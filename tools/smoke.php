@@ -19,6 +19,12 @@ use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Scale;
 use Drift\Geometry\Size;
+use Drift\Rendering\BoxStyle;
+use Drift\Rendering\Color;
+use Drift\Rendering\DisplayList;
+use Drift\Rendering\Paint;
+use Drift\Rendering\RasterCanvas;
+use Drift\Rendering\RecordingCanvas;
 use Drift\Widget\Widget;
 
 require __DIR__ . '/autoload.php';
@@ -53,6 +59,16 @@ if (str_starts_with($caseArg, '--case=')) {
 
     if ($case === 'constraints') {
         new BoxConstraints(20.0, 10.0); // min > max ⇒ 必须响亮失败（§13.1 C6）
+    }
+
+    if ($case === 'color') {
+        Color::fromRgb(300, 0, 0); // 分量越界 ⇒ 不静默截断
+    }
+
+    if ($case === 'w8') {
+        $list = new DisplayList();
+        $list->record(DisplayList::OP_SAVE); // 只有 save 没有 restore
+        $list->assertBalanced();             // W8 ⇒ 必须响亮失败
     }
 
     exit(0); // 走到这里说明"该中止的没中止"
@@ -196,6 +212,79 @@ fresh($log);
 [$code, $output] = runCase(__FILE__, 'constraints', null);
 check('Geometry · 约束违反退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
 check('Geometry · 约束违反写了 Errors.log', str_contains(logText($log), '违反约束'));
+
+// ⑨ Rendering：录制 → 回放，同一份 DisplayList 必得同一张位图（G3）
+fresh($log);
+$red = Color::fromRgb(255, 0, 0);
+$list = new DisplayList();
+$recorder = new RecordingCanvas($list);
+$recorder->save();
+$recorder->translate(10.0, 20.0);
+$recorder->pushClip(new Rect(0.0, 0.0, 5.0, 5.0));
+$recorder->drawRect(new Rect(0.0, 0.0, 5.0, 5.0), Paint::fill($red));
+$recorder->popClip();
+$recorder->restore();
+
+check('Rendering · 录制命令数', $list->count() === 6, (string) $list->count());
+check('Rendering · W8 栈平衡（save/clip 都归零）', $list->saveDepth() === 0 && $list->clipDepth() === 0);
+
+$raster = new RasterCanvas(32, 32, Color::white());
+$list->replay($raster);
+check('Rendering · 回放落在平移后的位置', $raster->pixelAt(12, 22)->equals($red));
+check('Rendering · 平移外的区域未被污染', $raster->pixelAt(2, 2)->equals(Color::white()));
+
+// 裁剪真的生效：画一个大矩形，只该出现裁剪区内那一块
+$clipped = new RasterCanvas(32, 32, Color::white());
+$clipList = new DisplayList();
+$clipCanvas = new RecordingCanvas($clipList);
+$clipCanvas->pushClip(new Rect(0.0, 0.0, 4.0, 4.0));
+$clipCanvas->drawRect(new Rect(0.0, 0.0, 16.0, 16.0), Paint::fill($red));
+$clipCanvas->popClip();
+$clipList->replay($clipped);
+check('Rendering · 裁剪区内被绘制', $clipped->pixelAt(1, 1)->equals($red));
+check('Rendering · 裁剪区外被挡住', $clipped->pixelAt(6, 6)->equals(Color::white()));
+
+// 圆角：角上那一个像素必须落在圆弧之外
+$rounded = new RasterCanvas(32, 32, Color::white());
+$roundList = new DisplayList();
+(new RecordingCanvas($roundList))->drawRect(new Rect(0.0, 0.0, 16.0, 16.0), Paint::fill($red), 6.0);
+$roundList->replay($rounded);
+check('Rendering · 圆角外露背景', $rounded->pixelAt(0, 0)->equals(Color::white()));
+check('Rendering · 圆角中心仍是实心', $rounded->pixelAt(8, 8)->equals($red));
+
+// 描边：中间该是空的
+$stroked = new RasterCanvas(32, 32, Color::white());
+$strokeList = new DisplayList();
+(new RecordingCanvas($strokeList))->drawRect(new Rect(2.0, 2.0, 16.0, 16.0), Paint::stroke($red, 2.0));
+$strokeList->replay($stroked);
+check('Rendering · 描边落在边上', $stroked->pixelAt(3, 3)->equals($red));
+check('Rendering · 描边内部是空的', $stroked->pixelAt(10, 10)->equals(Color::white()));
+
+// 缓冲复用：reset 之后槽位保留、可以重新录
+$list->reset();
+check('Rendering · reset 只归零长度', $list->count() === 0 && $list->saveDepth() === 0);
+$list->record(DisplayList::OP_DRAW_RECT, new Rect(0.0, 0.0, 1.0, 1.0), Paint::fill($red), 0.0);
+check('Rendering · reset 后可继续录制', $list->count() === 1);
+
+// 值对象
+check('Rendering · Color::fromHex 支持 #RGB', Color::fromHex('#f00')->equals($red));
+check('Rendering · Color 往返 ARGB', Color::fromArgb(Color::fromRgba(1, 2, 3, 4)->toArgb())->equals(Color::fromRgba(1, 2, 3, 4)));
+check('Rendering · BoxStyle::none 什么也不画', BoxStyle::none()->isNone());
+check(
+    'Rendering · BoxStyle 逐字段 with- 不改其它字段',
+    BoxStyle::none()->withBackground($red)->withRadius(8.0)->equals(new BoxStyle($red, null, 0.0, 8.0))
+);
+check('Rendering · Paint 风格可判', Paint::stroke($red, 2.0)->isStroke() && !Paint::fill($red)->isStroke());
+
+// ⑩ 响亮失败：颜色越界 / W8 未闭合
+fresh($log);
+[$code, $output] = runCase(__FILE__, 'color', null);
+check('Rendering · Color 越界退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
+
+fresh($log);
+[$code, $output] = runCase(__FILE__, 'w8', null);
+check('Rendering · W8 未闭合退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
+check('Rendering · W8 未闭合写了 Errors.log', str_contains(logText($log), 'W8'));
 
 fresh($log);
 if (is_file($log)) {
