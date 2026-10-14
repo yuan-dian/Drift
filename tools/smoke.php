@@ -14,6 +14,11 @@ declare(strict_types=1);
 
 use Drift\Dev\Smoke\SealProbe;
 use Drift\Errors;
+use Drift\Geometry\BoxConstraints;
+use Drift\Geometry\EdgeInsets;
+use Drift\Geometry\Rect;
+use Drift\Geometry\Scale;
+use Drift\Geometry\Size;
 use Drift\Widget\Widget;
 
 require __DIR__ . '/autoload.php';
@@ -44,6 +49,10 @@ if (str_starts_with($caseArg, '--case=')) {
         $widget = new SealProbe();
         $widget->seal();
         $widget->touch(); // 封存后写入 ⇒ 必须响亮失败
+    }
+
+    if ($case === 'constraints') {
+        new BoxConstraints(20.0, 10.0); // min > max ⇒ 必须响亮失败（§13.1 C6）
     }
 
     exit(0); // 走到这里说明"该中止的没中止"
@@ -155,6 +164,38 @@ fresh($log);
 [$code, $output] = runCase(__FILE__, 'seal', null);
 check('Widget · 封存后写入退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
 check('Widget · 封存后写入写了 Errors.log', str_contains(logText($log), 'Widget 已封存'));
+
+// ⑦ Geometry：唯一的量化函数 + 无界用 INF 不用 0
+fresh($log);
+check('Geometry · dpr = dpi / 96', Scale::fromDpi(96.0)->isIdentity() && Scale::fromDpi(120.0)->dpr === 1.25);
+check('Geometry · quantize = round(logical × dpr)', Scale::of(1.25)->quantize(10.0) === 13.0);
+
+$scale = Scale::of(1.5);
+$leftBox = $scale->quantizeRect(new Rect(0.0, 0.0, 3.0, 3.0));  // 0 .. 4.5
+$rightBox = $scale->quantizeRect(new Rect(3.0, 0.0, 3.0, 3.0)); // 4.5 .. 9
+check(
+    'Geometry · 相邻矩形共享同一条像素边（不错开半像素）',
+    $leftBox->right() === $rightBox->left,
+    $leftBox->right() . ' vs ' . $rightBox->left
+);
+
+$unbounded = BoxConstraints::unbounded();
+check('Geometry · 无界 = INF（不是 0）', $unbounded->maxWidth === INF && $unbounded->hasInfiniteWidth());
+check('Geometry · 0 是合法的紧尺寸', BoxConstraints::tight(Size::zero())->isTight());
+
+$bounded = new BoxConstraints(10.0, 20.0, 0.0, INF);
+check('Geometry · constrain 夹进区间', $bounded->constrain(new Size(5.0, 100.0))->equals(new Size(10.0, 100.0)));
+check('Geometry · tighten 收成紧约束', $bounded->tighten(new Size(50.0, 7.0))->equals(new BoxConstraints(20.0, 20.0, 7.0, 7.0)));
+check('Geometry · loosen 放开下界保留上界', $bounded->loosen()->equals(new BoxConstraints(0.0, 20.0, 0.0, INF)));
+
+check('Geometry · Rect 右边界现算不缓存', Rect::fromLtrb(1.0, 2.0, 4.0, 6.0)->right() === 4.0);
+check('Geometry · EdgeInsets 归几何面', EdgeInsets::all(8.0)->horizontal() === 16.0 && EdgeInsets::symmetric(4.0, 2.0)->vertical() === 4.0);
+
+// ⑧ C6：约束违反 ⇒ 响亮失败
+fresh($log);
+[$code, $output] = runCase(__FILE__, 'constraints', null);
+check('Geometry · 约束违反退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
+check('Geometry · 约束违反写了 Errors.log', str_contains(logText($log), '违反约束'));
 
 fresh($log);
 if (is_file($log)) {

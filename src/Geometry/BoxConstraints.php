@@ -1,0 +1,124 @@
+<?php
+declare(strict_types=1);
+
+namespace Drift\Geometry;
+
+use Drift\Errors;
+
+/**
+ * 盒约束（§13.1 C2）。
+ *
+ * ★ **无界 = `INF`，永不拿 0 当哨兵**。GUI 仓为此踩过三次坑：`0..maxH` 的松上界
+ *   被当成"可用高"吃满、合法取值被当哨兵 ⇒ 安静地错。
+ *
+ * ★ `constrain()` / `tighten()` 是**纯函数** —— 布局是纯函数（G3）的前提。
+ *
+ * @api
+ */
+final readonly class BoxConstraints
+{
+    public const INFINITY = INF;
+
+    public function __construct(
+        public float $minWidth = 0.0,
+        public float $maxWidth = self::INFINITY,
+        public float $minHeight = 0.0,
+        public float $maxHeight = self::INFINITY,
+    ) {
+        if ($minWidth > $maxWidth || $minHeight > $maxHeight) {
+            // C6：违反 ⇒ 响亮失败（Fatal 级，release 也中止）
+            Errors::report(sprintf(
+                'BoxConstraints 违反约束：min 不得大于 max（w %s..%s, h %s..%s）',
+                (string) $minWidth,
+                (string) $maxWidth,
+                (string) $minHeight,
+                (string) $maxHeight
+            ));
+        }
+    }
+
+    /** 无界：`0..INF` 两轴都不限（C2 的默认形态） */
+    public static function unbounded(): self
+    {
+        return new self();
+    }
+
+    /** 紧约束：min == max == size（父级定死了子节点尺寸） */
+    public static function tight(Size $size): self
+    {
+        return new self($size->width, $size->width, $size->height, $size->height);
+    }
+
+    /** 松约束：`0..size`（子节点可在范围内自选） */
+    public static function loose(Size $size): self
+    {
+        return new self(0.0, $size->width, 0.0, $size->height);
+    }
+
+    public function hasBoundedWidth(): bool
+    {
+        return !is_infinite($this->maxWidth);
+    }
+
+    public function hasBoundedHeight(): bool
+    {
+        return !is_infinite($this->maxHeight);
+    }
+
+    public function hasInfiniteWidth(): bool
+    {
+        return is_infinite($this->maxWidth);
+    }
+
+    public function hasInfiniteHeight(): bool
+    {
+        return is_infinite($this->maxHeight);
+    }
+
+    public function isTight(): bool
+    {
+        return $this->minWidth === $this->maxWidth && $this->minHeight === $this->maxHeight;
+    }
+
+    /** 把尺寸夹进约束 —— 纯函数 */
+    public function constrain(Size $size): Size
+    {
+        return new Size(
+            min(max($size->width, $this->minWidth), $this->maxWidth),
+            min(max($size->height, $this->minHeight), $this->maxHeight)
+        );
+    }
+
+    /** 把尺寸夹进约束，再收成紧约束 */
+    public function tighten(Size $size): self
+    {
+        $width = min(max($size->width, $this->minWidth), $this->maxWidth);
+        $height = min(max($size->height, $this->minHeight), $this->maxHeight);
+        return new self($width, $width, $height, $height);
+    }
+
+    /** 放开下界，保留上界 */
+    public function loosen(): self
+    {
+        return new self(0.0, $this->maxWidth, 0.0, $this->maxHeight);
+    }
+
+    /** 把本约束夹进外层约束（子约束不得超出父约束） */
+    public function enforce(BoxConstraints $outer): self
+    {
+        return new self(
+            min(max($this->minWidth, $outer->minWidth), $outer->maxWidth),
+            min(max($this->maxWidth, $outer->minWidth), $outer->maxWidth),
+            min(max($this->minHeight, $outer->minHeight), $outer->maxHeight),
+            min(max($this->maxHeight, $outer->minHeight), $outer->maxHeight)
+        );
+    }
+
+    public function equals(BoxConstraints $other): bool
+    {
+        return $this->minWidth === $other->minWidth
+            && $this->maxWidth === $other->maxWidth
+            && $this->minHeight === $other->minHeight
+            && $this->maxHeight === $other->maxHeight;
+    }
+}
