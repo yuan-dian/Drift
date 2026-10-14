@@ -1,0 +1,17 @@
+{
+    "name": "drift/drift",
+    "description": "Drift —— 用 TypePHP 写的声明式 GUI 框架",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.4"
+    },
+    "autoload": {
+        "psr-4": {
+            "Drift\\": "src/",
+            "Drift\\Dev\\": "tools/",
+            "App\\Hello\\": ["apps/hello/src/", "apps/hello/bin/win32/", "apps/hello/bin/macos/"],
+            "App\\Users\\": ["apps/users/src/", "apps/users/bin/win32/", "apps/users/bin/macos/"]
+        }
+    }
+}
