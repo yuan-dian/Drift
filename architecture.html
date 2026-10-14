@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Drift —— TypePHP 声明式 GUI 框架 · 架构图</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --panel:#ffffff; --ink:#1c1f24; --ink2:#5b6270; --ink3:#8b93a1;
+    --line:#e2e5ea; --line2:#cdd2da;
+    --blue:#185FA5; --blue-l:#E6F1FB; --blue-b:#B5D4F4;
+    --purple:#534AB7; --purple-l:#EEEDFE; --purple-b:#CECBF6;
+    --teal:#0F6E56; --teal-l:#E1F5EE; --teal-b:#9FE1CB;
+    --amber:#854F0B; --amber-l:#FAEEDA; --amber-b:#FAC775;
+    --coral:#993C1D; --coral-l:#FAECE7; --coral-b:#F5C4B3;
+    --red:#A32D2D; --red-l:#FCEBEB; --red-b:#F7C1C1;
+    --green:#3B6D11; --green-l:#EAF3DE; --green-b:#C0DD97;
+    --gray:#5F5E5A; --gray-l:#F1EFE8; --gray-b:#D3D1C7;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    font-size:14px;line-height:1.65;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1120px;margin:0 auto;padding:40px 28px 72px}
+  header.top{border-bottom:1px solid var(--line);padding-bottom:20px;margin-bottom:32px}
+  h1{font-size:26px;font-weight:600;margin:0 0 8px;letter-spacing:-.2px}
+  .sub{color:var(--ink2);font-size:14px;margin:0}
+  .chips{margin-top:14px;display:flex;flex-wrap:wrap;gap:8px}
+  .chip{font-size:12px;padding:3px 10px;border-radius:999px;background:var(--panel);
+    border:1px solid var(--line2);color:var(--ink2)}
+  h2{font-size:17px;font-weight:600;margin:44px 0 6px;padding-top:14px}
+  h2 .num{color:var(--ink3);font-weight:500;font-family:var(--mono);font-size:14px;margin-right:8px}
+  .note{color:var(--ink2);font-size:13px;margin:0 0 18px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px 20px;margin-bottom:18px}
+  svg{display:block;width:100%;height:auto}
+  text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+  .t{font-size:13.5px;fill:var(--ink)}
+  .th{font-size:13.5px;font-weight:600;fill:var(--ink)}
+  .ts{font-size:11.5px;fill:var(--ink2)}
+  .tm{font-family:var(--mono);font-size:11.5px;fill:var(--ink2)}
+  .box{fill:var(--panel);stroke:var(--line2);stroke-width:.8}
+  .ln{stroke:var(--line2);stroke-width:1;fill:none}
+  .ar{stroke:var(--ink3);stroke-width:1.2;fill:none;marker-end:url(#ah)}
+  .ard{stroke:var(--ink3);stroke-width:1.1;fill:none;stroke-dasharray:4 3;marker-end:url(#ah)}
+  .legend{display:flex;flex-wrap:wrap;gap:18px;margin-top:14px;padding-top:14px;border-top:1px dashed var(--line)}
+  .lg{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink2)}
+  .sw{width:14px;height:10px;border-radius:3px;border:1px solid var(--line2)}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-weight:600;color:var(--ink2);font-size:12.5px;background:var(--gray-l)}
+  td code,p code,li code{font-family:var(--mono);font-size:12px;background:var(--gray-l);
+    padding:1px 5px;border-radius:4px;border:1px solid var(--line)}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:820px){.two{grid-template-columns:1fr}}
+  ul{margin:6px 0 0;padding-left:20px}
+  li{margin:3px 0}
+  .kv{font-size:13px}
+  .kv b{font-weight:600}
+  footer{margin-top:52px;padding-top:18px;border-top:1px solid var(--line);color:var(--ink3);font-size:12.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <h1>Drift —— TypePHP 声明式 GUI 框架 · 架构图</h1>
+  <p class="sub">用 PHP 写界面，经 TypePHP AOT 编译为原生桌面应用。三树架构 + 自持布局与渲染 + 单 exe、无运行时。</p>
+  <div class="chips">
+    <span class="chip">三公理：编译器优先 · 绝不静默 · 确定性优先</span>
+    <span class="chip">PSR-4 分层</span>
+    <span class="chip">逻辑单位 DIP 全程 float</span>
+    <span class="chip">Canvas 三后端</span>
+    <span class="chip">fluent + Seal-on-Mount</span>
+    <span class="chip">双缝：select 订阅 + CommandRouter 冒泡</span>
+    <span class="chip">UI 单线程亲和</span>
+  </div>
+</header>
+
+<h2><span class="num">01</span>分层架构与依赖方向</h2>
+<p class="note">依赖只能向下（实线箭头）。<b>平台名只出现在每平台引导文件（组合根）</b>——共享代码零平台引用；跨平台 = 同一份应用源码为每个 OS 各编译一次。</p>
+<div class="card">
+<svg viewBox="0 0 1060 560" role="img" aria-label="Drift 分层架构图">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="#8b93a1" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <rect x="16" y="14" width="1028" height="76" rx="12" fill="#FAEEDA" stroke="#FAC775" stroke-width=".8"/>
+  <text class="th" x="36" y="42">apps/&lt;app&gt;/ &nbsp;应用层</text>
+  <text class="ts" x="36" y="62">Page 页面（一页一文件） · Store 业务（Subject 子类） · Root 只做组合 · bootstrap-&lt;os&gt;.php 组合根</text>
+  <text class="tm" x="36" y="80">★ 业务层不 import 任何 Drift 类型（除 State / Widget 公共 API）</text>
+
+  <path class="ar" d="M530 92 L530 108"/>
+
+  <rect x="16" y="110" width="1028" height="58" rx="10" fill="#E1F5EE" stroke="#9FE1CB" stroke-width=".8"/>
+  <text class="th" x="36" y="134">Drift\Routing &nbsp;·&nbsp; Drift\Theme</text>
+  <text class="ts" x="36" y="153">多页面：Page · RouteTable · PageHost · Offstage &nbsp;&nbsp;|&nbsp;&nbsp; 主题：Theme · ThemeScope · ColorToken / MetricToken</text>
+
+  <path class="ar" d="M530 170 L530 186"/>
+
+  <rect x="16" y="188" width="1028" height="112" rx="10" fill="#EEEDFE" stroke="#CECBF6" stroke-width=".8"/>
+  <text class="th" x="36" y="212">公共 API 层（对外稳定面，其余一律 @internal）</text>
+  <text class="ts" x="36" y="232">Drift\Widget &nbsp; Widget · StatelessWidget · StatefulWidget · Element · State · BuildContext · Key</text>
+  <text class="ts" x="36" y="251">Drift\Layout &nbsp; RenderObject · RenderBox · 布局契约 &nbsp;&nbsp;|&nbsp;&nbsp; Drift\State &nbsp;Subject · SubjectBuilder · Cell · Bound · SubscribingWidget</text>
+  <text class="ts" x="36" y="270">Drift\Commands &nbsp; CommandRouter · CommandHandler · CommandArg &nbsp;&nbsp;|&nbsp;&nbsp; Drift\Input &nbsp;事件 · 手势 · 焦点 · IME · 加速键 · 语义</text>
+  <text class="tm" x="36" y="289">唯一例外：自绘控件可 import Drift\Rendering（Canvas / Paint）</text>
+
+  <path class="ar" d="M530 302 L530 318"/>
+
+  <rect x="16" y="320" width="1028" height="112" rx="10" fill="#E6F1FB" stroke="#B5D4F4" stroke-width=".8"/>
+  <text class="th" x="36" y="344">引擎层（可替换实现）</text>
+  <text class="ts" x="36" y="364">Drift\Rendering &nbsp; RenderSurface · GpuContext · Canvas（接口：SkiaCanvas / RasterCanvas / RecordingCanvas） · DisplayList</text>
+  <text class="ts" x="36" y="383">Drift\Text &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; FontManager → FontCollection → TextShaper → TextLayout → Paragraph → TextMetricsProvider</text>
+  <text class="ts" x="36" y="402">Drift\Geometry &nbsp;&nbsp; Point · Size · Rect · EdgeInsets · Scale(dpr) · BoxConstraints</text>
+  <text class="tm" x="36" y="421">布局 / 绘制是纯函数；TextMetricsProvider 是确定性的注入点</text>
+
+  <path class="ar" d="M530 434 L530 450"/>
+
+  <rect x="16" y="452" width="1028" height="90" rx="10" fill="#F1EFE8" stroke="#D3D1C7" stroke-width=".8"/>
+  <text class="th" x="36" y="476">Drift\Platform &nbsp;平台端口（能力集合，只传原语）</text>
+  <text class="ts" x="36" y="496">screen · window · surface · input · timers &nbsp;|&nbsp; 独立小端口：clipboard · dialog · tray（不支持 ⇒ 返回 null）</text>
+  <text class="ts" x="36" y="515">Drift\App &nbsp; Application · EventLoop（派发） · FrameClock · TaskHost · WindowStateStore &nbsp;|&nbsp; Drift\Errors &nbsp;错误出口</text>
+  <text class="tm" x="36" y="533">循环归属平台（阻塞等待，不空转）；派发归属框架</text>
+</svg>
+<div class="legend">
+  <span class="lg"><span class="sw" style="background:#FAEEDA;border-color:#FAC775"></span>应用层（用户代码）</span>
+  <span class="lg"><span class="sw" style="background:#E1F5EE;border-color:#9FE1CB"></span>组合 / 主题</span>
+  <span class="lg"><span class="sw" style="background:#EEEDFE;border-color:#CECBF6"></span>公共 API（稳定面）</span>
+  <span class="lg"><span class="sw" style="background:#E6F1FB;border-color:#B5D4F4"></span>引擎（可替换）</span>
+  <span class="lg"><span class="sw" style="background:#F1EFE8;border-color:#D3D1C7"></span>平台 / 应用宿主</span>
+</div>
+</div>
+
+<h2><span class="num">02</span>事件循环归属与线程模型</h2>
+<p class="note">两条铁律：<b>循环属于平台，派发属于框架</b>；<b>UI 单线程亲和</b>，后台结果只能以事件回贴。</p>
+<div class="card">
+<svg viewBox="0 0 1060 430" role="img" aria-label="事件循环与线程模型图">
+  <rect x="16" y="14" width="1028" height="128" rx="12" fill="#E6F1FB" stroke="#B5D4F4" stroke-width=".8"/>
+  <text class="th" x="36" y="40">UI 线程（唯一）</text>
+  <rect x="36" y="52" width="300" height="72" rx="8" fill="#ffffff" stroke="#B5D4F4" stroke-width=".8"/>
+  <text class="th" x="52" y="76">平台消息泵 pump()</text>
+  <text class="ts" x="52" y="96">阻塞等待下一条消息</text>
+  <text class="tm" x="52" y="113">不空转 · 帧时钟由 VSync / WM_TIMER 驱动</text>
+  <path class="ar" d="M336 88 L378 88"/>
+  <rect x="380" y="52" width="300" height="72" rx="8" fill="#ffffff" stroke="#B5D4F4" stroke-width=".8"/>
+  <text class="th" x="396" y="76">EventLoop 派发</text>
+  <text class="ts" x="396" y="96">命中测试 → 焦点 → GestureArena → Element</text>
+  <text class="tm" x="396" y="113">派发中产生的事件入 next-tick 队列</text>
+  <path class="ar" d="M680 88 L722 88"/>
+  <rect x="724" y="52" width="300" height="72" rx="8" fill="#ffffff" stroke="#B5D4F4" stroke-width=".8"/>
+  <text class="th" x="740" y="76">帧末 flush</text>
+  <text class="ts" x="740" y="96">脏 Element 重建 → relayout → paint</text>
+  <text class="tm" x="740" y="113">→ surface.present()（DisplayList 回放）</text>
+
+  <path class="ard" d="M874 124 L874 176 L530 176 L530 206"/>
+  <text class="tm" x="700" y="170">postEvent（结果回贴）</text>
+
+  <rect x="16" y="208" width="1028" height="112" rx="12" fill="#EAF3DE" stroke="#C0DD97" stroke-width=".8"/>
+  <text class="th" x="36" y="234">TaskHost &nbsp;后台任务端口（UI 线程不跑协程）</text>
+  <rect x="36" y="246" width="470" height="62" rx="8" fill="#ffffff" stroke="#C0DD97" stroke-width=".8"/>
+  <text class="th" x="52" y="268">后端 A · 协程（Swoole / Swow）</text>
+  <text class="ts" x="52" y="287">worker 线程跑调度器；结果经跨线程队列回贴</text>
+  <text class="tm" x="52" y="302">★ 协程入口必须 catch (\Throwable)</text>
+  <rect x="522" y="246" width="502" height="62" rx="8" fill="#ffffff" stroke="#C0DD97" stroke-width=".8"/>
+  <text class="th" x="538" y="268">后端 B · 同步三态（M1–M3 默认，永远可用）</text>
+  <text class="ts" x="538" y="287">先广播 loading（界面不卡死到不可用），再跑，再广播结果</text>
+  <text class="tm" x="538" y="302">大响应时短暂停顿；换后端 = 组合根一行</text>
+
+  <rect x="16" y="334" width="1028" height="82" rx="10" fill="#FCEBEB" stroke="#F7C1C1" stroke-width=".8"/>
+  <text class="th" x="36" y="358">三条纪律</text>
+  <text class="ts" x="36" y="378">① 框架绝不自建循环 —— pump() 阻塞等待；时间注入（动画相位 = f(帧时间戳)，不读环境时钟）</text>
+  <text class="ts" x="36" y="397">② 重入安全 —— 事件中途 setState 只标脏，统一重建在帧末；回调里连点十次只重建一次</text>
+  <text class="ts" x="36" y="416">③ 后台只碰业务数据，不碰任何 Widget / Element；非 UI 线程改树 ⇒ 断言失败 + 中止</text>
+</svg>
+</div>
+
+<h2><span class="num">03</span>三棵树与一帧生命周期</h2>
+<p class="note">Widget 不可变描述 → Element 承载身份与 State → RenderObject 管几何与绘制。变更只在脏边界重建。</p>
+<div class="card">
+<svg viewBox="0 0 1060 300" role="img" aria-label="三树架构图">
+  <rect x="16" y="16" width="320" height="112" rx="10" fill="#EEEDFE" stroke="#CECBF6" stroke-width=".8"/>
+  <text class="th" x="36" y="42">Widget · 不可变描述</text>
+  <text class="ts" x="36" y="64">build() 的产物；纯值、无状态</text>
+  <text class="ts" x="36" y="84">fluent 构造 + Seal-on-Mount</text>
+  <text class="tm" x="36" y="106">Text::make('hi')-&gt;title()</text>
+
+  <path class="ar" d="M336 72 L378 72"/>
+  <text class="tm" x="340" y="62">createElement</text>
+
+  <rect x="380" y="16" width="320" height="112" rx="10" fill="#E6F1FB" stroke="#B5D4F4" stroke-width=".8"/>
+  <text class="th" x="400" y="42">Element · 身份 + 调和</text>
+  <text class="ts" x="400" y="64">(type, key) diff · 脏边界</text>
+  <text class="ts" x="400" y="84">State 宿主 · 订阅袋</text>
+  <text class="tm" x="400" y="106">换页 = Offstage 化而非卸载</text>
+
+  <path class="ar" d="M700 72 L742 72"/>
+  <text class="tm" x="700" y="62">createRenderObject</text>
+
+  <rect x="744" y="16" width="300" height="112" rx="10" fill="#E1F5EE" stroke="#9FE1CB" stroke-width=".8"/>
+  <text class="th" x="764" y="42">RenderObject · 几何 + 绘制</text>
+  <text class="ts" x="764" y="64">layout(BoxConstraints) → Size</text>
+  <text class="ts" x="764" y="84">paint(Canvas) → DisplayList</text>
+  <text class="tm" x="764" y="106">位置无关 · 纯函数</text>
+
+  <rect x="16" y="152" width="1028" height="128" rx="12" fill="#F6F7F9" stroke="#D3D1C7" stroke-width=".8"/>
+  <text class="th" x="36" y="178">一帧（60 FPS）</text>
+  <text class="ts" x="36" y="202">① pump 取事件 → ② 路由 / 手势竞争 → ③ 事件回调（setState 只标脏 / 命令上行）</text>
+  <text class="ts" x="36" y="224">④ 帧末：脏 Element 重建 build() → ⑤ 全树 layout（约束向下、尺寸向上）</text>
+  <text class="ts" x="36" y="246">⑥ paint 录制 DisplayList → ⑦ surface.present() 上屏（Skia CPU 光栅 + 位块传送）</text>
+  <text class="tm" x="36" y="268">★ 时间注入：动画相位 = f(帧时间戳) —— golden 测试可喂固定帧序列</text>
+</svg>
+</div>
+
+<h2><span class="num">04</span>UI 与业务隔离：两条缝</h2>
+<p class="note">业务不认识 GUI；控件不认识业务。跨边界只有两条通道：<b>值缝</b>（数据→UI）与<b>动作缝</b>（UI→业务）。</p>
+<div class="card">
+<svg viewBox="0 0 1060 350" role="img" aria-label="值缝与动作缝图">
+  <rect x="16" y="16" width="1028" height="86" rx="10" fill="#FAEEDA" stroke="#FAC775" stroke-width=".8"/>
+  <text class="th" x="36" y="42">业务层 &nbsp;Store / FormData（Subject 子类）</text>
+  <text class="ts" x="36" y="64">数据 + 规则 + IO。普通 PHP 类，零 GUI 依赖，可脱离 GUI 单测。</text>
+  <text class="tm" x="36" y="85">通知：subscribeFor(owner, fn) / unsubscribeAllOf(owner) · notifyChanged() 逐订阅者异常隔离</text>
+
+  <path class="ar" d="M240 102 L240 140"/>
+  <text class="tm" x="250" y="126">值缝：数据 → UI（控件吃「值」，不吃「源」）</text>
+
+  <rect x="16" y="142" width="1028" height="86" rx="10" fill="#EEEDFE" stroke="#CECBF6" stroke-width=".8"/>
+  <text class="th" x="36" y="168">绑定层 &nbsp;State（只持纯 UI 态） + SubjectBuilder（唯一允许订阅的控件）</text>
+  <text class="ts" x="36" y="190">State 订阅袋：watch() 记账，dispose() 基类统一全退 ⇒ 忘退订不可能</text>
+  <text class="tm" x="36" y="211">判据：业务编码在 State 里出现次数 = 0 · Cell::setIfChanged 带 === 门控</text>
+
+  <path class="ar" d="M240 228 L240 266"/>
+  <text class="tm" x="250" y="252">build($ctx) → Widget（纯值、不可变）</text>
+
+  <rect x="16" y="268" width="1028" height="72" rx="10" fill="#E1F5EE" stroke="#9FE1CB" stroke-width=".8"/>
+  <text class="th" x="36" y="294">视图层 &nbsp;三树 + 动作缝</text>
+  <text class="ts" x="36" y="316">上行 = 命令（可审计、可 lint、一个 handler 管一列）&nbsp;／&nbsp;纯 UI 回调（闭包，不承载业务）</text>
+  <text class="tm" x="36" y="334">Button::danger('删除')-&gt;command('user.del')-&gt;arg(CommandArg::id($u-&gt;id))</text>
+
+  <path class="ard" d="M900 304 L900 59"/>
+  <text class="tm" x="820" y="180" transform="rotate(0)">动作缝</text>
+</svg>
+</div>
+
+<h2><span class="num">05</span>控件写法裁决：fluent-first + Seal-on-Mount</h2>
+<p class="note">链式 <code>-&gt;title()</code> 若 <code>mutate + return $this</code> 会让 Widget 可变，破坏三树 diff 的不可变前提。<b>Seal-on-Mount</b>：挂载即封存，封存后写入 ⇒ 响亮失败（G2）；封存幂等，同一实例复用到多处合法。</p>
+<div class="card">
+<svg viewBox="0 0 1060 316" role="img" aria-label="fluent 链式与封存生命周期图">
+  <rect x="16" y="16" width="1028" height="60" rx="10" fill="#EEEDFE" stroke="#CECBF6" stroke-width=".8"/>
+  <text class="th" x="36" y="42">构造期（可配置）</text>
+  <text class="ts" x="36" y="63">Text::make('Hello Drift') → -&gt;title() → -&gt;maxLines(2) → -&gt;ellipsize()</text>
+  <text class="tm" x="700" y="42">每个修饰 = set + return $this 薄壳</text>
+  <text class="tm" x="700" y="63">mutate() 统一守卫 · 零分配</text>
+
+  <path class="ar" d="M530 76 L530 104"/>
+  <text class="tm" x="540" y="96">Element 挂载 ⇒ seal()（幂等）</text>
+
+  <rect x="16" y="106" width="1028" height="60" rx="10" fill="#E1F5EE" stroke="#9FE1CB" stroke-width=".8"/>
+  <text class="th" x="36" y="132">挂载后（不可变）</text>
+  <text class="ts" x="36" y="153">Widget 视为封存；配置更新 = 用新 Widget 重新调用 createRenderObject() 造新盒替换</text>
+  <text class="tm" x="700" y="132">不存在「字段级半同步」</text>
+  <text class="tm" x="700" y="153">RT-2 静默分叉结构上不可能</text>
+
+  <path class="ar" d="M530 166 L530 194"/>
+  <text class="tm" x="540" y="186">封存后再 -&gt;title()</text>
+
+  <rect x="16" y="196" width="1028" height="104" rx="10" fill="#FCEBEB" stroke="#F7C1C1" stroke-width=".8"/>
+  <text class="th" x="36" y="222">响亮失败（G2）</text>
+  <text class="ts" x="36" y="244">① 封存后写入 ⇒ Errors::report（不静默忽略）</text>
+  <text class="ts" x="36" y="266">② 同一实例复用到多处是<b>合法</b>的 —— 不做 owner 校验（Widget 是纯描述，各处各有独立 Element）</text>
+  <text class="ts" x="36" y="288">③ lint 兜底：必填 modifier 未调用 / 死字段 / 命令无 handler / children 数组内重复同一根变量</text>
+</svg>
+<div class="legend">
+  <span class="lg"><span class="sw" style="background:#EEEDFE;border-color:#CECBF6"></span>可变窗口</span>
+  <span class="lg"><span class="sw" style="background:#E1F5EE;border-color:#9FE1CB"></span>不可变窗口</span>
+  <span class="lg"><span class="sw" style="background:#FCEBEB;border-color:#F7C1C1"></span>违规 ⇒ 响亮失败</span>
+</div>
+</div>
+
+<h2><span class="num">06</span>fluent 实现的实测裁决（不是推演）</h2>
+<p class="note">探针 <code>probes/fluent_cost/</code>：N = 300,000 个「5 修饰」控件，<code>-O2</code>。结论：<b>链式写法本身几乎免费，clone-with 贵 4.2×</b> —— 所以采纳 mutate + 挂载即封存，并否决 <code>-&gt;build()</code>。</p>
+<div class="card">
+<svg viewBox="0 0 1060 262" role="img" aria-label="三种 fluent 实现成本对比">
+  <text class="ts" x="36" y="30">单控件构建成本（µs，越低越好）· 相对倍数标注在条右</text>
+
+  <text class="t" x="36" y="73">A &nbsp;clone-with 链式</text>
+  <rect x="260" y="58" width="500" height="26" rx="4" fill="#F0997B" stroke="#993C1D" stroke-width=".8"/>
+  <text class="tm" x="772" y="73">2.87 µs &nbsp;· 4.2×</text>
+
+  <text class="t" x="36" y="123">A2 clone-with（类型化局部）</text>
+  <rect x="260" y="108" width="432" height="26" rx="4" fill="#F5C4B3" stroke="#993C1D" stroke-width=".8"/>
+  <text class="tm" x="704" y="123">2.48 µs &nbsp;· 3.6×</text>
+
+  <text class="th" x="36" y="173">B &nbsp;mutate + $this ★采纳</text>
+  <rect x="260" y="158" width="118" height="26" rx="4" fill="#5DCAA5" stroke="#0F6E56" stroke-width=".8"/>
+  <text class="tm" x="390" y="173">0.68 µs &nbsp;· 1.0×</text>
+
+  <text class="t" x="36" y="223">C &nbsp;纯构造器（基线）</text>
+  <rect x="260" y="208" width="106" height="26" rx="4" fill="#D3D1C7" stroke="#5F5E5A" stroke-width=".8"/>
+  <text class="tm" x="378" y="223">0.61 µs &nbsp;· 0.9×</text>
+
+  <text class="tm" x="36" y="252">帧预算换算（60 FPS = 16.7 ms）：300 节点全量重建 → A 0.86 ms(5.2%) vs B 0.20 ms(1.2%)；1000 节点 → A 2.87 ms(17%) vs B 0.68 ms(4%)</text>
+</svg>
+<div class="legend">
+  <span class="lg"><span class="sw" style="background:#F0997B;border-color:#993C1D"></span>clone-with（否决：4.2× 换掉一行 if）</span>
+  <span class="lg"><span class="sw" style="background:#5DCAA5;border-color:#0F6E56"></span>mutate + Seal-on-Mount（采纳）</span>
+  <span class="lg"><span class="sw" style="background:#D3D1C7;border-color:#5F5E5A"></span>纯构造器基线</span>
+</div>
+</div>
+
+<div class="two">
+  <div class="card">
+    <p class="kv" style="margin-top:0"><b>为什么不加 <code>-&gt;build()</code></b></p>
+    <ul>
+      <li><b>名字硬冲突</b>：<code>StatelessWidget extends Widget</code> 已声明 <code>build(BuildContext $ctx): Widget</code>。基类再加零参 <code>build()</code> = 不兼容覆盖 ⇒ PHP Fatal error</li>
+      <li><b>要么到处都是、要么是装饰</b>：强制则每节点一次；挂载自动则退化成 no-op，违反「要么不提供、要么必须生效」</li>
+      <li><b>类型强制会翻倍类数</b>：45 控件 × 2 类</li>
+      <li><b>问题已有天然边界</b>：「何时结束可变窗口」由<b>挂载</b>回答，不必再声明一次</li>
+    </ul>
+    <p class="note" style="margin:12px 0 0">替代品：<code>-&gt;seal()</code>，<b>幂等且可选</b>——不写也对，写了才省掉挂载时的封存判断。</p>
+  </div>
+  <div class="card">
+    <p class="kv" style="margin-top:0"><b>类型化属性：手册旧记录已证伪</b></p>
+    <p style="font-size:13px;margin:8px 0">手册 §9.5/§9.15 记「属性进三元 ⇒ 推成 <code>php::Variant</code> ⇒ C2440」。探针 <code>probes/typed_ternary/</code>（<code>--dry</code> 查生成 C++）复核：</p>
+    <ul>
+      <li>✅ 五个探针函数返回类型<b>全部保真</b>，<code>grep -c Variant</code> = 0 —— <b>不再报错</b></li>
+      <li>⚠️ 但属性读走 <code>s.attr()</code> → <code>php::Var</code> → 拆箱，不是原生字段直读；三元里同一属性读两次</li>
+      <li>⇒ 是<b>性能特征</b>，不是正确性坑。热路径把属性读先落类型化局部变量</li>
+    </ul>
+    <p class="note" style="margin:12px 0 0">哨兵值（<code>accent: -1</code>）的理由随之改为「区分未设置 vs 合法值」的语义手段，不再是绕编译器。</p>
+  </div>
+</div>
+
+<div class="two">
+  <div class="card">
+    <p class="kv" style="margin-top:0"><b>命名规则（唯一一套，无例外）</b></p>
+    <table>
+      <tr><th>场景</th><th>形态</th></tr>
+      <tr><td>造控件</td><td><code>Text::make('hi')</code></td></tr>
+      <tr><td>修饰属性</td><td><code>-&gt;spacing(20)</code></td></tr>
+      <tr><td>语义角色</td><td><code>-&gt;title()</code> <code>-&gt;caption()</code></td></tr>
+      <tr><td>树结构</td><td><code>-&gt;children([...])</code></td></tr>
+      <tr><td>变体工厂</td><td><code>Button::primary('ok')</code></td></tr>
+      <tr><td>事件</td><td><code>-&gt;command('x')-&gt;arg($v)</code></td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <p class="kv" style="margin-top:0"><b>心智负担对照（同页面复刻）</b></p>
+    <table>
+      <tr><th>指标</th><th>构造器</th><th>fluent</th></tr>
+      <tr><td><code>new</code> 关键字数</td><td>~14</td><td>~2</td></tr>
+      <tr><td>需记忆的参数名</td><td>多个</td><td>0（打 <code>-&gt;</code> 全亮）</td></tr>
+      <tr><td>IDE 可发现性</td><td>3/5</td><td><b>5/5</b></td></tr>
+      <tr><td>语义角色内建</td><td>4/5</td><td><b>5/5</b></td></tr>
+    </table>
+    <p class="note" style="margin:12px 0 0">依据：GUI 实验仓 85 处手写 SizedBox、67 处内联 TextStyle —— 能力早有、采用率 0，因为示例没教。</p>
+  </div>
+</div>
+
+<footer>
+  Drift 设计方案 v2.0 · 配套文档 <code>DESIGN.md</code>（15 个设计重点逐条裁决 + §A 完整示例）、<code>HISTORY.md</code>（探针证据与已作废结论）、<code>probes/RESULTS.md</code>（原始数据）。<br>
+  所有「不能」依据 <code>TypePHP使用手册.md</code> §9；所有「能」依据 <code>examples/</code>（qt-taskboard · tetris-win32 · android-native · swoole · property-hook）。<br>
+  Seal-on-Mount 与 TaskHost 双后端为本方案新增裁决；fluent 微基准与类型降级复核已于 2026-10-14 完成（见 probes/RESULTS.md）。
+</footer>
+
+</div>
+</body>
+</html>

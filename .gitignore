@@ -1,0 +1,35 @@
+# ── 构建产物 ──
+/build/
+apps/*/build/
+*.exe
+*.obj
+*.o
+*.dll
+*.lib
+*.exp
+*.pdb
+*.ilk
+
+# ── 探针的 tpc 增量构建缓存（证据是生成物，缓存不是）──
+probes/**/cache/
+
+# ── 工具输出 ──
+/Errors.log
+/errors.log
+/tools/api-surface.json
+/golden/*/actual/
+/golden/*/diff/
+
+# ── 依赖 ──
+/vendor/
+
+# ── 编辑器 / 系统 ──
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+desktop.ini
+
+# ── 本地备份（方案修订期留下的回滚网）──
+*.bak-*
+*.orig
