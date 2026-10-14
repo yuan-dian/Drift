@@ -306,9 +306,14 @@ private function pageFor(string $name): ?Widget
       "Drift\\":      "src/",
       "Drift\\Dev\\": "tools/",
       // ★ 每个应用一条（前缀 → 目录），与 §4.5 的 apps/<app>/src/ 对齐
-      //   bin/ 也挂同一前缀：组合根按平台分文件，由 project.yml 的 if: 条件编译（§4.5）
-      "App\\Hello\\": ["apps/hello/src/", "apps/hello/bin/"],
-      "App\\Users\\": ["apps/users/src/", "apps/users/bin/"]
+      //   ★ bin/ 必须**按平台逐条列出**（不是笼统的 bin/）：组合根在
+      //     bin/<platform>/Bootstrap.php 里声明 `namespace App\Hello;`（§A.1），
+      //     只有把 bin/win32/ 与 bin/macos/ 各自挂到前缀上，该声明才落在
+      //     PSR-4 的"前缀根"上；写笼统的 bin/ 会要求命名空间是 App\Hello\win32。
+      //   两个平台目录同时列出无害：非当前平台的目录根本不会被查到。
+      //   实际选哪个文件由 project.yml 的 if: 条件编译（§4.5）。
+      "App\\Hello\\": ["apps/hello/src/", "apps/hello/bin/win32/", "apps/hello/bin/macos/"],
+      "App\\Users\\": ["apps/users/src/", "apps/users/bin/win32/", "apps/users/bin/macos/"]
     }
   }
 }
@@ -348,7 +353,7 @@ private function pageFor(string $name): ?Widget
 | `Input` | `Geometry` / `Errors`；**协议例外**：`Text\TextInputClient` 与 `Layout\SemanticsConfiguration` 可被引用，但仅限类型签名 | Widget / Rendering |
 | `Widget` / `Layout` / `State` | 下面全部 | Routing / Theme / Commands / App |
 | `Commands` | Geometry / Errors / **State**（只做类型签名） | Widget / Layout / Rendering / Platform |
-| `Theme` / `Routing` | Widget / Layout / State / Text / Geometry | App |
+| `Theme` / `Routing` | Widget / Layout / State / Text / **Rendering** / Geometry | App |
 | `App` | 全部 | apps |
 | `apps` | Drift **公共 API**（标 `@api` 的） | Drift 内部实现（`@internal`，§10.1.4；有豁免标注 ⇒ warn） |
 
@@ -3250,6 +3255,15 @@ M5 ── （无裁决项；虚拟化 / 脏矩形 / `WindowStateStore` / UIA 桥
 - §4.2 目录清单**缺 `Color`** —— 它被 §11.5（`color(ColorToken $t): Color`）与 §15.6（`Color::fromRgb`）引用，但**目录里没有定义** ⇒ **已补进 `Drift\Rendering`**（文档遗漏，语义不变）。
 - §16.4 的 **`ControlStyle` 是孤儿名字**（全文无定义、§4.2 也没有）⇒ **已删**，该格改指向 `BoxStyle`（见 §23.2 O-17 复核发现 ⑤）。
 - §19 里"**错误边界**"**同时在 M3 和 M5**（名字还不一致）⇒ 统一为"**错误边界容器**"、**归 M3**，M5 那处已删（见 §23.2 O-12 复核发现 ①）。
+
+★ **第五轮追加（2026-10-15，M0 落地时）** —— 两处**会挡住正确实现**的文档缺口（都是"已有裁决没写全"，语义不变）：
+
+| # | 位置 | 症状 | 修正 |
+|---|------|------|------|
+| 9 | **§4.1** | `composer.json` 把 `apps/<app>/bin/` **笼统挂一个前缀**，但 §4.5 的组合根在 `bin/<platform>/Bootstrap.php` 里声明 `namespace App\Hello;`（§A.1）⇒ 按 PSR-4 该声明应落在"前缀根"上，笼统挂 `bin/` 会要求命名空间是 `App\Hello\win32` ⇒ **§A.1 的例子在 PSR-4 下不成立**（`namespace-mismatch` 会报它） | 改为**按平台逐条列出** `bin/win32/` 与 `bin/macos/`；两个平台同时列出无害（非当前平台目录查不到） |
+| 10 | **§4.3** | `Theme` 行的允许集**漏了 `Rendering`**，而 §4.2 把 `Color` 放在 `Drift\Rendering`、§15.7 又要求 `ThemeData` 是主题 token 的**取值来源** ⇒ `Theme → Rendering` 是**必需边**，缺了它 `dependency-direction` lint 会误报 | Theme 行补 `Rendering` |
+
+★ 附带确认：`main.php` / `tools/*.php` 这类**入口脚本**（无类型声明）不受 `namespace-mismatch` 管 —— PSR-4 管的是类文件。
 
 ### 24.2 开放项总表（全部 ⏳ 集中在此）
 
