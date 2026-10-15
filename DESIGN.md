@@ -348,7 +348,7 @@ private function pageFor(string $name): ?Widget
 |----|---------|---------|
 | `Geometry` | `Errors` | 一切 |
 | `Platform` | `Geometry` / `Errors` | 上层任何东西 |
-| `Text` | `Geometry` | Widget / Rendering / Platform |
+| `Text` | `Geometry` / `Errors` | Widget / Rendering / Platform |
 | `Rendering` | `Geometry` / `Text` / `Errors` | Widget / Platform（表面由 App 注入） |
 | `Input` | `Geometry` / `Errors`；**协议例外**：`Text\TextInputClient` 与 `Layout\SemanticsConfiguration` 可被引用，但仅限类型签名 | Widget / Rendering |
 | `Widget` / `Layout` / `State` | 下面全部 | Routing / Theme / Commands / App |
@@ -647,6 +647,12 @@ Paragraph            不可变排版结果 + 缓存键 (text, style, maxWidth, s
    ↓
 TextMetricsProvider  ★ 布局确定性注入点：Widget 层问度量，不问平台
 ```
+
+> ★ **凡是影响排版结果的输入都在 `TextStyle` 里**（对齐 / 行数上限 / 省略号亦然），
+>   而不是 `TextMetricsProvider::layout()` 的额外参数 —— 因为缓存键被钉死为
+>   `(text, style, maxWidth, scale)`（§7.1 同）：**多一个不在键里的输入，缓存就会
+>   对同一个键给出不同结果**。widget 层的 `->align()` / `->maxLines()` 经主题解析后
+>   落成这里的值（§15.7）。
 
 ### 8.2 七个坑，逐个给答案
 
@@ -3262,6 +3268,8 @@ M5 ── （无裁决项；虚拟化 / 脏矩形 / `WindowStateStore` / UIA 桥
 |---|------|------|------|
 | 9 | **§4.1** | `composer.json` 把 `apps/<app>/bin/` **笼统挂一个前缀**，但 §4.5 的组合根在 `bin/<platform>/Bootstrap.php` 里声明 `namespace App\Hello;`（§A.1）⇒ 按 PSR-4 该声明应落在"前缀根"上，笼统挂 `bin/` 会要求命名空间是 `App\Hello\win32` ⇒ **§A.1 的例子在 PSR-4 下不成立**（`namespace-mismatch` 会报它） | 改为**按平台逐条列出** `bin/win32/` 与 `bin/macos/`；两个平台同时列出无害（非当前平台目录查不到） |
 | 10 | **§4.3** | `Theme` 行的允许集**漏了 `Rendering`**，而 §4.2 把 `Color` 放在 `Drift\Rendering`、§15.7 又要求 `ThemeData` 是主题 token 的**取值来源** ⇒ `Theme → Rendering` 是**必需边**，缺了它 `dependency-direction` lint 会误报 | Theme 行补 `Rendering` |
+| 11 | **§4.3** | `Text` 行的允许集只有 `Geometry`、**漏了 `Errors`**，但 §8.3 血账 1 已经裁决"`FontManager` 初始化失败走 `Errors::report` 而不是崩"，§8.2 坑 6 也要 Text 层响亮失败 ⇒ 缺这条会让"Text 层不许报错"与"G2 绝不静默"直接冲突 | Text 行补 `Errors` |
+| 12 | **§8.1 / §7.1** | 缓存键钉死为 `(text, style, maxWidth, scale)`，但排版结果**还受**对齐 / 行数上限 / 省略号影响 ⇒ 若把它们做成 `layout()` 的参数就会**同键不同结果**（缓存撒谎） | 裁决：三者**进 `TextStyle`**（§15.7 说 widget 层的角色方法落成 `TextStyle` 的值）⇒ 方案给定的键**保持字面成立** |
 
 ★ 附带确认：`main.php` / `tools/*.php` 这类**入口脚本**（无类型声明）不受 `namespace-mismatch` 管 —— PSR-4 管的是类文件。
 
