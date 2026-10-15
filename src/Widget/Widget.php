@@ -21,6 +21,9 @@ abstract class Widget
     /** @internal 0 = 可配置（构建期）；1 = 已封存（挂载后） */
     private int $sealed = 0;
 
+    /** @internal null = 无 Key ⇒ diff 身份由位置决定（§12.3） */
+    private ?Key $key = null;
+
     /**
      * ★ 子类必须调 `parent::__construct()`。
      *
@@ -28,6 +31,32 @@ abstract class Widget
      */
     public function __construct()
     {
+    }
+
+    /**
+     * 给本控件一个跨位置稳定的身份（§12.3）。
+     *
+     * 不给 ⇒ 身份由在 `children([...])` 里的位置决定；给了 ⇒ 重排也能保住 `State`。
+     * `ForEach` 的 key 是**必填**的（§16.6.1 R4），因为列表重排最需要它。
+     *
+     * @api
+     */
+    public function key(string|int $value): static
+    {
+        $this->mutate();
+        $this->key = new Key($value);
+
+        return $this;
+    }
+
+    /**
+     * diff 用的身份（§12.3）：`null` = 由位置决定。
+     *
+     * @internal Element 调和时读它，用户不需要（给了 Key 就已经生效）。
+     */
+    public function identity(): ?Key
+    {
+        return $this->key;
     }
 
     /**

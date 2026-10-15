@@ -35,6 +35,7 @@ use Drift\Text\FontWeight;
 use Drift\Text\TextAlign;
 use Drift\Text\TextLayout;
 use Drift\Text\TextStyle;
+use Drift\Widget\Key;
 use Drift\Widget\Widget;
 
 require __DIR__ . '/autoload.php';
@@ -65,6 +66,12 @@ if (str_starts_with($caseArg, '--case=')) {
         $widget = new SealProbe();
         $widget->seal();
         $widget->touch(); // 封存后写入 ⇒ 必须响亮失败
+    }
+
+    if ($case === 'key') {
+        $widget = new SealProbe();
+        $widget->seal();
+        $widget->key(7); // 封存后给身份 ⇒ 必须响亮失败
     }
 
     if ($case === 'constraints') {
@@ -487,6 +494,24 @@ $fadeList = new DisplayList();
 (new RecordingCanvas($fadeList))->drawParagraph($textParagraph, Paint::fill(Color::fromRgba(0, 0, 0, 64)), 0.0, 0.0);
 $fadeList->replay($faded);
 check('Rendering · 覆盖度 × 颜色 alpha 走同一条混合（半透明 ⇒ 灰）', $faded->pixelAt(1, 4)->r > $textCanvas->pixelAt(1, 4)->r);
+
+// ⑪ Key：跨位置稳定的身份（§12.3）
+fresh($log);
+$keyProbe = new SealProbe();
+check('Key · 默认无 Key ⇒ 身份由位置决定', $keyProbe->identity() === null);
+$keyProbe->key(7);
+check('Key · key() 之后拿到值对象', $keyProbe->identity()?->value === 7);
+check('Key · 同值即同一身份', Key::same(new Key(7), new Key(7)));
+check('Key · 异值即不同身份', !Key::same(new Key(7), new Key(8)));
+check('Key · 1 与 "1" 不等（不做类型互转）', !Key::same(new Key(1), new Key('1')));
+check('Key · 双方都没有 ⇒ 可复用（位置相同）', Key::same(null, null));
+check('Key · 一方有一方没有 ⇒ 不复用', !Key::same(new Key(1), null));
+check('Key · key() 走 mutate()（返回同一实例）', $keyProbe->key(7) === $keyProbe);
+
+fresh($log);
+[$code, $output] = runCase(__FILE__, 'key', null);
+check('Key · 封存后再给 Key 退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
+check('Key · 封存后再给 Key 写了 Errors.log', str_contains(logText($log), 'Widget 已封存'));
 
 fresh($log);
 if (is_file($log)) {
