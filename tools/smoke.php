@@ -54,6 +54,7 @@ use Drift\Layout\RenderPadding;
 use Drift\Layout\RenderProxyBox;
 use Drift\Layout\RenderText;
 use Drift\Rendering\BoxStyle;
+use Drift\Routing\RouteTable;
 use Drift\Rendering\Color;
 use Drift\Rendering\ColorToken;
 use Drift\Rendering\DisplayList;
@@ -142,6 +143,12 @@ if (str_starts_with($caseArg, '--case=')) {
     if ($case === 'cellunbound') {
         // 绕过 State::cell() 直接 new ⇒ 没有 Owner ⇒ 标不了脏 ⇒ 静默。G2：现在就炸。
         (new Cell(1))->setIfChanged(2);
+    }
+
+    if ($case === 'routedup') {
+        // 同名路由注册两次 ⇒ 后一次静默覆盖 ⇒ 上线后"导航到某页却没反应"
+        RouteTable::make()->route('users', static fn (): Widget => new LeafProbe(1.0))
+            ->route('users', static fn (): Widget => new LeafProbe(2.0));
     }
 
     if ($case === 'cmdup') {
@@ -1623,3 +1630,27 @@ check(
     $surface2->canvas !== null && inkCount($surface2->canvas) > 0,
     '墨点数 ' . (string) ($surface2->canvas !== null ? inkCount($surface2->canvas) : -1)
 );
+
+// ── ㉖ Routing：RouteTable（数据）+ Offstage（保状态，§12.1 第 4/7 条）──
+
+$table = RouteTable::make()
+    ->route('users', static fn (): Widget => new LeafProbe(1.0))
+    ->route('signup', static fn (): Widget => new LeafProbe(2.0));
+check(
+    'Routing · route() 链式 + names() 可枚举（devtools 列举的输入）',
+    $table->names() === ['users', 'signup']
+);
+$built = $table->build('users');
+check('Routing · build() 调工厂造页', $built instanceof LeafProbe && $built->width === 1.0);
+check('Routing · 未命中 ⇒ null（开放域 ⇒ 由调用方 default 处理）', $table->build('ghost') === null);
+check('Routing · has() 与 names() 一致', $table->has('users') && !$table->has('ghost'));
+
+fresh($log);
+[$code, $output] = runCase(__FILE__, 'routedup', null);
+check('Routing · 同名路由重复注册 ⇒ Fatal（不静默覆盖）', $code === 3, '实际 ' . $code . ' / ' . $output);
+check('Routing · 重复注册写了 Errors.log', str_contains(logText($log), '已注册'));
+
+fresh($log);
+if (is_file($log)) {
+    unlink($log);
+}
