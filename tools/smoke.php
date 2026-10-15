@@ -15,6 +15,10 @@ declare(strict_types=1);
 
 use Drift\Dev\Smoke\BoxProbe;
 use Drift\Dev\Smoke\BuildProbe;
+use Drift\Dev\Smoke\Layout\OffsetBox;
+use Drift\Dev\Smoke\Layout\OversizeBox;
+use Drift\Dev\Smoke\Layout\SolidBox;
+use Drift\Dev\Smoke\LeafProbe;
 use Drift\Dev\Smoke\SealProbe;
 use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
@@ -22,6 +26,8 @@ use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Scale;
 use Drift\Geometry\Size;
+use Drift\Layout\Overflow;
+use Drift\Layout\RenderBox;
 use Drift\Rendering\BoxStyle;
 use Drift\Rendering\Color;
 use Drift\Rendering\DisplayList;
@@ -85,6 +91,10 @@ if (str_starts_with($caseArg, '--case=')) {
         $widget = new BoxProbe();
         $widget->seal();
         $widget->background(Color::white()); // 封存后改样式 ⇒ 必须响亮失败
+    }
+
+    if ($case === 'layout') {
+        (new OversizeBox())->layout(new BoxConstraints(0.0, 10.0, 0.0, 10.0)); // C6 ⇒ 必须响亮失败
     }
 
     if ($case === 'constraints') {
@@ -662,6 +672,65 @@ check(
     'StatelessWidget · 同样的入参保证同样的输出（纯函数）',
     (new BuildProbe())->build($context)->width === (new BuildProbe())->build($context)->width
 );
+
+// ⑮ 布局：两阶段 + 六条契约（§13.1）
+fresh($log);
+$solid = new SolidBox(new Size(10.0, 6.0), 24.0, 7.0);
+check(
+    'Layout · 布局是纯函数（同约束两次 ⇒ 同尺寸）',
+    $solid->layout(BoxConstraints::unbounded())->equals($solid->layout(BoxConstraints::unbounded()))
+);
+check(
+    'Layout · layout() 把尺寸存下来（第二阶段 paint 用得上）',
+    $solid->hasSize() && $solid->size()?->equals(new Size(10.0, 6.0)) === true
+);
+check(
+    'Layout · C3 内禀测量带另一轴（不是把自身尺寸回抄）',
+    $solid->intrinsicWidth(0.0) === 24.0 && $solid->intrinsicWidth(0.0) !== $solid->size()?->width
+);
+
+// C1 单向数据流：父给子约束、父定位子
+$childBox = new SolidBox(new Size(8.0, 5.0), 8.0, 5.0);
+$holder = (new OffsetBox(new Size(100.0, 50.0)))->at(20.0, 10.0)->child($childBox);
+$holder->layout(BoxConstraints::tight(new Size(100.0, 50.0)));
+check(
+    'Layout · C1 约束真的往下传了（父给子的是自己那份，不是自己的约束）',
+    $holder->seenChildConstraints !== null && $holder->seenChildConstraints->hasInfiniteWidth()
+);
+check(
+    'Layout · C1 父定位子（偏移由父写）',
+    $childBox->offsetX() === 20.0 && $childBox->offsetY() === 10.0
+);
+$visited = 0;
+$holder->visitChildren(function (RenderBox $visitor) use (&$visited): void {
+    $visited++;
+});
+check('Layout · visitChildren 遍历到子节点', $visited === 1);
+
+// paint：父的 translate 必须落到设备像素上
+$treeList = new DisplayList();
+$holder->paint(new RecordingCanvas($treeList));
+$treeCanvas = new RasterCanvas(40, 30, Color::white(), Scale::of(1.0));
+$treeList->replay($treeCanvas);
+check(
+    'Layout · paint 把父的 translate 落到设备像素上（偏移 20,10 处有墨、原点没有）',
+    $treeCanvas->pixelAt(21, 11)->r < 128 && $treeCanvas->pixelAt(0, 0)->r >= 250
+);
+
+// C4 / C5：溢出策略
+check(
+    'Layout · C5 默认溢出策略 = Clip（只给不会超的容器）',
+    (new SolidBox(new Size(1.0, 1.0), 1.0, 1.0))->overflow() === Overflow::Clip
+);
+check(
+    'Layout · C5 会超的容器显式覆盖默认',
+    (new OversizeBox())->overflow() === Overflow::Report
+);
+
+fresh($log);
+[$code, $output] = runCase(__FILE__, 'layout', null);
+check('Layout · C6 布局违反约束退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
+check('Layout · C6 布局违反约束写了 Errors.log', str_contains(logText($log), '违反约束'));
 
 fresh($log);
 if (is_file($log)) {
