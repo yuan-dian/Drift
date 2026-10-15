@@ -119,21 +119,26 @@ final class BitmapFontFace implements FontFace
         $width = max(1, (int) round($sourceWidth * $scale));
         $height = max(1, (int) round(count($rows) * $scale));
 
-        $coverage = '';
+        // §2.4 纪律 2：循环里不许 .= 累加（增长累加器在多字节下会**堆损坏**，
+        // 且崩在无关代码）⇒ 先落数组，出循环一次 implode。
+        // ★ 故意用两个变量名（`$coverage` 保持 array、`$bitmap` 是 string）：
+        //   同一个变量从 array 改判成 string 会让 AOT 的类型钉死自找麻烦。
+        $coverage = [];
         for ($y = 0; $y < $height; $y++) {
             $row = $rows[min(count($rows) - 1, (int) floor($y * count($rows) / $height))];
             for ($x = 0; $x < $width; $x++) {
                 $column = min($sourceWidth - 1, (int) floor($x * $sourceWidth / $width));
-                $coverage .= $row[$column] === '#' ? "\xFF" : "\x00";
+                $coverage[] = $row[$column] === '#' ? "\xFF" : "\x00";
             }
         }
+        $bitmap = implode('', $coverage);
 
         return new GlyphBitmap(
             $width,
             $height,
             0,
             -(int) round($this->metrics->ascent * $pixelSize),
-            $coverage,
+            $bitmap,
         );
     }
 }
