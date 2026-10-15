@@ -97,6 +97,25 @@ final readonly class BoxConstraints
         return new self($width, $width, $height, $height);
     }
 
+    /**
+     * 去掉四边内边距后剩下的可用约束（`Padding` / `RenderFlex` 用；§13.1）。
+     *
+     * ★ min 同步缩小但不小于 0 —— 否则"内边距比约束还大"会造出 `min > max` 的
+     *   非法约束，而那会撞 C6 的构造期检查，报的却是 padding 的错。
+     */
+    public function deflate(EdgeInsets $padding): self
+    {
+        $minWidth = max(0.0, $this->minWidth - $padding->horizontal());
+        $minHeight = max(0.0, $this->minHeight - $padding->vertical());
+
+        return new self(
+            $minWidth,
+            max($minWidth, $this->maxWidth - $padding->horizontal()),
+            $minHeight,
+            max($minHeight, $this->maxHeight - $padding->vertical()),
+        );
+    }
+
     /** 放开下界，保留上界 */
     public function loosen(): self
     {

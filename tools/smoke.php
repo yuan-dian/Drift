@@ -15,6 +15,7 @@ declare(strict_types=1);
 
 use Drift\Dev\Smoke\BoxProbe;
 use Drift\Dev\Smoke\BuildProbe;
+use Drift\Dev\Smoke\Layout\ConstraintSpy;
 use Drift\Dev\Smoke\Layout\OffsetBox;
 use Drift\Dev\Smoke\Layout\OversizeBox;
 use Drift\Dev\Smoke\Layout\SolidBox;
@@ -29,8 +30,12 @@ use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Scale;
 use Drift\Geometry\Size;
+use Drift\Layout\FlexAlign;
 use Drift\Layout\Overflow;
 use Drift\Layout\RenderBox;
+use Drift\Layout\RenderFlex;
+use Drift\Layout\RenderFlexible;
+use Drift\Layout\RenderPadding;
 use Drift\Rendering\BoxStyle;
 use Drift\Rendering\Color;
 use Drift\Rendering\DisplayList;
@@ -125,6 +130,27 @@ if (str_starts_with($caseArg, '--case=')) {
     if ($case === 'fontfile') {
         // M0 只带内置点阵字模：解析字体文件这条路没实现 ⇒ 必须响亮失败而不是静默忽略
         DeterministicFontManager::standard()->registerFile('C:/nope.ttf');
+    }
+
+    if ($case === 'flexreport') {
+        // C5：Report 策略 ⇒ 溢出必须中止，不是画到盒外面去
+        $column = new RenderFlex(true, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Report);
+        $column->addChild(new SolidBox(new Size(10.0, 40.0), 10.0, 40.0));
+        $column->addChild(new SolidBox(new Size(10.0, 40.0), 10.0, 40.0));
+        $column->layout(BoxConstraints::tight(new Size(10.0, 50.0)));
+    }
+
+    if ($case === 'flexscroll') {
+        // Scroll / Wrap：M2 没实现 ⇒ 响亮失败，不是静默按 Clip 走
+        $column = new RenderFlex(true, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Scroll);
+        $column->addChild(new SolidBox(new Size(10.0, 40.0), 10.0, 40.0));
+        $column->addChild(new SolidBox(new Size(10.0, 40.0), 10.0, 40.0));
+        $column->layout(BoxConstraints::tight(new Size(10.0, 50.0)));
+    }
+
+    if ($case === 'flexvalue') {
+        // flex 份额 < 1 分不到空间，静默夹紧只会让"给了 Expanding 却不生效"更难查
+        new RenderFlexible(0);
     }
 
     exit(0); // 走到这里说明"该中止的没中止"
@@ -741,6 +767,120 @@ check(
     'Layout · C5 会超的容器显式覆盖默认',
     (new OversizeBox())->overflow() === Overflow::Report
 );
+
+// ── ⑮ Flex：C4 弹性子拿无界主轴 / spacing / flex 分配 / 交叉轴 / 溢出 ──
+
+// C4：有弹性子 ⇒ 弹性子拿无界主轴；非弹性子拿 0..可用
+$elasticSpy = new ConstraintSpy(new Size(40.0, 30.0));
+$plainSpy = new ConstraintSpy(new Size(40.0, 10.0));
+$c4Column = new RenderFlex(true, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Clip);
+$c4Column->addChild($plainSpy);
+$c4Column->addChild(new RenderFlexible(1));
+$c4Column->children()[1]->setChild($elasticSpy);
+$c4Column->layout(new BoxConstraints(0.0, 100.0, 0.0, 60.0));
+check(
+    'Layout · C4 弹性子拿到无界主轴（不是"现在剩多少"）',
+    $elasticSpy->firstSeen !== null && $elasticSpy->firstSeen->hasInfiniteHeight(),
+    '实际第一遍 maxHeight=' . (string) ($elasticSpy->firstSeen?->maxHeight ?? -1.0)
+);
+check(
+    'Layout · C4 非弹性子拿 0..可用（同一遍里两者不同）',
+    $plainSpy->firstSeen !== null && !$plainSpy->firstSeen->hasInfiniteHeight() && $plainSpy->firstSeen->maxHeight === 60.0
+);
+
+// flex 分配：1 : 2 分 60 的可用高（两个自然高 0）
+$flexA = new RenderFlex(true, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Clip);
+$flexA->addChild(new RenderFlexible(1));
+$flexA->addChild(new RenderFlexible(2));
+$flexA->layout(BoxConstraints::tight(new Size(100.0, 60.0)));
+$flexA->visitChildren(function (RenderBox $kid) use (&$got): void {
+});
+check(
+    'Layout · flex 按份额分剩余空间（1:2 ⇒ 20 / 40）',
+    $flexA->children()[0]->size()?->height === 20.0 && $flexA->children()[1]->size()?->height === 40.0,
+    sprintf('实际 %.2f / %.2f', $flexA->children()[0]->size()?->height ?? -1.0, $flexA->children()[1]->size()?->height ?? -1.0)
+);
+
+// spacing + 位置由父定（C1）
+$spaced = new RenderFlex(true, 8.0, new EdgeInsets(), FlexAlign::Start, Overflow::Clip);
+$spaced->addChild(new SolidBox(new Size(20.0, 10.0), 20.0, 10.0));
+$spaced->addChild(new SolidBox(new Size(20.0, 12.0), 20.0, 12.0));
+$spaced->addChild(new SolidBox(new Size(20.0, 14.0), 20.0, 12.0));
+$spaced->layout(BoxConstraints::loose(new Size(80.0, 100.0)));
+check(
+    'Layout · spacing 落在相邻子之间（10 / 10+12+8）',
+    $spaced->children()[0]->offsetY() === 0.0 && $spaced->children()[1]->offsetY() === 18.0,
+    sprintf('实际 %.2f / %.2f', $spaced->children()[0]->offsetY(), $spaced->children()[1]->offsetY())
+);
+check(
+    'Layout · 自然主轴高 = 各子相加 + 间距（10+12+14+2×8）',
+    $spaced->size()?->height === 52.0,
+    '实际 ' . (string) ($spaced->size()?->height ?? -1.0)
+);
+
+// 交叉轴对齐
+$centered = new RenderFlex(false, 0.0, new EdgeInsets(), FlexAlign::Center, Overflow::Clip);
+$centered->addChild(new SolidBox(new Size(30.0, 10.0), 30.0, 10.0));
+$centered->layout(BoxConstraints::tight(new Size(100.0, 40.0)));
+check(
+    'Layout · 交叉轴 Center 把短的那轴推到中间',
+    $centered->children()[0]->offsetY() === 15.0,
+    '实际 ' . (string) $centered->children()[0]->offsetY()
+);
+
+// padding：几何面，减约束再加回尺寸
+$padded = new RenderFlex(true, 0.0, EdgeInsets::all(6.0), FlexAlign::Start, Overflow::Clip);
+$padded->addChild(new SolidBox(new Size(10.0, 8.0), 10.0, 8.0));
+$padded->layout(BoxConstraints::loose(new Size(80.0, 80.0)));
+check(
+    'Layout · padding 进尺寸（子 8 + 上下各 6）',
+    $padded->size()?->height === 20.0 && $padded->size()?->width === 22.0,
+    sprintf('实际 %.2f × %.2f', $padded->size()?->width ?? -1.0, $padded->size()?->height ?? -1.0)
+);
+check(
+    'Layout · padding 减约束后子拿到的是内容区（不是 80 高）',
+    $padded->children()[0]->size()?->height === 8.0
+);
+
+// 单子代理：RenderPadding
+$inner = new SolidBox(new Size(10.0, 6.0), 10.0, 6.0);
+$padBox = new RenderPadding(EdgeInsets::symmetric(4.0, 2.0));
+$padBox->setChild($inner);
+$padBox->layout(BoxConstraints::loose(new Size(60.0, 60.0)));
+check(
+    'Layout · RenderPadding 内禀值 = 内边距 + 孩子（不是孩子本身）',
+    $padBox->intrinsicWidth(0.0) === 18.0 && $padBox->intrinsicHeight(0.0) === 10.0,
+    sprintf('实际 %.2f × %.2f', $padBox->intrinsicWidth(0.0), $padBox->intrinsicHeight(0.0))
+);
+
+// C4 / C5 的失败路径（子进程：会 Fatal）
+fresh($log);
+[$code, $output] = runCase(__FILE__, 'flexreport', null);
+check('Layout · C5 Report 溢出退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
+check('Layout · C5 Report 溢出写了 Errors.log', str_contains(logText($log), '溢出'));
+
+// Clip 是"盒子夹住、子照自然排"——不中止，但自己的尺寸不越界
+$clipColumn = new RenderFlex(true, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Clip);
+$clipColumn->addChild(new SolidBox(new Size(10.0, 40.0), 10.0, 40.0));
+$clipColumn->addChild(new SolidBox(new Size(10.0, 40.0), 10.0, 40.0));
+$clipColumn->layout(BoxConstraints::tight(new Size(10.0, 50.0)));
+check(
+    'Layout · Clip 允许子溢出但自己夹进约束（不撞 C6）',
+    $clipColumn->size()?->height === 50.0 && $clipColumn->children()[1]->offsetY() === 40.0,
+    sprintf('实际 %.2f / %.2f', $clipColumn->size()?->height ?? -1.0, $clipColumn->children()[1]->offsetY())
+);
+
+// Scroll / Wrap：声明了但没实现 ⇒ 响亮失败，不是空壳
+fresh($log);
+[$code, $output] = runCase(__FILE__, 'flexscroll', null);
+check('Layout · Scroll / Wrap 未实现 ⇒ 响亮失败退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
+check('Layout · Scroll / Wrap 未实现写了 Errors.log', str_contains(logText($log), '尚未实现'));
+
+// flex 份额 < 1 是构造成员错误（G2：绝不静默夹紧）⇒ 子进程里验
+fresh($log);
+[$code, $output] = runCase(__FILE__, 'flexvalue', null);
+check('Layout · flex 份额 < 1 退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
+check('Layout · flex 份额 < 1 写了 Errors.log', str_contains(logText($log), 'flex 份额'));
 
 fresh($log);
 [$code, $output] = runCase(__FILE__, 'layout', null);

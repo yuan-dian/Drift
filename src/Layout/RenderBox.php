@@ -64,25 +64,25 @@ abstract class RenderBox extends RenderObject
     final public function layout(BoxConstraints $constraints): Size
     {
         $measured = $this->performLayout($constraints);
-        $clamped = $constraints->constrain($measured);
 
-        if (!$clamped->equals($measured)) {
-            // C6：违反 ⇒ 响亮失败（Fatal 级，release 也中止）
+        // C6：**只有超出上界才算违反**——那意味着"我要画到盒外面去"。
+        // 下界提升不是违反：`tight()` 的语义就是父把尺寸定死了，`constrain()`
+        // 提下界是它的本职工作（Drift 的 Column 在紧约束下报"最宽子"而不是
+        // 硬宽，是正确的——父只是给了上限）。
+        if ($measured->width > $constraints->maxWidth || $measured->height > $constraints->maxHeight) {
             Errors::report(sprintf(
-                '%s 的布局结果违反约束：报了 %.6g × %.6g，约束只允许 %.6g..%.6g × %.6g..%.6g',
+                '%s 的布局结果违反约束：报了 %.6g × %.6g，约束只允许最多 %.6g × %.6g',
                 static::class,
                 $measured->width,
                 $measured->height,
-                $constraints->minWidth,
                 $constraints->maxWidth,
-                $constraints->minHeight,
                 $constraints->maxHeight
             ));
         }
 
-        $this->size = $measured;
+        $this->size = $constraints->constrain($measured);
 
-        return $measured;
+        return $this->size;
     }
 
     /**
@@ -101,6 +101,16 @@ abstract class RenderBox extends RenderObject
     abstract public function intrinsicWidth(float $height): float;
 
     abstract public function intrinsicHeight(float $width): float;
+
+    /**
+     * 主轴弹性份额（`RenderFlex` 读它；§13.1 C4）。
+     *
+     * `0` = 不参与弹性分配 ⇒ 拿自然尺寸。默认 0，只有弹性项的盒子覆写。
+     */
+    public function flex(): int
+    {
+        return 0;
+    }
 
     /**
      * C5 溢出策略。**默认 `Clip` 只给不会超的容器**（尺寸由内容或子决定的容器）；
