@@ -23,6 +23,7 @@ use Drift\Dev\Smoke\Commands\CommandWidget;
 use Drift\Dev\Smoke\Commands\EchoCommands;
 use Drift\Dev\Smoke\Commands\PickyCommands;
 use Drift\App\Application;
+use App\Hello\HelloApplication;
 use Drift\App\Frame;
 use Drift\Dev\Smoke\Frame\QuietWidget;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
@@ -1965,6 +1966,34 @@ check(
     'Application · 组合根的画面有墨（不是静默空白）',
     $compositeSurface->canvas !== null && inkCount($compositeSurface->canvas) > 0,
     '墨点数 ' . (string) ($compositeSurface->canvas !== null ? inkCount($compositeSurface->canvas) : -1)
+);
+
+// ── ㉛ apps/hello：第一个真实消费者（§4.5 / §A.1）──
+
+$hello = new HelloApplication();
+$helloSurface = new SurfaceProbe();
+$helloSurface->resize(320, 240, 1.0);
+$hello->attach($helloSurface, BoxConstraints::tight(new Size(320.0, 240.0)));
+check('apps/hello · 应用只写 buildRoot/title/commands（§4.5）', $hello->title() === 'Hello Drift');
+check('apps/hello · 无平台也能挂载（表面是注入的，§7.2 裁决 4）', $hello->root() !== null);
+check(
+    'apps/hello · 屏幕中央有「Hello Drift」（画出墨了）',
+    $helloSurface->canvas !== null && inkCount($helloSurface->canvas) > 0,
+    '墨点数 ' . (string) ($helloSurface->canvas !== null ? inkCount($helloSurface->canvas) : -1)
+);
+check(
+    'apps/hello · 根排满视口（Center 撑满紧约束）',
+    $hello->rootBox()?->size()->width === 320.0 && $hello->rootBox()?->size()->height === 240.0
+);
+
+// preview 的 --app 路径：Application 也能无头出图（§12.2）
+$helloSvgSurface = new SvgSurface();
+$helloSvg = (new Renderer($helloSvgSurface, $context->metrics(), ThemeData::light()))
+    ->renderApp(new HelloApplication(), 320.0, 240.0, 1.0);
+check(
+    'apps/hello · drift-preview --app 出 SVG（应用可独立预览）',
+    substr_count($helloSvg, '<rect x=') > 0,
+    'run 数 ' . (string) substr_count($helloSvg, '<rect x=')
 );
 
 fresh($log);

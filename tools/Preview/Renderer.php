@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Preview;
 
+use Drift\App\Application;
 use Drift\App\Frame;
 use Drift\Geometry\BoxConstraints;
 use Drift\Layout\RenderBox;
@@ -51,6 +52,27 @@ final class Renderer
 
         $frame = new Frame($this->surface);
         $frame->run($element, BoxConstraints::tight(new Size($width, $height)), 0.0);
+
+        return $this->surface->svg();
+    }
+
+    /**
+     * 渲染**一个应用**的一帧（§12.2：应用也能独立预览，不只是单页）。
+     *
+     * 与 `render()` 的差别：走 `Application::attach()`，于是 `buildRoot()` /
+     * `title()` / `commands()` 一起被验到 —— 而不只是验一棵 Widget 树。
+     * 组合根（无盒的 `StatelessWidget`）这条路也因此被真机覆盖到。
+     */
+    public function renderApp(Application $app, float $width, float $height, float $dpr = 1.0): string
+    {
+        $this->surface->resize((int) round($width), (int) round($height), $dpr);
+
+        $app->attach(
+            $this->surface,
+            BoxConstraints::tight(new Size($width, $height)),
+            new BuildContext($width, $height, $this->theme, $this->metrics),
+        );
+        $this->lastRoot = $app->root();
 
         return $this->surface->svg();
     }

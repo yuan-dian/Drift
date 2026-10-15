@@ -28,6 +28,7 @@ use Drift\Text\DeterministicMetricsProvider;
 use Drift\Text\DeterministicShaper;
 use Drift\Theme\SystemTheme;
 use Drift\Theme\ThemeData;
+use Drift\App\Application;
 use Drift\Widget\Widget;
 
 require __DIR__ . '/autoload.php';
@@ -56,10 +57,10 @@ function argStr(array $args, string $key, string $default): string
 }
 
 $args = parseArgs($argv ?? []);
-$page = argStr($args, 'page', '');
+$page = argStr($args, 'page', '') ?: argStr($args, 'app', '');
 
 if ($page === '') {
-    fwrite(STDERR, "用法：php tools/drift-preview.php --page=<返回 Widget 的 php> [--width=320] [--height=240] [--dpr=1] [--theme=light|dark] [--out=x.svg] [--fixture=store.php] [--ascii]\n");
+    fwrite(STDERR, "用法：php tools/drift-preview.php (--page=<Widget 的 php> | --app=<Application 的 php>) [--width=320] [--height=240] [--dpr=1] [--theme=light|dark] [--out=x.svg] [--fixture=store.php] [--ascii]\n");
     exit(2);
 }
 
@@ -99,10 +100,12 @@ if ($declared === []) {
 // 取**第一个**声明的类 —— 不是最后一个：`use` 语句的返回类型/父类解析会把框架类
 // 也拉进来（`Widget` / `StatelessWidget`），取末个就可能拿到一个抽象基类。
 $pageClass = reset($declared);
-$pageWidget = $store === null ? new $pageClass() : new $pageClass($store);
+$target = $store === null ? new $pageClass() : new $pageClass($store);
 
-if (!$pageWidget instanceof Widget) {
-    fwrite(STDERR, "{$pageClass} 不是 Widget\n");
+// `--app` 与 `--page` 共用一个入口：载入的东西是 Application 就走 attach()
+// （连带验 buildRoot/title/commands），是 Widget 就走 render()。
+if (!$target instanceof Widget && !$target instanceof Application) {
+    fwrite(STDERR, "{$pageClass} 既不是 Widget 也不是 Application\n");
     exit(2);
 }
 
@@ -117,7 +120,9 @@ $renderer = new Renderer(
     $theme,
 );
 
-$svg = $renderer->render($pageWidget, $width, $height, $dpr);
+$svg = $target instanceof Application
+    ? $renderer->renderApp($target, $width, $height, $dpr)
+    : $renderer->render($target, $width, $height, $dpr);
 
 $out = argStr($args, 'out', '');
 if ($out !== '') {
