@@ -45,7 +45,7 @@ final class Center extends RenderBoxWidget
         return $this->kid;
     }
 
-    public function createRenderObject(): RenderBox
+    public function createRenderObject(BuildContext $context): RenderBox
     {
         return new RenderCenter();
     }

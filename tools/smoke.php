@@ -692,7 +692,10 @@ check(
 
 // ⑭ BuildContext + StatelessWidget（§3.4 / §15.6.1）
 fresh($log);
-$context = new BuildContext(320.0, 240.0, ThemeData::light());
+$context = new BuildContext(320.0, 240.0, ThemeData::light(), new DeterministicMetricsProvider(
+    DeterministicFontManager::standard()->collection(),
+    new DeterministicShaper(),
+));
 check('BuildContext · 只读渲染环境快照（约束宽高 + 解析后的主题）', $context->width === 320.0 && $context->height === 240.0);
 check(
     'BuildContext · color() 与 theme() 是同一落点（不是两套取色）',

@@ -37,7 +37,7 @@ final class Spacer extends RenderBoxWidget
         return $this;
     }
 
-    public function createRenderObject(): RenderBox
+    public function createRenderObject(BuildContext $context): RenderBox
     {
         return new RenderFlexible($this->share);
     }

@@ -87,7 +87,7 @@ abstract class Element
     protected function syncBox(): void
     {
         $this->box = $this->widget instanceof RenderBoxWidget
-            ? $this->widget->createRenderObject()
+            ? $this->widget->createRenderObject($this->context)
             : null;
     }
 

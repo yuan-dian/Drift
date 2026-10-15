@@ -21,7 +21,11 @@ abstract class RenderBoxWidget extends Widget
     /**
      * 造本控件的渲染盒。**只读 Widget 自己的字段**（§13.2：字段对齐由 lint 比对）。
      *
+     * 收 `BuildContext` 是因为有些控件的盒要**环境**才有形状（`Text` 要把语义角色
+     * 经 `ThemeData` 解析成 `TextStyle`，还要拿到注入的度量）。不需要的控件忽略它 ——
+     * 一个用不上的参数，换"所有渲染控件同一个签名"。
+     *
      * 子盒不由这里挂 —— 那是 Element 的事（它才知道子 Element 的盒造好了没）。
      */
-    abstract public function createRenderObject(): RenderBox;
+    abstract public function createRenderObject(BuildContext $context): RenderBox;
 }

@@ -41,7 +41,7 @@ final class Expanded extends RenderBoxWidget
         return $this->kid;
     }
 
-    public function createRenderObject(): RenderBox
+    public function createRenderObject(BuildContext $context): RenderBox
     {
         return new RenderFlexible($this->share);
     }

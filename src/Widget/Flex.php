@@ -91,7 +91,7 @@ abstract class Flex extends RenderBoxWidget
         return $this;
     }
 
-    public function createRenderObject(): RenderBox
+    public function createRenderObject(BuildContext $context): RenderBox
     {
         return new RenderFlex(
             $this->isVertical(),

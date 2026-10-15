@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Widget;
 
 use Drift\Rendering\Color;
+use Drift\Text\TextMetricsProvider;
 use Drift\Theme\ColorToken;
 use Drift\Theme\MetricToken;
 use Drift\Theme\ThemeData;
@@ -27,17 +28,25 @@ final readonly class BuildContext
      * @param float $width  本容器收到的约束宽（逻辑单位，§6.1）
      * @param float $height 本容器收到的约束高
      * @param ThemeData $theme 沿 Element 父链**解析后**的结果（不是查找入口）
+     * @param TextMetricsProvider $metrics **布局确定性的注入点**（§14.2）——
+     *        Widget 层问度量、不问平台，所以测试能喂固定度量、golden 能复现。
      */
     public function __construct(
         public float $width,
         public float $height,
         private ThemeData $theme,
+        private TextMetricsProvider $metrics,
     ) {
     }
 
     public function theme(): ThemeData
     {
         return $this->theme;
+    }
+
+    public function metrics(): TextMetricsProvider
+    {
+        return $this->metrics;
     }
 
     public function color(ColorToken $token): Color
