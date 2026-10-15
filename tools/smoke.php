@@ -36,6 +36,10 @@ use Drift\Text\FontWeight;
 use Drift\Text\TextAlign;
 use Drift\Text\TextLayout;
 use Drift\Text\TextStyle;
+use Drift\Theme\ColorToken;
+use Drift\Theme\MetricToken;
+use Drift\Theme\SystemTheme;
+use Drift\Theme\ThemeData;
 use Drift\Widget\Key;
 use Drift\Widget\Widget;
 
@@ -151,6 +155,20 @@ function runCase(string $script, string $case, ?string $marker): array
 function logText(string $log): string
 {
     return is_file($log) ? (string) file_get_contents($log) : '';
+}
+
+/** 相对亮度（WCAG 口径），用来断言"高对比度"是真高而不是标了个名 */
+function luminance(Color $c): float
+{
+    return (0.2126 * $c->r + 0.7152 * $c->g + 0.0722 * $c->b) / 255.0;
+}
+
+function contrast(Color $a, Color $b): float
+{
+    $hi = max(luminance($a), luminance($b));
+    $lo = min(luminance($a), luminance($b));
+
+    return ($hi + 0.05) / ($lo + 0.05);
 }
 
 /** 非背景像素数：用来断言"文字真的画上了 / 真的被挡住了" */
@@ -547,6 +565,69 @@ fresh($log);
 [$code, $output] = runCase(__FILE__, 'box', null);
 check('BoxWidget · 封存后改样式退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
 check('BoxWidget · 封存后改样式写了 Errors.log', str_contains(logText($log), 'Widget 已封存'));
+
+// ⑬ 主题：角色 → 值的一次解析（§11.5 / §15.7）
+fresh($log);
+$lightTheme = ThemeData::light();
+$darkTheme = ThemeData::dark();
+
+$bothModes = true;
+foreach (ColorToken::cases() as $token) {
+    if (!$token->lightValue() instanceof Color || !$token->darkValue() instanceof Color) {
+        $bothModes = false;
+    }
+}
+check('Theme · 每个颜色角色明暗都有值 ⇒ 换肤只换值不换键', $bothModes);
+check(
+    'Theme · 正文与底色在明暗下都反相（浅底深字 / 深底浅字）',
+    luminance($lightTheme->color(ColorToken::Text)) < luminance($lightTheme->color(ColorToken::Pane))
+        && luminance($darkTheme->color(ColorToken::Text)) > luminance($darkTheme->color(ColorToken::Pane))
+);
+check(
+    'Theme · 暗色表把强调色提亮（深蓝压深灰 ⇒ 看不清）',
+    luminance($darkTheme->color(ColorToken::Accent)) > luminance(ColorToken::Accent->lightValue())
+);
+check(
+    'Theme · 度量与明暗无关（只有一张表）',
+    $lightTheme->metric(MetricToken::FontSize) === $darkTheme->metric(MetricToken::FontSize)
+);
+check(
+    'Theme · 语义角色字号在表里 ⇒ 换肤不改调用点',
+    $lightTheme->metric(MetricToken::FontSizeTitle) > $lightTheme->metric(MetricToken::FontSize)
+);
+
+$accentTheme = $lightTheme->withColor(ColorToken::Accent, Color::black());
+check(
+    'Theme · withColor 返回新实例，原主题不变',
+    $accentTheme !== $lightTheme
+        && $accentTheme->color(ColorToken::Accent)->equals(Color::black())
+        && $lightTheme->color(ColorToken::Accent)->equals(ColorToken::Accent->lightValue())
+);
+check(
+    'Theme · withMetric 覆盖生效且原值不变',
+    $lightTheme->withMetric(MetricToken::Gap, 20.0)->metric(MetricToken::Gap) === 20.0
+        && $lightTheme->metric(MetricToken::Gap) === 8.0
+);
+
+$highContrast = $lightTheme->withHighContrast();
+check(
+    'Theme · 高对比度：边框对底色的对比度真的更高（不是标了个名）',
+    contrast($highContrast->color(ColorToken::Border), $highContrast->color(ColorToken::Pane))
+        > contrast($lightTheme->color(ColorToken::Border), $lightTheme->color(ColorToken::Pane)),
+    sprintf(
+        '%.2f vs %.2f',
+        contrast($highContrast->color(ColorToken::Border), $highContrast->color(ColorToken::Pane)),
+        contrast($lightTheme->color(ColorToken::Border), $lightTheme->color(ColorToken::Pane))
+    )
+);
+check(
+    'Theme · 高对比度跳过没有 HC 形态的角色（Hover 保持原值，不与 Pressed 撞车）',
+    $highContrast->color(ColorToken::Hover)->equals($lightTheme->color(ColorToken::Hover))
+);
+check(
+    'Theme · forSystem 按系统主题选表',
+    ThemeData::forSystem(SystemTheme::Dark)->isDark() && !ThemeData::forSystem(SystemTheme::Light)->isDark()
+);
 
 fresh($log);
 if (is_file($log)) {
