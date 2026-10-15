@@ -33,9 +33,20 @@ final readonly class KeyChord
     ) {
     }
 
-    public static function make(string $key): self
+    /**
+     * 键名 + 修饰键。
+     *
+     * ★ 修饰键有默认值 ⇒ 既有的 `make('A')` 调用**一字不改**（纯扩展）。
+     *   三个单修饰键的工厂（`ctrl()` / `alt()` / `shift()`）只是它的简写。
+     *
+     * ★ **为什么必须有带修饰键的通用入口**：平台把一条 `WM_KEYDOWN` 归一化时，
+     *   修饰键是 `GetKeyState` 读出来的**三个独立布尔**，`Ctrl+Shift+A` 这种组合
+     *   在三个单修饰工厂里**表达不出来** ⇒ 没有它，平台层只能丢掉组合信息，
+     *   而丢掉的后果是"加速键表里 `Ctrl+Shift+A` 永远不命中"且**不报错**。
+     */
+    public static function make(string $key, bool $ctrl = false, bool $alt = false, bool $shift = false): self
     {
-        return new self($key, false, false, false);
+        return new self($key, $ctrl, $alt, $shift);
     }
 
     public static function ctrl(string $key): self
