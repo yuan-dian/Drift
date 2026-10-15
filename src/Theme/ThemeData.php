@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Theme;
 
 use Drift\Rendering\Color;
+use Drift\Text\TextRole;
 
 /**
  * 一份解析完成的主题（§11.5 / §15.7）。
@@ -72,6 +73,36 @@ final class ThemeData
     public function withMetric(MetricToken $token, float $value): self
     {
         return new self($this->dark, $this->colors, $this->metrics + [$token->name => $value]);
+    }
+
+    /**
+     * 文本语义角色 → 字号（§15.2 / §15.7 纪律 3）。
+     *
+     * ★ **合并只发生在这里一次**：控件只说角色，字号取自这张表 ⇒ 换肤改表，
+     *   调用点一个字都不动。
+     * ★ 显式的 `->size()` 优先于角色（§15.7 纪律 3：优先级在 `ThemeData` 解析一次）。
+     */
+    public function textSize(TextRole $role): float
+    {
+        return match ($role) {
+            TextRole::Title   => $this->metric(MetricToken::FontSizeTitle),
+            TextRole::Heading => $this->metric(MetricToken::FontSizeHeading),
+            TextRole::Body    => $this->metric(MetricToken::FontSize),
+            TextRole::Caption => $this->metric(MetricToken::FontSizeSmall),
+            TextRole::Error   => $this->metric(MetricToken::FontSizeSmall),
+            TextRole::Unset   => $this->metric(MetricToken::FontSize),
+        };
+    }
+
+    /** 文本语义角色 → 颜色。`Error` 走 `Danger`，其余按主次分 */
+    public function textColor(TextRole $role): Color
+    {
+        return match ($role) {
+            TextRole::Error => $this->color(ColorToken::Danger),
+            TextRole::Caption => $this->color(ColorToken::Muted),
+            TextRole::Title, TextRole::Heading, TextRole::Body, TextRole::Unset
+                => $this->color(ColorToken::Text),
+        };
     }
 
     /**

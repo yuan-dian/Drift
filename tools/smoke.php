@@ -38,6 +38,7 @@ use Drift\Layout\RenderFlex;
 use Drift\Layout\RenderFlexible;
 use Drift\Layout\RenderPadding;
 use Drift\Layout\RenderProxyBox;
+use Drift\Layout\RenderText;
 use Drift\Rendering\BoxStyle;
 use Drift\Rendering\Color;
 use Drift\Rendering\DisplayList;
@@ -52,6 +53,7 @@ use Drift\Text\FontSlant;
 use Drift\Text\FontWeight;
 use Drift\Text\TextAlign;
 use Drift\Text\TextLayout;
+use Drift\Text\TextRole;
 use Drift\Text\TextStyle;
 use Drift\Theme\ColorToken;
 use Drift\Theme\MetricToken;
@@ -66,6 +68,7 @@ use Drift\Widget\Key;
 use Drift\Widget\Padding;
 use Drift\Widget\Row;
 use Drift\Widget\Spacer;
+use Drift\Widget\Text;
 use Drift\Widget\Widget;
 
 require __DIR__ . '/autoload.php';
@@ -1042,6 +1045,99 @@ $growRoot->mount(null, $context);
 $firstBox = $growRoot->renderObject();
 $growRoot->update(Column::make()->children([Spacer::make(2)]));
 check('结构控件 · update 换描述 ⇒ 换盒（§13.2：不存在字段级半同步）', $growRoot->renderObject() !== null && $growRoot->renderObject() !== $firstBox);
+
+// ── ⑲ Text 控件：哨兵三档 + 角色经主题解析（§15.2 / §15.7 纪律 3）──
+
+// 哨兵：Unset 是显式 case ⇒ 0 是合法取值（->body() 解析出来就是它）
+$unsetText = Text::make('x');
+check('Text · 哨兵是 enum case 不是裸数字（Unset 有名字）', TextRole::Unset->value === 0 && $unsetText->role() === TextRole::Unset);
+check('Text · body() 落成 Body（0 是合法值，不是"未设置"）', Text::make('x')->body()->role() === TextRole::Body);
+
+// 三态 bool：未设置 / 否 / 是 三者可区分
+$tristateA = Text::make('x');
+$tristateB = Text::make('x')->bold(false);
+$tristateC = Text::make('x')->bold();
+check(
+    'Text · bold 三态可分（未设置 / 否 / 是）',
+    $tristateA->explicitBold() === null && $tristateB->explicitBold() === false && $tristateC->explicitBold() === true
+);
+
+// float 哨兵：负值域外
+check('Text · size 哨兵是 -1.0（尺寸非负 ⇒ 域外）', Text::make('x')->explicitSize() === null);
+check('Text · 给了 size 就用显式值', Text::make('x')->size(22.0)->explicitSize() === 22.0);
+
+// 角色 → 主题：换肤只换表，调用点不动
+$lightTitle = Text::make('标题')->title()->createRenderObject($context);
+$darkContext = new BuildContext(320.0, 240.0, ThemeData::dark(), $context->metrics());
+$darkTitle = Text::make('标题')->title()->createRenderObject($darkContext);
+check(
+    'Text · title() 的字号来自主题表（明 18）',
+    $lightTitle instanceof RenderText && $lightTitle->styleSize() === 18.0,
+    (string) ($lightTitle instanceof RenderText ? $lightTitle->styleSize() : -1.0)
+);
+check(
+    'Text · caption 比 body 小，title 比 body 大（层次是排出来的不是写死的）',
+    Text::make('x')->caption()->createRenderObject($context)->styleSize() === 12.0
+        && Text::make('x')->title()->createRenderObject($context)->styleSize() === 18.0
+);
+
+// 显式 size 优先于角色
+check(
+    'Text · 显式 size 盖过角色（优先级只在 ThemeData 解析一次）',
+    Text::make('x')->title()->size(40.0)->createRenderObject($context)->styleSize() === 40.0
+);
+
+// 端到端：Element → 盒 → 真实排版（不是"能造出来"）
+$textRoot = Text::make('Hello Drift')->body()->createElement();
+$textRoot->mount(null, $context);
+$textBox = $textRoot->renderObject();
+check('Text · 造出 RenderText', $textBox instanceof RenderText);
+$textBox?->layout(BoxConstraints::loose(new Size(200.0, 100.0)));
+check(
+    'Text · 排版走注入的度量，得到非零尺寸',
+    ($textBox?->size()?->width ?? 0.0) > 0.0 && ($textBox?->size()?->height ?? 0.0) > 0.0,
+    sprintf('实际 %.2f × %.2f', $textBox?->size()?->width ?? -1.0, $textBox?->size()?->height ?? -1.0)
+);
+
+// 受宽度约束 ⇒ 折行 ⇒ 变高（断行依赖可用宽，这是 C1 的必然推论）
+$narrow = Text::make('Hello Drift')->body()->createElement();
+$narrow->mount(null, $context);
+$narrowBox = $narrow->renderObject();
+$narrowBox?->layout(BoxConstraints::loose(new Size(30.0, 1000.0)));
+check(
+    'Text · 收窄约束 ⇒ 折行 ⇒ 更高（宽度变了断行就变）',
+    ($narrowBox?->size()?->height ?? 0.0) > ($textBox?->size()?->height ?? 0.0),
+    sprintf('窄 %.2f vs 宽 %.2f', $narrowBox?->size()?->height ?? -1.0, $textBox?->size()?->height ?? -1.0)
+);
+
+// maxLines / ellipsize 进的是 TextStyle（§8.1：影响排版的输入都必须在 style 里，
+// 否则缓存键 (text, style, maxWidth, scale) 会撒谎）
+$clipped = Text::make('Hello Drift Framework')->body()->maxLines(1)->ellipsize()->createRenderObject($context);
+$clipped->layout(BoxConstraints::loose(new Size(40.0, 1000.0)));
+check(
+    'Text · maxLines 真的限住行数（1 行 ⇒ 高度 = 一行高）',
+    $clipped instanceof RenderText && $clipped->lineCount() === 1,
+    (string) ($clipped instanceof RenderText ? $clipped->lineCount() : -1)
+);
+
+// ── ⑳ 控件与结构节点混用（§A.1 的形态真的能搭起来）──
+$mixed = Column::make()->spacing(8)->paddingAll(12)->children([
+    Text::make('标题')->title(),
+    Row::make()->spacing(8)->children([
+        Text::make('左')->body(),
+        Spacer::make(),
+        Text::make('右')->caption(),
+    ]),
+]);
+$mixedRoot = $mixed->createElement();
+$mixedRoot->mount(null, $context);
+$mixedBox = $mixedRoot->renderObject();
+$mixedBox?->layout(BoxConstraints::loose(new Size(400.0, 300.0)));
+check(
+    '控件 · Column 包 Text + Row(Text/Spacer/Text) 能一路排到底',
+    ($mixedBox?->size()?->width ?? 0.0) > 0.0 && ($mixedBox?->size()?->height ?? 0.0) > 0.0,
+    sprintf('实际 %.2f × %.2f', $mixedBox?->size()?->width ?? -1.0, $mixedBox?->size()?->height ?? -1.0)
+);
 
 // ⑰ State：setState 只标脏（§5.2 / §11.3.1 / §12.3）
 fresh($log);
