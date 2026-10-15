@@ -2428,7 +2428,7 @@ $app = new UsersApplication(new Win32Platform(), new ThreadPoolTaskHost());
 | **M4 工具链 + 异步** | drift-preview / golden / conformance / drift-lint / **drift-doctor** 齐备 + **TaskHost 线程池后端** + **`notifyChanged` 线程断言** + **ThemeChanged / 深色模式** | 无头 preview + golden diff 可跑；后台 IO 不卡帧；**worker 里 notify ⇒ 响亮失败**；跟得上系统主题切换 | ⏳ **未动** —— `drift-lint` / `drift-preview` / `drift-codegen` 三件在；`golden` / `conformance` / `drift-doctor` 未建，`TaskHost` 系 **7 个类型**（含 `Job`，§24.1 #35）+ `ThreadPoolTaskHost` 0 文件  |
 | **M5 业务底座** | 虚拟化（含 §12.3 的 State 外置纪律）+ 脏矩形 + **WindowStateStore** + Windows UIA 桥接 | 长列表滚动不掉帧；子树崩溃不整树陪葬；窗口位置/尺寸跨启动保留 | ⏳ **未动** —— 虚拟化 / 脏矩形 / `WindowStateStore` / UIA 桥接全 0 文件  |
 
-★ **状态列是 §20 纪律 4 在里程碑层的落点**：出口判据写“要做”不算数，`src/` 里有没有才算。§4.2 已按同一口径加了逐类型状态列（点名 91 个：**52 有文件 / 39 个 0 文件**） —— **两处必须同步维护**（否则又会出现“文档说已落地、代码还没写”的分裂）。★ `drift-doctor`（§16.2 六件套之一，O-10 已裁“做”）正是该**自动**输出这张表的工具 ⇒ 手工列只是它的**临时输入**，别为它新造机制。
+★ **状态列是 §20 纪律 4 在里程碑层的落点**：出口判据写“要做”不算数，`src/` 里有没有才算。§4.2 已按同一口径加了逐类型状态列（点名 91 个：**57 有文件 / 34 个 0 文件**） —— **两处必须同步维护**（否则又会出现“文档说已落地、代码还没写”的分裂）。★ `drift-doctor`（§16.2 六件套之一，O-10 已裁“做”）正是该**自动**输出这张表的工具 ⇒ 手工列只是它的**临时输入**，别为它新造机制。
 
 **M1 的探针门（先验后用，任一不过即退化）**：
 
