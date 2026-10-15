@@ -40,7 +40,7 @@ final class Frame
     public function run(Element $root, BoxConstraints $constraints, float $timestampMs): void
     {
         // ① 帧末统一重建（§5.2 裁决 3）：派发中途的 setState 只标脏
-        $this->flush($root);
+        $root->settle();
 
         // ② layout
         $box = $root->renderObject();
@@ -54,28 +54,5 @@ final class Frame
         $canvas = $this->surface->beginFrame($timestampMs);
         $box->paint($canvas);
         $this->surface->endFrame();
-    }
-
-    /**
-     * 走全树，把标脏的 StatefulElement 重建掉。
-     *
-     * ★ **只在脏的时候 rebuild** —— 无条件全树重建就退回成"每帧重排整棵树",
-     *   §13.3 的脏边界也就白做了。冒烟里有一条专门断"没脏的节点不重建"。
-     *
-     * ★ 递归在 `rebuild()` **之后**才进子层：`rebuild()` 刚换过 `children`
-     *   （`updateChildren` 是同步的），先下去才會走进旧的子列表。
-     */
-    private function flush(Element $element): void
-    {
-        if ($element instanceof StatefulElement && $element->state()?->needsBuild()) {
-            $element->rebuild(); // rebuild() 内部消费脏标记
-        }
-
-        // 普通闭包而不是箭头函数：`fn(): void => $this->flush($c)` 会报
-        // "A void method must not return a value" —— 箭头函数**隐式返回**它的
-        // 表达式，而 `flush()` 返回 void，不是值。
-        $element->visitChildren(function (Element $child): void {
-            $this->flush($child);
-        });
     }
 }

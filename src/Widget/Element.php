@@ -144,6 +144,30 @@ abstract class Element
     abstract public function rebuild(): void;
 
     /**
+     * 帧末统一重建（§5.2 裁决 3）：走全树，**只重建标脏的节点**。
+     *
+     * ★ 住 `Element` 而不是 `Frame`：① 树遍历是树自己的事；② `Offstage` 重新
+     *   可见时要兑现隐藏期间攒下的脏标记，那个调用点在 Widget 层 —— 而
+     *   §4.3 禁 `Widget → App`，放 `Frame` 里 Offstage 够不着。
+     *
+     * ★ 无条件全树重建就退回"每帧重排整棵树"，§13.3 的脏边界白做。
+     *
+     * @internal 由 `Drift\App\Frame` 调
+     */
+    public function settle(): void
+    {
+        if ($this instanceof StatefulElement && $this->state()?->needsBuild()) {
+            $this->rebuild(); // rebuild() 内部消费脏标记
+        }
+
+        // 普通闭包而不是箭头函数：`fn(): void => $c->settle()` 会报
+        // "A void method must not return a value" —— 箭头函数隐式返回它的表达式。
+        $this->visitChildren(function (Element $child): void {
+            $child->settle();
+        });
+    }
+
+    /**
      * 本节点展开出的**子 Widget 列表** —— 调和的唯一入口。
      *
      * `StatelessElement` = `[build($ctx)]`；**结构节点**（`Column` / `Row` /
