@@ -20,6 +20,7 @@ use Drift\Dev\Smoke\Layout\OversizeBox;
 use Drift\Dev\Smoke\Layout\SolidBox;
 use Drift\Dev\Smoke\LeafProbe;
 use Drift\Dev\Smoke\SealProbe;
+use Drift\Dev\Smoke\Tree\BranchWidget;
 use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\EdgeInsets;
@@ -48,6 +49,7 @@ use Drift\Theme\MetricToken;
 use Drift\Theme\SystemTheme;
 use Drift\Theme\ThemeData;
 use Drift\Widget\BuildContext;
+use Drift\Widget\Element;
 use Drift\Widget\Key;
 use Drift\Widget\Widget;
 
@@ -173,6 +175,17 @@ function logText(string $log): string
 function luminance(Color $c): float
 {
     return (0.2126 * $c->r + 0.7152 * $c->g + 0.0722 * $c->b) / 255.0;
+}
+
+/** 数整棵子树有多少个 Element（含自己） */
+function countTree(Element $element): int
+{
+    $total = 1;
+    $element->visitChildren(function (Element $child) use (&$total): void {
+        $total += countTree($child);
+    });
+
+    return $total;
 }
 
 function contrast(Color $a, Color $b): float
@@ -731,6 +744,75 @@ fresh($log);
 [$code, $output] = runCase(__FILE__, 'layout', null);
 check('Layout · C6 布局违反约束退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
 check('Layout · C6 布局违反约束写了 Errors.log', str_contains(logText($log), '违反约束'));
+
+// ⑯ 三树：Element 的挂载 / diff / 卸载（§3.2 / §12.3）
+fresh($log);
+$treeRoot = (new BranchWidget([new BuildProbe(), new BuildProbe()]))->createElement();
+$treeRoot->mount(null, $context);
+
+// 结构节点(1) + 2 个 Stateless(各带 1 个叶子) = 5
+check('Element · 挂载建出整棵子树（结构节点 → 2 个无状态 → 各 1 叶）', countTree($treeRoot) === 5, (string) countTree($treeRoot));
+check('Element · 挂载时封存 Widget', $treeRoot->widget()->isSealed() && $treeRoot->childAt(0) !== null && $treeRoot->childAt(0)->widget()->isSealed());
+check('Element · 渲染环境沿父链继承（不是每层新建一份）', $treeRoot->childAt(0)?->context() === $context);
+
+// diff：换同一形态的新控件 ⇒ Element 身份稳定（State / 子树不重置）
+$firstKid = $treeRoot->childAt(0);
+$treeRoot->update(new BranchWidget([new BuildProbe(), new BuildProbe()]));
+check(
+    'Element · diff 复用同槽旧子（身份稳定，不重置子树）',
+    $treeRoot->childAt(0) === $firstKid && $treeRoot->isMounted()
+);
+
+// 位置决定身份：无 Key 换位置 ⇒ 还是同两个槽位复用（§12.3 原话）
+$keyless = (new BranchWidget([(new BuildProbe())->key('a'), (new BuildProbe())->key('b')]))->createElement();
+$keyless->mount(null, $context);
+$slotA = $keyless->childAt(0);
+$slotB = $keyless->childAt(1);
+$keyless->update(new BranchWidget([(new BuildProbe())->key('b'), (new BuildProbe())->key('a')]));
+check(
+    'Element · 有 Key ⇒ 位置变了身份不变（换位复用的是同名那个）',
+    $keyless->childAt(0) === $slotB && $keyless->childAt(1) === $slotA
+);
+
+// Key 变了 ⇒ 不复用，换新 Element
+$keyless->update(new BranchWidget([(new BuildProbe())->key('a'), (new BuildProbe())->key('c')]));
+check(
+    'Element · Key 变了 ⇒ 不复用（新 Element 进槽）',
+    $keyless->childAt(0) === $slotA && $keyless->childAt(1) !== $slotB
+);
+
+// 同一实例挂两处合法 ⇒ 两个 Element（身份由位置决定）
+$twice = new BuildProbe();
+$pair = (new BranchWidget([$twice, $twice]))->createElement();
+$pair->mount(null, $context);
+check(
+    'Element · 同一实例挂两处 ⇒ 两个 Element（位置各有一个）',
+    $pair->childCount() === 2 && $pair->childAt(0) !== $pair->childAt(1)
+);
+
+// 卸载：级联到全树
+$unmountRoot = (new BranchWidget([new BuildProbe(), new BuildProbe()]))->createElement();
+$unmountRoot->mount(null, $context);
+$kidsBefore = [];
+$unmountRoot->visitChildren(function (Element $child) use (&$kidsBefore): void {
+    $kidsBefore[] = $child;
+});
+$unmountRoot->unmount();
+$allDown = true;
+foreach ($kidsBefore as $kid) {
+    if ($kid->isMounted()) {
+        $allDown = false;
+    }
+}
+check('Element · unmount 级联到全树', !$unmountRoot->isMounted() && $allDown);
+check('Element · unmount 后子列表清空', $unmountRoot->childCount() === 0);
+
+// update() 换的是新描述，且同样封存
+$rebuilt = (new BranchWidget([new BuildProbe()]))->createElement();
+$rebuilt->mount(null, $context);
+$nextWidget = new BuildProbe();
+$rebuilt->update(new BranchWidget([$nextWidget]));
+check('Element · update 换整体新描述并封存', $rebuilt->childAt(0)?->widget() === $nextWidget && $nextWidget->isSealed());
 
 fresh($log);
 if (is_file($log)) {

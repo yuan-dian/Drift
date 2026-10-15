@@ -50,6 +50,22 @@ abstract class Widget
     }
 
     /**
+     * 造 Element —— **唯一入口**（W1 同源：单一造盒路径）。
+     *
+     * ★ 收口成一处 `instanceof`，而不是让每个控件子类各写一遍 `return new
+     *   XxxElement($this)`：45 个控件抄同一句话，漏抄的不会报错，只会静默走错
+     *   元素类型。要特殊元素的（容器）可以覆写本方法。
+     *
+     * @internal 用户不该自己 new Element。
+     */
+    public function createElement(): Element
+    {
+        return $this instanceof StatefulWidget
+            ? new StatefulElement($this)
+            : new StatelessElement($this);
+    }
+
+    /**
      * diff 用的身份（§12.3）：`null` = 由位置决定。
      *
      * @internal Element 调和时读它，用户不需要（给了 Key 就已经生效）。
