@@ -63,6 +63,7 @@ use Drift\Widget\BuildContext;
 use Drift\Widget\BoxWidget;
 use Drift\Widget\Center;
 use Drift\Widget\Column;
+use Drift\Widget\Each;
 use Drift\Widget\Element;
 use Drift\Widget\Key;
 use Drift\Widget\Padding;
@@ -157,6 +158,19 @@ if (str_starts_with($caseArg, '--case=')) {
         $column->addChild(new SolidBox(new Size(10.0, 40.0), 10.0, 40.0));
         $column->addChild(new SolidBox(new Size(10.0, 40.0), 10.0, 40.0));
         $column->layout(BoxConstraints::tight(new Size(10.0, 50.0)));
+    }
+
+    if ($case === 'eachdup') {
+        // 同层重复 key ⇒ diff 复用错乱（R4）。绝不静默 ⇒ Fatal
+        Each::make(fn(array $u): int => $u['id'])
+            ->items([['id' => 1], ['id' => 1]], fn(array $u): Widget => Text::make('x'));
+    }
+
+    if ($case === 'eachkeytag') {
+        // key 1 与 '1' **不**算重复 —— 与 Key::same 同口径，不做类型互转
+        Each::make(fn(array $u): string|int => $u['id'])
+            ->items([['id' => 1], ['id' => '1']], fn(array $u): Widget => Text::make('x'));
+        exit(1); // 走到这里 = 该报的没报
     }
 
     if ($case === 'flexvalue') {
@@ -1119,6 +1133,58 @@ check(
     $clipped instanceof RenderText && $clipped->lineCount() === 1,
     (string) ($clipped instanceof RenderText ? $clipped->lineCount() : -1)
 );
+
+// ── ㉑ Each（原方案的 ForEach —— PHP 保留字撞名，见提交说明）──
+
+$users = [
+    ['id' => 7, 'name' => '甲'],
+    ['id' => 3, 'name' => '乙'],
+    ['id' => 9, 'name' => '丙'],
+];
+$eachWidget = Each::make(fn(array $u): int => $u['id'])
+    ->items($users, fn(array $u): Widget => Text::make($u['name'])->body());
+
+// keyFn 产出的 key 真的落到了子 widget 上 —— 不是"能调用"就算完
+$eachKids = $eachWidget->itemWidgets();
+check('Each · 每个 item 都带上了 keyFn 产出的 key', count($eachKids) === 3 && $eachKids[1]->identity()?->value === 3, var_export($eachKids[1]->identity()?->value, true));
+
+// key 改变了 diff 身份：同位置换新控件但 key 相同 ⇒ 复用；key 不同 ⇒ 卸旧挂新
+$eachRoot = $eachWidget->createElement();
+$eachRoot->mount(null, $context);
+check('Each · 挂载铺出 3 个子 Element', $eachRoot->childCount() === 3);
+$firstKidElement = $eachRoot->childAt(0);
+$eachRoot->update(
+    Each::make(fn(array $u): int => $u['id'])->items($users, fn(array $u): Widget => Text::make($u['name'])->body())
+);
+check(
+    'Each · key 相同 ⇒ diff 复用同一个 Element（State 不重置）',
+    $eachRoot->childAt(0) === $firstKidElement
+);
+$reordered = [['id' => 3, 'name' => '乙'], ['id' => 7, 'name' => '甲'], ['id' => 9, 'name' => '丙']];
+$eachRoot->update(
+    Each::make(fn(array $u): int => $u['id'])->items($reordered, fn(array $u): Widget => Text::make($u['name'])->body())
+);
+check(
+    'Each · 列表重排 ⇒ key 跟随 item（不是跟随槽位）',
+    $eachRoot->childAt(0)?->widget()->identity()?->value === 3
+        && $eachRoot->childAt(1)?->widget()->identity()?->value === 7
+);
+
+// 空列表 ⇒ 0 个子，不炸
+$emptyRoot = Each::make(fn(array $u): int => $u['id'])->items([], fn(array $u): Widget => Text::make('x'))->createElement();
+$emptyRoot->mount(null, $context);
+check('Each · 空列表铺出 0 个子（不塌、不炸）', $emptyRoot->childCount() === 0);
+
+// 重复 key ⇒ 响亮失败（G2：绝不静默）
+fresh($log);
+[$code, $output] = runCase(__FILE__, 'eachdup', null);
+check('Each · 重复 key 退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
+check('Each · 重复 key 写了 Errors.log', str_contains(logText($log), '重复的 key'));
+
+// key 1 与 '1' 不算重复（与 Key::same 同口径）：int id 与字符串 id 不静默撞车
+fresh($log);
+[$code, $output] = runCase(__FILE__, 'eachkeytag', null);
+check("Each · key 1 与 '1' 不算重复（子进程 exit 1 = 该报的没报）", $code === 1, '实际 ' . $code . ' / ' . $output);
 
 // ── ⑳ 控件与结构节点混用（§A.1 的形态真的能搭起来）──
 $mixed = Column::make()->spacing(8)->paddingAll(12)->children([

@@ -332,7 +332,7 @@ private function pageFor(string $name): ?Widget
 | `src/Platform/Win32/` | `Drift\Platform\Win32` | `Win32Platform.php` · `Win32WindowHost.php` · …（首个实现） |
 | `src/Geometry/` | `Drift\Geometry` | `Point` · `Size` · `Rect` · `EdgeInsets` · `Scale` · `BoxConstraints` |
 | `src/Rendering/` | `Drift\Rendering` | `RenderSurface` · `GpuContext` · `Canvas` · `DisplayList` · `Paint` · `Color` · `BoxStyle` · `SkiaCanvas` · `RasterCanvas` · `RecordingCanvas` |
-| `src/Text/` | `Drift\Text` | `FontManager` · `FontCollection` · `FontFace` · `TextShaper` · `TextLayout` · `Paragraph` · `TextMetricsProvider` · `TextStyle` · `TextInputClient` |
+| `src/Text/` | `Drift\Text` | `TextRole` · `FontManager` · `FontCollection` · `FontFace` · `TextShaper` · `TextLayout` · `Paragraph` · `TextMetricsProvider` · `TextStyle` · `TextInputClient` |
 | `src/Layout/` | `Drift\Layout` | `RenderObject` · `RenderBox` · 各 `Render*` 族 |
 | `src/Widget/` | `Drift\Widget` | `Widget` · **`BoxWidget`** · `StatelessWidget` · `StatefulWidget` · `Element` · `State` · `BuildContext` · `Key` |
 | `src/Input/` | `Drift\Input` | `PointerEvent` · `KeyEvent` · `KeyChord` · `GestureArena` · `FocusNode` · `SemanticsTree` · `AcceleratorTable` · `CursorShape` · `ThemeChangedEvent` |
@@ -1055,7 +1055,7 @@ final class HoverCardState extends State
     public function build(BuildContext $ctx): Widget
     {
         $h = $this->hovered->value();
-        return ForEach::make(fn(User $r): int => $r->id)->items($this->rows(), fn(User $r): Widget =>
+        return Each::make(fn(User $r): int => $r->id)->items($this->rows(), fn(User $r): Widget =>
             Row::make()->hovered($r->id === $h)->children([...]));
     }
 }
@@ -1343,7 +1343,7 @@ SubjectBuilder::make($store)
         match ($st) {                                             // ★ 无 default
             LoadStatus::Loading => Text::make('加载中…')->caption(),
             LoadStatus::Error   => Text::make('加载失败，点刷新重试')->error(),
-            LoadStatus::Ready   => ForEach::make(fn(User $u): int => $u->id)   // ★ key 必填
+            LoadStatus::Ready   => Each::make(fn(User $u): int => $u->id)   // ★ key 必填
                 ->items($store->rows(), fn(User $u): Widget =>
                     Row::make()->spacing(8)->children([
                         Text::make($u->name)->body(),
@@ -1354,7 +1354,7 @@ SubjectBuilder::make($store)
 ```
 
 > **★ 三处关键设计在此闭合**：
-> ① **`ForEach::make(fn(User $u): int => $u->id)`** —— key **进 `make()` 必填**。理由：G1 判据成立（`fn(User $u)` 的类型就在签名里 ⇒ **编译器知道列表项有身份**）；且"key 唯一 / 稳定 ⇒ 构建期校验"这条裁决的**落地**。
+> ① **`Each::make(fn(User $u): int => $u->id)`** —— key **进 `make()` 必填**。理由：G1 判据成立（`fn(User $u)` 的类型就在签名里 ⇒ **编译器知道列表项有身份**）；且"key 唯一 / 稳定 ⇒ 构建期校验"这条裁决的**落地**。
 > ② **backed enum + 无 `default` 的 `match`** —— `default => rows` 意味着"**任何未来新增的状态都会静默显示数据行**"（= §21 A7）。现在新增一个 case 而不改这里 ⇒ **`UnhandledMatchError`**（响亮失败，G2）。
 > ③ **`select()` 切片** —— 否则订阅粒度 = 整个 `Subject`。
 
@@ -1736,7 +1736,7 @@ Column::make()->spacing(20)->children([
             match ($st) {                                        // ★ 无 default（封闭域）
                 LoadStatus::Loading => Spinner::make(),
                 LoadStatus::Error   => Text::make('加载失败')->error(),
-                LoadStatus::Ready   => ForEach::make(fn(User $u): int => $u->id)   // ★ key 必填
+                LoadStatus::Ready   => Each::make(fn(User $u): int => $u->id)   // ★ key 必填
                     ->items($store->rows(), fn(User $u): Widget =>
                         Row::make()->spacing(8)->children([
                             Text::make($u->name)->body(),
@@ -1752,7 +1752,7 @@ Column::make()->spacing(20)->children([
 
 | 场景 | 形态 | 例子 |
 |------|------|------|
-| 造控件 | `Type::make(必填项…)` | `Text::make('hi')` · `Column::make()` · **`ForEach::make(keyFn)`** |
+| 造控件 | `Type::make(必填项…)` | `Text::make('hi')` · `Column::make()` · **`Each::make(keyFn)`** |
 | 修饰属性 | `->修饰名(值)` | `->spacing(20)` · `->value($v)` · `->maxWidth(640)` |
 | 语义角色 | `->角色名()`（backed enum，零参数） | `->title()` · `->caption()` · `->danger()` |
 | 树结构 | `->children([...])`（**数组形参**，PHP 无尾随闭包） | `->children([$a, $b])` |
@@ -1861,7 +1861,7 @@ namespace Drift\Widget;
 
 use Drift\Rendering\BoxStyle;
 
-/** 需要盒样式的控件继承它；结构节点（Column / Row / ForEach / Spacer / Text）继承裸 Widget ⇒ 拿不到 ->background() */
+/** 需要盒样式的控件继承它；结构节点（Column / Row / Each / Spacer / Text）继承裸 Widget ⇒ 拿不到 ->background() */
 abstract class BoxWidget extends Widget
 {
     /** @internal null = 无盒样式（零成本；符合 §15.2 哨兵定则） */
@@ -1907,7 +1907,7 @@ abstract class BoxWidget extends Widget
 | 哪个 State 变了 ⇒ 更新哪棵子树 | 运行期手写订阅 | 运行期（订阅点下移）+ **远期编译期推导**（spike） |
 | 死命令（命令全树无人接管 ⇒ 点了没反应） | ✅ lint `dead-command`（R5） | 继承，并扩为**跨应用级 `CommandRouter`** 的双向可达性校验 |
 | key 唯一 / 稳定 | 运行期位置匹配 | **构建期校验**（key 是结构事实） |
-| **`make()` 必填参数未提供**（如 `ForEach` 没给 keyFn） | 无 | **lint + 类型强制**（`make()` 签名） |
+| **`make()` 必填参数未提供**（如 `Each` 没给 keyFn） | 无 | **lint + 类型强制**（`make()` 签名） |
 | 样式最终值 | 运行期每帧解析 | **角色枚举 + token（`ColorToken` / `MetricToken`）解析为值对象（`BoxStyle`，§15.7）**；**不做字符串注册表**（★ `ControlStyle` 是孤儿名 ⇒ 已删，见 §23.2 O-17） |
 | 盒字段对齐（RT-2） | 约定 | **lint**（Widget 字段集 vs 盒字段集比对） |
 | 命名空间分层违反 | 无（平铺 namespace 没法查） | **lint**（§4.3 依赖规则） |
@@ -2086,7 +2086,7 @@ PHP Fatal error: Uncaught TypeError: TypePhp\Translator::getAbsolutePath():
 | R1 | `flex-parent` | 弹性项（`Expanded`/`Spacer`）不是 `Row`/`Column` 的**直接**子节点（静默不生效） | 直接移植 | G2 |
 | R2 | `positioned-parent` | `Positioned` 不在 `Stack` 里（`left/top/…` 被忽略） | 直接移植 | G2 |
 | R3 | `divider-in-row`（warn） | `Divider` 放在 `Row` 里（吃掉整行剩余宽度） | 直接移植 | G2 |
-| R4 | `dup-key` | 同层兄弟 `Key` 重复（diff 复用错乱） | 移植，且**升格**：`ForEach` 的 key 改为**必填** | G2 |
+| R4 | `dup-key` | 同层兄弟 `Key` 重复（diff 复用错乱） | 移植，且**升格**：`Each` 的 key 改为**必填** | G2 |
 | R5 | `dead-command` | 命令**全树无人接管**（点了没反应） | 移植，并**扩为跨 `CommandRouter` 的双向可达性校验** | G2 |
 | R6 | `grid-unsized` | `Grid` 既没给 `columns` 也没给 `minCellWidth`（列数无从谈起） | 直接移植 | G2 |
 | R7 | `table-span` | `Table` 某行 `colSpan` 之和超过列数（末尾格子被挤出） | 直接移植 | G2 |
@@ -2129,7 +2129,7 @@ PHP Fatal error: Uncaught TypeError: TypePhp\Translator::getAbsolutePath():
 | 6 | `select-purity` | `select` 闭包返回类型必须是**标量 / enum / `readonly class`**；出现 `new` 非 readonly 对象 ⇒ 报错 | **error** | §11.3.3 | G2 |
 | 7 | `stale-derived` | `Store` 里出现 `??=` 赋值的属性（缓存槽）⇒ 所有会修改其**依赖字段**的方法里必须有 `$this->xxxCache = null` | **error** | §11.3.4 | G2 |
 | 8 | `subscriber-mark` | 声明了 `->select()` / `watch()` 的类必须 `implements SubscribingWidget` | **error** | §10.3 第 5 条 | G1 |
-| 9 | `nested-subscribe` | 订阅出现在 `ForEach` 的 item builder 里（每列表项一个订阅） | **warn** | §11.3.2 纪律 2 | G2 |
+| 9 | `nested-subscribe` | 订阅出现在 `Each` 的 item builder 里（每列表项一个订阅） | **warn** | §11.3.2 纪律 2 | G2 |
 | 10 | `cached-subscriber` | `SubjectBuilder` 实例被赋给字段并跨 `build()` 复用 | **error** | §11.3.2 纪律 1 | A4 |
 | 11 | `alias-mutate` | 同一 `children([...])` 数组内出现两次同一根变量（`$t->a()`、`$t->b()`） | **error** | §15.6.1 | A12 |
 | 12 | `nano-hygiene` | 出现**匿名类** / `yield`（或 `Generator`/`Fiber`）/ `getenv`·`putenv` / `eval`·`include`·`require` | **error** | §16.7 | G1 |
@@ -2360,7 +2360,7 @@ $app = new UsersApplication(new Win32Platform(), new ThreadPoolTaskHost());
 |--------|------|---------|
 | **M0 骨架** | PSR-4 分层 + 契约文件 + `tools/smoke.php` + **公共面按 `@api` 标注**（决定 lint 骨架） | 冒烟全绿；依赖方向 lint 有断言；`internal-leak` 双向自检过 |
 | **M1 可显示** | Win32 Platform + RenderSurface(Skia CPU) + Canvas 接口 + 文本栈桥接 + DPI 缩放 + **`DisplayList` 录制**（决定渲染路径） | 一个窗口画出「Hello Drift」（§A.1），分数缩放下不糊 |
-| **M2 三树 + 布局** | Element/State/调和 + RenderBox 两阶段布局 + 首批控件 + **fluent-first 全部落地** + **盒样式（`BoxStyle` + `BoxWidget`，§15.7）** + **焦点遍历顺序** + **光标形状（命中三方消费）** + **`SubscribingWidget` 接口** + **property hooks 进 Store** + **`ForEach` key 必填** | 布局 conformance 夹具全过；首批控件过 **W1–W8**；Tab 序有 conformance 夹具；`ForEach` 缺 key ⇒ 构建期报错 |
+| **M2 三树 + 布局** | Element/State/调和 + RenderBox 两阶段布局 + 首批控件 + **fluent-first 全部落地** + **盒样式（`BoxStyle` + `BoxWidget`，§15.7）** + **焦点遍历顺序** + **光标形状（命中三方消费）** + **`SubscribingWidget` 接口** + **property hooks 进 Store** + **`Each` key 必填** | 布局 conformance 夹具全过；首批控件过 **W1–W8**；Tab 序有 conformance 夹具；`Each` 缺 key ⇒ 构建期报错 |
 | **M3 数据缝/多页** | Store 三件套 + `SubjectBuilder` + **`select()`** + RouteTable/PageHost + **动作缝（`CommandRouter` + 冒泡链）** + **三态 enum** + **错误边界容器**（★ 2026-10-14 裁决：**归 M3** —— 见 §23.2 O-12）+ **AcceleratorTable** + **自绘 MenuBar/ContextMenu** + **应用内拖放** | §A.2 的完整应用可跑；局部态与跨页共享两条路径都能写；`Root` 只组合（lint 可查）；Ctrl+S 等加速键可用；§16.6.3 的 **17 条规则全部双向自检**过 |
 | **M4 工具链 + 异步** | drift-preview / golden / conformance / drift-lint / **drift-doctor** 齐备 + **TaskHost 线程池后端** + **`notifyChanged` 线程断言** + **ThemeChanged / 深色模式** | 无头 preview + golden diff 可跑；后台 IO 不卡帧；**worker 里 notify ⇒ 响亮失败**；跟得上系统主题切换 |
 | **M5 业务底座** | 虚拟化（含 §12.3 的 State 外置纪律）+ 脏矩形 + **WindowStateStore** + Windows UIA 桥接 | 长列表滚动不掉帧；子树崩溃不整树陪葬；窗口位置/尺寸跨启动保留 |
@@ -3113,8 +3113,8 @@ ok, plain='d'
 
 | # | 理由 |
 |---|------|
-| 1 | **摧毁 §15.3 的性能依据**。`D+` 只贵 0.27 µs/节点，**前提是"只有真正用到的字段才存在"**。基类塞 12 个样式字段 ⇒ **每个实例都付**（含 `ForEach` / `Spacer` / `SubjectBuilder` 这些根本没有样式的）⇒ 节点分配量 ×2~3 |
-| 2 | **"所有组件都需要"不成立**。45 控件里需要背景色的不到一半；`Column` / `Row` / `ForEach` / `Spacer` / `SubjectBuilder` **不需要** |
+| 1 | **摧毁 §15.3 的性能依据**。`D+` 只贵 0.27 µs/节点，**前提是"只有真正用到的字段才存在"**。基类塞 12 个样式字段 ⇒ **每个实例都付**（含 `Each` / `Spacer` / `SubjectBuilder` 这些根本没有样式的）⇒ 节点分配量 ×2~3 |
+| 2 | **"所有组件都需要"不成立**。45 控件里需要背景色的不到一半；`Column` / `Row` / `Each` / `Spacer` / `SubjectBuilder` **不需要** |
 | 3 | **给结构节点加 `background()` = 死字段**（§15.6.1 否决 `Container::$constraints` 的同一条纪律；= §21 A1 的字段版） |
 
 **trait 组合的额外风险**：
@@ -3127,7 +3127,7 @@ ok, plain='d'
 | 方案 | 内容 | 得 | 失 |
 |------|------|----|----|
 | **A（推荐）** | **`BoxStyle` 值对象**：控件上只有**一个** `?BoxStyle $box` 字段；`->background()` / `->border()` / `->padding()` 是它的 with-改写糖 | ① 一个字段取代 N 个 ② `null` = 无样式（**零成本**，符合 §15.2 哨兵定则）③ 不可变 ⇒ `===` 门控直接可用 ④ **只有真用样式时才付一次对象分配** | `->background($c)` 多一层对象改写（但只在真用时） |
-| B | **`StyledWidget extends Widget`**：只有需要样式的控件继承它，结构节点继承裸 `Widget` | 不污染结构节点；语义正确（`ForEach` 拿不到 `background()`） | 多一层继承（只一层，不是 45×2）；"哪些算样式"要逐个定 |
+| B | **`StyledWidget extends Widget`**：只有需要样式的控件继承它，结构节点继承裸 `Widget` | 不污染结构节点；语义正确（`Each` 拿不到 `background()`） | 多一层继承（只一层，不是 45×2）；"哪些算样式"要逐个定 |
 | C | **trait 只提供方法、不提供字段**（字段仍只有 `$box`） | 糖可复用，且**不复制字段** | 需先验 trait 混入的 AOT 生成物（探针门） |
 | D | 样式字段直接进 `Widget` 基类 | 最省打字 | 撞上面三条理由 ⇒ **否决** |
 
@@ -3273,6 +3273,8 @@ M5 ── （无裁决项；虚拟化 / 脏矩形 / `WindowStateStore` / UIA 桥
 | 13 | **§A.3.3** | `overrideTokens([ColorToken::Border => …])` **不是合法 PHP** —— 枚举实例是对象，**不能作数组键**（实测 `Fatal error: Cannot access offset of type ColorToken on array`，纯枚举与 backed 枚举都一样）。⇒ 这行示例照抄必然编译不过 | 改为值对象的 `withX()` 形态（与 §15.7 `BoxStyle::withX()` 同源）：**点覆盖** `withColor(ColorToken, Color)` / `withMetric(MetricToken, float)`；**面覆盖** `withHighContrast()`。**公共面无字符串键**（§16.4 否决字符串注册表；内部用 `->name` 作数组键只是因为 PHP 数组键不能是对象） |
 | 14 | **§4.2** | 目录清单的 `Drift\Theme` 行**缺 `SystemTheme`**，但它被 §9.2 / §A.2.7 / §A.3.3 三处引用（`SystemTheme::Light` / `::Dark`）⇒ 与第 9 处（缺 `Color`）同类 | 补 `SystemTheme` |
 | 15 | **§4.3** | `Widget` 行的不许依赖列写着 `Theme`，但 §3.4（2026-10-14 才定义）要求 `Drift\Widget\BuildContext` 有 `theme(): ThemeData` / `color(ColorToken)` / `metric(MetricToken)` ⇒ **两条裁决直接冲突**（`dependency-direction` 会报它，而删掉 `theme()` 又让 §3.4 的能力面少一半） | 照 `Input` 行的既有先例加**协议例外**：三个类型**仅限 `BuildContext` 的类型签名**可引用。★ 边界要说清：`ThemeData` 是"解析后的值"，`BuildContext` 只是**把它递给 `build()`**，不构成 Widget → Theme 的架构依赖，`ThemeScope`（真·主题节点）仍归 `Drift\Theme` 侧 |
+| 16 | **§4.3 / §4.2** | `TextRole`（§15.2 定义、§11.5 要用）**不在 §4.2 目录清单里**，且"角色 → `TextStyle`"的解析该放哪一层方案没说 | 补进 `Drift\Text`（不是 `Drift\Widget`）：解析落 `ThemeData::textSize/textColor`，而 §4.3 只允许 `Theme → Text`、**不允许 `Theme → Widget`**。放 Widget 会让 Theme 依赖 Widget，直接撞 lint。另：**§15.7 纪律 3 因此有了第二个落点实例**（合并只发生一次） |
+| 17 | **§15.2 / §16.6.1 / §19 / §A.1 / §A.2** | **`ForEach` 不是合法 PHP 类名** —— `foreach` 是保留字，且 PHP 类名**大小写不敏感** ⇒ `class ForEach` 直接 `PHP Parse error: unexpected token "foreach"`（实测）。方案全文 6 处 `ForEach::make(...)` 照抄必然编译不过 | 类名改 **`Each`**（`Each::make(keyFn)->items(...)`）。★ 这是第 9 处"文档挡住实现"的同类，但**改了公共面** ⇒ 名字选择请你确认；若你更想叫 `Items` / `ListOf` / `EachItem`，改回来只是一次重命名（语义与 key 必填裁决都不变） |
 
 ★ 附带确认：`main.php` / `tools/*.php` 这类**入口脚本**（无类型声明）不受 `namespace-mismatch` 管 —— PSR-4 管的是类文件。
 
@@ -3977,7 +3979,7 @@ declare(strict_types=1);
 namespace App\Users\Pages;
 
 use Drift\Widget\{StatelessWidget, BuildContext, Widget};
-use Drift\Widget\{Column, Row, Text, Button, TextField, ForEach, Spinner, Padding, Spacer};
+use Drift\Widget\{Column, Row, Text, Button, TextField, Each, Spinner, Padding, Spacer};
 use Drift\State\SubjectBuilder;
 use Drift\Commands\CommandArg;
 
@@ -4017,7 +4019,7 @@ final class UsersPage extends StatelessWidget
                     LoadStatus::Ready   => SubjectBuilder::make($this->store)
                         ->select(fn(UserStore $s): array => $s->visible())   // ★ 切片：只跟过滤结果
                         ->builder(fn(array $rows): Widget =>
-                            ForEach::make(fn(User $u): int => $u->id)        // ★ key 必填
+                            Each::make(fn(User $u): int => $u->id)        // ★ key 必填
                                 ->items($rows, fn(User $u): Widget => UserRow::make($u))),
                     LoadStatus::Idle    => Text::make('尚未加载')->caption(),
                 }),
