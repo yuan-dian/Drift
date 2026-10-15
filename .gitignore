@@ -41,3 +41,5 @@ desktop.ini
 /out/
 # codegen 门的工作目录（drift-codegen 的假工具链 / 私有 ini / project.yml / 日志 / 生成的 C++）
 /_codegen
+# 真机构建的工作目录（drift-build 的私有 ini 副本 / 构建日志 / 截图）
+/_build
