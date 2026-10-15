@@ -13,6 +13,8 @@ use Drift\Rendering\Canvas;
  *
  * ★ 只减约束、不产出尺寸：盒子尺寸 = 内边距 + 孩子尺寸，再被外层约束夹住（C6）。
  *   "内边距比可用空间大" ⇒ 约束的 min 留住底线，不会造出负尺寸。
+ *
+ * @api
  */
 final class RenderPadding extends RenderProxyBox
 {

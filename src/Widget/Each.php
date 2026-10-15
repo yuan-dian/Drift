@@ -23,6 +23,8 @@ use Drift\Layout\RenderFlex;
  *
  * ★ **没有虚拟化**（M5）：`items()` 在构建期把每个 item 造成一个 Widget。
  *   1000 行 ⇒ 1000 个实例。虚拟化要动的是"按视口造子层"这一处，接口形状不变。
+ *
+ * @api
  */
 final class Each extends Flex
 {

@@ -9,6 +9,8 @@ namespace Drift\Widget;
  * ```php
  * Column::make()->spacing(16)->paddingAll(24)->children([...]);
  * ```
+ *
+ * @api
  */
 final class Column extends Flex
 {

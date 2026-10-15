@@ -9,6 +9,8 @@ namespace Drift\Widget;
  * ```php
  * Row::make()->spacing(8)->children([...]);
  * ```
+ *
+ * @api
  */
 final class Row extends Flex
 {

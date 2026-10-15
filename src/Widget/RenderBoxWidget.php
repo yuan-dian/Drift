@@ -15,6 +15,8 @@ use Drift\Layout\RenderBox;
  * ★ 放在这里而不是 `Widget` 基类上：结构节点（`Column` / `Row` / `ForEach` /
  *   `Spacer`）里有些不产盒（纯组合），基类留一个恒返回 null 的方法只会让
  *   `instanceof` 判断多一层。
+ *
+ * @api
  */
 abstract class RenderBoxWidget extends Widget
 {

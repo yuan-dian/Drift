@@ -10,6 +10,8 @@ use Drift\Layout\RenderFlex;
  *
  * ★ `expand()` 返回**多个**子（不是 `build()` 的单子）—— §13.2 说"容器与叶子
  *   共用同一套 diff"，靠的就是 Element 基类这一个扩展点。
+ *
+ * @api
  */
 final class FlexElement extends StatelessElement
 {

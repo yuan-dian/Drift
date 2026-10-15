@@ -11,6 +11,8 @@ use Drift\Geometry\Size;
  *
  * ★ 另一轴无界时不居中（无界轴上"中心"不存在）⇒ 偏移 0，不产生 NaN。
  *   这是无界约束下所有居中算法的同一个坑，收在一处。
+ *
+ * @api
  */
 final class RenderCenter extends RenderProxyBox
 {

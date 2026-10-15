@@ -9,6 +9,8 @@ use Drift\Layout\RenderProxyBox;
  * 单子控件的 Element：`Padding` / `Center` / `Expanded` 共用。
  *
  * ★ 三个控件的子层都恰好一个 ⇒ 同一份 diff。开第四种单子控件时不用再写 Element。
+ *
+ * @api
  */
 final class ProxyElement extends StatelessElement
 {

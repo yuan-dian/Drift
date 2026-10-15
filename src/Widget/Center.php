@@ -12,6 +12,8 @@ use Drift\Layout\RenderCenter;
  * ```php
  * Center::make()->child($content);
  * ```
+ *
+ * @api
  */
 final class Center extends RenderBoxWidget
 {

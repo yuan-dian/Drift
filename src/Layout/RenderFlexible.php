@@ -15,6 +15,8 @@ use Drift\Geometry\Size;
  *
  * ★ `flex = 0` 的实例等价于纯转发盒（`RenderProxyBox` 的形态）—— 不特判，
  *   少一条分支。
+ *
+ * @api
  */
 final class RenderFlexible extends RenderProxyBox
 {

@@ -18,6 +18,8 @@ use Drift\Layout\RenderFlex;
  *
  * ★ **结构节点，不是 `BoxWidget`**：它有布局职责但没有盒样式 ⇒ 继承裸 `Widget`，
  *   拿不到 `->background()`（§15.7 纪律 1）。
+ *
+ * @api
  */
 abstract class Flex extends RenderBoxWidget
 {

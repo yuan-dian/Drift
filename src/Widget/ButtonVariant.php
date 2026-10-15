@@ -10,6 +10,8 @@ namespace Drift\Widget;
  *   §15.4 的删除测试：`Button::primary('x')` 必须等价于
  *   `Button::make('x')->variant(ButtonVariant::Primary)`。糖删掉后框架契约
  *   与测试原样完整（只是更啰嗦）。
+ *
+ * @api
  */
 enum ButtonVariant
 {

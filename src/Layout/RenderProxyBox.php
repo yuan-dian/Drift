@@ -10,6 +10,8 @@ use Drift\Rendering\Canvas;
  *
  * ★ 它**不定义布局策略** —— 只回答"我的唯一孩子是谁、怎么把画布递过去"。
  *   于是"加内边距"与"参与 flex"是两个薄子类，而不是一个带 5 个分支的盒子。
+ *
+ * @api
  */
 abstract class RenderProxyBox extends RenderBox
 {

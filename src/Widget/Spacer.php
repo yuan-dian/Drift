@@ -11,6 +11,8 @@ use Drift\Layout\RenderFlexible;
  *
  * `Row::make()->children([... , Spacer::make()])` 把剩下的空间吃掉 —— 这是
  * "把这一行推到左边"的惯用法（§A.1 / §A.2 到处这么写）。
+ *
+ * @api
  */
 final class Spacer extends RenderBoxWidget
 {

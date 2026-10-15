@@ -23,6 +23,8 @@ use Drift\Text\TextRole;
  *
  * ★ **`->size()` / `->bold()` 优先于 `->role()`**：优先级只在 `ThemeData`
  *   解析一次（§15.7 纪律 3），不在这里做二轮合并。
+ *
+ * @api
  */
 final class Text extends RenderBoxWidget
 {

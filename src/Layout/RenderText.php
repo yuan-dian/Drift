@@ -24,6 +24,8 @@ use Drift\Text\TextStyle;
  * ★ `performLayout` **会调两次**（一次自然尺寸、一次被夹紧后的最终尺寸）——
  *   这是有意的：文本断行依赖可用宽度，宽度变了断行就变，所以最终度量必须用最终
  *   宽度重算。`TextMetricsProvider` 自己有缓存（键含 maxWidth），第二次几乎免费。
+ *
+ * @api
  */
 final class RenderText extends RenderBox
 {

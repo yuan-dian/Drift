@@ -27,6 +27,8 @@ use Drift\Rendering\MetricToken;
  *   - `->onPressed(闭包)` = 纯 UI 回调，零框架依赖（§A.3.7 就是这么用的）
  *   - `->command('名')->arg(...)` = 走命令系统（依赖 `Drift\Commands`，M3）
  *     **M2 里响亮说没实现**，不是静默忽略注册。
+ *
+ * @api
  */
 final class Button extends BoxWidget
 {

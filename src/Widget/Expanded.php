@@ -12,6 +12,8 @@ use Drift\Layout\RenderFlexible;
  * ```php
  * Row::make()->children([ Text::make('固定'), Expanded::make($grow) ]);
  * ```
+ *
+ * @api
  */
 final class Expanded extends RenderBoxWidget
 {

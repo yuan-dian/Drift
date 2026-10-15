@@ -24,6 +24,8 @@ use Drift\Text\TextStyle;
  *
  * ★ 标签是**它自己的孩子**（`RenderText`，问注入的度量）—— 于是按钮里的文字
  *   断行行为与独立 `Text` 完全一致，不会出现"按钮里的文字换行规则不一样"。
+ *
+ * @api
  */
 final class RenderButton extends RenderProxyBox
 {

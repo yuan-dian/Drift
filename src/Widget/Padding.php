@@ -13,6 +13,8 @@ use Drift\Layout\RenderPadding;
  * ```php
  * Padding::make($child)->paddingAll(8);
  * ```
+ *
+ * @api
  */
 final class Padding extends RenderBoxWidget
 {
