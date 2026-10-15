@@ -334,13 +334,16 @@ private function pageFor(string $name): ?Widget
 | `src/Rendering/` | `Drift\Rendering` | ✅ `RenderSurface` · `GpuContext` · `Canvas` · `DisplayList` · `Paint` · `Color` · `BoxStyle` · `RasterCanvas` · `RecordingCanvas`；⏳ `SkiaCanvas` | **缺 1**（M1） |
 | `src/Text/` | `Drift\Text` | `TextRole` · `FontManager` · `FontCollection` · `FontFace` · `TextShaper` · `TextLayout` · `Paragraph` · `TextMetricsProvider` · `TextStyle` · `TextInputClient` | ✅ 10/10（另有 **6 个未列入本表**的确定性实现：`DeterministicFontManager` · `DeterministicFontCollection` · `DeterministicShaper` · `DeterministicMetricsProvider` · `NotdefFontFace` · `BitmapFontFace` —— §8.2 坑 6 的“确定性参考实现”） |
 | `src/Layout/` | `Drift\Layout` | `RenderObject` · `RenderBox` · 各 `Render*` 族 | ✅（族 8 个：`RenderCenter` / `RenderFlex` / `RenderFlexible` / `RenderPadding` / `RenderProxyBox` / `RenderText` / `RenderButton` + `Overflow` · `FlexAlign`） |
-| `src/Widget/` | `Drift\Widget` | `Widget` · **`BoxWidget`** · `StatelessWidget` · `StatefulWidget` · `Element` · `State` · `BuildContext` · `Key` | ✅ 8/8（另有 11 个控件 + 6 个 Element 实现） |
+| `src/Widget/` | `Drift\Widget` | `Widget` · **`BoxWidget`** · `StatelessWidget` · `StatefulWidget` · `Element` · `State` · `BuildContext` · `Key`；⏳ **`TextField`** · **`Spinner`** | ✅ 8/8 + ⏳ **2**（另有 11 个控件 + 6 个 Element 实现；★ 已实现的 11 个控件**不含** `TextField` —— 全文 **29 处**引用、O-16 全部论据与 §A.2.9 旗舰表单都建在这个 0 文件的控件上，见 §24.1 #32） |
+| `src/Widget/Drag/` | `Drift\Widget\Drag` | ⏳ **一个文件都没有**：`Draggable` · `DragTarget` | **缺 2**（M3，§12.4 / §A.3.5） |
 | `src/Input/` | `Drift\Input` | ⏳ **一个文件都没有**：`PointerEvent` · `KeyEvent` · `KeyChord` · `GestureArena` · `FocusNode` · `SemanticsTree` · `AcceleratorTable` · `CursorShape` · `ThemeChangedEvent` | **缺 9**（M3，路由链见 §9.1） |
 | `src/State/` | `Drift\State` | `Subject` · `Subscription` · `SubjectBuilder` · `Cell` · `SubscribingWidget` | ✅ 5/5 |
 | `src/Commands/` | `Drift\Commands` | `CommandRouter` · `CommandHandler` · `CommandArg` | ✅ 3/3 |
 | `src/Theme/` | `Drift\Theme` | `ThemeData` · `ThemeScope` · **`SystemTheme`** | ✅ 3/3（★ 删掉孤儿名 `Theme`，见 §24.1 #26） |
 | `src/Routing/` | `Drift\Routing` | `RouteTable` · `PageHost` · `Offstage` · **`NoPage`** | ✅ 4/4（★ 删掉 `Page`，见 §24.1 #25） |
 | `src/Errors.php` | `Drift\Errors` | 错误出口 | ✅ |
+
+★ **本表不穷尽，它回答"这一层该有什么"**：`src/` 实有 **101 个 PHP 文件**（其中 96 个含 `@api`），本表点名 **74 个**（**48 个有文件 / 26 个 0 文件**，2026-10-15 按"名字 → 所属目录同名 `.php`"清点，**零矛盾** —— 没有一个标 ✅ 的名字没有文件）；**52 个已实现文件未列入本表**：6 个封闭域 enum + 11 个控件 + 6 个 Element 实现 + 16 个 Text 确定性实现族 + `Errors.php` + `Application`/`Frame`。★ 漏登记的代价见 §24.1 #32/#33（`TextField` 全文 29 处引用却不在表里）；**穷尽清单归 `drift-doctor`（O-10）自动扫 `src/`**，本表是它的临时输入。
 
 ### 4.3 依赖规则（lint 强制，违反即报错）
 
@@ -2411,12 +2414,12 @@ $app = new UsersApplication(new Win32Platform(), new ThreadPoolTaskHost());
 |--------|------|---------|------|
 | **M0 骨架** | PSR-4 分层 + 契约文件 + `tools/smoke.php` + **公共面按 `@api` 标注**（决定 lint 骨架） | 冒烟全绿；依赖方向 lint 有断言；`internal-leak` 双向自检过 | ✅ **已完成** —— PSR-4 分层 / `@api` 标注（76 类型）/ `smoke.php`（315 ok）/ lint 骨架（14 条落地）全在  |
 | **M1 可显示** | Win32 Platform + RenderSurface(Skia CPU) + Canvas 接口 + 文本栈桥接 + DPI 缩放 + **`DisplayList` 录制**（决定渲染路径） | 一个窗口画出「Hello Drift」（§A.1），分数缩放下不糊 | ⏳ **部分** —— 渲染侧齐（`RenderSurface`/`Canvas`/`DisplayList`/文本栈/`RasterCanvas`）；**平台侧 0 文件**：`Drift\Platform` 9 + `Win32` 2 + `SkiaCanvas` + `cpp-src/` + `apps/*/project.yml` + `bin/<platform>/Bootstrap.php` ⇒ **出口判据未兑现**（今天只能无头跑）  |
-| **M2 三树 + 布局** | Element/State/调和 + RenderBox 两阶段布局 + 首批控件 + **fluent-first 全部落地** + **盒样式（`BoxStyle` + `BoxWidget`，§15.7）** + **焦点遍历顺序** + **光标形状（命中三方消费）** + **`SubscribingWidget` 接口** + **property hooks 进 Store** + **`Each` key 必填** | 布局 conformance 夹具全过；首批控件过 **W1–W8**；Tab 序有 conformance 夹具；`Each` 缺 key ⇒ 构建期报错 | ⏳ **大部分** —— 三树/调和/两阶段布局/11 个控件/fluent-first/`BoxStyle`+`BoxWidget`/`SubscribingWidget`/property hooks/`Each` key 全在；**`FocusNode`（焦点遍历顺序）与 `CursorShape`（命中三方消费）0 文件**；conformance 夹具属 M4 工具链，未建  |
+| **M2 三树 + 布局** | Element/State/调和 + RenderBox 两阶段布局 + 首批控件 + **fluent-first 全部落地** + **盒样式（`BoxStyle` + `BoxWidget`，§15.7）** + **焦点遍历顺序** + **光标形状（命中三方消费）** + **`SubscribingWidget` 接口** + **property hooks 进 Store** + **`Each` key 必填** | 布局 conformance 夹具全过；首批控件过 **W1–W8**；Tab 序有 conformance 夹具；`Each` 缺 key ⇒ 构建期报错 | ⏳ **大部分** —— 三树/调和/两阶段布局/11 个控件/fluent-first/`BoxStyle`+`BoxWidget`/`SubscribingWidget`/property hooks/`Each` key 全在；**`TextField` · `Spinner` 0 文件**（§24.1 #32：全文引用却不在“首批控件”清单里）；**`FocusNode`（焦点遍历顺序）与 `CursorShape`（命中三方消费）0 文件**；conformance 夹具属 M4 工具链，未建  |
 | **M3 数据缝/多页** | Store 三件套 + `SubjectBuilder` + **`select()`** + RouteTable/PageHost + **动作缝（`CommandRouter` + 冒泡链）** + **三态 enum** + **错误边界容器**（★ 2026-10-14 裁决：**归 M3** —— 见 §23.2 O-12）+ **AcceleratorTable** + **自绘 MenuBar/ContextMenu** + **应用内拖放** | §A.2 的完整应用可跑；局部态与跨页共享两条路径都能写；`Root` 只组合（lint 可查）；Ctrl+S 等加速键可用；§16.6.3 的 **17 条规则全部双向自检**过 | ⏳ **约一半** —— 值缝（Store 三件套 + `SubjectBuilder` + `select`）与动作缝（`CommandRouter` + 冒泡链）已通；**错误边界容器 / `AcceleratorTable` / 自绘 `MenuBar`·`ContextMenu` / 应用内拖放 4 项 0 文件**；§A.2 样板刚对齐（O-18），`apps/users` 未建  |
 | **M4 工具链 + 异步** | drift-preview / golden / conformance / drift-lint / **drift-doctor** 齐备 + **TaskHost 线程池后端** + **`notifyChanged` 线程断言** + **ThemeChanged / 深色模式** | 无头 preview + golden diff 可跑；后台 IO 不卡帧；**worker 里 notify ⇒ 响亮失败**；跟得上系统主题切换 | ⏳ **未动** —— `drift-lint` / `drift-preview` / `drift-codegen` 三件在；`golden` / `conformance` / `drift-doctor` 未建，`TaskHost` 系 6 个类型 + `ThreadPoolTaskHost` 0 文件  |
 | **M5 业务底座** | 虚拟化（含 §12.3 的 State 外置纪律）+ 脏矩形 + **WindowStateStore** + Windows UIA 桥接 | 长列表滚动不掉帧；子树崩溃不整树陪葬；窗口位置/尺寸跨启动保留 | ⏳ **未动** —— 虚拟化 / 脏矩形 / `WindowStateStore` / UIA 桥接全 0 文件  |
 
-★ **状态列是 §20 纪律 4 在里程碑层的落点**：出口判据写“要做”不算数，`src/` 里有没有才算。§4.2 已按同一口径加了逐类型状态列（45/73 已实现） —— **两处必须同步维护**（否则又会出现“文档说已落地、代码还没写”的分裂）。★ `drift-doctor`（§16.2 六件套之一，O-10 已裁“做”）正是该**自动**输出这张表的工具 ⇒ 手工列只是它的**临时输入**，别为它新造机制。
+★ **状态列是 §20 纪律 4 在里程碑层的落点**：出口判据写“要做”不算数，`src/` 里有没有才算。§4.2 已按同一口径加了逐类型状态列（点名 74 个：**48 有文件 / 26 个 0 文件**） —— **两处必须同步维护**（否则又会出现“文档说已落地、代码还没写”的分裂）。★ `drift-doctor`（§16.2 六件套之一，O-10 已裁“做”）正是该**自动**输出这张表的工具 ⇒ 手工列只是它的**临时输入**，别为它新造机制。
 
 **M1 的探针门（先验后用，任一不过即退化）**：
 
@@ -3398,6 +3401,13 @@ M5 ── （无裁决项；虚拟化 / 脏矩形 / `WindowStateStore` / UIA 桥
 | 30 | **§A.2 / §5.1 / §9.1 / §11.4.3 / §A.3.1 / §A.3.2 / §A.3.8 / §A.3.9** | 旗舰样板**不可照拉**：`protected` 覆写 + `boot()` + `commands(): CommandRouter` + `accelerators()` + `taskHost()` 在已实现的 `Application` 上一个都不存在（#23 只修了 §A.1，§A.2 三枪全留着） | 9 处全部改成已实现 API：`public` 覆写、`commands(): iterable` 字典、依赖装配在构造点（O-15 E）、Bootstrap 改平台驱动（`attach()`+`pump()`）；三处不存在的钩子按 A15 **不预挂**，形状以注释留存 |
 | 31 | **§19** | 路线图六个里程碑**没有“当前状态”一列**，M1 出口判据读起来像已达成（实际平台层 11 个类型 0 文件） | 加状态列，与 §4.2 同口径、**同步维护**；归属 `drift-doctor`（O-10）自动输出 |
 
+★ **第八轮追加（2026-10-15，A 方向：把剩余 §A 样板对 `src/` 实况核验）** —— 两条同型：**目录表（§4.2）漏登记正在被依赖的类型**：
+
+| # | 位置 | 症状 | 修正 |
+|---|------|------|------|
+| 32 | **§4.2** `Drift\Widget` 行 | **`TextField` 全文 29 处引用、`src/` 里 0 文件**，而 §4.2 只写“另有 11 个控件”（那 11 个是 `Button`/`Center`/`Column`/`Each`/`Expanded`/`Flex`/`Offstage`/`Padding`/`Row`/`Spacer`/`Text`，**不含**它）⇒ O-16 全部论据、§11.4 官方订阅形态、§A.2.9 旗舰表单都建在一个**既无代码、又无里程碑归属**的控件上。`Spinner` 同类（3 处引用） | Widget 行补 ⏳ `TextField` · `Spinner`；§19 M2 状态列同步标“0 文件”；§A.2.9 加实况边界横幅。★ **这是能力缺口，不是文档缺口** —— 输入控件本该是 M2“首批控件”收的，repo 至今没写 |
+| 33 | **§4.2** | `Drift\Widget\Drag\{Draggable,DragTarget}` 4+2 处引用、§A.3.5 整节建在它上面、§12.4 与 §19 M3 都点了名，但 **§4.2 连目录行都没有**（§19 只写“应用内拖放”四个字，无文件可数） | 新增 `src/Widget/Drag/` 行（⏳ 缺 2，M3），与 §19 M3“应用内拖放 0 文件”对上账 |
+
 ★ 附带确认：`main.php` / `tools/*.php` 这类**入口脚本**（无类型声明）不受 `namespace-mismatch` 管 —— PSR-4 管的是类文件。
 
 ### 24.2 开放项总表（全部 ⏳ 集中在此）
@@ -4198,6 +4208,8 @@ final class UsersPage extends StatelessWidget
 
 > ★ **已按 §23.2 O-16 裁决修正**（2026-10-14）：搜索框原先**直接读** `$this->store->query()` 而**没有订阅** —— 在 `StatelessWidget` 里这就是 `dead-subscription`（值变了不刷新）。现改为**官方订阅形态**：`SubjectBuilder::select(...)` 包一层 + 手写 `value()/onChanged()`。
 > ★ 顺带：这也是 §11.4.2 那张"摩擦点对照"表**为什么要删**的活证据 —— 表里说"不用记得包 `SubjectBuilder`"，而**真实的正确写法就是必须包**。
+
+> ★ **本节样本的实况边界（2026-10-15 按 `src/` 核验）**：本页样板引用 **4 个 0 文件的类型** —— `TextField` · `Spinner`（`Drift\Widget`，M2）、`CursorShape`（`Drift\Input`，M2）、`Widget\Drag\Draggable`（M3）。**它们是目标形态，不是今天能跑的代码**；同页其余类型（`Column`/`Row`/`Text`/`Button`/`Each`/`Spacer`/`Padding`/`SubjectBuilder`/`CommandArg`）今天就能编译
 
 ```php
 <?php
