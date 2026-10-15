@@ -62,6 +62,18 @@ function drift_lint_selftest(string $root, Linter $linter): bool
         'alias-mutate' => [
             'apps/AliasChildrenFixture.php:' . Diagnostic::ERROR,
         ],
+        // §16.6.3 第三批（2026-10-15 按优先级补）
+        'subscriber-mark' => [
+            'apps/SubscriberMarkFixture.php:' . Diagnostic::ERROR,
+            'apps/SubscriberMarkFixture.php:' . Diagnostic::ERROR,
+        ],
+        'str-concat-loop' => [
+            'apps/StrConcatFixture.php:' . Diagnostic::ERROR,
+            'apps/StrConcatFixture.php:' . Diagnostic::ERROR,
+        ],
+        'nested-subscribe' => [
+            'apps/NestedSubscribeFixture.php:' . Diagnostic::WARN,
+        ],
     ];
 
     $ok = true;

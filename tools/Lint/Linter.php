@@ -15,6 +15,7 @@ use Drift\Dev\Lint\Rules\NanoHygiene;
 use Drift\Dev\Lint\Rules\OrphanTrait;
 use Drift\Dev\Lint\Rules\SelectPurity;
 use Drift\Dev\Lint\Rules\StaleDerived;
+use Drift\Dev\Lint\Rules\StrConcatLoop;
 use Drift\Dev\Lint\Rules\SubscriberMark;
 
 /**
@@ -43,6 +44,10 @@ final class Linter
             new StaleDerived(),
             new CachedSubscriber(),
             new AliasMutate(),
+            // §16.6.3 第三批（2026-10-15 按优先级补）
+            new SubscriberMark(),
+            new StrConcatLoop(),
+            new NestedSubscribe(),
         ]);
     }
 

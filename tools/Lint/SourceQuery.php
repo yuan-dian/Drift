@@ -69,6 +69,48 @@ final class SourceQuery
     }
 
     /**
+     * 区间内的**实例方法调用**：`->name(` 且 `name` 命中 `$names`。
+     *
+     * ★ 为什么放在 `SourceQuery` 而不是各规则自己写：`subscriber-mark` 与
+     *   `nested-subscribe` 判的是同一件事（"这里有没有发起订阅"），一个在方法体里
+     *   找、一个在 `items()` 参数里找 ⇒ **同一个口径，两个落点**。
+     * ★ 只认 `->`（实例调用）。静态调用 `Foo::select(` 是 `::`，不在此列 ——
+     *   它不产生"谁在订阅"的问题。
+     *
+     * @param list<mixed> $tokens
+     * @param list<string> $names 小写方法名
+     * @return list<array{name: string, line: int}>
+     */
+    public static function methodCalls(SourceFile $file, int $from, int $to, array $names): array
+    {
+        $tokens = $file->tokens();
+        $hits = [];
+
+        for ($i = $from; $i < $to; $i++) {
+            $tok = $tokens[$i];
+            if (!is_array($tok) || $tok[0] !== T_OBJECT_OPERATOR) {
+                continue;
+            }
+            $nameI = self::nextIndex($tokens, $i + 1);
+            if ($nameI === null || $tokens[$nameI][0] !== T_STRING) {
+                continue;
+            }
+            // ★ `->` 之后的属性名/方法名是 **T_STRING**（不是 T_VARIABLE —— 只有 `$foo` 才是）
+            $name = strtolower($tokens[$nameI][1]);
+            if (!in_array($name, $names, true)) {
+                continue;
+            }
+            $callI = self::nextIndex($tokens, $nameI + 1);
+            if ($callI === null || $tokens[$callI] !== '(') {
+                continue;
+            }
+            $hits[] = ['name' => $name, 'line' => $tokens[$i][2]];
+        }
+
+        return $hits;
+    }
+
+    /**
      * 括号匹配：从 `(` / `{` / `[` 的下标找对应闭合下标。
      *
      * @param list<mixed> $tokens

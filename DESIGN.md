@@ -2145,6 +2145,7 @@ PHP Fatal error: Uncaught TypeError: TypePhp\Translator::getAbsolutePath():
 > ★ **量具双向自检**（§20 第 1 条）：这 17 条**每条**都要配"已知错误"用例 —— 既验该响会响，也验不该响不误响。
 > ★ **诚实边界**（**2026-10-14 裁决**，原 §23 O-13）：`nano-hygiene` 只保证**源码纪律**，查不到 tpc 自己注入的 include（如 lib 模式的 `/FI` 聚合头）或链接期问题（PHPX 库路径）。⇒ **加了这条 lint ≠ 能切 nano**；nano 兼容性的最终判据只能是**跑一次真机 `--nano` 构建**。
 > ★ 既然 nano 已明确**不作为前期重点**（§16.7.5），`nano-hygiene` 的定位是**零成本保留"将来可切 nano"的可选性**，**不是"nano 就绪"的证明**。
+> ★ **未落地的 3 条，缺的都是"消费者"而不是工作量**（2026-10-15 记账）：`scan-autoload-drift` 要 `apps/*/project.yml`（还没有）· `no-using-php` / `stub-prefix` 要 `cpp-src/` C++ 桥接（M1 才建）。**没有消费者的规则只是审自己** ⇒ 到位的当天补，不预写。**落地与否以 `php tools/lint.php --list` 为准**（数字不写进本文件，写即过期）。
 
 ### 16.7 ★ `--nano`（无 VM 原生构建）评估
 
