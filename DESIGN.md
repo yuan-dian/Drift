@@ -3277,6 +3277,7 @@ M5 ── （无裁决项；虚拟化 / 脏矩形 / `WindowStateStore` / UIA 桥
 | 18 | **§4.2 / §4.3** | **§4.3 的 `Widget → Theme` 禁令与"控件要在造盒时把主题解析成值"直接冲突**。`Button::createRenderObject()` 必须引用 `ColorToken` / `MetricToken` 才能把变体解析成颜色 —— 而 lint 只放行了 `BuildContext.php` 一个文件的协议例外，扩例外会让它扩散（今天允许一个文件，明天整层都能依赖 Theme） | **`ColorToken` / `MetricToken` 从 `src/Theme/` 移到 `src/Rendering/`**。依赖方向天然成立：`Widget → Rendering` ✓、`Theme → Rendering` ✓、`Rendering` 自己不依赖 Widget/Theme ✓。**语义没说谎**：token 是"渲染资源的语义键"，与 `Color` 同层比与 `ThemeData` 同层更实。★ 解析仍只发生一次（§15.7 纪律 3），落点从 `RenderButton`（Layout，不许碰 Theme）移到 `Button::createRenderObject()`（Widget，经 `BuildContext`） |
 | 17 | **§15.2 / §16.6.1 / §19 / §A.1 / §A.2** | **`ForEach` 不是合法 PHP 类名** —— `foreach` 是保留字，且 PHP 类名**大小写不敏感** ⇒ `class ForEach` 直接 `PHP Parse error: unexpected token "foreach"`（实测）。方案全文 6 处 `ForEach::make(...)` 照抄必然编译不过 | 类名改 **`Each`**（`Each::make(keyFn)->items(...)`）。★ 这是第 9 处"文档挡住实现"的同类，但**改了公共面** ⇒ 名字选择请你确认；若你更想叫 `Items` / `ListOf` / `EachItem`，改回来只是一次重命名（语义与 key 必填裁决都不变） |
 | 22 | **§4.2** | `Drift\Routing` 行列了 **`Page`**，但全文对 `Page` 的唯一定义在 **§A.2.1 的 `App\Users\Store\Page`**（`fetchPage()` 返回的 DTO，三个字段 `ok/items/error`）—— 它是**应用私有值对象**，不是框架类型。这与第 10 处"目录表与定义对不上"同类，只是这次错在**层级**：照 §4.2 建 `src/Routing/Page.php` 会得到一个框架里没人用的空壳 | 从 `Drift\Routing` 行删掉 `Page`（该行的真实成员是 `RouteTable` · `PageHost` · `Offstage` + `NoPage`）。★ 应用私有 DTO 归 `apps/<app>/store/`，不进框架 —— §12.2 的"每页可独立预览"正要求页面只依赖自己的 store 类型 |
+| 23 | **§A.1** | 样例的三处照抄会编译不过：① `protected function title()/buildRoot()` —— 基类 `Application` 把它们定义成 public（`commands()` 要能被 devtools 枚举），子类**收窄**可见性 ⇒ `PHP Fatal: Access level must be public`；② `use` 列表里漏了 `Center`（正文用了 `Center::make()` 却没 import），多了一个没用的 `BuildContext`；③ `Bootstrap` 调 `$app->run()`，而 `Application` **没有** `run()` —— §5.2 裁决 1 明确"循环归平台，`Frame` 不拥有它" | ① 改 `public`；② 补 `Center`、删 `BuildContext`；③ 改成平台驱动形态（`attach()` + `pump()` 循环里调 `frame()`）。★ `main.php` 与 `bin/<platform>/Bootstrap.php` **本轮不建**：它们要 `Drift\Platform\Win32\Win32Platform`（M1 的 Skia/Win32 桥），建出来只会是引用不存在类型的空壳（A15）。`apps/hello/src/HelloApplication.php` 已建且可无头预览（`--app`） |
 | 21 | **§4.3** | `Routing` 行的允许集写着"Widget / Commands"，但 §12.1 第 7 条要求 `RouteTable` 的工厂**返回 `Widget`** ⇒ 签名必须引用 `Drift\Widget\Widget`。这正是 §4.2 目录表"Routing → Widget"那一列本来的意思，**依赖表漏抄了它**（与第 10 处"Theme 漏 Rendering"同类：允许集和目录表对不上） | `Routing` 行补 `Widget`。★ 顺带确认方向只有一条：`RouteTable` **不认 `Element`**、不挂树，它只造 Widget —— 挂载与保活住 `Drift\App` 与 `Drift\Widget\Offstage`，那样 Routing 才保持可单测（必须在浏览器外能跑） |
 | 19 | **§11.3.1** | 样例写 `private Cell $hovered = new Cell(-1);` + `$this->hovered->setIfChanged($index)`，并注明"内部：=== 不等 ⇒ setState 标脏"。**PHP 的属性初始化器拿不到 `$this`**（`new Cell(-1)` 里没有 State 可引用）⇒ 照抄能得到一个"设了值但没人重建"的 `Cell`，正是 G2 要消灭的静默形态 | 绑定必须显式发生：`State::cell($initial)` 是**唯一创建入口**，`initState()` 里 `$this->hovered = $this->cell(-1);`。`Cell` 未绑定就 `setIfChanged()` ⇒ **Fatal**（不留下"设了没用"的值）。★ 顺带：`State` 的样例因此从"属性初始化器"变成"`initState()` 里赋值"，与 §11.3 RT-1 的"只 initState 订"是同一个时机 |
 | 20 | **§4.3** | `Widget` 行的不许依赖列写着 `Commands`，但 §11.4.3 的派发链第 ①② 环要求 `Drift\Widget\State::handleCommand(string $name, CommandArg $arg): bool` —— 签名要碰 `Drift\Commands\CommandArg` ⇒ **与 §11.4.3 直接冲突** | 照 `BuildContext`/`Theme` 的既有先例加**协议例外**，且**只登记 `src/Widget/State.php` 一个文件**（层级放行会让"任何 Widget 都去依赖 Commands"合法化）。★ 边界：Widget 侧只碰这一个**参数类型**；链的其余部分住 `Drift\App`（那里 `Widget → Commands` 天然合法）。夹具 `src/Widget/UsesCommands.php` 守"例外不扩散" |
@@ -3364,8 +3365,16 @@ final class Bootstrap
 {
     public static function run(): void
     {
-        $app = new HelloApplication(new \Drift\Platform\Win32\Win32Platform());
-        $app->run();
+        $platform = new \Drift\Platform\Win32\Win32Platform();
+        $app = new HelloApplication();
+        // ★ 循环归平台（§5.2 裁决 1）：`Application` **没有** run()，只提供
+        //   `attach($surface, $constraints)` 与 `frame($timestampMs, $constraints)`。
+        //   表面由平台给（`platform->surface($hwnd)`），帧时钟由平台驱动。
+        $app->attach($platform->surface($platform->window()->createWindow(...)),
+                     $platform->screen()->viewport());
+        while ($platform->pump()) {
+            $app->frame($platform->now(), $platform->screen()->viewport());
+        }
     }
 }
 ```
@@ -3378,15 +3387,15 @@ declare(strict_types=1);
 namespace App\Hello;
 
 use Drift\App\Application;
-use Drift\Widget\BuildContext;
-use Drift\Widget\Widget;
+use Drift\Widget\Center;
 use Drift\Widget\Text;
+use Drift\Widget\Widget;
 
 final class HelloApplication extends Application
 {
-    protected function title(): string { return 'Hello Drift'; }
+    public function title(): string { return 'Hello Drift'; }
 
-    protected function buildRoot(): Widget
+    public function buildRoot(): Widget
     {
         return Center::make()->child(
             Text::make('Hello Drift')->title()
