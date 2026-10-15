@@ -360,7 +360,7 @@ function contrast(Color $a, Color $b): float
 }
 
 /** 非背景像素数：用来断言"文字真的画上了 / 真的被挡住了" */
-function inkCount(RasterCanvas $canvas, Color $background = null): int
+function inkCount(RasterCanvas $canvas, ?Color $background = null): int
 {
     $background ??= Color::white();
     $ink = 0;

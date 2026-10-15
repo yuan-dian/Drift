@@ -187,7 +187,7 @@ abstract class Application
      *
      * @api
      */
-    public function dispatch(string $name, CommandArg $arg = null): bool
+    public function dispatch(string $name, ?CommandArg $arg = null): bool
     {
         $root = $this->root;
         if ($root !== null && $this->bubble($root, $name, $arg ?? CommandArg::none())) {

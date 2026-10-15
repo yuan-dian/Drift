@@ -29,7 +29,7 @@ use Drift\Text\TextRole;
 final class Text extends RenderBoxWidget
 {
     private string $content;
-    private int $role = TextRole::Unset->value;
+    private int $role;
     private float $size = -1.0;
     private int $bold = -1;
     private int $maxLines = 0;
@@ -39,6 +39,9 @@ final class Text extends RenderBoxWidget
     {
         parent::__construct();
         $this->content = $content;
+        // §15.2 哨兵：enum case 本身可作属性默认值，取 `->value` 不行（tpc gen_stub 只接受
+        // ConstFetch/ClassConstFetch）⇒ 移到构造函数，语义不变。
+        $this->role = TextRole::Unset->value;
     }
 
     /** 唯一入口 —— 只吃必填项（§15.2 纪律 1） */
