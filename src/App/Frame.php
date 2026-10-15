@@ -43,9 +43,14 @@ final class Frame
         $root->settle();
 
         // ② layout
-        $box = $root->renderObject();
+        // ★ 必须用 `effectiveBox()` 而不是 `renderObject()`：应用根常是
+        //   `StatelessWidget`（§A.2 的 `UsersRoot` 就是这个形态），它自己没有盒、
+        //   只有它底下的 `Column` 有。用 `renderObject()` ⇒ 拿 null ⇒ 直接返回
+        //   ⇒ **整屏空白且不报错**（C6 只查上界，不画任何东西也不算违反）。
+        //   这正是 G2 要消灭的静默形态。
+        $box = $root->effectiveBox();
         if ($box === null) {
-            return; // 结构根（例如一个纯 Column 之外还有别的）没有盒 ⇒ 无从排起
+            return; // 整棵子树没有任何可绘制内容（例如空页）⇒ 这一帧无事可做
         }
 
         $box->layout($constraints);

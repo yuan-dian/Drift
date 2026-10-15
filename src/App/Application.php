@@ -223,17 +223,15 @@ abstract class Application
         $this->router->on($name, $handler);
     }
 
-    /** @internal 让 `Fatal` 之外的可恢复失败也能在测试里断言 */
-    public function reportForTest(string $message): void
-    {
-        Errors::report($message, Errors::DIAGNOSTIC);
-    }
-
     /**
      * @internal 测试：把根盒拿出来做几何断言
+     *
+     * ★ 用 `effectiveBox()`：应用根常是 `StatelessWidget`（无盒），能排的是它
+     *   底下的容器 —— 用 `renderObject()` 会得到 null，看不出"到底是没排开
+     *   还是根本没有可绘制内容"。
      */
     public function rootBox(): ?RenderBox
     {
-        return $this->root?->renderObject();
+        return $this->root?->effectiveBox();
     }
 }

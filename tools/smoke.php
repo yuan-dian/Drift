@@ -30,6 +30,7 @@ use Drift\Dev\Smoke\Frame\TickerWidget;
 use Drift\Dev\Preview\DemoPage;
 use Drift\Dev\Preview\Renderer;
 use Drift\Dev\Preview\SvgSurface;
+use Drift\Dev\Smoke\App\CompositeRootApp;
 use Drift\Dev\Smoke\App\EchoApplication;
 use Drift\Dev\Smoke\LeafProbe;
 use Drift\Dev\Smoke\Routing\NavStore;
@@ -1945,6 +1946,25 @@ check(
 check(
     'Preview · dpr=2 ⇒ 设备像素翻倍（§6.1 唯一量化点）',
     substr_count($preview->render(new DemoPage(), 320.0, 240.0, 2.0), 'viewBox="0 0 640 480"') === 1
+);
+
+// ★ 回归：应用根是**组合节点**（`StatelessWidget`，自己没盒、底下才有）
+//   ⇒ 以前 `Frame::run` 拿 `renderObject()` 得到 null ⇒ 直接 return
+//   ⇒ **整屏空白且不报错**（C6 只查上界，什么都不画也不算违反约束）。
+//   现在走 `effectiveBox()`，中间层对渲染树透明。
+$compositeSurface = new SurfaceProbe();
+$compositeSurface->resize(320, 240, 1.0);
+$compositeApp = new CompositeRootApp();
+$compositeApp->attach($compositeSurface, BoxConstraints::tight(new Size(320.0, 240.0)));
+check(
+    'Application · 组合根（无盒）仍能排到视口尺寸',
+    $compositeApp->rootBox()?->size()->width === 320.0,
+    (string) ($compositeApp->rootBox()?->size()->width ?? -1.0)
+);
+check(
+    'Application · 组合根的画面有墨（不是静默空白）',
+    $compositeSurface->canvas !== null && inkCount($compositeSurface->canvas) > 0,
+    '墨点数 ' . (string) ($compositeSurface->canvas !== null ? inkCount($compositeSurface->canvas) : -1)
 );
 
 fresh($log);

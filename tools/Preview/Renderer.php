@@ -11,7 +11,6 @@ use Drift\Text\TextMetricsProvider;
 use Drift\Theme\ThemeData;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Element;
-use Drift\Widget\Column;
 use Drift\Widget\Widget;
 
 /**
@@ -46,7 +45,7 @@ final class Renderer
         $this->surface->resize((int) round($width), (int) round($height), $dpr);
 
         $context = new BuildContext($width, $height, $this->theme, $this->metrics);
-        $element = $this->rootFor($root)->createElement();
+        $element = $root->createElement();
         $element->mount(null, $context);
         $this->lastRoot = $element;
 
@@ -69,23 +68,9 @@ final class Renderer
     {
         $this->surface->resize((int) round($width), (int) round($height), 1.0);
         $context = new BuildContext($width, $height, $this->theme, $this->metrics);
-        $element = $this->rootFor($root)->createElement();
+        $element = $root->createElement();
         $element->mount(null, $context);
 
         return $element;
-    }
-
-    /**
-     * 根必须是**有盒**的节点（`Frame::run` 拿不到 `renderObject()` 就直接返回 ——
-     * 那是设计如此：结构根无从排起）。
-     *
-     * 页面常以 `StatelessWidget` 为根（它没有盒）⇒ 包一层视口 `Column`。
-     * 只包一次，且**不改变页面自己的子树**。
-     */
-    private function rootFor(Widget $root): Widget
-    {
-        return $root instanceof \Drift\Widget\RenderBoxWidget
-            ? $root
-            : Column::make()->children([$root]);
     }
 }
