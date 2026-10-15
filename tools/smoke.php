@@ -21,6 +21,9 @@ use Drift\Dev\Smoke\Layout\OversizeBox;
 use Drift\Dev\Smoke\Layout\SolidBox;
 use Drift\Dev\Smoke\LeafProbe;
 use Drift\Dev\Smoke\SealProbe;
+use Drift\Dev\Smoke\State\BuildWatchWidget;
+use Drift\Dev\Smoke\State\FakeStore;
+use Drift\Dev\Smoke\State\HoverWidget;
 use Drift\Dev\Smoke\Tree\BranchWidget;
 use Drift\Dev\Smoke\Tree\CounterState;
 use Drift\Dev\Smoke\Tree\CounterWidget;
@@ -42,10 +45,15 @@ use Drift\Layout\RenderProxyBox;
 use Drift\Layout\RenderText;
 use Drift\Rendering\BoxStyle;
 use Drift\Rendering\Color;
+use Drift\Rendering\ColorToken;
 use Drift\Rendering\DisplayList;
+use Drift\Rendering\MetricToken;
 use Drift\Rendering\Paint;
 use Drift\Rendering\RasterCanvas;
 use Drift\Rendering\RecordingCanvas;
+use Drift\State\Cell;
+use Drift\State\SubjectBuilder;
+use Drift\State\Subject;
 use Drift\Text\DeterministicFontManager;
 use Drift\Text\DeterministicMetricsProvider;
 use Drift\Text\DeterministicShaper;
@@ -56,8 +64,6 @@ use Drift\Text\TextAlign;
 use Drift\Text\TextLayout;
 use Drift\Text\TextRole;
 use Drift\Text\TextStyle;
-use Drift\Rendering\ColorToken;
-use Drift\Rendering\MetricToken;
 use Drift\Theme\SystemTheme;
 use Drift\Theme\ThemeData;
 use Drift\Widget\BuildContext;
@@ -115,6 +121,17 @@ if (str_starts_with($caseArg, '--case=')) {
         $widget = new BoxProbe();
         $widget->seal();
         $widget->background(Color::white()); // 封存后改样式 ⇒ 必须响亮失败
+    }
+
+    if ($case === 'watchbuild') {
+        // A4：订阅写在 build 体内 ⇒ 每重建一次多订一份。运行期守卫必须响。
+        $element = (new BuildWatchWidget(new FakeStore()))->createElement();
+        $element->mount(null, smokeContext());
+    }
+
+    if ($case === 'cellunbound') {
+        // 绕过 State::cell() 直接 new ⇒ 没有 Owner ⇒ 标不了脏 ⇒ 静默。G2：现在就炸。
+        (new Cell(1))->setIfChanged(2);
     }
 
     if ($case === 'layout') {
@@ -235,6 +252,20 @@ function runCase(string $script, string $case, ?string $marker): array
 function logText(string $log): string
 {
     return is_file($log) ? (string) file_get_contents($log) : '';
+}
+
+/** 子进程用例也要挂载树 ⇒ 造一份和主进程同规格的渲染环境 */
+function smokeContext(): BuildContext
+{
+    return new BuildContext(
+        320.0,
+        240.0,
+        ThemeData::light(),
+        new DeterministicMetricsProvider(
+            DeterministicFontManager::standard()->collection(),
+            new DeterministicShaper(),
+        )
+    );
 }
 
 /** 相对亮度（WCAG 口径），用来断言"高对比度"是真高而不是标了个名 */
@@ -1300,6 +1331,154 @@ check('State · State 手里的 Widget 换成整份新的', $counter->widget() =
 // §12.3 回收纪律：卸载 ⇒ dispose
 $counterElement->unmount();
 check('State · unmount 调 dispose()（§12.3 回收纪律）', $counter->disposed);
+
+// ── ㉓ State 层：订阅生命周期 / Cell 门控 / select 切片（§11.3）──
+
+// ① SubjectBuilder：门控比的是**两次 select 输出**，不是 Store 的新旧值（§11.3.3）
+$store = new FakeStore();
+$builderRuns = 0;
+$builderArgs = [];
+$sub = SubjectBuilder::make($store)
+    ->select(static function (FakeStore $s): int { return $s->status(); })
+    ->builder(static function (mixed ...$args) use (&$builderRuns, &$builderArgs): Widget {
+        $builderRuns++;
+        $builderArgs = $args;
+
+        return new LeafProbe(1.0);
+    });
+$subElement = $sub->createElement();
+$subElement->mount(null, $context);
+check(
+    'State · initState 在首帧 build 之前 ⇒ 首帧就拿到选中的值',
+    $builderRuns === 1 && $builderArgs === [0],
+    'runs=' . $builderRuns . ' args=' . json_encode($builderArgs)
+);
+
+// 同值再 notify：select 输出没变 ⇒ **连脏都不标**（门控在回调里就挡掉了）
+$store->setStatus(0);
+check(
+    'State · 同值 notify 被门控挡住（两次 select 输出相等）',
+    $builderRuns === 1 && !$subElement->state()->needsBuild(),
+    'runs=' . $builderRuns
+);
+
+// 改了字段但不 notify ⇒ 订阅者收不到（重建由**通知**驱动，不是由字段变动驱动）
+$store->silentTouch(5);
+check(
+    'State · 改字段但不 notify ⇒ 订阅者收不到',
+    $builderRuns === 1 && !$subElement->state()->needsBuild(),
+    'runs=' . $builderRuns
+);
+
+// notify 且 select 输出变了 ⇒ 标脏
+$store->setStatus(6);
+check('State · notify 后 select 输出变了 ⇒ 标脏', $subElement->state()->needsBuild(), '没有标脏');
+
+// 帧末 flush 的动作。★ flush 循环（走全树消费脏标记）本身属 App 层（#22）——
+// State 层只负责"标脏标对"，这里显式 rebuild 一次来证明链路是通的。
+$subElement->rebuild();
+$subChild = $subElement->childAt(0)?->widget();
+check(
+    'State · 重建后 builder 拿到 select 的新值（不是 null、不是 Store）',
+    $builderRuns === 2 && $builderArgs === [6] && $subChild instanceof LeafProbe,
+    'runs=' . $builderRuns . ' args=' . json_encode($builderArgs)
+);
+
+// ② 卸载后退订 —— 没有"僵尸更新"，且**不依赖用户写 dispose()**
+$subElement->unmount();
+$store->setStatus(9);
+check(
+    'State · unmount 后退订（订阅袋全退，无僵尸更新）',
+    $builderRuns === 2 && !$subElement->state()->needsBuild(),
+    'runs=' . $builderRuns
+);
+
+// ③ 无 select ⇒ builder 收 0 个参数（★ 不是统一传 null）
+$plainRuns = 0;
+$plainArgs = null;
+$plain = SubjectBuilder::make($store)->builder(static function (mixed ...$args) use (&$plainRuns, &$plainArgs): Widget {
+    $plainRuns++;
+    $plainArgs = $args;
+
+    return new LeafProbe(1.0);
+});
+$plainElement = $plain->createElement();
+$plainElement->mount(null, $context);
+check(
+    'State · 无 select ⇒ builder 收 0 个参数',
+    $plainRuns === 1 && $plainArgs === [],
+    'args=' . json_encode($plainArgs)
+);
+$store->setStatus(11);
+check('State · 无 select ⇒ 任何 notify 都标脏', $plainElement->state()->needsBuild(), '没有标脏');
+$plainElement->rebuild();
+check(
+    'State · 无 select ⇒ 重建后 builder 仍收 0 个参数',
+    $plainRuns === 2 && $plainArgs === [],
+    'args=' . json_encode($plainArgs)
+);
+$plainElement->unmount();
+
+// ④ Cell：设同值不标脏（§11.3.1 / RT-4）
+$hoverElement = (new HoverWidget())->createElement();
+$hoverElement->mount(null, $context);
+$hoverState = $hoverElement->state();
+check('State · initState 只跑一次（重复挂载不重复订阅）', $hoverState->inits === 1, '实际 ' . $hoverState->inits);
+$hoverState->onRowHover(2);
+check('State · Cell 换值 ⇒ 标脏', $hoverState->needsBuild(), '没有标脏');
+$hoverElement->rebuild();
+$hoverState->onRowHover(2); // 同一行
+check('State · Cell 设同值不标脏（RT-4：=== 严格比较）', !$hoverState->needsBuild(), '同值也标了脏');
+$hoverState->onRowHover(3);
+check('State · Cell 换新值 ⇒ 再标脏', $hoverState->needsBuild(), '换值没标脏');
+$hoverElement->unmount();
+
+// ⑤ RT-3：一个订阅者抛异常，不妨碍其余订阅者收到通知
+$debugWas = Errors::isDebug();
+Errors::setDebug(false); // Recoverable 在 debug 会中止，先关掉才测得着"隔离"
+try {
+    $isoLog = $root . '/iso.log';
+    fresh($isoLog);
+    $ran = [];
+    $ownerA = new FakeStore();
+    $ownerB = new FakeStore();
+    $ownerC = new FakeStore();
+    $iso = new FakeStore();
+    $iso->subscribeFor($ownerA, static function () use (&$ran): void { $ran[] = 'a'; });
+    $iso->subscribeFor($ownerB, static function () use (&$ran): void {
+        $ran[] = 'b';
+        throw new \RuntimeException('订阅者 B 炸了');
+    });
+    $iso->subscribeFor($ownerC, static function () use (&$ran): void { $ran[] = 'c'; });
+    $iso->notifyChanged();
+    check(
+        'State · 一个订阅者抛异常，其余仍收到通知（RT-3）',
+        $ran === ['a', 'b', 'c'],
+        '实际 ' . implode(',', $ran)
+    );
+    check('State · 订阅者异常没有静默（写了 Errors 出口）', str_contains(logText($isoLog), '订阅者异常已隔离'));
+    check('State · 异常报的是 Recoverable 级', str_contains(logText($isoLog), 'RECOVERABLE'));
+    $iso->unsubscribeAllOf($ownerC);
+    $ran = [];
+    $iso->notifyChanged();
+    check('State · unsubscribeAllOf 退掉整个属主的订阅', $ran === ['a', 'b'], '实际 ' . implode(',', $ran));
+    if (is_file($isoLog)) {
+        unlink($isoLog);
+    }
+} finally {
+    Errors::setDebug($debugWas);
+}
+
+// ⑥ 两条守卫都跑在子进程里（会 exit(3)）
+fresh($log);
+[$code, $output] = runCase(__FILE__, 'watchbuild', null);
+check('State · build 期订阅 ⇒ Fatal（A4 运行期守卫）', $code === 3, '实际 ' . $code . ' / ' . $output);
+check('State · build 期订阅写了 Errors.log', str_contains(logText($log), 'initState'));
+
+fresh($log);
+[$code, $output] = runCase(__FILE__, 'cellunbound', null);
+check('State · 未绑定的 Cell ⇒ Fatal（不留下"设了没用"的值）', $code === 3, '实际 ' . $code . ' / ' . $output);
+check('State · 未绑定 Cell 写了 Errors.log', str_contains(logText($log), 'State::cell()'));
 
 fresh($log);
 if (is_file($log)) {

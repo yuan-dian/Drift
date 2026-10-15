@@ -1,0 +1,179 @@
+<?php
+declare(strict_types=1);
+
+namespace Drift\State;
+
+use Drift\Errors;
+use Drift\Widget\BuildContext;
+use Drift\Widget\State;
+use Drift\Widget\StatefulWidget;
+use Drift\Widget\Widget;
+
+/**
+ * 专职订阅控件：把 `Subject` 的一个切片变成一棵子树（§11.3.3）。
+ *
+ * ```php
+ * SubjectBuilder::make($store)
+ *     ->select(fn(UserStore $s): LoadStatus => $s->status())   // 只跟 status
+ *     ->builder(fn(LoadStatus $st): Widget => match ($st) { … })
+ * ```
+ *
+ * ★ **为什么订阅要一个专职控件**：订阅粒度 = 整个 `Subject` 时，一个 10 字段的
+ *   `Store` 有 10 个订阅者 ⇒ 任一字段变、10 个全重建。靠"每个切片自己是一个
+ *   `Subject`"绕会让 `Store` 必须暴露 N 个 `Subject`，还隐含"每次调用返回同一
+ *   实例"（不可 lint）⇒ 那是**做了个坏版本**，不是"没做"。
+ *
+ * ★ **相等门控比的是两次 `select` 输出**，不是 `Store` 的新旧值 —— 框架不存
+ *   `Subject` 快照，旧值缓存在订阅者自己身上（§11.3.3）。三条推论直接决定用法：
+ *   ① `select` 闭包**每帧都跑**，所以必须廉价（省的是子树重建，不省计算）；
+ *   ② 返回值该是"代表变化的最小值"（摘要），返回每次新建的对象/数组 ⇒ `===`
+ *      永不相等 ⇒ 退化成每帧重建；③ 闭包不许有副作用（它每帧都跑，且要被 lint
+ *      用来推导依赖）。
+ *
+ * @api
+ */
+final class SubjectBuilder extends StatefulWidget implements SubscribingWidget
+{
+    private ?Subject $source = null;
+
+    /** @var null|callable(Subject): mixed */
+    private $select = null;
+
+    /** @var null|callable(mixed): Widget */
+    private $builder = null;
+
+    private function __construct()
+    {
+        parent::__construct();
+    }
+
+    /**
+     * @param Subject $source 被订阅的 `Subject`（必填：订阅一个"没东西"没有意义）
+     *
+     * @api
+     */
+    public static function make(Subject $source): self
+    {
+        $builder = new self();
+        $builder->source = $source;
+
+        return $builder;
+    }
+
+    /**
+     * 切片：只关心 `Subject` 的这一部分（§11.3.3）。
+     *
+     * @param callable(Subject): mixed $f 闭包体内出现的属性集合 = 该订阅者**真正
+     *        依赖的字段集**（§16.1 编译期推导的第一步，可 lint）
+     *
+     * @api
+     */
+    public function select(callable $f): self
+    {
+        $this->mutate();
+        $this->select = $f;
+
+        return $this;
+    }
+
+    /**
+     * 由选出的值造子树。
+     *
+     * ★ 收不收形参**跟着 `select()` 走**（§11.3.3）：有 `select` ⇒ 调 `$f($v)`；
+     *   没 `select` ⇒ 调 `$f()`。**不是**统一传 `null` —— 那会凭空多出"传 null
+     *   给有类型形参"这条静默路径。
+     *
+     * @api
+     */
+    public function builder(callable $f): self
+    {
+        $this->mutate();
+        $this->builder = $f;
+
+        return $this;
+    }
+
+    /** @internal 给 `SubjectBuilderState` 读 */
+    public function source(): ?Subject
+    {
+        return $this->source;
+    }
+
+    /** @internal */
+    public function selectFn(): ?callable
+    {
+        return $this->select;
+    }
+
+    /** @internal */
+    public function builderFn(): ?callable
+    {
+        return $this->builder;
+    }
+
+    public function createState(): State
+    {
+        return new SubjectBuilderState();
+    }
+}
+
+/**
+ * @internal `SubjectBuilder` 的私有 State —— 和控件同文件，不进公共面。
+ *
+ * 订阅只在 `initState()` 里做一次（§11.3 RT-1 / A4）；`build()` 体内**不订阅**
+ * —— 否则每重建一次就多订一份，订阅数随重建次数增长。
+ */
+final class SubjectBuilderState extends State
+{
+    private bool $hasSelected = false;
+    private mixed $selected = null;
+
+    public function initState(): void
+    {
+        /** @var SubjectBuilder $widget */
+        $widget = $this->widget();
+        $source = $widget->source();
+        if ($source === null) {
+            Errors::report('SubjectBuilder 没有 source：订阅一个"没东西"没有意义');
+        }
+
+        $select = $widget->selectFn();
+
+        if ($select !== null) {
+            // 首次直接取，不进门控 —— 否则第一帧的子树拿不到值
+            $this->selected = $select($source);
+        }
+        $this->hasSelected = true;
+
+        $this->watch($source, function () use ($source, $select): void {
+            if ($select === null) {
+                // 没给 select ⇒ 整个 Subject 都是依赖，任何 notify 都重建
+                $this->markDirty();
+
+                return;
+            }
+
+            $value = $select($source);
+            if ($value === $this->selected) {
+                return; // ★ 两次 select 输出相等 ⇒ 不重建（§11.3.3 门控）
+            }
+
+            $this->markDirty();
+            $this->selected = $value;
+        });
+    }
+
+    public function build(BuildContext $ctx): Widget
+    {
+        /** @var SubjectBuilder $widget */
+        $widget = $this->widget();
+        $builder = $widget->builderFn();
+        if ($builder === null) {
+            Errors::report('SubjectBuilder 没给 builder()：订阅了却没有子树，等于一个空盒子');
+        }
+
+        return $widget->selectFn() !== null
+            ? $builder($this->selected)
+            : $builder();
+    }
+}

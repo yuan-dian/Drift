@@ -66,8 +66,22 @@ abstract class Element
         $this->context = $context;
         $this->widget->seal(); // §15.2 Seal-on-Mount
         $this->mounted = true;
+        $this->onMount();
         $this->syncBox();
         $this->rebuild();
+    }
+
+    /**
+     * @internal 子类钩子：已封存、**首次 build 之前**触发。
+     *
+     * `StatefulElement` 用它跑 `State::initState()` —— 顺序要紧：订阅必须在
+     * 第一次 `build()` 之前到位，否则首帧读不到已选中的值。
+     *
+     * ★ 做成钩子而不是让 `StatefulElement` 重写 `mount()`：挂载路径只有一份
+     *   （W1 同源），重写就等于把封存 / 造盒 / 重建的顺序抄第二遍。
+     */
+    protected function onMount(): void
+    {
     }
 
     /** 本节点的渲染盒（§13.2）；结构节点可能没有 ⇒ `null` */

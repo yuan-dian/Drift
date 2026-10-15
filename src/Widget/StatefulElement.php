@@ -51,9 +51,19 @@ final class StatefulElement extends Element
         $this->updateChildren([$state->build($this->context)]);
     }
 
+    protected function onMount(): void
+    {
+        // §11.3 RT-1 / A4：订阅只在 initState 里做，且必须在首次 build 之前
+        $this->state?->callInit();
+    }
+
     public function unmount(): void
     {
         parent::unmount();
-        $this->state?->dispose(); // §12.3 回收纪律
+        $state = $this->state;
+        if ($state !== null) {
+            $state->dispose();             // §12.3 回收纪律
+            $state->dropSubscriptions();   // §11.3 RT-1：框架侧兜底全退
+        }
     }
 }

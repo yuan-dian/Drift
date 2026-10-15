@@ -3,6 +3,11 @@ declare(strict_types=1);
 
 namespace Drift\Widget;
 
+use Drift\Errors;
+use Drift\State\Cell;
+use Drift\State\Subject;
+use Drift\State\Subscription;
+
 /**
  * `StatefulWidget` 的**纯 UI 态**（§11.5 / §12.3）。
  *
@@ -17,6 +22,15 @@ abstract class State
     private Widget $widget;
     private ?StatefulElement $element = null;
     private bool $dirty = false;
+
+    /** @var list<Subscription> 订阅袋（§11.3 RT-1） */
+    private array $bag = [];
+
+    /** @internal A4 守卫：只有 `initState()` 期间允许 `watch()` */
+    private bool $initializing = false;
+
+    /** @internal 挂载重入时不要重复订阅 */
+    private bool $initialized = false;
 
     /** @internal StatefulElement 建状态时调用一次 */
     public function attach(StatefulElement $element, Widget $widget): void
@@ -50,6 +64,101 @@ abstract class State
     {
         $change();
         $this->dirty = true;
+    }
+
+    /**
+     * 只标脏、不改值（§11.3.1）。
+     *
+     * ★ `Cell::setIfChanged()` 与 `SubjectBuilder` 的回调走这条 —— 它们已经在
+     *   自己的上下文里改完值了，不需要再裹一层空闭包。
+     *
+     * @internal
+     */
+    public function markDirty(): void
+    {
+        $this->dirty = true;
+    }
+
+    /**
+     * 挂载时调一次（§11.3 RT-1 / A4）。
+     *
+     * ★ **订阅只在这里做。** 在 `build()` 里订阅 ⇒ 每重建一次多订一份，订阅数随
+     *   重建次数增长；`watch()` 因此只在 `initializing` 期间放行，build 期
+     *   订阅 ⇒ Fatal（A4 的运行期守卫）。
+     *
+     * @api
+     */
+    public function initState(): void
+    {
+    }
+
+    /**
+     * 唯一的 `Cell` 创建入口（§11.3.1）。
+     *
+     * ★ 为什么不能 `new Cell(-1)` 直接放属性初始化器：PHP 的属性初始化器
+     *   **拿不到 `$this`**，`Cell` 便无从知道该标脏哪个 `State` —— 于是"
+     *   设了值但没人重建"。绑定必须显式发生，`cell()` 就是那一个显式点。
+     *
+     * @api
+     */
+    public function cell(mixed $initial): Cell
+    {
+        $cell = new Cell($initial);
+        $cell->bindTo($this);
+
+        return $cell;
+    }
+
+    /**
+     * 订阅一个 `Subject`，并记进订阅袋（§11.3 RT-1）。
+     *
+     * @param callable(): void $handler 只在 `initState()` 期间允许
+     *
+     * @api
+     */
+    public function watch(Subject $subject, callable $handler): Subscription
+    {
+        if (!$this->initializing) {
+            Errors::report('watch() 只能在 initState() 里调（§11.3 RT-1 / A4：build 期订阅会让订阅数随重建次数增长）');
+        }
+
+        $subscription = $subject->subscribeFor($this, $handler);
+        $this->bag[] = $subscription;
+
+        return $subscription;
+    }
+
+    /**
+     * 退掉订阅袋里的全部订阅。
+     *
+     * ★ 由 `StatefulElement::unmount()` 调，**不依赖用户记得**在 `dispose()` 里
+     *   退 —— `dispose()` 是可覆写的，"忘了 `parent::dispose()`"正是 A4 列的
+     *   失败模式。兜底放在框架侧才守得住。
+     *
+     * @internal
+     */
+    public function dropSubscriptions(): void
+    {
+        foreach ($this->bag as $subscription) {
+            $subscription->cancel();
+        }
+        $this->bag = [];
+    }
+
+    /** @internal `StatefulElement` 挂载时调；把"只准 initState 订阅"收在一处 */
+    public function callInit(): void
+    {
+        if ($this->initialized) {
+            return; // 幂等：重复挂载不重复订阅
+        }
+
+        $this->initialized = true;
+        $this->initializing = true;
+        try {
+            $this->initState();
+        } finally {
+            $this->initializing = false;
+        }
     }
 
     public function needsBuild(): bool
