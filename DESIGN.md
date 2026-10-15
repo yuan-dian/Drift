@@ -1121,6 +1121,23 @@ $this->setState(fn() => $this->text = (string) $v);
 
 **★ 与 `builder()` 签名的兼容**：`select` 之后 `builder` 要收参数 ⇒ **无 `select` 时 Element 调 `$f()`、有 `select` 时调 `$f($v)`**（★ **不是**统一传 `null` —— 统一传 `null` 会凭空多出"传 null 给有类型形参"这条静默路径，见探针 G 读数 ③′/④）。
 
+**★ `SubjectBuilder` 的类形状**（2026-10-15 补 —— §23.2 O-05 复核发现 ⑥ 的挂账项：这个 `@api` 契约原语此前**只有用法、没有成员表**。已按 `src/State/SubjectBuilder.php` 核验）：
+
+| 成员 | 签名 | 说明 | 标注 |
+|------|------|------|------|
+| `make` | `static make(Subject $source): self` | **`source` 必填** —— 订阅一个“没东西”没有意义；缺了 ⇒ `Errors::report`（响亮失败，不建一个空订阅者） | `@api` |
+| `select` | `select(callable(Subject): mixed $f): self` | 切片函数；**可省**（省了 ⇒ 整个 `Subject` 都是依赖，任何通知都重建） | `@api` |
+| `builder` | `builder(callable(mixed): Widget $f): self` | 由选出的值造子树；**必填**（没给 ⇒ `Errors::report`：订了却没有子树 = 一个空盒子） | `@api` |
+| `source()` / `selectFn()` / `builderFn()` | `(): ?Subject` / `(): ?callable` / `(): ?callable` | 给 `SubjectBuilderState` 读的三个口子；`null` = 没给 | `@internal` |
+| `createState()` | `(): State` | 返回同文件的 `SubjectBuilderState`（`@internal`，不进公共面） | `@api` |
+
+★ **三条调用约定**（住在 Element/State 侧，不是控件自己的方法）：
+1. **订阅只在 `initState()` 做一次**（§11.3 RT-1 / A4）；`build()` 体内**不订阅** —— 否则每重建一次多订一份。
+2. **首次取值不过门控**：`initState()` 里直接调一次 `select` 把旧值槽填上 —— 否则第一帧的子树拿不到值。
+3. **门控比的是两次 `select` 输出**（不是 `Store` 新旧值）：相等 ⇒ `markDirty()` 不调、`builder` 不被调用。
+
+★ **与 §A.2.11 `StatusBar` 的分工**：`SubjectBuilder` 是**框架原语**（切片 + 门控 + 订阅袋 + dispose 全退都是现成的）；`StatusBar` 是**手写同等机制**的应用私有控件 —— 只在“订阅之外还要做点别的”时才自己写。★ 反过来也成立：需要订阅时**先问能不能用 `SubjectBuilder`**，别默认手写（§20 纪律 4：契约能力必须在示例里出现过）。
+
 ★ **类型系统强制不了这件事**（**2026-10-14 实测**，见 §23.2 O-05 复核发现 / `probes/RESULTS.md §7`）：PHP 的 `callable` 是**不透明类型**（语言层面无法表达"1 元闭包"），用户态泛型也不可用 ⇒ `SelectedBuilder<T>` 的 `<T>` 只能是文档；`tpc -m bin --dry` 对 docblock 里的 `callable(T): string` 与**故意元数不符**的实参**零诊断**。⇒ 想要机器守卫只能用 **lint**（§16.6.3 的"闭包签名"本就在"编译期可见"清单里）。
 
 ★ **诚实边界**：五个错误方向里**只有一个静默** —— "有 `select` 但 `builder` 忘了接形参"。而它**写作时自纠**（不接形参就没有 `$st` 可 `match`）、**运行时立刻可见**（渲染成静态内容；选择器仍在门控、不崩）⇒ 属"**立刻可见的错误**"，不是 G2 要消灭的"静默错误"。⇒ **不加守卫**（§23.2 O-05：推荐**不做**）。
@@ -1403,6 +1420,25 @@ private function pageFor(string $name): ?Widget
    **页面名是开放字符串域**（将来加页、插件化路由都会加新名字），未命中是**预期内**的合法结果 ⇒ `default` 是"显式出口"。
    而 **`LoadStatus` 是封闭枚举域**，新增 case 是"作者改了枚举忘了改这里" ⇒ 必须 `UnhandledMatchError`。
    ⇒ **统一判据**：**开放域（string / int 键）允许 `default`；封闭域（enum）禁止 `default`。**
+
+   ★ **框架内的封闭域 enum 清单**（“禁 `default`”这条判据的落点 —— 没有清单，判据不可逐条核验；2026-10-15 按 `src/` 核验，这 11 个全是 `@api`）：
+
+   | enum | 住哪 | 取值 | 谁消费 |
+   |------|------|------|--------|
+   | `TextAlign` | `Drift\Text` | `Start` / `Center` / `End` / `Justify` | `TextStyle::withAlign()` |
+   | `FontSlant` | `Drift\Text` | `Normal` / `Italic` / `Oblique` | 度量 / face 选择 |
+   | `FontWeight` | `Drift\Text` | `Thin`(100) / `ExtraLight`(200) / `Light`(300) / `Regular`(400) / `Medium`(500) / `SemiBold`(600) / `Bold`(700) / `ExtraBold`(800) / `Black`(900) | `TextStyle::withWeight()` |
+   | `TextRole` | `Drift\Text` | `Unset`(0) / `Title`(1) / `Heading`(2) / `Body`(3) / `Caption`(4) / `Error`(5) | `Text` 的角色糖（`->title()` 等） |
+   | `FlexAlign` | `Drift\Layout` | `Start` / `Center` / `End` / `Stretch` | `RenderFlex` 交叉轴对齐 |
+   | `Overflow` | `Drift\Layout` | `Clip` / `Scroll` / `Wrap` / `Report` | `RenderFlex` 溢出策略 |
+   | `PaintStyle` | `Drift\Rendering` | `Fill` / `Stroke` | `Canvas` 画笔 |
+   | `ButtonVariant` | `Drift\Widget` | `Default` / `Primary` / `Danger` | `Button` 变体 |
+   | `ColorToken` | `Drift\Rendering` | `Pane` / `Chrome` / `Text` / `Muted` / `Border` / `Accent` / `Danger` / `Hover` / `Pressed` | 主题 token 键（§11.5） |
+   | `MetricToken` | `Drift\Rendering` | `Padding` / `Gap` / `Radius` / `BorderWidth` / `FontSize` / `FontSizeSmall` / `FontSizeTitle` / `FontSizeHeading` / `RowHeight` | 主题 token 键（§11.5） |
+   | `SystemTheme` | `Drift\Theme` | `Light` / `Dark` | §9.2 系统主题 |
+
+   ★ **`UnhandledMatchError` 是 PHP 内置类，不是 Drift 的**（2026-10-15 在 8.5.11 实测：`match` 无匹配臂且无 `default` ⇒ 抛 `\UnhandledMatchError`）⇒ “封闭域禁 `default`”这条纪律**不需要框架写一行代码**就成立；Drift 要做的只是**别在封闭域上写 `default`**。★ 因此 `UnhandledMatchError` **不会**出现在 §4.2 目录表里 —— 它不是框架类型。
+   ★ **`TextRole::Unset` 是 §15.2 哨兵三档定则“枚举语义 ⇒ 加显式 enum case”的落点**：未设置不是 `null`、不是 `-1`，是一个**必须被 `match` 处理掉**的合法 case。
 
    ★ **两个规模档，不是两套语义**：小应用直接在 `Root` 里 `match`（零分配、零新概念）；需要 **devtools 列举 / 单测 / 动态装配**时才升级为 `RouteTable`（表是数据，值是页面工厂闭包）。二者产出的是同一件事 —— "名字 → 页面 Widget"，`match` 只是它的最简形态。§12.2 用的是后者。
 
