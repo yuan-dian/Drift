@@ -328,8 +328,8 @@ private function pageFor(string $name): ?Widget
 | 目录 | 命名空间 | 文件 | 状态（2026-10-15 按 `src/` 核验） |
 |------|---------|------|------|
 | `src/App/` | `Drift\App` | ✅ `Application.php` · `Frame.php`（+ 1 个 `@internal` 实现文件 `FocusManager.php` —— 输入路由最小集，M3；§9.1 的完整链在 M4 的 `EventLoop`）；⏳ `EventLoop.php` · `FrameClock.php` · `TaskHost.php` · `ThreadPoolTaskHost.php` · `SyncTaskHost.php` · `WindowStateStore.php` · **`Job.php`** | **缺 7**（M4/M5） |
-| `src/Platform/` | `Drift\Platform` | ✅ 9/9：`Platform` · `WindowHost` · `SurfaceProvider` · `InputSource` · `TimerHost` · `Screen` · `Clipboard` · `Dialog` · `Tray`（★ 2026-10-15 **端口层落地** —— 只有接口，零平台代码；三个壳服务在 Win32 上返回 `null`，§24.3） | ✅（M1） |
-| `src/Platform/Win32/` | `Drift\Platform\Win32` | ⏳ **一个文件都没有**：`Win32Platform` · `Win32WindowHost` · …（首个实现） | **缺 2**（M1） |
+| `src/Platform/` | `Drift\Platform` | ✅ 9/9：`Platform` · `WindowHost` · `SurfaceProvider` · `InputSource` · `TimerHost` · `Screen` · `Clipboard` · `Dialog` · `Tray`（★ 2026-10-15 **端口层落地**；**同日 Win32 实现跟进**，见下行 —— 三个壳服务在 Win32 上返回 `null`，§24.3） | ✅（M1） |
+| `src/Platform/Win32/` | `Drift\Platform\Win32` | ✅ 7/7：`Win32Platform` · `Win32WindowHost` · `Win32Screen` · `Win32SurfaceProvider` · `Win32InputSource` · `Win32TimerHost` · `Win32RasterSurface`（★ 2026-10-15 **首个平台实现落地**，配套 `cpp-src/drift_win32.{stub.php,cc}` 窗口桥 ⇒ §19 M1 出口判据兑现。★ `Win32RasterSurface` 是 `RenderSurface` 的**第 4 个**实现，走 `RasterCanvas` + `SetDIBitsToDevice` 位块传送（§7.3 的 M1 分期原文就是"CPU 光栅 + 位块传送"）；`SkiaCanvas` 仍 ⏳，归 M4+） | ✅（M1） |
 | `src/Geometry/` | `Drift\Geometry` | `Point` · `Size` · `Rect` · `EdgeInsets` · `Scale` · `BoxConstraints` | ✅ 6/6 |
 | `src/Rendering/` | `Drift\Rendering` | ✅ `RenderSurface` · `GpuContext` · `Canvas` · `DisplayList` · `Paint` · `Color` · `BoxStyle` · `RasterCanvas` · `RecordingCanvas`；⏳ `SkiaCanvas` | **缺 1**（M1） |
 | `src/Text/` | `Drift\Text` | `TextRole` · `FontManager` · `FontCollection` · `FontFace` · `TextShaper` · `TextLayout` · `Paragraph` · `TextMetricsProvider` · `TextStyle` · `TextInputClient` | ✅ 10/10（另有 **6 个未列入本表**的确定性实现：`DeterministicFontManager` · `DeterministicFontCollection` · `DeterministicShaper` · `DeterministicMetricsProvider` · `NotdefFontFace` · `BitmapFontFace` —— §8.2 坑 6 的“确定性参考实现”） |
@@ -342,9 +342,11 @@ private function pageFor(string $name): ?Widget
 | `src/Commands/` | `Drift\Commands` | `CommandRouter` · `CommandHandler` · `CommandArg` | ✅ 3/3 |
 | `src/Theme/` | `Drift\Theme` | `ThemeData` · `ThemeScope` · **`SystemTheme`** | ✅ 3/3（★ 删掉孤儿名 `Theme`，见 §24.1 #26） |
 | `src/Routing/` | `Drift\Routing` | `RouteTable` · `PageHost` · **`NoPage`**（`PageHost` 有一个实现文件 `PageHostState.php`） | ✅ 3/3 + 1 个实现文件（★ 删掉 `Page`，见 §24.1 #25；★ **`Offstage` 住 `Drift\Widget`** —— 原表把它挂在本行并标 ✅ 4/4，是 §24.1 #37 的唯一"标 ✅ 却无文件"） |
-| `src/Errors.php` | `Drift\Errors` | 错误出口 | ✅ |
+| `src/Errors.php` | `Drift\Errors` | 错误出口（★ 2026-10-15 补 `@api` —— §1.2 的中止序列第 ② 步**逐字要求**组合根调 `installFatalBox()`，而 `apps` 只许碰 `@api`，§4.3 末行） | ✅ |
 
-★ **本表不穷尽，它回答"这一层该有什么"**：`src/` 实有 **120 个 PHP 文件**（其中 113 个含 `@api`），本表点名 **92 个**（**67 个有文件 / 25 个 0 文件**，2026-10-15 按"名字 → 所属目录同名 `.php`"清点，**零矛盾** —— 修掉误挂在 `Drift\Routing` 的 `Offstage`（§24.1 #37）之后才成立；此前那句"零矛盾"本身是**假陈述**）；**53 个已实现文件未列入本表**：6 个封闭域 enum · 11 个控件 · 6 个 Element 实现 · `Layout` 侧 10 个 `Render*` 族成员 + `Overflow`/`FlexAlign` · `Text` 侧 14 个（含 §8.2 坑 6 的 6 个确定性参考实现）· `ButtonVariant`/`RenderBoxWidget` · `TextField` 的 2 个 `@internal` 实现（`TextFieldBox`/`TextFieldState`）· `App\FocusManager`（输入路由最小集，`@internal`）· `Errors.php`（★ 分类之和与总数差 2，是上一轮遗留的口径问题，待 `drift-doctor` 按 `src/` 自动清点取代手工分类）。（120 = 67 点名有文件 + 53 未点名，2026-10-15 同口径清点；★ 上一轮这里写的 "52 个 … + Application/Frame" 两个数都错 —— `Application`/`Frame` 是**已点名**的，而族成员与 `Text` 目录的实现被漏数了）★ 漏登记的代价见 §24.1 #32/#33（`TextField` 全文 29 处引用却不在表里）；**穷尽清单归 `drift-doctor`（O-10）自动扫 `src/`**，本表是它的临时输入。
+★ **`cpp-src/` 不在 `src/` 内，不计入下面的清点**（2026-10-15 首次出现）：C ABI 桥目录。`<name>.stub.php` 是给 tpc 看的 **ABI 声明**（函数体全空），`<name>.cc` 是实现；两者**成对、同名**。今天只有一对：`drift_win32.stub.php` + `drift_win32.cc`（建窗 / 消息泵 / 位块传送 / 定时器，约 600 行）。三条纪律：① **桥不建控件、不做布局、不画任何东西**（§5.1 四条边界）；② `cpp-src/*.h` 绝不写 `using namespace php;`（§2.4 纪律 3）；③ **一帧只跨一次边界**（`drift_win32_present()` 贴整帧像素），不是 GUI 仓的"每条绘制命令过一次桥" —— 那是 2108 行的桥 vs 今天 600 行的差别。
+
+★ **本表不穷尽，它回答"这一层该有什么"**：`src/` 实有 **127 个 PHP 文件**（其中 115 个含 `@api`），本表点名 **97 个**（**74 个有文件 / 23 个 0 文件**，2026-10-15 按"名字 → 所属目录同名 `.php`"清点，**零矛盾** —— 修掉误挂在 `Drift\Routing` 的 `Offstage`（§24.1 #37）之后才成立；此前那句"零矛盾"本身是**假陈述**）；**53 个已实现文件未列入本表**：6 个封闭域 enum · 11 个控件 · 6 个 Element 实现 · `Layout` 侧 10 个 `Render*` 族成员 + `Overflow`/`FlexAlign` · `Text` 侧 14 个（含 §8.2 坑 6 的 6 个确定性参考实现）· `ButtonVariant`/`RenderBoxWidget` · `TextField` 的 2 个 `@internal` 实现（`TextFieldBox`/`TextFieldState`）· `App\FocusManager`（输入路由最小集，`@internal`）· `Errors.php`（★ 分类之和与总数差 2，是上一轮遗留的口径问题，待 `drift-doctor` 按 `src/` 自动清点取代手工分类）。（127 = 74 点名有文件 + 53 未点名，2026-10-15 同口径清点；★ 上一轮这里写的 "52 个 … + Application/Frame" 两个数都错 —— `Application`/`Frame` 是**已点名**的，而族成员与 `Text` 目录的实现被漏数了）★ 漏登记的代价见 §24.1 #32/#33（`TextField` 全文 29 处引用却不在表里）；**穷尽清单归 `drift-doctor`（O-10）自动扫 `src/`**，本表是它的临时输入。
 
 ### 4.3 依赖规则（lint 强制，违反即报错）
 
@@ -480,10 +482,26 @@ final class Bootstrap
 
         // ★ 循环归平台（§5.2 裁决 1）：`Application` **没有** run()，只提供
         //   `attach($surface, $constraints)` 与 `frame($timestampMs, $constraints)`。
-        $app->attach($platform->surface($platform->window()->createWindow(...)),
-                     $platform->screen()->viewport());
+        //   ★ `surface()` 返回 `?SurfaceProvider`（"不支持"在类型层表达，纪律 2），
+        //     而 `attach()` 要的是 `RenderSurface` ⇒ **必须收窄一次**。
+        $handle = $platform->window()->createWindow('Users', 900, 640);
+        $platform->window()->show($handle);            // ★ 不 show 就永远看不到画面
+        $provider = $platform->surface($handle);
+        if ($provider === null) {
+            \Drift\Errors::report('平台没给出渲染表面');   // Fatal ⇒ 不返回
+            return;
+        }
+        $screen  = $platform->screen();
+        $surface = $provider->surface();
+        // ★ 首帧前定尺寸：`attach()` 内部就会跑一帧，尺寸为 0 那一帧会被丢弃。
+        $surface->resize(
+            (int) round(900.0 * $screen->scale()),
+            (int) round(640.0 * $screen->scale()),
+            $screen->scale(),
+        );
+        $app->attach($surface, $screen->viewport());
         while ($platform->pump()) {
-            $app->frame($platform->now(), $platform->screen()->viewport());
+            $app->frame($platform->now(), $screen->viewport());
         }
         // ★ 窗口状态读回 / 写回（`WindowStateStore`）归 M5（§19）：启动一次、退出一次同步 IO。
     }
@@ -1990,7 +2008,9 @@ abstract class BoxWidget extends Widget
 | **业务引用 `@internal`** | 无（平铺 namespace 无从判定） | **lint `internal-leak`**（error + 可显式豁免） |
 | **`sources` 与 `composer autoload` 不一致** | 无 | **lint `scan-autoload-drift`**（SDK 模型独有） |
 
-### 16.2 六件套（全部 PHP 单语言、单一入口）
+### 16.2 工具集（全部 PHP 单语言、单一入口）
+
+> ★ 旧称"**六件套**"（§0 一页结论沿用至今）；**实际件数以本表为准 —— 今天 8 行**。名称与行数脱节是历史遗留，不改 §0 是因为那个词已经被全文多处引用（改名是纯机械劳动，等 `drift-doctor` 出清单时一并收口）。
 
 | 工具 | 职责 | 关键性质 |
 |------|------|---------|
@@ -2001,6 +2021,7 @@ abstract class BoxWidget extends Widget
 | `golden` | `DisplayList` 回放比对 + 几何对账 | G3 的验收形态；★ **必须绑定测试字体**（§14.2） |
 | **`drift-doctor`** | 环境自检：`PHPRC` 指向的 ini / `extension_dir` 是否绝对路径 / `mbstring` 可加载 / Skia include+lib 位置 / `icudtl.dat` 可定位 / `cl.exe` 在 PATH / `c++20` 支持 / 系统字体族可枚举。**输出"哪一项不满足 + 症状会是什么"** | §16.5 的六个陷阱**全都是"环境配置错 ⇒ 报错指向别处"**（缺 `mbstring` 报 `Failed to startup module`、CRT 不匹配报 `LNK2038`、缺 `icudtl.dat` 直接 abort、字体初始化失败报 `0xC0000005`）⇒ 值得一个自检入口。**★ 2026-10-14 裁决**（原 §23 O-10） |
 | **`drift-codegen`** | 把 `src/` + 各 `apps/<app>/src` 交给 **tpc 翻译**一遍（`--dry`，只生成 C++，不编译）⇒ `php -l` 与 lint 都放过的 AOT 专属缺陷在这一层现形 | **★ 2026-10-15 裁决（原 §23 O-14 方案 A）**：T1 档常驻门（实测数秒）。① **必须用源码树 `bin/tpc.php`** —— 修复只在源码树，发行版 `tpc.exe` 不含（拿它跑只会得到已修好的假警报）；② `--dry` **也仍校验工具链** ⇒ 用 `cmd.exe` 垫的假 `cl.exe`/`link.exe`（`--compiler` 直指它，比改 `PATH` 干净）；③ `PHPRC` 指向**私有 ini 副本**（`extension_dir` 改成绝对路径 —— 发行版 ini 里是相对 `./ext/`，跟着 cwd 漂）；④ 每次**先删 `build/`** 再跑 —— 留缓存的话第二遍全是 `[cached]`，"每个文件都翻译过"这条断言就成了空话，**门不能信缓存**；⑤ 七条断言：退出码 / `Dry run completed` / 无 `skip:`·`unsupported syntax` / `convert:` 集合 ↔ 自枚举的源文件集合（双向）/ `prepare completed` 计数相符 / `backend` 行里是我们传的编译器 / 产物清单行数相符。**退出码 0=通过 · 1=未通过 · 2=门没跑成**（"没跑"与"通过"绝不能同码，G2） |
+| **`drift-build`** | **真机构建**：调 `cl.exe` / `link.exe` 出一个能双击运行的 exe（`php tools/drift-build.php [应用名]`，默认 `hello`） | **★ 2026-10-15 新增（P0-3）**：把"**Windows 上跑 tpc 的四个坑**"固化成工具 —— ① `PHPRC` 指向**私有 ini 副本**（`tpc.exe` **不加载**同目录的 `php.ini`，而 `php.exe` 会 ⇒ 缺 `mbstring` 直接 Fatal）；② 私有 ini 的 `extension_dir` 改**绝对路径**（发行版写的是相对 `./ext/`，跟着 **cwd** 漂）；③ `PHPX_HOME`（不设 ⇒ `phpx directory not found`）；④ `INCLUDE`/`LIB`/`PATH` 三件套（`vcvars64.bat` 干的事，而 bash 里 `call` 不了它 ⇒ 直接按 MSVC/SDK 目录拼）。**判据 = 退出码 0 且 exe 存在** ⇒ 所以**构建前先删旧 exe**（否则"tpc 失败 + 上一轮产物还在"会被读成成功）。**与 `drift-codegen` 的分工**：那个 `--dry` 只到翻译层、用假 `cl`、秒级；这个**真编译**、分钟级 ⇒ **不进内环**（§16.3），只在"要出那个 exe"或"验证 AOT 专属问题"时跑。★ 它同时是 §19 M1 出口判据的**执行入口** |
 
 ### 16.3 CI 门禁顺序与开发内环
 
@@ -2432,13 +2453,13 @@ $app = new UsersApplication(new Win32Platform(), new ThreadPoolTaskHost());
 | 里程碑 | 内容 | 出口判据 | **当前状态**（2026-10-15 按 `src/` + `tools/` 核验） |
 |--------|------|---------|------|
 | **M0 骨架** | PSR-4 分层 + 契约文件 + `tools/smoke.php` + **公共面按 `@api` 标注**（决定 lint 骨架） | 冒烟全绿；依赖方向 lint 有断言；`internal-leak` 双向自检过 | ✅ **已完成** —— PSR-4 分层 / `@api` 标注（76 类型）/ `smoke.php`（315 ok）/ lint 骨架（14 条落地）全在  |
-| **M1 可显示** | Win32 Platform + RenderSurface(Skia CPU) + Canvas 接口 + 文本栈桥接 + DPI 缩放 + **`DisplayList` 录制**（决定渲染路径） | 一个窗口画出「Hello Drift」（§A.1），分数缩放下不糊 | ⏳ **部分** —— 渲染侧齐（`RenderSurface`/`Canvas`/`DisplayList`/文本栈/`RasterCanvas`）；**平台侧 0 文件**：`Drift\Platform` 9 + `Win32` 2 + `SkiaCanvas` + `cpp-src/` + `apps/*/project.yml` + `bin/<platform>/Bootstrap.php` ⇒ **出口判据未兑现**（今天只能无头跑）  |
+| **M1 可显示** | Win32 Platform + RenderSurface(Skia CPU) + Canvas 接口 + 文本栈桥接 + DPI 缩放 + **`DisplayList` 录制**（决定渲染路径） | 一个窗口画出「Hello Drift」（§A.1），分数缩放下不糊 | ✅ **出口判据已兑现**（2026-10-15）—— `apps/hello` 经 `tpc -m bin` **真机构建**出 `hello.exe`（1.5 MB），运行后窗口（640×400 客户区）画出居中的「Hello Drift」（截图核对；执行入口 `php tools/drift-build.php hello`）。<br>★ **落地路径与本文原计划有一处偏差，如实记下**：表面走 **`Win32RasterSurface`**（`RasterCanvas` 软光栅 + `SetDIBitsToDevice`），**不是** `RenderSurface(Skia CPU)`。理由：§7.3 的 M1 分期原文就写"CPU 光栅 + 位块传送"，且 `SurfaceProvider` 这层抽象存在的意义正是"**后端可换**"（换 Skia 只改 `Win32SurfaceProvider` 一处，应用侧一行不改）⇒ `SkiaCanvas` 归 M4+。<br>★ 仍未验（不阻塞 M1 判据）：分数缩放下不糊（本机 100% DPI，未跨屏试）、`SkiaCanvas`、跨模块调用性能。<br>★ 平台侧 `Drift\Platform` 9 + `Win32` 7 + `cpp-src/` 2 + `apps/hello` 4 个文件全在；渲染侧（`RenderSurface`/`Canvas`/`DisplayList`/文本栈/`RasterCanvas`）齐  |
 | **M2 三树 + 布局** | Element/State/调和 + RenderBox 两阶段布局 + 首批控件 + **fluent-first 全部落地** + **盒样式（`BoxStyle` + `BoxWidget`，§15.7）** + **焦点遍历顺序** + **光标形状（命中三方消费）** + **`SubscribingWidget` 接口** + **property hooks 进 Store** + **`Each` key 必填** | 布局 conformance 夹具全过；首批控件过 **W1–W8**；Tab 序有 conformance 夹具；`Each` 缺 key ⇒ 构建期报错 | ⏳ **大部分** —— 三树/调和/两阶段布局/12 个控件/fluent-first/`BoxStyle`+`BoxWidget`/`SubscribingWidget`/property hooks/`Each` key 全在；**`TextField` 2026-10-15 已落地**（§24.1 #32 闭环）；**`FocusNode`（焦点遍历顺序）2026-10-15 已落地** —— `FocusManager` 的 Tab 序（默认文档序 / `skipFocus` 整体跳过 / `focusOrder` 同容器稳定排序）可跑；**`Spinner` 仍 0 文件**；**`CursorShape`（命中三方消费）0 文件**；conformance 夹具属 M4 工具链，未建  |
 | **M3 数据缝/多页** | Store 三件套 + `SubjectBuilder` + **`select()`** + RouteTable/PageHost + **动作缝（`CommandRouter` + 冒泡链）** + **三态 enum** + **错误边界容器**（★ 2026-10-14 裁决：**归 M3** —— 见 §23.2 O-12）+ **AcceleratorTable** + **自绘 MenuBar/ContextMenu** + **应用内拖放** | §A.2 的完整应用可跑；局部态与跨页共享两条路径都能写；`Root` 只组合（lint 可查）；Ctrl+S 等加速键可用；§16.6.3 的 **17 条规则全部双向自检**过 | ⏳ **约一半** —— 值缝（Store 三件套 + `SubjectBuilder` + `select`）与动作缝（`CommandRouter` + 冒泡链）已通；**多页外壳（`Dock`/`AppBar`/`NavButton`）· `Widget\Menu` 四件 · 错误边界容器 · `AcceleratorTable` · `Drag` 两件 —— 6 类 11 个 0 文件**；§A.2 样板刚对齐（O-18），`apps/users` 未建  |
 | **M4 工具链 + 异步** | drift-preview / golden / conformance / drift-lint / **drift-doctor** 齐备 + **TaskHost 线程池后端** + **`notifyChanged` 线程断言** + **ThemeChanged / 深色模式** | 无头 preview + golden diff 可跑；后台 IO 不卡帧；**worker 里 notify ⇒ 响亮失败**；跟得上系统主题切换 | ⏳ **未动** —— `drift-lint` / `drift-preview` / `drift-codegen` 三件在；`golden` / `conformance` / `drift-doctor` 未建，`TaskHost` 系 **7 个类型**（含 `Job`，§24.1 #35）+ `ThreadPoolTaskHost` 0 文件  |
 | **M5 业务底座** | 虚拟化（含 §12.3 的 State 外置纪律）+ 脏矩形 + **WindowStateStore** + Windows UIA 桥接 | 长列表滚动不掉帧；子树崩溃不整树陪葬；窗口位置/尺寸跨启动保留 | ⏳ **未动** —— 虚拟化 / 脏矩形 / `WindowStateStore` / UIA 桥接全 0 文件  |
 
-★ **状态列是 §20 纪律 4 在里程碑层的落点**：出口判据写“要做”不算数，`src/` 里有没有才算。§4.2 已按同一口径加了逐类型状态列（点名 92 个：**67 有文件 / 25 个 0 文件**） —— **两处必须同步维护**（否则又会出现“文档说已落地、代码还没写”的分裂）。★ `drift-doctor`（§16.2 六件套之一，O-10 已裁“做”）正是该**自动**输出这张表的工具 ⇒ 手工列只是它的**临时输入**，别为它新造机制。
+★ **状态列是 §20 纪律 4 在里程碑层的落点**：出口判据写“要做”不算数，`src/` 里有没有才算。§4.2 已按同一口径加了逐类型状态列（点名 97 个：**74 有文件 / 23 个 0 文件**） —— **两处必须同步维护**（否则又会出现“文档说已落地、代码还没写”的分裂）。★ `drift-doctor`（§16.2 工具集之一，O-10 已裁“做”）正是该**自动**输出这张表的工具 ⇒ 手工列只是它的**临时输入**，别为它新造机制。
 
 **M1 的探针门（先验后用，任一不过即退化）**：
 
@@ -3308,7 +3329,7 @@ WPF 的 `Control.Background` / `Foreground` / `FontSize` 都是基类上的 `Dep
 | B | 只标 §4.2（本轮 #24 已做），§19 不动 | 改动小 | §19 的出口判据仍不可核验 —— **正是这次的病根** |
 
 **参考推荐：A** —— §4.2 已经在 #24 补了状态列，**两个文档说的是同一件事，就该有同一份状态**。
-★ **顺带**：§16.2 的 `drift-doctor`（六件套之一，O-10 已裁“做”）正是该**自动**输出这张表的工具 ⇒ 手工状态列只是它的**临时输入**，别为它新造机制。
+★ **顺带**：§16.2 的 `drift-doctor`（工具集之一，O-10 已裁“做”）正是该**自动**输出这张表的工具 ⇒ 手工状态列只是它的**临时输入**，别为它新造机制。
 **冲突点**：无（纯记录）。
 **落地成本**：0.1 天。
 
@@ -3457,9 +3478,17 @@ M5 ── （无裁决项；虚拟化 / 脏矩形 / `WindowStateStore` / UIA 桥
 
 | # | 位置 | 问题 | 处理 |
 |---|------|------|------|
-| 40 | **§4.3** `Platform` 行 · **§5.2** 消息泵归属 · **§A.1** 样板 | **三处互相矛盾，且都把 `Platform` 的"出口"写成了"入口"**：<br>① §4.3 的 `Platform` 行只允许 `Geometry` / `Errors`，而 §5.1 + §7.1 的签名要求 `SurfaceProvider::surface(): RenderSurface`、`Screen::systemTheme(): SystemTheme`，§9.1 的路由链图又把平台输出逐字写成 `PointerEvent / KeyEvent` ⇒ **三条指向"上层"的边被表漏掉**；<br>② §5.2 的图写 `WindowHost::pump`，§A.1 的可执行样板写 `$platform->pump()` ⇒ **同一个泵两个归属**；<br>③ §A.1 把 `$platform->surface($hwnd)`（`?SurfaceProvider`）直接当 `attach()` 的第一参（要 `RenderSurface`）⇒ **照抄编译不过**（与 §24.1 #23 同型：§A 章是"可照抄的代码"，却含 3 处不可照抄的写法）。 | ① §4.3 补三条边并**说清为什么是层放行而非按文件例外**（三条都是**输出类型**，没有更低的层能拥有；按文件放行会扩散到 `Platform\<Os>\` 每个文件）；`DependencyDirection` 的 `ALLOWED['Platform']` 同步；<br>② §5.2 改成 `Platform::pump`（**语义未变**：泵仍归平台层、仍阻塞、框架仍不自建循环）；<br>③ §A.1 与另三处组合根样板（§5.1 / §A.2.4 / §A.3.9）都含同一处错，⏳ **待 P0-3 用真机跑通的样板回填** —— 本批只登记、不写没跑过的代码（这正是本条第 ③ 点自己的判据）；<br>★ ③ 同时暴露样板缺 `show()` 调用（不显示窗口就永远看不到画面）。 |
+| 40 | **§4.3** `Platform` 行 · **§5.2** 消息泵归属 · **§A.1** 样板 | **三处互相矛盾，且都把 `Platform` 的"出口"写成了"入口"**：<br>① §4.3 的 `Platform` 行只允许 `Geometry` / `Errors`，而 §5.1 + §7.1 的签名要求 `SurfaceProvider::surface(): RenderSurface`、`Screen::systemTheme(): SystemTheme`，§9.1 的路由链图又把平台输出逐字写成 `PointerEvent / KeyEvent` ⇒ **三条指向"上层"的边被表漏掉**；<br>② §5.2 的图写 `WindowHost::pump`，§A.1 的可执行样板写 `$platform->pump()` ⇒ **同一个泵两个归属**；<br>③ §A.1 把 `$platform->surface($hwnd)`（`?SurfaceProvider`）直接当 `attach()` 的第一参（要 `RenderSurface`）⇒ **照抄编译不过**（与 §24.1 #23 同型：§A 章是"可照抄的代码"，却含 3 处不可照抄的写法）。 | ① §4.3 补三条边并**说清为什么是层放行而非按文件例外**（三条都是**输出类型**，没有更低的层能拥有；按文件放行会扩散到 `Platform\<Os>\` 每个文件）；`DependencyDirection` 的 `ALLOWED['Platform']` 同步；<br>② §5.2 改成 `Platform::pump`（**语义未变**：泵仍归平台层、仍阻塞、框架仍不自建循环）；<br>③ **✅ 2026-10-15 已回填**（P0-3 真机跑通后）—— 含同一处错的是**四处**：§A.1 / §5.1 / §A.2.4 / **§A.3.8**（★ 本条原写"§A.3.9"，**记错了** —— §A.3.9 只有"换后端一行"，含 `attach()` 的是 §A.3.8 的窗口状态样板；**同型错误第五次**，见下）。四处都换成**真机验证过的形态**：`createWindow()` → **`show($handle)`** → `surface($handle)` 收窄 `null` → `$provider->surface()` → **首帧前 `resize()`** → `attach($surface, $viewport)`。<br>★ 回填顺带补上三处原先缺的东西：① `show()` 调用；② `fatalBox` 的安装（§1.2 中止序列第 ② 步 —— 引导阶段崩溃时没有它就只剩闪退）；③ "`attach()` 内部就会跑一帧 ⇒ 尺寸为 0 那一帧被丢弃"（症状：**画面到第二次 resize 才出现，不报错**）。 |
 
 ★ **方法论（第三次同型 ⇒ 模型确实不成立）**：#23（§A.1 三处照抄不过）、#37（"标 ✅ 却无文件"）、#40（§A.1 又两处 + §4.3 漏边）**都是"文档自述与可执行事实不一致"**。⇒ 判据升级：**§A 章的每一段代码都要真的能编译/运行过**才算"可照抄"；`drift-conformance`（M4 建）落地前，§A 的代码只能靠人肉核 —— 这本身就是它该进 P0 的理由（见 §19 M2 判据依赖 M4 工具的顺序矛盾）。
+
+**#41（2026-10-15，P0-3 真机构建时撞出）**
+
+| # | 位置 | 问题 | 处理 |
+|---|------|------|------|
+| 41 | **上游 tpc codegen**（首个暴露者 `src/Text/DeterministicFontData.php`） | **类常量与同类方法同名 ⇒ 生成的 C++ 报 `error C2872: 不明确的符号`，整个应用编译不过**。根因：tpc 把类常量提升成**文件级静态变量** `__<类名>__<常量名小写>`，把方法翻译成**同名函数** ⇒ `private const LATIN` 与 `public static function latin()` 生成的两个符号都叫 `php_drift__text__deterministicfontdata__latin`；而生成的声明头末尾有 `using namespace typephp_project_hello;` ⇒ 调用点歧义。**判据（全仓可复用，已扫过 —— 只此一处）**：类常量名**小写后**与**同类任一方法名**相同即踩雷。 | ① 常量改名 `LATIN_GLYPHS` / `CJK_GLYPHS`（**语义零变化**，纯命名规避；同文件风格下 `= ButtonVariant::Default`（enum case 整体）**能过** ⇒ 禁的只是"取 `->value`"这一形态，见 §24.1 前文）；② ★ **`--dry` 门抓不到**（只生成不编译）⇒ `drift-codegen` 的覆盖面在**翻译层**止步，这类缺陷要**真编译**才现形。★ 与 §16.3 那条实测举证（codegen 抓到 lint / preview 都放过的 `Enum::Case->value`）合起来看：**三道门抓的是三批不同的东西**，不是冗余；但也说明 `drift-codegen` **不是** AOT 缺陷的完备门 —— 补法是让 `drift-build` 进 T2 档（已就位），或给 codegen 门加一步单文件 `cl /c`。<br>★ ③ 同轮还发现一处**覆盖缺口**：`drift-codegen` 的 `sources` 只有 `[../src, ../apps/<app>/src]`（单一出处 = `tools/drift-codegen.php`）⇒ **`apps/<app>/main.php` 与 `bin/<os>/Bootstrap.php` 不在门内**—— 而这两个恰恰是「入口 + 组合根」、平台相关代码最集中的文件（本轮 M1 的真机构建才第一次覆盖它们）。收口方向同上：把 `main.php` 与 `bin/<os>` 纳入 codegen 的 `sources`。 |
+
+★ **方法论（第四次同型，模型确实不成立 —— 与 §24.1 #40 同一条判据）**：#23 / #37 / #40 / #41 全是"**文档自述（或门禁自述）与可执行事实不一致**"。⇒ 判据再升级：**"门通过"只能证明门覆盖到的那一层**；每加一道门，必须同时写下它**覆盖不到什么**（§16.3 已为 codegen 记了一条，本条补第二条：**只生成不编译**）。
 
 ### 24.2 开放项总表（全部 ⏳ 集中在此）
 
@@ -3533,24 +3562,68 @@ namespace {
 ```php
 <?php
 // apps/hello/bin/win32/Bootstrap.php
+// ★ 本段**逐字等于**仓库里的 apps/hello/bin/win32/Bootstrap.php
+//   （2026-10-15 真机构建 + 运行截图核对 —— §24.1 #40 ③ 的回填）
 declare(strict_types=1);
 
 namespace App\Hello;
 
+use Drift\Errors;
+use Drift\Platform\Win32\Win32Platform;
+
 /** 组合根：全应用唯一提到平台实现的地方（§5.1） */
 final class Bootstrap
 {
+    /** 窗口客户区（**逻辑**像素）；物理像素由 `Screen::scale()` 决定（§6） */
+    private const WINDOW_WIDTH = 640;
+
+    private const WINDOW_HEIGHT = 400;
+
     public static function run(): void
     {
-        $platform = new \Drift\Platform\Win32\Win32Platform();
+        $platform = new Win32Platform();
+
+        // ★ 中止序列第 ② 步必须在**别的一切之前**装好（§1.2）：引导阶段就崩的话，
+        //   没有错误框就只剩"闪退"。★ 传的是 callable 而不是 Platform 实例 ——
+        //   `Errors` 不依赖 Platform 类型，"平台名只出现在组合根"才不被破坏（§5.1）。
+        Errors::installFatalBox(
+            static function (string $title, string $body) use ($platform): void {
+                $platform->fatalBox($title, $body);
+            }
+        );
+
+        $window = $platform->window();
+        $handle = $window->createWindow('Hello Drift', self::WINDOW_WIDTH, self::WINDOW_HEIGHT);
+        $window->show($handle);          // ★ 少了它窗口不显示 —— 画面永远看不到，且不报错
+
+        $provider = $platform->surface($handle);
+        if ($provider === null) {
+            // `Errors::report()` 是 Fatal ⇒ 走 §1.2 中止序列，不会返回。
+            // 这一行 `return` 只为让下面的 `$provider->surface()` 类型收窄成立。
+            Errors::report('Win32: 平台没给出渲染表面（窗口句柄无效）');
+
+            return;
+        }
+
+        $screen = $platform->screen();
+        $surface = $provider->surface();
+
+        // ★ 首帧之前把表面尺寸定下来：`attach()` 内部就会跑一帧（`Application::attach`），
+        //   而那帧要往表面上画 ⇒ 尺寸为 0 时那一帧会被丢弃
+        //   （症状：画面到第二次 resize 才出现，**不报错**）。
+        $surface->resize(
+            (int) round((float) self::WINDOW_WIDTH * $screen->scale()),
+            (int) round((float) self::WINDOW_HEIGHT * $screen->scale()),
+            $screen->scale(),
+        );
+
         $app = new HelloApplication();
-        // ★ 循环归平台（§5.2 裁决 1）：`Application` **没有** run()，只提供
-        //   `attach($surface, $constraints)` 与 `frame($timestampMs, $constraints)`。
-        //   表面由平台给（`platform->surface($hwnd)`），帧时钟由平台驱动。
-        $app->attach($platform->surface($platform->window()->createWindow(...)),
-                     $platform->screen()->viewport());
+        $app->attach($surface, $screen->viewport());
+
+        // ★ 循环归平台（§5.2 裁决 1）：`Application` **没有** run()。
+        //   这一行 `while` 就是"框架绝不自建循环"的全部代价。
         while ($platform->pump()) {
-            $app->frame($platform->now(), $platform->screen()->viewport());
+            $app->frame($platform->now(), $screen->viewport());
         }
     }
 }
@@ -3583,54 +3656,41 @@ final class HelloApplication extends Application
 
 ```yaml
 # apps/hello/project.yml
+# ★ 与仓库里的 apps/hello/project.yml 同构（注释从简，完整理由在那个文件里）
 name: hello
 mode: bin
 platform: win32
-optimize: 2
-job: 16
-cxx-std: c++20
-build-dir: ../../build/hello
-no-console: true
+no-console: true            # tpc 会加 /SUBSYSTEM:WINDOWS **并自动补 /ENTRY:mainCRTStartup**
+
+cxx-std: c++17              # ★ 不链 Skia ⇒ C++17 够（Skia / SkParagraph 才要 c++20）
+cxx-flags: [/utf-8, /wd4267, /FS]
+ld-flags: [/STACK:8388608]  # AOT 后 PHP 函数栈帧远大于 Zend 虚拟栈
+
+# 只列**真的用到**的（桥里每个 API 都能对上一本库）
+link-libs: [user32.lib, gdi32.lib, advapi32.lib]
 
 sources:
-  - main.php
-  - src
-  - ../../src
-  - ../../cpp-src
-  - path: bin/win32
-    if: PHP_OS_FAMILY == "Windows"
+  - .                       # 本应用：main.php + src/ + bin/win32/
+  - ../../src               # Drift 框架（bin 模式 = 整程序 AOT）
+  - ../../cpp-src           # Win32 桥：drift_win32.stub.php + drift_win32.cc
 
-ignore:
-  - ../../src/platform/macos
-
-defines:
-  - DRIFT_HELLO_ALL_DECL=<php_hello_all_decl.h>
-
-include-paths:
-  - ../../cpp/skia/include
-link-paths:
-  - ../../cpp/skia/out/Release-x64
-link-libs:
-  - user32.lib
-  - gdi32.lib
-  - ole32.lib
-  - imm32.lib
-  - comdlg32.lib
-  - shell32.lib
-  - advapi32.lib
-cxx-flags:
-  - /utf-8
-  - /MT
-  - /DUSE_SKIA
+ignore: [build]             # 产物不能进 sources（否则生成的 .cc 被再翻译一遍）
+build-dir: build
 ```
 
 ```bash
-# 构建（★ 从仓库根调用 —— cxx-flags/ld-flags 相对 cwd，§16.5 陷阱 1）
-export PHPRC="D:/TypePHP/typephp-windows-x64"        # ★ 从第一天就设（§16.5 陷阱 4）
-cd D:/TypePHP/Drift2
-tpc apps/hello/project.yml -O2 -m bin
+# 构建（★ 从仓库根调用 —— cxx-flags/ld-flags **不过** tpc 的路径解析，相对 cwd）
+php tools/drift-build.php hello      # ★ 首选：四个工具链坑全封在里面（§16.2）
 ./hello.exe
+
+# 等价的手工形态（四个坑要自己填，任一漏了就报"看不出根因"的错）：
+#   PHPRC=<私有 ini 目录>  PHPX_HOME=<发行版>/phpx  \
+#   INCLUDE=… LIB=… PATH=… \
+#   php <typephp 源码树>/bin/tpc.php --project apps/hello/project.yml -O2 -m bin
 ```
+
+> ★ **本节代码 2026-10-15 全部真机跑通**（`php tools/drift-build.php hello` → `hello.exe` → 窗口画出「Hello Drift」，截图核对）。
+> 在此之前本节含 **5 处照抄不过**的写法（§24.1 #23 的三处 + #40 ③ 的两处）—— "§A 章是可照抄的代码"这条承诺，今天才第一次为真。
 
 ## A.2 完整应用：`users`（列表 + 搜索 + 删除 + 表单 + 异步 + 多页 + 菜单 + 快捷键）
 
@@ -3781,10 +3841,24 @@ final class Bootstrap
         // ★ 循环归平台（§5.2 裁决 1）：`Application` **没有** run()，只提供
         //   `attach($surface, $constraints)` 与 `frame($timestampMs, $constraints)`。
         //   表面由平台给，帧时钟由平台驱动 ⇒ 测试能喂任意帧序列（G3）。
-        $app->attach($platform->surface($platform->window()->createWindow(...)),
-                     $platform->screen()->viewport());
+        //   ★ `surface()` 返回 `?SurfaceProvider` ⇒ 必须收窄成 `RenderSurface`。
+        $handle = $platform->window()->createWindow('Users', 900, 640);
+        $platform->window()->show($handle);
+        $provider = $platform->surface($handle);
+        if ($provider === null) {
+            \Drift\Errors::report('平台没给出渲染表面');   // Fatal ⇒ 不返回
+            return;
+        }
+        $screen  = $platform->screen();
+        $surface = $provider->surface();
+        $surface->resize(
+            (int) round(900.0 * $screen->scale()),
+            (int) round(640.0 * $screen->scale()),
+            $screen->scale(),
+        );
+        $app->attach($surface, $screen->viewport());
         while ($platform->pump()) {
-            $app->frame($platform->now(), $platform->screen()->viewport());
+            $app->frame($platform->now(), $screen->viewport());
         }
         // ★ 窗口状态读回 / 写回（`WindowStateStore`）归 M5（§19）：启动一次、退出一次同步 IO。
     }
@@ -4652,8 +4726,16 @@ $state    = new \Drift\App\WindowStateStore(\Drift\App\Paths::userConfig('users.
 $app      = new UsersApplication(new HttpUserSource());
 
 // ★ 循环归平台（§5.2 裁决 1）—— `Application` **没有** run()：
-$app->attach($platform->surface($platform->window()->createWindow(...)),
-             $platform->screen()->viewport());
+//   ★ `surface()` 返回 `?SurfaceProvider`，`attach()` 要 `RenderSurface` ⇒ 收窄一次。
+$handle = $platform->window()->createWindow('Users', 900, 640);
+$platform->window()->show($handle);
+$provider = $platform->surface($handle);
+if ($provider === null) { \Drift\Errors::report('平台没给出渲染表面'); return; }
+$screen  = $platform->screen();
+$surface = $provider->surface();
+$surface->resize((int) round(900.0 * $screen->scale()),
+                 (int) round(640.0 * $screen->scale()), $screen->scale());
+$app->attach($surface, $screen->viewport());
 $state->restore($platform->window());          // 启动一次
 while ($platform->pump()) {
     $app->frame($platform->now(), $platform->screen()->viewport());
