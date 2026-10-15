@@ -27,7 +27,10 @@ function drift_lint_selftest(string $root, Linter $linter): bool
 
     // 每条规则的"已知错误"用例 —— 文件:严重度
     $expected = [
-        'dependency-direction' => ['src/Geometry/Bad.php:' . Diagnostic::ERROR],
+        'dependency-direction' => [
+            'src/Geometry/Bad.php:' . Diagnostic::ERROR,
+            'src/Widget/UsesTheme.php:' . Diagnostic::ERROR,
+        ],
         'internal-leak' => [
             'apps/Bad.php:' . Diagnostic::ERROR,
             'apps/Exempt.php:' . Diagnostic::WARN,

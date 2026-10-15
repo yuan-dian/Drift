@@ -42,6 +42,18 @@ final class DependencyDirection implements Rule
         'Routing'   => ['Routing', 'Widget', 'Layout', 'State', 'Text', 'Geometry', 'Rendering', 'Input', 'Errors'],
     ];
 
+    /**
+     * §4.3 的协议例外，**按文件**放行而不是放开整层。
+     *
+     * `BuildContext` 要把"解析后的主题"递给 `build()`（§3.4），它是 `Drift\Widget`
+     * 里唯一可以引用 `Drift\Theme` 的文件。★ 写成文件级是有意的：层级放行会让
+     * "别的 Widget 文件也去依赖 Theme"合法化，例外就扩散了。`src/Widget/UsesTheme.php`
+     * 这条夹具就是守这条边界的。
+     */
+    private const FILE_EXCEPTIONS = [
+        'src/Widget/BuildContext.php' => ['Theme'],
+    ];
+
     public function name(): string
     {
         return 'dependency-direction';
@@ -83,6 +95,9 @@ final class DependencyDirection implements Rule
                 }
                 if (in_array($toLayer, self::ALLOWED[$fromLayer], true)) {
                     continue;
+                }
+                if (in_array($toLayer, self::FILE_EXCEPTIONS[$file->path()] ?? [], true)) {
+                    continue; // 协议例外，且仅限登记过的那一个文件
                 }
 
                 // 一个 (文件, 目标) 只报一次 —— 同一类型在文件里出现多次不是多条问题

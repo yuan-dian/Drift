@@ -14,6 +14,7 @@ declare(strict_types=1);
  */
 
 use Drift\Dev\Smoke\BoxProbe;
+use Drift\Dev\Smoke\BuildProbe;
 use Drift\Dev\Smoke\SealProbe;
 use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
@@ -40,6 +41,7 @@ use Drift\Theme\ColorToken;
 use Drift\Theme\MetricToken;
 use Drift\Theme\SystemTheme;
 use Drift\Theme\ThemeData;
+use Drift\Widget\BuildContext;
 use Drift\Widget\Key;
 use Drift\Widget\Widget;
 
@@ -627,6 +629,38 @@ check(
 check(
     'Theme · forSystem 按系统主题选表',
     ThemeData::forSystem(SystemTheme::Dark)->isDark() && !ThemeData::forSystem(SystemTheme::Light)->isDark()
+);
+
+// ⑭ BuildContext + StatelessWidget（§3.4 / §15.6.1）
+fresh($log);
+$context = new BuildContext(320.0, 240.0, ThemeData::light());
+check('BuildContext · 只读渲染环境快照（约束宽高 + 解析后的主题）', $context->width === 320.0 && $context->height === 240.0);
+check(
+    'BuildContext · color() 与 theme() 是同一落点（不是两套取色）',
+    $context->color(ColorToken::Text)->equals($context->theme()->color(ColorToken::Text))
+);
+check(
+    'BuildContext · metric() 与 theme() 是同一落点',
+    $context->metric(MetricToken::Gap) === $context->theme()->metric(MetricToken::Gap)
+);
+check(
+    'BuildContext · 无向上查找（无 of / find / maybeOf —— §18 已否决 provider soup）',
+    !method_exists(BuildContext::class, 'of')
+        && !method_exists(BuildContext::class, 'find')
+        && !method_exists(BuildContext::class, 'maybeOf')
+);
+check(
+    'BuildContext · 无业务数据出口（不返回 Subject）',
+    !method_exists(BuildContext::class, 'store') && !method_exists(BuildContext::class, 'subject')
+);
+check(
+    'Widget · 基类上刻意没有 build()（§15.6.1：否则与 StatelessWidget 不兼容覆盖）',
+    !method_exists(Widget::class, 'build')
+);
+check('StatelessWidget · build() 拿到本次渲染环境', (new BuildProbe())->build($context)->width === 320.0);
+check(
+    'StatelessWidget · 同样的入参保证同样的输出（纯函数）',
+    (new BuildProbe())->build($context)->width === (new BuildProbe())->build($context)->width
 );
 
 fresh($log);
