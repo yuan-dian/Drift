@@ -36,7 +36,7 @@ final class ProxyElement extends StatelessElement
             return;
         }
 
-        $childBox = $this->childAt(0)?->renderObject();
+        $childBox = $this->childAt(0)?->effectiveBox();
         if ($childBox !== null && $box instanceof RenderProxyBox) {
             $box->setChild($childBox);
         }

@@ -106,6 +106,33 @@ abstract class Element
     }
 
     /**
+     * 本节点对父可见的盒：自己有就用自己的；**没有就往下找第一个有盒的后代**。
+     *
+     * ★ 为什么需要它：`StatelessWidget` 常作为"组合描述"直接 wrap 一棵渲染子树
+     *   （页面根 `DemoPage extends StatelessWidget` ⇒ build() 返回 `Column`）。
+     *   它自己没有盒，但它底下的 `Column` 有 —— 中间层对渲染树应当是**透明的**。
+     *   少了这一步，`Column[DemoPage[Column[...]]]` 会收不到子盒，画面整块消失
+     *   （且不报错：C6 只查上界，0×0 在 tight 约束下是合法的）。
+     *
+     * @internal §13.2 父管挂接时用它，不要用 `renderObject()`
+     */
+    public function effectiveBox(): ?RenderBox
+    {
+        if ($this->box !== null) {
+            return $this->box;
+        }
+
+        foreach ($this->children as $child) {
+            $found = $child->effectiveBox();
+            if ($found !== null) {
+                return $found;
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * 子树建完后把**子节点的盒**收进自己的盒（C1：父管挂接，子不自定位）。
      *
      * 基类是空操作：叶子没有子盒要收。容器覆写它 —— 从 `children` 里拉盒。

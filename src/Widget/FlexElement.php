@@ -31,7 +31,7 @@ final class FlexElement extends StatelessElement
 
         $flex->clearChildren();
         foreach ($this->children as $child) {
-            $box = $child->renderObject();
+            $box = $child->effectiveBox();
             if ($box !== null) {
                 $flex->addChild($box);
             }

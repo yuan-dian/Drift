@@ -1917,3 +1917,8 @@ fresh($log);
 if (is_file($log)) {
     unlink($log);
 }
+
+fresh($log);
+if (is_file($log)) {
+    unlink($log);
+}
