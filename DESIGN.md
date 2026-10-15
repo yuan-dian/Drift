@@ -327,7 +327,7 @@ private function pageFor(string $name): ?Widget
 
 | 目录 | 命名空间 | 文件 | 状态（2026-10-15 按 `src/` 核验） |
 |------|---------|------|------|
-| `src/App/` | `Drift\App` | ✅ `Application.php` · `Frame.php`；⏳ `EventLoop.php` · `FrameClock.php` · `TaskHost.php` · `ThreadPoolTaskHost.php` · `SyncTaskHost.php` · `WindowStateStore.php` · **`Job.php`** | **缺 7**（M4/M5） |
+| `src/App/` | `Drift\App` | ✅ `Application.php` · `Frame.php`（+ 1 个 `@internal` 实现文件 `FocusManager.php` —— 输入路由最小集，M3；§9.1 的完整链在 M4 的 `EventLoop`）；⏳ `EventLoop.php` · `FrameClock.php` · `TaskHost.php` · `ThreadPoolTaskHost.php` · `SyncTaskHost.php` · `WindowStateStore.php` · **`Job.php`** | **缺 7**（M4/M5） |
 | `src/Platform/` | `Drift\Platform` | ⏳ **一个文件都没有**：`Platform` · `WindowHost` · `SurfaceProvider` · `InputSource` · `TimerHost` · `Screen` · `Clipboard` · `Dialog` · `Tray` | **缺 9**（M1） |
 | `src/Platform/Win32/` | `Drift\Platform\Win32` | ⏳ **一个文件都没有**：`Win32Platform` · `Win32WindowHost` · …（首个实现） | **缺 2**（M1） |
 | `src/Geometry/` | `Drift\Geometry` | `Point` · `Size` · `Rect` · `EdgeInsets` · `Scale` · `BoxConstraints` | ✅ 6/6 |
@@ -337,14 +337,14 @@ private function pageFor(string $name): ?Widget
 | `src/Widget/` | `Drift\Widget` | `Widget` · **`BoxWidget`** · `StatelessWidget` · `StatefulWidget` · `Element` · `State` · `BuildContext` · `Key` · **`TextField`**；⏳ **`Spinner`** · **`Dock`** · **`AppBar`** · **`NavButton`** | ✅ 8/8 + **`TextField`** + ⏳ **4**（另有 11 个控件 + 6 个 Element 实现；★ `TextField` **2026-10-15 已落地**（§24.1 #32 闭环）—— 此前全文 29 处引用、O-16 全部论据与 §A.2.9 旗舰表单都建在这个 0 文件的控件上） |
 | `src/Widget/Drag/` | `Drift\Widget\Drag` | ⏳ **一个文件都没有**：`Draggable` · `DragTarget` | **缺 2**（M3，§12.4 / §A.3.5） |
 | `src/Widget/Menu/` | `Drift\Widget\Menu` | ⏳ **一个文件都没有**：`MenuBar` · `Menu` · `MenuItem` · `ContextMenu` | **缺 4**（M3，§9.1 裁决“菜单 = 普通 Widget，不进 Platform”） |
-| `src/Input/` | `Drift\Input` | ⏳ **一个文件都没有**：`PointerEvent` · `KeyEvent` · `KeyChord` · `GestureArena` · `FocusNode` · `SemanticsTree` · `AcceleratorTable` · `CursorShape` · `ThemeChangedEvent` | **缺 9**（M3，路由链见 §9.1） |
+| `src/Input/` | `Drift\Input` | ✅ `PointerEvent` · `KeyEvent` · `KeyChord` · `FocusNode`；⏳ `GestureArena` · `SemanticsTree` · `AcceleratorTable` · `CursorShape` · `ThemeChangedEvent` | **缺 5**（M3，路由链见 §9.1；★ 2026-10-15 **输入层最小集落地** —— 四个值对象 + 路由住 `Drift\App\FocusManager`，见 §24.1 #38） |
 | `src/State/` | `Drift\State` | `Subject` · `Subscription` · `SubjectBuilder` · `Cell` · `SubscribingWidget` | ✅ 5/5 |
 | `src/Commands/` | `Drift\Commands` | `CommandRouter` · `CommandHandler` · `CommandArg` | ✅ 3/3 |
 | `src/Theme/` | `Drift\Theme` | `ThemeData` · `ThemeScope` · **`SystemTheme`** | ✅ 3/3（★ 删掉孤儿名 `Theme`，见 §24.1 #26） |
 | `src/Routing/` | `Drift\Routing` | `RouteTable` · `PageHost` · **`NoPage`**（`PageHost` 有一个实现文件 `PageHostState.php`） | ✅ 3/3 + 1 个实现文件（★ 删掉 `Page`，见 §24.1 #25；★ **`Offstage` 住 `Drift\Widget`** —— 原表把它挂在本行并标 ✅ 4/4，是 §24.1 #37 的唯一"标 ✅ 却无文件"） |
 | `src/Errors.php` | `Drift\Errors` | 错误出口 | ✅ |
 
-★ **本表不穷尽，它回答"这一层该有什么"**：`src/` 实有 **105 个 PHP 文件**（其中 99 个含 `@api`），本表点名 **91 个**（**53 个有文件 / 38 个 0 文件**，2026-10-15 按"名字 → 所属目录同名 `.php`"清点，**零矛盾** —— 修掉误挂在 `Drift\Routing` 的 `Offstage`（§24.1 #37）之后才成立；此前那句"零矛盾"本身是**假陈述**）；**52 个已实现文件未列入本表**：6 个封闭域 enum · 11 个控件 · 6 个 Element 实现 · `Layout` 侧 10 个 `Render*` 族成员 + `Overflow`/`FlexAlign` · `Text` 侧 14 个（含 §8.2 坑 6 的 6 个确定性参考实现）· `ButtonVariant`/`RenderBoxWidget` · `TextField` 的 2 个 `@internal` 实现（`TextFieldBox`/`TextFieldState`）· `Errors.php`（★ 分类之和与总数差 2，是上一轮遗留的口径问题，待 `drift-doctor` 按 `src/` 自动清点取代手工分类）。（105 = 53 点名有文件 + 52 未点名，2026-10-15 同口径清点；★ 上一轮这里写的 "52 个 … + Application/Frame" 两个数都错 —— `Application`/`Frame` 是**已点名**的，而族成员与 `Text` 目录的实现被漏数了）★ 漏登记的代价见 §24.1 #32/#33（`TextField` 全文 29 处引用却不在表里）；**穷尽清单归 `drift-doctor`（O-10）自动扫 `src/`**，本表是它的临时输入。
+★ **本表不穷尽，它回答"这一层该有什么"**：`src/` 实有 **110 个 PHP 文件**（其中 103 个含 `@api`），本表点名 **91 个**（**57 个有文件 / 34 个 0 文件**，2026-10-15 按"名字 → 所属目录同名 `.php`"清点，**零矛盾** —— 修掉误挂在 `Drift\Routing` 的 `Offstage`（§24.1 #37）之后才成立；此前那句"零矛盾"本身是**假陈述**）；**53 个已实现文件未列入本表**：6 个封闭域 enum · 11 个控件 · 6 个 Element 实现 · `Layout` 侧 10 个 `Render*` 族成员 + `Overflow`/`FlexAlign` · `Text` 侧 14 个（含 §8.2 坑 6 的 6 个确定性参考实现）· `ButtonVariant`/`RenderBoxWidget` · `TextField` 的 2 个 `@internal` 实现（`TextFieldBox`/`TextFieldState`）· `App\FocusManager`（输入路由最小集，`@internal`）· `Errors.php`（★ 分类之和与总数差 2，是上一轮遗留的口径问题，待 `drift-doctor` 按 `src/` 自动清点取代手工分类）。（110 = 57 点名有文件 + 53 未点名，2026-10-15 同口径清点；★ 上一轮这里写的 "52 个 … + Application/Frame" 两个数都错 —— `Application`/`Frame` 是**已点名**的，而族成员与 `Text` 目录的实现被漏数了）★ 漏登记的代价见 §24.1 #32/#33（`TextField` 全文 29 处引用却不在表里）；**穷尽清单归 `drift-doctor`（O-10）自动扫 `src/`**，本表是它的临时输入。
 
 ### 4.3 依赖规则（lint 强制，违反即报错）
 
@@ -731,6 +731,14 @@ Platform 原始事件（PointerEvent / KeyEvent / ImeEvent / ScrollEvent / Theme
 | **无障碍** | `SemanticsTree` 从 RenderObject 的 `SemanticsConfiguration` 生成：角色 / 标签 / 动作 / 取值 / 状态；**树是数据** ⇒ 可序列化 ⇒ 探针可断言。Windows UIA 桥接列为 M5+ |
 
 > **P3 陷阱**：语义**不能**靠覆写 `protected` 钩子实现（子类覆写可能被去虚化 ⇒ **静默不跑**）。语义写成**字段/构造参数** —— GUI 仓的 `SemanticsBuilder` 已是这个形态。
+
+> ★ **落地现状（2026-10-15）**：链上的**最小集**已跑通 —— `Drift\Input\{KeyChord, KeyEvent, PointerEvent, FocusNode}` 四个值对象 + `Drift\App\FocusManager`（路由宿主）。它兑现了三件事：
+> ③ **焦点链**（`Tab`/`Shift+Tab` 按文档序；`skipFocus` 整棵子树剪枝；`focusOrder` 同容器稳定排序）；
+> **命中测试**（`RenderBox::hitTest` 深度优先取最深盒；越界 ⇒ `null`）；
+> **命中 → 焦点**（★ 命中的是**最深的盒**，焦点链收的是**声明可聚焦的 `Element`** —— `TextField` 是 `StatefulWidget`、自己不产盒，两者**常不是同一个节点** ⇒ 必须沿父链上溯到最近的焦点链成员，否则"点得到、却给不了焦点"且**不报错**）；
+> 以及 §9.1 让位规则 ② 的**声明面**（`->claimKeys()` / `FocusNode::claims()`）。
+> **仍未落地**：① `AcceleratorTable` · ② IME 组合期 · `GestureArena` · 语义 · 光标形状（见 §4.2 `src/Input/` 行"缺 5"）。
+> ★ **`FocusManager` 是路由宿主的第一个形态**：§4.2 把"事件路由"归 `EventLoop`（`Drift\App`，M4）；M3 先把它落成独立类，M4 的 `EventLoop` 到位后由它**吸收/扩展**（§4.2 App 行已登记为 `@internal` 实现文件）。
 
 **用法示例**（完整版见 §A.3）：
 
@@ -2415,7 +2423,7 @@ $app = new UsersApplication(new Win32Platform(), new ThreadPoolTaskHost());
 |--------|------|---------|------|
 | **M0 骨架** | PSR-4 分层 + 契约文件 + `tools/smoke.php` + **公共面按 `@api` 标注**（决定 lint 骨架） | 冒烟全绿；依赖方向 lint 有断言；`internal-leak` 双向自检过 | ✅ **已完成** —— PSR-4 分层 / `@api` 标注（76 类型）/ `smoke.php`（315 ok）/ lint 骨架（14 条落地）全在  |
 | **M1 可显示** | Win32 Platform + RenderSurface(Skia CPU) + Canvas 接口 + 文本栈桥接 + DPI 缩放 + **`DisplayList` 录制**（决定渲染路径） | 一个窗口画出「Hello Drift」（§A.1），分数缩放下不糊 | ⏳ **部分** —— 渲染侧齐（`RenderSurface`/`Canvas`/`DisplayList`/文本栈/`RasterCanvas`）；**平台侧 0 文件**：`Drift\Platform` 9 + `Win32` 2 + `SkiaCanvas` + `cpp-src/` + `apps/*/project.yml` + `bin/<platform>/Bootstrap.php` ⇒ **出口判据未兑现**（今天只能无头跑）  |
-| **M2 三树 + 布局** | Element/State/调和 + RenderBox 两阶段布局 + 首批控件 + **fluent-first 全部落地** + **盒样式（`BoxStyle` + `BoxWidget`，§15.7）** + **焦点遍历顺序** + **光标形状（命中三方消费）** + **`SubscribingWidget` 接口** + **property hooks 进 Store** + **`Each` key 必填** | 布局 conformance 夹具全过；首批控件过 **W1–W8**；Tab 序有 conformance 夹具；`Each` 缺 key ⇒ 构建期报错 | ⏳ **大部分** —— 三树/调和/两阶段布局/12 个控件/fluent-first/`BoxStyle`+`BoxWidget`/`SubscribingWidget`/property hooks/`Each` key 全在；**`TextField` 2026-10-15 已落地**（§24.1 #32 闭环）；**`Spinner` 仍 0 文件**；**`FocusNode`（焦点遍历顺序）与 `CursorShape`（命中三方消费）0 文件**；conformance 夹具属 M4 工具链，未建  |
+| **M2 三树 + 布局** | Element/State/调和 + RenderBox 两阶段布局 + 首批控件 + **fluent-first 全部落地** + **盒样式（`BoxStyle` + `BoxWidget`，§15.7）** + **焦点遍历顺序** + **光标形状（命中三方消费）** + **`SubscribingWidget` 接口** + **property hooks 进 Store** + **`Each` key 必填** | 布局 conformance 夹具全过；首批控件过 **W1–W8**；Tab 序有 conformance 夹具；`Each` 缺 key ⇒ 构建期报错 | ⏳ **大部分** —— 三树/调和/两阶段布局/12 个控件/fluent-first/`BoxStyle`+`BoxWidget`/`SubscribingWidget`/property hooks/`Each` key 全在；**`TextField` 2026-10-15 已落地**（§24.1 #32 闭环）；**`FocusNode`（焦点遍历顺序）2026-10-15 已落地** —— `FocusManager` 的 Tab 序（默认文档序 / `skipFocus` 整体跳过 / `focusOrder` 同容器稳定排序）可跑；**`Spinner` 仍 0 文件**；**`CursorShape`（命中三方消费）0 文件**；conformance 夹具属 M4 工具链，未建  |
 | **M3 数据缝/多页** | Store 三件套 + `SubjectBuilder` + **`select()`** + RouteTable/PageHost + **动作缝（`CommandRouter` + 冒泡链）** + **三态 enum** + **错误边界容器**（★ 2026-10-14 裁决：**归 M3** —— 见 §23.2 O-12）+ **AcceleratorTable** + **自绘 MenuBar/ContextMenu** + **应用内拖放** | §A.2 的完整应用可跑；局部态与跨页共享两条路径都能写；`Root` 只组合（lint 可查）；Ctrl+S 等加速键可用；§16.6.3 的 **17 条规则全部双向自检**过 | ⏳ **约一半** —— 值缝（Store 三件套 + `SubjectBuilder` + `select`）与动作缝（`CommandRouter` + 冒泡链）已通；**多页外壳（`Dock`/`AppBar`/`NavButton`）· `Widget\Menu` 四件 · 错误边界容器 · `AcceleratorTable` · `Drag` 两件 —— 6 类 11 个 0 文件**；§A.2 样板刚对齐（O-18），`apps/users` 未建  |
 | **M4 工具链 + 异步** | drift-preview / golden / conformance / drift-lint / **drift-doctor** 齐备 + **TaskHost 线程池后端** + **`notifyChanged` 线程断言** + **ThemeChanged / 深色模式** | 无头 preview + golden diff 可跑；后台 IO 不卡帧；**worker 里 notify ⇒ 响亮失败**；跟得上系统主题切换 | ⏳ **未动** —— `drift-lint` / `drift-preview` / `drift-codegen` 三件在；`golden` / `conformance` / `drift-doctor` 未建，`TaskHost` 系 **7 个类型**（含 `Job`，§24.1 #35）+ `ThreadPoolTaskHost` 0 文件  |
 | **M5 业务底座** | 虚拟化（含 §12.3 的 State 外置纪律）+ 脏矩形 + **WindowStateStore** + Windows UIA 桥接 | 长列表滚动不掉帧；子树崩溃不整树陪葬；窗口位置/尺寸跨启动保留 | ⏳ **未动** —— 虚拟化 / 脏矩形 / `WindowStateStore` / UIA 桥接全 0 文件  |
@@ -3422,6 +3430,16 @@ M5 ── （无裁决项；虚拟化 / 脏矩形 / `WindowStateStore` / UIA 桥
 | # | 位置 | 症状 | 修正 |
 |---|------|------|------|
 | 37 | **§4.2** `Drift\Routing` 行 · **§3.1 分层图** | `Offstage` 被挂在 `Drift\Routing` 并标 ✅ 4/4，而它声明在 `src/Widget/Offstage.php`（结构节点，`Drift\Widget`）—— 全表**唯一一个"标 ✅ 却没有文件"的矛盾**。同图 `Drift\Routing` 行还留着已删的孤儿 `Page`、`Drift\Theme` 行还留着已删的孤儿 `Theme` | Routing 行删 `Offstage` → ✅ 3/3 + 注明归属；分层图两行分别改成 `RouteTable · PageHost · NoPage` 与 `ThemeData · ThemeScope · SystemTheme · token`；#22 的"真实成员"加更正。★ **方法论（第二次同类 ⇒ 顺找模型问题）**：#25/#26 删孤儿名时**只改了 §4.2 表格**，没有全文扫一遍同名孤儿 —— "已删"因此再次是自述。⇒ 以后删一个名字，**必须全文 grep 该名字的所有出现形态**（表格 / 分层图 / 术语表 / 正文叙述），而不是只改被点名那一处 |
+
+★ **第十一轮追加（2026-10-15，输入层最小集落地时撞出的两个"静默"盒挂接缺陷）** —— 两条**同根**（"新盒造出来后必须重新挂接进父容器"），且都是**能力缺陷**而非文档缺陷（`php -l` / lint / 全部断言全绿时缺陷照样活得很好）：
+
+| # | 位置 | 症状 | 修正 |
+|---|------|------|------|
+| 38 | **§13.2 + C1** · `Element::settle()` | **帧末重建后父容器仍握旧盒**：脏的 `StatefulElement` 重建 ⇒ `syncBox()` 造出新盒，但 `Element::settle()` 只重建脏节点、**不重新挂接** ⇒ 祖先容器（`RenderFlex` / `RenderProxyBox`）仍指向**旧盒对象**，`layout()/paint()` 走的是重建前那棵树 ⇒ **画面纹丝不动、也不报错**。首个暴露者：`TextField`（第一个"重建后盒内容会变"的 `StatefulWidget`）—— `drift-preview --focus` 曾是**空操作**（插入符画不出来，输出与不聚焦时**逐字节相同**，md5 一致） | `Element::settle()` 末尾调 `adoptBoxes()`（**后序**：先 `visitChildren` 再自己挂）。容器覆写幂等（先 `clearChildren()` 再重挂）⇒ 每帧 O(子数) 的指针重连，相对 `layout()` 的 O(整树) 可忽略（§13.3：Render 层本就无脏边界）。smoke 断言「帧末重建后父容器换上了新盒」——去掉该行必变红 |
+| 39 | **§13.2** · `Element::applyContext()` | **换肤时容器的新盒是空的**：`applyContext()` 先 `rebuild()`（其 `adoptBoxes()` 把子盒挂进**旧盒**）、后 `syncBox()`（用**空**新盒换掉旧盒）⇒ 容器整棵子树在"换表"到"下一帧 `settle()`"之间**静默消失**（`FlexElement` 实测 `kids=2 → 0 → 2`）。**叶子控件不受影响**（自己就是盒）⇒ 此前 4 条主题用例全绿，因为**它们只测了叶子** | 把 `syncBox()` 提到 `rebuild()` **之前**（§13.2「盒按 ctx 算」⇒ 先换盒、再挂子）。smoke 补「容器的盒立即重算**且子盒已挂上**」（与叶子那条**不重复**：一个测叶子、一个测容器） |
+
+★ **方法论（第二次同类 ⇒ 顺找模型问题）**：第 38 条修完后按「同类错误重复出现 ⇒ 顺着找第二次」把**所有会改盒的路径**扫了一遍（`mount` / `update` / `applyContext` / `settle`），在 `applyContext` 找到第 39 条。**判据记下来**：任何"造新盒"的动作都必须配一次"父层重新挂接"；`adoptBoxes()` 是那条**唯一**出口，缺它即静默。
+★ **#38 的连带**（本轮同批落地）：§9.1 补"落地现状"（`FocusManager` 兑现的 ③ 焦点链 / 命中测试 / 命中→焦点**父链上溯**）；§4.2 `src/Input/` 行从「缺 9」改「缺 5」、App 行登记 `FocusManager.php`（`@internal`）；§19 M2 状态列把 `FocusNode` 改标已落地；`Widget::focusOrder()` 的 docblock **撤回**"⇒ lint 报错"——**该守卫并未落地**（`--list` 15 条里没有它），属本轮自己写下的过度宣称。
 
 ★ 附带确认：`main.php` / `tools/*.php` 这类**入口脚本**（无类型声明）不受 `namespace-mismatch` 管 —— PSR-4 管的是类文件。
 

@@ -7,7 +7,7 @@ declare(strict_types=1);
  * ```bash
  * php tools/drift-preview.php --page=tools/Preview/demo.php [--width=320] [--height=240]
  *                              [--dpr=1] [--theme=light|dark] [--out=out.svg]
- *                              [--fixture=store.php] [--ascii]
+ *                              [--fixture=store.php] [--ascii] [--focus=<n>]
  * ```
  *
  * `--page` 指向一个返回 `Widget` 的 PHP 文件（页面级预览，§12.2）。带参页面用
@@ -29,6 +29,8 @@ use Drift\Text\DeterministicShaper;
 use Drift\Theme\SystemTheme;
 use Drift\Theme\ThemeData;
 use Drift\App\Application;
+use Drift\App\FocusManager;
+use Drift\Widget\Element;
 use Drift\Widget\Widget;
 
 require __DIR__ . '/autoload.php';
@@ -120,9 +122,24 @@ $renderer = new Renderer(
     $theme,
 );
 
+// `--focus=<n>`：先把焦点给第 n 个可聚焦节点（§9.1）⇒ 编辑态插入符被画进 SVG。
+// 这是"输入层能力进示例"（§20 纪律 4）最省的一条通道：不新增页面，复用现有页。
+$focusIndex = (int) argStr($args, 'focus', '-1');
+$prepare = null;
+if ($focusIndex >= 0) {
+    $prepare = static function (Element $root) use ($focusIndex): void {
+        $focus = new FocusManager();
+        $focus->collect($root);
+        $order = $focus->order();
+        if (isset($order[$focusIndex])) {
+            $focus->focus($order[$focusIndex]);
+        }
+    };
+}
+
 $svg = $target instanceof Application
     ? $renderer->renderApp($target, $width, $height, $dpr)
-    : $renderer->render($target, $width, $height, $dpr);
+    : $renderer->render($target, $width, $height, $dpr, $prepare);
 
 $out = argStr($args, 'out', '');
 if ($out !== '') {

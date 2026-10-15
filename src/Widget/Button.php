@@ -39,6 +39,8 @@ final class Button extends BoxWidget
     public function __construct(private readonly string $label)
     {
         parent::__construct();
+        // §9.1：按钮天然可聚焦（Tab 能到、回车/空格能触发）
+        $this->markFocusable();
     }
 
     public static function make(string $label): self

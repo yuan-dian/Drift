@@ -124,4 +124,51 @@ abstract class RenderBox extends RenderObject
     }
 
     abstract public function paint(Canvas $canvas): void;
+
+    /**
+     * 命中测试（§9.1）：**从本盒出发**深度优先，返回最深的命中盒。
+     *
+     * `$x` / `$y` 是本盒的**局部**坐标（左上角为原点，逻辑单位，§6.1）。
+     *
+     * ★ 三条规则（§9.1）：
+     *   ① 越界 ⇒ `null`；
+     *   ② 子节点**逆序**问（后画的在上面，与 `paint()` 顺序相反）；
+     *   ③ 子节点都不中 ⇒ **返回自己** —— 容器吞掉事件（"禁用 ≠ 穿透"的基础）。
+     * ★ **`Offstage` 无需特判**：它跳过 layout ⇒ `size` 为 null ⇒ 这里直接 `null`。
+     * ★ **一次命中、三方消费**（事件路由 / 语义 / 光标形状）⇒ 调用方只走一次树。
+     *
+     * @api
+     */
+    public function hitTest(float $x, float $y): ?RenderBox
+    {
+        $size = $this->size;
+
+        if ($size === null) {
+            return null;
+        }
+
+        if ($x < 0.0 || $y < 0.0 || $x >= $size->width || $y >= $size->height) {
+            return null;
+        }
+
+        /** @var list<RenderObject> $children */
+        $children = [];
+        $this->visitChildren(function (RenderObject $child) use (&$children): void {
+            $children[] = $child;
+        });
+
+        foreach (array_reverse($children) as $child) {
+            if (!$child instanceof RenderBox) {
+                continue;
+            }
+
+            $hit = $child->hitTest($x - $child->offsetX(), $y - $child->offsetY());
+
+            if ($hit !== null) {
+                return $hit;
+            }
+        }
+
+        return $this;
+    }
 }

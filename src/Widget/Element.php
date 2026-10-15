@@ -188,6 +188,12 @@ abstract class Element
      *   子层 `applyContext()`（新挂的走 `mount()`），所以这里不再自己遍历。
      *   `BuildContext` 是 readonly 值对象 ⇒ `===` 比身份，重复下发直接返回。
      *
+     * ★★ **顺序要紧：先 `syncBox()` 再 `rebuild()`**。`rebuild()` 末尾的
+     *   `adoptBoxes()` 是"把子盒挂进**本节点当前的盒**"；若先 rebuild 后 syncBox，
+     *   子盒会挂进**旧盒**，紧接着新盒把旧盒整个换掉 ⇒ **新盒是空的**（容器整棵
+     *   子树静默消失，直到下一次 `settle()` 才被补回来）。§13.2 说"盒按 ctx 算"
+     *   ⇒ 必须先换盒、再挂子。
+     *
      * @internal 由父 Element 调
      */
     public function applyContext(BuildContext $context): void
@@ -198,13 +204,14 @@ abstract class Element
 
         $this->context = $context;
 
+        // 先按新 ctx 造新盒（可能为 null：纯结构节点不产盒）
+        $this->syncBox();
+
         if ($this instanceof StatefulElement) {
             $this->state()?->markDirty();
         } else {
-            $this->rebuild();
+            $this->rebuild(); // 内部 adoptBoxes() 挂的是上面刚造的**新盒**
         }
-
-        $this->syncBox(); // §13.2：更新 ⇒ 重造盒（盒是按 ctx 算的）
     }
 
     abstract public function rebuild(): void;
@@ -217,6 +224,18 @@ abstract class Element
      *   §4.3 禁 `Widget → App`，放 `Frame` 里 Offstage 够不着。
      *
      * ★ 无条件全树重建就退回"每帧重排整棵树"，§13.3 的脏边界白做。
+     *
+     * ★★ **子层重建可能换了盒 ⇒ 本节点必须重新挂接**（`adoptBoxes()`）。这是
+     *   §13.2 + C1 的必然一步，漏掉就是**静默**的：脏的 `StatefulElement` 重建
+     *   后 `syncBox()` 造出新盒，但**它的祖先容器仍握着旧盒对象** —— 于是
+     *   `layout()/paint()` 走的是重建前那棵渲染树，画面上什么都不变、也不报错。
+     *   首个暴露者：`TextField`（第一个"重建后盒内容会变"的 `StatefulWidget`）——
+     *   输入焦点/文本改了，画面纹丝不动。挂接是**后序**（先 `visitChildren` 再
+     *   自己挂），父层拿到的才是子层刚造好的新盒。
+     *
+     * ★ `adoptBoxes()` 幂等（容器先 `clearChildren()` 再重挂），所以无条件调
+     *   不会重复追加子盒；代价只是每帧一次 O(子数) 的指针重连，相对 `layout()`
+     *   的 O(整树) 可忽略（§13.3：Render 层本来就无脏边界）。
      *
      * @internal 由 `Drift\App\Frame` 调
      */
@@ -231,6 +250,9 @@ abstract class Element
         $this->visitChildren(function (Element $child): void {
             $child->settle();
         });
+
+        // 后序：子层已定盒，这里才把它们收进自己的盒（容器覆写，叶子空操作）
+        $this->adoptBoxes();
     }
 
     /**

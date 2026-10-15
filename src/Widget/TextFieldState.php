@@ -5,6 +5,8 @@ namespace Drift\Widget;
 
 use Drift\Errors;
 use Drift\Geometry\Rect;
+use Drift\Input\KeyChord;
+use Drift\Input\KeyEvent;
 use Drift\Layout\RenderTextField;
 use Drift\Text\Utf8;
 
@@ -20,9 +22,9 @@ use Drift\Text\Utf8;
  *   字符切成半个（切了之后喂给排版器会得到非法 UTF-8）。
  *
  * ★ **编辑态与焦点**：`beginEditing()` / `endEditing()` 是**渲染态开关**（§9.1：
- *   "焦点是渲染态，不放业务值"），它决定插入符画不画。今天没有输入层，所以由
- *   调用方显式驱动；M3 的 `FocusNode` 会在这两个方法上接。`FocusNode` 到位之前，
- *   本类就是"输入层最小集"的 widget 侧接口。
+ *   "焦点是渲染态，不放业务值"），它决定插入符画不画。`FocusManager`（`Drift\App`）
+ *   在焦点落到本字段时调 `beginEditing()`、走开时调 `endEditing()`；按键经
+ *   `handleKey()` 翻译成编辑动作 —— 三者合起来就是"输入层最小集"的 widget 侧接口。
  *
  * @api
  */
@@ -197,6 +199,86 @@ final class TextFieldState extends State
     public function moveCaretToEnd(): void
     {
         $this->moveCaret(strlen($this->buffer));
+    }
+
+    /**
+     * 处理一次按键（§9.1 路由链第 ③ 环落到这里）。
+     *
+     * ★ **映射规则**（把 `KeyEvent` 翻译成编辑动作）：
+     *   · `Backspace` / `Delete` ⇒ 按**码位**删前 / 删后
+     *   · `Left` / `Right` ⇒ 移到前 / 后一个**码位边界**
+     *     （多字节字符一步跨过去，不会停在半个字符里）
+     *   · `Home` / `End` ⇒ 行首 / 行尾
+     *   · 带文本的按键 ⇒ 在插入符处插入
+     *   · 其余（含加速键）⇒ **返回 false**，让上层继续找别的消费者
+     *
+     * ★ 返回 `bool` 而不是 `void`：§9.1 的路由链要能问"这一环吃掉了没有"。
+     *   返回 `false` 时**不改任何状态**（不偷偷吞键）。
+     */
+    public function handleKey(KeyEvent $event): bool
+    {
+        $chord = $event->chord;
+
+        if ($chord->is(KeyChord::backspace())) {
+            $this->deleteBackward();
+
+            return true;
+        }
+
+        if ($chord->is(KeyChord::delete())) {
+            $this->deleteForward();
+
+            return true;
+        }
+
+        if ($chord->is(KeyChord::left())) {
+            // ★ 不能写成 moveCaret($this->caret - 1) 的镜像：moveCaret 吸附到
+            //   "不大于偏移的最近边界" ⇒ 向后要自己找**下一个**边界，
+            //   否则 caret 在边界上时 +1 会吸附回原地（按了没反应）。
+            $previous = 0;
+            foreach ($this->boundaries() as $bound) {
+                if ($bound >= $this->caret) {
+                    break;
+                }
+                $previous = $bound;
+            }
+            $this->moveCaret($previous);
+
+            return true;
+        }
+
+        if ($chord->is(KeyChord::right())) {
+            $next = strlen($this->buffer);
+            foreach ($this->boundaries() as $bound) {
+                if ($bound > $this->caret) {
+                    $next = $bound;
+                    break;
+                }
+            }
+            $this->moveCaret($next);
+
+            return true;
+        }
+
+        if ($chord->is(KeyChord::home())) {
+            $this->moveCaret(0);
+
+            return true;
+        }
+
+        if ($chord->is(KeyChord::end())) {
+            $this->moveCaretToEnd();
+
+            return true;
+        }
+
+        if ($event->isText()) {
+            $this->insert($event->text);
+
+            return true;
+        }
+
+        return false;
     }
 
     /**

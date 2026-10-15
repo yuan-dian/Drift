@@ -38,10 +38,13 @@ final class Renderer
      * 渲染一帧。
      *
      * @param float $dpr 设备像素比（§6.1）：逻辑宽高按它量化成物理像素
+     * @param callable|null $prepare 挂载后、布局前调用（`Element` 已建、State 已
+     *        `initState`）—— `drift-preview --focus` 用它先把焦点给某个可聚焦节点，
+     *        于是**编辑态插入符**能被画进 SVG（§9.1 的输入层"被看见"）。
      *
      * @api
      */
-    public function render(Widget $root, float $width, float $height, float $dpr = 1.0): string
+    public function render(Widget $root, float $width, float $height, float $dpr = 1.0, ?callable $prepare = null): string
     {
         $this->surface->resize((int) round($width), (int) round($height), $dpr);
 
@@ -49,6 +52,10 @@ final class Renderer
         $element = $root->createElement();
         $element->mount(null, $context);
         $this->lastRoot = $element;
+
+        if ($prepare !== null) {
+            $prepare($element);
+        }
 
         $frame = new Frame($this->surface);
         $frame->run($element, BoxConstraints::tight(new Size($width, $height)), 0.0);

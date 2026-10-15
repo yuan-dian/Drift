@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Widget;
 
 use Drift\Errors;
+use Drift\Input\FocusNode;
 
 /**
  * 所有控件的根基类（§15.2）。
@@ -23,6 +24,12 @@ abstract class Widget
 
     /** @internal null = 无 Key ⇒ diff 身份由位置决定（§12.3） */
     private ?Key $key = null;
+
+    /** @internal null = 未声明焦点（不可聚焦 / 用文档序，§9.1） */
+    private ?FocusNode $focus = null;
+
+    /** @internal 本控件是否**天然可聚焦**（输入控件在构造器里声明，§9.1） */
+    private bool $focusable = false;
 
     /**
      * ★ 子类必须调 `parent::__construct()`。
@@ -122,5 +129,84 @@ abstract class Widget
         if ($this->sealed === 1) {
             Errors::report('Widget 已封存，禁止再修改：' . static::class);
         }
+    }
+
+    // ── 焦点声明（§9.1 / §A.3.4）──────────────────────────────────────
+    // ★ 这三个是**声明**，不是状态："现在谁聚焦"住在 Drift\App\FocusManager。
+    //   Widget 挂载后不可变（§10.1 seal），把可变焦点塞进来会立刻撞纪律。
+
+    /**
+     * 显式指定本控件在**同一父容器内**的 Tab 序（§A.3.4）。
+     *
+     * 不声明 ⇒ 用文档序（深度优先）。★ 同一容器内**混用有/无** `focusOrder`
+     * ⇒ 隐式相对顺序有歧义（§9.1 裁决为 G2 级错误）。
+     * **诚实边界**：该 lint 守卫**尚未落地**（`php tools/lint.php --list` 里没有它）
+     * —— 今天 `FocusManager` 的行为是**有 `focusOrder` 的排在无的前面**、同侧按文档序。
+     *
+     * @api
+     */
+    public function focusOrder(int $order): static
+    {
+        $this->mutate();
+        $this->focus = ($this->focus ?? FocusNode::make())->withOrder($order);
+
+        return $this;
+    }
+
+    /**
+     * 整棵子树**不进** Tab 序（§A.3.4）。
+     *
+     * 典型：`AppBar` 的工具按钮组。**必须显式** —— 不做"智能跳过"。
+     *
+     * @api
+     */
+    public function skipFocus(): static
+    {
+        $this->mutate();
+        $this->focus = ($this->focus ?? FocusNode::make())->skipped();
+
+        return $this;
+    }
+
+    /**
+     * 声明本控件**独占**的键集：命中时不让加速键抢（§9.1 让位规则 ②）。
+     *
+     * `TextField` 的编辑命令（`Ctrl+A/C/V/X/Z`）就是这么声明的。
+     *
+     * @param list<KeyChord> $chords
+     *
+     * @api
+     */
+    public function claimKeys(array $chords): static
+    {
+        $this->mutate();
+        $this->focus = ($this->focus ?? FocusNode::make())->claiming($chords);
+
+        return $this;
+    }
+
+    /** @internal 焦点链读它（`null` = 本控件没声明任何焦点属性） */
+    public function focusNode(): ?FocusNode
+    {
+        return $this->focus;
+    }
+
+    /**
+     * 输入控件在**构造器里**声明"我能收焦点"（§9.1）。
+     *
+     * 默认 false：`Text` / `Column` 这类不该进 Tab 序。声明过的控件才可能被
+     * `FocusManager` 收进焦点链。
+     *
+     * @internal
+     */
+    final protected function markFocusable(): void
+    {
+        $this->focusable = true;
+    }
+
+    /** @internal */
+    final public function isFocusable(): bool
+    {
+        return $this->focusable;
     }
 }

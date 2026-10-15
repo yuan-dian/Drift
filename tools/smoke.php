@@ -23,6 +23,7 @@ use Drift\Dev\Smoke\Commands\CommandWidget;
 use Drift\Dev\Smoke\Commands\EchoCommands;
 use Drift\Dev\Smoke\Commands\PickyCommands;
 use Drift\App\Application;
+use Drift\App\FocusManager;
 use App\Hello\HelloApplication;
 use Drift\App\Frame;
 use Drift\Dev\Smoke\Frame\QuietWidget;
@@ -53,6 +54,10 @@ use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Scale;
 use Drift\Geometry\Size;
+use Drift\Input\FocusNode;
+use Drift\Input\KeyChord;
+use Drift\Input\KeyEvent;
+use Drift\Input\PointerEvent;
 use Drift\Layout\FlexAlign;
 use Drift\Layout\Overflow;
 use Drift\Layout\RenderBox;
@@ -106,6 +111,7 @@ use Drift\Widget\Key;
 use Drift\Widget\Padding;
 use Drift\Widget\Row;
 use Drift\Widget\Spacer;
+use Drift\Widget\StatefulElement;
 use Drift\Widget\Text;
 use Drift\Widget\TextField;
 use Drift\Widget\TextFieldState;
@@ -1544,6 +1550,174 @@ check(
     'run 数 ' . (string) substr_count($formSvg, '<rect x=')
 );
 
+// ── ㉔ 输入层最小集（§9.1：命中 → 焦点 → 按键）──
+// ★ 这是让 TextField **真能被用户驱动**的那一环（§20 纪律 4：没进示例 = 没交付）。
+//   数据与声明住 Drift\Input；路由（焦点链 + 命中测试）住 Drift\App\FocusManager。
+
+check(
+    '输入层 · KeyChord 值语义（Ctrl+A ≠ Ctrl+C）',
+    KeyChord::ctrl('A')->is(KeyChord::ctrl('A')) && !KeyChord::ctrl('A')->is(KeyChord::ctrl('C')),
+);
+check('输入层 · KeyChord::f(5) ⇒ F5', KeyChord::f(5)->key === 'F5' && KeyChord::f(5)->label() === 'F5');
+check(
+    '输入层 · KeyEvent::character 保留原字符、chord 归一化',
+    KeyEvent::character('井')->text === '井' && KeyEvent::character('井')->chord->key === '井',
+);
+check('输入层 · KeyEvent::down 不带文本（编辑键 / 加速键）', !KeyEvent::down(KeyChord::tab())->isText());
+
+$fn = FocusNode::make()->withOrder(3)->claiming([KeyChord::ctrl('A')]);
+check('输入层 · FocusNode 链式声明 + hasOrder', $fn->order === 3 && $fn->hasOrder() && !$fn->skip);
+check(
+    '输入层 · FocusNode::claims 只认声明过的组合',
+    $fn->claims(KeyChord::ctrl('A')) && !$fn->claims(KeyChord::ctrl('B')),
+);
+check('输入层 · FocusNode::skipped 是子树级标记', FocusNode::make()->skipped()->skip);
+
+// Widget 侧声明 ⇒ focusNode()
+$declared = TextField::make()->focusOrder(2)->claimKeys([KeyChord::ctrl('A')]);
+check(
+    'Widget · focusOrder/claimKeys 落到 focusNode()',
+    $declared->focusNode()?->order === 2 && ($declared->focusNode()?->claims(KeyChord::ctrl('A')) ?? false),
+);
+check('Widget · 没声明任何焦点属性 ⇒ focusNode() 为 null', Text::make('x')->focusNode() === null);
+check('Widget · Text 不可聚焦（默认 false）', !Text::make('x')->isFocusable());
+check('Widget · TextField 天然可聚焦', TextField::make()->isFocusable());
+
+// 一棵可交互的树：两个字段上下排
+$inContext = smokeContext();
+$inRoot = Column::make()->spacing(8)->children([
+    TextField::make()->value('ab'),
+    TextField::make()->value('cd'),
+])->createElement();
+$inRoot->mount(null, $inContext);
+$inBox = $inRoot->effectiveBox();
+$inBox?->layout(BoxConstraints::loose(new Size(300.0, 200.0)));
+
+$fm = new FocusManager();
+$fm->collect($inRoot);
+check('输入层 · 焦点链收进 2 个字段（文档序）', count($fm->order()) === 2);
+
+$inFirst = $fm->order()[0] ?? null;
+$inSecond = $fm->order()[1] ?? null;
+$inFirstState = $inFirst instanceof StatefulElement ? $inFirst->state() : null;
+
+check('输入层 · 没焦点时 dispatchKey 不吃键', !$fm->dispatchKey(KeyEvent::character('X')));
+
+$fm->dispatchKey(KeyEvent::down(KeyChord::tab()));
+check('输入层 · Tab ⇒ 焦点落到第一个字段', $fm->focused() === $inFirst);
+check(
+    '输入层 · 焦点落下即进入编辑态（插入符出现）',
+    $inFirstState instanceof TextFieldState && $inFirstState->isEditing(),
+);
+
+$fm->dispatchKey(KeyEvent::character('X'));
+check('输入层 · 打字 ⇒ 文本真的变了', $inFirstState?->text() === 'abX');
+
+$fm->dispatchKey(KeyEvent::down(KeyChord::backspace()));
+check('输入层 · 退格 ⇒ 删掉一个字符', $inFirstState?->text() === 'ab');
+
+$fm->dispatchKey(KeyEvent::down(KeyChord::left()));
+check('输入层 · 左方向键 ⇒ 插入符左移一位', $inFirstState?->caretOffset() === 1);
+$fm->dispatchKey(KeyEvent::down(KeyChord::right()));
+check(
+    '输入层 · 右方向键 ⇒ 插入符右移一位（★ 在边界上不是原地不动）',
+    $inFirstState?->caretOffset() === 2,
+);
+$fm->dispatchKey(KeyEvent::down(KeyChord::home()));
+check('输入层 · Home ⇒ 行首', $inFirstState?->caretOffset() === 0);
+$fm->dispatchKey(KeyEvent::down(KeyChord::end()));
+check('输入层 · End ⇒ 行尾', $inFirstState?->caretOffset() === 2);
+
+$fm->dispatchKey(KeyEvent::down(KeyChord::tab()));
+check('输入层 · Tab ⇒ 焦点移到第二个字段', $fm->focused() === $inSecond);
+check('输入层 · 焦点离开 ⇒ 前一个字段退出编辑态', $inFirstState !== null && !$inFirstState->isEditing());
+
+$fm->dispatchKey(KeyEvent::down(KeyChord::tab()));
+check('输入层 · 到末尾 Tab 就停（不环绕）', $fm->focused() === $inSecond);
+$fm->dispatchKey(KeyEvent::down(KeyChord::shift('Tab')));
+check('输入层 · Shift+Tab ⇒ 回到第一个字段', $fm->focused() === $inFirst);
+
+// 命中测试 → 焦点
+check('输入层 · hitTest 越界 ⇒ null', $inBox?->hitTest(-1.0, 5.0) === null);
+check(
+    '输入层 · hitTest 落在第一个字段的盒上（最深优先）',
+    $inBox?->hitTest(10.0, 10.0) === $inFirstState?->element()?->effectiveBox(),
+);
+
+$fmHit = new FocusManager();
+$fmHit->collect($inRoot);
+$fmHit->dispatchPointer(PointerEvent::down(10.0, 10.0), $inRoot);
+check(
+    '输入层 · 点一下字段 ⇒ 它拿到焦点并进入编辑态',
+    $fmHit->focused() === $inFirst && $inFirstState !== null && $inFirstState->isEditing(),
+    sprintf(
+        'focused=first:%s null:%s｜editing=%s｜order=%d｜hit=%s',
+        $fmHit->focused() === $inFirst ? 'y' : 'n',
+        $fmHit->focused() === null ? 'y' : 'n',
+        $inFirstState?->isEditing() ? 'y' : 'n',
+        count($fmHit->order()),
+        $inBox?->hitTest(10.0, 10.0) === null ? 'null' : 'box',
+    ),
+);
+
+// ★ 帧末重建（§5.2 裁决 3）：脏 StatefulElement 造了新盒后，**父容器必须换上新盒**
+//   （§13.2 + C1 父管挂接）。漏掉这一步是**静默**的 —— 新盒确实造出来了，但祖先
+//   容器仍握着旧盒对象，`layout()/paint()` 走的是重建前那棵渲染树 ⇒ 画面纹丝不动、
+//   也不报错。首个暴露者就是 `TextField`：`--focus` 曾是**空操作**（插入符画不出来）。
+//   ⇒ 这条断言的作用是"量具双向自检"（§20 纪律 1）：`Element::settle()` 里去掉
+//   `adoptBoxes()` 它必须变红。
+$inBoxBefore = $inBox?->children()[0] ?? null;
+$inFirstState?->markDirty();          // 等价于事件中途的 setState：只标脏
+$inRoot->settle();                    // 帧末统一重建
+$inBoxNow = $inRoot->effectiveBox();
+check(
+    '输入层 · 帧末重建后父容器换上了新盒（§13.2 挂接，不是握着旧盒）',
+    $inBoxNow instanceof RenderFlex
+        && ($inBoxNow->children()[0] ?? null) === $inFirstState?->element()?->effectiveBox()
+        && ($inBoxNow->children()[0] ?? null) !== $inBoxBefore,
+    sprintf(
+        'before=%s after=%s effective=%s',
+        $inBoxBefore === null ? 'null' : $inBoxBefore::class . '#' . spl_object_id($inBoxBefore),
+        ($inBoxNow?->children()[0] ?? null) === null ? 'null' : ($inBoxNow->children()[0])::class . '#' . spl_object_id($inBoxNow->children()[0]),
+        $inFirstState?->element()?->effectiveBox() === null ? 'null' : spl_object_id($inFirstState->element()->effectiveBox()),
+    ),
+);
+
+// skipFocus / focusOrder
+$skipRoot = Column::make()->children([
+    TextField::make()->value('a'),
+    Column::make()->skipFocus()->children([TextField::make()->value('b')]),
+])->createElement();
+$skipRoot->mount(null, $inContext);
+$fmSkip = new FocusManager();
+$fmSkip->collect($skipRoot);
+check('输入层 · skipFocus 整棵子树不进 Tab 序', count($fmSkip->order()) === 1);
+
+$orderRoot = Column::make()->children([
+    TextField::make()->value('first')->focusOrder(2),
+    TextField::make()->value('second')->focusOrder(1),
+])->createElement();
+$orderRoot->mount(null, $inContext);
+$fmOrder = new FocusManager();
+$fmOrder->collect($orderRoot);
+$orderedFirst = $fmOrder->order()[0] ?? null;
+$orderedState = $orderedFirst instanceof StatefulElement ? $orderedFirst->state() : null;
+check(
+    '输入层 · focusOrder 稳定排序（1 排在 2 前面）',
+    $orderedState instanceof TextFieldState && $orderedState->text() === 'second',
+);
+
+// claims：焦点独占键（§9.1 让位规则 ②）
+$claimRoot = TextField::make()->claimKeys([KeyChord::ctrl('A')])->createElement();
+$claimRoot->mount(null, $inContext);
+$fmClaim = new FocusManager();
+$fmClaim->collect($claimRoot);
+$fmClaim->focusNext();
+check(
+    '输入层 · claimKeys ⇒ 焦点独占 Ctrl+A、不独占 Ctrl+C',
+    $fmClaim->claims(KeyChord::ctrl('A')) && !$fmClaim->claims(KeyChord::ctrl('C')),
+);
+
 // ── ⑳ 控件与结构节点混用（§A.1 的形态真的能搭起来）──
 $mixed = Column::make()->spacing(8)->paddingAll(12)->children([
     Text::make('标题')->title(),
@@ -1990,6 +2164,24 @@ check(
     'ThemeScope · 切主题 ⇒ 无状态控件的盒立即重算（不是下一帧）',
     $darkBox !== null && $darkBox !== $lightBox
         && $darkBox->boxStyle()->background !== $lightBox->boxStyle()->background
+);
+
+// ④b **容器**也要立即换盒**且子盒已挂上**（§13.2：先换盒、再挂子）。
+//    顺序反了（先 rebuild 后 syncBox）会让新盒为空 ⇒ 容器整棵子树静默消失。
+//    ★ 这条与上面那条**不重复**：上面测叶子（自己就是盒），这条测容器（盒里还要装子盒）。
+$scopedColumn = Column::make()->children([Text::make('a'), Text::make('b')]);
+$columnScope = ThemeScope::make(ThemeData::light(), $scopedColumn)->createElement();
+$columnScope->mount(null, $context);
+$columnScope->update(ThemeScope::make(ThemeData::dark(), $scopedColumn));
+$columnBox = $columnScope->childAt(0)?->renderObject();
+check(
+    'ThemeScope · 切主题 ⇒ 容器的盒立即重算**且子盒已挂上**（§13.2 顺序）',
+    $columnBox instanceof RenderFlex && count($columnBox->children()) === 2,
+    sprintf(
+        'box=%s kids=%s',
+        $columnBox === null ? 'null' : $columnBox::class,
+        $columnBox instanceof RenderFlex ? (string) count($columnBox->children()) : 'n/a',
+    ),
 );
 
 // ⑤ 端到端：同一按钮在两份表下取到不同底色（§15.7 纪律 3 只解析一次）

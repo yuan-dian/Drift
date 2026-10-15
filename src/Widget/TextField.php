@@ -25,11 +25,12 @@ namespace Drift\Widget;
  *   造、渲染态由 `TextFieldState` 持 —— 三段分工见 `TextFieldBox` 的类注释。
  *
  * ★ **今天的边界**（诚实声明，不是待办清单）：编辑缓冲、插入符几何、IME 用的
- *   `caretRect()` 都在；**没有**键盘 / 指针事件投递（那要 `FocusNode` +
- *   `KeyEvent` + 命中测试，属 M3，见 §19）。所以今天驱动编辑的是
- *   `TextFieldState` 的编辑方法（`insert()` / `deleteBackward()` / `moveCaret()`），
- *   M3 的输入层会在这几个方法上接。`->focusOrder()` / `->claimKeys()` 同理
- *   —— 依赖 `FocusNode` / `KeyChord`，到位前**不预挂**（A15）。
+ *   `caretRect()` 都在；**键盘 / 指针投递也已到位** —— `FocusManager`（`Drift\App`）
+ *   收焦点链、做命中测试，把 `KeyEvent` 转成 `TextFieldState::handleKey()`。声明面
+ *   就是基类的 `->focusOrder()` / `->skipFocus()` / `->claimKeys()`（`TextField`
+ *   天然 `isFocusable()`，构造时已 `markFocusable()`）。
+ *   **仍未到位**：IME 组合期（§9.1 路由链第 ② 环）、`AcceleratorTable`（第 ① 环）、
+ *   `CursorShape`（命中三方消费的第三项）—— 那些要平台层，属 M3 之后。
  *
  * @api
  */
@@ -43,6 +44,8 @@ final class TextField extends StatefulWidget
     public function __construct()
     {
         parent::__construct();
+        // §9.1：输入控件天然可聚焦 —— 声明后才会被 FocusManager 收进焦点链
+        $this->markFocusable();
     }
 
     /** 唯一入口 —— 必填项由链式给（`value()` 才是必填，`make()` 不吃参数，§A.2.9） */
