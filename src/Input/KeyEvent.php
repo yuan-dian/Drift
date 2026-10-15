@@ -22,7 +22,7 @@ namespace Drift\Input;
  *
  * @api
  */
-final readonly class KeyEvent
+final readonly class KeyEvent implements InputEvent
 {
     private function __construct(
         public KeyChord $chord,

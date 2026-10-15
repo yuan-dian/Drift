@@ -24,13 +24,29 @@ final class DependencyDirection implements Rule
     /**
      * §4.3 的允许集（含自身）。
      *
-     * ★ 一处对 §4.3 的补正：`Theme` 行漏列了 `Rendering`，而 §4.2 把 `Color`
-     *   放在 `Drift\Rendering`，`ThemeData` 必须产出颜色值 ⇒ 放行 Rendering。
-     *   登记为文档缺口，见本次提交说明。
+     * ★ 两处对 §4.3 的补正（都是"写全已有裁决"，不是新设计）：
+     *
+     *   ① `Theme` 行漏列了 `Rendering`，而 §4.2 把 `Color` 放在 `Drift\Rendering`，
+     *      `ThemeData` 必须产出颜色值 ⇒ 放行 Rendering。
+     *
+     *   ② `Platform` 行漏列了 `Rendering` / `Input` / `Theme` 三条，而 §5.1 的接口
+     *      签名已经要求它们 —— `Platform::surface(): ?SurfaceProvider` 的
+     *      `SurfaceProvider::surface(): RenderSurface`（§7.1）、
+     *      `InputSource::poll(): ?InputEvent`（§9.1 路由链把平台输出逐字写成
+     *      `PointerEvent / KeyEvent`）、`Screen::systemTheme(): SystemTheme`（§9.2）。
+     *
+     *      ★ 这三条与 ① 的性质不同，值得说清楚**为什么是层放行而不是按文件例外**：
+     *        它们全是**平台必须产出的输出类型**（表面 / 事件 / 系统主题），而这三样
+     *        没有任何更低的层能拥有 —— `Rendering` 要 `Text`，`Input` 要 `Geometry`，
+     *        都住在 `Platform` **上面**。按文件放行在这里不成立：每个平台的
+     *        `Win32SurfaceProvider` / `Win32InputSource` / `Win32Screen` 都要引它们，
+     *        例外会一路扩散到 `Platform\<Os>\` 的每一个文件。
+     *        ⇒ 这不是"给 Platform 开后门"，而是 §4.3 的表把 Platform 的**出口**
+     *          当成了入口来登记（表中 `Platform` 行只写了"输入侧"）。
      */
     private const ALLOWED = [
         'Geometry'  => ['Geometry', 'Errors'],
-        'Platform'  => ['Platform', 'Geometry', 'Errors'],
+        'Platform'  => ['Platform', 'Geometry', 'Errors', 'Rendering', 'Input', 'Theme'],
         'Text'      => ['Text', 'Geometry', 'Errors'],
         'Rendering' => ['Rendering', 'Geometry', 'Text', 'Errors'],
         'Input'     => ['Input', 'Geometry', 'Errors', 'Text', 'Layout'],

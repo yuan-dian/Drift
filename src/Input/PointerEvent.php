@@ -15,7 +15,7 @@ namespace Drift\Input;
  *
  * @api
  */
-final readonly class PointerEvent
+final readonly class PointerEvent implements InputEvent
 {
     private function __construct(
         public float $x,

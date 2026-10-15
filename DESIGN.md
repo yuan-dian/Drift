@@ -328,7 +328,7 @@ private function pageFor(string $name): ?Widget
 | 目录 | 命名空间 | 文件 | 状态（2026-10-15 按 `src/` 核验） |
 |------|---------|------|------|
 | `src/App/` | `Drift\App` | ✅ `Application.php` · `Frame.php`（+ 1 个 `@internal` 实现文件 `FocusManager.php` —— 输入路由最小集，M3；§9.1 的完整链在 M4 的 `EventLoop`）；⏳ `EventLoop.php` · `FrameClock.php` · `TaskHost.php` · `ThreadPoolTaskHost.php` · `SyncTaskHost.php` · `WindowStateStore.php` · **`Job.php`** | **缺 7**（M4/M5） |
-| `src/Platform/` | `Drift\Platform` | ⏳ **一个文件都没有**：`Platform` · `WindowHost` · `SurfaceProvider` · `InputSource` · `TimerHost` · `Screen` · `Clipboard` · `Dialog` · `Tray` | **缺 9**（M1） |
+| `src/Platform/` | `Drift\Platform` | ✅ 9/9：`Platform` · `WindowHost` · `SurfaceProvider` · `InputSource` · `TimerHost` · `Screen` · `Clipboard` · `Dialog` · `Tray`（★ 2026-10-15 **端口层落地** —— 只有接口，零平台代码；三个壳服务在 Win32 上返回 `null`，§24.3） | ✅（M1） |
 | `src/Platform/Win32/` | `Drift\Platform\Win32` | ⏳ **一个文件都没有**：`Win32Platform` · `Win32WindowHost` · …（首个实现） | **缺 2**（M1） |
 | `src/Geometry/` | `Drift\Geometry` | `Point` · `Size` · `Rect` · `EdgeInsets` · `Scale` · `BoxConstraints` | ✅ 6/6 |
 | `src/Rendering/` | `Drift\Rendering` | ✅ `RenderSurface` · `GpuContext` · `Canvas` · `DisplayList` · `Paint` · `Color` · `BoxStyle` · `RasterCanvas` · `RecordingCanvas`；⏳ `SkiaCanvas` | **缺 1**（M1） |
@@ -337,21 +337,21 @@ private function pageFor(string $name): ?Widget
 | `src/Widget/` | `Drift\Widget` | `Widget` · **`BoxWidget`** · `StatelessWidget` · `StatefulWidget` · `Element` · `State` · `BuildContext` · `Key` · **`TextField`**；⏳ **`Spinner`** · **`Dock`** · **`AppBar`** · **`NavButton`** | ✅ 8/8 + **`TextField`** + ⏳ **4**（另有 11 个控件 + 6 个 Element 实现；★ `TextField` **2026-10-15 已落地**（§24.1 #32 闭环）—— 此前全文 29 处引用、O-16 全部论据与 §A.2.9 旗舰表单都建在这个 0 文件的控件上） |
 | `src/Widget/Drag/` | `Drift\Widget\Drag` | ⏳ **一个文件都没有**：`Draggable` · `DragTarget` | **缺 2**（M3，§12.4 / §A.3.5） |
 | `src/Widget/Menu/` | `Drift\Widget\Menu` | ⏳ **一个文件都没有**：`MenuBar` · `Menu` · `MenuItem` · `ContextMenu` | **缺 4**（M3，§9.1 裁决“菜单 = 普通 Widget，不进 Platform”） |
-| `src/Input/` | `Drift\Input` | ✅ `PointerEvent` · `KeyEvent` · `KeyChord` · `FocusNode`；⏳ `GestureArena` · `SemanticsTree` · `AcceleratorTable` · `CursorShape` · `ThemeChangedEvent` | **缺 5**（M3，路由链见 §9.1；★ 2026-10-15 **输入层最小集落地** —— 四个值对象 + 路由住 `Drift\App\FocusManager`，见 §24.1 #38） |
+| `src/Input/` | `Drift\Input` | ✅ `PointerEvent` · `KeyEvent` · `KeyChord` · `FocusNode` · **`InputEvent`**（★ 标记接口：`Platform::input()` 队列的元素类型，让 `poll()` 有单一返回类型 —— AOT 下比联合类型安全）；⏳ `GestureArena` · `SemanticsTree` · `AcceleratorTable` · `CursorShape` · `ThemeChangedEvent` | **缺 5**（M3，路由链见 §9.1；★ 2026-10-15 **输入层最小集落地** —— 四个值对象 + 路由住 `Drift\App\FocusManager`，见 §24.1 #38） |
 | `src/State/` | `Drift\State` | `Subject` · `Subscription` · `SubjectBuilder` · `Cell` · `SubscribingWidget` | ✅ 5/5 |
 | `src/Commands/` | `Drift\Commands` | `CommandRouter` · `CommandHandler` · `CommandArg` | ✅ 3/3 |
 | `src/Theme/` | `Drift\Theme` | `ThemeData` · `ThemeScope` · **`SystemTheme`** | ✅ 3/3（★ 删掉孤儿名 `Theme`，见 §24.1 #26） |
 | `src/Routing/` | `Drift\Routing` | `RouteTable` · `PageHost` · **`NoPage`**（`PageHost` 有一个实现文件 `PageHostState.php`） | ✅ 3/3 + 1 个实现文件（★ 删掉 `Page`，见 §24.1 #25；★ **`Offstage` 住 `Drift\Widget`** —— 原表把它挂在本行并标 ✅ 4/4，是 §24.1 #37 的唯一"标 ✅ 却无文件"） |
 | `src/Errors.php` | `Drift\Errors` | 错误出口 | ✅ |
 
-★ **本表不穷尽，它回答"这一层该有什么"**：`src/` 实有 **110 个 PHP 文件**（其中 103 个含 `@api`），本表点名 **91 个**（**57 个有文件 / 34 个 0 文件**，2026-10-15 按"名字 → 所属目录同名 `.php`"清点，**零矛盾** —— 修掉误挂在 `Drift\Routing` 的 `Offstage`（§24.1 #37）之后才成立；此前那句"零矛盾"本身是**假陈述**）；**53 个已实现文件未列入本表**：6 个封闭域 enum · 11 个控件 · 6 个 Element 实现 · `Layout` 侧 10 个 `Render*` 族成员 + `Overflow`/`FlexAlign` · `Text` 侧 14 个（含 §8.2 坑 6 的 6 个确定性参考实现）· `ButtonVariant`/`RenderBoxWidget` · `TextField` 的 2 个 `@internal` 实现（`TextFieldBox`/`TextFieldState`）· `App\FocusManager`（输入路由最小集，`@internal`）· `Errors.php`（★ 分类之和与总数差 2，是上一轮遗留的口径问题，待 `drift-doctor` 按 `src/` 自动清点取代手工分类）。（110 = 57 点名有文件 + 53 未点名，2026-10-15 同口径清点；★ 上一轮这里写的 "52 个 … + Application/Frame" 两个数都错 —— `Application`/`Frame` 是**已点名**的，而族成员与 `Text` 目录的实现被漏数了）★ 漏登记的代价见 §24.1 #32/#33（`TextField` 全文 29 处引用却不在表里）；**穷尽清单归 `drift-doctor`（O-10）自动扫 `src/`**，本表是它的临时输入。
+★ **本表不穷尽，它回答"这一层该有什么"**：`src/` 实有 **120 个 PHP 文件**（其中 113 个含 `@api`），本表点名 **92 个**（**67 个有文件 / 25 个 0 文件**，2026-10-15 按"名字 → 所属目录同名 `.php`"清点，**零矛盾** —— 修掉误挂在 `Drift\Routing` 的 `Offstage`（§24.1 #37）之后才成立；此前那句"零矛盾"本身是**假陈述**）；**53 个已实现文件未列入本表**：6 个封闭域 enum · 11 个控件 · 6 个 Element 实现 · `Layout` 侧 10 个 `Render*` 族成员 + `Overflow`/`FlexAlign` · `Text` 侧 14 个（含 §8.2 坑 6 的 6 个确定性参考实现）· `ButtonVariant`/`RenderBoxWidget` · `TextField` 的 2 个 `@internal` 实现（`TextFieldBox`/`TextFieldState`）· `App\FocusManager`（输入路由最小集，`@internal`）· `Errors.php`（★ 分类之和与总数差 2，是上一轮遗留的口径问题，待 `drift-doctor` 按 `src/` 自动清点取代手工分类）。（120 = 67 点名有文件 + 53 未点名，2026-10-15 同口径清点；★ 上一轮这里写的 "52 个 … + Application/Frame" 两个数都错 —— `Application`/`Frame` 是**已点名**的，而族成员与 `Text` 目录的实现被漏数了）★ 漏登记的代价见 §24.1 #32/#33（`TextField` 全文 29 处引用却不在表里）；**穷尽清单归 `drift-doctor`（O-10）自动扫 `src/`**，本表是它的临时输入。
 
 ### 4.3 依赖规则（lint 强制，违反即报错）
 
 | 层 | 可以依赖 | 不许依赖 |
 |----|---------|---------|
 | `Geometry` | `Errors` | 一切 |
-| `Platform` | `Geometry` / `Errors` | 上层任何东西 |
+| `Platform` | `Geometry` / `Errors` / **`Rendering` / `Input` / `Theme`**（★ 只作**输出类型**，见下） | 上层任何东西 |
 | `Text` | `Geometry` / `Errors` | Widget / Rendering / Platform |
 | `Rendering` | `Geometry` / `Text` / `Errors` | Widget / Theme / Platform（表面由 App 注入。★ `ColorToken` / `MetricToken` 在这里 ⇒ **Widget 与 Theme 都能引用它们**，这是第 18 处缺口的修正） |
 | `Input` | `Geometry` / `Errors`；**协议例外**：`Text\TextInputClient` 与 `Layout\SemanticsConfiguration` 可被引用，但仅限类型签名 | Widget / Rendering |
@@ -360,6 +360,16 @@ private function pageFor(string $name): ?Widget
 | `Theme` / `Routing` | Widget / Layout / State / Text / **Rendering** / Geometry | App |
 | `App` | 全部 | apps |
 | `apps` | Drift **公共 API**（标 `@api` 的） | Drift 内部实现（`@internal`，§10.1.4；有豁免标注 ⇒ warn） |
+
+★ **为什么 `Platform` 行有三条指向"上层"的边（2026-10-15 补正）**：这三条全是**平台必须产出的输出类型**，不是平台想借用上层的功能 ——
+
+| 边 | 强制它的签名 | 为什么不能更低 |
+|----|------------|--------------|
+| `Platform → Rendering` | `SurfaceProvider::surface(): RenderSurface`（§5.1 / §7.1） | `Rendering` 自己依赖 `Text`；把 `RenderSurface` 挪到 `Platform` 之下要先拆 `Text` |
+| `Platform → Input` | `InputSource::poll(): ?InputEvent`（§9.1 路由链把平台输出逐字写成 `PointerEvent / KeyEvent`） | `Input` 依赖 `Geometry` + 协议例外 `Text\TextInputClient` |
+| `Platform → Theme` | `Screen::systemTheme(): SystemTheme`（§5.1 注释 + §9.2） | `Theme` 依赖 `Widget`/`Rendering`，比 `Platform` 高得多 |
+
+★ **为什么是层放行、不是按文件例外**：`Win32SurfaceProvider` / `Win32InputSource` / `Win32Screen` **各在一个文件里**，按文件放行等于给 `Platform\<Os>\` 每个文件都开一条 —— 那正是 §4.3 想避免的"例外扩散"。⇒ §4.3 原表把 `Platform` 行只写成"输入侧"（`Geometry`/`Errors`），漏了它的**出口**。
 
 ★ 与 GUI 仓的差别：GUI 用平铺 `namespace GUI;` + classmap，分层检查**没有抓手**（lint 的类索引必须递归 glob）；PSR-4 之后"谁能依赖谁"第一次变得**可静态检查**。
 
@@ -483,7 +493,7 @@ final class Bootstrap
 ### 5.2 事件循环归属：循环属于平台，派发属于框架
 
 ```
-OS 消息泵（WindowHost::pump，阻塞等待，不空转）
+OS 消息泵（`Platform::pump`，阻塞等待，不空转）
    │  规范化：Win32 MSG → Drift Event（Pointer / Key / Resize / Dpi / Theme / Close / Timer / Shell…）
    ▼
 EventLoop（Drift\App）—— 拥有派发，不拥有等待
@@ -2428,7 +2438,7 @@ $app = new UsersApplication(new Win32Platform(), new ThreadPoolTaskHost());
 | **M4 工具链 + 异步** | drift-preview / golden / conformance / drift-lint / **drift-doctor** 齐备 + **TaskHost 线程池后端** + **`notifyChanged` 线程断言** + **ThemeChanged / 深色模式** | 无头 preview + golden diff 可跑；后台 IO 不卡帧；**worker 里 notify ⇒ 响亮失败**；跟得上系统主题切换 | ⏳ **未动** —— `drift-lint` / `drift-preview` / `drift-codegen` 三件在；`golden` / `conformance` / `drift-doctor` 未建，`TaskHost` 系 **7 个类型**（含 `Job`，§24.1 #35）+ `ThreadPoolTaskHost` 0 文件  |
 | **M5 业务底座** | 虚拟化（含 §12.3 的 State 外置纪律）+ 脏矩形 + **WindowStateStore** + Windows UIA 桥接 | 长列表滚动不掉帧；子树崩溃不整树陪葬；窗口位置/尺寸跨启动保留 | ⏳ **未动** —— 虚拟化 / 脏矩形 / `WindowStateStore` / UIA 桥接全 0 文件  |
 
-★ **状态列是 §20 纪律 4 在里程碑层的落点**：出口判据写“要做”不算数，`src/` 里有没有才算。§4.2 已按同一口径加了逐类型状态列（点名 91 个：**57 有文件 / 34 个 0 文件**） —— **两处必须同步维护**（否则又会出现“文档说已落地、代码还没写”的分裂）。★ `drift-doctor`（§16.2 六件套之一，O-10 已裁“做”）正是该**自动**输出这张表的工具 ⇒ 手工列只是它的**临时输入**，别为它新造机制。
+★ **状态列是 §20 纪律 4 在里程碑层的落点**：出口判据写“要做”不算数，`src/` 里有没有才算。§4.2 已按同一口径加了逐类型状态列（点名 92 个：**67 有文件 / 25 个 0 文件**） —— **两处必须同步维护**（否则又会出现“文档说已落地、代码还没写”的分裂）。★ `drift-doctor`（§16.2 六件套之一，O-10 已裁“做”）正是该**自动**输出这张表的工具 ⇒ 手工列只是它的**临时输入**，别为它新造机制。
 
 **M1 的探针门（先验后用，任一不过即退化）**：
 
@@ -3442,6 +3452,14 @@ M5 ── （无裁决项；虚拟化 / 脏矩形 / `WindowStateStore` / UIA 桥
 ★ **#38 的连带**（本轮同批落地）：§9.1 补"落地现状"（`FocusManager` 兑现的 ③ 焦点链 / 命中测试 / 命中→焦点**父链上溯**）；§4.2 `src/Input/` 行从「缺 9」改「缺 5」、App 行登记 `FocusManager.php`（`@internal`）；§19 M2 状态列把 `FocusNode` 改标已落地；`Widget::focusOrder()` 的 docblock **撤回**"⇒ lint 报错"——**该守卫并未落地**（`--list` 15 条里没有它），属本轮自己写下的过度宣称。
 
 ★ 附带确认：`main.php` / `tools/*.php` 这类**入口脚本**（无类型声明）不受 `namespace-mismatch` 管 —— PSR-4 管的是类文件。
+
+**#40（2026-10-15，端口层落地时暴露）**
+
+| # | 位置 | 问题 | 处理 |
+|---|------|------|------|
+| 40 | **§4.3** `Platform` 行 · **§5.2** 消息泵归属 · **§A.1** 样板 | **三处互相矛盾，且都把 `Platform` 的"出口"写成了"入口"**：<br>① §4.3 的 `Platform` 行只允许 `Geometry` / `Errors`，而 §5.1 + §7.1 的签名要求 `SurfaceProvider::surface(): RenderSurface`、`Screen::systemTheme(): SystemTheme`，§9.1 的路由链图又把平台输出逐字写成 `PointerEvent / KeyEvent` ⇒ **三条指向"上层"的边被表漏掉**；<br>② §5.2 的图写 `WindowHost::pump`，§A.1 的可执行样板写 `$platform->pump()` ⇒ **同一个泵两个归属**；<br>③ §A.1 把 `$platform->surface($hwnd)`（`?SurfaceProvider`）直接当 `attach()` 的第一参（要 `RenderSurface`）⇒ **照抄编译不过**（与 §24.1 #23 同型：§A 章是"可照抄的代码"，却含 3 处不可照抄的写法）。 | ① §4.3 补三条边并**说清为什么是层放行而非按文件例外**（三条都是**输出类型**，没有更低的层能拥有；按文件放行会扩散到 `Platform\<Os>\` 每个文件）；`DependencyDirection` 的 `ALLOWED['Platform']` 同步；<br>② §5.2 改成 `Platform::pump`（**语义未变**：泵仍归平台层、仍阻塞、框架仍不自建循环）；<br>③ §A.1 与另三处组合根样板（§5.1 / §A.2.4 / §A.3.9）都含同一处错，⏳ **待 P0-3 用真机跑通的样板回填** —— 本批只登记、不写没跑过的代码（这正是本条第 ③ 点自己的判据）；<br>★ ③ 同时暴露样板缺 `show()` 调用（不显示窗口就永远看不到画面）。 |
+
+★ **方法论（第三次同型 ⇒ 模型确实不成立）**：#23（§A.1 三处照抄不过）、#37（"标 ✅ 却无文件"）、#40（§A.1 又两处 + §4.3 漏边）**都是"文档自述与可执行事实不一致"**。⇒ 判据升级：**§A 章的每一段代码都要真的能编译/运行过**才算"可照抄"；`drift-conformance`（M4 建）落地前，§A 的代码只能靠人肉核 —— 这本身就是它该进 P0 的理由（见 §19 M2 判据依赖 M4 工具的顺序矛盾）。
 
 ### 24.2 开放项总表（全部 ⏳ 集中在此）
 
