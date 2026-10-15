@@ -20,6 +20,7 @@ class StatelessElement extends Element
     public function rebuild(): void
     {
         $this->updateChildren($this->expand());
+        $this->adoptBoxes();
     }
 
     protected function expand(): array

@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace Drift\Widget;
 
+use Drift\Layout\RenderBox;
+
 /**
  * 三树的中间一棵：**身份 + State 宿主 + 调和**（§3.2）。
  *
@@ -24,6 +26,9 @@ abstract class Element
     protected array $children = [];
 
     private bool $mounted = false;
+
+    /** @internal §13.2：本节点的渲染盒；结构节点为 null */
+    private ?RenderBox $box = null;
 
     public function __construct(Widget $widget)
     {
@@ -61,7 +66,40 @@ abstract class Element
         $this->context = $context;
         $this->widget->seal(); // §15.2 Seal-on-Mount
         $this->mounted = true;
+        $this->syncBox();
         $this->rebuild();
+    }
+
+    /** 本节点的渲染盒（§13.2）；结构节点可能没有 ⇒ `null` */
+    public function renderObject(): ?RenderBox
+    {
+        return $this->box;
+    }
+
+    /**
+     * 造 / 换渲染盒（§13.2）。
+     *
+     * ★ 配置更新 ⇒ **重新造一个换掉**，不就地改字段。Widget 不可变，所以"换盒"
+     *   与"换 Widget"是同一件事的两次表达。
+     *
+     * @internal
+     */
+    protected function syncBox(): void
+    {
+        $this->box = $this->widget instanceof RenderBoxWidget
+            ? $this->widget->createRenderObject()
+            : null;
+    }
+
+    /**
+     * 子树建完后把**子节点的盒**收进自己的盒（C1：父管挂接，子不自定位）。
+     *
+     * 基类是空操作：叶子没有子盒要收。容器覆写它 —— 从 `children` 里拉盒。
+     *
+     * @internal
+     */
+    protected function adoptBoxes(): void
+    {
     }
 
     /**
@@ -74,6 +112,7 @@ abstract class Element
     {
         $this->widget = $newWidget;
         $this->widget->seal();
+        $this->syncBox(); // §13.2：新描述 ⇒ 新盒
         $this->didUpdateWidget($newWidget);
         $this->rebuild();
     }

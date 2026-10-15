@@ -33,9 +33,11 @@ use Drift\Geometry\Size;
 use Drift\Layout\FlexAlign;
 use Drift\Layout\Overflow;
 use Drift\Layout\RenderBox;
+use Drift\Layout\RenderCenter;
 use Drift\Layout\RenderFlex;
 use Drift\Layout\RenderFlexible;
 use Drift\Layout\RenderPadding;
+use Drift\Layout\RenderProxyBox;
 use Drift\Rendering\BoxStyle;
 use Drift\Rendering\Color;
 use Drift\Rendering\DisplayList;
@@ -56,8 +58,14 @@ use Drift\Theme\MetricToken;
 use Drift\Theme\SystemTheme;
 use Drift\Theme\ThemeData;
 use Drift\Widget\BuildContext;
+use Drift\Widget\BoxWidget;
+use Drift\Widget\Center;
+use Drift\Widget\Column;
 use Drift\Widget\Element;
 use Drift\Widget\Key;
+use Drift\Widget\Padding;
+use Drift\Widget\Row;
+use Drift\Widget\Spacer;
 use Drift\Widget\Widget;
 
 require __DIR__ . '/autoload.php';
@@ -955,6 +963,82 @@ $rebuilt->mount(null, $context);
 $nextWidget = new BuildProbe();
 $rebuilt->update(new BranchWidget([$nextWidget]));
 check('Element · update 换整体新描述并封存', $rebuilt->childAt(0)?->widget() === $nextWidget && $nextWidget->isSealed());
+
+// ── ⑱ 结构控件：Column / Row / Padding / Center / Spacer / Expanded ──
+
+// 盒子真的建出来了，且子盒由父挂接（C1：父管挂接）
+$columnRoot = Column::make()->children([Spacer::make(), Spacer::make(3)])->createElement();
+$columnRoot->mount(null, $context);
+$columnFlex = $columnRoot->renderObject();
+check('结构控件 · Column 建出 RenderFlex', $columnFlex instanceof RenderFlex);
+check('结构控件 · 结构节点的子 Box 也建了盒', $columnRoot->childCount() === 2 && $columnRoot->childAt(0)?->renderObject() !== null);
+
+// 端到端：Element → adoptBoxes → flex 分配。1 : 3 分 60
+$columnFlex?->layout(BoxConstraints::tight(new Size(100.0, 60.0)));
+$columnHeight = [];
+$columnFlex?->visitChildren(function (RenderBox $kid) use (&$columnHeight): void {
+    $columnHeight[] = $kid->size()?->height ?? -1.0;
+});
+check(
+    '结构控件 · 端到端 flex 分配（Spacer 1:3 ⇒ 15 / 45，不是各 30）',
+    $columnHeight === [15.0, 45.0],
+    '实际 ' . implode(' / ', $columnHeight)
+);
+
+// Row 与 Column 只差方向：同一个基类，不是两份拷贝
+$rowRoot = Row::make()->children([Spacer::make(), Spacer::make(3)])->createElement();
+$rowRoot->mount(null, $context);
+$rowFlex = $rowRoot->renderObject();
+$rowFlex?->layout(BoxConstraints::tight(new Size(120.0, 40.0)));
+$rowWidth = [];
+$rowFlex?->visitChildren(function (RenderBox $kid) use (&$rowWidth): void {
+    $rowWidth[] = $kid->size()?->width ?? -1.0;
+});
+check(
+    '结构控件 · Row 主轴是横（1:3 分 120 ⇒ 30 / 90）',
+    $rowWidth === [30.0, 90.0],
+    '实际 ' . implode(' / ', $rowWidth)
+);
+
+// Padding：几何面，进盒尺寸
+$padRoot = Padding::make(Spacer::make())->all(10.0)->createElement();
+$padRoot->mount(null, $context);
+$padBox = $padRoot->renderObject();
+check('结构控件 · Padding 建出 RenderPadding', $padBox instanceof RenderPadding);
+$padBox?->layout(BoxConstraints::loose(new Size(80.0, 80.0)));
+check(
+    '结构控件 · Padding 进盒尺寸（孩子 0 + 上下各 10）',
+    $padBox?->size()?->height === 20.0,
+    '实际 ' . (string) ($padBox?->size()?->height ?? -1.0)
+);
+
+// Center：孩子在内容区正中
+$centerRoot = Center::make()->child(Spacer::make())->createElement();
+$centerRoot->mount(null, $context);
+$centerBox = $centerRoot->renderObject();
+check('结构控件 · Center 建出 RenderCenter', $centerBox instanceof RenderCenter);
+$centerBox?->layout(BoxConstraints::loose(new Size(100.0, 100.0)));
+$centerKid = null;
+$centerBox?->visitChildren(function (RenderBox $kid) use (&$centerKid): void {
+    $centerKid = $kid;
+});
+check(
+    '结构控件 · Center 把孩子推到正中（100×100 里 offset 50,50）',
+    $centerKid !== null && $centerKid->offsetX() === 50.0 && $centerKid->offsetY() === 50.0
+);
+
+// 结构节点拿不到 background() —— §15.7 纪律 1（防以后手滑把样式提上基类）
+check('结构控件 · Column / Row / Spacer 不是 BoxWidget', !is_subclass_of(Column::class, BoxWidget::class) && !is_subclass_of(Row::class, BoxWidget::class));
+
+// 结构控件没有 build() —— 它们不是 StatelessWidget
+check('结构控件 · Column / Row 上没有 build()（结构节点形态）', !method_exists(Column::class, 'build') && !method_exists(Row::class, 'build'));
+
+// 换 children：Element 复用，盒重造（§13.2）
+$growRoot = Column::make()->children([Spacer::make()])->createElement();
+$growRoot->mount(null, $context);
+$firstBox = $growRoot->renderObject();
+$growRoot->update(Column::make()->children([Spacer::make(2)]));
+check('结构控件 · update 换描述 ⇒ 换盒（§13.2：不存在字段级半同步）', $growRoot->renderObject() !== null && $growRoot->renderObject() !== $firstBox);
 
 // ⑰ State：setState 只标脏（§5.2 / §11.3.1 / §12.3）
 fresh($log);

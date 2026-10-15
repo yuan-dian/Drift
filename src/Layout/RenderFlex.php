@@ -51,6 +51,12 @@ final class RenderFlex extends RenderBox
         $this->adoptChild($child);
     }
 
+    /** @internal 重建前清空 —— 否则同一次 rebuild 会把子盒追加两遍 */
+    public function clearChildren(): void
+    {
+        $this->kids = [];
+    }
+
     /** @return list<RenderBox> */
     public function children(): array
     {
