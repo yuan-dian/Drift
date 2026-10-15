@@ -22,6 +22,10 @@ use Drift\Dev\Smoke\Layout\SolidBox;
 use Drift\Dev\Smoke\Commands\CommandWidget;
 use Drift\Dev\Smoke\Commands\EchoCommands;
 use Drift\Dev\Smoke\Commands\PickyCommands;
+use Drift\App\Frame;
+use Drift\Dev\Smoke\Frame\QuietWidget;
+use Drift\Dev\Smoke\Frame\SurfaceProbe;
+use Drift\Dev\Smoke\Frame\TickerWidget;
 use Drift\Dev\Smoke\LeafProbe;
 use Drift\Dev\Smoke\SealProbe;
 use Drift\Dev\Smoke\State\BuildWatchWidget;
@@ -1556,3 +1560,66 @@ fresh($log);
 if (is_file($log)) {
     unlink($log);
 }
+
+// ── ㉕ App.Frame：flush → layout → paint → present（§5.2）──
+
+$surface = new SurfaceProbe();
+$surface->resize(320, 240, 1.0);
+$frame = new Frame($surface);
+
+// setState **不立即重建**，Frame.run 才消费脏标记（§5.2 裁决 3）
+// ★ 根必须是**有盒**的节点（Column）：Frame 在 flush 之后才拿 renderObject，
+//   拿不到就直接返回 —— 这是设计如此（结构根无从排起），不是 bug。
+$rootElement = Column::make()->children([new TickerWidget()])->createElement();
+$rootElement->mount(null, $context);
+$tickerElement = $rootElement->childAt(0);
+check('Frame · 挂载即建出子树', $tickerElement !== null && $tickerElement->childCount() === 1);
+$ticker = $tickerElement?->state();
+check('Frame · 挂载时 State 只建一次', $ticker !== null && $ticker->builds === 1);
+$firstChild = $tickerElement?->childAt(0)?->widget();
+check(
+    'Frame · 首帧 build 的产物来自 State 初值',
+    $firstChild instanceof LeafProbe && $firstChild->width === 0.0
+);
+
+$ticker?->tick(); // 只标脏
+check(
+    'Frame · setState 之后、Frame 之前 ⇒ 还没重建',
+    $ticker !== null && $ticker->builds === 1 && $ticker->needsBuild()
+);
+
+$frame->run($rootElement, BoxConstraints::tight(new Size(320.0, 240.0)), 16.0);
+check(
+    'Frame · 帧末 flush 重建了脏节点',
+    $ticker !== null && $ticker->builds === 2 && !$ticker->needsBuild()
+);
+$secondChild = $tickerElement?->childAt(0)?->widget();
+check(
+    'Frame · 重建后子树换成新产物（setState → flush → 新 widget）',
+    $secondChild instanceof LeafProbe && $secondChild->width === 1.0,
+    (string) ($secondChild instanceof LeafProbe ? $secondChild->width : -1.0)
+);
+
+// 时间戳是**注入**的，不读环境时钟（§5.2 裁决 2 ⇒ G3 的 golden 基础）
+check('Frame · beginFrame 收到注入的时间戳', $surface->lastTimestamp === 16.0);
+check('Frame · beginFrame / endFrame 各一次（不重不漏）', $surface->frames === 1 && $surface->ends === 1);
+
+// 脏边界：没脏的节点不该被重建
+$quietElement = (new QuietWidget())->createElement();
+$quietElement->mount(null, $context);
+$quiet = $quietElement->state();
+$frame->run($quietElement, BoxConstraints::tight(new Size(320.0, 240.0)), 32.0);
+check('Frame · 没脏的节点不重建（flush 有脏边界，不是每帧全树）', $quiet->builds === 1);
+
+// layout + paint 真的跑了：一棵 Column[Text] 有墨上图
+$columnElement = Column::make()->children([Text::make('Hi')])->createElement();
+$columnElement->mount(null, $context);
+$surface2 = new SurfaceProbe();
+$surface2->resize(320, 240, 1.0);
+$frame2 = new Frame($surface2);
+$frame2->run($columnElement, BoxConstraints::tight(new Size(320.0, 240.0)), 48.0);
+check(
+    'Frame · layout → paint → present 一路通到表面（画布上有墨）',
+    $surface2->canvas !== null && inkCount($surface2->canvas) > 0,
+    '墨点数 ' . (string) ($surface2->canvas !== null ? inkCount($surface2->canvas) : -1)
+);
