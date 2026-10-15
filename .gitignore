@@ -39,3 +39,5 @@ desktop.ini
 
 # 预览输出（drift-preview 的产物）
 /out/
+# codegen 门的工作目录（drift-codegen 的假工具链 / 私有 ini / project.yml / 日志 / 生成的 C++）
+/_codegen

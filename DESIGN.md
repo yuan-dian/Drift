@@ -1931,17 +1931,20 @@ abstract class BoxWidget extends Widget
 | `drift-conformance` | 合成树夹具 + 期望数据；**新实现必须过套件** | 夹具不依赖示例应用 |
 | `golden` | `DisplayList` 回放比对 + 几何对账 | G3 的验收形态；★ **必须绑定测试字体**（§14.2） |
 | **`drift-doctor`** | 环境自检：`PHPRC` 指向的 ini / `extension_dir` 是否绝对路径 / `mbstring` 可加载 / Skia include+lib 位置 / `icudtl.dat` 可定位 / `cl.exe` 在 PATH / `c++20` 支持 / 系统字体族可枚举。**输出"哪一项不满足 + 症状会是什么"** | §16.5 的六个陷阱**全都是"环境配置错 ⇒ 报错指向别处"**（缺 `mbstring` 报 `Failed to startup module`、CRT 不匹配报 `LNK2038`、缺 `icudtl.dat` 直接 abort、字体初始化失败报 `0xC0000005`）⇒ 值得一个自检入口。**★ 2026-10-14 裁决**（原 §23 O-10） |
+| **`drift-codegen`** | 把 `src/` + 各 `apps/<app>/src` 交给 **tpc 翻译**一遍（`--dry`，只生成 C++，不编译）⇒ `php -l` 与 lint 都放过的 AOT 专属缺陷在这一层现形 | **★ 2026-10-15 裁决（原 §23 O-14 方案 A）**：T1 档常驻门（实测数秒）。① **必须用源码树 `bin/tpc.php`** —— 修复只在源码树，发行版 `tpc.exe` 不含（拿它跑只会得到已修好的假警报）；② `--dry` **也仍校验工具链** ⇒ 用 `cmd.exe` 垫的假 `cl.exe`/`link.exe`（`--compiler` 直指它，比改 `PATH` 干净）；③ `PHPRC` 指向**私有 ini 副本**（`extension_dir` 改成绝对路径 —— 发行版 ini 里是相对 `./ext/`，跟着 cwd 漂）；④ 每次**先删 `build/`** 再跑 —— 留缓存的话第二遍全是 `[cached]`，"每个文件都翻译过"这条断言就成了空话，**门不能信缓存**；⑤ 七条断言：退出码 / `Dry run completed` / 无 `skip:`·`unsupported syntax` / `convert:` 集合 ↔ 自枚举的源文件集合（双向）/ `prepare completed` 计数相符 / `backend` 行里是我们传的编译器 / 产物清单行数相符。**退出码 0=通过 · 1=未通过 · 2=门没跑成**（"没跑"与"通过"绝不能同码，G2） |
 
 ### 16.3 CI 门禁顺序与开发内环
 
 ```
-CI:      lint → preview → build(tpc) → selftest(conformance) → golden diff
-内环:    php -l → drift-lint → drift-preview（单页，秒级，不编译）
+CI:      lint → codegen(tpc --dry) → preview → build(tpc) → selftest(conformance) → golden diff
+内环:    php -l → drift-lint → drift-codegen（秒级，不编译）→ drift-preview（单页，秒级，不编译）
 提交前:  内环 + tpc build（一个应用）+ conformance
 ```
 
 - **lint 是构建的前置门禁**（不是事后检查）—— AOT 的静默失败只能靠它守。
 - **内环不编译**：preview 走软光栅、纯 PHP，可在解释器里跑 ⇒ 对冲 AOT 20–50s 的构建成本（这是 Drift 唯一真实且无法用 API 糖补的差距）。
+- ★ **`drift-codegen` 守的是 lint 结构与解释器都够不着的那一层**（**2026-10-15 实测举证**）：把 `src/Text` 下放一个 `private string $x = SomeEnum::A->value;` 的探针，`php -l` 报 "No syntax errors detected" 放行，而 codegen 门报 `Expr_PropertyFetch given` 失败 ⇒ **两道门抓的不是同一批东西**，"多一道门"在这里不是冗余。（该探针用完即删；门自身也做了双向自检：该响会响、撤掉后不误响。）
+- ★ **`drift-lint` 的落地条数不写进本文件**——它会随每次补规则变化，写死即过期。**单一出处 = `php tools/lint.php --list` 的实际输出**（§16.6.3 的 17 条是"设计清单"，未落地的一目了然）。
 
 ### 16.4 构建配置（`project.yml` 要点）
 
