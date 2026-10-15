@@ -28,6 +28,8 @@ final class DisplayList
     public const OP_PUSH_CLIP = 4;
     public const OP_POP_CLIP = 5;
     public const OP_DRAW_RECT = 6;
+    /** 段落绘制：`[paragraph, paint, x, y]` —— 位图在回放时才产生，见 `Canvas::drawParagraph()` */
+    public const OP_DRAW_PARAGRAPH = 7;
 
     /** 每条命令占的槽位数：`[op, a, b, c, ref]` */
     private const SLOTS = 5;
@@ -147,6 +149,13 @@ final class DisplayList
                     $this->buffer[$base + 1],
                     $this->buffer[$base + 2],
                     (float) $this->buffer[$base + 3]
+                );
+            } elseif ($op === self::OP_DRAW_PARAGRAPH) {
+                $canvas->drawParagraph(
+                    $this->buffer[$base + 1],
+                    $this->buffer[$base + 2],
+                    (float) $this->buffer[$base + 3],
+                    (float) $this->buffer[$base + 4]
                 );
             }
         }

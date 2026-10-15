@@ -139,6 +139,21 @@ function logText(string $log): string
     return is_file($log) ? (string) file_get_contents($log) : '';
 }
 
+/** 非背景像素数：用来断言"文字真的画上了 / 真的被挡住了" */
+function inkCount(RasterCanvas $canvas, Color $background = null): int
+{
+    $background ??= Color::white();
+    $ink = 0;
+    for ($y = 0; $y < $canvas->height(); $y++) {
+        for ($x = 0; $x < $canvas->width(); $x++) {
+            if (!$canvas->pixelAt($x, $y)->equals($background)) {
+                $ink++;
+            }
+        }
+    }
+    return $ink;
+}
+
 echo "M0 冒烟\n";
 
 // ① PSR-4 装载：前缀表驱动，不生成 vendor/
@@ -421,6 +436,57 @@ fresh($log);
 [$code, $output] = runCase(__FILE__, 'fontfile', null);
 check('Text · M0 不解析字体文件 ⇒ 响亮失败', $code === 3, '实际 ' . $code . ' / ' . $output);
 check('Text · 未实现就说是未实现（不静默忽略注册）', str_contains(logText($log), '不解析字体文件'));
+
+// ⑫ 文字上屏：段落绘制命令 → 字形位图上屏（§7.2 / §8.2 坑 2）
+fresh($log);
+$black = Color::fromRgb(0, 0, 0);
+$textScale = Scale::of(1.0);
+$textParagraph = $textMetrics->layout('Hello', $body, INF, $textScale);
+$textList = new DisplayList();
+(new RecordingCanvas($textList))->drawParagraph($textParagraph, Paint::fill($black), 0.0, 0.0);
+check('Rendering · 段落录制成一条命令', $textList->count() === 1 && $textList->opAt(0) === DisplayList::OP_DRAW_PARAGRAPH);
+
+$textCanvas = new RasterCanvas(60, 20, Color::white(), $textScale);
+$textList->replay($textCanvas);
+$ink = inkCount($textCanvas);
+check('Rendering · 文字真的画上了（有墨）', $ink > 0, (string) $ink);
+check('Rendering · 文字落在基线之上（首行顶部仍是背景）', $textCanvas->pixelAt(0, 0)->equals(Color::white()));
+
+// G3：同一份 DisplayList 重放 ⇒ 逐字节同一张位图
+$repeated = new RasterCanvas(60, 20, Color::white(), $textScale);
+$textList->replay($repeated);
+check('Rendering · 段落重放确定（逐字节相同）', $textCanvas->toRgba() === $repeated->toRgba());
+
+// 设备分辨率光栅：dpr 翻倍 ⇒ 墨的像素数变多（不是把 dpr=1 的位图放大）
+$hidpi = new RasterCanvas(120, 40, Color::white(), Scale::of(2.0));
+$textList->replay($hidpi);
+check('Rendering · 字形在设备分辨率光栅（dpr=2 墨更多）', inkCount($hidpi) > $ink * 2, inkCount($hidpi) . ' vs ' . $ink);
+
+// 裁剪对文本一样生效
+$clipList = new DisplayList();
+$clipRecorder = new RecordingCanvas($clipList);
+$clipRecorder->pushClip(new Rect(0.0, 0.0, 8.0, 20.0));
+$clipRecorder->drawParagraph($textParagraph, Paint::fill($black), 0.0, 0.0);
+$clipRecorder->popClip();
+$clipCanvas = new RasterCanvas(60, 20, Color::white(), $textScale);
+$clipList->replay($clipCanvas);
+$clippedInk = inkCount($clipCanvas);
+check('Rendering · 裁剪对文本生效（区内画、区外挡）', $clippedInk > 0 && $clippedInk < $ink, $clippedInk . ' vs ' . $ink);
+
+// 没有位图的字形（兜底 face）不画 —— 不是画一个方框顶上
+$blankList = new DisplayList();
+$blankParagraph = $textMetrics->layout("\u{1F600}", $body, INF, $textScale);
+(new RecordingCanvas($blankList))->drawParagraph($blankParagraph, Paint::fill($black), 0.0, 0.0);
+$blankCanvas = new RasterCanvas(32, 20, Color::white(), $textScale);
+$blankList->replay($blankCanvas);
+check('Rendering · 无位图的字形不上屏（不画方框顶替）', inkCount($blankCanvas) === 0, (string) inkCount($blankCanvas));
+
+// 覆盖度即 alpha：半透明色画出的是灰，不是黑
+$faded = new RasterCanvas(60, 20, Color::white(), $textScale);
+$fadeList = new DisplayList();
+(new RecordingCanvas($fadeList))->drawParagraph($textParagraph, Paint::fill(Color::fromRgba(0, 0, 0, 64)), 0.0, 0.0);
+$fadeList->replay($faded);
+check('Rendering · 覆盖度 × 颜色 alpha 走同一条混合（半透明 ⇒ 灰）', $faded->pixelAt(1, 4)->r > $textCanvas->pixelAt(1, 4)->r);
 
 fresh($log);
 if (is_file($log)) {

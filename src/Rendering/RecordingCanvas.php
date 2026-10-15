@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Rendering;
 
 use Drift\Geometry\Rect;
+use Drift\Text\Paragraph;
 
 /**
  * 录制画布：**生产路径的入口**（§7.2 裁决 1）。
@@ -57,5 +58,10 @@ final class RecordingCanvas implements Canvas
     public function drawRect(Rect $rect, Paint $paint, float $radius = 0.0): void
     {
         $this->list->record(DisplayList::OP_DRAW_RECT, $rect, $paint, $radius);
+    }
+
+    public function drawParagraph(Paragraph $paragraph, Paint $paint, float $x = 0.0, float $y = 0.0): void
+    {
+        $this->list->record(DisplayList::OP_DRAW_PARAGRAPH, $paragraph, $paint, $x, $y);
     }
 }

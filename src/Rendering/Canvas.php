@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Rendering;
 
 use Drift\Geometry\Rect;
+use Drift\Text\Paragraph;
 
 /**
  * 绘制目标（接口，§7.2 裁决 1）。
@@ -33,4 +34,15 @@ interface Canvas
 
     /** `radius = 0` ⇒ 直角 */
     public function drawRect(Rect $rect, Paint $paint, float $radius = 0.0): void;
+
+    /**
+     * 画一个**已排好的段落**，原点在段落左上角（逻辑单位）。
+     *
+     * ★ 命令里存的是 `Paragraph` 的**引用**，不是光栅后的位图 —— 字形位图在
+     *   **回放时**才产生。于是：录制的代价与字形数无关（不破坏 §7.2 的缓冲复用
+     *   契约），Skia 后端也能用真字体重画同一份命令（golden 才有可比性）。
+     *
+     * ★ 段的几何（`baseline` / `offsetX`）是**排版**给的，画布只负责施加，不重算。
+     */
+    public function drawParagraph(Paragraph $paragraph, Paint $paint, float $x = 0.0, float $y = 0.0): void;
 }
