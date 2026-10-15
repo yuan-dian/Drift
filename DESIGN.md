@@ -2407,14 +2407,16 @@ $app = new UsersApplication(new Win32Platform(), new ThreadPoolTaskHost());
 
 ## §19 路线图（M0–M5）
 
-| 里程碑 | 内容 | 出口判据 |
-|--------|------|---------|
-| **M0 骨架** | PSR-4 分层 + 契约文件 + `tools/smoke.php` + **公共面按 `@api` 标注**（决定 lint 骨架） | 冒烟全绿；依赖方向 lint 有断言；`internal-leak` 双向自检过 |
-| **M1 可显示** | Win32 Platform + RenderSurface(Skia CPU) + Canvas 接口 + 文本栈桥接 + DPI 缩放 + **`DisplayList` 录制**（决定渲染路径） | 一个窗口画出「Hello Drift」（§A.1），分数缩放下不糊 |
-| **M2 三树 + 布局** | Element/State/调和 + RenderBox 两阶段布局 + 首批控件 + **fluent-first 全部落地** + **盒样式（`BoxStyle` + `BoxWidget`，§15.7）** + **焦点遍历顺序** + **光标形状（命中三方消费）** + **`SubscribingWidget` 接口** + **property hooks 进 Store** + **`Each` key 必填** | 布局 conformance 夹具全过；首批控件过 **W1–W8**；Tab 序有 conformance 夹具；`Each` 缺 key ⇒ 构建期报错 |
-| **M3 数据缝/多页** | Store 三件套 + `SubjectBuilder` + **`select()`** + RouteTable/PageHost + **动作缝（`CommandRouter` + 冒泡链）** + **三态 enum** + **错误边界容器**（★ 2026-10-14 裁决：**归 M3** —— 见 §23.2 O-12）+ **AcceleratorTable** + **自绘 MenuBar/ContextMenu** + **应用内拖放** | §A.2 的完整应用可跑；局部态与跨页共享两条路径都能写；`Root` 只组合（lint 可查）；Ctrl+S 等加速键可用；§16.6.3 的 **17 条规则全部双向自检**过 |
-| **M4 工具链 + 异步** | drift-preview / golden / conformance / drift-lint / **drift-doctor** 齐备 + **TaskHost 线程池后端** + **`notifyChanged` 线程断言** + **ThemeChanged / 深色模式** | 无头 preview + golden diff 可跑；后台 IO 不卡帧；**worker 里 notify ⇒ 响亮失败**；跟得上系统主题切换 |
-| **M5 业务底座** | 虚拟化（含 §12.3 的 State 外置纪律）+ 脏矩形 + **WindowStateStore** + Windows UIA 桥接 | 长列表滚动不掉帧；子树崩溃不整树陪葬；窗口位置/尺寸跨启动保留 |
+| 里程碑 | 内容 | 出口判据 | **当前状态**（2026-10-15 按 `src/` + `tools/` 核验） |
+|--------|------|---------|------|
+| **M0 骨架** | PSR-4 分层 + 契约文件 + `tools/smoke.php` + **公共面按 `@api` 标注**（决定 lint 骨架） | 冒烟全绿；依赖方向 lint 有断言；`internal-leak` 双向自检过 | ✅ **已完成** —— PSR-4 分层 / `@api` 标注（76 类型）/ `smoke.php`（315 ok）/ lint 骨架（14 条落地）全在  |
+| **M1 可显示** | Win32 Platform + RenderSurface(Skia CPU) + Canvas 接口 + 文本栈桥接 + DPI 缩放 + **`DisplayList` 录制**（决定渲染路径） | 一个窗口画出「Hello Drift」（§A.1），分数缩放下不糊 | ⏳ **部分** —— 渲染侧齐（`RenderSurface`/`Canvas`/`DisplayList`/文本栈/`RasterCanvas`）；**平台侧 0 文件**：`Drift\Platform` 9 + `Win32` 2 + `SkiaCanvas` + `cpp-src/` + `apps/*/project.yml` + `bin/<platform>/Bootstrap.php` ⇒ **出口判据未兑现**（今天只能无头跑）  |
+| **M2 三树 + 布局** | Element/State/调和 + RenderBox 两阶段布局 + 首批控件 + **fluent-first 全部落地** + **盒样式（`BoxStyle` + `BoxWidget`，§15.7）** + **焦点遍历顺序** + **光标形状（命中三方消费）** + **`SubscribingWidget` 接口** + **property hooks 进 Store** + **`Each` key 必填** | 布局 conformance 夹具全过；首批控件过 **W1–W8**；Tab 序有 conformance 夹具；`Each` 缺 key ⇒ 构建期报错 | ⏳ **大部分** —— 三树/调和/两阶段布局/11 个控件/fluent-first/`BoxStyle`+`BoxWidget`/`SubscribingWidget`/property hooks/`Each` key 全在；**`FocusNode`（焦点遍历顺序）与 `CursorShape`（命中三方消费）0 文件**；conformance 夹具属 M4 工具链，未建  |
+| **M3 数据缝/多页** | Store 三件套 + `SubjectBuilder` + **`select()`** + RouteTable/PageHost + **动作缝（`CommandRouter` + 冒泡链）** + **三态 enum** + **错误边界容器**（★ 2026-10-14 裁决：**归 M3** —— 见 §23.2 O-12）+ **AcceleratorTable** + **自绘 MenuBar/ContextMenu** + **应用内拖放** | §A.2 的完整应用可跑；局部态与跨页共享两条路径都能写；`Root` 只组合（lint 可查）；Ctrl+S 等加速键可用；§16.6.3 的 **17 条规则全部双向自检**过 | ⏳ **约一半** —— 值缝（Store 三件套 + `SubjectBuilder` + `select`）与动作缝（`CommandRouter` + 冒泡链）已通；**错误边界容器 / `AcceleratorTable` / 自绘 `MenuBar`·`ContextMenu` / 应用内拖放 4 项 0 文件**；§A.2 样板刚对齐（O-18），`apps/users` 未建  |
+| **M4 工具链 + 异步** | drift-preview / golden / conformance / drift-lint / **drift-doctor** 齐备 + **TaskHost 线程池后端** + **`notifyChanged` 线程断言** + **ThemeChanged / 深色模式** | 无头 preview + golden diff 可跑；后台 IO 不卡帧；**worker 里 notify ⇒ 响亮失败**；跟得上系统主题切换 | ⏳ **未动** —— `drift-lint` / `drift-preview` / `drift-codegen` 三件在；`golden` / `conformance` / `drift-doctor` 未建，`TaskHost` 系 6 个类型 + `ThreadPoolTaskHost` 0 文件  |
+| **M5 业务底座** | 虚拟化（含 §12.3 的 State 外置纪律）+ 脏矩形 + **WindowStateStore** + Windows UIA 桥接 | 长列表滚动不掉帧；子树崩溃不整树陪葬；窗口位置/尺寸跨启动保留 | ⏳ **未动** —— 虚拟化 / 脏矩形 / `WindowStateStore` / UIA 桥接全 0 文件  |
+
+★ **状态列是 §20 纪律 4 在里程碑层的落点**：出口判据写“要做”不算数，`src/` 里有没有才算。§4.2 已按同一口径加了逐类型状态列（45/73 已实现） —— **两处必须同步维护**（否则又会出现“文档说已落地、代码还没写”的分裂）。★ `drift-doctor`（§16.2 六件套之一，O-10 已裁“做”）正是该**自动**输出这张表的工具 ⇒ 手工列只是它的**临时输入**，别为它新造机制。
 
 **M1 的探针门（先验后用，任一不过即退化）**：
 
@@ -2572,7 +2574,7 @@ $app = new UsersApplication(new Win32Platform(), new ThreadPoolTaskHost());
 | ✅ **O-16** | **`Bound` 的定位**（与 `SubjectBuilder::select` 的关系未定义；现签名**订阅不了**） | **高** | **A′：删 `Bound` 且删 `TextField::bind()`**（★ **已裁决并落地** —— 四层论据见下方 O-16 段的"横向对照"块） | M3 |
 | ✅ **O-17** | **样式复用**（背景/颜色/字号）：基类字段 vs `BoxStyle` 值对象 vs trait | 中 | **A′：`BoxStyle` 值对象**（**只管盒样式**）+ 中间基类 `BoxWidget`；**不引入 `TextStyle`**；**删孤儿名 `ControlStyle`**（★ **已裁决并落地** → §15.7） | M2 |
 | ✅ **O-18** | **§A.2 的 `Application` 用法与已实现 API 分裂**（`protected` + `boot()` + `commands(): CommandRouter` + `accelerators()` + `taskHost()` —— 照抄必然 `PHP Fatal`） | 中 | **A：改文档对齐代码**（✅ **已裁决并落地** —— §5.1 / §9.1 / §11.4.3 / §A.2.4 / §A.2.5 / §A.3.1 / §A.3.2 / §A.3.8 / §A.3.9 九处样板全部改成 `public` 覆写 + `iterable` 字典 + 构造点装配；`boot()` / `accelerators()` / `taskHost()` 三处不存在的钩子按 A15 **不预挂**，形状以注释留存） | 已落地 |
-| ⏳ **O-19** | **§19 出口判据与 `src/` 真实状态脱节**（M1 判据“一个窗口画出 Hello Drift”未兑现：`Drift\Platform` 9 + `Win32` 2 一个文件都没有） | 低 | **A：§19 也加“当前状态”列**（§4.2 已随 #24 补） | 现在 |
+| ✅ **O-19** | **§19 出口判据与 `src/` 真实状态脱节**（M1 判据“一个窗口画出 Hello Drift”未兑现：`Drift\Platform` 9 + `Win32` 2 一个文件都没有） | 低 | **A：§19 也加“当前状态”列**（✅ **已裁决并落地** —— §4.2 已随前一轮补上，本轮把 §19 六个里程碑全部标上） | 已落地 |
 
 ---
 
@@ -3271,7 +3273,7 @@ WPF 的 `Control.Background` / `Foreground` / `FontSize` 都是基类上的 `Dep
 
 #### O-19 §19 出口判据与 `src/` 真实状态脱节
 
-**⏳ 待裁决（2026-10-15）** —— 事实陈述，**不需要裁决“要不要做”，要裁的是“怎么记”。
+**✅ 已裁决（2026-10-15，用户拍板：按推荐 A）** —— §19 六个里程碑全部加上“当前状态”列（与 §4.2 同口径、同步维护）。
 
 **问题本质**：§19 的 M1 出口判据是“一个窗口画出「Hello Drift」（§A.1）”。但核验 `src/`：`Drift\Platform` 9 个类型 + `Drift\Platform\Win32` 2 个**一个文件都没有**；也没有 `cpp-src/`、没有 `apps/hello/project.yml`、没有 `bin/win32/Bootstrap.php`。**现有验证全部无头**（`tools/drift-preview.php` 走 `RasterCanvas`，`tools/smoke.php` 在 `php.exe` 里跑）。⇒ §19 的 M1 行读起来像“已达成”，实际达成的是“**控件树 + 布局 + 光栅绘制**”这一层。同型：`Input` 9 个（M3）、`App` 异步半 6 个（M4/M5）。
 ★ 这正是 §20 纪律 4（“没出现 = 没交付”）在**里程碑层**的版本：**出口判据本身没有被核验过**。
@@ -3292,14 +3294,14 @@ WPF 的 `Control.Background` / `Foreground` / `FontSize` 都是基类上的 `Dep
 
 ### 23.3 批量批准清单与依赖图
 
-**✅ 已裁决（2026-10-14，**17 项全部收口**）**：`O-01` · `O-02` · `O-03` · `O-04` · **`O-05`** · **`O-06`** · `O-07` · `O-08` · `O-09` · `O-10` · `O-11` · **`O-12`** · `O-13` · **`O-14`** · **`O-15`** · **`O-16`** · **`O-17`**。
+**✅ 已裁决（2026-10-14 首轮 17 项 + 2026-10-15 追加 2 项，**19 项全部收口**）**：`O-01` · `O-02` · `O-03` · `O-04` · **`O-05`** · **`O-06`** · `O-07` · `O-08` · `O-09` · `O-10` · `O-11` · **`O-12`** · `O-13` · **`O-14`** · **`O-15`** · **`O-16`** · **`O-17`** · **`O-18`** · **`O-19`**。
 
 | 处置 | 项 | 说明 |
 |------|----|------|
 | **不做** | `O-05` · `O-06` · `O-14` | 全部**实测证伪**（探针 F / G / H） |
 | **A′（修正形态）** | `O-12` · `O-16` · `O-17` | `O-12` = 帧循环异常策略 S3 + 容器归 M3；`O-16` = 删 `Bound` + 删 `TextField::bind()`；`O-17` = `BoxStyle` 只管盒样式 + `BoxWidget` |
 | **方案 E** | `O-15` | `on()` 收 handler 实例 |
-| **按推荐方案 A 落地** | 其余 10 项 | 条文已写进正文（各段的"✅ 已裁决"抬头里标了落点） |
+| **按推荐方案 A 落地** | 其余 12 项（含 O-18 / O-19） | 条文已写进正文（各段的"✅ 已裁决"抬头里标了落点） |
 
 ★ **`O-16` 并入了复核时发现的缺口**：`SubjectBuilder` 全文无类形状（字段表 / 方法表 / "无 `select` 时 `builder` 传 0 参还是 `null`"）—— 见 §23.2 O-05 复核发现 ⑥。**该缺口随 O-16 的订阅侧落地一并处理**（M3）。
 
@@ -3316,7 +3318,7 @@ M2 ── ✅ O-02（`BuildContext` 能力面）—— **已完成**（§3.4；O
       ✅ O-17（**`BoxStyle` 只管盒样式 + 中间基类 `BoxWidget`**）★ 已裁决并落地 → **§15.7**（新增节）
       （随 M2 实现：盒族控件的 `?BoxStyle` 字段 + 3 个糖方法 + 主题解析）
 M3 ── ✅ O-04 · ✅ O-05（不做）· ✅ O-06（不做）· ✅ O-07 · ✅ O-12 · ✅ O-15 · ✅ O-16
-      ✅ O-18（§A.2 样板对齐已实现的 `Application`，9 处）· ⏳ O-19（§19 补“当前状态”列）
+      ✅ O-18（§A.2 样板对齐已实现的 `Application`，9 处）· ✅ O-19（§19 六个里程碑全部加“当前状态”列）
       ★ **O-16 的订阅侧落地时，一并补 `SubjectBuilder` 的类形状**（字段表 / 方法表 / `builder` 调用约定）
       ★ O-12 的**容器归 M3**（§19 的 M5 那处已删）
       （随 M3 实现：Store 三件套 + `SubjectBuilder` + `select()` + 动作缝 + 错误边界容器 + 加速键 + 自绘菜单 + 拖放）
@@ -3388,6 +3390,13 @@ M5 ── （无裁决项；虚拟化 / 脏矩形 / `WindowStateStore` / UIA 桥
 | 27 | **§12.1** 第 2 条 | 判据说“封闭域（enum）禁止 `default`”，但**全文没有枚举清单** ⇒ 判据不可逐条核验；且 `UnhandledMatchError` 被 5 处当作“框架的守卫”引用，从没人说它是 **PHP 内置类**（8.5.11 实测：`match` 无臂无 `default` ⇒ 抛 `\UnhandledMatchError`） | 补**框架封闭域 enum 清单**（11 个：住哪层 / 取值 / 谁消费）+ 一句“纪律由语言保证，Drift 只需别写 `default`” |
 | 28 | **§11.3.3** | `SubjectBuilder` 这个 `@api` 契约原语**只有用法、没有成员表**（§23.2 O-05 复核发现 ⑥ 的挂账项，原定“随 M3 订阅侧一并补”）⇒ 照 §A.2.11 手写时不知道该实现哪些方法 | 补**类形状表**（`make`/`select`/`builder` + 三个 `@internal` 读取器 + `createState`）与三条调用约定 |
 | 29 | **§8.1 / §8.2** | `TextAlign` / `FontWeight` / `FontSlant` / `PaintStyle` 四个 `@api` 封闭域 enum 在全文**出现 0 次**，而 §8.2 坑 6 说“凡是影响排版结果的输入都在 `TextStyle` 里（对齐…亦然）” | 随 #27 的清单一并命名（公共面不再靠读者翻 `src/` 发现） |
+
+★ **第七轮追加（2026-10-15，O-18 / O-19 按推荐 A 裁决并落地）** —— 两条都属“文档挡住实现”同型：
+
+| # | 位置 | 症状 | 修正 |
+|---|------|------|------|
+| 30 | **§A.2 / §5.1 / §9.1 / §11.4.3 / §A.3.1 / §A.3.2 / §A.3.8 / §A.3.9** | 旗舰样板**不可照拉**：`protected` 覆写 + `boot()` + `commands(): CommandRouter` + `accelerators()` + `taskHost()` 在已实现的 `Application` 上一个都不存在（#23 只修了 §A.1，§A.2 三枪全留着） | 9 处全部改成已实现 API：`public` 覆写、`commands(): iterable` 字典、依赖装配在构造点（O-15 E）、Bootstrap 改平台驱动（`attach()`+`pump()`）；三处不存在的钩子按 A15 **不预挂**，形状以注释留存 |
+| 31 | **§19** | 路线图六个里程碑**没有“当前状态”一列**，M1 出口判据读起来像已达成（实际平台层 11 个类型 0 文件） | 加状态列，与 §4.2 同口径、**同步维护**；归属 `drift-doctor`（O-10）自动输出 |
 
 ★ 附带确认：`main.php` / `tools/*.php` 这类**入口脚本**（无类型声明）不受 `namespace-mismatch` 管 —— PSR-4 管的是类文件。
 
