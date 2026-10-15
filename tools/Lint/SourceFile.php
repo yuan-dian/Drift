@@ -160,11 +160,11 @@ final class SourceFile
                 // ★ PHP 8 允许保留字作方法名 ⇒ `public function namespace(): string`
                 //   也是一个 T_NAMESPACE。声明后面必然跟名字或 `{`，调用后面跟 `(`。
                 $after = Tokens::next($tokens, $i + 1);
-                if ($after === null || !$this->startsNameOrBlock($after[0])) {
+                if ($after === null || !self::startsNameOrBlock($after[0])) {
                     $pendingDoc = null;
                     continue;
                 }
-                $this->namespace = $this->readName($tokens, $i + 1);
+                $this->namespace = self::readName($tokens, $i + 1);
                 $this->namespaceLine = $line;
                 $pendingDoc = null;
                 continue;
@@ -187,7 +187,7 @@ final class SourceFile
                     T_ENUM => self::KIND_ENUM,
                     default => self::KIND_CLASS,
                 };
-                $name = $this->readName($tokens, $i + 1);
+                $name = self::readName($tokens, $i + 1);
                 if ($name !== '') {
                     $this->types[] = [
                         'kind' => $kind,
@@ -219,7 +219,7 @@ final class SourceFile
     }
 
     /** 命名空间声明后面只能跟名字（`namespace A\B;`）或块（`namespace {`） */
-    private function startsNameOrBlock(int|string $token): bool
+    public static function startsNameOrBlock(int|string $token): bool
     {
         return in_array($token, [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED, '{'], true);
     }
@@ -244,7 +244,7 @@ final class SourceFile
     }
 
     /** @param list<mixed> $tokens */
-    private function readName(array $tokens, int $i): string
+    public static function readName(array $tokens, int $i): string
     {
         $name = '';
         for (; $i < count($tokens); $i++) {

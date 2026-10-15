@@ -151,6 +151,12 @@ final class SourceQuery
     /**
      * 文件内每个类的结构。
      *
+     * ★ **多命名空间文件**：fqn 用的是**该类所在位置当时生效的** namespace，
+     *   不是 `$file->namespace()`（后者给的是文件里最后一个）。单命名空间文件
+     *   两者相同所以看不出来；`drift_lib.stub.php` 有 11 个 namespace ⇒
+     *   不按位置算的话，第 2 个之后的类全被算进最后一个命名空间。
+     *   （`export-surface-drift` 要读这个产物才暴露出来。）
+     *
      * @return list<array{
      *     name: string,
      *     fqn: string,
@@ -168,6 +174,7 @@ final class SourceQuery
     {
         $tokens = $file->tokens();
         $out = [];
+        $ns = '';
 
         for ($i = 0, $n = count($tokens); $i < $n; $i++) {
             $tok = $tokens[$i];
@@ -175,6 +182,17 @@ final class SourceQuery
                 continue;
             }
             $id = $tok[0];
+
+            // namespace 声明：更新"当前生效的命名空间"（`public function namespace()`
+            // 那类用法后面跟 `(`，声明后面跟名字或 `{`，据此区分）
+            if ($id === T_NAMESPACE) {
+                $after = self::nextIndex($tokens, $i + 1);
+                if ($after !== null && SourceFile::startsNameOrBlock($tokens[$after][0])) {
+                    $ns = SourceFile::readName($tokens, $i + 1);
+                }
+                continue;
+            }
+
             if ($id !== T_CLASS && $id !== T_INTERFACE && $id !== T_TRAIT && $id !== T_ENUM) {
                 continue;
             }
@@ -189,7 +207,7 @@ final class SourceQuery
 
             $readonly = $prevId === T_READONLY;
 
-            $info = self::readClass($file, $i, $id, $readonly);
+            $info = self::readClass($file, $i, $id, $ns, $readonly);
             if ($info !== null) {
                 $out[] = $info;
                 $i = $info['bodyEnd'];
@@ -208,8 +226,9 @@ final class SourceQuery
      *     methods: array<string, array{start: int, end: int, line: int}>,
      *     bodyStart: int, bodyEnd: int
      * }
+     * @param string $ns 该类位置当时生效的命名空间（多命名空间文件按位置算，见 classes() 注释）
      */
-    private static function readClass(SourceFile $file, int $classToken, int $id, bool $readonly): ?array
+    private static function readClass(SourceFile $file, int $classToken, int $id, string $ns, bool $readonly): ?array
     {
         $tokens = $file->tokens();
         $nameI = self::nextIndex($tokens, $classToken + 1);
@@ -263,7 +282,7 @@ final class SourceQuery
         };
         $info = [
             'name' => $name,
-            'fqn' => ltrim($file->namespace() . '\\' . $name, '\\'),
+            'fqn' => ltrim($ns . '\\' . $name, '\\'),
             'line' => $tokens[$classToken][2],
             'kind' => $kind,
             'readonly' => $readonly,
