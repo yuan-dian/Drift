@@ -338,7 +338,7 @@ private function pageFor(string $name): ?Widget
 | `src/Input/` | `Drift\Input` | `PointerEvent` · `KeyEvent` · `KeyChord` · `GestureArena` · `FocusNode` · `SemanticsTree` · `AcceleratorTable` · `CursorShape` · `ThemeChangedEvent` |
 | `src/State/` | `Drift\State` | `Subject` · `Subscription` · `SubjectBuilder` · `Cell` · `SubscribingWidget` |
 | `src/Commands/` | `Drift\Commands` | `CommandRouter` · `CommandHandler` · `CommandArg` |
-| `src/Theme/` | `Drift\Theme` | `Theme` · `ThemeData` · `ThemeScope` · `ColorToken` · `MetricToken` |
+| `src/Theme/` | `Drift\Theme` | `Theme` · `ThemeData` · `ThemeScope` · `ColorToken` · `MetricToken` · **`SystemTheme`** |
 | `src/Routing/` | `Drift\Routing` | `Page` · `RouteTable` · `PageHost` · `Offstage` |
 | `src/Errors.php` | `Drift\Errors` | 错误出口 |
 
@@ -3270,6 +3270,8 @@ M5 ── （无裁决项；虚拟化 / 脏矩形 / `WindowStateStore` / UIA 桥
 | 10 | **§4.3** | `Theme` 行的允许集**漏了 `Rendering`**，而 §4.2 把 `Color` 放在 `Drift\Rendering`、§15.7 又要求 `ThemeData` 是主题 token 的**取值来源** ⇒ `Theme → Rendering` 是**必需边**，缺了它 `dependency-direction` lint 会误报 | Theme 行补 `Rendering` |
 | 11 | **§4.3** | `Text` 行的允许集只有 `Geometry`、**漏了 `Errors`**，但 §8.3 血账 1 已经裁决"`FontManager` 初始化失败走 `Errors::report` 而不是崩"，§8.2 坑 6 也要 Text 层响亮失败 ⇒ 缺这条会让"Text 层不许报错"与"G2 绝不静默"直接冲突 | Text 行补 `Errors` |
 | 12 | **§8.1 / §7.1** | 缓存键钉死为 `(text, style, maxWidth, scale)`，但排版结果**还受**对齐 / 行数上限 / 省略号影响 ⇒ 若把它们做成 `layout()` 的参数就会**同键不同结果**（缓存撒谎） | 裁决：三者**进 `TextStyle`**（§15.7 说 widget 层的角色方法落成 `TextStyle` 的值）⇒ 方案给定的键**保持字面成立** |
+| 13 | **§A.3.3** | `overrideTokens([ColorToken::Border => …])` **不是合法 PHP** —— 枚举实例是对象，**不能作数组键**（实测 `Fatal error: Cannot access offset of type ColorToken on array`，纯枚举与 backed 枚举都一样）。⇒ 这行示例照抄必然编译不过 | 改为值对象的 `withX()` 形态（与 §15.7 `BoxStyle::withX()` 同源）：**点覆盖** `withColor(ColorToken, Color)` / `withMetric(MetricToken, float)`；**面覆盖** `withHighContrast()`。**公共面无字符串键**（§16.4 否决字符串注册表；内部用 `->name` 作数组键只是因为 PHP 数组键不能是对象） |
+| 14 | **§4.2** | 目录清单的 `Drift\Theme` 行**缺 `SystemTheme`**，但它被 §9.2 / §A.2.7 / §A.3.3 三处引用（`SystemTheme::Light` / `::Dark`）⇒ 与第 9 处（缺 `Color`）同类 | 补 `SystemTheme` |
 
 ★ 附带确认：`main.php` / `tools/*.php` 这类**入口脚本**（无类型声明）不受 `namespace-mismatch` 管 —— PSR-4 管的是类文件。
 
@@ -4330,9 +4332,12 @@ protected function onSystemThemeChanged(SystemTheme $t): void
 }
 
 // ③ 高对比度并入 ThemeData 作为 token 覆盖层
-$theme = ThemeData::light()->overrideTokens([
-    ColorToken::Border => ColorToken::Border->highContrastValue(),
-]);
+// ★ 原写的 overrideTokens([ColorToken::Border => …]) **在 PHP 里不合法**：
+//   枚举实例是对象，**不能作数组键**（`Illegal offset type`）。
+//   ⇒ 改成值对象的 withX()（与 §15.7 `BoxStyle::withX()` 同源）：
+//     点覆盖用 withColor()，整棵子树一起换用 withHighContrast()。
+$theme = ThemeData::light()->withColor(ColorToken::Border, ColorToken::Border->highContrastValue());
+$themeAll = ThemeData::light()->withHighContrast();   // 面覆盖
 ```
 
 ### A.3.4 焦点遍历顺序
