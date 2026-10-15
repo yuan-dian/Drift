@@ -180,8 +180,8 @@ Errors::installFatalBox(fn(string $t, string $b) => $platform->fatalBox($t, $b))
 │  apps/<app>/       应用层：Page 页面 · Store 业务 · Root 组合          │
 │                    ★ 业务层不 import 任何 Drift 类型（除 State/Widget） │
 ├──────────────────────────────────────────────────────────────────────┤
-│  Drift\Routing    多页面：Page · RouteTable · PageHost · Offstage      │
-│  Drift\Theme      主题：Theme · ThemeData · token · ThemeScope         │
+│  Drift\Routing    多页面：RouteTable · PageHost · NoPage               │
+│  Drift\Theme      主题：ThemeData · ThemeScope · SystemTheme · token   │
 ├──────────────────────────────────────────────────────────────────────┤
 │  Drift\Widget     公共 API ①：Widget · StatefulWidget · Element · State│
 │  Drift\Layout     公共 API ②：RenderObject · RenderBox · 布局契约      │
@@ -327,23 +327,24 @@ private function pageFor(string $name): ?Widget
 
 | 目录 | 命名空间 | 文件 | 状态（2026-10-15 按 `src/` 核验） |
 |------|---------|------|------|
-| `src/App/` | `Drift\App` | ✅ `Application.php` · `Frame.php`；⏳ `EventLoop.php` · `FrameClock.php` · `TaskHost.php` · `ThreadPoolTaskHost.php` · `SyncTaskHost.php` · `WindowStateStore.php` | **缺 6**（M4/M5） |
+| `src/App/` | `Drift\App` | ✅ `Application.php` · `Frame.php`；⏳ `EventLoop.php` · `FrameClock.php` · `TaskHost.php` · `ThreadPoolTaskHost.php` · `SyncTaskHost.php` · `WindowStateStore.php` · **`Job.php`** | **缺 7**（M4/M5） |
 | `src/Platform/` | `Drift\Platform` | ⏳ **一个文件都没有**：`Platform` · `WindowHost` · `SurfaceProvider` · `InputSource` · `TimerHost` · `Screen` · `Clipboard` · `Dialog` · `Tray` | **缺 9**（M1） |
 | `src/Platform/Win32/` | `Drift\Platform\Win32` | ⏳ **一个文件都没有**：`Win32Platform` · `Win32WindowHost` · …（首个实现） | **缺 2**（M1） |
 | `src/Geometry/` | `Drift\Geometry` | `Point` · `Size` · `Rect` · `EdgeInsets` · `Scale` · `BoxConstraints` | ✅ 6/6 |
 | `src/Rendering/` | `Drift\Rendering` | ✅ `RenderSurface` · `GpuContext` · `Canvas` · `DisplayList` · `Paint` · `Color` · `BoxStyle` · `RasterCanvas` · `RecordingCanvas`；⏳ `SkiaCanvas` | **缺 1**（M1） |
 | `src/Text/` | `Drift\Text` | `TextRole` · `FontManager` · `FontCollection` · `FontFace` · `TextShaper` · `TextLayout` · `Paragraph` · `TextMetricsProvider` · `TextStyle` · `TextInputClient` | ✅ 10/10（另有 **6 个未列入本表**的确定性实现：`DeterministicFontManager` · `DeterministicFontCollection` · `DeterministicShaper` · `DeterministicMetricsProvider` · `NotdefFontFace` · `BitmapFontFace` —— §8.2 坑 6 的“确定性参考实现”） |
 | `src/Layout/` | `Drift\Layout` | `RenderObject` · `RenderBox` · 各 `Render*` 族 | ✅（族 8 个：`RenderCenter` / `RenderFlex` / `RenderFlexible` / `RenderPadding` / `RenderProxyBox` / `RenderText` / `RenderButton` + `Overflow` · `FlexAlign`） |
-| `src/Widget/` | `Drift\Widget` | `Widget` · **`BoxWidget`** · `StatelessWidget` · `StatefulWidget` · `Element` · `State` · `BuildContext` · `Key`；⏳ **`TextField`** · **`Spinner`** | ✅ 8/8 + ⏳ **2**（另有 11 个控件 + 6 个 Element 实现；★ 已实现的 11 个控件**不含** `TextField` —— 全文 **29 处**引用、O-16 全部论据与 §A.2.9 旗舰表单都建在这个 0 文件的控件上，见 §24.1 #32） |
+| `src/Widget/` | `Drift\Widget` | `Widget` · **`BoxWidget`** · `StatelessWidget` · `StatefulWidget` · `Element` · `State` · `BuildContext` · `Key`；⏳ **`TextField`** · **`Spinner`** · **`Dock`** · **`AppBar`** · **`NavButton`** | ✅ 8/8 + ⏳ **5**（另有 11 个控件 + 6 个 Element 实现；★ 已实现的 11 个控件**不含** `TextField` —— 全文 **29 处**引用、O-16 全部论据与 §A.2.9 旗舰表单都建在这个 0 文件的控件上，见 §24.1 #32） |
 | `src/Widget/Drag/` | `Drift\Widget\Drag` | ⏳ **一个文件都没有**：`Draggable` · `DragTarget` | **缺 2**（M3，§12.4 / §A.3.5） |
+| `src/Widget/Menu/` | `Drift\Widget\Menu` | ⏳ **一个文件都没有**：`MenuBar` · `Menu` · `MenuItem` · `ContextMenu` | **缺 4**（M3，§9.1 裁决“菜单 = 普通 Widget，不进 Platform”） |
 | `src/Input/` | `Drift\Input` | ⏳ **一个文件都没有**：`PointerEvent` · `KeyEvent` · `KeyChord` · `GestureArena` · `FocusNode` · `SemanticsTree` · `AcceleratorTable` · `CursorShape` · `ThemeChangedEvent` | **缺 9**（M3，路由链见 §9.1） |
 | `src/State/` | `Drift\State` | `Subject` · `Subscription` · `SubjectBuilder` · `Cell` · `SubscribingWidget` | ✅ 5/5 |
 | `src/Commands/` | `Drift\Commands` | `CommandRouter` · `CommandHandler` · `CommandArg` | ✅ 3/3 |
 | `src/Theme/` | `Drift\Theme` | `ThemeData` · `ThemeScope` · **`SystemTheme`** | ✅ 3/3（★ 删掉孤儿名 `Theme`，见 §24.1 #26） |
-| `src/Routing/` | `Drift\Routing` | `RouteTable` · `PageHost` · `Offstage` · **`NoPage`** | ✅ 4/4（★ 删掉 `Page`，见 §24.1 #25） |
+| `src/Routing/` | `Drift\Routing` | `RouteTable` · `PageHost` · **`NoPage`**（`PageHost` 有一个实现文件 `PageHostState.php`） | ✅ 3/3 + 1 个实现文件（★ 删掉 `Page`，见 §24.1 #25；★ **`Offstage` 住 `Drift\Widget`** —— 原表把它挂在本行并标 ✅ 4/4，是 §24.1 #37 的唯一"标 ✅ 却无文件"） |
 | `src/Errors.php` | `Drift\Errors` | 错误出口 | ✅ |
 
-★ **本表不穷尽，它回答"这一层该有什么"**：`src/` 实有 **101 个 PHP 文件**（其中 96 个含 `@api`），本表点名 **74 个**（**48 个有文件 / 26 个 0 文件**，2026-10-15 按"名字 → 所属目录同名 `.php`"清点，**零矛盾** —— 没有一个标 ✅ 的名字没有文件）；**52 个已实现文件未列入本表**：6 个封闭域 enum + 11 个控件 + 6 个 Element 实现 + 16 个 Text 确定性实现族 + `Errors.php` + `Application`/`Frame`。★ 漏登记的代价见 §24.1 #32/#33（`TextField` 全文 29 处引用却不在表里）；**穷尽清单归 `drift-doctor`（O-10）自动扫 `src/`**，本表是它的临时输入。
+★ **本表不穷尽，它回答"这一层该有什么"**：`src/` 实有 **101 个 PHP 文件**（其中 96 个含 `@api`），本表点名 **91 个**（**52 个有文件 / 39 个 0 文件**，2026-10-15 按"名字 → 所属目录同名 `.php`"清点，**零矛盾** —— 修掉误挂在 `Drift\Routing` 的 `Offstage`（§24.1 #37）之后才成立；此前那句"零矛盾"本身是**假陈述**）；**49 个已实现文件未列入本表**：6 个封闭域 enum · 11 个控件 · 6 个 Element 实现 · `Layout` 侧 9 个 `Render*` 族成员 + `Overflow`/`FlexAlign` · `Text` 侧 14 个（含 §8.2 坑 6 的 6 个确定性参考实现）· `ButtonVariant`/`RenderBoxWidget` · `Errors.php`。（101 = 91 点名 + 49 未点名，2026-10-15 同口径清点；★ 上一轮这里写的 "52 个 … + Application/Frame" 两个数都错 —— `Application`/`Frame` 是**已点名**的，而族成员与 `Text` 目录的实现被漏数了）★ 漏登记的代价见 §24.1 #32/#33（`TextField` 全文 29 处引用却不在表里）；**穷尽清单归 `drift-doctor`（O-10）自动扫 `src/`**，本表是它的临时输入。
 
 ### 4.3 依赖规则（lint 强制，违反即报错）
 
@@ -1571,7 +1572,7 @@ paint(Canvas $canvas): void            // 父级已 translate 到本盒原点
 | C2 | **无界 = `+inf`** | `BoxConstraints(maxWidth: INF)`；**永不拿 0 当哨兵**；`constrain()/tighten()` 纯函数 | GUI 仓三次踩坑 |
 | C3 | **内禀测量带另一轴** | `intrinsicWidth(float $height)` / `intrinsicHeight(float $width)`（GTK4 口径 `measure(orientation, for_size)`） | Greenfield N1 证伪"measure/arrange 分离是 no-op"后的真实形态 |
 | C4 | **Flex 松上界规则** | 第一遍量自然高：格内有**竖直**弹性后代 ⇒ 给**无界高**，否则给 `0..maxH`；**`0` 是合法高度，不能当"无界"** | Grid/Table 实测缺陷（整行被撑成父盒可用高） |
-| C5 | **溢出策略是契约** | 每个容器必须声明行为：`clip / scroll / wrap / report`；**外壳类控件（AppBar/StatusBar）必须有溢出策略**，且必须是布局期行为而非宽度阈值 | 窄屏工具栏溢出缺陷 |
+| C5 | **溢出策略是契约** | 每个容器必须声明行为：`clip / scroll / wrap / report`；**外壳类容器必须有溢出策略**（框架侧如 `AppBar`，应用侧如 `StatusBar` —— “外壳类”是**类别判据，不是类清单**，见 §24.1 #36），且必须是布局期行为而非宽度阈值 | 窄屏工具栏溢出缺陷 |
 | C6 | **违反 ⇒ 响亮失败** | 无界约束传给有内禀尺寸的子、约束违反、溢出未声明 ⇒ `Errors::report`（**Fatal 级，release 也中止**） | G2 |
 
 ★ **C5 的"每个容器"的边界**（消歧）：`Overflow` 有**默认值**（`Overflow::Clip`），只有"可能超出给定约束"的容器（`AppBar` / `StatusBar` / `Row` / `Dock` 槽 / 自绘容器）**必须显式声明**；`Text` / `Icon` / `Padding` 这类"尺寸由内容或子决定、不会超"的容器用默认值即可。判据：**这个容器在约束不足时，是否必须"选择一种舍弃方式"？** 是 ⇒ 显式声明。（★ 这条在 v2 之前是隐性的，见 §23.1 第 9 项。）
@@ -2162,7 +2163,7 @@ PHP Fatal error: Uncaught TypeError: TypePhp\Translator::getAbsolutePath():
 | W1 | **单一造盒路径** | 渲染控件**有且只有** `createRenderObject()` 一个造盒入口；不得在 Element 之外 `new` 盒 | §13.2 | G1 |
 | W2 | **盒字段对齐** | Widget 的每个配置字段都被 `createRenderObject()` 读到（R12 的"Widget 侧"） | §13.2 | A9 |
 | W3 | **死字段** | 公开参数**声明了就必须被读**（= R11） | §10.3 | A1 |
-| W4 | **溢出策略已声明** | 可能超约束的容器声明 `Overflow`；**外壳类控件（`AppBar`/`StatusBar`）必须有** | §13.1 C5 | G2 |
+| W4 | **溢出策略已声明** | 可能超约束的容器声明 `Overflow`；**外壳类容器必须有**（“外壳类”是类别判据，框架侧 `AppBar` / 应用侧 `StatusBar`，见 §24.1 #36） | §13.1 C5 | G2 |
 | W5 | **布局纯函数** | `layout()` 不读自身 `ox/oy`、不读 OS/时钟/随机源；**无界用 `INF` 不用 0** | §13.1 C2 / §14.1 | G3 |
 | W6 | **Seal-on-Mount** | 挂载后不得写 Widget；`make()` 的必填参数已提供 | §15.2 / §15.4 | A11 |
 | W7 | **违反 ⇒ 响亮失败** | 无界传给有内禀尺寸的子、约束违反、溢出未声明 ⇒ `Errors::report`（**Fatal**） | §13.1 C6 | G2 |
@@ -2415,11 +2416,11 @@ $app = new UsersApplication(new Win32Platform(), new ThreadPoolTaskHost());
 | **M0 骨架** | PSR-4 分层 + 契约文件 + `tools/smoke.php` + **公共面按 `@api` 标注**（决定 lint 骨架） | 冒烟全绿；依赖方向 lint 有断言；`internal-leak` 双向自检过 | ✅ **已完成** —— PSR-4 分层 / `@api` 标注（76 类型）/ `smoke.php`（315 ok）/ lint 骨架（14 条落地）全在  |
 | **M1 可显示** | Win32 Platform + RenderSurface(Skia CPU) + Canvas 接口 + 文本栈桥接 + DPI 缩放 + **`DisplayList` 录制**（决定渲染路径） | 一个窗口画出「Hello Drift」（§A.1），分数缩放下不糊 | ⏳ **部分** —— 渲染侧齐（`RenderSurface`/`Canvas`/`DisplayList`/文本栈/`RasterCanvas`）；**平台侧 0 文件**：`Drift\Platform` 9 + `Win32` 2 + `SkiaCanvas` + `cpp-src/` + `apps/*/project.yml` + `bin/<platform>/Bootstrap.php` ⇒ **出口判据未兑现**（今天只能无头跑）  |
 | **M2 三树 + 布局** | Element/State/调和 + RenderBox 两阶段布局 + 首批控件 + **fluent-first 全部落地** + **盒样式（`BoxStyle` + `BoxWidget`，§15.7）** + **焦点遍历顺序** + **光标形状（命中三方消费）** + **`SubscribingWidget` 接口** + **property hooks 进 Store** + **`Each` key 必填** | 布局 conformance 夹具全过；首批控件过 **W1–W8**；Tab 序有 conformance 夹具；`Each` 缺 key ⇒ 构建期报错 | ⏳ **大部分** —— 三树/调和/两阶段布局/11 个控件/fluent-first/`BoxStyle`+`BoxWidget`/`SubscribingWidget`/property hooks/`Each` key 全在；**`TextField` · `Spinner` 0 文件**（§24.1 #32：全文引用却不在“首批控件”清单里）；**`FocusNode`（焦点遍历顺序）与 `CursorShape`（命中三方消费）0 文件**；conformance 夹具属 M4 工具链，未建  |
-| **M3 数据缝/多页** | Store 三件套 + `SubjectBuilder` + **`select()`** + RouteTable/PageHost + **动作缝（`CommandRouter` + 冒泡链）** + **三态 enum** + **错误边界容器**（★ 2026-10-14 裁决：**归 M3** —— 见 §23.2 O-12）+ **AcceleratorTable** + **自绘 MenuBar/ContextMenu** + **应用内拖放** | §A.2 的完整应用可跑；局部态与跨页共享两条路径都能写；`Root` 只组合（lint 可查）；Ctrl+S 等加速键可用；§16.6.3 的 **17 条规则全部双向自检**过 | ⏳ **约一半** —— 值缝（Store 三件套 + `SubjectBuilder` + `select`）与动作缝（`CommandRouter` + 冒泡链）已通；**错误边界容器 / `AcceleratorTable` / 自绘 `MenuBar`·`ContextMenu` / 应用内拖放 4 项 0 文件**；§A.2 样板刚对齐（O-18），`apps/users` 未建  |
-| **M4 工具链 + 异步** | drift-preview / golden / conformance / drift-lint / **drift-doctor** 齐备 + **TaskHost 线程池后端** + **`notifyChanged` 线程断言** + **ThemeChanged / 深色模式** | 无头 preview + golden diff 可跑；后台 IO 不卡帧；**worker 里 notify ⇒ 响亮失败**；跟得上系统主题切换 | ⏳ **未动** —— `drift-lint` / `drift-preview` / `drift-codegen` 三件在；`golden` / `conformance` / `drift-doctor` 未建，`TaskHost` 系 6 个类型 + `ThreadPoolTaskHost` 0 文件  |
+| **M3 数据缝/多页** | Store 三件套 + `SubjectBuilder` + **`select()`** + RouteTable/PageHost + **动作缝（`CommandRouter` + 冒泡链）** + **三态 enum** + **错误边界容器**（★ 2026-10-14 裁决：**归 M3** —— 见 §23.2 O-12）+ **AcceleratorTable** + **自绘 MenuBar/ContextMenu** + **应用内拖放** | §A.2 的完整应用可跑；局部态与跨页共享两条路径都能写；`Root` 只组合（lint 可查）；Ctrl+S 等加速键可用；§16.6.3 的 **17 条规则全部双向自检**过 | ⏳ **约一半** —— 值缝（Store 三件套 + `SubjectBuilder` + `select`）与动作缝（`CommandRouter` + 冒泡链）已通；**多页外壳（`Dock`/`AppBar`/`NavButton`）· `Widget\Menu` 四件 · 错误边界容器 · `AcceleratorTable` · `Drag` 两件 —— 6 类 11 个 0 文件**；§A.2 样板刚对齐（O-18），`apps/users` 未建  |
+| **M4 工具链 + 异步** | drift-preview / golden / conformance / drift-lint / **drift-doctor** 齐备 + **TaskHost 线程池后端** + **`notifyChanged` 线程断言** + **ThemeChanged / 深色模式** | 无头 preview + golden diff 可跑；后台 IO 不卡帧；**worker 里 notify ⇒ 响亮失败**；跟得上系统主题切换 | ⏳ **未动** —— `drift-lint` / `drift-preview` / `drift-codegen` 三件在；`golden` / `conformance` / `drift-doctor` 未建，`TaskHost` 系 **7 个类型**（含 `Job`，§24.1 #35）+ `ThreadPoolTaskHost` 0 文件  |
 | **M5 业务底座** | 虚拟化（含 §12.3 的 State 外置纪律）+ 脏矩形 + **WindowStateStore** + Windows UIA 桥接 | 长列表滚动不掉帧；子树崩溃不整树陪葬；窗口位置/尺寸跨启动保留 | ⏳ **未动** —— 虚拟化 / 脏矩形 / `WindowStateStore` / UIA 桥接全 0 文件  |
 
-★ **状态列是 §20 纪律 4 在里程碑层的落点**：出口判据写“要做”不算数，`src/` 里有没有才算。§4.2 已按同一口径加了逐类型状态列（点名 74 个：**48 有文件 / 26 个 0 文件**） —— **两处必须同步维护**（否则又会出现“文档说已落地、代码还没写”的分裂）。★ `drift-doctor`（§16.2 六件套之一，O-10 已裁“做”）正是该**自动**输出这张表的工具 ⇒ 手工列只是它的**临时输入**，别为它新造机制。
+★ **状态列是 §20 纪律 4 在里程碑层的落点**：出口判据写“要做”不算数，`src/` 里有没有才算。§4.2 已按同一口径加了逐类型状态列（点名 91 个：**52 有文件 / 39 个 0 文件**） —— **两处必须同步维护**（否则又会出现“文档说已落地、代码还没写”的分裂）。★ `drift-doctor`（§16.2 六件套之一，O-10 已裁“做”）正是该**自动**输出这张表的工具 ⇒ 手工列只是它的**临时输入**，别为它新造机制。
 
 **M1 的探针门（先验后用，任一不过即退化）**：
 
@@ -3377,7 +3378,7 @@ M5 ── （无裁决项；虚拟化 / 脏矩形 / `WindowStateStore` / UIA 桥
 | 16 | **§4.3 / §4.2** | `TextRole`（§15.2 定义、§11.5 要用）**不在 §4.2 目录清单里**，且"角色 → `TextStyle`"的解析该放哪一层方案没说 | 补进 `Drift\Text`（不是 `Drift\Widget`）：解析落 `ThemeData::textSize/textColor`，而 §4.3 只允许 `Theme → Text`、**不允许 `Theme → Widget`**。放 Widget 会让 Theme 依赖 Widget，直接撞 lint。另：**§15.7 纪律 3 因此有了第二个落点实例**（合并只发生一次） |
 | 18 | **§4.2 / §4.3** | **§4.3 的 `Widget → Theme` 禁令与"控件要在造盒时把主题解析成值"直接冲突**。`Button::createRenderObject()` 必须引用 `ColorToken` / `MetricToken` 才能把变体解析成颜色 —— 而 lint 只放行了 `BuildContext.php` 一个文件的协议例外，扩例外会让它扩散（今天允许一个文件，明天整层都能依赖 Theme） | **`ColorToken` / `MetricToken` 从 `src/Theme/` 移到 `src/Rendering/`**。依赖方向天然成立：`Widget → Rendering` ✓、`Theme → Rendering` ✓、`Rendering` 自己不依赖 Widget/Theme ✓。**语义没说谎**：token 是"渲染资源的语义键"，与 `Color` 同层比与 `ThemeData` 同层更实。★ 解析仍只发生一次（§15.7 纪律 3），落点从 `RenderButton`（Layout，不许碰 Theme）移到 `Button::createRenderObject()`（Widget，经 `BuildContext`） |
 | 17 | **§15.2 / §16.6.1 / §19 / §A.1 / §A.2** | **`ForEach` 不是合法 PHP 类名** —— `foreach` 是保留字，且 PHP 类名**大小写不敏感** ⇒ `class ForEach` 直接 `PHP Parse error: unexpected token "foreach"`（实测）。方案全文 6 处 `ForEach::make(...)` 照抄必然编译不过 | 类名改 **`Each`**（`Each::make(keyFn)->items(...)`）。★ 这是第 9 处"文档挡住实现"的同类，但**改了公共面** ⇒ 名字选择请你确认；若你更想叫 `Items` / `ListOf` / `EachItem`，改回来只是一次重命名（语义与 key 必填裁决都不变） |
-| 22 | **§4.2** | `Drift\Routing` 行列了 **`Page`**，但全文对 `Page` 的唯一定义在 **§A.2.1 的 `App\Users\Store\Page`**（`fetchPage()` 返回的 DTO，三个字段 `ok/items/error`）—— 它是**应用私有值对象**，不是框架类型。这与第 10 处"目录表与定义对不上"同类，只是这次错在**层级**：照 §4.2 建 `src/Routing/Page.php` 会得到一个框架里没人用的空壳 | 从 `Drift\Routing` 行删掉 `Page`（该行的真实成员是 `RouteTable` · `PageHost` · `Offstage` + `NoPage`）。★ 应用私有 DTO 归 `apps/<app>/store/`，不进框架 —— §12.2 的"每页可独立预览"正要求页面只依赖自己的 store 类型 |
+| 22 | **§4.2** | `Drift\Routing` 行列了 **`Page`**，但全文对 `Page` 的唯一定义在 **§A.2.1 的 `App\Users\Store\Page`**（`fetchPage()` 返回的 DTO，三个字段 `ok/items/error`）—— 它是**应用私有值对象**，不是框架类型。这与第 10 处"目录表与定义对不上"同类，只是这次错在**层级**：照 §4.2 建 `src/Routing/Page.php` 会得到一个框架里没人用的空壳 | 从 `Drift\Routing` 行删掉 `Page`。★ **2026-10-15 更正（§24.1 #37）**：本行写的"真实成员是 `RouteTable` · `PageHost` · `Offstage` + `NoPage`"**其中 `Offstage` 是错的** —— 它住 `Drift\Widget`（结构节点），该行真实成员是 `RouteTable` · `PageHost` · `NoPage` 三个。★ 应用私有 DTO 归 `apps/<app>/store/`，不进框架 —— §12.2 的"每页可独立预览"正要求页面只依赖自己的 store 类型 |
 | 23 | **§A.1** | 样例的三处照抄会编译不过：① `protected function title()/buildRoot()` —— 基类 `Application` 把它们定义成 public（`commands()` 要能被 devtools 枚举），子类**收窄**可见性 ⇒ `PHP Fatal: Access level must be public`；② `use` 列表里漏了 `Center`（正文用了 `Center::make()` 却没 import），多了一个没用的 `BuildContext`；③ `Bootstrap` 调 `$app->run()`，而 `Application` **没有** `run()` —— §5.2 裁决 1 明确"循环归平台，`Frame` 不拥有它" | ① 改 `public`；② 补 `Center`、删 `BuildContext`；③ 改成平台驱动形态（`attach()` + `pump()` 循环里调 `frame()`）。★ `main.php` 与 `bin/<platform>/Bootstrap.php` **本轮不建**：它们要 `Drift\Platform\Win32\Win32Platform`（M1 的 Skia/Win32 桥），建出来只会是引用不存在类型的空壳（A15）。`apps/hello/src/HelloApplication.php` 已建且可无头预览（`--app`） |
 | 21 | **§4.3** | `Routing` 行的允许集写着"Widget / Commands"，但 §12.1 第 7 条要求 `RouteTable` 的工厂**返回 `Widget`** ⇒ 签名必须引用 `Drift\Widget\Widget`。这正是 §4.2 目录表"Routing → Widget"那一列本来的意思，**依赖表漏抄了它**（与第 10 处"Theme 漏 Rendering"同类：允许集和目录表对不上） | `Routing` 行补 `Widget`。★ 顺带确认方向只有一条：`RouteTable` **不认 `Element`**、不挂树，它只造 Widget —— 挂载与保活住 `Drift\App` 与 `Drift\Widget\Offstage`，那样 Routing 才保持可单测（必须在浏览器外能跑） |
 | 19 | **§11.3.1** | 样例写 `private Cell $hovered = new Cell(-1);` + `$this->hovered->setIfChanged($index)`，并注明"内部：=== 不等 ⇒ setState 标脏"。**PHP 的属性初始化器拿不到 `$this`**（`new Cell(-1)` 里没有 State 可引用）⇒ 照抄能得到一个"设了值但没人重建"的 `Cell`，正是 G2 要消灭的静默形态 | 绑定必须显式发生：`State::cell($initial)` 是**唯一创建入口**，`initState()` 里 `$this->hovered = $this->cell(-1);`。`Cell` 未绑定就 `setIfChanged()` ⇒ **Fatal**（不留下"设了没用"的值）。★ 顺带：`State` 的样例因此从"属性初始化器"变成"`initState()` 里赋值"，与 §11.3 RT-1 的"只 initState 订"是同一个时机 |
@@ -3407,6 +3408,20 @@ M5 ── （无裁决项；虚拟化 / 脏矩形 / `WindowStateStore` / UIA 桥
 |---|------|------|------|
 | 32 | **§4.2** `Drift\Widget` 行 | **`TextField` 全文 29 处引用、`src/` 里 0 文件**，而 §4.2 只写“另有 11 个控件”（那 11 个是 `Button`/`Center`/`Column`/`Each`/`Expanded`/`Flex`/`Offstage`/`Padding`/`Row`/`Spacer`/`Text`，**不含**它）⇒ O-16 全部论据、§11.4 官方订阅形态、§A.2.9 旗舰表单都建在一个**既无代码、又无里程碑归属**的控件上。`Spinner` 同类（3 处引用） | Widget 行补 ⏳ `TextField` · `Spinner`；§19 M2 状态列同步标“0 文件”；§A.2.9 加实况边界横幅。★ **这是能力缺口，不是文档缺口** —— 输入控件本该是 M2“首批控件”收的，repo 至今没写 |
 | 33 | **§4.2** | `Drift\Widget\Drag\{Draggable,DragTarget}` 4+2 处引用、§A.3.5 整节建在它上面、§12.4 与 §19 M3 都点了名，但 **§4.2 连目录行都没有**（§19 只写“应用内拖放”四个字，无文件可数） | 新增 `src/Widget/Drag/` 行（⏳ 缺 2，M3），与 §19 M3“应用内拖放 0 文件”对上账 |
+
+★ **第九轮追加（2026-10-15，A 方向 15 处 use 失配审计收尾）** —— 三条同型：**名字对、位置/归属错**：
+
+| # | 位置 | 症状 | 修正 |
+|---|------|------|------|
+| 34 | **§A.2.6** · **§12.2** · **§13.1** | `Overflow` 三处引用错：① §A.2.6 从 `Drift\Widget\{… Overflow …}` 导入，而它声明在 `src/Layout/Overflow.php` ⇒ 照抄即 `Class "Drift\Widget\Overflow" not found`；② §12.2 样板写 `Overflow::clip`（小写）—— `src/` 里 case 是 PascalCase 的 `Clip/Scroll/Wrap/Report` ⇒ `Undefined constant`；③ §13.1 边界注里的默认值同理 | ① 拆成 `use Drift\Widget\{Dock, AppBar, NavButton}` + `use Drift\Layout\Overflow`（方向合法：§4.3 允许 Widget → Layout）；②③ 改 `Overflow::Clip`。★ ②③ 让 §12.1 自称的“枚举 case 命名已统一为 PascalCase”**从假变真** —— 此前 §12.2 自己就留着反例 |
+| 35 | **§4.2** | `Dock` / `AppBar` / `NavButton`（多页外壳三件）+ `Drift\Widget\Menu\{MenuBar, Menu, MenuItem, ContextMenu}` + `Drift\App\Job` 共 8 个类型全文被依赖（§12.2 外壳样板、§A.2.6 `UsersRoot`、§17.2 `TaskHost::submit(Job)`），**§4.2 一个都没登记**，`src/` 全 0 文件 | Widget 行补 ⏳ 三件外壳 + 新增 `src/Widget/Menu/` 行（缺 4）+ App 行补 ⏳ `Job`；§19 M3/M4 状态列同步（TaskHost 系 6 → 7 个） |
+| 36 | **§13.1 C5 / §16 W4** | 两张契约表都把“外壳类控件（**AppBar/StatusBar**）”并列，但 `StatusBar` 按 §4.2 目录注释与 §A.2.11 是**应用私有**控件（`apps/users/src/widgets/StatusBar.php`），不是框架类 ⇒ “必须有溢出策略”这条契约看起来在约束一个框架外的例子 | 澄清为**类别判据**而非类清单：会超约束的**外壳类**容器必须显式声明；`AppBar` 是框架控件、`StatusBar` 只是示范这个类别的应用私有样本。**契约对象是类别，不是那张名单** |
+
+★ **第十轮追加（2026-10-15）** —— **#25/#26 的同类错误第二次出现**，方法论见下：
+
+| # | 位置 | 症状 | 修正 |
+|---|------|------|------|
+| 37 | **§4.2** `Drift\Routing` 行 · **§3.1 分层图** | `Offstage` 被挂在 `Drift\Routing` 并标 ✅ 4/4，而它声明在 `src/Widget/Offstage.php`（结构节点，`Drift\Widget`）—— 全表**唯一一个"标 ✅ 却没有文件"的矛盾**。同图 `Drift\Routing` 行还留着已删的孤儿 `Page`、`Drift\Theme` 行还留着已删的孤儿 `Theme` | Routing 行删 `Offstage` → ✅ 3/3 + 注明归属；分层图两行分别改成 `RouteTable · PageHost · NoPage` 与 `ThemeData · ThemeScope · SystemTheme · token`；#22 的"真实成员"加更正。★ **方法论（第二次同类 ⇒ 顺找模型问题）**：#25/#26 删孤儿名时**只改了 §4.2 表格**，没有全文扫一遍同名孤儿 —— "已删"因此再次是自述。⇒ 以后删一个名字，**必须全文 grep 该名字的所有出现形态**（表格 / 分层图 / 术语表 / 正文叙述），而不是只改被点名那一处 |
 
 ★ 附带确认：`main.php` / `tools/*.php` 这类**入口脚本**（无类型声明）不受 `namespace-mismatch` 管 —— PSR-4 管的是类文件。
 
