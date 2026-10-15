@@ -22,10 +22,12 @@ use Drift\Dev\Smoke\Layout\SolidBox;
 use Drift\Dev\Smoke\Commands\CommandWidget;
 use Drift\Dev\Smoke\Commands\EchoCommands;
 use Drift\Dev\Smoke\Commands\PickyCommands;
+use Drift\App\Application;
 use Drift\App\Frame;
 use Drift\Dev\Smoke\Frame\QuietWidget;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Smoke\Frame\TickerWidget;
+use Drift\Dev\Smoke\App\EchoApplication;
 use Drift\Dev\Smoke\LeafProbe;
 use Drift\Dev\Smoke\Routing\NavStore;
 use Drift\Dev\Smoke\Theme\ThemeSpy;
@@ -1851,6 +1853,64 @@ check(
     $ghostSlot instanceof OffstageElement
         && $ghostSlot->childCount() === 1
         && $ghostSlot->childAt(0)?->widget() instanceof NoPage
+);
+
+fresh($log);
+if (is_file($log)) {
+    unlink($log);
+}
+
+// ── ㉙ Application：组合根（§4.5 / §11.4.3 全链）──
+
+$surface3 = new SurfaceProbe();
+$surface3->resize(320, 240, 1.0);
+$app = new EchoApplication();
+$app->attach($surface3, BoxConstraints::tight(new Size(320.0, 240.0)));
+
+check('Application · buildRoot 被调一次（组合根只组合）', $app->kerned);
+check('Application · 根 Element 挂上且有盒', $app->root() !== null && $app->rootBox() !== null);
+check('Application · attach 即跑首帧（表面收到 beginFrame）', $surface3->frames === 1);
+check('Application · title() 由应用给', $app->title() === '冒烟应用');
+
+// 平台驱动后续帧：每调一次 surface 多一帧
+$app->frame(16.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$app->frame(32.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+check('Application · frame() 由平台驱动（每调一次一帧）', $surface3->frames === 3 && $surface3->ends === 3);
+
+// ★ 命令派发链（§11.4.3 四环齐全）
+//   第 ①② 环：树内冒泡；第 ③ 环：CommandRouter；第 ④ 环：谁都没接 ⇒ Diagnostic
+check(
+    'Application · 注册表里的命令接得走（第 ③ 环）',
+    $app->dispatch('echo.hello') === true
+);
+
+// ★ 顺序：树内冒泡**优先于**注册表。同一个名字两边都能接 ⇒ 树内先接，
+//   注册表的 handler 一次都不该被调到。顺序反了页面就永远收不到自己的命令。
+$ordered = new EchoApplication();
+$ordered->withCommandWidget = true;
+$ordered->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
+check(
+    'Application · 树内冒泡优先于注册表（页面自己最知道命令是不是它的）',
+    $ordered->dispatch('widget.echo') === true
+);
+$routerHits = 0;
+$ordered->root()?->visitChildren(function (\Drift\Widget\Element $e) use (&$routerHits): void {
+    $st = $e instanceof \Drift\Widget\StatefulElement ? $e->state() : null;
+    if ($st instanceof \Drift\Dev\Smoke\Commands\CommandState) {
+        $routerHits = count($st->handled);
+    }
+});
+check(
+    'Application · 树内接走后注册表没被调（handler 的 seen 不增长）',
+    $routerHits === 1
+);
+check(
+    'Application · 链上谁都没接 ⇒ 返回 false + Diagnostic（不静默）',
+    $app->dispatch('nobody.wants.this') === false
+);
+check(
+    'Application · 没人接的命令写进环形缓冲',
+    str_contains((string) json_encode(\Drift\Errors::recentDiagnostics()), 'nobody.wants.this')
 );
 
 fresh($log);
