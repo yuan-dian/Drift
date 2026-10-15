@@ -12,6 +12,20 @@ namespace Drift;
  *
  * 中止不是裸 abort()：桌面应用没有控制台，闪退等于另一种静默。
  * 走 §1.2 的三步标准序列（写日志 → 原生错误框 → 固定退出码）。
+ *
+ * ★ **为什么是 `@api`（2026-10-15 补标）**：§1.2 的配套约束 1 逐字要求**组合根**
+ *   调 `Errors::installFatalBox(...)`，而组合根住在 `apps/<app>/bin/<os>/` ——
+ *   `apps` 只许碰 `@api`（§4.3）。不标它，§1.2 自己那段样板就是非法的
+ *   （lint 的 `internal-leak` 正是在 P0 落地时抓出来的）。
+ *
+ * ★ 公共面按**调用者**分三档，别混用：
+ *   · **业务代码**（`apps/<app>/src`）：只用 `report()` —— 报告一条错误。
+ *   · **组合根**（`apps/<app>/bin/<os>`）：只用 `installFatalBox()` —— §1.2 第 ② 步。
+ *   · **工具与自检**（`tools/`、测试）：`setDebug` / `setLogPath` / `logPath` /
+ *     `recentDiagnostics` / `reset` —— 它们存在的理由是"让错误出口可被观测"，
+ *     业务代码调它们只会让日志路径变成两个来源。
+ *
+ * @api
  */
 final class Errors
 {
