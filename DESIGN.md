@@ -325,22 +325,22 @@ private function pageFor(string $name): ?Widget
 
 ### 4.2 目录即分层
 
-| 目录 | 命名空间 | 文件 |
-|------|---------|------|
-| `src/App/` | `Drift\App` | `Application.php` · `EventLoop.php` · `FrameClock.php` · `TaskHost.php` · `ThreadPoolTaskHost.php` · `SyncTaskHost.php` · `WindowStateStore.php` |
-| `src/Platform/` | `Drift\Platform` | `Platform.php` · `WindowHost.php` · `SurfaceProvider.php` · `InputSource.php` · `TimerHost.php` · `Screen.php` · `Clipboard.php` · `Dialog.php` · `Tray.php` |
-| `src/Platform/Win32/` | `Drift\Platform\Win32` | `Win32Platform.php` · `Win32WindowHost.php` · …（首个实现） |
-| `src/Geometry/` | `Drift\Geometry` | `Point` · `Size` · `Rect` · `EdgeInsets` · `Scale` · `BoxConstraints` |
-| `src/Rendering/` | `Drift\Rendering` | `RenderSurface` · `GpuContext` · `Canvas` · `DisplayList` · `Paint` · `Color` · `BoxStyle` · `SkiaCanvas` · `RasterCanvas` · `RecordingCanvas` |
-| `src/Text/` | `Drift\Text` | `TextRole` · `FontManager` · `FontCollection` · `FontFace` · `TextShaper` · `TextLayout` · `Paragraph` · `TextMetricsProvider` · `TextStyle` · `TextInputClient` |
-| `src/Layout/` | `Drift\Layout` | `RenderObject` · `RenderBox` · 各 `Render*` 族 |
-| `src/Widget/` | `Drift\Widget` | `Widget` · **`BoxWidget`** · `StatelessWidget` · `StatefulWidget` · `Element` · `State` · `BuildContext` · `Key` |
-| `src/Input/` | `Drift\Input` | `PointerEvent` · `KeyEvent` · `KeyChord` · `GestureArena` · `FocusNode` · `SemanticsTree` · `AcceleratorTable` · `CursorShape` · `ThemeChangedEvent` |
-| `src/State/` | `Drift\State` | `Subject` · `Subscription` · `SubjectBuilder` · `Cell` · `SubscribingWidget` |
-| `src/Commands/` | `Drift\Commands` | `CommandRouter` · `CommandHandler` · `CommandArg` |
-| `src/Theme/` | `Drift\Theme` | `Theme` · `ThemeData` · `ThemeScope` · **`SystemTheme`** |
-| `src/Routing/` | `Drift\Routing` | `Page` · `RouteTable` · `PageHost` · `Offstage` |
-| `src/Errors.php` | `Drift\Errors` | 错误出口 |
+| 目录 | 命名空间 | 文件 | 状态（2026-10-15 按 `src/` 核验） |
+|------|---------|------|------|
+| `src/App/` | `Drift\App` | ✅ `Application.php` · `Frame.php`；⏳ `EventLoop.php` · `FrameClock.php` · `TaskHost.php` · `ThreadPoolTaskHost.php` · `SyncTaskHost.php` · `WindowStateStore.php` | **缺 6**（M4/M5） |
+| `src/Platform/` | `Drift\Platform` | ⏳ **一个文件都没有**：`Platform` · `WindowHost` · `SurfaceProvider` · `InputSource` · `TimerHost` · `Screen` · `Clipboard` · `Dialog` · `Tray` | **缺 9**（M1） |
+| `src/Platform/Win32/` | `Drift\Platform\Win32` | ⏳ **一个文件都没有**：`Win32Platform` · `Win32WindowHost` · …（首个实现） | **缺 2**（M1） |
+| `src/Geometry/` | `Drift\Geometry` | `Point` · `Size` · `Rect` · `EdgeInsets` · `Scale` · `BoxConstraints` | ✅ 6/6 |
+| `src/Rendering/` | `Drift\Rendering` | ✅ `RenderSurface` · `GpuContext` · `Canvas` · `DisplayList` · `Paint` · `Color` · `BoxStyle` · `RasterCanvas` · `RecordingCanvas`；⏳ `SkiaCanvas` | **缺 1**（M1） |
+| `src/Text/` | `Drift\Text` | `TextRole` · `FontManager` · `FontCollection` · `FontFace` · `TextShaper` · `TextLayout` · `Paragraph` · `TextMetricsProvider` · `TextStyle` · `TextInputClient` | ✅ 10/10（另有 **6 个未列入本表**的确定性实现：`DeterministicFontManager` · `DeterministicFontCollection` · `DeterministicShaper` · `DeterministicMetricsProvider` · `NotdefFontFace` · `BitmapFontFace` —— §8.2 坑 6 的“确定性参考实现”） |
+| `src/Layout/` | `Drift\Layout` | `RenderObject` · `RenderBox` · 各 `Render*` 族 | ✅（族 8 个：`RenderCenter` / `RenderFlex` / `RenderFlexible` / `RenderPadding` / `RenderProxyBox` / `RenderText` / `RenderButton` + `Overflow` · `FlexAlign`） |
+| `src/Widget/` | `Drift\Widget` | `Widget` · **`BoxWidget`** · `StatelessWidget` · `StatefulWidget` · `Element` · `State` · `BuildContext` · `Key` | ✅ 8/8（另有 11 个控件 + 6 个 Element 实现） |
+| `src/Input/` | `Drift\Input` | ⏳ **一个文件都没有**：`PointerEvent` · `KeyEvent` · `KeyChord` · `GestureArena` · `FocusNode` · `SemanticsTree` · `AcceleratorTable` · `CursorShape` · `ThemeChangedEvent` | **缺 9**（M3，路由链见 §9.1） |
+| `src/State/` | `Drift\State` | `Subject` · `Subscription` · `SubjectBuilder` · `Cell` · `SubscribingWidget` | ✅ 5/5 |
+| `src/Commands/` | `Drift\Commands` | `CommandRouter` · `CommandHandler` · `CommandArg` | ✅ 3/3 |
+| `src/Theme/` | `Drift\Theme` | `ThemeData` · `ThemeScope` · **`SystemTheme`** | ✅ 3/3（★ 删掉孤儿名 `Theme`，见 §24.1 #26） |
+| `src/Routing/` | `Drift\Routing` | `RouteTable` · `PageHost` · `Offstage` · **`NoPage`** | ✅ 4/4（★ 删掉 `Page`，见 §24.1 #25） |
+| `src/Errors.php` | `Drift\Errors` | 错误出口 | ✅ |
 
 ### 4.3 依赖规则（lint 强制，违反即报错）
 
