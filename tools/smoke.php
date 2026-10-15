@@ -13,6 +13,7 @@ declare(strict_types=1);
  *   测试钩子（那会给生产 API 添一个只为测试存在的开关，正是 A15）。
  */
 
+use Drift\Dev\Smoke\BoxProbe;
 use Drift\Dev\Smoke\SealProbe;
 use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
@@ -72,6 +73,12 @@ if (str_starts_with($caseArg, '--case=')) {
         $widget = new SealProbe();
         $widget->seal();
         $widget->key(7); // 封存后给身份 ⇒ 必须响亮失败
+    }
+
+    if ($case === 'box') {
+        $widget = new BoxProbe();
+        $widget->seal();
+        $widget->background(Color::white()); // 封存后改样式 ⇒ 必须响亮失败
     }
 
     if ($case === 'constraints') {
@@ -512,6 +519,34 @@ fresh($log);
 [$code, $output] = runCase(__FILE__, 'key', null);
 check('Key · 封存后再给 Key 退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
 check('Key · 封存后再给 Key 写了 Errors.log', str_contains(logText($log), 'Widget 已封存'));
+
+// ⑫ 盒样式：值对象 + 中间基类（§15.7）
+fresh($log);
+$boxProbe = new BoxProbe();
+check('BoxWidget · 不用样式 ⇒ 不分配 BoxStyle（零成本）', $boxProbe->box() === null);
+check('BoxWidget · 结构节点继承裸 Widget ⇒ 拿不到 background()', !method_exists(SealProbe::class, 'background'));
+$boxProbe->background(Color::white());
+check('BoxWidget · background 落进 BoxStyle', $boxProbe->box()?->hasBackground() === true);
+$boxProbe->border(Color::black(), 2.0);
+check(
+    'BoxWidget · 链式叠加是整体替换，不丢前一项',
+    $boxProbe->box()?->hasBackground() === true && $boxProbe->box()?->borderWidth === 2.0
+);
+$boxProbe->radius(8.0);
+check('BoxWidget · radius 独立改写', $boxProbe->box()?->radius === 8.0);
+check('BoxWidget · 链式返回自身（不产生新实例）', $boxProbe->radius(4.0) === $boxProbe);
+
+$plainBox = BoxStyle::none()->withBackground(Color::white());
+$roundedBox = $plainBox->withRadius(4.0);
+check(
+    'BoxStyle · with- 返回新值，原值不变',
+    $plainBox->radius === 0.0 && $roundedBox->radius === 4.0 && $roundedBox->hasBackground()
+);
+
+fresh($log);
+[$code, $output] = runCase(__FILE__, 'box', null);
+check('BoxWidget · 封存后改样式退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
+check('BoxWidget · 封存后改样式写了 Errors.log', str_contains(logText($log), 'Widget 已封存'));
 
 fresh($log);
 if (is_file($log)) {
