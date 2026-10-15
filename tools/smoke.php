@@ -27,6 +27,7 @@ use Drift\Dev\Smoke\Frame\QuietWidget;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Smoke\Frame\TickerWidget;
 use Drift\Dev\Smoke\LeafProbe;
+use Drift\Dev\Smoke\Theme\ThemeSpy;
 use Drift\Dev\Smoke\SealProbe;
 use Drift\Dev\Smoke\State\BuildWatchWidget;
 use Drift\Dev\Smoke\State\FakeStore;
@@ -78,6 +79,7 @@ use Drift\Text\TextRole;
 use Drift\Text\TextStyle;
 use Drift\Theme\SystemTheme;
 use Drift\Theme\ThemeData;
+use Drift\Theme\ThemeScope;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
 use Drift\Widget\ButtonVariant;
@@ -1694,6 +1696,85 @@ $offElement->update(Offstage::make($doomed->child(), false));
 $doomElement->update(Offstage::make($doomed->child(), false));
 $doomElement->unmount();
 check('Routing · 隐藏页被卸载 ⇒ State 仍走 dispose（不漏）', $doomState !== null && $doomState->disposed);
+
+fresh($log);
+if (is_file($log)) {
+    unlink($log);
+}
+
+// ── ㉗ ThemeScope：面覆盖（§2446 / §3171）──
+
+// ① 子树看到的是覆盖后的主题，外层不受影响
+$lightRoot = ThemeScope::make(ThemeData::light(), new ThemeSpy())->createElement();
+$lightRoot->mount(null, $context);
+$lightSpy = $lightRoot->childAt(0)?->state();
+check('ThemeScope · 外层是浅色 ⇒ 子层看到浅色', $lightSpy !== null && !$lightSpy->sawDark);
+
+$darkRoot = ThemeScope::make(ThemeData::dark(), new ThemeSpy())->createElement();
+$darkRoot->mount(null, $context);
+$darkSpy = $darkRoot->childAt(0)?->state();
+check('ThemeScope · 子树看到覆盖后的暗色', $darkSpy !== null && $darkSpy->sawDark);
+check('ThemeScope · 覆盖不外溢（外层 ctx 仍是浅色）', !$context->theme()->isDark());
+
+// ② 嵌套 ⇒ 最内层赢，没有特异性权重（§2446 原话"谁生效查父链"）
+$nested = ThemeScope::make(
+    ThemeData::light(),
+    ThemeScope::make(ThemeData::dark(), new ThemeSpy()),
+)->createElement();
+$nested->mount(null, $context);
+$nestedSpy = $nested->childAt(0)?->childAt(0)?->state();
+check('ThemeScope · 嵌套 ⇒ 最内层赢（不算特异性权重）', $nestedSpy !== null && $nestedSpy->sawDark);
+
+// ③ 切换主题 ⇒ 子层换表。**两种兑现时机**（Element::applyContext 的注释写清了）：
+//    有状态节点只标脏、等帧末；无状态节点立即重建。两种都在这儿钉住。
+$scopedChild = new ThemeSpy(); // Widget 不可变 ⇒ 复用一个实例（换主题不换控件）
+$switchRoot = ThemeScope::make(ThemeData::light(), $scopedChild)->createElement();
+$switchRoot->mount(null, $context);
+$switchSpy = $switchRoot->childAt(0)?->state();
+check('ThemeScope · 切换前是浅色', $switchSpy !== null && !$switchSpy->sawDark);
+$switchRoot->update(ThemeScope::make(ThemeData::dark(), $scopedChild));
+check(
+    'ThemeScope · 切主题 ⇒ 有状态子层先只标脏（§5.2 裁决 3，不在事件中途重建）',
+    $switchSpy !== null && $switchSpy->needsBuild() && $switchSpy->builds === 1
+);
+$switchRoot->settle(); // 帧末：与 Frame.run 走同一条 settle()
+check(
+    'ThemeScope · 帧末兑现 ⇒ 子层看到暗色，且 State 没换（切主题不丢状态）',
+    $switchSpy !== null && $switchSpy->sawDark && $switchSpy->builds === 2
+        && $switchRoot->childAt(0)?->state() === $switchSpy
+);
+
+// ④ 无状态控件**立即**兑现：它的盒是按 ctx 算的，不重算就是"换表不换色"
+$scopedButton = Button::make('确定');
+$buttonScope = ThemeScope::make(ThemeData::light(), $scopedButton)->createElement();
+$buttonScope->mount(null, $context);
+$lightBox = $buttonScope->childAt(0)?->renderObject();
+check('ThemeScope · scope 内按钮先取到浅色表', $lightBox?->boxStyle()->background !== null);
+$buttonScope->update(ThemeScope::make(ThemeData::dark(), $scopedButton));
+$darkBox = $buttonScope->childAt(0)?->renderObject();
+check(
+    'ThemeScope · 切主题 ⇒ 无状态控件的盒立即重算（不是下一帧）',
+    $darkBox !== null && $darkBox !== $lightBox
+        && $darkBox->boxStyle()->background !== $lightBox->boxStyle()->background
+);
+
+// ⑤ 端到端：同一按钮在两份表下取到不同底色（§15.7 纪律 3 只解析一次）
+$darkButton = Button::make('确定')->createRenderObject(
+    (new BuildContext(320.0, 240.0, ThemeData::dark(), $context->metrics()))
+);
+$lightButton = Button::make('确定')->createRenderObject(
+    (new BuildContext(320.0, 240.0, ThemeData::light(), $context->metrics()))
+);
+check(
+    'ThemeScope · 同一按钮在两份表下取到不同底色（§15.7 纪律 3 只解析一次）',
+    $darkButton->boxStyle()->background !== $lightButton->boxStyle()->background
+);
+
+// ⑤ ThemeScope 自己是结构节点：拿不到盒样式糖方法（§15.7）
+check(
+    'ThemeScope · 结构节点不碰绘制样式',
+    !method_exists(ThemeScope::class, 'background')
+);
 
 fresh($log);
 if (is_file($log)) {

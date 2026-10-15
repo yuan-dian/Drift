@@ -45,6 +45,18 @@ final readonly class BuildContext
         return $this->theme;
     }
 
+    /**
+     * 换一份主题，其余不变（§2446：ThemeScope 的"面覆盖"）。
+     *
+     * @internal 只有 `Drift\Theme\ThemeScope` 调它 —— Widget 侧不得拿这个方法
+     *           造自己的主题（那等于让控件自己决定配色）。放这里而不放
+     *           `ThemeData` 上，是因为 ctx 是"沿父链解析后的值"的唯一载体。
+     */
+    public function withTheme(ThemeData $theme): self
+    {
+        return new self($this->width, $this->height, $theme, $this->metrics);
+    }
+
     public function metrics(): TextMetricsProvider
     {
         return $this->metrics;

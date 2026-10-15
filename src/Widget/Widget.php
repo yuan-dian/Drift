@@ -50,6 +50,21 @@ abstract class Widget
     }
 
     /**
+     * 子层拿到的渲染环境（§2446：主题 scope 链的扩展点）。
+     *
+     * 默认原样递下去。**只有"面覆盖"型节点才覆写**（目前 `Drift\Theme\ThemeScope`
+     * 换主题；将来方向 / 本地化同形）。返回类型是 `BuildContext` 而不是更具体的
+     * 类型 —— 所以 `Drift\Widget` 不需要认识 `Drift\Theme`（§4.3 的协议例外
+     * 仍然只有 `BuildContext.php` 一个文件）。
+     *
+     * @internal Element 挂载 / 更新时调它，用户不需要。
+     */
+    public function childContext(BuildContext $context): BuildContext
+    {
+        return $context;
+    }
+
+    /**
      * 造 Element —— **唯一入口**（W1 同源：单一造盒路径）。
      *
      * ★ 收口成一处 `instanceof`，而不是让每个控件子类各写一遍 `return new

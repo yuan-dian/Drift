@@ -141,6 +141,45 @@ abstract class Element
     {
     }
 
+    /** 本节点算出的、要递给子层的渲染环境 */
+    private function childContext(): BuildContext
+    {
+        return $this->widget->childContext($this->context);
+    }
+
+    /**
+     * 换一份渲染环境（**主题切换**的唯一入口）。
+     *
+     * ★ 两种兑现时机，**必须写清否则是陷阱**：
+     *   ① **无状态 / 容器节点立即重建** —— 它没有脏标记可标，而"按主题取值的
+     *      控件"（Text 字号、Button 底色）的渲染盒是在 `createRenderObject(ctx)`
+     *      里算的，不重算就等于换表不换色。
+     *   ② **有状态节点只标脏**，等帧末 flush（§5.2 裁决 3：不在事件处理中途重建）。
+     *      于是紧跟着读 `$state` 里的旧值是可能的 —— 那是"推迟"，不是"丢"。
+     *
+     * ★ 递归只走一遍：无状态节点的 `rebuild()` → `updateChildren()` 会给每个
+     *   子层 `applyContext()`（新挂的走 `mount()`），所以这里不再自己遍历。
+     *   `BuildContext` 是 readonly 值对象 ⇒ `===` 比身份，重复下发直接返回。
+     *
+     * @internal 由父 Element 调
+     */
+    public function applyContext(BuildContext $context): void
+    {
+        if ($this->context === $context) {
+            return; // 同一份 ⇒ 幂等（父层重复下发不会引发二次重建）
+        }
+
+        $this->context = $context;
+
+        if ($this instanceof StatefulElement) {
+            $this->state()?->markDirty();
+        } else {
+            $this->rebuild();
+        }
+
+        $this->syncBox(); // §13.2：更新 ⇒ 重造盒（盒是按 ctx 算的）
+    }
+
     abstract public function rebuild(): void;
 
     /**
@@ -235,7 +274,7 @@ abstract class Element
 
             if ($slot === null) {
                 $element = $newWidget->createElement();
-                $element->mount($this, $this->context);
+                $element->mount($this, $this->childContext());
                 $next[] = $element;
                 continue;
             }
@@ -245,6 +284,9 @@ abstract class Element
             if ($element->widget() !== $newWidget) {
                 $element->update($newWidget);
             }
+            // 本节点的 ctx 结论换了（ThemeScope light → dark）⇒ 已存在的子层
+            // 也必须拿到新值。只更新新挂的子层会让"切主题"对老子树静默失效。
+            $element->applyContext($this->childContext());
             $next[] = $element;
         }
 
