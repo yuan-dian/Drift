@@ -2560,6 +2560,8 @@ $app = new UsersApplication(new Win32Platform(), new ThreadPoolTaskHost());
 | ✅ **O-15** | `CommandHandler` 的**依赖从哪来**（原方案只写了 `->on('x', XCommands::class)`，没说 handler 怎么拿到 store） | 中 | **E：`on()` 收实例**（★ 已裁决并落地 —— 零新 API / 零反射 / 零动态 `new`；A 的 `provide()` 放弃。技术前提已真机证实，见探针 I） | M3 |
 | ✅ **O-16** | **`Bound` 的定位**（与 `SubjectBuilder::select` 的关系未定义；现签名**订阅不了**） | **高** | **A′：删 `Bound` 且删 `TextField::bind()`**（★ **已裁决并落地** —— 四层论据见下方 O-16 段的"横向对照"块） | M3 |
 | ✅ **O-17** | **样式复用**（背景/颜色/字号）：基类字段 vs `BoxStyle` 值对象 vs trait | 中 | **A′：`BoxStyle` 值对象**（**只管盒样式**）+ 中间基类 `BoxWidget`；**不引入 `TextStyle`**；**删孤儿名 `ControlStyle`**（★ **已裁决并落地** → §15.7） | M2 |
+| ⏳ **O-18** | **§A.2 的 `Application` 用法与已实现 API 分裂**（`protected` + `boot()` + `commands(): CommandRouter` + `accelerators()` + `taskHost()` —— 照抄必然 `PHP Fatal`） | 中 | **A：改文档对齐代码**（零代码改动；`boot()` 违背已落地的 O-15 方案 E） | 现在（§A.2 是“可照抄”样板） |
+| ⏳ **O-19** | **§19 出口判据与 `src/` 真实状态脱节**（M1 判据“一个窗口画出 Hello Drift”未兑现：`Drift\Platform` 9 + `Win32` 2 一个文件都没有） | 低 | **A：§19 也加“当前状态”列**（§4.2 已随 #24 补） | 现在 |
 
 ---
 
@@ -3235,6 +3237,48 @@ WPF 的 `Control.Background` / `Foreground` / `FontSize` 都是基类上的 `Dep
 
 ---
 
+#### O-18 §A.2 的 `Application` 用法与已实现 API 分裂
+
+**⏳ 待裁决（2026-10-15）** —— 本轮转看核心能力时撞上的第一处：**旗舰样板不可照抄**。
+
+**问题本质**：`src/App/Application.php` 已定型（2026-10-15 核验）：构造器 `__construct(iterable $handlers = [])`、`public function commands(): iterable`、`attach()` 里注册（可重入）、`register()`、`router()`。而 **§A.2.5 写的是另一套**：`protected function boot()` / `protected function title()` / `protected function buildRoot()` / `protected function commands(): CommandRouter` / `protected function accelerators()` / `protected function onSystemThemeChanged()`，还调 `$this->taskHost()`。
+⇒ 照抄 §A.2 会连中三枪：① `PHP Fatal: Access level must be public`（**#23 已在 §A.1 修过同一处，§A.2 漏了**）；② 返回类型不协变（`CommandRouter` 不是 `iterable`）；③ `taskHost()` / `boot()` / `accelerators()` / `onSystemThemeChanged()` **在 `Application` 上一个都不存在**。
+★ 同型第 3 次：**样板与实现的分裂**（#17 `ForEach` / #23 §A.1 / 现在 §A.2）—— 每次都是“方案先写了理想 API，实现按约束收窄，样板没跟上”。
+
+**方案**：
+
+| 方案 | 内容 | 得 | 失 |
+|------|------|----|----|
+| **A（推荐）** | **改文档对齐代码**：§A.2 改 `public function ...` + `commands(): iterable<string, CommandHandler>` + 依赖在组合根构造器里 `new` | 零代码改动；§A.2 立刻可照抄；与已交付的 `Application` / `apps/hello` 完全一致 | `boot()` 这个“装配入口”没有了 —— handler 清单要在构造器里列出 |
+| B | **改代码对齐文档**：给 `Application` 加 `boot()` / `accelerators()` / `taskHost()` / `onSystemThemeChanged()`，`commands()` 返回 `CommandRouter` | §A.2 一行不改；`boot()` 比“构造器里塞数组”更明确 | 一次新增 4 个公共扩展点（A15 风险）；`commands(): CommandRouter` 与既有 `router()` 职责重叠；`taskHost()` 现在**返回不了东西**（`TaskHost` 在 M4） |
+| C | 只改可见性 + 新增 `boot()` 一处 | 装配点明确，`commands()` 保持可枚举 | 仍新增公共面；`boot()` 与 O-15 的“依赖在构造点”打摆子 |
+
+**参考推荐：A**。三条依据：① `boot()` 的收益在 PHP 里**构造器就是**，而 O-15 方案 E 的裁决原文就是“依赖就在构造点”—— §A.2 写 `boot()` **违背已落地的裁决**；② `apps/hello` 是唯一真实消费者，用的正是 A 形态；③ B/C 会在 `TaskHost` 还不存在时就先立一个返回 `null` 的 `taskHost()`——正是 A15（收益≈0 的公开 API）。
+★ **`accelerators()` / `onSystemThemeChanged()` 必须等 `AcceleratorTable` / `ThemeChangedEvent` 存在当天再加**（§9.1 / §9.2 的路由链形状不变，只是还没实现）—— 与 #23 的“`Bootstrap` 本轮不建”同一条纪律：**不建引用不存在类型的样板**。
+**冲突点**：与 O-15（方案 E）一致、与 A15 一致；无冲突。
+**落地成本**：文档 0.2 天（只动 §A.2.5 与 §9.1 那两段示例）。
+
+#### O-19 §19 出口判据与 `src/` 真实状态脱节
+
+**⏳ 待裁决（2026-10-15）** —— 事实陈述，**不需要裁决“要不要做”，要裁的是“怎么记”。
+
+**问题本质**：§19 的 M1 出口判据是“一个窗口画出「Hello Drift」（§A.1）”。但核验 `src/`：`Drift\Platform` 9 个类型 + `Drift\Platform\Win32` 2 个**一个文件都没有**；也没有 `cpp-src/`、没有 `apps/hello/project.yml`、没有 `bin/win32/Bootstrap.php`。**现有验证全部无头**（`tools/drift-preview.php` 走 `RasterCanvas`，`tools/smoke.php` 在 `php.exe` 里跑）。⇒ §19 的 M1 行读起来像“已达成”，实际达成的是“**控件树 + 布局 + 光栅绘制**”这一层。同型：`Input` 9 个（M3）、`App` 异步半 6 个（M4/M5）。
+★ 这正是 §20 纪律 4（“没出现 = 没交付”）在**里程碑层**的版本：**出口判据本身没有被核验过**。
+
+**方案**：
+
+| 方案 | 内容 | 得 | 失 |
+|------|------|----|----|
+| **A（推荐）** | §19 每行加“**当前状态**”列（✅ 部分达成 / ⏳ 未动 + 缺哪个文件），与 §4.2 的状态列同步 | 路线图第一次**可核验**；“还缺什么”不用翻 `src/` | 每里程碑完成时要维护两处 |
+| B | 只标 §4.2（本轮 #24 已做），§19 不动 | 改动小 | §19 的出口判据仍不可核验 —— **正是这次的病根** |
+
+**参考推荐：A** —— §4.2 已经在 #24 补了状态列，**两个文档说的是同一件事，就该有同一份状态**。
+★ **顺带**：§16.2 的 `drift-doctor`（六件套之一，O-10 已裁“做”）正是该**自动**输出这张表的工具 ⇒ 手工状态列只是它的**临时输入**，别为它新造机制。
+**冲突点**：无（纯记录）。
+**落地成本**：0.1 天。
+
+---
+
 ### 23.3 批量批准清单与依赖图
 
 **✅ 已裁决（2026-10-14，**17 项全部收口**）**：`O-01` · `O-02` · `O-03` · `O-04` · **`O-05`** · **`O-06`** · `O-07` · `O-08` · `O-09` · `O-10` · `O-11` · **`O-12`** · `O-13` · **`O-14`** · **`O-15`** · **`O-16`** · **`O-17`**。
@@ -3261,6 +3305,7 @@ M2 ── ✅ O-02（`BuildContext` 能力面）—— **已完成**（§3.4；O
       ✅ O-17（**`BoxStyle` 只管盒样式 + 中间基类 `BoxWidget`**）★ 已裁决并落地 → **§15.7**（新增节）
       （随 M2 实现：盒族控件的 `?BoxStyle` 字段 + 3 个糖方法 + 主题解析）
 M3 ── ✅ O-04 · ✅ O-05（不做）· ✅ O-06（不做）· ✅ O-07 · ✅ O-12 · ✅ O-15 · ✅ O-16
+      ⏳ O-18（§A.2 样板对齐已实现的 `Application`）· ⏳ O-19（§19 补“当前状态”列）
       ★ **O-16 的订阅侧落地时，一并补 `SubjectBuilder` 的类形状**（字段表 / 方法表 / `builder` 调用约定）
       ★ O-12 的**容器归 M3**（§19 的 M5 那处已删）
       （随 M3 实现：Store 三件套 + `SubjectBuilder` + `select()` + 动作缝 + 错误边界容器 + 加速键 + 自绘菜单 + 拖放）
@@ -3321,6 +3366,17 @@ M5 ── （无裁决项；虚拟化 / 脏矩形 / `WindowStateStore` / UIA 桥
 | 21 | **§4.3** | `Routing` 行的允许集写着"Widget / Commands"，但 §12.1 第 7 条要求 `RouteTable` 的工厂**返回 `Widget`** ⇒ 签名必须引用 `Drift\Widget\Widget`。这正是 §4.2 目录表"Routing → Widget"那一列本来的意思，**依赖表漏抄了它**（与第 10 处"Theme 漏 Rendering"同类：允许集和目录表对不上） | `Routing` 行补 `Widget`。★ 顺带确认方向只有一条：`RouteTable` **不认 `Element`**、不挂树，它只造 Widget —— 挂载与保活住 `Drift\App` 与 `Drift\Widget\Offstage`，那样 Routing 才保持可单测（必须在浏览器外能跑） |
 | 19 | **§11.3.1** | 样例写 `private Cell $hovered = new Cell(-1);` + `$this->hovered->setIfChanged($index)`，并注明"内部：=== 不等 ⇒ setState 标脏"。**PHP 的属性初始化器拿不到 `$this`**（`new Cell(-1)` 里没有 State 可引用）⇒ 照抄能得到一个"设了值但没人重建"的 `Cell`，正是 G2 要消灭的静默形态 | 绑定必须显式发生：`State::cell($initial)` 是**唯一创建入口**，`initState()` 里 `$this->hovered = $this->cell(-1);`。`Cell` 未绑定就 `setIfChanged()` ⇒ **Fatal**（不留下"设了没用"的值）。★ 顺带：`State` 的样例因此从"属性初始化器"变成"`initState()` 里赋值"，与 §11.3 RT-1 的"只 initState 订"是同一个时机 |
 | 20 | **§4.3** | `Widget` 行的不许依赖列写着 `Commands`，但 §11.4.3 的派发链第 ①② 环要求 `Drift\Widget\State::handleCommand(string $name, CommandArg $arg): bool` —— 签名要碰 `Drift\Commands\CommandArg` ⇒ **与 §11.4.3 直接冲突** | 照 `BuildContext`/`Theme` 的既有先例加**协议例外**，且**只登记 `src/Widget/State.php` 一个文件**（层级放行会让"任何 Widget 都去依赖 Commands"合法化）。★ 边界：Widget 侧只碰这一个**参数类型**；链的其余部分住 `Drift\App`（那里 `Widget → Commands` 天然合法）。夹具 `src/Widget/UsesCommands.php` 守"例外不扩散" |
+
+★ **第六轮追加（2026-10-15，补 lint 规则告一段落后转看核心能力时）** —— 全部是“已有裁决/已有实现没写全”，语义不变：
+
+| # | 位置 | 症状 | 修正 |
+|---|------|------|------|
+| 24 | **§4.2** | 目录表**没有“现状”一列**，读起来像 73 个类型都已存在。按 `src/` 核验：**45 个已实现、28 个连文件都没有**（`Platform` 9 + `Win32` 2 + `Input` 9 + `App` 异步半 6 + `SkiaCanvas` 1 + 孤儿 `Theme` 1） | 加**状态列**（✅/⏳ + 缺哪个）—— 路线图写“要做”不算数，`src/` 里有没有才算 |
+| 25 | **§4.2** `Drift\Routing` 行 | 第 22 项写“`Page` 已删”，但**表里 `Page` 还在**、真正的成员 `NoPage` 反而没列 ⇒ 上一轮的“已落地”是自述不是事实 | 删 `Page`、补 `NoPage`（与 #22 结论一致） |
+| 26 | **§4.2** `Drift\Theme` 行 | `Theme` 是**孤儿名**：全文无定义、无引用（`Theme::Light` 只在引用旧正文时出现一次），`src/` 里也没有 | 删（同 #22 `Page` / O-17 `ControlStyle` 的处置） |
+| 27 | **§12.1** 第 2 条 | 判据说“封闭域（enum）禁止 `default`”，但**全文没有枚举清单** ⇒ 判据不可逐条核验；且 `UnhandledMatchError` 被 5 处当作“框架的守卫”引用，从没人说它是 **PHP 内置类**（8.5.11 实测：`match` 无臂无 `default` ⇒ 抛 `\UnhandledMatchError`） | 补**框架封闭域 enum 清单**（11 个：住哪层 / 取值 / 谁消费）+ 一句“纪律由语言保证，Drift 只需别写 `default`” |
+| 28 | **§11.3.3** | `SubjectBuilder` 这个 `@api` 契约原语**只有用法、没有成员表**（§23.2 O-05 复核发现 ⑥ 的挂账项，原定“随 M3 订阅侧一并补”）⇒ 照 §A.2.11 手写时不知道该实现哪些方法 | 补**类形状表**（`make`/`select`/`builder` + 三个 `@internal` 读取器 + `createState`）与三条调用约定 |
+| 29 | **§8.1 / §8.2** | `TextAlign` / `FontWeight` / `FontSlant` / `PaintStyle` 四个 `@api` 封闭域 enum 在全文**出现 0 次**，而 §8.2 坑 6 说“凡是影响排版结果的输入都在 `TextStyle` 里（对齐…亦然）” | 随 #27 的清单一并命名（公共面不再靠读者翻 `src/` 发现） |
 
 ★ 附带确认：`main.php` / `tools/*.php` 这类**入口脚本**（无类型声明）不受 `namespace-mismatch` 管 —— PSR-4 管的是类文件。
 
