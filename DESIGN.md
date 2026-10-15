@@ -351,7 +351,7 @@ private function pageFor(string $name): ?Widget
 | `Text` | `Geometry` / `Errors` | Widget / Rendering / Platform |
 | `Rendering` | `Geometry` / `Text` / `Errors` | Widget / Platform（表面由 App 注入） |
 | `Input` | `Geometry` / `Errors`；**协议例外**：`Text\TextInputClient` 与 `Layout\SemanticsConfiguration` 可被引用，但仅限类型签名 | Widget / Rendering |
-| `Widget` / `Layout` / `State` | 下面全部 | Routing / Theme / Commands / App |
+| `Widget` / `Layout` / `State` | 下面全部；**协议例外**：`Theme\ThemeData` / `ColorToken` / `MetricToken` 可被引用，但**仅限 `BuildContext` 的类型签名**（§3.4） | Routing / Theme（**除该例外**）/ Commands / App |
 | `Commands` | Geometry / Errors / **State**（只做类型签名） | Widget / Layout / Rendering / Platform |
 | `Theme` / `Routing` | Widget / Layout / State / Text / **Rendering** / Geometry | App |
 | `App` | 全部 | apps |
@@ -3272,6 +3272,7 @@ M5 ── （无裁决项；虚拟化 / 脏矩形 / `WindowStateStore` / UIA 桥
 | 12 | **§8.1 / §7.1** | 缓存键钉死为 `(text, style, maxWidth, scale)`，但排版结果**还受**对齐 / 行数上限 / 省略号影响 ⇒ 若把它们做成 `layout()` 的参数就会**同键不同结果**（缓存撒谎） | 裁决：三者**进 `TextStyle`**（§15.7 说 widget 层的角色方法落成 `TextStyle` 的值）⇒ 方案给定的键**保持字面成立** |
 | 13 | **§A.3.3** | `overrideTokens([ColorToken::Border => …])` **不是合法 PHP** —— 枚举实例是对象，**不能作数组键**（实测 `Fatal error: Cannot access offset of type ColorToken on array`，纯枚举与 backed 枚举都一样）。⇒ 这行示例照抄必然编译不过 | 改为值对象的 `withX()` 形态（与 §15.7 `BoxStyle::withX()` 同源）：**点覆盖** `withColor(ColorToken, Color)` / `withMetric(MetricToken, float)`；**面覆盖** `withHighContrast()`。**公共面无字符串键**（§16.4 否决字符串注册表；内部用 `->name` 作数组键只是因为 PHP 数组键不能是对象） |
 | 14 | **§4.2** | 目录清单的 `Drift\Theme` 行**缺 `SystemTheme`**，但它被 §9.2 / §A.2.7 / §A.3.3 三处引用（`SystemTheme::Light` / `::Dark`）⇒ 与第 9 处（缺 `Color`）同类 | 补 `SystemTheme` |
+| 15 | **§4.3** | `Widget` 行的不许依赖列写着 `Theme`，但 §3.4（2026-10-14 才定义）要求 `Drift\Widget\BuildContext` 有 `theme(): ThemeData` / `color(ColorToken)` / `metric(MetricToken)` ⇒ **两条裁决直接冲突**（`dependency-direction` 会报它，而删掉 `theme()` 又让 §3.4 的能力面少一半） | 照 `Input` 行的既有先例加**协议例外**：三个类型**仅限 `BuildContext` 的类型签名**可引用。★ 边界要说清：`ThemeData` 是"解析后的值"，`BuildContext` 只是**把它递给 `build()`**，不构成 Widget → Theme 的架构依赖，`ThemeScope`（真·主题节点）仍归 `Drift\Theme` 侧 |
 
 ★ 附带确认：`main.php` / `tools/*.php` 这类**入口脚本**（无类型声明）不受 `namespace-mismatch` 管 —— PSR-4 管的是类文件。
 
