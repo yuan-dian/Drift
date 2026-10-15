@@ -27,6 +27,7 @@ use Drift\Dev\Smoke\Frame\QuietWidget;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Smoke\Frame\TickerWidget;
 use Drift\Dev\Smoke\LeafProbe;
+use Drift\Dev\Smoke\Routing\NavStore;
 use Drift\Dev\Smoke\Theme\ThemeSpy;
 use Drift\Dev\Smoke\SealProbe;
 use Drift\Dev\Smoke\State\BuildWatchWidget;
@@ -55,8 +56,12 @@ use Drift\Layout\RenderPadding;
 use Drift\Layout\RenderProxyBox;
 use Drift\Layout\RenderText;
 use Drift\Rendering\BoxStyle;
+use Drift\Routing\PageHost;
+use Drift\Routing\PageHostState;
+use Drift\Routing\NoPage;
 use Drift\Routing\RouteTable;
 use Drift\Widget\Offstage;
+use Drift\Widget\OffstageElement;
 use Drift\Rendering\Color;
 use Drift\Rendering\ColorToken;
 use Drift\Rendering\DisplayList;
@@ -1774,6 +1779,78 @@ check(
 check(
     'ThemeScope · 结构节点不碰绘制样式',
     !method_exists(ThemeScope::class, 'background')
+);
+
+fresh($log);
+if (is_file($log)) {
+    unlink($log);
+}
+
+// ── ㉘ PageHost：换页 = 旧页 Offstage 化（§12.1 第 4/7 条）──
+
+$nav = new NavStore();
+$navTable = RouteTable::make()
+    ->route('users', static fn (): Widget => Text::make('用户列表'))
+    ->route('signup', static fn (): Widget => Text::make('注册'));
+$host = PageHost::make()->source($nav)->select(static fn (NavStore $s): string => $s->page())->table($navTable);
+$hostElement = $host->createElement();
+$hostElement->mount(null, $context);
+
+/** @var PageHostState $hostState */
+$hostState = $hostElement->state();
+check('PageHost · 首帧选出当前页', $hostState !== null && $hostState->page() === 'users');
+check('PageHost · 初始就两页都挂上（各一个 Offstage）', $hostElement->childCount() === 1);
+$usersOffstage = $hostElement->childAt(0)?->childAt(0);
+$signupOffstage = $hostElement->childAt(0)?->childAt(1);
+check(
+    'PageHost · 当前页可见、另一页隐藏',
+    $usersOffstage instanceof OffstageElement && $usersOffstage->childCount() === 1
+        && $signupOffstage instanceof OffstageElement && $signupOffstage->childCount() === 0
+);
+
+// 换页：旧页隐藏但**不卸载**（State 留着），新页可见
+$nav->go('signup');
+check('PageHost · notify 后选中新页', $hostState !== null && $hostState->page() === 'signup');
+$hostElement->settle();
+check(
+    'PageHost · 换页 ⇒ 旧页进 Offstage、新页可见',
+    $hostElement->childAt(0)?->childAt(0)?->childCount() === 0
+        && $hostElement->childAt(0)?->childAt(1)?->childCount() === 1
+);
+
+// ★ 每页只造一次：切回来是同一个 Widget 实例（否则"保留状态"是空话）
+$firstUsers = $hostElement->childAt(0)?->childAt(0);
+$nav->go('users');
+$hostElement->settle();
+$backUsers = $hostElement->childAt(0)?->childAt(0);
+check(
+    'PageHost · 切回来 ⇒ 页面是同一个实例（工厂没有二次调用）',
+    $firstUsers !== null && $firstUsers === $backUsers && $hostState !== null && $hostState->cachedCount() === 2,
+    '缓存 ' . (string) ($hostState?->cachedCount() ?? -1) . ' 页'
+);
+
+// 同值 notify 被门控挡住（§11.3.3）：别的字段变了，页名没变 ⇒ 不换页
+$notifiesBefore = $nav->notifyCount();
+$nav->touchOtherField();
+check(
+    'PageHost · 同值 notify 被门控挡住（两次 select 输出相等）',
+    $hostState !== null && !$hostState->needsBuild()
+);
+// 反证：通知真的到了（否则"门控挡下"与"订阅没联上"长得一样）
+check(
+    'PageHost · 被门控挡的通知仍到达订阅者（排除"订阅没联上"）',
+    $nav->notifyCount() === $notifiesBefore + 1
+);
+
+// 未命中：开放域 ⇒ 什么都不显示，不崩（§12.1 第 2 条）
+$nav->go('ghost');
+$hostElement->settle();
+$ghostSlot = $hostElement->childAt(0)?->childAt(2);
+check(
+    'PageHost · 未命中的页名 ⇒ 末槽是可见的 NoPage（不崩、不静默错误）',
+    $ghostSlot instanceof OffstageElement
+        && $ghostSlot->childCount() === 1
+        && $ghostSlot->childAt(0)?->widget() instanceof NoPage
 );
 
 fresh($log);
