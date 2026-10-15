@@ -2,7 +2,8 @@
 declare(strict_types=1);
 
 /**
- * drift-smoke —— M0 的出口判据（§19）：骨架能装载、错误出口三级都真的生效。
+ * drift-smoke —— M0 的出口判据（§19）：骨架能装载、错误出口三级都真的生效，
+ * 且**已交付的每一层**都有真断言（不是"能 new 出来"就算过）。
  *
  * 用法：
  *   php tools/smoke.php
@@ -25,6 +26,15 @@ use Drift\Rendering\DisplayList;
 use Drift\Rendering\Paint;
 use Drift\Rendering\RasterCanvas;
 use Drift\Rendering\RecordingCanvas;
+use Drift\Text\DeterministicFontManager;
+use Drift\Text\DeterministicMetricsProvider;
+use Drift\Text\DeterministicShaper;
+use Drift\Text\FontFamily;
+use Drift\Text\FontSlant;
+use Drift\Text\FontWeight;
+use Drift\Text\TextAlign;
+use Drift\Text\TextLayout;
+use Drift\Text\TextStyle;
 use Drift\Widget\Widget;
 
 require __DIR__ . '/autoload.php';
@@ -69,6 +79,18 @@ if (str_starts_with($caseArg, '--case=')) {
         $list = new DisplayList();
         $list->record(DisplayList::OP_SAVE); // 只有 save 没有 restore
         $list->assertBalanced();             // W8 ⇒ 必须响亮失败
+    }
+
+    if ($case === 'font') {
+        // 显式家族名找不到任何 face ⇒ 连行高都拿不到 ⇒ 必须响亮失败（§8.3 血账 1）
+        $manager = DeterministicFontManager::standard();
+        (new DeterministicMetricsProvider($manager->collection(), new DeterministicShaper()))
+            ->layout('x', TextStyle::of(14.0)->withFamily(FontFamily::named('NoSuchFont')), INF, Scale::of(1.0));
+    }
+
+    if ($case === 'fontfile') {
+        // M0 只带内置点阵字模：解析字体文件这条路没实现 ⇒ 必须响亮失败而不是静默忽略
+        DeterministicFontManager::standard()->registerFile('C:/nope.ttf');
     }
 
     exit(0); // 走到这里说明"该中止的没中止"
@@ -285,6 +307,120 @@ fresh($log);
 [$code, $output] = runCase(__FILE__, 'w8', null);
 check('Rendering · W8 未闭合退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
 check('Rendering · W8 未闭合写了 Errors.log', str_contains(logText($log), 'W8'));
+
+// ⑪ Text：六层栈 + 确定性参考实现（§8 / §14.2）
+fresh($log);
+$fontManager = DeterministicFontManager::standard();
+$registry = $fontManager->collection();
+$textMetrics = new DeterministicMetricsProvider($registry, new DeterministicShaper());
+$unit = Scale::of(1.0);
+$body = TextStyle::of(14.0);
+$latinFace = $fontManager->faces()[0];
+$cjkFace = $fontManager->faces()[1];
+
+check('Text · FontManager 在任何绘制前就绪（§8.3 血账 1）', $fontManager->isReady() && count($fontManager->faces()) === 2);
+check(
+    'Text · 两个 face 的归一化度量逐字段相同（行高不随字形漂移）',
+    $latinFace->metrics()->equals($cjkFace->metrics())
+);
+
+// 回退链：按能力选 face，链上都不含才退兜底
+check('Text · 逻辑家族的回退链 = 拉丁 + CJK（能力顺序）', count($registry->resolve(FontFamily::sans(), FontWeight::Regular, FontSlant::Normal)) === 2);
+check('Text · 未注册的逻辑家族退默认链（落地名归平台配置）', count($registry->resolve(FontFamily::serif(), FontWeight::Regular, FontSlant::Normal)) === 2);
+check('Text · 显式家族名找不到就是没有', $registry->resolve(FontFamily::named('NoSuch'), FontWeight::Regular, FontSlant::Normal) === []);
+check('Text · 回退链按能力选 face：拉丁', $registry->faceFor(0x41, FontFamily::sans(), FontWeight::Regular, FontSlant::Normal) === $latinFace);
+check('Text · 回退链按能力选 face：CJK', $registry->faceFor(0x4E2D, FontFamily::sans(), FontWeight::Regular, FontSlant::Normal) === $cjkFace);
+$notdef = $registry->faceFor(0x1F600, FontFamily::sans(), FontWeight::Regular, FontSlant::Normal);
+check('Text · 链上都不含 ⇒ 兜底 face（布局不塌、但不画方框）', !$notdef->hasGlyph(0x1F600) && $notdef->glyphAdvance(0x1F600) === 1.0 && $notdef->rasterize(0x1F600, 16.0) === null);
+
+// 行高（§8.2 坑 3）
+$hello = $textMetrics->layout('Hello', $body, INF, $unit);
+check('Text · 行高 = (lineGap + (ascent+descent) × lineHeight) × size', abs($hello->lines[0]->height - 16.8) < 1e-9, (string) $hello->lines[0]->height);
+check('Text · INF 不限宽 ⇒ 不折行', $hello->lineCount() === 1);
+
+// 断行（§13.1 C5 的溢出契约）
+$latinWrapped = $textMetrics->layout('Hello Drift', $body, 40.0, $unit);
+check(
+    'Text · 拉丁整词不被劈开（放不下就溢出，不静默折断）',
+    $latinWrapped->lineCount() === 2
+        && substr('Hello Drift', $latinWrapped->lines[0]->textStart, $latinWrapped->lines[0]->textLength) === 'Hello',
+    (string) $latinWrapped->lineCount()
+);
+check('Text · 行尾空白被修剪（不参与宽度）', $latinWrapped->lines[0]->width === 55.0, (string) $latinWrapped->lines[0]->width);
+check('Text · CJK 按字边界断行', $textMetrics->layout('中文断行测试', $body, 30.0, $unit)->lineCount() === 3);
+
+// 禁则（§8.3 对策 ②）：闭标点不落行首
+$rule = '中文，测试。';
+$ruleWrapped = $textMetrics->layout($rule, $body, 34.0, $unit);
+$lineHeads = [];
+foreach ($ruleWrapped->lines as $line) {
+    $lineHeads[] = substr($rule, $line->textStart, 3);
+}
+check(
+    'Text · 禁则：闭标点不落行首',
+    !in_array('，', $lineHeads, true) && !in_array('。', $lineHeads, true),
+    implode(' / ', $lineHeads)
+);
+
+// 空文本 / 硬换行 / 省略号
+$empty = $textMetrics->layout('', $body, INF, $unit);
+check('Text · 空文本仍有一行高（不塌成 0）', $empty->lineCount() === 1 && $empty->height > 0.0);
+check('Text · 硬换行按 \\n 断', $textMetrics->layout("a\nb\nc", $body, INF, $unit)->lineCount() === 3);
+
+$clamped = $textMetrics->layout('Hello Drift Framework', $body->withMaxLines(2)->withEllipsize(true), 60.0, $unit);
+$lastLine = $clamped->lines[$clamped->lineCount() - 1];
+$lastRun = $lastLine->runs[count($lastLine->runs) - 1];
+$lastGlyph = $lastRun->glyphs[count($lastRun->glyphs) - 1];
+check('Text · 省略号：行数被 maxLines 夹住', $clamped->lineCount() === 2, (string) $clamped->lineCount());
+check('Text · 省略号：末行以 U+2026 结尾', $lastGlyph->codepoint === TextLayout::ELLIPSIS);
+check('Text · 省略号：末行宽度不超 maxWidth', $lastLine->width <= 60.0, (string) $lastLine->width);
+
+// 缓存归实现内部，键 = (text, style, maxWidth, scale)（§7.1 / §8.1）
+$probe = new DeterministicMetricsProvider($registry, new DeterministicShaper());
+$probe->layout('Cache Probe', $body, INF, $unit);
+$probe->layout('Cache Probe', $body, INF, $unit);
+check('Text · 同键复用（不重复排版）', $probe->cachedCount() === 1, (string) $probe->cachedCount());
+$probe->layout('Cache Probe', $body->withSize(15.0), INF, $unit);
+$probe->layout('Cache Probe', $body, 100.0, $unit);
+$probe->layout('Cache Probe', $body, INF, Scale::of(1.5));
+$probe->layout('Cache Probe', $body->withAlign(TextAlign::Center), INF, $unit);
+$probe->layout('Cache Probe Other', $body, INF, $unit);
+check('Text · 键的四个分量都参与（text/style/maxWidth/scale）', $probe->cachedCount() === 6, (string) $probe->cachedCount());
+
+// 光标唯一入口 / advance
+check('Text · indexAt 落在正确的码位', $hello->indexAt(12.0, 8.0) === 1);
+check('Text · advance() 与单行 layout 宽度一致', abs($textMetrics->advance('Hello', $body, $unit) - $hello->width) < 1e-9);
+
+// 光栅：位图即 em 盒，未覆盖不画方框
+$bitmap = $latinFace->rasterize(0x41, 14.0);
+$ink = 0;
+for ($y = 0; $y < $bitmap->height; $y++) {
+    for ($x = 0; $x < $bitmap->width; $x++) {
+        if ($bitmap->coverageAt($x, $y) > 0) {
+            $ink++;
+        }
+    }
+}
+check('Text · 位图尺寸随 pixelSize 缩放', $bitmap->width === 9 && $bitmap->height === 14, $bitmap->width . 'x' . $bitmap->height);
+check('Text · 基线上方 = ascent × pixelSize（位图即 em 盒）', $bitmap->bearingY === -12, (string) $bitmap->bearingY);
+check('Text · 位图有墨', $ink > 0);
+check('Text · 未覆盖码位不画方框', $latinFace->rasterize(0x4E2D, 14.0) === null);
+
+// 响亮失败：未覆盖码位问步进留痕；家族无 face / 解析字体文件 ⇒ Fatal
+fresh($log);
+$latinFace->glyphAdvance(0x4E2D);
+$ring = Errors::recentDiagnostics();
+check('Text · 未覆盖码位问步进 ⇒ 留痕不静默', $ring !== [] && str_contains($ring[count($ring) - 1], 'U+4E2D'));
+
+fresh($log);
+[$code, $output] = runCase(__FILE__, 'font', null);
+check('Text · 家族无可用 face 退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
+check('Text · 家族无可用 face 写了 Errors.log', str_contains(logText($log), '没有可用的字体面'));
+
+fresh($log);
+[$code, $output] = runCase(__FILE__, 'fontfile', null);
+check('Text · M0 不解析字体文件 ⇒ 响亮失败', $code === 3, '实际 ' . $code . ' / ' . $output);
+check('Text · 未实现就说是未实现（不静默忽略注册）', str_contains(logText($log), '不解析字体文件'));
 
 fresh($log);
 if (is_file($log)) {
