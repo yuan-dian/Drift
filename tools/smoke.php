@@ -21,6 +21,8 @@ use Drift\Dev\Smoke\Layout\SolidBox;
 use Drift\Dev\Smoke\LeafProbe;
 use Drift\Dev\Smoke\SealProbe;
 use Drift\Dev\Smoke\Tree\BranchWidget;
+use Drift\Dev\Smoke\Tree\CounterState;
+use Drift\Dev\Smoke\Tree\CounterWidget;
 use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\EdgeInsets;
@@ -813,6 +815,34 @@ $rebuilt->mount(null, $context);
 $nextWidget = new BuildProbe();
 $rebuilt->update(new BranchWidget([$nextWidget]));
 check('Element · update 换整体新描述并封存', $rebuilt->childAt(0)?->widget() === $nextWidget && $nextWidget->isSealed());
+
+// ⑰ State：setState 只标脏（§5.2 / §11.3.1 / §12.3）
+fresh($log);
+$counterElement = (new CounterWidget())->createElement();
+$counterElement->mount(null, $context);
+$counter = $counterElement->state();
+
+check('State · 挂载时造一次，之后是同一个', $counter instanceof CounterState && $counterElement->state() === $counter);
+check('State · build() 经 State 出，并收到渲染环境', $counter->builds === 1 && $counter->seenWidth === 320.0);
+check('State · 挂载时也建出了一层子', countTree($counterElement) === 2);
+
+// ★ §5.2 的核心：setState **只标脏**，不立即重建
+$counter->bump();
+check('State · setState 跑闭包', $counter->bumps === 1);
+check('State · setState 只标脏，不立即重建', $counter->needsBuild() && $counter->builds === 1);
+$counterElement->rebuild();
+check('State · 帧末重建后清脏', !$counter->needsBuild() && $counter->builds === 2);
+check('State · 重建不换 State（纯 UI 态活过整个 build）', $counterElement->state() === $counter);
+
+// §12.3：换描述时 State 跟着走，旧的不丢
+$newCounter = new CounterWidget();
+$counterElement->update($newCounter);
+check('State · 换新描述时 State 不换（状态活过更新）', $counterElement->state() === $counter);
+check('State · State 手里的 Widget 换成整份新的', $counter->widget() === $newCounter);
+
+// §12.3 回收纪律：卸载 ⇒ dispose
+$counterElement->unmount();
+check('State · unmount 调 dispose()（§12.3 回收纪律）', $counter->disposed);
 
 fresh($log);
 if (is_file($log)) {

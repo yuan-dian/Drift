@@ -74,7 +74,18 @@ abstract class Element
     {
         $this->widget = $newWidget;
         $this->widget->seal();
+        $this->didUpdateWidget($newWidget);
         $this->rebuild();
+    }
+
+    /**
+     * @internal 子类钩子：新描述已到位、**重建之前**触发。
+     *
+     * `StatefulElement` 用它把新 Widget 递给还在活着的 State —— 于是"跟手输入
+     * 不丢、展开状态还在"是结构保证，不是文档承诺。
+     */
+    protected function didUpdateWidget(Widget $newWidget): void
+    {
     }
 
     abstract public function rebuild(): void;
