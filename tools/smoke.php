@@ -286,6 +286,35 @@ function runCase(string $script, string $case, ?string $marker): array
     return [$code, implode("\n", $output)];
 }
 
+/**
+ * 墨迹包围盒 `[minX, maxX, minY, maxY]`；无墨 ⇒ null。
+ *
+ * ★ 只数墨点数（`inkCount`）测不出"画在了哪儿" —— `Center` 算对偏移而
+ *   绘制丢掉它，墨点数一样多，画面却贴在左上角。
+ */
+function inkBounds(RasterCanvas $canvas): ?array
+{
+    $minX = PHP_INT_MAX;
+    $maxX = -1;
+    $minY = PHP_INT_MAX;
+    $maxY = -1;
+    $w = 320;
+    $h = 240;
+
+    for ($y = 0; $y < $h; $y++) {
+        for ($x = 0; $x < $w; $x++) {
+            if ($canvas->pixelAt($x, $y)->r < 200) {
+                $minX = min($minX, $x);
+                $maxX = max($maxX, $x);
+                $minY = min($minY, $y);
+                $maxY = max($maxY, $y);
+            }
+        }
+    }
+
+    return $maxX < 0 ? null : [$minX, $maxX, $minY, $maxY];
+}
+
 function logText(string $log): string
 {
     return is_file($log) ? (string) file_get_contents($log) : '';
@@ -1994,6 +2023,32 @@ check(
     'apps/hello · drift-preview --app 出 SVG（应用可独立预览）',
     substr_count($helloSvg, '<rect x=') > 0,
     'run 数 ' . (string) substr_count($helloSvg, '<rect x=')
+);
+
+// ★ 回归：文本**必须吃画布变换**。`drawRect` 走 `toDevice()`（跟变换），
+//   而 `drawParagraph` 曾直接用传入坐标（不跟）⇒ `Center` 布局算出的偏移
+//   在 paint 时被丢掉 ⇒ 文字永远贴左上角，且墨点数一模一样（最难查的一档）。
+$shiftCanvas = new RasterCanvas(320, 240, Color::white(), Scale::of(1.0));
+$shiftCanvas->translate(50.0, 20.0);
+$shiftPara = $context->metrics()->layout('Hi', TextStyle::of(14.0), INF, Scale::of(1.0));
+$shiftList = new DisplayList();
+(new RecordingCanvas($shiftList))->drawParagraph($shiftPara, Paint::fill(Color::black()), 0.0, 0.0);
+$shiftList->replay($shiftCanvas);
+$shiftBounds = inkBounds($shiftCanvas);
+check(
+    'Rendering · 文本吃画布平移（translate 之后墨迹整体挪位）',
+    $shiftBounds !== null && $shiftBounds[0] >= 50 && $shiftBounds[2] >= 20,
+    '包围盒 ' . ($shiftBounds === null ? 'null' : implode(',', $shiftBounds))
+);
+
+// ★ 回归：hello 的「Hello Drift」是**居中**的，不是贴着左上角
+$helloBounds = inkBounds($helloSurface->canvas);
+check(
+    'apps/hello · 文字居中（Center 的偏移真被画出来）',
+    $helloBounds !== null
+        && abs(($helloBounds[0] + $helloBounds[1]) / 2 - 160) <= 4
+        && abs(($helloBounds[2] + $helloBounds[3]) / 2 - 120) <= 4,
+    '包围盒 ' . ($helloBounds === null ? 'null' : implode(',', $helloBounds))
 );
 
 fresh($log);

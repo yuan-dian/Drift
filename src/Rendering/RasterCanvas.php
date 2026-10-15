@@ -159,12 +159,20 @@ final class RasterCanvas implements Canvas
             return;
         }
 
+        // ★ 文本**必须**吃画布变换：`$x/$y` 是逻辑坐标，父盒给的位置是靠
+        //   `translate()` 传进来的（`RenderProxyBox::paint` 就是这么把子盒偏移
+        //   递下去的）。不加上当前偏移 ⇒ `Center` 算好的居中偏移画不出来，
+        //   文字永远贴在左上角 —— 而 `drawRect` 走 `toDevice()` 是对的，于是
+        //   "矩形跟着变换、文字不跟"这种半边错的状态最难发现。
+        $originX = $x + $this->offsetX;
+        $originY = $y + $this->offsetY;
+
         // 字形光栅在**设备分辨率**上做（§8.2 坑 2）；步进仍是逻辑单位
         $pixelSize = $paragraph->style->size * $this->scale->dpr;
 
         foreach ($paragraph->lines as $line) {
-            $baseline = $y + $line->baseline;
-            $pen = $x + $line->offsetX;
+            $baseline = $originY + $line->baseline;
+            $pen = $originX + $line->offsetX;
 
             foreach ($line->runs as $run) {
                 foreach ($run->glyphs as $glyph) {

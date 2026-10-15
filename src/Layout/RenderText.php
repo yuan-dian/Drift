@@ -31,6 +31,9 @@ final class RenderText extends RenderBox
 {
     private ?Paragraph $paragraph = null;
 
+    /** 复用缓冲（§7.2 裁决 2）：不每帧 new */
+    private ?DisplayList $list = null;
+
     public function __construct(
         private readonly string $content,
         private readonly TextStyle $style,
@@ -88,13 +91,17 @@ final class RenderText extends RenderBox
             return;
         }
 
-        $list = new DisplayList();
-        (new RecordingCanvas($list))->drawParagraph(
+        // ★ 缓冲复用（§7.2 裁决 2：每帧零分配）—— 每次 new 一个 DisplayList
+        //   等于每帧给每个 Text 分配一条命令缓冲，录制侧的"零分配"就白做了。
+        $this->list ??= new DisplayList();
+        $this->list->reset();
+
+        (new RecordingCanvas($this->list))->drawParagraph(
             $this->paragraph,
             Paint::fill($this->color),
             0.0,
             0.0,
         );
-        $list->replay($canvas);
+        $this->list->replay($canvas);
     }
 }
