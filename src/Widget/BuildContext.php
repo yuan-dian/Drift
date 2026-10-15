@@ -5,8 +5,9 @@ namespace Drift\Widget;
 
 use Drift\Rendering\Color;
 use Drift\Text\TextMetricsProvider;
-use Drift\Theme\ColorToken;
-use Drift\Theme\MetricToken;
+use Drift\Text\TextRole;
+use Drift\Rendering\ColorToken;
+use Drift\Rendering\MetricToken;
 use Drift\Theme\ThemeData;
 
 /**
@@ -57,5 +58,22 @@ final readonly class BuildContext
     public function metric(MetricToken $token): float
     {
         return $this->theme->metric($token);
+    }
+
+    /**
+     * 文本语义角色 → 字号 / 颜色（`Text` / `Button` 的标签都走这里）。
+     *
+     * ★ 与 `color()` / `metric()` 同一个形状：`BuildContext` 是 Widget 层**唯一**
+     *   被允许碰主题的入口（§4.3 协议例外）。控件不许自己 `new ThemeData` 或
+     *   引用 token 枚举 —— 那会让 Widget → Theme 变成架构依赖而不是一次取值。
+     */
+    public function textSize(TextRole $role): float
+    {
+        return $this->theme->textSize($role);
+    }
+
+    public function textColor(TextRole $role): Color
+    {
+        return $this->theme->textColor($role);
     }
 }

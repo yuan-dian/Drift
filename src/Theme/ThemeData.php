@@ -4,6 +4,8 @@ declare(strict_types=1);
 namespace Drift\Theme;
 
 use Drift\Rendering\Color;
+use Drift\Rendering\ColorToken;
+use Drift\Rendering\MetricToken;
 use Drift\Text\TextRole;
 
 /**

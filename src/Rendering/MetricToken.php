@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\Theme;
+namespace Drift\Rendering;
 
 /**
  * 语义度量角色（§11.5）。

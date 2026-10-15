@@ -338,7 +338,7 @@ private function pageFor(string $name): ?Widget
 | `src/Input/` | `Drift\Input` | `PointerEvent` · `KeyEvent` · `KeyChord` · `GestureArena` · `FocusNode` · `SemanticsTree` · `AcceleratorTable` · `CursorShape` · `ThemeChangedEvent` |
 | `src/State/` | `Drift\State` | `Subject` · `Subscription` · `SubjectBuilder` · `Cell` · `SubscribingWidget` |
 | `src/Commands/` | `Drift\Commands` | `CommandRouter` · `CommandHandler` · `CommandArg` |
-| `src/Theme/` | `Drift\Theme` | `Theme` · `ThemeData` · `ThemeScope` · `ColorToken` · `MetricToken` · **`SystemTheme`** |
+| `src/Theme/` | `Drift\Theme` | `Theme` · `ThemeData` · `ThemeScope` · **`SystemTheme`** |
 | `src/Routing/` | `Drift\Routing` | `Page` · `RouteTable` · `PageHost` · `Offstage` |
 | `src/Errors.php` | `Drift\Errors` | 错误出口 |
 
@@ -349,7 +349,7 @@ private function pageFor(string $name): ?Widget
 | `Geometry` | `Errors` | 一切 |
 | `Platform` | `Geometry` / `Errors` | 上层任何东西 |
 | `Text` | `Geometry` / `Errors` | Widget / Rendering / Platform |
-| `Rendering` | `Geometry` / `Text` / `Errors` | Widget / Platform（表面由 App 注入） |
+| `Rendering` | `Geometry` / `Text` / `Errors` | Widget / Theme / Platform（表面由 App 注入。★ `ColorToken` / `MetricToken` 在这里 ⇒ **Widget 与 Theme 都能引用它们**，这是第 18 处缺口的修正） |
 | `Input` | `Geometry` / `Errors`；**协议例外**：`Text\TextInputClient` 与 `Layout\SemanticsConfiguration` 可被引用，但仅限类型签名 | Widget / Rendering |
 | `Widget` / `Layout` / `State` | 下面全部；**协议例外**：`Theme\ThemeData` / `ColorToken` / `MetricToken` 可被引用，但**仅限 `BuildContext` 的类型签名**（§3.4） | Routing / Theme（**除该例外**）/ Commands / App |
 | `Commands` | Geometry / Errors / **State**（只做类型签名） | Widget / Layout / Rendering / Platform |
@@ -3274,6 +3274,7 @@ M5 ── （无裁决项；虚拟化 / 脏矩形 / `WindowStateStore` / UIA 桥
 | 14 | **§4.2** | 目录清单的 `Drift\Theme` 行**缺 `SystemTheme`**，但它被 §9.2 / §A.2.7 / §A.3.3 三处引用（`SystemTheme::Light` / `::Dark`）⇒ 与第 9 处（缺 `Color`）同类 | 补 `SystemTheme` |
 | 15 | **§4.3** | `Widget` 行的不许依赖列写着 `Theme`，但 §3.4（2026-10-14 才定义）要求 `Drift\Widget\BuildContext` 有 `theme(): ThemeData` / `color(ColorToken)` / `metric(MetricToken)` ⇒ **两条裁决直接冲突**（`dependency-direction` 会报它，而删掉 `theme()` 又让 §3.4 的能力面少一半） | 照 `Input` 行的既有先例加**协议例外**：三个类型**仅限 `BuildContext` 的类型签名**可引用。★ 边界要说清：`ThemeData` 是"解析后的值"，`BuildContext` 只是**把它递给 `build()`**，不构成 Widget → Theme 的架构依赖，`ThemeScope`（真·主题节点）仍归 `Drift\Theme` 侧 |
 | 16 | **§4.3 / §4.2** | `TextRole`（§15.2 定义、§11.5 要用）**不在 §4.2 目录清单里**，且"角色 → `TextStyle`"的解析该放哪一层方案没说 | 补进 `Drift\Text`（不是 `Drift\Widget`）：解析落 `ThemeData::textSize/textColor`，而 §4.3 只允许 `Theme → Text`、**不允许 `Theme → Widget`**。放 Widget 会让 Theme 依赖 Widget，直接撞 lint。另：**§15.7 纪律 3 因此有了第二个落点实例**（合并只发生一次） |
+| 18 | **§4.2 / §4.3** | **§4.3 的 `Widget → Theme` 禁令与"控件要在造盒时把主题解析成值"直接冲突**。`Button::createRenderObject()` 必须引用 `ColorToken` / `MetricToken` 才能把变体解析成颜色 —— 而 lint 只放行了 `BuildContext.php` 一个文件的协议例外，扩例外会让它扩散（今天允许一个文件，明天整层都能依赖 Theme） | **`ColorToken` / `MetricToken` 从 `src/Theme/` 移到 `src/Rendering/`**。依赖方向天然成立：`Widget → Rendering` ✓、`Theme → Rendering` ✓、`Rendering` 自己不依赖 Widget/Theme ✓。**语义没说谎**：token 是"渲染资源的语义键"，与 `Color` 同层比与 `ThemeData` 同层更实。★ 解析仍只发生一次（§15.7 纪律 3），落点从 `RenderButton`（Layout，不许碰 Theme）移到 `Button::createRenderObject()`（Widget，经 `BuildContext`） |
 | 17 | **§15.2 / §16.6.1 / §19 / §A.1 / §A.2** | **`ForEach` 不是合法 PHP 类名** —— `foreach` 是保留字，且 PHP 类名**大小写不敏感** ⇒ `class ForEach` 直接 `PHP Parse error: unexpected token "foreach"`（实测）。方案全文 6 处 `ForEach::make(...)` 照抄必然编译不过 | 类名改 **`Each`**（`Each::make(keyFn)->items(...)`）。★ 这是第 9 处"文档挡住实现"的同类，但**改了公共面** ⇒ 名字选择请你确认；若你更想叫 `Items` / `ListOf` / `EachItem`，改回来只是一次重命名（语义与 key 必填裁决都不变） |
 
 ★ 附带确认：`main.php` / `tools/*.php` 这类**入口脚本**（无类型声明）不受 `namespace-mismatch` 管 —— PSR-4 管的是类文件。

@@ -33,6 +33,7 @@ use Drift\Geometry\Size;
 use Drift\Layout\FlexAlign;
 use Drift\Layout\Overflow;
 use Drift\Layout\RenderBox;
+use Drift\Layout\RenderButton;
 use Drift\Layout\RenderCenter;
 use Drift\Layout\RenderFlex;
 use Drift\Layout\RenderFlexible;
@@ -55,11 +56,13 @@ use Drift\Text\TextAlign;
 use Drift\Text\TextLayout;
 use Drift\Text\TextRole;
 use Drift\Text\TextStyle;
-use Drift\Theme\ColorToken;
-use Drift\Theme\MetricToken;
+use Drift\Rendering\ColorToken;
+use Drift\Rendering\MetricToken;
 use Drift\Theme\SystemTheme;
 use Drift\Theme\ThemeData;
 use Drift\Widget\BuildContext;
+use Drift\Widget\Button;
+use Drift\Widget\ButtonVariant;
 use Drift\Widget\BoxWidget;
 use Drift\Widget\Center;
 use Drift\Widget\Column;
@@ -158,6 +161,16 @@ if (str_starts_with($caseArg, '--case=')) {
         $column->addChild(new SolidBox(new Size(10.0, 40.0), 10.0, 40.0));
         $column->addChild(new SolidBox(new Size(10.0, 40.0), 10.0, 40.0));
         $column->layout(BoxConstraints::tight(new Size(10.0, 50.0)));
+    }
+
+    if ($case === 'buttoncommand') {
+        // M2 还没接命令系统 ⇒ 响亮失败，不静默留一个按了没反应的按钮
+        Button::make('刷新')->command('users.refresh')->createRenderObject(
+            new BuildContext(320.0, 240.0, ThemeData::light(), new DeterministicMetricsProvider(
+                DeterministicFontManager::standard()->collection(),
+                new DeterministicShaper(),
+            ))
+        );
     }
 
     if ($case === 'eachdup') {
@@ -1185,6 +1198,61 @@ check('Each · 重复 key 写了 Errors.log', str_contains(logText($log), '重�
 fresh($log);
 [$code, $output] = runCase(__FILE__, 'eachkeytag', null);
 check("Each · key 1 与 '1' 不算重复（子进程 exit 1 = 该报的没报）", $code === 1, '实际 ' . $code . ' / ' . $output);
+
+// ── ㉒ Button：变体是 make() 的薄壳别名（§15.4 删除测试）──
+
+// "糖只转发"的删除测试：primary/danger 必须等价于 make()->variant(...)
+$primaryDirect = Button::primary('刷新');
+$primaryForward = Button::make('刷新')->variant(ButtonVariant::Primary);
+check(
+    'Button · primary() 是 make()+variant() 的薄壳（糖删掉框架契约不变）',
+    $primaryDirect->variantValue() === $primaryForward->variantValue()
+        && $primaryDirect->variantValue() === ButtonVariant::Primary
+);
+check('Button · danger() 同形', Button::danger('删')->variantValue() === ButtonVariant::Danger);
+
+// onPressed 是纯 UI 回调；Button 本身不依赖命令系统
+$fired = 0;
+$btn = Button::make('取消')->onPressed(function () use (&$fired): void { $fired++; });
+$handler = $btn->pressedHandler();
+check('Button · onPressed 闭包原样递下去（不是包一层的机制）', $handler !== null && $handler() === null && $fired === 1);
+
+// 造盒 → 配色经 BuildContext 解析一次（§15.7 纪律 3），Layout 层不碰主题
+$lightBtn = Button::primary('刷新')->createRenderObject($context);
+$darkBtn = Button::primary('刷新')->createRenderObject($darkContext);
+check('Button · 造出 RenderButton', $lightBtn instanceof RenderButton);
+check(
+    'Button · 同一变体在明/暗下取到不同底色（换肤改表不改控件）',
+    $lightBtn->boxStyle()->background?->toArgb() !== $darkBtn->boxStyle()->background?->toArgb(),
+);
+check(
+    'Button · Default 变体有边框、Primary 没有（描边是 Default 的辨识手段）',
+    Button::make('x')->createRenderObject($context)->boxStyle()->borderColor !== null
+        && Button::primary('x')->createRenderObject($context)->boxStyle()->borderColor === null
+);
+
+// 端到端：盒子尺寸 = 内边距 + 标签，且 Label 是它的孩子（按钮文字换行规则与 Text 一致）
+$btnRoot = Button::primary('刷新')->createElement();
+$btnRoot->mount(null, $context);
+$btnBox = $btnRoot->renderObject();
+$btnBox?->layout(BoxConstraints::loose(new Size(200.0, 60.0)));
+$btnKids = [];
+$btnBox?->visitChildren(function (RenderBox $kid) use (&$btnKids): void { $btnKids[] = $kid; });
+check(
+    'Button · 标签是它的唯一孩子（RenderText）',
+    count($btnKids) === 1 && $btnKids[0] instanceof RenderText,
+);
+check(
+    'Button · 盒尺寸 = 内边距 + 标签（不是 0，也不是填满约束）',
+    ($btnBox?->size()?->width ?? 0.0) > 0.0 && ($btnBox?->size()?->width ?? 0.0) < 200.0,
+    sprintf('实际 %.2f × %.2f', $btnBox?->size()?->width ?? -1.0, $btnBox?->size()?->height ?? -1.0)
+);
+
+// command() 在 M2 响亮说没实现（不静默留下一个按了没反应的按钮）
+fresh($log);
+[$code, $output] = runCase(__FILE__, 'buttoncommand', null);
+check('Button · M2 未接命令系统退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
+check('Button · 未接命令系统写了 Errors.log', str_contains(logText($log), '命令系统属 M3'));
 
 // ── ⑳ 控件与结构节点混用（§A.1 的形态真的能搭起来）──
 $mixed = Column::make()->spacing(8)->paddingAll(12)->children([

@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\Theme;
+namespace Drift\Rendering;
 
 use Drift\Rendering\Color;
 
