@@ -459,12 +459,19 @@ final class Bootstrap
 {
     public static function run(): void
     {
-        $app = new UsersApplication(
-            new \Drift\Platform\Win32\Win32Platform(),
-            new \Drift\App\SyncTaskHost(),                    // M1–M3；换线程池 = 换这一行
-            new \Drift\App\WindowStateStore('users.window'),
-        );
-        $app->run();
+        $platform = new \Drift\Platform\Win32\Win32Platform();
+        // ★ 后端挂在**源**上，不挂 Application（§11.7）：换同步/线程池 = 改这一行。
+        $src = new \App\Users\Store\HttpUserSource();
+        $app = new UsersApplication($src);
+
+        // ★ 循环归平台（§5.2 裁决 1）：`Application` **没有** run()，只提供
+        //   `attach($surface, $constraints)` 与 `frame($timestampMs, $constraints)`。
+        $app->attach($platform->surface($platform->window()->createWindow(...)),
+                     $platform->screen()->viewport());
+        while ($platform->pump()) {
+            $app->frame($platform->now(), $platform->screen()->viewport());
+        }
+        // ★ 窗口状态读回 / 写回（`WindowStateStore`）归 M5（§19）：启动一次、退出一次同步 IO。
     }
 }
 ```
@@ -725,9 +732,11 @@ Platform 原始事件（PointerEvent / KeyEvent / ImeEvent / ScrollEvent / Theme
 
 ```php
 // 加速键：应用级注册，零平台端口
+// ⏳ `AcceleratorTable` 尚未实现（§4.2 有名字、`src/` 0 文件，归 §19 M3）
+//   ⇒ 按 A15**不预先挂空钩子**：等能力落地当天再加，形状先定在这里。
 final class UsersApplication extends Application
 {
-    protected function accelerators(): AcceleratorTable
+    public function accelerators(): AcceleratorTable
     {
         return AcceleratorTable::make()
             ->bind(KeyChord::ctrl('R'), 'users.refresh')
@@ -1237,16 +1246,18 @@ SubjectBuilder::make($form)
 //      且依赖**就在构造点** ⇒ 零新 API、零反射、零动态 new。完整样例见 §A.2.5。
 final class UsersApplication extends Application
 {
-    protected function commands(): CommandRouter
+    /** @return iterable<string, CommandHandler> `命令名 => handler 实例` 的字典 */
+    public function commands(): iterable
     {
         $nav  = new NavigationCommands($this->app);          // 多命令共用 ⇒ 提局部变量（E 的代价）
         $user = new UserCommands($this->users, $this->app);
 
-        return CommandRouter::make()
-            ->on('nav.users',     $nav)                      // handler 是**具名类的实例**，不是闭包
-            ->on('nav.signup',    $nav)
-            ->on('user.del',      $user)
-            ->on('form.submit',   new SignupCommands($this->form, $this->src));
+        return [                                             // handler 是**具名类的实例**，不是闭包
+            'nav.users'   => $nav,
+            'nav.signup'  => $nav,
+            'user.del'    => $user,
+            'form.submit' => new SignupCommands($this->form, $this->src),
+        ];
     }
 }
 
@@ -2560,7 +2571,7 @@ $app = new UsersApplication(new Win32Platform(), new ThreadPoolTaskHost());
 | ✅ **O-15** | `CommandHandler` 的**依赖从哪来**（原方案只写了 `->on('x', XCommands::class)`，没说 handler 怎么拿到 store） | 中 | **E：`on()` 收实例**（★ 已裁决并落地 —— 零新 API / 零反射 / 零动态 `new`；A 的 `provide()` 放弃。技术前提已真机证实，见探针 I） | M3 |
 | ✅ **O-16** | **`Bound` 的定位**（与 `SubjectBuilder::select` 的关系未定义；现签名**订阅不了**） | **高** | **A′：删 `Bound` 且删 `TextField::bind()`**（★ **已裁决并落地** —— 四层论据见下方 O-16 段的"横向对照"块） | M3 |
 | ✅ **O-17** | **样式复用**（背景/颜色/字号）：基类字段 vs `BoxStyle` 值对象 vs trait | 中 | **A′：`BoxStyle` 值对象**（**只管盒样式**）+ 中间基类 `BoxWidget`；**不引入 `TextStyle`**；**删孤儿名 `ControlStyle`**（★ **已裁决并落地** → §15.7） | M2 |
-| ⏳ **O-18** | **§A.2 的 `Application` 用法与已实现 API 分裂**（`protected` + `boot()` + `commands(): CommandRouter` + `accelerators()` + `taskHost()` —— 照抄必然 `PHP Fatal`） | 中 | **A：改文档对齐代码**（零代码改动；`boot()` 违背已落地的 O-15 方案 E） | 现在（§A.2 是“可照抄”样板） |
+| ✅ **O-18** | **§A.2 的 `Application` 用法与已实现 API 分裂**（`protected` + `boot()` + `commands(): CommandRouter` + `accelerators()` + `taskHost()` —— 照抄必然 `PHP Fatal`） | 中 | **A：改文档对齐代码**（✅ **已裁决并落地** —— §5.1 / §9.1 / §11.4.3 / §A.2.4 / §A.2.5 / §A.3.1 / §A.3.2 / §A.3.8 / §A.3.9 九处样板全部改成 `public` 覆写 + `iterable` 字典 + 构造点装配；`boot()` / `accelerators()` / `taskHost()` 三处不存在的钩子按 A15 **不预挂**，形状以注释留存） | 已落地 |
 | ⏳ **O-19** | **§19 出口判据与 `src/` 真实状态脱节**（M1 判据“一个窗口画出 Hello Drift”未兑现：`Drift\Platform` 9 + `Win32` 2 一个文件都没有） | 低 | **A：§19 也加“当前状态”列**（§4.2 已随 #24 补） | 现在 |
 
 ---
@@ -3239,7 +3250,7 @@ WPF 的 `Control.Background` / `Foreground` / `FontSize` 都是基类上的 `Dep
 
 #### O-18 §A.2 的 `Application` 用法与已实现 API 分裂
 
-**⏳ 待裁决（2026-10-15）** —— 本轮转看核心能力时撞上的第一处：**旗舰样板不可照抄**。
+**✅ 已裁决（2026-10-15，用户拍板：按推荐 A）** —— **改文档对齐代码**，零代码改动。*落地范围：**§5.1 / §9.1 / §11.4.3 / §A.2.4 / §A.2.5 / §A.3.1 / §A.3.2 / §A.3.8 / §A.3.9 九处样板***。
 
 **问题本质**：`src/App/Application.php` 已定型（2026-10-15 核验）：构造器 `__construct(iterable $handlers = [])`、`public function commands(): iterable`、`attach()` 里注册（可重入）、`register()`、`router()`。而 **§A.2.5 写的是另一套**：`protected function boot()` / `protected function title()` / `protected function buildRoot()` / `protected function commands(): CommandRouter` / `protected function accelerators()` / `protected function onSystemThemeChanged()`，还调 `$this->taskHost()`。
 ⇒ 照抄 §A.2 会连中三枪：① `PHP Fatal: Access level must be public`（**#23 已在 §A.1 修过同一处，§A.2 漏了**）；② 返回类型不协变（`CommandRouter` 不是 `iterable`）；③ `taskHost()` / `boot()` / `accelerators()` / `onSystemThemeChanged()` **在 `Application` 上一个都不存在**。
@@ -3305,7 +3316,7 @@ M2 ── ✅ O-02（`BuildContext` 能力面）—— **已完成**（§3.4；O
       ✅ O-17（**`BoxStyle` 只管盒样式 + 中间基类 `BoxWidget`**）★ 已裁决并落地 → **§15.7**（新增节）
       （随 M2 实现：盒族控件的 `?BoxStyle` 字段 + 3 个糖方法 + 主题解析）
 M3 ── ✅ O-04 · ✅ O-05（不做）· ✅ O-06（不做）· ✅ O-07 · ✅ O-12 · ✅ O-15 · ✅ O-16
-      ⏳ O-18（§A.2 样板对齐已实现的 `Application`）· ⏳ O-19（§19 补“当前状态”列）
+      ✅ O-18（§A.2 样板对齐已实现的 `Application`，9 处）· ⏳ O-19（§19 补“当前状态”列）
       ★ **O-16 的订阅侧落地时，一并补 `SubjectBuilder` 的类形状**（字段表 / 方法表 / `builder` 调用约定）
       ★ O-12 的**容器归 M3**（§19 的 M5 那处已删）
       （随 M3 实现：Store 三件套 + `SubjectBuilder` + `select()` + 动作缝 + 错误边界容器 + 加速键 + 自绘菜单 + 拖放）
@@ -3679,21 +3690,33 @@ namespace {
 
 ```php
 <?php
-// apps/users/bin/win32/Bootstrap.php
+// apps/users/bin/win32/Bootstrap.php —— 组合根，全应用唯一提到平台实现的地方（§5.1）
 declare(strict_types=1);
 
 namespace App\Users;
+
+use App\Users\Store\HttpUserSource;
 
 final class Bootstrap
 {
     public static function run(): void
     {
-        $app = new UsersApplication(
-            new \Drift\Platform\Win32\Win32Platform(),
-            new \Drift\App\SyncTaskHost(),                        // M1–M3；换 ThreadPoolTaskHost() 即换后端
-            new \Drift\App\WindowStateStore(\Drift\App\Paths::userConfig('users.window')),
-        );
-        $app->run();
+        $platform = new \Drift\Platform\Win32\Win32Platform();
+
+        // ★ 后端挂在**源**上，不挂 Application（§11.7）：M1–M3 同步 ⇒ 无参构造；
+        //   M4 线程池 ⇒ `new HttpUserSource(new ThreadPoolTaskHost())`，只改这一行。
+        $src = new HttpUserSource();
+        $app = new UsersApplication($src);
+
+        // ★ 循环归平台（§5.2 裁决 1）：`Application` **没有** run()，只提供
+        //   `attach($surface, $constraints)` 与 `frame($timestampMs, $constraints)`。
+        //   表面由平台给，帧时钟由平台驱动 ⇒ 测试能喂任意帧序列（G3）。
+        $app->attach($platform->surface($platform->window()->createWindow(...)),
+                     $platform->screen()->viewport());
+        while ($platform->pump()) {
+            $app->frame($platform->now(), $platform->screen()->viewport());
+        }
+        // ★ 窗口状态读回 / 写回（`WindowStateStore`）归 M5（§19）：启动一次、退出一次同步 IO。
     }
 }
 ```
@@ -3708,14 +3731,23 @@ declare(strict_types=1);
 namespace App\Users;
 
 use Drift\App\Application;
-use Drift\Commands\CommandRouter;
-use Drift\Input\AcceleratorTable;
-use Drift\Input\KeyChord;
+use Drift\Commands\CommandHandler;
 use Drift\Widget\Widget;
 
-use App\Users\Store\{AppStore, UserStore, SignupForm, HttpUserSource, UserSource};
+use App\Users\Store\{AppStore, UserStore, SignupForm, UserSource};
 use App\Users\Commands\{NavigationCommands, UserCommands, SignupCommands, AppCommands};
 
+/**
+ * ★ 2026-10-15 按**已实现的** `Drift\App\Application` 重写（§23.2 O-18 方案 A）。
+ *   基类只有：`__construct(iterable $handlers = [])` · `buildRoot()` · `title()` ·
+ *   `commands(): iterable` · `theme()` · `metrics()` · `attach()` · `frame()` ·
+ *   `dispatch()` · `router()`。⇒ 三条硬约束：
+ *   ① 三个覆写**全是 public** —— 子类收窄可见性 ⇒ `PHP Fatal: Access level must be
+ *      public`（§24.1 #23，`commands()` 要能被 devtools 枚举）；
+ *   ② **没有 `boot()`** —— 依赖装配就在**构造点**（O-15 方案 E 的原话）；
+ *   ③ `commands()` 返回 `iterable<string, CommandHandler>` 字典，不是 `CommandRouter`
+ *      —— 链的第 ③ 环由 `Application::attach()` 用 `router()->on()` 自动拼好。
+ */
 final class UsersApplication extends Application
 {
     private AppStore   $app;
@@ -3723,57 +3755,74 @@ final class UsersApplication extends Application
     private SignupForm $form;
     private UserSource $src;          // ★ SignupCommands 也依赖它（§23.2 O-15 复核发现 ⑧）
 
-    /** 在任何 build / 命令注册之前调用一次（依赖装配的唯一入口） */
-    protected function boot(): void
+    /**
+     * 依赖装配：**就在这里**（没有 boot()）。
+     *
+     * ★ 后端由组合根注入（§11.7 / §A.3.9）：`Bootstrap` 决定给同步源还是线程池源
+     *   ⇒ 换后端 = 组合根一行，页面与 store 代码零改动。
+     * ★ handler **不在这时**注册：框架在 `attach()` 里才调 `commands()`，那一刻
+     *   `$this->users` 等字段才就位 ⇒ 声明式注册只写一处（见 `commands()`）。
+     */
+    public function __construct(UserSource $src)
     {
+        $this->src   = $src;
         $this->app   = new AppStore();
-        $this->src   = new HttpUserSource($this->taskHost());
         $this->users = new UserStore($this->src);
         $this->form  = new SignupForm();
 
         $this->users->load();          // 首屏：进 Loading → 结果回贴（§11.5）
     }
 
-    protected function title(): string { return '用户管理'; }
+    public function title(): string { return '用户管理'; }
 
-    protected function buildRoot(): Widget
+    public function buildRoot(): Widget
     {
         return UsersRoot::make($this->app, $this->users, $this->form);
     }
 
-    /** 动作缝注册表（§11.4.3）：可枚举、可 lint、可单测 */
-    protected function commands(): CommandRouter
+    /**
+     * 动作缝注册表（§11.4.3）：可枚举、可 lint、可单测。
+     *
+     * @return iterable<string, CommandHandler> `命令名 => handler 实例`
+     */
+    public function commands(): iterable
     {
-        // ★ 方案 E（§23.2 O-15 裁决）：on() 收**实例** ⇒ 依赖就在构造点，不需要 provide() / 反射。
+        // ★ 方案 E（§23.2 O-15 裁决）：依赖在构造点 new 出来 ⇒ 不需要 provide() / 反射。
         //   多命令共用同一 handler ⇒ 提局部变量（不提会 new 出多个实例）。
         $nav  = new NavigationCommands($this->app);
         $user = new UserCommands($this->users, $this->app);
 
-        return CommandRouter::make()
-            ->on('nav.users',     $nav)
-            ->on('nav.signup',    $nav)
-            ->on('nav.settings',  $nav)
-            ->on('user.del',      $user)
-            ->on('users.refresh', $user)
-            ->on('form.submit',   new SignupCommands($this->form, $this->src))
-            ->on('app.quit',      new AppCommands($this->app));
-    }
-
-    /** 应用级快捷键（§9.1 路由链第 ① 环，在焦点之前） */
-    protected function accelerators(): AcceleratorTable
-    {
-        return AcceleratorTable::make()
-            ->bind(KeyChord::ctrl('R'), 'users.refresh')
-            ->bind(KeyChord::ctrl('N'), 'nav.signup')
-            ->bind(KeyChord::f(5),      'users.refresh');
-    }
-
-    /** 系统主题变更 ⇒ 全树重建（§9.2） */
-    protected function onSystemThemeChanged(\Drift\Theme\SystemTheme $t): void
-    {
-        $this->app->setSystemTheme($t);
+        return [
+            'nav.users'     => $nav,
+            'nav.signup'    => $nav,
+            'nav.settings'  => $nav,
+            'user.del'      => $user,
+            'users.refresh' => $user,
+            'form.submit'   => new SignupCommands($this->form, $this->src),
+            'app.quit'      => new AppCommands($this->app),
+        ];
     }
 }
+
+// ⏳ 下面两个扩展点**今天还不存在** —— `AcceleratorTable` / `ThemeChangedEvent` 在
+//   §4.2 有名字、`src/` 里 0 文件（§19 M3 / M4）⇒ 按 A15「不提供收益≈0 的公开 API」，
+//   **不预先挂空钩子**：等能力落地当天再加，形状先定在这里。现在照抄只会得到
+//   "定义了却没被调用"的死方法。
+//
+//     /** 应用级快捷键（§9.1 路由链第 ① 环，在焦点之前） */
+//     public function accelerators(): AcceleratorTable
+//     {
+//         return AcceleratorTable::make()
+//             ->bind(KeyChord::ctrl('R'), 'users.refresh')
+//             ->bind(KeyChord::ctrl('N'), 'nav.signup')
+//             ->bind(KeyChord::f(5),      'users.refresh');
+//     }
+//
+//     /** 系统主题变更 ⇒ 全树重建（§9.2） */
+//     public function onSystemThemeChanged(SystemTheme $t): void
+//     {
+//         $this->app->setSystemTheme($t);
+//     }
 ```
 
 ### A.2.6 `UsersRoot`（只做组合）
@@ -4387,7 +4436,8 @@ final class StatusBarState extends State
 
 ```php
 // ① 应用级加速键（§9.1 路由链第 ① 环，★ 在焦点之前）
-protected function accelerators(): AcceleratorTable
+// ⏳ `AcceleratorTable` 尚未实现（§19 M3）⇒ 钩子不预挂，落地当天再加；形状先定。
+public function accelerators(): AcceleratorTable
 {
     return AcceleratorTable::make()
         ->bind(KeyChord::ctrl('R'), 'users.refresh')
@@ -4439,7 +4489,8 @@ ThemeScope::make()
     ->child($page)
 
 // ② 系统主题变更：走 screen() 通道，与 DpiChanged 同路（§9.2）
-protected function onSystemThemeChanged(SystemTheme $t): void
+// ⏳ `ThemeChangedEvent` 尚未实现（§19 M4）⇒ 钩子不预挂，落地当天再加；形状先定。
+public function onSystemThemeChanged(SystemTheme $t): void
 {
     $this->app->setSystemTheme($t);        // 改 store ⇒ notify ⇒ 全树重建（不是 relayout）
 }
@@ -4518,21 +4569,37 @@ $this->application()->showModal(
 ### A.3.8 窗口状态持久化
 
 ```php
-// 组合根（§5.4）：启动读回、退出写回，各一次同步 IO；恢复失败静默降级到默认值
-$state = new \Drift\App\WindowStateStore(\Drift\App\Paths::userConfig('users.window'));
-$app = new UsersApplication(new Win32Platform(), new SyncTaskHost(), $state);
-$app->run();
-// ★ Application::run() 内部：$state->restore($window) → 主循环 → $state->persist($window)
+// ⏳ 本节整体归 M5（§19）：`WindowStateStore` / `Paths` 在 §4.2 有名字、`src/` 0 文件。
+//   形状先定 —— 启动读回、退出写回，各一次同步 IO；恢复失败**静默降级到默认值**
+//   并写一条 Diagnostic（§24.3 登记过的 G2 例外，别让应用起不来）。
+//
+// 组合根（§5.4）：
+$platform = new Win32Platform();
+$state    = new \Drift\App\WindowStateStore(\Drift\App\Paths::userConfig('users.window'));
+$app      = new UsersApplication(new HttpUserSource());
+
+// ★ 循环归平台（§5.2 裁决 1）—— `Application` **没有** run()：
+$app->attach($platform->surface($platform->window()->createWindow(...)),
+             $platform->screen()->viewport());
+$state->restore($platform->window());          // 启动一次
+while ($platform->pump()) {
+    $app->frame($platform->now(), $platform->screen()->viewport());
+}
+$state->persist($platform->window());          // 退出一次
 ```
 
 ### A.3.9 异步：换后端 = 组合根一行
 
 ```php
-// M1–M3：同步（大响应时界面停顿，但 error 态可正确呈现）
-$app = new UsersApplication(new Win32Platform(), new \Drift\App\SyncTaskHost(), $state);
+// ★ 后端挂在**源**上，不挂 `Application`（§11.7）⇒ 换后端 = 组合根一行，UI 代码零改动。
+//   `TaskHost` 自身归 M4（§19）：M1–M3 同步源无参构造即可（§11.5 的诚实边界：
+//   loading 态画不出来，大响应时界面停顿，但 error 态可正确呈现）。
 
-// M4：线程池（UI 代码零改动）
-$app = new UsersApplication(new Win32Platform(), new \Drift\App\ThreadPoolTaskHost(), $state);
+// M1–M3：同步
+$app = new UsersApplication(new HttpUserSource());
+
+// M4：线程池 —— 只改这一行
+$app = new UsersApplication(new HttpUserSource(new \Drift\App\ThreadPoolTaskHost()));
 //                                                 ↑ 只改这一行
 ```
 
