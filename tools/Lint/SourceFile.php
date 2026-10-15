@@ -84,6 +84,16 @@ final class SourceFile
         return $this->types;
     }
 
+    /**
+     * 把可能是别名的名字解析成全限定名。
+     *
+     * `SourceQuery` 与各规则共用这一处口径（`use` 别名 / 同命名空间回退）。
+     */
+    public function resolveName(string $name): string
+    {
+        return $this->resolve(ltrim($name, '\\'));
+    }
+
     /** @return list<array{name: string, line: int}> */
     public function references(): array
     {

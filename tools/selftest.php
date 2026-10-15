@@ -39,6 +39,29 @@ function drift_lint_selftest(string $root, Linter $linter): bool
         'namespace-mismatch' => [],
         'nano-hygiene' => [],
         'orphan-trait' => [],
+        // §16.6.3 第二批（2026-10-15 按优先级补）
+        'dead-command' => [
+            'apps/CommandFixture.php:' . Diagnostic::ERROR,
+            'apps/CommandFixture.php:' . Diagnostic::ERROR,
+        ],
+        'dead-subscription' => [
+            'src/Widget/DeadSubscriptionFixture.php:' . Diagnostic::ERROR,
+        ],
+        'select-purity' => [
+            'apps/SelectFixture.php:' . Diagnostic::ERROR,
+            'apps/SelectFixture.php:' . Diagnostic::ERROR,
+            'apps/SelectFixture.php:' . Diagnostic::ERROR,
+        ],
+        'stale-derived' => [
+            'apps/CartStore.php:' . Diagnostic::ERROR,
+        ],
+        'cached-subscriber' => [
+            'apps/CachedSubscriberFixture.php:' . Diagnostic::ERROR,
+            'apps/CachedSubscriberFixture.php:' . Diagnostic::ERROR,
+        ],
+        'alias-mutate' => [
+            'apps/AliasChildrenFixture.php:' . Diagnostic::ERROR,
+        ],
     ];
 
     $ok = true;

@@ -3,11 +3,19 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Lint;
 
+use Drift\Dev\Lint\Rules\AliasMutate;
+use Drift\Dev\Lint\Rules\CachedSubscriber;
+use Drift\Dev\Lint\Rules\DeadCommand;
+use Drift\Dev\Lint\Rules\DeadSubscription;
 use Drift\Dev\Lint\Rules\DependencyDirection;
 use Drift\Dev\Lint\Rules\InternalLeak;
 use Drift\Dev\Lint\Rules\NamespaceMismatch;
+use Drift\Dev\Lint\Rules\NestedSubscribe;
 use Drift\Dev\Lint\Rules\NanoHygiene;
 use Drift\Dev\Lint\Rules\OrphanTrait;
+use Drift\Dev\Lint\Rules\SelectPurity;
+use Drift\Dev\Lint\Rules\StaleDerived;
+use Drift\Dev\Lint\Rules\SubscriberMark;
 
 /**
  * 规则集与执行器。
@@ -22,11 +30,19 @@ final class Linter
     public static function defaultRules(): self
     {
         return new self([
+            // 公理守卫（G1/G2）
             new DependencyDirection(),
             new InternalLeak(),
             new NamespaceMismatch(),
             new NanoHygiene(),
             new OrphanTrait(),
+            // §16.6.3 第二批（2026-10-15 按优先级补）
+            new DeadCommand(),
+            new DeadSubscription(),
+            new SelectPurity(),
+            new StaleDerived(),
+            new CachedSubscriber(),
+            new AliasMutate(),
         ]);
     }
 
