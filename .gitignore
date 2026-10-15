@@ -10,8 +10,8 @@ apps/*/build/
 *.pdb
 *.ilk
 
-# ── 探针的 tpc 增量构建缓存（证据是生成物，缓存不是）──
-probes/**/cache/
+# ── 探针
+/probes
 
 # ── 工具输出 ──
 /Errors.log
@@ -33,3 +33,6 @@ desktop.ini
 # ── 本地备份（方案修订期留下的回滚网）──
 *.bak-*
 *.orig
+
+/.workbuddy-ai
+
