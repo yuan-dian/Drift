@@ -30,6 +30,7 @@ function drift_lint_selftest(string $root, Linter $linter): bool
         'dependency-direction' => [
             'src/Geometry/Bad.php:' . Diagnostic::ERROR,
             'src/Widget/UsesTheme.php:' . Diagnostic::ERROR,
+            'src/Widget/UsesCommands.php:' . Diagnostic::ERROR,
         ],
         'internal-leak' => [
             'apps/Bad.php:' . Diagnostic::ERROR,

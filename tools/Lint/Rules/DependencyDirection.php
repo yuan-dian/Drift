@@ -49,9 +49,14 @@ final class DependencyDirection implements Rule
      * 里唯一可以引用 `Drift\Theme` 的文件。★ 写成文件级是有意的：层级放行会让
      * "别的 Widget 文件也去依赖 Theme"合法化，例外就扩散了。`src/Widget/UsesTheme.php`
      * 这条夹具就是守这条边界的。
+     *
+     * `State::handleCommand()` 是冒泡链第 ① 环（§11.4.3），签名要收 `CommandArg`
+     * ⇒ 同一个形状的第二条例外。同样只登记一个文件：链的其余部分住 `Drift\App`
+     * （那里 `Widget → Commands` 天然合法），Widget 侧只碰这一个参数类型。
      */
     private const FILE_EXCEPTIONS = [
         'src/Widget/BuildContext.php' => ['Theme'],
+        'src/Widget/State.php' => ['Commands'],
     ];
 
     public function name(): string

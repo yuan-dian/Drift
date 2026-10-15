@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Widget;
 
+use Drift\Commands\CommandArg;
 use Drift\Errors;
 use Drift\State\Cell;
 use Drift\State\Subject;
@@ -183,6 +184,21 @@ abstract class State
     public function didUpdateWidget(Widget $widget): void
     {
         $this->widget = $widget;
+    }
+
+    /**
+     * 冒泡链的第 ① 环（§11.4.3）：本控件接到了命令。
+     *
+     * @return bool true = "我处理了，停止冒泡"；false = "不是我管，继续往上"
+     *
+     * ★ 默认 false：**不接是常态**。做成抽象的会让每个 State 都白写一遍
+     *   `return false`，而那正是 A12 的样板代码。
+     *
+     * @api
+     */
+    public function handleCommand(string $name, CommandArg $arg): bool
+    {
+        return false;
     }
 
     /**
