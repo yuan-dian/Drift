@@ -1494,7 +1494,7 @@ final class UsersRoot extends StatelessWidget
                 ->source($this->store)
                 ->select(fn(AppStore $s): string => $s->currentPage())
                 ->table($this->routeTable()))
-            ->overflow(Overflow::clip);
+            ->overflow(Overflow::Clip);
     }
 
     private function routeTable(): RouteTable
@@ -1574,7 +1574,7 @@ paint(Canvas $canvas): void            // 父级已 translate 到本盒原点
 | C5 | **溢出策略是契约** | 每个容器必须声明行为：`clip / scroll / wrap / report`；**外壳类控件（AppBar/StatusBar）必须有溢出策略**，且必须是布局期行为而非宽度阈值 | 窄屏工具栏溢出缺陷 |
 | C6 | **违反 ⇒ 响亮失败** | 无界约束传给有内禀尺寸的子、约束违反、溢出未声明 ⇒ `Errors::report`（**Fatal 级，release 也中止**） | G2 |
 
-★ **C5 的"每个容器"的边界**（消歧）：`Overflow` 有**默认值**（`Overflow::clip`），只有"可能超出给定约束"的容器（`AppBar` / `StatusBar` / `Row` / `Dock` 槽 / 自绘容器）**必须显式声明**；`Text` / `Icon` / `Padding` 这类"尺寸由内容或子决定、不会超"的容器用默认值即可。判据：**这个容器在约束不足时，是否必须"选择一种舍弃方式"？** 是 ⇒ 显式声明。（★ 这条在 v2 之前是隐性的，见 §23.1 第 9 项。）
+★ **C5 的"每个容器"的边界**（消歧）：`Overflow` 有**默认值**（`Overflow::Clip`），只有"可能超出给定约束"的容器（`AppBar` / `StatusBar` / `Row` / `Dock` 槽 / 自绘容器）**必须显式声明**；`Text` / `Icon` / `Padding` 这类"尺寸由内容或子决定、不会超"的容器用默认值即可。判据：**这个容器在约束不足时，是否必须"选择一种舍弃方式"？** 是 ⇒ 显式声明。（★ 这条在 v2 之前是隐性的，见 §23.1 第 9 项。）
 
 ### 13.2 Widget → RenderBox 构造契约（RT-2 的根治）
 
@@ -3855,8 +3855,9 @@ namespace App\Users;
 
 use Drift\Widget\{StatelessWidget, BuildContext, Widget};
 use Drift\Routing\{PageHost, RouteTable};
-use Drift\Widget\{Dock, AppBar, Overflow, NavButton};
+use Drift\Widget\{Dock, AppBar, NavButton};
 use Drift\Widget\Menu\{MenuBar, Menu, MenuItem};
+use Drift\Layout\Overflow;      // ★ Overflow 是 Layout 层的封闭域 enum，不在 Widget（§24.1 #34：原稿从 Widget 导入，照抄即 Class not found）
 use Drift\Input\KeyChord;
 
 use App\Users\Store\{AppStore, UserStore, SignupForm};
