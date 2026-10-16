@@ -2192,6 +2192,7 @@ PHP Fatal error: Uncaught TypeError: TypePhp\Translator::getAbsolutePath():
 ⇒ **生效 10 条**（R1–R7 + R10–R12；R8/R9 因 `Intent` 删除而合并进 R5）。
 ★ **删掉 `Intent` 的直接收益**：GUI 仓的三条规则（R5 / R8 / R9）在 Drift 里**塌缩成一条**（R5）。少一个概念 = 少两条 lint + 少一套"谁构造/谁携带参数/谁解构"。
 ★ **两级严重度**（`error` 挡新债 / `warn` 留痕）与白名单机制**一并移植**（R11/R12 各有白名单文件）。
+★ **2026-10-16 核验（`php tools/lint.php --list` 实测）**：上表"直接移植"是**计划不是现状** —— R1–R12 里**实际在 lint 的只有 R5**（`dead-command`）；R1–R4 / R6 / R7 / R11 / R12 均无 lint 实现（R4 的 key 唯一性改走运行期 Fatal，smoke `eachdup` 用例）。★ W 侧对应守卫（W1/W2/W3 的静态检查）现由 `tools/M2Conformance.php` 覆盖（W2 为弱形式）；R11/R12 完整形态随 `drift-conformance` 归 M4。⇒ **教训同 O-19**："已移植"是自述，判据只能对着 `--list` 数。
 
 #### 16.6.2 `W1–W8`：控件契约八项
 
@@ -2210,7 +2211,9 @@ PHP Fatal error: Uncaught TypeError: TypePhp\Translator::getAbsolutePath():
 
 > ★ **W 与 R 不是两套东西**：R 是"**树级**规则"（看父子关系、看命令可达性），W 是"**控件级**规则"（看单个控件的契约完整性）。W3 = R11、W2 = R12 的镜像 —— 同一个判据从两个视角看。实现时**同一个检查器**，只是报错分组不同。
 
-#### 16.6.3 Drift 新增的 lint 规则（共 **17** 条）
+> ★ **守卫现状（2026-10-16 建 `tools/M2Conformance.php` 后）**：**W1/W2/W3** ⇒ conformance 静态扫描（token 级，量具带反例自检；W2 为弱形式，R11/R12 完整形态归 M4）· **W4** ⇒ `RenderFlex` 构造参数必填（结构性，漏声明编译不过）+ 夹具断言全部显式 `Report` · **W5/W6/W7/W8** ⇒ smoke 单测（Layout / Seal / Rendering 段）+ 夹具整体断言（两帧几何稳定 / 平移无关 / 零 Errors 记录 / 录制栈归零）。★ 该运行器的 W4 断言**当场抓到一处真框架缺陷**：`RenderFlex` 未覆写 `overflow()` ⇒ 查询返回 `RenderBox` 默认的 `Clip` 而行为是构造参数的 `Report`（判定面说谎）—— 已补覆写。
+
+#### 16.6.3 Drift 新增的 lint 规则（设计 **17** 条 · 实到 **14** 条）
 
 | # | 规则名 | 判据（静态可判吗？） | 严重度 | 来源 | 服务 |
 |---|--------|-------------------|--------|------|------|
@@ -2238,7 +2241,8 @@ PHP Fatal error: Uncaught TypeError: TypePhp\Translator::getAbsolutePath():
 > ★ **量具双向自检**（§20 第 1 条）：这 17 条**每条**都要配"已知错误"用例 —— 既验该响会响，也验不该响不误响。
 > ★ **诚实边界**（**2026-10-14 裁决**，原 §23 O-13）：`nano-hygiene` 只保证**源码纪律**，查不到 tpc 自己注入的 include（如 lib 模式的 `/FI` 聚合头）或链接期问题（PHPX 库路径）。⇒ **加了这条 lint ≠ 能切 nano**；nano 兼容性的最终判据只能是**跑一次真机 `--nano` 构建**。
 > ★ 既然 nano 已明确**不作为前期重点**（§16.7.5），`nano-hygiene` 的定位是**零成本保留"将来可切 nano"的可选性**，**不是"nano 就绪"的证明**。
-> ★ **未落地的 3 条，缺的都是"消费者"而不是工作量**（2026-10-15 记账）：`scan-autoload-drift` 要 `apps/*/project.yml`（还没有）· `no-using-php` / `stub-prefix` 要 `cpp-src/` C++ 桥接（M1 才建）。**没有消费者的规则只是审自己** ⇒ 到位的当天补，不预写。**落地与否以 `php tools/lint.php --list` 为准**（数字不写进本文件，写即过期）。
+> ★ **未落地的 4 条，缺的都是"消费者"而不是工作量**（2026-10-15 记账，2026-10-16 复核补 1 条）：`scan-autoload-drift` 要 `apps/*/project.yml`（还没有）· `export-surface-drift` 要 `-m lib` 分发工程（还没有）· `no-using-php` / `stub-prefix` 要 `cpp-src/` C++ 桥接（M1 才建）。**没有消费者的规则只是审自己** ⇒ 到位的当天补，不预写。**落地与否以 `php tools/lint.php --list` 为准**（数字不写进本文件，写即过期）。
+★ **`--list` 里还有一条本表没列的**：`dependency-direction`（§4.3 依赖规则的守卫，"层之间只能沿 §4.3 的允许方向依赖"）—— §16.6.1 之前就有的骨架规则，2026-10-16 补登于此。实到 14 = 本表 17 − 未落地 4 + 表外 1。
 
 ### 16.7 ★ `--nano`（无 VM 原生构建）评估
 
@@ -2454,7 +2458,7 @@ $app = new UsersApplication(new Win32Platform(), new ThreadPoolTaskHost());
 |--------|------|---------|------|
 | **M0 骨架** | PSR-4 分层 + 契约文件 + `tools/smoke.php` + **公共面按 `@api` 标注**（决定 lint 骨架） | 冒烟全绿；依赖方向 lint 有断言；`internal-leak` 双向自检过 | ✅ **已完成** —— PSR-4 分层 / `@api` 标注（76 类型）/ `smoke.php`（315 ok）/ lint 骨架（14 条落地）全在  |
 | **M1 可显示** | Win32 Platform + RenderSurface(Skia CPU) + Canvas 接口 + 文本栈桥接 + DPI 缩放 + **`DisplayList` 录制**（决定渲染路径） | 一个窗口画出「Hello Drift」（§A.1），分数缩放下不糊 | ✅ **出口判据已兑现**（2026-10-15）—— `apps/hello` 经 `tpc -m bin` **真机构建**出 `hello.exe`（1.5 MB），运行后窗口（640×400 客户区）画出居中的「Hello Drift」（截图核对；执行入口 `php tools/drift-build.php hello`）。<br>★ **落地路径与本文原计划有一处偏差，如实记下**：表面走 **`Win32RasterSurface`**（`RasterCanvas` 软光栅 + `SetDIBitsToDevice`），**不是** `RenderSurface(Skia CPU)`。理由：§7.3 的 M1 分期原文就写"CPU 光栅 + 位块传送"，且 `SurfaceProvider` 这层抽象存在的意义正是"**后端可换**"（换 Skia 只改 `Win32SurfaceProvider` 一处，应用侧一行不改）⇒ `SkiaCanvas` 归 M4+。<br>★ 仍未验（不阻塞 M1 判据）：分数缩放下不糊（本机 100% DPI，未跨屏试）、`SkiaCanvas`、跨模块调用性能。<br>★ 平台侧 `Drift\Platform` 9 + `Win32` 7 + `cpp-src/` 2 + `apps/hello` 4 个文件全在；渲染侧（`RenderSurface`/`Canvas`/`DisplayList`/文本栈/`RasterCanvas`）齐  |
-| **M2 三树 + 布局** | Element/State/调和 + RenderBox 两阶段布局 + 首批控件 + **fluent-first 全部落地** + **盒样式（`BoxStyle` + `BoxWidget`，§15.7）** + **焦点遍历顺序** + **光标形状（命中三方消费）** + **`SubscribingWidget` 接口** + **property hooks 进 Store** + **`Each` key 必填** | 布局 conformance 夹具全过；首批控件过 **W1–W8**；Tab 序有 conformance 夹具；`Each` 缺 key ⇒ 构建期报错 | ⏳ **大部分** —— 三树/调和/两阶段布局/13 个控件/fluent-first/`BoxStyle`+`BoxWidget`/`SubscribingWidget`/property hooks/`Each` key 全在；**`TextField` 2026-10-15 已落地**（§24.1 #32 闭环）；**`FocusNode`（焦点遍历顺序）2026-10-15 已落地** —— `FocusManager` 的 Tab 序（默认文档序 / `skipFocus` 整体跳过 / `focusOrder` 同容器稳定排序）可跑；**`Spinner` 2026-10-16 已落地**（§11.5 `Loading` 分支；三段形态 + `RenderSpinner` 8 点 alpha 环，smoke 14 条断言 + M2LayoutPage 示例）；**`CursorShape`（命中三方消费）随 M1 输入层已落地**（enum + 整条命中链 `Widget→RenderObject→FocusManager→dispatchInput→Win32 setCursor` 接好，smoke 有光标断言，见 §753）；conformance 夹具属 M4 工具链，未建  |
+| **M2 三树 + 布局** | Element/State/调和 + RenderBox 两阶段布局 + 首批控件 + **fluent-first 全部落地** + **盒样式（`BoxStyle` + `BoxWidget`，§15.7）** + **焦点遍历顺序** + **光标形状（命中三方消费）** + **`SubscribingWidget` 接口** + **property hooks 进 Store** + **`Each` key 必填** | 布局 conformance 夹具全过；首批控件过 **W1–W8**；Tab 序有 conformance 夹具；`Each` 缺 key ⇒ 构建期报错 | ⏳ **大部分** —— 三树/调和/两阶段布局/13 个控件/fluent-first/`BoxStyle`+`BoxWidget`/`SubscribingWidget`/property hooks/`Each` key 全在；**`TextField` 2026-10-15 已落地**（§24.1 #32 闭环）；**`FocusNode`（焦点遍历顺序）2026-10-15 已落地** —— `FocusManager` 的 Tab 序（默认文档序 / `skipFocus` 整体跳过 / `focusOrder` 同容器稳定排序）可跑；**`Spinner` 2026-10-16 已落地**（§11.5 `Loading` 分支；三段形态 + `RenderSpinner` 8 点 alpha 环，smoke 14 条断言 + M2LayoutPage 示例）；**`CursorShape`（命中三方消费）随 M1 输入层已落地**（enum + 整条命中链 `Widget→RenderObject→FocusManager→dispatchInput→Win32 setCursor` 接好，smoke 有光标断言，见 §753）；★ **conformance 夹具已建**（2026-10-16，`tools/M2Conformance.php`）—— W1–W8 静态 + runtime 判据集（token 级量具带反例自检），`M2LayoutPage` 即夹具页，M2 出口判据「夹具全过 / 首批控件过 W1–W8 / Tab 序有夹具」首次有可跑落点；常驻门 `drift-conformance` 仍归 M4（§16.2）  |
 | **M3 数据缝/多页** | Store 三件套 + `SubjectBuilder` + **`select()`** + RouteTable/PageHost + **动作缝（`CommandRouter` + 冒泡链）** + **三态 enum** + **错误边界容器**（★ 2026-10-14 裁决：**归 M3** —— 见 §23.2 O-12）+ **AcceleratorTable** + **自绘 MenuBar/ContextMenu** + **应用内拖放** | §A.2 的完整应用可跑；局部态与跨页共享两条路径都能写；`Root` 只组合（lint 可查）；Ctrl+S 等加速键可用；§16.6.3 的 **17 条规则全部双向自检**过 | ⏳ **约一半** —— 值缝（Store 三件套 + `SubjectBuilder` + `select`）与动作缝（`CommandRouter` + 冒泡链）已通；**多页外壳（`Dock`/`AppBar`/`NavButton`）· `Widget\Menu` 四件 · 错误边界容器 · `AcceleratorTable` · `Drag` 两件 —— 6 类 11 个 0 文件**；§A.2 样板刚对齐（O-18），`apps/users` 未建；★ **浮层机制已裁（O-20，按 A）** —— `Menu` / `ContextMenu` / 模态（`showModal()`）共用第二棵根渲染树，实现不再被“不存在的原语”卡住  |
 | **M4 工具链 + 异步** | drift-preview / golden / conformance / drift-lint / **drift-doctor** 齐备 + **TaskHost 线程池后端** + **`notifyChanged` 线程断言** + **ThemeChanged / 深色模式** | 无头 preview + golden diff 可跑；后台 IO 不卡帧；**worker 里 notify ⇒ 响亮失败**；跟得上系统主题切换 | ⏳ **未动** —— `drift-lint` / `drift-preview` / `drift-codegen` 三件在；`golden` / `conformance` / `drift-doctor` 未建，`TaskHost` 系 **7 个类型**（含 `Job`，§24.1 #35）+ `ThreadPoolTaskHost` 0 文件  |
 | **M5 业务底座** | 虚拟化（含 §12.3 的 State 外置纪律）+ 脏矩形 + **WindowStateStore** + Windows UIA 桥接 | 长列表滚动不掉帧；子树崩溃不整树陪葬；窗口位置/尺寸跨启动保留 | ⏳ **未动** —— 虚拟化 / 脏矩形 / `WindowStateStore` / UIA 桥接全 0 文件  |

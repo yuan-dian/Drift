@@ -51,6 +51,19 @@ final class RenderFlex extends RenderBox
         $this->adoptChild($child);
     }
 
+    /**
+     * C5 契约查询：返回本盒**实际生效**的溢出策略。
+     *
+     * ★ 必须覆写：`RenderBox::overflow()` 的默认值是 Clip，而本盒真正用的策略
+     *   是构造参数 `$this->overflow`（默认 Report）—— 不覆写 ⇒ "查询说 Clip、
+     *   行为是 Report"，W4（会超的容器声明溢出策略）的判定面整体说谎。
+     *   2026-10-16 由 M2 conformance 夹具抓到（`tools/M2Conformance.php` W4）。
+     */
+    public function overflow(): Overflow
+    {
+        return $this->overflow;
+    }
+
     /** @internal 重建前清空 —— 否则同一次 rebuild 会把子盒追加两遍 */
     public function clearChildren(): void
     {
