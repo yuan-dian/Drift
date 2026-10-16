@@ -3,11 +3,13 @@ declare(strict_types=1);
 
 namespace Drift\App;
 
+use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
 use Drift\Layout\RenderBox;
 use Drift\Rendering\RenderSurface;
 use Drift\Widget\Element;
 use Drift\Widget\StatefulElement;
+use Throwable;
 
 /**
  * 一帧：flush 脏 Element → layout → paint → present（§5.2）。
@@ -40,7 +42,19 @@ final class Frame
     public function run(Element $root, BoxConstraints $constraints, float $timestampMs): void
     {
         // ① 帧末统一重建（§5.2 裁决 3）：派发中途的 setState 只标脏
-        $root->settle();
+        // ★ O-12 A′ 帧循环异常策略 S3 的"无边界"半边：异常从子树一路冒到这里
+        //   （沿途没有 ErrorBoundary 捕获）⇒ Fatal 序列。**不吞**——吞掉就是
+        //   窗口冻结在上一帧且不报错（G2 明令禁止的半静默）。
+        try {
+            $root->settle();
+        } catch (Throwable $e) {
+            Errors::report(sprintf(
+                '帧循环：未捕获异常冒到帧末（沿途无错误边界）—— %s（%s:%d）',
+                $e->getMessage(),
+                basename($e->getFile()),
+                $e->getLine(),
+            ));
+        }
 
         // ② layout
         // ★ 必须用 `effectiveBox()` 而不是 `renderObject()`：应用根常是
@@ -53,11 +67,29 @@ final class Frame
             return; // 整棵子树没有任何可绘制内容（例如空页）⇒ 这一帧无事可做
         }
 
-        $box->layout($constraints);
+        try {
+            $box->layout($constraints);
+        } catch (Throwable $e) {
+            Errors::report(sprintf(
+                '帧循环：layout 阶段未捕获异常（沿途无错误边界）—— %s（%s:%d）',
+                $e->getMessage(),
+                basename($e->getFile()),
+                $e->getLine(),
+            ));
+        }
 
         // ③ paint → ④ present
-        $canvas = $this->surface->beginFrame($timestampMs);
-        $box->paint($canvas);
-        $this->surface->endFrame();
+        try {
+            $canvas = $this->surface->beginFrame($timestampMs);
+            $box->paint($canvas);
+            $this->surface->endFrame();
+        } catch (Throwable $e) {
+            Errors::report(sprintf(
+                '帧循环：paint 阶段未捕获异常（沿途无错误边界）—— %s（%s:%d）',
+                $e->getMessage(),
+                basename($e->getFile()),
+                $e->getLine(),
+            ));
+        }
     }
 }

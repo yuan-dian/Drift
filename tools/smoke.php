@@ -26,6 +26,11 @@ use Drift\App\Application;
 use Drift\App\FocusManager;
 use App\Hello\HelloApplication;
 use Drift\App\Frame;
+use Drift\Dev\Smoke\ErrorBoundary\BoomPage;
+use Drift\Dev\Smoke\ErrorBoundary\BoomState;
+use Drift\Dev\Smoke\ErrorBoundary\ConstructBoom;
+use Drift\Dev\Smoke\ErrorBoundary\LayoutBoomBox;
+use Drift\Dev\Smoke\ErrorBoundary\PaintBoomBox;
 use Drift\Dev\Smoke\Frame\QuietWidget;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Smoke\Frame\TickerWidget;
@@ -33,6 +38,7 @@ use Drift\Dev\Preview\DemoPage;
 use Drift\Dev\Preview\FormPage;
 use Drift\Dev\Preview\Renderer;
 use Drift\Dev\Preview\SvgSurface;
+use Drift\Dev\Smoke\App\AccelApplication;
 use Drift\Dev\Smoke\App\CompositeRootApp;
 use Drift\Dev\Smoke\App\CursorApplication;
 use Drift\Dev\Smoke\App\EchoApplication;
@@ -56,6 +62,7 @@ use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Scale;
 use Drift\Geometry\Size;
+use Drift\Input\AcceleratorTable;
 use Drift\Input\CursorShape;
 use Drift\Input\FocusNode;
 use Drift\Input\KeyChord;
@@ -68,6 +75,7 @@ use Drift\Layout\RenderBox;
 use Drift\Layout\RenderButton;
 use Drift\Layout\RenderCenter;
 use Drift\Layout\RenderDock;
+use Drift\Layout\RenderErrorBoundary;
 use Drift\Layout\RenderFlex;
 use Drift\Layout\RenderFlexible;
 use Drift\Layout\RenderPadding;
@@ -116,6 +124,9 @@ use Drift\Widget\Column;
 use Drift\Widget\Dock;
 use Drift\Widget\Each;
 use Drift\Widget\Element;
+use Drift\Widget\ErrorBoundary;
+use Drift\Widget\ErrorBoundaryElement;
+use Drift\Widget\ErrorPlaceholder;
 use Drift\Widget\Key;
 use Drift\Widget\NavButton;
 use Drift\Widget\Padding;
@@ -123,6 +134,7 @@ use Drift\Widget\Row;
 use Drift\Widget\Spacer;
 use Drift\Widget\Spinner;
 use Drift\Widget\SpinnerState;
+use Drift\Widget\State;
 use Drift\Widget\StatefulElement;
 use Drift\Widget\Text;
 use Drift\Widget\TextField;
@@ -265,6 +277,28 @@ if (str_starts_with($caseArg, '--case=')) {
     if ($case === 'flexvalue') {
         // flex 份额 < 1 分不到空间，静默夹紧只会让"给了 Expanding 却不生效"更难查
         new RenderFlexible(0);
+    }
+
+    if ($case === 'accelconflict') {
+        // G2：同一个组合绑两次 ⇒ 响亮失败，不是后绑覆盖前绑（用户按了没反应且不报错）
+        AcceleratorTable::make()
+            ->bind(KeyChord::ctrl('R'), 'users.refresh')
+            ->bind(KeyChord::ctrl('R'), 'users.reload');
+    }
+
+    if ($case === 'noboundary') {
+        // O-12 A′ S3 的"无边界"半边：帧末异常沿途没有 ErrorBoundary 捕获
+        //   ⇒ Fatal 序列（exit 3 + Errors.log）。**不吞** —— 吞了就是窗口冻结
+        //   在上一帧且不报错（G2 明令禁止的半静默）。
+        $ctx = new BuildContext(240.0, 80.0, ThemeData::light(), new DeterministicMetricsProvider(
+            DeterministicFontManager::standard()->collection(),
+            new DeterministicShaper(),
+        ));
+        $bad = BoomPage::make()->createElement();
+        $bad->mount(null, $ctx); // 首次 build 成功
+        $bad->state()?->boom();  // 标脏 ⇒ 帧末重建时抛
+        (new Frame(new SurfaceProbe()))->run($bad, BoxConstraints::tight(new Size(240.0, 80.0)), 0.0);
+        echo "不该到达这里\n";
     }
 
     exit(0); // 走到这里说明"该中止的没中止"
@@ -2820,6 +2854,167 @@ $quietApp->dispatchInput(KeyEvent::down(KeyChord::left()));
 check(
     '激活 · 方向键不触发激活（只有 Enter/Space）',
     $quietApp->recorder()->seen === [] && $quietApp->pressed === [],
+);
+
+// ── ㉝ 错误边界容器 + AcceleratorTable（任务 #5：M3，O-12 A′ + §9.1 第 ① 环）──
+
+// A. AcceleratorTable 单元（§9.1）
+$accel = AcceleratorTable::make()
+    ->bind(KeyChord::ctrl('R'), 'users.refresh')
+    ->bind(KeyChord::f(5), 'users.refresh');
+check(
+    'AcceleratorTable · 绑定后可查（Ctrl+R / F5 ⇒ 同一命令）',
+    $accel->resolve(KeyChord::ctrl('R')) === 'users.refresh'
+        && $accel->resolve(KeyChord::f(5)) === 'users.refresh',
+);
+check(
+    'AcceleratorTable · 未绑定的组合 ⇒ null（调用方继续走焦点链）',
+    $accel->resolve(KeyChord::ctrl('N')) === null,
+);
+check(
+    'AcceleratorTable · 修饰键不同 ⇒ 不同组合（Ctrl+R ≠ Ctrl+Shift+R）',
+    $accel->resolve(KeyChord::make('R', true, false, true)) === null,
+);
+check('AcceleratorTable · 计数 2 / 空表 isEmpty', $accel->count() === 2 && AcceleratorTable::make()->isEmpty());
+
+[$code, $output] = runCase(__FILE__, 'accelconflict', null);
+check(
+    'AcceleratorTable · 同一组合绑两次 ⇒ Fatal（exit 3，G2 冲突不静默）',
+    $code === 3,
+    '实际 ' . $code . ' / ' . $output,
+);
+check(
+    'AcceleratorTable · 冲突写了 Errors.log',
+    str_contains(logText($log), 'AcceleratorTable'),
+);
+
+// B. 错误边界 · 构造期（O-12 第 ① 层：createRenderObject 抛 ⇒ rebuild 的 try 捕获）
+$ebCtor = ErrorBoundary::make(ConstructBoom::make())->createElement();
+$ebCtor->mount(null, $context);
+check(
+    '错误边界 · 构造期异常被容器捕获（不冒泡，窗口其余部分继续）',
+    $ebCtor instanceof ErrorBoundaryElement && $ebCtor->hasCaught(),
+);
+check(
+    '错误边界 · 捕获后子树换成占位（ErrorPlaceholder）',
+    $ebCtor->childAt(0)?->widget() instanceof ErrorPlaceholder,
+);
+check(
+    '错误边界 · 占位带错误原文（G2：不吞不改写）',
+    str_contains((string) $ebCtor->caughtMessage(), 'construct boom'),
+);
+$ebCtor->effectiveBox()?->layout(BoxConstraints::tight(new Size(240.0, 80.0)));
+check(
+    '错误边界 · 占位可布局出墨（Center+Text 真画了东西）',
+    inkCount(spinCanvas($ebCtor->effectiveBox(), 240, 80), Color::white()) > 0,
+);
+// ★ 已知边界（O-08 的 M4 工作项）：确定性测试字体只覆盖拉丁 ⇒ 中文文本有尺寸、
+//   无字形（`FontFace::rasterize` 契约：无此字形 ⇒ null，不静默画方框）⇒ 预览 /
+//   光栅管线上中文无墨。等 M4 打包覆盖 CJK 的测试字体后，这条断言应改判。
+$cjkProbe = Text::make('出错')->createElement();
+$cjkProbe->mount(null, $context);
+check(
+    '字体边界 · 确定性测试字体无中文字形 ⇒ 中文无墨（O-08 M4 前已知，届时拆除本条）',
+    inkCount(spinCanvas($cjkProbe->effectiveBox(), 240, 80), Color::white()) === 0,
+);
+
+// C. 错误边界 · build 期（第 ② 层：State::build 抛 ⇒ settle 的 try 捕获）
+$ebBuild = ErrorBoundary::make(BoomPage::make())->createElement();
+$ebBuild->mount(null, $context);
+check(
+    '错误边界 · 健康时完全透明（孩子就是原页面）',
+    $ebBuild->childAt(0)?->widget() instanceof BoomPage && !$ebBuild->hasCaught(),
+);
+$boomState = $ebBuild->childAt(0) instanceof StatefulElement ? $ebBuild->childAt(0)->state() : null;
+if ($boomState instanceof BoomState) {
+    $boomState->boom(); // 标脏 ⇒ 帧末重建 ⇒ 第二次 build 抛
+}
+$ebBuild->settle();
+check(
+    '错误边界 · build 期异常被 settle() 捕获（帧末重建路径）',
+    $ebBuild->hasCaught() && str_contains((string) $ebBuild->caughtMessage(), 'build boom'),
+);
+check(
+    '错误边界 · build 期捕获后也换占位',
+    $ebBuild->childAt(0)?->widget() instanceof ErrorPlaceholder,
+);
+
+// D. 错误边界 · 渲染期（第 ③ 层：盒自己兜底，不冒泡）
+//    ★ loose 下才看得到"自然尺寸"：tight 的 constrain 会把下界提到上限
+//      （Spinner 任务确认过的语义 —— 紧约束下父把尺寸定死），fallback 的
+//      160×48 会被撑成 200×200，那是约束语义不是兜底失效。
+$rebLayout = new RenderErrorBoundary();
+$rebLayout->setChild(new LayoutBoomBox());
+$rebLayout->layout(BoxConstraints::loose(new Size(200.0, 200.0)));
+check(
+    '错误边界 · 渲染期 layout 异常 ⇒ 兜底自然尺寸（160×48，不放大到 INF）',
+    $rebLayout->size()?->width === 160.0 && $rebLayout->size()?->height === 48.0,
+    sprintf('实际 %.6g × %.6g', $rebLayout->size()?->width ?? -1, $rebLayout->size()?->height ?? -1),
+);
+$rebTight = new RenderErrorBoundary();
+$rebTight->setChild(new LayoutBoomBox());
+$rebTight->layout(BoxConstraints::tight(new Size(200.0, 200.0)));
+check(
+    '错误边界 · tight 约束下兜底地被提到上限（constrain 语义，非失效）',
+    $rebTight->size()?->width === 200.0,
+);
+$rebPaint = new RenderErrorBoundary();
+$rebPaint->setChild(new PaintBoomBox());
+$rebPaint->layout(BoxConstraints::tight(new Size(100.0, 60.0)));
+$paintThrew = false;
+try {
+    $rebPaint->paint(new RecordingCanvas(new DisplayList()));
+} catch (Throwable) {
+    $paintThrew = true;
+}
+check(
+    '错误边界 · 渲染期 paint 异常 ⇒ 盒兜底（paint 不冒泡）',
+    !$paintThrew,
+);
+check(
+    '错误边界 · paint 兜底有墨（红底叉框真的画了）',
+    inkCount(spinCanvas($rebPaint, 100, 60)) > 0,
+);
+
+// E. 无边界 ⇒ Fatal 序列（S3 的另半边：帧循环吞异常是 G2 不容的半静默）
+[$code, $output] = runCase(__FILE__, 'noboundary', null);
+check(
+    '帧循环 S3 · 无边界 ⇒ Fatal 序列（exit 3，绝不吞掉冻窗口）',
+    $code === 3,
+    '实际 ' . $code . ' / ' . $output,
+);
+check(
+    '帧循环 S3 · Fatal 写了 Errors.log（可观测）',
+    str_contains(logText($log), '未捕获异常冒到帧末'),
+);
+
+// F. 加速键接线（§9.1 第 ① 环：焦点之前）
+$accelApp = new AccelApplication();
+$accelApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
+$accelApp->dispatchInput(KeyEvent::down(KeyChord::ctrl('R')));
+check(
+    '加速键 · Ctrl+R ⇒ 命令走全链（第 ① 环命中，焦点之前）',
+    $accelApp->seen === ['accel.fire'],
+);
+$accelApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
+check(
+    '加速键 · 未绑定的键不走第 ① 环（Tab 仍归焦点链，seen 不变）',
+    $accelApp->seen === ['accel.fire'],
+);
+
+// G. 让位规则 ②：焦点控件声明独占 ⇒ 不吃快捷键
+$claimApp = new AccelApplication();
+$claimApp->withClaimer = true;
+$claimApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
+$claimApp->dispatchInput(KeyEvent::down(KeyChord::tab())); // 焦点落到 TextField（文档序第一个可聚焦）
+check(
+    '加速键 · 焦点控件声明独占 Ctrl+A ⇒ 让位给输入框（seen 为空）',
+    $claimApp->seen === [],
+);
+$claimApp->dispatchInput(KeyEvent::down(KeyChord::ctrl('R')));
+check(
+    '加速键 · 未独占的组合照常命中（Ctrl+R 仍走第 ① 环）',
+    $claimApp->seen === ['accel.fire'],
 );
 
 fresh($log);

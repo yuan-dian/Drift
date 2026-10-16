@@ -8,6 +8,7 @@ use Drift\Commands\CommandHandler;
 use Drift\Commands\CommandRouter;
 use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
+use Drift\Input\AcceleratorTable;
 use Drift\Input\CursorShape;
 use Drift\Input\InputEvent;
 use Drift\Input\KeyChord;
@@ -113,6 +114,28 @@ abstract class Application
     public function theme(): ThemeData
     {
         return ThemeData::light();
+    }
+
+    /**
+     * 加速键表（§9.1 路由链第 ① 环，焦点之前）。
+     *
+     * ```php
+     * public function accelerators(): AcceleratorTable
+     * {
+     *     return AcceleratorTable::make()
+     *         ->bind(KeyChord::ctrl('R'), 'users.refresh');
+     * }
+     * ```
+     *
+     * ★ 默认空表 ⇒ 不覆写的应用零加速键、也零开销（`isEmpty()` 短路）。
+     * ★ 每帧查询**现取现建**也行（值小、bind 便宜）；要省就缓存到字段——
+     *   应用级数据没有不可变纪律（不是 Widget）。
+     *
+     * @api
+     */
+    public function accelerators(): AcceleratorTable
+    {
+        return AcceleratorTable::make();
     }
 
     /** **布局确定性的注入点**（§14.2）：度量由宿主给，不由平台探测 */
@@ -230,6 +253,15 @@ abstract class Application
         }
 
         if ($event instanceof KeyEvent) {
+            // §9.1 第 ① 环：加速键（在焦点之前）。
+            // 让位规则 ②：焦点控件声明了独占该组合 ⇒ 不吃快捷键，往下走焦点链。
+            $accel = $this->accelerators()->resolve($event->chord);
+            if ($accel !== null && !$focus->claims($event->chord)) {
+                $this->dispatch($accel);
+
+                return null;
+            }
+
             if ($focus->dispatchKey($event)) {
                 return null;
             }
