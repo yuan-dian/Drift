@@ -10,6 +10,7 @@ use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
 use Drift\Input\CursorShape;
 use Drift\Input\InputEvent;
+use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
 use Drift\Layout\RenderBox;
@@ -20,6 +21,7 @@ use Drift\Text\DeterministicShaper;
 use Drift\Text\TextMetricsProvider;
 use Drift\Theme\ThemeData;
 use Drift\Widget\BuildContext;
+use Drift\Widget\Button;
 use Drift\Widget\Element;
 use Drift\Widget\StatefulElement;
 use Drift\Widget\Widget;
@@ -228,7 +230,12 @@ abstract class Application
         }
 
         if ($event instanceof KeyEvent) {
-            $focus->dispatchKey($event);
+            if ($focus->dispatchKey($event)) {
+                return null;
+            }
+
+            // §9.1：焦点按钮"回车/空格能触发"—— 动作缝的键盘侧激活
+            $this->activateFocused($event);
 
             return null;
         }
@@ -282,6 +289,40 @@ abstract class Application
         });
 
         return $accepted;
+    }
+
+    /**
+     * 焦点控件的 Enter / Space ⇒ 激活（§9.1 路由链第 ③ 环的激活语义）。
+     *
+     * ★ **指针激活缺席的诚实边界**：`PointerEvent` 今天只有 `down()`（抬起 /
+     *   移动留给 M4 完整输入层）⇒ 鼠标点按钮只给焦点，激活走键盘。这是输入层
+     *   分期的结构后果（同 §11.5 的 loading 态边界），不是漏接。
+     *
+     * @internal 由 dispatchInput() 调
+     */
+    private function activateFocused(KeyEvent $event): void
+    {
+        if (!$event->chord->is(KeyChord::enter()) && !$event->chord->is(KeyChord::make('Space'))) {
+            return;
+        }
+
+        $widget = $this->focus?->focused()?->widget();
+        if (!$widget instanceof Button) {
+            return;
+        }
+
+        // 命令优先（走全链：冒泡 → 注册表）；onPressed 是纯 UI 回调，框架兜底调
+        $name = $widget->commandName();
+        if ($name !== null) {
+            $this->dispatch($name, $widget->commandArg() ?? CommandArg::none());
+
+            return;
+        }
+
+        $handler = $widget->pressedHandler();
+        if ($handler !== null) {
+            $handler();
+        }
     }
 
     /**

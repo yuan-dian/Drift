@@ -22,9 +22,12 @@ use Drift\Rendering\Canvas;
  *   兄弟数量漂移）。`0` 是合法主轴尺寸，所以不能用"0 表示无界"—— 那是 GUI 仓
  *   三次踩坑的那一条（C2）。
  *
+ * ★ **不是 `final`**：`RenderAppBar`（§12.1 的 chrome 顶条）继承它 —— 顶条
+ *   就是"带底色的弹性行"，只覆写 `paint()`，不为一个新名字复制一套 flex。
+ *
  * @api
  */
-final class RenderFlex extends RenderBox
+class RenderFlex extends RenderBox
 {
     /** @var list<RenderBox> */
     private array $kids = [];

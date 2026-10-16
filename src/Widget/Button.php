@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Widget;
 
+use Drift\Commands\CommandArg;
 use Drift\Errors;
 use Drift\Geometry\EdgeInsets;
 use Drift\Layout\RenderBox;
@@ -25,16 +26,23 @@ use Drift\Rendering\MetricToken;
  *
  * ★ **两条输入路径，语义不同**：
  *   - `->onPressed(闭包)` = 纯 UI 回调，零框架依赖（§A.3.7 就是这么用的）
- *   - `->command('名')->arg(...)` = 走命令系统（依赖 `Drift\Commands`，M3）
- *     **M2 里响亮说没实现**，不是静默忽略注册。
+ *   - `->command('名')->arg(...)` = 走命令系统（`CommandRouter` + 冒泡链，M3 已通）
+ *     ★ **激活的诚实边界**（2026-10-16 接线时记）：**键盘 Enter/Space 已通**
+ *       （`Application::dispatchInput()` 派发焦点按钮的命令）；**指针激活缺席**
+ *       —— `PointerEvent` 今天只有 `down()`（抬起 / 移动留给 M4 完整输入层），
+ *       鼠标点按钮只给焦点。同 §11.5 loading 态的分期边界，不是缺陷。
+ *
+ * ★ **不是 `final`**：`NavButton`（§12.2 外壳词汇）继承它 —— 导航按钮就是一种
+ *   按钮，共享同一条链与同一个渲染盒，不为一个新名字复制一套机制。
  *
  * @api
  */
-final class Button extends BoxWidget
+class Button extends BoxWidget
 {
     private ButtonVariant $variant = ButtonVariant::Default;
     private ?\Closure $onPressed = null;
     private ?string $command = null;
+    private ?CommandArg $commandArg = null;
 
     public function __construct(private readonly string $label)
     {
@@ -76,11 +84,20 @@ final class Button extends BoxWidget
         return $this;
     }
 
-    /** 走命令系统（M3 才接上） */
+    /** 走命令系统（M3 已通：键盘 Enter/Space 激活；指针激活等 M4 的 up 事件） */
     public function command(string $name): static
     {
         $this->mutate();
         $this->command = $name;
+
+        return $this;
+    }
+
+    /** 命令参数（§11.4.3：`none/id/key` 三形态，不裸传 int/string） */
+    public function arg(CommandArg $arg): static
+    {
+        $this->mutate();
+        $this->commandArg = $arg;
 
         return $this;
     }
@@ -105,17 +122,13 @@ final class Button extends BoxWidget
         return $this->command;
     }
 
+    public function commandArg(): ?CommandArg
+    {
+        return $this->commandArg;
+    }
+
     public function createRenderObject(BuildContext $context): RenderBox
     {
-        if ($this->command !== null) {
-            // M2 还没接命令系统 —— 响亮说没实现，不静默留下一个按了没反应的按钮
-            Errors::report(sprintf(
-                "Button '%s' 用了 ->command('%s')，但命令系统属 M3（§19）—— M2 请用 ->onPressed()",
-                $this->label,
-                $this->command,
-            ));
-        }
-
         // §15.7 纪律 3：变体 → token → 值，**只在这里合并一次**。
         // 经 BuildContext 取（Widget 层唯一被允许碰主题的入口），Render 层只收值。
         $theme = $context;

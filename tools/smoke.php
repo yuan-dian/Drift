@@ -36,6 +36,7 @@ use Drift\Dev\Preview\SvgSurface;
 use Drift\Dev\Smoke\App\CompositeRootApp;
 use Drift\Dev\Smoke\App\CursorApplication;
 use Drift\Dev\Smoke\App\EchoApplication;
+use Drift\Dev\Smoke\App\NavApplication;
 use Drift\Dev\Smoke\LeafProbe;
 use Drift\Dev\Smoke\Routing\NavStore;
 use Drift\Dev\Smoke\Theme\ThemeSpy;
@@ -62,13 +63,16 @@ use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
 use Drift\Layout\FlexAlign;
 use Drift\Layout\Overflow;
+use Drift\Layout\RenderAppBar;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderButton;
 use Drift\Layout\RenderCenter;
+use Drift\Layout\RenderDock;
 use Drift\Layout\RenderFlex;
 use Drift\Layout\RenderFlexible;
 use Drift\Layout\RenderPadding;
 use Drift\Layout\RenderProxyBox;
+use Drift\Layout\RenderObject;
 use Drift\Layout\RenderSpinner;
 use Drift\Layout\RenderText;
 use Drift\Layout\RenderTextField;
@@ -105,12 +109,15 @@ use Drift\Theme\ThemeScope;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
 use Drift\Widget\ButtonVariant;
+use Drift\Widget\AppBar;
 use Drift\Widget\BoxWidget;
 use Drift\Widget\Center;
 use Drift\Widget\Column;
+use Drift\Widget\Dock;
 use Drift\Widget\Each;
 use Drift\Widget\Element;
 use Drift\Widget\Key;
+use Drift\Widget\NavButton;
 use Drift\Widget\Padding;
 use Drift\Widget\Row;
 use Drift\Widget\Spacer;
@@ -232,14 +239,14 @@ if (str_starts_with($caseArg, '--case=')) {
         $column->layout(BoxConstraints::tight(new Size(10.0, 50.0)));
     }
 
-    if ($case === 'buttoncommand') {
-        // M2 还没接命令系统 ⇒ 响亮失败，不静默留一个按了没反应的按钮
-        Button::make('刷新')->command('users.refresh')->createRenderObject(
-            new BuildContext(320.0, 240.0, ThemeData::light(), new DeterministicMetricsProvider(
-                DeterministicFontManager::standard()->collection(),
-                new DeterministicShaper(),
-            ))
-        );
+    if ($case === 'dockoverflow') {
+        // C5/W4：Dock 默认 Report ⇒ 条轨**合计**超出必须中止（每根各自合规，
+        //   冲突在合计层暴露 —— 30+20 > 40）
+        $dock = new RenderDock(Overflow::Report);
+        $dock->setSlot('top', new SolidBox(new Size(100.0, 30.0), 100.0, 30.0));
+        $dock->setSlot('bottom', new SolidBox(new Size(100.0, 20.0), 100.0, 20.0));
+        $dock->setSlot('center', new SolidBox(new Size(10.0, 10.0), 10.0, 10.0));
+        $dock->layout(BoxConstraints::tight(new Size(100.0, 40.0)));
     }
 
     if ($case === 'eachdup') {
@@ -1378,9 +1385,9 @@ check(
 
 // command() 在 M2 响亮说没实现（不静默留下一个按了没反应的按钮）
 fresh($log);
-[$code, $output] = runCase(__FILE__, 'buttoncommand', null);
-check('Button · M2 未接命令系统退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
-check('Button · 未接命令系统写了 Errors.log', str_contains(logText($log), '命令系统属 M3'));
+[$code, $output] = runCase(__FILE__, 'dockoverflow', null);
+check('Dock · C5 Report 条轨超出退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
+check('Dock · Report 超出写了 Errors.log', str_contains(logText($log), 'Dock 纵向超出'));
 
 // ── ㉓ TextField：受控输入框（§15.2 / §A.2.9）──
 
@@ -2669,6 +2676,150 @@ check('Spinner · 相位前进一步（step 0 → 1）', $spinState instanceof S
 check(
     'Spinner · 相位变 ⇒ 墨迹变（动画真的在走）',
     md5(spinCanvas($spinBox2, 200, 200)->toRgba()) !== $sigA,
+);
+
+// ── ㉘ 多页外壳：Dock / AppBar / NavButton + 命令激活（§12.1 / §12.2，2026-10-16 落地）──
+
+// RenderDock 五槽布局（直接构造渲染盒，与 C5 负例同一条测试路径）
+$dock = new RenderDock(Overflow::Report);
+$dock->setSlot('top', new SolidBox(new Size(100.0, 20.0), 100.0, 20.0));
+$dock->setSlot('bottom', new SolidBox(new Size(100.0, 15.0), 100.0, 15.0));
+$dock->setSlot('left', new SolidBox(new Size(30.0, 65.0), 30.0, 65.0));
+$dock->setSlot('right', new SolidBox(new Size(25.0, 65.0), 25.0, 65.0));
+$dock->setSlot('center', new SolidBox(new Size(45.0, 65.0), 45.0, 65.0));
+$dock->layout(BoxConstraints::tight(new Size(100.0, 100.0)));
+check(
+    'Dock · top 槽：全宽贴顶、拿自然高',
+    $dock->slot('top')?->offsetX() === 0.0 && $dock->slot('top')?->offsetY() === 0.0
+        && $dock->slot('top')?->size()?->width === 100.0 && $dock->slot('top')?->size()?->height === 20.0,
+);
+check(
+    'Dock · bottom 槽：全宽贴底（100−15）',
+    $dock->slot('bottom')?->offsetY() === 85.0 && $dock->slot('bottom')?->size()?->height === 15.0,
+);
+check(
+    'Dock · left/right 轨：中带全高、贴左右（右轨 100−25）',
+    $dock->slot('left')?->offsetY() === 20.0 && $dock->slot('left')?->size()?->height === 65.0
+        && $dock->slot('right')?->offsetX() === 75.0 && $dock->slot('right')?->offsetY() === 20.0,
+);
+check(
+    'Dock · center 槽：tight 填满剩余矩形（45×65 @ 30,20）',
+    $dock->slot('center')?->offsetX() === 30.0 && $dock->slot('center')?->offsetY() === 20.0
+        && $dock->slot('center')?->size()?->width === 45.0 && $dock->slot('center')?->size()?->height === 65.0,
+);
+
+// 元素层：挂载、封存、槽盒挂接（盒挂接不变量）
+$shellRoot = Dock::make()
+    ->top(AppBar::make()->title('外壳')->children([NavButton::make('列表')->command('nav.users')]))
+    ->center(Column::make()->children([Text::make('内容')]))
+    ->createElement();
+$shellRoot->mount(null, $context);
+$shellBox = $shellRoot->effectiveBox();
+check('Dock · 挂载即建出 RenderDock', $shellBox instanceof RenderDock);
+check(
+    'Dock · 槽盒按声明挂接（top/center 有盒，left/right/bottom 为空）',
+    $shellBox instanceof RenderDock
+        && $shellBox->slot('top') !== null && $shellBox->slot('center') !== null
+        && $shellBox->slot('left') === null && $shellBox->slot('right') === null && $shellBox->slot('bottom') === null,
+);
+check('Dock · 挂载后全树封存', $shellRoot->widget()->isSealed());
+
+// 条的宽拉满 / 轨的高铺满（§12.1 第 3 条"全宽横条 / 中带全高竖轨"）
+$stretchRoot = Dock::make()
+    ->top(AppBar::make()->title('条')->children([NavButton::make('a')->command('x')]))
+    ->left(Padding::make(Text::make('轨'))->all(4.0))
+    ->center(Text::make('内容'))
+    ->createElement();
+$stretchRoot->mount(null, $context);
+$stretchBox = $stretchRoot->effectiveBox();
+$stretchBox?->layout(BoxConstraints::tight(new Size(300.0, 200.0)));
+check(
+    'Dock · 横条拉满全宽（AppBar 300 宽，不是自然宽）',
+    $stretchBox instanceof RenderDock && $stretchBox->slot('top')?->size()?->width === 300.0,
+    (string) ($stretchBox instanceof RenderDock ? $stretchBox->slot('top')?->size()?->width : -1.0),
+);
+check(
+    'Dock · 竖轨铺满中带高（轨高 = 200 − 条高）',
+    $stretchBox instanceof RenderDock
+        && $stretchBox->slot('left')?->size()?->height === 200.0 - ($stretchBox->slot('top')?->size()?->height ?? 0.0),
+);
+
+// AppBar：标题 + children 一行；chrome 底有墨
+$barRoot = AppBar::make()->title('用户管理')->children([
+    NavButton::make('列表')->command('nav.users'),
+])->createElement();
+$barRoot->mount(null, $context);
+$barBox = $barRoot->effectiveBox();
+$barBox?->layout(BoxConstraints::tight(new Size(300.0, 60.0)));
+check('AppBar · 渲染盒是 RenderAppBar（RenderFlex 的 chrome 子类）', $barBox instanceof RenderAppBar);
+$barKids = [];
+$barBox?->visitChildren(function (RenderObject $kid) use (&$barKids): void {
+    if ($kid instanceof RenderBox) {
+        $barKids[] = $kid;
+    }
+});
+check(
+    'AppBar · 标题与按钮排成一行（按钮在标题右侧、不重叠）',
+    count($barKids) === 2
+        && $barKids[1]->offsetX() >= $barKids[0]->offsetX() + ($barKids[0]->size()?->width ?? 0.0),
+    sprintf('%d 个子盒', count($barKids)),
+);
+check('AppBar · chrome 底有墨（底色真的画了）', inkCount(spinCanvas($barBox, 300, 60)) > 0);
+
+// AppBar::skipFocus() ⇒ 整组工具按钮不进 Tab 序（§A.3.4）
+$skipRoot = AppBar::make()->children([
+    NavButton::make('a')->command('x'),
+    NavButton::make('b')->command('y'),
+])->skipFocus()->createElement();
+$skipRoot->mount(null, $context);
+$skipFm = new FocusManager();
+$skipFm->collect($skipRoot);
+check('AppBar · skipFocus ⇒ 整组按钮不进 Tab 序', $skipFm->order() === []);
+
+$keepRoot = AppBar::make()->children([
+    NavButton::make('a')->command('x'),
+    NavButton::make('b')->command('y'),
+])->createElement();
+$keepRoot->mount(null, $context);
+$keepFm = new FocusManager();
+$keepFm->collect($keepRoot);
+check('AppBar · 不声明 skipFocus ⇒ 按钮照常进 Tab 序（2 个）', count($keepFm->order()) === 2);
+
+// 命令激活（§9.1：焦点按钮"回车/空格能触发"）—— 两条路径各一遍
+$navApp = new NavApplication();
+$navApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
+$navApp->dispatchInput(KeyEvent::down(KeyChord::tab()));      // 焦点 ⇒ 第一个 NavButton
+$navApp->dispatchInput(KeyEvent::down(KeyChord::enter()));    // 激活 ⇒ 命令带 arg 派发
+check(
+    '激活 · 焦点 NavButton 的 Enter ⇒ 命令带 arg 派发（nav.users#7）',
+    $navApp->recorder()->seen === ['nav.users#7/'],
+    implode(',', $navApp->recorder()->seen),
+);
+$navApp->dispatchInput(KeyEvent::down(KeyChord::tab()));      // 焦点 ⇒ 取消按钮
+$navApp->dispatchInput(KeyEvent::down(KeyChord::make('Space'))); // 激活 ⇒ onPressed 纯 UI 回调
+check(
+    '激活 · 焦点 Button 的 Space ⇒ onPressed 被调（纯 UI 回调路径）',
+    $navApp->pressed === ['cancelled'],
+    implode(',', $navApp->pressed),
+);
+
+// 无焦点时激活键 ⇒ 无事发生（不崩、不误派发）
+$idleApp = new NavApplication();
+$idleApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
+$idleApp->dispatchInput(KeyEvent::down(KeyChord::enter()));
+check(
+    '激活 · 无焦点时 Enter ⇒ 无事发生',
+    $idleApp->recorder()->seen === [] && $idleApp->pressed === [],
+);
+
+// 非激活键不触发（Enter/Space 之外的键不该激活按钮）
+$quietApp = new NavApplication();
+$quietApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
+$quietApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
+$quietApp->dispatchInput(KeyEvent::down(KeyChord::left()));
+check(
+    '激活 · 方向键不触发激活（只有 Enter/Space）',
+    $quietApp->recorder()->seen === [] && $quietApp->pressed === [],
 );
 
 fresh($log);

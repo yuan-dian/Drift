@@ -69,10 +69,16 @@ final class DependencyDirection implements Rule
      * `State::handleCommand()` 是冒泡链第 ① 环（§11.4.3），签名要收 `CommandArg`
      * ⇒ 同一个形状的第二条例外。同样只登记一个文件：链的其余部分住 `Drift\App`
      * （那里 `Widget → Commands` 天然合法），Widget 侧只碰这一个参数类型。
+     *
+     * `Button::arg()` 是**同一个形状的第三例**（2026-10-16）：控件要声明命令的
+     * 参数（§11.4.3 的动作缝，§A.2.10 / §A.3.7 样板），`CommandArg` 是必须穿越
+     * `Widget → Commands` 的值对象。链的其余部分（派发）住 `Drift\App`，Widget 侧
+     * 只碰这一个值类型 —— 与 `State` 例完全同构，不为它放开整层。
      */
     private const FILE_EXCEPTIONS = [
         'src/Widget/BuildContext.php' => ['Theme'],
         'src/Widget/State.php' => ['Commands'],
+        'src/Widget/Button.php' => ['Commands'],
     ];
 
     public function name(): string
