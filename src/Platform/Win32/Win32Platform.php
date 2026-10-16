@@ -52,6 +52,17 @@ final class Win32Platform implements Platform
     /** @var array<int, Win32SurfaceProvider> 按窗口句柄缓存（同一窗口只造一个表面） */
     private array $surfaces = [];
 
+    /**
+     * @param string|null $renderer 光栅后端（`'skia'`；`null` = 软光栅，§7.2 裁决 4）。
+     *   ★ **归组合根**：换后端是**部署形态**（Skia 让产物多几 MiB，§4.6），
+     *   不是运行期配置 ⇒ 由 `bin/<os>/Bootstrap.php` 显式传入。
+     *   ★ **不读环境变量** —— §16.7 的 `nano-hygiene` 禁 `getenv`/`putenv`。
+     */
+    public function __construct(
+        private readonly ?string $renderer = null,
+    ) {
+    }
+
     public function screen(): Screen
     {
         return $this->screen ??= new Win32Screen($this->window());
@@ -68,7 +79,7 @@ final class Win32Platform implements Platform
             return null;   // 没建窗 / 建窗失败 ⇒ 类型层面的"没有表面"
         }
 
-        return $this->surfaces[$windowHandle] ??= new Win32SurfaceProvider($windowHandle);
+        return $this->surfaces[$windowHandle] ??= new Win32SurfaceProvider($windowHandle, $this->renderer);
     }
 
     public function input(): InputSource

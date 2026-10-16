@@ -1,0 +1,110 @@
+<?php
+
+/**
+ * Drift 的 Skia 桥接 ABI（§7.2 裁决 1 / §7.3 的 M1 后端之二）。
+ *
+ * ★ 与 `drift_win32.stub.php` 同一条纪律：每个函数都是**空体**，TypePHP 读它拿签名
+ *   并生成 C++ 声明头，实现住在 `cpp-src/drift_skia.cc`，函数名加 `php_` 前缀。
+ *   **改一边必须同步另一边** —— 签名不一致时是链接期「静默失败」，不是编译错误。
+ *
+ * ★ **本桥只画，不建窗、不泵消息、不贴屏**。窗口与贴屏仍归 `drift_win32.cc`：
+ *   `SkiaCanvas` 画完之后由 `drift_skia_read_pixels()` 取回 RGBA 字节，
+ *   再交给**同一条** `drift_win_present()` 上屏。于是：
+ *   ① 贴屏路径只有一处（§7.3 "present 是唯一跨边界的一次"）；
+ *   ② `WM_PAINT` 重贴缓存的逻辑不用在 Skia 侧重写一遍（漏了就是"窗口被遮住再露出来白屏"）。
+ *
+ * ★ **画布句柄是不透明 int**（§5.1 纪律 1）：C++ 侧持一个句柄表，PHP 侧只负责传递。
+ *   句柄 `0` = 无效（创建失败），所有后续调用对 `0` 一律**静默忽略** ——
+ *   画布创建失败是"这一帧没画"，不是"应用该崩"（与光标形状同一档：装饰性失败）。
+ *
+ * ★ **坐标一律是物理像素**（§6.1）：逻辑→物理的换算只有一处，在 PHP 侧的
+ *   `Scale::quantizeRect()`（`RasterCanvas` 同款）。本桥不接收 dpr，也不做量化 ——
+ *   多一个换算点就多一个取整口径，两个后端就会出现"矩形和文字差半个像素"这类账。
+ */
+
+/**
+ * 建一张离屏光栅画布，返回句柄；`0` = 失败。
+ *
+ * `$backgroundRgba` 是 `Color::toArgb()` 的产物（`0xAARRGGBB`）——
+ * **必须给**：Skia 的 bitmap 初值不确定，不清底色的话窗口会是黑的/花的，
+ * 而布局与绘制完全正确 ⇒ 现象像"渲染没跑"（`RasterCanvas` 踩过同款）。
+ */
+function drift_skia_canvas_create(int $width, int $height, int $backgroundRgba): int {}
+
+/** 释放画布。对 `0` 幂等；重复释放同一个句柄是**编程错误**（会命中已释放的槽位检查并忽略） */
+function drift_skia_canvas_destroy(int $canvas): void {}
+
+/**
+ * 压入裁剪矩形（与当前裁剪求交，**物理像素**）。与 `popClip()` 必须配对。
+ *
+ * ★ **`save` / `restore` / `translate` 不在本 ABI 里**，是有意的：
+ *   变换与量化由 PHP 侧算（§6.1 "逻辑→物理只走 `Scale::quantizeRect()`，唯一量化点"），
+ *   本桥收到的**永远是设备坐标**。若让 Skia 自己也持一份变换，两个后端就会出现
+ *   "先加偏移再取整"与"先取整再加偏移"的差异 —— 那种半个像素的账最难查。
+ *   `pushClip` / `popClip` 是例外：Skia 的裁剪**是 save 状态的一部分**，
+ *   所以它们内部各做一次 `save()` / `restore()`（配对，栈深平衡）。
+ */
+function drift_skia_push_clip(int $canvas, float $x, float $y, float $w, float $h): void {}
+
+function drift_skia_pop_clip(int $canvas): void {}
+
+/**
+ * 画一个轴对齐矩形（物理像素）。
+ *
+ * `$radius` 是圆角半径（`0` ⇒ 直角）；`$stroke` 为真 ⇒ 描边（`$strokeWidth` 生效），
+ * 为假 ⇒ 填充。`$rgba` 是 `Color::toArgb()`（`0xAARRGGBB`，alpha 参与 source-over 混合）。
+ */
+function drift_skia_draw_rect(
+    int $canvas,
+    float $x,
+    float $y,
+    float $w,
+    float $h,
+    float $radius,
+    int $rgba,
+    bool $stroke,
+    float $strokeWidth,
+): void {}
+
+/**
+ * 画**一个字形**，位置由 PHP 侧的排版给出（`penX` 是笔位、`baselineY` 是基线）。
+ *
+ * ★ 为什么是"一个字形一次调用"而不是"整段一次"：**几何必须来自 PHP**。
+ *   §7.2 写着"段的几何（baseline / offsetX）是排版给的，画布只负责施加，不重算" ——
+ *   若让 Skia 自己塑形，步进就换了一套（Skia 的 HarfBuzz 度量 ≠ Drift 的度量）
+ *   ⇒ 断行位置、光标、命中全部对不上。代价是每帧 N 次跨边界（N = 字形数），
+ *   这是 M1 的**已知代价**，批量化（一次传打包缓冲）留到有实测需求时再做。
+ *
+ * ★ `$family` / `$bold`：`family` 当前**未使用**（Drift 的确定性字体没有真实对应物，
+ *   一律用目录字体），留着是为了 M4 的 `SkiaTextMetricsProvider` 落地时不用改 ABI。
+ *   `$bold` 现在就用（选 Regular / Bold 字面）。
+ *
+ * ★ 字号是**物理像素**（= 逻辑字号 × dpr）—— 字形光栅在设备分辨率上做（§8.2 坑 2）。
+ */
+function drift_skia_draw_glyph(
+    int $canvas,
+    string $family,
+    bool $bold,
+    float $fontSize,
+    float $penX,
+    float $baselineY,
+    int $codepoint,
+    int $rgba,
+): void {}
+
+/**
+ * 取回本帧像素：**逐像素 RGBA、自上而下、无行填充**（与 `RasterCanvas::toRgba()` 同格式）。
+ *
+ * ★ 与 `drift_win_present()` 的入参**逐字同格式**，所以取回之后直接转交即可 ——
+ *   不需要在 PHP 侧再做一次 RGBA↔BGRA 换算（那是壳的私事，见 `drift_win32.cc`）。
+ */
+function drift_skia_read_pixels(int $canvas): string {}
+
+/**
+ * 目录字体是否已就绪（诊断用）。
+ *
+ * ★ 字体加载失败**不中止**（与 `Errors::installFatalBox` 同档：它是渲染能力问题，
+ *   不是应用状态问题），但必须**可观测** —— 否则现象是"矩形都画对了、字全没了"，
+ *   看起来像排版 bug。`SkiaCanvas` 在首次 `drawParagraph` 时问一次并记 Diagnostic。
+ */
+function drift_skia_font_ready(): bool {}

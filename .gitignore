@@ -47,3 +47,8 @@ desktop.ini
 /_codegen
 # 真机构建的工作目录（drift-build 的私有 ini 副本 / 构建日志 / 截图）
 /_build
+
+# ── 外部二进制依赖（不入库；§24.2 #12）──
+# Skia 预编译包（约 141 MB：include/ + modules/ + src/ + out/Release-x64/*.lib）
+# 与目录字体。**分发方式仍是开放项** —— 当前是从参考实现仓拷一份到本地。
+/cpp/

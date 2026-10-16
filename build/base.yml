@@ -11,60 +11,43 @@
 #   ② **list 型项是整体替换，不是追加** ⇒ 只有"两边完全相同"的 list 才配放这里。
 #      `sources` 因此**留在各应用文件里**（它含各应用自己的相对路径）。
 #
-# ★ 这里**不链 Skia**：`cxx-std: c++17` 是有意的 —— M1 走 PHP 软光栅 +
-#   `SetDIBitsToDevice`（§7.3），Skia 后端（`SkiaCanvas`，M4+）落地时这里才升 `c++20`
-#   （SkParagraph 的私有头用了 `std::countl_zero`，C++20 起才有）。
+# ★ **这里链 Skia**（2026-10-16 起，`SkiaCanvas` 落地）：`cxx-std: c++20` 是必需的 ——
+#   每个应用都链 `skia.lib`，而 Skia 的私有头用 `std::countl_zero/countr_zero`
+#   （`<bit>`，C++20 起才有）⇒ C++17 报 C2039。
 #
 # ───────────────────────────────────────────────────────────────────────────
-# ★★ Skia 追加项（M4 落地 `SkiaCanvas` 时抄这段）
-#    **2026-10-16 已实测**（最小 Skia 程序三档 + `/MT` 真机构建），结论比"照抄
-#    GUI 配置"多三条 —— 完整报告见 `SKIA-BUILD.md`。GUI 的 `apps/demo/project.yml`
-#    是同一套配置的真机构建通过样例，可逐条对照。
+# ★★ Skia 链接项（**已生效**；依据见 `SKIA-BUILD.md` 的实测报告）
 #
-#   前提：把 Skia 预编译包放到 `Drift2/cpp/skia/`（GUI 的那份在 `GUI/cpp/skia/`：
-#         `include/` + `out/Release-x64/*.lib`，约 **141 MB** ⇒ **不入库**）。
+#   包在 `Drift2/cpp/skia/`（`include/` + `modules/` + `src/` + `out/Release-x64/*.lib`，
+#   约 **141 MB** ⇒ **不入库**，见 `.gitignore` 与 `DESIGN.md §24.2 #12`）；
+#   字体在 `Drift2/cpp/fonts/`（Noto Sans SC，OFL）。**exe 必须以仓库根为 cwd 启动**
+#   —— 两者都按相对路径查找。
 #
-#   cxx-std: c++20                      # ★ 必须 —— SkParagraph 的 src/base/SkMathPriv.h
-#                                       #   用 std::countl_zero/countr_zero（<bit>），C++17 报 C2039
-#   cxx-flags 追加:
-#     - /MT                             # 匹配预编译包的**静态 CRT**。★ 它**能加**（实测构建通过）：
-#                                       #   tpc 的 `/MD` 写在 cxxflags **之前**（`Msvc.php:104`），
-#                                       #   用户 flag 在之后追加 ⇒ 这里的 `/MT` 覆盖它；
-#                                       #   且 php8ts 在本环境是 **DLL** ⇒ 跨 DLL 边界不共享 CRT
-#                                       #   ⇒ "静态库里 /MT 致命"那条**不适用**。
-#                                       #   ★ 但它**换不到"免 CRT / 单文件"** —— exe 仍导入
-#                                       #     `VCRUNTIME140.dll`（php8ts.dll 是 /MD）
-#                                       #     ⇒ **别为省体积加它**，加它只是为了匹配 Skia 包。
-#     - /DUSE_SKIA                      # 打开桥里的 Skia 分支（否则退化 GDI 路径）
-#     - /I"cpp/skia"                    # **唯一需要的 include 根** —— 包内头按 `include/core/...`
-#                                       #   与 `modules/skparagraph/...` 两种前缀写（GUI 桥接实测），
-#                                       #   一个 -I 同时覆盖两者（SkColorSpace.h 会 `#include
-#                                       #   "modules/skcms/skcms.h"` ⇒ 不能只给 `.../include`）。
-#                                       #   ★ 相对 **cwd（仓库根）** —— cxx-flags 不过 tpc 的路径解析；
-#                                       #   等价写法是 tpc 的 `include-paths:`（相对 yml 文件，GUI 两者都写）
-#     - /DGR_GL_FUNCTION_TYPE=__stdcall
-#   ld-flags 追加（**按依赖顺序，依赖者在前** —— 顺序错了就是一堆 LNK2019）:
-#     - cpp/skia/out/Release-x64/skia.lib  ·  skunicode_icu  ·  icu  ·  skcms  ·  expat
-#     - freetype2  ·  harfbuzz  ·  libpng  ·  zlib  ·  libjpeg  ·  libwebp  ·  sksg
-#     - skshaper  ·  skresources  ·  skparagraph  ·  skunicode_core
-#     - svg  ·  wuffs  ·  bentleyottmann  ·  jsonreader          （皆 .lib，同目录）
-#     ★ **删掉 `skottie`** —— 该包 Skottie 头不完整（`SlotManager.h` 要私头
-#       `modules/skottie/src/SkottieValue.h`）⇒ **实际不可用**，列进清单是空转（实测 C1083）。
-#   link-libs 追加: d3d12.lib · dxgi.lib · d3dcompiler.lib · windowscodecs.lib
-#     ★ 必须再加 **`advapi32.lib`** —— ICU 的 `uprv_detectWindowsTimeZone()` 要注册表
-#       （`RegOpenKeyExW` 等），缺则 `skunicode_icu.lib` 报 5 个 LNK2019。本文件下面的
-#       `link-libs` 已含它（软光栅的系统深色模式也用），故不必重复。
+#   · `/MT` —— 匹配预编译包的**静态 CRT**。★ 它**能加**（实测构建通过）：
+#     tpc 的 `/MD` 写在 cxxflags **之前**（`Msvc.php:104`），用户 flag 在之后追加
+#     ⇒ 这里的 `/MT` 覆盖它；且 php8ts 在本环境是 **DLL** ⇒ 跨 DLL 边界不共享 CRT
+#     ⇒ "静态库里 /MT 致命"那条**不适用**。
+#     ★ 但它**换不到"免 CRT / 单文件"** —— exe 仍导入 `VCRUNTIME140.dll`
+#     （php8ts.dll 是 /MD）⇒ **别为省体积加它**，加它只是为了匹配 Skia 包。
+#   · `/DUSE_SKIA` —— 打开桥里的 Skia 分支（否则退化 GDI 路径）
+#   · `/I"cpp/skia"` —— **唯一需要的 include 根**：包内头按 `include/core/...` 与
+#     `modules/skparagraph/...` 两种前缀写，一个 -I 同时覆盖两者（`SkColorSpace.h`
+#     会 `#include "modules/skcms/skcms.h"` ⇒ 不能只给 `.../include`）。
+#     ★ 相对 **cwd（仓库根）** —— cxx-flags 不过 tpc 的路径解析（`drift-build` 的 cwd 就是仓库根）
+#   · `/DGR_GL_FUNCTION_TYPE=__stdcall` —— Skia 的 GL 函数指针约定
 #
-#   ★ **运行期数据文件**：用了 SkParagraph ⇒ 必须把 `icudtl.dat`（**778 KB**）放到
-#     exe 的工作目录（ICU 按 **cwd** 找；缺失 ⇒ `SkUnicodes::ICU::Make()` 返回 null
-#     ⇒ `ParagraphBuilderImpl` 的 `check(fUnicode)` **abort**）。它**甩不掉**：
-#     `skshaper.lib` 硬引用 `SkUnicodes::ICU::Make`（实测 LNK2019 可证）。
-#     ⏳ "内嵌进 exe"当前**没有干净路径**（ICU 公开头未随包、`SkUnicode_icu.h` 只暴露
-#     `Make()`）⇒ 登记在 `DESIGN.md §24.2 #6`。
+#   `ld-flags` 里的 Skia 库**按依赖顺序**（依赖者在前；顺序错了就是一堆 LNK2019）。
+#   ★ **不含 `skottie`** —— 该包 Skottie 头不完整（`SlotManager.h` 要私头
+#     `modules/skottie/src/SkottieValue.h`）⇒ **实际不可用**，列进清单是空转（实测 C1083）。
+#   ★ **不含 `skshaper` / `skparagraph` / `skunicode_*` / `icu`** —— M1 的 `SkiaCanvas`
+#     不做文本塑形（几何来自 PHP 的 `Paragraph`，Skia 只把字形画出来）⇒ **不链 ICU、
+#     也就不需要 `icudtl.dat`**。真字体重排版（`SkiaTextMetricsProvider`，M4）落地时
+#     再加回，那时要补 `advapi32.lib`（ICU 时区探测）并把 `icudtl.dat` 放到 exe 工作目录
+#     （ICU 按 **cwd** 找；缺失即 `check(fUnicode)` abort）。
 #
-#   ★ 体积（最小程序 `/O2 /MT` **实测**，非"库文件大小"）：core 光栅 **4.03 MB**
-#     → +文本栈（SkParagraph/SkShaper/HarfBuzz/ICU）**5.89 MB**（+1.86）
-#     → +SVG/SkSG/expat **6.41 MB**（+0.52）。对照 Drift2 `users.exe`（无 Skia）2.90 MB。
+#   ★ 体积（最小程序 `/O2 /MT` **实测**，非"库文件大小"）：core 光栅 **4.03 MiB**
+#     → +文本栈（SkParagraph/SkShaper/HarfBuzz/ICU）**5.89 MiB**（+1.86）
+#     → +SVG/SkSG/expat **6.41 MiB**（+0.52）。对照 Drift2 `users.exe`（无 Skia）2.90 MiB。
 #
 #   ★ 另有一件 GUI 做了、Drift2 还没做的事：`resource:`（图标 + 版本信息）与
 #     `manifest:`（comctl32 v6 —— 没有它，**原生** MessageBox 是 Win95 外观）。
@@ -83,7 +66,7 @@ platform: win32
 # `Errors` 的日志文件（§1.2 中止序列第 ① 步本来就是写日志）。
 no-console: true
 
-cxx-std: c++17
+cxx-std: c++20
 
 cxx-flags:
   # 桥接源码（cpp-src/drift_win32.cc）的注释与字符串是 UTF-8。不加这条，
@@ -93,20 +76,60 @@ cxx-flags:
   - /wd4267
   # 多进程共享 PDB 写句柄（与 GUI 仓一致；并行编译时必需）
   - /FS
+  # ── Skia（见文件头 ★★ Skia 链接项）──
+  # /MT 匹配预编译包的静态 CRT；它**能加**是因为 tpc 的 /MD 写在 cxxflags 之前
+  # （用户 flag 在之后追加 ⇒ 覆盖它），且 php8ts 是 DLL ⇒ 跨 DLL 边界不共享 CRT。
+  # ★ 它**换不到"免 CRT / 单文件"**（exe 仍导入 VCRUNTIME140.dll）⇒ 别为省体积加它。
+  - /MT
+  - /DUSE_SKIA
+  # 相对 **cwd（仓库根）**：cxx-flags 不过 tpc 的路径解析
+  - /I"cpp/skia"
+  - /DGR_GL_FUNCTION_TYPE=__stdcall
 
 ld-flags:
   # AOT 转译后 PHP 函数栈帧远大于 Zend VM 虚拟栈 ⇒ 默认 1MB 链接栈会在深调用链
   # 上溢出崩溃。8MB 与 GUI 仓 / markdown-editor 一致。
   - /STACK:8388608
+  # ── Skia（**按依赖顺序，依赖者在前** —— 顺序错了就是一堆 LNK2019）──
+  # ★ 不含 skottie（头不完整、不可用）/ skshaper / skparagraph / skunicode_* / icu：
+  #   M1 的 SkiaCanvas 不做文本塑形 ⇒ 不链 ICU、也就不需要 icudtl.dat。
+  #   未用的 .lib **不会被链接器加载**，所以这里只列真的会被引用的那些。
+  - cpp/skia/out/Release-x64/skia.lib
+  - cpp/skia/out/Release-x64/skcms.lib
+  - cpp/skia/out/Release-x64/expat.lib
+  - cpp/skia/out/Release-x64/freetype2.lib
+  - cpp/skia/out/Release-x64/harfbuzz.lib
+  - cpp/skia/out/Release-x64/libpng.lib
+  - cpp/skia/out/Release-x64/zlib.lib
+  - cpp/skia/out/Release-x64/libjpeg.lib
+  - cpp/skia/out/Release-x64/libwebp.lib
+  - cpp/skia/out/Release-x64/wuffs.lib
+  - cpp/skia/out/Release-x64/bentleyottmann.lib
+  - cpp/skia/out/Release-x64/jsonreader.lib
 
 # Windows 系统库（只列**真的用到**的；桥里每个 API 都能对上一本库）：
 #   user32   建窗 / 消息泵 / 定时器 / 光标 / 按键状态 / 消息框 / DPI
 #   gdi32    SetDIBitsToDevice（贴一帧像素，§7.3 M1 的位块传送）
 #   advapi32 注册表读 AppsUseLightTheme（§9.2 的系统深色模式）
+#   —— 以下为 Skia 需要（`skia.lib` 的 D3D 后端 / 图片编解码 / 系统字体枚举）：
+#   d3d12 / dxgi / d3dcompiler   Skia 的 D3D12 后端（当前走 CPU 光栅，但归档里有引用）
+#   windowscodecs                图片编解码（WIC）
+#   opengl32 / msimg32           Skia 的 GL 兜底路径与 GDI 混合
+#   dwrite / gdiplus             系统字体枚举 / GDI+ 路径
+#   ole32                        COM 初始化（WIC / DirectWrite 的底座）
 link-libs:
   - user32.lib
   - gdi32.lib
   - advapi32.lib
+  - d3d12.lib
+  - dxgi.lib
+  - d3dcompiler.lib
+  - windowscodecs.lib
+  - opengl32.lib
+  - msimg32.lib
+  - dwrite.lib
+  - gdiplus.lib
+  - ole32.lib
 
 # 构建产物不能进 sources —— 生成的 .cc 会被当成源码再翻译一遍，
 # 症状是 "Duplicate function main" 这类看不出根因的错误。
