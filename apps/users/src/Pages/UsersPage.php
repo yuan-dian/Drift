@@ -1,0 +1,84 @@
+<?php
+declare(strict_types=1);
+
+namespace App\Users\Pages;
+
+use Drift\Geometry\EdgeInsets;
+use Drift\State\SubjectBuilder;
+use Drift\Widget\BuildContext;
+use Drift\Widget\Button;
+use Drift\Widget\Column;
+use Drift\Widget\Each;
+use Drift\Widget\Row;
+use Drift\Widget\Spacer;
+use Drift\Widget\Spinner;
+use Drift\Widget\StatelessWidget;
+use Drift\Widget\Text;
+use Drift\Widget\TextField;
+use Drift\Widget\Widget;
+
+use App\Users\Store\LoadStatus;
+use App\Users\Store\User;
+use App\Users\Store\UserStore;
+use App\Users\Widgets\UserRow;
+
+/**
+ * 列表页（§A.2.9）：搜索 + 三态列表 + 删除。
+ *
+ * ★ **订阅点在页这一层，行内只吃值**（§11.3.2 纪律 2）：`SubjectBuilder` 的
+ *   `select` 是切片（只跟自己那一份数据），列表重排不会每行广播一次。
+ * ★ 三态用 **`match` 无 default**（§12.1 第 2 条封闭域）—— 加一个状态编译期就叫。
+ */
+final class UsersPage extends StatelessWidget
+{
+    public function __construct(private readonly UserStore $store)
+    {
+        parent::__construct();
+    }
+
+    public static function make(UserStore $store): self
+    {
+        return new self($store);
+    }
+
+    public function build(BuildContext $ctx): Widget
+    {
+        return Column::make()->spacing(16)->padding(EdgeInsets::all(24.0))->children([
+            Text::make('用户目录')->title(),
+
+            Row::make()->spacing(8)->children([
+                // ── 搜索框：官方订阅形态（§11.4.2）—— 不提供 bind() ──
+                SubjectBuilder::make($this->store)
+                    ->select(static fn(UserStore $s): string => $s->query())
+                    ->builder(fn(string $q): Widget => TextField::make()
+                        ->value($q)
+                        ->label('搜索')
+                        ->placeholder('输入姓名')
+                        ->onChanged(fn(string $x) => $this->store->setQuery($x))),
+
+                Button::primary('刷新')->command('users.refresh'),
+
+                Spacer::make(),
+
+                Button::primary('新建用户')->command('nav.signup'),
+            ]),
+
+            // ── 列表：订阅点在这层，行内只吃值 ──
+            SubjectBuilder::make($this->store)
+                ->select(static fn(UserStore $s): LoadStatus => $s->status())
+                ->builder(fn(LoadStatus $st): Widget => match ($st) {
+                    LoadStatus::Loading => Spinner::make(),
+                    LoadStatus::Error => Row::make()->spacing(8)->children([
+                        Text::make('加载失败')->error(),
+                        Button::primary('重试')->command('users.refresh'),
+                    ]),
+                    LoadStatus::Ready => SubjectBuilder::make($this->store)
+                        ->select(static fn(UserStore $s): array => $s->visible()) // ★ 切片：只跟过滤结果
+                        ->builder(static fn(array $rows): Widget => Each::make(
+                            static fn(User $u): int => $u->id, // ★ key 必填（R4）
+                        )->items($rows, static fn(User $u): Widget => UserRow::make($u))),
+                    LoadStatus::Idle => Text::make('尚未加载')->caption(),
+                }),
+        ]);
+    }
+}

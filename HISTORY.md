@@ -280,3 +280,49 @@ PHPRC='D:/TypePHP/typephp-windows-x64' \
 | **O-20** | 菜单浮层机制（`Menu` / `ContextMenu` 打开形态；兼 §12.1 第 6 条 / §A.3.7 `showModal()` 的机制缺口） | **A：第二棵根渲染树** —— `Application` 持 `?Widget $menuWidget` + `?Element $menuElement`（与 `$root` 同构）；`Frame::run()` 三段加浮层分支；`dispatchInput()` 指针先选根；菜单 / 模态共用槽位。★ 参考仓 GUI `TOPIC-overlay.md`（提交 `e51e5b1`，`verify.sh` 56 项全绿）已真机验证同款架构 ⇒ **移植而非从零**。★ 同批批两项：右键最小集（`PointerEvent` button + 位移阈值，不等 `GestureArena`）+ §9.1“GestureArena 已支持”改诚实（第 6 处文档不实） | §5.1 裁决 1 · §9.1 · §12.1 第 6 条 · §A.3.7 · §4.2（+4 点名，96→100 / 23→27）· §19 M3 |
 
 ★ **方法论再得一证**：MEMORY.md 的纪律“写'⏳ 待验'项先 grep 参考仓 memory”直接兑现 —— `TOPIC-overlay.md` 让 O-20 从“从零设计”变成“移植已验证架构”，且核出三处**必须逐条对**的结构差异：① GUI 命中靠每帧 `elementId` 注册表（Drift 没有 ⇒ 先选根树再命中，反而更简单）；② GUI `Canvas` 有 `measureText`（Drift 没有 ⇒ 走 `TextMetricsProvider::advance()`）；③ GUI `Color::value()` 丢 alpha 被迫自绘遮罩（Drift 契约层 `Color::fromRgba` / `Paint::withAlpha` 就有 alpha，光栅后端混色未验）。
+
+### 7.5 实现纪事：M3 收尾（2026-10-16）
+
+**当日落地顺序**（每个都跑完四门：smoke / lint / `M2Conformance` / codegen）：
+Spinner → M2 conformance 运行器 → 多页外壳（`Dock`/`AppBar`/`NavButton`）→ 错误边界容器 + `AcceleratorTable`
+→ 菜单四件 + 应用内拖放 + 浮层机制（O-20 方案 A 从文档变实现）→ **`apps/users` 完整样板（M3 出口判据兑现）**。
+
+★ **"守卫空转"第 2 批（`apps/users` 一落地就当场露馅）** —— 与 O-19「文档自述≠事实」同族，
+但这次是**规则自己的代码**在空转：
+
+| # | 规则 | 病灶 | 后果 | 修法 |
+|---|------|------|------|------|
+| 1 | `dead-command` | `arrayKeys()` 拿 `=>` 跟**原始字符串**比，而它在 PHP 里是 **`T_DOUBLE_ARROW` 令牌** ⇒ 恒假 | `Application::commands()` 的**声明式注册路径从来没被扫到** ⇒ 七条命令全误报"死命令" | 比 `T_DOUBLE_ARROW`；并做**反例自检**（构造一个"死注册"文件必须先被抓到） |
+| 2 | `subscriber-mark` | 见 `->select(` 就报，不看**接收者** | 把 §A.2.9 的**官方写法**（页面用 `SubjectBuilder::make($store)->select(...)`，订阅责任在那个专职订阅者身上）判成违规 | 只认 `$this->select(...)`（`SourceQuery::methodCalls()` 加 `index`，判 `->` 左邻是不是 `$this`）；同样加反例自检 |
+
+★ **落地过程暴露的三类"文档承诺、代码没有"**（都已就地登记）：
+① `Widget::disabled()` **不存在**（§A.3.2 在用）；
+② `ThemeScope` 是**两参构造** `make($theme, $child)`（§A.3.3 写的是链式 `make()->theme()->child()`）；
+③ §A.2.1 目录树用小写目录名（`store/`），而 PSR-4 要求目录名 = 命名空间（`Store/`）—— 一落地就被
+`namespace-mismatch` 抓 37 条 error。
+
+★ **PHP 层的一处硬坑（值得写进纪律）**：**`static fn` 里用 `$this` 是运行时错误**，而当它出现在
+`Subject::notifyChanged()` 的订阅者回调路径里时，异常会被"订阅者异常隔离"包成 `RECOVERABLE`
+⇒ **debug 下整局中止**（现象是"改个搜索词，应用没了"）。`UserStore::visible()` 的过滤闭包踩了这条。
+
+★ **真机这一枪（本轮最值钱的一步）**：`apps/hello` 只走了 Column/Row/Text，
+而 **AOT 只编译"可达"代码** ⇒ `apps/users` 的更大用法面**首次触达**两位数框架代码，
+当场崩出两个 AOT 真缺陷（解释器面 smoke / lint / codegen 三道闸门全绿，一个都看不见）：
+
+| # | 症状 | 根因 | 修法 |
+|---|------|------|------|
+| 1 | `error C2440: "return": 无法从 php::Variant 转换为 php::Float`（`RenderFlex.cc`） | 三元分支里直接放**属性读取** ⇒ 被推成 `Variant`，与 `float` 形参不匹配（同型坑记在 `typephp-gui-build` 技能里） | `tightMain()` 先落局部标量再传 |
+| 2 | `Deprecated: Creation of dynamic property NavButton::$label` → `ArgumentCountError` Fatal | **会被继承的类的 `private` 构造提升属性**：AOT 按运行时类型查属性表，父类 private 不进子类表 ⇒ 访问退化成"创建动态属性"（值为 NULL） | `Button` 5 个字段 + `RenderFlex` 5 个提升参数改 `protected`（与 `Element::$box` 同一条纪律） |
+
+⇒ 固化两条纪律：**① 会被继承的类的构造提升属性一律 `protected`**；**② 写顶层 `return` 的夹具
+放 `tests/` 并在 `ignore:` 里排掉**（AOT 判据里没有 `Stmt_Return`）。
+
+★ **§4.6 的共享 base 抽出并验证**：`build/base.yml`（两个应用**当前编译参数完全相同** ⇒ 配得上
+一个 base；抽的时机正是 `apps/hello` 注释里写的"第二个应用落地时"）。tpc 的 `include:` **实测可用**
+（`ProjectYamlLoader` 有实现与循环检测；GUI 仓注释说"没有 include"是旧版本经验），两条语义已核实
+并写进注释：**路径相对被包含文件**、**list 型整体替换**。两个 exe 都构建通过、真机跑通。
+
+★ **M3 出口判据兑现**（§19）：`apps/users`（20 个 PHP）attach 后可跑、局部态与跨页共享两条路径都能写、
+`Root` 只组合（`rootBuilds()===1` + 全树过 lint）、**Ctrl+S 可用**（加速键第 ① 环 ⇒ `form.submit`）。
+清点复测（`_build/audit_42.py`）：`src/` 154 文件 / 136 `@api` / 点名 96 = **90 有文件 + 6 个 0 文件**
+（剩 6 个分属 M4/M5：`SkiaCanvas` · `Modal` · `GestureArena` · `SemanticsTree` · `ThemeChangedEvent` · `HoverHandler`）。

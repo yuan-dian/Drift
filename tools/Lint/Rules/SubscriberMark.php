@@ -104,10 +104,31 @@ final class SubscriberMark implements Rule
 
         foreach ($info['methods'] as $range) {
             foreach (SourceQuery::methodCalls($file, $range['start'], $range['end'], self::ACTIONS) as $hit) {
+                // ★ 只认**自己承担订阅**的形态（`$this->select(...)`）。
+                //   `SubjectBuilder::make($store)->select(...)` / `$this->widget->select(...)`
+                //   是"配置一个专职订阅者"—— 订阅责任在**那个**对象身上（它 implements
+                //   `SubscribingWidget`），调用方不是订阅者。2026-10-16 修：原判据见 `->`
+                //   就报，把 §A.2.9 的官方写法（页面用 `SubjectBuilder`）判成违规。
+                if (!$this->receiverIsThis($file, $hit['index'])) {
+                    continue;
+                }
+
                 $hits[] = ['action' => $hit['name'], 'line' => $hit['line']];
             }
         }
 
         return $hits;
+    }
+
+    /** `->` 的左边是不是 `$this` */
+    private function receiverIsThis(SourceFile $file, int $arrowIndex): bool
+    {
+        $tokens = $file->tokens();
+        $prev = SourceQuery::prevIndex($tokens, $arrowIndex - 1);
+        if ($prev === null || !is_array($tokens[$prev])) {
+            return false;
+        }
+
+        return $tokens[$prev][0] === T_VARIABLE && $tokens[$prev][1] === '$this';
     }
 }

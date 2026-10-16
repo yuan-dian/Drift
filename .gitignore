@@ -1,5 +1,9 @@
 # ── 构建产物 ──
-/build/
+# ★ 用 `/build/*` 而不是 `/build/`：后者会忽略**整个目录**，而目录被忽略时
+#   子文件的 `!` 否定**不生效** ⇒ `build/base.yml`（§4.6 的共享编译参数，
+#   **要提交**）就进不来。这样写：忽略 build 下的一切，但对 base.yml 开白名单。
+/build/*
+!/build/base.yml
 apps/*/build/
 *.exe
 *.obj

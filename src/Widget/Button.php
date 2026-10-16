@@ -39,12 +39,22 @@ use Drift\Rendering\MetricToken;
  */
 class Button extends BoxWidget
 {
-    private ButtonVariant $variant = ButtonVariant::Default;
-    private ?\Closure $onPressed = null;
-    private ?string $command = null;
-    private ?CommandArg $commandArg = null;
+    // ★ **AOT：会被继承的类，字段不能是 private** —— tpc 按**运行时类型**查属性表，
+    //   而父类的 `private` 不进子类属性表 ⇒ 子类实例（`NavButton` / `Menu` / `MenuItem`）
+    //   上访问它们会**动态创建属性**（`Deprecated`，且值是 NULL ⇒ 紧接着
+    //   `ArgumentCountError: RenderButton::__construct(): Argument #1 ($label) not passed`）。
+    //   与 `Element::$box` / `RenderBox::$size` 同一条纪律（那两处早就是 protected）。
+    //   2026-10-16 真机跑 `users.exe` 时当场崩出来 —— 解释器面 496 断言 / lint / codegen 全绿，
+    //   只有真机能看见。
+    protected ButtonVariant $variant = ButtonVariant::Default;
 
-    public function __construct(private readonly string $label)
+    protected ?\Closure $onPressed = null;
+
+    protected ?string $command = null;
+
+    protected ?CommandArg $commandArg = null;
+
+    public function __construct(protected readonly string $label)
     {
         parent::__construct();
         // §9.1：按钮天然可聚焦（Tab 能到、回车/空格能触发）

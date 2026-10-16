@@ -178,7 +178,13 @@ final class DeadCommand implements Rule
                 continue;
             }
             $next = SourceQuery::nextIndex($tokens, $i + 1);
-            if ($next !== null && $next <= $to && $tokens[$next] === '=>' ) {
+            // ★ `=>` 是 **T_DOUBLE_ARROW 令牌**（不是两个原始字符）—— 2026-10-16 修：
+            //   原先比原始字符串 `'=>'` ⇒ 恒假 ⇒ 整条 `commands()` 声明式注册的提取
+            //   是**空转**的（`apps/users` 一落地就当场露馅：七条命令全被报"死命令"）。
+            if ($next !== null
+                && $next <= $to
+                && is_array($tokens[$next])
+                && $tokens[$next][0] === T_DOUBLE_ARROW) {
                 $out[$name] = $tokens[$i][2];
             }
         }

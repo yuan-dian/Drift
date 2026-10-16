@@ -40,11 +40,16 @@ class RenderFlex extends RenderBox
      *        显式声明"。写成构造参数而不是字段默认，是为了让漏声明编译不过（G1）。
      */
     public function __construct(
-        private readonly bool $vertical,
-        private readonly float $spacing = 0.0,
-        private readonly EdgeInsets $padding = new EdgeInsets(),
-        private readonly FlexAlign $crossAlign = FlexAlign::Start,
-        private readonly Overflow $overflow = Overflow::Report,
+        // ★ **AOT：会被继承的类（这里是 `RenderAppBar`），字段不能是 private** ——
+        //   tpc 按运行时类型查属性表，父类 `private` 不进子类表 ⇒ 子类实例上访问会
+        //   动态创建属性（`Deprecated: Creation of dynamic property RenderAppBar::$vertical`，
+        //   且值为 NULL ⇒ 布局拿到错值）。与 `RenderBox::$size` 同一条纪律。
+        //   2026-10-16 真机跑 `users.exe` 时当场暴露。
+        protected readonly bool $vertical,
+        protected readonly float $spacing = 0.0,
+        protected readonly EdgeInsets $padding = new EdgeInsets(),
+        protected readonly FlexAlign $crossAlign = FlexAlign::Start,
+        protected readonly Overflow $overflow = Overflow::Report,
     ) {
     }
 
@@ -220,19 +225,28 @@ class RenderFlex extends RenderBox
     {
         $share = max(0.0, $main);
 
-        return $this->vertical
-            ? new BoxConstraints(
-                $this->crossAlign === FlexAlign::Stretch && $inner->hasBoundedWidth() ? $inner->maxWidth : 0.0,
-                $inner->maxWidth,
-                $share,
-                $share,
-            )
-            : new BoxConstraints(
-                $share,
-                $share,
-                0.0,
-                $inner->maxHeight,
-            );
+        // ★ **AOT 类型推断**：三元的分支里直接放**属性读取**（`$inner->maxWidth`）会被
+        //   推成 `php::Variant`，而 `BoxConstraints` 的形参是 `float` ⇒ `C2440`。
+        //   先落局部标量再传（`typephp-gui-build` 技能里记的同型坑）。
+        //   ★ 这一处由 `apps/users` 的**更大用法面**首次触达：AOT 只编译**可达**代码，
+        //     而 `apps/hello`（Column/Row/Text）走不到带 `Stretch` 的这条分支。
+        $crossMain = 0.0;
+        if ($this->vertical
+            && $this->crossAlign === FlexAlign::Stretch
+            && $inner->hasBoundedWidth()) {
+            $crossMain = $inner->maxWidth;
+        }
+
+        if ($this->vertical) {
+            return new BoxConstraints($crossMain, $inner->maxWidth, $share, $share);
+        }
+
+        return new BoxConstraints(
+            $share,
+            $share,
+            0.0,
+            $inner->maxHeight,
+        );
     }
 
     /** @param list<float> $mains */

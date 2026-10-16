@@ -1,0 +1,40 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# apps/users/project.yml —— §19 M3 的出口判据：§A.2 的完整应用
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# ★★ 调用约定与 `apps/hello/project.yml` 逐条相同（**从仓库根调用**；被 tpc 解析的
+#   路径以本文件所在目录为基准 ⇒ 写 `../../` 前缀）—— 理由见那份文件的文件头。
+#
+# ★ 编译参数全部来自 `../../build/base.yml`（§4.6 的共享 base，2026-10-16 抽）：
+#   `mode: bin` / `platform: win32` / `no-console` / `cxx-std: c++17` / flags / libs /
+#   `ignore: [build]` / `build-dir: build` —— **两个应用当前的编译参数完全相同**，
+#   所以它们配得上一个 base（这也正是"等第二个应用落地再抽"的判据）。
+#   本文件只留本应用独有的：名字 / 版本 / 描述 / 源码集。
+
+name: users
+version: 0.1.0
+
+info:
+  Author: Drift
+  Description: Drift 框架 M3 出口判据 —— §A.2 的完整应用（值缝 / 动作缝 / 多页 / 表单 / 加速键）
+
+include: ../../build/base.yml
+
+# ── 源码（路径相对**本文件所在目录**）──
+#   `.`             本应用全部：main.php（全局 main()）+ src/ + bin/win32/Bootstrap.php
+#   `../../src`     Drift 框架（bin 模式 = 整程序 AOT，框架随应用一起编译进 exe）
+#   `../../cpp-src` Win32 桥：drift_win32.stub.php（ABI 声明）+ drift_win32.cc（实现）
+sources:
+  - .
+  - ../../src
+  - ../../cpp-src
+
+# ★ `tests/` 必须排除：`drift-preview` 的夹具要写顶层 `return`（解释器面的约定），
+#   而 AOT 编译器的判据里没有 `Stmt_Return` ⇒ 落在 `sources` 里会让构建当场中止
+#   （`Fatal error: Unsupported statement: Stmt_Return`，2026-10-16 实际踩到）。
+# ★ **`ignore` 要写全** —— tpc 的 list 型项是**整体替换**（不是追加），
+#   只写 `[tests]` 会把 base 的 `build` 顶掉，而 `build/` 里是生成的 `.cc`，
+#   再被当源码翻译一遍 ⇒ `Duplicate function main`。
+ignore:
+  - build
+  - tests

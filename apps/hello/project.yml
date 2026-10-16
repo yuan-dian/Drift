@@ -8,69 +8,34 @@
 #        它们相对的是**编译进程的 cwd**，不是本文件所在目录；
 #     ② 输出 exe 落在 **cwd**（`name:` 只决定文件名）⇒ 落仓库根，双击即用；
 #     ③ 运行期资源若用相对路径，也是相对 cwd 找的。
-#   ⇒ 反之，**被 tpc 解析的路径**（`sources` / `include-paths` / `link-paths` /
-#     `build-dir`）一律以**本文件所在目录**为基准 ⇒ 必须写 `../../` 前缀。
-#   两类基准混用看着别扭，但它是上面三条约束下唯一自洽的写法。
+#   ⇒ 反之，**被 tpc 解析的路径**（`sources` / `build-dir`）一律以**本文件所在目录**
+#     为基准 ⇒ 必须写 `../../` 前缀。
 #
-# ★ §4.6 的 `include: ../../build/base.yml`（共享编译参数）**本批不做**：
-#   共享 base 的前提是"使用方同目录深度"，而今天只有**一个**应用 ⇒
-#   抽出来的 base 没有第二个消费者（A15：没有消费者的抽象不预建）。
-#   第二个应用（`apps/users`）落地时再抽，那时才知道哪些项真的共享。
+# ★ 编译参数（`no-console` / `cxx-std` / flags / libs / `ignore` / `build-dir`）
+#   **2026-10-16 抽到 `../../build/base.yml`**（§4.6）—— 抽的时机是"第二个应用
+#   `apps/users` 落地时"（本文件早先的注释就这么写着），因为那时才知道哪些项真的共享。
+#   本文件只留**本应用独有**的：名字 / 版本 / 描述 / 源码集。
+#   ★ 读者注意：GUI 仓的注释说"tpc 的 YAML 没有 include（被静默忽略）"—— 那是**旧版本**
+#     的经验；当前 `tpc.exe` 里含 `ProjectYamlLoader` 的 include 实现与循环检测，
+#     已实测可用（两个应用都构出来了）。
 
 name: hello
 version: 0.1.0
-mode: bin
-platform: win32
 
 info:
   Author: Drift
   Description: Drift 框架 M1 出口判据 —— 一个窗口画出「Hello Drift」（§19）
 
-# 隐藏控制台黑框：tpc 会加 /SUBSYSTEM:WINDOWS **并自动补 /ENTRY:mainCRTStartup**
-# （后者是关键 —— 否则 CRT 找不到入口）。代价：无 stdout/stderr，诊断一律走
-# `Errors` 的日志文件（§1.2 中止序列第 ① 步本来就是写日志）。
-no-console: true
-
-# C++17 足够：本工程**不链 Skia**（M1 走 PHP 软光栅 + SetDIBitsToDevice，§7.3）。
-# Skia 后端（`SkiaCanvas`）落地时这里要跟 GUI 仓一样升到 **c++20**
-# —— SkParagraph 的私有头用了 std::countl_zero（<bit>，C++20 起才有）。
-cxx-std: c++17
-
-cxx-flags:
-  # 桥接源码（cpp-src/drift_win32.cc）的注释与字符串是 UTF-8。不加这条，
-  # MSVC 会按系统代码页解析 ⇒ 中文注释直接报 C4819 或静默乱码。
-  - /utf-8
-  # size_t → int 的窄化：Skia/系统头里大量存在，本工程自己的代码没有。
-  - /wd4267
-  # 多进程共享 PDB 写句柄（与 GUI 仓一致；并行编译时必需）
-  - /FS
-
-ld-flags:
-  # AOT 转译后 PHP 函数栈帧远大于 Zend VM 虚拟栈 ⇒ 默认 1MB 链接栈会在深调用链
-  # 上溢出崩溃。8MB 与 GUI 仓 / markdown-editor 一致。
-  - /STACK:8388608
-
-# Windows 系统库（只列**真的用到**的；桥里每个 API 都能对上一本库）：
-#   user32   建窗 / 消息泵 / 定时器 / 光标 / 按键状态 / 消息框 / DPI
-#   gdi32    SetDIBitsToDevice（贴一帧像素，§7.3 M1 的位块传送）
-#   advapi32 注册表读 AppsUseLightTheme（§9.2 的系统深色模式）
-link-libs:
-  - user32.lib
-  - gdi32.lib
-  - advapi32.lib
+include: ../../build/base.yml
 
 # ── 源码（路径相对**本文件所在目录**）──
 #   `.`             本应用全部：main.php（全局 main()）+ src/ + bin/win32/
 #   `../../src`     Drift 框架（bin 模式 = 整程序 AOT，框架随应用一起编译进 exe）
 #   `../../cpp-src` Win32 桥：drift_win32.stub.php（ABI 声明）+ drift_win32.cc（实现）
+#
+# ★ `sources` 留在各应用文件里而不是 base：tpc 的 YAML **list 型项是整体替换**
+#   （不是追加），放 base 里会被子文件顶掉 —— 而这里每项都含各应用自己的相对路径。
 sources:
   - .
   - ../../src
   - ../../cpp-src
-
-# 构建产物不能进 sources —— 生成的 .cc 会被当成源码再翻译一遍，
-# 症状是 "Duplicate function main" 这类看不出根因的错误。
-ignore:
-  - build
-
-build-dir: build

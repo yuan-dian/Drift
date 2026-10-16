@@ -43,6 +43,9 @@ use Drift\Dev\Smoke\App\AccelApplication;
 use Drift\Dev\Smoke\App\CompositeRootApp;
 use Drift\Dev\Smoke\App\MenuApplication;
 use Drift\Dev\Smoke\App\RecordingHandler;
+use App\Users\UsersApplication;
+use App\Users\UsersRoot;
+use App\Users\Store\MemoryUserSource;
 use Drift\Dev\Smoke\App\CursorApplication;
 use Drift\Dev\Smoke\App\EchoApplication;
 use Drift\Dev\Smoke\App\NavApplication;
@@ -3242,6 +3245,117 @@ check(
     'PopupPanel · 宽 = max(minWidth, 最宽项)（面板统一宽 ⇒ 菜单项整行可点）',
     $panelProbeBox?->size() !== null && $panelProbeBox->size()->width >= 200.0,
     sprintf('实际宽 %.6g', $panelProbeBox?->size()?->width ?? -1),
+);
+
+// ── ㉟ apps/users 完整样板（§19 M3 出口判据：§A.2 的完整应用可跑）──
+
+$usersSurface = new SvgSurface();
+$usersSurface->resize(900, 640, 1.0);
+$usersTight = BoxConstraints::tight(new Size(900.0, 640.0));
+$usersApp = new UsersApplication(new MemoryUserSource());
+$usersApp->attach($usersSurface, $usersTight);
+
+check(
+    'apps/users · 完整应用 attach 后就有盒（§A.2 可跑：值缝+动作缝+多页+表单+加速键）',
+    $usersApp->root() !== null && $usersApp->rootBox() !== null,
+);
+check(
+    'apps/users · buildRoot 只调一次（框架不重复调；Root 只组合）',
+    $usersApp->rootBuilds() === 1,
+);
+check(
+    'apps/users · 首屏渲染有墨（chrome 条 + 状态栏 + 列表行）',
+    substr_count($usersSurface->svg(), '<rect') > 50,
+);
+
+// ① 值缝 · **跨页共享**（AppStore：状态栏跨页活着）
+$usersApp->dispatch('users.refresh');
+check(
+    'apps/users · 跨页共享态：刷新 ⇒ 状态栏播报"已刷新"（AppStore.say）',
+    $usersApp->appStore()->statusLine() === '已刷新',
+);
+$usersApp->dispatch('nav.signup');
+check('apps/users · 跨页共享态：nav.signup ⇒ currentPage=signup', $usersApp->appStore()->currentPage() === 'signup');
+check(
+    'apps/users · 跨页共享态：切页后状态栏仍在（共享态不随页销毁）',
+    $usersApp->appStore()->statusLine() === '已刷新',
+);
+
+// ② 值缝 · **局部态**（SignupForm：property hooks + 派生缓存）
+$usersApp->signupForm()->name = '张三';
+$usersApp->signupForm()->email = 'zhang@example.com';
+check(
+    'apps/users · 局部态：表单字段写入（property hooks ⇒ 字段名只写一次）',
+    $usersApp->signupForm()->name === '张三' && $usersApp->signupForm()->validate() === [],
+);
+$usersApp->dispatch('form.submit');
+check(
+    'apps/users · 局部态：合法表单 ⇒ 提交成功并回跳列表页（form.submit 走全链）',
+    $usersApp->appStore()->currentPage() === 'users'
+        && $usersApp->appStore()->statusLine() === '注册成功',
+);
+$usersApp->signupForm()->name = '';
+$usersApp->dispatch('form.submit');
+check(
+    'apps/users · 局部态：空姓名 ⇒ 校验失败回显（走 Store 的 submitError，不走 State）',
+    str_contains($usersApp->signupForm()->submitError, '姓名不能为空'),
+);
+
+// ③ 动作缝 · 第三页 + 删除 + 派生缓存失效
+$usersApp->dispatch('nav.settings');
+check('apps/users · 动作缝：nav.settings ⇒ 第三页', $usersApp->appStore()->currentPage() === 'settings');
+$rowsBefore = count($usersApp->userStore()->rows());
+$usersApp->dispatch('user.del', CommandArg::id(1));
+check(
+    'apps/users · 动作缝：user.del ⇒ 行数减一 + 状态栏播报',
+    count($usersApp->userStore()->rows()) === $rowsBefore - 1
+        && $usersApp->appStore()->statusLine() === '已删除',
+);
+$usersApp->userStore()->setQuery('不存在的名字');
+check(
+    'apps/users · 派生缓存：搜索 ⇒ visible() 变窄（缓存随依赖失效）',
+    $usersApp->userStore()->visible() === [],
+);
+$usersApp->userStore()->setQuery('');
+
+// ④ 加速键（§19 M3 出口判据：Ctrl+S 等加速键可用）
+$usersApp->signupForm()->name = '';
+$usersApp->dispatchInput(KeyEvent::down(KeyChord::ctrl('S')));
+check(
+    'apps/users · 加速键 Ctrl+S ⇒ form.submit 被派发（第 ① 环，焦点之前）',
+    str_contains($usersApp->signupForm()->submitError, '姓名不能为空'),
+);
+
+// ⑤ 菜单打开接线（Widget 不许依赖 App ⇒ 应用把 showMenu 包成闭包传进来）
+$openerInjected = 0;
+$probeRoot = UsersRoot::make($usersApp->appStore(), $usersApp->userStore(), $usersApp->signupForm())
+    ->menuOpener(function () use (&$openerInjected): void {
+        $openerInjected++;
+    });
+check(
+    'apps/users · 菜单 opener 可注入（Root 只组合，打开归应用）',
+    $probeRoot->menuOpenerHandler() instanceof Closure,
+);
+unset($probeRoot);
+
+// ⑥ 菜单端到端：Tab 到菜单标题（焦点链第 4 个）⇒ Enter ⇒ 浮层真的开了
+for ($i = 0; $i < 4; $i++) {
+    $usersApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
+}
+$usersApp->dispatchInput(KeyEvent::down(KeyChord::enter()));
+check(
+    'apps/users · 菜单标题 Enter ⇒ 浮层打开（opener → showMenu 端到端）',
+    $usersApp->isMenuOpen(),
+);
+$usersApp->dispatchInput(KeyEvent::down(KeyChord::escape()));
+check('apps/users · ESC 关掉菜单', !$usersApp->isMenuOpen());
+
+// ⑦ 帧驱动（宿主每帧调；浮层不开也照常）
+$framesBefore = $usersSurface->frameCount();
+$usersApp->frame(16.0, $usersTight);
+check(
+    'apps/users · frame() 由宿主驱动（表面多一帧）',
+    $usersSurface->frameCount() === $framesBefore + 1,
 );
 
 fresh($log);

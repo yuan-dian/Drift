@@ -2042,9 +2042,11 @@ CI:      lint → codegen(tpc --dry) → preview → build(tpc) → selftest(con
 **★ 已按真实 schema 校正**（对照【手册】L187–243 与 `GUI/apps/demo/project.yml` 实测配置）：
 
 ```yaml
+# ⚠️ **本块是"目标形态"（Skia + SDK 分发）**，不是当前可构建的配置 ——
+#    2026-10-16 校正：真实形态见本块**之后**的「★ 真实形态」小段（共享 base，已验证可构建）。
 name: users
 mode: bin
-platform: win32                     # ★ 真实键
+platform: win32
 version: 0.1.0
 php-version: "8.5"
 optimize: 2
@@ -2094,7 +2096,31 @@ cxx-flags:
   - /DUSE_SKIA
 ```
 
-### 16.5 六个必须知道的陷阱
+> ★ **真实形态（2026-10-16，两个 exe 均构建通过）**：`apps/users/project.yml` 只留四类项，
+> 其余编译参数抽到 `build/base.yml`（§4.6）：
+>
+> ```yaml
+> name: users
+> version: 0.1.0
+> info:
+>   Author: Drift
+>   Description: Drift 框架 M3 出口判据 —— §A.2 的完整应用
+> include: ../../build/base.yml     # ★ 真键；tpc 的 ProjectYamlLoader 支持 include（实测）
+> sources:                          # ★ list 型项**整体替换** ⇒ 不放 base
+>   - .
+>   - ../../src
+>   - ../../cpp-src
+> ignore: [build, tests]            # ★ 同样要写全（只写 tests 会顶掉 base 的 build）
+> ```
+>
+> `build/base.yml` 放"两边**完全相同**"的项：`mode` / `platform` / `no-console` /
+> `cxx-std: c++17` / `cxx-flags` / `ld-flags` / `link-libs` / `ignore: [build]` / `build-dir`。
+> ★ **`c++17` 不是笔误**：当前不链 Skia（M1 走软光栅），M4 落地 `SkiaCanvas` 时才升 `c++20`
+> 并加 Skia 的 include/link 项 —— 那段追加项（22 个 lib 按依赖序、**`/MD` 而非 `/MT`**、
+> `/DUSE_SKIA`、`/I"cpp/skia"`、`GR_GL_FUNCTION_TYPE`）已逐条记在 `build/base.yml` 注释里，
+> 抄自 `D:\TypePHP\GUI\apps\demo\project.yml`。
+
+### 16.5 八个必须知道的陷阱
 
 **陷阱 1 —— 两类路径基准不同（最贵的一处）**
 
@@ -2167,6 +2193,33 @@ PHP Fatal error: Uncaught TypeError: TypePhp\Translator::getAbsolutePath():
 根因：路径不存在时 `realpath()` 返回 `false`，而调用点声明 `: string` ⇒ 未捕获 `TypeError`。
 ⇒ **症状是"编译器崩溃"而不是"路径不存在"** ⇒ `include:` 必须配一个路径存在性检查（§4.6 约束 3）。
 
+**陷阱 7 —— 会被继承的类，`private` **构造提升属性**在子类实例上会退化成"动态属性"**
+
+AOT 按**运行时类型**查属性表，而父类的 `private` 不进子类属性表 ⇒ 父类方法在**子类实例**
+上访问它时，生成代码走的是"**创建动态属性**"那条路。症状两级：
+
+```
+Deprecated: Creation of dynamic property Drift\Widget\NavButton::$label is deprecated
+Fatal error: Uncaught ArgumentCountError: Drift\Layout\RenderButton::__construct():
+             Argument #1 ($label) not passed        ← 动态属性值是 NULL，传给 string 形参
+```
+
+★ **判据**：**凡"会被继承的类"，其构造提升属性一律 `protected`**（普通声明属性不受影响 ——
+它们进了子类布局；`Element::$box` / `RenderBox::$size` 早就是 `protected`，同一条纪律）。
+★ **只有真机能看见**：解释器面 496 条 smoke 断言、`lint` 0 error、codegen 0 skip **全绿**
+（本轮就撞上了：`Button::$label` 与 `RenderFlex::$vertical/$spacing/$padding/$crossAlign/$overflow`）。
+⇒ **纪律**：新增"被继承的控件/盒"时，构造提升属性写 `protected`，别写 `private`。
+
+**陷阱 8 —— `drift-preview` 夹具写顶层 `return` ⇒ AOT 直接中止**
+
+```
+Fatal error: Unsupported statement: Stmt_Return in apps/users/.../memory_source.php:13
+```
+
+夹具必须写顶层 `return`（`drift-preview` 的约定），而 AOT 编译器的判据里**没有 `Stmt_Return`**
+⇒ 夹具一旦落在 `sources` 扫到的目录里就构建失败。⇒ **夹具放 `tests/fixtures/` 并在 `ignore:` 里排掉**
+（约定来自 §16.7 的示例）。
+
 **Windows GUI 子系统**：`no-console: true` 让 PE 头 subsystem = 2（WINDOWS），不弹黑框；tpc 会**自动补 `/ENTRY:mainCRTStartup`**（否则 CRT 找不到入口，链接/启动即挂）。代价：无 stdout/stderr，调试只能靠日志文件 / 弹窗 / 附加调试器（【手册】§6）。验证：`dumpbin /headers your.exe | findstr subsystem`。
 
 ### 16.6 规则清单
@@ -2194,6 +2247,11 @@ PHP Fatal error: Uncaught TypeError: TypePhp\Translator::getAbsolutePath():
 ★ **删掉 `Intent` 的直接收益**：GUI 仓的三条规则（R5 / R8 / R9）在 Drift 里**塌缩成一条**（R5）。少一个概念 = 少两条 lint + 少一套"谁构造/谁携带参数/谁解构"。
 ★ **两级严重度**（`error` 挡新债 / `warn` 留痕）与白名单机制**一并移植**（R11/R12 各有白名单文件）。
 ★ **2026-10-16 核验（`php tools/lint.php --list` 实测）**：上表"直接移植"是**计划不是现状** —— R1–R12 里**实际在 lint 的只有 R5**（`dead-command`）；R1–R4 / R6 / R7 / R11 / R12 均无 lint 实现（R4 的 key 唯一性改走运行期 Fatal，smoke `eachdup` 用例）。★ W 侧对应守卫（W1/W2/W3 的静态检查）现由 `tools/M2Conformance.php` 覆盖（W2 为弱形式）；R11/R12 完整形态随 `drift-conformance` 归 M4。⇒ **教训同 O-19**："已移植"是自述，判据只能对着 `--list` 数。
+> ★ **2026-10-16 再补两处"守卫空转"（`apps/users` 一落地就当场露馅）**：
+> ① `dead-command` 的 `commands()` 提取拿 `=>` 与**原始字符串**比较，而 `=>` 是
+>   **`T_DOUBLE_ARROW` 令牌** ⇒ 恒假 ⇒ 那条声明式注册路径**从来没生效过**（七条命令
+>   全被误报"死命令"）；② `subscriber-mark` 见 `->select(` 就报（见上表判据修正）。
+> 两条修完都做了**反例自检**（临时违规文件必须先被抓到），证明规则仍在干活。
 
 #### 16.6.2 `W1–W8`：控件契约八项
 
@@ -2222,10 +2280,10 @@ PHP Fatal error: Uncaught TypeError: TypePhp\Translator::getAbsolutePath():
 | 2 | `scan-autoload-drift` | `project.yml` 的 `sources` 覆盖的命名空间 ≠ `composer.json` 的 `autoload.psr-4` | **error** | §10.2.5 | G2 |
 | 3 | `export-surface-drift` | **仅 `-m lib`**：`@api` 面 ⊄ `<target>.stub.php` 的导出面（某个 `@api` 没进 ABI，或 `@api` 签名引用了被 `#[NoExport]` 级联排除的类型 ⇒ **签名不完整**） | **error** | §10.2.6 | G2 |
 | 4 | `dead-subscription`（= A16） | `build()` 体内出现对 `Subject` 子类型实例的方法调用 ⇒ 该 `build()` 所属类必须实现 `SubscribingWidget`，或位于某 `SubscribingWidget` 子树内 | **error** | §11.3 / §21 A16 | A16 |
-| 5 | `dead-command`（扩） | ① 全树 `command('x')` 发出的名字 ∈ `CommandRouter` 注册集；② 注册集里的名字**至少被一处发出**（**双向**：死命令 + 死注册） | **error** | §11.4.3 | G2 |
+| 5 | `dead-command`（扩） | ① 全树 `command('x')` 发出的名字 ∈ `CommandRouter` 注册集（★ 注册集含**两条**来源：`->on('x', h)` 与 `Application::commands()` 的字典键）；② 注册集里的名字**至少被一处发出**（**双向**：死命令 + 死注册） | **error** | §11.4.3 | G2 |
 | 6 | `select-purity` | `select` 闭包返回类型必须是**标量 / enum / `readonly class`**；出现 `new` 非 readonly 对象 ⇒ 报错 | **error** | §11.3.3 | G2 |
 | 7 | `stale-derived` | `Store` 里出现 `??=` 赋值的属性（缓存槽）⇒ 所有会修改其**依赖字段**的方法里必须有 `$this->xxxCache = null` | **error** | §11.3.4 | G2 |
-| 8 | `subscriber-mark` | 声明了 `->select()` / `watch()` 的类必须 `implements SubscribingWidget` | **error** | §10.3 第 5 条 | G1 |
+| 8 | `subscriber-mark` | **自己**调 `$this->select()` / `watch()` 的类必须 `implements SubscribingWidget`（★ 2026-10-16 修正判据：原先见 `->select(` 就报，把"配置一个专职订阅者"—— `SubjectBuilder::make($store)->select(...)` / `StatusBar::make()->source()->select(...)` —— 判成违规，而 §A.2.9 的官方写法正是那样） | **error** | §10.3 第 5 条 | G1 |
 | 9 | `nested-subscribe` | 订阅出现在 `Each` 的 item builder 里（每列表项一个订阅） | **warn** | §11.3.2 纪律 2 | G2 |
 | 10 | `cached-subscriber` | `SubjectBuilder` 实例被赋给字段并跨 `build()` 复用 | **error** | §11.3.2 纪律 1 | A4 |
 | 11 | `alias-mutate` | 同一 `children([...])` 数组内出现两次同一根变量（`$t->a()`、`$t->b()`） | **error** | §15.6.1 | A12 |
@@ -2460,7 +2518,7 @@ $app = new UsersApplication(new Win32Platform(), new ThreadPoolTaskHost());
 | **M0 骨架** | PSR-4 分层 + 契约文件 + `tools/smoke.php` + **公共面按 `@api` 标注**（决定 lint 骨架） | 冒烟全绿；依赖方向 lint 有断言；`internal-leak` 双向自检过 | ✅ **已完成** —— PSR-4 分层 / `@api` 标注（76 类型）/ `smoke.php`（315 ok）/ lint 骨架（14 条落地）全在  |
 | **M1 可显示** | Win32 Platform + RenderSurface(Skia CPU) + Canvas 接口 + 文本栈桥接 + DPI 缩放 + **`DisplayList` 录制**（决定渲染路径） | 一个窗口画出「Hello Drift」（§A.1），分数缩放下不糊 | ✅ **出口判据已兑现**（2026-10-15）—— `apps/hello` 经 `tpc -m bin` **真机构建**出 `hello.exe`（1.5 MB），运行后窗口（640×400 客户区）画出居中的「Hello Drift」（截图核对；执行入口 `php tools/drift-build.php hello`）。<br>★ **落地路径与本文原计划有一处偏差，如实记下**：表面走 **`Win32RasterSurface`**（`RasterCanvas` 软光栅 + `SetDIBitsToDevice`），**不是** `RenderSurface(Skia CPU)`。理由：§7.3 的 M1 分期原文就写"CPU 光栅 + 位块传送"，且 `SurfaceProvider` 这层抽象存在的意义正是"**后端可换**"（换 Skia 只改 `Win32SurfaceProvider` 一处，应用侧一行不改）⇒ `SkiaCanvas` 归 M4+。<br>★ 仍未验（不阻塞 M1 判据）：分数缩放下不糊（本机 100% DPI，未跨屏试）、`SkiaCanvas`、跨模块调用性能。<br>★ 平台侧 `Drift\Platform` 9 + `Win32` 7 + `cpp-src/` 2 + `apps/hello` 4 个文件全在；渲染侧（`RenderSurface`/`Canvas`/`DisplayList`/文本栈/`RasterCanvas`）齐  |
 | **M2 三树 + 布局** | Element/State/调和 + RenderBox 两阶段布局 + 首批控件 + **fluent-first 全部落地** + **盒样式（`BoxStyle` + `BoxWidget`，§15.7）** + **焦点遍历顺序** + **光标形状（命中三方消费）** + **`SubscribingWidget` 接口** + **property hooks 进 Store** + **`Each` key 必填** | 布局 conformance 夹具全过；首批控件过 **W1–W8**；Tab 序有 conformance 夹具；`Each` 缺 key ⇒ 构建期报错 | ⏳ **大部分** —— 三树/调和/两阶段布局/13 个控件/fluent-first/`BoxStyle`+`BoxWidget`/`SubscribingWidget`/property hooks/`Each` key 全在；**`TextField` 2026-10-15 已落地**（§24.1 #32 闭环）；**`FocusNode`（焦点遍历顺序）2026-10-15 已落地** —— `FocusManager` 的 Tab 序（默认文档序 / `skipFocus` 整体跳过 / `focusOrder` 同容器稳定排序）可跑；**`Spinner` 2026-10-16 已落地**（§11.5 `Loading` 分支；三段形态 + `RenderSpinner` 8 点 alpha 环，smoke 14 条断言 + M2LayoutPage 示例）；**`CursorShape`（命中三方消费）随 M1 输入层已落地**（enum + 整条命中链 `Widget→RenderObject→FocusManager→dispatchInput→Win32 setCursor` 接好，smoke 有光标断言，见 §753）；★ **conformance 夹具已建**（2026-10-16，`tools/M2Conformance.php`）—— W1–W8 静态 + runtime 判据集（token 级量具带反例自检），`M2LayoutPage` 即夹具页，M2 出口判据「夹具全过 / 首批控件过 W1–W8 / Tab 序有夹具」首次有可跑落点；常驻门 `drift-conformance` 仍归 M4（§16.2）  |
-| **M3 数据缝/多页** | Store 三件套 + `SubjectBuilder` + **`select()`** + RouteTable/PageHost + **动作缝（`CommandRouter` + 冒泡链）** + **三态 enum** + **错误边界容器**（★ 2026-10-14 裁决：**归 M3** —— 见 §23.2 O-12）+ **AcceleratorTable** + **自绘 MenuBar/ContextMenu** + **应用内拖放** | §A.2 的完整应用可跑；局部态与跨页共享两条路径都能写；`Root` 只组合（lint 可查）；Ctrl+S 等加速键可用；§16.6.3 的 **17 条规则全部双向自检**过 | ⏳ **约一半** —— 值缝（Store 三件套 + `SubjectBuilder` + `select`）与动作缝（`CommandRouter` + 冒泡链）已通；**M3 的 0 文件已清零** —— `Widget\Menu` 四件（`MenuBar`/`Menu`/`MenuItem`/`ContextMenu`）与 `Drag` 两件（`Draggable`/`DragTarget`）**2026-10-16 已落地**（自绘菜单 + 应用内拖放兑现；错误边界容器与 `AcceleratorTable` 同日落地，见 §4.2 各行注）；★ **多页外壳 2026-10-16 已落地**（`Dock` 五槽 + `AppBar` + `NavButton`，smoke 21 条 + ShellPage 示例；§A.2.6 `UsersRoot` 控件面齐全，只差 `Draggable`）；★ **命令激活键盘侧已接线**（焦点按钮 Enter/Space ⇒ `dispatch()` 带 `CommandArg` —— §9.1；指针激活等 M4 的 `PointerEvent::up()`）；§A.2 样板刚对齐（O-18），`apps/users` 未建；★ **浮层机制已裁（O-20，按 A）** —— `Menu` / `ContextMenu` / 模态（`showModal()`）共用第二棵根渲染树，实现不再被“不存在的原语”卡住  |
+| **M3 数据缝/多页** | Store 三件套 + `SubjectBuilder` + **`select()`** + RouteTable/PageHost + **动作缝（`CommandRouter` + 冒泡链）** + **三态 enum** + **错误边界容器**（★ 2026-10-14 裁决：**归 M3** —— 见 §23.2 O-12）+ **AcceleratorTable** + **自绘 MenuBar/ContextMenu** + **应用内拖放** | §A.2 的完整应用可跑；局部态与跨页共享两条路径都能写；`Root` 只组合（lint 可查）；Ctrl+S 等加速键可用；§16.6.3 的 **17 条规则全部双向自检**过（`apps/users` 过全部 lint；两条修过的规则已做反例自检） | ✅ **M3 出口判据已兑现（2026-10-16）** —— `apps/users` 完整样板已建（20 个 PHP 文件，`apps/users/`）：① **§A.2 的完整应用可跑** —— **真机**：`tpc apps/users/project.yml -O2 -m bin` 出 `users.exe`（2.1MB，`Build successful`），运行后窗口 900×640 起来、客户区非白像素 11%（4 个"删除"按钮的 `rgb(209,36,47)` 清晰可辨）、进程保持消息循环、无 `Deprecated` / 无 Fatal；**无头侧** smoke 18 条断言；② **局部态与跨页共享两条路径都能写**（`SignupForm` property hooks / `AppStore` + `StatusBar` 专职订阅）；③ **`Root` 只组合**（`rootBuilds()===1` + 全树过 lint）；④ **Ctrl+S 可用**（加速键第 ① 环 ⇒ `form.submit`）；菜单 / 拖放 / 错误边界全在线。旧状态存档：值缝**M3 的 0 文件已清零** —— `Widget\Menu` 四件（`MenuBar`/`Menu`/`MenuItem`/`ContextMenu`）与 `Drag` 两件（`Draggable`/`DragTarget`）**2026-10-16 已落地**（自绘菜单 + 应用内拖放兑现；错误边界容器与 `AcceleratorTable` 同日落地，见 §4.2 各行注）；★ **多页外壳 2026-10-16 已落地**（`Dock` 五槽 + `AppBar` + `NavButton`，smoke 21 条 + ShellPage 示例；§A.2.6 `UsersRoot` 控件面齐全，只差 `Draggable`）；★ **命令激活键盘侧已接线**（焦点按钮 Enter/Space ⇒ `dispatch()` 带 `CommandArg` —— §9.1；指针激活等 M4 的 `PointerEvent::up()`）；§A.2 样板刚对齐（O-18），`apps/users` 未建；★ **浮层机制已裁（O-20，按 A）** —— `Menu` / `ContextMenu` / 模态（`showModal()`）共用第二棵根渲染树，实现不再被“不存在的原语”卡住  |
 | **M4 工具链 + 异步** | drift-preview / golden / conformance / drift-lint / **drift-doctor** 齐备 + **TaskHost 线程池后端** + **`notifyChanged` 线程断言** + **ThemeChanged / 深色模式** | 无头 preview + golden diff 可跑；后台 IO 不卡帧；**worker 里 notify ⇒ 响亮失败**；跟得上系统主题切换 | ⏳ **未动** —— `drift-lint` / `drift-preview` / `drift-codegen` 三件在；`golden` / `conformance` / `drift-doctor` 未建，`TaskHost` 系 **7 个类型**（含 `Job`，§24.1 #35）+ `ThreadPoolTaskHost` 0 文件  |
 | **M5 业务底座** | 虚拟化（含 §12.3 的 State 外置纪律）+ 脏矩形 + **WindowStateStore** + Windows UIA 桥接 | 长列表滚动不掉帧；子树崩溃不整树陪葬；窗口位置/尺寸跨启动保留 | ⏳ **未动** —— 虚拟化 / 脏矩形 / `WindowStateStore` / UIA 桥接全 0 文件  |
 
@@ -3784,31 +3842,38 @@ apps/users/
   bin/
     win32/Bootstrap.php          # 组合根（Windows）
     macos/Bootstrap.php          # 组合根（macOS）—— 由 if: 二选一
+  preview-fixture.php            # drift-preview 的离线夹具（返回 MemoryUserSource）
   src/
-    UsersApplication.php         # extends Application：title / boot / buildRoot / commands / accelerators
+    UsersApplication.php         # extends Application：title / buildRoot / commands / accelerators
     UsersRoot.php                # 只做组合（§12.2）
-    pages/
+    Pages/                       # ★ 目录大小写 = 命名空间（PSR-4；lint `namespace-mismatch` 守）
       UsersPage.php              # 列表 + 搜索 + 删除
       SignupPage.php             # 表单（property hooks + SubjectBuilder）
       SettingsPage.php           # 主题 / 光标 / 拖放 / 焦点序演示（§A.3）
-    store/                       # ★ 业务层：零 GUI 依赖
+    Store/                       # ★ 业务层：零 GUI 依赖（连 Drift\Widget 都不 import）
       AppStore.php               # 当前页 + 状态栏 + 主题
       UserStore.php              # 行数据 + 三态 + 缓存 getter
       User.php                   # 值对象
       LoadStatus.php             # backed enum
-      UserSource.php             # 数据源接口
-      HttpUserSource.php         # 实现（走 TaskHost）
-      MemoryUserSource.php       # 实现（测试 / 离线）
+      UserSource.php             # 数据源接口（+ 结果值对象 Page）
+      MemoryUserSource.php       # 实现（测试 / 离线 / 本样板默认）
       SignupForm.php             # 表单（property hooks）
-    commands/
+    Commands/
       NavigationCommands.php
       UserCommands.php
       SignupCommands.php
       AppCommands.php
-    widgets/
+    Widgets/
       StatusBar.php              # 应用私有专职订阅控件
       UserRow.php                # 列表行（纯展示，不吃 store）
 ```
+
+> ★ **2026-10-16 落地实况**：上面这份与 `apps/users/` 逐文件一致（20 个 PHP）。
+>   两处与旧版目录树不同，都是被**门**逼出来的：
+>   ① **目录名 PascalCase** —— PSR-4 要求目录名与命名空间一致（`Store/` ↔ `App\Users\Store`），
+>      旧图的小写 `store/` 一落地就被 lint `namespace-mismatch` 抓（37 条 error）；
+>   ② `HttpUserSource.php` **没有** —— 它依赖 `TaskHost` / `Job`（§17.2，M4，`src/` 里 0 文件）
+>      ⇒ 按 A15「不预写没有消费者的代码」不落；M4 到位后照 `Bootstrap` 那一行切换即可。
 
 ### A.2.2 `composer.json`（解释器面：preview / lint / 单测）
 
@@ -3867,6 +3932,30 @@ link-libs:
   - advapi32.lib
 cxx-flags: [/utf-8, /MT, /DUSE_SKIA]
 ```
+
+> ★ **2026-10-16 校正**：上面这份是**目标形态**（Skia + SDK 分发），当前**真实可构建**的配置
+> 是 `apps/users/project.yml` 的逐字形态（两个 exe 都构建通过）：
+>
+> ```yaml
+> name: users
+> version: 0.1.0
+> info:
+>   Author: Drift
+>   Description: Drift 框架 M3 出口判据 —— §A.2 的完整应用
+> include: ../../build/base.yml     # 编译参数共享（§4.6）
+> sources:
+>   - .
+>   - ../../src
+>   - ../../cpp-src
+> ignore: [build, tests]            # 要写全（list 替换语义）
+> ```
+>
+> 三处差别要记住（都写进了 §16.4 陷阱 7 / 陷阱 8 与 `build/base.yml` 注释）：
+> ① **当前不链 Skia** ⇒ `cxx-std: c++17`、无 Skia 的 include/link 项（M4 落地 `SkiaCanvas`
+>    时照 `build/base.yml` 里那段追加项，逐条抄自 `D:\TypePHP\GUI\apps\demo\project.yml`）；
+> ② **`/MT` 不能加**：tpc 的 bin 模式自己链 `phpx.lib` + `php8ts.lib`、编译期强制 `/MD`
+>    ⇒ Skia 也要 `/MD` 版本（否则 `LNK2038`）；
+> ③ `defines: DRIFT_*_ALL_DECL` 只在 **lib 模式**用（§16.4 陷阱 5），bin 模式不需要。
 
 **SDK 分发形态（§10.2）**：应用侧把框架换成一行 stub：
 
@@ -4023,34 +4112,39 @@ final class UsersApplication extends Application
             'nav.settings'  => $nav,
             'user.del'      => $user,
             'users.refresh' => $user,
-            'form.submit'   => new SignupCommands($this->form, $this->src),
+            'form.submit'   => new SignupCommands($this->form, $this->src, $this->app, $this->users),
             'app.quit'      => new AppCommands($this->app),
         ];
     }
 }
 
-// ⏳ 下面两个扩展点**今天还不存在** —— `AcceleratorTable` / `ThemeChangedEvent` 在
-//   §4.2 有名字、`src/` 里 0 文件（§19 M3 / M4）⇒ 按 A15「不提供收益≈0 的公开 API」，
-//   **不预先挂空钩子**：等能力落地当天再加，形状先定在这里。现在照抄只会得到
-//   "定义了却没被调用"的死方法。
-//
-//     /** 应用级快捷键（§9.1 路由链第 ① 环，在焦点之前） */
-//     public function accelerators(): AcceleratorTable
-//     {
-//         return AcceleratorTable::make()
-//             ->bind(KeyChord::ctrl('R'), 'users.refresh')
-//             ->bind(KeyChord::ctrl('N'), 'nav.signup')
-//             ->bind(KeyChord::f(5),      'users.refresh');
-//     }
-//
-//     /** 系统主题变更 ⇒ 全树重建（§9.2） */
-//     public function onSystemThemeChanged(SystemTheme $t): void
-//     {
-//         $this->app->setSystemTheme($t);
-//     }
+/**
+ * 应用级加速键（§9.1 路由链第 ① 环，在焦点之前）。
+ *
+ * ★ `AcceleratorTable` **2026-10-16 已落地** ⇒ 不再是"空钩子"：这一条正是
+ *   §19 M3 出口判据"Ctrl+S 等加速键可用"的落点（smoke 有断言）。
+ */
+public function accelerators(): AcceleratorTable
+{
+    return AcceleratorTable::make()
+        ->bind(KeyChord::ctrl('R'), 'users.refresh')
+        ->bind(KeyChord::ctrl('S'), 'form.submit')
+        ->bind(KeyChord::f(5),      'users.refresh');
+}
+
+// ⏳ 仍不预挂的只剩 `onSystemThemeChanged()` —— `ThemeChangedEvent` 在 §4.2 有名字、
+//   `src/` 里 0 文件（§19 M4）⇒ 按 A15「不提供收益≈0 的公开 API」等能力落地当天再加。
+//   主题**切换本身**今天已可用（`SettingsPage` 的两个按钮 → `app.theme` 命令 →
+//   `AppStore::setSystemTheme()` → `UsersRoot` 的 `ThemeScope` 消费）。
 ```
 
 ### A.2.6 `UsersRoot`（只做组合）
+
+> ★ **2026-10-16 落地时的两处增量**（样板是骨架，实现是它的完成态）：① 外层包一层
+> `ThemeScope::make($theme, $dock)` —— 否则"设置页切主题"没有消费点（§A.3.3）；
+> ② `MenuBar` 放进了 `AppBar` 的 children，并把菜单的**打开回调**由应用注入
+> （`menuOpener(...)`）—— Widget 不许依赖 App（§4.3），所以 `showMenu()` 只能由
+> `UsersApplication::buildRoot()` 包成闭包传进来。
 
 ```php
 <?php
@@ -4416,7 +4510,7 @@ final class UsersPage extends StatelessWidget
 > ★ **已按 §23.2 O-16 裁决修正**（2026-10-14）：搜索框原先**直接读** `$this->store->query()` 而**没有订阅** —— 在 `StatelessWidget` 里这就是 `dead-subscription`（值变了不刷新）。现改为**官方订阅形态**：`SubjectBuilder::select(...)` 包一层 + 手写 `value()/onChanged()`。
 > ★ 顺带：这也是 §11.4.2 那张"摩擦点对照"表**为什么要删**的活证据 —— 表里说"不用记得包 `SubjectBuilder`"，而**真实的正确写法就是必须包**。
 
-> ★ **本节样本的实况边界（2026-10-16 按 `src/` 核验）**：本页样板引用 **1 个 0 文件的类型** —— `Widget\Drag\Draggable`（M3）；`Spinner`（`Drift\Widget`）**2026-10-16 已落地**（§11.5 `Loading` 分支），`CursorShape`（`Drift\Input`）随 M1 输入层落地，今天能跑。**`Draggable` 仍是目标形态，不是今天能跑的代码**；同页其余类型（`Column`/`Row`/`Text`/`Button`/`TextField`/`Each`/`Spinner`/`Spacer`/`Padding`/`SubjectBuilder`/`CommandArg`）今天就能编译（`TextField` 2026-10-15、`Spinner` 2026-10-16 分别落地）
+> ★ **本节样本的实况（2026-10-16 收尾核验）**：**本页样板引用的类型全部已落地，可以整页编译并跑** —— `Draggable`（2026-10-16 落）、`Spinner`（同日）、`TextField`（10-15）、`CursorShape`（随 M1）及其余控件。★ 落地时被 lint 抓到的两处**样板自身**问题（已按实现修正）：① `SubjectBuilder::make($store)` 是"配置一个专职订阅者"，**页面不必** `implements SubscribingWidget`（规则判据已随之修正）；② 过滤闭包**不能**是 `static fn` —— 它读 `$this->query`，而它在 `notifyChanged()` 的订阅者回调里 ⇒ 报错会被"订阅者异常隔离"包成 RECOVERABLE ⇒ debug 下整局中止。
 
 ```php
 <?php
@@ -4718,9 +4812,12 @@ Button::primary('提交中…')->disabled()->cursor(CursorShape::Wait) // 忙碌
 
 ```php
 // ① 主题 scope：谁生效查父链，不算特异性权重（§18 避开 CSS 层叠）
-ThemeScope::make()
-    ->theme($this->app->systemTheme() === SystemTheme::Dark ? ThemeData::dark() : ThemeData::light())
-    ->child($page)
+// ★ 真实 API 是**两参构造** `make(ThemeData, Widget)`（2026-10-16 核验）——
+//   本示例原写 `make()->theme(...)->child(...)` 是链式，代码里没有那两个方法。
+ThemeScope::make(
+    $this->app->systemTheme() === SystemTheme::Dark ? ThemeData::dark() : ThemeData::light(),
+    $page,
+)
 
 // ② 系统主题变更：走 screen() 通道，与 DpiChanged 同路（§9.2）
 // ⏳ `ThemeChangedEvent` 尚未实现（§19 M4）⇒ 钩子不预挂，落地当天再加；形状先定。
@@ -4882,15 +4979,15 @@ php tools/drift-lint.php apps/users                       # 规则见 §16.6
 php tools/drift-preview.php apps/users --page users --svg out/users.svg
 
 # lint 报错长什么样（每条都指出"症状 + 修法"，不是只报行号）
-#   apps/users/src/pages/UsersPage.php:42  error  dead-subscription
+#   apps/users/src/Pages/UsersPage.php:42  error  dead-subscription
 #     build() 读了 UserStore 的值，但本类未实现 SubscribingWidget，也不在任何订阅者子树内。
 #     ⇒ 数据变了这里不会重建。修法：把读值的那层包进 SubjectBuilder（或让本类 implements SubscribingWidget）
 #
-#   apps/users/src/store/UserStore.php:31  error  stale-derived
+#   apps/users/src/Store/UserStore.php:31  error  stale-derived
 #     $visibleCache 依赖 $rows / $query；setQuery() 未清缓存 ⇒ 过滤结果会停在旧值。
 #     ⇒ 在 setQuery() 里加 $this->visibleCache = null;
 #
-#   apps/users/src/pages/UsersPage.php:56  error  dead-command
+#   apps/users/src/Pages/UsersPage.php:56  error  dead-command
 #     'user.del' 已发出，但 CommandRouter 未注册任何 handler ⇒ 点了没反应。
 
 # ── 单页预览（带参页面需要注入 store 夹具；§12.1 第 5 条）─────────
