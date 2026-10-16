@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Layout;
 
+use Drift\Input\CursorShape;
 use Drift\Rendering\Canvas;
 
 /**
@@ -21,9 +22,34 @@ abstract class RenderObject
 {
     protected ?RenderObject $parent = null;
 
+    /** @internal null = 本节点未声明光标形状（命中链会向上找更近的声明者，§9.1） */
+    protected ?CursorShape $cursor = null;
+
     public function parent(): ?RenderObject
     {
         return $this->parent;
+    }
+
+    /**
+     * 本节点**自己**声明的光标形状（`null` = 没声明，§9.1）。
+     *
+     * ★ 它**不是**最终生效的形状 —— 生效值由命中链从命中的盒**向上**找最近的
+     *   声明者（`FocusManager::cursorOf()`）。放在 `RenderObject` 而不是
+     *   `RenderBox` 上：§9.1 原文就是"`RenderObject` 声明 `cursor`"。
+     *
+     * @api
+     */
+    public function cursor(): ?CursorShape
+    {
+        return $this->cursor;
+    }
+
+    /**
+     * @internal Element 造盒时把 Widget 的声明落上来（唯一写点：`Element::syncBox()`）
+     */
+    public function setCursor(?CursorShape $shape): void
+    {
+        $this->cursor = $shape;
     }
 
     /**

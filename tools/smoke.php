@@ -34,6 +34,7 @@ use Drift\Dev\Preview\FormPage;
 use Drift\Dev\Preview\Renderer;
 use Drift\Dev\Preview\SvgSurface;
 use Drift\Dev\Smoke\App\CompositeRootApp;
+use Drift\Dev\Smoke\App\CursorApplication;
 use Drift\Dev\Smoke\App\EchoApplication;
 use Drift\Dev\Smoke\LeafProbe;
 use Drift\Dev\Smoke\Routing\NavStore;
@@ -54,6 +55,7 @@ use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Scale;
 use Drift\Geometry\Size;
+use Drift\Input\CursorShape;
 use Drift\Input\FocusNode;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
@@ -2434,6 +2436,114 @@ check(
         && abs(($helloBounds[0] + $helloBounds[1]) / 2 - 160) <= 4
         && abs(($helloBounds[2] + $helloBounds[3]) / 2 - 120) <= 4,
     '包围盒 ' . ($helloBounds === null ? 'null' : implode(',', $helloBounds))
+);
+
+// ── ㉜ 光标形状（§9.1「一次命中，三方消费」的第 ③ 方）──
+// ★ 三方 = 事件路由 / 语义 / **光标形状**。前两方早就在（`focusHit()`；语义树是
+//   M4 的活）；第 ③ 方此前**完全缺位** ⇒ 真机窗口的指针永远是箭头，**且不报错**
+//   （§9.1 只把"光标形状"写进了名字，没有一行代码兑现它）。
+// ★ 本段只判**解释器面判得了的**：形状表（= 桥的 ABI）· 声明落到盒上 · 命中链
+//   取最近者 · 应用层出口。**"系统光标真的变成手形"只能真机判**（`GetCursorInfo`），
+//   不在这里假装 —— 那是 §20 纪律 1 的双向量具纪律。
+
+check('光标 · Default 是 0（= 桥的 IDC_ARROW，兜底值）', CursorShape::Default->value === 0);
+check(
+    '光标 · IBeam=1 / PointingHand=2（★ value 就是桥的 ABI：改它等于改协议）',
+    CursorShape::IBeam->value === 1 && CursorShape::PointingHand->value === 2,
+);
+$shapeValues = array_map(static fn (CursorShape $c): int => $c->value, CursorShape::cases());
+check(
+    '光标 · 8 个 case、value 恰好是 0..7 且互不重复（桥的 switch 覆盖面）',
+    $shapeValues === [0, 1, 2, 3, 4, 5, 6, 7],
+    'values=' . implode(',', $shapeValues),
+);
+check(
+    '光标 · from() 往返（桥只传编号，PHP 侧能还原形状）',
+    CursorShape::from(2) === CursorShape::PointingHand,
+);
+
+// 声明：Widget::cursor() ⇒ 盒上的 RenderObject::cursor()
+check(
+    '光标 · 没声明 ⇒ cursorShape() 为 null（"我不管，问上面"）',
+    Text::make('x')->cursorShape() === null,
+);
+check(
+    '光标 · Widget::cursor() 是声明（链式 + 可读回）',
+    Text::make('x')->cursor(CursorShape::IBeam)->cursorShape() === CursorShape::IBeam,
+);
+
+// ★ 用 tight 约束：`RenderCenter` 是**贴身**的（size = 孩子 size），loose 下盒只有
+//   文字那么大 ⇒ 命中点得算字体度量。tight 下盒铺满，命中点取 (10,10) 即可，
+//   与度量无关（§20 纪律 1：断言不该依赖它不打算测的东西）。
+$curContext = smokeContext();
+$curRoot = Center::make()->cursor(CursorShape::PointingHand)->child(Text::make('hit me'))->createElement();
+$curRoot->mount(null, $curContext);
+$curBox = $curRoot->effectiveBox();
+$curBox?->layout(BoxConstraints::tight(new Size(300.0, 200.0)));
+check(
+    '光标 · 声明落到了盒上（Element::syncBox 是唯一落点）',
+    $curBox?->cursor() === CursorShape::PointingHand,
+);
+
+$curFm = new FocusManager();
+
+// 内层声明盖过外层：Padding(Wait) > Center(PointingHand) > Text(无)
+$nestRoot = Padding::make(Center::make()->cursor(CursorShape::PointingHand)->child(Text::make('deep')))
+    ->cursor(CursorShape::Wait)
+    ->createElement();
+$nestRoot->mount(null, $curContext);
+$nestBox = $nestRoot->effectiveBox();
+$nestBox?->layout(BoxConstraints::tight(new Size(300.0, 200.0)));
+$nestHit = $nestBox?->hitTest(10.0, 10.0);
+check(
+    '光标 · 命中链取**最近**声明者（内层 PointingHand 盖过外层 Wait）',
+    $curFm->cursorOf($nestHit) === CursorShape::PointingHand,
+    'resolved=' . $curFm->cursorOf($nestHit)->name . '｜hit=' . ($nestHit === null ? 'null' : $nestHit::class),
+);
+
+// 命中者自己没声明 ⇒ 沿父链上溯
+$outerRoot = Padding::make(Center::make()->child(Text::make('deep')))
+    ->cursor(CursorShape::Wait)
+    ->createElement();
+$outerRoot->mount(null, $curContext);
+$outerBox = $outerRoot->effectiveBox();
+$outerBox?->layout(BoxConstraints::tight(new Size(300.0, 200.0)));
+$outerHit = $outerBox?->hitTest(10.0, 10.0);
+check(
+    '光标 · 命中者自己没声明 ⇒ 沿父链上溯到声明者（Wait）',
+    $curFm->cursorOf($outerHit) === CursorShape::Wait,
+    'resolved=' . $curFm->cursorOf($outerHit)->name . '｜hit=' . ($outerHit === null ? 'null' : $outerHit::class),
+);
+
+// 整条链没人声明 ⇒ Default（不是 null）
+$bareRoot = Center::make()->child(Text::make('bare'))->createElement();
+$bareRoot->mount(null, $curContext);
+$bareBox = $bareRoot->effectiveBox();
+$bareBox?->layout(BoxConstraints::tight(new Size(300.0, 200.0)));
+check(
+    '光标 · 整条链没人声明 ⇒ Default（★ 不是 null：Default 是**明确决定**）',
+    $curFm->cursorOf($bareBox?->hitTest(10.0, 10.0)) === CursorShape::Default,
+);
+check('光标 · 没命中任何盒（点在根外）⇒ Default', $curFm->cursorOf(null) === CursorShape::Default);
+
+// 应用面：dispatchInput() 的返回值**就是**喂给 WindowHost::setCursor() 的形状
+$curApp = new CursorApplication();
+check(
+    '光标 · 未挂载 ⇒ dispatchInput 返回 null（没有树就没有路由）',
+    $curApp->dispatchInput(PointerEvent::down(1.0, 1.0)) === null,
+);
+$curApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
+check(
+    '光标 · 按键不吃光标（dispatchInput(KeyEvent) 返回 null，焦点链照常走）',
+    $curApp->dispatchInput(KeyEvent::down(KeyChord::tab())) === null,
+);
+check(
+    '光标 · 指针落在控件上 ⇒ dispatchInput 返回声明形状（第 ③ 方的出口）',
+    $curApp->dispatchInput(PointerEvent::down(160.0, 120.0)) === CursorShape::PointingHand,
+);
+check(
+    '光标 · 指针落在窗口外 ⇒ 返回 Default（壳据此把光标还原成箭头）',
+    $curApp->dispatchInput(PointerEvent::down(-5.0, -5.0)) === CursorShape::Default,
 );
 
 fresh($log);

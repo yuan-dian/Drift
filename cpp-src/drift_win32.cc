@@ -84,6 +84,30 @@ std::vector<unsigned char> g_frame;
 int g_frameW = 0;
 int g_frameH = 0;
 
+// 当前指针形状。★ **必须缓存**：`WM_SETCURSOR` 每次鼠标移动都会来一次，而那一刻
+// PHP 侧可能正阻塞在 `GetMessageW` 里（问不到框架）⇒ 只能重贴**上一次**的决定。
+// 见 `php_drift_win_set_cursor()` 与 WndProc 的 `WM_SETCURSOR` 分支。
+HCURSOR g_cursor = NULL;
+
+// ★★ `IDC_*` 是 `MAKEINTRESOURCE(...)` 宏：**非 UNICODE 编译下展开成 `LPSTR`**，
+//   直接喂 `LoadCursorW` 就是 C2664 / C2440（本文件第二次撞这个坑 —— 第一次是
+//   `DefWindowProc` 必须显式写 `W` 后缀，见 WndProc 里的注释）。根因同一个：
+//   **Win32 的 `*W` API 不认按 ANSI 展开的宏**。
+//   ⇒ 这里用 `MAKEINTRESOURCEW(数值)`：与编译期 `UNICODE` 设置**无关**，数值取自
+//     `<winuser.h>` 的原始定义（注释里写名字，好搜；WinUser 改了才需要跟着改）。
+LPCWSTR cursorIdForShape(int shape) {
+    switch (shape) {
+        case 1:  return MAKEINTRESOURCEW(32513);   // IDC_IBEAM
+        case 2:  return MAKEINTRESOURCEW(32649);   // IDC_HAND
+        case 3:  return MAKEINTRESOURCEW(32646);   // IDC_SIZEALL
+        case 4:  return MAKEINTRESOURCEW(32645);   // IDC_SIZENS
+        case 5:  return MAKEINTRESOURCEW(32644);   // IDC_SIZEWE
+        case 6:  return MAKEINTRESOURCEW(32514);   // IDC_WAIT
+        case 7:  return MAKEINTRESOURCEW(32648);   // IDC_NO
+        default: return MAKEINTRESOURCEW(32512);   // IDC_ARROW（0 与未知值同路）
+    }
+}
+
 // ────────────────────────────────────────────────────── 字符串换算 ──
 
 /** UTF-8（PHP 侧）→ UTF-16（Win32 W 系列 API） */
@@ -281,6 +305,18 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // 客户区整块由我们贴 ⇒ 让系统擦背景只会多一次全屏填充并造成闪烁
             return 1;
 
+        case WM_SETCURSOR:
+            // ★ 客户区里自己贴并返回 TRUE（= 已处理）。不这么做的话 DefWindowProc
+            //   会把光标重置回窗口类光标（本类 hCursor = NULL ⇒ 默认箭头）⇒ 框架
+            //   设的形状只显示到下一次鼠标移动，**且不报错**。
+            // ★ 非客户区（标题栏 / 边框）`break` 交回 DefWindowProc —— 那里的
+            //   拉伸/箭头光标该由系统决定，自绘没有好处。
+            if (LOWORD(lp) == HTCLIENT) {
+                SetCursor(g_cursor != NULL ? g_cursor : LoadCursorW(NULL, cursorIdForShape(0)));
+                return TRUE;
+            }
+            break;
+
         case WM_LBUTTONDOWN:
         case WM_MBUTTONDOWN:
         case WM_RBUTTONDOWN: {
@@ -466,6 +502,20 @@ void php_drift_win_close(Int hwnd) {
     HWND target = (HWND)(INT_PTR)hwnd;
     if (target != NULL) {
         DestroyWindow(target);
+    }
+}
+
+void php_drift_win_set_cursor(Int hwnd, Int shape) {
+    // ★ `shape` 是 `Drift\Input\CursorShape` 的 value（`src/Input/CursorShape.php`）；
+    //   名字→`IDC_*` 的映射只有 `cursorIdForShape()` 一处 —— 两边必须同步改。
+    // ★ `LoadCursorW(NULL, …)` 的 IDC_* 是**系统资源**（MAKEINTRESOURCE），
+    //   不需要 DestroyCursor，也不随窗口销毁而失效 ⇒ 缓存裸 HCURSOR 是安全的。
+    g_cursor = LoadCursorW(NULL, cursorIdForShape((int)shape));
+
+    HWND target = (HWND)(INT_PTR)hwnd;
+    if (target != NULL) {
+        // 立刻生效（不等下一次 WM_SETCURSOR）—— 否则"移进去要动一下才变"
+        SetCursor(g_cursor);
     }
 }
 

@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Platform;
 
 use Drift\Geometry\Size;
+use Drift\Input\CursorShape;
 
 /**
  * 窗口：生命周期 + 运行期控制（§5.1 纪律 3："生"与"活"分开）。
@@ -15,9 +16,11 @@ use Drift\Geometry\Size;
  *
  * ★ **指针形状与指针捕获也归这里**（不是新端口）：它们是**窗口级**状态
  *   （`SetCursor` / `SetCapture` 作用于 HWND），与"标题 / 位置 / 尺寸"同族。
- *   ⏳ 这两个方法**今天不声明**：它们的唯一消费者是 §9.1 的命中链 + `CursorShape`
- *   （`src/Input/`，归 M3）⇒ 按 A15"没有消费者的 API 不预挂"。形状已定：
- *   `setCursor(CursorShape $shape)` / `setCapture(bool $capture): bool`。
+ *   ★ **`setCursor()` 2026-10-15 落地** —— `CursorShape` 同日落地 ⇒ 消费者到位，
+ *     这正是当初"不预挂"的解除条件。**带 `$windowHandle`**：原记的形状没带，
+ *     但同族方法都带，且多窗口时"设哪个窗口的光标"必须有答案。
+ *   ★ **`setCapture()` 仍不声明**：它的消费者是 `GestureArena`（§9.1"按下即捕获"，
+ *     归 M3）⇒ 继续按 A15 不预挂。形状已定：`setCapture(int, bool): bool`。
  *
  * @api platform
  */
@@ -50,4 +53,16 @@ interface WindowHost
 
     /** 供 `WindowStateStore`（M5，§5.4）读回"上次是不是最大化" */
     public function isMaximized(int $windowHandle): bool;
+
+    /**
+     * 设置鼠标指针形状（§9.1「一次命中，三方消费」的第 ③ 方）。
+     *
+     * ★ **收 `CursorShape` 而不是 `int`**：§5.1 纪律 1 允许 Drift 值对象跨端口，
+     *   而 `int` 会把"哪个数字是 IBeam"这条知识泄漏到每个调用点。平台只需把它
+     *   翻成自己的资源（Win32：`LoadCursorW(IDC_*)`）。
+     * ★ **不触发重绘**：光标是**输入态**，不是渲染态 ⇒ 它不需要一帧。
+     *
+     * @api platform
+     */
+    public function setCursor(int $windowHandle, CursorShape $shape): void;
 }

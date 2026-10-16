@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Widget;
 
 use Drift\Errors;
+use Drift\Input\CursorShape;
 use Drift\Input\FocusNode;
 
 /**
@@ -27,6 +28,9 @@ abstract class Widget
 
     /** @internal null = 未声明焦点（不可聚焦 / 用文档序，§9.1） */
     private ?FocusNode $focus = null;
+
+    /** @internal null = 未声明光标形状（继承命中链上更近的祖先，§9.1） */
+    private ?CursorShape $cursor = null;
 
     /** @internal 本控件是否**天然可聚焦**（输入控件在构造器里声明，§9.1） */
     private bool $focusable = false;
@@ -189,6 +193,36 @@ abstract class Widget
     public function focusNode(): ?FocusNode
     {
         return $this->focus;
+    }
+
+    /**
+     * 声明本控件（及其**未覆写**的后代）的鼠标指针形状（§9.1 / §A.3.2）。
+     *
+     * ```php
+     * Row::make()->cursor(CursorShape::PointingHand)->children([...])   // 可点
+     * Text::make('可选中文本')->cursor(CursorShape::IBeam)              // 文本
+     * Column::make()->cursor(CursorShape::SizeAll)                     // 拖动把手
+     * ```
+     *
+     * ★ 这是**声明**，不是状态：谁声明、命中链取**最深**者 —— 解析住在
+     *   `FocusManager`（与焦点链同源，§9.1「一次命中，三方消费」）。
+     * ★ **不给控件开自绘光标的口子**（§9.1 裁决）：自绘光标要自己画、自己跟帧，
+     *   为一个装饰把渲染路径拉进输入态不划算。
+     *
+     * @api
+     */
+    public function cursor(CursorShape $shape): static
+    {
+        $this->mutate();
+        $this->cursor = $shape;
+
+        return $this;
+    }
+
+    /** @internal 造盒时读它（`null` = 未声明 ⇒ 交给命中链上更近的祖先） */
+    public function cursorShape(): ?CursorShape
+    {
+        return $this->cursor;
     }
 
     /**

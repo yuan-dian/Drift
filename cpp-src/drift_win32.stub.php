@@ -147,3 +147,21 @@ function drift_win_message_box(string $title, string $body): void {}
  *   不缓存就会白屏）。
  */
 function drift_win_present(int $hwnd, string $rgba, int $width, int $height): void {}
+
+// ---- 指针形状（§9.1 命中链的第 ③ 方） ----
+
+/**
+ * 设置鼠标指针形状。`$shape` 是 `Drift\Input\CursorShape` 的 `value`：
+ * `0`=Default `1`=IBeam `2`=PointingHand `3`=SizeAll `4`=SizeNS `5`=SizeWE
+ * `6`=Wait `7`=NotAllowed。
+ *
+ * ★ **为什么传 int 而不是形状名**：名字→`IDC_*` 的映射只该有一处（这里）。
+ *   传名字会让壳做字符串比较，而 AOT 下字符串是 `php::Str`，每次移动光标都要
+ *   过一次桥的解包 —— `int` 是原语（§5.1 纪律 1）。
+ * ★ **壳必须缓存**并在 `WM_SETCURSOR` 时重贴：Windows 在鼠标移动前发
+ *   `WM_SETCURSOR`，`DefWindowProc` 会把它重置回窗口类光标（`hCursor = NULL`
+ *   ⇒ 默认箭头）⇒ 不缓存的话框架设的形状只显示到下一次移动，**且不报错**。
+ * ★ 未知 `$shape` 一律退回 `IDC_ARROW`（**不抛**）：光标形状是**装饰**，
+ *   为它中止整个应用与 §1.2 的中止序列不成比例。
+ */
+function drift_win_set_cursor(int $hwnd, int $shape): void {}

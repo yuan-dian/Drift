@@ -6,6 +6,7 @@ namespace Drift\Platform\Win32;
 use Drift\Errors;
 use Drift\Geometry\Size;
 use Drift\Geometry\Scale;
+use Drift\Input\CursorShape;
 use Drift\Platform\WindowHost;
 
 use function drift_win_client_size;
@@ -13,6 +14,7 @@ use function drift_win_close;
 use function drift_win_create;
 use function drift_win_dpi;
 use function drift_win_is_maximized;
+use function drift_win_set_cursor;
 use function drift_win_set_title;
 use function drift_win_show;
 
@@ -92,5 +94,20 @@ final class Win32WindowHost implements WindowHost
     public function isMaximized(int $windowHandle): bool
     {
         return drift_win_is_maximized($windowHandle);
+    }
+
+    /**
+     * 设置指针形状（§9.1）。
+     *
+     * ★ 传的是 `$shape->value` —— **枚举的 `value` 就是桥的 ABI 编号**
+     *   （`drift_win_set_cursor(int $hwnd, int $shape)`）。这条约定写在
+     *   `CursorShape` 的 docblock 里，**两处必须同步改**。
+     * ★ 桥**缓存**这个形状并在 `WM_SETCURSOR` 时重贴 —— 不缓存的话 Windows
+     *   每次鼠标移动都会把光标重置回窗口类光标，形状只显示到下一次移动
+     *   （且**不报错**）。原因见 `cpp-src/drift_win32.cc` 的同名函数。
+     */
+    public function setCursor(int $windowHandle, CursorShape $shape): void
+    {
+        drift_win_set_cursor($windowHandle, $shape->value);
     }
 }

@@ -68,7 +68,20 @@ final class Bootstrap
         $app = new HelloApplication();
         $app->attach($surface, $screen->viewport());
 
+        // ★ **事件队列必须每帧前抽干**：平台把 Win32 消息翻成 Drift 事件推进
+        //   `input()`，而**派发是框架的活**（§5.2 裁决 1：循环归平台，派发归框架）。
+        //   不抽干的话队列会无限增长，而窗口对点击/按键**毫无反应** —— 且不报错。
+        // ★ `dispatchInput()` 对指针事件返回命中链解析出的光标形状 ⇒ 由**这里**
+        //   喂给 `setCursor()`：应用它需要 `WindowHost`，而框架不持平台（§5.1）。
+        $input = $platform->input();
         while ($platform->pump()) {
+            while (($event = $input->poll()) !== null) {
+                $shape = $app->dispatchInput($event);
+                if ($shape !== null) {
+                    $window->setCursor($handle, $shape);
+                }
+            }
+
             $app->frame($platform->now(), $screen->viewport());
         }
     }

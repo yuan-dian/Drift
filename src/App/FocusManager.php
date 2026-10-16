@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\App;
 
+use Drift\Input\CursorShape;
 use Drift\Input\FocusNode;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
@@ -127,19 +128,57 @@ final class FocusManager
     /**
      * 派发一次指针按下：命中测试 ⇒ 焦点（§9.1）。
      *
-     * ★ 命中的**不是**可聚焦节点（点了空白 / `Text`）⇒ 返回 `false` 且**不清焦点**
-     *   —— "点空白丢焦点"是另一条设计决定，不在这里偷偷做掉。
+     * ★ 它是 `hitTest()` + `focusHit()` 的组合体，**保留给"只关心焦点"的调用方**
+     *   （`drift-preview --focus` / smoke）。真机的输入派发走
+     *   `Application::dispatchInput()` —— 那里一次命中要同时喂给焦点与光标。
      */
     public function dispatchPointer(PointerEvent $event, Element $root): bool
     {
-        $box = $root->effectiveBox();
+        return $this->focusHit($this->hitTest($event->x, $event->y, $root), $root);
+    }
 
-        if ($box === null) {
-            return false;
+    /**
+     * 命中测试（§9.1）：**一次走树**，结果供多方消费。
+     *
+     * ★ 单独抽出来是因为 §9.1 的「一次命中，三方消费」（事件路由 / 语义 /
+     *   光标形状）**明确要求不重复走树** ⇒ 调用方先拿一次命中结果，再分别喂给
+     *   `focusHit()` 与 `cursorOf()`，而不是各自 hitTest 一遍。
+     */
+    public function hitTest(float $x, float $y, Element $root): ?RenderBox
+    {
+        return $root->effectiveBox()?->hitTest($x, $y);
+    }
+
+    /**
+     * 命中链解析光标形状（§9.1「三方消费」的第 ③ 方）。
+     *
+     * ★ 从命中的盒**向上**找最近的声明者 ⇒ "给 `Column` 声明一次，里面所有子节点
+     *   都生效"，而子节点自己声明时覆盖祖先。
+     * ★ 收的是**已经命中的盒**（不是坐标）：不重复走树（见 `hitTest()`）。
+     * ★ 一路没人声明 ⇒ `CursorShape::Default`（**不是** `null` —— 见该枚举的
+     *   docblock："未声明"与"明确要箭头"是两件事）。
+     */
+    public function cursorOf(?RenderBox $hit): CursorShape
+    {
+        for ($node = $hit; $node !== null; $node = $node->parent()) {
+            $shape = $node->cursor();
+
+            if ($shape !== null) {
+                return $shape;
+            }
         }
 
-        $hit = $box->hitTest($event->x, $event->y);
+        return CursorShape::Default;
+    }
 
+    /**
+     * 把**已经算好的命中**落到焦点上（§9.1 的第 ① 方）。
+     *
+     * ★ 命中的**不是**可聚焦节点（点了空白 / `Text`）⇒ 返回 `false` 且**不清焦点**
+     *   —— "点空白丢焦点"是另一条设计决定，不在这里偷偷做掉。
+     */
+    public function focusHit(?RenderBox $hit, Element $root): bool
+    {
         if ($hit === null) {
             return false;
         }

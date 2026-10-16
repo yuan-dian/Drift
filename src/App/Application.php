@@ -8,6 +8,10 @@ use Drift\Commands\CommandHandler;
 use Drift\Commands\CommandRouter;
 use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
+use Drift\Input\CursorShape;
+use Drift\Input\InputEvent;
+use Drift\Input\KeyEvent;
+use Drift\Input\PointerEvent;
 use Drift\Layout\RenderBox;
 use Drift\Rendering\RenderSurface;
 use Drift\Text\DeterministicFontManager;
@@ -46,11 +50,20 @@ use Drift\Widget\Widget;
  */
 abstract class Application
 {
-    private ?Element $root = null;
+    protected ?Element $root = null;
 
-    private ?Frame $frame = null;
+    protected ?Frame $frame = null;
 
-    private CommandRouter $router;
+    /**
+     * 输入路由宿主（§9.1 的 ②③ 环 + 命中测试）。
+     *
+     * ★ 它本身是 `@internal` 的实现细节，但**由 `Application` 持有**：路由需要根
+     *   Element，而根 Element 住在这里 ⇒ 让调用方自己拿一个 `FocusManager`
+     *   会变成"两份焦点状态"（§9.1 的焦点是渲染态，只能有一份）。
+     */
+    protected ?FocusManager $focus = null;
+
+    protected CommandRouter $router;
 
     /** @param iterable<string, CommandHandler> $handlers `commands()` 的返回值 */
     public function __construct(iterable $handlers = [])
@@ -149,6 +162,10 @@ abstract class Application
 
         $this->frame = new Frame($surface);
         $this->frame->run($root, $constraints, 0.0);
+
+        // 焦点链要在**挂载之后**建（此刻才有树可走）。
+        $this->focus = new FocusManager();
+        $this->focus->collect($root);
     }
 
     /** 根 Element（挂载后才有）—— 测试与 devtools 读它 */
@@ -173,6 +190,58 @@ abstract class Application
         }
 
         $frame->run($root, $constraints, $timestampMs);
+
+        // ★ 每帧重建焦点链：`settle()` 可能重建了子树 ⇒ 旧链里可能握着**已被移除**
+        //   的 Element（按键会静默丢给死节点）。`collect()` 幂等，且会保留仍然存在
+        //   的焦点（见 `FocusManager::collect()`）。
+        //   O(树) 与同帧的 `layout()` 同阶 —— §13.3：Render 层本就全树重排。
+        $this->focus?->collect($root);
+    }
+
+    /**
+     * 喂一条平台事件（§9.1 路由链的入口）。
+     *
+     * ```php
+     * while ($platform->pump()) {
+     *     while (($event = $input->poll()) !== null) {
+     *         $shape = $app->dispatchInput($event);
+     *         if ($shape !== null) { $window->setCursor($handle, $shape); }
+     *     }
+     *     $app->frame($platform->now(), $screen->viewport());
+     * }
+     * ```
+     *
+     * @return CursorShape|null 指针事件 ⇒ 命中链解析出的光标形状（★ 与焦点
+     *   **同一次命中**，不重复走树 —— §9.1「一次命中，三方消费」）；其余事件
+     *   ⇒ `null`（不改光标）。★ 应用它需要 `WindowHost`，而**框架不持平台**
+     *   （§5.1：共享代码零平台引用）⇒ 由组合根把返回值喂给 `setCursor()`。
+     *
+     * @api
+     */
+    public function dispatchInput(InputEvent $event): ?CursorShape
+    {
+        $root = $this->root;
+        $focus = $this->focus;
+
+        if ($root === null || $focus === null) {
+            return null;   // 未挂载：没有树就没有路由
+        }
+
+        if ($event instanceof KeyEvent) {
+            $focus->dispatchKey($event);
+
+            return null;
+        }
+
+        if ($event instanceof PointerEvent) {
+            $hit = $focus->hitTest($event->x, $event->y, $root);   // ★ 只走一次树
+
+            $focus->focusHit($hit, $root);
+
+            return $focus->cursorOf($hit);
+        }
+
+        return null;
     }
 
     /**

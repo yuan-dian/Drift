@@ -25,10 +25,15 @@ abstract class Element
     /** @var list<Element> */
     protected array $children = [];
 
-    private bool $mounted = false;
+    // ★ AOT 注意：这两个属性被**父类方法**（`effectiveBox()` / `syncBox()` /
+    //   `mount()` 等）在**子类实例**上访问。tpc 在按运行时类型查属性表时，
+    //   父类的 `private` 不进子类属性表 ⇒ 子类实例上访问它们会报
+    //   `Undefined property: <Sub>::$box` 并终止请求。放宽成 `protected`
+    //   让它们进入子类布局（语义不变，仅可见性放宽）。
+    protected bool $mounted = false;
 
     /** @internal §13.2：本节点的渲染盒；结构节点为 null */
-    private ?RenderBox $box = null;
+    protected ?RenderBox $box = null;
 
     public function __construct(Widget $widget)
     {
@@ -103,6 +108,11 @@ abstract class Element
         $this->box = $this->widget instanceof RenderBoxWidget
             ? $this->widget->createRenderObject($this->context)
             : null;
+
+        // §9.1：光标形状是 Widget 的**声明**，落一份到盒上供命中链解析。
+        // ★ 落在这里而不是每个 `createRenderObject()` 里各传一次：那是 12+ 处
+        //   抄同一句，漏抄的不会报错 —— 只会静默用默认光标。
+        $this->box?->setCursor($this->widget->cursorShape());
     }
 
     /**
