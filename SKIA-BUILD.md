@@ -199,6 +199,7 @@ para->paint(canvas, x, y);
 ### 4.1 三档阶梯
 
 量法：写**最小可运行程序**（真的调用目标模块），`cl /O2 /MT` + 全清单链接，量 **exe 字节数**。
+★ **单位**：本报告体积一律 **MiB**（1 MiB = 1048576 B）。按 10^6 计则三档为 4.23 / 6.18 / 6.72 MB。
 
 | 档 | 内容 | exe |
 |----|------|-----|
@@ -211,12 +212,12 @@ para->paint(canvas, x, y);
 | 程序 | 体积 |
 |------|------|
 | Drift2 `users.exe`（**无 Skia**，软光栅） | **2.90 MB** |
-| GUI `typephp_gui_demo.exe`（框架 + Skia 全开） | **13.38 MB** |
+| GUI `typephp_gui_demo.exe`（框架 + Skia 全开） | **12.76 MiB**（≈13.4 MB 十进制） |
 
 ### 4.2 两条读法
 
 1. **`.lib` 大小 ≠ 进 exe 的贡献** —— 链接器会 dead-strip 没被引用的代码。`skia.lib` 单个 35 MB，但档 1 的 exe 只有 4 MB ⇒ **只有"真走那条链"的程序才量得准**。
-2. **GUI 的 13.4 MB 主要不是 Skia** —— Skia 部分只 ~5.9 MB，差额约 **7 MB 是框架自身的 PHP→C++ 代码 + 更多特性**（GUI 有 Selftest / TreeDump / 更多页面）。
+2. **GUI 的 12.76 MiB 主要不是 Skia** —— Skia 部分只 ~5.9 MB，差额约 **7 MB 是框架自身的 PHP→C++ 代码 + 更多特性**（GUI 有 Selftest / TreeDump / 更多页面）。
 
 ### 4.3 ICU 的边际成本
 
