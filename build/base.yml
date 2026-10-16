@@ -16,28 +16,55 @@
 #   （SkParagraph 的私有头用了 `std::countl_zero`，C++20 起才有）。
 #
 # ───────────────────────────────────────────────────────────────────────────
-# ★★ Skia 追加项（M4 落地 `SkiaCanvas` 时抄这段；**2026-10-16 照
-#    `D:\TypePHP\GUI\apps\demo\project.yml` 逐条核过**，那是真机构建通过的配置）:
+# ★★ Skia 追加项（M4 落地 `SkiaCanvas` 时抄这段）
+#    **2026-10-16 已实测**（最小 Skia 程序三档 + `/MT` 真机构建），结论比"照抄
+#    GUI 配置"多三条 —— 完整报告见 `SKIA-BUILD.md`。GUI 的 `apps/demo/project.yml`
+#    是同一套配置的真机构建通过样例，可逐条对照。
 #
 #   前提：把 Skia 预编译包放到 `Drift2/cpp/skia/`（GUI 的那份在 `GUI/cpp/skia/`：
-#         `include/` + `out/Release-x64/*.lib`）。
+#         `include/` + `out/Release-x64/*.lib`，约 **141 MB** ⇒ **不入库**）。
 #
 #   cxx-std: c++20                      # ★ 必须 —— SkParagraph 的 src/base/SkMathPriv.h
 #                                       #   用 std::countl_zero/countr_zero（<bit>），C++17 报 C2039
 #   cxx-flags 追加:
-#     - /MT                             # 匹配 Px-dev 的 Skia 预编译包（aseprite m151，静态 CRT）。
-#                                       #   ★ bin(AOT) 模式不链 php8ts.lib ⇒ /MT 安全；
-#                                       #   litehtml-lab 走 /MD（php8ts）曾撞 LNK2038，别混
+#     - /MT                             # 匹配预编译包的**静态 CRT**。★ 它**能加**（实测构建通过）：
+#                                       #   tpc 的 `/MD` 写在 cxxflags **之前**（`Msvc.php:104`），
+#                                       #   用户 flag 在之后追加 ⇒ 这里的 `/MT` 覆盖它；
+#                                       #   且 php8ts 在本环境是 **DLL** ⇒ 跨 DLL 边界不共享 CRT
+#                                       #   ⇒ "静态库里 /MT 致命"那条**不适用**。
+#                                       #   ★ 但它**换不到"免 CRT / 单文件"** —— exe 仍导入
+#                                       #     `VCRUNTIME140.dll`（php8ts.dll 是 /MD）
+#                                       #     ⇒ **别为省体积加它**，加它只是为了匹配 Skia 包。
 #     - /DUSE_SKIA                      # 打开桥里的 Skia 分支（否则退化 GDI 路径）
-#     - /I"cpp/skia"                    # 让 #include <core/SkCanvas.h> 命中预编译 include 根
-#                                       #   ★ 相对 **cwd（仓库根）** —— cxx-flags 不过 tpc 的路径解析
+#     - /I"cpp/skia"                    # **唯一需要的 include 根** —— 包内头按 `include/core/...`
+#                                       #   与 `modules/skparagraph/...` 两种前缀写（GUI 桥接实测），
+#                                       #   一个 -I 同时覆盖两者（SkColorSpace.h 会 `#include
+#                                       #   "modules/skcms/skcms.h"` ⇒ 不能只给 `.../include`）。
+#                                       #   ★ 相对 **cwd（仓库根）** —— cxx-flags 不过 tpc 的路径解析；
+#                                       #   等价写法是 tpc 的 `include-paths:`（相对 yml 文件，GUI 两者都写）
 #     - /DGR_GL_FUNCTION_TYPE=__stdcall
 #   ld-flags 追加（**按依赖顺序，依赖者在前** —— 顺序错了就是一堆 LNK2019）:
 #     - cpp/skia/out/Release-x64/skia.lib  ·  skunicode_icu  ·  icu  ·  skcms  ·  expat
 #     - freetype2  ·  harfbuzz  ·  libpng  ·  zlib  ·  libjpeg  ·  libwebp  ·  sksg
-#     - skshaper  ·  skresources  ·  skparagraph  ·  skunicode_core  ·  skottie
+#     - skshaper  ·  skresources  ·  skparagraph  ·  skunicode_core
 #     - svg  ·  wuffs  ·  bentleyottmann  ·  jsonreader          （皆 .lib，同目录）
+#     ★ **删掉 `skottie`** —— 该包 Skottie 头不完整（`SlotManager.h` 要私头
+#       `modules/skottie/src/SkottieValue.h`）⇒ **实际不可用**，列进清单是空转（实测 C1083）。
 #   link-libs 追加: d3d12.lib · dxgi.lib · d3dcompiler.lib · windowscodecs.lib
+#     ★ 必须再加 **`advapi32.lib`** —— ICU 的 `uprv_detectWindowsTimeZone()` 要注册表
+#       （`RegOpenKeyExW` 等），缺则 `skunicode_icu.lib` 报 5 个 LNK2019。本文件下面的
+#       `link-libs` 已含它（软光栅的系统深色模式也用），故不必重复。
+#
+#   ★ **运行期数据文件**：用了 SkParagraph ⇒ 必须把 `icudtl.dat`（**778 KB**）放到
+#     exe 的工作目录（ICU 按 **cwd** 找；缺失 ⇒ `SkUnicodes::ICU::Make()` 返回 null
+#     ⇒ `ParagraphBuilderImpl` 的 `check(fUnicode)` **abort**）。它**甩不掉**：
+#     `skshaper.lib` 硬引用 `SkUnicodes::ICU::Make`（实测 LNK2019 可证）。
+#     ⏳ "内嵌进 exe"当前**没有干净路径**（ICU 公开头未随包、`SkUnicode_icu.h` 只暴露
+#     `Make()`）⇒ 登记在 `DESIGN.md §24.2 #6`。
+#
+#   ★ 体积（最小程序 `/O2 /MT` **实测**，非"库文件大小"）：core 光栅 **4.03 MB**
+#     → +文本栈（SkParagraph/SkShaper/HarfBuzz/ICU）**5.89 MB**（+1.86）
+#     → +SVG/SkSG/expat **6.41 MB**（+0.52）。对照 Drift2 `users.exe`（无 Skia）2.90 MB。
 #
 #   ★ 另有一件 GUI 做了、Drift2 还没做的事：`resource:`（图标 + 版本信息）与
 #     `manifest:`（comctl32 v6 —— 没有它，**原生** MessageBox 是 Win95 外观）。

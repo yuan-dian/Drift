@@ -710,8 +710,9 @@ TextMetricsProvider  ★ 布局确定性注入点：Widget 层问度量，不问
 1. **字体初始化空指针 ⇒ 启动崩溃，且会被误判为"无控制台子系统的问题"**。GUI 仓早期 `--no-console` 启动报 `0xC0000005`，根源是 `ensureFont()` 里字体句柄为空。【手册】§6 原话："**无控制台程序的启动崩溃常掩盖真正的空指针/初始化错误，先排查自身初始化路径**"。
    → Drift 对策：`FontManager` 初始化**必须**在任何绘制前完成并断言非空（G2），失败走 `Errors::report` 而非崩。
 2. **ICU 是运行期硬依赖**。GUI 仓用 `SkUnicodes::ICU::Make()` 做断行/字素/双向，**运行期硬依赖 `icudtl.dat`（778 KB），缺失即 `check(fUnicode)` abort**。
-   → Drift 对策（三条，按优先级）：① 把 ICU 数据经 `embedded-files` 或 PE 资源**打包进 exe**（【手册】§10），交付仍是单文件；② 若体积不可接受，退"内置简体中文断行 + 拉丁"的最小实现（放弃 bidi）；③ 中文断行规则（禁则）单独实现，不依赖 ICU 的完整 UAX #14。
-   → ⏳ **开放项**（§24.2）：三档按体积预算选。
+   → ★ **2026-10-16 实测**（报告 `SKIA-BUILD.md`）：ICU **甩不掉** —— `skshaper.lib` 硬引用 `SkUnicodes::ICU::Make()`（缺它即 `LNK2019`）⇒ 用了 SkParagraph 就没有"不带 ICU"的选项；且它的**边际体积只有 ~1.86 MB**（4.03 → 5.89 MB，含 HarfBuzz/SkShaper/SkParagraph 整条文本栈）。
+   → Drift 对策（**收敛为一条**）：把 ICU 数据（`icudtl.dat`，778 KB）**打包进 exe**（`embedded-files` 或 PE 资源，【手册】§10）⇒ 交付仍是单文件。★ 但当前预编译包**没有干净路径**（ICU 公开头未随包、`SkUnicode_icu.h` 只暴露 `Make()`）⇒ 若一时做不成，**先接受"与 exe 同目录分发"**（ICU 按 **cwd** 找文件），不阻塞 `SkiaCanvas`。原第 ② 档"退最小实现"**否掉**（省不到 1 MB，不值得自实现断行规则）；原第 ③ 档（自实现禁则）降为"若将来去掉 SkParagraph"的备选。
+   → ⏳ **开放项**（§24.2 #6）：剩"`icudtl.dat` 能否内嵌"一项待验。
 
 ### 8.4 IME 协议（`TextInputClient`）
 
@@ -2116,9 +2117,10 @@ cxx-flags:
 > `build/base.yml` 放"两边**完全相同**"的项：`mode` / `platform` / `no-console` /
 > `cxx-std: c++17` / `cxx-flags` / `ld-flags` / `link-libs` / `ignore: [build]` / `build-dir`。
 > ★ **`c++17` 不是笔误**：当前不链 Skia（M1 走软光栅），M4 落地 `SkiaCanvas` 时才升 `c++20`
-> 并加 Skia 的 include/link 项 —— 那段追加项（22 个 lib 按依赖序、**`/MD` 而非 `/MT`**、
-> `/DUSE_SKIA`、`/I"cpp/skia"`、`GR_GL_FUNCTION_TYPE`）已逐条记在 `build/base.yml` 注释里，
-> 抄自 `D:\TypePHP\GUI\apps\demo\project.yml`。
+> 并加 Skia 的 include/link 项 —— 那段追加项（**21 个 lib** 按依赖序、**`/MT`**、`/DUSE_SKIA`、
+> `/I"cpp/skia"`、`GR_GL_FUNCTION_TYPE`、`advapi32.lib`）已逐条记在 `build/base.yml` 注释里，
+> 并附 **2026-10-16 实测校正**（报告 `SKIA-BUILD.md`）—— 原写"`/MD` 而非 `/MT`"是**错的**：
+> `/MT` 实测可用（tpc 的 `/MD` 可被用户 flag 覆盖），且 `/MT` **换不到"免 CRT"**。
 
 ### 16.5 八个必须知道的陷阱
 
@@ -3664,12 +3666,13 @@ M5 ── （无裁决项；虚拟化 / 脏矩形 / `WindowStateStore` / UIA 桥
 | 3 | **`#[Native]` 类在 lib 模式下的实际限制** | 只知道"必须标 `#[NoExport]`" | 若想用 `#[Native]` 加速热路径对象 |
 | 4 | **CRT / PHP 版本不匹配的实际症状** | 部分已知（`LNK2038`），lib 专属症状未验 | 第三方分发时 |
 | 5 | **跨 `.dll` / 跨线程的"异步闭包"** | 同步闭包已验；异步未验 | 若走 O-03（`Job` 类）则**不再是阻塞项** |
-| 6 | **ICU 打包策略** | §8.3 给了三档（打包进 exe / 退最小实现 / 自实现禁则） | 按体积预算选（M1 前） |
+| 6 | **ICU 打包策略** —— ★ **2026-10-16 实测收口一半**：ICU **不可省**（`skshaper.lib` 硬引 `SkUnicodes::ICU::Make`）+ 边际仅 **~1.86 MB** ⇒ "退最小实现"档**否掉**；`icudtl.dat`（778 KB）必须随 exe 分发（**按 cwd 找**，缺失即 `check(fUnicode)` abort）。**剩一项待验**：能否内嵌进 exe —— `udata_setCommonData` 在 `icu.lib` 里，但 **ICU 公开头未随包**（`include/unicode/` 为空）、`SkUnicode_icu.h` 只暴露 `Make()` ⇒ 当前无干净路径，需自建 PE 资源注入机制（未实测）。详见 `SKIA-BUILD.md` | 见 `SKIA-BUILD.md` | M4 落地 `SkiaCanvas` 时（**"内嵌"可先接受"同目录分发"，不阻塞**） |
 | 7 | **§17 线程模型是否最终定案** | 原与"能否切 `--nano`"互为条件；★ **nano 已明确不做（§16.7.5，2026-10-14）⇒ 该约束解除**。★ **2026-10-16：TSRM 补枪已完成（同表 #1，探针 K），结论是后端 A 不可实现** ⇒ **线程模型事实上已定案 = 只上后端 B（同步三态）**，后端 A 转为"tpc 能力请求"挂起 | ✅ **已定案**（2026-10-16） |
 | 8 | ~~**`--nano` 真机跑通**~~ | ★ **已移出开放项** —— 2026-10-14 裁决：nano 不作为前期重点（§16.7.5） | — |
 | 9 | **`-m lib` 的 D4**（`*_arg_N_default_value()` 导出前缀） | 上游可能已连带解决 | 形态 B 首次真机构建时 |
 | 11 | **真·跨屏拖动未验** —— 进程 DPI 感知已是 **Per-Monitor V2**（`tools/probe-window.py` 直接断言过，带反例），但**本机单屏 100% DPI** ⇒ "跨到另一块不同 DPI 的显示器后画面是否正确重排 / 不糊"**从未实测** | 需要**第二块不同 DPI 的显示器**（或改系统 DPI 后重启），当前环境不具备 | 有双屏 / 可改 DPI 的环境时（探针已带感知级别断言；跨屏后的**画面**仍需人肉看） |
 | 10 | **`TaskHost` 端口目前没有 AOT 消费者** —— `Job` / `TaskHost` / `SyncTaskHost` 三件已落地（2026-10-16），但设计里它们的**第一个消费者 `HttpUserSource`（§A.2.8）归 M4**，`apps/users` 在 M3 只发 `MemoryUserSource` ⇒ 端口的 **AOT 可达性**只被 `drift-codegen` 门覆盖到"翻译层"，**没有真机使用点**（AOT 只编译**可达**代码 ⇒ 没人用就可能整块不生成） | ① 三条：`tpc` 会为 `sources` 里的文件做翻译，故语法/类型层有门；② **真机使用点缺失**是结构性缺口，不修 tpc 补不了；③ 注意这与 #1 不同 —— #1 是"线程池不能用"，本条是"端口没人用" | `HttpUserSource` 落地时（M4）；或先给 `apps/users` 接一个**本地 Job 源**（会动 `MemoryUserSource` 的构造签名 ⇒ 需先裁决） |
+| 12 | **Skia 预编译库的分发方式** —— 包约 **141 MB**（`include/` + `modules/` + `src/` + `out/Release-x64/*.lib`）⇒ **不宜入库**（Drift2 只引用它的头与 lib）。选项：仓外固定路径（`cpp/skia` 软链 / 环境变量）/ 下载脚本 / git-lfs / submodule | 二进制体积远超源码仓的合理范围 | M4 落地 `SkiaCanvas` 时（先定"怎么拿到这个包"） |
 
 ### 24.3 G2 例外登记表（允许静默的场合）
 
@@ -3691,6 +3694,7 @@ M5 ── （无裁决项；虚拟化 / 脏矩形 / `WindowStateStore` / UIA 桥
 | `DECISIONS.md` | 裁决档案（问题本质 / 得失 / 推荐 / 依赖图） | 想知道"某个决策为什么这样" |
 | `HISTORY.md` | 历史、探针证据、**已作废结论清单** | 想复核一条结论 / 想引用证据 |
 | `probes/RESULTS.md` | 探针原始数据 | 想看数字 |
+| `SKIA-BUILD.md` | Skia 构建流程 / 使用方式 / 坑 / 体积的**实测调研报告** | 要落地 `SkiaCanvas` 前 |
 | `architecture.html` | 六张架构图 | 想看图 |
 | `REVIEW.md` / `REVIEW-2.md` | 两轮评审发现过程 | 想看"当初挑出了什么毛病" |
 | `archive/DESIGN-v1.0-2026-10-14.md` | v1.0 全文 | 需要 diff 时 |
@@ -3980,9 +3984,11 @@ cxx-flags: [/utf-8, /MT, /DUSE_SKIA]
 >
 > 三处差别要记住（都写进了 §16.4 陷阱 7 / 陷阱 8 与 `build/base.yml` 注释）：
 > ① **当前不链 Skia** ⇒ `cxx-std: c++17`、无 Skia 的 include/link 项（M4 落地 `SkiaCanvas`
->    时照 `build/base.yml` 里那段追加项，逐条抄自 `D:\TypePHP\GUI\apps\demo\project.yml`）；
-> ② **`/MT` 不能加**：tpc 的 bin 模式自己链 `phpx.lib` + `php8ts.lib`、编译期强制 `/MD`
->    ⇒ Skia 也要 `/MD` 版本（否则 `LNK2038`）；
+>    时照 `build/base.yml` 里那段追加项，并附 2026-10-16 实测校正，报告见 `SKIA-BUILD.md`）；
+> ② **`/MT` 能加**（实测构建通过）：tpc 的 `/MD` 写在 `cxxflags` **之前**（`Msvc.php:104`）
+>    ⇒ 用户 `cxx-flags` 里的 `/MT` 覆盖它；且 `php8ts` 是 **DLL** ⇒ 跨 DLL 边界不共享 CRT
+>    ⇒ "静态库里 `/MT` 致命"那条不适用。★ 但 `/MT` **换不到"免 CRT / 单文件"**（exe 仍导入
+>    `VCRUNTIME140.dll`）⇒ 加它只为匹配 Skia 包，**不是**为省体积；
 > ③ `defines: DRIFT_*_ALL_DECL` 只在 **lib 模式**用（§16.4 陷阱 5），bin 模式不需要。
 
 **SDK 分发形态（§10.2）**：应用侧把框架换成一行 stub：
