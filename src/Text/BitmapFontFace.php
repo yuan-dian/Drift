@@ -114,21 +114,69 @@ final class BitmapFontFace implements FontFace
             return null;
         }
 
+        $sourceHeight = count($rows);
         $sourceWidth = strlen($rows[0]);
         $scale = $pixelSize / $this->unitsPerEm;
         $width = max(1, (int) round($sourceWidth * $scale));
-        $height = max(1, (int) round(count($rows) * $scale));
+        $height = max(1, (int) round($sourceHeight * $scale));
 
         // §2.4 纪律 2：循环里不许 .= 累加（增长累加器在多字节下会**堆损坏**，
         // 且崩在无关代码）⇒ 先落数组，出循环一次 implode。
         // ★ 故意用两个变量名（`$coverage` 保持 array、`$bitmap` 是 string）：
         //   同一个变量从 array 改判成 string 会让 AOT 的类型钉死自找麻烦。
         $coverage = [];
-        for ($y = 0; $y < $height; $y++) {
-            $row = $rows[min(count($rows) - 1, (int) floor($y * count($rows) / $height))];
-            for ($x = 0; $x < $width; $x++) {
-                $column = min($sourceWidth - 1, (int) floor($x * $sourceWidth / $width));
-                $coverage[] = $row[$column] === '#' ? "\xFF" : "\x00";
+
+        if ($scale >= 1.0) {
+            // 放大 / 1:1：最近邻（整数倍时逐像素复制，非整数倍时块状放大）
+            for ($y = 0; $y < $height; $y++) {
+                $row = $rows[min($sourceHeight - 1, (int) floor($y * $sourceHeight / $height))];
+                for ($x = 0; $x < $width; $x++) {
+                    $column = min($sourceWidth - 1, (int) floor($x * $sourceWidth / $width));
+                    $coverage[] = $row[$column] === '#' ? "\xFF" : "\x00";
+                }
+            }
+        } else {
+            // ★ 降采样：**面积覆盖度平均 + 0.5 阈值**。
+            //   最近邻降采样会**整行/整列丢笔画**（16→12 恰好丢 4/16 行），12px 的说明
+            //   文字因此糊成一团（2026-10-16 由预览抓出）。覆盖度平均把"1px 细线"折算
+            //   成 1/(16/12)=0.75 的覆盖度 ⇒ 过 0.5 阈值 ⇒ 保住笔画。
+            //   ★ 放大路径完全不动 ⇒ 既有位图逐字节不变（零回归）。
+            for ($y = 0; $y < $height; $y++) {
+                $sy0 = $y * $sourceHeight / $height;
+                $sy1 = ($y + 1) * $sourceHeight / $height;
+                $syLast = (int) ceil($sy1);
+                if ($syLast > $sourceHeight) {
+                    $syLast = $sourceHeight;
+                }
+                for ($x = 0; $x < $width; $x++) {
+                    $sx0 = $x * $sourceWidth / $width;
+                    $sx1 = ($x + 1) * $sourceWidth / $width;
+                    $sxLast = (int) ceil($sx1);
+                    if ($sxLast > $sourceWidth) {
+                        $sxLast = $sourceWidth;
+                    }
+
+                    $ink = 0.0;
+                    for ($sy = (int) floor($sy0); $sy < $syLast; $sy++) {
+                        $overY = min($sy1, $sy + 1.0) - max($sy0, (float) $sy);
+                        if ($overY <= 0.0) {
+                            continue;
+                        }
+                        $row = $rows[$sy];
+                        for ($sx = (int) floor($sx0); $sx < $sxLast; $sx++) {
+                            if ($row[$sx] !== '#') {
+                                continue;
+                            }
+                            $overX = min($sx1, $sx + 1.0) - max($sx0, (float) $sx);
+                            if ($overX > 0.0) {
+                                $ink += $overX * $overY;
+                            }
+                        }
+                    }
+
+                    $area = ($sx1 - $sx0) * ($sy1 - $sy0);
+                    $coverage[] = ($area > 0.0 && $ink >= $area * 0.5) ? "\xFF" : "\x00";
+                }
             }
         }
         $bitmap = implode('', $coverage);
