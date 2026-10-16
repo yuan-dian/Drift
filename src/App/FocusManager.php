@@ -48,21 +48,55 @@ final class FocusManager
     private ?Element $focused = null;
 
     /**
+     * 最近一次指针命中解析出的 Element（O-20 的锚点来源）。
+     *
+     * ★ 菜单打开的锚点不能用坐标（命令是"意图"，不带位置 —— §11.4.3）⇒
+     *   `Application::showMenu($panel)` 不给锚点时就取这个。
+     */
+    private ?Element $lastHit = null;
+
+    /**
      * 从根重建焦点链（挂载 / 更新后调）。
+     *
+     * ★ **变参**：浮层是第二棵根渲染树（O-20）∀ 它的焦点链也要能进 Tab 序 ⇒
+     *   调用方传 `collect($root, $menuElement)`（文档序 = 主树在前、浮层在后）。
      *
      * ★ 树变了 ⇒ 原来的焦点 Element 可能已被移除 ⇒ 这里**显式清掉**，
      *   不留一个指向死节点的焦点（那会让后续按键静默丢掉）。
      */
-    public function collect(Element $root): void
+    public function collect(Element ...$roots): void
     {
         $this->order = [];
         $this->byId = [];
-        $this->walk($root);
+
+        foreach ($roots as $root) {
+            $this->walk($root);
+        }
 
         if ($this->focused !== null && !isset($this->byId[spl_object_id($this->focused)])) {
             $this->leave($this->focused);
             $this->focused = null;
         }
+
+        if ($this->lastHit !== null && !$this->lastHit->isMounted()) {
+            $this->lastHit = null;
+        }
+    }
+
+    /** 最近一次命中的 Element（浮层锚点用；未命中过 / 已离线 ⇒ `null`） */
+    public function lastHit(): ?Element
+    {
+        return $this->lastHit;
+    }
+
+    /**
+     * 命中的盒 ⇒ 它对应的 Element（右键找 `ContextMenu` 声明者要用）。
+     *
+     * ★ 从**命中盒**反查（不是从坐标重算）—— §9.1「一次命中，三方消费」。
+     */
+    public function elementAt(Element $root, RenderBox $hit): ?Element
+    {
+        return $this->elementForBox($root, $hit);
     }
 
     /** @return list<Element> 当前焦点链（文档序） */
@@ -188,6 +222,10 @@ final class FocusManager
         //   `TextFieldBox`（`RenderBoxWidget`）⇒ 必须沿父链上溯到最近的焦点链成员，
         //   否则"点得到、却给不了焦点"（且不报错）。
         $element = $this->elementForBox($root, $hit);
+
+        // 锚点记的是**最深命中**（不是上溯后的可聚焦节点）：菜单要钉在被点的那个
+        // 控件旁边，而"可聚焦的那个"可能大得多（§5.1 裁决 1 的锚点来源）。
+        $this->lastHit = $element;
 
         while ($element !== null && !isset($this->byId[spl_object_id($element)])) {
             $element = $element->parent();

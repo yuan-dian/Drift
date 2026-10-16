@@ -6,6 +6,9 @@ namespace Drift\Widget;
 use Drift\Errors;
 use Drift\Input\CursorShape;
 use Drift\Input\FocusNode;
+use Drift\Widget\Drag\Draggable;
+use Drift\Widget\Drag\DragTarget;
+use Drift\Widget\Menu\ContextMenu;
 
 /**
  * 所有控件的根基类（§15.2）。
@@ -34,6 +37,15 @@ abstract class Widget
 
     /** @internal 本控件是否**天然可聚焦**（输入控件在构造器里声明，§9.1） */
     private bool $focusable = false;
+
+    /** @internal null = 本控件不可拖动（§A.3.5） */
+    private ?Draggable $draggable = null;
+
+    /** @internal null = 本控件不接受放置（§A.3.5） */
+    private ?DragTarget $dragTarget = null;
+
+    /** @internal null = 本控件没有右键菜单（§A.3.1） */
+    private ?ContextMenu $contextMenu = null;
 
     /**
      * ★ 子类必须调 `parent::__construct()`。
@@ -223,6 +235,78 @@ abstract class Widget
     public function cursorShape(): ?CursorShape
     {
         return $this->cursor;
+    }
+
+    /**
+     * 声明"本控件及其子树可被拖动"（§A.3.5，应用内拖放）。
+     *
+     * ```php
+     * Row::make()->children([...])->draggable(Draggable::make(payload: $user->id))
+     * ```
+     *
+     * ★ 它是**声明**：拖动状态机住 `Drift\App\DragController`（与焦点链同源 ——
+     *   都需要"命中的 Element"）。指针驱动等 M4 的 `PointerEvent::move()/up()`。
+     *
+     * @api
+     */
+    public function draggable(Draggable $value): static
+    {
+        $this->mutate();
+        $this->draggable = $value;
+
+        return $this;
+    }
+
+    /** @internal 拖动状态机读它；`null` = 不可拖 */
+    public function draggableValue(): ?Draggable
+    {
+        return $this->draggable;
+    }
+
+    /**
+     * 声明"本控件接受放置"（§A.3.5）。
+     *
+     * ```php
+     * Container::make()->dragTarget(DragTarget::make()->onAccept(fn($id) => ...))
+     * ```
+     *
+     * @api
+     */
+    public function dragTarget(DragTarget $value): static
+    {
+        $this->mutate();
+        $this->dragTarget = $value;
+
+        return $this;
+    }
+
+    /** @internal 拖动状态机读它；`null` = 不接受放置 */
+    public function dragTargetValue(): ?DragTarget
+    {
+        return $this->dragTarget;
+    }
+
+    /**
+     * 声明右键弹出的上下文菜单（§A.3.1；挂在**子树**上，命中链向上找最近的声明者）。
+     *
+     * ```php
+     * Row::make()->children([...])->contextMenu(ContextMenu::make()->items([...]))
+     * ```
+     *
+     * @api
+     */
+    public function contextMenu(ContextMenu $value): static
+    {
+        $this->mutate();
+        $this->contextMenu = $value;
+
+        return $this;
+    }
+
+    /** @internal 右键入口读它（`Application::dispatchInput()` 的指针分支） */
+    public function contextMenuValue(): ?ContextMenu
+    {
+        return $this->contextMenu;
     }
 
     /**

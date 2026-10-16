@@ -15,6 +15,7 @@ use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
 use Drift\Layout\RenderBox;
+use Drift\Layout\RenderPopupPanel;
 use Drift\Rendering\RenderSurface;
 use Drift\Text\DeterministicFontManager;
 use Drift\Text\DeterministicMetricsProvider;
@@ -23,7 +24,9 @@ use Drift\Text\TextMetricsProvider;
 use Drift\Theme\ThemeData;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
+use Drift\Widget\Drag\Draggable;
 use Drift\Widget\Element;
+use Drift\Widget\Menu\Menu;
 use Drift\Widget\StatefulElement;
 use Drift\Widget\Widget;
 
@@ -67,6 +70,32 @@ abstract class Application
     protected ?FocusManager $focus = null;
 
     protected CommandRouter $router;
+
+    /** 拖动状态机（§A.3.5）；懒建 —— 不拖的应用零成本 */
+    protected ?DragController $drag = null;
+
+    /**
+     * 浮层面板（O-20 第二棵根渲染树）：菜单 / 上下文菜单 / 模态共用同一槽位。
+     *
+     * ★ 与 `$root` **同构**（一个 Widget + 一个 Element）—— 树 / diff / 布局零配合，
+     *   `Frame` 只在主树之后多画一棵，"绘制顺序即层叠"故**不引入 z-index**。
+     *
+     * ★ **锚点是应用级几何**：面板钉在锚点矩形的左下角，再夹进客户区。锚点由
+     *   `showMenu()` 的 `$anchor` 给，`null` ⇒ 用最近一次命中的 Element
+     *   （§5.1 裁决 1 的锚点来源 —— 命令是"意图"不带位置，§11.4.3）。
+     */
+    protected ?Widget $menu = null;
+
+    protected ?Element $menuElement = null;
+
+    protected float $menuAnchorX = 0.0;
+
+    protected float $menuAnchorY = 0.0;
+
+    /** 面板左上角在客户区的落点（`placeMenu()` 每帧算，已夹进客户区） */
+    protected float $menuX = 0.0;
+
+    protected float $menuY = 0.0;
 
     /** @param iterable<string, CommandHandler> $handlers `commands()` 的返回值 */
     public function __construct(iterable $handlers = [])
@@ -200,6 +229,139 @@ abstract class Application
     }
 
     /**
+     * 打开浮层面板（O-20 方案 A：第二棵根渲染树）。
+     *
+     * ```php
+     * // 菜单标题的 onOpen 里
+     * ->onOpen(fn(Menu $m, ?Element $anchor) => $this->showMenu($m->panel(), $anchor))
+     * ```
+     *
+     * @param Widget $panel 面板（通常是 `PopupPanel`；菜单用 `Menu::panel()` / `ContextMenu::panel()`）
+     * @param Element|null $anchor 锚点 Element；`null` ⇒ 用最近一次命中的（`FocusManager::lastHit()`）
+     *
+     * ★ **调用点是应用**（菜单的 `onOpen` / 右键入口）—— 打开要碰 `Application`，
+     *   而 §4.3 禁 `Widget → App`；于是"菜单声明形体、应用管落位"这条分工
+     *   （§5.1 裁决 1）在类型层面就成立了。
+     *
+     * @api
+     */
+    public function showMenu(Widget $panel, ?Element $anchor = null): void
+    {
+        if ($this->root === null) {
+            return; // 未挂载：没有客户区，浮层无处安放
+        }
+
+        $element = $panel->createElement();
+        $element->mount(null, $this->menuContext());
+
+        $this->menu = $panel;
+        $this->menuElement = $element;
+
+        $anchor ??= $this->focus?->lastHit();
+        $box = $anchor?->effectiveBox();
+
+        if ($box !== null) {
+            // 盒原点要**沿父链累加**才有客户区坐标（`offsetX()` 是相对父的）
+            [$x, $y] = self::absoluteOrigin($box);
+            $this->menuAnchorX = $x;
+            $this->menuAnchorY = $y + ($box->size()?->height ?? 0.0); // 面板挂在锚点**下方**
+        } else {
+            $this->menuAnchorX = 0.0;
+            $this->menuAnchorY = 0.0;
+        }
+
+        $this->menuX = $this->menuAnchorX;
+        $this->menuY = $this->menuAnchorY;
+    }
+
+    /** 关掉浮层（已关 ⇒ 无事发生；幂等） */
+    public function closeMenu(): void
+    {
+        if ($this->menuElement === null) {
+            return;
+        }
+
+        $this->menuElement->unmount();
+        $this->menuElement = null;
+        $this->menu = null;
+    }
+
+    public function isMenuOpen(): bool
+    {
+        return $this->menuElement !== null;
+    }
+
+    /** 浮层 Element（测试 / devtools） */
+    public function menuElement(): ?Element
+    {
+        return $this->menuElement;
+    }
+
+    /** 浮层面板左上角在客户区的落点（夹紧后；测试 / devtools） */
+    public function menuOrigin(): array
+    {
+        return [$this->menuX, $this->menuY];
+    }
+
+    /**
+     * 浮层的布局段（O-20 说"三段各加分支"，layout 落在这里）。
+     *
+     * 三件事，都要锚点或客户区尺寸 ⇒ 只能住应用级：
+     *   ① **无界约束** layout（面板自尺寸 —— 它不知道外面多大）；
+     *   ② 面板矩形左上角钉到锚点；
+     *   ③ **夹进客户区**（★ 按**面板**矩形算，不含投影留白 —— §9.1 语义 #6）。
+     */
+    private function placeMenu(BoxConstraints $constraints): void
+    {
+        $box = $this->menuElement?->effectiveBox();
+        if ($box === null) {
+            return;
+        }
+
+        $box->layout(BoxConstraints::unbounded());
+
+        // 面板矩形（含投影留白的盒要内缩 `elevation` 才是"面板"本身）
+        if ($box instanceof RenderPopupPanel) {
+            $panel = $box->panelRect();
+            $panelW = $panel->width;
+            $panelH = $panel->height;
+            $e = $panel->left;
+        } else {
+            $panelW = $box->size()?->width ?? 0.0;
+            $panelH = $box->size()?->height ?? 0.0;
+            $e = 0.0;
+        }
+
+        $maxX = max(0.0, $constraints->maxWidth - $panelW);
+        $maxY = max(0.0, $constraints->maxHeight - $panelH);
+
+        // 盒原点 = 面板原点 − 留白（让**面板**左上角落在夹紧后的锚点上）
+        $this->menuX = min(max($this->menuAnchorX, 0.0), $maxX) - $e;
+        $this->menuY = min(max($this->menuAnchorY, 0.0), $maxY) - $e;
+    }
+
+    /** 浮层的渲染环境（复用主树的 —— 同主题 / 同度量） */
+    private function menuContext(): BuildContext
+    {
+        return $this->root?->context()
+            ?? new BuildContext(0.0, 0.0, $this->theme(), $this->metrics());
+    }
+
+    /** 盒在客户区的绝对原点（沿父链累加相对偏移） */
+    private static function absoluteOrigin(RenderBox $box): array
+    {
+        $x = 0.0;
+        $y = 0.0;
+
+        for ($node = $box; $node !== null; $node = $node->parent()) {
+            $x += $node->offsetX();
+            $y += $node->offsetY();
+        }
+
+        return [$x, $y];
+    }
+
+    /**
      * 跑一帧（§5.2）：平台每帧调一次。
      *
      * @param float $timestampMs **注入的**时间戳（不读环境时钟）
@@ -214,13 +376,18 @@ abstract class Application
             return; // 未挂载：没有树就没有帧
         }
 
-        $frame->run($root, $constraints, $timestampMs);
+        // 浮层布局段（无界自尺寸 + 钉锚点 + 夹进客户区）—— 见 placeMenu()
+        $this->placeMenu($constraints);
+
+        $frame->run($root, $constraints, $timestampMs, $this->menuElement, $this->menuX, $this->menuY);
 
         // ★ 每帧重建焦点链：`settle()` 可能重建了子树 ⇒ 旧链里可能握着**已被移除**
         //   的 Element（按键会静默丢给死节点）。`collect()` 幂等，且会保留仍然存在
         //   的焦点（见 `FocusManager::collect()`）。
         //   O(树) 与同帧的 `layout()` 同阶 —— §13.3：Render 层本就全树重排。
-        $this->focus?->collect($root);
+        // ★ **浮层是第二棵树，也要进焦点链**（O-20 差异表 #2）—— 否则菜单项
+        //   永远 Tab 不到。
+        $this->focus?->collect($root, ...($this->menuElement !== null ? [$this->menuElement] : []));
     }
 
     /**
@@ -253,6 +420,22 @@ abstract class Application
         }
 
         if ($event instanceof KeyEvent) {
+            // §9.1 关闭语义 #3：**ESC 在 `dispatchKey` 之前拦** —— 否则被焦点
+            // 控件（输入框）吃掉，菜单关不掉。
+            if ($event->chord->is(KeyChord::escape())) {
+                if ($this->menuElement !== null) {
+                    $this->closeMenu();
+
+                    return null;
+                }
+
+                if ($this->drag?->isDragging() === true) {
+                    $this->cancelDrag();
+
+                    return null;
+                }
+            }
+
             // §9.1 第 ① 环：加速键（在焦点之前）。
             // 让位规则 ②：焦点控件声明了独占该组合 ⇒ 不吃快捷键，往下走焦点链。
             $accel = $this->accelerators()->resolve($event->chord);
@@ -273,7 +456,34 @@ abstract class Application
         }
 
         if ($event instanceof PointerEvent) {
+            // §9.1 关闭语义 #1：**浮层开着 ⇒ 指针先归浮层**（先选根树）；
+            // 点浮层**外** ⇒ 关且**吞掉该次按下**（不穿透，否则"关菜单"顺手点到
+            // 下面按钮 —— GUI 仓真机踩过）。
+            if ($this->menuElement !== null) {
+                $menuBox = $this->menuElement->effectiveBox();
+
+                if ($menuBox !== null && $this->hitsMenu($event, $menuBox)) {
+                    // 浮层局部坐标 = 客户区坐标 − 浮层原点（Frame 画时的 translate）
+                    $hit = $focus->hitTest($event->x - $this->menuX, $event->y - $this->menuY, $this->menuElement);
+                    $focus->focusHit($hit, $this->menuElement);
+
+                    return $focus->cursorOf($hit);
+                }
+
+                $this->closeMenu();
+
+                return null; // 吞掉：不喂 focusHit、不改光标
+            }
+
             $hit = $focus->hitTest($event->x, $event->y, $root);   // ★ 只走一次树
+
+            // ★ 右键最小集（§9.1）：非主键 ⇒ 找最近的 `ContextMenu` 声明者并打开。
+            //   用 `down` 即弹（`up` / 位移阈值要 M4 的指针事件，见 `ContextMenu` docblock）。
+            if (!$event->isPrimary()) {
+                $this->openContextMenu($hit === null ? null : $focus->elementAt($root, $hit));
+
+                return null;
+            }
 
             $focus->focusHit($hit, $root);
 
@@ -281,6 +491,31 @@ abstract class Application
         }
 
         return null;
+    }
+
+    /** 指针是否落在浮层面板盒内（§9.1 语义 #1 的判据） */
+    private function hitsMenu(PointerEvent $event, RenderBox $menuBox): bool
+    {
+        return $menuBox->hitTest($event->x - $this->menuX, $event->y - $this->menuY) !== null;
+    }
+
+    /**
+     * 右键入口（§9.1"右键最小集"）：沿命中 Element 的父链找**最近**的声明者。
+     *
+     * ★ 找不到 ⇒ 什么也不做（右键落在没有上下文菜单的地方是合法的，不报错、
+     *   也不落给焦点 —— 右键不是"选中"）。
+     */
+    private function openContextMenu(?Element $hit): void
+    {
+        for ($element = $hit; $element !== null; $element = $element->parent()) {
+            $menu = $element->widget()->contextMenuValue();
+
+            if ($menu !== null) {
+                $this->showMenu($menu->panel(), $element);
+
+                return;
+            }
+        }
     }
 
     /**
@@ -298,11 +533,21 @@ abstract class Application
     public function dispatch(string $name, ?CommandArg $arg = null): bool
     {
         $root = $this->root;
+        $handled = false;
+
         if ($root !== null && $this->bubble($root, $name, $arg ?? CommandArg::none())) {
-            return true;
+            $handled = true;
+        } else {
+            $handled = $this->router->dispatch($name, $arg ?? CommandArg::none());
         }
 
-        return $this->router->dispatch($name, $arg ?? CommandArg::none());
+        // §9.1 关闭语义 #2：**命令分发之后才关**浮层 —— 菜单项的处理逻辑可能
+        // 自己开关浮层（例如"新建"打开另一个面板），此时先关会把它关掉。
+        if ($handled && $this->menuElement !== null) {
+            $this->closeMenu();
+        }
+
+        return $handled;
     }
 
     /** 深度优先找第一个接得的 `State`（第 ①② 环） */
@@ -338,7 +583,20 @@ abstract class Application
             return;
         }
 
-        $widget = $this->focus?->focused()?->widget();
+        $element = $this->focus?->focused();
+        $widget = $element?->widget();
+
+        // ★ 菜单标题（`Menu extends Button`）⇒ 走 `onOpen`（应用接线到 `showMenu()`）。
+        //   分支必须在 `Button` 之前 —— 子类会被 `instanceof` 认成父类。
+        if ($widget instanceof Menu) {
+            $open = $widget->openHandler();
+            if ($open !== null) {
+                $open($widget, $element);
+            }
+
+            return;
+        }
+
         if (!$widget instanceof Button) {
             return;
         }
@@ -363,6 +621,63 @@ abstract class Application
     public function register(string $name, CommandHandler $handler): void
     {
         $this->router->on($name, $handler);
+    }
+
+    // ── 应用内拖放（§A.3.5）：声明住 Widget，状态机住这里 ──────────────
+
+    /**
+     * 拖动状态机（§A.3.5）。
+     *
+     * ★ **真机指针序列等 M4**：`PointerEvent` 只有 `down()`（`move`/`up` 缺席）
+     *   ⇒ 下面三个入口当前由宿主 / 测试驱动（与 `Spinner::tick()` 同一个分期形态）。
+     */
+    public function drag(): DragController
+    {
+        return $this->drag ??= new DragController();
+    }
+
+    /**
+     * @internal 开始拖动（源 = 最近命中的 Element；命中处须有 `Draggable` 声明）
+     */
+    public function beginDrag(Draggable $draggable): bool
+    {
+        $this->drag()->begin($draggable, $this->focus?->lastHit());
+
+        return true;
+    }
+
+    /**
+     * @internal 指针移动：刷新悬停目标（**目标变化才通知** `onHover`）
+     */
+    public function updateDrag(float $x, float $y): void
+    {
+        $root = $this->root;
+        $focus = $this->focus;
+        $drag = $this->drag;
+
+        if ($root === null || $focus === null || $drag === null || !$drag->isDragging()) {
+            return;
+        }
+
+        $hit = $focus->hitTest($x, $y, $root);
+
+        $drag->hoverTo($hit === null ? null : $focus->elementAt($root, $hit));
+    }
+
+    /**
+     * @internal 放下：命中 `DragTarget` ⇒ 交出负载。
+     *
+     * @return bool 是否被接收
+     */
+    public function dropDrag(): bool
+    {
+        return $this->drag?->drop() ?? false;
+    }
+
+    /** @internal 取消拖动（ESC 也会cancel —— 见 `dispatchInput()`） */
+    public function cancelDrag(): void
+    {
+        $this->drag?->cancel();
     }
 
     /**

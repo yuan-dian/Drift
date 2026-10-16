@@ -34,12 +34,15 @@ use Drift\Dev\Smoke\ErrorBoundary\PaintBoomBox;
 use Drift\Dev\Smoke\Frame\QuietWidget;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Smoke\Frame\TickerWidget;
+use Drift\Dev\Smoke\Overlay\FlatBox;
 use Drift\Dev\Preview\DemoPage;
 use Drift\Dev\Preview\FormPage;
 use Drift\Dev\Preview\Renderer;
 use Drift\Dev\Preview\SvgSurface;
 use Drift\Dev\Smoke\App\AccelApplication;
 use Drift\Dev\Smoke\App\CompositeRootApp;
+use Drift\Dev\Smoke\App\MenuApplication;
+use Drift\Dev\Smoke\App\RecordingHandler;
 use Drift\Dev\Smoke\App\CursorApplication;
 use Drift\Dev\Smoke\App\EchoApplication;
 use Drift\Dev\Smoke\App\NavApplication;
@@ -80,7 +83,9 @@ use Drift\Layout\RenderFlex;
 use Drift\Layout\RenderFlexible;
 use Drift\Layout\RenderPadding;
 use Drift\Layout\RenderProxyBox;
+use Drift\Layout\RenderMenuItem;
 use Drift\Layout\RenderObject;
+use Drift\Layout\RenderPopupPanel;
 use Drift\Layout\RenderSpinner;
 use Drift\Layout\RenderText;
 use Drift\Layout\RenderTextField;
@@ -122,11 +127,18 @@ use Drift\Widget\BoxWidget;
 use Drift\Widget\Center;
 use Drift\Widget\Column;
 use Drift\Widget\Dock;
+use Drift\Widget\Drag\Draggable;
+use Drift\Widget\Drag\DragTarget;
 use Drift\Widget\Each;
 use Drift\Widget\Element;
 use Drift\Widget\ErrorBoundary;
 use Drift\Widget\ErrorBoundaryElement;
 use Drift\Widget\ErrorPlaceholder;
+use Drift\Widget\Menu\ContextMenu;
+use Drift\Widget\Menu\Menu;
+use Drift\Widget\Menu\MenuBar;
+use Drift\Widget\Menu\MenuItem;
+use Drift\Widget\PopupPanel;
 use Drift\Widget\Key;
 use Drift\Widget\NavButton;
 use Drift\Widget\Padding;
@@ -444,6 +456,27 @@ function fieldInk(?RenderBox $box, int $width, int $height): int
     $list->replay($canvas);
 
     return inkCount($canvas);
+}
+
+/**
+ * 盒在客户区的绝对原点（沿父链累加相对偏移）。
+ *
+ * 菜单 / 右键 / 拖放的测试要"点在某一行上"，而行的位置只能从盒树反推 ——
+ * 坐标写死会在任何 padding 变动时静默失准。
+ *
+ * @return array{0: float, 1: float}
+ */
+function boxOrigin(RenderBox $box): array
+{
+    $x = 0.0;
+    $y = 0.0;
+
+    for ($node = $box; $node !== null; $node = $node->parent()) {
+        $x += $node->offsetX();
+        $y += $node->offsetY();
+    }
+
+    return [$x, $y];
 }
 
 echo "M0 冒烟\n";
@@ -3015,6 +3048,200 @@ $claimApp->dispatchInput(KeyEvent::down(KeyChord::ctrl('R')));
 check(
     '加速键 · 未独占的组合照常命中（Ctrl+R 仍走第 ① 环）',
     $claimApp->seen === ['accel.fire'],
+);
+
+// ── ㉞ 菜单 / 浮层 / 拖放（任务 #6：O-20 方案 A + §9.1 关闭语义 + §A.3.5）──
+
+$menuSurface = new SvgSurface();
+$menuSurface->resize(320, 240, 1.0);
+$menuApp = new MenuApplication();
+$menuApp->attach($menuSurface, BoxConstraints::tight(new Size(320.0, 240.0)));
+$tight320 = BoxConstraints::tight(new Size(320.0, 240.0));
+
+check('浮层 · attach 后默认没开（浮层槽位为空）', !$menuApp->isMenuOpen());
+
+// —— 键盘路径打开：Tab 到菜单标题 ⇒ Enter（Application::activateFocused 的 Menu 分支）
+$menuApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
+$menuApp->dispatchInput(KeyEvent::down(KeyChord::enter()));
+check(
+    '浮层 · Menu 标题 Enter ⇒ onOpen 被调 + 应用打开面板',
+    $menuApp->opened && $menuApp->isMenuOpen(),
+);
+check(
+    '浮层 · 锚点 = 标题 Element（菜单钉在被点的控件旁）',
+    $menuApp->anchor !== null && $menuApp->anchor->widget() instanceof Menu,
+);
+$panelBox = $menuApp->menuElement()?->effectiveBox();
+check('浮层 · 面板盒是 RenderPopupPanel（与根树同构：一个 Widget 一个 Element）', $panelBox instanceof RenderPopupPanel);
+
+// —— 渲染：主树先画、浮层后画（顺序即层叠）
+$svgBefore = $menuSurface->svg();
+$menuApp->frame(16.0, $tight320);
+$svgAfter = $menuSurface->svg();
+check(
+    '浮层 · 渲染多画了一棵（SVG 的 rect 数增加 —— 面板底 / 边框 / 项文本）',
+    substr_count($svgAfter, '<rect') > substr_count($svgBefore, '<rect'),
+);
+
+// —— 落位：面板左上角 = 锚点左下；夹进客户区（按**面板**矩形算）
+[$mx, $my] = $menuApp->menuOrigin();
+$titleBox = $menuApp->anchor?->effectiveBox();
+$titleBottom = $titleBox === null ? 0.0 : boxOrigin($titleBox)[1] + $titleBox->size()->height;
+$panelInset = $panelBox instanceof RenderPopupPanel ? $panelBox->panelRect()->left : 0.0;
+check(
+    '浮层 · 面板左上角钉在锚点左下（含投影留白补偿）',
+    abs(($my + $panelInset) - $titleBottom) < 1.0,
+    sprintf('面板 y=%.6g 锚点底=%.6g', $my + $panelInset, $titleBottom),
+);
+check(
+    '浮层 · 面板夹进客户区（右 / 下都不越界）',
+    $panelBox !== null
+        && $mx + $panelBox->size()->width <= 320.5
+        && $my + $panelBox->size()->height <= 240.5,
+);
+
+// —— 关闭语义 ①：点面板外 ⇒ 关 + 吞掉该次按下（不穿透）
+//    ★ 坐标要同时满足两件事：**在面板矩形之外**、**仍在带 `ContextMenu` 的那行上**
+//      —— 面板窄（≈140）而客户区宽 320 ⇒ 取该行右侧（x+200）即可。若穿透，
+//      这次右键会顺手打开下面那个菜单（最容易被抓的形态）。
+$colBox = $menuApp->rootBox();
+$rows = $colBox instanceof RenderFlex ? $colBox->children() : [];
+$rowBox = $rows[1] ?? null;
+$targetBox = $rows[2] ?? null;
+[$rx, $ry] = $rowBox === null ? [0.0, 0.0] : boxOrigin($rowBox);
+[$sx, $sy] = $targetBox === null ? [0.0, 0.0] : boxOrigin($targetBox);
+$outsideX = $rx + 200.0;
+
+$menuApp->dispatchInput(PointerEvent::down($outsideX, $ry + 10.0, 1));
+check(
+    '浮层 · 点面板外 ⇒ 关且**吞掉**按下（不穿透到下面的右键菜单）',
+    !$menuApp->isMenuOpen(),
+    $menuApp->isMenuOpen() ? '穿透了：菜单被重开' : '',
+);
+
+// —— 右键最小集：再点一次（此刻无浮层）⇒ 打开命中的 ContextMenu
+$menuApp->dispatchInput(PointerEvent::down($rx + 10.0, $ry + 10.0, 1));
+check('右键 · 无浮层时右键 ⇒ 打开命中行的 ContextMenu', $menuApp->isMenuOpen());
+
+// —— 关闭语义 ②：命令分发**之后**才关
+$dispatched = $menuApp->dispatch('row.del');
+check(
+    '浮层 · 命令分发之后才关（语义 #2）',
+    $dispatched && !$menuApp->isMenuOpen() && $menuApp->seen === ['row.del'],
+);
+
+// —— 右键落在无声明处 ⇒ 什么也不做（不报错、不落给焦点）
+$menuApp->dispatchInput(PointerEvent::down($sx + 10.0, $sy + 10.0, 1));
+check('右键 · 落在无 ContextMenu 声明的行 ⇒ 什么也不做', !$menuApp->isMenuOpen());
+
+// —— 关闭语义 ③：ESC 在 dispatchKey 之前拦
+$fileMenu = $menuApp->fileMenu();
+$menuApp->showMenu($fileMenu->panel()); // 直接开（不依赖焦点当前在哪儿）
+check('浮层 · 重开（ESC 用例的前置）', $menuApp->isMenuOpen());
+$menuApp->dispatchInput(KeyEvent::down(KeyChord::escape()));
+check('浮层 · ESC ⇒ 关（语义 #3：在 dispatchKey 之前拦，不被焦点控件吃掉）', !$menuApp->isMenuOpen());
+
+// —— 关闭语义 ④：点面板**内** ⇒ 不关
+$menuApp->showMenu($fileMenu->panel());
+$menuApp->frame(32.0, $tight320); // 走一帧 ⇒ 落位算过（menuOrigin 才准）
+[$mx2, $my2] = $menuApp->menuOrigin();
+$menuApp->dispatchInput(PointerEvent::down($mx2 + 20.0, $my2 + 20.0));
+check('浮层 · 点面板内 ⇒ 不关（指针先归浮层，语义 #1 的另一半）', $menuApp->isMenuOpen());
+$menuApp->dispatchInput(KeyEvent::down(KeyChord::escape()));
+
+// —— 应用内拖放（§A.3.5）：状态机可驱动（真机指针序列等 M4）
+$dragApp = $menuApp;
+$dragApp->beginDrag(Draggable::make('user-7'));
+check('拖放 · beginDrag ⇒ 进入拖动态', $dragApp->drag()->isDragging());
+$dragApp->updateDrag($sx + 5.0, $sy + 5.0);
+check('拖放 · 进入 DragTarget ⇒ onHover(true)', $dragApp->hover === [true]);
+$dragApp->updateDrag($sx + 9.0, $sy + 9.0);
+check('拖放 · 目标不变 ⇒ 不重复通知（§9.1 语义 #5 同源）', $dragApp->hover === [true]);
+$dragApp->updateDrag($rx + 5.0, $ry + 5.0);
+check('拖放 · 离开目标 ⇒ onHover(false)', $dragApp->hover === [true, false]);
+$dragApp->updateDrag($sx + 5.0, $sy + 5.0);
+check(
+    '拖放 · drop 把负载交给命中的 DragTarget',
+    $dragApp->dropDrag() === true && $dragApp->drop === ['user-7'],
+);
+check('拖放 · drop 后退出拖动态', !$dragApp->drag()->isDragging());
+$dragApp->beginDrag(Draggable::make('user-9'));
+$dragApp->updateDrag($rx + 5.0, $ry + 5.0); // 拖到没有目标的地方
+check(
+    '拖放 · 拖空 ⇒ drop 返回 false（不派发 onAccept）',
+    $dragApp->dropDrag() === false && count($dragApp->drop) === 1,
+);
+$dragApp->beginDrag(Draggable::make('user-9'));
+$dragApp->dispatchInput(KeyEvent::down(KeyChord::escape()));
+check(
+    '拖放 · ESC 取消（不派发 onAccept）',
+    !$dragApp->drag()->isDragging() && count($dragApp->drop) === 1,
+);
+
+// —— 声明落位（Widget 基类三个新声明位）
+check(
+    '声明 · draggable / contextMenu / dragTarget 落在 widget 上（可被宿主读回）',
+    $rowBox !== null
+        && FlatBox::make(10.0, 10.0)->draggable(Draggable::make(1))->draggableValue()?->payload() === 1
+        && FlatBox::make(10.0, 10.0)->dragTarget(DragTarget::make())->dragTargetValue() instanceof DragTarget
+        && FlatBox::make(10.0, 10.0)->contextMenu(ContextMenu::make())->contextMenuValue() instanceof ContextMenu,
+);
+
+// —— Menu 四件的形体
+$menu = Menu::make('文件')->items([MenuItem::make('刷新')]);
+check('Menu · panel() 是 PopupPanel（浮层形体归 PopupPanel，落位归 App）', $menu->panel() instanceof PopupPanel);
+check('Menu · 是一种按钮（命令 / 焦点 / 激活整套复用，同 NavButton 先例）', $menu instanceof Button && $menu->isFocusable());
+
+$item = MenuItem::make('刷新')->chord(KeyChord::ctrl('R'))->command('menu.refresh');
+check(
+    'MenuItem · 命令 / chord 声明可读',
+    $item->commandName() === 'menu.refresh' && $item->chordValue()?->label() === 'Ctrl+R',
+);
+check('MenuItem · 是一种按钮 + 可聚焦（键盘能选中）', $item instanceof Button && $item->isFocusable());
+check('MenuItem · separator 形态', MenuItem::separator()->isSeparator());
+check('MenuBar · build 出横排（纯组合控件，自己没有盒）', MenuBar::make()->menus([$menu])->build($context) instanceof Row);
+check('ContextMenu · panel() 是 PopupPanel（声明对象，不是 Widget）', ContextMenu::make()->items([
+    MenuItem::make('删除'),
+])->panel() instanceof PopupPanel);
+
+// —— 菜单项盒：两端分布（label 左 / chord 右）+ 分隔线有墨
+//    ★ 约束用 **tight 宽 + loose 高**（与 `RenderPopupPanel` 给内容的一致）——
+//      tight 高会把文本挤爆（C6：内容放不下就该报，这里是我们给的约束不对）
+$itemBox = $item->createRenderObject($context);
+check('MenuItem · 盒是 RenderMenuItem', $itemBox instanceof RenderMenuItem);
+$itemBox->layout(new BoxConstraints(180.0, 180.0, 0.0, 60.0));
+$rowKids = [];
+$itemBox->visitChildren(function (RenderBox $c) use (&$rowKids): void {
+    $c->visitChildren(function (RenderBox $inner) use (&$rowKids): void {
+        $rowKids[] = $inner;
+    });
+});
+$first = $rowKids[0] ?? null;
+$last = $rowKids === [] ? null : $rowKids[count($rowKids) - 1];
+check(
+    'MenuItem · chord 在行的右端（label 与 chord 两端分布 ⇒ 整行可点）',
+    $first !== null && $last !== null && $last->offsetX() > $first->offsetX() + 40.0,
+    sprintf('label x=%.6g chord x=%.6g', $first?->offsetX() ?? -1, $last?->offsetX() ?? -1),
+);
+$sepBox = MenuItem::separator()->createRenderObject($context);
+$sepBox->layout(new BoxConstraints(180.0, 180.0, 0.0, 20.0));
+check(
+    'MenuItem · 分隔线有墨（1px 横线真画了）',
+    inkCount(spinCanvas($sepBox, 180, 8)) > 0,
+);
+
+// —— PopupPanel：统一宽 = max(minWidth, 最宽项)
+//    ★ 要**挂载**后再测：面板的 child 由 Element 层挂接（C1 父管挂接），
+//      光对 createRenderObject 的盒 layout 会拿到"没有孩子"的空盒。
+$panelProbe = $menu->minWidth(200.0)->panel();
+$panelProbeEl = $panelProbe->createElement();
+$panelProbeEl->mount(null, $context);
+$panelProbeBox = $panelProbeEl->effectiveBox();
+$panelProbeBox?->layout(BoxConstraints::unbounded());
+check(
+    'PopupPanel · 宽 = max(minWidth, 最宽项)（面板统一宽 ⇒ 菜单项整行可点）',
+    $panelProbeBox?->size() !== null && $panelProbeBox->size()->width >= 200.0,
+    sprintf('实际宽 %.6g', $panelProbeBox?->size()?->width ?? -1),
 );
 
 fresh($log);
