@@ -42,6 +42,10 @@
 #   ★ 另有一件 GUI 做了、Drift2 还没做的事：`resource:`（图标 + 版本信息）与
 #     `manifest:`（comctl32 v6 —— 没有它，**原生** MessageBox 是 Win95 外观）。
 #     Drift2 的 `Errors::installFatalBox` 正是用 `MessageBoxW` ⇒ M4 起 exe 时应一起加。
+#     ★ **DPI 感知不在 manifest 的清单里**：它在**运行期**由 `drift_win_create()` 用
+#       `SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)` 设定（§24.1 #43）。
+#       走 manifest 也能做，但当前实现选了运行期 ⇒ 加 `manifest:` 时**不要**再写一份
+#       `dpiAwareness`（两边都写以 manifest 为准，会盖掉框架的选择且难排查）。
 # ───────────────────────────────────────────────────────────────────────────
 
 mode: bin

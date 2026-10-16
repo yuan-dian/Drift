@@ -423,3 +423,49 @@ Spinner → M2 conformance 运行器 → 多页外壳（`Dock`/`AppBar`/`NavButt
 而"共享静态量 + 线程恰好串行"时**每线程步数也是 `$rounds`** ⇒ 判据恒真、什么都测不到。
 改成返回**绝对值**才成立（每线程独立 ⇒ `min=max=rounds`；共享 ⇒ `max=threads*rounds` 且 `distinct>1`）。
 **"量具必须带反例自检"的又一例。**
+
+### 7.8 实现纪事：单屏 100% DPI 把"糊"藏住了（2026-10-16 深夜）
+
+**这一节的主题是"开发机的环境恰好掩盖了一个真实缺陷，而文档把它写成了『无差别』"。**
+
+★ **背景**：§19 M1 的出口判据里有一句"**分数缩放下不糊**"，而实现一直只跑在**单屏 100% DPI**
+的机器上 ⇒ 这句话从没被检验过。方案侧只在 M1 行末尾留了一句"仍未验"，没说它会怎么坏。
+
+★ **缺陷是读代码读出来的，不是跑出来的**：`cpp-src/drift_win32.cc` 的 `php_drift_win_create()`
+调的是 `SetProcessDPIAware()` —— 那是 **system-DPI-aware（V1）**，**不是** per-monitor。
+而 `php_drift_win_dpi()` 的注释把它论证成"无所谓"：
+
+> 「用 `GetDeviceCaps(LOGPIXELSX)` 而不是 `GetDpiForWindow`：后者要 `_WIN32_WINNT >= 0x0A00`……
+>  代价：拿到的是**系统** DPI —— **对 M1 无差别**，因为跨屏拖动时系统会发 `WM_DPICHANGED`」
+
+**这句话里两个断言都是错的**：
+1. `WM_DPICHANGED` **只发给 per-monitor 感知的进程** —— V1 进程跨屏时**收不到**，
+   所以 `g_dpi` 永远停在系统 DPI，§6 的"跨屏 = scale 变更 = 布局事件"整条落空；
+2. V1 进程跨屏时系统把窗口内容**整体位图拉伸** —— 那正是"糊"本身。
+
+⇒ 于是"为一个 DPI 查询不值得抬 `WINVER`"这个**成本判断**也站不住：正解不是抬宏，是
+   `GetProcAddress` **动态取**（`SetProcessDpiAwarenessContext` / `GetDpiForWindow` /
+   `AdjustWindowRectExForDpi` 三个都这么取），**一个编译宏都不用碰**。
+
+★ **为什么它能在开发机上"过"**：单屏 + 100% DPI 时，V1 与 V2 的**可观测行为完全相同**
+（系统 DPI == 显示器 DPI，且没有"跨屏"这个动作）。⇒ **"本机跑得好"对这类缺陷零信息量。**
+这条比 §7.7 那条更狠：§7.7 是"探针没测那一面"，本节是"**环境恰好让那一面不存在**"。
+
+★ **修法与判据**（判据必须直接断言**配置**，而不是断言它的后果）：
+- 进程感知升到 **Per-Monitor V2**（三级回退：`SetProcessDpiAwarenessContext` →
+  shcore `SetProcessDpiAwareness` → `SetProcessDPIAware`）；必须在**建窗 / 取 DC 之前**设
+  （Windows 在那时锁定感知级别）。
+- `drift_win_dpi` 改 `GetDpiForWindow`（每显示器）；退 `GetDeviceCaps` 是**降级**不是等价。
+- 外框改 `AdjustWindowRectExForDpi`（老的 `AdjustWindowRectEx` 按系统 DPI 算边框厚度 ⇒
+  客户区对不上请求的逻辑尺寸）；建窗后按 `GetDpiForWindow` 再纠正一次
+  （`CW_USEDEFAULT` 可能把窗口放到另一块 DPI 的屏上）。
+- ★ **探针加断言**：`python tools/probe-window.py users` 现在读
+  `GetWindowDpiAwarenessContext` + `AreDpiAwarenessContextsEqual(…, PER_MONITOR_AWARE_V2)`，
+  **判据 = 感知级别 == PER_MONITOR_AWARE(2) 且 == V2**。
+  **反例自检**已跑过（`SetProcessDPIAware()` 之后同一条判据给 `False`）⇒ 旧的 V1 实现会被判 FAIL。
+- 分数 dpr 的**量化算术**另有一层：smoke 里 `Scale::fromDpi(120)`（1.25）/ `quantize(10.0)`
+  / `quantizeRect`（1.5，相邻盒共享像素边）/ `dpr=2` 设备分辨率光栅都有断言
+  —— 这两层合起来才叫"分数缩放下不糊"。
+
+★ **仍未验**：真·跨屏拖动（本机单屏，没有第二块不同 DPI 的显示器）⇒ 只验了"感知级别正确"，
+**没验**"跨屏后的实际画面"。已登记 §24.2 #11。
