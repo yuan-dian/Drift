@@ -161,9 +161,12 @@ class RenderFlex extends RenderBox
             $crossSize = max($crossSize, $cross);
         }
 
-        $this->placeChildren($mains, $vertical ? $inner->maxWidth : $inner->maxHeight);
-
-        return new Size(
+        // ★ 交叉轴定位按**盒自身的交叉尺寸**居中，不是按约束上限：
+        //   上限宽松时（`AppBar` 从纵向 `Column` 拿到 0..320 的高）拿上限居中会把子项
+        //   推到盒**外面** —— 标题落到 y=143 而盒高仅 44.8（2026-10-16 由预览抓出）。
+        //   盒尺寸要**按 `RenderBox::layout` 同口径夹一次**：父把交叉轴定死（`tight`）
+        //   时下界会顶上来，此时必须按夹后的尺寸居中（否则 `Center` 退回 0）。
+        $size = new Size(
             $vertical
                 ? min($crossSize + $this->padding->horizontal(), $constraints->maxWidth)
                 : $reported + $this->padding->horizontal(),
@@ -171,6 +174,13 @@ class RenderFlex extends RenderBox
                 ? $reported + $this->padding->vertical()
                 : min($crossSize + $this->padding->vertical(), $constraints->maxHeight),
         );
+        $clamped = $constraints->constrain($size);
+        $crossInner = $vertical
+            ? $clamped->width - $this->padding->horizontal()
+            : $clamped->height - $this->padding->vertical();
+        $this->placeChildren($mains, max(0.0, $crossInner));
+
+        return $size;
     }
 
     public function intrinsicWidth(float $height): float
