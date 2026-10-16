@@ -112,6 +112,7 @@ use Drift\Rendering\MetricToken;
 use Drift\Rendering\Paint;
 use Drift\Rendering\RasterCanvas;
 use Drift\Rendering\RecordingCanvas;
+use Drift\Rendering\SkiaCanvas;
 use Drift\State\Cell;
 use Drift\State\SubjectBuilder;
 use Drift\State\Subject;
@@ -488,6 +489,169 @@ function boxOrigin(RenderBox $box): array
     return [$x, $y];
 }
 
+// ── Skia 桥的假实现（⑨+1 conformance 夹具用）──────────────────────
+// ★ 签名与 cpp-src/drift_skia.stub.php 逐字一致 —— 夹具测的必须就是 ABI 本身
+//   （stub 注释原话："签名不一致时是链接期静默失败"）。
+// ★ `use function` 是运行期解析：真桥只存在于 AOT 构建，解释器面从不加载
+//   ⇒ SkiaCanvas 的调用落到这些假函数，参数进 $GLOBALS 记录 ——
+//   "Skia 收到了什么"成为可断言的纯数据，不必每次构建 exe。
+// ★ 两个开关只服务夹具：FAIL_CREATE 造"句柄 0"（H 用例）；
+//   SABOTAGE 把 draw_rect 的 x 篡改一格（量具反例自检）。
+if (!function_exists('drift_skia_canvas_create')) {
+    function drift_skia_canvas_create(int $width, int $height, int $backgroundRgba): int
+    {
+        $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][] = ['create', $width, $height, $backgroundRgba];
+        return empty($GLOBALS['DRIFT_SMOKE_SKIA_FAIL_CREATE']) ? 1 : 0;
+    }
+
+    function drift_skia_canvas_destroy(int $canvas): void
+    {
+        $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][] = ['destroy'];
+    }
+
+    function drift_skia_push_clip(int $canvas, float $x, float $y, float $w, float $h): void
+    {
+        $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][] = ['push_clip', $x, $y, $w, $h];
+    }
+
+    function drift_skia_pop_clip(int $canvas): void
+    {
+        $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][] = ['pop_clip'];
+    }
+
+    function drift_skia_draw_rect(
+        int $canvas,
+        float $x,
+        float $y,
+        float $w,
+        float $h,
+        float $radius,
+        int $rgba,
+        bool $stroke,
+        float $strokeWidth,
+    ): void {
+        if (!empty($GLOBALS['DRIFT_SMOKE_SKIA_SABOTAGE'])) {
+            $x += 1.0; // 已知违规件：只服务量具反例自检（判据恒真 = 夹具空转）
+        }
+        $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][] = ['draw_rect', $x, $y, $w, $h, $radius, $rgba, $stroke, $strokeWidth];
+    }
+
+    function drift_skia_draw_glyph(
+        int $canvas,
+        string $family,
+        bool $bold,
+        float $fontSize,
+        float $penX,
+        float $baselineY,
+        int $codepoint,
+        int $rgba,
+    ): void {
+        $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][] = ['draw_glyph', $family, $bold, $fontSize, $penX, $baselineY, $codepoint, $rgba];
+    }
+
+    function drift_skia_read_pixels(int $canvas): string
+    {
+        return '';
+    }
+
+    function drift_skia_font_ready(): bool
+    {
+        return true;
+    }
+}
+
+// ── 假桥记录的访问器与换算（⑨+1 用）──────────────────────────────
+
+/** 清空跨边界调用记录（每个用例前必调，否则用例互相污染） */
+function skiaBridgeReset(): void
+{
+    $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'] = [];
+}
+
+/** @return list<string> 按序取出调用操作名（create / draw_rect / push_clip …） */
+function skiaCallOps(): array
+{
+    $ops = [];
+    foreach ($GLOBALS['DRIFT_SMOKE_SKIA_CALLS'] ?? [] as $call) {
+        $ops[] = $call[0];
+    }
+    return $ops;
+}
+
+/** @return list<array> draw_rect 记录：[op, x, y, w, h, radius, rgba, stroke, strokeWidth] */
+function skiaDrawRectCalls(): array
+{
+    $out = [];
+    foreach ($GLOBALS['DRIFT_SMOKE_SKIA_CALLS'] ?? [] as $call) {
+        if ($call[0] === 'draw_rect') {
+            $out[] = $call;
+        }
+    }
+    return $out;
+}
+
+/** @return list<array> push_clip 记录：[op, x, y, w, h] */
+function skiaClipCalls(): array
+{
+    $out = [];
+    foreach ($GLOBALS['DRIFT_SMOKE_SKIA_CALLS'] ?? [] as $call) {
+        if ($call[0] === 'push_clip') {
+            $out[] = $call;
+        }
+    }
+    return $out;
+}
+
+/**
+ * 桥记录里的矩形 (x, y, w, h) → 软光栅墨迹 bbox（含端点）。
+ *
+ * 换算依据：rasterize 逐**像素中心**测试，整边矩形覆盖 [left, right)×[top, bottom)
+ * ⇒ 墨迹像素 x ∈ [left, right−1]。设备矩形由 quantizeRect 产出（round 的产物，
+ * 必为整数）⇒ 强转 int 无损。
+ *
+ * ★ 返回顺序与 `deviceInkBounds()` 同款（房规）：[left, right, top, bottom]（含端点）。
+ *   ★ 踩过：第一版写成 [left, top, right, bottom]，8 条对照全线 FAIL ——
+ *     夹具第一次跑就靠这个顺序错位自证了"判据真的在比数值"。
+ */
+function skiaRectToInk(array $rec): array
+{
+    $x = (int) $rec[1];
+    $y = (int) $rec[2];
+    return [$x, $x + (int) $rec[3] - 1, $y, $y + (int) $rec[4] - 1];
+}
+
+/** 墨迹 bbox 的调试串 */
+function fmtInk(?array $ink): string
+{
+    return $ink === null ? 'null' : '[' . implode(',', $ink) . ']';
+}
+
+/**
+ * 墨迹 bbox（含端点，尺寸无关版）："不等于透明"即墨。
+ * `inkBounds()` 写死 320×240 且判据是 r<200（白底假设）—— 这里要任意尺寸 + 透明底。
+ */
+function deviceInkBounds(RasterCanvas $canvas): ?array
+{
+    $clear = Color::transparent();
+    $minX = PHP_INT_MAX;
+    $maxX = -1;
+    $minY = PHP_INT_MAX;
+    $maxY = -1;
+
+    for ($y = 0; $y < $canvas->height(); $y++) {
+        for ($x = 0; $x < $canvas->width(); $x++) {
+            if (!$canvas->pixelAt($x, $y)->equals($clear)) {
+                $minX = min($minX, $x);
+                $maxX = max($maxX, $x);
+                $minY = min($minY, $y);
+                $maxY = max($maxY, $y);
+            }
+        }
+    }
+
+    return $maxX < 0 ? null : [$minX, $maxX, $minY, $maxY];
+}
+
 echo "M0 冒烟\n";
 
 // ① PSR-4 装载：前缀表驱动，不生成 vendor/
@@ -646,6 +810,328 @@ check(
     BoxStyle::none()->withBackground($red)->withRadius(8.0)->equals(new BoxStyle($red, null, 0.0, 8.0))
 );
 check('Rendering · Paint 风格可判', Paint::stroke($red, 2.0)->isStroke() && !Paint::fill($red)->isStroke());
+
+// ⑨+1 Skia 后端 conformance：drawRect / pushClip 与软光栅逐像素同构
+//   （§7.3 的 M1 后端之二。hello 夹具只有文字 ⇒ 矩形 / 裁剪路径此前**零视觉覆盖**）
+//
+// ★ 在解释器面做，不构建 exe：真桥（cpp-src/drift_skia.cc）只存在于 AOT 构建，
+//   而 `use function` 是**运行期**解析 ⇒ 助手区的假桥接管调用并记录每一次跨边界
+//   参数 —— "Skia 收到了什么"成为可断言的纯数据。
+// ★ 判据是**跨后端几何同构**，不是像素 golden：两后端的抗锯齿范围与描边实现
+//   **有意不同**（SkiaCanvas 类注释明写两条差异），像素级互比没有意义。能互比的
+//   是设备矩形 —— 软光栅 rasterize 逐**像素中心**测试，整边矩形覆盖
+//   [left, right)×[top, bottom) ⇒ 墨迹 bbox（含端点）= (left, top, right−1, bottom−1)。
+// ★ 量化规则本身由 ⑦ 钉住（round(logical×dpr)、相邻矩形共享像素边）；这里钉的是
+//   "Skia 路径确实走 Scale::quantizeRect 这一个量化点"。
+fresh($log);
+
+// ── A. 填充 · dpr=1：桥收到的设备矩形 == 软光栅墨迹 bbox ──
+skiaBridgeReset();
+$listA = new DisplayList();
+(new RecordingCanvas($listA))->drawRect(new Rect(3.0, 4.0, 10.0, 8.0), Paint::fill($red));
+$rasterA = new RasterCanvas(24, 20, null, Scale::of(1.0));
+$skiaA = new SkiaCanvas(24, 20, null, Scale::of(1.0));
+$listA->replay($rasterA);
+$listA->replay($skiaA);
+$inkA = deviceInkBounds($rasterA);
+$rectsA = skiaDrawRectCalls();
+$expectA = count($rectsA) === 1 ? skiaRectToInk($rectsA[0]) : null;
+check(
+    'Skia conformance · A 填充：桥恰好收到一次 draw_rect（dpr=1）',
+    count($rectsA) === 1,
+    (string) count($rectsA)
+);
+check(
+    'Skia conformance · A 填充：设备矩形 == 软光栅墨迹 bbox（dpr=1）',
+    $inkA === $expectA,
+    'ink=' . fmtInk($inkA) . ' 桥收到=' . fmtInk($expectA)
+);
+
+// ── B. 填充 · dpr=2 小数边界：量化在逻辑空间一次做完 ──
+skiaBridgeReset();
+$listB = new DisplayList();
+(new RecordingCanvas($listB))->drawRect(new Rect(3.25, 4.75, 10.5, 8.25), Paint::fill($red));
+$rasterB = new RasterCanvas(48, 40, null, Scale::of(2.0));
+$skiaB = new SkiaCanvas(48, 40, null, Scale::of(2.0));
+$listB->replay($rasterB);
+$listB->replay($skiaB);
+$inkB = deviceInkBounds($rasterB);
+$rectsB = skiaDrawRectCalls();
+$expectB = count($rectsB) === 1 ? skiaRectToInk($rectsB[0]) : null;
+check(
+    'Skia conformance · B 填充：dpr=2 小数边界的量化口径两后端一致',
+    $inkB === $expectB,
+    'ink=' . fmtInk($inkB) . ' 桥收到=' . fmtInk($expectB)
+);
+check(
+    'Skia conformance · B 量化锚点：(3.25,4.75,10.5,8.25)×2 ⇒ 设备 (7,10,21,16)（half-up）',
+    count($rectsB) === 1
+        && $rectsB[0][1] === 7.0 && $rectsB[0][2] === 10.0
+        && $rectsB[0][3] === 21.0 && $rectsB[0][4] === 16.0,
+    count($rectsB) === 1
+        ? '桥收到 x=' . $rectsB[0][1] . ' y=' . $rectsB[0][2] . ' w=' . $rectsB[0][3] . ' h=' . $rectsB[0][4]
+        : 'draw_rect 次数=' . count($rectsB)
+);
+
+// ── C. 平移叠加在逻辑空间：先加偏移再取整（不是先取整后加） ──
+// translate(0.3,0.3) + rect(0.3,0.3,10,10)、dpr=2 ⇒ left = round(1.2) = 1；
+// 若"先量化后加偏移"会得 round(0.6)+round(0.6) = 2 —— 本用例专门分开这两条路。
+skiaBridgeReset();
+$listC = new DisplayList();
+$recC = new RecordingCanvas($listC);
+$recC->translate(0.3, 0.3);
+$recC->drawRect(new Rect(0.3, 0.3, 10.0, 10.0), Paint::fill($red));
+$rasterC = new RasterCanvas(48, 40, null, Scale::of(2.0));
+$skiaC = new SkiaCanvas(48, 40, null, Scale::of(2.0));
+$listC->replay($rasterC);
+$listC->replay($skiaC);
+$inkC = deviceInkBounds($rasterC);
+$rectsC = skiaDrawRectCalls();
+$expectC = count($rectsC) === 1 ? skiaRectToInk($rectsC[0]) : null;
+check(
+    'Skia conformance · C 平移：先加偏移再取整，两后端一致',
+    $inkC === $expectC,
+    'ink=' . fmtInk($inkC) . ' 桥收到=' . fmtInk($expectC)
+);
+check(
+    'Skia conformance · C 锚点：left = round((0.3+0.3)×2) = 1（先量化后加会得 2）',
+    count($rectsC) === 1 && $rectsC[0][1] === 1.0 && $rectsC[0][2] === 1.0,
+    count($rectsC) === 1 ? '桥收到 x=' . $rectsC[0][1] . ' y=' . $rectsC[0][2] : 'draw_rect 次数=' . count($rectsC)
+);
+
+// ── D. save/restore 偏移栈：restore 必须把偏移归位（不是残留） ──
+// P1 画在 translate 作用域内 ⇒ 落 (20,4)；P2 画在 restore 之后 ⇒ 必须回到 (4,4)。
+// restore 失效（偏移残留）会让 P2 也落 (20,4) ⇒ 与 P1 重叠 ⇒ 软光栅墨迹从 128 塌成 64
+//   —— 这个 inkCount 判据两个方向**可区分**（第一版设计成"三块墨"不可区分：P2 无论
+//   落回 P0 还是残留到 P1，计数都是 128，纯坏判据，smoke 当场把它揪出来了）。
+skiaBridgeReset();
+$listD = new DisplayList();
+$recD = new RecordingCanvas($listD);
+$recD->save();
+$recD->translate(16.0, 0.0);
+$recD->drawRect(new Rect(4.0, 4.0, 8.0, 8.0), Paint::fill($red));       // P1 = (20,4)
+$recD->restore();
+$recD->drawRect(new Rect(4.0, 4.0, 8.0, 8.0), Paint::fill($red));       // P2 = (4,4)（restore 归零）
+$rasterD = new RasterCanvas(40, 24, null, Scale::of(1.0));
+$skiaD = new SkiaCanvas(40, 24, null, Scale::of(1.0));
+$listD->replay($rasterD);
+$listD->replay($skiaD);
+$rectsD = skiaDrawRectCalls();
+check(
+    'Skia conformance · D save/restore：桥收到两次 draw_rect',
+    count($rectsD) === 2,
+    (string) count($rectsD)
+);
+check(
+    'Skia conformance · D 平移生效：第一块 == (20,4)',
+    count($rectsD) === 2 && $rectsD[0][1] === 20.0 && $rectsD[0][2] === 4.0,
+    count($rectsD) === 2 ? '桥收到 x=' . $rectsD[0][1] . ' y=' . $rectsD[0][2] : '次数=' . count($rectsD)
+);
+check(
+    'Skia conformance · D restore 归零：第二块 == (4,4)（偏移残留会变成 (20,4)）',
+    count($rectsD) === 2 && $rectsD[1][1] === 4.0 && $rectsD[1][2] === 4.0,
+    count($rectsD) === 2 ? '桥收到 x=' . $rectsD[1][1] . ' y=' . $rectsD[1][2] : '次数=' . count($rectsD)
+);
+$inkD = inkCount($rasterD, Color::transparent());
+check(
+    'Skia conformance · D 软光栅两块墨互不重叠（inkCount=128；restore 失效会塌成 64）',
+    $inkD === 128,
+    'inkCount=' . $inkD
+);
+check(
+    'Skia conformance · D 软光栅定点：两块位置都有墨',
+    $rasterD->pixelAt(5, 5)->equals($red) && $rasterD->pixelAt(21, 5)->equals($red),
+    'p(5,5)=' . ($rasterD->pixelAt(5, 5)->equals($red) ? 'red' : 'clear')
+        . ' p(21,5)=' . ($rasterD->pixelAt(21, 5)->equals($red) ? 'red' : 'clear')
+);
+
+// ── E1. pushClip 几何：桥收到的裁剪矩形 == 被裁后的墨迹 bbox ──
+skiaBridgeReset();
+$listE1 = new DisplayList();
+$recE1 = new RecordingCanvas($listE1);
+$recE1->save();
+$recE1->pushClip(new Rect(2.0, 2.0, 6.0, 6.0));
+$recE1->drawRect(new Rect(0.0, 0.0, 20.0, 20.0), Paint::fill($red));
+$recE1->popClip();
+$recE1->restore();
+$rasterE1 = new RasterCanvas(24, 20, null, Scale::of(1.0));
+$skiaE1 = new SkiaCanvas(24, 20, null, Scale::of(1.0));
+$listE1->replay($rasterE1);
+$listE1->replay($skiaE1);
+$inkE1 = deviceInkBounds($rasterE1);
+$clipsE1 = skiaClipCalls();
+$expectE1 = count($clipsE1) === 1 ? skiaRectToInk($clipsE1[0]) : null;
+check(
+    'Skia conformance · E1 pushClip：裁剪矩形 == 被裁后的墨迹 bbox',
+    $inkE1 === $expectE1,
+    'ink=' . fmtInk($inkE1) . ' 裁剪=' . fmtInk($expectE1)
+);
+check(
+    'Skia conformance · E1 配对：push_clip / draw_rect / pop_clip 各一次（外加 create）',
+    skiaCallOps() === ['create', 'push_clip', 'draw_rect', 'pop_clip'],
+    implode('→', skiaCallOps())
+);
+
+// ── E2. popClip 真的释放裁剪：释放后画的矩形能落在裁剪区外 ──
+skiaBridgeReset();
+$listE2 = new DisplayList();
+$recE2 = new RecordingCanvas($listE2);
+$recE2->save();
+$recE2->pushClip(new Rect(2.0, 2.0, 6.0, 6.0));
+$recE2->popClip();
+$recE2->drawRect(new Rect(16.0, 16.0, 2.0, 2.0), Paint::fill($red));
+$recE2->restore();
+$rasterE2 = new RasterCanvas(24, 20, null, Scale::of(1.0));
+$skiaE2 = new SkiaCanvas(24, 20, null, Scale::of(1.0));
+$listE2->replay($rasterE2);
+$listE2->replay($skiaE2);
+$inkE2 = deviceInkBounds($rasterE2);
+$rectsE2 = skiaDrawRectCalls();
+$expectE2 = count($rectsE2) === 1 ? skiaRectToInk($rectsE2[0]) : null;
+check(
+    'Skia conformance · E2 popClip 释放裁剪：矩形落在裁剪区外且两后端一致',
+    $inkE2 === $expectE2,
+    'ink=' . fmtInk($inkE2) . ' 桥收到=' . fmtInk($expectE2)
+);
+
+// ── F. 描边：宽度不乘 dpr；外圈墨迹 bbox == 设备矩形 ──
+skiaBridgeReset();
+$listF = new DisplayList();
+(new RecordingCanvas($listF))->drawRect(new Rect(1.0, 1.0, 10.0, 10.0), Paint::stroke($red, 2.0));
+$rasterF = new RasterCanvas(48, 40, null, Scale::of(2.0));
+$skiaF = new SkiaCanvas(48, 40, null, Scale::of(2.0));
+$listF->replay($rasterF);
+$listF->replay($skiaF);
+$inkF = deviceInkBounds($rasterF);
+$rectsF = skiaDrawRectCalls();
+$expectF = count($rectsF) === 1 ? skiaRectToInk($rectsF[0]) : null;
+check(
+    'Skia conformance · F 描边：外圈墨迹 bbox == 设备矩形（dpr=2）',
+    $inkF === $expectF,
+    'ink=' . fmtInk($inkF) . ' 桥收到=' . fmtInk($expectF)
+);
+check(
+    'Skia conformance · F 描边宽度不乘 dpr（dpr=2 收到 2.0，不是 4.0）且标记为描边',
+    count($rectsF) === 1 && $rectsF[0][8] === 2.0 && $rectsF[0][7] === true,
+    count($rectsF) === 1 ? 'strokeWidth=' . $rectsF[0][8] . ' isStroke=' . var_export($rectsF[0][7], true) : '次数=' . count($rectsF)
+);
+check(
+    'Skia conformance · F 描边结构：边上有墨、中间是空的',
+    $rasterF->pixelAt(3, 3)->equals($red) && $rasterF->pixelAt(11, 11)->equals(Color::transparent()),
+    'p(3,3)=' . ($rasterF->pixelAt(3, 3)->equals($red) ? 'red' : 'clear')
+        . ' p(11,11)=' . ($rasterF->pixelAt(11, 11)->equals(Color::transparent()) ? 'clear' : 'ink')
+);
+
+// ── G. 零宽矩形：两后端都当空操作（Skia 早退、软光栅循环不进） ──
+skiaBridgeReset();
+$listG = new DisplayList();
+(new RecordingCanvas($listG))->drawRect(new Rect(0.0, 0.0, 0.0, 10.0), Paint::fill($red));
+$rasterG = new RasterCanvas(16, 16, null, Scale::of(1.0));
+$skiaG = new SkiaCanvas(16, 16, null, Scale::of(1.0));
+$listG->replay($rasterG);
+$listG->replay($skiaG);
+check(
+    'Skia conformance · G 零宽矩形：无墨迹、无跨边界调用（两后端一致空操作）',
+    deviceInkBounds($rasterG) === null && skiaDrawRectCalls() === [],
+    'ink=' . fmtInk(deviceInkBounds($rasterG)) . ' 桥调用次数=' . count(skiaDrawRectCalls())
+);
+
+// ── H. 创建失败（句柄 0）：所有绘制静默跳过（装饰性失败，不崩不报） ──
+$GLOBALS['DRIFT_SMOKE_SKIA_FAIL_CREATE'] = true;
+skiaBridgeReset();
+$dead = new SkiaCanvas(20, 16, null, Scale::of(1.0));
+$listH = new DisplayList();
+$recH = new RecordingCanvas($listH);
+$recH->save();
+$recH->translate(3.0, 4.0);
+$recH->pushClip(new Rect(0.0, 0.0, 5.0, 5.0));
+$recH->drawRect(new Rect(0.0, 0.0, 5.0, 5.0), Paint::fill($red));
+$recH->popClip();
+$recH->restore();
+$listH->replay($dead);
+check(
+    'Skia conformance · H 句柄 0：isValid=false 且整条命令流零跨边界调用（只有 create）',
+    !$dead->isValid() && skiaCallOps() === ['create'],
+    'isValid=' . ($dead->isValid() ? 'true' : 'false') . ' 调用序列=' . implode('→', skiaCallOps())
+);
+$dead->dispose();
+check(
+    'Skia conformance · H 句柄 0 的 dispose 不产生跨边界调用',
+    skiaCallOps() === ['create'],
+    '调用序列=' . implode('→', skiaCallOps())
+);
+$GLOBALS['DRIFT_SMOKE_SKIA_FAIL_CREATE'] = false;
+$alive = new SkiaCanvas(20, 16, null, Scale::of(1.0));
+check('Skia conformance · H 失败开关复位后创建恢复有效', $alive->isValid());
+
+// ── E3. 已知分歧（钉住现状，不是背书）──────────────────────────────
+// popClip 是否**连偏移一起复位**：两后端当前行为不同 ——
+//   · RasterCanvas::popClip 弹的是通用状态帧（= 半个 restore）：偏移也回到 save 时；
+//   · SkiaCanvas::popClip 只复位裁剪（桥的 pop_clip），偏移留到 restore 才归位。
+// 录制侧口径是 Skia 的：W8 对 saveDepth / clipDepth **分别**计深、接口文档写
+// "pushClip 与 popClip 必须配对"（各自成栈）⇒ Skia 与文档一致，Raster 是偏离。
+// 但今天没有任何生产代码调用 pushClip/popClip（唯一调用者是 DisplayList::replay）
+// ⇒ 分歧潜伏。此断言钉住两侧现状：任何一侧改动都会失败 ⇒ 逼出一次显式裁决。
+skiaBridgeReset();
+$listX = new DisplayList();
+$recX = new RecordingCanvas($listX);
+$recX->save();
+$recX->translate(6.0, 0.0);
+$recX->pushClip(new Rect(0.0, 0.0, 8.0, 8.0));
+$recX->drawRect(new Rect(0.0, 0.0, 2.0, 2.0), Paint::fill($red));
+$recX->popClip();
+$recX->drawRect(new Rect(0.0, 0.0, 2.0, 2.0), Paint::fill($red));
+$recX->restore();
+$rasterX = new RasterCanvas(24, 16, null, Scale::of(1.0));
+$skiaX = new SkiaCanvas(24, 16, null, Scale::of(1.0));
+$listX->replay($rasterX);
+$listX->replay($skiaX);
+$rectsX = skiaDrawRectCalls();
+$inkX = inkCount($rasterX, Color::transparent());
+check(
+    'Skia conformance · E3 钉住现状：Raster 的 popClip 连偏移一起复位（两块墨互不重叠）',
+    $rasterX->pixelAt(7, 1)->equals($red) && $rasterX->pixelAt(1, 1)->equals($red) && $inkX === 8,
+    'p(7,1)=' . ($rasterX->pixelAt(7, 1)->equals($red) ? 'red' : 'clear')
+        . ' p(1,1)=' . ($rasterX->pixelAt(1, 1)->equals($red) ? 'red' : 'clear')
+        . ' inkCount=' . $inkX
+);
+check(
+    'Skia conformance · E3 钉住现状：Skia 的 popClip 只复位裁剪（第二块仍带偏移 6）',
+    count($rectsX) === 2 && $rectsX[1][1] === 6.0 && $rectsX[1][2] === 0.0,
+    count($rectsX) === 2 ? '第二块 x=' . $rectsX[1][1] . ' y=' . $rectsX[1][2] : '次数=' . count($rectsX)
+);
+
+// ── 量具反例自检（§20 纪律 1）──────────────────────────────────────
+// 合成一个已知违规件：让假桥把 draw_rect 的 x 报错一格（等价于"SkiaCanvas 算错
+// 了偏移"），同一套换算判据必须变**假**。抓不到 = 判据恒真、本段整段空转。
+// 紧接的正对照：同一输入不篡改时判据必须为**真**。
+skiaBridgeReset();
+$GLOBALS['DRIFT_SMOKE_SKIA_SABOTAGE'] = true;
+$listS = new DisplayList();
+(new RecordingCanvas($listS))->drawRect(new Rect(3.0, 4.0, 10.0, 8.0), Paint::fill($red));
+$rasterS = new RasterCanvas(24, 20, null, Scale::of(1.0));
+$skiaS = new SkiaCanvas(24, 20, null, Scale::of(1.0));
+$listS->replay($rasterS);
+$listS->replay($skiaS);
+$inkS = deviceInkBounds($rasterS);
+$rectsSBad = skiaDrawRectCalls();
+$expectSBad = count($rectsSBad) === 1 ? skiaRectToInk($rectsSBad[0]) : null;
+check(
+    'Skia conformance · 反例自检：桥把 x 篡改一格 ⇒ 判据变假（否则判据恒真、夹具空转）',
+    $inkS !== $expectSBad,
+    'ink=' . fmtInk($inkS) . ' 篡改后桥收到=' . fmtInk($expectSBad)
+);
+$GLOBALS['DRIFT_SMOKE_SKIA_SABOTAGE'] = false;
+skiaBridgeReset();
+$skiaS2 = new SkiaCanvas(24, 20, null, Scale::of(1.0));
+$listS->replay($skiaS2);
+$rectsSGood = skiaDrawRectCalls();
+$expectSGood = count($rectsSGood) === 1 ? skiaRectToInk($rectsSGood[0]) : null;
+check(
+    'Skia conformance · 反例自检正对照：同一输入不篡改 ⇒ 判据为真',
+    $inkS === $expectSGood,
+    'ink=' . fmtInk($inkS) . ' 桥收到=' . fmtInk($expectSGood)
+);
 
 // ⑩ 响亮失败：颜色越界 / W8 未闭合
 fresh($log);
