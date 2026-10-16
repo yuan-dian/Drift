@@ -373,3 +373,53 @@ Spinner → M2 conformance 运行器 → 多页外壳（`Dock`/`AppBar`/`NavButt
 本轮加了 `_build/svg2png.py`（纯 `<rect>` 解析 + Pillow 光栅化）才第一次真正"看见"渲染结果 ——
 **#1 和 #2 都是靠它看见的**，纯读代码/看断言看不出来。
 
+
+### 7.7 实现纪事：TaskHost 线程池被探针 K 判死（2026-10-16 晚）
+
+**这一节的主题是"一个已经写进方案 4 处的『【实测】可用』是怎么被推翻的"。**
+
+★ **§17.2 后端 A（C++ 线程池执行 PHP 任务）在方案里被标了 4 次"【实测】可用"**
+（§2 表第 15 行 · §2 能力表 · §11.x 第 2 条 · §17.2 架构图），依据是探针 E。
+但探针 E 的 ⑤ 只跑了三个函数：`thr_php_add`（整数算术）/ `thr_php_sum`（标量循环）/
+`thr_php_concat`（循环拼字符串）—— **从没碰过类 / 对象 / 属性**。
+⇒ "worker 能跑 PHP"这句话成立的范围，**比它被引用时假设的范围小得多**。
+
+★ **探针 K（`probes/taskhost_tsrm/`）补的正是 §17.2.2 点名的那一枪**，做法上两个关键点：
+① **`threads=1` 是关键对照列** —— 它把"并发竞争"与"worker 线程本身就缺东西"分开。
+   结果是后者：**碰类/对象/属性的 mode 在 1 个 worker 线程上就 SIGSEGV**（3/3 稳定）。
+② **C++ 侧 `trace()` 文件追踪**（`fopen/fprintf/fclose`，每行一次 open/close）——
+   崩在 PHP 里时 `file_put_contents` 已经不可用，只有 C++ 侧的证据留得下来。
+   它把崩溃点定到了行：`mode=0 req=2` 崩在 **`zm_activate_*` 内部**；
+   `mode=4 req=1` 崩在 **`php::request_init()` 之后的 mode 调用里**。
+
+★ **根因是读生成的 C++ 读出来的**（不是猜的）：`build/extension-taskhost_tsrm.cc` 里
+`static THREAD_LOCAL php_request_cache_storage *php_request_cache = nullptr;`
+**只在模块 RINIT 里被 `new`**，而 `get_class()` / `get_property_cache()` / `get_method()` /
+`get_method_call_cache()` / `get_function_resolution_cache()` 全走它 ⇒
+**没跑过 RINIT 的线程上全是空指针解引用**。`typephp_read_property_cached(…, get_property_cache(…))`
+在生成的 `main.cc` 里出现 **32 次**（读枚举 `->value` 就要请求级属性缓存）。
+★ 顺带解释了一个"看起来像并发"的现象：mode 1（类静态属性）在 `threads=1` 也崩、但
+**主线程先摸一遍就好了** —— 因为 `get_persistent_class` 是 `std::atomic` + CAS 的**持久**缓存，
+主线程填上以后 worker 直接命中，**不再需要在自己线程上做类名解析**。
+
+★ **两条"给 worker 补请求上下文"的路都断了**（这是本轮唯一"想救但救不了"的部分）：
+- `php::request_init()`（**公开 API**）可调、安全（`mode=0 req=1` 完整跑通），
+  但它**不建 `php_request_cache`** ⇒ 类/对象访问照样崩；
+- 完整 RINIT（`zm_activate_*`）**自己就 SIGSEGV** —— 它的最后一步是
+  `php::eval("main();")`，把"建请求上下文"与"启动 main()"**绑死了**。
+⇒ 结论：**后端 A 在当前 tpc 运行时下不可实现**；需要 tpc 提供一个"每线程进入请求"的入口
+（分配请求缓存 + `php::request_init()`，**不启动 main()**），最省事的等价做法是把 RINIT 的
+前两步与最后那一步拆开各自导出。⇒ **M1–M3 只上后端 B（`SyncTaskHost`）**，
+端口契约不变，tpc 补上钩子即可接入（页面/Store/`Job` 零改动）。
+
+★ **顺带抓到两个"永不匹配的 mangling"式 `LNK2019`**（`obj` 里明明有符号）：
+① 生成的模块钩子**在命名空间里** —— 真实符号是
+   `typephp_project_taskhost_tsrm::zm_activate_typephp_taskhost_tsrm`（命名空间名 =
+   `typephp_project_<project.name>`）。在全局作用域写声明就永远匹配不上。
+② **`INIT_FUNC_ARGS` 是 `int type, int module_number`**（`zend_modules.h:27`），
+   **不是** `zend_module_entry*`。写成指针签名同样匹配不上。
+
+★ **一条量具缺陷**（自己踩的，写下来防复发）：mode 0 第一版返回"本线程推进的步数"——
+而"共享静态量 + 线程恰好串行"时**每线程步数也是 `$rounds`** ⇒ 判据恒真、什么都测不到。
+改成返回**绝对值**才成立（每线程独立 ⇒ `min=max=rounds`；共享 ⇒ `max=threads*rounds` 且 `distinct>1`）。
+**"量具必须带反例自检"的又一例。**

@@ -51,7 +51,7 @@
 | 12 | **布局契约** | 两阶段 `layout(constraints)→size` + `paint`；无界 = `+inf`（**永不拿 0 当哨兵**）；每容器声明溢出策略；违反 ⇒ 响亮失败 | §13 |
 | 13 | **架构图** | 见 §3 与 `architecture.html`（**六图**：分层 / 事件循环+线程 / 三树+帧生命周期 / 双缝 / fluent 封存生命周期 / fluent 实测裁决） | §3 |
 | 14 | **控件写法（链式，IDE 联想）** | **fluent-first + 挂载即封存**：`Text::make('Hello Drift')->title()`；`make()` 只吃必填项；链式方法 `set + return $this`；**不加 `->build()`**、**也不加 `->seal()`**；封存后写入 ⇒ 响亮失败（Fatal）。**【实测】** 设计真实形态 **0.92 µs/节点**，`clone-with` 贵 **3.4×** | §15 |
-| 15 | **协程（Swoole/Swow）** | UI 线程**不跑协程**；异步收进 `TaskHost` 端口：**线程池后端**（C++ `std::thread` + `ts_resource(0)`，**【实测】** 可用）/ **同步三态后端**（永远可用）。★ 协程**不需要**：要的是"别占 UI 线程"，线程直接给 | §17 |
+| 15 | **协程（Swoole/Swow）** | UI 线程**不跑协程**；异步收进 `TaskHost` 端口：**线程池后端**（C++ `std::thread` + `ts_resource(0)` —— ⛔ **2026-10-16 探针 K 实测：当前 tpc 下不可实现**，见 §17.2.2）/ **同步三态后端**（永远可用）。★ 协程**不需要**：要的是"别占 UI 线程"，线程直接给 | §17 |
 
 ---
 
@@ -123,7 +123,7 @@ Errors::installFatalBox(fn(string $t, string $b) => $platform->fatalBox($t, $b))
 | 命名参数 / `readonly` / backed enum | PHP 8 常规语法 | 契约层枚举化、不可变值对象 |
 | **property hooks（set/get）** | `examples/property-hook.php` | 受控属性的物理基础（`Store` 基类封装，§11.4.1） |
 | 运行时反射（Attribute 读取） | `examples/attributes/test.php` | devtools / 树转储；**不在渲染热路径用**（G1） |
-| **C++ 线程（`std::thread` + `mutex` + `atomic`）** | **【实测】** 探针 E | `TaskHost` 后端 A 的物理基础；worker 跑 PHP 的前置条件 = `ts_resource(0)`（§17.2） |
+| **C++ 线程（`std::thread` + `mutex` + `atomic`）** | **【实测】** 探针 E | `TaskHost` 后端 A 的物理基础。★ **探针 K（2026-10-16）把边界收窄了**：线程本身可用，但 **worker 线程跑不了 AOT PHP** —— `ts_resource(0)` 只是必要条件，缺的请求上下文（`php_request_cache`）**当前无可用入口**（§17.2.2 / 探针 K） |
 | C++ 互操作（`php_` 前缀 + `.stub.php`） | `qt-taskboard` / `tetris-win32` / `android-native` | 平台桥接的唯一形态 |
 | `php::Box`（C++ 对象交 PHP GC） | `examples/native`、`tetris-win32/BOX_USAGE_GUIDE.md` | 窗口 / 表面句柄跨边界传递 |
 | `--no-console`（PE 子系统 = GUI） | 【手册】§6、`win32-hello` | 交付无黑框 exe |
@@ -327,7 +327,7 @@ private function pageFor(string $name): ?Widget
 
 | 目录 | 命名空间 | 文件 | 状态（2026-10-15 按 `src/` 核验） |
 |------|---------|------|------|
-| `src/App/` | `Drift\App` | ✅ `Application.php` · `Frame.php`（+ 1 个 `@internal` 实现文件 `FocusManager.php` —— 输入路由最小集，M3；§9.1 的完整链在 M4 的 `EventLoop`）；⏳ `EventLoop.php` · `FrameClock.php` · `TaskHost.php` · `ThreadPoolTaskHost.php` · `SyncTaskHost.php` · `WindowStateStore.php` · **`Job.php`** | **缺 7**（M4/M5） |
+| `src/App/` | `Drift\App` | ✅ `Application.php` · `Frame.php`（+ 1 个 `@internal` 实现文件 `FocusManager.php` —— 输入路由最小集，M3；§9.1 的完整链在 M4 的 `EventLoop`）；★ **2026-10-16 新落地三件**（任务 #8）：**`Job.php`** · **`TaskHost.php`** · **`SyncTaskHost.php`**（§17.2 的端口 + **后端 B**；§24.1 #35 点名的 `Job` 0 文件已清零）；⏳ `EventLoop.php` · `FrameClock.php` · `ThreadPoolTaskHost.php`（**⛔ 被 tpc 能力卡住** —— 探针 K，§17.2.2）· `WindowStateStore.php` | **缺 4**（M4/M5） |
 | `src/Platform/` | `Drift\Platform` | ✅ 9/9：`Platform` · `WindowHost` · `SurfaceProvider` · `InputSource` · `TimerHost` · `Screen` · `Clipboard` · `Dialog` · `Tray`（★ 2026-10-15 **端口层落地**；**同日 Win32 实现跟进**，见下行 —— 三个壳服务在 Win32 上返回 `null`，§24.3） | ✅（M1） |
 | `src/Platform/Win32/` | `Drift\Platform\Win32` | ✅ 7/7：`Win32Platform` · `Win32WindowHost` · `Win32Screen` · `Win32SurfaceProvider` · `Win32InputSource` · `Win32TimerHost` · `Win32RasterSurface`（★ 2026-10-15 **首个平台实现落地**，配套 `cpp-src/drift_win32.{stub.php,cc}` 窗口桥 ⇒ §19 M1 出口判据兑现。★ `Win32RasterSurface` 是 `RenderSurface` 的**第 4 个**实现，走 `RasterCanvas` + `SetDIBitsToDevice` 位块传送（§7.3 的 M1 分期原文就是"CPU 光栅 + 位块传送"）；`SkiaCanvas` 仍 ⏳，归 M4+） | ✅（M1） |
 | `src/Geometry/` | `Drift\Geometry` | `Point` · `Size` · `Rect` · `EdgeInsets` · `Scale` · `BoxConstraints` | ✅ 6/6 |
@@ -538,7 +538,7 @@ UI 线程（唯一）：  全部树操作 / 布局 / 绘制 / 事件派发 / set
 **三条裁决**：
 
 1. **框架核心无锁**。单线程亲和是 Win32 消息模型的自然延伸，也是 AOT 现实下的安全默认。实证：GUI 仓全仓 `grep` 零多线程 / 零 Fiber / 零协程 —— 这不是能力缺失，是**刻意选择**。
-2. **`TaskHost` 是平台能力**（C++ 线程池）。**【实测】**（探针 E）：`std::thread` 可建（31–60 µs 返回，不阻塞）、`mutex`+`deque` 跨线程队列可用、`std::atomic` 可用；**worker 线程跑分配型 PHP 亦可用，前置条件 = 入口先 `ts_resource(0)`**，4 线程并发已过。**M1 仍先做单线程 + 同步 IO 占位**（后端 B），线程池作为独立端口实现可后补。
+2. **`TaskHost` 是平台能力**（C++ 线程池）。**【实测】**（探针 E）：`std::thread` 可建（31–60 µs 返回，不阻塞）、`mutex`+`deque` 跨线程队列可用、`std::atomic` 可用。★ **探针 E 的"worker 能跑 PHP"只成立于纯标量/字符串子集**；**探针 K（2026-10-16）证明该子集之外全崩**（类/对象/属性访问，单线程即 SIGSEGV）⇒ 后端 A **当前不可实现**（§17.2.2）。**M1–M3 用后端 B（同步三态）**；线程池留作端口上的目标形态，等 tpc 补钩子。
 3. **断言点有两个**：
    - **① `Subject::notifyChanged()` 入口** —— "**通知必须在 UI 线程发出**"；
    - **② `State::setState()` / 树变更** —— 非 UI 线程调用 ⇒ 同上。
@@ -2406,7 +2406,7 @@ interface TaskHost
         └────────┼──────────────────────────────┼────────┘
                  │                              ▼
         ┌────────┴──────────── TaskHost（平台端口）────────┴────────┐
-        │  后端 A：**线程池**（C++ `std::thread` + TSRM，【实测】可用）│
+        │  后端 A：**线程池**（⛔ 探针 K：当前 tpc 下不可实现，§17.2.2）  │
         │  后端 B：同步三态（M1–M3 默认，永远可用）                   │
         └───────────────────────────────────────────────────────────┘
 ```
@@ -2421,7 +2421,7 @@ interface TaskHost
 | ② 两线程是否真并发 | ✅ 主线程自旋 `355867~432054` 次的同时 worker 推进 `19532` 个进度块 |
 | ③ 跨线程队列 / 原子可用性 | ✅ `mutex`+`deque` 队列 + `std::atomic` 均正常（`pair` 顺序不定而 `sum=33` 恒定，3/3） |
 | ④ Swoole 在 AOT 产物里的加载方式 | ⚠️ **不再是阻塞项** —— 线程后端不需要它 |
-| ⑤ 线程能否跑 **PHP** | ✅ 能，**前置条件 = `ts_resource(0)`**；4 线程并发亦通过 |
+| ⑤ 线程能否跑 **PHP** | ⚠️ **只对纯标量/字符串子集成立** —— 见下方边界表；★ **2026-10-16 探针 K 已把边界收窄**（类/对象/属性全崩，单线程即崩） |
 
 **⑤ 的边界（关键）**：
 
@@ -2432,10 +2432,26 @@ interface TaskHost
 | 循环拼字符串 64 次 | `64` ✅ | **SIGSEGV 3/3** ❌ | **64** ✅ |
 | 同上 × **4 线程并发** | — | — | **okCount 4 / tsrmFail 0 / Σ 256** ✅ |
 
-⇒ 边界不在"是不是 PHP 代码"，而在**"碰不碰 Zend 运行时（分配 / 引用计数）"**；
-⇒ **修法是一行**：worker 入口先 `ts_resource(0)`。
+⇒ 探针 E 当时的读数：边界不在"是不是 PHP 代码"，而在**"碰不碰 Zend 运行时（分配 / 引用计数）"**；修法是一行 —— worker 入口先 `ts_resource(0)`。
 
-#### 17.2.2 后端 A —— C++ 线程池 + TSRM
+★★ **2026-10-16 探针 K（`probes/taskhost_tsrm/`）把这条边界**大幅收窄** —— 上表的"修法是一行"只成立于**纯标量 + 字符串**。一旦 PHP 碰**类条目 / 对象 / 属性 / 静态属性**，**哪怕只有一个 worker 线程也立刻 SIGSEGV**（`threads=1` 对照列，3/3 稳定）：
+
+| 构造面 | th=1 | th=4 | 根因（读生成的 C++ 得到） |
+|---|---|---|---|
+| 函数 `static` 局部变量 | ✅ | ✅ | AOT 把它编译成 `THREAD_LOCAL` ⇒ 天然每线程独立 |
+| 类静态属性 | ❌139 | ❌139 | worker 上做**类名解析**失败（主线程先摸一遍 ⇒ 命中持久缓存 ⇒ ✅） |
+| 字符串字面量 intern | ✅ | ❌127 | ★ **唯一真正的并发问题**：intern 路径不并发安全 |
+| 类常量 + enum case | ❌139 | ❌139 | `typephp_read_property_cached(…, get_property_cache(…))` ⇒ `php_request_cache` 空指针 |
+| `new` 对象 + 数组 | ❌139 | ❌139 | 同上（请求级缓存缺失） |
+| `spl_object_id` | ❌139 | ❌139 | 同上 |
+
+⇒ **根因**：生成的扩展里有 `static THREAD_LOCAL php_request_cache_storage *php_request_cache = nullptr;`，它**只在模块 RINIT 里被 `new`**，而 `get_class()` / `get_property_cache()` / `get_method()` 等全走它 ⇒ **没跑过 RINIT 的线程上全是空指针解引用**。
+⇒ **两条"补请求上下文"的路都断了**：`php::request_init()`（公开 API，可调、安全）**不建** `php_request_cache`；完整 RINIT（`zm_activate_*`）**自己就 SIGSEGV**（它最后一步是 `php::eval("main();")`，把"建请求上下文"与"启动 main"绑死了）。
+⇒ **结论：后端 A 在当前 tpc 运行时下不可实现**，需 tpc 补一个"每线程进入请求"的入口（详见 §17.2.2）。
+
+#### 17.2.2 后端 A —— C++ 线程池 + TSRM（⛔ 2026-10-16 实测：当前 tpc 下**不可实现**）
+
+> **状态**：下面这段是**目标形态**（端口契约不变），**现在跑不了**。实测见 §17.2.1 末段与 `probes/RESULTS.md` §11（探针 K）。
 
 ```php
 final class ThreadPoolTaskHost implements TaskHost
@@ -2451,8 +2467,15 @@ final class ThreadPoolTaskHost implements TaskHost
 
 - **UI 侧零改动**：Store 调 `$host->submit(...)`，回调里写 `$this->rows = ...`（走显式 notify），三态由 Store 持有。
 - **`ts_resource(0)` 归 C++ 侧管**，是桥接层的职责 —— PHP 开发者不该知道 TSRM 存在。
-- **⚠️ 仍未验（不假装已验）**：
-  - **`ts_resource(0)` 之后的完整线程安全**。探针 E 只证明"分配 + 引用计数"可用；AOT 运行时是否还有**非 TLS** 的全局状态（`get_str()` 持久字符串表、`get_persistent_func` 缓存、opcache）在多 worker 下竞争 —— 未验。**线程池正式落地前必须补这一枪。**
+- **✅ 已验（2026-10-16，探针 K）—— 结论是负面的**：
+  - **`ts_resource(0)` 之后的完整线程安全**这一枪已补（`probes/RESULTS.md` §11）。**探测到的不是"竞争"而是"缺上下文"**：
+    1. **类 / 对象 / 属性访问在 worker 线程上必崩**（`threads=1` 即 SIGSEGV）—— 根因是生成的扩展里 `static THREAD_LOCAL php_request_cache_storage *php_request_cache` **只在 RINIT 里被 `new`**；
+    2. **字符串字面量 intern 路径确实不并发安全**（单线程 ✅ / 4 线程 ❌ `zend_mm_heap corrupted`）—— 这是唯一真·竞争；
+    3. **两条"补请求上下文"的路都断了**（`php::request_init()` 不建请求缓存；`zm_activate_*` 自己就崩）。
+  - **⇒ 后端 A 落地前必须先有 tpc 侧的改动**（精确到接口，不是"优化一下"）：
+    > 一个**每线程"进入请求"的入口**：(a) 分配该线程的 `php_request_cache`，(b) 调 `php::request_init()`，(c) **不启动 `main()`**；配套一个对称的"离开请求"入口。
+    > 最省事的等价做法：把生成物 RINIT 的**前两步**与**最后那一步 `php::eval("main();")` 拆开**，各自导出。
+  - **⇒ 因此 M1–M3 只上后端 B**（§17.2.3）。`TaskHost` **端口照建** —— 端口存在的意义正是"换后端是组合根一行的事"，tpc 补上钩子后后端 A 即可接入，**页面与 Store 一行不改**。
 - **⚠️ 线程池复用线程时**，线程退出/回收要配 `ts_free_thread()`（一次性进程可省，池化不可省）。
 
 #### 17.2.3 后端 B —— 同步三态（M1–M3 默认）
@@ -2519,7 +2542,7 @@ $app = new UsersApplication(new Win32Platform(), new ThreadPoolTaskHost());
 | **M1 可显示** | Win32 Platform + RenderSurface(Skia CPU) + Canvas 接口 + 文本栈桥接 + DPI 缩放 + **`DisplayList` 录制**（决定渲染路径） | 一个窗口画出「Hello Drift」（§A.1），分数缩放下不糊 | ✅ **出口判据已兑现**（2026-10-15）—— `apps/hello` 经 `tpc -m bin` **真机构建**出 `hello.exe`（1.5 MB），运行后窗口（640×400 客户区）画出居中的「Hello Drift」（截图核对；执行入口 `php tools/drift-build.php hello`）。<br>★ **落地路径与本文原计划有一处偏差，如实记下**：表面走 **`Win32RasterSurface`**（`RasterCanvas` 软光栅 + `SetDIBitsToDevice`），**不是** `RenderSurface(Skia CPU)`。理由：§7.3 的 M1 分期原文就写"CPU 光栅 + 位块传送"，且 `SurfaceProvider` 这层抽象存在的意义正是"**后端可换**"（换 Skia 只改 `Win32SurfaceProvider` 一处，应用侧一行不改）⇒ `SkiaCanvas` 归 M4+。<br>★ 仍未验（不阻塞 M1 判据）：分数缩放下不糊（本机 100% DPI，未跨屏试）、`SkiaCanvas`、跨模块调用性能。<br>★ 平台侧 `Drift\Platform` 9 + `Win32` 7 + `cpp-src/` 2 + `apps/hello` 4 个文件全在；渲染侧（`RenderSurface`/`Canvas`/`DisplayList`/文本栈/`RasterCanvas`）齐  |
 | **M2 三树 + 布局** | Element/State/调和 + RenderBox 两阶段布局 + 首批控件 + **fluent-first 全部落地** + **盒样式（`BoxStyle` + `BoxWidget`，§15.7）** + **焦点遍历顺序** + **光标形状（命中三方消费）** + **`SubscribingWidget` 接口** + **property hooks 进 Store** + **`Each` key 必填** | 布局 conformance 夹具全过；首批控件过 **W1–W8**；Tab 序有 conformance 夹具；`Each` 缺 key ⇒ 构建期报错 | ⏳ **大部分** —— 三树/调和/两阶段布局/13 个控件/fluent-first/`BoxStyle`+`BoxWidget`/`SubscribingWidget`/property hooks/`Each` key 全在；**`TextField` 2026-10-15 已落地**（§24.1 #32 闭环）；**`FocusNode`（焦点遍历顺序）2026-10-15 已落地** —— `FocusManager` 的 Tab 序（默认文档序 / `skipFocus` 整体跳过 / `focusOrder` 同容器稳定排序）可跑；**`Spinner` 2026-10-16 已落地**（§11.5 `Loading` 分支；三段形态 + `RenderSpinner` 8 点 alpha 环，smoke 14 条断言 + M2LayoutPage 示例）；**`CursorShape`（命中三方消费）随 M1 输入层已落地**（enum + 整条命中链 `Widget→RenderObject→FocusManager→dispatchInput→Win32 setCursor` 接好，smoke 有光标断言，见 §753）；★ **conformance 夹具已建**（2026-10-16，`tools/M2Conformance.php`）—— W1–W8 静态 + runtime 判据集（token 级量具带反例自检），`M2LayoutPage` 即夹具页，M2 出口判据「夹具全过 / 首批控件过 W1–W8 / Tab 序有夹具」首次有可跑落点；常驻门 `drift-conformance` 仍归 M4（§16.2）  |
 | **M3 数据缝/多页** | Store 三件套 + `SubjectBuilder` + **`select()`** + RouteTable/PageHost + **动作缝（`CommandRouter` + 冒泡链）** + **三态 enum** + **错误边界容器**（★ 2026-10-14 裁决：**归 M3** —— 见 §23.2 O-12）+ **AcceleratorTable** + **自绘 MenuBar/ContextMenu** + **应用内拖放** | §A.2 的完整应用可跑；局部态与跨页共享两条路径都能写；`Root` 只组合（lint 可查）；Ctrl+S 等加速键可用；§16.6.3 的 **17 条规则全部双向自检**过（`apps/users` 过全部 lint；两条修过的规则已做反例自检） | ✅ **M3 出口判据已兑现（2026-10-16）** —— `apps/users` 完整样板已建（20 个 PHP 文件，`apps/users/`）：① **§A.2 的完整应用可跑** —— **真机**：`tpc apps/users/project.yml -O2 -m bin` 出 `users.exe`（2.1MB，`Build successful`），运行后窗口 900×640 起来、客户区非白像素 11%（4 个"删除"按钮的 `rgb(209,36,47)` 清晰可辨）、进程保持消息循环、无 `Deprecated` / 无 Fatal；**无头侧** smoke 18 条断言；② **局部态与跨页共享两条路径都能写**（`SignupForm` property hooks / `AppStore` + `StatusBar` 专职订阅）；③ **`Root` 只组合**（`rootBuilds()===1` + 全树过 lint）；④ **Ctrl+S 可用**（加速键第 ① 环 ⇒ `form.submit`）；菜单 / 拖放 / 错误边界全在线。旧状态存档：值缝**M3 的 0 文件已清零** —— `Widget\Menu` 四件（`MenuBar`/`Menu`/`MenuItem`/`ContextMenu`）与 `Drag` 两件（`Draggable`/`DragTarget`）**2026-10-16 已落地**（自绘菜单 + 应用内拖放兑现；错误边界容器与 `AcceleratorTable` 同日落地，见 §4.2 各行注）；★ **多页外壳 2026-10-16 已落地**（`Dock` 五槽 + `AppBar` + `NavButton`，smoke 21 条 + ShellPage 示例；§A.2.6 `UsersRoot` 控件面齐全，只差 `Draggable`）；★ **命令激活键盘侧已接线**（焦点按钮 Enter/Space ⇒ `dispatch()` 带 `CommandArg` —— §9.1；指针激活等 M4 的 `PointerEvent::up()`）；§A.2 样板刚对齐（O-18），`apps/users` 未建；★ **浮层机制已裁（O-20，按 A）** —— `Menu` / `ContextMenu` / 模态（`showModal()`）共用第二棵根渲染树，实现不再被“不存在的原语”卡住  |
-| **M4 工具链 + 异步** | drift-preview / golden / conformance / drift-lint / **drift-doctor** 齐备 + **TaskHost 线程池后端** + **`notifyChanged` 线程断言** + **ThemeChanged / 深色模式** | 无头 preview + golden diff 可跑；后台 IO 不卡帧；**worker 里 notify ⇒ 响亮失败**；跟得上系统主题切换 | ⏳ **未动** —— `drift-lint` / `drift-preview` / `drift-codegen` 三件在；`golden` / `conformance` / `drift-doctor` 未建，`TaskHost` 系 **7 个类型**（含 `Job`，§24.1 #35）+ `ThreadPoolTaskHost` 0 文件  |
+| **M4 工具链 + 异步** | drift-preview / golden / conformance / drift-lint / **drift-doctor** 齐备 + **TaskHost 线程池后端** + **`notifyChanged` 线程断言** + **ThemeChanged / 深色模式** | 无头 preview + golden diff 可跑；后台 IO 不卡帧；**worker 里 notify ⇒ 响亮失败**；跟得上系统主题切换 | ⏳ **部分** —— `drift-lint` / `drift-preview` / `drift-codegen` 三件在；`golden` / `conformance` / `drift-doctor` 未建。★ **`TaskHost` 端口已建**（2026-10-16：`Job` + `TaskHost` + `SyncTaskHost`，后端 B）—— **线程池后端 A 被 tpc 能力卡住**（⛔ §17.2.2 / §24.2 #1），故 M4 的"后台 IO 不卡帧"这条出口判据**当前不可达**，需先等 tpc 补"每线程进入请求"的钩子  |
 | **M5 业务底座** | 虚拟化（含 §12.3 的 State 外置纪律）+ 脏矩形 + **WindowStateStore** + Windows UIA 桥接 | 长列表滚动不掉帧；子树崩溃不整树陪葬；窗口位置/尺寸跨启动保留 | ⏳ **未动** —— 虚拟化 / 脏矩形 / `WindowStateStore` / UIA 桥接全 0 文件  |
 
 ★ **状态列是 §20 纪律 4 在里程碑层的落点**：出口判据写“要做”不算数，`src/` 里有没有才算。§4.2 已按同一口径加了逐类型状态列（点名 94 个：**79 有文件 / 15 个 0 文件**） —— **两处必须同步维护**（否则又会出现“文档说已落地、代码还没写”的分裂）。★ `drift-doctor`（§16.2 工具集之一，O-10 已裁“做”）正是该**自动**输出这张表的工具 ⇒ 手工列只是它的**临时输入**，别为它新造机制。
@@ -3627,21 +3650,23 @@ M5 ── （无裁决项；虚拟化 / 脏矩形 / `WindowStateStore` / UIA 桥
 |---|------|------|------|
 | 41 | **上游 tpc codegen**（首个暴露者 `src/Text/DeterministicFontData.php`） | **类常量与同类方法同名 ⇒ 生成的 C++ 报 `error C2872: 不明确的符号`，整个应用编译不过**。根因：tpc 把类常量提升成**文件级静态变量** `__<类名>__<常量名小写>`，把方法翻译成**同名函数** ⇒ `private const LATIN` 与 `public static function latin()` 生成的两个符号都叫 `php_drift__text__deterministicfontdata__latin`；而生成的声明头末尾有 `using namespace typephp_project_hello;` ⇒ 调用点歧义。**判据（全仓可复用，已扫过 —— 只此一处）**：类常量名**小写后**与**同类任一方法名**相同即踩雷。 | ① 常量改名 `LATIN_GLYPHS` / `CJK_GLYPHS`（**语义零变化**，纯命名规避；同文件风格下 `= ButtonVariant::Default`（enum case 整体）**能过** ⇒ 禁的只是"取 `->value`"这一形态，见 §24.1 前文）；② ★ **`--dry` 门抓不到**（只生成不编译）⇒ `drift-codegen` 的覆盖面在**翻译层**止步，这类缺陷要**真编译**才现形。★ 与 §16.3 那条实测举证（codegen 抓到 lint / preview 都放过的 `Enum::Case->value`）合起来看：**三道门抓的是三批不同的东西**，不是冗余；但也说明 `drift-codegen` **不是** AOT 缺陷的完备门 —— 补法是让 `drift-build` 进 T2 档（已就位），或给 codegen 门加一步单文件 `cl /c`。<br>★ ③ 同轮还发现一处**覆盖缺口**：`drift-codegen` 的 `sources` 只有 `[../src, ../apps/<app>/src]`（单一出处 = `tools/drift-codegen.php`）⇒ **`apps/<app>/main.php` 与 `bin/<os>/Bootstrap.php` 不在门内**—— 而这两个恰恰是「入口 + 组合根」、平台相关代码最集中的文件（本轮 M1 的真机构建才第一次覆盖它们）。收口方向同上：把 `main.php` 与 `bin/<os>` 纳入 codegen 的 `sources`。 |
 
-★ **方法论（第四次同型，模型确实不成立 —— 与 §24.1 #40 同一条判据）**：#23 / #37 / #40 / #41 全是"**文档自述（或门禁自述）与可执行事实不一致**"。⇒ 判据再升级：**"门通过"只能证明门覆盖到的那一层**；每加一道门，必须同时写下它**覆盖不到什么**（§16.3 已为 codegen 记了一条，本条补第二条：**只生成不编译**）。
+| 42 | **§17.2 后端 A 的"【实测】可用"是过度声称**（暴露者 `probes/taskhost_tsrm/`） | §17.2 曾在 4 处（§2 表第 15 行 / §2 能力表 / §11.x 第 2 条 / §17.2 架构图）声称"线程池后端 **【实测】可用**"，依据是探针 E。★ **但探针 E 只测了纯标量 + 字符串分配**（`thr_php_add` / `thr_php_sum` / `thr_php_concat`），**从没碰过类 / 对象 / 属性**。探针 K（6 mode × 7 组合，`threads=1` 关键对照）证明：**碰类/对象/属性的 PHP 在单个 worker 线程上就 SIGSEGV**，根因是生成的扩展里 `static THREAD_LOCAL php_request_cache` **只在 RINIT 里被 `new`**，而 worker 没跑过 RINIT。⇒ "可用"成立的范围**比文档声称的小得多，且小到没有工程意义**（`Job` 就是类）。 | ① 4 处"【实测】可用"全部收窄为"**只对纯标量/字符串子集成立**"并指向 §17.2.2；② §17.2.2 标题加"⛔ 当前 tpc 下不可实现"、"仍未验"改为"已验（结论负面）"并**精确写出 tpc 需要补什么接口**；③ §19 M4 行的"TaskHost 线程池后端"标注被卡住 ⇒ 该里程碑"后台 IO 不卡帧"这条出口判据**当前不可达**；④ §24.2 #1 收口（转为对 tpc 的能力请求）、#7 定案（**只上后端 B**）。★ **教训**：探针的"✅"只覆盖它**实际跑到的那一面**；把"探针 E 过"读成"线程池可用"，缺的正是"**探针没测什么**"那一列。 |
+★ **方法论（第五次同型，模型确实不成立 —— 与 §24.1 #40 同一条判据）**：#23 / #37 / #40 / #41 / #42 全是"**文档自述（或门禁自述）与可执行事实不一致**"。⇒ 判据再升级：**"门通过"只能证明门覆盖到的那一层**；每加一道门，必须同时写下它**覆盖不到什么**（§16.3 已为 codegen 记了一条，本条补第二条：**只生成不编译**）。
 
 ### 24.2 开放项总表（全部 ⏳ 集中在此）
 
 | # | 开放项 | 为什么开放 | 何时必须收口 |
 |---|--------|-----------|-------------|
-| 1 | **`ts_resource(0)` 之后的完整线程安全** —— AOT 运行时的**非 TLS** 全局状态（`get_str()` 持久字符串表 / `get_persistent_func` 缓存 / opcache）在多 worker 下是否竞争 | 探针 E 只证明"分配 + 引用计数"可用 | **线程池正式落地前**（M4） |
+| 1 | ~~**`ts_resource(0)` 之后的完整线程安全**~~ | ✅ **2026-10-16 已收口（探针 K，结论负面）** —— 不是"竞争"而是"**缺请求上下文**"：类/对象/属性访问在 worker 上必崩（`threads=1` 即 SIGSEGV，根因 = `php_request_cache` 只在 RINIT 里建）；字符串 intern 路径确实不并发安全。**⇒ 转成对 tpc 的能力请求**：需"每线程进入请求"的入口（分配请求缓存 + `php::request_init()`，**不启动 main()**）。详见 `probes/RESULTS.md` §11 / §17.2.2 | **tpc 提供该入口后**（届时才谈后端 A） |
 | 2 | **`-m lib` 的热路径跨模块性能差** —— 对照 §15.3 的 0.92 µs/节点 | GUI 仓 spike 只验了"对不对"，**从未量"快不快"** | 决定"形态 B 能否做性能敏感场景"时 |
 | 3 | **`#[Native]` 类在 lib 模式下的实际限制** | 只知道"必须标 `#[NoExport]`" | 若想用 `#[Native]` 加速热路径对象 |
 | 4 | **CRT / PHP 版本不匹配的实际症状** | 部分已知（`LNK2038`），lib 专属症状未验 | 第三方分发时 |
 | 5 | **跨 `.dll` / 跨线程的"异步闭包"** | 同步闭包已验；异步未验 | 若走 O-03（`Job` 类）则**不再是阻塞项** |
 | 6 | **ICU 打包策略** | §8.3 给了三档（打包进 exe / 退最小实现 / 自实现禁则） | 按体积预算选（M1 前） |
-| 7 | **§17 线程模型是否最终定案** | 原与"能否切 `--nano`"互为条件；★ **nano 已明确不做（§16.7.5，2026-10-14）⇒ 该约束解除**，本条现在只等"线程池落地前的 TSRM 补枪"（同表 #1） | 线程池正式落地前（M4） |
+| 7 | **§17 线程模型是否最终定案** | 原与"能否切 `--nano`"互为条件；★ **nano 已明确不做（§16.7.5，2026-10-14）⇒ 该约束解除**。★ **2026-10-16：TSRM 补枪已完成（同表 #1，探针 K），结论是后端 A 不可实现** ⇒ **线程模型事实上已定案 = 只上后端 B（同步三态）**，后端 A 转为"tpc 能力请求"挂起 | ✅ **已定案**（2026-10-16） |
 | 8 | ~~**`--nano` 真机跑通**~~ | ★ **已移出开放项** —— 2026-10-14 裁决：nano 不作为前期重点（§16.7.5） | — |
 | 9 | **`-m lib` 的 D4**（`*_arg_N_default_value()` 导出前缀） | 上游可能已连带解决 | 形态 B 首次真机构建时 |
+| 10 | **`TaskHost` 端口目前没有 AOT 消费者** —— `Job` / `TaskHost` / `SyncTaskHost` 三件已落地（2026-10-16），但设计里它们的**第一个消费者 `HttpUserSource`（§A.2.8）归 M4**，`apps/users` 在 M3 只发 `MemoryUserSource` ⇒ 端口的 **AOT 可达性**只被 `drift-codegen` 门覆盖到"翻译层"，**没有真机使用点**（AOT 只编译**可达**代码 ⇒ 没人用就可能整块不生成） | ① 三条：`tpc` 会为 `sources` 里的文件做翻译，故语法/类型层有门；② **真机使用点缺失**是结构性缺口，不修 tpc 补不了；③ 注意这与 #1 不同 —— #1 是"线程池不能用"，本条是"端口没人用" | `HttpUserSource` 落地时（M4）；或先给 `apps/users` 接一个**本地 Job 源**（会动 `MemoryUserSource` 的构造签名 ⇒ 需先裁决） |
 
 ### 24.3 G2 例外登记表（允许静默的场合）
 
