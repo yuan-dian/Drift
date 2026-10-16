@@ -110,7 +110,7 @@ final class Win32Platform implements Platform
      * |--------|-----------|
      * | `quit` | 返回 `false` ⇒ 组合根的 `while` 跳出 |
      * | `resize` | 把物理尺寸 + dpr 交给表面 `resize()`（§6.1 的量化点） |
-     * | `dpi` | 只更新屏幕状态；**全树重建**由下一帧的 `viewport()` 变化驱动 |
+     * | `dpi` | **丢弃**（当前无消费者）。表面尺寸/缩放由随行的 `WM_SIZE` ⇒ `resize` 事件驱动（§6.1 的量化点）；`layout()` 本就每帧全树跑（§13.3）⇒ 不需要额外触发 |
      * | `timer` | ⏳ M1 丢弃：`FrameClock` 归 M4，今天没有消费者 |
      * | `pointer` | ⇒ `PointerEvent::down()`（坐标除 dpr 转**逻辑**单位） |
      * | `key` | ⇒ `KeyEvent::down(KeyChord::make(键名, ctrl, alt, shift))` |
@@ -137,7 +137,13 @@ final class Win32Platform implements Platform
         }
 
         if ($type === 'timer' || $type === 'dpi') {
-            return true;   // 见上表：M1 无消费者，但不阻塞循环
+            // `timer`：`FrameClock` 归 M4，今天没有消费者。
+            // `dpi`：**不需要消费者** —— 表面跟着随行的 `WM_SIZE` ⇒ `resize` 事件走
+            //   （§6.1 的量化点），而布局每帧本就全树跑（§13.3）⇒ 没有"额外触发 relayout"
+            //   这回事。
+            //   ★ 这里原先写"全树重建由下一帧 `viewport()` 变化驱动" —— **不成立**：跨屏时
+            //     逻辑客户区尺寸不变（物理尺寸变、dpr 也变，两者相抵）⇒ `viewport()` 不变。
+            return true;
         }
 
         $input = $this->input();

@@ -3,10 +3,13 @@
     python tools/probe-window.py users        # 默认 users；也可 hello
     python tools/probe-window.py users 用户管理
 
-判据（三者缺一不可）：
+判据（四者缺一不可）：
   ① 找到窗口，标题 == Application::title()；
   ② 客户区尺寸 == Bootstrap 声明的逻辑尺寸；
-  ③ 客户区有**非白像素**且颜色分布符合主题 token（空窗/黑块会被判出来）。
+  ③ 客户区有**非白像素**且颜色分布符合主题 token（空窗/黑块会被判出来）；
+  ④ **DPI 感知级别 == PER_MONITOR_AWARE_V2**（§6 / §24.1 #43）。★ 这条带**反例**：
+     旧的 `SetProcessDPIAware()`（V1 = SYSTEM_AWARE=1）必须 FAIL —— 否则"跨屏不糊"
+     这条判据就是空话（V1 进程跨屏会被系统位图拉伸，且收不到 `WM_DPICHANGED`）。
 
 ★ 为什么用 Python 而不是 PHP：本机 PowerShell 的 `Add-Type` 与 WScript COM 都被安全
   策略拦，`BitBlt`/`GetDIBits` 只能靠 ctypes 直调 user32/gdi32（同 `typephp-gui-build`
@@ -105,7 +108,31 @@ def main() -> int:
         for (r, g, b), n in sorted(distinct.items(), key=lambda kv: -kv[1])[:6]:
             print(f"  rgb({r},{g},{b}) x {n}")
 
-        ok = nonwhite > 0
+        # ④ DPI 感知级别（§6 / §24.1 #43）
+        #    `GetWindowDpiAwarenessContext(hwnd)` → 不透明 ctx；
+        #    `GetAwarenessFromDpiAwarenessContext(ctx)` → 0=UNAWARE / 1=SYSTEM_AWARE /
+        #    2=PER_MONITOR_AWARE。V1(system) 给 1，per-monitor(V1/V2) 都给 2 ⇒ 还要用
+        #    `AreDpiAwarenessContextsEqual(ctx, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)`
+        #    把 V2 从 per-monitor V1 里分出来（V2 常量 = (HANDLE)-4）。
+        dpi_ok = False
+        try:
+            user32.GetWindowDpiAwarenessContext.restype = ctypes.c_void_p
+            user32.GetWindowDpiAwarenessContext.argtypes = [wintypes.HWND]
+            user32.GetAwarenessFromDpiAwarenessContext.restype = ctypes.c_int
+            user32.GetAwarenessFromDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+            user32.AreDpiAwarenessContextsEqual.restype = wintypes.BOOL
+            user32.AreDpiAwarenessContextsEqual.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+
+            ctx = user32.GetWindowDpiAwarenessContext(hwnd)
+            awareness = user32.GetAwarenessFromDpiAwarenessContext(ctx)
+            names = {0: "UNAWARE", 1: "SYSTEM_AWARE(V1)", 2: "PER_MONITOR_AWARE"}
+            is_v2 = bool(user32.AreDpiAwarenessContextsEqual(ctx, ctypes.c_void_p(-4)))
+            print(f"DPI 感知 = {awareness} ({names.get(awareness, '?')})  V2 = {is_v2}")
+            dpi_ok = (awareness == 2) and is_v2
+        except Exception as exc:   # noqa: BLE001 —— 查不到就是 FAIL，不静默放过
+            print(f"DPI 感知查询失败：{exc}")
+
+        ok = nonwhite > 0 and dpi_ok
         user32.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
         time.sleep(0.8)
 

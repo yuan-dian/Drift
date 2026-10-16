@@ -429,23 +429,139 @@ Array eventQuit() {
     return out;
 }
 
+// ────────────────────────────────────────────────────────── DPI 感知（§6） ──
+
+/**
+ * 把本进程设成 **Per-Monitor DPI Aware V2** —— §6 的坐标模型要求它。
+ *
+ * ★ 为什么**不能**用 `SetProcessDPIAware()`：那是 **system-DPI-aware（V1）**。V1 进程
+ *   跨屏到另一块不同 DPI 的显示器时，系统把窗口内容**整体位图拉伸**（⇒ 糊），
+ *   而且 **`WM_DPICHANGED` 根本不会发**（那条消息只发给 per-monitor 感知的进程）
+ *   ⇒ `Screen::scale` 永远停在系统 DPI，§6 的"跨屏 = scale 变更 = 布局事件"落空。
+ *   这正是 §19 M1 那句"分数缩放下不糊"要消灭的形态。
+ * ★ 为什么 `GetProcAddress` 动态取：`SetProcessDpiAwarenessContext` 与
+ *   `DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2` 在 `winuser.h` 里被
+ *   `WINVER >= 0x0A00` 包着，而本工程的 `cxx-flags` **不抬** `WINVER`
+ *   （抬它会连带改变框架侧所有 Windows 头的可见面）。动态取不碰编译宏。
+ * ★ 三级回退，新系统走第一级：V2（Win10 1703+）→ shcore 的 per-monitor（Win8.1+）
+ *   → V1（Vista+）。全失败就什么都不做 —— 那是 Vista 之前，本框架不支持。
+ * ★ **必须在建窗 / 取 DC 之前调用**：Windows 在第一次建窗或取 DC 时就锁定感知级别，
+ *   之后再设一律失败（返回 FALSE）。
+ */
+void enablePerMonitorDpi() {
+    // DPI_AWARENESS_CONTEXT 是不透明句柄；这个负值是 winuser.h 的原始定义
+    // （`DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2`）。本工程不抬 WINVER ⇒
+    // 拿不到那个宏，只能按数值用（名字写在注释里，好搜）。
+    const HANDLE kPerMonitorV2 = (HANDLE)(INT_PTR)-4;
+
+    HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    if (user32 != NULL) {
+        typedef BOOL (WINAPI *SetAwarenessContextFn)(HANDLE);
+        SetAwarenessContextFn setContext =
+            (SetAwarenessContextFn)(void *)GetProcAddress(user32, "SetProcessDpiAwarenessContext");
+        if (setContext != NULL && setContext(kPerMonitorV2) != FALSE) {
+            return;
+        }
+    }
+
+    // Windows 8.1+：shcore.dll 的 SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE = 2)
+    HMODULE shcore = LoadLibraryW(L"shcore.dll");
+    if (shcore != NULL) {
+        typedef HRESULT (WINAPI *SetAwarenessFn)(int);
+        SetAwarenessFn setAwareness =
+            (SetAwarenessFn)(void *)GetProcAddress(shcore, "SetProcessDpiAwareness");
+        if (setAwareness != NULL && setAwareness(2) == 0) {   // S_OK
+            return;
+        }
+    }
+
+    SetProcessDPIAware();   // 兜底：V1。至少不糊在"系统 DPI"那一档
+}
+
+/**
+ * 窗口所在**显示器**的 DPI。
+ *
+ * ★ 优先 `GetDpiForWindow`（Win10 1607+）：它给的是**每显示器** DPI，多屏 / 分数缩放
+ *   下才正确。同样动态取（理由同 `enablePerMonitorDpi` 的 `WINVER` 那条）。
+ * ★ 退 `GetDeviceCaps(LOGPIXELSX)`：只拿得到**系统** DPI —— 对多屏场景不够。
+ *   **这是降级，不是等价**。
+ */
+UINT dpiOfWindow(HWND hwnd) {
+    if (hwnd != NULL) {
+        HMODULE user32 = GetModuleHandleW(L"user32.dll");
+        if (user32 != NULL) {
+            typedef UINT (WINAPI *GetDpiForWindowFn)(HWND);
+            GetDpiForWindowFn getDpi =
+                (GetDpiForWindowFn)(void *)GetProcAddress(user32, "GetDpiForWindow");
+            if (getDpi != NULL) {
+                UINT dpi = getDpi(hwnd);
+                if (dpi > 0) {
+                    return dpi;
+                }
+            }
+        }
+
+        HDC dc = GetDC(hwnd);
+        if (dc != NULL) {
+            int dpi = GetDeviceCaps(dc, LOGPIXELSX);
+            ReleaseDC(hwnd, dc);
+            if (dpi > 0) {
+                return (UINT)dpi;
+            }
+        }
+    }
+
+    return g_dpi;
+}
+
+/**
+ * DPI 感知的 `AdjustWindowRectEx`。
+ *
+ * ★ 老的 `AdjustWindowRectEx` **不是** DPI 感知的：它按**系统** DPI 算标题栏/边框的
+ *   厚度 ⇒ 分数缩放下外框偏 ⇒ "请求 640 逻辑宽、拿到 624 客户区"。
+ *   `AdjustWindowRectExForDpi`（Win10 1607+）收一个显式 DPI，才是对的。
+ *   同样动态取，失败退老 API。
+ */
+void adjustFrameForDpi(RECT *rect, DWORD style, BOOL menu, DWORD exStyle, UINT dpi) {
+    HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    if (user32 != NULL) {
+        typedef BOOL (WINAPI *AdjustForDpiFn)(LPRECT, DWORD, BOOL, DWORD, UINT);
+        AdjustForDpiFn adjust =
+            (AdjustForDpiFn)(void *)GetProcAddress(user32, "AdjustWindowRectExForDpi");
+        if (adjust != NULL && adjust(rect, style, menu, exStyle, dpi) != FALSE) {
+            return;
+        }
+    }
+
+    AdjustWindowRectEx(rect, style, menu, exStyle);
+}
+
 }  // namespace
 
 // ══════════════════════════════════════════════════════ 窗口生命周期 ══
 
 Int php_drift_win_create(String title, Int width, Int height) {
-    // 进程级 DPI 感知：不设的话系统会把窗口内容整体拉伸，自绘界面会糊
-    // （§6 的分数缩放模型要求我们自己按物理像素画）。
-    SetProcessDPIAware();
+    // ★ **必须在建窗 / 取 DC 之前**：Windows 在第一次建窗或取 DC 时就锁定 DPI 感知
+    //   级别（§6 的分数缩放模型要求我们自己按物理像素画，而只有 per-monitor 感知才
+    //   拿得到"每显示器 DPI + WM_DPICHANGED"）。详见 enablePerMonitorDpi() 的注释。
+    enablePerMonitorDpi();
 
+    // 建窗前拿不到**窗口** DPI ⇒ 先用**系统** DPI 起算；建窗后再用 GetDpiForWindow
+    // 纠正（多显示器时窗口可能落在另一块屏上，见函数尾）。
     HDC screen = GetDC(NULL);
     if (screen != NULL) {
-        g_dpi = (UINT)GetDeviceCaps(screen, LOGPIXELSX);
+        int systemDpi = GetDeviceCaps(screen, LOGPIXELSX);
         ReleaseDC(NULL, screen);
+        if (systemDpi > 0) {
+            g_dpi = (UINT)systemDpi;
+        }
     }
     if (g_dpi == 0) {
         g_dpi = 96;
     }
+
+    // 建窗用的 DPI（建窗后会用 GetDpiForWindow 纠正；两者不同就得挪窗口）
+    const UINT preCreateDpi = g_dpi;
 
     HINSTANCE instance = GetModuleHandleW(NULL);
 
@@ -465,7 +581,7 @@ Int php_drift_win_create(String title, Int width, Int height) {
     // 不做这一步，用户拿到的是"窗口 640 宽、能画的只有 624"。
     double scale = (double)g_dpi / 96.0;
     RECT frame = {0, 0, (LONG)((double)(int)width * scale), (LONG)((double)(int)height * scale)};
-    AdjustWindowRectEx(&frame, WS_OVERLAPPEDWINDOW, FALSE, 0);
+    adjustFrameForDpi(&frame, WS_OVERLAPPEDWINDOW, FALSE, 0, g_dpi);
 
     std::wstring wideTitle = toWide(title);
 
@@ -483,8 +599,22 @@ Int php_drift_win_create(String title, Int width, Int height) {
     }
 
     g_main = hwnd;
-    g_clientW = (int)((double)(int)width * scale);
-    g_clientH = (int)((double)(int)height * scale);
+
+    // ★ 建窗后纠正 DPI：`CW_USEDEFAULT` 可能把窗口放在**另一块 DPI** 的显示器上，
+    //   而上面按系统 DPI 算的外框/客户区就偏了。`GetDpiForWindow` 给的是**每显示器**
+    //   真值 ⇒ 用它重算，并在不同时 `SetWindowPos` 把外框纠正过来。
+    UINT actualDpi = dpiOfWindow(hwnd);
+    double actualScale = (double)actualDpi / 96.0;
+    g_dpi = actualDpi;
+    g_clientW = (int)((double)(int)width * actualScale);
+    g_clientH = (int)((double)(int)height * actualScale);
+
+    if (actualDpi != preCreateDpi) {
+        RECT fixed = {0, 0, (LONG)((double)(int)width * actualScale), (LONG)((double)(int)height * actualScale)};
+        adjustFrameForDpi(&fixed, WS_OVERLAPPEDWINDOW, FALSE, 0, actualDpi);
+        SetWindowPos(hwnd, NULL, 0, 0, fixed.right - fixed.left, fixed.bottom - fixed.top,
+                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
 
     return (Int)(INT_PTR)hwnd;
 }
@@ -555,23 +685,15 @@ Bool php_drift_win_is_maximized(Int hwnd) {
 // ══════════════════════════════════════════════════════════════ 屏幕 ══
 
 Int php_drift_win_dpi(Int hwnd) {
-    // ★ 用 `GetDeviceCaps(LOGPIXELSX)` 而**不是** `GetDpiForWindow`：后者要
-    //   `_WIN32_WINNT >= 0x0A00`，而本工程的 `cxx-flags` 没有抬这个宏
-    //   （抬它会连带影响框架侧所有 Windows 头的可见面，为一个 DPI 查询不值得）。
-    //   代价：拿到的是**系统** DPI 而不是**每显示器** DPI —— 对 M1 无差别，
-    //   因为跨屏拖动时系统会发 `WM_DPICHANGED`，那时 `g_dpi` 被更新（见 WndProc）。
-    HWND target = (HWND)(INT_PTR)hwnd;
-    if (target != NULL) {
-        HDC dc = GetDC(target);
-        if (dc != NULL) {
-            int dpi = GetDeviceCaps(dc, LOGPIXELSX);
-            ReleaseDC(target, dc);
-            if (dpi > 0) {
-                return (Int)dpi;
-            }
-        }
-    }
-    return (Int)g_dpi;
+    // ★ 用 `dpiOfWindow()`：优先 `GetDpiForWindow`（**每显示器** DPI —— 多屏 / 分数
+    //   缩放下才正确），退 `GetDeviceCaps`（只有系统 DPI，是**降级**不是等价）。
+    //
+    // ★ 这里曾写着"`GetDpiForWindow` 要 `_WIN32_WINNT >= 0x0A00`，为一个查询不值得抬宏
+    //   ⇒ 用系统 DPI 也无差别，因为跨屏时系统会发 `WM_DPICHANGED`" —— **那句是错的**：
+    //   `WM_DPICHANGED` **只发给 per-monitor 感知的进程**，而当时进程只是 system-aware
+    //   ⇒ 跨屏既拿不到新 DPI、也被系统位图拉伸（糊）。2026-10-16 修（§24.1 #43）。
+    //   正解不是"抬 WINVER"，是 `GetProcAddress` 动态取 —— 不碰编译宏。
+    return (Int)dpiOfWindow((HWND)(INT_PTR)hwnd);
 }
 
 Bool php_drift_win_system_dark() {

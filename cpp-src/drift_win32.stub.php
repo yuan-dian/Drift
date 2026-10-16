@@ -33,6 +33,13 @@
  *
  * `$width` / `$height` 是**逻辑**像素的客户区尺寸，壳按当前 DPI 缩放后反推外框
  * （客户区 ≠ 窗口尺寸：标题栏与边框不算）。
+ *
+ * ★ **建窗会把本进程设成 Per-Monitor DPI Aware V2**（§6）：这是 Windows 的**进程级**
+ *   属性，必须在**任何窗口 / DC 之前**设定，所以它落在建窗这一步（§24.1 #43）。
+ *   不设成 per-monitor 的后果：跨屏时系统把内容**位图拉伸**（糊），且
+ *   `WM_DPICHANGED` **不会发** ⇒ `Screen::scale` 停在系统 DPI、§6 的"跨屏 = 布局事件"落空。
+ * ★ 外框换算走 `AdjustWindowRectExForDpi`：分数缩放下老的 `AdjustWindowRectEx` 按
+ *   **系统** DPI 算边框厚度 ⇒ 客户区对不上请求的逻辑尺寸。
  */
 function drift_win_create(string $title, int $width, int $height): int {}
 
@@ -59,8 +66,10 @@ function drift_win_is_maximized(int $hwnd): bool {}
 // ---- 屏幕 / DPI ----
 
 /**
- * 当前显示器 DPI（96 = 100%）。PHP 侧用 `Scale::fromDpi()` 换算成缩放比。
+ * 窗口所在**显示器** DPI（96 = 100%）。PHP 侧用 `Scale::fromDpi()` 换算成缩放比。
  *
+ * ★ 给的是**每显示器** DPI（`GetDpiForWindow`）；老系统退化为**系统** DPI
+ *   （`GetDeviceCaps`）—— 后者在多屏下不准确，是降级不是等价。
  * ★ 不返回"permille 缩放比"：DPI 是平台的**事实**，缩放比是框架的**解释**
  *   （96 是 Windows 的约定，不是普适真理）。解释留在 PHP 侧，换平台时才不用改口径。
  */
