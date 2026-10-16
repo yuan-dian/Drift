@@ -123,7 +123,7 @@ final class Button extends BoxWidget
         $gap = $theme->metric(MetricToken::Gap);
         $border = $theme->metric(MetricToken::BorderWidth);
 
-        [$box, $labelColor] = match ($this->variant) {
+        [$themeBox, $labelColor] = match ($this->variant) {
             ButtonVariant::Default => [
                 new BoxStyle(
                     $theme->color(ColorToken::Chrome),
@@ -142,6 +142,18 @@ final class Button extends BoxWidget
                 $theme->color(ColorToken::Pane),
             ],
         };
+
+        // ★ §15.7 修正：用户经 `BoxWidget::background()/border()/radius()` 设的盒样式
+        //   （`$this->box()`）此前被这里忽略 ⇒ 修饰符是死代码（其 docblock 写"渲染层读它"）。
+        //   字段级合并：用户设了（非 null/非零）就用用户的，否则回退主题默认盒。
+        //   ★ 边缘：radius 取 `> 0` 才用用户的（BoxStyle 以 0 表示"未设/直角"），故无法用修饰符把圆角显式设回 0。
+        $userBox = $this->box();
+        $box = $userBox === null ? $themeBox : new BoxStyle(
+            $userBox->hasBackground() ? $userBox->background : $themeBox->background,
+            $userBox->hasBorder() ? $userBox->borderColor : $themeBox->borderColor,
+            $userBox->hasBorder() ? $userBox->borderWidth : $themeBox->borderWidth,
+            $userBox->radius > 0.0 ? $userBox->radius : $themeBox->radius,
+        );
 
         return new RenderButton(
             $this->label,
