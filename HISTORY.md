@@ -272,3 +272,11 @@ PHPRC='D:/TypePHP/typephp-windows-x64' \
 | **O-19** | §19 出口判据与 `src/` 真实状态脱节 | **A：§19 也加「当前状态」列**（§4.2 已随本轮前一提交补上）。事实：M1 判据「一个窗口画出 Hello Drift」**未兑现** —— `Drift\Platform` 9 + `Win32` 2 + `SkiaCanvas` + `cpp-src/` + `project.yml` + `Bootstrap.php` 全 0 文件，现有验证全部无头 | §19 六个里程碑全标实况（M0 ✅ / M1 ⏳ 平台层 0 / M2 ⏳ 缺 FocusNode+CursorShape / M3 ⏳ 约一半 / M4 ⏳ 工具链三件在 / M5 ⏳ 未动） |
 
 ★ **本轮暴露的方法论问题**：**"上一轮已落地"是自述，不是事实** —— §24.1 #22 写「`Page` 已删」，核验时 `Page` 仍在 §4.2 表里、真正的成员 `NoPage` 反而没列。⇒ 以后每条"已落地"都必须有**可复核的落点**（本轮起：§24.1 逐条记位置 + 状态列）。
+
+**第五轮裁决（2026-10-16 用户拍板）—— 1 项，按推荐 A**：
+
+| # | 提案 | 裁决 | 现落点 |
+|---|------|------|--------|
+| **O-20** | 菜单浮层机制（`Menu` / `ContextMenu` 打开形态；兼 §12.1 第 6 条 / §A.3.7 `showModal()` 的机制缺口） | **A：第二棵根渲染树** —— `Application` 持 `?Widget $menuWidget` + `?Element $menuElement`（与 `$root` 同构）；`Frame::run()` 三段加浮层分支；`dispatchInput()` 指针先选根；菜单 / 模态共用槽位。★ 参考仓 GUI `TOPIC-overlay.md`（提交 `e51e5b1`，`verify.sh` 56 项全绿）已真机验证同款架构 ⇒ **移植而非从零**。★ 同批批两项：右键最小集（`PointerEvent` button + 位移阈值，不等 `GestureArena`）+ §9.1“GestureArena 已支持”改诚实（第 6 处文档不实） | §5.1 裁决 1 · §9.1 · §12.1 第 6 条 · §A.3.7 · §4.2（+4 点名，96→100 / 23→27）· §19 M3 |
+
+★ **方法论再得一证**：MEMORY.md 的纪律“写'⏳ 待验'项先 grep 参考仓 memory”直接兑现 —— `TOPIC-overlay.md` 让 O-20 从“从零设计”变成“移植已验证架构”，且核出三处**必须逐条对**的结构差异：① GUI 命中靠每帧 `elementId` 注册表（Drift 没有 ⇒ 先选根树再命中，反而更简单）；② GUI `Canvas` 有 `measureText`（Drift 没有 ⇒ 走 `TextMetricsProvider::advance()`）；③ GUI `Color::value()` 丢 alpha 被迫自绘遮罩（Drift 契约层 `Color::fromRgba` / `Paint::withAlpha` 就有 alpha，光栅后端混色未验）。

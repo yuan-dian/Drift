@@ -333,11 +333,11 @@ private function pageFor(string $name): ?Widget
 | `src/Geometry/` | `Drift\Geometry` | `Point` · `Size` · `Rect` · `EdgeInsets` · `Scale` · `BoxConstraints` | ✅ 6/6 |
 | `src/Rendering/` | `Drift\Rendering` | ✅ `RenderSurface` · `GpuContext` · `Canvas` · `DisplayList` · `Paint` · `Color` · `BoxStyle` · `RasterCanvas` · `RecordingCanvas`；⏳ `SkiaCanvas` | **缺 1**（M1） |
 | `src/Text/` | `Drift\Text` | `TextRole` · `FontManager` · `FontCollection` · `FontFace` · `TextShaper` · `TextLayout` · `Paragraph` · `TextMetricsProvider` · `TextStyle` · `TextInputClient` | ✅ 10/10（另有 **6 个未列入本表**的确定性实现：`DeterministicFontManager` · `DeterministicFontCollection` · `DeterministicShaper` · `DeterministicMetricsProvider` · `NotdefFontFace` · `BitmapFontFace` —— §8.2 坑 6 的“确定性参考实现”） |
-| `src/Layout/` | `Drift\Layout` | `RenderObject` · `RenderBox` · 各 `Render*` 族 | ✅（族 8 个：`RenderCenter` / `RenderFlex` / `RenderFlexible` / `RenderPadding` / `RenderProxyBox` / `RenderText` / `RenderButton` + `Overflow` · `FlexAlign`） |
-| `src/Widget/` | `Drift\Widget` | `Widget` · **`BoxWidget`** · `StatelessWidget` · `StatefulWidget` · `Element` · `State` · `BuildContext` · `Key` · **`TextField`**；⏳ **`Spinner`** · **`Dock`** · **`AppBar`** · **`NavButton`** | ✅ 8/8 + **`TextField`** + ⏳ **4**（另有 11 个控件 + 6 个 Element 实现；★ `TextField` **2026-10-15 已落地**（§24.1 #32 闭环）—— 此前全文 29 处引用、O-16 全部论据与 §A.2.9 旗舰表单都建在这个 0 文件的控件上） |
+| `src/Layout/` | `Drift\Layout` | `RenderObject` · `RenderBox` · 各 `Render*` 族 · **`RenderPopupPanel`**（⏳ O-20：浮层面板自绘盒 —— 投影 / 边框 / 底三层，投影必须外溢到自身矩形之外，`BoxStyle` 画不到） | ✅（族 8 个：`RenderCenter` / `RenderFlex` / `RenderFlexible` / `RenderPadding` / `RenderProxyBox` / `RenderText` / `RenderButton` + `Overflow` · `FlexAlign`）+ ⏳ 1（`RenderPopupPanel`，O-20） |
+| `src/Widget/` | `Drift\Widget` | `Widget` · **`BoxWidget`** · `StatelessWidget` · `StatefulWidget` · `Element` · `State` · `BuildContext` · `Key` · **`TextField`**；⏳ **`Spinner`** · **`Dock`** · **`AppBar`** · **`NavButton`** · **`PopupPanel`** · **`Modal`**（均 O-20 浮层族：`PopupPanel` = 菜单 / 浮层复合控件，`Modal` = 模态对话框复合糖） | ✅ 8/8 + **`TextField`** + ⏳ **6**（另有 11 个控件 + 6 个 Element 实现；★ `TextField` **2026-10-15 已落地**（§24.1 #32 闭环）—— 此前全文 29 处引用、O-16 全部论据与 §A.2.9 旗舰表单都建在这个 0 文件的控件上） |
 | `src/Widget/Drag/` | `Drift\Widget\Drag` | ⏳ **一个文件都没有**：`Draggable` · `DragTarget` | **缺 2**（M3，§12.4 / §A.3.5） |
-| `src/Widget/Menu/` | `Drift\Widget\Menu` | ⏳ **一个文件都没有**：`MenuBar` · `Menu` · `MenuItem` · `ContextMenu` | **缺 4**（M3，§9.1 裁决“菜单 = 普通 Widget，不进 Platform”） |
-| `src/Input/` | `Drift\Input` | ✅ `PointerEvent` · `KeyEvent` · `KeyChord` · `FocusNode` · **`InputEvent`**（★ 标记接口：`Platform::input()` 队列的元素类型，让 `poll()` 有单一返回类型 —— AOT 下比联合类型安全）；⏳ `GestureArena` · `SemanticsTree` · `AcceleratorTable` · `CursorShape` · `ThemeChangedEvent` | **缺 5**（M3，路由链见 §9.1；★ 2026-10-15 **输入层最小集落地** —— 四个值对象 + 路由住 `Drift\App\FocusManager`，见 §24.1 #38） |
+| `src/Widget/Menu/` | `Drift\Widget\Menu` | ⏳ **一个文件都没有**：`MenuBar` · `Menu` · `MenuItem` · `ContextMenu` | **缺 4**（M3，§9.1 裁决“菜单 = 普通 Widget，不进 Platform”；★ **打开机制已裁** —— O-20 第二棵根渲染树，落点见 §5.1 裁决 1 与 §9.1 菜单行） |
+| `src/Input/` | `Drift\Input` | ✅ `PointerEvent` · `KeyEvent` · `KeyChord` · `FocusNode` · **`InputEvent`** · `CursorShape`（★ 标记接口：`Platform::input()` 队列的元素类型，让 `poll()` 有单一返回类型 —— AOT 下比联合类型安全）；⏳ `GestureArena` · `SemanticsTree` · `AcceleratorTable` · `ThemeChangedEvent` · **`HoverHandler`** | **缺 5**（M3，路由链见 §9.1；★ `HoverHandler` = O-20 必要子项（浮层行高亮）：Enter / Move / Exit 三态悬停契约，与点击同源命中、只在目标变化时派发，派发住 `Drift\App\FocusManager`；★ 2026-10-15 **输入层最小集落地** —— 四个值对象 + 路由住 `Drift\App\FocusManager`，见 §24.1 #38） |
 | `src/State/` | `Drift\State` | `Subject` · `Subscription` · `SubjectBuilder` · `Cell` · `SubscribingWidget` | ✅ 5/5 |
 | `src/Commands/` | `Drift\Commands` | `CommandRouter` · `CommandHandler` · `CommandArg` | ✅ 3/3 |
 | `src/Theme/` | `Drift\Theme` | `ThemeData` · `ThemeScope` · **`SystemTheme`** | ✅ 3/3（★ 删掉孤儿名 `Theme`，见 §24.1 #26） |
@@ -346,7 +346,7 @@ private function pageFor(string $name): ?Widget
 
 ★ **`cpp-src/` 不在 `src/` 内，不计入下面的清点**（2026-10-15 首次出现）：C ABI 桥目录。`<name>.stub.php` 是给 tpc 看的 **ABI 声明**（函数体全空），`<name>.cc` 是实现；两者**成对、同名**。今天只有一对：`drift_win32.stub.php` + `drift_win32.cc`（建窗 / 消息泵 / 位块传送 / 定时器，约 600 行）。三条纪律：① **桥不建控件、不做布局、不画任何东西**（§5.1 四条边界）；② `cpp-src/*.h` 绝不写 `using namespace php;`（§2.4 纪律 3）；③ **一帧只跨一次边界**（`drift_win32_present()` 贴整帧像素），不是 GUI 仓的"每条绘制命令过一次桥" —— 那是 2108 行的桥 vs 今天 600 行的差别。
 
-★ **本表不穷尽，它回答"这一层该有什么"**：`src/` 实有 **127 个 PHP 文件**（其中 115 个含 `@api`），本表点名 **96 个**（**73 个有文件 / 23 个 0 文件**，2026-10-15 按"名字 → 所属目录同名 `.php`"清点，**零矛盾** —— 修掉误挂在 `Drift\Routing` 的 `Offstage`（§24.1 #37）之后才成立；此前那句"零矛盾"本身是**假陈述**）；**54 个已实现文件未列入本表**：6 个封闭域 enum · 11 个控件 · 6 个 Element 实现 · `Layout` 侧 10 个 `Render*` 族成员 + `Overflow`/`FlexAlign` · `Text` 侧 14 个（含 §8.2 坑 6 的 6 个确定性参考实现）· `ButtonVariant`/`RenderBoxWidget` · `TextField` 的 2 个 `@internal` 实现（`TextFieldBox`/`TextFieldState`）· `App\FocusManager`（输入路由最小集，`@internal`）· `Errors.php`（★ 分类之和与总数差 2，是上一轮遗留的口径问题，待 `drift-doctor` 按 `src/` 自动清点取代手工分类）。（127 = 73 点名有文件 + 54 未点名，2026-10-15 同口径清点；★ 上一轮这里写的 "52 个 … + Application/Frame" 两个数都错 —— `Application`/`Frame` 是**已点名**的，而族成员与 `Text` 目录的实现被漏数了）★ 漏登记的代价见 §24.1 #32/#33（`TextField` 全文 29 处引用却不在表里）；**穷尽清单归 `drift-doctor`（O-10）自动扫 `src/`**，本表是它的临时输入。<br>★ **上面这四个数可复现**：`drift-doc-src-audit` 技能的 `scripts/audit_refs.py --section 4.2` 直接打印它们（口径 = 名字出现在**表第 3 列的枚举本体**；括号里的旁注会被剥掉 —— 旁注会引到`FocusManager.php`（@internal 实现）· `DeterministicFontManager`（未列入本表）· `RenderSurface`（举例时提到别的层）甚至 `null`/`apps` 这类根本不是类型的词，不剥就虚高）。**2026-10-15 脚本修正后与本文数字一致**。
+★ **本表不穷尽，它回答"这一层该有什么"**：`src/` 实有 **127 个 PHP 文件**（其中 115 个含 `@api`），本表点名 **100 个**（**73 个有文件 / 27 个 0 文件**，2026-10-15 按"名字 → 所属目录同名 `.php`"清点、2026-10-16 随 O-20 裁决 +4（`PopupPanel` / `Modal` / `HoverHandler` / `RenderPopupPanel`，均 0 文件），**零矛盾** —— 修掉误挂在 `Drift\Routing` 的 `Offstage`（§24.1 #37）之后才成立；此前那句"零矛盾"本身是**假陈述**）；**54 个已实现文件未列入本表**：6 个封闭域 enum · 11 个控件 · 6 个 Element 实现 · `Layout` 侧 10 个 `Render*` 族成员 + `Overflow`/`FlexAlign` · `Text` 侧 14 个（含 §8.2 坑 6 的 6 个确定性参考实现）· `ButtonVariant`/`RenderBoxWidget` · `TextField` 的 2 个 `@internal` 实现（`TextFieldBox`/`TextFieldState`）· `App\FocusManager`（输入路由最小集，`@internal`）· `Errors.php`（★ 分类之和与总数差 2，是上一轮遗留的口径问题，待 `drift-doctor` 按 `src/` 自动清点取代手工分类）。（127 = 73 点名有文件 + 54 未点名，2026-10-15 同口径清点；★ 上一轮这里写的 "52 个 … + Application/Frame" 两个数都错 —— `Application`/`Frame` 是**已点名**的，而族成员与 `Text` 目录的实现被漏数了）★ 漏登记的代价见 §24.1 #32/#33（`TextField` 全文 29 处引用却不在表里）；**穷尽清单归 `drift-doctor`（O-10）自动扫 `src/`**，本表是它的临时输入。<br>★ **上面这四个数可复现**：`drift-doc-src-audit` 技能的 `scripts/audit_refs.py --section 4.2` 直接打印它们（口径 = 名字出现在**表第 3 列的枚举本体**；括号里的旁注会被剥掉 —— 旁注会引到`FocusManager.php`（@internal 实现）· `DeterministicFontManager`（未列入本表）· `RenderSurface`（举例时提到别的层）甚至 `null`/`apps` 这类根本不是类型的词，不剥就虚高）。**2026-10-15 脚本修正后与本文数字一致**。
 
 ### 4.3 依赖规则（lint 强制，违反即报错）
 
@@ -452,7 +452,7 @@ interface Platform
 
 **三条端口边界裁决**：
 
-1. ★ **菜单不进 `Platform`**：原生菜单栏（`HMENU` + `SetMenu`）与自绘界面**风格割裂**（GUI 仓 manifest 教训：原生对话框退回 Win95 外观时与 Skia 界面并排非常突兀）。⇒ **菜单 = 普通 Widget**（`MenuBar` / `Menu` / `MenuItem` / `ContextMenu` 全走 §15 链式写法，放在 `Dock::top` 里），**零平台端口成本**。**原生菜单栏：明确不做**（风格割裂 + 无法与自绘主题统一 + 违反 §18）。
+1. ★ **菜单不进 `Platform`**：原生菜单栏（`HMENU` + `SetMenu`）与自绘界面**风格割裂**（GUI 仓 manifest 教训：原生对话框退回 Win95 外观时与 Skia 界面并排非常突兀）。⇒ **菜单 = 普通 Widget**（`MenuBar` / `Menu` / `MenuItem` / `ContextMenu` 全走 §15 链式写法，放在 `Dock::top` 里），**零平台端口成本**。**原生菜单栏：明确不做**（风格割裂 + 无法与自绘主题统一 + 违反 §18）。★ **菜单“打开后浮在哪儿”归框架 —— 不归平台、也不归文档流**（2026-10-16 O-20 裁决，按方案 A）：`Menu` / `ContextMenu` 打开后挂**第二棵根渲染树** —— `Application` 持 `?Widget $menuWidget` + `?Element $menuElement`（与 `$root` 同构）；`Frame::run()` 的 settle / layout / paint 三段各加浮层分支（layout 用**无界约束**让面板自尺寸，再把渲染盒原点钉到锚点、夹进客户区）；`dispatchInput()` 的指针事件**先选根树**（浮层开着 ⇒ 优先归浮层；点浮层外 ⇒ 关且吞掉该次按下）。**零平台端口**。模态（`showModal()`，§12.1 第 6 条）复用同一槽位：紧约束盖满 + 面板自居中 + `ModalBarrier` 遮罩。
 2. ★ **鼠标指针形状进 `WindowHost`**（不是新端口）：它是**窗口级**状态（`SetCursor` 作用于 HWND），且与 `setCapture()` 同族。
 3. ★ **`ThemeChanged` 复用现有事件通道**（不新增端口方法）：`screen()` 已有；Win32 侧把 `WM_SETTINGCHANGE`（`lParam == "ImmersiveColorSet"`）规范化成 `ThemeChanged` 事件即可（与 `DpiChanged` 同路，见 §9.2）。
 4. ★ **`fatalBox()` 进主接口，不拆独立端口**（**2026-10-14 裁决**，原 §23 O-01）：它是**基础能力**（每个平台都有 —— Win32 用 `MessageBoxW`，其它平台最差也能写 stderr），**不存在"不支持"这个状态**。⇒ 若按第 2 条拆成 `?FatalBox`（返回 `null`），调用方就要处理一个**永远不会发生**的分支 —— 正是 §10.3 第 4 条（A1 死字段）的形态。
@@ -752,7 +752,7 @@ Platform 原始事件（PointerEvent / KeyEvent / ImeEvent / ScrollEvent / Theme
 | **指针捕获** | 按下即捕获（Win32 只把鼠标消息发给光标下的窗口 ⇒ 不捕获则按下态永不释放、拖拽永不结束）；`WindowHost::setCapture()` |
 | **光标形状** | `RenderObject` 声明 `cursor`（`CursorShape` backed enum：`Default`/`IBeam`/`PointingHand`/`SizeAll`/`SizeNS`/`SizeWE`/`Wait`/`NotAllowed`）；`EventLoop` 在 `WM_SETCURSOR` 时问**命中链**，取最深声明者 ⇒ `WindowHost::setCursor()`。**不给控件开自绘光标的口子**（自绘光标要自己画、自己跟帧，得不偿失） |
 | **快捷键 / 加速键** | `Drift\Input\AcceleratorTable`，挂在 `Application` 上（**应用级数据，不是平台能力** ⇒ 零新端口）。`EventLoop` 在派发 `KeyEvent` **之前**查表。冲突处理两条：① **IME 组合期不吃快捷键**（否则中文输入会误触）；② **编辑命令优先**：`TextInputClient` 可声明独占键集（`Ctrl+A/C/V/X/Z`），命中时让位给输入框 |
-| **菜单** | **自绘控件**（`MenuBar` / `Menu` / `MenuItem` / `ContextMenu`），零平台端口。原生菜单栏**明确不做**（理由见 §5.1）。上下文菜单走右键手势（GestureArena 已支持） |
+| **菜单** | **自绘控件**（`MenuBar` / `Menu` / `MenuItem` / `ContextMenu`），零平台端口。原生菜单栏**明确不做**（理由见 §5.1）。★ **打开形态 = 第二棵根渲染树**（O-20 已裁，机制详见 §5.1 裁决 1）：浮层挂 `Application`（`?Widget $menuWidget` + `?Element $menuElement`，与 `$root` 同构），paint 在主树之后（**绘制顺序即层叠，无 z-index**），指针事件**先选根树**；关闭语义四条：点浮层外 ⇒ 关且**吞掉该次按下** / 抬起在浮层上 ⇒ 命令分发**之后**才关 / **ESC 在 `dispatchKey` 之前**拦 / 浮层开着时**滚轮吞**。上下文菜单入口 = **右键最小集**（`PointerEvent` button + 位移阈值；★ 不依赖 `GestureArena` —— 它 0 文件，“已支持”是旧文档误记，2026-10-16 随 O-20 改正） |
 | **焦点** | `FocusNode`；焦点是**渲染态**（不放业务值） |
 | **焦点遍历顺序** | 默认 = **文档序（深度优先）**，与 Flutter / Qt 一致。容器可 `->skipFocus()` 整体跳过（如 AppBar 工具按钮组，**显式**，不隐式）。需定制时用 `->focusOrder(int)`，同一父容器内**稳定排序**。★ **lint 判据**：同一容器内混用"有 `focusOrder`"与"无 `focusOrder`"的子节点 ⇒ 报错（否则隐式相对顺序有歧义，属 G2） |
 | **IME** | `TextInputClient` 协议（§8.4）；caret / anchor / 撤销栈归属 State 的渲染态域（GUI 仓 V1 结案结论：外部不可能知道"用户点到哪、按了几个左箭头"） |
@@ -760,12 +760,12 @@ Platform 原始事件（PointerEvent / KeyEvent / ImeEvent / ScrollEvent / Theme
 
 > **P3 陷阱**：语义**不能**靠覆写 `protected` 钩子实现（子类覆写可能被去虚化 ⇒ **静默不跑**）。语义写成**字段/构造参数** —— GUI 仓的 `SemanticsBuilder` 已是这个形态。
 
-> ★ **落地现状（2026-10-15）**：链上的**最小集**已跑通 —— `Drift\Input\{KeyChord, KeyEvent, PointerEvent, FocusNode}` 四个值对象 + `Drift\App\FocusManager`（路由宿主）。它兑现了三件事：
+> ★ **落地现状（2026-10-15）**：链上的**最小集**已跑通 —— `Drift\Input\{KeyChord, KeyEvent, PointerEvent, FocusNode}` 四个值对象 + `CursorShape`（鼠标指针形状 backed enum，命中链消费）+ `Drift\App\FocusManager`（路由宿主）。它兑现了三件事：
 > ③ **焦点链**（`Tab`/`Shift+Tab` 按文档序；`skipFocus` 整棵子树剪枝；`focusOrder` 同容器稳定排序）；
 > **命中测试**（`RenderBox::hitTest` 深度优先取最深盒；越界 ⇒ `null`）；
 > **命中 → 焦点**（★ 命中的是**最深的盒**，焦点链收的是**声明可聚焦的 `Element`** —— `TextField` 是 `StatefulWidget`、自己不产盒，两者**常不是同一个节点** ⇒ 必须沿父链上溯到最近的焦点链成员，否则"点得到、却给不了焦点"且**不报错**）；
 > 以及 §9.1 让位规则 ② 的**声明面**（`->claimKeys()` / `FocusNode::claims()`）。
-> **仍未落地**：① `AcceleratorTable` · ② IME 组合期 · `GestureArena` · 语义 · 光标形状（见 §4.2 `src/Input/` 行"缺 5"）。
+> **仍未落地**：① `AcceleratorTable` · ② IME 组合期 · `GestureArena` · 语义（★ `CursorShape` 已随 M1 输入层落地，见 §4.2 `src/Input/` 行"缺 5"、§753）。
 > ★ **`FocusManager` 是路由宿主的第一个形态**：§4.2 把"事件路由"归 `EventLoop`（`Drift\App`，M4）；M3 先把它落成独立类，M4 的 `EventLoop` 到位后由它**吸收/扩展**（§4.2 App 行已登记为 `@internal` 实现文件）。
 
 **用法示例**（完整版见 §A.3）：
@@ -1502,7 +1502,7 @@ private function pageFor(string $name): ?Widget
      ① **参数会残留** —— 导航离开后 `selectedId` 还在 store 里，回到列表页时"上次选中的那行"仍然高亮。要清就得显式清（或在页面 `dispose` 时清），这是**手写的**，框架不管。
      ② **带参页面无法独立预览** —— §12.2 宣称的"每页可独立预览"对**不带参页面**成立；带参页面必须先喂一个假 store（`selectedId = 1`）才能挂载。⇒ 工具链的"单页预览"要支持**注入 store 夹具**，这不是免费的（§A.5 给了夹具样例）。
    - **为什么仍然选这条路**（而不是"从根逐层钻参数"）：钻参数的代价是**每一层中间容器都要知道它不关心的参数**（`Root` → `Dock` → `PageHost` → 页面），改一个参数要动 N 个签名；而残留/预览是**两个局部问题**，各有一个局部解法。
-6. **导航栈不做**：桌面主形态 = 外壳 + 内容槽 + **模态**（`Application::showModal()`）；只有出现真实"多级钻取"需求才做 Navigator —— 不需要栈的应用硬上栈 = 多一个必然出错的全局状态。
+6. **导航栈不做**：桌面主形态 = 外壳 + 内容槽 + **模态**（`Application::showModal()`）；只有出现真实“多级钻取”需求才做 Navigator —— 不需要栈的应用硬上栈 = 多一个必然出错的全局状态。★ **模态的机制 = 浮层槽位**（O-20 已裁）：`showModal()` 把内容挂上第二棵树、**紧约束盖满**客户区、`ModalBarrier` 半透明遮罩（`Color::fromRgba` / `Paint::withAlpha` 契约层支持 alpha；光栅后端是否真混色**未验** ⇒ 实现第一天验）、面板控件自己居中；**关不关仍归应用**（`Modal` 只发命令，绝不自己 `closeModal()`）。
 7. **`PageHost` 与 `RouteTable` 分工**：`RouteTable` 是**数据**（名字→页面工厂，可被 devtools 列举、可单测）；`PageHost` 是**容器控件**（持当前页 Element：换页 = 旧页 `Offstage` 化而非卸载，状态保留）。简单应用在 Root 里直接 `match` 即可。
 
 ### 12.2 Root 只做组合（反 A10 的正面样板）
@@ -2455,11 +2455,11 @@ $app = new UsersApplication(new Win32Platform(), new ThreadPoolTaskHost());
 | **M0 骨架** | PSR-4 分层 + 契约文件 + `tools/smoke.php` + **公共面按 `@api` 标注**（决定 lint 骨架） | 冒烟全绿；依赖方向 lint 有断言；`internal-leak` 双向自检过 | ✅ **已完成** —— PSR-4 分层 / `@api` 标注（76 类型）/ `smoke.php`（315 ok）/ lint 骨架（14 条落地）全在  |
 | **M1 可显示** | Win32 Platform + RenderSurface(Skia CPU) + Canvas 接口 + 文本栈桥接 + DPI 缩放 + **`DisplayList` 录制**（决定渲染路径） | 一个窗口画出「Hello Drift」（§A.1），分数缩放下不糊 | ✅ **出口判据已兑现**（2026-10-15）—— `apps/hello` 经 `tpc -m bin` **真机构建**出 `hello.exe`（1.5 MB），运行后窗口（640×400 客户区）画出居中的「Hello Drift」（截图核对；执行入口 `php tools/drift-build.php hello`）。<br>★ **落地路径与本文原计划有一处偏差，如实记下**：表面走 **`Win32RasterSurface`**（`RasterCanvas` 软光栅 + `SetDIBitsToDevice`），**不是** `RenderSurface(Skia CPU)`。理由：§7.3 的 M1 分期原文就写"CPU 光栅 + 位块传送"，且 `SurfaceProvider` 这层抽象存在的意义正是"**后端可换**"（换 Skia 只改 `Win32SurfaceProvider` 一处，应用侧一行不改）⇒ `SkiaCanvas` 归 M4+。<br>★ 仍未验（不阻塞 M1 判据）：分数缩放下不糊（本机 100% DPI，未跨屏试）、`SkiaCanvas`、跨模块调用性能。<br>★ 平台侧 `Drift\Platform` 9 + `Win32` 7 + `cpp-src/` 2 + `apps/hello` 4 个文件全在；渲染侧（`RenderSurface`/`Canvas`/`DisplayList`/文本栈/`RasterCanvas`）齐  |
 | **M2 三树 + 布局** | Element/State/调和 + RenderBox 两阶段布局 + 首批控件 + **fluent-first 全部落地** + **盒样式（`BoxStyle` + `BoxWidget`，§15.7）** + **焦点遍历顺序** + **光标形状（命中三方消费）** + **`SubscribingWidget` 接口** + **property hooks 进 Store** + **`Each` key 必填** | 布局 conformance 夹具全过；首批控件过 **W1–W8**；Tab 序有 conformance 夹具；`Each` 缺 key ⇒ 构建期报错 | ⏳ **大部分** —— 三树/调和/两阶段布局/12 个控件/fluent-first/`BoxStyle`+`BoxWidget`/`SubscribingWidget`/property hooks/`Each` key 全在；**`TextField` 2026-10-15 已落地**（§24.1 #32 闭环）；**`FocusNode`（焦点遍历顺序）2026-10-15 已落地** —— `FocusManager` 的 Tab 序（默认文档序 / `skipFocus` 整体跳过 / `focusOrder` 同容器稳定排序）可跑；**`Spinner` 仍 0 文件**；**`CursorShape`（命中三方消费）随 M1 输入层已落地**（enum + 整条命中链 `Widget→RenderObject→FocusManager→dispatchInput→Win32 setCursor` 接好，smoke 有光标断言，见 §753）；conformance 夹具属 M4 工具链，未建  |
-| **M3 数据缝/多页** | Store 三件套 + `SubjectBuilder` + **`select()`** + RouteTable/PageHost + **动作缝（`CommandRouter` + 冒泡链）** + **三态 enum** + **错误边界容器**（★ 2026-10-14 裁决：**归 M3** —— 见 §23.2 O-12）+ **AcceleratorTable** + **自绘 MenuBar/ContextMenu** + **应用内拖放** | §A.2 的完整应用可跑；局部态与跨页共享两条路径都能写；`Root` 只组合（lint 可查）；Ctrl+S 等加速键可用；§16.6.3 的 **17 条规则全部双向自检**过 | ⏳ **约一半** —— 值缝（Store 三件套 + `SubjectBuilder` + `select`）与动作缝（`CommandRouter` + 冒泡链）已通；**多页外壳（`Dock`/`AppBar`/`NavButton`）· `Widget\Menu` 四件 · 错误边界容器 · `AcceleratorTable` · `Drag` 两件 —— 6 类 11 个 0 文件**；§A.2 样板刚对齐（O-18），`apps/users` 未建  |
+| **M3 数据缝/多页** | Store 三件套 + `SubjectBuilder` + **`select()`** + RouteTable/PageHost + **动作缝（`CommandRouter` + 冒泡链）** + **三态 enum** + **错误边界容器**（★ 2026-10-14 裁决：**归 M3** —— 见 §23.2 O-12）+ **AcceleratorTable** + **自绘 MenuBar/ContextMenu** + **应用内拖放** | §A.2 的完整应用可跑；局部态与跨页共享两条路径都能写；`Root` 只组合（lint 可查）；Ctrl+S 等加速键可用；§16.6.3 的 **17 条规则全部双向自检**过 | ⏳ **约一半** —— 值缝（Store 三件套 + `SubjectBuilder` + `select`）与动作缝（`CommandRouter` + 冒泡链）已通；**多页外壳（`Dock`/`AppBar`/`NavButton`）· `Widget\Menu` 四件 · 错误边界容器 · `AcceleratorTable` · `Drag` 两件 —— 6 类 11 个 0 文件**；§A.2 样板刚对齐（O-18），`apps/users` 未建；★ **浮层机制已裁（O-20，按 A）** —— `Menu` / `ContextMenu` / 模态（`showModal()`）共用第二棵根渲染树，实现不再被“不存在的原语”卡住  |
 | **M4 工具链 + 异步** | drift-preview / golden / conformance / drift-lint / **drift-doctor** 齐备 + **TaskHost 线程池后端** + **`notifyChanged` 线程断言** + **ThemeChanged / 深色模式** | 无头 preview + golden diff 可跑；后台 IO 不卡帧；**worker 里 notify ⇒ 响亮失败**；跟得上系统主题切换 | ⏳ **未动** —— `drift-lint` / `drift-preview` / `drift-codegen` 三件在；`golden` / `conformance` / `drift-doctor` 未建，`TaskHost` 系 **7 个类型**（含 `Job`，§24.1 #35）+ `ThreadPoolTaskHost` 0 文件  |
 | **M5 业务底座** | 虚拟化（含 §12.3 的 State 外置纪律）+ 脏矩形 + **WindowStateStore** + Windows UIA 桥接 | 长列表滚动不掉帧；子树崩溃不整树陪葬；窗口位置/尺寸跨启动保留 | ⏳ **未动** —— 虚拟化 / 脏矩形 / `WindowStateStore` / UIA 桥接全 0 文件  |
 
-★ **状态列是 §20 纪律 4 在里程碑层的落点**：出口判据写“要做”不算数，`src/` 里有没有才算。§4.2 已按同一口径加了逐类型状态列（点名 96 个：**73 有文件 / 23 个 0 文件**） —— **两处必须同步维护**（否则又会出现“文档说已落地、代码还没写”的分裂）。★ `drift-doctor`（§16.2 工具集之一，O-10 已裁“做”）正是该**自动**输出这张表的工具 ⇒ 手工列只是它的**临时输入**，别为它新造机制。
+★ **状态列是 §20 纪律 4 在里程碑层的落点**：出口判据写“要做”不算数，`src/` 里有没有才算。§4.2 已按同一口径加了逐类型状态列（点名 100 个：**73 有文件 / 27 个 0 文件**） —— **两处必须同步维护**（否则又会出现“文档说已落地、代码还没写”的分裂）。★ `drift-doctor`（§16.2 工具集之一，O-10 已裁“做”）正是该**自动**输出这张表的工具 ⇒ 手工列只是它的**临时输入**，别为它新造机制。
 
 **M1 的探针门（先验后用，任一不过即退化）**：
 
@@ -2618,6 +2618,7 @@ $app = new UsersApplication(new Win32Platform(), new ThreadPoolTaskHost());
 | ✅ **O-17** | **样式复用**（背景/颜色/字号）：基类字段 vs `BoxStyle` 值对象 vs trait | 中 | **A′：`BoxStyle` 值对象**（**只管盒样式**）+ 中间基类 `BoxWidget`；**不引入 `TextStyle`**；**删孤儿名 `ControlStyle`**（★ **已裁决并落地** → §15.7） | M2 |
 | ✅ **O-18** | **§A.2 的 `Application` 用法与已实现 API 分裂**（`protected` + `boot()` + `commands(): CommandRouter` + `accelerators()` + `taskHost()` —— 照抄必然 `PHP Fatal`） | 中 | **A：改文档对齐代码**（✅ **已裁决并落地** —— §5.1 / §9.1 / §11.4.3 / §A.2.4 / §A.2.5 / §A.3.1 / §A.3.2 / §A.3.8 / §A.3.9 九处样板全部改成 `public` 覆写 + `iterable` 字典 + 构造点装配；`boot()` / `accelerators()` / `taskHost()` 三处不存在的钩子按 A15 **不预挂**，形状以注释留存） | 已落地 |
 | ✅ **O-19** | **§19 出口判据与 `src/` 真实状态脱节**（M1 判据“一个窗口画出 Hello Drift”未兑现：`Drift\Platform` 9 + `Win32` 2 一个文件都没有） | 低 | **A：§19 也加“当前状态”列**（✅ **已裁决并落地** —— §4.2 已随前一轮补上，本轮把 §19 六个里程碑全部标上） | 已落地 |
+| ✅ **O-20** | **菜单浮层机制**：`Menu` / `ContextMenu` 打开后“浮在上 / 钉锚点 / 点外关”无原语可表达；§12.1 第 6 条与 §A.3.7 已承诺的 `Application::showModal()` 指着同一个不存在的机制 | 中 | **A：第二棵根渲染树**（✅ **已裁决并落地** —— 2026-10-16 用户拍板：按推荐 A；同批批两项顺手：右键最小集 + §9.1 改诚实。落点：§5.1 / §9.1 / §12.1 / §A.3.7 / §4.2 / §19 M3） | **M3** |
 
 ---
 
@@ -3335,9 +3336,84 @@ WPF 的 `Control.Background` / `Foreground` / `FontSize` 都是基类上的 `Dep
 
 ---
 
+#### O-20 菜单浮层机制：`Menu` / `ContextMenu` 的打开形态（模态同一槽位）
+
+**✅ 已裁决（2026-10-16，用户拍板：按推荐 A）** —— ① 浮层机制按 **A：第二棵根渲染树**；② 同批批两项顺手项：右键入口做**最小集**（`PointerEvent` button + 位移阈值，不等完整 `GestureArena`）+ §9.1 的“GestureArena 已支持”改诚实。★ 它同时解 **§12.1 第 6 条与 §A.3.7 已承诺的 `Application::showModal()` / `closeModal()` 的机制缺口** —— 不只卡菜单。
+
+**裁决落地范围**：§5.1 裁决 1（打开形态归框架）· §9.1（菜单行重写 + 右键最小集）· §12.1 第 6 条 / §A.3.7（模态机制落点）· §4.2（新增 4 个点名：`PopupPanel` / `Modal` / `HoverHandler` / `RenderPopupPanel`，清点 96→100 / 23→27）· §19 M3（状态列注记）。
+
+**问题本质**：§5.1 裁“菜单 = 普通 Widget（自绘，不进 Platform）”，§9.1 补“菜单栏放 `Dock::top`”。但 **`Menu`（下拉展开块）与 `ContextMenu`（右键弹出块）打开后有三个性质，现有原语一个都表达不了**：
+
+| 性质 | 为什么现有原语做不到 |
+|---|---|
+| **浮在主内容之上** | 没有任何“画在主树之后”的挂点 —— `Frame::run()` 的 paint 段只画 `root->effectiveBox()` 一棵树 |
+| **钉在锚点旁、可溢出锚点容器** | §13.1 C1“父定位子”；全篇无绝对定位原语（`Stack` / `Positioned` 只活在 §16.6.3 R2 规则与 §18 对照表里，**两个控件都不存在**）；`Offstage` 保留文档流位置，不能浮 |
+| **点外面关 + 吞掉那次点击** | `dispatchInput()` 的指针路由只有“命中 ⇒ 焦点 / 光标”一条路，没有“这层开着 ⇒ 优先归它、点外算关”的分支 |
+
+⇒ `MenuBar`（Dock 里的横条）可做，**`Menu` / `ContextMenu` 的“打开后是什么”全文没有定义**；`MenuItem` 的 `->command()` 派完之后的关闭语义随之无定义。同缺口还摁着 **模态**：§12.1 第 6 条“桌面主形态 = 外壳 + 内容槽 + 模态（`Application::showModal()`）”与 §A.3.7 样板都已写死 API，机制是 0。
+
+★ **这不是从零设计 —— 参考仓已真机跑通同款问题**。`D:\TypePHP\GUI` 2026-10-06 提交 `e51e5b1` 落地“浮层 = 与主树并列的第二棵根渲染树”（`GUI/.workbuddy-ai/memory/TOPIC-overlay.md`，`verify.sh` 56 项全绿），2026-10-07 又叠提示层（第三棵树，只画不收事件）与应用内模态（复用浮层槽位 + `overlayModal` 开关，不新开第四棵树）。⇒ O-20 的本质是**把已验证架构移植到 Drift 的三树 / 两阶段布局 / `DisplayList` 上**，且逐条对三处结构差异（下表）。
+
+**★ 移植必须逐条对的三处结构差异**：
+
+| # | GUI 仓 | Drift 现状（2026-10-16 核验） | 移植结论 |
+|---|---|---|---|
+| 1 | 命中靠“每帧重建的 `elementId` 注册表”，教训是“两棵树注册表必须合一” | 命中直接走 Element 树（`FocusManager::hitTest()` 返回最深盒，**无 id 注册表**；`FocusManager` 已示范跨帧存 Element 对象） | “合一注册表”这条教训**自动消失**；变成 **先选根树、再命中**（`pointerRoot()` 等价物）—— 更简单 |
+| 2 | 帧管线是自研三钩子（reconcile / relayout / paint） | `Frame::run()` = `settle() → effectiveBox()->layout() → beginFrame/paint/endFrame`；`Application::frame()` 每帧再 `focus->collect()` | 三个动作点有明确落点：**settle 段走两棵树 · layout 段主树紧约束 + 浮层无界约束后钉原点 · paint 段主树后画浮层**；`collect()` 要含浮层链 |
+| 3 | 事件路由在 `Application::handleEvent()`，`pointerRoot()` 选根 | `Application::dispatchInput()`：KeyEvent ⇒ `focus->dispatchKey()`；PointerEvent ⇒ 一次命中 ⇒ `focusHit()` + `cursorOf()` | 指针分支前移一步选根；**关闭语义四条**（下节）落在 `dispatchInput()` |
+
+**方案**：
+
+| 方案 | 内容 | 得 | 失 |
+|---|---|---|---|
+| **A（推荐）** | **第二棵根渲染树**：`Application` 持 `?Widget $menuWidget` + `?Element $menuElement`（与 `$root` 同构）；`Frame::run()` 三段加浮层分支；`dispatchInput()` 指针先选根；菜单 / 模态共用同一槽位（模态 = 紧约束盖满 + 面板自己居中，GUI 仓 `overlayModal` 同款） | GUI 仓真机验证（菜单 / 模态 / 提示 / 通知四层叠全走通）；**不引入 z-index**（绘制顺序即层叠）；三树 / diff / 布局零配合；手势与焦点机整套复用；**一槽位同时解 M3 菜单与已承诺的模态** | 改 3 个既有类的帧管线（`Frame` / `Application` / `FocusManager` 各加分支，都是小分支）；事件路由多一步“选根” |
+| B | **`Overlay` 普通 Widget 住树里**（Flutter 模型：`Overlay` + `OverlayEntry` + `Stack` / `Positioned`） | 与“菜单 = 普通 Widget”字面一致；纯声明式 | 要新造 `Overlay` / `Stack` / `Positioned` 三个原语 + 它们与两阶段布局的配合（**锚点坐标是运行期量出来的，build 期拿不到**）；§13.1 C1 要开例外；命中优先级（z 序）回到树内解决 —— GUI 仓当年回避的整个问题域 |
+| C | **宿主 popup 窗口**（Win32 `WS_POPUP`） | 可溢出主窗口；OS 置顶 | **违反 §5.1“菜单不进 Platform”**（要加平台端口）；风格 / 主题分裂（= 原生菜单被否的同一理由）；DPI 两套坐标再开一条缝 |
+
+**参考推荐：A**。四条理由：
+
+1. **唯一已真机证明**的形态（GUI 仓 56 项自检 + 四层叠全部走通）；
+2. **一槽位两用**：M3 的 `Menu` / `ContextMenu` 与 §12.1 / §A.3.7 已承诺的 `showModal()` 是同一机制的两个消费者（GUI 仓裁决原话：模态与菜单天然互斥，且第二棵树白送“命中优先于主树”，正是遮罩生效的前提）；
+3. “菜单 = 普通 Widget”的字面一致性是**假的** —— 那条裁决的语义是“**不进 Platform**”（菜单项 / 菜单栏 / 菜单面板确实是普通 Widget，走 §15 链式），而“打开后浮在哪儿”本来就是**运行期几何**，本来就归 `Application`（GUI 仓同款分工：Application 管生命周期与落位，控件只管形体）；
+4. B 要给 §13.1 C1 开例外、且把 z 序问题请回树内；A 都不碰。
+
+**★ A 的关键语义（GUI 仓逐条踩过，原样继承；附 Drift 落点）**：
+
+| # | 语义 | Drift 落点 |
+|---|---|---|
+| 1 | 点浮层**外** ⇒ 关 + **吞掉该次按下**（不穿透，否则“关菜单”顺手点到下面按钮） | `dispatchInput()` 指针分支：命中不在浮层 ⇒ 关 + 返回（不喂 `focusHit`） |
+| 2 | 抬在浮层上 ⇒ **命令分发之后**才关（`$fromOverlay` 分发前取 —— 菜单项处理逻辑可能自己开关浮层） | 同上；`MenuItem` 的命令走既有 `dispatch()` 全链 |
+| 3 | **ESC 在 `dispatchKey` 之前**拦（否则被焦点控件吃掉） | `dispatchInput()` 键盘分支最前面 |
+| 4 | 浮层打开时**滚轮吞掉** | 同上（`PointerEvent` 的 wheel 分支） |
+| 5 | **悬停高亮**与点击同源命中、只在目标变化时派发 | Drift 现在只有“悬停改光标”（`cursorOf()`），**没有“悬停通知控件”** ⇒ A 的必要子项：`HoverHandler`（Enter / Move / Exit），记 **Element 对象**（`FocusManager` 已示范跨帧存对象）不记 id |
+| 6 | 面板**自绘渲染盒**：投影 → 边框 → 底三层，投影必须画到自己矩形**之外**（`BoxStyle` 画不到矩形外 —— O-17 定它只管盒内）；渲染盒 = 面板 + 2×投影留白；**夹紧按面板算** | 新 `RenderPopupPanel`（`Drift\Layout`）+ `PopupPanel` 复合控件 |
+| 7 | 菜单宽按**实测文本宽**，行内 `Spacer` 撑满 ⇒ 整行可点 | GUI 用 `Canvas::measureText`；**Drift 的 `Canvas` 没有这个方法**（核验过接口）—— 改走 §14.2 注入的 `TextMetricsProvider::advance()`，反而更贴 Drift 的确定性注入模型 |
+
+**锚点来源（Drift 形状，GUI `commandRect` 的等价物）**：命令是“意图”不是“事件”，不带位置（§11.4.3）。推荐 `Application::showMenu(Widget $menu, ?Element $anchor = null)`：`null` ⇒ 用 `dispatchInput()` 最近一次命中记下的 Element（`FocusManager` 加一个 `lastHit`），锚点矩形 = 该 Element `effectiveBox()` 的原点 + 尺寸；右键入口用 `PointerEvent` 的 button 判据（见下条文档修正）。
+
+**顺带核出一处文档不实（同 O-19 型，已随本裁决处置）**：§9.1 菜单行原写“上下文菜单走右键手势（**GestureArena 已支持**）”—— 实际 `src/Input/` 只有 6 个文件（`CursorShape` / `FocusNode` / `InputEvent` / `KeyChord` / `KeyEvent` / `PointerEvent`），`GestureArena` **0 文件**（§4.2 同章原标“缺 4”，现“缺 5”含 `HoverHandler`）。⇒ 用户已批**两项都做**：① 右键入口做**最小集**（`PointerEvent` button + 位移阈值，够开菜单即可，不必等完整 `GestureArena`）；② §9.1 那句已改诚实（随本裁决落地）。
+
+**与既有裁决的冲突点**：无。★ 三条“看起来冲突其实不”：
+
+- §13.1 C1“父定位子”：浮层**不是文档流里的子节点**，是第二棵树 ⇒ C1 管不到它（这正是选 A 不选 B 的理由）；
+- §5.1“菜单不进 Platform”：A 零平台端口；
+- §12.1“Root 只做组合”：浮层树挂 `Application`，不挂 Root。
+
+**诚实边界（未验，实现时逐条验）**：
+
+- GUI 仓的形态跑在 **PHP + Skia 自研帧管线**上；Drift 的 `Frame` / `Application` / `FocusManager` 形状不同 ⇒ 三处分支的行为等价性要靠 **smoke 合成事件**证（走完整 `dispatchInput()` 路径，**不直接调 `hitTest`** —— 生命周期归 `Application`，直接调证明不了“选中后关 / 点外关且不穿透”，GUI 仓原话）；
+- **半透明遮罩**：契约层支持（`Color::fromRgba` / `Paint::withAlpha` 都在），但 Drift 光栅后端是否真混色 **未验**（smoke 无半透明断言）⇒ 若 `RasterCanvas` 不吃 alpha，`ModalBarrier` 要像 GUI 仓那样自绘（GUI 当年正是 `Color::value()` 丢 alpha 被迫自绘）；**这是 Drift 与 GUI 的一个真实差异点，实现第一天验**；
+- 跨 `.dll`（形态 B）下第二棵树的 Element 生命周期未验（与 §10.2 ④⑤⑥ 同类开放项）。
+
+**落地成本**：`Application` +2 字段 +3 分支 · `Frame::run()` +浮层三段 · `FocusManager` +选根 / `lastHit` / 悬停派发 · `HoverHandler` 最小集 · `RenderPopupPanel` + `PopupPanel` / `Menu` / `MenuItem` / `MenuBar`（`ContextMenu` 复用槽位 + 右键入口）≈ **2–3 天**（含 smoke 合成事件自检：开 / 选中关 / 点外关且不穿透 / ESC 关 / 滚轮吞 / 悬停高亮六条）。模态（`Modal` + `showModal()` / `closeModal()`）**同一里程碑顺带**（槽位已付，只加紧约束分支 + 居中）。
+
+**争议度：中**（新增一个运行期概念“第二棵树” + `HoverHandler`；但 GUI 仓已实证、且卡 M3 两个消费者）—— 2026-10-16 按推荐 A 拍板，顺手项 ①② 同批批准（已落地，见条目头“裁决落地范围”）。
+
+---
+
 ### 23.3 批量批准清单与依赖图
 
-**✅ 已裁决（2026-10-14 首轮 17 项 + 2026-10-15 追加 2 项，**19 项全部收口**）**：`O-01` · `O-02` · `O-03` · `O-04` · **`O-05`** · **`O-06`** · `O-07` · `O-08` · `O-09` · `O-10` · `O-11` · **`O-12`** · `O-13` · **`O-14`** · **`O-15`** · **`O-16`** · **`O-17`** · **`O-18`** · **`O-19`**。
+**✅ 已裁决（2026-10-14 首轮 17 项 + 2026-10-15 追加 2 项 + 2026-10-16 追加 1 项，**20 项全部收口、0 项待裁决**）**：`O-01` · `O-02` · `O-03` · `O-04` · **`O-05`** · **`O-06`** · `O-07` · `O-08` · `O-09` · `O-10` · `O-11` · **`O-12`** · `O-13` · **`O-14`** · **`O-15`** · **`O-16`** · **`O-17`** · **`O-18`** · **`O-19`** · **`O-20`**。
 
 | 处置 | 项 | 说明 |
 |------|----|------|
@@ -4697,6 +4773,8 @@ final class UserListState extends State
 ```
 
 ### A.3.7 模态
+
+> ★ **机制已裁（2026-10-16 O-20，按 A）**：模态复用菜单浮层的第二棵根渲染树（`Application` 同一槽位 + 紧约束盖满分支）；遮罩 `ModalBarrier` 自绘（半透明走 `Color::fromRgba` / `Paint::withAlpha`，光栅后端混色未验 ⇒ 实现第一天验）；**关不关归应用** —— `Modal` 只发命令、绝不自己 `closeModal()`。`dismissible=false` 的模态吞掉 ESC 与遮罩点击但**不关**（拒绝 ≠ 放行给全局快捷键）。
 
 ```php
 // 桌面主形态 = 外壳 + 内容槽 + 模态（不做导航栈，§12.1 第 6 条）
