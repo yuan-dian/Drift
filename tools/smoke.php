@@ -43,6 +43,12 @@ use Drift\Dev\Smoke\App\AccelApplication;
 use Drift\Dev\Smoke\App\CompositeRootApp;
 use Drift\Dev\Smoke\App\MenuApplication;
 use Drift\Dev\Smoke\App\RecordingHandler;
+use Drift\Dev\Smoke\App\TaskRow;
+use Drift\Dev\Smoke\App\TaskRowJob;
+use Drift\Dev\Smoke\App\SumJob;
+use Drift\App\Job;
+use Drift\App\SyncTaskHost;
+use Drift\App\TaskHost;
 use App\Users\UsersApplication;
 use App\Users\UsersRoot;
 use App\Users\Store\MemoryUserSource;
@@ -3362,6 +3368,76 @@ $usersApp->frame(16.0, $usersTight);
 check(
     'apps/users · frame() 由宿主驱动（表面多一帧）',
     $usersSurface->frameCount() === $framesBefore + 1,
+);
+
+// ── ㊱ TaskHost 端口：`Job` / `TaskHost` / `SyncTaskHost`（任务 #8：§17.2 后端 B）──
+//
+// ★ 后端 A（C++ 线程池）已被**探针 K 判死**（`probes/RESULTS.md` §11：类/对象/属性
+//   访问在 worker 线程上必崩，根因 = `php_request_cache` 只在 RINIT 里建）⇒ 这里断言的
+//   是**后端 B 的端口契约**（§17.2.3），四件事：
+//     ① `Job` 是**类**、参数走构造器、`run()` 无参（§O-03 方案 A）；
+//     ② `$onDone` 收到 `run()` 的返回值；
+//     ③ **同步回贴** —— 回调在 `submit()` 返回前、同一调用栈上执行
+//        （这才是"回调里可以改 Store + notifyChanged"的前提，§17.2.3）；
+//     ④ 端口搬得动**对象**，不只是标量（真实形态：`fetchPage()` 返回 `Page`）。
+//
+// ★ **诚实边界（未验，不假装已验）**：本端口**目前没有生产消费者** —— 设计里它的
+//   第一个消费者是 `HttpUserSource`（§A.2.8），归 M4（`apps/users` 在 M3 只发
+//   `MemoryUserSource`）。⇒ **AOT 可达性**只由 `drift-codegen` 门（`src/` 在 `sources` 里）
+//   覆盖到"翻译层"，**没有真机使用点**。这条缺口记在 §24.2。
+
+$tasks = new SyncTaskHost();
+check('TaskHost · `SyncTaskHost` 是端口的实现', $tasks instanceof TaskHost);
+check('TaskHost · `SumJob` 是 `Job` 的实现（类，不是闭包）', new SumJob(1) instanceof Job);
+
+// ③ 同步回贴：`submit()` 返回前回调就已执行（同一调用栈 ⇒ "UI 线程"平凡成立）
+$delivered = [];
+$tasks->submit(new SumJob(10), function (int $sum) use (&$delivered): void {
+    $delivered[] = $sum;
+});
+check(
+    'TaskHost · 同步后端 ⇒ 回调在 submit() 返回前执行（同调用栈）',
+    $delivered === [55],
+    'delivered=' . implode(',', $delivered),
+);
+
+// ② 值正确 + 回调**恰好一次**
+check('TaskHost · `Job::run()` 的返回值原样回贴（1+…+10 = 55）', $delivered === [55]);
+check('TaskHost · 回调恰好一次（不是 0 次也不是 2 次）', count($delivered) === 1);
+
+// 顺序：连提交 ⇒ 回调按提交序（同步后端 = FIFO）
+$order = [];
+$tasks->submit(new SumJob(1), function (int $n) use (&$order): void { $order[] = 'a' . $n; });
+$tasks->submit(new SumJob(3), function (int $n) use (&$order): void { $order[] = 'b' . $n; });
+$tasks->submit(new SumJob(6), function (int $n) use (&$order): void { $order[] = 'c' . $n; });
+check(
+    'TaskHost · 多任务按提交序回贴（同步后端 FIFO）',
+    $order === ['a1', 'b6', 'c21'],
+    'order=' . implode(',', $order),
+);
+
+// ④ 搬对象：闭包签名把 `mixed` 收窄成 `Row` ⇒ 回调拿到的就是 Job 造的那个类实例
+$gotRow = null;
+$tasks->submit(new TaskRowJob('ada'), function (TaskRow $r) use (&$gotRow): void {
+    $gotRow = $r;
+});
+check(
+    'TaskHost · 端口搬得动类实例（`mixed` 由调用点闭包签名收窄）',
+    $gotRow instanceof TaskRow && $gotRow->name === 'ada' && $gotRow->len === 3,
+    $gotRow instanceof TaskRow ? $gotRow->name . '/' . $gotRow->len : 'null',
+);
+
+// ★ 反向自检：`mixed` 收窄不是"随便什么都收" —— 换个类型就该被 PHP 拦下（TypeError）。
+$typeError = '';
+try {
+    $tasks->submit(new SumJob(1), function (TaskRow $r): void {});
+} catch (\TypeError $e) {
+    $typeError = $e->getMessage();
+}
+check(
+    'TaskHost · 闭包签名收窄真的在生效（传错类型 ⇒ TypeError，不是静默）',
+    $typeError !== '',
+    $typeError,
 );
 
 fresh($log);
