@@ -13,6 +13,7 @@ use Drift\Widget\Column;
 use Drift\Widget\Expanded;
 use Drift\Widget\Padding;
 use Drift\Widget\Row;
+use Drift\Widget\Spinner;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
 
@@ -62,6 +63,17 @@ final class M2LayoutPage extends StatelessPage
                         Text::make('居中文本 · 命中时变手型光标')
                             ->cursor(CursorShape::PointingHand),
                     ),
+                    // ★ Spinner（§11.5 三态 Loading 分支）：8 点环 + alpha 尾迹。
+                    //   相位由 SpinnerState::tick() 驱动（FrameClock 属 M4）——
+                    //   静态页渲染出来的是初相位（头点在正上方）。
+                    Row::make()
+                        ->spacing(12.0)
+                        ->children([
+                            Spinner::make(),
+                            Spinner::make()->diameter(32.0),
+                            Spinner::make()->diameter(48.0),
+                            Text::make('加载指示器（Spinner）')->caption(),
+                        ]),
                     // ★ Expanded：占据 Column 剩余高度 ⇒ 验证 flex 布局把剩余空间分给了它
                     Expanded::make(
                         Padding::make(

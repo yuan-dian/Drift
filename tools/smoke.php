@@ -69,6 +69,7 @@ use Drift\Layout\RenderFlex;
 use Drift\Layout\RenderFlexible;
 use Drift\Layout\RenderPadding;
 use Drift\Layout\RenderProxyBox;
+use Drift\Layout\RenderSpinner;
 use Drift\Layout\RenderText;
 use Drift\Layout\RenderTextField;
 use Drift\Rendering\BoxStyle;
@@ -113,6 +114,8 @@ use Drift\Widget\Key;
 use Drift\Widget\Padding;
 use Drift\Widget\Row;
 use Drift\Widget\Spacer;
+use Drift\Widget\Spinner;
+use Drift\Widget\SpinnerState;
 use Drift\Widget\StatefulElement;
 use Drift\Widget\Text;
 use Drift\Widget\TextField;
@@ -2544,6 +2547,128 @@ check(
 check(
     '光标 · 指针落在窗口外 ⇒ 返回 Default（壳据此把光标还原成箭头）',
     $curApp->dispatchInput(PointerEvent::down(-5.0, -5.0)) === CursorShape::Default,
+);
+
+// ── ㉗ Widget.Spinner：加载指示器（§11.5 三态 Loading 分支，2026-10-16 落地）──
+
+/** 把一个盒画到白底光栅上（§14.1：同输入 ⇒ 同指纹，golden 的物质基础） */
+function spinCanvas(RenderBox $box, int $width, int $height): RasterCanvas
+{
+    $list = new DisplayList();
+    $box->paint(new RecordingCanvas($list));
+
+    $canvas = new RasterCanvas($width, $height, Color::white(), Scale::of(1.0));
+    $list->replay($canvas);
+
+    return $canvas;
+}
+
+$spinRoot = Spinner::make()->diameter(40.0)->createElement();
+$spinRoot->mount(null, $context);
+$spinBox = $spinRoot->effectiveBox();
+check(
+    'Spinner · 挂载即建出渲染盒（State.build → SpinnerBox → RenderSpinner）',
+    $spinBox instanceof RenderSpinner,
+);
+$spinBox?->layout(BoxConstraints::loose(new Size(200.0, 200.0)));
+check(
+    'Spinner · 宽松约束 ⇒ 拿自然直径（40×40）',
+    $spinBox?->size()?->width === 40.0 && $spinBox?->size()?->height === 40.0,
+);
+check(
+    'Spinner · 内禀尺寸 = 直径（另一轴不限）',
+    $spinBox?->intrinsicWidth(INF) === 40.0 && $spinBox?->intrinsicHeight(INF) === 40.0,
+);
+
+// 约束比直径小 ⇒ 缩小而不报 C6（装饰性控件；C6 只罚"画到盒外"）
+$tightSpin = Spinner::make()->diameter(40.0)->createElement();
+$tightSpin->mount(null, $context);
+$tightSpin->effectiveBox()?->layout(BoxConstraints::tight(new Size(16.0, 16.0)));
+check(
+    'Spinner · 紧约束(16) < 直径(40) ⇒ 缩到约束内（C6 不响）',
+    $tightSpin->effectiveBox()?->size()?->width === 16.0,
+);
+
+// 紧约束比直径大 ⇒ 盒被父定死（C6 下界提升，框架统一行为），但墨迹不拉伸
+$fillSpin = Spinner::make()->diameter(40.0)->createElement();
+$fillSpin->mount(null, $context);
+$fillBox = $fillSpin->effectiveBox();
+$fillBox?->layout(BoxConstraints::tight(new Size(200.0, 200.0)));
+check(
+    'Spinner · 紧约束(200) > 直径(40) ⇒ 盒被父定死 200×200',
+    $fillBox?->size()?->width === 200.0,
+);
+$fillCanvas = spinCanvas($fillBox, 200, 200);
+$fMinX = PHP_INT_MAX;
+$fMaxX = -1;
+$fMinY = PHP_INT_MAX;
+$fMaxY = -1;
+$fInk = 0;
+for ($y = 0; $y < $fillCanvas->height(); $y++) {
+    for ($x = 0; $x < $fillCanvas->width(); $x++) {
+        if (!$fillCanvas->pixelAt($x, $y)->equals(Color::white())) {
+            $fInk++;
+            $fMinX = min($fMinX, $x);
+            $fMaxX = max($fMaxX, $x);
+            $fMinY = min($fMinY, $y);
+            $fMaxY = max($fMaxY, $y);
+        }
+    }
+}
+check(
+    'Spinner · 授予盒 200×200 但墨迹不拉伸（≈40×40 且居中 —— 图标语义）',
+    $fInk > 0
+        && ($fMaxX - $fMinX + 1) <= 42 && ($fMaxY - $fMinY + 1) <= 42
+        && abs($fMinX + $fMaxX - 199) <= 4 && abs($fMinY + $fMaxY - 199) <= 4,
+    sprintf('ink=%d bounds=%d×%d center=(%d,%d)', $fInk, $fMaxX - $fMinX + 1, $fMaxY - $fMinY + 1, (int) (($fMinX + $fMaxX) / 2), (int) (($fMinY + $fMaxY) / 2)),
+);
+
+// 纯函数：同相位渲染两次 ⇒ 同指纹
+$sigA = md5(spinCanvas($spinBox, 200, 200)->toRgba());
+$sigB = md5(spinCanvas($spinBox, 200, 200)->toRgba());
+check('Spinner · 同相位渲染两次指纹一致（§14.1 纯函数）', $sigA === $sigB);
+
+// 墨迹结构：8 个点 = 8 档渐隐 ⇒ 墨里恰好 8 种颜色（alpha 尾迹真的画上了）
+$dotCanvas = spinCanvas($spinBox, 200, 200);
+$spinInk = 0;
+$shades = [];
+for ($y = 0; $y < $dotCanvas->height(); $y++) {
+    for ($x = 0; $x < $dotCanvas->width(); $x++) {
+        $pixel = $dotCanvas->pixelAt($x, $y);
+        if (!$pixel->equals(Color::white())) {
+            $spinInk++;
+            $shades[$pixel->toArgb()] = true;
+        }
+    }
+}
+check('Spinner · 8 个点都有墨（ink > 0）', $spinInk > 0, 'ink=' . $spinInk);
+check(
+    'Spinner · 8 档渐隐 = 8 种颜色（不是 8 个同样实心的点）',
+    count($shades) === 8,
+    'shades=' . count($shades),
+);
+
+// 动画：tick() 只标脏，帧末才重建；重建后墨迹变化
+$spinState = $spinRoot->state();
+check('Spinner · State 只建一次（初相位 0）', $spinState instanceof SpinnerState && $spinState->step() === 0);
+$spinState?->tick();
+check(
+    'Spinner · tick 只标脏、不立即重建（§5.2 裁决 3）',
+    $spinState?->needsBuild() === true,
+);
+$spinSurface = new SurfaceProbe();
+$spinSurface->resize(200, 200, 1.0);
+$spinFrame = new Frame($spinSurface);
+$spinFrame->run($spinRoot, BoxConstraints::tight(new Size(200.0, 200.0)), 16.0);
+$spinBox2 = $spinRoot->effectiveBox();
+check(
+    'Spinner · 帧末重建后换成新盒',
+    $spinBox2 !== $spinBox && $spinBox2 instanceof RenderSpinner,
+);
+check('Spinner · 相位前进一步（step 0 → 1）', $spinState instanceof SpinnerState && $spinState->step() === 1);
+check(
+    'Spinner · 相位变 ⇒ 墨迹变（动画真的在走）',
+    md5(spinCanvas($spinBox2, 200, 200)->toRgba()) !== $sigA,
 );
 
 fresh($log);
