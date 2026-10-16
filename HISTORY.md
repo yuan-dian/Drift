@@ -326,3 +326,50 @@ Spinner → M2 conformance 运行器 → 多页外壳（`Dock`/`AppBar`/`NavButt
 `Root` 只组合（`rootBuilds()===1` + 全树过 lint）、**Ctrl+S 可用**（加速键第 ① 环 ⇒ `form.submit`）。
 清点复测（`_build/audit_42.py`）：`src/` 154 文件 / 136 `@api` / 点名 96 = **90 有文件 + 6 个 0 文件**
 （剩 6 个分属 M4/M5：`SkiaCanvas` · `Modal` · `GestureArena` · `SemanticsTree` · `ThemeChangedEvent` · `HoverHandler`）。
+
+---
+
+### 7.6 实现纪事：示例 UI "乱" 的三处根因（2026-10-16 下午）
+
+**触发**：用户看 `out/*.svg` 预览后报"现在的示例，UI 界面怎么都是乱的"。**入口是"看渲染结果"**，
+不是"读代码"—— 三处根因里有两处**所有解释器面闸门都是绿的**（smoke 496 / lint 0 error / codegen 0 skip）。
+
+| # | 症状 | 根因 | 为什么闸门看不见 |
+|---|------|------|------------------|
+| 1 | 示例里中文**整片不显示**（"用户管理/刷新/编辑"全空，看起来像布局塌了） | `DeterministicFontData::CJK_GLYPHS` 只手写了 **16 个**演示字，而示例/应用用到 74 个汉字 ⇒ **71 个缺字形**。缺字形契约是"返回 `null` ⇒ 不画"（不是画方框）⇒ **静默无墨** | 契约本身是对的、有断言守；**没有任何断言问过"示例文案的字都有字形吗"** |
+| 2 | `AppBar` 标题画到盒**外面**（盒高 44.8，标题落在 y=143.2）；`PopupPanel` 菜单项同理 | `RenderFlex::performLayout` 的交叉轴定位拿**约束上限**居中（`$inner->maxHeight`），而 `AppBar` 从纵向 `Column` 拿到宽松高约束 `0..320` ⇒ `(320−21.6)/2≈143.2` | 所有既有断言都在**紧约束**下测 `Center`（`tight(100,40)` 恰好 `max==min` 所以对），宽松约束那条路径**零覆盖** |
+| 3 | 12px 说明文字糊成一团（笔画整根丢） | `BitmapFontFace::rasterize()` 降采样用**最近邻**：16→12 只采样 12 行，**丢掉 4/16 行** | 拉丁字模 5×8、常用字号 ≥12 ⇒ 拉丁永远走**放大**路径；CJK 才有 16→12 降采样，而 CJK 之前根本没有字形（被 #1 掩盖） |
+
+★ **修 #2 时自己踩的坑（值得写进纪律）**：第一版改法用"内容交叉尺寸 `min($crossSize, $inner->maxCross)`"，
+**当场把 smoke 那条 `Center` 断言打红** —— 因为 `tight()` 的语义是"父把尺寸定死"，
+`RenderBox::layout()` 末尾会 `$constraints->constrain($measured)` 把**下界顶上来**，
+所以居中必须按**夹后的盒尺寸**算。**判据：交叉轴居中用"盒自己的交叉尺寸"，而盒尺寸要按
+`constrain()` 同口径夹一次（含下界），不是按内容、也不是按约束上限。**
+
+★ **量具自检的又一证（第 3 处空断言）**：`tools/smoke.php` 那条"确定性测试字体无中文字形 ⇒
+中文无墨（O-08 M4 前已知，届时拆除）"**从未 layout 探针盒** ⇒ `RenderText::lineCount()===0` ⇒
+恒 0 墨 ⇒ **加字之前也是 0**。它一直"通过"，却什么都没测到；`O-08` 的"已知边界"是建立在一个
+空断言上的。已补 `layout()` 并把断言翻成正向（"覆盖示例用字 ⇒ 中文有墨"）。
+⇒ 与 §7.5 的 `dead-command` / `subscriber-mark` 同族：**规则/断言"存在"不等于"在测东西"**。
+
+★ **`subscriber-mark` 夹具没跟上判据（同轮收口）**：§7.5 把判据收紧成"只认 `$this->select(`"，
+但夹具还写 `$source->select(` ⇒ `--selftest` 报"期望 2 / 实际 0"，**该规则失去正向测试**。
+夹具已改（并补一条"委托式订阅不该响"的 `ConfiguredBuilder`、把 `WatcherState` 改成真能测到
+`State` 豁免分支的 `$this->watch(`）。
+
+★ **字模生成链的两个坑（都是"静默给错东西"）**：
+① **来源必须可再分发**：第一版拿系统 **SimHei** 生成 —— 而 `DeterministicFontData` 的 docblock
+   明写"取自 Noto Sans SC（SIL OFL 1.1）"。专有字体派生的点阵数据**不能入库**，已改回
+   `NotoSansSC-VF.ttf`（OFL）。
+② **变量字体的默认实例是 Thin**：`NotoSansSC-VF` 的 `Weight` 轴默认值 = **100**，
+   直接渲染出来的横竖笔画只有 ~1.5px（64px 下）⇒ 降到 16×16 后覆盖度够不上阈值 ⇒
+   `三/二/厂/引/「」` 全部被判"无字形"。必须 `set_variation_by_name('Regular')`。
+③ 顺带纠正了"扫描只收汉字"的口径：只扫 `U+4E00–U+9FFF` 会让**中文标点**（`，。（）「」`）
+   与箭头（`↑ ⇒`）静默无墨（`DemoPage` 的句号/逗号整个消失）。改成"所有 `cp >= 0xA0`"。
+④ 生成器从 `_build/`（**被 gitignore**）挪到 `tools/` —— 生成物入库、生成器不入库 =
+   "这个文件是生成物"这句话是**不可复现的谎言**。
+
+★ **预览链补了一件工具**：`drift-preview` 只出 SVG，而 SVG 是"位图 runs"、人眼读不了。
+本轮加了 `_build/svg2png.py`（纯 `<rect>` 解析 + Pillow 光栅化）才第一次真正"看见"渲染结果 ——
+**#1 和 #2 都是靠它看见的**，纯读代码/看断言看不出来。
+
