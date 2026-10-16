@@ -2944,14 +2944,20 @@ check(
     '错误边界 · 占位可布局出墨（Center+Text 真画了东西）',
     inkCount(spinCanvas($ebCtor->effectiveBox(), 240, 80), Color::white()) > 0,
 );
-// ★ 已知边界（O-08 的 M4 工作项）：确定性测试字体只覆盖拉丁 ⇒ 中文文本有尺寸、
-//   无字形（`FontFace::rasterize` 契约：无此字形 ⇒ null，不静默画方框）⇒ 预览 /
-//   光栅管线上中文无墨。等 M4 打包覆盖 CJK 的测试字体后，这条断言应改判。
+// ★ 2026-10-16 改判：确定性测试字体已补上**示例/应用字符串里用到的全部非 ASCII 字符**
+//   （`CjkGlyphData`，含中文标点与箭头）⇒ 中文文本现在**有墨**。真正的通用 CJK 后端
+//   （任意码位、按需打包）仍归 M4（O-08）；这条断言从此守"补的字模真的上屏"。
+//   ★ 旧版是**空断言**：探针盒从未 `layout()` ⇒ `RenderText::lineCount()===0` ⇒ 恒 0 墨，
+//     加字之前也是 0 ⇒ 它一直通过，却什么都没测到（量具无自检的又一处）。
 $cjkProbe = Text::make('出错')->createElement();
 $cjkProbe->mount(null, $context);
+$cjkBox = $cjkProbe->effectiveBox();
+$cjkBox?->layout(BoxConstraints::tight(new Size(240.0, 80.0)));
+$cjkInk = inkCount(spinCanvas($cjkBox, 240, 80), Color::white());
 check(
-    '字体边界 · 确定性测试字体无中文字形 ⇒ 中文无墨（O-08 M4 前已知，届时拆除本条）',
-    inkCount(spinCanvas($cjkProbe->effectiveBox(), 240, 80), Color::white()) === 0,
+    '字体边界 · 确定性测试字体覆盖示例用字 ⇒ 中文有墨',
+    $cjkInk > 0,
+    (string) $cjkInk,
 );
 
 // C. 错误边界 · build 期（第 ② 层：State::build 抛 ⇒ settle 的 try 捕获）

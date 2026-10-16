@@ -6,14 +6,17 @@ namespace Drift\Text;
 /**
  * 确定性参考实现的内置点阵字模（§14.2 的"测试字体"）。
  *
- * ★ 这是**测试字体**，不是通用字体：只覆盖拉丁 `0x20–0x7E` 与 16 个演示用 CJK 字。
+ * ★ 这是**测试字体**，不是通用字体：覆盖拉丁 `0x20–0x7E`、手写的 16 个演示用 CJK 字，
+ *   外加 `CjkGlyphData`（**示例 / 应用字符串里用到的全部非 ASCII 字符**，含中文标点
+ *   `，。（）「」` 与箭头 `↑ ⇒`，生成物）。
  *   覆盖之外的码位由 `NotdefFontFace` 给确定性步进（布局不塌），但画不出墨 ——
- *   完整 CJK 归 M1 的真字体后端（§24.2 开放项 6）。
+ *   真正的通用 CJK 后端仍归 M4 的真字体（§24.2 开放项 6）。
  *
  * 编码：每个字形一行，`#` = 墨 / `.` = 空，行间 `/` 分隔。拉丁 5×8、CJK 16×16，
  * **行数 = 该 face 的 `unitsPerEm`**（位图即 em 盒，基线由 `ascent` 定位）。
  *
- * CJK 子集的字形取自 Noto Sans SC（SIL OFL 1.1）在 16px 下的点阵化结果，
+ * CJK 字形取自 **Noto Sans SC（SIL OFL 1.1）**：手写那 16 个是 16px 直出，
+ * `CjkGlyphData` 那批是 64px 渲染后按面积覆盖度降到 16×16（`tools/font-gen-glyphs.py`）。
  * 仅作测试夹具；本文件是纯数据，不构成字体软件的再分发。
  *
  * @internal
@@ -163,7 +166,9 @@ final class DeterministicFontData
     /** @return array<int, list<string>> 码位 → 行位图 */
     public static function cjk(): array
     {
-        return self::index(self::CJK_GLYPHS);
+        // ★ 手写的 16 字模**优先**（`+` 的左操作数在键冲突时胜出），`CjkGlyphData`
+        //   只补缺 —— 于是"补齐用到的汉字"不动既有字形，示例/应用的中文都能上屏。
+        return self::index(self::CJK_GLYPHS + CjkGlyphData::GLYPHS);
     }
 
     /**
