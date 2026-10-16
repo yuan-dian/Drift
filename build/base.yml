@@ -29,7 +29,9 @@
 #     ⇒ "静态库里 /MT 致命"那条**不适用**。
 #     ★ 但它**换不到"免 CRT / 单文件"** —— exe 仍导入 `VCRUNTIME140.dll`
 #     （php8ts.dll 是 /MD）⇒ **别为省体积加它**，加它只是为了匹配 Skia 包。
-#   · `/DUSE_SKIA` —— 打开桥里的 Skia 分支（否则退化 GDI 路径）
+#   ★ **没有 `/DUSE_SKIA`** —— 上游参考仓的桥有 `#ifdef USE_SKIA` 的 GDI 回退分支，
+#     我们没有移植那个分支 ⇒ 这个 define **零消费者**（本仓代码与 Skia 头都不用，已核）
+#     ⇒ 按"不预挂"删掉。真要做条件编译时再加，并同时给出消费者。
 #   · `/I"cpp/skia"` —— **唯一需要的 include 根**：包内头按 `include/core/...` 与
 #     `modules/skparagraph/...` 两种前缀写，一个 -I 同时覆盖两者（`SkColorSpace.h`
 #     会 `#include "modules/skcms/skcms.h"` ⇒ 不能只给 `.../include`）。
@@ -81,7 +83,6 @@ cxx-flags:
   # （用户 flag 在之后追加 ⇒ 覆盖它），且 php8ts 是 DLL ⇒ 跨 DLL 边界不共享 CRT。
   # ★ 它**换不到"免 CRT / 单文件"**（exe 仍导入 VCRUNTIME140.dll）⇒ 别为省体积加它。
   - /MT
-  - /DUSE_SKIA
   # 相对 **cwd（仓库根）**：cxx-flags 不过 tpc 的路径解析
   - /I"cpp/skia"
   - /DGR_GL_FUNCTION_TYPE=__stdcall
