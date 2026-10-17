@@ -31,16 +31,23 @@ final class DeterministicFontManager implements FontManager
         return $manager;
     }
 
-    /** 拉丁面：unitsPerEm = 8，ascent 7 / descent 1 ⇒ 度量 (0.875, 0.125, 0) */
+    /**
+     * 拉丁面：unitsPerEm = 32，ascent 28 / descent 4 ⇒ 度量 (0.875, 0.125, 0)
+     *
+     * ★ 2026-10-17 从 8 提到 32（§24.2 #21）：字模改由 `tools/font-gen-latin.py`
+     *   生成，**位图宽 == 真 advance**。5×8 时代的固定 5 列让 `i` 与 `m` 同宽。
+     *   32 是精度与体积的折中（`i` 0.275em = 8.8 列 ⇒ 9 列，量化误差 ±0.016em）。
+     * ★ 度量与 CJK 面（14/16、2/16）**逐字段相同** ⇒ 两个面可以混排。
+     */
     public static function latinFace(): BitmapFontFace
     {
         return BitmapFontFace::fromGlyphs(
             'sans',
             FontWeight::Regular,
             FontSlant::Normal,
-            8,
-            7,
-            1,
+            32,
+            28,
+            4,
             0,
             DeterministicFontData::latin(),
         );

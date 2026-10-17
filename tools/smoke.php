@@ -1451,15 +1451,22 @@ check(
     count($glyphsP2) === 5 && $p2Pens === $p2ExpectPens,
     '桥 penX=[' . implode(',', $p2Pens) . '] 期望=[' . implode(',', $p2ExpectPens) . ']'
 );
+// ★ 判据从 "==" 放宽成 ">="（§24.2 #21）：拉丁字模改成 32 网格、位图宽取自真字体
+//   advance 之后，`H` 的字形在**位图内**左边留了 1 列空白（真字体的 side bearing）。
+//   `bearingX` 仍是 0（位图左沿 == pen），所以墨迹左沿 = penX + 空列 ⇒ 只会 ≥ penX。
+//   "精确相等"由下一条（并集 bbox == 独立算式）保证 —— 那条会同时钉住空列宽度。
 check(
-    'Skia conformance · P2 跨后端同构：墨迹左沿 == 首字形 penX',
-    $inkP2 !== null && count($glyphsP2) === 5 && (float) $inkP2[0] === $glyphsP2[0][4],
+    'Skia conformance · P2 跨后端同构：墨迹左沿 ≥ 首字形 penX（side bearing 在位图内）',
+    $inkP2 !== null && count($glyphsP2) === 5 && $inkP2[0] >= (int) $glyphsP2[0][4],
     'ink=' . fmtInk($inkP2) . ' 首字形 penX=' . (count($glyphsP2) === 5 ? (string) $glyphsP2[0][4] : '无')
 );
+// ★ 期望值只算**一次**（落变量）：放进 $cond 和诊断串各算一次时，两次求值
+//   在灰度降采样字模下会不一致（诊断串打印两边相同却 FAIL，最难查）
+$p2ExpectInk = skiaExpectedInkBounds($p2Paragraph, 0.0, 0.0, $pUnit);
 check(
     'Skia conformance · P2 软光栅并集墨迹 bbox == 独立算式（末字形右沿由步进推出）',
-    $inkP2 === skiaExpectedInkBounds($p2Paragraph, 0.0, 0.0, $pUnit),
-    'ink=' . fmtInk($inkP2) . ' 期望=' . fmtInk(skiaExpectedInkBounds($p2Paragraph, 0.0, 0.0, $pUnit))
+    $inkP2 === $p2ExpectInk,
+    'ink=' . fmtInk($inkP2) . ' 期望=' . fmtInk($p2ExpectInk)
 );
 
 // ── P3. 多行基线 + dpr=2（同一份命令流，两个缩放）──
@@ -1515,12 +1522,15 @@ check(
             . ' 行0 baseline=' . $glyphsP3x2[0][5] . ' 行1 baseline=' . $glyphsP3x2[5][5]
         : '次数=' . count($glyphsP3x2)
 );
+// ★ 同 P2：side bearing 在位图内 ⇒ 墨迹左沿 ≥ penX；精确值由 bbox 那条钉住。
+//   期望值只算一次（放进 $cond 与诊断串各算一次会重复 rasterize 整段文本）。
+$p3ExpectInk = skiaExpectedInkBounds($p3Paragraph, 0.0, 0.0, Scale::of(2.0));
 check(
-    'Skia conformance · P3 dpr=2 跨后端同构：墨迹左沿 ×2 == 桥 penX，且并集 bbox == 独立算式',
+    'Skia conformance · P3 dpr=2 跨后端同构：墨迹左沿 ≥ 桥 penX（含 side bearing），且并集 bbox == 独立算式',
     $inkP3x2 !== null && count($glyphsP3x2) === 10
-        && (float) $inkP3x2[0] === $glyphsP3x2[0][4]
-        && $inkP3x2 === skiaExpectedInkBounds($p3Paragraph, 0.0, 0.0, Scale::of(2.0)),
-    'ink=' . fmtInk($inkP3x2) . ' 期望=' . fmtInk(skiaExpectedInkBounds($p3Paragraph, 0.0, 0.0, Scale::of(2.0)))
+        && $inkP3x2[0] >= (int) $glyphsP3x2[0][4]
+        && $inkP3x2 === $p3ExpectInk,
+    'ink=' . fmtInk($inkP3x2) . ' 期望=' . fmtInk($p3ExpectInk)
 );
 
 // ── P4. 字形 offset 施加（2026-10-17 修复后：两后端同解）────────────────
@@ -1654,7 +1664,8 @@ check(
     (string) $latinWrapped->lineCount()
 );
 // 期望值 55 → 45 是 §24.2 #20 的步进语义变化（拉丁 0.75em → 0.625em），不是回归
-check('Text · 行尾空白被修剪（不参与宽度）', $latinWrapped->lines[0]->width === 45.0, (string) $latinWrapped->lines[0]->width);
+// 45 → 35：拉丁 advance 由固定 0.625em 改为真字体值（§24.2 #21）
+check('Text · 行尾空白被修剪（不参与宽度）', $latinWrapped->lines[0]->width === 35.0, (string) $latinWrapped->lines[0]->width);
 check('Text · CJK 按字边界断行', $textMetrics->layout('中文断行测试', $body, 30.0, $unit)->lineCount() === 3);
 
 // 禁则（§8.3 对策 ②）：闭标点不落行首
@@ -1709,7 +1720,8 @@ for ($y = 0; $y < $bitmap->height; $y++) {
         }
     }
 }
-check('Text · 位图尺寸随 pixelSize 缩放', $bitmap->width === 9 && $bitmap->height === 14, $bitmap->width . 'x' . $bitmap->height);
+// 宽 9 → 8：'A' 的位图宽 = round(advance × 14/32)，advance 取自真字体（§24.2 #21）
+check('Text · 位图尺寸随 pixelSize 缩放', $bitmap->width === 8 && $bitmap->height === 14, $bitmap->width . 'x' . $bitmap->height);
 check('Text · 基线上方 = ascent × pixelSize（位图即 em 盒）', $bitmap->bearingY === -12, (string) $bitmap->bearingY);
 check('Text · 位图有墨', $ink > 0);
 check('Text · 未覆盖码位不画方框', $latinFace->rasterize(0x4E2D, 14.0) === null);
@@ -2860,15 +2872,15 @@ check(
 
 $imeApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
 check(
-    'IME · 焦点在第一个字段 ⇒ 窗口坐标含容器 padding（24+30, 24+4）',
-    $imeApp->imeCaretRect() === [54.0, 28.0, 16.8],
+    'IME · 焦点在第一个字段 ⇒ 窗口坐标含容器 padding（24+29, 24+4）',
+    $imeApp->imeCaretRect() === [53.0, 28.0, 16.8],
     '(' . implode(', ', $imeApp->imeCaretRect() ?? []) . ')'
 );
 
 $imeApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
 check(
     'IME · 焦点在第二个字段 ⇒ y 沿父链累积（+32.8 = 字段高 + spacing）',
-    $imeApp->imeCaretRect() === [54.0, 60.8, 16.8],
+    $imeApp->imeCaretRect() === [52.0, 60.8, 16.8],
     '(' . implode(', ', $imeApp->imeCaretRect() ?? []) . ')'
 );
 
