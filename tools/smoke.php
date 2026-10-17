@@ -1653,7 +1653,8 @@ check(
         && substr('Hello Drift', $latinWrapped->lines[0]->textStart, $latinWrapped->lines[0]->textLength) === 'Hello',
     (string) $latinWrapped->lineCount()
 );
-check('Text · 行尾空白被修剪（不参与宽度）', $latinWrapped->lines[0]->width === 55.0, (string) $latinWrapped->lines[0]->width);
+// 期望值 55 → 45 是 §24.2 #20 的步进语义变化（拉丁 0.75em → 0.625em），不是回归
+check('Text · 行尾空白被修剪（不参与宽度）', $latinWrapped->lines[0]->width === 45.0, (string) $latinWrapped->lines[0]->width);
 check('Text · CJK 按字边界断行', $textMetrics->layout('中文断行测试', $body, 30.0, $unit)->lineCount() === 3);
 
 // 禁则（§8.3 对策 ②）：闭标点不落行首
@@ -2859,15 +2860,15 @@ check(
 
 $imeApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
 check(
-    'IME · 焦点在第一个字段 ⇒ 窗口坐标含容器 padding（24+34, 24+4）',
-    $imeApp->imeCaretRect() === [58.0, 28.0, 16.8],
+    'IME · 焦点在第一个字段 ⇒ 窗口坐标含容器 padding（24+30, 24+4）',
+    $imeApp->imeCaretRect() === [54.0, 28.0, 16.8],
     '(' . implode(', ', $imeApp->imeCaretRect() ?? []) . ')'
 );
 
 $imeApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
 check(
     'IME · 焦点在第二个字段 ⇒ y 沿父链累积（+32.8 = 字段高 + spacing）',
-    $imeApp->imeCaretRect() === [58.0, 60.8, 16.8],
+    $imeApp->imeCaretRect() === [54.0, 60.8, 16.8],
     '(' . implode(', ', $imeApp->imeCaretRect() ?? []) . ')'
 );
 

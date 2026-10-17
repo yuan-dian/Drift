@@ -12,8 +12,17 @@ use Drift\Errors;
  *   基线的位置（基线在自上而下第 `ascent` 行处）。于是 `rasterize()` 不需要任何
  *   bearing 推导 —— `bearingY = -ascent × pixelSize`，纵向定位一处算清。
  *
- * ★ **步进 = (位图宽 + 1) / unitsPerEm**，单位是 em 的倍数（§8.2 坑 3 的归一化）。
+ * ★ **步进 = 位图宽 / unitsPerEm**，单位是 em 的倍数（§8.2 坑 3 的归一化）。
  *   宽度不一的字模（如 `…`）自然得到不同步进，不需要单独的 advance 表。
+ *
+ * ★★ **2026-10-17 去掉了原来的 `+ 1` 间隙**（§24.2 #20）。那个间隙让**每个字多占
+ *   1/unitsPerEm**：中文 `17/16 = 1.0625em`、拉丁 `6/8 = 0.75em`。而真字体
+ *   （Noto Sans SC，实测 @1000px）中文正好 `1.0em`、拉丁平均 `0.55em`
+ *   （`a` 0.563 / `i` 0.275 / `m` 0.926 / **空格 0.224**）⇒ 满屏字距偏松，
+ *   `cross: Start` 那种"冒号后一个空洞"最刺眼。
+ *   去掉后 advance **恰等于字身宽** ⇒ 位图首尾相接，既不重叠也不留缝。
+ *   ★ 配套的数据改动：空格字模从 5 列收到 **2 列**（`0.25em` ≈ 真值 0.224）。
+ *     空格是"松"的最大单源（旧值是真值的 3.3 倍），而它没有墨 ⇒ 收窄零风险。
  *
  * ★ **降采样产出灰度覆盖度**（`pixelSize < unitsPerEm` 时）：每个目标像素输出
  *   0..255 的面积覆盖率，**不是** 0/255 二值 —— 绘制侧 `RasterCanvas::blend()`
@@ -108,7 +117,9 @@ final class BitmapFontFace implements FontFace
             );
             return 0.0;
         }
-        return (strlen($rows[0]) + 1) / $this->unitsPerEm;
+        // ★ 不加 `+1`：advance 就是字身宽（见类头的 §24.2 #20 说明）。
+        //   加 1 会让每个字多占 1/unitsPerEm，中文 +6.25%、拉丁 +36%。
+        return strlen($rows[0]) / $this->unitsPerEm;
     }
 
     public function rasterize(int $codepoint, float $pixelSize): ?GlyphBitmap
