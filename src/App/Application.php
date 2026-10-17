@@ -14,6 +14,7 @@ use Drift\Input\InputEvent;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
+use Drift\Input\ThemeChangedEvent;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderPopupPanel;
 use Drift\Rendering\RenderSurface;
@@ -406,6 +407,45 @@ abstract class Application
     }
 
     /**
+     * 系统主题变了（§9.2 / §A.2.5 的应用钩子）—— **应用扩展点**。
+     *
+     * ★ 框架不持平台（§5.1）⇒ 拿不到 `Screen::systemTheme()`，这个钩子**不带
+     *   参数**：应用自己持有 screen（组合根注入）时在这里重读，并更新自己
+     *   `theme()` 的来源字段。默认**空实现** —— 不跟随系统主题的应用零开销。
+     *
+     * ★ 调用时机在 `applyNewContext()` **之前**（见 `dispatchInput` 的
+     *   ThemeChangedEvent 分支）：钩子跑完 `theme()` 才是新值。
+     *
+     * @api
+     */
+    protected function onSystemThemeChanged(): void
+    {
+    }
+
+    /**
+     * 把新的渲染环境下发到**根与浮层**两棵树（O-20 差异表 #2：浮层是第二棵树）。
+     *
+     * ★ **不是新机制**：`Element::applyContext()` 就是"换一份渲染环境（主题切换
+     *   的唯一入口）"，且已实现两种兑现时机（无状态立即重建 / 有状态只标脏、
+     *   等帧末 flush）+ 递归只走一遍 —— 本方法只是**第一个生产调用者**。
+     *
+     * ★ 主题值来自 `$this->theme()`（应用注入点）。若应用没覆写 `theme()`、
+     *   也没在钩子里换源 ⇒ 新 context 与旧值 `===` ⇒ `applyContext()` 幂等
+     *   短路（零重建）。这是**设计**：不跟随系统主题的应用不该付重建成本。
+     */
+    private function applyNewContext(): void
+    {
+        $root = $this->root;
+        if ($root === null) {
+            return;
+        }
+
+        $context = $root->context()->withTheme($this->theme());
+        $root->applyContext($context);
+        $this->menuElement?->applyContext($context);
+    }
+
+    /**
      * 跑一帧（§5.2）：平台每帧调一次。
      *
      * @param float $timestampMs **注入的**时间戳（不读环境时钟）
@@ -464,11 +504,14 @@ abstract class Application
         }
 
         if ($event instanceof ThemeChangedEvent) {
-            // §9.2 事件通路的终点：显式消费（不落 default 丢弃）。框架侧**暂不
-            // 动作** —— `Screen::systemTheme()` 查询实时 + `Frame::run` 每帧
-            // `settle()` ⇒ 主题值变化下一帧自然重建。显式的"标全树脏"重建机制
-            // 按 A15（没有消费者不预先发明）留待应用真需要跟随系统主题时，
-            // 与 §A.2.5 的 `onSystemThemeChanged()` 钩子一并对齐。
+            // §9.2 事件通路的终点：显式消费（不落 default 丢弃）。
+            //
+            // ★ 顺序要紧：**先钩子、再下发**。`onSystemThemeChanged()` 是应用
+            //   重读系统主题、更新自己 `theme()` 来源的地方；它跑完，`theme()`
+            //   才是新值 ⇒ 这之后下发的 context 才带着新主题。
+            $this->onSystemThemeChanged();
+            $this->applyNewContext();
+
             return null;
         }
 

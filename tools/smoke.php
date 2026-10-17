@@ -55,6 +55,7 @@ use App\Users\Store\MemoryUserSource;
 use Drift\Dev\Smoke\App\CursorApplication;
 use Drift\Dev\Smoke\App\EchoApplication;
 use Drift\Dev\Smoke\App\TfApplication;
+use Drift\Dev\Smoke\App\ThemeApplication;
 use Drift\Dev\Smoke\App\NavApplication;
 use Drift\Dev\Smoke\LeafProbe;
 use Drift\Dev\Smoke\Routing\NavStore;
@@ -164,6 +165,7 @@ use Drift\Widget\SpinnerState;
 use Drift\Widget\State;
 use Drift\Widget\StatefulElement;
 use Drift\Widget\Text;
+use Drift\Input\ThemeChangedEvent;
 use Drift\Widget\TextField;
 use Drift\Widget\TextFieldState;
 use Drift\Widget\Widget;
@@ -2759,6 +2761,39 @@ check(
     'IME · 焦点在第二个字段 ⇒ y 沿父链累积（+32.8 = 字段高 + spacing）',
     $imeApp->imeCaretRect() === [58.0, 60.8, 16.8],
     '(' . implode(', ', $imeApp->imeCaretRect() ?? []) . ')'
+);
+
+// ── 主题切换 ⇒ 界面真的换表（§9.2 / §24.2 #14）────────────────────────
+//   `Element::applyContext()` 本就是"换一份渲染环境（主题切换的唯一入口）"，
+//   但 src/ 里**零生产调用者** ⇒ ThemeChangedEvent 之前只是被显式消费、不做
+//   任何事。本轮把两者接起来（先 `onSystemThemeChanged()` 换源、再下发 context）。
+$thApp = new ThemeApplication();
+$thApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
+$thRoot = $thApp->rootElement();
+check(
+    '主题 · 派发前：根 context 是浅色（对照，证明"没事件就不变"）',
+    $thRoot?->context()->theme()->isDark() === false,
+    $thRoot?->context()->theme()->isDark() ? 'dark' : 'light'
+);
+
+$thApp->dispatchInput(new ThemeChangedEvent());
+check(
+    '主题 · onSystemThemeChanged() 钩子被调 ⇒ 应用换了主题源',
+    $thApp->currentTheme()->isDark() === true,
+    $thApp->currentTheme()->isDark() ? 'dark' : 'light'
+);
+check(
+    '主题 · 根 Element 的 context 换成深色（applyContext 下发）',
+    $thRoot?->context()->theme()->isDark() === true,
+    $thRoot?->context()->theme()->isDark() ? 'dark' : 'light'
+);
+
+// ★ 递归生效才是"界面换表" —— 只换根不换子层，控件仍按旧主题取色（换表不换色）
+$thText = findElement($thRoot, fn($el) => $el->widget() instanceof Text);
+check(
+    '主题 · 子层 context 也换了（applyContext 递归下发 —— 换表**且**换色）',
+    $thText?->context()->theme()->isDark() === true,
+    $thText?->context()->theme()->isDark() ? 'dark' : 'light'
 );
 
 // ★ 帧末重建（§5.2 裁决 3）：脏 StatefulElement 造了新盒后，**父容器必须换上新盒**
