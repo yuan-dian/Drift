@@ -33,6 +33,9 @@ final class ProxyElement extends StatelessElement
         if ($widget instanceof PopupPanel) {
             return [$widget->child()];
         }
+        if ($widget instanceof ModalHost) {
+            return [$widget->child()];
+        }
 
         return [];
     }

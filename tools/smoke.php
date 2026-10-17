@@ -43,6 +43,7 @@ use Drift\Dev\Preview\SvgSurface;
 use Drift\Dev\Smoke\App\AccelApplication;
 use Drift\Dev\Smoke\App\CompositeRootApp;
 use Drift\Dev\Smoke\App\MenuApplication;
+use Drift\Dev\Smoke\App\ModalApplication;
 use Drift\Dev\Smoke\App\RecordingHandler;
 use Drift\Dev\Smoke\App\TaskRow;
 use Drift\Dev\Smoke\App\TaskRowJob;
@@ -101,6 +102,7 @@ use Drift\Layout\RenderScrollView;
 use Drift\Layout\RenderPadding;
 use Drift\Layout\RenderProxyBox;
 use Drift\Layout\RenderMenuItem;
+use Drift\Layout\RenderModalHost;
 use Drift\Layout\RenderObject;
 use Drift\Layout\RenderPopupPanel;
 use Drift\Layout\RenderSpinner;
@@ -125,6 +127,8 @@ use Drift\State\Cell;
 use Drift\State\SubjectBuilder;
 use Drift\State\Subject;
 use Drift\Text\DeterministicFontManager;
+use Drift\Text\FontLocator;
+use Drift\Text\TtfFace;
 use Drift\Text\DeterministicMetricsProvider;
 use Drift\Text\DeterministicShaper;
 use Drift\Text\FontFamily;
@@ -161,6 +165,7 @@ use Drift\Widget\Menu\ContextMenu;
 use Drift\Widget\Menu\Menu;
 use Drift\Widget\Menu\MenuBar;
 use Drift\Widget\Menu\MenuItem;
+use Drift\Widget\Modal;
 use Drift\Widget\PopupPanel;
 use Drift\Widget\Key;
 use Drift\Widget\NavButton;
@@ -1725,6 +1730,60 @@ check('Text · 位图尺寸随 pixelSize 缩放', $bitmap->width === 8 && $bitma
 check('Text · 基线上方 = ascent × pixelSize（位图即 em 盒）', $bitmap->bearingY === -12, (string) $bitmap->bearingY);
 check('Text · 位图有墨', $ink > 0);
 check('Text · 未覆盖码位不画方框', $latinFace->rasterize(0x4E2D, 14.0) === null);
+
+// ── 真字体度量面（TtfFace，2026-10-17）──
+//    ★ 判据必须**能区分 TTF 与位图**：中文表外字两边都是 1.0em（分不出来），
+//      所以取 'Ω'（TTF 0.758 / notdef 猜 0.5）与 '—'（TTF 0.894 / notdef 猜 0.5）。
+
+$fontPath = FontLocator::find('NotoSansSC-Regular.ttf');
+check('Text · 字体文件能定位（分发形态：fonts/ 或 cpp/fonts）', $fontPath !== null, (string) $fontPath);
+
+$ttfFace = $fontPath === null ? null : TtfFace::fromFile($fontPath, [$latinFace, $cjkFace]);
+check(
+    'Text · TtfFace 从文件读出（upem 1000，不是空壳）',
+    $ttfFace instanceof TtfFace && $ttfFace->unitsPerEm() === 1000,
+    $ttfFace === null ? 'no face' : (string) $ttfFace->unitsPerEm(),
+);
+check(
+    'Text · 行度量取 OS/2 sTypo（0.88 / 0.12），不是 hhea 的 1.448em',
+    $ttfFace !== null
+        && abs($ttfFace->metrics()->ascent - 0.88) < 1e-9
+        && abs($ttfFace->metrics()->descent - 0.12) < 1e-9,
+    $ttfFace === null ? 'no face' : sprintf('%.4f / %.4f', $ttfFace->metrics()->ascent, $ttfFace->metrics()->descent),
+);
+check(
+    'Text · 步进来自 hmtx（Ω = 0.758em —— notdef 会猜 0.5）',
+    $ttfFace !== null && abs($ttfFace->glyphAdvance(0x03A9) - 0.758) < 1e-9,
+    $ttfFace === null ? 'no face' : (string) $ttfFace->glyphAdvance(0x03A9),
+);
+check(
+    'Text · 覆盖判定查真字体 cmap（表外字「馈」有、emoji 无）',
+    $ttfFace !== null && $ttfFace->hasGlyph(0x9988) && !$ttfFace->hasGlyph(0x1F600),
+);
+check(
+    'Text · 字形委托位图面（TTF 有 + 位图也有 ⇒ 画得出）',
+    $ttfFace !== null && $ttfFace->rasterize(0x4E2D, 14.0) !== null,
+);
+//    ★ 用 'Ω'（希腊）：'馈' 这类中文上一轮重跑生成链已补进位图，判据会假绿
+check(
+    'Text · TTF 有但位图没有 ⇒ 不画（不静默画方框）',
+    $ttfFace !== null && $ttfFace->hasGlyph(0x03A9) && $ttfFace->rasterize(0x03A9, 14.0) === null,
+);
+check(
+    'Text · FontLocator 找不到 ⇒ null（不抛、不猜）',
+    FontLocator::find('NoSuchFont.ttf', ['/nonexistent-dir']) === null,
+);
+
+// —— 集成：Application::metrics() 真的接了真字体（不是静默退回位图）
+$ttfApp = new ModalApplication();
+$ttfAdvance = $ttfApp->metrics()->advance('Ω', $body, $unit);
+//    ★ 期望值要按**量化后**写：`DeterministicShaper` 把步进 round 到设备像素
+//      （§8.2 坑 4），0.758 × 14 = 10.612 ⇒ 11。notdef 对 Ω 猜 0.5em ⇒ 7 —— 两者可分。
+check(
+    'Text · Application::metrics() 已接真字体（Ω 宽 11px，不是 notdef 猜的 7px）',
+    abs($ttfAdvance - 11.0) < 1e-9,
+    sprintf('%.4f（notdef 会是 7.0）', $ttfAdvance),
+);
 
 // ── 降采样灰度（§24.2 #17）：小字抗锯齿不倒在函数出口 ──
 // pixelSize < unitsPerEm(16) ⇒ 降采样路径。判据：coverage 值域必须**超出** {0,255}
@@ -4525,6 +4584,198 @@ check(
     'PopupPanel · 宽 = max(minWidth, 最宽项)（面板统一宽 ⇒ 菜单项整行可点）',
     $panelProbeBox?->size() !== null && $panelProbeBox->size()->width >= 200.0,
     sprintf('实际宽 %.6g', $panelProbeBox?->size()?->width ?? -1),
+);
+
+// ── ㉞b 模态（§A.3.7 / §12.1 第 6 条：复用浮层槽位 + 紧约束盖满 + 遮罩自绘）──
+//    ★ 客户区取 480×360（不是 320）：Modal 默认 minWidth=320，320 宽的客户区
+//      会让面板几乎盖满 ⇒ 遮罩区只剩投影留白，"四角都是遮罩"这条判据就废了。
+
+$modalSurface = new SvgSurface();
+$modalSurface->resize(480, 360, 1.0);
+$modalTight = BoxConstraints::tight(new Size(480.0, 360.0));
+$modalApp = new ModalApplication();
+$modalApp->attach($modalSurface, $modalTight);
+
+check(
+    '模态 · attach 后默认没开（槽位与菜单共用，两个开关各自诚实）',
+    !$modalApp->isModalOpen() && $modalApp->modal() === null && !$modalApp->isMenuOpen(),
+);
+
+$modalApp->openConfirm();
+$modalApp->frame(16.0, $modalTight);
+check(
+    '模态 · showModal ⇒ 打开（浮层槽位被占，但 isMenuOpen() 仍为假）',
+    $modalApp->isModalOpen() && $modalApp->menuElement() !== null && !$modalApp->isMenuOpen(),
+);
+
+$modalBox = $modalApp->menuElement()?->effectiveBox();
+check('模态 · 浮层盒是 RenderModalHost（遮罩 + 盖满住同一个盒）', $modalBox instanceof RenderModalHost);
+check(
+    '模态 · 紧约束盖满客户区（不是自尺寸 —— 盖不满就"后面还能点"）',
+    $modalBox?->size() !== null
+        && abs($modalBox->size()->width - 480.0) < 0.01
+        && abs($modalBox->size()->height - 360.0) < 0.01,
+    sprintf('实际 %.6g × %.6g', $modalBox?->size()?->width ?? -1.0, $modalBox?->size()?->height ?? -1.0),
+);
+check('模态 · 原点归零（模态不钉锚点）', $modalApp->menuOrigin() === [0.0, 0.0]);
+
+// —— 面板：沿盒树找 PopupPanel（模态不自造 chrome，形体复用菜单那套）
+$modalPanel = null;
+$scanModal = function (?RenderBox $node) use (&$scanModal, &$modalPanel): void {
+    if ($node === null || $modalPanel !== null) {
+        return;
+    }
+    if ($node instanceof RenderPopupPanel) {
+        $modalPanel = $node;
+
+        return;
+    }
+    $node->visitChildren(function (RenderBox $child) use (&$scanModal): void {
+        $scanModal($child);
+    });
+};
+$scanModal($modalBox);
+check('模态 · 面板是 PopupPanel（形体复用，模态不自造一套 chrome）', $modalPanel instanceof RenderPopupPanel);
+
+$modalPanelRect = $modalPanel instanceof RenderPopupPanel ? $modalPanel->panelRect() : null;
+[$modalPx, $modalPy] = $modalPanel instanceof RenderBox ? boxOrigin($modalPanel) : [0.0, 0.0];
+$modalPanelW = $modalPanelRect?->width ?? 0.0;
+$modalPanelH = $modalPanelRect?->height ?? 0.0;
+$modalPanelX = $modalPx + ($modalPanelRect?->left ?? 0.0);
+$modalPanelY = $modalPy + ($modalPanelRect?->top ?? 0.0);
+check(
+    '模态 · 面板居中（Center 组合出来的，不是盒里写死的偏移）',
+    abs(($modalPanelX + $modalPanelW / 2.0) - 240.0) < 1.0
+        && abs(($modalPanelY + $modalPanelH / 2.0) - 180.0) < 1.0,
+    sprintf(
+        '面板中心 (%.6g, %.6g)，客户区中心 (240, 180)',
+        $modalPanelX + $modalPanelW / 2.0,
+        $modalPanelY + $modalPanelH / 2.0,
+    ),
+);
+
+// —— 遮罩：半透明混色（★ §A.3.7 点名的"实现第一天验"）
+$modalRaster = new RasterCanvas(480, 360, Color::white(), Scale::of(1.0));
+$modalBox?->paint($modalRaster);
+$barrierPx = $modalRaster->pixelAt(2, 2);
+check(
+    '模态 · 遮罩半透明混色（白底 × 35% 黑 ⇒ 灰；纯白/纯黑都说明 alpha 没走通）',
+    $barrierPx->r === $barrierPx->g && $barrierPx->g === $barrierPx->b
+        && $barrierPx->r > 120 && $barrierPx->r < 230,
+    sprintf('角落 rgb(%d,%d,%d)', $barrierPx->r, $barrierPx->g, $barrierPx->b),
+);
+
+$cornersOk = true;
+foreach ([[2, 2], [477, 2], [2, 357], [477, 357]] as $cornerPt) {
+    $p = $modalRaster->pixelAt($cornerPt[0], $cornerPt[1]);
+    if (!$p->equals($barrierPx)) {
+        $cornersOk = false;
+    }
+}
+check('模态 · 遮罩覆盖四角（盖满是真的盖满，不是画了个中间块）', $cornersOk);
+
+$panelPx = $modalRaster->pixelAt(
+    (int) round($modalPanelX + 8.0),
+    (int) round($modalPanelY + 8.0),
+);
+check(
+    '模态 · 面板画在遮罩之上（面板内像素 ≠ 遮罩色）',
+    !$panelPx->equals($barrierPx),
+    sprintf('面板内 rgb(%d,%d,%d)', $panelPx->r, $panelPx->g, $panelPx->b),
+);
+
+// —— 关闭语义：点面板内（空白）⇒ 不关
+$modalApp->dispatchInput(PointerEvent::down($modalPanelX + 8.0, $modalPanelY + 8.0));
+check('模态 · 点面板内 ⇒ 不关（遮罩只挡面板外）', $modalApp->isModalOpen());
+
+// —— 关闭语义：ESC ⇒ 关（dismissible 默认 true）
+$modalApp->dispatchInput(KeyEvent::down(KeyChord::escape()));
+check('模态 · ESC ⇒ 关（dismissible 默认 true）', !$modalApp->isModalOpen());
+check(
+    '模态 · 关后槽位清空 + 模态标记归零（不留脏状态）',
+    $modalApp->menuElement() === null && $modalApp->modal() === null && !$modalApp->isMenuOpen(),
+);
+$modalApp->closeModal();
+check('模态 · closeModal 幂等（没开再关一次不炸）', !$modalApp->isModalOpen());
+
+// —— dismissible=false：ESC 与遮罩点击都**吞掉但不关**
+$modalApp->dismissible = false;
+$modalApp->openConfirm();
+$modalApp->frame(16.0, $modalTight);
+$modalApp->seen = [];
+check(
+    '模态 · dismissible=false 的模态已打开（前置）',
+    $modalApp->isModalOpen() && $modalApp->modal()?->isDismissible() === false,
+);
+
+$modalApp->dispatchInput(KeyEvent::down(KeyChord::escape()));
+check(
+    '模态 · dismissible=false ⇒ ESC 不关且被吞（不落到第 ① 环加速键）',
+    $modalApp->isModalOpen() && $modalApp->seen === [],
+    'open=' . ($modalApp->isModalOpen() ? 'yes' : 'no') . ' seen=' . implode(',', $modalApp->seen),
+);
+
+$modalApp->dispatchInput(PointerEvent::down(5.0, 5.0));
+check(
+    '模态 · dismissible=false ⇒ 点遮罩不关且被吞（拒绝 ≠ 放行给下面的按钮）',
+    $modalApp->isModalOpen() && $modalApp->seen === [],
+    'open=' . ($modalApp->isModalOpen() ? 'yes' : 'no') . ' seen=' . implode(',', $modalApp->seen),
+);
+
+// —— dismissible=true：点遮罩 ⇒ 关 + 吞掉该次按下
+$modalApp->closeModal();
+$modalApp->dismissible = true;
+$modalApp->openConfirm();
+$modalApp->frame(16.0, $modalTight);
+$modalApp->seen = [];
+$modalApp->dispatchInput(PointerEvent::down(5.0, 5.0));
+check(
+    '模态 · dismissible=true ⇒ 点遮罩关 + 吞掉该次按下（不穿透到下面的按钮）',
+    !$modalApp->isModalOpen() && $modalApp->seen === [],
+    'open=' . ($modalApp->isModalOpen() ? 'yes' : 'no') . ' seen=' . implode(',', $modalApp->seen),
+);
+
+// —— ★ 核心裁决：点面板内按钮 ⇒ 命令分发，但模态**不自己关**（关不关归应用）
+$modalApp->openConfirm();
+$modalApp->frame(16.0, $modalTight);
+$modalApp->seen = [];
+$confirmEl = $modalApp->menuElement() === null ? null : findElement(
+    $modalApp->menuElement(),
+    fn (Element $e): bool => $e->widget() instanceof Button && $e->widget()->commandName() === 'modal.confirm',
+);
+$confirmBox = $confirmEl?->effectiveBox();
+[$confirmX, $confirmY] = $confirmBox === null ? [0.0, 0.0] : boxOrigin($confirmBox);
+$confirmW = $confirmBox?->size()?->width ?? 0.0;
+$confirmH = $confirmBox?->size()?->height ?? 0.0;
+$modalApp->dispatchInput(PointerEvent::down($confirmX + $confirmW / 2.0, $confirmY + $confirmH / 2.0));
+check(
+    '模态 · 点面板内按钮 ⇒ 命令分发，模态**不自己关**（§A.3.7：关不关归应用）',
+    $modalApp->seen === ['modal.confirm'] && $modalApp->isModalOpen(),
+    'seen=' . implode(',', $modalApp->seen) . ' open=' . ($modalApp->isModalOpen() ? 'yes' : 'no'),
+);
+
+// —— 一槽位两用：打开模态先清菜单（互斥）
+$modalMutexApp = new ModalApplication();
+$modalMutexApp->attach($modalSurface, $modalTight);
+$modalMutexApp->showMenu(PopupPanel::make(Text::make('菜单项')));
+check('模态 · 前置：菜单开着', $modalMutexApp->isMenuOpen() && !$modalMutexApp->isModalOpen());
+$modalMutexApp->openConfirm();
+check(
+    '模态 · 与菜单互斥（同一槽位 ⇒ 打开模态先清菜单）',
+    $modalMutexApp->isModalOpen() && !$modalMutexApp->isMenuOpen(),
+);
+
+// —— Modal 的 build 结构：ModalHost → Center → PopupPanel
+$modalBareEl = Modal::make()->child(Text::make('只有正文'))->createElement();
+$modalBareEl->mount(null, $context);
+$modalBareBox = $modalBareEl->effectiveBox();
+$modalBareCenter = false;
+$modalBareBox?->visitChildren(function (RenderBox $child) use (&$modalBareCenter): void {
+    $modalBareCenter = $child instanceof RenderCenter;
+});
+check(
+    'Modal · build = ModalHost → Center → PopupPanel（居中靠组合，不是盒里的开关）',
+    $modalBareBox instanceof RenderModalHost && $modalBareCenter,
 );
 
 // ── ㉟ apps/users 完整样板（§19 M3 出口判据：§A.2 的完整应用可跑）──

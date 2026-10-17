@@ -17,11 +17,14 @@ use Drift\Input\PointerEvent;
 use Drift\Input\ScrollEvent;
 use Drift\Input\ThemeChangedEvent;
 use Drift\Layout\RenderBox;
+use Drift\Layout\RenderObject;
 use Drift\Layout\RenderPopupPanel;
 use Drift\Rendering\RenderSurface;
 use Drift\Text\DeterministicFontManager;
 use Drift\Text\DeterministicMetricsProvider;
 use Drift\Text\DeterministicShaper;
+use Drift\Text\FontLocator;
+use Drift\Text\TtfFace;
 use Drift\Geometry\Rect;
 use Drift\Text\TextMetricsProvider;
 use Drift\Widget\TextFieldState;
@@ -32,6 +35,7 @@ use Drift\Widget\Button;
 use Drift\Widget\Drag\Draggable;
 use Drift\Widget\Element;
 use Drift\Widget\Menu\Menu;
+use Drift\Widget\Modal;
 use Drift\Widget\StatefulElement;
 use Drift\Widget\Widget;
 
@@ -126,6 +130,18 @@ abstract class Application
 
     protected float $menuY = 0.0;
 
+    /**
+     * 当前浮层是不是**模态**（O-20「一槽位两用」的判别位）。
+     *
+     * ★ 槽位共用（`$menu` / `$menuElement` / `$menuX` / `$menuY`），两处差异：
+     *   ① **布局** —— 模态紧约束盖满（`placeModal()`），菜单无界自尺寸后钉锚点
+     *      （`placeMenu()`）；② **关闭** —— 模态只在 `dismissible` 时被用户动作关掉、
+     *      且**永不穿透**，菜单点外即关。
+     * ★ 存 `?Modal` 而不是 bool：`dismissible` 住在控件上，判断要在
+     *   `dispatchInput()` 里做 —— 布尔标记会逼出"第二个真相"。
+     */
+    protected ?Modal $modal = null;
+
     /** @param iterable<string, CommandHandler> $handlers `commands()` 的返回值 */
     public function __construct(iterable $handlers = [])
     {
@@ -196,13 +212,56 @@ abstract class Application
         return AcceleratorTable::make();
     }
 
-    /** **布局确定性的注入点**（§14.2）：度量由宿主给，不由平台探测 */
+    /**
+     * 度量实现（缓存住 —— 它现在要读一次字体文件，不能每次问都读 11 MB）。
+     *
+     * @internal 缓存字段；子类覆写 `metrics()` 时不受影响
+     */
+    private ?TextMetricsProvider $metricsCache = null;
+
+    /**
+     * **布局确定性的注入点**（§14.2）：度量由宿主给，不由平台探测。
+     *
+     * ## 2026-10-17：从"纯位图"改为"真字体优先，位图作字形源"
+     *
+     * 位图字模只覆盖生成器扫到的那批字（864），表外字符退 `NotdefFontFace`
+     * 按宽/窄猜 1.0 / 0.5 em —— 而 `skia` 后端的字形来自真 TTF（全字集）。
+     * 于是"画得出、宽度是猜的"：长句错位、换行点算错。现在把**度量**接回真字体
+     * （`TtfFace` 解析 cmap + hmtx），位图面降级为 `soft` 后端的**字形源**。
+     *
+     * ★ 顺序要紧：`TtfFace` 注册在**最前**（它 `hasGlyph()` 查真字体 cmap ⇒
+     *   全字集），位图两面跟在后面只服务"TTF 也没有的字"和 `soft` 的字形委托。
+     * ★ 找不到字体文件 ⇒ 退纯位图（**降级留痕**：`TtfFace::fromFile()` 记
+     *   Diagnostic；不是静默 —— 现象会是"表外字宽度不对"，那条日志是唯一线索）。
+     *
+     * @api
+     */
     public function metrics(): TextMetricsProvider
     {
-        return new DeterministicMetricsProvider(
-            DeterministicFontManager::standard()->collection(),
+        if ($this->metricsCache !== null) {
+            return $this->metricsCache;
+        }
+
+        $latin = DeterministicFontManager::latinFace();
+        $cjk = DeterministicFontManager::cjkFace();
+
+        $manager = new DeterministicFontManager();
+        $fontPath = FontLocator::find('NotoSansSC-Regular.ttf');
+        $ttf = $fontPath === null ? null : TtfFace::fromFile($fontPath, [$latin, $cjk]);
+
+        if ($ttf !== null) {
+            $manager->registerFace($ttf);
+        }
+
+        $manager->registerFace($latin);
+        $manager->registerFace($cjk);
+
+        $this->metricsCache = new DeterministicMetricsProvider(
+            $manager->collection(),
             new DeterministicShaper(),
         );
+
+        return $this->metricsCache;
     }
 
     public function router(): CommandRouter
@@ -313,11 +372,22 @@ abstract class Application
         $this->menuElement->unmount();
         $this->menuElement = null;
         $this->menu = null;
+
+        // ★ 槽位共用 ⇒ 模态标记必须跟着清：漏了它，"关掉模态之后 ESC 仍被吞"，
+        //   而且 `isModalOpen()` 永远为真（两处状态会开始互相撒谎）。
+        $this->modal = null;
     }
 
+    /**
+     * 菜单是否开着。
+     *
+     * ★ **模态占槽位时不算菜单**：一个槽位两用 ⇒ "槽位空不空"与"菜单开没开"
+     *   是两个问题。混答的后果是 `showModal()` 之后 `isMenuOpen()` 返回真，
+     *   应用里"菜单开着就别响应某个快捷键"之类的判断会开始撒谎。
+     */
     public function isMenuOpen(): bool
     {
-        return $this->menuElement !== null;
+        return $this->menuElement !== null && $this->modal === null;
     }
 
     /** 浮层 Element（测试 / devtools） */
@@ -333,6 +403,101 @@ abstract class Application
     }
 
     /**
+     * 打开模态（§A.3.7 / §12.1 第 6 条）—— 与菜单**共用**同一个浮层槽位。
+     *
+     * ```php
+     * $this->application()->showModal(
+     *     Modal::make()->title('确认删除')->child($body)
+     * );
+     * ```
+     *
+     * ★ **模态与菜单天然互斥**（GUI 仓裁决原话）：同一槽位 ⇒ 打开模态会先关掉
+     *   菜单。不是"顺手清理"，是语义：一个应用同时只有一个"浮在最上、吃掉输入"
+     *   的东西。
+     * ★ **面板自居中靠组合**：`Modal::build()` 给的是 `ModalHost → Center →
+     *   PopupPanel`，本方法只负责"盖满 + 原点归零"（`placeModal()`）。
+     *
+     * @api
+     */
+    public function showModal(Modal $modal): void
+    {
+        if ($this->root === null) {
+            return; // 未挂载：没有客户区，模态无处安放（同 showMenu）
+        }
+
+        $this->closeMenu(); // 互斥：先清槽位（`closeMenu()` 幂等）
+
+        $element = $modal->createElement();
+        $element->mount(null, $this->menuContext());
+
+        $this->menu = $modal;
+        $this->menuElement = $element;
+        $this->modal = $modal;
+
+        // 模态不钉锚点：原点恒为 (0,0)，尺寸由 placeModal() 盖满
+        $this->menuAnchorX = 0.0;
+        $this->menuAnchorY = 0.0;
+        $this->menuX = 0.0;
+        $this->menuY = 0.0;
+    }
+
+    /**
+     * 关掉模态（幂等；没开 ⇒ 无事发生）。
+     *
+     * ★ **只有应用能调它**：`Modal` 自己不关（§A.3.7「关不关归应用」）。
+     *   `dismissible` 只管"用户动作能不能关"，不限制这里 —— 应用永远能关。
+     *
+     * @api
+     */
+    public function closeModal(): void
+    {
+        if ($this->modal === null) {
+            return;
+        }
+
+        $this->closeMenu(); // 槽位清理只有一份（含 `$this->modal = null`）
+    }
+
+    public function isModalOpen(): bool
+    {
+        return $this->modal !== null;
+    }
+
+    /** 当前模态（测试 / devtools / 应用读 `dismissible`） */
+    public function modal(): ?Modal
+    {
+        return $this->modal;
+    }
+
+    /**
+     * 模态的布局段：**紧约束盖满客户区**，原点归零。
+     *
+     * ★ 与 `placeMenu()` 的差别只有两点：约束是 tight（不是 unbounded），原点
+     *   是 (0,0)（不是锚点）—— 所以不共用一个方法：共用就得在里面长出
+     *   `if (模态)` 分支，而两个分支的**输入含义**根本不同（"自尺寸"vs"盖满"）。
+     * ★ 无界轴退化：窗口表面永远有界，这里只为不产生 `tight(INF)` 的非法约束
+     *   （真发生了就退成 unbounded，模态会缩到内容大小 —— 可见地不对，不是静默）。
+     */
+    private function placeModal(BoxConstraints $constraints): void
+    {
+        $box = $this->menuElement?->effectiveBox();
+        if ($box === null) {
+            return;
+        }
+
+        if ($constraints->hasBoundedWidth() && $constraints->hasBoundedHeight()) {
+            $box->layout(BoxConstraints::tight(
+                new \Drift\Geometry\Size($constraints->maxWidth, $constraints->maxHeight),
+            ));
+        } else {
+            $box->layout(BoxConstraints::unbounded());
+        }
+
+        $this->menuX = 0.0;
+        $this->menuY = 0.0;
+    }
+
+    /**
      * 浮层的布局段（O-20 说"三段各加分支"，layout 落在这里）。
      *
      * 三件事，都要锚点或客户区尺寸 ⇒ 只能住应用级：
@@ -342,6 +507,12 @@ abstract class Application
      */
     private function placeMenu(BoxConstraints $constraints): void
     {
+        if ($this->modal !== null) {
+            $this->placeModal($constraints);
+
+            return;
+        }
+
         $box = $this->menuElement?->effectiveBox();
         if ($box === null) {
             return;
@@ -545,6 +716,17 @@ abstract class Application
             // §9.1 关闭语义 #3：**ESC 在 `dispatchKey` 之前拦** —— 否则被焦点
             // 控件（输入框）吃掉，菜单关不掉。
             if ($event->chord->is(KeyChord::escape())) {
+                if ($this->modal !== null) {
+                    // §A.3.7：`dismissible=false` ⇒ **吞掉但不关**。"拒绝"不等于
+                    // "放行" —— 若把 ESC 交回加速键链，Ctrl+W 之类能绕过
+                    // "必须处理的对话框"，模态就白做了。
+                    if ($this->modal->isDismissible()) {
+                        $this->closeModal();
+                    }
+
+                    return null;
+                }
+
                 if ($this->menuElement !== null) {
                     $this->closeMenu();
 
@@ -653,6 +835,28 @@ abstract class Application
     }
 
     /**
+     * 命中的盒是否落在**模态面板**里（而非遮罩上）。
+     *
+     * ★ `Modal` 的 build 把面板包成 `ModalHost → Center → PopupPanel`，遮罩上的
+     *   命中停在 `Center` / `ModalHost`（默认 `hitTest()`：子都不中 ⇒ 返回自己）
+     *   ⇒ "父链上有 `RenderPopupPanel`" 就是"点在面板里"的判据。用父链而不是
+     *   "命中的是不是 Center"，是为了面板外面再包布局（比如加个底部按钮栏）也成立。
+     * ★ 边界：面板盒含 `elevation` 的投影留白 ⇒ 投影那 6 逻辑像素也算"面板内"
+     *   （点它不关模态）。要精确到 `panelRect()` 得把坐标换算进盒坐标系，
+     *   收益不值这个复杂度 —— 记在这里而不是假装没有。
+     */
+    private function hitsModalPanel(?RenderObject $hit): bool
+    {
+        for ($node = $hit; $node !== null; $node = $node->parent()) {
+            if ($node instanceof RenderPopupPanel) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * 指针事件派发（**四相位**，2026-10-17 move/up/leave 通路落地）。
      *
      * - **down**：三段（浮层优先 / 右键菜单 / 焦点激活 —— M3 修复的行为不动）
@@ -675,6 +879,25 @@ abstract class Application
                 // 浮层局部坐标 = 客户区坐标 − 浮层原点（Frame 画时的 translate）
                 $hit = $focus->hitTest($event->x - $this->menuX, $event->y - $this->menuY, $this->menuElement);
                 $element = $hit === null ? null : $focus->elementAt($this->menuElement, $hit);
+
+                // 模态：浮层盒**盖满客户区** ⇒ `hitsMenu()` 恒真，"点没点到面板"
+                // 只能看命中链（见 `hitsModalPanel()`）。点遮罩 = 一次"关闭意图"，
+                // 不是"点到了某个控件" ⇒ 不喂 focusHit、不改光标、**不穿透**。
+                if ($this->modal !== null && !$this->hitsModalPanel($hit)) {
+                    if ($event->isDown()) {
+                        if ($this->modal->isDismissible()) {
+                            $this->closeModal();
+                        }
+
+                        return null; // 不可关时同样吞掉（遮罩后面不能动）
+                    }
+
+                    if ($event->isMove() || $event->isLeave()) {
+                        $focus->hoverTo(null); // 滑出面板 ⇒ 面板内不再高亮
+                    }
+
+                    return null;
+                }
 
                 if ($event->isDown()) {
                     // 菜单项（MenuItem extends Button）与根树按钮同规则：焦点落在
@@ -881,7 +1104,11 @@ abstract class Application
 
         // §9.1 关闭语义 #2：**命令分发之后才关**浮层 —— 菜单项的处理逻辑可能
         // 自己开关浮层（例如"新建"打开另一个面板），此时先关会把它关掉。
-        if ($handled && $this->menuElement !== null) {
+        // ★ **模态不走这条**（§A.3.7「关不关归应用」）：模态里的按钮派完命令，
+        //   模态必须还在 —— 否则"确认删除"的对话框会在命令执行前消失，而
+        //   "校验失败就留在框里"这种正确写法直接做不到。菜单则相反：项点完
+        //   就关是菜单的语义（§9.1 语义 #2）。
+        if ($handled && $this->menuElement !== null && $this->modal === null) {
             $this->closeMenu();
         }
 
