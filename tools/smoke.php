@@ -122,8 +122,12 @@ use Drift\Text\DeterministicShaper;
 use Drift\Text\FontFamily;
 use Drift\Text\FontSlant;
 use Drift\Text\FontWeight;
+use Drift\Text\Glyph;
+use Drift\Text\GlyphRun;
+use Drift\Text\Paragraph;
 use Drift\Text\TextAlign;
 use Drift\Text\TextLayout;
+use Drift\Text\TextLine;
 use Drift\Text\TextRole;
 use Drift\Text\TextStyle;
 use Drift\Theme\SystemTheme;
@@ -546,6 +550,9 @@ if (!function_exists('drift_skia_canvas_create')) {
         int $codepoint,
         int $rgba,
     ): void {
+        if (!empty($GLOBALS['DRIFT_SMOKE_SKIA_SABOTAGE'])) {
+            $penX += 1.0; // 已知违规件：只服务量具反例自检（判据恒真 = 夹具空转）
+        }
         $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][] = ['draw_glyph', $family, $bold, $fontSize, $penX, $baselineY, $codepoint, $rgba];
     }
 
@@ -600,6 +607,120 @@ function skiaClipCalls(): array
         }
     }
     return $out;
+}
+
+/** @return list<array> draw_glyph 记录：[op, family, bold, fontSize, penX, baselineY, codepoint, rgba] */
+function skiaGlyphCalls(): array
+{
+    $out = [];
+    foreach ($GLOBALS['DRIFT_SMOKE_SKIA_CALLS'] ?? [] as $call) {
+        if ($call[0] === 'draw_glyph') {
+            $out[] = $call;
+        }
+    }
+    return $out;
+}
+
+/**
+ * 从 Paragraph 独立算出每个字形的期望跨边界参数（**正确语义**：offsetX/offsetY 施加）。
+ *
+ * 与 `SkiaCanvas::drawParagraph()` 的循环同公式但独立实现 —— 判据不靠被测代码自己背书。
+ * 今天所有字形 offset 恒为 0.0（`DeterministicShaper` / `TextLayout` 的 new Glyph 全部
+ * 显式传 0.0，grep 实证）⇒ 本算式与桥记录一致；真塑形（M4）产生非零 offset 后，
+ * 本判据会**逼出** Skia 侧漏加 offset 的修复（分歧现状由 P4 钉住）。
+ *
+ * @return list<array{codepoint:int, penX:float, baselineY:float}>
+ */
+function skiaExpectedGlyphs(Paragraph $paragraph, float $originX, float $originY, Scale $scale): array
+{
+    $dpr = $scale->dpr;
+    $out = [];
+    foreach ($paragraph->lines as $line) {
+        $baselineY = ($originY + $line->baseline) * $dpr;
+        $pen = $originX + $line->offsetX;
+        foreach ($line->runs as $run) {
+            foreach ($run->glyphs as $glyph) {
+                $out[] = [
+                    'codepoint' => $glyph->codepoint,
+                    'penX' => round(($pen + $glyph->offsetX) * $dpr),
+                    'baselineY' => $baselineY + $glyph->offsetY * $dpr,
+                ];
+                $pen += $glyph->advance;
+            }
+        }
+    }
+    return $out;
+}
+
+/**
+ * 从 Paragraph 独立算出软光栅墨迹的期望并集 bbox（含端点，房规 [l, r, t, b]）。
+ *
+ * 与 `RasterCanvas::blendBitmap()` 同公式但独立实现，口径与
+ * `deviceInkBounds()` 的「非透明即墨」完全一致 —— **逐位图扫描实际墨区**
+ * （`coverageAt() > 0`），位图内墨区偏移叠加 bearing 后再取并集。
+ *
+ * ★ 踩过（夹具第一次跑抓到自己）：第一版假设整张位图都有墨
+ *   （`maxY = top + height − 1`）—— 位图字体字形不占满全高：
+ *   U+48 @14px 位图 14 行但实际墨 13 行（底部 1 行全透明）、
+ *   @28px 位图 28 行但实际墨 26 行 ⇒ 纵向 maxY 系统性差 1（dpr=2 差 3），
+ *   4 条对照全线 FAIL。横向无透明边列（bearingX ≡ 0）故 penX 互比不受影响。
+ * 位图在**回放时**才由 `face->rasterize(codepoint, pixelSize)` 产生（确定性）⇒
+ * 夹具里再调一次拿到的是同一张；bearingY = −ascent×pixelSize（"位图即 em 盒"）。
+ */
+function skiaExpectedInkBounds(Paragraph $paragraph, float $originX, float $originY, Scale $scale): ?array
+{
+    $dpr = $scale->dpr;
+    $pixelSize = $paragraph->style->size * $dpr;
+    $minX = PHP_INT_MAX;
+    $maxX = -1;
+    $minY = PHP_INT_MAX;
+    $maxY = -1;
+
+    foreach ($paragraph->lines as $line) {
+        $baselineLogical = $originY + $line->baseline;
+        $pen = $originX + $line->offsetX;
+        foreach ($line->runs as $run) {
+            foreach ($run->glyphs as $glyph) {
+                $bitmap = $run->face->rasterize($glyph->codepoint, $pixelSize);
+                if ($bitmap !== null && !$bitmap->isEmpty()) {
+                    // 扫描位图实际墨区（coverage > 0 即墨，与 deviceInkBounds 同口径）
+                    $inkTop = null;
+                    $inkBottom = null;
+                    $inkLeft = null;
+                    $inkRight = null;
+                    for ($y = 0; $y < $bitmap->height; $y++) {
+                        for ($x = 0; $x < $bitmap->width; $x++) {
+                            if ($bitmap->coverageAt($x, $y) > 0) {
+                                if ($inkTop === null) {
+                                    $inkTop = $y;
+                                }
+                                $inkBottom = $y;
+                                if ($inkLeft === null || $x < $inkLeft) {
+                                    $inkLeft = $x;
+                                }
+                                if ($inkRight === null || $x > $inkRight) {
+                                    $inkRight = $x;
+                                }
+                            }
+                        }
+                    }
+                    if ($inkTop !== null) {
+                        $baseX = (int) round(($pen + $glyph->offsetX) * $dpr);
+                        $baseY = (int) round(($baselineLogical + $glyph->offsetY) * $dpr);
+                        $left = $baseX + $bitmap->bearingX + $inkLeft;
+                        $top = $baseY + $bitmap->bearingY + $inkTop;
+                        $minX = min($minX, $left);
+                        $maxX = max($maxX, $left + ($inkRight - $inkLeft));
+                        $minY = min($minY, $top);
+                        $maxY = max($maxY, $top + ($inkBottom - $inkTop));
+                    }
+                }
+                $pen += $glyph->advance;
+            }
+        }
+    }
+
+    return $maxX < 0 ? null : [$minX, $maxX, $minY, $maxY];
 }
 
 /**
@@ -1197,6 +1318,258 @@ check(
     $inkS === $expectSGood,
     'ink=' . fmtInk($inkS) . ' 桥收到=' . fmtInk($expectSGood)
 );
+
+// ── P. 段落路径 conformance：drawParagraph 与软光栅逐字形同构 ──────────
+// ★ drawParagraph 是 Canvas 唯一还没有跨后端覆盖的绘制方法（⑫ 只有 Raster 侧）。
+//   判据 = 跨后端**几何**同构：桥收到的每个字形（penX / baselineY / codepoint /
+//   family / rgba）与软光栅的墨迹位置逐一对得上 —— 与 drawRect 的"设备矩形 ==
+//   墨迹 bbox"同款思路，只是比较单位从矩形换成字形。
+// ★ 位图字体的 bearingX ≡ 0（"位图即 em 盒"，P1 钉住）⇒ 字形原点 = 墨迹左沿
+//   ⇒ 桥收到的 penX 与软光栅墨迹左沿**可直接互比**。bearingY = −ascent×pixelSize
+//   是后端特有量（位图字体 vs 真字体），不进互比，只各自钉（与两后端抗锯齿
+//   差异同档）。
+// ★ baseline 由排版给（size=14 实测 13.65）：Skia 发**不取整**的浮点、软光栅
+//   round 后落位图 —— 同 §6.1"逻辑→物理只走 quantizeRect"的同类分歧，
+//   两后端各自钉、不互比。
+$pFontManager = DeterministicFontManager::standard();
+$pMetrics = new DeterministicMetricsProvider($pFontManager->collection(), new DeterministicShaper());
+$pBody = TextStyle::of(14.0);
+$pUnit = Scale::of(1.0);
+
+// ── P1. 单字形跨后端同构（dpr=1，画布平移 (7,5)）──
+// 平移必须被文本吃掉（RasterCanvas 类注释：不跟 ⇒ Center 算好的偏移画不出来，
+// "矩形跟着变换、文字不跟"是最难发现的半边错）。
+skiaBridgeReset();
+$p1Paragraph = $pMetrics->layout('A', $pBody, INF, $pUnit);
+$p1List = new DisplayList();
+$p1Rec = new RecordingCanvas($p1List);
+$p1Rec->save();
+$p1Rec->translate(7.0, 5.0);
+$p1Rec->drawParagraph($p1Paragraph, Paint::fill($red), 0.0, 0.0);
+$p1Rec->restore();
+$rasterP1 = new RasterCanvas(40, 30, null, $pUnit);
+$skiaP1 = new SkiaCanvas(40, 30, null, $pUnit);
+$p1List->replay($rasterP1);
+$p1List->replay($skiaP1);
+$glyphsP1 = skiaGlyphCalls();
+$inkP1 = deviceInkBounds($rasterP1);
+$expectP1 = skiaExpectedGlyphs($p1Paragraph, 7.0, 5.0, $pUnit);
+$p1Face = $p1Paragraph->lines[0]->runs[0]->face;
+check(
+    'Skia conformance · P1 桥恰好一次 draw_glyph（codepoint=U+41 / family=sans / rgba=红）',
+    count($glyphsP1) === 1
+        && $glyphsP1[0][6] === 0x41
+        && $glyphsP1[0][1] === $p1Face->familyName()
+        && $glyphsP1[0][7] === $red->toArgb(),
+    count($glyphsP1) === 1
+        ? 'cp=U+' . dechex($glyphsP1[0][6]) . ' family=' . $glyphsP1[0][1] . ' rgba=' . $glyphsP1[0][7]
+        : '次数=' . count($glyphsP1)
+);
+check(
+    'Skia conformance · P1 平移被文本吃掉：penX=(7+0)、baselineY=(5+13.65)、fontSize=14',
+    count($glyphsP1) === 1 && count($expectP1) === 1
+        && $glyphsP1[0][4] === $expectP1[0]['penX']
+        && $glyphsP1[0][5] === $expectP1[0]['baselineY']
+        && $glyphsP1[0][3] === 14.0,
+    count($glyphsP1) === 1
+        ? '桥 penX=' . $glyphsP1[0][4] . ' baselineY=' . $glyphsP1[0][5] . ' fontSize=' . $glyphsP1[0][3]
+        : '次数=' . count($glyphsP1)
+);
+$p1Bitmap = $p1Face->rasterize(0x41, 14.0);
+check(
+    'Skia conformance · P1 前置条件：位图字体 bearingX ≡ 0（字形原点 = 墨迹左沿，跨后端才可直接互比）',
+    $p1Bitmap !== null && $p1Bitmap->bearingX === 0,
+    $p1Bitmap === null ? '位图为 null' : 'bearingX=' . $p1Bitmap->bearingX
+);
+check(
+    'Skia conformance · P1 跨后端同构：桥收到的 penX == 软光栅墨迹左沿',
+    count($glyphsP1) === 1 && $inkP1 !== null && (float) $inkP1[0] === $glyphsP1[0][4],
+    '墨迹左沿=' . fmtInk($inkP1) . ' 桥 penX=' . (count($glyphsP1) === 1 ? (string) $glyphsP1[0][4] : '无')
+);
+check(
+    'Skia conformance · P1 软光栅墨迹 bbox == 独立算式（含 bearingY 的纵向定位）',
+    $inkP1 === skiaExpectedInkBounds($p1Paragraph, 7.0, 5.0, $pUnit),
+    'ink=' . fmtInk($inkP1) . ' 期望=' . fmtInk(skiaExpectedInkBounds($p1Paragraph, 7.0, 5.0, $pUnit))
+);
+
+// ── P2. 多字形步进与并集墨迹（dpr=1）──
+// 步进 = 逐字 advance 累加（不是等距）——桥的 penX 序列与墨迹并集双向钉住。
+skiaBridgeReset();
+$p2Paragraph = $pMetrics->layout('Hello', $pBody, INF, $pUnit);
+$p2List = new DisplayList();
+(new RecordingCanvas($p2List))->drawParagraph($p2Paragraph, Paint::fill($red), 0.0, 0.0);
+$rasterP2 = new RasterCanvas(80, 24, null, $pUnit);
+$skiaP2 = new SkiaCanvas(80, 24, null, $pUnit);
+$p2List->replay($rasterP2);
+$p2List->replay($skiaP2);
+$glyphsP2 = skiaGlyphCalls();
+$inkP2 = deviceInkBounds($rasterP2);
+$expectP2 = skiaExpectedGlyphs($p2Paragraph, 0.0, 0.0, $pUnit);
+$p2Pens = [];
+$p2ExpectPens = [];
+foreach ($glyphsP2 as $g) {
+    $p2Pens[] = $g[4];
+}
+foreach ($expectP2 as $e) {
+    $p2ExpectPens[] = $e['penX'];
+}
+check(
+    'Skia conformance · P2 五个字形全部过桥，penX 按 advance 逐步进（不是等距）',
+    count($glyphsP2) === 5 && $p2Pens === $p2ExpectPens,
+    '桥 penX=[' . implode(',', $p2Pens) . '] 期望=[' . implode(',', $p2ExpectPens) . ']'
+);
+check(
+    'Skia conformance · P2 跨后端同构：墨迹左沿 == 首字形 penX',
+    $inkP2 !== null && count($glyphsP2) === 5 && (float) $inkP2[0] === $glyphsP2[0][4],
+    'ink=' . fmtInk($inkP2) . ' 首字形 penX=' . (count($glyphsP2) === 5 ? (string) $glyphsP2[0][4] : '无')
+);
+check(
+    'Skia conformance · P2 软光栅并集墨迹 bbox == 独立算式（末字形右沿由步进推出）',
+    $inkP2 === skiaExpectedInkBounds($p2Paragraph, 0.0, 0.0, $pUnit),
+    'ink=' . fmtInk($inkP2) . ' 期望=' . fmtInk(skiaExpectedInkBounds($p2Paragraph, 0.0, 0.0, $pUnit))
+);
+
+// ── P3. 多行基线 + dpr=2（同一份命令流，两个缩放）──
+// 'Hello Drift' 在 40 逻辑宽断两行（⑪ 钉过断行形状：行0='Hello'、行1='Drift'，
+// 各 5 字形，空格不成字形）；dpr=2 用**同一份** DisplayList 回放 —— 段落是
+// 缩放无关的值对象，dpr 只由画布施加（⑫ 同款口径）。
+skiaBridgeReset();
+$p3Paragraph = $pMetrics->layout('Hello Drift', $pBody, 40.0, $pUnit);
+$p3List = new DisplayList();
+(new RecordingCanvas($p3List))->drawParagraph($p3Paragraph, Paint::fill($red), 0.0, 0.0);
+$rasterP3 = new RasterCanvas(90, 80, null, $pUnit);
+$skiaP3 = new SkiaCanvas(90, 80, null, $pUnit);
+$p3List->replay($rasterP3);
+$p3List->replay($skiaP3);
+$glyphsP3 = skiaGlyphCalls();
+$inkP3 = deviceInkBounds($rasterP3);
+$expectP3 = skiaExpectedGlyphs($p3Paragraph, 0.0, 0.0, $pUnit);
+check(
+    'Skia conformance · P3 两行各自过桥：前 5 字形 baseline = 行0(13.65)、后 5 = 行1(30.45)',
+    count($glyphsP3) === 10
+        && $glyphsP3[0][5] === $expectP3[0]['baselineY']
+        && $glyphsP3[4][5] === $expectP3[4]['baselineY']
+        && $glyphsP3[5][5] === $expectP3[5]['baselineY']
+        && $glyphsP3[9][5] === $expectP3[9]['baselineY']
+        && $glyphsP3[5][5] > $glyphsP3[0][5],
+    count($glyphsP3) === 10
+        ? '行0 baseline=' . $glyphsP3[0][5] . ' 行1 baseline=' . $glyphsP3[5][5]
+        : '次数=' . count($glyphsP3)
+);
+check(
+    'Skia conformance · P3 软光栅并集墨迹 bbox == 独立算式（两行都在内）',
+    $inkP3 === skiaExpectedInkBounds($p3Paragraph, 0.0, 0.0, $pUnit),
+    'ink=' . fmtInk($inkP3) . ' 期望=' . fmtInk(skiaExpectedInkBounds($p3Paragraph, 0.0, 0.0, $pUnit))
+);
+// dpr=2：同一份命令流回放到 2× 画布 —— 位置 ×2、字号 ×2、墨迹随之（⑫ 同款口径）
+skiaBridgeReset();
+$rasterP3x2 = new RasterCanvas(180, 160, null, Scale::of(2.0));
+$skiaP3x2 = new SkiaCanvas(180, 160, null, Scale::of(2.0));
+$p3List->replay($rasterP3x2);
+$p3List->replay($skiaP3x2);
+$glyphsP3x2 = skiaGlyphCalls();
+$inkP3x2 = deviceInkBounds($rasterP3x2);
+$expectP3x2 = skiaExpectedGlyphs($p3Paragraph, 0.0, 0.0, Scale::of(2.0));
+check(
+    'Skia conformance · P3 dpr=2：fontSize=28、末位 penX 与行 baseline 全部 ×2',
+    count($glyphsP3x2) === 10
+        && $glyphsP3x2[0][3] === 28.0
+        && $glyphsP3x2[4][4] === $expectP3x2[4]['penX']
+        && $glyphsP3x2[0][5] === $expectP3x2[0]['baselineY']
+        && $glyphsP3x2[5][5] === $expectP3x2[5]['baselineY'],
+    count($glyphsP3x2) === 10
+        ? 'fontSize=' . $glyphsP3x2[0][3] . ' 行0末 penX=' . $glyphsP3x2[4][4]
+            . ' 行0 baseline=' . $glyphsP3x2[0][5] . ' 行1 baseline=' . $glyphsP3x2[5][5]
+        : '次数=' . count($glyphsP3x2)
+);
+check(
+    'Skia conformance · P3 dpr=2 跨后端同构：墨迹左沿 ×2 == 桥 penX，且并集 bbox == 独立算式',
+    $inkP3x2 !== null && count($glyphsP3x2) === 10
+        && (float) $inkP3x2[0] === $glyphsP3x2[0][4]
+        && $inkP3x2 === skiaExpectedInkBounds($p3Paragraph, 0.0, 0.0, Scale::of(2.0)),
+    'ink=' . fmtInk($inkP3x2) . ' 期望=' . fmtInk(skiaExpectedInkBounds($p3Paragraph, 0.0, 0.0, Scale::of(2.0)))
+);
+
+// ── P4. 已知分歧钉住：字形 offset —— Raster 施加、Skia 当前丢弃（E3 剧本）──
+// ★ 合成一个带 offset 的段落。今天的生产者造不出非零 offset ——
+//   `DeterministicShaper` 与 `TextLayout` 的 new Glyph(...) 全部显式传 0.0
+//   （grep 实证）⇒ 这是**潜伏**分歧，不是活缺陷（与 popClip 发现前同型）。
+// ★ 分歧机制：RasterCanvas 施加 `pen + glyph->offsetX`（round 后 + bearingX），
+//   SkiaCanvas 只发 `round(pen × dpr)` —— offset 被丢。真塑形（M4，HarfBuzz 的
+//   标记附加 / 字距调整）会产生非零 offset ⇒ 届时变活。
+// ★ 修法（等裁决）：SkiaCanvas::drawParagraph 的 penDevice 改
+//   `round(($pen + $glyph->offsetX) * $dpr)`、baseline 加 `$glyph->offsetY * $dpr`
+//   （Raster 侧已正确；SkiaCanvas 类注释"与 RasterCanvas::drawParagraph 逐行
+//   对齐"本就是承诺）。修时本断言的 Skia 侧与差值断言一起翻转（像 E3 那样）。
+// ★ 必须 reset（P3 dpr=2 的 10 次调用还在记录里）—— 踩过：漏 reset ⇒
+//   桥次数 11（10+1）、P4 三条断言全 FAIL。夹具用例互相污染的又一例。
+skiaBridgeReset();
+$p4Face = $pFontManager->faces()[0];
+$p4Advance = $p4Face->glyphAdvance(0x41) * $pBody->size;
+$p4Glyph = new Glyph(0x41, $p4Advance, 3.0, 2.0, 0);
+$p4Run = new GlyphRun([$p4Glyph], $p4Face, $pBody, $p4Advance, 0, 1);
+$p4Line = new TextLine([$p4Run], 0.0, 13.65, 16.8, $p4Advance, 0.0, 0, 1);
+$p4Paragraph = new Paragraph('A', [$p4Line], $p4Advance, 16.8, $pBody, INF);
+$p4List = new DisplayList();
+(new RecordingCanvas($p4List))->drawParagraph($p4Paragraph, Paint::fill($red), 0.0, 0.0);
+$rasterP4 = new RasterCanvas(40, 30, null, $pUnit);
+$skiaP4 = new SkiaCanvas(40, 30, null, $pUnit);
+$p4List->replay($rasterP4);
+$p4List->replay($skiaP4);
+$glyphsP4 = skiaGlyphCalls();
+$inkP4 = deviceInkBounds($rasterP4);
+check(
+    'Skia conformance · P4 Raster 施加 offset（正确语义）：墨迹左沿 = round((0+3)×1) = 3',
+    $inkP4 !== null
+        && $inkP4[0] === 3
+        && $inkP4 === skiaExpectedInkBounds($p4Paragraph, 0.0, 0.0, $pUnit),
+    'ink=' . fmtInk($inkP4) . ' 期望=' . fmtInk(skiaExpectedInkBounds($p4Paragraph, 0.0, 0.0, $pUnit))
+);
+check(
+    'Skia conformance · P4 Skia 当前丢弃 offset（已知分歧，钉住现状）：桥 penX=0、baselineY=13.65',
+    count($glyphsP4) === 1 && $glyphsP4[0][4] === 0.0 && $glyphsP4[0][5] === 13.65,
+    count($glyphsP4) === 1
+        ? '桥 penX=' . $glyphsP4[0][4] . ' baselineY=' . $glyphsP4[0][5]
+        : '次数=' . count($glyphsP4)
+);
+check(
+    'Skia conformance · P4 分歧量化：两后端墨迹左沿差 3px（= offsetX × dpr）——修 Skia 后归零、本断言翻转',
+    $inkP4 !== null && count($glyphsP4) === 1 && (float) $inkP4[0] - $glyphsP4[0][4] === 3.0,
+    '墨迹左沿 − 桥 penX = ' . ($inkP4 !== null && count($glyphsP4) === 1 ? (string) ((float) $inkP4[0] - $glyphsP4[0][4]) : 'n/a')
+);
+
+// ── 段落路径量具反例自检（§20 纪律 1）───────────────────────────────
+// 合成已知违规件：假桥把 draw_glyph 的 penX 报错一格（等价于"SkiaCanvas
+// 算错了字形笔位"），同款互比判据必须变**假**。抓不到 = 判据恒真、空转。
+// 紧接的正对照：同一输入不篡改时判据必须为**真**。
+// ★ 判据的判别力来自两条独立产出路径：墨迹左沿由 RasterCanvas 出、桥 penX
+//   由假桥出 ⇒ 篡改桥侧、墨迹侧不动 ⇒ 必然不等。
+skiaBridgeReset();
+$GLOBALS['DRIFT_SMOKE_SKIA_SABOTAGE'] = true;
+$listSP = new DisplayList();
+(new RecordingCanvas($listSP))->drawParagraph($pMetrics->layout('A', $pBody, INF, $pUnit), Paint::fill($red), 0.0, 0.0);
+$rasterSP = new RasterCanvas(40, 30, null, $pUnit);
+$skiaSP = new SkiaCanvas(40, 30, null, $pUnit);
+$listSP->replay($rasterSP);
+$listSP->replay($skiaSP);
+$inkSP = deviceInkBounds($rasterSP);
+$glyphsSPBad = skiaGlyphCalls();
+check(
+    'Skia conformance · 段落反例自检：桥把 penX 篡改一格 ⇒ 互比判据变假（否则判据恒真、夹具空转）',
+    $inkSP !== null && count($glyphsSPBad) === 1 && (float) $inkSP[0] !== $glyphsSPBad[0][4],
+    'ink=' . fmtInk($inkSP) . ' 篡改后桥 penX=' . (count($glyphsSPBad) === 1 ? (string) $glyphsSPBad[0][4] : '无')
+);
+$GLOBALS['DRIFT_SMOKE_SKIA_SABOTAGE'] = false;
+skiaBridgeReset();
+$skiaSP2 = new SkiaCanvas(40, 30, null, $pUnit);
+$listSP->replay($skiaSP2);
+$glyphsSPGood = skiaGlyphCalls();
+check(
+    'Skia conformance · 段落反例自检正对照：同一输入不篡改 ⇒ 判据为真',
+    $inkSP !== null && count($glyphsSPGood) === 1 && (float) $inkSP[0] === $glyphsSPGood[0][4],
+    'ink=' . fmtInk($inkSP) . ' 桥 penX=' . (count($glyphsSPGood) === 1 ? (string) $glyphsSPGood[0][4] : '无')
+);
+
 
 // ⑩ 响亮失败：颜色越界 / W8 未闭合
 fresh($log);
