@@ -196,7 +196,6 @@ class RenderFlex extends RenderBox
     public function paint(Canvas $canvas): void
     {
         $canvas->save();
-        $canvas->translate($this->padding->left, $this->padding->top);
 
         foreach ($this->kids as $kid) {
             $canvas->save();
@@ -262,7 +261,12 @@ class RenderFlex extends RenderBox
     /** @param list<float> $mains */
     private function placeChildren(array $mains, float $crossMax): void
     {
-        $pen = 0.0;
+        // ★ padding **在这里施加**（不是 paint 期的 translate）—— 子盒的
+        //   `offsetX()/offsetY()` 必须包含它，否则 `hitTest()` 与
+        //   `Application::absoluteOrigin()` 拿到的坐标都比画出来的位置差一个
+        //   padding（2026-10-17 实证：paint 画在 (24,24)、hitTest 判定 (0,0)）。
+        //   ⇒ 命中区与绘制区错位；IME 候选框坐标 / 菜单锚点同受影响。
+        $pen = $this->vertical ? $this->padding->top : $this->padding->left;
 
         foreach ($this->kids as $index => $kid) {
             $cross = $this->vertical ? $kid->size()->width : $kid->size()->height;
@@ -274,9 +278,9 @@ class RenderFlex extends RenderBox
             };
 
             if ($this->vertical) {
-                $kid->setOffset($offset, $pen);
+                $kid->setOffset($offset + $this->padding->left, $pen);
             } else {
-                $kid->setOffset($pen, $offset);
+                $kid->setOffset($pen, $offset + $this->padding->top);
             }
 
             $pen += $mains[$index] + $this->spacing;

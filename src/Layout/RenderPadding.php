@@ -30,6 +30,10 @@ final class RenderPadding extends RenderProxyBox
 
         $this->child->layout($constraints->deflate($this->padding));
 
+        // ★ 同 RenderFlex：padding 在**布局期**施加（不是 paint 期 translate）
+        //   ⇒ hitTest / absoluteOrigin 与画出来的位置一致。
+        $this->child->setOffset($this->padding->left, $this->padding->top);
+
         return $constraints->constrain($this->padding->inflate($this->child->size()));
     }
 
@@ -50,7 +54,7 @@ final class RenderPadding extends RenderProxyBox
         }
 
         $canvas->save();
-        $canvas->translate($this->padding->left + $this->child->offsetX(), $this->padding->top + $this->child->offsetY());
+        $canvas->translate($this->child->offsetX(), $this->child->offsetY());
         $this->child->paint($canvas);
         $canvas->restore();
     }
