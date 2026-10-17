@@ -95,6 +95,15 @@ interface Platform
     public function pump(): bool;
 
     /**
+     * IME 光标上报（§8.4）。`null` = 无插入符；`[x, y, h]` = **逻辑像素**窗口坐标
+     * （组合根从 `Application::imeCaretRect()` 拿）。
+     *
+     * ★ 平台侧负责量化（× dpr）—— §6.1「逻辑→物理只走 quantizeRect」的同类：
+     *   框架永远给逻辑值。Win32 上它就是 `drift_win_ime_caret()` 那一个桥调用。
+     */
+    public function imeCaret(?array $rect): void;
+
+    /**
      * **单调**毫秒时钟（帧时间戳的唯一来源，§5.2 裁决 2）。
      *
      * ★ 必须单调：`microtime()` 会被系统时间调整，而动画相位 = f(帧时间戳)，

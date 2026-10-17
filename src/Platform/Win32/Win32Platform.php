@@ -17,6 +17,7 @@ use Drift\Platform\TimerHost;
 use Drift\Platform\Tray;
 use Drift\Platform\WindowHost;
 
+use function drift_win_ime_caret;
 use function drift_win_message_box;
 use function drift_win_now_ms;
 use function drift_win_pump;
@@ -214,6 +215,19 @@ final class Win32Platform implements Platform
     public function now(): float
     {
         return drift_win_now_ms();
+    }
+
+    public function imeCaret(?array $rect): void
+    {
+        // 空 = 无插入符（(-1,-1,0) 是 C++ 侧的哨兵值，见 g_imeX 的注释）
+        if ($rect === null) {
+            drift_win_ime_caret(-1.0, -1.0, 0.0);
+            return;
+        }
+
+        [$x, $y, $h] = $rect;
+        $scale = $this->screen()->scale();
+        drift_win_ime_caret((float)$x * $scale, (float)$y * $scale, (float)$h * $scale);
     }
 
     /** 把客户区的**物理**尺寸交给表面（唯一一次量化，§6.1） */

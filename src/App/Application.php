@@ -20,7 +20,9 @@ use Drift\Rendering\RenderSurface;
 use Drift\Text\DeterministicFontManager;
 use Drift\Text\DeterministicMetricsProvider;
 use Drift\Text\DeterministicShaper;
+use Drift\Geometry\Rect;
 use Drift\Text\TextMetricsProvider;
+use Drift\Widget\TextFieldState;
 use Drift\Theme\ThemeData;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
@@ -359,6 +361,48 @@ abstract class Application
         }
 
         return [$x, $y];
+    }
+
+    /**
+     * IME 定位用的光标矩形（§8.4）—— **逻辑像素**的窗口坐标 `[x, y, h]`。
+     *
+     * ★ 返回 null = 无插入符（无焦点 / 焦点不在编辑态 / 光标矩形算不出来）。
+     *   组合根把它喂给 `Platform::imeCaret()`；平台侧负责 × dpr（§6.1：
+     *   **量化只发生在平台侧** —— 这里给逻辑值，与 `BoxConstraints`/视口同单位）。
+     *
+     * ★ 为什么不做在框架里每帧自动同步：**框架不持平台**（§5.1「平台名只出现
+     *   在组合根」）⇒ 这一行的驱动归组合根。几何算在框架侧是为了可头侧测试
+     *   （见 smoke 的 IME 夹具）—— 坐标换算是这条链上最容易错的一段。
+     */
+    public function imeCaretRect(): ?array
+    {
+        $focused = $this->focus?->focused();
+        if (!$focused instanceof StatefulElement) {
+            return null;
+        }
+
+        $state = $focused->state();
+        if (!$state instanceof TextFieldState || !$state->isEditing()) {
+            return null;
+        }
+
+        $box = $focused->effectiveBox();
+        if ($box === null) {
+            return null;
+        }
+
+        $local = $state->caretRect();   // 盒内坐标（含内边距）
+        if (!$local instanceof Rect) {
+            return null;
+        }
+
+        [$originX, $originY] = self::absoluteOrigin($box);
+
+        return [
+            $originX + $local->left,
+            $originY + $local->top,
+            $local->height,
+        ];
     }
 
     /**

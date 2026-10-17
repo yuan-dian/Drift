@@ -21,6 +21,7 @@
 
 #include <phpx.h>
 #include <windows.h>
+#include <imm.h>
 #include <windowsx.h>   // GET_X_LPARAM / GET_Y_LPARAM（在 windowsx.h，不在 windows.h）
 
 #include <string>
@@ -70,6 +71,13 @@ HWND g_main = NULL;
 int g_clientW = 0;
 int g_clientH = 0;
 UINT g_dpi = 96;
+
+// ── IME 定位（§8.4）── 设备像素的客户区坐标；(-1,-1,0) = 无插入符
+// 两个消费点：组字窗位置（WM_IME_STARTCOMPOSITION / CFS_POINT）与
+// IMR_QUERYCHARPOSITION 应答。内部换算用 g_dpi（与窗口同一 dpr）。
+float g_imeX = -1.0f;
+float g_imeY = -1.0f;
+float g_imeH = 0.0f;
 
 /** 待交付事件队列。WndProc 填，`php_drift_win_pump()` 取 —— 同线程，无需加锁（§5.3） */
 std::vector<PendingEvent> g_queue;
@@ -376,6 +384,86 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
 
+        case WM_IME_STARTCOMPOSITION: {
+            // 组字开始：系统将建自己的子窗口（DefWindowProc 做的）。我们只把
+            // 它的位置指到光标处 —— CFS_POINT（GUI 基线：组字窗 CFS_POINT、
+            // 候选窗不硬塞，"建议位置"的语义系统可调）。
+            // ★ ClientToScreen 是必须的：ImmSetCompositionWindow 吃屏幕坐标，
+            //   而 g_imeX/Y 是设备像素的客户区坐标。
+            HIMC imc = ImmGetContext(hwnd);
+            if (imc != NULL && g_imeX >= 0.0f) {
+                double imeScale = (double)g_dpi / 96.0;
+                POINT pt = {(LONG)((double)g_imeX / imeScale), (LONG)((double)g_imeY / imeScale)};
+                ClientToScreen(hwnd, &pt);
+                COMPOSITIONFORM form = {};
+                form.dwStyle = CFS_POINT;
+                form.ptCurrentPos = pt;
+                ImmSetCompositionWindow(imc, &form);
+            }
+            if (imc != NULL) {
+                ImmReleaseContext(hwnd, imc);
+            }
+            return 0;   // ⚠ 不吞消息：DefWindowProc 之后仍要收到它建组字窗
+        }
+
+        case WM_IME_COMPOSITION: {
+            // 只取 GCS_RESULTSTR（提交串）—— 走既有 kEvChar 路径，TextField 零改动。
+            // ⚠ GCS_COMPSTR（组字串）**不读**：那条是自绘路线，GUI 战史结论是
+            //   交给系统绘制（litehtml-lab 自绘路线明写"不照抄"）。
+            if (lp & GCS_RESULTSTR) {
+                HIMC imc = ImmGetContext(hwnd);
+                if (imc != NULL) {
+                    LONG bytes = ImmGetCompositionStringW(imc, GCS_RESULTSTR, NULL, 0);
+                    if (bytes > 0) {
+                        int wchars = bytes / (LONG)sizeof(wchar_t);
+                        std::vector<wchar_t> buf((size_t)wchars);
+                        ImmGetCompositionStringW(imc, GCS_RESULTSTR, buf.data(), bytes);
+                        PendingEvent event = {};
+                        event.kind = kEvChar;
+                        event.text = toUtf8(buf.data(), (int)wchars);
+                        enqueue(event);
+                    }
+                    ImmReleaseContext(hwnd, imc);
+                }
+            }
+            return 0;   // ⚠ 同理：ENDCOMPOSITION 之后 DefWindowProc 还要拆窗
+        }
+
+        case WM_IME_REQUEST: {
+            // IME 只问一次的字符位置查询（GCS 全在 GUI 战史里踩过）。
+            // 一律应答 —— 不答应会让输入法回退到"窗口左上角"乱放。
+            if (wp == IMR_QUERYCHARPOSITION) {
+                IMECHARPOSITION *pos = (IMECHARPOSITION *)lp;
+                if (pos != NULL) {
+                    pos->dwSize = sizeof(IMECHARPOSITION);
+                    pos->dwCharPos = 0;
+                    if (g_imeX < 0.0f || hwnd == NULL) {
+                        // 无插入符：报客户区左上角（0,0）高度 1 —— 合法值。
+                        pos->pt.x = 0;
+                        pos->pt.y = 0;
+                        pos->cLineHeight = 1;
+                        RECT rc = {};
+                        GetClientRect(hwnd, &rc);
+                        pos->rcDocument = rc;
+                    } else {
+                        double imeScale = (double)g_dpi / 96.0;
+                        LONG cx = (LONG)((double)g_imeX / imeScale);
+                        LONG cy = (LONG)((double)g_imeY / imeScale);
+                        POINT pt = {cx, cy};
+                        ClientToScreen(hwnd, &pt);   // 同样吃屏幕坐标
+                        pos->pt.x = pt.x;
+                        pos->pt.y = pt.y;
+                        pos->cLineHeight = (LONG)((double)g_imeH / imeScale);
+                        RECT rc = {};
+                        GetClientRect(hwnd, &rc);
+                        pos->rcDocument = rc;
+                    }
+                    return 1;   // 已处理（不落 DefWindowProc）
+                }
+            }
+            break;
+        }
+
         default:
             break;
     }
@@ -598,7 +686,7 @@ Int php_drift_win_create(String title, Int width, Int height) {
     // 不做这一步，用户拿到的是"窗口 640 宽、能画的只有 624"。
     double scale = (double)g_dpi / 96.0;
     RECT frame = {0, 0, (LONG)((double)(int)width * scale), (LONG)((double)(int)height * scale)};
-    adjustFrameForDpi(&frame, WS_OVERLAPPEDWINDOW, FALSE, 0, g_dpi);
+    adjustFrameForDpi(&frame, WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, FALSE, 0, g_dpi);
 
     std::wstring wideTitle = toWide(title);
 
@@ -606,7 +694,7 @@ Int php_drift_win_create(String title, Int width, Int height) {
         0,
         kWindowClass,
         wideTitle.c_str(),
-        WS_OVERLAPPEDWINDOW,
+        WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
         CW_USEDEFAULT, CW_USEDEFAULT,
         frame.right - frame.left, frame.bottom - frame.top,
         NULL, NULL, instance, NULL);
@@ -616,6 +704,14 @@ Int php_drift_win_create(String title, Int width, Int height) {
     }
 
     g_main = hwnd;
+
+    // ★ 假插入符（IME 战史基线）：IME 默认把组字/候选窗贴到"插入符"旁，而
+    //   插入符只存在于真实文本框里（系统为每个顶层窗口维护一个 caret 槽）。
+    //   CreateCaret 登记一个 1x1 的位图 caret + SetCaretPos 定位 —— **不
+    //   ShowCaret**：闪烁相位与自绘光标重叠，且 GUI 战史证明 ShowCaret 的
+    //   因果未定。我们只是借这个槽给 IME 一个可查的位置。
+    CreateCaret(hwnd, (HBITMAP)1, 1, 1);
+    SetCaretPos(0, 0);
 
     // ★ 建窗后纠正 DPI：`CW_USEDEFAULT` 可能把窗口放在**另一块 DPI** 的显示器上，
     //   而上面按系统 DPI 算的外框/客户区就偏了。`GetDpiForWindow` 给的是**每显示器**
@@ -628,7 +724,7 @@ Int php_drift_win_create(String title, Int width, Int height) {
 
     if (actualDpi != preCreateDpi) {
         RECT fixed = {0, 0, (LONG)((double)(int)width * actualScale), (LONG)((double)(int)height * actualScale)};
-        adjustFrameForDpi(&fixed, WS_OVERLAPPEDWINDOW, FALSE, 0, actualDpi);
+        adjustFrameForDpi(&fixed, WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, FALSE, 0, actualDpi);
         SetWindowPos(hwnd, NULL, 0, 0, fixed.right - fixed.left, fixed.bottom - fixed.top,
                      SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
@@ -672,6 +768,31 @@ void php_drift_win_set_title(Int hwnd, String title) {
         return;
     }
     SetWindowTextW(target, toWide(title).c_str());
+}
+
+void php_drift_win_ime_caret(Float x, Float y, Float h) {
+    // §8.4：IME 定位管线。x/y/h 是**设备像素**的客户区坐标；(-1,-1,0) = 无插入符。
+    // 两个消费点：组字窗位置（WM_IME_STARTCOMPOSITION）与 IMR_QUERYCHARPOSITION。
+    g_imeX = x;
+    g_imeY = y;
+    g_imeH = h;
+
+    if (g_main == NULL) {
+        return;
+    }
+    double imeScale = (double)g_dpi / 96.0;
+    if (x < 0.0f) {
+        // 无插入符：把假 caret 挪到客户区外（收起），IME 查到的位置退左上角
+        SetCaretPos(-10, -10);
+        return;
+    }
+    LONG cx = (LONG)((double)x / imeScale);
+    LONG cy = (LONG)((double)y / imeScale);
+    SetCaretPos(cx, cy);
+    // ★ 没有"主动通知 IME 位置变了"这个 API —— 位置在下次
+    //   WM_IME_STARTCOMPOSITION（组字开始）与 IMR_QUERYCHARPOSITION
+    //   （IME 主动问）时被读取，两个都是拉模型。推只会踩
+    //   ImmSetCompositionWindow 的空指针坑（imc 为空时不调）。
 }
 
 Array php_drift_win_client_size(Int hwnd) {

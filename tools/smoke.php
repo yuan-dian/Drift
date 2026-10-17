@@ -54,6 +54,7 @@ use App\Users\UsersRoot;
 use App\Users\Store\MemoryUserSource;
 use Drift\Dev\Smoke\App\CursorApplication;
 use Drift\Dev\Smoke\App\EchoApplication;
+use Drift\Dev\Smoke\App\TfApplication;
 use Drift\Dev\Smoke\App\NavApplication;
 use Drift\Dev\Smoke\LeafProbe;
 use Drift\Dev\Smoke\Routing\NavStore;
@@ -2694,6 +2695,70 @@ check(
         count($fmHit->order()),
         $inBox?->hitTest(10.0, 10.0) === null ? 'null' : 'box',
     ),
+);
+
+// ── 坐标链一致性：paint 画在哪 ⇒ hitTest 就得命中哪（padding 容器内） ──────
+// 2026-10-17 实证发现：padding 原先只在 `paint()` 期 `translate()` 施加，不进
+// 子盒 `offsetX/offsetY()` ⇒ 命中区与绘制区错位整个 padding（Column padding 24
+// 时：画在 (24,24)、命中判定从 (0,0) 起）。IME 候选框坐标与菜单锚点同受影响
+// （它们都用 `Application::absoluteOrigin()`）。修法 = padding 移到布局期施加。
+$coordApp = new TfApplication();
+$coordApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
+$coordApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
+$coordBox = $coordApp->rootElement()?->effectiveBox();
+$coordCanvas = new RasterCanvas(300, 200, null, Scale::of(1.0));
+$coordBox?->paint($coordCanvas);
+[$cMinX, $cMaxX, $cMinY, $cMaxY] = deviceInkBounds($coordCanvas, Color::transparent());
+
+// ★ 扫的是**字段盒自己**的命中起点 —— 不能扫"第一个非 null 命中"：根盒
+//   （RenderFlex）覆盖整片客户区，(0,0) 就命中它自己 ⇒ 判据恒真（空转）。
+$coordTfBox = findElement($coordApp->rootElement(), fn($el) => $el->widget() instanceof TextField)
+    ?->effectiveBox();
+$coordHitX = null;
+$coordHitY = null;
+for ($cy = 0; $cy < 200 && $coordHitX === null; $cy++) {
+    for ($cx = 0; $cx < 300; $cx++) {
+        if ($coordBox?->hitTest((float)$cx, (float)$cy) === $coordTfBox) {
+            $coordHitX = $cx;
+            $coordHitY = $cy;
+            break;
+        }
+    }
+}
+check(
+    '坐标链 · padding 容器内：hitTest 命中起点 == 墨迹起点（两视图同解）',
+    $coordHitX === $cMinX && $coordHitY === $cMinY,
+    sprintf('hit=(%s,%s) ink=(%s,%s)', $coordHitX, $coordHitY, $cMinX, $cMinY)
+);
+check(
+    '坐标链 · 墨迹起点 == 容器 padding（24px 真的施加了）',
+    $cMinX === 24 && $cMinY === 24,
+    sprintf('ink=(%s,%s)', $cMinX, $cMinY)
+);
+
+// ── IME 定位（§8.4）：框架算几何（逻辑像素），平台做量化 ──────────────
+//   `Application::imeCaretRect()` 是这条链上唯一「框架侧算坐标」的一段 ⇒
+//   做在头侧夹具里（坐标错了，候选框就贴错地方，而那个错误只有真机看得见）。
+$imeApp = new TfApplication();
+$imeApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
+check(
+    'IME · 无焦点 ⇒ imeCaretRect() = null（＝无插入符，桥收 (-1,-1,0)）',
+    $imeApp->imeCaretRect() === null,
+    var_export($imeApp->imeCaretRect(), true)
+);
+
+$imeApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
+check(
+    'IME · 焦点在第一个字段 ⇒ 窗口坐标含容器 padding（24+34, 24+4）',
+    $imeApp->imeCaretRect() === [58.0, 28.0, 16.8],
+    '(' . implode(', ', $imeApp->imeCaretRect() ?? []) . ')'
+);
+
+$imeApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
+check(
+    'IME · 焦点在第二个字段 ⇒ y 沿父链累积（+32.8 = 字段高 + spacing）',
+    $imeApp->imeCaretRect() === [58.0, 60.8, 16.8],
+    '(' . implode(', ', $imeApp->imeCaretRect() ?? []) . ')'
 );
 
 // ★ 帧末重建（§5.2 裁决 3）：脏 StatefulElement 造了新盒后，**父容器必须换上新盒**

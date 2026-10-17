@@ -78,6 +78,8 @@ function drift_win_dpi(int $hwnd): int {}
 /** 系统是否处于深色模式（§9.2；读 `AppsUseLightTheme`，读不到按浅色） */
 function drift_win_system_dark(): bool {}
 
+function drift_win_ime_caret(float $x, float $y, float $h): void {}
+
 // ---- 消息泵 ----
 
 /**

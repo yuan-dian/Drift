@@ -83,6 +83,11 @@ final class Bootstrap
             }
 
             $app->frame($platform->now(), $screen->viewport());
+
+            // ★ IME 定位（§8.4）：框架算几何（逻辑像素）、平台做量化。
+            //   组合根不调这一行 = 输入法候选框贴在窗口左上角（能打字、
+            //   候选框位置错）—— 半可用失败形态，故三行注释写死原因。
+            $platform->imeCaret($app->imeCaretRect());
         }
 
         // ★ 窗口状态读回 / 写回（`WindowStateStore`）归 M5（§19）：启动一次、退出一次同步 IO。

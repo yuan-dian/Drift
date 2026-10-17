@@ -122,6 +122,7 @@ link-libs:
   - user32.lib
   - gdi32.lib
   - advapi32.lib
+  - imm32.lib
   - d3d12.lib
   - dxgi.lib
   - d3dcompiler.lib
