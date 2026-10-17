@@ -8,6 +8,8 @@ use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Size;
 use Drift\Rendering\Canvas;
+use Drift\Rendering\Color;
+use Drift\Rendering\Paint;
 
 /**
  * 滚动视口（§13.1 的新盒）—— **内容比视口长时，按偏移平移内容并裁剪**。
@@ -31,19 +33,33 @@ use Drift\Rendering\Canvas;
  *   滚动由 `ScrollViewState` 持值、经重建把新偏移递进来（与 `TextField`
  *   打字的路径完全同构）。
  *
+ * ★ **滚动条**（2026-10-17）：`paint()` 在内容之上画一条胶囊形 thumb
+ *   （`maxScroll == 0` 不画）。纯视觉层 —— 不新增状态、不改夹取、不碰命中。
+ *
  * @api
  */
 final class RenderScrollView extends RenderProxyBox
 {
+    /** 滚动条形体（逻辑像素） */
+    private const BAR_THICKNESS = 6.0;
+    private const BAR_MARGIN = 3.0;
+    private const BAR_MIN_THUMB = 24.0;
+
     /** 本次布局算出的可滚动上限（供夹具与未来滚动条读） */
     private float $maxScroll = 0.0;
 
     /**
      * @param float $scrollOffset 已夹取的滚动偏移（逻辑像素，≥ 0）
+     * @param Color $thumb        滚动条色（主题 Muted：两主题都够清晰、语义"次要"）
      * @param bool  $vertical     true = 纵向滚动（内容沿 y 平移）
+     *
+     * ★ 参数序：**必选在前、可选在后** —— 反了 PHP 解释器只发 Deprecated，
+     *   tpc 预处理器直接 Fatal（"optional parameter cannot be declared before
+     *   required parameter"）⇒ 解释器三门全绿也过不了 codegen（2026-10-17 踩过）。
      */
     public function __construct(
         private readonly float $scrollOffset,
+        private readonly Color $thumb,
         private readonly bool $vertical = true,
     ) {
     }
@@ -113,10 +129,52 @@ final class RenderScrollView extends RenderProxyBox
         //   命中侧不需要它 —— 视口 size 判定已经把视口外的点拦在子树之外。
         $canvas->save();
         $canvas->pushClip(new Rect(0.0, 0.0, $size->width, $size->height));
+        // ★★ 平移只包住内容：滚动条画在**视口坐标系**（restore 掉平移再画）。
+        //   否则 thumb 跟着内容一起被偏移带走 —— offset=max 时整条飞出视口
+        //   被裁干净（"该贴底时什么都没有"，2026-10-17 被 smoke 的 sv2 抓到：
+        //   offset 小的用例有墨、offset=max 的没有 ⇒ 单看一条会以为是位置公式错）。
+        $canvas->save();
         $canvas->translate($child->offsetX(), $child->offsetY());
         $child->paint($canvas);
+        $canvas->restore();
+        // ★ 滚动条画在**内容之上**（后画即在上）、裁剪区之内 ⇒ 内容滚到
+        //   边角时被它盖住一角，与浏览器/Flutter 的 Scrollbar 同行为。
+        $this->paintScrollbar($canvas, $size);
         $canvas->popClip();
         $canvas->restore();
+    }
+
+    /**
+     * 滚动条（2026-10-17 补齐的第一个滚动缺口：**纯视觉层**，不碰滚动机制）。
+     *
+     * 形体：胶囊形 thumb，贴视口右侧（纵向）/ 底侧（横向）。
+     * - 长度 = 视口占比 × 轨道（最短 24，超长夹进轨道）⇒ 内容越长条越短；
+     * - 位置 = 偏移 / maxScroll × 可走距离 ⇒ 条即"当前位置"的可视化；
+     * - `maxScroll == 0`（内容不溢出）⇒ **不画**（浏览器同行为；画一条
+     *   满轨 thumb 是撒谎——它暗示"可以滚"）。★ 这个早退还是**结构必需**：
+     *   `appliedOffset() / max` 在 max=0 时是 0/0 ⇒ PHP 8 抛
+     *   `DivisionByZeroError`（删掉它 smoke 当场 Fatal，见反例自检 ③）。
+     */
+    private function paintScrollbar(Canvas $canvas, Size $size): void
+    {
+        $max = $this->maxScroll;
+        if ($max <= 0.0) {
+            return;
+        }
+
+        $vertical = $this->vertical;
+        $track = $vertical ? $size->height : $size->width;
+        $cross = $vertical ? $size->width : $size->height;
+
+        $thumbLen = min($track, max(self::BAR_MIN_THUMB, $track * $track / ($track + $max)));
+        $travel = max(0.0, $track - 2.0 * self::BAR_MARGIN - $thumbLen);
+        $thumbPos = self::BAR_MARGIN + ($this->appliedOffset() / $max) * $travel;
+
+        $bar = $vertical
+            ? new Rect($cross - self::BAR_THICKNESS - self::BAR_MARGIN, $thumbPos, self::BAR_THICKNESS, $thumbLen)
+            : new Rect($thumbPos, $cross - self::BAR_THICKNESS - self::BAR_MARGIN, $thumbLen, self::BAR_THICKNESS);
+
+        $canvas->drawRect($bar, Paint::fill($this->thumb), self::BAR_THICKNESS * 0.5);
     }
 
     /**

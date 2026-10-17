@@ -5373,6 +5373,9 @@ check(
 //   `ScrollEvent → dispatchInput → scrollAt → scrollBy → 帧末重建 → 盒偏移` 全链。
 //   ★ 反例自检：把偏移改回 paint 期 translate（setOffset 去掉、paint 里加 translate）
 //   ⇒ ①线 3 条 FAIL（offsetY 恒 0）+ ②线 2 条 FAIL（命中/绘制错位），诊断值精确显示形态。
+// ★ 滚动条色用品红：SolidBox 画黑 ⇒ 像素断言能区分"thumb 画了"与"只是内容"。
+$scrollInk = Color::fromRgb(0xFF, 0x00, 0xFF);
+
 $scrollChildOf = static function (?RenderScrollView $box): ?RenderBox {
     if ($box === null) {
         return null;
@@ -5386,7 +5389,7 @@ $scrollChildOf = static function (?RenderScrollView $box): ?RenderBox {
 };
 
 // ① 布局层：内容 100×1000，视口 100×300
-$sv0 = new RenderScrollView(0.0, true);
+$sv0 = new RenderScrollView(0.0, $scrollInk, true);
 $sv0->setChild(new SolidBox(new Size(100.0, 1000.0), 100.0, 1000.0));
 $sv0Size = $sv0->layout(new BoxConstraints(0.0, 100.0, 0.0, 300.0));
 $sv0Kid = $scrollChildOf($sv0);
@@ -5417,7 +5420,7 @@ check(
 );
 
 // ① 布局层：偏移 300 ⇒ 子盒 offsetY = −300（★ 坐标链判据）
-$sv1 = new RenderScrollView(300.0, true);
+$sv1 = new RenderScrollView(300.0, $scrollInk, true);
 $sv1->setChild(new SolidBox(new Size(100.0, 1000.0), 100.0, 1000.0));
 $sv1->layout(new BoxConstraints(0.0, 100.0, 0.0, 300.0));
 $sv1Kid = $scrollChildOf($sv1);
@@ -5433,7 +5436,7 @@ check(
 );
 
 // ① 布局层：越界夹取（"内容飞走"的静默形态 ⇒ 结构上不可能）
-$sv2 = new RenderScrollView(9999.0, true);
+$sv2 = new RenderScrollView(9999.0, $scrollInk, true);
 $sv2->setChild(new SolidBox(new Size(100.0, 1000.0), 100.0, 1000.0));
 $sv2->layout(new BoxConstraints(0.0, 100.0, 0.0, 300.0));
 check(
@@ -5443,7 +5446,7 @@ check(
 );
 
 // ① 布局层：父无界 ⇒ 视口跟着内容走（不滚）
-$sv3 = new RenderScrollView(9999.0, true);
+$sv3 = new RenderScrollView(9999.0, $scrollInk, true);
 $sv3->setChild(new SolidBox(new Size(100.0, 1000.0), 100.0, 1000.0));
 $sv3->layout(BoxConstraints::unbounded());
 check(
@@ -5453,7 +5456,7 @@ check(
 );
 
 // ① 布局层：横向
-$sv4 = new RenderScrollView(120.0, false);
+$sv4 = new RenderScrollView(120.0, $scrollInk, false);
 $sv4->setChild(new SolidBox(new Size(800.0, 50.0), 800.0, 50.0));
 $sv4->layout(new BoxConstraints(0.0, 400.0, 0.0, 50.0));
 check(
@@ -5461,6 +5464,76 @@ check(
     $sv4->maxScroll() === 400.0 && $scrollChildOf($sv4)?->offsetX() === -120.0,
     'maxScroll=' . $sv4->maxScroll(),
 );
+
+// ① 布局层：滚动条（2026-10-17 补齐的第一个滚动缺口 —— 纯视觉层）
+//   ★ 判据走像素：把盒画到白底光栅，数区域里的 **thumb 色**像素（SolidBox 画黑，
+//     用品红不会混）。★ 反例自检三发：删 `maxScroll<=0` 早退 ⇒ "不溢出不画"红；
+//     删 `*WHEEL_NOTCH_PX` ⇒ 步长两条红；thumb 位置公式写反 ⇒ "贴底/贴顶"红。
+$scrollRaster = static function (?RenderBox $box, int $w, int $h): RasterCanvas {
+    $list = new DisplayList();
+    $box?->paint(new RecordingCanvas($list));
+    $c = new RasterCanvas($w, $h, Color::white(), Scale::of(1.0));
+    $list->replay($c);
+
+    return $c;
+};
+$inkIn = static function (RasterCanvas $c, int $x0, int $y0, int $x1, int $y1) use ($scrollInk): int {
+    $n = 0;
+    for ($y = $y0; $y < $y1; $y++) {
+        for ($x = $x0; $x < $x1; $x++) {
+            if ($c->pixelAt($x, $y)->equals($scrollInk)) {
+                $n++;
+            }
+        }
+    }
+
+    return $n;
+};
+
+// sv0：视口 100×300 / 内容 1000 / maxScroll 700 / offset 0
+//   thumbLen = 300×300/1000 = 90；travel = 300−6−90 = 204；pos = 3+0 = 3 ⇒ y 3..93
+$sv0Raster = $scrollRaster($sv0, 100, 300);
+check(
+    'Scroll · 滚动条：offset 0 ⇒ thumb 贴顶（y 3..93 有墨，y 0..2 的边距无墨）',
+    $inkIn($sv0Raster, 92, 8, 95, 88) > 0 && $inkIn($sv0Raster, 91, 0, 97, 3) === 0,
+    sprintf('body=%d margin=%d', $inkIn($sv0Raster, 92, 8, 95, 88), $inkIn($sv0Raster, 91, 0, 97, 3)),
+);
+
+// sv2：offset 9999 ⇒ 夹到 700 = maxScroll ⇒ thumb 贴底（pos = 3+204 = 207 ⇒ y 207..297）
+$sv2Raster = $scrollRaster($sv2, 100, 300);
+check(
+    'Scroll · 滚动条：offset = maxScroll ⇒ thumb 贴底（y 290..296 有墨、顶端无墨）',
+    $inkIn($sv2Raster, 92, 291, 95, 296) > 0 && $inkIn($sv2Raster, 91, 0, 97, 3) === 0,
+    sprintf('bottom=%d margin=%d', $inkIn($sv2Raster, 92, 291, 95, 296), $inkIn($sv2Raster, 91, 0, 97, 3)),
+);
+
+// sv3：父无界 ⇒ maxScroll = 0 ⇒ **不画**（画一条满轨 thumb 是撒谎：暗示"可以滚"）
+$sv3Raster = $scrollRaster($sv3, 100, 1000);
+check(
+    'Scroll · 滚动条：内容不溢出（maxScroll=0）⇒ 不画（整条右带无 thumb 色）',
+    $inkIn($sv3Raster, 91, 0, 97, 1000) === 0,
+    (string) $inkIn($sv3Raster, 91, 0, 97, 1000),
+);
+
+// sv1：offset 300（中段）⇒ thumb 不随内容平移（★ 本轮真 bug 的判据：
+//   thumb 若画在 translate 之后 ⇒ 被带到 y −210..−120 ⇒ 整条飞出视口全红）
+//   thumbPos = 3 + 300/700×204 = 90.4 ⇒ thumb y 90..181
+$sv1Raster = $scrollRaster($sv1, 100, 300);
+check(
+    'Scroll · 滚动条：中段偏移 ⇒ thumb 不随内容平移（y 95..178 有墨、顶端边距无墨）',
+    $inkIn($sv1Raster, 92, 95, 95, 178) > 0 && $inkIn($sv1Raster, 91, 0, 97, 3) === 0,
+    sprintf('body=%d margin=%d', $inkIn($sv1Raster, 92, 95, 95, 178), $inkIn($sv1Raster, 91, 0, 97, 3)),
+);
+
+// sv4：横向 —— 轨道 400 / 内容 800 ⇒ thumbLen = 200（占一半，正确）
+//   thumbPos = 3 + 120/400×194 = 61.2 ⇒ thumb x 61..262、y 41..47
+$sv4Raster = $scrollRaster($sv4, 400, 50);
+check(
+    'Scroll · 滚动条：横向 ⇒ thumb 贴底侧（x 70..90 有墨、x 5..55 的 thumb 左缘外无墨）',
+    $inkIn($sv4Raster, 70, 42, 90, 45) > 0 && $inkIn($sv4Raster, 5, 42, 55, 45) === 0,
+    sprintf('body=%d left=%d', $inkIn($sv4Raster, 70, 42, 90, 45), $inkIn($sv4Raster, 5, 42, 55, 45)),
+);
+
 
 // ② 应用层：滚轮全链（命中 → 找视口 → scrollBy → 重建 → 盒偏移）
 $scrollApp = new ScrollApplication();
@@ -5478,11 +5551,20 @@ check(
     (string) ($scrollChildOf($sb0)?->offsetY() ?? -1.0),
 );
 
-$scrollApp->dispatchInput(ScrollEvent::make(150.0, 100.0, 60.0));
+$scrollApp->dispatchInput(ScrollEvent::make(150.0, 100.0, 1.0));   // 一格
 $scrollApp->frame(16.0, BoxConstraints::loose(new Size(300.0, 200.0)));
 check(
-    'Scroll · 应用：滚轮 +60 ⇒ 重建后偏移进盒（子盒 offsetY = −60）',
-    $scrollChildOf($scrollApp->scrollBox())?->offsetY() === -60.0,
+    'Scroll · 应用：滚轮一格（delta=1.0）⇒ 48px（WHEEL_NOTCH_PX：不跟手的根因修复）',
+    $scrollChildOf($scrollApp->scrollBox())?->offsetY() === -48.0,
+    'offsetY=' . ($scrollChildOf($scrollApp->scrollBox())?->offsetY() ?? -1.0),
+);
+
+// ★ 格是相对量 ⇒ 再滚一格累加（96 = 2×48），证明换算的是"每格"而不是一次性
+$scrollApp->dispatchInput(ScrollEvent::make(150.0, 100.0, 1.0));
+$scrollApp->frame(16.5, BoxConstraints::loose(new Size(300.0, 200.0)));
+check(
+    'Scroll · 应用：第二格累加（offsetY = −96：每格 48 不是一次 48）',
+    $scrollChildOf($scrollApp->scrollBox())?->offsetY() === -96.0,
     'offsetY=' . ($scrollChildOf($scrollApp->scrollBox())?->offsetY() ?? -1.0),
 );
 
@@ -5504,10 +5586,10 @@ check(
     'offsetY=' . ($scrollChildOf($scrollApp->scrollBox())?->offsetY() ?? -1.0),
 );
 
-$scrollApp->dispatchInput(ScrollEvent::make(150.0, 100.0, 50.0));
+$scrollApp->dispatchInput(ScrollEvent::make(150.0, 100.0, 1.0));
 $scrollApp->frame(19.0, BoxConstraints::loose(new Size(300.0, 200.0)));
 $beforeOutside = $scrollChildOf($scrollApp->scrollBox())?->offsetY();
-$scrollApp->dispatchInput(ScrollEvent::make(150.0, 250.0, 50.0));   // y=250 在视口（200）外
+$scrollApp->dispatchInput(ScrollEvent::make(150.0, 250.0, 1.0));   // y=250 在视口（200）外
 $scrollApp->frame(20.0, BoxConstraints::loose(new Size(300.0, 200.0)));
 check(
     'Scroll · 应用：轮落在视口外 ⇒ 命不中不滚（偏移不变）',

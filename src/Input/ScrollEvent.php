@@ -18,6 +18,10 @@ namespace Drift\Input;
  *   与 `ScrollViewState::scrollBy()` 完全一致（滚轮向前 = 看下面 = 正）。
  *   平台侧的 `WM_MOUSEWHEEL` 正值（向前滚）在这里就是正。
  *
+ * ★ **单位是"格"不是像素**：平台只做量化（`WHEEL_DELTA/120`，§6.1）；
+ *   "一格值多少 px" 是框架策略（`Application::WHEEL_NOTCH_PX`），
+ *   在 `dispatchInput()` 换算成像素后才进 `scrollBy()`。
+ *
  * @api
  */
 final readonly class ScrollEvent implements InputEvent

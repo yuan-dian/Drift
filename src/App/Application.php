@@ -108,6 +108,17 @@ abstract class Application
     private const DRAG_THRESHOLD = 6.0;
 
     /**
+     * 滚轮一格滚多少逻辑像素（2026-10-17："不跟手"的根因修复）。
+     *
+     * ★ 分工：平台只做**量化**（`÷120` 把 WHEEL_DELTA 收成"格"，§6.1），
+     *   "一格值多少 px" 是**策略**，归框架。48 = 3 行 × 16px 行高，与
+     *   Windows 默认 `SPI_GETWHEELSCROLLINES=3`、浏览器每格 ~40–53px 同量级。
+     *   ★ 修复前是 1px/格 ⇒ "滑不动/不跟手"（一格 notch 只挪一个像素）。
+     * ★ 桥未暴露 `SPI_GETWHEELSCROLLINES` ⇒ 这里是常量而非系统值（缺口已登记）。
+     */
+    private const WHEEL_NOTCH_PX = 48.0;
+
+    /**
      * 浮层面板（O-20 第二棵根渲染树）：菜单 / 上下文菜单 / 模态共用同一槽位。
      *
      * ★ 与 `$root` **同构**（一个 Widget + 一个 Element）—— 树 / diff / 布局零配合，
@@ -778,13 +789,17 @@ abstract class Application
             //   轮在浮层外 ⇒ 不穿透滚主树（同语义 #1：否则"关菜单"翻掉整页）。
             //   ★ 命中一次、就滚那一个：指针停在哪个视口里就滚哪个 —— 多个滚动
             //   容器各自滚动，外层的视口不吞内层的事件（scrollAt 只找最近的）。
+            // ★ **格 → 像素只在这里发生一次**（策略层）：`$event->delta` 是平台
+            //   量化出的"格"（WHEEL_DELTA/120），`scrollBy()` 起收的是逻辑像素。
+            $px = $event->delta * self::WHEEL_NOTCH_PX;
+
             if ($this->menuElement !== null) {
                 $menuBox = $this->menuElement->effectiveBox();
 
                 if ($menuBox !== null && $this->hitsMenu($event, $menuBox)) {
                     $hit = $focus->hitTest($event->x - $this->menuX, $event->y - $this->menuY, $this->menuElement);
                     $element = $hit === null ? null : $focus->elementAt($this->menuElement, $hit);
-                    $this->scrollAt($element, $event->delta);
+                    $this->scrollAt($element, $px);
 
                     return null;
                 }
@@ -794,7 +809,7 @@ abstract class Application
 
             $hit = $focus->hitTest($event->x, $event->y, $root);
             $element = $hit === null ? null : $focus->elementAt($root, $hit);
-            $this->scrollAt($element, $event->delta);
+            $this->scrollAt($element, $px);
 
             return null;
         }

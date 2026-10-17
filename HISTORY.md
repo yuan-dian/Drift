@@ -469,3 +469,19 @@ Spinner → M2 conformance 运行器 → 多页外壳（`Dock`/`AppBar`/`NavButt
 
 ★ **仍未验**：真·跨屏拖动（本机单屏，没有第二块不同 DPI 的显示器）⇒ 只验了"感知级别正确"，
 **没验**"跨屏后的实际画面"。已登记 §24.2 #11。
+
+### 7.6 滚动两缺口收尾（2026-10-17）
+
+用户报两点：① 没有滚动条 ② 可以滚动但不跟手。先出架构分析（链路：`WM_MOUSEWHEEL` → 桥 → `pump`(÷dpr、÷120 收"格") → `ScrollEvent` → `Application::scrollAt` → `ScrollViewState::scrollBy` → `RenderScrollView`），再落地。
+
+**① 滚动条 = 纯视觉层**（不动滚动机制）：`RenderScrollView::paint()` 在**视口坐标系**画胶囊形 thumb —— 长度 = 视口占比（最短 24、超长夹进轨道）、位置 = 偏移/maxScroll × 可走距离、`maxScroll==0` 不画、纵向贴右 / 横向贴底，画在内容之上（裁剪区内）。★ **抓到真 bug**：thumb 起初画在内容的 `translate` 之后 ⇒ 被滚动偏移带走 —— offset=max 时整条飞出视口被裁干净（"该贴底时什么都没有"）。offset 小的用例有墨 ⇒ 单看一条会误判成位置公式错；是 smoke 的 sv2（offset 9999）当场暴露的。修法：`save/restore` 包住内容的 translate，thumb 在 restore 之后画。
+
+**② "不跟手"根因 = 步长，不是缺插值动画**：`pump` 把 WHEEL_DELTA ÷120 收成"格"，而消费侧把"格"直接当像素用 ⇒ **一格 notch 只滚 1px**。修法：`Application::WHEEL_NOTCH_PX = 48`（3 行 × 16px 行高，与 Windows 默认 `SPI_GETWHEELSCROLLINES=3`、浏览器每格 ~40–53px 同量级），在 `dispatchInput()` 的 ScrollEvent 分支换算（**格→像素只发生一次**，策略归框架、量化归平台）。★ **不做插值动画**：滚轮输入本离散，48px/格后与浏览器同量级；惯性/平滑是新机制（要帧循环驱动动画态），留给真有消费者的 M4（触摸拖动）。这条判断写进文档：避免后人把"离散跳变"当 bug 又加一层动画。
+
+★ **tpc 比 PHP 严（新 AOT 纪律）**：可选参数排在必选参数之前，**解释器只发 Deprecated**（`php -l`/smoke/lint 全绿），**tpc 预处理器直接 Fatal**（"optional parameter cannot be declared before required parameter"）⇒ `RenderScrollView($offset, $thumb, $vertical = true)` 换序。解释器三门全绿也过不了 codegen，再次印证"AOT 只在更大用法面上才喊"。
+
+★ **量具判据自己要先自检**：滚动条真机探针第一版统计没对 y 去重（每行 6 个重复 y ⇒ "连续段"判断自断）⇒ **假报"thumb 碎成 2px"**。修正后真相相反：394 行全连续、6 列中段、4 列圆角端 —— 一条完美竖条。**判据报出的形态可能是判据自己的 bug**（与"探针 ✅ 只覆盖它跑到的面"同族）。
+
+★ **`maxScroll<=0` 早退是结构必需不是美学**：`appliedOffset()/max` 在 max=0 时 0/0 ⇒ PHP 8 `DivisionByZeroError`（删掉它 smoke 当场 Fatal —— 反例自检 ③ 以"响亮失败"形态被抓，按 §20 纪律算被抓住）。
+
+**验证**：smoke **669 ok / 0 FAIL**（+6：thumb 贴顶/贴底/中段不随内容平移/不溢出不画/横向 + 每格 48px 与累加）· lint 299 文件 0/0 · codegen 204 全翻译 0 skip · `drift-build users` 7.3MB + `probe-scrollbar.py`（thumb 6×394 + 滚 1 格 thumb 下移 37px = 48/64×50 travel ⇒ 步长端到端生效；反向 1 格回移 37px 加减对称）。反例自检三连全过（translate 回来 ⇒ 2 红；删换算 ⇒ 2 红且诊断值 `offsetY=-1/-2`；删早退 ⇒ 0/0 Fatal）。

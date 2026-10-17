@@ -30,7 +30,10 @@ final class ScrollViewState extends State
     }
 
     /**
-     * 滚动 Δ（正 = 内容上移，即"往下看"）。
+     * 滚动 Δ（**逻辑像素**；正 = 内容上移，即"往下看"）。
+     *
+     * ★ 入参是像素不是"格"：`ScrollEvent::$delta` 的格→像素换算发生在
+     *   `Application::dispatchInput()`（策略层），到这里的都已经是像素。
      *
      * ★ 夹取只做**下界 0**（不看内容）：上界在盒里按本次布局的 `maxScroll` 夹
      *   （`RenderScrollView::appliedOffset()`）—— 因为只有布局后才知道内容多长。

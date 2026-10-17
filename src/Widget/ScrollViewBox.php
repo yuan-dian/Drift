@@ -5,6 +5,7 @@ namespace Drift\Widget;
 
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderScrollView;
+use Drift\Rendering\ColorToken;
 
 /**
  * `ScrollView` 的盒（§13.2 的 Widget → RenderBox 构造契约）。
@@ -44,7 +45,9 @@ final class ScrollViewBox extends RenderBoxWidget
 
     public function createRenderObject(BuildContext $context): RenderBox
     {
-        return new RenderScrollView($this->offset, $this->vertical);
+        // ★ 滚动条色走主题（`Muted`：两主题都清晰、语义"次要信息"）——
+        //   由 Widget 侧在造盒时递进构造参数，盒自己不找主题（§13.2 契约）。
+        return new RenderScrollView($this->offset, $context->color(ColorToken::Muted), $this->vertical);
     }
 
     public function createElement(): Element
