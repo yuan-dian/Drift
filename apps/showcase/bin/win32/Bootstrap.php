@@ -43,7 +43,7 @@ final class Bootstrap
         );
 
         $window = $platform->window();
-        $handle = $window->createWindow('示例台', self::WINDOW_WIDTH, self::WINDOW_HEIGHT);
+        $handle = $window->createWindow('Drift 示例台', self::WINDOW_WIDTH, self::WINDOW_HEIGHT);
         $window->show($handle);
 
         $provider = $platform->surface($handle);

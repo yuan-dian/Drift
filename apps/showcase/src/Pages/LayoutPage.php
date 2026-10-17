@@ -69,13 +69,18 @@ final class LayoutPage extends StatelessWidget
             )->all(8.0),
 
             // ── Dock：五槽骨架 ──
-            // ★ 演示**暂缺**（如实登记，§24.2 #18）：Dock 在**无界主轴**
-            //   （ScrollView 给内容量长度的约束）下把 INF 当自己的高往下传
-            //   （bottom 槽 offsetY=INF）—— 本页根是 ScrollView ⇒ 无界，
-            //   复现脚本 `_build/repro_dock_inf.php`。Dock 五槽的**正确演示**
-            //   在有界窗口的 `tools/Preview/ShellPage.php`（§12.1 外壳页），
-            //   用户的列表页同样是 Dock（有限视口，不触发）。
-            Text::make('Dock：五槽骨架 —— 见 ShellPage（有界窗口）与 §24.2 #18')->heading(),
+            // ★ 本块曾是 **§24.2 #18 的曝光位**：页根是 ScrollView（无界主轴，
+            //   "先量内容有多长"）时 Dock 旧行为把 INF 当自己的高往下传
+            //   （bottom 槽 offsetY=INF）⇒ 演示一度暂缺。2026-10-17 修复
+            //   （无界主轴取内容自然高）后恢复 —— 这里是"示例台逼出核心缺陷、
+            //   缺陷修复回填示例"闭环的注脚。
+            Text::make('Dock：五槽骨架（无界滚动页里也正确）')->heading(),
+            Dock::make()
+                ->top($this->slot('top（横跨整宽）'))
+                ->left($this->slot('left'))
+                ->center($this->slot('center'))
+                ->right($this->slot('right'))
+                ->bottom($this->slot('bottom（横跨整宽）')),
 
             // ── 盒样式：背景 / 边框 / 圆角（§15.7 修正后真的画出来）──
             Text::make('盒样式修饰符：background / border / radius')->heading(),

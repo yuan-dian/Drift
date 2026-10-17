@@ -78,9 +78,23 @@ final class RenderDock extends RenderBox
         $topH = $top?->layout($barWidth)->height ?? 0.0;
         $bottomH = $bottom?->layout($barWidth)->height ?? 0.0;
 
-        $midH = $maxH - $topH - $bottomH;
-        if ($midH < 0.0) {
-            $midH = $this->reject('纵向', $topH + $bottomH, $maxH);
+        // ★★ 无界主轴 ⇒ 取**内容自然高**（§24.2 #18，2026-10-17 修）：
+        //   `ScrollView` 给内容的约束就是"主轴无界"（先量你到底有多长）⇒
+        //   过去直接把 INF 当自己的高往下传：bottom 槽 offsetY=INF、中带三槽
+        //   高 INF ⇒ 绘制链出 INF 坐标（无声劣化）。对照 `RenderFlex` 同条件下
+        //   返回内容自然尺寸 —— Dock 漏的是同一条回退，不是新语义。
+        //   有界路径（is_infinite=false）逐字节不变。
+        if (is_infinite($maxH)) {
+            $midH = $this->naturalMidHeight();
+            $selfH = $topH + $midH + $bottomH;
+            $bottomY = $topH + $midH;
+        } else {
+            $midH = $maxH - $topH - $bottomH;
+            if ($midH < 0.0) {
+                $midH = $this->reject('纵向', $topH + $bottomH, $maxH);
+            }
+            $selfH = $maxH;
+            $bottomY = $maxH - $bottomH; // 有界语义：贴底（reject 夹 0 时与 top 重叠是既定行为）
         }
 
         // 竖轨：高铺满中带（tight）、宽自然（loose）—— "中带全高竖轨"
@@ -96,12 +110,30 @@ final class RenderDock extends RenderBox
         $center?->layout(new BoxConstraints($centerW, $centerW, $midH, $midH));
 
         $top?->setOffset(0.0, 0.0);
-        $bottom?->setOffset(0.0, $maxH - $bottomH);
+        $bottom?->setOffset(0.0, $bottomY);
         $left?->setOffset(0.0, $topH);
         $right?->setOffset($maxW - $rightW, $topH);
         $center?->setOffset($leftW, $topH);
 
-        return $constraints->constrain(new Size($maxW, $maxH));
+        return $constraints->constrain(new Size($maxW, $selfH));
+    }
+
+    /**
+     * 中带三槽的自然高（无界主轴分支用）：left / center / right 的
+     * `intrinsicHeight` 最大值 —— 与 `intrinsicHeight()` 的 `$mid` 口径一致
+     * （那边是公开面，这边是布局执行面，两条读法互为印证）。
+     */
+    private function naturalMidHeight(): float
+    {
+        $mid = 0.0;
+        foreach (['left', 'center', 'right'] as $name) {
+            $box = $this->slots[$name];
+            if ($box !== null) {
+                $mid = max($mid, $box->intrinsicHeight(INF));
+            }
+        }
+
+        return $mid;
     }
 
     public function intrinsicWidth(float $height): float

@@ -3939,6 +3939,42 @@ check(
         && $dock->slot('center')?->size()?->width === 45.0 && $dock->slot('center')?->size()?->height === 65.0,
 );
 
+// ── 无界主轴：Dock 取内容自然高（§24.2 #18，2026-10-17 修）──
+// 触发形状 = ScrollView 给内容的约束（主轴无界"先量有多长"）。判据：
+// ① 自身高有限且 = 20 + max(左40,中50,右10) + 15 = 85（**不是** INF）
+// ② bottom offsetY = topH + midH = 70（**不是** INF —— 旧行为正是它）
+// ③ 中带三槽铺满 midH=50（不是各自自然高、也不是 INF）
+// ④ bottom 仍贴**内容**底：20 + 50 + 15 == 85
+// SolidBox 的 intrinsic 与 box 故意不同（见其注释）⇒ 这条夹具同时钉住
+// "midH 真的来自 intrinsicHeight"。
+$infDock = new RenderDock(Overflow::Report);
+$infDock->setSlot('top', new SolidBox(new Size(100.0, 20.0), 100.0, 20.0));
+$infDock->setSlot('bottom', new SolidBox(new Size(100.0, 15.0), 100.0, 15.0));
+$infDock->setSlot('left', new SolidBox(new Size(30.0, 40.0), 30.0, 40.0));
+$infDock->setSlot('center', new SolidBox(new Size(45.0, 50.0), 45.0, 77.0)); // intrinsic 77 > 左40 右10 ⇒ max
+$infDock->setSlot('right', new SolidBox(new Size(25.0, 10.0), 25.0, 10.0));
+$infSize = $infDock->layout(new BoxConstraints(0.0, 100.0, 0.0, INF));
+check(
+    'Dock · 无界主轴：自身高 = 内容自然高 112（20+max(40,77,10)+15），不是 INF',
+    $infSize->height === 112.0,
+    var_export($infSize->height, true),
+);
+check(
+    'Dock · 无界主轴：bottom offsetY = 97（topH+midH，不是 INF）',
+    $infDock->slot('bottom')?->offsetY() === 97.0,
+    var_export($infDock->slot('bottom')?->offsetY(), true),
+);
+check(
+    'Dock · 无界主轴：中带三槽铺满 midH=77（来自 center 的 intrinsicHeight）',
+    $infDock->slot('left')?->size()?->height === 77.0
+        && $infDock->slot('center')?->size()?->height === 77.0
+        && $infDock->slot('right')?->size()?->height === 77.0,
+);
+check(
+    'Dock · 无界主轴：有界行为不动（复跑 tight 100x100 五槽数值不变）',
+    $dock->slot('bottom')?->offsetY() === 85.0 && $dock->slot('center')?->offsetY() === 20.0,
+);
+
 // 元素层：挂载、封存、槽盒挂接（盒挂接不变量）
 $shellRoot = Dock::make()
     ->top(AppBar::make()->title('外壳')->children([NavButton::make('列表')->command('nav.users')]))
