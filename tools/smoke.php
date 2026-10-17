@@ -1065,13 +1065,20 @@ $alive = new SkiaCanvas(20, 16, null, Scale::of(1.0));
 check('Skia conformance · H 失败开关复位后创建恢复有效', $alive->isValid());
 
 // ── E3. 已知分歧（钉住现状，不是背书）──────────────────────────────
+// ★ 2026-10-17 更正：上一版注释写"零生产调用者、分歧潜伏"是**误判**（grep 被
+//   head 截断）。RenderTextField::paint 就是生产消费者，且分歧是**活缺陷**。
 // popClip 是否**连偏移一起复位**：两后端当前行为不同 ——
 //   · RasterCanvas::popClip 弹的是通用状态帧（= 半个 restore）：偏移也回到 save 时；
-//   · SkiaCanvas::popClip 只复位裁剪（桥的 pop_clip），偏移留到 restore 才归位。
-// 录制侧口径是 Skia 的：W8 对 saveDepth / clipDepth **分别**计深、接口文档写
-// "pushClip 与 popClip 必须配对"（各自成栈）⇒ Skia 与文档一致，Raster 是偏离。
-// 但今天没有任何生产代码调用 pushClip/popClip（唯一调用者是 DisplayList::replay）
-// ⇒ 分歧潜伏。此断言钉住两侧现状：任何一侧改动都会失败 ⇒ 逼出一次显式裁决。
+//   · SkiaCanvas::popClip 只复位裁剪（桥的 pop_clip = C++ 侧 save+clipRect/restore，
+//     独立栈），偏移留到 restore 才归位。
+// 生产序列（RenderTextField::paint 逐字）：pushClip; save; translate(insets); 画;
+// restore; popClip —— 只有双栈语义下自洽。Raster 上 TextField 的 popClip 吃掉
+// **父盒 kid 循环的帧** ⇒ 后续兄弟丢容器偏移（`_build/repro_popclip.php` 实证：
+// 同一份 DisplayList，Raster 把 TextField 之后的兄弟画在 (0,40)，Skia 画在 (24,64)）
+// ⇒ 默认后端出不同像素。证据链指向双栈是设计意图（接口文档"pushClip 与 popClip
+// 必须配对" + W8 双深度分别计数 + 桥实现 + 生产序列形状）⇒ 修 Raster（加独立
+// clip 栈），不动 Skia。此断言钉住两侧现状：修 Raster 会让 Raster 侧断言失败
+// —— 那是"该发生的失败"，逼出显式裁决而不是静默漂移。
 skiaBridgeReset();
 $listX = new DisplayList();
 $recX = new RecordingCanvas($listX);
