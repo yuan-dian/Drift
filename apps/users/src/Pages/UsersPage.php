@@ -32,10 +32,11 @@ use App\Users\Widgets\UserRow;
  * ★ 三态用 **`match` 无 default**（§12.1 第 2 条封闭域）—— 加一个状态编译期就叫。
  *
  * ★ **头部固定、列表可滚**：页面是 `Dock`（top = 标题 + 搜索行，center =
- *   可滚动列表）—— 而不是 `Column + Expanded`：`RenderFlex` 的 flex 分母含
- *   弹性子的**自然尺寸**，内容比视口长时弹性项拿 0（2026-10-17 观察，与
- *   "分剩余空间"的文档语义不符，待裁决）；`Dock` 的 center 槽拿**紧约束**
- *   高度 ⇒ 视口有界、列表真能滚。滚动位置是页面级纯 UI 态 ⇒ 放 `State`
+ *   可滚动列表）—— §12.1 第 3 条的"外壳 + 内容槽"形态（外壳持久、只换槽）。
+ *   ★ 2026-10-17 起 `Column + Expanded` 同样可用：flex 分母已修为**只含非弹性子
+ *   自然尺寸**（`RenderFlex` 阶段 2），弹性项不再被双重扣减（此前内容比视口长时
+ *   拿 `tight(0)` 整块不可见）。Dock 仍优先 —— 外壳/内容槽是**语义分工**，
+ *   不是绕缺陷。滚动位置是页面级纯 UI 态 ⇒ 放 `State`
  *   （§12.3 判据：承载它的 Element 不会被回收 —— 本容器不做虚拟化）。
  */
 final class UsersPage extends StatelessWidget

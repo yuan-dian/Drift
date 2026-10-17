@@ -153,6 +153,7 @@ use Drift\Widget\Element;
 use Drift\Widget\ErrorBoundary;
 use Drift\Widget\ErrorBoundaryElement;
 use Drift\Widget\ErrorPlaceholder;
+use Drift\Widget\Expanded;
 use Drift\Widget\Menu\ContextMenu;
 use Drift\Widget\Menu\Menu;
 use Drift\Widget\Menu\MenuBar;
@@ -2196,6 +2197,67 @@ check(
     '结构控件 · Row 主轴是横（1:3 分 120 ⇒ 30 / 90）',
     $rowWidth === [30.0, 90.0],
     '实际 ' . implode(' / ', $rowWidth)
+);
+
+// ── flex 分母：弹性子整组拿走全部剩余（§13.1 阶段 2 的标准语义，2026-10-17 修）──
+//   ★ 病灶（旧口径）：`$free = $maxMain − array_sum($mains) − $gap` 把弹性子的
+//     自然尺寸也减了 ⇒ 双重扣减 —— ① 弹性内容比视口长 ⇒ `Expanded` 拿 `tight(0)`
+//     （整块不可见，users 页 Column+Expanded 实证）；② 弹性内容比剩余短 ⇒ 容器白留
+//     没人要的死空间。修法：分母只含非弹性子。
+//   ★ 三条夹具的分工：A/B 是修复的正面判据（旧口径下 FAIL），C 是"非弹性子溢出
+//     行为不变"的回归守卫（旧口径下也过）。反例自检：换回旧公式 ⇒ A/B FAIL。
+//   ★ 自然尺寸用 `Padding::all(N) + Spacer` 造（Spacer 自然 0，Padding 加 2N）——
+//     确定性，不依赖字体度量。
+$flexHeights = static function (?RenderBox $flexBox): array {
+    $heights = [];
+    $flexBox?->visitChildren(function (RenderBox $kid) use (&$heights): void {
+        $heights[] = $kid->size()?->height ?? -1.0;
+    });
+
+    return $heights;
+};
+
+// A：非弹性子 100 + 弹性子自然 500，视口 300 ⇒ 弹性子拿 200（旧口径 300−600<0 ⇒ 0）
+$fxA = Column::make()->children([
+    Padding::make(Spacer::make())->all(50),
+    Expanded::make(Padding::make(Spacer::make())->all(250)),
+])->createElement();
+$fxA->mount(null, $context);
+$fxABox = $fxA->renderObject();
+$fxABox?->layout(BoxConstraints::tight(new Size(100.0, 300.0)));
+check(
+    'Flex · 弹性内容比视口长 ⇒ 拿全部剩余（300−100=200；旧口径拿 0 整块不可见）',
+    $flexHeights($fxABox) === [100.0, 200.0],
+    '实际 ' . implode(' / ', $flexHeights($fxABox))
+);
+
+// B：非弹性子 100 + 弹性子自然 40，视口 300 ⇒ 弹性子拿 200（旧口径 300−140=160，白留 40 死空间）
+$fxB = Column::make()->children([
+    Padding::make(Spacer::make())->all(50),
+    Expanded::make(Padding::make(Spacer::make())->all(20)),
+])->createElement();
+$fxB->mount(null, $context);
+$fxBBox = $fxB->renderObject();
+$fxBBox?->layout(BoxConstraints::tight(new Size(100.0, 300.0)));
+check(
+    'Flex · 弹性内容比剩余短 ⇒ 填满剩余（200；旧口径只拿 160 白留死空间）',
+    $flexHeights($fxBBox) === [100.0, 200.0],
+    '实际 ' . implode(' / ', $flexHeights($fxBBox))
+);
+
+// C：两个非弹性子 400 > 视口 300 ⇒ free<0 ⇒ 弹性子拿 0、盒夹到 300（C5 溢出照旧）
+$fxC = Column::make()->children([
+    Padding::make(Spacer::make())->all(100),
+    Padding::make(Spacer::make())->all(100),
+    Expanded::make(Padding::make(Spacer::make())->all(50)),
+])->overflow(Overflow::Clip)->createElement();
+$fxC->mount(null, $context);
+$fxCBox = $fxC->renderObject();
+$fxCBox?->layout(BoxConstraints::tight(new Size(100.0, 300.0)));
+check(
+    'Flex · 非弹性子溢出（400>300）⇒ 弹性子拿 0、盒夹到 300（既有溢出行为不变）',
+    $flexHeights($fxCBox) === [200.0, 200.0, 0.0] && $fxCBox?->size()?->height === 300.0,
+    'kids=' . implode(' / ', $flexHeights($fxCBox)) . ' box=' . (string) ($fxCBox?->size()?->height ?? -1.0)
 );
 
 // Padding：几何面，进盒尺寸
