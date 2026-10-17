@@ -6,7 +6,7 @@ namespace Drift\Widget;
 use Drift\Layout\RenderProxyBox;
 
 /**
- * 单子控件的 Element：`Padding` / `Center` / `Expanded` 共用。
+ * 单子控件的 Element：`Padding` / `Center` / `Expanded` / `SizedBox` 等共用。
  *
  * ★ 三个控件的子层都恰好一个 ⇒ 同一份 diff。开第四种单子控件时不用再写 Element。
  *
@@ -37,6 +37,9 @@ final class ProxyElement extends StatelessElement
             return [$widget->child()];
         }
         if ($widget instanceof Card) {
+            return $widget->kid() === null ? [] : [$widget->kid()];
+        }
+        if ($widget instanceof SizedBox) {
             return $widget->kid() === null ? [] : [$widget->kid()];
         }
 

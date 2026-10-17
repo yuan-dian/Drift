@@ -19,6 +19,7 @@ use Drift\Layout\FlexAlign;
 use Drift\Widget\Expanded;
 use Drift\Widget\Row;
 use Drift\Widget\ScrollView;
+use Drift\Widget\SizedBox;
 use Drift\Widget\State;
 use Drift\Widget\StatefulWidget;
 use Drift\Widget\Widget;
@@ -133,7 +134,10 @@ final class ShowcaseState extends State
     {
         return Card::make(
             Row::make()->cross(FlexAlign::Stretch)->children([
-                Card::make($this->buildNav())->paddingAll(10.0),
+                // ★ 侧栏**定宽 200**（LayUI 侧栏的形态）：没有 `SizedBox` 时宽度只能由
+                //   "最长那个按钮文字"撑出来，改文案/换语言就变。外层 `Row::cross(Stretch)`
+                //   负责把它拉满高，`SizedBox` 只定宽 —— 两轴各自管一件事。
+                SizedBox::make(Card::make($this->buildNav())->paddingAll(10.0))->width(200.0),
                 // ★ 滚动归**页根**（每页自己 `Card(ScrollView(...))`）：外壳再套一层
                 //   就是嵌套滚动 —— 内层永远"量到全部内容"，外层滚不动，两层都白搭。
                 Expanded::make($this->pageFor($this->selected)()),
@@ -158,22 +162,28 @@ final class ShowcaseState extends State
     {
         $isHere = $index === $this->selected;
 
-        return Button::make($name)
-            ->variant($isHere ? ButtonVariant::Primary : ButtonVariant::Default)
-            ->background($isHere ? Color::fromRgb(0x00, 0x96, 0x88) : Color::fromRgb(0xF2, 0xF2, 0xF2))
+        // ★ 未选中用 `Flat`（无底无边框 ⇒ 看起来像菜单项，不像一排按钮）；
+        //   选中用 `Primary` + 显式主色（主题的 Accent 是蓝的，示例台要 LayUI 的墨绿）。
+        $button = Button::make($name)
+            ->variant($isHere ? ButtonVariant::Primary : ButtonVariant::Flat)
             ->onPressed(function () use ($index): void {
                 // ★ `$this` 在闭包里（**不能** static fn —— 要调 setState）
                 $this->select($index);
             });
+
+        if ($isHere) {
+            $button->background(Color::fromRgb(0x00, 0x96, 0x88));
+        }
+
+        return $button;
     }
 
     private function buildNav(): Widget
     {
-        // ★ 这里**不能**用 `cross(Stretch)`：`Stretch` 的语义是"拉满**可用**宽"
-        //   （与 Flutter 一致），而导航卡的可用宽是整行 940 ⇒ 侧栏会被撑满、
-        //   把内容区挤到 0（真机第一帧 FATAL 就是这么来的）。要固定侧栏宽需要
-        //   "定尺寸"原语（`SizedBox` 那类），Drift 目前没有 —— 见 DESIGN §24.2 #25。
-        return Column::make()->spacing(4.0)->children($this->navButtons());
+        // ★ `cross(Stretch)` 在这里**安全**：宽度已被外层 `SizedBox(200)` 定死，
+        //   `Stretch` 拉的是"可用宽"= 180（扣掉卡片 padding），不再是整行 940。
+        //   ⇒ 导航项整行可点（LayUI 侧栏就是这个形态），右边缘也齐。
+        return Column::make()->cross(FlexAlign::Stretch)->spacing(2.0)->children($this->navButtons());
     }
 
     /** @return \Closure(): Widget */

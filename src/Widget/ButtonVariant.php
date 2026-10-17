@@ -18,4 +18,14 @@ enum ButtonVariant
     case Default;
     case Primary;
     case Danger;
+
+    /**
+     * 扁平：**无底、无边框**，字色取 `Text`（侧栏 / 工具条那种"看起来像菜单项"的按钮）。
+     *
+     * ★ 2026-10-17 加：`Button` 的盒样式合并是"用户设了**非 null/非零**就用用户的"
+     *   ⇒ `->border($c, 0.0)` 与 `->radius(0.0)` **表达不出"我要 0"**（静默回退主题值）。
+     *   变体是那条合并规则之外的一条正路：语义在变体表里说清，不去改 `BoxStyle` 的
+     *   "null = 未设"约定（那是 `@api` 值对象的语义变更，另立项）。
+     */
+    case Flat;
 }

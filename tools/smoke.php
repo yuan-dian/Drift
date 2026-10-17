@@ -101,6 +101,7 @@ use Drift\Layout\RenderFlexible;
 use Drift\Layout\RenderScrollView;
 use Drift\Layout\RenderPadding;
 use Drift\Layout\RenderCard;
+use Drift\Layout\RenderSizedBox;
 use Drift\Layout\RenderProxyBox;
 use Drift\Layout\RenderMenuItem;
 use Drift\Layout\RenderModalHost;
@@ -149,6 +150,7 @@ use Drift\Theme\ThemeScope;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
 use Drift\Widget\Card;
+use Drift\Widget\SizedBox;
 use Drift\Widget\ButtonVariant;
 use Drift\Widget\AppBar;
 use Drift\Widget\BoxWidget;
@@ -1766,10 +1768,17 @@ check(
     'Text · 字形委托位图面（TTF 有 + 位图也有 ⇒ 画得出）',
     $ttfFace !== null && $ttfFace->rasterize(0x4E2D, 14.0) !== null,
 );
-//    ★ 用 'Ω'（希腊）：'馈' 这类中文上一轮重跑生成链已补进位图，判据会假绿
+//    ★★ **判据字符必须"位图永远不会收录"**：扫描口径 = 所有 cp≥0xA0 的**字符串字面量**
+//       ⇒ 任何写进夹具名/诊断串的字符，下一次重跑生成链就被补进位图 —— 'Ω' 就这样
+//       假绿过一次（本轮加 Card 夹具时重跑生成链，Ω 进了位图，这条当场 FAIL）。
+//       ⇒ 用**运行时构造的码点**（纯 int，不落进任何字面量），扫描器看不见它，判据才稳定。
+$ttfOnlyCodepoint = 0x0416;   // 西里尔大写 Zhe：真字体有、位图从未收录（实测 ttf=true bitmap=false）
 check(
     'Text · TTF 有但位图没有 ⇒ 不画（不静默画方框）',
-    $ttfFace !== null && $ttfFace->hasGlyph(0x03A9) && $ttfFace->rasterize(0x03A9, 14.0) === null,
+    $ttfFace !== null
+        && $ttfFace->hasGlyph($ttfOnlyCodepoint)
+        && $ttfFace->rasterize($ttfOnlyCodepoint, 14.0) === null,
+    $ttfFace === null ? 'no ttf' : sprintf('hasGlyph=%s', var_export($ttfFace->hasGlyph($ttfOnlyCodepoint), true)),
 );
 check(
     'Text · FontLocator 找不到 ⇒ null（不抛、不猜）',
@@ -5043,6 +5052,137 @@ check(
     ($tightCardKids[0] ?? null)?->size() !== null
         && abs($tightCardKids[0]->size()->width - 268.0) < 0.01,
     sprintf('内容宽 %.6g', $tightCardKids[0]?->size()?->width ?? -1.0),
+);
+
+
+// ── ㉞e 定尺寸（`SizedBox`）与扁平按钮（`ButtonVariant::Flat`）──
+//    ★ 两条都是"侧栏定宽 + 像菜单项"的直接依赖，2026-10-17 由示例台逼出来。
+//      判据必须能区分"有 SizedBox"与"没有"：只量盒尺寸不够 —— `Row`/`Dock` 量
+//      **自然宽**走的是 `intrinsicWidth()`，不覆写那里，定尺寸在"量"这一路
+//      完全看不见（静默），所以 ③ 必须单独钉。
+
+$fixedTextSize = static function (string $text) use ($context) {
+    $el = Text::make($text)->createElement();
+    $el->mount(null, $context);
+    $box = $el->effectiveBox();
+    $box?->layout(BoxConstraints::unbounded());
+
+    return $box?->size();
+};
+
+$fixedNatural = $fixedTextSize('侧栏');
+
+$sizedBoxEl = SizedBox::make(Text::make('侧栏'))->width(200.0)->createElement();
+$sizedBoxEl->mount(null, $context);
+$sizedBox = $sizedBoxEl->effectiveBox();
+$sizedBox?->layout(BoxConstraints::loose(new Size(940.0, 620.0)));
+$sizedBoxKids = [];
+$sizedBox?->visitChildren(function (RenderBox $c) use (&$sizedBoxKids): void {
+    $sizedBoxKids[] = $c;
+});
+check(
+    'SizedBox · 定宽 ⇒ 盒宽 200 且孩子被拉满 200（只定盒不定孩子 = 内容缩在左边）',
+    $sizedBox?->size() !== null && abs($sizedBox->size()->width - 200.0) < 0.01
+        && ($sizedBoxKids[0] ?? null)?->size() !== null
+        && abs($sizedBoxKids[0]->size()->width - 200.0) < 0.01,
+    sprintf(
+        '盒 %.6g 孩子 %.6g 内容自然 %.6g',
+        $sizedBox?->size()?->width ?? -1.0,
+        $sizedBoxKids[0]?->size()?->width ?? -1.0,
+        $fixedNatural?->width ?? -1.0,
+    ),
+);
+check(
+    'SizedBox · 未定的轴透传（高随内容，不是 0 也不是约束上限）',
+    $sizedBox?->size() !== null && $fixedNatural !== null
+        && abs($sizedBox->size()->height - $fixedNatural->height) < 0.01,
+    sprintf('实际高 %.6g 内容高 %.6g', $sizedBox?->size()?->height ?? -1.0, $fixedNatural?->height ?? -1.0),
+);
+check(
+    'SizedBox · 内禀宽 == 定宽（Row/Dock 量自然宽也看得见；漏了这条等于没定）',
+    $sizedBox?->intrinsicWidth(0.0) !== null && abs($sizedBox->intrinsicWidth(0.0) - 200.0) < 0.01,
+    sprintf('内禀宽 %.6g', $sizedBox?->intrinsicWidth(0.0) ?? -1.0),
+);
+
+// —— 父更紧时听父（tight(100) 里塞 width(200) ⇒ 100，且不许抛"min 不得大于 max"）
+$clampedEl = SizedBox::make(Text::make('侧栏'))->width(200.0)->createElement();
+$clampedEl->mount(null, $context);
+$clamped = $clampedEl->effectiveBox();
+$clamped?->layout(BoxConstraints::tight(new Size(100.0, 40.0)));
+$clampedKids = [];
+$clamped?->visitChildren(function (RenderBox $c) use (&$clampedKids): void {
+    $clampedKids[] = $c;
+});
+check(
+    'SizedBox · 父更紧时听父（tight 100 里 width 200 ⇒ 盒 100 且孩子 100，不抛约束违规）',
+    $clamped?->size() !== null && abs($clamped->size()->width - 100.0) < 0.01
+        && ($clampedKids[0] ?? null)?->size() !== null
+        && abs($clampedKids[0]->size()->width - 100.0) < 0.01,
+    sprintf('盒 %.6g 孩子 %.6g', $clamped?->size()?->width ?? -1.0, $clampedKids[0]?->size()?->width ?? -1.0),
+);
+
+// —— 无子盒：尺寸就是定值（不崩、不产生 INF）
+$emptySizedBox = SizedBox::make()->size(24.0, 8.0)->createRenderObject($context);
+$emptySizedBox->layout(BoxConstraints::unbounded());
+check(
+    'SizedBox · 无子盒 ⇒ 尺寸 = 定值（占位空隙的用法）',
+    $emptySizedBox->size() !== null
+        && abs($emptySizedBox->size()->width - 24.0) < 0.01
+        && abs($emptySizedBox->size()->height - 8.0) < 0.01,
+    sprintf('%.6g×%.6g', $emptySizedBox->size()?->width ?? -1.0, $emptySizedBox->size()?->height ?? -1.0),
+);
+
+// —— 扁平按钮：盒样式 isNone（无底无边框），字色走正文色
+$flatBox = Button::make('导航项')->variant(ButtonVariant::Flat)->createRenderObject($context);
+check(
+    'ButtonVariant::Flat ⇒ 盒样式 isNone（无底无边框 —— 看起来像菜单项而不是按钮）',
+    $flatBox instanceof RenderButton && $flatBox->boxStyle()->isNone(),
+    $flatBox instanceof RenderButton
+        ? sprintf('底 %s 边 %s', $flatBox->boxStyle()->background === null ? 'null' : 'set', $flatBox->boxStyle()->borderColor === null ? 'null' : 'set')
+        : 'not RenderButton',
+);
+$flatDefaultBox = Button::make('导航项')->createRenderObject($context);
+check(
+    'ButtonVariant::Default 仍有边框（Flat 是新形态，不是把默认改扁）',
+    $flatDefaultBox instanceof RenderButton && !$flatDefaultBox->boxStyle()->isNone(),
+);
+$flatBox->layout(BoxConstraints::unbounded());
+check(
+    'ButtonVariant::Flat 仍占位（有尺寸 ⇒ 仍然可点，不是"视觉消失"）',
+    $flatBox->size() !== null && $flatBox->size()->width > 0.0 && $flatBox->size()->height > 0.0,
+    sprintf('%.6g×%.6g', $flatBox->size()?->width ?? -1.0, $flatBox->size()?->height ?? -1.0),
+);
+
+// —— 集成：侧栏定宽 + 扁平导航项（示例台的真实组合）
+$navProbeEl = SizedBox::make(
+    Card::make(
+        Column::make()->cross(FlexAlign::Stretch)->children([
+            Button::make('导航项一')->variant(ButtonVariant::Flat),
+        ])
+    )->paddingAll(10.0)
+)->width(200.0)->createElement();
+$navProbeEl->mount(null, $context);
+$navProbe = $navProbeEl->effectiveBox();
+$navProbe?->layout(BoxConstraints::loose(new Size(940.0, 600.0)));
+$navCardKids = [];
+$navProbe?->visitChildren(function (RenderBox $c) use (&$navCardKids): void {
+    $navCardKids[] = $c;
+});
+$navCard = $navCardKids[0] ?? null;
+$navColKids = [];
+$navCard?->visitChildren(function (RenderBox $c) use (&$navColKids): void {
+    $navColKids[] = $c;
+});
+$navCol = $navColKids[0] ?? null;
+$navBtnKids = [];
+$navCol?->visitChildren(function (RenderBox $c) use (&$navBtnKids): void {
+    $navBtnKids[] = $c;
+});
+check(
+    '集成 · 侧栏 SizedBox(200) ⇒ 导航项宽 180（整行可点，右边缘齐）',
+    ($navBtnKids[0] ?? null)?->size() !== null
+        && abs($navBtnKids[0]->size()->width - 180.0) < 0.01,
+    sprintf('导航项宽 %.6g', $navBtnKids[0]?->size()?->width ?? -1.0),
 );
 
 // ── ㉟ apps/users 完整样板（§19 M3 出口判据：§A.2 的完整应用可跑）──

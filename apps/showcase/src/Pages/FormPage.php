@@ -98,9 +98,11 @@ final class FormState extends State
 
             // ── H3 诚实边界：本页做不到的两处 ──
             $this->sectionBar('当前能力边界（如实记录）'),
-            Text::make('① 通用卡片面板缺席：盒样式只有 BoxWidget 子类有（Button / AppBar / PopupPanel）⇒ 圆角卡片容器做不出，上面用 AppBar 横条近似分节。')
+            Text::make('① 通用卡片面板：已补（2026-10-17 的 Card / RenderCard）—— 本页外层就是一张 Card；此前只能用 AppBar 横条近似分节。')
                 ->caption(),
-            Text::make('② 固定宽右对齐标签缺席：TextField 的 label 在字段上方；无 SizedBox ⇒ 做不到 LayUI 的 90px 右对齐标签，上面用 Row(cross:End) 近似。')
+            Text::make('② 固定宽右对齐标签：已补（2026-10-17 的 SizedBox）—— 定尺寸原语到位，LayUI 的 90px 右对齐标签现在做得出；本页仍用 Row(cross:End) 是历史写法，未改。')
+                ->caption(),
+            Text::make('③ 仍缺：TextField 的 label 只有"字段上方"一种位置（§A.2.9 的形态），右侧标签要自己拼 Row。')
                 ->caption(),
         ]);
     }

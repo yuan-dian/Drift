@@ -166,6 +166,12 @@ class Button extends BoxWidget
                 new BoxStyle($theme->color(ColorToken::Danger), null, 0.0, $radius),
                 $theme->color(ColorToken::Pane),
             ],
+            // ★ 扁平：什么都不画（`BoxStyle::none()`），字色走正文色。
+            //   渲染盒照常占位、照常命中 ⇒ 视觉上"没有盒子"但行为仍是按钮。
+            ButtonVariant::Flat => [
+                BoxStyle::none(),
+                $theme->color(ColorToken::Text),
+            ],
         };
 
         // ★ §15.7 修正：用户经 `BoxWidget::background()/border()/radius()` 设的盒样式
