@@ -1,0 +1,41 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# apps/showcase/project.yml —— §19 M1 的出口判据：一个窗口画出「Hello Drift」
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# ★★ 调用约定：**从仓库根调用**（`cd <repo-root> && tpc apps/hello/project.yml -O2 -m bin`）。
+#   三条理由与 GUI 仓 `apps/demo/project.yml` 逐条相同：
+#     ① `cxx-flags` / `ld-flags` **不经过** tpc 的路径解析（直接拼进命令行）⇒
+#        它们相对的是**编译进程的 cwd**，不是本文件所在目录；
+#     ② 输出 exe 落在 **cwd**（`name:` 只决定文件名）⇒ 落仓库根，双击即用；
+#     ③ 运行期资源若用相对路径，也是相对 cwd 找的。
+#   ⇒ 反之，**被 tpc 解析的路径**（`sources` / `build-dir`）一律以**本文件所在目录**
+#     为基准 ⇒ 必须写 `../../` 前缀。
+#
+# ★ 编译参数（`no-console` / `cxx-std` / flags / libs / `ignore` / `build-dir`）
+#   **2026-10-16 抽到 `../../build/base.yml`**（§4.6）—— 抽的时机是"第二个应用
+#   `apps/users` 落地时"（本文件早先的注释就这么写着），因为那时才知道哪些项真的共享。
+#   本文件只留**本应用独有**的：名字 / 版本 / 描述 / 源码集。
+#   ★ 读者注意：GUI 仓的注释说"tpc 的 YAML 没有 include（被静默忽略）"—— 那是**旧版本**
+#     的经验；当前 `tpc.exe` 里含 `ProjectYamlLoader` 的 include 实现与循环检测，
+#     已实测可用（两个应用都构出来了）。
+
+name: showcase
+version: 0.1.0
+
+info:
+  Author: Drift
+  Description: LayUI 式示例台 —— 顶条 + 左导航 + 功能展示（对照 GUI 仓 examples/showcase）
+
+include: ../../build/base.yml
+
+# ── 源码（路径相对**本文件所在目录**）──
+#   `.`             本应用全部：main.php（全局 main()）+ src/ + bin/win32/
+#   `../../src`     Drift 框架（bin 模式 = 整程序 AOT，框架随应用一起编译进 exe）
+#   `../../cpp-src` Win32 桥：drift_win32.stub.php（ABI 声明）+ drift_win32.cc（实现）
+#
+# ★ `sources` 留在各应用文件里而不是 base：tpc 的 YAML **list 型项是整体替换**
+#   （不是追加），放 base 里会被子文件顶掉 —— 而这里每项都含各应用自己的相对路径。
+sources:
+  - .
+  - ../../src
+  - ../../cpp-src

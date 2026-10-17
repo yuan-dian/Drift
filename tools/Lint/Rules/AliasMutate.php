@@ -18,6 +18,11 @@ use Drift\Dev\Lint\SourceQuery;
  *
  * ★ 只认**元素起点**的变量（紧跟 `[` 或 `,`），并把 `(...)` 深度压住：
  *   `Each::make(fn($u) => $u->name())` 里的 `$u` 出现在 `fn(` 之后，不是元素起点 ⇒ 不误响。
+ * ★ **`$this` 豁免**（2026-10-17 修，示例台踩到）：`children([$this->pageA(), $this->pageB()])`
+ *   的元素起点也是 `$this`，但方法工厂每次返回**新** Widget（内部 new）⇒ 不构成别名；
+ *   规则要盯的是"同一个 Widget 实例被两个孩子共享"（`$t = Button::make()->a()` 之后
+ *   `children([$t, $t])`），`$this` 从来不是那个形态。不加豁免 ⇒ 每个用 `$this->工厂()`
+ *   多个子节点的地方都误响（FeedbackPage / FormPage 实证）。
  * ★ 只扫 `children(`（§15.6.1 规定的批量子节点入口）；单子节点入口
  *   （`->child(...)`）不存在复用同一个根的问题。
  */
@@ -114,6 +119,10 @@ final class AliasMutate implements Rule
                 }
                 if ($expectRoot && $arrDepth === 1 && $parenDepth === 0 && $tok[0] === T_VARIABLE) {
                     $name = ltrim($tok[1], '$');
+                    if ($name === 'this') {
+                        $expectRoot = false; // $this->工厂() 每次返回新实例 ⇒ 别名不成立（见类注释）
+                        continue;
+                    }
                     if (isset($seen[$name])) {
                         $dupes[$name] = ['line' => $tok[2], 'count' => ($dupes[$name]['count'] ?? 1) + 1];
                     } else {

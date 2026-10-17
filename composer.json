@@ -11,7 +11,8 @@
             "Drift\\": "src/",
             "Drift\\Dev\\": "tools/",
             "App\\Hello\\": ["apps/hello/src/", "apps/hello/bin/win32/", "apps/hello/bin/macos/"],
-            "App\\Users\\": ["apps/users/src/", "apps/users/bin/win32/", "apps/users/bin/macos/"]
+            "App\\Users\\": ["apps/users/src/", "apps/users/bin/win32/", "apps/users/bin/macos/"],
+            "App\\Showcase\\": ["apps/showcase/src/", "apps/showcase/bin/win32/", "apps/showcase/bin/macos/"]
         }
     }
 }
