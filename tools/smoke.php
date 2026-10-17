@@ -23,6 +23,7 @@ use Drift\Dev\Smoke\Commands\CommandWidget;
 use Drift\Dev\Smoke\Commands\EchoCommands;
 use Drift\Dev\Smoke\Commands\PickyCommands;
 use Drift\App\Application;
+use Drift\Platform\Win32\Win32SurfaceProvider;
 use Drift\App\FocusManager;
 use App\Hello\HelloApplication;
 use Drift\App\Frame;
@@ -4942,6 +4943,26 @@ check(
     'dragging=' . var_export($leaveApp->drag()->isDragging(), true)
         . ' dropped=' . var_export($leaveApp->dropped, true)
         . ' targetLeave=' . $leaveApp->targetLeaves,
+);
+
+// ── 平台后端解析（§7.2 裁决 4：2026-10-17 默认从 soft 翻成 skia）──
+// ★ 这两条都钉**静默失败**：默认没翻（界面继续锯齿）与显式 'soft' 被默认值吞掉
+//   （"确定性后端没生效"）都不会报错，只能靠夹具。反例自检：把 resolveBackend
+//   换回"只认 'skia'、其余退回默认" ⇒ 第 2 条 FAIL，另两条照过。
+check(
+    'Platform · 默认后端 = skia（2026-10-17 翻转）',
+    Win32SurfaceProvider::resolveBackend(null) === 'skia',
+    '实际 ' . Win32SurfaceProvider::resolveBackend(null),
+);
+check(
+    'Platform · 显式 soft 不被默认值吞掉',
+    Win32SurfaceProvider::resolveBackend('soft') === 'soft',
+    '实际 ' . Win32SurfaceProvider::resolveBackend('soft'),
+);
+check(
+    'Platform · 未知值退回默认（不报错也不选错）',
+    Win32SurfaceProvider::resolveBackend('vulkan') === 'skia',
+    '实际 ' . Win32SurfaceProvider::resolveBackend('vulkan'),
 );
 
 fresh($log);

@@ -21,11 +21,21 @@
  *   确定性来自"不查系统字体"，不是来自"用位图字体"。加载失败**不中止**，
  *   但 `drift_skia_font_ready()` 会如实回答 false，让 PHP 侧记一条 Diagnostic
  *   （否则现象是"矩形全对、字全没了"，看起来像排版 bug）。
+ *
+ * ★ **查找顺序（2026-10-17）**：① exe 所在目录的 `fonts/` ② exe 目录的
+ *   `cpp/fonts/` ③ 相对 cwd 的 `cpp/fonts` ④ `fonts`。前两条让"把 fonts/ 放到
+ *   exe 旁边"这种**分发形态**成立 —— 双击 / 快捷方式 / 从任意目录启动都行。
+ *   （翻默认后端之前这里只有 ③④，等于暗含"cwd 必须是仓库根"，而那个前置
+ *   一旦不成立，症状是"界面全白、布局全对"，最难查。）
  */
 
 #define NOMINMAX
 
 #include <phpx.h>
+// ★ 必须在 phpx.h **之后**（与 drift_win32.cc 同序）：phpx.h 拉进来的
+//   php_network.h 依赖 winsock2 的 `timeval`，而 windows.h 先到会把旧
+//   winsock.h 带进来 ⇒ C2027 未定义类型 timeval（实测）。
+#include <windows.h>
 
 #include <cstdint>
 #include <map>
@@ -74,7 +84,7 @@ SkCanvas *canvasFor(Int handle) {
 
 // ─────────────────────────────────────────────────────────────── 字体 ──
 
-/** 与 GUI 参考实现同一条约定：exe 以仓库根为 cwd 启动 ⇒ 相对路径即可 */
+/** 相对 cwd 的兜底（旧约定：exe 放在仓库根、以仓库根启动） */
 const char *const kFontDirs[] = { "cpp/fonts", "fonts" };
 
 sk_sp<SkFontMgr> g_fontMgr;
@@ -84,8 +94,31 @@ bool g_fontProbed = false;
 bool g_fontReady = false;
 
 /**
+ * exe 所在目录（**含尾部路径分隔符**）；取不到时返回空串。
+ *
+ * ★ 用 `GetModuleFileNameA`（ANSI）而不是 `W`：`SkFontMgr_New_Custom_Directory`
+ *   收的是 `const char*`，Windows 侧按 ANSI 代码页解析 ⇒ 两者编码口径一致。
+ *   换成 UTF-8 反而会在非 ASCII 路径上出现"传进去的字节和 Skia 解析的口径不同"。
+ */
+std::string exeDirA() {
+    char buf[MAX_PATH * 4];
+    DWORD n = GetModuleFileNameA(NULL, buf, (DWORD)sizeof(buf));
+    if (n == 0 || n >= (DWORD)sizeof(buf)) {
+        return std::string();
+    }
+    while (n > 0 && buf[n - 1] != '\\' && buf[n - 1] != '/') {
+        n--;
+    }
+    return std::string(buf, (size_t)n);
+}
+
+/**
  * 懒加载目录字体。**只试一次**（失败也记着试过了）——
  * 每帧重试会变成"每次绘制都扫一遍目录"。
+ *
+ * ★ 候选顺序见文件头：exe 目录优先，cwd 相对路径兜底。`SkFontMgr_New_Custom_Directory`
+ *   对不存在的目录**不返回 null**（返回一个扫不到字体的 mgr）⇒ 判据必须落在
+ *   `makeFromFile` 的返回值上，不能只看 mgr。
  */
 void ensureFont() {
     if (g_fontProbed) {
@@ -93,12 +126,24 @@ void ensureFont() {
     }
     g_fontProbed = true;
 
+    std::string candidates[4];
+    int count = 0;
+
+    const std::string exe = exeDirA();
+    if (!exe.empty()) {
+        candidates[count++] = exe + "fonts";
+        candidates[count++] = exe + "cpp/fonts";
+    }
     for (int i = 0; i < 2; i++) {
-        sk_sp<SkFontMgr> mgr = SkFontMgr_New_Custom_Directory(kFontDirs[i]);
+        candidates[count++] = kFontDirs[i];
+    }
+
+    for (int i = 0; i < count; i++) {
+        const std::string &dir = candidates[i];
+        sk_sp<SkFontMgr> mgr = SkFontMgr_New_Custom_Directory(dir.c_str());
         if (!mgr) {
             continue;
         }
-        const std::string dir(kFontDirs[i]);
         sk_sp<SkTypeface> regular = mgr->makeFromFile((dir + "/NotoSansSC-Regular.ttf").c_str());
         if (!regular) {
             continue;

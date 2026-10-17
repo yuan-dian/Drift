@@ -260,8 +260,8 @@ final class SkiaCanvas implements Canvas
 
         if (!drift_skia_font_ready()) {
             Errors::report(
-                'Skia 后端找不到目录字体（cpp/fonts/NotoSansSC-Regular.ttf）⇒ 文字不绘制；'
-                . 'exe 必须以仓库根为工作目录启动',
+                'Skia 后端找不到目录字体（NotoSansSC-Regular.ttf）⇒ 文字不绘制；'
+                . '把 fonts/（或 cpp/fonts/）放到 exe 所在目录，或从仓库根启动',
                 Errors::DIAGNOSTIC,
             );
         }
