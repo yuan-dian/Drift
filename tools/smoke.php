@@ -100,6 +100,7 @@ use Drift\Layout\RenderFlex;
 use Drift\Layout\RenderFlexible;
 use Drift\Layout\RenderScrollView;
 use Drift\Layout\RenderPadding;
+use Drift\Layout\RenderCard;
 use Drift\Layout\RenderProxyBox;
 use Drift\Layout\RenderMenuItem;
 use Drift\Layout\RenderModalHost;
@@ -147,6 +148,7 @@ use Drift\Theme\ThemeData;
 use Drift\Theme\ThemeScope;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
+use Drift\Widget\Card;
 use Drift\Widget\ButtonVariant;
 use Drift\Widget\AppBar;
 use Drift\Widget\BoxWidget;
@@ -4776,6 +4778,271 @@ $modalBareBox?->visitChildren(function (RenderBox $child) use (&$modalBareCenter
 check(
     'Modal · build = ModalHost → Center → PopupPanel（居中靠组合，不是盒里的开关）',
     $modalBareBox instanceof RenderModalHost && $modalBareCenter,
+);
+
+
+// ── ㉞c 卡片（§15.7：带内边距的盒样式控件 —— 示例台"分组/层次"的地基）──
+//    ★ 每条判据都要能区分"有 Card"与"没有 Card"（否则是空转）：
+//      ① 内边距**真进**盒尺寸（少了它内容贴边，卡片退化成一个描边矩形）
+//      ② 内容原点 = padding（盒尺寸对、偏移对不上 ⇒ 内容画在角上）
+//      ③ 内禀宽含 padding（少了它 Row/Dock 量出的自然宽窄一圈 ⇒ 文字被挤）
+//      ④ 显式 ->background() ⇒ 默认边框/圆角**整套让位**（§15.7 纪律 3）
+//      ⑤ 阴影三层外扩且由外向内加深（单层实心 = 描边，不是影子）
+
+$cardTextWidget = Text::make('卡片内容');
+$cardTextEl = $cardTextWidget->createElement();
+$cardTextEl->mount(null, $context);
+$cardTextBox = $cardTextEl->effectiveBox();
+$cardTextBox?->layout(BoxConstraints::unbounded());
+$cardTextSize = $cardTextBox?->size();
+
+$cardWidget = Card::make($cardTextWidget);
+$cardEl = $cardWidget->createElement();
+$cardEl->mount(null, $context);
+$cardBox = $cardEl->effectiveBox();
+$cardBox?->layout(BoxConstraints::unbounded());
+
+check('Card · 盒是 RenderCard（ProxyElement 挂子，不是"盒无 child"的空壳）',
+    $cardBox instanceof RenderCard);
+check(
+    'Card · 内边距真进盒尺寸（默认 16 ⇒ 盒 = 文字 + 32，两轴都是）',
+    $cardBox?->size() !== null && $cardTextSize !== null
+        && abs($cardBox->size()->width - ($cardTextSize->width + 32.0)) < 0.01
+        && abs($cardBox->size()->height - ($cardTextSize->height + 32.0)) < 0.01,
+    sprintf(
+        '盒 %.6g×%.6g 文字 %.6g×%.6g',
+        $cardBox?->size()?->width ?? -1.0,
+        $cardBox?->size()?->height ?? -1.0,
+        $cardTextSize?->width ?? -1.0,
+        $cardTextSize?->height ?? -1.0,
+    ),
+);
+
+$cardKids = [];
+$cardBox?->visitChildren(function (RenderBox $c) use (&$cardKids): void {
+    $cardKids[] = $c;
+});
+check(
+    'Card · 内容原点 = padding（不是 0 —— 那内容就贴在描边上）',
+    ($cardKids[0] ?? null) !== null
+        && abs($cardKids[0]->offsetX() - 16.0) < 0.01
+        && abs($cardKids[0]->offsetY() - 16.0) < 0.01,
+    sprintf('child offset %.6g,%.6g', $cardKids[0]?->offsetX() ?? -1.0, $cardKids[0]?->offsetY() ?? -1.0),
+);
+check(
+    'Card · 内禀宽含 padding（Row/Dock 量自然宽不会窄一圈 ⇒ 文字不被挤）',
+    $cardBox?->intrinsicWidth(0.0) !== null && $cardTextSize !== null
+        && abs($cardBox->intrinsicWidth(0.0) - ($cardTextSize->width + 32.0)) < 0.01,
+    sprintf('内禀宽 %.6g', $cardBox?->intrinsicWidth(0.0) ?? -1.0),
+);
+
+// —— 空 Card：不崩、尺寸 = 内边距（"没内容也要占住 padding"）——
+$emptyCardBox = Card::make()->paddingAll(8.0)->createRenderObject($context);
+$emptyCardBox->layout(BoxConstraints::unbounded());
+check(
+    'Card · 无子盒 ⇒ 尺寸 = 内边距（不崩、不产生 INF）',
+    $emptyCardBox->size() !== null
+        && abs($emptyCardBox->size()->width - 16.0) < 0.01
+        && abs($emptyCardBox->size()->height - 16.0) < 0.01,
+    sprintf('%.6g×%.6g', $emptyCardBox->size()?->width ?? -1.0, $emptyCardBox->size()?->height ?? -1.0),
+);
+
+/**
+ * 把盒画到白底光栅上（先平移，好让"盒外"的阴影有地方落）。
+ */
+$paintCardAt = function (RenderBox $box, int $w, int $h, float $dx, float $dy) {
+    $list = new DisplayList();
+    $rec = new RecordingCanvas($list);
+    $rec->save();
+    $rec->translate($dx, $dy);
+    $box->paint($rec);
+    $rec->restore();
+
+    $canvas = new RasterCanvas($w, $h, Color::white(), Scale::of(1.0));
+    $list->replay($canvas);
+
+    return $canvas;
+};
+
+// —— 默认样式：底 Pane + 边 Border（1px）+ 圆角 2 ——
+$defaultCard = Card::make(Text::make('卡片内容'));
+$defaultCardBox = $defaultCard->createElement();
+$defaultCardBox->mount(null, $context);
+$defaultCardElBox = $defaultCardBox->effectiveBox();
+$defaultCardElBox?->layout(BoxConstraints::unbounded());
+$defaultSize = $defaultCardElBox?->size();
+$defaultCanvas = $defaultCardElBox === null
+    ? null
+    : $paintCardAt($defaultCardElBox, (int) ceil($defaultSize->width) + 8, (int) ceil($defaultSize->height) + 8, 4.0, 4.0);
+
+// 左边框中点（x=4 ⇒ 盒的左边界；y 取中线避开圆角）
+$midY = $defaultCanvas === null ? 0 : (int) round(4.0 + $defaultSize->height / 2.0);
+$edgePx = $defaultCanvas?->pixelAt(4, $midY);
+check(
+    'Card · 默认有边框（左边框中点不是白底 —— 有 1px 描边卡片才"立"得住）',
+    $edgePx !== null && !$edgePx->equals(Color::white()),
+    $edgePx === null ? 'no canvas' : sprintf('rgb(%d,%d,%d)', $edgePx->r, $edgePx->g, $edgePx->b),
+);
+check(
+    'Card · 默认圆角（左上角外露白底 —— 直角矩形不是 LayUI 卡片形态）',
+    $defaultCanvas?->pixelAt(4, 4)->equals(Color::white()) === true,
+    $defaultCanvas === null ? 'no canvas' : 'p(4,4) 有墨',
+);
+
+// —— 显式 ->background() ⇒ 默认边框/圆角整套让位（§15.7 纪律 3）——
+$flatCard = Card::make(Text::make('卡片内容'))->background(Color::fromRgb(0xFF, 0x00, 0x00));
+$flatEl = $flatCard->createElement();
+$flatEl->mount(null, $context);
+$flatBox = $flatEl->effectiveBox();
+$flatBox?->layout(BoxConstraints::unbounded());
+$flatSize = $flatBox?->size();
+$flatCanvas = $flatBox === null
+    ? null
+    : $paintCardAt($flatBox, (int) ceil($flatSize->width) + 8, (int) ceil($flatSize->height) + 8, 4.0, 4.0);
+check(
+    'Card · 显式 background ⇒ 默认边框让位（边上就是纯底色，不是灰描边）',
+    $flatCanvas?->pixelAt(4, (int) round(4.0 + $flatSize->height / 2.0))?->equals(Color::fromRgb(0xFF, 0x00, 0x00)) === true,
+    $flatCanvas === null ? 'no canvas' : sprintf(
+        'rgb(%d,%d,%d)',
+        $flatCanvas->pixelAt(4, (int) round(4.0 + $flatSize->height / 2.0))->r,
+        $flatCanvas->pixelAt(4, (int) round(4.0 + $flatSize->height / 2.0))->g,
+        $flatCanvas->pixelAt(4, (int) round(4.0 + $flatSize->height / 2.0))->b,
+    ),
+);
+check(
+    'Card · 显式 background ⇒ 默认圆角也让位（角上是纯底色 ⇒ 直角）',
+    $flatCanvas?->pixelAt(4, 4)?->equals(Color::fromRgb(0xFF, 0x00, 0x00)) === true,
+);
+
+// —— 阴影：三层外扩、由外向内加深（单层实心 = 描边，不是影子）——
+$shadowCard = Card::make(Text::make('卡片内容'))->shadow(0.20);
+$shadowEl = $shadowCard->createElement();
+$shadowEl->mount(null, $context);
+$shadowBox = $shadowEl->effectiveBox();
+$shadowBox?->layout(BoxConstraints::unbounded());
+$shadowSize = $shadowBox?->size();
+$shadowCanvas = $shadowBox === null
+    ? null
+    : $paintCardAt($shadowBox, (int) ceil($shadowSize->width) + 24, (int) ceil($shadowSize->height) + 24, 12.0, 12.0);
+
+// 盒左边界 x=12 ⇒ 外扩 1/2/3 层分别落在 x=11 / 10 / 9
+$r = static fn (?int $x): int => $shadowCanvas === null ? -1 : $shadowCanvas->pixelAt($x, (int) round(12.0 + $shadowSize->height / 2.0))->r;
+check(
+    'Card · 阴影三层外扩且由外向内加深（r9 > r10 > r11 ⇒ 是过渡带不是描边）',
+    $shadowCanvas !== null && $r(9) > $r(10) && $r(10) > $r(11) && $r(11) < 255,
+    sprintf('r(9)=%d r(10)=%d r(11)=%d', $r(9), $r(10), $r(11)),
+);
+check(
+    'Card · 阴影不越过第 3 层（x=8 仍是纯白 —— 影子有边界，不糊一片）',
+    $shadowCanvas?->pixelAt(8, (int) round(12.0 + $shadowSize->height / 2.0))->equals(Color::white()) === true,
+);
+$noShadowCanvas = $defaultCardElBox === null
+    ? null
+    : $paintCardAt($defaultCardElBox, (int) ceil($defaultSize->width) + 24, (int) ceil($defaultSize->height) + 24, 12.0, 12.0);
+check(
+    'Card · shadow 默认 0 ⇒ 盒外纯白（不要影子时一个像素都不多画）',
+    $noShadowCanvas?->pixelAt(11, (int) round(12.0 + $defaultSize->height / 2.0))->equals(Color::white()) === true,
+);
+
+
+// —— flex 的交叉轴拉伸（`FlexAlign::Stretch`）——
+//    ★ 这条分支在生产代码里**长期零用法**（示例台的三层卡片外壳是第一个），
+//      2026-10-17 一用就炸真机：旧实现把**主轴与交叉轴写反了**（`Row` 给了紧宽），
+//      同级 `Expanded` 被挤成 0 宽 ⇒ 内容区整片空白 + 第一帧 FATAL。
+//      ⇒ 判据必须同时钉"交叉轴拉满"与"主轴仍自然"两面，只钉一面漏掉的就是这个缺陷。
+
+$naturalTextSize = static function (string $text) use ($context) {
+    $el = Text::make($text)->createElement();
+    $el->mount(null, $context);
+    $box = $el->effectiveBox();
+    $box?->layout(BoxConstraints::unbounded());
+
+    return $box?->size();
+};
+$kidsOf = static function (?RenderBox $box): array {
+    $out = [];
+    $box?->visitChildren(function (RenderBox $c) use (&$out): void {
+        $out[] = $c;
+    });
+
+    return $out;
+};
+
+$stretchNatural = $naturalTextSize('拉伸');
+
+$stretchRowBox = Row::make()->cross(FlexAlign::Stretch)->children([Text::make('拉伸'), Text::make('自然')])
+    ->createElement();
+$stretchRowBox->mount(null, $context);
+$stretchRow = $stretchRowBox->effectiveBox();
+$stretchRow?->layout(BoxConstraints::tight(new Size(300.0, 120.0)));
+$stretchRowKids = $kidsOf($stretchRow);
+check(
+    'Flex · Row + cross(Stretch) ⇒ 子盒高拉满 120（交叉轴拉伸）',
+    ($stretchRowKids[0] ?? null)?->size() !== null
+        && abs($stretchRowKids[0]->size()->height - 120.0) < 0.01,
+    sprintf('实际高 %.6g', $stretchRowKids[0]?->size()?->height ?? -1.0),
+);
+check(
+    'Flex · Row + cross(Stretch) ⇒ 子盒宽仍自然（紧宽是旧缺陷的形态）',
+    ($stretchRowKids[0] ?? null)?->size() !== null && $stretchNatural !== null
+        && abs($stretchRowKids[0]->size()->width - $stretchNatural->width) < 0.01,
+    sprintf('实际宽 %.6g 自然 %.6g', $stretchRowKids[0]?->size()?->width ?? -1.0, $stretchNatural?->width ?? -1.0),
+);
+
+$startRowBox = Row::make()->children([Text::make('拉伸')])->createElement();
+$startRowBox->mount(null, $context);
+$startRow = $startRowBox->effectiveBox();
+$startRow?->layout(BoxConstraints::tight(new Size(300.0, 120.0)));
+$startRowKids = $kidsOf($startRow);
+check(
+    'Flex · Row 默认 Start ⇒ 子盒高仍自然（不拉伸是默认语义）',
+    ($startRowKids[0] ?? null)?->size() !== null && $stretchNatural !== null
+        && abs($startRowKids[0]->size()->height - $stretchNatural->height) < 0.01,
+    sprintf('实际高 %.6g 自然 %.6g', $startRowKids[0]?->size()?->height ?? -1.0, $stretchNatural?->height ?? -1.0),
+);
+
+$stretchColBox = Column::make()->cross(FlexAlign::Stretch)->children([Text::make('拉伸')])->createElement();
+$stretchColBox->mount(null, $context);
+$stretchCol = $stretchColBox->effectiveBox();
+$stretchCol?->layout(BoxConstraints::tight(new Size(200.0, 100.0)));
+$stretchColKids = $kidsOf($stretchCol);
+check(
+    'Flex · Column + cross(Stretch) ⇒ 子盒宽拉满 200（交叉轴是宽）',
+    ($stretchColKids[0] ?? null)?->size() !== null
+        && abs($stretchColKids[0]->size()->width - 200.0) < 0.01,
+    sprintf('实际宽 %.6g', $stretchColKids[0]?->size()?->width ?? -1.0),
+);
+
+// —— 弹性子也要拉满（第二遍 `tightMain` 的对称修正）——
+$stretchFlexRowBox = Row::make()->cross(FlexAlign::Stretch)->children([
+    Text::make('自然'),
+    Expanded::make(Text::make('弹性')),
+])->createElement();
+$stretchFlexRowBox->mount(null, $context);
+$stretchFlexRow = $stretchFlexRowBox->effectiveBox();
+$stretchFlexRow?->layout(BoxConstraints::tight(new Size(300.0, 120.0)));
+$stretchFlexKids = $kidsOf($stretchFlexRow);
+$flexKid = $stretchFlexKids[1] ?? null;
+$flexKidBox = $flexKid === null ? null : $kidsOf($flexKid)[0] ?? null;
+check(
+    'Flex · Row + Stretch ⇒ 弹性子也拉满高（否则同行高度参差）',
+    $flexKidBox?->size() !== null && abs($flexKidBox->size()->height - 120.0) < 0.01,
+    sprintf('弹性子内容高 %.6g', $flexKidBox?->size()?->height ?? -1.0),
+);
+
+// —— Card 在紧宽约束下内容撑满（不要 `loosen()`）——
+//    ★ 父把宽定死（`Column::cross(Stretch)`）时松掉紧约束 ⇒ 卡片撑满、内容缩在
+//      左边，观感像"没对齐"。与 `RenderPadding` 同口径：只 deflate，不放松。
+$tightCardBox = Card::make(Text::make('卡片内容'))->createElement();
+$tightCardBox->mount(null, $context);
+$tightCard = $tightCardBox->effectiveBox();
+$tightCard?->layout(BoxConstraints::tight(new Size(300.0, 80.0)));
+$tightCardKids = $kidsOf($tightCard);
+check(
+    'Card · 紧宽约束 ⇒ 内容撑满（300 − 2×16 = 268，不是文字自然宽）',
+    ($tightCardKids[0] ?? null)?->size() !== null
+        && abs($tightCardKids[0]->size()->width - 268.0) < 0.01,
+    sprintf('内容宽 %.6g', $tightCardKids[0]?->size()?->width ?? -1.0),
 );
 
 // ── ㉟ apps/users 完整样板（§19 M3 出口判据：§A.2 的完整应用可跑）──

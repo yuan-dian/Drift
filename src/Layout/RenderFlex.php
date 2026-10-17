@@ -233,14 +233,22 @@ class RenderFlex extends RenderBox
         $crossBounded = !is_infinite($crossMax);
         $stretch = $this->crossAlign === FlexAlign::Stretch && $crossBounded;
 
+        // ★ **`Stretch` 拉的是交叉轴，不是主轴**（2026-10-17 修正）：
+        //   `Column` ⇒ 宽拉满、高自然；`Row` ⇒ 高拉满、宽自然。
+        //   ★ 旧实现两个分支把主轴与交叉轴**写反了**（`Row` 给了紧宽、`Column`
+        //     给了紧高）—— 与 `placeChildren()` 里 `Stretch => 0.0`（交叉轴偏移 0）
+        //     以及 Flutter 的同名属性都相反。
+        //   ★ 潜伏原因：`FlexAlign::Stretch` 在生产代码里**零用法**（示例台的三层
+        //     卡片外壳是第一个），这条分支从未被执行过 —— 死代码不会报错，
+        //     而写反的紧宽会把同级 `Expanded` 挤到 0 宽（真机第一帧 FATAL）。
         if ($this->vertical) {
             return $stretch
-                ? new BoxConstraints(0.0, $crossMax, $mainMax, $mainMax)
+                ? new BoxConstraints($crossMax, $crossMax, 0.0, $mainMax)
                 : new BoxConstraints(0.0, $crossMax, 0.0, $mainMax);
         }
 
         return $stretch
-            ? new BoxConstraints($mainMax, $mainMax, 0.0, $crossMax)
+            ? new BoxConstraints(0.0, $mainMax, $crossMax, $crossMax)
             : new BoxConstraints(0.0, $mainMax, 0.0, $crossMax);
     }
 
@@ -261,6 +269,15 @@ class RenderFlex extends RenderBox
             $crossMain = $inner->maxWidth;
         }
 
+        // ★ 水平同理：`Row` 的交叉轴是**高** —— 弹性子也要拉满（否则同一行里
+        //   非弹性子被拉满、弹性子不被拉满，视觉上高度参差）。
+        $crossCross = 0.0;
+        if (!$this->vertical
+            && $this->crossAlign === FlexAlign::Stretch
+            && $inner->hasBoundedHeight()) {
+            $crossCross = $inner->maxHeight;
+        }
+
         if ($this->vertical) {
             return new BoxConstraints($crossMain, $inner->maxWidth, $share, $share);
         }
@@ -268,7 +285,7 @@ class RenderFlex extends RenderBox
         return new BoxConstraints(
             $share,
             $share,
-            0.0,
+            $crossCross,
             $inner->maxHeight,
         );
     }

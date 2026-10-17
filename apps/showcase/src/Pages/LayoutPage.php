@@ -8,7 +8,7 @@ use Drift\Rendering\Color;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
 use Drift\Widget\ButtonVariant;
-use Drift\Widget\Center;
+use Drift\Widget\Card;
 use Drift\Widget\Column;
 use Drift\Widget\Dock;
 use Drift\Layout\FlexAlign;
@@ -30,6 +30,10 @@ use Drift\Widget\Widget;
  *   · `Center` 居中、`Spacer` 吃掉剩余、`Padding` 内边距
  *   · 盒样式修饰符（`BoxWidget::background/border/radius`）
  *
+ * ★ **每个 demo 一个 `Card`**（2026-10-17）：页面背景是浅灰、内容块是白卡片 ——
+ *   "分组"是质感的第一来源。此前所有内容直接铺在纯白页面上，块与块之间只有
+ *   间距没有边界，观感就是用户说的"生硬、没有质感"。
+ *
  * 对照 LayUI：文档页没有专门的"布局"页（布局由 CSS 网格承担）；本页演示的是
  * Drift2 用**声明式控件**表达同一件事的形态。
  */
@@ -38,66 +42,88 @@ final class LayoutPage extends StatelessWidget
     public function build(BuildContext $ctx): Widget
     {
         return ScrollView::make(
-            Column::make()->spacing(16.0)->padding(EdgeInsets::all(20.0))->children([
+            // ★ `cross(Stretch)`：卡片是**块级**的（LayUI 的 `.layui-card` 就是
+            //   撑满容器宽），不拉伸的话每张卡只有内容那么宽，右边一大片空白 ——
+            //   那是"列表"不是"页面"。
+            Column::make()->cross(FlexAlign::Stretch)->spacing(12.0)->padding(EdgeInsets::all(16.0))->children([
                 Text::make('布局 Layout')->title(),
-            Text::make('两种定位原语（CenterBox / Dock 的语义）+ flex 排布。以下每块都是可运行的声明。')->caption(),
+                Text::make('两种定位原语（CenterBox / Dock 的语义）+ flex 排布。以下每块都是可运行的声明。')->caption(),
 
-            // ── Row：主轴排布 + cross 交叉轴对齐 ──
-            Text::make('Row：主轴排布 + 三种交叉轴对齐')->heading(),
-            Row::make()->spacing(8.0)->children([
-                Button::make('cross:Start')->variant(ButtonVariant::Default),
-                Button::make('cross:Center')->variant(ButtonVariant::Default),
-                Button::make('cross:End')->variant(ButtonVariant::Default),
-            ])->cross(FlexAlign::Center),
-            Row::make()->spacing(8.0)->children([
-                Text::make('Start（默认）')->caption(),
-                Button::make('中')->variant(ButtonVariant::Primary),
-                Text::make('End')->caption(),
-            ])->cross(FlexAlign::End),
+                // ── Row：主轴排布 + cross 交叉轴对齐 ──
+                $this->demo('Row：主轴排布 + 三种交叉轴对齐', Column::make()->spacing(10.0)->children([
+                    Row::make()->spacing(8.0)->children([
+                        Button::make('cross:Start')->variant(ButtonVariant::Default),
+                        Button::make('cross:Center')->variant(ButtonVariant::Default),
+                        Button::make('cross:End')->variant(ButtonVariant::Default),
+                    ])->cross(FlexAlign::Center),
+                    Row::make()->spacing(8.0)->children([
+                        Text::make('Start（默认）')->caption(),
+                        Button::make('中')->variant(ButtonVariant::Primary),
+                        Text::make('End')->caption(),
+                    ])->cross(FlexAlign::End),
+                ])),
 
-            // ── Spacer + Expanded：把剩余空间吃掉 / 占住 ──
-            Text::make('Spacer / Expanded：剩余空间的两种用法')->heading(),
-            Row::make()->spacing(8.0)->children([
-                Button::make('左')->variant(ButtonVariant::Default),
-                Spacer::make(),
-                Text::make('中间被推开')->caption(),
-                Spacer::make(),
-                Button::make('右')->variant(ButtonVariant::Default),
-            ]),
-            Padding::make(
-                Text::make('Spacer 已在上方演示"推开两边"；Expanded（占剩余高）归 M2LayoutPage 演示 —— 本页不再重复。')->caption()
-            )->all(8.0),
+                // ── Spacer + Expanded：把剩余空间吃掉 / 占住 ──
+                $this->demo('Spacer / Expanded：剩余空间的两种用法', Column::make()->spacing(10.0)->children([
+                    Row::make()->spacing(8.0)->children([
+                        Button::make('左')->variant(ButtonVariant::Default),
+                        Spacer::make(),
+                        Text::make('中间被推开')->caption(),
+                        Spacer::make(),
+                        Button::make('右')->variant(ButtonVariant::Default),
+                    ]),
+                    Padding::make(
+                        Text::make('Spacer 已在上方演示"推开两边"；Expanded（占剩余高）归 M2LayoutPage 演示 —— 本页不再重复。')->caption()
+                    )->all(8.0),
+                ])),
 
-            // ── Dock：五槽骨架 ──
-            // ★ 本块曾是 **§24.2 #18 的曝光位**：页根是 ScrollView（无界主轴，
-            //   "先量内容有多长"）时 Dock 旧行为把 INF 当自己的高往下传
-            //   （bottom 槽 offsetY=INF）⇒ 演示一度暂缺。2026-10-17 修复
-            //   （无界主轴取内容自然高）后恢复 —— 这里是"示例台逼出核心缺陷、
-            //   缺陷修复回填示例"闭环的注脚。
-            Text::make('Dock：五槽骨架（无界滚动页里也正确）')->heading(),
-            Dock::make()
-                ->top($this->slot('top（横跨整宽）'))
-                ->left($this->slot('left'))
-                ->center($this->slot('center'))
-                ->right($this->slot('right'))
-                ->bottom($this->slot('bottom（横跨整宽）')),
+                // ── Dock：五槽骨架 ──
+                // ★ 本块曾是 **§24.2 #18 的曝光位**：页根是 ScrollView（无界主轴，
+                //   "先量内容有多长"）时 Dock 旧行为把 INF 当自己的高往下传
+                //   （bottom 槽 offsetY=INF）⇒ 演示一度暂缺。2026-10-17 修复
+                //   （无界主轴取内容自然高）后恢复 —— 这里是"示例台逼出核心缺陷、
+                //   缺陷修复回填示例"闭环的注脚。
+                $this->demo('Dock：五槽骨架（无界滚动页里也正确）', Dock::make()
+                    ->top($this->slot('top（横跨整宽）'))
+                    ->left($this->slot('left'))
+                    ->center($this->slot('center'))
+                    ->right($this->slot('right'))
+                    ->bottom($this->slot('bottom（横跨整宽）'))),
 
-            // ── 盒样式：背景 / 边框 / 圆角（§15.7 修正后真的画出来）──
-            Text::make('盒样式修饰符：background / border / radius')->heading(),
-            Row::make()->spacing(8.0)->children([
-                Button::make('主色按钮')
-                    ->background(Color::fromRgb(0x00, 0x96, 0x88))
-                    ->border(Color::fromRgb(0x00, 0x6D, 0x62), 1.5)
-                    ->radius(8.0),
-                Button::make('危险')
-                    ->variant(ButtonVariant::Danger),
-                Button::make('幽灵')
-                    ->background(Color::fromRgb(0xFF, 0xFF, 0xFF))
-                    ->border(Color::fromRgb(0xE6, 0xE6, 0xE6), 1.0)
-                    ->radius(6.0),
-            ]),
-        ])
+                // ── 盒样式：背景 / 边框 / 圆角（§15.7 修正后真的画出来）──
+                $this->demo('盒样式修饰符：background / border / radius', Row::make()->spacing(8.0)->children([
+                    Button::make('主色按钮')
+                        ->background(Color::fromRgb(0x00, 0x96, 0x88))
+                        ->border(Color::fromRgb(0x00, 0x6D, 0x62), 1.5)
+                        ->radius(8.0),
+                    Button::make('危险')
+                        ->variant(ButtonVariant::Danger),
+                    Button::make('幽灵')
+                        ->background(Color::fromRgb(0xFF, 0xFF, 0xFF))
+                        ->border(Color::fromRgb(0xE6, 0xE6, 0xE6), 1.0)
+                        ->radius(6.0),
+                ])),
+            ])
         );
+    }
+
+    /**
+     * 一个 demo 块 = **白卡片 + 标题 + 内容**。
+     *
+     * ★ 收 `Widget` 而不是 `list<Widget>`：`array_merge` 在 tpc 下的行为没验过，
+     *   而"多一层 Column"零风险（本仓纪律：不为省打字引入未验机制）。
+     */
+    private function demo(string $title, Widget $content): Widget
+    {
+        return Card::make(
+            Column::make()->spacing(10.0)->children([
+                Text::make($title)->heading(),
+                $content,
+            ])
+        )
+            // LayUI 的 `.layui-card` 是 `0 1px 2px rgba(0,0,0,.05)` —— 一点点贴地阴影
+            // 让卡片从灰底上"浮"起来半毫米。再重就是 Material 的卡片，不是 LayUI。
+            ->shadow(0.06);
     }
 
     /** Dock 槽位的小盒子（固定内容，宽度由内容撑开） */

@@ -12,8 +12,10 @@ use Drift\Widget\AppBar;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
 use Drift\Widget\ButtonVariant;
+use Drift\Widget\Card;
 use Drift\Widget\Column;
 use Drift\Widget\Dock;
+use Drift\Layout\FlexAlign;
 use Drift\Widget\Expanded;
 use Drift\Widget\Row;
 use Drift\Widget\ScrollView;
@@ -117,16 +119,28 @@ final class ShowcaseState extends State
             ]);
     }
 
+    /**
+     * 外壳 = **浅灰背景板 + 白色导航面板 + 内容槽**（LayUI admin 的层次）。
+     *
+     * ★ 三个 `Card` 各有分工：最外层只当"背景板"（`->background()` 一给，
+     *   `BoxWidget` 的默认边框/圆角就整套让位 —— §15.7 纪律 3），中间那层是
+     *   **真正的卡片**（白底 + 1px 边框 + 圆角 2 + 内边距），内容页里每个 demo
+     *   再各自一张卡片。
+     * ★ `cross(Stretch)` 让导航面板拉满高：LayUI 的左侧导航就是全高白底，
+     *   少了它导航只有内容那么高，下面露出灰底 —— 一眼就"没做完"。
+     */
     private function buildBody(): Widget
     {
-        return Row::make()->children([
-            $this->buildNav(),
-            Expanded::make(
-                ScrollView::make(
-                    $this->pageFor($this->selected)()
-                )
-            ),
-        ]);
+        return Card::make(
+            Row::make()->cross(FlexAlign::Stretch)->children([
+                Card::make($this->buildNav())->paddingAll(10.0),
+                // ★ 滚动归**页根**（每页自己 `Card(ScrollView(...))`）：外壳再套一层
+                //   就是嵌套滚动 —— 内层永远"量到全部内容"，外层滚不动，两层都白搭。
+                Expanded::make($this->pageFor($this->selected)()),
+            ])
+        )
+            ->background(Color::fromRgb(0xF2, 0xF3, 0xF5))
+            ->paddingAll(10.0);
     }
 
     /** @return list<Widget> */
@@ -155,6 +169,10 @@ final class ShowcaseState extends State
 
     private function buildNav(): Widget
     {
+        // ★ 这里**不能**用 `cross(Stretch)`：`Stretch` 的语义是"拉满**可用**宽"
+        //   （与 Flutter 一致），而导航卡的可用宽是整行 940 ⇒ 侧栏会被撑满、
+        //   把内容区挤到 0（真机第一帧 FATAL 就是这么来的）。要固定侧栏宽需要
+        //   "定尺寸"原语（`SizedBox` 那类），Drift 目前没有 —— 见 DESIGN §24.2 #25。
         return Column::make()->spacing(4.0)->children($this->navButtons());
     }
 

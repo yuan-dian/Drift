@@ -6,6 +6,7 @@ namespace App\Showcase\Pages;
 use Drift\Geometry\EdgeInsets;
 use Drift\Rendering\Color;
 use Drift\Widget\BuildContext;
+use Drift\Widget\Card;
 use Drift\Widget\Button;
 use Drift\Widget\ButtonVariant;
 use Drift\Widget\Column;
@@ -29,20 +30,25 @@ final class ListPage extends StatelessWidget
 {
     public function build(BuildContext $ctx): Widget
     {
+        // ★ 同其余文档页：白面板撑满视口，滚动发生在面板**内部**。
+        return Card::make(ScrollView::make($this->body()))->paddingAll(0.0);
+    }
+
+    /** 页面内容（`build()` 只负责套一层面板外壳） */
+    private function body(): Widget
+    {
         $rows = [];
         for ($i = 1; $i <= 16; $i++) {
             $rows[] = '条目 ' . $i . ' —— 悬停我看光标变化';
         }
 
-        return ScrollView::make(
-            Column::make()->spacing(12.0)->padding(EdgeInsets::all(20.0))->children([
-                Text::make('列表 List')->title(),
-                Text::make('16 行种子数据超过视口 ⇒ 页根自含滚动（ScrollView，§24.2 #15）。行由 Each 按 string key 驱动（R4：key 必填且唯一）。')->caption(),
+        return Column::make()->spacing(12.0)->padding(EdgeInsets::all(20.0))->children([
+            Text::make('列表 List')->title(),
+            Text::make('16 行种子数据超过视口 ⇒ 页根自含滚动（ScrollView，§24.2 #15）。行由 Each 按 string key 驱动（R4：key 必填且唯一）。')->caption(),
 
-                Each::make(static fn(string $row): string => $row)
-                    ->items($rows, static fn(string $row): Widget => ListPage::row($row)),
-            ])
-        );
+            Each::make(static fn(string $row): string => $row)
+                ->items($rows, static fn(string $row): Widget => ListPage::row($row)),
+        ]);
     }
 
     private static function row(string $label): Widget

@@ -5,6 +5,8 @@ namespace App\Showcase\Pages;
 
 use Drift\Geometry\EdgeInsets;
 use Drift\Widget\BuildContext;
+use Drift\Widget\Card;
+use Drift\Widget\ScrollView;
 use Drift\Widget\Button;
 use Drift\Widget\ButtonVariant;
 use Drift\Widget\Column;
@@ -57,6 +59,15 @@ final class FeedbackState extends State
     private StubState $tab = StubState::Loading;
 
     public function build(BuildContext $ctx): Widget
+    {
+        // ★ 页面 = **一整块白色面板 + 面板内滚动**（LayUI 文档页的形态）：
+        //   卡片撑满视口高、内容在卡片里滚。反过来（卡片只包内容）会让卡片只占
+        //   上半屏，下半屏露出灰底 —— 看着像"没加载完"。
+        return Card::make(ScrollView::make($this->body()))->paddingAll(0.0);
+    }
+
+    /** 页面内容（`build()` 只负责套一层卡片外壳，与 `LayoutPage` 的"每块一张卡"互补） */
+    private function body(): Widget
     {
         return Column::make()->spacing(12.0)->padding(EdgeInsets::all(20.0))->children([
             Text::make('反馈 Feedback')->title(),

@@ -36,6 +36,9 @@ final class ProxyElement extends StatelessElement
         if ($widget instanceof ModalHost) {
             return [$widget->child()];
         }
+        if ($widget instanceof Card) {
+            return $widget->kid() === null ? [] : [$widget->kid()];
+        }
 
         return [];
     }
