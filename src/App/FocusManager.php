@@ -56,6 +56,18 @@ final class FocusManager
     private ?Element $lastHit = null;
 
     /**
+     * 当前悬停目标（`hoverHandlerValue()` 声明者链上的最近 Element）。
+     *
+     * ★ 与 `DragController::$hover` **同模式但独立**：普通悬停常驻（任何 move
+     *   刷新），拖放悬停只在拖动期活跃 —— 两个职责，同一条"目标变化才派发"
+     *   纪律（§9.1 语义 #5）。
+     * ★ **按 Element 实例比较是稳的**：Element diff 复用实例（§13.2"换描述换盒"
+     *   说的是**盒**，Element 实例跨重建存活）⇒ 悬停高亮 setState ⇒ 重建后
+     *   同一个实例还在，不会自激 leave/enter。
+     */
+    private ?Element $hovered = null;
+
+    /**
      * 从根重建焦点链（挂载 / 更新后调）。
      *
      * ★ **变参**：浮层是第二棵根渲染树（O-20）∀ 它的焦点链也要能进 Tab 序 ⇒
@@ -80,6 +92,13 @@ final class FocusManager
 
         if ($this->lastHit !== null && !$this->lastHit->isMounted()) {
             $this->lastHit = null;
+        }
+
+        // 悬停目标离线（菜单关了 / 子树被换掉）⇒ 显式退出它 —— 否则"菜单项
+        // 高亮"在菜单关闭后留在最后一个悬停项上（静默错形态）。
+        if ($this->hovered !== null && !$this->hovered->isMounted()) {
+            self::fireHover($this->hovered, false);
+            $this->hovered = null;
         }
     }
 
@@ -203,6 +222,34 @@ final class FocusManager
         }
 
         return CursorShape::Default;
+    }
+
+    /**
+     * 指针移动 ⇒ 刷新悬停目标（§9.1 语义 #5：**只在目标变化时派发**）。
+     *
+     * ★ `null` = 没命中 / 离开客户区 ⇒ 退出当前悬停目标。
+     * ★ **命中一次、只喂一处**：与 `cursorOf()` 同源（收的是已解析的 Element，
+     *   不重复走树）。
+     */
+    public function hoverTo(?Element $element): void
+    {
+        $next = self::hoverOwner($element);
+
+        if ($next === $this->hovered) {
+            return;
+        }
+
+        $previous = $this->hovered;
+        $this->hovered = $next;
+
+        self::fireHover($previous, false);
+        self::fireHover($next, true);
+    }
+
+    /** 当前悬停目标（测试 / 预览读） */
+    public function hovered(): ?Element
+    {
+        return $this->hovered;
     }
 
     /**
@@ -372,5 +419,27 @@ final class FocusManager
     private function stateOf(?Element $element): ?State
     {
         return $element instanceof StatefulElement ? $element->state() : null;
+    }
+
+    /** 沿父链找最近的悬停声明者（子声明覆盖祖先 —— 与光标同判据） */
+    private static function hoverOwner(?Element $element): ?Element
+    {
+        for ($node = $element; $node !== null; $node = $node->parent()) {
+            if ($node->widget()->hoverHandlerValue() !== null) {
+                return $node;
+            }
+        }
+
+        return null;
+    }
+
+    /** 派发悬停进出（无声明者 / 无处理器 ⇒ 无事发生） */
+    private static function fireHover(?Element $element, bool $entered): void
+    {
+        $handler = $element?->widget()->hoverHandlerValue();
+
+        if ($handler !== null) {
+            $handler($entered);
+        }
     }
 }

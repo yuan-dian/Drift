@@ -24,9 +24,9 @@ use Drift\Widget\Widget;
  *   而 §4.3 禁止 `Widget → App`。等价的写法是把 `onOpen` 关掉、改在菜单栏宿主
  *   里用命令打开；当前以回调落地（形状见 §A.3.1）。
  *
- * ★ **`onOpen` 的触发点**：`Application::activateFocused()` —— 焦点落在本标题上
- *   按 Enter/Space。**指针点击要等 M4**（`PointerEvent` 只有 `down()`，`up()` 缺席，
- *   §9.1 诚实边界），届时"按下即在标题上"再多一条入口。
+ * ★ **`onOpen` 的触发点**：`Application::activateFocused()`（键盘 Enter/Space）与
+ *   `dispatchPointer()` 的 down 分支（指针按下，2026-10-17 四相位已落地 §24.2 #16）
+ *   —— 两条路径同终点 `activateFocusedWidget()`。
  *
  * @api
  */

@@ -15,11 +15,10 @@ use Drift\Widget\Widget;
  * ★ **拖的是数据，不是控件**：`$payload` 原样交给命中的 `DragTarget` ——
  *   框架不认识业务类型（同 §11.4.3 命令的"意图"纪律）。
  *
- * ★ **指针驱动的诚实边界**（§9.1 输入层分期）：拖动要 `move`（过阈值才开始）与
- *   `up`（放置），而 `PointerEvent` 今天只有 `down()`（M4 补）⇒ 本轮落地的是
- *   **声明 + 状态机**（`Application::beginDrag()` / `updateDrag()` / `dropDrag()`），
- *   由宿主或测试驱动；真机指针序列接在 M4。与 `Spinner` 的 `tick()`、
- *   `Button` 的指针激活同一个分期形态。
+ * ★ **指针驱动已接线**（2026-10-17，§24.2 #16）：`down` 记拖动意图，
+ *   `move` 过阈值（6 逻辑像素，平方比较免开方）begin，`up` 放置 ——
+ *   `Application::dispatchPointer()` 四相位派发直达 `DragController`。
+ *   诚实边界：拖出窗口（无 SetCapture）`leave` 即取消。
  *
  * ★ `feedback`（拖动时跟着指针画的浮层）**本轮不画**：它要"跟随指针的第三棵树"
  *   （GUI 仓 2026-10-07 叠的提示层），归 M4 的 `FrameClock` + 悬停层一起做。

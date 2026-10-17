@@ -93,14 +93,16 @@ function drift_win_ime_caret(float $x, float $y, float $h): void {}
  * | `resize` | `w` `h`（**物理**像素） | `WM_SIZE` |
  * | `dpi` | `dpi` | `WM_DPICHANGED` |
  * | `timer` | `id` | `WM_TIMER`（id 由 PHP 给，见 `drift_win_set_timer`） |
- * | `pointer` | `x` `y`（**物理**像素，客户区原点） `button` | `WM_{L,M,R}BUTTONDOWN` |
+ * | `pointer` | `x` `y`（**物理**像素，客户区原点） `button` `phase`（0=down 1=move 2=up 3=leave，与 `Drift\Input\PointerPhase` 同值） | `WM_{L,M,R}BUTTONDOWN` / `WM_MOUSEMOVE` / `WM_{L,M,R}BUTTONUP` / `WM_MOUSELEAVE`（`leave` 的坐标是**最后已知位置** —— 系统不再带坐标；`move` 的 `button` 恒 0，按住态由应用自己的拖动状态跟踪） |
  * | `key` | `key`（**键名**字符串） `ctrl` `alt` `shift` | `WM_KEYDOWN` |
  * | `char` | `text`（UTF-8） | `WM_CHAR`（`TranslateMessage` 合成） |
  * | `theme` | — | `WM_SETTINGCHANGE`（系统主题变更，载荷为空） |
  * | `wheel` | `x` `y`（**物理**像素，客户区原点） `delta`（WHEEL_DELTA=120 为一格，正=内容上移） | `WM_MOUSEWHEEL`（坐标经 `ScreenToClient` 换算） |
  *
- * ★ **壳不关心的事件就地派发后丢掉**（绘制、鼠标移动、焦点切换…），绝不交给 PHP
+ * ★ **壳不关心的事件就地派发后丢掉**（绘制、焦点切换…），绝不交给 PHP
  *   去忽略 —— GUI 仓的教训：把不关心的事件也回传，泵就成了"每帧几百次跨边界调用"。
+ *   ★ 鼠标移动**是关心的**（2026-10-17 move/up/leave 通路：光标刷新 / 悬停派发 /
+ *   拖放过程三消费者）—— 入队前经 `TrackMouseEvent(TME_LEAVE)` 请求离开跟踪。
  * ★ **`WM_SIZE` 不是队列消息**：它是 `DefWindowProc` 在窗口尺寸变化时**同步**调进
  *   WndProc 的，`PeekMessage` 取不到。壳在 WndProc 里把它转成一条自定义队列消息，
  *   泵才看得见（GUI 仓同名坑，注释写在 `gui_win32.cc` 第 540 行附近）。

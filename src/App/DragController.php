@@ -20,10 +20,11 @@ use Drift\Widget\Element;
  *   `FocusManager`（§9.1「一次命中，三方消费」）⇒ 本类只做**状态与通知**，
  *   指针坐标 → Element 的反查由 `Application` 做（它有焦点链）。
  *
- * ★ **指针驱动的诚实边界**：`PointerEvent` 今天只有 `down()` ⇒ 真机的
- *   "按下 → 过阈值 → 移动 → 抬手"序列接不上（M4 补齐）。本类是**可驱动的状态机**：
- *   宿主 / 测试调 `Application::beginDrag()/updateDrag()/dropDrag()` 即可 ——
- *   与 `Spinner::tick()`、`Button` 的键盘激活同一个分期形态。
+ * ★ **指针驱动已接线**（2026-10-17，§24.2 #16）：`PointerEvent` 四相位
+ *   （down/move/up/leave）经 `Application::dispatchPointer()` 驱动本状态机 ——
+ *   `down` 记阈值起点（**按下 ≠ 拖动**）、`move` 过 6 逻辑像素才 `begin`、
+ *   `up` 放下、`leave` 取消（无 `SetCapture` 的诚实边界：拖出窗口即取消）。
+ *   宿主 / 测试仍可直接调 `begin()` / `hoverTo()` / `drop()` / `cancel()`。
  *
  * @internal 实现细节（公共面是 `Draggable` / `DragTarget` 两个声明）
  */

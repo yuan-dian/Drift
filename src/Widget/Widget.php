@@ -47,6 +47,9 @@ abstract class Widget
     /** @internal null = 本控件没有右键菜单（§A.3.1） */
     private ?ContextMenu $contextMenu = null;
 
+    /** @internal null = 本控件不参与悬停派发（§9.1 语义 #5） */
+    private ?\Closure $hoverHandler = null;
+
     /**
      * ★ 子类必须调 `parent::__construct()`。
      *
@@ -245,7 +248,8 @@ abstract class Widget
      * ```
      *
      * ★ 它是**声明**：拖动状态机住 `Drift\App\DragController`（与焦点链同源 ——
-     *   都需要"命中的 Element"）。指针驱动等 M4 的 `PointerEvent::move()/up()`。
+     *   都需要"命中的 Element"）。指针驱动已接线（2026-10-17，§24.2 #16）：
+     *   down 记意图 → move 过阈值 begin → up 放置。
      *
      * @api
      */
@@ -307,6 +311,35 @@ abstract class Widget
     public function contextMenuValue(): ?ContextMenu
     {
         return $this->contextMenu;
+    }
+
+    /**
+     * 声明"指针悬停在我上面时通知我"（§9.1 语义 #5，2026-10-17 随 move 相位落地）。
+     *
+     * ```php
+     * Button::make('删除', 'user.delete')->hover(function (bool $entered): void { ... })
+     * ```
+     *
+     * ★ **只在目标变化时派发**（进入 / 离开各一次，回调里可放心 `setState`）——
+     *   与 `DragController::hoverTo()` 同一条纪律（§9.1 语义 #5 同源）：指针在
+     *   同一控件上移动不会重复通知。
+     * ★ **回调签名** `function (bool $entered): void` —— 与 `DragTarget` 的
+     *   `hoverHandler` 同形（两处悬停是同一契约的两种消费者）。
+     *
+     * @api
+     */
+    public function hover(\Closure $handler): static
+    {
+        $this->mutate();
+        $this->hoverHandler = $handler;
+
+        return $this;
+    }
+
+    /** @internal 悬停派发读它；`null` = 不参与悬停（交给命中链上更近的祖先） */
+    public function hoverHandlerValue(): ?\Closure
+    {
+        return $this->hoverHandler;
     }
 
     /**

@@ -27,10 +27,12 @@ use Drift\Rendering\MetricToken;
  * ★ **两条输入路径，语义不同**：
  *   - `->onPressed(闭包)` = 纯 UI 回调，零框架依赖（§A.3.7 就是这么用的）
  *   - `->command('名')->arg(...)` = 走命令系统（`CommandRouter` + 冒泡链，M3 已通）
- *     ★ **激活的诚实边界**（2026-10-16 接线时记）：**键盘 Enter/Space 已通**
- *       （`Application::dispatchInput()` 派发焦点按钮的命令）；**指针激活缺席**
- *       —— `PointerEvent` 今天只有 `down()`（抬起 / 移动留给 M4 完整输入层），
- *       鼠标点按钮只给焦点。同 §11.5 loading 态的分期边界，不是缺陷。
+ *   ★ **激活时机**（2026-10-16 P0 修复）：**按下即激活**（`down` 相位 ——
+ *     `Application::dispatchInput()` 的 focusHit + activateFocusedWidget）。
+ *     `up` 相位（2026-10-17 落地）服务于**拖放放下**，按钮激活仍住 down
+ *     （不迁移到 up：press/release 视觉态无消费者，A15）。
+ *   ★ **悬停**：`->hover(fn(bool $entered) => ...)`（`Widget` 基类）—— 指针
+ *     `move` 相位派发，**目标变化才通知**（§9.1 语义 #5）。菜单项高亮即此用法。
  *
  * ★ **不是 `final`**：`NavButton`（§12.2 外壳词汇）继承它 —— 导航按钮就是一种
  *   按钮，共享同一条链与同一个渲染盒，不为一个新名字复制一套机制。
@@ -94,7 +96,7 @@ class Button extends BoxWidget
         return $this;
     }
 
-    /** 走命令系统（M3 已通：键盘 Enter/Space 激活；指针激活等 M4 的 up 事件） */
+    /** 走命令系统（键盘 Enter/Space 与指针按下两路径同激活，§24.2 #16） */
     public function command(string $name): static
     {
         $this->mutate();

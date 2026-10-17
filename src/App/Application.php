@@ -80,6 +80,30 @@ abstract class Application
     protected ?DragController $drag = null;
 
     /**
+     * 拖放阈值起点（§A.3.5，2026-10-17 指针驱动接线）。
+     *
+     * ★ **按下 ≠ 拖动**：`down` 落在 `Draggable` 声明者上只记 pending，
+     *   `move` 位移超过 `DRAG_THRESHOLD` 才真开始 —— 否则"点一下按钮"会
+     *   顺手启动拖动（标准拖拽语义）。
+     * ★ 不过阈值的 `up` ⇒ 丢弃 pending（那次点击的激活已在 down 发生过）。
+     */
+    protected ?Draggable $pendingDrag = null;
+
+    protected ?Element $pendingDragSource = null;
+
+    protected float $pendingDragX = 0.0;
+
+    protected float $pendingDragY = 0.0;
+
+    /**
+     * 开始拖动的位移阈值（**逻辑**像素，平方比较免开方）。
+     *
+     * ★ 6 是"明显是拖、不是抖"的经验值（Windows 的 `SM_CXDRAG` 是 4 设备像素，
+     *   逻辑单位下再放宽 —— 高 DPI 下手抖一个像素不该启动拖动）。
+     */
+    private const DRAG_THRESHOLD = 6.0;
+
+    /**
      * 浮层面板（O-20 第二棵根渲染树）：菜单 / 上下文菜单 / 模态共用同一槽位。
      *
      * ★ 与 `$root` **同构**（一个 Widget + 一个 Element）—— 树 / diff / 布局零配合，
@@ -532,6 +556,14 @@ abstract class Application
 
                     return null;
                 }
+
+                // 仅 pending（按下未过阈值）⇒ ESC 丢弃这次拖动意图并消费该键
+                if ($this->pendingDrag !== null) {
+                    $this->pendingDrag = null;
+                    $this->pendingDragSource = null;
+
+                    return null;
+                }
             }
 
             // §9.1 第 ① 环：加速键（在焦点之前）。
@@ -554,49 +586,7 @@ abstract class Application
         }
 
         if ($event instanceof PointerEvent) {
-            // §9.1 关闭语义 #1：**浮层开着 ⇒ 指针先归浮层**（先选根树）；
-            // 点浮层**外** ⇒ 关且**吞掉该次按下**（不穿透，否则"关菜单"顺手点到
-            // 下面按钮 —— GUI 仓真机踩过）。
-            if ($this->menuElement !== null) {
-                $menuBox = $this->menuElement->effectiveBox();
-
-                if ($menuBox !== null && $this->hitsMenu($event, $menuBox)) {
-                    // 浮层局部坐标 = 客户区坐标 − 浮层原点（Frame 画时的 translate）
-                    $hit = $focus->hitTest($event->x - $this->menuX, $event->y - $this->menuY, $this->menuElement);
-                    // 菜单项（MenuItem extends Button）与根树按钮同规则：焦点落在
-                    // 浮层内本次点击上 ⇒ 立即激活。命令经 dispatch() 分发 ⇒ 浮层按
-                    // 语义 #2 在分发后关闭 —— 与键盘 Enter 完全同路。
-                    if ($focus->focusHit($hit, $this->menuElement)) {
-                        $this->activateFocusedWidget();
-                    }
-
-                    return $focus->cursorOf($hit);
-                }
-
-                $this->closeMenu();
-
-                return null; // 吞掉：不喂 focusHit、不改光标
-            }
-
-            $hit = $focus->hitTest($event->x, $event->y, $root);   // ★ 只走一次树
-
-            // ★ 右键最小集（§9.1）：非主键 ⇒ 找最近的 `ContextMenu` 声明者并打开。
-            //   用 `down` 即弹（`up` / 位移阈值要 M4 的指针事件，见 `ContextMenu` docblock）。
-            if (!$event->isPrimary()) {
-                $this->openContextMenu($hit === null ? null : $focus->elementAt($root, $hit));
-
-                return null;
-            }
-
-            // §9.1 动作缝的指针侧：**焦点真落在本次点击上 ⇒ 立即激活**（与键盘
-            // Enter/Space 同一入口 activateFocusedWidget）。空点击 / 不可聚焦命中
-            // ⇒ focusHit 返回 false，不激活 —— 否则会误触发上一个焦点控件。
-            // 按下即激活：当前指针只有 down 相位（up 相位要 P1 的指针事件）。
-            if ($focus->focusHit($hit, $root)) {
-                $this->activateFocusedWidget();
-            }
-
-            return $focus->cursorOf($hit);
+            return $this->dispatchPointer($event, $root, $focus);
         }
 
         if ($event instanceof ScrollEvent) {
@@ -660,6 +650,191 @@ abstract class Application
     private function hitsMenu(PointerEvent $event, RenderBox $menuBox): bool
     {
         return $menuBox->hitTest($event->x - $this->menuX, $event->y - $this->menuY) !== null;
+    }
+
+    /**
+     * 指针事件派发（**四相位**，2026-10-17 move/up/leave 通路落地）。
+     *
+     * - **down**：三段（浮层优先 / 右键菜单 / 焦点激活 —— M3 修复的行为不动）
+     *   + 拖放阈值起点（落在 `Draggable` 上记 pending，**不开始拖动**）
+     * - **move**：光标刷新 + 悬停派发（目标变化才通知）+ 拖放阈值推进
+     * - **up**：拖放放下（激活仍住 down —— 不做 press/release 视觉，A15）
+     * - **leave**：悬停全退出 + 拖放取消（无 `SetCapture` 的诚实边界：
+     *   拖出窗口即取消，**不卡死**）
+     *
+     * ★ **浮层开着时四相位都先归浮层**（与 down 同一条"不穿透"纪律）：
+     *   命中浮层 ⇒ 菜单项悬停 / 光标；miss 浮层 ⇒ move/leave 只退悬停、
+     *   **不关浮层**（关只归 down —— §9.1 语义 #1）。
+     */
+    private function dispatchPointer(PointerEvent $event, Element $root, FocusManager $focus): ?CursorShape
+    {
+        if ($this->menuElement !== null) {
+            $menuBox = $this->menuElement->effectiveBox();
+
+            if ($menuBox !== null && $this->hitsMenu($event, $menuBox)) {
+                // 浮层局部坐标 = 客户区坐标 − 浮层原点（Frame 画时的 translate）
+                $hit = $focus->hitTest($event->x - $this->menuX, $event->y - $this->menuY, $this->menuElement);
+                $element = $hit === null ? null : $focus->elementAt($this->menuElement, $hit);
+
+                if ($event->isDown()) {
+                    // 菜单项（MenuItem extends Button）与根树按钮同规则：焦点落在
+                    // 浮层内本次点击上 ⇒ 立即激活。命令经 dispatch() 分发 ⇒ 浮层按
+                    // 语义 #2 在分发后关闭 —— 与键盘 Enter 完全同路。
+                    if ($focus->focusHit($hit, $this->menuElement)) {
+                        $this->activateFocusedWidget();
+                    }
+                } elseif ($event->isMove()) {
+                    // 浮层内悬停：菜单项高亮（§9.1 语义 #5）
+                    $focus->hoverTo($element);
+                } elseif ($event->isLeave()) {
+                    $focus->hoverTo(null);
+                }
+
+                return $event->isDown() || $event->isMove() ? $focus->cursorOf($hit) : null;
+            }
+
+            if ($event->isDown()) {
+                // §9.1 关闭语义 #1：点浮层外 ⇒ 关且**吞掉该次按下**（不穿透，
+                // 否则"关菜单"顺手点到下面按钮 —— GUI 仓真机踩过）。
+                $this->closeMenu();
+
+                return null; // 吞掉：不喂 focusHit、不改光标
+            }
+
+            // move/up/leave 在浮层外：不穿透、不关浮层（关只归 down）。
+            // 悬停照退（指针滑出菜单 ⇒ 菜单项不再高亮，但菜单开着）。
+            if ($event->isMove() || $event->isLeave()) {
+                $focus->hoverTo(null);
+            }
+
+            return null;
+        }
+
+        $hit = $focus->hitTest($event->x, $event->y, $root);   // ★ 只走一次树
+        $element = $hit === null ? null : $focus->elementAt($root, $hit);
+
+        if ($event->isDown()) {
+            // ★ 右键最小集（§9.1）：非主键 ⇒ 找最近的 `ContextMenu` 声明者并打开。
+            if (!$event->isPrimary()) {
+                $this->openContextMenu($element);
+
+                return null;
+            }
+
+            // §9.1 动作缝的指针侧：**焦点真落在本次点击上 ⇒ 立即激活**（与键盘
+            // Enter/Space 同一入口 activateFocusedWidget）。空点击 / 不可聚焦命中
+            // ⇒ focusHit 返回 false，不激活 —— 否则会误触发上一个焦点控件。
+            // 按下即激活：up 相位服务拖放，不做 press/release 视觉（A15）。
+            if ($focus->focusHit($hit, $root)) {
+                $this->activateFocusedWidget();
+            }
+
+            // 拖放阈值起点（§A.3.5）：落在 `Draggable` 声明者上记 pending
+            $this->beginPendingDrag($element, $event->x, $event->y);
+
+            return $focus->cursorOf($hit);
+        }
+
+        if ($event->isMove()) {
+            $this->advanceDrag($event->x, $event->y);
+            $focus->hoverTo($element);
+
+            return $focus->cursorOf($hit);
+        }
+
+        if ($event->isUp()) {
+            // 没过阈值的 up ⇒ 纯点击（激活已在 down 发生过）⇒ 丢 pending
+            $this->pendingDrag = null;
+            $this->pendingDragSource = null;
+
+            if ($this->drag !== null && $this->drag->isDragging()) {
+                $this->dropDrag();
+            }
+
+            return null;
+        }
+
+        // leave：悬停全退出 + 拖放取消（指针离开客户区 —— 无 SetCapture ⇒
+        // 拖出窗外收不到后续 move/up，必须在这里收口，否则拖动卡死）。
+        $focus->hoverTo(null);
+        $this->pendingDrag = null;
+        $this->pendingDragSource = null;
+
+        if ($this->drag !== null && $this->drag->isDragging()) {
+            $this->cancelDrag();
+        }
+
+        return null;
+    }
+
+    /**
+     * down 落在 `Draggable` 声明者上 ⇒ 记阈值起点（**不开始拖动**）。
+     *
+     * @internal 由 `dispatchPointer()` 的 down 分支调
+     */
+    private function beginPendingDrag(?Element $element, float $x, float $y): void
+    {
+        $owner = $this->draggableOwner($element);
+
+        if ($owner === null) {
+            return;
+        }
+
+        $draggable = $owner->widget()->draggableValue();
+
+        if ($draggable === null) {
+            return;
+        }
+
+        $this->pendingDrag = $draggable;
+        $this->pendingDragSource = $owner;
+        $this->pendingDragX = $x;
+        $this->pendingDragY = $y;
+    }
+
+    /**
+     * move ⇒ 推进拖放阈值状态机：过阈值才真开始拖动，随后刷新悬停目标。
+     *
+     * @internal 由 `dispatchPointer()` 的 move 分支调
+     */
+    private function advanceDrag(float $x, float $y): void
+    {
+        $draggable = $this->pendingDrag;
+
+        if ($draggable === null) {
+            // 无 pending：已在拖动 ⇒ 只刷新悬停目标（DragController 自己只
+            // 在目标变化时通知）
+            if ($this->drag !== null && $this->drag->isDragging()) {
+                $this->updateDrag($x, $y);
+            }
+
+            return;
+        }
+
+        $dx = $x - $this->pendingDragX;
+        $dy = $y - $this->pendingDragY;
+
+        if ($dx * $dx + $dy * $dy <= self::DRAG_THRESHOLD * self::DRAG_THRESHOLD) {
+            return; // 阈值内：纯点击的移动，不开始拖动
+        }
+
+        $source = $this->pendingDragSource;
+        $this->pendingDrag = null;
+        $this->pendingDragSource = null;
+        $this->drag()->begin($draggable, $source);
+        $this->updateDrag($x, $y);
+    }
+
+    /** 沿父链找最近的 `Draggable` 声明者（§A.3.5：子声明覆盖祖先） */
+    private function draggableOwner(?Element $element): ?Element
+    {
+        for ($node = $element; $node !== null; $node = $node->parent()) {
+            if ($node->widget()->draggableValue() !== null) {
+                return $node;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -734,9 +909,8 @@ abstract class Application
     /**
      * 焦点控件的 Enter / Space ⇒ 激活（§9.1 路由链第 ③ 环的激活语义）。
      *
-     * ★ **指针激活缺席的诚实边界**：`PointerEvent` 今天只有 `down()`（抬起 /
-     *   移动留给 M4 完整输入层）⇒ 鼠标点按钮只给焦点，激活走键盘。这是输入层
-     *   分期的结构后果（同 §11.5 的 loading 态边界），不是漏接。
+     * 键盘 Enter/Space 激活路径（指针路径走 dispatchPointer() 的 down 分支，
+     * 同终点 activateFocusedWidget()，2026-10-17 指针四相位已落地 §24.2 #16）。
      *
      * @internal 由 dispatchInput() 调
      */
@@ -803,8 +977,10 @@ abstract class Application
     /**
      * 拖动状态机（§A.3.5）。
      *
-     * ★ **真机指针序列等 M4**：`PointerEvent` 只有 `down()`（`move`/`up` 缺席）
-     *   ⇒ 下面三个入口当前由宿主 / 测试驱动（与 `Spinner::tick()` 同一个分期形态）。
+     * ★ **真机指针序列已接线**（2026-10-17，§24.2 #16）：`down` 在 `Draggable`
+     *   上记阈值起点（`beginPendingDrag`，**按下 ≠ 拖动**），`move` 过
+     *   `DRAG_THRESHOLD` 才 `begin`，`up` 放下，`leave`/ESC 取消。宿主 / 测试
+     *   仍可直接调这四个入口（与 `Spinner::tick()` 同一个分期形态）。
      */
     public function drag(): DragController
     {

@@ -56,6 +56,7 @@ use Drift\Dev\Smoke\App\CursorApplication;
 use Drift\Dev\Smoke\App\EchoApplication;
 use Drift\Dev\Smoke\App\TfApplication;
 use Drift\Dev\Smoke\App\ThemeApplication;
+use Drift\Dev\Smoke\App\PointerApplication;
 use Drift\Dev\Smoke\App\ScrollApplication;
 use Drift\Dev\Smoke\App\NavApplication;
 use Drift\Dev\Smoke\LeafProbe;
@@ -83,6 +84,7 @@ use Drift\Input\FocusNode;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
+use Drift\Input\PointerPhase;
 use Drift\Input\ScrollEvent;
 use Drift\Layout\FlexAlign;
 use Drift\Layout\Overflow;
@@ -4763,6 +4765,107 @@ check(
     'Scroll · 应用：轮落在视口外 ⇒ 命不中不滚（偏移不变）',
     $scrollChildOf($scrollApp->scrollBox())?->offsetY() === $beforeOutside,
     'before=' . ($beforeOutside ?? -1.0) . ' after=' . ($scrollChildOf($scrollApp->scrollBox())?->offsetY() ?? -1.0),
+);
+
+// ── 指针四相位（2026-10-17 move/up/leave 通路落地）─────────────────
+//   ★ 三个消费者：① 悬停派发（§9.1 语义 #5 —— **目标变化才通知**）② 拖放
+//   阈值状态机（§A.3.5 —— **按下 ≠ 拖动**，过 6 逻辑像素阈值才 begin）
+//   ③ 光标刷新（move 与 down 同一条命中链）。
+//   ★ 反例自检：把 dispatchPointer 的 move 分支去掉 hoverTo/advanceDrag
+//   ⇒ 悬停两条 + 拖放两条 FAIL（诊断值精确显示"没派发/没开始"）。
+
+// ① 相位枚举与桥映射（ABI 编号只该有一处读法 —— 与 CursorShape 同纪律）
+check(
+    'Pointer · PointerPhase 值与桥一致（down=0/move=1/up=2/leave=3）',
+    PointerPhase::Down->value === 0 && PointerPhase::Move->value === 1
+        && PointerPhase::Up->value === 2 && PointerPhase::Leave->value === 3,
+);
+check(
+    'Pointer · fromBridge 四相位映射（未知 phase 兜 Down）',
+    PointerEvent::fromBridge(1.0, 2.0, 2, 0)->isDown()
+        && PointerEvent::fromBridge(1.0, 2.0, 0, 1)->isMove()
+        && PointerEvent::fromBridge(1.0, 2.0, 0, 2)->isUp()
+        && PointerEvent::fromBridge(1.0, 2.0, 0, 3)->isLeave()
+        && PointerEvent::fromBridge(1.0, 2.0, 0, 9)->isDown(),
+);
+
+// ② 悬停：move 命中 ⇒ enter；同目标再 move ⇒ 不重复派发；移开 ⇒ leave
+$ptrApp = new PointerApplication();
+$ptrApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
+
+$shapeOnHover = $ptrApp->dispatchInput(PointerEvent::move(20.0, 20.0));
+check(
+    'Pointer · move 命中悬停目标 ⇒ enter 派发一次',
+    $ptrApp->hoverEnters === 1 && $ptrApp->hoverLeaves === 0,
+    'enter=' . $ptrApp->hoverEnters . ' leave=' . $ptrApp->hoverLeaves,
+);
+check(
+    'Pointer · move 刷新光标（命中声明 PointingHand 的盒）',
+    $shapeOnHover === CursorShape::PointingHand,
+    (string) ($shapeOnHover?->name ?? 'null'),
+);
+$ptrApp->dispatchInput(PointerEvent::move(21.0, 22.0));   // 同目标内移动
+check(
+    'Pointer · 同目标再 move ⇒ 不重复派发（§9.1 语义 #5）',
+    $ptrApp->hoverEnters === 1,
+    'enter=' . $ptrApp->hoverEnters,
+);
+$ptrApp->dispatchInput(PointerEvent::move(20.0, 60.0));   // 移到无悬停声明的源盒
+check(
+    'Pointer · 移出悬停目标 ⇒ leave 派发一次',
+    $ptrApp->hoverLeaves === 1 && $ptrApp->hoverEnters === 1,
+    'enter=' . $ptrApp->hoverEnters . ' leave=' . $ptrApp->hoverLeaves,
+);
+$ptrApp->dispatchInput(PointerEvent::leave(20.0, 60.0));
+check(
+    'Pointer · leave（已在目标外）⇒ 不重复 leave',
+    $ptrApp->hoverLeaves === 1,
+    'leave=' . $ptrApp->hoverLeaves,
+);
+
+// ③ 拖放阈值：小位移不开始、大位移开始并落到目标上、up 交出 payload
+$dragApp = new PointerApplication();
+$dragApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
+
+$dragApp->dispatchInput(PointerEvent::down(20.0, 60.0));   // 落在拖放源上
+$dragApp->dispatchInput(PointerEvent::move(22.0, 62.0));   // 位移 ~2.8 < 6 阈值
+check(
+    'Pointer · 拖放：小位移（< 阈值）⇒ 不开始拖动（按下 ≠ 拖动）',
+    $dragApp->drag()->isDragging() === false,
+);
+$dragApp->dispatchInput(PointerEvent::move(20.0, 100.0));  // 位移 40 > 阈值 ⇒ 开始 + 落到目标
+check(
+    'Pointer · 拖放：大位移 ⇒ 开始拖动且目标 enter 派发',
+    $dragApp->drag()->isDragging() === true && $dragApp->targetEnters === 1,
+    'dragging=' . var_export($dragApp->drag()->isDragging(), true) . ' targetEnter=' . $dragApp->targetEnters,
+);
+$dragApp->dispatchInput(PointerEvent::up(20.0, 100.0));
+check(
+    'Pointer · 拖放：up ⇒ 放下，payload 原样交出',
+    $dragApp->dropped === true && $dragApp->droppedPayload === 'payload-1',
+    'dropped=' . var_export($dragApp->dropped, true) . ' payload=' . var_export($dragApp->droppedPayload, true),
+);
+check(
+    'Pointer · 拖放：放下后状态清空（可再次起拖）',
+    $dragApp->drag()->isDragging() === false,
+);
+
+// ④ 拖出窗口（leave）⇒ 取消，不卡死（无 SetCapture 的诚实边界）
+$leaveApp = new PointerApplication();
+$leaveApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
+$leaveApp->dispatchInput(PointerEvent::down(20.0, 60.0));
+$leaveApp->dispatchInput(PointerEvent::move(20.0, 100.0));
+check(
+    'Pointer · 拖放：拖动中（leave 前置条件）',
+    $leaveApp->drag()->isDragging() === true,
+);
+$leaveApp->dispatchInput(PointerEvent::leave(20.0, 100.0));
+check(
+    'Pointer · 拖放：指针离开客户区 ⇒ 取消（不卡死、不放下）',
+    $leaveApp->drag()->isDragging() === false && $leaveApp->dropped === false && $leaveApp->targetLeaves === 1,
+    'dragging=' . var_export($leaveApp->drag()->isDragging(), true)
+        . ' dropped=' . var_export($leaveApp->dropped, true)
+        . ' targetLeave=' . $leaveApp->targetLeaves,
 );
 
 fresh($log);

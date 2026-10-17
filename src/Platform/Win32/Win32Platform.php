@@ -126,7 +126,7 @@ final class Win32Platform implements Platform
      * | `resize` | 把物理尺寸 + dpr 交给表面 `resize()`（§6.1 的量化点） |
      * | `dpi` | **丢弃**（当前无消费者）。表面尺寸/缩放由随行的 `WM_SIZE` ⇒ `resize` 事件驱动（§6.1 的量化点）；`layout()` 本就每帧全树跑（§13.3）⇒ 不需要额外触发 |
      * | `timer` | ⏳ M1 丢弃：`FrameClock` 归 M4，今天没有消费者 |
-     * | `pointer` | ⇒ `PointerEvent::down()`（坐标除 dpr 转**逻辑**单位） |
+     * | `pointer` | ⇒ `PointerEvent::fromBridge()`（四相位 down/move/up/leave，坐标除 dpr 转**逻辑**单位） |
      * | `wheel` | ⇒ `ScrollEvent::make()`（坐标除 dpr；delta 收成"格"= 原始值 / 120） |
      * | `key` | ⇒ `KeyEvent::down(KeyChord::make(键名, ctrl, alt, shift))` |
      * | `char` | ⇒ `KeyEvent::character()` |
@@ -175,14 +175,19 @@ final class Win32Platform implements Platform
         $input = $this->input();
 
         if ($type === 'pointer') {
+            // ★ 四相位（2026-10-17 move/up/leave 通路）：桥给 `phase`
+            //   （0=down 1=move 2=up 3=leave，与 `PointerPhase` 同值），
+            //   坐标除 dpr 转逻辑单位 —— 与 down 同口径（§6.1 量化只在平台侧）。
+            //   相位→工厂的映射住 `PointerEvent::fromBridge()`（唯一一处）。
             $dpr = $this->screen()->scale();
             if ($dpr <= 0.0) {
                 $dpr = 1.0;
             }
-            $input->push(PointerEvent::down(
+            $input->push(PointerEvent::fromBridge(
                 (float) ((int) ($event['x'] ?? 0)) / $dpr,
                 (float) ((int) ($event['y'] ?? 0)) / $dpr,
                 (int) ($event['button'] ?? 0),
+                (int) ($event['phase'] ?? 0),
             ));
 
             return true;

@@ -62,7 +62,8 @@ struct PendingEvent {
     int kind;
     int a;   // resize: w ／ dpi: dpi ／ timer: id ／ pointer: x ／ wheel: x ／ key: — ／ char: —
     int b;   // resize: h ／ pointer: y ／ wheel: y ／ —
-    int c;   // pointer: button ／ wheel: delta（WHEEL_DELTA=120 为一格，正=内容上移）／ key: modifier 位（1=ctrl 2=alt 4=shift）／ —
+    int c;   // pointer: button（move 恒 0 —— 按住态由应用自己的拖动状态跟踪）／ wheel: delta（WHEEL_DELTA=120 为一格，正=内容上移）／ key: modifier 位（1=ctrl 2=alt 4=shift）／ —
+    int d;   // pointer: 相位（0=down 1=move 2=up 3=leave，与 Drift\Input\PointerPhase 同值）／ —
     std::string text;   // key: 键名 ／ char: UTF-8 文本
 };
 
@@ -98,6 +99,17 @@ int g_frameH = 0;
 // PHP 侧可能正阻塞在 `GetMessageW` 里（问不到框架）⇒ 只能重贴**上一次**的决定。
 // 见 `php_drift_win_set_cursor()` 与 WndProc 的 `WM_SETCURSOR` 分支。
 HCURSOR g_cursor = NULL;
+
+// ── 指针跟踪（2026-10-17 move/up/leave 通路）──
+// 最后已知指针位置（客户区，设备像素）—— `WM_MOUSELEAVE` 不再带坐标，
+// 用它兜底（消费方只看"离开了"，不用坐标，见 PointerEvent::leave 的 docblock）。
+int g_ptrX = -1;
+int g_ptrY = -1;
+
+// `TrackMouseEvent(TME_LEAVE)` 是否已请求。★ 不请求跟踪就没有 `WM_MOUSELEAVE`
+// ⇒ 指针离开客户区时框架永远不知道（悬停目标卡在最后一个上、拖动不取消）——
+// hover 的标准 Win32 模式：首次移动时请求一次，离开后复位、下次重新请求。
+bool g_ptrTracked = false;
 
 // ★★ `IDC_*` 是 `MAKEINTRESOURCE(...)` 宏：**非 UNICODE 编译下展开成 `LPSTR`**，
 //   直接喂 `LoadCursorW` 就是 C2664 / C2440（本文件第二次撞这个坑 —— 第一次是
@@ -220,6 +232,25 @@ void enqueue(const PendingEvent &event) {
         // 把阻塞在 GetMessageW 上的泵叫醒。载荷在队列里，这条消息只是闹钟。
         PostMessageW(g_main, kMsgWake, 0, 0);
     }
+}
+
+/**
+ * 指针事件入队（四相位共用一个壳；顺带记最后已知位置供 `WM_MOUSELEAVE` 用）。
+ *
+ * ★ `phase` 与 `Drift\Input\PointerPhase` 的 value 同值（0=down 1=move 2=up
+ *   3=leave）—— 与 `CursorShape` 同一条纪律：跨边界的枚举值是 ABI。
+ */
+void pushPointer(int x, int y, int button, int phase) {
+    g_ptrX = x;
+    g_ptrY = y;
+
+    PendingEvent event = {};
+    event.kind = kEvPointer;
+    event.a = x;
+    event.b = y;
+    event.c = button;
+    event.d = phase;
+    enqueue(event);
 }
 
 // ───────────────────────────────────────────────────────────── 贴屏 ──
@@ -346,12 +377,46 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (msg == WM_MBUTTONDOWN) button = 1;
             if (msg == WM_RBUTTONDOWN) button = 2;
 
-            PendingEvent event = {};
-            event.kind = kEvPointer;
-            event.a = GET_X_LPARAM(lp);
-            event.b = GET_Y_LPARAM(lp);
-            event.c = button;
-            enqueue(event);
+            pushPointer(GET_X_LPARAM(lp), GET_Y_LPARAM(lp), button, 0);   // Down
+            return 0;
+        }
+
+        case WM_MOUSEMOVE: {
+            // ★ TrackMouseEvent(TME_LEAVE)：不请求跟踪就没有 WM_MOUSELEAVE ⇒
+            //   指针离开客户区时框架永远不知道（悬停目标卡在最后一个上、
+            //   拖动不取消）。首次移动时请求一次，离开后复位。
+            if (!g_ptrTracked) {
+                TRACKMOUSEEVENT tme = {};
+                tme.cbSize = sizeof(tme);
+                tme.dwFlags = TME_LEAVE;
+                tme.hwndTrack = hwnd;
+                TrackMouseEvent(&tme);
+                g_ptrTracked = true;
+            }
+
+            // ★ move 的 button 恒 0：wp 里的 MK_* 位（按住态）没有消费者 ——
+            //   拖动状态由应用自己的 pending 记录跟踪（§9.1 / A15：不预先
+            //   发明线上语义）。
+            pushPointer(GET_X_LPARAM(lp), GET_Y_LPARAM(lp), 0, 1);   // Move
+            return 0;
+        }
+
+        case WM_LBUTTONUP:
+        case WM_MBUTTONUP:
+        case WM_RBUTTONUP: {
+            int button = 0;
+            if (msg == WM_MBUTTONUP) button = 1;
+            if (msg == WM_RBUTTONUP) button = 2;
+
+            pushPointer(GET_X_LPARAM(lp), GET_Y_LPARAM(lp), button, 2);   // Up
+            return 0;
+        }
+
+        case WM_MOUSELEAVE: {
+            g_ptrTracked = false;   // 下次进入要重新请求跟踪
+
+            // 坐标是最后已知位置（系统不再给新坐标）—— 消费方只看"离开了"
+            pushPointer(g_ptrX, g_ptrY, 0, 3);   // Leave
             return 0;
         }
 
@@ -520,6 +585,7 @@ Array toArray(const PendingEvent &event) {
             out.set("x", (Int)event.a);
             out.set("y", (Int)event.b);
             out.set("button", (Int)event.c);
+            out.set("phase", (Int)event.d);
             break;
 
         case kEvKey:
