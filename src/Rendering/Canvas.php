@@ -55,6 +55,11 @@ interface Canvas
      *   契约），Skia 后端也能用真字体重画同一份命令（golden 才有可比性）。
      *
      * ★ 段的几何（`baseline` / `offsetX`）是**排版**给的，画布只负责施加，不重算。
+     * ★ **字形级的 `offsetX`/`offsetY` 同属“排版给的几何”，同样必须施加**：
+     *   口径与 `RasterCanvas::blendBitmap()` 一致 —— 逻辑空间叠加后**一次**量化
+     *   （`round((pen + offsetX) × dpr)`），不是“量化后再加偏移”。
+     *   ★ 2026-10-17 修复记录：SkiaCanvas 第一版只发 `round(pen × dpr)`，
+     *     offset 被丢（今天生产者 offset 恒 0 ⇒ 潜伏；M4 真塑形时会活）。
      */
     public function drawParagraph(Paragraph $paragraph, Paint $paint, float $x = 0.0, float $y = 0.0): void;
 }

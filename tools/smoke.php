@@ -636,14 +636,14 @@ function skiaExpectedGlyphs(Paragraph $paragraph, float $originX, float $originY
     $dpr = $scale->dpr;
     $out = [];
     foreach ($paragraph->lines as $line) {
-        $baselineY = ($originY + $line->baseline) * $dpr;
+        $baselineLogical = $originY + $line->baseline;
         $pen = $originX + $line->offsetX;
         foreach ($line->runs as $run) {
             foreach ($run->glyphs as $glyph) {
                 $out[] = [
                     'codepoint' => $glyph->codepoint,
                     'penX' => round(($pen + $glyph->offsetX) * $dpr),
-                    'baselineY' => $baselineY + $glyph->offsetY * $dpr,
+                    'baselineY' => round(($baselineLogical + $glyph->offsetY) * $dpr),
                 ];
                 $pen += $glyph->advance;
             }
@@ -1328,9 +1328,11 @@ check(
 //   ⇒ 桥收到的 penX 与软光栅墨迹左沿**可直接互比**。bearingY = −ascent×pixelSize
 //   是后端特有量（位图字体 vs 真字体），不进互比，只各自钉（与两后端抗锯齿
 //   差异同档）。
-// ★ baseline 由排版给（size=14 实测 13.65）：Skia 发**不取整**的浮点、软光栅
-//   round 后落位图 —— 同 §6.1"逻辑→物理只走 quantizeRect"的同类分歧，
-//   两后端各自钉、不互比。
+// ★ baseline 由排版给（size=14 实测 13.65）。修复前 Skia 发**不取整**的浮点、
+//   软光栅 round 后落位图（同类分歧、两后端各自钉）；2026-10-17 修字形 offset 时
+//   **一并对齐**：Skia 也改"逻辑空间叠加后一次 round"（与 blendBitmap 逐字一致）
+//   ⇒ 两后端 baseline 现在**同解、可互比**（反例自检证明：换回旧版 SkiaCanvas
+//   ⇒ P1/P3 的两条 baseline 断言也 FAIL，共 5 条）。
 $pFontManager = DeterministicFontManager::standard();
 $pMetrics = new DeterministicMetricsProvider($pFontManager->collection(), new DeterministicShaper());
 $pBody = TextStyle::of(14.0);
@@ -1490,17 +1492,18 @@ check(
     'ink=' . fmtInk($inkP3x2) . ' 期望=' . fmtInk(skiaExpectedInkBounds($p3Paragraph, 0.0, 0.0, Scale::of(2.0)))
 );
 
-// ── P4. 已知分歧钉住：字形 offset —— Raster 施加、Skia 当前丢弃（E3 剧本）──
-// ★ 合成一个带 offset 的段落。今天的生产者造不出非零 offset ——
-//   `DeterministicShaper` 与 `TextLayout` 的 new Glyph(...) 全部显式传 0.0
-//   （grep 实证）⇒ 这是**潜伏**分歧，不是活缺陷（与 popClip 发现前同型）。
-// ★ 分歧机制：RasterCanvas 施加 `pen + glyph->offsetX`（round 后 + bearingX），
-//   SkiaCanvas 只发 `round(pen × dpr)` —— offset 被丢。真塑形（M4，HarfBuzz 的
-//   标记附加 / 字距调整）会产生非零 offset ⇒ 届时变活。
-// ★ 修法（等裁决）：SkiaCanvas::drawParagraph 的 penDevice 改
-//   `round(($pen + $glyph->offsetX) * $dpr)`、baseline 加 `$glyph->offsetY * $dpr`
-//   （Raster 侧已正确；SkiaCanvas 类注释"与 RasterCanvas::drawParagraph 逐行
-//   对齐"本就是承诺）。修时本断言的 Skia 侧与差值断言一起翻转（像 E3 那样）。
+// ── P4. 字形 offset 施加（2026-10-17 修复后：两后端同解）────────────────
+
+// ★ 合成一个带 offset 的段落（offsetX=3, offsetY=2）。今天的生产者造不出非零
+//   offset —— `DeterministicShaper` 与 `TextLayout` 的 new Glyph(...) 全部显式
+//   传 0.0（grep 实证）⇒ 曾是与 popClip 发现前同型的**潜伏**分歧。
+// ★ 历史（2026-10-17 修复）：SkiaCanvas 第一版只发 `round(pen × dpr)`，offset
+//   被丢；RasterCanvas 施加 `pen + offsetX`（blendBitmap 入参，round 在函数内）。
+//   SkiaCanvas 类注释"与 RasterCanvas::drawParagraph 逐行对齐"本就是承诺 ⇒ 修 Skia。
+// ★ 修法：penDevice = round((pen+offsetX)×dpr)、baseline 改逻辑值后 glyph 级
+//   加 offsetY 再 round —— 与 blendBitmap 的"逻辑空间叠加后一次量化"逐字一致。
+//   本断言原钉"Skia 丢弃 offset"现状（桥 penX=0、baselineY=13.65、分歧差 3px），
+//   修复后翻正：桥 penX=3、baselineY=16、两后端墨迹左沿差 0px。
 // ★ 必须 reset（P3 dpr=2 的 10 次调用还在记录里）—— 踩过：漏 reset ⇒
 //   桥次数 11（10+1）、P4 三条断言全 FAIL。夹具用例互相污染的又一例。
 skiaBridgeReset();
@@ -1526,15 +1529,15 @@ check(
     'ink=' . fmtInk($inkP4) . ' 期望=' . fmtInk(skiaExpectedInkBounds($p4Paragraph, 0.0, 0.0, $pUnit))
 );
 check(
-    'Skia conformance · P4 Skia 当前丢弃 offset（已知分歧，钉住现状）：桥 penX=0、baselineY=13.65',
-    count($glyphsP4) === 1 && $glyphsP4[0][4] === 0.0 && $glyphsP4[0][5] === 13.65,
+    'Skia conformance · P4 Skia 施加 offset（修复后）：桥 penX=3、baselineY=16（先加后 round）',
+    count($glyphsP4) === 1 && $glyphsP4[0][4] === 3.0 && $glyphsP4[0][5] === 16.0,
     count($glyphsP4) === 1
         ? '桥 penX=' . $glyphsP4[0][4] . ' baselineY=' . $glyphsP4[0][5]
         : '次数=' . count($glyphsP4)
 );
 check(
-    'Skia conformance · P4 分歧量化：两后端墨迹左沿差 3px（= offsetX × dpr）——修 Skia 后归零、本断言翻转',
-    $inkP4 !== null && count($glyphsP4) === 1 && (float) $inkP4[0] - $glyphsP4[0][4] === 3.0,
+    'Skia conformance · P4 分歧已修：两后端墨迹左沿差 0px（桥 penX 与墨迹左沿同解）',
+    $inkP4 !== null && count($glyphsP4) === 1 && (float) $inkP4[0] - $glyphsP4[0][4] === 0.0,
     '墨迹左沿 − 桥 penX = ' . ($inkP4 !== null && count($glyphsP4) === 1 ? (string) ((float) $inkP4[0] - $glyphsP4[0][4]) : 'n/a')
 );
 

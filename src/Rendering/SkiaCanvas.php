@@ -209,7 +209,7 @@ final class SkiaCanvas implements Canvas
         $argb = $paint->color->toArgb();
 
         foreach ($paragraph->lines as $line) {
-            $baseline = ($originY + $line->baseline) * $dpr;
+            $baselineLogical = $originY + $line->baseline;
             $pen = $originX + $line->offsetX;
 
             foreach ($line->runs as $run) {
@@ -219,7 +219,15 @@ final class SkiaCanvas implements Canvas
                 foreach ($run->glyphs as $glyph) {
                     // 与 `RasterCanvas::blendBitmap()` 同口径：字形原点量化到设备像素
                     // （§8.2 坑 4 的显式策略，不是权宜之计）
-                    $penDevice = round($pen * $dpr);
+                    // ★ 字形的 offsetX/offsetY 在**逻辑空间**叠加后**一次**量化
+                    //   （与 Raster 逐行对齐：Raster 的 blendBitmap 入参已是
+                    //   `pen + offsetX`，round 在函数内做）。
+                    //   ★ 踩过：第一版只发 `round($pen * $dpr)` —— offset 被丢。
+                    //     今天所有生产者 offset 恒 0.0（grep 实证）⇒ 潜伏；
+                    //     M4 真塑形（HarfBuzz 标记附加/字距调整）会活。
+                    //     2026-10-17 修复，smoke ⑨+1 P4 钉住。
+                    $penDevice = round(($pen + $glyph->offsetX) * $dpr);
+                    $baselineDevice = round(($baselineLogical + $glyph->offsetY) * $dpr);
 
                     drift_skia_draw_glyph(
                         $this->handle,
@@ -227,7 +235,7 @@ final class SkiaCanvas implements Canvas
                         $bold,
                         $pixelSize,
                         $penDevice,
-                        $baseline,
+                        $baselineDevice,
                         $glyph->codepoint,
                         $argb,
                     );
