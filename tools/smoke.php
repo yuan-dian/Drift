@@ -1712,6 +1712,46 @@ check('Text · 基线上方 = ascent × pixelSize（位图即 em 盒）', $bitma
 check('Text · 位图有墨', $ink > 0);
 check('Text · 未覆盖码位不画方框', $latinFace->rasterize(0x4E2D, 14.0) === null);
 
+// ── 降采样灰度（§24.2 #17）：小字抗锯齿不倒在函数出口 ──
+// pixelSize < unitsPerEm(16) ⇒ 降采样路径。判据：coverage 值域必须**超出** {0,255}
+// ——0<v<255 的中间值就是 blend() 的 alpha。反例自检天然：本修复前全页 0/255 两值，
+// 这两条 FAIL（去阈值化即绿）。灰阶像素数作诊断串。
+$grayFace = $registry->faceFor(0x4E2D, FontFamily::sans(), FontWeight::Regular, FontSlant::Normal);
+$grayBmp = $grayFace->rasterize(0x4E2D, 13.0);
+$grayValues = [];
+for ($i = 0; $i < strlen($grayBmp->coverage); $i++) {
+    $grayValues[ord($grayBmp->coverage[$i])] = true;
+}
+$grayMid = 0;
+foreach ($grayValues as $v => $_) {
+    if ($v > 0 && $v < 255) {
+        $grayMid++;
+    }
+}
+check(
+    'Text · 降采样产出连续灰度（0<coverage<255 存在，不二值化）',
+    $grayMid > 0,
+    '不同值=' . count($grayValues) . ' 中间灰度值=' . $grayMid
+);
+check('Text · 降采样尺寸仍随 pixelSize 缩放（灰度不改几何）', $grayBmp->width === 13 && $grayBmp->height === 13, $grayBmp->width . 'x' . $grayBmp->height);
+
+// 端到端：灰度字模经 blendBitmap 上屏 ⇒ 画布出现"非字色非底色"的混合像素。
+// 这条钉**消费链**（blend 真的按 alpha 混合了），不是钉实现。
+$grayCanvas = new RasterCanvas(24, 24, null, $unit);
+$grayCanvas->clear(Color::fromRgb(255, 255, 255));
+$grayPara = $textMetrics->layout('中', $body, INF, $unit);
+$grayCanvas->drawParagraph($grayPara, Paint::fill(Color::fromRgb(0, 0, 0)), 2.0, 2.0);
+$grayPixels = 0;
+for ($gy = 0; $gy < $grayCanvas->height(); $gy++) {
+    for ($gx = 0; $gx < $grayCanvas->width(); $gx++) {
+        $gp = $grayCanvas->pixelAt($gx, $gy);
+        if ($gp->r > 0 && $gp->r < 255) {
+            $grayPixels++;
+        }
+    }
+}
+check('Text · 端到端：黑字白底出现混合像素（blend 按覆盖率插值）', $grayPixels > 0, '混合像素=' . $grayPixels);
+
 // 响亮失败：未覆盖码位问步进留痕；家族无 face / 解析字体文件 ⇒ Fatal
 fresh($log);
 $latinFace->glyphAdvance(0x4E2D);

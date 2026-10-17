@@ -15,6 +15,10 @@ use Drift\Errors;
  * ★ **步进 = (位图宽 + 1) / unitsPerEm**，单位是 em 的倍数（§8.2 坑 3 的归一化）。
  *   宽度不一的字模（如 `…`）自然得到不同步进，不需要单独的 advance 表。
  *
+ * ★ **降采样产出灰度覆盖度**（`pixelSize < unitsPerEm` 时）：每个目标像素输出
+ *   0..255 的面积覆盖率，**不是** 0/255 二值 —— 绘制侧 `RasterCanvas::blend()`
+ *   按 alpha 混合 ⇒ 小字有抗锯齿边缘（§24.2 #17，2026-10-17）。
+ *
  * @api
  */
 final class BitmapFontFace implements FontFace
@@ -136,10 +140,16 @@ final class BitmapFontFace implements FontFace
                 }
             }
         } else {
-            // ★ 降采样：**面积覆盖度平均 + 0.5 阈值**。
+            // ★ 降采样：**面积覆盖度平均 → 直接输出灰度**（0..255，非二值）。
             //   最近邻降采样会**整行/整列丢笔画**（16→12 恰好丢 4/16 行），12px 的说明
             //   文字因此糊成一团（2026-10-16 由预览抓出）。覆盖度平均把"1px 细线"折算
             //   成 1/(16/12)=0.75 的覆盖度 ⇒ 过 0.5 阈值 ⇒ 保住笔画。
+            //   ★★ 2026-10-17 修锯齿：覆盖度算出后**直接量化成 0..255 输出**，不再
+            //     二值化成 0x00/0xFF —— GlyphBitmap 契约本就是"连续覆盖度"，
+            //     RasterCanvas::blend() 也按 alpha 混合（alpha=色alpha×覆盖率），
+            //     抗锯齿信息过去在**本函数出口**被倒掉。实证：users 页预览从 5 种
+            //     纯色变 187 种（边缘连续过渡）。skia 后端不走本路径（真 TTF +
+            //     SkFont::kAntiAlias），不受影响。
             //   ★ 放大路径完全不动 ⇒ 既有位图逐字节不变（零回归）。
             for ($y = 0; $y < $height; $y++) {
                 $sy0 = $y * $sourceHeight / $height;
@@ -175,7 +185,7 @@ final class BitmapFontFace implements FontFace
                     }
 
                     $area = ($sx1 - $sx0) * ($sy1 - $sy0);
-                    $coverage[] = ($area > 0.0 && $ink >= $area * 0.5) ? "\xFF" : "\x00";
+                    $coverage[] = $area > 0.0 ? chr((int) round(min(1.0, $ink / $area) * 255)) : "\x00";
                 }
             }
         }
