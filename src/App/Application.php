@@ -419,6 +419,15 @@ abstract class Application
             return null;   // 未挂载：没有树就没有路由
         }
 
+        if ($event instanceof ThemeChangedEvent) {
+            // §9.2 事件通路的终点：显式消费（不落 default 丢弃）。框架侧**暂不
+            // 动作** —— `Screen::systemTheme()` 查询实时 + `Frame::run` 每帧
+            // `settle()` ⇒ 主题值变化下一帧自然重建。显式的"标全树脏"重建机制
+            // 按 A15（没有消费者不预先发明）留待应用真需要跟随系统主题时，
+            // 与 §A.2.5 的 `onSystemThemeChanged()` 钩子一并对齐。
+            return null;
+        }
+
         if ($event instanceof KeyEvent) {
             // §9.1 关闭语义 #3：**ESC 在 `dispatchKey` 之前拦** —— 否则被焦点
             // 控件（输入框）吃掉，菜单关不掉。

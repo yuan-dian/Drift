@@ -53,6 +53,7 @@ enum EventKind {
     kEvPointer,
     kEvKey,
     kEvChar,
+    kEvTheme,
 };
 
 struct PendingEvent {
@@ -266,6 +267,18 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
 
+        case WM_SETTINGCHANGE: {
+            // §9.2：系统主题变更（深色/浅色切换）。lParam 是被改的设置区名
+            // （宽字符指针）—— 时区、语言、显示设置等也会发这条消息，只认
+            // "ImmersiveColorSet"（Win10+ 的颜色模式区）。
+            if (lp != 0 && wcscmp((LPCWSTR)lp, L"ImmersiveColorSet") == 0) {
+                PendingEvent event = {};
+                event.kind = kEvTheme;
+                enqueue(event);
+            }
+            return 0;
+        }
+
         case WM_DPICHANGED: {
             g_dpi = HIWORD(wp);
             // 系统给了一个建议外框，照它调整（不照做的话窗口在新 DPI 下尺寸不对）
@@ -413,6 +426,10 @@ Array toArray(const PendingEvent &event) {
         case kEvChar:
             out.set("type", "char");
             out.set("text", String(event.text));
+            break;
+
+        case kEvTheme:
+            out.set("type", "theme");
             break;
 
         default:

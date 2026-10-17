@@ -6,6 +6,7 @@ namespace Drift\Platform\Win32;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
+use Drift\Input\ThemeChangedEvent;
 use Drift\Platform\Clipboard;
 use Drift\Platform\Dialog;
 use Drift\Platform\InputSource;
@@ -126,6 +127,8 @@ final class Win32Platform implements Platform
      * | `pointer` | ⇒ `PointerEvent::down()`（坐标除 dpr 转**逻辑**单位） |
      * | `key` | ⇒ `KeyEvent::down(KeyChord::make(键名, ctrl, alt, shift))` |
      * | `char` | ⇒ `KeyEvent::character()` |
+     * | `theme` | ⇒ `ThemeChangedEvent`（§9.2 系统主题变更；载荷为空，
+     *   新主题由消费者查 `Screen::systemTheme()` —— Win32 侧查询实时） |
      * | 其它 | 丢弃 —— 桥已经保证"只回传 Drift 关心的"，这里是防御性兜底 |
      *
      * ★ **`resize` 必须同时喂表面**：`Screen::viewport()` 读的是桥里的客户区尺寸
@@ -154,6 +157,15 @@ final class Win32Platform implements Platform
             //   这回事。
             //   ★ 这里原先写"全树重建由下一帧 `viewport()` 变化驱动" —— **不成立**：跨屏时
             //     逻辑客户区尺寸不变（物理尺寸变、dpr 也变，两者相抵）⇒ `viewport()` 不变。
+            return true;
+        }
+
+        if ($type === 'theme') {
+            // §9.2：系统主题变更。载荷为空 —— 新主题查 `Screen::systemTheme()`
+            // （Win32Screen 不缓存，每次读注册表）。框架侧显式消费见
+            // `Application::dispatchInput` 的同名分支。
+            $this->input()->push(new ThemeChangedEvent());
+
             return true;
         }
 
