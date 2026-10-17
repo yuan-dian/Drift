@@ -294,3 +294,15 @@ fwrite(STDOUT, sprintf(
     (float) filesize($exe) / 1048576.0,
     $elapsed
 ));
+
+// ─────────────────────── 随 exe 分发运行时 ini（坑 ⑤） ───────────────────────
+// ★ AOT 运行时靠 php.ini 加载扩展：exe 双击运行时 cwd = 自身目录，会读同目录
+//   `php.ini`；不随附则 `\mb_substr` / `\mb_strtoupper` 等内置函数**未定义**
+//   （namespace 内非限定调用本就会被 AOT 编译成 `Drift\Xxx\mb_substr` 而找不到，
+//   即便限定为全局，扩展没加载照样 Fatal）。
+//   只放 mbstring 这一条最小必要扩展，不拖 curl/openssl/zip，避免放大运行时面。
+$runtimeIni = "{$root}/php.ini";
+$runtimeText = "extension_dir = \"" . win($distRoot) . "/ext/\"\n"
+    . "extension=mbstring\n";
+file_put_contents($runtimeIni, $runtimeText);
+fwrite(STDOUT, "[drift-build] ✓ 运行时 ini → {$runtimeIni}（仅启用 mbstring）\n");

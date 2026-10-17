@@ -33,9 +33,9 @@ final readonly class KeyEvent implements InputEvent
     /** 文本输入：一个可打印字符（`'a'` / `'井'` / `' '`），`text` 原样保留大小写 */
     public static function character(string $text): self
     {
-        $first = mb_substr($text, 0, 1, 'UTF-8');
+        $first = \mb_substr($text, 0, 1, 'UTF-8');
 
-        return new self(KeyChord::make(mb_strtoupper($first, 'UTF-8')), $text);
+        return new self(KeyChord::make(\mb_strtoupper($first, 'UTF-8')), $text);
     }
 
     /** 非文本键（编辑键 / 加速键 / Tab） */
