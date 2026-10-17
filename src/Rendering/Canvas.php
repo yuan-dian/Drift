@@ -20,14 +20,26 @@ use Drift\Text\Paragraph;
  */
 interface Canvas
 {
-    /** 压入状态（变换 / 画笔状态）。与 `restore()` 必须配对 —— W8 会断言栈深归零。 */
+    /**
+     * 压入**变换**状态（偏移）。与 `restore()` 必须配对 —— W8 会断言栈深归零。
+     *
+     * ★ 变换栈与裁剪栈是**两条独立的栈**（W8 分别计深 `saveDepth` / `clipDepth`）：
+     *   `save()` / `restore()` 只管偏移，`pushClip()` / `popClip()` 只管裁剪，
+     *   `restore()` **不还原裁剪** —— 裁剪完全由那一对管理。三个实现必须同解：
+     *   2026-10-17 前软光栅把裁剪并进变换栈（`popClip` 弹通用状态帧），同一份
+     *   命令流两后端出不同像素（TextField 之后的兄弟丢容器偏移，见 smoke ⑨+1 E3/E4）。
+     */
     public function save(): void;
 
     public function restore(): void;
 
     public function translate(float $dx, float $dy): void;
 
-    /** 压入裁剪矩形（与当前裁剪求交）。与 `popClip()` 必须配对。 */
+    /**
+     * 压入裁剪矩形（与当前裁剪求交）。与 `popClip()` 必须配对。
+     *
+     * ★ 与 `save()` / `restore()` **互不干涉**：这一对不碰偏移，那一对不碰裁剪。
+     */
     public function pushClip(Rect $rect): void;
 
     public function popClip(): void;

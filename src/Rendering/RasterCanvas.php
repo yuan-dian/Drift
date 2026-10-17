@@ -33,8 +33,11 @@ final class RasterCanvas implements Canvas
     private Rect $clip;
     private readonly Scale $scale;
 
-    /** @var list<array{float, float, Rect}> 状态栈：偏移 + 裁剪 */
+    /** @var list<array{float, float}> 变换栈：只有偏移（裁剪独立成栈，与 SkiaCanvas 同口径） */
     private array $stack = [];
+
+    /** @var list<Rect> 裁剪栈：与变换栈独立（两条栈分别配对，W8 分别计深） */
+    private array $clipStack = [];
 
     public function __construct(
         private readonly int $width,
@@ -91,7 +94,7 @@ final class RasterCanvas implements Canvas
 
     public function save(): void
     {
-        $this->stack[] = [$this->offsetX, $this->offsetY, $this->clip];
+        $this->stack[] = [$this->offsetX, $this->offsetY];
     }
 
     public function restore(): void
@@ -100,7 +103,7 @@ final class RasterCanvas implements Canvas
         if ($frame === null) {
             return; // 未配对的 restore 由 W8 在录制侧拦截，光栅侧静默忽略即可
         }
-        [$this->offsetX, $this->offsetY, $this->clip] = $frame;
+        [$this->offsetX, $this->offsetY] = $frame;
     }
 
     public function translate(float $dx, float $dy): void
@@ -111,17 +114,17 @@ final class RasterCanvas implements Canvas
 
     public function pushClip(Rect $rect): void
     {
-        $device = $this->toDevice($rect);
-        $this->clip = $this->clip->intersect($device);
+        $this->clipStack[] = $this->clip;
+        $this->clip = $this->clip->intersect($this->toDevice($rect));
     }
 
     public function popClip(): void
     {
-        $frame = array_pop($this->stack);
-        if ($frame === null) {
-            return;
+        $previous = array_pop($this->clipStack);
+        if ($previous === null) {
+            return; // 未配对的 popClip 由 W8 在录制侧拦截，光栅侧静默忽略即可
         }
-        [$this->offsetX, $this->offsetY, $this->clip] = $frame;
+        $this->clip = $previous;
     }
 
     public function drawRect(Rect $rect, Paint $paint, float $radius = 0.0): void

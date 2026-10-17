@@ -813,6 +813,10 @@ check('Rendering · Paint 风格可判', Paint::stroke($red, 2.0)->isStroke() &&
 
 // ⑨+1 Skia 后端 conformance：drawRect / pushClip 与软光栅逐像素同构
 //   （§7.3 的 M1 后端之二。hello 夹具只有文字 ⇒ 矩形 / 裁剪路径此前**零视觉覆盖**）
+// ★ 覆盖：A 填充 dpr=1 · B dpr=2 小数边界+量化锚点 · C 平移在逻辑空间叠加 ·
+//   D save/restore 偏移栈 · E1 pushClip 几何 · E2 popClip 释放裁剪 ·
+//   E3 popClip 不动偏移（两后端同解）· E4 兄弟干扰（TextField 序列后兄弟保住
+//   容器偏移）· F 描边宽度不乘 dpr · G 零宽早退 · H 句柄 0 静默跳过。
 //
 // ★ 在解释器面做，不构建 exe：真桥（cpp-src/drift_skia.cc）只存在于 AOT 构建，
 //   而 `use function` 是**运行期**解析 ⇒ 助手区的假桥接管调用并记录每一次跨边界
@@ -1064,21 +1068,16 @@ $GLOBALS['DRIFT_SMOKE_SKIA_FAIL_CREATE'] = false;
 $alive = new SkiaCanvas(20, 16, null, Scale::of(1.0));
 check('Skia conformance · H 失败开关复位后创建恢复有效', $alive->isValid());
 
-// ── E3. 已知分歧（钉住现状，不是背书）──────────────────────────────
-// ★ 2026-10-17 更正：上一版注释写"零生产调用者、分歧潜伏"是**误判**（grep 被
-//   head 截断）。RenderTextField::paint 就是生产消费者，且分歧是**活缺陷**。
-// popClip 是否**连偏移一起复位**：两后端当前行为不同 ——
-//   · RasterCanvas::popClip 弹的是通用状态帧（= 半个 restore）：偏移也回到 save 时；
-//   · SkiaCanvas::popClip 只复位裁剪（桥的 pop_clip = C++ 侧 save+clipRect/restore，
-//     独立栈），偏移留到 restore 才归位。
-// 生产序列（RenderTextField::paint 逐字）：pushClip; save; translate(insets); 画;
-// restore; popClip —— 只有双栈语义下自洽。Raster 上 TextField 的 popClip 吃掉
-// **父盒 kid 循环的帧** ⇒ 后续兄弟丢容器偏移（`_build/repro_popclip.php` 实证：
-// 同一份 DisplayList，Raster 把 TextField 之后的兄弟画在 (0,40)，Skia 画在 (24,64)）
-// ⇒ 默认后端出不同像素。证据链指向双栈是设计意图（接口文档"pushClip 与 popClip
-// 必须配对" + W8 双深度分别计数 + 桥实现 + 生产序列形状）⇒ 修 Raster（加独立
-// clip 栈），不动 Skia。此断言钉住两侧现状：修 Raster 会让 Raster 侧断言失败
-// —— 那是"该发生的失败"，逼出显式裁决而不是静默漂移。
+// ── E3. popClip 只复位裁剪、不动偏移：两后端必须同解（2026-10-17 翻正）──────
+// 历史：本断言 2026-10-16 上线时钉的是**两侧现状**（Raster 的 popClip 弹通用状态
+// 帧 = 半个 restore，偏移也归位；Skia 只复位裁剪）。那不是"已知差异"而是**活
+// 缺陷**：RenderTextField::paint 的生产序列 pushClip; save; translate(insets); 画;
+// restore; popClip 只有双栈语义下自洽 —— Raster 上 TextField 的 popClip 吃掉父盒
+// kid 循环的帧 ⇒ 后续兄弟丢容器偏移（同形状的完整用例见 E4）。
+// 2026-10-17 已裁决并修复：RasterCanvas 加独立裁剪栈（结构与 SkiaCanvas 一致：
+// 变换栈只存偏移，裁剪独立成栈）。本断言翻正为**正确语义**。
+// ★ 判据可区分：弹通用帧（修复前）⇒ 第二块落 (0,0)，ink=8 且 (1,1) 有墨；
+//   只复位裁剪（修复后）⇒ 第二块落 (6,0)，ink=4 且 (1,1) 无墨。
 skiaBridgeReset();
 $listX = new DisplayList();
 $recX = new RecordingCanvas($listX);
@@ -1096,16 +1095,75 @@ $listX->replay($skiaX);
 $rectsX = skiaDrawRectCalls();
 $inkX = inkCount($rasterX, Color::transparent());
 check(
-    'Skia conformance · E3 钉住现状：Raster 的 popClip 连偏移一起复位（两块墨互不重叠）',
-    $rasterX->pixelAt(7, 1)->equals($red) && $rasterX->pixelAt(1, 1)->equals($red) && $inkX === 8,
+    'Skia conformance · E3 翻正：Raster 的 popClip 只复位裁剪（第二块仍带偏移 6，两块重叠 ink=4）',
+    $rasterX->pixelAt(7, 1)->equals($red) && $rasterX->pixelAt(1, 1)->equals(Color::transparent()) && $inkX === 4,
     'p(7,1)=' . ($rasterX->pixelAt(7, 1)->equals($red) ? 'red' : 'clear')
-        . ' p(1,1)=' . ($rasterX->pixelAt(1, 1)->equals($red) ? 'red' : 'clear')
+        . ' p(1,1)=' . ($rasterX->pixelAt(1, 1)->equals(Color::transparent()) ? 'clear' : 'ink')
         . ' inkCount=' . $inkX
 );
 check(
-    'Skia conformance · E3 钉住现状：Skia 的 popClip 只复位裁剪（第二块仍带偏移 6）',
+    'Skia conformance · E3 两后端同解：Skia 侧第二块仍带偏移 6（popClip 不动偏移）',
     count($rectsX) === 2 && $rectsX[1][1] === 6.0 && $rectsX[1][2] === 0.0,
     count($rectsX) === 2 ? '第二块 x=' . $rectsX[1][1] . ' y=' . $rectsX[1][2] : '次数=' . count($rectsX)
+);
+
+// ── E4. 兄弟干扰：TextField 序列之后，兄弟必须保住容器偏移 ─────────────
+// ★ 这是**唯一能抓 popClip 帧腐败的用例族**：单盒用例（E1–E3）全绿也看不见 ——
+//   腐败的症状是"兄弟丢容器偏移"，只有多子形状才可观测。历史上窗口探针（非白
+//   像素比例）、预览（RasterCanvas 像素转 SVG，自证）、W8（录制侧配平）对这一
+//   类全是结构性盲区 ⇒ 本节按"多子"构造。
+// 逐字镜像两个真实 paint：
+//   · RenderFlex::paint      —— save/translate(padding)/[per kid: save/translate(kidOffset)/画/restore]/restore
+//   · RenderTextField::paint —— pushClip/save/translate(insets)/画/restore/popClip
+// 形状 = SignupPage 的 Column：padding 24；kid1 = TextField 形状；kid2 = 普通盒。
+// 判据：kid2 的 10×10 蓝块必须落在布局位置 (24, 24+40)=(24,64)。
+//   · 腐败（popClip 弹通用帧）：kid1 的 popClip 吃掉 kid 循环的帧 ⇒ kid2 落 (0,40)；
+//   · 正确（两条独立栈）：两后端都把 kid2 画在 (24,64)。
+skiaBridgeReset();
+$blue = Color::fromRgb(0, 0, 255);
+$listE4 = new DisplayList();
+$recE4 = new RecordingCanvas($listE4);
+$recE4->save();                                     // RenderFlex::paint
+$recE4->translate(24.0, 24.0);                      // column padding
+$recE4->save();                                     // kid 循环 · kid1
+$recE4->translate(0.0, 0.0);                        // kid1 offset
+$recE4->pushClip(new Rect(0.0, 0.0, 200.0, 28.0));  // RenderTextField::paint
+$recE4->save();
+$recE4->translate(4.0, 4.0);                        // TextField insets
+$recE4->drawRect(new Rect(0.0, 0.0, 10.0, 10.0), Paint::fill($red));
+$recE4->restore();
+$recE4->popClip();
+$recE4->restore();                                  // kid 循环 restore
+$recE4->save();                                     // kid 循环 · kid2（offsetY=28+12=40）
+$recE4->translate(0.0, 40.0);
+$recE4->drawRect(new Rect(0.0, 0.0, 10.0, 10.0), Paint::fill($blue));
+$recE4->restore();
+$recE4->restore();                                  // flex restore
+$rasterE4 = new RasterCanvas(320, 240, null, Scale::of(1.0));
+$skiaE4 = new SkiaCanvas(320, 240, null, Scale::of(1.0));
+$listE4->replay($rasterE4);
+$listE4->replay($skiaE4);
+$rectsE4 = skiaDrawRectCalls();
+check(
+    'Skia conformance · E4 兄弟干扰：TextField 自身落 (28,28)（kid1 不受帧腐败影响）',
+    $rasterE4->pixelAt(29, 29)->equals($red),
+    'p(29,29)=' . ($rasterE4->pixelAt(29, 29)->equals($red) ? 'red' : 'clear')
+);
+check(
+    'Skia conformance · E4 兄弟保住容器偏移：蓝块落 (24,64) 而非腐败位 (0,40)',
+    $rasterE4->pixelAt(25, 65)->equals($blue) && $rasterE4->pixelAt(1, 41)->equals(Color::transparent()),
+    'p(25,65)=' . ($rasterE4->pixelAt(25, 65)->equals($blue) ? 'blue' : 'clear')
+        . ' p(1,41)=' . ($rasterE4->pixelAt(1, 41)->equals(Color::transparent()) ? 'clear' : 'ink')
+);
+check(
+    'Skia conformance · E4 跨后端同解：桥收到的两块设备矩形 == (28,28) 与 (24,64)',
+    count($rectsE4) === 2
+        && $rectsE4[0][1] === 28.0 && $rectsE4[0][2] === 28.0
+        && $rectsE4[1][1] === 24.0 && $rectsE4[1][2] === 64.0,
+    count($rectsE4) === 2
+        ? '第一块 x=' . $rectsE4[0][1] . ' y=' . $rectsE4[0][2]
+            . ' 第二块 x=' . $rectsE4[1][1] . ' y=' . $rectsE4[1][2]
+        : '次数=' . count($rectsE4)
 );
 
 // ── 量具反例自检（§20 纪律 1）──────────────────────────────────────
