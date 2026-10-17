@@ -474,7 +474,12 @@ abstract class Application
                 if ($menuBox !== null && $this->hitsMenu($event, $menuBox)) {
                     // 浮层局部坐标 = 客户区坐标 − 浮层原点（Frame 画时的 translate）
                     $hit = $focus->hitTest($event->x - $this->menuX, $event->y - $this->menuY, $this->menuElement);
-                    $focus->focusHit($hit, $this->menuElement);
+                    // 菜单项（MenuItem extends Button）与根树按钮同规则：焦点落在
+                    // 浮层内本次点击上 ⇒ 立即激活。命令经 dispatch() 分发 ⇒ 浮层按
+                    // 语义 #2 在分发后关闭 —— 与键盘 Enter 完全同路。
+                    if ($focus->focusHit($hit, $this->menuElement)) {
+                        $this->activateFocusedWidget();
+                    }
 
                     return $focus->cursorOf($hit);
                 }
@@ -494,7 +499,13 @@ abstract class Application
                 return null;
             }
 
-            $focus->focusHit($hit, $root);
+            // §9.1 动作缝的指针侧：**焦点真落在本次点击上 ⇒ 立即激活**（与键盘
+            // Enter/Space 同一入口 activateFocusedWidget）。空点击 / 不可聚焦命中
+            // ⇒ focusHit 返回 false，不激活 —— 否则会误触发上一个焦点控件。
+            // 按下即激活：当前指针只有 down 相位（up 相位要 P1 的指针事件）。
+            if ($focus->focusHit($hit, $root)) {
+                $this->activateFocusedWidget();
+            }
 
             return $focus->cursorOf($hit);
         }
@@ -592,6 +603,18 @@ abstract class Application
             return;
         }
 
+        $this->activateFocusedWidget();
+    }
+
+    /**
+     * 激活当前焦点控件 —— 键盘（Enter/Space）与指针（按下）两路径的**唯一**入口。
+     *
+     * §9.1 动作缝：Menu 走 `onOpen`（应用接线到 `showMenu()`）、Button 走
+     * 命令（全链）或 `onPressed`。Menu 分支必须在 Button 之前 —— 子类会被
+     * `instanceof` 认成父类。
+     */
+    private function activateFocusedWidget(): void
+    {
         $element = $this->focus?->focused();
         $widget = $element?->widget();
 

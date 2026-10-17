@@ -320,21 +320,35 @@ final class FocusManager
     }
 
     /** 最深优先：先找子（组合节点的 `effectiveBox()` 会返回后代的盒，取最深才对） */
+    /**
+     * 命中盒 → 拥有它的 Element。
+     *
+     * ★ chrome 类（`RenderMenuItem` 等）**自绘**子内容（含文字）⇒ 最深命中盒
+     *   常常没有任何 Element 拥有它（旧实现按"effectiveBox 精确等于命中盒"
+     *   匹配，此时落空 ⇒ 返回 null）。此时必须沿**渲染树**上溯到第一个"有
+     *   Element 的盒"—— 否则 chrome 控件（菜单项）的指针点击永远落不了焦点。
+     *   键盘路径不经过这里（焦点序里直接取 focused()）⇒ 该缺陷一直没暴露。
+     */
     private function elementForBox(Element $element, RenderBox $box): ?Element
     {
-        $found = null;
-        $element->visitChildren(function (Element $child) use ($box, &$found): void {
-            if ($found !== null) {
-                return;
+        $owners = [];
+        $collect = function (Element $el) use (&$collect, &$owners): void {
+            $own = $el->effectiveBox();
+            if ($own !== null) {
+                $owners[spl_object_id($own)] = $el;
             }
-            $found = $this->elementForBox($child, $box);
-        });
+            $el->visitChildren($collect);
+        };
+        $collect($element);
 
-        if ($found !== null) {
-            return $found;
+        for ($node = $box; $node !== null; $node = $node->parent()) {
+            $id = spl_object_id($node);
+            if (isset($owners[$id])) {
+                return $owners[$id];
+            }
         }
 
-        return $element->effectiveBox() === $box ? $element : null;
+        return null;
     }
 
     private function enter(?Element $element): void

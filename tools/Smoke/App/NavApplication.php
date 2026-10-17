@@ -10,6 +10,7 @@ use Drift\Widget\AppBar;
 use Drift\Widget\Button;
 use Drift\Widget\Center;
 use Drift\Widget\Dock;
+use Drift\Widget\Element;
 use Drift\Widget\NavButton;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
@@ -45,6 +46,12 @@ final class NavApplication extends Application
     public function recorder(): NavRecorder
     {
         return $this->recorder;
+    }
+
+    /** 挂载后的根 Element（指针夹具据此取控件盒坐标） */
+    public function rootElement(): ?Element
+    {
+        return $this->root;
     }
 
     public function buildRoot(): Widget

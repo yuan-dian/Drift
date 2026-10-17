@@ -480,6 +480,27 @@ function fieldInk(?RenderBox $box, int $width, int $height): int
  *
  * @return array{0: float, 1: float}
  */
+/**
+ * 深度优先找第一个满足条件的 Element（`visitChildren` 只走直接子节点 ⇒ 自己递归）。
+ */
+function findElement(Element $root, callable $pred): ?Element
+{
+    $found = null;
+    $walk = function (Element $el) use (&$walk, &$found, $pred): void {
+        if ($found !== null) {
+            return;
+        }
+        if ($pred($el)) {
+            $found = $el;
+            return;
+        }
+        $el->visitChildren($walk);
+    };
+    $walk($root);
+
+    return $found;
+}
+
 function boxOrigin(RenderBox $box): array
 {
     $x = 0.0;
@@ -3806,6 +3827,41 @@ check(
     implode(',', $navApp->pressed),
 );
 
+// —— 指针侧激活（§9.1 动作缝的另一半：鼠标**按下**即触发，与 Enter/Space 同入口）
+//   ★ 按下即激活：当前指针只有 down 相位（up 相位要 P1 的指针事件）。
+//   ★ 判据设计：点空白（无焦点可落）必须**不**触发 —— 若实现退化成
+//     "焦点非空就激活"，空点击会误触发上一个焦点控件，本条即 FAIL。
+$ptrApp = new NavApplication();
+$ptrApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
+$navBtnEl = findElement($ptrApp->rootElement(), fn (Element $e): bool => $e->widget() instanceof NavButton);
+$cancelEl = findElement($ptrApp->rootElement(), fn (Element $e): bool => $e->widget() instanceof Button && !$e->widget() instanceof NavButton);
+$navBox = $navBtnEl?->effectiveBox();
+[$nbx, $nby] = $navBox === null ? [0.0, 0.0] : boxOrigin($navBox);
+$nbw = $navBox?->size()?->width ?? 0.0;
+$nbh = $navBox?->size()?->height ?? 0.0;
+$ptrApp->dispatchInput(PointerEvent::down($nbx + $nbw / 2, $nby + $nbh / 2));
+check(
+    '激活 · 鼠标按下「列表」按钮 ⇒ 命令带 arg 派发（与 Enter 同入口）',
+    $ptrApp->recorder()->seen === ['nav.users#7/'],
+    implode(',', $ptrApp->recorder()->seen),
+);
+$ptrApp->dispatchInput(PointerEvent::down(160.0, 210.0));   // Center 区：Text 不可聚焦
+check(
+    '激活 · 点空白（无焦点可落）⇒ 不误触发上一个焦点控件',
+    $ptrApp->recorder()->seen === ['nav.users#7/'],
+    implode(',', $ptrApp->recorder()->seen),
+);
+$cancelBox = $cancelEl?->effectiveBox();
+[$cbx, $cby] = $cancelBox === null ? [0.0, 0.0] : boxOrigin($cancelBox);
+$cbw = $cancelBox?->size()?->width ?? 0.0;
+$cbh = $cancelBox?->size()?->height ?? 0.0;
+$ptrApp->dispatchInput(PointerEvent::down($cbx + $cbw / 2, $cby + $cbh / 2));
+check(
+    '激活 · 鼠标按下「取消」按钮 ⇒ onPressed 被调（焦点随点击转移）',
+    $ptrApp->pressed === ['cancelled'],
+    implode(',', $ptrApp->pressed),
+);
+
 // 无焦点时激活键 ⇒ 无事发生（不崩、不误派发）
 $idleApp = new NavApplication();
 $idleApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
@@ -4083,13 +4139,41 @@ check('浮层 · 重开（ESC 用例的前置）', $menuApp->isMenuOpen());
 $menuApp->dispatchInput(KeyEvent::down(KeyChord::escape()));
 check('浮层 · ESC ⇒ 关（语义 #3：在 dispatchKey 之前拦，不被焦点控件吃掉）', !$menuApp->isMenuOpen());
 
-// —— 关闭语义 ④：点面板**内** ⇒ 不关
+// —— 关闭语义 ④：点面板**内**（空白处，非菜单项）⇒ 不关
+//   ★ 2026-10-17 坐标修正：原 (20,20) 落在第一项上。指针激活修复后
+//     （点菜单项 ⇒ 命令分发 + 语义 #2 关浮层），点项会关 —— 那是**正确**
+//     行为。本用例要测的是"点空白不关"，故移到面板右下 padding
+//     （项区右界 x=150、下界 y≈70.6，取 (w−6, h−6) 必空白）。
 $menuApp->showMenu($fileMenu->panel());
 $menuApp->frame(32.0, $tight320); // 走一帧 ⇒ 落位算过（menuOrigin 才准）
 [$mx2, $my2] = $menuApp->menuOrigin();
-$menuApp->dispatchInput(PointerEvent::down($mx2 + 20.0, $my2 + 20.0));
+$panelBox2 = $menuApp->menuElement()?->effectiveBox();
+$menuApp->dispatchInput(PointerEvent::down(
+    $mx2 + ($panelBox2?->size()?->width ?? 160.0) - 6.0,
+    $my2 + ($panelBox2?->size()?->height ?? 80.0) - 6.0,
+));
 check('浮层 · 点面板内 ⇒ 不关（指针先归浮层，语义 #1 的另一半）', $menuApp->isMenuOpen());
 $menuApp->dispatchInput(KeyEvent::down(KeyChord::escape()));
+
+// —— 浮层项指针激活：点菜单项 ⇒ 命令分发 + 语义 #2 分发后关浮层（与 Enter 同路）
+$ptrMenuApp = new MenuApplication();
+$ptrMenuApp->attach($menuSurface, BoxConstraints::tight(new Size(320.0, 240.0)));
+$ptrMenuApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
+$ptrMenuApp->dispatchInput(KeyEvent::down(KeyChord::enter()));   // 键盘打开「文件」菜单
+$ptrMenuApp->frame(16.0, $tight320);                             // 走一帧 ⇒ 浮层落位（menuOrigin 才准、盒才有尺寸）
+check('浮层 · 菜单已开（指针项激活用例前置）', $ptrMenuApp->isMenuOpen());
+$itemEl = findElement($ptrMenuApp->menuElement(), fn (Element $e): bool => $e->widget() instanceof MenuItem);
+$itemBox = $itemEl?->effectiveBox();
+[$mmx, $mmy] = $ptrMenuApp->menuOrigin();
+[$ibx, $iby] = $itemBox === null ? [0.0, 0.0] : boxOrigin($itemBox);
+$ibw = $itemBox?->size()?->width ?? 0.0;
+$ibh = $itemBox?->size()?->height ?? 0.0;
+$ptrMenuApp->dispatchInput(PointerEvent::down($mmx + $ibx + $ibw / 2, $mmy + $iby + $ibh / 2));
+check(
+    '浮层 · 指针点菜单项 ⇒ 命令分发 + 分发后关浮层（语义 #2，与 Enter 同路）',
+    $ptrMenuApp->seen === ['menu.refresh'] && !$ptrMenuApp->isMenuOpen(),
+    'seen=' . implode(',', $ptrMenuApp->seen) . ' open=' . ($ptrMenuApp->isMenuOpen() ? 'yes' : 'no'),
+);
 
 // —— 应用内拖放（§A.3.5）：状态机可驱动（真机指针序列等 M4）
 $dragApp = $menuApp;
