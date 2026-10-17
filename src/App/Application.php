@@ -14,6 +14,7 @@ use Drift\Input\InputEvent;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
+use Drift\Input\ScrollEvent;
 use Drift\Input\ThemeChangedEvent;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderPopupPanel;
@@ -24,6 +25,7 @@ use Drift\Text\DeterministicShaper;
 use Drift\Geometry\Rect;
 use Drift\Text\TextMetricsProvider;
 use Drift\Widget\TextFieldState;
+use Drift\Widget\ScrollViewState;
 use Drift\Theme\ThemeData;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
@@ -597,7 +599,61 @@ abstract class Application
             return $focus->cursorOf($hit);
         }
 
+        if ($event instanceof ScrollEvent) {
+            // 滚轮（2026-10-17）：命中 → 沿命中链找最近的 ScrollViewState → scrollBy。
+            //
+            // ★ 与指针分支同构的三段：**浮层开着 ⇒ 先归浮层**（长菜单自己滚），
+            //   轮在浮层外 ⇒ 不穿透滚主树（同语义 #1：否则"关菜单"翻掉整页）。
+            //   ★ 命中一次、就滚那一个：指针停在哪个视口里就滚哪个 —— 多个滚动
+            //   容器各自滚动，外层的视口不吞内层的事件（scrollAt 只找最近的）。
+            if ($this->menuElement !== null) {
+                $menuBox = $this->menuElement->effectiveBox();
+
+                if ($menuBox !== null && $this->hitsMenu($event, $menuBox)) {
+                    $hit = $focus->hitTest($event->x - $this->menuX, $event->y - $this->menuY, $this->menuElement);
+                    $element = $hit === null ? null : $focus->elementAt($this->menuElement, $hit);
+                    $this->scrollAt($element, $event->delta);
+
+                    return null;
+                }
+
+                return null; // 浮层开着、轮在浮层外：不穿透
+            }
+
+            $hit = $focus->hitTest($event->x, $event->y, $root);
+            $element = $hit === null ? null : $focus->elementAt($root, $hit);
+            $this->scrollAt($element, $event->delta);
+
+            return null;
+        }
+
         return null;
+    }
+
+    /**
+     * 沿命中 Element 的父链找**最近**的可滚动视口并滚动它（滚轮路由）。
+     *
+     * ★ 找不到 ⇒ 无事发生（轮在不可滚动的区域上是合法的，不报错、不改光标）。
+     * ★ **只找最近的**：嵌套滚动容器里，轮落在内层上就只滚内层 —— 外层的
+     *   视口不吞内层的事件（§A.15：不预先发明没消费者的相位/规则，嵌套滚动的
+     *   "滚动到边界再传给外层"留给真有消费者时）。
+     *
+     * @internal 由 dispatchInput() 的 ScrollEvent 分支调
+     */
+    private function scrollAt(?Element $element, float $delta): void
+    {
+        for ($node = $element; $node !== null; $node = $node->parent()) {
+            if (!$node instanceof StatefulElement) {
+                continue;
+            }
+
+            $state = $node->state();
+            if ($state instanceof ScrollViewState) {
+                $state->scrollBy($delta);
+
+                return;
+            }
+        }
     }
 
     /** 指针是否落在浮层面板盒内（§9.1 语义 #1 的判据） */

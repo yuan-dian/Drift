@@ -55,13 +55,14 @@ enum EventKind {
     kEvKey,
     kEvChar,
     kEvTheme,
+    kEvWheel,
 };
 
 struct PendingEvent {
     int kind;
-    int a;   // resize: w ／ dpi: dpi ／ timer: id ／ pointer: x ／ key: — ／ char: —
-    int b;   // resize: h ／ pointer: y ／ —
-    int c;   // pointer: button ／ key: modifier 位（1=ctrl 2=alt 4=shift）／ —
+    int a;   // resize: w ／ dpi: dpi ／ timer: id ／ pointer: x ／ wheel: x ／ key: — ／ char: —
+    int b;   // resize: h ／ pointer: y ／ wheel: y ／ —
+    int c;   // pointer: button ／ wheel: delta（WHEEL_DELTA=120 为一格，正=内容上移）／ key: modifier 位（1=ctrl 2=alt 4=shift）／ —
     std::string text;   // key: 键名 ／ char: UTF-8 文本
 };
 
@@ -354,6 +355,24 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
 
+        case WM_MOUSEWHEEL: {
+            // ★ 与鼠标按键消息不同：滚轮的 `GET_X_LPARAM`/`GET_Y_LPARAM` 给的是
+            //   **屏幕**坐标 ⇒ 必须 ScreenToClient，否则"滚对了距离、位置差一个
+            //   窗口原点"（命中测试判在窗外 ⇒ 轮被吞，静默）。
+            // ★ 符号：向前滚（远离用户）= 正 = 内容上移（看下面）—— 与
+            //   ScrollEvent::$delta 的约定一致（PHP 侧只 /120 收成格，不改符号）。
+            POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+            ScreenToClient(g_main, &pt);
+
+            PendingEvent event = {};
+            event.kind = kEvWheel;
+            event.a = (int)pt.x;
+            event.b = (int)pt.y;
+            event.c = GET_WHEEL_DELTA_WPARAM(wp);
+            enqueue(event);
+            return 0;
+        }
+
         case WM_KEYDOWN: {
             std::string name = keyNameFromVk(wp);
             if (name.empty()) {
@@ -514,6 +533,13 @@ Array toArray(const PendingEvent &event) {
         case kEvChar:
             out.set("type", "char");
             out.set("text", String(event.text));
+            break;
+
+        case kEvWheel:
+            out.set("type", "wheel");
+            out.set("x", (Int)event.a);
+            out.set("y", (Int)event.b);
+            out.set("delta", (Int)event.c);
             break;
 
         case kEvTheme:

@@ -27,6 +27,9 @@ final class ProxyElement extends StatelessElement
         if ($widget instanceof Expanded) {
             return [$widget->child()];
         }
+        if ($widget instanceof ScrollViewBox) {
+            return [$widget->child()];
+        }
         if ($widget instanceof PopupPanel) {
             return [$widget->child()];
         }

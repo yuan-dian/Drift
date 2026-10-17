@@ -56,6 +56,7 @@ use Drift\Dev\Smoke\App\CursorApplication;
 use Drift\Dev\Smoke\App\EchoApplication;
 use Drift\Dev\Smoke\App\TfApplication;
 use Drift\Dev\Smoke\App\ThemeApplication;
+use Drift\Dev\Smoke\App\ScrollApplication;
 use Drift\Dev\Smoke\App\NavApplication;
 use Drift\Dev\Smoke\LeafProbe;
 use Drift\Dev\Smoke\Routing\NavStore;
@@ -82,6 +83,7 @@ use Drift\Input\FocusNode;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
+use Drift\Input\ScrollEvent;
 use Drift\Layout\FlexAlign;
 use Drift\Layout\Overflow;
 use Drift\Layout\RenderAppBar;
@@ -92,6 +94,7 @@ use Drift\Layout\RenderDock;
 use Drift\Layout\RenderErrorBoundary;
 use Drift\Layout\RenderFlex;
 use Drift\Layout\RenderFlexible;
+use Drift\Layout\RenderScrollView;
 use Drift\Layout\RenderPadding;
 use Drift\Layout\RenderProxyBox;
 use Drift\Layout\RenderMenuItem;
@@ -4549,6 +4552,155 @@ check(
     'TaskHost · 闭包签名收窄真的在生效（传错类型 ⇒ TypeError，不是静默）',
     $typeError !== '',
     $typeError,
+);
+
+// ── 可滚动容器（P1 / 2026-10-17）：偏移进坐标链 + 滚轮路由 ──────────
+//   两条线：① 布局层直接测 `RenderScrollView`（视口 / maxScroll 夹取 / 命中按视口判 /
+//   **偏移进子盒 offset 而非 paint 期 translate** —— 2026-10-17 padding 缺陷的同族判据，
+//   "画在哪 vs 命中哪"的交叉验证此前是结构性盲区）；② 应用层测
+//   `ScrollEvent → dispatchInput → scrollAt → scrollBy → 帧末重建 → 盒偏移` 全链。
+//   ★ 反例自检：把偏移改回 paint 期 translate（setOffset 去掉、paint 里加 translate）
+//   ⇒ ①线 3 条 FAIL（offsetY 恒 0）+ ②线 2 条 FAIL（命中/绘制错位），诊断值精确显示形态。
+$scrollChildOf = static function (?RenderScrollView $box): ?RenderBox {
+    if ($box === null) {
+        return null;
+    }
+    $kid = null;
+    $box->visitChildren(function (RenderObject $child) use (&$kid): void {
+        $kid = $child;
+    });
+
+    return $kid instanceof RenderBox ? $kid : null;
+};
+
+// ① 布局层：内容 100×1000，视口 100×300
+$sv0 = new RenderScrollView(0.0, true);
+$sv0->setChild(new SolidBox(new Size(100.0, 1000.0), 100.0, 1000.0));
+$sv0Size = $sv0->layout(new BoxConstraints(0.0, 100.0, 0.0, 300.0));
+$sv0Kid = $scrollChildOf($sv0);
+check(
+    'Scroll · 视口 = 约束上限（内容 1000 高 ⇒ 盒停在 100×300，不撑成内容高）',
+    $sv0Size->width === 100.0 && $sv0Size->height === 300.0,
+    sprintf('%.1f×%.1f', $sv0Size->width, $sv0Size->height),
+);
+check(
+    'Scroll · maxScroll = 内容主轴 − 视口主轴（1000−300 = 700）',
+    $sv0->maxScroll() === 700.0,
+    (string) $sv0->maxScroll(),
+);
+check(
+    'Scroll · 偏移 0 ⇒ 子盒 offsetY = 0（偏移落在子盒 offset 上，不是别处）',
+    $sv0Kid?->offsetY() === 0.0,
+    (string) ($sv0Kid?->offsetY() ?? -1.0),
+);
+check(
+    'Scroll · 命中按视口判定：视口内的点进子树（内容超长仍命中）',
+    $sv0->hitTest(50.0, 250.0) === $sv0Kid,
+    $sv0->hitTest(50.0, 250.0) === $sv0Kid ? 'hit' : 'miss',
+);
+check(
+    'Scroll · 视口外的点进不了子树（"裁掉的部分点不到"是结构保证）',
+    $sv0->hitTest(50.0, 350.0) === null,
+    $sv0->hitTest(50.0, 350.0) === null ? 'null' : 'hit',
+);
+
+// ① 布局层：偏移 300 ⇒ 子盒 offsetY = −300（★ 坐标链判据）
+$sv1 = new RenderScrollView(300.0, true);
+$sv1->setChild(new SolidBox(new Size(100.0, 1000.0), 100.0, 1000.0));
+$sv1->layout(new BoxConstraints(0.0, 100.0, 0.0, 300.0));
+$sv1Kid = $scrollChildOf($sv1);
+check(
+    'Scroll · 偏移 300 ⇒ 子盒 offsetY = −300（★ 偏移进子盒 offset，不是 paint 期 translate）',
+    $sv1Kid?->offsetY() === -300.0 && $sv1->appliedOffset() === 300.0,
+    'offsetY=' . ($sv1Kid?->offsetY() ?? -1.0) . ' applied=' . $sv1->appliedOffset(),
+);
+check(
+    'Scroll · 滚动后命中跟随偏移：视口 (50,250) 命中内容第 550 行（局部坐标跟着偏移走）',
+    $sv1->hitTest(50.0, 250.0) === $sv1Kid,
+    $sv1->hitTest(50.0, 250.0) === $sv1Kid ? 'hit' : 'miss',
+);
+
+// ① 布局层：越界夹取（"内容飞走"的静默形态 ⇒ 结构上不可能）
+$sv2 = new RenderScrollView(9999.0, true);
+$sv2->setChild(new SolidBox(new Size(100.0, 1000.0), 100.0, 1000.0));
+$sv2->layout(new BoxConstraints(0.0, 100.0, 0.0, 300.0));
+check(
+    'Scroll · 越界偏移被 maxScroll 夹住（9999 ⇒ 700 ⇒ offsetY = −700）',
+    $sv2->appliedOffset() === 700.0 && $scrollChildOf($sv2)?->offsetY() === -700.0,
+    'applied=' . $sv2->appliedOffset(),
+);
+
+// ① 布局层：父无界 ⇒ 视口跟着内容走（不滚）
+$sv3 = new RenderScrollView(9999.0, true);
+$sv3->setChild(new SolidBox(new Size(100.0, 1000.0), 100.0, 1000.0));
+$sv3->layout(BoxConstraints::unbounded());
+check(
+    'Scroll · 父无界 ⇒ 视口跟着内容走（不滚：maxScroll = 0，偏移归 0）',
+    $sv3->maxScroll() === 0.0 && $sv3->appliedOffset() === 0.0 && $scrollChildOf($sv3)?->offsetY() === 0.0,
+    'maxScroll=' . $sv3->maxScroll(),
+);
+
+// ① 布局层：横向
+$sv4 = new RenderScrollView(120.0, false);
+$sv4->setChild(new SolidBox(new Size(800.0, 50.0), 800.0, 50.0));
+$sv4->layout(new BoxConstraints(0.0, 400.0, 0.0, 50.0));
+check(
+    'Scroll · 横向滚动：偏移进 offsetX（内容 800 宽，视口 400 ⇒ maxScroll = 400）',
+    $sv4->maxScroll() === 400.0 && $scrollChildOf($sv4)?->offsetX() === -120.0,
+    'maxScroll=' . $sv4->maxScroll(),
+);
+
+// ② 应用层：滚轮全链（命中 → 找视口 → scrollBy → 重建 → 盒偏移）
+$scrollApp = new ScrollApplication();
+$scrollApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
+$sb0 = $scrollApp->scrollBox();
+$scrollMax = $sb0?->maxScroll() ?? 0.0;
+check(
+    'Scroll · 应用：视口盒存在且内容超长（maxScroll > 100 ⇒ 真能滚）',
+    $sb0 !== null && $scrollMax > 100.0,
+    'maxScroll=' . $scrollMax,
+);
+check(
+    'Scroll · 应用：未滚时子盒 offsetY = 0',
+    $scrollChildOf($sb0)?->offsetY() === 0.0,
+    (string) ($scrollChildOf($sb0)?->offsetY() ?? -1.0),
+);
+
+$scrollApp->dispatchInput(ScrollEvent::make(150.0, 100.0, 60.0));
+$scrollApp->frame(16.0, BoxConstraints::loose(new Size(300.0, 200.0)));
+check(
+    'Scroll · 应用：滚轮 +60 ⇒ 重建后偏移进盒（子盒 offsetY = −60）',
+    $scrollChildOf($scrollApp->scrollBox())?->offsetY() === -60.0,
+    'offsetY=' . ($scrollChildOf($scrollApp->scrollBox())?->offsetY() ?? -1.0),
+);
+
+// ★ scrollBy 是**相对**滚动（Δ 累加）⇒ 夹取测试用远超当前偏移的量：
+//   从 60 起 +999999 ⇒ 夹在 maxScroll；再 -9999999 ⇒ 夹在 0。
+$scrollApp->dispatchInput(ScrollEvent::make(150.0, 100.0, 999999.0));
+$scrollApp->frame(17.0, BoxConstraints::loose(new Size(300.0, 200.0)));
+check(
+    'Scroll · 应用：滚出上界 ⇒ 夹在 maxScroll（内容不飞出视口）',
+    $scrollChildOf($scrollApp->scrollBox())?->offsetY() === -$scrollMax,
+    'offsetY=' . ($scrollChildOf($scrollApp->scrollBox())?->offsetY() ?? -1.0) . ' max=' . $scrollMax,
+);
+
+$scrollApp->dispatchInput(ScrollEvent::make(150.0, 100.0, -9999999.0));
+$scrollApp->frame(18.0, BoxConstraints::loose(new Size(300.0, 200.0)));
+check(
+    'Scroll · 应用：滚出下界 ⇒ 夹在 0（scrollBy 的下界夹取生效）',
+    $scrollChildOf($scrollApp->scrollBox())?->offsetY() === 0.0,
+    'offsetY=' . ($scrollChildOf($scrollApp->scrollBox())?->offsetY() ?? -1.0),
+);
+
+$scrollApp->dispatchInput(ScrollEvent::make(150.0, 100.0, 50.0));
+$scrollApp->frame(19.0, BoxConstraints::loose(new Size(300.0, 200.0)));
+$beforeOutside = $scrollChildOf($scrollApp->scrollBox())?->offsetY();
+$scrollApp->dispatchInput(ScrollEvent::make(150.0, 250.0, 50.0));   // y=250 在视口（200）外
+$scrollApp->frame(20.0, BoxConstraints::loose(new Size(300.0, 200.0)));
+check(
+    'Scroll · 应用：轮落在视口外 ⇒ 命不中不滚（偏移不变）',
+    $scrollChildOf($scrollApp->scrollBox())?->offsetY() === $beforeOutside,
+    'before=' . ($beforeOutside ?? -1.0) . ' after=' . ($scrollChildOf($scrollApp->scrollBox())?->offsetY() ?? -1.0),
 );
 
 fresh($log);

@@ -6,6 +6,7 @@ namespace Drift\Platform\Win32;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
+use Drift\Input\ScrollEvent;
 use Drift\Input\ThemeChangedEvent;
 use Drift\Platform\Clipboard;
 use Drift\Platform\Dialog;
@@ -126,6 +127,7 @@ final class Win32Platform implements Platform
      * | `dpi` | **丢弃**（当前无消费者）。表面尺寸/缩放由随行的 `WM_SIZE` ⇒ `resize` 事件驱动（§6.1 的量化点）；`layout()` 本就每帧全树跑（§13.3）⇒ 不需要额外触发 |
      * | `timer` | ⏳ M1 丢弃：`FrameClock` 归 M4，今天没有消费者 |
      * | `pointer` | ⇒ `PointerEvent::down()`（坐标除 dpr 转**逻辑**单位） |
+     * | `wheel` | ⇒ `ScrollEvent::make()`（坐标除 dpr；delta 收成"格"= 原始值 / 120） |
      * | `key` | ⇒ `KeyEvent::down(KeyChord::make(键名, ctrl, alt, shift))` |
      * | `char` | ⇒ `KeyEvent::character()` |
      * | `theme` | ⇒ `ThemeChangedEvent`（§9.2 系统主题变更；载荷为空，
@@ -181,6 +183,23 @@ final class Win32Platform implements Platform
                 (float) ((int) ($event['x'] ?? 0)) / $dpr,
                 (float) ((int) ($event['y'] ?? 0)) / $dpr,
                 (int) ($event['button'] ?? 0),
+            ));
+
+            return true;
+        }
+
+        if ($type === 'wheel') {
+            // ★ 与指针同口径：坐标除 dpr 转逻辑单位；delta 是桥给的原始
+            //   WHEEL_DELTA 倍数（一格 = 120），这里收成"格"—— 逻辑单位才是
+            //   §6.1 的量化点分界（平台只做一次量化，框架侧不做位运算）。
+            $dpr = $this->screen()->scale();
+            if ($dpr <= 0.0) {
+                $dpr = 1.0;
+            }
+            $input->push(ScrollEvent::make(
+                (float) ((int) ($event['x'] ?? 0)) / $dpr,
+                (float) ((int) ($event['y'] ?? 0)) / $dpr,
+                (float) ((int) ($event['delta'] ?? 0)) / 120.0,
             ));
 
             return true;
