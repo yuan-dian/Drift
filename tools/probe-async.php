@@ -35,7 +35,11 @@ const LIST_Y0 = 220;          // 列表区起点（逻辑像素）：工具条/�
 const LIST_Y1 = 640;
 const LIST_MIN_PCT = 4.0;     // 列表区"有墨"的下限（Ready 实测 9.3%，错误态 ≈0%）
 const SAMPLES = 30;
-const INTERVAL_MS = 100;
+/** ★ 采样间隔（ms）。**不能取 100**：`Spinner` 的相位以 8 帧为周期（8 × 15.6ms ≈ 125ms），
+ *  而 `Sleep(100)` 加抓图开销 ~8ms ⇒ 实际间隔漂到 ~108ms，偶尔正好落 8 帧 ⇒ 相位回到
+ *  原点 ⇒ 相邻两格**像素完全相同** ⇒ 帧间变化 0（实测 6/8 的假红）。70ms ≈ 4.5 帧，
+ *  与 8 帧周期不成整数倍，撞不上。 */
+const INTERVAL_MS = 70;
 /** ★ 首帧落地前 `BitBlt` 抓到的是**屏幕残留**（实测 7.2%，下一帧 0.0%）⇒ 先等一下。
  *  见 `probe-grab.cc` 的 bug ②。200ms 远小于 mock 的 1.2s，不会盖住 Loading 期。 */
 const SETTLE_MS = 200;
@@ -318,10 +322,15 @@ $residual = $countCode === 0 ? (int) trim(str_replace('procs=', '', trim($countO
 // ──────────────────────────────────────────────────────────── 判据 ──
 
 step('判据');
-// ⑦ Loading 期前 8 格必须几乎都在动（`Spinner` 相位每帧推进）。
-//   取 7/8 而不是 8/8：第一格跨着"首帧落地"，允许一次例外。
-$loadingMotion = array_slice($motion, 0, 8);
-$movingCount = count(array_filter($loadingMotion, static fn (int $c): bool => $c > 0));
+// ⑦ Loading 期画面必须**持续在动**（`Spinner` 相位每帧推进）。
+//   ★ 窗口按实测的切换时刻算，不写死"前 8 格"：settle 与启动耗时会变，写死就变成
+//   在赌时序。反例（`$this->animating = false`）在这一窗口里是 **0 格**在动。
+$loadingPairs = $crossedAt === null ? count($motion) : max(0, intdiv($crossedAt, INTERVAL_MS) - 1);
+$movingCount = count(array_filter(
+    array_slice($motion, 0, $loadingPairs),
+    static fn (int $c): bool => $c > 0
+));
+$motionFloor = max(3, (int) ceil($loadingPairs * 0.6));   // 容忍偶发的相位重合
 // ⑧ 收尾必须静止：Ready 后没有任何东西该继续画 ⇒ 帧间变化精确 0（不空转）。
 $restChanged = $motion === [] ? -1 : $motion[count($motion) - 1];
 
@@ -332,17 +341,19 @@ $results = [
     '④ 是后到的（末 > 首）' => $late > $early,
     '⑤ 进程数 ≥ 2（主 + worker）' => $procs >= 2,
     '⑥ 关窗后无残留' => $residual === 0,
-    '⑦ Loading 期 Spinner 真的在转' => $movingCount >= 7,
+    '⑦ Loading 期 Spinner 真的在转' => $loadingPairs >= 3 && $movingCount >= $motionFloor,
     '⑧ Ready 后静止（不空转）' => $restChanged === 0,
 ];
 foreach ($results as $label => $passed) {
     $passed ? ok($label) : bad($label);
 }
 fwrite(STDOUT, sprintf(
-    "  （进程数 = %d，残留 = %d，Loading 期在动 %d/8 格，收尾变化 %d 像素）\n",
+    "  （进程数 = %d，残留 = %d，Loading 窗口 %d 格 / 在动 %d 格（下限 %d），收尾变化 %d 像素）\n",
     $procs,
     $residual,
+    $loadingPairs,
     $movingCount,
+    $motionFloor,
     $restChanged
 ));
 
@@ -363,7 +374,7 @@ if (in_array(false, $results, true)) {
     if ($residual > 0) {
         fwrite(STDOUT, "  · 有残留进程：worker 没收到 stdin EOF（关窗没走 WM_CLOSE？）\n");
     }
-    if ($movingCount < 7) {
+    if ($movingCount < $motionFloor) {
         fwrite(STDOUT, "  · Loading 期画面不动：① `Application::tickAnimations()` 没在 settle 之前调" .
             " ② `SpinnerState::tickFrame()` 没覆写 / 没返回 true ③ 帧时钟根本没跑\n");
     }
