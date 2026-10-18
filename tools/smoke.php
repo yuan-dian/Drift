@@ -46,8 +46,12 @@ use Drift\Dev\Smoke\App\MenuApplication;
 use Drift\Dev\Smoke\App\ModalApplication;
 use Drift\Dev\Smoke\App\RecordingHandler;
 use Drift\Dev\Smoke\App\TaskRow;
+use Drift\Dev\Smoke\App\TaskApplication;
 use Drift\Dev\Smoke\App\TaskRowJob;
+use Drift\Dev\Smoke\App\TaskWatcherState;
+use Drift\Dev\Smoke\App\ThrowingJob;
 use Drift\Dev\Smoke\App\SumJob;
+use Drift\App\Completion;
 use Drift\App\Job;
 use Drift\App\SyncTaskHost;
 use Drift\App\TaskHost;
@@ -248,6 +252,16 @@ if (str_starts_with($caseArg, '--case=')) {
     if ($case === 'cmdup') {
         // 同名注册两次 ⇒ 后一次静默覆盖前一次。上线后"点了没反应"且查不出为什么。
         CommandRouter::make()->on('a.b', new EchoCommands())->on('a.b', new EchoCommands());
+    }
+
+    if ($case === 'taskerr') {
+        // 后台任务失败且**没给 onError** ⇒ 必须走 Fatal 序列（§17.4.2 的错误通道）：
+        // 吞掉就是"界面永远转圈"，与三态的 Error 分支（§A.2.9）矛盾。
+        $app = new TaskApplication();
+        $app->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(320.0, 240.0)));
+        $app->tasks()?->submit(new ThrowingJob('没人接的失败'), function (int $v): void {
+        });
+        $app->frame(16.0, BoxConstraints::loose(new Size(320.0, 240.0)));
     }
 
     if ($case === 'layout') {
@@ -5296,75 +5310,218 @@ check(
     $usersSurface->frameCount() === $framesBefore + 1,
 );
 
-// ── ㊱ TaskHost 端口：`Job` / `TaskHost` / `SyncTaskHost`（任务 #8：§17.2 后端 B）──
+// ── ㊱ TaskHost 端口：`Job` / `TaskHost` / `SyncTaskHost`（§17.2 后端 B）──
 //
-// ★ 后端 A（C++ 线程池）已被**探针 K 判死**（`probes/RESULTS.md` §11：类/对象/属性
-//   访问在 worker 线程上必崩，根因 = `php_request_cache` 只在 RINIT 里建）⇒ 这里断言的
-//   是**后端 B 的端口契约**（§17.2.3），四件事：
-//     ① `Job` 是**类**、参数走构造器、`run()` 无参（§O-03 方案 A）；
-//     ② `$onDone` 收到 `run()` 的返回值；
-//     ③ **同步回贴** —— 回调在 `submit()` 返回前、同一调用栈上执行
-//        （这才是"回调里可以改 Store + notifyChanged"的前提，§17.2.3）；
-//     ④ 端口搬得动**对象**，不只是标量（真实形态：`fetchPage()` 返回 `Page`）。
+// ★★ 2026-10-18 **P0 的语义变更**：从"同步直调 `$onDone`"改为"**入队 → 每帧 drain**"。
+//   同步后端仍在 `submit()` 时跑完 `run()`，但回调**不在** `submit()` 的调用栈上 ——
+//   它由 `drain()` 在 UI 线程的下一帧取出执行（§17.4.2 的两条不变量）。
+//   ★ 这条改动是**有意的**，理由见 `SyncTaskHost` 的类注释：换异步后端时
+//     "提交 → 某一帧拿到结果"的语义不变，业务代码不用动。**改回直调就是破坏它。**
+//   端口层判据（八条）：① 当帧不回调 ② drain 后回调/值正确/恰好一次 ③ drain 取走即清空
+//   ④ FIFO ⑤ 搬得动对象 ⑥ 签名收窄仍生效 ⑦ swap（drain 中新入队留到下一帧）
+//   ⑧ 错误通道（run 抛 ⇒ onError，不调 onDone）。应用层四条在 ㊲。
 //
-// ★ **诚实边界（未验，不假装已验）**：本端口**目前没有生产消费者** —— 设计里它的
-//   第一个消费者是 `HttpUserSource`（§A.2.8），归 M4（`apps/users` 在 M3 只发
-//   `MemoryUserSource`）。⇒ **AOT 可达性**只由 `drift-codegen` 门（`src/` 在 `sources` 里）
-//   覆盖到"翻译层"，**没有真机使用点**。这条缺口记在 §24.2。
+// ★ **诚实边界**：端口的**生产消费者**仍是 `HttpUserSource`（§A.2.8，归 M4）；
+//   本段是"端口契约"的判据，`apps/users` 走的是 `MemoryUserSource`（同步）。
 
 $tasks = new SyncTaskHost();
 check('TaskHost · `SyncTaskHost` 是端口的实现', $tasks instanceof TaskHost);
 check('TaskHost · `SumJob` 是 `Job` 的实现（类，不是闭包）', new SumJob(1) instanceof Job);
 
-// ③ 同步回贴：`submit()` 返回前回调就已执行（同一调用栈 ⇒ "UI 线程"平凡成立）
+// ① 当帧不回调：submit 只入队
 $delivered = [];
 $tasks->submit(new SumJob(10), function (int $sum) use (&$delivered): void {
     $delivered[] = $sum;
 });
 check(
-    'TaskHost · 同步后端 ⇒ 回调在 submit() 返回前执行（同调用栈）',
-    $delivered === [55],
+    'TaskHost · submit() 之后回调**未**执行（结果只在队列里，不在调用栈上）',
+    $delivered === [],
     'delivered=' . implode(',', $delivered),
 );
 
-// ② 值正确 + 回调**恰好一次**
-check('TaskHost · `Job::run()` 的返回值原样回贴（1+…+10 = 55）', $delivered === [55]);
+// ② drain 取出并回调：值正确 + 恰好一次
+$tasks->drain(function (Completion $c): void {
+    ($c->onDone)($c->value);
+});
+check(
+    'TaskHost · drain() 把结果交给 onDone（1+…+10 = 55）',
+    $delivered === [55],
+    'delivered=' . implode(',', $delivered),
+);
 check('TaskHost · 回调恰好一次（不是 0 次也不是 2 次）', count($delivered) === 1);
 
-// 顺序：连提交 ⇒ 回调按提交序（同步后端 = FIFO）
+// ③ drain = 取走：队列已清空 ⇒ 再 drain 不重复回调
+$tasks->drain(function (Completion $c): void {
+    ($c->onDone)($c->value);
+});
+check('TaskHost · drain() 取走即清空（再 drain 不重复回调）', count($delivered) === 1, (string) count($delivered));
+
+// ④ 顺序：连提交 ⇒ FIFO
 $order = [];
 $tasks->submit(new SumJob(1), function (int $n) use (&$order): void { $order[] = 'a' . $n; });
 $tasks->submit(new SumJob(3), function (int $n) use (&$order): void { $order[] = 'b' . $n; });
 $tasks->submit(new SumJob(6), function (int $n) use (&$order): void { $order[] = 'c' . $n; });
+$tasks->drain(function (Completion $c): void { ($c->onDone)($c->value); });
 check(
-    'TaskHost · 多任务按提交序回贴（同步后端 FIFO）',
+    'TaskHost · 多任务按提交序回贴（FIFO）',
     $order === ['a1', 'b6', 'c21'],
     'order=' . implode(',', $order),
 );
 
-// ④ 搬对象：闭包签名把 `mixed` 收窄成 `Row` ⇒ 回调拿到的就是 Job 造的那个类实例
+// ⑤ 搬对象：闭包签名把 `mixed` 收窄成 `TaskRow` ⇒ 回调拿到的就是 Job 造的那个实例
 $gotRow = null;
 $tasks->submit(new TaskRowJob('ada'), function (TaskRow $r) use (&$gotRow): void {
     $gotRow = $r;
 });
+$tasks->drain(function (Completion $c): void { ($c->onDone)($c->value); });
 check(
     'TaskHost · 端口搬得动类实例（`mixed` 由调用点闭包签名收窄）',
     $gotRow instanceof TaskRow && $gotRow->name === 'ada' && $gotRow->len === 3,
     $gotRow instanceof TaskRow ? $gotRow->name . '/' . $gotRow->len : 'null',
 );
 
-// ★ 反向自检：`mixed` 收窄不是"随便什么都收" —— 换个类型就该被 PHP 拦下（TypeError）。
+// ⑥ 反向自检：收窄不是"随便什么都收" —— 换类型就该被 PHP 拦下。
+//   ★ 抛点在 **drain()**（不是 submit）：队列把"回调时机"挪了，类型检查跟着挪 ——
+//     这正是"回调真的在 drain 里跑"的第二重证据。
 $typeError = '';
 try {
     $tasks->submit(new SumJob(1), function (TaskRow $r): void {});
+    $tasks->drain(function (Completion $c): void { ($c->onDone)($c->value); });
 } catch (\TypeError $e) {
     $typeError = $e->getMessage();
 }
 check(
-    'TaskHost · 闭包签名收窄真的在生效（传错类型 ⇒ TypeError，不是静默）',
+    'TaskHost · 闭包签名收窄在 drain 时生效（传错类型 ⇒ TypeError，不是静默）',
     $typeError !== '',
     $typeError,
 );
+
+// ⑦ swap 语义：drain 期间新入队的留到下一帧（否则"回调里再 submit"会让一帧无限长）
+$waves = [];
+$tasks->submit(new SumJob(1), function (int $n) use (&$waves, $tasks): void {
+    $waves[] = 'a' . $n;
+    $tasks->submit(new SumJob(2), function (int $m) use (&$waves): void { $waves[] = 'b' . $m; });
+});
+$tasks->drain(function (Completion $c): void { ($c->onDone)($c->value); });
+check(
+    'TaskHost · drain 期间新入队的留到下一帧（一帧的工作量有界）',
+    $waves === ['a1'],
+    'waves=' . implode(',', $waves),
+);
+$tasks->drain(function (Completion $c): void { ($c->onDone)($c->value); });
+check('TaskHost · 下一帧取到上一帧入队的（a1, b3 —— SumJob(2) = 3）', $waves === ['a1', 'b3'], 'waves=' . implode(',', $waves));
+
+// ⑧ 错误通道：`run()` 抛异常 ⇒ 走 onError（两条通道**互斥**，不是都调）
+$boom = null;
+$okCalled = 0;
+$tasks->submit(
+    new ThrowingJob('设备离线'),
+    function (int $v) use (&$okCalled): void { $okCalled++; },
+    function (\Throwable $e) use (&$boom): void { $boom = $e; },
+);
+$tasks->drain(function (Completion $c): void {
+    if ($c->error !== null) {
+        ($c->onError)($c->error);
+
+        return;
+    }
+    ($c->onDone)($c->value);
+});
+check(
+    'TaskHost · run() 抛异常 ⇒ 走 onError（异常原文带出）',
+    $boom instanceof \RuntimeException && str_contains($boom->getMessage(), '设备离线'),
+    $boom instanceof \Throwable ? $boom->getMessage() : 'null',
+);
+check('TaskHost · 失败任务**不**调 onDone（两条通道互斥）', $okCalled === 0, (string) $okCalled);
+
+// ── ㊲ P0 接线：结果队列接进帧循环（§17.4.2 的帧驱动 + 同帧重建）──────────
+//
+// ★ 判据只有**应用层**测得出：端口层的 drain 是手调的，看不出"帧有没有驱动它"、
+//   也看不出"drain 排在 settle 之前"。
+//   ★ 反例自检（T1 后手做）：把 `Application::frame()` 里的 `pumpTasks()` 挪到
+//     `$frame->run(...)` 之后 ⇒ ②"同帧重建"必红（builds 不增、seen 是旧值）。
+
+$taskApp = new TaskApplication();
+$taskApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(320.0, 240.0)));
+$taskState = $taskApp->watcherState();
+check(
+    'P0 · 应用默认装上后台端口（`taskHost()` 默认 SyncTaskHost）',
+    $taskApp->tasks() instanceof TaskHost,
+);
+check(
+    'P0 · 挂载时 watcher 只建一次',
+    $taskState !== null && $taskState->builds === 1,
+    'builds=' . ($taskState?->builds ?? -1),
+);
+
+// ① 帧驱动：submit 之后当帧不回调，frame() 才回调
+$hit = 0;
+$taskApp->tasks()?->submit(new SumJob(4), function (int $sum) use (&$hit): void {
+    $hit = $sum;
+});
+check('P0 · submit() 之后回调未执行（帧还没来）', $hit === 0, (string) $hit);
+$taskApp->frame(16.0, BoxConstraints::loose(new Size(320.0, 240.0)));
+check('P0 · frame() 的 drain 段执行了回调（1+2+3+4 = 10）', $hit === 10, (string) $hit);
+
+// ② 同帧重建：`onDone` 里改 Store ⇒ 本帧 settle 就重建（drain 在 settle **之前**）
+$buildsBefore = $taskState?->builds ?? -1;
+$taskApp->tasks()?->submit(new SumJob(3), function (int $sum) use ($taskApp): void {
+    $taskApp->store->setStatus($sum * 10); // 6 ⇒ 60
+});
+$taskApp->frame(32.0, BoxConstraints::loose(new Size(320.0, 240.0)));
+check(
+    'P0 · onDone 里改 Store ⇒ **同帧**重建（builds +1 且读到新值）',
+    $taskState !== null && $taskState->builds === $buildsBefore + 1 && $taskState->seen === 60,
+    sprintf('builds %d→%d seen=%d', $buildsBefore, $taskState?->builds ?? -1, $taskState?->seen ?? -1),
+);
+
+// ③ 队列空了就不再回调（下一帧不重建）—— "结果不会被重复交付"
+$buildsAfter = $taskState?->builds ?? -1;
+$taskApp->frame(48.0, BoxConstraints::loose(new Size(320.0, 240.0)));
+check(
+    'P0 · 队列空了就不再回调（下一帧不重建）',
+    $taskState !== null && $taskState->builds === $buildsAfter,
+    'builds=' . ($taskState?->builds ?? -1),
+);
+
+// ④ 失败走 onError（应用层）：回调抛错不许拖垮帧循环
+$caught = null;
+$taskApp->tasks()?->submit(
+    new ThrowingJob('服务不可达'),
+    function (int $v): void {
+    },
+    function (\Throwable $e) use (&$caught): void {
+        $caught = $e;
+    },
+);
+$taskApp->frame(64.0, BoxConstraints::loose(new Size(320.0, 240.0)));
+check(
+    'P0 · 应用层失败走 onError（帧照常走完）',
+    $caught instanceof \RuntimeException && $caught->getMessage() === '服务不可达',
+    $caught instanceof \Throwable ? $caught->getMessage() : 'null',
+);
+
+// ⑤ 不装端口：`taskHost()` 返回 null ⇒ 不建端口、frame() 照常
+$noTaskApp = new TaskApplication();
+$noTaskApp->withTasks = false;
+$noTaskApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(320.0, 240.0)));
+check('P0 · taskHost() 返回 null ⇒ 不装端口', $noTaskApp->tasks() === null);
+$noTaskApp->frame(16.0, BoxConstraints::loose(new Size(320.0, 240.0)));
+check('P0 · 无端口时 frame() 行为不变（drain 段整段跳过）', $noTaskApp->root() !== null);
+
+// ⑥ 未给 onError ⇒ Fatal 序列（三态的 Error 分支不能被静默吞掉）
+fresh($log);
+[$code, $taskErrOut] = runCase(__FILE__, 'taskerr', null);
+check(
+    'P0 · 任务失败且未给 onError ⇒ Fatal（响亮，不静默）',
+    $code === 3,
+    '实际 ' . $code . ' / ' . $taskErrOut,
+);
+check('P0 · 未给 onError 写了 Errors.log', str_contains(logText($log), '未提供 onError'));
+fresh($log);
+if (is_file($log)) {
+    unlink($log);
+}
 
 // ── 可滚动容器（P1 / 2026-10-17）：偏移进坐标链 + 滚轮路由 ──────────
 //   两条线：① 布局层直接测 `RenderScrollView`（视口 / maxScroll 夹取 / 命中按视口判 /

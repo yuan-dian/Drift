@@ -485,3 +485,39 @@ Spinner → M2 conformance 运行器 → 多页外壳（`Dock`/`AppBar`/`NavButt
 ★ **`maxScroll<=0` 早退是结构必需不是美学**：`appliedOffset()/max` 在 max=0 时 0/0 ⇒ PHP 8 `DivisionByZeroError`（删掉它 smoke 当场 Fatal —— 反例自检 ③ 以"响亮失败"形态被抓，按 §20 纪律算被抓住）。
 
 **验证**：smoke **669 ok / 0 FAIL**（+6：thumb 贴顶/贴底/中段不随内容平移/不溢出不画/横向 + 每格 48px 与累加）· lint 299 文件 0/0 · codegen 204 全翻译 0 skip · `drift-build users` 7.3MB + `probe-scrollbar.py`（thumb 6×394 + 滚 1 格 thumb 下移 37px = 48/64×50 travel ⇒ 步长端到端生效；反向 1 格回移 37px 加减对称）。反例自检三连全过（translate 回来 ⇒ 2 红；删换算 ⇒ 2 红且诊断值 `offsetY=-1/-2`；删早退 ⇒ 0/0 Fatal）。
+
+### 7.9 P0：TaskHost 结果队列 + 每帧 drain（2026-10-18）
+
+**语义变更（有意）**：`$onDone` 从"`submit()` 的调用栈上同步执行"改为"**某一帧的 drain 里执行**"。
+同步后端仍然在 submit 时跑完 `run()`，只是结果先进队列；`Application::frame()` 的第一段把它取出来。
+★ 依据是 §17.2.7 的横向核对：Qt queued connection / WPF Dispatcher / Godot MessageQueue / Dart Port
+**没有一个直接调回调**。★ 这条不改，"换后端是组合根一行"就是假的 —— 业务代码会依赖"提交完立刻拿到结果"。
+
+**落地**：
+- `Completion`（`@internal`）：值 / 异常 / 两个回调。放一个数组里就是"用位置记语义"，第六个字段来了必错。
+- `TaskHost`：`submit(Job, onDone, ?onError)` + `drain(callable $onEach)`。
+- `SyncTaskHost`：`submit` 入队（`run()` 的异常就地转进 error 通道）、`drain` **swap 取快照**再清空
+  ⇒ 回调里再 `submit()` 留到下一帧，"一帧的工作量有界"（帧预算 P1 的前提）。
+- `Application`：`taskHost()` 注入点（**attach 时建一次并缓存** —— 后端持有队列，每帧现建会让入队/取走
+  分属两个队列）、`tasks()` 读法、`frame()` 里 `pumpTasks()`（**在 `Frame::run()` 之前** = 在 settle 之前）、
+  `complete()`（失败且无人接 ⇒ `Errors::report` 的 Fatal 序列，不许"界面永远转圈"）。
+
+**判据**（smoke +16 条）：端口八条（当帧不回调 / drain 后回调且恰好一次 / 取走即清空 / FIFO /
+搬得动对象 / 签名收窄在 **drain 时**生效 / swap / 错误通道两条互斥）+ 应用层六条
+（默认装端口 / 挂载建一次 / frame 驱动 / **onDone 改 Store ⇒ 同帧重建** / 队列空了不再回调 /
+无端口时 frame 照常 / 未给 onError ⇒ Fatal + Errors.log）。
+
+★ **三连反例自检全中**（判据都有牙齿）：
+① `pumpTasks()` 挪到 `$frame->run()` 之后 ⇒ "同帧重建"红，诊断值 `builds 1→1 seen=0`（精确显示"没重建"）；
+② `drain` 不清空队列 ⇒ "取走即清空"红（重复交付）；③ 改回同步直调 ⇒ "submit 之后回调未执行"红（`delivered=55`）。
+
+★ **踩到的两条**：
+- **判据自己写错**（与 7.6 的"探针统计去重"同族）：`SumJob(2)` 的结果是 1+2=3，我断言里写 `b2` ⇒ 一条 FAIL。
+  断言失败时**先怀疑判据**，再怀疑代码。
+- **锚点行尾**：`Application.php` 是 CRLF、`SyncTaskHost.php` 是 LF ⇒ 自检脚本的三引号锚点必须按目标文件
+  转换行尾（否则"锚点未命中"，看起来像反例不成立）。已在脚本里加 `conv()`。
+
+**验证**：smoke **688 ok / 0 FAIL**（+16）· lint 305 文件 0 error 0 warn · codegen 205 全翻译 0 skip ·
+`drift-build users` **7.4MB/19.1s** · 真机 `probe-window users` OK（DPI V2、无 Errors.log）。
+清点复测（`audit_42.py`）：`src/` **178 文件 / 153 `@api` / 点名 105 = 103 有文件 + 2 个 0 文件 / 未点名 75**
+（剩 2 个 0 文件：`GestureArena` · `SemanticsTree`，均属 M4/M5）。

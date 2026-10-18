@@ -161,6 +161,18 @@ abstract class Application
      */
     protected ?Modal $modal = null;
 
+    /**
+     * 后台执行端口（§17.2）—— `attach()` 时由 `taskHost()` 建一次并缓存。
+     *
+     * ★ **必须缓存实例**：后端持有结果队列，每次现建一个会让"这一帧入队、
+     *   下一帧 drain"落空（队列被换掉 ⇒ 结果永远等不到）。
+     *   ⇒ 与 `accelerators()`（每次现建也行）不同，本端口是**有状态**的。
+     *
+     * ★ `null` = 本应用不用后台任务（`taskHost()` 返回 null）⇒ `frame()` 的那段
+     *   drain 整个跳过，零开销。
+     */
+    protected ?TaskHost $tasks = null;
+
     /** @param iterable<string, CommandHandler> $handlers `commands()` 的返回值 */
     public function __construct(iterable $handlers = [])
     {
@@ -209,6 +221,38 @@ abstract class Application
         return ThemeData::light();
     }
 
+    /**
+     * 后台执行端口（§17.2）—— **组合根覆写它换后端**（§17.2.3 的"一行"）。
+     *
+     * ```php
+     * protected function taskHost(): ?TaskHost
+     * {
+     *     return new ProcessTaskHost(4);   // 换后端只改这一行
+     * }
+     * ```
+     *
+     * ★ **只在 `attach()` 调一次**（返回值被缓存）：后端持有队列，每次现建会让
+     *   "入队 / drain"分属两个队列。
+     * ★ 默认给 `SyncTaskHost`（永远可用）⇒ 任何应用**默认就有正确的异步语义**
+     *   （回调在帧内），只是"慢"；换真后端那天业务代码不用动。
+     * ★ 返回 `null` ⇒ 本应用不用后台任务（`frame()` 跳过 drain）。
+     *
+     * @api
+     */
+    protected function taskHost(): ?TaskHost
+    {
+        return new SyncTaskHost();
+    }
+
+    /**
+     * 已挂载的后台端口（`null` = 未挂载或应用声明不用）。
+     *
+     * @internal 测试与 devtools 读它；应用不该绕过 `submit()` 直接碰后端。
+     */
+    public function tasks(): ?TaskHost
+    {
+        return $this->tasks;
+    }
     /**
      * 加速键表（§9.1 路由链第 ① 环，焦点之前）。
      *
@@ -303,6 +347,9 @@ abstract class Application
     {
         // ★ UI 线程身份在**挂载之前**记：之后的任何回调都以此为准（§17.4.2.1）。
         $this->uiThreadId = \drift_thread_id();
+
+        // ★ 端口在挂载时建一次并缓存（它持有结果队列，不能每帧现建）。
+        $this->tasks = $this->taskHost();
 
         $context ??= new BuildContext(
             $constraints->maxWidth,
@@ -717,6 +764,12 @@ abstract class Application
         // ★ 帧必须在 UI 线程跑（§17.4.2.1）。成本 = 读一次 TEB + 一次整数比较。
         $this->assertUiThread('frame');
 
+        // ★★ ① 先把后台结果取出来（§17.4.2）—— **必须在 settle 之前**：
+        //   回调里 `setState()` 只标脏，紧随的 `Frame::run()` 第 ① 步就是 settle
+        //   ⇒ 同帧生效。放到 settle 之后，那次 setState 要等下一帧，
+        //   "loading → ready" 会闪一帧空（多一帧延迟，且用户看得见）。
+        $this->pumpTasks();
+
         // 浮层布局段（无界自尺寸 + 钉锚点 + 夹进客户区）—— 见 placeMenu()
         $this->placeMenu($constraints);
 
@@ -729,6 +782,64 @@ abstract class Application
         // ★ **浮层是第二棵树，也要进焦点链**（O-20 差异表 #2）—— 否则菜单项
         //   永远 Tab 不到。
         $this->focus?->collect($root, ...($this->menuElement !== null ? [$this->menuElement] : []));
+    }
+
+    /**
+     * 取后台结果并分派（§17.4.2 的第一步）。
+     *
+     * ★ 队列只能由 UI 线程消费 ⇒ 断言在这里（§17.4.2.1 的第二条断言位）。
+     * ★ 整体包一层 try/catch：用户回调抛异常**不许**穿过帧循环的剩余阶段。
+     *   处理策略与 `Frame::run()` 的 settle 段一致（S3：无边界 ⇒ Fatal 序列）——
+     *   **不吞**，吞掉就是"界面停在上一次的样子且不报错"（G2 明令禁止）。
+     */
+    private function pumpTasks(): void
+    {
+        $tasks = $this->tasks;
+        if ($tasks === null) {
+            return;
+        }
+
+        $this->assertUiThread('drain');
+
+        try {
+            $tasks->drain(function (Completion $completion): void {
+                $this->complete($completion);
+            });
+        } catch (\Throwable $e) {
+            Errors::report(sprintf(
+                '帧循环：后台结果回调未捕获异常 —— %s（%s:%d）',
+                $e->getMessage(),
+                basename($e->getFile()),
+                $e->getLine(),
+            ));
+        }
+    }
+
+    /**
+     * 把一条 `Completion` 送到对应回调（成功 → `onDone`，失败 → `onError`）。
+     *
+     * ★ **没给 `$onError` ⇒ Fatal 序列**：任务失败被静默吞掉就是"界面永远转圈"，
+     *   与三态的 `Error` 分支（§A.2.9）矛盾 —— 那是 G2 禁止的半静默。
+     */
+    private function complete(Completion $completion): void
+    {
+        if ($completion->error !== null) {
+            if ($completion->onError === null) {
+                Errors::report(sprintf(
+                    '后台任务失败（未提供 onError）—— %s: %s',
+                    get_class($completion->error),
+                    $completion->error->getMessage(),
+                ));
+
+                return;
+            }
+
+            ($completion->onError)($completion->error);
+
+            return;
+        }
+
+        ($completion->onDone)($completion->value);
     }
 
     /**
