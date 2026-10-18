@@ -2910,6 +2910,10 @@ UI 侧收到的是一个新的 `RuntimeException`（跨进程没有"同一个异
 
 - **不开 `Runtime::enableCoroutine`**：hook 是全局替换，开了之后非协程上下文的 `stream_select` 直接抛错（§17.2.6 实测）。
 - **不用 Swoole 协程**：`Event::dispatch()` 阻塞到下一个事件（50ms 定时器 ⇒ 单帧 57ms），且协程耗尽后再调会 Fatal。
+  ★★ **2026-10-18 复核：本条与上一条的旧证据都已推翻** —— `Swoole\Event` 不在官方 Windows 支持矩阵
+  （Windows 走 IOCP），用它是**用错 API**。正确的 `Coroutine\Scheduler` / `Co\run` 模型实测
+  1.2s HTTP 期间 tick 稳定 ~16ms、`longGaps(>50ms)=0`（探针 M/N，`probes/RESULTS.md`）。
+  ⇒ 协程档（P2）从「不做」改为「待评估」，本节的结论在重做之前**不要引用**。
 - **不做每任务 spawn 进程**：275ms/次（probes §12 ⑧）。
 - **不做"线程里跑 AOT 代码"**：需要上游 `php::thread_init()`（§17.2.5 追测）。
 - **不引入通用 Fiber 调度器**（第一版）：没有"顺序代码"消费者之前，它是过度设计。
