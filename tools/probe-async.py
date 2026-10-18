@@ -91,6 +91,25 @@ def non_white_ratio(data: bytes) -> float:
     return n / total if total else 0.0
 
 
+def ink_in_rows(data: bytes, w: int, h: int, y0: int, y1: int) -> float:
+    """只量 y0..y1 这几行的墨量。
+
+    ★ 为什么必须分区量（2026-10-18 的假绿教训）：**错误态**（"加载失败" + "重试"
+      两个控件）和 **Ready 态**（15 行列表）在整窗口径下都是 ~8.6% —— 顶部导航、
+      工具条、卡片边框占了大头，列表本身那点文字淹在里面。整窗阈值 8% 于是
+      对"取数失败"也成立，判据形同虚设。只量列表区才分得开。
+    """
+    total = 0
+    n = 0
+    for y in range(y0, min(y1, h)):
+        row = y * w * 4
+        for i in range(row, row + w * 4, 4):
+            total += 1
+            if data[i] < 245 or data[i + 1] < 245 or data[i + 2] < 245:
+                n += 1
+    return n / total if total else 0.0
+
+
 def main() -> int:
     # ① mock 必须在跑（后台取数请求它）
     try:
@@ -107,10 +126,24 @@ def main() -> int:
         print(f"✗ 找不到 {exe} —— 先跑 `php tools/drift-build.php users`")
         return 2
 
+    # ★★ **不能只写 `opcache.enable=0`**（2026-10-18 实测的假绿根因）：
+    #   `PHPRC` 会**覆盖** exe 同目录的 `php.ini` —— 那份是 `drift-build` 写的，
+    #   含 `extension=mbstring/openssl/curl`。临时 ini 只写 opcache 的话，
+    #   **worker 子进程**（同一 exe + `--drift-worker`）就没有 curl ⇒ `curl_init()`
+    #   未定义 ⇒ worker Fatal 退出 ⇒ 界面停在"加载失败"。
+    #   ⇒ 以 exe 同目录那份为底，只追加 opcache 关掉。
     ini_dir = tempfile.mkdtemp(prefix="drift-run-")
     ini = os.path.join(ini_dir, "php.ini")
-    with open(ini, "w", encoding="ascii") as fh:
-        fh.write("opcache.enable=0\n")
+    base = os.path.join(ROOT, "php.ini")
+    lines: list[str] = []
+    if os.path.isfile(base):
+        with open(base, "r", encoding="utf-8", errors="ignore") as fh:
+            lines = [ln.rstrip("\r\n") for ln in fh if ln.strip()]
+    else:
+        print(f"⚠ 没有 {base}（drift-build 的运行时 ini）—— worker 可能缺扩展")
+    lines.append("opcache.enable=0")
+    with open(ini, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
 
     env = dict(os.environ)
     env["PHPRC"] = ini
@@ -134,20 +167,36 @@ def main() -> int:
     user32.GetClientRect(hwnd, ctypes.byref(rect))
     w, h = rect.right - rect.left, rect.bottom - rect.top
 
-    early = non_white_ratio(grab(hwnd, w, h))
+    # 列表区起点（逻辑像素 220 起）：工具条/搜索框在上，15 行列表在下。
+    LIST_Y0, LIST_Y1 = 220, 640
+
+    raw_early = grab(hwnd, w, h)
+    early = non_white_ratio(raw_early)
+    early_list = ink_in_rows(raw_early, w, h, LIST_Y0, LIST_Y1)
+
     time.sleep(2.5)
-    late = non_white_ratio(grab(hwnd, w, h))
+
+    raw_late = grab(hwnd, w, h)
+    late = non_white_ratio(raw_late)
+    late_list = ink_in_rows(raw_late, w, h, LIST_Y0, LIST_Y1)
 
     # ② 进程数：主 + worker
     workers = proc_count()
 
     print(f"client = {w} x {h}")
     print(f"进程数 = {workers}（期望 2 = 主 + --drift-worker）")
-    print(f"Loading 时墨量 = {early * 100:.1f}%")
-    print(f"Ready   时墨量 = {late * 100:.1f}%（期望 ≥ 8%，列表 15 行）")
-    print(f"墨量差 = {(late - early) * 100:+.1f} 个百分点（期望 > 0：数据是**后到**的）")
+    print(f"Loading 时墨量 = {early * 100:.1f}%  列表区 = {early_list * 100:.1f}%")
+    print(f"Ready   时墨量 = {late * 100:.1f}%  列表区 = {late_list * 100:.1f}%")
+    print(f"列表区墨量差 = {(late_list - early_list) * 100:+.1f} 个百分点（期望 > 0：数据是**后到**的）")
 
-    ok = workers >= 2 and late >= 0.08 and late > early and w == 900 and h == 640
+    # ★ 判据只认**列表区**：整窗墨量对"加载失败"也成立（见 ink_in_rows 的注释）。
+    ok = (
+        workers >= 2
+        and late_list >= 0.04          # 15 行文字真的画出来了
+        and late_list > early_list     # 且是**后到**的（不是一开始就有）
+        and w == 900
+        and h == 640
+    )
 
     # ④ 关窗 ⇒ worker 跟着退
     user32.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
