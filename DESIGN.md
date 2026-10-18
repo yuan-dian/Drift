@@ -2934,7 +2934,7 @@ UI 侧收到的是一个新的 `RuntimeException`（跨进程没有"同一个异
 | 决策 | 取值 | 理由 |
 |---|---|---|
 | 帧间隔 | **15ms**（不是 16） | `SetTimer` 量化到 ~15.6ms 系统 tick；请求 16 落到**第二**个 tick（31ms ⇒ 32fps）。探针 M 实测同源（`sleep(0.016)`→31.6ms、`sleep(0.008)`→16.5ms） |
-| 何时跳 | `Application::wantsFrame()` | = 分片队列非空 ∨ `IoPoller::watchCount()>0` ∨ `TaskHost::pending()>0`。三件事都做完 ⇒ 停表 ⇒ **空闲 CPU 归零** |
+| 何时跳 | `Application::wantsFrame()` | = 分片队列非空 ∨ `IoPoller::watchCount()>0` ∨ `TaskHost::pending()>0` ∨ **有动画在跑**（§17.4.10）。四件事都做完 ⇒ 停表 ⇒ **空闲 CPU 归零** |
 | 谁来判 | **框架** | `TaskHost` 新增 `pending()`（在途 + 排队）：平台不知道"还有没有活"，只有框架知道 |
 | 循环在哪 | **仍在组合根** | `FrameClock` 只做"起/停定时器 + 跑一帧"，`while ($platform->pump())` 一个字没动（§5.2 裁决 1） |
 
@@ -2956,9 +2956,46 @@ UI 侧收到的是一个新的 `RuntimeException`（跨进程没有"同一个异
 ② 旧探针把 `PHPRC` 指到只写 `opcache.enable=0` 的临时 ini，**覆盖**了 exe 同目录那份
 （`drift-build` 写的，含 `extension=curl`）⇒ **worker 子进程**没有 curl ⇒ `curl_init()` 未定义
 直接 Fatal ⇒ 界面本来就停在错误态。现在：临时 ini **以 exe 同目录那份为底**，只追加 opcache 关掉。
+③（同一支量具的另一面，2026-10-18 重写时踩到）**客户区非空 ≠ 已画过第一帧**：窗口刚
+`ShowWindow` 时应用还没画，`BitBlt` 抓到的是**那块屏幕上的残留**（实测列表区 7.2%，下一帧 0.0%）
+⇒ 会把"首帧前的垃圾"读成"一开始就有内容"。探针加 `--settle=200`（远小于 mock 的 1.2s）。
 
 ★ 只有 `apps/users` 接了帧时钟（唯一有异步消费者的应用）。`hello` / `showcase` 的
 `wantsFrame()` 恒 `false` ⇒ 接不接行为相同；它们有异步时抄组合根那三行即可。
+
+#### 17.4.10 动画入口：`State::tickFrame()`（2026-10-18）
+
+**缺陷（同样不是优化）**：`SpinnerState::tick()` 从写下来那天起**零调用者** —— 相位永远停在 0，
+"转圈图"是一张静止的弧。这不是"动画没做"，是**框架没有"每帧推进"的入口**：`frame()` 依次做
+IO / 任务 / 分片 / settle / layout / paint，**没有任何一处问过"有没有东西要动"**。
+
+| 决策 | 取值 | 理由 |
+|---|---|---|
+| 钩子放哪 | `State::tickFrame(float $timestampMs): bool` | 动画相位是纯 UI 态（§11.5），本来就住 `State`；Widget 是不变的声明 |
+| 返回值 | `bool` = "**我还要下一帧**" | 直接喂 `wantsFrame()`；**不需要注册 / 注销** —— 卸载的元素不在树里，天然不再被调用 |
+| 谁来遍历 | `Application::tickAnimations()` | 在 `pumpSliced()` 之后、`Frame::run()` **之前** —— `tickFrame()` 里的 `setState()` 由紧随的 settle 段消费，**同帧生效**（放到 settle 之后会慢一帧） |
+| 走几棵树 | **两棵**（`$root` + `$menuElement`） | 与 `focus->collect()` / `placeMenu()` 同一个坑：只走主树 ⇒ 菜单里的 `Spinner` 永远不转，而且**不报错** |
+| 是否短路 | **不短路** | 已知 `$busy` 为真也要走完兄弟子树，否则"多个 Spinner 只有一个在转" |
+
+**为什么不是回调注册表**（`onFrame()` / `cancelFrame(id)`）：注册表必须**配对注销**，
+`dispose()` 漏调一次就是**永久空转 + 泄漏**，还要防"回调持有已卸载的 State"。树遍历的
+生命周期天然正确（元素卸载 ⇒ 不再被访问）。代价是每帧 O(树) —— 与同帧的 `layout()` 同阶
+（§13.3 本就全树重排），不是新增量级。
+
+**判据**（`probe-async.php` ⑦⑧，量"帧间变化**像素数**"）：
+
+| 构建 | Loading 期（每 100ms 一格） | 切换那一格 | Ready 后 | 结论 |
+|---|---|---|---|---|
+| `$this->animating = false;`（反例） | **0 0 0 0 0 0 0 0** | 41838 | 0 | ⑦ FAIL（画面完全不动） |
+| 接上 `tickAnimations()` | **116 ×11** | 41838 | **0** | ⑦⑧ OK |
+
+★★ **为什么用"变了多少个像素"而不是百分比**：`Spinner` 只有 24×24，占整窗 0.1% 不到 ——
+百分比会被四舍五入成 0.0，"在转"和"不转"长得**一模一样**（本轮第三次假绿风险）。
+绝对计数是二值信号：转 ⇒ 116；不转 ⇒ **精确 0**（`BitBlt` 同像素同值）。
+
+★ **⑧ 的必要不充分**：帧间变化 0 只证明"没有像素在变"，**不能**证明"定时器停了"
+（空转但不重绘也是 0）。CPU 归零的正面证据是 `FrameClock::armed` 在 Ready 后为 `false`；
+进程 CPU 时间采样本轮没做 —— 记在这里，别把 ⑧ 当充分条件。
 
 ### 17.3 为什么不用协程做 UI 状态
 

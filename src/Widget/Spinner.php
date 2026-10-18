@@ -16,10 +16,11 @@ use Drift\Widget\State;
  *   ⇒ 住 `State`；Widget 只持直径（§13.2：渲染盒只读 Widget 字段，态经
  *   `SpinnerBox` 递进去 —— 与 `TextField → TextFieldState → TextFieldBox` 同形态）。
  *
- * ★ **动画驱动力今天不在框架里**（诚实边界，不是待办）：`FrameClock` 属 M4
- *   （§19）⇒ `SpinnerState::tick()` 当前由宿主 / 测试调；M4 帧时钟到位后自动转，
- *   控件形状不动。★ 连带边界：§11.5 已记 —— M1–M3 同步 IO 下 `loading` 态本身
- *   画不出来（同栈无帧可渲染），本控件是异步后端（M4）就位后的可见形态。
+ * ★ **动画驱动力已就位**（2026-10-18）：`SpinnerState::tickFrame()` 由
+ *   `Application::frame()` 每帧遍历树调用（§17.4.9），相位随帧推进；它返回 true
+ *   让 `wantsFrame()` 保持为真 ⇒ 帧时钟不停 ⇒ 自己转，控件卸载后自动停。
+ *   ★ 连带边界：§11.5 已记 —— 同步 IO 后端下 `loading` 态本身画不出来（同栈无帧
+ *   可渲染）；装上 `ProcessTaskHost` 之后才真的看得见（见 `apps/users`）。
  *
  * @api
  */

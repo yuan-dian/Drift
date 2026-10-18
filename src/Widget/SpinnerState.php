@@ -17,12 +17,27 @@ final class SpinnerState extends State
 {
     private int $step = 0;
 
-    /** 前进一步（宿主 / 测试驱动；M4 起由 `FrameClock` 驱动） */
+    /** 前进一步（`tickFrame()` 由帧时钟驱动；测试也可直接调） */
     public function tick(): void
     {
         $this->setState(function (): void {
             $this->step++;
         });
+    }
+
+    /**
+     * 帧时钟驱动（§17.4.9）：每帧推进一步，并声明"我还要下一帧"。
+     *
+     * ★ 相位只自增、不取模（取模在绘制时做）⇒ "同输入同墨"仍成立（G3）：相位是
+     *   **状态**，渲染盒是相位的纯函数。
+     * ★ 卸载后没人再调它（走的是树遍历）⇒ 帧时钟自动停摆，不需要在 `dispose()`
+     *   里记得注销任何东西。
+     */
+    public function tickFrame(float $timestampMs): bool
+    {
+        $this->tick();
+
+        return true;
     }
 
     public function step(): int

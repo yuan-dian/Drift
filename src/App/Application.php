@@ -197,6 +197,9 @@ abstract class Application
      */
     protected array $sliced = [];
 
+    /** 上一帧有没有动画在跑（§17.4.9 的第四个判据，由 `tickAnimations()` 写） */
+    private bool $animating = false;
+
     /**
      * 非阻塞 I/O 轮询器（§17.4.4，P2）—— 每帧 `select(0)` 问一轮，就绪了就回调。
      *
@@ -408,7 +411,12 @@ abstract class Application
         $this->root = $root;
 
         $this->frame = new Frame($surface);
-        $this->frame->run($root, $constraints, 0.0);
+
+        // ★ 首帧走**同一个入口**（§17.4.10）：直接调 `Frame::run()` 会绕过
+        //   `tickAnimations()` ⇒ 纯动画应用（根就是一个 `Spinner`、没有异步任务）
+        //   在 `attach()` 之后 `wantsFrame()` 仍是 false ⇒ 帧时钟永不上膛 ⇒
+        //   **转圈图一辈子不动**。这条是给 §17.4.10 写冒烟时抓到的，不是设计时想到的。
+        $this->frame(0.0, $constraints);
 
         // 焦点链要在**挂载之后**建（此刻才有树可走）。
         $this->focus = new FocusManager();
@@ -814,6 +822,11 @@ abstract class Application
         //   顺序（结果 → 分片 → settle）不重要，**都在 settle 之前**才重要。
         $this->pumpSliced();
 
+        // ★ ⓸ 推进动画（§17.4.9）：同样**必须在 settle 之前** —— `tickFrame()` 里的
+        //   `setState()` 由紧随的 `Frame::run()` 的 settle 段消费，同一帧生效。
+        //   返回值是"还有动画在跑吗"，喂给 `wantsFrame()` 决定下一次要不要被叫醒。
+        $this->animating = $this->tickAnimations($timestampMs);
+
         // 浮层布局段（无界自尺寸 + 钉锚点 + 夹进客户区）—— 见 placeMenu()
         $this->placeMenu($constraints);
 
@@ -843,6 +856,11 @@ abstract class Application
      */
     public function wantsFrame(): bool
     {
+        // ★ 第四个判据：有动画在跑（§17.4.9）。排最前 —— Loading 期间它恒为真。
+        if ($this->animating) {
+            return true;
+        }
+
         if ($this->sliced !== []) {
             return true;
         }
@@ -855,6 +873,56 @@ abstract class Application
         $tasks = $this->tasks;
 
         return $tasks !== null && $tasks->pending() > 0;
+    }
+
+    /**
+     * 遍历树推进所有动画，并回答"**还有动画在跑吗**"（§17.4.9）。
+     *
+     * ★ **浮层是第二棵树**（与 `focus->collect()` / `placeMenu()` 同一个坑）：只走
+     *   `$root` 的话，菜单里放一个 `Spinner` 就永远不转，而且**没有任何报错**。
+     * ★ 成本 O(树)，与同帧的 `layout()` 同阶（§13.3：Render 层本就全树重排）。
+     */
+    private function tickAnimations(float $timestampMs): bool
+    {
+        $busy = false;
+
+        $root = $this->root;
+        if ($root !== null && $this->tickSubtree($root, $timestampMs)) {
+            $busy = true;
+        }
+
+        $menu = $this->menuElement;
+        if ($menu !== null && $this->tickSubtree($menu, $timestampMs)) {
+            $busy = true;
+        }
+
+        return $busy;
+    }
+
+    /**
+     * `tickAnimations()` 的递归体。
+     *
+     * ★ **不许短路**：即使已经知道 `$busy` 为真，兄弟子树里的动画也必须收到这一帧，
+     *   否则"整棵树里只推进第一个动画"——现象是多个 Spinner 只有一个在转。
+     */
+    private function tickSubtree(Element $element, float $timestampMs): bool
+    {
+        $busy = false;
+
+        if ($element instanceof StatefulElement) {
+            $state = $element->state();
+            if ($state !== null && $state->tickFrame($timestampMs)) {
+                $busy = true;
+            }
+        }
+
+        $element->visitChildren(function (Element $child) use ($timestampMs, &$busy): void {
+            if ($this->tickSubtree($child, $timestampMs)) {
+                $busy = true;
+            }
+        });
+
+        return $busy;
     }
 
     /**

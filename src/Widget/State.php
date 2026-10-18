@@ -81,6 +81,26 @@ abstract class State
     }
 
     /**
+     * 每帧推进动画（§17.4.9）—— 默认"这一帧不动"。
+     *
+     * ★ 由 `Application::frame()` 在 settle **之前**遍历树调用：`tickFrame()` 里的
+     *   `setState()` 由紧随的 settle 段消费 ⇒ 同一帧生效（放到 settle 之后会慢一帧）。
+     * ★ 返回 `true` = "**我还要下一帧**"。`Application` 把整棵树的返回值聚合起来喂
+     *   `wantsFrame()`，帧时钟据此决定要不要继续被叫醒 ⇒ 动画跑完（或控件卸载）就
+     *   没人返回 true，定时器停摆、CPU 归零 —— **不需要谁记得 stop()**。
+     * ★ 用"返回值"而不是"注册 / 注销回调"：卸载的元素不在树里，天然不再被调用；
+     *   注册表则必须配对注销，漏一次就是永久空转 + 泄漏。
+     *
+     * @param float $timestampMs 注入的帧时间戳（不读环境时钟，§14.1 / G3）
+     * @return bool 还要下一帧吗
+     * @api
+     */
+    public function tickFrame(float $timestampMs): bool
+    {
+        return false;
+    }
+
+    /**
      * 挂载时调一次（§11.3 RT-1 / A4）。
      *
      * ★ **订阅只在这里做。** 在 `build()` 里订阅 ⇒ 每重建一次多订一份，订阅数随
