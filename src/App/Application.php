@@ -41,6 +41,7 @@ use Drift\Widget\Menu\Menu;
 use Drift\Widget\Modal;
 use Drift\Widget\StatefulElement;
 use Drift\Widget\Widget;
+use Drift\Widget\SemanticsBuilder;
 
 /**
  * **组合根**（§4.5）：应用只写 `buildRoot()` / `title()` / `commands()`。
@@ -104,6 +105,14 @@ abstract class Application
      * ★ 拖动阈值 `DRAG_THRESHOLD_PX` 归 `GestureArena`（识别器自带，单一出处）。
      */
     protected ?GestureArena $gestureArena = null;
+
+    /**
+     * 语义树消费闭包（§9 / M5 UIA，per-app opt-in，同 taskHost() 形态）。
+     *
+     * ★ **默认 null ⇒ 不建语义树**（SemanticsBuilder"没人调就不建"，零开销）；
+     *   应用覆写返回闭包即接入 UIA（组合根把闭包接到 WindowHost::pushSemantics）。
+     */
+    protected ?\Closure $semanticsSink = null;
 
     /**
      * 滚轮一格滚多少逻辑像素（2026-10-17："不跟手"的根因修复）。
@@ -824,6 +833,9 @@ abstract class Application
         // ★ **浮层是第二棵树，也要进焦点链**（O-20 差异表 #2）—— 否则菜单项
         //   永远 Tab 不到。
         $this->focus?->collect($root, ...($this->menuElement !== null ? [$this->menuElement] : []));
+
+        // 语义树推给 UIA（§9 / M5）：每帧末经 sink 交出（无 sink ⇒ 不建，零开销）。
+        $this->pumpSemantics();
     }
 
     /**
@@ -867,6 +879,33 @@ abstract class Application
      *   `$root` 的话，菜单里放一个 `Spinner` 就永远不转，而且**没有任何报错**。
      * ★ 成本 O(树)，与同帧的 `layout()` 同阶（§13.3：Render 层本就全树重排）。
      */
+    /**
+     * 注入语义树消费者（§9 / M5 UIA）—— 组合根把它接到 `WindowHost::pushSemantics()`。
+     *
+     * ★ 框架只存闭包、**不碰平台**（§5.1：平台引用止于组合根）；默认不注入 ⇒ 不建语义树。
+     */
+    public function setSemanticsSink(callable $sink): void
+    {
+        $this->semanticsSink = \Closure::fromCallable($sink);
+    }
+
+    /**
+     * 每帧末把语义树推给消费者（§9 / M5 UIA）。
+     *
+     * ★ 无 sink ⇒ 直接返回（**不建语义树** —— SemanticsBuilder 的"没人调就不建"）。
+     * ★ 走 SemanticsBuilder::build()（Element 树）+ toArrays()['nodes']（扁平标量，
+     *   正是 WindowHost::pushSemantics 收的形状）。放在 settle/重建之后 ⇒ 反映最新树。
+     */
+    private function pumpSemantics(): void
+    {
+        $sink = $this->semanticsSink;
+        if ($sink === null) {
+            return;
+        }
+        $tree = SemanticsBuilder::build($this->root);
+        ($sink)($tree->toArrays()['nodes']);
+    }
+
     private function tickAnimations(float $timestampMs): bool
     {
         $busy = false;

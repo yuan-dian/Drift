@@ -112,6 +112,12 @@ final class Bootstrap
 
         $app->attach($surface, $screen->viewport());
 
+        // ★ UIA 无障碍（§9 / M5）：把语义树消费者接到窗口 —— 框架只产 SemanticsTree、
+        //   经闭包交给平台（框架不持平台，§5.1）。不接 ⇒ 不建语义树，零开销。
+        $app->setSemanticsSink(static function (array $nodes) use ($window, $handle): void {
+            $window->pushSemantics($nodes);
+        });
+
         // ★ **事件队列必须每帧前抽干**（§5.2 裁决 1：派发归框架）—— 不抽干的话
         //   队列会无限增长，而窗口对点击/按键**毫无反应**，且不报错。
         // ★ `dispatchInput()` 对指针事件返回命中链解析出的光标形状 ⇒ 由这里喂给
