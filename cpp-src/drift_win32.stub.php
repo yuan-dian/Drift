@@ -119,6 +119,15 @@ function drift_win_pump(): array {}
  */
 function drift_win_now_ms(): float {}
 
+/**
+ * 当前线程 id（`GetCurrentThreadId`，读 TEB，无 syscall）。
+ *
+ * ★ 为什么必须有它：**`getmypid()` 区分不了线程**（同进程所有线程 pid 相同）⇒
+ *   "UI 线程身份 / 跨线程断言"只能由壳给。它无状态、不碰任何 OS 句柄，
+ *   是最小的一条桥（§17.4.2.1）。
+ */
+function drift_thread_id(): int {}
+
 // ---- 定时器（帧时钟的物质载体，§5.2 裁决 1） ----
 
 /**

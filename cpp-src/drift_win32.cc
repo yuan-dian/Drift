@@ -980,6 +980,11 @@ Float php_drift_win_now_ms() {
     return (Float)(double)GetTickCount64();
 }
 
+/** 当前线程 id —— 供 PHP 侧做 UI 线程身份/断言（§17.4.2.1）。 */
+Int php_drift_thread_id() {
+    return (Int)GetCurrentThreadId();
+}
+
 // ══════════════════════════════════════════════════════════════ 定时器 ══
 
 Bool php_drift_win_set_timer(Int hwnd, Int id, Int ms) {

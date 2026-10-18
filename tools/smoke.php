@@ -5538,6 +5538,23 @@ check(
 // ② 应用层：滚轮全链（命中 → 找视口 → scrollBy → 重建 → 盒偏移）
 $scrollApp = new ScrollApplication();
 $scrollApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
+
+// ── UI 线程身份（§17.4.2.1）：attach 记 id，帧内断言 —— WPF `VerifyAccess()` 的等价物
+//   ★ 解释器下由 `tools/autoload.php` 的 `drift_thread_id()` 替身提供（固定 1）；
+//   ★ AOT 产物里是 `GetCurrentThreadId()`（cpp-src 的桥）。
+check(
+    'App · UI 线程身份在 attach 时记下（!= 0；0 = 未挂载）',
+    $scrollApp->uiThreadId() !== 0,
+    (string) $scrollApp->uiThreadId(),
+);
+check(
+    'App · 当前线程就是 UI 线程（uiThreadId == drift_thread_id()）',
+    $scrollApp->uiThreadId() === \drift_thread_id(),
+    $scrollApp->uiThreadId() . ' vs ' . \drift_thread_id(),
+);
+// 正路径：断言不失败（失败走 Fatal 序列会中止整个 smoke ⇒ 这行本身就是判据）
+$scrollApp->assertUiThread('smoke');
+check('App · assertUiThread 在 UI 线程上放行', true, 'ok');
 $sb0 = $scrollApp->scrollBox();
 $scrollMax = $sb0?->maxScroll() ?? 0.0;
 check(

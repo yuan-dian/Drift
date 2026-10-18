@@ -2711,6 +2711,69 @@ $box->paint($canvas);                                             // ④
 **错误通道**：`Job::run()` 抛异常 ⇒ 后端把 `$error` 放进 `Completion`；UI 侧若没给 `$onError`，默认 `Errors::report()`（Fatal 序列）。
 这与三态里的 `Error` 分支一一对应，不新增"第四个状态"。
 
+#### 17.4.2.1 UI 线程的实体：身份 / 队列 / 断言
+
+★ 先澄清一个误解：**"实现 UI 线程"不是"新开一个线程"**。Win32 的窗口消息只能由**创建窗口的线程**泵
+（`GetMessage` 所在线程 == `CreateWindow` 所在线程）⇒ UI 线程就是组合根 `Bootstrap::run()` 所在的线程
+（当前是进程主线程）。把它搬到子线程只会让生命周期更难管、且没有任何收益。
+
+要补的是**三件基础设施**（成熟框架都有，Drift 缺前两件）：
+
+| 件 | 做什么 | 参照 |
+|---|---|---|
+| **身份** | `drift_thread_id()`（C++ 桥 → `GetCurrentThreadId`）；`attach()` 记下 `uiThreadId` | Qt `QObject::thread()` |
+| **队列** | `post(callable)` + 帧首 `drain()`（P0 的结果队列是它的第一个消费者） | WPF Dispatcher / Godot MessageQueue |
+| **断言** | `assertUiThread($where)`：不在 UI 线程 ⇒ 响亮失败（不给"静默竞争"留缝） | WPF `VerifyAccess()` |
+
+```php
+// ① 桥：cpp-src/drift_win32.stub.php 加一行空体（tpc 读签名）
+function drift_thread_id(): int {}
+
+// ① 实现：cpp-src/drift_win32.cc —— 无状态，读 TEB，不是 syscall
+Int php_drift_thread_id() { return (Int) GetCurrentThreadId(); }
+
+// ② Application：attach 记身份，frame 首行断言
+private int $uiThreadId = 0;
+public function attach(...): void { $this->uiThreadId = drift_thread_id(); ... }
+public function frame(...): void { $this->assertUiThread('frame'); ... }
+
+/** @internal */
+public function assertUiThread(string $where): void
+{
+    if (drift_thread_id() !== $this->uiThreadId) {
+        Errors::report("UI 线程断言：{$where} 跑在非 UI 线程（数据竞争的前兆）");
+    }
+}
+```
+
+**断言放在哪（按性价比）**：
+
+1. `Application::frame()` 首行 —— 每帧一次，成本 = 读一次 TEB + 一次整数比较。
+2. `Application::drain()` 首行 —— 队列只能由 UI 线程消费。
+3. `State::setState()` —— **树变更的唯一入口**，也是 WPF `VerifyAccess()` 的等价物。
+4. `Subject::notifyChanged()` —— §17.2 第 ① 处点名的那条（"在 worker 里改 Store"）。
+
+★ **第 3/4 条现在不要加**：没有异步后端时它们是死代码（纪律：从未被消费的分支 = 未实现）。
+等 P0 的队列接上、P3 的进程池落地（那时才有真正的非 UI 线程）再一起加。
+
+**队列的三种实现（按后端）**：
+
+| 后端 | 队列 | 说明 |
+|---|---|---|
+| P0 同步 / P1 分帧 | 纯 PHP 数组 | `post` 与 `drain` 同线程，无需锁 |
+| 线程后端（未来） | C++ `std::mutex + std::deque<Completion>` | `drain()` 时一次 `swap` 出来，UI 线程不长时间持锁 |
+| P3 进程池 | worker 的 stdout 管道 | UI 帧 `stream_select(0)` 非阻塞读，攒够一行 JSON 就入队 |
+
+**为什么 `getmypid()` 不够**：同进程所有线程的 pid **相同** ⇒ 区分不了 UI 线程与 worker。
+
+★ **2026-10-18 已落地最小地基**：`drift_thread_id()`（stub + `php_` 实现，一行 `GetCurrentThreadId`）、`Application::uiThreadId()/assertUiThread()/uiThreadId` 字段、`frame()` 首行断言、解释器替身（`tools/autoload.php`，固定 `1`）。验证：smoke **672/0**（+3 条）、`drift-build users` 7.3MB、真机窗口 OK（断言在真机放行、无 Errors.log）。
+必须有 `GetCurrentThreadId()`（读 TEB，无 syscall，纳秒级）；这也是为什么它要落在 C++ 桥，而不是 PHP 层。
+
+**验收判据**（smoke）：
+- `attach()` 后 `uiThreadId != 0`；`frame()` 里断言通过（主线程）。
+- 用一个**纯 C++ 短命线程**（只取 `GetCurrentThreadId`，不碰任何 PHP 对象）取 id ⇒ 与 `uiThreadId` 不同，
+  证明"身份可区分"；同时验证"在非 UI 线程调 `assertUiThread` 会响亮失败"这条路径。
+
 #### 17.4.3 `SlicedJob`（单线程分片，P1）
 
 ```php

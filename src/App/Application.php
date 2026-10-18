@@ -78,6 +78,14 @@ abstract class Application
      */
     protected ?FocusManager $focus = null;
 
+    /**
+     * UI 线程身份（`GetCurrentThreadId`，attach 时记下）。
+     *
+     * ★ 为什么不是 `getmypid()`：同进程所有线程的 pid 相同 ⇒ 区分不了 UI 线程与 worker。
+     *   见 DESIGN §17.4.2.1（WPF `VerifyAccess()` 的等价物）。
+     */
+    protected int $uiThreadId = 0;
+
     protected CommandRouter $router;
 
     /** 拖动状态机（§A.3.5）；懒建 —— 不拖的应用零成本 */
@@ -293,6 +301,9 @@ abstract class Application
      */
     public function attach(RenderSurface $surface, BoxConstraints $constraints, ?BuildContext $context = null): void
     {
+        // ★ UI 线程身份在**挂载之前**记：之后的任何回调都以此为准（§17.4.2.1）。
+        $this->uiThreadId = \drift_thread_id();
+
         $context ??= new BuildContext(
             $constraints->maxWidth,
             $constraints->maxHeight,
@@ -325,6 +336,41 @@ abstract class Application
     public function root(): ?Element
     {
         return $this->root;
+    }
+
+    /**
+     * UI 线程 id（`0` = 未挂载）。测试与 devtools 读它。
+     *
+     * @internal 应用不该读线程身份 —— 它只用于断言（§17.4.2.1）。
+     */
+    public function uiThreadId(): int
+    {
+        return $this->uiThreadId;
+    }
+
+    /**
+     * UI 线程断言（§17.4.2.1，WPF `VerifyAccess()` 的等价物）。
+     *
+     * ★ 只在"当前线程不是 UI 线程"时失败；`uiThreadId == 0`（未挂载）不算失败 ——
+     *   挂载前本来就没有 UI 线程可谈。
+     *
+     * ★ 这是**响亮失败**（Fatal 序列），不是静默忽略：静默就等于给数据竞争留缝，
+     *   而那类 bug 只在压力下偶发（§17.2 第 ① 处）。
+     *
+     * @internal 框架内部用；应用不应调用。
+     */
+    public function assertUiThread(string $where): void
+    {
+        if ($this->uiThreadId === 0 || \drift_thread_id() === $this->uiThreadId) {
+            return;
+        }
+
+        Errors::report(sprintf(
+            'UI 线程断言：%s 跑在非 UI 线程（UI=%d，当前=%d）—— 数据竞争的前兆',
+            $where,
+            $this->uiThreadId,
+            \drift_thread_id(),
+        ));
     }
 
     /**
@@ -667,6 +713,9 @@ abstract class Application
         if ($root === null || $frame === null) {
             return; // 未挂载：没有树就没有帧
         }
+
+        // ★ 帧必须在 UI 线程跑（§17.4.2.1）。成本 = 读一次 TEB + 一次整数比较。
+        $this->assertUiThread('frame');
 
         // 浮层布局段（无界自尺寸 + 钉锚点 + 夹进客户区）—— 见 placeMenu()
         $this->placeMenu($constraints);
