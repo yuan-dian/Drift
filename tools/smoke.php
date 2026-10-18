@@ -44,8 +44,12 @@ use Drift\Dev\Smoke\App\AccelApplication;
 use Drift\Dev\Smoke\App\CompositeRootApp;
 use Drift\Dev\Smoke\App\CountJob;
 use Drift\Dev\Smoke\App\MenuApplication;
+use Drift\Dev\Smoke\App\NamedBoomJob;
+use Drift\Dev\Smoke\App\NamedExitJob;
+use Drift\Dev\Smoke\App\NamedSumJob;
 use Drift\Dev\Smoke\App\ModalApplication;
 use Drift\Dev\Smoke\App\RecordingHandler;
+use Drift\Dev\Smoke\App\SmokeJobRegistry;
 use Drift\Dev\Smoke\App\TaskRow;
 use Drift\Dev\Smoke\App\TaskApplication;
 use Drift\Dev\Smoke\App\TaskRowJob;
@@ -55,6 +59,8 @@ use Drift\Dev\Smoke\App\SumJob;
 use Drift\App\Completion;
 use Drift\App\Io\IoPoller;
 use Drift\App\Job;
+use Drift\App\NamedJob;
+use Drift\App\ProcessTaskHost;
 use Drift\App\SyncTaskHost;
 use Drift\App\TaskHost;
 use App\Users\UsersApplication;
@@ -5692,6 +5698,113 @@ fclose($ia);
 fclose($ib);
 fclose($ic);
 fclose($idd);
+
+// ── ㊵ P3：`ProcessTaskHost` 常驻子进程（§17.4.5）────────────────────────
+//
+// ★ **真进程、真管道、真 JSON Lines**：worker 用 php.exe 起（生产形态是同一份 AOT 产物的
+//   `--drift-worker` 分支，协议与 `ProcessWorker` 完全一致 ⇒ 测的是生产路径）。
+// ★ 为什么不是"每任务一进程"：spawn 实测 **275ms/次**（probes §12 ⑧）⇒ 懒启动 + 常驻。
+// ★ 为什么不是线程：worker 线程跑不了 AOT 代码（探针 K/L，§17.2.5）。
+// 判据：① 懒启动 ② 真进程算对 ③ 串行（在途 ≤ 1）④ 任务失败 ⇒ onError 且 worker 活着
+//   ⑤ 崩溃 ⇒ onError 且 worker 停 ⑥ 崩溃后自动重启 ⑦ shutdown 收工
+
+$workerScript = __DIR__ . '/Smoke/App/worker.php';
+$procHost = new ProcessTaskHost([PHP_BINARY, $workerScript], SmokeJobRegistry::make());
+
+// ★ `$until` 必须**收参数**（不能靠闭包捕获 `$sink`）：`static fn() => $sink !== []`
+//   按值捕获的是**创建时**的空数组 ⇒ 永远 false ⇒ 每次 pump 等满 deadline
+//   （本段第一版就是这样，smoke 从 10s 涨到 78s）。
+$pump = static function (ProcessTaskHost $host, array &$sink, callable $until): void {
+    $deadline = microtime(true) + 10.0;
+    while (!$until($sink) && microtime(true) < $deadline) {
+        usleep(5000);
+        // ★ 走**生产路径**（`$onDone` / `$onError`），不直接读 `Completion->value` ——
+        //   否则测的是"队列里有值"，测不出"回调真的被调了"（本段第一版就栽在这：
+        //   断言期望 `a1` 却拿到 `1` —— `onDone` 根本没被调）。
+        $host->drain(function (Completion $c) use (&$sink): void {
+            if ($c->error !== null) {
+                if ($c->onError !== null) {
+                    ($c->onError)($c->error);
+                } else {
+                    $sink[] = 'ERR:' . $c->error->getMessage();
+                }
+
+                return;
+            }
+            ($c->onDone)($c->value);
+        });
+    }
+};
+
+// ① 懒启动 + 真进程算对
+$sink = [];
+$procHost->submit(new NamedSumJob(10), function ($v) use (&$sink): void {
+    $sink[] = $v;
+});
+check('P3 · submit 之后未回调（任务在 worker 里跑）', $sink === [], json_encode($sink));
+check('P3 · 懒启动：第一次 submit 才起 worker', $procHost->isRunning());
+check('P3 · 在途 1 条', $procHost->inFlightCount() === 1, (string) $procHost->inFlightCount());
+
+$pump($procHost, $sink, static fn(array $s): bool => $s !== []);
+check('P3 · 真进程算对了（跨进程跑 AOT 类：1+…+10 = 55）', $sink === [55], json_encode($sink));
+
+// ② 串行：第二条排队（在途恒 ≤ 1）
+$sink = [];
+$procHost->submit(new NamedSumJob(1), function ($v) use (&$sink): void { $sink[] = 'a' . $v; });
+$procHost->submit(new NamedSumJob(3), function ($v) use (&$sink): void { $sink[] = 'b' . $v; });
+check(
+    'P3 · 串行：第二条在排队（在途仍 1、队列 1）',
+    $procHost->inFlightCount() === 1 && $procHost->queuedCount() === 1,
+    'inflight=' . $procHost->inFlightCount() . ' queued=' . $procHost->queuedCount(),
+);
+$pump($procHost, $sink, static fn(array $s): bool => count($s) >= 2);
+check('P3 · 两条都跑完且按提交序（a1, b6）', $sink === ['a1', 'b6'], json_encode($sink));
+
+// ③ 任务失败（worker 里抛）⇒ onError，且**不打死 worker**
+$sink = [];
+$procHost->submit(
+    new NamedBoomJob('设备离线'),
+    function ($v): void {
+    },
+    function (\Throwable $e) use (&$sink): void {
+        $sink[] = $e->getMessage();
+    },
+);
+$pump($procHost, $sink, static fn(array $s): bool => $s !== []);
+check(
+    'P3 · worker 里的异常 ⇒ onError（原文带出）',
+    str_contains($sink[0] ?? '', '设备离线'),
+    $sink[0] ?? 'null',
+);
+check('P3 · 一个任务失败不打死 worker', $procHost->isRunning());
+
+// ④ 崩溃隔离：worker 真的死（`exit 9`，catch 拦不住）⇒ onError + worker 停
+$sink = [];
+$procHost->submit(
+    new NamedExitJob(),
+    function ($v): void {
+    },
+    function (\Throwable $e) use (&$sink): void {
+        $sink[] = $e->getMessage();
+    },
+);
+$pump($procHost, $sink, static fn(array $s): bool => $s !== []);
+check(
+    'P3 · worker 崩溃 ⇒ 在途任务 onError（不是静默挂住）',
+    str_contains($sink[0] ?? '', '后台进程退出'),
+    $sink[0] ?? 'null',
+);
+check('P3 · 崩溃后 worker 已停', !$procHost->isRunning());
+
+// ⑤ 崩溃后自动重启（同一实例继续用）
+$sink = [];
+$procHost->submit(new NamedSumJob(4), function ($v) use (&$sink): void { $sink[] = $v; });
+$pump($procHost, $sink, static fn(array $s): bool => $s !== []);
+check('P3 · 崩溃后自动重启并跑完新任务（1+…+4 = 10）', $sink === [10], json_encode($sink));
+
+// ⑥ 收工
+$procHost->shutdown();
+check('P3 · shutdown 之后不再有 worker', !$procHost->isRunning());
 
 // ── 可滚动容器（P1 / 2026-10-17）：偏移进坐标链 + 滚轮路由 ──────────
 //   两条线：① 布局层直接测 `RenderScrollView`（视口 / maxScroll 夹取 / 命中按视口判 /

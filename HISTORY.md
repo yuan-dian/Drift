@@ -584,3 +584,46 @@ PHP `Fiber` **不会让出阻塞 IO**。⇒ 唯一能用的形态：**IO 先非�
 **验证**：smoke **708 ok / 0 FAIL**（+10）· lint **309 文件 0/0** · codegen **207 全翻译 0 skip** ·
 `drift-build users` **7.4MB/18.2s** · 真机 OK。DESIGN：§4.2 数字 **180 / 155 / 105 = 103 + 2 / 未点名 77**、
 §17.4.4 标已落地、§17.4.6 P2 行 ✅。
+
+### 7.12 P3：ProcessTaskHost 常驻子进程（2026-10-18）
+
+**为什么是进程**（§17.2.5–17.2.6 实测的结论）：线程跑 AOT 代码当前不可行（worker 线程缺 Zend
+上下文，裸线程 / Swoole + FFI 两枪 SIGSEGV）；进程**天然隔离**（崩了只丢一个任务），且 worker
+**跑的是同一份 AOT 代码** —— 不像 Swoole 线程只能 `require` 源码解释执行（慢 55–95×）。
+
+**落地**：
+- `NamedJob`：`name()` + `args()` —— 跨进程只能传"名字 + 参数数组"（对象图没有稳定的序列化格式，
+  且 `serialize()` 在 AOT 下没验过）。注册表两侧一致是硬约束。
+- `ProcessWorker::serve($registry)`：`php://stdin/stdout` 上的 JSON Lines，一行请求一行回复；
+  **任何异常都变 `{ok:false}`**，不许打死 worker（进程隔离的价值就在这）。
+- `ProcessTaskHost($command, $registry)`：**懒启动 + 常驻 + 串行**；`drain()` 每帧非阻塞读
+  stdout **和 stderr**（不读 stderr 的话管道满了 worker 会阻塞在 warning 上 —— 真正的死锁来源）；
+  `reap()` 检测进程死亡 ⇒ 在途任务走 `onError` + 下一帧自动重启。
+
+**实测**（本地 php.exe）：首次 spawn + 往返 **256ms**，热态**往返 23.5ms**。
+对比"每任务一进程"的 275ms/次 ⇒ 常驻池的价值就在这个数上。
+
+**判据（smoke +12，真进程真管道）**：懒启动 / 真进程算对（跨进程跑 `SumJob`）/ 串行排队
+（在途 1、队列 1）/ 任务失败 ⇒ `onError` 且 worker 活着 / `exit 9` 崩死 ⇒ `onError`（"后台进程退出
+（exit=9）"）且 worker 停 / 崩溃后自动重启并跑完新任务 / `shutdown()` 收工。
+
+★ **两处踩坑（都是"判据自己的 bug"）**：
+1. `$pump` 的 drain 回调直接读 `$c->value`，**没调 `onDone`** ⇒ 断言期望 `a1` 拿到 `1`。
+   改成走**生产路径**（`$onDone` / `$onError`）—— 测端口就要测"回调真的被调了"。
+2. `static fn(): bool => $sink !== []` **按值捕获创建时的空数组** ⇒ `$until` 恒 false ⇒
+   每次 pump 等满 10 秒 deadline（smoke 从 10s 涨到 78s）。判据闭包必须**收参数**。
+   修完 30s（真进程测试本身的成本 ~3s）。
+
+**两条必须说清的代价**：
+① **异常类不可还原**：worker 把 `RuntimeException: 消息` 拼成字符串，UI 侧收到的是一个新的
+`RuntimeException`（跨进程没有"同一个异常对象"这回事）。
+② **串行**（在途 ≤ 1）：第一版形态。并行要"多 worker + 空闲挑选 + 任务重派"（并发调度器），
+等真有需求再把 `$worker` 变成数组，结构不用改。
+
+★★ **AOT 运行面仍未验**：`users` 没有真实后台需求，所以"同一份 AOT 产物带 `--drift-worker` 分支"
+只到**翻译层**（codegen 210 全翻译 + `users.exe` 链接通过）。补法很明确：组合根加一次
+`$_SERVER['argv']` 分流（探针 ⑦ 已验可行）+ 让某个应用真用上 —— 留给 M4 的 `HttpUserSource`。
+
+**验证**：smoke **720 ok / 0 FAIL**（+12）· lint **317 文件 0/0** · codegen **210 全翻译 0 skip** ·
+`drift-build users` 构建通过 + 真机 OK。DESIGN：§4.2 数字 **183 / 158 / 105 = 103 + 2 / 未点名 80**、
+§17.4.5 标已落地、§17.4.6 P3 行 ✅。
