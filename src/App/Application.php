@@ -11,6 +11,8 @@ use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
 use Drift\Input\AcceleratorTable;
 use Drift\Input\CursorShape;
+use Drift\Input\GestureArena;
+use Drift\Input\GestureRecognizer;
 use Drift\Input\InputEvent;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
@@ -93,28 +95,15 @@ abstract class Application
     protected ?DragController $drag = null;
 
     /**
-     * 拖放阈值起点（§A.3.5，2026-10-17 指针驱动接线）。
+     * 进行中的手势竞技场（§9.1 手势消歧，2026-10-18 落地）。
      *
-     * ★ **按下 ≠ 拖动**：`down` 落在 `Draggable` 声明者上只记 pending，
-     *   `move` 位移超过 `DRAG_THRESHOLD` 才真开始 —— 否则"点一下按钮"会
-     *   顺手启动拖动（标准拖拽语义）。
-     * ★ 不过阈值的 `up` ⇒ 丢弃 pending（那次点击的激活已在 down 发生过）。
+     * ★ **仅当命中链上有 `Draggable` 声明者时开**：`down` 记 arena（成员 =
+     *   Tap + Drag），激活从 down 推迟到裁决 —— `up` 未过阈值 ⇒ Tap 胜 ⇒ 激活；
+     *   `move` 过阈值 ⇒ Drag claim ⇒ Tap 让位（修"拖可拖控件时命令在 down 先响"）。
+     *   无 `Draggable` 声明者的控件维持"down 即激活"（A15 不动，防回归）。
+     * ★ 拖动阈值 `DRAG_THRESHOLD_PX` 归 `GestureArena`（识别器自带，单一出处）。
      */
-    protected ?Draggable $pendingDrag = null;
-
-    protected ?Element $pendingDragSource = null;
-
-    protected float $pendingDragX = 0.0;
-
-    protected float $pendingDragY = 0.0;
-
-    /**
-     * 开始拖动的位移阈值（**逻辑**像素，平方比较免开方）。
-     *
-     * ★ 6 是"明显是拖、不是抖"的经验值（Windows 的 `SM_CXDRAG` 是 4 设备像素，
-     *   逻辑单位下再放宽 —— 高 DPI 下手抖一个像素不该启动拖动）。
-     */
-    private const DRAG_THRESHOLD = 6.0;
+    protected ?GestureArena $gestureArena = null;
 
     /**
      * 滚轮一格滚多少逻辑像素（2026-10-17："不跟手"的根因修复）。
@@ -1179,10 +1168,10 @@ abstract class Application
                     return null;
                 }
 
-                // 仅 pending（按下未过阈值）⇒ ESC 丢弃这次拖动意图并消费该键
-                if ($this->pendingDrag !== null) {
-                    $this->pendingDrag = null;
-                    $this->pendingDragSource = null;
+                // 仅 arena 未裁决（按下未过阈值）⇒ ESC 丢弃这次手势意图并消费该键
+                if ($this->gestureArena !== null && !$this->gestureArena->isClosed()) {
+                    $this->gestureArena->leave();
+                    $this->gestureArena = null;
 
                     return null;
                 }
@@ -1388,31 +1377,52 @@ abstract class Application
                 return null;
             }
 
-            // §9.1 动作缝的指针侧：**焦点真落在本次点击上 ⇒ 立即激活**（与键盘
-            // Enter/Space 同一入口 activateFocusedWidget）。空点击 / 不可聚焦命中
-            // ⇒ focusHit 返回 false，不激活 —— 否则会误触发上一个焦点控件。
-            // 按下即激活：up 相位服务拖放，不做 press/release 视觉（A15）。
+            // §9.1 手势消歧：命中链上有 `Draggable` 声明者 ⇒ 开 GestureArena，
+            // **激活从 down 推迟到 arena 裁决**（up 未过阈值 ⇒ Tap 胜 ⇒ 激活；
+            // move 过阈值 ⇒ Drag claim ⇒ Tap 让位）—— 修"拖可拖控件时命令在 down
+            // 先响过"（原注释自承"激活已在 down 发生过"，§9.1"拖动中的 tap 让位"）。
+            if ($this->draggableOwner($element) !== null) {
+                $this->beginGestureArena($element, $hit, $root, $focus, $event->x, $event->y);
+
+                return $focus->cursorOf($hit);
+            }
+
+            // 无 `Draggable` 竞争者 ⇒ 维持 M3 行为：焦点真落在本次点击上 ⇒ 立即
+            // 激活（与键盘 Enter/Space 同入口 activateFocusedWidget）。空点击 /
+            // 不可聚焦命中 ⇒ focusHit 返回 false，不激活。按下即激活，不做
+            // press/release 视觉（A15）。
             if ($focus->focusHit($hit, $root)) {
                 $this->activateFocusedWidget();
             }
-
-            // 拖放阈值起点（§A.3.5）：落在 `Draggable` 声明者上记 pending
-            $this->beginPendingDrag($element, $event->x, $event->y);
 
             return $focus->cursorOf($hit);
         }
 
         if ($event->isMove()) {
-            $this->advanceDrag($event->x, $event->y);
+            // 手势竞技场推进：过阈值 ⇒ Drag claim（begin + 刷新悬停目标）
+            $arena = $this->gestureArena;
+            if ($arena !== null && !$arena->isClosed()) {
+                $arena->move($event->x, $event->y);
+            }
+
+            // 已在拖动（arena 已裁决出 Drag，或宿主直起）⇒ 刷新悬停目标
+            if ($this->drag !== null && $this->drag->isDragging()) {
+                $this->updateDrag($event->x, $event->y);
+            }
+
             $focus->hoverTo($element);
 
             return $focus->cursorOf($hit);
         }
 
         if ($event->isUp()) {
-            // 没过阈值的 up ⇒ 纯点击（激活已在 down 发生过）⇒ 丢 pending
-            $this->pendingDrag = null;
-            $this->pendingDragSource = null;
+            // arena 未裁决 ⇒ 无人 claim ⇒ 第一个成员（Tap）胜 ⇒ 激活
+            $arena = $this->gestureArena;
+            if ($arena !== null && !$arena->isClosed()) {
+                $arena->up($event->x, $event->y);
+            }
+
+            $this->gestureArena = null;
 
             if ($this->drag !== null && $this->drag->isDragging()) {
                 $this->dropDrag();
@@ -1421,11 +1431,14 @@ abstract class Application
             return null;
         }
 
-        // leave：悬停全退出 + 拖放取消（指针离开客户区 —— 无 SetCapture ⇒
-        // 拖出窗外收不到后续 move/up，必须在这里收口，否则拖动卡死）。
+        // leave：悬停全退出 + 手势取消（arena 关闭不触发任何人）+ 拖放取消
+        // （指针离开客户区 —— 无 SetCapture ⇒ 拖出窗外收不到后续 move/up，
+        // 必须在这里收口，否则拖动卡死）。
         $focus->hoverTo(null);
-        $this->pendingDrag = null;
-        $this->pendingDragSource = null;
+        if ($this->gestureArena !== null) {
+            $this->gestureArena->leave();
+            $this->gestureArena = null;
+        }
 
         if ($this->drag !== null && $this->drag->isDragging()) {
             $this->cancelDrag();
@@ -1435,61 +1448,41 @@ abstract class Application
     }
 
     /**
-     * down 落在 `Draggable` 声明者上 ⇒ 记阈值起点（**不开始拖动**）。
+     * down 命中链有 `Draggable` 声明者 ⇒ 开 `GestureArena`（§9.1 手势消歧）。
+     *
+     * 成员 = Tap（`up` 未过阈值 ⇒ 胜 ⇒ 激活 down 落焦点的控件）+ Drag（`move`
+     * 过阈值 ⇒ claim ⇒ 开始拖动，源 = 声明者 owner）。**Tap 必须排在首位** ——
+     * arena 的默认胜者是 `members[0]`。
      *
      * @internal 由 `dispatchPointer()` 的 down 分支调
      */
-    private function beginPendingDrag(?Element $element, float $x, float $y): void
+    private function beginGestureArena(Element $owner, ?RenderBox $hit, Element $root, FocusManager $focus, float $x, float $y): void
     {
-        $owner = $this->draggableOwner($element);
-
-        if ($owner === null) {
-            return;
-        }
-
         $draggable = $owner->widget()->draggableValue();
 
         if ($draggable === null) {
             return;
         }
 
-        $this->pendingDrag = $draggable;
-        $this->pendingDragSource = $owner;
-        $this->pendingDragX = $x;
-        $this->pendingDragY = $y;
-    }
+        $arena = new GestureArena($x, $y);
 
-    /**
-     * move ⇒ 推进拖放阈值状态机：过阈值才真开始拖动，随后刷新悬停目标。
-     *
-     * @internal 由 `dispatchPointer()` 的 move 分支调
-     */
-    private function advanceDrag(float $x, float $y): void
-    {
-        $draggable = $this->pendingDrag;
-
-        if ($draggable === null) {
-            // 无 pending：已在拖动 ⇒ 只刷新悬停目标（DragController 自己只
-            // 在目标变化时通知）
-            if ($this->drag !== null && $this->drag->isDragging()) {
-                $this->updateDrag($x, $y);
+        // Tap：up 无人 claim ⇒ 胜 ⇒ 焦点落到 down 命中处则激活（同 down 分支原语义）
+        $arena->add(GestureRecognizer::tap(function (float $tx, float $ty) use ($focus, $hit, $root): void {
+            if ($focus->focusHit($hit, $root)) {
+                $this->activateFocusedWidget();
             }
+        }));
 
-            return;
-        }
+        // Drag：move 过阈值 ⇒ claim ⇒ 开始拖动（源 = owner）并刷新悬停目标
+        $arena->add(GestureRecognizer::drag(
+            GestureArena::DRAG_THRESHOLD_PX,
+            function (float $cx, float $cy) use ($draggable, $owner): void {
+                $this->drag()->begin($draggable, $owner);
+                $this->updateDrag($cx, $cy);
+            }
+        ));
 
-        $dx = $x - $this->pendingDragX;
-        $dy = $y - $this->pendingDragY;
-
-        if ($dx * $dx + $dy * $dy <= self::DRAG_THRESHOLD * self::DRAG_THRESHOLD) {
-            return; // 阈值内：纯点击的移动，不开始拖动
-        }
-
-        $source = $this->pendingDragSource;
-        $this->pendingDrag = null;
-        $this->pendingDragSource = null;
-        $this->drag()->begin($draggable, $source);
-        $this->updateDrag($x, $y);
+        $this->gestureArena = $arena;
     }
 
     /** 沿父链找最近的 `Draggable` 声明者（§A.3.5：子声明覆盖祖先） */
