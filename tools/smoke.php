@@ -110,6 +110,7 @@ use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
 use Drift\Input\PointerPhase;
 use Drift\Input\ScrollEvent;
+use Drift\Input\SemanticsRole;
 use Drift\Layout\FlexAlign;
 use Drift\Layout\Overflow;
 use Drift\Layout\RenderAppBar;
@@ -187,6 +188,7 @@ use Drift\Widget\LazyColumnState;
 use Drift\Widget\Scrollable;
 use Drift\Widget\ScrollView;
 use Drift\Widget\ScrollViewState;
+use Drift\Widget\SemanticsBuilder;
 use Drift\Widget\Element;
 use Drift\Widget\ErrorBoundary;
 use Drift\Widget\ErrorBoundaryElement;
@@ -6701,6 +6703,138 @@ check(
 @unlink($statePath);
 @unlink($stateMissing);
 
+// ── ⑰ 语义树（§9 无障碍 / M5）—— **树是数据** ⇒ 可序列化 ⇒ 可断言 ──
+// ★ 这组夹具证明"按角色找控件"真的能找到，而不是只证明"这几个类存在"。
+//   （§9 §801 原话："树是数据 ⇒ 可序列化 ⇒ 探针可断言"。）
+
+/** 挂载 + 布局一棵 Widget 树 —— 语义的几何来自渲染树 ⇒ 必须先布局再建树 */
+$semLay = static function (Widget $root): Element {
+    $el = $root->createElement();
+    $el->mount(null, smokeContext());
+    $el->settle();
+    $el->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
+
+    return $el;
+};
+
+// ① 加性：没声明角色的应用 ⇒ 空树（现有应用零成本，老探针一字不改）
+$semPlain = SemanticsBuilder::build($semLay(Column::make()->children([
+    Text::make('标题'),
+    Text::make('正文'),
+])));
+check('Sem · 未声明角色 ⇒ 空树（加性：现有应用零成本）', $semPlain->count() === 0, 'count=' . $semPlain->count());
+
+// ② Button：label 即可访问名
+$semBtn = SemanticsBuilder::build($semLay(Column::make()->children([
+    Button::make('保存'),
+    Button::make('取消'),
+])));
+$btnSave = $semBtn->findByRoleAndName(SemanticsRole::Button->value, '保存');
+check(
+    'Sem · Button 自动带 button 角色、name = label',
+    $btnSave >= 0 && $semBtn->count() === 2,
+    'count=' . $semBtn->count() . ' saveIdx=' . $btnSave
+);
+check(
+    'Sem · 节点 type 是控件类名短名',
+    $semBtn->node($btnSave)->type === 'Button',
+    $semBtn->node($btnSave)->type
+);
+
+// ③ TextField：label 是 name、value 跟着当前文本
+$semField = SemanticsBuilder::build($semLay(Column::make()->children([
+    TextField::make()->label('邮箱')->value('a@b.c'),
+])));
+$fieldIdx = $semField->findByRole(SemanticsRole::TextField->value);
+check(
+    'Sem · TextField：label 是 name、value 跟当前文本',
+    $fieldIdx >= 0
+        && $semField->node($fieldIdx)->name === '邮箱'
+        && $semField->node($fieldIdx)->value === 'a@b.c',
+    $fieldIdx >= 0
+        ? 'name=' . $semField->node($fieldIdx)->name . ' v=' . $semField->node($fieldIdx)->value
+        : 'not found'
+);
+
+// ④ 嵌套：子节点挂在最近的语义祖先下（parent / depth）
+$semNest = SemanticsBuilder::build($semLay(ScrollView::make(
+    Column::make()->children([Button::make('确定')])
+)));
+$scrollIdx = $semNest->findByRole(SemanticsRole::Scroll->value);
+$okIdx = $semNest->findByRoleAndName(SemanticsRole::Button->value, '确定');
+check(
+    'Sem · 嵌套：按钮的父是外层滚动节点（parent/depth 正确）',
+    $scrollIdx >= 0 && $okIdx >= 0
+        && $semNest->node($okIdx)->parent === $scrollIdx
+        && $semNest->node($okIdx)->depth === 1,
+    'scroll=' . $scrollIdx . ' btn=' . $okIdx
+        . ' parent=' . ($okIdx >= 0 ? $semNest->node($okIdx)->parent : -1)
+);
+
+// ⑤ 几何来自渲染树（不是另算一套）
+check(
+    'Sem · 几何来自渲染树（布局后有正尺寸，落在视口内）',
+    $semBtn->node($btnSave)->w > 0
+        && $semBtn->node($btnSave)->h > 0
+        && $semBtn->node($btnSave)->x >= 0
+        && $semBtn->node($btnSave)->y >= 0,
+    'rect=' . $semBtn->node($btnSave)->x . ',' . $semBtn->node($btnSave)->y . ','
+        . $semBtn->node($btnSave)->w . 'x' . $semBtn->node($btnSave)->h
+);
+
+// ⑥ hitTest 取**最深**节点（与 RenderBox::hitTest 同口径）
+$hitSave = $semBtn->hitTest($semBtn->node($btnSave)->x + 1, $semBtn->node($btnSave)->y + 1);
+check(
+    'Sem · hitTest 取最深节点（点在按钮上 ⇒ 命中按钮不是祖先）',
+    $hitSave === $btnSave,
+    'hit=' . $hitSave . ' want=' . $btnSave
+);
+
+// ⑦ Modal ⇒ dialog 角色、name = 标题
+$semModal = SemanticsBuilder::build($semLay(
+    Modal::make()->title('确认删除')->child(Column::make()->children([Button::make('删除')]))
+));
+$dlgIdx = $semModal->findByRole(SemanticsRole::Dialog->value);
+check(
+    'Sem · Modal ⇒ dialog 角色、name = 标题',
+    $dlgIdx >= 0 && $semModal->node($dlgIdx)->name === '确认删除',
+    $dlgIdx >= 0 ? 'name=' . $semModal->node($dlgIdx)->name : 'not found'
+);
+
+// ⑧ 越界 ⇒ 空节点（不炸、不是 null）
+check(
+    'Sem · node() 越界返回空节点（调用方不必判空）',
+    $semBtn->node(999)->role === '' && $semBtn->node(-1)->role === '',
+    'r999=[' . $semBtn->node(999)->role . '] r-1=[' . $semBtn->node(-1)->role . ']'
+);
+
+// ⑨ 序列化形状（devtools 快照的语义段）
+$semArr = $semBtn->toArrays();
+check(
+    'Sem · toArrays：count 与节点数一致、字段齐全',
+    $semArr['count'] === $semBtn->count()
+        && count($semArr['nodes']) === $semBtn->count()
+        && isset($semArr['nodes'][0]['role'], $semArr['nodes'][0]['name'], $semArr['nodes'][0]['x']),
+    'count=' . ($semArr['count'] ?? -1) . ' nodes=' . count($semArr['nodes'] ?? [])
+);
+
+// ⑩ text() 转储（数组 + implode，不逐字节累加 —— AOT 多字节堆损坏）
+check(
+    'Sem · text() 转储含角色与名字',
+    str_contains($semBtn->text(), 'button/Button[' . '保存' . ']'),
+    substr($semBtn->text(), 0, 70)
+);
+
+// ⑪ 虚拟列表也是"可滚动区域"
+$semLazy = SemanticsBuilder::build($semLay(LazyColumn::make(56.0)->items(
+    [0, 1, 2],
+    static fn (int $i): Widget => Text::make('行 ' . $i)
+)));
+check(
+    'Sem · LazyColumn ⇒ scroll 角色（虚拟列表也是可滚动区域）',
+    $semLazy->findByRole(SemanticsRole::Scroll->value) >= 0,
+    'count=' . $semLazy->count()
+);
 // ── 汇总 + 退出码（2026-10-18）──
 // ★ 以前只打印 FAIL、**从不汇总、也从不非零退出** ⇒ 打印 3 个 FAIL 仍然 exit 0：
 //   任何自动化调用（脚本 / CI / `&&` 链）都会把它读成"过了"。与 G2（不许静默
