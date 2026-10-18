@@ -75,6 +75,7 @@ use App\Users\Store\LoadStatus;
 use Drift\Dev\Smoke\App\CursorApplication;
 use Drift\Dev\Smoke\App\EchoApplication;
 use Drift\Dev\Smoke\App\FailSliceJob;
+use Drift\Dev\Smoke\App\GestureApplication;
 use Drift\Dev\Smoke\App\TfApplication;
 use Drift\Dev\Smoke\App\ThemeApplication;
 use Drift\Dev\Smoke\App\PointerApplication;
@@ -6316,6 +6317,53 @@ check(
     'dragging=' . var_export($leaveApp->drag()->isDragging(), true)
         . ' dropped=' . var_export($leaveApp->dropped, true)
         . ' targetLeave=' . $leaveApp->targetLeaves,
+);
+
+// ⑤ 手势消歧（GestureArena，§9.1）：可拖 + 可点击控件的 tap/drag 裁决
+$gestApp = new GestureApplication();
+$gestApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
+$dragBtnEl = findElement($gestApp->root(), fn (Element $e): bool => $e->widget() instanceof Button && $e->widget()->draggableValue() !== null);
+$plainBtnEl = findElement($gestApp->root(), fn (Element $e): bool => $e->widget() instanceof Button && $e->widget()->draggableValue() === null);
+$dBox = $dragBtnEl?->effectiveBox();
+[$dox, $doy] = $dBox === null ? [0.0, 0.0] : boxOrigin($dBox);
+$dcx = $dox + ($dBox?->size()?->width ?? 0.0) / 2;
+$dcy = $doy + ($dBox?->size()?->height ?? 0.0) / 2;
+
+// a. 过阈值拖动 ⇒ Drag claim ⇒ Tap 让位 ⇒ **不误激活**命令（修真的缺陷）
+$gestApp->dispatchInput(PointerEvent::down($dcx, $dcy));
+$gestApp->dispatchInput(PointerEvent::move($dcx + 40.0, $dcy));   // 位移 40 > 6 阈值
+check(
+    'Gesture · 可拖控件：过阈值拖动 ⇒ 开始拖动且不误激活命令（拖动中 tap 让位）',
+    $gestApp->drag()->isDragging() === true && $gestApp->dragPresses === 0,
+    'dragging=' . var_export($gestApp->drag()->isDragging(), true) . ' dragPresses=' . $gestApp->dragPresses,
+);
+$gestApp->dispatchInput(PointerEvent::up($dcx + 40.0, $dcy));   // 放下（无 DragTarget ⇒ 退出拖动态）
+check(
+    'Gesture · 可拖控件：拖动后 up ⇒ 仍不激活（命令只在 tap 胜时）',
+    $gestApp->dragPresses === 0,
+    'dragPresses=' . $gestApp->dragPresses,
+);
+
+// b. 未过阈值的 up ⇒ Tap 胜 ⇒ 激活（tap 在可拖控件上仍可用）
+$gestApp->dispatchInput(PointerEvent::down($dcx, $dcy));
+$gestApp->dispatchInput(PointerEvent::move($dcx + 2.0, $dcy + 2.0));   // 位移 ~2.8 < 6
+$gestApp->dispatchInput(PointerEvent::up($dcx + 2.0, $dcy + 2.0));
+check(
+    'Gesture · 可拖控件：未过阈值的 up ⇒ tap 胜 ⇒ 激活',
+    $gestApp->dragPresses === 1,
+    'dragPresses=' . $gestApp->dragPresses,
+);
+
+// c. 非可拖控件 ⇒ down 即激活（防回归，A15 不动）
+$pBox = $plainBtnEl?->effectiveBox();
+[$pox, $poy] = $pBox === null ? [0.0, 0.0] : boxOrigin($pBox);
+$pcx = $pox + ($pBox?->size()?->width ?? 0.0) / 2;
+$pcy = $poy + ($pBox?->size()?->height ?? 0.0) / 2;
+$gestApp->dispatchInput(PointerEvent::down($pcx, $pcy));
+check(
+    'Gesture · 非可拖控件：down 即激活（防回归）',
+    $gestApp->plainPresses === 1,
+    'plainPresses=' . $gestApp->plainPresses,
 );
 
 // ── 平台后端解析（§7.2 裁决 4：2026-10-17 默认从 soft 翻成 skia）──
