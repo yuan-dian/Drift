@@ -197,7 +197,7 @@ Errors::installFatalBox(fn(string $t, string $b) => $platform->fatalBox($t, $b))
 │  Drift\Platform   平台端口：窗口 · 表面 · 输入源 · 定时器 · 屏幕 · 壳服务│
 ├──────────────────────────────────────────────────────────────────────┤
 │  Drift\App        Application · EventLoop(派发) · FrameClock · TaskHost│
-│                   · WindowStateStore                                   │
+│                   · WindowStateStore · Paths                           │
 │  Drift\Errors     错误出口（"绝不静默"的物质载体）                     │
 └──────────────────────────────────────────────────────────────────────┘
 ```
@@ -327,8 +327,8 @@ private function pageFor(string $name): ?Widget
 
 | 目录 | 命名空间 | 文件 | 状态（2026-10-15 按 `src/` 核验） |
 |------|---------|------|------|
-| `src/App/` | `Drift\App` | ✅ `Application.php` · `Frame.php`（+ 1 个 `@internal` 实现文件 `FocusManager.php` —— 输入路由最小集，M3；§9.1 的完整链在 M4 的 `EventLoop`）；★ **2026-10-16 新落地三件**（任务 #8）：**`Job.php`** · **`TaskHost.php`** · **`SyncTaskHost.php`**（§17.2 的端口 + **后端 B**；§24.1 #35 点名的 `Job` 0 文件已清零）；★ **2026-10-18 P0**：**`Completion.php`**（`@internal` —— 队列里流动的完成事件，§17.4.2）+ **`DragController.php`**（`@internal`，拖动状态机，§9.1）；★ **P1**：**`SlicedJob.php`**（单线程分片的任务契约，§17.4.3）；★ **P2**：**`Io/IoPoller.php`**（非阻塞 IO 每帧轮询，§17.4.4 —— `src/App/` 的第一个子目录）；★ **P3**：**`NamedJob.php`**（可跨进程描述的任务）· **`ProcessWorker.php`**（worker 侧 JSON Lines 服务端）· **`ProcessTaskHost.php`**（常驻子进程后端，§17.4.5）；★ **2026-10-18 P0 补丁**：**`FrameClock.php`**（自适应帧时钟 —— `TimerHost` 的第一个生产调用者，§17.4.9）；⏳ `EventLoop.php` · `ThreadPoolTaskHost.php`（**⛔ 被 tpc 能力卡住** —— 探针 K，§17.2.2）· `WindowStateStore.php` | **缺 3**（M4/M5） |
-| `src/Platform/` | `Drift\Platform` | ✅ 9/9：`Platform` · `WindowHost` · `SurfaceProvider` · `InputSource` · `TimerHost` · `Screen` · `Clipboard` · `Dialog` · `Tray`（★ 2026-10-15 **端口层落地**；**同日 Win32 实现跟进**，见下行 —— 三个壳服务在 Win32 上返回 `null`，§24.3） | ✅（M1） |
+| `src/App/` | `Drift\App` | ✅ `Application.php` · `Frame.php`（+ 1 个 `@internal` 实现文件 `FocusManager.php` —— 输入路由最小集，M3；§9.1 的完整链在 M4 的 `EventLoop`）；★ **2026-10-16 新落地三件**（任务 #8）：**`Job.php`** · **`TaskHost.php`** · **`SyncTaskHost.php`**（§17.2 的端口 + **后端 B**；§24.1 #35 点名的 `Job` 0 文件已清零）；★ **2026-10-18 P0**：**`Completion.php`**（`@internal` —— 队列里流动的完成事件，§17.4.2）+ **`DragController.php`**（`@internal`，拖动状态机，§9.1）；★ **P1**：**`SlicedJob.php`**（单线程分片的任务契约，§17.4.3）；★ **P2**：**`Io/IoPoller.php`**（非阻塞 IO 每帧轮询，§17.4.4 —— `src/App/` 的第一个子目录）；★ **P3**：**`NamedJob.php`**（可跨进程描述的任务）· **`ProcessWorker.php`**（worker 侧 JSON Lines 服务端）· **`ProcessTaskHost.php`**（常驻子进程后端，§17.4.5）；★ **2026-10-18 P0 补丁**：**`FrameClock.php`**（自适应帧时钟 —— `TimerHost` 的第一个生产调用者，§17.4.9）；★ **2026-10-18 M5**：**`Paths.php`**（@api —— **只做字符串组装**：配置目录由 `Platform::configDir()` 给，`Drift\App` 因此不碰平台，§5.1）+ **`WindowStateStore.php`**（@api —— §5.4：启动读回 / 退出写回**各一次同步 IO**、kv 文件、恢复失败**静默降级 + 一条 Diagnostic**；`position()` 返 `null` = 最小化不写；显示器夹取归壳）；⏳ `EventLoop.php` · `ThreadPoolTaskHost.php`（**⛔ 被 tpc 能力卡住** —— 探针 K，§17.2.2） | **缺 2**（M4） |
+| `src/Platform/` | `Drift\Platform` | ✅ 9/9：`Platform` · `WindowHost` · `SurfaceProvider` · `InputSource` · `TimerHost` · `Screen` · `Clipboard` · `Dialog` · `Tray`（★ 2026-10-15 **端口层落地**；**同日 Win32 实现跟进**，见下行 —— 三个壳服务在 Win32 上返回 `null`，§24.3；★ 2026-10-18 M5 **两个既有端口各加方法**：`WindowHost` +`position(): ?Point` / `place(Rect, bool)`（§5.4 的读写两侧）、`Platform` +`configDir(): string`（用户配置目录 —— 每个平台必然有，「没有」用**空字符串**表达，不用 `null`）） | ✅（M1） |
 | `src/Platform/Win32/` | `Drift\Platform\Win32` | ✅ 8/8：`Win32Platform` · `Win32WindowHost` · `Win32Screen` · `Win32SurfaceProvider` · `Win32InputSource` · `Win32TimerHost` · `Win32RasterSurface` · **`Win32SkiaSurface`**（★ 2026-10-15 **首个平台实现落地**，配套 `cpp-src/drift_win32.{stub.php,cc}` 窗口桥 ⇒ §19 M1 出口判据兑现。★ `Win32RasterSurface` 是 `RenderSurface` 的**第 4 个**实现，走 `RasterCanvas` + `SetDIBitsToDevice` 位块传送（§7.3 的 M1 分期原文就是"CPU 光栅 + 位块传送"））。★ **2026-10-16 第二个渲染后端落地**（M1 遗留 ②）：`Win32SkiaSurface` = `SkiaCanvas` + **同一个** `drift_win_present()`，与 `Win32RasterSurface` **只差"造哪种画布"一行** ⇒ §7.2 裁决 1「后端可换、应用侧一行不改」兑现。后端由组合根 `new Win32Platform('skia' | 'soft')` 选（★ **2026-10-17 默认从 `soft` 翻成 `skia`**—— 软光栅的字来自位图字体，14px 上屏必然点阵锯齿，且 `Title=18px` 走放大路径；详见 §24.2 #19。`'soft'` 仍是显式可选的确定性测试后端）。真机已验：`hello.exe` 经 Skia 后端画出「Hello Drift」） | ✅（M1） |
 | `src/Geometry/` | `Drift\Geometry` | `Point` · `Size` · `Rect` · `EdgeInsets` · `Scale` · `BoxConstraints` | ✅ 6/6 |
 | `src/Rendering/` | `Drift\Rendering` | ✅ `RenderSurface` · `GpuContext` · `Canvas` · `DisplayList` · `Paint` · `Color` · `BoxStyle` · `RasterCanvas` · `RecordingCanvas` · **`SkiaCanvas`**（★ **2026-10-16 落地**（M1 遗留 ②）= §7.2 裁决 1 的第三个 `Canvas` 实现：`DisplayList` 的 Skia 回放器。**几何（行基线 / 笔位）全来自 PHP 的 `Paragraph`**，桥只逐字形 `drawSimpleText`（§7.2「画布只施加、不重算」）⇒ **不链 SkParagraph / SkShaper / ICU ⇒ 不需要 `icudtl.dat`**。坐标一律**设备像素**（量化只走 `Scale::quantizeRect()`），与 `RasterCanvas` 逐条同口径；**有意保留两处后端差异**（抗锯齿范围、描边实现）⇒ 像素级 golden **不能跨后端比**） | ✅（M1） |
@@ -503,7 +503,7 @@ final class Bootstrap
         while ($platform->pump()) {
             $app->frame($platform->now(), $screen->viewport());
         }
-        // ★ 窗口状态读回 / 写回（`WindowStateStore`）归 M5（§19）：启动一次、退出一次同步 IO。
+        // ★ 窗口状态读回 / 写回（`WindowStateStore`，§5.4）：启动一次、退出一次同步 IO。
     }
 }
 ```
@@ -569,17 +569,58 @@ namespace Drift\App;
 
 final class WindowStateStore          // 启动时读回，退出时写回
 {
-    public function __construct(private string $path) {}   // 用户目录下的 kv 文件
-    public function restore(WindowHost $w): void;          // 无记录 ⇒ 用默认值，不报错
-    public function persist(WindowHost $w): void;          // 退出时一次
+    public function __construct(private string $path) {}   // 用户目录下的 kv 文件；'' = 平台没给目录 ⇒ 整体退化为空操作
+    public function restore(WindowHost $w, int $handle): void;   // 无记录/读坏 ⇒ 用默认值，不报错
+    public function persist(WindowHost $w, int $handle): void;   // 退出时一次
 }
 ```
+
+★ **两个端口方法（2026-10-18 随 store 一起落地，形状先定在这里）**：
+
+```php
+interface WindowHost
+{
+    /** 客户区左上角的**屏幕逻辑坐标**
+     *  · `null` = 当前位置无意义（**最小化**）⇒ 别记
+     *  · **窗口已销毁** ⇒ 给"最后已知几何"（壳缓存：每次活窗口查询顺手刷新 + WM_DESTROY 抓最后一下）
+     *    —— `persist()` 就跑在窗口死透之后的退出路径上，问死句柄 = 永远问不到
+     */
+    public function position(int $windowHandle): ?Point;
+
+    /** 一次原子还原几何（`Rect` + 最大化）；**显示器夹取归平台** */
+    public function place(int $windowHandle, Rect $rect, bool $maximized): void;
+}
+```
+
+★ **三处易错的顺序 / 归属**（都已在实现里踩过或绕过）：
+
+1. `restore()` 必须在 `surface->resize()` **之前** —— resize 定首帧尺寸，而首帧就该是
+   还原后的尺寸。放后面 = 用户先看到一帧默认尺寸再被拽过去。
+2. resize 用还原后**读回**的 `clientSize()`（不是常量）⇒ 窗口大小与画面尺寸永远一致。
+3. `Paths::userConfig($baseDir, $name)` 的 `$baseDir` 由组合根从 `Platform::configDir()`
+   传进来 —— 目录是平台能力（§5.1），而 `getenv('APPDATA')` 在 PHP 侧被 §16.7 禁掉。
+4. **退出路径上窗口已经死了**：WM_CLOSE 里壳是**同步** `DestroyWindow`，等
+   `while (pump())` 跳出、`persist()` 开问时，`GetClientRect` 对死句柄必然失败 ⇒
+   首版实现**一个字都写不出去**且无任何报错（静默到只能靠逐点落盘的诊断才看出来）。
+   解法在壳侧：`drift_win32.cc` 维护最后已知几何缓存（活窗口查询顺手刷 + WM_DESTROY
+   抓最后一下），死句柄查询回填它。`position()` / `clientSize()` / `isMaximized()`
+   三个查询同此路径；最小化 ⇒ 缓存作废（坐标是屏幕外的），保留上一份状态。
 
 **三条纪律**：
 
 1. **只在启动 / 退出各一次同步 IO**（不在帧内）⇒ **不需要 `TaskHost`**。
 2. **恢复失败必须静默降级到默认值**，不报错 —— 这是少数**允许静默**的场合（显示器拔了、分辨率变了、配置文件被删，都不该让应用起不来）。★ 这是 G2 的**显式例外**，写进 §24.3 例外登记表以免被 lint 误判。
 3. **存储后端可换**（文件 / 注册表 / 平台偏好），但**不进 `Platform` 端口** —— 因为换它不影响"谁能依赖谁"的分层，只影响一个 `Drift\App` 内部实现。
+
+★ **2026-10-18 落地形态**：kv 文本文件（`v`/`x`/`y`/`w`/`h`/`max` 六行，带格式版本号；
+版本不符或任一项不是数 ⇒ 整份降级）。落点 `%APPDATA%\Drift\<app>.window`
+（壳用 `SHGetKnownFolderPath` 取目录、**只给路径不创建**；`shell32.lib` 已进
+`build/base.yml`）。smoke 12 条夹具覆盖：往返 / 坏字段 / 版本不符 / 缺文件不刷
+Diagnostic / 空路径空操作 / 最小化不写 / `max=0` / 非正尺寸。
+★ **真机验证（2026-10-18，`users.exe` + probe-grab）**：RUN1 搬到 (400,300,1000x700)
+⇒ 优雅关窗 ⇒ 状态文件 `x=408 y=331 w=984 h=661 max=0`（客户区原点含 8px 边框 +
+31px 标题栏，与逻辑换算一致）；RUN2 启动 `rect=400,300,1000,700` —— 位置/尺寸
+**逐像素**还原，无残留进程。`showcase` 两个 Bootstrap 接线相同。
 
 ---
 
@@ -3120,7 +3161,7 @@ IO / 任务 / 分片 / settle / layout / paint，**没有任何一处问过"有�
 | **M2 三树 + 布局** | Element/State/调和 + RenderBox 两阶段布局 + 首批控件 + **fluent-first 全部落地** + **盒样式（`BoxStyle` + `BoxWidget`，§15.7）** + **焦点遍历顺序** + **光标形状（命中三方消费）** + **`SubscribingWidget` 接口** + **property hooks 进 Store** + **`Each` key 必填** | 布局 conformance 夹具全过；首批控件过 **W1–W8**；Tab 序有 conformance 夹具；`Each` 缺 key ⇒ 构建期报错 | ✅ **已完成（2026-10-17 收口核验）** —— **四条出口判据全部兑现**：① `tools/M2Conformance.php` **14 ok / 0 FAIL**（2026-10-17 实跑；W1–W8 + §9.1 Tab 序夹具）⇒「布局 conformance 夹具全过 / 首批控件过 W1–W8 / Tab 序有夹具」三条一并兑现；② **`Each` 缺 key ⇒ 构建期报错**以**构造参数必填**形态兑现（`Each::__construct(callable $keyFn)` —— 比「报错」更强：缺 key 的 Each 根本造不出来，G1 结构化必填），运行期**重复 key** 响亮失败（smoke `eachdup` 用例：exit 3 + `Errors.log` 留痕；`1` 与 `'1'` 不算重复的反面也钉住）。<br>历史沿革：三树/调和/两阶段布局/13 个控件/fluent-first/`BoxStyle`+`BoxWidget`/`SubscribingWidget`/property hooks/`Each` key 全在；**`TextField` 2026-10-15 已落地**（§24.1 #32 闭环）；**`FocusNode`（焦点遍历顺序）2026-10-15 已落地** —— `FocusManager` 的 Tab 序（默认文档序 / `skipFocus` 整体跳过 / `focusOrder` 同容器稳定排序）可跑；**`Spinner` 2026-10-16 已落地**（§11.5 `Loading` 分支；三段形态 + `RenderSpinner` 8 点 alpha 环，smoke 14 条断言 + M2LayoutPage 示例）；**`CursorShape`（命中三方消费）随 M1 输入层已落地**（enum + 整条命中链 `Widget→RenderObject→FocusManager→dispatchInput→Win32 setCursor` 接好，smoke 有光标断言，见 §753）；★ **conformance 夹具已建**（2026-10-16，`tools/M2Conformance.php`）—— W1–W8 静态 + runtime 判据集（token 级量具带反例自检），`M2LayoutPage` 即夹具页，M2 出口判据「夹具全过 / 首批控件过 W1–W8 / Tab 序有夹具」首次有可跑落点；常驻门 `drift-conformance` 仍归 M4（§16.2）  |
 | **M3 数据缝/多页** | Store 三件套 + `SubjectBuilder` + **`select()`** + RouteTable/PageHost + **动作缝（`CommandRouter` + 冒泡链）** + **三态 enum** + **错误边界容器**（★ 2026-10-14 裁决：**归 M3** —— 见 §23.2 O-12）+ **AcceleratorTable** + **自绘 MenuBar/ContextMenu** + **应用内拖放** | §A.2 的完整应用可跑；局部态与跨页共享两条路径都能写；`Root` 只组合（lint 可查）；Ctrl+S 等加速键可用；§16.6.3 的 **17 条规则全部双向自检**过（`apps/users` 过全部 lint；两条修过的规则已做反例自检） | ✅ **M3 出口判据已兑现（2026-10-16）** —— `apps/users` 完整样板已建（20 个 PHP 文件，`apps/users/`）：① **§A.2 的完整应用可跑** —— **真机**：`tpc apps/users/project.yml -O2 -m bin` 出 `users.exe`（2.1MB，`Build successful`），运行后窗口 900×640 起来、客户区非白像素 11%（4 个"删除"按钮的 `rgb(209,36,47)` 清晰可辨）、进程保持消息循环、无 `Deprecated` / 无 Fatal；**无头侧** smoke 18 条断言；② **局部态与跨页共享两条路径都能写**（`SignupForm` property hooks / `AppStore` + `StatusBar` 专职订阅）；③ **`Root` 只组合**（`rootBuilds()===1` + 全树过 lint）；④ **Ctrl+S 可用**（加速键第 ① 环 ⇒ `form.submit`）；菜单 / 拖放 / 错误边界全在线。旧状态存档：值缝**M3 的 0 文件已清零** —— `Widget\Menu` 四件（`MenuBar`/`Menu`/`MenuItem`/`ContextMenu`）与 `Drag` 两件（`Draggable`/`DragTarget`）**2026-10-16 已落地**（自绘菜单 + 应用内拖放兑现；错误边界容器与 `AcceleratorTable` 同日落地，见 §4.2 各行注）；★ **多页外壳 2026-10-16 已落地**（`Dock` 五槽 + `AppBar` + `NavButton`，smoke 21 条 + ShellPage 示例；§A.2.6 `UsersRoot` 控件面齐全，只差 `Draggable`）；★ **命令激活键盘侧已接线**（焦点按钮 Enter/Space ⇒ `dispatch()` 带 `CommandArg` —— §9.1；指针激活等 M4 的 `PointerEvent::up()`）；§A.2 样板刚对齐（O-18），`apps/users` 未建；★ **浮层机制已裁（O-20，按 A）** —— `Menu` / `ContextMenu` / 模态（`showModal()`）共用第二棵根渲染树，实现不再被“不存在的原语”卡住  |
 | **M4 工具链 + 异步** | drift-preview / golden / conformance / drift-lint / **drift-doctor** 齐备 + **TaskHost 线程池后端** + **`notifyChanged` 线程断言** + **ThemeChanged / 深色模式** | 无头 preview + golden diff 可跑；后台 IO 不卡帧；**worker 里 notify ⇒ 响亮失败**；跟得上系统主题切换 | ⏳ **部分** —— `drift-lint` / `drift-preview` / `drift-codegen` 三件在；`golden` / `conformance` / `drift-doctor` 未建。★ **`TaskHost` 端口已建**（2026-10-16：`Job` + `TaskHost` + `SyncTaskHost`，后端 B）—— **线程池后端 A 被 tpc 能力卡住**（⛔ §17.2.2 / §24.2 #1），故 M4 的"后台 IO 不卡帧"这条出口判据**当前不可达**，需先等 tpc 补"每线程进入请求"的钩子。★ **`ThemeChanged` 事件通路已建（2026-10-17）**：零件盘点——查询侧早已齐（`ThemeData::forSystem(SystemTheme)` 值对象 + `Win32Screen::systemTheme()` 实时读注册表 `AppsUseLightTheme` 的桥 `drift_win_system_dark` + `advapi32.lib` 早已链接（`build/base.yml` 注释预留））；本轮补**事件侧**——`ThemeChangedEvent` 空值对象（`src/Input/`，载荷为空：新主题由消费者实时查 `Screen::systemTheme()`，事件只回答"变了"）+ C++ `WndProc` 的 `WM_SETTINGCHANGE` 分支（过滤 `lParam == L"ImmersiveColorSet"`—— 时区/语言/显示设置也发这条，必须过滤）+ `toArray` 的 `kEvTheme` ⇒ "theme" 映射+ `Win32Platform::pump()` 翻译入队 + `Application::dispatchInput` 显式消费分支（不落 default 丢弃）。真机验证：`drift-build hello`（C++ 编译通过，107.4s）+ 窗口探针（消息循环未受影响）。★ **2026-10-17 已闭环（§24.2 #14）**："主题变了界面跟着变"的最后一段是**接线不是新机制** —— `Element::applyContext()` 本就是"换一份渲染环境（**主题切换的唯一入口**）"，且已实现两种兑现时机（无状态立即重建 / 有状态只标脏等帧末 flush）+ 递归只走一遍，但 src/ 里**零生产调用者**。本轮加 `Application::onSystemThemeChanged()`（§A.2.5 的应用钩子，无参 —— 框架不持平台 ⇒ 应用自己重读系统主题）+ `applyNewContext()`（根 + 浮层两棵树下发 `withTheme()`），并在 `dispatchInput` 的 ThemeChangedEvent 分支按"**先钩子、再下发**"接线。★ 同轮抓到一个**死分支**：`Application.php` 漏 `use Drift\Input\ThemeChangedEvent;` ⇒ `instanceof` 解析到 `Drift\App\` ⇒ 恒 false 且不报错 ⇒ 上一轮加的消费分支从未执行过（"instanceof 漏 use"第二次咬人）。⇒ M4 出口判据"跟得上系统主题切换"**三段（查询 / 事件 / 界面重建）全部兑现**。  |
-| **M5 业务底座** | 虚拟化（含 §12.3 的 State 外置纪律）+ 脏矩形 + **WindowStateStore** + Windows UIA 桥接 | 长列表滚动不掉帧；子树崩溃不整树陪葬；窗口位置/尺寸跨启动保留 | 🔶 **部分** —— **虚拟化已落地**（2026-10-18，§13.4 `LazyColumn` + `Scrollable` + `RenderScrollView` 的 `virtualExtent`/`sliceOrigin`；10000 行单帧 96ms → ~0.2ms，示例台 `BigListPage` 为消费者）；⏳ 脏矩形 / `WindowStateStore` / UIA 桥接仍 0 文件  |
+| **M5 业务底座** | 虚拟化（含 §12.3 的 State 外置纪律）+ 脏矩形 + **WindowStateStore** + Windows UIA 桥接 | 长列表滚动不掉帧；子树崩溃不整树陪葬；窗口位置/尺寸跨启动保留 | 🔶 **部分** —— **虚拟化已落地**（2026-10-18，§13.4 `LazyColumn` + `Scrollable` + `RenderScrollView` 的 `virtualExtent`/`sliceOrigin`；10000 行单帧 96ms → ~0.2ms，示例台 `BigListPage` 为消费者）；★ **`WindowStateStore` 已落地**（2026-10-18，§5.4：`Paths` + `WindowStateStore` + `WindowHost::position()/place()` + `Platform::configDir()` + 壳 3 原生；两个应用各 2 行接线，落盘 `%APPDATA%\Drift\<app>.window` 的 kv 文件，smoke 12 条夹具）；⏳ 脏矩形 / UIA 桥接仍 0 文件  |
 
 ★ **状态列是 §20 纪律 4 在里程碑层的落点**：出口判据写“要做”不算数，`src/` 里有没有才算。§4.2 已按同一口径加了逐类型状态列（点名 94 个：**79 有文件 / 15 个 0 文件**） —— **两处必须同步维护**（否则又会出现“文档说已落地、代码还没写”的分裂）。★ `drift-doctor`（§16.2 工具集之一，O-10 已裁“做”）正是该**自动**输出这张表的工具 ⇒ 手工列只是它的**临时输入**，别为它新造机制。
 
@@ -4656,7 +4697,7 @@ final class Bootstrap
         while ($platform->pump()) {
             $app->frame($platform->now(), $screen->viewport());
         }
-        // ★ 窗口状态读回 / 写回（`WindowStateStore`）归 M5（§19）：启动一次、退出一次同步 IO。
+        // ★ 窗口状态读回 / 写回（`WindowStateStore`，§5.4）：启动一次、退出一次同步 IO。
     }
 }
 ```
@@ -5534,31 +5575,36 @@ $this->application()->showModal(
 ### A.3.8 窗口状态持久化
 
 ```php
-// ⏳ 本节整体归 M5（§19）：`WindowStateStore` / `Paths` 在 §4.2 有名字、`src/` 0 文件。
-//   形状先定 —— 启动读回、退出写回，各一次同步 IO；恢复失败**静默降级到默认值**
-//   并写一条 Diagnostic（§24.3 登记过的 G2 例外，别让应用起不来）。
+// ✅ 2026-10-18 已落地（§5.4 / §19 M5）：`WindowStateStore` / `Paths` 在 `src/App/`。
+//   启动读回、退出写回，各一次同步 IO；恢复失败**静默降级到默认值**并写一条
+//   Diagnostic（§24.3 登记过的 G2 例外，别让应用起不来）。
 //
 // 组合根（§5.4）：
 $platform = new Win32Platform();
-$state    = new \Drift\App\WindowStateStore(\Drift\App\Paths::userConfig('users.window'));
+$state    = new \Drift\App\WindowStateStore(
+    \Drift\App\Paths::userConfig($platform->configDir(), 'users.window')
+);
 $app      = new UsersApplication(new HttpUserSource());
 
 // ★ 循环归平台（§5.2 裁决 1）—— `Application` **没有** run()：
 //   ★ `surface()` 返回 `?SurfaceProvider`，`attach()` 要 `RenderSurface` ⇒ 收窄一次。
-$handle = $platform->window()->createWindow('Users', 900, 640);
-$platform->window()->show($handle);
+$window  = $platform->window();
+$handle  = $window->createWindow('Users', 900, 640);
+$window->show($handle);
+$state->restore($window, $handle);              // 启动一次 —— **必须在 resize 之前**
+
 $provider = $platform->surface($handle);
 if ($provider === null) { \Drift\Errors::report('平台没给出渲染表面'); return; }
 $screen  = $platform->screen();
 $surface = $provider->surface();
-$surface->resize((int) round(900.0 * $screen->scale()),
-                 (int) round(640.0 * $screen->scale()), $screen->scale());
+$restored = $window->clientSize($handle);       // 读回，不是常量
+$surface->resize((int) round($restored->width * $screen->scale()),
+                 (int) round($restored->height * $screen->scale()), $screen->scale());
 $app->attach($surface, $screen->viewport());
-$state->restore($platform->window());          // 启动一次
 while ($platform->pump()) {
     $app->frame($platform->now(), $platform->screen()->viewport());
 }
-$state->persist($platform->window());          // 退出一次
+$state->persist($window, $handle);              // 退出一次
 ```
 
 ### A.3.9 异步：换后端 = 组合根一行
