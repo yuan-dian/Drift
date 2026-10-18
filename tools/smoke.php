@@ -42,6 +42,7 @@ use Drift\Dev\Preview\Renderer;
 use Drift\Dev\Preview\SvgSurface;
 use Drift\Dev\Smoke\App\AccelApplication;
 use Drift\Dev\Smoke\App\CompositeRootApp;
+use Drift\Dev\Smoke\App\CountJob;
 use Drift\Dev\Smoke\App\MenuApplication;
 use Drift\Dev\Smoke\App\ModalApplication;
 use Drift\Dev\Smoke\App\RecordingHandler;
@@ -60,6 +61,7 @@ use App\Users\UsersRoot;
 use App\Users\Store\MemoryUserSource;
 use Drift\Dev\Smoke\App\CursorApplication;
 use Drift\Dev\Smoke\App\EchoApplication;
+use Drift\Dev\Smoke\App\FailSliceJob;
 use Drift\Dev\Smoke\App\TfApplication;
 use Drift\Dev\Smoke\App\ThemeApplication;
 use Drift\Dev\Smoke\App\PointerApplication;
@@ -5522,6 +5524,97 @@ fresh($log);
 if (is_file($log)) {
     unlink($log);
 }
+
+// ── ㊳ P1：`SlicedJob` 单线程分片（§17.4.3）──────────────────────────────
+//
+// ★ 它解决的是"能算完、只是算得慢"（过滤一万行 / 排序 / 解析）：不需要并行，
+//   只需要别把一帧卡死（WPF 的原话：`await` 不加 `Task.Run` 就是单线程分段计算）。
+//   ★ 分片**不走 `TaskHost`** —— 它永远在 UI 线程跑，与"换后端"正交。
+//   判据：① 进队列不执行 ② 一帧只推一步 ③ N 帧后完成 ④ 结果与一次性算相同
+//   ⑤ 完成后出队且不再步进 ⑥ 每步耗时有界 ⑦ 完成回调改 Store ⇒ 同帧重建
+//   ⑧ step 抛异常 ⇒ onError 且出队
+
+$sliceApp = new TaskApplication();
+$sliceApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(320.0, 240.0)));
+
+$sliceJob = new CountJob(100000, 10000); // 10 万次累加、每帧 1 万 ⇒ 10 帧
+$sliceDone = null;
+$sliceApp->submitSliced($sliceJob, function (int $sum) use (&$sliceDone): void {
+    $sliceDone = $sum;
+});
+check(
+    'P1 · submitSliced 之后进队列（还没执行）',
+    $sliceApp->slicedCount() === 1 && $sliceDone === null,
+    'queued=' . $sliceApp->slicedCount() . ' done=' . var_export($sliceDone, true),
+);
+
+$sliceApp->frame(16.0, BoxConstraints::loose(new Size(320.0, 240.0)));
+check(
+    'P1 · 一帧只推一步（不一口气跑完）',
+    $sliceJob->steps() === 1 && $sliceDone === null,
+    'steps=' . $sliceJob->steps(),
+);
+
+for ($i = 0; $i < 9; $i++) {
+    $sliceApp->frame(32.0 + $i * 16.0, BoxConstraints::loose(new Size(320.0, 240.0)));
+}
+check(
+    'P1 · 10 帧后完成（10 万 / 每帧 1 万）',
+    $sliceJob->steps() === 10 && $sliceDone !== null,
+    'steps=' . $sliceJob->steps() . ' done=' . var_export($sliceDone, true),
+);
+check(
+    'P1 · 结果与一次性求和相同（1+…+100000）',
+    $sliceDone === (new SumJob(100000))->run(),
+    (string) ($sliceDone ?? -1),
+);
+check('P1 · 完成后出队（不再占用帧预算）', $sliceApp->slicedCount() === 0, (string) $sliceApp->slicedCount());
+
+$stepsAfterDone = $sliceJob->steps();
+$sliceApp->frame(256.0, BoxConstraints::loose(new Size(320.0, 240.0)));
+check('P1 · 完成后不再步进（下一帧 steps 不变）', $sliceJob->steps() === $stepsAfterDone, (string) $sliceJob->steps());
+
+$maxStepMs = $sliceJob->stepMs === [] ? 999.0 : max($sliceJob->stepMs);
+check(
+    'P1 · 每步耗时有界（10 万次累加切成 10 份，单步 < 5ms）',
+    $maxStepMs < 5.0,
+    sprintf('max=%.2fms', $maxStepMs),
+);
+
+// ⑦ 完成回调改 Store ⇒ 同帧重建（与 ㊲ 同一条：pumpSliced 也在 settle 之前）
+$buildsBeforeSlice = $taskState?->builds ?? -1;
+$taskApp->submitSliced(new CountJob(2000, 1000), function (int $sum) use ($taskApp): void {
+    $taskApp->store->setStatus(7);
+});
+$taskApp->frame(80.0, BoxConstraints::loose(new Size(320.0, 240.0)));
+check(
+    'P1 · 分片未完时不回调（第 1 帧只推进）',
+    $taskState !== null && $taskState->builds === $buildsBeforeSlice && $taskApp->slicedCount() === 1,
+    'builds=' . ($taskState?->builds ?? -1),
+);
+$taskApp->frame(96.0, BoxConstraints::loose(new Size(320.0, 240.0)));
+check(
+    'P1 · 分片完成回调改 Store ⇒ **同帧**重建',
+    $taskState !== null && $taskState->builds === $buildsBeforeSlice + 1 && $taskState->seen === 7,
+    sprintf('builds %d→%d seen=%d', $buildsBeforeSlice, $taskState?->builds ?? -1, $taskState?->seen ?? -1),
+);
+
+// ⑧ 错误通道：step 抛 ⇒ onError 且出队（不静默、不重试）
+$sliceErr = null;
+$taskApp->submitSliced(
+    new FailSliceJob(),
+    function (mixed $v): void {
+    },
+    function (\Throwable $e) use (&$sliceErr): void {
+        $sliceErr = $e;
+    },
+);
+$taskApp->frame(112.0, BoxConstraints::loose(new Size(320.0, 240.0)));
+check(
+    'P1 · step 抛异常 ⇒ onError 且出队（任务终止，不重试）',
+    $sliceErr instanceof \RuntimeException && $sliceErr->getMessage() === '分片中途失败' && $taskApp->slicedCount() === 0,
+    ($sliceErr instanceof \Throwable ? $sliceErr->getMessage() : 'null') . ' queued=' . $taskApp->slicedCount(),
+);
 
 // ── 可滚动容器（P1 / 2026-10-17）：偏移进坐标链 + 滚轮路由 ──────────
 //   两条线：① 布局层直接测 `RenderScrollView`（视口 / maxScroll 夹取 / 命中按视口判 /

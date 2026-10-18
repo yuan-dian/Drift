@@ -127,6 +127,15 @@ abstract class Application
     private const WHEEL_NOTCH_PX = 48.0;
 
     /**
+     * 分片任务每帧的时间预算（毫秒，§17.4.3）。
+     *
+     * ★ 4 的来历：一帧 16.7ms，留 12ms 给布局 / 绘制 / 输入（§13.3 全树重排）
+     *   ⇒ 分片最多吃掉四分之一帧。`SlicedJob::step()` 自己决定一次干多少，
+     *   这只是**建议值**（"干到超预算就返回"）。
+     */
+    private const SLICE_BUDGET_MS = 4;
+
+    /**
      * 浮层面板（O-20 第二棵根渲染树）：菜单 / 上下文菜单 / 模态共用同一槽位。
      *
      * ★ 与 `$root` **同构**（一个 Widget + 一个 Element）—— 树 / diff / 布局零配合，
@@ -172,6 +181,20 @@ abstract class Application
      *   drain 整个跳过，零开销。
      */
     protected ?TaskHost $tasks = null;
+
+    /**
+     * 排队中的分片任务（§17.4.3，P1）—— 每帧推一次 `step()`。
+     *
+     * ★ **不走 `TaskHost`**：分片永远在 UI 线程跑（它解决的是"别把一帧卡死"，
+     *   不是"别占 UI 线程"）。所以它和端口正交：换后端不影响分片。
+     *
+     * ★ 元素是数组而不是对象：只有四个字段、生命周期一帧内、不需要身份 ——
+     *   为它造一个类只会多一层没有信息的壳（对比 `Completion`：那个要跨边界传，
+     *   有语义）。
+     *
+     * @var list<array{job: SlicedJob, onDone: \Closure, onError: ?\Closure, budgetMs: int}>
+     */
+    protected array $sliced = [];
 
     /** @param iterable<string, CommandHandler> $handlers `commands()` 的返回值 */
     public function __construct(iterable $handlers = [])
@@ -770,6 +793,10 @@ abstract class Application
         //   "loading → ready" 会闪一帧空（多一帧延迟，且用户看得见）。
         $this->pumpTasks();
 
+        // ★ ② 再推进分片任务（P1）：完成的那一个也在此刻回调 ⇒ 同样落在 settle 之前。
+        //   顺序（结果 → 分片 → settle）不重要，**都在 settle 之前**才重要。
+        $this->pumpSliced();
+
         // 浮层布局段（无界自尺寸 + 钉锚点 + 夹进客户区）—— 见 placeMenu()
         $this->placeMenu($constraints);
 
@@ -840,6 +867,95 @@ abstract class Application
         }
 
         ($completion->onDone)($completion->value);
+    }
+
+    /**
+     * 提交一个**可分片**的长任务（§17.4.3，P1）：每帧推一次 `step()`，不占一帧。
+     *
+     * ```php
+     * $app->submitSliced(
+     *     new FilterJob($rows, $query),
+     *     fn (array $hits) => $this->store->replace($hits),
+     * );
+     * ```
+     *
+     * ★ 与 `TaskHost::submit()` 的差别只在**怎么跑**：分片在 UI 线程的帧间跑，
+     *   回调同样**在帧内**、同样在 `settle()` 之前（所以改 Store 同帧生效）。
+     * ★ 预算默认 {@see self::SLICE_BUDGET_MS}；任务自己决定一次干多少。
+     *
+     * @param callable(mixed): void $onDone 完成后回调（帧内执行）
+     * @param null|callable(\Throwable): void $onError 失败回调；`null` ⇒ Fatal 序列
+     *
+     * @api
+     */
+    public function submitSliced(
+        SlicedJob $job,
+        callable $onDone,
+        ?callable $onError = null,
+        int $budgetMs = self::SLICE_BUDGET_MS,
+    ): void {
+        $this->assertUiThread('submitSliced');
+
+        $this->sliced[] = [
+            'job' => $job,
+            'onDone' => \Closure::fromCallable($onDone),
+            'onError' => $onError === null ? null : \Closure::fromCallable($onError),
+            'budgetMs' => $budgetMs,
+        ];
+    }
+
+    /**
+     * 推进所有分片任务（§17.4.3）—— 每帧一次，在 `settle()` 之前。
+     *
+     * ★ **swap 语义**：先取快照再清空，未完成的回填 ⇒ 回调里 `submitSliced()`
+     *   的新任务不会丢（也不会让本帧无限长）。与 `SyncTaskHost::drain()` 同一手法。
+     * ★ `step()` 抛异常 ⇒ 该任务终止、走 `$onError`（不再回填）——
+     *   与 `Job::run()` 同一条错误通道，不新增第四态。
+     */
+    private function pumpSliced(): void
+    {
+        if ($this->sliced === []) {
+            return;
+        }
+
+        $this->assertUiThread('slice');
+
+        $queue = $this->sliced;
+        $this->sliced = [];
+
+        try {
+            foreach ($queue as $item) {
+                try {
+                    $more = $item['job']->step($item['budgetMs']);
+                } catch (\Throwable $e) {
+                    $this->complete(new Completion(null, $e, $item['onDone'], $item['onError']));
+
+                    continue;
+                }
+
+                if ($more) {
+                    $this->sliced[] = $item;
+
+                    continue;
+                }
+
+                $this->complete(new Completion($item['job']->result(), null, $item['onDone'], $item['onError']));
+            }
+        } catch (\Throwable $e) {
+            // 回调抛异常：与 `pumpTasks()` 同策略（S3：无边界 ⇒ Fatal 序列，不吞）
+            Errors::report(sprintf(
+                '帧循环：分片任务回调未捕获异常 —— %s（%s:%d）',
+                $e->getMessage(),
+                basename($e->getFile()),
+                $e->getLine(),
+            ));
+        }
+    }
+
+    /** @internal 测试与 devtools：还有几个分片任务在排队 */
+    public function slicedCount(): int
+    {
+        return count($this->sliced);
     }
 
     /**

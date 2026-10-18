@@ -521,3 +521,34 @@ Spinner → M2 conformance 运行器 → 多页外壳（`Dock`/`AppBar`/`NavButt
 `drift-build users` **7.4MB/19.1s** · 真机 `probe-window users` OK（DPI V2、无 Errors.log）。
 清点复测（`audit_42.py`）：`src/` **178 文件 / 153 `@api` / 点名 105 = 103 有文件 + 2 个 0 文件 / 未点名 75**
 （剩 2 个 0 文件：`GestureArena` · `SemanticsTree`，均属 M4/M5）。
+
+### 7.10 P1：SlicedJob 单线程分片（2026-10-18）
+
+**要解决的问题**：一类最常见的"后台需求"其实是"能算完、只是算得慢"（过滤一万行、排序、解析）。
+它不需要线程，只需要**别把一帧卡死** —— WPF 文档的原话：`await` 不加 `Task.Run` 就是单线程分段计算。
+
+**落地**：
+- `SlicedJob`：`step(int $budgetMs): bool`（true = 还没完）+ `result()`。
+  ★ `step()` **自己决定一次干多少** —— 框架只给预算，不切片（只有任务知道"一个条目多贵"）。
+- `Application::submitSliced(job, onDone, ?onError, budgetMs = 4)` + `frame()` 里的 `pumpSliced()`。
+  ★ **不走 `TaskHost`**：分片永远在 UI 线程跑，与"换后端"正交（换后端不影响它）；
+  ★ 排在 `pumpTasks()` 之后、**settle 之前** ⇒ 完成回调改 Store 同帧生效；
+  ★ swap 语义（回调里再 `submitSliced()` 留到下一帧）；
+  ★ `step()` 抛 ⇒ 该任务终止、走 `onError`、不再回填（与 `Job::run()` 同一条错误通道）。
+- 预算 4ms 的来历：一帧 16.7ms 留 12ms 给布局/绘制/输入（§13.3 全树重排）。
+
+**判据（smoke +10）**：进队列不执行 / 一帧只推一步 / 10 帧完成（10 万次累加，每帧 1 万）/
+结果与一次性算相同 / 完成后出队且不再步进 / **单步 < 5ms**（只断言"分了几帧"测不出"一帧偷偷干十倍活"）/
+未完不回调 / 完成回调改 Store ⇒ 同帧重建 / `step` 抛 ⇒ `onError` 且出队。
+
+★ **两连反例自检全中**：① `pumpSliced()` 挪到 `$frame->run()` 之后 ⇒ 同帧重建红
+（`builds 2→2 seen=60` —— 精确显示"没重建、读的还是旧值"）；② 未完成任务不回填 ⇒
+`steps=1 done=NULL`（第 1 帧就出队了）。
+
+★ **登记缺口**：**取消（`cancel()`）没做** —— 现在没有"页面销毁 / 导航离开"事件能把它接上
+（`PageHost` 换页只是 Offstage），先不发明机制；等真出现消费者（比如关闭标签页要停掉解析）再加。
+
+**验证**：smoke **698 ok / 0 FAIL**（+10）· lint **308 文件 0 error 0 warn** ·
+codegen **206 全翻译 0 skip** · `drift-build users` **7.4MB/18.1s** · 真机 OK（DPI V2、无 Errors.log）。
+DESIGN：§4.2 数字按 `audit_42.py` 刷新（**179 / 154 / 105 = 103 + 2 / 未点名 76**）、
+§17.4.3 标已落地、§17.4.6 P1 行 ✅。
