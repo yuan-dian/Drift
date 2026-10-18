@@ -2536,7 +2536,7 @@ $app = new UsersApplication(new Win32Platform(), new ThreadPoolTaskHost());
 | **C. C++ 线程池 + C++ 原语**（用户方案） | **纯 C++（无 PHP 对象）** | 每条任务写 C++ stub | µs 级投递 | 同进程 | 无（`cpp-src` 机制已有） | ✅ **不受探针 K 限制** |
 | **D. Swoole 线程池** | **解释执行业务 PHP 源码** | 源码分发 + 双份实现 | 30ms 首建 + 55–95× 解释 | 同进程 | swoole+curl DLL | ✅ 实测可跑，但代价高 |
 | **E. 常驻子进程池** | **同一 AOT exe**（`--job` 分支） | AOT（快） | spawn 275ms 一次 + IPC ~0.1ms | **进程级**（崩了不拖死 UI） | 无 | ✅ 前提全验（⑦） |
-| **F. tpc 补钩子 + 原生线程池** | AOT | AOT | µs | 同进程 | 需改 tpc | ❌ 等上游 |
+| **F. tpc 补钩子 + 原生线程池** | AOT | AOT | µs | 同进程 | 需改 tpc | ⏳ **入口已有、上下文仍缺**（2026-10-18 追测：lib 已导出 `typephp_<name>_library_request_startup`（直调 RINIT、可重入计数），但裸 `std::thread` 与 Swoole 线程 + FFI 两枪都 SIGSEGV —— 缺的是 **ts_resource + EG 初始化**，不是 RINIT）|
 
 **推荐（分层，不是二选一）**：
 - **B + A 打底**：可分片的长计算（过滤/排序/布局预计算）走 `SlicedJob` —— 零依赖、零风险，
@@ -2548,7 +2548,7 @@ $app = new UsersApplication(new Win32Platform(), new ThreadPoolTaskHost());
   与"PHP 逻辑在 UI 线程"不矛盾（C++ 线程只碰 C++ 数据）。这是用户方案的正确位置：**不是通用后端，是算力下沉层**。
 - **D 不做默认**：解释执行慢 55–95× + 源码分发 + DLL 硬依赖，与"单 exe 静态分发"冲突；
   保留为**可选后端**（用户已装扩展时可开，适合 IO 等待型）。
-- **F 长期最优**（线程里跑 AOT 代码），但依赖 tpc 上游：补"每线程进入请求"的入口即可解锁。
+- **F 长期最优**（线程里跑 AOT 代码），但依赖 tpc 上游。★ 2026-10-18 追测修正了边界：**入口已经有**（`typephp_<name>_library_request_startup()` = 直调 RINIT，lib 模式导出且带引用计数），缺的是"给新线程建 Zend 上下文"（`ts_resource` + EG/executor globals）—— 实测裸线程与 Swoole+FFI 各崩一次；主线程走 C ABI 正常（lib 形态本身没问题）。⇒ 要解锁 F，请上游加 `php::thread_init()`/`thread_shutdown()` 之类，RINIT 复用现有入口即可。
 
 ★ **为什么不能"在 worker 里改 Store 然后 notify"**（§17.2 第 ① 处的线程断言）依然成立：
 无论哪个后端，**订阅者回调都只能在 UI 线程跑** —— 后端只负责"把结果交回来"，改 Store 的动作在 UI 线程的 `onDone` 里。
