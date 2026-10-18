@@ -133,6 +133,18 @@ final class ProcessTaskHost implements TaskHost
         $this->flush();
     }
 
+    /**
+     * 还有多少条没回贴（在途 + 排队）—— 帧时钟据此决定要不要定时唤醒（§17.4.9）。
+     *
+     * ★ **必须把排队算进来**：`submit()` 只是入队，真正发给 worker 是在 `flush()`
+     *   （`drain()` 里）。只算在途的话，"提交后、首帧前"这一段是 0 ⇒ 定时器不起 ⇒
+     *   第一次 `pump()` 阻塞到用户动鼠标，任务才会被发出去。
+     */
+    public function pending(): int
+    {
+        return \count($this->inflight) + \count($this->queue);
+    }
+
     /** 在途任务数（测试与 devtools 用） */
     public function inFlightCount(): int
     {

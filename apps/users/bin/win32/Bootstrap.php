@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Users;
 
+use Drift\App\FrameClock;
 use Drift\App\ProcessTaskHost;
 use Drift\App\ProcessWorker;
 use Drift\Errors;
@@ -102,6 +103,18 @@ final class Bootstrap
         // ★ `dispatchInput()` 对指针事件返回命中链解析出的光标形状 ⇒ 由这里喂给
         //   `setCursor()`：应用它需要 `WindowHost`，而框架不持平台（§5.1）。
         $input = $platform->input();
+
+        // ★★ 自适应帧时钟（§17.4.9）：`pump()` 阻塞在 `GetMessageW` 上 —— 没有输入
+        //   事件时循环会一直睡，**后台结果只能等下一条用户消息捎带**（现象：任务
+        //   1.2s 就完了、界面 3s 后才变；Loading 的转圈图一动不动）。
+        //   `FrameClock` 按 `Application::wantsFrame()` 起/停一个 15ms 定时器：
+        //   有活才跳、没活就睡（空闲 CPU 归零）。
+        $clock = new FrameClock($platform->timers());
+
+        // ★ **进循环之前先上膛**：此刻可能已经有在途任务（应用构造器里 `load()`
+        //   就提交了首屏取数）⇒ 不定时器的话第一次 `pump()` 就无限期阻塞，缺陷照旧。
+        $clock->pace($app->wantsFrame());
+
         while ($platform->pump()) {
             while (($event = $input->poll()) !== null) {
                 $shape = $app->dispatchInput($event);
@@ -110,13 +123,17 @@ final class Bootstrap
                 }
             }
 
-            $app->frame($platform->now(), $screen->viewport());
+            // ★ 帧由帧时钟跑：它顺带量"两帧间隔"（§17.4.9 的卡顿观测），
+            //   帧后再按 `wantsFrame()` 决定下一次要不要被叫醒。
+            $clock->tick($app, $platform->now(), $screen->viewport());
 
             // ★ IME 定位（§8.4）：框架算几何（逻辑像素）、平台做量化。
             //   组合根不调这一行 = 输入法候选框贴在窗口左上角（能打字、
             //   候选框位置错）—— 半可用失败形态，故三行注释写死原因。
             $platform->imeCaret($app->imeCaretRect());
         }
+
+        $clock->stop();
 
         // ★ 窗口状态读回 / 写回（`WindowStateStore`）归 M5（§19）：启动一次、退出一次同步 IO。
     }

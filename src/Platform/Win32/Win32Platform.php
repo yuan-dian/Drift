@@ -125,7 +125,10 @@ final class Win32Platform implements Platform
      * | `quit` | 返回 `false` ⇒ 组合根的 `while` 跳出 |
      * | `resize` | 把物理尺寸 + dpr 交给表面 `resize()`（§6.1 的量化点） |
      * | `dpi` | **丢弃**（当前无消费者）。表面尺寸/缩放由随行的 `WM_SIZE` ⇒ `resize` 事件驱动（§6.1 的量化点）；`layout()` 本就每帧全树跑（§13.3）⇒ 不需要额外触发 |
-     * | `timer` | ⏳ M1 丢弃：`FrameClock` 归 M4，今天没有消费者 |
+     * | `timer` | 丢弃 —— **不是没人要，而是消费者不在这一层**：`SetTimer` 的
+     *   唯一作用是**把阻塞的 `GetMessageW` 叫醒**，事件本身没有载荷要翻译。
+     *   消费方是组合根的 `FrameClock`（§17.4.9）：`pump()` 返回 true 就已经是
+     *   它要的全部信号 |
      * | `pointer` | ⇒ `PointerEvent::fromBridge()`（四相位 down/move/up/leave，坐标除 dpr 转**逻辑**单位） |
      * | `wheel` | ⇒ `ScrollEvent::make()`（坐标除 dpr；delta 收成"格"= 原始值 / 120） |
      * | `key` | ⇒ `KeyEvent::down(KeyChord::make(键名, ctrl, alt, shift))` |
@@ -154,7 +157,8 @@ final class Win32Platform implements Platform
         }
 
         if ($type === 'timer' || $type === 'dpi') {
-            // `timer`：`FrameClock` 归 M4，今天没有消费者。
+            // `timer`：**没有载荷要翻译** —— `pump()` 返回 true 本身就是信号
+            //   （`FrameClock::tick()` 靠它跑下一帧，§17.4.9）。
             // `dpi`：**不需要消费者** —— 表面跟着随行的 `WM_SIZE` ⇒ `resize` 事件走
             //   （§6.1 的量化点），而布局每帧本就全树跑（§13.3）⇒ 没有"额外触发 relayout"
             //   这回事。

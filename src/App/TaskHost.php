@@ -68,6 +68,19 @@ interface TaskHost
     public function submit(Job $job, callable $onDone, ?callable $onError = null): void;
 
     /**
+     * 还有多少条任务**没回贴**（在途 + 排队）。
+     *
+     * ★ **帧时钟的判据**（§17.4.9）：平台的消息泵是阻塞的（`GetMessageW`），没有输入
+     *   事件时它会一直睡 ⇒ 异步结果只能等下一条用户消息捎带（现象："任务 1.2s 就完了、
+     *   界面 3s 后才变"）。框架只有能回答"还有没有活"，平台才知道要不要起定时器。
+     * ★ 返回 0 ⇒ 平台可以**无限期阻塞**（不空转）；>0 ⇒ 帧时钟按 15ms 跳。
+     *   这就是"自适应"的全部机制：**有活才跳，没活就睡**。
+     *
+     * @api
+     */
+    public function pending(): int;
+
+    /**
      * 把**已完成**的结果逐个交给 `$onEach`（仅 UI 线程，`Application::frame()` 每帧调一次）。
      *
      * ★ **swap 语义**：取走的是调用瞬间的快照；`drain()` 期间新入队的留在队列里，

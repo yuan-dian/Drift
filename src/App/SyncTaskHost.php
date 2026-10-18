@@ -58,6 +58,18 @@ final class SyncTaskHost implements TaskHost
         }
     }
 
+    /**
+     * 已完成、但还没被 `drain()` 取走的结果数。
+     *
+     * ★ 本后端 `submit()` **同步跑完** ⇒ 这里永远只有"已就绪未回贴"，没有在途。
+     *   于是帧时钟只在"有结果等着回贴"时短暂跳一帧，其余时间 UI 线程照样阻塞休眠
+     *   —— 同步后端不会让应用变成空转。
+     */
+    public function pending(): int
+    {
+        return \count($this->queue);
+    }
+
     public function drain(callable $onEach): void
     {
         if ($this->queue === []) {
