@@ -29,7 +29,7 @@ use Drift\Text\TtfFace;
 use Drift\Geometry\Rect;
 use Drift\Text\TextMetricsProvider;
 use Drift\Widget\TextFieldState;
-use Drift\Widget\ScrollViewState;
+use Drift\Widget\Scrollable;
 use Drift\Theme\ThemeData;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
@@ -1268,7 +1268,7 @@ abstract class Application
             }
 
             $state = $node->state();
-            if ($state instanceof ScrollViewState) {
+            if ($state instanceof Scrollable) {
                 $state->scrollBy($delta);
 
                 return;

@@ -19,7 +19,7 @@ use Drift\Errors;
  *
  * @api
  */
-final class ScrollViewState extends State
+final class ScrollViewState extends State implements Scrollable
 {
     private float $offset = 0.0;
 
