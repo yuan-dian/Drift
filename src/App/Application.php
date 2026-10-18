@@ -695,18 +695,14 @@ abstract class Application
             ?? new BuildContext(0.0, 0.0, $this->theme(), $this->metrics());
     }
 
-    /** 盒在客户区的绝对原点（沿父链累加相对偏移） */
+    /**
+     * 盒在客户区的绝对原点 —— 委派到 `RenderBox::absoluteOrigin()`（单一出处，
+     * Layout 拥有盒几何）。历史：2026-10-18 语义树落地时把这段 8 行父链累加上提，
+     * 免得 Input/Widget 侧为了算几何再抄一份（或反向依赖 App）。
+     */
     private static function absoluteOrigin(RenderBox $box): array
     {
-        $x = 0.0;
-        $y = 0.0;
-
-        for ($node = $box; $node !== null; $node = $node->parent()) {
-            $x += $node->offsetX();
-            $y += $node->offsetY();
-        }
-
-        return [$x, $y];
+        return RenderBox::absoluteOrigin($box);
     }
 
     /**

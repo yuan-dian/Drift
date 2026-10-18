@@ -56,6 +56,30 @@ abstract class RenderBox extends RenderObject
     }
 
     /**
+     * 盒在客户区的**绝对原点**（沿父链累加相对偏移）—— 逻辑像素。
+     *
+     * ★ 单一出处：命中测试 / IME 候选框 / 菜单锚点 / 语义几何全部走这里
+     *   （`Application::absoluteOrigin()` 已改为委派到本方法）。自己沿 Element 链
+     *   累加 `offset` 会**重复累加**（Element 不持有 offset，盒才持）。
+     * ★ 未参与本轮布局（`size() === null`）的盒照常累加 —— 调用方自己判
+     *   `hasSize()`；这里不做"部分布局"的特殊处理。
+     *
+     * @return array{0: float, 1: float} `[x, y]`
+     */
+    public static function absoluteOrigin(RenderBox $box): array
+    {
+        $x = 0.0;
+        $y = 0.0;
+
+        for ($node = $box; $node !== null; $node = $node->parent()) {
+            $x += $node->offsetX();
+            $y += $node->offsetY();
+        }
+
+        return [$x, $y];
+    }
+
+    /**
      * 两阶段之一（§13.1）：约束 → 尺寸，**同时定位子节点**。
      *
      * 纯函数（§14.1）：同样输入 ⇒ 同样输出。所以它**不参与**脏判定 —— 由调用方
