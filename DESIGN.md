@@ -2614,6 +2614,48 @@ CPU 不可切分（解压/解码/加密）
 ★ **一个反直觉的结论**：线程池不是"异步"的同义词。它在**并行吞吐**上赢，在**响应性**上并不比事件驱动强——
 而 GUI 最贵的通常是等待，不是计算。
 
+#### 17.2.7 成熟 GUI 怎么处理同一件事（2026-10-18 横向核对官方文档）
+
+> 目的：确认 Drift 的 `pump()` + 单 UI 线程 + `TaskHost` 是不是"自创"，以及缺哪一环。
+> 来源：Flutter `docs.flutter.dev/perf/isolates`、Qt `doc.qt.io/qt-6/threads-qobject.html`、
+> WPF `learn.microsoft.com/.../threading-model`、JUCE `ThreadPool` 类文档（均为官方页）。
+
+| 框架 | UI 线程模型 | 后台执行单元 | **结果回注机制** | I/O 模型 | 线程安全手段 |
+|---|---|---|---|---|---|
+| **Flutter/Dart** | 主 isolate 的 event loop（60Hz paint 事件） | 后台 isolate（**独立内存，只能消息传递**） | `Port` 消息 → 主 isolate 的 event queue | 平台侧 event loop（epoll/IOCP）+ async | 物理隔离（想共享也做不到） |
+| **Qt** | 主线程 `QCoreApplication::exec()` | `QThread`（可带自己的事件循环） | **queued connection**：slot 在**接收者线程**的事件循环里执行（`postEvent` 线程安全） | `QTcpSocket`/`QSocketNotifier`（事件驱动） | `QObject::thread()` 亲和性；GUI 只能主线程；跨线程访问要 mutex |
+| **WPF** | UI 线程 + `Dispatcher`（10 个优先级的工作项队列） | 线程池（`Task.Run`） | `InvokeAsync`/`BeginInvoke` 把工作项**排队到 Dispatcher**；`async/await` 经 `SynchronizationContext` 回 UI 线程 | IOCP 完成端口（.NET 线程池） | `DispatcherObject.VerifyAccess()`：不在创建线程 ⇒ **抛异常** |
+| **Godot** | 主线程 + 帧边界 flush 的 `MessageQueue` | `WorkerThreadPool` / `Thread` | `call_deferred()` → MessageQueue（帧边界回主线程） | `load_threaded_request` 等后台加载 API | 子线程碰场景树/Node 直接报错；Array/Dictionary 非线程安全 |
+| **JUCE** | 消息线程（`MessageManager`） | `ThreadPool` + `ThreadPoolJob::runJob()` | `MessageManager::callAsync` / `AsyncUpdater` 回消息线程 | 由调用方在消息线程轮询/回调 | GUI 只能在消息线程访问 |
+
+**三条共同的结论**（不是 Drift 的发明）：
+
+1. **UI 线程唯一 + 事件循环**：没有任何一个框架让后台线程直接改 UI。Drift 的 `while (pump()) { frame(); }` 与它们同构。
+2. **跨执行单元一律"结果入队 → UI 帧 drain"**：Qt 的 queued connection、WPF 的 Dispatcher、Godot 的 MessageQueue、Dart 的 Port——**没有一个直接调回调**。
+   ★ 这正是 Drift 当前唯一的**结构性缺口**：`SyncTaskHost::submit()` 是 `$onDone($job->run())`（同步直调），没有队列。
+3. **I/O 一律事件驱动**，没有"每任务一线程"：Qt 的 QSocketNotifier、WPF 的 IOCP、Flutter 的平台 event loop、Godot 的后台加载 API。
+   ⇒ Drift 的"每帧 `select(0)` + Fiber"是把"事件循环的一轮"放进 `pump()`，与它们同一模型。
+
+**"计算放哪"的三种主流答案，Drift 各占一半**：
+- **拷贝/消息（Actor）**：Flutter isolate（可变对象**拷贝**）、Godot（复制数据给子线程）⇒ 对应 Drift 的**进程池 / C++ 原语**。
+  ★ 所以"进程池 + 序列化"不是妥协——Flutter 的 isolate 是同一取舍（业务代码是 AOT 编译的，本来也无法共享 PHP 对象图）。
+- **共享内存 + 锁 + 亲和性**：Qt worker thread、WPF 线程池 ⇒ Drift 的**线程后端（F）**如果要上，必须同时有 `VerifyAccess` 式的断言。
+- **单线程分片**：WPF 文档明说"`await` 不加 `Task.Run` 就是单线程分段计算"；Dart 的 microtask 同理 ⇒ 对应 Drift 的 **`SlicedJob`**。
+  这是最被低估的一档，也是"能单线程就别多线程"（WPF 原文）的直接体现。
+
+**Drift 的差距清单（按落地顺序）**：
+
+| # | 缺口 | 参照 | 说明 |
+|---|---|---|---|
+| ① | **`TaskHost` 缺"结果队列 + 每帧 drain"** | Qt queued / WPF Dispatcher / Godot MessageQueue | 任何异步后端的前提；现在 `SyncTaskHost` 的同步直调把它掩盖了 |
+| ② | **`notifyChanged` 缺线程断言** | WPF `VerifyAccess()` | 等 ① 落地后一起加（否则是死代码） |
+| ③ | **`SlicedJob`（单线程分片）** | WPF 单线程分段 / Dart microtask | 零依赖，覆盖"可切分计算" |
+| ④ | **非阻塞 I/O + Fiber 调度器** | Godot MessageQueue + `select(0)` | 覆盖 HTTP/文件，与 §17.2.6 的结论一致 |
+| ⑤ | **进程池 / C++ 原语** | Flutter isolate（拷贝语义） | 覆盖"不可切分计算"与隔离 |
+
+★ **最重要的一条**：`TaskHost` 的接口本身要补一档——`submit(Job, onDone)` 只说了"结果怎么回来"（回调），
+没说"在**哪个线程的哪一帧**回来"。成熟框架的回答统一是：**队列 + UI 线程 drain**。这是落地异步后端前的第一件事。
+
 ### 17.3 为什么不用协程做 UI 状态
 
 响应式的"数据变了刷新 UI"与协程的"让出等待"是**两件事**。把 UI 重建放进协程会引入"重建中途让出 ⇒ 树处于半更新态"的新失效模式，与 G3（确定性）冲突。**协程只服务 IO，不服务 UI。**
