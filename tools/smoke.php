@@ -6366,6 +6366,24 @@ check(
     'plainPresses=' . $gestApp->plainPresses,
 );
 
+// ⑥ UIA 语义推送（§9 / M5）：帧末把语义树经 sink 交给平台（头侧；真机 provider 归 AOT）
+$semApp = new GestureApplication();
+$semNodes = [];
+$semApp->setSemanticsSink(function (array $nodes) use (&$semNodes): void {
+    $semNodes = $nodes;
+});
+$semApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
+check(
+    'Semantics · attach 首帧 ⇒ sink 收到语义树（含 Button 角色）',
+    count($semNodes) >= 1 && ($semNodes[0]['role'] ?? '') === 'button',
+    'nodes=' . count($semNodes),
+);
+check(
+    'Semantics · 两个 Button 各贡献一个节点，name = label',
+    count($semNodes) === 2 && ($semNodes[0]['name'] ?? '') !== '' && ($semNodes[1]['name'] ?? '') !== '',
+    'count=' . count($semNodes),
+);
+
 // ── 平台后端解析（§7.2 裁决 4：2026-10-17 默认从 soft 翻成 skia）──
 // ★ 这两条都钉**静默失败**：默认没翻（界面继续锯齿）与显式 'soft' 被默认值吞掉
 //   （"确定性后端没生效"）都不会报错，只能靠夹具。反例自检：把 resolveBackend

@@ -71,4 +71,12 @@ final class FakeWindowHost implements WindowHost
     {
         $this->placed[] = [$rect, $maximized];
     }
+
+    /** @var list<array<string,mixed>> 记录 pushSemantics 收到的扁平节点（UIA 夹具断言，§9 / M5） */
+    public array $pushedSemantics = [];
+
+    public function pushSemantics(array $flatNodes): void
+    {
+        $this->pushedSemantics = $flatNodes;
+    }
 }
