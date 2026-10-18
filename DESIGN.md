@@ -2584,7 +2584,7 @@ CPU 不可切分（解压/解码/加密）
 | **分帧切片**（`SlicedJob.step()`） | 可分片计算 | 总时长变长 | 无（`Job` 只需加一步） |
 | **非阻塞 I/O + 每帧 poll** | HTTP/文件/DB | 需要非阻塞封装（`stream_set_blocking(false)` + `stream_select` 0 超时，或 C++ 侧 IOCP） | 未验（下一步第一枪） |
 | **TimerHost** | 动画/重试/超时 | 无 | ✅ 已有（`Win32TimerHost`） |
-| **Fiber（协程）** | 顺序逻辑 + 等待 | 不解决 CPU 阻塞（只在显式让出点切换） | phpx 有 `typephp_fiber_generator.h`；`src/` 零使用 |
+| **Fiber（PHP 用户态协程）** | 顺序逻辑 + 等待 | 不解决 CPU 阻塞（只在显式让出点切换）；**IO 必须已非阻塞** | ✅ 2026-10-18 实测：AOT 产物里 `start/suspend/resume/isTerminated` 全正常，**零阻塞** |
 | **常驻子进程池** | 重活 / 隔离 | IPC 序列化、内存翻倍 | 前提已验（`$_SERVER['argv']`+`proc_open`） |
 | **C++ 线程池（纯 C++）** | 解码/压缩/哈希 | 每条任务写 C++ | 不受探针 K 限制 |
 | **Swoole 线程** | 池化 + IO 等待 | 解释执行慢 55–95× | 实测可跑但跑不了 AOT 类 |
@@ -2602,6 +2602,12 @@ CPU 不可切分（解压/解码/加密）
 3. **进程池**承担"重活 + 隔离"。
 4. **C++ 原语**承担"解码/压缩"。
 5. **线程（F）是最后手段**，只在"必须真快 + 必须共享内存 + 不能进程化"同时成立时才考虑。
+
+**协程的正确用法（2026-10-18 实测）**：**用 PHP `Fiber`，不要用 Swoole 协程**。
+- Swoole 协程依赖**它自己的 reactor**：`Swoole\Event::dispatch()` 实测**阻塞到下一个事件**（50ms 定时器 ⇒ 单帧 57ms），UI 帧被卡住；且协程耗尽后再 dispatch 在 AOT 下会崩（tpc 的扩展调用路径）。Swoole 没有"0 超时 pump reactor"的 API。
+- PHP `Fiber` 是**用户态**的：`Fiber::suspend()` 立即把控制权还给调用方，**何时 resume 完全由 UI 帧循环决定** ⇒ 天然与 Win32 消息泵共存。AOT 实测：`[I] suspended=need-io / fiber-resumed:io-ready / terminated=yes`。
+- ★ Fiber 只解决**控制流**，不解决"在等什么"：恢复条件要自己判（`stream_select` 0 超时 / TimerHost 到期）；且它**不能让出 C++ 层的阻塞调用** ⇒ IO 必须先 `stream_set_blocking(false)`。
+- 正确形态 = **UI 帧循环当调度器**（约 100 行）：每帧 `select(读集, 0)` → 就绪 fd → `resume` 对应 Fiber；Fiber 内数据不够 ⇒ `suspend('need-more')`；TimerHost 到期 ⇒ 恢复等超时的 Fiber。**零线程、零扩展、零 TSRM**。
 
 ★ **一个反直觉的结论**：线程池不是"异步"的同义词。它在**并行吞吐**上赢，在**响应性**上并不比事件驱动强——
 而 GUI 最贵的通常是等待，不是计算。
