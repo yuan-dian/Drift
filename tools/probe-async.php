@@ -15,13 +15,15 @@
  * ⇒ `drain()` 只在"用户动了鼠标"时跑 ⇒ 后台取数的结果只能等下一条消息捎带，**且不报错**。
  * 装上 `FrameClock` 之后，窗口应当**在零输入下**自己从 Loading 切到 Ready。
  *
- * 判据（六条，缺一不可）：
+ * 判据（八条，缺一不可）：
  *   ① 窗口是 900×640（DPI V2 下客户区的物理像素）；
  *   ② 采样**开始时**列表区没墨（还在 Loading）；
  *   ③ 采样**结束时**列表区有墨（数据真的回来了）；
  *   ④ ③ > ②（是**后到**的，不是一开始就有）；
  *   ⑤ **同时有 2 个 `users.exe` 进程** —— 主 + `--drift-worker`（AOT 靠 argv 分流的直接证据）；
- *   ⑥ 关窗后残留 0（stdin 关闭 ⇒ worker 正常收工，不留孤儿）。
+ *   ⑥ 关窗后残留 0（stdin 关闭 ⇒ worker 正常收工，不留孤儿）；
+ *   ⑦ Loading 期**画面在动**（`Spinner` 相位随帧推进 —— 帧间变化像素数 > 0）；
+ *   ⑧ Ready 后**静止**（帧间变化精确 0 ⇒ 帧时钟真的停了，不空转）。
  *
  * ★★ 只量**列表区**（y 220–640），不量整窗：整窗墨量对"取数失败"也成立
  *   （错误态 8.6% vs Ready 15.1%），阈值 8% 于是形同虚设 —— 这是 2026-10-18 踩到的假绿。
@@ -110,14 +112,15 @@ function mockAlive(string $host, int $port, string $path, float $timeout = 2.0):
 }
 
 /**
- * `key=value` 输出 ⇒ 关联数组；`s0..sN` 收进 `samples`。
+ * `key=value` 输出 ⇒ 关联数组；`s0..sN` 收进 `samples`，`c1..cN` 收进 `motion`。
  *
- * @return array{meta: array<string,string>, samples: list<float>}
+ * @return array{meta: array<string,string>, samples: list<float>, motion: list<int>}
  */
 function parseGrab(string $stdout): array
 {
     $meta = [];
     $samples = [];
+    $motion = [];
     foreach (preg_split('/[\r\n]+/', $stdout) ?: [] as $line) {
         $line = trim($line);
         if ($line === '' || !str_contains($line, '=')) {
@@ -126,12 +129,14 @@ function parseGrab(string $stdout): array
         [$key, $value] = explode('=', $line, 2);
         if (preg_match('/^s\d+$/', $key) === 1) {
             $samples[] = (float) $value;
+        } elseif (preg_match('/^c\d+$/', $key) === 1) {
+            $motion[] = (int) $value;
         } else {
             $meta[$key] = $value;
         }
     }
 
-    return ['meta' => $meta, 'samples' => $samples];
+    return ['meta' => $meta, 'samples' => $samples, 'motion' => $motion];
 }
 
 // ──────────────────────────────────────────────────────────── 前置 ──
@@ -239,6 +244,7 @@ step('抓客户区（等窗口 ≤8s，settle ' . SETTLE_MS . 'ms，然后 ' . S
     '--interval=' . INTERVAL_MS,
     '--y0=' . LIST_Y0,
     '--y1=' . LIST_Y1,
+    '--motion',
     '--close',
 ], $root);
 
@@ -264,6 +270,7 @@ if ($grabCode !== 0) {
 $parsed = parseGrab($grabOut);
 $meta = $parsed['meta'];
 $series = $parsed['samples'];
+$motion = $parsed['motion'];
 
 $client = $meta['client'] ?? '?';
 $inkAll = (float) ($meta['ink_all_pct'] ?? 0.0);
@@ -274,6 +281,8 @@ fwrite(STDOUT, '  列表区采样：' . implode(' ', array_map(
     static fn (float $v): string => number_format($v, 1),
     $series
 )) . "\n");
+// ★ 帧间变化像素数：Loading 期 `Spinner` 在转 ⇒ 每格都有变化；Ready 后静止 ⇒ 精确 0。
+fwrite(STDOUT, '  帧间变化（像素数）：' . implode(' ', $motion) . "\n");
 
 $early = $series === [] ? 0.0 : $series[0];
 $late = $series === [] ? 0.0 : $series[count($series) - 1];
@@ -309,6 +318,13 @@ $residual = $countCode === 0 ? (int) trim(str_replace('procs=', '', trim($countO
 // ──────────────────────────────────────────────────────────── 判据 ──
 
 step('判据');
+// ⑦ Loading 期前 8 格必须几乎都在动（`Spinner` 相位每帧推进）。
+//   取 7/8 而不是 8/8：第一格跨着"首帧落地"，允许一次例外。
+$loadingMotion = array_slice($motion, 0, 8);
+$movingCount = count(array_filter($loadingMotion, static fn (int $c): bool => $c > 0));
+// ⑧ 收尾必须静止：Ready 后没有任何东西该继续画 ⇒ 帧间变化精确 0（不空转）。
+$restChanged = $motion === [] ? -1 : $motion[count($motion) - 1];
+
 $results = [
     '① 客户区 900×640' => $client === '900x640',
     '② 采样开始时还在 Loading' => $early < LIST_MIN_PCT,
@@ -316,11 +332,19 @@ $results = [
     '④ 是后到的（末 > 首）' => $late > $early,
     '⑤ 进程数 ≥ 2（主 + worker）' => $procs >= 2,
     '⑥ 关窗后无残留' => $residual === 0,
+    '⑦ Loading 期 Spinner 真的在转' => $movingCount >= 7,
+    '⑧ Ready 后静止（不空转）' => $restChanged === 0,
 ];
 foreach ($results as $label => $passed) {
     $passed ? ok($label) : bad($label);
 }
-fwrite(STDOUT, sprintf("  （进程数 = %d，残留 = %d）\n", $procs, $residual));
+fwrite(STDOUT, sprintf(
+    "  （进程数 = %d，残留 = %d，Loading 期在动 %d/8 格，收尾变化 %d 像素）\n",
+    $procs,
+    $residual,
+    $movingCount,
+    $restChanged
+));
 
 // 失败时给根因提示，而不是只丢一句 FAIL
 if (in_array(false, $results, true)) {
@@ -338,6 +362,14 @@ if (in_array(false, $results, true)) {
     }
     if ($residual > 0) {
         fwrite(STDOUT, "  · 有残留进程：worker 没收到 stdin EOF（关窗没走 WM_CLOSE？）\n");
+    }
+    if ($movingCount < 7) {
+        fwrite(STDOUT, "  · Loading 期画面不动：① `Application::tickAnimations()` 没在 settle 之前调" .
+            " ② `SpinnerState::tickFrame()` 没覆写 / 没返回 true ③ 帧时钟根本没跑\n");
+    }
+    if ($restChanged > 0) {
+        fwrite(STDOUT, "  · Ready 后还在变：帧时钟没停（`wantsFrame()` 恒真 ⇒ 空闲 CPU 不归零），" .
+            "或有别的动画没收工\n");
     }
 }
 

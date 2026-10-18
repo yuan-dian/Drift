@@ -11,10 +11,11 @@
  * 用法（所有参数都是 `--key=value`，输出都是 `key=value` 一行一条）：
  *
  *   probe-grab --pid=1234 --image=users.exe --wait=8000 --settle=200 \
- *              --samples=30 --interval=100 --y0=220 --y1=640 --close
+ *              --samples=30 --interval=100 --y0=220 --y1=640 --close --motion
  *   probe-grab --count-only --image=users.exe
  *
- * 输出：`hwnd=` `client=WxH` `ink_all_pct=` `s0..sN=` `procs=` `closed=`
+ * 输出：`hwnd=` `client=WxH` `ink_all_pct=` `s0..sN=`（墨量）`c1..cN=`（帧间变化
+ *      像素数，仅 `--motion`）`procs=` `closed=`
  * 退出码：0 正常 · 2 没等到窗口/参数错 · 3 抓图失败
  *
  * ── 三个真 bug（写这个工具时踩出来的，判据就是被它们教出来的） ──
@@ -67,6 +68,7 @@ struct Options {
     int y1 = 0;
     bool close = false;
     bool countOnly = false;
+    bool motion = false;
 };
 
 struct Shot {
@@ -221,6 +223,35 @@ double inkPct(const Shot& shot, int y0, int y1)
     return total == 0 ? 0.0 : 100.0 * static_cast<double>(ink) / static_cast<double>(total);
 }
 
+// ───────────────────────────────────────────────────── 帧间变化量 ──
+
+/** 两帧之间**有多少像素变了**（精确不等，不做阈值）。
+ *
+ *  ★ 为什么用"变了多少个"而不是"变了百分之几"：`Spinner` 只有 24×24，占整窗
+ *  0.1% 不到 —— 百分比会被四舍五入成 0.0，"在转"和"不转"看起来一样（假绿）。
+ *  绝对计数是二值信号：转 ⇒ 几十到几百；不转 ⇒ **精确 0**（BitBlt 同像素同值）。
+ *  尺寸变了（窗口被改大小）返回 -1，不硬比。
+ */
+long long changedPixels(const Shot& before, const Shot& after)
+{
+    if (before.width != after.width || before.height != after.height) {
+        return -1;
+    }
+
+    const size_t count = before.pixels.size() / 4;
+    const unsigned char* a = before.pixels.data();
+    const unsigned char* b = after.pixels.data();
+
+    long long changed = 0;
+    for (size_t i = 0; i < count; ++i) {
+        const size_t offset = i * 4;
+        if (a[offset] != b[offset] || a[offset + 1] != b[offset + 1] || a[offset + 2] != b[offset + 2]) {
+            ++changed;
+        }
+    }
+    return changed;
+}
+
 // ───────────────────────────────────────────────────────── 数进程 ──
 
 /** 同名进程数（含主进程与 `--drift-worker` 子进程）。失败返回 -1。 */
@@ -283,6 +314,8 @@ int wmain(int argc, wchar_t** argv)
             options.close = value != L"0";
         } else if (key == L"count-only") {
             options.countOnly = value != L"0";
+        } else if (key == L"motion") {
+            options.motion = value != L"0";
         }
     }
 
@@ -333,16 +366,31 @@ int wmain(int argc, wchar_t** argv)
         std::fflush(stdout);
     } else {
         // ★ bug ③：采样循环在本进程内，别在外面 spawn 30 次（见文件头）。
+        Shot previous;
+        if (options.motion) {
+            previous = shot;
+        }
+
         for (int i = 0; i < options.samples; ++i) {
+            long long changed = -1;
             if (i > 0) {
                 ::Sleep(static_cast<DWORD>(options.intervalMs));
                 if (!grab(hwnd, shot, error)) {
                     std::fprintf(stderr, "err=%s\n", error.c_str());
                     return 3;
                 }
+                if (options.motion) {
+                    changed = changedPixels(previous, shot);
+                }
             }
             std::printf("s%d=%.1f\n", i, inkPct(shot, options.y0, options.y1));
+            if (options.motion && i > 0) {
+                std::printf("c%d=%lld\n", i, changed);
+            }
             std::fflush(stdout);
+            if (options.motion) {
+                previous = shot;
+            }
         }
     }
 
