@@ -658,7 +658,7 @@ PHP `Fiber` **不会让出阻塞 IO**。⇒ 唯一能用的形态：**IO 先非�
 2. `UserStore::load()` 改了 `status` 没清 `visibleCache` ⇒ `stale-derived`（多一次过滤换掉一类陈旧值）；
 3.4. 两个测试脚本的 `require` ⇒ 挪到 `tools/`（工具链豁免）。
 
-★ **真机证据（`tools/probe-async.py`）**：
+★ **真机证据（`tools/probe-async.php`）**：
 ```
 client = 900 x 640
 进程数 = 2（期望 2 = 主 + --drift-worker）
@@ -719,4 +719,4 @@ HTTPS 证书校验是一等公民。
 
 **验证**：smoke **725 ok / 0 FAIL** · lint **322 文件 0/0** · codegen **213 全翻译 0 skip** ·
 `drift-build users` **7.5MB/18.8s**（ini 现为 `mbstring / openssl / curl`）·
-真机 `probe-async.py` 同前（进程 2 / Loading 0.0% → Ready 8.3% / 残留 0）。
+真机 `probe-async.php` 同前（进程 2 / Loading 0.0% → Ready 8.3% / 残留 0）。

@@ -1406,7 +1406,7 @@ final class UserStore extends Subject            // 业务层：不认识任何 
 > 结论：**M1–M3 的三态只在 `error` 一支真正对用户可见**；`loading` 骨架要等 M4+ 的 `TaskHost` 后台后端（§17）才成立。这不是实现缺陷，是"同步 IO + 帧末统一 flush"的结构后果 —— 不要靠"先广播一次"来假装异步。
 >
 > ★★ **2026-10-18 已兑现**：`apps/users` 装上 `ProcessTaskHost`（§17.4.5）之后，`loading` **真的看得见**了 ——
-> 真机探针（`tools/probe-async.py`）的数字：窗口刚出现时客户区墨量 **0.0%**（只有一个小 Spinner），
+> 真机探针（`tools/probe-async.php`）的数字：窗口刚出现时客户区墨量 **0.0%**（只有一个小 Spinner），
 > 1.2s 慢 HTTP 回来后 **8.3%**（15 行列表）。⇒ 上面这条从"三态的缺陷"降级为"**同步后端专属**的边界"：
 > 三态本身没问题，是"同步 IO + 帧末统一 flush"让它无帧可画。
 
@@ -2873,7 +2873,7 @@ UI 侧收到的是一个新的 `RuntimeException`（跨进程没有"同一个异
 `$until` 恒 false ⇒ 每次 pump 等满 deadline（smoke 从 10s 涨到 78s）—— 判据闭包必须**收参数**。
 ★★ **AOT 运行面已验（2026-10-18 当天补齐）**：`apps/users` 的组合根按 `$_SERVER['argv']` 分流
 （`--drift-worker` ⇒ `ProcessWorker::serve(JobRegistry::make())`，不进消息循环），
-并真的用上了 `ProcessTaskHost`（首屏取数走后台，后端是 `php -S` 的慢 mock）。真机证据（`tools/probe-async.py`）：
+并真的用上了 `ProcessTaskHost`（首屏取数走后台，后端是 `php -S` 的慢 mock）。真机证据（`tools/probe-async.php`）：
 - **进程数 = 2**（主 + worker）⇒ `proc_open([$argv[0], '--drift-worker'])` 在 AOT 下成立；
 - **Loading 墨量 0.0% → Ready 8.3%** ⇒ 数据真的是"后到"的（不是启动时就有）；
 - **关窗后残留 0** ⇒ stdin 关闭让 worker 正常收工，不留孤儿。
@@ -2942,7 +2942,7 @@ UI 侧收到的是一个新的 `RuntimeException`（跨进程没有"同一个异
 > 60ms ⇒ `DIAGNOSTIC`（进环形缓冲，随任何一次中止落盘，事后取证）；> 500ms ⇒ `RECOVERABLE`（dev 中止）。
 > ★ 精度边界：`GetTickCount64` 粒度 ~15.6ms ⇒ 只判**量级**（"卡了一下"/"没卡"），不判精确耗时。
 
-**判据（带反例自检）**：`tools/probe-async.py` —— **全程不发送任何输入**，
+**判据（带反例自检）**：`tools/probe-async.php` —— **全程不发送任何输入**，
 只量客户区**列表区**（y 220–640）的墨量。
 
 | 构建 | Loading 列表区 | 2.5s 后列表区 | 结论 |
