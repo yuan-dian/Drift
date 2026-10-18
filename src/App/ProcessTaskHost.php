@@ -186,10 +186,17 @@ final class ProcessTaskHost implements TaskHost
     /** 起 worker（只在需要时；失败就是配置错误 ⇒ Fatal） */
     private function spawn(): bool
     {
+        // ★★ **必须是 `socket` 而不是 `pipe`**（2026-10-18 实测，Windows）：
+        //   - `pipe + stream_select(0)` = **13.6ms/次**（Windows 的 `select()` 只支持 socket，
+        //     PHP 对 pipe 走的是"逐句柄猜"的退化路径）；
+        //   - `pipe + 非阻塞 fread` = **411ms/次**（非阻塞标记在 pipe 上等于没用）；
+        //   - `socket + stream_select(0)` = **0.008ms**、`socket + 非阻塞 fread` = **0.001ms**。
+        //   ⇒ 用 pipe 的版本每帧 drain 要 29ms（`drain()` 里两次 select）—— 界面上就是
+        //   稳定的 30fps 掉帧，而且**看不出是谁的错**（帧耗时里只有"慢"）。
         $descriptors = [
-            0 => ['pipe', 'r'], // worker 的 stdin
-            1 => ['pipe', 'w'], // worker 的 stdout
-            2 => ['pipe', 'w'], // worker 的 stderr（PHP 的 warning / fatal 走这里）
+            0 => ['socket'], // worker 的 stdin
+            1 => ['socket'], // worker 的 stdout
+            2 => ['socket'], // worker 的 stderr（PHP 的 warning / fatal 走这里）
         ];
 
         $proc = @proc_open($this->command, $descriptors, $pipes);

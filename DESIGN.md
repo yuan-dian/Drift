@@ -2879,6 +2879,21 @@ UI 侧收到的是一个新的 `RuntimeException`（跨进程没有"同一个异
 - **关窗后残留 0** ⇒ stdin 关闭让 worker 正常收工，不留孤儿。
 ★ 顺带把 P2 登记的"resource + `stream_select` 在 AOT 下未验"也覆盖了：worker 里是 `file_get_contents`
 （真 socket）拿到 15 行 JSON。★ 仍未验的是"worker 崩溃后自动重启"在 AOT 下的表现（解释器侧 smoke 已验）。
+★★ **两个实现级事实（2026-10-18 同一台机器实测，都已落进代码）**：
+① **`proc_open` 的句柄必须是 `socket` 而不是 `pipe`**：Windows 的 `select()` 只吃 socket，
+   PHP 对 pipe 走"逐句柄猜"的退化路径 ⇒ `pipe + stream_select(0)` = **13.6ms/次**、
+   `pipe + 非阻塞 fread` = **411ms/次**（"非阻塞"标记在 pipe 上等于没用）；
+   换成 `['socket']` 之后是 **0.008ms / 0.001ms**。⇒ `drain()` **29.4ms → 0.013ms**、
+   `frame()` 平均 **34.5ms → 4.24ms**。用 pipe 的版本在界面上就是稳定的 30fps 掉帧，
+   而且**看不出是谁的错**（帧耗时里只有"慢"）。
+② **AOT 产物里 curl 是能用的**（`curl_init` / `curl_exec` / `curl_setopt_array` + `CURLOPT_*`
+   常量全部工作，实测 `code=200`）—— 之前 `drift-build` 只启 `mbstring` 是**保守选择**，
+   不是能力限制。⇒ 运行时 ini 改为 **`mbstring + openssl + curl`**；`FetchUsersJob` 改用 curl
+   （连接超时与总超时分离、能拿 HTTP 状态码、HTTPS 证书校验是一等公民）。
+
+★ **"UI 会不会卡"的答案（实测）**：同步形态下一次 1.2s 的 HTTP = **1208ms 界面冻结**
+（一帧都画不出来）；后台形态下 `attach` **116ms** 回到事件循环，此后每帧 `frame()` **4.24ms**、
+`drain()` **0.013ms**（60fps 预算 16.7ms 的四分之一）。
 #### 17.4.6 分阶段与判据
 
 | 阶段 | 内容 | 判据（先写夹具再实现） |

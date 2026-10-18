@@ -31,7 +31,10 @@ final class FetchUsersJob implements NamedJob
     /** mock 后端的默认地址（`DRIFT_API_BASE` 可覆盖） */
     public const DEFAULT_BASE = 'http://127.0.0.1:8099';
 
-    /** 超时（秒）：比 mock 的 1.2s 宽裕，又不至于让 UI 永远等 */
+    /** 连接超时（秒）：连不上就该早失败，不要等满总超时 */
+    private const CONNECT_TIMEOUT_S = 5;
+
+    /** 总超时（秒）：比 mock 的 1.2s 宽裕，又不至于让 UI 永远等 */
     private const TIMEOUT_S = 10;
 
     public function __construct(
@@ -54,15 +57,35 @@ final class FetchUsersJob implements NamedJob
     {
         $url = rtrim($this->baseUrl, '/') . '/api/users?page=' . $this->page;
 
-        // ★ 超时是**必须**的：没有它，后端悬挂会把 worker 永久占住
-        //   （串行模型下等于整个后台层死掉）。
-        $context = stream_context_create([
-            'http' => ['timeout' => self::TIMEOUT_S, 'ignore_errors' => true],
+        // ★ 用 **curl** 而不是 `file_get_contents`：
+        //   - 连接超时与总超时能分开设（`CURLOPT_CONNECTTIMEOUT` vs `CURLOPT_TIMEOUT`）——
+        //     "连不上"要 5s 就断，"响应慢"可以等 10s；
+        //   - 能拿到 HTTP 状态码（4xx/5xx 不该当成"解析失败"）；
+        //   - HTTPS 的证书校验是一等公民（`file_get_contents` 要靠 stream context 拼）。
+        //   ★ 前提：运行时 ini 要 `extension=curl`（`drift-build` 现在会启它，见那儿的注释）。
+        $ch = curl_init($url);
+        if ($ch === false) {
+            throw new \RuntimeException('curl 初始化失败（扩展没加载？）：' . $url);
+        }
+
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT => self::CONNECT_TIMEOUT_S,
+            CURLOPT_TIMEOUT => self::TIMEOUT_S,
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_HTTPHEADER => ['Accept: application/json'],
         ]);
 
-        $raw = @file_get_contents($url, false, $context);
-        if ($raw === false) {
-            throw new \RuntimeException('取用户失败（网络）：' . $url);
+        $raw = curl_exec($ch);
+        $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        $error = (string) curl_error($ch);
+
+        if (!is_string($raw)) {
+            throw new \RuntimeException('取用户失败（curl）：' . $error . ' —— ' . $url);
+        }
+
+        if ($status < 200 || $status >= 300) {
+            throw new \RuntimeException('取用户失败（HTTP ' . $status . '）：' . substr($raw, 0, 200));
         }
 
         $data = json_decode($raw, true);

@@ -300,9 +300,18 @@ fwrite(STDOUT, sprintf(
 //   `php.ini`；不随附则 `\mb_substr` / `\mb_strtoupper` 等内置函数**未定义**
 //   （namespace 内非限定调用本就会被 AOT 编译成 `Drift\Xxx\mb_substr` 而找不到，
 //   即便限定为全局，扩展没加载照样 Fatal）。
-//   只放 mbstring 这一条最小必要扩展，不拖 curl/openssl/zip，避免放大运行时面。
+// ★★ 扩展清单（2026-10-18 调整）：`mbstring` 是**编译产物必需**（tpc 的类型php_tpc
+//   模块缺它直接 Fatal）；`openssl` + `curl` 是**应用侧 HTTP 必需** —— `apps/users`
+//   的后台任务要请求真接口（`FetchUsersJob` 用 curl），没有它们运行时 `curl_init()`
+//   就是 undefined。
+//   ★ 实测（`probes/RESULTS.md` §12.4）：AOT 产物里 `curl_init/curl_exec/curl_setopt_array`
+//     全部可用、`code=200` —— 之前"不拖 curl"是保守选择，不是能力限制。
+//   ★ 仍**不启** zip / gd / 其它重扩展：它们没有消费者，多加载一个就多一份运行时面。
+$runtimeExtensions = ['mbstring', 'openssl', 'curl'];
 $runtimeIni = "{$root}/php.ini";
-$runtimeText = "extension_dir = \"" . win($distRoot) . "/ext/\"\n"
-    . "extension=mbstring\n";
+$runtimeText = "extension_dir = \"" . win($distRoot) . "/ext/\"\n";
+foreach ($runtimeExtensions as $ext) {
+    $runtimeText .= "extension={$ext}\n";
+}
 file_put_contents($runtimeIni, $runtimeText);
-fwrite(STDOUT, "[drift-build] ✓ 运行时 ini → {$runtimeIni}（仅启用 mbstring）\n");
+fwrite(STDOUT, "[drift-build] ✓ 运行时 ini → {$runtimeIni}（启用 " . implode(' / ', $runtimeExtensions) . "）\n");

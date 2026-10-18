@@ -678,3 +678,45 @@ Ready   时墨量 = 8.3%      ← 1.2s HTTP 回来，15 行列表
 首行来自 HTTP / 耗时 ≥ 1.2s）· lint **322 文件 0/0** · codegen **213 全翻译 0 skip** ·
 `drift-build users` **7.5MB/27.9s** · 真机探针 OK。DESIGN：§11.5 的"loading 不可见"
 降级为"同步后端专属"、§17.4.5 的 AOT 缺口标为已验。
+
+### 7.14 pipe→socket 与 curl：把"不卡"从口号变成数字（2026-10-18）
+
+用户问"请求耗时的 HTTP 接口，UI 会卡吗"，并要求"请求用 PHP 的 curl 实现"。两件事都量了。
+
+**① 先量"卡不卡"**（同一台机器，mock 后端固定 1.2s）：
+
+| 形态 | 一次 HTTP 期间 |
+|---|---|
+| 同步（`run()` 在 UI 线程）| **1208ms 界面冻结**，一帧都画不出来 |
+| 后台（`ProcessTaskHost`）| `attach` **116ms** 回事件循环；此后 `frame()` **4.24ms/帧**、`drain()` **0.013ms** |
+
+**② 但第一次量出来 `drain()` 是 29ms、`frame()` 是 34.5ms** —— 界面上就是稳定 30fps 掉帧。
+根因不在架构，在**句柄类型**（Windows 专属）：
+
+| `proc_open` 句柄 | `stream_select(..., 0)` | 非阻塞 `fread` |
+|---|---|---|
+| `['pipe','w']` | **13.654 ms/次** | **411.189 ms/次**（"非阻塞"等于没用）|
+| `['socket']` | **0.008 ms/次** | **0.001 ms/次** |
+
+Windows 的 `select()` 只吃 socket，PHP 对 pipe 走"逐句柄猜"的退化路径。⇒ 全部换 `['socket']`，
+12 条 P3 判据仍全绿（worker 的 `php://stdin` 照常工作）。
+
+**③ curl 在 AOT 产物里可用**（探针 `[L]` 段）：
+```
+[L1] curl_init=yes curl_exec=yes allow_url_fopen=1
+[L2] curl → code=200 body={"ok":true} err=
+```
+⇒ `drift-build` 的运行时 ini 从"仅 mbstring"改为 **`mbstring + openssl + curl`**
+（之前"不拖 curl"是保守选择，不是能力限制）；`FetchUsersJob` 改用 curl ——
+连接超时/总超时分离（5s/10s）、能拿 HTTP 状态码（4xx/5xx 不再混成"解析失败"）、
+HTTPS 证书校验是一等公民。
+
+★ 顺带确认：`$_SERVER['argv'][0]` = **exe 的绝对路径**（`["D://...//swoole_probe.exe"]`），
+`ProcessTaskHost([$argv[0], '--drift-worker'])` 的自 spawn 有了直接依据。
+
+★ **两条"数字变好看"的判据都不该只靠肉眼**：`drain()` 29ms 时界面**看起来只是有点慢**，
+没有任何报错；如果不是把 `frame()` 计时拆出来量，这个 bug 会一直躺在"架构正确"的假象里。
+
+**验证**：smoke **725 ok / 0 FAIL** · lint **322 文件 0/0** · codegen **213 全翻译 0 skip** ·
+`drift-build users` **7.5MB/18.8s**（ini 现为 `mbstring / openssl / curl`）·
+真机 `probe-async.py` 同前（进程 2 / Loading 0.0% → Ready 8.3% / 残留 0）。
