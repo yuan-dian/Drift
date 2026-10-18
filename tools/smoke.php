@@ -44,6 +44,7 @@ use Drift\Dev\Smoke\App\AccelApplication;
 use Drift\Dev\Smoke\App\CompositeRootApp;
 use Drift\Dev\Smoke\App\CountJob;
 use Drift\Dev\Smoke\App\MenuApplication;
+use Drift\Dev\Smoke\App\LazyApplication;
 use Drift\Dev\Smoke\App\NamedBoomJob;
 use Drift\Dev\Smoke\App\NamedExitJob;
 use Drift\Dev\Smoke\App\NamedSumJob;
@@ -177,6 +178,11 @@ use Drift\Widget\Dock;
 use Drift\Widget\Drag\Draggable;
 use Drift\Widget\Drag\DragTarget;
 use Drift\Widget\Each;
+use Drift\Widget\LazyColumn;
+use Drift\Widget\LazyColumnState;
+use Drift\Widget\Scrollable;
+use Drift\Widget\ScrollView;
+use Drift\Widget\ScrollViewState;
 use Drift\Widget\Element;
 use Drift\Widget\ErrorBoundary;
 use Drift\Widget\ErrorBoundaryElement;
@@ -6331,6 +6337,206 @@ if (is_file($log)) {
     unlink($log);
 }
 
+// ── ㊷ M5：`LazyColumn` 虚拟列表（按视口造子层）──────────────────────────────
+//   虚拟化的定义是"**没看见的行不存在**"：没有 Widget、没有 Element、没有盒。
+//   三线判据 ——
+//   ① **窗口只覆盖视口**：5000 / 20000 行都只造 5 行（视口 240 ÷ 行高 56）。
+//      全量列表随行数**线性**变慢（`_build/bench-list3.php` 实测：20000 行
+//      mount+layout 2.8s），虚拟列表与行数无关。
+//   ② **坐标链**：窗在完整内容里的起点（`sliceOrigin`）进子盒 offset ⇒
+//      "画在哪 = 点在哪"（与 padding / 滚动偏移同一条纪律）。
+//   ③ **绘制透明**：同一偏移下 SVG 与全量列表**逐字节一致** —— 虚拟化不许改观感。
+//   ★ 反例自检三发：① 窗口改成"全部行" ⇒ 前两条红（行数变 5000）；
+//   ② `sliceOrigin` 恒置 0 ⇒ "滚一格 ⇒ 子盒 offsetY = −8" 红（会得 −48）；
+//   ③ `maxScroll` 按窗长算 ⇒ 可滚上限红（280 而不是 1119760）。
+$lazyRows = static function (int $count): array {
+    $rows = [];
+    for ($i = 0; $i < $count; $i++) {
+        $rows[] = $i;
+    }
+
+    return $rows;
+};
+
+$lazyBuild = static function (int $count, float $extent, ?EdgeInsets $pad = null) use ($lazyRows): LazyColumn {
+    $widget = LazyColumn::make($extent)->items(
+        $lazyRows($count),
+        static fn(int $i): Widget => Text::make('行 ' . $i),
+    );
+
+    return $pad === null ? $widget : $widget->padding($pad);
+};
+
+/** 挂树 + 按 320×240 布局（smokeContext 的规格） */
+$lazyMount = static function (LazyColumn $widget): Element {
+    $element = $widget->createElement();
+    $element->mount(null, smokeContext());
+    $element->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
+
+    return $element;
+};
+
+/** 窗口里实际造了几行（= Column 的直接子节点数） */
+$lazyKids = static function (Element $root): int {
+    $column = findElement($root, static fn(Element $e): bool => $e->widget() instanceof Column);
+    $n = 0;
+    $column?->visitChildren(static function (Element $child) use (&$n): void {
+        $n++;
+    });
+
+    return $n;
+};
+
+$lazyStateOf = static function (Element $root): ?LazyColumnState {
+    $hit = findElement(
+        $root,
+        static fn(Element $e): bool => $e instanceof StatefulElement && $e->state() instanceof LazyColumnState,
+    );
+
+    $state = $hit instanceof StatefulElement ? $hit->state() : null;
+
+    return $state instanceof LazyColumnState ? $state : null;
+};
+
+$lazyColumnBoxOf = static function (Element $root): ?RenderBox {
+    return findElement($root, static fn(Element $e): bool => $e->widget() instanceof Column)?->renderObject();
+};
+
+// ① 窗口只覆盖视口：视口 240 / 行高 56 ⇒ 5 行（ceil(240/56) = 5）
+$lazySmall = $lazyMount($lazyBuild(5000, 56.0));
+check(
+    'Lazy · 窗口只造视口覆盖的行（5000 行 ⇒ 5 行，不是 5000）',
+    $lazyKids($lazySmall) === 5,
+    (string) $lazyKids($lazySmall),
+);
+
+// ② 与行数无关：20000 行仍然 5 行（这是虚拟化与全量列表的分界判据）
+$lazyBig = $lazyMount($lazyBuild(20000, 56.0));
+check(
+    'Lazy · 窗口行数与总行数无关（20000 行 ⇒ 仍 5 行）',
+    $lazyKids($lazyBig) === 5,
+    (string) $lazyKids($lazyBig),
+);
+
+// ③ 可滚上限按**完整内容**算：20000×56 − 240 = 1119760
+//    （按窗长算会得到 280 —— 滚动条会假装"只有一屏"）
+$lazyMax = $lazyBig->effectiveBox()?->maxScroll() ?? -1.0;
+check(
+    'Lazy · maxScroll = 完整内容 − 视口（20000×56−240 = 1119760，不是窗长）',
+    $lazyMax === 1119760.0,
+    (string) $lazyMax,
+);
+
+// ④ 滚到 400：第 7 行是窗的第一行（400 ÷ 56 = 7.14）⇒ 窗起点 392
+//    ⇒ 子盒 offsetY = −(400 − 392) = −8（★ sliceOrigin 的正负号判据）
+$lazyState = $lazyStateOf($lazyBig);
+$lazyState?->scrollBy(400.0);
+$lazyBig->settle();
+$lazyBig->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
+$lazyCol = $lazyColumnBoxOf($lazyBig);
+check(
+    'Lazy · 滚动 400 ⇒ 窗起点 392、子盒 offsetY = −8（窗在完整内容里的位置进坐标链）',
+    $lazyCol?->offsetY() === -8.0 && $lazyState?->offset() === 400.0,
+    'offsetY=' . ($lazyCol?->offsetY() ?? -1.0) . ' offset=' . ($lazyState?->offset() ?? -1.0),
+);
+
+// ⑤ 命中跟随窗：视口 y=10 落在第 7 行（−8..48）⇒ 命中盒的绝对 y 必须也是 −8
+$lazyHit = $lazyBig->effectiveBox()?->hitTest(100.0, 10.0);
+$lazyHitY = $lazyHit === null ? null : boxOrigin($lazyHit)[1];
+check(
+    'Lazy · 命中跟随窗：视口 (100,10) 命中第 7 行，绝对 y = −8（画在哪 = 点在哪）',
+    $lazyHitY === -8.0,
+    $lazyHitY === null ? 'miss' : (string) $lazyHitY,
+);
+
+// ⑥ 上内边距进 sliceOrigin：offset 0 / pad.top 24 ⇒ 第一行画在 y = 24
+$lazyPad = $lazyMount($lazyBuild(100, 56.0, EdgeInsets::only(0.0, 24.0, 0.0, 0.0)));
+$lazyPadCol = $lazyColumnBoxOf($lazyPad);
+check(
+    'Lazy · 上内边距是内容的一部分（pad.top 24 ⇒ 子盒下移 +24）',
+    $lazyPadCol?->offsetY() === 24.0,
+    (string) ($lazyPadCol?->offsetY() ?? -1.0),
+);
+
+// ⑦ 绘制透明：同一偏移下 SVG 与全量列表逐字节一致
+$lazySvgOf = static function (float $offset, bool $virtual): string {
+    $rows = [];
+    for ($i = 0; $i < 300; $i++) {
+        $rows[] = $i;
+    }
+    $rowOf = static fn(int $i): Widget => SizedBox::make(Text::make('行 ' . $i))->height(56.0);
+
+    $root = $virtual
+        ? LazyColumn::make(56.0)->items($rows, $rowOf)
+        : ScrollView::make(
+            Column::make()->children([Each::make(static fn(int $i): int => $i)->items($rows, $rowOf)])
+        );
+
+    return (new Renderer(new SvgSurface(), smokeContext()->metrics(), ThemeData::light()))->render(
+        $root,
+        320.0,
+        240.0,
+        1.0,
+        static function (Element $el) use ($offset, $virtual): void {
+            if ($virtual) {
+                $st = findElement(
+                    $el,
+                    static fn(Element $e): bool => $e instanceof StatefulElement && $e->state() instanceof LazyColumnState,
+                )?->state();
+            } else {
+                $st = findElement(
+                    $el,
+                    static fn(Element $e): bool => $e instanceof StatefulElement && $e->state() instanceof ScrollViewState,
+                )?->state();
+            }
+            if ($st instanceof Scrollable) {
+                $st->scrollBy($offset);
+            }
+        },
+    );
+};
+// ★ 先跑一发预热：`DeterministicFontManager` 的字形表是**懒加载**的，第一次
+//   排版会顺带把它建起来（建表前后的度量能差几像素）⇒ 不预热的话"第一份 SVG
+//   与第二份不同"会伪装成虚拟化的缺陷。预热后两份都走同一份已建好的度量。
+$lazySvgOf(0.0, true);
+$lazyPairs = [];
+foreach ([0.0, 400.0] as $off) {
+    $lazyPairs[(string) $off] = [$lazySvgOf($off, false), $lazySvgOf($off, true)];
+}
+$lazySame = true;
+$lazySizes = [];
+foreach ($lazyPairs as $off => [$eachSvg, $virtualSvg]) {
+    $lazySame = $lazySame && $eachSvg === $virtualSvg;
+    $lazySizes[] = sprintf('%s: %d/%d', $off, strlen($eachSvg), strlen($virtualSvg));
+}
+check(
+    'Lazy · 绘制透明：offset 0 与 400 下与全量列表的 SVG 逐字节一致',
+    $lazySame,
+    implode(' · ', $lazySizes),
+);
+
+// ⑧ 应用层：滚轮经 `Scrollable` 路由到 `LazyColumnState`（接口的第一个真实消费者）
+$lazyApp = new LazyApplication();
+$lazyApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
+$lazyApp->dispatchInput(ScrollEvent::make(150.0, 100.0, 1.0));   // 一格 = 48px
+$lazyApp->frame(16.0, BoxConstraints::loose(new Size(300.0, 200.0)));
+$lazyAppState = $lazyApp->lazyState();
+$lazyAppBox = $lazyApp->scrollBox();
+check(
+    'Lazy · 滚轮一格 ⇒ offset 48（`Scrollable` 接口路由到 LazyColumnState）',
+    $lazyAppState?->offset() === 48.0,
+    (string) ($lazyAppState?->offset() ?? -1.0),
+);
+// 行高 20 ⇒ 窗起点 floor(48/20)×20 = 40 ⇒ 子盒 offsetY = −8
+check(
+    'Lazy · 滚轮后窗滑两行（起点 40 ⇒ 子盒 offsetY = −8）',
+    $lazyAppBox?->maxScroll() === 9800.0
+        && findElement(
+            $lazyApp->root(),
+            static fn(Element $e): bool => $e->widget() instanceof Column,
+        )?->renderObject()?->offsetY() === -8.0,
+    'maxScroll=' . ($lazyAppBox?->maxScroll() ?? -1.0),
+);
 // ── 汇总 + 退出码（2026-10-18）──
 // ★ 以前只打印 FAIL、**从不汇总、也从不非零退出** ⇒ 打印 3 个 FAIL 仍然 exit 0：
 //   任何自动化调用（脚本 / CI / `&&` 链）都会把它读成"过了"。与 G2（不许静默
