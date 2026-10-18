@@ -2656,6 +2656,140 @@ CPU 不可切分（解压/解码/加密）
 ★ **最重要的一条**：`TaskHost` 的接口本身要补一档——`submit(Job, onDone)` 只说了"结果怎么回来"（回调），
 没说"在**哪个线程的哪一帧**回来"。成熟框架的回答统一是：**队列 + UI 线程 drain**。这是落地异步后端前的第一件事。
 
+### 17.4 落地蓝图（2026-10-18 定稿草案）
+
+> 依据：§17.2.5–17.2.7 的实测与横向核对。目标不是"再加一个后端"，而是**先把结构补齐**，
+> 之后换后端只改组合根一行（§17.2.3 的承诺才真正成立）。
+
+#### 17.4.1 三条不变量
+
+1. **回调只在 UI 线程的帧内执行** —— 任何后端都不许直接调 `onDone`。
+2. **结果只能经队列到达 UI** —— 后端负责"放进队列"，`Application` 每帧 drain。
+3. **I/O 只走非阻塞 + 每帧 poll** —— 不开 Swoole hook（§17.2.6 实测会全局协程化）、不用 Swoole 协程（`dispatch()` 阻塞 57ms）。
+
+#### 17.4.2 端口扩展：`TaskHost` 补"队列 + drain"
+
+```php
+namespace Drift\App;
+
+interface TaskHost
+{
+    /** 提交任务；$onDone/$onError 一定在 UI 线程的帧内被调用（见 drain） */
+    public function submit(Job $job, callable $onDone, ?callable $onError = null): void;
+
+    /** UI 线程每帧调用一次：把已完成的结果逐个交给 $onEach（$onEach 在 UI 线程执行） */
+    public function drain(callable $onEach): void;
+}
+```
+
+`Completion`（`@internal`）承载"值 / 异常 / 两个回调"：
+
+```php
+final class Completion
+{
+    public function __construct(
+        public readonly mixed $value,
+        public readonly ?\Throwable $error,
+        public readonly \Closure $onDone,
+        public readonly ?\Closure $onError,
+    ) {}
+}
+```
+
+★ **`drain` 的调用点必须在 `settle()` 之前**（`Frame` 的 ① 步就是 settle）：
+
+```php
+// Application::frame() —— 顺序不能反
+$this->tasks?->drain(fn (Completion $c) => $this->complete($c));  // ① 回调里 setState 只标脏
+$root->settle();                                                  // ② 帧末统一重建（§5.2 裁决 3）
+$box->layout($constraints);                                       // ③
+$box->paint($canvas);                                             // ④
+```
+
+反了会怎样：回调排在 settle 之后 ⇒ 那次 `setState` 要等**下一帧**才生效（多一帧延迟，且"loading→ready"会闪一下空帧）。
+
+**错误通道**：`Job::run()` 抛异常 ⇒ 后端把 `$error` 放进 `Completion`；UI 侧若没给 `$onError`，默认 `Errors::report()`（Fatal 序列）。
+这与三态里的 `Error` 分支一一对应，不新增"第四个状态"。
+
+#### 17.4.3 `SlicedJob`（单线程分片，P1）
+
+```php
+interface SlicedJob
+{
+    /** 干一部分；返回 true = 还没完（下一帧继续），false = 完 */
+    public function step(int $budgetMs): bool;
+
+    /** step() 返回 false 后读，作为 submit 的结果 */
+    public function result(): mixed;
+}
+```
+
+`TaskHost` 加一个方法（默认实现可拒绝，`SyncTaskHost` 支持）：
+
+```php
+public function submitSliced(SlicedJob $job, callable $onDone, ?callable $onError = null, int $budgetMs = 4): void;
+```
+
+★ 预算 4ms 的来历：一帧 16.7ms，留 12ms 给布局/绘制/输入（§13.3 全树重排）。
+`step()` 自己决定一次干多少（按条目数或按时间），框架只给预算、不切片。
+
+#### 17.4.4 `IoPoller`（非阻塞 I/O，P2）
+
+```php
+namespace Drift\App\Io;
+
+final class IoPoller
+{
+    /** 监听可读/可写；返回 token（用于 unwatch） */
+    public function watch($stream, bool $forRead, callable $callback): int;
+
+    public function unwatch(int $token): void;
+
+    /** 每帧调用：stream_select(读, 写, 异常, 0 超时) ⇒ 逐个回调 */
+    public function poll(): void;
+}
+```
+
+- 回调里业务代码自己做"读到多少、够不够一条消息"的状态机（与 Node/Qt 的 readyRead 同构）。
+- **`Fiber` 是可选包装**（`Awaitable::read($stream)`）：等真的出现"顺序代码"需求再加；
+  第一版**不引入**通用 Fiber 调度器（避免"没有消费者就发明机制"）。
+- 已验证前提：`stream_socket_pair` + `stream_set_blocking(false)` + `stream_select(..., 0)` 在 AOT 产物里全部可用（probes §12.3 `[J3]`）。
+
+#### 17.4.5 `ProcessTaskHost`（P3：重计算 + 隔离）
+
+- **常驻池**（不是每任务 spawn：实测 spawn 275ms/次，不可接受）。
+- 协议：stdin/stdout 各一行 JSON —— `{"id":1,"job":"user.fetch","arg":{...}}` / `{"id":1,"ok":true,"value":...}`。
+- worker = **同一个 AOT exe** 的 `--drift-worker` 分支（`$_SERVER['argv']` 实测可用；`$argv` 不可用）。
+- UI 侧每帧 `drain()` 里非阻塞读 stdout（`stream_select` 0 超时），**不在 drain 里阻塞**。
+- 崩溃隔离：worker 死 ⇒ 只丢该任务，UI 收到 `onError`，可拉起新 worker。
+
+#### 17.4.6 分阶段与判据
+
+| 阶段 | 内容 | 判据（先写夹具再实现） |
+|---|---|---|
+| **P0** | `TaskHost` 队列 + `drain`；`SyncTaskHost` 改走队列；`Application::frame` 接线 | smoke：① submit 当帧**不**调 onDone ② 下一帧调 ③ onDone 里 setState **同帧**生效 ④ Job 抛异常走 onError ⑤ 无 TaskHost 时行为不变 |
+| **P1** | `SlicedJob` + `submitSliced` | smoke：100 万次累加切 10 帧完成；每帧 `step` 耗时 < 5ms；结果与一次性算相同；中途取消不泄漏 |
+| **P2** | `IoPoller` | smoke：socket pair 写端稍后写 ⇒ 可读回调在 poll 里触发（不阻塞）；unwatch 后不再回调 |
+| **P3** | `ProcessTaskHost` | 真机：10 个任务并发、UI 帧不掉；kill worker ⇒ onError 且自动补员 |
+| **P4** | `NativeJob`（C++ 线程池，`QueueUserWorkItem`） | 解码/哈希类任务，µs 级投递；线程里只碰 C++ 数据 |
+
+★ 每个阶段都**独立可交付**：P0 之后即使不做 P1–P4，框架的异步语义也已经正确（只是"能力少"，不是"结构错"）。
+
+#### 17.4.7 明确不做（以及理由）
+
+- **不开 `Runtime::enableCoroutine`**：hook 是全局替换，开了之后非协程上下文的 `stream_select` 直接抛错（§17.2.6 实测）。
+- **不用 Swoole 协程**：`Event::dispatch()` 阻塞到下一个事件（50ms 定时器 ⇒ 单帧 57ms），且协程耗尽后再调会 Fatal。
+- **不做每任务 spawn 进程**：275ms/次（probes §12 ⑧）。
+- **不做"线程里跑 AOT 代码"**：需要上游 `php::thread_init()`（§17.2.5 追测）。
+- **不引入通用 Fiber 调度器**（第一版）：没有"顺序代码"消费者之前，它是过度设计。
+
+#### 17.4.8 已知风险 / 回退
+
+- **P0 是语义变更**（onDone 从"同步立即"变成"下一帧"）：当前 `TaskHost` **零生产消费者**（只有文档示例）⇒ 安全；但要在 DESIGN 与 `SyncTaskHost` 注释里写死这一点，避免后人当 bug 改回去。
+- **P0 的 drain 与错误边界**：回调里抛异常不能拖垮帧循环 ⇒ `complete()` 内 try/catch，走 `Errors::report`（与 §5.2 的 S3 一致）。
+- **P3 的 exe 分流**：GUI 程序带 `--drift-worker` 时要**不进消息循环**（`main()` 里先判参数）。
+- 回退：每个阶段都是"新增 + 接线"，P0 的回退就是把 `drain` 去掉、`SyncTaskHost` 改回直调；不影响既有页面。
+
 ### 17.3 为什么不用协程做 UI 状态
 
 响应式的"数据变了刷新 UI"与协程的"让出等待"是**两件事**。把 UI 重建放进协程会引入"重建中途让出 ⇒ 树处于半更新态"的新失效模式，与 G3（确定性）冲突。**协程只服务 IO，不服务 UI。**
