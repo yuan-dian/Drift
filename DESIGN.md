@@ -2605,6 +2605,8 @@ CPU 不可切分（解压/解码/加密）
 
 **协程的正确用法（2026-10-18 实测）**：**用 PHP `Fiber`，不要用 Swoole 协程**。
 - Swoole 协程依赖**它自己的 reactor**：`Swoole\Event::dispatch()` 实测**阻塞到下一个事件**（50ms 定时器 ⇒ 单帧 57ms），UI 帧被卡住；且协程耗尽后再 dispatch 在 AOT 下会崩（tpc 的扩展调用路径）。Swoole 没有"0 超时 pump reactor"的 API。
+- ★ **hook 是 Swoole 协程让出的前提，也是它不能用的原因**：`Runtime::enableCoroutine(SWOOLE_HOOK_ALL)` 实测可开（`getHookFlags=2143287295`），它把 `fread`/`stream_socket_client`/`stream_select`/`file_get_contents` 换成协程版；但**替换是全局的** —— 开启后非协程上下文调用 `stream_select` 直接抛 `Swoole\Error: API must be called in the coroutine`（实测）。Drift 的 UI 线程代码不可能整体跑在协程容器里 ⇒ **不能开 hook**。
+- ★ **Fiber 不会让出阻塞 IO**（用户指出，实测确认）：Fiber 不 hook、不抢占，`fread` 阻塞时整线程就阻塞。Fiber 只提供**让出点** —— 正确用法是 **IO 先非阻塞**（`stream_set_blocking(false)`），读不到 ⇒ `Fiber::suspend()`；UI 帧里 `stream_select(读集, 0)` 判可读 ⇒ `resume()`。实测闭环：`[J3] select_ready=1 log=["round1:not-ready","got:hello"] terminated=yes`（全程不开 hook）。
 - PHP `Fiber` 是**用户态**的：`Fiber::suspend()` 立即把控制权还给调用方，**何时 resume 完全由 UI 帧循环决定** ⇒ 天然与 Win32 消息泵共存。AOT 实测：`[I] suspended=need-io / fiber-resumed:io-ready / terminated=yes`。
 - ★ Fiber 只解决**控制流**，不解决"在等什么"：恢复条件要自己判（`stream_select` 0 超时 / TimerHost 到期）；且它**不能让出 C++ 层的阻塞调用** ⇒ IO 必须先 `stream_set_blocking(false)`。
 - 正确形态 = **UI 帧循环当调度器**（约 100 行）：每帧 `select(读集, 0)` → 就绪 fd → `resume` 对应 Fiber；Fiber 内数据不够 ⇒ `suspend('need-more')`；TimerHost 到期 ⇒ 恢复等超时的 Fiber。**零线程、零扩展、零 TSRM**。
