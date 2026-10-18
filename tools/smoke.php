@@ -65,7 +65,9 @@ use Drift\App\SyncTaskHost;
 use Drift\App\TaskHost;
 use App\Users\UsersApplication;
 use App\Users\UsersRoot;
+use App\Users\Jobs\JobRegistry;
 use App\Users\Store\MemoryUserSource;
+use App\Users\Store\LoadStatus;
 use Drift\Dev\Smoke\App\CursorApplication;
 use Drift\Dev\Smoke\App\EchoApplication;
 use Drift\Dev\Smoke\App\FailSliceJob;
@@ -5805,6 +5807,85 @@ check('P3 · 崩溃后自动重启并跑完新任务（1+…+4 = 10）', $sink =
 // ⑥ 收工
 $procHost->shutdown();
 check('P3 · shutdown 之后不再有 worker', !$procHost->isRunning());
+
+// ── ㊶ apps/users 的**真异步取数**（真 HTTP + 真子进程，§17.4.5 的落地）────────
+//
+// ★ 这条链就是 M4 `HttpUserSource` 的预演：`UserStore::load()` → `ProcessTaskHost`
+//   → 常驻 worker → **真 HTTP**（`php -S` 的 mock，故意慢 1.2s）→ JSON 回程 → hydrate。
+// ★ 它同时兑现了 §11.5 那条结论："`loading` 只在同步 IO 下不可见" —— 有了后台，
+//   三态第一次真的对用户有意义。
+// 判据：① attach 之后仍 Loading（没被 HTTP 阻塞）② 若干帧后 Ready + 15 行
+//   ③ 数据真的来自 HTTP（首行姓名）④ 同步路径（host=null）行为不变（既有 18 条已覆盖）
+
+$mockPort = 18000 + (getmypid() % 1000);
+$mockProc = proc_open(
+    [PHP_BINARY, '-S', '127.0.0.1:' . $mockPort, dirname(__DIR__) . '/tools/app-workers/users-mock.php'],
+    [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+    $mockPipes,
+);
+$mockReady = false;
+for ($i = 0; $i < 120; $i++) {
+    $probe = @file_get_contents('http://127.0.0.1:' . $mockPort . '/healthz');
+    if ($probe !== false) {
+        $mockReady = true;
+
+        break;
+    }
+    usleep(50000);
+}
+check('异步 · mock 后端起来了（php -S）', $mockReady, 'port=' . $mockPort);
+
+if ($mockReady) {
+    $asyncHost = new ProcessTaskHost(
+        [PHP_BINARY, dirname(__DIR__) . '/tools/app-workers/users-worker.php'],
+        JobRegistry::make(),
+    );
+    $asyncApp = new UsersApplication(new MemoryUserSource(), $asyncHost, 'http://127.0.0.1:' . $mockPort);
+    $asyncApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(900.0, 640.0)));
+
+    check(
+        '异步 · attach 之后仍是 Loading（取数没占 UI 线程）',
+        $asyncApp->userStore()->status() === LoadStatus::Loading,
+        $asyncApp->userStore()->status()->name,
+    );
+
+    $asyncT0 = microtime(true);
+    $asyncFrames = 0;
+    while ($asyncApp->userStore()->status() === LoadStatus::Loading && microtime(true) - $asyncT0 < 10.0) {
+        usleep(16000);
+        $asyncApp->frame((microtime(true) - $asyncT0) * 1000.0, BoxConstraints::loose(new Size(900.0, 640.0)));
+        $asyncFrames++;
+    }
+
+    $asyncStore = $asyncApp->userStore();
+    check(
+        '异步 · 后台取数完成 ⇒ Ready 且 15 行',
+        $asyncStore->status() === LoadStatus::Ready && count($asyncStore->rows()) === 15,
+        $asyncStore->status()->name . ' rows=' . count($asyncStore->rows()) . ' frames=' . $asyncFrames,
+    );
+    check(
+        '异步 · 数据真的来自 HTTP（首行「张伟」经 worker 往返）',
+        ($asyncStore->rows()[0]->name ?? '') === '张伟',
+        $asyncStore->rows()[0]->name ?? '(空)',
+    );
+    check(
+        '异步 · 耗时说明它真的等了网络（≥ 1.2s）',
+        (microtime(true) - $asyncT0) >= 1.2,
+        sprintf('%.2fs', microtime(true) - $asyncT0),
+    );
+
+    $asyncHost->shutdown();
+}
+
+if (is_resource($mockProc)) {
+    proc_terminate($mockProc);
+    foreach ($mockPipes as $pipe) {
+        if (is_resource($pipe)) {
+            fclose($pipe);
+        }
+    }
+    proc_close($mockProc);
+}
 
 // ── 可滚动容器（P1 / 2026-10-17）：偏移进坐标链 + 滚轮路由 ──────────
 //   两条线：① 布局层直接测 `RenderScrollView`（视口 / maxScroll 夹取 / 命中按视口判 /

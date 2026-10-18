@@ -3,10 +3,13 @@ declare(strict_types=1);
 
 namespace App\Users;
 
+use Drift\App\ProcessTaskHost;
+use Drift\App\ProcessWorker;
 use Drift\Errors;
 use Drift\Platform\Win32\Win32Platform;
 
 use App\Users\Store\MemoryUserSource;
+use App\Users\Jobs\JobRegistry;
 
 /**
  * 组合根（§A.2.4 / §5.1）：**全应用唯一提到平台实现的地方**。
@@ -29,6 +32,27 @@ final class Bootstrap
 
     public static function run(): void
     {
+        // ★★ worker 分支：**同一个 exe**，靠参数分流（§17.4.5）。
+        //   ★ `$argv` 在 tpc 编译期被拒（"The variable $argv is undefined"）⇒ 必须用
+        //     `$_SERVER['argv']`（探针 ⑦ 实测：连额外参数一起给全）。
+        //   ★ worker 只跑 `ProcessWorker::serve()`（读 stdin、跑任务、回 stdout），
+        //     **不进消息循环、不建窗口、不碰 UI**。
+        $argv = $_SERVER['argv'] ?? [];
+        $isWorker = false;
+        foreach ($argv as $arg) {
+            if ($arg === '--drift-worker') {
+                $isWorker = true;
+
+                break;
+            }
+        }
+
+        if ($isWorker) {
+            ProcessWorker::serve(JobRegistry::make());
+
+            return; // stdin 关闭 = UI 进程走了 ⇒ 正常收工
+        }
+
         $platform = new Win32Platform();
 
         Errors::installFatalBox(
@@ -37,11 +61,15 @@ final class Bootstrap
             }
         );
 
-        // ★ 后端挂在**源**上，不挂 Application（§11.7）：
-        //   M1–M3 同步 ⇒ MemoryUserSource；M4 线程池 ⇒ `new HttpUserSource(new ThreadPoolTaskHost())`，
-        //   只改这一行，页面与 store 代码零改动。
+        // ★ **M4 的形态到了**：首屏取数不再占 UI 线程 —— 交给常驻子进程（§17.4.5），
+        //   它去请求一个**真 HTTP 后端**（`apps/users/mock-server.php`，故意慢 1.2s）。
+        //   ⇒ `LoadStatus::Loading` 第一次真的被用户看见（§11.5 的结论）。
+        //   ★ 换回同步只改这一行：`new UsersApplication($src)`（host = null）。
+        //   ★ `$argv[0]` = 本 exe 路径（AOT 下由启动器给；空则退化为同步，不静默崩）。
         $src = new MemoryUserSource();
-        $app = new UsersApplication($src);
+        $exe = (string) ($argv[0] ?? '');
+        $host = $exe === '' ? null : new ProcessTaskHost([$exe, '--drift-worker'], JobRegistry::make());
+        $app = new UsersApplication($src, $host);
 
         $window = $platform->window();
         $handle = $window->createWindow('用户管理', self::WINDOW_WIDTH, self::WINDOW_HEIGHT);

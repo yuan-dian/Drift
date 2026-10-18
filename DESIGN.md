@@ -1404,6 +1404,11 @@ final class UserStore extends Subject            // 业务层：不认识任何 
 
 > **⚠️ 同步后端下的诚实边界**：单线程同步后端里，两次 `notifyChanged()` 处于**同一调用栈**，中间没有任何一帧能被渲染（§5.2：统一重建在帧末 `flush`）⇒ **`loading` 态画不出来**，`status = LoadStatus::Loading` 只是给**错误处理与调试**留的语义，不是可见骨架。
 > 结论：**M1–M3 的三态只在 `error` 一支真正对用户可见**；`loading` 骨架要等 M4+ 的 `TaskHost` 后台后端（§17）才成立。这不是实现缺陷，是"同步 IO + 帧末统一 flush"的结构后果 —— 不要靠"先广播一次"来假装异步。
+>
+> ★★ **2026-10-18 已兑现**：`apps/users` 装上 `ProcessTaskHost`（§17.4.5）之后，`loading` **真的看得见**了 ——
+> 真机探针（`tools/probe-async.py`）的数字：窗口刚出现时客户区墨量 **0.0%**（只有一个小 Spinner），
+> 1.2s 慢 HTTP 回来后 **8.3%**（15 行列表）。⇒ 上面这条从"三态的缺陷"降级为"**同步后端专属**的边界"：
+> 三态本身没问题，是"同步 IO + 帧末统一 flush"让它无帧可画。
 
 ```php
 // 页面：订阅点放在「真正变的那层」，不放根
@@ -2866,10 +2871,14 @@ UI 侧收到的是一个新的 `RuntimeException`（跨进程没有"同一个异
 验证：smoke **720/0**（+12：懒启动 / 真进程算对 / 串行排队 / 任务失败不打死 worker / 崩溃 ⇒ onError /
 崩溃后自动重启 / shutdown）；★ 踩坑：`static fn() => $sink !== []` 按值捕获**创建时**的空数组 ⇒
 `$until` 恒 false ⇒ 每次 pump 等满 deadline（smoke 从 10s 涨到 78s）—— 判据闭包必须**收参数**。
-★★ **AOT 运行面仍未验**：`users` 没有真实后台需求，所以"同一份 AOT 产物带 `--drift-worker` 分支"
-这条生产形态**只到翻译层**（codegen 210 全翻译 + `users.exe` 链接通过）。
-要把这条补上，只需要在组合根加一次 `$_SERVER['argv']` 分流（探针 ⑦ 已验可行），
-并让某个应用真的用 `ProcessTaskHost` —— 留给 M4 的 `HttpUserSource`。
+★★ **AOT 运行面已验（2026-10-18 当天补齐）**：`apps/users` 的组合根按 `$_SERVER['argv']` 分流
+（`--drift-worker` ⇒ `ProcessWorker::serve(JobRegistry::make())`，不进消息循环），
+并真的用上了 `ProcessTaskHost`（首屏取数走后台，后端是 `php -S` 的慢 mock）。真机证据（`tools/probe-async.py`）：
+- **进程数 = 2**（主 + worker）⇒ `proc_open([$argv[0], '--drift-worker'])` 在 AOT 下成立；
+- **Loading 墨量 0.0% → Ready 8.3%** ⇒ 数据真的是"后到"的（不是启动时就有）；
+- **关窗后残留 0** ⇒ stdin 关闭让 worker 正常收工，不留孤儿。
+★ 顺带把 P2 登记的"resource + `stream_select` 在 AOT 下未验"也覆盖了：worker 里是 `file_get_contents`
+（真 socket）拿到 15 行 JSON。★ 仍未验的是"worker 崩溃后自动重启"在 AOT 下的表现（解释器侧 smoke 已验）。
 #### 17.4.6 分阶段与判据
 
 | 阶段 | 内容 | 判据（先写夹具再实现） |

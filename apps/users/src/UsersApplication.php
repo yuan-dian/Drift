@@ -4,6 +4,9 @@ declare(strict_types=1);
 namespace App\Users;
 
 use Drift\App\Application;
+use Drift\App\TaskHost;
+
+use App\Users\Jobs\FetchUsersJob;
 use Drift\Commands\CommandHandler;
 use Drift\Input\AcceleratorTable;
 use Drift\Input\KeyChord;
@@ -40,6 +43,9 @@ final class UsersApplication extends Application
 
     private UserSource $src;
 
+    /** 后台端口（`null` = 同步路径）；`Application::taskHost()` 覆写它 */
+    private ?TaskHost $host;
+
     /** @internal `buildRoot()` 被调次数（"Root 只组合"的观测面：框架只该调一次） */
     private int $rootBuilds = 0;
 
@@ -51,16 +57,26 @@ final class UsersApplication extends Application
      * ★ handler **不在这时**注册：框架在 `attach()` 里才调 `commands()`，那一刻
      *   字段才就位 ⇒ 声明式注册只写一处。
      */
-    public function __construct(UserSource $src)
-    {
+    /**
+     * @param null|TaskHost $host 非 null ⇒ 首屏取数走**后台**（§17.4.5：进程池 / 同步队列）；
+     *   null ⇒ 同步 `UserSource`（解释器与旧测试用）。★ 组合根的"一行"就在这里。
+     * @param string $apiBase 后台取数的服务地址（默认 mock 后端；测试传随机端口）
+     */
+    public function __construct(
+        UserSource $src,
+        ?TaskHost $host = null,
+        string $apiBase = FetchUsersJob::DEFAULT_BASE,
+    ) {
         parent::__construct();
 
         $this->src = $src;
+        $this->host = $host;
         $this->app = new AppStore();
-        $this->users = new UserStore($this->src);
+        $this->users = new UserStore($this->src, $host, $apiBase);
         $this->form = new SignupForm();
 
-        $this->users->load(); // 首屏：进 Loading → 结果回贴（§11.5）
+        // 首屏：进 Loading（用户看得到）→ 结果由 frame 的 drain 段回贴（§11.5 / §17.4.2）
+        $this->users->load();
     }
 
     public function title(): string
@@ -107,6 +123,16 @@ final class UsersApplication extends Application
      *
      * @return iterable<string, CommandHandler> `命令名 => handler 实例`
      */
+    /**
+     * ★★ **覆写注入点**（§17.4.2）：`Application` 每帧 drain 的就是这个实例。
+     *   ★ 漏了这一步的后果（第一版就这样）：`UserStore` 拿的是注入的 `ProcessTaskHost`，
+     *     而 `frame()` 用默认新建的 `SyncTaskHost` drain —— **两个实例、两套队列**，
+     *     worker 早把结果回了，UI 却永远 `Loading`（不报错、不卡帧，最坏的那种静默）。
+     */
+    protected function taskHost(): ?TaskHost
+    {
+        return $this->host;
+    }
     public function commands(): iterable
     {
         // ★ 方案 E（§23.2 O-15 裁决）：依赖在构造点 new 出来 ⇒ 不需要 provide() / 反射。

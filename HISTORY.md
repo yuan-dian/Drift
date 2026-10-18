@@ -627,3 +627,54 @@ PHP `Fiber` **不会让出阻塞 IO**。⇒ 唯一能用的形态：**IO 先非�
 **验证**：smoke **720 ok / 0 FAIL**（+12）· lint **317 文件 0/0** · codegen **210 全翻译 0 skip** ·
 `drift-build users` 构建通过 + 真机 OK。DESIGN：§4.2 数字 **183 / 158 / 105 = 103 + 2 / 未点名 80**、
 §17.4.5 标已落地、§17.4.6 P3 行 ✅。
+
+### 7.13 apps/users 真异步取数：mock HTTP + 常驻 worker（2026-10-18）
+
+用户建议"用 `php -S` 起一个临时 mock，在里面 sleep 模拟耗时" —— 比 `usleep` 更接近生产，
+而且能顺带验掉之前登记的两个 AOT 缺口（`proc_open` 自 spawn、worker 里做网络 IO）。
+
+**落地**：
+- `apps/users/tests/...` → `tools/app-workers/users-mock.php`：`php -S` 的 router，`/api/users`
+  先 `usleep(1.2s)` 再回 `UserSeed::all()`；`/healthz` 立即返回（探针用它等就绪）。
+  ★ 放 `tools/` 而不是 `apps/`：① 不进 AOT 的 `sources` ② lint 的产物纪律不适用（它 `require` autoload）。
+- `apps/users/src/Store/UserSeed.php`：**JSON 友好的种子**（原始数组）。跨进程只能传数组，
+  `User` 对象是 UI 侧 hydrate 出来的 —— 两个进程各自读同一份种子。
+- `apps/users/src/Jobs/FetchUsersJob.php`（`NamedJob`，`users.fetch`）：真发 HTTP
+  （`file_get_contents` + 超时 10s）。地址走**构造参数**，不用 `getenv`（§16.7 禁用它）。
+- `apps/users/src/Jobs/JobRegistry.php`：UI 与 worker **共用同一份**注册表（组合根两处都调 `make()`）。
+- `UserStore`：`load()` 两条路 —— 有 `TaskHost` 就提交后台、没有就同步老路；出口统一
+  `applyPage()`（三态 / 缓存失效 / 通知只在一处落）。
+- `UsersApplication`：加 `?TaskHost` + `apiBase` 构造参数，**并覆写 `taskHost()`**。
+- `Bootstrap`：`$_SERVER['argv']` 分流 `--drift-worker` ⇒ `ProcessWorker::serve()`（不进消息循环），
+  否则 `new ProcessTaskHost([$argv[0], '--drift-worker'], JobRegistry::make())`。
+
+★★ **抓到一个"最坏的那种"静默 bug**：`UsersApplication` 把 host 传给了 `UserStore`，但没覆写
+`Application::taskHost()` ⇒ `frame()` 用默认新建的 `SyncTaskHost` 去 drain，**两个实例、两套队列**。
+现象：worker 早就把结果回来了，界面永远 `Loading`，**不报错、不卡帧、不打日志**。
+（这类"注入点漏一半"只有把 UI 与后端的**同一实例**画一遍才看得出来。）
+
+★ **lint 一次抓出四个 error**（都是真问题）：
+1. `FetchUsersJob` 用了 `getenv()` ⇒ §16.7 `nano-hygiene` 禁用（AOT 不保证环境变量）⇒ 改构造参数 + `args()`；
+2. `UserStore::load()` 改了 `status` 没清 `visibleCache` ⇒ `stale-derived`（多一次过滤换掉一类陈旧值）；
+3.4. 两个测试脚本的 `require` ⇒ 挪到 `tools/`（工具链豁免）。
+
+★ **真机证据（`tools/probe-async.py`）**：
+```
+client = 900 x 640
+进程数 = 2（期望 2 = 主 + --drift-worker）
+Loading 时墨量 = 0.0%      ← 窗口已出现，只有一个小 Spinner
+Ready   时墨量 = 8.3%      ← 1.2s HTTP 回来，15 行列表
+墨量差 = +8.3 个百分点      ← 数据是**后到**的
+关窗后残留进程 = 0
+```
+★ 探针第一版只截最终态 —— 那样"一开始就有内容"和"后来才有内容"长得一样；
+改成"窗口一出现截一张、2.5s 后再截一张"才把 `loading` 变成数字。
+
+★ **mock 端口踩坑**：早期用已删除的旧路径（`apps/users/mock-server.php`）起过 8099，
+后来那个孤儿进程还活着 ⇒ 所有请求 500（router 文件不见了）。`netstat -ano | grep 8099`
+发现**两个 PID 同时 LISTENING**，杀掉重起才干净 —— 长跑的后台服务要记 PID。
+
+**验证**：smoke **725 ok / 0 FAIL**（+5：mock 就绪 / attach 后仍 Loading / Ready 15 行 /
+首行来自 HTTP / 耗时 ≥ 1.2s）· lint **322 文件 0/0** · codegen **213 全翻译 0 skip** ·
+`drift-build users` **7.5MB/27.9s** · 真机探针 OK。DESIGN：§11.5 的"loading 不可见"
+降级为"同步后端专属"、§17.4.5 的 AOT 缺口标为已验。

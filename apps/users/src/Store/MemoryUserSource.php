@@ -16,25 +16,9 @@ final class MemoryUserSource implements UserSource
 
     public function __construct()
     {
-        $this->rows = [
-            new User(1, '张伟', 'zhangwei@example.com'),
-            new User(2, '李娜', 'lina@example.com'),
-            new User(3, '王强', 'wangqiang@example.com'),
-            new User(4, '赵敏', 'zhaomin@example.com'),
-            new User(5, '陈晨', 'chenchen@example.com'),
-            new User(6, '刘洋', 'liuyang@example.com'),
-            new User(7, '孙丽', 'sunli@example.com'),
-            new User(8, '周杰', 'zhoujie@example.com'),
-            new User(9, '吴静', 'wujing@example.com'),
-            new User(10, '郑昊', 'zhenghao@example.com'),
-            new User(11, '冯雪', 'fengxue@example.com'),
-            new User(12, '蒋涛', 'jiangtao@example.com'),
-            new User(13, '韩梅', 'hanmei@example.com'),
-            new User(14, '杨柳', 'yangliu@example.com'),
-            new User(15, '朱军', 'zhujun@example.com'),
-        ];
+        // ★ 种子抽到 `UserSeed`（后台任务也要读同一份 —— 两个进程各自 hydrate）
+        $this->rows = UserSeed::hydrate(UserSeed::all());
     }
-
     public function fetchPage(int $page): Page
     {
         return new Page(ok: true, items: $this->rows);
