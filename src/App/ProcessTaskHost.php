@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace Drift\App;
 
 /**
- * `TaskHost` 后端 —— **常驻子进程**（§17.4.5，P3）：真后台、真隔离、跑的是 AOT 代码。
+ * `TaskHost` 后端 —— **常驻子进程池**（§17.4.5，P3）：真后台、真隔离、跑的是 AOT 代码。
  *
  * ```
  *  UI 进程                                worker 进程（同一份 AOT 产物）
@@ -22,16 +22,20 @@ namespace Drift\App;
  *     （慢 55–95×，§12 探针 L）。
  *
  * ★ **不是"每任务一进程"**：实测 `spawn` 单价 **275ms**（`probes/RESULTS.md` §12 ⑧），
- *   按任务起进程根本不可用。所以是**懒启动 + 常驻**：第一次 `submit()` 起一个，
- *   之后所有任务复用它；`drain()` 每帧非阻塞看一眼有没有回复。
+ *   按任务起进程根本不可用。所以是**懒启动 + 常驻**：需要时才起，之后所有任务复用它；
+ *   `drain()` 每帧非阻塞看一眼有没有回复。
  *
- * ★ **串行（在途最多 1 条）**：不是偷懒，是刻意的第一版形态 —— 并行需要"多 worker +
- *   空闲挑选 + 任务重派"，那是并发调度器。**先有正确的机制，再有并发**。
- *   一个常驻 worker 已经解决"UI 不被阻塞"，HTTP 一个接一个也够用；
- *   要并发就把 `$worker` 变成数组（结构不用改）。
+ * ★★ **并发 = 多个 worker 进程，不是 worker 内多线程**（`maxWorkers`）：
+ *   单个 worker 是**串行**的（`fgets` 一行、跑完、回一行 —— 它没有线程，见上）；
+ *   要并行只能**多起几个进程**。所以这里是一个池：
+ *   - `maxWorkers = 1`（默认）⇒ 行为与第一版**逐字节一致**（串行、满载排队）；
+ *   - `maxWorkers = N` ⇒ 空闲的 worker 各接一条，**满载排队**，不会无界起进程
+ *     （一个 worker 是一整套 AOT 运行时，不是线程 —— 无界起 = 内存爆炸）。
+ *   ⇒ 这是**能力**（可以并行），默认值保守是因为"开并发"是应用的决定：几个 worker、
+ *   在什么机器上，只有应用知道（`apps/users` 今天仍是默认 1）。
  *
- * ★ **诚实边界**：worker 是**串行**的；`stdin` 用阻塞写（在途 1 条 ⇒ 管道不会写满）；
- *   协议是 JSON Lines（结构化数据合适，字节流不合适）。
+ * ★ **诚实边界**：单个 worker 内部串行；`stdin` 用阻塞写（每条 worker 在途 ≤ 1 条
+ *   ⇒ 管道不会写满）；协议是 JSON Lines（结构化数据合适，字节流不合适）。
  *
  * @api
  */
@@ -41,33 +45,36 @@ final class ProcessTaskHost implements TaskHost
     private const READ_CHUNK = 8192;
 
     /**
-     * 在跑的 worker（`null` = 没起 / 已死）。
+     * 在跑的 worker 池。
      *
-     * @var null|array{proc: mixed, in: mixed, out: mixed, err: mixed}
+     * ★ **索引自增、不重用**：重用会让"错误归属"错乱 —— 老 worker 的迟到回复会被
+     *   算到新 worker 头上（同一个索引既是死者又是继任者）。`$workerSeq` 只增不减。
+     *
+     * @var array<int, array{proc: mixed, in: mixed, out: mixed, err: mixed, buffer: string, stderr: string}>
      */
-    private ?array $worker = null;
+    private array $workers = [];
 
     /**
-     * 已发出、等回复的任务。
+     * 已发出、等回复的任务（`worker` = 记在哪个 worker 名下，用于挑空闲）。
      *
-     * @var array<int, array{onDone: \Closure, onError: ?\Closure}>
+     * @var array<int, array{onDone: \Closure, onError: ?\Closure, worker: int}>
      */
     private array $inflight = [];
 
     /**
-     * 还没发出去的任务（worker 没起好 / 正在等上一条）。
+     * 还没发出去的任务（没有空闲 worker / worker 没起好）。
      *
      * @var list<array{id: int, line: string, onDone: \Closure, onError: ?\Closure}>
      */
     private array $queue = [];
 
-    /** stdout 的未完整行 */
-    private string $buffer = '';
-
-    /** stderr 攒着 —— worker 崩了要把它拼进错误消息（否则只剩 exit code） */
-    private string $stderr = '';
-
     private int $seq = 0;
+
+    /** worker 索引发号器（只增不减，见 `$workers` 的注释） */
+    private int $workerSeq = 0;
+
+    /** 池上限（1 = 串行，与第一版一致） */
+    private readonly int $maxWorkers;
 
     /**
      * @param list<string> $command worker 的启动命令（如 `[$exe, '--drift-worker']`；
@@ -75,13 +82,22 @@ final class ProcessTaskHost implements TaskHost
      * @param array<string, callable(array<string, mixed>): Job> $registry
      *        名字 → 重建工厂。★ 必须与 worker 侧 `ProcessWorker::serve()` 的注册表**一致**：
      *        UI 侧用它做"名字打错就早失败"，worker 侧用它真正重建任务。
+     * @param int $maxWorkers 池上限（默认 1 = 串行）。>1 才可能真并行 —— 满载排队，
+     *        不会无界起进程。
      *
      * @api
      */
     public function __construct(
         private readonly array $command,
         array $registry,
+        int $maxWorkers = 1,
     ) {
+        if ($maxWorkers < 1) {
+            Errors::report('ProcessTaskHost：maxWorkers 必须 ≥ 1（给的是 ' . $maxWorkers . '）');
+            $maxWorkers = 1;
+        }
+        $this->maxWorkers = $maxWorkers;
+
         foreach ($registry as $name => $factory) {
             $this->registry[(string) $name] = \Closure::fromCallable($factory);
         }
@@ -157,16 +173,22 @@ final class ProcessTaskHost implements TaskHost
         return count($this->queue);
     }
 
+    /** 池里有几个 worker（测试与 devtools 用；只数活着的） */
+    public function workerCount(): int
+    {
+        return count($this->workers);
+    }
+
     /** worker 是否在跑（测试用；崩溃后会变 false） */
     public function isRunning(): bool
     {
-        if ($this->worker === null) {
-            return false;
+        foreach ($this->workers as $worker) {
+            if ((bool) proc_get_status($worker['proc'])['running']) {
+                return true;
+            }
         }
 
-        $status = proc_get_status($this->worker['proc']);
-
-        return (bool) $status['running'];
+        return false;
     }
 
     /**
@@ -179,24 +201,21 @@ final class ProcessTaskHost implements TaskHost
      */
     public function shutdown(): void
     {
-        if ($this->worker === null) {
-            return;
+        foreach ($this->workers as $worker) {
+            @fclose($worker['in']);
+            @fclose($worker['out']);
+            @fclose($worker['err']);
+            @proc_close($worker['proc']);
         }
 
-        @fclose($this->worker['in']);
-        @fclose($this->worker['out']);
-        @fclose($this->worker['err']);
-        @proc_close($this->worker['proc']);
-
-        $this->worker = null;
-        $this->buffer = '';
+        $this->workers = [];
         $this->inflight = [];
     }
 
     // ── 内部实现 ────────────────────────────────────────────────────────────
 
-    /** 起 worker（只在需要时；失败就是配置错误 ⇒ Fatal） */
-    private function spawn(): bool
+    /** 起一个 worker，返回它的索引（失败 ⇒ `null`，Errors 已报过） */
+    private function spawnWorker(): ?int
     {
         // ★★ **必须是 `socket` 而不是 `pipe`**（2026-10-18 实测，Windows）：
         //   - `pipe + stream_select(0)` = **13.6ms/次**（Windows 的 `select()` 只支持 socket，
@@ -220,87 +239,148 @@ final class ProcessTaskHost implements TaskHost
                 . '（' . ($error['message'] ?? '未知原因') . '）'
             );
 
-            return false;
+            return null;
         }
 
         // ★ stdout / stderr 必须非阻塞：`drain()` 每帧只看一眼，绝不等待。
-        //   stdin 保持阻塞写（在途最多 1 条 ⇒ 管道永远不会写满，见类注释的"串行"）。
+        //   stdin 保持阻塞写（每个 worker 在途 ≤ 1 条 ⇒ 管道永远不会写满）。
         stream_set_blocking($pipes[1], false);
         stream_set_blocking($pipes[2], false);
 
-        $this->worker = ['proc' => $proc, 'in' => $pipes[0], 'out' => $pipes[1], 'err' => $pipes[2]];
-        $this->buffer = '';
-        $this->stderr = '';
+        $index = $this->workerSeq++;
+        $this->workers[$index] = [
+            'proc' => $proc,
+            'in' => $pipes[0],
+            'out' => $pipes[1],
+            'err' => $pipes[2],
+            'buffer' => '',
+            'stderr' => '',
+        ];
+
+        return $index;
+    }
+
+    /** 这个 worker 名下有几条在途 */
+    private function busyOf(int $index): int
+    {
+        $busy = 0;
+        foreach ($this->inflight as $item) {
+            if ($item['worker'] === $index) {
+                ++$busy;
+            }
+        }
+
+        return $busy;
+    }
+
+    /** 挑一个空闲且活着的 worker；没有 ⇒ `null` */
+    private function pickIdle(): ?int
+    {
+        foreach ($this->workers as $index => $worker) {
+            if ($this->busyOf($index) === 0 && (bool) proc_get_status($worker['proc'])['running']) {
+                return $index;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * 把队列里的任务发出去：**每个空闲 worker 接一条**，满载就排队。
+     *
+     * ★ 满载时**返回而不是继续起进程**：一个 worker 是一整套 AOT 运行时（几十 MB），
+     *   无界起进程等于把"并发"变成"内存炸弹"。上限由构造参数给。
+     */
+    private function flush(): void
+    {
+        while ($this->queue !== []) {
+            $index = $this->pickIdle();
+            if ($index === null) {
+                if (count($this->workers) >= $this->maxWorkers) {
+                    return;
+                }
+                $index = $this->spawnWorker();
+                if ($index === null) {
+                    return; // 起不来：留在队列里，下帧再试（Errors 已经报过）
+                }
+            }
+
+            $item = array_shift($this->queue);
+            if (!$this->send($index, $item)) {
+                // 管道断了：放回队首，让 `reap()` 在下一帧把它转成错误并重启
+                array_unshift($this->queue, $item);
+
+                return;
+            }
+        }
+    }
+
+    /**
+     * 往指定 worker 写一行；成功则记进在途表。
+     *
+     * @param array{id: int, line: string, onDone: \Closure, onError: ?\Closure} $item
+     */
+    private function send(int $index, array $item): bool
+    {
+        $worker = $this->workers[$index] ?? null;
+        if ($worker === null) {
+            return false;
+        }
+
+        $written = @fwrite($worker['in'], $item['line'] . "\n");
+        if ($written === false || $written === 0) {
+            return false;
+        }
+        @fflush($worker['in']);
+
+        $this->inflight[$item['id']] = [
+            'onDone' => $item['onDone'],
+            'onError' => $item['onError'],
+            'worker' => $index,
+        ];
 
         return true;
     }
 
-    /** 把队首的任务写出去（串行：在途非空就不发） */
-    private function flush(): void
-    {
-        if ($this->queue === [] || $this->inflight !== []) {
-            return;
-        }
-
-        if ($this->worker === null && !$this->spawn()) {
-            return; // 起不来：留在队列里，下帧再试（Errors 已经报过）
-        }
-
-        $worker = $this->worker;
-        if ($worker === null) {
-            return;
-        }
-
-        $item = array_shift($this->queue);
-        $written = @fwrite($worker['in'], $item['line'] . "\n");
-        if ($written === false || $written === 0) {
-            // 管道断了：放回队首，让 `reap()` 在下一帧把它转成错误并重启
-            array_unshift($this->queue, $item);
-
-            return;
-        }
-        @fflush($worker['in']);
-
-        $this->inflight[$item['id']] = ['onDone' => $item['onDone'], 'onError' => $item['onError']];
-    }
-
-    /** 非阻塞读回复（按 `\n` 切行，余下的留到下一帧） */
+    /** 非阻塞读**所有** worker 的回复（按 `\n` 切行，余下的留到下一帧） */
     private function readReplies(callable $onEach): void
     {
-        $worker = $this->worker;
-        if ($worker === null) {
-            return;
-        }
-
-        // stderr 也要读：不读的话管道满了 worker 会阻塞在 warning 上（真正的死锁来源）
-        $errRead = [$worker['err']];
-        $noWrite = [];
-        $noExcept = [];
-        if ((int) @stream_select($errRead, $noWrite, $noExcept, 0) > 0) {
-            $chunk = fread($worker['err'], self::READ_CHUNK);
-            if (is_string($chunk)) {
-                $this->stderr .= $chunk;
+        foreach (array_keys($this->workers) as $index) {
+            $worker = $this->workers[$index] ?? null;
+            if ($worker === null) {
+                continue;
             }
-        }
 
-        $read = [$worker['out']];
-        $write = [];
-        $except = [];
-        if ((int) @stream_select($read, $write, $except, 0) === 0) {
-            return;
-        }
+            // stderr 也要读：不读的话管道满了 worker 会阻塞在 warning 上（真正的死锁来源）
+            $errRead = [$worker['err']];
+            $noWrite = [];
+            $noExcept = [];
+            if ((int) @stream_select($errRead, $noWrite, $noExcept, 0) > 0) {
+                $chunk = fread($worker['err'], self::READ_CHUNK);
+                if (is_string($chunk)) {
+                    $this->workers[$index]['stderr'] .= $chunk;
+                }
+            }
 
-        $chunk = fread($worker['out'], self::READ_CHUNK);
-        if ($chunk === false || $chunk === '') {
-            return;
-        }
+            $read = [$worker['out']];
+            $write = [];
+            $except = [];
+            if ((int) @stream_select($read, $write, $except, 0) === 0) {
+                continue;
+            }
 
-        $this->buffer .= $chunk;
+            $chunk = fread($worker['out'], self::READ_CHUNK);
+            if ($chunk === false || $chunk === '') {
+                continue;
+            }
 
-        while (($pos = strpos($this->buffer, "\n")) !== false) {
-            $line = substr($this->buffer, 0, $pos);
-            $this->buffer = substr($this->buffer, $pos + 1);
-            $this->deliver($line, $onEach);
+            $this->workers[$index]['buffer'] .= $chunk;
+
+            while (($pos = strpos($this->workers[$index]['buffer'], "\n")) !== false) {
+                $line = substr($this->workers[$index]['buffer'], 0, $pos);
+                $this->workers[$index]['buffer'] = substr($this->workers[$index]['buffer'], $pos + 1);
+                $this->deliver($line, $onEach);
+            }
         }
     }
 
@@ -343,41 +423,40 @@ final class ProcessTaskHost implements TaskHost
     }
 
     /**
-     * 检查 worker 是否还活着；死了就把在途任务转成错误并准备重启。
+     * 检查每个 worker 是否还活着；死了就把**它名下**的在途任务转成错误并移出池。
      *
      * ★ **崩溃隔离就体现在这里**：worker 崩了，UI 只是收到一个 `onError`，
-     *   下一帧 `flush()` 会自动起一个新的（任务本身不重试 —— 重试策略归业务）。
+     *   下一帧 `flush()` 会自动补一个新的（任务本身不重试 —— 重试策略归业务）。
+     * ★ 只结算**死者名下**的在途：别的 worker 还在正常跑，不能被连坐。
      */
     private function reap(callable $onEach): void
     {
-        $worker = $this->worker;
-        if ($worker === null) {
-            return;
+        foreach ($this->workers as $index => $worker) {
+            $status = proc_get_status($worker['proc']);
+            if ($status['running']) {
+                continue;
+            }
+
+            $parts = ['后台进程退出（exit=' . (string) $status['exitcode'] . '）'];
+            if (trim($worker['stderr']) !== '') {
+                $parts[] = trim($worker['stderr']);
+            }
+            $message = implode('：', $parts);
+
+            foreach ($this->inflight as $id => $item) {
+                if ($item['worker'] !== $index) {
+                    continue;
+                }
+                $onEach(new Completion(null, new \RuntimeException($message), $item['onDone'], $item['onError']));
+                unset($this->inflight[$id]);
+            }
+
+            @fclose($worker['in']);
+            @fclose($worker['out']);
+            @fclose($worker['err']);
+            @proc_close($worker['proc']);
+
+            unset($this->workers[$index]);
         }
-
-        $status = proc_get_status($worker['proc']);
-        if ($status['running']) {
-            return;
-        }
-
-        $message = '后台进程退出（exit=' . (string) $status['exitcode'] . '）';
-        if (trim($this->stderr) !== '') {
-            $message .= '：' . trim($this->stderr);
-        }
-
-        foreach ($this->inflight as $item) {
-            $onEach(new Completion(null, new \RuntimeException($message), $item['onDone'], $item['onError']));
-        }
-        $this->inflight = [];
-
-        // 未发出去的任务不受影响（它们会由下一次 flush 起新 worker 后执行）
-        @fclose($worker['in']);
-        @fclose($worker['out']);
-        @fclose($worker['err']);
-        @proc_close($worker['proc']);
-
-        $this->worker = null;
-        $this->buffer = '';
-        $this->stderr = '';
     }
 }

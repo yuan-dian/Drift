@@ -2860,16 +2860,29 @@ unwatch 空操作 ⇒ 两条红；poll 挪到 settle 之后 ⇒ `builds 1→1 se
 
 ★ **2026-10-18 已落地**（P3）：`NamedJob`（`name()` + `args()`，跨进程可重建）+
 `ProcessWorker::serve($registry)`（`php://stdin/stdout` 行协议，异常变 `{ok:false}` 不许打死 worker）+
-`ProcessTaskHost($command, $registry)`（**懒启动 + 常驻 + 串行**；`drain()` 每帧非阻塞读 stdout/stderr；
+`ProcessTaskHost($command, $registry, $maxWorkers = 1)`（**懒启动 + 常驻 + 可扩池**；`drain()` 每帧非阻塞读 stdout/stderr；
 `reap()` 检测进程死亡 ⇒ 在途任务走 `onError` + 下一帧自动重启）。
 ★ **实测**：首次 spawn + 往返 **256ms**、热态**往返 23.5ms**（本地 php.exe）——
 对比"每任务一进程"的 275ms/次，常驻池的价值就在这个数上。
 ★★ **两条必须说清的代价**：① **异常类不可还原** —— worker 把 `RuntimeException: 消息` 拼成字符串，
 UI 侧收到的是一个新的 `RuntimeException`（跨进程没有"同一个异常对象"这回事）；
-② **串行**（在途 ≤ 1）—— 这是第一版形态：并行要"多 worker + 空闲挑选 + 任务重派"，是并发调度器，
-   等真有并发需求再把 `$worker` 变成数组（结构不用改）。
-验证：smoke **720/0**（+12：懒启动 / 真进程算对 / 串行排队 / 任务失败不打死 worker / 崩溃 ⇒ onError /
-崩溃后自动重启 / shutdown）；★ 踩坑：`static fn() => $sink !== []` 按值捕获**创建时**的空数组 ⇒
+② **单个 worker 是串行的**（`fgets` 一行 → 跑 → 回一行，它没有线程，见 §17.2.5）—— 要并行只能
+   **多起进程**：`maxWorkers`（2026-10-18 补齐，**默认 1 = 与第一版逐字节一致**）。满载**排队**、
+   不无界起进程（一个 worker 是一整套 AOT 运行时，几十 MB）。
+   ★ **收益随任务变长逼近 N×**（本地 php.exe，3 条任务，`_build/bench-pool.php` 实测）：
+
+   | 任务时长 | 池 1（串行） | 池 2 | 池 3 |
+   |---|---|---|---|
+   | 200ms | 943ms | 744ms | 593ms |
+   | 600ms | 2122ms | 1569ms | 1020ms |
+   | 1200ms | 3894ms | 2747ms | 1664ms（理论 ≈1600，已到顶） |
+
+   ⇒ **短任务开池是亏的**：`proc_open` 是同步的（php.exe ~150ms/个、AOT **275ms/个**），
+   3 个 worker 的首帧要付 3 次。这正是默认值保持 1 的理由 —— 开不开、开几个归应用。
+   ★ 已知代价（**没做**）：预热 / 每帧最多起一个，可以把 spawn 成本摊到多帧。
+验证：smoke **734/0**（P3 段 17 条：懒启动 / 真进程算对 / 串行排队 / **池 3 条并行** /
+**池上限排队** / 任务失败不打死 worker / 崩溃 ⇒ onError / 崩溃后自动重启 / shutdown）；
+★ 踩坑：`static fn() => $sink !== []` 按值捕获**创建时**的空数组 ⇒
 `$until` 恒 false ⇒ 每次 pump 等满 deadline（smoke 从 10s 涨到 78s）—— 判据闭包必须**收参数**。
 ★★ **AOT 运行面已验（2026-10-18 当天补齐）**：`apps/users` 的组合根按 `$_SERVER['argv']` 分流
 （`--drift-worker` ⇒ `ProcessWorker::serve(JobRegistry::make())`，不进消息循环），
