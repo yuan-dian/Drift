@@ -20,6 +20,7 @@ use function drift_win_place_window;
 use function drift_win_set_cursor;
 use function drift_win_set_title;
 use function drift_win_show;
+use function drift_win_uia_push;
 use function drift_win_window_position;
 
 /**
@@ -161,5 +162,15 @@ final class Win32WindowHost implements WindowHost
     public function setCursor(int $windowHandle, CursorShape $shape): void
     {
         drift_win_set_cursor($windowHandle, $shape->value);
+    }
+
+    /**
+     * 推送语义树扁平节点（§9 / M5）：原样交给桥（只传标量，§5.1 纪律 1）。
+     *
+     * ★ 桥侧 provider 从这份数组应答 UIA 客户端；空数组 ⇒ 清空（无障碍关闭）。
+     */
+    public function pushSemantics(array $flatNodes): void
+    {
+        drift_win_uia_push($flatNodes);
     }
 }

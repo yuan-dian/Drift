@@ -102,4 +102,18 @@ interface WindowHost
      * @api platform
      */
     public function setCursor(int $windowHandle, CursorShape $shape): void;
+
+    /**
+     * 推送语义树扁平节点给 UIA 无障碍（§9 / M5）。
+     *
+     * ★ **收扁平关联数组而非 `SemanticsTree` 对象**（§5.1 纪律 1：跨端口只原语 +
+     *   Drift 值对象，且 `SemanticsTree` 属 `Drift\Input`、不是端口层词汇）——
+     *   形状即 `SemanticsTree::toArrays()['nodes']`。**空数组 = 无障碍关闭**。
+     * ★ **窗口级能力**（与 `setCursor` / `setTitle` 同族）：UIA provider 挂在 HWND 上。
+     *
+     * @param list<array<string,mixed>> $flatNodes 前序扁平节点（父在子前）
+     *
+     * @api platform
+     */
+    public function pushSemantics(array $flatNodes): void;
 }

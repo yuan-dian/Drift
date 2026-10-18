@@ -236,3 +236,15 @@ function drift_win_present(int $hwnd, string $rgba, int $width, int $height): vo
  *   为它中止整个应用与 §1.2 的中止序列不成比例。
  */
 function drift_win_set_cursor(int $hwnd, int $shape): void {}
+
+/**
+ * 推送语义树扁平节点给 UIA 无障碍（§9 / M5，P2 数据流）。
+ *
+ * `$nodes` 是 `SemanticsTree::toArrays()['nodes']`：关联数组列表，每个含
+ * `role` / `type` / `name` / ... 标量字段（**前序**，父在子前）。**空数组 =
+ * 无障碍关闭**（清空 C 侧树）。
+ *
+ * ★ **只传标量**（§5.1 纪律 1）：节点已是扁平关联数组，无对象 / 无 OS 句柄跨边界。
+ * ★ C 侧 provider 从这份数组应答 UIA 客户端（P2 只到"根属性可达"，树导航归 P3）。
+ */
+function drift_win_uia_push(array $nodes): void {}

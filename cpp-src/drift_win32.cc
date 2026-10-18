@@ -25,6 +25,14 @@
 #include <windowsx.h>   // GET_X_LPARAM / GET_Y_LPARAM（在 windowsx.h，不在 windows.h）
 #include <ShlObj.h>     // SHGetKnownFolderPath —— 用户配置目录（§5.4）
 #include <KnownFolders.h>
+#include <objbase.h>             // IUnknown —— UIAutomationCore.h 接口的基类
+#include <UIAutomationCore.h>    // IRawElementProviderSimple / ProviderOptions
+#include <UIAutomationClient.h>  // UIA_*ControlTypeId / UIA_*PropertyId 常量
+#include <uiautomationcoreapi.h> // UiaReturnRawElementProvider / UiaRootObjectId
+#pragma comment(lib, "UIAutomationCore.lib")  // UiaReturnRawElementProvider
+#pragma comment(lib, "oleaut32.lib")          // SysAllocString / VariantInit / BSTR
+#pragma comment(lib, "ole32.lib")             // COM（IUnknown 基类）
+#pragma comment(lib, "uuid.lib")              // __uuidof(IRawElementProviderSimple / IUnknown)
 
 #include <string>
 #include <vector>
@@ -145,6 +153,84 @@ std::vector<PendingEvent> g_queue;
 std::vector<unsigned char> g_frame;
 int g_frameW = 0;
 int g_frameH = 0;
+
+// ── UIA 无障碍（§9 / M5，P2 数据流）─────────────────────────────────
+// PHP 把 SemanticsTree 扁平节点推进来（php_drift_win_uia_push）；provider 从
+// 这份数组应答 UIA 客户端。P2 只到"根属性可达"，树导航（Fragment）归 P3。
+struct UiaNode {
+    std::wstring name;
+    long controlType = UIA_CustomControlTypeId;
+    bool isControl = true;
+};
+static std::vector<UiaNode> g_uiaNodes;
+
+// Drift 语义角色（SemanticsRole::value，string backed）⇒ UIA ControlTypeId。
+// Windows 编号知识集中在这一处（§5.1 纪律 1：PHP 侧不持平台常量）。
+static long uiaControlTypeFor(const std::string &role) {
+    if (role == "button") return UIA_ButtonControlTypeId;
+    if (role == "textfield") return UIA_EditControlTypeId;
+    if (role == "scroll") return UIA_ListControlTypeId;
+    if (role == "dialog") return UIA_WindowControlTypeId;
+    return UIA_CustomControlTypeId;
+}
+
+// ★ 本 SDK（10.0.26100）UIA 接口扁平化：Fragment/FragmentRoot 直接继承 IUnknown，
+//   Simple 吸收 get_HostRawElementProvider ⇒ provider 实现单 IRawElementProviderSimple
+//   即可让 ElementFromHandle 读到根属性（多接口需 adapter，归 P3）。
+class UiaProvider : public IRawElementProviderSimple {
+public:
+    UiaProvider() : m_ref(1) {}
+
+    STDMETHOD(QueryInterface)(REFIID riid, void **ppv) override {
+        if (ppv == nullptr) return E_INVALIDARG;
+        if (riid == __uuidof(IUnknown) || riid == __uuidof(IRawElementProviderSimple)) {
+            *ppv = static_cast<IRawElementProviderSimple *>(this);
+            AddRef();
+            return S_OK;
+        }
+        *ppv = nullptr;
+        return E_NOINTERFACE;
+    }
+    STDMETHOD_(ULONG, AddRef)() override { return ++m_ref; }
+    STDMETHOD_(ULONG, Release)() override {
+        ULONG r = --m_ref;
+        if (r == 0) delete this;
+        return r;
+    }
+    STDMETHOD(get_ProviderOptions)(ProviderOptions *pRet) override {
+        *pRet = ProviderOptions_ServerSideProvider;
+        return S_OK;
+    }
+    STDMETHOD(GetPatternProvider)(PATTERNID, IUnknown **ppv) override {
+        *ppv = nullptr;
+        return S_OK;
+    }
+    STDMETHOD(GetPropertyValue)(PROPERTYID id, VARIANT *out) override {
+        VariantInit(out);
+        // P2：暴露"数组首节点"（SemanticsTree 前序第一个有角色控件）作根属性。
+        const std::wstring name = g_uiaNodes.empty() ? L"Drift" : g_uiaNodes[0].name;
+        long ctrl = g_uiaNodes.empty() ? UIA_WindowControlTypeId : g_uiaNodes[0].controlType;
+        if (id == UIA_NamePropertyId) {
+            out->vt = VT_BSTR;
+            out->bstrVal = SysAllocString(name.c_str());
+        } else if (id == UIA_ControlTypePropertyId) {
+            out->vt = VT_I4;
+            out->lVal = ctrl;
+        } else if (id == UIA_IsControlElementPropertyId || id == UIA_IsContentElementPropertyId) {
+            out->vt = VT_BOOL;
+            out->boolVal = VARIANT_TRUE;
+        }
+        return S_OK;
+    }
+    STDMETHOD(get_HostRawElementProvider)(IRawElementProviderSimple **ret) override {
+        *ret = nullptr;
+        return S_OK;
+    }
+
+private:
+    ULONG m_ref;
+};
+static UiaProvider *g_uiaProvider = nullptr;
 
 // 当前指针形状。★ **必须缓存**：`WM_SETCURSOR` 每次鼠标移动都会来一次，而那一刻
 // PHP 侧可能正阻塞在 `GetMessageW` 里（问不到框架）⇒ 只能重贴**上一次**的决定。
@@ -328,6 +414,12 @@ void presentTo(HDC dc) {
 
 LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
+        case WM_GETOBJECT:
+            // UIA 无障碍（§9 / M5，P2）：UIA 客户端问窗口 provider ⇒ 交出。
+            if (lp == (LPARAM)UiaRootObjectId && g_uiaProvider != nullptr) {
+                return UiaReturnRawElementProvider(hwnd, wp, lp, g_uiaProvider);
+            }
+            break;
         case WM_CLOSE:
             // 不调 DefWindowProc：它会走"关闭确认"那套，而 Drift 的退出语义
             // 只有一条（销毁 ⇒ WM_QUIT ⇒ 泵返回 quit，见 WindowHost::close 的 docblock）。
@@ -875,6 +967,9 @@ Int php_drift_win_create(String title, Int width, Int height) {
                      SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
 
+    // UIA 无障碍（§9 / M5，P2）：建窗即挂 provider（数据由 php_drift_win_uia_push 喂）。
+    g_uiaProvider = new UiaProvider();
+
     return (Int)(INT_PTR)hwnd;
 }
 
@@ -1239,5 +1334,27 @@ void php_drift_win_present(Int hwnd, String rgba, Int width, Int height) {
     if (dc != NULL) {
         presentTo(dc);
         ReleaseDC(target, dc);
+    }
+}
+
+// ═══════════════════════════════════════ UIA 无障碍（§9 / M5，P2 数据流）══
+// PHP 侧 SemanticsBuilder::build(root)->toArrays()['nodes'] 推进来；provider 从
+// 这份扁平数组应答 UIA 客户端。空数组 = 无障碍关闭（清空 C 侧树）。
+void php_drift_win_uia_push(Array nodes) {
+    g_uiaNodes.clear();
+    size_t n = nodes.count();
+    for (size_t i = 0; i < n; i++) {
+        Variant v = nodes.get((zend_ulong)i);
+        if (!v.isArray()) {
+            continue;
+        }
+        Array a = v;
+        UiaNode node;
+        std::string name(a.get("name").toCString());
+        std::string role(a.get("role").toCString());
+        node.name = toWide(String(name));
+        node.controlType = uiaControlTypeFor(role);
+        node.isControl = true;
+        g_uiaNodes.push_back(node);
     }
 }
