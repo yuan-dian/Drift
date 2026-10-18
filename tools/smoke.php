@@ -76,6 +76,7 @@ use Drift\Dev\Smoke\App\ThemeApplication;
 use Drift\Dev\Smoke\App\PointerApplication;
 use Drift\Dev\Smoke\App\ScrollApplication;
 use Drift\Dev\Smoke\App\NavApplication;
+use Drift\Dev\Smoke\App\NamedSleepJob;
 use Drift\Dev\Smoke\App\SpinnerApplication;
 use Drift\Dev\Smoke\LeafProbe;
 use Drift\Dev\Smoke\Routing\NavStore;
@@ -5788,6 +5789,48 @@ check(
 );
 $pump($procHost, $sink, static fn(array $s): bool => count($s) >= 2);
 check('P3 · 两条都跑完且按提交序（a1, b6）', $sink === ['a1', 'b6'], json_encode($sink));
+
+// ②b 并发：池里 3 个 worker **各接一条**（`maxWorkers` 是 opt-in；默认 1 就是上面那条串行）
+//   ★ 判据是**结构**不是墙钟：任务睡 200ms 保证「提交第二条时第一条还在跑」，
+//     于是「3 条同时在途 + 3 个 worker + 0 排队」只有在真的并行时才成立。
+//     不拿墙钟当断言 —— 机器一忙就假红（量具纪律：别让判据依赖负载）。
+$poolSink = [];
+$pool = new ProcessTaskHost([PHP_BINARY, $workerScript], SmokeJobRegistry::make(), 3);
+foreach ([200, 200, 200] as $ms) {
+    $pool->submit(new NamedSleepJob($ms), function ($v) use (&$poolSink): void { $poolSink[] = $v; });
+}
+check(
+    'P3 · 池：3 条同时在途 + 3 个 worker + 0 排队（真并行）',
+    $pool->inFlightCount() === 3 && $pool->workerCount() === 3 && $pool->queuedCount() === 0,
+    'inflight=' . $pool->inFlightCount() . ' workers=' . $pool->workerCount() . ' queued=' . $pool->queuedCount(),
+);
+$pump($pool, $poolSink, static fn (array $s): bool => count($s) >= 3);
+check(
+    'P3 · 池：3 条都回来了（各睡 200ms，并行跑完）',
+    count($poolSink) === 3 && $poolSink === [200, 200, 200],
+    json_encode($poolSink),
+);
+$pool->shutdown();
+check(
+    'P3 · 池：shutdown 收掉所有 worker',
+    $pool->workerCount() === 0 && $pool->isRunning() === false,
+    'workers=' . $pool->workerCount(),
+);
+
+// ②c 池上限：**满载排队**，不无界起进程（一个 worker = 一整套 AOT 运行时）
+$cappedSink = [];
+$capped = new ProcessTaskHost([PHP_BINARY, $workerScript], SmokeJobRegistry::make(), 2);
+foreach ([300, 300, 300] as $ms) {
+    $capped->submit(new NamedSleepJob($ms), function ($v) use (&$cappedSink): void { $cappedSink[] = $v; });
+}
+check(
+    'P3 · 池上限：第 3 条排队（2 在途 + 1 排队 + 2 个 worker）',
+    $capped->inFlightCount() === 2 && $capped->queuedCount() === 1 && $capped->workerCount() === 2,
+    'inflight=' . $capped->inFlightCount() . ' queued=' . $capped->queuedCount() . ' workers=' . $capped->workerCount(),
+);
+$pump($capped, $cappedSink, static fn (array $s): bool => count($s) >= 3);
+check('P3 · 池上限：排队那条最后也跑完了', count($cappedSink) === 3, json_encode($cappedSink));
+$capped->shutdown();
 
 // ③ 任务失败（worker 里抛）⇒ onError，且**不打死 worker**
 $sink = [];

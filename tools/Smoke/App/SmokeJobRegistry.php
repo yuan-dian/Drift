@@ -21,6 +21,9 @@ final class SmokeJobRegistry
             'smoke.exit' => static function (array $args): Job {
                 return new NamedExitJob();
             },
+            'smoke.sleep' => static function (array $args): Job {
+                return new NamedSleepJob((int) ($args['ms'] ?? 0));
+            },
         ];
     }
 }
