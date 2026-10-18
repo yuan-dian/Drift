@@ -49,6 +49,26 @@ final class BitmapFontFace implements FontFace
     }
 
     /**
+     * §13.5 的记忆化缓存：`码位@像素尺寸` → GlyphBitmap。
+     *
+     * ★ 为什么必须加（2026-10-18 实测）：`rasterize()` 是纯函数（`glyphs` 不可变，
+     *   输入只有码位与像素尺寸），却是每帧 paint 的热点 —— 不带缓存时一个
+     *   Card+Row+2Text 的列表行 paint 要 19.4ms（layout 只 0.2ms、settle 0.05ms），
+     *   绝大部分花在**反复光栅同样的字**（同帧内 + 跨帧 100% 重复）。
+     * ★ 键是**精确浮点字符串**（`码位@像素尺寸`）：量化到 1/64px 会让两个
+     *   pixelSize 共用一份位图，边界像素可能不同 ⇒ 破坏"同输入同输出"的
+     *   golden 承诺；float→string 是最短往返表示，相等才同键。
+     * ★ GlyphBitmap 是 `final readonly`（不可变）⇒ 跨帧共享无别名风险。
+     * ★ 上限防爆：字号动画（10→40 连续扫）会造出几千个尺寸键 ⇒ 超限整体清零
+     *   （纯性能缓存，清了只回到"慢"，不会错）。
+     *
+     * @var array<string, GlyphBitmap>
+     */
+    private array $rasterCache = [];
+
+    private const RASTER_CACHE_MAX = 8192;
+
+    /**
      * @param array<int, list<string>> $glyphs
      */
     public static function fromGlyphs(
@@ -129,6 +149,26 @@ final class BitmapFontFace implements FontFace
             return null;
         }
 
+        // ★ 记忆化（§13.5）：同一帧里同一字形被反复光栅化（滚动列表、多处同字号），
+        //   跨帧更是 100% 重复 —— 缓存把这些全部变成一次查表。
+        $key = $codepoint . '@' . $pixelSize;
+        $cached = $this->rasterCache[$key] ?? null;
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        $bitmap = $this->rasterizeUncached($rows, $pixelSize);
+        if (count($this->rasterCache) >= self::RASTER_CACHE_MAX) {
+            $this->rasterCache = [];   // 纯性能缓存：超限整体清零，只回到慢、不错
+        }
+        $this->rasterCache[$key] = $bitmap;
+
+        return $bitmap;
+    }
+
+    /** 真正的缩放 / 覆盖度计算。记忆化由调用方负责，本函数保持纯函数 */
+    private function rasterizeUncached(array $rows, float $pixelSize): GlyphBitmap
+    {
         $sourceHeight = count($rows);
         $sourceWidth = strlen($rows[0]);
         $scale = $pixelSize / $this->unitsPerEm;
