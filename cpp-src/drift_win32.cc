@@ -23,6 +23,8 @@
 #include <windows.h>
 #include <imm.h>
 #include <windowsx.h>   // GET_X_LPARAM / GET_Y_LPARAM（在 windowsx.h，不在 windows.h）
+#include <ShlObj.h>     // SHGetKnownFolderPath —— 用户配置目录（§5.4）
+#include <KnownFolders.h>
 
 #include <string>
 #include <vector>
@@ -73,6 +75,55 @@ HWND g_main = NULL;
 int g_clientW = 0;
 int g_clientH = 0;
 UINT g_dpi = 96;
+
+// ── §5.4 退出路径专用：窗口销毁后的"最后已知几何" ──
+// 为什么需要：WM_CLOSE 里壳**同步** DestroyWindow ⇒ 等组合根的 while(pump())
+// 跳出、WindowStateStore::persist() 来问的时候，窗口句柄已经死了 ⇒
+// GetClientRect 对一个死句柄必然失败 ⇒ "记住窗口位置"永远写不出去。
+// 刷新两条路：① 每次活窗口查询成功（顺手刷新，零额外成本）；
+//           ② WM_DESTROY（决定性的一发 —— 退出前最后一帧的真实几何）。
+// 最小化 ⇒ 整份作废（最小化期间的坐标是屏幕外的，照抄会让下次启动"消失"）。
+static int  g_lastPosX = 0;
+static int  g_lastPosY = 0;
+static int  g_lastClientW = 0;
+static int  g_lastClientH = 0;
+static bool g_lastMaximized = false;
+static bool g_lastGeomValid = false;
+
+/** 窗口还活着 ⇒ 顺手刷新缓存；已死 ⇒ 回填最后已知值（从未记过 ⇒ 空数组） */
+static void cacheFinalGeometry(HWND target) {
+    if (target == NULL) {
+        return;
+    }
+    if (IsIconic(target) != FALSE) {
+        g_lastGeomValid = false;   // 最小化 = 别记，保留上一份
+        return;
+    }
+    RECT client = {0, 0, 0, 0};
+    if (!GetClientRect(target, &client)) {
+        return;   // 抓不到就保留上一份，不清零
+    }
+    POINT origin = {client.left, client.top};
+    if (!ClientToScreen(target, &origin)) {
+        return;
+    }
+    g_lastPosX = origin.x;
+    g_lastPosY = origin.y;
+    g_lastClientW = client.right - client.left;
+    g_lastClientH = client.bottom - client.top;
+    g_lastMaximized = IsZoomed(target) != FALSE;
+    g_lastGeomValid = true;
+}
+
+/** 死句柄查询时把最后已知几何摊进 out（x/y/w/h 四个键一起给，用哪半取哪半） */
+static void fillGeomFromCache(Array &out) {
+    if (g_lastGeomValid) {
+        out.set("x", (Float)(double)g_lastPosX);
+        out.set("y", (Float)(double)g_lastPosY);
+        out.set("w", (Int)g_lastClientW);
+        out.set("h", (Int)g_lastClientH);
+    }
+}
 
 // ── IME 定位（§8.4）── 设备像素的客户区坐标；(-1,-1,0) = 无插入符
 // 两个消费点：组字窗位置（WM_IME_STARTCOMPOSITION / CFS_POINT）与
@@ -284,6 +335,9 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
 
         case WM_DESTROY:
+            // ★ 销毁**之前**抓最后几何（§5.4 的救命一发：persist 会在这个窗口
+            //   死透之后才来问它，见 g_lastGeom* 的注释）。
+            cacheFinalGeometry(hwnd);
             PostQuitMessage(0);
             return 0;
 
@@ -890,26 +944,164 @@ void php_drift_win_ime_caret(Float x, Float y, Float h) {
 Array php_drift_win_client_size(Int hwnd) {
     HWND target = (HWND)(INT_PTR)hwnd;
     Array out;
-    if (target == NULL) {
-        return out;
-    }
-
+    // 窗口已死（退出路径）：给最后已知尺寸（§5.4，见 g_lastGeom* 注释）
     RECT rect;
-    if (!GetClientRect(target, &rect)) {
+    if (target == NULL || !GetClientRect(target, &rect)) {
+        fillGeomFromCache(out);
         return out;
     }
 
     out.set("w", (Int)(rect.right - rect.left));
     out.set("h", (Int)(rect.bottom - rect.top));
+    cacheFinalGeometry(target);
     return out;
 }
 
 Bool php_drift_win_is_maximized(Int hwnd) {
     HWND target = (HWND)(INT_PTR)hwnd;
     if (target == NULL) {
-        return (Bool)false;
+        // 窗口已死（退出路径）：退化到最后已知状态（§5.4）
+        return (Bool)(g_lastGeomValid && g_lastMaximized);
     }
-    return (Bool)(IsZoomed(target) != FALSE);
+    bool zoomed = IsZoomed(target) != FALSE;
+    g_lastMaximized = zoomed;   // 活窗口：顺手刷新，缓存有效性仍归 cacheFinalGeometry 管
+    return (Bool)zoomed;
+}
+
+Array php_drift_win_window_position(Int hwnd) {
+    // §5.4 持久化的读向侧。**物理**像素；空数组 = "别记"（最小化，或从未记过）。
+    // 为什么不记最小化时的坐标：Windows 在最小化期间把窗口摆在屏幕外
+    // （惯例是 (-32000,-32000)），照抄回来下次启动窗口就"消失"了。
+    // ★ 窗口已销毁（退出路径）⇒ 回填 WM_DESTROY 抓的最后已知位置，不是空数组 ——
+    //   否则 persist() 第一关就跳过，"记住窗口位置"永远写不出去（真机实测过）。
+    HWND target = (HWND)(INT_PTR)hwnd;
+    Array out;
+    if (target != NULL && IsIconic(target) != FALSE) {
+        g_lastGeomValid = false;
+        return out;
+    }
+
+    RECT client = {0, 0, 0, 0};
+    if (target == NULL || !GetClientRect(target, &client)) {
+        fillGeomFromCache(out);
+        return out;
+    }
+    POINT origin = {client.left, client.top};
+    if (!ClientToScreen(target, &origin)) {
+        fillGeomFromCache(out);
+        return out;
+    }
+
+    cacheFinalGeometry(target);   // 活窗口：顺手刷新
+    out.set("x", (Float)(double)origin.x);
+    out.set("y", (Float)(double)origin.y);
+    return out;
+}
+
+/**
+ * 把窗口矩形夹回"看得见"的范围（§5.4 的显示器夹取）。
+ *
+ * 屏幕几何是平台知识，所以它住在壳里而不是 PHP 侧（`Drift\App` 不该有
+ * "哪块显示器在工作区左边"这种概念）。两条规则：
+ *   ① 与最近显示器的工作区**完全不相交** ⇒ 平移到工作区原点；
+ *   ② **部分越界** ⇒ 整体平移回来，**不缩尺寸**（用户存的大小就是大小）。
+ */
+static void clampRectToNearestMonitor(RECT &rect) {
+    HMONITOR monitor = MonitorFromRect(&rect, MONITOR_DEFAULTTONEAREST);
+    if (monitor == NULL) {
+        return;   // 拿不到显示器信息 ⇒ 原样返回，交给 SetWindowPos
+    }
+    MONITORINFO info = {};
+    info.cbSize = sizeof(MONITORINFO);
+    if (!GetMonitorInfoW(monitor, &info)) {
+        return;
+    }
+    const RECT &work = info.rcWork;
+
+    const bool disjoint = rect.right <= work.left || rect.left >= work.right
+        || rect.bottom <= work.top || rect.top >= work.bottom;
+    if (disjoint) {
+        long w = rect.right - rect.left;
+        long h = rect.bottom - rect.top;
+        rect.left = work.left;
+        rect.top = work.top;
+        rect.right = rect.left + w;
+        rect.bottom = rect.top + h;
+        return;
+    }
+
+    if (rect.left < work.left) {
+        long d = work.left - rect.left;
+        rect.left += d;
+        rect.right += d;
+    }
+    if (rect.top < work.top) {
+        long d = work.top - rect.top;
+        rect.top += d;
+        rect.bottom += d;
+    }
+    if (rect.right > work.right) {
+        long d = rect.right - work.right;
+        rect.left -= d;
+        rect.right -= d;
+    }
+    if (rect.bottom > work.bottom) {
+        long d = rect.bottom - work.bottom;
+        rect.top -= d;
+        rect.bottom -= d;
+    }
+}
+
+void php_drift_win_place_window(Int hwnd, Float x, Float y, Float w, Float h, Bool maximized) {
+    // §5.4 一次性还原：逻辑客户区几何 ⇒ 物理外框 ⇒ 夹取 ⇒ SetWindowPlacement。
+    // 为什么用 `WINDOWPLACEMENT` 而不是 `SetWindowPos`：最大化与"还原后回到哪"
+    // 在 Windows 里是同一份状态，拆成两个 API 就会丢掉"从最大化还原回原位"。
+    HWND target = (HWND)(INT_PTR)hwnd;
+    if (target == NULL) {
+        return;
+    }
+    // 非正尺寸含 NaN 比较（`!(nan > 0)` 为真）⇒ 一律当垃圾输入，不动窗口
+    if (!(w > 0.0) || !(h > 0.0)) {
+        return;
+    }
+
+    UINT dpi = dpiOfWindow(target);
+    double dpr = dpi > 0 ? (double)dpi / 96.0 : 1.0;
+
+    // ① 客户区（逻辑）→ 物理，再把外框厚度加回去（DPI 感知）
+    RECT frame = {0, 0, (LONG)((double)w * dpr), (LONG)((double)h * dpr)};
+    adjustFrameForDpi(&frame, WS_OVERLAPPEDWINDOW, FALSE, 0, dpi);
+
+    // ② 平移：外框矩形的 -left/-top 偏移就是"标题栏比客户区高多少"
+    RECT want = {
+        (LONG)((double)x * dpr) + frame.left,
+        (LONG)((double)y * dpr) + frame.top,
+        (LONG)((double)x * dpr) + frame.right,
+        (LONG)((double)y * dpr) + frame.bottom,
+    };
+
+    // ③ 夹到看得见的范围（拔显示器 / 分辨率变小都不会让窗口消失）
+    clampRectToNearestMonitor(want);
+
+    WINDOWPLACEMENT placement = {};
+    placement.length = sizeof(WINDOWPLACEMENT);
+    placement.rcNormalPosition = want;
+    placement.showCmd = (maximized != FALSE) ? SW_SHOWMAXIMIZED : SW_SHOWNORMAL;
+    placement.flags = 0;   // 同步应用：调用方紧接下来就要读回 clientSize()
+    SetWindowPlacement(target, &placement);
+}
+
+String php_drift_win_config_dir() {
+    // §5.4 用户配置目录：`%APPDATA%\Drift`。只给路径，**不创建目录**。
+    // 空返回 = 平台答不出来 ⇒ PHP 侧静默跳过持久化（`WindowStateStore`）。
+    PWSTR raw = NULL;
+    if (FAILED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, KF_FLAG_DEFAULT, NULL, &raw))) {
+        return String();
+    }
+
+    std::wstring dir = std::wstring(raw) + L"\\Drift";
+    CoTaskMemFree(raw);
+    return toUtf8(dir.c_str(), (int)dir.size());
 }
 
 // ══════════════════════════════════════════════════════════════ 屏幕 ══

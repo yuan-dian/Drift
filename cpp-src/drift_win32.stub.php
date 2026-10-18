@@ -63,6 +63,53 @@ function drift_win_client_size(int $hwnd): array {}
 
 function drift_win_is_maximized(int $hwnd): bool {}
 
+/**
+ * 客户区左上角的屏幕坐标（**物理**像素，`['x'=>float,'y'=>float]`）。
+ *
+ * 空数组 = **当前位置不可信**：① 窗口最小化（`IsIconic` —— 那时 Windows 把它
+ * 挪在屏幕外，照抄回来下次启动"窗口消失"）；② `GetClientRect`/`ClientToScreen`
+ * 失败。⇒ PHP 侧译成 `null`（`WindowStateStore::position()`），由持久化方
+ * 选择跳过。**这不是错误返回值**，是一个有语义的"别记"。
+ *
+ * ★ 为什么给**物理**而不是逻辑：`ClientToScreen` 的结果恒为物理（屏幕坐标没有
+ *   DPI 感知一说），壳在这里做除法只会多一个取整点（§6.1）。逻辑化在
+ *   `Win32WindowHost::position()` 按当前窗口 DPI 做一次。
+ */
+function drift_win_window_position(int $hwnd): array {}
+
+/**
+ * 一次原子还原窗口几何（读回上次退出时的位置 / 尺寸 / 最大化，§5.4）。
+ *
+ * 收**逻辑**像素（客户区原点 + 客户区尺寸，与 `drift_win_create` 同口径），
+ * 壳负责剩下全部：外框换算（`AdjustWindowRectExForDpi`）、显示器夹取、
+ * 最大化状态（`SetWindowPlacement` 的 `WINDOWPLACEMENT` 一次给全）。
+ *
+ * ★ **一次到位的理由**：分两次（先尺寸后位置）会让用户看到窗口跳一下，
+ *   且"以最大化启动、还原后回到哪"这两件事在 Windows 里本来就是一起给的。
+ * ★ **夹取归壳**：目标矩形与任何显示器工作区都不相交 ⇒ 落到最近显示器的工作区；
+ *   部分越界 ⇒ 整体挪回来（保尺寸）。屏幕几何是平台知识，PHP 不该有。
+ * ★ 尺寸非正（调用方传了垃圾）⇒ 直接返回不动窗口；**不报错**：调用方紧接下来
+ *   会读 `clientSize()` 拿实际几何，对不对当下就知道。
+ */
+function drift_win_place_window(
+    int $hwnd,
+    float $x,
+    float $y,
+    float $w,
+    float $h,
+    bool $maximized
+): void {}
+
+/**
+ * 用户级配置目录（`%APPDATA%\Drift`；失败 = 空字符串，§5.4）。
+ *
+ * ★ **只给路径，不创建目录**：问一次路径不该有副作用；创建归写入方。
+ * ★ 空字符串 = 平台答不出来 ⇒ `WindowStateStore` 静默跳过持久化。
+ * ★ 为什么 PHP 侧不能自己 `getenv('APPDATA')`：§16.7 的 `nano-hygiene`
+ *   编译期就拒 `getenv` ⇒ "用户的文件放哪"是**平台能力**，只能由壳回答。
+ */
+function drift_win_config_dir(): string {}
+
 // ---- 屏幕 / DPI ----
 
 /**

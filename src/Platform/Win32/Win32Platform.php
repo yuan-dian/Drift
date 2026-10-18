@@ -18,6 +18,7 @@ use Drift\Platform\TimerHost;
 use Drift\Platform\Tray;
 use Drift\Platform\WindowHost;
 
+use function drift_win_config_dir;
 use function drift_win_ime_caret;
 use function drift_win_message_box;
 use function drift_win_now_ms;
@@ -243,6 +244,19 @@ final class Win32Platform implements Platform
     public function now(): float
     {
         return drift_win_now_ms();
+    }
+
+    /**
+     * 用户配置目录（§5.4）—— `%APPDATA%\Drift`，壳只给**路径不创建**。
+     *
+     * ★ 空字符串 = 平台答不出来（`SHGetKnownFolderPath` 失败：极少见，例如
+     *   没有用户配置文件的会话）⇒ `WindowStateStore` 静默跳过持久化，
+     *   **不是**静默崩在别处。
+     * ★ 末尾的 `Drift` 子目录是品牌隔离：不把用户文件直接倒进 `%APPDATA%` 根。
+     */
+    public function configDir(): string
+    {
+        return drift_win_config_dir();
     }
 
     public function imeCaret(?array $rect): void

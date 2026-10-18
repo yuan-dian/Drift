@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace Drift\Platform;
 
+use Drift\Geometry\Point;
+use Drift\Geometry\Rect;
 use Drift\Geometry\Size;
 use Drift\Input\CursorShape;
 
@@ -48,8 +50,43 @@ interface WindowHost
 
     public function setTitle(int $windowHandle, string $title): void;
 
-    /** 客户区尺寸（**逻辑**像素；物理像素的换算归 `Screen::scale()`） */
+    /**
+     * 客户区尺寸（**逻辑**像素；物理像素的换算归 `Screen::scale()`） */
     public function clientSize(int $windowHandle): Size;
+
+    /**
+     * 客户区左上角的**屏幕坐标**（**逻辑**像素；供 `WindowStateStore` 持久化，§5.4）。
+     *
+     * ★ **客户区原点而不是外框原点**：应用认的永远是"能画的那块"，外框厚度
+     *   （标题栏 / 边框）是平台装饰。存外框原点 ⇒ 换主题 / 换 DPI / 换 Windows
+     *   版本后还原位置偏几个像素，且偏的是**用户能看见**的那种。
+     * ★ **最小化 ⇒ `null`**：那时窗口被挪到屏幕外（Windows 惯例
+     *   (-32000,-32000)），照抄会让下次启动"窗口消失"⇒ 平台侧直接说
+     *   "当前位置没有意义"，由持久化方选择跳过（保留上一份状态）。
+     * ★ **窗口已销毁 ⇒ 最后已知几何**（不是 `null`）：`WindowStateStore::persist()`
+     *   跑在退出路径上，而 WM_CLOSE 里壳同步销毁窗口 ⇒ 等它来问时句柄已经死了。
+     *   对死句柄问 `GetClientRect` 必然失败 ⇒ 若无此回填，"记住窗口位置"
+     *   永远写不出去（静默失败，2026-10-18 真机实测）。实现侧见
+     *   `drift_win32.cc` 的 `g_lastGeom*` 缓存（活窗口查询顺手刷 + WM_DESTROY
+     *   抓最后一下）。
+     *
+     * @return Point|null 屏幕逻辑坐标；`null` = 当前位置不可信（最小化）
+     */
+    public function position(int $windowHandle): ?Point;
+
+    /**
+     * 一次原子还原窗口几何（`WindowStateStore::restore()` 的写向侧，§5.4）。
+     *
+     * ★ **一次到位的理由**：分两次（先尺寸后位置）会让用户看到窗口跳一下，
+     *   且最大化语义夹在中间没法表达 —— "以最大化启动、还原后回到哪"是
+     *   Windows 的 `WINDOWPLACEMENT` 一起给的两件事，拆开就丢一半。
+     * ★ **显示器夹取归平台**：目标矩形与任何显示器的可见工作区都不相交时
+     *   （显示器拔了 / 分辨率变小了），由实现决定落点 —— 屏幕几何是平台知识，
+     *   `Drift\App` 不该有。实现必须保证"还原后至少有一部分在屏幕上"。
+     * ★ 收**逻辑**像素（与 `createWindow()` / `clientSize()` 同口径）；
+     *   逻辑↔物理换算在平台侧一次做完（§6.1）。
+     */
+    public function place(int $windowHandle, Rect $rect, bool $maximized): void;
 
     /** 供 `WindowStateStore`（M5，§5.4）读回"上次是不是最大化" */
     public function isMaximized(int $windowHandle): bool;

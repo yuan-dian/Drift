@@ -111,17 +111,21 @@ ld-flags:
 # Windows 系统库（只列**真的用到**的；桥里每个 API 都能对上一本库）：
 #   user32   建窗 / 消息泵 / 定时器 / 光标 / 按键状态 / 消息框 / DPI
 #   gdi32    SetDIBitsToDevice（贴一帧像素，§7.3 M1 的位块传送）
-#   advapi32 注册表读 AppsUseLightTheme（§9.2 的系统深色模式）
-#   —— 以下为 Skia 需要（`skia.lib` 的 D3D 后端 / 图片编解码 / 系统字体枚举）：
-#   d3d12 / dxgi / d3dcompiler   Skia 的 D3D12 后端（当前走 CPU 光栅，但归档里有引用）
-#   windowscodecs                图片编解码（WIC）
-#   opengl32 / msimg32           Skia 的 GL 兜底路径与 GDI 混合
-#   dwrite / gdiplus             系统字体枚举 / GDI+ 路径
-#   ole32                        COM 初始化（WIC / DirectWrite 的底座）
+  #   advapi32 注册表读 AppsUseLightTheme（§9.2 的系统深色模式）
+  #   shell32   SHGetKnownFolderPath —— 用户配置目录（§5.4 `WindowStateStore`）
+  #   imm32     IME 组合串
+  #   —— 以下为 Skia 需要（`skia.lib` 的 D3D 后端 / 图片编解码 / 系统字体枚举）：
+  #   d3d12 / dxgi / d3dcompiler   Skia 的 D3D12 后端（当前走 CPU 光栅，但归档里有引用）
+  #   windowscodecs                图片编解码（WIC）
+  #   opengl32 / msimg32           Skia 的 GL 兜底路径与 GDI 混合
+  #   dwrite / gdiplus             系统字体枚举 / GDI+ 路径
+  #   ole32                        COM 初始化（WIC / DirectWrite 的底座，
+  #                               `SHGetKnownFolderPath` 返回值的 `CoTaskMemFree`）
 link-libs:
   - user32.lib
   - gdi32.lib
   - advapi32.lib
+  - shell32.lib
   - imm32.lib
   - d3d12.lib
   - dxgi.lib
