@@ -327,7 +327,7 @@ private function pageFor(string $name): ?Widget
 
 | 目录 | 命名空间 | 文件 | 状态（2026-10-15 按 `src/` 核验） |
 |------|---------|------|------|
-| `src/App/` | `Drift\App` | ✅ `Application.php` · `Frame.php`（+ 1 个 `@internal` 实现文件 `FocusManager.php` —— 输入路由最小集，M3；§9.1 的完整链在 M4 的 `EventLoop`）；★ **2026-10-16 新落地三件**（任务 #8）：**`Job.php`** · **`TaskHost.php`** · **`SyncTaskHost.php`**（§17.2 的端口 + **后端 B**；§24.1 #35 点名的 `Job` 0 文件已清零）；★ **2026-10-18 P0**：**`Completion.php`**（`@internal` —— 队列里流动的完成事件，§17.4.2）+ **`DragController.php`**（`@internal`，拖动状态机，§9.1）；★ **P1**：**`SlicedJob.php`**（单线程分片的任务契约，§17.4.3）；★ **P2**：**`Io/IoPoller.php`**（非阻塞 IO 每帧轮询，§17.4.4 —— `src/App/` 的第一个子目录）；★ **P3**：**`NamedJob.php`**（可跨进程描述的任务）· **`ProcessWorker.php`**（worker 侧 JSON Lines 服务端）· **`ProcessTaskHost.php`**（常驻子进程后端，§17.4.5）；⏳ `EventLoop.php` · `FrameClock.php` · `ThreadPoolTaskHost.php`（**⛔ 被 tpc 能力卡住** —— 探针 K，§17.2.2）· `WindowStateStore.php` | **缺 4**（M4/M5） |
+| `src/App/` | `Drift\App` | ✅ `Application.php` · `Frame.php`（+ 1 个 `@internal` 实现文件 `FocusManager.php` —— 输入路由最小集，M3；§9.1 的完整链在 M4 的 `EventLoop`）；★ **2026-10-16 新落地三件**（任务 #8）：**`Job.php`** · **`TaskHost.php`** · **`SyncTaskHost.php`**（§17.2 的端口 + **后端 B**；§24.1 #35 点名的 `Job` 0 文件已清零）；★ **2026-10-18 P0**：**`Completion.php`**（`@internal` —— 队列里流动的完成事件，§17.4.2）+ **`DragController.php`**（`@internal`，拖动状态机，§9.1）；★ **P1**：**`SlicedJob.php`**（单线程分片的任务契约，§17.4.3）；★ **P2**：**`Io/IoPoller.php`**（非阻塞 IO 每帧轮询，§17.4.4 —— `src/App/` 的第一个子目录）；★ **P3**：**`NamedJob.php`**（可跨进程描述的任务）· **`ProcessWorker.php`**（worker 侧 JSON Lines 服务端）· **`ProcessTaskHost.php`**（常驻子进程后端，§17.4.5）；★ **2026-10-18 P0 补丁**：**`FrameClock.php`**（自适应帧时钟 —— `TimerHost` 的第一个生产调用者，§17.4.9）；⏳ `EventLoop.php` · `ThreadPoolTaskHost.php`（**⛔ 被 tpc 能力卡住** —— 探针 K，§17.2.2）· `WindowStateStore.php` | **缺 3**（M4/M5） |
 | `src/Platform/` | `Drift\Platform` | ✅ 9/9：`Platform` · `WindowHost` · `SurfaceProvider` · `InputSource` · `TimerHost` · `Screen` · `Clipboard` · `Dialog` · `Tray`（★ 2026-10-15 **端口层落地**；**同日 Win32 实现跟进**，见下行 —— 三个壳服务在 Win32 上返回 `null`，§24.3） | ✅（M1） |
 | `src/Platform/Win32/` | `Drift\Platform\Win32` | ✅ 8/8：`Win32Platform` · `Win32WindowHost` · `Win32Screen` · `Win32SurfaceProvider` · `Win32InputSource` · `Win32TimerHost` · `Win32RasterSurface` · **`Win32SkiaSurface`**（★ 2026-10-15 **首个平台实现落地**，配套 `cpp-src/drift_win32.{stub.php,cc}` 窗口桥 ⇒ §19 M1 出口判据兑现。★ `Win32RasterSurface` 是 `RenderSurface` 的**第 4 个**实现，走 `RasterCanvas` + `SetDIBitsToDevice` 位块传送（§7.3 的 M1 分期原文就是"CPU 光栅 + 位块传送"））。★ **2026-10-16 第二个渲染后端落地**（M1 遗留 ②）：`Win32SkiaSurface` = `SkiaCanvas` + **同一个** `drift_win_present()`，与 `Win32RasterSurface` **只差"造哪种画布"一行** ⇒ §7.2 裁决 1「后端可换、应用侧一行不改」兑现。后端由组合根 `new Win32Platform('skia' | 'soft')` 选（★ **2026-10-17 默认从 `soft` 翻成 `skia`**—— 软光栅的字来自位图字体，14px 上屏必然点阵锯齿，且 `Title=18px` 走放大路径；详见 §24.2 #19。`'soft'` 仍是显式可选的确定性测试后端）。真机已验：`hello.exe` 经 Skia 后端画出「Hello Drift」） | ✅（M1） |
 | `src/Geometry/` | `Drift\Geometry` | `Point` · `Size` · `Rect` · `EdgeInsets` · `Scale` · `BoxConstraints` | ✅ 6/6 |
@@ -2924,6 +2924,41 @@ UI 侧收到的是一个新的 `RuntimeException`（跨进程没有"同一个异
 - **P0 的 drain 与错误边界**：回调里抛异常不能拖垮帧循环 ⇒ `complete()` 内 try/catch，走 `Errors::report`（与 §5.2 的 S3 一致）。
 - **P3 的 exe 分流**：GUI 程序带 `--drift-worker` 时要**不进消息循环**（`main()` 里先判参数）。
 - 回退：每个阶段都是"新增 + 接线"，P0 的回退就是把 `drain` 去掉、`SyncTaskHost` 改回直调；不影响既有页面。
+
+#### 17.4.9 帧时钟：`FrameClock`（P0 补丁，2026-10-18）
+
+**缺陷（不是优化）**：平台的 `pump()` 阻塞在 `GetMessageW` 上 —— 没有输入事件时循环一直睡。
+于是 `drain()` 只在"用户动了鼠标"时才跑 ⇒ **后台结果只能等下一条消息捎带**。
+`TimerHost`（`SetTimer` → `WM_TIMER`）早已实现，但**全仓零调用者**，所以这条通路一直是死的。
+
+| 决策 | 取值 | 理由 |
+|---|---|---|
+| 帧间隔 | **15ms**（不是 16） | `SetTimer` 量化到 ~15.6ms 系统 tick；请求 16 落到**第二**个 tick（31ms ⇒ 32fps）。探针 M 实测同源（`sleep(0.016)`→31.6ms、`sleep(0.008)`→16.5ms） |
+| 何时跳 | `Application::wantsFrame()` | = 分片队列非空 ∨ `IoPoller::watchCount()>0` ∨ `TaskHost::pending()>0`。三件事都做完 ⇒ 停表 ⇒ **空闲 CPU 归零** |
+| 谁来判 | **框架** | `TaskHost` 新增 `pending()`（在途 + 排队）：平台不知道"还有没有活"，只有框架知道 |
+| 循环在哪 | **仍在组合根** | `FrameClock` 只做"起/停定时器 + 跑一帧"，`while ($platform->pump())` 一个字没动（§5.2 裁决 1） |
+
+**卡顿护栏**：上膛期间量**两帧间隔**（不量帧内耗时 —— 那要读环境时钟，违反 G3）。
+> 60ms ⇒ `DIAGNOSTIC`（进环形缓冲，随任何一次中止落盘，事后取证）；> 500ms ⇒ `RECOVERABLE`（dev 中止）。
+> ★ 精度边界：`GetTickCount64` 粒度 ~15.6ms ⇒ 只判**量级**（"卡了一下"/"没卡"），不判精确耗时。
+
+**判据（带反例自检）**：`tools/probe-async.py` —— **全程不发送任何输入**，
+只量客户区**列表区**（y 220–640）的墨量。
+
+| 构建 | Loading 列表区 | 2.5s 后列表区 | 结论 |
+|---|---|---|---|
+| 摘掉 `pace()` / `tick()`（反例） | 0.0% | **0.0%** | 界面永远停在 Loading ⇒ FAIL |
+| 接上 `FrameClock` | 0.0% | **9.3%** | **1.94s** 自己切到 Ready（≈ worker 启动 + mock 的 1.2s + 一帧）⇒ OK |
+
+★★ **同日抓到的量具假绿（两次）**：
+① 旧判据量**整窗**墨量 ≥ 8%。实测**错误态**（"加载失败" + "重试"）也有 8.6% —— 导航条与卡片
+边框占大头，列表那点字淹在里面 ⇒ 对"取数失败"也成立。现在只认列表区（错误态 ≈ 0%）。
+② 旧探针把 `PHPRC` 指到只写 `opcache.enable=0` 的临时 ini，**覆盖**了 exe 同目录那份
+（`drift-build` 写的，含 `extension=curl`）⇒ **worker 子进程**没有 curl ⇒ `curl_init()` 未定义
+直接 Fatal ⇒ 界面本来就停在错误态。现在：临时 ini **以 exe 同目录那份为底**，只追加 opcache 关掉。
+
+★ 只有 `apps/users` 接了帧时钟（唯一有异步消费者的应用）。`hello` / `showcase` 的
+`wantsFrame()` 恒 `false` ⇒ 接不接行为相同；它们有异步时抄组合根那三行即可。
 
 ### 17.3 为什么不用协程做 UI 状态
 
