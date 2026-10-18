@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\App;
 
+use Drift\App\Io\IoPoller;
 use Drift\Commands\CommandArg;
 use Drift\Commands\CommandHandler;
 use Drift\Commands\CommandRouter;
@@ -196,6 +197,15 @@ abstract class Application
      */
     protected array $sliced = [];
 
+    /**
+     * 非阻塞 I/O 轮询器（§17.4.4，P2）—— 每帧 `select(0)` 问一轮，就绪了就回调。
+     *
+     * ★ 挂载时建一次（它持有监听表，是**有状态**的，同 `$tasks`）。
+     * ★ 为什么不是"线程里阻塞读"：见 §17.2.6 —— 线程要 30ms 起、进程要 275ms 起，
+     *   而 `select(0)` 的代价是微秒级，且回调天然落在 UI 线程的帧内。
+     */
+    protected ?IoPoller $io = null;
+
     /** @param iterable<string, CommandHandler> $handlers `commands()` 的返回值 */
     public function __construct(iterable $handlers = [])
     {
@@ -373,6 +383,9 @@ abstract class Application
 
         // ★ 端口在挂载时建一次并缓存（它持有结果队列，不能每帧现建）。
         $this->tasks = $this->taskHost();
+
+        // ★ 轮询器同理：监听表是它的状态，每帧现建等于每帧丢掉所有监听。
+        $this->io = new IoPoller();
 
         $context ??= new BuildContext(
             $constraints->maxWidth,
@@ -787,13 +800,17 @@ abstract class Application
         // ★ 帧必须在 UI 线程跑（§17.4.2.1）。成本 = 读一次 TEB + 一次整数比较。
         $this->assertUiThread('frame');
 
-        // ★★ ① 先把后台结果取出来（§17.4.2）—— **必须在 settle 之前**：
+        // ★ ① 先问一轮非阻塞 IO（§17.4.4）：外部数据先到，回调里 setState 的脏标记
+        //   由本次 settle 消费（这一句必须在 `Frame::run()` 之前）。
+        $this->pumpIo();
+
+        // ★★ ② 再把后台结果取出来（§17.4.2）—— **必须在 settle 之前**：
         //   回调里 `setState()` 只标脏，紧随的 `Frame::run()` 第 ① 步就是 settle
         //   ⇒ 同帧生效。放到 settle 之后，那次 setState 要等下一帧，
         //   "loading → ready" 会闪一帧空（多一帧延迟，且用户看得见）。
         $this->pumpTasks();
 
-        // ★ ② 再推进分片任务（P1）：完成的那一个也在此刻回调 ⇒ 同样落在 settle 之前。
+        // ★ ③ 最后推进分片任务（P1）：完成的那一个也在此刻回调 ⇒ 同样落在 settle 之前。
         //   顺序（结果 → 分片 → settle）不重要，**都在 settle 之前**才重要。
         $this->pumpSliced();
 
@@ -956,6 +973,49 @@ abstract class Application
     public function slicedCount(): int
     {
         return count($this->sliced);
+    }
+
+    /**
+     * 非阻塞 I/O 轮询器（`null` = 未挂载）。
+     *
+     * ```php
+     * $sock = stream_socket_client("tcp://127.0.0.1:9000", $errno, $errstr, 0, STREAM_CLIENT_ASYNC_CONNECT);
+     * stream_set_blocking($sock, false);            // ★ 必须：poll 只保证"问一下就走"
+     * $app->io()->watch($sock, true, function ($s) use ($app): void { ... });
+     * ```
+     *
+     * @api
+     */
+    public function io(): ?IoPoller
+    {
+        return $this->io;
+    }
+
+    /**
+     * 问一轮非阻塞 I/O（§17.4.4）—— 每帧一次，在 `settle()` 之前。
+     *
+     * ★ 与 `pumpTasks()` / `pumpSliced()` 同策略：回调异常不吞（S3 ⇒ Fatal 序列），
+     *   但要用 try/catch 把它变成"指明来源的错误"，而不是裸栈冒到组合根。
+     */
+    private function pumpIo(): void
+    {
+        $io = $this->io;
+        if ($io === null) {
+            return;
+        }
+
+        $this->assertUiThread('poll');
+
+        try {
+            $io->poll();
+        } catch (\Throwable $e) {
+            Errors::report(sprintf(
+                '帧循环：IO 就绪回调未捕获异常 —— %s（%s:%d）',
+                $e->getMessage(),
+                basename($e->getFile()),
+                $e->getLine(),
+            ));
+        }
     }
 
     /**

@@ -53,6 +53,7 @@ use Drift\Dev\Smoke\App\TaskWatcherState;
 use Drift\Dev\Smoke\App\ThrowingJob;
 use Drift\Dev\Smoke\App\SumJob;
 use Drift\App\Completion;
+use Drift\App\Io\IoPoller;
 use Drift\App\Job;
 use Drift\App\SyncTaskHost;
 use Drift\App\TaskHost;
@@ -5615,6 +5616,82 @@ check(
     $sliceErr instanceof \RuntimeException && $sliceErr->getMessage() === '分片中途失败' && $taskApp->slicedCount() === 0,
     ($sliceErr instanceof \Throwable ? $sliceErr->getMessage() : 'null') . ' queued=' . $taskApp->slicedCount(),
 );
+
+// ── ㊴ P2：`IoPoller` 非阻塞 IO（§17.4.4）────────────────────────────────
+//
+// ★ 前提已实测（probes §12.3 [J3]）：`stream_socket_pair` + `stream_set_blocking(false)`
+//   + `stream_select(..., 0)` 在 AOT 产物里全部可用。
+// ★ 为什么不是"线程里阻塞读"：线程起价 30ms、进程 275ms，而 `select(0)` 是微秒级
+//   （§17.2.6 的实测）。★ 与 Swoole 的差别：它的 `Event::dispatch()` 阻塞到下一个事件。
+// 判据：① 无数据不回调且不阻塞 ② 写入后回调一次且读得到 ③ unwatch 后不再回调
+//   ④ 多监听只回调就绪的那个 ⑤ IO 回调改 Store ⇒ 同帧重建
+
+$pollApp = new TaskApplication();
+$pollApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(320.0, 240.0)));
+check('P2 · 应用挂载后带轮询器（attach 建一次）', $pollApp->io() instanceof IoPoller);
+
+// Windows 没有 AF_UNIX ⇒ 用 PF_INET(2) / SOCK_STREAM(1) / IPPROTO_IP(0)
+[$ia, $ib] = stream_socket_pair(2, 1, 0);
+stream_set_blocking($ia, false); // ★ 必须：poll 只保证"问一下就走"
+
+$hits = 0;
+$got = '';
+$token = $pollApp->io()?->watch($ia, true, function ($stream) use (&$hits, &$got): void {
+    $hits++;
+    $chunk = fread($stream, 16);
+    $got .= $chunk === false ? '' : $chunk;
+});
+check('P2 · watch 返回非零 token 且监听数 +1', $token !== 0 && $pollApp->io()?->watchCount() === 1);
+
+$t0 = microtime(true);
+$pollApp->frame(16.0, BoxConstraints::loose(new Size(320.0, 240.0)));
+$pollMs = (microtime(true) - $t0) * 1000.0;
+check('P2 · 无数据 ⇒ 不回调', $hits === 0, (string) $hits);
+// ★ 阈值宽松（50ms）是有意的：误写成阻塞版（超时 null）会**直接挂住整轮**，
+//   不会"慢一点"——那样 smoke 是超时失败，比断言失败更响。
+check('P2 · poll 不阻塞（无数据的一帧仍很快返回）', $pollMs < 50.0, sprintf('%.1fms', $pollMs));
+
+fwrite($ib, 'hi');
+$pollApp->frame(32.0, BoxConstraints::loose(new Size(320.0, 240.0)));
+check('P2 · 写入后 ⇒ 回调恰好一次', $hits === 1, (string) $hits);
+check('P2 · 回调里读得到数据（非阻塞 fread）', $got === 'hi', $got);
+
+// ③ unwatch：取消后不再回调（数据还在流里也不调）
+$pollApp->io()?->unwatch((int) $token);
+check('P2 · unwatch 之后监听数归零', $pollApp->io()?->watchCount() === 0, (string) $pollApp->io()?->watchCount());
+fwrite($ib, 'x');
+$pollApp->frame(48.0, BoxConstraints::loose(new Size(320.0, 240.0)));
+check('P2 · unwatch 后不再回调（即使流里有数据）', $hits === 1, (string) $hits);
+
+// ④ + ⑤ 多监听：只有就绪的那个被回调；就绪回调里改 Store ⇒ 同帧重建
+[$ic, $idd] = stream_socket_pair(2, 1, 0);
+stream_set_blocking($ic, false);
+stream_set_blocking($ia, false);
+fread($ia, 16); // 读掉上一步残留的 'x'，避免它干扰"只有就绪的那个"
+
+$order = [];
+$pollApp->io()?->watch($ia, true, function () use (&$order): void { $order[] = 'a'; });
+$pollApp->io()?->watch($ic, true, function () use (&$order, $pollApp): void {
+    $order[] = 'c';
+    $pollApp->store->setStatus(42);
+});
+
+$pollState = $pollApp->watcherState();
+$buildsBeforePoll = $pollState?->builds ?? -1;
+
+fwrite($idd, 'y'); // 只有 $ic 就绪
+$pollApp->frame(64.0, BoxConstraints::loose(new Size(320.0, 240.0)));
+check('P2 · 多监听：只有就绪的那个被回调', $order === ['c'], implode(',', $order));
+check(
+    'P2 · IO 回调改 Store ⇒ **同帧**重建（poll 在 settle 之前）',
+    $pollState !== null && $pollState->builds === $buildsBeforePoll + 1 && $pollState->seen === 42,
+    sprintf('builds %d→%d seen=%d', $buildsBeforePoll, $pollState?->builds ?? -1, $pollState?->seen ?? -1),
+);
+
+fclose($ia);
+fclose($ib);
+fclose($ic);
+fclose($idd);
 
 // ── 可滚动容器（P1 / 2026-10-17）：偏移进坐标链 + 滚轮路由 ──────────
 //   两条线：① 布局层直接测 `RenderScrollView`（视口 / maxScroll 夹取 / 命中按视口判 /

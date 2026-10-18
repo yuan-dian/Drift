@@ -327,7 +327,7 @@ private function pageFor(string $name): ?Widget
 
 | 目录 | 命名空间 | 文件 | 状态（2026-10-15 按 `src/` 核验） |
 |------|---------|------|------|
-| `src/App/` | `Drift\App` | ✅ `Application.php` · `Frame.php`（+ 1 个 `@internal` 实现文件 `FocusManager.php` —— 输入路由最小集，M3；§9.1 的完整链在 M4 的 `EventLoop`）；★ **2026-10-16 新落地三件**（任务 #8）：**`Job.php`** · **`TaskHost.php`** · **`SyncTaskHost.php`**（§17.2 的端口 + **后端 B**；§24.1 #35 点名的 `Job` 0 文件已清零）；★ **2026-10-18 P0**：**`Completion.php`**（`@internal` —— 队列里流动的完成事件，§17.4.2）+ **`DragController.php`**（`@internal`，拖动状态机，§9.1）；★ **P1**：**`SlicedJob.php`**（单线程分片的任务契约，§17.4.3）；⏳ `EventLoop.php` · `FrameClock.php` · `ThreadPoolTaskHost.php`（**⛔ 被 tpc 能力卡住** —— 探针 K，§17.2.2）· `WindowStateStore.php` | **缺 4**（M4/M5） |
+| `src/App/` | `Drift\App` | ✅ `Application.php` · `Frame.php`（+ 1 个 `@internal` 实现文件 `FocusManager.php` —— 输入路由最小集，M3；§9.1 的完整链在 M4 的 `EventLoop`）；★ **2026-10-16 新落地三件**（任务 #8）：**`Job.php`** · **`TaskHost.php`** · **`SyncTaskHost.php`**（§17.2 的端口 + **后端 B**；§24.1 #35 点名的 `Job` 0 文件已清零）；★ **2026-10-18 P0**：**`Completion.php`**（`@internal` —— 队列里流动的完成事件，§17.4.2）+ **`DragController.php`**（`@internal`，拖动状态机，§9.1）；★ **P1**：**`SlicedJob.php`**（单线程分片的任务契约，§17.4.3）；★ **P2**：**`Io/IoPoller.php`**（非阻塞 IO 每帧轮询，§17.4.4 —— `src/App/` 的第一个子目录）；⏳ `EventLoop.php` · `FrameClock.php` · `ThreadPoolTaskHost.php`（**⛔ 被 tpc 能力卡住** —— 探针 K，§17.2.2）· `WindowStateStore.php` | **缺 4**（M4/M5） |
 | `src/Platform/` | `Drift\Platform` | ✅ 9/9：`Platform` · `WindowHost` · `SurfaceProvider` · `InputSource` · `TimerHost` · `Screen` · `Clipboard` · `Dialog` · `Tray`（★ 2026-10-15 **端口层落地**；**同日 Win32 实现跟进**，见下行 —— 三个壳服务在 Win32 上返回 `null`，§24.3） | ✅（M1） |
 | `src/Platform/Win32/` | `Drift\Platform\Win32` | ✅ 8/8：`Win32Platform` · `Win32WindowHost` · `Win32Screen` · `Win32SurfaceProvider` · `Win32InputSource` · `Win32TimerHost` · `Win32RasterSurface` · **`Win32SkiaSurface`**（★ 2026-10-15 **首个平台实现落地**，配套 `cpp-src/drift_win32.{stub.php,cc}` 窗口桥 ⇒ §19 M1 出口判据兑现。★ `Win32RasterSurface` 是 `RenderSurface` 的**第 4 个**实现，走 `RasterCanvas` + `SetDIBitsToDevice` 位块传送（§7.3 的 M1 分期原文就是"CPU 光栅 + 位块传送"））。★ **2026-10-16 第二个渲染后端落地**（M1 遗留 ②）：`Win32SkiaSurface` = `SkiaCanvas` + **同一个** `drift_win_present()`，与 `Win32RasterSurface` **只差"造哪种画布"一行** ⇒ §7.2 裁决 1「后端可换、应用侧一行不改」兑现。后端由组合根 `new Win32Platform('skia' | 'soft')` 选（★ **2026-10-17 默认从 `soft` 翻成 `skia`**—— 软光栅的字来自位图字体，14px 上屏必然点阵锯齿，且 `Title=18px` 走放大路径；详见 §24.2 #19。`'soft'` 仍是显式可选的确定性测试后端）。真机已验：`hello.exe` 经 Skia 后端画出「Hello Drift」） | ✅（M1） |
 | `src/Geometry/` | `Drift\Geometry` | `Point` · `Size` · `Rect` · `EdgeInsets` · `Scale` · `BoxConstraints` | ✅ 6/6 |
@@ -346,7 +346,7 @@ private function pageFor(string $name): ?Widget
 
 ★ **`cpp-src/` 不在 `src/` 内，不计入下面的清点**（2026-10-15 首次出现）：C ABI 桥目录。`<name>.stub.php` 是给 tpc 看的 **ABI 声明**（函数体全空），`<name>.cc` 是实现；两者**成对、同名**。今天只有一对：`drift_win32.stub.php` + `drift_win32.cc`（建窗 / 消息泵 / 位块传送 / 定时器，约 600 行）。三条纪律：① **桥不建控件、不做布局、不画任何东西**（§5.1 四条边界）；② `cpp-src/*.h` 绝不写 `using namespace php;`（§2.4 纪律 3）；③ **一帧只跨一次边界**（`drift_win32_present()` 贴整帧像素），不是 GUI 仓的"每条绘制命令过一次桥" —— 那是 2108 行的桥 vs 今天 600 行的差别。
 
-★ **本表不穷尽，它回答"这一层该有什么"**：`src/` 实有 **179 个 PHP 文件**（其中 154 个含 `@api`），本表点名 **105 个**（**103 个有文件 / 2 个 0 文件**，2026-10-18 同口径复测：名字 = 表第 3 列枚举本体、括号旁注剥掉），**零矛盾** —— 修掉误挂在 `Drift\Routing` 的 `Offstage`（§24.1 #37）之后才成立；此前那句"零矛盾"本身是**假陈述**）；**76 个已实现文件未列入本表**：6 个封闭域 enum · 11 个控件 · 6 个 Element 实现 · `Layout` 侧 10 个 `Render*` 族成员 + `Overflow`/`FlexAlign` · `Text` 侧 14 个（含 §8.2 坑 6 的 6 个确定性参考实现）· `ButtonVariant`/`RenderBoxWidget` · `TextField` 的 2 个 `@internal` 实现（`TextFieldBox`/`TextFieldState`）· `Spinner` 的 2 个 `@internal` 实现（`SpinnerBox`/`SpinnerState`）· `Dock` 的 2 个 `@internal` 实现（`DockElement`/`AppBarElement`）· `App\FocusManager`（输入路由最小集，`@internal`）· `Errors.php`（★ 分类之和与总数有差，是手工分类的既有口径问题，待 `drift-doctor` 按 `src/` 自动清点取代）。（179 = 103 点名有文件 + 76 未点名，2026-10-18 同口径复测 —— ★ 分类明细那一串是 2026-10-16 的口径，此后的新增（菜单/拖放/浮层/滚动/Modal 五族的 `@internal` 实现与渲染盒）只并进总数、未重排分类；**明细归 `drift-doctor` 自动清点**；★ 上一轮这里写的 "52 个 … + Application/Frame" 两个数都错 —— `Application`/`Frame` 是**已点名**的，而族成员与 `Text` 目录的实现被漏数了）★ 漏登记的代价见 §24.1 #32/#33（`TextField` 全文 29 处引用却不在表里）；**穷尽清单归 `drift-doctor`（O-10）自动扫 `src/`**，本表是它的临时输入。<br>★ **上面这四个数可复现**（口径 = 名字出现在**表第 3 列的枚举本体**；括号里的旁注会被剥掉 —— 旁注会引到`FocusManager.php`（@internal 实现）· `DeterministicFontManager`（未列入本表）· `RenderSurface`（举例时提到别的层）甚至 `null`/`apps` 这类根本不是类型的词，不剥就虚高）：`drift-doc-src-audit` 技能的 `scripts/audit_refs.py --section 4.2`（本机未安装该技能时，用同口径脚本复测 —— 2026-10-16 即如此复测得 139/123/94）。**判据只能对着量具的数**，不接受手工同步（2026-10-16 手工同步曾把 131/117/100 三数全部写漂，复测才发现）。
+★ **本表不穷尽，它回答"这一层该有什么"**：`src/` 实有 **180 个 PHP 文件**（其中 155 个含 `@api`），本表点名 **105 个**（**103 个有文件 / 2 个 0 文件**，2026-10-18 同口径复测：名字 = 表第 3 列枚举本体、括号旁注剥掉），**零矛盾** —— 修掉误挂在 `Drift\Routing` 的 `Offstage`（§24.1 #37）之后才成立；此前那句"零矛盾"本身是**假陈述**）；**77 个已实现文件未列入本表**：6 个封闭域 enum · 11 个控件 · 6 个 Element 实现 · `Layout` 侧 10 个 `Render*` 族成员 + `Overflow`/`FlexAlign` · `Text` 侧 14 个（含 §8.2 坑 6 的 6 个确定性参考实现）· `ButtonVariant`/`RenderBoxWidget` · `TextField` 的 2 个 `@internal` 实现（`TextFieldBox`/`TextFieldState`）· `Spinner` 的 2 个 `@internal` 实现（`SpinnerBox`/`SpinnerState`）· `Dock` 的 2 个 `@internal` 实现（`DockElement`/`AppBarElement`）· `App\FocusManager`（输入路由最小集，`@internal`）· `Errors.php`（★ 分类之和与总数有差，是手工分类的既有口径问题，待 `drift-doctor` 按 `src/` 自动清点取代）。（180 = 103 点名有文件 + 77 未点名，2026-10-18 同口径复测 —— ★ 分类明细那一串是 2026-10-16 的口径，此后的新增（菜单/拖放/浮层/滚动/Modal 五族的 `@internal` 实现与渲染盒）只并进总数、未重排分类；**明细归 `drift-doctor` 自动清点**；★ 上一轮这里写的 "52 个 … + Application/Frame" 两个数都错 —— `Application`/`Frame` 是**已点名**的，而族成员与 `Text` 目录的实现被漏数了）★ 漏登记的代价见 §24.1 #32/#33（`TextField` 全文 29 处引用却不在表里）；**穷尽清单归 `drift-doctor`（O-10）自动扫 `src/`**，本表是它的临时输入。<br>★ **上面这四个数可复现**（口径 = 名字出现在**表第 3 列的枚举本体**；括号里的旁注会被剥掉 —— 旁注会引到`FocusManager.php`（@internal 实现）· `DeterministicFontManager`（未列入本表）· `RenderSurface`（举例时提到别的层）甚至 `null`/`apps` 这类根本不是类型的词，不剥就虚高）：`drift-doc-src-audit` 技能的 `scripts/audit_refs.py --section 4.2`（本机未安装该技能时，用同口径脚本复测 —— 2026-10-16 即如此复测得 139/123/94）。**判据只能对着量具的数**，不接受手工同步（2026-10-16 手工同步曾把 131/117/100 三数全部写漂，复测才发现）。
 
 ### 4.3 依赖规则（lint 强制，违反即报错）
 
@@ -2833,6 +2833,18 @@ final class IoPoller
   第一版**不引入**通用 Fiber 调度器（避免"没有消费者就发明机制"）。
 - 已验证前提：`stream_socket_pair` + `stream_set_blocking(false)` + `stream_select(..., 0)` 在 AOT 产物里全部可用（probes §12.3 `[J3]`）。
 
+★ **2026-10-18 已落地**（P2）：`Drift\App\Io\IoPoller` —— `watch($stream, $forRead, $cb): int` /
+`unwatch($token)` / `poll()`（**`stream_select(..., 0)` 不阻塞**）；`Application::io()` 读法 +
+`frame()` 里 `pumpIo()`（**在 settle 之前**，排在 `pumpTasks()` 之前 —— 外部数据先到）。
+★ 回调里 `setState()` 与后台结果回调**同级**（同一帧、同一线程）。
+★ **本次刻意不做**：通用 Fiber 调度器（`Awaitable::read()` 等真有"顺序代码"消费者再加）、
+写缓冲与粘包处理（协议层的事：轮询器只负责"可读了"）。
+验证：smoke **708/0**（+10：无数据不回调且不阻塞 / 写入后回调一次且读得到 / unwatch 后不再回调 /
+多监听只回调就绪的 / IO 回调改 Store 同帧重建）；三连反例自检全中（不看就绪结果 ⇒ 无数据也回调；
+unwatch 空操作 ⇒ 两条红；poll 挪到 settle 之后 ⇒ `builds 1→1 seen=0`）。
+★★ **诚实边界**：AOT 面只到**翻译层**（codegen 207 全翻译）—— `apps/users` 不用 IO，
+所以"resource 存属性 + AOT 下 stream_select"**没有真机运行证据**；这条与 P3（进程池的管道就是 resource）
+一起验，已登记为缺口。
 #### 17.4.5 `ProcessTaskHost`（P3：重计算 + 隔离）
 
 - **常驻池**（不是每任务 spawn：实测 spawn 275ms/次，不可接受）。
@@ -2847,7 +2859,7 @@ final class IoPoller
 |---|---|---|
 | **P0** ✅ | `TaskHost` 队列 + `drain`；`SyncTaskHost` 改走队列；`Application::frame` 接线 | smoke：① submit 当帧**不**调 onDone ② 下一帧调 ③ onDone 里 setState **同帧**生效 ④ Job 抛异常走 onError ⑤ 无 TaskHost 时行为不变 |
 | **P1** ✅ | `SlicedJob` + `submitSliced` | smoke：100 万次累加切 10 帧完成；每帧 `step` 耗时 < 5ms；结果与一次性算相同；中途取消不泄漏 |
-| **P2** | `IoPoller` | smoke：socket pair 写端稍后写 ⇒ 可读回调在 poll 里触发（不阻塞）；unwatch 后不再回调 |
+| **P2** ✅ | `IoPoller` | smoke：socket pair 写端稍后写 ⇒ 可读回调在 poll 里触发（不阻塞）；unwatch 后不再回调 |
 | **P3** | `ProcessTaskHost` | 真机：10 个任务并发、UI 帧不掉；kill worker ⇒ onError 且自动补员 |
 | **P4** | `NativeJob`（C++ 线程池，`QueueUserWorkItem`） | 解码/哈希类任务，µs 级投递；线程里只碰 C++ 数据 |
 

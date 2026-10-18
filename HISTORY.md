@@ -552,3 +552,35 @@ Spinner → M2 conformance 运行器 → 多页外壳（`Dock`/`AppBar`/`NavButt
 codegen **206 全翻译 0 skip** · `drift-build users` **7.4MB/18.1s** · 真机 OK（DPI V2、无 Errors.log）。
 DESIGN：§4.2 数字按 `audit_42.py` 刷新（**179 / 154 / 105 = 103 + 2 / 未点名 76**）、
 §17.4.3 标已落地、§17.4.6 P1 行 ✅。
+
+### 7.11 P2：IoPoller 非阻塞 I/O（2026-10-18）
+
+**路线依据**（前几轮实测的合成）：Swoole 协程的 `Event::dispatch()` **阻塞到下一个事件**
+（50ms 定时器 ⇒ 单帧 57ms）；hook 是**全局替换**（开了之后非协程上下文的 `stream_select` 直接抛）；
+PHP `Fiber` **不会让出阻塞 IO**。⇒ 唯一能用的形态：**IO 先非阻塞 + 每帧 `select(0)`**。
+
+**落地**：
+- `Drift\App\Io\IoPoller`：`watch($stream, bool $forRead, callable $cb): int` / `unwatch(int $token)` /
+  `poll()`（`@stream_select($r, $w, $e, 0)` —— 超时 0 = 立即返回）；`watchCount()` 供测试。
+- `Application::io()` 读法 + `frame()` 的 `pumpIo()`：**在 `pumpTasks()` 之前、settle 之前**
+  （外部数据先到；回调里 `setState()` 的脏标记由本次 settle 消费）。
+- 反查 token 用 `===`（resource 是身份比较），**不用 `(int) $stream`** —— 后者在 PHP 8 有
+  deprecated，且 tpc 对 resource→int 没验过；监听数 < 10，O(n²) 无所谓。
+
+★ **刻意不做**（避免"没有消费者就发明机制"）：通用 Fiber 调度器（`Awaitable::read()`）、
+写缓冲与粘包处理（协议层：轮询器只负责"可读了"）。
+
+**判据（smoke +10）**：无数据不回调且**一帧仍很快返回**（阈值 50ms 故意放宽 —— 误写成阻塞版会
+**直接挂住整轮**，比断言失败更响）/ 写入后回调恰好一次且 `fread` 读得到 / `unwatch` 后监听数归零
+且不再回调（流里有数据也不调）/ 多监听只回调就绪的那个 / IO 回调改 Store ⇒ 同帧重建。
+
+★ **三连反例自检全中**：① 不看 `select` 结果 ⇒ "无数据不回调"红（4 条连带）；② `unwatch` 空操作 ⇒
+两条红（`watchCount=1` / `hits=2`）；③ `poll` 挪到 settle 之后 ⇒ `builds 1→1 seen=0`。
+
+★★ **诚实边界（登记）**：AOT 面只到**翻译层**（codegen 207 全翻译 + `users.exe` 链接通过 +
+`new IoPoller()` 在真机 attach 时不炸）；**"resource 存属性 + AOT 下跑 `stream_select`" 尚无真机运行证据**
+—— `apps/users` 不用 IO。这条与 P3（进程池的管道就是 resource）一起验。
+
+**验证**：smoke **708 ok / 0 FAIL**（+10）· lint **309 文件 0/0** · codegen **207 全翻译 0 skip** ·
+`drift-build users` **7.4MB/18.2s** · 真机 OK。DESIGN：§4.2 数字 **180 / 155 / 105 = 103 + 2 / 未点名 77**、
+§17.4.4 标已落地、§17.4.6 P2 行 ✅。
