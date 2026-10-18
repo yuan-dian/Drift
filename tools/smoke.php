@@ -76,6 +76,7 @@ use Drift\Dev\Smoke\App\ThemeApplication;
 use Drift\Dev\Smoke\App\PointerApplication;
 use Drift\Dev\Smoke\App\ScrollApplication;
 use Drift\Dev\Smoke\App\NavApplication;
+use Drift\Dev\Smoke\App\SpinnerApplication;
 use Drift\Dev\Smoke\LeafProbe;
 use Drift\Dev\Smoke\Routing\NavStore;
 use Drift\Dev\Smoke\Theme\ThemeSpy;
@@ -377,10 +378,12 @@ if (str_starts_with($caseArg, '--case=')) {
 // ── 断言与工具 ──
 
 $failures = 0;
+$checks = 0;
 
 function check(string $name, bool $ok, string $detail = ''): void
 {
-    global $failures;
+    global $failures, $checks;
+    ++$checks;
     if ($ok) {
         printf("  ok    %s\n", $name);
         return;
@@ -4018,6 +4021,30 @@ check(
     md5(spinCanvas($spinBox2, 200, 200)->toRgba()) !== $sigA,
 );
 
+// ── ㉗b 帧时钟驱动的动画（§17.4.10，2026-10-18）──
+//    ★ 这里量的是"**没人调 `tick()`**，相位也自己走"。真机侧由
+//    `tools/probe-async.php` 的 ⑦⑧（帧间变化像素数）守。
+$spinApp = new SpinnerApplication();
+$spinApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(120.0, 120.0)));
+$spinAppRoot = $spinApp->root();
+$spinAppState = $spinAppRoot instanceof StatefulElement ? $spinAppRoot->state() : null;
+check(
+    '§17.4.10 · 首帧就推进了动画（attach 走同一入口）',
+    $spinAppState instanceof SpinnerState && $spinAppState->step() === 1,
+);
+check('§17.4.10 · 有动画在跑 ⇒ wantsFrame() 为真', $spinApp->wantsFrame() === true);
+$spinApp->frame(16.0, BoxConstraints::tight(new Size(120.0, 120.0)));
+$spinApp->frame(32.0, BoxConstraints::tight(new Size(120.0, 120.0)));
+check(
+    '§17.4.10 · 每帧推进一格（没人调 tick）',
+    $spinAppState instanceof SpinnerState && $spinAppState->step() === 3,
+);
+
+// 反例方向：没有动画的应用不该要求下一帧（**空闲不空转**的另一半）
+$quietApp = new EchoApplication();
+$quietApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(120.0, 120.0)));
+check('§17.4.10 · 无动画的应用 wantsFrame() 为假（空闲不空转）', $quietApp->wantsFrame() === false);
+
 // ── ㉘ 多页外壳：Dock / AppBar / NavButton + 命令激活（§12.1 / §12.2，2026-10-16 落地）──
 
 // RenderDock 五槽布局（直接构造渲染盒，与 C5 负例同一条测试路径）
@@ -6260,3 +6287,11 @@ fresh($log);
 if (is_file($log)) {
     unlink($log);
 }
+
+// ── 汇总 + 退出码（2026-10-18）──
+// ★ 以前只打印 FAIL、**从不汇总、也从不非零退出** ⇒ 打印 3 个 FAIL 仍然 exit 0：
+//   任何自动化调用（脚本 / CI / `&&` 链）都会把它读成"过了"。与 G2（不许静默
+//   失败）直接冲突，故收口在这里。反例自检：故意让一条 check() 失败 ⇒ 末行
+//   `N FAIL` 且退出码 1。
+printf("\n--- %d ok / %d FAIL ---\n", $checks - $failures, $failures);
+exit($failures === 0 ? 0 : 1);
