@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace Drift\Widget;
 
+use Drift\Input\SemanticsRole;
+
 /**
  * 可滚动视口（§13.1 / P1，2026-10-17 落地）。
  *
@@ -36,6 +38,8 @@ final class ScrollView extends StatefulWidget
         private readonly bool $vertical = true,
     ) {
         parent::__construct();
+        // §9 无障碍：可滚动视口进语义树（"这是一个可滚动区域"；名字留给内容本身）
+        $this->semantics(SemanticsRole::Scroll);
     }
 
     /** 唯一入口：`$child` 是被滚动的内容，`$vertical` 默认纵向滚动 */

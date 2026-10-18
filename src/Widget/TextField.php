@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace Drift\Widget;
 
+use Drift\Input\SemanticsRole;
+
 /**
  * 单行输入框（§15.2 / §A.2.9）。
  *
@@ -46,6 +48,8 @@ final class TextField extends StatefulWidget
         parent::__construct();
         // §9.1：输入控件天然可聚焦 —— 声明后才会被 FocusManager 收进焦点链
         $this->markFocusable();
+        // §9 无障碍：文本框进语义树（name 由 `label()` 给，value 由 `value()` 跟）
+        $this->semantics(SemanticsRole::TextField);
     }
 
     /** 唯一入口 —— 必填项由链式给（`value()` 才是必填，`make()` 不吃参数，§A.2.9） */
@@ -59,6 +63,8 @@ final class TextField extends StatefulWidget
     {
         $this->mutate();
         $this->value = $text;
+        // §9：可访问"取值"跟随当前文本（读屏/自动化读它，而不是另存一份）
+        $this->semantics(SemanticsRole::TextField, null, $text);
 
         return $this;
     }
@@ -68,6 +74,8 @@ final class TextField extends StatefulWidget
     {
         $this->mutate();
         $this->label = $text;
+        // §9：label 就是可访问名 —— 在**设它的那一行**顺手给，不靠框架事后猜
+        $this->semantics(SemanticsRole::TextField, $text);
 
         return $this;
     }

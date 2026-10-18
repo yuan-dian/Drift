@@ -6,6 +6,7 @@ namespace Drift\Widget;
 use Drift\Errors;
 use Drift\Input\CursorShape;
 use Drift\Input\FocusNode;
+use Drift\Input\SemanticsRole;
 use Drift\Widget\Drag\Draggable;
 use Drift\Widget\Drag\DragTarget;
 use Drift\Widget\Menu\ContextMenu;
@@ -49,6 +50,18 @@ abstract class Widget
 
     /** @internal null = 本控件不参与悬停派发（§9.1 语义 #5） */
     private ?\Closure $hoverHandler = null;
+
+    /** @internal null = 本控件不在语义树里（无角色 = 不建节点，§9 / M5 无障碍） */
+    private ?SemanticsRole $semRole = null;
+
+    /** @internal 人读的名字（按钮 label / 对话框标题）；无角色时无意义 */
+    private string $semName = '';
+
+    /** @internal 扁平的取值 / 状态（如文本框当前文本）；无角色时无意义 */
+    private string $semValue = '';
+
+    /** @internal 可用性声明（§9）；默认 true。只是**数据**，没有消费者时不起任何作用 */
+    private bool $semEnabled = true;
 
     /**
      * ★ 子类必须调 `parent::__construct()`。
@@ -340,6 +353,71 @@ abstract class Widget
     public function hoverHandlerValue(): ?\Closure
     {
         return $this->hoverHandler;
+    }
+
+    /**
+     * 声明"这个控件是什么"（§9 无障碍 / M5）—— 角色 + 人读信息，供
+     * `SemanticsBuilder` 建语义树（检查器 / 自动化 / 将来的朗读消费）。
+     *
+     * ```php
+     * Button::make('保存', 'doc.save')          // 内部即 ->semantics(Button, '保存')
+     * TextField::make()->label('邮箱')           // label 同时是可访问名
+     * Modal::make()->title('确认删除')           // 标题即对话框名
+     * ```
+     *
+     * ★★ **这是字段赋值，不是虚方法覆写**（§9 P3 陷阱）：tpc 有全程序去虚化缺陷，
+     *   "基类给默认实现 + 子类覆写 `semantics()`" 会被**静默忽略** ⇒ 症状是"所有
+     *   节点角色为空"且编译期不报错。控件要么在自己的构造/设值处调本方法
+     *   （`Button` / `TextField::label()` / `Modal::title()` 即如此），要么由应用显式调。
+     * ★ **不声明 = 不进语义树**（加性）：`Text` / `Row` / `Card` 这类结构与叶子
+     *   一律不调它（判据见 `SemanticsRole` 的类注释）。
+     * ★ `null` 参数 = "不动这一项"（便于分次补设，如先角色后取值）。
+     *
+     * @api
+     */
+    public function semantics(
+        SemanticsRole $role,
+        ?string $name = null,
+        ?string $value = null,
+        ?bool $enabled = null
+    ): static {
+        $this->mutate();
+        $this->semRole = $role;
+        if ($name !== null) {
+            $this->semName = $name;
+        }
+        if ($value !== null) {
+            $this->semValue = $value;
+        }
+        if ($enabled !== null) {
+            $this->semEnabled = $enabled;
+        }
+
+        return $this;
+    }
+
+    /** @internal `SemanticsBuilder` 读它；`null` = 不在语义树里 */
+    public function semanticsRole(): ?SemanticsRole
+    {
+        return $this->semRole;
+    }
+
+    /** @internal `SemanticsBuilder` 读它 */
+    public function semanticsName(): string
+    {
+        return $this->semName;
+    }
+
+    /** @internal `SemanticsBuilder` 读它 */
+    public function semanticsValue(): string
+    {
+        return $this->semValue;
+    }
+
+    /** @internal `SemanticsBuilder` 读它 */
+    public function semanticsEnabled(): bool
+    {
+        return $this->semEnabled;
     }
 
     /**

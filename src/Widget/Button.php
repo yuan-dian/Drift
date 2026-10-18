@@ -6,6 +6,7 @@ namespace Drift\Widget;
 use Drift\Commands\CommandArg;
 use Drift\Errors;
 use Drift\Geometry\EdgeInsets;
+use Drift\Input\SemanticsRole;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderButton;
 use Drift\Rendering\BoxStyle;
@@ -61,6 +62,9 @@ class Button extends BoxWidget
         parent::__construct();
         // §9.1：按钮天然可聚焦（Tab 能到、回车/空格能触发）
         $this->markFocusable();
+        // §9 无障碍：按钮的可访问名 = label。**字段赋值**（不是虚方法覆写 ——
+        // tpc 全程序去虚化会让"基类默认+子类覆写"静默失效，见 Widget::semantics()）
+        $this->semantics(SemanticsRole::Button, $label);
     }
 
     public static function make(string $label): self

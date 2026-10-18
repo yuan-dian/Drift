@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Widget;
 
 use Drift\Geometry\EdgeInsets;
+use Drift\Input\SemanticsRole;
 
 /**
  * 模态对话框（§A.3.7 / §12.1 第 6 条）。
@@ -57,6 +58,8 @@ final class Modal extends StatelessWidget
     public function __construct()
     {
         parent::__construct();
+        // §9 无障碍：模态 = 对话框角色（可访问名 = `title()` 给的标题）
+        $this->semantics(SemanticsRole::Dialog);
     }
 
     public static function make(): self
@@ -69,6 +72,7 @@ final class Modal extends StatelessWidget
     {
         $this->mutate();
         $this->title = $text;
+        $this->semantics(SemanticsRole::Dialog, $text);
 
         return $this;
     }

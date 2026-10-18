@@ -5,6 +5,7 @@ namespace Drift\Widget;
 
 use Drift\Errors;
 use Drift\Geometry\EdgeInsets;
+use Drift\Input\SemanticsRole;
 
 /**
  * **按视口造子层**的纵向列表（虚拟化，§13.1 / M5）。
@@ -62,6 +63,8 @@ final class LazyColumn extends StatefulWidget
     {
         parent::__construct();
         $this->insets = EdgeInsets::zero();
+        // §9 无障碍：虚拟列表也是一种"可滚动区域"，与 `ScrollView` 同角色
+        $this->semantics(SemanticsRole::Scroll);
     }
 
     /**
