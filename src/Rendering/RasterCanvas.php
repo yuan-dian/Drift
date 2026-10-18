@@ -39,6 +39,28 @@ final class RasterCanvas implements Canvas
     /** @var list<Rect> 裁剪栈：与变换栈独立（两条栈分别配对，W8 分别计深） */
     private array $clipStack = [];
 
+    /**
+     * §13.5 的两个纯性能缓存（**不影响输出**——同输入同字节，golden 逐字节比对过）：
+     *
+     * 1. `opaqueChunks`：`r,g,b` → 四个预计算的单字节串。不透明矩形填充省掉
+     *    每像素 4 次 `chr()` 调用（字符串偏移写在 refcount==1 时原地完成，O(1)）。
+     * 2. `blendLuts`：`r,g,b,alpha` → 四条 256 项目标的预混合表。半透明填充从
+     *    "每像素 8 次 `round()`" 变成 "每像素 4 次查表"。
+     *
+     * ★ 为什么只缓存"填充"不缓存"字形"：字形的 alpha 每像素都在变（覆盖度
+     *   0..255），一个键只摊一个像素 ⇒ 建表比直接算还贵。字形仍走 `blend()`。
+     * ★ 两个缓存都设上限、超限整体清零：它们是**纯性能缓存**，清了只回到慢，
+     *   不会错（颜色键空间理论上开放，防的是"字号动画扫几千个 alpha"那种）。
+     *
+     * @var array<string, array<int, string>>
+     */
+    private array $opaqueChunks = [];
+
+    /** @var array<string, array<int, array<int, string>>> */
+    private array $blendLuts = [];
+
+    private const CACHE_MAX = 128;
+
     public function __construct(
         private readonly int $width,
         private readonly int $height,
@@ -233,32 +255,160 @@ final class RasterCanvas implements Canvas
             return;
         }
 
-        $x0 = max((int) floor($rect->left), 0);
-        $y0 = max((int) floor($rect->top), 0);
-        $x1 = min((int) ceil($rect->right()), $this->width);
-        $y1 = min((int) ceil($rect->bottom()), $this->height);
-        $clipRight = $this->clip->right();
-        $clipBottom = $this->clip->bottom();
+        // ★ 全部区间换算成**整数像素**，与旧的"每像素判谓词"逐点等价：
+        //   · `insideRoundRect` 的矩形门是**两端含**（`px >= left && px <= right`）
+        //     ⇒ 区间 [ceil(left-0.5), floor(right-0.5)+1)
+        //   · `clip` 是**左闭右开**（`px >= left && px < right`）
+        //     ⇒ 区间 [ceil(left-0.5), ceil(right-0.5))
+        //   px = x + 0.5 是像素中心。含等号的一侧在 .5 恰好对齐时也一致。
+        $rx0 = (int) ceil($rect->left - 0.5);
+        $rx1 = (int) floor($rect->right() - 0.5) + 1;
+        $ry0 = (int) ceil($rect->top - 0.5);
+        $ry1 = (int) floor($rect->bottom() - 0.5) + 1;
 
-        for ($y = $y0; $y < $y1; $y++) {
+        $xa = max($rx0, (int) ceil($this->clip->left - 0.5), 0);
+        $xb = min($rx1, (int) ceil($this->clip->right() - 0.5), $this->width);
+        $ya = max($ry0, (int) ceil($this->clip->top - 0.5), 0);
+        $yb = min($ry1, (int) ceil($this->clip->bottom() - 0.5), $this->height);
+        if ($xa >= $xb || $ya >= $yb) {
+            return;
+        }
+
+        $opaque = $color->a >= 255;
+        $lut = $opaque ? null : $this->blendLut($color);
+
+        for ($y = $ya; $y < $yb; $y++) {
             $py = $y + 0.5;
-            if ($py < $this->clip->top || $py >= $clipBottom) {
+
+            // 圆角的行内区间：中部行整段在内；上下边带行从两端向内扫
+            // （谓词仍走 insideRoundRect 逐点判 ⇒ 与旧实现同一个字节；
+            //   扫描最多 radius 个像素，远小于整行宽度）。
+            $x0 = $xa;
+            $x1 = $xb;
+            if ($radius > 0.0 && ($py < $rect->top + $radius || $py > $rect->bottom() - $radius)) {
+                while ($x0 < $x1 && !$this->insideRoundRect($x0 + 0.5, $py, $rect, $radius)) {
+                    $x0++;
+                }
+                while ($x1 > $x0 && !$this->insideRoundRect($x1 - 0.5, $py, $rect, $radius)) {
+                    $x1--;
+                }
+            }
+            if ($x0 >= $x1) {
                 continue;
             }
-            for ($x = $x0; $x < $x1; $x++) {
-                $px = $x + 0.5;
-                if ($px < $this->clip->left || $px >= $clipRight) {
-                    continue;
+
+            // 描边的洞：洞自己的行区间（同样两端含）∩ 墨区间，圆角时只在
+            // 上下边带行向内扫；挖掉洞后剩两段，各自写。
+            if ($hole !== null) {
+                $h0 = max($x0, (int) ceil($hole->left - 0.5));
+                $h1 = min($x1, (int) floor($hole->right() - 0.5) + 1);
+                if ($h0 < $h1 && $holeRadius > 0.0
+                    && ($py < $hole->top + $holeRadius || $py > $hole->bottom() - $holeRadius)
+                ) {
+                    while ($h0 < $h1 && !$this->insideRoundRect($h0 + 0.5, $py, $hole, $holeRadius)) {
+                        $h0++;
+                    }
+                    while ($h1 > $h0 && !$this->insideRoundRect($h1 - 0.5, $py, $hole, $holeRadius)) {
+                        $h1--;
+                    }
                 }
-                if ($radius > 0.0 && !$this->insideRoundRect($px, $py, $rect, $radius)) {
-                    continue;
+                if ($h0 < $h1) {
+                    $this->fillSpan($y, $x0, $h0, $color, $opaque, $lut);
+                    $this->fillSpan($y, $h1, $x1, $color, $opaque, $lut);
+                } else {
+                    // 本行完全在洞里（或洞比墨区大）⇒ 整行都是墨
+                    $this->fillSpan($y, $x0, $x1, $color, $opaque, $lut);
                 }
-                if ($hole !== null && $this->insideRoundRect($px, $py, $hole, $holeRadius)) {
-                    continue;
-                }
-                $this->blend($x, $y, $color);
+                continue;
             }
+
+            $this->fillSpan($y, $x0, $x1, $color, $opaque, $lut);
         }
+    }
+
+    /** 写一段水平像素 run（同一行、同一颜色；opaque 逐像素原地写，半透明查表逐像素） */
+    private function fillSpan(int $y, int $xa, int $xb, Color $color, bool $opaque, ?array $lut): void
+    {
+        if ($xa >= $xb) {
+            return;
+        }
+
+        // 不透明：预计算四个单字节串，逐像素原地写（字符串偏移写在 refcount==1 时
+        // 是 in-place 的 O(1)）。★ 试过"整行一次 substr_replace"—— 它对整块像素串
+        // 是 O(整串) 拷贝（900×640×4 = 2.3MB/行）⇒ 全幅矩形反而慢一倍，已回退。
+        if ($opaque) {
+            $key = $color->r . ',' . $color->g . ',' . $color->b;
+            $chunk = $this->opaqueChunks[$key] ?? null;
+            if ($chunk === null) {
+                if (count($this->opaqueChunks) >= self::CACHE_MAX) {
+                    $this->opaqueChunks = [];
+                }
+                $chunk = [chr($color->r), chr($color->g), chr($color->b), "\xFF"];
+                $this->opaqueChunks[$key] = $chunk;
+            }
+            [$c0, $c1, $c2, $c3] = $chunk;
+
+            $base = $y * $this->width;
+            for ($x = $xa; $x < $xb; $x++) {
+                $i = ($base + $x) * 4;
+                $this->pixels[$i] = $c0;
+                $this->pixels[$i + 1] = $c1;
+                $this->pixels[$i + 2] = $c2;
+                $this->pixels[$i + 3] = $c3;
+            }
+
+            return;
+        }
+
+        // 半透明：目标字节预混合表（alpha 在本 span 内恒定 ⇒ 每像素 4 次查表）
+        $base = $y * $this->width;
+        for ($x = $xa; $x < $xb; $x++) {
+            $i = ($base + $x) * 4;
+            $this->pixels[$i] = $lut[0][ord($this->pixels[$i])];
+            $this->pixels[$i + 1] = $lut[1][ord($this->pixels[$i + 1])];
+            $this->pixels[$i + 2] = $lut[2][ord($this->pixels[$i + 2])];
+            $this->pixels[$i + 3] = $lut[3][ord($this->pixels[$i + 3])];
+        }
+    }
+
+    /**
+     * 半透明填充的预混合表：四条 256 项目标字节。
+     *
+     * 公式与 `blend()` 逐字节相同（`(int) round((c*alpha + old*(255-alpha)) / 255)`）
+     * ⇒ 输出与旧逐像素实现完全一致。
+     *
+     * @return array<int, array<int, string>>
+     */
+    private function blendLut(Color $color): array
+    {
+        $key = $color->r . ',' . $color->g . ',' . $color->b . ',' . $color->a;
+        $lut = $this->blendLuts[$key] ?? null;
+        if ($lut !== null) {
+            return $lut;
+        }
+
+        $inverse = 255 - $color->a;
+        $tables = [];
+        foreach ([$color->r, $color->g, $color->b] as $channel) {
+            $table = [];
+            for ($old = 0; $old < 256; $old++) {
+                $table[$old] = chr((int) round(($channel * $color->a + $old * $inverse) / 255));
+            }
+            $tables[] = $table;
+        }
+        // alpha 通道：dst_a = min(255, alpha + round(old_a * inverse / 255))
+        $alphaTable = [];
+        for ($old = 0; $old < 256; $old++) {
+            $alphaTable[$old] = chr(min(255, $color->a + (int) round($old * $inverse / 255)));
+        }
+        $tables[] = $alphaTable;
+
+        if (count($this->blendLuts) >= self::CACHE_MAX) {
+            $this->blendLuts = [];
+        }
+        $this->blendLuts[$key] = $tables;
+
+        return $tables;
     }
 
     private function insideRoundRect(float $px, float $py, Rect $rect, float $radius): bool
