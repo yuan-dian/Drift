@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace App\Showcase;
 
+use Drift\App\Paths;
+use Drift\App\WindowStateStore;
 use Drift\Errors;
 use Drift\Platform\Win32\Win32Platform;
 
@@ -46,6 +48,14 @@ final class Bootstrap
         $handle = $window->createWindow('Drift 示例台', self::WINDOW_WIDTH, self::WINDOW_HEIGHT);
         $window->show($handle);
 
+        // ★ 窗口状态读回（§5.4 / §19 M5）：**启动一次同步 IO**，不在帧内。
+        //   ★ 顺序在 `surface->resize()` **之前** —— resize 定首帧尺寸，而首帧就该是
+        //     还原后的尺寸；放到后面用户会先看到一帧默认尺寸再被拽过去。
+        //   ★ 没有配置文件 / 读坏了 / 平台没给配置目录 ⇒ 一律**静默降级**到默认几何
+        //     （§5.4 纪律 2，G2 的显式例外；每次降级写一条 Diagnostic）。
+        $state = new WindowStateStore(Paths::userConfig($platform->configDir(), 'showcase.window'));
+        $state->restore($window, $handle);
+
         $provider = $platform->surface($handle);
         if ($provider === null) {
             // `Errors::report()` 是 Fatal ⇒ 走 §1.2 中止序列，不会返回。
@@ -60,9 +70,12 @@ final class Bootstrap
 
         // 首帧之前把表面尺寸定下来：`attach()` 内部就会跑一帧（`Application::attach`），
         // 而那帧要往表面上画 ⇒ 尺寸为 0 时那一帧会被丢弃（画面到第二次 resize 才出现）。
+        // 还原后的实际客户区（读回，不是常量）：断言"缩放到真实几何"，否则
+        // 还原了窗口大小、画面还按旧尺寸排 ⇒ 四周出现拉伸/裁切且不报错。
+        $restored = $window->clientSize($handle);
         $surface->resize(
-            (int) round((float) self::WINDOW_WIDTH * $screen->scale()),
-            (int) round((float) self::WINDOW_HEIGHT * $screen->scale()),
+            (int) round($restored->width * $screen->scale()),
+            (int) round($restored->height * $screen->scale()),
             $screen->scale(),
         );
 
@@ -90,5 +103,9 @@ final class Bootstrap
             //   候选框位置错）—— 半可用失败形态，故三行注释写死原因。
             $platform->imeCaret($app->imeCaretRect());
         }
+
+        // ★ 窗口状态写回（§5.4）：**退出一次同步 IO**（循环之外，不占帧）。
+        //   最小化时退出 ⇒ 平台侧 position() 给 null ⇒ 跳过写入，保留上一份状态。
+        $state->persist($window, $handle);
     }
 }
