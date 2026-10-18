@@ -13,9 +13,13 @@
  *   probe-grab --pid=1234 --image=users.exe --wait=8000 --settle=200 \
  *              --samples=30 --interval=100 --y0=220 --y1=640 --close --motion
  *   probe-grab --count-only --image=users.exe
+ *   probe-grab --pid=1234 --settle=800 --move=300,200,1100,760 --rect --close
+ *   probe-grab --pid=1234 --settle=1500 --rect --no-grab --close
  *
  * 输出：`hwnd=` `client=WxH` `ink_all_pct=` `s0..sN=`（墨量）`c1..cN=`（帧间变化
  *      像素数，仅 `--motion`）`procs=` `closed=`
+ *      ★ 窗口控制（2026-10-18 M5 加）：`moved=1` `zoomed=1` `unzoomed=1`
+ *      `rect=x,y,w,h`（**外框**、物理像素）
  * 退出码：0 正常 · 2 没等到窗口/参数错 · 3 抓图失败
  *
  * ── 三个真 bug（写这个工具时踩出来的，判据就是被它们教出来的） ──
@@ -36,6 +40,12 @@
  *
  * ★ `biHeight = -height`：位图自顶向下。不这么写 `--y0/--y1` 量的是**底部**那几行，
  *   列表区判据会当场失效（而画面看起来完全正常）。
+ *
+ * ★ **为什么探针要能搬窗口**（2026-10-18 M5，§5.4）：`WindowStateStore` 的验收是
+ *   "关窗时的位置/尺寸，下次启动原样还原"—— 而"位置被还原"这件事**只有进程外部**
+ *   能观测（应用自述不算）。所以这里加 `--move/--zoom/--rect`：把窗口搬到已知位置、
+ *   优雅关窗（`--close` 走 WM_CLOSE，让 store 的 persist 跑到）、再启动量一次外框，
+ *   两次只差 ≤2px 才算还原。少了这三个开关，这条出口判据只能靠人眼。
  */
 
 #define NOMINMAX
@@ -48,6 +58,7 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <algorithm>   // std::sort（--auto 的同名进程 pid 排序）
 
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
@@ -69,6 +80,16 @@ struct Options {
     bool close = false;
     bool countOnly = false;
     bool motion = false;
+    // ── 窗口控制（M5，§5.4 的验证开关；见文件头末段）──
+    bool move = false;
+    int moveX = 0;
+    int moveY = 0;
+    int moveW = 0;
+    int moveH = 0;
+    int zoom = 0;             // 0 = 不动；1 = 最大化；2 = 还原
+    bool printRect = false;   // 打印外框（物理像素）
+    bool noGrab = false;      // 只做控制 + 打印，不碰像素
+    bool autoResolve = false; // `--pid` 缺省时按 `--image` 找（取**最老**的那个进程）
 };
 
 struct Shot {
@@ -120,6 +141,30 @@ BOOL CALLBACK enumWindowsProc(HWND hwnd, LPARAM param)
 
     context->found = hwnd;
     return FALSE;
+}
+
+struct CountContext {
+    DWORD pid;
+    int count;
+};
+
+/** 放宽版枚举：只按 **pid** 数顶层窗口，不看可见性与客户区（诊断用） */
+BOOL CALLBACK countWindowsProc(HWND hwnd, LPARAM param)
+{
+    auto* context = reinterpret_cast<CountContext*>(param);
+    DWORD owner = 0;
+    ::GetWindowThreadProcessId(hwnd, &owner);
+    if (owner == context->pid) {
+        ++context->count;
+    }
+    return TRUE;
+}
+
+int countOwnerWindows(DWORD pid)
+{
+    CountContext context{pid, 0};
+    ::EnumWindows(&countWindowsProc, reinterpret_cast<LPARAM>(&context));
+    return context.count;
 }
 
 HWND waitWindow(DWORD pid, int waitMs)
@@ -277,6 +322,30 @@ int countImage(const std::wstring& image)
     return count;
 }
 
+/** 按镜像名列出**所有**进程 pid（升序）—— 主进程 + worker 同名，不能只取一个。 */
+std::vector<DWORD> resolveAllImages(const std::wstring& image)
+{
+    HANDLE snapshot = ::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    std::vector<DWORD> pids;
+    if (snapshot == INVALID_HANDLE_VALUE) {
+        return pids;
+    }
+    PROCESSENTRY32W entry{};
+    entry.dwSize = sizeof(entry);
+
+    if (::Process32FirstW(snapshot, &entry) != FALSE) {
+        do {
+            if (_wcsicmp(entry.szExeFile, image.c_str()) == 0) {
+                pids.push_back(entry.th32ProcessID);
+            }
+        } while (::Process32NextW(snapshot, &entry) != FALSE);
+    }
+    ::CloseHandle(snapshot);
+
+    std::sort(pids.begin(), pids.end());
+    return pids;
+}
+
 }   // namespace
 
 int wmain(int argc, wchar_t** argv)
@@ -316,6 +385,43 @@ int wmain(int argc, wchar_t** argv)
             options.countOnly = value != L"0";
         } else if (key == L"motion") {
             options.motion = value != L"0";
+        } else if (key == L"move") {
+            // x,y,w,h —— 外框、物理像素（进程是 DPI aware 的）
+            int parts[4] = {0, 0, 0, 0};
+            int index = 0;
+            size_t start = 0;
+            for (size_t i = 0; i <= value.size(); ++i) {
+                if (i == value.size() || value[i] == L',') {
+                    long long parsed = 0;
+                    if (!parseInt(value.substr(start, i - start), parsed)) {
+                        std::fprintf(stderr, "err=--move wants x,y,w,h\n");
+                        return 2;
+                    }
+                    if (index >= 4) {
+                        std::fprintf(stderr, "err=--move wants exactly 4 numbers\n");
+                        return 2;
+                    }
+                    parts[index++] = static_cast<int>(parsed);
+                    start = i + 1;
+                }
+            }
+            if (index != 4) {
+                std::fprintf(stderr, "err=--move wants exactly 4 numbers\n");
+                return 2;
+            }
+            options.move = true;
+            options.moveX = parts[0];
+            options.moveY = parts[1];
+            options.moveW = parts[2];
+            options.moveH = parts[3];
+        } else if (key == L"zoom" && parseInt(value, number)) {
+            options.zoom = value == L"0" ? 2 : static_cast<int>(number);
+        } else if (key == L"rect") {
+            options.printRect = value != L"0";
+        } else if (key == L"no-grab") {
+            options.noGrab = value != L"0";
+        } else if (key == L"auto") {
+            options.autoResolve = value != L"0";
         }
     }
 
@@ -332,16 +438,42 @@ int wmain(int argc, wchar_t** argv)
         return count < 0 ? 3 : 0;
     }
 
+    HWND hwnd = nullptr;
     if (options.pid == 0) {
-        std::fprintf(stderr, "err=--pid is required\n");
-        return 2;
+        if (options.autoResolve && !options.image.empty()) {
+            // ★ **逐个试**：同名进程里 worker 也在（`--drift-worker` 分支不建窗口），
+            //   而"哪个 pid 有窗口"不由 pid 大小决定（pid 会回收）⇒ 只能试。
+            const std::vector<DWORD> pids = resolveAllImages(options.image);
+            if (pids.empty()) {
+                std::fprintf(stderr, "err=no process named %ls is running\n", options.image.c_str());
+                return 2;
+            }
+            const int per = options.waitMs > 0 ? options.waitMs / static_cast<int>(pids.size()) : 400;
+            for (const DWORD candidate : pids) {
+                hwnd = waitWindow(candidate, per < 100 ? 100 : per);
+                if (hwnd != nullptr) {
+                    options.pid = candidate;
+                    std::printf("resolved_pid=%lu\n", static_cast<unsigned long>(options.pid));
+                    break;
+                }
+            }
+        }
+        if (hwnd == nullptr) {
+            std::fprintf(stderr, "err=--pid is required (or --auto with --image)\n");
+            return 2;
+        }
     }
 
-    const HWND hwnd = waitWindow(options.pid, options.waitMs);
     if (hwnd == nullptr) {
+        hwnd = waitWindow(options.pid, options.waitMs);
+    }
+    if (hwnd == nullptr) {
+        // ★ 诊断：是"进程没有窗口"还是"窗口不满足判据"—— 两种原因的修法完全不同。
+        const int owned = countOwnerWindows(options.pid);
         std::fprintf(stderr,
-                     "err=no usable window for pid %lu within %dms (must be visible with a non-empty client area)\n",
-                     static_cast<unsigned long>(options.pid), options.waitMs);
+                     "err=no usable window for pid %lu within %dms (must be visible with a non-empty "
+                     "client area); the process owns %d top-level window(s) in total\n",
+                     static_cast<unsigned long>(options.pid), options.waitMs, owned);
         return 2;
     }
     std::printf("hwnd=0x%llx\n", static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(hwnd)));
@@ -349,6 +481,41 @@ int wmain(int argc, wchar_t** argv)
     // ★ bug ②：窗口在 ≠ 已画过第一帧。首帧落地前抓到的是屏幕残留。
     if (options.settleMs > 0) {
         ::Sleep(static_cast<DWORD>(options.settleMs));
+    }
+
+    // ── 窗口控制（M5，§5.4 验证用）────────────────────────────
+    // 顺序固定：最大化先、搬位置后 —— 反过来"先把最大化窗口搬走"会被 Windows 忽略。
+    if (options.zoom == 1) {
+        ::ShowWindow(hwnd, SW_MAXIMIZE);
+        std::printf("zoomed=1\n");
+    } else if (options.zoom == 2) {
+        ::ShowWindow(hwnd, SW_RESTORE);
+        std::printf("unzoomed=1\n");
+    }
+    if (options.move) {
+        // SWP_NOZORDER(4)：只搬尺寸，不换 Z 序（换 Z 序会让窗口弹到最前，干扰观测）
+        ::SetWindowPos(hwnd, nullptr, options.moveX, options.moveY, options.moveW, options.moveH,
+                       SWP_NOZORDER);
+        std::printf("moved=1\n");
+        // 搬完立刻量外框：SetWindowPos 是同步的，此刻 GetWindowRect 就是新值
+    }
+    if (options.printRect) {
+        RECT frame{};
+        ::GetWindowRect(hwnd, &frame);
+        std::printf("rect=%ld,%ld,%ld,%ld\n", frame.left, frame.top,
+                    frame.right - frame.left, frame.bottom - frame.top);
+        std::fflush(stdout);
+    }
+    if (options.noGrab) {
+        if (!options.image.empty()) {
+            std::printf("procs=%d\n", countImage(options.image));
+        }
+        if (options.close) {
+            ::PostMessageW(hwnd, WM_CLOSE, 0, 0);
+            std::printf("closed=1\n");
+        }
+        std::fflush(stdout);
+        return 0;
     }
 
     Shot shot{};
