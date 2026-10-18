@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Drift\Layout;
 
+use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Size;
@@ -52,6 +53,13 @@ final class RenderScrollView extends RenderProxyBox
      * @param float $scrollOffset 已夹取的滚动偏移（逻辑像素，≥ 0）
      * @param Color $thumb        滚动条色（主题 Muted：两主题都够清晰、语义"次要"）
      * @param bool  $vertical     true = 纵向滚动（内容沿 y 平移）
+     * @param float|null $virtualExtent 完整内容的**主轴长度**（虚拟列表用）。
+     *        `null` ⇒ 内容长度就取子盒实测值（普通 `ScrollView`，逐字节同旧行为）。
+     *        ★ 虚拟列表的子盒只是**一扇窗**（只含可见行），它的实测长度远小于
+     *        完整内容 ⇒ 不传这个参数，滚动条长度和可滚上限都会算成"只有一屏"。
+     * @param float $sliceOrigin 这扇窗的起点在**完整内容**中的主轴坐标。
+     *        ★ 它同时是两个东西：`maxScroll` 的锚（`scrollOffset` 是完整内容的
+     *        偏移，不是窗内偏移）和"窗该往哪挪"的量。
      *
      * ★ 参数序：**必选在前、可选在后** —— 反了 PHP 解释器只发 Deprecated，
      *   tpc 预处理器直接 Fatal（"optional parameter cannot be declared before
@@ -61,6 +69,8 @@ final class RenderScrollView extends RenderProxyBox
         private readonly float $scrollOffset,
         private readonly Color $thumb,
         private readonly bool $vertical = true,
+        private readonly ?float $virtualExtent = null,
+        private readonly float $sliceOrigin = 0.0,
     ) {
     }
 
@@ -97,18 +107,48 @@ final class RenderScrollView extends RenderProxyBox
         // ② 视口：取约束上限；上界无限 ⇒ 视口跟着内容走（不滚动）
         $mainMax = $this->vertical ? $constraints->maxHeight : $constraints->maxWidth;
         $crossMax = $this->vertical ? $constraints->maxWidth : $constraints->maxHeight;
+
+        // ★★ 虚拟列表遇上无界主轴：**先分清是哪种无界**。
+        //   · `RenderFlex` 量自然尺寸的**第一遍**也会递无界主轴（`RenderFlexible`
+        //     的注释原话：量自然高那遍拿无界主轴）。那是**合法的中间态** ——
+        //     LazyColumn 的自然高就是"当前窗口"，松手让它跟着窗口走即可，
+        //     第二遍（`tightMain`）才拿得到真视口。⇒ 不报错。
+        //   · **外层还有一个滚动视口**才是真的用错：内容被外层的无界约束吞掉，
+        //     窗口永远只有一屏，而滚动归外层管 ⇒ 看起来能跑、实际永远看不到第
+        //     21 行以后。这是 G2 要消灭的静默形态 ⇒ 响亮失败。
+        //   ★ 判别法：沿父链找 `RenderScrollView`（`Expanded` / `Column` / `Card`
+        //     都不算）。测过的反例：把 LazyColumn 塞进外层 ScrollView ⇒ 命中这条。
+        if ($this->virtualExtent !== null && is_infinite($mainMax)) {
+            for ($ancestor = $this->parent(); $ancestor !== null; $ancestor = $ancestor->parent()) {
+                if ($ancestor instanceof self) {
+                    Errors::report(
+                        'LazyColumn 不能嵌在另一个滚动视口里 —— 外层视口给它的是无界主轴，'
+                        . '窗口会永远只有一屏，而滚动归外层管（G2：不许静默失效）'
+                    );
+
+                    break;
+                }
+            }
+        }
+
         $viewportMain = is_infinite($mainMax) ? $contentMain : $mainMax;
         $viewportCross = is_infinite($crossMax) ? $contentCross : $crossMax;
 
         // ③ 夹取（越界 = 内容飞走的静默形态 ⇒ 结构上不可能）
-        $this->maxScroll = max(0.0, $contentMain - $viewportMain);
+        // ★ 虚拟列表：可滚上限按**完整内容**算，不是按这扇窗的实测长度。
+        $virtualMain = $this->virtualExtent ?? $contentMain;
+        $this->maxScroll = max(0.0, $virtualMain - $viewportMain);
         $offset = $this->appliedOffset();
 
         // ④ ★ 偏移进子盒 offset（不是 paint 期 translate）—— 见类注释
+        // ★ 虚拟列表：窗只含 [sliceOrigin, sliceOrigin+窗长)，所以窗要挪的
+        //   距离是"完整内容偏移 − 窗起点"。普通 ScrollView 的 sliceOrigin 恒 0
+        //   ⇒ 与旧式 `-offset` 完全等价。
+        $shift = $offset - $this->sliceOrigin;
         if ($this->vertical) {
-            $child->setOffset(0.0, -$offset);
+            $child->setOffset(0.0, -$shift);
         } else {
-            $child->setOffset(-$offset, 0.0);
+            $child->setOffset(-$shift, 0.0);
         }
 
         return $this->vertical

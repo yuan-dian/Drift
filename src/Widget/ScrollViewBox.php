@@ -27,14 +27,27 @@ final class ScrollViewBox extends RenderBoxWidget
         private readonly float $offset,
         private readonly bool $vertical,
         private readonly Widget $kid,
+        private readonly ?float $virtualExtent = null,
+        private readonly float $sliceOrigin = 0.0,
     ) {
         parent::__construct();
     }
 
-    /** @internal 由 `ScrollViewState::build()` 调 */
-    public static function make(float $offset, bool $vertical, Widget $kid): self
-    {
-        return new self($offset, $vertical, $kid);
+    /**
+     * @internal 由 `ScrollViewState::build()` / `LazyColumnState::build()` 调
+     *
+     * ★ 后两个参数是**虚拟列表**的（`LazyColumn`）：`$virtualExtent` = 完整内容的
+     *   主轴长度、`$sliceOrigin` = 这扇窗在完整内容里的起点。`ScrollView` 不传
+     *   ⇒ `null` / `0.0` ⇒ 走 `RenderScrollView` 的旧路径（逐字节不变）。
+     */
+    public static function make(
+        float $offset,
+        bool $vertical,
+        Widget $kid,
+        ?float $virtualExtent = null,
+        float $sliceOrigin = 0.0,
+    ): self {
+        return new self($offset, $vertical, $kid, $virtualExtent, $sliceOrigin);
     }
 
     /** 被滚动的内容 */
@@ -47,7 +60,13 @@ final class ScrollViewBox extends RenderBoxWidget
     {
         // ★ 滚动条色走主题（`Muted`：两主题都清晰、语义"次要信息"）——
         //   由 Widget 侧在造盒时递进构造参数，盒自己不找主题（§13.2 契约）。
-        return new RenderScrollView($this->offset, $context->color(ColorToken::Muted), $this->vertical);
+        return new RenderScrollView(
+            $this->offset,
+            $context->color(ColorToken::Muted),
+            $this->vertical,
+            $this->virtualExtent,
+            $this->sliceOrigin,
+        );
     }
 
     public function createElement(): Element
