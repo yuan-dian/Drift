@@ -24,6 +24,7 @@ use Drift\Widget\State;
 use Drift\Widget\StatefulWidget;
 use Drift\Widget\Widget;
 
+use App\Showcase\Pages\BigListPage;
 use App\Showcase\Pages\ButtonsPage;
 use App\Showcase\Pages\FeedbackPage;
 use App\Showcase\Pages\FormPage;
@@ -93,6 +94,7 @@ final class ShowcaseState extends State
             ['按钮 Button', static fn(): Widget => new ButtonsPage()],
             ['表单 Form', static fn(): Widget => new FormPage()],
             ['列表 List', static fn(): Widget => new ListPage()],
+            ['长列表 Big', static fn(): Widget => new BigListPage()],
             ['反馈 Feedback', static fn(): Widget => new FeedbackPage()],
         ];
     }
