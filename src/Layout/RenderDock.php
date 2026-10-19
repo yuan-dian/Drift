@@ -197,7 +197,9 @@ final class RenderDock extends RenderBox
     {
         match ($this->policy) {
             Overflow::Clip => null,
-            Overflow::Report => Errors::report(sprintf(
+            Overflow::Report => LayoutTolerance::$previewing
+                ? null   // 预览期：条轨溢出不中断（夹到 0，重叠但可继续拖）
+                : Errors::report(sprintf(
                 'Dock %s超出：条轨需要 %.6g，可用 %.6g。C5 要求外壳类容器声明策略 —— Report 即响亮失败；若要允许重叠请改用 Clip',
                 $axis,
                 $need,

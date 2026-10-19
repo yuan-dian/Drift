@@ -93,7 +93,8 @@ abstract class RenderBox extends RenderObject
         // 下界提升不是违反：`tight()` 的语义就是父把尺寸定死了，`constrain()`
         // 提下界是它的本职工作（Drift 的 Column 在紧约束下报"最宽子"而不是
         // 硬宽，是正确的——父只是给了上限）。
-        if ($measured->width > $constraints->maxWidth || $measured->height > $constraints->maxHeight) {
+        if (($measured->width > $constraints->maxWidth || $measured->height > $constraints->maxHeight)
+            && !LayoutTolerance::$previewing) {   // 预览期（拖动中）：瞬时违规降级为裁剪
             Errors::report(sprintf(
                 '%s 的布局结果违反约束：报了 %.6g × %.6g，约束只允许最多 %.6g × %.6g',
                 static::class,

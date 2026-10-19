@@ -51,6 +51,14 @@ interface WindowHost
     public function setTitle(int $windowHandle, string $title): void;
 
     /**
+     * 客户区**最小**尺寸（**逻辑**像素；0 = 不限制）。§5.4
+     *
+     * ★ 系统据此挡住"拖到比内容更小"——那种状态会让布局硬校验弹 Fatal，
+     *   而它不是编程错误。平台侧负责换算到物理像素与**外框**（标题栏/边框）。
+     */
+    public function setMinSize(int $width, int $height): void;
+
+    /**
      * 客户区尺寸（**逻辑**像素；物理像素的换算归 `Screen::scale()`） */
     public function clientSize(int $windowHandle): Size;
 

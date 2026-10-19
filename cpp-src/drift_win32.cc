@@ -90,6 +90,17 @@ int g_clientW = 0;
 int g_clientH = 0;
 UINT g_dpi = 96;
 
+// ── 最小客户区（§5.4，物理像素；0 = 未设）──────────────────────────
+// ★ 为什么必须有：窗口能被拖到比内容更小 ⇒ C5/C6 的布局硬校验会弹 Fatal，
+//   而"窗口被拖小"是**用户行为**、不是编程错误（用户实测：可用宽 93 vs 条轨 94）。
+//   最小尺寸是主流 GUI 的标配（Qt/WPF/Flutter 都有 minimumSize），比让每个
+//   容器在极小空间里优雅降级便宜得多。
+int g_minClientW = 0;
+int g_minClientH = 0;
+
+/** `AdjustWindowRectExForDpi` 的前置声明（定义在文件后部，WndProc 要用） */
+void adjustFrameForDpi(RECT *rect, DWORD style, BOOL menu, DWORD exStyle, UINT dpi);
+
 // ── §5.4 退出路径专用：窗口销毁后的"最后已知几何" ──
 // 为什么需要：WM_CLOSE 里壳**同步** DestroyWindow ⇒ 等组合根的 while(pump())
 // 跳出、WindowStateStore::persist() 来问的时候，窗口句柄已经死了 ⇒
@@ -775,6 +786,26 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
 
+        case WM_GETMINMAXINFO: {
+            // 最小尺寸（§5.4）：客户区 min（物理像素）⇒ 外框 min（路径同建窗换算）。
+            // 0 = 未设 ⇒ 交给 DefWindowProc 的系统默认。
+            if (g_minClientW > 0 && g_minClientH > 0) {
+                MINMAXINFO *info = (MINMAXINFO *)lp;
+                if (info != NULL) {
+                    RECT frame = {0, 0, g_minClientW, g_minClientH};
+                    adjustFrameForDpi(
+                        &frame,
+                        (DWORD)GetWindowLongPtrW(hwnd, GWL_STYLE),
+                        FALSE,
+                        (DWORD)GetWindowLongPtrW(hwnd, GWL_EXSTYLE),
+                        g_dpi);
+                    info->ptMinTrackSize.x = frame.right - frame.left;
+                    info->ptMinTrackSize.y = frame.bottom - frame.top;
+                }
+            }
+            return 0;
+        }
+
         case WM_SIZE: {
             int w = LOWORD(lp);
             int h = HIWORD(lp);
@@ -1408,6 +1439,15 @@ void php_drift_win_set_title(Int hwnd, String title) {
     SetWindowTextW(target, toWide(title).c_str());
 }
 
+void php_drift_win_set_min_size(Int hwnd, Int width, Int height) {
+    // §5.4：客户区最小尺寸（**物理**像素）。WM_GETMINMAXINFO 里换算成外框。
+    // 只是"下一次拖动时的限制" —— 当前窗口若已经更小，不强制放大（那会让
+    // 用户在窄屏幕上开不出窗口）。
+    g_minClientW = width > 0 ? (int)width : 0;
+    g_minClientH = height > 0 ? (int)height : 0;
+    (void)hwnd;   // 单窗口进程：状态在进程级（同 g_clientW）
+}
+
 void php_drift_win_ime_caret(Float x, Float y, Float h) {
     // §8.4：IME 定位管线。x/y/h 是**设备像素**的客户区坐标；(-1,-1,0) = 无插入符。
     // 两个消费点：组字窗位置（WM_IME_STARTCOMPOSITION）与 IMR_QUERYCHARPOSITION。
@@ -1570,6 +1610,19 @@ void php_drift_win_place_window(Int hwnd, Float x, Float y, Float w, Float h, Bo
 
     UINT dpi = dpiOfWindow(target);
     double dpr = dpi > 0 ? (double)dpi / 96.0 : 1.0;
+
+    // ★ 最小尺寸 clamp（§5.4）：还原的历史几何可能是"窗口太小"的脏数据 ——
+    //   那种状态会踩布局硬校验（C5/C6）弹 Fatal。拖动由 WM_GETMINMAXINFO 挡，
+    //   程序设尺寸（SetWindowPlacement/SetWindowPos 不受 ptMinTrackSize 限制）
+    //   在这里挡。min 是**物理客户区**，w/h 是逻辑 ⇒ 先换算再比。
+    if (g_minClientW > 0 && g_minClientH > 0) {
+        if ((double)w * dpr < (double)g_minClientW) {
+            w = (Float)((double)g_minClientW / dpr);
+        }
+        if ((double)h * dpr < (double)g_minClientH) {
+            h = (Float)((double)g_minClientH / dpr);
+        }
+    }
 
     // ① 客户区（逻辑）→ 物理，再把外框厚度加回去（DPI 感知）
     RECT frame = {0, 0, (LONG)((double)w * dpr), (LONG)((double)h * dpr)};

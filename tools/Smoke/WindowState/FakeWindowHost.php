@@ -48,6 +48,14 @@ final class FakeWindowHost implements WindowHost
     {
     }
 
+    /** 夹具：记录最后一次设的最小尺寸（真机行为由 WM_GETMINMAXINFO 挡，头侧只验接线） */
+    public ?array $minSize = null;
+
+    public function setMinSize(int $width, int $height): void
+    {
+        $this->minSize = [$width, $height];
+    }
+
     public function clientSize(int $windowHandle): Size
     {
         return $this->client;

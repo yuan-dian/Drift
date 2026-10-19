@@ -69,6 +69,12 @@ final class Bootstrap
         $app = new HelloApplication();
         $app->attach($surface, $screen->viewport());
 
+        // ★ 最小窗口尺寸（§5.4）：挡住"拖到比内容更小"——那种状态会踩 C5/C6
+        //   的布局硬校验（用户实测：可用宽 93 vs 条轨 94 ⇒ 弹 Fatal，拖动被打断）。
+        //   "窗口被拖小"是用户行为、不是编程错误；最小尺寸是 Qt/WPF/Flutter 的标配。
+        //   420×320 逻辑像素 = 顶条（标题 + 3 个导航 + 文件菜单）留余量 + 状态栏 + 数行列表。
+        $window->setMinSize(420, 320);
+
         // ★ 拖动边缘重排（§5.2）：模态尺寸循环里主循环被系统挂起，壳在 WM_SIZE
         //   里**同步调回** PHP 走轻量重绘（只 settle/layout/paint/present，不碰
         //   任务/动画/焦点/语义）。入口 `drift_resize_hook_pump()` 是 AOT 具名

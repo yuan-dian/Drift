@@ -52,6 +52,16 @@ function drift_win_close(int $hwnd): void {}
 function drift_win_set_title(int $hwnd, string $title): void {}
 
 /**
+ * 客户区**最小**尺寸（**物理**像素；0 = 不限制）。§5.4
+ *
+ * ★ 为什么需要：窗口能被拖到比内容更小 ⇒ 布局硬校验（C5/C6）会弹 Fatal，
+ *   而"用户把窗口拖小"是**用户行为**、不是编程错误。最小尺寸是主流 GUI 的
+ *   标配（Qt/WPF/Flutter 都有 minimumSize），比让每个容器在极小空间里优雅
+ *   降级便宜得多。壳在 `WM_GETMINMAXINFO` 里换算成外框约束。
+ */
+function drift_win_set_min_size(int $hwnd, int $width, int $height): void {}
+
+/**
  * 客户区尺寸（**物理**像素，`['w'=>int,'h'=>int]`；失败为空数组）。
  *
  * ★ 返回**物理**像素而不是逻辑：逻辑↔物理的换算**只能发生一次**（§6.1），

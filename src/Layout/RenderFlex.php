@@ -32,20 +32,6 @@ use Drift\Rendering\Canvas;
  */
 class RenderFlex extends RenderBox
 {
-    /**
-     * ★ **resize 预览期**（`Application::repaintForResize` 的 try/finally 置位）：
-     *   用户拖窗口边缘时，中间尺寸是**瞬时态**——内容暂时放不下是**合法状态**，
-     *   不是编程错误。此时 `Overflow::Report` 降级为裁剪（不弹 Fatal、不中断拖动）；
-     *   松手后的正式帧照旧响亮失败。
-     *
-     * ★ 为什么开关放在 Layout 层而不是由 Application 传下来：布局不依赖 App（§4.3），
-     *   而 `handleOverflow` 在最内层、拿不到调用方上下文 ⇒ 静态开关是唯一不外泄
-     *   依赖的形态（同 `Errors` 的进程级语义）。
-     *
-     * @internal 只由 `Application::repaintForResize()` 在 try/finally 里翻转
-     */
-    public static bool $previewTolerant = false;
-
     /** @var list<RenderBox> */
     private array $kids = [];
 
@@ -337,7 +323,7 @@ class RenderFlex extends RenderBox
     {
         match ($this->overflow) {
             Overflow::Clip => null, // 自己夹住（见 performLayout 的 min），子项照自然位置排
-            Overflow::Report => self::$previewTolerant
+            Overflow::Report => LayoutTolerance::$previewing
                 ? null   // 预览期（拖动中）：瞬时溢出降级为裁剪，不弹 Fatal
                 : Errors::report(sprintf(
                 '%s 溢出：自然主轴 %.6g 超过可用 %.6g。C5 要求声明策略 —— Report 即响亮失败；'

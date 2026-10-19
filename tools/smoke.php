@@ -103,6 +103,7 @@ use Drift\Geometry\Point;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Scale;
 use Drift\Geometry\Size;
+use Drift\Layout\LayoutTolerance;
 use Drift\Input\AcceleratorTable;
 use Drift\Input\CursorShape;
 use Drift\Input\FocusNode;
@@ -3041,6 +3042,24 @@ check(
     $barDiag === []
         && ($barEl->effectiveBox()?->size()?->width ?? -1.0) === 100.0,
     'diag=' . count($barDiag) . ' rootW=' . ($barEl->effectiveBox()?->size()?->width ?? -1.0)
+);
+
+// ── 预览期硬校验降级（§5.2）：拖动中的瞬时极小尺寸不弹 Fatal ──────────
+//   用户拖窗口边缘时中间尺寸是**瞬时态**——「窗口比内容小」是合法状态，不是
+//   编程错误。`LayoutTolerance::$previewing` 期间 C5/C6 的硬校验一律降级为裁剪
+//   （RenderFlex / RenderDock / RenderBox 三处都读它）；松手后复位，真溢出照旧报。
+Errors::reset();
+LayoutTolerance::$previewing = true;
+$tolApp = new TfApplication();
+$tolApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
+$tolApp->frame(16.0, BoxConstraints::loose(new Size(300.0, 200.0)));
+$tolApp->repaintForResize(BoxConstraints::tight(new Size(80.0, 50.0)));   // 远小于内容
+$tolDiag = Errors::recentDiagnostics();
+LayoutTolerance::$previewing = false;
+check(
+    'Resize · 预览期极小尺寸不弹 Fatal（C5/C6 降级为裁剪）',
+    $tolDiag === [],
+    'diag=' . count($tolDiag) . ' ' . implode(' | ', array_slice($tolDiag, 0, 2))
 );
 
 // ── 主题切换 ⇒ 界面真的换表（§9.2 / §24.2 #14）────────────────────────

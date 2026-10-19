@@ -17,6 +17,7 @@ use function drift_win_create;
 use function drift_win_dpi;
 use function drift_win_is_maximized;
 use function drift_win_place_window;
+use function drift_win_set_min_size;
 use function drift_win_set_cursor;
 use function drift_win_set_title;
 use function drift_win_show;
@@ -72,6 +73,21 @@ final class Win32WindowHost implements WindowHost
     public function setTitle(int $windowHandle, string $title): void
     {
         drift_win_set_title($windowHandle, $title);
+    }
+
+    public function setMinSize(int $width, int $height): void
+    {
+        $handle = $this->handle;
+        if ($handle === null) {
+            return;   // 还没建窗：调用方顺序错（组合根在 createWindow 之后调）
+        }
+
+        $dpr = Scale::fromDpi((float) drift_win_dpi($handle))->dpr;
+        if ($dpr <= 0.0) {
+            $dpr = 1.0;
+        }
+
+        drift_win_set_min_size($handle, (int) round($width * $dpr), (int) round($height * $dpr));
     }
 
     /**

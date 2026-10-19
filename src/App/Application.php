@@ -20,7 +20,7 @@ use Drift\Input\PointerEvent;
 use Drift\Input\ScrollEvent;
 use Drift\Input\ThemeChangedEvent;
 use Drift\Layout\RenderBox;
-use Drift\Layout\RenderFlex;
+use Drift\Layout\LayoutTolerance;
 use Drift\Layout\RenderObject;
 use Drift\Layout\RenderPopupPanel;
 use Drift\Rendering\RenderSurface;
@@ -873,8 +873,8 @@ abstract class Application
         // ★ 预览期（拖动中的瞬时尺寸）：`Overflow::Report` 降级为裁剪 —— 用户把窗口
         //   拖窄时「内容暂时放不下」是**合法状态**，不能弹 Fatal 打断拖动；松手后
         //   主循环的正式帧照旧响亮失败（真溢出仍会被发现）。
-        $previousTolerant = RenderFlex::$previewTolerant;
-        RenderFlex::$previewTolerant = true;
+        $previousTolerant = LayoutTolerance::$previewing;
+        LayoutTolerance::$previewing = true;
         try {
             $this->placeMenu($constraints);
             $frame->run(
@@ -886,7 +886,7 @@ abstract class Application
                 $this->menuY,
             );
         } finally {
-            RenderFlex::$previewTolerant = $previousTolerant;
+            LayoutTolerance::$previewing = $previousTolerant;
         }
     }
 
