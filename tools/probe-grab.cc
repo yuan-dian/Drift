@@ -100,6 +100,8 @@ struct Options {
     bool click = false;            // --click=x,y（客户区坐标；down+up 一次完整点击）
     int clickX = 0;
     int clickY = 0;
+    bool mouseDrag = false;        // --mdrag=x1,y1,x2,y2（**客户区**坐标：按下-移动-抬起）
+    int mdragX1 = 0, mdragY1 = 0, mdragX2 = 0, mdragY2 = 0;
     bool dragResize = false;       // --drag=x1,y1,x2,y2（屏幕坐标；从左下角拖到新尺寸）
     int dragX1 = 0, dragY1 = 0, dragX2 = 0, dragY2 = 0;
     int dragSteps = 12;            // 拖动分几步发 WM_MOUSEMOVE（模拟真实拖动节奏）
@@ -548,6 +550,35 @@ int wmain(int argc, wchar_t** argv)
             options.clickY = parts[1];
         } else if (key == L"click-wait" && parseInt(value, number)) {
             options.clickWaitMs = static_cast<int>(number);
+        } else if (key == L"mdrag") {
+            // x1,y1,x2,y2 —— **客户区**坐标（滚动条拖动等客户区内拖拽用）
+            int parts[4] = {0, 0, 0, 0};
+            int index = 0;
+            size_t start = 0;
+            for (size_t i = 0; i <= value.size(); ++i) {
+                if (i == value.size() || value[i] == L',') {
+                    long long parsed = 0;
+                    if (!parseInt(value.substr(start, i - start), parsed)) {
+                        std::fprintf(stderr, "err=--mdrag wants x1,y1,x2,y2\n");
+                        return 2;
+                    }
+                    if (index >= 4) {
+                        std::fprintf(stderr, "err=--mdrag wants exactly 4 numbers\n");
+                        return 2;
+                    }
+                    parts[index++] = static_cast<int>(parsed);
+                    start = i + 1;
+                }
+            }
+            if (index != 4) {
+                std::fprintf(stderr, "err=--mdrag wants exactly 4 numbers\n");
+                return 2;
+            }
+            options.mouseDrag = true;
+            options.mdragX1 = parts[0];
+            options.mdragY1 = parts[1];
+            options.mdragX2 = parts[2];
+            options.mdragY2 = parts[3];
         } else if (key == L"drag") {
             // dx,dy —— 从窗口右下角起算的**放大量**（正=拖大、负=拖小）。
             // 走 WM_NCLBUTTONDOWN(HTBOTTOMRIGHT) + 若干 WM_MOUSEMOVE + WM_LBUTTONUP，
@@ -691,6 +722,23 @@ int wmain(int argc, wchar_t** argv)
         ::PostMessageW(hwnd, WM_LBUTTONUP, 0, lpPt);
         std::printf("click=%d,%d\n", options.clickX, options.clickY);
         ::Sleep(static_cast<DWORD>(options.clickWaitMs));
+    }
+    if (options.mouseDrag) {
+        // 客户区按下 → 分步移动 → 抬起（WM_* 的 lParam 是**客户区**坐标，无需换算）
+        ::PostMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON,
+                       MAKELPARAM(static_cast<WORD>(options.mdragX1), static_cast<WORD>(options.mdragY1)));
+        ::Sleep(60);
+        for (int s = 1; s <= 12; ++s) {
+            const int mx = options.mdragX1 + (options.mdragX2 - options.mdragX1) * s / 12;
+            const int my = options.mdragY1 + (options.mdragY2 - options.mdragY1) * s / 12;
+            ::PostMessageW(hwnd, WM_MOUSEMOVE, MK_LBUTTON,
+                           MAKELPARAM(static_cast<WORD>(mx), static_cast<WORD>(my)));
+            ::Sleep(30);
+        }
+        ::PostMessageW(hwnd, WM_LBUTTONUP, 0,
+                       MAKELPARAM(static_cast<WORD>(options.mdragX2), static_cast<WORD>(options.mdragY2)));
+        std::printf("mdrag=%d,%d,%d,%d\n", options.mdragX1, options.mdragY1, options.mdragX2, options.mdragY2);
+        ::Sleep(static_cast<DWORD>(options.wheelWaitMs));
     }
     if (options.wheel) {
         POINT pt{options.wheelX, options.wheelY};

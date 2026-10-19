@@ -179,7 +179,7 @@ final class RenderScrollView extends RenderProxyBox
         $canvas->restore();
         // ★ 滚动条画在**内容之上**（后画即在上）、裁剪区之内 ⇒ 内容滚到
         //   边角时被它盖住一角，与浏览器/Flutter 的 Scrollbar 同行为。
-        $this->paintScrollbar($canvas, $size);
+        $this->paintScrollbar($canvas);
         $canvas->popClip();
         $canvas->restore();
     }
@@ -195,26 +195,65 @@ final class RenderScrollView extends RenderProxyBox
      *   `appliedOffset() / max` 在 max=0 时是 0/0 ⇒ PHP 8 抛
      *   `DivisionByZeroError`（删掉它 smoke 当场 Fatal，见反例自检 ③）。
      */
-    private function paintScrollbar(Canvas $canvas, Size $size): void
+    private function paintScrollbar(Canvas $canvas): void
     {
-        $max = $this->maxScroll;
-        if ($max <= 0.0) {
+        $bar = $this->thumbRect();
+        if ($bar === null) {
             return;
+        }
+
+        $canvas->drawRect($bar, Paint::fill($this->thumb), self::BAR_THICKNESS * 0.5);
+    }
+
+    /**
+     * 滚动条 thumb 的矩形（**盒内**坐标；`null` = 内容不溢出 / 还没布局）。
+     *
+     * ★ 几何只算这一处：`paintScrollbar()` 用它画，`Application` 的滚动条拖动
+     *   用它命中 —— 两处各算一遍迟早会漂（条画在这里、抓在别处）。
+     */
+    public function thumbRect(): ?Rect
+    {
+        $size = $this->size;
+        if ($size === null || $this->maxScroll <= 0.0) {
+            return null;
         }
 
         $vertical = $this->vertical;
         $track = $vertical ? $size->height : $size->width;
         $cross = $vertical ? $size->width : $size->height;
 
-        $thumbLen = min($track, max(self::BAR_MIN_THUMB, $track * $track / ($track + $max)));
+        $thumbLen = min($track, max(self::BAR_MIN_THUMB, $track * $track / ($track + $this->maxScroll)));
         $travel = max(0.0, $track - 2.0 * self::BAR_MARGIN - $thumbLen);
-        $thumbPos = self::BAR_MARGIN + ($this->appliedOffset() / $max) * $travel;
+        $thumbPos = self::BAR_MARGIN + ($this->appliedOffset() / $this->maxScroll) * $travel;
 
-        $bar = $vertical
+        return $vertical
             ? new Rect($cross - self::BAR_THICKNESS - self::BAR_MARGIN, $thumbPos, self::BAR_THICKNESS, $thumbLen)
             : new Rect($thumbPos, $cross - self::BAR_THICKNESS - self::BAR_MARGIN, $thumbLen, self::BAR_THICKNESS);
+    }
 
-        $canvas->drawRect($bar, Paint::fill($this->thumb), self::BAR_THICKNESS * 0.5);
+    /**
+     * thumb 在轨道里**可走**的距离（拖动映射用：位移 × maxScroll / travel）。
+     *
+     * ★ 与 `thumbRect()` 分开是因为拖动只要这一个标量，拿整条矩形回来还得
+     *   再抠一遍长度；两处口子都从同一组常量推，不引入第二个"条长"定义。
+     */
+    public function thumbTravel(): float
+    {
+        $size = $this->size;
+        if ($size === null) {
+            return 0.0;
+        }
+
+        $track = $this->vertical ? $size->height : $size->width;
+        $thumbLen = min($track, max(self::BAR_MIN_THUMB, $track * $track / ($track + $this->maxScroll)));
+
+        return max(0.0, $track - 2.0 * self::BAR_MARGIN - $thumbLen);
+    }
+
+    /** 滚动主轴（拖动映射用：纵向看 y，横向看 x） */
+    public function isVertical(): bool
+    {
+        return $this->vertical;
     }
 
     /**

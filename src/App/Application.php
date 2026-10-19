@@ -23,6 +23,7 @@ use Drift\Layout\RenderBox;
 use Drift\Layout\LayoutTolerance;
 use Drift\Layout\RenderObject;
 use Drift\Layout\RenderPopupPanel;
+use Drift\Layout\RenderScrollView;
 use Drift\Rendering\RenderSurface;
 use Drift\Text\DeterministicFontManager;
 use Drift\Text\DeterministicMetricsProvider;
@@ -106,6 +107,16 @@ abstract class Application
      * ★ 拖动阈值 `DRAG_THRESHOLD_PX` 归 `GestureArena`（识别器自带，单一出处）。
      */
     protected ?GestureArena $gestureArena = null;
+
+    /**
+     * 滚动条 thumb 拖动状态（§12.3，2026-10-19）。
+     *
+     * `['state' => Scrollable, 'box' => RenderScrollView, 'last' => float]`。
+     * ★ 为什么单独一个状态而不是并进 `DragController`：thumb 不是控件（它是
+     *   paint 期画的），没有 Draggable 声明、不进手势竞技场 —— 混进去会让
+     *   "拖动的是控件"这条判据失真。
+     */
+    private ?array $thumbDrag = null;
 
     /**
      * 语义树消费闭包（§9 / M5 UIA，per-app opt-in，同 taskHost() 形态）。
@@ -1336,6 +1347,94 @@ abstract class Application
      *
      * @internal 由 dispatchInput() 的 ScrollEvent 分支调
      */
+    /**
+     * 命中滚动条 thumb（返回拖动状态；`null` = 没点中）。
+     *
+     * ★ 沿命中链找**最近**的可滚动视口，再问它的 `thumbRect()` —— 两个条件都满足
+     *   才算点中：视觉上 thumb 压在那个视口的右缘（横向在底缘），点在那里
+     *   用户的意思就是"拖这条"。
+     * ★ 容差 2px：条只有 6px 宽，像素级精确抓取对鼠标过于苛刻。
+     *
+     * @return null|array{state: Scrollable, box: RenderScrollView, last: float}
+     */
+    private function scrollThumbAt(float $x, float $y, Element $root, FocusManager $focus): ?array
+    {
+        $hit = $focus->hitTest($x, $y, $root);
+        $element = $hit === null ? null : $focus->elementAt($root, $hit);
+
+        for ($node = $element; $node !== null; $node = $node->parent()) {
+            if (!$node instanceof StatefulElement) {
+                continue;
+            }
+
+            $state = $node->state();
+            if (!$state instanceof Scrollable) {
+                continue;
+            }
+
+            $box = $node->findBox(static fn(RenderBox $b): bool => $b instanceof RenderScrollView);
+            if (!$box instanceof RenderScrollView) {
+                return null;
+            }
+
+            $bar = $box->thumbRect();
+            if ($bar === null) {
+                return null;   // 内容不溢出：没有条可拖
+            }
+
+            [$originX, $originY] = self::absoluteOrigin($box);
+            $left = $originX + $bar->left - 2.0;
+            $top = $originY + $bar->top - 2.0;
+
+            if ($x < $left || $x > $left + $bar->width + 4.0
+                || $y < $top || $y > $top + $bar->height + 4.0) {
+                return null;
+            }
+
+            return [
+                'state' => $state,
+                'box' => $box,
+                'last' => $box->isVertical() ? $y : $x,
+            ];
+        }
+
+        return null;
+    }
+
+    /**
+     * thumb 拖动的一步：位移 → 滚动量（主轴方向按视口取向取 x 或 y）。
+     *
+     * ★ 映射是"thumb 走多远、内容走多远"：`dy * maxScroll / thumbTravel`。
+     *   thumb 下移 ⇒ offset 增大（看到下面）—— 与 `scrollBy` 的正向语义一致，
+     *   所以**不需要额外取反**（滚轮那层已经在壳里翻译过了）。
+     */
+    private function dragScrollThumb(PointerEvent $event): void
+    {
+        $drag = $this->thumbDrag;
+        if ($drag === null) {
+            return;
+        }
+
+        /** @var Scrollable $state */
+        $state = $drag['state'];
+        /** @var RenderScrollView $box */
+        $box = $drag['box'];
+
+        $travel = $box->thumbTravel();
+        $max = $box->maxScroll();
+        if ($travel <= 0.0 || $max <= 0.0) {
+            return;
+        }
+
+        $now = $box->isVertical() ? $event->y : $event->x;
+        $delta = ($now - (float) $drag['last']) * $max / $travel;
+        if ($delta !== 0.0) {
+            $state->scrollBy($delta);
+        }
+
+        $this->thumbDrag['last'] = $now;
+    }
+
     private function scrollAt(?Element $element, float $delta): void
     {
         for ($node = $element; $node !== null; $node = $node->parent()) {
@@ -1455,6 +1554,31 @@ abstract class Application
             }
 
             return null;
+        }
+
+        // ── 滚动条 thumb 拖动（§12.3，2026-10-19）─────────────────────
+        // thumb 是 `paint()` 画的胶囊，**不是子盒** ⇒ 命中测试看不见它，
+        // 所以必须先于内容接管：down 落在 thumb 上就吃掉本次手势（不喂
+        // focusHit、不派发给内容），move 按位移映射成滚动量，up/leave 结束。
+        if ($this->thumbDrag !== null) {
+            if ($event->isMove()) {
+                $this->dragScrollThumb($event);
+
+                return null;
+            }
+
+            $this->thumbDrag = null;   // up / leave / 其它相位：本次拖动结束
+
+            return null;
+        }
+
+        if ($event->isDown() && $event->isPrimary()) {
+            $thumb = $this->scrollThumbAt($event->x, $event->y, $root, $focus);
+            if ($thumb !== null) {
+                $this->thumbDrag = $thumb;
+
+                return null;   // 吞掉：大拇指上的按下不算"点内容"
+            }
         }
 
         $hit = $focus->hitTest($event->x, $event->y, $root);   // ★ 只走一次树

@@ -6285,6 +6285,52 @@ check(
     'offsetY=' . ($scrollChildOf($scrollApp->scrollBox())?->offsetY() ?? -1.0),
 );
 
+// ── 滚动条拖动（§12.3，2026-10-19）：thumb 是绘制物，命中必须先于内容 ──
+//   判据两条：① 在 thumb 上按下并下拖 30px ⇒ 偏移按 maxScroll/thumbTravel 放大；
+//   ② 在内容区同向拖 ⇒ 偏移**不变**（内容区拖动不是拖条）。
+$barBox = $scrollApp->scrollBox();
+$barRect = $barBox?->thumbRect();
+$barOffsetBefore = $barBox?->appliedOffset() ?? -1.0;
+$barCx = ($barRect?->left ?? 0.0) + ($barRect?->width ?? 0.0) / 2.0;
+$barCy = ($barRect?->top ?? 0.0) + ($barRect?->height ?? 0.0) / 2.0;
+$barTravel = $barBox?->thumbTravel() ?? 0.0;
+$barMax = $barBox?->maxScroll() ?? 0.0;
+
+$scrollApp->dispatchInput(PointerEvent::down($barCx, $barCy));
+$scrollApp->dispatchInput(PointerEvent::move($barCx, $barCy + 30.0));
+$scrollApp->dispatchInput(PointerEvent::up($barCx, $barCy + 30.0));
+
+// ★ 必须跑一帧：`scrollBy()` 改的是 State 的 offset，`appliedOffset()` 读的是
+//   渲染盒的（布局期才从 state 同步）—— 真机上由帧循环自动完成，头侧要手动补。
+$scrollApp->frame(18.0, BoxConstraints::loose(new Size(300.0, 200.0)));
+
+$barExpected = $barOffsetBefore + ($barTravel > 0.0 ? 30.0 * $barMax / $barTravel : 0.0);
+$barNow = ($scrollApp->scrollBox())?->appliedOffset() ?? -1.0;
+check(
+    'Scroll · 拖滚动条：thumb 下拖 30px ⇒ 偏移按 maxScroll/thumbTravel 放大',
+    $barRect !== null && abs($barNow - $barExpected) < 0.51,
+    sprintf(
+        'rect=%s travel=%.1f max=%.1f before=%.1f now=%.1f expect=%.1f',
+        $barRect === null ? 'null' : sprintf('[%.1f,%.1f,%.1f,%.1f]', $barRect->left, $barRect->top, $barRect->width, $barRect->height),
+        $barTravel,
+        $barMax,
+        $barOffsetBefore,
+        $barNow,
+        $barExpected,
+    )
+);
+
+$bodyOffsetBefore = $barNow;
+$scrollApp->dispatchInput(PointerEvent::down(40.0, 40.0));
+$scrollApp->dispatchInput(PointerEvent::move(40.0, 70.0));
+$scrollApp->dispatchInput(PointerEvent::up(40.0, 70.0));
+$scrollApp->frame(18.5, BoxConstraints::loose(new Size(300.0, 200.0)));
+check(
+    'Scroll · 内容区拖动不是拖条（偏移不变）',
+    ($scrollApp->scrollBox())?->appliedOffset() === $bodyOffsetBefore,
+    'before=' . $bodyOffsetBefore . ' now=' . (($scrollApp->scrollBox())?->appliedOffset() ?? -1.0)
+);
+
 // ★ scrollBy 是**相对**滚动（Δ 累加）⇒ 夹取测试用远超当前偏移的量：
 //   从 60 起 +999999 ⇒ 夹在 maxScroll；再 -9999999 ⇒ 夹在 0。
 $scrollApp->dispatchInput(ScrollEvent::make(150.0, 100.0, 999999.0));
