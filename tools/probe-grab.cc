@@ -52,6 +52,7 @@
 
 #include <windows.h>
 #include <tlhelp32.h>
+#include <wincodec.h>
 
 #include <cstdio>
 #include <cstdlib>
@@ -62,6 +63,7 @@
 
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
+#pragma comment(lib, "windowscodecs.lib")
 
 namespace {
 
@@ -90,6 +92,18 @@ struct Options {
     bool printRect = false;   // 打印外框（物理像素）
     bool noGrab = false;      // 只做控制 + 打印，不碰像素
     bool autoResolve = false; // `--pid` 缺省时按 `--image` 找（取**最老**的那个进程）
+    // ── 输入注入 + 存图（2026-10-19 滚轮方向判定用）──
+    bool wheel = false;            // --wheel=x,y,delta（客户区坐标 + WHEEL_DELTA 倍数）
+    int wheelX = 0;
+    int wheelY = 0;
+    int wheelDelta = 0;
+    bool click = false;            // --click=x,y（客户区坐标；down+up 一次完整点击）
+    int clickX = 0;
+    int clickY = 0;
+    int clickWaitMs = 600;         // 点完等多久（让应用处理点击）
+    int wheelWaitMs = 600;         // 发完滚轮等多久再抓（让帧循环产出新帧）
+    bool savePng = false;          // --png=path（WIC 编码，供 Read 直接看）
+    std::wstring pngPath;
 };
 
 struct Shot {
@@ -346,6 +360,55 @@ std::vector<DWORD> resolveAllImages(const std::wstring& image)
     return pids;
 }
 
+/** 把 Shot（BGRA 自顶向下）编码成 PNG（WIC）。失败返回 false。 */
+bool savePng(const Shot& shot, const std::wstring& path)
+{
+    // STA 初始化失败（RPC_E_CHANGED_MODE）也继续：WIC 工厂两种模式都能建。
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+
+    IWICImagingFactory* factory = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                  IID_PPV_ARGS(&factory));
+    if (FAILED(hr) || factory == nullptr) {
+        return false;
+    }
+
+    IWICStream* stream = nullptr;
+    IWICBitmapEncoder* encoder = nullptr;
+    IWICBitmapFrameEncode* frame = nullptr;
+    IPropertyBag2* props = nullptr;
+    bool ok = false;
+
+    do {
+        if (FAILED(factory->CreateStream(&stream))) break; }
+        hr = stream->InitializeFromFilename(path.c_str(), GENERIC_WRITE);
+        if (FAILED(hr)) break; }
+        if (FAILED(factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder))) break; }
+        if (FAILED(encoder->Initialize(stream, WICBitmapEncoderNoCache))) { std::fprintf(stderr, "dbg: enc Init 0x%08lx\n", hr); break; }
+        if (FAILED(encoder->CreateNewFrame(&frame, &props))) break; }
+        if (FAILED(frame->Initialize(props))) { std::fprintf(stderr, "dbg: frame Init 0x%08lx\n", hr); break; }
+        if (FAILED(frame->SetSize(static_cast<UINT>(shot.width), static_cast<UINT>(shot.height)))) break; }
+        // BGRA（内存布局）⇒ GUID_WICPixelFormat32bppBGRA，与像素序一致，无需转换
+        WICPixelFormatGUID srcFmt = GUID_WICPixelFormat32bppBGRA;
+        hr = frame->SetPixelFormat(&srcFmt);
+        if (FAILED(hr)) break; }
+        if (FAILED(frame->WritePixels(static_cast<UINT>(shot.height),
+                                      static_cast<UINT>(shot.width) * 4,
+                                      static_cast<UINT>(shot.pixels.size()),
+                                      const_cast<BYTE*>(shot.pixels.data())))) break; }
+        if (FAILED(frame->Commit())) { std::fprintf(stderr, "dbg: frame Commit 0x%08lx\n", hr); break; }
+        if (FAILED(encoder->Commit())) { std::fprintf(stderr, "dbg: enc Commit 0x%08lx\n", hr); break; }
+        ok = true;
+    } while (false);
+
+    if (props != nullptr) props->Release();
+    if (frame != nullptr) frame->Release();
+    if (encoder != nullptr) encoder->Release();
+    if (stream != nullptr) stream->Release();
+    factory->Release();
+    return ok;
+}
+
 }   // namespace
 
 int wmain(int argc, wchar_t** argv)
@@ -422,6 +485,67 @@ int wmain(int argc, wchar_t** argv)
             options.noGrab = value != L"0";
         } else if (key == L"auto") {
             options.autoResolve = value != L"0";
+        } else if (key == L"wheel") {
+            int parts[3] = {0, 0, 0};
+            int index = 0;
+            size_t start = 0;
+            for (size_t i = 0; i <= value.size(); ++i) {
+                if (i == value.size() || value[i] == L',') {
+                    long long parsed = 0;
+                    if (!parseInt(value.substr(start, i - start), parsed)) {
+                        std::fprintf(stderr, "err=--wheel wants x,y,delta\n");
+                        return 2;
+                    }
+                    if (index >= 3) {
+                        std::fprintf(stderr, "err=--wheel wants exactly 3 numbers\n");
+                        return 2;
+                    }
+                    parts[index++] = static_cast<int>(parsed);
+                    start = i + 1;
+                }
+            }
+            if (index != 3) {
+                std::fprintf(stderr, "err=--wheel wants exactly 3 numbers\n");
+                return 2;
+            }
+            options.wheel = true;
+            options.wheelX = parts[0];
+            options.wheelY = parts[1];
+            options.wheelDelta = parts[2];
+        } else if (key == L"wheel-wait" && parseInt(value, number)) {
+            options.wheelWaitMs = static_cast<int>(number);
+        } else if (key == L"click") {
+            // x,y —— 客户区坐标；down+up 一次完整点击（导航切换用）
+            int parts[2] = {0, 0};
+            int index = 0;
+            size_t start = 0;
+            for (size_t i = 0; i <= value.size(); ++i) {
+                if (i == value.size() || value[i] == L',') {
+                    long long parsed = 0;
+                    if (!parseInt(value.substr(start, i - start), parsed)) {
+                        std::fprintf(stderr, "err=--click wants x,y\n");
+                        return 2;
+                    }
+                    if (index >= 2) {
+                        std::fprintf(stderr, "err=--click wants exactly 2 numbers\n");
+                        return 2;
+                    }
+                    parts[index++] = static_cast<int>(parsed);
+                    start = i + 1;
+                }
+            }
+            if (index != 2) {
+                std::fprintf(stderr, "err=--click wants exactly 2 numbers\n");
+                return 2;
+            }
+            options.click = true;
+            options.clickX = parts[0];
+            options.clickY = parts[1];
+        } else if (key == L"click-wait" && parseInt(value, number)) {
+            options.clickWaitMs = static_cast<int>(number);
+        } else if (key == L"png") {
+            options.savePng = true;
+            options.pngPath = value;
         }
     }
 
@@ -483,6 +607,26 @@ int wmain(int argc, wchar_t** argv)
         ::Sleep(static_cast<DWORD>(options.settleMs));
     }
 
+    // ── 输入注入（点击 / 滚轮）────────────────────────────────
+    if (options.click) {
+        POINT pt{options.clickX, options.clickY};
+        ::ClientToScreen(hwnd, &pt);
+        LPARAM lpPt = MAKELPARAM(static_cast<WORD>(pt.x), static_cast<WORD>(pt.y));
+        ::PostMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, lpPt);
+        ::PostMessageW(hwnd, WM_LBUTTONUP, 0, lpPt);
+        std::printf("click=%d,%d\n", options.clickX, options.clickY);
+        ::Sleep(static_cast<DWORD>(options.clickWaitMs));
+    }
+    if (options.wheel) {
+        POINT pt{options.wheelX, options.wheelY};
+        ::ClientToScreen(hwnd, &pt);
+        WPARAM wheelWp = MAKEWPARAM(0, static_cast<WORD>(options.wheelDelta));
+        LPARAM wheelLp = MAKELPARAM(static_cast<WORD>(pt.x), static_cast<WORD>(pt.y));
+        ::PostMessageW(hwnd, WM_MOUSEWHEEL, wheelWp, wheelLp);
+        std::printf("wheel=%d,%d,%d\n", options.wheelX, options.wheelY, options.wheelDelta);
+        ::Sleep(static_cast<DWORD>(options.wheelWaitMs));
+    }
+
     // ── 窗口控制（M5，§5.4 验证用）────────────────────────────
     // 顺序固定：最大化先、搬位置后 —— 反过来"先把最大化窗口搬走"会被 Windows 忽略。
     if (options.zoom == 1) {
@@ -527,6 +671,14 @@ int wmain(int argc, wchar_t** argv)
 
     std::printf("client=%dx%d\n", shot.width, shot.height);
     std::printf("ink_all_pct=%.1f\n", inkPct(shot, 0, 0));
+
+    if (options.savePng) {
+        if (savePng(shot, options.pngPath)) {
+            std::printf("png=%ls\n", options.pngPath.c_str());
+        } else {
+            std::fprintf(stderr, "err=png encode failed\n");
+        }
+    }
 
     if (options.samples <= 0) {
         std::printf("s0=%.1f\n", inkPct(shot, options.y0, options.y1));
