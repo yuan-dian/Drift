@@ -38,14 +38,15 @@ final class SemanticsBuilder
 
     /**
      * @param ?Element $root Element 树根（`Application::root()` 的那棵；null ⇒ 空树）
+     * @param ?Element $focused 焦点元素（`FocusManager::focused()`；null ⇒ 无节点持焦点）
      */
-    public static function build(?Element $root): SemanticsTree
+    public static function build(?Element $root, ?Element $focused = null): SemanticsTree
     {
         $tree = new SemanticsTree();
         if ($root === null) {
             return $tree;
         }
-        self::descend($root, $tree, -1, 0);
+        self::descend($root, $tree, -1, 0, $focused);
 
         return $tree;
     }
@@ -56,7 +57,7 @@ final class SemanticsBuilder
      * ★ 用 `childCount()/childAt()` 而**不是闭包 visitChildren** —— 递归里递闭包
      *   在 AOT 下多一层不可见的调用，能用索引循环就别递函数。
      */
-    private static function descend(Element $el, SemanticsTree $tree, int $parentIdx, int $depth): void
+    private static function descend(Element $el, SemanticsTree $tree, int $parentIdx, int $depth, ?Element $focused): void
     {
         $role = $el->widget()->semanticsRole();
         $cur = $parentIdx;
@@ -71,6 +72,7 @@ final class SemanticsBuilder
             $n->name = $w->semanticsName();
             $n->value = $w->semanticsValue();
             $n->enabled = $w->semanticsEnabled();
+            $n->focused = $focused !== null && $el === $focused;
             $n->parent = $parentIdx;
             $n->depth = $depth;
 
@@ -91,7 +93,7 @@ final class SemanticsBuilder
         for ($i = 0; $i < $count; $i++) {
             $kid = $el->childAt($i);
             if ($kid !== null) {
-                self::descend($kid, $tree, $cur, $nextDepth);
+                self::descend($kid, $tree, $cur, $nextDepth, $focused);
             }
         }
     }

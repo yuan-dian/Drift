@@ -44,6 +44,9 @@ final class SemanticsNode
     public int $w = 0;
     public int $h = 0;
 
+    /** 是否持有焦点（FocusManager::focused() 命中本节点）；UIA focus changed 的判据 */
+    public bool $focused = false;
+
     /** 父节点索引，-1 = 树根 */
     public int $parent = -1;
 

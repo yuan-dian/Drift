@@ -161,6 +161,7 @@ final class SemanticsTree
                 'name' => $n->name,
                 'value' => $n->value,
                 'enabled' => $n->enabled,
+                'focused' => $n->focused,
                 'x' => $n->x,
                 'y' => $n->y,
                 'w' => $n->w,

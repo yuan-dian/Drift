@@ -902,7 +902,7 @@ abstract class Application
         if ($sink === null) {
             return;
         }
-        $tree = SemanticsBuilder::build($this->root);
+        $tree = SemanticsBuilder::build($this->root, $this->focus?->focused());
         ($sink)($tree->toArrays()['nodes']);
     }
 

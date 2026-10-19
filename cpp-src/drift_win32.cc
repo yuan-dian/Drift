@@ -161,6 +161,7 @@ struct UiaNode {
     std::wstring name;
     long controlType = UIA_CustomControlTypeId;
     int parent = -1;   // 父节点索引（g_uiaNodes），-1 = 顶层（父是窗口根）
+    bool focused = false;
     double x = 0.0;
     double y = 0.0;
     double w = 0.0;
@@ -168,6 +169,7 @@ struct UiaNode {
     bool isControl = true;
 };
 static std::vector<UiaNode> g_uiaNodes;
+static int g_lastFocusIdx = -2;   // 上次 push 时的焦点节点索引（-2 = 未初始化）
 
 // Drift 语义角色（SemanticsRole::value，string backed）⇒ UIA ControlTypeId。
 // Windows 编号知识集中在这一处（§5.1 纪律 1：PHP 侧不持平台常量）。
@@ -296,12 +298,26 @@ public:
         return frag;
     }
 
+    // 造一个"能当 IRawElementProviderSimple"的 provider（focus changed raise 用：
+    // 通知里带的是焦点元素本身）。引用契约同 makeFragment。
+    static IRawElementProviderSimple *makeFragmentSimple(int idx) {
+        CProvider *p = new CProvider(idx);
+        IRawElementProviderSimple *simple = nullptr;
+        p->QueryInterface(__uuidof(IRawElementProviderSimple), (void **)&simple);
+        p->Release();
+        return simple;
+    }
+
     // IRawElementProviderFragmentRoot（本 SDK 只剩这两个纯虚）
     STDMETHOD(ElementProviderFromPoint)(double, double, IRawElementProviderFragment **ret) override {
         *ret = makeFragment(-1);
         return S_OK;
     }
     STDMETHOD(GetFocus)(IRawElementProviderFragment **ret) override {
+        // 返回真实焦点节点（§9 / M5，B）；无焦点 ⇒ 窗口根（-1）。
+        for (size_t k = 0; k < g_uiaNodes.size(); k++) {
+            if (g_uiaNodes[k].focused) { *ret = makeFragment((int)k); return S_OK; }
+        }
         *ret = makeFragment(-1);
         return S_OK;
     }
@@ -1579,6 +1595,7 @@ void php_drift_win_uia_push(Array nodes) {
         node.w = a.get("w").toFloat();
         node.h = a.get("h").toFloat();
         node.isControl = true;
+        node.focused = a.get("focused").toBool();
         g_uiaNodes.push_back(node);
     }
 
@@ -1592,6 +1609,23 @@ void php_drift_win_uia_push(Array nodes) {
             if (SUCCEEDED(g_uiaProvider->QueryInterface(__uuidof(IRawElementProviderSimple), (void **)&simple)) && simple != nullptr) {
                 UiaRaiseStructureChangedEvent(simple, StructureChangeType_ChildrenInvalidated, nullptr, 0);
                 simple->Release();
+            }
+        }
+    }
+
+    // 焦点变化事件（§9 / M5，B）：焦点节点索引变了 ⇒ raise。provider 取焦点节点本身
+    // （客户端回调里一般会 GetFocusedElement()，这里只负责通知"焦点动过了"）。
+    int focusIdx = -1;
+    for (size_t k = 0; k < g_uiaNodes.size(); k++) {
+        if (g_uiaNodes[k].focused) { focusIdx = (int)k; break; }
+    }
+    if (focusIdx != g_lastFocusIdx) {
+        g_lastFocusIdx = focusIdx;
+        if (focusIdx >= 0 && g_uiaProvider != nullptr) {
+            IRawElementProviderSimple *fsimple = CProvider::makeFragmentSimple(focusIdx);
+            if (fsimple != nullptr) {
+                UiaRaiseAutomationEvent(fsimple, UIA_AutomationFocusChangedEventId);
+                fsimple->Release();
             }
         }
     }
