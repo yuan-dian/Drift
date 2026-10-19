@@ -160,6 +160,11 @@ int g_frameH = 0;
 struct UiaNode {
     std::wstring name;
     long controlType = UIA_CustomControlTypeId;
+    int parent = -1;   // 父节点索引（g_uiaNodes），-1 = 顶层（父是窗口根）
+    double x = 0.0;
+    double y = 0.0;
+    double w = 0.0;
+    double h = 0.0;
     bool isControl = true;
 };
 static std::vector<UiaNode> g_uiaNodes;
@@ -174,18 +179,101 @@ static long uiaControlTypeFor(const std::string &role) {
     return UIA_CustomControlTypeId;
 }
 
-// ★ 本 SDK（10.0.26100）UIA 接口扁平化：Fragment/FragmentRoot 直接继承 IUnknown，
-//   Simple 吸收 get_HostRawElementProvider ⇒ provider 实现单 IRawElementProviderSimple
-//   即可让 ElementFromHandle 读到根属性（多接口需 adapter，归 P3）。
-class UiaProvider : public IRawElementProviderSimple {
-public:
-    UiaProvider() : m_ref(1) {}
+// ── parent 关系走树 helper（g_uiaNodes 前序扁平，parent 指父索引，-1 = 窗口根）──
+static int uiaFirstChild(int idx) {
+    for (size_t k = 0; k < g_uiaNodes.size(); k++) {
+        if (g_uiaNodes[k].parent == idx) return (int)k;
+    }
+    return -1;
+}
+static int uiaNextSibling(int idx) {
+    if (idx < 0 || idx >= (int)g_uiaNodes.size()) return -1;
+    int p = g_uiaNodes[idx].parent;
+    for (size_t k = (size_t)idx + 1; k < g_uiaNodes.size(); k++) {
+        if (g_uiaNodes[k].parent == p) return (int)k;
+    }
+    return -1;
+}
+static int uiaPrevSibling(int idx) {
+    if (idx < 0 || idx >= (int)g_uiaNodes.size()) return -1;
+    int p = g_uiaNodes[idx].parent;
+    for (int k = idx - 1; k >= 0; k--) {
+        if (g_uiaNodes[k].parent == p) return k;
+    }
+    return -1;
+}
+static int uiaLastChild(int idx) {
+    int last = -1;
+    for (size_t k = 0; k < g_uiaNodes.size(); k++) {
+        if (g_uiaNodes[k].parent == idx) last = (int)k;
+    }
+    return last;
+}
 
+// ★ 本 SDK（10.0.26100）UIA 接口扁平化：Fragment / FragmentRoot 都直接继承 IUnknown，
+//   Simple 吸收 get_HostRawElementProvider，ShowContextMenu 已移除 ⇒ 多接口继承会
+//   IUnknown 歧义。故主类只继承 IRawElementProviderFragmentRoot，Simple / Fragment 经
+//   内嵌 adapter（QI 分派；adapter 的 IUnknown 委托主对象）。每 provider 持一个
+//   g_uiaNodes 索引（-1 = 窗口根），Navigate 按 parent 走树（§9 / M5，P3）。
+class CProvider;
+
+class SimpleAdapter : public IRawElementProviderSimple {
+public:
+    explicit SimpleAdapter(CProvider *host) : m_ref(1), m_host(host) {}
+    STDMETHOD(QueryInterface)(REFIID riid, void **ppv) override;
+    STDMETHOD_(ULONG, AddRef)() override;
+    STDMETHOD_(ULONG, Release)() override;
+    STDMETHOD(get_ProviderOptions)(ProviderOptions *p) override;
+    STDMETHOD(GetPatternProvider)(PATTERNID id, IUnknown **ppv) override;
+    STDMETHOD(GetPropertyValue)(PROPERTYID id, VARIANT *out) override;
+    STDMETHOD(get_HostRawElementProvider)(IRawElementProviderSimple **r) override;
+private:
+    ULONG m_ref;
+    CProvider *m_host;
+};
+
+class FragmentAdapter : public IRawElementProviderFragment {
+public:
+    explicit FragmentAdapter(CProvider *host) : m_ref(1), m_host(host) {}
+    STDMETHOD(QueryInterface)(REFIID riid, void **ppv) override;
+    STDMETHOD_(ULONG, AddRef)() override;
+    STDMETHOD_(ULONG, Release)() override;
+    STDMETHOD(Navigate)(NavigateDirection dir, IRawElementProviderFragment **ret) override;
+    STDMETHOD(SetFocus)() override;
+    STDMETHOD(GetRuntimeId)(SAFEARRAY **ret) override;
+    STDMETHOD(GetEmbeddedFragmentRoots)(SAFEARRAY **ret) override;
+    STDMETHOD(get_BoundingRectangle)(UiaRect *rect) override;
+    STDMETHOD(get_FragmentRoot)(IRawElementProviderFragmentRoot **ret) override;
+private:
+    ULONG m_ref;
+    CProvider *m_host;
+};
+
+class CProvider : public IRawElementProviderFragmentRoot {
+public:
+    explicit CProvider(int index)
+        : m_ref(1), m_index(index), m_simple(new SimpleAdapter(this)), m_frag(new FragmentAdapter(this)) {}
+    ~CProvider() {
+        delete m_simple;
+        delete m_frag;
+    }
+
+    // IUnknown（主对象）
     STDMETHOD(QueryInterface)(REFIID riid, void **ppv) override {
         if (ppv == nullptr) return E_INVALIDARG;
-        if (riid == __uuidof(IUnknown) || riid == __uuidof(IRawElementProviderSimple)) {
-            *ppv = static_cast<IRawElementProviderSimple *>(this);
+        if (riid == __uuidof(IUnknown) || riid == __uuidof(IRawElementProviderFragmentRoot)) {
+            *ppv = static_cast<IRawElementProviderFragmentRoot *>(this);
             AddRef();
+            return S_OK;
+        }
+        if (riid == __uuidof(IRawElementProviderSimple)) {
+            *ppv = m_simple;
+            m_simple->AddRef();
+            return S_OK;
+        }
+        if (riid == __uuidof(IRawElementProviderFragment)) {
+            *ppv = m_frag;
+            m_frag->AddRef();
             return S_OK;
         }
         *ppv = nullptr;
@@ -197,19 +285,46 @@ public:
         if (r == 0) delete this;
         return r;
     }
-    STDMETHOD(get_ProviderOptions)(ProviderOptions *pRet) override {
-        *pRet = ProviderOptions_ServerSideProvider;
+
+    // 造一个"能当 IRawElementProviderFragment"的子 provider（QI 取其 Fragment adapter，
+    // 归还 new 的引用 ⇒ 返回指针持 host ref=1，客户端 Release 时 delete，引用平衡）。
+    static IRawElementProviderFragment *makeFragment(int idx) {
+        CProvider *p = new CProvider(idx);
+        IRawElementProviderFragment *frag = nullptr;
+        p->QueryInterface(__uuidof(IRawElementProviderFragment), (void **)&frag);
+        p->Release();
+        return frag;
+    }
+
+    // IRawElementProviderFragmentRoot（本 SDK 只剩这两个纯虚）
+    STDMETHOD(ElementProviderFromPoint)(double, double, IRawElementProviderFragment **ret) override {
+        *ret = makeFragment(-1);
         return S_OK;
     }
-    STDMETHOD(GetPatternProvider)(PATTERNID, IUnknown **ppv) override {
+    STDMETHOD(GetFocus)(IRawElementProviderFragment **ret) override {
+        *ret = makeFragment(-1);
+        return S_OK;
+    }
+
+    // ── Simple 逻辑（SimpleAdapter 转发；按 m_index 读 Name / ControlType）──
+    HRESULT simpleOptions(ProviderOptions *p) {
+        *p = ProviderOptions_ServerSideProvider;
+        return S_OK;
+    }
+    HRESULT simplePattern(PATTERNID, IUnknown **ppv) {
         *ppv = nullptr;
         return S_OK;
     }
-    STDMETHOD(GetPropertyValue)(PROPERTYID id, VARIANT *out) override {
+    HRESULT simpleProperty(PROPERTYID id, VARIANT *out) {
         VariantInit(out);
-        // P2：暴露"数组首节点"（SemanticsTree 前序第一个有角色控件）作根属性。
-        const std::wstring name = g_uiaNodes.empty() ? L"Drift" : g_uiaNodes[0].name;
-        long ctrl = g_uiaNodes.empty() ? UIA_WindowControlTypeId : g_uiaNodes[0].controlType;
+        std::wstring name = L"Drift";
+        long ctrl = UIA_CustomControlTypeId;
+        if (m_index == -1) {
+            ctrl = UIA_WindowControlTypeId;
+        } else if (m_index >= 0 && m_index < (int)g_uiaNodes.size()) {
+            name = g_uiaNodes[m_index].name;
+            ctrl = g_uiaNodes[m_index].controlType;
+        }
         if (id == UIA_NamePropertyId) {
             out->vt = VT_BSTR;
             out->bstrVal = SysAllocString(name.c_str());
@@ -222,15 +337,115 @@ public:
         }
         return S_OK;
     }
-    STDMETHOD(get_HostRawElementProvider)(IRawElementProviderSimple **ret) override {
+    HRESULT simpleHost(IRawElementProviderSimple **r) {
+        *r = nullptr;
+        return S_OK;
+    }
+
+    // ── Fragment 逻辑（FragmentAdapter 转发；按 parent 走树）──
+    HRESULT fragNavigate(NavigateDirection dir, IRawElementProviderFragment **ret) {
         *ret = nullptr;
+        if (m_index == -1) {
+            if (dir == NavigateDirection_FirstChild) {
+                int c = uiaFirstChild(-1);
+                if (c >= 0) *ret = makeFragment(c);
+            }
+            return S_OK;
+        }
+        int target = -1;
+        bool valid = false;
+        switch (dir) {
+            case NavigateDirection_Parent:
+                target = g_uiaNodes[m_index].parent;   // -1 = 窗口根（合法）
+                valid = true;
+                break;
+            case NavigateDirection_FirstChild:
+                target = uiaFirstChild(m_index);
+                valid = target >= 0;
+                break;
+            case NavigateDirection_LastChild:
+                target = uiaLastChild(m_index);
+                valid = target >= 0;
+                break;
+            case NavigateDirection_NextSibling:
+                target = uiaNextSibling(m_index);
+                valid = target >= 0;
+                break;
+            case NavigateDirection_PreviousSibling:
+                target = uiaPrevSibling(m_index);
+                valid = target >= 0;
+                break;
+            default:
+                break;
+        }
+        if (valid) *ret = makeFragment(target);
+        return S_OK;
+    }
+    HRESULT fragSetFocus() { return S_OK; }
+    HRESULT fragRuntimeId(SAFEARRAY **ret) {
+        int id = m_index;
+        *ret = SafeArrayCreateVector(VT_I4, 0, 1);
+        LONG idx = 0;
+        SafeArrayPutElement(*ret, &idx, &id);
+        return S_OK;
+    }
+    HRESULT fragEmbedded(SAFEARRAY **ret) {
+        *ret = nullptr;
+        return S_OK;
+    }
+    HRESULT fragBoundingRect(UiaRect *rect) {
+        if (m_index >= 0 && m_index < (int)g_uiaNodes.size()) {
+            // 几何是逻辑/客户区，UIA 要屏幕物理 —— 位置近似（尺寸对、原点未加客户区偏移）。
+            rect->left = g_uiaNodes[m_index].x;
+            rect->top = g_uiaNodes[m_index].y;
+            rect->width = g_uiaNodes[m_index].w;
+            rect->height = g_uiaNodes[m_index].h;
+        } else {
+            rect->left = rect->top = rect->width = rect->height = 0.0;
+        }
+        return S_OK;
+    }
+    HRESULT fragFragmentRoot(IRawElementProviderFragmentRoot **ret) {
+        *ret = new CProvider(-1);   // CProvider* → FragmentRoot*（upcast，直接基类）
         return S_OK;
     }
 
 private:
     ULONG m_ref;
+    int m_index;
+    SimpleAdapter *m_simple;
+    FragmentAdapter *m_frag;
 };
-static UiaProvider *g_uiaProvider = nullptr;
+
+// ── adapter 方法定义（CProvider 之后，故可调其 public simple*/frag*）──
+STDMETHODIMP SimpleAdapter::QueryInterface(REFIID riid, void **ppv) {
+    if (ppv == nullptr) return E_INVALIDARG;
+    if (riid == __uuidof(IUnknown)) { *ppv = m_host; m_host->AddRef(); return S_OK; }
+    if (riid == __uuidof(IRawElementProviderSimple)) { *ppv = this; AddRef(); return S_OK; }
+    return m_host->QueryInterface(riid, ppv);
+}
+STDMETHODIMP_(ULONG) SimpleAdapter::AddRef() { return m_host->AddRef(); }
+STDMETHODIMP_(ULONG) SimpleAdapter::Release() { return m_host->Release(); }
+STDMETHODIMP SimpleAdapter::get_ProviderOptions(ProviderOptions *p) { return m_host->simpleOptions(p); }
+STDMETHODIMP SimpleAdapter::GetPatternProvider(PATTERNID id, IUnknown **ppv) { return m_host->simplePattern(id, ppv); }
+STDMETHODIMP SimpleAdapter::GetPropertyValue(PROPERTYID id, VARIANT *out) { return m_host->simpleProperty(id, out); }
+STDMETHODIMP SimpleAdapter::get_HostRawElementProvider(IRawElementProviderSimple **r) { return m_host->simpleHost(r); }
+
+STDMETHODIMP FragmentAdapter::QueryInterface(REFIID riid, void **ppv) {
+    if (ppv == nullptr) return E_INVALIDARG;
+    if (riid == __uuidof(IUnknown)) { *ppv = m_host; m_host->AddRef(); return S_OK; }
+    if (riid == __uuidof(IRawElementProviderFragment)) { *ppv = this; AddRef(); return S_OK; }
+    return m_host->QueryInterface(riid, ppv);
+}
+STDMETHODIMP_(ULONG) FragmentAdapter::AddRef() { return m_host->AddRef(); }
+STDMETHODIMP_(ULONG) FragmentAdapter::Release() { return m_host->Release(); }
+STDMETHODIMP FragmentAdapter::Navigate(NavigateDirection dir, IRawElementProviderFragment **ret) { return m_host->fragNavigate(dir, ret); }
+STDMETHODIMP FragmentAdapter::SetFocus() { return m_host->fragSetFocus(); }
+STDMETHODIMP FragmentAdapter::GetRuntimeId(SAFEARRAY **ret) { return m_host->fragRuntimeId(ret); }
+STDMETHODIMP FragmentAdapter::GetEmbeddedFragmentRoots(SAFEARRAY **ret) { return m_host->fragEmbedded(ret); }
+STDMETHODIMP FragmentAdapter::get_BoundingRectangle(UiaRect *rect) { return m_host->fragBoundingRect(rect); }
+STDMETHODIMP FragmentAdapter::get_FragmentRoot(IRawElementProviderFragmentRoot **ret) { return m_host->fragFragmentRoot(ret); }
+static CProvider *g_uiaProvider = nullptr;
 
 // 当前指针形状。★ **必须缓存**：`WM_SETCURSOR` 每次鼠标移动都会来一次，而那一刻
 // PHP 侧可能正阻塞在 `GetMessageW` 里（问不到框架）⇒ 只能重贴**上一次**的决定。
@@ -415,9 +630,12 @@ void presentTo(HDC dc) {
 LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_GETOBJECT:
-            // UIA 无障碍（§9 / M5，P2）：UIA 客户端问窗口 provider ⇒ 交出。
+            // UIA 无障碍（§9 / M5）：UIA 客户端问窗口 provider ⇒ QI 出 Simple 交出。
             if (lp == (LPARAM)UiaRootObjectId && g_uiaProvider != nullptr) {
-                return UiaReturnRawElementProvider(hwnd, wp, lp, g_uiaProvider);
+                IRawElementProviderSimple *simple = nullptr;
+                if (SUCCEEDED(g_uiaProvider->QueryInterface(__uuidof(IRawElementProviderSimple), (void **)&simple))) {
+                    return UiaReturnRawElementProvider(hwnd, wp, lp, simple);
+                }
             }
             break;
         case WM_CLOSE:
@@ -968,7 +1186,7 @@ Int php_drift_win_create(String title, Int width, Int height) {
     }
 
     // UIA 无障碍（§9 / M5，P2）：建窗即挂 provider（数据由 php_drift_win_uia_push 喂）。
-    g_uiaProvider = new UiaProvider();
+    g_uiaProvider = new CProvider(-1);   // 根 provider（m_index=-1 = 窗口根）
 
     return (Int)(INT_PTR)hwnd;
 }
@@ -1354,6 +1572,11 @@ void php_drift_win_uia_push(Array nodes) {
         std::string role(a.get("role").toCString());
         node.name = toWide(String(name));
         node.controlType = uiaControlTypeFor(role);
+        node.parent = (int)a.get("parent").toInt();
+        node.x = a.get("x").toFloat();
+        node.y = a.get("y").toFloat();
+        node.w = a.get("w").toFloat();
+        node.h = a.get("h").toFloat();
         node.isControl = true;
         g_uiaNodes.push_back(node);
     }
