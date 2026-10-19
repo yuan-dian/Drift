@@ -9,6 +9,7 @@ use Drift\Dev\Lint\Rules\DeadCommand;
 use Drift\Dev\Lint\Rules\DeadSubscription;
 use Drift\Dev\Lint\Rules\DependencyDirection;
 use Drift\Dev\Lint\Rules\InternalLeak;
+use Drift\Dev\Lint\Rules\InstanceofMissingUse;
 use Drift\Dev\Lint\Rules\NamespaceMismatch;
 use Drift\Dev\Lint\Rules\NestedSubscribe;
 use Drift\Dev\Lint\Rules\NanoHygiene;
@@ -48,6 +49,8 @@ final class Linter
             new SubscriberMark(),
             new StrConcatLoop(),
             new NestedSubscribe(),
+            // instanceof 漏 use（2026-10-19：静默恒 false 缺陷模式，本仓咬过 ≥3 次）
+            new InstanceofMissingUse(),
         ]);
     }
 
