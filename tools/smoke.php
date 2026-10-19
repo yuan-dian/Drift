@@ -2996,6 +2996,30 @@ check(
     '(' . implode(', ', $imeApp->imeCaretRect() ?? []) . ')'
 );
 
+// ── 拖动 resize 轻量入口（§5.2）：只重排+重绘，不碰任务/动画/语义 ──────
+//   平台壳在**模态尺寸循环内同步调回**它（C → PHP 重入）⇒ 能碰的状态越少越安全。
+//   头侧可断言的部分：新约束真的生效（根盒宽）、只跑一帧、时间戳复用上一帧。
+$resizeApp = new TfApplication();
+$resizeSurface = new SurfaceProbe();
+$resizeApp->attach($resizeSurface, BoxConstraints::loose(new Size(300.0, 200.0)));
+$resizeApp->frame(16.0, BoxConstraints::loose(new Size(300.0, 200.0)));
+$resizeFramesBefore = $resizeSurface->frames;
+$resizeTsBefore = $resizeSurface->lastTimestamp;
+$resizeApp->repaintForResize(BoxConstraints::tight(new Size(420.0, 260.0)));
+check(
+    'Resize · repaintForResize 按新约束重排（根盒宽 = 420，不是旧的 300）',
+    ($resizeApp->root()?->effectiveBox()?->size()?->width ?? -1.0) === 420.0,
+    'rootW=' . ($resizeApp->root()?->effectiveBox()?->size()?->width ?? -1.0)
+);
+check(
+    'Resize · repaintForResize 只跑一帧、时间戳复用上一帧（不自己读时钟）',
+    $resizeSurface->frames === $resizeFramesBefore + 1
+        && $resizeSurface->ends === $resizeFramesBefore + 1
+        && $resizeSurface->lastTimestamp === $resizeTsBefore,
+    'frames=' . $resizeSurface->frames . ' ends=' . $resizeSurface->ends
+        . ' ts=' . var_export($resizeSurface->lastTimestamp, true)
+);
+
 // ── 主题切换 ⇒ 界面真的换表（§9.2 / §24.2 #14）────────────────────────
 //   `Element::applyContext()` 本就是"换一份渲染环境（主题切换的唯一入口）"，
 //   但 src/ 里**零生产调用者** ⇒ ThemeChangedEvent 之前只是被显式消费、不做

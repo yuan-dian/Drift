@@ -198,6 +198,9 @@ abstract class Application
     /** 上一帧有没有动画在跑（§17.4.9 的第四个判据，由 `tickAnimations()` 写） */
     private bool $animating = false;
 
+    /** 上一帧的时间戳（`repaintForResize()` 复用：拖动重排不该自己读环境时钟） */
+    private float $lastTimestampMs = 0.0;
+
     /**
      * 非阻塞 I/O 轮询器（§17.4.4，P2）—— 每帧 `select(0)` 问一轮，就绪了就回调。
      *
@@ -802,6 +805,8 @@ abstract class Application
         // ★ 帧必须在 UI 线程跑（§17.4.2.1）。成本 = 读一次 TEB + 一次整数比较。
         $this->assertUiThread('frame');
 
+        $this->lastTimestampMs = $timestampMs;
+
         // ★ ① 先问一轮非阻塞 IO（§17.4.4）：外部数据先到，回调里 setState 的脏标记
         //   由本次 settle 消费（这一句必须在 `Frame::run()` 之前）。
         $this->pumpIo();
@@ -836,6 +841,43 @@ abstract class Application
 
         // 语义树推给 UIA（§9 / M5）：每帧末经 sink 交出（无 sink ⇒ 不建，零开销）。
         $this->pumpSemantics();
+    }
+
+    /**
+     * 拖动 resize 专用的**轻量重绘**（§5.2 模态尺寸循环）。
+     *
+     * ★★ 与 `frame()` 的唯一区别：**不碰帧外的东西** —— 不 pumpIo / pumpTasks /
+     *   pumpSliced、不推进画、不重建焦点链、不推语义树。它会被平台壳在
+     *   **WM_SIZE（模态循环内）同步调回**（C → PHP 重入），能碰的状态越少越安全；
+     *   顺带也更快（拖动预算 48ms 留出余量）。
+     *
+     * ★ 时间戳复用上一帧的：这不是一帧「新时间」，只是「同一时刻换个尺寸再画一次」。
+     *   自己读环境时钟会破坏 `frame()` 的单一时钟来源。
+     *
+     * ★ 界面要跟手的语义仍由主循环兜底：松手后 `pump()` 恢复，积压的 resize 已
+     *   被合并成一条 ⇒ 主循环跑一帧完整 `frame()` 收尾（任务/动画/语义都补上）。
+     *
+     * @api 由平台壳的拖动重排入口调（`src/Platform/Win32/ResizeHook.php`）
+     */
+    public function repaintForResize(BoxConstraints $constraints): void
+    {
+        $root = $this->root;
+        $frame = $this->frame;
+        if ($root === null || $frame === null) {
+            return;
+        }
+
+        $this->assertUiThread('repaintForResize');
+
+        $this->placeMenu($constraints);
+        $frame->run(
+            $root,
+            $constraints,
+            $this->lastTimestampMs,
+            $this->menuElement,
+            $this->menuX,
+            $this->menuY,
+        );
     }
 
     /**

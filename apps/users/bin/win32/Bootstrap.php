@@ -13,6 +13,7 @@ use Drift\Platform\Win32\Win32Platform;
 
 use App\Users\Store\MemoryUserSource;
 use App\Users\Jobs\JobRegistry;
+use Drift\Platform\Win32\ResizeHookState;
 
 /**
  * 组合根（§A.2.4 / §5.1）：**全应用唯一提到平台实现的地方**。
@@ -111,6 +112,22 @@ final class Bootstrap
         );
 
         $app->attach($surface, $screen->viewport());
+
+        // ★ 拖动边缘重排（§5.2）：模态尺寸循环里主循环被系统挂起，壳在 WM_SIZE
+        //   里**同步调回** PHP 走轻量重绘（只 settle/layout/paint/present，不碰
+        //   任务/动画/焦点/语义）。入口 `drift_resize_hook_pump()` 是 AOT 具名
+        //   符号（见 src/Platform/Win32/ResizeHook.php）。
+        //   不注入 ⇒ 壳退回"原尺寸贴 + 余区填底色"（拖动中不放大、松手补齐）。
+        ResizeHookState::$pump = static function () use ($app, $surface, $screen): void {
+            $dpr = $screen->scale();
+            $vp = $screen->viewport();
+            $surface->resize(
+                (int) round($vp->maxWidth * $dpr),
+                (int) round($vp->maxHeight * $dpr),
+                $dpr,
+            );
+            $app->repaintForResize($vp);
+        };
 
         // ★ UIA 无障碍（§9 / M5）：把语义树消费者接到窗口 —— 框架只产 SemanticsTree、
         //   经闭包交给平台（框架不持平台，§5.1）。不接 ⇒ 不建语义树，零开销。
