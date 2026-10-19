@@ -39,6 +39,12 @@
 
 using namespace php;
 
+// ★ 拖动重排入口（§5.2）：PHP 侧具名全局函数（src/Platform/Win32/ResizeHook.php）。
+//   **必须声明在全局作用域**——放进下面那个匿名 namespace 会被链接成
+//   `anonymous namespace::php_drift_resize_hook_pump`，与 AOT 生成的符号对不上
+//   （实测 LNK2019）。
+extern void php_drift_resize_hook_pump();
+
 namespace {
 
 // ─────────────────────────────────────────────────────────────── 常量 ──
@@ -598,6 +604,24 @@ int modifierBits() {
 // ──────────────────────────────────────────────────────────── 队列 ──
 
 void enqueue(const PendingEvent &event) {
+    // ★ resize 合并（coalesce，2026-10-19 修"松手后卡顿"）：拖动边缘时系统
+    //   高频同步派发 WM_SIZE（ modal resize loop 期间每条都进这里），而应用帧
+    //   循环要等 modal loop 退出后才逐条重放 ⇒ N 条中间尺寸各触发一次全树重排
+    //   + Skia 重画，大窗口下每帧几十 ms，串行重放就是秒级卡顿。
+    //   合并到队列中**最早未消费**的那条（保持顺序位置，只更新尺寸）⇒ 松手后
+    //   一帧直达最终尺寸。同尺寸的重复帧对用户零信息（只看最终态）。
+    if (event.kind == kEvResize) {
+        for (auto &queued : g_queue) {
+            if (queued.kind == kEvResize) {
+                queued.a = event.a;
+                queued.b = event.b;
+                if (g_main != NULL) {
+                    PostMessageW(g_main, kMsgWake, 0, 0);
+                }
+                return;
+            }
+        }
+    }
     g_queue.push_back(event);
     if (g_main != NULL) {
         // 把阻塞在 GetMessageW 上的泵叫醒。载荷在队列里，这条消息只是闹钟。
@@ -629,8 +653,10 @@ void pushPointer(int x, int y, int button, int phase) {
 /** 把缓存帧贴到给定 DC。`WM_PAINT` 与 `present()` 共用这一条路径。
  *
  *  ★ `dstW/dstH` 非 0 = 目标尺寸与帧不同（resize 拖动中：PHP 还没推出新帧，
- *    客户区已变大）⇒ 拉伸贴 —— 宁可糊一会儿，不可黑一块（2026-10-19 修
- *    "拖动缩放黑框"：旧实现清帧 + 只贴原尺寸，新露出的区域全黑）。 */
+ *    客户区已变大）⇒ **原尺寸贴 + 余区填帧底色**。
+ *  ★ **不拉伸**（2026-10-19 用户裁决）：拉伸会让用户看到"旧内容被放大/重复"，
+ *    比一块同色留白难受得多。余区取帧右下角像素当底色 —— 那就是应用自己的
+ *    背景色，深色主题也自动跟随。 */
 void presentTo(HDC dc, int dstW = 0, int dstH = 0) {
     if (g_frame.empty() || g_frameW <= 0 || g_frameH <= 0 || dc == NULL) {
         return;
@@ -652,12 +678,64 @@ void presentTo(HDC dc, int dstW = 0, int dstH = 0) {
         SetDIBitsToDevice(dc, 0, 0, g_frameW, g_frameH, 0, 0, 0, g_frameH,
                           g_frame.data(), &info, DIB_RGB_COLORS);
     } else {
-        StretchDIBits(dc, 0, 0, dstW, dstH, 0, 0, g_frameW, g_frameH,
-                      g_frame.data(), &info, DIB_RGB_COLORS, SRCCOPY);
+        // ★ 尺寸不匹配（拖动中 PHP 新帧未到）：**原尺寸贴 + 余区用帧背景色填**
+        //   —— **不拉伸**（2026-10-19 用户裁决：拉伸会看到"旧内容放大/重复"，
+        //   比留白更难受）。取帧右下角像素当背景色（那就是应用的底色，零配置、
+        //   深色主题也自动跟随）。
+        const int w = dstW < g_frameW ? dstW : g_frameW;
+        const int h = dstH < g_frameH ? dstH : g_frameH;
+
+        // 余区填底色（右下角像素 = BGRA）；先填两块余区（右、下），再贴帧（不重叠）
+        const unsigned char *last = g_frame.data() + g_frame.size() - 4;
+        HBRUSH brush = CreateSolidBrush(RGB(last[2], last[1], last[0]));
+        if (brush != NULL) {
+            if (dstW > w) {
+                RECT rightR = {w, 0, dstW, dstH};
+                FillRect(dc, &rightR, brush);
+            }
+            if (dstH > h) {
+                RECT bottomR = {0, h, w, dstH};
+                FillRect(dc, &bottomR, brush);
+            }
+            DeleteObject(brush);
+        }
+        SetDIBitsToDevice(dc, 0, 0, w, h, 0, 0, 0, h, g_frame.data(), &info, DIB_RGB_COLORS);
     }
 }
 
-// ─────────────────────────────────────────────────────────── WndProc ──
+// ─────────────────────────────────────── 拖动重排入口（§5.2 模态循环）──
+// 拖窗口边缘时系统进入模态尺寸循环，PHP 主循环被挂起 ⇒ 拖动中的刷新只能由壳
+// **同步**调回 PHP 跑一帧。这是编译期已知的具名函数（不是回调穿越边界）：
+// PHP 侧 `src/Platform/Win32/ResizeHook.php`（无 namespace，AOT 符号名约定）。
+// 声明在文件顶部**全局作用域**（见那里的注释：匿名 namespace 会改符号名）。
+
+/** 模态拖动会话（WM_ENTERSIZEMOVE..WM_EXITSIZEMOVE） */
+static bool g_inSizeMove = false;
+/** 防重入：hook 内部若再次触发 WM_SIZE/WM_TIMER 不得嵌套再进 PHP */
+static bool g_inResizeHook = false;
+/** 上一次 hook 的耗时（ms）；0 = 尚未成功跑过（此时退回旧帧拉伸兜底） */
+static DWORD g_resizeHookMs = 0;
+/** 跟手预算（ms）：超过则跳过本次（与 §5.2 的 100ms 因果感知上限同源，更严） */
+static const DWORD kResizeHookBudgetMs = 48;
+
+/** 让 PHP 同步重排 + 重绘 + present 一帧（安全封装：防重入 + 预算） */
+static void pumpResizeHook() {
+    if (g_inResizeHook || g_resizeHookMs >= kResizeHookBudgetMs) {
+        return;   // 正在跑 / 上次太慢：本次跳过，画面由拉伸兜底或松手后收尾
+    }
+    g_inResizeHook = true;
+    const DWORD started = GetTickCount();
+    ::php_drift_resize_hook_pump();
+    g_resizeHookMs = GetTickCount() - started;
+    g_inResizeHook = false;
+}
+
+/** hook 是否真的产出了**匹配当前客户区**的帧（PHP 未注入时 hook 是 no-op） */
+static bool resizeHookProducedFrame() {
+    return g_frameW == g_clientW && g_frameH == g_clientH && g_frameW > 0;
+}
+
+// ─────────────────────────────────────────── WndProc ──
 
 LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
@@ -683,6 +761,20 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             PostQuitMessage(0);
             return 0;
 
+        case WM_ENTERSIZEMOVE: {
+            // 模态尺寸循环开始（§5.2）：PHP 主循环即被挂起 ⇒ 由下面的 WM_SIZE
+            // 分支**同步**产帧（Flutter Windows embedder 同款：在 WM_SIZE 里等到
+            // 一张匹配新尺寸的帧；模态循环是串行的 ⇒ 产帧期间尺寸不会变）。
+            g_inSizeMove = true;
+            return 0;
+        }
+
+        case WM_EXITSIZEMOVE: {
+            g_inSizeMove = false;
+            // 松手：常规循环恢复（积压的 resize 已被合并成一条，见 enqueue）
+            return 0;
+        }
+
         case WM_SIZE: {
             int w = LOWORD(lp);
             int h = HIWORD(lp);
@@ -690,24 +782,22 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (w > 0 && h > 0) {
                 g_clientW = w;
                 g_clientH = h;
+                // ★ 拖动中**同步产帧**（§5.2，Flutter/Qt 同口径）：模态循环串行
+                //   ⇒ 这里产帧期间下一个鼠标消息不会被处理、尺寸不会变 ⇒ 帧必然
+                //   匹配当前客户区。产完再决定要不要拉伸兜底（正常情况下不需要）。
+                if (g_inSizeMove) {
+                    pumpResizeHook();
+                }
+
                 // ★ 2026-10-19：**不清帧**。旧实现在这里 clear() ⇒ WM_PAINT 时
-                //   presentTo 无内容可贴，resize 拖动中新露出的区域全黑；且松手
-                //   后要等 PHP 重排完才一次补齐 ⇒ "黑框 + 卡一下"。
-                //   现在：旧帧留在原地，PHP 推新帧时自然被替换；下面立刻拉伸
-                //   贴一次兜底（拖动期间持续有画面）。
-                if (!g_frame.empty() && g_frameW > 0 && g_frameH > 0
+                //   presentTo 无内容可贴，resize 拖动中新露出的区域全黑。
+                //   尺寸不匹配时由 presentTo 走"原尺寸贴 + 余区填底色"（**不拉伸**）。
+                if (!resizeHookProducedFrame()
+                    && !g_frame.empty() && g_frameW > 0 && g_frameH > 0
                     && (g_frameW != w || g_frameH != h)) {
                     HDC dc = GetDC(hwnd);
                     if (dc != NULL) {
-                        BITMAPINFO info = {};
-                        info.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
-                        info.bmiHeader.biWidth       = g_frameW;
-                        info.bmiHeader.biHeight      = -g_frameH;
-                        info.bmiHeader.biPlanes      = 1;
-                        info.bmiHeader.biBitCount    = 32;
-                        info.bmiHeader.biCompression = BI_RGB;
-                        StretchDIBits(dc, 0, 0, w, h, 0, 0, g_frameW, g_frameH,
-                                      g_frame.data(), &info, DIB_RGB_COLORS, SRCCOPY);
+                        presentTo(dc, w, h);
                         ReleaseDC(hwnd, dc);
                     }
                 }
