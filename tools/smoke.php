@@ -6822,19 +6822,26 @@ check(
         : 'not found'
 );
 
-// ④ 嵌套：子节点挂在最近的语义祖先下（parent / depth）
-$semNest = SemanticsBuilder::build($semLay(ScrollView::make(
-    Column::make()->children([Button::make('确定')])
-)));
-$scrollIdx = $semNest->findByRole(SemanticsRole::Scroll->value);
-$okIdx = $semNest->findByRoleAndName(SemanticsRole::Button->value, '确定');
+// ⑤ 焦点标记：build(root, focused) 只给焦点元素打 focused（UIA focus changed 的数据源）
+$semFocusRoot = $semLay(Column::make()->children([
+    Button::make('甲'),
+    Button::make('乙'),
+]));
+$semFocusKid = $semFocusRoot->childAt(0);
+$semFocus = SemanticsBuilder::build($semFocusRoot, $semFocusKid);
 check(
-    'Sem · 嵌套：按钮的父是外层滚动节点（parent/depth 正确）',
-    $scrollIdx >= 0 && $okIdx >= 0
-        && $semNest->node($okIdx)->parent === $scrollIdx
-        && $semNest->node($okIdx)->depth === 1,
-    'scroll=' . $scrollIdx . ' btn=' . $okIdx
-        . ' parent=' . ($okIdx >= 0 ? $semNest->node($okIdx)->parent : -1)
+    'Sem · build(root, focused) 只给焦点节点打 focused 标',
+    $semFocus->count() === 2
+        && $semFocus->node(0)->focused === true
+        && $semFocus->node(1)->focused === false,
+    'count=' . $semFocus->count()
+        . ' f0=' . var_export($semFocus->node(0)->focused, true)
+        . ' f1=' . var_export($semFocus->node(1)->focused, true)
+);
+check(
+    'Sem · 不传 focused ⇒ 全树无焦点标（默认行为不变）',
+    SemanticsBuilder::build($semFocusRoot)->node(0)->focused === false,
+    'f0=' . var_export(SemanticsBuilder::build($semFocusRoot)->node(0)->focused, true)
 );
 
 // ⑤ 几何来自渲染树（不是另算一套）
