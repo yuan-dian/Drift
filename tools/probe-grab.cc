@@ -100,6 +100,11 @@ struct Options {
     bool click = false;            // --click=x,y（客户区坐标；down+up 一次完整点击）
     int clickX = 0;
     int clickY = 0;
+    bool dragResize = false;       // --drag=x1,y1,x2,y2（屏幕坐标；从左下角拖到新尺寸）
+    int dragX1 = 0, dragY1 = 0, dragX2 = 0, dragY2 = 0;
+    int dragSteps = 12;            // 拖动分几步发 WM_MOUSEMOVE（模拟真实拖动节奏）
+    int grabStep = 0;              // >0 = 拖到第几步时抓一张（验证"拖动中"的画面）
+    std::wstring midPngPath;       // 拖动中那张的存图路径
     int clickWaitMs = 600;         // 点完等多久（让应用处理点击）
     int wheelWaitMs = 600;         // 发完滚轮等多久再抓（让帧循环产出新帧）
     bool savePng = false;          // --png=path（WIC 编码，供 Read 直接看）
@@ -543,6 +548,41 @@ int wmain(int argc, wchar_t** argv)
             options.clickY = parts[1];
         } else if (key == L"click-wait" && parseInt(value, number)) {
             options.clickWaitMs = static_cast<int>(number);
+        } else if (key == L"drag") {
+            // dx,dy —— 从窗口右下角起算的**放大量**（正=拖大、负=拖小）。
+            // 走 WM_NCLBUTTONDOWN(HTBOTTOMRIGHT) + 若干 WM_MOUSEMOVE + WM_LBUTTONUP，
+            // 与真实拖动同路径（系统 modal resize loop），区别于 --move 的单次 SetWindowPos。
+            int parts[2] = {0, 0};
+            int index = 0;
+            size_t start = 0;
+            for (size_t i = 0; i <= value.size(); ++i) {
+                if (i == value.size() || value[i] == L',') {
+                    long long parsed = 0;
+                    if (!parseInt(value.substr(start, i - start), parsed)) {
+                        std::fprintf(stderr, "err=--drag wants dx,dy\n");
+                        return 2;
+                    }
+                    if (index >= 2) {
+                        std::fprintf(stderr, "err=--drag wants exactly 2 numbers\n");
+                        return 2;
+                    }
+                    parts[index++] = static_cast<int>(parsed);
+                    start = i + 1;
+                }
+            }
+            if (index != 2) {
+                std::fprintf(stderr, "err=--drag wants exactly 2 numbers\n");
+                return 2;
+            }
+            options.dragResize = true;
+            options.dragX2 = parts[0];
+            options.dragY2 = parts[1];
+        } else if (key == L"drag-steps" && parseInt(value, number)) {
+            options.dragSteps = static_cast<int>(number);
+        } else if (key == L"grab-step" && parseInt(value, number)) {
+            options.grabStep = static_cast<int>(number);
+        } else if (key == L"mid-png") {
+            options.midPngPath = value;
         } else if (key == L"png") {
             options.savePng = true;
             options.pngPath = value;
@@ -607,7 +647,42 @@ int wmain(int argc, wchar_t** argv)
         ::Sleep(static_cast<DWORD>(options.settleMs));
     }
 
-    // ── 输入注入（点击 / 滚轮）────────────────────────────────
+    // ── 输入注入（拖动 resize / 点击 / 滚轮）────────────────────
+    if (options.dragResize) {
+        // ★ PostMessage（不是 SendMessage）：WM_NCLBUTTONDOWN 交 DefWindowProc 后会
+        //   进系统 modal resize loop 并**阻塞发送线程**，SendMessage 会把探针卡死。
+        //   PostMessage + 后续 MOVE/UP 都由 modal loop 在同一线程消费。
+        // 起点 (0,0) = 自动取窗口右下角（免去先量几何再算）
+        RECT frame{};
+        ::GetWindowRect(hwnd, &frame);
+        const int sx = frame.right - 2;   // 起点永远是当前右下角（dx/dy 模式）
+        const int sy = frame.bottom - 2;
+        ::PostMessageW(hwnd, WM_NCLBUTTONDOWN, HTBOTTOMRIGHT,
+                       MAKELPARAM(static_cast<WORD>(sx), static_cast<WORD>(sy)));
+        ::Sleep(60);
+        for (int s = 1; s <= options.dragSteps; ++s) {
+            const int mx = sx + options.dragX2 * s / options.dragSteps;
+            const int my = sy + options.dragY2 * s / options.dragSteps;
+            ::PostMessageW(hwnd, WM_MOUSEMOVE, 0,
+                           MAKELPARAM(static_cast<WORD>(mx), static_cast<WORD>(my)));
+            ::Sleep(30);
+            if (options.grabStep > 0 && s == options.grabStep) {
+                // 拖动中抓一张：验证"拖动期间"是实时新帧还是旧帧拉伸
+                Shot mid{};
+                std::string midError;
+                if (grab(hwnd, mid, midError)) {
+                    std::printf("mid_client=%dx%d mid_ink=%.1f\n", mid.width, mid.height, inkPct(mid, 0, 0));
+                    if (!options.midPngPath.empty() && savePng(mid, options.midPngPath)) {
+                        std::printf("mid_png=%ls\n", options.midPngPath.c_str());
+                    }
+                }
+            }
+        }
+        ::PostMessageW(hwnd, WM_LBUTTONUP, 0,
+                       MAKELPARAM(static_cast<WORD>(sx + options.dragX2), static_cast<WORD>(sy + options.dragY2)));
+        std::printf("drag=br(%d,%d)+(%d,%d)\n", sx, sy, options.dragX2, options.dragY2);
+        ::Sleep(static_cast<DWORD>(options.wheelWaitMs));
+    }
     if (options.click) {
         POINT pt{options.clickX, options.clickY};
         ::ClientToScreen(hwnd, &pt);
