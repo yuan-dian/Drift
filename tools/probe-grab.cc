@@ -380,24 +380,24 @@ bool savePng(const Shot& shot, const std::wstring& path)
     bool ok = false;
 
     do {
-        if (FAILED(factory->CreateStream(&stream))) break; }
+        if (FAILED(factory->CreateStream(&stream))) break;
         hr = stream->InitializeFromFilename(path.c_str(), GENERIC_WRITE);
-        if (FAILED(hr)) break; }
-        if (FAILED(factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder))) break; }
-        if (FAILED(encoder->Initialize(stream, WICBitmapEncoderNoCache))) break; }
-        if (FAILED(encoder->CreateNewFrame(&frame, &props))) break; }
-        if (FAILED(frame->Initialize(props))) break; }
-        if (FAILED(frame->SetSize(static_cast<UINT>(shot.width), static_cast<UINT>(shot.height)))) break; }
+        if (FAILED(hr)) break;
+        if (FAILED(factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder))) break;
+        if (FAILED(encoder->Initialize(stream, WICBitmapEncoderNoCache))) break;
+        if (FAILED(encoder->CreateNewFrame(&frame, &props))) break;
+        if (FAILED(frame->Initialize(props))) break;
+        if (FAILED(frame->SetSize(static_cast<UINT>(shot.width), static_cast<UINT>(shot.height)))) break;
         // BGRA（内存布局）⇒ GUID_WICPixelFormat32bppBGRA，与像素序一致，无需转换
         WICPixelFormatGUID srcFmt = GUID_WICPixelFormat32bppBGRA;
         hr = frame->SetPixelFormat(&srcFmt);
-        if (FAILED(hr)) break; }
+        if (FAILED(hr)) break;
         if (FAILED(frame->WritePixels(static_cast<UINT>(shot.height),
                                       static_cast<UINT>(shot.width) * 4,
                                       static_cast<UINT>(shot.pixels.size()),
-                                      const_cast<BYTE*>(shot.pixels.data())))) break; }
-        if (FAILED(frame->Commit())) break; }
-        if (FAILED(encoder->Commit())) break; }
+                                      const_cast<BYTE*>(shot.pixels.data())))) break;
+        if (FAILED(frame->Commit())) break;
+        if (FAILED(encoder->Commit())) break;
         ok = true;
     } while (false);
 
