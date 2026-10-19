@@ -26,7 +26,11 @@ final class RenderAppBar extends RenderFlex
         float $spacing,
         EdgeInsets $padding,
     ) {
-        parent::__construct(false, $spacing, $padding, FlexAlign::Center, Overflow::Report);
+        // ★ `Overflow::Clip`（2026-10-19 改，原 Report）：顶条的宽度**随窗口变化**
+        //   —— 用户把窗口拖窄时，标题 + 导航项放不下是**用户行为**，不是编程错误。
+        //   原先 Report ⇒ 拖动缩窗弹 Fatal（实测 322 可用宽 vs 327 自然宽）。
+        //   裁剪语义：右侧导航项被裁掉（优于 Fatal；腾挪/折叠留给后续设计）。
+        parent::__construct(false, $spacing, $padding, FlexAlign::Center, Overflow::Clip);
     }
 
     public function paint(Canvas $canvas): void

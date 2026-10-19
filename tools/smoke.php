@@ -3020,6 +3020,29 @@ check(
         . ' ts=' . var_export($resizeSurface->lastTimestamp, true)
 );
 
+// ── AppBar 窄窗口（§12.1 / W4）：宽度随窗口变化 ⇒ 裁剪，不弹 Fatal ──────
+//   实测回归：窗口拖到可用宽 322、顶条自然宽 327 ⇒ 原 `Overflow::Report` 直接
+//   弹 "RenderFlex 溢出" Fatal，拖动缩窗被中断。顶条放不下是**用户行为**，
+//   正确语义是裁剪（右侧导航项暂时不可见）。
+Errors::reset();
+$barEl = AppBar::make()->title('用户管理')->children([
+    NavButton::make('列表'),
+    NavButton::make('注册'),
+    NavButton::make('设置'),
+])->createElement();
+$barEl->mount(null, smokeContext());
+$barEl->settle();
+// ★ 约束必须**窄于顶条自然宽**（实测自然宽 ≈ 327：标题 + 3 个导航 + 菜单）。
+//   320 已接近，取 280 保证稳定溢出 —— 否则夹具对回归不敏感（反例仍绿）。
+$barEl->effectiveBox()?->layout(BoxConstraints::tight(new Size(100.0, 220.0)));
+$barDiag = Errors::recentDiagnostics();
+check(
+    'AppBar · 可用宽 100 < 自然宽 ⇒ 裁剪（无溢出 Fatal）',
+    $barDiag === []
+        && ($barEl->effectiveBox()?->size()?->width ?? -1.0) === 100.0,
+    'diag=' . count($barDiag) . ' rootW=' . ($barEl->effectiveBox()?->size()?->width ?? -1.0)
+);
+
 // ── 主题切换 ⇒ 界面真的换表（§9.2 / §24.2 #14）────────────────────────
 //   `Element::applyContext()` 本就是"换一份渲染环境（主题切换的唯一入口）"，
 //   但 src/ 里**零生产调用者** ⇒ ThemeChangedEvent 之前只是被显式消费、不做
