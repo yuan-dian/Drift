@@ -1341,9 +1341,13 @@ void php_drift_win_ime_caret(Float x, Float y, Float h) {
     }
     LONG cx = (LONG)((double)x / imeScale);
     LONG cy = (LONG)((double)y / imeScale);
-    if (g_caretVisible) {
-        SetCaretPos(cx, cy);
-    }
+    // ★★ 无条件 SetCaretPos（2026-10-19 回归教训）：微软拼音 / 搜狗等输入法经
+    //    `GetCaretPos` 读位置，**不依赖 caret 是否可见**。曾把这一行关进
+    //    "仅 caret 可见"，组字前与组字中的查询全部读到 (-10,-10) 哨兵 ⇒
+    //    候选框贴屏幕左上角（两个输入法同时复现，均上周正常）。caret 的
+    //    建/销独立管理（WM_IME_STARTCOMPOSITION / ENDCOMPOSITION），与这里
+    //    "每帧报位置"是两件事，别再合并。
+    SetCaretPos(cx, cy);
     // ★ 没有"主动通知 IME 位置变了"这个 API —— 位置在下次
     //   WM_IME_STARTCOMPOSITION（组字开始）与 IMR_QUERYCHARPOSITION
     //   （IME 主动问）时被读取，两个都是拉模型。推只会踩

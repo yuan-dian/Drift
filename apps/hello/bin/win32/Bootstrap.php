@@ -80,6 +80,11 @@ final class Bootstrap
                 if ($shape !== null) {
                     $window->setCursor($handle, $shape);
                 }
+                // ★ IME 时序双保险（2026-10-19）：组字可能在同帧的**下一个**输入
+                //   事件发生（TranslateMessage 在消息循环层触发 WM_IME_STARTCOMPOSITION）
+                //   ⇒ 事件处理后立即同步 caret，不等帧末（FrameClock 空闲睡眠时帧末
+                //   版会晚到，输入法已按旧位置放过一次候选框）。与帧末那次同口径。
+                $platform->imeCaret($app->imeCaretRect());
             }
 
             $app->frame($platform->now(), $screen->viewport());
