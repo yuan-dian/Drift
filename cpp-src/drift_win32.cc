@@ -139,6 +139,9 @@ static void fillGeomFromCache(Array &out) {
 float g_imeX = -1.0f;
 float g_imeY = -1.0f;
 float g_imeH = 0.0f;
+// 1×1 假 caret 的可见态（IME 定位：输入法经 GetCaretPos 找候选框位置）。
+// 建/销各只有一处（WM_IME_STARTCOMPOSITION / WM_IME_ENDCOMPOSITION）。
+bool g_caretVisible = false;
 
 /** 待交付事件队列。WndProc 填，`php_drift_win_pump()` 取 —— 同线程，无需加锁（§5.3） */
 std::vector<PendingEvent> g_queue;
@@ -623,10 +626,18 @@ void pushPointer(int x, int y, int button, int phase) {
 
 // ───────────────────────────────────────────────────────────── 贴屏 ──
 
-/** 把缓存帧贴到给定 DC。`WM_PAINT` 与 `present()` 共用这一条路径。 */
-void presentTo(HDC dc) {
+/** 把缓存帧贴到给定 DC。`WM_PAINT` 与 `present()` 共用这一条路径。
+ *
+ *  ★ `dstW/dstH` 非 0 = 目标尺寸与帧不同（resize 拖动中：PHP 还没推出新帧，
+ *    客户区已变大）⇒ 拉伸贴 —— 宁可糊一会儿，不可黑一块（2026-10-19 修
+ *    "拖动缩放黑框"：旧实现清帧 + 只贴原尺寸，新露出的区域全黑）。 */
+void presentTo(HDC dc, int dstW = 0, int dstH = 0) {
     if (g_frame.empty() || g_frameW <= 0 || g_frameH <= 0 || dc == NULL) {
         return;
+    }
+    if (dstW <= 0 || dstH <= 0) {
+        dstW = g_frameW;
+        dstH = g_frameH;
     }
 
     BITMAPINFO info = {};
@@ -637,8 +648,13 @@ void presentTo(HDC dc) {
     info.bmiHeader.biBitCount    = 32;
     info.bmiHeader.biCompression = BI_RGB;
 
-    SetDIBitsToDevice(dc, 0, 0, g_frameW, g_frameH, 0, 0, 0, g_frameH,
-                      g_frame.data(), &info, DIB_RGB_COLORS);
+    if (dstW == g_frameW && dstH == g_frameH) {
+        SetDIBitsToDevice(dc, 0, 0, g_frameW, g_frameH, 0, 0, 0, g_frameH,
+                          g_frame.data(), &info, DIB_RGB_COLORS);
+    } else {
+        StretchDIBits(dc, 0, 0, dstW, dstH, 0, 0, g_frameW, g_frameH,
+                      g_frame.data(), &info, DIB_RGB_COLORS, SRCCOPY);
+    }
 }
 
 // ─────────────────────────────────────────────────────────── WndProc ──
@@ -674,9 +690,27 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (w > 0 && h > 0) {
                 g_clientW = w;
                 g_clientH = h;
-                // 旧帧尺寸作废：留着会在 WM_PAINT 时把旧尺寸的画面贴到新客户区
-                g_frame.clear();
-                g_frameW = g_frameH = 0;
+                // ★ 2026-10-19：**不清帧**。旧实现在这里 clear() ⇒ WM_PAINT 时
+                //   presentTo 无内容可贴，resize 拖动中新露出的区域全黑；且松手
+                //   后要等 PHP 重排完才一次补齐 ⇒ "黑框 + 卡一下"。
+                //   现在：旧帧留在原地，PHP 推新帧时自然被替换；下面立刻拉伸
+                //   贴一次兜底（拖动期间持续有画面）。
+                if (!g_frame.empty() && g_frameW > 0 && g_frameH > 0
+                    && (g_frameW != w || g_frameH != h)) {
+                    HDC dc = GetDC(hwnd);
+                    if (dc != NULL) {
+                        BITMAPINFO info = {};
+                        info.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
+                        info.bmiHeader.biWidth       = g_frameW;
+                        info.bmiHeader.biHeight      = -g_frameH;
+                        info.bmiHeader.biPlanes      = 1;
+                        info.bmiHeader.biBitCount    = 32;
+                        info.bmiHeader.biCompression = BI_RGB;
+                        StretchDIBits(dc, 0, 0, w, h, 0, 0, g_frameW, g_frameH,
+                                      g_frame.data(), &info, DIB_RGB_COLORS, SRCCOPY);
+                        ReleaseDC(hwnd, dc);
+                    }
+                }
 
                 PendingEvent event = {};
                 event.kind = kEvResize;
@@ -729,7 +763,10 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_PAINT: {
             PAINTSTRUCT ps;
             HDC dc = BeginPaint(hwnd, &ps);
-            presentTo(dc);
+            // 帧尺寸与客户区不同（resize 后 PHP 新帧未到）⇒ 拉伸贴，不留黑边
+            RECT rc;
+            presentTo(dc, GetClientRect(hwnd, &rc) ? (int)(rc.right - rc.left) : 0,
+                      rc.bottom - rc.top);
             EndPaint(hwnd, &ps);
             return 0;
         }
@@ -858,20 +895,52 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // 候选窗不硬塞，"建议位置"的语义系统可调）。
             // ★ ClientToScreen 是必须的：ImmSetCompositionWindow 吃屏幕坐标，
             //   而 g_imeX/Y 是设备像素的客户区坐标。
-            HIMC imc = ImmGetContext(hwnd);
-            if (imc != NULL && g_imeX >= 0.0f) {
+            // ★ 2026-10-19 补三件（真机候选框贴屏幕左上角的修复）：
+            //   ① 创建 1×1 **可见**系统 caret —— 不少输入法（含部分 TSF 系）
+            //      通过 GetCaretPos 定位候选框；caret 不存在时查询失败返回
+            //      (0,0)，候选框就落到屏幕左上角。只 SetCaretPos 不建 caret
+            //      对这一类输入法无效。
+            //   ② ImmSetCandidateWindow（默认候选窗，同点）—— IMM32 输入法
+            //      （搜鱼/QQ 类）的**候选框**位置由它决定，不设就默认位置。
+            //   ③ 见 WM_IME_ENDCOMPOSITION 的清理。
+            if (g_imeX >= 0.0f) {
                 double imeScale = (double)g_dpi / 96.0;
-                POINT pt = {(LONG)((double)g_imeX / imeScale), (LONG)((double)g_imeY / imeScale)};
-                ClientToScreen(hwnd, &pt);
-                COMPOSITIONFORM form = {};
-                form.dwStyle = CFS_POINT;
-                form.ptCurrentPos = pt;
-                ImmSetCompositionWindow(imc, &form);
-            }
-            if (imc != NULL) {
-                ImmReleaseContext(hwnd, imc);
+                LONG cx = (LONG)((double)g_imeX / imeScale);
+                LONG cy = (LONG)((double)g_imeY / imeScale);
+                if (!g_caretVisible) {
+                    CreateCaret(hwnd, nullptr, 1, (int)(g_imeH / imeScale) > 0 ? (int)(g_imeH / imeScale) : 1);
+                    ShowCaret(hwnd);
+                    g_caretVisible = true;
+                }
+                SetCaretPos(cx, cy);
+
+                HIMC imc = ImmGetContext(hwnd);
+                if (imc != NULL) {
+                    POINT pt = {cx, cy};
+                    ClientToScreen(hwnd, &pt);
+                    COMPOSITIONFORM form = {};
+                    form.dwStyle = CFS_POINT;
+                    form.ptCurrentPos = pt;
+                    ImmSetCompositionWindow(imc, &form);
+                    CANDIDATEFORM cand = {};
+                    cand.dwIndex = 0;
+                    cand.dwStyle = CFS_POINT;
+                    cand.ptCurrentPos = pt;
+                    ImmSetCandidateWindow(imc, &cand);
+                    ImmReleaseContext(hwnd, imc);
+                }
             }
             return 0;   // ⚠ 不吞消息：DefWindowProc 之后仍要收到它建组字窗
+        }
+
+        case WM_IME_ENDCOMPOSITION: {
+            // 组字结束：收起 caret（否则光标处留一个残留黑点）。
+            if (g_caretVisible) {
+                HideCaret(hwnd);
+                DestroyCaret();
+                g_caretVisible = false;
+            }
+            return 0;
         }
 
         case WM_IME_COMPOSITION: {
@@ -1261,13 +1330,20 @@ void php_drift_win_ime_caret(Float x, Float y, Float h) {
     }
     double imeScale = (double)g_dpi / 96.0;
     if (x < 0.0f) {
-        // 无插入符：把假 caret 挪到客户区外（收起），IME 查到的位置退左上角
+        // 无插入符：收起 caret 并挪到客户区外（IME 查到的位置退左上角）
+        if (g_caretVisible) {
+            HideCaret(g_main);
+            DestroyCaret();
+            g_caretVisible = false;
+        }
         SetCaretPos(-10, -10);
         return;
     }
     LONG cx = (LONG)((double)x / imeScale);
     LONG cy = (LONG)((double)y / imeScale);
-    SetCaretPos(cx, cy);
+    if (g_caretVisible) {
+        SetCaretPos(cx, cy);
+    }
     // ★ 没有"主动通知 IME 位置变了"这个 API —— 位置在下次
     //   WM_IME_STARTCOMPOSITION（组字开始）与 IMR_QUERYCHARPOSITION
     //   （IME 主动问）时被读取，两个都是拉模型。推只会踩
