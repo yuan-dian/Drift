@@ -96,7 +96,9 @@ abstract class RenderBox extends RenderObject
         if (($measured->width > $constraints->maxWidth || $measured->height > $constraints->maxHeight)
             && !LayoutTolerance::$previewing) {   // 预览期（拖动中）：瞬时违规降级为裁剪
             Errors::report(sprintf(
-                '%s 的布局结果违反约束：报了 %.6g × %.6g，约束只允许最多 %.6g × %.6g',
+                '%s 画出的尺寸超出父容器给的可用空间：实际 %.1f × %.1f，最多只能用 %.1f × %.1f。'
+                    . "\n" . '修法：让这个控件的尺寸跟随约束（不要写死比可用空间更大的尺寸），'
+                    . '或检查父容器为什么只给了这么小。',
                 static::class,
                 $measured->width,
                 $measured->height,

@@ -326,11 +326,13 @@ class RenderFlex extends RenderBox
             Overflow::Report => LayoutTolerance::$previewing
                 ? null   // 预览期（拖动中）：瞬时溢出降级为裁剪，不弹 Fatal
                 : Errors::report(sprintf(
-                '%s 溢出：自然主轴 %.6g 超过可用 %.6g。C5 要求声明策略 —— Report 即响亮失败；'
-                . '若要允许裁剪请改用 Clip',
+                '%s 放不下：子项共需 %.1f，可用只有 %.1f（差 %.1f）。'
+                    . "\n" . '修法：① 把窗口拖大，或让子项少占一些；'
+                    . '② 允许裁剪则给该容器声明 overflow(Overflow::Clip)（默认策略 Report 会中止）。',
                 static::class,
                 $mainSize,
                 $maxMain,
+                $mainSize - $maxMain,
             )),
             Overflow::Scroll, Overflow::Wrap => Errors::report(sprintf(
                 '%s 的溢出策略 %s 尚未实现（M2 只有 Clip / Report）',

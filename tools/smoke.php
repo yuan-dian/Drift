@@ -2233,7 +2233,12 @@ check(
 fresh($log);
 [$code, $output] = runCase(__FILE__, 'flexreport', null);
 check('Layout · C5 Report 溢出退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
-check('Layout · C5 Report 溢出写了 Errors.log', str_contains(logText($log), '溢出'));
+check(
+    'Layout · 溢出消息写了 Errors.log（含差额与修法，不含内部条款编号）',
+    str_contains(logText($log), '放不下')
+        && str_contains(logText($log), '差 ')
+        && !str_contains(logText($log), 'C5')
+);
 
 // Clip 是"盒子夹住、子照自然排"——不中止，但自己的尺寸不越界
 $clipColumn = new RenderFlex(true, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Clip);
@@ -2261,7 +2266,11 @@ check('Layout · flex 份额 < 1 写了 Errors.log', str_contains(logText($log),
 fresh($log);
 [$code, $output] = runCase(__FILE__, 'layout', null);
 check('Layout · C6 布局违反约束退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
-check('Layout · C6 布局违反约束写了 Errors.log', str_contains(logText($log), '违反约束'));
+check(
+    'Layout · 约束违规消息写了 Errors.log（人话描述，不含内部条款编号）',
+    str_contains(logText($log), '超出父容器给的可用空间')
+        && !str_contains(logText($log), 'C6')
+);
 
 // ⑯ 三树：Element 的挂载 / diff / 卸载（§3.2 / §12.3）
 fresh($log);
@@ -2648,7 +2657,12 @@ check(
 fresh($log);
 [$code, $output] = runCase(__FILE__, 'dockoverflow', null);
 check('Dock · C5 Report 条轨超出退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
-check('Dock · Report 超出写了 Errors.log', str_contains(logText($log), 'Dock 纵向超出'));
+check(
+    'Dock · Report 超出写了 Errors.log（含槽名与差额，且不含内部条款编号）',
+    str_contains(logText($log), 'Dock 放不下')
+        && str_contains(logText($log), 'top + bottom')
+        && !str_contains(logText($log), 'C5')
+);
 
 // ── ㉓ TextField：受控输入框（§15.2 / §A.2.9）──
 

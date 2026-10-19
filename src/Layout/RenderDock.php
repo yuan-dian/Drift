@@ -91,7 +91,7 @@ final class RenderDock extends RenderBox
         } else {
             $midH = $maxH - $topH - $bottomH;
             if ($midH < 0.0) {
-                $midH = $this->reject('纵向', $topH + $bottomH, $maxH);
+                $midH = $this->reject('top + bottom', '可用高', $topH + $bottomH, $maxH);
             }
             $selfH = $maxH;
             $bottomY = $maxH - $bottomH; // 有界语义：贴底（reject 夹 0 时与 top 重叠是既定行为）
@@ -104,7 +104,7 @@ final class RenderDock extends RenderBox
 
         $centerW = $maxW - $leftW - $rightW;
         if ($centerW < 0.0) {
-            $centerW = $this->reject('横向', $leftW + $rightW, $maxW);
+            $centerW = $this->reject('left + right', '可用宽', $leftW + $rightW, $maxW);
         }
 
         $center?->layout(new BoxConstraints($centerW, $centerW, $midH, $midH));
@@ -192,18 +192,35 @@ final class RenderDock extends RenderBox
         }
     }
 
-    /** 溢出裁决：Report ⇒ Fatal；Clip ⇒ 夹到 0（条轨重叠，画面烂但不崩）；其余 ⇒ 未实现 */
-    private function reject(string $axis, float $need, float $have): float
+    /**
+     * 溢出裁决：Report ⇒ Fatal；Clip ⇒ 夹到 0（条轨重叠，画面烂但不崩）；其余 ⇒ 未实现。
+     *
+     * ★ 消息写成三段（**谁**放不下 / **差多少** / **怎么修**）：
+     *   · 槽名直说 `top + bottom` / `left + right` —— 不写"横向/纵向"：读者要的是
+     *     "去哪改"，槽名就是他写代码时的那个名字。
+     *   · 给差额（94 与 93 差 1）：这是"窗口被拖小了"与"内容真的超了"的分界线。
+     *   · 两条修法都给：可裁的配 `Clip`，不可裁的去缩小槽内容 —— 只给 `Clip` 会把人
+     *     引向"把溢出裁掉"（治标），只说缩内容会漏掉"窗口本就可被拖小"这个合法场景。
+     *
+     * @param string $slots 哪几个槽合计放不下（`top + bottom` / `left + right`）
+     * @param string $available 被抢的维度（`可用高` / `可用宽`）
+     */
+    private function reject(string $slots, string $available, float $need, float $have): float
     {
         match ($this->policy) {
             Overflow::Clip => null,
             Overflow::Report => LayoutTolerance::$previewing
                 ? null   // 预览期：条轨溢出不中断（夹到 0，重叠但可继续拖）
                 : Errors::report(sprintf(
-                'Dock %s超出：条轨需要 %.6g，可用 %.6g。C5 要求外壳类容器声明策略 —— Report 即响亮失败；若要允许重叠请改用 Clip',
-                $axis,
+                'Dock 放不下：%s 槽共需 %.1f，%s只有 %.1f（差 %.1f）。'
+                    . "\n" . '修法：① 把窗口拖大，或缩小这些槽的内容；'
+                    . '② 允许裁剪则给 Dock 声明 overflow(Overflow::Clip)（默认策略 Report 会中止）。',
+                $slots,
                 $need,
+                $available,
                 $have,
+                $need - $have,
+                $slots,
             )),
             Overflow::Scroll, Overflow::Wrap => Errors::report(sprintf(
                 'Dock 的溢出策略 %s 尚未实现（M3 只有 Clip / Report）',
