@@ -72,7 +72,7 @@ struct PendingEvent {
     int kind;
     int a;   // resize: w ／ dpi: dpi ／ timer: id ／ pointer: x ／ wheel: x ／ key: — ／ char: —
     int b;   // resize: h ／ pointer: y ／ wheel: y ／ —
-    int c;   // pointer: button（move 恒 0 —— 按住态由应用自己的拖动状态跟踪）／ wheel: delta（WHEEL_DELTA=120 为一格，正=内容上移）／ key: modifier 位（1=ctrl 2=alt 4=shift）／ —
+    int c;   // pointer: button（move 恒 0 —— 按住态由应用自己的拖动状态跟踪）／ wheel: delta（WHEEL_DELTA=120 为一格；壳已取负 ⇒ 正=回拉=内容上移，见 WM_MOUSEWHEEL 注释）／ key: modifier 位（1=ctrl 2=alt 4=shift）／ —
     int d;   // pointer: 相位（0=down 1=move 2=up 3=leave，与 Drift\Input\PointerPhase 同值）／ —
     std::string text;   // key: 键名 ／ char: UTF-8 文本
 };
@@ -804,8 +804,12 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // ★ 与鼠标按键消息不同：滚轮的 `GET_X_LPARAM`/`GET_Y_LPARAM` 给的是
             //   **屏幕**坐标 ⇒ 必须 ScreenToClient，否则"滚对了距离、位置差一个
             //   窗口原点"（命中测试判在窗外 ⇒ 轮被吞，静默）。
-            // ★ 符号：向前滚（远离用户）= 正 = 内容上移（看下面）—— 与
-            //   ScrollEvent::$delta 的约定一致（PHP 侧只 /120 收成格，不改符号）。
+            // ★ 符号（2026-10-19 修正）：原生 delta 正 = 滚轮前推（远离用户）。
+            //   框架侧 `ScrollEvent::$delta` 的约定是"正 = 内容上移（往下看）"。
+            //   用户环境要的手感是**滚轮跟随视口**：前推 ⇒ 看到上面、回拉 ⇒
+            //   看到下面（与触控板的"上划看到下面"同族的直接操作感），故壳在
+            //   边界上取负 —— 平台惯例 → 框架语义的翻译只发生在这一处。
+            //   （Windows 传统映射是前推=看到下面；本仓按用户明确要求取反。）
             POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
             ScreenToClient(g_main, &pt);
 
@@ -813,7 +817,7 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             event.kind = kEvWheel;
             event.a = (int)pt.x;
             event.b = (int)pt.y;
-            event.c = GET_WHEEL_DELTA_WPARAM(wp);
+            event.c = -GET_WHEEL_DELTA_WPARAM(wp);
             enqueue(event);
             return 0;
         }
