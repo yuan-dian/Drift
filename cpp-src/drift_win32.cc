@@ -1559,6 +1559,7 @@ void php_drift_win_present(Int hwnd, String rgba, Int width, Int height) {
 // PHP 侧 SemanticsBuilder::build(root)->toArrays()['nodes'] 推进来；provider 从
 // 这份扁平数组应答 UIA 客户端。空数组 = 无障碍关闭（清空 C 侧树）。
 void php_drift_win_uia_push(Array nodes) {
+    static int g_lastNodeCount = -1;
     g_uiaNodes.clear();
     size_t n = nodes.count();
     for (size_t i = 0; i < n; i++) {
@@ -1579,5 +1580,19 @@ void php_drift_win_uia_push(Array nodes) {
         node.h = a.get("h").toFloat();
         node.isControl = true;
         g_uiaNodes.push_back(node);
+    }
+
+    // 结构变化事件（§9 / M5，P4）：节点数变了 ⇒ 通知 UIA 客户端重新查询树
+    // （Loading→Ready、列表增删）。count 触发（同 count 的内容变不 raise，够用）。
+    int cnt = (int)g_uiaNodes.size();
+    if (cnt != g_lastNodeCount) {
+        g_lastNodeCount = cnt;
+        if (g_uiaProvider != nullptr) {
+            IRawElementProviderSimple *simple = nullptr;
+            if (SUCCEEDED(g_uiaProvider->QueryInterface(__uuidof(IRawElementProviderSimple), (void **)&simple)) && simple != nullptr) {
+                UiaRaiseStructureChangedEvent(simple, StructureChangeType_ChildrenInvalidated, nullptr, 0);
+                simple->Release();
+            }
+        }
     }
 }
