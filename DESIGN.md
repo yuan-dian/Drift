@@ -2441,6 +2441,7 @@ Fatal error: Unsupported statement: Stmt_Return in apps/users/.../memory_source.
 | 15 | `stub-prefix` | 命名空间内调用全局 stub 函数（`platform_*` / `pool_*` / `win_*` …）未写前导 `\` | **error** | §16.5 陷阱 3 | G1 |
 | 16 | `namespace-mismatch` | 文件的 `namespace` 声明与 PSR-4 路径不符 | **error** | §4.4 纪律 3 | G1 |
 | 17 | `orphan-trait` | 一个 `.php` 文件只含 trait（不产出翻译单元） | **error** | §2.4 纪律 7 | G1 |
+| 18 | `instanceof-missing-use` | `instanceof` 右侧短名既不在本文件 `use` 列表、也不解析到同命名空间/全局项目类，但该短名在本仓**某个命名空间下存在** ⇒ 恒 false（PHP 不报未导入类的名，静默死分支） | **error** | 2026-10-19（静默缺陷模式，咬过 ≥3 次：ThemeChangedEvent / SemanticsBuilder / RenderFlex Stretch） | G1 |
 
 > ★ **每条规则必须标注服务对象**（**2026-10-14 裁决**，原 §23 O-11）：三张表的"服务"列 = 该规则服务的**公理**（G1/G2/G3）或**反模式**（A#），**不许留空**。§21 的反模式表同理（"守它的人/机制"列三选一，不许留空）。⇒ 两张表**互相锁死**：新增反模式必须问"谁来守它"，新增 lint 必须问"它守的是哪条公理" —— **守不住任何东西的规则 = A1 的规则版**。
 > ★ **全部满足 G1 判据**（"编译器知道吗？"）：类型声明、前缀、标注、闭包签名、文件路径**都是编译期可见的** ⇒ 都该在构建期做，不靠人记。
@@ -2449,7 +2450,7 @@ Fatal error: Unsupported statement: Stmt_Return in apps/users/.../memory_source.
 > ★ **诚实边界**（**2026-10-14 裁决**，原 §23 O-13）：`nano-hygiene` 只保证**源码纪律**，查不到 tpc 自己注入的 include（如 lib 模式的 `/FI` 聚合头）或链接期问题（PHPX 库路径）。⇒ **加了这条 lint ≠ 能切 nano**；nano 兼容性的最终判据只能是**跑一次真机 `--nano` 构建**。
 > ★ 既然 nano 已明确**不作为前期重点**（§16.7.5），`nano-hygiene` 的定位是**零成本保留"将来可切 nano"的可选性**，**不是"nano 就绪"的证明**。
 > ★ **未落地的 4 条，缺的都是"消费者"而不是工作量**（2026-10-15 记账，2026-10-16 复核补 1 条）：`scan-autoload-drift` 要 `apps/*/project.yml`（还没有）· `export-surface-drift` 要 `-m lib` 分发工程（还没有）· `no-using-php` / `stub-prefix` 要 `cpp-src/` C++ 桥接（M1 才建）。**没有消费者的规则只是审自己** ⇒ 到位的当天补，不预写。**落地与否以 `php tools/lint.php --list` 为准**（数字不写进本文件，写即过期）。
-★ **`--list` 里还有一条本表没列的**：`dependency-direction`（§4.3 依赖规则的守卫，"层之间只能沿 §4.3 的允许方向依赖"）—— §16.6.1 之前就有的骨架规则，2026-10-16 补登于此。实到 14 = 本表 17 − 未落地 4 + 表外 1。
+★ **`--list` 里还有一条本表没列的**：`dependency-direction`（§4.3 依赖规则的守卫，"层之间只能沿 §4.3 的允许方向依赖"）—— §16.6.1 之前就有的骨架规则，2026-10-16 补登于此。实到 14 = 本表 17 − 未落地 4 + 表外 1。★ **2026-10-19 补第 18 条**：`instanceof-missing-use`（表外新增，同 `dependency-direction` 先例）—— 静默恒 false 缺陷模式，本项目唯一反复咬人的一类 bug，一条静态规则一劳永逸防患一类；夹具 `apps/InstanceofBad.php`（漏 use）+ `apps/InstanceofGood.php`（use / 全限定 / 变量右侧三正确形态不误响）。
 
 ### 16.7 ★ `--nano`（无 VM 原生构建）评估
 
