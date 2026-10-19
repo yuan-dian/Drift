@@ -77,6 +77,7 @@ use Drift\Dev\Smoke\App\EchoApplication;
 use Drift\Dev\Smoke\App\FailSliceJob;
 use Drift\Dev\Smoke\App\GestureApplication;
 use Drift\Dev\Smoke\App\TfApplication;
+use Drift\Dev\Smoke\App\TfLabeledApplication;
 use Drift\Dev\Smoke\App\ThemeApplication;
 use Drift\Dev\Smoke\App\PointerApplication;
 use Drift\Dev\Smoke\App\ScrollApplication;
@@ -3009,6 +3010,21 @@ check(
     'IME · 焦点在第二个字段 ⇒ y 沿父链累积（+32.8 = 字段高 + spacing）',
     $imeApp->imeCaretRect() === [52.0, 60.8, 16.8],
     '(' . implode(', ', $imeApp->imeCaretRect() ?? []) . ')'
+);
+
+// ★ 回归夹具（2026-10-19 真机 bug）：**带 label** 的字段必须同样给出光标矩形。
+//   有 label 时 build() 返回 `Column[Text(标签), 字段盒]` ⇒ 焦点元素的
+//   `effectiveBox()` 是 `Column` 的盒；若 caretRect() 拿它判 instanceof
+//   `RenderTextField` ⇒ null ⇒ 壳收到"无插入符" ⇒ 候选框贴屏幕左上角。
+$imeLabeledApp = new TfLabeledApplication();
+$imeLabeledApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
+$imeLabeledApp->frame(16.0, BoxConstraints::loose(new Size(300.0, 200.0)));
+$imeLabeledApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
+$labeledCaret = $imeLabeledApp->imeCaretRect();
+check(
+    'IME · 有 label 的字段也给出光标矩形（穿过 Column 包装找真实字段盒）',
+    $labeledCaret !== null && $labeledCaret[0] > 0.0 && $labeledCaret[1] > 0.0,
+    var_export($labeledCaret, true)
 );
 
 // ── 拖动 resize 轻量入口（§5.2）：只重排+重绘，不碰任务/动画/语义 ──────

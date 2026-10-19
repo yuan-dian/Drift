@@ -143,6 +143,36 @@ abstract class Element
     }
 
     /**
+     * 子树里**第一个类型匹配**的渲染盒（找不到 ⇒ `null`）。
+     *
+     * ★ 与 `effectiveBox()` 的区别：那个是"父要挂接子盒"用的**第一个盒**（可能是
+     *   包装层，例如 `TextField` 有 label 时的 `Column`）；这里要的是"**指定控件**的
+     *   盒"，必须穿过包装层继续往下找。
+     *
+     * 用在 IME 光标矩形（`TextFieldState::caretRect()`）：它必须拿到 `RenderTextField`
+     * 本身 —— 拿 `Column` 的盒去问光标位置只会得到 `null`，候选框就贴屏幕左上角
+     * （2026-10-19 实测：有 label 的字段全错、无 label 的全对）。
+     *
+     * @param callable(RenderBox):bool $match
+     * @internal 框架内部查找（Widget 侧不要用它做业务判断）
+     */
+    public function findBox(callable $match): ?RenderBox
+    {
+        if ($this->box !== null && $match($this->box)) {
+            return $this->box;
+        }
+
+        foreach ($this->children as $child) {
+            $found = $child->findBox($match);
+            if ($found !== null) {
+                return $found;
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * 子树建完后把**子节点的盒**收进自己的盒（C1：父管挂接，子不自定位）。
      *
      * 基类是空操作：叶子没有子盒要收。容器覆写它 —— 从 `children` 里拉盒。

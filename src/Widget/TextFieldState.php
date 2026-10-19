@@ -7,6 +7,7 @@ use Drift\Errors;
 use Drift\Geometry\Rect;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
+use Drift\Layout\RenderBox;
 use Drift\Layout\RenderTextField;
 use Drift\Text\Utf8;
 
@@ -296,9 +297,15 @@ final class TextFieldState extends State
      */
     public function caretRect(): ?Rect
     {
-        $box = $this->element()?->effectiveBox();
+        // ★ 必须**穿过包装层**找 `RenderTextField`：有 label 时 `build()` 返回
+        //   `Column[Text(标签), 字段盒]`，`effectiveBox()` 给的是 `Column` 的盒。
+        //   用它判类型 ⇒ `null` ⇒ 壳收到"无插入符" ⇒ 候选框贴屏幕左上角
+        //   （2026-10-19 实测：带 label 的字段全错，无 label 的全对）。
+        $box = $this->element()?->findBox(
+            static fn(RenderBox $candidate): bool => $candidate instanceof RenderTextField,
+        );
 
-        return $box instanceof RenderTextField ? $box->caretRect() : null;
+        return $box?->caretRect();
     }
 
     public function build(BuildContext $ctx): Widget
