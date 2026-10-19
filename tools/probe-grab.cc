@@ -384,9 +384,9 @@ bool savePng(const Shot& shot, const std::wstring& path)
         hr = stream->InitializeFromFilename(path.c_str(), GENERIC_WRITE);
         if (FAILED(hr)) break; }
         if (FAILED(factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder))) break; }
-        if (FAILED(encoder->Initialize(stream, WICBitmapEncoderNoCache))) { std::fprintf(stderr, "dbg: enc Init 0x%08lx\n", hr); break; }
+        if (FAILED(encoder->Initialize(stream, WICBitmapEncoderNoCache))) break; }
         if (FAILED(encoder->CreateNewFrame(&frame, &props))) break; }
-        if (FAILED(frame->Initialize(props))) { std::fprintf(stderr, "dbg: frame Init 0x%08lx\n", hr); break; }
+        if (FAILED(frame->Initialize(props))) break; }
         if (FAILED(frame->SetSize(static_cast<UINT>(shot.width), static_cast<UINT>(shot.height)))) break; }
         // BGRA（内存布局）⇒ GUID_WICPixelFormat32bppBGRA，与像素序一致，无需转换
         WICPixelFormatGUID srcFmt = GUID_WICPixelFormat32bppBGRA;
@@ -396,8 +396,8 @@ bool savePng(const Shot& shot, const std::wstring& path)
                                       static_cast<UINT>(shot.width) * 4,
                                       static_cast<UINT>(shot.pixels.size()),
                                       const_cast<BYTE*>(shot.pixels.data())))) break; }
-        if (FAILED(frame->Commit())) { std::fprintf(stderr, "dbg: frame Commit 0x%08lx\n", hr); break; }
-        if (FAILED(encoder->Commit())) { std::fprintf(stderr, "dbg: enc Commit 0x%08lx\n", hr); break; }
+        if (FAILED(frame->Commit())) break; }
+        if (FAILED(encoder->Commit())) break; }
         ok = true;
     } while (false);
 
