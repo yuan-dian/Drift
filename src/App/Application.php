@@ -25,6 +25,7 @@ use Drift\Layout\RenderObject;
 use Drift\Layout\RenderPopupPanel;
 use Drift\Layout\RenderScrollView;
 use Drift\Rendering\RenderSurface;
+use Drift\Rendering\SurfaceProfile;
 use Drift\Text\DeterministicFontManager;
 use Drift\Text\DeterministicMetricsProvider;
 use Drift\Text\DeterministicShaper;
@@ -819,27 +820,51 @@ abstract class Application
 
         $this->lastTimestampMs = $timestampMs;
 
+        // ★ 分段计时（SurfaceProfile，默认关）：frame() 里各泵与收尾的占比，
+        //   M4 拆「其余(PHP)」黑箱用（`26` §7）。段键与 Frame.php 的同治一套表。
+        $prof = SurfaceProfile::$on;
+
         // ★ ① 先问一轮非阻塞 IO（§17.4.4）：外部数据先到，回调里 setState 的脏标记
         //   由本次 settle 消费（这一句必须在 `Frame::run()` 之前）。
+        $t = $prof ? \hrtime(true) : 0;
         $this->pumpIo();
+        if ($prof) {
+            SurfaceProfile::add('pumpIo', \hrtime(true) - $t);
+        }
 
         // ★★ ② 再把后台结果取出来（§17.4.2）—— **必须在 settle 之前**：
         //   回调里 `setState()` 只标脏，紧随的 `Frame::run()` 第 ① 步就是 settle
         //   ⇒ 同帧生效。放到 settle 之后，那次 setState 要等下一帧，
         //   "loading → ready" 会闪一帧空（多一帧延迟，且用户看得见）。
+        $t = $prof ? \hrtime(true) : 0;
         $this->pumpTasks();
+        if ($prof) {
+            SurfaceProfile::add('pumpTasks', \hrtime(true) - $t);
+        }
 
         // ★ ③ 最后推进分片任务（P1）：完成的那一个也在此刻回调 ⇒ 同样落在 settle 之前。
         //   顺序（结果 → 分片 → settle）不重要，**都在 settle 之前**才重要。
+        $t = $prof ? \hrtime(true) : 0;
         $this->pumpSliced();
+        if ($prof) {
+            SurfaceProfile::add('pumpSliced', \hrtime(true) - $t);
+        }
 
         // ★ ⓸ 推进动画（§17.4.9）：同样**必须在 settle 之前** —— `tickFrame()` 里的
         //   `setState()` 由紧随的 `Frame::run()` 的 settle 段消费，同一帧生效。
         //   返回值是"还有动画在跑吗"，喂给 `wantsFrame()` 决定下一次要不要被叫醒。
+        $t = $prof ? \hrtime(true) : 0;
         $this->animating = $this->tickAnimations($timestampMs);
+        if ($prof) {
+            SurfaceProfile::add('anim', \hrtime(true) - $t);
+        }
 
         // 浮层布局段（无界自尺寸 + 钉锚点 + 夹进客户区）—— 见 placeMenu()
+        $t = $prof ? \hrtime(true) : 0;
         $this->placeMenu($constraints);
+        if ($prof) {
+            SurfaceProfile::add('placeMenu', \hrtime(true) - $t);
+        }
 
         $frame->run($root, $constraints, $timestampMs, $this->menuElement, $this->menuX, $this->menuY);
 
@@ -849,10 +874,18 @@ abstract class Application
         //   O(树) 与同帧的 `layout()` 同阶 —— §13.3：Render 层本就全树重排。
         // ★ **浮层是第二棵树，也要进焦点链**（O-20 差异表 #2）—— 否则菜单项
         //   永远 Tab 不到。
+        $t = $prof ? \hrtime(true) : 0;
         $this->focus?->collect($root, ...($this->menuElement !== null ? [$this->menuElement] : []));
+        if ($prof) {
+            SurfaceProfile::add('focus', \hrtime(true) - $t);
+        }
 
         // 语义树推给 UIA（§9 / M5）：每帧末经 sink 交出（无 sink ⇒ 不建，零开销）。
+        $t = $prof ? \hrtime(true) : 0;
         $this->pumpSemantics();
+        if ($prof) {
+            SurfaceProfile::add('semantics', \hrtime(true) - $t);
+        }
     }
 
     /**

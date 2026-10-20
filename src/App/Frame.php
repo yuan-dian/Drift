@@ -7,6 +7,7 @@ use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
 use Drift\Layout\RenderBox;
 use Drift\Rendering\RenderSurface;
+use Drift\Rendering\SurfaceProfile;
 use Drift\Widget\Element;
 use Drift\Widget\StatefulElement;
 use Throwable;
@@ -60,6 +61,9 @@ final class Frame
         // ★ O-12 A′ 帧循环异常策略 S3 的"无边界"半边：异常从子树一路冒到这里
         //   （沿途没有 ErrorBoundary 捕获）⇒ Fatal 序列。**不吞**——吞掉就是
         //   窗口冻结在上一帧且不报错（G2 明令禁止的半静默）。
+        // ★ 分段计时（SurfaceProfile，默认关）：M4 拆「其余(PHP)」黑箱用（`26` §7）。
+        $prof = SurfaceProfile::$on;
+        $t = $prof ? \hrtime(true) : 0;
         try {
             $root->settle();
             $popup?->settle(); // 第二棵树的帧末重建（O-20）
@@ -70,6 +74,9 @@ final class Frame
                 basename($e->getFile()),
                 $e->getLine(),
             ));
+        }
+        if ($prof) {
+            SurfaceProfile::add('settle', \hrtime(true) - $t);
         }
 
         // ② layout
@@ -83,6 +90,7 @@ final class Frame
             return; // 整棵子树没有任何可绘制内容（例如空页）⇒ 这一帧无事可做
         }
 
+        $t = $prof ? \hrtime(true) : 0;
         try {
             $box->layout($constraints);
         } catch (Throwable $e) {
@@ -93,8 +101,14 @@ final class Frame
                 $e->getLine(),
             ));
         }
+        if ($prof) {
+            SurfaceProfile::add('layout', \hrtime(true) - $t);
+        }
 
         // ③ paint → ④ present
+        // ★ 本段**含** beginFrame 与 endFrame（各自另有计时）⇒ 报告里要扣掉，
+        //   剩下的才是「画」自己的（DisplayList 记录 + Skia 光栅）。
+        $t = $prof ? \hrtime(true) : 0;
         try {
             $canvas = $this->surface->beginFrame($timestampMs);
             $box->paint($canvas);
@@ -116,6 +130,9 @@ final class Frame
                 basename($e->getFile()),
                 $e->getLine(),
             ));
+        }
+        if ($prof) {
+            SurfaceProfile::add('paint', \hrtime(true) - $t);
         }
     }
 }
