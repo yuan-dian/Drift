@@ -120,9 +120,23 @@ class RenderFlex extends RenderBox
             $flex = $kid->flex();
             $totalFlex += $flex;
 
-            // C4：有弹性子 ⇒ 弹性子拿无界主轴（分母是自然尺寸，不是剩余空间）。
-            // 主轴本身就无界时同样给无界 ⇒ 无空间可分，flex 退化成自然尺寸。
-            $childMainMax = ($hasFlex && $flex > 0) || !$mainBounded ? INF : max(0.0, $maxMain);
+            // ★★ 弹性子**不在第一遍量**（主轴有界时）：它的尺寸要等"份额"
+            //   定下来才有意义，而份额又要等固定子节点量完。第一遍量的结果会被
+            //   第二遍**完全覆盖**（`$mains` 回填、`mainSize` 在第二遍之后才求和）
+            //   ⇒ 等于让整棵弹性子树每帧白排一遍 —— showcase / users 的外层
+            //   `Row[导航, Expanded(ScrollView(页))]` 正是此形态。GUI 上游同款
+            //   实测：这笔浪费接近整帧布局开销的一半（layout 620→310µs）。
+            //   Flutter 的 RenderFlex 同构：第一遍只处理 flex == 0 的子节点。
+            // ★ **主轴无界时例外**：第二遍不会跑（无空间可分），弹性子必须在
+            //   这里拿自然尺寸，否则整棵子树一次都不排 ⇒ 尺寸停留上一帧。
+            if ($flex > 0 && $mainBounded) {
+                $mains[$index] = 0.0;   // 占位：第二遍回填
+                continue;
+            }
+
+            // 主轴无界 ⇒ 无空间可分，所有子拿无界主轴（自然尺寸）；
+            // 有界且非弹性 ⇒ 上限。
+            $childMainMax = !$mainBounded ? INF : max(0.0, $maxMain);
             $kid->layout($this->childConstraints($kid, $childMainMax, $maxCross));
             $mains[$index] = $vertical ? $kid->size()->height : $kid->size()->width;
         }
@@ -154,6 +168,7 @@ class RenderFlex extends RenderBox
                 }
                 $share = $space * $flex / $totalFlex;
                 $tight = $this->tightMain($inner, $share);
+                // 第一遍被跳过的弹性子在这里第一次也是唯一一次量 ⇒ `$mains` 占位回填
                 $kid->layout($tight);
                 $mains[$index] = $vertical ? $kid->size()->height : $kid->size()->width;
             }

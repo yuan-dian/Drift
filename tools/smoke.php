@@ -2156,9 +2156,15 @@ $c4Column->addChild(new RenderFlexible(1));
 $c4Column->children()[1]->setChild($elasticSpy);
 $c4Column->layout(new BoxConstraints(0.0, 100.0, 0.0, 60.0));
 check(
-    'Layout · C4 弹性子拿到无界主轴（不是"现在剩多少"）',
-    $elasticSpy->firstSeen !== null && $elasticSpy->firstSeen->hasInfiniteHeight(),
-    '实际第一遍 maxHeight=' . (string) ($elasticSpy->firstSeen?->maxHeight ?? -1.0)
+    'Layout · C4 弹性子只在份额定下后量一次（拿紧主轴，不再白排一遍）',
+    $elasticSpy->firstSeen !== null
+        && $elasticSpy->firstSeen === $elasticSpy->lastSeen
+        && $elasticSpy->firstSeen->maxHeight === 50.0,
+    sprintf(
+        '实际第一遍 maxHeight=%.1f（与 lastSeen 同一实例：%s）',
+        $elasticSpy->firstSeen?->maxHeight ?? -1.0,
+        $elasticSpy->firstSeen === $elasticSpy->lastSeen ? '是' : '否'
+    )
 );
 check(
     'Layout · C4 非弹性子拿 0..可用（同一遍里两者不同）',
