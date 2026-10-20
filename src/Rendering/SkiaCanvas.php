@@ -263,6 +263,60 @@ final class SkiaCanvas implements Canvas
         }
     }
 
+
+    /**
+     * P0：桥（`cpp-src/drift_skia.cc`）还没有椭圆/线段的原生入口 —— Core
+     * 两 op 在 P1 落桥后这里换成真调用。在那之前同样**响亮失败**。
+     */
+    public function capabilities(): int
+    {
+        return 0;
+    }
+
+    public function drawEllipse(Rect $rect, Paint $paint): void
+    {
+        $this->unsupportedOp('drawEllipse', 'Core');
+    }
+
+    public function drawLine(float $x1, float $y1, float $x2, float $y2, Paint $paint): void
+    {
+        $this->unsupportedOp('drawLine', 'Core');
+    }
+
+    public function drawPath(Path $path, Paint $paint): void
+    {
+        $this->unsupportedOp('drawPath', 'Optional');
+    }
+
+    public function drawImage(ImageHandle $image, ?Rect $src, Rect $dst): void
+    {
+        $this->unsupportedOp('drawImage', 'Optional');
+    }
+
+    public function drawShadow(Shadow $shadow): void
+    {
+        $this->unsupportedOp('drawShadow', 'Optional');
+    }
+
+    public function pushLayer(float $opacity): void
+    {
+        $this->unsupportedOp('pushLayer', 'Optional');
+    }
+
+    public function popLayer(): void
+    {
+        $this->unsupportedOp('popLayer', 'Optional');
+    }
+
+    public function pushClipPath(Path $path): void
+    {
+        $this->unsupportedOp('pushClipPath', 'Extended');
+    }
+
+    private function unsupportedOp(string $op, string $tier): void
+    {
+        Errors::report(CanvasCapabilities::unsupportedMessage($op, 'SkiaCanvas', $tier));
+    }
     /**
      * 字体未就绪时记一条 Diagnostic（只记一次）。
      *

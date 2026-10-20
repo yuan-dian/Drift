@@ -16,6 +16,14 @@ use Drift\Text\Paragraph;
  * **坐标约定**（§7.2 裁决 3）：父级在绘制子盒前已 translate 到盒原点，
  * 所以 `paint` 内部以 (0,0) 为盒左上角作画。
  *
+ * **能力分级**（D2，2026-10-20 采纳）：7-op 时代的原语（`drawRect` /
+ * `drawParagraph` / `save` / `pushClip` …）无条件支持；19 op 回植新增的面
+ * 分三层 —— Core（`drawEllipse` / `drawLine`，所有后端必须）/ Extended
+ * （渐变 / 虚线 / `pushClipPath`，Raster 允许降级近似）/ Optional
+ * （`drawPath` / `drawImage` / `drawShadow` / `pushLayer`，仅 Skia 级）。
+ * `capabilities()` 是各后端对外的能力位掩码，`CustomPaint` 在拿到画布时
+ * **查一次**，不在每次绘制时查。位语义见 `CanvasCapabilities`。
+ *
  * @api extension
  */
 interface Canvas
@@ -62,4 +70,76 @@ interface Canvas
      *     offset 被丢（今天生产者 offset 恒 0 ⇒ 潜伏；M4 真塑形时会活）。
      */
     public function drawParagraph(Paragraph $paragraph, Paint $paint, float $x = 0.0, float $y = 0.0): void;
+
+    /**
+     * 能力位掩码（`CanvasCapabilities::CAP_*`，构建期查一次）。
+     *
+     * `RecordingCanvas` 返回 `ALL_MASK`：它只录制不 rasterize，能不能画
+     * 由**回放时的画布**裁决（失败发生在回放侧，消息里带的是真后端名）。
+     */
+    public function capabilities(): int;
+
+    /**
+     * 椭圆（外接矩形 `$rect` 内切），Core 层。
+     *
+     * ★ 与 `drawRect` 同口径：`radius` 的事归矩形；`Paint::Stroke` 时
+     *   描边宽度**不乘 dpr**（两个后端 conformance 的统一口径）。
+     * ★ `Paint::Fill` + `Paint::Stroke` 都成立；`$paint->color->a === 0`
+     *   时可整块跳过（与 `rasterize()` 的早退同一档）。
+     */
+    public function drawEllipse(Rect $rect, Paint $paint): void;
+
+    /**
+     * 线段（两端点，逻辑坐标），Core 层。
+     *
+     * ★ 宽度一律取 `$paint->strokeWidth`（逻辑单位，不乘 dpr）；`$paint`
+     *   是 **Fill** 风格时报 `E-OP-UNSUPPORTED` —— 线段没有"内外圈"概念，
+     *   Fill 语义不存在，静默按 1px 画正是最难查的那类错。
+     */
+    public function drawLine(float $x1, float $y1, float $x2, float $y2, Paint $paint): void;
+
+    /**
+     * 矢量路径填充/描边，Optional 层（P4）。
+     *
+     * ★ 路径的几何在**逻辑空间**，变换吃画布的 `translate()`（与
+     *   `drawParagraph` 同一条纪律：不叠加当前偏移 = 位置全错且看不出来）。
+     */
+    public function drawPath(Path $path, Paint $paint): void;
+
+    /**
+     * 图像（`$src` 子矩形整幅画到 `$dst`，任一为 null ⇒ 整幅缩放），
+     * Optional 层（P4）。
+     *
+     * ★ **只支持整数倍/任意缩放都在后端层消化**：`$dst` 是逻辑矩形，
+     *   后端自己决定最近邻/双线性（`RasterCanvas` 先只做最近邻，文档注明）。
+     */
+    public function drawImage(ImageHandle $image, ?Rect $src, Rect $dst): void;
+
+    /**
+     * 阴影（投影形状的几何 + 偏移 + 模糊 + 浓度），Optional 层（P4）。
+     *
+     * ★ 它是**原语**：`BoxStyle.shadow` 字段（将来）转调这里，不要在
+     *   字段层另造一套三层半透明矩形的老路（`RenderCard` 的现状）。
+     */
+    public function drawShadow(Shadow $shadow): void;
+
+    /**
+     * 压入合成层（`opacity` 整体不透明度，0..1），与 `popLayer()` 配对。
+     *
+     * ★ 层是**绘制栈**的一部分（`save`/`restore` 之外新增的第三条语义）：
+     *   当前 offset/clip 照常生效，层只影响"层内累积的结果怎么合到下层"。
+     * ★ W8 的配平断言（`DisplayList::assertBalanced`）**不**覆盖层深 ——
+     *   层的配平由 `CustomPaint` 的契约保证（painter 自己配对，画布只执行）。
+     */
+    public function pushLayer(float $opacity): void;
+
+    public function popLayer(): void;
+
+    /**
+     * 压入路径裁剪（与当前裁剪求交），Extended 层，弹仍然用 `popClip()`。
+     *
+     * ★ 复用 `pushClip` 的裁剪栈（**不**开第二条栈）：两种裁剪的差别只在
+     *   "裁什么形状"，弹栈语义完全一致（W8 的 `clipDepth` 同口径计深）。
+     */
+    public function pushClipPath(Path $path): void;
 }

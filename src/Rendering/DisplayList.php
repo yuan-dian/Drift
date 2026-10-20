@@ -30,9 +30,26 @@ final class DisplayList
     public const OP_DRAW_RECT = 6;
     /** 段落绘制：`[paragraph, paint, x, y]` —— 位图在回放时才产生，见 `Canvas::drawParagraph()` */
     public const OP_DRAW_PARAGRAPH = 7;
+    /** 19 op 回植（P0 立 opcode，P1/P3/P4 分批实现后端，见 `CanvasCapabilities` 分层表） */
+    public const OP_DRAW_ELLIPSE = 8;   // [rect, paint]                      Core
+    public const OP_DRAW_LINE = 9;     // [x1, y1, x2, y2, paint]           Core
+    public const OP_DRAW_PATH = 10;    // [path, paint]                     Optional
+    public const OP_DRAW_IMAGE = 11;   // [image, ?src, dst]                Optional
+    public const OP_DRAW_SHADOW = 12;  // [shadow]                          Optional
+    public const OP_LAYER_PUSH = 13;   // [opacity]                         Optional
+    public const OP_LAYER_POP = 14;    // []                                Optional
+    public const OP_PUSH_CLIP_PATH = 15; // [path]                          Extended
 
-    /** 每条命令占的槽位数：`[op, a, b, c, ref]` */
-    private const SLOTS = 5;
+    /**
+     * 每条命令占的槽位数：`[op, a, b, c, d, ref]`。
+     *
+     * ★ 7-op 时代 5 槽够（最多 4 个操作数：`drawParagraph` 的
+     *   paragraph/paint/x/y）。19 op 的 `OP_DRAW_LINE` 要 5 个
+     *   （x1/y1/x2/y2/paint）⇒ 统一升到 6 槽。代价是所有命令每条多一个槽
+     *   （`estimatedBytes` 的公式同步变大）；收益是 record/replay 的寻址
+     *   保持「一条命令一段连续槽位」，不为一种 op 特例化。
+     */
+    private const SLOTS = 6;
 
     /** @var array<int, mixed> 扁平命令缓冲 —— 复用，不每帧重建 */
     private array $buffer = [];
@@ -58,14 +75,22 @@ final class DisplayList
      * @param mixed $c
      * @param mixed $ref
      */
-    public function record(int $op, $a = null, $b = null, $c = null, $ref = null): void
+    /**
+     * @param mixed $a
+     * @param mixed $b
+     * @param mixed $c
+     * @param mixed $d
+     * @param mixed $ref
+     */
+    public function record(int $op, $a = null, $b = null, $c = null, $d = null, $ref = null): void
     {
         $base = $this->length * self::SLOTS;
         $this->buffer[$base] = $op;
         $this->buffer[$base + 1] = $a;
         $this->buffer[$base + 2] = $b;
         $this->buffer[$base + 3] = $c;
-        $this->buffer[$base + 4] = $ref;
+        $this->buffer[$base + 4] = $d;
+        $this->buffer[$base + 5] = $ref;
         $this->length++;
 
         if ($op === self::OP_SAVE) {
@@ -157,6 +182,38 @@ final class DisplayList
                     (float) $this->buffer[$base + 3],
                     (float) $this->buffer[$base + 4]
                 );
+            } elseif ($op === self::OP_DRAW_ELLIPSE) {
+                $canvas->drawEllipse(
+                    $this->buffer[$base + 1],
+                    $this->buffer[$base + 2],
+                );
+            } elseif ($op === self::OP_DRAW_LINE) {
+                $canvas->drawLine(
+                    (float) $this->buffer[$base + 1],
+                    (float) $this->buffer[$base + 2],
+                    (float) $this->buffer[$base + 3],
+                    (float) $this->buffer[$base + 4],
+                    $this->buffer[$base + 5],
+                );
+            } elseif ($op === self::OP_DRAW_PATH) {
+                $canvas->drawPath(
+                    $this->buffer[$base + 1],
+                    $this->buffer[$base + 2],
+                );
+            } elseif ($op === self::OP_DRAW_IMAGE) {
+                $canvas->drawImage(
+                    $this->buffer[$base + 1],
+                    $this->buffer[$base + 2],
+                    $this->buffer[$base + 3],
+                );
+            } elseif ($op === self::OP_DRAW_SHADOW) {
+                $canvas->drawShadow($this->buffer[$base + 1]);
+            } elseif ($op === self::OP_LAYER_PUSH) {
+                $canvas->pushLayer((float) $this->buffer[$base + 1]);
+            } elseif ($op === self::OP_LAYER_POP) {
+                $canvas->popLayer();
+            } elseif ($op === self::OP_PUSH_CLIP_PATH) {
+                $canvas->pushClipPath($this->buffer[$base + 1]);
             }
         }
     }

@@ -143,11 +143,17 @@ use Drift\Routing\NoPage;
 use Drift\Routing\RouteTable;
 use Drift\Widget\Offstage;
 use Drift\Widget\OffstageElement;
+use Drift\Rendering\CanvasCapabilities;
 use Drift\Rendering\Color;
 use Drift\Rendering\ColorToken;
+use Drift\Rendering\DashPattern;
 use Drift\Rendering\DisplayList;
+use Drift\Rendering\Gradient;
+use Drift\Rendering\ImageHandle;
 use Drift\Rendering\MetricToken;
 use Drift\Rendering\Paint;
+use Drift\Rendering\Path;
+use Drift\Rendering\Shadow;
 use Drift\Rendering\RasterCanvas;
 use Drift\Rendering\RecordingCanvas;
 use Drift\Rendering\SkiaCanvas;
@@ -308,6 +314,25 @@ if (str_starts_with($caseArg, '--case=')) {
         $list = new DisplayList();
         $list->record(DisplayList::OP_SAVE); // 只有 save 没有 restore
         $list->assertBalanced();             // W8 ⇒ 必须响亮失败
+    }
+
+    if ($case === 'pathop') {
+        // P0：RasterCanvas 没实现 Optional 层 op ⇒ 响亮失败，不静默丢像素
+        $canvas = new RasterCanvas(20, 20, Color::white(), Scale::of(1.0));
+        $canvas->drawPath(
+            Path::create()->moveTo(2, 2)->lineTo(8, 2)->lineTo(8, 8)->close(),
+            Paint::fill(Color::black())
+        );
+    }
+
+    if ($case === 'gradientbad') {
+        // 色标越界 ⇒ 构造期就失败（不等长/越界的色标表在光栅化时会静默错位）
+        Gradient::linear(0, 0, 10, 0, [Color::white(), Color::black()], [0.0, 1.5]);
+    }
+
+    if ($case === 'shadowtransparent') {
+        // 全透明阴影 = 什么都不会留下 ⇒ 直接失败，别留一个 no-op 的调用点
+        new Shadow(new Rect(0, 0, 10, 10), new Color(0, 0, 0, 0));
     }
 
     if ($case === 'font') {
@@ -1677,6 +1702,57 @@ fresh($log);
 [$code, $output] = runCase(__FILE__, 'w8', null);
 check('Rendering · W8 未闭合退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
 check('Rendering · W8 未闭合写了 Errors.log', str_contains(logText($log), 'W8'));
+
+// ⑩+1 19 op 回植 · P0 契约（2026-10-20，D2 分层进 Canvas）
+fresh($log);
+$capsRaster = new RasterCanvas(8, 8, Color::white(), Scale::of(1.0));
+check('Canvas · Raster capabilities() = 0（分层后端未到：P1/P3/P4）', $capsRaster->capabilities() === 0);
+$capsRec = RecordingCanvas::create();
+check(
+    'Canvas · Recording capabilities() = ALL_MASK（录制侧全录，支持与否由回放侧裁决）',
+    $capsRec->capabilities() === CanvasCapabilities::ALL_MASK
+);
+
+// Path 构造
+$p19 = Path::create()->moveTo(2, 2)->lineTo(6, 2)->quadTo(8, 4, 6, 6)->close();
+check('Path · 命令数与非空', $p19->commandCount() === 4 && !$p19->isEmpty());
+$cmds19 = $p19->commands();
+check('Path · MOVE 首命令带坐标', $cmds19[0][0] === Path::CMD_MOVE && $cmds19[0][1] === 2.0);
+check('Path · QUAD 携带控制点与终点', $cmds19[2][0] === Path::CMD_QUAD && $cmds19[2][3] === 6.0 && $cmds19[2][4] === 6.0);
+check('Path · addRect 四边闭合', Path::create()->addRect(new Rect(0, 0, 4, 3))->commandCount() === 5);
+
+// Paint 的 source 正交维度（渐变/虚线是画笔属性，不是新 draw 方法）
+$plain19 = Paint::fill(Color::white());
+$graded19 = $plain19->withGradient(Gradient::linear(0, 0, 10, 0, [Color::white(), Color::black()]));
+check('Paint · withGradient 不动原对象（值语义）', !$plain19->hasGradient() && $graded19->hasGradient());
+check('Paint · withColor 保留渐变', $graded19->withColor(Color::fromRgb(255, 0, 0))->hasGradient());
+$dashed19 = $plain19->withDash(new DashPattern(4.0, 2.0));
+check('Paint · withDash 周期 = on+off', $dashed19->hasDash() && $dashed19->dash->period() === 6.0);
+check('Paint · equals 感知渐变/虚线差异', !$graded19->equals($plain19));
+check(
+    'Paint · equals 对同构渐变成立（== 值语义而非实例同一）',
+    $graded19->equals(Paint::fill(Color::white())->withGradient(Gradient::linear(0, 0, 10, 0, [Color::white(), Color::black()])))
+);
+
+// DisplayList 6 槽与新 opcode（LINE 是 5 操作数的命令）
+$list19 = new DisplayList();
+$list19->record(DisplayList::OP_DRAW_LINE, 1.0, 2.0, 3.0, 4.0, $plain19);
+check('DisplayList · 6 槽 LINE 的 y2/paint 定位', $list19->count() === 1 && $list19->argAt(0, 3) === 4.0 && $list19->argAt(0, 4) === $plain19);
+
+// Optional op 在软光栅上响亮失败
+[$code, $output] = runCase(__FILE__, 'pathop', null);
+check('Canvas · Raster drawPath 退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
+$msg = logText($log);
+check('Canvas · 失败消息含 op 名与两条修法', str_contains($msg, 'drawPath') && str_contains($msg, '两条修法'));
+fresh($log);
+
+[$code, $output] = runCase(__FILE__, 'gradientbad', null);
+check('Gradient · 色标越界退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
+fresh($log);
+
+[$code, $output] = runCase(__FILE__, 'shadowtransparent', null);
+check('Shadow · 全透明阴影退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
+fresh($log);
 
 // ⑪ Text：六层栈 + 确定性参考实现（§8 / §14.2）
 fresh($log);

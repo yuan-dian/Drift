@@ -64,4 +64,53 @@ final class RecordingCanvas implements Canvas
     {
         $this->list->record(DisplayList::OP_DRAW_PARAGRAPH, $paragraph, $paint, $x, $y);
     }
+
+    /**
+     * 录制侧**全能力**：它只把命令写进 `DisplayList`，能不能画由回放时的
+     * 画布裁决（失败发生在回放侧，消息里带的是真后端名，见 `Canvas` 契约）。
+     */
+    public function capabilities(): int
+    {
+        return CanvasCapabilities::ALL_MASK;
+    }
+
+    public function drawEllipse(Rect $rect, Paint $paint): void
+    {
+        $this->list->record(DisplayList::OP_DRAW_ELLIPSE, $rect, $paint);
+    }
+
+    public function drawLine(float $x1, float $y1, float $x2, float $y2, Paint $paint): void
+    {
+        $this->list->record(DisplayList::OP_DRAW_LINE, $x1, $y1, $x2, $y2, $paint);
+    }
+
+    public function drawPath(Path $path, Paint $paint): void
+    {
+        $this->list->record(DisplayList::OP_DRAW_PATH, $path, $paint);
+    }
+
+    public function drawImage(ImageHandle $image, ?Rect $src, Rect $dst): void
+    {
+        $this->list->record(DisplayList::OP_DRAW_IMAGE, $image, $src, $dst);
+    }
+
+    public function drawShadow(Shadow $shadow): void
+    {
+        $this->list->record(DisplayList::OP_DRAW_SHADOW, $shadow);
+    }
+
+    public function pushLayer(float $opacity): void
+    {
+        $this->list->record(DisplayList::OP_LAYER_PUSH, $opacity);
+    }
+
+    public function popLayer(): void
+    {
+        $this->list->record(DisplayList::OP_LAYER_POP);
+    }
+
+    public function pushClipPath(Path $path): void
+    {
+        $this->list->record(DisplayList::OP_PUSH_CLIP_PATH, $path);
+    }
 }

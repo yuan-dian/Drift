@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Rendering;
 
+use Drift\Errors;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Scale;
 use Drift\Text\GlyphBitmap;
@@ -211,6 +212,62 @@ final class RasterCanvas implements Canvas
         }
     }
 
+
+    /**
+     * P0：19 op 回植的后端实现未到 —— Core（椭圆/线段）在 P1、Extended
+     * （渐变/虚线/路径裁剪）在 P3、Optional（路径/图像/阴影/层）在 P4。
+     * 在那之前，遇到这些 op **响亮失败**而不是静默丢像素（"矩形全对、
+     * 内容没了"正是最难查的一类 bug 形状）。
+     */
+    public function capabilities(): int
+    {
+        return 0;
+    }
+
+    public function drawEllipse(Rect $rect, Paint $paint): void
+    {
+        $this->unsupportedOp('drawEllipse', 'Core');
+    }
+
+    public function drawLine(float $x1, float $y1, float $x2, float $y2, Paint $paint): void
+    {
+        $this->unsupportedOp('drawLine', 'Core');
+    }
+
+    public function drawPath(Path $path, Paint $paint): void
+    {
+        $this->unsupportedOp('drawPath', 'Optional');
+    }
+
+    public function drawImage(ImageHandle $image, ?Rect $src, Rect $dst): void
+    {
+        $this->unsupportedOp('drawImage', 'Optional');
+    }
+
+    public function drawShadow(Shadow $shadow): void
+    {
+        $this->unsupportedOp('drawShadow', 'Optional');
+    }
+
+    public function pushLayer(float $opacity): void
+    {
+        $this->unsupportedOp('pushLayer', 'Optional');
+    }
+
+    public function popLayer(): void
+    {
+        $this->unsupportedOp('popLayer', 'Optional');
+    }
+
+    public function pushClipPath(Path $path): void
+    {
+        $this->unsupportedOp('pushClipPath', 'Extended');
+    }
+
+    private function unsupportedOp(string $op, string $tier): void
+    {
+        Errors::report(CanvasCapabilities::unsupportedMessage($op, 'RasterCanvas', $tier));
+    }
     private function toDevice(Rect $rect): Rect
     {
         return $this->scale->quantizeRect(
