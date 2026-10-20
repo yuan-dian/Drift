@@ -264,23 +264,65 @@ final class SkiaCanvas implements Canvas
     }
 
 
-    /**
-     * P0：桥（`cpp-src/drift_skia.cc`）还没有椭圆/线段的原生入口 —— Core
-     * 两 op 在 P1 落桥后这里换成真调用。在那之前同样**响亮失败**。
-     */
+    /** P1 起 Core 两 op 有桥（`php_drift_skia_draw_ellipse/line`）。 */
     public function capabilities(): int
     {
-        return 0;
+        return CanvasCapabilities::CAP_ELLIPSE | CanvasCapabilities::CAP_LINE;
     }
 
+    /**
+     * 椭圆：`draw_rect` 的同族调用（桥收到设备坐标；宽度不乘 dpr）。
+     * Skia 的 `drawOval` 描边居中 —— 与 `RasterCanvas::drawEllipse` 的
+     * "外减内收半宽"同口径（都是居中），两后端可互做 conformance。
+     */
     public function drawEllipse(Rect $rect, Paint $paint): void
     {
-        $this->unsupportedOp('drawEllipse', 'Core');
+        if ($this->handle === 0) {
+            return;
+        }
+        $device = $this->toDevice($rect);
+        if ($device->width <= 0.0 || $device->height <= 0.0) {
+            return;
+        }
+
+        $stroke = $paint->isStroke();
+        $width = $paint->strokeWidth;
+        $argb = $paint->color->toArgb();
+
+        drift_skia_draw_ellipse(
+            $this->handle,
+            $device->left,
+            $device->top,
+            $device->width,
+            $device->height,
+            $argb,
+            $stroke,
+            $width,
+        );
     }
 
+    /**
+     * 线段：端点叠加当前偏移后一次量化（`drawParagraph` 笔位同口径），
+     * 宽度不乘 dpr（`draw_rect` 同款口径）。只支持描边（桥只发 stroke）。
+     */
     public function drawLine(float $x1, float $y1, float $x2, float $y2, Paint $paint): void
     {
-        $this->unsupportedOp('drawLine', 'Core');
+        if ($this->handle === 0) {
+            return;
+        }
+        CanvasCapabilities::assertStrokePaint($paint, 'drawLine');
+
+        $dpr = $this->scale->dpr;
+
+        drift_skia_draw_line(
+            $this->handle,
+            round(($x1 + $this->offsetX) * $dpr),
+            round(($y1 + $this->offsetY) * $dpr),
+            round(($x2 + $this->offsetX) * $dpr),
+            round(($y2 + $this->offsetY) * $dpr),
+            $paint->color->toArgb(),
+            $paint->strokeWidth,
+        );
     }
 
     public function drawPath(Path $path, Paint $paint): void

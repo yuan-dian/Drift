@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace Drift\Rendering;
 
+use Drift\Errors;
+
 /**
  * 画布能力位掩码（D2：op 分级进 `Canvas` 契约，2026-10-20 采纳）。
  *
@@ -70,6 +72,22 @@ final class CanvasCapabilities
      * @param string $backend 后端名，如 `RasterCanvas`
      * @param string $tier    `Core` / `Extended` / `Optional`
      */
+    /**
+     * 线段的 Fill 风格检查（两个后端同一口径）。
+     *
+     * 线段没有内外圈概念 ⇒ Fill 语义不存在；静默按 1px 画正是最难查的错。
+     */
+    public static function assertStrokePaint(Paint $paint, string $op): void
+    {
+        if (!$paint->isStroke()) {
+            Errors::report(sprintf(
+                '「%s 只支持描边」—— 收到的是填充风格的画笔。两条修法：'
+                . '① 改用 Paint::stroke(颜色, 宽度)；② 要实心形状就用 drawRect 或 Path。',
+                $op,
+            ));
+        }
+    }
+
     public static function unsupportedMessage(string $op, string $backend, string $tier): string
     {
         return sprintf(

@@ -116,6 +116,38 @@ $scenes['widget'] = static function () use ($W, $H): string {
     return $canvas->toRgba();
 };
 
+// ── 场景 N（P1 新增）：19 op 的 Core 层图元（椭圆填充/描边/线段）──
+// ★ golden 只用 Raster（确定性）；Skia 的抗锯齿边缘不同，不跨后端比像素。
+$scenes['ellipse-line'] = static function () use ($W, $H): string {
+    $c = new RasterCanvas($W, $H, Color::white(), null);
+
+    // 椭圆填充（不透明 / 半透明各一）
+    $c->drawEllipse(new Rect(40.0, 40.0, 200.0, 120.0), Paint::fill(new Color(30, 90, 200, 255)));
+    $c->drawEllipse(new Rect(300.0, 40.0, 200.0, 120.0), Paint::fill(new Color(200, 40, 40, 128)));
+
+    // 椭圆描边（居中半宽口径）
+    $c->drawEllipse(new Rect(560.0, 40.0, 200.0, 120.0), Paint::stroke(new Color(20, 20, 20, 255), 4.0));
+
+    // 线段：水平 / 垂直 / 斜线（胶囊体谓词，各种宽度）
+    $c->drawLine(40.0, 220.0, 240.0, 220.0, Paint::stroke(new Color(0, 0, 0, 255), 2.0));
+    $c->drawLine(40.0, 260.0, 40.0, 360.0, Paint::stroke(new Color(0, 0, 0, 255), 6.0));
+    $c->drawLine(300.0, 220.0, 460.0, 340.0, Paint::stroke(new Color(0, 120, 80, 255), 5.0));
+
+    // 裁剪内的椭圆（clip 与椭圆求交）
+    $c->save();
+    $c->pushClip(new Rect(560.0, 220.0, 200.0, 140.0));
+    $c->drawEllipse(new Rect(520.0, 200.0, 280.0, 180.0), Paint::fill(new Color(90, 60, 180, 220)));
+    $c->popClip();
+    $c->restore();
+
+    // 变换后的线段（offset 叠加一次量化）
+    $c->save();
+    $c->translate(30.0, 420.0);
+    $c->drawLine(0.0, 0.0, 160.0, 80.0, Paint::stroke(new Color(240, 160, 20, 255), 3.0));
+    $c->restore();
+
+    return $c->toRgba();
+};
 $out = [];
 foreach ($scenes as $name => $make) {
     $rgba = $make();

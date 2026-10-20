@@ -65,6 +65,33 @@ function drift_skia_draw_rect(
     bool $stroke,
     float $strokeWidth,
 ): void {}
+/**
+ * 椭圆（外接矩形内切）。PHP 侧负责逻辑→设备量化与偏移叠加（§6.1），
+ * 桥收到的永远是设备坐标；strokeWidth 不乘 dpr，与 draw_rect 同口径。
+ */
+function drift_skia_draw_ellipse(
+    int $canvas,
+    float $x,
+    float $y,
+    float $w,
+    float $h,
+    int $rgba,
+    bool $stroke,
+    float $strokeWidth,
+): void {}
+
+/**
+ * 线段（两端点，设备坐标）。只支持描边；宽度口径同 draw_rect。
+ */
+function drift_skia_draw_line(
+    int $canvas,
+    float $x1,
+    float $y1,
+    float $x2,
+    float $y2,
+    int $rgba,
+    float $strokeWidth,
+): void {}
 
 /**
  * 画**一个字形**，位置由 PHP 侧的排版给出（`penX` 是笔位、`baselineY` 是基线）。

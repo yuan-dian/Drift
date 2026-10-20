@@ -325,6 +325,60 @@ void php_drift_skia_draw_rect(
     }
 }
 
+void php_drift_skia_draw_ellipse(
+    Int canvas,
+    Float x,
+    Float y,
+    Float w,
+    Float h,
+    Int rgba,
+    Bool stroke,
+    Float strokeWidth
+) {
+    SkCanvas *c = canvasFor(canvas);
+    if (c == NULL || w <= 0.0 || h <= 0.0) {
+        return;
+    }
+
+    SkPaint paint;
+    paint.setAntiAlias(true);
+    // `Color::toArgb()` 的 0xAARRGGBB 就是 SkColor 的布局，直接喂
+    paint.setColor((SkColor)(uint32_t)rgba);
+    if ((bool)stroke) {
+        paint.setStyle(SkPaint::kStroke_Style);
+        paint.setStrokeWidth((SkScalar)strokeWidth);
+    } else {
+        paint.setStyle(SkPaint::kFill_Style);
+    }
+
+    c->drawOval(SkRect::MakeXYWH((SkScalar)x, (SkScalar)y, (SkScalar)w, (SkScalar)h), paint);
+}
+
+void php_drift_skia_draw_line(
+    Int canvas,
+    Float x1,
+    Float y1,
+    Float x2,
+    Float y2,
+    Int rgba,
+    Float strokeWidth
+) {
+    SkCanvas *c = canvasFor(canvas);
+    if (c == NULL) {
+        return;
+    }
+
+    SkPaint paint;
+    paint.setAntiAlias(true);
+    paint.setColor((SkColor)(uint32_t)rgba);
+    // 线段只支持描边（Paint::Fill 在 PHP 侧已响亮失败）；宽度口径与
+    // draw_rect 的 strokeWidth 一致：逻辑像素，不乘 dpr。
+    paint.setStyle(SkPaint::kStroke_Style);
+    paint.setStrokeWidth((SkScalar)strokeWidth);
+
+    c->drawLine((SkScalar)x1, (SkScalar)y1, (SkScalar)x2, (SkScalar)y2, paint);
+}
+
 void php_drift_skia_draw_glyph(
     Int canvas,
     String family,

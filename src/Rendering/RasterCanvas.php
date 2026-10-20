@@ -214,24 +214,183 @@ final class RasterCanvas implements Canvas
 
 
     /**
-     * P0：19 op 回植的后端实现未到 —— Core（椭圆/线段）在 P1、Extended
-     * （渐变/虚线/路径裁剪）在 P3、Optional（路径/图像/阴影/层）在 P4。
-     * 在那之前，遇到这些 op **响亮失败**而不是静默丢像素（"矩形全对、
-     * 内容没了"正是最难查的一类 bug 形状）。
+     * P1 起 Core 两 op 真实现（Extended 在 P3、Optional 在 P4，仍是显式失败）。
      */
     public function capabilities(): int
     {
-        return 0;
+        return CanvasCapabilities::CAP_ELLIPSE | CanvasCapabilities::CAP_LINE;
     }
 
+    /**
+     * 椭圆（外接矩形内切）填充 / 描边。
+     *
+     * ★ 不用 `rasterize()` 的区间法：那套靠"圆角只在上下边带行出现"，
+     *   而椭圆**每一行**的 x 范围都在变 ⇒ 逐行用谓词求跨度。谓词是像素
+     *   中心版 `((px-cx)/rx)² + ((py-cy)/ry)² <= 1`，与 `insideRoundRect`
+     *   同一族（中心采样；软光栅只对圆角/字形做覆盖度，其余不抗锯齿）。
+     * ★ 描边 = 外椭圆**扩**半宽减内椭圆**收**半宽（居中描边，与 Skia 的
+     *   `drawOval` 同口径，两后端可互做 conformance）。注意这与 `drawRect`
+     *   的"整宽内缩"是两套 —— drawRect 的口径是历史遗留，新 op 按正确
+     *   形态来。
+     * ★ 宽度不乘 dpr（两个后端 conformance 的统一口径）。
+     */
     public function drawEllipse(Rect $rect, Paint $paint): void
     {
-        $this->unsupportedOp('drawEllipse', 'Core');
+        if ($paint->color->a === 0) {
+            return;
+        }
+        $device = $this->toDevice($rect);
+        if ($device->width <= 0.0 || $device->height <= 0.0) {
+            return;
+        }
+
+        $outer = $device;
+        $hole = null;
+        if ($paint->isStroke()) {
+            $w = $paint->strokeWidth;
+            $outer = new Rect(
+                $device->left - $w / 2.0,
+                $device->top - $w / 2.0,
+                $device->width + $w,
+                $device->height + $w
+            );
+            $hole = new Rect(
+                $device->left + $w / 2.0,
+                $device->top + $w / 2.0,
+                $device->width - $w,
+                $device->height - $w
+            );
+        }
+        $this->rasterizeEllipse($outer, $paint->color, $hole);
     }
 
+    /**
+     * 线段（胶囊体谓词）。
+     *
+     * ★ 为什么不用 Bresenham + 圆头冲程：软光栅的老风格是"谓词逐像素"
+     *   （`insideRoundRect` / 椭圆同一祖宗），胶囊体谓词（点到线段距离
+     *   <= 半宽）对任意角度、任意宽度只有一个真相；"冲程叠加"在斜线上
+     *   会露接缝。代价是 O(包围盒) 而非 O(像素数) —— 线段都小，与椭圆的
+     *   逐行 sqrt 同款成本。
+     * ★ 无抗锯齿 ⇒ 边缘与 Skia 不同，像素级 golden 不跨后端比（既有约定）。
+     * ★ 端点取整：逻辑坐标叠加当前偏移后**一次**量化（与 `blendBitmap` /
+     *   `drawParagraph` 的笔位同口径）；宽度不乘 dpr。
+     */
     public function drawLine(float $x1, float $y1, float $x2, float $y2, Paint $paint): void
     {
-        $this->unsupportedOp('drawLine', 'Core');
+        if ($paint->color->a === 0) {
+            return;
+        }
+        CanvasCapabilities::assertStrokePaint($paint, 'drawLine');
+
+        $half = $paint->strokeWidth / 2.0;
+        $dpr = $this->scale->dpr;
+        $ax = round(($x1 + $this->offsetX) * $dpr);
+        $ay = round(($y1 + $this->offsetY) * $dpr);
+        $bx = round(($x2 + $this->offsetX) * $dpr);
+        $by = round(($y2 + $this->offsetY) * $dpr);
+
+        $xa = max((int) ceil(min($ax, $bx) - $half - 0.5), (int) ceil($this->clip->left - 0.5), 0);
+        $xb = min((int) floor(max($ax, $bx) + $half - 0.5) + 1, (int) ceil($this->clip->right() - 0.5), $this->width);
+        $ya = max((int) ceil(min($ay, $by) - $half - 0.5), (int) ceil($this->clip->top - 0.5), 0);
+        $yb = min((int) floor(max($ay, $by) + $half - 0.5) + 1, (int) ceil($this->clip->bottom() - 0.5), $this->height);
+        if ($xa >= $xb || $ya >= $yb) {
+            return;
+        }
+
+        $ex = $bx - $ax;
+        $ey = $by - $ay;
+        $len2 = $ex * $ex + $ey * $ey;
+        $r2 = $half * $half;
+        $color = $paint->color;
+
+        for ($y = $ya; $y < $yb; $y++) {
+            $py = $y + 0.5;
+            for ($x = $xa; $x < $xb; $x++) {
+                $px = $x + 0.5;
+                if ($len2 <= 0.0) {
+                    $dx = $px - $ax;
+                    $dy = $py - $ay;
+                } else {
+                    $t = (($px - $ax) * $ex + ($py - $ay) * $ey) / $len2;
+                    $t = $t < 0.0 ? 0.0 : ($t > 1.0 ? 1.0 : $t);
+                    $dx = $px - ($ax + $t * $ex);
+                    $dy = $py - ($ay + $t * $ey);
+                }
+                if ($dx * $dx + $dy * $dy <= $r2) {
+                    $this->blend($x, $y, $color);
+                }
+            }
+        }
+    }
+
+    /**
+     * 椭圆光栅：逐行求跨度写 span；`$hole` 非空时同行写两段（外减内）。
+     *
+     * @param ?Rect $hole 内椭圆（描边的洞）；null = 实心
+     */
+    private function rasterizeEllipse(Rect $ellipse, Color $color, ?Rect $hole): void
+    {
+        $cx = $ellipse->left + $ellipse->width / 2.0;
+        $cy = $ellipse->top + $ellipse->height / 2.0;
+        $rx = $ellipse->width / 2.0;
+        $ry = $ellipse->height / 2.0;
+        if ($rx <= 0.0 || $ry <= 0.0) {
+            return;
+        }
+
+        // 与 rasterize() 同口径的区间：外框两端含 ∩ 裁剪左闭右开 ∩ 画布
+        $xa = max((int) ceil($ellipse->left - 0.5), (int) ceil($this->clip->left - 0.5), 0);
+        $xb = min((int) floor($ellipse->right() - 0.5) + 1, (int) ceil($this->clip->right() - 0.5), $this->width);
+        $ya = max((int) ceil($ellipse->top - 0.5), (int) ceil($this->clip->top - 0.5), 0);
+        $yb = min((int) floor($ellipse->bottom() - 0.5) + 1, (int) ceil($this->clip->bottom() - 0.5), $this->height);
+        if ($xa >= $xb || $ya >= $yb) {
+            return;
+        }
+
+        $opaque = $color->a >= 255;
+        $lut = $opaque ? null : $this->blendLut($color);
+        $ry2 = $ry * $ry;
+
+        for ($y = $ya; $y < $yb; $y++) {
+            $py = $y + 0.5;
+            $dy = $py - $cy;
+            $t = 1.0 - ($dy * $dy) / $ry2;
+            if ($t <= 0.0) {
+                continue; // 本行中心在椭圆外
+            }
+            $dx = $rx * sqrt($t);
+            $x0 = max((int) ceil($cx - $dx - 0.5), $xa);
+            $x1 = min((int) floor($cx + $dx - 0.5) + 1, $xb);
+            if ($x0 >= $x1) {
+                continue;
+            }
+
+            if ($hole === null || $hole->width <= 0.0 || $hole->height <= 0.0) {
+                $this->fillSpan($y, $x0, $x1, $color, $opaque, $lut);
+                continue;
+            }
+
+            // 内椭圆跨度（退化/本行中心在洞外 ⇒ 无洞）
+            $hcx = $hole->left + $hole->width / 2.0;
+            $hcy = $hole->top + $hole->height / 2.0;
+            $hrx = $hole->width / 2.0;
+            $hry = $hole->height / 2.0;
+            $ht = ($hrx > 0.0 && $hry > 0.0) ? 1.0 - (($py - $hcy) * ($py - $hcy)) / ($hry * $hry) : 0.0;
+            if ($ht <= 0.0) {
+                $this->fillSpan($y, $x0, $x1, $color, $opaque, $lut);
+                continue;
+            }
+            $hdx = $hrx * sqrt($ht);
+            $h0 = max((int) ceil($hcx - $hdx - 0.5), $x0);
+            $h1 = min((int) floor($hcx + $hdx - 0.5) + 1, $x1);
+            if ($h0 < $h1) {
+                $this->fillSpan($y, $x0, $h0, $color, $opaque, $lut);
+                $this->fillSpan($y, $h1, $x1, $color, $opaque, $lut);
+            } else {
+                $this->fillSpan($y, $x0, $x1, $color, $opaque, $lut);
+            }
+        }
     }
 
     public function drawPath(Path $path, Paint $paint): void

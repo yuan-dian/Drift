@@ -665,6 +665,31 @@ if (!function_exists('drift_skia_canvas_create')) {
         $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][] = ['draw_glyph', $family, $bold, $fontSize, $penX, $baselineY, $codepoint, $rgba];
     }
 
+    function drift_skia_draw_ellipse(
+        int $canvas,
+        float $x,
+        float $y,
+        float $w,
+        float $h,
+        int $rgba,
+        bool $stroke,
+        float $strokeWidth,
+    ): void {
+        $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][] = ['draw_ellipse', $x, $y, $w, $h, $rgba, $stroke, $strokeWidth];
+    }
+
+    function drift_skia_draw_line(
+        int $canvas,
+        float $x1,
+        float $y1,
+        float $x2,
+        float $y2,
+        int $rgba,
+        float $strokeWidth,
+    ): void {
+        $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][] = ['draw_line', $x1, $y1, $x2, $y2, $rgba, $strokeWidth];
+    }
+
     function drift_skia_read_pixels(int $canvas): string
     {
         return '';
@@ -1706,7 +1731,15 @@ check('Rendering · W8 未闭合写了 Errors.log', str_contains(logText($log), 
 // ⑩+1 19 op 回植 · P0 契约（2026-10-20，D2 分层进 Canvas）
 fresh($log);
 $capsRaster = new RasterCanvas(8, 8, Color::white(), Scale::of(1.0));
-check('Canvas · Raster capabilities() = 0（分层后端未到：P1/P3/P4）', $capsRaster->capabilities() === 0);
+check(
+    'Canvas · Raster capabilities() = Core 两位（P1 起；Extended/Optional 仍缺）',
+    $capsRaster->capabilities() === (CanvasCapabilities::CAP_ELLIPSE | CanvasCapabilities::CAP_LINE)
+);
+$capsSkia = new SkiaCanvas(8, 8, null, Scale::of(1.0));
+check(
+    'Canvas · Skia capabilities() = Core 两位（桥已落）',
+    $capsSkia->capabilities() === (CanvasCapabilities::CAP_ELLIPSE | CanvasCapabilities::CAP_LINE)
+);
 $capsRec = RecordingCanvas::create();
 check(
     'Canvas · Recording capabilities() = ALL_MASK（录制侧全录，支持与否由回放侧裁决）',
@@ -1753,6 +1786,64 @@ fresh($log);
 [$code, $output] = runCase(__FILE__, 'shadowtransparent', null);
 check('Shadow · 全透明阴影退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
 fresh($log);
+
+// ── ⑩+2 19 op 回植 · P1：椭圆/线段双后端墨迹（2026-10-20）──
+// ★ 夹具统一 320×240（inkBounds 写死扫这个尺寸；拿 100×100 跑会把画布外
+//   的越界读当墨迹 —— PHP 越界读返回 '' ⇒ ord=0 ⇒ r=0 < 200）。
+// 填充：(60,40,200,120) 实心黑 ⇒ 像素中心 px∈{60..259}、py∈{40..159}
+$cE = new RasterCanvas(320, 240, Color::white(), Scale::of(1.0));
+$cE->drawEllipse(new Rect(60.0, 40.0, 200.0, 120.0), Paint::fill(Color::black()));
+$bE = inkBounds($cE);
+check('P1 · 椭圆填充包围盒 = 外接矩形两端含', $bE !== null && $bE === [60, 259, 40, 159], var_export($bE, true));
+check('P1 · 椭圆中心实心、四角空白', $cE->pixelAt(160, 100)->r === 0 && $cE->pixelAt(5, 5)->r === 255);
+
+// 描边：居中（外扩半宽 1、内收半宽 1）⇒ 外沿 [59,260]×[39,160]，中心是洞
+$cS = new RasterCanvas(320, 240, Color::white(), Scale::of(1.0));
+$cS->drawEllipse(new Rect(60.0, 40.0, 200.0, 120.0), Paint::stroke(Color::black(), 2.0));
+$bS = inkBounds($cS);
+check('P1 · 椭圆描边外沿 = 外扩半宽', $bS !== null && $bS === [59, 260, 39, 160], var_export($bS, true));
+check('P1 · 椭圆描边中心是洞（白）', $cS->pixelAt(160, 100)->r === 255);
+check('P1 · 椭圆描边顶边中段有墨', $cS->pixelAt(160, 40)->r === 0);
+
+// 线段：胶囊体谓词（半宽 1.5）—— 线上像素黑、线外像素白
+$cL = new RasterCanvas(320, 240, Color::white(), Scale::of(1.0));
+$cL->drawLine(40.0, 40.0, 200.0, 120.0, Paint::stroke(Color::black(), 3.0));
+check('P1 · 线段中点像素有墨', $cL->pixelAt(120, 80)->r === 0);
+check('P1 · 线段端头有墨', $cL->pixelAt(40, 40)->r === 0);
+check('P1 · 线段外 20px 处空白', $cL->pixelAt(120, 40)->r === 255);
+
+// DisplayList 回放路径（ELLIPSE + LINE 两个新 opcode，LINE 走 6 槽布局）
+$recL = RecordingCanvas::create();
+$recL->save();
+$recL->translate(20.0, 20.0);
+$recL->drawEllipse(new Rect(0.0, 0.0, 60.0, 60.0), Paint::fill(Color::black()));
+$recL->drawLine(0.0, 0.0, 60.0, 60.0, Paint::stroke(Color::black(), 2.0));
+$recL->restore();
+$listL = $recL->displayList();
+$listL->assertBalanced();
+$cR = new RasterCanvas(320, 240, Color::white(), Scale::of(1.0));
+$listL->replay($cR);
+check('P1 · 回放后椭圆+线段都有墨', inkCount($cR) > 100 && $cR->pixelAt(50, 50)->r === 0);
+
+// Skia 侧：假桥记录（ABI 形状即契约）
+skiaBridgeReset();
+$cK = new SkiaCanvas(100, 100, null, Scale::of(1.0));
+$cK->drawEllipse(new Rect(10.0, 10.0, 80.0, 80.0), Paint::fill(Color::black()));
+$cK->drawLine(5.0, 5.0, 25.0, 15.0, Paint::stroke(Color::black(), 3.0));
+$opsK = skiaCallOps();
+check('P1 · Skia 桥收到 draw_ellipse + draw_line', $opsK === ['create', 'draw_ellipse', 'draw_line'], implode(',', $opsK));
+$callsK = $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'];
+check(
+    'P1 · draw_ellipse 参数（设备坐标/argb/非描边/宽 1）',
+    $callsK[1] === ['draw_ellipse', 10.0, 10.0, 80.0, 80.0, Color::black()->toArgb(), false, 1.0],
+    var_export($callsK[1], true)
+);
+check(
+    'P1 · draw_line 参数（两端点设备坐标/argb/宽 3）',
+    $callsK[2] === ['draw_line', 5.0, 5.0, 25.0, 15.0, Color::black()->toArgb(), 3.0],
+    var_export($callsK[2], true)
+);
+skiaBridgeReset();
 
 // ⑪ Text：六层栈 + 确定性参考实现（§8 / §14.2）
 fresh($log);
