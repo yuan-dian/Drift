@@ -64,6 +64,7 @@
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "windowscodecs.lib")
+#pragma comment(lib, "ole32.lib")   // savePng 的 CoCreateInstance / CoInitializeEx
 
 namespace {
 
@@ -715,9 +716,12 @@ int wmain(int argc, wchar_t** argv)
         ::Sleep(static_cast<DWORD>(options.wheelWaitMs));
     }
     if (options.click) {
-        POINT pt{options.clickX, options.clickY};
-        ::ClientToScreen(hwnd, &pt);
-        LPARAM lpPt = MAKELPARAM(static_cast<WORD>(pt.x), static_cast<WORD>(pt.y));
+        // ★★ WM_LBUTTONDOWN 的 lParam 是**客户区**坐标，**不能** ClientToScreen
+        //   （那是 WM_MOUSEWHEEL 才需要的换算，见下）。旧实现从 wheel 分支抄了
+        //   一行 ClientToScreen ⇒ 点击整体偏移一个窗口原点：客户区 (100,318) 实际
+        //   落在 (100, 318+窗体 top) —— 点导航项永远点不中想要的（2026-10-20 实证）。
+        //   与 mdrag 分支同口径：直接发客户区坐标。
+        LPARAM lpPt = MAKELPARAM(static_cast<WORD>(options.clickX), static_cast<WORD>(options.clickY));
         ::PostMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, lpPt);
         ::PostMessageW(hwnd, WM_LBUTTONUP, 0, lpPt);
         std::printf("click=%d,%d\n", options.clickX, options.clickY);
