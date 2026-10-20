@@ -5,6 +5,7 @@ namespace App\Showcase;
 
 use Drift\App\Paths;
 use Drift\App\WindowStateStore;
+use Drift\App\FrameClock;
 use Drift\Errors;
 use Drift\Platform\Win32\Win32Platform;
 use Drift\Platform\Win32\ResizeHookState;
@@ -111,6 +112,15 @@ final class Bootstrap
         // ★ `dispatchInput()` 对指针事件返回命中链解析出的光标形状 ⇒ 由**这里**
         //   喂给 `setCursor()`：应用它需要 `WindowHost`，而框架不持平台（§5.1）。
         $input = $platform->input();
+
+        // ★★ 自适应帧时钟（§17.4.9）：`pump()` 阻塞在 `GetMessageW` —— 没输入事件时
+        //   循环一直睡，后台结果只能等下一条用户消息捎带（现象：任务完了界面几秒后才变、
+        //   Loading 转圈图不动）。`FrameClock` 按 `Application::wantsFrame()` 起/停 15ms
+        //   定时器：有活才跳、没活就睡（空闲 CPU 归零）。同 users 应用的接线。
+        $clock = new FrameClock($platform->timers());
+        // ★ 进循环前先上膛：此刻可能已有在途任务（首屏取数），不定时器第一次 pump 会无限阻塞。
+        $clock->pace($app->wantsFrame());
+
         while ($platform->pump()) {
             while (($event = $input->poll()) !== null) {
                 $shape = $app->dispatchInput($event);
@@ -124,13 +134,17 @@ final class Bootstrap
                 $platform->imeCaret($app->imeCaretRect());
             }
 
-            $app->frame($platform->now(), $screen->viewport());
+            // ★ 帧由帧时钟跑（同 users）：顺带量两帧间隔，帧后再按 `wantsFrame()`
+            //   决定下次要不要被叫醒（动画在跑 ⇒ 继续跳；都停 ⇒ 定时器停摆、CPU 归零）。
+            $clock->tick($app, $platform->now(), $screen->viewport());
 
             // ★ IME 定位（§8.4）：框架算几何（逻辑像素）、平台做量化。
             //   组合根不调这一行 = 输入法候选框贴在窗口左上角（能打字、
             //   候选框位置错）—— 半可用失败形态，故三行注释写死原因。
             $platform->imeCaret($app->imeCaretRect());
         }
+
+        $clock->stop();
 
         // ★ 窗口状态写回（§5.4）：**退出一次同步 IO**（循环之外，不占帧）。
         //   最小化时退出 ⇒ 平台侧 position() 给 null ⇒ 跳过写入，保留上一份状态。

@@ -30,8 +30,11 @@ abstract class State
     /** @internal A4 守卫：只有 `initState()` 期间允许 `watch()` */
     private bool $initializing = false;
 
-    /** @internal 挂载重入时不要重复订阅 */
+    /** @internal 挂载重载时不要重复订阅 */
     private bool $initialized = false;
+
+    /** @internal 帧时钟幂等：本帧已 `tickFrame()` 过的状态，重跑一遍时不再被推进第二次 */
+    private int $lastTickedFrame = -1;
 
     /** @internal StatefulElement 建状态时调用一次 */
     public function attach(StatefulElement $element, Widget $widget): void
@@ -98,6 +101,26 @@ abstract class State
     public function tickFrame(float $timestampMs): bool
     {
         return false;
+    }
+
+    /**
+     * 帧时钟每帧"要不要下一帧"遍历的入口（@internal）。
+     *
+     * ★ **同帧幂等**：本帧已经 `tickFrame()` 过的状态，重跑一遍（见
+     *   `Application::frame()` 的迟到挂载补 tick）时**不再推进** —— 否则既有状态
+     *   一帧被推进两次、动画快进一帧。`tickFrame()` 的真实消费者（测试）不走这里，
+     *   不受影响。
+     *
+     * @return bool 这一遍是否真的推进了（= 还要下一帧）
+     */
+    public function tickFrameStamped(float $timestampMs, int $serial): bool
+    {
+        if ($this->lastTickedFrame === $serial) {
+            return false;
+        }
+        $this->lastTickedFrame = $serial;
+
+        return $this->tickFrame($timestampMs);
     }
 
     /**

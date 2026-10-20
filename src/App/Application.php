@@ -211,6 +211,9 @@ abstract class Application
     /** 上一帧有没有动画在跑（§17.4.9 的第四个判据，由 `tickAnimations()` 写） */
     private bool $animating = false;
 
+    /** 每帧自增的序列号 —— `State::tickFrameStamped` 用它做同帧幂等（迟到挂载补 tick 用） */
+    private int $frameSerial = 0;
+
     /** 上一帧的时间戳（`repaintForResize()` 复用：拖动重排不该自己读环境时钟） */
     private float $lastTimestampMs = 0.0;
 
@@ -820,6 +823,10 @@ abstract class Application
 
         $this->lastTimestampMs = $timestampMs;
 
+        // ★ 帧序列号自增（迟到挂载补 tick 的幂等判据）：每帧一个唯一值，
+        //   `State::tickFrameStamped` 用它识别"本帧已推进过的状态"。
+        $this->frameSerial++;
+
         // ★ 分段计时（SurfaceProfile，默认关）：frame() 里各泵与收尾的占比，
         //   M4 拆「其余(PHP)」黑箱用（`26` §7）。段键与 Frame.php 的同治一套表。
         $prof = SurfaceProfile::$on;
@@ -867,6 +874,15 @@ abstract class Application
         }
 
         $frame->run($root, $constraints, $timestampMs, $this->menuElement, $this->menuX, $this->menuY);
+
+        // ★ ⓹ 迟到挂载补 tick（2026-10-20 修框架洞）：⓸ 在 settle **之前**跑，而页面
+        //   挂载发生在 `Frame::run()` 的 settle 段 —— 于是"这一帧刚挂上的页"的 State
+        //   在 ⓸ 时还不在树里、从未被 `tickFrame()` 访问 ⇒ `$animating` 当帧永远是
+        //   false ⇒ `wantsFrame()` 返回 false ⇒ 帧时钟不重新上膛 ⇒ **之后没鼠标事件就
+        //   永远静止**（Spinner / 自绘页同病，真机探针抓到）。补一遍把刚挂载的页也 tick
+        //   一次；既有状态因 `tickFrameStamped` 的每帧戳被跳过（不重复推进）。任一新挂载
+        //   的 State 还想下一帧 ⇒ `$animating` 置真 ⇒ 时钟重新上膛，动画得以续跑。
+        $this->animating = $this->animating || $this->tickAnimations($timestampMs);
 
         // ★ 每帧重建焦点链：`settle()` 可能重建了子树 ⇒ 旧链里可能握着**已被移除**
         //   的 Element（按键会静默丢给死节点）。`collect()` 幂等，且会保留仍然存在
@@ -1031,7 +1047,7 @@ abstract class Application
 
         if ($element instanceof StatefulElement) {
             $state = $element->state();
-            if ($state !== null && $state->tickFrame($timestampMs)) {
+            if ($state !== null && $state->tickFrameStamped($timestampMs, $this->frameSerial)) {
                 $busy = true;
             }
         }
