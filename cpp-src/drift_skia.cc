@@ -51,6 +51,8 @@
 #include "include/core/SkRRect.h"
 #include "include/core/SkRect.h"
 #include "include/core/SkTypeface.h"
+#include "include/effects/SkGradient.h"
+#include "include/effects/SkDashPathEffect.h"
 #include "include/ports/SkFontMgr_directory.h"
 
 using namespace php;
@@ -66,6 +68,10 @@ namespace {
 struct SkiaSlot {
     SkBitmap bitmap;
     std::unique_ptr<SkCanvas> canvas;
+    // ★ P3 渐变/虚线：画布级的"当前画笔源"，由 set_gradient/set_dash 写入、
+    //   各 draw 函数读取（§7.2 D2 表：渐变/虚线是 paint source 属性，不是新 draw 方法）。
+    sk_sp<SkShader> shader;
+    sk_sp<SkPathEffect> dash;
 };
 
 /** 句柄 → 槽位。句柄从 1 起（0 保留给"无效"），只增不减 ⇒ 不会复用到已释放的槽位 */
@@ -92,6 +98,26 @@ SkiaSlot *slotFor(Int handle) {
 SkCanvas *canvasFor(Int handle) {
     SkiaSlot *slot = slotFor(handle);
     return slot == NULL ? NULL : slot->canvas.get();
+}
+
+/**
+ * P3：把画布当前的 paint source（渐变 shader / 虚线 path effect）施加到一笔上。
+ *
+ * ★ 必须定义在匿名命名空间**内部**：三个 draw 函数也在这里面，而文件在
+ *   `} // namespace` 之后只剩 `php_drift_skia_*` 导出函数（要按 C 名链接）⇒ 放在外面
+ *   会变成另一个实体，编译期报 C2129「已声明但未定义」。
+ * ★ 虚线只作用于描边（填充挂 path effect 无意义，Skia 下行为未定义）。
+ */
+static void applyPaintSource(SkiaSlot *slot, SkPaint *paint) {
+    if (slot == NULL) {
+        return;
+    }
+    if (slot->shader) {
+        paint->setShader(slot->shader);
+    }
+    if (slot->dash && paint->getStyle() == SkPaint::kStroke_Style) {
+        paint->setPathEffect(slot->dash);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────── 字体 ──
@@ -301,7 +327,8 @@ void php_drift_skia_draw_rect(
     Bool stroke,
     Float strokeWidth
 ) {
-    SkCanvas *c = canvasFor(canvas);
+    SkiaSlot *slot = slotFor(canvas);
+    SkCanvas *c = slot == NULL ? NULL : slot->canvas.get();
     if (c == NULL || w <= 0.0 || h <= 0.0) {
         return;
     }
@@ -316,6 +343,8 @@ void php_drift_skia_draw_rect(
     } else {
         paint.setStyle(SkPaint::kFill_Style);
     }
+    // ★ P3：渐变/虚线是 paint source，画布级当前源由 set_gradient/set_dash 写入
+    applyPaintSource(slot, &paint);
 
     const SkRect rect = SkRect::MakeXYWH((SkScalar)x, (SkScalar)y, (SkScalar)w, (SkScalar)h);
     if (radius > 0.0) {
@@ -335,7 +364,8 @@ void php_drift_skia_draw_ellipse(
     Bool stroke,
     Float strokeWidth
 ) {
-    SkCanvas *c = canvasFor(canvas);
+    SkiaSlot *slot = slotFor(canvas);
+    SkCanvas *c = slot == NULL ? NULL : slot->canvas.get();
     if (c == NULL || w <= 0.0 || h <= 0.0) {
         return;
     }
@@ -350,6 +380,7 @@ void php_drift_skia_draw_ellipse(
     } else {
         paint.setStyle(SkPaint::kFill_Style);
     }
+    applyPaintSource(slot, &paint);
 
     c->drawOval(SkRect::MakeXYWH((SkScalar)x, (SkScalar)y, (SkScalar)w, (SkScalar)h), paint);
 }
@@ -363,7 +394,8 @@ void php_drift_skia_draw_line(
     Int rgba,
     Float strokeWidth
 ) {
-    SkCanvas *c = canvasFor(canvas);
+    SkiaSlot *slot = slotFor(canvas);
+    SkCanvas *c = slot == NULL ? NULL : slot->canvas.get();
     if (c == NULL) {
         return;
     }
@@ -375,8 +407,87 @@ void php_drift_skia_draw_line(
     // draw_rect 的 strokeWidth 一致：逻辑像素，不乘 dpr。
     paint.setStyle(SkPaint::kStroke_Style);
     paint.setStrokeWidth((SkScalar)strokeWidth);
+    applyPaintSource(slot, &paint);
 
     c->drawLine((SkScalar)x1, (SkScalar)y1, (SkScalar)x2, (SkScalar)y2, paint);
+}
+
+
+/**
+ * 建一个渐变 shader 写入画布当前源（线性 / 径向）。坐标已是**设备像素**
+ * （PHP 侧按 toDevice 同变换把逻辑端点转设备），与 draw 函数收到的设备坐标一致。
+ * 最多 4 个色标；色标表升序、长度与颜色数一致由 PHP 侧 Gradient 构造期保证。
+ */
+void php_drift_skia_set_gradient(
+    Int handle,
+    Int radial,
+    Float x1, Float y1, Float x2, Float y2,
+    Int n, Int c0, Int c1, Int c2, Int c3,
+    Float s0, Float s1, Float s2, Float s3
+) {
+    SkiaSlot *slot = slotFor(handle);
+    if (slot == NULL) {
+        return;
+    }
+    int count = (int)n;
+    if (count > 4) {
+        count = 4;
+    }
+    if (count < 2) {
+        count = 2;
+    }
+    SkColor packed[4] = {
+        (SkColor)(uint32_t)c0, (SkColor)(uint32_t)c1,
+        (SkColor)(uint32_t)c2, (SkColor)(uint32_t)c3,
+    };
+    float packedStops[4] = { (float)s0, (float)s1, (float)s2, (float)s3 };
+
+    // ★ 只喂前 count 个：位置必须**严格递增**，而 PHP 侧为凑齐 4 槽会把末位重复补齐
+    //   （2 色标 ⇒ [0,1,1,1]），重复值交给 Skia 会被当成非法输入丢掉整个位置表。
+    SkColor4f colors[4];
+    float stops[4];
+    for (int i = 0; i < count; i++) {
+        colors[i] = SkColor4f::FromColor(packed[i]);
+        stops[i] = packedStops[i];
+    }
+
+    SkGradient::Colors gradientColors(
+        SkSpan<const SkColor4f>(colors, count),
+        SkSpan<const float>(stops, count),
+        SkTileMode::kClamp
+    );
+    SkGradient grad(gradientColors, SkGradient::Interpolation{});
+
+    if ((bool)radial) {
+        SkPoint center = SkPoint::Make((SkScalar)x1, (SkScalar)y1);
+        slot->shader = SkShaders::RadialGradient(center, (float)x2, grad);
+    } else {
+        SkPoint pts[2] = {
+            SkPoint::Make((SkScalar)x1, (SkScalar)y1),
+            SkPoint::Make((SkScalar)x2, (SkScalar)y2),
+        };
+        slot->shader = SkShaders::LinearGradient(pts, grad);
+    }
+}
+
+/** 建一个虚线 path effect 写入画布当前源（on/off 为逻辑像素，phase 同口径）。 */
+void php_drift_skia_set_dash(Int handle, Float on, Float off, Float phase) {
+    SkiaSlot *slot = slotFor(handle);
+    if (slot == NULL) {
+        return;
+    }
+    SkScalar intervals[2] = { (SkScalar)on, (SkScalar)off };
+    slot->dash = SkDashPathEffect::Make(SkSpan<const SkScalar>(intervals, 2), (SkScalar)phase);
+}
+
+/** 清空画布当前源（每笔绘制后调用，避免源泄漏到下一笔）。 */
+void php_drift_skia_clear_source(Int handle) {
+    SkiaSlot *slot = slotFor(handle);
+    if (slot == NULL) {
+        return;
+    }
+    slot->shader = nullptr;
+    slot->dash = nullptr;
 }
 
 void php_drift_skia_draw_glyph(

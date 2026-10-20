@@ -8,6 +8,8 @@ use Drift\Geometry\Rect;
 use Drift\Geometry\Size;
 use Drift\Rendering\Canvas;
 use Drift\Rendering\Color;
+use Drift\Rendering\DashPattern;
+use Drift\Rendering\Gradient;
 use Drift\Rendering\Paint;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Card;
@@ -91,7 +93,13 @@ final class GaugePainter extends CustomPainter
 
         // 表盘（填充 + 描边）
         $face = new Rect($cx - $rx, $cy - $ry, $rx * 2.0, $ry * 2.0);
-        $canvas->drawEllipse($face, Paint::fill(new Color(244, 246, 250, 255)));
+        // P3 的渐变消费者：表盘用径向渐变填（中心亮、边缘沉），不是纯色。
+        $canvas->drawEllipse($face, Paint::fill(new Color(244, 246, 250, 255))->withGradient(
+            Gradient::radial($cx, $cy - $ry * 0.35, max($rx, $ry), [
+                new Color(255, 255, 255, 255),
+                new Color(222, 229, 240, 255),
+            ])
+        ));
         $canvas->drawEllipse($face, Paint::stroke(new Color(70, 82, 104, 255), 2.0));
 
         // 刻度：11 根沿下半圆的线段（无 arc op ⇒ 线段拼弧）
@@ -185,9 +193,11 @@ final class SparklinePainter extends CustomPainter
         // 网格：3 横 + 3 竖
         for ($g = 1; $g < 3; $g++) {
             $y = $top + $h * ($g / 3.0);
-            $canvas->drawLine($left, $y, $left + $w, $y, Paint::stroke(new Color(226, 230, 238, 255), 1.0));
+            // P3 的虚线消费者：网格走虚线（图表里最常见的一档）
+            $grid = Paint::stroke(new Color(226, 230, 238, 255), 1.0)->withDash(new DashPattern(4.0, 4.0));
+            $canvas->drawLine($left, $y, $left + $w, $y, $grid);
             $x = $left + $w * ($g / 3.0);
-            $canvas->drawLine($x, $top, $x, $top + $h, Paint::stroke(new Color(226, 230, 238, 255), 1.0));
+            $canvas->drawLine($x, $top, $x, $top + $h, $grid);
         }
 
         // 折线：无 polyline op ⇒ 相邻两点一线段

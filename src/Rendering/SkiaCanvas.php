@@ -6,16 +6,21 @@ namespace Drift\Rendering;
 use Drift\Errors;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Scale;
+use Drift\Rendering\DashPattern;
+use Drift\Rendering\Gradient;
 use Drift\Text\Paragraph;
 
 use function drift_skia_canvas_create;
 use function drift_skia_canvas_destroy;
+use function drift_skia_clear_source;
 use function drift_skia_draw_glyph;
 use function drift_skia_draw_rect;
 use function drift_skia_font_ready;
 use function drift_skia_pop_clip;
 use function drift_skia_push_clip;
 use function drift_skia_read_pixels;
+use function drift_skia_set_dash;
+use function drift_skia_set_gradient;
 
 /**
  * Skia 光栅画布（§7.2 裁决 1 的第三个实现；§7.3 的 M1 后端之二）。
@@ -52,6 +57,9 @@ final class SkiaCanvas implements Canvas
     private array $stack = [];
 
     private readonly Scale $scale;
+
+    /** P3：当前是否真挂着渐变/虚线源（只有挂了才发 clear_source，免得每次 draw 多一次桥调用） */
+    private bool $sourceActive = false;
 
     /** 字体未就绪只报一次 —— 每帧报会把日志刷掉 */
     private bool $fontWarned = false;
@@ -189,6 +197,7 @@ final class SkiaCanvas implements Canvas
         $width = $paint->strokeWidth;
         $argb = $paint->color->toArgb();
 
+        $this->applyPaintSource($paint);
         drift_skia_draw_rect(
             $this->handle,
             $device->left,
@@ -200,6 +209,7 @@ final class SkiaCanvas implements Canvas
             $stroke,
             $width,
         );
+        $this->clearPaintSource();
     }
 
     /**
@@ -264,10 +274,11 @@ final class SkiaCanvas implements Canvas
     }
 
 
-    /** P1 起 Core 两 op 有桥（`php_drift_skia_draw_ellipse/line`）。 */
+    /** P1 起 Core 两 op 有桥；P3 渐变/虚线走 SkShader/SkDashPathEffect（`set_gradient`/`set_dash`）。 */
     public function capabilities(): int
     {
-        return CanvasCapabilities::CAP_ELLIPSE | CanvasCapabilities::CAP_LINE;
+        return CanvasCapabilities::CAP_ELLIPSE | CanvasCapabilities::CAP_LINE
+            | CanvasCapabilities::CAP_GRADIENT | CanvasCapabilities::CAP_DASH;
     }
 
     /**
@@ -289,6 +300,7 @@ final class SkiaCanvas implements Canvas
         $width = $paint->strokeWidth;
         $argb = $paint->color->toArgb();
 
+        $this->applyPaintSource($paint);
         drift_skia_draw_ellipse(
             $this->handle,
             $device->left,
@@ -299,6 +311,7 @@ final class SkiaCanvas implements Canvas
             $stroke,
             $width,
         );
+        $this->clearPaintSource();
     }
 
     /**
@@ -314,6 +327,7 @@ final class SkiaCanvas implements Canvas
 
         $dpr = $this->scale->dpr;
 
+        $this->applyPaintSource($paint);
         drift_skia_draw_line(
             $this->handle,
             round(($x1 + $this->offsetX) * $dpr),
@@ -323,6 +337,7 @@ final class SkiaCanvas implements Canvas
             $paint->color->toArgb(),
             $paint->strokeWidth,
         );
+        $this->clearPaintSource();
     }
 
     public function drawPath(Path $path, Paint $paint): void
@@ -358,6 +373,76 @@ final class SkiaCanvas implements Canvas
     private function unsupportedOp(string $op, string $tier): void
     {
         Errors::report(CanvasCapabilities::unsupportedMessage($op, 'SkiaCanvas', $tier));
+    }
+
+    /**
+     * P3 · 把当前 Paint 的渐变/虚线源写到 Skia 画布（设备坐标），供紧接着的 draw 调用消费。
+     *
+     * ★ 渐变端点/圆心是**逻辑坐标**（与形状同空间），转设备空间 = (logical + offset) × dpr
+     *   （与 `toDevice()` 同一变换）；径向半径 x2 是长度量 ⇒ 只缩放不平移。
+     */
+    private function applyPaintSource(Paint $paint): void
+    {
+        $dpr = $this->scale->dpr;
+        $g = $paint->gradient;
+        if ($g !== null) {
+            if ($g->isRadial()) {
+                $gx1 = ($g->x1 + $this->offsetX) * $dpr;
+                $gy1 = ($g->y1 + $this->offsetY) * $dpr;
+                $gx2 = $g->x2 * $dpr; // 半径：长度量，只缩放
+                $gy2 = 0.0;
+            } else {
+                $gx1 = ($g->x1 + $this->offsetX) * $dpr;
+                $gy1 = ($g->y1 + $this->offsetY) * $dpr;
+                $gx2 = ($g->x2 + $this->offsetX) * $dpr;
+                $gy2 = ($g->y2 + $this->offsetY) * $dpr;
+            }
+            [$n, $colors, $stops] = $this->packGradient($g);
+            drift_skia_set_gradient(
+                $this->handle,
+                $g->isRadial() ? 1 : 0,
+                $gx1, $gy1, $gx2, $gy2,
+                $n, $colors[0], $colors[1], $colors[2], $colors[3],
+                $stops[0], $stops[1], $stops[2], $stops[3],
+            );
+            $this->sourceActive = true;
+        }
+        $dash = $paint->dash;
+        if ($dash !== null) {
+            // ★ DashPattern 的 on/off/phase 是**逻辑像素**（与 RasterCanvas::drawLine 同口径：
+            //   Raster 用 `sqrt(len2) / dpr` 把弧长换算回逻辑单位再取模）。这里喂的是设备
+            //   空间 ⇒ 必须乘 dpr，否则 dpr=2 时虚线视觉上只剩一半长，两个后端对不上。
+            drift_skia_set_dash($this->handle, $dash->on * $dpr, $dash->off * $dpr, $dash->phase * $dpr);
+            $this->sourceActive = true;
+        }
+    }
+
+    /** 渐变打包成桥要的 4 色标 / 4 位置（空位置按均匀分布补，长度量升序） */
+    private function packGradient(Gradient $g): array
+    {
+        $src = $g->colors;
+        $srcStops = $g->stops;
+        $n = count($src);
+        $colors = [0, 0, 0, 0];
+        $stops = [0.0, 0.0, 0.0, 0.0];
+        for ($i = 0; $i < 4; $i++) {
+            // ★ 补位槽一律 clamp 到最后一个真实色标：直接按 i/(n-1) 算会在 n<4 时
+            //   补出 2.0、3.0 这种越界位置（Skia 色标位置必须落在 0..1，越界的表现
+            //   是**静默错色**而不是报错 —— 只能靠"补位不许越界"这条判据守住）。
+            $k = min($i, $n - 1);
+            $colors[$i] = $src[$k]->toArgb();
+            $stops[$i] = $srcStops === [] ? ($n > 1 ? (float) ($k / ($n - 1)) : 0.0) : $srcStops[$k];
+        }
+        return [$n, $colors, $stops];
+    }
+
+    private function clearPaintSource(): void
+    {
+        if (!$this->sourceActive) {
+            return;
+        }
+        drift_skia_clear_source($this->handle);
+        $this->sourceActive = false;
     }
     /**
      * 字体未就绪时记一条 Diagnostic（只记一次）。

@@ -94,6 +94,26 @@ function drift_skia_draw_line(
 ): void {}
 
 /**
+ * P3 · 把当前渐变源写入画布（线性 / 径向）。坐标已是**设备像素**
+ * （PHP 侧按 `toDevice` 同变换把逻辑端点转设备，与 draw 函数收到的坐标一致）。
+ * 最多 4 个色标：$c0..$c3 是 `Color::toArgb()`，$s0..$s3 是升序 [0,1] 位置；
+ * $n 为实际色标数（>4 截断、<2 按 2 处理）。每笔 draw 之前设、之后 clear_source。
+ */
+function drift_skia_set_gradient(
+    int $canvas,
+    int $radial,
+    float $x1, float $y1, float $x2, float $y2,
+    int $n, int $c0, int $c1, int $c2, int $c3,
+    float $s0, float $s1, float $s2, float $s3,
+): void {}
+
+/** P3 · 把当前虚线源写入画布（$on/$off/$phase 均为逻辑像素）。 */
+function drift_skia_set_dash(int $canvas, float $on, float $off, float $phase): void {}
+
+/** P3 · 清空画布当前源（每笔 draw 之后调用，避免源泄漏到下一笔）。 */
+function drift_skia_clear_source(int $canvas): void {}
+
+/**
  * 画**一个字形**，位置由 PHP 侧的排版给出（`penX` 是笔位、`baselineY` 是基线）。
  *
  * ★ 为什么是"一个字形一次调用"而不是"整段一次"：**几何必须来自 PHP**。

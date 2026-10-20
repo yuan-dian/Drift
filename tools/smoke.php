@@ -701,6 +701,26 @@ if (!function_exists('drift_skia_canvas_create')) {
         $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][] = ['draw_line', $x1, $y1, $x2, $y2, $rgba, $strokeWidth];
     }
 
+    function drift_skia_set_gradient(
+        int $canvas,
+        int $radial,
+        float $x1, float $y1, float $x2, float $y2,
+        int $n, int $c0, int $c1, int $c2, int $c3,
+        float $s0, float $s1, float $s2, float $s3,
+    ): void {
+        $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][] = ['set_gradient', $radial, $x1, $y1, $x2, $y2, $n, $c0, $c1, $c2, $c3, $s0, $s1, $s2, $s3];
+    }
+
+    function drift_skia_set_dash(int $canvas, float $on, float $off, float $phase): void
+    {
+        $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][] = ['set_dash', $on, $off, $phase];
+    }
+
+    function drift_skia_clear_source(int $canvas): void
+    {
+        $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][] = ['clear_source'];
+    }
+
     function drift_skia_read_pixels(int $canvas): string
     {
         return '';
@@ -1743,19 +1763,166 @@ check('Rendering · W8 未闭合写了 Errors.log', str_contains(logText($log), 
 fresh($log);
 $capsRaster = new RasterCanvas(8, 8, Color::white(), Scale::of(1.0));
 check(
-    'Canvas · Raster capabilities() = Core 两位（P1 起；Extended/Optional 仍缺）',
-    $capsRaster->capabilities() === (CanvasCapabilities::CAP_ELLIPSE | CanvasCapabilities::CAP_LINE)
+    'Canvas · Raster capabilities() = Core + Extended（P3 渐变/虚线：逐像素实渐变 + 线段真虚线，矩形/椭圆描边虚线退化为实线）',
+    $capsRaster->capabilities() === (CanvasCapabilities::CAP_ELLIPSE | CanvasCapabilities::CAP_LINE
+        | CanvasCapabilities::CAP_GRADIENT | CanvasCapabilities::CAP_DASH)
 );
 $capsSkia = new SkiaCanvas(8, 8, null, Scale::of(1.0));
 check(
-    'Canvas · Skia capabilities() = Core 两位（桥已落）',
-    $capsSkia->capabilities() === (CanvasCapabilities::CAP_ELLIPSE | CanvasCapabilities::CAP_LINE)
+    'Canvas · Skia capabilities() = Core + Extended（P3 渐变/虚线走 SkShader/SkDashPathEffect）',
+    $capsSkia->capabilities() === (CanvasCapabilities::CAP_ELLIPSE | CanvasCapabilities::CAP_LINE
+        | CanvasCapabilities::CAP_GRADIENT | CanvasCapabilities::CAP_DASH)
 );
 $capsRec = RecordingCanvas::create();
 check(
     'Canvas · Recording capabilities() = ALL_MASK（录制侧全录，支持与否由回放侧裁决）',
     $capsRec->capabilities() === CanvasCapabilities::ALL_MASK
 );
+
+// ⑩+3 19 op 回植 · P3 渐变/虚线（RasterCanvas，确定性后端；Skia 侧在 Skia 桥落地后补断言）
+$fb = new RasterCanvas(40, 40, Color::white(), Scale::of(1.0));
+$grad = Gradient::linear(0.0, 0.0, 40.0, 0.0, [Color::fromRgb(255, 0, 0), Color::fromRgb(0, 0, 255)]);
+$fb->drawRect(new Rect(0.0, 0.0, 40.0, 40.0), Paint::fill(Color::black())->withGradient($grad));
+$cLeft = $fb->pixelAt(2, 20);
+$cRight = $fb->pixelAt(38, 20);
+check(
+    'P3 · 线性渐变横向铺开：左红右蓝（两端色标被真采样，不是实色）',
+    $cLeft->r > 150 && $cLeft->b < 80 && $cRight->b > 150 && $cRight->r < 80,
+    '左(r=' . $cLeft->r . ',b=' . $cLeft->b . ') 右(r=' . $cRight->r . ',b=' . $cRight->b . ')'
+);
+
+// 径向渐变：圆心红、外圈蓝
+$fr = new RasterCanvas(40, 40, Color::white(), Scale::of(1.0));
+$gradR = Gradient::radial(20.0, 20.0, 20.0, [Color::fromRgb(255, 0, 0), Color::fromRgb(0, 0, 255)]);
+$fr->drawRect(new Rect(0.0, 0.0, 40.0, 40.0), Paint::fill(Color::black())->withGradient($gradR));
+$cCenter = $fr->pixelAt(20, 20);
+$cEdge = $fr->pixelAt(1, 20);
+check(
+    'P3 · 径向渐变：圆心红、边缘蓝（半径方向被真采样）',
+    $cCenter->r > 150 && $cCenter->b < 80 && $cEdge->b > 150 && $cEdge->r < 80,
+    '心(r=' . $cCenter->r . ',b=' . $cCenter->b . ') 边(r=' . $cEdge->r . ',b=' . $cEdge->b . ')'
+);
+
+// 线段虚线：on/off 交替（中段有空洞，不是实线）
+$fl = new RasterCanvas(60, 8, Color::white(), Scale::of(1.0));
+$fl->drawLine(2.0, 4.0, 58.0, 4.0, Paint::stroke(Color::black(), 4.0)->withDash(new DashPattern(8.0, 8.0)));
+$on = 0;
+$off = 0;
+for ($x = 2; $x <= 58; $x += 2) {
+    $p = $fl->pixelAt((int) $x, 4);
+    if ($p->r < 40 && $p->g < 40 && $p->b < 40) {
+        $on++;
+    } else {
+        $off++;
+    }
+}
+check(
+    'P3 · 线段虚线：on/off 交替（中段有空洞，不是实线）',
+    $on > 0 && $off > 0,
+    "on=$on off=$off"
+);
+
+// 矩形描边虚线退化为实线（R2 降级）：整条描边都画出来，无空洞。
+// ★ drawRect 描边是"整宽内缩"（已知口径，椭圆才是居中）：矩形 (2,2) 的顶部描边带
+//   在 y∈[2,5)（边框 y=2 向内缩 w=3）。采样 y=3 落在此带内；y=1 在框外、洞内是白。
+$fr2 = new RasterCanvas(40, 20, Color::white(), Scale::of(1.0));
+$fr2->drawRect(new Rect(2.0, 2.0, 36.0, 16.0), Paint::stroke(Color::black(), 3.0)->withDash(new DashPattern(6.0, 6.0)));
+$gap = 0;
+for ($x = 4; $x <= 36; $x += 2) {
+    $p = $fr2->pixelAt((int) $x, 3);
+    if ($p->r > 200 && $p->g > 200 && $p->b > 200) {
+        $gap++;
+    }
+}
+check(
+    'P3 · 矩形描边虚线退化为实线（R2 降级 ⇒ 描边无空洞）',
+    $gap === 0,
+    "gap=$gap"
+);
+
+// DisplayList 回放：录制侧原样持有 Paint ⇒ 渐变/虚线不许在管道里被"规范化"掉
+$recG = RecordingCanvas::create();
+$recG->drawRect(new Rect(0.0, 0.0, 40.0, 40.0), Paint::fill(Color::black())->withGradient(
+    Gradient::linear(0.0, 0.0, 40.0, 0.0, [Color::fromRgb(255, 0, 0), Color::fromRgb(0, 0, 255)])
+));
+$cg = new RasterCanvas(40, 40, Color::white(), Scale::of(1.0));
+$recG->displayList()->replay($cg);
+$pl = $cg->pixelAt(2, 20);
+$pr = $cg->pixelAt(38, 20);
+check(
+    'P3 · DisplayList 回放不丢渐变（管道只搬运 Paint，属性不许被规范化掉）',
+    $pl->r > 200 && $pl->b < 60 && $pr->b > 200 && $pr->r < 60,
+    "左={$pl->r},{$pl->g},{$pl->b} 右={$pr->r},{$pr->g},{$pr->b}"
+);
+
+// P3 · Skia 端（生产后端，走 SkShader/SkDashPathEffect）。
+// ★ 解释器面没有真 Skia（`drift_skia_read_pixels` 的假桥返回空串）⇒ 像素断言不成立。
+//   按仓库既有惯例断言**桥收到了什么**（⑨+1 conformance：ABI 形状即契约）；
+//   真像素由 T2 的 AOT 构建 + 真机探针兜。
+$redArgb = Color::fromRgb(255, 0, 0)->toArgb();
+$blueArgb = Color::fromRgb(0, 0, 255)->toArgb();
+
+skiaBridgeReset();
+$fsk = new SkiaCanvas(40, 40, null, Scale::of(1.0));
+$fsk->drawRect(new Rect(0.0, 0.0, 40.0, 40.0), Paint::fill(Color::black())->withGradient(
+    Gradient::linear(0.0, 0.0, 40.0, 0.0, [Color::fromRgb(255, 0, 0), Color::fromRgb(0, 0, 255)])
+));
+$opsG = skiaCallOps();
+check(
+    'P3 · Skia 渐变：桥收到 set_gradient → draw_rect → clear_source（源不泄漏到下次 draw）',
+    $opsG === ['create', 'set_gradient', 'draw_rect', 'clear_source'],
+    implode(',', $opsG)
+);
+$callG = $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][1];
+check(
+    'P3 · Skia set_gradient 参数（线性 / 端点设备坐标 / 2 色标 / 补位不越界）',
+    $callG === ['set_gradient', 0, 0.0, 0.0, 40.0, 0.0, 2, $redArgb, $blueArgb, $blueArgb, $blueArgb, 0.0, 1.0, 1.0, 1.0],
+    var_export($callG, true)
+);
+
+// 径向：radial 位 = 1，且 x2 是**长度量**（半径只缩放不平移）⇒ (20,20) 圆心 + 半径 10
+skiaBridgeReset();
+$fskR = new SkiaCanvas(40, 40, null, Scale::of(1.0));
+$fskR->drawEllipse(new Rect(10.0, 10.0, 20.0, 20.0), Paint::fill(Color::black())->withGradient(
+    Gradient::radial(20.0, 20.0, 10.0, [Color::fromRgb(255, 0, 0), Color::fromRgb(0, 0, 255)])
+));
+$callR = $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][1];
+check(
+    'P3 · Skia 径向渐变：radial=1 且半径只缩放不平移（(20,20) r=10）',
+    $callR[0] === 'set_gradient'
+        && $callR[1] === 1
+        && $callR[2] === 20.0 && $callR[3] === 20.0 && $callR[4] === 10.0 && $callR[5] === 0.0,
+    var_export($callR, true)
+);
+
+// 虚线：on/off/phase 原样过桥
+skiaBridgeReset();
+$fskD = new SkiaCanvas(60, 8, null, Scale::of(1.0));
+$fskD->drawLine(2.0, 4.0, 58.0, 4.0, Paint::stroke(Color::black(), 4.0)->withDash(new DashPattern(8.0, 8.0, 2.0)));
+$opsD = skiaCallOps();
+check(
+    'P3 · Skia 虚线：桥收到 set_dash → draw_line → clear_source',
+    $opsD === ['create', 'set_dash', 'draw_line', 'clear_source'],
+    implode(',', $opsD)
+);
+check(
+    'P3 · Skia set_dash 参数（on=8 / off=8 / phase=2 原样过桥）',
+    $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][1] === ['set_dash', 8.0, 8.0, 2.0],
+    var_export($GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][1], true)
+);
+
+// 反例自检：没有渐变/虚线时**一个桥调用都不多发**（热路径不为不存在的源付账，
+// 也顺带守住"source 状态不跨 draw 泄漏"这条——clear 只在真挂了时才发）
+skiaBridgeReset();
+$fskP = new SkiaCanvas(20, 20, null, Scale::of(1.0));
+$fskP->drawRect(new Rect(0.0, 0.0, 20.0, 20.0), Paint::fill(Color::black()));
+$fskP->drawLine(0.0, 0.0, 20.0, 20.0, Paint::stroke(Color::black(), 2.0));
+check(
+    'P3 · Skia 无 source 时不发 set_*/clear_source（不多调、也不泄漏）',
+    skiaCallOps() === ['create', 'draw_rect', 'draw_line'],
+    implode(',', skiaCallOps())
+);
+skiaBridgeReset();
 
 // Path 构造
 $p19 = Path::create()->moveTo(2, 2)->lineTo(6, 2)->quadTo(8, 4, 6, 6)->close();

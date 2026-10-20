@@ -92,6 +92,28 @@ final readonly class Color
         return ($this->a << 24) | ($this->r << 16) | ($this->g << 8) | $this->b;
     }
 
+    /**
+     * 两色按 t∈[0,1] 线性插值（渐变色标之间用）。
+     *
+     * t 越界按端点夹取（插值本就是"段内"语义，不报错也不回绕）。
+     */
+    public static function lerp(Color $a, Color $b, float $t): self
+    {
+        if ($t <= 0.0) {
+            return $a;
+        }
+        if ($t >= 1.0) {
+            return $b;
+        }
+
+        return new self(
+            (int) round($a->r + ($b->r - $a->r) * $t),
+            (int) round($a->g + ($b->g - $a->g) * $t),
+            (int) round($a->b + ($b->b - $a->b) * $t),
+            (int) round($a->a + ($b->a - $a->a) * $t),
+        );
+    }
+
     public function isOpaque(): bool
     {
         return $this->a === 255;

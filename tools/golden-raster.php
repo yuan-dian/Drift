@@ -16,6 +16,8 @@ use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Size;
 use Drift\Rendering\Color;
+use Drift\Rendering\DashPattern;
+use Drift\Rendering\Gradient;
 use Drift\Rendering\Paint;
 use Drift\Rendering\RasterCanvas;
 use Drift\Text\DeterministicFontManager;
@@ -179,6 +181,38 @@ $scenes['custompaint'] = static function () use ($W, $H): string {
     $element->effectiveBox()->paint($canvas);
 
     return $canvas->toRgba();
+};
+
+// P3 渐变/虚线：直接打在确定性后端上（不绕控件树 —— 量的是 canvas 这条路径本身）。
+// 覆盖四条：线性渐变矩形（含 3 色标带显式位置）/ 径向渐变椭圆 / 线段虚线 /
+// 描边矩形的虚线降级（R2 ⇒ 实线，不该出现空洞）。
+$scenes['gradient-dash'] = static function () use ($W, $H): string {
+    $c = new RasterCanvas($W, $H, Color::white(), null);
+
+    $c->drawRect(new Rect(20.0, 20.0, 160.0, 60.0), Paint::fill(Color::black())->withGradient(
+        Gradient::linear(20.0, 20.0, 180.0, 20.0, [
+            Color::fromRgb(255, 0, 0),
+            Color::fromRgb(255, 255, 0),
+            Color::fromRgb(0, 0, 255),
+        ], [0.0, 0.5, 1.0])
+    ));
+
+    $c->drawEllipse(new Rect(220.0, 20.0, 120.0, 60.0), Paint::fill(Color::black())->withGradient(
+        Gradient::radial(280.0, 50.0, 60.0, [
+            Color::fromRgb(255, 255, 255),
+            Color::fromRgb(30, 90, 200),
+        ])
+    ));
+
+    $c->drawLine(20.0, 110.0, 340.0, 110.0, Paint::stroke(Color::black(), 4.0)->withDash(new DashPattern(10.0, 8.0, 3.0)));
+    $c->drawLine(20.0, 130.0, 340.0, 130.0, Paint::stroke(Color::black(), 2.0)->withDash(new DashPattern(6.0, 6.0)));
+
+    // 描边矩形：虚线降级为实线（R2）
+    $c->drawRect(new Rect(20.0, 150.0, 160.0, 50.0), Paint::stroke(Color::black(), 3.0)->withDash(new DashPattern(6.0, 6.0)));
+    // 描边椭圆：同样降级
+    $c->drawEllipse(new Rect(220.0, 150.0, 120.0, 50.0), Paint::stroke(Color::black(), 3.0)->withDash(new DashPattern(6.0, 6.0)));
+
+    return $c->toRgba();
 };
 
 $out = [];foreach ($scenes as $name => $make) {

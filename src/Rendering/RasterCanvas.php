@@ -155,7 +155,7 @@ final class RasterCanvas implements Canvas
         $device = $this->toDevice($rect);
 
         if (!$paint->isStroke()) {
-            $this->rasterize($device, $radius, $paint->color, null, 0.0);
+            $this->rasterize($device, $radius, $paint->color, null, 0.0, $paint->gradient);
             return;
         }
 
@@ -167,7 +167,9 @@ final class RasterCanvas implements Canvas
             $device->width - 2.0 * $w,
             $device->height - 2.0 * $w
         );
-        $this->rasterize($device, $radius, $paint->color, $hole, max(0.0, $radius - $w));
+        // ★ R2 降级：矩形/椭圆描边的虚线退化为实线（虚线只在 drawLine 上做真虚线），
+        //   故这里无视 $paint->dash，只透传渐变（描边渐变仍是实色渐变，不是虚线）。
+        $this->rasterize($device, $radius, $paint->color, $hole, max(0.0, $radius - $w), $paint->gradient);
     }
 
     /**
@@ -218,7 +220,11 @@ final class RasterCanvas implements Canvas
      */
     public function capabilities(): int
     {
-        return CanvasCapabilities::CAP_ELLIPSE | CanvasCapabilities::CAP_LINE;
+        // ★ Extended 层：Raster 允许降级近似（§7.2 D2 表）—— 渐变做逐像素实渐变
+        //   （比"分带"更好），虚线在**线段**上做真虚线、在矩形/椭圆描边上退化为实线。
+        //   两种都"产出了像素"，故置位；Skia 端做完整实现。
+        return CanvasCapabilities::CAP_ELLIPSE | CanvasCapabilities::CAP_LINE
+            | CanvasCapabilities::CAP_GRADIENT | CanvasCapabilities::CAP_DASH;
     }
 
     /**
@@ -261,7 +267,7 @@ final class RasterCanvas implements Canvas
                 $device->height - $w
             );
         }
-        $this->rasterizeEllipse($outer, $paint->color, $hole);
+        $this->rasterizeEllipse($outer, $paint->color, $hole, $paint->gradient);
     }
 
     /**
@@ -304,6 +310,15 @@ final class RasterCanvas implements Canvas
         $r2 = $half * $half;
         $color = $paint->color;
 
+        // ★ 虚线：沿弧长（逻辑单位，与 DashPattern 同口径）算"在 on 段还是 off 段"。
+        //   s = t × 逻辑长度；相位 phase 让相邻段错开。Raster 在**线段**上做真虚线
+        //   （矩形/椭圆描边退化为实线，见 drawRect/drawEllipse）。
+        $dash = $paint->dash;
+        $logicalLen = $len2 > 0.0 ? sqrt($len2) / $dpr : 0.0;
+        $dashPeriod = $dash !== null ? $dash->period() : 0.0;
+        $dashOn = $dash !== null ? $dash->on : 0.0;
+        $dashPhase = $dash !== null ? $dash->phase : 0.0;
+
         for ($y = $ya; $y < $yb; $y++) {
             $py = $y + 0.5;
             for ($x = $xa; $x < $xb; $x++) {
@@ -317,9 +332,20 @@ final class RasterCanvas implements Canvas
                     $dx = $px - ($ax + $t * $ex);
                     $dy = $py - ($ay + $t * $ey);
                 }
-                if ($dx * $dx + $dy * $dy <= $r2) {
-                    $this->blend($x, $y, $color);
+                if ($dx * $dx + $dy * $dy > $r2) {
+                    continue;
                 }
+                if ($dash !== null) {
+                    $s = $t * $logicalLen + $dashPhase;
+                    $m = fmod($s, $dashPeriod);
+                    if ($m < 0.0) {
+                        $m += $dashPeriod;
+                    }
+                    if ($m >= $dashOn) {
+                        continue; // 落在空段：跳过点（虚线的"虚"）
+                    }
+                }
+                $this->blend($x, $y, $color);
             }
         }
     }
@@ -329,7 +355,7 @@ final class RasterCanvas implements Canvas
      *
      * @param ?Rect $hole 内椭圆（描边的洞）；null = 实心
      */
-    private function rasterizeEllipse(Rect $ellipse, Color $color, ?Rect $hole): void
+    private function rasterizeEllipse(Rect $ellipse, Color $color, ?Rect $hole, ?Gradient $gradient = null): void
     {
         $cx = $ellipse->left + $ellipse->width / 2.0;
         $cy = $ellipse->top + $ellipse->height / 2.0;
@@ -367,7 +393,7 @@ final class RasterCanvas implements Canvas
             }
 
             if ($hole === null || $hole->width <= 0.0 || $hole->height <= 0.0) {
-                $this->fillSpan($y, $x0, $x1, $color, $opaque, $lut);
+                $this->fillSpanOrGrad($y, $x0, $x1, $color, $opaque, $lut, $gradient);
                 continue;
             }
 
@@ -378,17 +404,17 @@ final class RasterCanvas implements Canvas
             $hry = $hole->height / 2.0;
             $ht = ($hrx > 0.0 && $hry > 0.0) ? 1.0 - (($py - $hcy) * ($py - $hcy)) / ($hry * $hry) : 0.0;
             if ($ht <= 0.0) {
-                $this->fillSpan($y, $x0, $x1, $color, $opaque, $lut);
+                $this->fillSpanOrGrad($y, $x0, $x1, $color, $opaque, $lut, $gradient);
                 continue;
             }
             $hdx = $hrx * sqrt($ht);
             $h0 = max((int) ceil($hcx - $hdx - 0.5), $x0);
             $h1 = min((int) floor($hcx + $hdx - 0.5) + 1, $x1);
             if ($h0 < $h1) {
-                $this->fillSpan($y, $x0, $h0, $color, $opaque, $lut);
-                $this->fillSpan($y, $h1, $x1, $color, $opaque, $lut);
+                $this->fillSpanOrGrad($y, $x0, $h0, $color, $opaque, $lut, $gradient);
+                $this->fillSpanOrGrad($y, $h1, $x1, $color, $opaque, $lut, $gradient);
             } else {
-                $this->fillSpan($y, $x0, $x1, $color, $opaque, $lut);
+                $this->fillSpanOrGrad($y, $x0, $x1, $color, $opaque, $lut, $gradient);
             }
         }
     }
@@ -465,7 +491,7 @@ final class RasterCanvas implements Canvas
         }
     }
 
-    private function rasterize(Rect $rect, float $radius, Color $color, ?Rect $hole, float $holeRadius): void
+    private function rasterize(Rect $rect, float $radius, Color $color, ?Rect $hole, float $holeRadius, ?Gradient $gradient = null): void
     {
         if ($color->a === 0) {
             return;
@@ -513,9 +539,13 @@ final class RasterCanvas implements Canvas
                 continue;
             }
 
-            // 描边的洞：洞自己的行区间（同样两端含）∩ 墨区间，圆角时只在
-            // 上下边带行向内扫；挖掉洞后剩两段，各自写。
-            if ($hole !== null) {
+            // 描边的洞：当前行落在洞的纵向范围内时，才做横向挖空（挖掉洞的那一段
+            // 剩左右两段）；当前行在洞之上/之下（顶/底边带）⇒ 整行都是墨（顶/底
+            // 边要完整画出，不能反过来被洞的 x 区间吃掉）。
+            // ★ 修复：旧实现对**每一行**都横向挖掉洞的 x 区间，无视行是否在洞的纵向
+            //   范围内 ⇒ 矩形描边的顶/底边整条被吞掉，只剩左右两条竖边。P3 的
+            //   像素断言首次戳中；golden prims 的描边矩形旧基线即此坏输出，已重基线。
+            if ($hole !== null && $py >= $hole->top && $py < $hole->bottom()) {
                 $h0 = max($x0, (int) ceil($hole->left - 0.5));
                 $h1 = min($x1, (int) floor($hole->right() - 0.5) + 1);
                 if ($h0 < $h1 && $holeRadius > 0.0
@@ -529,17 +559,111 @@ final class RasterCanvas implements Canvas
                     }
                 }
                 if ($h0 < $h1) {
-                    $this->fillSpan($y, $x0, $h0, $color, $opaque, $lut);
-                    $this->fillSpan($y, $h1, $x1, $color, $opaque, $lut);
+                    $this->fillSpanOrGrad($y, $x0, $h0, $color, $opaque, $lut, $gradient);
+                    $this->fillSpanOrGrad($y, $h1, $x1, $color, $opaque, $lut, $gradient);
                 } else {
                     // 本行完全在洞里（或洞比墨区大）⇒ 整行都是墨
-                    $this->fillSpan($y, $x0, $x1, $color, $opaque, $lut);
+                    $this->fillSpanOrGrad($y, $x0, $x1, $color, $opaque, $lut, $gradient);
                 }
-                continue;
+            } else {
+                // 无洞 / 当前行在洞纵向范围之外（顶/底边缘带）⇒ 整行墨
+                $this->fillSpanOrGrad($y, $x0, $x1, $color, $opaque, $lut, $gradient);
             }
-
-            $this->fillSpan($y, $x0, $x1, $color, $opaque, $lut);
+            continue;
         }
+    }
+
+    /**
+     * 一段水平像素 run：有渐变走逐像素插值，否则走常量色快速路径。
+     */
+    private function fillSpanOrGrad(int $y, int $xa, int $xb, Color $color, bool $opaque, ?array $lut, ?Gradient $gradient): void
+    {
+        if ($gradient === null) {
+            $this->fillSpan($y, $xa, $xb, $color, $opaque, $lut);
+            return;
+        }
+        $this->fillSpanGrad($y, $xa, $xb, $gradient);
+    }
+
+    /** 渐变段：逐像素按位置取色（source-over 混合，半透明自然过渡） */
+    private function fillSpanGrad(int $y, int $x0, int $x1, Gradient $g): void
+    {
+        $py = (float) ($y + 0.5);
+        for ($x = $x0; $x < $x1; $x++) {
+            $this->blend($x, $y, $this->gradientColorAt($g, (float) ($x + 0.5), $py));
+        }
+    }
+
+    /**
+     * 渐变采样：设备像素 (px,py) → 颜色。
+     *
+     * ★ 渐变端点/圆心是**逻辑坐标**（与形状同空间），转设备空间 = (logical + offset) × dpr
+     *   —— 与 `toDevice()` 同一变换（只是不量化，渐变要连续）。逐像素采样即正确渐变，
+     *   比 R2 允许的"分带"更平滑。
+     */
+    private function gradientColorAt(Gradient $g, float $px, float $py): Color
+    {
+        $dpr = $this->scale->dpr;
+        $ox = $this->offsetX;
+        $oy = $this->offsetY;
+
+        if ($g->isRadial()) {
+            $cx = ($g->x1 + $ox) * $dpr;
+            $cy = ($g->y1 + $oy) * $dpr;
+            $radius = max($g->x2 * $dpr, 1e-6);
+            $dx = $px - $cx;
+            $dy = $py - $cy;
+            $t = sqrt($dx * $dx + $dy * $dy) / $radius;
+        } else {
+            $x1 = ($g->x1 + $ox) * $dpr;
+            $y1 = ($g->y1 + $oy) * $dpr;
+            $x2 = ($g->x2 + $ox) * $dpr;
+            $y2 = ($g->y2 + $oy) * $dpr;
+            $ex = $x2 - $x1;
+            $ey = $y2 - $y1;
+            $len2 = $ex * $ex + $ey * $ey;
+            $t = $len2 <= 0.0 ? 0.0 : (($px - $x1) * $ex + ($py - $y1) * $ey) / $len2;
+        }
+
+        if ($t < 0.0) {
+            $t = 0.0;
+        } elseif ($t > 1.0) {
+            $t = 1.0;
+        }
+
+        $colors = $g->colors;
+        $stops = $g->stops;
+        $n = count($colors);
+
+        if ($stops === []) {
+            if ($n === 1) {
+                return $colors[0];
+            }
+            $seg = $t * ($n - 1);
+            $i = (int) $seg;
+            if ($i >= $n - 1) {
+                return $colors[$n - 1];
+            }
+            return Color::lerp($colors[$i], $colors[$i + 1], $seg - $i);
+        }
+
+        if ($t <= $stops[0]) {
+            return $colors[0];
+        }
+        if ($t >= $stops[$n - 1]) {
+            return $colors[$n - 1];
+        }
+        for ($i = 1; $i < $n; $i++) {
+            if ($t <= $stops[$i]) {
+                $a = $stops[$i - 1];
+                $b = $stops[$i];
+                $f = $b > $a ? ($t - $a) / ($b - $a) : 0.0;
+
+                return Color::lerp($colors[$i - 1], $colors[$i], $f);
+            }
+        }
+
+        return $colors[$n - 1];
     }
 
     /** 写一段水平像素 run（同一行、同一颜色；opaque 逐像素原地写，半透明查表逐像素） */
