@@ -72,6 +72,18 @@ struct SkiaSlot {
 std::map<int, SkiaSlot *> g_slots;
 int g_nextHandle = 1;
 
+/**
+ * 表面复用缓存（`26` §5.4 修法 3）：1 深，按尺寸命中。
+ *
+ * 稳态下每帧 create/destroy 同一尺寸 ⇒ `allocN32Pixels`（1280x800 时
+ * 4 MB）的分配与首次触页全部省掉，只留画布状态复位 + clear 底色。
+ * resize 中尺寸连变：每个 miss 帧照常分配，同时把上一个不同尺寸的
+ * 缓存释放 —— 不多留内存，也不比现状慢。
+ */
+SkiaSlot *g_recycleSlot = nullptr;
+int g_recycleW = 0;
+int g_recycleH = 0;
+
 SkiaSlot *slotFor(Int handle) {
     std::map<int, SkiaSlot *>::iterator it = g_slots.find((int)handle);
     return it == g_slots.end() ? NULL : it->second;
@@ -192,24 +204,35 @@ Int php_drift_skia_canvas_create(Int width, Int height, Int backgroundRgba) {
         return (Int)0;   // 0 尺寸窗口（最小化）不是错误，只是没有可画的东西
     }
 
-    SkiaSlot *slot = new SkiaSlot();
-    // isOpaque = true：画布不透明 ⇒ Skia 直接覆盖写，不做 dst alpha 混合；
-    // 取回像素时 alpha 固定 255，与 `drift_win_present()` 的约定一致。
-    slot->bitmap.allocN32Pixels(w, h, true);
-    if (slot->bitmap.getPixels() == NULL) {
-        delete slot;
-        return (Int)0;
-    }
+    SkiaSlot *slot = nullptr;
+    if (g_recycleSlot != nullptr && g_recycleW == w && g_recycleH == h) {
+        // ★ 命中复用缓存：bitmap 与 canvas 都活着，只把画布状态复位成"新画布"：
+        //   restoreToCount(1) 兜住上一帧可能漏出的 save/clip（正常应已平衡）；
+        //   resetMatrix 把 CTM 还原成创建时的单位矩阵（光栅 direct 的初态）。
+        slot = g_recycleSlot;
+        g_recycleSlot = nullptr;
+        slot->canvas->restoreToCount(1);
+        slot->canvas->resetMatrix();
+    } else {
+        slot = new SkiaSlot();
+        // isOpaque = true：画布不透明 ⇒ Skia 直接覆盖写，不做 dst alpha 混合；
+        // 取回像素时 alpha 固定 255，与 `drift_win_present()` 的约定一致。
+        slot->bitmap.allocN32Pixels(w, h, true);
+        if (slot->bitmap.getPixels() == NULL) {
+            delete slot;
+            return (Int)0;
+        }
 
-    slot->canvas = SkCanvas::MakeRasterDirectN32(
-        w,
-        h,
-        (SkPMColor *)slot->bitmap.getPixels(),
-        slot->bitmap.rowBytes()
-    );
-    if (!slot->canvas) {
-        delete slot;
-        return (Int)0;
+        slot->canvas = SkCanvas::MakeRasterDirectN32(
+            w,
+            h,
+            (SkPMColor *)slot->bitmap.getPixels(),
+            slot->bitmap.rowBytes()
+        );
+        if (!slot->canvas) {
+            delete slot;
+            return (Int)0;
+        }
     }
 
     // 必须清底色：bitmap 初值不确定，不清的话窗口会是黑的/花的，而布局与绘制全对
@@ -226,7 +249,14 @@ void php_drift_skia_canvas_destroy(Int canvas) {
     if (it == g_slots.end()) {
         return;   // 对 0 与未知句柄幂等
     }
-    delete it->second;
+    // ★ 不进 delete，进复用缓存：下一帧同尺寸 create 直接取走（`26` §5.4 修法 3）。
+    //   缓存只留 1 个 —— 已有不同尺寸的占用就先释放它。
+    if (g_recycleSlot != nullptr) {
+        delete g_recycleSlot;
+    }
+    g_recycleSlot = it->second;
+    g_recycleW = it->second->bitmap.width();
+    g_recycleH = it->second->bitmap.height();
     g_slots.erase(it);
 }
 
