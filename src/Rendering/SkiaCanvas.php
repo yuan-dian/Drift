@@ -87,6 +87,23 @@ final class SkiaCanvas implements Canvas
         return $this->handle !== 0;
     }
 
+    /**
+     * 画布句柄 —— 只给**壳侧的直贴路径**用（`drift_win_present_skia()`）。
+     *
+     * ★ 为什么需要它：贴屏本来要把像素 `toRgba()` 取回 PHP 再交回壳里，那条路每帧
+     *   做两次方向相反的 swizzle + 一次 4MB 跨界，实测占端到端 50%+（`26` §5）。
+     *   有了句柄，壳可以直接读 Skia 表面贴屏，像素不进 PHP。
+     *
+     * ★ 0 = 创建失败 ⇒ 调用方（`Win32SkiaSurface`）会回落到"这一帧不贴"，
+     *   与"画布无效时所有绘制静默跳过"同一档，不是错误。
+     *
+     * @api platform 只有 `src/Platform/Win32/Win32SkiaSurface` 会读它
+     */
+    public function handle(): int
+    {
+        return $this->handle;
+    }
+
     /** 原始 RGBA 字节流（行优先，每像素 4 字节）—— 与 `RasterCanvas::toRgba()` 同格式 */
     public function toRgba(): string
     {

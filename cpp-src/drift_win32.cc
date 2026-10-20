@@ -19,6 +19,7 @@
 
 #define NOMINMAX
 
+#include <cstring>   // memcpy —— Skia 直贴路径按行拷（§7.3 提速，见文件尾）
 #include <phpx.h>
 #include <windows.h>
 #include <imm.h>
@@ -1789,6 +1790,59 @@ void php_drift_win_present(Int hwnd, String rgba, Int width, Int height) {
         g_frame[i + 1] = src[i + 1];
         g_frame[i + 2] = src[i + 0];
         g_frame[i + 3] = 0xFF;
+    }
+
+    HDC dc = GetDC(target);
+    if (dc != NULL) {
+        presentTo(dc);
+        ReleaseDC(target, dc);
+    }
+}
+
+// ═══════════════════════════════════════════════ Skia 直贴（§7.3 提速）══
+// ★★ 旧路径每帧把同一批像素做两次**方向相反**的逐像素交换：
+//     `drift_skia_read_pixels()`   BGRA → RGBA（为了喂 `php_drift_win_present`）
+//     `php_drift_win_present()`    RGBA → BGRA（为了喂 32bpp DIB）
+//   中间还要过一次 PHP 字符串形态的 4MB 跨界。实测这两段合计占端到端 **50%+**
+//   （`docs/design-v7/26-bench-结果.md` §5：toRgba 30% + present 20.5%）。
+//
+//   ★ **交换本来就是多余的**：Skia 的 N32 在小端上就是 **BGRA**，而 32bpp
+//     `BI_RGB` DIB 要的也是 BGRA ⇒ 按行 `memcpy` 就够，两次 swizzle 全省。
+//
+// ★ 像素指针由 `drift_skia.cc` 零拷取出。它**不是** PHP ABI 函数（不进 stub，
+//   PHP 侧拿不到）⇒ 用 `extern "C"` 固定符号名，不为它开公共面。
+extern "C" bool drift_skia_surface_pixels(
+    int canvas,
+    const unsigned char **data,
+    int *w,
+    int *h,
+    size_t *rowBytes);
+
+void php_drift_win_present_skia(Int hwnd, Int canvas) {
+    HWND target = (HWND)(INT_PTR)hwnd;
+    if (target == NULL) {
+        return;
+    }
+
+    const unsigned char *src = NULL;
+    int w = 0;
+    int h = 0;
+    size_t rowBytes = 0;
+    if (!drift_skia_surface_pixels((int)canvas, &src, &w, &h, &rowBytes)) {
+        return;   // 画布无效/已销毁 ⇒ 这一帧没贴。与 `php_drift_win_present` 的丢弃同档
+    }
+
+    const size_t need = (size_t)w * (size_t)h * 4u;
+    if (g_frameW != w || g_frameH != h) {
+        g_frame.assign(need, 0);
+        g_frameW = w;
+        g_frameH = h;
+    }
+
+    // ★★ 零 swizzle：BGRA → BGRA。只拷紧凑宽度，忽略 Skia 的行尾填充。
+    const size_t rowPixels = (size_t)w * 4u;
+    for (int y = 0; y < h; y++) {
+        memcpy(g_frame.data() + (size_t)y * rowPixels, src + (size_t)y * rowBytes, rowPixels);
     }
 
     HDC dc = GetDC(target);

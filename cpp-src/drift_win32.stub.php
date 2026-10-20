@@ -229,6 +229,28 @@ function drift_win_message_box(string $title, string $body): void {}
  */
 function drift_win_present(int $hwnd, string $rgba, int $width, int $height): void {}
 
+/**
+ * 把 **Skia 画布**直接贴到窗口客户区 —— 不经过 PHP 的像素形态。
+ *
+ * ★★ 为什么要有它（而不是复用 `drift_win_present`）：旧路径每帧把同一批像素做
+ *   两次**方向相反**的 swizzle，外加一次 4MB 跨界：
+ *   ```
+ *   drift_skia_read_pixels()   BGRA → RGBA  （为了喂 present 的入参格式）
+ *   php_drift_win_present()    RGBA → BGRA  （为了喂 32bpp DIB）
+ *   ```
+ *   而 Skia 的 N32 在小端上**本来就是 BGRA**，32bpp `BI_RGB` DIB 要的也是 BGRA
+ *   ⇒ 两次交换纯属白做。实测它们合计占端到端 **50%+**（`26` §5：
+ *   toRgba 30% + present 20.5%）。本函数把这条链缩成一次 `memcpy`。
+ *
+ * ★ `$canvas` 是 `SkiaCanvas` 的**不透明句柄**（拿到它要 `SkiaCanvas::handle()`）。
+ *   无效 / 已销毁 ⇒ 这一帧没贴（与 `drift_win_present` 的"整帧丢弃"同档，
+ *   不是"应用该崩"）。
+ *
+ * ★ 壳仍然**缓存**这一帧（`WM_PAINT` 重贴）—— 语义与 `drift_win_present` 逐字相同，
+ *   只是少了两步换算。窗口被遮住再露出来照样不会白屏。
+ */
+function drift_win_present_skia(int $hwnd, int $canvas): void {}
+
 // ---- 指针形状（§9.1 命中链的第 ③ 方） ----
 
 /**

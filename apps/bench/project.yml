@@ -1,0 +1,44 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# apps/bench/project.yml —— v7 阶段 0 微基准（`docs/design-v7/25` §3）
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# ★★ 调用约定与其它应用完全一致：**从仓库根调用**
+#     `cd <repo-root> && php tools/drift-build.php bench`
+#   理由见 `apps/hello/project.yml` 头部（cwd 决定 exe 落点与相对路径基准）。
+#
+# ★ 为什么它住在 `apps/` 而**不是** `tools/`：
+#   `drift-build` 只认 `apps/<name>/project.yml`（`tools/drift-build.php:106`），
+#   而它封装了 tpc 的三条调用约定（cwd=仓库根 / `-O2` / `-m bin`）+ 增量 + 私有 ini。
+#   为了"语义上属于 tools"去改 `drift-build` 或另写一份封装，是拿**验证链**换**目录名**。
+#   ⇒ bench 是一个真实的 tpc 工程，`apps/` 就是"tpc 工程所在处"。
+#
+#   ★ 但它**不是** §20 纪律 4 意义上的"能力示例"（那条说每个契约能力必须在一个示例里
+#     出现）—— bench 一个能力都不展示，它是量具。别拿它当示例读。
+#
+# ★ 为什么 `sources` 里有 `../showcase/src`：
+#   M3 要量**真实应用根**（`ShowcaseRoot`，实测 70 个 Element），而不只是参数化的
+#   合成树。tpc 只编译**可达**代码 ⇒ 只有 `ShowcaseRoot` 及其 Page 被真正生成。
+#
+# ★ 为什么链 `cpp-src`：`src/Platform/Win32/*` 引用了 `drift_win_*` 的 C 函数。
+#   bench 一个都不 new（AOT 不可达即不编译），但保留 `cpp-src` 让"可达性判断出错"
+#   时表现为**能链上**而不是一堆 LNK2019 —— 量具不该死在构建期。
+
+name: bench
+version: 0.1.0
+
+info:
+  Author: Drift
+  Description: v7 阶段 0 微基准 —— M1 toObject / M2 mixed 装箱 / M3 阶段耗时（25 §3）
+
+include: ../../build/base.yml
+
+# ── 源码（路径相对**本文件所在目录**）──
+#   `.`                  main.php（全局 main()）+ src/（三个基准）
+#   `../../src`          Drift 框架（量的是真实现，不是仿写）
+#   `../../cpp-src`      Win32 桥（见上）
+#   `../showcase/src`    M3 的"真实应用根"夹具
+sources:
+  - .
+  - ../../src
+  - ../../cpp-src
+  - ../showcase/src

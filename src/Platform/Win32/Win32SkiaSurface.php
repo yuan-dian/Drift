@@ -8,8 +8,9 @@ use Drift\Rendering\Canvas;
 use Drift\Rendering\Color;
 use Drift\Rendering\RenderSurface;
 use Drift\Rendering\SkiaCanvas;
+use Drift\Rendering\SurfaceProfile;
 
-use function drift_win_present;
+use function drift_win_present_skia;
 
 /**
  * Win32 的 Skia 表面：**Skia 光栅 + 贴屏**（§7.3 的 M1 后端之二）。
@@ -24,6 +25,10 @@ use function drift_win_present;
  *
  * ★ **每帧新建、用完显式 `dispose()`**：Skia 画布是 C++ 侧 `new` 出来的原生资源，
  *   不释放就是每帧漏一张 w×h×4。`dispose()` 必须在 `toRgba()` **之后**调用。
+ *
+ * ★★ **三段计时受 `SurfaceProfile::$on` 控制**（默认关，关时每段只多一次静态读）。
+ *   存在的理由：`26` §3.2 指出 M3 的分母不含 present，而真机一帧的大头很可能就在
+ *   `toRgba` + `present` 这条"像素搬出搬进"的链上 —— 要判断该不该拆布局，先量它。
  *
  * @internal 平台实现；应用只认 `Drift\Rendering\RenderSurface`
  */
@@ -52,6 +57,9 @@ final class Win32SkiaSurface implements RenderSurface
 
     public function beginFrame(float $timestampMs): Canvas
     {
+        $prof = SurfaceProfile::$on;
+        $t0 = $prof ? \hrtime(true) : 0;
+
         // 背景白：Skia 的 bitmap 初值不确定，不清底色的话窗口会是黑的/花的，
         // 而布局与绘制完全正确 —— 现象像"渲染没跑"（`Win32RasterSurface` 同款）。
         $this->canvas = new SkiaCanvas(
@@ -60,6 +68,10 @@ final class Win32SkiaSurface implements RenderSurface
             Color::white(),
             Scale::of($this->dpr),
         );
+
+        if ($prof) {
+            SurfaceProfile::add('beginFrame', \hrtime(true) - $t0);
+        }
 
         return $this->canvas;
     }
@@ -73,17 +85,29 @@ final class Win32SkiaSurface implements RenderSurface
             return;
         }
 
-        $rgba = $canvas->toRgba();
-        $width = $canvas->width();
-        $height = $canvas->height();
+        $prof = SurfaceProfile::$on;
+        $t0 = $prof ? \hrtime(true) : 0;
 
-        // ★ 先取像素再释放 —— 顺序反了就是读一块已 delete 的内存
-        $canvas->dispose();
+        // ★★ 直贴（默认路径）：壳直接读 Skia 表面，**像素不进 PHP**。
+        //   旧路径 `toRgba()` + `drift_win_present()` 每帧做两次**方向相反**的
+        //   swizzle（BGRA→RGBA 再 RGBA→BGRA）+ 一次 4MB 跨界，
+        //   实测合计占端到端 50%+（`26` §5）；直贴把它缩成一次 memcpy。
+        if ($canvas->isValid()) {
+            drift_win_present_skia($this->windowHandle, $canvas->handle());
 
-        if ($width <= 0 || $height <= 0 || $rgba === '') {
-            return;   // 0 尺寸窗口（最小化）：没有可贴的东西，也不是错误
+            // ★ 顺序：先贴后销毁。`drift_win_present_skia()` 内部取的是 Skia 表面的
+            //   指针并立刻拷进 `g_frame`（同一帧用完）⇒ 生命周期符合约定。
+            $canvas->dispose();
+
+            if ($prof) {
+                SurfaceProfile::add('present', \hrtime(true) - $t0);
+            }
+
+            return;
         }
 
-        drift_win_present($this->windowHandle, $rgba, $width, $height);
+        // 回落：句柄无效（创建失败 / 已销毁）⇒ 没有可贴的东西。
+        // 与"画布无效时所有绘制静默跳过"同档 —— 这一帧没画，不是"应用该崩"。
+        $canvas->dispose();
     }
 }

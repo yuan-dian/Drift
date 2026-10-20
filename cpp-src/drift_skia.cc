@@ -382,3 +382,50 @@ Bool php_drift_skia_font_ready() {
     ensureFont();
     return (Bool)g_fontReady;
 }
+
+// ─────────────────────────────────────────── 零拷贝取像素（喂贴屏）──
+//
+// ★ **不是 PHP ABI 函数**（不进 stub，PHP 侧拿不到）：它只服务
+//   `drift_win32.cc` 的 `php_drift_win_present_skia()`。
+//   用 `extern "C"` 固定符号名 ⇒ 不为它开公共面，也不会有人从 PHP 绕开 present 路径。
+//
+// ★ 为什么要有它：旧路径把像素 `read_pixels()` 取回成 PHP 字符串（BGRA→RGBA
+//   swizzle + 4MB 跨界），再交给 `php_drift_win_present()` 做一次**反向**的
+//   RGBA→BGRA swizzle。而 Skia 的 N32 在小端上本来就是 BGRA、32bpp DIB 也要 BGRA
+//   ⇒ 两次交换纯属白做，实测合计占端到端 50%+（`26` §5）。
+//
+// ★ 返回的指针在**下一次绘制或 destroy 之前**有效。调用方必须在同一帧内用完 ——
+//   直贴路径立刻拷进 `g_frame`（WM_PAINT 重贴缓存还要用），符合这个约束。
+extern "C" bool drift_skia_surface_pixels(
+    int canvas,
+    const unsigned char **data,
+    int *w,
+    int *h,
+    size_t *rowBytes)
+{
+    if (data == NULL || w == NULL || h == NULL || rowBytes == NULL) {
+        return false;
+    }
+
+    SkiaSlot *slot = slotFor(canvas);
+    if (slot == NULL) {
+        return false;
+    }
+
+    const int bw = slot->bitmap.width();
+    const int bh = slot->bitmap.height();
+    if (bw <= 0 || bh <= 0) {
+        return false;
+    }
+
+    const unsigned char *pixels = (const unsigned char *)slot->bitmap.getPixels();
+    if (pixels == NULL) {
+        return false;
+    }
+
+    *data = pixels;
+    *w = bw;
+    *h = bh;
+    *rowBytes = slot->bitmap.rowBytes();
+    return true;
+}
