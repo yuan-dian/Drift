@@ -39,6 +39,7 @@ use Drift\Dev\Smoke\Frame\QuietWidget;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Smoke\Frame\TickerWidget;
 use Drift\Dev\Smoke\Overlay\FlatBox;
+use Drift\Dev\Smoke\Rendering\ProbePainter;
 use Drift\Dev\Preview\DemoPage;
 use Drift\Dev\Preview\FormPage;
 use Drift\Dev\Preview\Renderer;
@@ -128,6 +129,7 @@ use Drift\Layout\RenderScrollView;
 use Drift\Layout\RenderPadding;
 use Drift\Layout\RenderCard;
 use Drift\Layout\RenderSizedBox;
+use Drift\Layout\RenderCustomPaint;
 use Drift\Layout\RenderProxyBox;
 use Drift\Layout\RenderMenuItem;
 use Drift\Layout\RenderModalHost;
@@ -182,6 +184,8 @@ use Drift\Theme\ThemeScope;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
 use Drift\Widget\Card;
+use Drift\Widget\CustomPaint;
+use Drift\Widget\CustomPainter;
 use Drift\Widget\SizedBox;
 use Drift\Widget\ButtonVariant;
 use Drift\Widget\AppBar;
@@ -323,6 +327,13 @@ if (str_starts_with($caseArg, '--case=')) {
             Path::create()->moveTo(2, 2)->lineTo(8, 2)->lineTo(8, 8)->close(),
             Paint::fill(Color::black())
         );
+    }
+
+    if ($case === 'custompaint') {
+        // P2：自绘的轴没给、父容器又不限制这一轴 ⇒ 响亮失败（自绘区不能无穷大）
+        $el = (new CustomPaint(new ProbePainter(), 120.0))->createElement();
+        $el->mount(null, smokeContext());
+        $el->effectiveBox()?->layout(new BoxConstraints(0.0, 300.0, 0.0, INF));
     }
 
     if ($case === 'gradientbad') {
@@ -1845,6 +1856,76 @@ check(
 );
 skiaBridgeReset();
 
+// ── ⑩+3 19 op 回植 · P2：CustomPaint 逃生舱（2026-10-20）──
+// ★ 夹具统一 320×240（inkCount 按这个尺寸走）。
+$ctxP = smokeContext();
+$probeP = new ProbePainter(7);
+$probeP->draw = true;
+$cpEl = (new CustomPaint($probeP, 200.0, 120.0))->createElement();
+$cpEl->mount(null, $ctxP);
+$cpBox = $cpEl->effectiveBox();
+$cpBox?->layout(BoxConstraints::loose(new Size(300.0, 200.0)));
+$cpCustom = $cpBox instanceof RenderCustomPaint ? $cpBox : null;
+check('P2 · effectiveBox() 是 RenderCustomPaint（类型接线正确）', $cpCustom !== null, get_debug_type($cpBox));
+check(
+    'P2 · 定尺寸 ⇒ 盒 (200,120)',
+    $cpBox?->size() !== null && abs($cpBox->size()->width - 200.0) < 0.01 && abs($cpBox->size()->height - 120.0) < 0.01,
+    sprintf('实际 %s', var_export($cpBox?->size(), true))
+);
+check('P2 · painterVersion() 直通画家内容戳（7）', $cpCustom !== null && $cpCustom->painterVersion() === 7);
+
+$probeFill = new ProbePainter();
+$cpFillEl = (new CustomPaint($probeFill, 160.0))->createElement();
+$cpFillEl->mount(null, $ctxP);
+$cpFillBox = $cpFillEl->effectiveBox();
+$cpFillBox?->layout(BoxConstraints::loose(new Size(300.0, 200.0)));
+check(
+    'P2 · 未定的轴吃满约束上限（高 200 不是 0 —— 0 会静默不画）',
+    $cpFillBox?->size() !== null && abs($cpFillBox->size()->width - 160.0) < 0.01
+        && abs($cpFillBox->size()->height - 200.0) < 0.01,
+    sprintf('实际 %s', var_export($cpFillBox?->size(), true))
+);
+check(
+    'P2 · 未给定的轴自然尺寸 = 0（Row/Dock 量自然宽时不猜；要参与就给值）',
+    $cpFillBox !== null && $cpFillBox->intrinsicHeight(0.0) === 0.0,
+    sprintf('内禀高 %.6g', $cpFillBox?->intrinsicHeight(0.0) ?? -1.0)
+);
+
+$probeTight = new ProbePainter();
+$cpTightEl = (new CustomPaint($probeTight, 200.0, 120.0))->createElement();
+$cpTightEl->mount(null, $ctxP);
+$cpTightBox = $cpTightEl->effectiveBox();
+$cpTightBox?->layout(BoxConstraints::tight(new Size(150.0, 100.0)));
+check(
+    'P2 · 父更紧 ⇒ 听父（200 夹成 150，约束是父给的）',
+    $cpTightBox?->size() !== null && abs($cpTightBox->size()->width - 150.0) < 0.01
+        && abs($cpTightBox->size()->height - 100.0) < 0.01,
+    sprintf('实际 %s', var_export($cpTightBox?->size(), true))
+);
+
+$cP = new RasterCanvas(320, 240, Color::white(), Scale::of(1.0));
+$cpCustom?->paint($cP);
+check(
+    'P2 · paint 调画家一次且左上 40×40 有墨（画家直绘 Core 层图元）',
+    $probeP->calls === 1 && inkCount($cP) > 100 && $cP->pixelAt(20, 20)->r === 0,
+    sprintf('calls=%d ink=%d', $probeP->calls, inkCount($cP))
+);
+check(
+    'P2 · 画家收到的尺寸 = 盒尺寸（画布已 translate 到盒原点）',
+    $probeP->seen !== null && abs($probeP->seen->width - 200.0) < 0.01 && abs($probeP->seen->height - 120.0) < 0.01,
+    sprintf('画家收到 %s', var_export($probeP->seen, true))
+);
+
+fresh($log);
+[$code, $output] = runCase(__FILE__, 'custompaint', null);
+check('P2 · CustomPaint 未定轴 + 无限约束退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
+$msgP = logText($log);
+check(
+    'P2 · 失败消息点名 CustomPaint、带两条修法、不泄露内部编号',
+    str_contains($msgP, 'CustomPaint') && str_contains($msgP, '两条修法') && !str_contains($msgP, 'C6'),
+    $msgP
+);
+fresh($log);
 // ⑪ Text：六层栈 + 确定性参考实现（§8 / §14.2）
 fresh($log);
 $fontManager = DeterministicFontManager::standard();

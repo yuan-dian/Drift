@@ -26,6 +26,7 @@ use Drift\Widget\Widget;
 
 use App\Showcase\Pages\BigListPage;
 use App\Showcase\Pages\ButtonsPage;
+use App\Showcase\Pages\CustomPaintPage;
 use App\Showcase\Pages\FeedbackPage;
 use App\Showcase\Pages\FormPage;
 use App\Showcase\Pages\LayoutPage;
@@ -95,6 +96,7 @@ final class ShowcaseState extends State
             ['表单 Form', static fn(): Widget => new FormPage()],
             ['列表 List', static fn(): Widget => new ListPage()],
             ['长列表 Big', static fn(): Widget => new BigListPage()],
+            ['自绘 Paint', static fn(): Widget => new CustomPaintPage()],
             ['反馈 Feedback', static fn(): Widget => new FeedbackPage()],
         ];
     }

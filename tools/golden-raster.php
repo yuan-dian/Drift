@@ -24,6 +24,10 @@ use Drift\Text\DeterministicShaper;
 use Drift\Theme\ThemeData;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Card;
+use Drift\Widget\CustomPaint;
+use Drift\Widget\CustomPainter;
+use Drift\Dev\Smoke\Golden\GoldenGaugePainter;
+use Drift\Dev\Smoke\Golden\GoldenSparkPainter;
 use Drift\Widget\Column;
 use Drift\Widget\Row;
 use Drift\Widget\ScrollView;
@@ -148,8 +152,36 @@ $scenes['ellipse-line'] = static function () use ($W, $H): string {
 
     return $c->toRgba();
 };
-$out = [];
-foreach ($scenes as $name => $make) {
+// ── 场景 N+1（P2 新增）：CustomPaint 逃生舱（画家直绘 Core 层图元）──
+// ★ 与 showcase 的「自绘」页同构（同两只 painters，只差命名空间）：仪表盘 =
+//   椭圆表盘 + 11 根刻度线段拼弧（无 arc op）+ 指针；走势 = 网格 + 折线 + 端点。
+$scenes['custompaint'] = static function () use ($W, $H): string {
+    $theme = ThemeData::light();
+    $metrics = new DeterministicMetricsProvider(
+        DeterministicFontManager::standard()->collection(),
+        new DeterministicShaper(),
+    );
+    $context = new BuildContext((float) $W, (float) $H, $theme, $metrics);
+
+    $root = Column::make()->spacing(10)->children([
+        Text::make('自绘：仪表盘（椭圆表盘 + 刻度线 + 指针）')->title(),
+        new CustomPaint(new GoldenGaugePainter(0.62), 360.0, 200.0),
+        Text::make('自绘：走势折线（网格线 + 折线 + 端点标记）')->title(),
+        new CustomPaint(new GoldenSparkPainter(), 360.0, 160.0),
+    ]);
+
+    $element = $root->createElement();
+    $element->mount(null, $context);
+    $element->settle();
+    $element->effectiveBox()->layout(BoxConstraints::tight(new Size((float) $W, (float) $H)));
+
+    $canvas = new RasterCanvas($W, $H, Color::white(), null);
+    $element->effectiveBox()->paint($canvas);
+
+    return $canvas->toRgba();
+};
+
+$out = [];foreach ($scenes as $name => $make) {
     $rgba = $make();
     $out[] = sprintf('%s: len=%d md5=%s', $name, strlen($rgba), md5($rgba));
 }
