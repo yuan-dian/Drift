@@ -5,6 +5,7 @@ namespace Drift\App;
 
 use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
+use Drift\Layout\LayoutSelfCheck;
 use Drift\Layout\RenderBox;
 use Drift\Rendering\RenderSurface;
 use Drift\Rendering\SurfaceProfile;
@@ -104,6 +105,13 @@ final class Frame
         if ($prof) {
             SurfaceProfile::add('layout', \hrtime(true) - $t);
         }
+
+        // ②b 布局自校验（`04` §5；默认关，`build/layout.check` 存在时开）
+        // ★ 必须放在 layout **之后**：它做的是"用同一约束再排一次"，
+        //   排在前面就等于替真实帧排了两遍。
+        // ★ **只覆盖主树**：浮层的 layout 在 `Application::placeMenu()`
+        //   （要锚点与客户区尺寸），不在本类 ⇒ 自校验看不见它。
+        LayoutSelfCheck::maybeCheck($box, $constraints);
 
         // ③ paint → ④ present
         // ★ 本段**含** beginFrame 与 endFrame（各自另有计时）⇒ 报告里要扣掉，
