@@ -1019,9 +1019,16 @@ abstract class Application
         //   M4 拆「其余(PHP)」黑箱用（`26` §7）。段键与 Frame.php 的同治一套表。
         $prof = SurfaceProfile::$on;
 
+        // ★ 帧阶段 trace（`06` §2.4，默认关）：九段各记一个名字，帧末比对名单。
+        //   关时 $trace 为 null，每段只多一次 `if ($trace !== null)`。
+        $trace = FramePhase::begin();
+
         // ★ ① 先问一轮非阻塞 IO（§17.4.4）：外部数据先到，回调里 setState 的脏标记
         //   由本次 settle 消费（这一句必须在 `Frame::run()` 之前）。
         $t = $prof ? \hrtime(true) : 0;
+        if ($trace !== null) {
+            $trace[] = 'pumpIo';
+        }
         $this->pumpIo();
         if ($prof) {
             SurfaceProfile::add('pumpIo', \hrtime(true) - $t);
@@ -1032,6 +1039,9 @@ abstract class Application
         //   ⇒ 同帧生效。放到 settle 之后，那次 setState 要等下一帧，
         //   "loading → ready" 会闪一帧空（多一帧延迟，且用户看得见）。
         $t = $prof ? \hrtime(true) : 0;
+        if ($trace !== null) {
+            $trace[] = 'pumpTasks';
+        }
         $this->pumpTasks();
         if ($prof) {
             SurfaceProfile::add('pumpTasks', \hrtime(true) - $t);
@@ -1040,6 +1050,9 @@ abstract class Application
         // ★ ③ 最后推进分片任务（P1）：完成的那一个也在此刻回调 ⇒ 同样落在 settle 之前。
         //   顺序（结果 → 分片 → settle）不重要，**都在 settle 之前**才重要。
         $t = $prof ? \hrtime(true) : 0;
+        if ($trace !== null) {
+            $trace[] = 'pumpSliced';
+        }
         $this->pumpSliced();
         if ($prof) {
             SurfaceProfile::add('pumpSliced', \hrtime(true) - $t);
@@ -1049,6 +1062,9 @@ abstract class Application
         //   `setState()` 由紧随的 `Frame::run()` 的 settle 段消费，同一帧生效。
         //   返回值是"还有动画在跑吗"，喂给 `wantsFrame()` 决定下一次要不要被叫醒。
         $t = $prof ? \hrtime(true) : 0;
+        if ($trace !== null) {
+            $trace[] = 'tickAnimations';
+        }
         $this->animating = $this->tickAnimations($timestampMs);
         if ($prof) {
             SurfaceProfile::add('anim', \hrtime(true) - $t);
@@ -1056,9 +1072,19 @@ abstract class Application
 
         // 浮层布局段（无界自尺寸 + 钉锚点 + 夹进客户区）—— 见 placeMenu()
         $t = $prof ? \hrtime(true) : 0;
+        if ($trace !== null) {
+            $trace[] = 'placeMenu';
+        }
         $this->placeMenu($constraints);
         if ($prof) {
             SurfaceProfile::add('placeMenu', \hrtime(true) - $t);
+        }
+
+        // ★ `settle` 是**标记**不是真段（`FramePhase::CORE`）：Frame::run() 内部
+        //   才是 settle → layout → paint → present。标记打在它前面，
+        //   "跨过 settle"的越界就拿它当下标。
+        if ($trace !== null) {
+            $trace[] = 'settle';
         }
 
         $frame->run($root, $constraints, $timestampMs, $this->menuElement, $this->menuX, $this->menuY);
@@ -1070,6 +1096,9 @@ abstract class Application
         //   永远静止**（Spinner / 自绘页同病，真机探针抓到）。补一遍把刚挂载的页也 tick
         //   一次；既有状态因 `tickFrameStamped` 的每帧戳被跳过（不重复推进）。任一新挂载
         //   的 State 还想下一帧 ⇒ `$animating` 置真 ⇒ 时钟重新上膛，动画得以续跑。
+        if ($trace !== null) {
+            $trace[] = 'tickLateMount';
+        }
         $this->animating = $this->animating || $this->tickAnimations($timestampMs);
 
         // ★ 每帧重建焦点链：`settle()` 可能重建了子树 ⇒ 旧链里可能握着**已被移除**
@@ -1079,6 +1108,9 @@ abstract class Application
         // ★ **浮层是第二棵树，也要进焦点链**（O-20 差异表 #2）—— 否则菜单项
         //   永远 Tab 不到。
         $t = $prof ? \hrtime(true) : 0;
+        if ($trace !== null) {
+            $trace[] = 'focusCollect';
+        }
         $this->focus?->collect($root, ...($this->menuElement !== null ? [$this->menuElement] : []));
         if ($prof) {
             SurfaceProfile::add('focus', \hrtime(true) - $t);
@@ -1086,9 +1118,16 @@ abstract class Application
 
         // 语义树推给 UIA（§9 / M5）：每帧末经 sink 交出（无 sink ⇒ 不建，零开销）。
         $t = $prof ? \hrtime(true) : 0;
+        if ($trace !== null) {
+            $trace[] = 'pumpSemantics';
+        }
         $this->pumpSemantics();
         if ($prof) {
             SurfaceProfile::add('semantics', \hrtime(true) - $t);
+        }
+
+        if ($trace !== null) {
+            FramePhase::end($trace);
         }
     }
 
