@@ -10,6 +10,9 @@ use Drift\Widget\ScrollView;
 use Drift\Widget\Button;
 use Drift\Widget\ButtonVariant;
 use Drift\Widget\Column;
+use Drift\Widget\Divider;
+use Drift\Widget\Expanded;
+use Drift\Widget\Progress;
 use Drift\Widget\ErrorPlaceholder;
 use Drift\Layout\FlexAlign;
 use Drift\Widget\Offstage;
@@ -104,6 +107,38 @@ final class FeedbackState extends State
             // ── 错误边界占位（错误边界的视觉半，§A.2.6）──
             Text::make('错误边界占位（RenderErrorBoundary 捕获后换上来的那棵子树）')->heading(),
             ErrorPlaceholder::make('发生了未捕获的错误'),
+
+            // ── 分节原语（Divider / Progress）——
+            Text::make('分节原语（Divider / Progress）')->heading(),
+            Text::make('Divider 是装饰：不给语义角色，屏幕阅读器不该念它；Progress 给 role=progress + 「58%」读数，值由调用方给，不自持状态。')->caption(),
+
+            Column::make()->spacing(8.0)->children([
+                Text::make('账号安全')->body(),
+                Divider::make(),
+                Text::make('已开启两步验证')->caption(),
+            ]),
+
+            Divider::make()->thickness(2.0)->width(240.0),
+
+            Column::make()->spacing(8.0)->children([
+                Row::make()->spacing(8.0)->children([
+                    Text::make('磁盘占用'),
+                    Expanded::make(Progress::make(0.58)),
+                    Text::make('58%'),
+                ]),
+                Row::make()->spacing(8.0)->children([
+                    Text::make('同步中'),
+                    Expanded::make(Progress::make(0.24)),
+                    Text::make('24%'),
+                ]),
+            ]),
+
+            Row::make()->spacing(8.0)->children([
+                Text::make('0%'),
+                Expanded::make(Progress::make(0.0)),
+                Text::make('100%'),
+                Expanded::make(Progress::make(1.0)),
+            ]),
         ]);
     }
 

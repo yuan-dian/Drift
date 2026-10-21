@@ -32,7 +32,7 @@ namespace Drift\Input;
  *     "文本可被找到"时用 `name`（按钮的 `semName` = label）表达。
  *   - **没有声明者的角色不进这里**（未被消费的分支等价于未实现）—— 当前每个角色
  *     各有一个真实声明控件：`Button` / `TextField` / `ScrollView` / `Modal` /
- *     `Checkbox` / `Radio` / `Switch`。
+ *     `Checkbox` / `Radio` / `Switch` / `Progress`。
  *
  * @api
  */
@@ -58,4 +58,7 @@ enum SemanticsRole: string
 
     /** 开关（`Switch`）—— value = `checked` / `unchecked` */
     case Switch = 'switch';
+
+    /** 进度（`Progress`）—— value = 「37%」这种百分读数 */
+    case Progress = 'progress';
 }
