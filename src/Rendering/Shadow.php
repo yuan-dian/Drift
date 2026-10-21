@@ -19,6 +19,8 @@ use Drift\Geometry\Rect;
  * ★ `blur = 0` ⇒ 硬边阴影（等价于偏移的不透明矩形），实现可以走捷径。
  * ★ `cornerRadius` 是**被投影形状**的圆角，不是阴影自己的圆角 —— 与
  *   `drawRect` 的 `radius` 同语义。
+ *
+ * @api
  */
 final readonly class Shadow
 {

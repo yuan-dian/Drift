@@ -18,6 +18,8 @@ use Drift\Geometry\Rect;
  *   画布上（`translate()`），路径本身以绘制时坐标系为准。
  * ★ 裁剪路径（`pushClipPath`）复用同一个类型：填充路径与裁剪路径的几何表达
  *   完全一致，差别只在画布怎么用它。
+ *
+ * @api
  */
 final class Path
 {

@@ -114,6 +114,65 @@ function drift_skia_set_dash(int $canvas, float $on, float $off, float $phase): 
 function drift_skia_clear_source(int $canvas): void {}
 
 /**
+ * P4 · 矢量路径填充 / 描边（设备像素）。`$count` 命令数；`$verbs` 每命令 1 字节
+ * （MOVE=1 / LINE=2 / QUAD=3 / CLOSE=4）；`$coords` 每命令 4 个 little-endian
+ * IEEE754 float（x1,y1,x2,y2）共 16 字节 —— 与 x64 原生 float 同字节序。
+ * 渐变 / 虚线走画布级 source（与 draw_rect 同纪律）。
+ */
+function drift_skia_draw_path(
+    int $canvas,
+    int $count,
+    string $verbs,
+    string $coords,
+    int $rgba,
+    bool $stroke,
+    float $strokeWidth,
+): int {}
+
+/**
+ * P4 · 图像。`$rgba` 行优先 RGBA 字节串（每像素 4 字节，与 `read_pixels` 同格式）；
+ * `$w`/`$h` 像素尺寸；`$sx,$sy,$sw,$sh` 源子矩形（仅 `$hasSrc` 为真时用）；
+ * `$dx,$dy,$dw,$dh` 目标矩形（设备像素）。整幅缩放 / 子区缩放都在 C++ 侧消化。
+ */
+function drift_skia_draw_image(
+    int $canvas,
+    string $rgba,
+    int $w,
+    int $h,
+    float $sx, float $sy, float $sw, float $sh,
+    float $dx, float $dy, float $dw, float $dh,
+    bool $hasSrc,
+): void {}
+
+/**
+ * P4 · 阴影（投影形状几何 + 偏移 + 模糊 + 浓度）。`$x,$y,$w,$h` 被投影矩形（设备像素）；
+ * `$argb` 阴影色（alpha = 浓度）；`$radius` 被投影形状圆角；`$dx,$dy` 偏移；
+ * `$blur` 模糊半径（0 ⇒ 硬边）。
+ */
+function drift_skia_draw_shadow(
+    int $canvas,
+    float $x, float $y, float $w, float $h,
+    int $argb, float $radius, float $dx, float $dy, float $blur,
+): void {}
+
+/** P4 · 压入合成层（整体不透明度 0..1，设备像素无关）。与 `pop_layer()` 配对。 */
+function drift_skia_push_layer(int $canvas, float $opacity): void {}
+
+/** P4 · 弹出合成层（canvas->restore()）。 */
+function drift_skia_pop_layer(int $canvas): void {}
+
+/**
+ * P4 · 压入路径裁剪（与当前裁剪求交，单设备像素）。复用裁剪栈，弹栈仍用 `pop_clip()`。
+ * `$verbs`/`$coords` 打包格式同 `draw_path`。
+ */
+function drift_skia_push_clip_path(
+    int $canvas,
+    int $count,
+    string $verbs,
+    string $coords,
+): void {}
+
+/**
  * 画**一个字形**，位置由 PHP 侧的排版给出（`penX` 是笔位、`baselineY` 是基线）。
  *
  * ★ 为什么是"一个字形一次调用"而不是"整段一次"：**几何必须来自 PHP**。

@@ -16,6 +16,8 @@ use Drift\Errors;
  *   跨进程/跨后端传递图像时不需要再来一次 swizzle。
  * ★ **校验长度而不复制**：构造时断言 `strlen(rgba) === w*h*4`（不等长出
  *   的图片在绘制时会整行错位，是最难查的一类像素 bug），之后持有同一串。
+ *
+ * @api
  */
 final class ImageHandle
 {

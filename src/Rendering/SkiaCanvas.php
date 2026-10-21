@@ -8,16 +8,25 @@ use Drift\Geometry\Rect;
 use Drift\Geometry\Scale;
 use Drift\Rendering\DashPattern;
 use Drift\Rendering\Gradient;
+use Drift\Rendering\ImageHandle;
+use Drift\Rendering\Path;
+use Drift\Rendering\Shadow;
 use Drift\Text\Paragraph;
 
 use function drift_skia_canvas_create;
 use function drift_skia_canvas_destroy;
 use function drift_skia_clear_source;
 use function drift_skia_draw_glyph;
+use function drift_skia_draw_image;
+use function drift_skia_draw_path;
 use function drift_skia_draw_rect;
+use function drift_skia_draw_shadow;
 use function drift_skia_font_ready;
 use function drift_skia_pop_clip;
+use function drift_skia_pop_layer;
 use function drift_skia_push_clip;
+use function drift_skia_push_clip_path;
+use function drift_skia_push_layer;
 use function drift_skia_read_pixels;
 use function drift_skia_set_dash;
 use function drift_skia_set_gradient;
@@ -274,11 +283,14 @@ final class SkiaCanvas implements Canvas
     }
 
 
-    /** P1 起 Core 两 op 有桥；P3 渐变/虚线走 SkShader/SkDashPathEffect（`set_gradient`/`set_dash`）。 */
+    /** Core 两 op + P3 渐变/虚线 + P4 Optional（PATH/IMAGE/SHADOW/LAYER）+ Extended CLIP_PATH。 */
     public function capabilities(): int
     {
         return CanvasCapabilities::CAP_ELLIPSE | CanvasCapabilities::CAP_LINE
-            | CanvasCapabilities::CAP_GRADIENT | CanvasCapabilities::CAP_DASH;
+            | CanvasCapabilities::CAP_GRADIENT | CanvasCapabilities::CAP_DASH
+            | CanvasCapabilities::CAP_PATH | CanvasCapabilities::CAP_IMAGE
+            | CanvasCapabilities::CAP_SHADOW | CanvasCapabilities::CAP_LAYER
+            | CanvasCapabilities::CAP_CLIP_PATH;
     }
 
     /**
@@ -340,39 +352,177 @@ final class SkiaCanvas implements Canvas
         $this->clearPaintSource();
     }
 
+    /**
+     * 矢量路径填充 / 描边（P4 · Optional）。几何在 `packPath()` 里叠加当前偏移并
+     * 乘 dpr（与 `drawLine` / `toDevice()` 同一变换口径）；渐变 / 虚线走画布级
+     * source（与 `draw_rect` 同纪律）。
+     *
+     * ★★ 这里**没有**画布级 translate：`translate()` 只改 PHP 侧 `offsetX/offsetY`，
+     *   每个 draw 自己把偏移加进坐标（见 `drawLine` / `toDevice`）。第一版照
+     *   "几何走画布的 translate()" 的注释写，路径就落在画布原点 ⇒ 被自绘盒裁掉
+     *   ⇒ 真机完全无墨（阴影/层/图像都正常，因为它们各自加了偏移）。
+     */
     public function drawPath(Path $path, Paint $paint): void
     {
-        $this->unsupportedOp('drawPath', 'Optional');
+        if ($this->handle === 0) {
+            return;
+        }
+        if ($path->isEmpty()) {
+            return;
+        }
+
+        [$count, $verbs, $coords] = $this->packPath($path);
+        $argb = $paint->color->toArgb();
+
+        $this->applyPaintSource($paint);
+        drift_skia_draw_path(
+            $this->handle,
+            $count,
+            $verbs,
+            $coords,
+            $argb,
+            $paint->isStroke(),
+            $paint->strokeWidth,
+        );
+        $this->clearPaintSource();
     }
 
+    /**
+     * 图像（P4 · Optional）。`$dst` 逻辑矩形走 `toDevice()`；`$src` 是图像自身像素
+     * 空间的子矩形，不与画布变换叠加 —— 只缩放进 `$dst`，缩放由 C++ 侧消化。
+     */
     public function drawImage(ImageHandle $image, ?Rect $src, Rect $dst): void
     {
-        $this->unsupportedOp('drawImage', 'Optional');
+        if ($this->handle === 0) {
+            return;
+        }
+        if ($image->isEmpty()) {
+            return;
+        }
+
+        $device = $this->toDevice($dst);
+        $hasSrc = $src !== null;
+        if ($hasSrc) {
+            $sx = $src->left;
+            $sy = $src->top;
+            $sw = $src->width;
+            $sh = $src->height;
+        } else {
+            $sx = $sy = $sw = $sh = 0.0;
+        }
+
+        drift_skia_draw_image(
+            $this->handle,
+            $image->rgba(),
+            $image->width,
+            $image->height,
+            $sx, $sy, $sw, $sh,
+            $device->left, $device->top, $device->width, $device->height,
+            $hasSrc,
+        );
     }
 
+    /**
+     * 阴影（P4 · Optional）。被投影矩形走 `toDevice()`；偏移 / 圆角 / 模糊是长度量
+     * ⇒ 只缩放不平移（与渐变半径同纪律），统一乘 dpr 落到设备空间。
+     */
     public function drawShadow(Shadow $shadow): void
     {
-        $this->unsupportedOp('drawShadow', 'Optional');
+        if ($this->handle === 0) {
+            return;
+        }
+        $dpr = $this->scale->dpr;
+        $device = $this->toDevice($shadow->rect);
+
+        drift_skia_draw_shadow(
+            $this->handle,
+            $device->left, $device->top, $device->width, $device->height,
+            $shadow->color->toArgb(),
+            $shadow->cornerRadius * $dpr,
+            $shadow->dx * $dpr,
+            $shadow->dy * $dpr,
+            $shadow->blur * $dpr,
+        );
     }
 
+    /** 压入合成层（P4 · Optional）；不透明度无量纲，不与变换叠加 */
     public function pushLayer(float $opacity): void
     {
-        $this->unsupportedOp('pushLayer', 'Optional');
+        if ($this->handle === 0) {
+            return;
+        }
+        drift_skia_push_layer($this->handle, $opacity);
     }
 
+    /** 弹出合成层（P4 · Optional） */
     public function popLayer(): void
     {
-        $this->unsupportedOp('popLayer', 'Optional');
+        if ($this->handle === 0) {
+            return;
+        }
+        drift_skia_pop_layer($this->handle);
     }
 
+    /**
+     * 压入路径裁剪（P4 · Extended）。复用裁剪栈（弹栈仍用 `popClip()`）；几何与
+     * `drawPath` 同一条打包路径（偏移 + dpr 在 `packPath()` 里一次施加）。
+     */
     public function pushClipPath(Path $path): void
     {
-        $this->unsupportedOp('pushClipPath', 'Extended');
+        if ($this->handle === 0) {
+            return;
+        }
+        if ($path->isEmpty()) {
+            return;
+        }
+        [$count, $verbs, $coords] = $this->packPath($path);
+        drift_skia_push_clip_path($this->handle, $count, $verbs, $coords);
     }
 
-    private function unsupportedOp(string $op, string $tier): void
+    /**
+     * P4 · 把 Path 的扁平命令表打包成过桥字节流（与 `drift_skia.stub.php` 约定一致）：
+     * `verbs` 每命令 1 字节（MOVE/LINE/QUAD/CLOSE），`coords` 每命令 4 个
+     * little-endian IEEE754 float（x1,y1,x2,y2）。桥 ABI 只认标量 + string，不引数组。
+     *
+     * ★★ 坐标在这里**一次**施加 `(逻辑 + 偏移) × dpr` 再量化 —— 与 `drawLine` 同口径。
+     *   漏了这一步路径会落在画布原点（被盒裁掉 ⇒ 无墨），而不是"位置偏一点"。
+     * ★★ 必须"数组攒 + implode"，不能 `$verbs .= …`：这两个串是**二进制**（含 \0 与
+     *   高位字节），AOT 下循环内累加拼接会写坏多字节串 ⇒ C++ 侧读到乱码 verb ⇒
+     *   路径为空 ⇒ 真机**完全无墨**而解释器（smoke）全过（§2.4 纪律 2 的实证案例）。
+     */
+    private function packPath(Path $path): array
     {
-        Errors::report(CanvasCapabilities::unsupportedMessage($op, 'SkiaCanvas', $tier));
+        $cmds = $path->commands();
+        $dpr = $this->scale->dpr;
+        $ox = $this->offsetX;
+        $oy = $this->offsetY;
+        $verbParts = [];
+        $coordParts = [];
+        foreach ($cmds as $c) {
+            $verb = (int) $c[0];
+            $verbParts[] = \chr($verb);
+            if ($verb === Path::CMD_QUAD) {
+                $coordParts[] = \pack(
+                    'f4',
+                    round(($c[1] + $ox) * $dpr),
+                    round(($c[2] + $oy) * $dpr),
+                    round(($c[3] + $ox) * $dpr),
+                    round(($c[4] + $oy) * $dpr),
+                );
+            } elseif ($verb === Path::CMD_MOVE || $verb === Path::CMD_LINE) {
+                $coordParts[] = \pack(
+                    'f4',
+                    round(($c[1] + $ox) * $dpr),
+                    round(($c[2] + $oy) * $dpr),
+                    0.0,
+                    0.0,
+                );
+            } else {
+                // CLOSE 不带参数（四槽留 0，与 `Path` 的命令表格式一致）
+                $coordParts[] = \pack('f4', 0.0, 0.0, 0.0, 0.0);
+            }
+        }
+        return [\count($cmds), \implode('', $verbParts), \implode('', $coordParts)];
     }
 
     /**

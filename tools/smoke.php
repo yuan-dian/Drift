@@ -721,6 +721,59 @@ if (!function_exists('drift_skia_canvas_create')) {
         $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][] = ['clear_source'];
     }
 
+    // ── P4：Optional / Extended 复合 op 的假桥（记录调用，不真画）──
+    function drift_skia_draw_path(
+        int $canvas,
+        int $count,
+        string $verbs,
+        string $coords,
+        int $rgba,
+        bool $stroke,
+        float $strokeWidth,
+    ): int {
+        $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][] = ['draw_path', $count, $verbs, $coords, $rgba, $stroke, $strokeWidth];
+        return $count * 3;
+    }
+
+    function drift_skia_draw_image(
+        int $canvas,
+        string $rgba,
+        int $w,
+        int $h,
+        float $sx, float $sy, float $sw, float $sh,
+        float $dx, float $dy, float $dw, float $dh,
+        bool $hasSrc,
+    ): void {
+        $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][] = ['draw_image', strlen($rgba), $w, $h, $sx, $sy, $sw, $sh, $dx, $dy, $dw, $dh, $hasSrc];
+    }
+
+    function drift_skia_draw_shadow(
+        int $canvas,
+        float $x, float $y, float $w, float $h,
+        int $argb, float $radius, float $dx, float $dy, float $blur,
+    ): void {
+        $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][] = ['draw_shadow', $x, $y, $w, $h, $argb, $radius, $dx, $dy, $blur];
+    }
+
+    function drift_skia_push_layer(int $canvas, float $opacity): void
+    {
+        $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][] = ['push_layer', $opacity];
+    }
+
+    function drift_skia_pop_layer(int $canvas): void
+    {
+        $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][] = ['pop_layer'];
+    }
+
+    function drift_skia_push_clip_path(
+        int $canvas,
+        int $count,
+        string $verbs,
+        string $coords,
+    ): void {
+        $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][] = ['push_clip_path', $count, $verbs, $coords];
+    }
+
     function drift_skia_read_pixels(int $canvas): string
     {
         return '';
@@ -1769,9 +1822,12 @@ check(
 );
 $capsSkia = new SkiaCanvas(8, 8, null, Scale::of(1.0));
 check(
-    'Canvas · Skia capabilities() = Core + Extended（P3 渐变/虚线走 SkShader/SkDashPathEffect）',
+    'Canvas · Skia capabilities() = Core + Extended + Optional + CLIP_PATH（P4 全 op 走 SkShader/Skia 原语）',
     $capsSkia->capabilities() === (CanvasCapabilities::CAP_ELLIPSE | CanvasCapabilities::CAP_LINE
-        | CanvasCapabilities::CAP_GRADIENT | CanvasCapabilities::CAP_DASH)
+        | CanvasCapabilities::CAP_GRADIENT | CanvasCapabilities::CAP_DASH
+        | CanvasCapabilities::CAP_PATH | CanvasCapabilities::CAP_IMAGE
+        | CanvasCapabilities::CAP_SHADOW | CanvasCapabilities::CAP_LAYER
+        | CanvasCapabilities::CAP_CLIP_PATH)
 );
 $capsRec = RecordingCanvas::create();
 check(
@@ -1921,6 +1977,116 @@ check(
     'P3 · Skia 无 source 时不发 set_*/clear_source（不多调、也不泄漏）',
     skiaCallOps() === ['create', 'draw_rect', 'draw_line'],
     implode(',', skiaCallOps())
+);
+skiaBridgeReset();
+
+// ── ⑩+4 19 op 回植 · P4 Optional / Extended 复合 op（Skia 桥结构 golden）──
+// ★ 解释器面没有真 Skia（read_pixels 假桥返回空串）⇒ 不像素断言；断言**桥收到了什么**
+//   （ABI 形状即契约，⑨+1 conformance 惯例）。真像素由 T2 AOT 构建 + 真机探针兜。
+// 路径几何走画布 translate() ⇒ 打包的 verbs/coords 是绘制时坐标系（已含偏移），
+// 这里偏移 0，所以直接比对命令表即可。
+skiaBridgeReset();
+$fp = new SkiaCanvas(40, 40, null, Scale::of(1.0));
+$pathP = Path::create()->moveTo(2.0, 2.0)->lineTo(6.0, 2.0)->quadTo(8.0, 4.0, 6.0, 6.0)->close();
+$fp->drawPath($pathP, Paint::fill(Color::black()));
+$opsP = skiaCallOps();
+check(
+    'P4 · Skia drawPath：桥收到 draw_path（count=4，verbs=MOVE/LINE/QUAD/CLOSE）',
+    $opsP === ['create', 'draw_path'],
+    implode(',', $opsP)
+);
+$callP = $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][1];
+$expectedVerbs = chr(Path::CMD_MOVE) . chr(Path::CMD_LINE) . chr(Path::CMD_QUAD) . chr(Path::CMD_CLOSE);
+check(
+    'P4 · Skia drawPath 打包：count=4 且 verbs 字节序正确',
+    $callP[0] === 'draw_path' && $callP[1] === 4 && $callP[2] === $expectedVerbs,
+    var_export($callP, true)
+);
+check(
+    'P4 · Skia drawPath 不挂源时不发 set_*/clear_source',
+    count($opsP) === 2,
+    implode(',', $opsP)
+);
+skiaBridgeReset();
+
+// 图像：RGBA 字节串长度必须等于 w*h*4（与 ImageHandle 构造期校验同判据）
+skiaBridgeReset();
+$imgBytes = str_repeat("\x80\x40\x20\xFF", 8 * 6); // 8×6 半透明橙
+$fimg = new SkiaCanvas(40, 40, null, Scale::of(1.0));
+$fimg->drawImage(ImageHandle::fromRgba($imgBytes, 8, 6), null, new Rect(1.0, 1.0, 8.0, 6.0));
+$opsI = skiaCallOps();
+$callI = $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][1];
+check(
+    'P4 · Skia drawImage：桥收到 draw_image 且 rgba 长度 = w*h*4',
+    $opsI === ['create', 'draw_image'] && $callI[1] === 192 && $callI[2] === 8 && $callI[3] === 6,
+    var_export($callI, true)
+);
+check(
+    'P4 · Skia drawImage 整幅缩放（hasSrc=false，dst 设备坐标命中 1,1,8,6）',
+    $callI[12] === false && $callI[8] === 1.0 && $callI[9] === 1.0 && $callI[10] === 8.0 && $callI[11] === 6.0,
+    var_export($callI, true)
+);
+skiaBridgeReset();
+
+// 阴影：标量原样过桥（rect 经 toDevice，这里偏移 0 ⇒ 直接 10,10,20,20）
+skiaBridgeReset();
+$fsh = new SkiaCanvas(40, 40, null, Scale::of(1.0));
+$fsh->drawShadow(new Shadow(new Rect(10.0, 10.0, 20.0, 20.0), Color::fromRgb(0, 0, 0), 4.0, 2.0, 3.0, 5.0));
+$callSh = $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][1];
+$expectedShadowArgb = Color::fromRgb(0, 0, 0)->toArgb();
+check(
+    'P4 · Skia drawShadow：桥收到标量（rect + argb + radius + 偏移 + blur 原样过桥）',
+    $callSh[0] === 'draw_shadow' && $callSh[1] === 10.0 && $callSh[2] === 10.0
+        && $callSh[3] === 20.0 && $callSh[4] === 20.0 && $callSh[5] === $expectedShadowArgb
+        && $callSh[6] === 4.0 && $callSh[7] === 2.0 && $callSh[8] === 3.0 && $callSh[9] === 5.0,
+    var_export($callSh, true)
+);
+skiaBridgeReset();
+
+// 合成层 / 路径裁剪：op 顺序与参数
+skiaBridgeReset();
+$fly = new SkiaCanvas(40, 40, null, Scale::of(1.0));
+$fly->pushLayer(0.5);
+$fly->pushClipPath($pathP);
+$fly->popLayer();
+$opsL = skiaCallOps();
+check(
+    'P4 · Skia 层/路径裁剪：桥收到 push_layer → push_clip_path → pop_layer',
+    $opsL === ['create', 'push_layer', 'push_clip_path', 'pop_layer'],
+    implode(',', $opsL)
+);
+$callL = $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][1];
+check(
+    'P4 · Skia push_layer 参数（opacity=0.5 原样过桥）',
+    $callL[0] === 'push_layer' && $callL[1] === 0.5,
+    var_export($callL, true)
+);
+$callCP = $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][2];
+check(
+    'P4 · Skia push_clip_path 打包（count=4，verbs 与 drawPath 同）',
+    $callCP[0] === 'push_clip_path' && $callCP[1] === 4 && $callCP[2] === $expectedVerbs,
+    var_export($callCP, true)
+);
+skiaBridgeReset();
+
+// ★★ 回归闸门：路径坐标必须**叠加画布偏移并乘 dpr**（与 drawLine / toDevice 同口径）。
+//   第一版照"几何走画布 translate()"的注释写 ⇒ 路径落在画布原点 ⇒ 被自绘盒裁掉
+//   ⇒ 真机完全无墨，而阴影/层/图像都正常（它们各自加了偏移）。纯 PHP 缺陷，这里能抓。
+skiaBridgeReset();
+$foff = new SkiaCanvas(80, 80, null, Scale::of(2.0));
+$foff->translate(10.0, 20.0);
+$foff->drawPath(
+    Path::create()->moveTo(1.0, 2.0)->lineTo(3.0, 4.0)->close(),
+    Paint::fill(Color::black())
+);
+$callOff = $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][1];
+$expectCoords = pack('f4', 22.0, 44.0, 0.0, 0.0)
+    . pack('f4', 26.0, 48.0, 0.0, 0.0)
+    . pack('f4', 0.0, 0.0, 0.0, 0.0);
+check(
+    'P4 · Skia drawPath 坐标叠加偏移并乘 dpr（(1+10)*2=22 / (2+20)*2=44）',
+    $callOff[0] === 'draw_path' && $callOff[3] === $expectCoords,
+    var_export($callOff[3], true)
 );
 skiaBridgeReset();
 

@@ -38,16 +38,24 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <cstring>
 #include <map>
 #include <memory>
 #include <string>
 
 #include "include/core/SkBitmap.h"
+#include "include/core/SkBlurTypes.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColor.h"
 #include "include/core/SkFont.h"
 #include "include/core/SkFontMgr.h"
+#include "include/core/SkImage.h"
+#include "include/core/SkImageInfo.h"
+#include "include/core/SkMaskFilter.h"
 #include "include/core/SkPaint.h"
+#include "include/core/SkPath.h"
+#include "include/core/SkPathBuilder.h"
+#include "include/core/SkPixmap.h"
 #include "include/core/SkRRect.h"
 #include "include/core/SkRect.h"
 #include "include/core/SkTypeface.h"
@@ -412,6 +420,195 @@ void php_drift_skia_draw_line(
     c->drawLine((SkScalar)x1, (SkScalar)y1, (SkScalar)x2, (SkScalar)y2, paint);
 }
 
+// ── P4：Optional / Extended 复合 op（drawPath / drawImage / drawShadow / pushLayer / pushClipPath）──
+
+/**
+ * 从 PHP 打包的字节流重建一条 SkPath。
+ *
+ * ★ 打包格式（PHP 侧 `SkiaCanvas::packPath` 约定）：`verbs` 每命令 1 字节
+ *   （MOVE=1 / LINE=2 / QUAD=3 / CLOSE=4），`coords` 每命令 4 个 little-endian
+ *   IEEE754 float（x1,y1,x2,y2，16 字节）—— 与 x64 原生 float 同字节序，memcpy 即可。
+ *   不引数组参数进 ABI（本桥 ABI 只认标量 + string，见 stub 头）。
+ * ★ 本仓 Skia 剥掉了 `SkPath` 的构造方法，路径必须用 `SkPathBuilder` 拼，再
+ *   `detach()` 成 `SkPath`（Skia 新版的硬约束，不是我们加的）。
+ */
+static SkPath buildSkPath(const char *verbs, const char *coords, int count) {
+    SkPathBuilder builder;
+    for (int i = 0; i < count; i++) {
+        unsigned char verb = (unsigned char)verbs[i];
+        float f[4];
+        memcpy(f, coords + (size_t)i * 16u, 16u);
+        switch (verb) {
+            case 1: builder.moveTo((SkScalar)f[0], (SkScalar)f[1]); break;
+            case 2: builder.lineTo((SkScalar)f[0], (SkScalar)f[1]); break;
+            case 3: builder.quadTo((SkScalar)f[0], (SkScalar)f[1], (SkScalar)f[2], (SkScalar)f[3]); break;
+            case 4: builder.close(); break;
+            default: break;
+        }
+    }
+    return builder.detach();
+}
+
+/**
+ * P4 · 矢量路径填充 / 描边。坐标已是设备像素（PHP 侧按 toDevice 同变换）；
+ * 渐变 / 虚线走画布级 source（与 draw_rect 同纪律）。
+ */
+Int php_drift_skia_draw_path(
+    Int canvas,
+    Int count,
+    String verbs,
+    String coords,
+    Int rgba,
+    Bool stroke,
+    Float strokeWidth
+) {
+    SkiaSlot *slot = slotFor(canvas);
+    SkCanvas *c = slot == NULL ? NULL : slot->canvas.get();
+    if (c == NULL || (int)count <= 0) {
+        return 0;
+    }
+
+    SkPath path = buildSkPath(verbs.data(), coords.data(), (int)count);
+    // 诊断：pts<=0 说明 C++ 没从字节流重建出几何（PHP 侧已验证字节流正确），
+    // 那问题在 buildSkPath 内部。点数正常却无墨则是 paint / 变换问题。
+    const int pts = path.countPoints();
+
+    SkPaint paint;
+    paint.setAntiAlias(true);
+    paint.setColor((SkColor)(uint32_t)rgba);
+    if ((bool)stroke) {
+        paint.setStyle(SkPaint::kStroke_Style);
+        paint.setStrokeWidth((SkScalar)strokeWidth);
+    } else {
+        paint.setStyle(SkPaint::kFill_Style);
+    }
+    applyPaintSource(slot, &paint);
+
+    c->drawPath(path, paint);
+    return pts;
+}
+
+/**
+ * P4 · 图像。RGBA 字节串（行优先，每像素 4 字节，与 `toRgba()` 同格式）在 C++ 侧
+ * 重建为 SkImage 再画。`$hasSrc` 为假 ⇒ 整幅缩放进 `$dst`。
+ */
+void php_drift_skia_draw_image(
+    Int canvas,
+    String rgba,
+    Int w,
+    Int h,
+    Float sx, Float sy, Float sw, Float sh,
+    Float dx, Float dy, Float dw, Float dh,
+    Bool hasSrc
+) {
+    SkiaSlot *slot = slotFor(canvas);
+    SkCanvas *c = slot == NULL ? NULL : slot->canvas.get();
+    int iw = (int)w, ih = (int)h;
+    if (c == NULL || iw <= 0 || ih <= 0) {
+        return;
+    }
+    size_t need = (size_t)iw * (size_t)ih * 4u;
+    if ((size_t)rgba.length() < need) {
+        return; // 像素数不足 ⇒ 整幅错位，响亮跳过（与 ImageHandle 构造期校验同判据）
+    }
+
+    SkImageInfo info = SkImageInfo::Make(iw, ih, kRGBA_8888_SkColorType, kUnpremul_SkAlphaType);
+    SkPixmap pixmap(info, rgba.data(), (size_t)iw * 4u);
+    sk_sp<SkImage> img = SkImages::RasterFromPixmapCopy(pixmap);
+    if (!img) {
+        return;
+    }
+
+    SkRect dst = SkRect::MakeXYWH((SkScalar)dx, (SkScalar)dy, (SkScalar)dw, (SkScalar)dh);
+    if ((bool)hasSrc) {
+        SkRect src = SkRect::MakeXYWH((SkScalar)sx, (SkScalar)sy, (SkScalar)sw, (SkScalar)sh);
+        c->drawImageRect(img.get(), src, dst, SkSamplingOptions(), nullptr, SkCanvas::kFast_SrcRectConstraint);
+    } else {
+        c->drawImageRect(img.get(), dst, SkSamplingOptions(), nullptr);
+    }
+}
+
+/**
+ * P4 · 阴影（投影形状的几何 + 偏移 + 模糊 + 浓度）。
+ *
+ * ★ 实现：在被投影位置画一个带模糊 mask filter 的圆角矩形，填充阴影色 ——
+ *   Skia 没有独立的"画阴影"原语，模糊的实心形状就是软阴影。blur=0 ⇒ 关掉
+ *   mask filter（硬边阴影，等价于偏移的不透明矩形）。
+ * ★ 坐标已是设备像素（PHP 侧按 toDevice 同变换把 rect 转设备）。
+ */
+void php_drift_skia_draw_shadow(
+    Int canvas,
+    Float x, Float y, Float w, Float h,
+    Int argb, Float radius, Float dx, Float dy, Float blur
+) {
+    SkiaSlot *slot = slotFor(canvas);
+    SkCanvas *c = slot == NULL ? NULL : slot->canvas.get();
+    if (c == NULL || w <= 0.0 || h <= 0.0) {
+        return;
+    }
+
+    SkRect r = SkRect::MakeXYWH((SkScalar)(x + dx), (SkScalar)(y + dy), (SkScalar)w, (SkScalar)h);
+    SkPathBuilder builder;
+    if (radius > 0.0) {
+        builder.addRRect(SkRRect::MakeRectXY(r, (SkScalar)radius, (SkScalar)radius));
+    } else {
+        builder.addRect(r);
+    }
+    SkPath path = builder.detach();
+
+    SkPaint paint;
+    paint.setAntiAlias(true);
+    paint.setColor((SkColor)(uint32_t)argb);
+    if (blur > 0.0) {
+        paint.setMaskFilter(SkMaskFilter::MakeBlur(kNormal_SkBlurStyle, (SkScalar)(blur * 0.5f)));
+    }
+
+    c->drawPath(path, paint);
+}
+
+/**
+ * P4 · 压入合成层（整体不透明度 0..1）。Skia 的 `saveLayerAlpha` 把层内累积结果
+ *   按 alpha 合成到下层；与 `popLayer()`（canvas->restore()）配对。
+ * ★ 层是绘制栈的第三条语义（save/restore 管变换、pushClip/popClip 管裁剪之外），
+ *   不污染那两条栈（W8 的 saveDepth/clipDepth 不覆盖层深，由调用方配对）。
+ */
+void php_drift_skia_push_layer(Int canvas, Float opacity) {
+    SkCanvas *c = canvasFor(canvas);
+    if (c == NULL) {
+        return;
+    }
+    U8CPU alpha = (U8CPU)((SkScalar)opacity * 255.0f);
+    if (alpha > 255) {
+        alpha = 255;
+    }
+    c->saveLayerAlpha(nullptr, alpha);
+}
+
+void php_drift_skia_pop_layer(Int canvas) {
+    SkCanvas *c = canvasFor(canvas);
+    if (c != NULL) {
+        c->restore();
+    }
+}
+
+/**
+ * P4 · 压入路径裁剪（与当前裁剪求交，设备像素）。复用 pushClip 的裁剪栈
+ *   （不另开第二条栈），弹栈仍用 popClip()（canvas->restore()）。
+ */
+void php_drift_skia_push_clip_path(
+    Int canvas,
+    Int count,
+    String verbs,
+    String coords
+) {
+    SkCanvas *c = canvasFor(canvas);
+    if (c == NULL || (int)count <= 0) {
+        return;
+    }
+    SkPath path = buildSkPath(verbs.data(), coords.data(), (int)count);
+    c->save();
+    c->clipPath(path, true);
+}
 
 /**
  * 建一个渐变 shader 写入画布当前源（线性 / 径向）。坐标已是**设备像素**

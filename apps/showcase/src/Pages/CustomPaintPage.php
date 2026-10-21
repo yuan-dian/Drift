@@ -10,7 +10,10 @@ use Drift\Rendering\Canvas;
 use Drift\Rendering\Color;
 use Drift\Rendering\DashPattern;
 use Drift\Rendering\Gradient;
+use Drift\Rendering\ImageHandle;
 use Drift\Rendering\Paint;
+use Drift\Rendering\Path;
+use Drift\Rendering\Shadow;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Card;
 use Drift\Widget\Column;
@@ -32,7 +35,7 @@ use Drift\Widget\Widget;
  * |---|---|---|
  * | 表盘 / 指针 / 刻度 / 端点 / 网格 / 折线 | `ELLIPSE` + `LINE` + `RECT`（Core 层） | **够**，双后端都能出图 |
  * | 圆弧刻度 | 无 `ARC` op ⇒ 11 根线段拼出来（本例的做法） | **勉强够**：视觉对、程序啰嗦；要省事得加 op 或上 P4 的 `PATH` |
- * | 折线下面积填充 | 无路径填充操作 ⇒ Optional 的 `drawPath` 未实现 | **不够**（P4 的事） |
+ * | 折线下面积填充 | Optional 的 `drawPath`（P4 已接 Skia 后端） | **够**（见 P4 画家） |
  * | 画布内文字（刻度数字） | `drawParagraph` 在，但 Paragraph 构造是重路径 | **绕开**：数字放控件层（`Text`），画家只管几何 |
  *
  * ★ **指针动画是画家 + 帧时钟**（§12.3 纯 UI 态）：相位住 `State::tickFrame()`
@@ -221,6 +224,74 @@ final class SparklinePainter extends CustomPainter
     }
 }
 
+/**
+ * P4 画家：把 19 op 的 Optional / Extended 复合 op 当真实消费者用一遍
+ * （"没人调的分支等价于未实现"，所以 P4 的每个 op 都要有一个真的绘制出口）。
+ *
+ * - `drawShadow`：卡片背后的软阴影（几何 + 偏移 + 模糊 + 浓度）
+ * - `drawPath`：填充三角形（折线下填色现在能画了，不再等 P4）
+ * - `pushLayer` / `popLayer`：半透明合成层
+ * - `drawImage`：渐变 swatch（内存 RGBA，行优先 4 字节）
+ * - `pushClipPath`：圆形路径裁剪（后续矩形只落在形状内）
+ */
+final class P4Painter extends CustomPainter
+{
+    /**
+     * 生成一张 2D 渐变 swatch（行优先 RGBA），证明 drawImage 的字节串能过桥回画。
+     *
+     * ★★ 数组攒 + implode：`$rgba .= …` 是二进制串（每像素 4 字节、含 \0 与高位），
+     *   AOT 下循环内累加会写坏多字节串 ⇒ 图像乱码 / 崩在无关代码（§2.4 纪律 2）。
+     */
+    private function makeSwatch(int $w, int $h): ImageHandle
+    {
+        $rows = [];
+        for ($y = 0; $y < $h; $y++) {
+            $px = [];
+            for ($x = 0; $x < $w; $x++) {
+                $t = $x / \max(1, $w - 1);
+                $r = (int) (255.0 * $t);
+                $g = (int) (120.0 + 80.0 * (1.0 - $t));
+                $b = (int) (255.0 * (1.0 - $t));
+                $px[] = \chr($r) . \chr($g) . \chr($b) . "\xFF";
+            }
+            $rows[] = \implode('', $px);
+        }
+        return ImageHandle::fromRgba(\implode('', $rows), $w, $h);
+    }
+
+    public function paint(Canvas $canvas, Size $size): void
+    {
+        // 软阴影：卡片背后（drawShadow，alpha = 浓度，不是额外乘算）
+        $canvas->drawShadow(new Shadow(new Rect(10.0, 8.0, 130.0, 60.0), new Color(0, 0, 0, 60), 8.0, 3.0, 4.0, 6.0));
+
+        // 填充三角形（drawPath，P4 新增；折线下填色现在能画）
+        $tri = Path::create()
+            ->moveTo(18.0, 14.0)
+            ->lineTo(62.0, 14.0)
+            ->lineTo(40.0, 58.0)
+            ->close();
+        $canvas->drawPath($tri, Paint::fill(new Color(40, 140, 220, 255)));
+
+        // 合成层：半透明叠一层（pushLayer + popLayer）
+        $canvas->pushLayer(0.5);
+        $canvas->drawRect(new Rect(76.0, 16.0, 56.0, 46.0), Paint::fill(new Color(220, 60, 60, 255)));
+        $canvas->popLayer();
+
+        // 图像：渐变 swatch（drawImage，内存 RGBA 字节串过桥）
+        $canvas->drawImage($this->makeSwatch(48, 48), null, new Rect(144.0, 15.0, 48.0, 48.0));
+
+        // 路径裁剪：绿色横条只落在下方菱形内（pushClipPath + popClip）
+        $clip = Path::create()
+            ->moveTo(210.0, 78.0)
+            ->quadTo(240.0, 48.0, 270.0, 78.0)
+            ->quadTo(240.0, 108.0, 210.0, 78.0)
+            ->close();
+        $canvas->pushClipPath($clip);
+        $canvas->drawRect(new Rect(206.0, 40.0, 68.0, 80.0), Paint::fill(new Color(120, 200, 120, 255)));
+        $canvas->popClip();
+    }
+}
+
 final class CustomPaintPageState extends State
 {
     /** 每帧指针走的行程（0..1） */
@@ -273,6 +344,17 @@ final class CustomPaintPageState extends State
                 . '下面两个控件只画 Core 层（椭圆 / 线段 / 矩形）⇒ Skia 与软光栅双后端都能出图。'
             )->caption(),
 
+            // ── P4 复合 op 真实消费者 ──
+            //   刻意排在前面：默认窗口高度下这张卡就完整可见（真机探针无需滚动
+            //   就能判"6 个 op 是否都出图"），滚动后才见后面的动画控件。
+            Card::make(
+                Column::make()->spacing(8.0)->children([
+                    Text::make('P4 · 复合 op（drawShadow / drawPath / pushLayer / drawImage / pushClipPath）')->heading(),
+                    new CustomPaint(new P4Painter(), 300.0, 170.0),
+                    Text::make('阴影 + 填充三角 + 半透明合成层 + 渐变 swatch 图像 + 圆形路径裁剪。')->caption(),
+                ])
+            ),
+
             // ── 仪表盘：指针每帧扫动 ──
             Card::make(
                 Column::make()->spacing(8.0)->children([
@@ -287,7 +369,7 @@ final class CustomPaintPageState extends State
                 Column::make()->spacing(8.0)->children([
                     Text::make('走势折线（静态）')->heading(),
                     new CustomPaint(new SparklinePainter(), 300.0, 140.0),
-                    Text::make('网格 + 12 点折线逐段拼 + 末点椭圆标记。折线下要填色得等 P4 的 drawPath。')->caption(),
+                    Text::make('网格 + 12 点折线逐段拼 + 末点椭圆标记。折线下填色用 P4 的 drawPath（见上）')->caption(),
                 ])
             ),
 

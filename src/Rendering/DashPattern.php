@@ -13,6 +13,8 @@ use Drift\Errors;
  *
  * ★ 逻辑单位，与 `strokeWidth` 同口径（不乘 dpr）—— 两个后端的描边宽度
  *   口径已经统一过（`SkiaCanvas::drawRect` 注释），虚线不能再开一个口径。
+ *
+ * @api
  */
 final readonly class DashPattern
 {
