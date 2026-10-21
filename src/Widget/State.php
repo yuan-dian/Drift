@@ -76,7 +76,16 @@ abstract class State
      * ★ `Cell::setIfChanged()` 与 `SubjectBuilder` 的回调走这条 —— 它们已经在
      *   自己的上下文里改完值了，不需要再裹一层空闭包。
      *
-     * @internal
+     * ★ **什么时候用它而不是 `setState()`**：值已经改完了（`Cell` 刚 set 过、
+     *   动画刚 tick 过、输入刚落过），只差"告诉框架该重建了"。包一层空闭包
+     *   也能跑，但读者会以为"这里要改点什么"—— 而这里没有。
+     *
+     * ★ **它不比较值**：同 `setState()`，想"设同值不重建"就把值装进 `Cell`。
+     *
+     * ★ 与 `setState()` 同一条时间线：只置脏标记，重建发生在**帧末**的 settle
+     *   段 ⇒ 连标十次只重建一次，"build 期 setState 触发重入"结构上不存在。
+     *
+     * @api
      */
     public function markDirty(): void
     {
