@@ -3416,6 +3416,7 @@ IO / 任务 / 分片 / settle / layout / paint，**没有任何一处问过"有�
 | `docs/design-v7/` | v7 设计方案（27 册分册，范式参考） | 想看设计蓝图 |
 | `docs/CROSS-PLATFORM.md` | 跨平台能力矩阵与设计 | 要落地新平台 |
 | `docs/EVAL-design-v7-2026-10-21.md` | design-v7 与实现差距评估 | 想看设计 vs 实现差距 |
+| `docs/ARCH-REVIEW-2026-10-21.md` | **架构重审**：11 份调研 + Drift3 四代草案对账；六个结构性补丁 + A1/A2/A3 三条破坏性改进（覆盖层栈 / 控件基座 / 两后端能力等价） | 想知道"下一个控件会不会再打补丁" |
 | `docs/ISSUE-typephp-*.md` | TypePHP 编译器坑的实测分析（C2872/C2065） | 踩 AOT 编译错时 |
 | `probes/RESULTS.md` | 探针原始数据 | 想看数字 |
 | `docs/_archive/` | 历史 / 过期文档（DECISIONS/HISTORY/REVIEW/SKIA-BUILD/v1.0 等） | 想复核已作废结论 |
