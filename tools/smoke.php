@@ -16,6 +16,7 @@ declare(strict_types=1);
 use Drift\Dev\Smoke\BoxProbe;
 use Drift\Dev\Smoke\BuildProbe;
 use Drift\Dev\Smoke\Layout\ConstraintSpy;
+use Drift\Dev\Smoke\Layout\ImpureBox;
 use Drift\Dev\Smoke\Layout\OffsetBox;
 use Drift\Dev\Smoke\Layout\OversizeBox;
 use Drift\Dev\Smoke\Layout\SolidBox;
@@ -27,6 +28,7 @@ use Drift\Platform\Win32\Win32SurfaceProvider;
 use Drift\App\FocusManager;
 use App\Hello\HelloApplication;
 use Drift\App\Frame;
+use Drift\App\FramePhase;
 use Drift\App\Paths;
 use Drift\App\WindowStateStore;
 use Drift\Dev\Smoke\WindowState\FakeWindowHost;
@@ -111,6 +113,7 @@ use Drift\Geometry\Point;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Scale;
 use Drift\Geometry\Size;
+use Drift\Layout\LayoutSelfCheck;
 use Drift\Layout\LayoutTolerance;
 use Drift\Input\AcceleratorTable;
 use Drift\Input\CursorShape;
@@ -2692,6 +2695,50 @@ $solid = new SolidBox(new Size(10.0, 6.0), 24.0, 7.0);
 check(
     'Layout · 布局是纯函数（同约束两次 ⇒ 同尺寸）',
     $solid->layout(BoxConstraints::unbounded())->equals($solid->layout(BoxConstraints::unbounded()))
+);
+
+// ── 布局自校验的反例自检（`04` §5 / §12.2 #14）──────────────────────────
+// ★★ 这是"量具自己也会空转"的那一条：`LayoutSelfCheck` 开关打开时如果什么都没
+//   发生（采样没落到这棵树 / 快照字段漏了 / `$on` 从没被翻开），表现是**静默**的。
+//   ⇒ 一条夹具同时驱**两个方向**：纯盒必须 0 不一致（不误报），不纯盒必须 > 0（真在守）。
+//   合成一条 check，免得为对照组单开一条（W0 的 smoke 链按 936+3 记账）。
+$selfCheckConstraints = BoxConstraints::loose(new Size(1000.0, 1000.0));
+LayoutSelfCheck::$on = true;
+
+// ① 对照组：`SolidBox` 的 `performLayout` 只读约束 ⇒ 连排两次必须逐字节相同
+LayoutSelfCheck::reset();
+$pureBox = new SolidBox(new Size(40.0, 20.0), 40.0, 20.0);
+for ($i = 0; $i < 32; $i++) {
+    $pureBox->layout($selfCheckConstraints);
+    LayoutSelfCheck::maybeCheck($pureBox, $selfCheckConstraints);
+}
+$pureChecks = LayoutSelfCheck::$checks;
+$pureMismatches = LayoutSelfCheck::$mismatches;
+
+// ② 反例：`ImpureBox::performLayout()` 读 `$this->size()` ⇒ 每排一次宽 +1
+LayoutSelfCheck::reset();
+$impureBox = new ImpureBox();
+for ($i = 0; $i < 64; $i++) {
+    $impureBox->layout($selfCheckConstraints);
+    LayoutSelfCheck::maybeCheck($impureBox, $selfCheckConstraints);
+}
+LayoutSelfCheck::$on = false;
+
+check(
+    'Layout · 自校验反例自检（纯盒 0 不一致 / 不纯盒 > 0 / 两侧都真采样到）',
+    $pureChecks > 0 && $pureMismatches === 0
+        && LayoutSelfCheck::$checks > 0 && LayoutSelfCheck::$mismatches > 0,
+    sprintf(
+        '纯盒 checks=%d mismatches=%d ｜ 不纯盒 checks=%d mismatches=%d ｜ 末条差异=%s',
+        $pureChecks,
+        $pureMismatches,
+        LayoutSelfCheck::$checks,
+        LayoutSelfCheck::$mismatches,
+        LayoutSelfCheck::$recent === []
+            ? '(空)'
+            : LayoutSelfCheck::$recent[count(LayoutSelfCheck::$recent) - 1]['class']
+                . ' @ ' . LayoutSelfCheck::$recent[count(LayoutSelfCheck::$recent) - 1]['field']
+    )
 );
 check(
     'Layout · layout() 把尺寸存下来（第二阶段 paint 用得上）',
@@ -8610,6 +8657,53 @@ if ($motionFixture !== null) {
         'builds=' . $motionFixture->builds . ' done=' . $buildsDone,
     );
 }
+
+// ── 帧阶段顺序的正反例（`06` §11.2 #1 / #2）────────────────────────────
+// ★ 与上面 LayoutSelfCheck 同族：`FramePhase` 也可能空转（`$on` 从没被翻开、
+//   trace 没被记、assertOrder 的某个分支写错）。⇒ 正确序一条不报 + 反例三个
+//   越界方向都报，合成 2 条 check。
+// ★ 用"前后条数差"而不是 `Errors::reset()`：后者会把 `$fatalBox` 一起清掉，
+//   而本文件后面还有跑 Fatal 路径的用例。
+$nBefore = count(Errors::recentDiagnostics());
+FramePhase::assertOrder(FramePhase::ALL);
+$nAfter = count(Errors::recentDiagnostics());
+check(
+    '帧阶段 · 顺序正确（ALL 本身就是按约束排的）⇒ 一条都不报',
+    $nAfter === $nBefore,
+    '新增 ' . ($nAfter - $nBefore) . ' 条 Diagnostic'
+);
+
+// 三个越界方向，逐条喂进去：
+//   a) A 组（settle 前）成员跑到 settle **之后** —— pumpTasks 与 settle 对调
+//   b) C 组（settle 后）成员跑到 settle **之前** —— focusCollect 与 pumpIo 对调
+//   c) 整帧**没有 settle 标记** —— `Frame::run()` 没被调用
+$aTrace = ['pumpIo', 'settle', 'pumpTasks', 'pumpSliced', 'tickAnimations', 'placeMenu', 'tickLateMount', 'focusCollect', 'pumpSemantics'];
+$bTrace = ['focusCollect', 'pumpTasks', 'pumpSliced', 'tickAnimations', 'placeMenu', 'settle', 'tickLateMount', 'pumpIo', 'pumpSemantics'];
+$cTrace = FramePhase::ALL;
+unset($cTrace[(int) array_search('settle', FramePhase::ALL, true)]);
+$cTrace = array_values($cTrace);
+
+$base = count(Errors::recentDiagnostics());
+FramePhase::assertOrder($aTrace);
+$afterA = count(Errors::recentDiagnostics());
+FramePhase::assertOrder($bTrace);
+$afterB = count(Errors::recentDiagnostics());
+FramePhase::assertOrder($cTrace);
+$afterC = count(Errors::recentDiagnostics());
+
+$ring = Errors::recentDiagnostics();
+$lastText = $ring === [] ? '(空)' : (string) $ring[count($ring) - 1];
+check(
+    '帧阶段 · 反例：三个越界方向都报（A 组过后 / C 组提前 / 缺 settle）',
+    $afterA > $base && $afterB > $afterA && $afterC > $afterB,
+    sprintf(
+        'A +%d / B +%d / C +%d ｜ 末条：%s',
+        $afterA - $base,
+        $afterB - $afterA,
+        $afterC - $afterB,
+        \strlen($lastText) > 60 ? \substr($lastText, 0, 60) . '…' : $lastText
+    )
+);
 
 // ── 汇总 + 退出码（2026-10-18）──
 // ★ 以前只打印 FAIL、**从不汇总、也从不非零退出** ⇒ 打印 3 个 FAIL 仍然 exit 0：
