@@ -27,6 +27,7 @@ final class ErrorBoundaryElement extends StatelessElement
     /** 已捕获的异常；非 null ⇒ 本边界已"烧断"，子树换成占位且不再重建 */
     private ?Throwable $caught = null;
 
+    #[\Override]
     public function rebuild(): void
     {
         if ($this->caught !== null) {
@@ -42,6 +43,7 @@ final class ErrorBoundaryElement extends StatelessElement
         }
     }
 
+    #[\Override]
     public function settle(): void
     {
         if ($this->caught !== null) {
@@ -55,6 +57,7 @@ final class ErrorBoundaryElement extends StatelessElement
         }
     }
 
+    #[\Override]
     protected function expand(): array
     {
         $widget = $this->widget;
@@ -62,6 +65,7 @@ final class ErrorBoundaryElement extends StatelessElement
         return $widget instanceof ErrorBoundary ? [$widget->child()] : [];
     }
 
+    #[\Override]
     protected function adoptBoxes(): void
     {
         // ★ `RenderErrorBoundary` 必须 import：instanceof 对**未导入**的类按当前

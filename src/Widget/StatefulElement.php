@@ -25,6 +25,7 @@ final class StatefulElement extends Element
         return $this->state;
     }
 
+    #[\Override]
     public function mount(?Element $parent, BuildContext $context): void
     {
         $state = $this->widget->createState();
@@ -34,6 +35,7 @@ final class StatefulElement extends Element
         parent::mount($parent, $context);
     }
 
+    #[\Override]
     protected function didUpdateWidget(Widget $newWidget): void
     {
         // §12.3：换新描述，State 本身不换 —— 所以"跟手输入不丢、展开状态还在"
@@ -51,12 +53,14 @@ final class StatefulElement extends Element
         $this->updateChildren([$state->build($this->context)]);
     }
 
+    #[\Override]
     protected function onMount(): void
     {
         // §11.3 RT-1 / A4：订阅只在 initState 里做，且必须在首次 build 之前
         $this->state?->callInit();
     }
 
+    #[\Override]
     public function unmount(): void
     {
         parent::unmount();

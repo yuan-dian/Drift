@@ -71,6 +71,7 @@ final class RenderMenuItem extends RenderProxyBox
      *   （`RenderPopupPanel`），漏了 insets ⇒ 面板偏窄 ⇒ 行内内容溢出报 C5
      *   （开发中被 smoke 当场抓到）。
      */
+    #[\Override]
     public function intrinsicWidth(float $height): float
     {
         if ($this->separator) {
@@ -80,6 +81,7 @@ final class RenderMenuItem extends RenderProxyBox
         return $this->insets->horizontal() + parent::intrinsicWidth($height);
     }
 
+    #[\Override]
     public function intrinsicHeight(float $width): float
     {
         if ($this->separator) {
@@ -106,6 +108,7 @@ final class RenderMenuItem extends RenderProxyBox
         return $constraints->constrain($this->insets->inflate($content));
     }
 
+    #[\Override]
     public function paint(Canvas $canvas): void
     {
         $size = $this->size ?? new Size(0.0, 0.0);

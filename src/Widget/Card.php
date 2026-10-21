@@ -112,6 +112,7 @@ final class Card extends BoxWidget
         return new RenderCard($this->padding, $this->shadow, $style);
     }
 
+    #[\Override]
     public function createElement(): Element
     {
         return new ProxyElement($this);

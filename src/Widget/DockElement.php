@@ -18,6 +18,7 @@ final class DockElement extends StatelessElement
     /** 槽位顺序（expand 与 adoptBoxes 共用，改一处必须改另一处） */
     private const ORDER = ['top', 'left', 'center', 'right', 'bottom'];
 
+    #[\Override]
     protected function expand(): array
     {
         $dock = $this->widget;
@@ -36,6 +37,7 @@ final class DockElement extends StatelessElement
         return $kids;
     }
 
+    #[\Override]
     protected function adoptBoxes(): void
     {
         $box = $this->renderObject();

@@ -33,6 +33,7 @@ final class RenderAppBar extends RenderFlex
         parent::__construct(false, $spacing, $padding, FlexAlign::Center, Overflow::Clip);
     }
 
+    #[\Override]
     public function paint(Canvas $canvas): void
     {
         $size = $this->size ?? new Size(0.0, 0.0);

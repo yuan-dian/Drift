@@ -110,6 +110,7 @@ abstract class Flex extends RenderBoxWidget
         return $this->kids;
     }
 
+    #[\Override]
     public function createElement(): Element
     {
         return new FlexElement($this);

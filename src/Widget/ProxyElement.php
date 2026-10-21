@@ -14,6 +14,7 @@ use Drift\Layout\RenderProxyBox;
  */
 final class ProxyElement extends StatelessElement
 {
+    #[\Override]
     protected function expand(): array
     {
         $widget = $this->widget;
@@ -46,6 +47,7 @@ final class ProxyElement extends StatelessElement
         return [];
     }
 
+    #[\Override]
     protected function adoptBoxes(): void
     {
         $box = $this->renderObject();

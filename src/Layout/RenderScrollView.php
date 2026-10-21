@@ -156,6 +156,7 @@ final class RenderScrollView extends RenderProxyBox
             : new Size($viewportMain, $viewportCross);
     }
 
+    #[\Override]
     public function paint(Canvas $canvas): void
     {
         $child = $this->child;
@@ -261,6 +262,7 @@ final class RenderScrollView extends RenderProxyBox
      *   滚动偏移平移 + 视口裁剪 —— 这是 `Overflow::Scroll` 的第一次真实实现
      *   （此前只有声明，行为靠 `RenderDock` 的 `Errors::report` 兜）。
      */
+    #[\Override]
     public function overflow(): Overflow
     {
         return Overflow::Scroll;

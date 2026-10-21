@@ -88,6 +88,7 @@ final class RenderPopupPanel extends RenderProxyBox
         ));
     }
 
+    #[\Override]
     public function paint(Canvas $canvas): void
     {
         $size = $this->size;

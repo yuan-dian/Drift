@@ -67,6 +67,7 @@ final class RenderButton extends RenderProxyBox
         return $constraints->constrain($this->insets->inflate($label));
     }
 
+    #[\Override]
     public function paint(Canvas $canvas): void
     {
         $size = $this->size ?? new Size(0.0, 0.0);

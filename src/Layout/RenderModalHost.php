@@ -75,6 +75,7 @@ final class RenderModalHost extends RenderProxyBox
         ));
     }
 
+    #[\Override]
     public function paint(Canvas $canvas): void
     {
         $size = $this->size;

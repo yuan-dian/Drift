@@ -44,6 +44,7 @@ final class Spacer extends RenderBoxWidget
         return new RenderFlexible($this->share);
     }
 
+    #[\Override]
     public function createElement(): Element
     {
         return new ProxyElement($this);

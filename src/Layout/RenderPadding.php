@@ -37,16 +37,19 @@ final class RenderPadding extends RenderProxyBox
         return $constraints->constrain($this->padding->inflate($this->child->size()));
     }
 
+    #[\Override]
     public function intrinsicWidth(float $height): float
     {
         return $this->padding->horizontal() + parent::intrinsicWidth($height);
     }
 
+    #[\Override]
     public function intrinsicHeight(float $width): float
     {
         return $this->padding->vertical() + parent::intrinsicHeight($width);
     }
 
+    #[\Override]
     public function paint(Canvas $canvas): void
     {
         if ($this->child === null) {

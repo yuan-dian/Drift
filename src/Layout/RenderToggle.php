@@ -92,12 +92,14 @@ final class RenderToggle extends RenderProxyBox
         return $constraints->constrain(new Size($control + $gap + $label->width, $height));
     }
 
+    #[\Override]
     public function intrinsicWidth(float $height): float
     {
         return $this->controlWidth() + $this->style->gap
             + ($this->child?->intrinsicWidth($height) ?? 0.0);
     }
 
+    #[\Override]
     public function intrinsicHeight(float $width): float
     {
         $labelWidth = max(0.0, $width - $this->controlWidth() - $this->style->gap);
@@ -105,6 +107,7 @@ final class RenderToggle extends RenderProxyBox
         return max($this->style->boxSize, $this->child?->intrinsicHeight($labelWidth) ?? 0.0);
     }
 
+    #[\Override]
     public function paint(Canvas $canvas): void
     {
         $size = $this->size ?? new Size(0.0, 0.0);

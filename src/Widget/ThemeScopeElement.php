@@ -15,6 +15,7 @@ namespace Drift\Widget;
  */
 final class ThemeScopeElement extends StatelessElement
 {
+    #[\Override]
     protected function expand(): array
     {
         /** @var ThemeScope $widget */

@@ -52,6 +52,7 @@ final class Center extends RenderBoxWidget
         return new RenderCenter();
     }
 
+    #[\Override]
     public function createElement(): Element
     {
         return new ProxyElement($this);

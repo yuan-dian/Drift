@@ -23,6 +23,7 @@ class StatelessElement extends Element
         $this->adoptBoxes();
     }
 
+    #[\Override]
     protected function expand(): array
     {
         $widget = $this->widget;

@@ -69,6 +69,7 @@ final class ScrollViewBox extends RenderBoxWidget
         );
     }
 
+    #[\Override]
     public function createElement(): Element
     {
         return new ProxyElement($this);

@@ -87,6 +87,7 @@ final class PopupPanel extends BoxWidget
         return new RenderPopupPanel($this->padding, $this->minWidth, $this->elevation, $style);
     }
 
+    #[\Override]
     public function createElement(): Element
     {
         return new ProxyElement($this);

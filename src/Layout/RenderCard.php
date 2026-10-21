@@ -85,18 +85,21 @@ final class RenderCard extends RenderProxyBox
      * ★ **有内边距的盒必须覆写内禀尺寸**（§13.1 C3）：不加上 insets 的话，
      *   `Row` / `Dock` 量出来的自然宽会比实际窄一个 padding，卡片的文字会被挤。
      */
+    #[\Override]
     public function intrinsicWidth(float $height): float
     {
         return ($this->child?->intrinsicWidth(max(0.0, $height - $this->padding->vertical())) ?? 0.0)
             + $this->padding->horizontal();
     }
 
+    #[\Override]
     public function intrinsicHeight(float $width): float
     {
         return ($this->child?->intrinsicHeight(max(0.0, $width - $this->padding->horizontal())) ?? 0.0)
             + $this->padding->vertical();
     }
 
+    #[\Override]
     public function paint(Canvas $canvas): void
     {
         $size = $this->size;

@@ -51,6 +51,7 @@ final class TextFieldState extends State
     /** @internal 选区活动端（字节偏移，恒字符边界）—— Shift+方向键 / 指针拖动挪的是它 */
     private int $selExtent = 0;
 
+    #[\Override]
     public function initState(): void
     {
         // 初值来自 widget 的 value()（§A.2.9 的受控形态：值由外部给）
@@ -67,6 +68,7 @@ final class TextFieldState extends State
      * ★ **同值不动**：否则调用方每帧重传同一个值都会把插入符打回末尾，
      *   用户正在中间插入时就"跟手输入不丢"这条承诺直接失效。
      */
+    #[\Override]
     public function didUpdateWidget(Widget $widget): void
     {
         parent::didUpdateWidget($widget);

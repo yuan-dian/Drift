@@ -58,6 +58,7 @@ final class ModalHost extends RenderBoxWidget
         return new RenderModalHost($this->barrier ?? new Color(0, 0, 0, 90));
     }
 
+    #[\Override]
     public function createElement(): Element
     {
         return new ProxyElement($this);

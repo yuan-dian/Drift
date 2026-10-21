@@ -33,6 +33,7 @@ final class SpinnerState extends State
      * ★ 卸载后没人再调它（走的是树遍历）⇒ 帧时钟自动停摆，不需要在 `dispose()`
      *   里记得注销任何东西。
      */
+    #[\Override]
     public function tickFrame(float $timestampMs): bool
     {
         $this->tick();

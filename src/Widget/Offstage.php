@@ -64,6 +64,7 @@ final class Offstage extends Widget
         return $this->shown;
     }
 
+    #[\Override]
     public function createElement(): Element
     {
         return new OffstageElement($this);

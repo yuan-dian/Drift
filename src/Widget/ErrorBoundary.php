@@ -53,6 +53,7 @@ final class ErrorBoundary extends RenderBoxWidget
         return $this->kid;
     }
 
+    #[\Override]
     public function createElement(): Element
     {
         return new ErrorBoundaryElement($this);

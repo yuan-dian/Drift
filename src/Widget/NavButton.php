@@ -17,6 +17,7 @@ namespace Drift\Widget;
  */
 final class NavButton extends Button
 {
+    #[\Override]
     public static function make(string $label): self
     {
         return new self($label);

@@ -48,6 +48,7 @@ final class RenderErrorBoundary extends RenderProxyBox
         }
     }
 
+    #[\Override]
     public function paint(Canvas $canvas): void
     {
         if ($this->paintBroken) {

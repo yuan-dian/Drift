@@ -15,6 +15,7 @@ use Drift\Layout\RenderFlex;
  */
 final class AppBarElement extends StatelessElement
 {
+    #[\Override]
     protected function expand(): array
     {
         $bar = $this->widget;
@@ -33,6 +34,7 @@ final class AppBarElement extends StatelessElement
         return $kids;
     }
 
+    #[\Override]
     protected function adoptBoxes(): void
     {
         $box = $this->renderObject();

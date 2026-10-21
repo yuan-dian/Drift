@@ -92,6 +92,7 @@ final class SizedBox extends RenderBoxWidget
         return new RenderSizedBox($this->width, $this->height);
     }
 
+    #[\Override]
     public function createElement(): Element
     {
         return new ProxyElement($this);

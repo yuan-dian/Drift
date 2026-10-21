@@ -70,6 +70,7 @@ class RenderFlex extends RenderBox
      *   行为是 Report"，W4（会超的容器声明溢出策略）的判定面整体说谎。
      *   2026-10-16 由 M2 conformance 夹具抓到（`tools/M2Conformance.php` W4）。
      */
+    #[\Override]
     public function overflow(): Overflow
     {
         return $this->overflow;

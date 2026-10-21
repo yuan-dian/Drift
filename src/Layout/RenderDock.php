@@ -46,6 +46,7 @@ final class RenderDock extends RenderBox
         return $this->slots[$slot] ?? null;
     }
 
+    #[\Override]
     public function overflow(): Overflow
     {
         return $this->policy;

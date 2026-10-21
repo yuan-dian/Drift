@@ -89,6 +89,7 @@ final class AppBar extends BoxWidget
         );
     }
 
+    #[\Override]
     public function createElement(): Element
     {
         return new AppBarElement($this);

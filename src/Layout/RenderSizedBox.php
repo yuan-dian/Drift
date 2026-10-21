@@ -115,6 +115,7 @@ final class RenderSizedBox extends RenderProxyBox
      *   不覆写的话定尺寸在"量"这一路完全看不见 —— 侧栏会被量成内容宽，
      *   等于 `SizedBox` 没生效（静默）。
      */
+    #[\Override]
     public function intrinsicWidth(float $height): float
     {
         if ($this->width !== null) {
@@ -124,6 +125,7 @@ final class RenderSizedBox extends RenderProxyBox
         return $this->child?->intrinsicWidth($height) ?? 0.0;
     }
 
+    #[\Override]
     public function intrinsicHeight(float $width): float
     {
         if ($this->height !== null) {

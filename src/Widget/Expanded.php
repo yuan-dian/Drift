@@ -48,6 +48,7 @@ final class Expanded extends RenderBoxWidget
         return new RenderFlexible($this->share);
     }
 
+    #[\Override]
     public function createElement(): Element
     {
         return new ProxyElement($this);

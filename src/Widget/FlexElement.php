@@ -15,6 +15,7 @@ use Drift\Layout\RenderFlex;
  */
 final class FlexElement extends StatelessElement
 {
+    #[\Override]
     protected function expand(): array
     {
         /** @var Flex $widget */
@@ -23,6 +24,7 @@ final class FlexElement extends StatelessElement
         return $widget->kidList();
     }
 
+    #[\Override]
     protected function adoptBoxes(): void
     {
         /** @var RenderFlex $flex */

@@ -22,6 +22,7 @@ final class OffstageElement extends Element
     /** @internal 停着的子 Element；隐藏时它是唯一还持着子树的东西 */
     private ?Element $parked = null;
 
+    #[\Override]
     protected function onMount(): void
     {
         $child = $this->widget()->child()->createElement();
@@ -56,6 +57,7 @@ final class OffstageElement extends Element
         $this->adoptBoxes();
     }
 
+    #[\Override]
     public function unmount(): void
     {
         $parked = $this->parked;

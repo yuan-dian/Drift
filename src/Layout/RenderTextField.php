@@ -79,6 +79,7 @@ final class RenderTextField extends RenderBox
      *   可用宽时"必须选择一种舍弃方式"，而当前选的是裁剪（横向滚动属 M3）。
      *   会超的容器必须显式声明（§13.1 C5）—— 默认值不许替它决定。
      */
+    #[\Override]
     public function overflow(): Overflow
     {
         return Overflow::Clip;

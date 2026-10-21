@@ -114,6 +114,7 @@ final class Dock extends RenderBoxWidget
         return new RenderDock($this->policy);
     }
 
+    #[\Override]
     public function createElement(): Element
     {
         return new DockElement($this);
