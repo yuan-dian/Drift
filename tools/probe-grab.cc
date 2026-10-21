@@ -15,6 +15,15 @@
  *   probe-grab --count-only --image=users.exe
  *   probe-grab --pid=1234 --settle=800 --move=300,200,1100,760 --rect --close
  *   probe-grab --pid=1234 --settle=1500 --rect --no-grab --close
+ *   probe-grab --pid=1234 --settle=500 --cursor=250,456 --mdrag=250,456,400,456 \
+ *              --png=drag.png                       （框选/拖动类手势）
+ *
+ * ★★ `--cursor` / `--mdrag` **必须真挪物理光标**（`SetCursorPos`），不能只
+ *    `PostMessage` 合成消息：系统不认为指针在窗内 ⇒ 壳侧
+ *   `TrackMouseEvent(TME_LEAVE)` 立刻回 `WM_MOUSELEAVE` ⇒ 应用"指针出窗"把
+ *   手势收口，现象是"拖到第 2 步就断"、**间歇复现**（2026-10-21 实测：框选只选
+ *   到第 1 个字符，成功率 ~50%；补 SetCursorPos 后 ~5/6，残余取决于窗口是否
+ *   被遮挡）。⇒ 判据要允许"偶发断"，或把窗口提到前台再跑。
  *
  * 输出：`hwnd=` `client=WxH` `ink_all_pct=` `s0..sN=`（墨量）`c1..cN=`（帧间变化
  *      像素数，仅 `--motion`）`procs=` `closed=`
@@ -101,6 +110,9 @@ struct Options {
     bool click = false;            // --click=x,y（客户区坐标；down+up 一次完整点击）
     int clickX = 0;
     int clickY = 0;
+    bool setCursor = false;        // --cursor=x,y（客户区坐标；把**物理光标**挪进去）
+    int cursorX = 0;
+    int cursorY = 0;
     bool mouseDrag = false;        // --mdrag=x1,y1,x2,y2（**客户区**坐标：按下-移动-抬起）
     int mdragX1 = 0, mdragY1 = 0, mdragX2 = 0, mdragY2 = 0;
     bool dragResize = false;       // --drag=x1,y1,x2,y2（屏幕坐标；从左下角拖到新尺寸）
@@ -551,6 +563,36 @@ int wmain(int argc, wchar_t** argv)
             options.clickY = parts[1];
         } else if (key == L"click-wait" && parseInt(value, number)) {
             options.clickWaitMs = static_cast<int>(number);
+        } else if (key == L"cursor") {
+            // x,y —— 客户区坐标。**必须用 SetCursorPos 真挪物理光标**：合成
+            // WM_MOUSEMOVE 不会让系统认为指针在窗口里，`TrackMouseEvent(TME_LEAVE)`
+            // 会立刻回一条 WM_MOUSELEAVE ⇒ 应用侧"指针出窗"收口，框选/拖动半途
+            // 被打断（2026-10-21 实证：拖到第 2 步 textSelect 就被清空，间歇复现）。
+            int parts[2] = {0, 0};
+            int index = 0;
+            size_t start = 0;
+            for (size_t i = 0; i <= value.size(); ++i) {
+                if (i == value.size() || value[i] == L',') {
+                    long long parsed = 0;
+                    if (!parseInt(value.substr(start, i - start), parsed)) {
+                        std::fprintf(stderr, "err=--cursor wants x,y\n");
+                        return 2;
+                    }
+                    if (index >= 2) {
+                        std::fprintf(stderr, "err=--cursor wants exactly 2 numbers\n");
+                        return 2;
+                    }
+                    parts[index++] = static_cast<int>(parsed);
+                    start = i + 1;
+                }
+            }
+            if (index != 2) {
+                std::fprintf(stderr, "err=--cursor wants exactly 2 numbers\n");
+                return 2;
+            }
+            options.setCursor = true;
+            options.cursorX = parts[0];
+            options.cursorY = parts[1];
         } else if (key == L"mdrag") {
             // x1,y1,x2,y2 —— **客户区**坐标（滚动条拖动等客户区内拖拽用）
             int parts[4] = {0, 0, 0, 0};
@@ -715,6 +757,13 @@ int wmain(int argc, wchar_t** argv)
         std::printf("drag=br(%d,%d)+(%d,%d)\n", sx, sy, options.dragX2, options.dragY2);
         ::Sleep(static_cast<DWORD>(options.wheelWaitMs));
     }
+    if (options.setCursor) {
+        POINT target{options.cursorX, options.cursorY};
+        ::ClientToScreen(hwnd, &target);
+        ::SetCursorPos(target.x, target.y);
+        std::printf("cursor=%d,%d\n", options.cursorX, options.cursorY);
+        ::Sleep(80);   // 让 TrackMouseEvent 先看到"指针在窗内"
+    }
     if (options.click) {
         // ★★ WM_LBUTTONDOWN 的 lParam 是**客户区**坐标，**不能** ClientToScreen
         //   （那是 WM_MOUSEWHEEL 才需要的换算，见下）。旧实现从 wheel 分支抄了
@@ -729,12 +778,24 @@ int wmain(int argc, wchar_t** argv)
     }
     if (options.mouseDrag) {
         // 客户区按下 → 分步移动 → 抬起（WM_* 的 lParam 是**客户区**坐标，无需换算）
+        // ★★ 每一步都**真挪物理光标**（SetCursorPos），不能只 PostMessage：
+        //   系统认为指针不在窗内 ⇒ `TrackMouseEvent(TME_LEAVE)` 立刻回
+        //   WM_MOUSELEAVE ⇒ 应用侧"指针出窗"把拖动/框选收口，现象是"拖到第 2
+        //   步就断"，且**间歇复现**（取决于窗口是否真的在光标下、有没有被遮）。
+        //   合成消息保留：它保证即使 SetCursorPos 被系统合并，应用也收到每一步。
+        auto cursorTo = [hwnd](int cx, int cy) {
+            POINT p{cx, cy};
+            ::ClientToScreen(hwnd, &p);
+            ::SetCursorPos(p.x, p.y);
+        };
+        cursorTo(options.mdragX1, options.mdragY1);
         ::PostMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON,
                        MAKELPARAM(static_cast<WORD>(options.mdragX1), static_cast<WORD>(options.mdragY1)));
         ::Sleep(60);
         for (int s = 1; s <= 12; ++s) {
             const int mx = options.mdragX1 + (options.mdragX2 - options.mdragX1) * s / 12;
             const int my = options.mdragY1 + (options.mdragY2 - options.mdragY1) * s / 12;
+            cursorTo(mx, my);
             ::PostMessageW(hwnd, WM_MOUSEMOVE, MK_LBUTTON,
                            MAKELPARAM(static_cast<WORD>(mx), static_cast<WORD>(my)));
             ::Sleep(30);
