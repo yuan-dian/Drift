@@ -12,8 +12,13 @@
 源码注释只记 5 条、构建工具注释只覆盖工具链、MEMORY 记 15 条但不在仓库里、
 v6 `13` 册记 12 条但口径是"从零设计"。
 
-★ 其中最贵的一条：**`C2653` / `C2660` / `C2129` 在本仓源码里零命中**
-（`grep` 实测），只在 MEMORY 里 ⇒ 下一个人踩同一个坑时，**仓库里没有任何线索**。
+★ 其中最贵的一条：**`C2653` / `C2660` / `C2129` 曾在 `cpp-src/` 里零线索**
+（`08` §1.2 当时的账；D-2 已把三条补进 `cpp-src/drift_skia.cc` 的对应代码处）。
+★ 顺带纠一个**张冠李戴**：`08` §1.2 把 C2653 描述成"命名空间内非限定函数
+不回退全局 ⇒ 必须 `\`"—— **那条是 PHP 侧规则，报的是运行期
+`Call to undefined function`，不是 MSVC C2653**。本仓真正的 C2653 是
+**Skia API 改名**（`SkGradientShader` → `SkShaders::LinearGradient`）。
+两个都叫"C2653"纯属巧合，别混。
 
 本文件是那"一处完整"。它是 `08` §2 判据表的落点，也是 M0 三条实测结论的家
 （`08` §8：M0-a 的产出必须写进仓库，**不是只在会话里**）。
@@ -48,7 +53,7 @@ v6 `13` 册记 12 条但口径是"从零设计"。
 | 可选参数排必选前 ⇒ Fatal（比 PHP 严） | `function f($a = 1, $b)` | 必选在前（`RenderScrollView::__construct` 注释写明） |
 | 类常量与同类方法同名 ⇒ **C2872** | 同名 | 改名 |
 | 常量链 `A = B \| C` 而 `B = X \| Y` ⇒ **C2065** | 嵌套常量表达式 | 平铺成一次 `\|`（`CanvasCapabilities::ALL_MASK`） |
-| 命名空间内非限定函数**不回退全局** ⇒ **C2653** | 裸 `strlen()` | 写 `\strlen()` |
+| 命名空间内非限定函数**不回退全局** ⇒ 运行期 `Call to undefined function` | 裸 `strlen()` | 写 `\strlen()` |
 | 函数外不能有语句（探针 P-4） | 文件级初始化 | 静态方法 |
 | **双引号串里含 `$` 但无插值意图** ⇒ tpc 编译期 Fatal `The variable ... is undefined` | `"...$frame->run(...)"` 这类文案 | 拆成 `'半句' . "\n" . '半句'`（单引号保 `$` 字面量，双引号保 `\n` 真换行）。**W0 踩过一次，见 §2.4** |
 
@@ -370,7 +375,7 @@ M0-1 证明 `readonly` 免费 ⇒ **原先唯一的迁移理由（"慢 10×+"）
 | 6 | **属性读不当实参**：先落局部标量 | C2440 ×5（本仓最高频，**只能靠 T2 兜**） |
 | 7 | 常量链平铺成一次 `\|` | C2065（`CanvasCapabilities`） |
 | 8 | 类常量不与同类方法同名 | C2872 |
-| 9 | 命名空间内调全局函数写 `\` | C2653 |
+| 9 | 命名空间内调全局函数写 `\` | 运行期 `Call to undefined function`（**不是** C2653，见 §6） |
 | 10 | 循环内禁 `.=` 累加二进制串 | lint `str-concat-loop` |
 | 11 | 可空对象字段优先用"非空 + `bool` 哨兵"或 `NAN` | `?Obj` 退化（**人因为主，见 M0-2**） |
 | 12 | 二进制复合数据过桥只走打包字节串 | 桥 ABI 只认标量 + string |
@@ -393,9 +398,9 @@ M0-1 证明 `readonly` 免费 ⇒ **原先唯一的迁移理由（"慢 10×+"）
 | **C2065** | 常量链 `A = B \| C` 而 `B = X \| Y` | `CanvasCapabilities::ALL_MASK` 注释 |
 | **C2872** | 类常量与同类方法同名 | 改名（无残留） |
 | **C3861** | `drawImageRect` 有 4 参/6 参两重载；`SkPath` 无构造方法 ⇒ `SkPathBuilder` + `detach()` | `BACKPORT-19OP.md` |
-| **C2653** | 命名空间内非限定函数不回退全局 ⇒ 必须 `\` | ~~0~~ **本文件 §5 纪律 9** |
-| **C2660** | 函数参数个数不符（`SkDashPathEffect::Make` 3 参 → 2 参） | ~~0~~ **本文件 + `cpp-src/`（D-2）** |
-| **C2129** | 匿名命名空间在第 206 行关闭 ⇒ NS 内 forward-declare 的 static helper 定义也必须留在 NS 内 | ~~0~~ **本文件 + `cpp-src/`（D-2）** |
+| **C2653** | **Skia API 改名**：`SkGradientShader`（旧，一个类+静态工厂）→ `SkShaders::LinearGradient/RadialGradient`（新，命名空间下的自由函数）。★ 与 PHP 侧"非限定函数不回退全局"**不是一回事**（那条报运行期 Fatal） | `cpp-src/drift_skia.cc` `php_drift_skia_set_gradient` docblock |
+| **C2660** | 函数参数个数不符：`SkDashPathEffect::Make(intervals,count,phase)` 3 参 → `Make(SkSpan,phase)` 2 参 | `cpp-src/drift_skia.cc` `php_drift_skia_set_dash` docblock |
+| **C2129** | 匿名命名空间在第 230 行关闭 ⇒ NS 内 forward-declare 的 static helper 定义也必须留在 NS 内 | `cpp-src/drift_skia.cc` `} // namespace` 处 + `applyPaintSource()` docblock |
 
 ★ 后三行是 `08` §1.2 的记账缺口（"仓库里零线索"）。本文件补上**判据**，
 `cpp-src/` 的具体位置注释由 **D-2** 补。

@@ -229,6 +229,15 @@ size_t encodeUtf8(uint32_t cp, char out[4]) {
 
 }   // namespace
 
+// ★★ **C2129（只在这里会踩）**：上面匿名命名空间里的 static helper
+//    （如 `applyPaintSource()`，其 docblock 有详细说明）**定义必须留在 NS 内**。
+//    本行之后只剩 `php_drift_skia_*` 导出函数 —— 它们要按 **C 名**链接
+//    （PHP 扩展 ABI 不认 C++ mangling）⇒ 若把 NS 内 forward-declare 的
+//    static helper 的定义放到这里，会变成"另一个实体"，编译期报
+//    **C2129「已声明但未定义」**。
+//    ⇒ 加 helper 时的判据：**它被 NS 内的 draw 函数调用 ⇒ 定义也住 NS 内**。
+//    （`docs/AOT-CONSTRAINTS.md` §6 有这三条错误码的速查表。）
+
 // ══════════════════════════════════════════════════════════ 画布生命周期 ══
 
 Int php_drift_skia_canvas_create(Int width, Int height, Int backgroundRgba) {
@@ -614,6 +623,17 @@ void php_drift_skia_push_clip_path(
  * 建一个渐变 shader 写入画布当前源（线性 / 径向）。坐标已是**设备像素**
  * （PHP 侧按 toDevice 同变换把逻辑端点转设备），与 draw 函数收到的设备坐标一致。
  * 最多 4 个色标；色标表升序、长度与颜色数一致由 PHP 侧 Gradient 构造期保证。
+ *
+ * ★★ **C2653（2026-10-17 实测，只在本文件这类"手写 Skia 调用"处会踩）**：
+ *    旧 API 写 `SkGradientShader::MakeLinearGradient(...)` ⇒ MSVC 报
+ *    **C2653「`SkGradientShader`: 不是类或命名空间」** —— 新 Skia 把它从
+ *    "一个类 + 静态工厂"改成"`SkShaders` 命名空间下的自由函数"。
+ *    径向同理：`SkShaders::RadialGradient`。
+ *    ⇒ 判据：**照旧版 Skia 教程/文档写桥，编译期就炸**；而 PHP 侧 smoke 有假桥
+ *      （`if (!function_exists)` 兜底）⇒ **T1 全绿，只有 T2 真机构建看得见**。
+ *      这也是"改 Skia C++ 桥必须过 T2"的第一条理由。
+ * ★ 色标数组必须 `SkColor4f` 且位置**严格递增**（重复位置会被 Skia 整表丢掉）；
+ *    PHP 侧 `Gradient` 会把不足 4 槽的补齐成 4 槽 —— 补齐值若重复就是静默丢表。
  */
 void php_drift_skia_set_gradient(
     Int handle,
@@ -667,7 +687,18 @@ void php_drift_skia_set_gradient(
     }
 }
 
-/** 建一个虚线 path effect 写入画布当前源（on/off 为逻辑像素，phase 同口径）。 */
+/**
+ * 建一个虚线 path effect 写入画布当前源（on/off 为逻辑像素，phase 同口径）。
+ *
+ * ★★ **C2660（2026-10-17 实测）**：旧 API 是**三参**
+ *    `SkDashPathEffect::Make(intervals, count, phase)`；新 Skia 改成**两参**
+ *    `Make(SkSpan<const SkScalar>, phase)`。照旧写法 ⇒ MSVC **C2660
+ *    「函数不接受 3 个参数」**。
+ *    ⇒ 判据同 C2653：**T1 全绿（假桥兜底），只有 T2 看得见**。
+ * ★ `SkSpan` 要显式带 `const SkScalar` 模板实参 —— 从 C 数组推断会失败。
+ * ★ 虚线只作用于描边：`applyPaintSource()` 里判了 `kStroke_Style`，
+ *   填充挂 path effect 在 Skia 下行为未定义（不报错，画出来是错的）。
+ */
 void php_drift_skia_set_dash(Int handle, Float on, Float off, Float phase) {
     SkiaSlot *slot = slotFor(handle);
     if (slot == NULL) {
