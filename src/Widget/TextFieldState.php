@@ -22,6 +22,11 @@ use Drift\Text\Utf8;
  *   码位的 (字节偏移, 字节长度)，所有移动 / 删除都按它走 —— 于是不会把多字节
  *   字符切成半个（切了之后喂给排版器会得到非法 UTF-8）。
  *
+ * ★ **选区是"锚点 + 活动端"两个字节偏移**（恒字符边界）：`hasSelection()` ⇔ 两者
+ *   不等。不带 Shift 的移动 / 任何一次真的文本改动都**折叠**选区（两端归位到
+ *   插入符）—— 选中的是旧文本的一段，替换之后它已经不存在了。反过来 Shift+方向键
+ *   只挪活动端，于是"从起点一路选到当前"与"从当前往回选"是同一个模型。
+ *
  * ★ **编辑态与焦点**：`beginEditing()` / `endEditing()` 是**渲染态开关**（§9.1：
  *   "焦点是渲染态，不放业务值"），它决定插入符画不画。`FocusManager`（`Drift\App`）
  *   在焦点落到本字段时调 `beginEditing()`、走开时调 `endEditing()`；按键经
@@ -40,11 +45,20 @@ final class TextFieldState extends State
     /** @internal 渲染态：在编辑中 ⇒ 画插入符 */
     private bool $editing = false;
 
+    /** @internal 选区锚点（字节偏移，恒字符边界）；与 `$selExtent` 相等 ⇔ 无选区 */
+    private int $selAnchor = 0;
+
+    /** @internal 选区活动端（字节偏移，恒字符边界）—— Shift+方向键 / 指针拖动挪的是它 */
+    private int $selExtent = 0;
+
     public function initState(): void
     {
         // 初值来自 widget 的 value()（§A.2.9 的受控形态：值由外部给）
         $this->buffer = $this->field()->valueText();
         $this->caret = strlen($this->buffer);
+        // 初始无选区：锚点 = 活动端（这个不变量由各编辑动作共同维护）
+        $this->selAnchor = $this->caret;
+        $this->selExtent = $this->caret;
     }
 
     /**
@@ -68,6 +82,9 @@ final class TextFieldState extends State
 
         $this->buffer = $incoming;
         $this->caret = strlen($incoming);
+        // 外部换值 ⇒ 选区一起作废（它描述的是**旧文本**的字节区间）
+        $this->selAnchor = $this->caret;
+        $this->selExtent = $this->caret;
     }
 
     /** 当前文本（**已包含未提交的编辑**，与 `TextField::valueText()` 可能不同） */
@@ -99,15 +116,29 @@ final class TextFieldState extends State
     /** 退出编辑态 ⇒ 插入符消失；文本保留（不回滚 —— 回滚是调用方的事） */
     public function endEditing(): void
     {
-        if (!$this->editing) {
-            return;
+        // ★ 选区是编辑态的一部分 ⇒ **不管当前在不在编辑都收口**。早先的实现在
+        //   `!editing` 时早退，于是「不在编辑却有选区」这个状态能活下来
+        //   （屏幕上留一片来路不明的蓝，且下次进入编辑时它还在）。
+        //   smoke 的「endEditing() 清掉选区」就是那时候的红。
+        $hadSelection = $this->selAnchor !== $this->selExtent;
+        if ($hadSelection) {
+            $this->selAnchor = $this->caret;
+            $this->selExtent = $this->caret;
         }
+
+        if (!$this->editing && !$hadSelection) {
+            return;   // 两样都没有 ⇒ 真的无事发生（不标脏）
+        }
+
         $this->editing = false;
         $this->markDirty();
     }
 
     /**
      * 在插入符处插入文本（IME 提交 / 直接键入的落点，§8.4）。
+     *
+     * ★ **有选区 ⇒ 整段替换**：键入覆盖选中的文本（与各平台编辑器的默认行为
+     *   一致）。于是调用方不必先问"现在有没有选区"。
      *
      * 插入符移到插入内容的末尾。
      */
@@ -117,15 +148,29 @@ final class TextFieldState extends State
             return;
         }
 
+        if ($this->selAnchor !== $this->selExtent) {
+            $this->replaceSelection($text);
+
+            return;
+        }
+
         $this->apply(
             substr($this->buffer, 0, $this->caret) . $text . substr($this->buffer, $this->caret),
             $this->caret + strlen($text),
         );
     }
 
-    /** 退格：删掉插入符**前一个字符**（按码位，不是按字节） */
+    /**
+     * 退格：**有选区 ⇒ 删掉整段**；否则删掉插入符前一个字符（按码位，不是按字节）。
+     */
     public function deleteBackward(): void
     {
+        if ($this->selAnchor !== $this->selExtent) {
+            $this->deleteSelection();
+
+            return;
+        }
+
         $bounds = $this->boundaries();
         $previous = 0;
         foreach ($bounds as $bound) {
@@ -145,9 +190,15 @@ final class TextFieldState extends State
         );
     }
 
-    /** Delete：删掉插入符**后一个字符** */
+    /** Delete：**有选区 ⇒ 删掉整段**；否则删掉插入符后一个字符 */
     public function deleteForward(): void
     {
+        if ($this->selAnchor !== $this->selExtent) {
+            $this->deleteSelection();
+
+            return;
+        }
+
         if ($this->caret >= strlen($this->buffer)) {
             return; // 已在最后 ⇒ 无字符可删
         }
@@ -189,11 +240,16 @@ final class TextFieldState extends State
             $snapped = $bound;
         }
 
-        if ($snapped === $this->caret) {
+        // ★ 早退条件必须带着选区看：偏移没变但**有选区**时也得走下去 ——
+        //   "在同一位置再点一下取消选择"是可见变化（高亮消失）。
+        if ($snapped === $this->caret && $this->selAnchor === $this->selExtent) {
             return;
         }
 
         $this->caret = $snapped;
+        // 不带 Shift 的移动 = 折叠选区（锚点与活动端都归位到新插入符）
+        $this->selAnchor = $snapped;
+        $this->selExtent = $snapped;
         $this->markDirty();
     }
 
@@ -202,15 +258,159 @@ final class TextFieldState extends State
         $this->moveCaret(strlen($this->buffer));
     }
 
+    // ── 选区（锚点 / 活动端模型；渲染与剪贴板命令都建在它上面）──────────
+
+    /** 有没有选区（锚点 ≠ 活动端） */
+    public function hasSelection(): bool
+    {
+        return $this->selAnchor !== $this->selExtent;
+    }
+
+    /** 选区起点（两个端里小的那个 —— 展示与删除用它，别用锚点） */
+    public function selectionStart(): int
+    {
+        if ($this->selAnchor < $this->selExtent) {
+            return $this->selAnchor;
+        }
+
+        return $this->selExtent;
+    }
+
+    /** 选区终点（两个端里大的那个） */
+    public function selectionEnd(): int
+    {
+        if ($this->selAnchor > $this->selExtent) {
+            return $this->selAnchor;
+        }
+
+        return $this->selExtent;
+    }
+
+    /** 选中的文本（无选区 ⇒ 空串） */
+    public function selectedText(): string
+    {
+        if ($this->selAnchor === $this->selExtent) {
+            return '';
+        }
+
+        $start = $this->selectionStart();
+
+        return substr($this->buffer, $start, $this->selectionEnd() - $start);
+    }
+
+    /** 全选（`Ctrl+A`）；空文本没有"全选"这回事 */
+    public function selectAll(): void
+    {
+        $end = strlen($this->buffer);
+        if ($end === 0) {
+            return;
+        }
+
+        if ($this->selectionStart() === 0 && $this->selectionEnd() === $end && $this->caret === $end) {
+            return;   // 已经全选 ⇒ 无变化不重建（G2：宁可少报）
+        }
+
+        $this->selAnchor = 0;
+        $this->selExtent = $end;
+        $this->caret = $end;
+        $this->markDirty();
+    }
+
+    /** 折叠选区（两端都归位到插入符）；无选区 ⇒ 无事发生 */
+    public function clearSelection(): void
+    {
+        if ($this->selAnchor === $this->selExtent) {
+            return;
+        }
+
+        $this->selAnchor = $this->caret;
+        $this->selExtent = $this->caret;
+        $this->markDirty();
+    }
+
+    /**
+     * 扩展选区到 `$offset`（吸附到字符边界）—— Shift+方向键的手感来源。
+     *
+     * ★ **只挪活动端，锚点不动** ⇒ "从起点一路选到当前"与"从当前往回选"是同一个
+     *   模型。指针拖动框选给的也是这个形状（见 #50 的 `dispatchPointer` 分支）。
+     */
+    public function extendSelectionTo(int $offset): void
+    {
+        if ($offset < 0) {
+            $offset = 0;
+        }
+        if ($offset > strlen($this->buffer)) {
+            $offset = strlen($this->buffer);
+        }
+
+        $snapped = 0;
+        foreach ($this->boundaries() as $bound) {
+            if ($bound > $offset) {
+                break;
+            }
+            $snapped = $bound;
+        }
+
+        // 活动端没动、且本来就没选区 ⇒ 真的无事发生（连脏都不标）
+        if ($snapped === $this->selExtent && $this->selAnchor === $this->selExtent) {
+            return;
+        }
+
+        $this->caret = $snapped;
+        $this->selExtent = $snapped;
+        $this->markDirty();
+    }
+
+    /**
+     * 用 `$text` 整段替换选区；无选区 ⇒ 退化成在插入符处插入。
+     *
+     * ★ 键入 / 粘贴 / 剪切三方共用这一个落点 ⇒ 不可能走出两种语义。
+     */
+    public function replaceSelection(string $text): void
+    {
+        if ($this->selAnchor === $this->selExtent) {
+            $this->insert($text);
+
+            return;
+        }
+
+        $start = $this->selectionStart();
+        $next = substr($this->buffer, 0, $start) . $text . substr($this->buffer, $this->selectionEnd());
+
+        if ($next === $this->buffer) {
+            // 替换成同一段文本 ⇒ 缓冲没变，但选区必须收口（用户确实按了删除）
+            $caret = $start + strlen($text);
+            $this->caret = $caret;
+            $this->selAnchor = $caret;
+            $this->selExtent = $caret;
+            $this->markDirty();
+
+            return;
+        }
+
+        $this->apply($next, $start + strlen($text));
+    }
+
+    /** 删掉选区（无选区 ⇒ 无事发生） */
+    public function deleteSelection(): void
+    {
+        if ($this->selAnchor === $this->selExtent) {
+            return;
+        }
+
+        $this->replaceSelection('');
+    }
+
     /**
      * 处理一次按键（§9.1 路由链第 ③ 环落到这里）。
      *
      * ★ **映射规则**（把 `KeyEvent` 翻译成编辑动作）：
-     *   · `Backspace` / `Delete` ⇒ 按**码位**删前 / 删后
-     *   · `Left` / `Right` ⇒ 移到前 / 后一个**码位边界**
-     *     （多字节字符一步跨过去，不会停在半个字符里）
+     *   · `Backspace` / `Delete` ⇒ 有选区删**整段**，否则按码位删前 / 删后
+     *   · `Left` / `Right` ⇒ 移到前 / 后一个**码位边界**（折叠选区）
+     *   · `Shift` + `Left` / `Right` / `Home` / `End` ⇒ **扩展**选区（只挪活动端）
      *   · `Home` / `End` ⇒ 行首 / 行尾
-     *   · 带文本的按键 ⇒ 在插入符处插入
+     *   · `Ctrl+A` ⇒ 全选；`Esc` ⇒ 有选区时吃掉它
+     *   · 带文本的按键 ⇒ 在插入符处插入（有选区则整段替换）
      *   · 其余（含加速键）⇒ **返回 false**，让上层继续找别的消费者
      *
      * ★ 返回 `bool` 而不是 `void`：§9.1 的路由链要能问"这一环吃掉了没有"。
@@ -233,30 +433,13 @@ final class TextFieldState extends State
         }
 
         if ($chord->is(KeyChord::left())) {
-            // ★ 不能写成 moveCaret($this->caret - 1) 的镜像：moveCaret 吸附到
-            //   "不大于偏移的最近边界" ⇒ 向后要自己找**下一个**边界，
-            //   否则 caret 在边界上时 +1 会吸附回原地（按了没反应）。
-            $previous = 0;
-            foreach ($this->boundaries() as $bound) {
-                if ($bound >= $this->caret) {
-                    break;
-                }
-                $previous = $bound;
-            }
-            $this->moveCaret($previous);
+            $this->moveCaret($this->previousBoundary());
 
             return true;
         }
 
         if ($chord->is(KeyChord::right())) {
-            $next = strlen($this->buffer);
-            foreach ($this->boundaries() as $bound) {
-                if ($bound > $this->caret) {
-                    $next = $bound;
-                    break;
-                }
-            }
-            $this->moveCaret($next);
+            $this->moveCaret($this->nextBoundary());
 
             return true;
         }
@@ -273,13 +456,93 @@ final class TextFieldState extends State
             return true;
         }
 
+        if ($chord->is(KeyChord::ctrl('A'))) {
+            $this->selectAll();
+
+            return true;
+        }
+
+        if ($chord->is(KeyChord::shift('Left'))) {
+            // ★ Shift+方向键 = 扩展选区（只挪活动端）。与不带 Shift 的两个分支
+            //   走**同一对边界助手**，区别只在"折叠还是扩展"
+            //   （见 moveCaret / extendSelectionTo 的分工）。
+            $this->extendSelectionTo($this->previousBoundary());
+
+            return true;
+        }
+
+        if ($chord->is(KeyChord::shift('Right'))) {
+            $this->extendSelectionTo($this->nextBoundary());
+
+            return true;
+        }
+
+        if ($chord->is(KeyChord::shift('Home'))) {
+            $this->extendSelectionTo(0);
+
+            return true;
+        }
+
+        if ($chord->is(KeyChord::shift('End'))) {
+            $this->extendSelectionTo(strlen($this->buffer));
+
+            return true;
+        }
+
+        if ($chord->is(KeyChord::escape())) {
+            // 有选区 ⇒ Esc 吃掉它（各平台"取消选择"的默认键），并**消费这次按键**
+            // —— 放行会让 Application 的 activateFocused 顺手把按钮触发掉。
+            if ($this->selAnchor !== $this->selExtent) {
+                $this->clearSelection();
+
+                return true;
+            }
+
+            return false;
+        }
+
         if ($event->isText()) {
+            // 有选区时 insert() 内部走整段替换（见该方法的注释）
             $this->insert($event->text);
 
             return true;
         }
 
         return false;
+    }
+
+    /**
+     * 插入符**前一个**字符边界（0 = 已在最前）。
+     *
+     * ★ 不能写成 `moveCaret($this->caret - 1)` 的镜像：字节偏移差 1 很可能落在
+     *   多字节字符**中间**，而 `moveCaret()` 吸附到"不大于偏移的最近边界" ⇒
+     *   把 -1 吸回原地（按了没反应）。所以向左必须自己找上一个边界。
+     */
+    private function previousBoundary(): int
+    {
+        $previous = 0;
+        foreach ($this->boundaries() as $bound) {
+            if ($bound >= $this->caret) {
+                break;
+            }
+            $previous = $bound;
+        }
+
+        return $previous;
+    }
+
+    /** 插入符**后一个**字符边界（末尾 = 已在最后） */
+    private function nextBoundary(): int
+    {
+        $next = strlen($this->buffer);
+        foreach ($this->boundaries() as $bound) {
+            if ($bound > $this->caret) {
+                $next = $bound;
+                break;
+            }
+        }
+
+        return $next;
     }
 
     /**
@@ -316,6 +579,9 @@ final class TextFieldState extends State
             $this->buffer,
             $field->placeholderText(),
             $this->editing ? $this->caret : null,
+            // 选区恒给（相等即"无选区"）；焦点走开时 endEditing() 已清掉
+            $this->selectionStart(),
+            $this->selectionEnd(),
         );
 
         $label = $field->labelText();
@@ -345,6 +611,10 @@ final class TextFieldState extends State
 
         $this->buffer = $nextText;
         $this->caret = $nextCaret;
+        // 任何一次真的文本改动都折叠选区：它选中的是**旧文本**的一段，
+        // 替换之后那段字节区间已经不存在了（留着 = 高亮一片来路不明的文本）。
+        $this->selAnchor = $nextCaret;
+        $this->selExtent = $nextCaret;
 
         $handler = $this->field()->changedHandler();
         if ($handler !== null) {

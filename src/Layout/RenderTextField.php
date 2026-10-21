@@ -16,6 +16,7 @@ use Drift\Rendering\Paint;
 use Drift\Rendering\RecordingCanvas;
 use Drift\Text\Paragraph;
 use Drift\Text\TextMetricsProvider;
+use Drift\Text\Utf8;
 use Drift\Text\TextStyle;
 
 /**
@@ -38,6 +39,11 @@ use Drift\Text\TextStyle;
  *   沿父链累积平移 —— 属平台层（§8.4 的 `TextInputClient::caretRect()`）。
  *   这里只提供几何，不假装知道自己在屏幕上的位置。
  *
+ * ★ **选区**是「字节区间 → 两个 x」（`advanceAt()` 同一个换算给插入符与选区共用）：
+ *   `selectionStart` / `selectionEnd` 相等即无选区，`paint()` 直接跳过。反查
+ *   `offsetAt(float $x)` 把盒内 x 翻译回字节偏移（吸附到最近的字符边界）——
+ *   指针拖动框选靠它把"拖到哪儿"变成"选到哪个字符"。
+ *
  * @api
  */
 final class RenderTextField extends RenderBox
@@ -58,6 +64,9 @@ final class RenderTextField extends RenderBox
         private readonly ?int $caretOffset,
         private readonly Color $caretColor,
         private readonly float $caretWidth,
+        private readonly Color $selectionColor,
+        private readonly int $selectionStart,
+        private readonly int $selectionEnd,
         private readonly TextMetricsProvider $metrics,
         private readonly Scale $scale = new Scale(1.0),
     ) {
@@ -137,6 +146,73 @@ final class RenderTextField extends RenderBox
     public function caretRect(): Rect
     {
         $offset = $this->caretOffset ?? strlen($this->text);
+
+        return new Rect(
+            $this->insets->left + $this->advanceAt($offset),
+            $this->insets->top,
+            $this->caretWidth,
+            $this->lineHeight(),
+        );
+    }
+
+    /**
+     * 选区矩形（**盒内坐标**，已含内边距）；无选区 ⇒ `null`。
+     *
+     * ★ 与 `caretRect()` 共用 `advanceAt()`：插入符右边缘与选区右边缘必须是同一个
+     *   换算，否则"选到插入符处"会差出亚像素级的缝。
+     */
+    public function selectionRect(): ?Rect
+    {
+        if ($this->selectionEnd <= $this->selectionStart) {
+            return null;
+        }
+
+        return new Rect(
+            $this->insets->left + $this->advanceAt($this->selectionStart),
+            $this->insets->top,
+            $this->advanceAt($this->selectionEnd) - $this->advanceAt($this->selectionStart),
+            $this->lineHeight(),
+        );
+    }
+
+    /**
+     * 盒内 x ⇒ 最近的插入点（字节偏移，恒字符边界）。
+     *
+     * ★ 判据是"哪个字符的**中点**更近"，与 `moveCaret()` 的吸附同向（不会把
+     *   多字节字符切成半个）。指针拖动框选、以及"点一下落插入符"都用它。
+     */
+    public function offsetAt(float $x): int
+    {
+        $local = $x - $this->insets->left;
+        if ($local <= 0.0) {
+            return 0;
+        }
+
+        $length = strlen($this->text);
+        $previousOffset = 0;
+        $previousX = 0.0;
+
+        foreach (Utf8::decode($this->text) as $glyph) {
+            $bound = $glyph[1] + $glyph[2];
+            $boundX = $this->metrics->advance(substr($this->text, 0, $bound), $this->style, $this->scale);
+            if ($local <= ($previousX + $boundX) * 0.5) {
+                return $previousOffset;
+            }
+            $previousOffset = $bound;
+            $previousX = $boundX;
+        }
+
+        return $length;
+    }
+
+    /**
+     * 字节偏移 ⇒ **文本区内**的 x（已减去左内边距）。
+     *
+     * ★ `caretRect()` / `selectionRect()` / `paint()` 共用它 ⇒ 「插入符右边缘」与
+     *   「选区右边缘」不可能算出两个值。偏移夹取到 `[0, strlen]`。
+     */
+    private function advanceAt(int $offset): float
+    {
         if ($offset < 0) {
             $offset = 0;
         }
@@ -144,12 +220,7 @@ final class RenderTextField extends RenderBox
             $offset = strlen($this->text);
         }
 
-        return new Rect(
-            $this->insets->left + $this->metrics->advance(substr($this->text, 0, $offset), $this->style, $this->scale),
-            $this->insets->top,
-            $this->caretWidth,
-            $this->lineHeight(),
-        );
+        return $this->metrics->advance(substr($this->text, 0, $offset), $this->style, $this->scale);
     }
 
     /** @internal 冒烟 / 调试：解析后的字号（主题 → 这里） */
@@ -188,6 +259,21 @@ final class RenderTextField extends RenderBox
             $this->list->reset();
             (new RecordingCanvas($this->list))->drawParagraph($this->paragraph, Paint::fill($color), 0.0, 0.0);
             $this->list->replay($canvas);
+        }
+
+        // 选区画在文本**下面**：先铺色，再落字 —— 高亮是背景，不是前景
+        // （否则选中的字符会被同色墨盖掉，变成"看得见选了一块、看不出选了什么"）。
+        $selection = $this->selectionRect();
+        if ($selection !== null) {
+            $canvas->drawRect(
+                new Rect(
+                    $selection->left - $this->insets->left,
+                    $selection->top - $this->insets->top,
+                    $selection->width,
+                    $selection->height,
+                ),
+                Paint::fill($this->selectionColor),
+            );
         }
 
         if ($this->caretOffset !== null) {

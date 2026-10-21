@@ -27,10 +27,14 @@ use Drift\Input\SemanticsRole;
  *   造、渲染态由 `TextFieldState` 持 —— 三段分工见 `TextFieldBox` 的类注释。
  *
  * ★ **今天的边界**（诚实声明，不是待办清单）：编辑缓冲、插入符几何、IME 用的
- *   `caretRect()` 都在；**键盘 / 指针投递也已到位** —— `FocusManager`（`Drift\App`）
- *   收焦点链、做命中测试，把 `KeyEvent` 转成 `TextFieldState::handleKey()`。声明面
- *   就是基类的 `->focusOrder()` / `->skipFocus()` / `->claimKeys()`（`TextField`
- *   天然 `isFocusable()`，构造时已 `markFocusable()`）。
+ *   `caretRect()`、**选区与编辑命令**都在 —— 选区是「锚点 + 活动端」两个字节偏移
+ *   （`TextFieldState`，Shift+方向键扩展 / 不带 Shift 折叠），`Shift+Left/Right/
+ *   Home/End`、`Ctrl+A`、`Esc` 吃选区已接通；`Ctrl+C/V/X`（剪贴板）归
+ *   `Application` 层（§5.1：`State` 拿不到平台）。**键盘 / 指针投递也已到位** ——
+ *   `FocusManager`（`Drift\App`）收焦点链、做命中测试，把 `KeyEvent` 转成
+ *   `TextFieldState::handleKey()`。声明面就是基类的 `->focusOrder()` /
+ *   `->skipFocus()` / `->claimKeys()`（`TextField` 天然 `isFocusable()`，构造时已
+ *   `markFocusable()`）。
  *   **仍未到位**：IME 组合期（§9.1 路由链第 ② 环）、`AcceleratorTable`（第 ① 环）、
  *   `CursorShape`（命中三方消费的第三项）—— 那些要平台层，属 M3 之后。
  *

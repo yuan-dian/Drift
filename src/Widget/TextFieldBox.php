@@ -7,6 +7,7 @@ use Drift\Geometry\EdgeInsets;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderTextField;
 use Drift\Rendering\BoxStyle;
+use Drift\Rendering\Color;
 use Drift\Rendering\ColorToken;
 use Drift\Rendering\MetricToken;
 use Drift\Text\TextRole;
@@ -33,14 +34,21 @@ final class TextFieldBox extends RenderBoxWidget
         private readonly string $text,
         private readonly string $placeholder,
         private readonly ?int $caretOffset,
+        private readonly int $selectionStart,
+        private readonly int $selectionEnd,
     ) {
         parent::__construct();
     }
 
     /** @internal 由 `TextFieldState::build()` 调 */
-    public static function make(string $text, string $placeholder, ?int $caretOffset): self
-    {
-        return new self($text, $placeholder, $caretOffset);
+    public static function make(
+        string $text,
+        string $placeholder,
+        ?int $caretOffset,
+        int $selectionStart,
+        int $selectionEnd,
+    ): self {
+        return new self($text, $placeholder, $caretOffset, $selectionStart, $selectionEnd);
     }
 
     public function text(): string
@@ -56,6 +64,16 @@ final class TextFieldBox extends RenderBoxWidget
     public function caretOffset(): ?int
     {
         return $this->caretOffset;
+    }
+
+    public function selectionStart(): int
+    {
+        return $this->selectionStart;
+    }
+
+    public function selectionEnd(): int
+    {
+        return $this->selectionEnd;
     }
 
     public function createRenderObject(BuildContext $context): RenderBox
@@ -88,6 +106,16 @@ final class TextFieldBox extends RenderBoxWidget
             $this->caretOffset,
             $context->color(ColorToken::Text),
             $border,
+            // 选区高亮：强调色向画布色混 72%（不透明混色，不用 alpha —— 软/硬两个
+            // 后端对半透明的处理不一致，§14.1 的后端等价性就不能挂在运气上）。
+            // 主题换了表就自动跟随，控件一行不改。
+            Color::lerp(
+                $context->color(ColorToken::Accent),
+                $context->color(ColorToken::Pane),
+                0.72,
+            ),
+            $this->selectionStart,
+            $this->selectionEnd,
             $context->metrics(),
         );
     }
