@@ -181,22 +181,31 @@ public const ALL_MASK = self::CAP_ELLIPSE | self::CAP_LINE
 
 ---
 
-## 9. 修复（已在 fork 落地，未合上游）
+## 9. 修复（已按上游 PR 标准备好分支，待提交）
 
-`1a9d77d1`，`src/CompilerBase.php`，在 `findNativeClassConst()` 的 value 内联前加一道闸：
+### 9.1 分支与提交
+
+- 分支：`fix/class-const-expr-inline-tmpvars`（单提交，自 `origin/master` @ `06851fb5` 起）
+- 提交：`fix(compiler): fall back to Zend lookup for expression-valued class constants`
+  （提交信息体为英文、72 列换行 + `Validation:` 段，格式对齐仓内最近提交；代码注释同步改为英文，与原文件注释风格一致）
+- 变更：3 文件 / +74 行 —— `src/CompilerBase.php`（本节的闸）+ 新增 PHPUnit codegen 回归测试 2 文件
+- master 上原中文提交 `1a9d77d1` **已撤销**（master 现与 `origin/master` 齐平）
+
+### 9.2 补丁（`src/CompilerBase.php`，`findNativeClassConst()` 的 value 内联前）
 
 ```diff
 @@ -3400,6 +3400,16 @@ abstract class CompilerBase implements PropertyAccessContext
              if (!$constDef->codegenFinalized) {
                  return false;
              }
-+            // ★ 常量初值若在 parse 时产生了 materialize 临时量（如 value 串里
-+            //   出现 tmp_var_N），那些临时量的声明与赋值只存在于 arrayExpr 的
-+            //   prelude 里，且和数组常量一起发射 —— 在这里把 value 内联进**获取方
-+            //   的函数体**，等于引用一批不存在的局部量（C2065 / C2593，2026-10-20
-+            //   实证：CanvasCapabilities::ALL_MASK = 若干 CAP_* 的 | 运算）。
-+            //   正确做法是回落 Zend 类常量查表：注册处声明的是**已求值的字面量**
-+            //   （ZVAL_LONG 511），查表既正确又有转换期缓存。
++            // A constant initializer that parse lowered into materialize
++            // temporaries (tmp_var_N) cannot be inlined: those temporaries are
++            // declared and assigned only in arrayExpr's prelude, which is
++            // emitted together with array constants. Inlining the value string
++            // into the fetching function references locals that do not exist
++            // there (C2065 / C2593). Fall back to the Zend class-constant
++            // lookup instead: it reads the already-evaluated literal that was
++            // registered for the constant and is cached in the convert phase.
 +            if ($constDef->arrayExpr !== '' || str_contains($constDef->value, 'tmp_var_')) {
 +                return false;
 +            }
@@ -207,11 +216,21 @@ public const ALL_MASK = self::CAP_ELLIPSE | self::CAP_LINE
 
 **为什么这样修**：`return false` 会走函数既有 fallthrough —— 即 `php::constant(ce, name)` 的 Zend 类常量查表（与 forward-ref 回落同型）。注册处（`Translator`）声明的常量值是求值器算出的**字面量**，查表既正确又带转换期缓存，不损失内联的意义（内联本来是为了省一次查表，而这里已经不可安全内联）。
 
-**验证**：Drift2 bench 应用 AOT 构建从 `C2065` 转为 `✓ bench.exe`（7.6 MB）；Drift2 smoke 797/0。
+**回归测试**（新增 2 文件，PHPUnit codegen 夹具，便宜、无需 MSVC）：
 
-**请上游做的两件事**：
-1. **补一条 phpt** 覆盖"表达式求值的类常量在方法体内获取"（本仓此前无此形态的测试）；
-2. （可选）在 `--dry` 路径对"内联的 value 串含 `tmp_var_`"做一次自检并报警，让这类问题不等真编译就暴露。
+- `phpunit/code/class-constant-expression-inline.php`：同类里放一个字面量常量 `CAP_A = 1` 与一个表达式常量 `ALL_MASK = CAP_A | CAP_B`，两个方法分别读取。
+- `phpunit/src/ClassConstantExpressionInlineTest.php`：断言**叶子常量仍被内联**（方法体是 `= (1L+);`、无 `php::constant(`），而**表达式常量走 Zend 查表**（方法体含 `php::constant(`、且不含 `php::Var(tmp_var_N)`）。
+
+**验证（全部真跑）**：
+
+1. 新测试在父提交 `06851fb5`（未修）上**失败**，失败正文就是 `tmp_var_0 = (((php::Var(tmp_var_0)) | (php::Var(tmp_var_1))))`；带闸后通过。
+2. 拆掉闸（保持测试）再跑 ⇒ 同样失败 ⇒ 该测试**确实抓得住这个 bug**，不是摆设。
+3. **完整 PHPUnit 套件**（排除 `Build` 目录与被 Linux-only `exit(1)` 中断的 `CompilerBaseApiTest`）：修复分支与 master 的失败清单**逐条一致**（各 143 条：37 errors / 106 failures / 111 warnings），唯一的差量就是新增的这 1 个测试 / 7 条断言 ⇒ **零回归**。
+4. Drift2 bench 应用 AOT 构建从 `C2065` 转为 `✓ bench.exe`（7.6 MB）；Drift2 smoke 797/0。
+
+**还需要上游做的两件事**：
+1. **合并该 PR**（`fix/class-const-expr-inline-tmpvars`）；
+2. （可选）若要 phpt 覆盖，可基于同一 fixture 再补一条 —— 那需要自举编译器；另外建议给 `--dry` 路径加一次"内联值串含 `tmp_var_`"的自检，让这类问题不等真编译就暴露。
 
 ---
 
