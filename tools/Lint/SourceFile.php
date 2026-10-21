@@ -321,7 +321,13 @@ final class SourceFile
         if ($fqn === '') {
             return;
         }
-        $short = $alias ?? substr($fqn, (int) strrpos($fqn, '\\') + 1);
+        // ★ `strrpos` 找不到分隔符时返回 **false**，`(int) false === 0` ⇒
+        //   `substr($fqn, 1)` 会把首字母吃掉：`use \Override;` 登记的别名键曾是 `verride`
+        //   ⇒ `resolveName('Override')` 查不到，落回"同命名空间回退"。
+        //   2026-10-21 修（写 `attribute-unqualified` 夹具时撞到；本仓 src/ 零处
+        //   `use \X;` 所以一直潜伏）。
+        $sep = strrpos($fqn, '\\');
+        $short = $alias ?? ($sep === false ? $fqn : substr($fqn, $sep + 1));
         $this->uses[strtolower($short)] = $fqn;
 
         // ★ import 本身就是一次引用：依赖方向与 internal-leak 主要靠它判 ——

@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Dev\Lint;
 
 use Drift\Dev\Lint\Rules\AliasMutate;
+use Drift\Dev\Lint\Rules\AttributeUnqualified;
 use Drift\Dev\Lint\Rules\CachedSubscriber;
 use Drift\Dev\Lint\Rules\DeadCommand;
 use Drift\Dev\Lint\Rules\DeadSubscription;
@@ -51,6 +52,8 @@ final class Linter
             new NestedSubscribe(),
             // instanceof 漏 use（2026-10-19：静默恒 false 缺陷模式，本仓咬过 ≥3 次）
             new InstanceofMissingUse(),
+            // 内建编译期注解漏 \（2026-10-21 W0/A0：`#[Override]` 解析成 `当前命名空间\Override`，静默无效）
+            new AttributeUnqualified(),
         ]);
     }
 

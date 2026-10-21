@@ -78,6 +78,12 @@ function drift_lint_selftest(string $root, Linter $linter): bool
         'instanceof-missing-use' => [
             'apps/InstanceofBad.php:' . Diagnostic::ERROR,
         ],
+        // 内建编译期注解漏 \（2026-10-21 W0/A0）
+        'attribute-unqualified' => [
+            'apps/AttributeBad.php:' . Diagnostic::ERROR,
+            'apps/AttributeBad.php:' . Diagnostic::ERROR,
+            'apps/AttributeBad.php:' . Diagnostic::ERROR,
+        ],
     ];
 
     $ok = true;
