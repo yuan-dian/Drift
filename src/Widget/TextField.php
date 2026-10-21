@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Widget;
 
+use Drift\Input\KeyChord;
 use Drift\Input\SemanticsRole;
 
 /**
@@ -29,14 +30,18 @@ use Drift\Input\SemanticsRole;
  * ★ **今天的边界**（诚实声明，不是待办清单）：编辑缓冲、插入符几何、IME 用的
  *   `caretRect()`、**选区与编辑命令**都在 —— 选区是「锚点 + 活动端」两个字节偏移
  *   （`TextFieldState`，Shift+方向键扩展 / 不带 Shift 折叠），`Shift+Left/Right/
- *   Home/End`、`Ctrl+A`、`Esc` 吃选区已接通；`Ctrl+C/V/X`（剪贴板）归
- *   `Application` 层（§5.1：`State` 拿不到平台）。**键盘 / 指针投递也已到位** ——
- *   `FocusManager`（`Drift\App`）收焦点链、做命中测试，把 `KeyEvent` 转成
- *   `TextFieldState::handleKey()`。声明面就是基类的 `->focusOrder()` /
- *   `->skipFocus()` / `->claimKeys()`（`TextField` 天然 `isFocusable()`，构造时已
- *   `markFocusable()`）。
- *   **仍未到位**：IME 组合期（§9.1 路由链第 ② 环）、`AcceleratorTable`（第 ① 环）、
- *   `CursorShape`（命中三方消费的第三项）—— 那些要平台层，属 M3 之后。
+ *   Home/End`、`Ctrl+A`、`Esc` 吃选区已接通；`Ctrl+C/X/V`（剪贴板）由
+ *   `Application` 的**编辑命令环**处理（§5.1：`State` 拿不到平台；环在加速键
+ *   之前，门控不满足整族回落 —— 没有剪贴板时它们不是死键）。**指针框选同住
+ *   那里**（`dispatchPointer` 三相位：down 落插入符 / move 延伸 / up·leave 收口）。
+ *   **键盘 / 指针投递也已到位** —— `FocusManager`（`Drift\App`）收焦点链、
+ *   做命中测试，把 `KeyEvent` 转成 `TextFieldState::handleKey()`。构造时已
+ *   `markFocusable()` + 声明独占 `Ctrl+A`（IBeam 光标由 `TextFieldBox` 声明 ——
+ *   `Element::syncBox()` 的落盒机制只认**自己产盒**的 Widget，`StatefulWidget`
+ *   的声明落不到盒上）。
+ *   **仍未到位**：IME 组合期（§9.1 路由链第 ② 环）—— 它要平台层，属 M3 之后。
+ *   （`CursorShape` 已通：命中链解析 → `dispatchInput()` 返回 → 组合根喂
+ *   `WindowHost::setCursor()`；字段自己声明 IBeam。）
  *
  * @api
  */
@@ -54,6 +59,9 @@ final class TextField extends StatefulWidget
         $this->markFocusable();
         // §9 无障碍：文本框进语义树（name 由 `label()` 给，value 由 `value()` 跟）
         $this->semantics(SemanticsRole::TextField);
+        // §9.1 让位规则 ②：`Ctrl+A`（全选）归编辑命令 —— 声明独占后加速键
+        // 不给它抢（焦点在输入框时 `claims()` 为真，第 ① 环让位）。
+        $this->claimKeys([KeyChord::ctrl('A')]);
     }
 
     /** 唯一入口 —— 必填项由链式给（`value()` 才是必填，`make()` 不吃参数，§A.2.9） */

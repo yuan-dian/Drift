@@ -45,6 +45,8 @@ use Drift\Dev\Preview\FormPage;
 use Drift\Dev\Preview\Renderer;
 use Drift\Dev\Preview\SvgSurface;
 use Drift\Dev\Smoke\App\AccelApplication;
+use Drift\Dev\Smoke\App\EditApplication;
+use Drift\Dev\Smoke\App\FakeClipboard;
 use Drift\Dev\Smoke\App\CompositeRootApp;
 use Drift\Dev\Smoke\App\CountJob;
 use Drift\Dev\Smoke\App\MenuApplication;
@@ -5407,6 +5409,187 @@ $claimApp->dispatchInput(KeyEvent::down(KeyChord::ctrl('R')));
 check(
     '加速键 · 未独占的组合照常命中（Ctrl+R 仍走第 ① 环）',
     $claimApp->seen === ['accel.fire'],
+);
+
+// ★ 2026-10-21：`TextField` 构造时自带 `claimKeys([ctrl('A')])` —— 让位规则 ②
+//   的**第一个生产消费者**（此前 claims() 只有夹具在声明）。不带 withClaimer
+//   也照样让位，且键真的落到 `TextFieldState::handleKey()`（全选发生）。
+$prodApp = new AccelApplication();
+$prodApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
+$prodApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
+$prodApp->dispatchInput(KeyEvent::down(KeyChord::ctrl('A')));
+$prodEl = findElement($prodApp->rootElement(), fn(Element $el) => $el->widget() instanceof TextField);
+$prodState = $prodEl instanceof StatefulElement ? $prodEl->state() : null;
+check(
+    '让位规则② · TextField 自带 Ctrl+A 独占（让位给输入框，且全选真的发生）',
+    $prodApp->seen === [] && $prodState instanceof TextFieldState
+        && $prodState->selectionStart() === 0 && $prodState->selectionEnd() === 3,
+    'seen=[' . implode(',', $prodApp->seen) . '] sel='
+        . ($prodState?->selectionStart() ?? -1) . '..' . ($prodState?->selectionEnd() ?? -1),
+);
+
+// H. 编辑命令环 + 指针框选（2026-10-21，#50：§9.1 让位规则 ② 的剪贴板侧）
+//    夹具应用：padding24 里两个字段（abc / xyz），Ctrl+C / Ctrl+V **另绑**
+//    加速键 ⇒ 门控放行时它们必须开火（证明键没被吞），环吃掉时 seen 必须
+//    不动（证明优先级正确）。
+$editApp = new EditApplication();
+$editApp->clip = new FakeClipboard();
+$editApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(300.0, 200.0)));
+$editApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
+$editEl = findElement($editApp->rootElement(), fn(Element $el) => $el->widget() instanceof TextField);
+$editState = $editEl instanceof StatefulElement ? $editEl->state() : null;
+check(
+    '编辑命令 · Tab 焦点进第一个字段（编辑态同步开）',
+    $editState instanceof TextFieldState && $editState->isEditing(),
+    var_export($editState instanceof TextFieldState, true),
+);
+
+// —— 门控 ④（C/X 无选区）⇒ 整族回落给加速键
+$editApp->dispatchInput(KeyEvent::down(KeyChord::ctrl('C')));
+check(
+    '编辑命令 · 无选区（门控④）⇒ Ctrl+C 回落加速键（键没被吞）',
+    $editApp->seen === ['app.copy'] && $editApp->clip->text === '',
+    'seen=[' . implode(',', $editApp->seen) . '] clip=' . var_export($editApp->clip->text, true),
+);
+
+// —— Ctrl+A：让位后的键落点（不进加速键，全选发生）
+$editApp->dispatchInput(KeyEvent::down(KeyChord::ctrl('A')));
+check(
+    '编辑命令 · Ctrl+A 归输入框（加速键不吃，全选 [0,3]）',
+    $editState?->selectionStart() === 0 && $editState?->selectionEnd() === 3
+        && $editApp->seen === ['app.copy'],
+    'sel=' . ($editState?->selectionStart() ?? -1) . '..' . ($editState?->selectionEnd() ?? -1),
+);
+
+// —— 环吃掉：复制（有选区 + 有剪贴板）
+$editApp->dispatchInput(KeyEvent::down(KeyChord::ctrl('C')));
+check(
+    '编辑命令 · 有选区 + 有剪贴板 ⇒ 复制进剪贴板，加速键不吃',
+    $editApp->clip->text === 'abc' && $editApp->seen === ['app.copy'],
+    'clip=' . var_export($editApp->clip->text, true) . ' seen=[' . implode(',', $editApp->seen) . ']',
+);
+
+// —— 剪切：写剪贴板 + 删掉选区（不等同于复制）
+$editApp->dispatchInput(KeyEvent::down(KeyChord::ctrl('X')));
+check(
+    '编辑命令 · 剪切 = 写剪贴板 + 删掉选区（字段空了）',
+    $editApp->clip->text === 'abc' && $editState?->text() === '',
+    'clip=' . var_export($editApp->clip->text, true) . ' text=' . var_export($editState?->text(), true),
+);
+
+// —— 粘贴：替换选区（此处无选区 ⇒ 插在插入符）
+$editApp->clip->text = 'XY';
+$editApp->dispatchInput(KeyEvent::down(KeyChord::ctrl('V')));
+check(
+    '编辑命令 · 粘贴把剪贴板内容写进字段（加速键不吃）',
+    $editState?->text() === 'XY' && $editApp->seen === ['app.copy'],
+    'text=' . var_export($editState?->text(), true) . ' seen=[' . implode(',', $editApp->seen) . ']',
+);
+
+// —— 门控 ③（平台没递剪贴板）⇒ 有选区也回落
+$noClipApp = new EditApplication();
+$noClipApp->clip = null;
+$noClipApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(300.0, 200.0)));
+$noClipApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
+$noClipApp->dispatchInput(KeyEvent::down(KeyChord::ctrl('A')));
+$noClipApp->dispatchInput(KeyEvent::down(KeyChord::ctrl('C')));
+check(
+    '编辑命令 · 平台没递剪贴板（门控③）⇒ 有选区也回落给加速键',
+    $noClipApp->seen === ['app.copy'],
+    'seen=[' . implode(',', $noClipApp->seen) . ']',
+);
+
+// —— 门控 ④（V 的剪贴板空）⇒ 回落
+$emptyClipApp = new EditApplication();
+$emptyClipApp->clip = new FakeClipboard();   // text='' ⇒ hasText() false
+$emptyClipApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(300.0, 200.0)));
+$emptyClipApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
+$emptyClipApp->dispatchInput(KeyEvent::down(KeyChord::ctrl('V')));
+$emptyEl = findElement($emptyClipApp->rootElement(), fn(Element $el) => $el->widget() instanceof TextField);
+$emptyState = $emptyEl instanceof StatefulElement ? $emptyEl->state() : null;
+check(
+    '编辑命令 · 剪贴板空（门控④）⇒ Ctrl+V 回落加速键，字段不动',
+    $emptyClipApp->seen === ['app.paste'] && $emptyState?->text() === 'abc',
+    'seen=[' . implode(',', $emptyClipApp->seen) . '] text=' . var_export($emptyState?->text(), true),
+);
+
+// —— 门控 ②（焦点不在输入框）⇒ 回落
+$idleApp = new EditApplication();
+$idleApp->clip = new FakeClipboard();
+$idleApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(300.0, 200.0)));
+$idleApp->dispatchInput(KeyEvent::down(KeyChord::ctrl('C')));
+check(
+    '编辑命令 · 无焦点（门控②）⇒ 整族回落给加速键',
+    $idleApp->seen === ['app.copy'],
+    'seen=[' . implode(',', $idleApp->seen) . ']',
+);
+
+// —— 指针框选（§A.2.9 的指针侧）：down 落插入符 / move 延伸 / up·leave 收口
+$selApp = new EditApplication();
+$selApp->clip = new FakeClipboard();
+$selApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(300.0, 200.0)));
+$selEl = findElement($selApp->rootElement(), fn(Element $el) => $el->widget() instanceof TextField);
+$selState = $selEl instanceof StatefulElement ? $selEl->state() : null;
+$selBox = $selEl?->effectiveBox();
+check(
+    '框选 · 夹具就绪（字段盒在 padding 24 处，宽度由内容定）',
+    $selBox instanceof RenderTextField && boxOrigin($selBox) === [24.0, 24.0],
+    'origin=' . implode(',', $selBox === null ? [] : boxOrigin($selBox)),
+);
+[$bx, $by] = boxOrigin($selBox);
+$bw = $selBox->size()->width;   // 字段盒宽（点"右端"必须点在盒内 —— 盒外焦点落不上）
+
+$selApp->dispatchInput(PointerEvent::down($bx + 1.0, $by + 1.0));
+check(
+    '框选 · down 落左边缘 ⇒ 插入符 0、无选区（点一下不继承旧选区）',
+    $selState?->caretOffset() === 0 && $selState?->hasSelection() === false,
+    'caret=' . ($selState?->caretOffset() ?? -1) . ' sel=' . var_export($selState?->hasSelection(), true),
+);
+
+$selApp->dispatchInput(PointerEvent::move($bx + 200.0, $by + 4.0));
+check(
+    '框选 · 向右拖 ⇒ 选区延伸到末尾（[0,3]，selectedText 完整）',
+    $selState?->selectionStart() === 0 && $selState?->selectionEnd() === 3
+        && $selState?->selectedText() === 'abc',
+    'sel=' . ($selState?->selectionStart() ?? -1) . '..' . ($selState?->selectionEnd() ?? -1),
+);
+
+$selApp->dispatchInput(PointerEvent::up($bx + 200.0, $by + 4.0));
+$selApp->dispatchInput(PointerEvent::move($bx + 250.0, $by + 4.0));
+check(
+    '框选 · up 收口后再 move 不延伸（手势结束，选区留在字段里）',
+    $selState?->selectionStart() === 0 && $selState?->selectionEnd() === 3
+        && $selState?->selectedText() === 'abc',
+    'sel=' . ($selState?->selectionStart() ?? -1) . '..' . ($selState?->selectionEnd() ?? -1),
+);
+
+// 反向：点在右端（折叠）⇒ 向左拖 ⇒ 活动端在左；leave 收口后不再延伸
+$selApp->dispatchInput(PointerEvent::down($bx + $bw - 1.0, $by + 4.0));
+check(
+    '框选 · 再点一次 ⇒ 旧选区折叠、插入符移到点中处',
+    $selState?->caretOffset() === 3 && $selState?->hasSelection() === false,
+    'caret=' . ($selState?->caretOffset() ?? -1) . ' sel=' . var_export($selState?->hasSelection(), true),
+);
+$selApp->dispatchInput(PointerEvent::move($bx + 1.0, $by + 4.0));
+check(
+    '框选 · 反向拖动同样成选区（活动端在左，[0,3]）',
+    $selState?->selectionStart() === 0 && $selState?->selectionEnd() === 3,
+    'sel=' . ($selState?->selectionStart() ?? -1) . '..' . ($selState?->selectionEnd() ?? -1),
+);
+$selApp->dispatchInput(PointerEvent::leave($bx + 1.0, $by + 4.0));
+$selApp->dispatchInput(PointerEvent::move($bx + 200.0, $by + 4.0));
+check(
+    '框选 · leave 收口后再 move 不延伸（指针无捕获的诚实边界）',
+    $selState?->selectionStart() === 0 && $selState?->selectionEnd() === 3
+        && $selState?->selectedText() === 'abc',
+    'sel=' . ($selState?->selectionStart() ?? -1) . '..' . ($selState?->selectionEnd() ?? -1),
+);
+
+$selCursor = $selApp->dispatchInput(PointerEvent::move($bx + 2.0, $by + 2.0));
+check(
+    '光标 · 指针移入字段 ⇒ IBeam（§9.1 三方消费第三项）',
+    $selCursor === CursorShape::IBeam,
+    var_export($selCursor, true),
 );
 
 // ── ㉞ 菜单 / 浮层 / 拖放（任务 #6：O-20 方案 A + §9.1 关闭语义 + §A.3.5）──

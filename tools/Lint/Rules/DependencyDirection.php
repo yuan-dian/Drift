@@ -43,6 +43,12 @@ final class DependencyDirection implements Rule
      *        例外会一路扩散到 `Platform\<Os>\` 的每一个文件。
      *        ⇒ 这不是"给 Platform 开后门"，而是 §4.3 的表把 Platform 的**出口**
      *          当成了入口来登记（表中 `Platform` 行只写了"输入侧"）。
+     *
+     *   ③ `App` 行（2026-10-21 补）：§4.3 原表写「`App | 全部 | apps`」而这里
+     *      没有对应行 —— 之前靠 `check()` 的"表里没有就跳过"顺带放行（行为
+     *      等价，但表与文档不一致，读代码的人无法确认这个放行是有意的）。
+     *      显式列出全部层 ⇒ 放行是**写下来的决定**，且 `App` 文件从此也参与
+     *      检查（将来若要把某条边收紧，改这一行就有抓手）。
      */
     private const ALLOWED = [
         'Geometry'  => ['Geometry', 'Errors'],
@@ -56,6 +62,7 @@ final class DependencyDirection implements Rule
         'Commands'  => ['Commands', 'Geometry', 'Errors', 'State'],
         'Theme'     => ['Theme', 'Widget', 'Layout', 'State', 'Text', 'Geometry', 'Rendering', 'Input', 'Errors'],
         'Routing'   => ['Routing', 'Widget', 'Layout', 'State', 'Text', 'Geometry', 'Rendering', 'Input', 'Errors'],
+        'App'       => ['App', 'Geometry', 'Platform', 'Text', 'Rendering', 'Input', 'Widget', 'Layout', 'State', 'Commands', 'Theme', 'Routing', 'Errors'],
     ];
 
     /**

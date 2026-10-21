@@ -10,6 +10,7 @@ use Drift\Input\AcceleratorTable;
 use Drift\Input\KeyChord;
 use Drift\Widget\Center;
 use Drift\Widget\Column;
+use Drift\Widget\Element;
 use Drift\Widget\Text;
 use Drift\Widget\TextField;
 use Drift\Widget\Widget;
@@ -27,9 +28,15 @@ final class AccelApplication extends Application
 
     public bool $withClaimer = false;
 
+    /** 夹具用：断言要读字段的选区状态（同 `TfApplication` 形态） */
+    public function rootElement(): ?Element
+    {
+        return $this->root;
+    }
+
     public function buildRoot(): Widget
     {
-        $field = TextField::make();
+        $field = TextField::make()->value('abc');
         if ($this->withClaimer) {
             $field->claimKeys([KeyChord::ctrl('A')]);
         }

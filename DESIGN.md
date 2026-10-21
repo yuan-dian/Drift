@@ -793,7 +793,7 @@ Platform 原始事件（PointerEvent / KeyEvent / ImeEvent / ScrollEvent / Theme
 | **手势** | `GestureArena`：多个识别器可同时竞争（拖动中的 tap 让位），胜出者独占直到手势结束；识别器是**无状态的判定函数 + arena 成员资格**，不是每控件一份定时器。★ **2026-10-18 已落地**：`GestureArena` + `GestureRecognizer`（`Drift\Input`，@internal）—— `Application` down 分支仅当命中链有 `Draggable` 声明者时开 arena（成员 Tap + Drag），Drag 过阈值 claim ⇒ Tap 让位，无人 claim ⇒ up 第一个成员胜（Flutter 同口径）；激活因此从 down 推迟到裁决，修"拖可拖控件时命令在 down 先响"，零平台改动、可头侧断言 |
 | **指针捕获** | 按下即捕获（Win32 只把鼠标消息发给光标下的窗口 ⇒ 不捕获则按下态永不释放、拖拽永不结束）；`WindowHost::setCapture()` |
 | **光标形状** | `RenderObject` 声明 `cursor`（`CursorShape` backed enum：`Default`/`IBeam`/`PointingHand`/`SizeAll`/`SizeNS`/`SizeWE`/`Wait`/`NotAllowed`）；`EventLoop` 在 `WM_SETCURSOR` 时问**命中链**，取最深声明者 ⇒ `WindowHost::setCursor()`。**不给控件开自绘光标的口子**（自绘光标要自己画、自己跟帧，得不偿失） |
-| **快捷键 / 加速键** | `Drift\Input\AcceleratorTable`，挂在 `Application` 上（**应用级数据，不是平台能力** ⇒ 零新端口）。`EventLoop` 在派发 `KeyEvent` **之前**查表。冲突处理两条：① **IME 组合期不吃快捷键**（否则中文输入会误触）；② **编辑命令优先**：`TextInputClient` 可声明独占键集（`Ctrl+A/C/V/X/Z`），命中时让位给输入框 |
+| **快捷键 / 加速键** | `Drift\Input\AcceleratorTable`，挂在 `Application` 上（**应用级数据，不是平台能力** ⇒ 零新端口）。`EventLoop` 在派发 `KeyEvent` **之前**查表。冲突处理两条：① **IME 组合期不吃快捷键**（否则中文输入会误触）；② **编辑命令优先**：`TextInputClient` 可声明独占键集（`Ctrl+A/C/V/X/Z`），命中时让位给输入框。★ **2026-10-21 修正（#50 落地后的实况）**：`C/V/X` **不经 `claimKeys` 声明独占**，改由 `Application::dispatchEditCommand()` 的**编辑命令环**处理 —— 环在加速键**之前**，四条门控（焦点是编辑中的 `TextFieldState` / 平台递了剪贴板 / C·X 有选区 / V 剪贴板有文本）任一不满足 ⇒ 整族**回落**给加速键（不吞键 ⇒ 没有剪贴板时 `Ctrl+C` 仍能被应用绑成"复制选中行"之类自己的命令 —— "声明独占却没人接"让键失效，正是这条规则想避免的）。`Ctrl+A` 由 `TextField` **构造时**声明独占（让位规则 ② 的**第一个生产消费者**）⇒ 全选归 `TextFieldState::handleKey()`（单一真相源）。`Ctrl+Z`（撤销）未实现 ⇒ 不声明。指针框选（down/move/up 三相位）同住 `Application` |
 | **菜单** | **自绘控件**（`MenuBar` / `Menu` / `MenuItem` / `ContextMenu`），零平台端口。原生菜单栏**明确不做**（理由见 §5.1）。★ **打开形态 = 第二棵根渲染树**（O-20 已裁，机制详见 §5.1 裁决 1）：浮层挂 `Application`（`?Widget $menuWidget` + `?Element $menuElement`，与 `$root` 同构），paint 在主树之后（**绘制顺序即层叠，无 z-index**），指针事件**先选根树**；关闭语义四条：点浮层外 ⇒ 关且**吞掉该次按下** / 抬起在浮层上 ⇒ 命令分发**之后**才关 / **ESC 在 `dispatchKey` 之前**拦 / 浮层开着时**滚轮吞**。上下文菜单入口 = **右键最小集**（`PointerEvent` button；★ 不依赖 `GestureArena` —— 它 0 文件，“已支持”是旧文档误记，2026-10-16 随 O-20 改正。★ **实现已落地**（2026-10-16）：`dispatchInput()` 指针分支先选根树 + 沿命中 Element 父链找最近的 `contextMenuValue()` 声明者；**位移阈值消歧缺席** —— 那要 `move` 事件（M4），当前 `down` 即弹） |
 | **焦点** | `FocusNode`；焦点是**渲染态**（不放业务值） |
 | **焦点遍历顺序** | 默认 = **文档序（深度优先）**，与 Flutter / Qt 一致。容器可 `->skipFocus()` 整体跳过（如 AppBar 工具按钮组，**显式**，不隐式）。需定制时用 `->focusOrder(int)`，同一父容器内**稳定排序**。★ **lint 判据**：同一容器内混用"有 `focusOrder`"与"无 `focusOrder`"的子节点 ⇒ 报错（否则隐式相对顺序有歧义，属 G2） |
@@ -817,6 +817,8 @@ Platform 原始事件（PointerEvent / KeyEvent / ImeEvent / ScrollEvent / Theme
 // ✅ `AcceleratorTable` 已落地（2026-10-16，§4.2 `src/Input/` 行）—— 形状即此。
 //   让位规则 ②（编辑命令优先）在 `Application::dispatchInput()` 接线：
 //   焦点控件 `claimKeys()` 声明独占的组合 ⇒ 不吃快捷键。
+//   ★ 2026-10-21（#50）：`TextField` 构造时**自带** `Ctrl+A` 独占；`Ctrl+C/X/V`
+//     不走这里 —— 归加速键之前的**编辑命令环**，门控不满足整族回落（见 §24.2 #32）。
 final class UsersApplication extends Application
 {
     public function accelerators(): AcceleratorTable
@@ -5501,9 +5503,12 @@ Row::make()->contextMenu(
     ])
 )
 
-// ④ 输入框声明独占键集（编辑命令优先于加速键）
-TextField::make()->claimKeys([KeyChord::ctrl('A'), KeyChord::ctrl('C'),
-                              KeyChord::ctrl('V'), KeyChord::ctrl('X'), KeyChord::ctrl('Z')])
+// ④ 输入框的编辑命令（2026-10-21 #50 实况，§24.2 #32）：
+//   · `Ctrl+A`（全选）由 `TextField` **构造时自带** claimKeys 声明独占 —— 应用不用写
+//   · `Ctrl+C/X/V`（复制/剪切/粘贴）**不要**在这里声明：归 `Application` 的编辑命令环
+//     （在加速键之前，四条门控任一不满足整族回落）⇒ 应用仍能把它们绑给自己的命令。
+//     在这里声明却连着没剪贴板的平台 ⇒ 死键（没人接、也不落给加速键）。
+TextField::make()   // Ctrl+A 已内置；C/V/X 不用（也不该）声明
 ```
 
 ### A.3.2 光标形状（命中一次、三方消费）
@@ -5760,3 +5765,4 @@ return new UserStore(new MemoryUserSource([
 1. `grep` 本文有没有写过（防"我撞上了"≠"文档没有"）；
 2. 查 `HISTORY.md §1` 的作废表（防从旧文档或 GUI 仓过时注释里捡回已证伪的结论）。
 | 31 | ✅ **已闭环（2026-10-21）—— 文本选区模型 + 键盘命令 + 选区渲染**（`TextField` 三件套的第二步；剪贴板端口与 Ctrl+C/V/X 的接线在下一步，端口层已就绪）。★ **形态裁决：锚点 + 活动端两个字节偏移**（`selAnchor` / `selExtent`，恒字符边界），**相等即无选区** —— 不另设 bool，少一个需要同步的真相源。Shift+方向键只挪**活动端**（锚点不动）⇒「从起点一路选到当前」与「从当前往回选」是同一个模型；不带 Shift 的移动 / 任何一次真的文本改动都**折叠**选区（选中的是旧文本的字节区间，替换之后它已不存在）。★ **一次换算三者共用**：`RenderTextField::advanceAt()`（字节偏移 → 文本区内 x）同时喂 `caretRect()` / `selectionRect()` / `paint()` ⇒ 插入符右边缘与选区右边缘**不可能**算出两个值（否则"选到插入符处"差出一个亚像素级的缝）。★ 高亮色 = `Color::lerp(Accent, Pane, 0.72)`（**不透明混色，不用 alpha** —— 软/硬两后端对半透明的处理不一致，§14.1 的后端等价性不能挂在运气上）；换肤自动跟随。★ 键路由：`Shift+Left/Right/Home/End` 扩展、`Ctrl+A` 全选、`Esc` 吃掉选区并**消费按键**（不放行，否则 `Application::activateFocused` 会顺手把焦点按钮触发掉）；`Ctrl+C/V/X` 留在 `Application` 层（`State` 拿不到平台，§5.1）。★ 端点吸附抽成 `boundaries()` 之外的独立判据并**专门喂坏值测**：Shift+方向键给的偏移天生是边界，不专门喂一次"字符中间"的偏移，那段吸附代码等于从没被测过（反例实测：整段删掉吸附，前 26 条夹具一条都不红 ⇒ 补第三条夹具后才红）。★ 夹具 smoke 29 条（选区构造与折叠 / Shift 四键方向性 / Ctrl+A / Esc 消费 / 键入·退格·Delete 吃整段 / 多字节端点 0..8 / 端点吸附与越界夹取 / selectionRect 几何与同源性 / **offsetAt 真实往返** / 端到端墨量差），**反例自检 5/5**（selectAll 只挪插入符 12 红 / insert 不吃选区 2 红 / 不画高亮 1 红 / 删吸附 1 红 / offsetAt 中点判据写反 1 红）。T1：lint 386/0 · smoke **897 ok / 0 FAIL**。
+| 32 | ✅ **已闭环（2026-10-21）—— 编辑命令环（Ctrl+C/X/V）+ 指针框选 + Ctrl+A 独占**（`TextField` 三件套的第三步；剪贴板端口层 `Win32Clipboard` + C 侧三桥已写在树上但**故意未提交** —— AOT 只编译可达代码，等 #51 showcase 接线后随 T2 一起提交）。★ **环的位置裁决**：`dispatchEditCommand()` 插在加速键**之前**（不走让位规则 ② 的 `claims()` 路径）—— `State` 拿不到平台（§5.1），而"能不能复制"是平台问题；四条门控任一不满足**整族回落**给加速键（不吞键 ⇒ 没有剪贴板时 `Ctrl+C` 不是死键）。★ **门控判据**：焦点是**编辑中**的 `TextFieldState`（与 `imeCaretRect()` 共用助手 `editingTextFieldState()` ⇒ 不可能一个放行一个拦住）/ 平台递了剪贴板（`Application::clipboard(): ?Clipboard` 组合根覆写，默认 `null`，与 `theme()` / `taskHost()` 同一形态）/ C·X 要求 `hasSelection()` / V 要求 `hasText()`。★ **指针框选三相位**（down 落插入符 + 起手势 / move 延伸活动端 / up·leave 收口）只存 **State 不存盒** —— 编辑只标脏 ⇒ 帧末 flush 重建盒，缓存盒等于拿上一帧的几何算这一帧；盒每步经 `Element::findBox()` 现取（**穿过 label 包装层**，与 IME 候选框 2026-10-19 贴角的坑同源）。★ **ESC 也收口框选手势**（选区折叠归焦点控件的 Esc 分支，手势本身住 App）。★ **过程中就地补掉两处框架缺口**：① `TextField`（`StatefulWidget`）调 `cursor()` **静默无效** —— `Element::syncBox()` 只把光标落在**自己产盒**的 Widget 上 ⇒ IBeam 声明挪到真正产盒的 `TextFieldBox`（否则命中链永远拿默认箭头且不报错，正是该处注释警告的"漏抄"形态）；② lint `DependencyDirection` 的 `ALLOWED` 表**漏了 `App` 行**（§4.3 写「`App | 全部`」，实现靠"表里没有就跳过"顺带放行）⇒ 显式列出全部层（行为不变、表与文档一致，`App` 文件从此也参与检查）。★ 夹具 smoke 18 条（门控④条逐一回落 / 复制·剪切·粘贴全链 / Ctrl+A 生产消费者 / 框选 down-move-up·反向·leave / IBeam 光标）+ **反例自检 3/3**（环挪到加速键后 3 红 / move 不延伸 4 红 / 不声明 Ctrl+A 1 红）。★ 反例跑法坑：`exec('php …')` 在 Windows 上会解析到**另一个 php**（`D:\PHP\bin\php-8.4.15`，`memory_limit=128M`）⇒ 读 11MB 字体 OOM **假红**；脚本必须用绝对路径 `D:\TypePHP\typephp-windows-x64\php.exe`（bash 直跑解析到的那个，限额 `-1`）。T1：lint **387/0** · smoke **915 ok / 0 FAIL**。

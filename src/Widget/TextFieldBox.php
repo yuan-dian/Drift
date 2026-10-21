@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Widget;
 
 use Drift\Geometry\EdgeInsets;
+use Drift\Input\CursorShape;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderTextField;
 use Drift\Rendering\BoxStyle;
@@ -38,6 +39,11 @@ final class TextFieldBox extends RenderBoxWidget
         private readonly int $selectionEnd,
     ) {
         parent::__construct();
+        // §9.1 命中三方消费：指针停在字段上给 I 形光标（文本编辑的通用约定）。
+        // ★ 声明在**这里**而不是 `TextField`：`Element::syncBox()` 只把光标
+        //   落在**自己产盒**的 Widget 上，`TextField` 是 `StatefulWidget`
+        //   （自己不产盒）⇒ 那边的 `cursor()` 是静默无效的调用。
+        $this->cursor(CursorShape::IBeam);
     }
 
     /** @internal 由 `TextFieldState::build()` 调 */
