@@ -31,6 +31,7 @@ use App\Showcase\Pages\FeedbackPage;
 use App\Showcase\Pages\FormPage;
 use App\Showcase\Pages\LayoutPage;
 use App\Showcase\Pages\ListPage;
+use App\Showcase\Pages\MotionPage;
 use App\Showcase\Pages\TextPage;
 
 /**
@@ -98,6 +99,8 @@ final class ShowcaseState extends State
             ['长列表 Big', static fn(): Widget => new BigListPage()],
             ['自绘 Paint', static fn(): Widget => new CustomPaintPage()],
             ['反馈 Feedback', static fn(): Widget => new FeedbackPage()],
+            // ★ 追加**在末尾**：前 8 项的 y 坐标不变 ⇒ 既有真机探针量出的坐标不用改。
+            ['动画 Motion', static fn(): Widget => new MotionPage()],
         ];
     }
 
