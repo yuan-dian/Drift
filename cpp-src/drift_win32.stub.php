@@ -280,3 +280,19 @@ function drift_win_set_cursor(int $hwnd, int $shape): void {}
  * ★ C 侧 provider 从这份数组应答 UIA 客户端（P2 只到"根属性可达"，树导航归 P3）。
  */
 function drift_win_uia_push(array $nodes): void {}
+
+// ---- 剪贴板（§5.1 壳服务，M3 文本编辑三件套；只做纯文本 CF_UNICODETEXT） ----
+
+/**
+ * 读纯文本；剪贴板为空 / 不是文本 / 被别的进程占着（重试后仍打不开）⇒ 空串。
+ *
+ * ★ **空串不是错误**（端口契约）：调用方无法区分"真为空"与"读失败"——
+ *   这个区分对上层没有价值（粘贴一个空串 = 什么都不做）。
+ */
+function drift_win_clipboard_read_text(): string {}
+
+/** 写纯文本（覆盖现有内容）。失败静默 —— 端口契约是 `void`，见 .cc 注释 */
+function drift_win_clipboard_write_text(string $text): void {}
+
+/** 剪贴板上有没有纯文本 —— 让"粘贴"能先判可用性再改状态 */
+function drift_win_clipboard_has_text(): bool {}

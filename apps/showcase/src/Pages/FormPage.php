@@ -67,6 +67,11 @@ final class FormState extends State
 
     private string $email = '';
 
+    /** 文本编辑演示（2026-10-21 #51）：源字段预填中英混排（复制过去不分家），目标字段接粘贴 */
+    private string $editSrc = '张三 zhangsan@example.com';
+
+    private string $editDst = '';
+
     /** 选择类控件的受控值（2026-10-21 新增，Checkbox / Radio / Toggle 的真实消费者） */
     private bool $agree = true;
 
@@ -104,6 +109,20 @@ final class FormState extends State
                 TextField::make()->label('手机号')->placeholder('11 位手机号'),
                 TextField::make()->label('验证码')->placeholder('6 位数字'),
                 Button::make('获取验证码')->variant(ButtonVariant::Default),
+            ]),
+
+            // ── H3「文本编辑命令」：选择 / 复制 / 剪切 / 粘贴（2026-10-21 新增）──
+            //   演示 §9.1 的编辑命令环 + 指针框选：Shift+方向键或**拖动**选择，
+            //   Ctrl+A 全选 / Esc 取消，Ctrl+C/X/V 走系统剪贴板（组合根递端口）。
+            //   源字段预填中英混排 —— 多字节选区复制过去不分家（按码位边界算）。
+            $this->sectionBar('文本编辑（选择 / 复制 / 粘贴）'),
+            Text::make('点进字段 ⇒ Shift+方向键或拖动选择 ⇒ Ctrl+C 复制 ⇒ 点另一个字段 ⇒ Ctrl+V 粘贴；Ctrl+A 全选、Esc 取消选择。')
+                ->caption(),
+            Row::make()->spacing(8.0)->children([
+                TextField::make()->label('源（中英混排）')->value($this->editSrc)
+                    ->onChanged(fn(string $v) => $this->editSrc = $v),
+                TextField::make()->label('目标')->value($this->editDst)
+                    ->onChanged(fn(string $v) => $this->editDst = $v),
             ]),
 
             // ── H3「选择类控件」：Checkbox / Radio / Toggle（2026-10-21 新增）──

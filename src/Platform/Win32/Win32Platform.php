@@ -31,11 +31,11 @@ use function drift_win_pump;
  *   ② **把桥的命名事件翻译成框架的类型**（`pump()` 里的那张 switch）。
  *   其余一律转发 —— 平台层不该有策略。
  *
- * ★ **三个壳服务返回 `null`**（`clipboard()` / `dialog()` / `tray()`）：
- *   §5.1 纪律 2 把"不支持"设计成**类型层面**的合法状态。M1 不实现它们，
- *   因为今天**没有消费者**（第一个消费者是 `TextInputClient` 的 `Ctrl+C/V`，
- *   归 M3）。返回 `null` 与"实现了但什么都不做"的区别是：前者调用方必须处理，
- *   后者会被当成能用的服务静默吞掉。
+ * ★ **两个壳服务返回 `null`**（`dialog()` / `tray()`）：
+ *   §5.1 纪律 2 把"不支持"设计成**类型层面**的合法状态。返回 `null` 与
+ *   "实现了但什么都不做"的区别是：前者调用方必须处理，后者会被当成能用的服务
+ *   静默吞掉。★ **`clipboard()` 2026-10-21 起不再是其中之一** —— 第一个消费者
+ *   （`Application` 的 `Ctrl+C/V/X`，§9.1 第 ③ 环）已落地，见 `Win32Clipboard`。
  *
  * ★ `fatalBox()` 走桥的 `MessageBoxW`，**不依赖渲染栈** —— 渲染栈本身可能正是
  *   崩掉的那一环（§1.2）。组合根在 `attach()` 之前就把它装进 `Errors`：
@@ -52,6 +52,8 @@ final class Win32Platform implements Platform
     private ?Win32InputSource $input = null;
 
     private ?Win32TimerHost $timers = null;
+
+    private ?Win32Clipboard $clipboard = null;
 
     /** @var array<int, Win32SurfaceProvider> 按窗口句柄缓存（同一窗口只造一个表面） */
     private array $surfaces = [];
@@ -103,7 +105,7 @@ final class Win32Platform implements Platform
 
     public function clipboard(): ?Clipboard
     {
-        return null;   // M3（`TextInputClient` 的复制/粘贴）
+        return $this->clipboard ??= new Win32Clipboard();
     }
 
     public function dialog(): ?Dialog

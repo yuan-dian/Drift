@@ -81,7 +81,11 @@ final class Bootstrap
             $screen->scale(),
         );
 
-        $app = new ShowcaseApplication();
+        // ★ 剪贴板端口在这里递进应用（2026-10-21，#51）：框架不持平台（§5.1）
+        //   ⇒ `Application::clipboard()` 默认 null；示例台是 `Ctrl+C/X/V`
+        //   （§9.1 让位规则 ② 的编辑命令环）的第一个真实消费者。
+        //   ★ 递的是**端口**不是平台实例 —— Win32 实现仍只出现在本文件。
+        $app = new ShowcaseApplication($platform->clipboard());
         $app->attach($surface, $screen->viewport());
 
         // ★ 最小窗口尺寸（§5.4）：挡住"拖到比内容更小"——那种状态会踩 C5/C6
