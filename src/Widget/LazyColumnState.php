@@ -103,7 +103,22 @@ final class LazyColumnState extends State implements Scrollable
         if ($box instanceof RenderScrollView) {
             $size = $box->size();
             if ($size !== null && $size->height > 0.0) {
-                return $size->height;
+                $viewport = $size->height;
+
+                // ★ `04` §5.5 的断言：这里是**帧间状态依赖**（读上一帧的盒
+                //   尺寸，不在 performLayout 里 ⇒ 不违反布局纯函数，但同类隐患）。
+                //   超过 2 倍窗口高 ⇒ 上一帧的盒尺寸是错的（如窗口刚从小变大）。
+                //   逻辑不动（三条理由见 `04` §5.5），只加这条上界。
+                if ($ctx->height > 0.0 && $viewport > $ctx->height * 2.0) {
+                    \Drift\Errors::report(sprintf(
+                        'LazyColumn 视口估计 %s 超过窗口高 %s 的 2 倍 —— 上一帧的盒尺寸可疑。'
+                            . "\n" . '修法：确认窗口尺寸变化后盒已重排；必要时首帧用 ctx->height 兜底。',
+                        (string) $viewport,
+                        (string) $ctx->height,
+                    ), \Drift\Errors::DIAGNOSTIC);
+                }
+
+                return $viewport;
             }
         }
 
