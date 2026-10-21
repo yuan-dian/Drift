@@ -63,6 +63,12 @@ final class Runner
         self::line('');
         self::flush();
 
+        // ★ M0 排在最前：它是 arch-v2"先测再写"的第 0 步，且它的结论可能
+        //   改变后面基准的解读（若 `readonly` 慢，M1/M2 里 `final readonly class`
+        //   夹具的数字也要重新看一遍）。
+        self::m0();
+        self::flush();
+
         self::m1();
         self::flush();
 
@@ -95,6 +101,64 @@ final class Runner
     private static function flush(): void
     {
         \file_put_contents(self::OUT, \implode("\n", self::$lines) . "\n");
+    }
+
+    /**
+     * M0：arch-v2 的三条实测（`08` §3）。
+     *
+     * ★★ **M0-3（`mixed` 装箱）不在这里重测**：它已经被 M2 逐字覆盖 ——
+     *    M2 的 A 组（`mixed` + `toInt()`）与 B 组（`int` 直读）就是这条判据，
+     *    问的是同一个问题（`Cell` 要不要分裂）。
+     *    `09` W0 第 1 步写作时写的"M0Mixed"没注意到这个重叠 ⇒ 文档要改。
+     *
+     * ★ **M0-2 不计时**：答案是生成物里的字段声明类型（二值），见
+     *    `M0Nullable::notes()` 与 `docs/AOT-CONSTRAINTS.md`。
+     */
+    private static function m0(): void
+    {
+        self::line('## M0  arch-v2 的三条实测（docs/arch-v2/08 §3）');
+        self::line('');
+
+        // ── M0-1：readonly 的成本 ──
+        $m0 = M0Readonly::run();
+        $a = (int) ($m0['A readonly direct'] ?? 0);
+        $b = (int) ($m0['B private+getter'] ?? 0);
+        $c = (int) ($m0['C plain public'] ?? 0);
+
+        self::line('### M0-1  readonly 的成本（决定 02 §3.1 的 Modifier 字段形态）');
+        self::line('   10 万次读 × 80 轮取中位；64 个对象循环取，防读被提升出循环');
+        self::line('');
+        self::line(\sprintf('   %-22s %8d ns/read', 'A readonly direct', $a));
+        self::line(\sprintf('   %-22s %8d ns/read', 'B private+getter', $b));
+        self::line(\sprintf('   %-22s %8d ns/read', 'C plain public(对照)', $c));
+        self::line('');
+        self::line(\sprintf('   A - C = %+d ns/read   ⇒ readonly 自身开销（v6"慢 10x+"那条断言）', $a - $c));
+        self::line(\sprintf('   B - C = %+d ns/read   ⇒ getter 方法调用的净成本', $b - $c));
+        self::line(\sprintf('   A - B = %+d ns/read    A / B = %s', $a - $b, Stats::ratio($a, $b)));
+        self::line('   判据（08 §3.3）：A−B 差值 ≤ 100ns/read ⇒ 无显著差异；');
+        self::line('                    或 (差值 × 10 次读/帧 × 60 帧) < 1ms/秒 ⇒ 可用 public readonly');
+        self::line('   结论：' . M0Readonly::verdict($m0));
+        self::line('');
+
+        // ── M0-2：?Obj 退化（看生成物，不计时）──
+        $obs = M0Nullable::run();
+
+        self::line('### M0-2  ?Obj 是否退化成 php::Var（看生成物，**不计时**）');
+        self::line(\sprintf(
+            '   夹具自检读回：A ?RO = %s · B RO+bool = %s（不等即报 DIAGNOSTIC）',
+            (string) $obs['A ?RO'],
+            (string) $obs['B RO+bool']
+        ));
+        foreach (M0Nullable::notes() as $note) {
+            self::line('   · ' . $note);
+        }
+        self::line('   二值结论由 grep 生成物补，落点：docs/AOT-CONSTRAINTS.md');
+        self::line('');
+
+        // ── M0-3：mixed 装箱（复用 M2）──
+        self::line('### M0-3  mixed 装箱成本（复用下面的 M2，不重测）');
+        self::line('   M2 的 A/B 两组即此判据；见 M2 段结论。');
+        self::line('');
     }
 
     private static function m1(): void
