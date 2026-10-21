@@ -121,7 +121,8 @@ final class FramePhase
         if ($settleIndex === false) {
             Errors::report(
                 '帧阶段：本帧没有 settle 标记 —— Frame::run() 没被调用，'
-                . "整帧的 setState 都没被消费。\n修法：确认 frame() 里 $frame->run(...) 那段没被提前 return 掉。",
+                . '整帧的 setState 都没被消费。' . "\n"
+                . '修法：确认 frame() 里 $frame->run(...) 那段没被提前 return 掉。',
                 Errors::DIAGNOSTIC
             );
 
