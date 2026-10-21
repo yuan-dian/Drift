@@ -9,16 +9,19 @@ use Drift\Widget\Card;
 use Drift\Widget\ScrollView;
 use Drift\Widget\Button;
 use Drift\Widget\ButtonVariant;
+use Drift\Widget\Checkbox;
 use Drift\Widget\Column;
 use Drift\Layout\FlexAlign;
 use Drift\Widget\Offstage;
 use Drift\Widget\Padding;
+use Drift\Widget\Radio;
 use Drift\Widget\Row;
 use Drift\Widget\Spacer;
 use Drift\Widget\State;
 use Drift\Widget\StatefulWidget;
 use Drift\Widget\Text;
 use Drift\Widget\TextField;
+use Drift\Widget\Toggle;
 use Drift\Widget\Widget;
 
 /**
@@ -64,6 +67,13 @@ final class FormState extends State
 
     private string $email = '';
 
+    /** 选择类控件的受控值（2026-10-21 新增，Checkbox / Radio / Toggle 的真实消费者） */
+    private bool $agree = true;
+
+    private string $size = 'm';
+
+    private bool $notify = false;
+
     /** true = 显示源码视图（LayUI 的 `</>` 切换） */
     private bool $showCode = false;
 
@@ -95,6 +105,54 @@ final class FormState extends State
                 TextField::make()->label('验证码')->placeholder('6 位数字'),
                 Button::make('获取验证码')->variant(ButtonVariant::Default),
             ]),
+
+            // ── H3「选择类控件」：Checkbox / Radio / Toggle（2026-10-21 新增）──
+            //   三个控件都是**受控**的：值住 State，点击只回调新值（与 TextField 同纪律）。
+            $this->sectionBar('选择类控件（Checkbox / Radio / Toggle）'),
+            Card::make(Column::make()->spacing(10.0)->children([
+                Checkbox::make('我已阅读并同意服务条款')
+                    ->checked($this->agree)
+                    ->onChanged(function (bool $on): void {
+                        $this->setState(function () use ($on): void {
+                            $this->agree = $on;
+                        });
+                    }),
+                Row::make()->spacing(20.0)->children([
+                    Radio::make('小号')->value('s')->group($this->size)
+                        ->onChanged(function (string $v): void {
+                            $this->setState(function () use ($v): void {
+                                $this->size = $v;
+                            });
+                        }),
+                    Radio::make('中号')->value('m')->group($this->size)
+                        ->onChanged(function (string $v): void {
+                            $this->setState(function () use ($v): void {
+                                $this->size = $v;
+                            });
+                        }),
+                    Radio::make('大号')->value('l')->group($this->size)
+                        ->onChanged(function (string $v): void {
+                            $this->setState(function () use ($v): void {
+                                $this->size = $v;
+                            });
+                        }),
+                ]),
+                Toggle::make('接收版本更新通知')
+                    ->checked($this->notify)
+                    ->onChanged(function (bool $on): void {
+                        $this->setState(function () use ($on): void {
+                            $this->notify = $on;
+                        });
+                    }),
+                Checkbox::make('禁用示例（点了没反应，但仍在 Tab 序里）')
+                    ->checked(true)
+                    ->enabled(false),
+                Text::make(
+                    '当前值：同意=' . ($this->agree ? '是' : '否')
+                    . ' · 尺寸=' . $this->size
+                    . ' · 通知=' . ($this->notify ? '开' : '关')
+                )->caption(),
+            ]))->paddingAll(12.0),
 
             // ── H3 诚实边界：本页做不到的两处 ──
             $this->sectionBar('当前能力边界（如实记录）'),

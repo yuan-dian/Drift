@@ -45,6 +45,7 @@ use Drift\Widget\Modal;
 use Drift\Widget\StatefulElement;
 use Drift\Widget\Widget;
 use Drift\Widget\SemanticsBuilder;
+use Drift\Widget\ToggleBase;
 
 /**
  * **组合根**（§4.5）：应用只写 `buildRoot()` / `title()` / `commands()`。
@@ -1870,6 +1871,15 @@ abstract class Application
             if ($open !== null) {
                 $open($widget, $element);
             }
+
+            return;
+        }
+
+        // ★ 开关类（`Checkbox` / `Radio` / `Toggle`）：与按钮同一入口，但"激活"
+        //   的含义是**换值**（回调收新值）。分支必须在 `Button` 之前 —— 二者互不
+        //   继承，但放在 `!$widget instanceof Button` 早退之后会永远进不来。
+        if ($widget instanceof ToggleBase) {
+            $widget->activate();
 
             return;
         }

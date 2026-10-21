@@ -30,8 +30,9 @@ namespace Drift\Input;
  *     语义合并，`hitTest()` 取"最深"节点 ⇒ 叶子普遍嵌在交互控件内部，一旦给
  *     `Text` 角色，检查器把光标移到按钮上会选中里面的文字而不是按钮。需要
  *     "文本可被找到"时用 `name`（按钮的 `semName` = label）表达。
- *   - **没有声明者的角色不进这里**（未被消费的分支等价于未实现）—— 当前四个
- *     角色各有一个真实声明控件：`Button` / `TextField` / `ScrollView` / `Modal`。
+ *   - **没有声明者的角色不进这里**（未被消费的分支等价于未实现）—— 当前每个角色
+ *     各有一个真实声明控件：`Button` / `TextField` / `ScrollView` / `Modal` /
+ *     `Checkbox` / `Radio` / `Switch`。
  *
  * @api
  */
@@ -48,4 +49,13 @@ enum SemanticsRole: string
 
     /** 模态对话框（`Modal`）—— name 取标题 */
     case Dialog = 'dialog';
+
+    /** 复选框（`Checkbox`）—— value = `checked` / `unchecked` */
+    case Checkbox = 'checkbox';
+
+    /** 单选钮（`Radio`）—— value = 选中时的自己的值，未选中为空 */
+    case Radio = 'radio';
+
+    /** 开关（`Switch`）—— value = `checked` / `unchecked` */
+    case Switch = 'switch';
 }
