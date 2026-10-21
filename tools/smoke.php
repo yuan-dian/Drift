@@ -46,6 +46,9 @@ use Drift\Dev\Preview\Renderer;
 use Drift\Dev\Preview\SvgSurface;
 use Drift\Dev\Smoke\App\AccelApplication;
 use Drift\Dev\Smoke\App\EditApplication;
+use Drift\Dev\Smoke\App\MotionApplication;
+use Drift\Widget\AnimationController;
+use Drift\Widget\Curve;
 use Drift\Dev\Smoke\App\FakeClipboard;
 use Drift\Dev\Smoke\App\CompositeRootApp;
 use Drift\Dev\Smoke\App\CountJob;
@@ -8413,6 +8416,201 @@ check(
     $pgIdx >= 0 && $pgTree->node($pgIdx)->value === '42%',
     'idx=' . $pgIdx,
 );
+// ── ㊹ 动画：`AnimationController` / `Curve`（2026-10-21，#52：§17.4.11）──────
+//    ★ 两层判据：① 控制器算术（曲线端点 / 夹取 / 打断 / 回调一次性）；
+//      ② **链条**（State::tickFrame → animating → wantsFrame → 帧真的重建）。
+//      ① 全对而 ② 断了 ⇒ 界面静止且**不报错** —— 正是 §17.4.10 那一课的形状。
+
+// ① Curve：端点必须不动（map(1) 给了 0.9997 ⇒ 动画结束差那 0.3% 到不了终点）
+$curveEnds = Curve::linear()->map(0.0) === 0.0 && Curve::linear()->map(1.0) === 1.0
+    && Curve::easeIn()->map(0.0) === 0.0 && Curve::easeIn()->map(1.0) === 1.0
+    && Curve::easeOut()->map(0.0) === 0.0 && Curve::easeOut()->map(1.0) === 1.0
+    && Curve::easeInOut()->map(0.0) === 0.0 && Curve::easeInOut()->map(1.0) === 1.0;
+check('Curve · 四根曲线端点不动（0→0、1→1）', $curveEnds);
+
+check(
+    'Curve · 入参夹取（负数→0、超 1→1，不报错）',
+    Curve::easeOut()->map(-0.5) === 0.0 && Curve::easeOut()->map(1.5) === 1.0,
+);
+
+check(
+    'Curve · 中点手感：easeOut = 0.75 快、easeIn = 0.25 慢',
+    Curve::easeOut()->map(0.5) === 0.75 && Curve::easeIn()->map(0.5) === 0.25,
+    'easeOut=' . Curve::easeOut()->map(0.5) . ' easeIn=' . Curve::easeIn()->map(0.5),
+);
+
+// ② 初值 / 没请求就不跑
+$ctl = AnimationController::make(100.0);
+check(
+    '控制器 · 初值 0、不在跑、tick() 返回 false',
+    $ctl->value() === 0.0 && !$ctl->isAnimating() && $ctl->tick(0.0) === false,
+);
+
+// ③ 起手帧钉起点（第一帧不吃掉一个间隔）
+$ctl->forward();
+check(
+    '控制器 · forward() 后第一帧钉起点（值仍是 0，返回 true）',
+    $ctl->tick(1000.0) === true && $ctl->progress() === 0.0,
+);
+
+// ④ 半程：linear 下 t = 已过 / 总长
+check(
+    '控制器 · 半程帧：50ms / 100ms ⇒ t = 0.5',
+    $ctl->tick(1050.0) === true && abs($ctl->progress() - 0.5) < 1.0e-9,
+    't=' . $ctl->progress(),
+);
+
+// ⑤ 终点帧：**值精确 1 且仍返回 true**（最后一帧要把终点值画出去），再下一帧收口
+check(
+    '控制器 · 终点帧：t 精确 1、isAnimating=false、仍返回 true（最后一帧要画）',
+    $ctl->tick(1100.0) === true && $ctl->progress() === 1.0 && !$ctl->isAnimating(),
+    't=' . $ctl->progress(),
+);
+check(
+    '控制器 · 收口帧：返回 false ⇒ 帧时钟可以停了',
+    $ctl->tick(1116.0) === false,
+);
+
+// ⑥ value() 是缓动后的值（不是线性 t）
+$easeCtl = AnimationController::make(100.0)->curve(Curve::easeOut());
+$easeCtl->forward();
+$easeCtl->tick(0.0);
+$easeCtl->tick(50.0);
+check(
+    '控制器 · value() 是缓动后的值（easeOut 半程 = 0.75，不是 0.5）',
+    abs($easeCtl->value() - 0.75) < 1.0e-9 && abs($easeCtl->progress() - 0.5) < 1.0e-9,
+    'v=' . $easeCtl->value() . ' t=' . $easeCtl->progress(),
+);
+
+// ⑦ onCompleted 一次性（跑完后继续 tick 不再放）
+$fires = 0;
+$doneCtl = AnimationController::make(100.0);
+$doneCtl->onCompleted(static function () use (&$fires): void {
+    $fires++;
+});
+$doneCtl->forward();
+$doneCtl->tick(0.0);
+$doneCtl->tick(400.0);   // 一次性跑完（终点帧）
+$doneCtl->tick(416.0);   // 收口帧 ⇒ 放回调
+$doneCtl->tick(900.0);   // 之后继续 tick ⇒ 不该再放
+check('控制器 · onCompleted 一次性（只放一次）', $fires === 1, 'fires=' . $fires);
+
+// ⑧ jumpTo 打断：值精确、停住、**不**放完成回调（打断 = 取消，不是完成）
+$jumpFires = 0;
+$jumpCtl = AnimationController::make(100.0);
+$jumpCtl->onCompleted(static function () use (&$jumpFires): void {
+    $jumpFires++;
+});
+$jumpCtl->forward();
+$jumpCtl->tick(0.0);
+$jumpCtl->jumpTo(0.42);
+check(
+    '控制器 · jumpTo 打断：值精确、停住、不触发完成回调',
+    $jumpCtl->value() === 0.42 && !$jumpCtl->isAnimating() && $jumpFires === 0,
+    'v=' . $jumpCtl->value() . ' fires=' . $jumpFires,
+);
+
+$clampCtl = AnimationController::make(100.0);
+$clampCtl->jumpTo(-3.0);
+$low = $clampCtl->progress();
+$clampCtl->jumpTo(9.0);
+check(
+    '控制器 · jumpTo 夹取（负数→0、超 1→1）',
+    $low === 0.0 && $clampCtl->progress() === 1.0,
+    'low=' . $low . ' high=' . $clampCtl->progress(),
+);
+
+// ⑨ reverse 按剩余距离缩时长（0.5 → 0 只跑 50ms，速度恒定）
+$revCtl = AnimationController::make(100.0);
+$revCtl->jumpTo(0.5);
+$revCtl->reverse();
+$revCtl->tick(1000.0);
+$revCtl->tick(1050.0);
+check(
+    '控制器 · reverse 按剩余距离缩时长（0.5→0 只跑 50ms）',
+    $revCtl->progress() === 0.0 && $revCtl->tick(1066.0) === false,
+    't=' . $revCtl->progress(),
+);
+
+// ⑩ 已在终点再 forward() ⇒ 不跑也不回调（幂等）
+$idemCtl = AnimationController::make(100.0);
+$idemCtl->jumpTo(1.0);
+$idemCtl->forward();
+check(
+    '控制器 · 已在终点再 forward() ⇒ 不跑、不回调（幂等）',
+    !$idemCtl->isAnimating() && $idemCtl->tick(0.0) === false,
+);
+
+// ⑪ duration = 0 ⇒ 起手帧之后立刻完成
+$zeroCtl = AnimationController::make(0.0);
+$zeroCtl->forward();
+$zeroCtl->tick(0.0);
+check(
+    '控制器 · duration <= 0 ⇒ 立即完成（不除零、不卡死）',
+    $zeroCtl->tick(1.0) === true && $zeroCtl->progress() === 1.0 && $zeroCtl->tick(2.0) === false,
+    't=' . $zeroCtl->progress(),
+);
+
+// ⑫ 链条：State::tickFrame → animating → wantsFrame → 帧真的重建
+$motionApp = new MotionApplication();
+$motionApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(200.0, 60.0)));
+$motionApp->frame(0.0, BoxConstraints::tight(new Size(200.0, 60.0)));
+
+$motionFixture = null;
+$motionEl = findElement(
+    $motionApp->rootElement(),
+    static fn(Element $el): bool => $el instanceof StatefulElement
+        && $el->state() instanceof \Drift\Dev\Smoke\App\MotionFixtureState,
+);
+if ($motionEl instanceof StatefulElement) {
+    $candidate = $motionEl->state();
+    if ($candidate instanceof \Drift\Dev\Smoke\App\MotionFixtureState) {
+        $motionFixture = $candidate;
+    }
+}
+check('动画链 · 夹具状态可定位', $motionFixture !== null);
+
+if ($motionFixture !== null) {
+    check(
+        '动画链 · 没动画时 wantsFrame() = false（空闲不空转）',
+        $motionApp->wantsFrame() === false,
+    );
+
+    $buildsAtRest = $motionFixture->builds;
+
+    $motionFixture->ctl->forward();
+    // ★ 起手那一帧就把 animating 立起来 —— 否则"点了播放但时钟没上膛"，
+    //   界面静止且**没有任何报错**（§17.4.9 的同一条缺陷）。
+    $motionApp->frame(16.0, BoxConstraints::tight(new Size(200.0, 60.0)));
+    check(
+        '动画链 · 起手帧就把 animating 立起来 ⇒ wantsFrame() = true',
+        $motionApp->wantsFrame() === true,
+    );
+
+    $motionApp->frame(32.0, BoxConstraints::tight(new Size(200.0, 60.0)));
+    check(
+        '动画链 · 动画期间每帧重建（builds 增长）',
+        $motionFixture->builds > $buildsAtRest,
+        'builds=' . $motionFixture->builds . ' atRest=' . $buildsAtRest,
+    );
+
+    $motionApp->frame(2000.0, BoxConstraints::tight(new Size(200.0, 60.0)));
+    check(
+        '动画链 · 跑完：值精确 1、不在跑（终点帧仍要下一帧收口）',
+        $motionFixture->ctl->progress() === 1.0 && !$motionFixture->ctl->isAnimating(),
+        't=' . $motionFixture->ctl->progress(),
+    );
+
+    $motionApp->frame(2016.0, BoxConstraints::tight(new Size(200.0, 60.0)));
+    $buildsDone = $motionFixture->builds;
+    $motionApp->frame(2032.0, BoxConstraints::tight(new Size(200.0, 60.0)));
+    check(
+        '动画链 · 收口后 wantsFrame() 回落 false 且不再重建（帧时钟真的停了）',
+        $motionApp->wantsFrame() === false && $motionFixture->builds === $buildsDone,
+        'builds=' . $motionFixture->builds . ' done=' . $buildsDone,
+    );
+}
+
 // ── 汇总 + 退出码（2026-10-18）──
 // ★ 以前只打印 FAIL、**从不汇总、也从不非零退出** ⇒ 打印 3 个 FAIL 仍然 exit 0：
 //   任何自动化调用（脚本 / CI / `&&` 链）都会把它读成"过了"。与 G2（不许静默
