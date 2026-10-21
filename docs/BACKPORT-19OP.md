@@ -1,0 +1,255 @@
+# 19 op + CustomPaint 回植 Drift2 —— 影响面与执行方案
+
+> 来源：`D:\TypePHP\Drift3\design-v6`（05 绘制 / 07 控件与 API）的可移植决策。
+> 状态：**评审稿**（未改一行代码）。按项目纪律，改 `Canvas` 接口属语义变更，需裁决后再动手。
+> ★ **2026-10-20 更新**：项目目标确认为**跨平台多端**（首版只落 Win32）。跨平台要求把本文 §5 的
+> R1/R2/R3 取舍变成**必须分层** —— 见 `docs/CROSS-PLATFORM.md` 决策 **D2**（op 分 Core / Extended /
+> Optional 三层 + `Canvas::capabilities()`）。本文 §5 的推荐 R2 仍然成立，但理由从"省工"升级为"契约必需"。
+
+
+---
+
+## 0. 一句话
+
+Drift2 的"7 op 天花板"不在 `DisplayList`，而在 **`Canvas` 接口 + 两个后端**：
+`DisplayList` 的 7 个 opcode 目前**只有 `RenderText` / `RenderTextField` 在用**（局部缓冲），
+主树 `Frame::run` 是 `$box->paint($canvas)` **直接画**到 `SkiaCanvas` / `RasterCanvas`。
+所以回植 19 op = **扩 `Canvas` 接口 + 扩两个后端 + 加 `CustomPaint` 节点**，
+`DisplayList` 是次要的（只影响 golden/快照那条路）。
+
+---
+
+## 1. 现状事实（已逐文件核对）
+
+| 层 | 现状 | 文件 |
+|---|---|---|
+| 画布接口 | **7 个方法**：`save/restore/translate/pushClip/popClip/drawRect/drawParagraph` | `src/Rendering/Canvas.php` |
+| 命令录制 | **7 个 opcode**：SAVE/RESTORE/TRANSLATE/PUSH_CLIP/POP_CLIP/DRAW_RECT/DRAW_PARAGRAPH | `src/Rendering/DisplayList.php` |
+| 录制画布 | 只把 7 个方法转成 op | `src/Rendering/RecordingCanvas.php` |
+| 软光栅 | 轴对齐矩形（填充/描边/圆角）· 平移 · 矩形裁剪 · source-over · 段落字形 | `src/Rendering/RasterCanvas.php` |
+| Skia 后端 | 桥只有 **8 个函数**，绘制只有 `draw_rect` / `draw_glyph` | `src/Rendering/SkiaCanvas.php` + `cpp-src/drift_skia.{cc,stub.php}` |
+| 画笔 | `color` + `Fill/Stroke` + `strokeWidth`（**无渐变/混合模式/虚线**） | `src/Rendering/Paint.php` / `PaintStyle.php` |
+| 盒样式 | `background / borderColor / borderWidth / radius`（**无 shadow 字段**） | `src/Rendering/BoxStyle.php` |
+| 图像/路径/渐变/阴影 | **零命中**（`src` 里没有 `drawImage` / `Path` / `Gradient` / `Shadow`） | — |
+| 生产者 | **15 个 `Render*`** 调 `drawRect`；2 个调 `drawParagraph` | `src/Layout/Render*.php` |
+| 主树绘制 | 直接画到 surface canvas，**不经 `DisplayList`** | `src/App/Frame.php:99-110` |
+
+**生产者的真实清单**（`drawRect`）：
+`RenderAppBar` / `RenderButton` / `RenderCard` / `RenderErrorBoundary` / `RenderMenuItem` /
+`RenderModalHost` / `RenderPopupPanel` / `RenderScrollView`（thumb）/ `RenderSpinner` /
+`RenderTextField`；`drawParagraph`：`RenderText` / `RenderTextField`。
+
+**阴影现状**：`RenderCard` 用**三层递增的半透明矩形**硬凑（`RenderCard.php:110-121`）——
+这正是 design-v6 §05 说"实测 233ms/帧"的那种做法。
+
+---
+
+## 2. design-v6 的 19 op → Drift2 映射
+
+| design-v6 op | Drift2 今天 | 回植动作 | 难度 |
+|---|---|---|---|
+| `RECT` | `drawRect(rect, fill)` | 已有 | — |
+| `ROUND_RECT` | `drawRect(rect, fill, radius)` | 已有 | — |
+| `ELLIPSE` | 无 | 新增 `drawEllipse(rect, Paint)` | 低 |
+| `LINE` | 无 | 新增 `drawLine(x1,y1,x2,y2, Paint)` | 低 |
+| `PATH` | 无 | 新增 `Path` 值对象 + `drawPath(Path, Paint)` | **高**（Raster 侧） |
+| `TEXT` | `drawParagraph` | 已有 | — |
+| `GLYPH_RUN` | 内部字形步进 | 不公开（`drawParagraph` 已覆盖） | — |
+| `IMAGE` | 无 | 新增 `ImageHandle` + `drawImage(handle, srcRect, dstRect)` | **中高** |
+| `SOLID` | `Paint::fill(color)` | 已有 | — |
+| `LINEAR` | 无 | `Paint` 加渐变（或 `drawGradientRect`） | 中 |
+| `RADIAL` | 无 | 同上 | 中 |
+| `NONE` | `Paint::fill(transparent)` | 已有（alpha=0 早退） | — |
+| `STROKE` | `Paint::stroke(color, width)` | 已有（矩形）；需扩到 path/ellipse/line | 低 |
+| `DASH` | 无 | `Paint` 加 dash 参数 | 中 |
+| `DRAW_CHILD` | 直接 `child->paint()` | 已有（不需要 op） | — |
+| `CLIP_RECT` | `pushClip(Rect)` | 已有 | — |
+| `CLIP_PATH` | 无 | 新增 `pushClipPath(Path)` | **高**（Raster 侧） |
+| `LAYER` | 无 | 新增 `pushLayer(opacity, blend)` / `popLayer` | **高**（Raster 侧） |
+| `SHADOW` | 三层矩形硬凑 | 新增 `drawShadow(rect, radius, dx, dy, blur, color)` | **高**（Raster 侧） |
+
+**结论**：19 个里 **7 个已有、1 个不公开、11 个要新增**；其中 **5 个是"Raster 侧难"**
+（PATH / CLIP_PATH / LAYER / SHADOW / IMAGE）。
+
+---
+
+## 3. 分层改动清单
+
+### 3.1 接口层（向后兼容，纯增量）
+
+`Canvas` 现有 7 个方法**不动**，新增（签名待定）：
+
+```php
+public function drawEllipse(Rect $rect, Paint $paint): void;
+public function drawLine(float $x1, float $y1, float $x2, float $y2, Paint $paint): void;
+public function drawPath(Path $path, Paint $paint): void;
+public function drawImage(int $imageHandle, Rect $src, Rect $dst): void;
+public function drawShadow(Rect $rect, float $radius, float $dx, float $dy, float $blur, Color $color): void;
+public function pushClipPath(Path $path): void;
+public function pushLayer(float $opacity, int $blendMode): void;
+public function popLayer(): void;
+```
+
+> 为什么不在 `Canvas` 上直接做"19 op 录制"：Drift2 是**直接绘制**模型，`Canvas` 是命令式接口；
+> 强行改成"只录 op"会把 15 个生产者全改一遍，收益是 golden/快照，成本是全部 Render*。
+> **先扩接口，DisplayList 后补**（见 §3.2）。
+
+### 3.2 录制层（次要，可后置）
+
+`DisplayList` 加对应 opcode（建议编号从 8 起，保留现有 7 个不变）：
+`OP_DRAW_ELLIPSE=8`、`OP_DRAW_LINE=9`、`OP_DRAW_PATH=10`、`OP_DRAW_IMAGE=11`、
+`OP_DRAW_SHADOW=12`、`OP_PUSH_CLIP_PATH=13`、`OP_PUSH_LAYER=14`、`OP_POP_LAYER=15`。
+`RecordingCanvas` 同步加转发。**这一步不影响现有生产者**（它们仍可直接调 Canvas）。
+
+### 3.3 软光栅（`RasterCanvas`，工作量的大头）
+
+| 能力 | 实现思路 | 成本 |
+|---|---|---|
+| 椭圆 | 按行求 `x` 区间（解析解） | 0.5 天 |
+| 线段 | Bresenham / 距离场（抗锯齿） | 0.5 天 |
+| 路径填充 | 扫描线 + 奇偶/非零环绕 + 有符号面积抗锯齿 | **1–2 周** |
+| 渐变 | 每像素按 `t` 线性/径向插值（可预计算 LUT） | 3–5 天 |
+| 阴影 | 矩形/圆角 + 可分离 box blur（3 次近似高斯） | 1 周 |
+| 图像 | 解码（PNG/JPEG）+ 缩放（双线性）+ blit | 1 周 |
+| 图层 | 离屏 RGBA 缓冲 + opacity/blend 合成 | 3–5 天 |
+| 路径裁剪 | 逐像素 point-in-path（慢）或扫描线掩码 | 1 周 |
+
+**关键判断**：`RasterCanvas` 是**确定性后端**（smoke / preview / golden 的物质基础）。
+新增 op 若不在 Raster 里实现，**golden 就覆盖不到它**。这是本方案最大的取舍（见 §5）。
+
+### 3.4 Skia 后端（相对便宜）
+
+`cpp-src/drift_skia.cc` 加桥函数（Skia 原生支持，主要是 API 映射）：
+
+```cpp
+drift_skia_draw_ellipse(...)
+drift_skia_draw_line(...)
+drift_skia_draw_path(canvas, pathId, argb, stroke, width)
+drift_skia_draw_image(canvas, imageId, srcX, srcY, srcW, srcH, dstX, dstY, dstW, dstH)
+drift_skia_draw_shadow(canvas, x, y, w, h, radius, dx, dy, blur, argb)
+drift_skia_push_clip_path(canvas, pathId)
+drift_skia_push_layer(canvas, opacity, blendMode) / drift_skia_pop_layer(canvas)
+```
+
+`Path` / 图像需要 C++ 侧句柄注册表（`int` 槽位），与 design-v6 §05 的"句柄只在 C++"一致。
+**成本 3–5 天**（不含图像解码，解码复用现有字体/位图基础设施或系统 API）。
+
+### 3.5 `CustomPaint`（应用侧逃生舱）
+
+新增三个文件：
+
+```
+src/Rendering/CustomPainter.php      // 接口：paint(Canvas, Size) + version(): int
+src/Widget/CustomPaint.php           // Widget：painter + child(可选) + size
+src/Layout/RenderCustomPaint.php     // RenderObject：layout 用 size；paint 调 painter
+```
+
+设计要点：
+- **`CustomPainter` 是接口**（不是 `#[Native]`，要能被应用实现）；
+- `paint(Canvas $canvas, Size $size)` 直接拿到 §3.1 的全部新方法——**19 op 就是它的画笔**；
+- `version(): int` 代替 `shouldRepaint`（Drift2 没有 diff；应用自己管版本，变了才重录）；
+- 有 `child` 时先画自己、再 `translate + child->paint()`；无 child 时是叶子；
+- 语义：可选 `role/label`，默认不进语义树（纯装饰）；
+- **它是叶子/轻量节点**，不改变现有布局/绘制管线。
+
+**成本 2–3 天**（含 smoke 夹具）。
+
+---
+
+## 4. 迁移策略：纯增量，不破坏现有 15 个生产者
+
+1. `Canvas` **只加方法，不改现有 7 个签名** ⇒ 15 个 `Render*` 零改动；
+2. `RasterCanvas` / `SkiaCanvas` 实现新方法；未实现的方法**必须显式失败**（不是静默空实现）：
+   - dev：`Errors::report('画布不支持 drawPath（E-OP-UNSUPPORTED）')`；
+   - release：跳过并计数进诊断环。
+3. `RenderCard` 的"三层阴影"可以**后续**换成 `drawShadow`（可选，先不动，避免 golden 变化）；
+4. `BoxStyle` 加 `shadow` 字段是**第二步**（先让 `CustomPaint` 能用，再让内置控件用）。
+
+---
+
+## 5. 关键取舍：RasterCanvas 要不要全量支持？
+
+| 方案 | 做法 | 优点 | 缺点 |
+|---|---|---|---|
+| **R1 全量双后端** | 11 个新 op 都在 Raster 实现 | golden 全覆盖、确定性不丢 | **4–8 周**；PHP 软光栅路径/模糊/图层易错 |
+| **R2 核心双后端 + 高级仅 Skia**（推荐） | 椭圆/线/渐变在 Raster；PATH/IMAGE/SHADOW/LAYER/CLIP_PATH 仅 Skia，Raster 报 `E-OP-UNSUPPORTED` | 2–3 周拿到 80% 价值；确定性保留在核心几何 | 高级 op 的 golden 只能靠 Skia（跨机器不一定逐字节一致） |
+| **R3 只做 Skia** | Raster 完全不扩 | 最快 | 丢掉确定性后端，**不推荐**（等于放弃 Drift2 的招牌） |
+
+**推荐 R2**：先让 `CustomPaint` + 核心几何（椭圆/线/渐变）在**两个后端**都成立，
+高级 op（路径/图像/阴影/图层）先只在 Skia 落地并标 capability。
+等真实应用证明"高级 op 的 golden 必需"时，再逐个补 Raster（R2 → R1 渐进）。
+
+---
+
+## 6. 分阶段执行 + 工作量（粗估，基于文件面，未实测）
+
+| 阶段 | 内容 | 出口判据 | 估时 |
+|---|---|---|---|
+| **P0 接口** | `Canvas` 加 8 方法 + 两个后端空实现（显式失败）+ `RecordingCanvas`/`DisplayList` opcode | lint + smoke 全绿（现有 781 不回归） | 1–2 天 |
+| **P1 核心几何** | `drawEllipse` / `drawLine` / `drawDash`（双后端） | golden 新增 2 张；smoke +4 | 2–3 天 |
+| **P2 CustomPaint** | `CustomPainter` + `CustomPaint` + `RenderCustomPaint` | 一个自定义控件（画椭圆+线）在 preview 与真机都出图 | 2–3 天 |
+| **P3 渐变** | `Paint` 加 linear/radial（双后端） | golden 2 张；Skia/Raster 目视一致 | 3–5 天 |
+| **P4 高级（Skia only）** | `drawPath` / `drawImage` / `drawShadow` / `pushLayer` / `pushClipPath` | 真机 demo：圆角卡片真阴影、图标矢量、图片 | 1–2 周 |
+| **P5 Raster 补齐（可选）** | 按需把 P4 的 op 补进 Raster | golden 从 Skia 迁回 Raster | 3–6 周 |
+
+**P0–P3 合计约 2 周**，就能拿到"椭圆/线/渐变 + CustomPaint"这套最常用的表达力；
+P4 再 1–2 周拿到路径/图像/阴影。
+
+---
+
+## 7. 验证策略（不能只看"能画出来"）
+
+| 层 | 判据 |
+|---|---|
+| 头侧 | `php -l` + `tools/lint.php` + `tools/smoke.php`（现有 781 条不许回归） |
+| 确定性 | 新增 op 的 golden 用 `RasterCanvas`（P1–P3）；P4 的 Skia-only op 用**结构 golden**（元素位置/包围盒），不逐像素 |
+| 双后端一致性 | P1–P3 的 op 必须两后端都实现，且 `preview --svg` 与 Skia 截图目视一致 |
+| 真机 | `probe-grab --png` 抓图；P4 的阴影/路径/图像各一张 |
+| 性能 | `FrameClock` 计时；阴影/路径不能比"三层矩形"更慢（P4 的硬指标） |
+
+---
+
+## 8. 风险
+
+| # | 风险 | 缓解 |
+|---|---|---|
+| R1 | `RasterCanvas` 路径填充/模糊写错，golden 错但看不出来 | 先写**独立单测**（已知面积/已知像素），再进 golden |
+| R2 | 新 op 让 `RasterCanvas` 变慢，smoke 超时 | 新 op 默认只在小尺寸夹具用；性能单独测 |
+| R3 | `Canvas` 接口膨胀，第三方实现（若有）破坏 | Drift2 的 `Canvas` 标 `@api extension`；新方法给默认实现？**PHP 接口不能有默认方法** ⇒ 只能显式失败 |
+| R4 | 阴影/图层的语义与 `BoxStyle` 重复 | `drawShadow` 是**原语**，`BoxStyle.shadow` 是**字段**；先原语后字段 |
+| R5 | `CustomPaint` 绕过脏位/语义 | 它只画不写状态；`version()` 控制重录；语义可选 |
+
+---
+
+## 9. 建议的下一步
+
+1. **裁决 §5 的 R2**（核心双后端 + 高级仅 Skia）——这是本方案唯一的分叉点；
+2. 批 P0 + P1（约 3–5 天）：加接口 + 椭圆/线，**不动任何现有生产者**，smoke 不回归；
+3. P2 的 `CustomPaint` 一落地，就能用它验证"19 op 是否真的够用"——**先用它画一个真实控件**（比如 design-v6 的卡片阴影/图标），比继续加 op 更有信息量。
+
+---
+
+## 执行记录（2026-10-20，按用户裁决：采纳 D2+R2，P0–P2）
+
+> 裁决：**D2（op 三层进 Canvas 契约）+ R2** 采纳，且用户明确「架构优先、可破坏兼容」
+> ⇒ P0 不做"够用就好"的裁剪，一次立完整契约，实现分批激活。
+
+### P0 已落（提交前待 T2）：接口层全契约
+
+| 文件 | 动作 |
+|---|---|
+| `src/Rendering/Canvas.php` | 接口 +9 成员：`capabilities()` + `drawEllipse`/`drawLine`（Core）、`drawPath`/`drawImage`/`drawShadow`/`pushLayer`/`popLayer`（Optional）、`pushClipPath`（Extended）—— 三类分层写进类注释 |
+| `src/Rendering/CanvasCapabilities.php` | **新文件**：位掩码契约（Core/Extended/Optional 三 mask + ALL_MASK）+ `unsupportedMessage()`（现象+op 名+两条修法，不带内部编号） |
+| `src/Rendering/{Path,Gradient,DashPattern,Shadow,ImageHandle}.php` | **新文件**：5 个值对象。渐变/虚线是 **Paint source 属性**（design-v6 的 SOLID/LINEAR/RADIAL/NONE 正交维度）不是新 draw 方法；阴影收成值对象（DisplayList 单操作数 + 与将来的 `BoxStyle.shadow` 共享） |
+| `src/Rendering/Paint.php` | +`?Gradient $gradient` / `?DashPattern $dash` 两个可选字段 + `withGradient/withDash/hasGradient/hasDash`；`equals` 用 `==` 值语义 |
+| `src/Rendering/DisplayList.php` | +8 opcode；**槽位 5→6**（`OP_DRAW_LINE` 要 5 个操作数：x1/y1/x2/y2/paint）；`record()` +`$d`；`replay()` 全分支 |
+| `src/Rendering/RecordingCanvas.php` | 全录制；`capabilities() = ALL_MASK`（能不能画由回放侧裁决，失败消息带真后端名） |
+| `src/Rendering/{Raster,Skia}Canvas.php` | `capabilities() = 0`（分层实现未到）+ 9 方法全部**显式失败**（E-OP-UNSUPPORTED 走 `Errors::report`，不静默丢像素） |
+
+**P0 出口判据**：lint 0 error；smoke 781→**797/0**（+16：能力位 / Path 构造 / Paint 正交维度 / LINE 6 槽定位 / 三个显式失败子进程断言 exit=3）；现有生产者零改动 ⇒ 像素路径不变。T2（AOT 编译 + selftest）进行中。
+
+### P1（下一步）：drawEllipse/drawLine 双后端
+
+- `RasterCanvas`：椭圆填充/描边（扫描线 + 逐点判谓词，与 `rasterize()` 的圆角同思路）；线段（逻辑空间步进 + 宽度）。渐变/虚线下批。
+- `SkiaCanvas` + `cpp-src/drift_skia.cc`：桥加 `drift_skia_draw_ellipse` / `drift_skia_draw_line`，坐标口径与 `draw_rect` 一致（设备像素、宽度不乘 dpr）。
+- golden +2 张（Raster）；smoke：两后端各画一次并断墨迹包围盒。
