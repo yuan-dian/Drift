@@ -28,6 +28,17 @@ abstract class RenderBox extends RenderObject
     protected float $offsetX = 0.0;
     protected float $offsetY = 0.0;
 
+    // ── 主轴弹性意图（§13.1 C4 扩展；`04` §2）──────────────────────
+    // ★ 住 `RenderBox` 而不是"一个代理盒"：`RenderFlex` 本来就读 `$kid->flex()`，
+    //   四个意图放同一层 ⇒ `02` §7 把 `Expanded`/`Flexible` 改成 shim 之后，
+    //   代理盒（`RenderFlexible`）就没有存在理由了。
+    // ★ **NAN = 未设**：`basis` 的"未设"（用自然尺寸）与"设为 0"必须是两件事，
+    //   同 `02` §3.2 的 `width` 判据。
+    private int $grow = 0;        // 0 = 不参与放大
+    private int $shrink = 0;      // 0 = 不参与压缩
+    private float $basis = \NAN;  // NAN = 用自然尺寸
+    private int $alignSelf = self::ALIGN_INHERIT;
+
     public function size(): ?Size
     {
         return $this->size;
@@ -129,14 +140,66 @@ abstract class RenderBox extends RenderObject
 
     abstract public function intrinsicHeight(float $width): float;
 
+    // ── `alignSelf` 的取值（`04` §2.4）────────────────────────────
+    // ★ **int 哨兵而不是 enum**：`alignSelf` 要表达"未设"（INHERIT），而
+    //   `FlexAlign` 没有这个 case；加一个会让 `placeChildren()` 的 match
+    //   多一条"不该走到"的分支。int 0 是唯一不可能与真值混淆的写法。
+    public const ALIGN_INHERIT = 0;   // 跟父容器的 crossAlign
+    public const ALIGN_START   = 1;
+    public const ALIGN_CENTER  = 2;
+    public const ALIGN_END     = 3;
+    public const ALIGN_STRETCH = 4;
+
+    /**
+     * 一次性写四个弹性意图（`Modifier` / `RenderFlexible` 的落点）。
+     *
+     * ★ 为什么是一个 setter 而不是四个：调用点（`Element::syncBox()`）只有一处，
+     *   四个 setter = 四次方法调用 + 四次"漏调一个"的机会。
+     */
+    public function setFlexIntent(int $grow, int $shrink, float $basis, int $alignSelf): void
+    {
+        $this->grow = $grow;
+        $this->shrink = $shrink;
+        $this->basis = $basis;
+        $this->alignSelf = $alignSelf;
+    }
+
+    /** 主轴放大份额（0 = 不参与） */
+    public function grow(): int
+    {
+        return $this->grow;
+    }
+
+    /** 主轴压缩份额（0 = 不参与；`04` §3 的 shrink 分支读它） */
+    public function shrink(): int
+    {
+        return $this->shrink;
+    }
+
+    /** 分配前的起始主轴尺寸（NAN = 用自然尺寸） */
+    public function basis(): float
+    {
+        return $this->basis;
+    }
+
+    /** 交叉轴自对齐（ALIGN_INHERIT = 跟父容器） */
+    public function alignSelf(): int
+    {
+        return $this->alignSelf;
+    }
+
     /**
      * 主轴弹性份额（`RenderFlex` 读它；§13.1 C4）。
      *
-     * `0` = 不参与弹性分配 ⇒ 拿自然尺寸。默认 0，只有弹性项的盒子覆写。
+     * ★ **`flex()` 是 `grow()` 的别名**（`04` §2.1）：语义没变，只是
+     *   "住进字段"之后 `grow` 是正式名字。保留一个提交周期，
+     *   等 `apps/showcase` 全量改名之后删。
+     *
+     * @deprecated 用 `grow()`
      */
     public function flex(): int
     {
-        return 0;
+        return $this->grow;
     }
 
     /**

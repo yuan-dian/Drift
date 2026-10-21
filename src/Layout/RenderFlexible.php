@@ -20,17 +20,16 @@ use Drift\Geometry\Size;
  */
 final class RenderFlexible extends RenderProxyBox
 {
-    public function __construct(private readonly int $flexValue = 1)
+    public function __construct(int $flexValue = 1)
     {
         if ($flexValue < 1) {
             // flex 份额无意义 ⇒ 响亮失败（C6：违反 ⇒ 报）
             \Drift\Errors::report(sprintf('flex 份额必须 ≥ 1，收到 %d', $flexValue));
         }
-    }
-
-    public function flex(): int
-    {
-        return $this->flexValue;
+        // ★ 写进 `RenderBox` 的意图字段，不再自己存一份 ——
+        //   `RenderFlex` 读的是 `$kid->flex()`（= `grow()`），两个住处
+        //   迟早不一致（`04` §2.2：改的是数据的住处，不是算法的写法）。
+        $this->setFlexIntent($flexValue, 0, \NAN, self::ALIGN_INHERIT);
     }
 
     protected function performLayout(BoxConstraints $constraints): Size
