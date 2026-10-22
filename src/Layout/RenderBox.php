@@ -28,6 +28,15 @@ abstract class RenderBox extends RenderObject
     protected float $offsetX = 0.0;
     protected float $offsetY = 0.0;
 
+    // ── 浮层基准偏移（arch-v2 `01` §4.4，W3）──────────────────────────
+    // ★ `hasBase=true` ⇒ 本盒是某棵**浮层树的根**：`absoluteOrigin()` 累加到它为止，
+    //   加上自己的落点就停。没有它，嵌套浮层里的锚点只算到浮层根 (0,0)，
+    //   子菜单会弹到左上角。
+    // ★ `hasBase` 用独立 bool 而不是 "baseX !== 0"：浮层原点可能就是 (0,0)（模态）。
+    protected float $baseX = 0.0;
+    protected float $baseY = 0.0;
+    protected bool $hasBase = false;
+
     // ── 主轴弹性意图（§13.1 C4 扩展；`04` §2）──────────────────────
     // ★ 住 `RenderBox` 而不是"一个代理盒"：`RenderFlex` 本来就读 `$kid->flex()`，
     //   四个意图放同一层 ⇒ `02` §7 把 `Expanded`/`Flexible` 改成 shim 之后，
@@ -66,12 +75,37 @@ abstract class RenderBox extends RenderObject
         $this->offsetY = $y;
     }
 
+    /** 标记本盒是浮层树的根，并给它客户区落点（`Application::placeEntry()` 每帧写） */
+    public function setBase(float $x, float $y): void
+    {
+        $this->baseX = $x;
+        $this->baseY = $y;
+        $this->hasBase = true;
+    }
+
+    public function hasBase(): bool
+    {
+        return $this->hasBase;
+    }
+
+    public function baseX(): float
+    {
+        return $this->baseX;
+    }
+
+    public function baseY(): float
+    {
+        return $this->baseY;
+    }
+
     /**
      * 盒在客户区的**绝对原点**（沿父链累加相对偏移）—— 逻辑像素。
      *
      * ★ 单一出处：命中测试 / IME 候选框 / 菜单锚点 / 语义几何全部走这里
      *   （`Application::absoluteOrigin()` 已改为委派到本方法）。自己沿 Element 链
      *   累加 `offset` 会**重复累加**（Element 不持有 offset，盒才持）。
+     * ★ **遇到浮层根（`hasBase`）就加上它的落点并停止**：嵌套浮层里的锚点若一路
+     *   累加到主树根，浮层根那一层会被算成 (0,0)（`01` §4.4 的真坑）。
      * ★ 未参与本轮布局（`size() === null`）的盒照常累加 —— 调用方自己判
      *   `hasSize()`；这里不做"部分布局"的特殊处理。
      *
@@ -85,6 +119,12 @@ abstract class RenderBox extends RenderObject
         for ($node = $box; $node !== null; $node = $node->parent()) {
             $x += $node->offsetX();
             $y += $node->offsetY();
+
+            if ($node->hasBase()) {
+                $x += $node->baseX();
+                $y += $node->baseY();
+                break;
+            }
         }
 
         return [$x, $y];
