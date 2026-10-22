@@ -35,6 +35,12 @@ use Drift\Geometry\BoxConstraints;
  * 采样 1/16：一次全量重排 ≈ 0.3–0.8ms（2200 行的树），摊到 16 帧 ≈ 0.05ms/帧。
  * 若将来树大到重排 > 4ms，把 `SAMPLE_EVERY` 改 64。
  *
+ * ## 不一致怎么被看见（★ 真机判据靠这个）
+ *
+ * 同 `FramePhase`：`Errors::report(DIAGNOSTIC)` 只进**进程内**环形缓冲，真机上
+ * `users.exe` 是独立进程 ⇒ 外面读不到 ⇒ “`mismatches === 0`”只能选择相信。
+ * ⇒ 每次采样完把计数器刷进 `build/layout.check.out`（整份重写）。
+ *
  * @api dev 量具入口（`04` §12.2 #14 的夹具设 `$on = true` 直接驱它）
  */
 final class LayoutSelfCheck
@@ -45,13 +51,24 @@ final class LayoutSelfCheck
     /** 采样频率：每 N 帧一次（v6 `04` §3.2 同频率） */
     private const SAMPLE_EVERY = 16;
 
+    /**
+     * 报告文件（与开关同目录同前缀，`getcwd()` 相对）。
+     *
+     * ★ 命名跟着 `apps/bench` 的 `build/bench-out.txt` 那一套 `-out` 后缀惯例。
+     */
+    private const REPORT = 'build/layout.check.out';
+
     /** 已执行的比对次数 */
     public static int $checks = 0;
 
-    /** 不一致次数（**这个数必须恒 0**） */
+    /** 不一致次数（**这个数必须恒 0**；真机判据直接读报告文件里的这一行） */
     public static int $mismatches = 0;
 
-    /** @var list<string> 最近几条不一致的描述（类名 + 字段 + 两个值） */
+    /**
+     * 最近几条不一致的描述。
+     *
+     * @var list<array{class: string, field: string}>
+     */
     public static array $recent = [];
 
     /** 帧计数（自持，不穿 `Frame::run()` 的 `@api` 签名） */
@@ -107,7 +124,33 @@ final class LayoutSelfCheck
                     $diff['field'],
                 ), Errors::DIAGNOSTIC);
             }
+
+            // ★ 每次采样完都刷：哪怕一帧都没采样到，`boot()` 也已经落了一份
+            //   `checks 0` —— "没有文件"与"跑过且干净"在外面必须分得开。
+            self::writeReport();
         }
+    }
+
+    /**
+     * 把计数器刷进报告文件（同 `FramePhase::writeReport()`）。
+     *
+     * ★ 整份重写而不是追加：报告表达"**当前**状态；进程被杀时留下的最后一份
+     *   恰好就是当时的真实状态。
+     * ★ 开关与报告同在 `build/` 下 ⇒ 开关被 `is_file()` 找到时目录一定存在，
+     *   写不会因目录缺失而静默失败。
+     */
+    private static function writeReport(): void
+    {
+        $lines = [
+            'switch     build/layout.check',
+            'frames     ' . self::$frames,
+            'checks     ' . self::$checks,
+            'mismatches ' . self::$mismatches,
+        ];
+        foreach (self::$recent as $r) {
+            $lines[] = '  · ' . $r['class'] . ' · ' . $r['field'];
+        }
+        \file_put_contents(self::REPORT, implode("\n", $lines) . "\n");
     }
 
     /** 清零（bench / 测试每轮开头调） */
@@ -134,6 +177,11 @@ final class LayoutSelfCheck
         // ★ `getcwd()` 而不是 `__DIR__`：后者是**编译期常量**，AOT 下指向
         //   构建机源码树 ⇒ 开发机"恰好能用"、打包后静默不生效（`10` §2 A8）。
         self::$on = self::$on || \is_file('build/layout.check');
+        if (self::$on) {
+            // ★ 立刻落一份 `checks 0`：否则"没有报告文件"与"跑过且干净"
+            //   在外面看起来一模一样。
+            self::writeReport();
+        }
     }
 
     /**

@@ -37,6 +37,13 @@ use Drift\Errors;
  *
  * 关的时候开销 = `begin()` 返回 null + 每段一次 `if ($trace !== null)` ⇒ 可忽略。
  *
+ * ## 违规怎么被看见（★ 真机判据靠这个）
+ *
+ * `Errors::report(DIAGNOSTIC)` 只进**进程内**环形缓冲，而真机上 `users.exe` 是
+ * 独立进程 ⇒ 外面一条都读不到 ⇒ “0 条违规”只能选择相信，**那正是 G2「绝不静默」
+ * 的反面：断言输出了，但没有人看得见**。⇒ 开着的每一帧都把计数器刷进
+ * `build/frame.trace.out`（整份重写，与开关同目录同前缀）。
+ *
  * @api dev 量具入口（`06` §11.2 #1/#2 的夹具直接驱 `assertOrder()`）
  */
 final class FramePhase
@@ -78,6 +85,23 @@ final class FramePhase
     /** 打开后每帧记 trace，帧末断言 */
     public static bool $on = false;
 
+    /**
+     * 报告文件（与开关同目录同前缀，`getcwd()` 相对）。
+     *
+     * ★ 命名跟着 `apps/bench` 的 `build/bench-out.txt` / `build/bench-m4.txt`
+     *   那一套 `-out` 后缀惯例。
+     */
+    private const REPORT = 'build/frame.trace.out';
+
+    /** 已断言帧数 */
+    private static int $frames = 0;
+
+    /** 违规次数（**这个数必须恒 0**；真机判据直接读报告文件里的这一行） */
+    public static int $violations = 0;
+
+    /** @var list<string> 最近几条违规的一行摘要（真机报告文件里同格式） */
+    public static array $recent = [];
+
     /** 文件开关只读一次 */
     private static bool $booted = false;
 
@@ -100,7 +124,9 @@ final class FramePhase
      */
     public static function end(array $trace): void
     {
+        self::$frames++;
         self::assertOrder($trace);
+        self::writeReport();
     }
 
     /** 清零（测试用） */
@@ -108,6 +134,9 @@ final class FramePhase
     {
         self::$on = false;
         self::$booted = false;
+        self::$frames = 0;
+        self::$violations = 0;
+        self::$recent = [];
     }
 
     /**
@@ -119,11 +148,11 @@ final class FramePhase
     {
         $settleIndex = array_search('settle', $trace, true);
         if ($settleIndex === false) {
-            Errors::report(
+            self::flag(
                 '帧阶段：本帧没有 settle 标记 —— Frame::run() 没被调用，'
                 . '整帧的 setState 都没被消费。' . "\n"
                 . '修法：确认 frame() 里 $frame->run(...) 那段没被提前 return 掉。',
-                Errors::DIAGNOSTIC
+                '缺 settle 标记'
             );
 
             return;
@@ -139,12 +168,12 @@ final class FramePhase
                 continue; // 缺失由下面的"必须出现"检查报
             }
             if ($index[$name] > $settleIndex) {
-                Errors::report(sprintf(
+                self::flag(\sprintf(
                     "帧阶段：%s 在 settle 之后跑了 —— %s。\n"
                     . '修法：把它挪到 $frame->run(...) 之前（组 A 只做"调回调"，回调里只 setState/markDirty）。',
                     $name,
                     self::CONSEQUENCE[$name] ?? '会慢一帧',
-                ), Errors::DIAGNOSTIC);
+                ), $name . ' 在 settle 之后');
             }
         }
 
@@ -153,25 +182,65 @@ final class FramePhase
                 continue;
             }
             if ($index[$name] < $settleIndex) {
-                Errors::report(sprintf(
+                self::flag(\sprintf(
                     "帧阶段：%s 在 settle 之前跑了 —— %s。\n"
                     . '修法：把它挪到 $frame->run(...) 之后（组 C 观察的是**新**树）。',
                     $name,
                     self::CONSEQUENCE[$name] ?? '会读到旧树',
-                ), Errors::DIAGNOSTIC);
+                ), $name . ' 在 settle 之前');
             }
         }
 
         foreach (self::ALL as $name) {
             if (!isset($index[$name])) {
-                Errors::report(sprintf(
+                self::flag(\sprintf(
                     "帧阶段：本帧没跑 %s —— %s。\n"
                     . '修法：确认 frame() 里那段没被条件跳过；若确实要跳过，把名字从 FramePhase::ALL 里删掉并写理由。',
                     $name,
                     self::CONSEQUENCE[$name] ?? '这一帧少做一件事',
-                ), Errors::DIAGNOSTIC);
+                ), '缺 ' . $name);
             }
         }
+    }
+
+    /**
+     * 记一条违规：计数 + 一行摘要 + 一条 Diagnostic。
+     *
+     * ★ 摘要与 Diagnostic 是**两个出口**，缺一不可：
+     *   · Diagnostic 进进程内环形缓冲（`Errors::recentDiagnostics()`，测试读）
+     *   · 摘要进报告文件（真机可读）
+     *   只有前者 ⇒ 真机上"看得见"等于不存在（见类 docblock）。
+     */
+    private static function flag(string $message, string $short): void
+    {
+        self::$violations++;
+        self::$recent[] = \sprintf('帧 %d：%s', self::$frames, $short);
+        if (count(self::$recent) > 8) {
+            self::$recent = array_slice(self::$recent, -8);
+        }
+        Errors::report($message, Errors::DIAGNOSTIC);
+    }
+
+    /**
+     * 把计数器刷进报告文件。
+     *
+     * ★ 整份重写而不是追加：报告要表达"**当前**状态"，追加会无限增长；
+     *   而且进程被杀时留下的最后一份，恰好就是当时的真实状态。
+     * ★ 为什么不会因目录缺失而静默失败：开关与报告同在 `build/` 下，
+     *   开关能被 `is_file()` 找到 ⇒ `build/` 一定存在。
+     * ★ `getcwd()` 相对，不用 `__DIR__`（编译期常量 ⇒ 打包后静默不生效，`10` §2 A8）。
+     */
+    private static function writeReport(): void
+    {
+        $lines = [
+            'switch     build/frame.trace',
+            'frames     ' . self::$frames,
+            'violations ' . self::$violations,
+        ];
+        foreach (self::$recent as $line) {
+            $lines[] = '  · ' . $line;
+        }
+        \file_put_contents(self::REPORT, implode("\n", $lines) . "\n");
     }
 
     /**
@@ -187,5 +256,10 @@ final class FramePhase
         }
         self::$booted = true;
         self::$on = self::$on || \is_file('build/frame.trace');
+        if (self::$on) {
+            // ★ 立刻落一份 `frames 0`：否则"没有报告文件"与"跑过 300 帧且干净"
+            //   两种完全不同的情况在外面看起来一模一样 —— 那正是这个文件要消除的歧义。
+            self::writeReport();
+        }
     }
 }

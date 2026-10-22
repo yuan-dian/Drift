@@ -2724,12 +2724,24 @@ for ($i = 0; $i < 64; $i++) {
 }
 LayoutSelfCheck::$on = false;
 
+// ③ 报告文件：真机上 `users.exe` 是独立进程，`Errors` 的环形缓冲外面一条都读不到
+//    ⇒ "mismatches === 0" 会退化成"只能选择相信"。落盘出口必须真的落。
+$selfCheckReport = getcwd() . '/build/layout.check.out';
+$selfCheckReportMismatches = -1;
+if (is_file($selfCheckReport)) {
+    $text = (string) file_get_contents($selfCheckReport);
+    if (preg_match('/^mismatches (\d+)$/m', $text, $mm) === 1) {
+        $selfCheckReportMismatches = (int) $mm[1];
+    }
+}
+
 check(
-    'Layout · 自校验反例自检（纯盒 0 不一致 / 不纯盒 > 0 / 两侧都真采样到）',
+    'Layout · 自校验反例自检（纯盒 0 不一致 / 不纯盒 > 0 / 两侧都真采样到 / 报告文件落盘）',
     $pureChecks > 0 && $pureMismatches === 0
-        && LayoutSelfCheck::$checks > 0 && LayoutSelfCheck::$mismatches > 0,
+        && LayoutSelfCheck::$checks > 0 && LayoutSelfCheck::$mismatches > 0
+        && $selfCheckReportMismatches > 0,
     sprintf(
-        '纯盒 checks=%d mismatches=%d ｜ 不纯盒 checks=%d mismatches=%d ｜ 末条差异=%s',
+        '纯盒 checks=%d mismatches=%d ｜ 不纯盒 checks=%d mismatches=%d ｜ 末条差异=%s ｜ 报告文件 mismatches=%d',
         $pureChecks,
         $pureMismatches,
         LayoutSelfCheck::$checks,
@@ -2737,7 +2749,8 @@ check(
         LayoutSelfCheck::$recent === []
             ? '(空)'
             : LayoutSelfCheck::$recent[count(LayoutSelfCheck::$recent) - 1]['class']
-                . ' @ ' . LayoutSelfCheck::$recent[count(LayoutSelfCheck::$recent) - 1]['field']
+                . ' @ ' . LayoutSelfCheck::$recent[count(LayoutSelfCheck::$recent) - 1]['field'],
+        $selfCheckReportMismatches
     )
 );
 check(
@@ -8683,25 +8696,41 @@ $cTrace = FramePhase::ALL;
 unset($cTrace[(int) array_search('settle', FramePhase::ALL, true)]);
 $cTrace = array_values($cTrace);
 
+// ★ 三个方向**都走 `end()`** 而不是 `assertOrder()`：`end()` 才是
+//   `Application::frame()` 真调的那一个（断言 + 刷报告文件）。
+//   绕过它验不到落盘出口，而且报告里的帧号会停在 0（看着像 off-by-one）。
 $base = count(Errors::recentDiagnostics());
-FramePhase::assertOrder($aTrace);
+FramePhase::end($aTrace);
 $afterA = count(Errors::recentDiagnostics());
-FramePhase::assertOrder($bTrace);
+FramePhase::end($bTrace);
 $afterB = count(Errors::recentDiagnostics());
-FramePhase::assertOrder($cTrace);
+FramePhase::end($cTrace);
 $afterC = count(Errors::recentDiagnostics());
 
 $ring = Errors::recentDiagnostics();
 $lastText = $ring === [] ? '(空)' : (string) $ring[count($ring) - 1];
+
+// 报告文件：真机上独立进程读不到环形缓冲 ⇒ 违规必须落盘才算"看得见"
+$frameReport = getcwd() . '/build/frame.trace.out';
+$frameReportViolations = -1;
+if (is_file($frameReport)) {
+    $text = (string) file_get_contents($frameReport);
+    if (preg_match('/^violations (\d+)$/m', $text, $fm) === 1) {
+        $frameReportViolations = (int) $fm[1];
+    }
+}
+
 check(
-    '帧阶段 · 反例：三个越界方向都报（A 组过后 / C 组提前 / 缺 settle）',
-    $afterA > $base && $afterB > $afterA && $afterC > $afterB,
+    '帧阶段 · 反例：三个越界方向都报（A 组过后 / C 组提前 / 缺 settle）＋ 报告文件落盘',
+    $afterA > $base && $afterB > $afterA && $afterC > $afterB
+        && $frameReportViolations > 0,
     sprintf(
-        'A +%d / B +%d / C +%d ｜ 末条：%s',
+        'A +%d / B +%d / C +%d ｜ 末条：%s ｜ 报告文件 violations=%d',
         $afterA - $base,
         $afterB - $afterA,
         $afterC - $afterB,
-        \strlen($lastText) > 60 ? \substr($lastText, 0, 60) . '…' : $lastText
+        \strlen($lastText) > 60 ? \substr($lastText, 0, 60) . '…' : $lastText,
+        $frameReportViolations
     )
 );
 
