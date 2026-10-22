@@ -128,8 +128,11 @@ interface Canvas
      *
      * ★ 层是**绘制栈**的一部分（`save`/`restore` 之外新增的第三条语义）：
      *   当前 offset/clip 照常生效，层只影响"层内累积的结果怎么合到下层"。
-     * ★ W8 的配平断言（`DisplayList::assertBalanced`）**不**覆盖层深 ——
-     *   层的配平由 `CustomPaint` 的契约保证（painter 自己配对，画布只执行）。
+     * ★ W8 的配平断言（`DisplayList::assertBalanced`）**也覆盖层深**
+     *   （W1/L3-3 起：`layerDepth` 同口径计深）。层的**语义**由 `CustomPaint`
+     *   的契约保证（painter 自己配对，画布只执行）；**配平**是另一件事，
+     *   归 W8。之前"不覆盖"是为了省一支计数，代价是不配对的 `pushLayer`
+     *   让后续绘制整体变透而无人知晓。
      */
     public function pushLayer(float $opacity): void;
 

@@ -18,8 +18,8 @@ use Drift\Errors;
  * | 层 | op | 所有后端 | RasterCanvas | SkiaCanvas |
  * |---|---|---|---|---|
  * | Core | ELLIPSE / LINE | **必须实现**（缺一个就是缺陷） | 必须（golden 用它） | 必须 |
- * | Extended | GRADIENT / DASH / CLIP_PATH / PATH | Skia 级必须 | **可降级近似**（渐变→分带、虚线→实线；路径硬边无抗锯齿且只做 Miter+Butt；路径裁剪 = 每行 x 区间掩码） | 必须 |
- * | Optional | IMAGE / SHADOW / LAYER | 仅 Skia 级 | **报 E-OP-UNSUPPORTED** | 必须 |
+ * | Extended | GRADIENT / DASH / CLIP_PATH / PATH / LAYER | Skia 级必须 | **可降级近似**（渐变→分带、虚线→实线；路径硬边无抗锯齿且只做 Miter+Butt；路径裁剪 = 每行 x 区间掩码；层 = alpha 乘数栈） | 必须 |
+ * | Optional | IMAGE / SHADOW | 仅 Skia 级 | **报 E-OP-UNSUPPORTED** | 必须 |
  *
  * **位置位 = "该后端能处理这个 op"**（Extended 的近似也算处理 —— 输出质量
  * 档位见各后端方法注释与 `BACKPORT-19OP.md` §5 的 R2 取舍；金色基线只用
@@ -48,11 +48,16 @@ final class CanvasCapabilities
     //   提档的语义是"缺了它控件画不出来"，不是"实现质量相同" —— Raster 这一份
     //   是硬边、无抗锯齿、只做 Miter+Butt（`05` §3.3 / §3.4），差异写在 docblock。
     public const CAP_PATH = 1 << 5;
+    // ★ `CAP_LAYER` 在 W1/L3-3 从 Optional 提到 Extended：Raster 的 alpha
+    //   乘数栈（`05` §5.6）能近似层语义 ⇒ "缺了它控件画不出来"这条不再成立
+    //   （`opacity` 动画是 Extended 级需求）。与真离屏的差异是"层内重叠子
+    //   更透"，smoke 夹具 #9 钉住。位值随之重排（无常量/字面量硬编码依赖，
+    //   全部经常量名引用）。
+    public const CAP_LAYER = 1 << 6;
 
     // ── Optional：仅 Skia 级后端；Raster 响亮失败 ──
-    public const CAP_IMAGE = 1 << 6;
-    public const CAP_SHADOW = 1 << 7;
-    public const CAP_LAYER = 1 << 8;
+    public const CAP_IMAGE = 1 << 7;
+    public const CAP_SHADOW = 1 << 8;
 
     /**
      * 全量位掩码。

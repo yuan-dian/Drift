@@ -58,6 +58,15 @@ final class DisplayList
     private int $clipDepth = 0;
 
     /**
+     * 层深（W1/L3-3 起纳入 W8 配平）。
+     *
+     * ★ 之前"不查"（`Canvas.php` 的 docblock 明写不覆盖层深）⇒ 不配对的
+     *   `pushLayer` 让后续所有绘制都带一个没人弹掉的乘数，画面整体变透而
+     *   无人知晓。层的语义归 CustomPaint 契约，**配平归 W8**，两件事。
+     */
+    private int $layerDepth = 0;
+
+    /**
      * 复用缓冲：只归零长度，槽位保留。
      */
     public function reset(): void
@@ -65,6 +74,7 @@ final class DisplayList
         $this->length = 0;
         $this->saveDepth = 0;
         $this->clipDepth = 0;
+        $this->layerDepth = 0;
     }
 
     /**
@@ -108,6 +118,10 @@ final class DisplayList
             $this->clipDepth++;
         } elseif ($op === self::OP_POP_CLIP) {
             $this->clipDepth--;
+        } elseif ($op === self::OP_LAYER_PUSH) {
+            $this->layerDepth++;
+        } elseif ($op === self::OP_LAYER_POP) {
+            $this->layerDepth--;
         }
     }
 
@@ -150,11 +164,12 @@ final class DisplayList
      */
     public function assertBalanced(): void
     {
-        if ($this->saveDepth !== 0 || $this->clipDepth !== 0) {
+        if ($this->saveDepth !== 0 || $this->clipDepth !== 0 || $this->layerDepth !== 0) {
             Errors::report(sprintf(
-                'DisplayList 录制未闭合：save/restore 差 %d、pushClip/popClip 差 %d（W8）',
+                'DisplayList 录制未闭合：save/restore 差 %d、pushClip/popClip 差 %d、pushLayer/popLayer 差 %d（W8）',
                 $this->saveDepth,
-                $this->clipDepth
+                $this->clipDepth,
+                $this->layerDepth
             ));
         }
     }

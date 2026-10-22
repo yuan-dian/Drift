@@ -20,7 +20,8 @@ use Drift\Text\Paragraph;
  *
  * 覆盖能力：轴对齐矩形（填充 / 描边 / 圆角）、椭圆、线段、平移、矩形裁剪、
  * **路径裁剪（每行 x 区间掩码，W1/L3-2）**、路径填充与描边（扫描线 + 奇偶，
- * W1/L3-1）、source-over 混合、**段落（字形位图按覆盖度混合）**。
+ * W1/L3-1）、**层不透明度（alpha 乘数栈，W1/L3-3）**、source-over 混合、
+ * **段落（字形位图按覆盖度混合）**。
  *
  * ★ 逻辑 → 物理只走 `Scale::quantizeRect()`（§6.1 的唯一量化点）。画布本身是
  *   **物理像素**空间，构造尺寸就是像素尺寸。
@@ -65,6 +66,19 @@ final class RasterCanvas implements Canvas
      * @var list<array{Rect, ?array}>
      */
     private array $clipStack = [];
+
+    /**
+     * 层不透明度栈（`05` §5.6）：栈顶 = 当前生效的乘数（空栈 ⇒ 1.0）。
+     *
+     * ★ 这是 **alpha 乘数栈**，不是真离屏：每个 draw 的颜色 alpha 各乘一次
+     *   （`effectiveColor`）⇒ 层内重叠子之间会重复相乘，视觉上比 Skia 的真
+     *   离屏合成**更透**。Extended 层的有意近似 —— 真离屏在纯 PHP 里是一块
+     *   `array<int,int>`（1080p 约 200 万元素），内存与 GC 压力远超这 20 行
+     *   的收益。差异由 smoke 夹具钉住（`05` §12.2 #9）。
+     *
+     * @var list<float>
+     */
+    private array $layerAlpha = [];
 
     /**
      * §13.5 的两个纯性能缓存（**不影响输出**——同输入同字节，golden 逐字节比对过）：
@@ -257,9 +271,12 @@ final class RasterCanvas implements Canvas
         //   后，Extended 层的缺口从 1 变 0。这一位一直在 Extended 段（`05` §1.1
         //   第 6 行的"矛盾"：标着 Extended 而 Raster 响亮失败），本步消掉的正是
         //   那个矛盾。掩码是硬边无抗锯齿的像素区间，与 `CAP_PATH` 同一族取舍。
+        // ★ `CAP_LAYER` 在 W1/L3-3 置位：alpha 乘数栈（`05` §5.6）。Extended 层
+        //   的有意近似 —— 与真离屏只差"层内重叠子更透"这一条，写进 docblock。
         return CanvasCapabilities::CAP_ELLIPSE | CanvasCapabilities::CAP_LINE
             | CanvasCapabilities::CAP_GRADIENT | CanvasCapabilities::CAP_DASH
-            | CanvasCapabilities::CAP_CLIP_PATH | CanvasCapabilities::CAP_PATH;
+            | CanvasCapabilities::CAP_CLIP_PATH | CanvasCapabilities::CAP_PATH
+            | CanvasCapabilities::CAP_LAYER;
     }
 
     /**
@@ -343,7 +360,7 @@ final class RasterCanvas implements Canvas
         $ey = $by - $ay;
         $len2 = $ex * $ex + $ey * $ey;
         $r2 = $half * $half;
-        $color = $paint->color;
+        $color = $this->effectiveColor($paint->color);
 
         // ★ 虚线：沿弧长（逻辑单位，与 DashPattern 同口径）算"在 on 段还是 off 段"。
         //   s = t × 逻辑长度；相位 phase 让相邻段错开。Raster 在**线段**上做真虚线
@@ -392,6 +409,7 @@ final class RasterCanvas implements Canvas
      */
     private function rasterizeEllipse(Rect $ellipse, Color $color, ?Rect $hole, ?Gradient $gradient = null): void
     {
+        $color = $this->effectiveColor($color);
         $cx = $ellipse->left + $ellipse->width / 2.0;
         $cy = $ellipse->top + $ellipse->height / 2.0;
         $rx = $ellipse->width / 2.0;
@@ -639,6 +657,7 @@ final class RasterCanvas implements Canvas
         if ($edges === []) {
             return;
         }
+        $color = $this->effectiveColor($color);
 
         $bounds = $this->edgeBounds($edges);
         $minY = $bounds[1];
@@ -987,7 +1006,7 @@ final class RasterCanvas implements Canvas
             return;
         }
 
-        $color = $paint->color;
+        $color = $this->effectiveColor($paint->color);
         $opaque = $color->a >= 255;
         $lut = $opaque ? null : $this->blendLut($color);
 
@@ -1079,14 +1098,46 @@ final class RasterCanvas implements Canvas
         $this->unsupportedOp('drawShadow', 'Optional');
     }
 
+    /**
+     * 压入层（`05` §5.6）：**alpha 乘数栈**，不是真离屏。
+     *
+     * 栈顶乘数随每个 draw 的颜色 alpha 一起算下去（`effectiveColor`）；
+     * 嵌套时乘数相乘 ⇒ "层内再开层"的语义与真离屏一致。
+     *
+     * ★ 与 Skia 的真离屏只差一处：**层内重叠子各乘一次**（Skia 是先合成再乘
+     *   一次）⇒ Raster 上重叠处更透。Extended 层的有意近似（内存零开销 vs
+     *   一块 1080p 的 `array<int,int>`），smoke 夹具 #9 把差异钉住。
+     */
     public function pushLayer(float $opacity): void
     {
-        $this->unsupportedOp('pushLayer', 'Optional');
+        $top = $this->layerAlpha === [] ? 1.0 : $this->layerAlpha[count($this->layerAlpha) - 1];
+        $this->layerAlpha[] = $top * max(0.0, min(1.0, $opacity));
     }
 
     public function popLayer(): void
     {
-        $this->unsupportedOp('popLayer', 'Optional');
+        if ($this->layerAlpha === []) {
+            return; // 未配对：W8 的 layerDepth 断言在录制侧抓（§1.7）
+        }
+        array_pop($this->layerAlpha);
+    }
+
+    /**
+     * 层不透明度栈作用到颜色上（`05` §5.6）。
+     *
+     * 空栈 / 栈顶 >= 1 时原样返回（快路：绝大多数帧没有层，不造新 Color）。
+     */
+    private function effectiveColor(Color $color): Color
+    {
+        if ($this->layerAlpha === []) {
+            return $color;
+        }
+        $factor = $this->layerAlpha[count($this->layerAlpha) - 1];
+        if ($factor >= 1.0) {
+            return $color;
+        }
+
+        return new Color($color->r, $color->g, $color->b, (int) round($color->a * $factor));
     }
 
     /**
@@ -1269,6 +1320,7 @@ final class RasterCanvas implements Canvas
     /** 覆盖位图按 source-over 混合（覆盖率即 alpha） */
     private function blendBitmap(GlyphBitmap $bitmap, Color $color, float $penX, float $baselineY): void
     {
+        $color = $this->effectiveColor($color);
         // 位图已在设备像素空间：`bearingX/Y` 是相对笔位的偏移
         $left = (int) round($penX * $this->scale->dpr) + $bitmap->bearingX;
         $top = (int) round($baselineY * $this->scale->dpr) + $bitmap->bearingY;
@@ -1306,6 +1358,7 @@ final class RasterCanvas implements Canvas
 
     private function rasterize(Rect $rect, float $radius, Color $color, ?Rect $hole, float $holeRadius, ?Gradient $gradient = null): void
     {
+        $color = $this->effectiveColor($color);
         if ($color->a === 0) {
             return;
         }

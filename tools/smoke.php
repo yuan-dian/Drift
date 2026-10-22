@@ -380,6 +380,15 @@ if (str_starts_with($caseArg, '--case=')) {
         $list->assertBalanced();
     }
 
+    if ($case === 'layerunbalanced') {
+        // W1/L3-3 / `05` §10 #6b：只 pushLayer 不 popLayer ⇒ W8 必须抓到。
+        // ★ 之前 DisplayList 根本不查层深（`Canvas.php` docblock 明写不覆盖）
+        //   ⇒ 没人弹掉的乘数让后续绘制整体变透，画面"莫名变淡"且无人知晓。
+        $list = new DisplayList();
+        $list->record(DisplayList::OP_LAYER_PUSH, 0.5);
+        $list->assertBalanced();
+    }
+
     if ($case === 'custompaint') {
         // P2：自绘的轴没给、父容器又不限制这一轴 ⇒ 响亮失败（自绘区不能无穷大）
         $el = (new CustomPaint(new ProbePainter(), 120.0))->createElement();
@@ -1867,10 +1876,11 @@ check('Rendering · W8 未闭合写了 Errors.log', str_contains(logText($log), 
 fresh($log);
 $capsRaster = new RasterCanvas(8, 8, Color::white(), Scale::of(1.0));
 check(
-    'Canvas · Raster capabilities() = Core + Extended（W1/L3-1 起含 CAP_PATH：扫描线填充 + 奇偶 + Miter/Butt 描边；W1/L3-2 起含 CAP_CLIP_PATH：每行 x 区间掩码）',
+    'Canvas · Raster capabilities() = Core + Extended（W1 三步：CAP_PATH 扫描线填充 / CAP_CLIP_PATH 每行区间掩码 / CAP_LAYER alpha 乘数栈）',
     $capsRaster->capabilities() === (CanvasCapabilities::CAP_ELLIPSE | CanvasCapabilities::CAP_LINE
         | CanvasCapabilities::CAP_GRADIENT | CanvasCapabilities::CAP_DASH
-        | CanvasCapabilities::CAP_CLIP_PATH | CanvasCapabilities::CAP_PATH)
+        | CanvasCapabilities::CAP_CLIP_PATH | CanvasCapabilities::CAP_PATH
+        | CanvasCapabilities::CAP_LAYER)
 );
 $capsSkia = new SkiaCanvas(8, 8, null, Scale::of(1.0));
 check(
@@ -2090,6 +2100,46 @@ check(
     '实际 ' . $code . ' / ' . $output
 );
 check('Path · pushClipPath 不配对写了 Errors.log', str_contains(logText($log), 'W8'));
+
+// ⑧ pushLayer 单层 opacity：白底上画 50% 黑 ⇒ source-over 混合值
+//    alpha = round(255 × 0.5) = 128 ⇒ dst = round((0×128 + 255×127)/255) = 127
+$layerCanvas = new RasterCanvas(60, 60, Color::white(), Scale::of(1.0));
+$layerCanvas->pushLayer(0.5);
+$layerCanvas->drawRect(new Rect(0.0, 0.0, 60.0, 60.0), Paint::fill(Color::black()));
+$layerCanvas->popLayer();
+$mid = $layerCanvas->pixelAt(30, 30);
+check(
+    'Path · pushLayer 单层 opacity = 0.5 ⇒ 黑白混合 ≈127',
+    abs($mid->r - 127) <= 2 && abs($mid->g - 127) <= 2 && abs($mid->b - 127) <= 2,
+    'rgb=' . $mid->r . ',' . $mid->g . ',' . $mid->b
+);
+
+// ⑨ 重叠近似（**记录为已知近似，不是断言正确**）：层内两个重叠子各乘一次
+//    ⇒ 重叠处比单层更透。这正是 Raster 乘数栈与 Skia 真离屏的唯一差异
+//    （`05` §5.6 的表），夹具的价值是"把有意的差异钉住"。
+$overCanvas = new RasterCanvas(60, 60, Color::white(), Scale::of(1.0));
+$overCanvas->pushLayer(0.5);
+$overCanvas->drawRect(new Rect(0.0, 0.0, 40.0, 60.0), Paint::fill(Color::black()));
+$overCanvas->drawRect(new Rect(20.0, 0.0, 40.0, 60.0), Paint::fill(Color::black()));
+$overCanvas->popLayer();
+// 左段（只被第一个矩形覆盖）= 一次 50% 黑 ≈ 127；中段（两个都覆盖）= 两次 ≈ 63
+$left = $overCanvas->pixelAt(5, 30);
+$overlap = $overCanvas->pixelAt(30, 30);
+check(
+    'Path · pushLayer 重叠子：重叠处比单层更透（已知近似，05 §5.6）',
+    abs($left->r - 127) <= 2 && abs($overlap->r - 63) <= 3 && $overlap->r < $left->r - 40,
+    '左段=' . $left->r . ' 重叠=' . $overlap->r
+);
+
+// ⑦b pushLayer 不配对：只 push 不 pop ⇒ W8 抓得到（`05` §10 #6b）
+fresh($log);
+[$code, $output] = runCase(__FILE__, 'layerunbalanced', null);
+check(
+    'Path · pushLayer 不配对 ⇒ W8 退出码 3（补 layerDepth 计数前完全不查）',
+    $code === 3,
+    '实际 ' . $code . ' / ' . $output
+);
+check('Path · pushLayer 不配对写了 Errors.log', str_contains(logText($log), 'W8'));
 
 // ⑩+3 19 op 回植 · P3 渐变/虚线（RasterCanvas，确定性后端；Skia 侧在 Skia 桥落地后补断言）
 $fb = new RasterCanvas(40, 40, Color::white(), Scale::of(1.0));

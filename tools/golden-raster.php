@@ -341,6 +341,68 @@ $scenes['clipcircle'] = static function () use ($W, $H): string {
     return $c->toRgba();
 };
 
+// W1/L3-3：层不透明度（alpha 乘数栈）。四个子图分别钉住
+// ① 单层 0.5 的矩形/路径/文字 ② 嵌套 0.5×0.5 = 0.25 ③ 层与路径裁剪叠加
+// ④ 重叠子近似（重叠处更透 —— 与 Skia 真离屏的唯一差异，05 §5.6）
+$scenes['opacity'] = static function () use ($W, $H): string {
+    $c = new RasterCanvas($W, $H, Color::white(), null);
+
+    // ① 单层 0.5：黑矩形 + 实心路径 + 描边路径都吃同一个乘数
+    $c->pushLayer(0.5);
+    $c->drawRect(new Rect(40.0, 40.0, 100.0, 80.0), Paint::fill(Color::black()));
+    $c->drawPath(
+        Path::create()->moveTo(200.0, 40.0)->lineTo(300.0, 40.0)->lineTo(250.0, 120.0)->close(),
+        Paint::fill(Color::fromRgb(30, 90, 200))
+    );
+    $c->drawPath(
+        Path::create()->moveTo(360.0, 40.0)->lineTo(460.0, 40.0)->lineTo(460.0, 120.0)->close(),
+        Paint::stroke(Color::fromRgb(200, 90, 30), 10.0)
+    );
+    $c->popLayer();
+
+    // ② 嵌套 0.5 × 0.5 = 0.25：比单层更淡（乘法语义）
+    $c->pushLayer(0.5);
+    $c->pushLayer(0.5);
+    $c->drawRect(new Rect(40.0, 200.0, 100.0, 80.0), Paint::fill(Color::black()));
+    $c->popLayer();
+    $c->popLayer();
+
+    // ③ 层 + 路径裁剪叠加：乘数在颜色层、掩码在像素层，两层独立
+    $c->pushLayer(0.5);
+    $ring = Path::create();
+    for ($i = 0; $i < 64; $i++) {
+        $ang = $i * 2.0 * M_PI / 64.0;
+        $x = 300.0 + 60.0 * cos($ang);
+        $y = 240.0 + 60.0 * sin($ang);
+        if ($i === 0) {
+            $ring->moveTo($x, $y);
+        } else {
+            $ring->lineTo($x, $y);
+        }
+    }
+    $ring->close();
+    $c->pushClipPath($ring);
+    $c->drawRect(new Rect(240.0, 200.0, 120.0, 80.0), Paint::fill(Color::fromRgb(30, 160, 90)));
+    $c->popClip();
+    $c->popLayer();
+
+    // ④ 重叠子近似：层内两个重叠矩形 ⇒ 重叠处双乘更透
+    $c->pushLayer(0.5);
+    $c->drawRect(new Rect(480.0, 200.0, 100.0, 80.0), Paint::fill(Color::black()));
+    $c->drawRect(new Rect(540.0, 240.0, 100.0, 80.0), Paint::fill(Color::black()));
+    $c->popLayer();
+
+    // ⑤ 半透明色 × 层乘数叠加：颜色自己 128 alpha，再乘 0.5
+    $c->pushLayer(0.5);
+    $c->drawRect(
+        new Rect(680.0, 200.0, 100.0, 80.0),
+        Paint::fill(new Color(30, 90, 200, 128))
+    );
+    $c->popLayer();
+
+    return $c->toRgba();
+};
+
 $out = [];foreach ($scenes as $name => $make) {
     $rgba = $make();
     $out[] = sprintf('%s: len=%d md5=%s', $name, strlen($rgba), md5($rgba));
