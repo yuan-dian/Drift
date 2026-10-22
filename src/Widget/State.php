@@ -20,6 +20,24 @@ use Drift\State\Subscription;
  */
 abstract class State
 {
+    /**
+     * @internal 未消费的脏 State 数 —— `Element::settle()` 收敛循环的 O(1) 提前退出条件
+     *
+     * ★ **静态**：`Frame::run()` 里主树与浮层两棵树共用一份计数。这是**对的** ——
+     *   若浮层的 build 标脏了主树的 State，主树的 `settle()` 会看到非零计数并
+     *   多跑一遍（`03` §5.4）。
+     * ★ 漏减只会让每帧多扫一遍（性能退化，**不报错**）⇒ smoke 有"跑 100 帧后
+     *   `pendingDirty() === 0`"的夹具守着（`03` §10）。`settle()` 里另有
+     *   "这一遍什么都没重建就 break"的兜底，防止漂移被误判成 E-FLUSH-CYCLE。
+     */
+    private static int $pendingDirty = 0;
+
+    /** @internal 本帧累计 rebuild 次数 —— `settle()` 的"有没有重建"判据（前后差） */
+    private static int $rebuiltCount = 0;
+
+    /** @internal 本帧序号 —— `noteRebuilt()` 用它识别"同帧第二次"（`03` §5.3） */
+    private static int $frameSerial = 0;
+
     private Widget $widget;
     private ?StatefulElement $element = null;
     private bool $dirty = false;
@@ -67,7 +85,7 @@ abstract class State
     public function setState(callable $change): void
     {
         $change();
-        $this->dirty = true;
+        $this->markDirty();
     }
 
     /**
@@ -83,13 +101,20 @@ abstract class State
      * ★ **它不比较值**：同 `setState()`，想"设同值不重建"就把值装进 `Cell`。
      *
      * ★ 与 `setState()` 同一条时间线：只置脏标记，重建发生在**帧末**的 settle
-     *   段 ⇒ 连标十次只重建一次，"build 期 setState 触发重入"结构上不存在。
+     *   段 ⇒ 连标十次只重建一次。
+     *
+     * ★ 它同时维护 `pendingDirty` 静态计数（收敛循环的提前退出条件）⇒
+     *   **已经脏就直接返回**，不重复计数。
      *
      * @api
      */
     public function markDirty(): void
     {
+        if ($this->dirty) {
+            return;                  // ★ 已经脏 ⇒ 不重复计数
+        }
         $this->dirty = true;
+        self::$pendingDirty++;
     }
 
     /**
@@ -224,9 +249,47 @@ abstract class State
     public function consumeDirty(): bool
     {
         $dirty = $this->dirty;
-        $this->dirty = false;
+        if ($dirty) {
+            $this->dirty = false;
+            self::$pendingDirty--;
+        }
 
         return $dirty;
+    }
+
+    /** @internal 收敛循环的提前退出条件（`Element::settle()` 用） */
+    public static function pendingDirty(): int
+    {
+        return self::$pendingDirty;
+    }
+
+    /** @internal 本帧累计 rebuild 次数（`settle()` 用前后差判断"有没有重建"） */
+    public static function rebuiltCount(): int
+    {
+        return self::$rebuiltCount;
+    }
+
+    /**
+     * @internal 由 `Application::frame()` 每帧调一次，紧跟 `$this->frameSerial++`
+     *
+     * ★ 帧序号不新造：`Application::$frameSerial` 早在（迟到挂载补 tick 的幂等
+     *   判据），这里只是**同步一份到 `State` 的静态**，让 `rebuild()` 拿得到
+     *   —— 传参要改两处签名，还要给"mount 期没有帧号"开一个新分支。
+     */
+    public static function beginFrame(int $serial): void
+    {
+        self::$frameSerial = $serial;
+    }
+
+    /**
+     * @internal `StatefulElement::rebuild()` 的第二句调它（第一句是 consumeDirty）
+     *
+     * ★ 只记数。"同帧第二次 rebuild ⇒ E-FLUSH-CYCLE"的守卫在 S4 加
+     *   （`03` §5.3）—— 分开落，这一步先让 `settle()` 有"有没有重建"可判。
+     */
+    public function noteRebuilt(): void
+    {
+        self::$rebuiltCount++;
     }
 
     /**

@@ -50,6 +50,7 @@ final class StatefulElement extends Element
             return; // 未挂载：没有 State 就没有子层
         }
 
+        $state->noteRebuilt();     // ★ 收敛循环的"有没有重建"判据（S4 起兼同帧守卫）
         $this->updateChildren([$state->build($this->context)]);
     }
 

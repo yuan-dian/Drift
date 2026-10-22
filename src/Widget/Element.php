@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Widget;
 
+use Drift\Errors;
 use Drift\Layout\RenderBox;
 
 /**
@@ -18,6 +19,14 @@ use Drift\Layout\RenderBox;
  */
 abstract class Element
 {
+    /**
+     * 收敛循环的最大轮数（`03` §5.1）：**防御上限，正常 ≤ 2**。
+     *
+     * ★ 16 不是拍脑袋：脏在"祖先 → 后代"方向传播时前序遍历同一遍就收住（§5.2），
+     *   需要第二遍的只有"后代 → 祖先"；留 8 倍余量给病态树形。
+     */
+    private const SETTLE_ROUNDS = 16;
+
     protected ?Element $parent = null;
     protected BuildContext $context;
     protected Widget $widget;
@@ -277,18 +286,72 @@ abstract class Element
      *   不会重复追加子盒；代价只是每帧一次 O(子数) 的指针重连，相对 `layout()`
      *   的 O(整树) 可忽略（§13.3：Render 层本来就无脏边界）。
      *
+     * ★★ **多轮收敛**（`03` §5.1，W2/S3）：脏在"后代 → 祖先"方向传播时
+     *   （子 rebuild 造出新节点、它的 build 标脏了祖先）单遍收不住 ⇒ 循环到
+     *   `pendingDirty() === 0` 或 16 轮上限。`settle()` 因此是 **`final`**：
+     *   全仓只有 `ErrorBoundaryElement` 一个覆写者，它覆写"整遍"就意味着
+     *   第 2 遍起的异常绕过边界直冒 `Frame::run()` ⇒ **错误边界粒度从
+     *   "到节点"退化成"到整帧"，且不报错**。拆出 `settlePass()`（单遍）后，
+     *   那个错误在语法层面不可达。
+     *
+     * @return bool 本次 settle **是否重建过任何节点**（`05` §8 的"跳过 layout"用它）
+     *
      * @internal 由 `Drift\App\Frame` 调
      */
-    public function settle(): void
+    final public function settle(): bool
+    {
+        $before = State::rebuiltCount();
+
+        // ★★ 第一遍**无条件**跑，不能因 `pendingDirty() === 0` 整遍跳过：
+        //   这一遍不只重建脏节点，还做 `adoptBoxes()`（把子盒挂进父盒）——
+        //   **挂载路径不调它**（`StatefulElement::rebuild()` 不像
+        //   `StatelessElement::rebuild()` 那样以 adoptBoxes 收尾），首帧的
+        //   盒挂接全靠 settle 的这一遍。跳过 ⇒ 容器握着空盒子 ⇒ 画面全白
+        //   **且不报错**（真机探针抓到的：smoke 全绿而 showcase 首屏无墨）。
+        //   `03` §5.1 原稿的"O(1) 提前退出"假设 settle 只重建脏节点，
+        //   对本框架不成立 —— 已按实况改正。
+        for ($round = 1; $round <= self::SETTLE_ROUNDS; $round++) {
+            $passBefore = State::rebuiltCount();
+            $this->settlePass();
+
+            if (State::pendingDirty() === 0) {
+                break;                        // 干净了：绝大多数帧到这里就退
+            }
+
+            if (State::rebuiltCount() === $passBefore) {
+                // ★ 有脏计数但这一遍**什么都没重建** ⇒ 计数漂移（脏 State 不在这棵树里 /
+                //   已卸载），不是真循环。再跑下去只是空转，且会误报 E-FLUSH-CYCLE
+                //   （§10 预告的症状是"每帧多扫一遍、性能退化、不报错"—— 按那个来）。
+                break;
+            }
+        }
+
+        if ($round > self::SETTLE_ROUNDS) {
+            Errors::report(sprintf(
+                '一帧内 rebuild 了 %d 轮仍未收敛：有 State 在 build() 里改了会标脏的东西（E-FLUSH-CYCLE）',
+                self::SETTLE_ROUNDS,
+            ));
+        }
+
+        return State::rebuiltCount() > $before;
+    }
+
+    /**
+     * 单遍收敛（前序：先自己、再子节点、最后挂接）。
+     *
+     * ★ 循环归 `settle()` 所有，且它是 `final` —— 子类无法再用"覆写整遍"的
+     *   方式绕过收敛（`ErrorBoundaryElement` 覆写的正是这一层，见那里）。
+     */
+    protected function settlePass(): void
     {
         if ($this instanceof StatefulElement && $this->state()?->needsBuild()) {
             $this->rebuild(); // rebuild() 内部消费脏标记
         }
 
-        // 普通闭包而不是箭头函数：`fn(): void => $c->settle()` 会报
+        // 普通闭包而不是箭头函数：`fn(): void => $c->settlePass()` 会报
         // "A void method must not return a value" —— 箭头函数隐式返回它的表达式。
         $this->visitChildren(function (Element $child): void {
-            $child->settle();
+            $child->settlePass();
         });
 
         // 后序：子层已定盒，这里才把它们收进自己的盒（容器覆写，叶子空操作）

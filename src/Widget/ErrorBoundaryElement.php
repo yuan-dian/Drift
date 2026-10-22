@@ -10,10 +10,12 @@ use Throwable;
 /**
  * `ErrorBoundary` 的 Element（O-12 A′ 的捕获逻辑住这里）。
  *
- * ★ **为什么覆写 `settle()` 而不只是 `rebuild()`**：`rebuild()` 只覆盖构造期
+ * ★ **为什么覆写 `settlePass()` 而不只是 `rebuild()`**：`rebuild()` 只覆盖构造期
  *   （mount/update 路径上的异常）；页面 `build()` 抛的异常发生在帧末
- *   `Frame → root->settle() → 孩子->settle() → 孩子->rebuild()` 的**孩子栈**里，
- *   本节点的 `rebuild()` 早已返回 ⇒ 必须整棵 `settle()` 包住。
+ *   `Frame → root->settle() → 孩子->settlePass() → 孩子->rebuild()` 的**孩子栈**里，
+ *   本节点的 `rebuild()` 早已返回 ⇒ 必须把整棵遍历包住。
+ *   （`settle()` 自 W2/S3 起是 `final` 的多轮循环 ⇒ 覆写它只能包住第一遍，
+ *   见 `settlePass()` 上的注记。）
  *
  * ★ **捕获即换子树**：`updateChildren([ErrorPlaceholder])` 复用同一套 diff ——
  *   旧子树整体卸载、占位整体挂载。在 `settle()` 中途换是安全的：异常已跳出
@@ -43,15 +45,21 @@ final class ErrorBoundaryElement extends StatelessElement
         }
     }
 
+    /**
+     * ★ **改名自 `settle()`**（`03` §5.1，W2/S3）：`Element::settle()` 现在是
+     *   `final` 的多轮循环，覆写它 = 只包住第一遍 ⇒ 第 2 遍起的异常绕过边界
+     *   直冒 `Frame::run()` ⇒ 错误边界粒度从"到节点"退化成"到整帧"，
+     *   **且不报错**。改成覆写单遍的 `settlePass()` 后，每一遍都在边界内。
+     */
     #[\Override]
-    public function settle(): void
+    public function settlePass(): void
     {
         if ($this->caught !== null) {
             return; // 已坏：占位不参与帧末重建，不会二次抛
         }
 
         try {
-            parent::settle();
+            parent::settlePass();
         } catch (Throwable $e) {
             $this->capture($e);
         }
