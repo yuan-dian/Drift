@@ -38,15 +38,12 @@ final class Frame
      *
      * @param BoxConstraints $constraints 表面给出的约束（通常 = 表面尺寸的紧约束）
      * @param float $timestampMs 帧时间戳，由 `FrameClock` 注入，**不读环境时钟**（§5.2 裁决 2）
-     * @param Element|null $popup 浮层面板（O-20 第二棵根渲染树：菜单 / 模态）；`null` ⇒ 无浮层
-     * @param float $popupX 浮层**盒**原点（客户区坐标，已由 `Application` 夹进客户区）
-     * @param float $popupY 同上
+     * @param list<\Drift\App\OverlayEntry> $overlays 已由 `Application::placeOverlays()` 算好 x/y
      *
-     * ★ **浮层的布局段不在这里**（O-20 差异表说"三段各加分支"，实际落点是：
-     *   settle 与 paint 两段在本类，**layout 段在 `Application::placeMenu()`**）——
-     *   因为浮层是"无界约束自尺寸 + 按锚点钉原点 + 夹进客户区"，三件事都要
-     *   **锚点**与**客户区尺寸**，而锚点住 `FocusManager`（最近命中）。Frame 只拿到
-     *   算好的原点，画的时候 `translate` 过去（绘制顺序即层叠，无 z-index）。
+     * ★ **浮层的布局段不在这里**：settle 与 paint 两段在本类，**layout 段在
+     *   `Application::placeOverlays()`** —— 因为浮层是"自尺寸 + 按锚点钉原点 +
+     *   夹进客户区"，三件事都要**锚点**与**客户区尺寸**，而锚点住 `FocusManager`。
+     *   Frame 只拿到算好的 `$e->x/$e->y`，画的时候 `translate` 过去。
      *
      * @api
      */
@@ -54,9 +51,7 @@ final class Frame
         Element $root,
         BoxConstraints $constraints,
         float $timestampMs,
-        ?Element $popup = null,
-        float $popupX = 0.0,
-        float $popupY = 0.0,
+        array $overlays = [],
     ): void {
         // ① 帧末统一重建（§5.2 裁决 3）：派发中途的 setState 只标脏
         // ★ O-12 A′ 帧循环异常策略 S3 的"无边界"半边：异常从子树一路冒到这里
@@ -67,7 +62,9 @@ final class Frame
         $t = $prof ? \hrtime(true) : 0;
         try {
             $root->settle();
-            $popup?->settle(); // 第二棵树的帧末重建（O-20）
+            foreach ($overlays as $e) {
+                $e->element?->settle(); // 浮层各自的帧末重建（W3）
+            }
         } catch (Throwable $e) {
             Errors::report(sprintf(
                 '帧循环：未捕获异常冒到帧末（沿途无错误边界）—— %s（%s:%d）',
@@ -109,7 +106,7 @@ final class Frame
         // ②b 布局自校验（`04` §5；默认关，`build/layout.check` 存在时开）
         // ★ 必须放在 layout **之后**：它做的是"用同一约束再排一次"，
         //   排在前面就等于替真实帧排了两遍。
-        // ★ **只覆盖主树**：浮层的 layout 在 `Application::placeMenu()`
+        // ★ **只覆盖主树**：浮层的 layout 在 `Application::placeOverlays()`
         //   （要锚点与客户区尺寸），不在本类 ⇒ 自校验看不见它。
         LayoutSelfCheck::maybeCheck($box, $constraints);
 
@@ -121,13 +118,17 @@ final class Frame
             $canvas = $this->surface->beginFrame($timestampMs);
             $box->paint($canvas);
 
-            // 浮层画在主树**之后** —— 绘制顺序即层叠，不引入 z-index（O-20）
-            $popupBox = $popup?->effectiveBox();
-            if ($popupBox !== null && $popupBox->hasSize()) {
-                $canvas->save();
-                $canvas->translate($popupX, $popupY);
-                $popupBox->paint($canvas);
-                $canvas->restore();
+            // 浮层画在主树**之后**，按栈顺序逐层 —— 绘制顺序即层叠，不引入 z-index。
+            // ★ scrim 不在这里画：模态的遮罩由 `ModalHost`（RenderModalHost）自绘，
+            //   再画一次会双绘（`01` §5 的理想形态与本仓现状的差异）。
+            foreach ($overlays as $e) {
+                $popupBox = $e->element?->effectiveBox();
+                if ($popupBox !== null && $popupBox->hasSize()) {
+                    $canvas->save();
+                    $canvas->translate($e->x, $e->y);
+                    $popupBox->paint($canvas);
+                    $canvas->restore();
+                }
             }
 
             $this->surface->endFrame();

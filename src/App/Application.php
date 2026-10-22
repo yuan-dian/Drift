@@ -175,7 +175,7 @@ abstract class Application
      *
      * ★ 栈顺序 = 绘制顺序 = 命中顺序，不引入 z-index。
      * ★ 下面七个字段在 01-c 完成前是**栈顶条目的镜像**（`syncMirrors()` 维护），
-     *   供尚未迁移的 `placeMenu()` / `dispatchPointer()` / `dispatchInput()` 读。
+     *   供尚未迁移的 `dispatchPointer()` / `dispatchInput()` 读。
      *   01-c 把读点全部改成栈访问后删除这些镜像。
      */
     protected OverlayStack $overlays;
@@ -442,6 +442,10 @@ abstract class Application
     {
         // ★ UI 线程身份在**挂载之前**记：之后的任何回调都以此为准（§17.4.2.1）。
         $this->uiThreadId = \drift_thread_id();
+
+        // ★ 兜底：子类构造器若没调 parent::__construct()（老夹具遗留），
+        //   `$overlays` 会是未初始化状态 ⇒ 首帧 placeOverlays() 直接 Fatal。
+        $this->overlays ??= new OverlayStack();
 
         // ★ 端口在挂载时建一次并缓存（它持有结果队列，不能每帧现建）。
         $this->tasks = $this->taskHost();
@@ -734,74 +738,182 @@ abstract class Application
     }
 
     /**
-     * 模态的布局段：**紧约束盖满客户区**，原点归零。
+     * 浮层布局段（arch-v2 `01` §4）：**每层独立**量 + 定位 + 夹取。
      *
-     * ★ 与 `placeMenu()` 的差别只有两点：约束是 tight（不是 unbounded），原点
-     *   是 (0,0)（不是锚点）—— 所以不共用一个方法：共用就得在里面长出
-     *   `if (模态)` 分支，而两个分支的**输入含义**根本不同（"自尺寸"vs"盖满"）。
-     * ★ 无界轴退化：窗口表面永远有界，这里只为不产生 `tight(INF)` 的非法约束
-     *   （真发生了就退成 unbounded，模态会缩到内容大小 —— 可见地不对，不是静默）。
+     * ★ 写 `$e->x/$e->y`（条目持有落点），不再写应用级单槽位字段。
+     * ★ 每帧把条目根的盒 `setBase($e->x, $e->y)` 写一次 —— **写在这里而不是
+     *   `Frame::run`**：Frame 只拿到算好的原点，它不该知道 base 的存在（`01` §4.4）。
      */
-    private function placeModal(BoxConstraints $constraints): void
+    private function placeOverlays(BoxConstraints $constraints): void
     {
-        $box = $this->menuElement?->effectiveBox();
-        if ($box === null) {
-            return;
+        foreach ($this->overlays->all() as $e) {
+            $this->placeEntry($e, $constraints);
         }
 
-        if ($constraints->hasBoundedWidth() && $constraints->hasBoundedHeight()) {
-            $box->layout(BoxConstraints::tight(
-                new \Drift\Geometry\Size($constraints->maxWidth, $constraints->maxHeight),
-            ));
-        } else {
-            $box->layout(BoxConstraints::unbounded());
-        }
-
-        $this->menuX = 0.0;
-        $this->menuY = 0.0;
+        // 镜像同步（01-d 删除）：dispatch 仍读 $menuX/$menuY
+        $top = $this->overlays->top();
+        $this->menuX = $top?->x ?? 0.0;
+        $this->menuY = $top?->y ?? 0.0;
     }
 
     /**
-     * 浮层的布局段（O-20 说"三段各加分支"，layout 落在这里）。
-     *
-     * 三件事，都要锚点或客户区尺寸 ⇒ 只能住应用级：
-     *   ① **无界约束** layout（面板自尺寸 —— 它不知道外面多大）；
-     *   ② 面板矩形左上角钉到锚点；
-     *   ③ **夹进客户区**（★ 按**面板**矩形算，不含投影留白 —— §9.1 语义 #6）。
+     * 单层定位（`01` §4.1）：
+     *   ① 量（模态 tight 盖满；其余无界自尺寸，超大退化 tight）
+     *   ② 锚矩形（`absoluteOrigin` 沿父链，遇浮层根停止）
+     *   ③ 首选方向 → 候选原点
+     *   ④ 翻转（只翻一次）
+     *   ⑤ 夹取
+     *   ⑥ 写 `$e->x/$e->y` + 盒 `setBase`
      */
-    private function placeMenu(BoxConstraints $constraints): void
+    private function placeEntry(OverlayEntry $e, BoxConstraints $constraints): void
     {
-        if ($this->modal !== null) {
-            $this->placeModal($constraints);
-
+        $box = $e->element?->effectiveBox();
+        if ($box === null) {
             return;
         }
 
-        $box = $this->menuElement?->effectiveBox();
-        if ($box === null) {
+        $maxW = $constraints->maxWidth;
+        $maxH = $constraints->maxHeight;
+
+        // ① 量：模态紧约束盖满（原点归零，面板自居中靠 Modal::build 的 Center）
+        if ($e->prefer === OverlayEntry::CENTER) {
+            if ($constraints->hasBoundedWidth() && $constraints->hasBoundedHeight()) {
+                $box->layout(BoxConstraints::tight(
+                    new \Drift\Geometry\Size($maxW, $maxH),
+                ));
+            } else {
+                $box->layout(BoxConstraints::unbounded());
+            }
+
+            $e->x = 0.0;
+            $e->y = 0.0;
+            $box->setBase(0.0, 0.0);
+
             return;
         }
 
         $box->layout(BoxConstraints::unbounded());
 
-        // 面板矩形（含投影留白的盒要内缩 `elevation` 才是"面板"本身）
-        if ($box instanceof RenderPopupPanel) {
-            $panel = $box->panelRect();
-            $panelW = $panel->width;
-            $panelH = $panel->height;
-            $e = $panel->left;
-        } else {
-            $panelW = $box->size()?->width ?? 0.0;
-            $panelH = $box->size()?->height ?? 0.0;
-            $e = 0.0;
+        // 超大面板退化：夹进客户区重量一次（内容溢出由面板自己 Overflow::Clip）
+        $size = $box->size();
+        if ($size !== null && ($size->width > $maxW || $size->height > $maxH)) {
+            $box->layout(BoxConstraints::tight(new \Drift\Geometry\Size($maxW, $maxH)));
         }
 
-        $maxX = max(0.0, $constraints->maxWidth - $panelW);
-        $maxY = max(0.0, $constraints->maxHeight - $panelH);
+        // ② 面板矩形（含投影留白的盒要内缩 `elevation` 才是"面板"本身）
+        if ($box instanceof RenderPopupPanel) {
+            $panel = $box->panelRect();
+            $w = $panel->width;
+            $h = $panel->height;
+            $pad = $panel->left;
+        } else {
+            $size = $box->size();
+            $w = $size?->width ?? 0.0;
+            $h = $size?->height ?? 0.0;
+            $pad = 0.0;
+        }
 
-        // 盒原点 = 面板原点 − 留白（让**面板**左上角落在夹紧后的锚点上）
-        $this->menuX = min(max($this->menuAnchorX, 0.0), $maxX) - $e;
-        $this->menuY = min(max($this->menuAnchorY, 0.0), $maxY) - $e;
+        // ② 锚矩形
+        [$ax, $ay, $aw, $ah] = $this->anchorRect($e);
+
+        // ③④ 首选方向 + 翻转
+        [$x, $y] = self::originFor($e->prefer, $ax, $ay, $aw, $ah, $w, $h, $maxW, $maxH);
+
+        // ⑤ 夹取
+        $x = min(max($x, 0.0), max(0.0, $maxW - $w));
+        $y = min(max($y, 0.0), max(0.0, $maxH - $h));
+
+        // ⑥ 写落点（盒原点 = 面板原点 − 投影留白）
+        $e->x = $x - $pad;
+        $e->y = $y - $pad;
+        $box->setBase($e->x, $e->y);
+    }
+
+    /**
+     * 锚矩形（客户区坐标）：`[x, y, w, h]`。
+     *
+     * ★ 无锚（模态已提前返回）/ 锚点已卸载 ⇒ `[0,0,0,0]`（落左上角，夹取兜底）。
+     * ★ `AT_POINTER` 暂退化为锚点（右键菜单当前用 `anchor`，不用指针坐标）。
+     *
+     * @return array{0: float, 1: float, 2: float, 3: float}
+     */
+    private function anchorRect(OverlayEntry $e): array
+    {
+        $anchor = $e->anchor;
+        if ($anchor === null || !$anchor->isMounted()) {
+            return [0.0, 0.0, 0.0, 0.0];
+        }
+
+        $box = $anchor->effectiveBox();
+        if ($box === null) {
+            return [0.0, 0.0, 0.0, 0.0];
+        }
+
+        [$x, $y] = self::absoluteOrigin($box);
+        $size = $box->size();
+
+        return [$x, $y, $size?->width ?? 0.0, $size?->height ?? 0.0];
+    }
+
+    /**
+     * 首选方向 → 候选原点，放不下就**只翻一次**（`01` §4.2 / §4.3：不做通用避让，
+     * 否则同一控件在不同窗口尺寸下弹出方向不同 ⇒ golden 无法比）。
+     *
+     * @return array{0: float, 1: float}
+     */
+    private static function originFor(
+        int $prefer,
+        float $ax,
+        float $ay,
+        float $aw,
+        float $ah,
+        float $w,
+        float $h,
+        float $maxW,
+        float $maxH,
+    ): array {
+        if ($prefer === OverlayEntry::ABOVE) {
+            if ($ay - $h >= 0.0) {
+                return [$ax, $ay - $h];
+            }
+            if ($ay + $ah + $h <= $maxH) {
+                return [$ax, $ay + $ah];   // 翻到下方
+            }
+
+            return [$ax, $ay - $h];
+        }
+
+        if ($prefer === OverlayEntry::RIGHT) {
+            if ($ax + $aw + $w <= $maxW) {
+                return [$ax + $aw, $ay];
+            }
+            if ($ax - $w >= 0.0) {
+                return [$ax - $w, $ay];    // 翻到左侧
+            }
+
+            return [$ax + $aw, $ay];
+        }
+
+        if ($prefer === OverlayEntry::LEFT) {
+            if ($ax - $w >= 0.0) {
+                return [$ax - $w, $ay];
+            }
+            if ($ax + $aw + $w <= $maxW) {
+                return [$ax + $aw, $ay];
+            }
+
+            return [$ax - $w, $ay];
+        }
+
+        // BELOW（默认）/ AT_POINTER
+        if ($ay + $ah + $h <= $maxH) {
+            return [$ax, $ay + $ah];
+        }
+        if ($ay - $h >= 0.0) {
+            return [$ax, $ay - $h];        // 翻到上方
+        }
+
+        return [$ax, $ay + $ah];
     }
 
     /** 浮层的渲染环境（复用主树的 —— 同主题 / 同度量） */
@@ -1134,12 +1246,12 @@ abstract class Application
             SurfaceProfile::add('anim', \hrtime(true) - $t);
         }
 
-        // 浮层布局段（无界自尺寸 + 钉锚点 + 夹进客户区）—— 见 placeMenu()
+        // 浮层布局段（逐层自尺寸 + 钉锚点 + 夹进客户区）—— 见 placeOverlays()
         $t = $prof ? \hrtime(true) : 0;
         if ($trace !== null) {
             $trace[] = 'placeMenu';
         }
-        $this->placeMenu($constraints);
+        $this->placeOverlays($constraints);
         if ($prof) {
             SurfaceProfile::add('placeMenu', \hrtime(true) - $t);
         }
@@ -1151,7 +1263,7 @@ abstract class Application
             $trace[] = 'settle';
         }
 
-        $frame->run($root, $constraints, $timestampMs, $this->menuElement, $this->menuX, $this->menuY);
+        $frame->run($root, $constraints, $timestampMs, $this->overlays->all());
 
         // ★ ⓹ 迟到挂载补 tick（2026-10-20 修框架洞）：⓸ 在 settle **之前**跑，而页面
         //   挂载发生在 `Frame::run()` 的 settle 段 —— 于是"这一帧刚挂上的页"的 State
@@ -1175,7 +1287,13 @@ abstract class Application
         if ($trace !== null) {
             $trace[] = 'focusCollect';
         }
-        $this->focus?->collect($root, ...($this->menuElement !== null ? [$this->menuElement] : []));
+        $popupRoots = [];
+        foreach ($this->overlays->all() as $e) {
+            if ($e->element !== null) {
+                $popupRoots[] = $e->element;
+            }
+        }
+        $this->focus?->collect($root, ...$popupRoots);
         if ($prof) {
             SurfaceProfile::add('focus', \hrtime(true) - $t);
         }
@@ -1227,14 +1345,12 @@ abstract class Application
         $previousTolerant = LayoutTolerance::$previewing;
         LayoutTolerance::$previewing = true;
         try {
-            $this->placeMenu($constraints);
+            $this->placeOverlays($constraints);
             $frame->run(
                 $root,
                 $constraints,
                 $this->lastTimestampMs,
-                $this->menuElement,
-                $this->menuX,
-                $this->menuY,
+                $this->overlays->all(),
             );
         } finally {
             LayoutTolerance::$previewing = $previousTolerant;
