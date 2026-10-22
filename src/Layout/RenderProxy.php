@@ -22,7 +22,7 @@ use Drift\Geometry\Size;
  * 盒"没有存在理由 —— 但**代理盒本身**还需要一个具体类（`RenderProxyBox` 是抽象
  * 的，`ProxyElement::adoptBoxes()` 又要求盒能 `setChild()`）。
  *
- * 于是五个修饰盒里，**四个**收敛成本类 + `mods`：
+ * 于是五个修饰盒**全部**收敛成"本类 + `mods`"：
  *
  * | 原类 | 原来自己做的事 | 现在由谁做 | 删于 |
  * |---|---|---|---|
@@ -30,10 +30,10 @@ use Drift\Geometry\Size;
  * | `RenderSizedBox` | 逐轴夹取 + 紧约束 | `Modifier::tighten()`（①，同一套夹取规则） | M2-3 |
  * | `RenderCenter` | `loosen()` + 按上限算偏移 | 基类 ③ + ⑦（偏移按可用空间，逐字复刻旧口径） | M2-4 |
  * | `RenderFlexible` | 带 flex 份额 | `mods.grow` ⇒ `setMods()` 里 `setFlexIntent()` | M2-4 |
+ * | `RenderCard` | 底 / 边 / 圆角 / 阴影 / 内距 | `Modifier::paintBehind()` + ②⑤⑦；`Card` 改 `StatelessWidget` 在 `build()` 里把样式写成子控件的 `mods` | M2-5 |
  *
- * 只剩 `RenderCard`：它的默认样式要用 `$context->theme()` 解析，而 `syncBox()` 递的
- * 是 `widget->mods()`（不含主题派生默认值）⇒ 等 `Widget::renderMods(BuildContext)`
- * 那一层（M2-5）。
+ * ⇒ **"修饰是字段，不是节点"这条判据在 W5 兑现完毕**：今天没有任何"只为施加一个
+ * 修饰而存在"的 `RenderBox` 子类。
  *
  * ## 为什么 `setOffset(0, 0)` 要显式写
  *

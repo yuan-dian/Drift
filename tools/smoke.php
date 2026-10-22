@@ -145,7 +145,6 @@ use Drift\Layout\RenderErrorBoundary;
 use Drift\Layout\RenderFlex;
 use Drift\Layout\RenderScrollView;
 use Drift\Layout\RenderProxy;
-use Drift\Layout\RenderCard;
 use Drift\Layout\RenderCustomPaint;
 use Drift\Layout\RenderProxyBox;
 use Drift\Layout\RenderMenuItem;
@@ -7140,8 +7139,13 @@ $cardEl->mount(null, $context);
 $cardBox = $cardEl->effectiveBox();
 $cardBox?->layout(BoxConstraints::unbounded());
 
-check('Card · 盒是 RenderCard（ProxyElement 挂子，不是"盒无 child"的空壳）',
-    $cardBox instanceof RenderCard);
+// ★ M2-5：`RenderCard` 已删，Card 是 `StatelessWidget` ⇒ `effectiveBox()` 拿到的是
+//   **子控件自己的盒**，卡片样式住在它的 `mods` 上。判据因此从"是不是那个类"变成
+//   "样式有没有落到那个盒上"（后者才是真正要守的东西）。
+check(
+    'Card · 样式落在子控件的 mods 上（不再是独立的 RenderCard 盒）',
+    $cardBox !== null && $cardBox->mods()->hasVisual() && $cardBox->mods()->hasPadding()
+);
 check(
     'Card · 内边距真进盒尺寸（默认 16 ⇒ 盒 = 文字 + 32，两轴都是）',
     $cardBox?->size() !== null && $cardTextSize !== null
@@ -7156,16 +7160,13 @@ check(
     ),
 );
 
-$cardKids = [];
-$cardBox?->visitChildren(function (RenderBox $c) use (&$cardKids): void {
-    $cardKids[] = $c;
-});
+// ★ M2-5 起内容原点不再靠"父盒平移子盒"，而是 `contentOriginX/Y()`（`02` §4.1.1）
 check(
     'Card · 内容原点 = padding（不是 0 —— 那内容就贴在描边上）',
-    ($cardKids[0] ?? null) !== null
-        && abs($cardKids[0]->offsetX() - 16.0) < 0.01
-        && abs($cardKids[0]->offsetY() - 16.0) < 0.01,
-    sprintf('child offset %.6g,%.6g', $cardKids[0]?->offsetX() ?? -1.0, $cardKids[0]?->offsetY() ?? -1.0),
+    $cardBox !== null
+        && abs($cardBox->contentOriginX() - 16.0) < 0.01
+        && abs($cardBox->contentOriginY() - 16.0) < 0.01,
+    sprintf('contentOrigin %.6g,%.6g', $cardBox?->contentOriginX() ?? -1.0, $cardBox?->contentOriginY() ?? -1.0),
 );
 check(
     'Card · 内禀宽含 padding（Row/Dock 量自然宽不会窄一圈 ⇒ 文字不被挤）',
@@ -7175,14 +7176,18 @@ check(
 );
 
 // —— 空 Card：不崩、尺寸 = 内边距（"没内容也要占住 padding"）——
-$emptyCardBox = Card::make()->paddingAll(8.0)->createRenderObject($context);
-$emptyCardBox->layout(BoxConstraints::unbounded());
+// ★ 走 Element 挂载：`build()` 对"没内容"给的是 `SizedBox::make()`（纯转发盒），
+//   盒尺寸 = 内边距由基类 ⑤ 步加回。
+$emptyCardEl = Card::make()->paddingAll(8.0)->createElement();
+$emptyCardEl->mount(null, $context);
+$emptyCardBox = $emptyCardEl->effectiveBox();
+$emptyCardBox?->layout(BoxConstraints::unbounded());
 check(
-    'Card · 无子盒 ⇒ 尺寸 = 内边距（不崩、不产生 INF）',
-    $emptyCardBox->size() !== null
+    'Card · 无内容 ⇒ 尺寸 = 内边距（不崩、不产生 INF）',
+    $emptyCardBox?->size() !== null
         && abs($emptyCardBox->size()->width - 16.0) < 0.01
         && abs($emptyCardBox->size()->height - 16.0) < 0.01,
-    sprintf('%.6g×%.6g', $emptyCardBox->size()?->width ?? -1.0, $emptyCardBox->size()?->height ?? -1.0),
+    sprintf('%.6g×%.6g', $emptyCardBox?->size()?->width ?? -1.0, $emptyCardBox?->size()?->height ?? -1.0),
 );
 
 /**
@@ -7371,11 +7376,16 @@ check(
 // —— Card 在紧宽约束下内容撑满（不要 `loosen()`）——
 //    ★ 父把宽定死（`Column::cross(Stretch)`）时松掉紧约束 ⇒ 卡片撑满、内容缩在
 //      左边，观感像"没对齐"。与 `RenderPadding` 同口径：只 deflate，不放松。
-$tightCardBox = Card::make(Text::make('卡片内容'))->createElement();
-$tightCardBox->mount(null, $context);
-$tightCard = $tightCardBox->effectiveBox();
-$tightCard?->layout(BoxConstraints::tight(new Size(300.0, 80.0)));
-$tightCardKids = $kidsOf($tightCard);
+// ★ M2-5：`Card` 不再多一层盒 ⇒ `effectiveBox()` 就是**内容自己的盒**，
+//   "内容宽度"得往下再走一层才看得见（用 `Column::cross(Stretch)` —— 也正是
+//   示例台侧栏的真实形态）。
+$tightCardEl = Card::make(
+    Column::make()->cross(FlexAlign::Stretch)->children([Text::make('卡片内容')])
+)->createElement();
+$tightCardEl->mount(null, $context);
+$tightCardCol = $tightCardEl->effectiveBox();
+$tightCardCol?->layout(BoxConstraints::tight(new Size(300.0, 80.0)));
+$tightCardKids = $kidsOf($tightCardCol);
 check(
     'Card · 紧宽约束 ⇒ 内容撑满（300 − 2×16 = 268，不是文字自然宽）',
     ($tightCardKids[0] ?? null)?->size() !== null
@@ -7497,20 +7507,9 @@ $navProbeEl = SizedBox::make(
 $navProbeEl->mount(null, $context);
 $navProbe = $navProbeEl->effectiveBox();
 $navProbe?->layout(BoxConstraints::loose(new Size(940.0, 600.0)));
-$navCardKids = [];
-$navProbe?->visitChildren(function (RenderBox $c) use (&$navCardKids): void {
-    $navCardKids[] = $c;
-});
-$navCard = $navCardKids[0] ?? null;
-$navColKids = [];
-$navCard?->visitChildren(function (RenderBox $c) use (&$navColKids): void {
-    $navColKids[] = $c;
-});
-$navCol = $navColKids[0] ?? null;
-$navBtnKids = [];
-$navCol?->visitChildren(function (RenderBox $c) use (&$navBtnKids): void {
-    $navBtnKids[] = $c;
-});
+// ★ M2-5：`Card` 不再是盒 ⇒ 树少一层（SizedBox → Column → Button）
+$navCol = $kidsOf($navProbe)[0] ?? null;
+$navBtnKids = $kidsOf($navCol);
 check(
     '集成 · 侧栏 SizedBox(200) ⇒ 导航项宽 180（整行可点，右边缘齐）',
     ($navBtnKids[0] ?? null)?->size() !== null
