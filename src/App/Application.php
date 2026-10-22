@@ -171,35 +171,14 @@ abstract class Application
      *   （§5.1 裁决 1 的锚点来源 —— 命令是"意图"不带位置，§11.4.3）。
      */
     /**
-     * 浮层栈（arch-v2 `01`，W3）：**真实来源**。`showMenu()` / `showModal()` 往这里 push。
+     * 浮层栈（arch-v2 `01`，W3）：**唯一真实来源**。`showMenu()` / `showModal()` 往这里 push。
      *
      * ★ 栈顺序 = 绘制顺序 = 命中顺序，不引入 z-index。
-     * ★ 下面七个字段在 01-c 完成前是**栈顶条目的镜像**（`syncMirrors()` 维护），
-     *   供尚未迁移的 `dispatchPointer()` / `dispatchInput()` 读。
-     *   01-c 把读点全部改成栈访问后删除这些镜像。
+     * ★ 01-a/01-b 期间这里还挂着七个镜像字段（`$menu`/`$menuElement`/`$menuAnchorX`/
+     *   `$menuAnchorY`/`$menuX`/`$menuY`/`$modal`）供未迁移的读点用；01-c 把读点
+     *   全改成栈访问后已删除 —— 现在没有"两份状态"，只有一个栈。
      */
     protected OverlayStack $overlays;
-
-    /** @deprecated 01-c 后移除（镜像：栈顶条目 panel） */
-    protected ?Widget $menu = null;
-
-    /** @deprecated 01-c 后移除（镜像：栈顶条目 element） */
-    protected ?Element $menuElement = null;
-
-    /** @deprecated 01-c 后移除（镜像：栈顶条目锚点落点） */
-    protected float $menuAnchorX = 0.0;
-
-    /** @deprecated 01-c 后移除 */
-    protected float $menuAnchorY = 0.0;
-
-    /** @deprecated 01-c 后移除（镜像：栈顶条目 x） */
-    protected float $menuX = 0.0;
-
-    /** @deprecated 01-c 后移除（镜像：栈顶条目 y） */
-    protected float $menuY = 0.0;
-
-    /** @deprecated 01-c 后移除（镜像：栈里最上面的 scrim 条目） */
-    protected ?Modal $modal = null;
 
     /**
      * 后台执行端口（§17.2）—— `attach()` 时由 `taskHost()` 建一次并缓存。
@@ -562,22 +541,6 @@ abstract class Application
         $e->focusTrap = false;
 
         $this->pushOverlay($e);
-
-        // 镜像锚点落点（01-c 后由 placeEntry 每帧重算）
-        $box = $anchor?->effectiveBox();
-        if ($box !== null) {
-            // 盒原点要**沿父链累加**才有客户区坐标（`offsetX()` 是相对父的）
-            [$x, $y] = self::absoluteOrigin($box);
-            $this->menuAnchorX = $x;
-            $this->menuAnchorY = $y + ($box->size()?->height ?? 0.0); // 面板挂在锚点**下方**
-        } else {
-            $this->menuAnchorX = 0.0;
-            $this->menuAnchorY = 0.0;
-        }
-
-        $this->menuX = $this->menuAnchorX;
-        $this->menuY = $this->menuAnchorY;
-        $this->syncMirrors();
     }
 
     /** 关掉浮层（已关 ⇒ 无事发生；幂等） */
@@ -587,36 +550,60 @@ abstract class Application
         while (($e = $this->overlays->pop()) !== null) {
             $e->element?->unmount();
         }
-
-        $this->menuAnchorX = 0.0;
-        $this->menuAnchorY = 0.0;
-        $this->menuX = 0.0;
-        $this->menuY = 0.0;
-        $this->syncMirrors();
     }
 
     /**
-     * 菜单是否开着。
+     * 浮层栈本体（`01` §8.1）—— 测试 / devtools 的正式入口。
      *
-     * ★ **模态占槽位时不算菜单**：一个槽位两用 ⇒ "槽位空不空"与"菜单开没开"
-     *   是两个问题。混答的后果是 `showModal()` 之后 `isMenuOpen()` 返回真，
-     *   应用里"菜单开着就别响应某个快捷键"之类的判断会开始撒谎。
+     * ★ 下面那批 `menu*` / `modal*` 兼容方法是**旧槽位 API 的残留**：它们都只是
+     *   对这一个栈的投影。新代码要"看有几层、每层是什么"就读这里。
+     *
+     * @api
+     */
+    public function overlays(): OverlayStack
+    {
+        return $this->overlays;
+    }
+
+    /**
+     * 菜单是否开着：栈里存在 `barrier=true && scrim=false` 的条目（`01` §8.1）。
+     *
+     * ★ **模态不算菜单**：模态是 `scrim=true` ⇒ 不满足条件。混答的后果是
+     *   `showModal()` 之后 `isMenuOpen()` 返回真，应用里"菜单开着就别响应某个
+     *   快捷键"之类的判断会开始撒谎。
      */
     public function isMenuOpen(): bool
     {
-        return $this->menuElement !== null && $this->modal === null;
+        foreach ($this->overlays->all() as $e) {
+            if ($e->barrier && !$e->scrim) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
-    /** 浮层 Element（测试 / devtools） */
+    /**
+     * 栈顶条目的 Element（测试 / devtools）。
+     *
+     * @deprecated 用 `overlays()->top()?->element` —— 本方法只是旧槽位的投影，
+     *             "栈顶"在有模态压着时返回的是模态的元素，名字会骗人。
+     */
     public function menuElement(): ?Element
     {
-        return $this->menuElement;
+        return $this->overlays->top()?->element;
     }
 
-    /** 浮层面板左上角在客户区的落点（夹紧后；测试 / devtools） */
+    /**
+     * 栈顶条目的落点（夹紧后；测试 / devtools）。
+     *
+     * @deprecated 用 `overlays()->top()` 的 `x`/`y`（同上：栈顶 ≠ 菜单）。
+     */
     public function menuOrigin(): array
     {
-        return [$this->menuX, $this->menuY];
+        $top = $this->overlays->top();
+
+        return [$top?->x ?? 0.0, $top?->y ?? 0.0];
     }
 
     /**
@@ -628,11 +615,12 @@ abstract class Application
      * );
      * ```
      *
-     * ★ **模态与菜单天然互斥**（GUI 仓裁决原话）：同一槽位 ⇒ 打开模态会先关掉
-     *   菜单。不是"顺手清理"，是语义：一个应用同时只有一个"浮在最上、吃掉输入"
-     *   的东西。
+     * ★ **模态盖在菜单之上**（`01` §8 的**唯一行为变化**）：W3 之前"同一槽位 ⇒
+     *   打开模态先关菜单"，那是**槽位的产物、不是需求** —— 在下拉里点「新建分类…」
+     *   弹出对话框是正常交互，关掉对话框后下拉应该还在。要"开模态就关菜单"是
+     *   **应用的策略**（自己先 `closeMenu()`），框架不再替它决定。
      * ★ **面板自居中靠组合**：`Modal::build()` 给的是 `ModalHost → Center →
-     *   PopupPanel`，本方法只负责"盖满 + 原点归零"（`placeModal()`）。
+     *   PopupPanel`，本方法只负责"盖满 + 原点归零"（`placeEntry()` 的 `CENTER` 分支）。
      *
      * @api
      */
@@ -652,13 +640,6 @@ abstract class Application
         $e->focusTrap = true;
 
         $this->pushOverlay($e);
-
-        // 模态不钉锚点：原点恒为 (0,0)，尺寸由 placeModal() 盖满
-        $this->menuAnchorX = 0.0;
-        $this->menuAnchorY = 0.0;
-        $this->menuX = 0.0;
-        $this->menuY = 0.0;
-        $this->syncMirrors();
     }
 
     /**
@@ -671,21 +652,12 @@ abstract class Application
      */
     public function closeModal(): void
     {
-        // 找到最上面的 scrim 条目并移除（不要求它在栈顶）
-        $found = null;
-        foreach ($this->overlays->all() as $e) {
-            if ($e->scrim) {
-                $found = $e;
-            }
-        }
-
-        if ($found === null) {
+        $e = $this->topModalEntry();
+        if ($e === null) {
             return;
         }
 
-        $found->element?->unmount();
-        $this->overlays->remove($found);
-        $this->syncMirrors();
+        $this->removeOverlay($e);
     }
 
     /**
@@ -704,37 +676,45 @@ abstract class Application
         $this->overlays->push($e);
     }
 
+    /** 精确移除一个浮层条目并卸载它的树（`01` §7.1） */
+    private function removeOverlay(OverlayEntry $e): void
+    {
+        $e->element?->unmount();
+        $this->overlays->remove($e);
+    }
+
     /**
-     * 把七个旧字段同步成"栈顶条目"的镜像（01-c 迁移期用）。
+     * 最上面的 scrim（模态）条目（`01` §8.1）。
      *
-     * ★ `modal` 取**最上面的 scrim 条目**，不是"栈顶是不是模态"：模态下面可能还压着
+     * ★ 取**最上面的 scrim 条目**，不是"栈顶是不是模态"：模态下面可能还压着
      *   菜单（新语义允许）⇒ 栈顶是模态时才相等。
      */
-    private function syncMirrors(): void
+    private function topModalEntry(): ?OverlayEntry
     {
-        $top = $this->overlays->top();
-
-        $this->menu = $top?->panel;
-        $this->menuElement = $top?->element;
-
-        $modal = null;
+        $found = null;
         foreach ($this->overlays->all() as $e) {
-            if ($e->scrim && $e->panel instanceof Modal) {
-                $modal = $e->panel;
+            if ($e->scrim) {
+                $found = $e;
             }
         }
-        $this->modal = $modal;
+
+        return $found;
     }
 
     public function isModalOpen(): bool
     {
-        return $this->modal !== null;
+        return $this->topModalEntry() !== null;
     }
 
     /** 当前模态（测试 / devtools / 应用读 `dismissible`） */
     public function modal(): ?Modal
     {
-        return $this->modal;
+        $e = $this->topModalEntry();
+        if ($e === null || !$e->panel instanceof Modal) {
+            return null;
+        }
+
+        return $e->panel;
     }
 
     /**
@@ -749,11 +729,6 @@ abstract class Application
         foreach ($this->overlays->all() as $e) {
             $this->placeEntry($e, $constraints);
         }
-
-        // 镜像同步（01-d 删除）：dispatch 仍读 $menuX/$menuY
-        $top = $this->overlays->top();
-        $this->menuX = $top?->x ?? 0.0;
-        $this->menuY = $top?->y ?? 0.0;
     }
 
     /**
@@ -1164,7 +1139,10 @@ abstract class Application
 
         $context = $root->context()->withTheme($this->theme());
         $root->applyContext($context);
-        $this->menuElement?->applyContext($context);
+
+        foreach ($this->overlays->all() as $e) {
+            $e->element?->applyContext($context);
+        }
     }
 
     /**
@@ -1249,11 +1227,11 @@ abstract class Application
         // 浮层布局段（逐层自尺寸 + 钉锚点 + 夹进客户区）—— 见 placeOverlays()
         $t = $prof ? \hrtime(true) : 0;
         if ($trace !== null) {
-            $trace[] = 'placeMenu';
+            $trace[] = 'placeOverlays';
         }
         $this->placeOverlays($constraints);
         if ($prof) {
-            SurfaceProfile::add('placeMenu', \hrtime(true) - $t);
+            SurfaceProfile::add('placeOverlays', \hrtime(true) - $t);
         }
 
         // ★ `settle` 是**标记**不是真段（`FramePhase::CORE`）：Frame::run() 内部
@@ -1394,7 +1372,7 @@ abstract class Application
     /**
      * 遍历树推进所有动画，并回答"**还有动画在跑吗**"（§17.4.9）。
      *
-     * ★ **浮层是第二棵树**（与 `focus->collect()` / `placeMenu()` 同一个坑）：只走
+     * ★ **浮层是第二棵树**（与 `focus->collect()` / `placeOverlays()` 同一个坑）：只走
      *   `$root` 的话，菜单里放一个 `Spinner` 就永远不转，而且**没有任何报错**。
      * ★ 成本 O(树)，与同帧的 `layout()` 同阶（§13.3：Render 层本就全树重排）。
      */
@@ -1434,9 +1412,10 @@ abstract class Application
             $busy = true;
         }
 
-        $menu = $this->menuElement;
-        if ($menu !== null && $this->tickSubtree($menu, $timestampMs)) {
-            $busy = true;
+        foreach ($this->overlays->all() as $e) {
+            if ($e->element !== null && $this->tickSubtree($e->element, $timestampMs)) {
+                $busy = true;
+            }
         }
 
         return $busy;
@@ -1703,19 +1682,16 @@ abstract class Application
             // §9.1 关闭语义 #3：**ESC 在 `dispatchKey` 之前拦** —— 否则被焦点
             // 控件（输入框）吃掉，菜单关不掉。
             if ($event->chord->is(KeyChord::escape())) {
-                if ($this->modal !== null) {
-                    // §A.3.7：`dismissible=false` ⇒ **吞掉但不关**。"拒绝"不等于
-                    // "放行" —— 若把 ESC 交回加速键链，Ctrl+W 之类能绕过
-                    // "必须处理的对话框"，模态就白做了。
-                    if ($this->modal->isDismissible()) {
-                        $this->closeModal();
+                // 浮层栈：栈顶条目决定 Esc 语义（arch-v2 `01` §6.3）
+                // ★ `dismissOnEsc=false` ⇒ **吞掉但不关**。"拒绝"不等于"放行" ——
+                //   若把 ESC 交回加速键链，Ctrl+W 之类能绕过"必须处理的对话框"。
+                $top = $this->overlays->top();
+                if ($top !== null) {
+                    if (!$top->dismissOnEsc) {
+                        return null;
                     }
 
-                    return null;
-                }
-
-                if ($this->menuElement !== null) {
-                    $this->closeMenu();
+                    $this->removeOverlay($top);
 
                     return null;
                 }
@@ -1779,18 +1755,22 @@ abstract class Application
             //   量化出的"格"（WHEEL_DELTA/120），`scrollBy()` 起收的是逻辑像素。
             $px = $event->delta * self::WHEEL_NOTCH_PX;
 
-            if ($this->menuElement !== null) {
-                $menuBox = $this->menuElement->effectiveBox();
+            for ($i = $this->overlays->count() - 1; $i >= 0; $i--) {
+                $e = $this->overlays->at($i);
+                if ($e === null || $e->element === null) {
+                    continue;
+                }
 
-                if ($menuBox !== null && $this->hitsMenu($event, $menuBox)) {
-                    $hit = $focus->hitTest($event->x - $this->menuX, $event->y - $this->menuY, $this->menuElement);
-                    $element = $hit === null ? null : $focus->elementAt($this->menuElement, $hit);
-                    $this->scrollAt($element, $px);
+                $hit = $focus->hitTest($event->x - $e->x, $event->y - $e->y, $e->element);
+                if ($hit !== null) {
+                    $this->scrollAt($focus->elementAt($e->element, $hit), $px);
 
                     return null;
                 }
 
-                return null; // 浮层开着、轮在浮层外：不穿透
+                if ($e->barrier) {
+                    return null; // 浮层开着、轮在浮层外：不穿透
+                }
             }
 
             $hit = $focus->hitTest($event->x, $event->y, $root);
@@ -1917,12 +1897,6 @@ abstract class Application
         }
     }
 
-    /** 指针是否落在浮层面板盒内（§9.1 语义 #1 的判据） */
-    private function hitsMenu(PointerEvent $event, RenderBox $menuBox): bool
-    {
-        return $menuBox->hitTest($event->x - $this->menuX, $event->y - $this->menuY) !== null;
-    }
-
     /**
      * 命中的盒是否落在**模态面板**里（而非遮罩上）。
      *
@@ -1961,28 +1935,29 @@ abstract class Application
      */
     private function dispatchPointer(PointerEvent $event, Element $root, FocusManager $focus): ?CursorShape
     {
-        if ($this->menuElement !== null) {
-            $menuBox = $this->menuElement->effectiveBox();
+        // ── 浮层栈：**从顶往下**逐层问（arch-v2 `01` §6.1）─────────────
+        for ($i = $this->overlays->count() - 1; $i >= 0; $i--) {
+            $e = $this->overlays->at($i);
+            if ($e === null || $e->element === null) {
+                continue;
+            }
 
-            if ($menuBox !== null && $this->hitsMenu($event, $menuBox)) {
-                // 浮层局部坐标 = 客户区坐标 − 浮层原点（Frame 画时的 translate）
-                $hit = $focus->hitTest($event->x - $this->menuX, $event->y - $this->menuY, $this->menuElement);
-                $element = $hit === null ? null : $focus->elementAt($this->menuElement, $hit);
+            // 浮层局部坐标 = 客户区坐标 − 浮层原点（Frame 画时的 translate）
+            $hit = $focus->hitTest($event->x - $e->x, $event->y - $e->y, $e->element);
 
-                // 模态：浮层盒**盖满客户区** ⇒ `hitsMenu()` 恒真，"点没点到面板"
-                // 只能看命中链（见 `hitsModalPanel()`）。点遮罩 = 一次"关闭意图"，
-                // 不是"点到了某个控件" ⇒ 不喂 focusHit、不改光标、**不穿透**。
-                if ($this->modal !== null && !$this->hitsModalPanel($hit)) {
+            if ($hit !== null) {
+                // 模态：ModalHost 盖满客户区 ⇒ 命中恒非 null；点遮罩 = 关闭意图
+                if ($e->scrim && !$this->hitsModalPanel($hit)) {
                     if ($event->isDown()) {
-                        if ($this->modal->isDismissible()) {
-                            $this->closeModal();
+                        if ($e->dismissOnTapOutside) {
+                            $this->removeOverlay($e);
                         }
 
                         return null; // 不可关时同样吞掉（遮罩后面不能动）
                     }
 
                     if ($event->isMove() || $event->isLeave()) {
-                        $focus->hoverTo(null); // 滑出面板 ⇒ 面板内不再高亮
+                        $focus->hoverTo(null);
                     }
 
                     return null;
@@ -1992,12 +1967,12 @@ abstract class Application
                     // 菜单项（MenuItem extends Button）与根树按钮同规则：焦点落在
                     // 浮层内本次点击上 ⇒ 立即激活。命令经 dispatch() 分发 ⇒ 浮层按
                     // 语义 #2 在分发后关闭 —— 与键盘 Enter 完全同路。
-                    if ($focus->focusHit($hit, $this->menuElement)) {
+                    if ($focus->focusHit($hit, $e->element)) {
                         $this->activateFocusedWidget();
                     }
                 } elseif ($event->isMove()) {
                     // 浮层内悬停：菜单项高亮（§9.1 语义 #5）
-                    $focus->hoverTo($element);
+                    $focus->hoverTo($focus->elementAt($e->element, $hit));
                 } elseif ($event->isLeave()) {
                     $focus->hoverTo(null);
                 }
@@ -2005,21 +1980,25 @@ abstract class Application
                 return $event->isDown() || $event->isMove() ? $focus->cursorOf($hit) : null;
             }
 
-            if ($event->isDown()) {
-                // §9.1 关闭语义 #1：点浮层外 ⇒ 关且**吞掉该次按下**（不穿透，
-                // 否则"关菜单"顺手点到下面按钮 —— GUI 仓真机踩过）。
-                $this->closeMenu();
+            // 点在条目盒外
+            if ($e->barrier) {
+                if ($event->isDown()) {
+                    // §9.1 关闭语义 #1：点浮层外 ⇒ 关且**吞掉该次按下**（不穿透）
+                    if ($e->dismissOnTapOutside) {
+                        $this->removeOverlay($e);
+                    }
 
-                return null; // 吞掉：不喂 focusHit、不改光标
+                    return null;
+                }
+
+                // move/up/leave 在浮层外：不穿透、不关浮层（关只归 down）
+                if ($event->isMove() || $event->isLeave()) {
+                    $focus->hoverTo(null);
+                }
+
+                return null;
             }
-
-            // move/up/leave 在浮层外：不穿透、不关浮层（关只归 down）。
-            // 悬停照退（指针滑出菜单 ⇒ 菜单项不再高亮，但菜单开着）。
-            if ($event->isMove() || $event->isLeave()) {
-                $focus->hoverTo(null);
-            }
-
-            return null;
+            // barrier=false（Tooltip / Toast）：继续往下问
         }
 
         // ── 滚动条 thumb 拖动（§12.3，2026-10-19）─────────────────────
@@ -2238,7 +2217,7 @@ abstract class Application
         //   模态必须还在 —— 否则"确认删除"的对话框会在命令执行前消失，而
         //   "校验失败就留在框里"这种正确写法直接做不到。菜单则相反：项点完
         //   就关是菜单的语义（§9.1 语义 #2）。
-        if ($handled && $this->menuElement !== null && $this->modal === null) {
+        if ($handled && $this->isMenuOpen() && !$this->isModalOpen()) {
             $this->closeMenu();
         }
 

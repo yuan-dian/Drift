@@ -6498,15 +6498,31 @@ check(
     'seen=' . implode(',', $modalApp->seen) . ' open=' . ($modalApp->isModalOpen() ? 'yes' : 'no'),
 );
 
-// —— 一槽位两用：打开模态先清菜单（互斥）
+// —— ★ W3 行为变化（`01` §8）：模态**盖在菜单之上**，不再清菜单
+//   旧语义"同一槽位 ⇒ 打开模态先清菜单"是槽位的产物，不是需求：
+//   在下拉里点「新建分类…」弹出对话框，关掉对话框后下拉应该还在。
+//   判据三条：① 模态开、菜单仍在 ② 栈深 = 2 ③ 关模态后菜单回到栈顶。
 $modalMutexApp = new ModalApplication();
 $modalMutexApp->attach($modalSurface, $modalTight);
 $modalMutexApp->showMenu(PopupPanel::make(Text::make('菜单项')));
 check('模态 · 前置：菜单开着', $modalMutexApp->isMenuOpen() && !$modalMutexApp->isModalOpen());
 $modalMutexApp->openConfirm();
 check(
-    '模态 · 与菜单互斥（同一槽位 ⇒ 打开模态先清菜单）',
-    $modalMutexApp->isModalOpen() && !$modalMutexApp->isMenuOpen(),
+    '模态 · 模态盖在菜单之上（不再清菜单 —— `01` §8 的行为变化）',
+    $modalMutexApp->isModalOpen() && $modalMutexApp->isMenuOpen()
+    && $modalMutexApp->overlays()->count() === 2,
+    'modal=' . ($modalMutexApp->isModalOpen() ? 'yes' : 'no')
+    . ' menu=' . ($modalMutexApp->isMenuOpen() ? 'yes' : 'no')
+    . ' depth=' . $modalMutexApp->overlays()->count(),
+);
+$modalMutexApp->closeModal();
+check(
+    '模态 · 关掉对话框后菜单还在（栈没被连坐清掉）',
+    !$modalMutexApp->isModalOpen() && $modalMutexApp->isMenuOpen()
+    && $modalMutexApp->overlays()->count() === 1,
+    'modal=' . ($modalMutexApp->isModalOpen() ? 'yes' : 'no')
+    . ' menu=' . ($modalMutexApp->isMenuOpen() ? 'yes' : 'no')
+    . ' depth=' . $modalMutexApp->overlays()->count(),
 );
 
 // —— Modal 的 build 结构：ModalHost → Center → PopupPanel
@@ -9143,8 +9159,8 @@ check(
 //   a) A 组（settle 前）成员跑到 settle **之后** —— pumpTasks 与 settle 对调
 //   b) C 组（settle 后）成员跑到 settle **之前** —— focusCollect 与 pumpIo 对调
 //   c) 整帧**没有 settle 标记** —— `Frame::run()` 没被调用
-$aTrace = ['pumpIo', 'settle', 'pumpTasks', 'pumpSliced', 'tickAnimations', 'placeMenu', 'tickLateMount', 'focusCollect', 'pumpSemantics'];
-$bTrace = ['focusCollect', 'pumpTasks', 'pumpSliced', 'tickAnimations', 'placeMenu', 'settle', 'tickLateMount', 'pumpIo', 'pumpSemantics'];
+$aTrace = ['pumpIo', 'settle', 'pumpTasks', 'pumpSliced', 'tickAnimations', 'placeOverlays', 'tickLateMount', 'focusCollect', 'pumpSemantics'];
+$bTrace = ['focusCollect', 'pumpTasks', 'pumpSliced', 'tickAnimations', 'placeOverlays', 'settle', 'tickLateMount', 'pumpIo', 'pumpSemantics'];
 $cTrace = FramePhase::ALL;
 unset($cTrace[(int) array_search('settle', FramePhase::ALL, true)]);
 $cTrace = array_values($cTrace);

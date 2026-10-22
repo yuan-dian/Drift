@@ -60,10 +60,10 @@ final class FramePhase
      * ★ `settle` 是**标记**不是真段：它记在 `$frame->run()` 之前，
      *   而 `Frame::run()` 内部才是 settle → layout → paint → present。
      */
-    public const CORE = ['placeMenu', 'settle'];
+    public const CORE = ['placeOverlays', 'settle'];
 
     /** 全部要出现的名字（`06` §2.1 的三组九段 + settle 标记） */
-    public const ALL = ['pumpIo', 'pumpTasks', 'pumpSliced', 'tickAnimations', 'placeMenu', 'settle', 'tickLateMount', 'focusCollect', 'pumpSemantics'];
+    public const ALL = ['pumpIo', 'pumpTasks', 'pumpSliced', 'tickAnimations', 'placeOverlays', 'settle', 'tickLateMount', 'focusCollect', 'pumpSemantics'];
 
     /**
      * 每个名字越界/缺失的后果 —— 断言消息要能直接回答"所以呢"。
@@ -75,7 +75,7 @@ final class FramePhase
         'pumpTasks' => '后台结果晚一帧生效 —— "loading → ready" 会闪一帧空',
         'pumpSliced' => '分片完成晚一帧，长任务收尾可见地迟一拍',
         'tickAnimations' => '动画晚一帧起手，第一帧不动',
-        'placeMenu' => '浮层布局晚一帧，菜单/模态会抖一下',
+        'placeOverlays' => '浮层布局晚一帧，菜单/模态会抖一下',
         'settle' => '帧末重建没跑 —— 这一帧的 setState 全部作废',
         'tickLateMount' => '迟到挂载的 State 不被 tick ⇒ 帧时钟不上膛 ⇒ 之后没事件就永远静止',
         'focusCollect' => '焦点链可能握着已被移除的 Element ⇒ 按键静默丢给死节点',
