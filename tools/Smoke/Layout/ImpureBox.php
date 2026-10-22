@@ -36,12 +36,12 @@ final class ImpureBox extends RenderBox
         return new Size($w, 10.0);
     }
 
-    public function intrinsicWidth(float $height): float
+    protected function contentIntrinsicWidth(float $height): float
     {
         return 10.0;
     }
 
-    public function intrinsicHeight(float $width): float
+    protected function contentIntrinsicHeight(float $width): float
     {
         return 10.0;
     }
@@ -50,7 +50,7 @@ final class ImpureBox extends RenderBox
     {
     }
 
-    public function paint(Canvas $canvas): void
+    protected function paintContent(Canvas $canvas): void
     {
         $canvas->drawRect(new Rect(0.0, 0.0, 10.0, 10.0), Paint::fill(Color::black()));
     }

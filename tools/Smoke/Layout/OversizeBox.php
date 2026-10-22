@@ -22,12 +22,12 @@ final class OversizeBox extends RenderBox
         return new Size($constraints->maxWidth + 1.0, 5.0);
     }
 
-    public function intrinsicWidth(float $height): float
+    protected function contentIntrinsicWidth(float $height): float
     {
         return 1.0;
     }
 
-    public function intrinsicHeight(float $width): float
+    protected function contentIntrinsicHeight(float $width): float
     {
         return 1.0;
     }
@@ -41,7 +41,7 @@ final class OversizeBox extends RenderBox
     {
     }
 
-    public function paint(Canvas $canvas): void
+    protected function paintContent(Canvas $canvas): void
     {
     }
 }

@@ -30,17 +30,17 @@ abstract class RenderProxyBox extends RenderBox
         }
     }
 
-    public function intrinsicWidth(float $height): float
+    protected function contentIntrinsicWidth(float $height): float
     {
         return $this->child?->intrinsicWidth($height) ?? 0.0;
     }
 
-    public function intrinsicHeight(float $width): float
+    protected function contentIntrinsicHeight(float $width): float
     {
         return $this->child?->intrinsicHeight($width) ?? 0.0;
     }
 
-    public function paint(Canvas $canvas): void
+    protected function paintContent(Canvas $canvas): void
     {
         if ($this->child === null) {
             return;

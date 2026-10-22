@@ -157,7 +157,7 @@ final class RenderScrollView extends RenderProxyBox
     }
 
     #[\Override]
-    public function paint(Canvas $canvas): void
+    protected function paintContent(Canvas $canvas): void
     {
         $child = $this->child;
         $size = $this->size();

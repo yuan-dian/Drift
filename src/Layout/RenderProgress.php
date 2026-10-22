@@ -54,12 +54,12 @@ final class RenderProgress extends RenderBox
         return $constraints->constrain(new Size($w, $this->style->height));
     }
 
-    public function intrinsicWidth(float $height): float
+    protected function contentIntrinsicWidth(float $height): float
     {
         return $this->width;
     }
 
-    public function intrinsicHeight(float $width): float
+    protected function contentIntrinsicHeight(float $width): float
     {
         return $this->style->height;
     }
@@ -69,7 +69,7 @@ final class RenderProgress extends RenderBox
     {
     }
 
-    public function paint(Canvas $canvas): void
+    protected function paintContent(Canvas $canvas): void
     {
         $size = $this->size;
         if ($size === null || $size->width <= 0.0 || $size->height <= 0.0) {

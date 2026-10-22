@@ -32,7 +32,7 @@ final class LayoutCountBox extends RenderBox
         return $constraints->constrain($this->fixed);
     }
 
-    public function paint(Canvas $canvas): void
+    protected function paintContent(Canvas $canvas): void
     {
         $this->paintCalls++;
     }
@@ -41,12 +41,12 @@ final class LayoutCountBox extends RenderBox
     {
     }
 
-    public function intrinsicWidth(float $height): float
+    protected function contentIntrinsicWidth(float $height): float
     {
         return $this->fixed->width;
     }
 
-    public function intrinsicHeight(float $width): float
+    protected function contentIntrinsicHeight(float $width): float
     {
         return $this->fixed->height;
     }

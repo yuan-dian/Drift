@@ -124,7 +124,26 @@ abstract class Element
         $this->box?->setCursor($this->widget->cursorShape());
 
         // 修饰同形（`02` §11）：一个引用递给盒，不逐项传递。
-        $this->box?->setMods($this->widget->mods());
+        if ($this->box !== null) {
+            $this->box->setMods($this->widget->mods());
+
+            return;
+        }
+
+        // ★★ **修饰无处可去 ⇒ 响亮失败，不静默丢掉**（`02` §11.7）。
+        //   `StatefulWidget` / `StatelessWidget` 自己不产盒（`TextField` 的盒在
+        //   `TextFieldBox` 里），所以 `TextField->padding(8)` 会**完全不生效**：
+        //   声明的 pad 只留在 Widget 上，盒永远读不到。实测现象是"尺寸一点没变"。
+        //   给 `RenderBoxWidget` 之外的控件套修饰，正确的写法是**用包装节点**
+        //   （`Padding::make(8)->child($tf)`）或该控件自己的样式参数。
+        if (!$this->widget->mods()->isDefault()) {
+            Errors::report(sprintf(
+                '%s 声明了修饰（padding / 尺寸 / 背景…），但它自己不产渲染盒 ⇒ 这些修饰不会生效。'
+                    . "\n" . '修法：① 用 `Padding::make(8)->child($x)` 这样的包装节点；'
+                    . '② 或改用该控件自己的样式参数（如 `TextField` 的 `label`）。',
+                $this->widget::class
+            ));
+        }
     }
 
     /**

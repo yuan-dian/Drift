@@ -32,12 +32,12 @@ final class SolidBox extends RenderBox
         return $this->box;
     }
 
-    public function intrinsicWidth(float $height): float
+    protected function contentIntrinsicWidth(float $height): float
     {
         return $this->intrinsicW + $height * 0.0; // 显式读另一轴，防"顺手删参数"
     }
 
-    public function intrinsicHeight(float $width): float
+    protected function contentIntrinsicHeight(float $width): float
     {
         return $this->intrinsicH;
     }
@@ -51,7 +51,7 @@ final class SolidBox extends RenderBox
     {
     }
 
-    public function paint(Canvas $canvas): void
+    protected function paintContent(Canvas $canvas): void
     {
         $canvas->drawRect(new Rect(0.0, 0.0, $this->box->width, $this->box->height), Paint::fill(Color::black()));
     }

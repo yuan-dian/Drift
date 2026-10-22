@@ -86,21 +86,21 @@ final class RenderCard extends RenderProxyBox
      *   `Row` / `Dock` 量出来的自然宽会比实际窄一个 padding，卡片的文字会被挤。
      */
     #[\Override]
-    public function intrinsicWidth(float $height): float
+    protected function contentIntrinsicWidth(float $height): float
     {
         return ($this->child?->intrinsicWidth(max(0.0, $height - $this->padding->vertical())) ?? 0.0)
             + $this->padding->horizontal();
     }
 
     #[\Override]
-    public function intrinsicHeight(float $width): float
+    protected function contentIntrinsicHeight(float $width): float
     {
         return ($this->child?->intrinsicHeight(max(0.0, $width - $this->padding->horizontal())) ?? 0.0)
             + $this->padding->vertical();
     }
 
     #[\Override]
-    public function paint(Canvas $canvas): void
+    protected function paintContent(Canvas $canvas): void
     {
         $size = $this->size;
         if ($size === null) {

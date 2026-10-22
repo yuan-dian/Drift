@@ -137,7 +137,7 @@ final class RenderDock extends RenderBox
         return $mid;
     }
 
-    public function intrinsicWidth(float $height): float
+    protected function contentIntrinsicWidth(float $height): float
     {
         $bars = 0.0;
         foreach (['top', 'bottom'] as $name) {
@@ -158,7 +158,7 @@ final class RenderDock extends RenderBox
         return max($bars, $mid);
     }
 
-    public function intrinsicHeight(float $width): float
+    protected function contentIntrinsicHeight(float $width): float
     {
         $bars = 0.0;
         foreach (['top', 'bottom'] as $name) {
@@ -179,7 +179,7 @@ final class RenderDock extends RenderBox
         return $bars + $mid;
     }
 
-    public function paint(Canvas $canvas): void
+    protected function paintContent(Canvas $canvas): void
     {
         foreach (['center', 'top', 'bottom', 'left', 'right'] as $name) {
             $box = $this->slots[$name];

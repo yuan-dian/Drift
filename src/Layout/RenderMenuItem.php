@@ -72,23 +72,23 @@ final class RenderMenuItem extends RenderProxyBox
      *   （开发中被 smoke 当场抓到）。
      */
     #[\Override]
-    public function intrinsicWidth(float $height): float
+    protected function contentIntrinsicWidth(float $height): float
     {
         if ($this->separator) {
             return $this->insets->horizontal();
         }
 
-        return $this->insets->horizontal() + parent::intrinsicWidth($height);
+        return $this->insets->horizontal() + parent::contentIntrinsicWidth($height);
     }
 
     #[\Override]
-    public function intrinsicHeight(float $width): float
+    protected function contentIntrinsicHeight(float $width): float
     {
         if ($this->separator) {
             return self::SEPARATOR_HEIGHT;
         }
 
-        return $this->insets->vertical() + parent::intrinsicHeight($width);
+        return $this->insets->vertical() + parent::contentIntrinsicHeight($width);
     }
 
     protected function performLayout(BoxConstraints $constraints): Size
@@ -109,7 +109,7 @@ final class RenderMenuItem extends RenderProxyBox
     }
 
     #[\Override]
-    public function paint(Canvas $canvas): void
+    protected function paintContent(Canvas $canvas): void
     {
         $size = $this->size ?? new Size(0.0, 0.0);
 

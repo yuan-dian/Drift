@@ -93,7 +93,7 @@ final class RenderCustomPaint extends RenderBox
         return $constraints->constrain(new Size($boxW, $boxH));
     }
 
-    public function paint(Canvas $canvas): void
+    protected function paintContent(Canvas $canvas): void
     {
         $size = $this->size;
         if ($size === null) {
@@ -103,7 +103,7 @@ final class RenderCustomPaint extends RenderBox
         $this->painter->paint($canvas, $size);
     }
 
-    public function intrinsicWidth(float $height): float
+    protected function contentIntrinsicWidth(float $height): float
     {
         if ($this->width !== null) {
             return $this->width;
@@ -113,7 +113,7 @@ final class RenderCustomPaint extends RenderBox
         return 0.0;
     }
 
-    public function intrinsicHeight(float $width): float
+    protected function contentIntrinsicHeight(float $width): float
     {
         if ($this->height !== null) {
             return $this->height;

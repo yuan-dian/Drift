@@ -39,12 +39,12 @@ final class ConstraintSpy extends RenderBox
         );
     }
 
-    public function intrinsicWidth(float $height): float
+    protected function contentIntrinsicWidth(float $height): float
     {
         return $this->box->width;
     }
 
-    public function intrinsicHeight(float $width): float
+    protected function contentIntrinsicHeight(float $width): float
     {
         return $this->box->height;
     }
@@ -58,7 +58,7 @@ final class ConstraintSpy extends RenderBox
     {
     }
 
-    public function paint(Canvas $canvas): void
+    protected function paintContent(Canvas $canvas): void
     {
     }
 }

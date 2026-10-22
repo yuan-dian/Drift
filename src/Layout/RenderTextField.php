@@ -127,13 +127,13 @@ final class RenderTextField extends RenderBox
         )));
     }
 
-    public function intrinsicWidth(float $height): float
+    protected function contentIntrinsicWidth(float $height): float
     {
         return $this->insets->horizontal()
             + $this->metrics->advance($this->shownText(), $this->style, $this->scale);
     }
 
-    public function intrinsicHeight(float $width): float
+    protected function contentIntrinsicHeight(float $width): float
     {
         return $this->insets->vertical() + $this->lineHeight();
     }
@@ -240,7 +240,7 @@ final class RenderTextField extends RenderBox
         return $this->text === '' && $this->placeholder !== '';
     }
 
-    public function paint(Canvas $canvas): void
+    protected function paintContent(Canvas $canvas): void
     {
         $size = $this->size ?? new Size(0.0, 0.0);
         $rect = new Rect(0.0, 0.0, $size->width, $size->height);

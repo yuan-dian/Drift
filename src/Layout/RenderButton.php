@@ -68,7 +68,7 @@ final class RenderButton extends RenderProxyBox
     }
 
     #[\Override]
-    public function paint(Canvas $canvas): void
+    protected function paintContent(Canvas $canvas): void
     {
         $size = $this->size ?? new Size(0.0, 0.0);
         $rect = new Rect(0.0, 0.0, $size->width, $size->height);

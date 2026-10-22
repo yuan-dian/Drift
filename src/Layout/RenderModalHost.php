@@ -76,7 +76,7 @@ final class RenderModalHost extends RenderProxyBox
     }
 
     #[\Override]
-    public function paint(Canvas $canvas): void
+    protected function paintContent(Canvas $canvas): void
     {
         $size = $this->size;
         if ($size === null) {
@@ -92,6 +92,6 @@ final class RenderModalHost extends RenderProxyBox
         );
 
         // ② 内容（面板）盖在遮罩上
-        parent::paint($canvas);
+        parent::paintContent($canvas);
     }
 }

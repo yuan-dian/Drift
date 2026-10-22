@@ -18,17 +18,17 @@ final class LayoutBoomBox extends RenderBox
         throw new \RuntimeException('layout boom');
     }
 
-    public function intrinsicWidth(float $height): float
+    protected function contentIntrinsicWidth(float $height): float
     {
         return 80.0;
     }
 
-    public function intrinsicHeight(float $width): float
+    protected function contentIntrinsicHeight(float $width): float
     {
         return 40.0;
     }
 
-    public function paint(Canvas $canvas): void
+    protected function paintContent(Canvas $canvas): void
     {
     }
 

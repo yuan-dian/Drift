@@ -34,7 +34,7 @@ final class RenderAppBar extends RenderFlex
     }
 
     #[\Override]
-    public function paint(Canvas $canvas): void
+    protected function paintContent(Canvas $canvas): void
     {
         $size = $this->size ?? new Size(0.0, 0.0);
         $rect = new Rect(0.0, 0.0, $size->width, $size->height);
@@ -46,6 +46,6 @@ final class RenderAppBar extends RenderFlex
             $canvas->drawRect($rect, Paint::stroke($this->box->borderColor, $this->box->borderWidth), $this->box->radius);
         }
 
-        parent::paint($canvas);
+        parent::paintContent($canvas);
     }
 }

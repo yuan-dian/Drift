@@ -162,9 +162,17 @@ final class Modifier
      * ★ "父更紧时听父的"不是宽容，是 C2 的唯一正确解 —— 约束是父给的，子无权
      *   突破（`tight(100)` 里塞 `width(200)` 不能让 `BoxConstraints` 抛
      *   "min 不得大于 max"，那是 Fatal）。
+     * ★ 两轴都没设 ⇒ **原样返回入参**（不新建对象）：`layout()` 每次都会调它，
+     *   给绝大多数没设尺寸的盒省一次分配。
      */
     public function tighten(BoxConstraints $c): BoxConstraints
     {
+        $hasW = !\is_nan($this->width);
+        $hasH = !\is_nan($this->height);
+        if (!$hasW && !$hasH) {
+            return $c;
+        }
+
         $minW = $c->minWidth;
         $maxW = $c->maxWidth;
         $minH = $c->minHeight;
@@ -172,7 +180,7 @@ final class Modifier
 
         // ★ 属性读取先落局部标量：AOT 下在分支里直接读属性会被推成 Variant，
         //   与 `float` 形参不匹配 ⇒ C2440（`RenderFlex::tightMain` 同型坑）。
-        if (!\is_nan($this->width)) {
+        if ($hasW) {
             $w = $this->width;
             if ($w > $maxW) {
                 $w = $maxW;
@@ -184,7 +192,7 @@ final class Modifier
             $maxW = $w;
         }
 
-        if (!\is_nan($this->height)) {
+        if ($hasH) {
             $h = $this->height;
             if ($h > $maxH) {
                 $h = $maxH;
@@ -197,6 +205,28 @@ final class Modifier
         }
 
         return new BoxConstraints($minW, $maxW, $minH, $maxH);
+    }
+
+    /** 该轴是否显式定了尺寸（`NAN` = 未设） */
+    public function hasBoxWidth(): bool
+    {
+        return !\is_nan($this->width);
+    }
+
+    public function hasBoxHeight(): bool
+    {
+        return !\is_nan($this->height);
+    }
+
+    /** 显式宽度（`NAN` = 未设；调用前先 `hasBoxWidth()`） */
+    public function boxWidth(): float
+    {
+        return $this->width;
+    }
+
+    public function boxHeight(): float
+    {
+        return $this->height;
     }
 
     /** 父约束 → 内容盒约束（内边距内缩） */
@@ -304,6 +334,33 @@ final class Modifier
     public function hasCompose(): bool
     {
         return $this->opacity < 1.0 || $this->translateX !== 0.0 || $this->translateY !== 0.0;
+    }
+
+    /**
+     * 所有字段都是默认值（没有任何修饰）。
+     *
+     * ★ 用途只有一个：`Element::syncBox()` 判断"这个控件声明了修饰、但它自己不产盒"
+     *   —— 那种情况下修饰**无处可去**，必须响亮失败而不是静默丢掉（见 `02` §11.7）。
+     * ★ 不放进热路径：`layout()` / `paint()` 走的是 `hasPadding()` / `hasVisual()` /
+     *   `hasCompose()` 三个窄判据，没有"全字段扫一遍"的开销。
+     */
+    public function isDefault(): bool
+    {
+        return !$this->hasPadding()
+            && \is_nan($this->width)
+            && \is_nan($this->height)
+            && !$this->hasBackground
+            && !$this->hasBorder
+            && $this->radius === 0.0
+            && $this->shadow === 0.0
+            && $this->opacity === 1.0
+            && $this->translateX === 0.0
+            && $this->translateY === 0.0
+            && $this->grow === 0
+            && $this->shrink === 0
+            && \is_nan($this->basis)
+            && $this->alignSelf === 0
+            && !$this->center;
     }
 
     public function composeOpacity(): float

@@ -55,12 +55,12 @@ final class OffsetBox extends RenderBox
         return $this->box;
     }
 
-    public function intrinsicWidth(float $height): float
+    protected function contentIntrinsicWidth(float $height): float
     {
         return $this->box->width;
     }
 
-    public function intrinsicHeight(float $width): float
+    protected function contentIntrinsicHeight(float $width): float
     {
         return $this->box->height;
     }
@@ -78,7 +78,7 @@ final class OffsetBox extends RenderBox
         }
     }
 
-    public function paint(Canvas $canvas): void
+    protected function paintContent(Canvas $canvas): void
     {
         if ($this->child === null) {
             return;

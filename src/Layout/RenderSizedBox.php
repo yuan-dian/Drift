@@ -116,7 +116,7 @@ final class RenderSizedBox extends RenderProxyBox
      *   等于 `SizedBox` 没生效（静默）。
      */
     #[\Override]
-    public function intrinsicWidth(float $height): float
+    protected function contentIntrinsicWidth(float $height): float
     {
         if ($this->width !== null) {
             return $this->width;
@@ -126,7 +126,7 @@ final class RenderSizedBox extends RenderProxyBox
     }
 
     #[\Override]
-    public function intrinsicHeight(float $width): float
+    protected function contentIntrinsicHeight(float $width): float
     {
         if ($this->height !== null) {
             return $this->height;

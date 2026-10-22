@@ -49,7 +49,7 @@ final class RenderErrorBoundary extends RenderProxyBox
     }
 
     #[\Override]
-    public function paint(Canvas $canvas): void
+    protected function paintContent(Canvas $canvas): void
     {
         if ($this->paintBroken) {
             $this->paintBrokenMark($canvas);
@@ -58,7 +58,7 @@ final class RenderErrorBoundary extends RenderProxyBox
         }
 
         try {
-            parent::paint($canvas);
+            parent::paintContent($canvas);
         } catch (Throwable $e) {
             $this->paintBroken = true;
             $this->paintBrokenMark($canvas);

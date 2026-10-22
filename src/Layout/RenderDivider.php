@@ -50,13 +50,13 @@ final class RenderDivider extends RenderBox
         return $constraints->constrain(new Size($w, $this->style->thickness));
     }
 
-    public function intrinsicWidth(float $height): float
+    protected function contentIntrinsicWidth(float $height): float
     {
         // 0 = "不表达自然宽"（宽度由父给）—— 与 performLayout 的"吃满"是同一条语义
         return $this->width;
     }
 
-    public function intrinsicHeight(float $width): float
+    protected function contentIntrinsicHeight(float $width): float
     {
         return $this->style->thickness;
     }
@@ -66,7 +66,7 @@ final class RenderDivider extends RenderBox
     {
     }
 
-    public function paint(Canvas $canvas): void
+    protected function paintContent(Canvas $canvas): void
     {
         $size = $this->size;
         if ($size === null || $size->width <= 0.0 || $size->height <= 0.0) {

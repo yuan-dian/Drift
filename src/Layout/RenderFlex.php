@@ -214,17 +214,17 @@ class RenderFlex extends RenderBox
         return $size;
     }
 
-    public function intrinsicWidth(float $height): float
+    protected function contentIntrinsicWidth(float $height): float
     {
         return $this->vertical ? $this->intrinsicCross($height) : $this->intrinsicMain($height);
     }
 
-    public function intrinsicHeight(float $width): float
+    protected function contentIntrinsicHeight(float $width): float
     {
         return $this->vertical ? $this->intrinsicMain($width) : $this->intrinsicCross($width);
     }
 
-    public function paint(Canvas $canvas): void
+    protected function paintContent(Canvas $canvas): void
     {
         $canvas->save();
 

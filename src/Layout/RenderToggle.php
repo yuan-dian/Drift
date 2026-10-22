@@ -93,14 +93,14 @@ final class RenderToggle extends RenderProxyBox
     }
 
     #[\Override]
-    public function intrinsicWidth(float $height): float
+    protected function contentIntrinsicWidth(float $height): float
     {
         return $this->controlWidth() + $this->style->gap
             + ($this->child?->intrinsicWidth($height) ?? 0.0);
     }
 
     #[\Override]
-    public function intrinsicHeight(float $width): float
+    protected function contentIntrinsicHeight(float $width): float
     {
         $labelWidth = max(0.0, $width - $this->controlWidth() - $this->style->gap);
 
@@ -108,7 +108,7 @@ final class RenderToggle extends RenderProxyBox
     }
 
     #[\Override]
-    public function paint(Canvas $canvas): void
+    protected function paintContent(Canvas $canvas): void
     {
         $size = $this->size ?? new Size(0.0, 0.0);
         if ($size->width <= 0.0 || $size->height <= 0.0) {
@@ -131,7 +131,7 @@ final class RenderToggle extends RenderProxyBox
         }
 
         // 标签（偏移已在 performLayout 里定好；RenderProxyBox 负责 translate + 还原）
-        parent::paint($canvas);
+        parent::paintContent($canvas);
     }
 
     /** 方框 + 两条线段拼的勾（勾的坐标全按 box 比例，盒子缩放时跟着缩放） */

@@ -173,12 +173,60 @@ abstract class RenderBox extends RenderObject
      *
      * 纯函数（§14.1）：同样输入 ⇒ 同样输出。所以它**不参与**脏判定 —— 由调用方
      * 决定何时重排（§13.3：Render 层全树重排）。
+     *
+     * ## 本方法接管了四件事（arch-v2 `02` §4.1，W5）
+     *
+     * | 步 | 做什么 | 为什么在基类 |
+     * |---|---|---|
+     * | ① | `width`/`height` 修饰 ⇒ 收紧约束 | "设了就变紧轴"只有一份语义 |
+     * | ② | padding 内缩 ⇒ 给子类的是**内容盒**约束 | 内缩只有一份实现 |
+     * | ③ | `center` ⇒ 松掉下界 | 居中要子能缩 |
+     * | ⑤ | padding 加回 ⇒ 盒尺寸 | 与 ② 成对 |
+     * | ⑦ | **后置平移直接子盒** | 见下 |
+     *
+     * ★★ **⑦ 是整个设计的关键**：`performLayout()` 收到的是内容盒约束，所以容器
+     *   把子摆在"内容盒原点"坐标系里 —— 这与它们原本的写法**完全一致**（容器本来
+     *   就从 `(0,0)` 起算）。量完之后整体平移 `(padLeft, padTop)`，就从内容盒坐标
+     *   换到了边框盒坐标。⇒ **19 个 `performLayout` 一行都不用改。**
+     *   `center` 走同一处：padding 的位移是常量，center 的位移由 `(自身 − 内容)`
+     *   算出 —— 两者都是"把直接子盒整体平移"，属于同一类操作。
+     *
+     * ★ **`setOffset()` 是 `protected`**：基类调子类的 protected 方法在 PHP 与 tpc
+     *   下都合法（同继承层级）。**不要**改成 `public` —— 那会破坏 C1「父定位子，
+     *   子不自定位」的可见性约束。
      */
     final public function layout(BoxConstraints $constraints): Size
     {
-        $measured = $this->performLayout($constraints);
+        $m = $this->mods;
 
-        // C6：**只有超出上界才算违反**——那意味着"我要画到盒外面去"。
+        // ① 尺寸修饰收紧约束（设了的那一轴变成紧的）
+        if ($m !== null) {
+            $constraints = $m->tighten($constraints);
+        }
+
+        // ② padding 内缩：给子类的约束是**内容盒**的
+        $padded = $m !== null && $m->hasPadding();
+        $inner = $constraints;
+        if ($padded) {
+            $inner = $m->deflate($constraints);
+        }
+
+        // ③ 居中 ⇒ 松掉下界。不松的话 `Stretch` 的 Flex 里子会被拉满、居中失效
+        //    （`RenderCenter` 原本就是给子 `loosen()`，这里复刻）。
+        $centered = $m !== null && $m->hasCenter();
+        if ($centered) {
+            $inner = $inner->loosen();
+        }
+
+        // ④ 子类量内容 —— **契约**：返回**内容**尺寸，不是盒尺寸
+        $measured = $this->performLayout($inner);
+
+        // ⑤ padding 加回
+        if ($padded) {
+            $measured = $m->inflate($measured);
+        }
+
+        // ⑥ C6：**只有超出上界才算违反**——那意味着"我要画到盒外面去"。
         // 下界提升不是违反：`tight()` 的语义就是父把尺寸定死了，`constrain()`
         // 提下界是它的本职工作（Drift 的 Column 在紧约束下报"最宽子"而不是
         // 硬宽，是正确的——父只是给了上限）。
@@ -198,25 +246,109 @@ abstract class RenderBox extends RenderObject
 
         $this->size = $constraints->constrain($measured);
 
+        // ⑦ 后置平移直接子盒
+        if ($padded || $centered) {
+            $dx = 0.0;
+            $dy = 0.0;
+
+            if ($padded) {
+                $dx = $m->padLeft();
+                $dy = $m->padTop();
+            }
+
+            if ($centered) {
+                // 剩余空间 = 盒尺寸 − 内容尺寸（pad 在两边各出现一次，抵消）
+                $slackW = $this->size->width - $measured->width;
+                $slackH = $this->size->height - $measured->height;
+                $dx += \max(0.0, $slackW / 2.0);
+                $dy += \max(0.0, $slackH / 2.0);
+            }
+
+            $this->visitChildren(function (RenderObject $child) use ($dx, $dy): void {
+                if ($child instanceof RenderBox) {
+                    $child->setOffset($child->offsetX() + $dx, $child->offsetY() + $dy);
+                }
+            });
+        }
+
         return $this->size;
     }
 
     /**
-     * 子类只实现这一层。**必须返回约束内的尺寸**，否则 C6 立刻报。
+     * 子类只实现这一层。**必须返回内容尺寸**（不含 padding / 不被 `width` 修饰撑大），
+     * 否则 C6 立刻报。
      *
      * 若是容器：在这里给子节点 `layout()` 并 `setOffset()`（C1 单向数据流）。
+     * **坐标系是内容盒原点** —— 基类的 ⑦ 步会整体平移 padding，子类不要自己加。
      */
     abstract protected function performLayout(BoxConstraints $constraints): Size;
 
     /**
-     * C3 内禀测量：本盒在**给定另一轴**时的自然尺寸。
+     * C3 内禀测量：本盒在**给定另一轴**时的自然尺寸（**盒**尺寸，含 padding）。
      *
      * `$height = INF` 表示那一轴不限。为什么必须带另一轴：比例盒（图、
      * 视频）要靠本轴约束定另一轴尺寸，单轴内禀值给不出答案。
+     *
+     * ★ **`final`**：与 `layout()` 同一个理由 —— "显式尺寸问它、否则问内容 + padding"
+     *   这件事只该有一份实现。子类实现 `contentIntrinsicWidth()`。
      */
-    abstract public function intrinsicWidth(float $height): float;
+    final public function intrinsicWidth(float $height): float
+    {
+        $m = $this->mods;
 
-    abstract public function intrinsicHeight(float $width): float;
+        // ① 显式宽度 ⇒ 直接是它（不再问内容）
+        if ($m !== null && $m->hasBoxWidth()) {
+            return $m->boxWidth();
+        }
+
+        // ② 内容的内禀 + padding
+        $innerHeight = $height;
+        if ($m !== null && $m->hasPadding()) {
+            $innerHeight = $height - $m->padTop() - $m->padBottom();
+            if ($innerHeight < 0.0) {
+                $innerHeight = 0.0;
+            }
+        }
+
+        $width = $this->contentIntrinsicWidth($innerHeight);
+
+        if ($m !== null && $m->hasPadding()) {
+            $width += $m->padLeft() + $m->padRight();
+        }
+
+        return $width;
+    }
+
+    final public function intrinsicHeight(float $width): float
+    {
+        $m = $this->mods;
+
+        if ($m !== null && $m->hasBoxHeight()) {
+            return $m->boxHeight();
+        }
+
+        $innerWidth = $width;
+        if ($m !== null && $m->hasPadding()) {
+            $innerWidth = $width - $m->padLeft() - $m->padRight();
+            if ($innerWidth < 0.0) {
+                $innerWidth = 0.0;
+            }
+        }
+
+        $height = $this->contentIntrinsicHeight($innerWidth);
+
+        if ($m !== null && $m->hasPadding()) {
+            $height += $m->padTop() + $m->padBottom();
+        }
+
+        return $height;
+    }
+
+    /** 内容的内禀宽（**不含** padding、**不看** `width` 修饰） */
+    abstract protected function contentIntrinsicWidth(float $height): float;
+
+    /** 内容的内禀高（**不含** padding、**不看** `height` 修饰） */
+    abstract protected function contentIntrinsicHeight(float $width): float;
 
     // ── `alignSelf` 的取值（`04` §2.4）────────────────────────────
     // ★ **int 哨兵而不是 enum**：`alignSelf` 要表达"未设"（INHERIT），而
@@ -291,7 +423,49 @@ abstract class RenderBox extends RenderObject
         return Overflow::Clip;
     }
 
-    abstract public function paint(Canvas $canvas): void;
+    /**
+     * 画自己：**装饰 → 平移 → 内容**（arch-v2 `02` §4.2，W5）。
+     *
+     * ★ **`final`**：与 `layout()` 同一个理由 —— 装饰只该画一处。子类实现
+     *   `paintContent()`；漏改名 = "抽象方法未实现" = 编译期 Fatal，不静默。
+     *
+     * ★ 为什么不让父容器调 `paintDecorated()`：那是 12+ 处抄同一句、漏抄不报错
+     *   —— 正是 `Element::syncBox()` 注释里点明的那类问题。
+     *
+     * ★ **`translate()` 只改 PHP 侧偏移、从不调后端**（MEMORY 记载）⇒ `save()`
+     *   必须真的保存/恢复它。三后端的 `saveDepth` 与偏移栈一致性由 smoke 的
+     *   「W8 栈平衡」与 golden 守着。
+     */
+    final public function paint(Canvas $canvas): void
+    {
+        $m = $this->mods;
+        $size = $this->size;
+
+        // ① 背景 / 边框 / 圆角 / 阴影 —— 画在自己身上，在内容**之下**
+        if ($m !== null && $size !== null && $m->hasVisual()) {
+            $m->paintBehind($canvas, $size);
+        }
+
+        // ② 内容：有 padding ⇒ 平移后画（内容盒坐标系）
+        if ($m !== null && $m->hasPadding()) {
+            $canvas->save();
+            $canvas->translate($m->padLeft(), $m->padTop());
+            $this->paintContent($canvas);
+            $canvas->restore();
+
+            return;
+        }
+
+        $this->paintContent($canvas);
+    }
+
+    /**
+     * 子类只实现这一层（原 `paint()`，W5 全局改名）。
+     *
+     * **坐标系是内容盒原点**：有 padding 时基类已经 `translate(padLeft, padTop)`；
+     * 需要"盒尺寸"就自己加回 padding（见 `02` §4.1.1 的两坐标系表）。
+     */
+    abstract protected function paintContent(Canvas $canvas): void;
 
     /**
      * 动画期的合成参数（arch-v2 `05` §5.4，W4-L3-4）—— **就地改，不重建盒、不重排**。

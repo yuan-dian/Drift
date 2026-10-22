@@ -70,12 +70,12 @@ final class RenderText extends RenderBox
         return new Size($this->paragraph->width, $this->paragraph->height);
     }
 
-    public function intrinsicWidth(float $height): float
+    protected function contentIntrinsicWidth(float $height): float
     {
         return $this->metrics->advance($this->content, $this->style, $this->scale);
     }
 
-    public function intrinsicHeight(float $width): float
+    protected function contentIntrinsicHeight(float $width): float
     {
         $paragraph = $this->metrics->layout(
             $this->content,
@@ -91,7 +91,7 @@ final class RenderText extends RenderBox
     {
     }
 
-    public function paint(Canvas $canvas): void
+    protected function paintContent(Canvas $canvas): void
     {
         if ($this->paragraph === null || $this->paragraph->lineCount() === 0) {
             return;

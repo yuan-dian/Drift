@@ -299,6 +299,20 @@ if (str_starts_with($caseArg, '--case=')) {
         $widget->background(Color::white()); // 封存后改样式 ⇒ 必须响亮失败
     }
 
+    if ($case === 'modstateful') {
+        // ★ 修饰落在"不产盒"的控件上 ⇒ 必须响亮失败（`02` §11.7）。
+        //   `TextField` 的盒在 `TextFieldBox` 里，`syncBox()` 拿到的是 null ⇒
+        //   声明的 pad 无处可去。静默丢掉是 G2 明令禁止的半静默。
+        $modCtx = new BuildContext(240.0, 80.0, ThemeData::light(), new DeterministicMetricsProvider(
+            DeterministicFontManager::standard()->collection(),
+            new DeterministicShaper(),
+        ));
+        $modEl = TextField::make()->value('x')->paddingAll(8.0)->createElement();
+        $modEl->mount(null, $modCtx);
+        echo "mounted-without-error\n";
+        exit(0);
+    }
+
     if ($case === 'watchbuild') {
         // A4：订阅写在 build 体内 ⇒ 每重建一次多订一份。运行期守卫必须响。
         $element = (new BuildWatchWidget(new FakeStore()))->createElement();
@@ -4125,6 +4139,31 @@ check(
     var_export($labeledCaret, true)
 );
 
+// ── 修饰落在"不产盒"的控件上（arch-v2 `02` §11.7）──────────────────────
+//   `StatefulWidget` / `StatelessWidget` 自己不产盒（`TextField` 的盒在
+//   `TextFieldBox` 里）⇒ 声明的 pad 只留在 Widget 上、盒永远读不到。
+//   实测现象是"尺寸一点没变"——**静默失效**是最坏的一种，所以这里断言它响亮失败。
+check('Modifier · isDefault() 对全默认为真', (new Modifier())->isDefault());
+check(
+    'Modifier · isDefault() 对单字段改动为假（21 个字段都在判据里）',
+    !(new Modifier())->withCenter(true)->isDefault()
+        && !(new Modifier())->withShadow(0.1)->isDefault()
+        && !(new Modifier())->withGrow(1)->isDefault()
+        && !(new Modifier())->withBasis(0.0)->isDefault()
+);
+
+// ★ 中止路径跑子进程（与「封存后写入」同型）：断言退出码 + 日志内容。
+fresh($log);
+[$modCode, $modOut] = runCase(__FILE__, 'modstateful', null);
+check(
+    'Modifier · 不产盒的控件上声明修饰 ⇒ 退出码 = 3（不静默丢）',
+    $modCode === 3,
+    '实际 ' . $modCode . ' / ' . $modOut
+);
+check(
+    'Modifier · 该失败写了 Errors.log 并指明修法',
+    str_contains(logText($log), '不产渲染盒')
+);
 // ── 选区模型（#49）：锚点 + 活动端，恒字符边界 ────────────────────────
 //   Shift+方向键只挪活动端；不带 Shift 的移动与任何一次文本改动折叠选区。
 //   这批夹具锁的是"选了一段之后，键入/退格/删除都吃它"这条用户可见契约。
