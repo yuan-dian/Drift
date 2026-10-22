@@ -146,9 +146,8 @@ use Drift\Layout\RenderErrorBoundary;
 use Drift\Layout\RenderFlex;
 use Drift\Layout\RenderFlexible;
 use Drift\Layout\RenderScrollView;
-use Drift\Layout\RenderPadding;
+use Drift\Layout\RenderProxy;
 use Drift\Layout\RenderCard;
-use Drift\Layout\RenderSizedBox;
 use Drift\Layout\RenderCustomPaint;
 use Drift\Layout\RenderProxyBox;
 use Drift\Layout\RenderMenuItem;
@@ -712,15 +711,11 @@ function findElement(Element $root, callable $pred): ?Element
 
 function boxOrigin(RenderBox $box): array
 {
-    $x = 0.0;
-    $y = 0.0;
-
-    for ($node = $box; $node !== null; $node = $node->parent()) {
-        $x += $node->offsetX();
-        $y += $node->offsetY();
-    }
-
-    return [$x, $y];
+    // ★ 委派 `RenderBox::absoluteOrigin()`，**不要**在这里手抄一遍累加：
+    //   W5 之后子盒 offset 住**内容盒**坐标，"内容原点 → 边框盒原点"那一步在
+    //   `absoluteOrigin()` 里补。手抄版少补一次 ⇒ `Padding::all(24)` 的字段盒
+    //   原点算成 (0,0)，7 条框选/光标断言全红（2026-10-22 实测）。
+    return RenderBox::absoluteOrigin($box);
 }
 
 // ── Skia 桥的假实现（⑨+1 conformance 夹具用）──────────────────────
@@ -3331,15 +3326,37 @@ check(
     $padded->children()[0]->size()?->height === 8.0
 );
 
-// 单子代理：RenderPadding
+// 单子代理：RenderProxy + mods 内距（W5：padding 是**字段**，不是节点）
 $inner = new SolidBox(new Size(10.0, 6.0), 10.0, 6.0);
-$padBox = new RenderPadding(EdgeInsets::symmetric(4.0, 2.0));
+$padBox = new RenderProxy();
+$padBox->setMods((new Modifier())->withPadding(4.0, 2.0, 4.0, 2.0));
 $padBox->setChild($inner);
 $padBox->layout(BoxConstraints::loose(new Size(60.0, 60.0)));
 check(
-    'Layout · RenderPadding 内禀值 = 内边距 + 孩子（不是孩子本身）',
+    'Layout · RenderProxy + mods 内距：内禀值 = 内边距 + 孩子（不是孩子本身）',
     $padBox->intrinsicWidth(0.0) === 18.0 && $padBox->intrinsicHeight(0.0) === 10.0,
     sprintf('实际 %.2f × %.2f', $padBox->intrinsicWidth(0.0), $padBox->intrinsicHeight(0.0))
+);
+check(
+    'Layout · RenderProxy + mods 内距：盒尺寸也加了内距（10+8 × 6+4）',
+    $padBox->size()?->width === 18.0 && $padBox->size()?->height === 10.0,
+    sprintf('实际 %.2f × %.2f', $padBox->size()?->width ?? -1.0, $padBox->size()?->height ?? -1.0)
+);
+check(
+    'Layout · 子盒偏移住**内容盒**坐标（padding 不进 offset）',
+    $inner->offsetX() === 0.0 && $inner->offsetY() === 0.0,
+    sprintf('实际 %.2f, %.2f', $inner->offsetX(), $inner->offsetY())
+);
+$innerOrigin = RenderBox::absoluteOrigin($inner);
+check(
+    'Layout · absoluteOrigin 补回内容原点（0 + 4, 0 + 2）',
+    $innerOrigin[0] === 4.0 && $innerOrigin[1] === 2.0,
+    sprintf('实际 %.2f, %.2f', $innerOrigin[0], $innerOrigin[1])
+);
+check(
+    'Layout · hitTest 减内容原点：padding 区不命中孩子、内容区命中',
+    $padBox->hitTest(1.0, 1.0) === $padBox && $padBox->hitTest(5.0, 3.0) === $inner,
+    sprintf('(1,1) ⇒ %s，(5,3) ⇒ %s', get_class($padBox->hitTest(1.0, 1.0) ?? $padBox), get_class($padBox->hitTest(5.0, 3.0) ?? $padBox))
 );
 
 // C4 / C5 的失败路径（子进程：会 Fatal）
@@ -3555,7 +3572,7 @@ check(
 $padRoot = Padding::make(Spacer::make())->all(10.0)->createElement();
 $padRoot->mount(null, $context);
 $padBox = $padRoot->renderObject();
-check('结构控件 · Padding 建出 RenderPadding', $padBox instanceof RenderPadding);
+check('结构控件 · Padding 建出 RenderProxy（内距走 mods）', $padBox instanceof RenderProxy);
 $padBox?->layout(BoxConstraints::loose(new Size(80.0, 80.0)));
 check(
     '结构控件 · Padding 进盒尺寸（孩子 0 + 上下各 10）',
@@ -6369,11 +6386,13 @@ $ptrMenuApp->frame(16.0, $tight320);                             // 走一帧 �
 check('浮层 · 菜单已开（指针项激活用例前置）', $ptrMenuApp->isMenuOpen());
 $itemEl = findElement($ptrMenuApp->menuElement(), fn (Element $e): bool => $e->widget() instanceof MenuItem);
 $itemBox = $itemEl?->effectiveBox();
-[$mmx, $mmy] = $ptrMenuApp->menuOrigin();
+// ★ `boxOrigin()` 现在给**绝对**原点（委派 `absoluteOrigin()`，浮层根会加自己的
+//   落点）⇒ 再叠一次 `menuOrigin()` 就是加两遍，点会落到面板外、静默不生效
+//   （2026-10-22 实测：`seen=` 空而 `open=yes`）。
 [$ibx, $iby] = $itemBox === null ? [0.0, 0.0] : boxOrigin($itemBox);
 $ibw = $itemBox?->size()?->width ?? 0.0;
 $ibh = $itemBox?->size()?->height ?? 0.0;
-$ptrMenuApp->dispatchInput(PointerEvent::down($mmx + $ibx + $ibw / 2, $mmy + $iby + $ibh / 2));
+$ptrMenuApp->dispatchInput(PointerEvent::down($ibx + $ibw / 2, $iby + $ibh / 2));
 check(
     '浮层 · 指针点菜单项 ⇒ 命令分发 + 分发后关浮层（语义 #2，与 Enter 同路）',
     $ptrMenuApp->seen === ['menu.refresh'] && !$ptrMenuApp->isMenuOpen(),
@@ -7407,14 +7426,18 @@ check(
 );
 
 // —— 无子盒：尺寸就是定值（不崩、不产生 INF）
-$emptySizedBox = SizedBox::make()->size(24.0, 8.0)->createRenderObject($context);
-$emptySizedBox->layout(BoxConstraints::unbounded());
+// ★ 走 Element 挂载而不是裸 `createRenderObject()`：W5 之后几何住 `mods`，
+//   由 `Element::syncBox()` 递给盒 —— 裸造盒拿不到定值，量出来是 0×0。
+$emptySizedBoxEl = SizedBox::make()->size(24.0, 8.0)->createElement();
+$emptySizedBoxEl->mount(null, $context);
+$emptySizedBox = $emptySizedBoxEl->effectiveBox();
+$emptySizedBox?->layout(BoxConstraints::unbounded());
 check(
     'SizedBox · 无子盒 ⇒ 尺寸 = 定值（占位空隙的用法）',
-    $emptySizedBox->size() !== null
+    $emptySizedBox?->size() !== null
         && abs($emptySizedBox->size()->width - 24.0) < 0.01
         && abs($emptySizedBox->size()->height - 8.0) < 0.01,
-    sprintf('%.6g×%.6g', $emptySizedBox->size()?->width ?? -1.0, $emptySizedBox->size()?->height ?? -1.0),
+    sprintf('%.6g×%.6g', $emptySizedBox?->size()?->width ?? -1.0, $emptySizedBox?->size()?->height ?? -1.0),
 );
 
 // —— 扁平按钮：盒样式 isNone（无底无边框），字色走正文色

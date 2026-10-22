@@ -75,6 +75,42 @@ abstract class RenderBox extends RenderObject
         return $this->mods;
     }
 
+    /**
+     * 内容盒原点在**本盒坐标系**里的偏移（arch-v2 `02` §4.1.1，W5）。
+     *
+     * ★ 子盒的 `offsetX/Y` 住**内容盒坐标**，所以"内容盒坐标 → 边框盒坐标"这一步
+     *   必须有人补。补的地方只有两处，且都不是热路径：
+     *   · 绘制 —— `paint()` 的 `translate(padLeft, padTop)`（画布自己带着走）
+     *   · 几何 —— `hitTest()` 与 `absoluteOrigin()` 调本方法
+     *   ⇒ `performLayout()` / `paintContent()` 因此**一行都不用改**：它们本来就
+     *   以内容盒原点起算（19 个容器的 `setOffset` 已逐点核对）。
+     *
+     * ★ 返回 `float` 而不是 `?EdgeInsets`：AOT 下 `?Obj` 会被推成 `php::Var`，
+     *   而这两个值每帧被 `hitTest` 读 ⇒ 退化代价直接落在命中测试上。
+     */
+    public function contentOriginX(): float
+    {
+        $m = $this->mods;
+
+        if ($m === null || !$m->hasPadding()) {
+            return 0.0;
+        }
+
+        return $m->padLeft();
+    }
+
+    /** 内容盒原点的 y（见 `contentOriginX()`） */
+    public function contentOriginY(): float
+    {
+        $m = $this->mods;
+
+        if ($m === null || !$m->hasPadding()) {
+            return 0.0;
+        }
+
+        return $m->padTop();
+    }
+
     // ── 主轴弹性意图（§13.1 C4 扩展；`04` §2）──────────────────────
     // ★ 住 `RenderBox` 而不是"一个代理盒"：`RenderFlex` 本来就读 `$kid->flex()`，
     //   四个意图放同一层 ⇒ `02` §7 把 `Expanded`/`Flexible` 改成 shim 之后，
@@ -163,6 +199,14 @@ abstract class RenderBox extends RenderObject
                 $y += $node->baseY();
                 break;
             }
+
+            // ★ 子盒的 offset 是**内容盒**坐标 ⇒ 换成父的边框盒坐标要补父的内容原点。
+            //   浮层根（`hasBase`）已经 `break`，不补 —— 它的落点就是它的边框盒原点。
+            $up = $node->parent();
+            if ($up instanceof RenderBox) {
+                $x += $up->contentOriginX();
+                $y += $up->contentOriginY();
+            }
         }
 
         return [$x, $y];
@@ -182,14 +226,20 @@ abstract class RenderBox extends RenderObject
      * | ② | padding 内缩 ⇒ 给子类的是**内容盒**约束 | 内缩只有一份实现 |
      * | ③ | `center` ⇒ 松掉下界 | 居中要子能缩 |
      * | ⑤ | padding 加回 ⇒ 盒尺寸 | 与 ② 成对 |
-     * | ⑦ | **后置平移直接子盒** | 见下 |
+     * | ⑦ | `center` ⇒ 后置平移直接子盒 | 见下 |
      *
-     * ★★ **⑦ 是整个设计的关键**：`performLayout()` 收到的是内容盒约束，所以容器
-     *   把子摆在"内容盒原点"坐标系里 —— 这与它们原本的写法**完全一致**（容器本来
-     *   就从 `(0,0)` 起算）。量完之后整体平移 `(padLeft, padTop)`，就从内容盒坐标
-     *   换到了边框盒坐标。⇒ **19 个 `performLayout` 一行都不用改。**
-     *   `center` 走同一处：padding 的位移是常量，center 的位移由 `(自身 − 内容)`
-     *   算出 —— 两者都是"把直接子盒整体平移"，属于同一类操作。
+     * ★★ **子盒的 offset 住内容盒坐标**：`performLayout()` 收到的是内容盒约束，
+     *   容器把子摆在"内容盒原点"坐标系里 —— 这与它们原本的写法**完全一致**
+     *   （容器本来就从 `(0,0)` 起算）。⇒ **19 个 `performLayout` 一行都不用改，
+     *   它们的 `paintContent()` 也不用改。**
+     *
+     * ★★ 于是 `(padLeft, padTop)` 这一步由**两个不同的地方**各自补一次，绝不重叠：
+     *   · **绘制**：`paint()` 里 `save/translate(padLeft, padTop)/paintContent/restore`
+     *   · **几何**：`hitTest()` 与 `absoluteOrigin()` 走 `contentOriginX/Y()`
+     *   两边都补 = 重复平移（画得对、点得偏）；两边都不补 = padding 白设。
+     *   2026-10-22 曾把 padding 也写进第 ⑦ 步（子盒改住边框盒坐标），与 `paint()`
+     *   的 translate 撞成双重平移 —— 因为当时没有任何生产控件把 padding 写进
+     *   `mods`，四档验证全绿也发现不了。
      *
      * ★ **`setOffset()` 是 `protected`**：基类调子类的 protected 方法在 PHP 与 tpc
      *   下都合法（同继承层级）。**不要**改成 `public` —— 那会破坏 C1「父定位子，
@@ -221,9 +271,14 @@ abstract class RenderBox extends RenderObject
         // ④ 子类量内容 —— **契约**：返回**内容**尺寸，不是盒尺寸
         $measured = $this->performLayout($inner);
 
-        // ⑤ padding 加回
+        // ⑤ padding 加回，**并且先夹进父给的区间**再交给 ⑥
+        // ★ 夹这一步不能省：内距比可用空间大时（`Padding::all(250)` 塞进 200 高的
+        //   槽）口径是"按可用空间算、静默裁剪"—— W5 之前 `RenderPadding` 返回的就是
+        //   `constrain(inflate(child))`。不夹 ⇒ 同一段代码从裁剪变成 C6 FATAL。
+        //   内容自己超出约束（`SolidBox(500)` 塞进 100 宽）仍然由 ⑥ 响亮报 ——
+        //   那才是 C6 要抓的东西。
         if ($padded) {
-            $measured = $m->inflate($measured);
+            $measured = $constraints->constrain($m->inflate($measured));
         }
 
         // ⑥ C6：**只有超出上界才算违反**——那意味着"我要画到盒外面去"。
@@ -246,23 +301,14 @@ abstract class RenderBox extends RenderObject
 
         $this->size = $constraints->constrain($measured);
 
-        // ⑦ 后置平移直接子盒
-        if ($padded || $centered) {
-            $dx = 0.0;
-            $dy = 0.0;
-
-            if ($padded) {
-                $dx = $m->padLeft();
-                $dy = $m->padTop();
-            }
-
-            if ($centered) {
-                // 剩余空间 = 盒尺寸 − 内容尺寸（pad 在两边各出现一次，抵消）
-                $slackW = $this->size->width - $measured->width;
-                $slackH = $this->size->height - $measured->height;
-                $dx += \max(0.0, $slackW / 2.0);
-                $dy += \max(0.0, $slackH / 2.0);
-            }
+        // ⑦ 后置平移直接子盒：**只做 `center`**
+        // ★ padding **不**进子盒偏移 —— 子盒坐标就住内容盒，换算交给 `paint()` 的
+        //   `translate()` 与 `hitTest()`/`absoluteOrigin()` 的 `contentOriginX/Y()`
+        //   （`02` §4.1.1）。进一次就与绘制重复平移，且不报错。
+        if ($centered) {
+            // 剩余空间 = 盒尺寸 − 内容尺寸（pad 在两边各出现一次，抵消）
+            $dx = \max(0.0, ($this->size->width - $measured->width) / 2.0);
+            $dy = \max(0.0, ($this->size->height - $measured->height) / 2.0);
 
             $this->visitChildren(function (RenderObject $child) use ($dx, $dy): void {
                 if ($child instanceof RenderBox) {
@@ -597,12 +643,18 @@ abstract class RenderBox extends RenderObject
             $children[] = $child;
         });
 
+        // ★ 子盒 offset 住内容盒坐标 ⇒ 先把自己的内容原点减掉（`02` §4.1.1）。
+        //   漏了 ⇒ 有 padding 的控件整体偏一个 padding 命中，而画面是对的 ——
+        //   只有"点了没反应 / 点到隔壁"这种真机现象能暴露。
+        $padX = $this->contentOriginX();
+        $padY = $this->contentOriginY();
+
         foreach (array_reverse($children) as $child) {
             if (!$child instanceof RenderBox) {
                 continue;
             }
 
-            $hit = $child->hitTest($x - $child->offsetX(), $y - $child->offsetY());
+            $hit = $child->hitTest($x - $padX - $child->offsetX(), $y - $padY - $child->offsetY());
 
             if ($hit !== null) {
                 return $hit;

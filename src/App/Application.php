@@ -1005,7 +1005,8 @@ abstract class Application
         }
 
         [$originX, $originY] = self::absoluteOrigin($box);
-        [$padLeft, $padTop] = self::contentInset($box);
+        $padLeft = $box->contentOriginX();
+        $padTop = $box->contentOriginY();
 
         // ★ **必须加 padding**（arch-v2 `02` §4.1.1）：`caretRect()` 是**内容盒**
         //   坐标（插入符自己走 `paintContent()` 那条路，画得是对的），而
@@ -1020,23 +1021,6 @@ abstract class Application
         ];
     }
 
-    /**
-     * 盒的**内容盒原点**相对边框盒原点的偏移（arch-v2 `02` §4.1.1）。
-     *
-     * W5 之前 padding 是祖先盒 ⇒ `absoluteOrigin()` 已经含了它；W5 之后 padding
-     * 搬进同一个盒 ⇒ 凡是"内容盒坐标 → 窗口坐标"的地方都要自己补上这一步。
-     *
-     * @return array{0: float, 1: float} `[dx, dy]`
-     */
-    private static function contentInset(RenderBox $box): array
-    {
-        $m = $box->mods();
-        if ($m === null || !$m->hasPadding()) {
-            return [0.0, 0.0];
-        }
-
-        return [$m->padLeft(), $m->padTop()];
-    }
 
     /**
      * 焦点里**在编辑**的输入框（§9.1 第 ③ 环与指针框选共用的门控）。
@@ -1100,7 +1084,7 @@ abstract class Application
         }
 
         [$originX] = self::absoluteOrigin($box);
-        [$padLeft] = self::contentInset($box);
+        $padLeft = $box->contentOriginX();
         // ★ `offsetAt()` 要的是**内容盒** x（它自己再减一次 `insets->left`）⇒
         //   先扣边框盒原点，再扣 padding（`02` §4.1.1）。漏了 ⇒ 插入符落点偏右
         //   一个 padding，点到的是后面几个字。
@@ -1129,7 +1113,7 @@ abstract class Application
         }
 
         [$originX] = self::absoluteOrigin($box);
-        [$padLeft] = self::contentInset($box);
+        $padLeft = $box->contentOriginX();
         // ★ 同 `beginTextSelection()`：`offsetAt()` 收内容盒 x。
         $state->extendSelectionTo($box->offsetAt($x - $originX - $padLeft));
     }

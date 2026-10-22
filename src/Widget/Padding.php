@@ -5,7 +5,7 @@ namespace Drift\Widget;
 
 use Drift\Geometry\EdgeInsets;
 use Drift\Layout\RenderBox;
-use Drift\Layout\RenderPadding;
+use Drift\Layout\RenderProxy;
 
 /**
  * 内边距（§13.1 几何面 —— 不是盒样式，所以它不继承 `BoxWidget`）。
@@ -14,29 +14,28 @@ use Drift\Layout\RenderPadding;
  * Padding::make($child)->paddingAll(8);
  * ```
  *
+ * ★ **W5 之后它只是一个"壳"**（arch-v2 `02` §11）：`padding()` 继承自 `Widget`、
+ *   写进 `mods`；`createRenderObject()` 给一个纯转发盒 `RenderProxy`。内距由
+ *   `RenderBox::layout()` 的 ②⑤ 步施加、`paint()` 的 `translate()` 换坐标 ——
+ *   与 `Text::make('hi')->paddingAll(8)` 走**同一条路**。这正是 W5 要的：
+ *   修饰是字段，不是节点。
+ *
+ * ★ `all` / `symmetric` / `only` 三个便利方法保留：`apps/` 与 `LazyColumnState`
+ *   在用，而且这里的 `only()` 是"没给的边就是 0"，与 `Widget::paddingOnly()` 的
+ *   "`null` = 不动那一边"语义不同 —— 合并会静默改掉调用点的意思。
+ *
  * @api
  */
 final class Padding extends RenderBoxWidget
 {
-    private EdgeInsets $insets;
-
     public function __construct(private readonly Widget $kid)
     {
         parent::__construct();
-        $this->insets = EdgeInsets::zero();
     }
 
     public static function make(Widget $kid): self
     {
         return new self($kid);
-    }
-
-    public function padding(EdgeInsets $value): static
-    {
-        $this->mutate();
-        $this->insets = $value;
-
-        return $this;
     }
 
     public function all(float $value): static
@@ -61,7 +60,7 @@ final class Padding extends RenderBoxWidget
 
     public function createRenderObject(BuildContext $context): RenderBox
     {
-        return new RenderPadding($this->insets);
+        return new RenderProxy();
     }
 
     #[\Override]

@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace Drift\Widget;
 
 use Drift\Layout\RenderBox;
-use Drift\Layout\RenderSizedBox;
+use Drift\Layout\RenderProxy;
 
 /**
  * 定尺寸：把孩子的某一轴（或两轴）钉死成给定值。
@@ -28,15 +28,17 @@ use Drift\Layout\RenderSizedBox;
  * ★ **父约束更紧时听父的**（`tight(100)` 里塞 `width(200)` 得到 100，不报错）——
  *   约束是父给的，子无权突破（§13.1 C2）。
  *
+ * ## W5：`width` / `height` 不再住这里（arch-v2 `02` §11）
+ *
+ * 它们继承自 `Widget`，写进 `mods`；夹取规则搬进 `Modifier::tighten()`（与原来
+ * `RenderSizedBox` 的逐轴夹取**逐行同构**，含"父更紧 ⇒ 听父的"）。于是本类只剩
+ * 便利方法 `size()` 与"壳"的职责：`createRenderObject()` 给纯转发盒 `RenderProxy`。
+ *
  * @api
  */
 final class SizedBox extends RenderBoxWidget
 {
     private ?Widget $kid = null;
-
-    private ?float $width = null;
-
-    private ?float $height = null;
 
     public static function make(?Widget $kid = null): self
     {
@@ -61,35 +63,15 @@ final class SizedBox extends RenderBoxWidget
         return $this->kid;
     }
 
-    public function width(float $value): static
-    {
-        $this->mutate();
-        $this->width = $value;
-
-        return $this;
-    }
-
-    public function height(float $value): static
-    {
-        $this->mutate();
-        $this->height = $value;
-
-        return $this;
-    }
-
     /** 两轴一起定（等价于 `->width($w)->height($h)`，只是少一次 mutate） */
     public function size(float $width, float $height): static
     {
-        $this->mutate();
-        $this->width = $width;
-        $this->height = $height;
-
-        return $this;
+        return $this->boxSize($width, $height);
     }
 
     public function createRenderObject(BuildContext $context): RenderBox
     {
-        return new RenderSizedBox($this->width, $this->height);
+        return new RenderProxy();
     }
 
     #[\Override]
