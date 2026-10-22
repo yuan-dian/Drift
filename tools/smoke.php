@@ -552,8 +552,28 @@ if (str_starts_with($caseArg, '--case=')) {
         echo "不该到达这里\n";
     }
 
+    // ★ 量具反例：`expectBox()` 必须**真的会红**。只写正例的助手等于"永远绿"，
+    //   它自己错了也看不出来（G2：量具要有反向自检，与 `lint --selftest` 同理）。
+    //   三条覆盖三种失败路径：原点不符 / 盒为 null / 盒没 layout。
+    // ★ 必须放在**本链内**：链尾那句 `exit(0)` 是"未知用例静默退出"，
+    //   放链外的话这段永远不执行（2026-10-22 踩到，表现为子进程零输出）。
+    if ($case === 'expectbox') {
+        $probe = new SolidBox(new Size(10.0, 6.0), 10.0, 6.0);
+        $host = new RenderProxy();
+        $host->setMods((new Modifier())->withPadding(4.0, 2.0, 4.0, 2.0));
+        $host->setChild($probe);
+        $host->layout(BoxConstraints::loose(new Size(60.0, 60.0)));
+
+        // 真实矩形是 (4, 2) 10×6 —— 这里故意把 x 写成 5
+        expectBox($probe, 5.0, 2.0, 10.0, 6.0, '量具反例 · 原点差 1px');
+        expectBox(null, 0.0, 0.0, 10.0, 6.0, '量具反例 · 盒为 null');
+        expectBox(new SolidBox(new Size(10.0, 6.0), 10.0, 6.0), 0.0, 0.0, 10.0, 6.0, '量具反例 · 没 layout');
+
+        exit(0); // 断言层自己打印 FAIL，判定交给外层
+    }
     exit(0); // 走到这里说明"该中止的没中止"
 }
+
 
 // ── 断言与工具 ──
 
@@ -757,6 +777,44 @@ function boxOrigin(RenderBox $box): array
     //   `absoluteOrigin()` 里补。手抄版少补一次 ⇒ `Padding::all(24)` 的字段盒
     //   原点算成 (0,0)，7 条框选/光标断言全红（2026-10-22 实测）。
     return RenderBox::absoluteOrigin($box);
+}
+
+/**
+ * 断言某个盒的**矩形**（客户区绝对坐标，`07` §5.2）。
+ *
+ * ★ 用 `RenderBox::absoluteOrigin()` 而不是自己沿父链累加：W5/M2-3 之后子盒
+ *   offset 住**内容盒**坐标，"内容原点 → 边框盒原点"那一步只有它做对了。
+ * ★ **四个数一起断言**：几何错通常是"整体偏了一个 padding"，分开断言会得到
+ *   四条消息、还得自己拼；合起来一条就够定位。
+ * ★ 严格 `===`，**不加容差**（`07` §5.3）：布局是确定性的，容差会掩盖"差
+ *   0.3px"的真实 bug。★ 涉及**字体度量**的断言不要用它 —— 那类只能取上界。
+ * ★ 盒为 null / 没 layout 过（`size()` 为 null）⇒ 断言失败并写明是哪种，
+ *   不是崩溃（`07` §9 第 5 条）。
+ */
+function expectBox(?RenderBox $box, float $x, float $y, float $w, float $h, string $name = ''): void
+{
+    $label = $name !== '' ? $name : '盒矩形';
+    if ($box === null) {
+        check($label, false, '盒为 null（没挂上 / 没 layout）');
+
+        return;
+    }
+    $size = $box->size();
+    if ($size === null) {
+        check($label, false, '盒 size() 为 null（layout 没跑）');
+
+        return;
+    }
+    [$ax, $ay] = RenderBox::absoluteOrigin($box);
+    check(
+        $label,
+        $ax === $x && $ay === $y && $size->width === $w && $size->height === $h,
+        sprintf(
+            '期望 (%.4g, %.4g) %.4g×%.4g，实际 (%.4g, %.4g) %.4g×%.4g',
+            $x, $y, $w, $h,
+            $ax, $ay, $size->width, $size->height
+        )
+    );
 }
 
 // ── Skia 桥的假实现（⑨+1 conformance 夹具用）──────────────────────
@@ -3528,11 +3586,7 @@ $looseStack = new RenderStack();
 $looseStack->addChild($stackA);
 $looseStack->addChild($stackB);
 $looseStack->layout(BoxConstraints::loose(new Size(300.0, 300.0)));
-check(
-    'Stack · Loose 尺寸 = 最大子（100×20 与 30×80 ⇒ 100×80）',
-    $looseStack->size()?->width === 100.0 && $looseStack->size()?->height === 80.0,
-    sprintf('实际 %.1f × %.1f', $looseStack->size()?->width ?? -1.0, $looseStack->size()?->height ?? -1.0)
-);
+expectBox($looseStack, 0.0, 0.0, 100.0, 80.0, 'Stack · Loose 尺寸 = 最大子（100×20 与 30×80 ⇒ 100×80）');
 check(
     'Stack · 默认 TopLeft ⇒ 两个子都在 (0,0)',
     $stackA->offsetX() === 0.0 && $stackA->offsetY() === 0.0
@@ -3558,11 +3612,7 @@ $expandSpy = new ConstraintSpy(new Size(30.0, 10.0));
 $expandStack = new RenderStack(StackAlign::TopLeft, StackFit::Expand);
 $expandStack->addChild($expandSpy);
 $expandStack->layout(BoxConstraints::loose(new Size(100.0, 80.0)));
-check(
-    'Stack · Expand 有界轴拉满父给的空间（100×80，不是 max(子) 的 30×10）',
-    $expandStack->size()?->width === 100.0 && $expandStack->size()?->height === 80.0,
-    sprintf('实际 %.1f × %.1f', $expandStack->size()?->width ?? -1.0, $expandStack->size()?->height ?? -1.0)
-);
+expectBox($expandStack, 0.0, 0.0, 100.0, 80.0, 'Stack · Expand 有界轴拉满父给的空间（100×80，不是 max(子) 的 30×10）');
 check(
     'Stack · Expand 给子 tight（min === max === 本盒尺寸）',
     $expandSpy->lastSeen !== null
@@ -3578,11 +3628,7 @@ $halfSpy = new ConstraintSpy(new Size(40.0, 10.0));
 $halfStack = new RenderStack(StackAlign::TopLeft, StackFit::Expand);
 $halfStack->addChild($halfSpy);
 $halfStack->layout(new BoxConstraints(0.0, INF, 0.0, 40.0));
-check(
-    'Stack · Expand 的无界轴退化为 Loose（宽按子 40、高拉满 40）',
-    $halfStack->size()?->width === 40.0 && $halfStack->size()?->height === 40.0,
-    sprintf('实际 %.1f × %.1f', $halfStack->size()?->width ?? -1.0, $halfStack->size()?->height ?? -1.0)
-);
+expectBox($halfStack, 0.0, 0.0, 40.0, 40.0, 'Stack · Expand 的无界轴退化为 Loose（宽按子 40、高拉满 40）');
 
 // 对齐：盒被紧约束撑大后，子按 StackAlign 落位
 $brKid = new SolidBox(new Size(30.0, 10.0), 30.0, 10.0);
@@ -3654,22 +3700,13 @@ check(
     $padBox->intrinsicWidth(0.0) === 18.0 && $padBox->intrinsicHeight(0.0) === 10.0,
     sprintf('实际 %.2f × %.2f', $padBox->intrinsicWidth(0.0), $padBox->intrinsicHeight(0.0))
 );
-check(
-    'Layout · RenderProxy + mods 内距：盒尺寸也加了内距（10+8 × 6+4）',
-    $padBox->size()?->width === 18.0 && $padBox->size()?->height === 10.0,
-    sprintf('实际 %.2f × %.2f', $padBox->size()?->width ?? -1.0, $padBox->size()?->height ?? -1.0)
-);
+expectBox($padBox, 0.0, 0.0, 18.0, 10.0, 'Layout · RenderProxy + mods 内距：盒尺寸也加了内距（10+8 × 6+4）');
 check(
     'Layout · 子盒偏移住**内容盒**坐标（padding 不进 offset）',
     $inner->offsetX() === 0.0 && $inner->offsetY() === 0.0,
     sprintf('实际 %.2f, %.2f', $inner->offsetX(), $inner->offsetY())
 );
-$innerOrigin = RenderBox::absoluteOrigin($inner);
-check(
-    'Layout · absoluteOrigin 补回内容原点（0 + 4, 0 + 2）',
-    $innerOrigin[0] === 4.0 && $innerOrigin[1] === 2.0,
-    sprintf('实际 %.2f, %.2f', $innerOrigin[0], $innerOrigin[1])
-);
+expectBox($inner, 4.0, 2.0, 10.0, 6.0, 'Layout · absoluteOrigin 补回内容原点（0 + 4, 0 + 2），尺寸不变');
 check(
     'Layout · hitTest 减内容原点：padding 区不命中孩子、内容区命中',
     $padBox->hitTest(1.0, 1.0) === $padBox && $padBox->hitTest(5.0, 3.0) === $inner,
@@ -6032,24 +6069,26 @@ $dock->setSlot('left', new SolidBox(new Size(30.0, 65.0), 30.0, 65.0));
 $dock->setSlot('right', new SolidBox(new Size(25.0, 65.0), 25.0, 65.0));
 $dock->setSlot('center', new SolidBox(new Size(45.0, 65.0), 45.0, 65.0));
 $dock->layout(BoxConstraints::tight(new Size(100.0, 100.0)));
+// ★ 五槽改用 `expectBox()`：**绝对原点 + 尺寸四个数一起断**。原来的写法只断
+//   `offsetX/Y`（相对内容盒）+ 部分尺寸 —— left 槽的 x 和宽、right 槽的宽都
+//   没人管，而"整体偏一个 padding"正是这类断言最容易漏的错。
+expectBox($dock->slot('top'), 0.0, 0.0, 100.0, 20.0, 'Dock · top 槽：全宽贴顶、拿自然高');
+expectBox($dock->slot('bottom'), 0.0, 85.0, 100.0, 15.0, 'Dock · bottom 槽：全宽贴底（100−15）');
+expectBox($dock->slot('left'), 0.0, 20.0, 30.0, 65.0, 'Dock · left 轨：中带全高、贴左');
+expectBox($dock->slot('right'), 75.0, 20.0, 25.0, 65.0, 'Dock · right 轨：贴右（100−25）');
+expectBox($dock->slot('center'), 30.0, 20.0, 45.0, 65.0, 'Dock · center 槽：tight 填满剩余矩形（45×65 @ 30,20）');
+
+// 量具自检：上面 10 条用 `expectBox()` 的断言**全绿**只说明"它们都对"，不说明
+// "助手会红"。这里跑一个故意错的子进程，把"会红"也变成断言（`07` §11.2 #4/#5）。
+[$ebCode, $ebOut] = runCase(__FILE__, 'expectbox', null);
 check(
-    'Dock · top 槽：全宽贴顶、拿自然高',
-    $dock->slot('top')?->offsetX() === 0.0 && $dock->slot('top')?->offsetY() === 0.0
-        && $dock->slot('top')?->size()?->width === 100.0 && $dock->slot('top')?->size()?->height === 20.0,
-);
-check(
-    'Dock · bottom 槽：全宽贴底（100−15）',
-    $dock->slot('bottom')?->offsetY() === 85.0 && $dock->slot('bottom')?->size()?->height === 15.0,
-);
-check(
-    'Dock · left/right 轨：中带全高、贴左右（右轨 100−25）',
-    $dock->slot('left')?->offsetY() === 20.0 && $dock->slot('left')?->size()?->height === 65.0
-        && $dock->slot('right')?->offsetX() === 75.0 && $dock->slot('right')?->offsetY() === 20.0,
-);
-check(
-    'Dock · center 槽：tight 填满剩余矩形（45×65 @ 30,20）',
-    $dock->slot('center')?->offsetX() === 30.0 && $dock->slot('center')?->offsetY() === 20.0
-        && $dock->slot('center')?->size()?->width === 45.0 && $dock->slot('center')?->size()?->height === 65.0,
+    '量具自检 · expectBox 给错期望时会红（三种失败路径各一条，消息带期望与实际）',
+    $ebCode === 0
+        && substr_count($ebOut, 'FAIL') === 3
+        && str_contains($ebOut, '期望 (5, 2) 10×6，实际 (4, 2) 10×6')
+        && str_contains($ebOut, '盒为 null（没挂上 / 没 layout）')
+        && str_contains($ebOut, '盒 size() 为 null（layout 没跑）'),
+    'code=' . $ebCode . ' ｜ ' . str_replace("\n", ' ⏎ ', $ebOut)
 );
 
 // ── 无界主轴：Dock 取内容自然高（§24.2 #18，2026-10-17 修）──
