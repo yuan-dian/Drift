@@ -28,9 +28,36 @@ use Throwable;
  */
 final class Frame
 {
+    /**
+     * 上一帧的约束（`05` §5.4 第三步的判据之一）。
+     *
+     * ★ **四个 float + 一个 bool，而不是一个 `?BoxConstraints`**：可选对象字段在
+     *   AOT 下退化成 `php::Var`（`08` 的类型退化表）⇒ 比较与取值都变慢且类型
+     *   不确定。这里只做相等判断，摊平存储没有代价。
+     */
+    private bool $laidOut = false;
+
+    private float $lastMinWidth = 0.0;
+
+    private float $lastMaxWidth = 0.0;
+
+    private float $lastMinHeight = 0.0;
+
+    private float $lastMaxHeight = 0.0;
+
     public function __construct(
         private readonly RenderSurface $surface,
     ) {
+    }
+
+    /** 约束与上一帧是否不同（没排过 ⇒ 一定不同 ⇒ 必须排） */
+    private function constraintsChanged(BoxConstraints $constraints): bool
+    {
+        return !$this->laidOut
+            || $this->lastMinWidth !== $constraints->minWidth
+            || $this->lastMaxWidth !== $constraints->maxWidth
+            || $this->lastMinHeight !== $constraints->minHeight
+            || $this->lastMaxHeight !== $constraints->maxHeight;
     }
 
     /**
@@ -60,10 +87,12 @@ final class Frame
         // ★ 分段计时（SurfaceProfile，默认关）：M4 拆「其余(PHP)」黑箱用（`26` §7）。
         $prof = SurfaceProfile::$on;
         $t = $prof ? \hrtime(true) : 0;
+        $didRebuild = false;
         try {
-            $root->settle();
+            $didRebuild = $root->settle();
             foreach ($overlays as $e) {
-                $e->element?->settle(); // 浮层各自的帧末重建（W3）
+                // 浮层各自的帧末重建（W3）；任一浮层重建 ⇒ 本帧不能跳过 layout
+                $didRebuild = ($e->element?->settle() ?? false) || $didRebuild;
             }
         } catch (Throwable $e) {
             Errors::report(sprintf(
@@ -89,15 +118,29 @@ final class Frame
         }
 
         $t = $prof ? \hrtime(true) : 0;
-        try {
-            $box->layout($constraints);
-        } catch (Throwable $e) {
-            Errors::report(sprintf(
-                '帧循环：layout 阶段未捕获异常（沿途无错误边界）—— %s（%s:%d）',
-                $e->getMessage(),
-                basename($e->getFile()),
-                $e->getLine(),
-            ));
+        // ★ **纯动画帧跳过 layout**（arch-v2 `05` §5.4 第三步，W4-L3-5）：
+        //   "没 rebuild + 约束没变 ⇒ 盒的 size 与子 offset 与上一帧逐位相同"
+        //   —— 前提是 `layout()` 是纯函数，这一点由 `LayoutSelfCheck`（W0）在
+        //   真机上守（`04` §5.2：先证明纯，才有资格说不缓存）。
+        //   ★ 自校验必须先于本步上线：没有它，跳过 layout 会把"布局不纯"的
+        //     后果从**漂移**放大成**完全不更新**（`05` §13 的推翻条件）。
+        if ($didRebuild || $this->constraintsChanged($constraints)) {
+            $this->laidOut = true;
+            $this->lastMinWidth = $constraints->minWidth;
+            $this->lastMaxWidth = $constraints->maxWidth;
+            $this->lastMinHeight = $constraints->minHeight;
+            $this->lastMaxHeight = $constraints->maxHeight;
+
+            try {
+                $box->layout($constraints);
+            } catch (Throwable $e) {
+                Errors::report(sprintf(
+                    '帧循环：layout 阶段未捕获异常（沿途无错误边界）—— %s（%s:%d）',
+                    $e->getMessage(),
+                    basename($e->getFile()),
+                    $e->getLine(),
+                ));
+            }
         }
         if ($prof) {
             SurfaceProfile::add('layout', \hrtime(true) - $t);
@@ -116,7 +159,7 @@ final class Frame
         $t = $prof ? \hrtime(true) : 0;
         try {
             $canvas = $this->surface->beginFrame($timestampMs);
-            $box->paint($canvas);
+            $box->paintComposed($canvas);
 
             // 浮层画在主树**之后**，按栈顺序逐层 —— 绘制顺序即层叠，不引入 z-index。
             // ★ scrim 不在这里画：模态的遮罩由 `ModalHost`（RenderModalHost）自绘，
@@ -126,7 +169,7 @@ final class Frame
                 if ($popupBox !== null && $popupBox->hasSize()) {
                     $canvas->save();
                     $canvas->translate($e->x, $e->y);
-                    $popupBox->paint($canvas);
+                    $popupBox->paintComposed($canvas);
                     $canvas->restore();
                 }
             }

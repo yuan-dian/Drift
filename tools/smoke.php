@@ -20,6 +20,8 @@ use Drift\Dev\Smoke\Layout\ImpureBox;
 use Drift\Dev\Smoke\Layout\OffsetBox;
 use Drift\Dev\Smoke\Layout\OversizeBox;
 use Drift\Dev\Smoke\Layout\SolidBox;
+use Drift\Dev\Smoke\Layout\LayoutCountBox;
+use Drift\Dev\Smoke\Layout\LayoutCountWidget;
 use Drift\Dev\Smoke\Commands\CommandWidget;
 use Drift\Dev\Smoke\Commands\EchoCommands;
 use Drift\Dev\Smoke\Commands\PickyCommands;
@@ -40,6 +42,7 @@ use Drift\Dev\Smoke\ErrorBoundary\PaintBoomBox;
 use Drift\Dev\Smoke\Frame\QuietWidget;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Smoke\Frame\TickerWidget;
+use Drift\Dev\Smoke\Frame\TickerState;
 use Drift\Dev\Smoke\Overlay\FlatBox;
 use Drift\Dev\Smoke\Overlay\RecordingSurface;
 use Drift\Dev\Smoke\App\OverlayLabApplication;
@@ -6844,6 +6847,92 @@ check(
     $cap->captureNode() === null && $captureDiag,
     'cap=' . ($cap->captureNode() === null ? 'null' : 'set')
     . ' diag=' . ($captureDiag ? 'yes' : 'no'),
+);
+
+// ── ㉟ 合成与跳过 layout（arch-v2 `05` §5.4 / §12.2 #10–#12，W4）──
+//    ★ 判据是**调用次数**，不是"画面看起来变了"：画面在"重排了但结果一样"和
+//      "没重排"两种情况下完全一样 ⇒ 只有探针能分辨。
+
+$lcTight = BoxConstraints::tight(new Size(320.0, 240.0));
+$lcWidget = new LayoutCountWidget(new Size(80.0, 40.0));
+$lcEl = $lcWidget->createElement();
+$lcEl->mount(null, $context);
+$lcBox = $lcEl->effectiveBox();
+$lcSurface = new RecordingSurface();
+$lcSurface->resize(320, 240, 1.0);
+$lcFrame = new Frame($lcSurface);
+
+$lcFrame->run($lcEl, $lcTight, 0.0);
+check(
+    '合成 · 首帧：layout 排一次、paint 画一次（量具本身不是空转）',
+    $lcBox instanceof LayoutCountBox && $lcBox->layoutCalls === 1 && $lcBox->paintCalls === 1,
+    $lcBox instanceof LayoutCountBox
+        ? sprintf('layout=%d paint=%d', $lcBox->layoutCalls, $lcBox->paintCalls)
+        : 'no box',
+);
+
+// #12：纯动画帧 —— 没 rebuild、约束没变 ⇒ 跳过 layout，但 paint 照画
+$lcFrame->run($lcEl, $lcTight, 16.0);
+check(
+    '合成 · 纯动画帧跳过 layout、paint 仍执行（§12.2 #12）',
+    $lcBox instanceof LayoutCountBox && $lcBox->layoutCalls === 1 && $lcBox->paintCalls === 2,
+    $lcBox instanceof LayoutCountBox
+        ? sprintf('layout=%d paint=%d', $lcBox->layoutCalls, $lcBox->paintCalls)
+        : 'no box',
+);
+
+// #10：setCompose 只改合成参数，不触发 layout
+$lcBox instanceof LayoutCountBox && $lcBox->setCompose(0.5, 3.0, 0.0);
+$lcFrame->run($lcEl, $lcTight, 32.0);
+check(
+    '合成 · setCompose 不触发 layout（§12.2 #10）',
+    $lcBox instanceof LayoutCountBox
+    && $lcBox->layoutCalls === 1
+    && $lcBox->paintCalls === 3
+    && $lcBox->composeOpacity() === 0.5,
+    $lcBox instanceof LayoutCountBox
+        ? sprintf('layout=%d paint=%d opacity=%.3f', $lcBox->layoutCalls, $lcBox->paintCalls, $lcBox->composeOpacity())
+        : 'no box',
+);
+
+// setCompose 的参数必须**真被画出来**（写而不读 = 未实现）：录到的命令里
+// 要有一条 OP_LAYER_PUSH（opacity < 1 开层）和一条 OP_TRANSLATE（dx ≠ 0）
+$lcList = $lcSurface->list();
+$lcHasLayer = false;
+$lcHasTranslate = false;
+for ($i = 0, $n = $lcList->count(); $i < $n; $i++) {
+    $op = $lcList->opAt($i);
+    if ($op === DisplayList::OP_LAYER_PUSH) {
+        $lcHasLayer = true;
+    } elseif ($op === DisplayList::OP_TRANSLATE) {
+        $lcHasTranslate = true;
+    }
+}
+check(
+    '合成 · 合成参数真被画出来（opacity 开层 + dx 平移各一条命令）',
+    $lcHasLayer && $lcHasTranslate,
+    'layer=' . ($lcHasLayer ? 'yes' : 'no') . ' translate=' . ($lcHasTranslate ? 'yes' : 'no'),
+);
+
+// #11：settle() 的返回值是"本帧有没有 rebuild"—— W4 跳过 layout 的唯一判据
+$tickEl = (new TickerWidget())->createElement();
+$tickEl->mount(null, $context);
+$tickEl->settle(); // 清掉挂载那一轮的脏
+$tickState = $tickEl instanceof StatefulElement ? $tickEl->state() : null;
+if ($tickState instanceof TickerState) {
+    $tickState->tick();
+}
+$tickDirtySettle = $tickEl->settle();
+check(
+    '合成 · settle() 有脏 ⇒ true（W4 靠它判断能不能跳过 layout）',
+    $tickDirtySettle === true,
+    'settle=' . var_export($tickDirtySettle, true)
+    . ' state=' . ($tickState === null ? 'null' : get_class($tickState))
+    . ' builds=' . ($tickState instanceof TickerState ? $tickState->builds : -1),
+);
+check(
+    '合成 · settle() 干净 ⇒ false（不脏还排 = 每帧全树重排，等于没优化）',
+    $tickEl->settle() === false,
 );
 
 

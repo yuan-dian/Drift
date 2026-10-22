@@ -125,7 +125,7 @@ final class RenderMenuItem extends RenderProxyBox
 
         $canvas->save();
         $canvas->translate($this->insets->left, $this->insets->top);
-        $this->child?->paint($canvas);
+        $this->child?->paintComposed($canvas);
         $canvas->restore();
     }
 }

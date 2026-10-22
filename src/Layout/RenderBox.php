@@ -256,6 +256,104 @@ abstract class RenderBox extends RenderObject
     abstract public function paint(Canvas $canvas): void;
 
     /**
+     * 动画期的合成参数（arch-v2 `05` §5.4，W4-L3-4）—— **就地改，不重建盒、不重排**。
+     *
+     * ★ 为什么允许可变字段破坏「Render 层也是值对象」的纪律：值对象管的是
+     *   **描述**（Widget 层，不可变），这里管的是**每帧都在变的动画量**。
+     *   两者失效频率差三个数量级 —— 让动画量走值对象等于每帧造一个新盒，
+     *   而造盒正是 `D_LAYOUT` 那条最贵的路（§5.2）。
+     * ★ **rebuild 会把这些值丢掉**（新盒的字段是默认值）—— 这是**正确行为**：
+     *   结构变了，动画的中间态就不该继续顶着（`05` §10 边界 #9）。
+     *   所以它只在"纯动画帧"里有效，与 `Frame::run` 跳过 layout 的判据是同一个前提。
+     */
+    private float $composeOpacity = 1.0;
+
+    private float $composeDx = 0.0;
+
+    private float $composeDy = 0.0;
+
+    /**
+     * 就地改合成参数（不重建、不重排、不置任何脏位）。
+     *
+     * ```php
+     * // 应用代码（淡入）：State::tickFrame 里直接写盒
+     * public function tickFrame(float $timestampMs): bool
+     * {
+     *     $busy = $this->fade->tick($timestampMs);
+     *     if (!$busy) { return false; }
+     *     $this->element()?->renderObject()?->setCompose($this->fade->value(), 0.0, 0.0);
+     *     return true;
+     * }
+     * ```
+     *
+     * ★ **不置布局脏**是整条路的重点：置了就等于每帧全树重排，这条路白修。
+     * ★ `opacity >= 1` 且 `dx == dy == 0` ⇒ `paintComposed()` 走**零开销快路**
+     *   （不 save / 不开层）⇒ 不用它就没有代价。
+     *
+     * @api
+     */
+    public function setCompose(float $opacity, float $dx = 0.0, float $dy = 0.0): void
+    {
+        $this->composeOpacity = $opacity;
+        $this->composeDx = $dx;
+        $this->composeDy = $dy;
+    }
+
+    public function composeOpacity(): float
+    {
+        return $this->composeOpacity;
+    }
+
+    /** @return array{0: float, 1: float} `[dx, dy]` */
+    public function composeOffset(): array
+    {
+        return [$this->composeDx, $this->composeDy];
+    }
+
+    /**
+     * 画自己（**含合成参数**）—— 父容器与 `Frame` 一律走这个入口，不走 `paint()`。
+     *
+     * ★ 平移用坐标加法（不开层），`opacity < 1` 才开层（`05` §5.5）：
+     *   开层是"分配一整块像素"，为一次加法付这个代价不划算；而不透明度是
+     *   **逐像素乘法**，必须在子树画完之后才能乘（否则子与子重叠处被乘两次）。
+     * ★ 默认参数下（`1.0 / 0 / 0`）**一条命令都不多**：没有 save、没有层。
+     *
+     * @api
+     */
+    final public function paintComposed(Canvas $canvas): void
+    {
+        $opacity = $this->composeOpacity;
+        $dx = $this->composeDx;
+        $dy = $this->composeDy;
+        $translated = $dx !== 0.0 || $dy !== 0.0;
+        $layered = $opacity < 1.0;
+
+        if (!$translated && !$layered) {
+            $this->paint($canvas);   // 零开销快路：绝大多数盒一辈子走这里
+
+            return;
+        }
+
+        $canvas->save();
+
+        if ($translated) {
+            $canvas->translate($dx, $dy);
+        }
+
+        if ($layered) {
+            $canvas->pushLayer(max(0.0, $opacity));
+        }
+
+        $this->paint($canvas);
+
+        if ($layered) {
+            $canvas->popLayer();
+        }
+
+        $canvas->restore();
+    }
+
+    /**
      * 命中测试（§9.1）：**从本盒出发**深度优先，返回最深的命中盒。
      *
      * `$x` / `$y` 是本盒的**局部**坐标（左上角为原点，逻辑单位，§6.1）。

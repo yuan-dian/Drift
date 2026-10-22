@@ -231,7 +231,7 @@ class RenderFlex extends RenderBox
         foreach ($this->kids as $kid) {
             $canvas->save();
             $canvas->translate($kid->offsetX(), $kid->offsetY());
-            $kid->paint($canvas);
+            $kid->paintComposed($canvas);
             $canvas->restore();
         }
 

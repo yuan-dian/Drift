@@ -188,7 +188,7 @@ final class RenderDock extends RenderBox
             }
             $canvas->save();
             $canvas->translate($box->offsetX(), $box->offsetY());
-            $box->paint($canvas);
+            $box->paintComposed($canvas);
             $canvas->restore();
         }
     }

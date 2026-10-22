@@ -58,7 +58,7 @@ final class RenderPadding extends RenderProxyBox
 
         $canvas->save();
         $canvas->translate($this->child->offsetX(), $this->child->offsetY());
-        $this->child->paint($canvas);
+        $this->child->paintComposed($canvas);
         $canvas->restore();
     }
 }

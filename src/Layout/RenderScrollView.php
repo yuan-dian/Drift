@@ -176,7 +176,7 @@ final class RenderScrollView extends RenderProxyBox
         //   offset 小的用例有墨、offset=max 的没有 ⇒ 单看一条会以为是位置公式错）。
         $canvas->save();
         $canvas->translate($child->offsetX(), $child->offsetY());
-        $child->paint($canvas);
+        $child->paintComposed($canvas);
         $canvas->restore();
         // ★ 滚动条画在**内容之上**（后画即在上）、裁剪区之内 ⇒ 内容滚到
         //   边角时被它盖住一角，与浏览器/Flutter 的 Scrollbar 同行为。
