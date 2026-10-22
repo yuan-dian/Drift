@@ -43,9 +43,13 @@ final class CanvasCapabilities
     public const CAP_GRADIENT = 1 << 2;
     public const CAP_DASH = 1 << 3;
     public const CAP_CLIP_PATH = 1 << 4;
+    // ★ `CAP_PATH` 在 W1/L3-1 从 Optional 提到 Extended：Raster 补齐了扫描线
+    //   填充后，两边都有 ⇒ 按"能力等价"（`05` §2.2）它不再是可以缺的。
+    //   提档的语义是"缺了它控件画不出来"，不是"实现质量相同" —— Raster 这一份
+    //   是硬边、无抗锯齿、只做 Miter+Butt（`05` §3.3 / §3.4），差异写在 docblock。
+    public const CAP_PATH = 1 << 5;
 
     // ── Optional：仅 Skia 级后端；Raster 响亮失败 ──
-    public const CAP_PATH = 1 << 5;
     public const CAP_IMAGE = 1 << 6;
     public const CAP_SHADOW = 1 << 7;
     public const CAP_LAYER = 1 << 8;

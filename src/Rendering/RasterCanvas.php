@@ -216,7 +216,11 @@ final class RasterCanvas implements Canvas
 
 
     /**
-     * P1 起 Core 两 op 真实现（Extended 在 P3、Optional 在 P4，仍是显式失败）。
+     * P1 起 Core 两 op 真实现；Extended 在 W1/L3-1 起补（`CAP_PATH` 已提档）。
+     *
+     * ★ `CAP_PATH` 置位的含义是"能画路径"，**不是"与 Skia 逐像素相同"**：
+     *   Raster 这一份是硬边无抗锯齿、奇偶规则、只做 Miter+Butt（`05` §3.3/§3.4）。
+     *   两个后端的像素级 golden 本来就不互比（既有约定），能力位只回答"能不能画"。
      */
     public function capabilities(): int
     {
@@ -224,7 +228,8 @@ final class RasterCanvas implements Canvas
         //   （比"分带"更好），虚线在**线段**上做真虚线、在矩形/椭圆描边上退化为实线。
         //   两种都"产出了像素"，故置位；Skia 端做完整实现。
         return CanvasCapabilities::CAP_ELLIPSE | CanvasCapabilities::CAP_LINE
-            | CanvasCapabilities::CAP_GRADIENT | CanvasCapabilities::CAP_DASH;
+            | CanvasCapabilities::CAP_GRADIENT | CanvasCapabilities::CAP_DASH
+            | CanvasCapabilities::CAP_PATH;
     }
 
     /**
@@ -419,9 +424,600 @@ final class RasterCanvas implements Canvas
         }
     }
 
+    /**
+     * 路径填充 / 描边（`05` §3；W1/L3-1 从 Optional 提档 Extended 后真实现）。
+     *
+     * ## 算法：扫描线 + 奇偶
+     *
+     * 路径没有解析式谓词（不像矩形/椭圆）⇒ 只能按行求与路径边的交点，
+     * 排序后成对填区间。`O(边数 × 行数)`，且每行只填连续区间 —— 与 `rasterize()`
+     * 同一条填色路径（`05` §3.1 的方案表）。
+     *
+     * ★ **奇偶（even-odd）而不是非零环绕**：`Path` 不记录子路径方向，非零环绕要
+     *   改数据格式（`05` §3.2）。奇偶对 99% 的实际路径（图标、箭头、勾）结果相同；
+     *   要"挖洞"就用两个反向子路径。
+     * ★ **奇偶跨所有子路径一起算**：两个重叠矩形子路径，重叠区必须不填
+     *   （`05` §12.2 #3）。逐个子路径填会让重叠区填两遍。
+     *
+     * ## 三个必须记住的口径
+     *
+     * ① **逐点吃画布偏移**：`translate()` 只改 PHP 侧 `offsetX/offsetY`，从不调
+     *    后端（`05` §1.3）。所以每个点都要自己加偏移再乘 dpr。P4 踩过一次：
+     *    几何走画布 `translate()` ⇒ 落在画布原点、被盒裁掉 ⇒ **真机完全无墨，
+     *    而解释器全过**。
+     * ② **无抗锯齿**：与 `drawRect` / `drawEllipse` 一致（硬边、像素中心谓词），
+     *    三个形状在同一张图上边缘风格统一（`05` §3.3）。
+     * ③ **宽度不乘 dpr**：与 `drawLine` / `drawEllipse` 同一口径（两个后端
+     *    conformance 的统一约定）。路径坐标本身已在设备像素空间。
+     *
+     * ## 描边（`05` §3.4）
+     *
+     * 把路径偏移成环再填，**不是**沿路径逐段画粗线（接缝会重叠/有缝）：
+     * · 开放路径：单环 = 一侧偏移正向 + 另一侧偏移反向，末端 Butt 直接闭
+     * · 闭合路径：两条偏移环按行取**对称差**（内环被外环包住时即"外减内"）
+     * 只做 Miter join + Butt cap；Round / Bevel 记在 §13。miter 超限按
+     * miter-limit 截断（仍是 miter，只是不无限伸成尖刺）。
+     * ★ 虚线退化为实线（与 `drawRect` 的 R2 降级同口径；真虚线只在 `drawLine`）。
+     */
     public function drawPath(Path $path, Paint $paint): void
     {
-        $this->unsupportedOp('drawPath', 'Optional');
+        if ($paint->color->a === 0 || $path->isEmpty()) {
+            return;
+        }
+
+        $subpaths = $this->flattenPath($path);
+        if ($subpaths === []) {
+            return;
+        }
+
+        if ($paint->isStroke()) {
+            $this->strokeSubpaths($subpaths, $paint);
+            return;
+        }
+
+        $edges = [];
+        foreach ($subpaths as $sub) {
+            foreach ($this->ringEdges($sub[0], $sub[1]) as $e) {
+                $edges[] = $e;
+            }
+        }
+        $this->fillEdges($edges, $paint->color, $paint->gradient);
+    }
+
+    /** 二次贝塞尔扁平化的固定段数（`05` §3.1；自适应扁平化记在 §13） */
+    private const QUAD_SEGMENTS = 16;
+
+    /** 扫描线成本上界：边数 × 行数（`05` §3.5） */
+    private const SCANLINE_BUDGET = 200000;
+
+    /** miter 接缝长度上界（单位为半宽；SVG 默认 miter-limit = 4） */
+    private const MITER_LIMIT = 4.0;
+
+    /**
+     * 扁平化路径 → 子路径表（坐标已在**设备像素**空间）。
+     *
+     * @return list<array{list<array{float, float}>, bool}> [顶点表, 是否闭合]
+     */
+    private function flattenPath(Path $path): array
+    {
+        $subpaths = [];
+        $current = [];
+        $start = null;
+        $dpr = $this->scale->dpr;
+        $ox = $this->offsetX;
+        $oy = $this->offsetY;
+
+        foreach ($path->commands() as $c) {
+            $verb = (int) $c[0];
+
+            if ($verb === Path::CMD_MOVE) {
+                if ($current !== []) {
+                    $subpaths[] = [$current, false];
+                }
+                $current = [[round(($c[1] + $ox) * $dpr), round(($c[2] + $oy) * $dpr)]];
+                $start = $current[0];
+                continue;
+            }
+
+            if ($verb === Path::CMD_LINE) {
+                if ($current === []) {
+                    continue; // 没有 MOVE 就打点：忽略（路径未开始）
+                }
+                $current[] = [round(($c[1] + $ox) * $dpr), round(($c[2] + $oy) * $dpr)];
+                continue;
+            }
+
+            if ($verb === Path::CMD_QUAD) {
+                if ($current === []) {
+                    continue;
+                }
+                $p0 = $current[count($current) - 1];
+                $cx = round(($c[1] + $ox) * $dpr);
+                $cy = round(($c[2] + $oy) * $dpr);
+                $px = round(($c[3] + $ox) * $dpr);
+                $py = round(($c[4] + $oy) * $dpr);
+                for ($i = 1; $i <= self::QUAD_SEGMENTS; $i++) {
+                    $t = (float) $i / (float) self::QUAD_SEGMENTS;
+                    $u = 1.0 - $t;
+                    // 二次贝塞尔 B(t) = (1-t)²P0 + 2(1-t)tC + t²P
+                    $current[] = [
+                        $u * $u * $p0[0] + 2.0 * $u * $t * $cx + $t * $t * $px,
+                        $u * $u * $p0[1] + 2.0 * $u * $t * $cy + $t * $t * $py,
+                    ];
+                }
+                continue;
+            }
+
+            // CMD_CLOSE：只标记闭合，**不把首点接回来** —— 闭边由
+            // `ringEdges($pts, true)` 补。接回来会让"首点重复一次"的环
+            // 在偏移时被当成两个独立顶点（miter 退化成单边法向，角上出缺口）。
+            if ($current !== []) {
+                $subpaths[] = [$current, true];
+                $current = [];
+                $start = null;
+            }
+        }
+
+        if ($current !== []) {
+            $subpaths[] = [$current, false];
+        }
+
+        return $subpaths;
+    }
+
+    /**
+     * 顶点表 → 线段表。`$closed` 为真时补上首尾相接的那条边。
+     *
+     * ★ 闭合是**显式参数**而不是"表里已经有重复首点"：偏移环（`offsetRing`）
+     *   返回的是去重后的环，两种形状必须走同一条路，否则闭合环会少最后一条边
+     *   ⇒ 奇偶交点落单 ⇒ **整个形状画不出来**（闭合描边第一版 0 墨）。
+     *
+     * @param list<array{float, float}> $points
+     * @return list<array{float, float, float, float}> [x1,y1,x2,y2]
+     */
+    private function ringEdges(array $points, bool $closed = false): array
+    {
+        $edges = [];
+        $n = count($points);
+        if ($n < 2) {
+            return $edges;
+        }
+
+        for ($i = 0; $i + 1 < $n; $i++) {
+            $edges[] = [
+                $points[$i][0], $points[$i][1],
+                $points[$i + 1][0], $points[$i + 1][1],
+            ];
+        }
+        if ($closed && $n > 2) {
+            $edges[] = [
+                $points[$n - 1][0], $points[$n - 1][1],
+                $points[0][0], $points[0][1],
+            ];
+        }
+
+        return $edges;
+    }
+
+    /**
+     * 奇偶填充：所有子路径的边合在一起算交点（`05` §3.2 + §12.2 #3）。
+     *
+     * @param list<array{float, float, float, float}> $edges
+     */
+    private function fillEdges(array $edges, Color $color, ?Gradient $gradient): void
+    {
+        if ($edges === []) {
+            return;
+        }
+
+        [$minY, $maxY] = $this->edgeBounds($edges);
+        [$ya, $yb] = $this->rowRange($minY, $maxY);
+        if ($ya >= $yb) {
+            return;
+        }
+
+        $rows = $yb - $ya;
+        $cost = count($edges) * $rows;
+        if ($cost > self::SCANLINE_BUDGET) {
+            Errors::report(sprintf(
+                'drawPath 的扫描线成本超预算：%d 条边 × %d 行 = %d 次交点（上界 %d）。'
+                    . "\n" . '修法：① 简化路径（贝塞尔已经按 %d 段扁平化）；'
+                    . '② 改用 drawImage。Raster 是测试后端，不中止，但这一帧会明显变慢。',
+                count($edges),
+                $rows,
+                $cost,
+                self::SCANLINE_BUDGET,
+                self::QUAD_SEGMENTS
+            ), Errors::DIAGNOSTIC);
+        }
+
+        $opaque = $color->a >= 255;
+        $lut = $opaque ? null : $this->blendLut($color);
+
+        for ($y = $ya; $y < $yb; $y++) {
+            foreach ($this->rowPixelSpans($edges, $y + 0.5) as $span) {
+                $this->fillSpanOrGrad($y, $span[0], $span[1], $color, $opaque, $lut, $gradient);
+            }
+        }
+    }
+
+    /**
+     * 一行的奇偶 span 表（已量化成像素区间、已裁到 clip 与画布）。
+     *
+     * ★ 这是**唯一**的扫描线实现：填充、开放描边、闭合描边、（W1/L3-2 的）
+     *   `pushClipPath` 全都经过它 —— `05` §4.2 说的"一次实现两处用"。
+     *
+     * @param list<array{float, float, float, float}> $edges
+     * @return list<array{int, int}> 左闭右开，已排序且互不相交
+     */
+    private function rowPixelSpans(array $edges, float $py): array
+    {
+        $xs = [];
+        foreach ($edges as $e) {
+            $lo = $e[1] < $e[3] ? $e[1] : $e[3];
+            $hi = $e[1] < $e[3] ? $e[3] : $e[1];
+            // ★ 半开区间 [lo, hi)：水平边（lo == hi）天然不产交点；
+            //   相邻边共享的顶点也恰好被算一次（不重不漏）。
+            if ($py < $lo || $py >= $hi) {
+                continue;
+            }
+            $xs[] = $e[0] + ($py - $e[1]) * ($e[2] - $e[0]) / ($e[3] - $e[1]);
+        }
+
+        $n = count($xs);
+        if ($n < 2) {
+            return [];
+        }
+        sort($xs);
+
+        $out = [];
+        // 奇偶：排序后成对填；落单的那个丢弃（只可能是数值边界）
+        for ($i = 0; $i + 1 < $n; $i += 2) {
+            $span = $this->spanToPixels($xs[$i], $xs[$i + 1]);
+            if ($span[0] < $span[1]) {
+                $out[] = $span;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * 一段浮点 x 区间 → 像素区间（左闭右开），并裁到 clip 与画布。
+     *
+     * 口径与 `rasterize()` 逐字相同：像素中心 px = x + 0.5，区间两端含。
+     *
+     * @return array{int, int}
+     */
+    private function spanToPixels(float $x0, float $x1): array
+    {
+        return [
+            max((int) ceil($x0 - 0.5), (int) ceil($this->clip->left - 0.5), 0),
+            min((int) floor($x1 - 0.5) + 1, (int) ceil($this->clip->right() - 0.5), $this->width),
+        ];
+    }
+
+    /**
+     * 行的可绘范围：几何包围盒 ∩ clip ∩ 画布。
+     *
+     * 口径与 `rasterize()` 逐字相同：像素中心 py = y + 0.5，两端含。
+     *
+     * @return array{int, int} 左闭右开；空范围时两个值相等
+     */
+    private function rowRange(float $minY, float $maxY): array
+    {
+        return [
+            max((int) ceil($minY - 0.5), (int) ceil($this->clip->top - 0.5), 0),
+            min((int) floor($maxY - 0.5) + 1, (int) ceil($this->clip->bottom() - 0.5), $this->height),
+        ];
+    }
+
+    /**
+     * @param list<array{float, float, float, float}> $edges
+     * @return array{float, float} [minY, maxY]
+     */
+    private function edgeBounds(array $edges): array
+    {
+        $minY = $edges[0][1];
+        $maxY = $edges[0][3];
+        foreach ($edges as $e) {
+            if ($e[1] < $minY) {
+                $minY = $e[1];
+            }
+            if ($e[3] < $minY) {
+                $minY = $e[3];
+            }
+            if ($e[1] > $maxY) {
+                $maxY = $e[1];
+            }
+            if ($e[3] > $maxY) {
+                $maxY = $e[3];
+            }
+
+        }
+
+        return [$minY, $maxY];
+    }
+
+    /**
+     * 描边：把每个子路径偏移成环再填（`05` §3.4）。
+     *
+     * @param list<array{list<array{float, float}>, bool}> $subpaths
+     */
+    private function strokeSubpaths(array $subpaths, Paint $paint): void
+    {
+        $half = $paint->strokeWidth / 2.0;
+        if ($half <= 0.0) {
+            return;
+        }
+
+        foreach ($subpaths as $sub) {
+            $pts = $sub[0];
+            if (count($pts) < 2) {
+                continue;
+            }
+
+            if ($sub[1]) {
+                // 闭合：两条偏移环按行取对称差
+                $this->fillRingsXor(
+                    $this->offsetRing($pts, $half, true),
+                    $this->offsetRing($pts, $half, false),
+                    $paint
+                );
+                continue;
+            }
+
+            // 开放：单环 = 一侧偏移正向 + 另一侧偏移反向，末端 Butt 直接闭
+            $ring = array_merge(
+                $this->offsetOpen($pts, $half, true),
+                array_reverse($this->offsetOpen($pts, $half, false))
+            );
+            $this->fillEdges($this->ringEdges($ring, true), $paint->color, $paint->gradient);
+        }
+    }
+
+    /**
+     * 闭合多边形的偏移环：每个顶点做 miter。
+     *
+     * ★ 先去掉尾部的重复点：`Path::close()` 会把首点接回来，于是环常以
+     *   "首点重复一次"的形式给出。不去的话首/尾两个顶点各有一条**退化边**，
+     *   miter 退化成"沿单边法向偏移"，角上会出现缺口（实测矩形描边少 13% 墨）。
+     *
+     * @param list<array{float, float}> $pts
+     * @return list<array{float, float}>
+     */
+    private function offsetRing(array $pts, float $half, bool $left): array
+    {
+        $n = count($pts);
+        $out = [];
+        for ($i = 0; $i < $n; $i++) {
+            $out[] = $this->miterPoint(
+                $pts[($i - 1 + $n) % $n],
+                $pts[$i],
+                $pts[($i + 1) % $n],
+                $half,
+                $left
+            );
+        }
+
+        return $out;
+    }
+
+    /**
+     * 开放折线的偏移点列：首尾取所在边的法向，中间顶点做 miter。
+     *
+     * @param list<array{float, float}> $pts
+     * @return list<array{float, float}>
+     */
+    private function offsetOpen(array $pts, float $half, bool $left): array
+    {
+        $n = count($pts);
+        $out = [];
+        for ($i = 0; $i < $n; $i++) {
+            if ($i === 0) {
+                // 首点：沿**第一条边**的法向偏移（Butt cap 的起点）
+                $out[] = $this->normalOffset($pts[0], $pts[1], $pts[0], $half, $left);
+                continue;
+            }
+            if ($i === $n - 1) {
+                // 尾点：沿**最后一条边**的法向偏移（Butt cap 的终点）
+                $out[] = $this->normalOffset($pts[$n - 2], $pts[$n - 1], $pts[$n - 1], $half, $left);
+                continue;
+            }
+            $out[] = $this->miterPoint($pts[$i - 1], $pts[$i], $pts[$i + 1], $half, $left);
+        }
+
+        return $out;
+    }
+
+    /**
+     * 点 $p 沿**有向线段** $a→$b 的法向偏移 $half（$left 选左侧）。
+     *
+     * ★ 方向由 $a→$b 定，与"偏移哪个点"解耦 —— 否则首点要用反向边时只能把
+     *   $a/$p 对调，左右侧会跟着翻（开放折线描边第一版就这么画空了）。
+     *
+     * @return array{float, float}
+     */
+    private function normalOffset(array $a, array $b, array $p, float $half, bool $left): array
+    {
+        $dx = $b[0] - $a[0];
+        $dy = $b[1] - $a[1];
+        $len = sqrt($dx * $dx + $dy * $dy);
+        if ($len <= 0.0) {
+            return [$p[0], $p[1]];
+        }
+        $nx = -$dy / $len;
+        $ny = $dx / $len;
+        if (!$left) {
+            $nx = -$nx;
+            $ny = -$ny;
+        }
+
+        return [$p[0] + $nx * $half, $p[1] + $ny * $half];
+    }
+
+    /**
+     * 顶点 $cur 的 miter 点：入射边与出射边各自偏移后的两条直线的交点。
+     *
+     * ★ miter 超限（接缝过长会伸成尖刺）时按 miter-limit 截断到
+     *   `$half × MITER_LIMIT` —— 仍是 miter，只是不无限伸长。
+     *
+     * @return array{float, float}
+     */
+    private function miterPoint(array $prev, array $cur, array $next, float $half, bool $left): array
+    {
+        $d1x = $cur[0] - $prev[0];
+        $d1y = $cur[1] - $prev[1];
+        $d2x = $next[0] - $cur[0];
+        $d2y = $next[1] - $cur[1];
+        $l1 = sqrt($d1x * $d1x + $d1y * $d1y);
+        $l2 = sqrt($d2x * $d2x + $d2y * $d2y);
+        if ($l1 <= 0.0 || $l2 <= 0.0) {
+            // 退化边：退回另一条边的法向
+            return $l1 > 0.0
+                ? $this->normalOffset($prev, $cur, $cur, $half, $left)
+                : $this->normalOffset($cur, $next, $cur, $half, $left);
+        }
+        $d1x /= $l1;
+        $d1y /= $l1;
+        $d2x /= $l2;
+        $d2y /= $l2;
+
+        $s = $left ? 1.0 : -1.0;
+        $p1x = $cur[0] - $d1y * $s * $half;
+        $p1y = $cur[1] + $d1x * $s * $half;
+        $p2x = $cur[0] - $d2y * $s * $half;
+        $p2y = $cur[1] + $d2x * $s * $half;
+
+        $denom = $d1x * $d2y - $d1y * $d2x;
+        if (abs($denom) < 1e-9) {
+            // 共线（或反向折）：两条偏移线平行，没有唯一交点
+            return [$p2x, $p2y];
+        }
+
+        // P1 + t·d1 = P2 + s·d2 解 t
+        $wx = $p2x - $p1x;
+        $wy = $p2y - $p1y;
+        $t = ($wx * $d2y - $wy * $d2x) / $denom;
+        $mx = $p1x + $t * $d1x;
+        $my = $p1y + $t * $d1y;
+
+        $dx = $mx - $cur[0];
+        $dy = $my - $cur[1];
+        $dist = sqrt($dx * $dx + $dy * $dy);
+        $limit = $half * self::MITER_LIMIT;
+        if ($dist > $limit && $dist > 0.0) {
+            $k = $limit / $dist;
+            $mx = $cur[0] + $dx * $k;
+            $my = $cur[1] + $dy * $k;
+        }
+
+        return [$mx, $my];
+    }
+
+    /**
+     * 两条环按行取对称差后填（闭合路径描边用）。
+     *
+     * ★ 为什么是**对称差**而不是"外减内"：偏移环哪条在外取决于路径走向，
+     *   而对称差与顺序无关 —— 内环被外环包住时它恰好就是"外减内"。
+     * ★ 在**像素**层取对称差而不是浮点层：直接复用 `spanToPixels` 的量化口径，
+     *   且区间表是整数，边界扫描退化成"排序去重 + 逐段判归属"。
+     */
+    private function fillRingsXor(array $ringA, array $ringB, Paint $paint): void
+    {
+        $edgesA = $this->ringEdges($ringA, true);
+        $edgesB = $this->ringEdges($ringB, true);
+        if ($edgesA === [] || $edgesB === []) {
+            return;
+        }
+
+        [$minA, $maxA] = $this->edgeBounds($edgesA);
+        [$minB, $maxB] = $this->edgeBounds($edgesB);
+        [$ya, $yb] = $this->rowRange(min($minA, $minB), max($maxA, $maxB));
+        if ($ya >= $yb) {
+            return;
+        }
+
+        $color = $paint->color;
+        $opaque = $color->a >= 255;
+        $lut = $opaque ? null : $this->blendLut($color);
+
+        for ($y = $ya; $y < $yb; $y++) {
+            $py = $y + 0.5;
+            $sa = $this->rowPixelSpans($edgesA, $py);
+            $sb = $this->rowPixelSpans($edgesB, $py);
+            if ($sa === [] && $sb === []) {
+                continue;
+            }
+            foreach ($this->xorPixelSpans($sa, $sb) as $span) {
+                $this->fillSpanOrGrad($y, $span[0], $span[1], $color, $opaque, $lut, $paint->gradient);
+            }
+        }
+    }
+
+    /**
+     * 两个像素区间集（各自已排序且不相交）的对称差。
+     *
+     * @param list<array{int, int}> $a
+     * @param list<array{int, int}> $b
+     * @return list<array{int, int}>
+     */
+    private function xorPixelSpans(array $a, array $b): array
+    {
+        if ($a === []) {
+            return $b;
+        }
+        if ($b === []) {
+            return $a;
+        }
+
+        $marks = [];
+        foreach ($a as $iv) {
+            $marks[$iv[0]] = true;
+            $marks[$iv[1]] = true;
+        }
+        foreach ($b as $iv) {
+            $marks[$iv[0]] = true;
+            $marks[$iv[1]] = true;
+        }
+        $keys = array_keys($marks);
+        sort($keys);
+
+        $out = [];
+        $n = count($keys);
+        for ($i = 0; $i + 1 < $n; $i++) {
+            $lo = (int) $keys[$i];
+            $hi = (int) $keys[$i + 1];
+            if ($lo >= $hi) {
+                continue;
+            }
+            $inA = $this->spanHasPixel($a, $lo);
+            $inB = $this->spanHasPixel($b, $lo);
+            if ($inA === $inB) {
+                continue; // 两侧都在（重叠）或都不在 ⇒ 不进对称差
+            }
+            if ($out !== [] && $out[count($out) - 1][1] === $lo) {
+                $out[count($out) - 1][1] = $hi; // 与上一段相邻 ⇒ 合并
+            } else {
+                $out[] = [$lo, $hi];
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * @param list<array{int, int}> $spans
+     */
+    private function spanHasPixel(array $spans, int $x): bool
+    {
+        foreach ($spans as $iv) {
+            if ($x >= $iv[0] && $x < $iv[1]) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function drawImage(ImageHandle $image, ?Rect $src, Rect $dst): void

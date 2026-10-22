@@ -338,11 +338,32 @@ if (str_starts_with($caseArg, '--case=')) {
     }
 
     if ($case === 'pathop') {
-        // P0：RasterCanvas 没实现 Optional 层 op ⇒ 响亮失败，不静默丢像素
+        // W1/L3-1：`CAP_PATH` 已从 Optional 提档 Extended，Raster 不再响亮失败。
+        // ★ 这一例反过来证明**真的画出了像素** —— 否则"提档了但画布是空的"
+        //   是同一种静默失败，只是换了个方向。
         $canvas = new RasterCanvas(20, 20, Color::white(), Scale::of(1.0));
         $canvas->drawPath(
             Path::create()->moveTo(2, 2)->lineTo(8, 2)->lineTo(8, 8)->close(),
             Paint::fill(Color::black())
+        );
+        // 三角形 (2,2)(8,2)(8,8) 的解析面积 = 0.5 × 6 × 6 = 18
+        $px = $canvas->toRgba();
+        $ink = 0;
+        for ($i = 0, $len = strlen($px); $i < $len; $i += 4) {
+            if (ord($px[$i]) !== 255) {
+                $ink++;
+            }
+        }
+        fwrite(STDOUT, 'ink=' . $ink . "\n");
+    }
+
+    if ($case === 'imageop') {
+        // W1/L3-1 之后 Raster 仍不支持的 Optional op（drawImage）—— 响亮失败照旧
+        $canvas = new RasterCanvas(20, 20, Color::white(), Scale::of(1.0));
+        $canvas->drawImage(
+            ImageHandle::fromRgba(str_repeat("\x00", 16), 2, 2),
+            null,
+            new Rect(0.0, 0.0, 4.0, 4.0)
         );
     }
 
@@ -1833,9 +1854,10 @@ check('Rendering · W8 未闭合写了 Errors.log', str_contains(logText($log), 
 fresh($log);
 $capsRaster = new RasterCanvas(8, 8, Color::white(), Scale::of(1.0));
 check(
-    'Canvas · Raster capabilities() = Core + Extended（P3 渐变/虚线：逐像素实渐变 + 线段真虚线，矩形/椭圆描边虚线退化为实线）',
+    'Canvas · Raster capabilities() = Core + Extended（W1/L3-1 起含 CAP_PATH：扫描线填充 + 奇偶 + Miter/Butt 描边）',
     $capsRaster->capabilities() === (CanvasCapabilities::CAP_ELLIPSE | CanvasCapabilities::CAP_LINE
-        | CanvasCapabilities::CAP_GRADIENT | CanvasCapabilities::CAP_DASH)
+        | CanvasCapabilities::CAP_GRADIENT | CanvasCapabilities::CAP_DASH
+        | CanvasCapabilities::CAP_PATH)
 );
 $capsSkia = new SkiaCanvas(8, 8, null, Scale::of(1.0));
 check(
@@ -1850,6 +1872,119 @@ $capsRec = RecordingCanvas::create();
 check(
     'Canvas · Recording capabilities() = ALL_MASK（录制侧全录，支持与否由回放侧裁决）',
     $capsRec->capabilities() === CanvasCapabilities::ALL_MASK
+);
+
+// ── W1/L3-1 路径（`05` §3 / §12.2 #1–#4）──────────────────────────────────
+// ★ 这一波的四条夹具全都要"量与已知几何的差"，因为 drawPath 是**新算法**
+//   （扫描线 + 奇偶），而新算法最贵的失败是"画出来但形状不对"。
+// ★ 数的是**非背景**像素：背景是不透明白，数 alpha>0 会把背景也算成墨
+//   （第一版量具就这么错的，全画布都是 40000）。
+$pathInkCount = static function (RasterCanvas $canvas): int {
+    $px = $canvas->toRgba();
+    $n = 0;
+    for ($i = 0, $len = strlen($px); $i < $len; $i += 4) {
+        if (ord($px[$i]) !== 255 || ord($px[$i + 1]) !== 255 || ord($px[$i + 2]) !== 255) {
+            $n++;
+        }
+    }
+
+    return $n;
+};
+
+// ① 填充：三角形 (20,20)(180,20)(100,160)，解析面积 = 0.5 × 160 × 140 = 11200
+$triCanvas = new RasterCanvas(200, 200, Color::white(), Scale::of(1.0));
+$triCanvas->drawPath(
+    Path::create()->moveTo(20.0, 20.0)->lineTo(180.0, 20.0)->lineTo(100.0, 160.0)->close(),
+    Paint::fill(Color::black())
+);
+$triInk = $pathInkCount($triCanvas);
+check(
+    'Path · 填充的墨量 = 解析面积 ±5%（三角形 11200）',
+    abs($triInk - 11200) <= 560,
+    'ink=' . $triInk . ' 偏差=' . sprintf('%+.2f%%', ($triInk - 11200) / 112.0)
+);
+
+// ② 奇偶重叠：两个 80×80 错开 40 的矩形 ⇒ 交集区**不填**
+//    两个矩形并集 11200，但奇偶填的是**对称差** = 11200 − 2×1600 = 9600
+$evenOddCanvas = new RasterCanvas(200, 200, Color::white(), Scale::of(1.0));
+$evenOddCanvas->drawPath(
+    Path::create()
+        ->addRect(new Rect(20.0, 20.0, 80.0, 80.0))
+        ->addRect(new Rect(60.0, 60.0, 80.0, 80.0)),
+    Paint::fill(Color::black())
+);
+$evenOddInk = $pathInkCount($evenOddCanvas);
+check(
+    'Path · 奇偶规则：两个重叠子路径的交集不填（对称差 9600）',
+    abs($evenOddInk - 9600) <= 480,
+    'ink=' . $evenOddInk . '（若 ≈11200 就是按并集填了，奇偶没生效）'
+);
+// 交集正中的像素必须是背景色
+check(
+    'Path · 奇偶交集正中没有墨',
+    $evenOddCanvas->pixelAt(80, 80)->r === 255,
+    'pixel(80,80)=' . $evenOddCanvas->pixelAt(80, 80)->r
+);
+
+// ③ 描边：斜线 (20,180)→(180,20)，宽 10 ⇒ 面积 ≈ 线长 × 宽 = 226.27 × 10 ≈ 2263
+$strokeCanvas = new RasterCanvas(200, 200, Color::white(), Scale::of(1.0));
+$strokeCanvas->drawPath(
+    Path::create()->moveTo(20.0, 180.0)->lineTo(180.0, 20.0),
+    Paint::stroke(Color::black(), 10.0)
+);
+$strokeInk = $pathInkCount($strokeCanvas);
+check(
+    'Path · 斜线描边的墨量 ≈ 线长 × 宽度（2263 ±10%）',
+    abs($strokeInk - 2263) <= 227,
+    'ink=' . $strokeInk
+);
+// ★ 闭合路径描边是**环**：外矩形 130² − 内矩形 110² = 4800
+$ringCanvas = new RasterCanvas(200, 200, Color::white(), Scale::of(1.0));
+$ringCanvas->drawPath(
+    Path::create()->addRect(new Rect(40.0, 40.0, 120.0, 120.0)),
+    Paint::stroke(Color::black(), 10.0)
+);
+$ringInk = $pathInkCount($ringCanvas);
+check(
+    'Path · 闭合描边是环（外 130² − 内 110² = 4800 ±5%）',
+    abs($ringInk - 4800) <= 240,
+    'ink=' . $ringInk . '（若 ≈14400 就是把矩形填满了，描边没挖洞）'
+);
+// 环正中心必须空
+check(
+    'Path · 闭合描环的中心是空的',
+    $ringCanvas->pixelAt(100, 100)->r === 255,
+    'pixel(100,100)=' . $ringCanvas->pixelAt(100, 100)->r
+);
+
+// ④ 成本上界：500 边 × ~1000 行 = 50 万 > 20 万 ⇒ 报 1 条 DIAGNOSTIC，画面照画
+$budgetCanvas = new RasterCanvas(1200, 1200, Color::white(), Scale::of(1.0));
+$budgetPath = Path::create();
+for ($bi = 0; $bi < 500; $bi++) {
+    $ang = $bi * 2.0 * M_PI / 500.0;
+    $bx = 600.0 + 500.0 * cos($ang);
+    $by = 600.0 + 500.0 * sin($ang);
+    if ($bi === 0) {
+        $budgetPath->moveTo($bx, $by);
+    } else {
+        $budgetPath->lineTo($bx, $by);
+    }
+}
+$budgetPath->close();
+$budgetBefore = count(Errors::recentDiagnostics());
+$budgetCanvas->drawPath($budgetPath, Paint::fill(Color::black()));
+$budgetAfter = count(Errors::recentDiagnostics());
+check(
+    'Path · 成本上界：边数 × 行数 > 20 万 ⇒ 1 条 DIAGNOSTIC',
+    $budgetAfter - $budgetBefore >= 1,
+    '+' . ($budgetAfter - $budgetBefore) . ' 条'
+);
+// ★ 报了但不中止：500 边形面积 = π × 500² ≈ 785398
+$budgetInk = $pathInkCount($budgetCanvas);
+check(
+    'Path · 成本上界报完照画（500 边形 ≈ 785398 ±1%）',
+    abs($budgetInk - 785398) <= 7854,
+    'ink=' . $budgetInk
 );
 
 // ⑩+3 19 op 回植 · P3 渐变/虚线（RasterCanvas，确定性后端；Skia 侧在 Skia 桥落地后补断言）
@@ -2133,11 +2268,24 @@ $list19 = new DisplayList();
 $list19->record(DisplayList::OP_DRAW_LINE, 1.0, 2.0, 3.0, 4.0, $plain19);
 check('DisplayList · 6 槽 LINE 的 y2/paint 定位', $list19->count() === 1 && $list19->argAt(0, 3) === 4.0 && $list19->argAt(0, 4) === $plain19);
 
-// Optional op 在软光栅上响亮失败
+// W1/L3-1：drawPath 在 Raster 上从"响亮失败"翻成"真的画得出像素"
 [$code, $output] = runCase(__FILE__, 'pathop', null);
-check('Canvas · Raster drawPath 退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
+check(
+    'Canvas · Raster drawPath 退出码 = 0（W1/L3-1 起 CAP_PATH 已提档，不再响亮失败）',
+    $code === 0,
+    '实际 ' . $code . ' / ' . $output
+);
+preg_match('/ink=(\d+)/', $output, $pathInkMatch);
+$pathInk = isset($pathInkMatch[1]) ? (int) $pathInkMatch[1] : -1;
+// ★ 只断言退出码不够：画布全白也照样 exit 0。三角形解析面积 18（±3 容硬边量化）
+check('Canvas · Raster drawPath 真出墨（不是"提档了但画布空"）', $pathInk >= 15 && $pathInk <= 21, 'ink=' . $pathInk);
+fresh($log);
+
+// 仍然不支持的 Optional op：响亮失败的消息格式照旧
+[$code, $output] = runCase(__FILE__, 'imageop', null);
+check('Canvas · Raster drawImage 退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
 $msg = logText($log);
-check('Canvas · 失败消息含 op 名与两条修法', str_contains($msg, 'drawPath') && str_contains($msg, '两条修法'));
+check('Canvas · 失败消息含 op 名与两条修法', str_contains($msg, 'drawImage') && str_contains($msg, '两条修法'));
 fresh($log);
 
 [$code, $output] = runCase(__FILE__, 'gradientbad', null);

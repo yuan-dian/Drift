@@ -19,6 +19,7 @@ use Drift\Rendering\Color;
 use Drift\Rendering\DashPattern;
 use Drift\Rendering\Gradient;
 use Drift\Rendering\Paint;
+use Drift\Rendering\Path;
 use Drift\Rendering\RasterCanvas;
 use Drift\Text\DeterministicFontManager;
 use Drift\Text\DeterministicMetricsProvider;
@@ -211,6 +212,64 @@ $scenes['gradient-dash'] = static function () use ($W, $H): string {
     $c->drawRect(new Rect(20.0, 150.0, 160.0, 50.0), Paint::stroke(Color::black(), 3.0)->withDash(new DashPattern(6.0, 6.0)));
     // 描边椭圆：同样降级
     $c->drawEllipse(new Rect(220.0, 150.0, 120.0, 50.0), Paint::stroke(Color::black(), 3.0)->withDash(new DashPattern(6.0, 6.0)));
+
+    return $c->toRgba();
+};
+
+// ── 场景 7：路径（W1/L3-1；覆盖 fill / even-odd / 开放描边 / 闭合描边 / 贝塞尔）──
+// ★ 这条基线是**新增**的：L3-1 之前 Raster 的 drawPath 是响亮失败，没有像素可钉。
+// ★ 只走 Raster：无抗锯齿 ⇒ 边缘与 Skia 不同，像素级 golden 本来就不跨后端比。
+// ★ 它同时是"translate() 偏移被吃进去了"的回归网 —— 那个坑的形态是真机完全
+//   无墨而解释器全过，只有像素基线能抓住（`05` §1.3）。
+$scenes['path'] = static function () use ($W, $H): string {
+    $c = new RasterCanvas($W, $H, Color::white(), null);
+
+    // ① 实心三角形
+    $c->drawPath(
+        Path::create()->moveTo(40.0, 40.0)->lineTo(200.0, 40.0)->lineTo(120.0, 160.0)->close(),
+        Paint::fill(Color::fromRgb(30, 90, 200))
+    );
+
+    // ② 奇偶：两个错开的矩形，交集区留白（挖洞的唯一手段）
+    $c->drawPath(
+        Path::create()
+            ->addRect(new Rect(240.0, 40.0, 120.0, 120.0))
+            ->addRect(new Rect(300.0, 100.0, 120.0, 120.0)),
+        Paint::fill(Color::fromRgb(200, 90, 30))
+    );
+
+    // ③ 二次贝塞尔穹顶（固定 16 段扁平化）
+    $c->drawPath(
+        Path::create()->moveTo(440.0, 160.0)->quadTo(520.0, 40.0, 600.0, 160.0)->close(),
+        Paint::fill(Color::fromRgb(30, 160, 90))
+    );
+
+    // ④ 开放折线描边（Miter join + Butt cap）
+    $c->drawPath(
+        Path::create()->moveTo(40.0, 300.0)->lineTo(140.0, 220.0)->lineTo(240.0, 300.0),
+        Paint::stroke(Color::black(), 12.0)
+    );
+
+    // ⑤ 闭合描边：环（外扩半宽 − 内收半宽）
+    $c->drawPath(
+        Path::create()->addRect(new Rect(300.0, 220.0, 200.0, 120.0)),
+        Paint::stroke(Color::fromRgb(120, 30, 160), 14.0)
+    );
+
+    // ⑥ 半透明填充（source-over，与 drawRect 同一混合口径）
+    $c->drawPath(
+        Path::create()->moveTo(560.0, 380.0)->lineTo(760.0, 380.0)->lineTo(660.0, 520.0)->close(),
+        Paint::fill(new Color(30, 90, 200, 128))
+    );
+
+    // ⑦ save/translate 之后再画同一个三角形（`05` §1.3 的回归）
+    $c->save();
+    $c->translate(60.0, 40.0);
+    $c->drawPath(
+        Path::create()->moveTo(40.0, 560.0)->lineTo(200.0, 560.0)->lineTo(120.0, 480.0)->close(),
+        Paint::fill(Color::fromRgb(90, 90, 90))
+    );
+    $c->restore();
 
     return $c->toRgba();
 };
