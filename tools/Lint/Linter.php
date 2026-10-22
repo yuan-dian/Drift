@@ -5,6 +5,7 @@ namespace Drift\Dev\Lint;
 
 use Drift\Dev\Lint\Rules\AliasMutate;
 use Drift\Dev\Lint\Rules\AttributeUnqualified;
+use Drift\Dev\Lint\Rules\BackendBranch;
 use Drift\Dev\Lint\Rules\CachedSubscriber;
 use Drift\Dev\Lint\Rules\DeadCommand;
 use Drift\Dev\Lint\Rules\DeadSubscription;
@@ -14,6 +15,7 @@ use Drift\Dev\Lint\Rules\InstanceofMissingUse;
 use Drift\Dev\Lint\Rules\NamespaceMismatch;
 use Drift\Dev\Lint\Rules\NestedSubscribe;
 use Drift\Dev\Lint\Rules\NanoHygiene;
+use Drift\Dev\Lint\Rules\OptionalOpGuard;
 use Drift\Dev\Lint\Rules\OrphanTrait;
 use Drift\Dev\Lint\Rules\SelectPurity;
 use Drift\Dev\Lint\Rules\StaleDerived;
@@ -54,6 +56,9 @@ final class Linter
             new InstanceofMissingUse(),
             // 内建编译期注解漏 \（2026-10-21 W0/A0：`#[Override]` 解析成 `当前命名空间\Override`，静默无效）
             new AttributeUnqualified(),
+            // W1/L3-6（`05` §2.5 两条）：禁后端分叉 / 发 Optional op 前查能力位
+            new BackendBranch(),
+            new OptionalOpGuard(),
         ]);
     }
 

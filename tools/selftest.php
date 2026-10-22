@@ -84,6 +84,17 @@ function drift_lint_selftest(string $root, Linter $linter): bool
             'apps/AttributeBad.php:' . Diagnostic::ERROR,
             'apps/AttributeBad.php:' . Diagnostic::ERROR,
         ],
+        // W1/L3-6（`05` §2.5 两条）
+        // ★ backend-branch 报 2 条：`use ...RasterCanvas`（import 本身就是依赖
+        //   具体后端）+ `instanceof RasterCanvas`（分叉本体）。删 import 不解决问题，
+        //   写全限定名一样被 T_NAME_FULLY_QUALIFIED 抓到。
+        'backend-branch' => [
+            'src/Widget/BackendBranchBad.php:' . Diagnostic::ERROR,
+            'src/Widget/BackendBranchBad.php:' . Diagnostic::ERROR,
+        ],
+        'optional-op-guard' => [
+            'apps/OptionalOpBad.php:' . Diagnostic::ERROR,
+        ],
     ];
 
     $ok = true;

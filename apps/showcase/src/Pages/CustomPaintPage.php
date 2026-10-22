@@ -7,6 +7,7 @@ use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Size;
 use Drift\Rendering\Canvas;
+use Drift\Rendering\CanvasCapabilities;
 use Drift\Rendering\Color;
 use Drift\Rendering\DashPattern;
 use Drift\Rendering\Gradient;
@@ -233,6 +234,10 @@ final class SparklinePainter extends CustomPainter
  * - `pushLayer` / `popLayer`：半透明合成层
  * - `drawImage`：渐变 swatch（内存 RGBA，行优先 4 字节）
  * - `pushClipPath`：圆形路径裁剪（后续矩形只落在形状内）
+ *
+ * ★ `drawShadow` / `drawImage` 是 Optional 层 ⇒ `paint()` 开头查一次
+ *   `capabilities()`，没有对应位就跳过那一笔（`05` §2.5 的
+ *   `optional-op-guard`：demo 页可以演示 Optional op，但不能假设后端有）。
  */
 final class P4Painter extends CustomPainter
 {
@@ -261,8 +266,15 @@ final class P4Painter extends CustomPainter
 
     public function paint(Canvas $canvas, Size $size): void
     {
+        // ★ Optional op 先查能力位（`05` §2.5 的 optional-op-guard）：画家拿到的
+        //   画布可能是软光栅（preview / golden / smoke 全走它）⇒ 没实现 Optional
+        //   op 的后端会响亮失败。demo 页也不例外 —— 查一次，没有就跳过那一笔。
+        $caps = $canvas->capabilities();
+
         // 软阴影：卡片背后（drawShadow，alpha = 浓度，不是额外乘算）
-        $canvas->drawShadow(new Shadow(new Rect(10.0, 8.0, 130.0, 60.0), new Color(0, 0, 0, 60), 8.0, 3.0, 4.0, 6.0));
+        if (($caps & CanvasCapabilities::CAP_SHADOW) !== 0) {
+            $canvas->drawShadow(new Shadow(new Rect(10.0, 8.0, 130.0, 60.0), new Color(0, 0, 0, 60), 8.0, 3.0, 4.0, 6.0));
+        }
 
         // 填充三角形（drawPath，P4 新增；折线下填色现在能画）
         $tri = Path::create()
@@ -278,7 +290,9 @@ final class P4Painter extends CustomPainter
         $canvas->popLayer();
 
         // 图像：渐变 swatch（drawImage，内存 RGBA 字节串过桥）
-        $canvas->drawImage($this->makeSwatch(48, 48), null, new Rect(144.0, 15.0, 48.0, 48.0));
+        if (($caps & CanvasCapabilities::CAP_IMAGE) !== 0) {
+            $canvas->drawImage($this->makeSwatch(48, 48), null, new Rect(144.0, 15.0, 48.0, 48.0));
+        }
 
         // 路径裁剪：绿色横条只落在下方菱形内（pushClipPath + popClip）
         $clip = Path::create()

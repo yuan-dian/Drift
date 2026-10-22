@@ -22,6 +22,10 @@ use Drift\Text\TextStyle;
 /**
  * 单行输入框的盒（§15.2 / §A.2.9）。
  *
+ * @backend-branch-allowed: 与 `RenderText` 同形态 —— 插入符与文本经
+ * `RecordingCanvas` 录进 `DisplayList` 再 replay（DisplayList 的既定消费形态，
+ * 不是按后端分叉：两条后端走同一份命令流、同一条 replay）。
+ *
  * ★ **只吃解析好的值**（盒样式 / 文本色 / 内边距 / 插入符全由构造参数给）——
  *   它在 `Drift\Layout`，而 §4.3 不许 Layout 依赖 Theme。"主题 token → 值"的解析
  *   发生在 widget 层（`TextFieldBox::createRenderObject()` 经 `BuildContext`），

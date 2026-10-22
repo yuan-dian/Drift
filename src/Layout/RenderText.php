@@ -18,6 +18,12 @@ use Drift\Text\TextStyle;
 /**
  * 文本盒（§13.1 / §8）。
  *
+ * @backend-branch-allowed: 文本盒用 `RecordingCanvas` 把段落录进 `DisplayList`
+ * 再 replay 到真画布 —— 这是 DisplayList 的**既定消费形态**（每帧重录、
+ * 缓冲复用），不是"按后端分叉"：软光栅与 Skia 两条路上录的是同一份命令流，
+ * 走的同一条 replay。若将来要有第二个录制缓冲实现，改的是这里的构造点
+ * （一处），不是行为分支。
+ *
  * ★ **问度量，不问平台**：`TextMetricsProvider` 在造盒时注入（§14.2），所以同一份
  *   Widget 树在测试里喂固定度量 ⇒ 布局可复现、golden 可比对。
  *
