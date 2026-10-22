@@ -170,29 +170,35 @@ abstract class Application
      *   `showMenu()` 的 `$anchor` 给，`null` ⇒ 用最近一次命中的 Element
      *   （§5.1 裁决 1 的锚点来源 —— 命令是"意图"不带位置，§11.4.3）。
      */
+    /**
+     * 浮层栈（arch-v2 `01`，W3）：**真实来源**。`showMenu()` / `showModal()` 往这里 push。
+     *
+     * ★ 栈顺序 = 绘制顺序 = 命中顺序，不引入 z-index。
+     * ★ 下面七个字段在 01-c 完成前是**栈顶条目的镜像**（`syncMirrors()` 维护），
+     *   供尚未迁移的 `placeMenu()` / `dispatchPointer()` / `dispatchInput()` 读。
+     *   01-c 把读点全部改成栈访问后删除这些镜像。
+     */
+    protected OverlayStack $overlays;
+
+    /** @deprecated 01-c 后移除（镜像：栈顶条目 panel） */
     protected ?Widget $menu = null;
 
+    /** @deprecated 01-c 后移除（镜像：栈顶条目 element） */
     protected ?Element $menuElement = null;
 
+    /** @deprecated 01-c 后移除（镜像：栈顶条目锚点落点） */
     protected float $menuAnchorX = 0.0;
 
+    /** @deprecated 01-c 后移除 */
     protected float $menuAnchorY = 0.0;
 
-    /** 面板左上角在客户区的落点（`placeMenu()` 每帧算，已夹进客户区） */
+    /** @deprecated 01-c 后移除（镜像：栈顶条目 x） */
     protected float $menuX = 0.0;
 
+    /** @deprecated 01-c 后移除（镜像：栈顶条目 y） */
     protected float $menuY = 0.0;
 
-    /**
-     * 当前浮层是不是**模态**（O-20「一槽位两用」的判别位）。
-     *
-     * ★ 槽位共用（`$menu` / `$menuElement` / `$menuX` / `$menuY`），两处差异：
-     *   ① **布局** —— 模态紧约束盖满（`placeModal()`），菜单无界自尺寸后钉锚点
-     *      （`placeMenu()`）；② **关闭** —— 模态只在 `dismissible` 时被用户动作关掉、
-     *      且**永不穿透**，菜单点外即关。
-     * ★ 存 `?Modal` 而不是 bool：`dismissible` 住在控件上，判断要在
-     *   `dispatchInput()` 里做 —— 布尔标记会逼出"第二个真相"。
-     */
+    /** @deprecated 01-c 后移除（镜像：栈里最上面的 scrim 条目） */
     protected ?Modal $modal = null;
 
     /**
@@ -243,6 +249,7 @@ abstract class Application
     public function __construct(iterable $handlers = [])
     {
         $this->router = CommandRouter::make();
+        $this->overlays = new OverlayStack();
 
         // 只注册**显式传进来**的那些。`commands()` **不在构造器里调** ——
         // PHP 的构造链是"父先子后"，此刻子类构造器里的字段（`$this->store` 之类）
@@ -539,15 +546,21 @@ abstract class Application
             return; // 未挂载：没有客户区，浮层无处安放
         }
 
-        $element = $panel->createElement();
-        $element->mount(null, $this->menuContext());
-
-        $this->menu = $panel;
-        $this->menuElement = $element;
-
         $anchor ??= $this->focus?->lastHit();
-        $box = $anchor?->effectiveBox();
 
+        $e = new OverlayEntry($panel);
+        $e->anchor = $anchor;
+        $e->prefer = OverlayEntry::BELOW;
+        $e->barrier = true;
+        $e->scrim = false;
+        $e->dismissOnTapOutside = true;
+        $e->dismissOnEsc = true;
+        $e->focusTrap = false;
+
+        $this->pushOverlay($e);
+
+        // 镜像锚点落点（01-c 后由 placeEntry 每帧重算）
+        $box = $anchor?->effectiveBox();
         if ($box !== null) {
             // 盒原点要**沿父链累加**才有客户区坐标（`offsetX()` 是相对父的）
             [$x, $y] = self::absoluteOrigin($box);
@@ -560,22 +573,22 @@ abstract class Application
 
         $this->menuX = $this->menuAnchorX;
         $this->menuY = $this->menuAnchorY;
+        $this->syncMirrors();
     }
 
     /** 关掉浮层（已关 ⇒ 无事发生；幂等） */
     public function closeMenu(): void
     {
-        if ($this->menuElement === null) {
-            return;
+        // 语义不变：它原来清的就是"整个槽位" ⇒ 栈版 = 全清
+        while (($e = $this->overlays->pop()) !== null) {
+            $e->element?->unmount();
         }
 
-        $this->menuElement->unmount();
-        $this->menuElement = null;
-        $this->menu = null;
-
-        // ★ 槽位共用 ⇒ 模态标记必须跟着清：漏了它，"关掉模态之后 ESC 仍被吞"，
-        //   而且 `isModalOpen()` 永远为真（两处状态会开始互相撒谎）。
-        $this->modal = null;
+        $this->menuAnchorX = 0.0;
+        $this->menuAnchorY = 0.0;
+        $this->menuX = 0.0;
+        $this->menuY = 0.0;
+        $this->syncMirrors();
     }
 
     /**
@@ -625,20 +638,23 @@ abstract class Application
             return; // 未挂载：没有客户区，模态无处安放（同 showMenu）
         }
 
-        $this->closeMenu(); // 互斥：先清槽位（`closeMenu()` 幂等）
+        $e = new OverlayEntry($modal);
+        $e->anchor = null;
+        $e->prefer = OverlayEntry::CENTER;
+        $e->barrier = true;
+        $e->scrim = true;
+        $e->dismissOnTapOutside = $modal->isDismissible();
+        $e->dismissOnEsc = $modal->isDismissible();
+        $e->focusTrap = true;
 
-        $element = $modal->createElement();
-        $element->mount(null, $this->menuContext());
-
-        $this->menu = $modal;
-        $this->menuElement = $element;
-        $this->modal = $modal;
+        $this->pushOverlay($e);
 
         // 模态不钉锚点：原点恒为 (0,0)，尺寸由 placeModal() 盖满
         $this->menuAnchorX = 0.0;
         $this->menuAnchorY = 0.0;
         $this->menuX = 0.0;
         $this->menuY = 0.0;
+        $this->syncMirrors();
     }
 
     /**
@@ -651,11 +667,59 @@ abstract class Application
      */
     public function closeModal(): void
     {
-        if ($this->modal === null) {
+        // 找到最上面的 scrim 条目并移除（不要求它在栈顶）
+        $found = null;
+        foreach ($this->overlays->all() as $e) {
+            if ($e->scrim) {
+                $found = $e;
+            }
+        }
+
+        if ($found === null) {
             return;
         }
 
-        $this->closeMenu(); // 槽位清理只有一份（含 `$this->modal = null`）
+        $found->element?->unmount();
+        $this->overlays->remove($found);
+        $this->syncMirrors();
+    }
+
+    /**
+     * 把条目挂载并压栈（`showMenu` / `showModal` 的共同部分）。
+     *
+     * ★ `restoreFocus` 在这里快照：关闭时焦点该回到打开前的节点。
+     */
+    private function pushOverlay(OverlayEntry $e): void
+    {
+        $element = $e->panel->createElement();
+        $element->mount(null, $this->menuContext());
+
+        $e->element = $element;
+        $e->restoreFocus = $this->focus?->focused();
+
+        $this->overlays->push($e);
+    }
+
+    /**
+     * 把七个旧字段同步成"栈顶条目"的镜像（01-c 迁移期用）。
+     *
+     * ★ `modal` 取**最上面的 scrim 条目**，不是"栈顶是不是模态"：模态下面可能还压着
+     *   菜单（新语义允许）⇒ 栈顶是模态时才相等。
+     */
+    private function syncMirrors(): void
+    {
+        $top = $this->overlays->top();
+
+        $this->menu = $top?->panel;
+        $this->menuElement = $top?->element;
+
+        $modal = null;
+        foreach ($this->overlays->all() as $e) {
+            if ($e->scrim && $e->panel instanceof Modal) {
+                $modal = $e->panel;
+            }
+        }
+        $this->modal = $modal;
     }
 
     public function isModalOpen(): bool
