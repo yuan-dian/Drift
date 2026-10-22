@@ -45,6 +45,9 @@ final class Progress extends RenderBoxWidget
 
     public function __construct(float $value = 0.0)
     {
+        // ★ 必须调：`Widget::__construct()` 里初始化 `$mods`（修饰值对象，永远非空）。
+        parent::__construct();
+
         $this->setPermille($value);
         $this->refreshSemantics();
     }

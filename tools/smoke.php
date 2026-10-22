@@ -174,6 +174,7 @@ use Drift\Rendering\DisplayList;
 use Drift\Rendering\Gradient;
 use Drift\Rendering\ImageHandle;
 use Drift\Rendering\MetricToken;
+use Drift\Rendering\Modifier;
 use Drift\Rendering\Paint;
 use Drift\Rendering\Path;
 use Drift\Rendering\Shadow;
@@ -2904,9 +2905,24 @@ check('Key · 封存后再给 Key 写了 Errors.log', str_contains(logText($log)
 fresh($log);
 $boxProbe = new BoxProbe();
 check('BoxWidget · 不用样式 ⇒ 不分配 BoxStyle（零成本）', $boxProbe->box() === null);
-check('BoxWidget · 结构节点继承裸 Widget ⇒ 拿不到 background()', !method_exists(SealProbe::class, 'background'));
+// ★★ W5 起 `background()` 是**所有控件**的修饰（arch-v2 `02` §11），不再是
+//   `BoxWidget` 专属。边界从"有没有这个方法"变成**分道**：`BoxWidget` 子类写
+//   `BoxStyle`（控件自带的整套样式，含主题派生默认值），裸 `Widget` 写 `mods`
+//   （给任意控件贴一层装饰）。两套存储刻意不合并。
+$plainProbe = new SealProbe();
+check(
+    'BoxWidget · 修饰分道：裸 Widget 也有 background()',
+    method_exists(SealProbe::class, 'background') && !is_subclass_of(SealProbe::class, BoxWidget::class)
+);
+$plainProbe->background(Color::white());
+check('BoxWidget · 修饰分道：裸 Widget 的 background() 进 mods', $plainProbe->mods()->hasVisual());
+
 $boxProbe->background(Color::white());
 check('BoxWidget · background 落进 BoxStyle', $boxProbe->box()?->hasBackground() === true);
+check(
+    'BoxWidget · 修饰分道：BoxWidget 子类的 background() 不进 mods',
+    $boxProbe->mods()->hasVisual() === false
+);
 $boxProbe->border(Color::black(), 2.0);
 check(
     'BoxWidget · 链式叠加是整体替换，不丢前一项',
@@ -2915,6 +2931,90 @@ check(
 $boxProbe->radius(8.0);
 check('BoxWidget · radius 独立改写', $boxProbe->box()?->radius === 8.0);
 check('BoxWidget · 链式返回自身（不产生新实例）', $boxProbe->radius(4.0) === $boxProbe);
+
+// ⑫b 修饰是字段（arch-v2 `02` §11，M2-1）—— 值对象 + 15 个 Widget setter
+$modProbe = new SealProbe();
+$mods0 = $modProbe->mods();
+check(
+    'Modifier · 默认：无内距 / 无视觉 / 无合成 / 尺寸与 basis 未设',
+    !$mods0->hasPadding() && !$mods0->hasVisual() && !$mods0->hasCompose()
+        && \is_nan($mods0->flexBasis())
+);
+check('Modifier · 每个 Widget 都有（构造器里建好，永远非空）', $mods0 instanceof Modifier);
+
+$modProbe->paddingAll(8.0);
+check(
+    'Modifier · paddingAll 写四边',
+    $modProbe->mods()->padLeft() === 8.0 && $modProbe->mods()->padTop() === 8.0
+        && $modProbe->mods()->padRight() === 8.0 && $modProbe->mods()->padBottom() === 8.0
+);
+check(
+    'Modifier · 值对象换新：旧对象不动',
+    $mods0->hasPadding() === false && $modProbe->mods()->hasPadding()
+);
+$modProbe->paddingOnly(null, null, 2.0);
+check(
+    'Modifier · paddingOnly 只动给了的那一边',
+    $modProbe->mods()->padLeft() === 8.0 && $modProbe->mods()->padRight() === 2.0
+);
+
+// 尺寸：NAN = 未设，与"设为 0"必须是两件事（`02` §3.2）
+$sizeProbe = new SealProbe();
+$sizeProbe->boxSize(120.0);
+$loose = new BoxConstraints(0.0, 400.0, 0.0, 300.0);
+$tightW = $sizeProbe->mods()->tighten($loose);
+check(
+    'Modifier · boxSize 只定宽 ⇒ 宽变紧、高透传',
+    $tightW->minWidth === 120.0 && $tightW->maxWidth === 120.0
+        && $tightW->minHeight === 0.0 && $tightW->maxHeight === 300.0
+);
+$tightNarrow = $sizeProbe->mods()->tighten(new BoxConstraints(0.0, 50.0, 0.0, 300.0));
+check(
+    'Modifier · 父更紧时听父的（不造 min > max）',
+    $tightNarrow->minWidth === 50.0 && $tightNarrow->maxWidth === 50.0
+);
+$zeroProbe = new SealProbe();
+$zeroProbe->boxSize(0.0, 0.0);
+$tightZero = $zeroProbe->mods()->tighten($loose);
+check(
+    'Modifier · boxSize(0) 是"0 尺寸"，不是"未设"',
+    $tightZero->minWidth === 0.0 && $tightZero->maxWidth === 0.0
+        && $tightZero->minHeight === 0.0 && $tightZero->maxHeight === 0.0
+);
+
+$m8 = (new Modifier())->withPadding(8.0, 4.0, 8.0, 4.0);
+$deflated = $m8->deflate(new BoxConstraints(0.0, 100.0, 0.0, 100.0));
+check('Modifier · deflate 减内边距', $deflated->maxWidth === 84.0 && $deflated->maxHeight === 92.0);
+$inflated = $m8->inflate(new Size(84.0, 92.0));
+check('Modifier · inflate 加内边距', $inflated->width === 100.0 && $inflated->height === 100.0);
+
+$modProbe->opacity(0.5)->translate(3.0, -2.0);
+check(
+    'Modifier · opacity / translate 进合成维',
+    $modProbe->mods()->hasCompose()
+        && $modProbe->mods()->composeOpacity() === 0.5
+        && $modProbe->mods()->composeDx() === 3.0
+        && $modProbe->mods()->composeDy() === -2.0
+);
+
+$modProbe->grow(2)->shrink(1)->basis(40.0)->alignSelf(RenderBox::ALIGN_CENTER);
+check(
+    'Modifier · 弹性意图四项（Expanded / Flexible 的字段形态）',
+    $modProbe->mods()->flexGrow() === 2 && $modProbe->mods()->flexShrink() === 1
+        && $modProbe->mods()->flexBasis() === 40.0
+        && $modProbe->mods()->flexAlign() === RenderBox::ALIGN_CENTER
+);
+
+// ★★ 合成初值落到盒上；但**绝不能**顺手写 `setFlexIntent()` —— 那会清掉
+//   `RenderFlexible` 在构造器里写好的份额（`Expanded` 全部失效、且不报错）。
+//   接上 flexIntent 的时机是 M2-5（`RenderFlexible` 删掉之后）。
+$flexKeep = new RenderFlexible(2);
+$flexKeep->setMods((new Modifier())->withOpacity(0.25));
+check('Modifier · setMods 把合成初值落到盒上', $flexKeep->composeOpacity() === 0.25);
+check(
+    'Modifier · setMods 不清掉 RenderFlexible 的份额（M2-1 硬约束）',
+    $flexKeep->grow() === 2
+);
 
 $plainBox = BoxStyle::none()->withBackground(Color::white());
 $roundedBox = $plainBox->withRadius(4.0);
@@ -5049,10 +5149,10 @@ check(
     $darkButton->boxStyle()->background !== $lightButton->boxStyle()->background
 );
 
-// ⑤ ThemeScope 自己是结构节点：拿不到盒样式糖方法（§15.7）
+// ⑤ ThemeScope 是结构节点：W5 起也有 `background()`（修饰是字段），但不产 BoxStyle
 check(
-    'ThemeScope · 结构节点不碰绘制样式',
-    !method_exists(ThemeScope::class, 'background')
+    'ThemeScope · 结构节点也有 background()，但不产 BoxStyle',
+    method_exists(ThemeScope::class, 'background') && !method_exists(ThemeScope::class, 'box')
 );
 
 fresh($log);

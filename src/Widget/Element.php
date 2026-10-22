@@ -122,6 +122,9 @@ abstract class Element
         // ★ 落在这里而不是每个 `createRenderObject()` 里各传一次：那是 12+ 处
         //   抄同一句，漏抄的不会报错 —— 只会静默用默认光标。
         $this->box?->setCursor($this->widget->cursorShape());
+
+        // 修饰同形（`02` §11）：一个引用递给盒，不逐项传递。
+        $this->box?->setMods($this->widget->mods());
     }
 
     /**

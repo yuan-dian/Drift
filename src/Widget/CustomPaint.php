@@ -40,6 +40,9 @@ final class CustomPaint extends RenderBoxWidget
         private readonly ?float $width = null,
         private readonly ?float $height = null,
     ) {
+        // ★ 必须调：`Widget::__construct()` 里初始化 `$mods`（修饰值对象，永远非空）。
+        //   漏了 ⇒ `$mods` 未初始化 ⇒ `Element::syncBox()` 读它时 Fatal。
+        parent::__construct();
     }
 
     public static function make(

@@ -4,9 +4,12 @@ declare(strict_types=1);
 namespace Drift\Widget;
 
 use Drift\Errors;
+use Drift\Geometry\EdgeInsets;
 use Drift\Input\CursorShape;
 use Drift\Input\FocusNode;
 use Drift\Input\SemanticsRole;
+use Drift\Rendering\Color;
+use Drift\Rendering\Modifier;
 use Drift\Widget\Drag\Draggable;
 use Drift\Widget\Drag\DragTarget;
 use Drift\Widget\Menu\ContextMenu;
@@ -26,6 +29,16 @@ abstract class Widget
 {
     /** @internal 0 = 可配置（构建期）；1 = 已封存（挂载后） */
     private int $sealed = 0;
+
+    /**
+     * 修饰字段的集合（padding / 尺寸 / 背景 / 边框 / 圆角 / 阴影 / 合成 / 弹性意图）。
+     *
+     * ★ **永远非空**（构造器里 `new Modifier()`）：`Element::syncBox()` 无条件把
+     *   它递给盒，不要"有没有修饰"这条分支。代价是每个 Widget 多一次对象分配，
+     *   换来 `->padding(8)` 之类完全不必判空。
+     * ★ 修饰是**声明**，与 `cursor()` / `focusOrder()` 同一层；挂载后照样封存。
+     */
+    private Modifier $mods;
 
     /** @internal null = 无 Key ⇒ diff 身份由位置决定（§12.3） */
     private ?Key $key = null;
@@ -79,6 +92,24 @@ abstract class Widget
      */
     public function __construct()
     {
+        $this->mods = new Modifier();
+    }
+
+    /**
+     * ★ 克隆 = 复制一份**可再配置的描述** ⇒ 封存位必须归零。
+     *
+     * `$sealed` 是 `private int`，`clone` 会连它一起复制 ⇒ 克隆一个已挂载（已封存）
+     * 的 Widget，得到的也是封存的，紧接着 `->padding(...)` 里的 `mutate()` 直接 Fatal。
+     *
+     * 需要的场景：`Card` 的语义是"**包一层**"而不是"给这个控件加样式"，所以它的
+     * `build()` 必须 `clone $this->kid` 再贴样式 —— 否则样式会漏给另一处共享引用
+     * （`children([$a, $a])` 合法）。
+     *
+     * @internal
+     */
+    public function __clone()
+    {
+        $this->sealed = 0;
     }
 
     /**
@@ -260,6 +291,303 @@ abstract class Widget
     public function cursorShape(): ?CursorShape
     {
         return $this->cursor;
+    }
+
+    // ── 修饰：字段，不是节点（arch-v2 `02` §11）────────────────────────
+    //
+    // ★ 全部走同一个 `$this->mods`（值对象，**换新不就地改**）⇒ `Element::syncBox()`
+    //   只需把**一个**引用递给盒，不必为每个修饰加一条传递路径 —— 十二处抄同一句、
+    //   漏抄不报错，那是 `syncBox()` 注释里已经写明的问题。
+    //
+    // ★ 名字上有**三处刻意避让**（实测撞名，撞了是类声明期 Fatal，不是运行时）：
+    //   · `size()` 被 `Text::size(float $pt)`（字号）与 `SizedBox::size(w,h)` 占了
+    //     ⇒ 尺寸修饰叫 `boxSize()`；
+    //   · `center()` 被 `Dock::center(Widget $kid)`（五区槽位）占了
+    //     ⇒ 居中修饰叫 `centerContent()`。
+    //
+    // ★ `padding` / `paddingAll` / `background` / `border` / `radius` / `shadow` /
+    //   `width` / `height` 在 `BoxWidget` / `Card` / `Flex` / `PopupPanel` /
+    //   `LazyColumn` / `Divider` / `Progress` 上**已有同名同签名实现** ⇒ 子类覆写
+    //   基类，写它们自己的存储（`BoxStyle` / 自有字段），**行为与今天完全一致**。
+    //   只有裸 `Widget` 的调用才落到 `mods`。这是有意的边界：控件自带的整套样式
+    //   （含主题派生默认值）继续住 `BoxStyle`，`mods` 只管"给任意控件贴一层"。
+
+    /** @internal `Element::syncBox()` 递它；永远非空 */
+    public function mods(): Modifier
+    {
+        return $this->mods;
+    }
+
+    /**
+     * 四边等距内边距。
+     *
+     * ```php
+     * Text::make('hi')->paddingAll(8.0)          // 简写
+     * $x->padding(EdgeInsets::symmetric(12.0, 8.0));
+     * ```
+     *
+     * ★ 收 `EdgeInsets` 而不是 `float`：`padding(EdgeInsets)` 在 `Flex` /
+     *   `LazyColumn` / `PopupPanel` / `Card` / `Padding` 上**已经存在**且被
+     *   `apps/` 里十几处调用。基类收 `float` 会让那些子类变成"不兼容覆写"
+     *   ⇒ 整个 `src/` 装载不起来。等距用法由 `paddingAll()` 覆盖。
+     *
+     * @api
+     */
+    public function padding(EdgeInsets $insets): static
+    {
+        $this->mutate();
+        $this->mods = $this->mods->withPadding(
+            $insets->left,
+            $insets->top,
+            $insets->right,
+            $insets->bottom,
+        );
+
+        return $this;
+    }
+
+    /** 四边等距（`padding()` 的简写） */
+    public function paddingAll(float $all): static
+    {
+        $this->mutate();
+        $this->mods = $this->mods->withPadding($all, $all, $all, $all);
+
+        return $this;
+    }
+
+    /** 逐边设置；`null` = 不动这一边（便于分次补设） */
+    public function paddingOnly(
+        ?float $left = null,
+        ?float $top = null,
+        ?float $right = null,
+        ?float $bottom = null
+    ): static {
+        $this->mutate();
+
+        $l = $this->mods->padLeft();
+        $t = $this->mods->padTop();
+        $r = $this->mods->padRight();
+        $b = $this->mods->padBottom();
+
+        if ($left !== null) {
+            $l = $left;
+        }
+        if ($top !== null) {
+            $t = $top;
+        }
+        if ($right !== null) {
+            $r = $right;
+        }
+        if ($bottom !== null) {
+            $b = $bottom;
+        }
+
+        $this->mods = $this->mods->withPadding($l, $t, $r, $b);
+
+        return $this;
+    }
+
+    /**
+     * 定尺寸（`SizedBox` 的字段形态）：给了的那一轴**钉死**，`null` = 该轴透传。
+     *
+     * ★ 叫 `boxSize` 而不是 `size`：`Text::size()` 是字号、`SizedBox::size()` 是
+     *   两个必选参数 —— 两个都不兼容，基类叫 `size()` 会让它们变成非法覆写。
+     *
+     * @api
+     */
+    public function boxSize(?float $width = null, ?float $height = null): static
+    {
+        $this->mutate();
+
+        $w = \NAN;
+        if ($width !== null) {
+            $w = $width;
+        }
+        $h = \NAN;
+        if ($height !== null) {
+            $h = $height;
+        }
+
+        $this->mods = $this->mods->withSize($w, $h);
+
+        return $this;
+    }
+
+    /** 只定宽（高随内容） */
+    public function width(float $width): static
+    {
+        $this->mutate();
+        $this->mods = $this->mods->withWidth($width);
+
+        return $this;
+    }
+
+    /** 只定高（宽随内容） */
+    public function height(float $height): static
+    {
+        $this->mutate();
+        $this->mods = $this->mods->withHeight($height);
+
+        return $this;
+    }
+
+    /**
+     * 底色。
+     *
+     * ★ `BoxWidget` 的子类（`Button` / `PopupPanel` / …）覆写了本方法、写进
+     *   `BoxStyle` —— 那是控件自带的整套样式，与 `mods` 的"贴一层装饰"是两件事，
+     *   刻意不合并。
+     *
+     * @api
+     */
+    public function background(Color $color): static
+    {
+        $this->mutate();
+        $this->mods = $this->mods->withFill($color);
+
+        return $this;
+    }
+
+    public function border(Color $color, float $width = 1.0): static
+    {
+        $this->mutate();
+        $this->mods = $this->mods->withStroke($color, $width);
+
+        return $this;
+    }
+
+    public function radius(float $radius): static
+    {
+        $this->mutate();
+        $this->mods = $this->mods->withRadius($radius);
+
+        return $this;
+    }
+
+    /**
+     * 柔和投影（值域 = 黑色透明度；`0.0` = 不画）。
+     *
+     * ★ 阴影画在**盒外** ⇒ 父布局不会为它留白，块之间要留 ≥ 4px 间距，
+     *   否则邻块底色会盖掉它。
+     *
+     * @api
+     */
+    public function shadow(float $elevation): static
+    {
+        $this->mutate();
+        $this->mods = $this->mods->withShadow($elevation);
+
+        return $this;
+    }
+
+    /**
+     * 不透明度（`1.0` = 不透明）。
+     *
+     * ★ 这是**声明值**：`RenderBox::setMods()` 读一次去初始化盒上的合成参数，
+     *   此后动画走 `RenderBox::setCompose()` 直接写盒、不重建不重排。
+     *   rebuild 之后回到这里声明的值（结构变了，动画中间态就不该继续顶着）。
+     *
+     * @api
+     */
+    public function opacity(float $value): static
+    {
+        $this->mutate();
+
+        if ($value < 0.0 || $value > 1.0) {
+            Errors::report(\sprintf('opacity 应在 0.0..1.0，收到 %.3f', $value));
+        }
+
+        $this->mods = $this->mods->withOpacity($value);
+
+        return $this;
+    }
+
+    /**
+     * 绘制期平移（不开层、不重排）—— 合成维，与 `opacity()` 同一组。
+     *
+     * @api
+     */
+    public function translate(float $dx, float $dy): static
+    {
+        $this->mutate();
+        $this->mods = $this->mods->withTranslate($dx, $dy);
+
+        return $this;
+    }
+
+    /**
+     * 把**内容**在本盒内居中（`Center` 的字段形态）。
+     *
+     * ★ 与 `alignSelf()` 不是一件事：`alignSelf` 只在 `RenderFlex` 里被消费
+     *   （没有 Flex 父就是死字段），而 `Center` 常常是页面根。
+     * ★ 叫 `centerContent` 而不是 `center`：`Dock::center(Widget)` 是五区槽位。
+     *
+     * @api
+     */
+    public function centerContent(bool $on = true): static
+    {
+        $this->mutate();
+        $this->mods = $this->mods->withCenter($on);
+
+        return $this;
+    }
+
+    /**
+     * 主轴放大份额（`Expanded` 的字段形态）。
+     *
+     * ★ `RenderFlex` 读的是盒上的 `grow()`，`Element::syncBox()` 把这里声明的值
+     *   递过去 —— 所以 `Expanded::make($x)->child()` 只是 `$x->grow(1)`。
+     *
+     * @api
+     */
+    public function grow(int $weight): static
+    {
+        $this->mutate();
+
+        if ($weight < 0) {
+            Errors::report(\sprintf('grow 份额不能为负，收到 %d', $weight));
+        }
+
+        $this->mods = $this->mods->withGrow($weight);
+
+        return $this;
+    }
+
+    /** 主轴压缩份额（`Flexible` 的字段形态） */
+    public function shrink(int $weight): static
+    {
+        $this->mutate();
+
+        if ($weight < 0) {
+            Errors::report(\sprintf('shrink 份额不能为负，收到 %d', $weight));
+        }
+
+        $this->mods = $this->mods->withShrink($weight);
+
+        return $this;
+    }
+
+    /** 分配前的起始主轴尺寸（不设 = 用自然尺寸） */
+    public function basis(float $basis): static
+    {
+        $this->mutate();
+        $this->mods = $this->mods->withBasis($basis);
+
+        return $this;
+    }
+
+    /**
+     * 交叉轴自对齐（覆盖父容器的 `crossAlign`）。
+     *
+     * @param int $align `RenderBox::ALIGN_INHERIT` / `ALIGN_START` / `ALIGN_CENTER`
+     *                   / `ALIGN_END` / `ALIGN_STRETCH`
+     */
+    public function alignSelf(int $align): static
+    {
+        $this->mutate();
+        $this->mods = $this->mods->withAlign($align);
+
+        return $this;
     }
 
     /**

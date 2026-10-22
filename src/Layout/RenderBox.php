@@ -7,6 +7,7 @@ use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Size;
 use Drift\Rendering\Canvas;
+use Drift\Rendering\Modifier;
 
 /**
  * 参与盒布局的渲染对象（§13.1）。
@@ -36,6 +37,43 @@ abstract class RenderBox extends RenderObject
     protected float $baseX = 0.0;
     protected float $baseY = 0.0;
     protected bool $hasBase = false;
+
+    // ── 修饰字段（arch-v2 `02` §11，W5）────────────────────────────
+    // ★ **可空**，与 `?Size $size` 同形：smoke 里有十几个夹具直接
+    //   `new SolidBox(...)` 造盒、不经 `Element::syncBox()` ⇒ 非空初始化会让它们
+    //   全 Fatal。`?Obj` 的 `Var` 代价 = 每盒每帧一次读，与已判"不做"的
+    //   `toObject`（0.5–1%）同阶。
+    // ★ 这是**派生**字段（由 Widget 的声明递下来），不是盒自己的状态 ⇒ 与
+    //   `composeOpacity` 那组"每帧都在变的动画量"是两件事。
+    private ?Modifier $mods = null;
+
+    /**
+     * 收下 Widget 的修饰声明（`Element::syncBox()` 唯一调用点）。
+     *
+     * ★★ **M2-1 阶段只存引用 + 初始化合成参数，绝不碰 `setFlexIntent()`**：
+     *   `Expanded` / `Flexible` 此刻仍然产 `RenderFlexible`，它的份额是在
+     *   **构造器里** `setFlexIntent()` 写进去的；这里若按 `mods` 的默认值
+     *   （`grow = 0`）再写一次，会把份额清零 ⇒ `Expanded` 全部失效、且不报错。
+     *   接上 `setFlexIntent()` 的时机是 M2-5（`RenderFlexible` 删掉之后）。
+     *
+     * ★ `padding` / `tighten` / `paintBehind` 的消费在 M2-2 / M2-3，同样不在本步。
+     */
+    public function setMods(Modifier $mods): void
+    {
+        $this->mods = $mods;
+
+        // 合成维是**初值**：读一次去初始化盒上的动画量，此后动画走
+        // `setCompose()` 直接写盒（rebuild 后回到这里声明的值 —— `05` §10 #9）。
+        $this->composeOpacity = $mods->composeOpacity();
+        $this->composeDx = $mods->composeDx();
+        $this->composeDy = $mods->composeDy();
+    }
+
+    /** `null` = 这个盒没有修饰（直接 `new` 出来的测试盒 / 未挂载） */
+    public function mods(): ?Modifier
+    {
+        return $this->mods;
+    }
 
     // ── 主轴弹性意图（§13.1 C4 扩展；`04` §2）──────────────────────
     // ★ 住 `RenderBox` 而不是"一个代理盒"：`RenderFlex` 本来就读 `$kid->flex()`，
