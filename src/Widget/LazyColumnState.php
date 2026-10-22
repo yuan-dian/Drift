@@ -5,6 +5,7 @@ namespace Drift\Widget;
 
 use Drift\Errors;
 use Drift\Geometry\EdgeInsets;
+use Drift\Geometry\Rect;
 use Drift\Layout\RenderScrollView;
 
 /**
@@ -46,6 +47,31 @@ final class LazyColumnState extends State implements Scrollable
         $this->setState(function () use ($next): void {
             $this->offset = $next;
         });
+    }
+
+    /**
+     * 把内容坐标里的矩形滚进视口（`04` §6.3）。
+     *
+     * ★ 这里的"内容坐标"是**完整内容**的坐标（含 `insets`、含所有没造出来的
+     *   行）—— 与 `$offset` 同一套坐标，所以换算不需要再补 `sliceOrigin`
+     *   （窗的起点只是绘制期的平移量，不进内容坐标）。
+     *
+     * ★ 形状与 `ScrollViewState::ensureVisible()` 逐字同构：算术都在
+     *   `RenderScrollView::revealDelta()`，本方法只"找盒 + 转交"。
+     */
+    public function ensureVisible(Rect $target, float $margin = 8.0): void
+    {
+        $box = $this->element()?->effectiveBox();
+        if (!$box instanceof RenderScrollView) {
+            return;
+        }
+
+        // ★ 基准传**自己待生效的偏移**（同 `ScrollViewState`，见 `revealDelta()`
+        //   的 `$base` 说明）。
+        $delta = $box->revealDelta($target, $margin, $this->offset);
+        if ($delta !== 0.0) {
+            $this->scrollBy($delta);
+        }
     }
 
     public function build(BuildContext $ctx): Widget

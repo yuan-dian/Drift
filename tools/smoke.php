@@ -62,6 +62,7 @@ use Drift\Dev\Smoke\App\CompositeRootApp;
 use Drift\Dev\Smoke\App\CountJob;
 use Drift\Dev\Smoke\App\MenuApplication;
 use Drift\Dev\Smoke\App\LazyApplication;
+use Drift\Dev\Smoke\App\RevealApplication;
 use Drift\Dev\Smoke\App\NamedBoomJob;
 use Drift\Dev\Smoke\App\NamedExitJob;
 use Drift\Dev\Smoke\App\NamedSumJob;
@@ -9216,6 +9217,137 @@ check(
             static fn(Element $e): bool => $e->widget() instanceof Column,
         )?->renderObject()?->offsetY() === -8.0,
     'maxScroll=' . ($lazyAppBox?->maxScroll() ?? -1.0),
+);
+
+// ════════════════════════════════════════ ensureVisible（W6 L4-6，`04` §6.3）══
+//
+// 守的是**键盘可达性**：Tab 把焦点移出视口时，焦点环会画在视口外 ⇒ 用户看不到
+// 焦点在哪。算术只有一处（`RenderScrollView::revealDelta()`），两个 `Scrollable`
+// 实现都只做"找自己的盒 → 转交"。
+//
+// ★ 每条都写了它抓的反例 —— 没有反例的断言是空转。
+
+// ① 盒级算术（不经过 State / 应用）：目标在视口上方 ⇒ 负增量
+//    反例：忘了减 `margin` ⇒ −300；把视口当成窗口高 240 ⇒ 差 40。
+$revApp = new RevealApplication();
+$revApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 200.0)));
+$revState = $revApp->scrollState();
+$revState?->scrollBy(400.0);
+$revApp->frame(16.0, BoxConstraints::tight(new Size(320.0, 200.0)));
+// ★ 盒在重建时**换新**（Widget 不可变 ⇒ 每次 build 造一个新盒）⇒ 必须在
+//   frame() 之后重新取。拿首帧那个盒（`scrollOffset` 恒 0）算出来永远是 0 ——
+//   这条是首跑红掉的：`revealDelta()` 得 0，看着像公式错、其实是基准旧。
+$revBox = $revApp->scrollBox();
+$revUp = $revBox?->revealDelta(new Rect(0.0, 100.0, 100.0, 20.0), 8.0, $revBox->appliedOffset()) ?? -999.0;
+check(
+    'ensureVisible · revealDelta：目标在视口上方 ⇒ −308（100 − 8 − 400）',
+    $revUp === -308.0,
+    (string) $revUp,
+);
+
+// ② State 级：真滚过去（`04` §12.2 #10）
+//    反例：只改盒不算 State ⇒ offset 仍是 400；夹上界夹错 ⇒ 停在 600。
+$revState?->ensureVisible(new Rect(0.0, 100.0, 100.0, 20.0));
+check(
+    'ensureVisible · 上滚到 top − 8（400 → 92：增量 −308 加到 400 上）',
+    $revState?->offset() === 92.0,
+    (string) ($revState?->offset() ?? -1.0),
+);
+
+// ③ 已在视口内 ⇒ 不动、**不标脏**（`04` §12.2 #11）
+//    反例：无条件 `scrollBy(0)` 会走 `setState` ⇒ 每帧重建一次（白烧）。
+$revApp->frame(32.0, BoxConstraints::tight(new Size(320.0, 200.0)));
+$revState?->ensureVisible(new Rect(0.0, 120.0, 100.0, 20.0));
+check(
+    'ensureVisible · 已在视口内 ⇒ 偏移不变且不标脏（省一次重建）',
+    $revState?->offset() === 92.0 && $revState?->needsBuild() === false,
+    'offset=' . ($revState?->offset() ?? -1.0)
+        . ' dirty=' . ($revState?->needsBuild() === true ? '1' : '0'),
+);
+
+// ④ 下滚：`bottom + 8 − 视口`
+//    反例：把目标起点当终点 ⇒ 只滚 12（108 → 120）而不是 420。
+$revState?->ensureVisible(new Rect(0.0, 700.0, 100.0, 20.0));
+check(
+    'ensureVisible · 下滚到 bottom + 8 − 视口（92 → 528，增量 436）',
+    $revState?->offset() === 528.0,
+    (string) ($revState?->offset() ?? -1.0),
+);
+
+// ⑤ 目标比视口还高（300 > 200）⇒ 上沿对齐，且**幂等**
+//    反例：不加这条分支会先滚到底、再滚回顶 —— 连着调两次在两端来回跳。
+$revState?->scrollBy(-528.0);   // 回到 0
+$revState?->ensureVisible(new Rect(0.0, 100.0, 100.0, 300.0));
+$revState?->ensureVisible(new Rect(0.0, 100.0, 100.0, 300.0));
+check(
+    'ensureVisible · 目标比视口高 ⇒ 上沿对齐 92 且幂等（第二次不动）',
+    $revState?->offset() === 92.0,
+    (string) ($revState?->offset() ?? -1.0),
+);
+
+// ⑥ 横向视口取 x/width
+//    反例：只写纵向公式 ⇒ 横向滚动容器里 Tab 永远不跟（静默不生效）。
+$hKids = [];
+for ($i = 0; $i < 20; $i++) {
+    $hKids[] = SizedBox::make()->width(40.0);
+}
+$hRoot = ScrollView::make(Row::make()->children($hKids), false)->createElement();
+$hRoot->mount(null, smokeContext());
+$hRoot->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 100.0)));
+$hState = findElement(
+    $hRoot,
+    static fn(Element $e): bool => $e instanceof StatefulElement && $e->state() instanceof ScrollViewState,
+)?->state();
+$hState?->scrollBy(400.0);
+// ★ 用**下滚**验轴向：上滚的公式（`top − margin − offset`）里没有视口，
+//   横向纵向算出同一个值 ⇒ 验不出"取的是 width 还是 height"。
+//   下滚：`728 − 400 − 320 = 8` ⇒ 408；若错取高 100 ⇒ 628（两个值分得开）。
+$hState?->ensureVisible(new Rect(700.0, 0.0, 20.0, 10.0));
+check(
+    'ensureVisible · 横向视口用 x/width（下滚 400 → 408；按高算会得 628）',
+    $hState instanceof ScrollViewState && $hState->offset() === 408.0,
+    $hState instanceof ScrollViewState ? (string) $hState->offset() : 'no-state',
+);
+
+// ⑦ LazyColumn 是**同一形状**的实现（内容坐标 = 完整内容坐标）
+//    反例：把 `sliceOrigin` 再补一遍 ⇒ 488 变成 448（差两行）。
+$lazyRev = $lazyMount($lazyBuild(500, 40.0));
+$lazyRevState = $lazyStateOf($lazyRev);
+$lazyRevState?->ensureVisible(new Rect(0.0, 700.0, 100.0, 20.0));
+check(
+    'ensureVisible · LazyColumn 同一条算术（488 = 720 + 8 − 240）',
+    $lazyRevState?->offset() === 488.0,
+    (string) ($lazyRevState?->offset() ?? -1.0),
+);
+
+// ⑧ 真消费：Tab 换焦点 ⇒ 自动滚进视口（6 次 Tab 落到 b5，y 200..240）
+//    反例：`revealFocused()` 没接上 ⇒ offset 恒 0（Tab 走得到、看不见）。
+$navApp = new RevealApplication();
+$navApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 200.0)));
+$navTs = 0.0;
+for ($i = 0; $i < 6; $i++) {
+    $navTs += 16.0;
+    $navApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
+    $navApp->frame($navTs, BoxConstraints::tight(new Size(320.0, 200.0)));
+}
+$navState = $navApp->scrollState();
+check(
+    'ensureVisible · Tab 到视口外的按钮 ⇒ 自动滚进来（6 次 ⇒ 焦点 b5、offset 48）',
+    $navApp->focusedLabel() === 'b5' && $navState?->offset() === 48.0,
+    'focus=' . ($navApp->focusedLabel() ?? 'null') . ' offset=' . ($navState?->offset() ?? -1.0),
+);
+
+// ⑨ 反向同样跟：Shift+Tab 回退到 b0 ⇒ offset 回 0
+//    反例：只在 `focusNext()` 侧接线 ⇒ 反向导航时焦点跑到视口上方。
+for ($i = 0; $i < 5; $i++) {
+    $navTs += 16.0;
+    $navApp->dispatchInput(KeyEvent::down(KeyChord::shift('Tab')));
+    $navApp->frame($navTs, BoxConstraints::tight(new Size(320.0, 200.0)));
+}
+check(
+    'ensureVisible · Shift+Tab 反向同样跟（回到 b0 ⇒ offset 回 0）',
+    $navApp->focusedLabel() === 'b0' && $navState?->offset() === 0.0,
+    'focus=' . ($navApp->focusedLabel() ?? 'null') . ' offset=' . ($navState?->offset() ?? -1.0),
 );
 
 // ══════════════════════════════════════════════════ 窗口状态（§5.4 / M5）══

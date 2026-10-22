@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace Drift\Widget;
 
+use Drift\Geometry\Rect;
+
 /**
  * **能接收滚动增量**的 State（`ScrollView` / `LazyColumn`）。
  *
@@ -30,4 +32,19 @@ interface Scrollable
      *   的内容长度决定这一帧能不能滚"，内容变长后要多滚一帧才生效。
      */
     public function scrollBy(float $delta): void;
+
+    /**
+     * 把**内容坐标**里的矩形滚进视口，四周留 `$margin` 逻辑像素。
+     *
+     * ★ 坐标系是**内容坐标**（内容自己的坐标，与滚动偏移无关），不是视口坐标：
+     *   视口坐标会随滚动变化 ⇒ 调用方得先知道当前偏移才能算，等于把滚动知识
+     *   漏给每一处调用点。
+     *
+     * ★ **只滚最近的一个**（与滚轮路由同口径）：实现各自找自己的盒，不去通知
+     *   外层 —— 嵌套滚动的裁决见 `04` §6.2（不做 delta 传递）。
+     *
+     * ★ **已经在视口里 ⇒ 什么都不做**（不标脏）：Tab 在可见区域里移动时不能
+     *   因为"顺便检查一下"就每帧重建。夹具 `04` §12.2 #11 守这条。
+     */
+    public function ensureVisible(Rect $target, float $margin = 8.0): void;
 }

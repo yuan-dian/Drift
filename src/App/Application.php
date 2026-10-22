@@ -1857,7 +1857,16 @@ abstract class Application
                 return null;
             }
 
+            // ★ 焦点链自己的键（Tab / Shift+Tab）会**换焦点**：换完要把新焦点滚进
+            //   它所在的视口，否则焦点环画在视口外、用户看不到焦点在哪（`04` §6.3）。
+            //   判据是"焦点 Element 变了"而不是"按的是 Tab" —— 焦点控件也可能吃掉
+            //   别的键，那时焦点没动，不该滚（滚一下就是用户没要求的位移）。
+            $focusedBefore = $focus->focused();
             if ($focus->dispatchKey($event)) {
+                if ($focus->focused() !== $focusedBefore) {
+                    $this->revealFocused();
+                }
+
                 return null;
             }
 
@@ -2021,6 +2030,65 @@ abstract class Application
 
                 return;
             }
+        }
+    }
+
+    /**
+     * 把**当前焦点**滚进它所在的滚动视口（`04` §6.3：键盘可达性硬要求）。
+     *
+     * ★ 沿父链找**最近**的 `Scrollable`（与滚轮路由 `scrollAt()` 同一口径）：
+     *   嵌套视口只滚最里面那个，不逐层上报（`04` §6.2 的裁决）。
+     *
+     * ★ 目标矩形用**绝对坐标之差**换算成内容坐标，不自己沿父链累加偏移：
+     *   `absoluteOrigin()` 已经把滚动偏移算进去了（偏移住子盒的 `offsetX/Y`），
+     *   再加回 `appliedOffset()` 就回到内容坐标。手抄累加是 M2-3 那一族
+     *   bug 的温床（padding 被算两次、偏移被算两次 —— 都不报错）。
+     *
+     * ★ 焦点控件**还没挂盒**（虚拟列表里没造出来的行 / 刚换过树）⇒ 不动。
+     *   这也是 `LazyColumn` 的既有边界：Tab 只能在已造出来的行之间走。
+     */
+    private function revealFocused(): void
+    {
+        $focused = $this->focus?->focused();
+        $box = $focused?->effectiveBox();
+        if ($focused === null || $box === null) {
+            return;
+        }
+
+        $size = $box->size();
+        if ($size === null) {
+            return;
+        }
+
+        for ($node = $focused->parent(); $node !== null; $node = $node->parent()) {
+            if (!$node instanceof StatefulElement) {
+                continue;
+            }
+
+            $state = $node->state();
+            if (!$state instanceof Scrollable) {
+                continue;
+            }
+
+            $scroll = $node->findBox(static fn(RenderBox $b): bool => $b instanceof RenderScrollView);
+            if (!$scroll instanceof RenderScrollView || $scroll->size() === null) {
+                return;
+            }
+
+            [$scrollX, $scrollY] = self::absoluteOrigin($scroll);
+            [$boxX, $boxY] = self::absoluteOrigin($box);
+            $dx = $boxX - $scrollX;
+            $dy = $boxY - $scrollY;
+            $offset = $scroll->appliedOffset();
+
+            // ★ 偏移只在**主轴**上加回；交叉轴上的绝对差就是内容坐标。
+            $target = $scroll->isVertical()
+                ? new Rect($dx, $dy + $offset, $size->width, $size->height)
+                : new Rect($dx + $offset, $dy, $size->width, $size->height);
+
+            $state->ensureVisible($target);
+
+            return;
         }
     }
 

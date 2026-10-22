@@ -86,6 +86,61 @@ final class RenderScrollView extends RenderProxyBox
         return min(max(0.0, $this->scrollOffset), $this->maxScroll);
     }
 
+    /**
+     * 把**内容坐标**里的矩形滚进视口所需的偏移**增量**（`0.0` = 已经可见）。
+     *
+     * ★ 几何只算这一处：两个 `Scrollable` 实现（`ScrollViewState` /
+     *   `LazyColumnState`）都只是"找到自己的盒 → 把增量交给 `scrollBy()`"，
+     *   不各算一遍 —— 各算一遍迟早会漂（一个按视口高、一个按窗口高之类）。
+     *
+     * ★ 返回**增量**不是绝对偏移：`scrollBy()` 是唯一的写入口，夹取在它
+     *   （下界）与布局期（上界）各做一次。返回绝对值就等于绕过写入口。
+     *
+     * ★ `$base` 是**基准偏移**（"现在按哪个偏移算可见"），**必填**：State 侧传
+     *   自己**待生效**的值 —— 同一帧里连按两次 Tab 时盒还没重排，用盒里的
+     *   `appliedOffset()` 会把上一段增量再算一遍（8 之后再要 48 会滚到 56）。
+     *   目标矩形是内容坐标 ⇒ 与基准解耦，换基准不改变正确性。
+     *   ★ 不给默认值是为了避开 tpc 的"可选参数排在必选参数前"Fatal
+     *   （2026-10-17 踩过）；`margin` 的默认值只留在 `ensureVisible()` 一处。
+     *
+     * ★ **目标比视口还大**（`extent + 2×margin > viewport`）⇒ 上下两个条件
+     *   不可能同时满足，取"上沿对齐 `margin`"。这条是**幂等**的：连着调两次
+     *   第二次返回 0 —— 否则大目标会在两端来回跳（每次调用都翻一次方向）。
+     */
+    public function revealDelta(Rect $target, float $margin, float $base): float
+    {
+        $size = $this->size();
+        if ($size === null) {
+            return 0.0;   // 还没布局：没有视口，"可见"无从谈起
+        }
+
+        // ★ 属性先落局部标量：分支里直接读属性在 AOT 侧会被推成 `Variant`。
+        $vertical = $this->vertical;
+        $viewport = $vertical ? $size->height : $size->width;
+        if ($viewport <= 0.0) {
+            return 0.0;
+        }
+
+        $offset = $base;
+        $start = $vertical ? $target->top : $target->left;
+        $extent = $vertical ? $target->height : $target->width;
+
+        if ($extent + $margin * 2.0 > $viewport) {
+            return $start - $margin - $offset;
+        }
+
+        if ($start - $margin < $offset) {
+            return $start - $margin - $offset;   // 在视口上方 ⇒ 负增量（往上滚）
+        }
+
+        $end = $start + $extent;
+        if ($end + $margin > $offset + $viewport) {
+            return $end + $margin - $offset - $viewport;   // 在下方 ⇒ 正增量
+        }
+
+        return 0.0;
+    }
+
     protected function performLayout(BoxConstraints $constraints): Size
     {
         $child = $this->child;

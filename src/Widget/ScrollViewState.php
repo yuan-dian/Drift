@@ -4,6 +4,8 @@ declare(strict_types=1);
 namespace Drift\Widget;
 
 use Drift\Errors;
+use Drift\Geometry\Rect;
+use Drift\Layout\RenderScrollView;
 
 /**
  * `ScrollView` 的纯 UI 态：**滚动偏移**（§11.5 / §12.3）。
@@ -50,6 +52,30 @@ final class ScrollViewState extends State implements Scrollable
         $this->setState(function () use ($next): void {
             $this->offset = $next;
         });
+    }
+
+    /**
+     * 把内容坐标里的矩形滚进视口（`04` §6.3）。
+     *
+     * ★ 算术全在 `RenderScrollView::revealDelta()`，这里只做"找盒 → 交给
+     *   `scrollBy()`"。`LazyColumnState` 是**同一形状** —— 两个实现不各算一遍。
+     *
+     * ★ 还没挂盒（首帧之前 / 盒被换掉）⇒ **什么都不做**：没有视口就没有
+     *   "可见"可言。不猜一个默认视口高 —— 猜错就是滚到错的位置，比不滚更坏。
+     */
+    public function ensureVisible(Rect $target, float $margin = 8.0): void
+    {
+        $box = $this->element()?->effectiveBox();
+        if (!$box instanceof RenderScrollView) {
+            return;
+        }
+
+        // ★ 基准传**自己待生效的偏移**：盒里那个是上一帧的值，同一帧连按两次
+        //   Tab 会把上一段增量再算一遍（见 `revealDelta()` 的 `$base` 说明）。
+        $delta = $box->revealDelta($target, $margin, $this->offset);
+        if ($delta !== 0.0) {
+            $this->scrollBy($delta);
+        }
     }
 
     public function build(BuildContext $ctx): Widget
