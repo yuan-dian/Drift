@@ -89,6 +89,13 @@ final class RenderTextField extends RenderBox
         return Overflow::Clip;
     }
 
+    /** 文本框恒裁：文本比盒宽是常态（长文本 + 光标），不裁就会画到相邻控件上 */
+    #[\Override]
+    public function clipsOverflow(): bool
+    {
+        return true;
+    }
+
     /** 解析后的盒样式（`@internal` 冒烟 / 调试：断言"明暗换肤改表不改控件"） */
     public function boxStyle(): BoxStyle
     {
@@ -240,7 +247,9 @@ final class RenderTextField extends RenderBox
         return $this->text === '' && $this->placeholder !== '';
     }
 
-    protected function paintContent(Canvas $canvas): void
+    /** chrome 画在裁剪**之外**：本盒恒裁（`clipsOverflow()`），描边的外半边不能被自己切掉 */
+    #[\Override]
+    protected function paintOwnChrome(Canvas $canvas): void
     {
         $size = $this->size ?? new Size(0.0, 0.0);
         $rect = new Rect(0.0, 0.0, $size->width, $size->height);
@@ -251,9 +260,12 @@ final class RenderTextField extends RenderBox
         if ($this->box->borderColor !== null && $this->box->borderWidth > 0.0) {
             $canvas->drawRect($rect, Paint::stroke($this->box->borderColor, $this->box->borderWidth), $this->box->radius);
         }
+    }
 
-        // ★ overflow() 声明的 Clip 在这里兑现：文本长过盒宽时不许画到盒外去。
-        $canvas->pushClip($rect);
+    protected function paintContent(Canvas $canvas): void
+    {
+        // ★ 裁剪由基类 `RenderBox::paint()` 统一兑现（`clipsOverflow()` 恒真）；
+        //   chrome 已搬进 `paintOwnChrome()`（在裁剪之外），这里只剩内容。
         $canvas->save();
         $canvas->translate($this->insets->left, $this->insets->top);
 
@@ -295,6 +307,5 @@ final class RenderTextField extends RenderBox
         }
 
         $canvas->restore();
-        $canvas->popClip();
     }
 }

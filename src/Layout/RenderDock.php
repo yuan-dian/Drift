@@ -52,6 +52,13 @@ final class RenderDock extends RenderBox
         return $this->policy;
     }
 
+    /** 与 `RenderFlex` 同口径：声明了 `Clip` 就把槽位里超出的部分裁掉 */
+    #[\Override]
+    public function clipsOverflow(): bool
+    {
+        return $this->policy === Overflow::Clip;
+    }
+
     public function visitChildren(callable $visitor): void
     {
         // 绘制序 = 访问序：center 先画、条轨后画（chrome 压内容）；

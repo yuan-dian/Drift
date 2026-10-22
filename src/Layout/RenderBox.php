@@ -5,6 +5,7 @@ namespace Drift\Layout;
 
 use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
+use Drift\Geometry\Rect;
 use Drift\Geometry\Size;
 use Drift\Rendering\Canvas;
 use Drift\Rendering\Modifier;
@@ -486,6 +487,26 @@ abstract class RenderBox extends RenderObject
     }
 
     /**
+     * 绘制时是否把内容裁到盒矩形。
+     *
+     * ★ **默认 `false`，与 `overflow()` 的默认 `Clip` 故意不一致**：`overflow()`
+     *   是"放不下时怎么办"的**契约查询**（默认值只是"不会超的容器"这个乐观假设），
+     *   而裁剪要付出每帧 `save/pushClip/popClip/restore` 的代价 ⇒ 必须由真正会超的
+     *   容器**显式覆写**。默认 `false` 还保证"新容器不覆写 ⇒ 行为与加此钩子之前
+     *   完全一致"，不会因为忘记覆写而静默改变像素。
+     *
+     * ★ 覆写者：`RenderFlex` / `RenderDock`（`overflow === Clip` 时）、
+     *   `RenderTextField`（恒真）。`RenderScrollView` **不**覆写 —— 它自己的
+     *   `paintContent()` 已按视口矩形手写裁剪，再覆写就是双重压栈。
+     *
+     * @internal 量具 / `RenderBox::paint()` 读；应用侧用 `Widget::clip()`
+     */
+    public function clipsOverflow(): bool
+    {
+        return false;
+    }
+
+    /**
      * 画自己：**装饰 → 平移 → 内容**（arch-v2 `02` §4.2，W5）。
      *
      * ★ **`final`**：与 `layout()` 同一个理由 —— 装饰只该画一处。子类实现
@@ -504,21 +525,46 @@ abstract class RenderBox extends RenderObject
         $size = $this->size;
 
         // ① 背景 / 边框 / 圆角 / 阴影 —— 画在自己身上，在内容**之下**
+        //    ★ 必须在裁剪**之外**：阴影按 `-grow` 起画、本来就在盒外（`02` §11.11）。
         if ($m !== null && $size !== null && $m->hasVisual()) {
             $m->paintBehind($canvas, $size);
         }
 
-        // ② 内容：有 padding ⇒ 平移后画（内容盒坐标系）
+        // ①.5 自己的 chrome（自持 `BoxStyle` 的容器在这里画背景/边框，**不**被裁）
+        $this->paintOwnChrome($canvas);
+
+        // ② 裁剪：矩形是**盒矩形**（含内边距），压栈在 `translate(padLeft, padTop)`
+        //    之前 ⇒ `pushClip` 按当前偏移解释（`RasterCanvas::toDevice`），压的正是
+        //    盒边界。两条来源：控件显式 `clip()`，或容器声明 `Overflow::Clip`。
+        $clip = false;
+        if ($size !== null) {
+            $wantsClip = ($m !== null && $m->hasClip()) || $this->clipsOverflow();
+            if ($wantsClip) {
+                $w = $size->width;
+                $h = $size->height;
+                $canvas->save();
+                $canvas->pushClip(new Rect(0.0, 0.0, $w, $h));
+                $clip = true;
+            }
+        }
+
+        // ③ 内容：有 padding ⇒ 平移后画（内容盒坐标系）
         if ($m !== null && $m->hasPadding()) {
             $canvas->save();
             $canvas->translate($m->padLeft(), $m->padTop());
             $this->paintContent($canvas);
             $canvas->restore();
-
-            return;
+        } else {
+            $this->paintContent($canvas);
         }
 
-        $this->paintContent($canvas);
+        // ④ 与 ② 配对。★ 走**统一出口**而不是每个分支各自 `popClip()`：早退分支
+        //    漏 pop ⇒ `DisplayList::assertBalanced()` 会抓（`clipDepth` 归不了零），
+        //    但真机上表现为"后面整棵子树全被裁"且不报错 —— 最坏的那一类。
+        if ($clip) {
+            $canvas->popClip();
+            $canvas->restore();
+        }
     }
 
     /**
@@ -528,6 +574,21 @@ abstract class RenderBox extends RenderObject
      * 需要"盒尺寸"就自己加回 padding（见 `02` §4.1.1 的两坐标系表）。
      */
     abstract protected function paintContent(Canvas $canvas): void;
+
+    /**
+     * 画**自己的 chrome**（背景 / 边框 / 圆角）—— 在裁剪**之外**、`paintContent()` 之前。
+     *
+     * ★ 为什么需要这个钩子：`Modifier` 的视觉走 `paintBehind()`（本来就在裁剪之外），
+     *   但自持 `BoxStyle` 的容器（`AppBar` / `TextField` / `Button` / `PopupPanel`）
+     *   一直是在 `paintContent()` 里画 chrome 的。它们一旦 `clipsOverflow()`，描边跨在
+     *   盒边界上的那一半就会被裁掉 —— 2026-10-23 真机实测：`users` 顶条底部那条
+     *   1px 灰线（`#ebeef1`）整行消失，diff 983 个像素。
+     *
+     * ★ 默认空实现、只被真正画 chrome 的容器覆写 ⇒ 其余盒每帧多一次空虚调用。
+     */
+    protected function paintOwnChrome(Canvas $canvas): void
+    {
+    }
 
     /**
      * 动画期的合成参数（arch-v2 `05` §5.4，W4-L3-4）—— **就地改，不重建盒、不重排**。

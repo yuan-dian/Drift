@@ -19,6 +19,7 @@ use Drift\Dev\Smoke\Layout\ConstraintSpy;
 use Drift\Dev\Smoke\Layout\ImpureBox;
 use Drift\Dev\Smoke\Layout\OffsetBox;
 use Drift\Dev\Smoke\Layout\OversizeBox;
+use Drift\Dev\Smoke\Layout\BleedBox;
 use Drift\Dev\Smoke\Layout\SolidBox;
 use Drift\Dev\Smoke\Layout\LayoutCountBox;
 use Drift\Dev\Smoke\Layout\LayoutCountWidget;
@@ -1344,6 +1345,129 @@ $list->reset();
 check('Rendering · reset 只归零长度', $list->count() === 0 && $list->saveDepth() === 0);
 $list->record(DisplayList::OP_DRAW_RECT, new Rect(0.0, 0.0, 1.0, 1.0), Paint::fill($red), 0.0);
 check('Rendering · reset 后可继续录制', $list->count() === 1);
+
+// —— 真裁剪：`Modifier::clip` / `Overflow::Clip` 落到绘制（2026-10-23）
+// ★ 装置是 `BleedBox`（盒 10×10、墨 40×40）：裁与不裁像素**不同**。
+//   `SolidBox` 的墨与盒同尺寸 ⇒ 裁与不裁完全相同 = 恒真断言，验不出东西。
+$bleedPlain = new BleedBox(new Size(40.0, 40.0));
+$bleedPlain->layout(BoxConstraints::tight(new Size(10.0, 10.0)));
+$bleedPlainRaster = new RasterCanvas(40, 40, Color::white(), Scale::of(1.0));
+$bleedPlain->paint($bleedPlainRaster);
+check(
+    '裁剪 · 基准：未声明 clip 时墨画到盒外（装置真能溢出）',
+    $bleedPlain->size()?->width === 10.0
+        && !$bleedPlainRaster->pixelAt(20, 20)->equals(Color::white()),
+    sprintf('盒宽 %s（应为 10），盒外 (20,20) %s', (string) $bleedPlain->size()?->width,
+        $bleedPlainRaster->pixelAt(20, 20)->equals(Color::white()) ? '是白' : '有墨'),
+);
+
+$clipWidget = Text::make('x')->clip();
+$clipOn = $clipWidget->mods()->hasClip();
+$clipWidget->clip(false);
+check(
+    '裁剪 · Widget::clip() 写进 mods，clip(false) 可关',
+    $clipOn && !$clipWidget->mods()->hasClip(),
+);
+check(
+    '裁剪 · clip 计入 isDefault（漏了 ⇒ syncBox 的"修饰无处可去"守卫失效）',
+    (new Modifier())->isDefault() && !(new Modifier())->withClip(true)->isDefault(),
+);
+
+$bleedClip = new BleedBox(new Size(40.0, 40.0));
+$bleedClip->setMods((new Modifier())->withClip(true));
+$bleedClip->layout(BoxConstraints::tight(new Size(10.0, 10.0)));
+$bleedClipRaster = new RasterCanvas(40, 40, Color::white(), Scale::of(1.0));
+$bleedClip->paint($bleedClipRaster);
+check(
+    '裁剪 · Widget::clip() 后盒外是背景',
+    $bleedClipRaster->pixelAt(20, 20)->equals(Color::white()),
+    sprintf('(20,20) rgb(%d,%d,%d)', $bleedClipRaster->pixelAt(20, 20)->r,
+        $bleedClipRaster->pixelAt(20, 20)->g, $bleedClipRaster->pixelAt(20, 20)->b),
+);
+check(
+    '裁剪 · 盒内仍有墨（不是整块被裁没了）',
+    !$bleedClipRaster->pixelAt(5, 5)->equals(Color::white()),
+);
+
+// —— 容器声明驱动：`Overflow::Clip` 从"只是不报错"变成"真的裁"
+$flexClip = new RenderFlex(false, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Clip);
+$flexClip->addChild(new BleedBox(new Size(40.0, 40.0)));
+$flexClip->layout(BoxConstraints::tight(new Size(10.0, 10.0)));
+$flexClipRaster = new RasterCanvas(40, 40, Color::white(), Scale::of(1.0));
+$flexClip->paint($flexClipRaster);
+check(
+    '裁剪 · Overflow::Clip 的 Flex 真的裁（注释承诺的"子项被裁掉"兑现了）',
+    $flexClipRaster->pixelAt(20, 20)->equals(Color::white()),
+);
+
+// Report 不裁：子被夹到 10 ⇒ mainSize 不超、不报 Fatal，但墨仍溢出 ⇒ 默认行为不变
+$flexReport = new RenderFlex(false, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Report);
+$flexReport->addChild(new BleedBox(new Size(40.0, 40.0)));
+$flexReport->layout(BoxConstraints::tight(new Size(10.0, 10.0)));
+$flexReportRaster = new RasterCanvas(40, 40, Color::white(), Scale::of(1.0));
+$flexReport->paint($flexReportRaster);
+check(
+    '裁剪 · Overflow::Report 不裁（默认行为与加钩子之前一致）',
+    !$flexReportRaster->pixelAt(20, 20)->equals(Color::white()),
+);
+
+// 装饰（阴影）在裁剪**之外**：同一帧里"墨被裁、影子还在"
+$bleedShadow = new BleedBox(new Size(40.0, 40.0));
+$bleedShadow->setMods((new Modifier())->withClip(true)->withShadow(0.6));
+$bleedShadow->layout(BoxConstraints::tight(new Size(20.0, 20.0)));
+$shadowList = new DisplayList();
+$shadowRec = new RecordingCanvas($shadowList);
+$shadowRec->translate(10.0, 10.0);
+$bleedShadow->paint($shadowRec);
+$shadowRaster = new RasterCanvas(60, 60, Color::white(), Scale::of(1.0));
+$shadowList->replay($shadowRaster);
+check(
+    '裁剪 · 阴影不被裁（盒 (10,10)-(30,30)，(8,20) 处仍有影子）',
+    !$shadowRaster->pixelAt(8, 20)->equals(Color::white()),
+    sprintf('(8,20) rgb(%d,%d,%d)', $shadowRaster->pixelAt(8, 20)->r,
+        $shadowRaster->pixelAt(8, 20)->g, $shadowRaster->pixelAt(8, 20)->b),
+);
+check(
+    '裁剪 · 同一帧里墨在盒外被裁（(35,35) 在墨内、盒外 ⇒ 白）',
+    $shadowRaster->pixelAt(35, 35)->equals(Color::white()),
+);
+
+check(
+    '裁剪 · clipsOverflow 口径（Flex/Dock 看声明，普通盒默认不裁）',
+    $flexClip->clipsOverflow() === true
+        && $flexReport->clipsOverflow() === false
+        && (new RenderDock(Overflow::Clip))->clipsOverflow() === true
+        && (new RenderDock(Overflow::Report))->clipsOverflow() === false
+        && $bleedPlain->clipsOverflow() === false,
+);
+
+// —— chrome 在裁剪**之外**（真机抓到的：第一版把 chrome 留在 `paintContent()` 里，
+//    `users` 顶条底部那条 1px 灰线整行消失，diff 983 像素）
+// ★ 判据用**命令顺序**而不是像素：描边是内描边（像素 9 有墨、10 没有），
+//   靠像素分不出"被裁"与"本来就不画"。`paintOwnChrome()` 必须在 `pushClip` 之前。
+$bar = new RenderAppBar(
+    BoxStyle::none()->withBackground(Color::black())->withBorder(Color::black(), 2.0),
+    0.0,
+    new EdgeInsets(),
+);
+$bar->layout(BoxConstraints::tight(new Size(10.0, 10.0)));
+$barList = new DisplayList();
+$bar->paint(new RecordingCanvas($barList));
+$barClipAt = -1;
+$barChromeAt = [];
+for ($bi = 0; $bi < $barList->count(); $bi++) {
+    $bop = $barList->opAt($bi);
+    if ($bop === DisplayList::OP_PUSH_CLIP) {
+        $barClipAt = $bi;
+    } elseif ($bop === DisplayList::OP_DRAW_RECT) {
+        $barChromeAt[] = $bi;
+    }
+}
+check(
+    '裁剪 · chrome（背景/边框）画在 pushClip 之前 ⇒ 不被自己裁掉',
+    $barClipAt > 0 && count($barChromeAt) === 2 && max($barChromeAt) < $barClipAt,
+    sprintf('drawRect 在 [%s]，pushClip 在 %d', implode(',', $barChromeAt), $barClipAt),
+);
 
 // 值对象
 check('Rendering · Color::fromHex 支持 #RGB', Color::fromHex('#f00')->equals($red));

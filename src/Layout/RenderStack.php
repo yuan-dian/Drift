@@ -34,10 +34,12 @@ use Drift\Rendering\Canvas;
  *   ⇒ 最后画的先命中，所有容器都这样。`Stack` 什么都不用做（方案册上一版把这条
  *   当成 `Stack` 的特权，是错的）。
  *
- * ★ **不做 `Overflow` 参数**（`04` §4.2 的裁决）：`Overflow::Clip` 今天不真裁
- *   （`src/Rendering/` 里没有裁剪 API），而本盒的 `mainSize = max(子)` ⇒ `Report`
- *   永不触发。加一个必填参数会得到"两个值都不生效"的假保障。真裁剪归
- *   `Modifier::clip`（未排期）。
+ * ★ **不做 `Overflow` 参数**（`04` §4.2 的裁决）：本盒的 `mainSize = max(子)` ⇒
+ *   子永远不会越过盒边界 ⇒ `Report` 永不触发、`Clip` 也无事可裁。加一个必填参数
+ *   会得到"两个值都不生效"的假保障。
+ *   ★ 2026-10-23 修正理由（结论不变）：`Modifier::clip` 现在已经**真的会裁**
+ *   （`02` §11.11），所以"没有裁剪 API"不再是理由；真正的理由只剩上面那条几何
+ *   事实。要给 `Stack` 的内容加裁剪，用 `Stack::make()->clip()`。
  *
  * ★ **子盒 offset 住内容盒坐标**（`02` §4.1.1）：本盒的 `performLayout()` 拿到的是
  *   内容盒约束，偏移从 `(0,0)` 起算；`(padLeft, padTop)` 由 `paint()` 的 `translate()`

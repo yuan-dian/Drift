@@ -88,6 +88,13 @@ class RenderFlex extends RenderBox
         return $this->overflow;
     }
 
+    /** `Overflow::Clip` 的**兑现**：布局期夹住尺寸，绘制期把超出的子项裁掉 */
+    #[\Override]
+    public function clipsOverflow(): bool
+    {
+        return $this->overflow === Overflow::Clip;
+    }
+
     /** @internal 重建前清空 —— 否则同一次 rebuild 会把子盒追加两遍 */
     public function clearChildren(): void
     {

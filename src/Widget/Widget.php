@@ -523,6 +523,24 @@ abstract class Widget
     }
 
     /**
+     * 把**内容**裁到盒矩形（含内边距）。`clip(false)` 可显式关掉。
+     *
+     * ★ 与容器声明 `->overflow(Overflow::Clip)` 的分工：`Overflow` 管**布局期**
+     *   "放不下时报错还是夹住"，`clip()` 管**绘制期**"画的时候裁掉"。会超的容器
+     *   两者都要 —— 只声明 `Overflow::Clip` 只是"不报错"，内容仍然画到盒外。
+     * ★ 装饰（背景 / 边框 / 圆角 / 阴影）**不**被裁：阴影本来就在盒外。
+     *
+     * @api
+     */
+    public function clip(bool $on = true): static
+    {
+        $this->mutate();
+        $this->mods = $this->mods->withClip($on);
+
+        return $this;
+    }
+
+    /**
      * 把**内容**在本盒内居中（`Center` 的字段形态）。
      *
      * ★ 与 `alignSelf()` 不是一件事：`alignSelf` 只在 `RenderFlex` 里被消费

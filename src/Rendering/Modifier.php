@@ -112,6 +112,20 @@ final class Modifier
 
     private int $alignSelf = 0;      // RenderBox::ALIGN_* 常量
 
+    // ── 绘制裁剪（D_PAINT）──────────────────────────────────────────
+    /**
+     * 内容裁到**盒矩形**（含内边距）。
+     *
+     * ★ 与 `Overflow` 不是一回事：`Overflow` 是**布局期** C5 策略（放不下时
+     *   报错还是夹住），`clip` 是**绘制期**"画的时候裁掉"。会超的容器两者都要
+     *   —— 只声明 `Overflow::Clip` 是"不报错"，不裁就仍然画到盒外
+     *   （2026-10-23 之前的真实状态：`RenderAppBar` 的注释写着"右侧导航项被裁掉"，
+     *   而代码什么都没做）。
+     * ★ 装饰（背景 / 边框 / 圆角 / **阴影**）不被裁：阴影本来就画到盒外
+     *   （`paintBehind()` 里 `-grow` 起画），裁了等于把影子切掉。
+     */
+    private bool $clip = false;
+
     public function __construct()
     {
         // 占位：`hasBackground` / `hasBorder` 为假时这两个值无意义
@@ -241,6 +255,12 @@ final class Modifier
         return $size->inflate($this->insets());
     }
 
+    /** 内容是否裁到盒矩形（`Widget::clip()` / `Overflow::Clip` 的落点） */
+    public function hasClip(): bool
+    {
+        return $this->clip;
+    }
+
     /** 内容是否要在盒内居中 */
     public function hasCenter(): bool
     {
@@ -360,7 +380,8 @@ final class Modifier
             && $this->shrink === 0
             && \is_nan($this->basis)
             && $this->alignSelf === 0
-            && !$this->center;
+            && !$this->center
+            && !$this->clip;
     }
 
     public function composeOpacity(): float
@@ -486,6 +507,14 @@ final class Modifier
         $c = clone $this;
         $c->translateX = $dx;
         $c->translateY = $dy;
+
+        return $c;
+    }
+
+    public function withClip(bool $clip): self
+    {
+        $c = clone $this;
+        $c->clip = $clip;
 
         return $c;
     }

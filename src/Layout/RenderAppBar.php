@@ -33,8 +33,12 @@ final class RenderAppBar extends RenderFlex
         parent::__construct(false, $spacing, $padding, FlexAlign::Center, Overflow::Clip);
     }
 
+    /**
+     * chrome 画在裁剪**之外**：本盒声明 `Overflow::Clip`（见构造器），描边跨在盒边界上
+     * ⇒ 画进 `paintContent()` 的话，外半边会被自己的裁剪切掉。
+     */
     #[\Override]
-    protected function paintContent(Canvas $canvas): void
+    protected function paintOwnChrome(Canvas $canvas): void
     {
         $size = $this->size ?? new Size(0.0, 0.0);
         $rect = new Rect(0.0, 0.0, $size->width, $size->height);
@@ -45,7 +49,5 @@ final class RenderAppBar extends RenderFlex
         if ($this->box->borderColor !== null && $this->box->borderWidth > 0.0) {
             $canvas->drawRect($rect, Paint::stroke($this->box->borderColor, $this->box->borderWidth), $this->box->radius);
         }
-
-        parent::paintContent($canvas);
     }
 }
