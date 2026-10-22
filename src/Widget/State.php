@@ -152,14 +152,15 @@ abstract class State
      *   **拿不到 `$this`**，`Cell` 便无从知道该标脏哪个 `State` —— 于是"
      *   设了值但没人重建"。绑定必须显式发生，`cell()` 就是那一个显式点。
      *
+     * ★ `Cell::__construct` 是 `private` ⇒ "绕过 `cell()` 直接 new"这个写法
+     *   **编译期就写不出来**（运行期抛 `Error`），不再靠"未绑定 ⇒ Fatal"
+     *   兜底（`03` §3.5：把运行期 Fatal 换成更早、更近出错点的 Error）。
+     *
      * @api
      */
     public function cell(mixed $initial): Cell
     {
-        $cell = new Cell($initial);
-        $cell->bindTo($this);
-
-        return $cell;
+        return Cell::makeFor($this, $initial);
     }
 
     /**

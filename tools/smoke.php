@@ -295,11 +295,6 @@ if (str_starts_with($caseArg, '--case=')) {
         $element->mount(null, smokeContext());
     }
 
-    if ($case === 'cellunbound') {
-        // 绕过 State::cell() 直接 new ⇒ 没有 Owner ⇒ 标不了脏 ⇒ 静默。G2：现在就炸。
-        (new Cell(1))->setIfChanged(2);
-    }
-
     if ($case === 'computedcycle') {
         // 求值期间又触发自己的求值 ⇒ 闭包不纯。E-COMPUTED-CYCLE。
         $self = new Computed(static function () use (&$self): int {
@@ -4683,10 +4678,29 @@ fresh($log);
 check('Computed · 自引用 ⇒ Fatal（E-COMPUTED-CYCLE）', $code === 3, '实际 ' . $code . ' / ' . $output);
 check('Computed · 自引用写了 Errors.log', str_contains(logText($log), 'E-COMPUTED-CYCLE'));
 
-fresh($log);
-[$code, $output] = runCase(__FILE__, 'cellunbound', null);
-check('State · 未绑定的 Cell ⇒ Fatal（不留下"设了没用"的值）', $code === 3, '实际 ' . $code . ' / ' . $output);
-check('State · 未绑定 Cell 写了 Errors.log', str_contains(logText($log), 'State::cell()'));
+// Cell 构造私有 ⇒ new 不出来（W2/S2）。进程内断言：私有构造抛的是**可捕获的
+// Error**，不需要子进程（原来的"未绑定 ⇒ Fatal"用例随 makeFor 一起退役 ——
+// 未绑定的 Cell 现在**造不出来**，比造出来再炸更早）。
+try {
+    new Cell(1);
+    check('State · Cell 构造函数私有 ⇒ new 不出来', false, 'new Cell(1) 竟然成功了');
+} catch (\Error $e) {
+    check(
+        'State · Cell 构造函数私有 ⇒ new 不出来',
+        str_contains($e->getMessage(), 'private'),
+        $e->getMessage()
+    );
+}
+
+// State::cell() 仍可用，且拿到的 Cell 真的绑在本 State 上（makeFor 的回归面）
+$cellElement = (new HoverWidget())->createElement();
+$cellElement->mount(null, $context);
+$cellState = $cellElement->state();
+$madeCell = $cellState->cell(7);
+check('State · State::cell() 仍可用（走 makeFor）', $madeCell->value() === 7);
+$madeCell->setIfChanged(8);
+check('State · makeFor 建的 Cell 绑对了 Owner（标脏到本 State）', $cellState->needsBuild(), '没有标脏');
+$cellElement->unmount();
 
 fresh($log);
 if (is_file($log)) {

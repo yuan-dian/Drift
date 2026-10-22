@@ -4,7 +4,6 @@ declare(strict_types=1);
 namespace Drift\State;
 
 use Drift\Core\Versioned;
-use Drift\Errors;
 use Drift\Widget\State;
 
 /**
@@ -28,17 +27,45 @@ final class Cell implements Versioned
     /** @internal 版本号：换一次值 +1（`Computed` 的依赖判据） */
     private int $version = 0;
 
-    /** @internal 标脏要靠它；由 `State::cell()` 绑上 */
-    private ?State $owner = null;
+    /**
+     * @internal 标脏要靠它。
+     *
+     * ★ **非空**：读点不写 `?->`（人因收益，不是性能 —— M0-2 实测字段存储层
+     *   `?State` 与 `State` 同形态，都走 PHP 属性表，读点各付一次比较；
+     *   且非空字段上的属性访问仍是内联缓存读，不是静态偏移读。
+     *   证据：docs/AOT-CONSTRAINTS.md §2.2）。
+     */
+    private State $owner;
 
     /**
-     * @param mixed $value 初值
+     * @internal 恒为 `true`。
      *
-     * @api
+     * ★ 看着多余，它留着是为了让"未绑定"这件事在类型系统里**有位置**：
+     *   将来若有第二条创建路径（比如 `Store` 里要一个不标脏的 `Cell`），
+     *   `bound = false` 就是那个开关，而不是又加一个可空属性。
      */
-    public function __construct(mixed $value)
+    private bool $bound = false;
+
+    /**
+     * ★ private：唯一入口是 `State::cell()` —— 让"错的写法"写不出来。
+     *
+     * @param mixed $initial 初值
+     */
+    private function __construct(mixed $initial)
     {
-        $this->value = $value;
+        $this->value = $initial;
+    }
+
+    /**
+     * @internal 只有 `State::cell()` 调得到（构造函数私有 ⇒ 外部造不出未绑定的 Cell）
+     */
+    public static function makeFor(State $owner, mixed $initial): self
+    {
+        $cell = new self($initial);
+        $cell->owner = $owner;
+        $cell->bound = true;
+
+        return $cell;
     }
 
     public function value(): mixed
@@ -62,22 +89,9 @@ final class Cell implements Versioned
         $this->value = $value;
         $this->version++;
 
-        $owner = $this->owner;
-        if ($owner === null) {
-            // 没有 Owner 就没有可标脏的 State ⇒ 这次写入没人会看见 ⇒ 静默。
-            // G2：宁可现在就炸，不留一个"设了没用"的值到运行期。
-            Errors::report('Cell 未绑定到 State：请用 State::cell() 创建（§11.3.1）');
-        }
-
-        $owner->markDirty();
+        $this->owner->markDirty();     // 非空引用 ⇒ 无 null 分支
 
         return true;
-    }
-
-    /** @internal 唯一的绑定入口（`State::cell()`） */
-    public function bindTo(State $owner): void
-    {
-        $this->owner = $owner;
     }
 
     /** @inherit */
