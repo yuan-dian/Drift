@@ -140,11 +140,9 @@ use Drift\Layout\Overflow;
 use Drift\Layout\RenderAppBar;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderButton;
-use Drift\Layout\RenderCenter;
 use Drift\Layout\RenderDock;
 use Drift\Layout\RenderErrorBoundary;
 use Drift\Layout\RenderFlex;
-use Drift\Layout\RenderFlexible;
 use Drift\Layout\RenderScrollView;
 use Drift\Layout\RenderProxy;
 use Drift\Layout\RenderCard;
@@ -507,8 +505,9 @@ if (str_starts_with($caseArg, '--case=')) {
     }
 
     if ($case === 'flexvalue') {
-        // flex 份额 < 1 分不到空间，静默夹紧只会让"给了 Expanding 却不生效"更难查
-        new RenderFlexible(0);
+        // flex 份额 < 1 分不到空间，静默夹紧只会让"给了 Expanded 却不生效"更难查
+        // ★ 守卫住 `Expanded::flex()`（`RenderFlexible` 的构造器守卫随它一起删了）
+        Expanded::make(Text::make('x'))->flex(0);
     }
 
     if ($case === 'accelconflict') {
@@ -707,6 +706,20 @@ function findElement(Element $root, callable $pred): ?Element
     $walk($root);
 
     return $found;
+}
+
+/**
+ * 夹具：带份额的纯转发盒（`RenderFlexible` 在 M2-4 删除后的替代）。
+ *
+ * ★ 这里直接写盒上的意图字段，而不是 `setMods()` —— 夹具要测的是**盒**的行为，
+ *   不该绕一圈 Element。生产路径上份额走 `mods.grow` → `syncBox()` → 同一组字段。
+ */
+function flexProxy(int $share): RenderProxy
+{
+    $box = new RenderProxy();
+    $box->setFlexIntent($share, 0, \NAN, RenderBox::ALIGN_INHERIT);
+
+    return $box;
 }
 
 function boxOrigin(RenderBox $box): array
@@ -3014,15 +3027,26 @@ check(
         && $modProbe->mods()->flexAlign() === RenderBox::ALIGN_CENTER
 );
 
-// ★★ 合成初值落到盒上；但**绝不能**顺手写 `setFlexIntent()` —— 那会清掉
-//   `RenderFlexible` 在构造器里写好的份额（`Expanded` 全部失效、且不报错）。
-//   接上 flexIntent 的时机是 M2-5（`RenderFlexible` 删掉之后）。
-$flexKeep = new RenderFlexible(2);
+// ★★ 合成初值落到盒上。
+$flexKeep = new RenderProxy();
 $flexKeep->setMods((new Modifier())->withOpacity(0.25));
 check('Modifier · setMods 把合成初值落到盒上', $flexKeep->composeOpacity() === 0.25);
+
+// ★★ M2-1 时这条是**反向**的（"setMods 不能清掉 `RenderFlexible` 的份额"）——
+//   那时份额住在 `RenderFlexible` 的构造器里，按 mods 默认值再写一次会清零、
+//   `Expanded` 全失效且不报错。M2-4 删掉那个类之后，`mods.grow` 成了份额的
+//   **唯一**来源 ⇒ 断言反转：`setMods()` 必须把份额写到盒上。
+$flexKeep->setMods((new Modifier())->withGrow(2)->withShrink(1)->withBasis(40.0)->withAlign(RenderBox::ALIGN_CENTER));
 check(
-    'Modifier · setMods 不清掉 RenderFlexible 的份额（M2-1 硬约束）',
-    $flexKeep->grow() === 2
+    'Modifier · setMods 把 mods 的弹性意图写到盒上（M2-4 起份额只有一个来源）',
+    $flexKeep->grow() === 2 && $flexKeep->shrink() === 1
+        && $flexKeep->basis() === 40.0 && $flexKeep->alignSelf() === RenderBox::ALIGN_CENTER,
+    sprintf('grow=%d shrink=%d basis=%.1f align=%d', $flexKeep->grow(), $flexKeep->shrink(), $flexKeep->basis(), $flexKeep->alignSelf())
+);
+$flexKeep->setMods(new Modifier());
+check(
+    'Modifier · mods 里没有份额 ⇒ 盒上的份额归零（没有第二个来源可以"留着"）',
+    $flexKeep->grow() === 0 && \is_nan($flexKeep->basis())
 );
 
 $plainBox = BoxStyle::none()->withBackground(Color::white());
@@ -3253,7 +3277,7 @@ $elasticSpy = new ConstraintSpy(new Size(40.0, 30.0));
 $plainSpy = new ConstraintSpy(new Size(40.0, 10.0));
 $c4Column = new RenderFlex(true, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Clip);
 $c4Column->addChild($plainSpy);
-$c4Column->addChild(new RenderFlexible(1));
+$c4Column->addChild(flexProxy(1));
 $c4Column->children()[1]->setChild($elasticSpy);
 $c4Column->layout(new BoxConstraints(0.0, 100.0, 0.0, 60.0));
 check(
@@ -3274,8 +3298,8 @@ check(
 
 // flex 分配：1 : 2 分 60 的可用高（两个自然高 0）
 $flexA = new RenderFlex(true, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Clip);
-$flexA->addChild(new RenderFlexible(1));
-$flexA->addChild(new RenderFlexible(2));
+$flexA->addChild(flexProxy(1));
+$flexA->addChild(flexProxy(2));
 $flexA->layout(BoxConstraints::tight(new Size(100.0, 60.0)));
 $flexA->visitChildren(function (RenderBox $kid) use (&$got): void {
 });
@@ -3584,7 +3608,7 @@ check(
 $centerRoot = Center::make()->child(Spacer::make())->createElement();
 $centerRoot->mount(null, $context);
 $centerBox = $centerRoot->renderObject();
-check('结构控件 · Center 建出 RenderCenter', $centerBox instanceof RenderCenter);
+check('结构控件 · Center 建出 RenderProxy（居中走 mods）', $centerBox instanceof RenderProxy && $centerBox->mods()->hasCenter());
 $centerBox?->layout(BoxConstraints::loose(new Size(100.0, 100.0)));
 $centerKid = null;
 $centerBox?->visitChildren(function (RenderBox $kid) use (&$centerKid): void {
@@ -5479,7 +5503,7 @@ check(
     Text::make('x')->cursor(CursorShape::IBeam)->cursorShape() === CursorShape::IBeam,
 );
 
-// ★ 用 tight 约束：`RenderCenter` 是**贴身**的（size = 孩子 size），loose 下盒只有
+// ★ 用 tight 约束：`Center` 的盒是**贴身**的（size = 孩子 size），loose 下盒只有
 //   文字那么大 ⇒ 命中点得算字体度量。tight 下盒铺满，命中点取 (10,10) 即可，
 //   与度量无关（§20 纪律 1：断言不该依赖它不打算测的东西）。
 $curContext = smokeContext();
@@ -6695,7 +6719,8 @@ $modalBareEl->mount(null, $context);
 $modalBareBox = $modalBareEl->effectiveBox();
 $modalBareCenter = false;
 $modalBareBox?->visitChildren(function (RenderBox $child) use (&$modalBareCenter): void {
-    $modalBareCenter = $child instanceof RenderCenter;
+    $mods = $child->mods();
+    $modalBareCenter = $child instanceof RenderProxy && $mods !== null && $mods->hasCenter();
 });
 check(
     'Modal · build = ModalHost → Center → PopupPanel（居中靠组合，不是盒里的开关）',

@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace Drift\Widget;
 
 use Drift\Layout\RenderBox;
-use Drift\Layout\RenderFlexible;
+use Drift\Layout\RenderProxy;
 
 /**
  * 占位弹性项：`Expanded` 的"没有孩子"形态。
@@ -16,32 +16,30 @@ use Drift\Layout\RenderFlexible;
  */
 final class Spacer extends RenderBoxWidget
 {
-    private int $share = 1;
-
     public function __construct()
     {
         parent::__construct();
+        $this->grow(1);
     }
 
     public static function make(int $flex = 1): self
     {
-        $self = new self();
-        $self->share = $flex;
-
-        return $self;
+        return (new self())->flex($flex);
     }
 
+    /** 份额（与 `Expanded` 同一条路：只有 `mods.grow` 一个住处） */
     public function flex(int $share): static
     {
-        $this->mutate();
-        $this->share = $share;
+        if ($share < 1) {
+            \Drift\Errors::report(\sprintf('flex 份额必须 ≥ 1，收到 %d', $share));
+        }
 
-        return $this;
+        return $this->grow($share);
     }
 
     public function createRenderObject(BuildContext $context): RenderBox
     {
-        return new RenderFlexible($this->share);
+        return new RenderProxy();
     }
 
     #[\Override]

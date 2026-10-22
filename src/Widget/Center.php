@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace Drift\Widget;
 
 use Drift\Layout\RenderBox;
-use Drift\Layout\RenderCenter;
+use Drift\Layout\RenderProxy;
 
 /**
  * 把唯一的孩子摆在容器正中。
@@ -22,6 +22,10 @@ final class Center extends RenderBoxWidget
     public function __construct()
     {
         parent::__construct();
+
+        // ★ 居中是**字段**（`mods.center`），不是盒子里的开关 —— `RenderCenter`
+        //   在 M2-4 删除，由 `RenderBox::layout()` 的 ③（松下界）与 ⑦（算偏移）施加。
+        $this->centerContent();
     }
 
     public static function make(?Widget $kid = null): self
@@ -49,7 +53,7 @@ final class Center extends RenderBoxWidget
 
     public function createRenderObject(BuildContext $context): RenderBox
     {
-        return new RenderCenter();
+        return new RenderProxy();
     }
 
     #[\Override]

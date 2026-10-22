@@ -54,7 +54,11 @@ final class RenderMenuItem extends RenderProxyBox
         $row->addChild(new RenderText($label, TextStyle::of($fontSize), $labelColor, $metrics));
 
         if ($chord !== null) {
-            $row->addChild(new RenderFlexible(1));
+            // 份额 1 的纯转发盒（`RenderFlexible` 在 M2-4 删除）。它不经 Element
+            // ⇒ 没有 `setMods()` 这一步，直接写盒上的意图字段。
+            $gap = new RenderProxy();
+            $gap->setFlexIntent(1, 0, \NAN, RenderBox::ALIGN_INHERIT);
+            $row->addChild($gap);
             $row->addChild(new RenderText($chord, TextStyle::of($fontSize), $chordColor, $metrics));
         }
 

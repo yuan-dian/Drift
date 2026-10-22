@@ -50,23 +50,24 @@ abstract class RenderBox extends RenderObject
     /**
      * 收下 Widget 的修饰声明（`Element::syncBox()` 唯一调用点）。
      *
-     * ★★ **M2-1 阶段只存引用 + 初始化合成参数，绝不碰 `setFlexIntent()`**：
-     *   `Expanded` / `Flexible` 此刻仍然产 `RenderFlexible`，它的份额是在
-     *   **构造器里** `setFlexIntent()` 写进去的；这里若按 `mods` 的默认值
-     *   （`grow = 0`）再写一次，会把份额清零 ⇒ `Expanded` 全部失效、且不报错。
-     *   接上 `setFlexIntent()` 的时机是 M2-5（`RenderFlexible` 删掉之后）。
-     *
-     * ★ `padding` / `tighten` / `paintBehind` 的消费在 M2-2 / M2-3，同样不在本步。
+     * 三件事，都是"把声明落到盒的字段上"：
+     * ① 存引用（布局 / 绘制期读它）
+     * ② 合成维**初值** —— 此后动画走 `setCompose()` 直接写盒，rebuild 后回到
+     *    这里声明的值（`05` §10 #9）
+     * ③ **弹性意图**（M2-4 起）—— `RenderFlexible` 已删，`mods.grow` 是份额的
+     *    唯一来源。★ M2-1 时这一步必须缺席（那时份额还住在 `RenderFlexible` 的
+     *    构造器里，按 mods 默认值再写一次会清零、`Expanded` 全失效且不报错）；
+     *    `RenderFlexible` 删掉之后才轮到它。
      */
     public function setMods(Modifier $mods): void
     {
         $this->mods = $mods;
 
-        // 合成维是**初值**：读一次去初始化盒上的动画量，此后动画走
-        // `setCompose()` 直接写盒（rebuild 后回到这里声明的值 —— `05` §10 #9）。
         $this->composeOpacity = $mods->composeOpacity();
         $this->composeDx = $mods->composeDx();
         $this->composeDy = $mods->composeDy();
+
+        $this->setFlexIntent($mods->flexGrow(), $mods->flexShrink(), $mods->flexBasis(), $mods->flexAlign());
     }
 
     /** `null` = 这个盒没有修饰（直接 `new` 出来的测试盒 / 未挂载） */
@@ -113,8 +114,8 @@ abstract class RenderBox extends RenderObject
 
     // ── 主轴弹性意图（§13.1 C4 扩展；`04` §2）──────────────────────
     // ★ 住 `RenderBox` 而不是"一个代理盒"：`RenderFlex` 本来就读 `$kid->flex()`，
-    //   四个意图放同一层 ⇒ `02` §7 把 `Expanded`/`Flexible` 改成 shim 之后，
-    //   代理盒（`RenderFlexible`）就没有存在理由了。
+    //   四个意图放同一层 ⇒ `Expanded` / `Spacer` 的份额改由 `mods.grow` 声明之后，
+    //   代理盒（`RenderFlexible`，M2-4 已删）就没有存在理由了。
     // ★ **NAN = 未设**：`basis` 的"未设"（用自然尺寸）与"设为 0"必须是两件事，
     //   同 `02` §3.2 的 `width` 判据。
     private int $grow = 0;        // 0 = 不参与放大
@@ -305,10 +306,25 @@ abstract class RenderBox extends RenderObject
         // ★ padding **不**进子盒偏移 —— 子盒坐标就住内容盒，换算交给 `paint()` 的
         //   `translate()` 与 `hitTest()`/`absoluteOrigin()` 的 `contentOriginX/Y()`
         //   （`02` §4.1.1）。进一次就与绘制重复平移，且不报错。
+        //
+        // ★★ **居中偏移按"可用空间"算，不是按"盒尺寸"**（`02` §11.9）：这条是
+        //   逐字复刻 `RenderCenter` 的口径（`$constraints->maxWidth − 孩子`），为的是
+        //   M2-4 删掉那个类时**零行为变化**。它有一个已知缺陷 —— 父给**松**约束时
+        //   盒尺寸 = 孩子尺寸，偏移却按上限算 ⇒ 孩子被推到盒**外**（画面"看起来居中"，
+        //   但盒比孩子小）。改成"盒先撑满上限再居中"（Flutter `Align` 的语义）会让
+        //   `Row`/`Column` 里的 `Center` 交叉轴突然拉满，属于**布局语义变更**，
+        //   归 W6 与 `Stack`/`Align` 一起裁决。
         if ($centered) {
-            // 剩余空间 = 盒尺寸 − 内容尺寸（pad 在两边各出现一次，抵消）
-            $dx = \max(0.0, ($this->size->width - $measured->width) / 2.0);
-            $dy = \max(0.0, ($this->size->height - $measured->height) / 2.0);
+            $innerMaxW = $inner->maxWidth;
+            $innerMaxH = $inner->maxHeight;
+            $dx = 0.0;
+            $dy = 0.0;
+            if ($inner->hasBoundedWidth()) {
+                $dx = \max(0.0, ($innerMaxW - $measured->width) / 2.0);
+            }
+            if ($inner->hasBoundedHeight()) {
+                $dy = \max(0.0, ($innerMaxH - $measured->height) / 2.0);
+            }
 
             $this->visitChildren(function (RenderObject $child) use ($dx, $dy): void {
                 if ($child instanceof RenderBox) {
@@ -407,7 +423,7 @@ abstract class RenderBox extends RenderObject
     public const ALIGN_STRETCH = 4;
 
     /**
-     * 一次性写四个弹性意图（`Modifier` / `RenderFlexible` 的落点）。
+     * 一次性写四个弹性意图（`Modifier` 的落点；`Element::syncBox()` 唯一调用点）。
      *
      * ★ 为什么是一个 setter 而不是四个：调用点（`Element::syncBox()`）只有一处，
      *   四个 setter = 四次方法调用 + 四次"漏调一个"的机会。
