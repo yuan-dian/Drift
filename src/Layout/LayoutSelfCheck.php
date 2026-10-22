@@ -94,41 +94,45 @@ final class LayoutSelfCheck
         }
 
         self::$frames++;
-        if (self::$frames % self::SAMPLE_EVERY !== 0) {
-            return;
-        }
 
-        $before = self::snapshot($root);
+        if (self::$frames % self::SAMPLE_EVERY === 0) {
+            $before = self::snapshot($root);
 
-        try {
-            // ★ 用**同一约束**再排一次。若 `performLayout()` 纯，这一步什么都不改变。
-            $root->layout($constraints);
-        } finally {
-            // ★ `04` §10 #14：自校验时 `layout()` 抛异常 ⇒ 计数器照常推进，
-            //   异常**不吞**（吞了就是"窗口冻结在上一帧且不报错"）。
-            $after = self::snapshot($root);
-            self::$checks++;
+            try {
+                // ★ 用**同一约束**再排一次。若 `performLayout()` 纯，这一步什么都不改变。
+                $root->layout($constraints);
+            } finally {
+                // ★ `04` §10 #14：自校验时 `layout()` 抛异常 ⇒ 计数器照常推进，
+                //   异常**不吞**（吞了就是"窗口冻结在上一帧且不报错"）。
+                $after = self::snapshot($root);
+                self::$checks++;
 
-            if ($before !== $after) {
-                self::$mismatches++;
-                $diff = self::firstDiff($before, $after);
-                self::$recent[] = $diff;
-                if (count(self::$recent) > 8) {
-                    self::$recent = array_slice(self::$recent, -8);
+                if ($before !== $after) {
+                    self::$mismatches++;
+                    $diff = self::firstDiff($before, $after);
+                    self::$recent[] = $diff;
+                    if (count(self::$recent) > 8) {
+                        self::$recent = array_slice(self::$recent, -8);
+                    }
+                    Errors::report(sprintf(
+                        '布局不是纯函数：%s 用同一约束连排两次，结果不同（%s）。'
+                            . "\n" . '修法：performLayout() 里只读约束与子树，'
+                            . '不读 $this->size / $this->offsetX 等上一帧留下的值。',
+                        $diff['class'],
+                        $diff['field'],
+                    ), Errors::DIAGNOSTIC);
                 }
-                Errors::report(sprintf(
-                    '布局不是纯函数：%s 用同一约束连排两次，结果不同（%s）。'
-                        . "\n" . '修法：performLayout() 里只读约束与子树，'
-                        . '不读 $this->size / $this->offsetX 等上一帧留下的值。',
-                    $diff['class'],
-                    $diff['field'],
-                ), Errors::DIAGNOSTIC);
-            }
 
-            // ★ 每次采样完都刷：哪怕一帧都没采样到，`boot()` 也已经落了一份
-            //   `checks 0` —— "没有文件"与"跑过且干净"在外面必须分得开。
-            self::writeReport();
+            }
         }
+
+        // ★ **每帧都刷，不只采样帧**：报告里的 `frames` 要表达"当前跑到第几帧"。
+        //   只在采样帧刷（我第一版就是这么写的）会让它比真实帧数少 0–15 ——
+        //   真机上看着像"丢帧"，实际只是报告没跟上（`143 vs 128`，128 = 8×16）。
+        //   代价是一次 ~200 字节的写，dev 开关下可忽略。
+        // ★ 哪怕一帧都没采样到，`boot()` 也已经落了一份 `checks 0` ——
+        //   "没有文件"与"跑过且干净"在外面必须分得开。
+        self::writeReport();
     }
 
     /**
