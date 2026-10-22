@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\State;
 
+use Drift\Core\Versioned;
 use Drift\Errors;
 use Drift\Widget\State;
 
@@ -15,11 +16,17 @@ use Drift\Widget\State;
  * ★ **住在 `State` 里，不住 `Store` 里**。典型场景是高频、可能重复设值的 UI 态
  *   （鼠标在列表行间移动会反复触发同一行的 hover）。
  *
+ * ★ 实现 `Versioned`（`03` §4.4）：`Computed` 靠它判断"依赖变了没有"，
+ *   而 `Computed` 住 `Core` ⇒ 版本号只说"变了没有"，不提 Cell。
+ *
  * @api
  */
-final class Cell
+final class Cell implements Versioned
 {
     private mixed $value;
+
+    /** @internal 版本号：换一次值 +1（`Computed` 的依赖判据） */
+    private int $version = 0;
 
     /** @internal 标脏要靠它；由 `State::cell()` 绑上 */
     private ?State $owner = null;
@@ -53,6 +60,7 @@ final class Cell
         }
 
         $this->value = $value;
+        $this->version++;
 
         $owner = $this->owner;
         if ($owner === null) {
@@ -70,5 +78,11 @@ final class Cell
     public function bindTo(State $owner): void
     {
         $this->owner = $owner;
+    }
+
+    /** @inherit */
+    public function version(): int
+    {
+        return $this->version;
     }
 }

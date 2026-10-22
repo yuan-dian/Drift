@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\State;
 
+use Drift\Core\Versioned;
 use Drift\Errors;
 
 /**
@@ -15,9 +16,12 @@ use Drift\Errors;
  *   意义。要"设同值不重建" ⇒ 那个值用 `Cell` 装（§11.3.1）；**不要**为了门控把
  *   `Store` 的每个字段都换成 `Cell` —— 那会让业务层依赖 State 层类型。
  *
+ * ★ 实现 `Versioned`（`03` §4.4）：`Computed` 靠它判断"依赖变了没有"，
+ *   而 `Computed` 住 `Core` ⇒ 版本号只说"变了没有"，不提 Subject。
+ *
  * @api
  */
-abstract class Subject
+abstract class Subject implements Versioned
 {
     /**
      * @var array<int, array{int, string, callable(): void}> 订阅者；键 = 自增 id
@@ -26,6 +30,9 @@ abstract class Subject
     private array $subscribers = [];
 
     private int $nextId = 1;
+
+    /** @internal 版本号：广播一次 +1（`Computed` 的依赖判据） */
+    private int $version = 0;
 
     /**
      * 广播"我的数据变了"（§11.3.1）。业务代码改完数据**手动调一次**。
@@ -36,6 +43,8 @@ abstract class Subject
      */
     public function notifyChanged(): void
     {
+        $this->version++;        // 先推版本：回调里读到的就是新版本
+
         $failures = [];
 
         foreach ($this->subscribers as $entry) {
@@ -82,5 +91,11 @@ abstract class Subject
     public function unsubscribeId(int $id): void
     {
         unset($this->subscribers[$id]);
+    }
+
+    /** @inherit */
+    public function version(): int
+    {
+        return $this->version;
     }
 }

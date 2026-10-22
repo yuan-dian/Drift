@@ -100,6 +100,8 @@ use Drift\Dev\Smoke\SealProbe;
 use Drift\Dev\Smoke\State\BuildWatchWidget;
 use Drift\Dev\Smoke\State\FakeStore;
 use Drift\Dev\Smoke\State\HoverWidget;
+use Drift\Dev\Smoke\State\VersionProbe;
+use Drift\Core\Computed;
 use Drift\Dev\Smoke\Tree\BranchWidget;
 use Drift\Dev\Smoke\Tree\CounterState;
 use Drift\Dev\Smoke\Tree\CounterWidget;
@@ -296,6 +298,14 @@ if (str_starts_with($caseArg, '--case=')) {
     if ($case === 'cellunbound') {
         // 绕过 State::cell() 直接 new ⇒ 没有 Owner ⇒ 标不了脏 ⇒ 静默。G2：现在就炸。
         (new Cell(1))->setIfChanged(2);
+    }
+
+    if ($case === 'computedcycle') {
+        // 求值期间又触发自己的求值 ⇒ 闭包不纯。E-COMPUTED-CYCLE。
+        $self = new Computed(static function () use (&$self): int {
+            return $self->get() + 1; // phpcs:ignore
+        }, []);
+        $self->get();
     }
 
     if ($case === 'routedup') {
@@ -4570,7 +4580,63 @@ $hoverState->onRowHover(3);
 check('State · Cell 换新值 ⇒ 再标脏', $hoverState->needsBuild(), '换值没标脏');
 $hoverElement->unmount();
 
-// ⑤ RT-3：一个订阅者抛异常，不妨碍其余订阅者收到通知
+// ⑤ Computed：无脏不重算 / 依赖变重算 / 嵌套求值（`03` §4，W2/S1）
+$vprobe = new VersionProbe(3);
+$computedRuns = 0;
+$computed = new Computed(static function () use (&$computedRuns, $vprobe): int {
+    $computedRuns++;
+
+    return $vprobe->value() * 2;
+}, [$vprobe]);
+check(
+    'Computed · 首次 get ⇒ 求值一次',
+    $computed->get() === 6 && $computedRuns === 1,
+    'runs=' . $computedRuns
+);
+check(
+    'Computed · 无脏不重算（两次 get 之间不改依赖 ⇒ 闭包只跑一次）',
+    $computed->get() === 6 && $computedRuns === 1,
+    'runs=' . $computedRuns
+);
+check('Computed · 版本号没变就不变', $computed->version() === 1, 'version=' . $computed->version());
+
+$vprobe->bump(); // 版本 +1、值不动 ⇒ 必须重算
+check(
+    'Computed · 依赖版本变 ⇒ 重算（闭包跑第二次）',
+    $computed->get() === 6 && $computedRuns === 2,
+    'runs=' . $computedRuns
+);
+check('Computed · 求值成功自己也进一版（可嵌套）', $computed->version() === 2, 'version=' . $computed->version());
+
+// 嵌套：A 依赖 B，B 依赖 C；改 C ⇒ 一次 A.get() 把链算完
+// ★ 这条抓的是一个真会静默的坑：A 的版本和用的是 B.version()，而 B 不重算就不进
+//   版本 ⇒ 若不先刷新下游，A 永远拿缓存（03 原稿的形状就是这样，靠这条夹具才发现）
+$cProbe = new VersionProbe(1);
+$bRuns = 0;
+$computedB = new Computed(static function () use (&$bRuns, $cProbe): int {
+    $bRuns++;
+
+    return $cProbe->value() + 10;
+}, [$cProbe]);
+$aRuns = 0;
+$computedA = new Computed(static function () use (&$aRuns, $computedB): int {
+    $aRuns++;
+
+    return $computedB->get() * 2;
+}, [$computedB]);
+check(
+    'Computed · 嵌套首次求值（A→B→C 一次算完）',
+    $computedA->get() === 22 && $aRuns === 1 && $bRuns === 1,
+    'a=' . var_export($computedA->get(), true) . ' aRuns=' . $aRuns . ' bRuns=' . $bRuns
+);
+$cProbe->bump();
+check(
+    'Computed · 改最底层依赖 ⇒ 一次 A.get() 把整条链算完',
+    $computedA->get() === 22 && $aRuns === 2 && $bRuns === 2,
+    'aRuns=' . $aRuns . ' bRuns=' . $bRuns
+);
+
+// ⑥ RT-3：一个订阅者抛异常，不妨碍其余订阅者收到通知
 $debugWas = Errors::isDebug();
 Errors::setDebug(false); // Recoverable 在 debug 会中止，先关掉才测得着"隔离"
 try {
@@ -4606,11 +4672,16 @@ try {
     Errors::setDebug($debugWas);
 }
 
-// ⑥ 两条守卫都跑在子进程里（会 exit(3)）
+// ⑦ 守卫跑在子进程里（会 exit(3)）
 fresh($log);
 [$code, $output] = runCase(__FILE__, 'watchbuild', null);
 check('State · build 期订阅 ⇒ Fatal（A4 运行期守卫）', $code === 3, '实际 ' . $code . ' / ' . $output);
 check('State · build 期订阅写了 Errors.log', str_contains(logText($log), 'initState'));
+
+fresh($log);
+[$code, $output] = runCase(__FILE__, 'computedcycle', null);
+check('Computed · 自引用 ⇒ Fatal（E-COMPUTED-CYCLE）', $code === 3, '实际 ' . $code . ' / ' . $output);
+check('Computed · 自引用写了 Errors.log', str_contains(logText($log), 'E-COMPUTED-CYCLE'));
 
 fresh($log);
 [$code, $output] = runCase(__FILE__, 'cellunbound', null);
