@@ -3459,6 +3459,57 @@ check(
     sprintf('实际 %.1f / %.1f', $mixA->size()?->width ?? -1.0, $mixB->size()?->width ?? -1.0)
 );
 
+// ── ⑮c alignSelf 覆盖容器（W6 L4-3，`04` §2.4）──
+// ★ 四条一起才有意义：单测"END 靠右"会漏掉"STRETCH 只改偏移、尺寸没拉满"
+//   （那是最典型的"看起来实现了"）。
+
+// 父 `Center`、子 `alignSelf(END)` ⇒ 子贴交叉轴末端
+$selfEnd = new SolidBox(new Size(30.0, 10.0), 30.0, 10.0);
+$selfEnd->setFlexIntent(0, 0, \NAN, RenderBox::ALIGN_END);
+$selfEndRow = new RenderFlex(false, 0.0, new EdgeInsets(), FlexAlign::Center, Overflow::Clip);
+$selfEndRow->addChild($selfEnd);
+$selfEndRow->layout(BoxConstraints::tight(new Size(100.0, 40.0)));
+check(
+    'Layout · alignSelf(END) 覆盖父的 Center ⇒ 子贴交叉轴末端（40−10=30）',
+    $selfEnd->offsetY() === 30.0,
+    '实际 ' . (string) $selfEnd->offsetY()
+);
+
+// 父 `Start`、子 `alignSelf(CENTER)` ⇒ 居中
+$selfCenter = new SolidBox(new Size(30.0, 10.0), 30.0, 10.0);
+$selfCenter->setFlexIntent(0, 0, \NAN, RenderBox::ALIGN_CENTER);
+$selfCenterRow = new RenderFlex(false, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Clip);
+$selfCenterRow->addChild($selfCenter);
+$selfCenterRow->layout(BoxConstraints::tight(new Size(100.0, 40.0)));
+check(
+    'Layout · alignSelf(CENTER) 在 Start 容器里居中（(40−10)/2=15）',
+    $selfCenter->offsetY() === 15.0,
+    '实际 ' . (string) $selfCenter->offsetY()
+);
+
+// 子 `alignSelf(STRETCH)` ⇒ **尺寸**拉满交叉轴（不是只把偏移算成 0）
+$selfStretch = new SolidBox(new Size(30.0, 10.0), 30.0, 10.0);
+$selfStretch->setFlexIntent(0, 0, \NAN, RenderBox::ALIGN_STRETCH);
+$selfStretchRow = new RenderFlex(false, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Clip);
+$selfStretchRow->addChild($selfStretch);
+$selfStretchRow->layout(BoxConstraints::tight(new Size(100.0, 40.0)));
+check(
+    'Layout · alignSelf(STRETCH) 真的拉满交叉轴（子高 10 ⇒ 40，不是只改偏移）',
+    $selfStretch->size()?->height === 40.0 && $selfStretch->offsetY() === 0.0,
+    sprintf('实际高 %.1f，偏移 %.1f', $selfStretch->size()?->height ?? -1.0, $selfStretch->offsetY())
+);
+
+// 未设（ALIGN_INHERIT）⇒ 跟容器（End 容器 + 未设子 ⇒ 靠右）
+$inheritKid = new SolidBox(new Size(30.0, 10.0), 30.0, 10.0);
+$inheritRow = new RenderFlex(false, 0.0, new EdgeInsets(), FlexAlign::End, Overflow::Clip);
+$inheritRow->addChild($inheritKid);
+$inheritRow->layout(BoxConstraints::tight(new Size(100.0, 40.0)));
+check(
+    'Layout · 未设 alignSelf ⇒ 跟容器的 crossAlign（End 容器 ⇒ 30）',
+    $inheritKid->offsetY() === 30.0,
+    '实际 ' . (string) $inheritKid->offsetY()
+);
+
 // 单子代理：RenderProxy + mods 内距（W5：padding 是**字段**，不是节点）
 $inner = new SolidBox(new Size(10.0, 6.0), 10.0, 6.0);
 $padBox = new RenderProxy();

@@ -208,7 +208,7 @@ class RenderFlex extends RenderBox
                     continue;
                 }
                 $share = $space * $flex / $totalFlex;
-                $tight = $this->tightMain($inner, $share);
+                $tight = $this->tightMain($inner, $share, $kid);
                 // 第一遍被跳过的弹性子在这里第一次也是唯一一次量 ⇒ `$mains` 占位回填
                 $kid->layout($tight);
                 $mains[$index] = $vertical ? $kid->size()->height : $kid->size()->width;
@@ -409,11 +409,40 @@ class RenderFlex extends RenderBox
         /** @var list<float> $final */
         $final = [];
         foreach ($this->kids as $index => $kid) {
-            $kid->layout($this->tightMain($inner, $sizes[$index]));
+            $kid->layout($this->tightMain($inner, $sizes[$index], $kid));
             $final[$index] = $this->vertical ? $kid->size()->height : $kid->size()->width;
         }
 
         return $final;
+    }
+
+    /**
+     * 解析某个子的交叉轴对齐：`alignSelf` 声明了就用它，否则跟容器的 `crossAlign`。
+     *
+     * ★ **`int` 哨兵而不是 enum**（`04` §2.4）：`alignSelf` 要表达"未设"
+     *   （`ALIGN_INHERIT`），而 enum 没有"未设"这个 case —— 加一个 `Inherit` case
+     *   会让 `placeChildren()` 的 `match` 多一条"不该走到"的分支。
+     *
+     * ★ **三处都要用它**（约束 / 紧主轴 / 定位）：只在 `placeChildren()` 里解析的话，
+     *   `ALIGN_STRETCH` 会变成"偏移算成 0、尺寸却没拉满"—— 一个看起来实现了、
+     *   实际没生效的分支（G2）。
+     *
+     * ★ `default` 兜 `ALIGN_START` 与任何非法值：非法值可能从 `setFlexIntent()`
+     *   直接写进来（绕过 `Widget::alignSelf()`），退化为 `Start` 与"未设"同义。
+     */
+    private function resolveAlign(RenderBox $kid): FlexAlign
+    {
+        $self = $kid->alignSelf();
+        if ($self === RenderBox::ALIGN_INHERIT) {
+            return $this->crossAlign;
+        }
+
+        return match ($self) {
+            RenderBox::ALIGN_CENTER  => FlexAlign::Center,
+            RenderBox::ALIGN_END     => FlexAlign::End,
+            RenderBox::ALIGN_STRETCH => FlexAlign::Stretch,
+            default                  => FlexAlign::Start,
+        };
     }
 
     /**
@@ -423,7 +452,9 @@ class RenderFlex extends RenderBox
     private function childConstraints(RenderBox $kid, float $mainMax, float $crossMax): BoxConstraints
     {
         $crossBounded = !is_infinite($crossMax);
-        $stretch = $this->crossAlign === FlexAlign::Stretch && $crossBounded;
+        // ★ 按**子**解析，不是按容器：`alignSelf(STRETCH)` 要能单独拉满某一个子
+        //   （`04` §2.4）。默认 `ALIGN_INHERIT` ⇒ 与容器一致 ⇒ 零行为变化。
+        $stretch = $this->resolveAlign($kid) === FlexAlign::Stretch && $crossBounded;
 
         // ★ **`Stretch` 拉的是交叉轴，不是主轴**（2026-10-17 修正）：
         //   `Column` ⇒ 宽拉满、高自然；`Row` ⇒ 高拉满、宽自然。
@@ -445,9 +476,11 @@ class RenderFlex extends RenderBox
     }
 
     /** 主轴紧约束（flex 分配结果） */
-    private function tightMain(BoxConstraints $inner, float $main): BoxConstraints
+    private function tightMain(BoxConstraints $inner, float $main, RenderBox $kid): BoxConstraints
     {
         $share = max(0.0, $main);
+        // ★ 弹性子也要能被 `alignSelf(STRETCH)` 单独拉满交叉轴 ⇒ 按子解析
+        $stretch = $this->resolveAlign($kid) === FlexAlign::Stretch;
 
         // ★ **AOT 类型推断**：三元的分支里直接放**属性读取**（`$inner->maxWidth`）会被
         //   推成 `php::Variant`，而 `BoxConstraints` 的形参是 `float` ⇒ `C2440`。
@@ -456,7 +489,7 @@ class RenderFlex extends RenderBox
         //     而 `apps/hello`（Column/Row/Text）走不到带 `Stretch` 的这条分支。
         $crossMain = 0.0;
         if ($this->vertical
-            && $this->crossAlign === FlexAlign::Stretch
+            && $stretch
             && $inner->hasBoundedWidth()) {
             $crossMain = $inner->maxWidth;
         }
@@ -465,7 +498,7 @@ class RenderFlex extends RenderBox
         //   非弹性子被拉满、弹性子不被拉满，视觉上高度参差）。
         $crossCross = 0.0;
         if (!$this->vertical
-            && $this->crossAlign === FlexAlign::Stretch
+            && $stretch
             && $inner->hasBoundedHeight()) {
             $crossCross = $inner->maxHeight;
         }
@@ -494,7 +527,9 @@ class RenderFlex extends RenderBox
 
         foreach ($this->kids as $index => $kid) {
             $cross = $this->vertical ? $kid->size()->width : $kid->size()->height;
-            $offset = match ($this->crossAlign) {
+            // ★ `alignSelf` 覆盖容器的 `crossAlign`（`04` §2.4）
+            $align = $this->resolveAlign($kid);
+            $offset = match ($align) {
                 FlexAlign::Center  => max(0.0, ($crossMax - $cross) / 2.0),
                 FlexAlign::End     => max(0.0, $crossMax - $cross),
                 FlexAlign::Stretch => 0.0,
