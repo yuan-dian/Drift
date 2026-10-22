@@ -18,8 +18,8 @@ use Drift\Errors;
  * | 层 | op | 所有后端 | RasterCanvas | SkiaCanvas |
  * |---|---|---|---|---|
  * | Core | ELLIPSE / LINE | **必须实现**（缺一个就是缺陷） | 必须（golden 用它） | 必须 |
- * | Extended | GRADIENT / DASH / CLIP_PATH | Skia 级必须 | **可降级近似**（渐变→分带、虚线→实线） | 必须 |
- * | Optional | PATH / IMAGE / SHADOW / LAYER | 仅 Skia 级 | **报 E-OP-UNSUPPORTED** | 必须 |
+ * | Extended | GRADIENT / DASH / CLIP_PATH / PATH | Skia 级必须 | **可降级近似**（渐变→分带、虚线→实线；路径硬边无抗锯齿且只做 Miter+Butt；路径裁剪 = 每行 x 区间掩码） | 必须 |
+ * | Optional | IMAGE / SHADOW / LAYER | 仅 Skia 级 | **报 E-OP-UNSUPPORTED** | 必须 |
  *
  * **位置位 = "该后端能处理这个 op"**（Extended 的近似也算处理 —— 输出质量
  * 档位见各后端方法注释与 `BACKPORT-19OP.md` §5 的 R2 取舍；金色基线只用

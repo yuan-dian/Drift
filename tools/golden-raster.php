@@ -274,6 +274,73 @@ $scenes['path'] = static function () use ($W, $H): string {
     return $c->toRgba();
 };
 
+// W1/L3-2：路径裁剪（每行 x 区间掩码）。三个子图分别钉住
+// ① 单个圆裁剪（四角留白）② 嵌套求交（透镜）③ 裁剪内的文字（与 Skia 同口径）
+$scenes['clipcircle'] = static function () use ($W, $H): string {
+    $c = new RasterCanvas($W, $H, Color::white(), null);
+
+    // ① 64 边形近似圆 r=60 居中；裁剪内画一个渐变横条 ⇒ 只有圆内有色
+    $ring = Path::create();
+    for ($i = 0; $i < 64; $i++) {
+        $ang = $i * 2.0 * M_PI / 64.0;
+        $x = 160.0 + 60.0 * cos($ang);
+        $y = 120.0 + 60.0 * sin($ang);
+        if ($i === 0) {
+            $ring->moveTo($x, $y);
+        } else {
+            $ring->lineTo($x, $y);
+        }
+    }
+    $ring->close();
+    $c->pushClipPath($ring);
+    $c->drawRect(
+        new Rect(100.0, 100.0, 120.0, 40.0),
+        Paint::fill(Color::fromRgb(30, 90, 200))
+    );
+    $c->popClip();
+
+    // ② 嵌套：两个 r=60、圆心距 60 的圆求交 ⇒ 透镜；裁剪内画实心矩形
+    $nestA = Path::create();
+    $nestB = Path::create();
+    for ($i = 0; $i < 64; $i++) {
+        $ang = $i * 2.0 * M_PI / 64.0;
+        if ($i === 0) {
+            $nestA->moveTo(400.0 + 60.0 * cos($ang), 120.0 + 60.0 * sin($ang));
+            $nestB->moveTo(460.0 + 60.0 * cos($ang), 120.0 + 60.0 * sin($ang));
+        } else {
+            $nestA->lineTo(400.0 + 60.0 * cos($ang), 120.0 + 60.0 * sin($ang));
+            $nestB->lineTo(460.0 + 60.0 * cos($ang), 120.0 + 60.0 * sin($ang));
+        }
+    }
+    $nestA->close();
+    $nestB->close();
+    $c->pushClipPath($nestA);
+    $c->pushClipPath($nestB);
+    $c->drawRect(
+        new Rect(370.0, 90.0, 120.0, 60.0),
+        Paint::fill(Color::fromRgb(200, 90, 30))
+    );
+    $c->popClip();
+    $c->popClip();
+
+    // ③ 裁剪 + save/translate 叠加：**裁剪路径按压入时刻的偏移量化**（与 Skia
+    //    的 clipPath 同口径），**绘制按当前偏移** ⇒ 两侧分别吃 `05` §1.3 的偏移，
+    //    再求交。压入时 offset=0、绘制时 offset=(40,40) ⇒ 交集是右下 20×20。
+    $c->pushClipPath(
+        Path::create()->addRect(new Rect(600.0, 90.0, 120.0, 60.0))
+    );
+    $c->save();
+    $c->translate(40.0, 40.0);
+    $c->drawRect(
+        new Rect(600.0, 90.0, 120.0, 60.0),
+        Paint::fill(Color::fromRgb(30, 160, 90))
+    );
+    $c->restore();
+    $c->popClip();
+
+    return $c->toRgba();
+};
+
 $out = [];foreach ($scenes as $name => $make) {
     $rgba = $make();
     $out[] = sprintf('%s: len=%d md5=%s', $name, strlen($rgba), md5($rgba));

@@ -99,6 +99,13 @@ final class DisplayList
             $this->saveDepth--;
         } elseif ($op === self::OP_PUSH_CLIP) {
             $this->clipDepth++;
+        } elseif ($op === self::OP_PUSH_CLIP_PATH) {
+            // ★ W1/L3-2 补：`pushClipPath` 与 `pushClip` 共用同一条裁剪栈
+            //   （`Canvas` 接口契约，弹栈都用 `popClip()`）⇒ W8 的 `clipDepth`
+            //   必须同口径计深。漏了这一支时，"`pushClipPath` 后没 `popClip`"
+            //   的 `clipDepth` 仍是 0 ⇒ `assertBalanced()` 抓不到 ⇒ 后续全部
+            //   被裁而无人知晓（`05` §10 #5）。
+            $this->clipDepth++;
         } elseif ($op === self::OP_POP_CLIP) {
             $this->clipDepth--;
         }

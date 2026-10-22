@@ -18,8 +18,9 @@ use Drift\Text\Paragraph;
  * ★ 光栅顺序 = 录制顺序，且只依赖（命令流、裁剪、当前颜色）⇒ 同一份
  *   `DisplayList` 重放必然得到同一张位图（G3）。
  *
- * 覆盖能力：轴对齐矩形（填充 / 描边 / 圆角）、平移、矩形裁剪、source-over 混合、
- * **段落（字形位图按覆盖度混合）**。
+ * 覆盖能力：轴对齐矩形（填充 / 描边 / 圆角）、椭圆、线段、平移、矩形裁剪、
+ * **路径裁剪（每行 x 区间掩码，W1/L3-2）**、路径填充与描边（扫描线 + 奇偶，
+ * W1/L3-1）、source-over 混合、**段落（字形位图按覆盖度混合）**。
  *
  * ★ 逻辑 → 物理只走 `Scale::quantizeRect()`（§6.1 的唯一量化点）。画布本身是
  *   **物理像素**空间，构造尺寸就是像素尺寸。
@@ -37,7 +38,32 @@ final class RasterCanvas implements Canvas
     /** @var list<array{float, float}> 变换栈：只有偏移（裁剪独立成栈，与 SkiaCanvas 同口径） */
     private array $stack = [];
 
-    /** @var list<Rect> 裁剪栈：与变换栈独立（两条栈分别配对，W8 分别计深） */
+    /**
+     * 路径裁剪的行掩码（`05` §4.2）：`list<array{int, int, list<array{int, int}>}>`。
+     *
+     * 每条目 = `[y0, y1, spans]`：像素行 y ∈ [y0, y1) 的可绘区间是 spans
+     * （已量化、已排序、互不相交、已裁到压入那一刻的 clip 与画布）。条目按
+     * y0 升序 ⇒ 查询走二分（`clipRowSpansForRow`）。
+     *
+     * null = 当前没有路径裁剪 ⇒ 走快路直接放行（绝大多数帧如此）。
+     *
+     * ★ 为什么压入时一次算完、不在每次绘制时重算：push 一次 O(行数)，
+     *   之后每像素 O(1) 查表（`05` §4.2 第 ④ 步）。反过来做会把裁剪成本
+     *   按绘制次数反复付。
+     */
+    private ?array $clipRows = null;
+
+    /**
+     * 裁剪栈：与变换栈独立（两条栈分别配对，W8 分别计深）。
+     *
+     * ★ 每条目是 **`[Rect, ?array]` 一对**而不是只有 Rect：`pushClip(Rect)` 与
+     *   `pushClipPath(Path)` 共用同一条栈（`Canvas` 接口契约，弹栈都用
+     *   `popClip()`），两种裁剪任意交错时 `popClip` 必须把两个字段一起恢复。
+     *   只存 Rect 的话，`pushClipPath` 之后的 `popClip` 会把行掩码漏在外面 ——
+     *   表现为"裁剪没弹掉"（后续全被裁），且静默。
+     *
+     * @var list<array{Rect, ?array}>
+     */
     private array $clipStack = [];
 
     /**
@@ -137,7 +163,7 @@ final class RasterCanvas implements Canvas
 
     public function pushClip(Rect $rect): void
     {
-        $this->clipStack[] = $this->clip;
+        $this->clipStack[] = [$this->clip, $this->clipRows];
         $this->clip = $this->clip->intersect($this->toDevice($rect));
     }
 
@@ -147,7 +173,7 @@ final class RasterCanvas implements Canvas
         if ($previous === null) {
             return; // 未配对的 popClip 由 W8 在录制侧拦截，光栅侧静默忽略即可
         }
-        $this->clip = $previous;
+        [$this->clip, $this->clipRows] = $previous;
     }
 
     public function drawRect(Rect $rect, Paint $paint, float $radius = 0.0): void
@@ -227,9 +253,13 @@ final class RasterCanvas implements Canvas
         // ★ Extended 层：Raster 允许降级近似（§7.2 D2 表）—— 渐变做逐像素实渐变
         //   （比"分带"更好），虚线在**线段**上做真虚线、在矩形/椭圆描边上退化为实线。
         //   两种都"产出了像素"，故置位；Skia 端做完整实现。
+        // ★ `CAP_CLIP_PATH` 在 W1/L3-2 真正落地：补了每行 x 区间掩码（`05` §4.2）
+        //   后，Extended 层的缺口从 1 变 0。这一位一直在 Extended 段（`05` §1.1
+        //   第 6 行的"矛盾"：标着 Extended 而 Raster 响亮失败），本步消掉的正是
+        //   那个矛盾。掩码是硬边无抗锯齿的像素区间，与 `CAP_PATH` 同一族取舍。
         return CanvasCapabilities::CAP_ELLIPSE | CanvasCapabilities::CAP_LINE
             | CanvasCapabilities::CAP_GRADIENT | CanvasCapabilities::CAP_DASH
-            | CanvasCapabilities::CAP_PATH;
+            | CanvasCapabilities::CAP_CLIP_PATH | CanvasCapabilities::CAP_PATH;
     }
 
     /**
@@ -610,7 +640,9 @@ final class RasterCanvas implements Canvas
             return;
         }
 
-        [$minY, $maxY] = $this->edgeBounds($edges);
+        $bounds = $this->edgeBounds($edges);
+        $minY = $bounds[1];
+        $maxY = $bounds[3];
         [$ya, $yb] = $this->rowRange($minY, $maxY);
         if ($ya >= $yb) {
             return;
@@ -714,13 +746,27 @@ final class RasterCanvas implements Canvas
 
     /**
      * @param list<array{float, float, float, float}> $edges
-     * @return array{float, float} [minY, maxY]
+     * @return array{float, float, float, float} [minX, minY, maxX, maxY]
      */
     private function edgeBounds(array $edges): array
     {
+        $minX = $edges[0][0];
         $minY = $edges[0][1];
+        $maxX = $edges[0][2];
         $maxY = $edges[0][3];
         foreach ($edges as $e) {
+            if ($e[0] < $minX) {
+                $minX = $e[0];
+            }
+            if ($e[2] < $minX) {
+                $minX = $e[2];
+            }
+            if ($e[0] > $maxX) {
+                $maxX = $e[0];
+            }
+            if ($e[2] > $maxX) {
+                $maxX = $e[2];
+            }
             if ($e[1] < $minY) {
                 $minY = $e[1];
             }
@@ -733,10 +779,9 @@ final class RasterCanvas implements Canvas
             if ($e[3] > $maxY) {
                 $maxY = $e[3];
             }
-
         }
 
-        return [$minY, $maxY];
+        return [$minX, $minY, $maxX, $maxY];
     }
 
     /**
@@ -931,8 +976,12 @@ final class RasterCanvas implements Canvas
             return;
         }
 
-        [$minA, $maxA] = $this->edgeBounds($edgesA);
-        [$minB, $maxB] = $this->edgeBounds($edgesB);
+        $boundsA = $this->edgeBounds($edgesA);
+        $minA = $boundsA[1];
+        $maxA = $boundsA[3];
+        $boundsB = $this->edgeBounds($edgesB);
+        $minB = $boundsB[1];
+        $maxB = $boundsB[3];
         [$ya, $yb] = $this->rowRange(min($minA, $minB), max($maxA, $maxB));
         if ($ya >= $yb) {
             return;
@@ -1040,9 +1089,170 @@ final class RasterCanvas implements Canvas
         $this->unsupportedOp('popLayer', 'Optional');
     }
 
+    /**
+     * 压入路径裁剪（`05` §4）：每行 x 区间掩码。
+     *
+     * 与 `pushClip(Rect)` 的差别只在"裁什么形状"：矩形是 O(1) 粗筛（`$clip`
+     * 求交），路径是 O(行数) 精筛（行掩码；第 ④ 步之后每像素 O(1)）。两者
+     * 叠加 = 求交；弹栈都用 `popClip()`（`Canvas` 接口契约，与 Skia 的
+     * `save/restore` 同形态）。
+     *
+     * ★ 空路径 = 裁剪区为空（后面全被裁），但**仍然压栈**：录制侧无条件录
+     *   `OP_PUSH_CLIP_PATH`（W8 的 `clipDepth` 同口径计深），光栅侧不压栈的
+     *   话 `popClip` 会多弹一层、把外层的裁剪弹掉。
+     */
     public function pushClipPath(Path $path): void
     {
-        $this->unsupportedOp('pushClipPath', 'Extended');
+        $edges = [];
+        foreach ($this->flattenPath($path) as $sub) {
+            foreach ($this->ringEdges($sub[0], $sub[1]) as $e) {
+                $edges[] = $e;
+            }
+        }
+
+        $previousClip = $this->clip;
+        $previousRows = $this->clipRows;
+
+        if ($edges === []) {
+            $this->clipRows = [];
+        } else {
+            $bounds = $this->edgeBounds($edges);
+            // 粗筛：clip 缩到路径包围盒（行掩码随后做精筛）。O(1)，收益是
+            // "路径完全在裁剪区外 ⇒ rowRange 直接空"（`05` §10 #4）。
+            $this->clip = $this->clip->intersect(
+                new Rect($bounds[0], $bounds[1], $bounds[2] - $bounds[0], $bounds[3] - $bounds[1])
+            );
+            $this->clipRows = $this->buildClipRows($edges);
+        }
+
+        $this->clipStack[] = [$previousClip, $previousRows];
+    }
+
+    /**
+     * 压入路径裁剪时构建行掩码（`05` §4.2 第 ② 步）。
+     *
+     * ★ 与**已有的**行掩码按行求交：只把 `$clip` 缩到包围盒是不够的 ——
+     *   "外圆内大矩形"的场景，矩形的包围盒覆盖整个圆 ⇒ 外圆的约束被丢掉。
+     *   嵌套语义（夹具 #6）要求两个裁剪逐行求交。
+     * ★ 连续相同行合并成一个条目：圆/菱形每行 spans 都变、合并省不了多少，
+     *   但"横条裁切"这类上下同形的场景能省一半条目。
+     *
+     * @param list<array{float, float, float, float}> $edges
+     * @return list<array{int, int, list<array{int, int}>}>
+     */
+    private function buildClipRows(array $edges): array
+    {
+        $bounds = $this->edgeBounds($edges);
+        [$ya, $yb] = $this->rowRange($bounds[1], $bounds[3]);
+
+        $rows = [];
+        for ($y = $ya; $y < $yb; $y++) {
+            $spans = $this->rowPixelSpans($edges, $y + 0.5);
+            if ($this->clipRows !== null) {
+                $spans = $this->intersectSpans($spans, $this->clipRowSpansForRow($y));
+            }
+            if ($spans === []) {
+                continue;
+            }
+            $last = count($rows) - 1;
+            if ($last >= 0 && $rows[$last][1] === $y && $rows[$last][2] === $spans) {
+                $rows[$last][1] = $y + 1;
+                continue;
+            }
+            $rows[] = [$y, $y + 1, $spans];
+        }
+
+        return $rows;
+    }
+
+    /**
+     * 两个已排序、互不相交的像素区间表求交（`05` §4.2 的嵌套语义）。
+     *
+     * @param list<array{int, int}> $a
+     * @param list<array{int, int}> $b
+     * @return list<array{int, int}>
+     */
+    private function intersectSpans(array $a, array $b): array
+    {
+        $out = [];
+        $i = 0;
+        $j = 0;
+        $na = count($a);
+        $nb = count($b);
+        while ($i < $na && $j < $nb) {
+            $lo = max($a[$i][0], $b[$j][0]);
+            $hi = min($a[$i][1], $b[$j][1]);
+            if ($lo < $hi) {
+                $out[] = [$lo, $hi];
+            }
+            if ($a[$i][1] <= $b[$j][1]) {
+                $i++;
+            } else {
+                $j++;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * 一行上的路径裁剪区间（像素、左闭右开、已排序不相交）。
+     *
+     * @return ?array null = 没有路径裁剪（整行放行）；[] = 整行被裁
+     */
+    private function clipRowSpansForRow(int $y): ?array
+    {
+        if ($this->clipRows === null) {
+            return null;
+        }
+
+        // 二分：条目按 y0 升序，行 y ∈ [y0, y1)
+        $rows = $this->clipRows;
+        $lo = 0;
+        $hi = count($rows) - 1;
+        while ($lo <= $hi) {
+            $mid = intdiv($lo + $hi, 2);
+            $entry = $rows[$mid];
+            if ($y < $entry[0]) {
+                $hi = $mid - 1;
+            } elseif ($y >= $entry[1]) {
+                $lo = $mid + 1;
+            } else {
+                return $entry[2];
+            }
+        }
+
+        return [];
+    }
+
+    /**
+     * 一行上的可绘区间 [lo, hi) 与路径掩码求交，切成 0..n 个子段。
+     *
+     * 掩码与 Rect clip 是两层独立裁剪：Rect 那层在 `spanToPixels` / `rowRange`
+     * 里，这一层在像素层。两层都过 ⇒ 交集的交集。
+     *
+     * @return list<array{int, int}>
+     */
+    private function clipRow(int $y, int $lo, int $hi): array
+    {
+        if ($lo >= $hi) {
+            return [];
+        }
+        $spans = $this->clipRowSpansForRow($y);
+        if ($spans === null) {
+            return [[$lo, $hi]];
+        }
+
+        $out = [];
+        foreach ($spans as $s) {
+            $a = max($lo, $s[0]);
+            $b = min($hi, $s[1]);
+            if ($a < $b) {
+                $out[] = [$a, $b];
+            }
+        }
+
+        return $out;
     }
 
     private function unsupportedOp(string $op, string $tier): void
@@ -1073,9 +1283,16 @@ final class RasterCanvas implements Canvas
             if ($y < 0 || $y >= $this->height || $y < $clipTop || $y >= $clipBottom) {
                 continue;
             }
+            // ★ 路径裁剪也裁文字（与 Skia 的 clipPath 同口径，能力等价）：
+            //   一行查一次掩码，行内逐像素判。无路径裁剪时是 null，只多一次
+            //   调用/行 —— 文字是热点路径，不能每像素查。
+            $rowSpans = $this->clipRowSpansForRow($y);
             for ($bx = 0; $bx < $bitmap->width; $bx++) {
                 $x = $left + $bx;
                 if ($x < 0 || $x >= $this->width || $x < $clipLeft || $x >= $clipRight) {
+                    continue;
+                }
+                if ($rowSpans !== null && !$this->spanHasPixel($rowSpans, $x)) {
                     continue;
                 }
                 $coverage = $bitmap->coverageAt($bx, $by);
@@ -1174,11 +1391,16 @@ final class RasterCanvas implements Canvas
      */
     private function fillSpanOrGrad(int $y, int $xa, int $xb, Color $color, bool $opaque, ?array $lut, ?Gradient $gradient): void
     {
-        if ($gradient === null) {
-            $this->fillSpan($y, $xa, $xb, $color, $opaque, $lut);
-            return;
+        // ★ 路径裁剪的行掩码在这里统一施加 —— 它是**所有**填充的最终出口
+        //   （`rasterize` 的矩形/圆角/描边洞、`fillEdges` 的扫描线全经过它），
+        //   一个注入点覆盖整条绘制路径。无路径裁剪时 `clipRow` 一次调用就放行。
+        foreach ($this->clipRow($y, $xa, $xb) as $span) {
+            if ($gradient === null) {
+                $this->fillSpan($y, $span[0], $span[1], $color, $opaque, $lut);
+                continue;
+            }
+            $this->fillSpanGrad($y, $span[0], $span[1], $gradient);
         }
-        $this->fillSpanGrad($y, $xa, $xb, $gradient);
     }
 
     /** 渐变段：逐像素按位置取色（source-over 混合，半透明自然过渡） */

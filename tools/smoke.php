@@ -367,6 +367,19 @@ if (str_starts_with($caseArg, '--case=')) {
         );
     }
 
+    if ($case === 'clippathunbalanced') {
+        // W1/L3-2 / `05` §10 #5：只 pushClipPath 不 popClip ⇒ W8 必须响亮失败。
+        // ★ 补 `DisplayList::record()` 的 `OP_PUSH_CLIP_PATH` 计数之前，这一例的
+        //   `clipDepth` 停在 0 ⇒ `assertBalanced()` 放行 ⇒ 后续全被裁而无人
+        //   知晓（静默失败）。走子进程：`Errors::report` 默认 FATAL。
+        $list = new DisplayList();
+        $list->record(
+            DisplayList::OP_PUSH_CLIP_PATH,
+            Path::create()->addRect(new Rect(0.0, 0.0, 4.0, 4.0))
+        );
+        $list->assertBalanced();
+    }
+
     if ($case === 'custompaint') {
         // P2：自绘的轴没给、父容器又不限制这一轴 ⇒ 响亮失败（自绘区不能无穷大）
         $el = (new CustomPaint(new ProbePainter(), 120.0))->createElement();
@@ -1854,10 +1867,10 @@ check('Rendering · W8 未闭合写了 Errors.log', str_contains(logText($log), 
 fresh($log);
 $capsRaster = new RasterCanvas(8, 8, Color::white(), Scale::of(1.0));
 check(
-    'Canvas · Raster capabilities() = Core + Extended（W1/L3-1 起含 CAP_PATH：扫描线填充 + 奇偶 + Miter/Butt 描边）',
+    'Canvas · Raster capabilities() = Core + Extended（W1/L3-1 起含 CAP_PATH：扫描线填充 + 奇偶 + Miter/Butt 描边；W1/L3-2 起含 CAP_CLIP_PATH：每行 x 区间掩码）',
     $capsRaster->capabilities() === (CanvasCapabilities::CAP_ELLIPSE | CanvasCapabilities::CAP_LINE
         | CanvasCapabilities::CAP_GRADIENT | CanvasCapabilities::CAP_DASH
-        | CanvasCapabilities::CAP_PATH)
+        | CanvasCapabilities::CAP_CLIP_PATH | CanvasCapabilities::CAP_PATH)
 );
 $capsSkia = new SkiaCanvas(8, 8, null, Scale::of(1.0));
 check(
@@ -1986,6 +1999,97 @@ check(
     abs($budgetInk - 785398) <= 7854,
     'ink=' . $budgetInk
 );
+
+// ⑤ pushClipPath 圆形裁剪：填满屏的矩形 + 64 边形近似圆 ⇒ 只有圆内有墨，四角是白的
+//    64 边形面积 = 0.5 × 64 × 60² × sin(2π/64) ≈ 11300（圆的 π×60² = 11310，差 0.08%）
+$clipCircle = new RasterCanvas(200, 200, Color::white(), Scale::of(1.0));
+$ringPath = Path::create();
+for ($ci = 0; $ci < 64; $ci++) {
+    $ang = $ci * 2.0 * M_PI / 64.0;
+    $cx = 100.0 + 60.0 * cos($ang);
+    $cy = 100.0 + 60.0 * sin($ang);
+    if ($ci === 0) {
+        $ringPath->moveTo($cx, $cy);
+    } else {
+        $ringPath->lineTo($cx, $cy);
+    }
+}
+$ringPath->close();
+$clipCircle->pushClipPath($ringPath);
+$clipCircle->drawRect(new Rect(0.0, 0.0, 200.0, 200.0), Paint::fill(Color::black()));
+$clipInk = $pathInkCount($clipCircle);
+check(
+    'Path · pushClipPath 圆形裁剪的墨量 = 64 边形面积 ±5%（11300）',
+    abs($clipInk - 11300) <= 565,
+    'ink=' . $clipInk . '（若 =40000 就是裁剪没生效，矩形画满了全屏）'
+);
+check(
+    'Path · 圆形裁剪的四角是白的',
+    $clipCircle->pixelAt(2, 2)->r === 255 && $clipCircle->pixelAt(197, 2)->r === 255
+        && $clipCircle->pixelAt(2, 197)->r === 255 && $clipCircle->pixelAt(197, 197)->r === 255,
+    '角点 r=' . $clipCircle->pixelAt(2, 2)->r . '/' . $clipCircle->pixelAt(197, 197)->r
+);
+check('Path · 圆形裁剪的圆心有墨', $clipCircle->pixelAt(100, 100)->r === 0);
+// popClip 之后必须恢复：再画一个全屏矩形 ⇒ 全黑（40000）
+//   ★ 这一条同时验证"裁剪栈存的是 [clip, rows] 一对"：只恢复 Rect 不恢复
+//     行掩码的话，popClip 之后圆外仍然是白的（裁剪没弹掉）。
+$clipCircle->popClip();
+$clipCircle->drawRect(new Rect(0.0, 0.0, 200.0, 200.0), Paint::fill(Color::black()));
+check(
+    'Path · popClip 后裁剪弹掉（全屏再填 ⇒ 40000 全黑）',
+    $pathInkCount($clipCircle) === 40000,
+    'ink=' . $pathInkCount($clipCircle)
+);
+
+// ⑥ pushClipPath 嵌套：两个 r=60、圆心距 60 的圆求交 ⇒ 透镜形
+//    透镜面积 = 2r²·arccos(d/2r) − (d/2)·√(4r²−d²) = 2400π − 30√10800 ≈ 4422
+$clipNest = new RasterCanvas(200, 200, Color::white(), Scale::of(1.0));
+$nestA = Path::create();
+$nestB = Path::create();
+for ($ci = 0; $ci < 64; $ci++) {
+    $ang = $ci * 2.0 * M_PI / 64.0;
+    if ($ci === 0) {
+        $nestA->moveTo(70.0 + 60.0 * cos($ang), 100.0 + 60.0 * sin($ang));
+        $nestB->moveTo(130.0 + 60.0 * cos($ang), 100.0 + 60.0 * sin($ang));
+    } else {
+        $nestA->lineTo(70.0 + 60.0 * cos($ang), 100.0 + 60.0 * sin($ang));
+        $nestB->lineTo(130.0 + 60.0 * cos($ang), 100.0 + 60.0 * sin($ang));
+    }
+}
+$nestA->close();
+$nestB->close();
+$clipNest->pushClipPath($nestA);
+$clipNest->pushClipPath($nestB);
+$clipNest->drawRect(new Rect(0.0, 0.0, 200.0, 200.0), Paint::fill(Color::black()));
+$nestInk = $pathInkCount($clipNest);
+check(
+    'Path · pushClipPath 嵌套 = 两个裁剪求交（透镜 4422 ±5%）',
+    abs($nestInk - 4422) <= 221,
+    'ink=' . $nestInk . '（若 ≈11300 就是只生效了一个裁剪，嵌套没求交）'
+);
+// A 圆单独覆盖、B 圆不覆盖的一点必须是白的；两圆交集内心必须是黑的
+check('Path · 嵌套裁剪：只在 A 圆内的一点是白的', $clipNest->pixelAt(30, 100)->r === 255);
+check('Path · 嵌套裁剪：交集内心有墨', $clipNest->pixelAt(100, 100)->r === 0);
+$clipNest->popClip();
+$clipNest->popClip();
+$clipNest->drawRect(new Rect(0.0, 0.0, 200.0, 200.0), Paint::fill(Color::black()));
+check(
+    'Path · 嵌套 popClip 两次后恢复（全屏再填 ⇒ 40000）',
+    $pathInkCount($clipNest) === 40000,
+    'ink=' . $pathInkCount($clipNest)
+);
+
+// ⑦ pushClipPath 不配对：只 push 不 pop ⇒ W8 抓得到（`05` §10 #5）
+//    ★ 子进程：`Errors::report` 默认 FATAL。补 `DisplayList::record()` 的
+//      `OP_PUSH_CLIP_PATH` 计数之前，这一例的 clipDepth 停在 0、抓不到。
+fresh($log);
+[$code, $output] = runCase(__FILE__, 'clippathunbalanced', null);
+check(
+    'Path · pushClipPath 不配对 ⇒ W8 退出码 3（补 OP_PUSH_CLIP_PATH 计数前抓不到）',
+    $code === 3,
+    '实际 ' . $code . ' / ' . $output
+);
+check('Path · pushClipPath 不配对写了 Errors.log', str_contains(logText($log), 'W8'));
 
 // ⑩+3 19 op 回植 · P3 渐变/虚线（RasterCanvas，确定性后端；Skia 侧在 Skia 桥落地后补断言）
 $fb = new RasterCanvas(40, 40, Color::white(), Scale::of(1.0));
