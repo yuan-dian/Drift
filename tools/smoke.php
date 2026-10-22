@@ -259,6 +259,7 @@ use Drift\Input\ThemeChangedEvent;
 use Drift\Widget\TextField;
 use Drift\Widget\TextFieldState;
 use Drift\Widget\Widget;
+use Drift\Dev\TestApp;
 
 require __DIR__ . '/autoload.php';
 
@@ -10528,6 +10529,100 @@ check(
         \strlen($lastText) > 60 ? \substr($lastText, 0, 60) . '…' : $lastText,
         $frameReportViolations
     )
+);
+
+// ── TestApp：声明式场景（`07` §4.2 / §4.3，W7 第 42 步）──
+//   三条场景各验一类，都用 `TestApp` 的**同一个**执行器：
+//     ① 虚拟列表：滚动前后都只造可见行（R1 查树，不查 Widget 声明）
+//     ② 动画：没人调 `tick`，帧时钟自己推进（R4 显式 pump）
+//     ③ 几何：滚动只动**子盒偏移**，不动视口盒（M2-3 的不变量）
+//   ★ 第 4 条是**反例**：假谓词 / 选择器无匹配 / 选择器不唯一都必须记失败 ——
+//     只写正例的宿主等于"永远绿"。
+$lazyTextCount = static function (Application $app): int {
+    $count = 0;
+    $walk = static function (Element $el) use (&$walk, &$count): void {
+        if ($el->widget() instanceof Text) {
+            ++$count;
+        }
+        $el->visitChildren($walk);
+    };
+    $root = $app->root();
+    if ($root !== null) {
+        $walk($root);
+    }
+
+    return $count;
+};
+$spinnerStep = static function (Application $app): int {
+    $root = $app->root();
+    if (!$root instanceof StatefulElement) {
+        return -1;
+    }
+    $state = $root->state();
+
+    return $state instanceof SpinnerState ? $state->step() : -1;
+};
+
+$testAppScenarios = [
+    TestApp::scenario('虚拟列表：滚动前后都只造可见行')
+        ->app(new LazyApplication())
+        ->constraints(400.0, 200.0)
+        ->pump(1)
+        ->expect(
+            '树里的 Text < 20（500 行只造可见的）',
+            static fn(Application $a): bool => $lazyTextCount($a) < 20
+        )
+        // ★ `scroll()` 的单位是**格**：1 格 = 48px（`Application::WHEEL_NOTCH_PX`）。
+        //   这个 48 是**设计值**，改了就该让这条断言红 —— 不是"跑出来再抄回去"。
+        ->scroll(1.0)
+        ->pump(1)
+        ->expect(
+            '滚轮真的改了偏移（1 格 = 48px）',
+            static fn(Application $a): bool => $a instanceof LazyApplication && $a->lazyState()?->offset() === 48.0
+        )
+        ->expect(
+            '滚动后仍然只造可见行',
+            static fn(Application $a): bool => $lazyTextCount($a) < 20
+        ),
+    TestApp::scenario('Spinner：没人调 tick，帧时钟自己推进')
+        ->app(new SpinnerApplication())
+        ->constraints(120.0, 120.0)
+        ->pump(1)
+        ->expect('首帧 step === 1（attach 走同一入口）', static fn(Application $a): bool => $spinnerStep($a) === 1)
+        ->pump(2)
+        ->expect('再跑两帧 ⇒ step === 3', static fn(Application $a): bool => $spinnerStep($a) === 3),
+    TestApp::scenario('几何：滚动只动子盒偏移，不动视口盒')
+        ->app(new LazyApplication())
+        ->constraints(400.0, 200.0)
+        ->pump(1)
+        ->expectBox('LazyColumn', 0.0, 0.0, 400.0, 200.0)
+        ->scroll(3.0)
+        ->pump(1)
+        ->expectBox('LazyColumn', 0.0, 0.0, 400.0, 200.0),
+];
+
+foreach ($testAppScenarios as $scenario) {
+    $result = $scenario->run();
+    check(
+        'TestApp · ' . $result['name'] . '（' . $result['passed'] . ' 条断言）',
+        $result['failed'] === 0,
+        implode(' ｜ ', $result['failures'])
+    );
+}
+
+// 反例：宿主自己也得会红
+$testAppNegative = TestApp::scenario('反例：假谓词 / 无匹配 / 不唯一')
+    ->app(new LazyApplication())
+    ->constraints(400.0, 200.0)
+    ->pump(1)
+    ->expect('故意假', static fn(Application $a): bool => false)
+    ->expectBox('NoSuchWidget', 0.0, 0.0, 1.0, 1.0)
+    ->expectBox('Text', 0.0, 0.0, 1.0, 1.0)
+    ->run();
+check(
+    'TestApp · 反例：假谓词 + 选择器无匹配 + 选择器不唯一都记失败（R2 与 G2 都有牙）',
+    $testAppNegative['failed'] === 3 && $testAppNegative['passed'] === 0,
+    'failed=' . $testAppNegative['failed'] . ' ｜ ' . implode(' ｜ ', $testAppNegative['failures'])
 );
 
 // ── 汇总 + 退出码（2026-10-18）──
