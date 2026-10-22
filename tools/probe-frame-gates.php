@@ -138,4 +138,13 @@ if ($layout === null || !isset($layout['mismatches'])) {
 }
 
 $say($ok ? 'PASS' : 'FAIL');
+
+// ── ⑧ 收尾：撤掉两个文件开关 ─────────────────────────────────────────────
+// ★ 必须撤：留着的话之后每一次跑应用都白付 dev 断言的开销（每帧一次文件写），
+//   而且 build/ 下会一直躺着两份 .out。开关由本脚本创建，也由本脚本销毁。
+foreach (['build/frame.trace', 'build/layout.check'] as $sw) {
+    @unlink($root . '/' . $sw);
+}
+$say('开关已撤（build/frame.trace / build/layout.check）');
+
 exit($ok ? 0 : 3);
