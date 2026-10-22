@@ -20,6 +20,18 @@ use Drift\Rendering\Canvas;
  *    内容比视口长时拿 `tight(0)` 整块不可见、内容比剩余短时白留死空间）；
  * 3. **定位** —— 主轴顺序排、交叉轴按 `FlexAlign`（C1：父定位子）。
  *
+ * ## 第 2 步有两条路径（W6 L4-2）
+ *
+ * | 判据 | 走哪条 | 公式 |
+ * |---|---|---|
+ * | 没有子声明 `shrink` / `basis`（**今天 100% 的用法**） | 上面那段老路径 | 份额 = `剩余 × grow / Σgrow`，从 0 起算 |
+ * | 有子声明了（`$advanced`） | `allocateAdvanced()` | 起点（`basis` 或自然尺寸）→ `grow` 加剩余 → `shrink` 加权压缩（≤3 轮冻结） |
+ *
+ * ★ 两条路径对**纯 `grow` 子**是等价的（起点 0 ⇒ `0 + 剩余 × 份额` = 老公式），
+ *   所以同一容器里混用不会漂移。
+ * ★ 老路径保住的是**性能**：弹性子第一遍不量（layout 620→310µs）。新路径必须量
+ *   —— 压缩的起点是"它本来要多大"，而这个数只有量了才知道。
+ *
  * ★ **C4 的"无界高"不是实现细节而是契约**：量自然尺寸那遍给弹性子无界主轴，
  *   否则弹性子按"现在剩多少"量，flex 分配就建立在错误分母上（图形比例会随
  *   兄弟数量漂移）。`0` 是合法主轴尺寸，所以不能用"0 表示无界"—— 那是 GUI 仓
@@ -104,13 +116,29 @@ class RenderFlex extends RenderBox
         $maxCross = $vertical ? $inner->maxWidth : $inner->maxHeight;
         $mainBounded = $vertical ? $inner->hasBoundedHeight() : $inner->hasBoundedWidth();
 
+        // ★ 三个判据一次扫完（不能 `break`：`$needsNatural` 要看全部子）：
+        //   · `$hasFlex`  —— 有 `grow` 子 ⇒ 老路径的"分剩余空间"要跑；
+        //   · `$needsNatural` —— 有子要压缩却不知道它本来多宽 ⇒ 第一遍**不能跳过**
+        //     弹性子（`04` §3.1：压缩的起点是"它本来要多大"）；
+        //   · `$hasBasis` —— 有子直接声明了起点 ⇒ 走新公式。
         $hasFlex = false;
+        $needsNatural = false;
+        $hasBasis = false;
         foreach ($this->kids as $kid) {
             if ($kid->flex() > 0) {
                 $hasFlex = true;
-                break;
+            }
+            if (!\is_nan($kid->basis())) {
+                $hasBasis = true;
+            } elseif ($kid->shrink() > 0) {
+                $needsNatural = true;
             }
         }
+
+        // ★ **新公式的启用判据**（`04` §3.1）：有子声明 `shrink` 或 `basis`。
+        //   两者都没有 ⇒ 纯 `grow` 容器（今天 100% 的用法）⇒ 走老路径，
+        //   行为与性能**逐字节不变**（这是 620→310µs 那条快路径的守卫）。
+        $advanced = $needsNatural || $hasBasis;
 
         // ── 第一遍：自然尺寸 ────────────────────────────────────────
         /** @var list<float> $mains 每个子的主轴尺寸 */
@@ -130,14 +158,23 @@ class RenderFlex extends RenderBox
             //   Flutter 的 RenderFlex 同构：第一遍只处理 flex == 0 的子节点。
             // ★ **主轴无界时例外**：第二遍不会跑（无空间可分），弹性子必须在
             //   这里拿自然尺寸，否则整棵子树一次都不排 ⇒ 尺寸停留上一帧。
-            if ($flex > 0 && $mainBounded) {
+            if ($flex > 0 && $mainBounded && !$needsNatural) {
                 $mains[$index] = 0.0;   // 占位：第二遍回填
                 continue;
             }
 
             // 主轴无界 ⇒ 无空间可分，所有子拿无界主轴（自然尺寸）；
             // 有界且非弹性 ⇒ 上限。
-            $childMainMax = !$mainBounded ? INF : max(0.0, $maxMain);
+            // ★★ **`$needsNatural` 时弹性子也拿无界主轴** —— 这是 C4 契约的原文
+            //   （"量自然尺寸那遍给弹性子无界主轴"），在这里才第一次真有后果：
+            //   给 `0..$maxMain` 的话，内容比容器长的弹性子（正是要压缩的那种）
+            //   第一遍就撞 C5 报"放不下" ⇒ `shrink` **永远用不上**。
+            //   2026-10-23 写分配公式时发现，不是真机暴露的。
+            // ★ 判据必须含 `shrink`：`flex()` 只是 `grow()` 的别名，而"要压缩的
+            //   弹性子"恰恰是 `grow = 0, shrink > 0` 的那种 —— 只看 `$flex` 的话
+            //   本意要保护的子拿不到无界主轴（夹具当场抓到：第一遍 maxWidth=100）。
+            $elasticNatural = $needsNatural && ($flex > 0 || $kid->shrink() > 0);
+            $childMainMax = ($mainBounded && !$elasticNatural) ? max(0.0, $maxMain) : INF;
             $kid->layout($this->childConstraints($kid, $childMainMax, $maxCross));
             $mains[$index] = $vertical ? $kid->size()->height : $kid->size()->width;
         }
@@ -151,7 +188,10 @@ class RenderFlex extends RenderBox
         //   `Expanded` 拿 `tight(0)`（整块不可见，2026-10-17 users 页实证）、内容比
         //   剩余短时容器白留没人要的死空间。非弹性子溢出时 `$free < 0` ⇒ 弹性子拿 0、
         //   C5 溢出处理照旧 ⇒ 既有溢出行为不变。
-        if ($hasFlex && $mainBounded && $totalFlex > 0) {
+        if ($mainBounded && $advanced) {
+            // 新公式（`basis` / `shrink`）：起点 → `grow` 加剩余 → `shrink` 加权压缩
+            $mains = $this->allocateAdvanced($mains, $inner, $maxMain, $gap, $totalFlex);
+        } elseif ($hasFlex && $mainBounded && $totalFlex > 0) {
             $fixedMain = 0.0;
             foreach ($this->kids as $index => $kid) {
                 if ($kid->flex() === 0) {
@@ -239,6 +279,142 @@ class RenderFlex extends RenderBox
     }
 
     // ── 内部 ────────────────────────────────────────────────────────
+
+    /**
+     * 新分配公式：起点（`basis` 或自然尺寸）→ `grow` 加剩余 → `shrink` 加权压缩。
+     *
+     * 只在有子声明了 `shrink` 或 `basis` 时走到（`04` §3）；纯 `grow` 的容器仍走
+     * `performLayout()` 里的老路径 —— 那条路径**逐字节同**现状（`$needsNatural`
+     * 判据保住 620→310µs 的快路径：弹性子第一遍不量）。
+     *
+     * ★ **与老路径的唯一语义差别**：老路径的 `grow` 份额是"从 0 起算的总量"
+     *   （`share = space * grow / totalGrow`），这里是"在起点之上的增量"
+     *   （`start + free * grow / totalGrow`）。纯 `grow` 子的起点是 0 ⇒ 两者等价，
+     *   所以同一容器里混用不会漂移。
+     *
+     * ★ **压缩下限是 0，不做 `min-content`**（`04` §3.4）：被压到 0 的子内容
+     *   不可见但**不报错**，而且**今天没有保底手段** —— 册子原文说"要保底就设
+     *   `width`"，但 `Modifier::tighten()` 是把 `width` **夹进**父给的区间，
+     *   这里的紧约束 `(0, 0)` 会把 `width` 一起夹成 0（2026-10-23 夹具实证：
+     *   写了 `width(60)` 的子照样被压到 0）。真要有下限得等 `min-content`，
+     *   而它需要文本的最小宽度（`DeterministicMetricsProvider` 只有 max-content）。
+     *
+     * ★ **3 轮上限**（`04` §3.2）：每轮至少冻结一个子，否则收敛；真跑满 3 轮说明
+     *   同一行里有 4 个以上子同时被压到 0 —— 布局已经不可用，剩下的交给 C5
+     *   让用户看到"放不下：子项共需 X，可用只有 Y"，而不是"所有子都变 0 宽"。
+     *
+     * @param list<float> $mains 第一遍量到的自然主轴尺寸（`basis` 有效的子可能是占位 0）
+     * @return list<float> 每个子最终的主轴尺寸（已按紧约束排过一次）
+     */
+    private function allocateAdvanced(
+        array $mains,
+        BoxConstraints $inner,
+        float $maxMain,
+        float $gap,
+        int $totalGrow,
+    ): array {
+        // ── ① 起点 ──────────────────────────────────────────────────
+        /** @var list<float> $sizes */
+        $sizes = [];
+        $sumStart = $gap;
+        foreach ($this->kids as $index => $kid) {
+            $b = $kid->basis();
+            $start = \is_nan($b) ? $mains[$index] : $b;
+            $sizes[$index] = $start;
+            $sumStart += $start;
+        }
+
+        if ($sumStart <= $maxMain) {
+            // ── ② 有剩余 ⇒ 按 `grow` 份额加在起点**之上** ────────────
+            // ★ 分母只含 `grow`（不含 `shrink`）：CSS 的 `flex-grow` 与
+            //   `flex-shrink` 是两套独立的权重，混在一个分母里会让"只压缩不放大"
+            //   的子偷走放大份额。
+            if ($totalGrow > 0) {
+                $free = $maxMain - $sumStart;
+                foreach ($this->kids as $index => $kid) {
+                    $g = $kid->grow();
+                    if ($g === 0) {
+                        continue;
+                    }
+                    $sizes[$index] += $free * $g / $totalGrow;
+                }
+            }
+        } else {
+            // ── ③ 溢出 ⇒ 加权压缩 + 冻结迭代 ─────────────────────────
+            /** @var array<int, int> $frozen 1 = 已压到 0，不再参与后续轮次 */
+            $frozen = [];
+            foreach ($this->kids as $index => $kid) {
+                $frozen[$index] = 0;
+            }
+
+            for ($round = 0; $round < 3; ++$round) {
+                // ★ 每轮从**当前** `$sizes` 重算总账，而不是"把冻结子的 basis 从
+                //   overshoot 里扣掉"：后者要维护一份 overshoot 修正量，且冻结子
+                //   的 `shrink × size` 已经自然归 0 ⇒ 重算更少出错（`04` §3.2 的
+                //   公式与本实现在数学上等价）。
+                $total = $gap;
+                foreach ($sizes as $value) {
+                    $total += $value;
+                }
+                $overshoot = $total - $maxMain;
+                if ($overshoot <= 0.0) {
+                    break;
+                }
+
+                $scaledSum = 0.0;
+                foreach ($this->kids as $index => $kid) {
+                    if ($frozen[$index] === 1) {
+                        continue;
+                    }
+                    $s = $kid->shrink();
+                    if ($s === 0) {
+                        continue;
+                    }
+                    $scaledSum += (float) $s * $sizes[$index];
+                }
+                // 没有可压缩的子（或它们起点都是 0）⇒ 不在这里报错，交给 C5
+                if ($scaledSum <= 0.0) {
+                    break;
+                }
+
+                $newFrozen = false;
+                foreach ($this->kids as $index => $kid) {
+                    if ($frozen[$index] === 1) {
+                        continue;
+                    }
+                    $s = $kid->shrink();
+                    if ($s === 0) {
+                        continue;
+                    }
+                    $cut = $overshoot * ((float) $s * $sizes[$index]) / $scaledSum;
+                    $next = $sizes[$index] - $cut;
+                    if ($next <= 0.0) {
+                        $sizes[$index] = 0.0;
+                        $frozen[$index] = 1;
+                        $newFrozen = true;
+                    } else {
+                        $sizes[$index] = $next;
+                    }
+                }
+                // 本轮没人被压到 0 ⇒ 加权公式一次到位，收敛
+                if (!$newFrozen) {
+                    break;
+                }
+            }
+        }
+
+        // ── ④ 按最终尺寸紧约束排一次 ────────────────────────────────
+        // `$mains` 回填**实际**主轴尺寸：`width` 保底会让被压到 0 的子变大，
+        // `placeChildren()` 的笔位与 `mainSize` 都必须按实际值走。
+        /** @var list<float> $final */
+        $final = [];
+        foreach ($this->kids as $index => $kid) {
+            $kid->layout($this->tightMain($inner, $sizes[$index]));
+            $final[$index] = $this->vertical ? $kid->size()->height : $kid->size()->width;
+        }
+
+        return $final;
+    }
 
     /**
      * 单个子的约束：主轴 `0..$mainMax`（弹性且有界时由第二遍收紧），

@@ -553,7 +553,16 @@ abstract class Widget
         return $this;
     }
 
-    /** 主轴压缩份额（`Flexible` 的字段形态） */
+    /**
+     * 主轴压缩份额（`Flexible` 的字段形态）。
+     *
+     * 空间不够时按 `shrink × 起始尺寸` 加权压缩（`04` §3.2，≤3 轮冻结迭代）。
+     *
+     * ★ **下限是 0，没有保底**（`04` §3.4）：被压到 0 的控件内容不可见，但
+     *   **不报错**。今天也没有"设 `width` 就压不动"这回事 —— `Modifier::tighten()`
+     *   是把 `width` 夹进父给的区间，紧约束 `(0, 0)` 会把 `width` 一起夹成 0。
+     *   要真正的下限得等 `min-content`，而它需要文本的最小宽度（今天没有）。
+     */
     public function shrink(int $weight): static
     {
         $this->mutate();

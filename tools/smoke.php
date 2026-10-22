@@ -472,6 +472,20 @@ if (str_starts_with($caseArg, '--case=')) {
         $column->layout(BoxConstraints::tight(new Size(10.0, 50.0)));
     }
 
+    if ($case === 'shrinkoverflow') {
+        // C5 兜底：压缩把弹性子压到 0 之后**仍然**放不下 ⇒ Report 必须中止
+        //   ★ 怎么才放不下：`shrink` 只能压弹性子，间距与固定子压不动。这里
+        //     间距 20×2 加两个 40 的固定子就吃掉 120 > 100，弹性子压到 0 也补不回来。
+        //   ★ 册子 `04` §12.2 #3 原本写"一个子 basis 200 shrink 1 进 100 ⇒ 该子 0
+        //     且报 C5"：按加权公式它压到 100 就正好装满（根本不用冻结），数字推不出
+        //     那条结论；"给 width 保底"也保不住（`tighten()` 把 width 夹进紧约束）。
+        $row = new RenderFlex(false, 20.0, new EdgeInsets(), FlexAlign::Start, Overflow::Report);
+        $row->addChild(new SolidBox(new Size(40.0, 10.0), 40.0, 10.0));
+        $row->addChild(flexIntent(0, 1, 10.0));
+        $row->addChild(new SolidBox(new Size(40.0, 10.0), 40.0, 10.0));
+        $row->layout(BoxConstraints::tight(new Size(100.0, 40.0)));
+    }
+
     if ($case === 'flexscroll') {
         // Scroll / Wrap：M2 没实现 ⇒ 响亮失败，不是静默按 Clip 走
         $column = new RenderFlex(true, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Scroll);
@@ -717,6 +731,14 @@ function flexProxy(int $share): RenderProxy
 {
     $box = new RenderProxy();
     $box->setFlexIntent($share, 0, \NAN, RenderBox::ALIGN_INHERIT);
+
+    return $box;
+}
+
+function flexIntent(int $grow, int $shrink, float $basis): RenderProxy
+{
+    $box = new RenderProxy();
+    $box->setFlexIntent($grow, $shrink, $basis, RenderBox::ALIGN_INHERIT);
 
     return $box;
 }
@@ -3349,6 +3371,94 @@ check(
     $padded->children()[0]->size()?->height === 8.0
 );
 
+// ── ⑮b Flex 分配公式：basis / shrink（W6 L4-2，`04` §3）──
+// ★ 这一节守的是"纯 grow 走快路径"的另一半：只有声明了 `shrink` 或 `basis` 的
+//   容器才走新公式（`allocateAdvanced`），否则 `performLayout` 的老路径逐字节不变。
+
+// `$needsNatural` 判据：有 shrink 子且没声明 basis ⇒ 第一遍必须量它，
+// 而且**拿无界主轴** —— 给 `0..可用` 的话内容比容器长就先撞 C5，shrink 永远用不上
+$naturalSpy = new ConstraintSpy(new Size(300.0, 20.0));
+$naturalSpy->setFlexIntent(0, 1, \NAN, RenderBox::ALIGN_INHERIT);
+$naturalRow = new RenderFlex(false, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Clip);
+$naturalRow->addChild($naturalSpy);
+$naturalRow->layout(BoxConstraints::tight(new Size(100.0, 40.0)));
+check(
+    'Layout · shrink 子第一遍拿无界主轴（否则内容超容器先报 C5，shrink 用不上）',
+    $naturalSpy->firstSeen !== null && $naturalSpy->firstSeen->hasInfiniteWidth(),
+    $naturalSpy->firstSeen === null
+        ? '一次都没量'
+        : sprintf('第一遍 maxWidth=%.1f', $naturalSpy->firstSeen->maxWidth)
+);
+check(
+    'Layout · shrink 子量两次（自然 300 + 紧约束 100），纯 grow 子只量一次',
+    $naturalSpy->firstSeen !== $naturalSpy->lastSeen
+        && $naturalSpy->lastSeen !== null
+        && $naturalSpy->lastSeen->maxWidth === 100.0
+        && $naturalSpy->size()?->width === 100.0,
+    sprintf(
+        '末次 maxWidth=%.1f，尺寸 %.1f',
+        $naturalSpy->lastSeen?->maxWidth ?? -1.0,
+        $naturalSpy->size()?->width ?? -1.0
+    )
+);
+
+// 加权压缩：三个 basis 100 / shrink 1 进 240 ⇒ 各 80（`04` §12.2 #2）
+$evenRow = new RenderFlex(false, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Clip);
+$evenRow->addChild(flexIntent(0, 1, 100.0));
+$evenRow->addChild(flexIntent(0, 1, 100.0));
+$evenRow->addChild(flexIntent(0, 1, 100.0));
+$evenRow->layout(BoxConstraints::tight(new Size(240.0, 40.0)));
+$evenWidths = [];
+foreach ($evenRow->children() as $kid) {
+    $evenWidths[] = $kid->size()?->width ?? -1.0;
+}
+check(
+    'Layout · shrink 加权压缩（三个 basis 100 进 240 ⇒ 各 80）',
+    $evenWidths === [80.0, 80.0, 80.0],
+    '实际 ' . implode(' / ', array_map(static fn (float $v): string => sprintf('%.1f', $v), $evenWidths))
+);
+
+// 冻结迭代：A 的 scaled 份额大 ⇒ 先压到 0 并冻结；B 拿剩下的（`04` §12.2 #4）
+// ★ 方案册写的是 A `shrink` 1 `basis` 10 —— 按加权公式 A 只分到 110×10/2010 ≈ 0.55，
+//   压不到 0（会收敛在 9.45 / 90.55）。要真触发冻结必须让 A 的 scaled 份额够大。
+$freezeA = flexIntent(0, 100, 10.0);
+$freezeB = flexIntent(0, 10, 200.0);
+$freezeRow = new RenderFlex(false, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Clip);
+$freezeRow->addChild($freezeA);
+$freezeRow->addChild($freezeB);
+$freezeRow->layout(BoxConstraints::tight(new Size(100.0, 40.0)));
+check(
+    'Layout · shrink 冻结迭代（A 压到 0 冻结，B 两轮后拿到 100）',
+    $freezeA->size()?->width === 0.0 && $freezeB->size()?->width === 100.0,
+    sprintf('实际 %.1f / %.1f', $freezeA->size()?->width ?? -1.0, $freezeB->size()?->width ?? -1.0)
+);
+
+// basis 优先于自然尺寸（`04` §12.2 #5）：内容 50、basis 80 ⇒ 拿 80
+$basisBox = new RenderProxy();
+$basisBox->setFlexIntent(0, 0, 80.0, RenderBox::ALIGN_INHERIT);
+$basisBox->setChild(new SolidBox(new Size(50.0, 10.0), 50.0, 10.0));
+$basisRow = new RenderFlex(false, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Clip);
+$basisRow->addChild($basisBox);
+$basisRow->layout(BoxConstraints::tight(new Size(100.0, 40.0)));
+check(
+    'Layout · basis 优先于自然尺寸（内容 50、basis 80 ⇒ 拿 80）',
+    $basisBox->size()?->width === 80.0,
+    '实际 ' . (string) ($basisBox->size()?->width ?? -1.0)
+);
+
+// basis + grow 混用：起点之上的**增量**（不是从 0 起算的总量）
+$mixA = flexIntent(1, 0, 40.0);
+$mixB = flexIntent(1, 0, 40.0);
+$mixRow = new RenderFlex(false, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Clip);
+$mixRow->addChild($mixA);
+$mixRow->addChild($mixB);
+$mixRow->layout(BoxConstraints::tight(new Size(160.0, 40.0)));
+check(
+    'Layout · basis + grow 是增量语义（起点 40 各加 40 ⇒ 80 / 80）',
+    $mixA->size()?->width === 80.0 && $mixB->size()?->width === 80.0,
+    sprintf('实际 %.1f / %.1f', $mixA->size()?->width ?? -1.0, $mixB->size()?->width ?? -1.0)
+);
+
 // 单子代理：RenderProxy + mods 内距（W5：padding 是**字段**，不是节点）
 $inner = new SolidBox(new Size(10.0, 6.0), 10.0, 6.0);
 $padBox = new RenderProxy();
@@ -3403,6 +3513,12 @@ check(
     $clipColumn->size()?->height === 50.0 && $clipColumn->children()[1]->offsetY() === 40.0,
     sprintf('实际 %.2f / %.2f', $clipColumn->size()?->height ?? -1.0, $clipColumn->children()[1]->offsetY())
 );
+
+// shrink 压到 0 之后仍放不下 ⇒ C5 兜底（子进程：会 Fatal）
+fresh($log);
+[$code, $output] = runCase(__FILE__, 'shrinkoverflow', null);
+check('Layout · shrink 压到 0 仍放不下 ⇒ C5 中止退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
+check('Layout · shrink 的 C5 消息写的是"放不下"（不是"所有子都变 0 宽"）', str_contains(logText($log), '放不下'));
 
 // Scroll / Wrap：声明了但没实现 ⇒ 响亮失败，不是空壳
 fresh($log);
