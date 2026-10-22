@@ -48,6 +48,15 @@ final class FocusManager
     private ?Element $focused = null;
 
     /**
+     * 本次 `collect()` 是否处于**焦点陷阱**（arch-v2 `01` §6.4）。
+     *
+     * ★ 陷阱只改一件事：Tab 到边界时**在链内循环**（不环绕 = 用户在对话框里
+     *   从最后一个控件再按 Tab 就卡住不动，Windows 对话框不是这个手感）。
+     *   非陷阱维持既有裁决「到末尾就停」—— 主树的 Tab 不该绕回第一个控件。
+     */
+    private bool $trapped = false;
+
+    /**
      * 最近一次指针命中解析出的 Element（O-20 的锚点来源）。
      *
      * ★ 菜单打开的锚点不能用坐标（命令是"意图"，不带位置 —— §11.4.3）⇒
@@ -70,18 +79,27 @@ final class FocusManager
     /**
      * 从根重建焦点链（挂载 / 更新后调）。
      *
-     * ★ **变参**：浮层是第二棵根渲染树（O-20）∀ 它的焦点链也要能进 Tab 序 ⇒
-     *   调用方传 `collect($root, $menuElement)`（文档序 = 主树在前、浮层在后）。
+     * ★ **浮层是第二棵根渲染树**（O-20）⇒ 它的焦点链也要能进 Tab 序 ⇒
+     *   调用方把每层浮层的 element 都放进 `$roots`（文档序 = 主树在前、浮层在后）。
+     *
+     * ★ **`$scope` = 焦点陷阱**（arch-v2 `01` §6.4）：非空时**只收这几个根**，
+     *   且 Tab 在链内循环。调用方给的是"最上面那个 `focusTrap` 条目 + 它上面
+     *   压着的所有层" —— 这样"模态里开 Select 下拉"时下拉也能 Tab 到
+     *   （下拉是独立根，不在这模态的子树里）。
      *
      * ★ 树变了 ⇒ 原来的焦点 Element 可能已被移除 ⇒ 这里**显式清掉**，
      *   不留一个指向死节点的焦点（那会让后续按键静默丢掉）。
+     *
+     * @param list<Element> $roots 全部要收的根（主树 + 各层浮层）
+     * @param list<Element> $scope 非空 ⇒ 焦点陷阱，只收这些根且循环
      */
-    public function collect(Element ...$roots): void
+    public function collect(array $roots, array $scope = []): void
     {
         $this->order = [];
         $this->byId = [];
+        $this->trapped = $scope !== [];
 
-        foreach ($roots as $root) {
+        foreach ($this->trapped ? $scope : $roots as $root) {
             $this->walk($root);
         }
 
@@ -347,7 +365,15 @@ final class FocusManager
         $next = $current + $delta;
 
         if ($next < 0 || $next >= $count) {
-            return false;
+            // 焦点陷阱（模态）里循环；主树维持既有裁决「到末尾就停」
+            if (!$this->trapped) {
+                return false;
+            }
+
+            $next = ($next % $count + $count) % $count;
+            if ($this->focused !== null && $this->order[$next] === $this->focused) {
+                return false; // 链里只有一个节点：不自己派给自己
+            }
         }
 
         $this->focus($this->order[$next]);

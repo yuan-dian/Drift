@@ -462,7 +462,7 @@ abstract class Application
 
         // 焦点链要在**挂载之后**建（此刻才有树可走）。
         $this->focus = new FocusManager();
-        $this->focus->collect($root);
+        $this->focus->collect([$root]);
     }
 
     /** 根 Element（挂载后才有）—— 测试与 devtools 读它 */
@@ -679,8 +679,49 @@ abstract class Application
     /** 精确移除一个浮层条目并卸载它的树（`01` §7.1） */
     private function removeOverlay(OverlayEntry $e): void
     {
+        $restore = $e->restoreFocus;
+
         $e->element?->unmount();
         $this->overlays->remove($e);
+
+        // `01` §6.4 焦点回锚：关掉浮层后焦点回到**打开它之前**的节点。
+        // ★ 锚点已离线（它自己也被这次关闭带走了）⇒ 什么都不做，让下一帧的
+        //   `collect()` 把焦点清空 —— 不猜"上一个焦点"，猜错就是焦点跑到
+        //   用户没预期的地方。
+        if ($restore !== null && $restore->isMounted()) {
+            $this->focus?->focus($restore);
+        }
+    }
+
+    /**
+     * 焦点陷阱的根集（`01` §6.4）—— 空数组 = 无陷阱。
+     *
+     * ★ 取**最上面**那个 `focusTrap` 条目（§9 边界 #14：模态里再开模态时只有
+     *   最上面那层生效），并把**压在它上面的层一起收进来**：模态里开 `Select`
+     *   下拉时，下拉是独立根、不在模态子树里 —— 只收模态会让下拉 Tab 不到。
+     */
+    private function focusTrapRoots(): array
+    {
+        $all = $this->overlays->all();
+        $from = null;
+        foreach ($all as $i => $e) {
+            if ($e->focusTrap) {
+                $from = $i;
+            }
+        }
+
+        if ($from === null) {
+            return [];
+        }
+
+        $roots = [];
+        for ($i = $from, $n = count($all); $i < $n; $i++) {
+            if ($all[$i]->element !== null) {
+                $roots[] = $all[$i]->element;
+            }
+        }
+
+        return $roots;
     }
 
     /**
@@ -723,10 +764,19 @@ abstract class Application
      * ★ 写 `$e->x/$e->y`（条目持有落点），不再写应用级单槽位字段。
      * ★ 每帧把条目根的盒 `setBase($e->x, $e->y)` 写一次 —— **写在这里而不是
      *   `Frame::run`**：Frame 只拿到算好的原点，它不该知道 base 的存在（`01` §4.4）。
+     * ★ **锚点没了 ⇒ 自动 pop**（`01` §9 边界 #2）：锚点被虚拟化回收 / 所在行被
+     *   删掉之后，浮层悬在左上角是**错形态**（用户看到的是一个不知道属于谁的框）。
+     *   先清扫再定位 —— 清扫在快照上做，避免边遍历边改栈。
      */
     private function placeOverlays(BoxConstraints $constraints): void
     {
         foreach ($this->overlays->all() as $e) {
+            if ($e->anchor !== null && !$e->anchor->isMounted()) {
+                $this->removeOverlay($e);
+
+                continue;
+            }
+
             $this->placeEntry($e, $constraints);
         }
     }
@@ -1271,7 +1321,7 @@ abstract class Application
                 $popupRoots[] = $e->element;
             }
         }
-        $this->focus?->collect($root, ...$popupRoots);
+        $this->focus?->collect([$root, ...$popupRoots], $this->focusTrapRoots());
         if ($prof) {
             SurfaceProfile::add('focus', \hrtime(true) - $t);
         }

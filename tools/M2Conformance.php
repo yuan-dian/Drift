@@ -612,7 +612,7 @@ check(
 
 // §19 M2 出口判据之三：Tab 序有夹具 —— 夹具里的可聚焦控件按文档序进链
 $fm = new FocusManager();
-$fm->collect($element);
+$fm->collect([$element]);
 $focusOrder = array_map(static fn (Element $e): string => $e->widget()::class, $fm->order());
 check(
     '§9.1 · 夹具内可聚焦控件按文档序进焦点链（Tab 序有夹具）',

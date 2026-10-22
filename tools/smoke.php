@@ -41,6 +41,9 @@ use Drift\Dev\Smoke\Frame\QuietWidget;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Smoke\Frame\TickerWidget;
 use Drift\Dev\Smoke\Overlay\FlatBox;
+use Drift\Dev\Smoke\Overlay\RecordingSurface;
+use Drift\Dev\Smoke\App\OverlayLabApplication;
+use Drift\App\OverlayEntry;
 use Drift\Dev\Smoke\Rendering\ProbePainter;
 use Drift\Dev\Preview\DemoPage;
 use Drift\Dev\Preview\FormPage;
@@ -3874,7 +3877,7 @@ $inBox = $inRoot->effectiveBox();
 $inBox?->layout(BoxConstraints::loose(new Size(300.0, 200.0)));
 
 $fm = new FocusManager();
-$fm->collect($inRoot);
+$fm->collect([$inRoot]);
 check('输入层 · 焦点链收进 2 个字段（文档序）', count($fm->order()) === 2);
 
 $inFirst = $fm->order()[0] ?? null;
@@ -3925,7 +3928,7 @@ check(
 );
 
 $fmHit = new FocusManager();
-$fmHit->collect($inRoot);
+$fmHit->collect([$inRoot]);
 $fmHit->dispatchPointer(PointerEvent::down(10.0, 10.0), $inRoot);
 check(
     '输入层 · 点一下字段 ⇒ 它拿到焦点并进入编辑态',
@@ -4423,7 +4426,7 @@ $skipRoot = Column::make()->children([
 ])->createElement();
 $skipRoot->mount(null, $inContext);
 $fmSkip = new FocusManager();
-$fmSkip->collect($skipRoot);
+$fmSkip->collect([$skipRoot]);
 check('输入层 · skipFocus 整棵子树不进 Tab 序', count($fmSkip->order()) === 1);
 
 $orderRoot = Column::make()->children([
@@ -4432,7 +4435,7 @@ $orderRoot = Column::make()->children([
 ])->createElement();
 $orderRoot->mount(null, $inContext);
 $fmOrder = new FocusManager();
-$fmOrder->collect($orderRoot);
+$fmOrder->collect([$orderRoot]);
 $orderedFirst = $fmOrder->order()[0] ?? null;
 $orderedState = $orderedFirst instanceof StatefulElement ? $orderedFirst->state() : null;
 check(
@@ -4444,7 +4447,7 @@ check(
 $claimRoot = TextField::make()->claimKeys([KeyChord::ctrl('A')])->createElement();
 $claimRoot->mount(null, $inContext);
 $fmClaim = new FocusManager();
-$fmClaim->collect($claimRoot);
+$fmClaim->collect([$claimRoot]);
 $fmClaim->focusNext();
 check(
     '输入层 · claimKeys ⇒ 焦点独占 Ctrl+A、不独占 Ctrl+C',
@@ -5668,7 +5671,7 @@ $skipRoot = AppBar::make()->children([
 ])->skipFocus()->createElement();
 $skipRoot->mount(null, $context);
 $skipFm = new FocusManager();
-$skipFm->collect($skipRoot);
+$skipFm->collect([$skipRoot]);
 check('AppBar · skipFocus ⇒ 整组按钮不进 Tab 序', $skipFm->order() === []);
 
 $keepRoot = AppBar::make()->children([
@@ -5677,7 +5680,7 @@ $keepRoot = AppBar::make()->children([
 ])->createElement();
 $keepRoot->mount(null, $context);
 $keepFm = new FocusManager();
-$keepFm->collect($keepRoot);
+$keepFm->collect([$keepRoot]);
 check('AppBar · 不声明 skipFocus ⇒ 按钮照常进 Tab 序（2 个）', count($keepFm->order()) === 2);
 
 // 命令激活（§9.1：焦点按钮"回车/空格能触发"）—— 两条路径各一遍
@@ -6536,6 +6539,238 @@ $modalBareBox?->visitChildren(function (RenderBox $child) use (&$modalBareCenter
 check(
     'Modal · build = ModalHost → Center → PopupPanel（居中靠组合，不是盒里的开关）',
     $modalBareBox instanceof RenderModalHost && $modalBareCenter,
+);
+
+// ── ㉞b 浮层栈（arch-v2 `01` §12.1 的八条夹具）──
+//    ★ 每条都要能区分"栈版"与"槽位版"：单槽只能放一个 ⇒ 三层、逐层路由、
+//      锚点消失自动关 这三类判据在旧实现下**根本写不出来**。
+
+$labSurface = new RecordingSurface();
+$labSurface->resize(320, 240, 1.0);
+$lab = new OverlayLabApplication();
+$lab->attach($labSurface, BoxConstraints::tight(new Size(320.0, 240.0)));
+
+// ① 三层同屏：栈深 3，栈顶是最新的那一层
+$lab->openPanel(FlatBox::make(80.0, 30.0));
+$lab->openPanel(FlatBox::make(90.0, 30.0));
+$lab->openModalBox(60.0, 24.0, '第三层');
+check(
+    '浮层栈 · 三层同屏（count=3，栈顶是最新的模态）',
+    $lab->overlays()->count() === 3
+    && $lab->overlays()->top()?->scrim === true
+    && $lab->overlays()->at(0)?->scrim === false,
+    'depth=' . $lab->overlays()->count()
+    . ' top-scrim=' . var_export($lab->overlays()->top()?->scrim, true),
+);
+
+// ② scrim 顺序：第二层模态的遮罩**盖在第一层模态的面板上**（栈序 = 绘制序）
+//    ★ 用像素回答，不用字符串：两个同色 rect 换个顺序，SVG 里看不出来。
+//    ★ 采样点必须**在第一层面板内、第二层面板外** —— 否则测的是"第二层的面板
+//      盖住第一层"，与遮罩顺序无关（这个坑踩过一次：两层模态面板都 ≈308 宽，
+//      只有**高度**不同 ⇒ 沿 y 挑点，挑第一层面板的底部）。
+$labTight = BoxConstraints::tight(new Size(320.0, 240.0));
+$lab->overlays()->pop();
+$lab->overlays()->pop();
+$lab->overlays()->pop();
+$lab->frame(16.0, $labTight);
+$lab->openModalBox(200.0, 120.0, '第一层');
+$lab->frame(32.0, $labTight);
+$firstPanelEl = $lab->overlays()->top()?->element;
+$firstPanelBox = $firstPanelEl === null ? null : findElement(
+    $firstPanelEl,
+    static fn(Element $e): bool => $e->widget() instanceof PopupPanel,
+)?->effectiveBox();
+$firstPanel = $firstPanelBox instanceof RenderPopupPanel ? $firstPanelBox->panelRect() : null;
+[$fpX, $fpY] = $firstPanelBox === null ? [0.0, 0.0] : RenderBox::absoluteOrigin($firstPanelBox);
+$probeX = (int) ($fpX + ($firstPanel?->left ?? 0.0) + 20.0);
+$probeY = (int) ($fpY + ($firstPanel?->top ?? 0.0) + ($firstPanel?->height ?? 0.0) - 10.0);
+$oneLayer = $labSurface->raster()->pixelAt($probeX, $probeY);
+$lab->openModalBox(60.0, 24.0, '第二层');
+$lab->frame(48.0, $labTight);
+$twoLayers = $labSurface->raster()->pixelAt($probeX, $probeY);
+check(
+    '浮层栈 · 上层 scrim 盖在下层面板上（栈序 = 绘制序，不是"最后画一层遮罩"）',
+    $twoLayers->r < $oneLayer->r && $oneLayer->r > 200,
+    sprintf('单层 r=%d 两层 r=%d @(%d,%d)', $oneLayer->r, $twoLayers->r, $probeX, $probeY),
+);
+
+// ③ 锚点消失 ⇒ 下一帧自动关（`01` §9 边界 #2）
+$lab2Surface = new RecordingSurface();
+$lab2Surface->resize(320, 240, 1.0);
+$lab2 = new OverlayLabApplication();
+$lab2->attach($lab2Surface, BoxConstraints::tight(new Size(320.0, 240.0)));
+$lab2Tight = BoxConstraints::tight(new Size(320.0, 240.0));
+$anchorEl = findElement(
+    $lab2->root(),
+    static fn(Element $e): bool => $e->widget() instanceof Button
+        && $e->widget()->commandName() === 'lab.anchor',
+);
+$lab2->openPanel(FlatBox::make(80.0, 30.0), $anchorEl);
+check('浮层栈 · 前置：锚点还在 ⇒ 浮层在栈里', $lab2->overlays()->count() === 1);
+$lab2->root()->unmount();
+$lab2->frame(16.0, $lab2Tight);
+check(
+    '浮层栈 · 锚点卸载 ⇒ 下一帧自动关（不悬在左上角冒充别人的框）',
+    $lab2->overlays()->count() === 0,
+    'depth=' . $lab2->overlays()->count(),
+);
+
+// ④ 翻转：锚点贴底边 + BELOW ⇒ 面板翻到锚点上方
+$lab3Surface = new RecordingSurface();
+$lab3Surface->resize(320, 240, 1.0);
+$lab3 = new OverlayLabApplication();
+$lab3->attach($lab3Surface, BoxConstraints::tight(new Size(320.0, 240.0)));
+$lab3Tight = BoxConstraints::tight(new Size(320.0, 240.0));
+$bgEl = findElement(
+    $lab3->root(),
+    static fn(Element $e): bool => $e->widget() instanceof Button
+        && $e->widget()->commandName() === 'lab.bottom',
+);
+$bgBox = $bgEl?->effectiveBox();
+[$bgX, $bgY] = $bgBox === null ? [0.0, 0.0] : RenderBox::absoluteOrigin($bgBox);
+$lab3->openPanel(FlatBox::make(80.0, 60.0), $bgEl, OverlayEntry::BELOW);
+$lab3->frame(16.0, $lab3Tight);
+$flipTop = $lab3->overlays()->top();
+check(
+    '浮层栈 · 锚点贴底边 ⇒ BELOW 翻到上方（只翻一次，不做通用避让）',
+    $flipTop !== null && $flipTop->y + 60.0 <= $bgY + 1.0 && $flipTop->y >= 0.0,
+    $flipTop === null ? 'no entry' : sprintf('面板底 y=%.6g 锚点 y=%.6g', $flipTop->y + 60.0, $bgY),
+);
+$lab3->closeMenu();
+
+// ⑤ 嵌套 base：浮层里的锚点 ⇒ 子浮层落点 = 父浮层原点 + 锚点相对位置
+$parentPanel = FlatBox::make(120.0, 90.0);
+$parentEntry = $lab3->openPanel($parentPanel, $bgEl, OverlayEntry::ABOVE);
+$lab3->frame(32.0, $lab3Tight);
+$parentEntry = $lab3->overlays()->top();
+$innerEl = $parentEntry?->element;
+$innerBox = $innerEl?->effectiveBox();
+[$innerAbsX, $innerAbsY] = $innerBox === null ? [0.0, 0.0] : RenderBox::absoluteOrigin($innerBox);
+$childEntry = $lab3->openPanel(FlatBox::make(40.0, 20.0), $innerEl, OverlayEntry::BELOW);
+$lab3->frame(48.0, $lab3Tight);
+$childEntry = $lab3->overlays()->top();
+check(
+    '浮层栈 · 嵌套浮层的锚点坐标系（父层 base + 相对偏移，不是客户区绝对坐标）',
+    $parentEntry !== null && $childEntry !== null
+    && ($parentEntry->x !== 0.0 || $parentEntry->y !== 0.0)
+    && abs($childEntry->x - $innerAbsX) < 1.0
+    && abs($childEntry->y - ($innerAbsY + ($innerBox?->size()?->height ?? 0.0))) < 1.0,
+    $parentEntry === null || $childEntry === null ? 'no entry' : sprintf(
+        '父=(%.6g,%.6g) 内层绝对=(%.6g,%.6g) 子=(%.6g,%.6g)',
+        $parentEntry->x,
+        $parentEntry->y,
+        $innerAbsX,
+        $innerAbsY,
+        $childEntry->x,
+        $childEntry->y,
+    ),
+);
+
+// ⑥ barrier=true ⇒ 点浮层外不穿透到主树按钮
+$lab4Surface = new RecordingSurface();
+$lab4Surface->resize(320, 240, 1.0);
+$lab4 = new OverlayLabApplication();
+$lab4->attach($lab4Surface, BoxConstraints::tight(new Size(320.0, 240.0)));
+$lab4Tight = BoxConstraints::tight(new Size(320.0, 240.0));
+$lab4Anchor = findElement(
+    $lab4->root(),
+    static fn(Element $e): bool => $e->widget() instanceof Button
+        && $e->widget()->commandName() === 'lab.anchor',
+);
+$lab4->openPanel(FlatBox::make(40.0, 20.0), $lab4Anchor);
+$lab4->frame(16.0, $lab4Tight);
+$lab4Bg = findElement(
+    $lab4->root(),
+    static fn(Element $e): bool => $e->widget() instanceof Button
+        && $e->widget()->commandName() === 'lab.bottom',
+);
+$lab4BgBox = $lab4Bg?->effectiveBox();
+[$l4x, $l4y] = $lab4BgBox === null ? [0.0, 0.0] : RenderBox::absoluteOrigin($lab4BgBox);
+$lab4->seen = [];
+$lab4->dispatchInput(PointerEvent::down(
+    $l4x + ($lab4BgBox?->size()?->width ?? 0.0) / 2.0,
+    $l4y + ($lab4BgBox?->size()?->height ?? 0.0) / 2.0,
+));
+check(
+    '浮层栈 · barrier=true 点浮层外 ⇒ 主树按钮未被激活（吞掉，不穿透）',
+    $lab4->seen === [],
+    'seen=' . implode(',', $lab4->seen),
+);
+
+// ⑦ barrier=false（Tooltip / Toast）⇒ 点浮层外穿透到主树
+$lab5Surface = new RecordingSurface();
+$lab5Surface->resize(320, 240, 1.0);
+$lab5 = new OverlayLabApplication();
+$lab5->attach($lab5Surface, BoxConstraints::tight(new Size(320.0, 240.0)));
+$lab5Tight = BoxConstraints::tight(new Size(320.0, 240.0));
+$lab5Anchor = findElement(
+    $lab5->root(),
+    static fn(Element $e): bool => $e->widget() instanceof Button
+        && $e->widget()->commandName() === 'lab.anchor',
+);
+$lab5->openPanel(FlatBox::make(40.0, 20.0), $lab5Anchor, OverlayEntry::BELOW, false);
+$lab5->frame(16.0, $lab5Tight);
+$lab5Bg = findElement(
+    $lab5->root(),
+    static fn(Element $e): bool => $e->widget() instanceof Button
+        && $e->widget()->commandName() === 'lab.bottom',
+);
+$lab5BgBox = $lab5Bg?->effectiveBox();
+[$l5x, $l5y] = $lab5BgBox === null ? [0.0, 0.0] : RenderBox::absoluteOrigin($lab5BgBox);
+$lab5->seen = [];
+$lab5->dispatchInput(PointerEvent::down(
+    $l5x + ($lab5BgBox?->size()?->width ?? 0.0) / 2.0,
+    $l5y + ($lab5BgBox?->size()?->height ?? 0.0) / 2.0,
+));
+check(
+    '浮层栈 · barrier=false 点浮层外 ⇒ 穿透到主树按钮（Tooltip 不吃点击）',
+    $lab5->seen === ['lab.bottom'],
+    'seen=' . implode(',', $lab5->seen),
+);
+
+// ⑧ 焦点回锚：模态关掉后焦点回到打开前的节点（`01` §6.4）
+$lab6Surface = new RecordingSurface();
+$lab6Surface->resize(320, 240, 1.0);
+$lab6 = new OverlayLabApplication();
+$lab6->attach($lab6Surface, BoxConstraints::tight(new Size(320.0, 240.0)));
+$lab6Tight = BoxConstraints::tight(new Size(320.0, 240.0));
+$lab6Anchor = findElement(
+    $lab6->root(),
+    static fn(Element $e): bool => $e->widget() instanceof Button
+        && $e->widget()->commandName() === 'lab.anchor',
+);
+$lab6->focusForTest($lab6Anchor);
+$lab6->openModalBox(60.0, 24.0, '回锚');
+$lab6->frame(16.0, $lab6Tight);
+$lab6->closeModal();
+$lab6->frame(32.0, $lab6Tight);
+check(
+    '浮层栈 · 关闭后焦点回到打开前的节点（restoreFocus 真被消费）',
+    $lab6->focusedForTest() === $lab6Anchor,
+    $lab6->focusedForTest() === null ? '焦点被清空' : '焦点在别处',
+);
+
+// ⑨ 焦点陷阱：模态开着 ⇒ 主树的按钮不在 Tab 序里（Tab 出不去）
+$lab7Surface = new RecordingSurface();
+$lab7Surface->resize(320, 240, 1.0);
+$lab7 = new OverlayLabApplication();
+$lab7->attach($lab7Surface, BoxConstraints::tight(new Size(320.0, 240.0)));
+$lab7Tight = BoxConstraints::tight(new Size(320.0, 240.0));
+$lab7->openModalBox(60.0, 24.0, '陷阱', true);
+$lab7->frame(16.0, $lab7Tight);
+$tabOrder = $lab7->focusOrderForTest();
+$inMainTree = 0;
+foreach ($tabOrder as $tabEl) {
+    $isAnchor = $tabEl->widget() instanceof Button
+        && in_array($tabEl->widget()->commandName(), ['lab.anchor', 'bg.hit'], true);
+    if ($isAnchor) {
+        $inMainTree++;
+    }
+}
+check(
+    '浮层栈 · 模态开着 ⇒ Tab 序只剩浮层（focusTrap：主树按钮进不来）',
+    $tabOrder !== [] && $inMainTree === 0,
+    '链长=' . count($tabOrder) . ' 主树按钮=' . $inMainTree,
 );
 
 
