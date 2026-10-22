@@ -47,6 +47,25 @@ abstract class State
     /** @internal 本帧累计 rebuild 次数 —— `settle()` 的"有没有重建"判据（前后差） */
     private static int $rebuiltCount = 0;
 
+    /**
+     * 本帧挂载的 State（`callInit()` 登记，`Application::frame()` 第 ⑦ 段消费）。
+     *
+     * ★ 存在理由（`06` §4.2）：`tickFrame()` **必须**在 settle 之前跑，而挂载**必然**
+     *   发生在 settle 期间 ⇒ "这一帧刚挂上的 State"在第一次 tick 时还不在树里。
+     *   改动前是靠**再遍历一遍全树**补上（`tickFrameStamped` 的帧戳防重复推进），
+     *   代价是每帧多 O(树) 次虚调用，只为照顾通常 0–5 个新挂载。
+     *
+     * ★ **登记点是 `callInit()`**（已在 `StatefulElement::onMount()` 里被调）
+     *   ⇒ 不新增调用点，只加一行。
+     *
+     * ★ **必须被帧消费**：不消费就会一直累积（挂着已卸载的 State）。所以
+     *   `Application::frame()` 每次都 `takeMountedThisFrame()`，且循环里**跳过
+     *   已卸载的**（`mount()` 了但一直没有帧到来的场景：测试、纯头侧夹具）。
+     *
+     * @var list<State>
+     */
+    private static array $mountedThisFrame = [];
+
     private Widget $widget;
     private ?StatefulElement $element = null;
     private bool $dirty = false;
@@ -251,6 +270,7 @@ abstract class State
         }
 
         $this->initialized = true;
+        self::$mountedThisFrame[] = $this;   // ★ 挂载登记（`06` §4.2）
         $this->initializing = true;
         try {
             $this->initState();
@@ -288,6 +308,25 @@ abstract class State
         return self::$rebuiltCount;
     }
 
+    /**
+     * 取走本帧挂载的 State 并**清空**登记表（`06` §4.2）。
+     *
+     * @return list<State>
+     * @internal 由 `Application::frame()` 第 ⑦ 段调（每帧一次，必须调）
+     */
+    public static function takeMountedThisFrame(): array
+    {
+        $list = self::$mountedThisFrame;
+        self::$mountedThisFrame = [];
+
+        return $list;
+    }
+
+    /** @internal 夹具用：登记表必须被消费干净（不消费会无限累积） */
+    public static function mountedCount(): int
+    {
+        return count(self::$mountedThisFrame);
+    }
 
     /**
      * @internal `StatefulElement::rebuild()` 的第二句调它（第一句是 consumeDirty）

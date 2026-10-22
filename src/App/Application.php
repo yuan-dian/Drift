@@ -44,6 +44,7 @@ use Drift\Widget\Drag\Draggable;
 use Drift\Widget\Element;
 use Drift\Widget\Menu\Menu;
 use Drift\Widget\Modal;
+use Drift\Widget\State;
 use Drift\Widget\StatefulElement;
 use Drift\Widget\Widget;
 use Drift\Widget\SemanticsBuilder;
@@ -1371,17 +1372,34 @@ abstract class Application
 
         $frame->run($root, $constraints, $timestampMs, $this->overlays->all());
 
-        // ★ ⓹ 迟到挂载补 tick（2026-10-20 修框架洞）：⓸ 在 settle **之前**跑，而页面
-        //   挂载发生在 `Frame::run()` 的 settle 段 —— 于是"这一帧刚挂上的页"的 State
-        //   在 ⓸ 时还不在树里、从未被 `tickFrame()` 访问 ⇒ `$animating` 当帧永远是
-        //   false ⇒ `wantsFrame()` 返回 false ⇒ 帧时钟不重新上膛 ⇒ **之后没鼠标事件就
-        //   永远静止**（Spinner / 自绘页同病，真机探针抓到）。补一遍把刚挂载的页也 tick
-        //   一次；既有状态因 `tickFrameStamped` 的每帧戳被跳过（不重复推进）。任一新挂载
-        //   的 State 还想下一帧 ⇒ `$animating` 置真 ⇒ 时钟重新上膛，动画得以续跑。
+        // ★ ⓹ 迟到挂载补 tick（2026-10-20 修的框架洞，2026-10-22 换成登记表）：
+        //   ⓸ 在 settle **之前**跑，而页面挂载发生在 `Frame::run()` 的 settle 段 ——
+        //   于是"这一帧刚挂上的页"的 State 在 ⓸ 时还不在树里、从未被 `tickFrame()`
+        //   访问 ⇒ `$animating` 当帧永远是 false ⇒ `wantsFrame()` 返回 false ⇒
+        //   帧时钟不重新上膛 ⇒ **之后没鼠标事件就永远静止**（Spinner / 自绘页同病，
+        //   真机探针抓到）。任一新挂载的 State 还想下一帧 ⇒ `$animating` 置真 ⇒
+        //   时钟重新上膛，动画得以续跑。
         if ($trace !== null) {
             $trace[] = 'tickLateMount';
         }
-        $this->animating = $this->animating || $this->tickAnimations($timestampMs);
+        //   ★ **2026-10-22 改成"只 tick 登记表"**（`06` §4.2）：第二次全树遍历的
+        //     目的**只有一个** —— 让"这一帧刚挂上的 State"有机会声明"我还要下一帧"。
+        //     全树里其他 State 已经在 ⓸ 被访问过（`tickFrameStamped` 会跳过重复）⇒
+        //     遍历它们纯属浪费（树 800 节点 ≈ 800 次虚调用，通常只有 0–5 个新挂载）。
+        //   ★ 帧戳仍然要传：登记表里可能有"在 settle **之前**就挂上"的 State
+        //     （`placeOverlays()` 期间），它已经被 ⓸ 推进过 ⇒ 帧戳保证不重复推进。
+        //   ★ **跳过已卸载的**：`mount()` 了但一直没有帧到来的场景（纯头侧夹具）
+        //     会让登记表挂着死节点 —— 不跳过就是 tick 一个已经离开树的状态。
+        foreach (State::takeMountedThisFrame() as $mountedState) {
+            $mountedElement = $mountedState->element();
+            if ($mountedElement === null || !$mountedElement->isMounted()) {
+                continue;
+            }
+
+            if ($mountedState->tickFrameStamped($timestampMs, $this->frameSerial)) {
+                $this->animating = true;
+            }
+        }
 
         // ★ 每帧重建焦点链：`settle()` 可能重建了子树 ⇒ 旧链里可能握着**已被移除**
         //   的 Element（按键会静默丢给死节点）。`collect()` 幂等，且会保留仍然存在

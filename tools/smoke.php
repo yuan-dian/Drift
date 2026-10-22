@@ -9565,6 +9565,68 @@ check(
     (string) $clockApp->frameCostMs(),
 );
 
+// ═══════════════════════════════════════════════ 挂载登记表（W7 L5-4）══
+//
+// `06` §4.2：`tickFrame()` **必须**在 settle 之前跑，而挂载**必然**发生在 settle 期间
+// ⇒ "这一帧刚挂上的 State"第一次 tick 时还不在树里。改动前靠**再遍历一遍全树**补上，
+// 现在只遍历 `callInit()` 登记的那张表（通常 0–5 条）。
+//
+// ★ 下面用一个**不在任何应用树里**的 Spinner 当探针：它只能被登记表照顾到 ⇒
+//   "它的 step 前进了"就证明第 ⑦ 段真的在消费登记表（而不是遍历全树时顺手带到）。
+
+// ⑳ `mount()` 之后 ⇒ 登记表里有 1 条（消费方还没跑）
+//    ★ 先清掉前面夹具留下的（那些 `mount()` 没有帧来消费）—— 登记表是进程级静态的。
+State::takeMountedThisFrame();
+$mountSpin = Spinner::make()->createElement();
+$mountSpin->mount(null, smokeContext());
+$mountSpin->effectiveBox()?->layout(BoxConstraints::loose(new Size(64.0, 64.0)));
+$mountSpinState = findElement(
+    $mountSpin,
+    static fn(Element $e): bool => $e instanceof StatefulElement && $e->state() instanceof SpinnerState,
+)?->state();
+check(
+    '挂载登记 · mount() 之后登记表里有 1 条（等帧来消费）',
+    State::mountedCount() === 1 && $mountSpinState instanceof SpinnerState,
+    'mounted=' . State::mountedCount(),
+);
+
+// ㉑ 一帧之后 ⇒ 登记表清空，且那个**不在应用树里**的 State 真的被 tick 了
+//    反例：登记表没人消费 ⇒ 一直累积（挂着已卸载的 State）；
+//          或者第 ⑦ 段只 tick 自己树里的 ⇒ 这个 Spinner 的 step 不动。
+$mountApp = new RevealApplication();
+$mountApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 200.0)));
+check(
+    '挂载登记 · 一帧之后被消费干净（不会无限累积）',
+    State::mountedCount() === 0,
+    'mounted=' . State::mountedCount(),
+);
+$mountStep = $mountSpinState instanceof SpinnerState ? $mountSpinState->step() : -1;
+check(
+    '挂载登记 · 本帧新挂载的 State 当帧被 tick（不在应用树里也照 tick）',
+    $mountStep === 1,
+    'step=' . $mountStep,
+);
+
+// ㉒ 已卸载的登记项被**跳过**
+//    反例：不判 `isMounted()` ⇒ tick 一个已经离开树的状态（`mount()` 了但一直
+//    没有帧到来的场景：纯头侧夹具、或挂载后立刻被换掉的子树）。
+State::takeMountedThisFrame();
+$deadSpin = Spinner::make()->createElement();
+$deadSpin->mount(null, smokeContext());
+$deadState = findElement(
+    $deadSpin,
+    static fn(Element $e): bool => $e instanceof StatefulElement && $e->state() instanceof SpinnerState,
+)?->state();
+$deadSpin->unmount();
+$deadApp = new RevealApplication();
+$deadApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 200.0)));
+check(
+    '挂载登记 · 已卸载的登记项被跳过（不 tick 死节点）',
+    $deadState instanceof SpinnerState && $deadState->step() === 0 && State::mountedCount() === 0,
+    'step=' . ($deadState instanceof SpinnerState ? $deadState->step() : -1)
+        . ' mounted=' . State::mountedCount(),
+);
+
 // ══════════════════════════════════════════════════ 窗口状态（§5.4 / M5）══
 // 每条 check 的注释里都写了"它抓的是什么反例"—— 量具没有反例就是空转。
 //
