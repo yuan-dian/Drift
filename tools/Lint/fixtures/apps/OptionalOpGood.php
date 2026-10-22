@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-namespace Fixture\Apps;
+namespace App;
 
 use Drift\Geometry\Rect;
 use Drift\Geometry\Size;

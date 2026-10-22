@@ -123,6 +123,19 @@ abstract class Application
     private ?array $thumbDrag = null;
 
     /**
+     * 捕获指针的节点（`06` §5，W3-L5-6）：非空 ⇒ 指针事件**只发给它**，
+     * 不再命中测试。
+     *
+     * ★ **捕获的全部意义就是"不命中测试"**：拖到控件外面仍然归它 —— 否则
+     *   "拖出边界就断"这类 bug 每个控件都要自己防一遍（现在已经有
+     *   `DragController` 和 `$thumbDrag` 两套手写版本，第三套必然走样）。
+     * ★ 四条释放路径（少一条就是"事件永远发给死节点"）：
+     *   ① 指针抬起（UP / CANCEL）② 捕获者卸载（`frame()` 里清扫 + DIAGNOSTIC）
+     *   ③ 窗口失焦 ④ 浮层外的 `down`（浮层优先于捕获，见 `dispatchPointer`）。
+     */
+    private ?Element $captureNode = null;
+
+    /**
      * 文本框选手势（2026-10-21，§A.2.9 的指针侧）：
      * `down` 落**编辑中**的输入框 ⇒ 记 State，`move` 延伸、`up` / `leave` 收口。
      *
@@ -1315,6 +1328,19 @@ abstract class Application
         if ($trace !== null) {
             $trace[] = 'focusCollect';
         }
+        // ★ 捕获者卸载 ⇒ 必须在这里释放（`06` §5.2 释放路径 ②）：settle 可能把
+        //   捕获者所在的子树换掉 ⇒ 之后的指针事件全发给一个死节点（静默冻住）。
+        //   报 DIAGNOSTIC 而不是静默清空：这是**控件写错了**（该在卸载前自己放），
+        //   不报的话现象是"拖到一半不响应了"，没人查得出来。
+        $captureNode = $this->captureNode;
+        if ($captureNode !== null && !$captureNode->isMounted()) {
+            Errors::report(sprintf(
+                '指针捕获：捕获者已卸载但仍握着指针 —— 自动释放。'
+                    . "\n" . '修法：在控件自己的卸载路径里先调 releasePointer()，'
+                    . '或把捕获挂在会被卸载的子树外面。',
+            ), Errors::DIAGNOSTIC);
+            $this->captureNode = null;
+        }
         $popupRoots = [];
         foreach ($this->overlays->all() as $e) {
             if ($e->element !== null) {
@@ -1688,6 +1714,42 @@ abstract class Application
     }
 
     /**
+     * 捕获指针（`06` §5，W3-L5-6）：从这个节点起的指针事件**只发给它**，不再命中测试。
+     *
+     * ```php
+     * // 控件在处理按下时申请捕获（通常是 Element 自己的 pointer() 回调里）
+     * $this->application()->capturePointer($element);
+     * ```
+     *
+     * ★ 捕获**没有引用计数**：后一次覆盖前一次。理由 —— 同时"按住"两个控件的
+     *   唯一途径是两根手指，而当前平台是单指针（`PointerEvent` 没有 pointerId）。
+     *   多指进来时这里要改成 `array<int, Element>`，届时判据是"事件带 id"。
+     * ★ 释放有四条路（见 `$captureNode` 的注释），**少一条就是死节点收事件**。
+     *
+     * @api
+     */
+    public function capturePointer(Element $node): void
+    {
+        $this->captureNode = $node;
+    }
+
+    /**
+     * 释放指针捕获（幂等；没捕获 ⇒ 无事发生）。
+     *
+     * @api
+     */
+    public function releasePointer(): void
+    {
+        $this->captureNode = null;
+    }
+
+    /** @internal 当前捕获者（测试 / devtools） */
+    public function captureNode(): ?Element
+    {
+        return $this->captureNode;
+    }
+
+    /**
      * 喂一条平台事件（§9.1 路由链的入口）。
      *
      * ```php
@@ -1970,6 +2032,48 @@ abstract class Application
     }
 
     /**
+     * 把一条指针事件交给捕获者（`06` §5.2）。
+     *
+     * ★ **坐标不换算**：回调拿到的是客户区坐标 —— 与 `PointerEvent` 同源，
+     *   控件要局部坐标就自己减 `absoluteOrigin()`。在这里替它减会逼框架
+     *   假设"捕获者一定有一个盒"（拖放 feedback 没有）。
+     * ★ 回调抛异常 ⇒ 报错 + **释放捕获**：留着一个会抛的捕获者等于之后每个
+     *   指针事件都炸一次，而且树里没有别的东西能收到事件（静默冻住）。
+     */
+    private function dispatchToCapture(Element $node, PointerEvent $event): ?CursorShape
+    {
+        $handler = null;
+        for ($n = $node; $n !== null; $n = $n->parent()) {
+            $candidate = $n->widget()->pointerHandlerValue();
+            if ($candidate !== null) {
+                $handler = $candidate;
+
+                break;
+            }
+        }
+
+        if ($handler === null) {
+            return null;   // 捕获者没声明回调：合法（捕获只用于"吃掉事件"）
+        }
+
+        try {
+            $result = $handler($event, $node);
+        } catch (\Throwable $e) {
+            Errors::report(sprintf(
+                '指针捕获：回调未捕获异常 —— %s（%s:%d）',
+                $e->getMessage(),
+                basename($e->getFile()),
+                $e->getLine(),
+            ));
+            $this->releasePointer();
+
+            return null;
+        }
+
+        return $result instanceof CursorShape ? $result : null;
+    }
+
+    /**
      * 指针事件派发（**四相位**，2026-10-17 move/up/leave 通路落地）。
      *
      * - **down**：三段（浮层优先 / 右键菜单 / 焦点激活 —— M3 修复的行为不动）
@@ -1999,6 +2103,8 @@ abstract class Application
                 // 模态：ModalHost 盖满客户区 ⇒ 命中恒非 null；点遮罩 = 关闭意图
                 if ($e->scrim && !$this->hitsModalPanel($hit)) {
                     if ($event->isDown()) {
+                        $this->releasePointer();   // 浮层优先于捕获（`06` §10）
+
                         if ($e->dismissOnTapOutside) {
                             $this->removeOverlay($e);
                         }
@@ -2014,6 +2120,10 @@ abstract class Application
                 }
 
                 if ($event->isDown()) {
+                    // 浮层接管这次按下 ⇒ 捕获必须让位（`06` §10「浮层优先于捕获」：
+                    // 用户主动点浮层，那次 down 不该被拖拽者吃掉）
+                    $this->releasePointer();
+
                     // 菜单项（MenuItem extends Button）与根树按钮同规则：焦点落在
                     // 浮层内本次点击上 ⇒ 立即激活。命令经 dispatch() 分发 ⇒ 浮层按
                     // 语义 #2 在分发后关闭 —— 与键盘 Enter 完全同路。
@@ -2033,6 +2143,8 @@ abstract class Application
             // 点在条目盒外
             if ($e->barrier) {
                 if ($event->isDown()) {
+                    $this->releasePointer();   // 浮层优先于捕获（`06` §10）
+
                     // §9.1 关闭语义 #1：点浮层外 ⇒ 关且**吞掉该次按下**（不穿透）
                     if ($e->dismissOnTapOutside) {
                         $this->removeOverlay($e);
@@ -2049,6 +2161,21 @@ abstract class Application
                 return null;
             }
             // barrier=false（Tooltip / Toast）：继续往下问
+        }
+
+        // ── 指针捕获（`06` §5，W3-L5-6）：捕获期**不命中测试** ───────────
+        // ★ 放在浮层段**之后**：浮层优先于捕获（`06` §10 裁决）—— 用户主动点浮层
+        //   时那次 down 先归浮层；但 `barrier=false` 的浮层（Toast / Tooltip）
+        //   在上面时照样穿透到捕获者，拖到一半弹个 Toast 不该断拖。
+        $capture = $this->captureNode;
+        if ($capture !== null) {
+            $cursor = $this->dispatchToCapture($capture, $event);
+
+            if ($event->isUp() || $event->isLeave()) {
+                $this->releasePointer();   // 释放路径 ①：指针抬起 / 离开窗口
+            }
+
+            return $cursor;
         }
 
         // ── 滚动条 thumb 拖动（§12.3，2026-10-19）─────────────────────

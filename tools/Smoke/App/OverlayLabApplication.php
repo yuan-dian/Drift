@@ -6,10 +6,12 @@ namespace Drift\Dev\Smoke\App;
 use Drift\App\Application;
 use Drift\App\OverlayEntry;
 use Drift\Commands\CommandArg;
+use Drift\Input\CursorShape;
+use Drift\Input\PointerEvent;
 use Drift\Widget\Button;
 use Drift\Widget\Column;
+use Drift\Widget\Element;
 use Drift\Widget\Modal;
-use Drift\Widget\Text;
 use Drift\Widget\Widget;
 use Drift\Dev\Smoke\Overlay\FlatBox;
 
@@ -33,10 +35,27 @@ final class OverlayLabApplication extends Application
     /** @var list<Modal> 依次打开过的模态（夹具要读它们的 `dismissible`） */
     public array $modals = [];
 
+    /**
+     * 捕获期收到的指针相位序列（`06` §5 夹具 #9：捕获路由）。
+     *
+     * ★ 只有**锚点按钮**声明了 `pointer()`：捕获别人时这里不该增加 —— 这正是
+     *   "捕获期不命中测试"的判据。
+     *
+     * @var list<string>
+     */
+    public array $pointerLog = [];
+
     public function buildRoot(): Widget
     {
         return Column::make()->children([
-            Button::make('锚点')->command('lab.anchor'),
+            Button::make('锚点')->command('lab.anchor')
+                ->pointer(function (PointerEvent $event, Element $self): ?CursorShape {
+                    $this->pointerLog[] = $event->isDown()
+                        ? 'down'
+                        : ($event->isMove() ? 'move' : ($event->isUp() ? 'up' : 'leave'));
+
+                    return null;
+                }),
             Button::make('背景')->command('bg.hit'),
             // 底部按钮：离顶部的浮层足够远 ⇒ "点浮层外会不会穿透"用它当靶子
             // （离得近的靶子会被面板盒盖住，测出来的是"点到了面板"）

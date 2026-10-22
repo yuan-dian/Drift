@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-namespace Fixture\Widget;
+namespace Drift\Widget;
 
 use Drift\Geometry\Size;
 use Drift\Rendering\Canvas;

@@ -6773,6 +6773,79 @@ check(
     '链长=' . count($tabOrder) . ' 主树按钮=' . $inMainTree,
 );
 
+// ⑩ 指针捕获（`06` §5 / §11.2 夹具 #9）：捕获期不命中测试
+$capSurface = new RecordingSurface();
+$capSurface->resize(320, 240, 1.0);
+$cap = new OverlayLabApplication();
+$cap->attach($capSurface, BoxConstraints::tight(new Size(320.0, 240.0)));
+$capAnchor = findElement(
+    $cap->root(),
+    static fn(Element $e): bool => $e->widget() instanceof Button
+        && $e->widget()->commandName() === 'lab.anchor',
+);
+$capBottom = findElement(
+    $cap->root(),
+    static fn(Element $e): bool => $e->widget() instanceof Button
+        && $e->widget()->commandName() === 'lab.bottom',
+);
+$capBottomBox = $capBottom?->effectiveBox();
+[$cbx, $cby] = $capBottomBox === null ? [0.0, 0.0] : RenderBox::absoluteOrigin($capBottomBox);
+$cap->capturePointer($capAnchor);
+$cap->pointerLog = [];
+$cap->dispatchInput(PointerEvent::move($cbx + 5.0, $cby + 5.0));
+check(
+    '指针捕获 · 捕获期 move 落在别的控件上 ⇒ 仍归捕获者（不做命中测试）',
+    $cap->pointerLog === ['move'] && $cap->captureNode() === $capAnchor,
+    'log=' . implode(',', $cap->pointerLog),
+);
+$cap->dispatchInput(PointerEvent::up($cbx + 5.0, $cby + 5.0));
+check(
+    '指针捕获 · 抬起 ⇒ 自动释放（不释放就是"事件永远发给死节点"）',
+    $cap->captureNode() === null && $cap->pointerLog === ['move', 'up'],
+    'log=' . implode(',', $cap->pointerLog),
+);
+$cap->pointerLog = [];
+$cap->dispatchInput(PointerEvent::move($cbx + 6.0, $cby + 6.0));
+check(
+    '指针捕获 · 释放后 move 不再进捕获者（回到正常命中）',
+    $cap->pointerLog === [],
+    'log=' . implode(',', $cap->pointerLog),
+);
+
+// ⑪ 浮层优先于捕获（`06` §10）：捕获中点浮层外 ⇒ 先释放捕获 + 关浮层
+$cap->capturePointer($capAnchor);
+$cap->openPanel(FlatBox::make(40.0, 20.0), $capAnchor);
+$cap->frame(16.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$cap->pointerLog = [];
+$cap->dispatchInput(PointerEvent::down($cbx + 5.0, $cby + 5.0));
+check(
+    '指针捕获 · 捕获中点浮层外 ⇒ 释放捕获 + 关浮层（浮层优先，down 不转发给捕获者）',
+    $cap->captureNode() === null && $cap->overlays()->count() === 0 && $cap->pointerLog === [],
+    'cap=' . ($cap->captureNode() === null ? 'null' : 'set')
+    . ' depth=' . $cap->overlays()->count()
+    . ' log=' . implode(',', $cap->pointerLog),
+);
+
+// ⑫ 捕获者卸载 ⇒ 自动释放 + DIAGNOSTIC（`06` §5.2 释放路径 ②）
+//    ★ DIAGNOSTIC **不落盘**（只进进程内环形缓冲）⇒ 读 `recentDiagnostics()`，
+//      读日志文件永远是空的（这条差点写成假绿）。
+$cap->capturePointer($capAnchor);
+$cap->root()->unmount();
+$cap->frame(32.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$captureDiag = false;
+foreach (Errors::recentDiagnostics() as $diag) {
+    $text = is_array($diag) ? (string) ($diag['message'] ?? '') : (string) $diag;
+    if (str_contains($text, '捕获者已卸载')) {
+        $captureDiag = true;
+    }
+}
+check(
+    '指针捕获 · 捕获者卸载 ⇒ 自动释放并报 DIAGNOSTIC（不静默冻住）',
+    $cap->captureNode() === null && $captureDiag,
+    'cap=' . ($cap->captureNode() === null ? 'null' : 'set')
+    . ' diag=' . ($captureDiag ? 'yes' : 'no'),
+);
+
 
 // ── ㉞c 卡片（§15.7：带内边距的盒样式控件 —— 示例台"分组/层次"的地基）──
 //    ★ 每条判据都要能区分"有 Card"与"没有 Card"（否则是空转）：

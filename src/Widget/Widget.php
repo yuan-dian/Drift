@@ -51,6 +51,15 @@ abstract class Widget
     /** @internal null = 本控件不参与悬停派发（§9.1 语义 #5） */
     private ?\Closure $hoverHandler = null;
 
+    /**
+     * @internal null = 本控件不接受**捕获期**的指针事件（`06` §5）
+     *
+     * ★ 与 `hoverHandler` 的分工：hover 是"指针路过我"（每帧谁在最上面就是谁），
+     *   捕获是"指针被钉在我身上"（按下后一直到抬起，**不再命中测试**）。
+     *   两者都是 `\Closure(PointerEvent): ?CursorShape`，但语义互不覆盖。
+     */
+    private ?\Closure $pointerHandler = null;
+
     /** @internal null = 本控件不在语义树里（无角色 = 不建节点，§9 / M5 无障碍） */
     private ?SemanticsRole $semRole = null;
 
@@ -353,6 +362,40 @@ abstract class Widget
     public function hoverHandlerValue(): ?\Closure
     {
         return $this->hoverHandler;
+    }
+
+    /**
+     * 声明"按下后我要一直收到指针事件"（指针捕获，`06` §5）。
+     *
+     * ```php
+     * Slider::make()
+     *     ->pointer(function (PointerEvent $e, Element $self): ?CursorShape {
+     *         // e 的坐标仍是**客户区坐标**（不换算），需要局部坐标就减
+     *         // `RenderBox::absoluteOrigin($self->effectiveBox())`
+     *         return null;
+     *     });
+     * ```
+     *
+     * ★ **捕获不是"能收到更多事件"**：捕获期指针事件**不再命中测试**（这是捕获的
+     *   全部意义 —— 拖到控件外面仍然归我）。捕获由控件在处理 `down` 时主动申请：
+     *   `$app->capturePointer($element)`，抬起 / 捕获者卸载 / 窗口失焦时自动释放。
+     * ★ 只在捕获期被调 —— 没捕获过的控件这个回调**一次都不会跑**（不是"指针经过
+     *   就调"，那是 `hover()`）。
+     *
+     * @api
+     */
+    public function pointer(\Closure $handler): static
+    {
+        $this->mutate();
+        $this->pointerHandler = $handler;
+
+        return $this;
+    }
+
+    /** @internal 捕获派发读它；`null` = 本控件不接受捕获期事件 */
+    public function pointerHandlerValue(): ?\Closure
+    {
+        return $this->pointerHandler;
     }
 
     /**
