@@ -27,6 +27,18 @@ abstract class Element
      */
     private const SETTLE_ROUNDS = 16;
 
+    /**
+     * 结构版本号（`07` §6.2）：节点**增删**或子表**重排**时 +1。
+     *
+     * ★ 唯一消费者是语义推送的档位选择：结构变了 ⇒ 必须推 `full`（增量表达
+     *   不了"多了一个节点"）。没有它就只能靠"有 State 脏"猜 —— 而脏不等于
+     *   结构变（改个 label 是脏，不是结构变）。
+     *
+     * ★ **只在真的变了时 +1**：`updateChildren()` 每次 rebuild 都会被调，
+     *   无条件 +1 会让版本号每帧都变 ⇒ "结构没变"永远判不出来（等于没做）。
+     */
+    private static int $structureVersion = 0;
+
     protected ?Element $parent = null;
     protected BuildContext $context;
     protected Widget $widget;
@@ -69,6 +81,18 @@ abstract class Element
         return $this->mounted;
     }
 
+    /** @internal 结构变了（节点增删 / 重排）—— 见 `$structureVersion` */
+    public static function bumpStructure(): void
+    {
+        ++self::$structureVersion;
+    }
+
+    /** @internal 语义推送用它判"结构变没变"（`07` §6.2） */
+    public static function structureVersion(): int
+    {
+        return self::$structureVersion;
+    }
+
     /**
      * 挂载到父链下，并建整棵子树。
      *
@@ -80,6 +104,7 @@ abstract class Element
         $this->context = $context;
         $this->widget->seal(); // §15.2 Seal-on-Mount
         $this->mounted = true;
+        self::bumpStructure(); // ★ 结构变了（`07` §6.2）
         $this->onMount();
         $this->syncBox();
         $this->rebuild();
@@ -417,6 +442,7 @@ abstract class Element
         }
         $this->children = [];
         $this->mounted = false;
+        self::bumpStructure(); // ★ 结构变了（`07` §6.2）
     }
 
     /**
@@ -470,6 +496,34 @@ abstract class Element
             }
         }
 
+        // ★ **重排也算结构变**（语义树的顺序变了），而重排**不触发**
+        //   `mount()`/`unmount()`（子被复用）⇒ 必须在这里单独判一次。
+        // ★ 判据是**逐个位置比**（O(n) 指针比较）：`updateChildren()` 每次
+        //   rebuild 都会被调，无条件 +1 会让版本号每帧都变 ⇒ 结构判据失效。
+        if (self::compositionChanged($old, $next)) {
+            self::bumpStructure();
+        }
+
         $this->children = $next;
+    }
+
+    /**
+     * 子表组合是否变了（数量 / 每个位置上的实例）。
+     *
+     * @param list<Element> $old
+     * @param list<Element> $next
+     */
+    private static function compositionChanged(array $old, array $next): bool
+    {
+        if (count($old) !== count($next)) {
+            return true;
+        }
+        foreach ($next as $index => $element) {
+            if (($old[$index] ?? null) !== $element) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

@@ -244,6 +244,23 @@ abstract class Application
     /** D1：上次推语义时焦点是谁（焦点一变必须立即推，**焦点永不节流**） */
     private ?Element $semanticsFocused = null;
 
+    /** `07` §6.2：上次推语义时的结构版本（`-1` = 还没推过 ⇒ 首帧必然 full） */
+    private int $lastStructureVersion = -1;
+
+    /** `07` §6.2 coalesce：攒了几帧没推（0 = 没在攒） */
+    private int $semanticsCoalesced = 0;
+
+    /**
+     * coalesce 的帧数上限：攒满就必须推一次（`07` §9 #10）。
+     *
+     * ★ 没有上限 = "滚动/动画期间一直不推" ⇒ 读屏用户**完全失去反馈**。
+     *   与 `06` §3.4 的 D1 同值（4 帧 ≈ 64ms）。
+     */
+    private const SEMANTICS_COALESCE_MAX = 4;
+
+    /** 上次推送的档位（`full` / `coalesce` / `none`）—— 夹具与 devtools 读它 */
+    private string $semanticsMode = 'none';
+
     /**
      * 后台执行端口（§17.2）—— `attach()` 时由 `taskHost()` 建一次并缓存。
      *
@@ -1622,6 +1639,26 @@ abstract class Application
      * ★ 走 SemanticsBuilder::build()（Element 树）+ toArrays()['nodes']（扁平标量，
      *   正是 WindowHost::pushSemantics 收的形状）。放在 settle/重建之后 ⇒ 反映最新树。
      */
+    /**
+     * 语义推送：**两档**（`07` §6.2 / §6.4）。
+     *
+     * | 档 | 什么时候 | 推什么 |
+     * |---|---|---|
+     * | `full` | 结构变了（节点增删 / 重排）或焦点变了 | 整棵语义树 |
+     * | `coalesce` | 动画中（结构没变） | 攒起来，**每 4 帧**合并成一次 |
+     *
+     * ★★ **`delta` 档诚实降级、没做**（`07` §6.4）：精确 diff 要"每个节点记住
+     *   上次推的值"，那是 O(树) 的额外内存；没有字段表就只能推"整棵树的当前值"，
+     *   省的是序列化与 IPC、不是遍历 ⇒ 是个"每帧仍遍历全树、只少一次序列化"的
+     *   半成品。本册只落两档，delta 记为"结构版本号落地后再评估"。
+     *
+     * ★★ **结构变 / 焦点变 ⇒ 立即 `full`，两条节流都不看**：
+     *   - 增量表达不了"多了一个节点"，攒着推会让读屏的树与真实树错位；
+     *   - 焦点一变必须马上说（延迟 50ms 就让人怀疑键盘失灵，`07` §6.3）。
+     *
+     * ★ D1（`06` §3.3 / §3.4）仍在：超预算时降到**每 4 帧一次**，但只约束
+     *   "没有结构/焦点变化"的常态帧。
+     */
     private function pumpSemantics(): void
     {
         $sink = $this->semanticsSink;
@@ -1629,23 +1666,53 @@ abstract class Application
             return;
         }
 
-        // ★ D1（`06` §3.3 / §3.4）：超预算时降到**每 4 帧一次**，但
-        //   **焦点变化永不节流** —— 读屏用户靠焦点提示知道"我移到哪了"，
-        //   延迟 3 帧（约 50ms）能忍，漏一次不能忍。
         $focused = $this->focus?->focused();
         $focusChanged = $focused !== $this->semanticsFocused;
+        $version = Element::structureVersion();
+        $structureChanged = $version !== $this->lastStructureVersion;
 
-        if ($this->overBudget && $this->semanticsFrameSkip > 0 && !$focusChanged) {
-            $this->semanticsFrameSkip--;
+        // ① 结构 / 焦点变了 ⇒ full，**立即**（不看 coalesce，也不看 D1）
+        if ($structureChanged || $focusChanged) {
+            $this->lastStructureVersion = $version;
+            $this->semanticsFocused = $focused;
+            $this->semanticsCoalesced = 0;
+            $this->semanticsFrameSkip = $this->overBudget ? 3 : 0;
+            $this->pushSemantics($sink, $focused, 'full');
 
             return;
         }
 
-        $this->semanticsFrameSkip = $this->overBudget ? 3 : 0;
-        $this->semanticsFocused = $focused;
+        // ② 动画中 ⇒ coalesce：攒着，攒满上限必须推一次
+        if ($this->animating) {
+            $this->semanticsMode = 'coalesce';
+            if (++$this->semanticsCoalesced < self::SEMANTICS_COALESCE_MAX) {
+                return;
+            }
+        }
 
+        // ③ D1：超预算时降到每 4 帧一次
+        if ($this->overBudget && $this->semanticsFrameSkip > 0) {
+            $this->semanticsFrameSkip--;
+
+            return;
+        }
+        $this->semanticsFrameSkip = $this->overBudget ? 3 : 0;
+        $this->semanticsCoalesced = 0;
+        $this->pushSemantics($sink, $focused, $this->animating ? 'coalesce' : 'full');
+    }
+
+    /** @param \Closure(array<int, array<string, mixed>>): void $sink */
+    private function pushSemantics(\Closure $sink, ?Element $focused, string $mode): void
+    {
+        $this->semanticsMode = $mode;
         $tree = SemanticsBuilder::build($this->root, $focused);
         ($sink)($tree->toArrays()['nodes']);
+    }
+
+    /** @internal 夹具 / devtools：上次推送用的是哪一档（`full` / `coalesce` / `none`） */
+    public function semanticsMode(): string
+    {
+        return $this->semanticsMode;
     }
 
     private function tickAnimations(float $timestampMs): bool

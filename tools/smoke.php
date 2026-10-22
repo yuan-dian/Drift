@@ -10531,6 +10531,93 @@ check(
     )
 );
 
+// ═══════════════════════════════════════════ 语义推送两档（W7 L6-6）══
+//
+// `07` §6.2：结构变了 ⇒ `full`；动画中（结构没变）⇒ `coalesce`（每 4 帧一次）；
+// 焦点变 ⇒ 立即 `full`。★ `delta` 档**诚实降级没做**（§6.4：没有字段表就只能是
+// "每帧仍遍历全树、少一次序列化"的半成品）。
+//
+// ★ 反例方向：若 `updateChildren()` 无条件 `bumpStructure()`（每次 rebuild 都 +1），
+//   则"结构没变"永远判不出来 ⇒ ㉓ 会变成每帧推（8 次而不是 2 次）、㉔ 的版本号会涨。
+
+// ㉑ 结构版本号随挂载增长（`mount()` 里 +1）
+$sv0 = Element::structureVersion();
+$svApp = new EchoApplication();
+$svApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(120.0, 120.0)));
+$sv1 = Element::structureVersion();
+check(
+    '语义两档 · 结构版本号随挂载增长（mount() 里 +1）',
+    $sv1 > $sv0,
+    $sv0 . ' -> ' . $sv1,
+);
+
+// ㉒ 首帧（结构变了）⇒ 推 full
+$modeApp = new SpinnerApplication();
+$modePushes = 0;
+$modeApp->setSemanticsSink(function (array $nodes) use (&$modePushes): void {
+    ++$modePushes;
+});
+$modeApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(120.0, 120.0)));
+check(
+    '语义两档 · 首帧结构变了 ⇒ 推 full',
+    $modePushes === 1 && $modeApp->semanticsMode() === 'full',
+    'pushes=' . $modePushes . ' mode=' . $modeApp->semanticsMode(),
+);
+
+// ㉓ coalesce：动画中 8 帧 ⇒ 2 次（每 4 帧一次），不是 8 次
+// ㉔ 同时钉住"动画每帧重建但**结构没变**" ⇒ 版本号不动
+$modePushes = 0;
+$svSpinBefore = Element::structureVersion();
+$modeTs = 0.0;
+for ($i = 0; $i < 8; $i++) {
+    $modeTs += 16.0;
+    $modeApp->frame($modeTs, BoxConstraints::tight(new Size(120.0, 120.0)));
+}
+$svSpinAfter = Element::structureVersion();
+check(
+    '语义两档 · coalesce：动画中 8 帧 ⇒ 推 2 次（每 4 帧一次）',
+    $modePushes === 2 && $modeApp->semanticsMode() === 'coalesce',
+    'pushes=' . $modePushes . ' mode=' . $modeApp->semanticsMode(),
+);
+check(
+    '语义两档 · 动画每帧重建但结构没变 ⇒ 版本号不动（updateChildren 不无条件 +1）',
+    $svSpinAfter === $svSpinBefore,
+    $svSpinBefore . ' -> ' . $svSpinAfter,
+);
+
+// ㉕ coalesce 的第 1 帧**不推**（攒着）—— 证明它真在攒，不是"没走这条路"
+$spin2 = new SpinnerApplication();
+$spin2Pushes = 0;
+$spin2->setSemanticsSink(function (array $nodes) use (&$spin2Pushes): void {
+    ++$spin2Pushes;
+});
+$spin2->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(120.0, 120.0)));
+$spin2Pushes = 0;
+$spin2->frame(16.0, BoxConstraints::tight(new Size(120.0, 120.0)));
+check(
+    '语义两档 · coalesce 第 1 帧不推（攒着），档位记的是 coalesce',
+    $spin2Pushes === 0 && $spin2->semanticsMode() === 'coalesce',
+    'pushes=' . $spin2Pushes . ' mode=' . $spin2->semanticsMode(),
+);
+
+// ㉖ 虚拟列表滚动换了行 ⇒ **结构变** ⇒ full（不是 coalesce）
+//    这条钉的是"滚动不是一种可以攒的变化"：行换了就必须整棵推，攒着会让读屏
+//    的树与真实树错位（增量表达不了"多了几个节点"）。
+$svLazy = new LazyApplication();
+$lazyPushes = 0;
+$svLazy->setSemanticsSink(function (array $nodes) use (&$lazyPushes): void {
+    ++$lazyPushes;
+});
+$svLazy->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(400.0, 200.0)));
+$lazyPushes = 0;
+$svLazyBefore = Element::structureVersion();
+$svLazy->dispatchInput(ScrollEvent::make(200.0, 100.0, 3.0)); // 3 格 = 144px ⇒ 窗口换行
+$svLazy->frame(16.0, BoxConstraints::tight(new Size(400.0, 200.0)));
+check(
+    '语义两档 · 虚拟列表滚动换了行 ⇒ 结构变 ⇒ 立即 full（不攒）',
+    Element::structureVersion() > $svLazyBefore && $lazyPushes === 1 && $svLazy->semanticsMode() === 'full',
+    'ver=' . $svLazyBefore . '->' . Element::structureVersion() . ' pushes=' . $lazyPushes . ' mode=' . $svLazy->semanticsMode(),
+);
 // ── TestApp：声明式场景（`07` §4.2 / §4.3，W7 第 42 步）──
 //   三条场景各验一类，都用 `TestApp` 的**同一个**执行器：
 //     ① 虚拟列表：滚动前后都只造可见行（R1 查树，不查 Widget 声明）
