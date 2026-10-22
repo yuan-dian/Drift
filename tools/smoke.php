@@ -152,9 +152,12 @@ use Drift\Layout\RenderModalHost;
 use Drift\Layout\RenderObject;
 use Drift\Layout\RenderPopupPanel;
 use Drift\Layout\RenderSpinner;
+use Drift\Layout\RenderStack;
 use Drift\Layout\RenderText;
 use Drift\Layout\RenderTextField;
 use Drift\Layout\RenderToggle;
+use Drift\Layout\StackAlign;
+use Drift\Layout\StackFit;
 use Drift\Rendering\BoxStyle;
 use Drift\Routing\PageHost;
 use Drift\Routing\PageHostState;
@@ -3508,6 +3511,132 @@ check(
     'Layout · 未设 alignSelf ⇒ 跟容器的 crossAlign（End 容器 ⇒ 30）',
     $inheritKid->offsetY() === 30.0,
     '实际 ' . (string) $inheritKid->offsetY()
+);
+
+// ── ⑮d Stack（W6 L4-4，`04` §4）──
+// ★ 四条口径一起守：尺寸 = 最大子 / `Expand` 取父给的尺寸（不是 max(子)）/
+//   `PassThrough` 原样透传 / 内禀值 = max。少任何一条都会漏掉一类"看起来实现了"。
+
+// 尺寸 = 最大子（不是和、不是最后一个）
+$stackA = new SolidBox(new Size(100.0, 20.0), 100.0, 20.0);
+$stackB = new SolidBox(new Size(30.0, 80.0), 30.0, 80.0);
+$looseStack = new RenderStack();
+$looseStack->addChild($stackA);
+$looseStack->addChild($stackB);
+$looseStack->layout(BoxConstraints::loose(new Size(300.0, 300.0)));
+check(
+    'Stack · Loose 尺寸 = 最大子（100×20 与 30×80 ⇒ 100×80）',
+    $looseStack->size()?->width === 100.0 && $looseStack->size()?->height === 80.0,
+    sprintf('实际 %.1f × %.1f', $looseStack->size()?->width ?? -1.0, $looseStack->size()?->height ?? -1.0)
+);
+check(
+    'Stack · 默认 TopLeft ⇒ 两个子都在 (0,0)',
+    $stackA->offsetX() === 0.0 && $stackA->offsetY() === 0.0
+        && $stackB->offsetX() === 0.0 && $stackB->offsetY() === 0.0,
+    sprintf('实际 A(%.1f,%.1f) B(%.1f,%.1f)', $stackA->offsetX(), $stackA->offsetY(), $stackB->offsetX(), $stackB->offsetY())
+);
+
+// 命中从后往前（守的是**基类**契约：`RenderBox::hitTest` 里 array_reverse）
+$below = new SolidBox(new Size(50.0, 50.0), 50.0, 50.0);
+$above = new SolidBox(new Size(50.0, 50.0), 50.0, 50.0);
+$hitStack = new RenderStack();
+$hitStack->addChild($below);
+$hitStack->addChild($above);
+$hitStack->layout(BoxConstraints::loose(new Size(100.0, 100.0)));
+check(
+    'Stack · 命中从后往前（重叠处命中后加的那个）',
+    $hitStack->hitTest(10.0, 10.0) === $above,
+    '实际命中 ' . (($hitStack->hitTest(10.0, 10.0) ?? $below) === $above ? '后加的' : '先加的')
+);
+
+// Expand：有界轴取**父给的**尺寸（不是 max(子)），子拿到 tight
+$expandSpy = new ConstraintSpy(new Size(30.0, 10.0));
+$expandStack = new RenderStack(StackAlign::TopLeft, StackFit::Expand);
+$expandStack->addChild($expandSpy);
+$expandStack->layout(BoxConstraints::loose(new Size(100.0, 80.0)));
+check(
+    'Stack · Expand 有界轴拉满父给的空间（100×80，不是 max(子) 的 30×10）',
+    $expandStack->size()?->width === 100.0 && $expandStack->size()?->height === 80.0,
+    sprintf('实际 %.1f × %.1f', $expandStack->size()?->width ?? -1.0, $expandStack->size()?->height ?? -1.0)
+);
+check(
+    'Stack · Expand 给子 tight（min === max === 本盒尺寸）',
+    $expandSpy->lastSeen !== null
+        && $expandSpy->lastSeen->minWidth === 100.0
+        && $expandSpy->lastSeen->maxHeight === 80.0,
+    $expandSpy->lastSeen === null
+        ? '一次都没量'
+        : sprintf('子约束 %.1f..%.1f × %.1f..%.1f', $expandSpy->lastSeen->minWidth, $expandSpy->lastSeen->maxWidth, $expandSpy->lastSeen->minHeight, $expandSpy->lastSeen->maxHeight)
+);
+
+// Expand 的无界轴退化为 Loose（绝不产生 INF 尺寸）
+$halfSpy = new ConstraintSpy(new Size(40.0, 10.0));
+$halfStack = new RenderStack(StackAlign::TopLeft, StackFit::Expand);
+$halfStack->addChild($halfSpy);
+$halfStack->layout(new BoxConstraints(0.0, INF, 0.0, 40.0));
+check(
+    'Stack · Expand 的无界轴退化为 Loose（宽按子 40、高拉满 40）',
+    $halfStack->size()?->width === 40.0 && $halfStack->size()?->height === 40.0,
+    sprintf('实际 %.1f × %.1f', $halfStack->size()?->width ?? -1.0, $halfStack->size()?->height ?? -1.0)
+);
+
+// 对齐：盒被紧约束撑大后，子按 StackAlign 落位
+$brKid = new SolidBox(new Size(30.0, 10.0), 30.0, 10.0);
+$brStack = new RenderStack(StackAlign::BottomRight, StackFit::Loose);
+$brStack->addChild($brKid);
+$brStack->layout(BoxConstraints::tight(new Size(100.0, 80.0)));
+check(
+    'Stack · BottomRight ⇒ 子落右下（100−30, 80−10 = 70, 70）',
+    $brKid->offsetX() === 70.0 && $brKid->offsetY() === 70.0,
+    sprintf('实际 %.1f, %.1f', $brKid->offsetX(), $brKid->offsetY())
+);
+
+$cKid = new SolidBox(new Size(30.0, 10.0), 30.0, 10.0);
+$cStack = new RenderStack(StackAlign::Center, StackFit::Loose);
+$cStack->addChild($cKid);
+$cStack->layout(BoxConstraints::tight(new Size(100.0, 80.0)));
+check(
+    'Stack · Center ⇒ 子居中（(100−30)/2, (80−10)/2 = 35, 35）',
+    $cKid->offsetX() === 35.0 && $cKid->offsetY() === 35.0,
+    sprintf('实际 %.1f, %.1f', $cKid->offsetX(), $cKid->offsetY())
+);
+
+// PassThrough：子看到的就是父给的约束（下界也透传）
+$ptSpy = new ConstraintSpy(new Size(20.0, 20.0));
+$ptStack = new RenderStack(StackAlign::TopLeft, StackFit::PassThrough);
+$ptStack->addChild($ptSpy);
+$ptStack->layout(new BoxConstraints(10.0, 50.0, 10.0, 50.0));
+check(
+    'Stack · PassThrough 原样透传（子看到 10..50 × 10..50）',
+    $ptSpy->lastSeen !== null
+        && $ptSpy->lastSeen->minWidth === 10.0
+        && $ptSpy->lastSeen->maxWidth === 50.0,
+    $ptSpy->lastSeen === null
+        ? '一次都没量'
+        : sprintf('子约束 %.1f..%.1f', $ptSpy->lastSeen->minWidth, $ptSpy->lastSeen->maxWidth)
+);
+
+// 内禀值 = max（不是和）
+$intrStack = new RenderStack();
+$intrStack->addChild(new SolidBox(new Size(10.0, 10.0), 70.0, 30.0));
+$intrStack->addChild(new SolidBox(new Size(10.0, 10.0), 20.0, 90.0));
+check(
+    'Stack · 内禀值 = max（不是和）：宽 70、高 90',
+    $intrStack->intrinsicWidth(0.0) === 70.0 && $intrStack->intrinsicHeight(0.0) === 90.0,
+    sprintf('实际 %.1f / %.1f', $intrStack->intrinsicWidth(0.0), $intrStack->intrinsicHeight(0.0))
+);
+
+// 每个子只 layout 一次（Expand 也没有第二遍 —— 循环依赖那条的守门夹具）
+$onceA = new LayoutCountBox(new Size(30.0, 10.0));
+$onceB = new LayoutCountBox(new Size(50.0, 20.0));
+$onceStack = new RenderStack(StackAlign::Center, StackFit::Expand);
+$onceStack->addChild($onceA);
+$onceStack->addChild($onceB);
+$onceStack->layout(BoxConstraints::loose(new Size(100.0, 80.0)));
+check(
+    'Stack · 每个子只 layout 一次（Expand 也没有第二遍）',
+    $onceA->layoutCalls === 1 && $onceB->layoutCalls === 1,
+    sprintf('实际 %d / %d 次', $onceA->layoutCalls, $onceB->layoutCalls)
 );
 
 // 单子代理：RenderProxy + mods 内距（W5：padding 是**字段**，不是节点）

@@ -9,13 +9,18 @@ use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
 use Drift\Widget\ButtonVariant;
 use Drift\Widget\Card;
+use Drift\Widget\Center;
 use Drift\Widget\Column;
 use Drift\Widget\Dock;
 use Drift\Layout\FlexAlign;
+use Drift\Layout\StackAlign;
+use Drift\Layout\StackFit;
 use Drift\Widget\Padding;
 use Drift\Widget\Row;
 use Drift\Widget\ScrollView;
+use Drift\Widget\SizedBox;
 use Drift\Widget\Spacer;
+use Drift\Widget\Stack;
 use Drift\Widget\StatelessWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
@@ -102,6 +107,44 @@ final class LayoutPage extends StatelessWidget
                         ->background(Color::fromRgb(0xFF, 0xFF, 0xFF))
                         ->border(Color::fromRgb(0xE6, 0xE6, 0xE6), 1.0)
                         ->radius(6.0),
+                ])),
+
+                // ── Stack：层叠 + 3×3 方位对齐（W6 L4-4）──
+                // ★ 三个形态各守一个口径，且都是**真消费**：AOT 只编译可达代码，
+                //   没有这一段 `RenderStack` 在真机上等于没验。
+                //   · 左：`Loose` + `TopRight` ⇒ 角标压在右上
+                //   · 中：`Expand` ⇒ 底层拉满**父给的**空间（不是 max(子)）
+                //   · 右：`BottomRight` ⇒ 另一个角，验证对齐不是只实现了 TopLeft
+                // ★ 标题用"3×3 方位"而不是"九宫格"：内置点阵字模缺"九""宫"两个字
+                //   （`CjkGlyphData.php` 落后仓库 164 个字符，本机装不上 PIL 无法重生成），
+                //   而缺字是**静默无墨** —— 只有看图才发现。
+                $this->demo('Stack：层叠 + 3×3 方位对齐（后加的子压在上面）', Row::make()->spacing(12.0)->children([
+                    Stack::make()->alignment(StackAlign::TopRight)->children([
+                        SizedBox::make()->size(160.0, 64.0)
+                            ->background(Color::fromRgb(0xF2, 0xF2, 0xF2))
+                            ->border(Color::fromRgb(0xE6, 0xE6, 0xE6), 1.0)
+                            ->radius(6.0),
+                        SizedBox::make()->size(20.0, 20.0)
+                            ->background(Color::fromRgb(0xFF, 0x57, 0x22))
+                            ->radius(10.0),
+                    ]),
+                    SizedBox::make(
+                        Stack::make()->fit(StackFit::Expand)->children([
+                            SizedBox::make()->height(64.0)
+                                ->background(Color::fromRgb(0xE8, 0xEE, 0xEC))
+                                ->radius(6.0),
+                            Center::make(Text::make('Expand 铺满')->caption()),
+                        ])
+                    )->size(160.0, 64.0),
+                    Stack::make()->alignment(StackAlign::BottomRight)->children([
+                        SizedBox::make()->size(160.0, 64.0)
+                            ->background(Color::fromRgb(0xF2, 0xF2, 0xF2))
+                            ->border(Color::fromRgb(0xE6, 0xE6, 0xE6), 1.0)
+                            ->radius(6.0),
+                        SizedBox::make()->size(24.0, 12.0)
+                            ->background(Color::fromRgb(0x00, 0x96, 0x88))
+                            ->radius(3.0),
+                    ]),
                 ])),
             ])
         );
