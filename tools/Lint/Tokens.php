@@ -49,4 +49,40 @@ final class Tokens
         }
         return null;
     }
+
+    /**
+     * 下一个有效 token 的**下标**。
+     *
+     * `next()` 只给 token 本身；要"再往后看一个"就必须有下标（写调用点时用）。
+     *
+     * @param list<mixed> $tokens
+     */
+    public static function nextIndex(array $tokens, int $i): ?int
+    {
+        for ($n = count($tokens); $i < $n; $i++) {
+            $tok = $tokens[$i];
+            if (is_array($tok) && in_array($tok[0], self::SKIP, true)) {
+                continue;
+            }
+            return $i;
+        }
+        return null;
+    }
+
+    /**
+     * 上一个有效 token 的**下标**。
+     *
+     * @param list<mixed> $tokens
+     */
+    public static function prevIndex(array $tokens, int $i): ?int
+    {
+        for (; $i >= 0; $i--) {
+            $tok = $tokens[$i];
+            if (is_array($tok) && in_array($tok[0], self::SKIP, true)) {
+                continue;
+            }
+            return $i;
+        }
+        return null;
+    }
 }

@@ -28,6 +28,40 @@ final class SourceFile
     /** @var list<array{name: string, line: int}> 解析后的全限定引用 */
     private array $references = [];
 
+    /**
+     * 类体内声明的具名方法（含 `@internal` / `@api` 标注）。
+     *
+     * `internal-leak` 的方法级判据（`07` §2.2 ②）就靠它 + `calls()`：
+     * 类型级只看"引用了哪个类型"，而"引用了一个公共类型却调它的内部方法"
+     * 是另一类泄漏，类型表看不出来。
+     *
+     * @var list<array{class: string, name: string, line: int, internal: bool, api: bool}>
+     */
+    private array $methods = [];
+
+    /** @var array<string, string> 类 FQN => 解析后的父类 FQN（`extends`） */
+    private array $parents = [];
+
+    /** @var array<string, string> 变量名（带 `$`）=> 文件内可静态确定的类型 FQN */
+    private array $varTypes = [];
+
+    /**
+     * 方法调用点。
+     *
+     * `class` 为 null 表示接收者是变量（`$this` / `$foo`），要由规则用 `owner`
+     * 或 `varTypes()` 解析；**解析不出来就不猜**（见 `noteTypedVariable()`）。
+     *
+     * @var list<array{owner: string, class: null|string, receiver: string, method: string, line: int}>
+     */
+    private array $calls = [];
+
+    /** PHP 内建类型名：`Foo $x` 的 `Foo` 位置出现这些就不是类（不记 varTypes） */
+    private const BUILTIN_TYPES = [
+        'int', 'float', 'string', 'bool', 'array', 'callable', 'iterable',
+        'object', 'mixed', 'void', 'null', 'false', 'true', 'never',
+        'self', 'static', 'parent',
+    ];
+
     /** @var list<array<int, mixed>> */
     private array $tokens = [];
 
@@ -100,6 +134,38 @@ final class SourceFile
         return $this->references;
     }
 
+    /**
+     * 类体内声明的具名方法。
+     *
+     * @return list<array{class: string, name: string, line: int, internal: bool, api: bool}>
+     */
+    public function methods(): array
+    {
+        return $this->methods;
+    }
+
+    /** @return array<string, string> 类 FQN => 父类 FQN */
+    public function parents(): array
+    {
+        return $this->parents;
+    }
+
+    /** @return array<string, string> 变量名（带 `$`）=> 类型 FQN */
+    public function varTypes(): array
+    {
+        return $this->varTypes;
+    }
+
+    /**
+     * 方法调用点（`internal-leak` 的方法级输入）。
+     *
+     * @return list<array{owner: string, class: null|string, receiver: string, method: string, line: int}>
+     */
+    public function calls(): array
+    {
+        return $this->calls;
+    }
+
     /** 文件里是否出现过 `@internal-use-allowed:` 豁免 */
     public function hasInternalUseExemption(): bool
     {
@@ -143,10 +209,19 @@ final class SourceFile
         $tokens = $this->tokens;
         $count = count($tokens);
         $pendingDoc = null;
+        // 最后声明的类型 FQN。本仓 PSR-4 一文件一类型 ⇒ "最后一个"就是"当前这个"，
+        // 不需要维护花括号深度（维护了反而要处理 heredoc / 插值里的假括号）。
+        $currentClass = '';
 
         for ($i = 0; $i < $count; $i++) {
             $tok = $tokens[$i];
             if (!is_array($tok)) {
+                // ★ 语句边界必须清 pendingDoc：属性上的
+                //   `/** @internal 缓存 */ private int $n = 0;` 后面跟 `;`，
+                //   不清的话下一个方法会被**误标**成 @internal ⇒ 方法级检查全是假警报。
+                if ($tok === ';' || $tok === '{' || $tok === '}') {
+                    $pendingDoc = null;
+                }
                 continue;
             }
             [$id, $text, $line] = $tok;
@@ -189,13 +264,16 @@ final class SourceFile
                 };
                 $name = self::readName($tokens, $i + 1);
                 if ($name !== '') {
+                    $fqn = ltrim($this->namespace . '\\' . $name, '\\');
                     $this->types[] = [
                         'kind' => $kind,
                         'name' => $name,
-                        'fqn' => ltrim($this->namespace . '\\' . $name, '\\'),
+                        'fqn' => $fqn,
                         'line' => $line,
                         'api' => $pendingDoc !== null && preg_match('/@api\b/', $pendingDoc) === 1,
                     ];
+                    $currentClass = $fqn;
+                    $this->readParent($tokens, $i, $fqn);
                 }
                 $pendingDoc = null;
                 continue;
@@ -203,6 +281,23 @@ final class SourceFile
 
             if ($id === T_NAME_QUALIFIED || $id === T_NAME_FULLY_QUALIFIED) {
                 $this->references[] = ['name' => $this->resolve(ltrim($text, '\\')), 'line' => $line];
+                $this->noteTypedVariable($tokens, $i, $text);
+                continue;
+            }
+
+            if ($id === T_FUNCTION) {
+                $this->readMethod($tokens, $i, $line, $pendingDoc, $currentClass);
+                $pendingDoc = null;
+                continue;
+            }
+
+            if ($id === T_OBJECT_OPERATOR || $id === T_NULLSAFE_OBJECT_OPERATOR) {
+                $this->readInstanceCall($tokens, $i, $line, $currentClass);
+                continue;
+            }
+
+            if ($id === T_DOUBLE_COLON) {
+                $this->readStaticCall($tokens, $i, $line, $currentClass);
                 continue;
             }
 
@@ -214,8 +309,201 @@ final class SourceFile
                 if ($isStaticAccess || $isNew) {
                     $this->references[] = ['name' => $this->resolve($text), 'line' => $line];
                 }
+                $this->noteTypedVariable($tokens, $i, $text);
+                if ($isNew) {
+                    $this->noteNewAssignment($tokens, $i, $text);
+                }
             }
         }
+    }
+
+    /**
+     * 读一个方法声明（`T_FUNCTION` 分支）。
+     *
+     * ★ 只收**类体内**的具名方法：闭包的下一个有效 token 是 `(`，
+     *   顶层函数没有 owner（`$owner === ''`）⇒ 都不进方法表。
+     */
+    private function readMethod(array $tokens, int $i, int $line, ?string $doc, string $owner): void
+    {
+        if ($owner === '') {
+            return;
+        }
+        $j = Tokens::nextIndex($tokens, $i + 1);
+        // `function &name()` —— `&` 是单字符 token 或 T_AMPERSAND_*，两种都跳过
+        while ($j !== null) {
+            $tok = $tokens[$j];
+            $isAmp = $tok === '&'
+                || (is_array($tok) && in_array($tok[0], [T_AMPERSAND_FOLLOWED_BY_VAR_OR_VARARG, T_AMPERSAND_NOT_FOLLOWED_BY_VAR_OR_VARARG], true));
+            if (!$isAmp) {
+                break;
+            }
+            $j = Tokens::nextIndex($tokens, $j + 1);
+        }
+        if ($j === null || !is_array($tokens[$j]) || $tokens[$j][0] !== T_STRING) {
+            return; // 闭包 / 匿名函数
+        }
+        $this->methods[] = [
+            'class' => $owner,
+            'name' => $tokens[$j][1],
+            'line' => $line,
+            'internal' => $doc !== null && preg_match('/@internal\b/', $doc) === 1,
+            'api' => $doc !== null && preg_match('/@api\b/', $doc) === 1,
+        ];
+    }
+
+    /**
+     * 读 `extends` 的父类（类型声明分支调用）。
+     *
+     * 只认 `{` 之前的 `T_EXTENDS`；`implements` 后面的名字不算（接口方法表
+     * 不在本规则的解析范围内 —— 认了就会把"接口方法"当成"类方法"去查）。
+     */
+    private function readParent(array $tokens, int $i, string $owner): void
+    {
+        $count = count($tokens);
+        for ($j = $i + 1; $j < $count; $j++) {
+            $tok = $tokens[$j];
+            if (!is_array($tok)) {
+                if ($tok === '{' || $tok === ';') {
+                    return;
+                }
+                continue;
+            }
+            if ($tok[0] === T_EXTENDS) {
+                $parent = self::readName($tokens, $j + 1);
+                if ($parent !== '') {
+                    $this->parents[$owner] = $this->resolve($parent);
+                }
+                return;
+            }
+            if ($tok[0] === T_IMPLEMENTS) {
+                return;
+            }
+        }
+    }
+
+    /**
+     * 读一个实例调用点（`->` / `?->` 分支）。
+     *
+     * 接收者只认**变量**：`$obj->m()` 收；`foo()->m()` / `$a['k']->m()` 这类
+     * 链式接收者一律不收 —— 本规则**不猜**类型（猜错的代价是误报）。
+     */
+    private function readInstanceCall(array $tokens, int $i, int $line, string $owner): void
+    {
+        $prev = Tokens::prev($tokens, $i - 1);
+        if ($prev === null || $prev[0] !== T_VARIABLE) {
+            return;
+        }
+        $j = Tokens::nextIndex($tokens, $i + 1);
+        if ($j === null || !is_array($tokens[$j]) || $tokens[$j][0] !== T_STRING) {
+            return;
+        }
+        $k = Tokens::nextIndex($tokens, $j + 1);
+        if ($k === null || $tokens[$k] !== '(') {
+            return; // 属性访问，不是调用
+        }
+        $this->calls[] = [
+            'owner' => $owner,
+            'class' => null,
+            'receiver' => $prev[1],
+            'method' => $tokens[$j][1],
+            'line' => $line,
+        ];
+    }
+
+    /**
+     * 读一个静态调用点（`::` 分支）。
+     *
+     * `self::` / `static::` 解析成当前类，`parent::` 解析成父类 —— 这三种是
+     * 唯一能**零推断**确定的接收者。
+     */
+    private function readStaticCall(array $tokens, int $i, int $line, string $owner): void
+    {
+        $prev = Tokens::prev($tokens, $i - 1);
+        if ($prev === null || !is_array($prev)) {
+            return;
+        }
+        if (!in_array($prev[0], [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true)) {
+            return;
+        }
+        $j = Tokens::nextIndex($tokens, $i + 1);
+        if ($j === null || !is_array($tokens[$j]) || $tokens[$j][0] !== T_STRING) {
+            return;
+        }
+        $k = Tokens::nextIndex($tokens, $j + 1);
+        if ($k === null || $tokens[$k] !== '(') {
+            return; // 类常量 / 静态属性
+        }
+        $head = strtolower(ltrim($prev[1], '\\'));
+        if ($head === 'self' || $head === 'static') {
+            $class = $owner;
+        } elseif ($head === 'parent') {
+            $class = $this->parents[$owner] ?? null;
+        } else {
+            $class = $this->resolve(ltrim($prev[1], '\\'));
+        }
+        if ($class === null || $class === '') {
+            return;
+        }
+        $this->calls[] = [
+            'owner' => $owner,
+            'class' => $class,
+            'receiver' => $prev[1],
+            'method' => $tokens[$j][1],
+            'line' => $line,
+        ];
+    }
+
+    /**
+     * 记录"可静态确定的变量类型"：`Foo $x` 形态（参数 / 属性 / 提升属性）。
+     *
+     * ★ 只收三种前缀（`(` / `,` / 可见性等修饰符 / `{`）—— 收窄是为了不把
+     *   `return Foo $x`（不合法但半成品代码里常见）之类的噪声收进来。
+     * ★ 收不到就不记：规则会**跳过**不可解析的接收者，而不是按方法名瞎匹配
+     *   （`src/` 里 93 个 @internal 方法名中有 `tick` / `start` / `reset` /
+     *   `box` / `slot` 这类到处重名的，按名字报等于把量具砸了）。
+     */
+    private function noteTypedVariable(array $tokens, int $i, string $name): void
+    {
+        if (in_array(strtolower($name), self::BUILTIN_TYPES, true)) {
+            return;
+        }
+        $next = Tokens::next($tokens, $i + 1);
+        if ($next === null || $next[0] !== T_VARIABLE) {
+            return;
+        }
+        $prev = Tokens::prev($tokens, $i - 1);
+        if ($prev === null) {
+            return;
+        }
+        $ok = in_array($prev[0], [T_PUBLIC, T_PRIVATE, T_PROTECTED, T_STATIC, T_READONLY, T_VAR], true)
+            || $prev[0] === '(' || $prev[0] === ',' || $prev[0] === '{';
+        if (!$ok) {
+            return;
+        }
+        $this->varTypes[$next[1]] = $this->resolve(ltrim($name, '\\'));
+    }
+
+    /**
+     * 记录 `$x = new Foo(...)` 形态（`new` 分支调用）。
+     *
+     * 只认"直接赋值给变量"：`$this->p = new Foo` 是属性赋值、`foo(new Bar)`
+     * 没有变量可命名 ⇒ 都不记。
+     */
+    private function noteNewAssignment(array $tokens, int $i, string $name): void
+    {
+        $new = Tokens::prevIndex($tokens, $i - 1);
+        if ($new === null || !is_array($tokens[$new]) || $tokens[$new][0] !== T_NEW) {
+            return;
+        }
+        $eq = Tokens::prevIndex($tokens, $new - 1);
+        if ($eq === null || $tokens[$eq] !== '=') {
+            return;
+        }
+        $var = Tokens::prevIndex($tokens, $eq - 1);
+        if ($var === null || !is_array($tokens[$var]) || $tokens[$var][0] !== T_VARIABLE) {
+            return;
+        }
+        $this->varTypes[$tokens[$var][1]] = $this->resolve(ltrim($name, '\\'));
     }
 
     /** 命名空间声明后面只能跟名字（`namespace A\B;`）或块（`namespace {`） */

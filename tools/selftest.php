@@ -35,6 +35,12 @@ function drift_lint_selftest(string $root, Linter $linter): bool
         'internal-leak' => [
             'apps/Bad.php:' . Diagnostic::ERROR,
             'apps/Exempt.php:' . Diagnostic::WARN,
+            // 方法级（`07` §2.2 ②，W7 第 40 步）：三种可解析接收者各一条。
+            // ★ `apps/MethodGood.php` 一条都不该有 —— 它验的是三件"看着像但不是"：
+            //   调 @api 方法 / 调自己覆写的同名方法 / 接收者是 `foo()->m()`（不猜）。
+            'apps/MethodBad.php:' . Diagnostic::WARN,
+            'apps/MethodBad.php:' . Diagnostic::WARN,
+            'apps/MethodBad.php:' . Diagnostic::WARN,
         ],
         'namespace-mismatch' => [],
         'nano-hygiene' => [],

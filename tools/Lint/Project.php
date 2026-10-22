@@ -103,6 +103,28 @@ final class Project
         return str_starts_with($file->path(), self::TOOLCHAIN_DIR);
     }
 
+    /**
+     * 该文件是否属于框架本体。
+     *
+     * ★★ **不能只看命名空间**：`src/Platform/Win32/ResizeHook.php` 刻意**不带**
+     *   `namespace`（AOT 下 C++ 壳按符号名直接调用一个全局具名入口，带前缀就找不到）
+     *   ⇒ 只看命名空间会把它判成"消费者"，于是框架内部互调内部方法被报成泄漏。
+     *   判据要用**物理位置**（composer.json 的前缀表：`src/` ⇒ `Drift`）。
+     */
+    public function isFramework(SourceFile $file): bool
+    {
+        if (str_starts_with($file->namespace(), self::FRAMEWORK_PREFIX)) {
+            return true;
+        }
+        $framework = rtrim(self::FRAMEWORK_PREFIX, '\\');
+        foreach ($this->dirToPrefix as $dir => $prefix) {
+            if ($prefix === $framework && str_starts_with($file->path(), $dir)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** @return null|array{file: string, api: bool, kind: string} */
     public function symbol(string $fqn): ?array
     {
@@ -122,6 +144,19 @@ final class Project
         }
         $symbol = $this->symbols[$fqn] ?? null;
         return $symbol !== null && !$symbol['api'];
+    }
+
+    /**
+     * 该 FQN 是否属于框架本体（类型一定有命名空间 ⇒ 只按命名空间判）。
+     *
+     * 工具链（`Drift\Dev\`）与框架同包但不算"内部面"（`10` §2：工具入口自行注册）。
+     */
+    public function isFrameworkFqn(string $fqn): bool
+    {
+        if (!str_starts_with($fqn, self::FRAMEWORK_PREFIX)) {
+            return false;
+        }
+        return !str_starts_with($fqn, self::FRAMEWORK_PREFIX . 'Dev\\');
     }
 
     /** @return list<string> */

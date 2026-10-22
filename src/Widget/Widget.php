@@ -194,7 +194,14 @@ abstract class Widget
      *
      * 封存后写入 ⇒ 响亮失败（Fatal 级，release 也中止，§1.2）。
      *
-     * @internal
+     * ★ **`@api` 而不是 `@internal`**（2026-10-22，W7 第 40 步）：它是 `final
+     *   protected` 的**封存守卫**，应用自定义 Widget 写自己的链式方法时**必须**
+     *   调它 —— 否则那些方法能绕过封存、在挂载后改字段（`§10.1` 的不可变纪律
+     *   从这一处漏光）。原来的 `@internal` 把"唯一的正确做法"标成了内部面，
+     *   于是 `apps/users` 3 处正确用法被方法级 `internal-leak` 报成泄漏。
+     *   这正是 `07` §2.2 说的"标记与用法打架"：改标记，不改用法。
+     *
+     * @api
      */
     final protected function mutate(): void
     {
