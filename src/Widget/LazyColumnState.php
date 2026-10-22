@@ -30,6 +30,20 @@ final class LazyColumnState extends State implements Scrollable
 {
     private float $offset = 0.0;
 
+    /**
+     * 锚点（`04` §7.3）：视口顶部那一行在**完整内容**里的位置 —— 行号 + 行内
+     * 滚过的比例（`0..1`，保留"没对齐到行"的那点偏移）。
+     *
+     * ★ `anchorKey` 是这一行的**身份**（`LazyColumn::keyOf()` 给的）；没配
+     *   `keyOf` 时恒 `null` ⇒ 内容变短只能按行号夹。
+     */
+    private int $anchorIndex = 0;
+    private float $anchorFrac = 0.0;
+    private ?string $anchorKey = null;
+
+    /** 上一次见到的行数（没配 `keyOf` 时用它判断"内容变了没有"） */
+    private int $lastCount = -1;
+
     /** 当前偏移（逻辑像素，≥ 0，已按上一帧的内容长度夹过上界） */
     public function offset(): float
     {
@@ -46,7 +60,127 @@ final class LazyColumnState extends State implements Scrollable
 
         $this->setState(function () use ($next): void {
             $this->offset = $next;
+            $this->rememberAnchor();
         });
+    }
+
+    /**
+     * 内容变了 ⇒ 按锚点还原偏移（`04` §7.3）。
+     *
+     * ★ **每次父重建都会走到这里**（应用 `setState()` 一次就重建一次），所以第一
+     *   件事是判断"内容到底变没变"：配了 `keyOf` 就看**锚点那一行的 key 还在不在
+     *   原位**（O(1)），没配就看行数。判不出来就什么都不做 —— 否则每帧把偏移重算
+     *   一遍，浮点误差会慢慢把滚动位置磨掉。
+     *
+     * ★ **按 key 不按行号**：搜索把 10000 行筛成 30 行时，锚点行 500 不存在了 ——
+     *   按行号夹会跳到列表末尾（比跳回顶部更糟）。找不到 key ⇒ 回顶部。
+     *
+     * ★ 这里的 `O(n)` 只跑一次、且**只在内容变时**：10000 行线性扫描 ≈ 0.1ms，
+     *   而内容变本身已经是一次全量数据替换。
+     */
+    #[\Override]
+    public function didUpdateWidget(Widget $widget): void
+    {
+        parent::didUpdateWidget($widget);
+
+        if (!$widget instanceof LazyColumn) {
+            return;
+        }
+
+        $items = $widget->itemsList();
+        $count = count($items);
+        $extent = $widget->itemExtent();
+        $insets = $widget->insets();
+        $insetTop = $insets->top;
+        $changed = $count !== $this->lastCount;
+        $this->lastCount = $count;
+
+        // ★ 从没滚过（或正好在顶部）⇒ 锚点就是"顶部"，没有什么要还原。
+        //   这条早退还顺手挡掉了"上内边距"：没滚时 offset 是 0，而还原会把
+        //   offset 算成 insetTop ⇒ 一帧白跳。
+        if ($this->offset <= 0.0) {
+            return;
+        }
+
+        $keyOf = $widget->keyMapper();
+
+        if ($keyOf === null) {
+            if (!$changed) {
+                return;   // 行数没变 ⇒ 按行号的锚点本来就在原位
+            }
+
+            // 无 keyOf ⇒ 按行号夹（行为可预测，允许跳）
+            $index = min($this->anchorIndex, max(0, $count - 1));
+            $this->anchorIndex = $index;
+            $this->offset = $insetTop + ($index + $this->anchorFrac) * $extent;
+
+            return;
+        }
+
+        // ★ O(1) 判据：锚点那一行的 key 还在原位 ⇒ 内容没动到锚点
+        $here = $this->anchorIndex < $count ? (string) $keyOf($items[$this->anchorIndex]) : null;
+        if ($here !== null && $here === $this->anchorKey) {
+            return;
+        }
+
+        $found = -1;
+        if ($this->anchorKey !== null) {
+            for ($i = 0; $i < $count; $i++) {
+                if ((string) $keyOf($items[$i]) === $this->anchorKey) {
+                    $found = $i;
+
+                    break;
+                }
+            }
+        }
+
+        if ($found < 0) {
+            // 锚点行被筛掉了 ⇒ 回顶部（不夹到末尾：那比回顶部更糟）
+            $this->offset = 0.0;
+            $this->anchorIndex = 0;
+            $this->anchorFrac = 0.0;
+            $this->anchorKey = null;
+
+            return;
+        }
+
+        $this->anchorIndex = $found;
+        $this->offset = $insetTop + ($found + $this->anchorFrac) * $extent;
+    }
+
+    /**
+     * 记下"视口顶部是哪一行的哪个位置"（`04` §7.3）。
+     *
+     * ★ 只在**偏移真的变了**时调（`scrollBy()` 里）—— 内容变时的还原走
+     *   `didUpdateWidget()`，两者方向相反，混在一起会互相覆盖。
+     *
+     * ★ 上内边距要从偏移里扣掉：行从 `insets->top` 开始，`offset = 0` 时
+     *   视口顶部是**内边距**而不是第 0 行。
+     */
+    private function rememberAnchor(): void
+    {
+        $view = $this->view();
+        $extent = $view->itemExtent();
+        if ($extent <= 0.0) {
+            return;
+        }
+
+        $insets = $view->insets();
+        $main = max(0.0, $this->offset - $insets->top);
+        $index = (int) floor($main / $extent);
+
+        $this->anchorIndex = $index;
+        $this->anchorFrac = ($main - $index * $extent) / $extent;
+
+        $keyOf = $view->keyMapper();
+        if ($keyOf === null) {
+            $this->anchorKey = null;
+
+            return;
+        }
+
+        $items = $view->itemsList();
+        $this->anchorKey = isset($items[$index]) ? (string) $keyOf($items[$index]) : null;
     }
 
     /**

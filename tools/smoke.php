@@ -9350,6 +9350,124 @@ check(
     'focus=' . ($navApp->focusedLabel() ?? 'null') . ' offset=' . ($navState?->offset() ?? -1.0),
 );
 
+// ═══════════════════════════════════════ 虚拟列表锚点（W6 L4-7，`04` §7.3）══
+//
+// 问题：搜索把 10000 行筛成 30 行时，滚动位置怎么办？
+// 按**行号**保持会跳到列表末尾（锚点那一行已经不存在了）⇒ 必须按**身份 key** 保持。
+//
+// ★ 每条都写了它抓的反例。
+
+$anchorItems = static function (int $from, int $to): array {
+    $out = [];
+    for ($i = $from; $i < $to; $i++) {
+        $out[] = $i;
+    }
+
+    return $out;
+};
+$anchorWidget = static function (array $items, bool $withKey): LazyColumn {
+    $widget = LazyColumn::make(40.0)->items(
+        $items,
+        static fn(int $i): Widget => Text::make('行 ' . $i),
+    );
+    if ($withKey) {
+        $widget->keyOf(static fn(int $i): string => 'k' . $i);
+    }
+
+    return $widget;
+};
+$anchorLayout = static function (Element $root): void {
+    $root->settle();
+    $root->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
+};
+/** 视口顶部那一行的文本（窗口第一行 = 文档序第一个 `Text`） */
+$anchorTopRow = static function (Element $root): string {
+    $text = findElement($root, static fn(Element $e): bool => $e->widget() instanceof Text)?->widget();
+
+    return $text instanceof Text ? $text->content() : '?';
+};
+$anchorStateOf = static function (Element $root): ?LazyColumnState {
+    $hit = findElement(
+        $root,
+        static fn(Element $e): bool => $e instanceof StatefulElement && $e->state() instanceof LazyColumnState,
+    );
+    $state = $hit instanceof StatefulElement ? $hit->state() : null;
+
+    return $state instanceof LazyColumnState ? $state : null;
+};
+
+// ⑩ 有 keyOf：删掉第 1 行 ⇒ **同一行**仍在视口顶部（offset 4000 → 3960）
+//    反例：按行号保持 ⇒ offset 仍是 4000 ⇒ 顶部变成"行 101"（跳了一行）。
+$anchorA = $anchorWidget($anchorItems(0, 500), true)->createElement();
+$anchorA->mount(null, smokeContext());
+$anchorA->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
+$anchorStateA = $anchorStateOf($anchorA);
+$anchorStateA?->scrollBy(4000.0);
+$anchorLayout($anchorA);
+$anchorTopBefore = $anchorTopRow($anchorA);
+$anchorA->update($anchorWidget($anchorItems(1, 500), true));
+$anchorLayout($anchorA);
+check(
+    'Lazy 锚点 · 有 keyOf：删掉第 1 行 ⇒ 原第 100 行仍在顶部（4000 → 3960）',
+    $anchorStateA?->offset() === 3960.0
+        && $anchorTopBefore === '行 100'
+        && $anchorTopRow($anchorA) === '行 100',
+    'offset=' . ($anchorStateA?->offset() ?? -1.0)
+        . ' 前=' . $anchorTopBefore . ' 后=' . $anchorTopRow($anchorA),
+);
+
+// ⑪ 无 keyOf：同样的操作 ⇒ 按行号夹，顶部换行（**允许跳**，但行为可预测）
+//    反例：没有 keyOf 也想按身份保持 ⇒ 只能靠猜，猜错就是随机跳。
+$anchorB = $anchorWidget($anchorItems(0, 500), false)->createElement();
+$anchorB->mount(null, smokeContext());
+$anchorB->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
+$anchorStateB = $anchorStateOf($anchorB);
+$anchorStateB?->scrollBy(4000.0);
+$anchorLayout($anchorB);
+$anchorB->update($anchorWidget($anchorItems(1, 500), false));
+$anchorLayout($anchorB);
+check(
+    'Lazy 锚点 · 无 keyOf：按行号夹（offset 仍 4000，顶部变成"行 101"）',
+    $anchorStateB?->offset() === 4000.0 && $anchorTopRow($anchorB) === '行 101',
+    'offset=' . ($anchorStateB?->offset() ?? -1.0) . ' top=' . $anchorTopRow($anchorB),
+);
+
+// ⑫ 父重建但内容没变 ⇒ 偏移一点不动（**守门夹具**）
+//    反例：`didUpdateWidget` 里无条件重算 offset ⇒ 每帧按锚点重算一遍，
+//    浮点误差把滚动位置慢慢磨掉（"滚到 4000 变成 3999.98"）。
+$anchorC = $anchorWidget($anchorItems(0, 500), true)->createElement();
+$anchorC->mount(null, smokeContext());
+$anchorC->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
+$anchorStateC = $anchorStateOf($anchorC);
+$anchorStateC?->scrollBy(4000.0);
+$anchorLayout($anchorC);
+for ($i = 0; $i < 3; $i++) {
+    $anchorC->update($anchorWidget($anchorItems(0, 500), true));
+    $anchorLayout($anchorC);
+}
+check(
+    'Lazy 锚点 · 内容没变的重建不碰偏移（连重建 3 次仍是 4000）',
+    $anchorStateC?->offset() === 4000.0,
+    (string) ($anchorStateC?->offset() ?? -1.0),
+);
+
+// ⑬ 锚点行被筛掉 ⇒ 回顶部（不夹到末尾）
+//    反例：`min($index, $count - 1)` 不加 key 查找 ⇒ 10000 行筛成 30 行时
+//    跳到列表末尾 —— 比跳回顶部更糟。
+$anchorD = $anchorWidget($anchorItems(0, 500), true)->createElement();
+$anchorD->mount(null, smokeContext());
+$anchorD->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
+$anchorStateD = $anchorStateOf($anchorD);
+$anchorStateD?->scrollBy(4000.0);
+$anchorLayout($anchorD);
+$anchorD->update($anchorWidget($anchorItems(0, 51), true));   // 锚点行 100 被筛掉
+$anchorLayout($anchorD);
+check(
+    'Lazy 锚点 · 锚点行被筛掉 ⇒ 回顶部（offset 0，不是跳到末尾）',
+    $anchorStateD?->offset() === 0.0 && $anchorTopRow($anchorD) === '行 0',
+    'offset=' . ($anchorStateD?->offset() ?? -1.0) . ' top=' . $anchorTopRow($anchorD),
+);
+
 // ══════════════════════════════════════════════════ 窗口状态（§5.4 / M5）══
 // 每条 check 的注释里都写了"它抓的是什么反例"—— 量具没有反例就是空转。
 //

@@ -55,6 +55,9 @@ final class LazyColumn extends StatefulWidget
 
     private ?\Closure $builder = null;
 
+    /** 每行的**身份 key**（`null` = 没配，锚点只能按行号夹） */
+    private ?\Closure $keyMapper = null;
+
     private float $overscanPx = self::DEFAULT_OVERSCAN;
 
     private EdgeInsets $insets;
@@ -96,6 +99,36 @@ final class LazyColumn extends StatefulWidget
         $this->builder = \Closure::fromCallable($builder);
 
         return $this;
+    }
+
+    /**
+     * 每行的**身份 key**（`fn(mixed $item): string|int`）—— 内容变了之后保持
+     * 滚动位置用（`04` §7.3）。
+     *
+     * ★ **不配也能跑**，但"搜索把 10000 行筛成 30 行"时会跳：锚点只能按**行号**
+     *   夹，而筛选后第 500 行已经不是原来那一行。这是**诚实的边界** —— 框架不能
+     *   凭空知道"两批数据里哪一行是同一行"。
+     *
+     * ★ **只用于锚点**：行的 Element key 仍然是**绝对行号**。改成身份 key 是
+     *   Element 级 diff（跨内容复用行 Element）的另一个话题，本步不做 —— 它不
+     *   影响锚点，因为锚点是在算窗口**之前**恢复的。
+     *
+     * ★ key **必须唯一**（同一份 items 内）：锚点查找取第一个命中的。不校验是
+     *   因为校验要 O(n)、而它在滚动路径上；重复 key 的代价是"锚点可能落到
+     *   另一个同 key 的行"，不会崩。
+     */
+    public function keyOf(callable $keyOf): static
+    {
+        $this->mutate();
+        $this->keyMapper = \Closure::fromCallable($keyOf);
+
+        return $this;
+    }
+
+    /** @internal 锚点保持用（`null` = 没配） */
+    public function keyMapper(): ?\Closure
+    {
+        return $this->keyMapper;
     }
 
     /**
