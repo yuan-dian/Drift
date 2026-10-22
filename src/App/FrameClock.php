@@ -116,7 +116,14 @@ final class FrameClock
 
         $this->lastTs = $timestampMs;
 
+        // ★ 帧耗时**在这里量**（`06` §3.4）：`FrameClock` 本来就是"谁在管时间"
+        //   的那一层，应用只收一个数字（不自己读钟 —— G3：帧的输入只有约束与树）。
+        //   一对 `hrtime` 约 60ns，与一帧 3.1ms 相比可忽略。
+        //   ★ 量的范围 = `frame()` 全段（四个泵 + settle + layout + paint + present），
+        //   正是 `06` §3.2 那张六阶段表的合计口径。
+        $startedNs = \hrtime(true);
         $app->frame($timestampMs, $constraints);
+        $app->noteFrameCost((float) (\hrtime(true) - $startedNs) / 1e6);
 
         $this->pace($app->wantsFrame());
     }

@@ -174,6 +174,38 @@ abstract class Application
     private const SLICE_BUDGET_MS = 4;
 
     /**
+     * 一帧的预算（毫秒）—— 60fps 的 16.7ms（`06` §3.2）。
+     *
+     * ★ 实测端到端 3.1ms（M4）⇒ 余量 5.3×。这个常量的用途**不是"按它分配 CPU"**，
+     *   而是回答"超了先砍谁"（见 {@see self::STAGE_BUDGET_MS} 与 `06` §3.3）。
+     */
+    public const BUDGET_MS = 16.7;
+
+    /**
+     * 连续多少帧超预算才算"真超"（`06` §3.4）。
+     *
+     * ★ **不用单帧判定**：单帧超预算通常是垃圾回收或系统抢占，连续 10 帧才是真问题。
+     *   与 `00` §5 的"单帧 > 8ms 连续 10 帧"同一口径。
+     */
+    public const OVER_BUDGET_FRAMES = 10;
+
+    /**
+     * 六阶段预算（毫秒，`06` §3.2）。
+     *
+     * ★ 它是**降级顺序的依据**，不是 CPU 分配表：超了先砍语义推送（D1），
+     *   `layout` / `paint` / `present` **永不砍** —— 砍了等于画面不更新，
+     *   比掉帧严重一个数量级（`06` §3.3 的 D5 边界）。
+     */
+    public const STAGE_BUDGET_MS = [
+        'A 组（四个泵）' => 1.0,
+        'settle' => 1.0,
+        'layout' => 2.0,
+        'paint' => 4.0,
+        'present' => 5.0,
+        '余量' => 3.7,
+    ];
+
+    /**
      * 浮层面板（O-20 第二棵根渲染树）：菜单 / 上下文菜单 / 模态共用同一槽位。
      *
      * ★ 与 `$root` **同构**（一个 Widget + 一个 Element）—— 树 / diff / 布局零配合，
@@ -192,6 +224,24 @@ abstract class Application
      *   全改成栈访问后已删除 —— 现在没有"两份状态"，只有一个栈。
      */
     protected OverlayStack $overlays;
+
+    /** 连续超预算的帧数（0 = 本帧在预算内） */
+    private int $overBudgetStreak = 0;
+
+    /** 是否处于"超预算"状态（连续 {@see self::OVER_BUDGET_FRAMES} 帧超了 ⇒ true） */
+    private bool $overBudget = false;
+
+    /** 最近一帧的耗时（毫秒；0 = 还没量过） */
+    private float $frameCostMs = 0.0;
+
+    /** 观测到的最差一帧（毫秒） */
+    private float $worstFrameMs = 0.0;
+
+    /** D1：语义推送还剩几帧不推（0 = 这帧要推） */
+    private int $semanticsFrameSkip = 0;
+
+    /** D1：上次推语义时焦点是谁（焦点一变必须立即推，**焦点永不节流**） */
+    private ?Element $semanticsFocused = null;
 
     /**
      * 后台执行端口（§17.2）—— `attach()` 时由 `taskHost()` 建一次并缓存。
@@ -1472,6 +1522,76 @@ abstract class Application
      *
      * ★ 框架只存闭包、**不碰平台**（§5.1：平台引用止于组合根）；默认不注入 ⇒ 不建语义树。
      */
+    public function noteFrameCost(float $milliseconds): void
+    {
+        // ★ 量坏了（NaN / 负值）⇒ **不立超预算**：一次坏样本把降级打开，
+        //   接下来几帧的语义推送就被白白节流了。
+        if (!\is_finite($milliseconds) || $milliseconds < 0.0) {
+            return;
+        }
+
+        $this->frameCostMs = $milliseconds;
+        if ($milliseconds > $this->worstFrameMs) {
+            $this->worstFrameMs = $milliseconds;
+        }
+
+        if ($milliseconds <= self::BUDGET_MS) {
+            $this->overBudgetStreak = 0;
+            $this->overBudget = false;
+
+            return;
+        }
+
+        $this->overBudgetStreak++;
+        $this->overBudget = $this->overBudgetStreak >= self::OVER_BUDGET_FRAMES;
+
+        // ★ 只在**刚立起来的那一帧**报：每帧报一次会把环形缓冲刷满，
+        //   反而看不到别的（环形缓冲只有 100 条）。
+        if ($this->overBudgetStreak === self::OVER_BUDGET_FRAMES) {
+            Errors::report(sprintf(
+                '连续 %d 帧超过 %.1fms 预算（本帧 %.1fms，最差 %.1fms）'
+                    . ' ⇒ 语义推送降到每 4 帧一次（焦点变化仍立即推）。'
+                    . "\n" . '六阶段预算：%s —— 超了先砍语义推送，layout / paint / present 永不砍（`06` §3.3）。'
+                    . "\n" . '修法：① 打开分段计时看哪一段超了；'
+                    . '② 检查本帧是否 rebuild 了整棵子树（动画应该用 setCompose 而不是 markDirty）。',
+                self::OVER_BUDGET_FRAMES,
+                self::BUDGET_MS,
+                $milliseconds,
+                $this->worstFrameMs,
+                self::stageBudgetText(),
+            ), Errors::DIAGNOSTIC);
+        }
+    }
+
+    /** 是否处于超预算状态（D1 的判据；devtools / 夹具也读它） */
+    public function overBudget(): bool
+    {
+        return $this->overBudget;
+    }
+
+    /** 最近一帧的耗时（毫秒；0 = 还没量过） */
+    public function frameCostMs(): float
+    {
+        return $this->frameCostMs;
+    }
+
+    /** 观测到的最差一帧（毫秒） */
+    public function worstFrameMs(): float
+    {
+        return $this->worstFrameMs;
+    }
+
+    /** 六阶段预算拼成一行（诊断文案用；数字的唯一来源是 {@see self::STAGE_BUDGET_MS}） */
+    private static function stageBudgetText(): string
+    {
+        $parts = [];
+        foreach (self::STAGE_BUDGET_MS as $name => $ms) {
+            $parts[] = sprintf('%s %.1f', (string) $name, $ms);
+        }
+
+        return implode(' / ', $parts);
+    }
+
     public function setSemanticsSink(callable $sink): void
     {
         $this->semanticsSink = \Closure::fromCallable($sink);
@@ -1490,7 +1610,23 @@ abstract class Application
         if ($sink === null) {
             return;
         }
-        $tree = SemanticsBuilder::build($this->root, $this->focus?->focused());
+
+        // ★ D1（`06` §3.3 / §3.4）：超预算时降到**每 4 帧一次**，但
+        //   **焦点变化永不节流** —— 读屏用户靠焦点提示知道"我移到哪了"，
+        //   延迟 3 帧（约 50ms）能忍，漏一次不能忍。
+        $focused = $this->focus?->focused();
+        $focusChanged = $focused !== $this->semanticsFocused;
+
+        if ($this->overBudget && $this->semanticsFrameSkip > 0 && !$focusChanged) {
+            $this->semanticsFrameSkip--;
+
+            return;
+        }
+
+        $this->semanticsFrameSkip = $this->overBudget ? 3 : 0;
+        $this->semanticsFocused = $focused;
+
+        $tree = SemanticsBuilder::build($this->root, $focused);
         ($sink)($tree->toArrays()['nodes']);
     }
 

@@ -26,6 +26,7 @@ use Drift\Dev\Smoke\Commands\CommandWidget;
 use Drift\Dev\Smoke\Commands\EchoCommands;
 use Drift\Dev\Smoke\Commands\PickyCommands;
 use Drift\App\Application;
+use Drift\App\FrameClock;
 use Drift\Platform\Win32\Win32SurfaceProvider;
 use Drift\App\FocusManager;
 use App\Hello\HelloApplication;
@@ -63,6 +64,8 @@ use Drift\Dev\Smoke\App\CountJob;
 use Drift\Dev\Smoke\App\MenuApplication;
 use Drift\Dev\Smoke\App\LazyApplication;
 use Drift\Dev\Smoke\App\RevealApplication;
+use Drift\Dev\Smoke\App\SlowFrameApplication;
+use Drift\Dev\Smoke\Frame\FakeTimers;
 use Drift\Dev\Smoke\App\NamedBoomJob;
 use Drift\Dev\Smoke\App\NamedExitJob;
 use Drift\Dev\Smoke\App\NamedSumJob;
@@ -9466,6 +9469,100 @@ check(
     'Lazy 锚点 · 锚点行被筛掉 ⇒ 回顶部（offset 0，不是跳到末尾）',
     $anchorStateD?->offset() === 0.0 && $anchorTopRow($anchorD) === '行 0',
     'offset=' . ($anchorStateD?->offset() ?? -1.0) . ' top=' . $anchorTopRow($anchorD),
+);
+
+// ═══════════════════════════════════════════ 帧预算与 D1 降级（W7 L5-2 / L5-3）══
+//
+// `06` §3：一帧 16.7ms；超了先砍**语义推送**（D1），layout / paint / present 永不砍
+// （砍了等于画面不更新，比掉帧严重一个数量级）。
+//
+// ★ 这一节把 `overBudget` 与它的**唯一消费者**（D1）一起验 —— 只立标志不消费
+//   就是"写了但没被走通的分支"。
+
+// ⑭ 连续 9 帧超预算 ⇒ **还没立**（单帧超多半是 GC / 系统抢占）
+//    反例：按单帧判定 ⇒ 一次 GC 就把语义推送节流 4 帧。
+$budgetApp = new RevealApplication();
+$budgetApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 200.0)));
+for ($i = 0; $i < 9; $i++) {
+    $budgetApp->noteFrameCost(20.0);
+}
+check(
+    '帧预算 · 连续 9 帧超预算 ⇒ 还不降级（单帧超不算"真超"）',
+    !$budgetApp->overBudget() && $budgetApp->frameCostMs() === 20.0,
+    'over=' . ($budgetApp->overBudget() ? '1' : '0') . ' cost=' . $budgetApp->frameCostMs(),
+);
+
+// ⑮ 第 10 帧 ⇒ 立起来，且**只报一条** DIAGNOSTIC
+//    反例：每帧报一条 ⇒ 100 条的环形缓冲被刷满，别的诊断全被挤掉。
+Errors::reset();
+$budgetApp->noteFrameCost(20.0);
+$budgetDiag = Errors::recentDiagnostics();
+check(
+    '帧预算 · 第 10 帧立 overBudget 并只报一条 DIAGNOSTIC',
+    $budgetApp->overBudget()
+        && count($budgetDiag) === 1
+        && str_contains($budgetDiag[0], '连续 10 帧超过'),
+    'over=' . ($budgetApp->overBudget() ? '1' : '0') . ' diag=' . count($budgetDiag),
+);
+
+// ⑯ 一帧回到预算内 ⇒ **立刻**复位
+//    反例：要连续 10 帧"不超"才复位 ⇒ 偶尔一帧慢就把降级锁死很久。
+$budgetApp->noteFrameCost(10.0);
+check(
+    '帧预算 · 回到预算内 ⇒ 立刻复位（不用等 10 帧好帧）',
+    !$budgetApp->overBudget() && $budgetApp->frameCostMs() === 10.0,
+    'over=' . ($budgetApp->overBudget() ? '1' : '0') . ' cost=' . $budgetApp->frameCostMs(),
+);
+
+// ⑰ D1：超预算时语义推送降到**每 4 帧一次**
+//    反例：不节流 ⇒ 8 帧推 8 次（读屏端每次都重建整棵树）。
+$budgetSem = new RevealApplication();
+$semPushes = 0;
+$budgetSem->setSemanticsSink(function (array $nodes) use (&$semPushes): void {
+    $semPushes++;
+});
+$budgetSem->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 200.0)));
+for ($i = 0; $i < Application::OVER_BUDGET_FRAMES; $i++) {
+    $budgetSem->noteFrameCost(20.0);
+}
+$semPushes = 0;
+$budgetTs = 0.0;
+for ($i = 0; $i < 8; $i++) {
+    $budgetTs += 16.0;
+    $budgetSem->frame($budgetTs, BoxConstraints::tight(new Size(320.0, 200.0)));
+}
+check(
+    '帧预算 · D1：超预算时语义推送每 4 帧一次（8 帧 ⇒ 2 次，不是 8 次）',
+    $semPushes === 2 && $budgetSem->overBudget(),
+    'pushes=' . $semPushes,
+);
+
+// ⑱ D1：**焦点变化永不节流**（第 9 帧推一次后 skip=3，Tab 之后仍要立刻推）
+//    反例：只按帧计数不看焦点 ⇒ 读屏用户按 Tab 之后 3 帧（约 50ms）不知道焦点在哪。
+$semPushes = 0;
+$budgetTs += 16.0;
+$budgetSem->frame($budgetTs, BoxConstraints::tight(new Size(320.0, 200.0)));
+$afterNinth = $semPushes;
+$budgetTs += 16.0;
+$budgetSem->dispatchInput(KeyEvent::down(KeyChord::tab()));
+$budgetSem->frame($budgetTs, BoxConstraints::tight(new Size(320.0, 200.0)));
+check(
+    '帧预算 · D1：焦点变化永不节流（skip=3 也照样立刻推）',
+    $afterNinth === 1 && $semPushes === 2,
+    '第9帧=' . $afterNinth . ' Tab后=' . $semPushes,
+);
+
+// ⑲ `FrameClock` **真的在量**帧耗时（不是只有算术对）
+//    反例：`noteFrameCost()` 摘掉不接 ⇒ 这条红，而 ⑭⑮⑯ 照过（它们直接调）。
+$clockTimers = new FakeTimers();
+$clockApp = new SlowFrameApplication();
+$clockApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 200.0)));
+$clock = new FrameClock($clockTimers);
+$clock->tick($clockApp, 16.0, BoxConstraints::tight(new Size(320.0, 200.0)));
+check(
+    '帧预算 · FrameClock 真的把帧耗时喂给应用（慢帧 ⇒ frameCostMs > 预算）',
+    $clockApp->frameCostMs() > Application::BUDGET_MS,
+    (string) $clockApp->frameCostMs(),
 );
 
 // ══════════════════════════════════════════════════ 窗口状态（§5.4 / M5）══
