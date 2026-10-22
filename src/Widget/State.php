@@ -32,11 +32,20 @@ abstract class State
      */
     private static int $pendingDirty = 0;
 
+    /**
+     * @internal 正在 `build()` 的 State —— `markDirty()` 用它识别"build 期写自己"
+     *
+     * ★ **为什么是"build 期写自己"而不是"同一次 settle 两次 rebuild"**：真机上
+     *   `Element::applyContext()`（主题 / 上下文切换）会合法地给 StatefulElement
+     *   标脏，形态和"build 期写"完全一样（同一次 settle 多次重建），但那是框架
+     *   自身的必要传播，**不是 bug**。`applyContext` 发生在 `build()` 之外
+     *   （`rebuild()` 调完 `build()` 之后才走 `updateChildren` → `applyContext`），
+     *   所以只在 `build()` 调用栈内标脏自己才判 E-FLUSH-CYCLE —— 精准、零误杀。
+     */
+    private static ?State $buildingState = null;
+
     /** @internal 本帧累计 rebuild 次数 —— `settle()` 的"有没有重建"判据（前后差） */
     private static int $rebuiltCount = 0;
-
-    /** @internal 本帧序号 —— `noteRebuilt()` 用它识别"同帧第二次"（`03` §5.3） */
-    private static int $frameSerial = 0;
 
     private Widget $widget;
     private ?StatefulElement $element = null;
@@ -110,6 +119,16 @@ abstract class State
      */
     public function markDirty(): void
     {
+        // ★★ build() 里标脏**自己** = build 期写（E-FLUSH-CYCLE）：build 本该是纯函数，
+        //   却在第 ① 环就改了自己的脏标记 ⇒ 下一次 settle 又重建 ⇒ 活锁。放在早退之前，
+        //   确保"重复标脏自己"也判得到。`applyContext` 的标脏发生在 build 之后，看不到
+        //   这个标记，所以不会误杀主题 / 上下文切换。
+        if (self::$buildingState === $this) {
+            Errors::report(sprintf(
+                'build() 里改了自身的状态（%s 在 build 中对自己标脏）：这是 build 期写，会从当帧活锁成每帧重建（E-FLUSH-CYCLE）',
+                get_class($this),
+            ));
+        }
         if ($this->dirty) {
             return;                  // ★ 已经脏 ⇒ 不重复计数
         }
@@ -269,27 +288,34 @@ abstract class State
         return self::$rebuiltCount;
     }
 
-    /**
-     * @internal 由 `Application::frame()` 每帧调一次，紧跟 `$this->frameSerial++`
-     *
-     * ★ 帧序号不新造：`Application::$frameSerial` 早在（迟到挂载补 tick 的幂等
-     *   判据），这里只是**同步一份到 `State` 的静态**，让 `rebuild()` 拿得到
-     *   —— 传参要改两处签名，还要给"mount 期没有帧号"开一个新分支。
-     */
-    public static function beginFrame(int $serial): void
-    {
-        self::$frameSerial = $serial;
-    }
 
     /**
      * @internal `StatefulElement::rebuild()` 的第二句调它（第一句是 consumeDirty）
      *
-     * ★ 只记数。"同帧第二次 rebuild ⇒ E-FLUSH-CYCLE"的守卫在 S4 加
-     *   （`03` §5.3）—— 分开落，这一步先让 `settle()` 有"有没有重建"可判。
+     * ★ 唯一职责：`settle()` 的"有没有重建"判据（`rebuiltCount` 前后差）。build 期写
+     *   的守卫已移到 `markDirty()`（见 `$buildingState`）—— 那里能区分"build 自己标脏"
+     *   与"框架 `applyContext` 合法标脏"，不会再误杀主题 / 上下文切换。
      */
     public function noteRebuilt(): void
     {
         self::$rebuiltCount++;
+    }
+
+    /**
+     * @internal `rebuild()` 包住 `build()` 的进入 / 退出：标记"此刻正在 build 的 State"。
+     *
+     * ★ 仅此一个信号就够判 build 期写：`markDirty()` 看到 `$buildingState === $this`
+     *   即知"build 里改了自己"。`applyContext` 的标脏发生在 build 之后，看不到这个标记。
+     */
+    public function enterBuild(): void
+    {
+        self::$buildingState = $this;
+    }
+
+    /** @internal 见 `enterBuild()`；`build()` 抛异常也要清（try/finally 调它） */
+    public function leaveBuild(): void
+    {
+        self::$buildingState = null;
     }
 
     /**

@@ -50,8 +50,14 @@ final class StatefulElement extends Element
             return; // 未挂载：没有 State 就没有子层
         }
 
-        $state->noteRebuilt();     // ★ 收敛循环的"有没有重建"判据（S4 起兼同帧守卫）
-        $this->updateChildren([$state->build($this->context)]);
+        $state->noteRebuilt();     // ★ 收敛循环的"有没有重建"判据（settle() 用前后差）
+        // ★ build() 包进 enter/leave：build 里对自己标脏 ⇒ markDirty() 判 E-FLUSH-CYCLE
+        $state->enterBuild();
+        try {
+            $this->updateChildren([$state->build($this->context)]);
+        } finally {
+            $state->leaveBuild();
+        }
     }
 
     #[\Override]

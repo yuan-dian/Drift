@@ -44,7 +44,6 @@ use Drift\Widget\Drag\Draggable;
 use Drift\Widget\Element;
 use Drift\Widget\Menu\Menu;
 use Drift\Widget\Modal;
-use Drift\Widget\State;
 use Drift\Widget\StatefulElement;
 use Drift\Widget\Widget;
 use Drift\Widget\SemanticsBuilder;
@@ -1015,11 +1014,6 @@ abstract class Application
         // ★ 帧序列号自增（迟到挂载补 tick 的幂等判据）：每帧一个唯一值，
         //   `State::tickFrameStamped` 用它识别"本帧已推进过的状态"。
         $this->frameSerial++;
-
-        // ★ 同步一份给 `State` 的静态（`03` §5.1/§5.3）：`Element::settle()` 的
-        //   收敛循环与 `noteRebuilt()` 的同帧守卫都要拿帧号。静态一份、一处写入，
-        //   比" settle(int $serial) → settlePass(int) → rebuild(int)" 改三处签名小。
-        State::beginFrame($this->frameSerial);
 
         // ★ 分段计时（SurfaceProfile，默认关）：frame() 里各泵与收尾的占比，
         //   M4 拆「其余(PHP)」黑箱用（`26` §7）。段键与 Frame.php 的同治一套表。

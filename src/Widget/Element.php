@@ -302,38 +302,38 @@ abstract class Element
     {
         $before = State::rebuiltCount();
 
-        // ★★ 第一遍**无条件**跑，不能因 `pendingDirty() === 0` 整遍跳过：
-        //   这一遍不只重建脏节点，还做 `adoptBoxes()`（把子盒挂进父盒）——
-        //   **挂载路径不调它**（`StatefulElement::rebuild()` 不像
-        //   `StatelessElement::rebuild()` 那样以 adoptBoxes 收尾），首帧的
-        //   盒挂接全靠 settle 的这一遍。跳过 ⇒ 容器握着空盒子 ⇒ 画面全白
-        //   **且不报错**（真机探针抓到的：smoke 全绿而 showcase 首屏无墨）。
-        //   `03` §5.1 原稿的"O(1) 提前退出"假设 settle 只重建脏节点，
-        //   对本框架不成立 —— 已按实况改正。
-        for ($round = 1; $round <= self::SETTLE_ROUNDS; $round++) {
-            $passBefore = State::rebuiltCount();
-            $this->settlePass();
+            // ★★ 第一遍**无条件**跑，不能因 `pendingDirty() === 0` 整遍跳过：
+            //   这一遍不只重建脏节点，还做 `adoptBoxes()`（把子盒挂进父盒）——
+            //   **挂载路径不调它**（`StatefulElement::rebuild()` 不像
+            //   `StatelessElement::rebuild()` 那样以 adoptBoxes 收尾），首帧的
+            //   盒挂接全靠 settle 的这一遍。跳过 ⇒ 容器握着空盒子 ⇒ 画面全白
+            //   **且不报错**（真机探针抓到的：smoke 全绿而 showcase 首屏无墨）。
+            //   `03` §5.1 原稿的"O(1) 提前退出"假设 settle 只重建脏节点，
+            //   对本框架不成立 —— 已按实况改正。
+            for ($round = 1; $round <= self::SETTLE_ROUNDS; $round++) {
+                $passBefore = State::rebuiltCount();
+                $this->settlePass();
 
-            if (State::pendingDirty() === 0) {
-                break;                        // 干净了：绝大多数帧到这里就退
+                if (State::pendingDirty() === 0) {
+                    break;                        // 干净了：绝大多数帧到这里就退
+                }
+
+                if (State::rebuiltCount() === $passBefore) {
+                    // ★ 有脏计数但这一遍**什么都没重建** ⇒ 计数漂移（脏 State 不在这棵树里 /
+                    //   已卸载），不是真循环。再跑下去只是空转，且会误报 E-FLUSH-CYCLE
+                    //   （§10 预告的症状是"每帧多扫一遍、性能退化、不报错"—— 按那个来）。
+                    break;
+                }
             }
 
-            if (State::rebuiltCount() === $passBefore) {
-                // ★ 有脏计数但这一遍**什么都没重建** ⇒ 计数漂移（脏 State 不在这棵树里 /
-                //   已卸载），不是真循环。再跑下去只是空转，且会误报 E-FLUSH-CYCLE
-                //   （§10 预告的症状是"每帧多扫一遍、性能退化、不报错"—— 按那个来）。
-                break;
+            if ($round > self::SETTLE_ROUNDS) {
+                Errors::report(sprintf(
+                    '一帧内 rebuild 了 %d 轮仍未收敛：有 State 在 build() 里改了会标脏的东西（E-FLUSH-CYCLE）',
+                    self::SETTLE_ROUNDS,
+                ));
             }
-        }
 
-        if ($round > self::SETTLE_ROUNDS) {
-            Errors::report(sprintf(
-                '一帧内 rebuild 了 %d 轮仍未收敛：有 State 在 build() 里改了会标脏的东西（E-FLUSH-CYCLE）',
-                self::SETTLE_ROUNDS,
-            ));
-        }
-
-        return State::rebuiltCount() > $before;
+            return State::rebuiltCount() > $before;
     }
 
     /**

@@ -313,6 +313,20 @@ if (str_starts_with($caseArg, '--case=')) {
         $loop->settle();
     }
 
+    if ($case === 'chainwrite') {
+        // 子的 build 标脏祖先 ⇒ 祖先第二遍重建时又把子标脏 ⇒ 子同帧第二次 rebuild
+        // ⇒ S4 的 noteRebuilt() 当帧 Fatal（E-FLUSH-CYCLE，带类名）。
+        $probe = new ChainProbe();
+        $root = ChainPage::make($probe)->createElement();
+        $root->mount(null, smokeContext());
+        $probe->markOuterOnInnerBuild = true;
+        $inner = $root->childAt(0);
+        if ($inner instanceof StatefulElement) {
+            $inner->state()?->markDirty();
+        }
+        $root->settle();
+    }
+
     if ($case === 'routedup') {
         // 同名路由注册两次 ⇒ 后一次静默覆盖 ⇒ 上线后"导航到某页却没反应"
         RouteTable::make()->route('users', static fn (): Widget => new LeafProbe(1.0))
@@ -4677,44 +4691,10 @@ try {
     Errors::setDebug($debugWas);
 }
 
-// ⑦ settle 多轮收敛（`03` §5.1，W2/S3）："后代 → 祖先"的脏单遍收不住
+// ⑦ settle 多轮收敛（`03` §5.1，W2/S3 + §5.3，W2/S4）
 //    基线先取：pendingDirty 是进程级静态，前面夹具卸载时留的脏要排除在外，
 //    否则"计数不漂移"会被别人的泄漏判红。
 $pendingBase = State::pendingDirty();
-
-$chainProbe = new ChainProbe();
-$chainRoot = ChainPage::make($chainProbe)->createElement();
-$chainRoot->mount(null, $context);
-check(
-    'settle · 首帧挂载即建好两层（探针外观测量点）',
-    $chainProbe->outerBuilds === 1 && $chainProbe->innerBuilds === 1,
-    'outer=' . $chainProbe->outerBuilds . ' inner=' . $chainProbe->innerBuilds
-);
-
-// 先标脏 Inner ⇒ 第一遍重建 Inner，它的 build 把 Outer 标脏 ⇒ **同一帧**第二遍重建 Outer
-// ★ 为什么是 3 次而不是 2 次：`updateChildren()` 对**已存在的 StatefulElement 子层**
-//   会 markDirty()（新 widget 实例 ⇒ 参数可能变）⇒ Outer 第二遍重建时 Inner 又被
-//   标脏一次。但前序保证这次标脏在**同一遍**的 visitChildren 里就消费掉 ⇒ 总共
-//   2 遍、3 次重建。单遍 settle 下 Inner 的第二次重建要等下一帧。
-$chainProbe->markOuterOnInnerBuild = true;
-$chainInner = $chainRoot->childAt(0);
-if ($chainInner instanceof StatefulElement) {
-    $chainInner->state()?->markDirty();
-}
-$rebuiltBefore = State::rebuiltCount();
-$chainRoot->settle();
-$rebuiltDelta = State::rebuiltCount() - $rebuiltBefore;
-check(
-    'settle · 后代 build 标脏祖先 ⇒ 同一帧内收敛（2 遍 3 次重建，不等下一帧）',
-    $rebuiltDelta === 3 && $chainProbe->outerBuilds === 2 && $chainProbe->innerBuilds === 3,
-    sprintf('rebuilds=%d outer=%d inner=%d', $rebuiltDelta, $chainProbe->outerBuilds, $chainProbe->innerBuilds)
-);
-check(
-    'settle · 收敛后 pendingDirty 回到基线（这一趟没有漏减）',
-    State::pendingDirty() === $pendingBase,
-    'pending=' . State::pendingDirty() . ' base=' . $pendingBase
-);
-$chainRoot->unmount();
 
 // ⑦b 计数不漂移：100 帧、每帧标脏一次 + settle 一次 ⇒ 净增量必须为 0
 $driftElement = (new HoverWidget())->createElement();
@@ -4731,11 +4711,19 @@ check(
 );
 $driftElement->unmount();
 
-// ⑦c 收敛不了 ⇒ 当帧 Fatal（不是"每帧默默重建一次、CPU 上去没人知道"）
+// ⑦c build 期标脏自己 ⇒ 当帧 Fatal（不是"每帧默默重建一次、CPU 上去没人知道"）
 fresh($log);
 [$code, $output] = runCase(__FILE__, 'flushcycle', null);
-check('settle · build 期标脏自己 ⇒ 16 轮不收敛 ⇒ Fatal（E-FLUSH-CYCLE）', $code === 3, '实际 ' . $code . ' / ' . $output);
+check('settle · build 期标脏自己 ⇒ 当帧 Fatal（E-FLUSH-CYCLE）', $code === 3, '实际 ' . $code . ' / ' . $output);
 check('settle · 不收敛写了 Errors.log', str_contains(logText($log), 'E-FLUSH-CYCLE'));
+
+// ⑦d S4 守卫收紧后的回归：build 期写"自己"才 Fatal；跨 State 的一次性写
+//     （子 build 标脏祖先）是合法的脏传播（§5.2 性质 B），应当收敛、不误杀。
+//     W2/S4 之前粗守卫把这种合法传播也当 build 期写误杀了（showcase 主题切换
+//     走的就是同一形态），收紧到"build 里对自己标脏"后这里必须收敛、不 Fatal。
+fresh($log);
+[$code, $output] = runCase(__FILE__, 'chainwrite', null);
+check('settle · build 期跨 State 一次性写 ⇒ 收敛不 Fatal（守卫不误杀合法传播）', $code !== 3, '实际 ' . $code . ' / ' . $output);
 
 // ⑧ 守卫跑在子进程里（会 exit(3)）
 fresh($log);
