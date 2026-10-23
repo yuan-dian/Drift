@@ -15,6 +15,13 @@ final class StatefulElement extends Element
 {
     private ?State $state = null;
 
+    /**
+     * 本节点的盒是不是 `State` 直接产的（决定 `rebuild()` 走哪条路）。
+     *
+     * @internal `02` §6.2
+     */
+    private bool $boxFromState = false;
+
     public function __construct(StatefulWidget $widget)
     {
         parent::__construct($widget);
@@ -35,6 +42,37 @@ final class StatefulElement extends Element
         parent::mount($parent, $context);
     }
 
+    /**
+     * 造盒：**先问 State，再走基座**（`02` §6.2）。
+     *
+     * @internal 由 `Element::mount()` / `syncChildren()` 调
+     */
+    #[\Override]
+    protected function syncBox(): void
+    {
+        $box = null;
+        $state = $this->state;
+        $widget = $this->widget;
+        if ($state !== null && $widget instanceof StatefulWidget) {
+            $box = $widget->createRenderObjectFromState($this->context, $state);
+        }
+
+        if ($box !== null) {
+            $this->box = $box;
+            $this->boxFromState = true;
+            // 与基座同两句（`Element::syncBox()` 的同形注释）：光标是 Widget 的
+            // 声明、修饰是一个引用递给盒。**`setMods()` 一句不能省** —— 少了它
+            // `Spinner->padding(8)` 会撞 §11.7 的"修饰无处可去"守卫。
+            $box->setCursor($widget->cursorShape());
+            $box->setMods($widget->mods());
+
+            return;
+        }
+
+        $this->boxFromState = false;
+        parent::syncBox();
+    }
+
     #[\Override]
     protected function didUpdateWidget(Widget $newWidget): void
     {
@@ -48,6 +86,16 @@ final class StatefulElement extends Element
         $state = $this->state;
         if ($state === null) {
             return; // 未挂载：没有 State 就没有子层
+        }
+
+        // ★ 叶子：只换盒，**不产子、不调 `build()`**（`02` §6.2）。
+        //   盒里带的是 State 的当前值 ⇒ `setState()` 后这一步把新相位递进去。
+        //   注意这里**不能**省 `consumeDirty()`（上面那句）—— 不然 settle() 的
+        //   "脏了就重建"判据永远为真，收敛不了。
+        if ($this->boxFromState) {
+            $this->syncBox();
+
+            return;
         }
 
         $state->noteRebuilt();     // ★ 收敛循环的"有没有重建"判据（settle() 用前后差）

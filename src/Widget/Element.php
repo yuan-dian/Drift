@@ -156,10 +156,11 @@ abstract class Element
         }
 
         // ★★ **修饰无处可去 ⇒ 响亮失败，不静默丢掉**（`02` §11.7）。
-        //   `StatefulWidget` / `StatelessWidget` 自己不产盒（`TextField` 的盒在
-        //   `TextFieldBox` 里），所以 `TextField->padding(8)` 会**完全不生效**：
-        //   声明的 pad 只留在 Widget 上，盒永远读不到。实测现象是"尺寸一点没变"。
-        //   给 `RenderBoxWidget` 之外的控件套修饰，正确的写法是**用包装节点**
+        //   `StatelessWidget` 自己不产盒（`TextField` 的盒在 `TextFieldBox` 里；
+        //   `StatefulWidget` 只有**不**覆写 `createRenderObjectFromState()` 时才
+        //   不产盒）⇒ 给它们套修饰会**完全不生效**：声明的 pad 只留在 Widget 上，
+        //   盒永远读不到。实测现象是"尺寸一点没变"。
+        //   给这两类控件套修饰，正确的写法是**用包装节点**
         //   （`Padding::make(8)->child($tf)`）或该控件自己的样式参数。
         if (!$this->widget->mods()->isDefault()) {
             Errors::report(sprintf(

@@ -392,5 +392,28 @@ abstract class State
     {
     }
 
-    abstract public function build(BuildContext $ctx): Widget;
+    /**
+     * 描述子层。
+     *
+     * ★ **默认实现只为"直接产盒"的控件存在**（`StatefulWidget::
+     *   createRenderObjectFromState()` 返回非 null 的那些，`02` §6.2）——
+     *   它们的 `build()` **永远不会被调用**（`StatefulElement::rebuild()` 看到
+     *   `$boxFromState` 就不走这条路）。
+     *
+     * ★ **为什么从抽象改成有默认实现**：2026-10-23 之前 `StatefulWidget` 不产盒
+     *   ⇒ 每个 State 都必须 `build()`，抽象是准确的。叶子路径落地后"有态 + 有盒 +
+     *   无子"的控件不再需要 `build()`，而 PHP/AOT 都无法表达"`build()` 与
+     *   `createRenderObjectFromState()` 二选一必填"（无反射）⇒ 默认实现是
+     *   唯一可编译的形态。
+     *
+     * ★ **为什么返回零尺寸而不是抛异常**：抛异常会把"忘记 override"变成 Fatal，
+     *   而那个遗漏本身无害（返回值没人读 —— 叶子控件根本不经过这里）。真出错的
+     *   现象是"控件不显示"，不是崩溃。这是一处**契约弱化**，诚实标注。
+     *
+     * ★ 防线：smoke 有一条"叶子控件的 `build()` 零调用"的断言（计数器夹具）。
+     */
+    public function build(BuildContext $ctx): Widget
+    {
+        return SizedBox::make()->size(0.0, 0.0);
+    }
 }

@@ -113,6 +113,9 @@ use Drift\Dev\Smoke\State\ChainPage;
 use Drift\Dev\Smoke\State\ChainProbe;
 use Drift\Dev\Smoke\State\FakeStore;
 use Drift\Dev\Smoke\State\HoverWidget;
+use Drift\Dev\Smoke\State\LeafBoxFallbackWidget;
+use Drift\Dev\Smoke\State\LeafBoxState;
+use Drift\Dev\Smoke\State\LeafBoxWidget;
 use Drift\Dev\Smoke\State\LoopPage;
 use Drift\Dev\Smoke\State\VersionProbe;
 use Drift\Core\Computed;
@@ -316,6 +319,18 @@ if (str_starts_with($caseArg, '--case=')) {
         $modEl = TextField::make()->value('x')->paddingAll(8.0)->createElement();
         $modEl->mount(null, $modCtx);
         echo "mounted-without-error\n";
+        exit(0);
+    }
+
+    if ($case === 'leafbox') {
+        // 反向自检（`02` §6.2 叶子路径）：同一个 `LeafBoxState`，**不**覆写
+        // `createRenderObjectFromState()` ⇒ 必须走 `build()`。
+        // ★ 只写正例 = 永远绿 —— 计数器自己坏了也看不出来。
+        LeafBoxWidget::resetBuildCalls();
+        $fallback = LeafBoxFallbackWidget::make()->createElement();
+        $fallback->mount(null, smokeContext());
+        $fallback->rebuild();
+        echo 'buildCalls=' . LeafBoxWidget::$buildCalls . "\n";
         exit(0);
     }
 
@@ -6103,7 +6118,7 @@ $spinRoot = Spinner::make()->diameter(40.0)->createElement();
 $spinRoot->mount(null, $context);
 $spinBox = $spinRoot->effectiveBox();
 check(
-    'Spinner · 挂载即建出渲染盒（State.build → SpinnerBox → RenderSpinner）',
+    'Spinner · 挂载即建出渲染盒（State 直接产盒 → RenderSpinner）',
     $spinBox instanceof RenderSpinner,
 );
 $spinBox?->layout(BoxConstraints::loose(new Size(200.0, 200.0)));
@@ -6230,6 +6245,70 @@ check(
 $quietApp = new EchoApplication();
 $quietApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(120.0, 120.0)));
 check('§17.4.10 · 无动画的应用 wantsFrame() 为假（空闲不空转）', $quietApp->wantsFrame() === false);
+
+// ── ㉗c `createRenderObjectFromState()`：有态控件直接产盒（`02` §6.2）──
+//    以前"有态"与"有盒"必须是两个类（`Spinner → SpinnerState → SpinnerBox`，
+//    第三类的唯一职责是把相位递进去）。现在 StatefulWidget 可以直接从 State
+//    产盒 ⇒ 叶子控件两段就够，`SpinnerBox` 已删。
+//    ★ 夹具 `LeafBoxWidget` 数 `build()` 调用次数 —— 叶子路径下一次都不该调。
+LeafBoxWidget::resetBuildCalls();
+$leafRoot = LeafBoxWidget::make()->createElement();
+$leafRoot->mount(null, $context);
+check(
+    '叶子态控件 · 挂载即有盒（State 直接产盒，不经过 build）',
+    $leafRoot->effectiveBox() instanceof SolidBox,
+);
+check(
+    '叶子态控件 · 没有子节点（叶子语义：不产子）',
+    $leafRoot->childCount() === 0,
+    'childCount=' . $leafRoot->childCount(),
+);
+check(
+    '叶子态控件 · `State::build()` 零调用',
+    LeafBoxWidget::$buildCalls === 0,
+    'calls=' . LeafBoxWidget::$buildCalls,
+);
+$leafModRoot = LeafBoxWidget::make()->paddingAll(8.0)->createElement();
+$leafModRoot->mount(null, $context);
+check(
+    '叶子态控件 · 修饰落在自己身上（`setMods()` 没被漏掉 —— 漏了会撞 §11.7 守卫）',
+    $leafModRoot->effectiveBox()?->mods()?->padLeft() === 8.0,
+);
+
+// `Spinner` 也走这条路（它的 `SpinnerBox` 已删）—— 结构上不可能再走 build
+$spinLeafRoot = Spinner::make()->diameter(30.0)->createElement();
+$spinLeafRoot->mount(null, $context);
+check(
+    'Spinner · 走叶子路径（有盒、无子 ⇒ 不再需要 SpinnerBox）',
+    $spinLeafRoot->effectiveBox() instanceof RenderSpinner && $spinLeafRoot->childCount() === 0,
+    'box=' . ($spinLeafRoot->effectiveBox() === null ? 'null' : $spinLeafRoot->effectiveBox()::class)
+    . ' childCount=' . $spinLeafRoot->childCount(),
+);
+
+// 量具反向自检：不覆写钩子 ⇒ `build()` 真被调用（计数器不是死的）
+[$lbCode, $lbOut] = runCase(__FILE__, 'leafbox', null);
+$lbCalls = 0;
+if (preg_match('/buildCalls=(\d+)/', $lbOut, $lbM) === 1) {
+    $lbCalls = (int) $lbM[1];
+}
+check(
+    '叶子态控件 · 反向自检：不覆写钩子 ⇒ build() 被调用（计数器有牙）',
+    $lbCode === 0 && $lbCalls >= 1,
+    'rc=' . $lbCode . ' calls=' . $lbCalls . ' out=' . trim($lbOut),
+);
+
+// `State::build()` 的默认实现（§6.3）：只为"直接产盒"的控件存在，返回零尺寸
+$leafDefaultState = new LeafBoxState();
+$defaultBuilt = $leafDefaultState->build($context);
+$defaultBox = $defaultBuilt->createElement();
+$defaultBox->mount(null, $context);
+$defaultBox->effectiveBox()?->layout(BoxConstraints::loose(new Size(100.0, 100.0)));
+check(
+    'State::build() 默认实现 · 返回零尺寸盒（不再抽象，叶子控件不需要它）',
+    $defaultBuilt instanceof SizedBox
+        && $defaultBox->effectiveBox()?->size()?->width === 0.0
+        && $defaultBox->effectiveBox()?->size()?->height === 0.0,
+);
 
 // ── ㉘ 多页外壳：Dock / AppBar / NavButton + 命令激活（§12.1 / §12.2，2026-10-16 落地）──
 

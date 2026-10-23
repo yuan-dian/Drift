@@ -18,9 +18,14 @@ use Drift\Text\TextStyle;
  * `TextField` 的盒（§13.2 的 Widget → RenderBox 构造契约）。
  *
  * ★ **为什么存在**：`TextField` 必须有纯 UI 态（编辑缓冲 + 插入符），所以它只能是
- *   `StatefulWidget`；而 `StatefulWidget` 自己不产盒（`Element::syncBox()` 只认
- *   `RenderBoxWidget`）。于是"有状态的字段"与"有盒的控件"必须是两个 Widget ——
- *   这正是 Flutter `TextField → EditableText → RenderEditable` 的三段形态。
+ *   `StatefulWidget`。2026-10-23 之前"有态"与"有盒"因此必须是两个 Widget
+ *   （Flutter `TextField → EditableText → RenderEditable` 的三段形态）。
+ *
+ * ★ **今天它仍是三件套，但是"有子"的特例，不是框架要求**（`02` §6.4）：
+ *   `createRenderObjectFromState()` 让"有态 + 有盒 + **无子**"的控件两段就够
+ *   （`Spinner` 已改造，`SpinnerBox` 已删），但那个钩子的语义是"**不产子**"，
+ *   而 `TextField` 有子（label + 输入框）⇒ 套上去会静默丢掉子层。
+ *   ⇒ 下一个写控件的人：**叶子用钩子，有子才需要 `*Box`**。
  *
  * ★ **它只做一件事**：把主题 token 解析成值，交给 `RenderTextField`（§15.7 纪律 3
  *   的合并点）。于是 `Drift\Layout` 那边不必也不许碰 Theme。

@@ -11,9 +11,11 @@ use Drift\Rendering\ColorToken;
  * `ScrollView` 的盒（§13.2 的 Widget → RenderBox 构造契约）。
  *
  * ★ 存在理由同 `TextFieldBox`：`ScrollView` 要持滚动偏移（纯 UI 态）⇒ 只能是
- *   `StatefulWidget`，而 `StatefulWidget` 不产盒 ⇒ 盒由这个 `RenderBoxWidget`
- *   造。三段分工：`ScrollView`（声明）/ `ScrollViewState`（持偏移）/
+ *   `StatefulWidget`。三段分工：`ScrollView`（声明）/ `ScrollViewState`（持偏移）/
  *   `ScrollViewBox`（产 `RenderScrollView`）。
+ *   ★ 2026-10-23 起**这是"有子"的特例，不是框架要求**（`02` §6.4）：
+ *   `createRenderObjectFromState()` 让"有态 + 有盒 + **无子**"的控件两段就够
+ *   （`Spinner` 已改造），而 `ScrollView` 有子（滚动内容）⇒ 走不了叶子路径。
  *
  * ★ **孩子原样透传**：本盒是 `RenderProxyBox` 的代理盒，孩子由 `ProxyElement`
  *   在挂接期挂上（`ProxyElement::expand()` 认 `ScrollViewBox`）—— 与 `Padding`

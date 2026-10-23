@@ -16,7 +16,8 @@ use Drift\Rendering\Canvas;
  *
  * ★ **画家是 (canvas, size) 的纯函数**（§14.1 / G3）：同输入必然同墨。动画相位
  *   不住这里，住 `State`（`tickFrame()` 驱动，Widget 每次重建换新画家）—— 与
- *   `Spinner → SpinnerState → SpinnerBox` 同形态。
+ *   `Spinner → SpinnerState` 同形态（2026-10-23 起 `Spinner` 走叶子路径，
+ *   `SpinnerBox` 已删；有子的 `TextField` 仍保留 `TextFieldBox`）。
  * ★ **只用自己查得到的能力**：画家可经 `Canvas::capabilities()` 查后端支持
  *   （Extended 层允许近似降级、Optional 层缺失时响亮失败 —— 位掩码是 D2 的
  *   契约形状，见 `CanvasCapabilities`）。示例台的 gauge/sparkline 只画

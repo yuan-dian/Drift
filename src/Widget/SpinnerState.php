@@ -3,13 +3,16 @@ declare(strict_types=1);
 
 namespace Drift\Widget;
 
-use Drift\Errors;
-
 /**
  * `Spinner` 的动画相位（纯 UI 态，§11.5 / §12.3）。
  *
  * ★ **相位只自增、取模在绘制时做**：`tick()` 调多少次都不回收、不溢出，
  *   渲染盒是 (直径, 相位, 颜色) 的纯函数 ⇒ 同输入必然同墨（§14.1 / G3）。
+ *
+ * ★ **没有 `build()`**（2026-10-23，`02` §6.2）：`Spinner` 走叶子路径
+ *   （`createRenderObjectFromState()` 直接产盒）⇒ `build()` 永不被调用，
+ *   基类的默认实现返回零尺寸就够。以前这里有一份
+ *   `return SpinnerBox::make(...)`，随 `SpinnerBox` 一起删掉。
  *
  * @internal
  */
@@ -44,22 +47,5 @@ final class SpinnerState extends State
     public function step(): int
     {
         return $this->step;
-    }
-
-    public function build(BuildContext $ctx): Widget
-    {
-        return SpinnerBox::make($this->spinner()->diameterValue(), $this->step);
-    }
-
-    private function spinner(): Spinner
-    {
-        $widget = $this->widget();
-        if (!$widget instanceof Spinner) {
-            // 框架不变量：StatefulElement 按 get_class 配对，配错不可能发生
-            Errors::report('SpinnerState 只能配 Spinner（框架内部不变量被破坏）');
-        }
-
-        /** @var Spinner $widget */
-        return $widget;
     }
 }
