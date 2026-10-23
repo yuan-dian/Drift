@@ -174,8 +174,17 @@ final class FocusManager
     /**
      * 派发一次按键（§9.1 第 ③ 环）。
      *
-     * 顺序：`Tab` / `Shift+Tab`（焦点链自己的键）⇒ 焦点节点的 `handleKey()`。
+     * 顺序：`Tab` / `Shift+Tab`（焦点链自己的键）⇒ **焦点控件的 `keyboard()` 回调**
+     * （W8-2）⇒ 焦点节点的 `handleKey()`。
      * 返回 `false` ⇒ **这一环没吃掉**，上层（将来的加速键 / IME）可以继续。
+     *
+     * ★ 为什么 `keyboard()` 排在 `TextFieldState` 之前：两者都是"焦点控件处理按键"，
+     *   但 `keyboard()` 是**声明式**的（任何控件都能挂），`TextFieldState` 是状态机。
+     *   一个控件同时有两者几乎不可能（输入框不会自己声明方向键语义），
+     *   真撞上了让显式声明优先 —— 应用总比框架更知道这个键该干嘛。
+     * ★ 这条缝让"新交互控件"不必再往 `Application::activateFocusedWidget()`
+     *   的 `instanceof` 塔里加分支（Slider 的方向键 / Select 的上下选 / DatePicker
+     *   的翻页全都走这里）。
      */
     public function dispatchKey(KeyEvent $event): bool
     {
@@ -185,6 +194,16 @@ final class FocusManager
 
         if ($event->chord->is(KeyChord::shift('Tab'))) {
             return $this->focusPrevious();
+        }
+
+        $handler = $this->focused?->widget()->keyHandlerValue();
+
+        if ($handler !== null) {
+            $handled = $handler($event);
+
+            if ($handled === true) {
+                return true;
+            }
         }
 
         $state = $this->stateOf($this->focused);

@@ -73,6 +73,27 @@ abstract class Widget
      */
     private ?\Closure $pointerHandler = null;
 
+    /**
+     * @internal 按下是否**归本控件**（W8-2，Slider 立的口子）。
+     *
+     * `true` ⇒ 命中链上最近的 `pointer()` 声明者接管本次按下：框架捕获它、先把
+     * `down` 相位交过去，**跳过** `activateFocusedWidget()`。焦点仍然落上去
+     * （键盘可达），只是"激活"的含义由控件自己定义（Slider：按下的 x 换算成值）。
+     *
+     * ★ 为什么是开关而不是默认行为：`pointer()` 今天还有一个消费者
+     *   （`OverlayLab` 的锚点按钮）只想要"捕获期收事件"、按下仍该走命令派发
+     *   ⇒ 默认 `false` 保持逐字节不变，需要接管的控件显式声明。
+     */
+    private bool $pointerOwnsPress = false;
+
+    /**
+     * @internal null = 本控件不处理键盘（按键落给焦点链的默认路径）
+     *
+     * `\Closure(KeyEvent): bool`，返回 `true` = 吃掉这个键。
+     * ★ 与 `pointer()` 同族：都是"控件自己处理某类输入"的声明，框架只做路由。
+     */
+    private ?\Closure $keyHandler = null;
+
     /** @internal null = 本控件不在语义树里（无角色 = 不建节点，§9 / M5 无障碍） */
     private ?SemanticsRole $semRole = null;
 
@@ -743,29 +764,35 @@ abstract class Widget
     }
 
     /**
-     * 声明"按下后我要一直收到指针事件"（指针捕获，`06` §5）。
+     * 声明"我要处理指针事件"（`06` §5 指针捕获 + W8-2 按下接管）。
      *
      * ```php
-     * Slider::make()
-     *     ->pointer(function (PointerEvent $e, Element $self): ?CursorShape {
-     *         // e 的坐标仍是**客户区坐标**（不换算），需要局部坐标就减
-     *         // `RenderBox::absoluteOrigin($self->effectiveBox())`
-     *         return null;
-     *     });
+     * // ① 只要捕获期事件（按下仍走框架的激活/命令派发）
+     * Button::make('锚点')->pointer(fn(PointerEvent $e, Element $self) => null);
+     *
+     * // ② 按下就归我（Slider 这类"位置即语义"的控件）
+     * Slider::make()->value($v)->pointer(
+     *     fn(PointerEvent $e, Element $self) => $this->handlePointer($e, $self),
+     *     ownsPress: true,
+     * );
      * ```
      *
      * ★ **捕获不是"能收到更多事件"**：捕获期指针事件**不再命中测试**（这是捕获的
-     *   全部意义 —— 拖到控件外面仍然归我）。捕获由控件在处理 `down` 时主动申请：
-     *   `$app->capturePointer($element)`，抬起 / 捕获者卸载 / 窗口失焦时自动释放。
-     * ★ 只在捕获期被调 —— 没捕获过的控件这个回调**一次都不会跑**（不是"指针经过
-     *   就调"，那是 `hover()`）。
+     *   全部意义 —— 拖到控件外面仍然归我）。抬起 / 捕获者卸载 / 窗口失焦时自动释放。
+     * ★ `$ownsPress = false`（默认）⇒ 只在捕获期被调，按下仍由框架激活；
+     *   `true` ⇒ 命中链上最近的声明者**接管按下**：框架捕获它并把 `down` 相位交过来，
+     *   跳过 `activateFocusedWidget()`。焦点照旧落上去（键盘可达）。
+     * ★ 坐标是**客户区坐标**，要局部坐标就减 `RenderBox::absoluteOrigin()`。
+     *   回调第二参是**命中的 Element**（盒每帧重建 ⇒ 现取 `effectiveBox()`，
+     *   别缓存盒）。
      *
      * @api
      */
-    public function pointer(\Closure $handler): static
+    public function pointer(\Closure $handler, bool $ownsPress = false): static
     {
         $this->mutate();
         $this->pointerHandler = $handler;
+        $this->pointerOwnsPress = $ownsPress;
 
         return $this;
     }
@@ -774,6 +801,45 @@ abstract class Widget
     public function pointerHandlerValue(): ?\Closure
     {
         return $this->pointerHandler;
+    }
+
+    /** @internal 按下路由读它；`true` = 本次按下由本控件接管（不激活） */
+    public function pointerOwnsPressValue(): bool
+    {
+        return $this->pointerOwnsPress;
+    }
+
+    /**
+     * 声明"我要处理键盘"（W8-2，Slider 立的口子）。
+     *
+     * ```php
+     * Slider::make()->value($v)->keyboard(fn(KeyEvent $e) => $this->nudge($e));
+     * ```
+     *
+     * ★ 回调 `\Closure(KeyEvent): bool`，返回 `true` = 吃掉这个键。
+     * ★ **只对焦点控件调**（`FocusManager::dispatchKey` 里，Tab/Shift+Tab 之后、
+     *   `TextFieldState` 之前）—— 与"键盘属于焦点"的既有分工一致。
+     * ★ 为什么不复用 `activateFocusedWidget()`：那个入口收的是"激活"语义且**收不到
+     *   按键**，Slider 的方向键调值、Select 的上下选、DatePicker 的翻页都做不到。
+     *   ⇒ 新控件走这条缝，`activateFocusedWidget()` 的 `instanceof` 塔不再增长。
+     * ★ 命名是 `keyboard()` 不是 `key()` —— 后者已被 diff 身份 `key(Key)` 占用
+     *   （`Widget::$key`），两者毫无关系。`pointer()` / `hover()` / `keyboard()`
+     *   是同一族的三个输入类别。
+     *
+     * @api
+     */
+    public function keyboard(\Closure $handler): static
+    {
+        $this->mutate();
+        $this->keyHandler = $handler;
+
+        return $this;
+    }
+
+    /** @internal 键盘派发读它；`null` = 本控件不处理按键 */
+    public function keyHandlerValue(): ?\Closure
+    {
+        return $this->keyHandler;
     }
 
     /**

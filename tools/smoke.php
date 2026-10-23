@@ -95,6 +95,7 @@ use Drift\Dev\Smoke\App\CursorApplication;
 use Drift\Dev\Smoke\App\EchoApplication;
 use Drift\Dev\Smoke\App\FailSliceJob;
 use Drift\Dev\Smoke\App\GestureApplication;
+use Drift\Dev\Smoke\App\PressLabApplication;
 use Drift\Dev\Smoke\App\TfApplication;
 use Drift\Dev\Smoke\App\TfLabeledApplication;
 use Drift\Dev\Smoke\App\ThemeApplication;
@@ -267,6 +268,10 @@ use Drift\Layout\RenderSegmentedControl;
 use Drift\Layout\RenderSegment;
 use Drift\Rendering\SegmentedStyle;
 use Drift\Dev\Smoke\App\SegmentedApplication;
+use Drift\Widget\Slider;
+use Drift\Layout\RenderSlider;
+use Drift\Rendering\SliderStyle;
+use Drift\Dev\Smoke\App\SliderApplication;
 use Drift\Widget\State;
 use Drift\Widget\StatefulElement;
 use Drift\Widget\Text;
@@ -9855,7 +9860,133 @@ check(
     'plainPresses=' . $gestApp->plainPresses,
 );
 
-// ⑥ UIA 语义推送（§9 / M5）：帧末把语义树经 sink 交给平台（头侧；真机 provider 归 AOT）
+// ⑥ 「按下归我」+「键盘归我」两条缝（W8-2，Slider 立的范式）
+//
+// 背景：`activateFocusedWidget()` 是 `instanceof` 塔（Menu/ToggleBase/Segment/
+// Button），而且**收不到坐标、收不到按键** ⇒ 位置即语义的控件（Slider）做不了。
+// 这两条缝让控件自己声明"按下归我"/"键盘归我"，框架只做路由。
+$pl = new PressLabApplication();
+$pl->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(320.0, 400.0)));
+
+$plOwnEl = findElement(
+    $pl->root(),
+    static fn(Element $e): bool => $e->widget() instanceof Button && $e->widget()->pointerOwnsPressValue(),
+);
+$plWatchEl = findElement(
+    $pl->root(),
+    static fn(Element $e): bool => $e->widget() instanceof Button
+        && $e->widget()->pointerHandlerValue() !== null
+        && !$e->widget()->pointerOwnsPressValue(),
+);
+$plKeyEl = findElement(
+    $pl->root(),
+    static fn(Element $e): bool => $e->widget() instanceof Button && $e->widget()->keyHandlerValue() !== null,
+);
+$plChildEl = findElement(
+    $pl->root(),
+    static fn(Element $e): bool => $e->widget() instanceof Button && $e->widget()->pressedHandler() !== null
+        && $e->widget()->pointerHandlerValue() === null
+        && $e->widget()->keyHandlerValue() === null,
+);
+
+/** 盒中心（夹具一律现取，不赌字模高度） */
+$plCenter = static function (?Element $e): array {
+    $box = $e?->effectiveBox();
+    if ($box === null || $box->size() === null) {
+        return [0.0, 0.0];
+    }
+    [$ox, $oy] = boxOrigin($box);
+
+    return [$ox + $box->size()->width / 2.0, $oy + $box->size()->height / 2.0];
+};
+
+[$plOx, $plOy] = $plCenter($plOwnEl);
+[$plWx, $plWy] = $plCenter($plWatchEl);
+[$plCx, $plCy] = $plCenter($plChildEl);
+
+// a. 接管：down ⇒ 回调收到 down、指针被捕获、**命令不发**
+$pl->dispatchInput(PointerEvent::down($plOx, $plOy));
+check(
+    'Press · ownsPress：down 交给控件（回调收到 down、指针被捕获）',
+    $pl->ownLog === ['down'] && $pl->captureNode() === $plOwnEl,
+    'log=' . implode(',', $pl->ownLog) . ' captured=' . ($pl->captureNode() === $plOwnEl ? 'yes' : 'no'),
+);
+check(
+    'Press · ownsPress：按下**不**走 activateFocusedWidget（命令不发）',
+    $pl->ownPresses === 0,
+    'ownPresses=' . $pl->ownPresses,
+);
+check(
+    'Press · ownsPress：焦点**仍落上去**（键盘可达的前提）',
+    $pl->focusedElement() === $plOwnEl,
+    'focused=' . ($pl->focusedElement() === $plOwnEl ? 'own' : 'other'),
+);
+
+// b. 接管期拖到控件外 ⇒ 仍归它（捕获的全部意义：不做命中测试）
+$pl->dispatchInput(PointerEvent::move(5.0, 5.0));
+check(
+    'Press · ownsPress：拖到控件外仍归它（捕获期不命中测试）',
+    $pl->ownLog === ['down', 'move'] && $pl->captureNode() === $plOwnEl,
+    'log=' . implode(',', $pl->ownLog),
+);
+
+// c. up ⇒ 收口（捕获自动释放；不释放就是"事件永远发给死节点"）
+$pl->dispatchInput(PointerEvent::up(5.0, 5.0));
+check(
+    'Press · ownsPress：up ⇒ 捕获释放且回调收到 up',
+    $pl->ownLog === ['down', 'move', 'up'] && $pl->captureNode() === null,
+    'log=' . implode(',', $pl->ownLog),
+);
+
+// d. 零回归：默认声明（ownsPress=false）⇒ 命令照发、回调一次都不跑
+$pl->dispatchInput(PointerEvent::down($plWx, $plWy));
+check(
+    'Press · 默认 pointer()：down 仍走激活（命令照发）且回调不跑 —— 零回归',
+    $pl->watchPresses === 1 && $pl->watchLog === [] && $pl->captureNode() === null,
+    'presses=' . $pl->watchPresses . ' log=' . implode(',', $pl->watchLog),
+);
+
+// e. 祖先接管：子按钮没声明，祖先声明了 ⇒ 按下归祖先，子按钮命令不发
+$pl->dispatchInput(PointerEvent::down($plCx, $plCy));
+check(
+    'Press · 祖先 ownsPress：点子按钮 ⇒ 按下归祖先（子命令不发）',
+    $pl->ancestorLog === ['down'] && $pl->childPresses === 0,
+    'log=' . implode(',', $pl->ancestorLog) . ' childPresses=' . $pl->childPresses,
+);
+$pl->dispatchInput(PointerEvent::up($plCx, $plCy));
+
+// f. 键盘缝：焦点在声明了 keyboard() 的控件上 ⇒ 方向键归它，返回 true 吃掉
+$pl->dispatchInput(PointerEvent::down($plKeyEl === null ? 0.0 : $plCenter($plKeyEl)[0], $plKeyEl === null ? 0.0 : $plCenter($plKeyEl)[1]));
+$pl->dispatchInput(PointerEvent::up($plKeyEl === null ? 0.0 : $plCenter($plKeyEl)[0], $plKeyEl === null ? 0.0 : $plCenter($plKeyEl)[1]));
+$pl->dispatchInput(KeyEvent::down(KeyChord::right()));
+check(
+    'Press · keyboard()：焦点控件收到方向键（框架不认识的键也能被控件吃掉）',
+    $pl->keyLog === ['Right'],
+    'keyLog=' . implode(',', $pl->keyLog),
+);
+
+// g. 键盘缝的让位：返回 false ⇒ 键继续往下走（Enter 落到激活 ⇒ 按钮真被按下）
+// ★ 计数先归零：上面那次点击（down 即激活）已经给它 +1 了。
+$pl->keyPresses = 0;
+$pl->keyHandled = false;
+$pl->dispatchInput(KeyEvent::down(KeyChord::enter()));
+check(
+    'Press · keyboard() 返回 false ⇒ 让位到下游（Enter 仍激活按钮）',
+    $pl->keyLog === ['Right', 'Enter'] && $pl->keyPresses === 1,
+    'keyLog=' . implode(',', $pl->keyLog) . ' keyPresses=' . $pl->keyPresses,
+);
+
+// h. 反例：没声明 keyboard() 的控件收到同一个键 ⇒ 回调不跑（不会被别的控件接走）
+$pl->dispatchInput(PointerEvent::down($plOx, $plOy));
+$pl->dispatchInput(PointerEvent::up($plOx, $plOy));
+$pl->dispatchInput(KeyEvent::down(KeyChord::right()));
+check(
+    'Press · 反例：焦点在没声明 keyboard() 的控件上 ⇒ 该键无人接（不串台）',
+    $pl->keyLog === ['Right', 'Enter'],
+    'keyLog=' . implode(',', $pl->keyLog),
+);
+
+// ⑦ UIA 语义推送（§9 / M5）：帧末把语义树经 sink 交给平台（头侧；真机 provider 归 AOT）
 $semApp = new GestureApplication();
 $semNodes = [];
 $semApp->setSemanticsSink(function (array $nodes) use (&$semNodes): void {
@@ -11896,6 +12027,277 @@ check(
     'Seg · 点禁用段（开，C 组整组禁用）⇒ 不回调',
     $segPtrApp->events === [['a', 0]],
     json_encode($segPtrApp->events),
+);
+
+// ── W8-2 Slider（滑杆）──────────────────────────────────────────────────
+//
+// 几何全部按公式推（不拟合）：padX = 拇指半径，盒高 = 2*半径 + 2*留白，
+// thumbX = padX + t*(w - 2*padX)，t = (value - min)/(max - min)。
+$slRadius = SliderStyle::DEFAULT_THUMB_RADIUS;   // 8
+$slGap = SliderStyle::DEFAULT_THUMB_GAP;         // 2
+$slTrackH = SliderStyle::DEFAULT_TRACK_HEIGHT;   // 4
+$slWantH = 2.0 * $slRadius + 2.0 * $slGap;       // 20
+$slWantW = Slider::DEFAULT_WIDTH;                 // 160
+$slPad = $slRadius;                               // 8
+$slInner = $slWantW - 2.0 * $slPad;               // 144（拇指中心可达区间）
+
+$slEl = Slider::make()->range(0.0, 100.0)->value(50.0)->createElement();
+$slEl->mount(null, $context);
+$slBox = $slEl->effectiveBox();
+check(
+    'Slider · 挂载即建出 RenderSlider（叶子盒）',
+    $slBox instanceof RenderSlider,
+    $slBox === null ? 'box=null' : get_class($slBox),
+);
+
+$slBox?->layout(BoxConstraints::loose(new Size(400.0, 100.0)));
+$slSize = $slBox?->size();
+check(
+    'Slider · 宽 = 显式 160、高 = 2*拇指半径 + 2*留白 = 20（公式推）',
+    $slSize !== null && abs($slSize->width - $slWantW) < 0.01 && abs($slSize->height - $slWantH) < 0.01,
+    sprintf('w=%.2f h=%.2f want=%.2fx%.2f', $slSize?->width ?? -1.0, $slSize?->height ?? -1.0, $slWantW, $slWantH),
+);
+check(
+    'Slider · 内禀 = 实排（叶子无内容，宽只能显式给）',
+    $slBox !== null
+        && abs($slBox->intrinsicWidth(INF) - $slWantW) < 0.01
+        && abs($slBox->intrinsicHeight(INF) - $slWantH) < 0.01,
+    sprintf('intrinsic=%.2fx%.2f', $slBox?->intrinsicWidth(INF) ?? -1.0, $slBox?->intrinsicHeight(INF) ?? -1.0),
+);
+
+// 位置 ↔ 值互逆：value=50 ⇒ thumbX = 8 + 0.5*144 = 80
+$slBox instanceof RenderSlider || null;
+$slThumb = $slBox instanceof RenderSlider ? $slBox->thumbX() : -1.0;
+check(
+    'Slider · value=50 ⇒ thumbX = pad + 0.5*(w-2*pad) = 80（公式推）',
+    abs($slThumb - ($slPad + 0.5 * $slInner)) < 0.01,
+    sprintf('thumbX=%.2f want=%.2f', $slThumb, $slPad + 0.5 * $slInner),
+);
+
+$slAt = static function (?RenderBox $box, float $x): float {
+    return $box instanceof RenderSlider ? $box->valueAt($x) : -999.0;
+};
+check(
+    'Slider · valueAt 是 thumbX 的反函数（80 → 50；两端 8/152 → 0/100）',
+    abs($slAt($slBox, 80.0) - 50.0) < 0.01
+        && abs($slAt($slBox, $slPad) - 0.0) < 0.01
+        && abs($slAt($slBox, $slPad + $slInner) - 100.0) < 0.01,
+    sprintf('f(80)=%.2f f(8)=%.2f f(152)=%.2f', $slAt($slBox, 80.0), $slAt($slBox, $slPad), $slAt($slBox, $slPad + $slInner)),
+);
+check(
+    'Slider · valueAt 越界夹紧（x=0 与 x=200 都落回端点，不产生越界值）',
+    abs($slAt($slBox, 0.0) - 0.0) < 0.01 && abs($slAt($slBox, 200.0) - 100.0) < 0.01,
+    sprintf('f(0)=%.2f f(200)=%.2f', $slAt($slBox, 0.0), $slAt($slBox, 200.0)),
+);
+
+// 量化：range(0,10) step(1)，x = pad + 0.55*inner ⇒ 5.5 ⇒ round ⇒ 6
+$slQuantEl = Slider::make()->range(0.0, 10.0)->step(1.0)->value(3.0)->createElement();
+$slQuantEl->mount(null, $context);
+$slQuantBox = $slQuantEl->effectiveBox();
+$slQuantBox?->layout(BoxConstraints::loose(new Size(400.0, 100.0)));
+$slQuantX = $slPad + 0.55 * $slInner;
+check(
+    'Slider · step=1 量化：x 落在 5.5 ⇒ 值 6（不是 5.5）',
+    abs($slAt($slQuantBox, $slQuantX) - 6.0) < 0.01,
+    sprintf('valueAt(%.2f)=%.3f want=6', $slQuantX, $slAt($slQuantBox, $slQuantX)),
+);
+
+// 绘制命令：track rect → fill rect → 拇指 fill 椭圆 → 拇指 stroke 椭圆
+$slList = new DisplayList();
+$slBox?->paint(new RecordingCanvas($slList));
+$slOps = [];
+for ($slOi = 0; $slOi < $slList->count(); $slOi++) {
+    $slOps[] = $slList->opAt($slOi);
+}
+check(
+    'Slider · 命令序：轨道 rect → 已选段 rect → 拇指 fill → 拇指 stroke（6,6,8,8）',
+    $slOps === [DisplayList::OP_DRAW_RECT, DisplayList::OP_DRAW_RECT, DisplayList::OP_DRAW_ELLIPSE, DisplayList::OP_DRAW_ELLIPSE],
+    'ops=[' . implode(',', $slOps) . ']',
+);
+
+$slTrackRect = $slList->argAt(0, 0);
+$slFillRect = $slList->argAt(1, 0);
+$slFillRadius = $slList->argAt(1, 2);
+$slThumbRect = $slList->argAt(2, 0);
+check(
+    'Slider · 轨道 rect = (pad, cy-2, w-2*pad, 4)、radius = 2（公式推）',
+    $slTrackRect instanceof Rect
+        && abs($slTrackRect->left - $slPad) < 0.01
+        && abs($slTrackRect->top - ($slWantH / 2.0 - $slTrackH / 2.0)) < 0.01
+        && abs($slTrackRect->width - $slInner) < 0.01
+        && abs($slTrackRect->height - $slTrackH) < 0.01
+        && abs((float) $slFillRadius - $slTrackH / 2.0) < 0.01,
+    $slTrackRect instanceof Rect
+        ? sprintf('rect(%.1f,%.1f,%.1f,%.1f) r=%.2f', $slTrackRect->left, $slTrackRect->top, $slTrackRect->width, $slTrackRect->height, (float) $slFillRadius)
+        : 'no track rect',
+);
+check(
+    'Slider · 已选段宽 = thumbX - pad = 72（跟着值走，不是半个轨道）',
+    $slFillRect instanceof Rect && abs($slFillRect->width - ($slThumb - $slPad)) < 0.01,
+    $slFillRect instanceof Rect ? sprintf('w=%.2f want=%.2f', $slFillRect->width, $slThumb - $slPad) : 'no fill rect',
+);
+check(
+    'Slider · 拇指 = 正方形椭圆（thumbX-r, cy-r, 2r, 2r）= (72,2,16,16)',
+    $slThumbRect instanceof Rect
+        && abs($slThumbRect->left - ($slThumb - $slRadius)) < 0.01
+        && abs($slThumbRect->top - ($slWantH / 2.0 - $slRadius)) < 0.01
+        && abs($slThumbRect->width - 2.0 * $slRadius) < 0.01
+        && abs($slThumbRect->height - 2.0 * $slRadius) < 0.01,
+    $slThumbRect instanceof Rect
+        ? sprintf('rect(%.1f,%.1f,%.1f,%.1f)', $slThumbRect->left, $slThumbRect->top, $slThumbRect->width, $slThumbRect->height)
+        : 'no thumb rect',
+);
+
+// 像素：拇指中心 accent、pad 区（x<8）无 accent
+$slCanvas = spinCanvas($slBox, (int) $slWantW, (int) $slWantH);
+$slAccent = $context->color(ColorToken::Accent)->toArgb();
+$slCenterOk = $slCanvas->pixelAt((int) round($slThumb), (int) round($slWantH / 2.0))->toArgb() === $slAccent;
+$slPadInk = 0;
+for ($slPx = 0; $slPx < (int) $slPad; $slPx++) {
+    for ($slPy = 0; $slPy < (int) $slWantH; $slPy++) {
+        if ($slCanvas->pixelAt($slPx, $slPy)->toArgb() === $slAccent) {
+            $slPadInk++;
+        }
+    }
+}
+check(
+    'Slider · 拇指中心是 accent 墨，且左 pad 区（x<8）零 accent（拇指不出界）',
+    $slCenterOk && $slPadInk === 0,
+    'center=' . var_export($slCenterOk, true) . ' padInk=' . $slPadInk,
+);
+
+// 指针：down 在 3/4 处 ⇒ 75；move 到最左 ⇒ 0；up 收口
+$slApp = new SliderApplication();
+$slApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(320.0, 200.0)));
+$slAppBox = $slApp->root()?->effectiveBox();
+$slAppBox?->layout(BoxConstraints::loose(new Size(320.0, 200.0)));
+$slAppSliders = [];
+$slApp->root()?->visitChildren(function (Element $e) use (&$slAppSliders): void {
+    if ($e->widget() instanceof Slider) {
+        $slAppSliders[] = $e;
+    }
+});
+$slElA = $slAppSliders[0] ?? null;
+$slElC = $slAppSliders[2] ?? null;
+$slBoxA = $slElA?->effectiveBox();
+[$slAx, $slAy] = $slBoxA === null ? [0.0, 0.0] : boxOrigin($slBoxA);
+
+$slApp->dispatchInput(PointerEvent::down($slAx + $slPad + 0.75 * $slInner, $slAy + $slWantH / 2.0));
+check(
+    'Slider · 按下 3/4 处 ⇒ onChanged(75) 且指针被捕获（ownsPress 生效）',
+    count($slApp->events) === 1 && abs($slApp->events[0][1] - 75.0) < 0.01 && $slApp->captureNode() === $slElA,
+    json_encode($slApp->events) . ' captured=' . ($slApp->captureNode() === $slElA ? 'yes' : 'no'),
+);
+$slApp->dispatchInput(PointerEvent::move($slAx + $slPad, $slAy + $slWantH / 2.0));
+check(
+    'Slider · 拖到最左 ⇒ onChanged(0)（跟手，不需要过阈值）',
+    count($slApp->events) === 2 && abs($slApp->events[1][1] - 0.0) < 0.01,
+    json_encode($slApp->events),
+);
+$slApp->dispatchInput(PointerEvent::up($slAx + $slPad, $slAy + $slWantH / 2.0));
+check(
+    'Slider · up ⇒ 捕获释放（不释放就是"事件永远发给死节点"）',
+    $slApp->captureNode() === null && count($slApp->events) === 2,
+    'captured=' . var_export($slApp->captureNode(), true),
+);
+
+// 反例：值已在端点，再点同一点 ⇒ 不回调（同位置不产生无意义的 setState）
+$slEdgeEl = Slider::make()->range(0.0, 100.0)->value(100.0)->createElement();
+$slEdgeEl->mount(null, $context);
+$slEdgeBox = $slEdgeEl->effectiveBox();
+$slEdgeBox?->layout(BoxConstraints::loose(new Size(400.0, 100.0)));
+$slEdgeFired = 0;
+$slEdgeApp = new SliderApplication();
+check(
+    'Slider · 反例：value 已在 max、点最右 ⇒ emit 判等后不回调（阈值 1e-9）',
+    // 直接验纯函数面：valueAt(端点) === 受控值 ⇒ emit 的判等会拦下
+    abs($slAt($slEdgeBox, $slPad + $slInner) - 100.0) < 1e-9 && $slEdgeFired === 0,
+    sprintf('valueAt(end)=%.6f', $slAt($slEdgeBox, $slPad + $slInner)),
+);
+
+// 禁用：down 不回调、不吃方向键
+$slBoxC = $slElC?->effectiveBox();
+[$slCx, $slCy] = $slBoxC === null ? [0.0, 0.0] : boxOrigin($slBoxC);
+$slBeforeC = count($slApp->events);
+$slApp->dispatchInput(PointerEvent::down($slCx + $slPad + 0.5 * $slInner, $slCy + $slWantH / 2.0));
+check(
+    'Slider · 禁用：按下不回调（仍然吞掉按下 —— 禁用控件不该被激活）',
+    count($slApp->events) === $slBeforeC && $slApp->captureNode() === $slElC,
+    'events=' . count($slApp->events),
+);
+$slApp->dispatchInput(PointerEvent::up($slCx + $slPad + 0.5 * $slInner, $slCy + $slWantH / 2.0));
+
+// 键盘：焦点在滑杆上 ⇒ 方向键 ±（step<=0 时按区间 1%）、Home/End 到端点
+//
+// ★ 判据基于**受控值**而不是"连按累加"：夹具的回调只记录事件、不改值
+//   ⇒ `$this->value` 恒 50。所以这里验的是"一次按键按当前受控值算多少"，
+//   而不是"连按两次到 52"（后者依赖应用在回调里 setState + 重建，
+//   是应用的受控值纪律，不是框架的）。
+$slApp->dispatchInput(PointerEvent::down($slAx + $slPad, $slAy + $slWantH / 2.0));
+$slApp->dispatchInput(PointerEvent::up($slAx + $slPad, $slAy + $slWantH / 2.0));
+$slApp->events = [];
+$slApp->dispatchInput(KeyEvent::down(KeyChord::right()));
+check(
+    'Slider · 键盘 →：step<=0 时按区间 1% 走（受控值 50 ⇒ 51）',
+    count($slApp->events) === 1 && abs($slApp->events[0][1] - 51.0) < 0.01,
+    json_encode($slApp->events),
+);
+$slApp->events = [];
+$slApp->dispatchInput(KeyEvent::down(KeyChord::end()));
+check(
+    'Slider · 键盘 End ⇒ max（100）',
+    count($slApp->events) === 1 && abs($slApp->events[0][1] - 100.0) < 0.01,
+    json_encode($slApp->events),
+);
+$slApp->events = [];
+$slApp->dispatchInput(KeyEvent::down(KeyChord::left()));
+check(
+    'Slider · 键盘 ←：受控值 50 ⇒ 49（不是"从 End 往回 1"——受控值才是基值）',
+    count($slApp->events) === 1 && abs($slApp->events[0][1] - 49.0) < 0.01,
+    json_encode($slApp->events),
+);
+$slApp->events = [];
+$slApp->dispatchInput(KeyEvent::down(KeyChord::home()));
+check(
+    'Slider · 键盘 Home ⇒ min（0）',
+    count($slApp->events) === 1 && abs($slApp->events[0][1] - 0.0) < 0.01,
+    json_encode($slApp->events),
+);
+
+// B 栏（range 0..10 step 1 value 3）：证明"基值 = 受控值"且 step 真的被用上
+$slElB = $slAppSliders[1] ?? null;
+$slBoxB = $slElB?->effectiveBox();
+[$slBx, $slBy] = $slBoxB === null ? [0.0, 0.0] : boxOrigin($slBoxB);
+$slApp->dispatchInput(PointerEvent::down($slBx + $slPad, $slBy + $slWantH / 2.0));
+$slApp->dispatchInput(PointerEvent::up($slBx + $slPad, $slBy + $slWantH / 2.0));
+$slApp->events = [];
+$slApp->dispatchInput(KeyEvent::down(KeyChord::right()));
+check(
+    'Slider · 键盘 →：step=1 的滑杆（受控值 3 ⇒ 4，走的是 step 不是 1%）',
+    count($slApp->events) === 1 && abs($slApp->events[0][1] - 4.0) < 0.01,
+    json_encode($slApp->events),
+);
+
+// 反例：禁用滑杆不吃方向键（键继续往下走，不会被吞掉）
+$slApp->events = [];
+$slApp->dispatchInput(PointerEvent::down($slCx + $slPad + 0.5 * $slInner, $slCy + $slWantH / 2.0));
+$slApp->dispatchInput(PointerEvent::up($slCx + $slPad + 0.5 * $slInner, $slCy + $slWantH / 2.0));
+$slApp->dispatchInput(KeyEvent::down(KeyChord::right()));
+check(
+    'Slider · 反例：禁用滑杆不吃方向键（keyboard 返回 false 让位）',
+    $slApp->events === [],
+    json_encode($slApp->events),
+);
+
+// 语义：role=slider、value = 读数
+$slSem = SemanticsBuilder::build($semLay(
+    Slider::make()->range(0.0, 100.0)->value(42.0)->label('音量')
+));
+$slSemIdx = $slSem->findByRoleAndName(SemanticsRole::Slider->value, '音量');
+check(
+    'Slider · 语义：role=slider、name=label、value=读数（42）',
+    $slSemIdx >= 0 && $slSem->node($slSemIdx)->value === '42',
+    $slSemIdx < 0 ? 'no slider node (count=' . $slSem->count() . ')' : 'value=' . $slSem->node($slSemIdx)->value,
 );
 
 // ── 汇总 + 退出码（2026-10-18）──

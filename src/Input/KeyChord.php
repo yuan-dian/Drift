@@ -105,6 +105,16 @@ final readonly class KeyChord
         return self::make('Right');
     }
 
+    public static function up(): self
+    {
+        return self::make('Up');
+    }
+
+    public static function down(): self
+    {
+        return self::make('Down');
+    }
+
     public static function home(): self
     {
         return self::make('Home');

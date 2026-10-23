@@ -61,4 +61,7 @@ enum SemanticsRole: string
 
     /** 进度（`Progress`）—— value = 「37%」这种百分读数 */
     case Progress = 'progress';
+
+    /** 连续取值（`Slider`）—— value = 「42」这种读数（W8-2） */
+    case Slider = 'slider';
 }

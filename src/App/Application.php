@@ -2533,6 +2533,33 @@ abstract class Application
                 return null;
             }
 
+            // ★ W8-2（Slider 立的口子）：命中链上有**声明"按下归我"**的
+            //   `pointer()`（`pointer($h, ownsPress: true)`）⇒ 它接管本次按下。
+            //
+            //   与下面两条路的分工：
+            //   | 声明 | down 归谁 |
+            //   |---|---|
+            //   | `ownsPress: true` | **本控件**（框架捕获它 + 把 down 交过去）|
+            //   | `Draggable` | GestureArena 裁决（过阈值才算拖）|
+            //   | 都没有 | 框架激活（`activateFocusedWidget()`）|
+            //
+            //   ★ **必须排在 `Draggable` 之前**：`pointer()` 是"我自己处理指针"的
+            //     最深声明，比祖先的 `Draggable` 更具体（同 `draggableOwner` 的
+            //     "子声明覆盖祖先"）。否则"可排序列表里放一个 Slider"会被祖先的
+            //     Draggable 抢走按下，Slider 点不动。
+            //   ★ 焦点**照旧落上去**（键盘可达），只是不走 `activateFocusedWidget()`
+            //     —— 位置即语义的控件，激活的含义由它自己定义。
+            //   ★ 捕获后 move/up 经 `dispatchToCapture()` 直达同一个回调
+            //     ⇒ **不引入第六个手势状态**：`$captureNode` 的四条收口路径
+            //     （抬起 / 卸载 / 失焦 / 浮层外按下）全部现成。
+            $pointerOwner = $this->pointerOwner($element);
+            if ($pointerOwner !== null) {
+                $focus->focusHit($hit, $root);
+                $this->capturePointer($pointerOwner);
+
+                return $this->dispatchToCapture($pointerOwner, $event);
+            }
+
             // §9.1 手势消歧：命中链上有 `Draggable` 声明者 ⇒ 开 GestureArena，
             // **激活从 down 推迟到 arena 裁决**（up 未过阈值 ⇒ Tap 胜 ⇒ 激活；
             // move 过阈值 ⇒ Drag claim ⇒ Tap 让位）—— 修"拖可拖控件时命令在 down
@@ -2686,6 +2713,25 @@ abstract class Application
     {
         for ($node = $element; $node !== null; $node = $node->parent()) {
             if ($node->widget()->draggableValue() !== null) {
+                return $node;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * 沿父链找最近的、**声明"按下归我"**的 `pointer()` 声明者（W8-2）。
+     *
+     * ★ 只看 `ownsPress`，不看"有没有 handler"：`ownsPress: false` 的中间层
+     *   （如 `OverlayLab` 的锚点按钮）只是"想在捕获期收事件"，不该拦住祖先的接管声明。
+     * ★ 找到的那个节点自己必然有 handler（`pointer()` 一次设两个字段），
+     *   所以随后的 `dispatchToCapture()` 第一跳就命中它。
+     */
+    private function pointerOwner(?Element $element): ?Element
+    {
+        for ($node = $element; $node !== null; $node = $node->parent()) {
+            if ($node->widget()->pointerOwnsPressValue()) {
                 return $node;
             }
         }
