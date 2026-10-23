@@ -466,13 +466,31 @@ if (str_starts_with($caseArg, '--case=')) {
     }
 
     if ($case === 'imageop') {
-        // W1/L3-1 之后 Raster 仍不支持的 Optional op（drawImage）—— 响亮失败照旧
+        // W8-1 起 Raster 支持 drawImage ⇒ 这一例从"响亮失败"改成"真出墨"。
+        // ★ 只断言退出码不够：画布全白也照样 exit 0（与 drawPath 同一条教训）。
+        //   2×2 全黑图铺到 4×4 ⇒ 16 个黑像素。
+        // ★ 用**黑**不用红：下面的 ink 判据只看 R 通道（历史口径），纯红的
+        //   R=255 会被当成"白" ⇒ ink=0 假 FAIL（本轮踩到）。
         $canvas = new RasterCanvas(20, 20, Color::white(), Scale::of(1.0));
         $canvas->drawImage(
-            ImageHandle::fromRgba(str_repeat("\x00", 16), 2, 2),
+            ImageHandle::fromRgba(str_repeat("\x00\x00\x00\xFF", 4), 2, 2),
             null,
             new Rect(0.0, 0.0, 4.0, 4.0)
         );
+        $px = $canvas->toRgba();
+        $ink = 0;
+        for ($i = 0, $len = strlen($px); $i < $len; $i += 4) {
+            if (ord($px[$i]) !== 255) {
+                $ink++;
+            }
+        }
+        fwrite(STDOUT, 'ink=' . $ink . "\n");
+    }
+
+    if ($case === 'shadowop') {
+        // W8-1 之后 Raster 唯一仍不支持的 Optional op（drawShadow）—— 响亮失败照旧
+        $canvas = new RasterCanvas(20, 20, Color::white(), Scale::of(1.0));
+        $canvas->drawShadow(new Shadow(new Rect(2.0, 2.0, 8.0, 8.0), Color::black(), 0.0, 1.0, 1.0, 2.0));
     }
 
     if ($case === 'clippathunbalanced') {
@@ -2198,11 +2216,11 @@ check('Rendering · W8 未闭合写了 Errors.log', str_contains(logText($log), 
 fresh($log);
 $capsRaster = new RasterCanvas(8, 8, Color::white(), Scale::of(1.0));
 check(
-    'Canvas · Raster capabilities() = Core + Extended（W1 三步：CAP_PATH 扫描线填充 / CAP_CLIP_PATH 每行区间掩码 / CAP_LAYER alpha 乘数栈）',
+    'Canvas · Raster capabilities() = Core + Extended + CAP_IMAGE（W1 三步 + W8-1 图像 blit）',
     $capsRaster->capabilities() === (CanvasCapabilities::CAP_ELLIPSE | CanvasCapabilities::CAP_LINE
         | CanvasCapabilities::CAP_GRADIENT | CanvasCapabilities::CAP_DASH
         | CanvasCapabilities::CAP_CLIP_PATH | CanvasCapabilities::CAP_PATH
-        | CanvasCapabilities::CAP_LAYER)
+        | CanvasCapabilities::CAP_LAYER | CanvasCapabilities::CAP_IMAGE)
 );
 $capsSkia = new SkiaCanvas(8, 8, null, Scale::of(1.0));
 check(
@@ -2217,6 +2235,136 @@ $capsRec = RecordingCanvas::create();
 check(
     'Canvas · Recording capabilities() = ALL_MASK（录制侧全录，支持与否由回放侧裁决）',
     $capsRec->capabilities() === CanvasCapabilities::ALL_MASK
+);
+
+// ── W8-1 图像：RasterCanvas::drawImage（最近邻 blit）────────────────────────
+// 判据全按公式推，不拟合：
+// ① 1:1 整图 ⇒ 逐像素与源 RGBA 相同（这也是"与 Skia 逐字节一致"的那一档）；
+// ② 源矩形裁剪 ⇒ 只取 src 指定的子块；
+// ③ 整数放大 N 倍 ⇒ 每个源像素铺成 N×N 的同色块（最近邻的可判定形态）；
+// ④ 越界夹紧 ⇒ 不炸、不越界写、可见部分落位正确；
+// ⑤ 半透明 ⇒ source-over 与 blend() 同式（拿解析值对）；
+// ⑥ 命令流 replay 与直接调用**逐字节相同**（OP_DRAW_IMAGE 回放路径）。
+$argb = static fn(int $r, int $g, int $b, int $a = 255): int => ($a << 24) | ($r << 16) | ($g << 8) | $b;
+$mkImage = static function (array $px): ImageHandle {
+    $rgba = '';
+    foreach ($px as $p) {
+        $rgba .= chr($p[0]) . chr($p[1]) . chr($p[2]) . chr($p[3]);
+    }
+
+    return ImageHandle::fromRgba($rgba, 2, 2);
+};
+// 2×2：左上红 / 右上绿 / 左下蓝 / 右下黄（全不透明）
+$imgQuad = $mkImage([[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255], [255, 255, 0, 255]]);
+
+// ① 1:1 整图
+$imgCanvas = new RasterCanvas(4, 4, Color::white(), Scale::of(1.0));
+$imgCanvas->drawImage($imgQuad, null, new Rect(0.0, 0.0, 2.0, 2.0));
+$imgGot = [];
+foreach ([[0, 0], [1, 0], [0, 1], [1, 1], [2, 2]] as [$ix, $iy]) {
+    $imgGot[] = $imgCanvas->pixelAt($ix, $iy)->toArgb();
+}
+check(
+    'Image · 1:1 整图 blit 逐像素 = 源 RGBA（含"盒外不动"）',
+    $imgGot === [
+        $argb(255, 0, 0), $argb(0, 255, 0), $argb(0, 0, 255), $argb(255, 255, 0),
+        $argb(255, 255, 255),
+    ],
+    'got=' . implode(',', $imgGot),
+);
+
+// ② 源矩形裁剪：只取 (1,0) 那颗绿像素，落到 (2,2)
+$imgCanvas2 = new RasterCanvas(4, 4, Color::white(), Scale::of(1.0));
+$imgCanvas2->drawImage($imgQuad, new Rect(1.0, 0.0, 1.0, 1.0), new Rect(2.0, 2.0, 1.0, 1.0));
+check(
+    'Image · 源矩形裁剪：src(1,0,1,1) ⇒ 只有 (2,2) 变绿，别处不动',
+    $imgCanvas2->pixelAt(2, 2)->toArgb() === $argb(0, 255, 0)
+        && $imgCanvas2->pixelAt(1, 1)->toArgb() === $argb(255, 255, 255)
+        && $imgCanvas2->pixelAt(0, 0)->toArgb() === $argb(255, 255, 255),
+    sprintf('p22=%d p11=%d p00=%d', $imgCanvas2->pixelAt(2, 2)->toArgb(), $imgCanvas2->pixelAt(1, 1)->toArgb(), $imgCanvas2->pixelAt(0, 0)->toArgb()),
+);
+
+// ③ 整数放大 2×：2×2 → 4×4，每个源像素铺 2×2 同色块
+$imgCanvas3 = new RasterCanvas(4, 4, Color::white(), Scale::of(1.0));
+$imgCanvas3->drawImage($imgQuad, null, new Rect(0.0, 0.0, 4.0, 4.0));
+$imgUpscaleOk = true;
+for ($uy = 0; $uy < 4; $uy++) {
+    for ($ux = 0; $ux < 4; $ux++) {
+        $want = $imgQuad->rgba()[((intdiv($uy, 2) * 2) + intdiv($ux, 2)) * 4];
+        $got = $imgCanvas3->pixelAt($ux, $uy);
+        if (ord($want) !== $got->r) {
+            $imgUpscaleOk = false;
+        }
+    }
+}
+check(
+    'Image · 整数放大 2×：每个源像素铺成 2×2 同色块（最近邻的可判定形态）',
+    $imgUpscaleOk,
+    '见逐像素核对（R 通道 = 源块 R）',
+);
+
+// ④ 越界夹紧：dst 左上角在画布外 (-1,-1)，只有右下那颗黄像素可见 ⇒ (0,0) 黄
+$imgCanvas4 = new RasterCanvas(2, 2, Color::white(), Scale::of(1.0));
+$imgCanvas4->drawImage($imgQuad, null, new Rect(-1.0, -1.0, 2.0, 2.0));
+check(
+    'Image · 越界夹紧：dst(-1,-1,2,2) ⇒ 只有源右下角可见于 (0,0)，不炸不越界',
+    $imgCanvas4->pixelAt(0, 0)->toArgb() === $argb(255, 255, 0)
+        && $imgCanvas4->pixelAt(1, 1)->toArgb() === $argb(255, 255, 255),
+    sprintf('p00=%d p11=%d', $imgCanvas4->pixelAt(0, 0)->toArgb(), $imgCanvas4->pixelAt(1, 1)->toArgb()),
+);
+
+// ⑤ 半透明：源 (0,0,0,128) 压白底 ⇒ 每通道 = round((0*128 + 255*127)/255) = 127
+$imgHalf = ImageHandle::fromRgba(chr(0) . chr(0) . chr(0) . chr(128), 1, 1);
+$imgCanvas5 = new RasterCanvas(2, 2, Color::white(), Scale::of(1.0));
+$imgCanvas5->drawImage($imgHalf, null, new Rect(0.0, 0.0, 1.0, 1.0));
+$imgHalfWant = (int) round((0 * 128 + 255 * 127) / 255);
+$imgHalfGot = $imgCanvas5->pixelAt(0, 0);
+check(
+    'Image · 半透明 source-over = blend() 同式（解析值 round((0*128+255*127)/255)）',
+    $imgHalfGot->r === $imgHalfWant && $imgHalfGot->g === $imgHalfWant && $imgHalfGot->b === $imgHalfWant
+        && $imgHalfGot->a === 255,
+    sprintf('got=(%d,%d,%d,%d) want=%d', $imgHalfGot->r, $imgHalfGot->g, $imgHalfGot->b, $imgHalfGot->a, $imgHalfWant),
+);
+
+// ⑥ 命令流 replay 与直接调用逐字节相同（OP_DRAW_IMAGE 回放路径，RenderImage 走这条）
+$imgDirect = new RasterCanvas(6, 6, Color::white(), Scale::of(1.0));
+$imgDirect->drawImage($imgQuad, null, new Rect(1.0, 1.0, 2.0, 2.0));
+$imgList = new DisplayList();
+$imgRec = new RecordingCanvas($imgList);
+$imgRec->drawImage($imgQuad, null, new Rect(1.0, 1.0, 2.0, 2.0));
+$imgReplay = new RasterCanvas(6, 6, Color::white(), Scale::of(1.0));
+$imgList->replay($imgReplay);
+check(
+    'Image · 命令流 replay 与直接调用逐字节相同（录制/回放路径等价）',
+    $imgReplay->toRgba() === $imgDirect->toRgba(),
+    'md5 direct=' . md5($imgDirect->toRgba()) . ' replay=' . md5($imgReplay->toRgba()),
+);
+
+// ⑦ 矩形裁剪生效：裁到 (0,0,1,1) 后画 2×2 ⇒ 只有 (0,0) 变红
+$imgCanvas7 = new RasterCanvas(3, 3, Color::white(), Scale::of(1.0));
+$imgCanvas7->pushClip(new Rect(0.0, 0.0, 1.0, 1.0));
+$imgCanvas7->drawImage($imgQuad, null, new Rect(0.0, 0.0, 2.0, 2.0));
+$imgCanvas7->popClip();
+check(
+    'Image · 矩形裁剪生效：clip(1×1) 内只画 (0,0)，(1,0)/(0,1) 保持白',
+    $imgCanvas7->pixelAt(0, 0)->toArgb() === $argb(255, 0, 0)
+        && $imgCanvas7->pixelAt(1, 0)->toArgb() === $argb(255, 255, 255)
+        && $imgCanvas7->pixelAt(0, 1)->toArgb() === $argb(255, 255, 255),
+    sprintf('p00=%d p10=%d p01=%d', $imgCanvas7->pixelAt(0, 0)->toArgb(), $imgCanvas7->pixelAt(1, 0)->toArgb(), $imgCanvas7->pixelAt(0, 1)->toArgb()),
+);
+
+// ⑧ 反例：全透明图 / 源全在界外 / 0 面积目标 ⇒ 不炸、不改一个像素
+//    ★ 不用 `ImageHandle::fromRgba('', 0, 0)`：构造器对 width<=0 会 Errors::report
+//      （那条是防"图坏了静默错位"的响亮失败，不是给正常调用用的）。
+$imgCanvas8 = new RasterCanvas(2, 2, Color::white(), Scale::of(1.0));
+$imgBefore8 = $imgCanvas8->toRgba();
+$imgCanvas8->drawImage(ImageHandle::fromRgba(chr(0) . chr(0) . chr(0) . chr(0), 1, 1), null, new Rect(0.0, 0.0, 1.0, 1.0));
+$imgCanvas8->drawImage($imgQuad, new Rect(5.0, 5.0, 1.0, 1.0), new Rect(0.0, 0.0, 1.0, 1.0));
+$imgCanvas8->drawImage($imgQuad, null, new Rect(0.0, 0.0, 0.0, 0.0));
+check(
+    'Image · 反例：全透明图 / 源全在界外 / 目标 0 面积 ⇒ 一个像素都不改',
+    $imgCanvas8->toRgba() === $imgBefore8,
+    'md5=' . md5($imgCanvas8->toRgba()),
 );
 
 // ── W1/L3-1 路径（`05` §3 / §12.2 #1–#4）──────────────────────────────────
@@ -2757,11 +2905,23 @@ $pathInk = isset($pathInkMatch[1]) ? (int) $pathInkMatch[1] : -1;
 check('Canvas · Raster drawPath 真出墨（不是"提档了但画布空"）', $pathInk >= 15 && $pathInk <= 21, 'ink=' . $pathInk);
 fresh($log);
 
-// 仍然不支持的 Optional op：响亮失败的消息格式照旧
+// drawImage 在 W8-1 提档：不再响亮失败，且**真出墨**（4×4 全红 = 16 像素）
 [$code, $output] = runCase(__FILE__, 'imageop', null);
-check('Canvas · Raster drawImage 退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
+check(
+    'Canvas · Raster drawImage 退出码 = 0（W8-1 起 CAP_IMAGE 已提档）',
+    $code === 0,
+    '实际 ' . $code . ' / ' . $output
+);
+preg_match('/ink=(\d+)/', $output, $imgInkMatch);
+$imgInk = isset($imgInkMatch[1]) ? (int) $imgInkMatch[1] : -1;
+check('Canvas · Raster drawImage 真出墨（4×4 = 16 像素，不是"提档了但画布空"）', $imgInk === 16, 'ink=' . $imgInk);
+fresh($log);
+
+// 仍然不支持的 Optional op：响亮失败的消息格式照旧（drawShadow 是最后一个）
+[$code, $output] = runCase(__FILE__, 'shadowop', null);
+check('Canvas · Raster drawShadow 退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
 $msg = logText($log);
-check('Canvas · 失败消息含 op 名与两条修法', str_contains($msg, 'drawImage') && str_contains($msg, '两条修法'));
+check('Canvas · 失败消息含 op 名与两条修法', str_contains($msg, 'drawShadow') && str_contains($msg, '两条修法'));
 fresh($log);
 
 [$code, $output] = runCase(__FILE__, 'gradientbad', null);

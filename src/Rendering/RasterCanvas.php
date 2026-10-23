@@ -20,8 +20,8 @@ use Drift\Text\Paragraph;
  *
  * 覆盖能力：轴对齐矩形（填充 / 描边 / 圆角）、椭圆、线段、平移、矩形裁剪、
  * **路径裁剪（每行 x 区间掩码，W1/L3-2）**、路径填充与描边（扫描线 + 奇偶，
- * W1/L3-1）、**层不透明度（alpha 乘数栈，W1/L3-3）**、source-over 混合、
- * **段落（字形位图按覆盖度混合）**。
+ * W1/L3-1）、**层不透明度（alpha 乘数栈，W1/L3-3）**、**图像（最近邻 blit，
+ * W8-1）**、source-over 混合、**段落（字形位图按覆盖度混合）**。
  *
  * ★ 逻辑 → 物理只走 `Scale::quantizeRect()`（§6.1 的唯一量化点）。画布本身是
  *   **物理像素**空间，构造尺寸就是像素尺寸。
@@ -273,10 +273,13 @@ final class RasterCanvas implements Canvas
         //   那个矛盾。掩码是硬边无抗锯齿的像素区间，与 `CAP_PATH` 同一族取舍。
         // ★ `CAP_LAYER` 在 W1/L3-3 置位：alpha 乘数栈（`05` §5.6）。Extended 层
         //   的有意近似 —— 与真离屏只差"层内重叠子更透"这一条，写进 docblock。
+        // ★ `CAP_IMAGE` 在 W8-1 置位：`drawImage` 走最近邻 blit（见该方法 docblock）。
+        //   1:1 时与 Skia 逐字节相同；缩放时 Skia 双线性、Raster 最近邻 —— 这是
+        //   **有意的双端差异**，conformance 基线只钉 1:1（详见 drawImage 注释）。
         return CanvasCapabilities::CAP_ELLIPSE | CanvasCapabilities::CAP_LINE
             | CanvasCapabilities::CAP_GRADIENT | CanvasCapabilities::CAP_DASH
             | CanvasCapabilities::CAP_CLIP_PATH | CanvasCapabilities::CAP_PATH
-            | CanvasCapabilities::CAP_LAYER;
+            | CanvasCapabilities::CAP_LAYER | CanvasCapabilities::CAP_IMAGE;
     }
 
     /**
@@ -1088,9 +1091,151 @@ final class RasterCanvas implements Canvas
         return false;
     }
 
+    /**
+     * 图像：把 `ImageHandle` 的内存 RGBA 直接 blit 到设备像素。
+     *
+     * ★ **最近邻采样**，不是双线性 —— 这是**有意的双端差异**，理由要写清：
+     *   Raster 是**测试后端**（§7.2 裁决 1），它的全部价值是"同一份命令流重放
+     *   必然得到同一张位图"（G3）。最近邻是纯整数运算（一次除法建表、之后全是
+     *   数组下标）⇒ 可复现、零浮点抖动；双线性要引入采样权重与浮点乘加，
+     *   收益只在"放大看得顺眼"——而放大质量该由**真后端**负责（Skia 的
+     *   `drawImageRect` 默认双线性）。
+     *   ⇒ **1:1 时两后端逐字节相同**（双线性在像素中心取样时权重恰为 1/0），
+     *   conformance 基线因此只钉 1:1；缩放只断"几何落位"，不断字节。
+     *
+     * ★ 源矩形**夹到图内**再算映射：`?Rect $src` 的 null = 整图；越界按 Skia
+     *   `drawImageRect` 的口径夹紧（夹到 0 面积 ⇒ 不画，不报错）。
+     *
+     * ★ 采样表**每列/每行各算一次**：内层循环里绝不出现除法（一帧图像是
+     *   O(像素) 次迭代，一次除法都不能有）。
+     */
     public function drawImage(ImageHandle $image, ?Rect $src, Rect $dst): void
     {
-        $this->unsupportedOp('drawImage', 'Optional');
+        if ($image->isEmpty()) {
+            return;
+        }
+
+        // ★ 显式 `(int)` 收窄：`$image->width` 是属性读取 ⇒ tpc 推成 `php::Var`，
+        //   后面 `$ih - 1` 再赋回 `$sy`（已被推成 `php::Int`）会撞
+        //   "Cannot assign php::Var to php::Int"，只有 T2 构建看得到。
+        $iw = (int) $image->width;
+        $ih = (int) $image->height;
+
+        // ① 源区域（图像像素坐标，夹到图内）
+        if ($src === null) {
+            $sx0 = 0.0;
+            $sy0 = 0.0;
+            $sx1 = (float) $iw;
+            $sy1 = (float) $ih;
+        } else {
+            $sx0 = max(0.0, $src->left);
+            $sy0 = max(0.0, $src->top);
+            $sx1 = min((float) $iw, $src->right());
+            $sy1 = min((float) $ih, $src->bottom());
+        }
+        $sw = $sx1 - $sx0;
+        $sh = $sy1 - $sy0;
+        if ($sw <= 0.0 || $sh <= 0.0) {
+            return;
+        }
+
+        // ② 目标区域（设备像素；逻辑 → 物理只走 toDevice 这一个量化点）
+        $device = $this->toDevice($dst);
+        $dx0 = (int) round($device->left);
+        $dy0 = (int) round($device->top);
+        $dw = (int) round($device->width);
+        $dh = (int) round($device->height);
+        if ($dw <= 0 || $dh <= 0) {
+            return;
+        }
+
+        // ③ 夹到画布 + 矩形裁剪（路径裁剪在像素层另算，见 ⑤）
+        $x0 = max($dx0, 0, (int) $this->clip->left);
+        $x1 = min($dx0 + $dw, $this->width, (int) $this->clip->right());
+        $y0 = max($dy0, 0, (int) $this->clip->top);
+        $y1 = min($dy0 + $dh, $this->height, (int) $this->clip->bottom());
+        if ($x0 >= $x1 || $y0 >= $y1) {
+            return;
+        }
+
+        // ④ 采样表：目标像素中心反算源像素下标（夹到源区域内，防越界）
+        //   ★ 用 if 不用嵌套三元：tpc 对 `?:` 的 codegen 在"两支类型不同 / 嵌套"
+        //     时会撞 C2678，只有 T2 构建看得到（`08` 的 AOT 三坑之一）。
+        $colSrc = [];
+        for ($x = $x0; $x < $x1; $x++) {
+            $sx = (int) ($sx0 + ($x - $dx0 + 0.5) / $dw * $sw);
+            if ($sx >= $iw) {
+                $sx = $iw - 1;
+            }
+            if ($sx < 0) {
+                $sx = 0;
+            }
+            $colSrc[$x - $x0] = $sx;
+        }
+        $rowSrc = [];
+        for ($y = $y0; $y < $y1; $y++) {
+            $sy = (int) ($sy0 + ($y - $dy0 + 0.5) / $dh * $sh);
+            if ($sy >= $ih) {
+                $sy = $ih - 1;
+            }
+            if ($sy < 0) {
+                $sy = 0;
+            }
+            $rowSrc[$y - $y0] = $sy;
+        }
+
+        // ⑤ 层不透明度：与 effectiveColor 同口径（乘到**源 alpha** 上，不改 RGB
+        //    —— 改 RGB 会把"半透明覆盖"变成"变暗"，与 Skia 的离屏合成不同色）
+        $factor = $this->layerAlpha === [] ? 1.0 : $this->layerAlpha[count($this->layerAlpha) - 1];
+
+        $rgba = $image->rgba();
+        $stride = $iw * 4;
+        $canvasW = $this->width;
+
+        // ★ foreach 的键值变量必须换名（`$srcY` 而不是 `$sy`）：tpc 已把 `$sy`
+        //   推成 `php::Int`（上一段 for 循环），再让 foreach 往它写 `php::Var`
+        //   会撞 "Cannot assign php::Var to php::Int"，只有 T2 看得到。
+        foreach ($rowSrc as $rowIdx => $srcY) {
+            $y = $y0 + $rowIdx;
+            $rowSpans = $this->clipRowSpansForRow($y);
+            if ($rowSpans === []) {
+                continue; // 该行被路径裁光
+            }
+            $srcRow = $srcY * $stride;
+            foreach ($colSrc as $colIdx => $srcX) {
+                $x = $x0 + $colIdx;
+                if ($rowSpans !== null && !$this->spanHasPixel($rowSpans, $x)) {
+                    continue;
+                }
+
+                $si = $srcRow + $srcX * 4;
+                $sa = ord($rgba[$si + 3]);
+                if ($sa === 0) {
+                    continue;
+                }
+                if ($factor < 1.0) {
+                    $sa = (int) round($sa * $factor);
+                    if ($sa <= 0) {
+                        continue;
+                    }
+                }
+
+                // source-over，与 blend() 逐字同式（只是省掉 Color 对象）
+                $p = ($y * $canvasW + $x) * 4;
+                if ($sa === 255) {
+                    $this->pixels[$p] = $rgba[$si];
+                    $this->pixels[$p + 1] = $rgba[$si + 1];
+                    $this->pixels[$p + 2] = $rgba[$si + 2];
+                    $this->pixels[$p + 3] = "\xFF";
+                    continue;
+                }
+                $inverse = 255 - $sa;
+                $this->pixels[$p] = chr((int) round((ord($rgba[$si]) * $sa + ord($this->pixels[$p]) * $inverse) / 255));
+                $this->pixels[$p + 1] = chr((int) round((ord($rgba[$si + 1]) * $sa + ord($this->pixels[$p + 1]) * $inverse) / 255));
+                $this->pixels[$p + 2] = chr((int) round((ord($rgba[$si + 2]) * $sa + ord($this->pixels[$p + 2]) * $inverse) / 255));
+                $this->pixels[$p + 3] = chr(min(255, $sa + (int) round(ord($this->pixels[$p + 3]) * $inverse / 255)));
+            }
+        }
     }
 
     public function drawShadow(Shadow $shadow): void

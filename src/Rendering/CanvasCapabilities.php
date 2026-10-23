@@ -55,7 +55,12 @@ final class CanvasCapabilities
     //   全部经常量名引用）。
     public const CAP_LAYER = 1 << 6;
 
-    // ── Optional：仅 Skia 级后端；Raster 响亮失败 ──
+    // ── Optional 层 ──
+    // ★ `CAP_IMAGE` 自 W8-1 起**两个后端都有**：Skia 走 `drawImageRect` 原生
+    //   codec，Raster 走内存 RGBA 的最近邻 blit（纯整数、可复现）。1:1 时两者
+    //   逐字节相同；缩放时 Skia 双线性、Raster 最近邻 —— 有意的差异，理由见
+    //   `RasterCanvas::drawImage` 的 docblock（Raster 是测试后端，要的是确定性）。
+    // ★ `CAP_SHADOW` 仍只有 Skia：Raster 响亮失败（E-OP-UNSUPPORTED）。
     public const CAP_IMAGE = 1 << 7;
     public const CAP_SHADOW = 1 << 8;
 
