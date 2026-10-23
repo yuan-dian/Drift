@@ -63,6 +63,12 @@ final class SizedBox extends RenderBoxWidget
         return $this->kid;
     }
 
+    #[\Override]
+    public function expandChildren(): array
+    {
+        return $this->kid === null ? [] : [$this->kid];
+    }
+
     /** 两轴一起定（等价于 `->width($w)->height($h)`，只是少一次 mutate） */
     public function size(float $width, float $height): static
     {

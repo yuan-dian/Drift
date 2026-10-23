@@ -39,6 +39,12 @@ final class ModalHost extends RenderBoxWidget
         return $this->kid;
     }
 
+    #[\Override]
+    public function expandChildren(): array
+    {
+        return [$this->kid];
+    }
+
     /**
      * 遮罩色（**必须带 alpha**，否则下面全看不见）。
      *

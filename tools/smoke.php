@@ -4066,18 +4066,64 @@ check(
 );
 
 // Center：孩子在内容区正中
+// ★ 必须用 **tight**：居中要有"可居中的空间"，而空间由父给。loose 下盒 = 内容尺寸
+//   ⇒ 没有空间可居中（Flutter 在同样前提下也收缩）—— 见下面第二条守卫。
 $centerRoot = Center::make()->child(Spacer::make())->createElement();
 $centerRoot->mount(null, $context);
 $centerBox = $centerRoot->renderObject();
 check('结构控件 · Center 建出 RenderProxy（居中走 mods）', $centerBox instanceof RenderProxy && $centerBox->mods()->hasCenter());
-$centerBox?->layout(BoxConstraints::loose(new Size(100.0, 100.0)));
+$centerBox?->layout(BoxConstraints::tight(new Size(100.0, 100.0)));
 $centerKid = null;
 $centerBox?->visitChildren(function (RenderBox $kid) use (&$centerKid): void {
     $centerKid = $kid;
 });
 check(
-    '结构控件 · Center 把孩子推到正中（100×100 里 offset 50,50）',
-    $centerKid !== null && $centerKid->offsetX() === 50.0 && $centerKid->offsetY() === 50.0
+    '结构控件 · Center 把孩子推到正中（tight 100×100 里 offset 50,50）',
+    $centerKid !== null && $centerKid->offsetX() === 50.0 && $centerKid->offsetY() === 50.0,
+    sprintf('offset (%.6g, %.6g)', $centerKid?->offsetX() ?? -1.0, $centerKid?->offsetY() ?? -1.0),
+);
+
+// —— 松约束：盒 = 内容尺寸，子**不许**被推出盒外（2026-10-23 修）
+// ★ 旧实现：盒 = 0×0 而偏移按 `$inner->maxWidth`(100) 算 ⇒ 子 offset (50,50) ——
+//   画面"看起来居中"，但盒比子小 ⇒ `hitTest` 在盒外不命中、`Modifier::clip` 把子裁掉。
+$centerLooseRoot = Center::make()->child(Spacer::make())->createElement();
+$centerLooseRoot->mount(null, $context);
+$centerLooseBox = $centerLooseRoot->renderObject();
+$centerLooseBox?->layout(BoxConstraints::loose(new Size(100.0, 100.0)));
+$centerLooseKid = null;
+$centerLooseBox?->visitChildren(function (RenderBox $kid) use (&$centerLooseKid): void {
+    $centerLooseKid = $kid;
+});
+check(
+    '结构控件 · Center 松约束：盒 = 内容尺寸，子偏移 0（不被推出盒外）',
+    $centerLooseBox?->size()?->width === 0.0
+        && $centerLooseKid !== null
+        && $centerLooseKid->offsetX() === 0.0
+        && $centerLooseKid->offsetY() === 0.0,
+    sprintf(
+        '盒 %.6g×%.6g，子 offset (%.6g, %.6g)',
+        $centerLooseBox?->size()?->width ?? -1.0,
+        $centerLooseBox?->size()?->height ?? -1.0,
+        $centerLooseKid?->offsetX() ?? -1.0,
+        $centerLooseKid?->offsetY() ?? -1.0,
+    ),
+);
+
+// —— 带 padding：偏移按「内容区 − 内容」算（2026-10-23 修）
+// ★ 旧实现用 `$inner->maxWidth - $measured->width`，而 `$measured` 在 ⑤ 步已加回
+//   padding（是**盒**尺寸）⇒ (80 − 100)/2 < 0 ⇒ `max(0, …)` = 0 ⇒ **完全不居中**。
+$centerPadRoot = Center::make()->child(Spacer::make())->paddingAll(10.0)->createElement();
+$centerPadRoot->mount(null, $context);
+$centerPadBox = $centerPadRoot->renderObject();
+$centerPadBox?->layout(BoxConstraints::tight(new Size(100.0, 100.0)));
+$centerPadKid = null;
+$centerPadBox?->visitChildren(function (RenderBox $kid) use (&$centerPadKid): void {
+    $centerPadKid = $kid;
+});
+check(
+    '结构控件 · Center + padding(10)：偏移按内容区 80 算 ⇒ (80−0)/2 = 40',
+    $centerPadKid !== null && $centerPadKid->offsetX() === 40.0 && $centerPadKid->offsetY() === 40.0,
+    sprintf('offset (%.6g, %.6g)', $centerPadKid?->offsetX() ?? -1.0, $centerPadKid?->offsetY() ?? -1.0),
 );
 
 // 结构节点拿不到 background() —— §15.7 纪律 1（防以后手滑把样式提上基类）

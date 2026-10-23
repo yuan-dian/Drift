@@ -49,6 +49,12 @@ final class PopupPanel extends BoxWidget
         return $this->content;
     }
 
+    #[\Override]
+    public function expandChildren(): array
+    {
+        return [$this->content];
+    }
+
     public function padding(EdgeInsets $value): static
     {
         $this->mutate();

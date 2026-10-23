@@ -49,6 +49,12 @@ final class Expanded extends RenderBoxWidget
         return $this->kid;
     }
 
+    #[\Override]
+    public function expandChildren(): array
+    {
+        return [$this->kid];
+    }
+
     public function createRenderObject(BuildContext $context): RenderBox
     {
         // 份额住 `mods`（`__construct()` 里 `grow(1)`）⇒ 纯转发盒就够

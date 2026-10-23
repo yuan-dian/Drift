@@ -56,6 +56,12 @@ final class ScrollViewBox extends RenderBoxWidget
         return $this->kid;
     }
 
+    #[\Override]
+    public function expandChildren(): array
+    {
+        return [$this->kid];
+    }
+
     public function createRenderObject(BuildContext $context): RenderBox
     {
         // ★ 滚动条色走主题（`Muted`：两主题都清晰、语义"次要信息"）——

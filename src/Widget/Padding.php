@@ -58,6 +58,12 @@ final class Padding extends RenderBoxWidget
         return $this->kid;
     }
 
+    #[\Override]
+    public function expandChildren(): array
+    {
+        return [$this->kid];
+    }
+
     public function createRenderObject(BuildContext $context): RenderBox
     {
         return new RenderProxy();

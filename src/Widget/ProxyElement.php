@@ -16,34 +16,15 @@ use Drift\Layout\RenderProxyBox;
  */
 final class ProxyElement extends StatelessElement
 {
+    /**
+     * ★ 一行转发：子层由**控件自己**声明（`Widget::expandChildren()`）。
+     *   原来这里是 7 个 `instanceof` 分支 —— 每新增一个单子控件都要回来改这一处，
+     *   漏了就是"子不挂载、静默空白"（§24.2 #25）。开放-封闭之后不用再碰本文件。
+     */
     #[\Override]
     protected function expand(): array
     {
-        $widget = $this->widget;
-
-        if ($widget instanceof Padding) {
-            return [$widget->child()];
-        }
-        if ($widget instanceof Center) {
-            return $widget->kid() === null ? [] : [$widget->kid()];
-        }
-        if ($widget instanceof Expanded) {
-            return [$widget->child()];
-        }
-        if ($widget instanceof ScrollViewBox) {
-            return [$widget->child()];
-        }
-        if ($widget instanceof PopupPanel) {
-            return [$widget->child()];
-        }
-        if ($widget instanceof ModalHost) {
-            return [$widget->child()];
-        }
-        if ($widget instanceof SizedBox) {
-            return $widget->kid() === null ? [] : [$widget->kid()];
-        }
-
-        return [];
+        return $this->widget->expandChildren();
     }
 
     #[\Override]

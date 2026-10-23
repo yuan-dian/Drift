@@ -326,6 +326,22 @@ abstract class Widget
     }
 
     /**
+     * 本控件展开出的子控件（`ProxyElement` 的唯一输入）。
+     *
+     * ★ 从 `ProxyElement::expand()` 的 7 个 `instanceof` 分支搬过来：那种写法要求
+     *   **每新增一个单子控件都回来改 `ProxyElement`**（漏了就是"子不挂载、静默空白"，
+     *   §24.2 #25）。搬到 `Widget` 上之后是开放-封闭：新控件覆写自己的方法即可。
+     * ★ 默认 `[]`：容器控件（`Column` / `Row` / `Dock`）走各自的 Element，不经过这里。
+     *
+     * @internal `ProxyElement` 调；应用侧不该用
+     * @return list<Widget>
+     */
+    public function expandChildren(): array
+    {
+        return [];
+    }
+
+    /**
      * 四边等距内边距。
      *
      * ```php

@@ -51,6 +51,12 @@ final class Center extends RenderBoxWidget
         return $this->kid;
     }
 
+    #[\Override]
+    public function expandChildren(): array
+    {
+        return $this->kid === null ? [] : [$this->kid];
+    }
+
     public function createRenderObject(BuildContext $context): RenderBox
     {
         return new RenderProxy();

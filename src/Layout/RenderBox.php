@@ -272,6 +272,7 @@ abstract class RenderBox extends RenderObject
 
         // ④ 子类量内容 —— **契约**：返回**内容**尺寸，不是盒尺寸
         $measured = $this->performLayout($inner);
+        $content = $measured;   // ★ 内容尺寸：⑦ 的居中要它（⑤ 会把 `$measured` 换成盒尺寸）
 
         // ⑤ padding 加回，**并且先夹进父给的区间**再交给 ⑥
         // ★ 夹这一步不能省：内距比可用空间大时（`Padding::all(250)` 塞进 200 高的
@@ -301,31 +302,37 @@ abstract class RenderBox extends RenderObject
             ));
         }
 
-        $this->size = $constraints->constrain($measured);
+        $boxSize = $constraints->constrain($measured);
+        $this->size = $boxSize;
+
+        // ★ 为什么**不**"有界轴撑满"（Flutter `Align` 的语义）：Drift 的
+        //   `RenderFlex::childConstraints()` 给非弹性子**有界主轴**（`0..$mainMax`），
+        //   而 Flutter 给的是 `0..INF` ⇒ 撑满会在 `Row` 里占满整行、把兄弟挤出去
+        //   （2026-10-23 实测：`AccelApplication` 264.8 > 240 当场 C6 Fatal）。
+        //   而"松约束下不居中"**不是 bug**：盒就是内容那么大，没有空间可居中
+        //   （Flutter 在同样前提下也收缩）。要撑满请让父给 tight（`Dock` 的
+        //   `center` 槽 / `Stack(Expand)` / 应用根都是这么做的）。
 
         // ⑦ 后置平移直接子盒：**只做 `center`**
         // ★ padding **不**进子盒偏移 —— 子盒坐标就住内容盒，换算交给 `paint()` 的
         //   `translate()` 与 `hitTest()`/`absoluteOrigin()` 的 `contentOriginX/Y()`
         //   （`02` §4.1.1）。进一次就与绘制重复平移，且不报错。
         //
-        // ★★ **居中偏移按"可用空间"算，不是按"盒尺寸"**（`02` §11.9）：这条是
-        //   逐字复刻 `RenderCenter` 的口径（`$constraints->maxWidth − 孩子`），为的是
-        //   M2-4 删掉那个类时**零行为变化**。它有一个已知缺陷 —— 父给**松**约束时
-        //   盒尺寸 = 孩子尺寸，偏移却按上限算 ⇒ 孩子被推到盒**外**（画面"看起来居中"，
-        //   但盒比孩子小）。改成"盒先撑满上限再居中"（Flutter `Align` 的语义）会让
-        //   `Row`/`Column` 里的 `Center` 交叉轴突然拉满，属于**布局语义变更**，
-        //   归 W6 与 `Stack`/`Align` 一起裁决。
+        // ★★ **偏移按「盒的内容区 − 内容尺寸」算**。旧写法是
+        //   `$inner->maxWidth - $measured->width`，两个都错：`$inner->maxWidth` 是
+        //   **父给的可用宽**（松约束下比盒大 ⇒ 推出盒外），而 `$measured` 在 ⑤ 步
+        //   已加回 padding（是**盒**尺寸）⇒ 有 padding 时偏移少算 `(padL+padR)/2`。
+        //   现在用 `$boxSize - padding` 与 `$content`，与 `Align` 的口径一致。
         if ($centered) {
-            $innerMaxW = $inner->maxWidth;
-            $innerMaxH = $inner->maxHeight;
-            $dx = 0.0;
-            $dy = 0.0;
-            if ($inner->hasBoundedWidth()) {
-                $dx = \max(0.0, ($innerMaxW - $measured->width) / 2.0);
+            $contentW = $boxSize->width;
+            $contentH = $boxSize->height;
+            if ($padded) {
+                $contentW -= $m->padLeft() + $m->padRight();
+                $contentH -= $m->padTop() + $m->padBottom();
             }
-            if ($inner->hasBoundedHeight()) {
-                $dy = \max(0.0, ($innerMaxH - $measured->height) / 2.0);
-            }
+
+            $dx = \max(0.0, ($contentW - $content->width) / 2.0);
+            $dy = \max(0.0, ($contentH - $content->height) / 2.0);
 
             $this->visitChildren(function (RenderObject $child) use ($dx, $dy): void {
                 if ($child instanceof RenderBox) {
