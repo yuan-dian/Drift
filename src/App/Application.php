@@ -273,6 +273,16 @@ abstract class Application
      */
     public const TOOLTIP_DELAY_MS = 500;
 
+    /**
+     * 控件声明的浮层面板（`Widget::overlayPanel()`）的宽度上限（W8-2 Select）。
+     *
+     * ★ 与 `TooltipPanel::MAX_WIDTH` 分开：那是"一行提示"，这是"一列选项"。
+     * ★ 宽度上限是**必须**的（不是审美）：`placeEntry()` 给非居中层的是无界约束，
+     *   `RenderPopupPanel` 只在有界时才夹宽，而 ⑤ 的夹紧**只挪 x 不改宽** ⇒
+     *   不限宽就是"长选项右边溢出到客户区外"。
+     */
+    public const PANEL_MAX_WIDTH = 320.0;
+
     /** 上次推送的档位（`full` / `coalesce` / `none`）—— 夹具与 devtools 读它 */
     private string $semanticsMode = 'none';
 
@@ -3346,6 +3356,18 @@ abstract class Application
         $element = $this->focus?->focused();
         $widget = $element?->widget();
 
+        // ★★ 声明式浮层（W8-2 Select）：**通用缝，排在最前**。
+        //   任何控件声明了 `overlayPanel()` ⇒ 激活它 = 开/关那个面板，**不走**
+        //   `onPressed` / 命令（"浮一个面板"比"按一下"更具体）。
+        //   ★ 这是**唯一**一条按"能力"而不是按"类型"判的分支 —— 没有 `instanceof`，
+        //     所以以后 DatePicker / ComboBox 不用再改这里一行。
+        $factory = $widget?->overlayPanelValue();
+        if ($factory !== null && $element !== null) {
+            $this->toggleWidgetPanel($element, $factory);
+
+            return;
+        }
+
         // ★ 菜单标题（`Menu extends Button`）⇒ 走 `onOpen`（应用接线到 `showMenu()`）。
         //   分支必须在 `Button` 之前 —— 子类会被 `instanceof` 认成父类。
         if ($widget instanceof Menu) {
@@ -3392,6 +3414,76 @@ abstract class Application
         if ($handler !== null) {
             $handler();
         }
+    }
+
+    /**
+     * 开 / 关控件声明的面板（W8-2 Select）—— `activateFocusedWidget()` 的通用缝。
+     *
+     * ★ **开关语义**：同一个控件再激活一次就收掉。键盘 Enter 能走到这里（鼠标点
+     *   第二下走不到 —— 面板开着时点控件在面板**外**，`barrier` 会先把它关掉并吞掉
+     *   那次按下，这是下拉的标准手感）。
+     * ★ **不靠字段记"谁开着"**：直接扫栈里 `owner === $anchor` 的条目。字段会在
+     *   `dismissOnTapOutside` / `closeMenu()` / owner 清扫这些**不经过本类**的移除
+     *   路径上变陈旧（Snackbar 的 `snackEntry` 就是靠 `closeMenu()` 手动复位兜的，
+     *   那种补丁能少一个是一个）。
+     */
+    private function toggleWidgetPanel(Element $anchor, \Closure $factory): void
+    {
+        $open = $this->widgetPanelEntry($anchor);
+        if ($open !== null) {
+            $this->removeOverlay($open);
+
+            return;
+        }
+
+        // ★ dismiss 由**本类**注入（§4.3：面板里的按钮拿不到 `Application`）。
+        //   走"按 owner 找条目"而不是捕获 `$e` —— 闭包里按引用捕获变量是 tpc 未验证形态。
+        $panel = $factory(function () use ($anchor): void {
+            $this->closeWidgetPanel($anchor);
+        });
+
+        $e = new OverlayEntry($panel);
+        $e->anchor = $anchor;
+        // ★ owner = 锚点自身：页面走了没关下拉 ⇒ `placeOverlays()` 的 owner 清扫收尸。
+        $e->owner = $anchor;
+        $e->prefer = OverlayEntry::BELOW;
+        // ★★ `barrier = true`（与菜单同）—— 这是 `dismissOnTapOutside` **唯一**生效的
+        //   路径：`dispatchPointer()` 里"点在条目盒外"那一支整个包在 `if ($e->barrier)` 里，
+        //   `barrier = false` 的条目直接穿透，永远轮不到关闭。
+        $e->barrier = true;
+        $e->scrim = false;
+        $e->dismissOnTapOutside = true;
+        $e->dismissOnEsc = true;
+        $e->focusTrap = false;
+        $e->maxWidth = self::PANEL_MAX_WIDTH;
+
+        // ★ **不动 `restoreFocus`**（与 Tooltip / Snackbar 相反）：那两个是被"悬停"/
+        //   "定时器"触发的，打开时焦点根本不在锚点上，快照下来是错的；这里打开它的
+        //   就是锚点自己 ⇒ `pushOverlay()` 的快照天然正确，收面板时焦点回到控件上。
+        $this->pushOverlay($e);
+    }
+
+    /** 栈里属于这个锚点的面板条目（没有 ⇒ `null`） */
+    private function widgetPanelEntry(Element $anchor): ?OverlayEntry
+    {
+        foreach ($this->overlays->all() as $e) {
+            if ($e->owner === $anchor) {
+                return $e;
+            }
+        }
+
+        return null;
+    }
+
+    /** 收掉这个锚点的面板（幂等；没有 ⇒ 无事发生） */
+    private function closeWidgetPanel(Element $anchor): void
+    {
+        $e = $this->widgetPanelEntry($anchor);
+        if ($e === null) {
+            return;
+        }
+
+        $this->removeOverlay($e);
     }
 
     /**

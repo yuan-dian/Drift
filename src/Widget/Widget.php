@@ -106,6 +106,16 @@ abstract class Widget
      */
     private string $tooltipText = '';
 
+    /**
+     * @internal 激活时浮出的面板工厂（W8-2 Select）；`null` = 激活时不浮面板
+     *
+     * ★ 存**工厂**不存 Widget：面板里的"点了选项就收掉这层"要靠 `Application`
+     *   注入的 dismiss 闭包，而面板**必须在开的那一刻**才建得出来。
+     * ★ `?\Closure` 是本仓已跑通的形态（`hoverHandler` / `pointerHandler` /
+     *   `keyHandler` / `draggable` 都是），与 `?string` 退化 `php::Var` 那条不同。
+     */
+    private ?\Closure $overlayPanelFactory = null;
+
     /** @internal null = 本控件不在语义树里（无角色 = 不建节点，§9 / M5 无障碍） */
     private ?SemanticsRole $semRole = null;
 
@@ -891,6 +901,61 @@ abstract class Widget
     public function tooltipTextValue(): string
     {
         return $this->tooltipText;
+    }
+
+    /**
+     * 声明"激活我时，给我浮一个面板"（W8-2 Select，2026-10-23）。
+     *
+     * ```php
+     * // 工厂：收"收掉这一层"的闭包，交回面板内容
+     * Button::make($label)->overlayPanel(function (\Closure $dismiss): Widget {
+     *     return PopupPanel::make(Column::make()->children([
+     *         Button::make('北京')->onPressed(function () use ($dismiss): void {
+     *             $this->apply('110000');
+     *             $dismiss();
+     *         }),
+     *     ]));
+     * });
+     * ```
+     *
+     * ## 为什么是"工厂 + 注入 dismiss"而不是直接给一个 Widget
+     *
+     * ★★ **"点了选项要关掉自己"** —— 而面板里的按钮**拿不到 `Application`**
+     *   （§4.3 禁 `Widget → App`）。所以 `dismiss` 只能由 `Application` 在**开面板
+     *   的那一刻**注入进来。这与 `SnackbarPanel::make($s, $onDismiss)` 是**同一条**
+     *   已被真机验证过的路（`119cfd7`）。
+     *
+     * ★★ **工厂只收一个参数是刻意的**：tpc 生成的 C++ 侧**闭包 arity 没有系统验证
+     *   过**（`Menu::onOpen` 的 2 参形态至今没有被示例台消费过）。要往工厂里多塞
+     *   "锚点宽度"这类信息，宁可给 `OverlayEntry` 加字段，也不要加形参。
+     *
+     * ## 为什么是声明而不是回调
+     *
+     * 与 `tooltip()` / `contextMenu()` 同一族：`pointer()` / `keyboard()` 这两条缝
+     * 把事件交给**控件自己的闭包**，而"开浮层"要 `Application` —— 闭包够不着。
+     * 声明式让框架在**激活**那一个入口统一处理（`activateFocusedWidget()` 里只有
+     * **一条**通用分支，不按控件类型加 `instanceof`）。
+     *
+     * ★ 优先级：**声明了本字段的控件，激活时开面板，不走 `onPressed` / 命令**
+     *   （"浮一个面板"比"按一下"更具体）。`Select` 因此不给内层按钮设 `onPressed`。
+     * ★ 面板的落位 / 锚点 / 归属 / 关闭归 `Application`（`§5.1` 裁决 1）。
+     *
+     * @param \Closure(\Closure): Widget $factory 形参 = `dismiss` 闭包，返回值 = 面板内容
+     *
+     * @api
+     */
+    public function overlayPanel(\Closure $factory): static
+    {
+        $this->mutate();
+        $this->overlayPanelFactory = $factory;
+
+        return $this;
+    }
+
+    /** @internal 激活时浮出的面板工厂；`null` = 本控件激活时不开面板 */
+    public function overlayPanelValue(): ?\Closure
+    {
+        return $this->overlayPanelFactory;
     }
 
     /**

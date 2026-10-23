@@ -274,6 +274,9 @@ use Drift\Rendering\SliderStyle;
 use Drift\Dev\Smoke\App\SliderApplication;
 use Drift\Dev\Smoke\App\TooltipApplication;
 use Drift\Dev\Smoke\App\SnackbarApplication;
+use Drift\Dev\Smoke\App\SelectApplication;
+use Drift\Widget\Option;
+use Drift\Widget\Select;
 use Drift\Widget\Snackbar;
 use Drift\Widget\TooltipPanel;
 use Drift\Widget\State;
@@ -12728,6 +12731,180 @@ check(
     'Snackbar · dismiss 幂等（空队列再调无事发生）',
     !$sbApp->hasSnackbar() && $sbApp->snackbarQueueLength() === 0,
     'has=' . ($sbApp->hasSnackbar() ? 'yes' : 'no'),
+);
+
+// ── W8-2 Select（下拉选择 + 声明式浮层面板，2026-10-23）──
+// ★ 这一块钉住四件事：① 激活 ⇒ 框架开面板（`Widget::overlayPanel()` 的通用缝）；
+//   ② 面板参数（barrier / owner / restoreFocus 三处最容易搞反的）；③ 点选项 ⇒
+//   回调 + 收面板 + 焦点回控件；④ **不影响既有控件**（没声明浮层的按钮照旧 onPressed）。
+// ★ 反例自检三条：值不匹配 ⇒ 不选（不夹到第一项）/ 点面板外只关不开 / host 按钮
+//   没有被新分支吃掉。
+$selConstraints = BoxConstraints::loose(new Size(600.0, 400.0));
+$selApp = new SelectApplication();
+$selApp->attach(new SurfaceProbe(), $selConstraints);
+$selApp->root()?->effectiveBox()?->layout($selConstraints);
+$selApp->frame(1000.0, $selConstraints);
+
+// —— ⓪ 纯函数：受控值 → 下标（不需要应用）——
+check(
+    'Select · 受控值匹配 ⇒ selectedIndex 命中那一项',
+    Select::make([Option::of('a'), Option::of('b')])->value('b')->selectedIndex() === 1,
+    'idx=' . Select::make([Option::of('a'), Option::of('b')])->value('b')->selectedIndex(),
+);
+// ★ 反例：不匹配 ⇒ -1（**不夹到 0**）—— 静默选中第一项是替用户做决定
+//   （与 `SegmentedControl` 的"越界选中 ⇒ 全不选"同一条纪律）。
+check(
+    'Select · 反例：值不匹配 ⇒ selectedIndex = -1（显示 placeholder，不夹到第一项）',
+    Select::make([Option::of('a'), Option::of('b')])->value('nope')->selectedIndex() === -1,
+    'idx=' . Select::make([Option::of('a'), Option::of('b')])->value('nope')->selectedIndex(),
+);
+
+check(
+    'Select · 初始没有浮层',
+    $selApp->overlayCount() === 0,
+    'count=' . $selApp->overlayCount(),
+);
+
+// —— ① 激活（真实指针链）⇒ 框架开面板 ——
+$selTc = $selApp->triggerCenter();
+$selApp->dispatchInput(PointerEvent::down($selTc[0] ?? 0.0, $selTc[1] ?? 0.0));
+$selApp->frame(1100.0, $selConstraints);
+
+check(
+    'Select · 激活触发框 ⇒ 开了一层浮层（Widget::overlayPanel() 的通用缝）',
+    $selApp->overlayCount() === 1,
+    'count=' . $selApp->overlayCount() . ' trigger=' . var_export($selTc, true),
+);
+
+$selTop = $selApp->topEntry();
+$selBox = $selTop?->element?->effectiveBox();
+$selSize = $selBox?->size();
+$selW = $selSize?->width ?? 0.0;
+$selH = $selSize?->height ?? 0.0;
+
+// ★★ 尺寸必须单独断言：Tooltip 那次"位置完全正确、尺寸 0"（AOT 外部类常量求值成 0）
+//   就是这样漏过去的 —— 位置对不代表画得出来。
+check(
+    'Select · 面板宽高非零（位置对但尺寸 0 = 画面一丝不变）',
+    $selW > 0.0 && $selH > 0.0,
+    'size=' . $selW . 'x' . $selH,
+);
+
+check(
+    'Select · 面板宽 ≥ PANEL_MIN_WIDTH（一列选项不能挤成一条）',
+    $selW >= Select::PANEL_MIN_WIDTH,
+    'w=' . $selW . ' min=' . Select::PANEL_MIN_WIDTH,
+);
+
+$selTrigger = $selApp->trigger();
+check(
+    'Select · 面板参数：锚点=控件 / owner=控件（页面走了自动收尸）/ barrier=true（点外面才关得掉）'
+        . ' / scrim=false / hitTest=true / dismissOnTapOutside / dismissOnEsc / 不抢焦点',
+    $selTop !== null
+        && $selTop->anchor === $selTrigger
+        && $selTop->owner === $selTrigger
+        && $selTop->barrier === true
+        && $selTop->scrim === false
+        && $selTop->hitTest === true
+        && $selTop->dismissOnTapOutside === true
+        && $selTop->dismissOnEsc === true
+        && $selTop->focusTrap === false,
+    'anchor=' . ($selTop?->anchor === $selTrigger ? 'yes' : 'no')
+        . ' owner=' . ($selTop?->owner === $selTrigger ? 'yes' : 'no')
+        . ' barrier=' . ($selTop?->barrier ? '1' : '0')
+        . ' hitTest=' . ($selTop?->hitTest ? '1' : '0'),
+);
+
+// ★★ 与 Tooltip / Snackbar **相反**：那两个打开时焦点不在锚点上（悬停 / 定时器触发），
+//   所以必须把 `restoreFocus` 抹成 null；这里是控件自己激活 ⇒ 快照天然正确，
+//   收面板时焦点要回到控件上（否则选完一项焦点就丢了）。
+check(
+    'Select · restoreFocus = 触发框（选完焦点回到控件，与 Tooltip/Snackbar 相反）',
+    $selTop?->restoreFocus === $selTrigger,
+    'restore=' . ($selTop?->restoreFocus === $selTrigger ? 'yes' : 'no'),
+);
+
+// —— ② 面板内容：三项 + 选中项用 Primary 底（不用 "✓" 前缀，字模子集没有 U+2713）——
+$selOptions = $selApp->optionButtons();
+check(
+    'Select · 面板里恰好 3 个选项按钮',
+    \count($selOptions) === 3,
+    'n=' . \count($selOptions),
+);
+
+$selVariants = [];
+foreach ($selOptions as $selOpt) {
+    $selW2 = $selOpt->widget();
+    $selVariants[] = $selW2 instanceof \Drift\Widget\Button
+        ? $selW2->variantValue()->name
+        : '?';
+}
+check(
+    'Select · 选中项（上海市）是 Primary、其余是 Flat',
+    $selVariants === ['Flat', 'Primary', 'Flat'],
+    'variants=' . implode(',', $selVariants),
+);
+
+// —— ③ 点第 1 个选项（北京市）⇒ 回调 + 收面板 + 焦点回控件 ——
+$selC0 = $selApp->optionCenter(0);
+$selApp->dispatchInput(PointerEvent::down($selC0[0] ?? 0.0, $selC0[1] ?? 0.0));
+$selApp->frame(1200.0, $selConstraints);
+check(
+    'Select · 点选项 ⇒ onChanged 收到那一项的 value（不是 label、不是下标）',
+    $selApp->changed === ['110000'],
+    'changed=' . implode(',', $selApp->changed),
+);
+check(
+    'Select · 点选项 ⇒ 面板自己收掉（dismiss 由 Application 注入）',
+    $selApp->overlayCount() === 0,
+    'count=' . $selApp->overlayCount(),
+);
+check(
+    'Select · 点选项 ⇒ 焦点回到触发框（不是"焦点丢了"）',
+    $selApp->focusedElement() === $selTrigger,
+    'focused=' . ($selApp->focusedElement() instanceof \Drift\Widget\Button ? 'button' : 'other'),
+);
+
+// —— ④ 再开一次 ⇒ 点面板外 ⇒ 关且不开新的（`barrier` 吞掉那次按下）——
+$selApp->dispatchInput(PointerEvent::down($selTc[0] ?? 0.0, $selTc[1] ?? 0.0));
+$selApp->frame(1300.0, $selConstraints);
+$selHost = $selApp->host();
+$selHBox = $selHost?->effectiveBox();
+[$selHx, $selHy] = $selHBox === null
+    ? [0.0, 0.0]
+    : \Drift\Layout\RenderBox::absoluteOrigin($selHBox);
+$selHw = $selHBox?->size()?->width ?? 0.0;
+$selHh = $selHBox?->size()?->height ?? 0.0;
+
+$selApp->hostPressed = [];
+$selApp->dispatchInput(PointerEvent::down($selHx + $selHw / 2.0, $selHy + $selHh / 2.0));
+$selApp->frame(1400.0, $selConstraints);
+check(
+    'Select · 点面板外 ⇒ 关面板，且那次按下被吞（host 收不到 —— 下拉的标准手感）',
+    $selApp->overlayCount() === 0 && $selApp->hostPressed === [],
+    'count=' . $selApp->overlayCount() . ' host=' . implode(',', $selApp->hostPressed),
+);
+
+// —— ⑤ ESC ⇒ 关 ——
+$selApp->dispatchInput(PointerEvent::down($selTc[0] ?? 0.0, $selTc[1] ?? 0.0));
+$selApp->frame(1500.0, $selConstraints);
+$selOpenBefore = $selApp->overlayCount();
+$selApp->dispatchInput(KeyEvent::down(KeyChord::escape()));
+$selApp->frame(1600.0, $selConstraints);
+check(
+    'Select · ESC ⇒ 关面板（dismissOnEsc）',
+    $selOpenBefore === 1 && $selApp->overlayCount() === 0,
+    'before=' . $selOpenBefore . ' after=' . $selApp->overlayCount(),
+);
+
+// —— ⑥ 反例：没声明浮层的按钮 ⇒ 激活照旧走 onPressed（新分支是加性的）——
+$selApp->hostPressed = [];
+$selApp->dispatchInput(PointerEvent::down($selHx + $selHw / 2.0, $selHy + $selHh / 2.0));
+$selApp->frame(1700.0, $selConstraints);
+check(
+    'Select · 反例：没有 overlayPanel() 的按钮 ⇒ 激活照旧走 onPressed（新分支加性）',
+    $selApp->hostPressed === ['host'] && $selApp->overlayCount() === 0,
+    'host=' . implode(',', $selApp->hostPressed) . ' count=' . $selApp->overlayCount(),
 );
 
 // ── 汇总 + 退出码（2026-10-18）──

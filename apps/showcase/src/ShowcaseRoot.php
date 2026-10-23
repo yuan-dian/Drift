@@ -35,6 +35,7 @@ use App\Showcase\Pages\LayoutPage;
 use App\Showcase\Pages\ListPage;
 use App\Showcase\Pages\MotionPage;
 use App\Showcase\Pages\SegmentedPage;
+use App\Showcase\Pages\SelectPage;
 use App\Showcase\Pages\SliderPage;
 use App\Showcase\Pages\SnackbarPage;
 use App\Showcase\Pages\TooltipPage;
@@ -127,6 +128,7 @@ final class ShowcaseState extends State
             ['滑杆 Slider', static fn(): Widget => new SliderPage()],
             ['提示 Tooltip', static fn(): Widget => new TooltipPage()],
             ['通知 Snackbar', fn(): Widget => new SnackbarPage($this->notify)],
+            ['下拉 Select', static fn(): Widget => new SelectPage()],
         ];
     }
 
