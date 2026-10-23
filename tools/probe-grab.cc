@@ -19,6 +19,11 @@
  *              --png=drag.png                       （框选/拖动类手势）
  *   probe-grab --pid=1234 --settle=500 --deactivate --close
  *                                                    （模拟"用户切走"：WM_ACTIVATE/WA_INACTIVE）
+ *   probe-grab --pid=1234 --settle=500 --keys=64,128,5F204F1F --close
+ *                                                    （在客户区 64,128 点一下聚焦，再敲"张伟"）
+ *                                                    （hex：4 位 = 一个 UTF-16 码元；过 IME 的话不可复现）
+ *   probe-grab --pid=1234 --click=64,128 --chars=5F204F1F --close
+ *                                                    （确定性字符输入：聚焦 + 逐码元 WM_CHAR）
  *
  * ★★ `--cursor` / `--mdrag` **必须真挪物理光标**（`SetCursorPos`），不能只
  *    `PostMessage` 合成消息：系统不认为指针在窗内 ⇒ 壳侧
@@ -127,6 +132,16 @@ struct Options {
     bool savePng = false;          // --png=path（WIC 编码，供 Read 直接看）
     std::wstring pngPath;
     bool deactivate = false;       // --deactivate（发 WM_ACTIVATE/WA_INACTIVE，模拟"用户切走"）
+    // ── 键盘输入（2026-10-23：S5 搜索框真机验证用）──
+    bool typeKeys = false;         // --keys=x,y,<hex UTF-16>
+    int keysX = 0;
+    int keysY = 0;
+    std::wstring keysHex;          // 4 个 hex = 一个 UTF-16 码元（"张伟" = 5F204F1F）
+    int keysWaitMs = 700;          // 敲完等多久再抓（让应用处理 onChanged + 重排 + 重画）
+    bool printForeground = false;  // --fg（诊断：敲键盘时目标窗口是不是前台）
+    // ── 字符输入（`--chars`：PostMessage(WM_CHAR)）──────────────────
+    bool typeChars = false;        // --chars=<hex UTF-16>
+    std::wstring charsHex;
 };
 
 struct Shot {
@@ -335,6 +350,85 @@ long long changedPixels(const Shot& before, const Shot& after)
 }
 
 // ───────────────────────────────────────────────────────── 数进程 ──
+
+/**
+ * 诊断用：打印"此刻谁是前台窗口"与目标窗口的几何。
+ *
+ * ★ 为什么需要：`--keys` 走**真实输入**（`SendInput`），而键盘事件只进
+ *   **前台窗口**的消息队列。探针从控制台里跑，前台默认是控制台 —— 若点击
+ *   没能把目标窗提前台（被别的窗挡住 / 激活被系统合并），敲的字符就全进了
+ *   控制台，画面一丝不变（2026-10-23 实证：S5 判据四趟全平，一度被读成
+ *   "过滤坏了"，其实是键盘送错了窗口）。
+ */
+void printForegroundInfo(const char* tag, HWND target)
+{
+    const HWND fg = ::GetForegroundWindow();
+    wchar_t title[256] = {};
+    if (fg != nullptr) {
+        ::GetWindowTextW(fg, title, 255);
+    }
+    DWORD fgPid = 0;
+    if (fg != nullptr) {
+        ::GetWindowThreadProcessId(fg, &fgPid);
+    }
+    RECT fgRect{};
+    if (fg != nullptr) {
+        ::GetWindowRect(fg, &fgRect);
+    }
+    RECT targetRect{};
+    if (target != nullptr) {
+        ::GetWindowRect(target, &targetRect);
+    }
+    std::printf(
+        "%s fg_hwnd=0x%llx fg_pid=%lu fg_rect=%ld,%ld,%ld,%ld fg_title=%ls "
+        "target_hwnd=0x%llx target_rect=%ld,%ld,%ld,%ld is_fg=%d\n",
+        tag,
+        static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(fg)),
+        static_cast<unsigned long>(fgPid),
+        fgRect.left, fgRect.top, fgRect.right, fgRect.bottom,
+        title,
+        static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(target)),
+        targetRect.left, targetRect.top, targetRect.right, targetRect.bottom,
+        fg == target ? 1 : 0);
+    std::fflush(stdout);
+}
+
+/**
+ * 把目标窗**提前台**（真实输入的前置条件）。
+ *
+ * ★★ 为什么必须有：`--keys` 走真实输入 —— `SendInput` 的键盘事件只进
+ *   **前台窗口**的消息队列，物理点击也只落在"最上面那扇窗"上。探针是从
+ *   IDE/控制台里起的，被测窗口天生在后台（2026-10-23 实证：`fg0` 是全屏
+ *   IDE、点完 `fg1` 干脆是 0x0）⇒ 点击与字符全送进 IDE，画面一丝不变，
+ *   S5 判据四趟全平，一度被读成"过滤坏了"。**不激活 = 输入没送到**。
+ * ★ `AttachThreadInput` 是标准解法：后台进程直接 `SetForegroundWindow`
+ *   会被系统拒绝，先挂到前台线程的输入队列再设就能成。
+ */
+void activateWindow(HWND hwnd)
+{
+    if (hwnd == nullptr) {
+        return;
+    }
+    ::ShowWindow(hwnd, SW_RESTORE);
+
+    DWORD foregroundThread = 0;
+    const HWND fg = ::GetForegroundWindow();
+    if (fg != nullptr) {
+        foregroundThread = ::GetWindowThreadProcessId(fg, nullptr);
+    }
+    const DWORD thisThread = ::GetCurrentThreadId();
+
+    bool attached = false;
+    if (foregroundThread != 0 && foregroundThread != thisThread) {
+        attached = ::AttachThreadInput(foregroundThread, thisThread, TRUE) != FALSE;
+    }
+    ::SetForegroundWindow(hwnd);
+    ::BringWindowToTop(hwnd);
+    if (attached) {
+        ::AttachThreadInput(foregroundThread, thisThread, FALSE);
+    }
+    ::Sleep(150);   // 前台切换是异步的，等它落地
+}
 
 /** 同名进程数（含主进程与 `--drift-worker` 子进程）。失败返回 -1。 */
 int countImage(const std::wstring& image)
@@ -662,6 +756,50 @@ int wmain(int argc, wchar_t** argv)
             options.midPngPath = value;
         } else if (key == L"deactivate") {
             options.deactivate = true;
+        } else if (key == L"keys") {
+            // x,y,<hex UTF-16> —— 三段。hex 而不是原文：bash 传的非 ASCII 参数经
+            // `CommandLineToArgvW` 按 ANSI 码页转换会丢字 ⇒ 一律 hex 才可复现。
+            std::vector<std::wstring> parts;
+            size_t start = 0;
+            while (true) {
+                const size_t comma = value.find(L',', start);
+                if (comma == std::wstring::npos) {
+                    parts.push_back(value.substr(start));
+                    break;
+                }
+                parts.push_back(value.substr(start, comma - start));
+                start = comma + 1;
+            }
+            // ★★ x/y 必须**各自解析进自己的变量**：旧写法把 `parseInt` 写在
+            //   `if` 条件里，第二次调用把 `number` 覆盖成 y 值，紧接着
+            //   `keysX = number` 拿到的是 **y**（2026-10-23 实证：传 64,128
+            //   实际点 128,128 —— 落在"刷新"按钮上，整轮 S5 判据全假绿）。
+            long long keysX = 0;
+            long long keysY = 0;
+            if (parts.size() >= 3 && parseInt(parts[0], keysX) && parseInt(parts[1], keysY)) {
+                options.typeKeys = true;
+                options.keysX = static_cast<int>(keysX);
+                options.keysY = static_cast<int>(keysY);
+                options.keysHex = parts[2];
+            } else {
+                std::fprintf(stderr, "err=--keys wants x,y,<hex>\n");
+                return 2;
+            }
+        } else if (key == L"keys-wait" && parseInt(value, number)) {
+            options.keysWaitMs = static_cast<int>(number);
+        } else if (key == L"fg") {
+            options.printForeground = true;
+        } else if (key == L"chars") {
+            // <hex UTF-16> —— 逐码元 PostMessage(WM_CHAR)（确定性字符输入）。
+            // ★ 与 `--keys` 的分工：`--keys` 走 `SendInput` 真实输入，**要求目标窗
+            //   在前台**（键盘事件只进前台窗口的队列）；本机探针从 IDE 里跑，被测
+            //   窗常在后台，真实输入会整批送进 IDE（2026-10-23 实证：S5 四趟全平）。
+            //   `--chars` 直接发到目标窗的消息队列 —— 壳侧 `WM_CHAR` 处理与真实
+            //   敲键**同一条路径**（都入 `kEvChar`，焦点路由在 PHP 侧），
+            //   `SendInput(KEYEVENTF_UNICODE)` 产生的也正是 WM_CHAR。
+            //   ⇒ 语义等价、且不依赖窗口层级。焦点仍由 `--click` 给。
+            options.typeChars = true;
+            options.charsHex = value;
         } else if (key == L"png") {
             options.savePng = true;
             options.pngPath = value;
@@ -720,6 +858,9 @@ int wmain(int argc, wchar_t** argv)
         return 2;
     }
     std::printf("hwnd=0x%llx\n", static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(hwnd)));
+    if (options.printForeground) {
+        printForegroundInfo("fg0", hwnd);
+    }
 
     // ★ bug ②：窗口在 ≠ 已画过第一帧。首帧落地前抓到的是屏幕残留。
     if (options.settleMs > 0) {
@@ -827,6 +968,66 @@ int wmain(int argc, wchar_t** argv)
         ::PostMessageW(hwnd, WM_ACTIVATE, MAKEWPARAM(WA_INACTIVE, 0), 0);
         std::printf("deactivated=1\n");
         ::Sleep(static_cast<DWORD>(options.wheelWaitMs));
+    }
+
+    // ── 键盘输入（S5 搜索框真机验证用）────────────────────────────
+    // ★ 走**真实输入**（`SetCursorPos` + `mouse_event` + `SendInput`）：最贴近
+    //   真实用户（含"系统路由到焦点控件"这一跳）。★ 代价：要求目标窗在**前台**
+    //   （键盘事件只进前台窗口的队列）—— 见 `activateWindow`；本机探针从 IDE
+    //   里跑、被测窗常在后台时改用 `--chars`（语义等价、不依赖窗口层级）。
+    // ★ `KEYEVENTF_UNICODE` 直接送码元 ⇒ **不过输入法**，可复现（中文也能敲）。
+    if (options.typeKeys) {
+        // ★★ 先把目标窗提前台：否则物理点击落在压着它的窗（IDE）上、
+        //   字符也进 IDE 的消息队列 —— 输入根本没送到（见 `activateWindow`）。
+        activateWindow(hwnd);
+
+        // hex → UTF-16 码元：4 个 hex = 1 个码元（"张伟" = 5F204F1F）
+        std::wstring text;
+        for (size_t i = 0; i + 4 <= options.keysHex.size(); i += 4) {
+            const std::wstring unit = options.keysHex.substr(i, 4);
+            text.push_back(static_cast<wchar_t>(wcstol(unit.c_str(), nullptr, 16)));
+        }
+
+        POINT at{options.keysX, options.keysY};
+        ::ClientToScreen(hwnd, &at);
+        ::SetCursorPos(at.x, at.y);
+        ::Sleep(80);    // 让 TrackMouseEvent 先看到"指针在窗内"
+        ::mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+        ::Sleep(30);
+        ::mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+        ::Sleep(150);   // 等控件拿到焦点
+        if (options.printForeground) {
+            printForegroundInfo("fg1", hwnd);
+        }
+
+        for (const wchar_t ch : text) {
+            INPUT in[2] = {};
+            in[0].type = INPUT_KEYBOARD;
+            in[0].ki.wScan = ch;
+            in[0].ki.dwFlags = KEYEVENTF_UNICODE;
+            in[1] = in[0];
+            in[1].ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
+            ::SendInput(2, in, sizeof(INPUT));
+            ::Sleep(40);
+        }
+
+        std::printf("keys=%d,%d,units=%zu\n", options.keysX, options.keysY, text.size());
+        ::Sleep(static_cast<DWORD>(options.keysWaitMs));
+    }
+
+    // ── 字符输入（PostMessage(WM_CHAR)，见参数解析处的分工说明）─────
+    if (options.typeChars) {
+        std::wstring text;
+        for (size_t i = 0; i + 4 <= options.charsHex.size(); i += 4) {
+            const std::wstring unit = options.charsHex.substr(i, 4);
+            text.push_back(static_cast<wchar_t>(wcstol(unit.c_str(), nullptr, 16)));
+        }
+        for (const wchar_t ch : text) {
+            ::PostMessageW(hwnd, WM_CHAR, static_cast<WPARAM>(ch), 0);
+            ::Sleep(40);
+        }
+        std::printf("chars=units=%zu\n", text.size());
+        ::Sleep(static_cast<DWORD>(options.keysWaitMs));
     }
 
     // ── 窗口控制（M5，§5.4 验证用）────────────────────────────
