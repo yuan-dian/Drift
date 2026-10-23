@@ -29,6 +29,7 @@ use App\Showcase\Pages\ButtonsPage;
 use App\Showcase\Pages\CustomPaintPage;
 use App\Showcase\Pages\FeedbackPage;
 use App\Showcase\Pages\FormPage;
+use App\Showcase\Pages\ImagePage;
 use App\Showcase\Pages\LayoutPage;
 use App\Showcase\Pages\ListPage;
 use App\Showcase\Pages\MotionPage;
@@ -103,6 +104,7 @@ final class ShowcaseState extends State
             // ★ 追加**在末尾**：前 10 项的 y 坐标不变 ⇒ 既有真机探针量出的坐标不用改。
             ['动画 Motion', static fn(): Widget => new MotionPage()],
             ['分段 Segmented', static fn(): Widget => new SegmentedPage()],
+            ['图片 Image', static fn(): Widget => new ImagePage()],
         ];
     }
 

@@ -166,6 +166,8 @@ use Drift\Layout\RenderTextField;
 use Drift\Layout\RenderToggle;
 use Drift\Layout\StackAlign;
 use Drift\Layout\StackFit;
+use Drift\Layout\ImageFit;
+use Drift\Layout\RenderImage;
 use Drift\Rendering\BoxStyle;
 use Drift\Routing\PageHost;
 use Drift\Routing\PageHostState;
@@ -180,10 +182,12 @@ use Drift\Rendering\DashPattern;
 use Drift\Rendering\DisplayList;
 use Drift\Rendering\Gradient;
 use Drift\Rendering\ImageHandle;
+use Drift\Rendering\ImageLoader;
 use Drift\Rendering\MetricToken;
 use Drift\Rendering\Modifier;
 use Drift\Rendering\Paint;
 use Drift\Rendering\Path;
+use Drift\Rendering\PngDecoder;
 use Drift\Rendering\Shadow;
 use Drift\Rendering\RasterCanvas;
 use Drift\Rendering\RecordingCanvas;
@@ -221,6 +225,7 @@ use Drift\Widget\AppBar;
 use Drift\Widget\BoxWidget;
 use Drift\Widget\Center;
 use Drift\Widget\Column;
+use Drift\Widget\Image;
 use Drift\Widget\Dock;
 use Drift\Widget\Drag\Draggable;
 use Drift\Widget\Drag\DragTarget;
@@ -2365,6 +2370,319 @@ check(
     'Image · 反例：全透明图 / 源全在界外 / 目标 0 面积 ⇒ 一个像素都不改',
     $imgCanvas8->toRgba() === $imgBefore8,
     'md5=' . md5($imgCanvas8->toRgba()),
+);
+
+// ══ W8-1 · PNG 解码 / ImageLoader / Image 控件 ═══════════════════════════════
+// ★ 解码器的判据**全部对"按规范手算出来的 RGBA"**，不对"再编回去的字节" ——
+//   编解码共用一份实现时同一个 bug 会两边一起错（量具自检纪律）。下面这个
+//   编码器只负责**造输入**，输出侧一律断言解析值。
+$pngChunk = static function (string $type, string $data): string {
+    return pack('N', strlen($data)) . $type . $data . pack('N', crc32($type . $data));
+};
+
+/**
+ * 造一份 PNG 字节流。`$rows` = **原始样本**（每行长度 = stride），`$filter`
+ * 对所有行统一（五种滤波各造一份就能把反滤波全走一遍）。
+ */
+$pngMake = static function (
+    int $w,
+    int $h,
+    int $colorType,
+    int $depth,
+    array $rows,
+    int $filter = 0,
+    string $extra = '',
+    int $interlace = 0,
+) use ($pngChunk): string {
+    $channels = 1;
+    if ($colorType === 2) {
+        $channels = 3;
+    } elseif ($colorType === 4) {
+        $channels = 2;
+    } elseif ($colorType === 6) {
+        $channels = 4;
+    }
+    $stride = intdiv($w * $channels * $depth + 7, 8);
+    $bpp = intdiv($channels * $depth + 7, 8);
+    if ($bpp < 1) {
+        $bpp = 1;
+    }
+
+    $raw = '';
+    $prev = array_fill(0, $stride, 0);
+    foreach ($rows as $line) {
+        $raw .= chr($filter);
+        for ($i = 0; $i < $stride; $i++) {
+            $a = $i >= $bpp ? $line[$i - $bpp] : 0;
+            $b = $prev[$i];
+            $c = $i >= $bpp ? $prev[$i - $bpp] : 0;
+            if ($filter === 0) {
+                $v = $line[$i];
+            } elseif ($filter === 1) {
+                $v = $line[$i] - $a;
+            } elseif ($filter === 2) {
+                $v = $line[$i] - $b;
+            } elseif ($filter === 3) {
+                $v = $line[$i] - (($a + $b) >> 1);
+            } else {
+                $p = $a + $b - $c;
+                $pa = abs($p - $a);
+                $pb = abs($p - $b);
+                $pc = abs($p - $c);
+                $pred = $c;
+                if ($pa <= $pb && $pa <= $pc) {
+                    $pred = $a;
+                } elseif ($pb <= $pc) {
+                    $pred = $b;
+                }
+                $v = $line[$i] - $pred;
+            }
+            $raw .= chr($v & 0xFF);
+        }
+        $prev = $line;
+    }
+
+    return "\x89PNG\r\n\x1a\n"
+        . $pngChunk('IHDR', pack('NN', $w, $h) . chr($depth) . chr($colorType) . "\x00\x00" . chr($interlace))
+        . $extra
+        . $pngChunk('IDAT', gzcompress($raw, 9))
+        . $pngChunk('IEND', '');
+};
+
+/** 读一个像素成 "r,g,b,a" 字符串（断言里好读） */
+$pngPx = static function (ImageHandle $image, int $x, int $y): string {
+    $s = $image->rgba();
+    $o = ($y * $image->width + $x) * 4;
+
+    return ord($s[$o]) . ',' . ord($s[$o + 1]) . ',' . ord($s[$o + 2]) . ',' . ord($s[$o + 3]);
+};
+
+// ① 五种滤波：同一份 2×2 RGBA 样本，换滤波类型编，解出来必须逐像素相同
+$pngFilterOk = true;
+$pngFilterNote = [];
+foreach ([0, 1, 2, 3, 4] as $pngF) {
+    // 相邻像素刻意不相等 ⇒ Sub/Up/Average/Paeth 的预测器真的被用到
+    $pngRows = [
+        [10, 20, 30, 255, 40, 50, 60, 255],
+        [70, 80, 90, 255, 100, 110, 120, 255],
+    ];
+    $pngImg = PngDecoder::decode($pngMake(2, 2, 6, 8, $pngRows, $pngF), 'filter-' . $pngF);
+    $pngGood = $pngImg !== null
+        && $pngPx($pngImg, 0, 0) === '10,20,30,255'
+        && $pngPx($pngImg, 1, 0) === '40,50,60,255'
+        && $pngPx($pngImg, 0, 1) === '70,80,90,255'
+        && $pngPx($pngImg, 1, 1) === '100,110,120,255';
+    if (!$pngGood) {
+        $pngFilterOk = false;
+    }
+    $pngFilterNote[] = 'f' . $pngF . ($pngGood ? ' ok' : ' FAIL');
+}
+check(
+    'PNG · 五种滤波（None/Sub/Up/Average/Paeth）解码 = 原始样本',
+    $pngFilterOk,
+    implode(' / ', $pngFilterNote),
+);
+
+// ② 色彩类型 2（真彩无 alpha）⇒ alpha 补 255
+$pngRgb = PngDecoder::decode($pngMake(1, 2, 2, 8, [[200, 100, 50], [10, 20, 30]]), 'rgb');
+check(
+    'PNG · 色彩类型 2（RGB）⇒ alpha 补 255',
+    $pngRgb !== null && $pngPx($pngRgb, 0, 0) === '200,100,50,255' && $pngPx($pngRgb, 0, 1) === '10,20,30,255',
+    $pngRgb === null ? 'null' : $pngPx($pngRgb, 0, 0) . ' / ' . $pngPx($pngRgb, 0, 1),
+);
+
+// ③ 色彩类型 0（灰度）⇒ r=g=b
+$pngGray = PngDecoder::decode($pngMake(1, 2, 0, 8, [[128], [255]]), 'gray');
+check(
+    'PNG · 色彩类型 0（灰度 8 位）⇒ r=g=b',
+    $pngGray !== null && $pngPx($pngGray, 0, 0) === '128,128,128,255' && $pngPx($pngGray, 0, 1) === '255,255,255,255',
+    $pngGray === null ? 'null' : $pngPx($pngGray, 0, 0) . ' / ' . $pngPx($pngGray, 0, 1),
+);
+
+// ④ 色彩类型 3（调色板）+ tRNS：索引 0 全透、索引 1 半透、索引 2 不透明
+$pngPlte = $pngChunk('PLTE', chr(10) . chr(20) . chr(30) . chr(40) . chr(50) . chr(60) . chr(70) . chr(80) . chr(90));
+$pngTrns = $pngChunk('tRNS', chr(0) . chr(128));
+$pngPal = PngDecoder::decode($pngMake(3, 1, 3, 8, [[0, 1, 2]], 0, $pngPlte . $pngTrns), 'palette');
+check(
+    'PNG · 色彩类型 3（调色板）+ tRNS：索引色与 alpha 表都对',
+    $pngPal !== null
+        && $pngPx($pngPal, 0, 0) === '10,20,30,0'
+        && $pngPx($pngPal, 1, 0) === '40,50,60,128'
+        && $pngPx($pngPal, 2, 0) === '70,80,90,255',
+    $pngPal === null ? 'null' : $pngPx($pngPal, 0, 0) . ' | ' . $pngPx($pngPal, 1, 0) . ' | ' . $pngPx($pngPal, 2, 0),
+);
+
+// ⑤ 16 位取高字节：0x12FF → 0x12
+$png16 = PngDecoder::decode(
+    $pngMake(1, 1, 6, 16, [[0x12, 0xFF, 0x34, 0xFF, 0x56, 0xFF, 0xFF, 0xFF]]),
+    'rgba16',
+);
+check(
+    'PNG · 16 位取高字节（0x12FF→0x12）',
+    $png16 !== null && $pngPx($png16, 0, 0) === '18,52,86,255',
+    $png16 === null ? 'null' : $pngPx($png16, 0, 0),
+);
+
+// ⑥ 1 位灰度：位打包（MSB 优先），0 → 黑、1 → 白
+//    两个像素 = 1 字节：pixel0 在 bit7、pixel1 在 bit6 ⇒ [0,1] = 0b0100_0000 = 64
+$png1bit = PngDecoder::decode($pngMake(2, 1, 0, 1, [[64]]), 'gray1');
+check(
+    'PNG · 1 位灰度（MSB 打包）⇒ 0/1 拉伸成 0/255',
+    $png1bit !== null && $pngPx($png1bit, 0, 0) === '0,0,0,255' && $pngPx($png1bit, 1, 0) === '255,255,255,255',
+    $png1bit === null ? 'null' : $pngPx($png1bit, 0, 0) . ' / ' . $pngPx($png1bit, 1, 0),
+);
+
+// ⑦ 真资源文件：assets/demo/quad.png（四象限 + 中心白点）
+$pngAsset = PngDecoder::decodeFile(__DIR__ . '/../assets/demo/quad.png');
+check(
+    'PNG · 真文件 assets/demo/quad.png（64×64 四象限 + 中心白点）',
+    $pngAsset !== null
+        && $pngAsset->width === 64 && $pngAsset->height === 64
+        && $pngPx($pngAsset, 8, 8) === '220,40,40,255'
+        && $pngPx($pngAsset, 56, 8) === '40,170,80,255'
+        && $pngPx($pngAsset, 8, 56) === '40,90,210,255'
+        && $pngPx($pngAsset, 56, 56) === '235,190,40,255'
+        && $pngPx($pngAsset, 32, 32) === '255,255,255,255',
+    $pngAsset === null ? 'null' : $pngPx($pngAsset, 8, 8) . ' / ' . $pngPx($pngAsset, 32, 32),
+);
+
+// ⑧ 反例：签名错 / 截断 / 隔行 / 位深非法 ⇒ null + **每条都留痕**
+$pngDiagBefore = count(Errors::recentDiagnostics());
+$pngBad1 = PngDecoder::decode('not a png at all', 'bad-signature');
+$pngBad2 = PngDecoder::decode(substr($pngMake(2, 2, 6, 8, [[1, 2, 3, 4, 5, 6, 7, 8], [9, 10, 11, 12, 13, 14, 15, 16]]), 0, 20), 'truncated');
+$pngBad3 = PngDecoder::decode($pngMake(1, 1, 6, 8, [[1, 2, 3, 4]], 0, '', 1), 'interlaced');
+$pngBad4 = PngDecoder::decode($pngMake(1, 1, 2, 4, [[1, 2]]), 'bad-depth');
+$pngBad5 = PngDecoder::decodeFile(__DIR__ . '/../assets/demo/definitely-missing.png');
+$pngDiagAfter = count(Errors::recentDiagnostics());
+check(
+    'PNG · 反例五条（签名错/截断/隔行/位深非法/文件不存在）⇒ 全部 null 且各留一条诊断',
+    $pngBad1 === null && $pngBad2 === null && $pngBad3 === null && $pngBad4 === null && $pngBad5 === null
+        && $pngDiagAfter - $pngDiagBefore === 5,
+    sprintf('nulls=%s 诊断 +%d', implode(',', array_map(static fn(?ImageHandle $i): string => $i === null ? 'null' : 'ok', [$pngBad1, $pngBad2, $pngBad3, $pngBad4, $pngBad5])), $pngDiagAfter - $pngDiagBefore),
+);
+
+// ⑨ ImageLoader：候选目录解析 + **缓存命中同一实例** + 缺失留痕
+ImageLoader::clearCache();
+$ldrA = ImageLoader::load('demo/quad.png');
+$ldrB = ImageLoader::load('demo/quad.png');
+check(
+    'ImageLoader · 相对路径按候选目录解析，第二次命中缓存（同一实例，不重复解码）',
+    $ldrA !== null && $ldrA === $ldrB && ImageLoader::cacheSize() === 1,
+    sprintf('a=%s b=%s cache=%d', $ldrA === null ? 'null' : 'ok', $ldrB === null ? 'null' : 'ok', ImageLoader::cacheSize()),
+);
+$ldrAbs = __DIR__ . '/../assets/demo/quad.png';
+$ldrResolved = ImageLoader::resolve($ldrAbs);
+check(
+    'ImageLoader · 绝对路径原样使用（不往候选目录上拼）',
+    $ldrResolved !== null && realpath($ldrResolved) === realpath($ldrAbs),
+    'resolved=' . ($ldrResolved ?? 'null'),
+);
+
+// ⑩ RenderImage 几何：自然尺寸 / 只给一边按比例推 / 内禀与实排一致
+$imgQuadAsset = ImageLoader::load('demo/quad.png'); // 64×64
+$imgStripAsset = ImageLoader::load('demo/strip.png'); // 96×24
+$boxNat = new RenderImage($imgQuadAsset, ImageFit::Contain, 0.0, 0.0);
+$natSize = $boxNat->layout(new BoxConstraints(0.0, INF, 0.0, INF));
+check(
+    'Image · 自然尺寸 = 原图像素尺寸（64×64）',
+    abs($natSize->width - 64.0) < 0.01 && abs($natSize->height - 64.0) < 0.01,
+    sprintf('%.2f×%.2f', $natSize->width, $natSize->height),
+);
+$boxWOnly = new RenderImage($imgStripAsset, ImageFit::Contain, 48.0, 0.0);
+$wOnlySize = $boxWOnly->layout(new BoxConstraints(0.0, INF, 0.0, INF));
+check(
+    'Image · 只给宽 48（原图 96×24）⇒ 高按比例 = 12',
+    abs($wOnlySize->width - 48.0) < 0.01 && abs($wOnlySize->height - 12.0) < 0.01,
+    sprintf('%.2f×%.2f', $wOnlySize->width, $wOnlySize->height),
+);
+check(
+    'Image · 内禀 = 实排（contentIntrinsic* 与 performLayout 同式）',
+    abs($boxWOnly->intrinsicWidth(0.0) - 48.0) < 0.01 && abs($boxWOnly->intrinsicHeight(0.0) - 12.0) < 0.01,
+    sprintf('intr=%.2f×%.2f', $boxWOnly->intrinsicWidth(0.0), $boxWOnly->intrinsicHeight(0.0)),
+);
+
+// ⑪ RenderImage 像素：Contain 在方盒里 letterbox（2×1 图进 4×4 盒 ⇒ 上下各留 1 行）
+//     scale = min(4/2, 4/1) = 2 ⇒ dst = (0, 1, 4, 2)
+$imgTwoByOne = ImageHandle::fromRgba(
+    chr(220) . chr(40) . chr(40) . chr(255) . chr(40) . chr(170) . chr(80) . chr(255),
+    2,
+    1,
+);
+$boxContain = new RenderImage($imgTwoByOne, ImageFit::Contain, 4.0, 4.0);
+$boxContain->layout(new BoxConstraints(4.0, 4.0, 4.0, 4.0));
+$cvContain = new RasterCanvas(4, 4, Color::white(), Scale::of(1.0));
+$boxContain->paint($cvContain);
+check(
+    'Image · Contain 在方盒里 letterbox（上下留白、左右铺满、比例不变形）',
+    $cvContain->pixelAt(0, 1)->toArgb() === $argb(220, 40, 40)
+        && $cvContain->pixelAt(0, 2)->toArgb() === $argb(220, 40, 40)
+        && $cvContain->pixelAt(3, 1)->toArgb() === $argb(40, 170, 80)
+        && $cvContain->pixelAt(0, 0)->toArgb() === $argb(255, 255, 255)
+        && $cvContain->pixelAt(0, 3)->toArgb() === $argb(255, 255, 255),
+    sprintf('(0,0)=%d (0,1)=%d (0,2)=%d (3,1)=%d (0,3)=%d', $cvContain->pixelAt(0, 0)->toArgb(), $cvContain->pixelAt(0, 1)->toArgb(), $cvContain->pixelAt(0, 2)->toArgb(), $cvContain->pixelAt(3, 1)->toArgb(), $cvContain->pixelAt(0, 3)->toArgb()),
+);
+
+// ⑫ Cover 的**裁源矩形**：4×2 图进 2×4 盒 ⇒ 盒更窄 ⇒ 保高裁宽
+//     boxAspect=0.5, imgAspect=2 ⇒ sw = ih*0.5 = 1, sh = ih = 2 ⇒ src=(1.5, 0, 1, 2), dst=(0,0,2,4)
+$imgFourByTwo = ImageHandle::fromRgba(str_repeat("\x00\x00\x00\xFF", 8), 4, 2);
+$boxCover = new RenderImage($imgFourByTwo, ImageFit::Cover, 2.0, 4.0);
+$boxCover->layout(new BoxConstraints(2.0, 2.0, 4.0, 4.0));
+$GLOBALS['DRIFT_SMOKE_SKIA_CALLS'] = [];
+$cvCover = new SkiaCanvas(2, 4, null, Scale::of(1.0));
+$boxCover->paint($cvCover);
+$coverCall = null;
+foreach ($GLOBALS['DRIFT_SMOKE_SKIA_CALLS'] as $skCall) {
+    if ($skCall[0] === 'draw_image') {
+        $coverCall = $skCall;
+    }
+}
+check(
+    'Image · Cover 用**裁源矩形**（不是裁目标）：src=(1.5,0,1,2) dst=(0,0,2,4)，双端收到同一设备矩形',
+    $coverCall !== null
+        && abs($coverCall[4] - 1.5) < 0.01 && abs($coverCall[5]) < 0.01
+        && abs($coverCall[6] - 1.0) < 0.01 && abs($coverCall[7] - 2.0) < 0.01
+        && abs($coverCall[8]) < 0.01 && abs($coverCall[9]) < 0.01
+        && abs($coverCall[10] - 2.0) < 0.01 && abs($coverCall[11] - 4.0) < 0.01
+        && $coverCall[12] === true,
+    $coverCall === null ? 'no draw_image call' : implode(',', array_slice($coverCall, 4)),
+);
+
+// ⑬ Image 控件：走 createRenderObject，源来自资源路径；只给宽按比例
+$imgWidget = Image::make()->asset('demo/strip.png')->width(48.0)->fit(ImageFit::Contain);
+$imgWidgetBox = $imgWidget->createRenderObject(smokeContext());
+$imgWidgetSize = $imgWidgetBox->layout(new BoxConstraints(0.0, INF, 0.0, INF));
+check(
+    'Image 控件 · asset() 走 ImageLoader，只给宽 48 ⇒ 48×12',
+    abs($imgWidgetSize->width - 48.0) < 0.01 && abs($imgWidgetSize->height - 12.0) < 0.01,
+    sprintf('%.2f×%.2f', $imgWidgetSize->width, $imgWidgetSize->height),
+);
+
+// ⑭ Image 控件反例：资源不存在 ⇒ 退回 1×1 透明占位（不炸、不静默空白报错）
+$imgMissing = Image::make()->asset('demo/no-such-image.png');
+$imgMissingBox = $imgMissing->createRenderObject(smokeContext());
+$imgMissingSize = $imgMissingBox->layout(new BoxConstraints(0.0, INF, 0.0, INF));
+$cvMissing = new RasterCanvas(2, 2, Color::white(), Scale::of(1.0));
+$imgMissingBox->paint($cvMissing);
+check(
+    'Image 控件 · 缺图 ⇒ 1×1 透明占位（尺寸退化 + 画不出墨，诊断已留痕）',
+    abs($imgMissingSize->width - 1.0) < 0.01 && abs($imgMissingSize->height - 1.0) < 0.01
+        && $cvMissing->pixelAt(0, 0)->toArgb() === $argb(255, 255, 255),
+    sprintf('%.2f×%.2f', $imgMissingSize->width, $imgMissingSize->height),
+);
+
+// ⑮ Image 控件 · 内存句柄路径（image() 不碰文件系统）
+$imgFromHandle = Image::make()->image($imgQuadAsset)->width(32.0)->height(32.0)->fit(ImageFit::Fill);
+$imgFromHandleBox = $imgFromHandle->createRenderObject(smokeContext());
+$imgFromHandleSize = $imgFromHandleBox->layout(new BoxConstraints(0.0, INF, 0.0, INF));
+$cvHandle = new RasterCanvas(32, 32, Color::white(), Scale::of(1.0));
+$imgFromHandleBox->paint($cvHandle);
+check(
+    'Image 控件 · image() 内存句柄（32×32 Fill）⇒ 左上红、右上绿、右下黄',
+    abs($imgFromHandleSize->width - 32.0) < 0.01 && abs($imgFromHandleSize->height - 32.0) < 0.01
+        && $cvHandle->pixelAt(4, 4)->toArgb() === $argb(220, 40, 40)
+        && $cvHandle->pixelAt(28, 4)->toArgb() === $argb(40, 170, 80)
+        && $cvHandle->pixelAt(28, 28)->toArgb() === $argb(235, 190, 40),
+    sprintf('%.2f×%.2f (4,4)=%d (28,4)=%d (28,28)=%d', $imgFromHandleSize->width, $imgFromHandleSize->height, $cvHandle->pixelAt(4, 4)->toArgb(), $cvHandle->pixelAt(28, 4)->toArgb(), $cvHandle->pixelAt(28, 28)->toArgb()),
 );
 
 // ── W1/L3-1 路径（`05` §3 / §12.2 #1–#4）──────────────────────────────────
