@@ -322,6 +322,37 @@ if (str_starts_with($caseArg, '--case=')) {
         exit(0);
     }
 
+    if ($case === 'cardproxy') {
+        // ★ 正向（与 `modstateful` 反例配对）：`Card` 的样式注入**两种孩子两条路**。
+        //   M2-5（2026-10-22）把 Card 从"自己有盒"改成"注入孩子 mods"后漏过这里：
+        //   结构节点（ScrollView/TextField）自己不产盒 ⇒ §11.7 守卫当场 FATAL，
+        //   示例台 7 页一点就炸，而当时四档闸门全绿（用例面没覆盖 Card(结构节点)）。
+        //   修法：结构节点套一层 `SizedBox`（RenderProxy）再写样式。
+        // ① 结构节点：中间必须是 SizedBox 代理，样式落代理盒上。
+        $ctx = smokeContext();
+        $el = Card::make(ScrollView::make(Text::make('x')))->createElement();
+        $el->mount(null, $ctx);
+        $mid = $el->childAt(0);
+        // 代理盒 = SizedBox 自己的渲染盒（`RenderProxy`），`mount` 后即有（与 Padding/Center 同一 idiom）。
+        // ★ 不能走 `$sv->parent()`：ScrollView 是**有态**控件，盒要等一帧才建，仅 `mount` 后为 null
+        //   ⇒ 第一版那么写，sv-parent-proxy / proxy-visual 两条恒 0（不是实现错，是取盒路径错）。
+        $proxy = $mid?->renderObject();
+        echo 'sv-wrapped=' . ($mid !== null && $mid->widget() instanceof SizedBox ? 1 : 0) . "\n";
+        echo 'sv-parent-proxy=' . ($proxy instanceof RenderProxy ? 1 : 0) . "\n";
+        echo 'proxy-visual=' . ($proxy !== null && $proxy->mods() !== null && $proxy->mods()->hasVisual() ? 1 : 0) . "\n";
+        // ② 产盒孩子：**不套壳**，样式直接落它自己（M2-5 之前的行为逐字不变）。
+        //   ★ 判据必须落在**控件类型**上：只看"盒有没有视觉样式"的话，哪天
+        //   有人给所有孩子都套壳，RenderProxy 照样有样式 ⇒ 假绿（2026-10-23
+        //   调试时我就写出过这一版，靠 lint 的 instanceof-missing-use 才抓住）。
+        $el2 = Card::make(Text::make('y'))->createElement();
+        $el2->mount(null, $ctx);
+        $kid = $el2->childAt(0);
+        $tb = $kid?->renderObject();
+        echo 'text-kid-direct=' . ($kid !== null && $kid->widget() instanceof Text ? 1 : 0) . "\n";
+        echo 'text-box-visual=' . ($tb !== null && $tb->mods() !== null && $tb->mods()->hasVisual() ? 1 : 0) . "\n";
+        exit(0);
+    }
+
     if ($case === 'leafbox') {
         // 反向自检（`02` §6.2 叶子路径）：同一个 `LeafBoxState`，**不**覆写
         // `createRenderObjectFromState()` ⇒ 必须走 `build()`。
