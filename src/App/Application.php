@@ -49,6 +49,7 @@ use Drift\Widget\State;
 use Drift\Widget\StatefulElement;
 use Drift\Widget\Widget;
 use Drift\Widget\SemanticsBuilder;
+use Drift\Widget\Segment;
 use Drift\Widget\ToggleBase;
 
 /**
@@ -2809,6 +2810,16 @@ abstract class Application
         //   的含义是**换值**（回调收新值）。分支必须在 `Button` 之前 —— 二者互不
         //   继承，但放在 `!$widget instanceof Button` 早退之后会永远进不来。
         if ($widget instanceof ToggleBase) {
+            $widget->activate();
+
+            return;
+        }
+
+        // ★ 分段控件的一段（`Segment`）：激活 = 选中自己（one-of-N），语义与
+        //   ToggleBase 同族，但形状是"轨内一段"不是方框/圆点/轨道 ⇒ 不进
+        //   ToggleBase 继承（组合不同，见 `SegmentedControl` 类头）。
+        //   分支与 ToggleBase 互不继承，放它前后都能进；挨着放是为读起来一类。
+        if ($widget instanceof Segment) {
             $widget->activate();
 
             return;

@@ -256,6 +256,12 @@ use Drift\Layout\RenderProgress;
 use Drift\Widget\Divider;
 use Drift\Widget\Toggle;
 use Drift\Widget\Progress;
+use Drift\Widget\SegmentedControl;
+use Drift\Widget\Segment;
+use Drift\Layout\RenderSegmentedControl;
+use Drift\Layout\RenderSegment;
+use Drift\Rendering\SegmentedStyle;
+use Drift\Dev\Smoke\App\SegmentedApplication;
 use Drift\Widget\State;
 use Drift\Widget\StatefulElement;
 use Drift\Widget\Text;
@@ -11063,6 +11069,355 @@ check(
     'TestApp · 反例：假谓词 + 选择器无匹配 + 选择器不唯一都记失败（R2 与 G2 都有牙）',
     $testAppNegative['failed'] === 3 && $testAppNegative['passed'] === 0,
     'failed=' . $testAppNegative['failed'] . ' ｜ ' . implode(' ｜ ', $testAppNegative['failures'])
+);
+
+// ── ㊺ 分段控件：SegmentedControl / Segment（2026-10-23，W8-2 第一个控件）──
+// 五条判据：① 结构 = 多子盒容器（`Stack` 形态：kidList + 自己的 Element）；
+//          ② 几何按**公式**推（等宽 = 最宽标签推进，不跑一次抄回来）；
+//          ③ 墨迹/命令序：轨道 chrome 在段之前，选中块精确落在段内缩处；
+//          ④ 激活走 Application 唯一入口，焦点落**段**（整组答不出"选了哪段"）；
+//          ⑤ 反例全在位：越界选中 / 空标签 / 已选段 / 禁用段 / 空点击。
+
+$segTextStyle = TextStyle::of($context->textSize(TextRole::Body));
+$segScale = new Scale(1.0);
+$segGap = SegmentedStyle::DEFAULT_GAP;
+$segInset = SegmentedStyle::DEFAULT_INSET;
+$segLabels = ['日', '周', '月'];
+
+// 期望几何全部由度量现推（RenderText 的自然宽 = advance；行高 = layout(...)->height）
+$segEqual = 0.0;
+foreach ($segLabels as $segLabel) {
+    $segAdv = $context->metrics()->advance($segLabel, $segTextStyle, $segScale);
+    if ($segAdv > $segEqual) {
+        $segEqual = $segAdv;
+    }
+}
+$segLineH = $context->metrics()->layout($segLabels[0], $segTextStyle, INF, $segScale)->height;
+// ★ 段盒 = 标签 + 四边 inset（RenderSegment::performLayout 的不变量）：选中块按
+//   inset 内缩后画，药丸必须装得下标签。少了这一圈，选中态白字会溢出到轨道上。
+$segBoxW = $segEqual + 2.0 * $segInset;
+$segBoxH = $segLineH + 2.0 * $segInset;
+$segWantW = $segBoxW * 3.0 + $segGap * 2.0 + 20.0; // 段盒宽×3 + 缝×2 + 左右内距 10×2
+$segWantH = $segBoxH + 10.0;                       // 段盒高 + 上下内距 5×2
+
+$scEl = SegmentedControl::make($segLabels)->selected(1)->createElement();
+$scEl->mount(null, $context);
+$scBox = $scEl->effectiveBox();
+check(
+    'Seg · 挂载即建出 RenderSegmentedControl（结构节点产盒）',
+    $scBox instanceof RenderSegmentedControl,
+    $scBox === null ? 'box=null' : get_class($scBox),
+);
+
+$scKids = $scBox instanceof RenderSegmentedControl ? $scBox->children() : [];
+$scKidsOk = count($scKids) === 3;
+if ($scKidsOk) {
+    foreach ($scKids as $scIdx => $scKid) {
+        if (!$scKid instanceof RenderSegment || $scKid->isSelected() !== ($scIdx === 1)) {
+            $scKidsOk = false;
+            break;
+        }
+    }
+}
+check(
+    'Seg · 三个段各是 RenderSegment，只有中段选中',
+    $scKidsOk,
+    'kids=' . count($scKids),
+);
+
+$scBox?->layout(BoxConstraints::loose(new Size(400.0, 100.0)));
+$scSize = $scBox?->size();
+check(
+    'Seg · 宽 = 段盒宽×3 + 缝×2 + 内距 20（公式推）',
+    $scSize !== null && abs($scSize->width - $segWantW) < 0.01,
+    sprintf('w=%.2f want=%.2f', $scSize?->width ?? -1.0, $segWantW),
+);
+check(
+    'Seg · 高 = 段盒高 + 内距 10',
+    $scSize !== null && abs($scSize->height - $segWantH) < 0.01,
+    sprintf('h=%.2f want=%.2f', $scSize?->height ?? -1.0, $segWantH),
+);
+check(
+    'Seg · 内禀宽 = 实排宽（等宽口径：最宽者乘段数，不是求和）',
+    $scBox !== null && abs($scBox->intrinsicWidth(INF) - $segWantW) < 0.01,
+    sprintf('intrinsic=%.2f want=%.2f', $scBox?->intrinsicWidth(INF) ?? -1.0, $segWantW),
+);
+
+// 段盒等宽 + offset 累积（内容盒坐标：0, equal+gap, 2*(equal+gap)）
+$scOffsets = [];
+$scWidths = [];
+foreach ($scKids as $scKid) {
+    $scOffsets[] = $scKid->offsetX();
+    $scWidths[] = $scKid->size()?->width ?? -1.0;
+}
+check(
+    'Seg · 段盒等宽（= 最宽标签 + 2*inset）且 offset 累积',
+    count($scOffsets) === 3
+        && abs($scWidths[0] - $segBoxW) < 0.01 && abs($scWidths[1] - $segBoxW) < 0.01 && abs($scWidths[2] - $segBoxW) < 0.01
+        && abs($scOffsets[0]) < 0.01
+        && abs($scOffsets[1] - ($segBoxW + $segGap)) < 0.01
+        && abs($scOffsets[2] - 2.0 * ($segBoxW + $segGap)) < 0.01,
+    sprintf('boxW=%.2f offsets=%s', $segBoxW, implode(',', array_map(static fn(float $v): string => sprintf('%.2f', $v), $scOffsets))),
+);
+
+// 命令序：轨道 fill + stroke 两条在前，选中块一条在后（chrome 不被段盖、也不裁自己）
+$scList = new DisplayList();
+$scBox?->paint(new RecordingCanvas($scList));
+$scRects = [];
+for ($scRi = 0; $scRi < $scList->count(); $scRi++) {
+    if ($scList->opAt($scRi) === DisplayList::OP_DRAW_RECT) {
+        $scRects[] = $scRi;
+    }
+}
+check(
+    'Seg · 命令序：轨道 fill+stroke 在前、选中块在后（共 3 条 drawRect）',
+    count($scRects) === 3 && $scRects[0] < $scRects[1] && $scRects[1] < $scRects[2],
+    'rects=[' . implode(',', $scRects) . ']',
+);
+
+// 像素 + 命令双重判据。
+// ★ 为什么不扫"accent Run 的精确边界"（第一版那么写，恒红）：抗锯齿让边缘像素是
+//   混合色，leftmost/rightmost 找不到纯 accent；且内容盒 offset 差一个左内距。
+//   几何改走**命令参数**精确断言（rect / radius / color 全在 DisplayList 里），
+//   像素只断"墨真的落在该落的地方、没落在不该落的地方"。
+$scCanvas = spinCanvas($scBox, 240, 60);
+$scMid = (int) round($segWantH / 2.0);
+$scAccent = $context->color(ColorToken::Accent);
+$scChrome = $context->color(ColorToken::Chrome);
+$scBorder = $context->color(ColorToken::Border);
+$scOriginX = $scBox->contentOriginX(); // 左内距 10 —— 子盒 offset 住内容盒，像素坐标要加它
+
+// ① 选中块的命令参数：rect = 段盒四边内缩 inset、radius = min(宽,高)/2（夹半宽）、
+//    颜色 = Accent。三个数全由几何公式推，不拟合。
+$scPillRect = null;
+$scPillRadius = 0.0;
+for ($scRi = 0; $scRi < $scList->count(); $scRi++) {
+    if ($scList->opAt($scRi) !== DisplayList::OP_DRAW_RECT) {
+        continue;
+    }
+    $scPaintArg = $scList->argAt($scRi, 1);
+    if (!$scPaintArg instanceof Paint || !$scPaintArg->color->equals($scAccent)) {
+        continue;
+    }
+    $scPillRect = $scList->argAt($scRi, 0);
+    $scPillRadius = (float) $scList->argAt($scRi, 2);
+}
+$scPillW = $segBoxW - 2.0 * $segInset;
+$scPillH = $segBoxH - 2.0 * $segInset;
+check(
+    'Seg · 选中块命令参数：rect = 段盒内缩 inset、radius = min(宽,高)/2、色 = Accent',
+    $scPillRect instanceof Rect
+        && abs($scPillRect->left - $segInset) < 0.01 && abs($scPillRect->top - $segInset) < 0.01
+        && abs($scPillRect->width - $scPillW) < 0.01 && abs($scPillRect->height - $scPillH) < 0.01
+        && abs($scPillRadius - min($scPillW, $scPillH) / 2.0) < 0.01,
+    $scPillRect instanceof Rect
+        ? sprintf('rect(%.1f,%.1f,%.1f,%.1f) r=%.2f', $scPillRect->left, $scPillRect->top, $scPillRect->width, $scPillRect->height, $scPillRadius)
+        : 'no accent rect',
+);
+
+// ①b 药丸必须装得下标签（这条是"段盒 = 标签 + 2*inset"不变量的判据）：
+//     药丸宽 = 段盒宽 − 2*inset = 最宽标签宽；药丸高同理 = 行高。
+//     少了这条，`equal` 就等于标签宽、药丸比标签窄 4 ⇒ 选中态白字每边溢出 1px
+//     落到轨道上（真机像素实测：字迹 12px / 药丸 10px）。
+check(
+    'Seg · 药丸装得下标签：pill 宽 = 最宽标签、pill 高 = 行高',
+    abs($scPillW - $segEqual) < 0.01 && abs($scPillH - $segLineH) < 0.01 && $scPillW >= $segEqual,
+    sprintf('pillW=%.2f labelW=%.2f pillH=%.2f lineH=%.2f', $scPillW, $segEqual, $scPillH, $segLineH),
+);
+
+// ② 段间缝（2px）在选中块两侧都必须是轨底：选中块不越段界
+$scGapBad = [];
+foreach ([0, 1] as $scGapIdx) {
+    $scGapX = (int) floor($scOriginX + ($scGapIdx + 1) * $segBoxW + $scGapIdx * $segGap);
+    for ($scG = 0; $scG < (int) $segGap; $scG++) {
+        if (!$scCanvas->pixelAt($scGapX + $scG, $scMid)->equals($scChrome)) {
+            $scGapBad[] = ($scGapX + $scG);
+        }
+    }
+}
+check(
+    'Seg · 段间缝（2px）全是轨底 ⇒ 选中块不越段界',
+    $scGapBad === [],
+    'bad=' . implode(',', $scGapBad),
+);
+
+// ③ 选中块里有真 accent 墨（排除"命令录对了却没画出来"）
+$scInk = 0;
+for ($scPy = 0; $scPy < 60; $scPy++) {
+    for ($scPx = 0; $scPx < 240; $scPx++) {
+        if ($scCanvas->pixelAt($scPx, $scPy)->equals($scAccent)) {
+            $scInk++;
+        }
+    }
+}
+check('Seg · 选中块有真 accent 墨（≥ 15 px）', $scInk >= 15, 'accentPx=' . $scInk);
+
+// ④ 未选段（日/月）中行零 accent：填充只画在选中段上
+$scUnselBad = [];
+foreach ([0, 2] as $scUnselIdx) {
+    $scSegX0 = (int) floor($scOriginX + $scUnselIdx * ($segBoxW + $segGap));
+    $scSegX1 = (int) ceil($scOriginX + $scUnselIdx * ($segBoxW + $segGap) + $segBoxW);
+    for ($scUx = $scSegX0; $scUx < $scSegX1; $scUx++) {
+        if ($scCanvas->pixelAt($scUx, $scMid)->equals($scAccent)) {
+            $scUnselBad[] = $scUx;
+        }
+    }
+}
+check('Seg · 未选段中行零 accent（填充只画在选中段）', $scUnselBad === [], 'bad=' . implode(',', $scUnselBad));
+
+// ⑤ 轨道 chrome：中行 x=0 描边、x=1 轨底（chrome 真的画了）
+check(
+    'Seg · 轨道 chrome：中行 x=0 描边、x=1 轨底（chrome 真的画了）',
+    $scCanvas->pixelAt(0, $scMid)->equals($scBorder) && $scCanvas->pixelAt(1, $scMid)->equals($scChrome),
+    sprintf('x0=%s x1=%s', $scCanvas->pixelAt(0, $scMid)->toArgb(), $scCanvas->pixelAt(1, $scMid)->toArgb()),
+);
+
+// kidList 单元：selected() 在 make() 之后调也必须拿得到值（不能建构器里建一次缓存）
+$scKidsFresh = SegmentedControl::make($segLabels)->selected(1)->kidList();
+$scFreshOk = count($scKidsFresh) === 3 && $scKidsFresh[1]->isSelected()
+    && !$scKidsFresh[0]->isSelected() && !$scKidsFresh[2]->isSelected();
+check('Seg · kidList 每次建新段：make() 之后调的 selected() 进得去', $scFreshOk);
+
+$scOut = SegmentedControl::make($segLabels)->selected(5);
+$scOutKids = $scOut->kidList();
+$scNoneSel = true;
+foreach ($scOutKids as $scOutKid) {
+    if ($scOutKid->isSelected()) {
+        $scNoneSel = false;
+    }
+}
+check(
+    'Seg · 越界选中 ⇒ selectedIndex() = -1 且一段都不选中（不夹到 0）',
+    $scOut->selectedIndex() === -1 && $scNoneSel,
+    'idx=' . $scOut->selectedIndex(),
+);
+
+$scEmpty = SegmentedControl::make([]);
+check('Seg · 空标签表 ⇒ kidList 空、不炸', $scEmpty->kidList() === []);
+$scEmptyEl = $scEmpty->createElement();
+$scEmptyEl->mount(null, $context);
+$scEmptyEl->effectiveBox()?->layout(BoxConstraints::loose(new Size(400.0, 100.0)));
+$scEmptySize = $scEmptyEl->effectiveBox()?->size();
+check(
+    'Seg · 空轨 = 只剩内距（20×10），不炸不出 INF',
+    $scEmptySize !== null && $scEmptySize->width === 20.0 && $scEmptySize->height === 10.0,
+    $scEmptySize === null ? 'size=null' : sprintf('%.1fx%.1f', $scEmptySize->width, $scEmptySize->height),
+);
+
+// 段控件自己的 activate()：未选才回调；已选 / 禁用都不回调（反例在位）
+$scFired = 0;
+$scFire = static function () use (&$scFired): void {
+    $scFired++;
+};
+Segment::make('周', 1)->selected(false)->onChanged($scFire)->activate();
+Segment::make('周', 1)->selected(true)->onChanged($scFire)->activate();
+Segment::make('周', 1)->selected(false)->enabled(false)->onChanged($scFire)->activate();
+check('Seg · activate()：未选段才回调；已选/禁用都不回调', $scFired === 1, 'fired=' . $scFired);
+
+// 全不选 ⇒ 整幅零 accent（没有"默认选中第一项"这回事）
+$scNoneEl = SegmentedControl::make($segLabels)->selected(5)->createElement();
+$scNoneEl->mount(null, $context);
+$scNoneBox = $scNoneEl->effectiveBox();
+$scNoneBox?->layout(BoxConstraints::loose(new Size(400.0, 100.0)));
+$scNoneCanvas = spinCanvas($scNoneBox, 240, 60);
+$scNoneAccent = 0;
+for ($scNy = 0; $scNy < 60; $scNy++) {
+    for ($scNx = 0; $scNx < 240; $scNx++) {
+        if ($scNoneCanvas->pixelAt($scNx, $scNy)->equals($scAccent)) {
+            $scNoneAccent++;
+        }
+    }
+}
+check('Seg · 全不选 ⇒ 整幅零 accent', $scNoneAccent === 0, 'accentPx=' . $scNoneAccent);
+
+// 语义：三个 radio 节点；容器本身不给角色（结构不是语义）
+$scSem = SemanticsBuilder::build($semLay(SegmentedControl::make($segLabels)->selected(2)));
+$scRadioCount = 0;
+for ($scSi = 0; $scSi < $scSem->count(); $scSi++) {
+    if ($scSem->node($scSi)->role === SemanticsRole::Radio->value) {
+        $scRadioCount++;
+    }
+}
+$scSemMoon = $scSem->findByRoleAndName(SemanticsRole::Radio->value, '月');
+check(
+    'Seg · 语义：三个 radio 节点（容器本身不给角色）',
+    $scRadioCount === 3,
+    'count=' . $scRadioCount,
+);
+check(
+    'Seg · 语义：name = 标签、value = 选中项的标签',
+    $scSemMoon >= 0 && $scSem->node($scSemMoon)->value === '月',
+    'idx=' . $scSemMoon,
+);
+
+// ★★ 激活链（键盘）：Tab 一段一格 + Space ⇒ Application 的 Segment 分支。
+//   A 组尾段预选中、B 组中段预选中、C 组整组禁用 —— 三个反例各占几步。
+$segApp = new SegmentedApplication();
+$segApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
+for ($segStep = 0; $segStep < 8; $segStep++) {
+    $segApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
+    $segApp->dispatchInput(KeyEvent::down(KeyChord::make('Space')));
+}
+check(
+    'Seg · Tab+Space 八步：未选段回调、已选段不回调、禁用段不回调',
+    $segApp->events === [['a', 0], ['a', 1], ['b', 0], ['b', 2]],
+    json_encode($segApp->events),
+);
+
+// 指针侧：down 即激活（与 Enter 同入口）。命中测试取最深盒 ⇒ 焦点落**段**上
+//   （若忘写 markFocusable，焦点落不上去 ⇒ 不激活 ⇒ 本条红）。
+$segPtrApp = new SegmentedApplication();
+$segPtrApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
+$segPtrDay = findElement($segPtrApp->rootElement(), static function (Element $e): bool {
+    $w = $e->widget();
+
+    return $w instanceof Segment && $w->index() === 0;
+});
+$segDayBox = $segPtrDay?->effectiveBox();
+[$segDx, $segDy] = $segDayBox === null ? [0.0, 0.0] : boxOrigin($segDayBox);
+$segDw = $segDayBox?->size()?->width ?? 0.0;
+$segDh = $segDayBox?->size()?->height ?? 0.0;
+$segPtrApp->dispatchInput(PointerEvent::down($segDx + $segDw / 2.0, $segDy + $segDh / 2.0));
+check(
+    'Seg · 指针按下段中心 ⇒ 选中该段',
+    $segPtrApp->events === [['a', 0]],
+    json_encode($segPtrApp->events),
+);
+$segPtrApp->dispatchInput(PointerEvent::down(4.0, 4.0)); // 根 Column 的 padding 区：无焦点可落
+check(
+    'Seg · 点空白（无焦点可落）⇒ 不误触发上一个焦点段',
+    $segPtrApp->events === [['a', 0]],
+    json_encode($segPtrApp->events),
+);
+$segPtrMoon = findElement($segPtrApp->rootElement(), static function (Element $e): bool {
+    $w = $e->widget();
+
+    return $w instanceof Segment && $w->index() === 2;
+});
+$segMoonBox = $segPtrMoon?->effectiveBox();
+[$segMx, $segMy] = $segMoonBox === null ? [0.0, 0.0] : boxOrigin($segMoonBox);
+$segMw = $segMoonBox?->size()?->width ?? 0.0;
+$segMh = $segMoonBox?->size()?->height ?? 0.0;
+$segPtrApp->dispatchInput(PointerEvent::down($segMx + $segMw / 2.0, $segMy + $segMh / 2.0));
+check(
+    'Seg · 点已选段（月，A 组预选中）⇒ 不重复回调',
+    $segPtrApp->events === [['a', 0]],
+    json_encode($segPtrApp->events),
+);
+$segPtrOff = findElement($segPtrApp->rootElement(), static function (Element $e): bool {
+    $w = $e->widget();
+
+    return $w instanceof Segment && $w->semanticsName() === '开';
+});
+$segOffBox = $segPtrOff?->effectiveBox();
+[$segOx, $segOy] = $segOffBox === null ? [0.0, 0.0] : boxOrigin($segOffBox);
+$segOw = $segOffBox?->size()?->width ?? 0.0;
+$segOh = $segOffBox?->size()?->height ?? 0.0;
+$segPtrApp->dispatchInput(PointerEvent::down($segOx + $segOw / 2.0, $segOy + $segOh / 2.0));
+check(
+    'Seg · 点禁用段（开，C 组整组禁用）⇒ 不回调',
+    $segPtrApp->events === [['a', 0]],
+    json_encode($segPtrApp->events),
 );
 
 // ── 汇总 + 退出码（2026-10-18）──
