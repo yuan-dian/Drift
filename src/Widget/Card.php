@@ -49,6 +49,10 @@ use Drift\Rendering\ColorToken;
  *   自己是 `BoxWidget`（`Button` / `PopupPanel`），它的 `background()` 会写自己的
  *   `BoxStyle`，卡片的底/边就会**覆盖**它而不是垫在它下面。今天所有调用点传的都是
  *   结构节点 / `Text` / `ScrollView`，走 `mods` 那条路；要真"垫一层"得等 `Stack`。
+ *   ★ **结构节点会被套一层代理盒**（`build()` 里的 `instanceof RenderBoxWidget`
+ *   分支）：`ScrollView` / `TextField` 这类"盒住在自己 `*Box` 里"的控件，直接收
+ *   修饰会撞 §11.7 守卫（M2-5 之后 `Card(ScrollView)` 就这么炸过）—— 套
+ *   `SizedBox`（`RenderProxy`）之后样式落到代理盒上，外观与 `RenderCard` 同类。
  *
  * @api
  */
@@ -162,9 +166,21 @@ final class Card extends StatelessWidget
             ->withBorder($theme->color(ColorToken::Border), 1.0)
             ->withRadius(2.0);
 
-        // ★ clone（见类头）：`SizedBox::make()` 是"没有内容"的合法形态 ——
-        //   纯转发盒 + 只有内边距 ⇒ 盒尺寸 = 内边距（`Card::make()` 不接内容时）。
-        $styled = $this->kid === null ? SizedBox::make() : clone $this->kid;
+        // ★ 样式总要落到**一个盒**上，分两种情况：
+        // · 孩子自己产盒（`RenderBoxWidget`：`Column` / `Row` / `Text` / `Button`…）
+        //   ⇒ 直接写给它，**不套壳**（这条路上的行为逐字不变）。
+        // · 孩子**不产盒**（`ScrollView` / `TextField` / 页面这类结构节点 —— 它们的盒
+        //   住在自己的 `*Box` 里）⇒ **必须先套一个代理盒**再写。否则修饰无处可去，
+        //   §11.7 的守卫当场 FATAL：2026-10-23 实证，M2-5 把 Card 从"自己有盒"
+        //   改成"样式注入孩子"之后，`Card::make(ScrollView::make(...))` 让示例台
+        //   7 个页面一点就炸（`ScrollView 声明了修饰…但它自己不产渲染盒`）。
+        // ★ 代理盒用 `SizedBox`（纯转发盒 `RenderProxy`）：`RenderBox::paint()` 通用
+        //   画 mods 的 chrome（`paintBehind`：阴影 → 底 → 边），尺寸/内容原点走
+        //   `layout()` ②⑤ 步的同一套 padding 规则 ⇒ 外观与几何都和被删掉的
+        //   `RenderCard` 同类，且与"直接写给盒孩子"口径一致（都不 loosen）。
+        $styled = $this->kid === null
+            ? SizedBox::make()
+            : ($this->kid instanceof RenderBoxWidget ? clone $this->kid : SizedBox::make($this->kid));
 
         $styled = $styled->padding($this->padding);
 
