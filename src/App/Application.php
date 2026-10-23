@@ -19,6 +19,7 @@ use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
 use Drift\Input\ScrollEvent;
 use Drift\Input\ThemeChangedEvent;
+use Drift\Input\WindowDeactivatedEvent;
 use Drift\Platform\Clipboard;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderTextField;
@@ -2007,6 +2008,19 @@ abstract class Application
      */
     public function dispatchInput(InputEvent $event): ?CursorShape
     {
+        // ★ 失活**先于**"未挂载"守卫：窗口可能在拆卸途中失去前台（Alt+Tab 关窗），
+        //   那一刻树可能已经没了，但手势状态仍要清 —— 它不依赖树。
+        if ($event instanceof WindowDeactivatedEvent) {
+            // 释放路径 ③（`$captureNode` 的注释）：指针手势的全部收口信号都来自
+            // 指针自己（`up` / `leave`），而"拖到一半切走"两个都不会来
+            // （系统不发 `WM_MOUSEMOVE`，`WM_LBUTTONUP` 落在别的窗口）
+            // ⇒ 必须靠窗口级信号补这一刀。
+            // ★ 只收口手势，**不关浮层**（W3 裁决：失焦 ≠ 放弃，`06` §10）。
+            $this->cancelActiveGestures();
+
+            return null;
+        }
+
         $root = $this->root;
         $focus = $this->focus;
 
@@ -2583,11 +2597,38 @@ abstract class Application
             return null;
         }
 
-        // leave：悬停全退出 + 手势取消（arena 关闭不触发任何人）+ 拖放取消
-        // （指针离开客户区 —— 无 SetCapture ⇒ 拖出窗外收不到后续 move/up，
-        // 必须在这里收口，否则拖动卡死）。
-        $focus->hoverTo(null);
-        $this->textSelect = null;   // 指针出窗 ⇒ 框选同样收口（无 SetCapture 的诚实边界）
+        // leave：指针离开客户区（无 SetCapture ⇒ 拖出窗外收不到后续 move/up）
+        // ⇒ 与"窗口失活"共用同一条收口路径。
+        $this->cancelActiveGestures();
+
+        return null;
+    }
+
+    /**
+     * 收口**所有**进行中的指针手势（指针离开客户区 / 窗口失活）。
+     *
+     * ★ 五处状态必须一起清 —— 漏一个的现象都是"拖到一半不动了"或"回来之后某个
+     *   控件永久只收它的事件"：
+     *   | 状态 | 漏了会怎样 |
+     *   |---|---|
+     *   | `$captureNode` | 指针事件永远只发给那个节点，别的控件点不动 |
+     *   | `$gestureArena` | Tap/Drag 卡在未裁决，下次 down 覆盖前一直挂着 |
+     *   | `$drag` | 拖动中：悬停目标永远停在上一个、`drop` 永远不来 |
+     *   | `$textSelect` | 框选没松手，之后每次 `move` 都在延伸选区 |
+     *   | `$thumbDrag` | 滚动条拇指跟着指针跑（哪怕没按键） |
+     *
+     * ★ **不关浮层**（W3 裁决：失焦 ≠ 放弃，`06` §10「关闭四来源」里没有这一条）。
+     *
+     * ★ 幂等：没有进行中的手势 ⇒ 无事发生。
+     *
+     * @internal 由 `dispatchPointer()` 的 leave 分支与 `dispatchInput()` 的失活分支调
+     */
+    private function cancelActiveGestures(): void
+    {
+        $this->releasePointer();
+        $this->thumbDrag = null;
+        $this->textSelect = null;
+
         if ($this->gestureArena !== null) {
             $this->gestureArena->leave();
             $this->gestureArena = null;
@@ -2597,7 +2638,8 @@ abstract class Application
             $this->cancelDrag();
         }
 
-        return null;
+        // 悬停也是手势的一部分（指针已经不在这扇窗上）—— 树没了就不用清
+        $this->focus?->hoverTo(null);
     }
 
     /**

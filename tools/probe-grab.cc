@@ -17,6 +17,8 @@
  *   probe-grab --pid=1234 --settle=1500 --rect --no-grab --close
  *   probe-grab --pid=1234 --settle=500 --cursor=250,456 --mdrag=250,456,400,456 \
  *              --png=drag.png                       （框选/拖动类手势）
+ *   probe-grab --pid=1234 --settle=500 --deactivate --close
+ *                                                    （模拟"用户切走"：WM_ACTIVATE/WA_INACTIVE）
  *
  * ★★ `--cursor` / `--mdrag` **必须真挪物理光标**（`SetCursorPos`），不能只
  *    `PostMessage` 合成消息：系统不认为指针在窗内 ⇒ 壳侧
@@ -124,6 +126,7 @@ struct Options {
     int wheelWaitMs = 600;         // 发完滚轮等多久再抓（让帧循环产出新帧）
     bool savePng = false;          // --png=path（WIC 编码，供 Read 直接看）
     std::wstring pngPath;
+    bool deactivate = false;       // --deactivate（发 WM_ACTIVATE/WA_INACTIVE，模拟"用户切走"）
 };
 
 struct Shot {
@@ -657,6 +660,8 @@ int wmain(int argc, wchar_t** argv)
             options.grabStep = static_cast<int>(number);
         } else if (key == L"mid-png") {
             options.midPngPath = value;
+        } else if (key == L"deactivate") {
+            options.deactivate = true;
         } else if (key == L"png") {
             options.savePng = true;
             options.pngPath = value;
@@ -812,6 +817,15 @@ int wmain(int argc, wchar_t** argv)
         LPARAM wheelLp = MAKELPARAM(static_cast<WORD>(pt.x), static_cast<WORD>(pt.y));
         ::PostMessageW(hwnd, WM_MOUSEWHEEL, wheelWp, wheelLp);
         std::printf("wheel=%d,%d,%d\n", options.wheelX, options.wheelY, options.wheelDelta);
+        ::Sleep(static_cast<DWORD>(options.wheelWaitMs));
+    }
+
+    // ── 窗口失活（`WM_ACTIVATE` + `WA_INACTIVE`，模拟"用户切走"）──────
+    // ★ 这条**可以**用 PostMessage：`WM_ACTIVATE` 不依赖"指针在哪"（与
+    //   `WM_MOUSEMOVE` 不同，见文件头的 ★★），壳侧只看 `LOWORD(wParam)`。
+    if (options.deactivate) {
+        ::PostMessageW(hwnd, WM_ACTIVATE, MAKEWPARAM(WA_INACTIVE, 0), 0);
+        std::printf("deactivated=1\n");
         ::Sleep(static_cast<DWORD>(options.wheelWaitMs));
     }
 

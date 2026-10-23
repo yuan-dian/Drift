@@ -257,6 +257,7 @@ use Drift\Widget\State;
 use Drift\Widget\StatefulElement;
 use Drift\Widget\Text;
 use Drift\Input\ThemeChangedEvent;
+use Drift\Input\WindowDeactivatedEvent;
 use Drift\Widget\TextField;
 use Drift\Widget\TextFieldState;
 use Drift\Widget\Widget;
@@ -7539,6 +7540,78 @@ check(
     $cap->captureNode() === null && $captureDiag,
     'cap=' . ($cap->captureNode() === null ? 'null' : 'set')
     . ' diag=' . ($captureDiag ? 'yes' : 'no'),
+);
+
+// ⑬ 窗口失活（`WM_ACTIVATE` + `WA_INACTIVE`）⇒ 收口所有指针手势（`06` §5.2 释放路径 ③）
+//    ★ 为什么必须有这条：指针手势的收口信号**全部来自指针自己**（`up` / `leave`），
+//      而"拖到一半 Alt+Tab 出去"这两个都不会来 —— 指针没动（没有 `WM_MOUSEMOVE`），
+//      用户在别处松手（`WM_LBUTTONUP` 落在别的窗口）⇒ 捕获 / 竞技场 / 拖动 /
+//      框选 / 拇指全部卡在"进行中"。现象是"某个控件永久只收它的事件"。
+$blurSurface = new RecordingSurface();
+$blurSurface->resize(320, 240, 1.0);
+$blur = new OverlayLabApplication();
+$blur->attach($blurSurface, BoxConstraints::tight(new Size(320.0, 240.0)));
+$blurAnchor = findElement(
+    $blur->root(),
+    static fn(Element $e): bool => $e->widget() instanceof Button
+        && $e->widget()->commandName() === 'lab.anchor',
+);
+$blurBottom = findElement(
+    $blur->root(),
+    static fn(Element $e): bool => $e->widget() instanceof Button
+        && $e->widget()->commandName() === 'lab.bottom',
+);
+$blurBottomBox = $blurBottom?->effectiveBox();
+[$bbx, $bby] = $blurBottomBox === null ? [0.0, 0.0] : RenderBox::absoluteOrigin($blurBottomBox);
+
+$blur->capturePointer($blurAnchor);
+$blur->pointerLog = [];
+$blur->dispatchInput(PointerEvent::move($bbx + 5.0, $bby + 5.0));
+$blur->dispatchInput(new WindowDeactivatedEvent());
+check(
+    '窗口失活 · 捕获被释放（否则回到窗口后只有那个节点收事件）',
+    $blur->captureNode() === null && $blur->pointerLog === ['move'],
+    'cap=' . ($blur->captureNode() === null ? 'null' : 'set')
+    . ' log=' . implode(',', $blur->pointerLog),
+);
+$blur->pointerLog = [];
+$blur->dispatchInput(PointerEvent::move($bbx + 6.0, $bby + 6.0));
+check(
+    '窗口失活 · 释放后 move 回到正常命中（不再进原捕获者）',
+    $blur->pointerLog === [],
+    'log=' . implode(',', $blur->pointerLog),
+);
+
+// ⑭ 失活**不关浮层**（W3 裁决：失焦 ≠ 放弃，`06` §10「关闭四来源」里没有这一条）
+//    ★ 反向守卫：以后有人"顺手"把关浮层加进失活路径，这条会红。
+$blur->openPanel(FlatBox::make(40.0, 20.0), $blurAnchor);
+$blur->frame(16.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$blurDepth = $blur->overlays()->count();
+$blur->dispatchInput(new WindowDeactivatedEvent());
+check(
+    '窗口失活 · 浮层不关（失焦 ≠ 放弃：用户可能只是去别处看一眼）',
+    $blurDepth > 0 && $blur->overlays()->count() === $blurDepth,
+    'before=' . $blurDepth . ' after=' . $blur->overlays()->count(),
+);
+
+// ⑮ 失活幂等 + 未挂载也安全
+//    ★ 后半条钉的是代码形状：失活分支在"未挂载"守卫**之前**（窗口可能在拆卸
+//      途中失去前台，那一刻树已经没了，但手势状态仍要清）。
+$blur->dispatchInput(new WindowDeactivatedEvent());
+$blurDetachedOk = true;
+try {
+    (new OverlayLabApplication())->dispatchInput(new WindowDeactivatedEvent());
+} catch (\Throwable $e) {
+    $blurDetachedOk = false;
+}
+check(
+    '窗口失活 · 幂等，且未挂载时也安全（分支在"未挂载"守卫之前）',
+    $blur->captureNode() === null
+        && $blur->overlays()->count() === $blurDepth
+        && $blurDetachedOk,
+    'cap=' . ($blur->captureNode() === null ? 'null' : 'set')
+    . ' depth=' . $blur->overlays()->count()
+    . ' detached=' . ($blurDetachedOk ? 'ok' : 'threw'),
 );
 
 // ── ㉟ 合成与跳过 layout（arch-v2 `05` §5.4 / §12.2 #10–#12，W4）──

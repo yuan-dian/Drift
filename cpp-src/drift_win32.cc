@@ -73,6 +73,7 @@ enum EventKind {
     kEvChar,
     kEvTheme,
     kEvWheel,
+    kEvDeactivate,
 };
 
 struct PendingEvent {
@@ -843,6 +844,32 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
 
+        case WM_ACTIVATE: {
+            // 窗口失活 = 用户切走了（Alt+Tab / 点别的应用 / 系统弹窗抢前台）。
+            //
+            // ★ **为什么必须入队**：指针手势的全部收口信号都来自指针自己
+            //   （`WM_LBUTTONUP` / `WM_MOUSELEAVE`），而"拖到一半切走"两个都
+            //   不会来 —— 指针没动（没有 `WM_MOUSEMOVE`），用户在别处松手
+            //   （`WM_LBUTTONUP` 落在别的窗口）⇒ 应用侧的捕获/竞技场/拖动/
+            //   框选全部卡在"进行中"，回到窗口后表现为"某个控件永久只收它的
+            //   事件"或"拖到一半不动了"。
+            //
+            // ★ 只发 `WA_INACTIVE`，**不发对称的激活**：今天没有消费者需要在
+            //   激活时做任何事（A15：没有消费者不预先发明线上语义）。
+            //
+            // ★ 用 `WM_ACTIVATE` 而不是 `WM_KILLFOCUS`：前者语义就是"这扇窗
+            //   不再是前台"，与"用户切走了"一一对应；后者还会被"焦点在窗口内
+            //   部控件之间移动"触发（今天单窗口无此情形，但语义不对）。
+            if (LOWORD(wp) == WA_INACTIVE) {
+                PendingEvent event = {};
+                event.kind = kEvDeactivate;
+                enqueue(event);
+            }
+            // 不 `return 0`：这条消息没有"必须吞掉"的理由，交给 DefWindowProc
+            // （其它壳分支 `return 0` 是因为它们**处理**了那条消息，这里只是旁听）。
+            break;
+        }
+
         case WM_SETTINGCHANGE: {
             // §9.2：系统主题变更（深色/浅色切换）。lParam 是被改的设置区名
             // （宽字符指针）—— 时区、语言、显示设置等也会发这条消息，只认
@@ -1185,6 +1212,10 @@ Array toArray(const PendingEvent &event) {
 
         case kEvTheme:
             out.set("type", "theme");
+            break;
+
+        case kEvDeactivate:
+            out.set("type", "deactivate");
             break;
 
         default:

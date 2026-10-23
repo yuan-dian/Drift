@@ -8,6 +8,7 @@ use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
 use Drift\Input\ScrollEvent;
 use Drift\Input\ThemeChangedEvent;
+use Drift\Input\WindowDeactivatedEvent;
 use Drift\Platform\Clipboard;
 use Drift\Platform\Dialog;
 use Drift\Platform\InputSource;
@@ -175,6 +176,17 @@ final class Win32Platform implements Platform
             // （Win32Screen 不缓存，每次读注册表）。框架侧显式消费见
             // `Application::dispatchInput` 的同名分支。
             $this->input()->push(new ThemeChangedEvent());
+
+            return true;
+        }
+
+        if ($type === 'deactivate') {
+            // `WM_ACTIVATE` 且 `WA_INACTIVE`：用户切走了。载荷为空 —— 消费者只
+            // 需要知道"这事发生了"。框架侧收口指针手势（`capturePointer` 的
+            // 释放路径 ③），见 `Application::dispatchInput` 的同名分支。
+            // ★ 只发失活、**不发对称的激活**：今天没有东西需要在激活时做
+            //   （A15：没有消费者不预先发明线上语义）。
+            $this->input()->push(new WindowDeactivatedEvent());
 
             return true;
         }
