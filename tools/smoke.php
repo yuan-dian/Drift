@@ -273,6 +273,8 @@ use Drift\Layout\RenderSlider;
 use Drift\Rendering\SliderStyle;
 use Drift\Dev\Smoke\App\SliderApplication;
 use Drift\Dev\Smoke\App\TooltipApplication;
+use Drift\Dev\Smoke\App\SnackbarApplication;
+use Drift\Widget\Snackbar;
 use Drift\Widget\TooltipPanel;
 use Drift\Widget\State;
 use Drift\Widget\StatefulElement;
@@ -12559,6 +12561,173 @@ check(
     'Tooltip · 已显示时移到相邻带提示的按钮 ⇒ 立即换内容（100ms < 500ms 也换）',
     $ttApp->overlayCount() === 1 && $ttApp->tooltipText() === '永久删除，不可恢复',
     'count=' . $ttApp->overlayCount() . ' text=' . var_export($ttApp->tooltipText(), true),
+);
+
+// ── W8-2 Snackbar（底部通知 + FIFO 队列 + `after()` 定时，2026-10-23）──
+// ★ 这一块同时钉住三件事：① 落位（底部居中 + 贴底留白）；② 队列语义（第一条立即、
+//   后面排队、队首到点后上位）；③ `duration=0` = 永不自动消失。
+// ★ 反例自检四条：未到点不消失 / duration=0 跑满仍在 / 无 action() 就没按钮 /
+//   `hitTest` 与 Tooltip **相反**（这里是 true，动作按钮要能点）。
+$sbConstraints = BoxConstraints::loose(new Size(600.0, 400.0));
+$sbApp = new SnackbarApplication();
+$sbApp->attach(new SurfaceProbe(), $sbConstraints);
+$sbApp->root()?->effectiveBox()?->layout($sbConstraints);
+
+// —— ① 第一条立即显示 + 落位公式 ——
+// ★ 先跑一帧对齐 `after()` 的时间基准（它读 `lastTimestampMs`），再推 —— 否则
+//   due 会落在过去、定时器"提前到期"（Tooltip 块踩过同一个坑）。
+$sbApp->frame(1000.0, $sbConstraints);
+$sbApp->push(Snackbar::make('已保存'));   // due = 1000 + 4000 = 5000
+check(
+    'Snackbar · 第一条立即显示（不等队列）',
+    $sbApp->hasSnackbar() && $sbApp->snackbarQueueLength() === 0,
+    'has=' . ($sbApp->hasSnackbar() ? 'yes' : 'no') . ' queue=' . $sbApp->snackbarQueueLength(),
+);
+
+$sbApp->frame(1100.0, $sbConstraints);   // 落位（placeOverlays 在这一帧跑）
+$sbEntry = $sbApp->snackbarEntry();
+$sbBox = $sbEntry?->element?->effectiveBox();
+$sbPanelW = ($sbBox?->size()?->width ?? 0.0) - 12.0;    // elevation 6 × 2
+$sbPanelH = ($sbBox?->size()?->height ?? 0.0) - 12.0;
+check(
+    'Snackbar · 文字是声明的那句',
+    $sbApp->snackText() === '已保存',
+    'text=' . var_export($sbApp->snackText(), true),
+);
+check(
+    'Snackbar · 面板宽高非零（位置对但尺寸 0 = 画面一丝不变）',
+    $sbPanelW > 0.0 && $sbPanelH > 0.0,
+    'panelW=' . $sbPanelW . ' panelH=' . $sbPanelH,
+);
+
+$sbLeft = ($sbEntry?->x ?? -999.0) + 6.0;
+$sbTop = ($sbEntry?->y ?? -999.0) + 6.0;
+check(
+    'Snackbar · 水平居中（x = (maxW − w)/2）',
+    abs($sbLeft - (600.0 - $sbPanelW) / 2.0) < 0.51,
+    'left=' . $sbLeft . ' expect=' . ((600.0 - $sbPanelW) / 2.0) . ' panelW=' . $sbPanelW,
+);
+check(
+    'Snackbar · 贴底留白（y = maxH − h − Snackbar::MARGIN）',
+    abs($sbTop - (400.0 - $sbPanelH - Snackbar::MARGIN)) < 0.51,
+    'top=' . $sbTop . ' expect=' . (400.0 - $sbPanelH - Snackbar::MARGIN) . ' panelH=' . $sbPanelH,
+);
+check(
+    'Snackbar · 条目参数：hitTest=true（动作按钮要能点，与 Tooltip 相反）/ 不拦层外 / 不动焦点',
+    $sbEntry !== null
+        && $sbEntry->hitTest === true
+        && $sbEntry->barrier === false
+        && $sbEntry->scrim === false
+        && $sbEntry->dismissOnTapOutside === false
+        && $sbEntry->dismissOnEsc === false
+        && $sbEntry->prefer === OverlayEntry::BOTTOM_CENTER
+        && abs($sbEntry->maxWidth - Snackbar::MAX_WIDTH) < 0.01
+        && $sbEntry->restoreFocus === null,
+    $sbEntry === null ? 'no entry' : json_encode([
+        'hitTest' => $sbEntry->hitTest,
+        'barrier' => $sbEntry->barrier,
+        'prefer' => $sbEntry->prefer,
+        'maxWidth' => $sbEntry->maxWidth,
+        'restoreFocus' => $sbEntry->restoreFocus === null ? 'null' : 'set',
+    ]),
+);
+
+// —— ② 定时消失 ——
+$sbApp->frame(2000.0, $sbConstraints);
+check(
+    'Snackbar · 反例：未到点不消失',
+    $sbApp->hasSnackbar(),
+    'has=' . ($sbApp->hasSnackbar() ? 'yes' : 'no') . '（due=5000，此刻 2000）',
+);
+$sbApp->frame(5100.0, $sbConstraints);
+check(
+    'Snackbar · 到点自动消失',
+    !$sbApp->hasSnackbar(),
+    'has=' . ($sbApp->hasSnackbar() ? 'yes' : 'no') . '（due=5000，此刻 5100）',
+);
+
+// —— ③ 队列 FIFO ——
+$sbApp->frame(6000.0, $sbConstraints);
+$sbApp->push(Snackbar::make('第一条'));   // due = 10000
+$sbApp->push(Snackbar::make('第二条'));   // 入队
+check(
+    'Snackbar · 第二条进队列（不抢当前这条）',
+    $sbApp->hasSnackbar() && $sbApp->snackbarQueueLength() === 1 && $sbApp->snackText() === '第一条',
+    'queue=' . $sbApp->snackbarQueueLength() . ' text=' . var_export($sbApp->snackText(), true),
+);
+$sbApp->frame(10100.0, $sbConstraints);
+check(
+    'Snackbar · 第一条到点 ⇒ 队首立刻上位（FIFO）',
+    $sbApp->hasSnackbar() && $sbApp->snackbarQueueLength() === 0 && $sbApp->snackText() === '第二条',
+    'queue=' . $sbApp->snackbarQueueLength() . ' text=' . var_export($sbApp->snackText(), true),
+);
+
+// —— ④ duration=0 = 永不自动消失 ——
+$sbApp->dismissSnackbar();
+check(
+    'Snackbar · dismiss 之后没有通知、队列也空',
+    !$sbApp->hasSnackbar() && $sbApp->snackbarQueueLength() === 0,
+    'has=' . ($sbApp->hasSnackbar() ? 'yes' : 'no'),
+);
+$sbApp->frame(11000.0, $sbConstraints);
+$sbApp->push(Snackbar::make('错误：保存失败')->duration(0));
+check(
+    'Snackbar · duration=0 ⇒ 不排定时器（wantsFrame 为假 = 不会自己消失）',
+    $sbApp->hasSnackbar() && !$sbApp->wantsFrame(),
+    'has=' . ($sbApp->hasSnackbar() ? 'yes' : 'no') . ' wantsFrame=' . ($sbApp->wantsFrame() ? 'true' : 'false'),
+);
+$sbApp->frame(999999.0, $sbConstraints);
+check(
+    'Snackbar · 反例：duration=0 跑满任意时长仍在',
+    $sbApp->hasSnackbar() && $sbApp->snackText() === '错误：保存失败',
+    'has=' . ($sbApp->hasSnackbar() ? 'yes' : 'no'),
+);
+
+// —— ⑤ 动作按钮 ——
+$sbApp->dismissSnackbar();
+$sbApp->frame(1000000.0, $sbConstraints);
+$sbHits = 0;
+$sbApp->push(
+    Snackbar::make('已删除')->duration(0)->action('撤销', function () use (&$sbHits): void {
+        $sbHits++;
+    })
+);
+$sbApp->frame(1000100.0, $sbConstraints);   // 落位
+check(
+    'Snackbar · action() ⇒ 面板里有动作按钮',
+    $sbApp->actionButton() !== null,
+    $sbApp->actionButton() === null ? 'no button' : 'ok',
+);
+
+$sbBtn = $sbApp->actionButton();
+$sbBtnBox = $sbBtn?->effectiveBox();
+[$sbBx, $sbBy] = $sbBtnBox === null ? [0.0, 0.0] : boxOrigin($sbBtnBox);
+$sbBw = $sbBtnBox?->size()?->width ?? 0.0;
+$sbBh = $sbBtnBox?->size()?->height ?? 0.0;
+$sbApp->dispatchInput(PointerEvent::down($sbBx + $sbBw / 2.0, $sbBy + $sbBh / 2.0));
+$sbApp->dispatchInput(PointerEvent::up($sbBx + $sbBw / 2.0, $sbBy + $sbBh / 2.0));
+check(
+    'Snackbar · 点动作按钮 ⇒ 调 handler 且收掉这条',
+    $sbHits === 1 && !$sbApp->hasSnackbar(),
+    'hits=' . $sbHits . ' has=' . ($sbApp->hasSnackbar() ? 'yes' : 'no'),
+);
+
+$sbApp->frame(1000200.0, $sbConstraints);
+$sbApp->push(Snackbar::make('无动作')->duration(0));
+$sbApp->frame(1000300.0, $sbConstraints);
+check(
+    'Snackbar · 反例：没有 action() 就没有动作按钮',
+    $sbApp->actionButton() === null,
+    $sbApp->actionButton() === null ? 'ok' : 'unexpected button',
+);
+
+// —— ⑥ 幂等 ——
+$sbApp->dismissSnackbar();
+$sbApp->dismissSnackbar();
+check(
+    'Snackbar · dismiss 幂等（空队列再调无事发生）',
+    !$sbApp->hasSnackbar() && $sbApp->snackbarQueueLength() === 0,
+    'has=' . ($sbApp->hasSnackbar() ? 'yes' : 'no'),
 );
 
 // ── 汇总 + 退出码（2026-10-18）──

@@ -20,6 +20,7 @@ use Drift\Widget\Expanded;
 use Drift\Widget\Row;
 use Drift\Widget\ScrollView;
 use Drift\Widget\SizedBox;
+use Drift\Widget\Snackbar;
 use Drift\Widget\State;
 use Drift\Widget\StatefulWidget;
 use Drift\Widget\Widget;
@@ -35,6 +36,7 @@ use App\Showcase\Pages\ListPage;
 use App\Showcase\Pages\MotionPage;
 use App\Showcase\Pages\SegmentedPage;
 use App\Showcase\Pages\SliderPage;
+use App\Showcase\Pages\SnackbarPage;
 use App\Showcase\Pages\TooltipPage;
 use App\Showcase\Pages\TextPage;
 
@@ -59,19 +61,28 @@ use App\Showcase\Pages\TextPage;
  */
 final class ShowcaseRoot extends StatefulWidget
 {
-    public function __construct()
+    /**
+     * @param \Closure(Snackbar): void $notify 「弹一条底部通知」—— 由组合根接线
+     *
+     * ★ 为什么是**闭包**而不是 `Application`：`Widget` 层不该认识 `Drift\App`
+     *   （§4.3），而且页面只该拿到"我能做什么"，不是"整个应用"。
+     * ★ 为什么**不可空**：可选对象在 AOT 侧会退化 `php::Var`（同 `?float` 用
+     *   `NAN` 那条纪律）⇒ 一律由组合根给一个真的。
+     */
+    public function __construct(private \Closure $notify)
     {
         parent::__construct();
     }
 
-    public static function make(): self
+    /** @param \Closure(Snackbar): void $notify */
+    public static function make(\Closure $notify): self
     {
-        return new self();
+        return new self($notify);
     }
 
     public function createState(): State
     {
-        return new ShowcaseState();
+        return new ShowcaseState($this->notify);
     }
 }
 
@@ -79,8 +90,9 @@ final class ShowcaseRoot extends StatefulWidget
  * 导航条目 + 选中态。
  *
  * ★ `$entries` 平行存 `[名称, 页工厂]`（**不是** map：PHP 数组键不能是 Closure）。
- * ★ 工厂是 `Closure` 而不是类型名：页类构造无参，`static fn(): Widget => new XxxPage()`
- *   对 AOT 直白（类名常量字符串形态还没在 codegen 验过）。
+ * ★ 工厂是 `Closure` 而不是类型名：页类构造**至多一个闭包参数**，`static fn(): Widget
+ *   => new XxxPage()` 对 AOT 直白（类名常量字符串形态还没在 codegen 验过）。
+ *   ★ 通知页是唯一带参的：它要 `$notify`（浮层归 `Application`，页面够不到 —— §4.3）。
  */
 final class ShowcaseState extends State
 {
@@ -91,6 +103,11 @@ final class ShowcaseState extends State
     private array $entries = [];
 
     private int $selected = 0;
+
+    /** @param \Closure(Snackbar): void $notify 组合根接线的通知能力（转手给通知页） */
+    public function __construct(private \Closure $notify)
+    {
+    }
 
     public function initState(): void
     {
@@ -109,6 +126,7 @@ final class ShowcaseState extends State
             ['图片 Image', static fn(): Widget => new ImagePage()],
             ['滑杆 Slider', static fn(): Widget => new SliderPage()],
             ['提示 Tooltip', static fn(): Widget => new TooltipPage()],
+            ['通知 Snackbar', fn(): Widget => new SnackbarPage($this->notify)],
         ];
     }
 

@@ -47,6 +47,16 @@ final class OverlayEntry
     /** 锚上方、水平居中于锚点（Tooltip 首选） */
     public const ABOVE_CENTER = 7;
 
+    /**
+     * 客户区底部居中（Snackbar，2026-10-23）。
+     *
+     * ★ 与 `CENTER` 的区别：`CENTER` 是**盖满**客户区（模态靠子层自居中），
+     *   本方向是**自尺寸 + 贴底**（一条横条）。两者在 `placeEntry()` 里走不同分支
+     *   （`CENTER` 提前返回，本方向走常规的量 + 落位 + 夹取）。
+     * ★ 贴底留白走 `$inset`（不是面板 padding）：padding 是内边距，改不了"离底多远"。
+     */
+    public const BOTTOM_CENTER = 8;
+
     private static int $nextId = 1;
 
     /** 进程内唯一，调试与 trace 用 */
@@ -70,6 +80,15 @@ final class OverlayEntry
      *   限宽是**内容语义**（一行提示不该横穿屏幕），不是落位算法能猜的。
      */
     public float $maxWidth = \INF;
+
+    /**
+     * 贴边留白（逻辑像素；只有 `BOTTOM_CENTER` 用它，2026-10-23）。
+     *
+     * ★ 为什么不是面板的 `padding`：`padding` 是**内边距**（内容离边框多远），
+     *   改不了"面板离客户区底边多远"。落位算法只知道 `maxH` 和面板高，
+     *   所以"离底多远"必须由条目告诉它。
+     */
+    public float $inset = 0.0;
 
     /** 是否拦截浮层外的指针（**与 scrim 是两个参数**） */
     public bool $barrier = true;

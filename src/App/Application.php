@@ -51,6 +51,8 @@ use Drift\Widget\Widget;
 use Drift\Widget\SemanticsBuilder;
 use Drift\Widget\Segment;
 use Drift\Widget\ToggleBase;
+use Drift\Widget\Snackbar;
+use Drift\Widget\SnackbarPanel;
 use Drift\Widget\TooltipPanel;
 
 /**
@@ -342,6 +344,22 @@ abstract class Application
 
     /** Tooltip 浮层条目（隐藏时精确移除它，不误伤同栈的菜单/模态） */
     private ?OverlayEntry $tooltipEntry = null;
+
+    /**
+     * 排队中的 Snackbar（**不含正在显示的那条**，W8-2）。
+     *
+     * ★ FIFO、**不设上限**：连续触发（保存 → 保存 → 保存）都该看到。
+     *   框架不替应用猜"哪条更重要" —— 雪崩场景由应用自己限流。
+     *
+     * @var list<Snackbar>
+     */
+    private array $snackQueue = [];
+
+    /** 正在显示的那条（`null` = 没有通知在显示） */
+    private ?OverlayEntry $snackEntry = null;
+
+    /** 当前这条的自动消失定时器（`null` = 没有排期，含 `duration=0` 的"永不消失"） */
+    private ?int $snackTimer = null;
 
     /**
      * 非阻塞 I/O 轮询器（§17.4.4，P2）—— 每帧 `select(0)` 问一轮，就绪了就回调。
@@ -682,11 +700,17 @@ abstract class Application
             $e->element?->unmount();
         }
 
-        // ★ 全清会顺手把 Tooltip 也清掉 ⇒ 它的两个状态位必须跟着复位，否则
-        //   下一次悬停会以为"还显示着"从而**跳过 500ms 延时**（或反过来握着
-        //   一个已经不在栈里的条目）。
+        // ★ 全清会顺手把 Tooltip / Snackbar 也清掉 ⇒ 它们的状态位必须跟着复位，
+        //   否则下一次悬停会以为"还显示着"从而**跳过 500ms 延时**（或反过来握着
+        //   一个已经不在栈里的条目、把队列卡死）。
         $this->tooltipEntry = null;
         $this->tooltipShown = false;
+        $this->snackEntry = null;
+
+        if ($this->snackTimer !== null) {
+            $this->cancelAfter($this->snackTimer);
+            $this->snackTimer = null;
+        }
     }
 
     /**
@@ -821,6 +845,151 @@ abstract class Application
     }
 
     /**
+     * 弹一条底部通知（W8-2，2026-10-23）。
+     *
+     * ```php
+     * // ★ 组合根接线（§4.3：Widget 层够不到 Application）—— 把这条闭包递给页面
+     * ($this->notify)(
+     *     Snackbar::make('已保存')->action('撤销', function (): void { ... })
+     * );
+     * ```
+     *
+     * ★★ **`$this->application()->showSnackbar(...)` 不存在**（`State` 上没有那个
+     *   访问器，§4.3 禁 `Widget → App`）。本注释 2026-10-23 上午写成了那个形态，
+     *   结果示例台真机点一下就把进程打死，而 smoke 全绿 —— 夹具本来就拿着
+     *   `Application`，根本没走那条路。**示例台是这条 API 唯一的真实消费者。**
+     * ★ **第一条立即显示，后面的排队**（FIFO）。不排队的话"连续保存三次"只会
+     *   看到最后一次 —— 那正是通知最容易失职的场景。
+     * ★ **`duration=0` ⇒ 永不自动消失**，只能 `dismissSnackbar()` 收（错误提示用）。
+     * ★ 与 Tooltip 一样**不动焦点**（`restoreFocus` 置 null）：通知不该把焦点从
+     *   用户正在操作的地方抢走。
+     * ★★ 与 Tooltip **相反**的一点：`hitTest` 保持默认 `true` —— 动作按钮要能点。
+     *   Tooltip 是 `false`（指针看不见它），Snackbar 必须看得见。这两个需求正好
+     *   相反，改任何一个之前先想清楚是哪一类。
+     *
+     * @api
+     */
+    public function showSnackbar(Snackbar $snackbar): void
+    {
+        if ($this->root === null) {
+            return; // 未挂载：没有客户区，通知无处安放
+        }
+
+        if ($this->snackEntry !== null) {
+            $this->snackQueue[] = $snackbar;
+
+            return;
+        }
+
+        $this->presentSnackbar($snackbar);
+    }
+
+    /**
+     * 收掉当前这条通知（有排队 ⇒ 立刻上队首那条）。幂等。
+     *
+     * ★ 动作按钮点完也走这里（见 `SnackbarPanel` 注入的关闭回调）。
+     */
+    public function dismissSnackbar(): void
+    {
+        if ($this->snackTimer !== null) {
+            $this->cancelAfter($this->snackTimer);
+            $this->snackTimer = null;
+        }
+
+        $e = $this->snackEntry;
+        $this->snackEntry = null;
+
+        if ($e !== null) {
+            $this->removeOverlay($e);
+        }
+
+        $next = $this->shiftSnackQueue();
+        if ($next !== null) {
+            $this->presentSnackbar($next);
+        }
+    }
+
+    /** 当前是否有通知在显示（测试 / devtools） */
+    public function hasSnackbar(): bool
+    {
+        return $this->snackEntry !== null;
+    }
+
+    /** 排队等待的通知条数（测试 / devtools） */
+    public function snackbarQueueLength(): int
+    {
+        return \count($this->snackQueue);
+    }
+
+    /** 当前通知的条目（测试 / devtools 读参数用） */
+    public function snackbarEntry(): ?OverlayEntry
+    {
+        return $this->snackEntry;
+    }
+
+    /**
+     * 取队首并出队（`null` = 队列空）。
+     *
+     * ★ **单独一个带返回类型的方法**：`$this->snackQueue[0]` 的类型在 AOT 侧会被
+     *   推成 `php::Var`，直接传给 `presentSnackbar(Snackbar)` 会 C2440。集中在这里
+     *   转换一次，调用点就有类型了（同 `OverlayStack::at()` 的 `?OverlayEntry`）。
+     */
+    private function shiftSnackQueue(): ?Snackbar
+    {
+        $next = null;
+        $rest = [];
+
+        foreach ($this->snackQueue as $item) {
+            if ($next === null) {
+                $next = $item;
+
+                continue;
+            }
+
+            $rest[] = $item;
+        }
+
+        $this->snackQueue = $rest;
+
+        return $next;
+    }
+
+    /** 把一条通知压栈并排自动消失（内部用；已挂载前提下才调） */
+    private function presentSnackbar(Snackbar $snackbar): void
+    {
+        $e = new OverlayEntry(SnackbarPanel::make($snackbar, function (): void {
+            $this->dismissSnackbar();
+        }));
+
+        $e->prefer = OverlayEntry::BOTTOM_CENTER;
+        $e->inset = Snackbar::MARGIN;
+        $e->barrier = false;
+        $e->scrim = false;
+        $e->dismissOnTapOutside = false;
+        $e->dismissOnEsc = false;
+        $e->focusTrap = false;
+        $e->maxWidth = Snackbar::MAX_WIDTH;
+        // ★ `hitTest` 保持默认 true —— 动作按钮要能点（与 Tooltip 相反）。
+
+        $this->pushOverlay($e);
+
+        // ★ push 之后覆盖：`pushOverlay()` 会把当前焦点快照进 `restoreFocus`。
+        $e->restoreFocus = null;
+
+        $this->snackEntry = $e;
+
+        $duration = $snackbar->durationValue();
+        if ($duration <= 0) {
+            return; // 永不自动消失（要显式 dismissSnackbar）
+        }
+
+        $this->snackTimer = $this->after($duration, function (): void {
+            $this->snackTimer = null;
+            $this->dismissSnackbar();
+        });
+    }
+
+    /**
      * 浮层栈本体（`01` §8.1）—— 测试 / devtools 的正式入口。
      *
      * ★ 下面那批 `menu*` / `modal*` 兼容方法是**旧槽位 API 的残留**：它们都只是
@@ -878,11 +1047,11 @@ abstract class Application
      * 打开模态（§A.3.7 / §12.1 第 6 条）—— 与菜单**共用**同一个浮层槽位。
      *
      * ```php
-     * $this->application()->showModal(
-     *     Modal::make()->title('确认删除')->child($body)
-     * );
+     * // 组合根接线（§4.3：Widget 层够不到 Application）
+     * ($this->openModal)(Modal::make()->title('确认删除')->child($body));
      * ```
      *
+     * ★ **`$this->application()` 不存在**（同 `showSnackbar()` 的注释）。
      * ★ **模态盖在菜单之上**（`01` §8 的**唯一行为变化**）：W3 之前"同一槽位 ⇒
      *   打开模态先关菜单"，那是**槽位的产物、不是需求** —— 在下拉里点「新建分类…」
      *   弹出对话框是正常交互，关掉对话框后下拉应该还在。要"开模态就关菜单"是
@@ -1134,7 +1303,7 @@ abstract class Application
         [$ax, $ay, $aw, $ah] = $this->anchorRect($e);
 
         // ③④ 首选方向 + 翻转
-        [$x, $y] = self::originFor($e->prefer, $ax, $ay, $aw, $ah, $w, $h, $maxW, $maxH);
+        [$x, $y] = self::originFor($e->prefer, $ax, $ay, $aw, $ah, $w, $h, $maxW, $maxH, $e->inset);
 
         // ⑤ 夹取
         $x = min(max($x, 0.0), max(0.0, $maxW - $w));
@@ -1188,7 +1357,14 @@ abstract class Application
         float $h,
         float $maxW,
         float $maxH,
+        float $inset = 0.0,
     ): array {
+        // ★ 贴底居中（Snackbar）：**不做翻转** —— 一条通知没有"上面放不下就翻到下面"
+        //   这种语义（它本来就贴底）。放不下（窗口比横条还矮）由 ⑤ 的夹取兜住。
+        if ($prefer === OverlayEntry::BOTTOM_CENTER) {
+            return [($maxW - $w) / 2.0, $maxH - $h - $inset];
+        }
+
         if ($prefer === OverlayEntry::ABOVE) {
             if ($ay - $h >= 0.0) {
                 return [$ax, $ay - $h];

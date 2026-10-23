@@ -10,15 +10,18 @@ use Drift\Input\SemanticsRole;
  * 模态对话框（§A.3.7 / §12.1 第 6 条）。
  *
  * ```php
- * $this->application()->showModal(
- *     Modal::make()->title('确认删除')->child(
- *         Column::make()->spacing(16)->children([
- *             Text::make('删除后不可恢复，确定吗？')->body(),
- *             Row::make()->spacing(8)->children([...]),
- *         ])
- *     )
- * );
+ * // 组合根接线（§4.3：Widget 层够不到 Application）—— 页面拿到的是一个闭包
+ * ($this->showModal)(Modal::make()->title('确认删除')->child(
+ *     Column::make()->spacing(16)->children([
+ *         Text::make('删除后不可恢复，确定吗？')->body(),
+ *         Row::make()->spacing(8)->children([...]),
+ *     ])
+ * ));
  * ```
+ *
+ * ★ **`$this->application()` 不存在**：`State` 上没有这个访问器（§4.3 禁
+ *   `Widget → App`）。本文档 2026-10-17 起就写着它，2026-10-23 在示例台上
+ *   才被真机咬出来（点一下进程直接崩、smoke 全绿）。
  *
  * ★ **它只描述形体，不管打开**：打开 / 关闭归 `Application::showModal()` /
  *   `closeModal()`（§5.1 裁决 1 的原话："Application 管生命周期与落位，控件只管
@@ -31,10 +34,10 @@ use Drift\Input\SemanticsRole;
  *   且模态不关 —— 不能穿透到全局快捷键（否则"必须处理的对话框"会被 Ctrl+W
  *   之类的加速键绕过）。见 `Application::dispatchInput()`。
  *
- * ★ **没有焦点陷阱**（诚实边界）：模态打开时 Tab 仍能走到主树的控件上 ——
- *   `FocusManager::collect()` 收的是"主树 + 浮层"两棵树。做焦点陷阱要一套
- *   "容器级焦点作用域"（现在没有这个原语）；先用 `dismissible` + 遮罩挡住
- *   指针，键盘侧留给 M4 的完整 `EventLoop`。
+ * ★ **有焦点陷阱**（W3 落地，`OverlayEntry::$focusTrap`）：模态打开时 Tab 只在
+ *   "最上面那个 `focusTrap` 条目 + 压在它上面的层"里循环（`Application::focusTrapRoots()`），
+ *   主树上的控件 Tab 不到。★ 本文档 2026-10-17 写的"没有焦点陷阱"是**当时的实况**，
+ *   W3 之后已不成立 —— 以代码为准。
  *
  * @api
  */

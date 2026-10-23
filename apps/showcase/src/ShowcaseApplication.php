@@ -5,6 +5,7 @@ namespace App\Showcase;
 
 use Drift\App\Application;
 use Drift\Platform\Clipboard;
+use Drift\Widget\Snackbar;
 use Drift\Widget\Widget;
 
 /**
@@ -30,7 +31,14 @@ final class ShowcaseApplication extends Application
 
     public function buildRoot(): Widget
     {
-        return ShowcaseRoot::make();
+        // ★ **应用侧接线**（§4.3 禁 `Widget → App`，`Menu::onOpen` 同款）：
+        //   浮层归 `Application` 管，而页面在 `Drift\Widget` 层够不到它 ⇒ 由这里
+        //   （唯一持有 `$this` 的地方）把"弹一条通知"这个能力递下去。
+        //   ★ 2026-10-23 之前示例台写的是 `$this->application()->showSnackbar()`，
+        //     那个方法**不存在** ⇒ 真机点一下进程直接崩、而 smoke 全绿。
+        return ShowcaseRoot::make(function (Snackbar $snackbar): void {
+            $this->showSnackbar($snackbar);
+        });
     }
 
     public function title(): string

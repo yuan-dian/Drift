@@ -1231,17 +1231,30 @@ final class UserListState extends State
 
 ```php
 // 桌面主形态 = 外壳 + 内容槽 + 模态（不做导航栈，§12.1 第 6 条）
-$this->application()->showModal(
+// ★★ **`$this->application()` 不存在**（`State` 上没有这个访问器，§4.3 禁
+//    `Widget → App`）。本文档 2026-10-16 起就写着它，2026-10-23 示例台照抄后
+//    真机点一下**进程直接崩**、而 smoke 全绿。浮层归 `Application` 管，应用侧
+//    只有两条合规路：**组合根接线**（下面这个 `$openModal`）或**框架托管**
+//    （`Widget::tooltip()` 那种声明式）。
+($this->openModal)(
     Modal::make()->title('确认删除')->child(
         Column::make()->spacing(16)->children([
             Text::make('删除后不可恢复，确定吗？')->body(),
             Row::make()->spacing(8)->children([
                 Button::danger('删除')->command('user.del.confirmed')->arg(CommandArg::id($id)),
-                Button::make('取消')->onPressed(fn() => $this->closeModal()),   // 纯 UI 回调
+                Button::make('取消')->onPressed(fn() => ($this->closeModal)()),   // 纯 UI 回调
             ]),
         ])
     )
 );
+```
+
+```php
+// 组合根（唯一持有 Application 的地方）：
+$app->run(Root::make(
+    openModal: fn(Modal $m) => $app->showModal($m),
+    closeModal: fn() => $app->closeModal(),
+));
 ```
 
 ### A.3.8 窗口状态持久化
