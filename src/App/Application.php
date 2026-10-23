@@ -51,6 +51,7 @@ use Drift\Widget\Widget;
 use Drift\Widget\SemanticsBuilder;
 use Drift\Widget\Segment;
 use Drift\Widget\ToggleBase;
+use Drift\Widget\TooltipPanel;
 
 /**
  * **组合根**（§4.5）：应用只写 `buildRoot()` / `title()` / `commands()`。
@@ -260,6 +261,16 @@ abstract class Application
      */
     private const SEMANTICS_COALESCE_MAX = 4;
 
+    /**
+     * 悬停多久才弹出 Tooltip（毫秒，W8-2）。
+     *
+     * ★ 500ms 是桌面惯例（Windows / macOS 都在 400–700ms 这一档）。太短 ⇒ 指针
+     *   扫过一排图标时提示乱闪；太长 ⇒ 用户以为没有提示。
+     * ★ **相邻切换不等**：已经显示着的时候移到另一个带提示的控件，**立即**换内容
+     *   （Windows 手感）—— 见 `onHoverHit()`。
+     */
+    public const TOOLTIP_DELAY_MS = 500;
+
     /** 上次推送的档位（`full` / `coalesce` / `none`）—— 夹具与 devtools 读它 */
     private string $semanticsMode = 'none';
 
@@ -297,6 +308,40 @@ abstract class Application
 
     /** 上一帧的时间戳（`repaintForResize()` 复用：拖动重排不该自己读环境时钟） */
     private float $lastTimestampMs = 0.0;
+
+    /**
+     * 待触发的延时回调（W8-2，2026-10-23）—— `after()` 排进来，`pumpTimers()` 消费。
+     *
+     * ★ **为什么不做成"平台多开几个 `TimerHost` id"**：`TimerHost` 是**周期**定时器
+     *   （`SetTimer` 会一直响），而这里要的是**一次性**延时；再者在平台层做 id 分配
+     *   就要在 `pump()` 里把 `timer` 事件按 id 分发回框架 —— 一圈下来只换来
+     *   15.6ms → 0ms 的精度提升，而 Tooltip / Snackbar 的 500ms 停留对 15ms 无感。
+     *   ★ 代价必须说清楚：**有定时器待触发期间帧时钟保持上膛**（每 15ms 一帧空转，
+     *   直到到期）。这是 `wantsFrame()` 必须加第 5 条判据的另一面 —— 不加就永远
+     *   不响，加了就有这段空转。Tooltip 停留期最多 500ms（约 33 帧），可接受。
+     *
+     * @var array<int, array{due: float, cb: \Closure}>
+     */
+    private array $timers = [];
+
+    /** 下一个定时器 id（进程内自增，`cancelAfter()` 用它） */
+    private int $nextTimerId = 1;
+
+    /**
+     * 当前悬停的 Tooltip 目标（`tooltipTextValue()` 声明者链上的最近 Element）。
+     *
+     * ★ `null` = 没有悬停在任何带提示的控件上。
+     */
+    private ?Element $tooltipTarget = null;
+
+    /** 已排期的"显示"定时器 id；`null` = 没有在等待（已显示 / 已取消） */
+    private ?int $tooltipTimer = null;
+
+    /** Tooltip 浮层当前是否**真的挂在栈上**（决定"相邻切换是否要再等 500ms"） */
+    private bool $tooltipShown = false;
+
+    /** Tooltip 浮层条目（隐藏时精确移除它，不误伤同栈的菜单/模态） */
+    private ?OverlayEntry $tooltipEntry = null;
 
     /**
      * 非阻塞 I/O 轮询器（§17.4.4，P2）—— 每帧 `select(0)` 问一轮，就绪了就回调。
@@ -545,6 +590,9 @@ abstract class Application
 
         // 焦点链要在**挂载之后**建（此刻才有树可走）。
         $this->focus = new FocusManager();
+        $this->focus->onHoverChanged(function (?Element $hit): void {
+            $this->onHoverHit($hit);
+        });
         $this->focus->collect([$root]);
     }
 
@@ -632,6 +680,143 @@ abstract class Application
         // 语义不变：它原来清的就是"整个槽位" ⇒ 栈版 = 全清
         while (($e = $this->overlays->pop()) !== null) {
             $e->element?->unmount();
+        }
+
+        // ★ 全清会顺手把 Tooltip 也清掉 ⇒ 它的两个状态位必须跟着复位，否则
+        //   下一次悬停会以为"还显示着"从而**跳过 500ms 延时**（或反过来握着
+        //   一个已经不在栈里的条目）。
+        $this->tooltipEntry = null;
+        $this->tooltipShown = false;
+    }
+
+    /**
+     * 悬停命中变化（`FocusManager::onHoverChanged` 的消费者）—— Tooltip 的时序全在这里。
+     *
+     * ```text
+     * 进入带提示的控件 ──after(500)──▶ showTooltip
+     * 离开            ──cancel + 立即──▶ hideTooltip
+     * 已显示时移到另一个 ──立即──▶ showTooltip（Windows 手感）
+     * ```
+     *
+     * ★ **相邻切换不等 500ms** 是刻意的：指针扫过一排图标时，如果每个都要重新
+     *   停留 500ms，用户会觉得"提示坏了"。代价是"手快划过两个图标"也会换一次
+     *   内容 —— 但那比"等不到"好。
+     * ★ **时序只在框架一处**：这正是"声明式"相对"应用写 hover 回调"的主要收益
+     *   （见 `Widget::tooltip()` 的注释）。
+     */
+    private function onHoverHit(?Element $hit): void
+    {
+        $next = self::tooltipOwner($hit);
+
+        if ($next === $this->tooltipTarget) {
+            return;   // 同一个控件内的移动 / 同样"没有提示" ⇒ 什么都不做
+        }
+
+        $this->tooltipTarget = $next;
+
+        // 还没到点就换了目标 ⇒ 撤掉旧排期（否则 500ms 后会弹出上一个控件的提示）
+        if ($this->tooltipTimer !== null) {
+            $this->cancelAfter($this->tooltipTimer);
+            $this->tooltipTimer = null;
+        }
+
+        if ($next === null) {
+            $this->hideTooltip();
+
+            return;
+        }
+
+        if ($this->tooltipShown) {
+            $this->showTooltip($next);
+
+            return;
+        }
+
+        // ★ 闭包**不捕获 `$next`**：到点时以 `$tooltipTarget` 为准（它可能已经被
+        //   后来的 hover 换掉了）。捕获旧值 + 忘记比对 = 弹出上一个控件的提示。
+        $this->tooltipTimer = $this->after(self::TOOLTIP_DELAY_MS, function (): void {
+            $this->tooltipTimer = null;
+
+            $target = $this->tooltipTarget;
+            if ($target !== null) {
+                $this->showTooltip($target);
+            }
+        });
+    }
+
+    /**
+     * 沿父链找最近的**带提示**声明者（`Widget::tooltipTextValue() !== null`）。
+     *
+     * ★ 与 `FocusManager::hoverOwner()` 是**两条独立判据**：那个找的是 `hover()`
+     *   声明者（为了派发悬停高亮），本方法找的是 `tooltip()` 声明者。一个控件可以
+     *   只声明其中任意一个。
+     */
+    private static function tooltipOwner(?Element $element): ?Element
+    {
+        for ($node = $element; $node !== null; $node = $node->parent()) {
+            // ★ 空串判据（不是 `!== null`）：可选标量在 AOT 下退化 `php::Var`，
+            //   2026-10-23 真机上 `?string` 恒读成 null ⇒ 提示永远不出现。
+            if ($node->widget()->tooltipTextValue() !== '') {
+                return $node;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * 弹出提示（已显示则先撤旧的）。
+     *
+     * ★ 条目参数逐条都有理由：
+     *   - `barrier=false` ⇒ 不拦层外点击（提示不该吃掉用户的点击）
+     *   - `hitTest=false` ⇒ **指针看不见这一层**（否则悬停目标被面板抢走 ⇒ 闪烁死循环）
+     *   - `dismissOnTapOutside=false` / `dismissOnEsc=false` ⇒ 提示不是模态，
+     *     "关闭"只归悬停离开
+     *   - `owner=$anchor` ⇒ 锚点被回收时自动收尸（`placeOverlays()` 的清扫）
+     *   - `restoreFocus=null`（push 之后覆盖）⇒ **不许动焦点**：`pushOverlay()` 会
+     *     快照当前焦点，关闭时"恢复"会把焦点从用户刚点的地方抢走
+     */
+    private function showTooltip(Element $anchor): void
+    {
+        $text = $anchor->widget()->tooltipTextValue();
+        if ($text === '') {
+            return;
+        }
+
+        $this->hideTooltip();   // 换内容：先撤旧的（同一条路径，不重复实现）
+
+        $e = new OverlayEntry(TooltipPanel::make($text));
+        $e->anchor = $anchor;
+        $e->owner = $anchor;
+        $e->prefer = OverlayEntry::ABOVE_CENTER;
+        $e->barrier = false;
+        $e->scrim = false;
+        $e->dismissOnTapOutside = false;
+        $e->dismissOnEsc = false;
+        $e->focusTrap = false;
+        $e->hitTest = false;
+        $e->maxWidth = TooltipPanel::MAX_WIDTH;
+
+        $this->pushOverlay($e);
+
+        // ★ 必须在 push **之后**覆盖：`pushOverlay()` 内部会把当前焦点快照进
+        //   `restoreFocus`（那是菜单/模态需要的"焦点回锚"）。
+        $e->restoreFocus = null;
+
+        $this->tooltipEntry = $e;
+        $this->tooltipShown = true;
+    }
+
+    /** 撤掉提示浮层（未显示 ⇒ 无事发生，幂等） */
+    private function hideTooltip(): void
+    {
+        $e = $this->tooltipEntry;
+
+        $this->tooltipEntry = null;
+        $this->tooltipShown = false;
+
+        if ($e !== null) {
+            $this->removeOverlay($e);
         }
     }
 
@@ -860,6 +1045,17 @@ abstract class Application
                 continue;
             }
 
+            // ★ `owner` 清扫（`01` §7）：锚点与归属者是**两个**概念 —— 锚点管"挂在哪"，
+            //   归属者管"谁的生命周期决定我该不该在"。Tooltip 两者同为悬停目标，
+            //   但下拉这类"锚在按钮、归属在控件"的浮层只能靠 owner 收尸。
+            //   ★ 2026-10-23 之前本字段**零消费**（`01` §7 承诺了、代码没做）——
+            //     死字段比缺失更贵：读代码的人会以为防线已经在。
+            if ($e->owner !== null && !$e->owner->isMounted()) {
+                $this->removeOverlay($e);
+
+                continue;
+            }
+
             $this->placeEntry($e, $constraints);
         }
     }
@@ -900,7 +1096,20 @@ abstract class Application
             return;
         }
 
-        $box->layout(BoxConstraints::unbounded());
+        // ★ 宽度上限（W8-2）：`Tooltip` 这类"按内容自尺寸、但可能很长"的层必须给
+        //   有界宽 —— `RenderPopupPanel` 只在约束有界时才夹宽，而 ⑤ 的夹紧**只挪 x
+        //   不改宽** ⇒ 不限宽就是"右边内容溢出到客户区外"。
+        //   ★ 高度仍无界：菜单靠 `innerMaxH` 的 `maxHeight === INF` 分支决定"不限高"，
+        //     改成有界会连带把菜单限高（行为变更，与本步无关）。
+        $capW = $e->maxWidth > $maxW ? $maxW : $e->maxWidth;
+        if (\is_infinite($capW)) {
+            $box->layout(BoxConstraints::unbounded());
+        } else {
+            // ★ 走 `capWidth()` 工厂，**不要**在这里手写 `BoxConstraints::INFINITY`
+            //   —— 外部类常量引用在 AOT 下求值成 0（面板宽高全 0、画面一丝不变，
+            //   而 smoke 全绿）。详见 `BoxConstraints::capWidth()` 的注释。
+            $box->layout(BoxConstraints::capWidth($capW));
+        }
 
         // 超大面板退化：夹进客户区重量一次（内容溢出由面板自己 Overflow::Clip）
         $size = $box->size();
@@ -1011,6 +1220,34 @@ abstract class Application
             }
 
             return [$ax - $w, $ay];
+        }
+
+        // ★ 居中两向（W8-2 Tooltip）：水平对准锚点中心，垂直与 BELOW/ABOVE 同规则。
+        //   夹取仍由调用方的 ⑤ 兜底 —— 锚点贴边时 tooltip 会偏离中心而不出界，
+        //   这是刻意的（`01` §4.2「不做通用避让」：同一控件在不同窗口尺寸下弹出
+        //   方向不同 ⇒ golden 无法比）。
+        if ($prefer === OverlayEntry::BELOW_CENTER) {
+            $cx = $ax + ($aw - $w) / 2.0;
+            if ($ay + $ah + $h <= $maxH) {
+                return [$cx, $ay + $ah];
+            }
+            if ($ay - $h >= 0.0) {
+                return [$cx, $ay - $h];    // 翻到上方
+            }
+
+            return [$cx, $ay + $ah];
+        }
+
+        if ($prefer === OverlayEntry::ABOVE_CENTER) {
+            $cx = $ax + ($aw - $w) / 2.0;
+            if ($ay - $h >= 0.0) {
+                return [$cx, $ay - $h];
+            }
+            if ($ay + $ah + $h <= $maxH) {
+                return [$cx, $ay + $ah];   // 翻到下方
+            }
+
+            return [$cx, $ay - $h];
         }
 
         // BELOW（默认）/ AT_POINTER
@@ -1360,6 +1597,18 @@ abstract class Application
             SurfaceProfile::add('pumpSliced', \hrtime(true) - $t);
         }
 
+        // ★ ③ 推进到期的延时回调（W8-2）：同样**必须在 settle 之前** ——
+        //   `after()` 的回调里 `setState()` 由紧随的 `Frame::run()` 的 settle 段
+        //   消费，同一帧生效（Tooltip 到点那一帧就画出来，不多闪一帧空）。
+        $t = $prof ? \hrtime(true) : 0;
+        if ($trace !== null) {
+            $trace[] = 'pumpTimers';
+        }
+        $this->pumpTimers($timestampMs);
+        if ($prof) {
+            SurfaceProfile::add('pumpTimers', \hrtime(true) - $t);
+        }
+
         // ★ ⓸ 推进动画（§17.4.9）：同样**必须在 settle 之前** —— `tickFrame()` 里的
         //   `setState()` 由紧随的 `Frame::run()` 的 settle 段消费，同一帧生效。
         //   返回值是"还有动画在跑吗"，喂给 `wantsFrame()` 决定下一次要不要被叫醒。
@@ -1514,6 +1763,74 @@ abstract class Application
     }
 
     /**
+     * 排一个**一次性延时回调**（W8-2，2026-10-23）。
+     *
+     * ```php
+     * $id = $this->application()->after(500, function (): void { $this->setState(...); });
+     * // 想撤销就 cancelAfter($id)（已触发过 ⇒ 幂等无事发生）
+     * ```
+     *
+     * ★ **时间基准是"上一帧的时间戳"**，不是环境时钟（G3：框架不自己读钟）。
+     *   在 `frame()` **之外**调用（例如指针回调里）时，基准会早一个帧间隔
+     *   （≤ `FrameClock::FRAME_MS` = 15ms）—— 对 Tooltip / Snackbar 这种"人的
+     *   反应时间"尺度无感，但**不要拿它做动画计时**（那是 `AnimationController`
+     *   的活，它收的是精确帧时间戳）。
+     * ★ **回调在 `frame()` 内、`settle()` 之前跑**（`pumpTimers()` 的位置与
+     *   `pumpTasks()` 同级）⇒ 回调里 `setState()` 同帧生效。
+     * ★ **有定时器在等 ⇒ `wantsFrame()` 为真** ⇒ 帧时钟保持上膛。这是"定时器
+     *   能不能响"的**结构前提**：消息泵是阻塞的，没人叫醒就永远不响。
+     *
+     * @param int $milliseconds 延时（毫秒；负数按 0 处理 ⇒ 下一帧就触发）
+     * @return int 定时器 id（`cancelAfter()` 用）
+     *
+     * @api
+     */
+    public function after(int $milliseconds, \Closure $callback): int
+    {
+        $id = $this->nextTimerId++;
+        $this->timers[$id] = [
+            'due' => $this->lastTimestampMs + (float) ($milliseconds < 0 ? 0 : $milliseconds),
+            'cb' => $callback,
+        ];
+
+        return $id;
+    }
+
+    /** 撤销一个延时回调（已触发 / id 不存在 ⇒ 无事发生，幂等） */
+    public function cancelAfter(int $id): void
+    {
+        unset($this->timers[$id]);
+    }
+
+    /**
+     * 推进到期的延时回调（每帧一次，在 `settle()` 之前）。
+     *
+     * ★ **先摘再调**：回调里可以安全地 `after()` 新定时器 / `cancelAfter()` 别的
+     *   —— 否则遍历中改 `$this->timers` 会漏掉或重复触发。
+     * ★ 回调抛异常**不吞**（与 `pumpTasks()` / `pumpSliced()` 同策略：S3 无边界
+     *   ⇒ Fatal 序列）。
+     */
+    private function pumpTimers(float $timestampMs): void
+    {
+        if ($this->timers === []) {
+            return;
+        }
+
+        // ★ 先把到期的挑出来（不在遍历里改数组）
+        $due = [];
+        foreach ($this->timers as $id => $timer) {
+            if ($timer['due'] <= $timestampMs) {
+                $due[$id] = $timer['cb'];
+            }
+        }
+
+        foreach ($due as $id => $callback) {
+            unset($this->timers[$id]);
+            $callback();
+        }
+    }
+
+    /**
      * 本应用**还需要下一帧吗**（§17.4.9）—— 自适应帧时钟的唯一判据。
      *
      * ★ 平台的消息泵是**阻塞**的（`GetMessageW`）：没有输入事件时它一直睡。所以
@@ -1543,8 +1860,13 @@ abstract class Application
         }
 
         $tasks = $this->tasks;
+        if ($tasks !== null && $tasks->pending() > 0) {
+            return true;
+        }
 
-        return $tasks !== null && $tasks->pending() > 0;
+        // ★ 第五个判据（W8-2）：有延时回调在等 ⇒ 必须保持上膛，否则永远不响。
+        //   排最后 —— 它**通常为空**（一次 `===` 比较），而前四条在活跃场景下更常为真。
+        return $this->timers !== [];
     }
 
     /**
@@ -2412,6 +2734,13 @@ abstract class Application
         for ($i = $this->overlays->count() - 1; $i >= 0; $i--) {
             $e = $this->overlays->at($i);
             if ($e === null || $e->element === null) {
+                continue;
+            }
+
+            // ★ 不参与命中的层（Tooltip）：整层跳过 —— 既不算命中，也不算"点在层外"，
+            //   连 `barrier` 判断都跳过（`hitTest=false` 的语义就是"指针看不见我"）。
+            //   没有这一句，tooltip 一出就把锚点的悬停目标抢走 ⇒ 显示/隐藏死循环。
+            if (!$e->hitTest) {
                 continue;
             }
 

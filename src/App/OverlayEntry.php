@@ -36,6 +36,17 @@ final class OverlayEntry
     /** 最近一次命中的指针位置（右键菜单） */
     public const AT_POINTER = 5;
 
+    /**
+     * 锚下方、**水平居中于锚点**（W8-2 Tooltip，2026-10-23）。
+     *
+     * ★ 为什么不复用 `BELOW` + 应用侧自己算偏移：落位算法在 `originFor()` 里，
+     *   应用算不了（拿不到夹紧后的 `maxW`）。方向是**语义**，不是坐标。
+     */
+    public const BELOW_CENTER = 6;
+
+    /** 锚上方、水平居中于锚点（Tooltip 首选） */
+    public const ABOVE_CENTER = 7;
+
     private static int $nextId = 1;
 
     /** 进程内唯一，调试与 trace 用 */
@@ -49,6 +60,16 @@ final class OverlayEntry
 
     /** 首选方向，OverlayEntry::* 常量 */
     public int $prefer = self::BELOW;
+
+    /**
+     * 面板宽度上限（逻辑像素；`INF` = 不额外限宽，W8-2 Tooltip）。
+     *
+     * ★ 为什么要这个字段：`placeEntry()` 给非居中层的约束是**无界**的，而
+     *   `RenderPopupPanel` 只在"约束有界"时才夹宽 ⇒ 一段很长的 tooltip 文本
+     *   会排出超过客户区的宽，随后 ⑤ 的夹紧**只挪 x 不改宽** ⇒ 右边溢出。
+     *   限宽是**内容语义**（一行提示不该横穿屏幕），不是落位算法能猜的。
+     */
+    public float $maxWidth = \INF;
 
     /** 是否拦截浮层外的指针（**与 scrim 是两个参数**） */
     public bool $barrier = true;
@@ -67,6 +88,18 @@ final class OverlayEntry
 
     /** 归属者：它 unmount 时本条目自动 pop（§7 的结构性防线） */
     public ?Element $owner = null;
+
+    /**
+     * 本层是否**参与指针命中测试**（W8-2 Tooltip，2026-10-23）。
+     *
+     * ★ `false` = 指针完全看不见这一层，事件穿透到下面的层/主树 —— 对应 Win32 的
+     *   `WS_EX_TRANSPARENT`。**Tooltip 必须用它**，否则会出现死循环：
+     *   tooltip 面板一出现在指针附近 ⇒ `dispatchPointer()` 的浮层段命中它 ⇒
+     *   `hoverTo(面板里的元素)` ⇒ 锚点悬停丢失 ⇒ 隐藏 ⇒ 指针又命中锚点 ⇒ 再显示。
+     * ★ 与 `barrier` **正交**：`barrier` 管"层外的按下拦不拦"，本字段管"层内的命中
+     *   算不算"。`barrier=false` 只解决"没命中时穿透"，解决不了"命中了就不放"。
+     */
+    public bool $hitTest = true;
 
     /** 挂载后的根 Element（框架写） */
     public ?Element $element = null;

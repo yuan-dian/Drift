@@ -94,6 +94,18 @@ abstract class Widget
      */
     private ?\Closure $keyHandler = null;
 
+    /**
+     * @internal 空串 = 本控件无悬停提示（W8-2 Tooltip）
+     *
+     * ★ 存**文本**不存 Widget：Tooltip 的形体归框架（`TooltipPanel` 工厂），
+     *   应用只声明"说什么"。要富内容提示时再开 `tooltipWidget()` 另一个声明。
+     * ★★ **用空串当哨兵，不用 `?string`**：可选标量在 AOT 侧退化 `php::Var`
+     *   （与 `?float` 用 `NAN` 是同一条纪律）。2026-10-23 真机就是这么坏的：
+     *   smoke（解释器）22 条全绿，`showcase.exe` 上提示**永远不出现** ——
+     *   悬停高亮正常（那条链只碰 `?Element`），唯独 `tooltipTextValue()` 恒 null。
+     */
+    private string $tooltipText = '';
+
     /** @internal null = 本控件不在语义树里（无角色 = 不建节点，§9 / M5 无障碍） */
     private ?SemanticsRole $semRole = null;
 
@@ -840,6 +852,45 @@ abstract class Widget
     public function keyHandlerValue(): ?\Closure
     {
         return $this->keyHandler;
+    }
+
+    /**
+     * 声明"悬停在我上面时显示这段提示"（W8-2，2026-10-23）。
+     *
+     * ```php
+     * IconButton::make('save')->tooltip('保存当前文档 (Ctrl+S)');
+     * ```
+     *
+     * ★ **为什么是声明而不是 `hover()` 回调**：回调收的是 `\Closure(bool)`，
+     *   **拿不到锚点 Element**（Tooltip 必须知道挂在哪）。加第二个参数在 PHP 侧
+     *   无害，但 tpc 生成的 C++ 侧闭包 arity 行为没有验证过 —— 不值得为一个可选
+     *   能力去赌编译器。声明式还有一个更硬的好处：**时序只在一处**（两个控件相邻
+     *   时"先关旧的再开新的"不需要每个应用自己写对）。
+     * ★ **为什么不做成包裹 Widget**：Tooltip **不产生布局、不产生绘制**，包裹式
+     *   要一个透明 `RenderProxy` + `expandChildren()`（纯开销），还会插进
+     *   `hoverOwner()` 的父链判定 —— 而 `semantics()` / `pointer()` / `keyboard()`
+     *   这一族正是"控件属性"的正确形状。
+     * ★ 浮层生命周期归 `Application`（`§5.1` 裁决 1 的原话："Application 管生命周期
+     *   与落位，控件只管形体"）。本声明只是**把文字交出去**。
+     *
+     * @param string $text 单行提示文本（多行由 `\n` 表达，渲染侧负责换行）
+     *
+     * @api
+     */
+    public function tooltip(string $text): static
+    {
+        $this->mutate();
+        $this->tooltipText = $text;
+
+        return $this;
+    }
+
+    /**
+     * @internal Tooltip 浮层读它；**空串 = 本控件无提示**（不用 `?string`，见字段注释）
+     */
+    public function tooltipTextValue(): string
+    {
+        return $this->tooltipText;
     }
 
     /**

@@ -55,6 +55,21 @@ final readonly class BoxConstraints
         return new self(0.0, $size->width, 0.0, $size->height);
     }
 
+    /**
+     * **只限宽**：宽 `0..$maxWidth`，高不限（W8-2 Tooltip，2026-10-23）。
+     *
+     * ★ 为什么要有这个工厂，而不是调用方自己 `new BoxConstraints(0, $w, 0, BoxConstraints::INFINITY)`：
+     *   **AOT 侧那行是坏的** —— `BoxConstraints::INFINITY` 作为**外部类常量引用**
+     *   在 tpc 生成的 C++ 里求值成 `0`，于是 `maxHeight = 0` ⇒ 子节点被夹成
+     *   高度 0 ⇒ **面板宽高全 0、画出来什么都没有，而解释器（smoke）全绿**。
+     *   走类内 `self::INFINITY`（与 `unbounded()` / `loose()` 同一条已被验证的
+     *   路径）就正常。2026-10-23 真机实测：`placed x=268 y=161.6 w=0 h=0`。
+     */
+    public static function capWidth(float $maxWidth): self
+    {
+        return new self(0.0, $maxWidth, 0.0, self::INFINITY);
+    }
+
     public function hasBoundedWidth(): bool
     {
         return !is_infinite($this->maxWidth);

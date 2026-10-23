@@ -35,6 +35,7 @@ use App\Showcase\Pages\ListPage;
 use App\Showcase\Pages\MotionPage;
 use App\Showcase\Pages\SegmentedPage;
 use App\Showcase\Pages\SliderPage;
+use App\Showcase\Pages\TooltipPage;
 use App\Showcase\Pages\TextPage;
 
 /**
@@ -107,6 +108,7 @@ final class ShowcaseState extends State
             ['分段 Segmented', static fn(): Widget => new SegmentedPage()],
             ['图片 Image', static fn(): Widget => new ImagePage()],
             ['滑杆 Slider', static fn(): Widget => new SliderPage()],
+            ['提示 Tooltip', static fn(): Widget => new TooltipPage()],
         ];
     }
 

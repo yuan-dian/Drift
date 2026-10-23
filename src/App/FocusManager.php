@@ -77,6 +77,33 @@ final class FocusManager
     private ?Element $hovered = null;
 
     /**
+     * 悬停**原始命中**变化的监听口（W8-2 Tooltip，2026-10-23）。
+     *
+     * `\Closure(?Element): void`，收到的是**未解析的命中元素**（不是 `$hovered`）。
+     *
+     * ★ 为什么不复用 `hoverHandler`：那个声明者链找的是"有 `hover()` 的控件"，
+     *   而 Tooltip 的声明者可能**没有** `hover()`（也不需要）—— 两个集合不同源。
+     * ★ 为什么收原始命中：消费方（`Application`）要沿父链找 `tooltipTextValue()`，
+     *   在这里替它解析就把"Tooltip 是什么"的知识漏进了焦点层。
+     * ★ 默认 `null` ⇒ 一次 `if` 都不多做，逐字节不变。
+     */
+    private ?\Closure $hoverListener = null;
+
+    /**
+     * 上一次的**原始命中**元素（`hoverTo()` 收的那个，未经 `hoverOwner` 解析）。
+     *
+     * ★ 与 `$hovered` 分开存：`$hovered` 是"有 `hover()` 声明的最近祖先"，
+     *   本字段是"指针真的落在谁身上"—— 悬停高亮要前者，Tooltip 要后者。
+     */
+    private ?Element $hoverHit = null;
+
+    /** 注入悬停命中监听（`null` 回调不注册即默认行为） */
+    public function onHoverChanged(\Closure $listener): void
+    {
+        $this->hoverListener = $listener;
+    }
+
+    /**
      * 从根重建焦点链（挂载 / 更新后调）。
      *
      * ★ **浮层是第二棵根渲染树**（O-20）⇒ 它的焦点链也要能进 Tab 序 ⇒
@@ -117,6 +144,17 @@ final class FocusManager
         if ($this->hovered !== null && !$this->hovered->isMounted()) {
             self::fireHover($this->hovered, false);
             $this->hovered = null;
+        }
+
+        // ★ 原始命中离线同理（Tooltip）：`$hovered` 的清理管不到它（两者不同源），
+        //   不通知的话消费方会握着一个死锚点继续显示提示 —— 而 `placeOverlays()`
+        //   的清扫只是把浮层拿掉，`$tooltipShown` 之类的状态会留在"已显示"。
+        if ($this->hoverHit !== null && !$this->hoverHit->isMounted()) {
+            $this->hoverHit = null;
+
+            if ($this->hoverListener !== null) {
+                ($this->hoverListener)(null);
+            }
         }
     }
 
@@ -270,6 +308,16 @@ final class FocusManager
      */
     public function hoverTo(?Element $element): void
     {
+        // ★ 原始命中先过监听口（Tooltip）：与下面的 `hoverOwner` **两条独立判据**
+        //   —— 指针停在同一个元素上移动时两者都不该再派发一次。
+        if ($element !== $this->hoverHit) {
+            $this->hoverHit = $element;
+
+            if ($this->hoverListener !== null) {
+                ($this->hoverListener)($element);
+            }
+        }
+
         $next = self::hoverOwner($element);
 
         if ($next === $this->hovered) {

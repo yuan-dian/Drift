@@ -272,6 +272,8 @@ use Drift\Widget\Slider;
 use Drift\Layout\RenderSlider;
 use Drift\Rendering\SliderStyle;
 use Drift\Dev\Smoke\App\SliderApplication;
+use Drift\Dev\Smoke\App\TooltipApplication;
+use Drift\Widget\TooltipPanel;
 use Drift\Widget\State;
 use Drift\Widget\StatefulElement;
 use Drift\Widget\Text;
@@ -283,6 +285,14 @@ use Drift\Widget\Widget;
 use Drift\Dev\TestApp;
 
 require __DIR__ . '/autoload.php';
+
+// ★ 量具自己把上限抬到 2G（2026-10-23，W8-2 Tooltip）。
+//   **不是泄漏**：全量 1217 条用例会串起几十个 Application 实例，每个都持有
+//   字模 + 渲染树，默认 128M 早在几百条就炸；1024M 也已经贴着边（加 Tooltip 块
+//   时在 `attach()` 加载字模处 OOM，差 10MB）。
+//   ★ 为什么写在脚本里而不是靠调用方 `-d memory_limit=`：量具的**运行前提**不该
+//     依赖调用者的命令行 —— 忘了带参数就得到一条"内存耗尽"的假红。
+ini_set('memory_limit', '2048M');
 
 $root = dirname(__DIR__);
 $log = $root . '/Errors.log';
@@ -12298,6 +12308,257 @@ check(
     'Slider · 语义：role=slider、name=label、value=读数（42）',
     $slSemIdx >= 0 && $slSem->node($slSemIdx)->value === '42',
     $slSemIdx < 0 ? 'no slider node (count=' . $slSem->count() . ')' : 'value=' . $slSem->node($slSemIdx)->value,
+);
+
+// ── W8-2 Tooltip（声明式 + 框架托管浮层，2026-10-23）──────────────────
+// ★ 这一块同时钉住两件东西：① `Application::after()` 这条**通用延时**能力
+//   （Tooltip / Snackbar 的共同燃料）；② Tooltip 的显示时序与落位。
+//   ★ 反例自检有三条：`hitTest=true`（闪烁死循环）、悬停无提示控件（不该排期）、
+//     未满 500ms（不该弹）。
+$ttConstraints = BoxConstraints::loose(new Size(320.0, 400.0));
+$ttApp = new TooltipApplication();
+$ttApp->attach(new SurfaceProbe(), $ttConstraints);
+$ttApp->root()?->effectiveBox()?->layout($ttConstraints);
+
+$ttButtons = $ttApp->buttons();
+$ttD = $ttButtons[0] ?? null;   // 被 a 的提示盖住
+$ttA = $ttButtons[1] ?? null;   // 带提示（主判据）
+$ttB = $ttButtons[2] ?? null;   // 带提示（相邻切换）
+$ttC = $ttButtons[3] ?? null;   // 反例：无提示
+$ttABox = $ttA?->effectiveBox();
+$ttBBox = $ttB?->effectiveBox();
+$ttCBox = $ttC?->effectiveBox();
+[$ttAx, $ttAy] = $ttABox === null ? [0.0, 0.0] : boxOrigin($ttABox);
+[$ttBx, $ttBy] = $ttBBox === null ? [0.0, 0.0] : boxOrigin($ttBBox);
+[$ttCx, $ttCy] = $ttCBox === null ? [0.0, 0.0] : boxOrigin($ttCBox);
+$ttAw = $ttABox?->size()?->width ?? 0.0;
+$ttAh = $ttABox?->size()?->height ?? 0.0;
+$ttBw = $ttBBox?->size()?->width ?? 0.0;
+$ttBh = $ttBBox?->size()?->height ?? 0.0;
+$ttCw = $ttCBox?->size()?->width ?? 0.0;
+$ttCh = $ttCBox?->size()?->height ?? 0.0;
+
+// —— ① 通用延时 API（`after()` / `cancelAfter()`）——
+$ttTicks = [];
+$ttApp->after(500, function () use (&$ttTicks): void {
+    $ttTicks[] = 't500';
+});
+check(
+    '延时 · 排期后 wantsFrame() 为真（否则帧时钟不叫醒 ⇒ 定时器永远不响）',
+    $ttApp->wantsFrame(),
+    'wantsFrame=false（帧时钟不会上膛）',
+);
+$ttApp->frame(400.0, $ttConstraints);
+check('延时 · 未到点不触发', $ttTicks === [], 'ticks=' . implode(',', $ttTicks));
+$ttApp->frame(600.0, $ttConstraints);
+check('延时 · 到点触发一次', $ttTicks === ['t500'], 'ticks=' . implode(',', $ttTicks));
+check(
+    '延时 · 触发后 wantsFrame() 归假（空闲不空转）',
+    !$ttApp->wantsFrame(),
+    'wantsFrame=true（会每 15ms 空转）',
+);
+
+$ttCancel = 0;
+$ttCancelId = $ttApp->after(100, function () use (&$ttCancel): void {
+    $ttCancel++;
+});
+$ttApp->cancelAfter($ttCancelId);
+$ttApp->frame(2000.0, $ttConstraints);
+check('延时 · cancelAfter() 撤销后不触发（幂等）', $ttCancel === 0, 'cancel=' . $ttCancel);
+
+$ttNest = [];
+$ttApp->after(10, function () use ($ttApp, &$ttNest): void {
+    $ttNest[] = 'outer';
+    $ttApp->after(10, function () use (&$ttNest): void {
+        $ttNest[] = 'inner';
+    });
+});
+$ttApp->frame(2100.0, $ttConstraints);
+check(
+    '延时 · 回调里再 after() 不丢（先摘再调，遍历中不改进中的表）',
+    $ttNest === ['outer'],
+    'nest=' . implode(',', $ttNest),
+);
+$ttApp->frame(2200.0, $ttConstraints);
+check(
+    '延时 · 新排的回调下一帧照常触发',
+    $ttNest === ['outer', 'inner'],
+    'nest=' . implode(',', $ttNest),
+);
+
+// —— ② 悬停 500ms 才弹 ——
+$ttApp->dispatchInput(PointerEvent::move($ttAx + $ttAw / 2.0, $ttAy + $ttAh / 2.0));
+check(
+    'Tooltip · 悬停不立即弹（500ms 未到）',
+    $ttApp->overlayCount() === 0,
+    'count=' . $ttApp->overlayCount(),
+);
+check('Tooltip · 排期后 wantsFrame() 为真', $ttApp->wantsFrame(), 'wantsFrame=false');
+
+$ttApp->frame(2500.0, $ttConstraints);
+check(
+    'Tooltip · 反例：未满 500ms 走帧仍不弹',
+    $ttApp->overlayCount() === 0,
+    'count=' . $ttApp->overlayCount(),
+);
+
+$ttApp->frame(2800.0, $ttConstraints);
+check(
+    'Tooltip · 满 500ms ⇒ 弹出且文字是声明的那句',
+    $ttApp->overlayCount() === 1 && $ttApp->tooltipText() === '保存当前文档',
+    'count=' . $ttApp->overlayCount() . ' text=' . var_export($ttApp->tooltipText(), true),
+);
+
+// —— ③ 落位：水平居中于锚点 + 垂直在锚点上方（首选 ABOVE_CENTER）——
+$ttTop = $ttApp->topEntry();
+$ttPanelBox = $ttTop?->element?->effectiveBox();
+$ttPanelW = ($ttPanelBox?->size()?->width ?? 0.0) - 8.0;    // elevation 4 × 2
+$ttPanelH = ($ttPanelBox?->size()?->height ?? 0.0) - 8.0;
+// ★ 面板必须有非零尺寸。2026-10-23 真机踩过：`BoxConstraints::INFINITY` 作为
+//   **外部类常量引用**在 AOT 下求值成 0 ⇒ maxHeight=0 ⇒ 面板 w=h=0 ⇒
+//   位置算得完全正确、画面一丝不变，而解释器侧（本文件）全绿。
+//   这条断言在解释器下**抓不到那个 bug**（INFINITY 正常），但它把"面板必须有
+//   尺寸"写成了显式契约；真正的闸门是 T2 真机一图 + `BoxConstraints::capWidth()`。
+check(
+    'Tooltip · 面板宽高非零（位置对但尺寸 0 = 画面一丝不变）',
+    $ttPanelW > 0.0 && $ttPanelH > 0.0,
+    'panelW=' . $ttPanelW . ' panelH=' . $ttPanelH,
+);
+$ttLeft = ($ttTop?->x ?? -999.0) + 4.0;
+$ttTopY = ($ttTop?->y ?? -999.0) + 4.0;
+// ★ 期望值 = **夹取后**的居中值（`placeEntry()` ⑤ 会把负的 x 夹到 0）。
+//   不夹就写死 `ax + (aw−w)/2` 的话，锚点靠左时会误判成"没居中"——而实际是
+//   "居中后出界，被夹回来了"，那正是设计意图（`01` §4.2 不做通用避让）。
+$ttWantX = $ttAx + ($ttAw - $ttPanelW) / 2.0;
+if ($ttWantX < 0.0) {
+    $ttWantX = 0.0;
+}
+$ttMaxX = 320.0 - $ttPanelW;
+if ($ttWantX > $ttMaxX) {
+    $ttWantX = $ttMaxX > 0.0 ? $ttMaxX : 0.0;
+}
+check(
+    'Tooltip · 水平居中于锚点（x = clamp(ax + (aw − w)/2, 0, maxW − w)）',
+    abs($ttLeft - $ttWantX) < 0.51 && $ttAx > 50.0,
+    'left=' . $ttLeft . ' expect=' . $ttWantX . ' ax=' . $ttAx . ' panelW=' . $ttPanelW,
+);
+// ★ 期望值按公式推：锚点上方放得下就上方，否则翻到下方（夹具顶部留了 120 白，
+//   所以这里走的正是**上方**分支 —— 不留白就永远测不到首选方向）。
+$ttWantY = $ttAy - $ttPanelH >= 0.0 ? $ttAy - $ttPanelH : $ttAy + $ttAh;
+check(
+    'Tooltip · 垂直落在锚点上方（ABOVE_CENTER，不是贴着窗口顶翻转）',
+    abs($ttTopY - $ttWantY) < 0.51 && $ttAy - $ttPanelH >= 0.0,
+    'y=' . $ttTopY . ' expect=' . $ttWantY . ' ay=' . $ttAy . ' panelH=' . $ttPanelH,
+);
+check(
+    'Tooltip · 条目参数：不拦点击 / 不遮罩 / 不参与命中 / 限宽 320 / 不动焦点',
+    $ttTop !== null
+        && $ttTop->barrier === false
+        && $ttTop->scrim === false
+        && $ttTop->hitTest === false
+        && $ttTop->dismissOnTapOutside === false
+        && $ttTop->dismissOnEsc === false
+        && abs($ttTop->maxWidth - TooltipPanel::MAX_WIDTH) < 0.01
+        && $ttTop->restoreFocus === null,
+    $ttTop === null ? 'no entry' : json_encode([
+        'barrier' => $ttTop->barrier,
+        'hitTest' => $ttTop->hitTest,
+        'tapOutside' => $ttTop->dismissOnTapOutside,
+        'maxWidth' => $ttTop->maxWidth,
+        'restoreFocus' => $ttTop->restoreFocus === null ? 'null' : 'set',
+    ]),
+);
+
+// —— ④ hitTest=false：提示盖在 d 上时，点击穿透到 d（提示不吃点击）——
+$ttPanelCx = $ttLeft + $ttPanelW / 2.0;
+$ttPanelCy = $ttTopY + $ttPanelH / 2.0;
+// 前提：面板真的盖住了 d 的盒（否则这条判据测的是空气）
+$ttDBox = $ttD?->effectiveBox();
+[$ttDx, $ttDy] = $ttDBox === null ? [0.0, 0.0] : boxOrigin($ttDBox);
+$ttDw = $ttDBox?->size()?->width ?? 0.0;
+$ttDh = $ttDBox?->size()?->height ?? 0.0;
+$ttCovers = $ttPanelCx >= $ttDx && $ttPanelCx <= $ttDx + $ttDw
+    && $ttPanelCy >= $ttDy && $ttPanelCy <= $ttDy + $ttDh;
+
+$ttApp->seen = [];
+$ttApp->dispatchInput(PointerEvent::down($ttPanelCx, $ttPanelCy));
+check(
+    'Tooltip · hitTest=false ⇒ 提示盖在 d 上时点击穿透到 d（提示不吃点击）',
+    $ttCovers && $ttApp->seen === ['d'],
+    'covers=' . ($ttCovers ? 'yes' : 'no')
+        . ' seen=' . implode(',', $ttApp->seen)
+        . ' panel=(' . $ttPanelCx . ',' . $ttPanelCy . ')'
+        . ' d=(' . $ttDx . ',' . $ttDy . ',' . $ttDw . ',' . $ttDh . ')',
+);
+$ttApp->dispatchInput(PointerEvent::up($ttPanelCx, $ttPanelCy));
+
+// ★ 反例自检：hitTest=true ⇒ 面板自己吃掉这次 down（下面的 d 收不到）。
+//   这一条是"为什么必须有 hitTest 字段"的证据，不是补充说明。
+$ttTop2 = $ttApp->topEntry();
+if ($ttTop2 !== null) {
+    $ttTop2->hitTest = true;
+}
+$ttApp->seen = [];
+$ttApp->dispatchInput(PointerEvent::down($ttPanelCx, $ttPanelCy));
+check(
+    'Tooltip · 反例：hitTest=true ⇒ 提示吃掉点击（d 收不到）—— 这就是必须有这个字段的理由',
+    $ttApp->seen === [],
+    'seen=' . implode(',', $ttApp->seen),
+);
+$ttApp->dispatchInput(PointerEvent::up($ttPanelCx, $ttPanelCy));
+
+// —— ⑤ 离开 ⇒ 立即消失；回来 ⇒ 重新等 500ms ——
+// ★ 顺序很重要：**先离开再回来**。不离开的话 hover 目标没变 ⇒ `onHoverHit()`
+//   根本不会被调 ⇒ "重新弹出"会变成"它本来就没消失"的假通过。
+$ttApp->dispatchInput(PointerEvent::move($ttCx + $ttCw / 2.0, $ttCy + $ttCh / 2.0));
+check(
+    'Tooltip · 离开锚点 ⇒ 立即消失（不等延时）',
+    $ttApp->overlayCount() === 0,
+    'count=' . $ttApp->overlayCount(),
+);
+// ★ 先把时间基准对齐到 3000：`after()` 的基准是 **`lastTimestampMs`**（上一帧），
+//   在帧外调用时它可能已经落后很久 ⇒ 不对齐的话 due 会落在过去、定时器"提前到期"。
+//   ★ 对齐必须**在 move 之前**（`after()` 在 move 那一刻就调用了，due 当场定死）。
+//   对齐后 due = 3000 + 500 = 3500 ⇒ 下面 3400 / 3600 是**推出来的**，不是试出来的。
+$ttApp->frame(3000.0, $ttConstraints);
+$ttApp->dispatchInput(PointerEvent::move($ttAx + $ttAw / 2.0, $ttAy + $ttAh / 2.0));
+$ttApp->frame(3400.0, $ttConstraints);
+check(
+    'Tooltip · 离开再回来：未满 500ms 不弹（延时是真的在重新计时）',
+    $ttApp->overlayCount() === 0,
+    'count=' . $ttApp->overlayCount() . '（due=3500，此刻 3400）',
+);
+$ttApp->frame(3600.0, $ttConstraints);
+check(
+    'Tooltip · 离开再回来、满 500ms ⇒ 再次弹出',
+    $ttApp->overlayCount() === 1 && $ttApp->tooltipText() === '保存当前文档',
+    'count=' . $ttApp->overlayCount() . ' text=' . var_export($ttApp->tooltipText(), true),
+);
+
+// —— ⑥ 反例：悬停**无提示**的控件 ⇒ 不排期、不弹 ——
+$ttApp->dispatchInput(PointerEvent::move($ttCx + $ttCw / 2.0, $ttCy + $ttCh / 2.0));
+check(
+    'Tooltip · 移到无提示控件 ⇒ 已显示的提示立刻消失',
+    $ttApp->overlayCount() === 0,
+    'count=' . $ttApp->overlayCount(),
+);
+$ttApp->frame(4600.0, $ttConstraints);
+check(
+    'Tooltip · 反例：悬停无 tooltip() 的按钮 ⇒ 走满 500ms 也不弹、也不排期',
+    $ttApp->overlayCount() === 0 && !$ttApp->wantsFrame(),
+    'count=' . $ttApp->overlayCount() . ' wantsFrame=' . ($ttApp->wantsFrame() ? 'true' : 'false'),
+);
+
+// —— ⑦ 已显示时移到相邻带提示的控件 ⇒ 立即换（不再等 500ms）——
+$ttApp->dispatchInput(PointerEvent::move($ttAx + $ttAw / 2.0, $ttAy + $ttAh / 2.0));
+$ttApp->frame(4700.0, $ttConstraints);
+$ttApp->frame(5300.0, $ttConstraints);
+$ttApp->dispatchInput(PointerEvent::move($ttBx + $ttBw / 2.0, $ttBy + $ttBh / 2.0));
+$ttApp->frame(5400.0, $ttConstraints);   // 距上次显示只有 100ms < 500ms
+check(
+    'Tooltip · 已显示时移到相邻带提示的按钮 ⇒ 立即换内容（100ms < 500ms 也换）',
+    $ttApp->overlayCount() === 1 && $ttApp->tooltipText() === '永久删除，不可恢复',
+    'count=' . $ttApp->overlayCount() . ' text=' . var_export($ttApp->tooltipText(), true),
 );
 
 // ── 汇总 + 退出码（2026-10-18）──

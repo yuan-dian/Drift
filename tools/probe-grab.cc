@@ -142,6 +142,14 @@ struct Options {
     // ── 字符输入（`--chars`：PostMessage(WM_CHAR)）──────────────────
     bool typeChars = false;        // --chars=<hex UTF-16>
     std::wstring charsHex;
+    // ── 提前台（`--activate`）──────────────────────────────────────
+    // ★ 悬停类判据（Tooltip / hover 高亮）必需：`--cursor` 用 `SetCursorPos` 挪
+    //   **物理光标**，而 WM_MOUSEMOVE 只会送到"光标底下那扇窗"—— 目标窗在后台、
+    //   被 IDE 压着时，光标实际落在 IDE 上 ⇒ 目标窗**一条 move 都收不到**，
+    //   悬停永远不成立（现象：画面一丝不变，像"功能坏了"）。
+    //   ★ 与 `--keys` / `--chars` 内部的激活同源（`activateWindow()`），
+    //     但那两处是隐式的；悬停判据需要**显式**的开关。
+    bool activateFirst = false;    // --activate
 };
 
 struct Shot {
@@ -756,6 +764,8 @@ int wmain(int argc, wchar_t** argv)
             options.midPngPath = value;
         } else if (key == L"deactivate") {
             options.deactivate = true;
+        } else if (key == L"activate") {
+            options.activateFirst = true;
         } else if (key == L"keys") {
             // x,y,<hex UTF-16> —— 三段。hex 而不是原文：bash 传的非 ASCII 参数经
             // `CommandLineToArgvW` 按 ANSI 码页转换会丢字 ⇒ 一律 hex 才可复现。
@@ -865,6 +875,15 @@ int wmain(int argc, wchar_t** argv)
     // ★ bug ②：窗口在 ≠ 已画过第一帧。首帧落地前抓到的是屏幕残留。
     if (options.settleMs > 0) {
         ::Sleep(static_cast<DWORD>(options.settleMs));
+    }
+
+    // ★ 提前台（`--activate`）：悬停类判据的前置条件 —— `--cursor` 的物理光标
+    //   只把 WM_MOUSEMOVE 送给"光标底下那扇窗"，目标窗在后台时一条都收不到。
+    //   放在 settle **之后**（先让首帧落地，再抢前台，否则抢完还要等它重画）。
+    if (options.activateFirst) {
+        activateWindow(hwnd);
+        std::printf("activated=1\n");
+        printForegroundInfo("fg_after_activate", hwnd);
     }
 
     // ── 输入注入（拖动 resize / 点击 / 滚轮）────────────────────

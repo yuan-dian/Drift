@@ -49,7 +49,7 @@ use Drift\Errors;
 final class FramePhase
 {
     /** 必须在 settle 之前（会产脏；组内顺序任意 —— 四个泵写的是不同的 State） */
-    public const BEFORE_SETTLE = ['pumpIo', 'pumpTasks', 'pumpSliced', 'tickAnimations'];
+    public const BEFORE_SETTLE = ['pumpIo', 'pumpTasks', 'pumpSliced', 'pumpTimers', 'tickAnimations'];
 
     /** 必须在 settle 之后（观察新树；组内顺序任意，但 ⑧ 要在 ⑨ 前 —— 语义树要带焦点） */
     public const AFTER_SETTLE = ['tickLateMount', 'focusCollect', 'pumpSemantics'];
@@ -62,8 +62,8 @@ final class FramePhase
      */
     public const CORE = ['placeOverlays', 'settle'];
 
-    /** 全部要出现的名字（`06` §2.1 的三组九段 + settle 标记） */
-    public const ALL = ['pumpIo', 'pumpTasks', 'pumpSliced', 'tickAnimations', 'placeOverlays', 'settle', 'tickLateMount', 'focusCollect', 'pumpSemantics'];
+    /** 全部要出现的名字（`06` §2.1 的三组九段 + settle 标记 + W8-2 的 `pumpTimers`） */
+    public const ALL = ['pumpIo', 'pumpTasks', 'pumpSliced', 'pumpTimers', 'tickAnimations', 'placeOverlays', 'settle', 'tickLateMount', 'focusCollect', 'pumpSemantics'];
 
     /**
      * 每个名字越界/缺失的后果 —— 断言消息要能直接回答"所以呢"。
@@ -74,6 +74,7 @@ final class FramePhase
         'pumpIo' => '外部数据晚一帧到，回调里的 setState 要等下一帧',
         'pumpTasks' => '后台结果晚一帧生效 —— "loading → ready" 会闪一帧空',
         'pumpSliced' => '分片完成晚一帧，长任务收尾可见地迟一拍',
+        'pumpTimers' => '延时回调晚一帧；跑到 settle 之后则回调里的 setState 要等下一帧（tooltip 晚出、snackbar 晚走）',
         'tickAnimations' => '动画晚一帧起手，第一帧不动',
         'placeOverlays' => '浮层布局晚一帧，菜单/模态会抖一下',
         'settle' => '帧末重建没跑 —— 这一帧的 setState 全部作废',
