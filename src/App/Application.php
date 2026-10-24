@@ -27,6 +27,9 @@ use Drift\Layout\LayoutTolerance;
 use Drift\Layout\RenderObject;
 use Drift\Layout\RenderPopupPanel;
 use Drift\Layout\RenderScrollView;
+use Drift\Rendering\Canvas;
+use Drift\Rendering\ColorToken;
+use Drift\Rendering\Paint;
 use Drift\Rendering\RenderSurface;
 use Drift\Rendering\SurfaceProfile;
 use Drift\Text\DeterministicFontManager;
@@ -93,6 +96,9 @@ abstract class Application
      *   会变成"两份焦点状态"（§9.1 的焦点是渲染态，只能有一份）。
      */
     protected ?FocusManager $focus = null;
+
+    /** 上一次**画过**的焦点（`wantsFrame()` 的第七判据：焦点变过就再画一帧） */
+    private ?Element $paintedFocus = null;
 
     /**
      * UI 线程身份（`GetCurrentThreadId`，attach 时记下）。
@@ -1944,7 +1950,12 @@ abstract class Application
             $trace[] = 'settle';
         }
 
-        $frame->run($root, $constraints, $timestampMs, $this->overlays->all());
+        $frame->run($root, $constraints, $timestampMs, $this->overlays->all(), function (Canvas $canvas): void {
+            $this->paintFocusRing($canvas);
+        });
+
+        // 环已经落盘 ⇒ `wantsFrame()` 的第七判据从这里回落 false（有界）
+        $this->paintedFocus = $this->focus?->focused();
 
         // ★ ⓹ 迟到挂载补 tick（2026-10-20 修的框架洞，2026-10-22 换成登记表）：
         //   ⓸ 在 settle **之前**跑，而页面挂载发生在 `Frame::run()` 的 settle 段 ——
@@ -2062,6 +2073,9 @@ abstract class Application
                 $constraints,
                 $this->lastTimestampMs,
                 $this->overlays->all(),
+                function (Canvas $canvas): void {
+                    $this->paintFocusRing($canvas);
+                },
             );
         } finally {
             LayoutTolerance::$previewing = $previousTolerant;
@@ -2183,6 +2197,15 @@ abstract class Application
         // ★★ 第六个判据（W8-2 远程搜索，2026-10-24）：**面板内容落后一帧**。
         //   见 `panelsLagBehind()` —— 少了它，远程搜索的结果到了、数据也对，
         //   面板却**永远**停在旧内容（真机现象，smoke 因为显式跑两帧看不见）。
+        // ★★ 第七个判据（W8-5 焦点视觉，2026-10-24）：**焦点变过但还没画**。
+        //   焦点环是应用级叠加（`paintFocusRing`），不经过任何 `setState` ⇒
+        //   没有这条，键盘 Tab 换焦点后环要等**下一次鼠标移动**才出现（真机现象：
+        //   点击普通文字把焦点落到 RichText，画面 md5 一点没变）。
+        //   有界：画完把 `$paintedFocus` 记成当前焦点 ⇒ 立刻回落 false。
+        if ($this->focus?->focused() !== $this->paintedFocus) {
+            return true;
+        }
+
         return $this->panelsLagBehind();
     }
 
@@ -3058,6 +3081,51 @@ abstract class Application
         }
 
         return $this->focus?->cursorOf($hit) ?? CursorShape::Default;
+    }
+
+    /**
+     * 焦点环 —— **应用级叠加**，不侵入任何控件（W8-5 续作五）。
+     *
+     * ★ 为什么挂在 `Frame::run()` 的 afterPaint：树与浮层都画完之后再画，环才压在
+     *   最上层（浮层里的焦点也盖得住）。
+     * ★ 为什么不做成 `Modifier` 或各控件自绘：那要么每个盒都得知道"我在焦点上"
+     *   （盒状态跨重建会丢，见 `State::didChangeFocus()` 的注释），要么给
+     *   `RenderObject` 注入焦点查询 —— 都比这一处多。
+     * ★ 样式：**2px 外扩**描边（`drawRect` 只有填充 ⇒ 四条边拼），主题 `Accent` 色。
+     *   直角、不跟随控件圆角（MVP，见文档能力边界）。
+     */
+    private function paintFocusRing(Canvas $canvas): void
+    {
+        $focused = $this->focus?->focused();
+
+        if ($focused === null) {
+            return;
+        }
+
+        $box = $focused->effectiveBox();
+
+        if ($box === null || !$box->hasSize()) {
+            return;
+        }
+
+        $size = $box->size();
+
+        if ($size === null) {
+            return;
+        }
+
+        [$ox, $oy] = RenderBox::absoluteOrigin($box);
+        $paint = Paint::fill($this->theme()->color(ColorToken::Accent));
+
+        $x = $ox - 1.0;
+        $y = $oy - 1.0;
+        $w = $size->width + 2.0;
+        $h = $size->height + 2.0;
+
+        $canvas->drawRect(new Rect($x, $y, $w, 2.0), $paint);
+        $canvas->drawRect(new Rect($x, $y + $h - 2.0, $w, 2.0), $paint);
+        $canvas->drawRect(new Rect($x, $y, 2.0, $h), $paint);
+        $canvas->drawRect(new Rect($x + $w - 2.0, $y, 2.0, $h), $paint);
     }
 
     private function dispatchToCapture(Element $node, PointerEvent $event): ?CursorShape

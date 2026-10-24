@@ -95,6 +95,7 @@ final class Frame
         BoxConstraints $constraints,
         float $timestampMs,
         array $overlays = [],
+        ?\Closure $afterPaint = null,
     ): void {
         // ① 帧末统一重建（§5.2 裁决 3）：派发中途的 setState 只标脏
         // ★ O-12 A′ 帧循环异常策略 S3 的"无边界"半边：异常从子树一路冒到这里
@@ -198,6 +199,12 @@ final class Frame
                     $popupBox->paintComposed($canvas);
                     $canvas->restore();
                 }
+            }
+
+            // ★ `afterPaint`：树与浮层都画完、`endFrame` 之前 —— 给"应用级叠加"
+            //   一个口子（焦点环就是它：不侵入任何控件，一次覆盖全仓可聚焦点）。
+            if ($afterPaint !== null) {
+                $afterPaint($canvas);
             }
 
             $this->surface->endFrame();

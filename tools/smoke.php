@@ -48,6 +48,7 @@ use Drift\Dev\Smoke\Frame\TickerWidget;
 use Drift\Dev\Smoke\Frame\TickerState;
 use Drift\Dev\Smoke\Overlay\FlatBox;
 use Drift\Dev\Smoke\Overlay\RecordingSurface;
+use Drift\Dev\Smoke\App\FocusRingApplication;
 use Drift\Dev\Smoke\App\OverlayLabApplication;
 use Drift\App\OverlayEntry;
 use Drift\Dev\Smoke\Rendering\ProbePainter;
@@ -9152,6 +9153,42 @@ check(
     'RichText · Enter 触发第一个链接（keyboard 缝，键被消费）',
     $kbConsumed && $taps === ['retry'],
     sprintf('consumed=%s taps=%s', $kbConsumed ? 'y' : 'n', implode(',', $taps)),
+);
+
+// —— W8-5 续作五：焦点环（应用级叠加，零控件改动）——
+$ringApp = new FocusRingApplication();
+$ringProbe = new SurfaceProbe();
+$ringProbe->resize(300, 200, 1.0);
+$ringApp->attach($ringProbe, BoxConstraints::tight(new Size(300.0, 200.0)));
+$ringApp->frame(0.0, BoxConstraints::tight(new Size(300.0, 200.0)));
+$ringBefore = $ringProbe->canvas?->pixelAt(19, 19);
+
+$ringApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
+$ringWants = $ringApp->wantsFrame();
+$ringApp->frame(1.0, BoxConstraints::tight(new Size(300.0, 200.0)));
+$ringAfter = $ringProbe->canvas?->pixelAt(19, 19);
+$ringAccent = Color::fromRgb(0x09, 0x69, 0xDA);
+
+check(
+    '焦点环 · 焦点变了但还没画 ⇒ wantsFrame 为真（第七判据；否则环要等下次输入）',
+    $ringWants === true,
+    'wantsFrame=' . ($ringWants ? 'y' : 'n'),
+);
+
+check(
+    '焦点环 · 无焦点时 (19,19) 不是描边（不是"一直画")',
+    $ringBefore !== null && !$ringBefore->equals($ringAccent),
+    'rgb=' . ($ringBefore === null ? 'null' : $ringBefore->r . ',' . $ringBefore->g . ',' . $ringBefore->b),
+);
+check(
+    '焦点环 · Tab 聚焦后控件左上外扩 1px 是 Accent 描边',
+    $ringAfter !== null && $ringAfter->equals($ringAccent),
+    'rgb=' . ($ringAfter === null ? 'null' : $ringAfter->r . ',' . $ringAfter->g . ',' . $ringAfter->b),
+);
+check(
+    '焦点环 · 画完后悔回落（wantsFrame 的第七判据有界）',
+    $ringApp->wantsFrame() === false,
+    'wantsFrame=' . ($ringApp->wantsFrame() ? 'y' : 'n'),
 );
 
 // —— 扁平按钮：盒样式 isNone（无底无边框），字色走正文色
