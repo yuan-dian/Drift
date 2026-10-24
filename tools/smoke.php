@@ -278,6 +278,7 @@ use Drift\Dev\Smoke\App\SliderApplication;
 use Drift\Dev\Smoke\App\TooltipApplication;
 use Drift\Dev\Smoke\App\SnackbarApplication;
 use Drift\Dev\Smoke\App\SelectApplication;
+use Drift\Dev\Smoke\App\SelectStateApplication;
 use Drift\Dev\Smoke\App\ComboBoxApplication;
 use Drift\Widget\Option;
 use Drift\Widget\Select;
@@ -13394,6 +13395,132 @@ check(
     'Select · 反例：短列表 maxScroll = 0（内容不溢出 ⇒ 不画滚动条，浏览器同行为）',
     $selSMax === 0.0,
     'maxScroll=' . $selSMax,
+);
+
+// ── W8-2 Select 三态 / 方向键 / 跨树重建（2026-10-24）──
+// ★ 这一块钉住的是"面板内容随状态变"这条链：浮层是**第二棵根渲染树**，主树重建
+//   不带动它 ⇒ 全靠 `SelectState` 的 `Subject`（方向键）与 `didUpdateWidget`
+//   签名比对（受控值 / 三态 / 选项表）。
+// ★ 反例自检（2026-10-24 实测）：把 `SelectState::didUpdateWidget()` 里的
+//   `parent::didUpdateWidget($widget)` 摘掉 ⇒ 下面**恰好 6 条红**（三态 5 条 + 跨树
+//   1 条），而方向键 3 条**仍绿** —— 方向键走的是 `Subject` 广播、不经过那条缝。
+//   这个"红 6 绿 3"的形状就是这套用例确实守着跨树重建的证据。
+$ssC = BoxConstraints::loose(new Size(600.0, 400.0));
+$ssApp = new SelectStateApplication();
+$ssApp->attach(new SurfaceProbe(), $ssC);
+$ssApp->frame(1000.0, $ssC);
+$ssHost = $ssApp->host();
+check('Select 三态 · 夹具挂上（根是 StatefulWidget，有 State）', $ssHost !== null);
+
+// —— 键盘路径开面板：Tab 到触发框 ⇒ Enter（`onOpen` 在这里触发）——
+$ssApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
+$ssApp->dispatchInput(KeyEvent::down(KeyChord::enter()));
+$ssApp->frame(1100.0, $ssC);
+check(
+    'Select 三态 · Enter 开面板，且 onOpen 恰好被调一次',
+    $ssApp->overlayCount() === 1 && $ssHost?->openCount === 1,
+    'overlay=' . $ssApp->overlayCount() . ' open=' . ($ssHost?->openCount ?? -1)
+);
+check('Select 三态 · 面板 3 项（三态都没设时的正常路径）', count($ssApp->optionButtons()) === 3);
+
+// —— 方向键：打开时高亮 = 当前值（310000 ⇒ 下标 1）⇒ Enter 直接提交它 ——
+$ssApp->dispatchInput(KeyEvent::down(KeyChord::enter()));
+$ssApp->frame(1200.0, $ssC);
+check(
+    'Select 方向键 · 打开时高亮落在当前值上 ⇒ Enter 提交它',
+    $ssHost?->changed === ['310000'],
+    'changed=' . implode(',', $ssHost?->changed ?? [])
+);
+check('Select 方向键 · 提交后面板自己收起', $ssApp->overlayCount() === 0);
+
+// —— Down 移一格 ——
+$ssApp->dispatchInput(KeyEvent::down(KeyChord::enter()));
+$ssApp->frame(1300.0, $ssC);
+$ssApp->dispatchInput(KeyEvent::down(KeyChord::down()));
+$ssApp->frame(1400.0, $ssC);
+$ssApp->dispatchInput(KeyEvent::down(KeyChord::enter()));
+$ssApp->frame(1500.0, $ssC);
+check(
+    'Select 方向键 · Down 一格 ⇒ 提交下一项（440100，不是当前值）',
+    $ssHost?->changed === ['310000', '440100'],
+    'changed=' . implode(',', $ssHost?->changed ?? [])
+);
+
+// —— Up 环绕：下标 1 往上两次 ⇒ 1 → 0 → 末项（2）——
+$ssApp->dispatchInput(KeyEvent::down(KeyChord::enter()));
+$ssApp->frame(1600.0, $ssC);
+$ssApp->dispatchInput(KeyEvent::down(KeyChord::up()));
+$ssApp->frame(1700.0, $ssC);
+$ssApp->dispatchInput(KeyEvent::down(KeyChord::up()));
+$ssApp->frame(1800.0, $ssC);
+$ssApp->dispatchInput(KeyEvent::down(KeyChord::enter()));
+$ssApp->frame(1900.0, $ssC);
+check(
+    'Select 方向键 · Up 到顶后环绕到末项（与 FocusManager 的 Tab 环同手感）',
+    $ssHost?->changed === ['310000', '440100', '440100'],
+    'changed=' . implode(',', $ssHost?->changed ?? [])
+);
+
+// —— 三态：面板开着时改受控值 ⇒ 面板**跨树**跟着变 ——
+// ★ 每处要跑**两帧**，原因是 `Application::frame()` 的顺序：
+//   ① `placeOverlays()`（先 settle 浮层 + 布局）→ ② `Frame::run()`（settle 主树）。
+//   受控值一变，主树重建发生在 ②，面板的 `markDirty()` 也在 ② —— 此时浮层的
+//   布局段已经跑完 ⇒ 新盒这一帧没排过，下一帧才显示。60fps 下不可见（16ms），
+//   但用例必须按实际帧序写，否则会把"晚一帧"误判成"没生效"。
+$ssSettle = function (float $t) use ($ssApp, $ssC): void {
+    $ssApp->frame($t, $ssC);
+    $ssApp->frame($t + 1.0, $ssC);
+};
+
+$ssApp->dispatchInput(KeyEvent::down(KeyChord::enter()));
+$ssApp->frame(2000.0, $ssC);
+$ssHost?->setLoading(true);
+$ssSettle(2100.0);
+check(
+    'Select 三态 · loading ⇒ 面板 0 个候选按钮（不是还列着旧选项）',
+    $ssApp->optionButtons() === [],
+    'n=' . count($ssApp->optionButtons())
+);
+check(
+    'Select 三态 · loading ⇒ 面板里是"正在加载…"（跨树重建的证据）',
+    in_array('正在加载…', $ssApp->panelTexts(), true),
+    'texts=' . implode('|', $ssApp->panelTexts())
+);
+
+$ssHost?->setLoading(false);
+$ssHost?->setError('加载失败');
+$ssSettle(2200.0);
+check(
+    'Select 三态 · error ⇒ 面板里是错误行',
+    in_array('加载失败', $ssApp->panelTexts(), true) && $ssApp->optionButtons() === [],
+    'texts=' . implode('|', $ssApp->panelTexts())
+);
+
+// 优先级：loading 盖过 error（重试时两个都真，该看到"正在加载"）
+$ssHost?->setLoading(true);
+$ssSettle(2300.0);
+check(
+    'Select 三态 · loading 优先于 error（重试时该看到"正在加载"）',
+    in_array('正在加载…', $ssApp->panelTexts(), true) && !in_array('加载失败', $ssApp->panelTexts(), true)
+);
+
+$ssHost?->setLoading(false);
+$ssHost?->setError('');
+$ssHost?->setOptions([]);
+$ssSettle(2400.0);
+check(
+    'Select 三态 · 空表 ⇒ emptyText 那一行（不是一片空白）',
+    in_array('没有可选项', $ssApp->panelTexts(), true) && $ssApp->optionButtons() === [],
+    'texts=' . implode('|', $ssApp->panelTexts())
+);
+
+// 面板开着时换选项表 ⇒ 项数跟着变（`didUpdateWidget` 的签名比对在起作用）
+$ssHost?->setOptions([Option::of('甲'), Option::of('乙')]);
+$ssSettle(2500.0);
+check(
+    'Select 跨树 · 面板开着时换选项表 ⇒ 面板项数跟着变',
+    count($ssApp->optionButtons()) === 2,
+    'n=' . count($ssApp->optionButtons())
 );
 
 // ── W8-2 ComboBox（可编辑下拉：输入过滤 + 浮层联动，2026-10-24）──

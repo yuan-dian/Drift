@@ -4,7 +4,10 @@ declare(strict_types=1);
 namespace App\Showcase\Pages;
 
 use Drift\Geometry\EdgeInsets;
+use Drift\Layout\FlexAlign;
 use Drift\Widget\BuildContext;
+use Drift\Widget\Button;
+use Drift\Widget\ButtonVariant;
 use Drift\Widget\Card;
 use Drift\Widget\Column;
 use Drift\Widget\Option;
@@ -23,16 +26,22 @@ use Drift\Widget\Widget;
  * 形态对照 Win32 `ComboBox` / Material `DropdownButton`：一个"选择框"，
  * 点开是一列选项，选中一项后把值交给应用（**受控**）。
  *
- * 四段演示：
+ * 七段演示：
  *
  *   ① 基本：三个城市，选中项在下拉里用强调色底标出来；
  *   ② 值 ≠ 显示名：`Option::make('北京市', '110000')` —— 值域是身份、标签是给人看的字；
  *   ③ 宽控件：`triggerWidth()` 定宽（标签靠左，没有下拉箭头）；
- *   ④ 长列表：30 项 ⇒ 面板被限高到 260 且**可以滚**（2026-10-24 起有了）。
+ *   ④ 长列表：30 项 ⇒ 面板被限高到 260 且**可以滚**（2026-10-24 起有了）；
+ *   ⑤ 映射短形式：`['110000' => '北京市']`（键 = 值）；
+ *   ⑥ 行数组：`Option::fromRows($rows, 'name', 'id')`（DB / HTTP 的形状）；
+ *   ⑦ 远程三态：加载中 / 失败 / 空表 —— 外加 `onOpen()` 打开才取数（2026-10-24）。
  *
- * ★ 应用侧只有三个链式方法：`options / value / onChanged`。开面板、落位、点外面关、
- *   ESC 关、控件卸载自动收尸全在框架 —— 这与 Tooltip 是**同一类**声明式浮层
+ * ★ 应用侧只有这几个链式方法：`options / value / onChanged` + 三态
+ *   `loading / emptyText / errorText` + `onOpen`。开面板、落位、点外面关、ESC 关、
+ *   控件卸载自动收尸全在框架 —— 这与 Tooltip 是**同一类**声明式浮层
  *   （`Widget::overlayPanel()`），不需要组合根接线（与 Snackbar 相反）。
+ * ★ 方向键（2026-10-24 起有了）：面板打开后 ↓/↑ 移高亮（环绕）、Enter 提交。
+ *   高亮是**控件私有态**，应用不用为"光标停在第几行"再存一个字段。
  * ★ 页末如实记录能力边界。
  */
 final class SelectPage extends StatefulWidget
@@ -66,6 +75,50 @@ final class SelectState extends State
     private string $short = '';
 
     private string $row = '';
+
+    // ── ⑦ 远程三态（受控：什么时候算加载完只有应用知道）──
+
+    /** @var list<Option> 远程选项表（一开始是空的 —— 打开面板才取数） */
+    private array $remote = [];
+
+    private string $remoteValue = '';
+
+    private bool $remoteLoading = false;
+
+    private string $remoteError = '';
+
+    /** `onOpen` 被调了几次（证明它只在"要开面板"时触发，不是每次重建） */
+    private int $openCount = 0;
+
+    /**
+     * 把远程那段状态切到某一态（示例台不联网，**直接摆姿势**）。
+     *
+     * ★ 刻意做成"点了就一直停在这一态"：`loading` 若在同一帧里被立刻改成 `false`，
+     *   你就永远看不到"正在加载"那个面板 —— 而这一页要给人看的恰恰是那个面板。
+     * ★ 真应用的写法是：`onOpen` 里 `loading(true)` + 发请求，`Job::onDone` 里
+     *   `loading(false)` + 换选项表。控件侧一行都不用改（三态全是受控属性）。
+     */
+    private function setRemoteState(string $state): void
+    {
+        $this->setState(function () use ($state): void {
+            $this->remoteError = '';
+            $this->remoteLoading = false;
+            $this->remote = [];
+
+            if ($state === 'loading') {
+                $this->remoteLoading = true;
+            } elseif ($state === 'error') {
+                $this->remoteError = '连接超时（换一态再来）';
+            } elseif ($state === 'ok') {
+                $this->remote = [
+                    Option::make('北京市', '110000'),
+                    Option::make('上海市', '310000'),
+                    Option::make('广州市', '440100'),
+                ];
+            }
+            // 'empty' ⇒ 什么都不设：选项表为空、不在加载、没有错误
+        });
+    }
 
     /** @return list<Option> 30 项（行高由主题定，这里不猜） */
     private static function manyOptions(): array
@@ -161,9 +214,53 @@ final class SelectState extends State
                 . '那两家字段名拼错是**静默**的（整列空白），这里缺字段直接 Fatal 并报出'
                 . '「哪一行、缺哪个字段、现有哪几列」。')->caption(),
 
+            $this->sectionBar('⑦ 远程三态 · 加载中 / 失败 / 空表（2026-10-24）'),
+            Card::make(Column::make()->spacing(10.0)->children([
+                Row::make()->spacing(12.0)->children([
+                    Select::make($this->remote)
+                        ->value($this->remoteValue)
+                        ->placeholder('请选择城市')
+                        // ★ 定宽：不定宽时占位文字会把框撑成两行（Row 只给内容宽）
+                        ->triggerWidth(200.0)
+                        ->loading($this->remoteLoading)
+                        ->errorText($this->remoteError)
+                        ->emptyText('没有匹配的城市')
+                        ->onOpen(function (): void {
+                            // ★ 只在**要开面板**那一刻触发一次（不是每次应用重建）
+                            $this->setState(function (): void {
+                                $this->openCount++;
+                            });
+                        })
+                        ->onChanged(fn(string $v) => $this->setState(function () use ($v): void {
+                            $this->remoteValue = $v;
+                        })),
+                    Text::make($this->remoteValue === '' ? '还没选' : '收到值：' . $this->remoteValue)
+                        ->caption(),
+                    Text::make('onOpen 触发 ' . $this->openCount . ' 次')->caption(),
+                ])->cross(FlexAlign::Center),
+                Row::make()->spacing(8.0)->children([
+                    Button::make('加载中')->variant(ButtonVariant::Flat)
+                        ->onPressed(fn() => $this->setRemoteState('loading')),
+                    Button::make('加载完成（3 项）')->variant(ButtonVariant::Flat)
+                        ->onPressed(fn() => $this->setRemoteState('ok')),
+                    Button::make('加载失败')->variant(ButtonVariant::Flat)
+                        ->onPressed(fn() => $this->setRemoteState('error')),
+                    Button::make('空结果')->variant(ButtonVariant::Flat)
+                        ->onPressed(fn() => $this->setRemoteState('empty')),
+                ]),
+            ]))->paddingAll(12.0),
+            Text::make('优先级：`loading` > `errorText` > 空表 `emptyText` > 选项行 —— 重试时'
+                . '两个都真，用户该看到的是"正在加载"。三态全是**受控属性**（什么时候算加载完'
+                . '只有应用知道），控件只负责"显示成什么样"。')->caption(),
+            Text::make('★ 面板是**第二棵根渲染树**：主树重建不带动它 ⇒ 这三条能跨树生效，'
+                . '靠的是 `Select` 有态化之后在 `didUpdateWidget()` 里比对签名再 publish。'
+                . '把 `Select` 改回无态，这一段就会"点了按钮面板纹丝不动"。')->caption(),
+
             $this->sectionBar('能力边界（如实记录）'),
-            Text::make('① 方向键换值：没有 —— 面板只在**打开那一刻**建一次，选中高亮会停在'
-                . '旧值上 ⇒ 宁可不做，也不做一个会自相矛盾的。补齐要先让"面板随控件重建"。')->caption(),
+            Text::make('① 方向键换值：**有了**（2026-10-24）—— 面板打开后 ↓/↑ 移高亮（到顶'
+                . '环绕到末项）、Enter 提交。做法是"高亮 + Enter"而不是"方向键移焦点"：'
+                . '后者要新开一条"复合控件内方向键"的框架缝，而焦点/手势是本仓出过最多'
+                . ' bug 的地方，为一个 nice-to-have 动它不划算。')->caption(),
             Text::make('② 下拉箭头：没有 —— `Button` 的标签位只收字符串，要画箭头得再包一层'
                 . ' `Row`，那会多出一个焦点目标。')->caption(),
             Text::make('③ 滚动：有了（2026-10-24）—— 面板内容套 `ScrollView` + '
