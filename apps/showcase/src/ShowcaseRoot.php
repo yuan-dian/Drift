@@ -27,6 +27,7 @@ use Drift\Widget\Widget;
 
 use App\Showcase\Pages\BigListPage;
 use App\Showcase\Pages\ButtonsPage;
+use App\Showcase\Pages\ComboBoxPage;
 use App\Showcase\Pages\CustomPaintPage;
 use App\Showcase\Pages\FeedbackPage;
 use App\Showcase\Pages\FormPage;
@@ -129,6 +130,7 @@ final class ShowcaseState extends State
             ['提示 Tooltip', static fn(): Widget => new TooltipPage()],
             ['通知 Snackbar', fn(): Widget => new SnackbarPage($this->notify)],
             ['下拉 Select', static fn(): Widget => new SelectPage()],
+            ['可编辑 Combo', static fn(): Widget => new ComboBoxPage()],
         ];
     }
 

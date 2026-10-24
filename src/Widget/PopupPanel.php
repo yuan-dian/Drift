@@ -97,9 +97,9 @@ final class PopupPanel extends BoxWidget
      *   **只挪 x/y 不改高**，所以那条兜底救不了"点不到"。
      *
      * ★ **已有消费者**（都走同一条"超高才滚"）：`Select`（`PANEL_MAX_HEIGHT = 260`）、
-     *   `Menu` / `ContextMenu`（`PANEL_MAX_HEIGHT = 320`，2026-10-24）。
-     *   `Modal` / `SnackbarPanel` / `TooltipPanel` 仍不设 —— 它们的内容由应用自己管
-     *   （要滚应用自己套 `ScrollView`），面板不替它决定。
+     *   `ComboBox`（260，2026-10-24）、`Menu` / `ContextMenu`（`PANEL_MAX_HEIGHT = 320`，
+     *   2026-10-24）。`Modal` / `SnackbarPanel` / `TooltipPanel` 仍不设 —— 它们的内容
+     *   由应用自己管（要滚应用自己套 `ScrollView`），面板不替它决定。
      */
     public function maxHeight(float $value): static
     {

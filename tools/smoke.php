@@ -276,6 +276,7 @@ use Drift\Dev\Smoke\App\SliderApplication;
 use Drift\Dev\Smoke\App\TooltipApplication;
 use Drift\Dev\Smoke\App\SnackbarApplication;
 use Drift\Dev\Smoke\App\SelectApplication;
+use Drift\Dev\Smoke\App\ComboBoxApplication;
 use Drift\Widget\Option;
 use Drift\Widget\Select;
 use Drift\Widget\Snackbar;
@@ -13241,6 +13242,174 @@ check(
     'Select · 反例：短列表 maxScroll = 0（内容不溢出 ⇒ 不画滚动条，浏览器同行为）',
     $selSMax === 0.0,
     'maxScroll=' . $selSMax,
+);
+
+// ── W8-2 ComboBox（可编辑下拉：输入过滤 + 浮层联动，2026-10-24）──
+// ★ 这一块钉住三件事：
+//   ① **跨树重建**：输入框在主树、候选面板在浮层树（第二棵根渲染树）⇒ 主树重建
+//      **不会**带动面板。面板靠 `ComboBoxQuery`（`Subject`）自己订阅自己重建 ——
+//      这是本控件最不显然的一处，只读代码看不出来它通不通，所以必须有断言。
+//   ② 字段的两个状态（显示标签 / 搜索框）之间的切换点只有"打开面板"与"关闭面板"。
+//   ③ 键盘：Enter 取第一项、Esc 收起、Tab 进面板后打字仍进输入框（`forwardKey()`）。
+// ★ 反例自检两条：无匹配项时 Enter **不关面板也不回调**；点面板外 ⇒ 字段**丢弃**
+//   打了一半的词回到旧标签。
+$cbConstraints = BoxConstraints::loose(new Size(360.0, 300.0));
+$cbApp = new ComboBoxApplication();
+$cbApp->attach(new SurfaceProbe(), $cbConstraints);
+$cbApp->frame(2000.0, $cbConstraints);
+$cbT = 2000.0;
+
+/** 推进一帧（`placeOverlays()` 的 settle 段在这一帧里重建面板） */
+$cbTick = static function () use ($cbApp, $cbConstraints, &$cbT): void {
+    $cbT += 16.0;
+    $cbApp->frame($cbT, $cbConstraints);
+};
+
+/** 在客户区某点按一下（down + up 同点）并推进一帧 */
+$cbTap = static function (array $pt) use ($cbApp, $cbTick): void {
+    $cbApp->dispatchInput(PointerEvent::down($pt[0], $pt[1]));
+    $cbApp->dispatchInput(PointerEvent::up($pt[0], $pt[1]));
+    $cbTick();
+};
+
+/** 候选按钮的标签（按视觉顺序） */
+$cbLabels = static function () use ($cbApp): array {
+    $out = [];
+    foreach ($cbApp->optionButtons() as $el) {
+        $w = $el->widget();
+        $out[] = $w instanceof Button ? $w->label() : '?';
+    }
+
+    return $out;
+};
+
+check('ComboBox · 初始没有浮层', $cbApp->overlayCount() === 0, 'overlay=' . $cbApp->overlayCount());
+
+// —— ① 点输入框 ⇒ 开面板（全部 4 项）——
+$cbTap($cbApp->fieldCenter());
+check(
+    'ComboBox · 点输入框 ⇒ 开一层浮层，列出全部 4 项',
+    $cbApp->overlayCount() === 1 && $cbLabels() === ['北京市', '上海市', '广州市', '北京南站'],
+    'overlay=' . $cbApp->overlayCount() . ' rows=[' . implode(',', $cbLabels()) . ']',
+);
+// ★ 打开时字段必须切成**空**的搜索框：否则打字会追加在标签后面
+//   （现象：选中"北京市"再打开、打"上"⇒ 字段成了"北京市上"、一项都匹配不到）。
+check(
+    'ComboBox · 打开时字段切成空搜索框（不是留着标签让打字追加）',
+    $cbApp->fieldState()?->text() === '',
+    'text=' . var_export($cbApp->fieldState()?->text(), true),
+);
+
+// —— ② 打字 ⇒ **跨树**过滤 ——
+$cbApp->dispatchInput(KeyEvent::character('北'));
+$cbTick();
+check(
+    'ComboBox · 打字「北」⇒ 面板跨树过滤到 2 项（主树输入、浮层树重建）',
+    $cbLabels() === ['北京市', '北京南站'],
+    'rows=[' . implode(',', $cbLabels()) . ']',
+);
+check(
+    'ComboBox · 字段显示输入的字（不是标签）',
+    $cbApp->fieldState()?->text() === '北',
+    'text=' . var_export($cbApp->fieldState()?->text(), true),
+);
+
+// —— ③ Enter ⇒ 取过滤后的**第一项** ——
+$cbApp->dispatchInput(KeyEvent::down(KeyChord::enter()));
+$cbTick();
+check(
+    'ComboBox · Enter ⇒ 取过滤后的第一项（110000，不是唯一的"北京南站"）',
+    $cbApp->changed() === ['110000'] && $cbApp->value() === '110000',
+    'changed=[' . implode(',', $cbApp->changed()) . '] value=' . $cbApp->value(),
+);
+check(
+    'ComboBox · Enter 后浮层收掉，字段回到新标签「北京市」',
+    $cbApp->overlayCount() === 0 && $cbApp->fieldState()?->text() === '北京市',
+    'overlay=' . $cbApp->overlayCount() . ' text=' . var_export($cbApp->fieldState()?->text(), true),
+);
+
+// —— ④ 再打开 ⇒ 过滤词复位（"点一下看全部"）——
+$cbTap($cbApp->fieldCenter());
+check(
+    'ComboBox · 再打开 ⇒ 又列出全部 4 项（过滤词随打开复位，不是只剩标签那一项）',
+    $cbApp->overlayCount() === 1 && count($cbLabels()) === 4,
+    'overlay=' . $cbApp->overlayCount() . ' rows=' . count($cbLabels()),
+);
+
+// —— ⑤ 过滤 + Esc ⇒ 收面板且**丢弃**过滤词 ——
+$cbApp->dispatchInput(KeyEvent::character('上'));
+$cbTick();
+check(
+    'ComboBox · 打「上」⇒ 只剩 1 项（"北京市"不再匹配）',
+    $cbLabels() === ['上海市'],
+    'rows=[' . implode(',', $cbLabels()) . ']',
+);
+$cbApp->dispatchInput(KeyEvent::down(KeyChord::escape()));
+$cbTick();
+check(
+    'ComboBox · Esc ⇒ 收面板且字段回到旧标签「北京市」（丢弃打了一半的词）',
+    $cbApp->overlayCount() === 0 && $cbApp->fieldState()?->text() === '北京市'
+        && $cbApp->changed() === ['110000'],
+    'overlay=' . $cbApp->overlayCount() . ' text=' . var_export($cbApp->fieldState()?->text(), true),
+);
+
+// —— ⑥ 鼠标点第二项 ——
+$cbTap($cbApp->fieldCenter());
+$cbTap($cbApp->optionCenter(1));
+check(
+    'ComboBox · 点面板里的第二项 ⇒ 回调收到它的 value（310000）且收面板',
+    $cbApp->changed() === ['110000', '310000'] && $cbApp->overlayCount() === 0
+        && $cbApp->fieldState()?->text() === '上海市',
+    'changed=[' . implode(',', $cbApp->changed()) . '] overlay=' . $cbApp->overlayCount()
+        . ' text=' . var_export($cbApp->fieldState()?->text(), true),
+);
+
+// —— ⑦ 反例：无匹配项时 Enter 不关面板也不回调 ——
+$cbTap($cbApp->fieldCenter());
+$cbApp->dispatchInput(KeyEvent::character('z'));
+$cbTick();
+check(
+    'ComboBox · 反例：无匹配项 ⇒ 面板里 0 个候选按钮（但面板还在，有一行"无匹配项"）',
+    $cbApp->overlayCount() === 1 && count($cbLabels()) === 0,
+    'overlay=' . $cbApp->overlayCount() . ' rows=' . count($cbLabels()),
+);
+$cbApp->dispatchInput(KeyEvent::down(KeyChord::enter()));
+$cbTick();
+check(
+    'ComboBox · 反例：无匹配项时 Enter 不关面板、也不回调（别让人以为选中了什么）',
+    $cbApp->overlayCount() === 1 && $cbApp->changed() === ['110000', '310000'],
+    'overlay=' . $cbApp->overlayCount() . ' changed=[' . implode(',', $cbApp->changed()) . ']',
+);
+
+// —— ⑧ Tab 进面板后打字仍进输入框（`forwardKey()`）——
+$cbApp->dispatchInput(KeyEvent::down(KeyChord::escape()));
+$cbTick();
+$cbTap($cbApp->fieldCenter());
+$cbApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
+$cbTick();
+$cbFocused = $cbApp->focusedElement()?->widget();
+check(
+    'ComboBox · Tab ⇒ 焦点进面板的候选行（浮层树也在焦点链里，菜单同一条路）',
+    $cbFocused instanceof Button,
+    'focus=' . ($cbFocused === null ? '(null)' : get_class($cbFocused)),
+);
+$cbApp->dispatchInput(KeyEvent::character('上'));
+$cbTick();
+check(
+    'ComboBox · 焦点在面板行上时打字仍进输入框（forwardKey ⇒ 面板过滤到 1 项）',
+    $cbApp->fieldState()?->text() === '上' && $cbLabels() === ['上海市'],
+    'text=' . var_export($cbApp->fieldState()?->text(), true) . ' rows=[' . implode(',', $cbLabels()) . ']',
+);
+
+// —— ⑨ 反例：点面板外 ⇒ 关且丢弃过滤词 ——
+$cbApp->dispatchInput(PointerEvent::down(340.0, 280.0));
+$cbApp->dispatchInput(PointerEvent::up(340.0, 280.0));
+$cbTick();
+check(
+    'ComboBox · 反例：点面板外 ⇒ 关且字段回旧标签「上海市」（不把半截过滤词留在框里）',
+    $cbApp->overlayCount() === 0 && $cbApp->fieldState()?->text() === '上海市'
+        && $cbApp->changed() === ['110000', '310000'],
+    'overlay=' . $cbApp->overlayCount() . ' text=' . var_export($cbApp->fieldState()?->text(), true),
 );
 
 // ── 汇总 + 退出码（2026-10-18）──
