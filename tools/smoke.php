@@ -13072,6 +13072,39 @@ check(
     'count=' . $ttApp->overlayCount() . ' text=' . var_export($ttApp->tooltipText(), true),
 );
 
+// —— ②b 全清栈之后，相邻切换仍要等满 500ms ——
+// ★ 这条盯 S1 第 8 步「E 碰 D」的那条不变量：`closeMenu()` 全清会顺手收掉
+//   提示层，"已显示"状态位（`tooltipShown`）若不跟着复位，下一次悬停会
+//   **跳过 500ms 立即弹** —— 而正常路径必须重新等满。
+$ttApp->closeMenu();
+check(
+    'Tooltip · closeMenu() 全清后栈空（提示层被顺手收掉）',
+    $ttApp->overlayCount() === 0,
+    'count=' . $ttApp->overlayCount(),
+);
+$ttApp->dispatchInput(PointerEvent::move($ttBx + $ttBw / 2.0, $ttBy + $ttBh / 2.0));
+$ttApp->frame(3100.0, $ttConstraints);
+check(
+    'Tooltip · 反例：全清后悬停 b 不立即弹（状态位已复位，重新等 500ms）',
+    $ttApp->overlayCount() === 0,
+    'count=' . $ttApp->overlayCount(),
+);
+$ttApp->frame(3700.0, $ttConstraints);
+check(
+    'Tooltip · 再满 500ms ⇒ b 的提示弹出（文字是 b 声明的那句）',
+    $ttApp->overlayCount() === 1 && $ttApp->tooltipText() === '永久删除，不可恢复',
+    'count=' . $ttApp->overlayCount() . ' text=' . var_export($ttApp->tooltipText(), true),
+);
+// 恢复现场：③ 段起的落位 / hitTest 用例读的都是 **a 的提示**（已显示时相邻
+// 切换立即换内容 ⇒ move 回 a 即弹，不用再等 500ms）。
+$ttApp->dispatchInput(PointerEvent::move($ttAx + $ttAw / 2.0, $ttAy + $ttAh / 2.0));
+$ttApp->frame(4200.0, $ttConstraints);
+check(
+    'Tooltip · 悬停回 a ⇒ 现场恢复（后续落位用例读 a 的提示）',
+    $ttApp->overlayCount() === 1 && $ttApp->tooltipText() === '保存当前文档',
+    'count=' . $ttApp->overlayCount() . ' text=' . var_export($ttApp->tooltipText(), true),
+);
+
 // —— ③ 落位：水平居中于锚点 + 垂直在锚点上方（首选 ABOVE_CENTER）——
 $ttTop = $ttApp->topEntry();
 $ttPanelBox = $ttTop?->element?->effectiveBox();

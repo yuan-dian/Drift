@@ -1,9 +1,9 @@
 # 12 · Application 拆分（S1）
 
-> 状态：拆解中 · 2026-10-24 · 第一~七步已落地（收接口 + 四片：TextEditingBridge / ScrollInputRouter / InputRouter / OverlayLayout）
+> 状态：拆解中 · 2026-10-24 · 第一~八步已落地（收接口 + 五片：TextEditingBridge / ScrollInputRouter / InputRouter / OverlayLayout / OverlayManager）
 > 上游：ARCH-REVIEW-2026-10-24 §2.2（唯一的架构性缺陷）/ §3.2 I1+I2 / §7 第一步
-> 护栏：smoke 1392 条 + lint 19 条 + docref 3 条 + api-surface diff
-> 回答三个问题：**39 处 instanceof 的真实版图是什么？四片怎么切？先收接口还是先搬家？**
+> 护栏：smoke 1396 条 + lint 19 条 + docref 3 条 + api-surface diff
+> 回答三个问题：**39 处 instanceof 的真实版图是什么？五片怎么切？先收接口还是先搬家？**
 
 ---
 
@@ -329,6 +329,119 @@ ComboBox 跨树/远程 4 条 + **wantsFrame 回落**）—— 最后一条正是
 
 ---
 
+## 4h. 第八步动工前分析：OverlayManager 主体（2026-10-24）
+
+**边界**：§4g 版图里的 A（栈所有权）+ B（栈查询）+ E（时序件）+ F（入口
+API）整类搬走，约 640 行；**C 类（帧循环 5 处读栈）明确排除**——
+`applyNewContext()` / `Frame::run` 喂树两处 / `focus->collect()` 的
+popupRoots / `tickAnimations()` 的浮层子树都在帧循环里，等步 9 拆
+FrameEngine 时定窄面（"被依赖多的晚拆"的同一原则）。
+
+**为什么不再分刀**（评估过"时序件单独一刀"）：E 与 F 互相渗透 ——
+`closeMenu()` 全清后必须复位 snackbar/tooltip 状态位并取消 snackTimer
+（F 碰 E）、`pushOverlay()` 被 showTooltip / presentSnackbar /
+toggleWidgetPanel 三处复用（E 碰 A）⇒ 分刀会造出两片 + 片间组合，
+边界互相穿孔。且合计 ~640 行一步可扛（InputRouter 857 行有先例）。
+
+**命名**：类 `OverlayManager`，接口 `OverlayHost`。双先例对齐 ——
+`FocusManager`（App 层管焦点的片）与 `InputHost` / `TextEditingHost`
+（接口 = 宿主要提供的口子集合）。不叫 OverlayHostImpl / OverlayController。
+
+**host 6 口子**（Application 实现）：`focus()`（push 快照 / remove 回锚）/
+`root()`（未挂载守卫 + menuContext）/ `theme()` + `metrics()`（menuContext）/
+`after()` + `cancelAfter()`（snackbar/tooltip 定时器）。与 InputHost 的
+focus/root 两口子重叠但各自独立声明（同 TextEditingHost 的重叠口径）——
+不让 OverlayHost extends InputHost：那会把 dispatch/accelerators 等
+4 个浮层不需要的口子带进来。
+
+**两处结构改进**（相对 §4g 原计划）：
+
+1. **`InputHost` 8 → 4 口子，InputRouter 改持 OverlayManager**。原计划
+   "InputHost 的 4 个浮层口子改指 host"若只改 Application 侧实现，就得到
+   "InputRouter → InputHost → Application → OverlayManager" 的壳中壳 ——
+   focus/root/dispatch/accelerators 是应用状态（该留 InputHost），而
+   overlays/dismissOverlay/showMenu/toggleWidgetPanel 是**另一片的职责**
+   （该直连）。InputRouter 构造签名加第四参 `OverlayManager $overlayHost`，
+   11 处 `$this->host->浮层调用` 改 `$this->overlayHost->...`（片间组合走
+   构造参数，同第 5/6 步口径）。
+2. **OverlayLayout 的 host 从 Application 改指 OverlayManager，删
+   `OverlayLayoutHost` 接口**。布局片只需要"读栈 + 按条目关"，这正是
+   OverlayManager 的两个 public 方法 ⇒ 第 7 步那层 Application 中转
+   （Application 实现 OverlayLayoutHost 再转调）纯属多余。这是对第 7 步
+   成果的精化，不是回退。
+
+**兼容性破坏清单**（四项，都验过零外部影响）：
+
+| 破坏 | 验证 |
+|---|---|
+| 删 `protected OverlayStack $overlays` 字段 | 全仓 grep：`$this->overlays` 仅 Application 类内 14 处，夹具/探针/示例台零直摸 |
+| 删 `OverlayLayoutHost` 接口 | 唯一实现者是 Application（grep 确认） |
+| 删 `Application::dismissOverlay()` / `toggleWidgetPanel()` 两个 @internal 壳 | 唯一消费者是 InputRouter（改指）；ComboBox.php 只有注释提及 |
+| 删 attach() 的 `$this->overlays ??=` 兜底 | 全仓 33 个 Application 子类无不调父构造器（ThemeApplication 已于第 6 步修） |
+
+`overlays()` getter（@api）与 13 个 @api 入口**位置不动**，内部转调
+`OverlayManager`；`PANEL_MAX_WIDTH` / `TOOLTIP_DELAY_MS` 零外部引用，
+随方法搬走。
+
+**装配顺序**：textEditing → scrollInput → **overlayHost** → input（收
+overlayHost）→ overlayLayout（收 overlayHost）。帧循环的 5 处读栈经
+`$this->overlayHost->overlays()->all()`；`onHoverHit` 注册闭包直调
+`$this->overlayHost->onHoverHit($hit)`（Application 不保留该方法）。
+
+### 4h-落地（2026-10-24 完成）
+
+**数字**：Application **2444 → 1919 行**（−525；比预估 −600 少，因为
+15 个委托壳约 130 行留在壳上）；`OverlayManager` 714 行（新片）；
+`--api` diff = **+0 @api / +5 @internal**（OverlayManager 类 + OverlayHost
+接口 + onHoverHit / focusTrapRoots / dismissOverlay / toggleWidgetPanel
+四口子 − OverlayLayoutHost 接口）；smoke **1396 ok / 0 FAIL**（含本步
+新增 4 条，见下）、lint 503 文件 0/0、docref 68/0、selftest 过。
+
+**执行要点**：
+
+- 28 方法 + 7 字段 + 2 常量整块搬走（Python 脚本定位 + 14 处 `$this->`
+  机械改写走 host 口子，逐条打印 diff 人工过目）；`$tooltipTimer` /
+  `$snackTimer` 实为 `?int`（不是 TimerHandle），两个常量零外部引用 ⇒
+  随方法降为 `private const`。
+- **4 个口子在片上开 public @internal**（原来 private）：`onHoverHit`
+  （宿主 attach 的 hover 回调直调）、`focusTrapRoots`（帧循环
+  `focus->collect()` 直调）—— 同 `dismissOverlay` 第 6 步先例
+  「片间契约口子，不是扩展点」。
+- 委托壳 15 个集中在类末尾（带分组注释「API 位置不动，实现搬走」）；
+  **内部调用点直调片不经壳**（帧循环 / hover 回调 / 失活收口），同第 7 步
+  `frame()` 直调 `overlayLayout` 的口径。
+- 顺手修了 4 处第 6 步遗留的过期文档引用（`06-帧管线.md` 里 drag 回调 /
+  thumbDrag / LEAVE 的 Application 行号，随第 6/8 步搬到 InputRouter /
+  ScrollInputRouter）。
+
+**变异测试**（5 发，4 响 1 不响 → 补用例后 5/5 响）：
+
+| # | 打挂 | smoke |
+|---|---|---|
+| 1 | `removeOverlay()` 焦点回锚段（`if (false && ...)`） | **2 FAIL**（焦点回锚失效） |
+| 2 | `showTooltip()` 的 `hitTest = false` → `true` | **2 FAIL**（提示层吃掉点击 / 悬停目标被抢） |
+| 3 | `showSnackbar()` 排队分支（`if (false && snackEntry !== null)`） | **2 FAIL**（FIFO 失效，连发只显示最后一条） |
+| 4 | `menuContext()` 复用主树 context（恒走 `new BuildContext`） | 0 FAIL ⇒ **记录为覆盖缺口**：三个入口在 `root === null` 时已早退，`?? new BuildContext` 回退分支不可达，是防御性死代码 |
+| 5 | `closeMenu()` 删 `tooltipShown = false` 复位 | 旧 smoke 0 FAIL ⇒ **暴露真实缺口**，补 4 条用例（含现场恢复段）后 **1 FAIL** |
+
+变异 5 补的 4 条 smoke 用例（`smoke.php` Tooltip 段）：closeMenu 全清后
+栈空 / 悬停 b 不立即弹（反例）/ 再满 500ms 弹 b 的提示 / move 回 a 恢复
+现场。**「全清后相邻切换仍要等 500ms」正是 §4h「E 碰 D」立论的活证据**
+—— 之前 smoke 完全没有覆盖它，变异抓到后才知道缺。
+
+**执行期对分析的两处修正**（都在"更保守"方向）：
+
+1. §4h 破坏清单原计划「删 `Application::dismissOverlay()` /
+   `toggleWidgetPanel()` 两个 @internal 壳」—— 落地改为**保留壳转调**
+   （15 个 public 壳一个不少）。理由：壳的边际成本是两行转发，而删壳让
+   「@internal 也是 API」的口子出现真实断裂（ComboBox 之外的探针 / 未来
+   片都可能摸）；与 5 个 @api 壳「位置不动」保持同一口径。
+2. §4h「13 个 @api 委托壳」口径不准 —— 实际 public 方法是 15 个
+   （5 @api + 8 无标签 + 2 @internal），全部留壳。`--api` 计数不变
+   （51 = 51）即证据。
+
+---
+
 ## 5. 剩余路线（每步的验收）
 
 | 步 | 动作 | 验收 |
@@ -339,7 +452,7 @@ ComboBox 跨树/远程 4 条 + **wantsFrame 回落**）—— 最后一条正是
 | 5 | ~~拆 `OverlayHost`~~ → **已调整为 `ScrollInputRouter`**（滚动输入族，2026-10-24 拆片顺序调整 + 完成，见 §4e） | 同上 |
 | 6 | ~~拆 `InputRouter`（dispatchInput / dispatchPointer 主体 + 手势状态 + 光标）~~（✅ 2026-10-24，见 §4f） | 同上 |
 | 7 | ~~拆 `OverlayLayout` 前哨（几何布局族：placeOverlays/syncPanelSignatures/panelsLagBehind/placeEntry/anchorRect/originFor/absoluteOrigin，见 §4g）~~（✅ 2026-10-24） | smoke 绿 + Application 行数 −372 |
-| 8 | 拆 `OverlayHost` 主体（栈所有权 A + 栈查询 B + 时序件 E + 入口 API F；InputHost 的 4 个浮层口子改指 host） | 同上 |
+| 8 | ~~拆 `OverlayManager` 主体（栈所有权 A + 栈查询 B + 时序件 E + 入口 API F；InputHost 8→4 口子、OverlayLayout 改指本片）~~（✅ 2026-10-24，动工前分析见 §4h，落地见 §4h-落地） | smoke 绿 + Application 行数 −600（实际 −525） |
 | 9 | 拆 `FrameEngine`（九段表驱动；帧循环读栈的 1740/1862/2210 定窄面） | 同上 |
 | 10 | **加 lint 规则**：`src/App/` 里 `instanceof` 只许出现在接口上（I2 的闸门，现在加会红 39 处，拆完才绿） | selftest 红绿双向 |
 

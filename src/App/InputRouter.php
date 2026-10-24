@@ -39,11 +39,12 @@ use Drift\Widget\ToggleBase;
  *   浮层优先、捕获、手势消歧本来就该住在一起。拆完后 Application 只剩壳 +
  *   记账 + 主题分发（后者是帧循环职责，不是输入路由）。
  *
- * ★ **与另两片的分工**：`TextEditingBridge`（编辑命令 / 框选）与
- *   `ScrollInputRouter`（滚轮 / thumb）经构造参数收进来做片间组合 —— 不经
- *   host（S1 第 5 步立的口径：host 只摸"应用状态"，片间调用直连）。
- *   应用状态（焦点 / 根 / 浮层栈 / 菜单 / 命令派发 / 加速键）走 `InputHost`
- *   的 8 个口子，全部是"现读"式 getter 或转发，片不持应用值的副本。
+ * ★ **与另三片的分工**：`TextEditingBridge`（编辑命令 / 框选）、
+ *   `ScrollInputRouter`（滚轮 / thumb）与 `OverlayManager`（浮层栈 + 开合策略，
+ *   S1 第 8 步）经构造参数收进来做片间组合 —— 不经 host（S1 第 5 步立的口径：
+ *   host 只摸"应用状态"，片间调用直连）。应用状态（焦点 / 根 / 命令派发 /
+ *   加速键）走 `InputHost` 的 4 个口子，全部是"现读"式 getter 或转发，
+ *   片不持应用值的副本。
  *
  * @internal S1 的拆分片，同 `FocusManager` —— 不是应用契约
  */
@@ -95,6 +96,7 @@ final class InputRouter
         private InputHost $host,
         private ScrollInputRouter $scrollInput,
         private TextEditingBridge $textEditing,
+        private OverlayManager $overlayHost,
     ) {
     }
 
@@ -114,13 +116,13 @@ final class InputRouter
                 // 浮层栈：栈顶条目决定 Esc 语义（arch-v2 `01` §6.3）
                 // ★ `dismissOnEsc=false` ⇒ **吞掉但不关**。"拒绝"不等于"放行" ——
                 //   若把 ESC 交回加速键链，Ctrl+W 之类能绕过"必须处理的对话框"。
-                $top = $this->host->overlays()->top();
+                $top = $this->overlayHost->overlays()->top();
                 if ($top !== null) {
                     if (!$top->dismissOnEsc) {
                         return null;
                     }
 
-                    $this->host->dismissOverlay($top);
+                    $this->overlayHost->dismissOverlay($top);
 
                     return null;
                 }
@@ -193,8 +195,8 @@ final class InputRouter
             //   量化出的"格"（WHEEL_DELTA/120），`scrollBy()` 起收的是逻辑像素。
             $px = $event->delta * self::WHEEL_NOTCH_PX;
 
-            for ($i = $this->host->overlays()->count() - 1; $i >= 0; $i--) {
-                $e = $this->host->overlays()->at($i);
+            for ($i = $this->overlayHost->overlays()->count() - 1; $i >= 0; $i--) {
+                $e = $this->overlayHost->overlays()->at($i);
                 if ($e === null || $e->element === null) {
                     continue;
                 }
@@ -238,8 +240,8 @@ final class InputRouter
     private function dispatchPointer(PointerEvent $event, Element $root, FocusManager $focus): ?CursorShape
     {
         // ── 浮层栈：**从顶往下**逐层问（arch-v2 `01` §6.1）─────────────
-        for ($i = $this->host->overlays()->count() - 1; $i >= 0; $i--) {
-            $e = $this->host->overlays()->at($i);
+        for ($i = $this->overlayHost->overlays()->count() - 1; $i >= 0; $i--) {
+            $e = $this->overlayHost->overlays()->at($i);
             if ($e === null || $e->element === null) {
                 continue;
             }
@@ -261,7 +263,7 @@ final class InputRouter
                         $this->releasePointer();   // 浮层优先于捕获（`06` §10）
 
                         if ($e->dismissOnTapOutside) {
-                            $this->host->dismissOverlay($e);
+                            $this->overlayHost->dismissOverlay($e);
                         }
 
                         return null; // 不可关时同样吞掉（遮罩后面不能动）
@@ -302,7 +304,7 @@ final class InputRouter
 
                     // §9.1 关闭语义 #1：点浮层外 ⇒ 关且**吞掉该次按下**（不穿透）
                     if ($e->dismissOnTapOutside) {
-                        $this->host->dismissOverlay($e);
+                        $this->overlayHost->dismissOverlay($e);
                     }
 
                     return null;
@@ -585,7 +587,7 @@ final class InputRouter
             $menu = $element->widget()->contextMenuValue();
 
             if ($menu !== null) {
-                $this->host->showMenu($menu->panel(), $element);
+                $this->overlayHost->showMenu($menu->panel(), $element);
 
                 return;
             }
@@ -628,7 +630,7 @@ final class InputRouter
         //     所以以后 DatePicker / ComboBox 不用再改这里一行。
         $factory = $widget?->overlayPanelValue();
         if ($factory !== null && $element !== null) {
-            $this->host->toggleWidgetPanel($element, $factory);
+            $this->overlayHost->toggleWidgetPanel($element, $factory);
 
             return;
         }

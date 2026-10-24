@@ -12,8 +12,9 @@ use Drift\Layout\RenderPopupPanel;
  * 浮层**几何布局**策略（arch-v2 `01` §4）—— 帧循环每帧一次的纯几何段。
  *
  * ★ 与输入 / 命令 / snackbar / tooltip **零耦合**：只读栈、读盒、写盒。
- *   host 契约只有两个口子（{@see OverlayLayoutHost}）。
- * ★ 它是 {@see OverlayHost} 主体（步 8）与 `FrameEngine`（步 9）的双重前哨：
+ *   host 契约即 {@see OverlayManager}（第 8 步起它是浮层栈的 Owner）——
+ *   两个消费：`overlays()` 现读栈 / `dismissOverlay()` 表达"关掉这个条目"。
+ * ★ 它是 {@see OverlayManager}（步 8）与 `FrameEngine`（步 9）的双重前哨：
  *   "settle → 清扫 → 定位"的帧内次序整体住在这里，两处调用点
  *   （`frame()` / `repaintForResize()`）原样调用。
  *
@@ -21,7 +22,7 @@ use Drift\Layout\RenderPopupPanel;
  */
 final class OverlayLayout
 {
-    public function __construct(private OverlayLayoutHost $host)
+    public function __construct(private OverlayManager $host)
     {
     }
 
