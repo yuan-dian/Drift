@@ -207,6 +207,25 @@ abstract class Element
     }
 
     /**
+     * 让**自己**在下次 settle 重建（W8-2，2026-10-24）。
+     *
+     * ★ 只有 `StatefulElement` 有"状态"可重读；纯结构 / 无态节点调它**什么都不发生**
+     *   —— 这也是对的：无态面板的内容只由 Widget 决定，而 Widget 换不了（面板的
+     *   Widget 是开面板那一刻造好的）。
+     *
+     * ★ 消费方是 `Application::syncPanelSignatures()`（受控值变了 ⇒ 面板重读），
+     *   它是**跨树**的：浮层是第二棵根渲染树，主树的 `setState` 到不了这里。
+     *
+     * @internal 框架内部用（`Application` 的浮层传播段），控件不要调
+     */
+    public function markNeedsBuild(): void
+    {
+        if ($this instanceof StatefulElement) {
+            $this->state()?->markDirty();
+        }
+    }
+
+    /**
      * 子树里**第一个类型匹配**的渲染盒（找不到 ⇒ `null`）。
      *
      * ★ 与 `effectiveBox()` 的区别：那个是"父要挂接子盒"用的**第一个盒**（可能是

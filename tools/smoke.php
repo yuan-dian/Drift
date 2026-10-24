@@ -13691,6 +13691,59 @@ check(
     'overlay=' . $cbApp->overlayCount() . ' text=' . var_export($cbApp->fieldState()?->text(), true),
 );
 
+// ── ⑩ 受控值 ⇒ 面板重读（框架的 `overlaySignature()`，2026-10-24）──
+//
+// ★ 这一块钉的是 2026-10-24 之前 `ComboBox` 的**静默缺陷**：面板开着时应用换掉
+//   `options`（远程取数就是这个形状），面板**纹丝不动**、不报错。
+//   现在由框架负责（`Application::syncPanelSignatures()`）：锚点 Widget 换了 ⇒
+//   求签名 ⇒ 变了就标脏面板。
+// ★ 面板内容比主树**晚一帧**（`placeOverlays()` 跑在主树 settle 之前）⇒ 每次
+//   改完都要跑**两帧**，否则会把"晚一帧"误判成"没生效"。
+$cbSettle = static function () use ($cbTick): void {
+    $cbTick();
+    $cbTick();
+};
+
+$cbTap($cbApp->fieldCenter());
+check(
+    'ComboBox · 换选项表前：面板 4 项（基线）',
+    $cbLabels() === ['北京市', '上海市', '广州市', '北京南站'],
+    'rows=[' . implode(',', $cbLabels()) . ']',
+);
+
+$cbApp->host()?->setOptions([
+    Option::make('成都市', '510100'),
+    Option::make('杭州市', '330100'),
+]);
+$cbSettle();
+check(
+    'ComboBox 跨树 · 面板开着时换选项表 ⇒ 面板项数跟着变（受控值 ⇒ 面板重读）',
+    $cbLabels() === ['成都市', '杭州市'],
+    'rows=[' . implode(',', $cbLabels()) . ']',
+);
+
+// ★ 反例的另一半：**内容没变就不许重建**。应用每次重建都会造新的 `Option`
+//   实例，若按对象身份比 ⇒ 面板每帧重建 ⇒ `ScrollView` 换盒、滚动位置回顶部。
+//   判据用**Widget 实例身份**：没重建 ⇒ 还是同一个实例。
+//   ★★ 必须捕获 **Widget**，不能捕获 Element：`Element::widget()` 是活动访问器，
+//     元素会被复用（`update()` 只换里面的 Widget）⇒ 拿 Element 再读 widget() 拿到
+//     的永远是**当前**那个，断言恒真。这一版第一稿就是这么写的，反向自检当场抓到
+//     （去掉签名比对仍然全绿）。
+$cbBefore = $cbApp->optionButtons()[0]?->widget();
+$cbApp->host()?->setOptions([
+    Option::make('成都市', '510100'),
+    Option::make('杭州市', '330100'),
+]);
+$cbSettle();
+$cbAfter = $cbApp->optionButtons()[0]?->widget();
+check(
+    'ComboBox 跨树 · 换的是**同样的内容** ⇒ 面板不重建（滚动位置不会跳）',
+    $cbBefore !== null && $cbAfter !== null && $cbBefore === $cbAfter,
+    $cbBefore === null || $cbAfter === null
+        ? '面板没项'
+        : 'rebuilt=' . ($cbBefore === $cbAfter ? 'no' : 'yes'),
+);
+
 // ── 汇总 + 退出码（2026-10-18）──
 // ★ 以前只打印 FAIL、**从不汇总、也从不非零退出** ⇒ 打印 3 个 FAIL 仍然 exit 0：
 //   任何自动化调用（脚本 / CI / `&&` 链）都会把它读成"过了"。与 G2（不许静默

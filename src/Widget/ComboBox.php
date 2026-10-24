@@ -263,7 +263,11 @@ final class ComboBoxState extends State
             ->onChanged(function (string $text): void {
                 $this->onInput($text);
             })
-            ->overlayPanel($this->panelFactory());
+            ->overlayPanel($this->panelFactory())
+            // ★★ **受控值（选项表）⇒ 面板重读由框架负责**（`Widget::overlaySignature()`，
+            //   2026-10-24）。★ 2026-10-24 之前这里什么都没有 ⇒ 面板开着时应用换掉
+            //   `options`（远程取数就是这个形状）**面板纹丝不动**，且不报错。
+            ->overlaySignature(fn (): string => $this->panelSignature());
 
         // ★ `keyboard()` 在**外层**：焦点落在里面的 `TextField` 上，靠父链解析命中
         //   （见 `ComboBox` 类头的 ★★）。
@@ -317,6 +321,25 @@ final class ComboBoxState extends State
             ->keyboard(function (KeyEvent $event): bool {
                 return $this->forwardKey($event);
             });
+    }
+
+    /**
+     * 面板**受控**部分（选项表）的签名 —— 交给框架（见 `build()` 里的 `overlaySignature()`）。
+     *
+     * ★ 查询词**刻意不进签名**：它是控件私有态，走 `$this->query` 那条广播。
+     *   两样都算进来会变成"每敲一键重建两次"（Subject 一次 + 框架签名一次）。
+     * ★ 只看 `(value,label)` 序列，不看对象身份 —— 应用每次重建都造新 `Option`。
+     *
+     * @internal
+     */
+    private function panelSignature(): string
+    {
+        $parts = [];
+        foreach ($this->combo()->optionsValue() as $option) {
+            $parts[] = $option->value . "\x1f" . $option->label;
+        }
+
+        return implode("\x1e", $parts);
     }
 
     /**

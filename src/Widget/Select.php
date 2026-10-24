@@ -49,21 +49,27 @@ use Drift\State\Subject;
  *
  * ## 为什么是 `StatefulWidget`（2026-10-24 从 `StatelessWidget` 改过来）
  *
- * 两件事逼的，都是**结构性的**，不是"想加个状态"：
+ * 三件事逼的，都是**结构性的**，不是"想加个状态"：
  *
  * 1. **浮层是第二棵根渲染树**（`OverlayEntry::$panel` 的字段注释就是这条设计）：
  *    主树重建**不带动**面板。`loading` / 选项表 / `emptyText` 这些受控值住在
- *    Widget 上，应用 `setState` 换了 Widget 之后，面板**不会自己重读** ⇒ 必须由
- *    `SelectState` 订阅一个 `Subject` 并在 `didUpdateWidget()` 里 publish。
+ *    Widget 上 ⇒ 必须有人把"Widget 换了"这件事送过树去。**现在由框架负责**
+ *    （`Widget::overlaySignature()`，2026-10-24 收口）。
  * 2. **方向键换高亮**是控件私有态（应用不该为"光标停在第几行"再存一个字段），
- *    它变化时主树根本不用重建 ⇒ 只能走同一条跨树通道。
+ *    它变化时主树根本不用重建 ⇒ 走 `SelectPanelSignal`（`Subject` 广播）。
+ * 3. **`onOpen()` 需要"开面板那一刻"这个时机**，而工厂只在开面板时被调一次。
  *
  * 于是面板的构建时机从"打开那一刻一次"变成"每次内容变化都重来"，选中高亮也就
  * 不会再停在旧值上 —— 这正是 2026-10-23 版本"方向键换值"做不了的根因。
  *
- * ★ `didUpdateWidget()` 里做了**签名比对**才 publish：应用每次重建都会造一个新的
- *   `Select`（选项对象也全是新实例），无条件 publish 会让面板每次应用重建都重建
- *   一次 —— 表现是"列表滚动位置莫名回到顶部"。签名只看面板**真的**在意的东西。
+ * ★★ **受控值与私有态走两条不同的路**（这是本类最该记住的一条）：
+ *   | 面板内容取决于 | 谁负责传播 |
+ *   |---|---|
+ *   | 三态 / 选项表 / 受控值（Widget 上） | 框架：`overlaySignature()` 签名变了就标脏 |
+ *   | 高亮（State 上） | 本类：`$this->signal->notifyChanged()` |
+ *   两条都必须有 —— 只有前者，方向键按下去面板不动；只有后者，应用换了选项表
+ *   面板不重读。2026-10-24 之前两条都压在本类的 `didUpdateWidget()` 里，而那一版
+ *   漏了 `parent::` 就**全静默**（面板永不更新、不报错），所以前者收进了框架。
  *
  * ## 浮层归谁
  *
@@ -341,7 +347,7 @@ final class Select extends StatefulWidget
  */
 final class SelectState extends State
 {
-    /** @internal 面板订阅它 ⇒ 高亮 / 受控值一变就跨树重建 */
+    /** @internal 面板订阅它 ⇒ **高亮**一变就跨树重建（受控值那条走框架的签名） */
     private SelectPanelSignal $signal;
 
     /**
@@ -354,42 +360,10 @@ final class SelectState extends State
     /** @internal 方向键光标（选项表下标）。打开面板时复位成当前值的下标 */
     private int $highlight = 0;
 
-    /** @internal 上一次见过的"面板真正在意的东西"的快照（见 `didUpdateWidget`） */
-    private string $signature = '';
-
     #[\Override]
     public function initState(): void
     {
         $this->signal = new SelectPanelSignal();
-        $this->signature = $this->contentSignature();
-    }
-
-    /**
-     * 受控值 / 选项表 / 三态都住 Widget 上 ⇒ Widget 一换，面板就得重读。
-     *
-     * ★★★ **必须先 `parent::didUpdateWidget($widget)`**：基类那一句是**唯一**把
-     *   新 Widget 落到 `State::$widget` 的地方（`State::widget()` 读的就是它）。
-     *   漏掉 parent 的后果完全静默：`widget()` 永远返回**旧**对象 ⇒ 这里算出的
-     *   签名恒等 ⇒ 面板永不更新，而 `didUpdateWidget()` 看起来被调了、也不报错。
-     *   （2026-10-24 实测踩中：`didUpdate=2 / published=0`。）
-     *
-     * ★ **必须比对签名**：应用每次重建都会造一个新的 `Select`（选项对象也全是新
-     *   实例），无条件 publish 会让面板跟着应用每次重建都重建 —— 表现是"列表滚动
-     *   位置莫名回到顶部"（`RenderScrollView` 换了新盒，offset 归零）。
-     *   面板**真的**在意的只有：三态三个值 + 受控值 + 选项表的 (value,label) 序列。
-     */
-    #[\Override]
-    public function didUpdateWidget(Widget $widget): void
-    {
-        parent::didUpdateWidget($widget);
-
-        $signature = $this->contentSignature();
-        if ($signature === $this->signature) {
-            return;
-        }
-
-        $this->signature = $signature;
-        $this->signal->notifyChanged();
     }
 
     public function build(BuildContext $ctx): Widget
@@ -398,6 +372,13 @@ final class SelectState extends State
             ->variant(ButtonVariant::Default)
             ->width($this->select()->triggerWidthValue())
             ->overlayPanel($this->panelFactory())
+            // ★★ **受控值 ⇒ 面板重读由框架负责**（`Widget::overlaySignature()`，
+            //   2026-10-24）：三态 / 选项表 / 受控值都住在 Widget 上，框架在"锚点
+            //   Widget 换了"之后比对签名，变了就标脏面板。
+            //   ★ 这里**不需要**再覆写 `didUpdateWidget()` —— 2026-10-24 之前那版
+            //     就是靠它 + `parent::`，而漏掉 parent 是全静默的（面板永不更新）。
+            //     现在那个坑结构上不存在了。
+            ->overlaySignature(fn (): string => $this->contentSignature())
             // ★ `keyboard()` 声明在外层：焦点落在这个 `Button` 上，靠父链解析命中
             //   （与 `ComboBox` 同构，见 `FocusManager::dispatchKey()`）。
             ->keyboard($this->keyHandler());
@@ -607,8 +588,11 @@ final class SelectState extends State
     }
 
     /**
-     * 面板**真正**在意的东西的签名（见 `didUpdateWidget()` 的 ★）。
+     * 面板**真正**在意的东西的签名 —— 交给框架（`build()` 里的 `overlaySignature()`）。
      *
+     * ★ 为什么是"语义"而不是对象身份：应用每次重建都造新的 `Option` 实例，
+     *   用身份比必然"天天在变" ⇒ 面板每帧重建 ⇒ 滚动位置回顶部。
+     *   这里只看 `(value,label)` 序列，重排 / 换文案才算变。
      * ★ 用 `list<string>` + `implode` 而不是循环里 `.=`：后者会被 lint 的
      *   `str-concat-loop` 判错（循环体内 `.=` 是 error）。
      */
@@ -644,6 +628,9 @@ final class SelectState extends State
 /**
  * `Select` 面板的广播端 —— **专门为了跨树**（主树是触发框、浮层是另一棵树）。
  *
+ * ★ 只服务**控件私有态**（方向键高亮）：受控值那条路归框架
+ *   （`Widget::overlaySignature()`），别往这里塞 —— 一个信号两种职责，
+ *   下一个人就分不清"这条为什么没生效"该查哪边。
  * ★ 为什么不是 `Cell`：`Cell::setIfChanged()` 只标脏**它自己的属主** `State`
  *   （住同一个 State 里 ⇒ 只能影响那一棵子树）。面板在另一棵树，要的是"广播"。
  * ★ 它不承载业务数据（不是 `Store`）：只表达"面板该重读了"，且**不出现在公共

@@ -116,6 +116,16 @@ abstract class Widget
      */
     private ?\Closure $overlayPanelFactory = null;
 
+    /**
+     * 面板内容的**签名**（`\Closure(): string`；`null` = 不声明）。
+     *
+     * ★ 与 `overlayPanelFactory` 一样是"声明式字段、不是虚方法"（见 `semantics()`
+     *   那条 §9 P3 的说明）。
+     *
+     * @internal 只有 `Application` 读它（`overlaySignatureValue()`）
+     */
+    private ?\Closure $overlaySignature = null;
+
     /** @internal null = 本控件不在语义树里（无角色 = 不建节点，§9 / M5 无障碍） */
     private ?SemanticsRole $semRole = null;
 
@@ -963,6 +973,60 @@ abstract class Widget
     public function overlayPanelValue(): ?\Closure
     {
         return $this->overlayPanelFactory;
+    }
+
+    /**
+     * 声明"我的面板**在意**什么" —— 一个字符串签名（W8-2，2026-10-24）。
+     *
+     * ```php
+     * // Select 里（State 侧）
+     * ->overlayPanel($this->panelFactory())
+     * ->overlaySignature(fn(): string => $this->contentSignature())
+     * ```
+     *
+     * ## 为什么需要这条缝
+     *
+     * ★★ **浮层是第二棵根渲染树**（`OverlayEntry::$panel` 的设计注释就是这条）：
+     *   主树重建**不带动**面板。而 `Select` / `ComboBox` 的面板内容来自**受控属性**
+     *   （`loading` / 选项表 / `emptyText`）—— 应用 `setState` 换了 Widget 之后，
+     *   面板不会自己重读。
+     *
+     * ★★ 2026-10-24 之前这条职责落在**每个控件**身上：持有 `Subject`、`initState`
+     *   里订阅、覆写 `didUpdateWidget()` 且**必须**调 `parent::`、比对签名再 publish。
+     *   四步里漏任何一步都是**全静默**的（`Select` 就漏过 `parent::`，面板永不更新
+     *   而 `didUpdateWidget()` 看起来被调了）。收进框架后，这个坑**结构上不存在**。
+     *
+     * ## 分工（这是本缝的全部理由）
+     *
+     * | 面板内容取决于 | 谁负责传播 |
+     * |---|---|
+     * | **受控属性**（住在 Widget 上） | 框架：本签名变了 ⇒ 标脏面板 |
+     * | **控件私有态**（住在 State 上） | 控件自己：`Subject::notifyChanged()` |
+     *
+     * ★ **签名必须是"语义"而不是"身份"**：应用每次重建都造新的 `Option` 实例，
+     *   用对象身份比必然"天天在变" ⇒ 面板每帧重建 ⇒ 列表滚动位置回顶部。
+     *   写法参考 `Select::contentSignature()`（三态三值 + 受控值 + (value,label) 序列，
+     *   用 `implode` 拼 —— 循环里 `.=` 会被 lint 的 `str-concat-loop` 判错）。
+     *
+     * ★ 求值时机：框架在**锚点 Widget 换了**（= 那个 `State` 重建过）之后才调一次，
+     *   锚点没重建就一次都不调。所以签名函数要**便宜**，但不必极便宜。
+     *
+     * @param \Closure(): string $signature
+     *
+     * @api
+     */
+    public function overlaySignature(\Closure $signature): static
+    {
+        $this->mutate();
+        $this->overlaySignature = $signature;
+
+        return $this;
+    }
+
+    /** @internal 面板内容签名；`null` = 本控件不声明（框架不传播受控值变化） */
+    public function overlaySignatureValue(): ?\Closure
+    {
+        return $this->overlaySignature;
     }
 
     /**

@@ -1239,6 +1239,10 @@ abstract class Application
         //     两遍 settle 幂等（`settle()` 只标脏 / 重建，无副作用累积）。
         //   ★ 异常仍走帧末那套上报口径（与 `Frame::run()` 的 settle 段同措辞）。
         try {
+            // ★ 受控值 ⇒ 面板重读（W8-2，2026-10-24）：**必须在 settle 之前**，
+            //   理由同下一条 invariant —— settle 换上的新盒要这一帧就排过。
+            $this->syncPanelSignatures();
+
             foreach ($this->overlays->all() as $e) {
                 $e->element?->settle();
             }
@@ -1270,6 +1274,71 @@ abstract class Application
             }
 
             $this->placeEntry($e, $constraints);
+        }
+    }
+
+    /**
+     * 受控值变了 ⇒ 面板重读（W8-2，2026-10-24）。
+     *
+     * ## 它补的是哪条缝
+     *
+     * ★★ **浮层是第二棵根渲染树**（`OverlayEntry::$panel` 的字段注释就是这条设计）：
+     *   主树重建**不带动**面板。而 `Select` / `ComboBox` 的面板内容来自**受控属性**
+     *   （`loading` / 选项表 / `emptyText`）—— 应用 `setState` 之后面板不会自己重读。
+     *   2026-10-24 之前这条职责在每个控件身上（Subject + `initState` 订阅 +
+     *   `didUpdateWidget` 比对签名 + notify，四步漏一步就全静默），现在收到这里。
+     *
+     * ## 两道闸（顺序不能换）
+     *
+     * ① **锚点 Widget 换了** ⇒ 那个 `State` 重建过 ⇒ 受控属性**可能**变了。
+     *    `Widget` 不可变 ⇒ `===` 就是判据，O(1)。没换 ⇒ 连签名都不算
+     *    （签名要拼整张选项表，5000 项的远程列表每帧算一遍是白烧）。
+     * ② **签名变了** ⇒ 面板**真的**在意的东西变了 ⇒ 标脏。这一步是必需的：
+     *    应用每次重建都造新的 `Option` 实例，只看①会让面板每帧重建 ⇒ 滚动位置回顶部。
+     *
+     * ## 为什么必须在 `placeOverlays()` 的 settle 段**之前**调
+     *
+     * 标脏只是置标，重建发生在紧随的 settle 里；而 `placeEntry()` 排在 settle
+     * **之后** ⇒ "重建 → 布局"的顺序成立。反过来（放到 `Frame::run()` 的浮层
+     * settle 段）会得到"这一帧排过的还是旧盒"，即 `76549c7` 修掉的那个"面板空白一帧"。
+     *
+     * ## 代价（如实记录）
+     *
+     * ★ 面板内容比主树**晚一帧**：本帧 `placeOverlays()` 跑的时候，主树还没 settle
+     *   （`Frame::run()` 在它后面）⇒ 锚点还是旧 Widget ⇒ 这一帧看不见变化。
+     *   60fps 下 16ms，用户不可见；但**用例必须跑两帧**（`tools/smoke.php` 的
+     *   `$ssSettle` 就是这条）。
+     *
+     * @internal
+     */
+    private function syncPanelSignatures(): void
+    {
+        foreach ($this->overlays->all() as $e) {
+            // 还没挂载（本帧刚 push）⇒ 面板内容本来就是按当前值造的
+            if ($e->element === null) {
+                continue;
+            }
+
+            $current = $e->anchor?->widget();
+            if ($current === null || $current === $e->seenAnchor) {
+                continue;
+            }
+            $e->seenAnchor = $current;
+
+            // 没声明签名 ⇒ 不传播（**加性**：Menu / Tooltip / Modal / 静态面板逐字节不变）
+            $signature = $current->overlaySignatureValue();
+            if ($signature === null) {
+                continue;
+            }
+
+            $value = $signature();
+            if ($value === $e->lastSignature) {
+                continue;
+            }
+            $e->lastSignature = $value;
+
+            // 无态面板（静态内容）⇒ 无事发生，且是对的：它的内容只由 Widget 决定
+            $e->element->markNeedsBuild();
         }
     }
 
@@ -3480,6 +3549,16 @@ abstract class Application
         $e->anchor = $anchor;
         // ★ owner = 锚点自身：页面走了没关下拉 ⇒ `placeOverlays()` 的 owner 清扫收尸。
         $e->owner = $anchor;
+
+        // ★ 受控值传播的**基线**（W8-2，2026-10-24，见 `syncPanelSignatures()`）：
+        //   开面板这一刻就把"锚点当前 Widget"和"它声明的签名"记下来 —— 否则下一帧
+        //   会以为"签名从空变成了有值"，白重建一次面板（滚动位置回到顶部）。
+        $anchorWidget = $anchor->widget();
+        $e->seenAnchor = $anchorWidget;
+        $signature = $anchorWidget->overlaySignatureValue();
+        if ($signature !== null) {
+            $e->lastSignature = $signature();
+        }
         $e->prefer = OverlayEntry::BELOW;
         // ★★ `barrier = true`（与菜单同）—— 这是 `dismissOnTapOutside` **唯一**生效的
         //   路径：`dispatchPointer()` 里"点在条目盒外"那一支整个包在 `if ($e->barrier)` 里，

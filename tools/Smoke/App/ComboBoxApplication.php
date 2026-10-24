@@ -237,10 +237,30 @@ final class ComboBoxHostState extends State
     /** @var list<string> */
     public array $changed = [];
 
+    /**
+     * @var list<Option> 面板内容来自它 —— 用例要在**面板开着时**换掉它
+     *   （"受控值 ⇒ 面板重读"那条缝的判据，2026-10-24）
+     */
+    public array $options = [];
+
+    #[\Override]
+    public function initState(): void
+    {
+        $this->options = ComboBoxApplication::cities();
+    }
+
+    /** 换选项表（远程取数的形状：应用 setState 换掉整个表） */
+    public function setOptions(array $options): void
+    {
+        $this->setState(function () use ($options): void {
+            $this->options = $options;
+        });
+    }
+
     public function build(BuildContext $ctx): Widget
     {
         return Column::make()->children([
-            ComboBox::make(ComboBoxApplication::cities())
+            ComboBox::make($this->options)
                 ->value($this->value)
                 ->placeholder('请选择城市')
                 ->onChanged(function (string $value): void {
