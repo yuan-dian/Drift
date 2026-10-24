@@ -156,15 +156,18 @@ final class Log
     // ── 读回（devtools / 测试）──────────────────────────────────
 
     /**
-     * 最近 N 条（时间正序）。**返回结构不是字符串** —— 读方自己决定怎么渲染。
+     * 最近 N 条（时间正序），可按分类 / 级别过滤。
+     * **返回结构不是字符串** —— 读方自己决定怎么渲染（`12` §4.7.5 的兜底）。
      *
+     * @param null|string $category 精确匹配分类；null = 全部
+     * @param null|int    $minLevel 最低级别（含）；null = 全部
      * @return list<LogEntry>
      */
-    public static function recent(): array
+    public static function recent(?string $category = null, ?int $minLevel = null): array
     {
         foreach (self::$sinks as $sink) {
             if ($sink instanceof RingSink) {
-                return $sink->recent();
+                return $sink->recent($category, $minLevel);
             }
         }
 

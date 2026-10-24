@@ -14581,6 +14581,31 @@ check(
         'got=' . $line,
     );
 
+    // ⑩ 过滤在数据层（`RingSink::recent($category, $minLevel)`）
+    //    ★ 反例方向：若过滤挪到 UI 层，这里就测不到"数据层真会滤"；
+    //      而两个参数**各自独立**（分类 ⊕ 级别）—— 只测一个会让另一个的
+    //      回归漏过去。
+    Log::reset();
+    $ring = new RingSink(10);
+    Log::addSink($ring);
+    Log::get('layout')->info('layout 的 info');
+    Log::get('layout')->warn('layout 的 warn');
+    Log::get('net')->info('net 的 info');
+    Log::get('net')->error('net 的 error');
+    $mAll = array_map(static fn (LogEntry $e): string => $e->message, $ring->recent());
+    $mLayout = array_map(static fn (LogEntry $e): string => $e->message, $ring->recent('layout'));
+    $mWarnUp = array_map(static fn (LogEntry $e): string => $e->message, $ring->recent(null, Log::WARN));
+    $mBoth = array_map(static fn (LogEntry $e): string => $e->message, $ring->recent('net', Log::WARN));
+    check(
+        'Log · recent() 按分类 / 级别过滤（两个参数各自独立，可叠加）',
+        $mAll === ['layout 的 info', 'layout 的 warn', 'net 的 info', 'net 的 error']
+            && $mLayout === ['layout 的 info', 'layout 的 warn']
+            && $mWarnUp === ['layout 的 warn', 'net 的 error']
+            && $mBoth === ['net 的 error'],
+        'all=' . count($mAll) . ' layout=' . count($mLayout)
+            . ' warnUp=' . count($mWarnUp) . ' both=' . count($mBoth),
+    );
+
     Log::reset();
     Errors::reset();
 }

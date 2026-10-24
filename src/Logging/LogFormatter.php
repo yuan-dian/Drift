@@ -13,7 +13,8 @@ namespace Drift\Logging;
  *   Qt 文档明写 `qSetMessagePattern()` 装了自定义 handler 后**不生效** ——
  *   框架不再格式化。Drift2 同约定：sink 自己产出字符串 = 接管格式化，
  *   pattern 不再参与；想"既走 sink 又改格式"，改的是本接口而不是 sink。
- */
+  * @api
+*/
 interface LogFormatter
 {
     public function format(LogEntry $entry): string;

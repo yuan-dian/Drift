@@ -19,7 +19,8 @@ use Drift\Errors;
  *   代价是每条一次系统调用 —— 文件 sink 本来就不是热路径（热路径的量走 `RingSink`）。
  * ★ **写失败不抛**（接口契约）：磁盘满 / 路径不可写时丢这条，下一条再试。
  *   ★ 但**打开失败要响亮**（G2）：连目标都建不起来是配置错误，不是运行时抖动。
- */
+  * @api
+*/
 final class StreamSink implements LogSink
 {
     private LogFormatter $formatter;

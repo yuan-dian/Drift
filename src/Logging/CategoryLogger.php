@@ -13,7 +13,8 @@ namespace Drift\Logging;
  *   否则"改门槛"得遍历所有句柄。
  * ★ 句柄是纯转发，**不持有状态** ⇒ 多个 `Log::get('layout')` 返回的实例等价，
  *   可以随便缓存到字段里。
- */
+  * @api
+*/
 final class CategoryLogger
 {
     /** @internal 由 `Log::get()` 创建 */

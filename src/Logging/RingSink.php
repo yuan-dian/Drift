@@ -13,7 +13,8 @@ use Drift\Errors;
  * ★ **存的是 `LogEntry` 不是字符串**：devtools 要按分类/级别过滤、
  *   要按 `%T` 显示墙钟 —— 先格式化成字符串就都做不了了。
  *   这也是 `12` §4.7.5 的"格式自由的兜底"。
- */
+  * @api
+*/
 final class RingSink implements LogSink
 {
     /**
@@ -52,16 +53,30 @@ final class RingSink implements LogSink
     }
 
     /**
-     * 时间正序的最近 N 条（最旧在前）。
+     * 时间正序的最近 N 条（最旧在前），可按分类 / 级别过滤。
      *
+     * ★ **过滤在数据层不在 UI 层**（2026-10-24）：devtools 面板要"只看 layout"
+     *   或"只看 WARN 以上"，那是**查询语义**，不是 Widget 该做的事 ——
+     *   放 UI 层会导致每个消费者各写一份过滤，口径还会漂。
+     * ★ 两个过滤都是**可选**（null = 不限）：不传就退化成"最近 N 条"。
+     *
+     * @param null|string $category 精确匹配分类；null = 全部
+     * @param null|int    $minLevel 最低级别（含）；null = 全部
      * @return list<LogEntry>
      */
-    public function recent(): array
+    public function recent(?string $category = null, ?int $minLevel = null): array
     {
         $out = [];
         $start = self::wrap($this->head - $this->count, $this->capacity);
         for ($i = 0; $i < $this->count; $i++) {
-            $out[] = $this->buffer[self::wrap($start + $i, $this->capacity)];
+            $entry = $this->buffer[self::wrap($start + $i, $this->capacity)];
+            if ($category !== null && $entry->category !== $category) {
+                continue;
+            }
+            if ($minLevel !== null && $entry->level < $minLevel) {
+                continue;
+            }
+            $out[] = $entry;
         }
 
         return $out;

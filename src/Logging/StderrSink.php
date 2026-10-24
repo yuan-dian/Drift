@@ -9,7 +9,8 @@ namespace Drift\Logging;
  * ★ 走 `error_log()` 而不是 `fwrite(STDERR)`：桌面应用没有控制台，
  *   `STDERR` 常量在 GUI 子系统下可能不存在（与 `Errors` 的中止序列同一判断）。
  * ★ 默认 pattern 不带时间戳：开发期的噪音越少越好，`%l %c: %m` 足够。
- */
+  * @api
+*/
 final class StderrSink implements LogSink
 {
     private LogFormatter $formatter;

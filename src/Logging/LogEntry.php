@@ -17,7 +17,8 @@ namespace Drift\Logging;
  *   的 2000 条**事后**重放给 devtools 时会全部渲染成"当下"，`%T` 就是假的。
  *   真实墙钟必须在**构造 entry 的那一刻**捕获一次。相对时间则不存（`%t` 由
  *   `monotonic` 与启动点算出），守 `12` §4.5 的"`date()` 不进热路径"。
- */
+  * @api
+*/
 final readonly class LogEntry
 {
     /**

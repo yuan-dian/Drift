@@ -15,7 +15,8 @@ namespace Drift\Logging;
  *   早落地比晚落地便宜 —— 现在只有 3 个实现（`RingSink` / `StderrSink` / 测试的
  *   `CollectSink`），全在仓内；等应用真去写 `SentrySink` 了再加就是破坏它的代码。
  *   不用"可选接口"绕：一个 sink 若真有缓冲，"能不能收口"就不该是可选的。
- */
+  * @api
+*/
 interface LogSink
 {
     public function write(LogEntry $entry): void;

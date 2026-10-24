@@ -19,7 +19,8 @@ use Drift\Errors;
  *
  * ★ 不做 spdlog 的 `add_flag` 注册机制：PHP 里自定义 formatter 就是一个类，
  *   不需要注册表 —— 多一层就多一个失败点。
- */
+  * @api
+*/
 final class PatternFormatter implements LogFormatter
 {
     /** 片段类型：字面量 */

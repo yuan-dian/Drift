@@ -36,6 +36,7 @@ use App\Showcase\Pages\GridPage;
 use App\Showcase\Pages\ImagePage;
 use App\Showcase\Pages\LayoutPage;
 use App\Showcase\Pages\ListPage;
+use App\Showcase\Pages\LogPage;
 use App\Showcase\Pages\MotionPage;
 use App\Showcase\Pages\RichTextPage;
 use App\Showcase\Pages\SegmentedPage;
@@ -149,6 +150,8 @@ final class ShowcaseState extends State
             ['网格 Grid', static fn(): Widget => new GridPage()],
             ['宽高比 Aspect', static fn(): Widget => new AspectPage()],
             ['富文本 Rich', static fn(): Widget => new RichTextPage()],
+            // ★ 追加**在末尾**（同上条注释）：前 19 项的 y 坐标不变 ⇒ 既有真机探针不用改。
+            ['日志 Log', static fn(): Widget => new LogPage()],
         ];
     }
 
