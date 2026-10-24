@@ -8,21 +8,13 @@ use Drift\Geometry\Scale;
 use Drift\Geometry\Size;
 use Drift\Rendering\Canvas;
 use Drift\Rendering\Color;
-use Drift\Rendering\DisplayList;
 use Drift\Rendering\Paint;
-use Drift\Rendering\RecordingCanvas;
 use Drift\Text\Paragraph;
 use Drift\Text\TextMetricsProvider;
 use Drift\Text\TextStyle;
 
 /**
  * 文本盒（§13.1 / §8）。
- *
- * @backend-branch-allowed: 文本盒用 `RecordingCanvas` 把段落录进 `DisplayList`
- * 再 replay 到真画布 —— 这是 DisplayList 的**既定消费形态**（每帧重录、
- * 缓冲复用），不是"按后端分叉"：软光栅与 Skia 两条路上录的是同一份命令流，
- * 走的同一条 replay。若将来要有第二个录制缓冲实现，改的是这里的构造点
- * （一处），不是行为分支。
  *
  * ★ **问度量，不问平台**：`TextMetricsProvider` 在造盒时注入（§14.2），所以同一份
  *   Widget 树在测试里喂固定度量 ⇒ 布局可复现、golden 可比对。
@@ -37,8 +29,14 @@ final class RenderText extends RenderBox
 {
     private ?Paragraph $paragraph = null;
 
-    /** 复用缓冲（§7.2 裁决 2）：不每帧 new */
-    private ?DisplayList $list = null;
+    /**
+     * `color` 是构造注入的 readonly ⇒ 一支 Paint 跟着盒活，跨帧复用。
+     *
+     * ★ 早先这里缓存的是一个 `DisplayList`：每帧 reset → 录 1 条 `drawParagraph`
+     *   → replay 回真画布 —— 纯绕路（`analysis/17` §5.1 点名过）。录制没有缓存语义，
+     *   只是把"直接画"变成"记下来再画一遍"。
+     */
+    private ?Paint $paint = null;
 
     public function __construct(
         private readonly string $content,
@@ -97,17 +95,6 @@ final class RenderText extends RenderBox
             return;
         }
 
-        // ★ 缓冲复用（§7.2 裁决 2：每帧零分配）—— 每次 new 一个 DisplayList
-        //   等于每帧给每个 Text 分配一条命令缓冲，录制侧的"零分配"就白做了。
-        $this->list ??= new DisplayList();
-        $this->list->reset();
-
-        (new RecordingCanvas($this->list))->drawParagraph(
-            $this->paragraph,
-            Paint::fill($this->color),
-            0.0,
-            0.0,
-        );
-        $this->list->replay($canvas);
+        $canvas->drawParagraph($this->paragraph, $this->paint ??= Paint::fill($this->color), 0.0, 0.0);
     }
 }

@@ -10,9 +10,7 @@ use Drift\Geometry\Size;
 use Drift\Input\CursorShape;
 use Drift\Rendering\Canvas;
 use Drift\Rendering\Color;
-use Drift\Rendering\DisplayList;
 use Drift\Rendering\Paint;
-use Drift\Rendering\RecordingCanvas;
 use Drift\Text\Paragraph;
 use Drift\Text\TextMetricsProvider;
 use Drift\Text\TextSpan;
@@ -20,10 +18,6 @@ use Drift\Text\TextStyle;
 
 /**
  * 富文本盒（W8-5，2026-10-24）—— `RenderText` 的多 span 版本。
- *
- * @backend-branch-allowed: 与 `RenderText` 同一个理由 —— 用 `RecordingCanvas`
- * 把段落录进 `DisplayList` 再 replay 到真画布，是 DisplayList 的**既定消费形态**
- * （每帧重录、缓冲复用），不是"按后端分叉"：软光栅与 Skia 录的是同一份命令流。
  *
  * ★ 与 `RenderText` 的差别只有两点：
  *   ① 排版入口是 `layoutSpans()`（每个 span 各自整形，cluster 抬到全文偏移）；
@@ -40,8 +34,8 @@ final class RenderRichText extends RenderBox
 {
     private ?Paragraph $paragraph = null;
 
-    /** 复用缓冲（§7.2 裁决 2：不每帧 new） */
-    private ?DisplayList $list = null;
+    /** 复用缓冲：`color` 是构造注入的 readonly ⇒ 一支 Paint 跟着盒活 */
+    private ?Paint $paint = null;
 
     /** @param list<TextSpan> $spans */
     public function __construct(
@@ -167,33 +161,23 @@ final class RenderRichText extends RenderBox
             return;
         }
 
-        $this->list ??= new DisplayList();
-        $this->list->reset();
-
-        $recorder = new RecordingCanvas($this->list);
-
-        $this->paintRunDecorations($recorder);
-
-        $recorder->drawParagraph(
-            $this->paragraph,
-            Paint::fill($this->color),
-            0.0,
-            0.0,
-        );
-        $this->list->replay($canvas);
+        // 装饰与段落**同序直画**（背景垫在字下）—— 不再过 `DisplayList`：
+        // 录一条再回放只是把"直接画"做了两遍（`analysis/17` §5.1）。
+        $this->paintRunDecorations($canvas);
+        $canvas->drawParagraph($this->paragraph, $this->paint ??= Paint::fill($this->color), 0.0, 0.0);
     }
 
     /**
      * 按 run 画装饰（背景 / 下划线）—— **盒内**，不进 Canvas 后端。
      *
-     * ★ 坐标是盒局部，随 DisplayList 一起 replay ⇒ Raster / Skia 两条路自动一致，
+     * ★ 坐标是盒局部，直接画到当前画布 ⇒ Raster / Skia 两条路自动一致，
      *   后端一行都不用改。
      * ★ 必须排在字形**之前**：背景要垫在字下面。
      * ★ 背景高度 = 该 run 的**字体内容区**（`baseline − ascent .. baseline + descent`），
      *   不是整行高 —— 大字号 span 的背景才贴着字，不会把行距也涂上。字号取 run 自己的
      *   （同一行里 32pt 与 14pt 混排时各行其道）。
      */
-    private function paintRunDecorations(RecordingCanvas $recorder): void
+    private function paintRunDecorations(Canvas $canvas): void
     {
         if ($this->paragraph === null) {
             return;
@@ -207,7 +191,7 @@ final class RenderRichText extends RenderBox
                     $metrics = $run->face->metrics();
                     $size = $run->style->size;
                     $ascent = $metrics->ascentPx($size);
-                    $recorder->drawRect(
+                    $canvas->drawRect(
                         new Rect($pen, $line->baseline - $ascent, $run->width, $ascent + $metrics->descentPx($size)),
                         Paint::fill(Color::fromArgb($run->background)),
                     );
@@ -215,7 +199,7 @@ final class RenderRichText extends RenderBox
 
                 if ($run->underline) {
                     $underlineColor = $run->argb >= 0 ? Color::fromArgb($run->argb) : $this->color;
-                    $recorder->drawRect(
+                    $canvas->drawRect(
                         new Rect($pen, $line->baseline + 2.0, $run->width, 1.0),
                         Paint::fill($underlineColor),
                     );

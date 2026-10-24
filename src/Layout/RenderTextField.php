@@ -11,9 +11,7 @@ use Drift\Geometry\Size;
 use Drift\Rendering\BoxStyle;
 use Drift\Rendering\Canvas;
 use Drift\Rendering\Color;
-use Drift\Rendering\DisplayList;
 use Drift\Rendering\Paint;
-use Drift\Rendering\RecordingCanvas;
 use Drift\Text\Paragraph;
 use Drift\Text\TextMetricsProvider;
 use Drift\Text\Utf8;
@@ -21,10 +19,6 @@ use Drift\Text\TextStyle;
 
 /**
  * 单行输入框的盒（§15.2 / §A.2.9）。
- *
- * @backend-branch-allowed: 与 `RenderText` 同形态 —— 插入符与文本经
- * `RecordingCanvas` 录进 `DisplayList` 再 replay（DisplayList 的既定消费形态，
- * 不是按后端分叉：两条后端走同一份命令流、同一条 replay）。
  *
  * ★ **只吃解析好的值**（盒样式 / 文本色 / 内边距 / 插入符全由构造参数给）——
  *   它在 `Drift\Layout`，而 §4.3 不许 Layout 依赖 Theme。"主题 token → 值"的解析
@@ -54,8 +48,10 @@ final class RenderTextField extends RenderBox
 {
     private ?Paragraph $paragraph = null;
 
-    /** 复用缓冲（§7.2 裁决 2）：不每帧 new */
-    private ?DisplayList $list = null;
+    /**
+     * 早先是 `DisplayList` 缓冲（每帧 reset → 录 1 条 → replay，纯绕路）。
+     * 现在直接画；颜色在 text/placeholder 间切换，故不为 Paint 建缓存。
+     */
 
     public function __construct(
         private readonly string $text,
@@ -272,10 +268,7 @@ final class RenderTextField extends RenderBox
         if ($this->paragraph !== null && $this->paragraph->lineCount() > 0) {
             $color = $this->text === '' ? $this->placeholderColor : $this->textColor;
 
-            $this->list ??= new DisplayList();
-            $this->list->reset();
-            (new RecordingCanvas($this->list))->drawParagraph($this->paragraph, Paint::fill($color), 0.0, 0.0);
-            $this->list->replay($canvas);
+            $canvas->drawParagraph($this->paragraph, Paint::fill($color), 0.0, 0.0);
         }
 
         // 选区画在文本**下面**：先铺色，再落字 —— 高亮是背景，不是前景
