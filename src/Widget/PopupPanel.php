@@ -33,6 +33,9 @@ final class PopupPanel extends BoxWidget
 
     private float $elevation = 6.0;
 
+    /** 内容高度上限（`0` = 不限）；语义见 `maxHeight()` */
+    private float $maxHeight = 0.0;
+
     public function __construct(private readonly Widget $content)
     {
         parent::__construct();
@@ -81,6 +84,29 @@ final class PopupPanel extends BoxWidget
         return $this;
     }
 
+    /**
+     * 面板**内容**高度上限（逻辑像素；`0` = 不限）。
+     *
+     * ★ **超长才滚、够短就贴着内容** —— 这个判断在 `RenderPopupPanel` 里用**实测**
+     *   做，不在这里猜：先无界排一遍量自然高，超过上限才按上限重排（内容变成可滚
+     *   视口），否则按自然高贴着。所以**少选项的面板不会凭空变成一截空白**。
+     *
+     * ★★ **为什么必须有**（2026-10-23）：不设上限时，一列 30 项的面板会被
+     *   `placeEntry()` 的"超大退化"夹成**整个客户区那么高**，超出部分被面板自己的
+     *   `Overflow::Clip` 裁掉 ⇒ **第 N 项之后点不到**。而 `placeEntry()` ⑤ 的夹紧
+     *   **只挪 x/y 不改高**，所以那条兜底救不了"点不到"。
+     *
+     * ★ **菜单也该设**（`Menu::panel()` 现在没设 ⇒ 同一个洞）。本步只给 Select 接上，
+     *   菜单留作独立一步：它的行高与项数都由应用定，改之前要一起定"菜单滚不滚"。
+     */
+    public function maxHeight(float $value): static
+    {
+        $this->mutate();
+        $this->maxHeight = $value;
+
+        return $this;
+    }
+
     public function createRenderObject(BuildContext $context): RenderBox
     {
         $theme = $context->theme();
@@ -90,7 +116,13 @@ final class PopupPanel extends BoxWidget
             ->withBackground($theme->color(ColorToken::Pane))
             ->withBorder($theme->color(ColorToken::Border), 1.0);
 
-        return new RenderPopupPanel($this->padding, $this->minWidth, $this->elevation, $style);
+        return new RenderPopupPanel(
+            $this->padding,
+            $this->minWidth,
+            $this->elevation,
+            $style,
+            $this->maxHeight,
+        );
     }
 
     #[\Override]

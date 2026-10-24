@@ -1217,6 +1217,40 @@ abstract class Application
      */
     private function placeOverlays(BoxConstraints $constraints): void
     {
+        // ★★ **浮层的重建必须早于浮层的布局**（2026-10-24 立的 invariant）。
+        //
+        //   为什么：`Element::update()` 会**换一个新渲染盒**（§13.2"Widget 不可变 ⇒
+        //   换盒与换 Widget 是同一件事的两次表达"），`adoptBoxes()` 再把新盒挂进祖先。
+        //   本方法原先只做"摆盒"，而 `Frame::run()` 的 settle 段排在它**后面** ⇒
+        //   settle 换上的新盒这一帧**没排过**（`size` 为 null、offset 为默认值），
+        //   于是 `paintContent()` 第一句"没排过 ⇒ 无墨"早退 ⇒ **面板空白一帧**。
+        //
+        //   首个暴露者：`Select` 面板里的 `ScrollView`（2026-10-24）—— 滚一格换一次盒、
+        //   空白一格，连续滚动时面板几乎全白；而滚动本身是对的（下一帧 `appliedOffset`
+        //   就到位），所以极像"渲染偶发抽风"，不像结构错。
+        //   ★ 这不是 Select 特有的洞：**任何浮层里的有态控件**都中招（模态里放个
+        //     `TextField`，每敲一键空白一帧）—— 只是以前没有浮层装过会自重建的内容。
+        //
+        //   ★ 放本方法里而不是调用点：两个调用点（`frame()` / `repaintForResize()`）
+        //     都要这条顺序，而 resize 那条路更需要（约束变了 + 树也重建了）。
+        //   ★ `Frame::run()` 里那段浮层 settle 保留不动，而且是**必须的**：它的返回值
+        //     进 `$didRebuild`（"任一浮层重建 ⇒ 本帧不能跳过 layout"）。只在本方法 settle
+        //     会把"早 settle 引发的重建"漏出那个判据 ⇒ layout 被跳过 ⇒ 新盒仍没排过。
+        //     两遍 settle 幂等（`settle()` 只标脏 / 重建，无副作用累积）。
+        //   ★ 异常仍走帧末那套上报口径（与 `Frame::run()` 的 settle 段同措辞）。
+        try {
+            foreach ($this->overlays->all() as $e) {
+                $e->element?->settle();
+            }
+        } catch (Throwable $t) {
+            Errors::report(sprintf(
+                '帧循环：浮层 settle 段未捕获异常冒到帧末（沿途无错误边界）—— %s（%s:%d）',
+                $t->getMessage(),
+                basename($t->getFile()),
+                $t->getLine(),
+            ));
+        }
+
         foreach ($this->overlays->all() as $e) {
             if ($e->anchor !== null && !$e->anchor->isMounted()) {
                 $this->removeOverlay($e);

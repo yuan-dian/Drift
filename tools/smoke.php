@@ -12907,6 +12907,113 @@ check(
     'host=' . implode(',', $selApp->hostPressed) . ' count=' . $selApp->overlayCount(),
 );
 
+// —— ⑦ `PopupPanel::maxHeight()`：长列表被限高 + 真的能滚（2026-10-24）——
+// ★ 为什么必须有：不限高时 30 项的面板被 `placeEntry()` 的"超大退化"夹成**整个客户区**
+//   那么高，超出部分被面板自己的 `Overflow::Clip` 裁掉 ⇒ 第 N 项之后**点不到**；而
+//   ⑤ 的夹紧只挪 x/y 不改高，那条兜底救不了"点不到"。
+// ★ 判据**不按条目数猜**：`RenderPopupPanel` 先无界排一遍量自然高，超过上限才按上限
+//   重排（内容变成可滚视口），否则按自然高贴着 ⇒ ⑦（限高可滚）与 ⑧（贴着内容）
+//   两条必须同时钉，只有一条会漏掉另一半。
+$selLTc = $selApp->longTriggerCenter();
+$selApp->dispatchInput(PointerEvent::down($selLTc[0] ?? 0.0, $selLTc[1] ?? 0.0));
+$selApp->frame(1800.0, $selConstraints);
+check(
+    'Select · 长列表（30 项）⇒ 激活即开面板',
+    $selApp->overlayCount() === 1,
+    'count=' . $selApp->overlayCount(),
+);
+
+$selLBox = $selApp->topEntry()?->element?->effectiveBox();
+$selLH = $selLBox?->size()?->height ?? 0.0;
+check(
+    'Select · 长列表面板高 = PANEL_MAX_HEIGHT（限高生效）',
+    abs($selLH - Select::PANEL_MAX_HEIGHT) < 0.01,
+    'h=' . $selLH . ' cap=' . Select::PANEL_MAX_HEIGHT,
+);
+
+// 反向自检：自然高（30 行，chrome 只增不减）必须**远超**上限 —— 否则这条用例根本没在
+// 验"限高"，只是在验一个本来就够短的面板（量具只会绿的那种）。
+$selLRow = $selApp->optionButtons()[0]?->effectiveBox()?->size()?->height ?? 0.0;
+check(
+    'Select · 反例：自然高（30 行）远超上限 ⇒ 这条用例真的在验限高',
+    30.0 * $selLRow > $selLH && $selLRow > 0.0,
+    'natural=' . (30.0 * $selLRow) . ' actual=' . $selLH,
+);
+
+$selLSv = $selApp->panelScrollView();
+$selLView = $selLSv?->size()?->height ?? 0.0;
+$selLMax = $selLSv?->maxScroll() ?? -1.0;
+check(
+    'Select · 长列表面板里有 ScrollView，视口比盒矮（chrome 扣掉了）且 maxScroll > 0',
+    $selLSv !== null && $selLView > 0.0 && $selLView < $selLH && $selLMax > 0.0,
+    'view=' . $selLView . ' box=' . $selLH . ' maxScroll=' . $selLMax,
+);
+
+// 可滚距离 = 内容高 − 视口高（**推导**，不是抄实测值：行高与项数都从盒里读）
+check(
+    'Select · 长列表面板 maxScroll = 30 行内容高 − 视口高（滚得到底）',
+    abs($selLMax - (30.0 * $selLRow - $selLView)) < 0.01,
+    'maxScroll=' . $selLMax . ' expect=' . (30.0 * $selLRow - $selLView),
+);
+
+// ★ "为什么不限高就点不到"的**实证**：第 30 项的中心在面板下沿之外 ⇒ 滚之前摸不到它
+$selLLast = $selApp->optionCenter(29);
+[$selLPx, $selLPy] = $selLBox === null ? [0.0, 0.0] : \Drift\Layout\RenderBox::absoluteOrigin($selLBox);
+$selLBottom = $selLPy + $selLH;
+check(
+    'Select · 第 30 项在面板下沿之外 ⇒ 不限高/不滚就点不到它（限高的动机）',
+    $selLLast !== null && $selLLast[1] > $selLBottom,
+    'last=' . ($selLLast[1] ?? -1.0) . ' panelBottom=' . $selLBottom,
+);
+
+// ★★ 端到端：滚一格（`WHEEL_NOTCH_PX` = 48px）⇒ 第 0 项真的上移 48px。
+//   走真实 `ScrollEvent` 通道（命中 → 找最近 ScrollViewState → scrollBy），不直接改 state。
+$selLBefore = $selApp->optionCenter(0);
+$selLCx = $selLPx + ($selLBox?->size()?->width ?? 0.0) / 2.0;
+$selLCy = $selLPy + $selLH / 2.0;
+$selApp->dispatchInput(ScrollEvent::make($selLCx, $selLCy, 1.0));
+$selApp->frame(1900.0, $selConstraints);
+$selLAfter = $selApp->optionCenter(0);
+check(
+    'Select · 长列表面板滚一格 ⇒ 第 0 项上移 48px（WHEEL_NOTCH_PX，真实滚轮通道）',
+    $selLBefore !== null && $selLAfter !== null
+        && abs(($selLBefore[1] - $selLAfter[1]) - 48.0) < 0.01,
+    'dy=' . (($selLBefore[1] ?? 0.0) - ($selLAfter[1] ?? 0.0)),
+);
+
+// ★ 滚完面板还开着、还在限高（滚动不该把面板关掉或撑开）
+check(
+    'Select · 滚完之后面板仍在、高度仍是上限',
+    $selApp->overlayCount() === 1
+        && abs(($selApp->topEntry()?->element?->effectiveBox()?->size()?->height ?? 0.0) - Select::PANEL_MAX_HEIGHT) < 0.01,
+    'count=' . $selApp->overlayCount(),
+);
+
+// —— ⑧ 反例：短列表（3 项）⇒ 面板**贴着内容**，不凭空撑到上限 ——
+// ★ 这一条是限高的反面：若 `RenderPopupPanel` 无脑按上限排，3 项的面板会拖出一截
+//   空白（"明明只有 3 项却有 260px 高的面板"）。判定用**实测 chrome**，不写死数字。
+$selApp->dispatchInput(KeyEvent::down(KeyChord::escape()));
+$selApp->frame(1950.0, $selConstraints);
+$selApp->dispatchInput(PointerEvent::down($selTc[0] ?? 0.0, $selTc[1] ?? 0.0));
+$selApp->frame(2000.0, $selConstraints);
+
+$selSBox = $selApp->topEntry()?->element?->effectiveBox();
+$selSH = $selSBox?->size()?->height ?? 0.0;
+$selSSv = $selApp->panelScrollView();
+$selSView = $selSSv?->size()?->height ?? 0.0;
+$selSMax = $selSSv?->maxScroll() ?? -1.0;
+$selSRow = $selApp->optionButtons()[0]?->effectiveBox()?->size()?->height ?? 0.0;
+check(
+    'Select · 反例：短列表（3 项）⇒ 面板高 = 3 行 + chrome（**贴着内容**，不撑到上限）',
+    abs($selSH - (3.0 * $selSRow + ($selSH - $selSView))) < 0.01 && $selSH < Select::PANEL_MAX_HEIGHT,
+    'h=' . $selSH . ' rows=' . (3.0 * $selSRow) . ' view=' . $selSView . ' cap=' . Select::PANEL_MAX_HEIGHT,
+);
+check(
+    'Select · 反例：短列表 maxScroll = 0（内容不溢出 ⇒ 不画滚动条，浏览器同行为）',
+    $selSMax === 0.0,
+    'maxScroll=' . $selSMax,
+);
+
 // ── 汇总 + 退出码（2026-10-18）──
 // ★ 以前只打印 FAIL、**从不汇总、也从不非零退出** ⇒ 打印 3 个 FAIL 仍然 exit 0：
 //   任何自动化调用（脚本 / CI / `&&` 链）都会把它读成"过了"。与 G2（不许静默

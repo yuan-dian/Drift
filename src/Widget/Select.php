@@ -63,8 +63,9 @@ use Drift\Layout\FlexAlign;
  *   而 `Button` 的标签位只收字符串 ⇒ 得再包一层 `Row`，那会多出一个焦点目标。
  *   v1 用"有底有边的框 + 占位文字"表达可点。
  * - **可编辑（输入过滤）**：没有 —— 那是 `ComboBox`，要 `TextField` + 浮层联动。
- * - **滚动**：没有 —— 与 `Menu::panel()` 一致（都是 `PopupPanel(Column)`）。
- *   选项多到一屏放不下时，应用应自己做搜索 / 分页。
+ * - **滚动**：有了 —— 面板内容套 `ScrollView` + `PopupPanel::maxHeight(260)`，
+ *   **贴着内容还是滚动由实测自然高决定**（不是按条目数猜）。超过一屏仍建议应用
+ *   自己做搜索 / 分页（几百项靠滚屏找仍然慢，且没有虚拟化）。
  * - **多选**：没有 —— 多选是 `list<string>` 的受控值，形状不同。
  *
  * @api
@@ -73,6 +74,14 @@ final class Select extends StatelessWidget
 {
     /** 面板内容最小宽（逻辑像素）—— 比这更窄的一列选项点起来太挤 */
     public const PANEL_MIN_WIDTH = 180.0;
+
+    /**
+     * 面板内容高度上限（逻辑像素）。
+     *
+     * ★ 8 行 × 约 33px ≈ 264，取 260 ⇒ 常见"一次看得完"的列表**贴着内容**不滚动，
+     *   更长的才滚（`RenderPopupPanel` 按实测自然高决定，不猜条目数）。
+     */
+    public const PANEL_MAX_HEIGHT = 260.0;
 
     /** 触发框默认宽（逻辑像素）。`Button` 被定宽后标签靠左，正好是选择框的形态 */
     public const DEFAULT_WIDTH = 160.0;
@@ -208,10 +217,15 @@ final class Select extends StatelessWidget
             // ★ `cross(Stretch)`：面板给内容的是**有界宽**（`RenderPopupPanel` 先量
             //   统一宽再 tight 布局）⇒ 整行可点、高亮横贯。这与 `ShowcaseRoot` 里
             //   "宽度已被 SizedBox 定死才敢 Stretch" 是同一条前提。
+            // ★ **必须套 `ScrollView`**：`PopupPanel::maxHeight()` 的"超高就滚"是靠
+            //   内容自己是滚动视口实现的（它只负责给上限，不会替内容滚）。
             return PopupPanel::make(
-                Column::make()->cross(FlexAlign::Stretch)->children($rows)
+                ScrollView::make(
+                    Column::make()->cross(FlexAlign::Stretch)->children($rows)
+                )
             )
                 ->minWidth(self::PANEL_MIN_WIDTH)
+                ->maxHeight(self::PANEL_MAX_HEIGHT)
                 ->padding(EdgeInsets::symmetric(4.0, 4.0))
                 ->elevation(4.0);
         };

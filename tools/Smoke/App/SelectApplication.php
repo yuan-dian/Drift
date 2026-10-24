@@ -5,6 +5,8 @@ namespace Drift\Dev\Smoke\App;
 
 use Drift\App\Application;
 use Drift\App\OverlayEntry;
+use Drift\Layout\RenderBox;
+use Drift\Layout\RenderScrollView;
 use Drift\Widget\Button;
 use Drift\Widget\Column;
 use Drift\Widget\Element;
@@ -16,7 +18,8 @@ use Drift\Widget\Widget;
  * Select 夹具（W8-2）。
  *
  * 主树 = 一个 `Select`（三个选项）+ 一个 host 按钮（占位 + 验"没声明浮层的按钮
- * 仍走 `onPressed`"）。
+ * 仍走 `onPressed`"）+ 一个 **30 项的长列表 `Select`**（验 `PopupPanel::maxHeight()`
+ * 的"超高才滚、够短就贴着内容"）。
  *
  * ★ 判据全部走**真实激活链**（`dispatchInput(PointerEvent::down(...))` ⇒
  *   `activateFocusedWidget()`），不直调私有方法 —— 否则测的是"我以为的路径"。
@@ -51,7 +54,27 @@ final class SelectApplication extends Application
             Button::make('host')->onPressed(function (): void {
                 $this->hostPressed[] = 'host';
             }),
+            // ★ 第三个孩子：30 项 ⇒ 自然高远超 260，必然触发"限高 + 滚动"分支。
+            //   放在 host **之后**，`findButtonN()` 的下标口径才不变（#0 短列表触发框、
+            //   #1 host、#2 长列表触发框）。
+            Select::make(self::longOptions())
+                ->value('v15')
+                ->placeholder('请选择编号')
+                ->onChanged(function (string $value): void {
+                    $this->changed[] = $value;
+                }),
         ]);
+    }
+
+    /** @return list<Option> 30 个选项（行高由主题定，夹具不猜） */
+    private static function longOptions(): array
+    {
+        $out = [];
+        for ($i = 1; $i <= 30; $i++) {
+            $out[] = Option::make('选项 ' . sprintf('%02d', $i), 'v' . $i);
+        }
+
+        return $out;
     }
 
     /** 触发按钮（`Select` build 出来的那个 `Button`）的 Element */
@@ -66,6 +89,44 @@ final class SelectApplication extends Application
         $seen = 0;
 
         return self::findButtonN($this->root(), 1, $seen);
+    }
+
+    /** 长列表（30 项）那个 `Select` 的触发按钮 Element（主树第 3 个按钮） */
+    public function longTrigger(): ?Element
+    {
+        $seen = 0;
+
+        return self::findButtonN($this->root(), 2, $seen);
+    }
+
+    /** 长列表触发按钮的客户区中心（没排过 ⇒ `null`） */
+    public function longTriggerCenter(): ?array
+    {
+        $box = $this->longTrigger()?->effectiveBox();
+        if ($box === null) {
+            return null;
+        }
+
+        [$x, $y] = self::absoluteOrigin($box);
+        $size = $box->size();
+
+        return [$x + ($size?->width ?? 0.0) / 2.0, $y + ($size?->height ?? 0.0) / 2.0];
+    }
+
+    /**
+     * 栈顶面板里的滚动视口（`PopupPanel::maxHeight()` 的判据要读它的 `maxScroll()`）。
+     *
+     * ★ 走 `visitChildren()` 而不是手抄盒链：`RenderProxyBox::$child` 是 protected，
+     *   而"直接孩子"这个假设一旦被"面板里再套一层"打破就会静默取错。
+     */
+    public function panelScrollView(): ?RenderScrollView
+    {
+        $box = $this->overlays()->top()?->element?->effectiveBox();
+        if ($box === null) {
+            return null;
+        }
+
+        return self::findScrollView($box);
     }
 
     /** 浮层栈层数（`0` = 没有面板） */
@@ -187,6 +248,32 @@ final class SelectApplication extends Application
         for ($i = 0, $n = $element->childCount(); $i < $n; $i++) {
             self::collectButtons($element->childAt($i), $out);
         }
+    }
+
+    /** 子树里第一个滚动视口（没有 ⇒ `null`） */
+    private static function findScrollView(RenderBox $box): ?RenderScrollView
+    {
+        if ($box instanceof RenderScrollView) {
+            return $box;
+        }
+
+        $kids = [];
+        $box->visitChildren(static function ($child) use (&$kids): void {
+            $kids[] = $child;
+        });
+
+        foreach ($kids as $kid) {
+            if (!$kid instanceof RenderBox) {
+                continue;
+            }
+
+            $hit = self::findScrollView($kid);
+            if ($hit !== null) {
+                return $hit;
+            }
+        }
+
+        return null;
     }
 
     /**

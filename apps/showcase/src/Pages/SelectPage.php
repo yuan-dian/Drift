@@ -27,8 +27,8 @@ use Drift\Widget\Widget;
  *
  *   ① 基本：三个城市，选中项在下拉里用强调色底标出来；
  *   ② 值 ≠ 显示名：`Option::make('北京市', '110000')` —— 值域是身份、标签是给人看的字；
- *   ③ 未选中：`value()` 不匹配任何选项 ⇒ 显示 placeholder；
- *   ④ 长列表 + 宽控件：选项多到一屏放不下时**不会滚**（能力边界，见页末）。
+ *   ③ 宽控件：`triggerWidth()` 定宽（标签靠左，没有下拉箭头）；
+ *   ④ 长列表：30 项 ⇒ 面板被限高到 260 且**可以滚**（2026-10-24 起有了）。
  *
  * ★ 应用侧只有三个链式方法：`options / value / onChanged`。开面板、落位、点外面关、
  *   ESC 关、控件卸载自动收尸全在框架 —— 这与 Tooltip 是**同一类**声明式浮层
@@ -60,6 +60,19 @@ final class SelectState extends State
     private string $plain = '';
 
     private string $wide = '';
+
+    private string $many = '';
+
+    /** @return list<Option> 30 项（行高由主题定，这里不猜） */
+    private static function manyOptions(): array
+    {
+        $out = [];
+        for ($i = 1; $i <= 30; $i++) {
+            $out[] = Option::make('选项 ' . sprintf('%02d', $i), 'v' . $i);
+        }
+
+        return $out;
+    }
 
     public function build(BuildContext $ctx): Widget
     {
@@ -107,13 +120,23 @@ final class SelectState extends State
                 Text::make($this->wide === '' ? '还没选' : '收到值：' . $this->wide)->caption(),
             ]))->paddingAll(12.0),
 
+            $this->sectionBar('④ 长列表 · 30 项 ⇒ 面板限高 260 且可以滚（够短则贴着内容）'),
+            Card::make(Row::make()->spacing(12.0)->children([
+                Select::make(self::manyOptions())->value($this->many)->placeholder('请选择编号')
+                    ->onChanged(fn(string $v) => $this->pick('many', $v)),
+                Text::make($this->many === '' ? '还没选' : '收到值：' . $this->many)->caption(),
+            ]))->paddingAll(12.0),
+            Text::make('打开后把光标移进面板，用滚轮往下翻 —— 第 30 项一开始在面板下沿之外，'
+                . '不限高就永远点不到它。')->caption(),
+
             $this->sectionBar('能力边界（如实记录）'),
             Text::make('① 方向键换值：没有 —— 面板只在**打开那一刻**建一次，选中高亮会停在'
                 . '旧值上 ⇒ 宁可不做，也不做一个会自相矛盾的。补齐要先让"面板随控件重建"。')->caption(),
             Text::make('② 下拉箭头：没有 —— `Button` 的标签位只收字符串，要画箭头得再包一层'
                 . ' `Row`，那会多出一个焦点目标。')->caption(),
-            Text::make('③ 滚动：没有 —— 与菜单（`Menu::panel()`）一致，都是 `PopupPanel(Column)`。'
-                . '选项多到一屏放不下时，应用应自己做搜索 / 分页。')->caption(),
+            Text::make('③ 滚动：有了（2026-10-24）—— 面板内容套 `ScrollView` + '
+                . '`PopupPanel::maxHeight(260)`，"贴着内容还是滚动"由实测自然高决定，不按条目数猜。'
+                . '超过一屏仍建议应用自己做搜索 / 分页（几百项靠滚屏找仍然慢，且没有虚拟化）。')->caption(),
             Text::make('④ 可编辑 / 多选：没有 —— 那是 `ComboBox` 与 `list<string>` 受控值，形状不同。')->caption(),
             Text::make('⑤ 面板宽度不与控件等宽：面板按内容 + 最小宽 180 自尺寸。要等宽得给'
                 . ' `placeEntry()` 加最小宽约束（现在只有最大宽）。')->caption(),
@@ -127,6 +150,8 @@ final class SelectState extends State
                 $this->city = $value;
             } elseif ($which === 'plain') {
                 $this->plain = $value;
+            } elseif ($which === 'many') {
+                $this->many = $value;
             } else {
                 $this->wide = $value;
             }

@@ -37,6 +37,7 @@ final class RenderPopupPanel extends RenderProxyBox
         private readonly float $minWidth = 0.0,
         private readonly float $elevation = 6.0,
         private readonly BoxStyle $style = new BoxStyle(),
+        private readonly float $maxHeight = 0.0,
     ) {
     }
 
@@ -74,17 +75,52 @@ final class RenderPopupPanel extends RenderProxyBox
         $boxW = min($panelW, $constraints->maxWidth);
         $innerW = max(0.0, $boxW - 2.0 * $e - $this->padding->horizontal());
 
-        // 有界宽 + 尽量自然高：tight 宽让 `Spacer` 撑满整行，loose 高让内容自尺寸
-        $innerMaxH = $constraints->maxHeight === INF
+        // ① 约束允许的内容高（投影 + 内边距都要从盒高里扣掉）
+        $roomH = $constraints->maxHeight === INF
             ? INF
             : max(0.0, $constraints->maxHeight - 2.0 * $e - $this->padding->vertical());
 
-        $child->layout(new BoxConstraints($innerW, $innerW, 0.0, $innerMaxH));
+        // ② 本盒声明的内容高上限（`0` = 不限）；与约束取小
+        //   ★ 与 `$constraints->maxHeight` 取小是**必须**的：`placeEntry()` 的"超大退化"
+        //     会给整个客户区那么高的**紧**约束，那时上限不能超出客户区。
+        $cap = $this->maxHeight;
+        if ($cap > 0.0 && $cap > $roomH) {
+            $cap = $roomH;
+        }
+
+        if ($cap <= 0.0) {
+            // ── 不限高：与 2026-10-23 之前逐字节相同（无第二遍排）──
+            $child->layout(new BoxConstraints($innerW, $innerW, 0.0, $roomH));
+            $child->setOffset($e + $this->padding->left, $e + $this->padding->top);
+
+            return $constraints->constrain(new Size(
+                $boxW,
+                $child->size()->height + $this->padding->vertical() + 2.0 * $e,
+            ));
+        }
+
+        // ── 限高：**先无界排一遍量自然高**，再决定"贴着内容"还是"按上限滚" ──
+        // ★ 为什么不能在 Widget 侧按条目数猜：行高由主题与应用的字号定，猜错就是
+        //   "明明只有 5 项却拖出 260px 的空面板"或反过来"6 项就溢出被裁掉"。
+        //   ★ 为什么不能在 `RenderScrollView` 里 hug：视口的语义就是"父给多大占多大"
+        //     （`BigListPage` 依赖它撑满）—— 改它会动到所有既有布局。
+        //   ★ 第二遍只发生在"真的超高"时 ⇒ 常见路径（少选项）只多一次 intrinsic。
+        $natural = $child->layout(new BoxConstraints($innerW, $innerW, 0.0, INF));
+        $naturalH = $natural->height + $this->padding->vertical() + 2.0 * $e;
+
+        if ($naturalH > $cap) {
+            // 超高 ⇒ 内容按上限重排：`ScrollView` 的视口 = 上限 ⇒ 可滚；超出部分
+            // 仍被它自己的视口裁剪（那是**滚动**，不是"点不到"）。
+            $innerCap = max(0.0, $cap - 2.0 * $e - $this->padding->vertical());
+            $child->layout(new BoxConstraints($innerW, $innerW, 0.0, $innerCap));
+        }
+        // 否则沿用第一遍的自然高（贴着内容，不凭空撑高一截空白）
+
         $child->setOffset($e + $this->padding->left, $e + $this->padding->top);
 
         return $constraints->constrain(new Size(
             $boxW,
-            $child->size()->height + $this->padding->vertical() + 2.0 * $e,
+            min($cap, $child->size()->height + $this->padding->vertical() + 2.0 * $e),
         ));
     }
 
