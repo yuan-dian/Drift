@@ -235,18 +235,20 @@ final class RasterCanvas implements Canvas
         $originX = $x + $this->offsetX;
         $originY = $y + $this->offsetY;
 
-        // 字形光栅在**设备分辨率**上做（§8.2 坑 2）；步进仍是逻辑单位
-        $pixelSize = $paragraph->style->size * $this->scale->dpr;
-
         foreach ($paragraph->lines as $line) {
             $baseline = $originY + $line->baseline;
             $pen = $originX + $line->offsetX;
 
             foreach ($line->runs as $run) {
+                // ★ 每个 run 自己的颜色与字号（W8-5 富文本）；`-1` = 用整段的 Paint。
+                //   单段路径的 run 恒 `-1`、style === 段落 style ⇒ 逐字节不变。
+                $runColor = $run->argb >= 0 ? Color::fromArgb($run->argb) : $paint->color;
+                $pixelSize = $run->style->size * $this->scale->dpr;
+
                 foreach ($run->glyphs as $glyph) {
                     $bitmap = $run->face->rasterize($glyph->codepoint, $pixelSize);
                     if ($bitmap !== null) {
-                        $this->blendBitmap($bitmap, $paint->color, $pen + $glyph->offsetX, $baseline + $glyph->offsetY);
+                        $this->blendBitmap($bitmap, $runColor, $pen + $glyph->offsetX, $baseline + $glyph->offsetY);
                     }
                     $pen += $glyph->advance;
                 }

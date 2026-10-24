@@ -241,8 +241,7 @@ final class SkiaCanvas implements Canvas
         $originY = $y + $this->offsetY;
 
         $dpr = $this->scale->dpr;
-        $pixelSize = $paragraph->style->size * $dpr;
-        $argb = $paint->color->toArgb();
+        $paintArgb = $paint->color->toArgb();
 
         foreach ($paragraph->lines as $line) {
             $baselineLogical = $originY + $line->baseline;
@@ -251,6 +250,10 @@ final class SkiaCanvas implements Canvas
             foreach ($line->runs as $run) {
                 $family = $run->face->familyName();
                 $bold = $run->face->weight()->isBold();
+                // ★ 每个 run 自己的颜色与字号（W8-5 富文本）；`-1` = 用整段 Paint。
+                //   单段路径恒 `-1` 且 style === 段落 style ⇒ 逐字节不变。
+                $pixelSize = $run->style->size * $dpr;
+                $argb = $run->argb >= 0 ? $run->argb : $paintArgb;
 
                 foreach ($run->glyphs as $glyph) {
                     // 与 `RasterCanvas::blendBitmap()` 同口径：字形原点量化到设备像素

@@ -34,6 +34,69 @@ final class TextLayout
         Scale $scale,
         FontCollection $collection,
     ): Paragraph {
+        return $this->layoutRuns(
+            $text,
+            $this->shaper->shape($text, $style, $collection, $scale->dpr),
+            $style,
+            $maxWidth,
+            $scale,
+            $collection,
+        );
+    }
+
+    /**
+     * 多 span 排版（富文本，W8-5，2026-10-24）。
+     *
+     * ★ 每个 span 各自整形，run 的 `cluster` / `textStart` 抬到**全文**字节偏移
+     *   ⇒ 断行 / 光标 / 选中仍然能用字节偏移映射回原文。
+     * ★ 行高按**最大字号**算（把段落 style 的 size 抬上去）—— 否则 span 里一个
+     *   24pt 的字会被 14pt 的行高压扁。单段 `layout()` 不走这条路径。
+     * ★ `argb = -1` 的 run 保持"用调用方的 `Paint`"（单段路径的既有行为）。
+     *
+     * @param list<TextSpan> $spans
+     */
+    public function layoutSpans(
+        array $spans,
+        TextStyle $paragraphStyle,
+        float $maxWidth,
+        Scale $scale,
+        FontCollection $collection,
+    ): Paragraph {
+        $maxSize = $paragraphStyle->size;
+        foreach ($spans as $span) {
+            $size = $span->style->size;
+            if ($size > $maxSize) {
+                $maxSize = $size;
+            }
+        }
+        if ($maxSize !== $paragraphStyle->size) {
+            $paragraphStyle = $paragraphStyle->withSize($maxSize);
+        }
+
+        $texts = [];
+        $runs = [];
+        $offset = 0;
+        foreach ($spans as $span) {
+            $spanRuns = $this->shaper->shape($span->text, $span->style, $collection, $scale->dpr);
+            foreach ($spanRuns as $run) {
+                $runs[] = $run->shifted($offset)->withColor($span->argb);
+            }
+            $offset += strlen($span->text);
+            $texts[] = $span->text;
+        }
+
+        return $this->layoutRuns(implode('', $texts), $runs, $paragraphStyle, $maxWidth, $scale, $collection);
+    }
+
+    /** @param list<GlyphRun> $runs */
+    private function layoutRuns(
+        string $text,
+        array $runs,
+        TextStyle $style,
+        float $maxWidth,
+        Scale $scale,
+        FontCollection $collection,
+    ): Paragraph {
         $align = $style->align;
         $maxLines = $style->maxLines;
         $ellipsize = $style->ellipsize;
@@ -50,13 +113,13 @@ final class TextLayout
         $baseline = $metrics->baselineOffset($style->size, $style->lineHeight);
 
         $flat = [];
-        foreach ($this->shaper->shape($text, $style, $collection, $scale->dpr) as $run) {
+        foreach ($runs as $run) {
             foreach ($run->glyphs as $glyph) {
                 $flat[] = ['g' => $glyph, 'r' => $run];
             }
         }
 
-        $ranges = $this->breakLines($flat, $maxWidth, $style);
+        $ranges = $this->breakLines($flat, $maxWidth);
         $ellipsisLine = -1;
         if ($maxLines > 0 && count($ranges) > $maxLines) {
             $ranges = array_slice($ranges, 0, $maxLines);
@@ -74,7 +137,7 @@ final class TextLayout
         $lines = [];
         $contentWidth = 0.0;
         foreach ($ranges as $index => [$start, $end]) {
-            $width = $this->measure($flat, $start, $end, $style);
+            $width = $this->measure($flat, $start, $end);
 
             $ellipsis = null;
             if ($index === $ellipsisLine) {
@@ -91,9 +154,9 @@ final class TextLayout
 
             // 末行不拉伸（排版惯例：最后一行左对齐）
             $stretch = $justify && $index < $lineCount - 1 ? max(0.0, $maxWidth - $width) : 0.0;
-            $runs = $this->sliceRuns($flat, $start, $end, $style, $stretch);
+            $lineRuns = $this->sliceRuns($flat, $start, $end, $stretch);
             if ($ellipsis !== null) {
-                $runs[] = $ellipsis;
+                $lineRuns[] = $ellipsis;
             }
 
             $textStart = $start < count($flat) ? $flat[$start]['g']->cluster : $textLength;
@@ -101,7 +164,7 @@ final class TextLayout
             $top = $index * $lineHeight;
 
             $lines[] = new TextLine(
-                $runs,
+                $lineRuns,
                 $top,
                 $top + $baseline,
                 $lineHeight,
@@ -136,7 +199,7 @@ final class TextLayout
      * @param list<array{g: Glyph, r: GlyphRun}> $flat
      * @return list<array{0: int, 1: int}> 每行的 [起, 止) 在 $flat 上的下标
      */
-    private function breakLines(array $flat, float $maxWidth, TextStyle $style): array
+    private function breakLines(array $flat, float $maxWidth): array
     {
         $count = count($flat);
         if ($count === 0) {
@@ -161,7 +224,7 @@ final class TextLayout
                 continue;
             }
 
-            $pen += $flat[$index]['g']->advance + $style->letterSpacing;
+            $pen += $flat[$index]['g']->advance + $flat[$index]['r']->style->letterSpacing;
 
             if (!is_infinite($maxWidth) && $pen > $maxWidth && $lastBreak > $lineStart) {
                 $lines[] = [$lineStart, $lastBreak];
@@ -210,11 +273,11 @@ final class TextLayout
     }
 
     /** @param list<array{g: Glyph, r: GlyphRun}> $flat */
-    private function measure(array $flat, int $start, int $end, TextStyle $style): float
+    private function measure(array $flat, int $start, int $end): float
     {
         $width = 0.0;
         for ($i = $start; $i < $end; $i++) {
-            $width += $flat[$i]['g']->advance + $style->letterSpacing;
+            $width += $flat[$i]['g']->advance + $flat[$i]['r']->style->letterSpacing;
         }
         return $width;
     }
@@ -228,7 +291,7 @@ final class TextLayout
      * @param list<array{g: Glyph, r: GlyphRun}> $flat
      * @return list<GlyphRun>
      */
-    private function sliceRuns(array $flat, int $start, int $end, TextStyle $style, float $stretch): array
+    private function sliceRuns(array $flat, int $start, int $end, float $stretch): array
     {
         $gapCount = 0;
         for ($i = $start; $i < $end; $i++) {
@@ -252,14 +315,14 @@ final class TextLayout
             $owner = $flat[$i]['r'];
             if ($active !== $owner) {
                 if ($active !== null) {
-                    $runs[] = $this->makeRun($glyphs, $active->face, $style, $width);
+                    $runs[] = $this->makeRun($glyphs, $active->face, $active->style, $width, $active->argb);
                 }
                 $active = $owner;
                 $glyphs = [];
                 $width = 0.0;
             }
 
-            $advance = $glyph->advance + $style->letterSpacing;
+            $advance = $glyph->advance + $owner->style->letterSpacing;
             if ($share > 0.0) {
                 if ($gapCount > 0) {
                     if (Utf8::isWhitespace($glyph->codepoint)) {
@@ -273,14 +336,14 @@ final class TextLayout
             $width += $advance;
         }
         if ($active !== null) {
-            $runs[] = $this->makeRun($glyphs, $active->face, $style, $width);
+            $runs[] = $this->makeRun($glyphs, $active->face, $active->style, $width, $active->argb);
         }
 
         return $runs;
     }
 
     /** @param list<Glyph> $glyphs */
-    private function makeRun(array $glyphs, FontFace $face, TextStyle $style, float $width): GlyphRun
+    private function makeRun(array $glyphs, FontFace $face, TextStyle $style, float $width, int $argb = -1): GlyphRun
     {
         $first = $glyphs[0];
         $last = $glyphs[count($glyphs) - 1];
@@ -292,7 +355,8 @@ final class TextLayout
             $style,
             $width,
             $start,
-            $last->cluster + strlen(Utf8::encode($last->codepoint)) - $start
+            $last->cluster + strlen(Utf8::encode($last->codepoint)) - $start,
+            $argb,
         );
     }
 

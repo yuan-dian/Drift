@@ -27,6 +27,12 @@ final readonly class Glyph
         return new self($this->codepoint, $advance, $this->offsetX, $this->offsetY, $this->cluster);
     }
 
+    /** 跨 span 拼接时把 cluster 抬到**全文**的字节偏移 */
+    public function withCluster(int $cluster): self
+    {
+        return new self($this->codepoint, $this->advance, $this->offsetX, $this->offsetY, $cluster);
+    }
+
     public function equals(Glyph $other): bool
     {
         return $this->codepoint === $other->codepoint

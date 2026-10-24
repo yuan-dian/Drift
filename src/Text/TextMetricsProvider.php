@@ -26,6 +26,17 @@ interface TextMetricsProvider
      */
     public function layout(string $text, TextStyle $style, float $maxWidth, Scale $scale): Paragraph;
 
+    /**
+     * 富文本排版（W8-5）：span 列表 → 段落。
+     *
+     * ★ 返回的 `Paragraph` 里 `cluster` 是**全文**字节偏移 ⇒ `indexAt()` 仍是
+     *   全文偏移（光标 / 选中不用二次换算）。
+     *
+     * @param list<TextSpan> $spans
+     * @param float $maxWidth 逻辑单位；`INF` = 不限宽（不折行）
+     */
+    public function layoutSpans(array $spans, TextStyle $style, float $maxWidth, Scale $scale): Paragraph;
+
     /** 单行宽度（逻辑单位）—— 不折行时的便捷入口 */
     public function advance(string $text, TextStyle $style, Scale $scale): float;
 }

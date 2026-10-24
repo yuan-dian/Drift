@@ -37,6 +37,7 @@ use App\Showcase\Pages\ImagePage;
 use App\Showcase\Pages\LayoutPage;
 use App\Showcase\Pages\ListPage;
 use App\Showcase\Pages\MotionPage;
+use App\Showcase\Pages\RichTextPage;
 use App\Showcase\Pages\SegmentedPage;
 use App\Showcase\Pages\SelectPage;
 use App\Showcase\Pages\SliderPage;
@@ -147,6 +148,7 @@ final class ShowcaseState extends State
             ['可编辑 Combo', fn(): Widget => new ComboBoxPage($this->delay)],
             ['网格 Grid', static fn(): Widget => new GridPage()],
             ['宽高比 Aspect', static fn(): Widget => new AspectPage()],
+            ['富文本 Rich', static fn(): Widget => new RichTextPage()],
         ];
     }
 

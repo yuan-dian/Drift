@@ -137,6 +137,7 @@ use Drift\Geometry\Scale;
 use Drift\Geometry\Size;
 use Drift\Layout\LayoutSelfCheck;
 use Drift\Layout\LayoutTolerance;
+use Drift\Layout\RenderRichText;
 use Drift\Input\AcceleratorTable;
 use Drift\Input\CursorShape;
 use Drift\Input\FocusNode;
@@ -213,6 +214,7 @@ use Drift\Text\TextAlign;
 use Drift\Text\TextLayout;
 use Drift\Text\TextLine;
 use Drift\Text\TextRole;
+use Drift\Text\TextSpan;
 use Drift\Text\TextStyle;
 use Drift\Theme\SystemTheme;
 use Drift\Theme\ThemeData;
@@ -290,6 +292,8 @@ use Drift\Widget\Snackbar;
 use Drift\Widget\TooltipPanel;
 use Drift\Widget\State;
 use Drift\Widget\StatefulElement;
+use Drift\Widget\RichText;
+use Drift\Widget\Span;
 use Drift\Widget\Text;
 use Drift\Input\ThemeChangedEvent;
 use Drift\Input\WindowDeactivatedEvent;
@@ -8973,6 +8977,59 @@ check(
         && abs($aspectPad->size()->width - 240.0) < 0.01
         && abs($aspectPad->size()->height - 120.0) < 0.01,
     sprintf('盒 %.6g×%.6g', $aspectPad?->size()?->width ?? -1.0, $aspectPad?->size()?->height ?? -1.0),
+);
+
+// —— W8-5 RichText：一段里多个样式；颜色/字号由 run 自带，排版一次成段
+$richEl = RichText::make([
+    Span::make('保存失败：')->bold(),
+    Span::make('磁盘空间不足')->color(Color::fromHex('#d93025')),
+])->createElement();
+$richEl->mount(null, $context);
+$richBox = $richEl->effectiveBox();
+$richBox?->layout(BoxConstraints::loose(new Size(500.0, 120.0)));
+$richPara = $richBox instanceof RenderRichText ? $richBox->paragraph() : null;
+$richRuns = $richPara?->lines[0]->runs ?? [];
+$richLast = $richRuns === [] ? null : $richRuns[count($richRuns) - 1];
+check(
+    'RichText · 两段各自成 run（前段默认色、后段显式色）',
+    count($richRuns) >= 2
+        && $richRuns[0]->argb === -1
+        && $richLast !== null
+        && $richLast->argb === Color::fromHex('#d93025')->toArgb(),
+    sprintf('runs=%d 首=%d 尾=%s', count($richRuns), $richRuns[0]->argb ?? 99, var_export($richLast?->argb, true)),
+);
+$richTailFirst = null;
+foreach ($richRuns as $richRun) {
+    if ($richRun->argb === Color::fromHex('#d93025')->toArgb()) {
+        $richTailFirst = $richRun;
+        break;
+    }
+}
+check(
+    'RichText · 后段 cluster 是全文字节偏移（不是 0；段内回退 run 也一起抬）',
+    $richTailFirst !== null
+        && $richTailFirst->glyphs !== []
+        && $richTailFirst->glyphs[0]->cluster === strlen('保存失败：'),
+    sprintf('后段首 run 的 cluster=%s 期望=%d', var_export($richTailFirst?->glyphs[0]->cluster ?? null, true), strlen('保存失败：')),
+);
+
+$richBigEl = RichText::make([Span::make('大')->size(28.0), Span::make('小')])->createElement();
+$richBigEl->mount(null, $context);
+$richBig = $richBigEl->effectiveBox();
+$richBig?->layout(BoxConstraints::loose(new Size(500.0, 200.0)));
+check(
+    'RichText · 行高按最大 span 字号（28pt ⇒ 高 ≥ 28，不被 14pt 压扁）',
+    $richBig?->size() !== null && $richBig->size()->height >= 28.0,
+    sprintf('高 %.1f', $richBig?->size()?->height ?? -1.0),
+);
+
+$richBaseStyle = TextStyle::of(14.0);
+$richKeyA = Paragraph::keyForSpans([new TextSpan('x', $richBaseStyle, 0xFFFF0000)], $richBaseStyle, 100.0, new Scale(1.0));
+$richKeyB = Paragraph::keyForSpans([new TextSpan('x', $richBaseStyle, 0xFF0000FF)], $richBaseStyle, 100.0, new Scale(1.0));
+check(
+    'RichText · 缓存键不含颜色（只换色不重排 —— §8.1 键只收排版输入）',
+    $richKeyA === $richKeyB,
+    sprintf('A=%s B=%s', substr($richKeyA, 0, 8), substr($richKeyB, 0, 8)),
 );
 
 // —— 扁平按钮：盒样式 isNone（无底无边框），字色走正文色

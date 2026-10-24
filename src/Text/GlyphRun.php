@@ -21,7 +21,44 @@ final readonly class GlyphRun
         public float $width,
         public int $textStart,
         public int $textLength,
+        /**
+         * 显式文字色（ARGB）；`-1` = 未设 ⇒ 绘制方用传入的 `Paint`。
+         *
+         * ★ 颜色**不进 `TextStyle`**：它不影响排版，进 `TextStyle::cacheKey()`
+         *   会让"只换颜色"也整段重排（§8.1 的缓存键只含排版输入）。
+         * ★ 用 `int` 而不是 `?Color`：可空对象在 AOT 下退化。
+         */
+        public int $argb = -1,
     ) {
+    }
+
+    /** 同几何、换颜色（`-1` = 回到"用 Paint"） */
+    public function withColor(int $argb): self
+    {
+        return new self($this->glyphs, $this->face, $this->style, $this->width, $this->textStart, $this->textLength, $argb);
+    }
+
+    /** 跨 span 拼接：字形 cluster 与 `textStart` 一起抬到全文偏移 */
+    public function shifted(int $offset): self
+    {
+        if ($offset === 0) {
+            return $this;
+        }
+
+        $glyphs = [];
+        foreach ($this->glyphs as $glyph) {
+            $glyphs[] = $glyph->withCluster($glyph->cluster + $offset);
+        }
+
+        return new self(
+            $glyphs,
+            $this->face,
+            $this->style,
+            $this->width,
+            $this->textStart + $offset,
+            $this->textLength,
+            $this->argb,
+        );
     }
 
     public function count(): int

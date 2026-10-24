@@ -49,6 +49,30 @@ final readonly class Paragraph
         return self::keyFor($this->text, $this->style, $this->maxWidth, $scale);
     }
 
+    /**
+     * 富文本缓存键（W8-5）：各 span 的 (text, 排版样式) + 段落样式 + maxWidth + scale。
+     *
+     * ★ **不含颜色（argb）**：颜色不影响排版，进键会让"只换颜色"也整段重排 ——
+     *   §8.1 的键只收**影响排版的输入**。
+     *
+     * @param list<TextSpan> $spans
+     */
+    public static function keyForSpans(array $spans, TextStyle $style, float $maxWidth, Scale $scale): string
+    {
+        $parts = [];
+        foreach ($spans as $span) {
+            $parts[] = $span->text;
+            $parts[] = $span->style->cacheKey();
+        }
+
+        return hash('sha256', implode("\x1f", [
+            implode("\x1e", $parts),
+            $style->cacheKey(),
+            (string) $maxWidth,
+            (string) $scale->dpr,
+        ]));
+    }
+
     public function lineCount(): int
     {
         return count($this->lines);

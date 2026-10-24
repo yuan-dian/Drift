@@ -37,6 +37,12 @@ final class DeterministicMetricsProvider implements TextMetricsProvider
         return $this->cache[$key] ??= $this->layout->layout($text, $style, $maxWidth, $scale, $this->collection);
     }
 
+    public function layoutSpans(array $spans, TextStyle $style, float $maxWidth, Scale $scale): Paragraph
+    {
+        $key = Paragraph::keyForSpans($spans, $style, $maxWidth, $scale);
+        return $this->cache[$key] ??= $this->layout->layoutSpans($spans, $style, $maxWidth, $scale, $this->collection);
+    }
+
     public function advance(string $text, TextStyle $style, Scale $scale): float
     {
         // 不折行的便捷入口：只量一行的宽度，不产生段落
