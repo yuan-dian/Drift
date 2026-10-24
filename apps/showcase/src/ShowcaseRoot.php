@@ -65,26 +65,33 @@ final class ShowcaseRoot extends StatefulWidget
 {
     /**
      * @param \Closure(Snackbar): void $notify 「弹一条底部通知」—— 由组合根接线
+     * @param \Closure(int, \Closure): void $delay 「N 毫秒后跑这个回调」—— 由组合根接线
+     *        （`Application::after()`）。ComboBox 页用它模拟远程搜索的**异步到达**。
      *
      * ★ 为什么是**闭包**而不是 `Application`：`Widget` 层不该认识 `Drift\App`
      *   （§4.3），而且页面只该拿到"我能做什么"，不是"整个应用"。
      * ★ 为什么**不可空**：可选对象在 AOT 侧会退化 `php::Var`（同 `?float` 用
      *   `NAN` 那条纪律）⇒ 一律由组合根给一个真的。
      */
-    public function __construct(private \Closure $notify)
-    {
+    public function __construct(
+        private \Closure $notify,
+        private \Closure $delay,
+    ) {
         parent::__construct();
     }
 
-    /** @param \Closure(Snackbar): void $notify */
-    public static function make(\Closure $notify): self
+    /**
+     * @param \Closure(Snackbar): void $notify
+     * @param \Closure(int, \Closure): void $delay
+     */
+    public static function make(\Closure $notify, \Closure $delay): self
     {
-        return new self($notify);
+        return new self($notify, $delay);
     }
 
     public function createState(): State
     {
-        return new ShowcaseState($this->notify);
+        return new ShowcaseState($this->notify, $this->delay);
     }
 }
 
@@ -106,9 +113,14 @@ final class ShowcaseState extends State
 
     private int $selected = 0;
 
-    /** @param \Closure(Snackbar): void $notify 组合根接线的通知能力（转手给通知页） */
-    public function __construct(private \Closure $notify)
-    {
+    /**
+     * @param \Closure(Snackbar): void $notify 组合根接线的通知能力（转手给通知页）
+     * @param \Closure(int, \Closure): void $delay 组合根接线的延时能力（转手给 ComboBox 页）
+     */
+    public function __construct(
+        private \Closure $notify,
+        private \Closure $delay,
+    ) {
     }
 
     public function initState(): void
@@ -130,7 +142,7 @@ final class ShowcaseState extends State
             ['提示 Tooltip', static fn(): Widget => new TooltipPage()],
             ['通知 Snackbar', fn(): Widget => new SnackbarPage($this->notify)],
             ['下拉 Select', static fn(): Widget => new SelectPage()],
-            ['可编辑 Combo', static fn(): Widget => new ComboBoxPage()],
+            ['可编辑 Combo', fn(): Widget => new ComboBoxPage($this->delay)],
         ];
     }
 

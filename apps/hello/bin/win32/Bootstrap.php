@@ -99,7 +99,7 @@ final class Bootstrap
         $input = $platform->input();
         while ($platform->pump()) {
             while (($event = $input->poll()) !== null) {
-                $shape = $app->dispatchInput($event);
+                $shape = $app->dispatchInput($event, $platform->now());
                 if ($shape !== null) {
                     $window->setCursor($handle, $shape);
                 }

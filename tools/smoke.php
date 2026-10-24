@@ -13757,6 +13757,143 @@ check(
         : 'rebuilt=' . ($cbBefore === $cbAfter ? 'no' : 'yes'),
 );
 
+// ── ⑪ 远程搜索（`onSearch` + `status`，2026-10-24）──
+//
+// ★ 这一块钉四条**只靠读代码看不出来**的事：
+//   ① `onSearch` 只挂在"用户输入"上 —— 开关面板时的内部复位**不许**触发它
+//      （否则每次开关面板都发一次"搜索空串"请求）。
+//   ② 声明了 `onSearch` ⇒ **本地过滤让位**：服务端结果原样显示。判据要选"本地会
+//      筛掉一项"的表（查询词是"北"、表里有"上海市"）—— 用全是"北"的表就分不出
+//      是"没筛"还是"筛了没变化"。
+//   ③ 三态不是 ready 时 Enter **不许**选中：加载中面板里没有选项行，但应用很可能
+//      还留着上一批 `options`（不清旧数据以免闪烁）⇒ 不加闸会选中看不见的项。
+//   ④ 换选项表之后字段**不许变空白**（远程搜索必然走到这里）。
+//
+// ★ 面板内容比主树晚一帧 ⇒ 每次改完跑两帧（`$cbSettle`）。
+$cbApp->dispatchInput(KeyEvent::down(KeyChord::escape()));
+$cbTick();
+$cbApp->host()?->setRemote(true);
+$cbApp->host()?->setOptions(ComboBoxApplication::cities());
+$cbApp->host()?->setStatus(OptionStatus::ready());
+$cbSettle();
+
+$cbTap($cbApp->fieldCenter());
+check(
+    'ComboBox 远程 · 开面板 ⇒ onOpen 触发一次（不是每次应用重建）',
+    $cbApp->host()?->openCount === 1,
+    'openCount=' . var_export($cbApp->host()?->openCount, true),
+);
+check(
+    'ComboBox 远程 · 开面板时的内部清空**不**触发 onSearch（只有用户输入才算）',
+    $cbApp->host()?->searched === [],
+    'searched=[' . implode(',', $cbApp->host()?->searched ?? []) . ']',
+);
+
+$cbApp->dispatchInput(KeyEvent::character('北'));
+// ★ 这里必须跑**两帧**：`onSearch` 的回调把 status 改成 loading，而面板内容读的是
+//   "锚点当前那个 Widget" —— 它要等主树 settle 之后才换。第一帧面板还会用**旧**
+//   Widget（ready）重建一次（那是 `$query` 广播带出来的），第二帧框架的签名闸才
+//   看到新 Widget 并把面板换成"正在加载…"。
+$cbSettle();
+check(
+    'ComboBox 远程 · 打字 ⇒ onSearch 收到**当时的词**（不是空串、不是旧词）',
+    $cbApp->host()?->searched === ['北'],
+    'searched=[' . implode(',', $cbApp->host()?->searched ?? []) . ']',
+);
+check(
+    'ComboBox 远程 · 回调进加载态 ⇒ 面板只剩一行"正在加载…"、0 个候选',
+    $cbLabels() === [] && in_array('正在加载…', $cbApp->panelTexts(), true),
+    'rows=[' . implode(',', $cbLabels()) . '] texts=' . implode('|', $cbApp->panelTexts()),
+);
+
+// ★★ ③ 加载中 Enter 不许选中 —— 此时 options 里**还留着 4 个城市**（应用没清旧数据）
+$cbChangedBefore = count($cbApp->changed());
+$cbApp->dispatchInput(KeyEvent::down(KeyChord::enter()));
+$cbTick();
+check(
+    'ComboBox 远程 · 加载中 Enter ⇒ 不选中（旧 options 还在，但不许拿它当"看得见的项"）',
+    count($cbApp->changed()) === $cbChangedBefore && $cbApp->overlayCount() === 1,
+    'changed=' . count($cbApp->changed()) . ' overlay=' . $cbApp->overlayCount(),
+);
+
+// 服务端结果到达：**表里含一项不含"北"的** —— 本地若还筛，就只剩 1 项
+$cbApp->host()?->setOptions([
+    Option::make('北京市', '110000'),
+    Option::make('上海市', '310000'),
+]);
+$cbApp->host()?->setStatus(OptionStatus::ready());
+$cbSettle();
+check(
+    'ComboBox 远程 · 服务端结果原样显示（查询词「北」+ 含「上海市」⇒ 本地不再筛）',
+    $cbLabels() === ['北京市', '上海市'],
+    'rows=[' . implode(',', $cbLabels()) . ']',
+);
+
+// ★★ ④ 选中之后换选项表 ⇒ 字段**不许变空白**
+$cbTap($cbApp->optionCenter(0));
+check(
+    'ComboBox 远程 · 选中后字段回标签「北京市」（基线）',
+    $cbApp->value() === '110000' && $cbApp->fieldState()?->text() === '北京市',
+    'value=' . $cbApp->value() . ' text=' . var_export($cbApp->fieldState()?->text(), true),
+);
+$cbApp->host()?->setOptions([Option::make('杭州市', '330100')]);
+$cbSettle();
+check(
+    'ComboBox 远程 · 换选项表（已选值不在表里）⇒ 字段仍显示「北京市」，不变空白',
+    $cbApp->fieldState()?->text() === '北京市',
+    'text=' . var_export($cbApp->fieldState()?->text(), true),
+);
+// ★ 反例的另一半：**没见过**的值不许拿旧标签冒充（否则字段会显示一个错的名字）
+$cbApp->host()?->setValue('999999');
+$cbSettle();
+check(
+    'ComboBox 远程 · 反例：表里没有、也从没见过的值 ⇒ 字段空（不拿旧标签冒充）',
+    $cbApp->fieldState()?->text() === '',
+    'text=' . var_export($cbApp->fieldState()?->text(), true),
+);
+
+// ★★ 真机缺陷的判据（2026-10-24）：主树 settle 之后、面板还没同步的那一帧，
+//    `wantsFrame()` **必须为真** —— 否则帧时钟不上膛，面板永远停在旧内容。
+//    现象（真机实测）：远程搜索的 `deliver()` 明明把选项换成了 2 项（日志 n=2），
+//    面板还列着旧的 4 项；而 smoke 因为总是**显式跑两帧**，从来看不出来。
+//    ★ 这一条不能用"再跑一帧面板就对了"来测 —— 那正是本缺陷**恰好**能通过的写法。
+$cbTap($cbApp->fieldCenter());
+$cbSettle();
+$cbApp->host()?->setOptions([Option::make('成都市', '510100')]);
+$cbTick();   // 只跑**一帧**：主树换了，面板还没跟上
+check(
+    'ComboBox 远程 · 主树换了、面板还没同步 ⇒ wantsFrame() 为真（否则帧时钟不上膛）',
+    $cbApp->wantsFrame() === true,
+    'wantsFrame=' . var_export($cbApp->wantsFrame(), true),
+);
+$cbTick();   // 第二帧：面板同步（`syncPanelSignatures()` 更新 `seenAnchor`）
+check(
+    'ComboBox 远程 · 同步完 ⇒ wantsFrame() 回落（这条判据不自旋）',
+    $cbApp->wantsFrame() === false,
+    'wantsFrame=' . var_export($cbApp->wantsFrame(), true),
+);
+
+// ★★ 延时基准（真机缺陷判据，2026-10-24）：`after()` 的基准必须取"上一次输入"与
+//    "上一帧"的**较大者**。只取"上一帧"的话，**空闲应用**上排的 400ms 会当场触发
+//    （现象：远程搜索的"正在加载…"一帧都没出现过，结果直接跳出来）。
+//    ★ 摆法要选"上一帧离得很远"：帧戳 1000、输入戳 5000 —— 两者差 4 秒，
+//      只取上一帧的话 `due=1400` 早就在过去了。
+//    ★ 这里是全文件最后一组断言，直接写帧戳（不再走 `$cbTick` 的递增计数）。
+$cbApp->frame(1000.0, $cbConstraints);
+$cbApp->dispatchInput(PointerEvent::move(5.0, 5.0), 5000.0);
+$cbDelayFired = 0;
+$cbApp->after(400, function () use (&$cbDelayFired): void {
+    $cbDelayFired++;
+});
+$cbApp->frame(5100.0, $cbConstraints);
+check(
+    '延时 · 基准取输入时刻（+100ms 不触发；只取上一帧的话这里已经触发了）',
+    $cbDelayFired === 0,
+    'fired=' . $cbDelayFired,
+);
+$cbApp->frame(5400.0, $cbConstraints);
+check('延时 · 基准取输入时刻（+400ms 才触发）', $cbDelayFired === 1, 'fired=' . $cbDelayFired);
+
 // ── 汇总 + 退出码（2026-10-18）──
 // ★ 以前只打印 FAIL、**从不汇总、也从不非零退出** ⇒ 打印 3 个 FAIL 仍然 exit 0：
 //   任何自动化调用（脚本 / CI / `&&` 链）都会把它读成"过了"。与 G2（不许静默

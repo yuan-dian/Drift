@@ -36,9 +36,18 @@ final class ShowcaseApplication extends Application
         //   （唯一持有 `$this` 的地方）把"弹一条通知"这个能力递下去。
         //   ★ 2026-10-23 之前示例台写的是 `$this->application()->showSnackbar()`，
         //     那个方法**不存在** ⇒ 真机点一下进程直接崩、而 smoke 全绿。
-        return ShowcaseRoot::make(function (Snackbar $snackbar): void {
-            $this->showSnackbar($snackbar);
-        });
+        return ShowcaseRoot::make(
+            function (Snackbar $snackbar): void {
+                $this->showSnackbar($snackbar);
+            },
+            // ★ 第二个能力：**一次性延时回调**（`Application::after()`）。
+            //   ComboBox 页用它模拟"服务端 400ms 后响应"—— 远程搜索的真实形状是
+            //   **异步到达**，不是"点一个按钮让结果出现"。控件侧够不到定时器
+            //   （§4.3：`Widget → App` 是禁的）⇒ 只能由组合根递进来。
+            function (int $milliseconds, \Closure $callback): void {
+                $this->after($milliseconds, $callback);
+            },
+        );
     }
 
     public function title(): string

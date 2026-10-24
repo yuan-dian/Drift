@@ -36,6 +36,7 @@ use Drift\State\Subject;
  * |---|---|---|
  * | `overlayPanel($factory)` | `Application::activateFocusedWidget()` | 激活（点击 / Enter）时浮出候选面板 |
  * | `keyboard($handler)` | `FocusManager::dispatchKey()` | Enter 取第一项 / Esc 收起；其余让位 |
+ * | `overlaySignature($fn)` | `Application::syncPanelSignatures()` | 受控值（选项表 / 三态）变了 ⇒ 面板重读 |
  *
  * ★★ **`keyboard()` 声明在 `Column` 上、不声明在 `TextField` 上**：焦点落在
  *   `TextField` 上，`keyboard()` 沿**父链**找最近的声明者（2026-10-24 修，`c659d0a`）。
@@ -76,6 +77,39 @@ use Drift\State\Subject;
  * ★ 但清空**只在字段还显示标签时**做：用户可能在面板关着时就打了字（Tab 进来
  *   直接打 / Esc 之后接着改），那时点开面板不该把他的字吃掉。
  *
+ * ## 远程搜索（`onSearch` + `status`，2026-10-24）
+ *
+ * 本地过滤只对"候选表就在手上"成立。远程搜索是另一套：**打字 ⇒ 问服务端 ⇒ 换选项表**。
+ *
+ * ```php
+ * ComboBox::make($this->results)
+ *     ->status($this->status)                      // OptionStatus：取数中 / 失败 / 空 / 正常
+ *     ->onOpen(fn() => $this->search(''))          // 面板打开那一刻（可选：加载初始列表）
+ *     ->onSearch(fn(string $q) => $this->search($q))
+ *     ->onChanged(fn(string $v) => $this->setState(fn() => $this->city = $v));
+ * ```
+ *
+ * **四条决定**（每条都对应一处会静默出错的写法）：
+ *
+ * 1. ★★ **`onSearch` 挂在"用户输入"上，不挂在"查询词变了"上**。查询词有三个写入点
+ *    （打字 / 开面板时清空 / 关面板时复位），后两个是**控件自己的状态管理**。接在
+ *    写入点上 ⇒ 每次开关面板都发一次"搜索空串"请求（刚选完又去取一遍）。
+ * 2. ★★ **声明了 `onSearch` ⇒ 本地过滤让位**（`matches()` 原样返回）。服务端可能按
+ *    拼音、按 `value`、按首字母匹配，本地再按标签子串筛一遍是**二次收缩** ——
+ *    现象是"服务端返回 8 条、面板只显示 2 条"，而它看起来像服务端的问题。
+ *    判据是"有没有声明回调"而不是另加一个开关：声明了就意味着选项表是权威。
+ * 3. ★★ **Enter 跟着三态闭**。加载中 / 失败时面板里没有选项行，但应用很可能**保留
+ *    上一批 `options`**（加载时不清旧数据以免闪烁）⇒ 不加这条闸，Enter 会选中一个
+ *    用户根本没看见的项。与既有的"无匹配项时吃掉 Enter"同一条分支。
+ * 4. **去抖不做**（v1）。控件侧做去抖需要定时器，而定时器只有 `Application::after()`
+ *    有（§4.3 禁 `Widget → App`）；造一条"控件声明延时、框架执行"的新缝代价不小，
+ *    收益只是少发几个请求。契约定为：**查询词一变就回调一次，且带上当时的词** ——
+ *    应用自己比对词来丢弃过期响应（`Job` + 请求序号）。这不是省事，是分工：控件
+ *    报告时机与事实，调度归应用（与 `Select::onOpen` 同一条线）。
+ *
+ * ★ 远程模式下 `options` 通常从空表起步，而空表 + `ready()` 会画"无匹配项" ——
+ *   所以应用一般把初始状态设成 `OptionStatus::empty('输入关键词搜索')`。
+ *
  * ## 受控
  *
  * `value()` 由应用给，选中只回调 `onChanged(新值)`（与 `Select` / `Checkbox` /
@@ -96,9 +130,13 @@ use Drift\State\Subject;
  *   输入框时转发"）。
  * - **下拉箭头**：没有。内置字模缺 164 个字符（含 `▾`），理由同 `Select`。
  * - **自定义过滤函数**：没有。v1 是"标签的大小写不敏感子串匹配"，够覆盖
- *   "选城市 / 选用户"这两类真实场景。要按拼音 / 按 `value` 匹配得自己过滤后
- *   传进来。
- * - **多选 / 远程数据**：没有 —— 形状分别是 `list<string>` 受控值、`Job` + 三态。
+ *   "选城市 / 选用户"这两类真实场景。要按拼音 / 按 `value` 匹配就走 `onSearch()`
+ *   （把选项表整个换掉，本地过滤随之让位），不要指望在这里插一个 `filter()`。
+ * - **打字时自动弹出面板**：没有。开面板只有"点击 / Enter"两条路（框架的
+ *   `activateFocusedWidget()` 才拿得到浮层栈，控件侧够不着）。所以"Tab 进来直接
+ *   打字"时看不到候选，得再点一下或按 Enter —— 别当缺陷报。
+ * - **去抖**：没有，见上面"远程搜索"第 4 条。
+ * - **多选**：没有 —— 形状是 `list<string>` 受控值。
  *
  * @api
  */
@@ -126,6 +164,23 @@ final class ComboBox extends StatefulWidget
     private ?\Closure $onChanged = null;
 
     /**
+     * 选项表的就绪度（三态，`OptionStatus`）—— 与 `Select` 共用同一个值类型。
+     *
+     * ★ 远程搜索**必然**有加载中 / 失败 / 空三种非正常态，而它们与选项行是**互斥**的
+     *   （见 `OptionStatus` 类头：互斥之后就不需要"同时成立时显示谁"那条规则）。
+     */
+    private OptionStatus $status;
+
+    /** 面板**打开那一刻**触发（应用在这里发起初始取数） */
+    private ?\Closure $onOpen = null;
+
+    /**
+     * **用户改了搜索词**时触发（`TextField::onChanged` 那条路）——
+     * ★ 控件的内部复位（开面板清空 / 关面板复位）**不**触发它，见类头"四条决定"第 1 条。
+     */
+    private ?\Closure $onSearch = null;
+
+    /**
      * @param list<Option>|array<array-key, string> $options 选项表。两种形态都过
      *        `Option::normalize()`（映射形态 = 键是值、值是显示名），空表 ⇒ 面板
      *        里只有"无匹配项"一行，不炸。
@@ -134,6 +189,7 @@ final class ComboBox extends StatefulWidget
     {
         parent::__construct();
         $this->options = Option::normalize($options);
+        $this->status = OptionStatus::ready();
     }
 
     /** @param list<Option>|array<array-key, string> $options 见 `Option::normalize()` */
@@ -177,6 +233,50 @@ final class ComboBox extends StatefulWidget
         return $this;
     }
 
+    /**
+     * 选项表的就绪度（受控）—— 取数中 / 失败 / 空表 / 正常，**四者互斥**。
+     *
+     * ★ 与 `Select::status()` 同一个值类型、同一套语义（见 `OptionStatus` 类头）。
+     */
+    public function status(OptionStatus $status): static
+    {
+        $this->mutate();
+        $this->status = $status;
+
+        return $this;
+    }
+
+    /**
+     * 面板**打开那一刻**触发一次（不是每次应用重建）。
+     *
+     * ★ 唯一触发点是面板工厂 —— 框架只在"要开面板"时调它一次。
+     * ★ 远程搜索的常见用法是在这里取初始列表（`onSearch('')` 那种"搜索空串"）。
+     */
+    public function onOpen(callable $handler): static
+    {
+        $this->mutate();
+        $this->onOpen = $handler(...);
+
+        return $this;
+    }
+
+    /**
+     * **用户改了搜索词** ⇒ 回调收到新词。
+     *
+     * ★★ 声明了它 ⇒ **本地过滤让位**（选项表是服务端的搜索结果，权威）。
+     * ★★ 控件**不做去抖**，每次改动回调一次；应用自己比对词丢弃过期响应
+     *   （见类头"远程搜索"第 4 条）。
+     *
+     * @param callable(string): void $handler
+     */
+    public function onSearch(callable $handler): static
+    {
+        $this->mutate();
+        $this->onSearch = $handler(...);
+
+        return $this;
+    }
+
     public function createState(): State
     {
         return new ComboBoxState();
@@ -210,6 +310,24 @@ final class ComboBox extends StatefulWidget
     public function changedHandler(): ?\Closure
     {
         return $this->onChanged;
+    }
+
+    /** @internal */
+    public function statusValue(): OptionStatus
+    {
+        return $this->status;
+    }
+
+    /** @internal */
+    public function openHandler(): ?\Closure
+    {
+        return $this->onOpen;
+    }
+
+    /** @internal 非 `null` ⇒ 远程搜索模式（本地过滤让位，见类头第 2 条） */
+    public function searchHandler(): ?\Closure
+    {
+        return $this->onSearch;
     }
 }
 
@@ -245,6 +363,21 @@ final class ComboBoxState extends State
      *   `cancel()` ⇒ 靠 `cancel()` 复位会漏掉另外两条。
      */
     private ?\Closure $dismiss = null;
+
+    /**
+     * @internal 见过的 `(value ⇒ label)` 配对 —— **只为远程搜索而存在**。
+     *
+     * ★ 为什么需要：`fieldText()` 靠"在当前 `options` 里找 `value`"得到标签。远程
+     *   搜索会把选项表整个换掉 ⇒ 选中"北京市"之后搜"上"，选项表里已经没有 110000 ⇒
+     *   框变成**空白**（用户看到的是"值丢了"）。这里记住最后一次真见过的标签，表里
+     *   找不到时用它兜底。
+     * ★ 两个字段而不是 `array<string,string>` 缓存：只需要当前值这一个（缓存全量
+     *   会随搜索无限增长，且改名后永远返回旧标签）。换值 ⇒ 下一次渲染就更新。
+     */
+    private string $knownValue = '';
+
+    /** @internal 见 `$knownValue` */
+    private string $knownLabel = '';
 
     #[\Override]
     public function initState(): void
@@ -298,17 +431,25 @@ final class ComboBoxState extends State
     public function panelContent(): Widget
     {
         $rows = [];
+        $status = $this->combo()->statusValue();
+        $statusRow = $status->row();
 
-        foreach ($this->matches() as $option) {
-            $rows[] = Button::make($option->label)
-                ->variant(ButtonVariant::Flat)
-                ->onPressed(function () use ($option): void {
-                    $this->commit($option);
-                });
-        }
+        // ★ 三态与选项行**互斥**（`OptionStatus::showsOptions()`）⇒ 这里没有优先级
+        //   判断链：状态不 ready ⇒ 只画那一行；ready ⇒ 画选项（空表画内置兜底）。
+        if ($statusRow !== null) {
+            $rows[] = $statusRow;
+        } else {
+            foreach ($this->matches() as $option) {
+                $rows[] = Button::make($option->label)
+                    ->variant(ButtonVariant::Flat)
+                    ->onPressed(function () use ($option): void {
+                        $this->commit($option);
+                    });
+            }
 
-        if ($rows === []) {
-            $rows[] = Text::make('无匹配项')->caption();
+            if ($rows === []) {
+                $rows[] = Text::make('无匹配项')->caption();
+            }
         }
 
         // ★ `cross(Stretch)`：面板给内容的是**有界宽**（`RenderPopupPanel` 先量
@@ -324,17 +465,18 @@ final class ComboBoxState extends State
     }
 
     /**
-     * 面板**受控**部分（选项表）的签名 —— 交给框架（见 `build()` 里的 `overlaySignature()`）。
+     * 面板**受控**部分的签名 —— 交给框架（见 `build()` 里的 `overlaySignature()`）。
      *
      * ★ 查询词**刻意不进签名**：它是控件私有态，走 `$this->query` 那条广播。
      *   两样都算进来会变成"每敲一键重建两次"（Subject 一次 + 框架签名一次）。
      * ★ 只看 `(value,label)` 序列，不看对象身份 —— 应用每次重建都造新 `Option`。
+     * ★ 三态那一段由 `OptionStatus` 自己给 —— 与 `Select` 共用一处实现。
      *
      * @internal
      */
     private function panelSignature(): string
     {
-        $parts = [];
+        $parts = [$this->combo()->statusValue()->signature()];
         foreach ($this->combo()->optionsValue() as $option) {
             $parts[] = $option->value . "\x1f" . $option->label;
         }
@@ -343,9 +485,14 @@ final class ComboBoxState extends State
     }
 
     /**
-     * @internal 当前过滤结果（查询词为空 ⇒ 全部候选）。
+     * @internal 当前候选（本地模式：按查询词过滤；远程模式：**原样返回**）。
      *
-     * ★ 匹配规则：标签的**大小写不敏感子串**。用 `mb_strtoupper()` 而不是
+     * ★★ 远程模式下**不能再筛**：服务端可能按拼音 / 按 `value` / 按首字母匹配，本地
+     *   按标签子串再筛一遍是二次收缩（"服务端返回 8 条、面板只显示 2 条"，而它看
+     *   起来像服务端的问题）。判据是"应用声明了 `onSearch`"—— 声明了就意味着选项表
+     *   是权威，不是一个可以关的开关（两个旋钮 = 又能拼出含糊状态）。
+     *
+     * ★ 本地匹配规则：标签的**大小写不敏感子串**。用 `mb_strtoupper()` 而不是
      *   `mb_strtolower()` / `stripos()`：本仓 AOT 侧只有**已在 `src/` 用过的**
      *   字符串函数算"验证过"（`mb_strtoupper` 在 `KeyEvent::character()` 里），
      *   其余没跑过真机构建 —— 不值得为一个大小写折叠去赌运行时。
@@ -355,6 +502,11 @@ final class ComboBoxState extends State
     public function matches(): array
     {
         $all = $this->combo()->optionsValue();
+
+        if ($this->combo()->searchHandler() !== null) {
+            return $all;
+        }
+
         $needle = \mb_strtoupper($this->query->text(), 'UTF-8');
 
         if ($needle === '') {
@@ -436,11 +588,22 @@ final class ComboBoxState extends State
         $value = $this->combo()->valueText();
         foreach ($this->combo()->optionsValue() as $option) {
             if ($option->value === $value) {
+                // ★ 顺手记住"这个值显示成什么"（远程搜索换表之后靠它兜底，见 $knownValue）
+                $this->knownValue = $value;
+                $this->knownLabel = $option->label;
+
                 return $option->label;
             }
         }
 
-        return '';   // 没匹配项 ⇒ 空串，`TextField` 自己显示 placeholder
+        // ★★ 当前值**不在**选项表里。远程搜索必然走到这里：选项表是"这次搜索的结果"，
+        //   已选值通常不在其中。此时若返回空串，框会变空白 ⇒ 用户以为值丢了。
+        //   返回最后一次真见过的标签（且必须同值 —— 换了值就不该拿旧标签冒充）。
+        if ($value !== '' && $value === $this->knownValue) {
+            return $this->knownLabel;
+        }
+
+        return '';   // 没见过 ⇒ 空串，`TextField` 自己显示 placeholder
     }
 
     /** 用户打了一个字（`TextFieldState::apply()` 的回调） */
@@ -451,6 +614,14 @@ final class ComboBoxState extends State
         //   字段显示不需要本 State 再重建一遍；要变的只有**另一棵树**里的面板，
         //   而那是 `notifyChanged()` 的事。少一次全子树重建。
         $this->query->setText($text);
+
+        // ★★ `onSearch` 只挂在这里 —— 这是"用户改了搜索词"的**唯一**入口。
+        //   查询词另外两个写入点（开面板清空 / 关面板复位）是控件自己的状态管理，
+        //   接在那里会变成"每次开关面板都发一次搜索空串请求"。见类头第 1 条。
+        $handler = $this->combo()->searchHandler();
+        if ($handler !== null) {
+            $handler($text);
+        }
     }
 
     /**
@@ -478,6 +649,12 @@ final class ComboBoxState extends State
                 $this->markDirty();
             }
 
+            // ★ `onOpen` 的唯一触发点（与 `Select` 同形）：工厂在"要开面板"时被调一次。
+            $open = $this->combo()->openHandler();
+            if ($open !== null) {
+                $open();
+            }
+
             return OptionPanel::make(
                 $this->query,
                 fn (): Widget => $this->panelContent(),
@@ -498,6 +675,7 @@ final class ComboBoxState extends State
      * ★ 面板开着但**没有匹配项**时 Enter 吃掉（什么都不做）：让"无匹配项"这一行
      *   留在眼前；否则 Enter 会走到 `toggleWidgetPanel()` 把面板关掉，用户以为
      *   自己选中了什么。
+     * ★ 面板开着但**三态不是 ready** 时同样吃掉 —— 理由见下面那段 ★★。
      * ★ Esc 在面板**关着**时也让位：`TextFieldState::handleKey()` 用它清选区
      *   （既有行为，别在这里抢）。
      */
@@ -517,6 +695,15 @@ final class ComboBoxState extends State
 
             if (!$event->chord->is(KeyChord::enter()) || !$open) {
                 return false;
+            }
+
+            // ★★ 三态不是 ready ⇒ 吃掉 Enter（什么都不做）。远程搜索里这条是必需的：
+            //   加载中 / 失败时面板里没有选项行，但应用**很可能还留着上一批 options**
+            //   （加载时不清旧数据以免闪烁）⇒ 不加闸，Enter 会选中一个用户根本没看见的项。
+            //   与下面"无匹配项时吃掉 Enter"同一条分支：让那一行留在眼前，别让
+            //   Enter 走到 `toggleWidgetPanel()` 把面板关掉。
+            if (!$this->combo()->statusValue()->showsOptions()) {
+                return true;
             }
 
             $first = $this->firstMatch();

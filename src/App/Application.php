@@ -332,9 +332,26 @@ abstract class Application
      *   直到到期）。这是 `wantsFrame()` 必须加第 5 条判据的另一面 —— 不加就永远
      *   不响，加了就有这段空转。Tooltip 停留期最多 500ms（约 33 帧），可接受。
      *
+     * ★★ `due` 的基准是 `max(上一帧, 上一次输入)` —— 见 `after()` 与 `$lastInputMs`。
+     *   2026-10-24 之前只用"上一帧"：`after()` 常被**帧外**的回调调用（指针点击 →
+     *   `onOpen`），而空闲应用的"上一帧"可能是几百毫秒前 ⇒ `due` 落在过去 ⇒
+     *   **定时器当场触发**。现象（真机实测）：远程搜索的"正在加载…"一帧都没出现过。
+     *
      * @var array<int, array{due: float, cb: \Closure}>
      */
     private array $timers = [];
+
+    /**
+     * **最近一次输入派发**的时间戳（`dispatchInput()` 的第 2 参，由壳注入）。
+     *
+     * ★ 为什么要它：框架不自己读钟（G3），唯一的时间来源是壳每帧递进来的
+     *   `$timestampMs`。但"用户点了某个东西"这件事发生在**两帧之间**，此时
+     *   `lastTimestampMs` 是**上一帧**的 —— 应用空闲时可能是几百毫秒前。
+     *   而"点了之后延时 400ms"必须以**点击那一刻**为基准，不能以上一帧为基准。
+     * ★ 默认 `0.0`：测试与解释器不传时间戳 ⇒ 行为与之前**逐字节相同**
+     *   （`max(上一帧, 0)` = 上一帧）。
+     */
+    private float $lastInputMs = 0.0;
 
     /** 下一个定时器 id（进程内自增，`cancelAfter()` 用它） */
     private int $nextTimerId = 1;
@@ -2078,7 +2095,11 @@ abstract class Application
     {
         $id = $this->nextTimerId++;
         $this->timers[$id] = [
-            'due' => $this->lastTimestampMs + (float) ($milliseconds < 0 ? 0 : $milliseconds),
+            // ★ 基准取"上一帧"与"上一次输入"的**较大者**（见 `$lastInputMs`）：
+            //   在输入回调里排的定时器必须以**输入那一刻**起算 —— 用"上一帧"会让
+            //   空闲应用上的 400ms 变成"立刻"（真机实测：加载态一帧都没出现）。
+            'due' => \max($this->lastTimestampMs, $this->lastInputMs)
+                + (float) ($milliseconds < 0 ? 0 : $milliseconds),
             'cb' => $callback,
         ];
 
@@ -2155,7 +2176,45 @@ abstract class Application
 
         // ★ 第五个判据（W8-2）：有延时回调在等 ⇒ 必须保持上膛，否则永远不响。
         //   排最后 —— 它**通常为空**（一次 `===` 比较），而前四条在活跃场景下更常为真。
-        return $this->timers !== [];
+        if ($this->timers !== []) {
+            return true;
+        }
+
+        // ★★ 第六个判据（W8-2 远程搜索，2026-10-24）：**面板内容落后一帧**。
+        //   见 `panelsLagBehind()` —— 少了它，远程搜索的结果到了、数据也对，
+        //   面板却**永远**停在旧内容（真机现象，smoke 因为显式跑两帧看不见）。
+        return $this->panelsLagBehind();
+    }
+
+    /**
+     * 有浮层的锚点 Widget 换了、但 `syncPanelSignatures()` 还没看到 ⇒ 必须再跑一帧。
+     *
+     * ★★ 为什么这条判据是**必需**的：`syncPanelSignatures()` 跑在 `placeOverlays()`
+     *   里，而主树在它**之后**才 settle ⇒ 那一帧它看到的锚点还是**旧** Widget
+     *   （`Widget` 不可变 ⇒ 旧实例的受控属性也是旧的），只能等下一帧再看一次。
+     *   - smoke 里"跑两帧"是**显式写的**（`$cbSettle` / `$ssSettle`）⇒ 从来看不出问题；
+     *   - 真机上**没有下一帧** —— 应用处理完一次 `setState` 就静默了（前五条判据全假），
+     *     帧时钟不上膛 ⇒ 面板永远停在旧内容。2026-10-24 实测：远程搜索的
+     *     `deliver()` 明明把选项换成了 2 项（日志 n=2），面板还列着旧的 4 项。
+     *
+     * ★ **自终止**：`syncPanelSignatures()` 无论签名变没变都会更新 `seenAnchor`
+     *   ⇒ 下一帧这个判据即为假，不会空转。这一点是它能放进 `wantsFrame()` 的前提。
+     * ★ 成本 O(浮层数)，通常是 0 或 1 次 `===`。
+     */
+    private function panelsLagBehind(): bool
+    {
+        foreach ($this->overlays->all() as $e) {
+            if ($e->element === null) {
+                continue;
+            }
+
+            $current = $e->anchor?->widget();
+            if ($current !== null && $current !== $e->seenAnchor) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -2611,6 +2670,10 @@ abstract class Application
      * }
      * ```
      *
+     * @param float|null $timestampMs 这一条事件**到达的时刻**（壳注入 `Platform::now()`）。
+     *   只有一件事用它：`after()` 的计时基准（见 `$lastInputMs`）。★ 不传 ⇒
+     *   基准退回"上一帧"，与 2026-10-24 之前逐字节相同（测试 / 解释器不受影响）。
+     *
      * @return CursorShape|null 指针事件 ⇒ 命中链解析出的光标形状（★ 与焦点
      *   **同一次命中**，不重复走树 —— §9.1「一次命中，三方消费」）；其余事件
      *   ⇒ `null`（不改光标）。★ 应用它需要 `WindowHost`，而**框架不持平台**
@@ -2618,8 +2681,14 @@ abstract class Application
      *
      * @api
      */
-    public function dispatchInput(InputEvent $event): ?CursorShape
+    public function dispatchInput(InputEvent $event, ?float $timestampMs = null): ?CursorShape
     {
+        // ★ 记下"用户动了一下"的时刻 —— `after()` 的基准要取它（见 `$lastInputMs`）。
+        //   放在最前面：失活事件也要记（它同样是"用户动了一下"）。
+        if ($timestampMs !== null) {
+            $this->lastInputMs = $timestampMs;
+        }
+
         // ★ 失活**先于**"未挂载"守卫：窗口可能在拆卸途中失去前台（Alt+Tab 关窗），
         //   那一刻树可能已经没了，但手势状态仍要清 —— 它不依赖树。
         if ($event instanceof WindowDeactivatedEvent) {

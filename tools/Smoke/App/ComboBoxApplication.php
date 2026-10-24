@@ -11,6 +11,7 @@ use Drift\Widget\Column;
 use Drift\Widget\ComboBox;
 use Drift\Widget\Element;
 use Drift\Widget\Option;
+use Drift\Widget\OptionStatus;
 use Drift\Widget\State;
 use Drift\Widget\StatefulElement;
 use Drift\Widget\StatefulWidget;
@@ -143,6 +144,32 @@ final class ComboBoxApplication extends Application
         return self::center($buttons[$i] ?? null);
     }
 
+    /** 面板里的文字（`Text` 的 content，按遍历顺序）—— 三态那几行是 `Text`，不在候选按钮里 */
+    public function panelTexts(): array
+    {
+        $out = [];
+        self::walkPanel($this->topEntry()?->element, function (Element $e) use (&$out): void {
+            $w = $e->widget();
+            if ($w instanceof \Drift\Widget\Text) {
+                $out[] = $w->content();
+            }
+        });
+
+        return $out;
+    }
+
+    private static function walkPanel(?Element $root, callable $visit): void
+    {
+        if ($root === null) {
+            return;
+        }
+
+        $visit($root);
+        $root->visitChildren(function (Element $child) use ($visit): void {
+            self::walkPanel($child, $visit);
+        });
+    }
+
     // ── 小工具 ────────────────────────────────────────────────────────
 
     private static function center(?Element $element): ?array
@@ -243,10 +270,29 @@ final class ComboBoxHostState extends State
      */
     public array $options = [];
 
+    /** 选项表的就绪度（三态互斥，`OptionStatus`） */
+    public OptionStatus $status;
+
+    /**
+     * `true` ⇒ **远程搜索模式**（`build()` 才挂 `onOpen` / `onSearch`）。
+     *
+     * ★ 为什么要这个开关：挂了 `onSearch` 之后**本地过滤让位**（见 `ComboBox` 类头
+     *   第 2 条），而前面那一大段用例钉的正是本地过滤（打"北"⇒ 2 项）。两种模式
+     *   必须能在同一个夹具里切换，否则得复制一整套夹具。
+     */
+    public bool $remote = false;
+
+    /** @var list<string> `onSearch` 收到的词（顺序 = 触发顺序） */
+    public array $searched = [];
+
+    /** `onOpen` 被调了几次（证明它只在"要开面板"时触发，不是每次重建） */
+    public int $openCount = 0;
+
     #[\Override]
     public function initState(): void
     {
         $this->options = ComboBoxApplication::cities();
+        $this->status = OptionStatus::ready();
     }
 
     /** 换选项表（远程取数的形状：应用 setState 换掉整个表） */
@@ -257,19 +303,62 @@ final class ComboBoxHostState extends State
         });
     }
 
+    /** 换就绪度（`loading()` / `error()` / `empty()` / `ready()` 之一） */
+    public function setStatus(OptionStatus $status): void
+    {
+        $this->setState(function () use ($status): void {
+            $this->status = $status;
+        });
+    }
+
+    /** 切本地过滤 / 远程搜索 */
+    public function setRemote(bool $on): void
+    {
+        $this->setState(function () use ($on): void {
+            $this->remote = $on;
+        });
+    }
+
+    /** 换受控值（"值由应用给"—— 用例要看"表里没有这个值时字段显示什么"） */
+    public function setValue(string $value): void
+    {
+        $this->setState(function () use ($value): void {
+            $this->value = $value;
+        });
+    }
+
     public function build(BuildContext $ctx): Widget
     {
-        return Column::make()->children([
-            ComboBox::make($this->options)
-                ->value($this->value)
-                ->placeholder('请选择城市')
-                ->onChanged(function (string $value): void {
-                    $this->changed[] = $value;
-                    // ★ 只标脏（§5.2）：本帧末的 settle 统一重建 ⇒ 字段换标签
-                    $this->setState(function () use ($value): void {
-                        $this->value = $value;
+        $combo = ComboBox::make($this->options)
+            ->value($this->value)
+            ->placeholder('请选择城市')
+            ->status($this->status)
+            ->onChanged(function (string $value): void {
+                $this->changed[] = $value;
+                // ★ 只标脏（§5.2）：本帧末的 settle 统一重建 ⇒ 字段换标签
+                $this->setState(function () use ($value): void {
+                    $this->value = $value;
+                });
+            });
+
+        if ($this->remote) {
+            // ★ 远程模式的真实形状：开面板取初始列表、打字问服务端、回调里进"加载中"。
+            //   回调**只记录 + 进加载态**，不自己造结果 —— 结果由用例显式给
+            //   （`setOptions()` + `setStatus(ready())`），每条断言才互相独立。
+            $combo
+                ->onOpen(function (): void {
+                    $this->setState(function (): void {
+                        $this->openCount++;
                     });
-                }),
-        ]);
+                })
+                ->onSearch(function (string $query): void {
+                    $this->setState(function () use ($query): void {
+                        $this->searched[] = $query;
+                        $this->status = OptionStatus::loading();
+                    });
+                });
+        }
+
+        return Column::make()->children([$combo]);
     }
 }
