@@ -113,6 +113,81 @@ final readonly class BoxConstraints
     }
 
     /**
+     * 按宽高比求尺寸（W8-3 `AspectRatio`，2026-10-24）。
+     *
+     * 与 `tighten()` 同族：返回**紧**约束（比例一旦确定，盒尺寸就被定死）。
+     *
+     * 求解顺序：
+     * ① 两轴都已紧 ⇒ 原样返回（`width` + `height` 都显式给了，比例没有自由度）；
+     * ② 一轴已紧 ⇒ 另一轴由比例推出（**显式尺寸优先于比例**）；
+     * ③ 两轴都松 ⇒ 先铺满有界的那轴，超出另一轴再回退（与成熟实现同款）；
+     * ④ 两轴都无界 ⇒ 原样返回（比例给不出绝对尺寸）。
+     *
+     * ★ 末尾的 `min/max` 夹取可能让比例不严格 —— 比例要求的尺寸小于 `min` 时，
+     *   **父给的下界优先**（与 `tighten()` 的"父更紧时听父的"同一条）。
+     */
+    public function applyAspect(float $ratio): self
+    {
+        if ($ratio <= 0.0 || is_nan($ratio) || is_infinite($ratio)) {
+            return $this;
+        }
+        if ($this->isTight()) {
+            return $this;
+        }
+
+        $minW = $this->minWidth;
+        $maxW = $this->maxWidth;
+        $minH = $this->minHeight;
+        $maxH = $this->maxHeight;
+
+        // ② 一轴已紧：另一轴 = 紧值 / 比例
+        if ($minW === $maxW) {
+            $w = $minW;
+            $h = min(max($w / $ratio, $minH), $maxH);
+
+            return new self($w, $w, $h, $h);
+        }
+        if ($minH === $maxH) {
+            $h = $minH;
+            $w = min(max($h * $ratio, $minW), $maxW);
+
+            return new self($w, $w, $h, $h);
+        }
+
+        // ③ 两轴都松：有界的那轴铺满，超界再回退
+        if (!is_infinite($maxW)) {
+            $w = $maxW;
+            $h = $w / $ratio;
+            if ($h > $maxH) {
+                $h = $maxH;
+                $w = $h * $ratio;
+            }
+            if ($h < $minH) {
+                $h = $minH;
+                $w = $h * $ratio;
+            }
+        } elseif (!is_infinite($maxH)) {
+            $h = $maxH;
+            $w = $h * $ratio;
+            if ($w > $maxW) {
+                $w = $maxW;
+                $h = $w / $ratio;
+            }
+            if ($w < $minW) {
+                $w = $minW;
+                $h = $w / $ratio;
+            }
+        } else {
+            return $this;
+        }
+
+        $w = min(max($w, $minW), $maxW);
+        $h = min(max($h, $minH), $maxH);
+
+        return new self($w, $w, $h, $h);
+    }
+
+    /**
      * 去掉四边内边距后剩下的可用约束（`Padding` / `RenderFlex` 用；§13.1）。
      *
      * ★ min 同步缩小但不小于 0 —— 否则"内边距比约束还大"会造出 `min > max` 的

@@ -217,6 +217,7 @@ use Drift\Text\TextStyle;
 use Drift\Theme\SystemTheme;
 use Drift\Theme\ThemeData;
 use Drift\Theme\ThemeScope;
+use Drift\Widget\AspectRatio;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
 use Drift\Widget\Card;
@@ -8911,6 +8912,67 @@ check(
         && abs($emptySizedBox->size()->width - 24.0) < 0.01
         && abs($emptySizedBox->size()->height - 8.0) < 0.01,
     sprintf('%.6g×%.6g', $emptySizedBox?->size()?->width ?? -1.0, $emptySizedBox?->size()?->height ?? -1.0),
+);
+
+// —— W8-3 AspectRatio：比例是 `mods.aspect` 字段（不是新渲染盒），由布局管线 ① 步解出
+$aspectEl = AspectRatio::make(2.0, Text::make('封面'))->createElement();
+$aspectEl->mount(null, $context);
+$aspect = $aspectEl->effectiveBox();
+$aspect?->layout(BoxConstraints::loose(new Size(940.0, 620.0)));
+check(
+    'AspectRatio · 宽铺满、高按比例（940 ÷ 2 = 470）',
+    $aspect?->size() !== null
+        && abs($aspect->size()->width - 940.0) < 0.01
+        && abs($aspect->size()->height - 470.0) < 0.01,
+    sprintf('盒 %.6g×%.6g', $aspect?->size()?->width ?? -1.0, $aspect?->size()?->height ?? -1.0),
+);
+
+$aspectCapEl = AspectRatio::make(2.0, Text::make('封面'))->createElement();
+$aspectCapEl->mount(null, $context);
+$aspectCap = $aspectCapEl->effectiveBox();
+$aspectCap?->layout(new BoxConstraints(0.0, 200.0, 0.0, 60.0));
+check(
+    'AspectRatio · 高度不够时按高度回退（宽 200 要 100 高、只有 60 ⇒ 120×60）',
+    $aspectCap?->size() !== null
+        && abs($aspectCap->size()->width - 120.0) < 0.01
+        && abs($aspectCap->size()->height - 60.0) < 0.01,
+    sprintf('盒 %.6g×%.6g', $aspectCap?->size()?->width ?? -1.0, $aspectCap?->size()?->height ?? -1.0),
+);
+
+$aspectFixedEl = AspectRatio::make(2.0, Text::make('封面'))->width(200.0)->createElement();
+$aspectFixedEl->mount(null, $context);
+$aspectFixed = $aspectFixedEl->effectiveBox();
+$aspectFixed?->layout(BoxConstraints::loose(new Size(940.0, 620.0)));
+check(
+    'AspectRatio · 显式 width 优先（200 ÷ 2 = 100）',
+    $aspectFixed?->size() !== null
+        && abs($aspectFixed->size()->width - 200.0) < 0.01
+        && abs($aspectFixed->size()->height - 100.0) < 0.01,
+    sprintf('盒 %.6g×%.6g', $aspectFixed?->size()?->width ?? -1.0, $aspectFixed?->size()?->height ?? -1.0),
+);
+
+$aspectBothEl = AspectRatio::make(2.0, Text::make('封面'))->width(200.0)->height(80.0)->createElement();
+$aspectBothEl->mount(null, $context);
+$aspectBoth = $aspectBothEl->effectiveBox();
+$aspectBoth?->layout(BoxConstraints::loose(new Size(940.0, 620.0)));
+check(
+    'AspectRatio · 两轴都定死 ⇒ 比例无自由度（200×80，不改成 100 高）',
+    $aspectBoth?->size() !== null
+        && abs($aspectBoth->size()->width - 200.0) < 0.01
+        && abs($aspectBoth->size()->height - 80.0) < 0.01,
+    sprintf('盒 %.6g×%.6g', $aspectBoth?->size()?->width ?? -1.0, $aspectBoth?->size()?->height ?? -1.0),
+);
+
+$aspectPadEl = AspectRatio::make(2.0, Text::make('封面'))->paddingAll(10.0)->createElement();
+$aspectPadEl->mount(null, $context);
+$aspectPad = $aspectPadEl->effectiveBox();
+$aspectPad?->layout(BoxConstraints::loose(new Size(240.0, 240.0)));
+check(
+    'AspectRatio · 比例作用于**盒**（含 padding）：240 宽 ⇒ 120 高',
+    $aspectPad?->size() !== null
+        && abs($aspectPad->size()->width - 240.0) < 0.01
+        && abs($aspectPad->size()->height - 120.0) < 0.01,
+    sprintf('盒 %.6g×%.6g', $aspectPad?->size()?->width ?? -1.0, $aspectPad?->size()?->height ?? -1.0),
 );
 
 // —— 扁平按钮：盒样式 isNone（无底无边框），字色走正文色

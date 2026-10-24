@@ -25,6 +25,7 @@ use Drift\Widget\State;
 use Drift\Widget\StatefulWidget;
 use Drift\Widget\Widget;
 
+use App\Showcase\Pages\AspectPage;
 use App\Showcase\Pages\BigListPage;
 use App\Showcase\Pages\ButtonsPage;
 use App\Showcase\Pages\ComboBoxPage;
@@ -145,6 +146,7 @@ final class ShowcaseState extends State
             ['下拉 Select', static fn(): Widget => new SelectPage()],
             ['可编辑 Combo', fn(): Widget => new ComboBoxPage($this->delay)],
             ['网格 Grid', static fn(): Widget => new GridPage()],
+            ['宽高比 Aspect', static fn(): Widget => new AspectPage()],
         ];
     }
 

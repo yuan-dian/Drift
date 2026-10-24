@@ -508,6 +508,35 @@ abstract class Widget
     }
 
     /**
+     * 宽高比（宽 ÷ 高）—— `AspectRatio` 的字段形态，任意控件可用。
+     *
+     * ```php
+     * Image::make('cover.png')->aspect(16 / 9);   // 宽随父容器，高按比例
+     * ```
+     *
+     * ★ **显式尺寸优先**：`->width(320)->aspect(16 / 9)` ⇒ 高 = 320 ÷ (16/9)。
+     *   两轴都显式给了 ⇒ 比例没有自由度（`tighten()` 只把两轴变紧，不再解比例）。
+     * ★ 至少一轴有界才生效；两轴都无界时比例给不出绝对尺寸（保持原约束）。
+     * ★★ **AOT 下写 `16.0 / 9.0`，不要写 `16 / 9`**：后者在 tpc 生成的 C++ 里是
+     *   **整数除法**（= 1），而解释器里是 1.7778 ⇒ 真机悄悄变成 1:1（2026-10-24 实测）。
+     */
+    public function aspect(float $ratio): static
+    {
+        if ($ratio <= 0.0 || \is_nan($ratio) || \is_infinite($ratio)) {
+            Errors::report(\sprintf(
+                '宽高比必须是有限正数，实际传入 %s。' . "\n" . '修法：写成 `->aspect(16 / 9)` 这样的正数；'
+                    . '不需要比例就别调这个方法。',
+                (string) $ratio
+            ));
+        }
+
+        $this->mutate();
+        $this->mods = $this->mods->withAspect($ratio);
+
+        return $this;
+    }
+
+    /**
      * 底色。
      *
      * ★ `BoxWidget` 的子类（`Button` / `PopupPanel` / …）覆写了本方法、写进

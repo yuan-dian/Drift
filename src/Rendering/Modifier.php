@@ -64,6 +64,15 @@ final class Modifier
     private float $height = \NAN;
 
     /**
+     * 宽高比（宽 ÷ 高）；`NAN` = 未设。
+     *
+     * ★ 与 `width` / `height` 同族：都是"约束 → 约束"的尺寸修饰，由
+     *   `tighten()` 末尾交给 `BoxConstraints::applyAspect()`。**不是新渲染盒**
+     *   （W5 判据"修饰是字段，不是节点"）。
+     */
+    private float $aspect = \NAN;
+
+    /**
      * 内容居中（`Center` 的字段形态）。
      *
      * ★ 与 `alignSelf` 不是一件事：`alignSelf` 只在 `RenderFlex::placeChildren()`
@@ -183,42 +192,53 @@ final class Modifier
     {
         $hasW = !\is_nan($this->width);
         $hasH = !\is_nan($this->height);
-        if (!$hasW && !$hasH) {
+        $hasAspect = !\is_nan($this->aspect);
+        if (!$hasW && !$hasH && !$hasAspect) {
             return $c;
         }
 
-        $minW = $c->minWidth;
-        $maxW = $c->maxWidth;
-        $minH = $c->minHeight;
-        $maxH = $c->maxHeight;
+        if ($hasW || $hasH) {
+            $minW = $c->minWidth;
+            $maxW = $c->maxWidth;
+            $minH = $c->minHeight;
+            $maxH = $c->maxHeight;
 
-        // ★ 属性读取先落局部标量：AOT 下在分支里直接读属性会被推成 Variant，
-        //   与 `float` 形参不匹配 ⇒ C2440（`RenderFlex::tightMain` 同型坑）。
-        if ($hasW) {
-            $w = $this->width;
-            if ($w > $maxW) {
-                $w = $maxW;
+            // ★ 属性读取先落局部标量：AOT 下在分支里直接读属性会被推成 Variant，
+            //   与 `float` 形参不匹配 ⇒ C2440（`RenderFlex::tightMain` 同型坑）。
+            if ($hasW) {
+                $w = $this->width;
+                if ($w > $maxW) {
+                    $w = $maxW;
+                }
+                if ($w < $minW) {
+                    $w = $minW;
+                }
+                $minW = $w;
+                $maxW = $w;
             }
-            if ($w < $minW) {
-                $w = $minW;
+
+            if ($hasH) {
+                $h = $this->height;
+                if ($h > $maxH) {
+                    $h = $maxH;
+                }
+                if ($h < $minH) {
+                    $h = $minH;
+                }
+                $minH = $h;
+                $maxH = $h;
             }
-            $minW = $w;
-            $maxW = $w;
+
+            $c = new BoxConstraints($minW, $maxW, $minH, $maxH);
         }
 
-        if ($hasH) {
-            $h = $this->height;
-            if ($h > $maxH) {
-                $h = $maxH;
-            }
-            if ($h < $minH) {
-                $h = $minH;
-            }
-            $minH = $h;
-            $maxH = $h;
+        // 比例在显式尺寸之后施加：已紧的那一轴优先，另一轴由比例推出
+        if ($hasAspect) {
+            $ratio = $this->aspect;
+            $c = $c->applyAspect($ratio);
         }
 
-        return new BoxConstraints($minW, $maxW, $minH, $maxH);
+        return $c;
     }
 
     /** 该轴是否显式定了尺寸（`NAN` = 未设） */
@@ -241,6 +261,18 @@ final class Modifier
     public function boxHeight(): float
     {
         return $this->height;
+    }
+
+    /** 是否设了宽高比（`NAN` = 未设） */
+    public function hasAspect(): bool
+    {
+        return !\is_nan($this->aspect);
+    }
+
+    /** 宽高比（`NAN` = 未设；调用前先 `hasAspect()`） */
+    public function aspect(): float
+    {
+        return $this->aspect;
     }
 
     /** 父约束 → 内容盒约束（内边距内缩） */
@@ -369,6 +401,7 @@ final class Modifier
         return !$this->hasPadding()
             && \is_nan($this->width)
             && \is_nan($this->height)
+            && \is_nan($this->aspect)
             && !$this->hasBackground
             && !$this->hasBorder
             && $this->radius === 0.0
@@ -436,6 +469,15 @@ final class Modifier
     {
         $c = clone $this;
         $c->height = $height;
+
+        return $c;
+    }
+
+    /** 宽高比（宽 ÷ 高）；调用方负责校验有限正数 */
+    public function withAspect(float $ratio): self
+    {
+        $c = clone $this;
+        $c->aspect = $ratio;
 
         return $c;
     }
