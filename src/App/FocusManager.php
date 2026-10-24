@@ -212,17 +212,32 @@ final class FocusManager
     /**
      * 派发一次按键（§9.1 第 ③ 环）。
      *
-     * 顺序：`Tab` / `Shift+Tab`（焦点链自己的键）⇒ **焦点控件的 `keyboard()` 回调**
-     * （W8-2）⇒ 焦点节点的 `handleKey()`。
+     * 顺序：`Tab` / `Shift+Tab`（焦点链自己的键）⇒ **焦点控件或其祖先的 `keyboard()`
+     * 回调**（W8-2）⇒ 焦点节点的 `handleKey()`。
      * 返回 `false` ⇒ **这一环没吃掉**，上层（将来的加速键 / IME）可以继续。
      *
-     * ★ 为什么 `keyboard()` 排在 `TextFieldState` 之前：两者都是"焦点控件处理按键"，
+     * ★★ **`keyboard()` 沿父链找"最近的声明者"**（2026-10-24 修）：此前只读
+     *   `$this->focused?->widget()` ⇒ **包裹式控件的声明是死的**。`ComboBox` 包一个
+     *   `TextField` 时，焦点落在 `TextField` 上，包在外层的 `ComboBox` 声明
+     *   `keyboard()` 永远收不到键（它要拦 Enter / 方向键 / Esc 来驱动浮层）。
+     *   这与 `Widget::keyboard()` docblock 写的"任何控件都能挂"**不符** —— 文档
+     *   承诺了一件代码没做到的事，比没有这个特性更贵。
+     *
+     * ★ **与 `pointer()` / `contextMenu()` 同一条规则**：那两条早就沿父链找最近
+     *   声明者（`Application::pointerOwner()` / `openContextMenu()`），唯独
+     *   `keyboard()` 漏了。三条缝现在同构，"最深的声明赢"。
+     *
+     * ★ **对现有代码可证明是加性**：全仓三处 `keyboard()` 声明
+     *   （`Slider` / `Select` / `PressLabApplication`）都挂在**自己就是焦点控件**
+     *   的 widget 上 ⇒ 父链第一跳就命中，逐字节不变。
+     *
+     * ★ 为什么 `keyboard()` 仍排在 `TextFieldState` 之前：两者都是"焦点控件处理按键"，
      *   但 `keyboard()` 是**声明式**的（任何控件都能挂），`TextFieldState` 是状态机。
      *   一个控件同时有两者几乎不可能（输入框不会自己声明方向键语义），
      *   真撞上了让显式声明优先 —— 应用总比框架更知道这个键该干嘛。
      * ★ 这条缝让"新交互控件"不必再往 `Application::activateFocusedWidget()`
      *   的 `instanceof` 塔里加分支（Slider 的方向键 / Select 的上下选 / DatePicker
-     *   的翻页全都走这里）。
+     *   的翻页 / ComboBox 的浮层驱动全都走这里）。
      */
     public function dispatchKey(KeyEvent $event): bool
     {
@@ -234,14 +249,19 @@ final class FocusManager
             return $this->focusPrevious();
         }
 
-        $handler = $this->focused?->widget()->keyHandlerValue();
+        // ★ 焦点控件**或它祖先**里最近的那个 `keyboard()` 声明者（见方法注释）。
+        //   找不到 ⇒ 这一环让开（`null` handler 与"返回 false"同义）。
+        for ($node = $this->focused; $node !== null; $node = $node->parent()) {
+            $handler = $node->widget()->keyHandlerValue();
+            if ($handler === null) {
+                continue;
+            }
 
-        if ($handler !== null) {
-            $handled = $handler($event);
-
-            if ($handled === true) {
+            if ($handler($event) === true) {
                 return true;
             }
+
+            break;   // 最近的声明者没吃掉 ⇒ 不再往上找（更远的祖先更不具体）
         }
 
         $state = $this->stateOf($this->focused);

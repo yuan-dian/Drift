@@ -60,6 +60,7 @@ use Drift\Dev\Smoke\App\MotionApplication;
 use Drift\Widget\AnimationController;
 use Drift\Widget\Curve;
 use Drift\Dev\Smoke\App\FakeClipboard;
+use Drift\Dev\Smoke\App\KeyAncestorApplication;
 use Drift\Dev\Smoke\App\CompositeRootApp;
 use Drift\Dev\Smoke\App\CountJob;
 use Drift\Dev\Smoke\App\MenuApplication;
@@ -10168,6 +10169,65 @@ check(
     'Press · 反例：焦点在没声明 keyboard() 的控件上 ⇒ 该键无人接（不串台）',
     $pl->keyLog === ['Right', 'Enter'],
     'keyLog=' . implode(',', $pl->keyLog),
+);
+
+// h2. ★★ `keyboard()` 沿**父链**找最近的声明者（2026-10-24 修）
+//     此前只读焦点控件自己的 widget ⇒ 包裹式控件的声明是**死的**，而
+//     `Widget::keyboard()` 的 docblock 一直写着"任何控件都能挂"（文档承诺了
+//     代码没做到的事）。`ComboBox` 包 `TextField` 时焦点落在 `TextField` 上，
+//     外层声明必须收得到键 —— 否则浮层驱动不了。
+//     判据用 **Backspace + `TextFieldState::text()`**：外层吃掉 ⇒ 文本不变；
+//     让位 ⇒ 文本真被删一个字符。这是"吃没吃到"的可观测差别，不是恒真断言。
+$kaApp = new KeyAncestorApplication();
+$kaC = BoxConstraints::loose(new Size(300.0, 200.0));
+$kaApp->attach(new SurfaceProbe(), $kaC);
+$kaApp->frame(16.0, $kaC);
+$kaField = $kaApp->fieldElement();
+$kaBox = $kaField?->effectiveBox();
+[$kaX, $kaY] = $kaBox === null || $kaBox->size() === null
+    ? [0.0, 0.0]
+    : [RenderBox::absoluteOrigin($kaBox)[0] + $kaBox->size()->width / 2.0,
+        RenderBox::absoluteOrigin($kaBox)[1] + $kaBox->size()->height / 2.0];
+// 点一下 ⇒ 焦点落到 TextField 上（命中测试 ⇒ 焦点）
+$kaApp->dispatchInput(PointerEvent::down($kaX, $kaY));
+$kaApp->dispatchInput(PointerEvent::up($kaX, $kaY));
+// 方向键：`TextFieldState` 不认它 ⇒ 只有外层能收到。这一条单独证明"父链走得通"
+$kaApp->dispatchInput(KeyEvent::down(KeyChord::right()));
+check(
+    'Press · keyboard() 沿父链：焦点在 TextField 上，外层声明的 handler 也收到键',
+    $kaApp->ancestorLog === ['Right'],
+    'ancestorLog=' . implode(',', $kaApp->ancestorLog),
+);
+// 外层吃掉 Backspace ⇒ 键不到 `TextFieldState` ⇒ 文本不动
+$kaApp->ancestorEats = true;
+$kaApp->ancestorLog = [];
+$kaApp->dispatchInput(KeyEvent::down(KeyChord::backspace()));
+check(
+    'Press · keyboard() 沿父链：外层吃掉 Backspace ⇒ 焦点控件的文本不被改',
+    $kaApp->ancestorLog === ['Backspace'] && $kaApp->fieldState()?->text() === 'ab',
+    'ancestorLog=' . implode(',', $kaApp->ancestorLog) . ' text=' . ($kaApp->fieldState()?->text() ?? '-'),
+);
+// 外层让位 ⇒ 键继续往下走到 `TextFieldState::handleKey()` ⇒ 文本真被删一个字符
+//   （这一条同时证明"`keyboard()` 仍排在 `TextFieldState` 之前"的顺序没被改坏）
+//   ★ 期望值从 `caretOffset()` **现推**，不猜插入符在哪：上面的点击落在输入框中部，
+//     插入符就在 'a'/'b' 之间 ⇒ 删的是 'a'（结果 'b'）。写死 'a' 会把正确行为判成 bug。
+$kaCaret = $kaApp->fieldState()->caretOffset();
+$kaBefore = $kaApp->fieldState()->text();
+$kaApp->ancestorEats = false;
+$kaApp->ancestorLog = [];
+$kaApp->dispatchInput(KeyEvent::down(KeyChord::backspace()));
+$kaExpected = substr($kaBefore, 0, $kaCaret - 1) . substr($kaBefore, $kaCaret);
+check(
+    'Press · keyboard() 沿父链：外层让位 ⇒ 键落到 TextFieldState（删掉插入符前一个字符）',
+    $kaApp->ancestorLog === ['Backspace'] && $kaApp->fieldState()?->text() === $kaExpected,
+    sprintf(
+        'ancestorLog=%s caret=%d %s ⇒ %s（期望 %s）',
+        implode(',', $kaApp->ancestorLog),
+        $kaCaret,
+        $kaBefore,
+        $kaApp->fieldState()?->text() ?? '-',
+        $kaExpected,
+    ),
 );
 
 // ⑦ UIA 语义推送（§9 / M5）：帧末把语义树经 sink 交给平台（头侧；真机 provider 归 AOT）

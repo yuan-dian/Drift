@@ -839,8 +839,15 @@ abstract class Widget
      * ```
      *
      * ★ 回调 `\Closure(KeyEvent): bool`，返回 `true` = 吃掉这个键。
-     * ★ **只对焦点控件调**（`FocusManager::dispatchKey` 里，Tab/Shift+Tab 之后、
-     *   `TextFieldState` 之前）—— 与"键盘属于焦点"的既有分工一致。
+     * ★ **沿焦点控件的父链找"最近的声明者"**（`FocusManager::dispatchKey`）——
+     *   所以**包裹式控件也能挂**：`ComboBox` 包一个 `TextField` 时，焦点落在
+     *   `TextField` 上，而 `ComboBox` 自己声明的 `keyboard()` 照样收得到
+     *   （它要拦 Enter / 方向键 / Esc 驱动浮层）。与 `pointer()` /
+     *   `contextMenu()` 同一条规则："最深的声明赢"。
+     *   （2026-10-24 之前只读焦点控件自己的 widget ⇒ 包裹层的声明是死的，
+     *   而本条 docblock 一直写着"任何控件都能挂"—— 文档承诺了代码没做到的事。）
+     * ★ 只对**焦点控件那一支**调（Tab/Shift+Tab 之后、`TextFieldState` 之前）
+     *   —— 与"键盘属于焦点"的既有分工一致。
      * ★ 为什么不复用 `activateFocusedWidget()`：那个入口收的是"激活"语义且**收不到
      *   按键**，Slider 的方向键调值、Select 的上下选、DatePicker 的翻页都做不到。
      *   ⇒ 新控件走这条缝，`activateFocusedWidget()` 的 `instanceof` 塔不再增长。
