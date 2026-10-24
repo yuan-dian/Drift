@@ -1,6 +1,6 @@
 # 12 · Application 拆分（S1）
 
-> 状态：拆解中 · 2026-10-24 · 第一步（收接口）已落地
+> 状态：拆解中 · 2026-10-24 · 第一~六步已落地（收接口 + 三片：TextEditingBridge / ScrollInputRouter / InputRouter）
 > 上游：ARCH-REVIEW-2026-10-24 §2.2（唯一的架构性缺陷）/ §3.2 I1+I2 / §7 第一步
 > 护栏：smoke 1392 条 + lint 19 条 + docref 3 条 + api-surface diff
 > 回答三个问题：**39 处 instanceof 的真实版图是什么？四片怎么切？先收接口还是先搬家？**
@@ -206,6 +206,62 @@ api-surface diff = **+0 @api / +1 @internal**（ScrollInputRouter）。
 
 ---
 
+## 4f. 第六步已完成：InputRouter 主体（2026-10-24）
+
+**动工前的评估**（两处对原分析的修正）：
+
+1. **`InputHost` 是 8 个口子而不是 7 个** —— 原分析漏了 `root()`。
+   `updateDrag()` 要 hitTest ⇒ 要 root；它是公开入口（smoke 直调）、arena 的
+   Drag  recognizer 回调也要调它，把 root 透传进三处调用点（含一次闭包捕获）
+   比多一个 getter 口子更差。`focus()` / `root()` 同为"现读树状态"（挂载前
+   为 null、重建会换），与第 4 步 `TextEditingHost` 立的口径一致。
+2. **壳的边界**：`dispatchInput()` 壳内保留三件**应用侧**职责 ——
+   ① `lastInputMs` / `keyboardFocusVisible` 记账（`after()` 与焦点环的基准）
+   ② 失活收口（`cancelActiveGestures` 必须**先于**"未挂载"守卫 —— 窗口可能
+   在拆卸途中失前台，手势清理不依赖树）③ `ThemeChangedEvent` 分发（先钩子再
+   下发 context = 帧循环职责，不是输入路由）。路由主体拿到的 root/focus 由
+   壳传参（已过守卫）—— 与 `dispatchPointer` 原有签名同形，router 不重复
+   持守卫。
+
+**搬入片的资产**（Application 3834 行里的 ~800 行）：`dispatch()` 的
+键/指针/滚轮三分支 / `dispatchPointer()` 四相位 / `cancelActiveGestures()` /
+`beginGestureArena()` / `draggableOwner()` / `pointerOwner()` /
+`openContextMenu()` / `activateFocused()` / `activateFocusedWidget()` /
+`hitsModalPanel()` / `dispatchToCapture()` / `cursorFor()` / 捕获三方法
+（`capturePointer` / `releasePointer` / `captureNode`）/ 拖放五入口
+（`drag` / `beginDrag` / `updateDrag` / `dropDrag` / `cancelDrag`）+
+三字段（`$gestureArena` / `$drag` / `$captureNode`）+ `WHEEL_NOTCH_PX`。
+
+**§2 原表的偏离（执行时按"输入路由"边界重判）**：hover/tooltip 四方法与
+焦点环（`paintFocusRing` / `focusRingTarget`）**留在 Application** ——
+它们由帧循环驱动（悬停延时、afterPaint 画环），不是"喂一条事件决定谁吃"的
+路由职责；`revealFocused` 已随第 5 步进 ScrollInputRouter。
+
+**装配模式**：`new InputRouter($this, $this->scrollInput, $this->textEditing)`
+—— host 摸应用状态（8 口子），另两片走构造参数做片间组合（不经 host，
+第 5 步口径）。**API 位置不动**：`dispatchInput` / `capturePointer` /
+`releasePointer`（@api）、`captureNode` / 拖放四入口（@internal）在
+Application 留壳 —— smoke ~150 处直调、三个 Bootstrap、TestApp 不断。
+
+**行数**：Application 3487 → 2817（−670）；新增 InputRouter 857 行 +
+InputHost 40 行。
+
+**踩坑（修夹具，不给框架加兜底）**：`ThemeApplication`（smoke 夹具）构造器
+没调 `parent::__construct()` ⇒ 新片 `$input` 未初始化，frame() 的捕获者
+清扫第一帧就 Fatal。选择修夹具而不是在 attach() 里再抄三份 `??=`：
+`NavApplication` 的注释立过"不调父构造器 ⇒ `$router` 未初始化"的规矩，
+容忍老Fixture的只有 `$overlays ??=` 那一条遗留补丁 —— 容忍面每复制一次，
+"子类可以不调父构造器"就多一分既成事实。
+
+**验收**：smoke 1392/0（变异测试：① dispatchPointer 浮层优先段 scrim 分支
+打挂 ⇒ **1 FAIL**（点遮罩关模态）② `activateFocusedWidget` 的命令分发打挂
+⇒ **6 FAIL**（键盘/指针激活、菜单项、模态按钮、Tooltip 穿透全覆盖））、
+lint 0/0、docref 68/0、api-surface diff = **+0 @api / +1 @internal**
+（−3 搬入片内 / +2 host 契约口子 `dismissOverlay` `toggleWidgetPanel` /
++2 新片类 `InputHost` `InputRouter`）。
+
+---
+
 ## 5. 剩余路线（每步的验收）
 
 | 步 | 动作 | 验收 |
@@ -214,7 +270,7 @@ api-surface diff = **+0 @api / +1 @internal**（ScrollInputRouter）。
 | 3 | ~~`Scrollable` 已合规；`RenderScrollView` 5 处收成 `Scrollable`（盒侧接口）~~（✅ 2026-10-24，方案已修正，见 §4c） | 同上 |
 | 4 | ~~拆 `TextEditingBridge`（最小片，验证装配模式）~~（✅ 2026-10-24，见 §4d） | smoke 绿 + Application 行数 −250 |
 | 5 | ~~拆 `OverlayHost`~~ → **已调整为 `ScrollInputRouter`**（滚动输入族，2026-10-24 拆片顺序调整 + 完成，见 §4e） | 同上 |
-| 6 | 拆 `InputRouter`（dispatchInput / dispatchPointer 主体 + 手势状态 + 光标） | 同上 |
+| 6 | ~~拆 `InputRouter`（dispatchInput / dispatchPointer 主体 + 手势状态 + 光标）~~（✅ 2026-10-24，见 §4f） | 同上 |
 | 7 | 拆 `OverlayHost`（原步 5 推迟到这里：被帧/焦点/输入/命令四方依赖，"被依赖多的晚拆"） | 同上 |
 | 8 | 拆 `FrameEngine`（九段表驱动） | 同上 |
 | 9 | **加 lint 规则**：`src/App/` 里 `instanceof` 只许出现在接口上（I2 的闸门，现在加会红 39 处，拆完才绿） | selftest 红绿双向 |

@@ -26,6 +26,7 @@ final class ThemeApplication extends Application
 
     public function __construct()
     {
+        parent::__construct(); // ★ 不调 ⇒ Application 的片（$input 等）未初始化（构造链：父先子后）
         $this->themeData = ThemeData::forSystem(SystemTheme::Light);
     }
 
