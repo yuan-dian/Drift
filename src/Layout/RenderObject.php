@@ -53,6 +53,23 @@ abstract class RenderObject
     }
 
     /**
+     * 这个**位置**要什么光标（`null` = 不表态，回落到 `cursor()` 的父链声明）。
+     *
+     * ★ 与 `cursor()` 的分工：`cursor()` 是"整个控件一个形状"，本方法是"同一个
+     *   控件里按位置变"（富文本的链接只在几个字上是手型）。
+     * ★ 坐标是**本盒的局部坐标**（与 `hitTest()` 同口径）—— 调用方负责减
+     *   `absoluteOrigin()`，盒不自己沿父链换算（那是重复实现）。
+     * ★ 默认 `null`：绝大多数盒没有按位置变的需求，声明式 `cursor()` 够用；
+     *   覆写的盒必须**快速返回**（每次 move 都会问一次）。
+     *
+     * @api
+     */
+    public function cursorAt(float $x, float $y): ?CursorShape
+    {
+        return null;
+    }
+
+    /**
      * @internal 挂载子节点：把 subordinate 的父指到本节点。
      *
      * Element 建树时用；做成方法而不是公开 `$parent =`，是为了让"改父"有唯一落点。

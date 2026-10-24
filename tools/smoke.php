@@ -9067,6 +9067,20 @@ check(
     $linkPara !== null && $linkPara->tagAt(1.0, 5.0) === '',
     sprintf('tagAt=%s', var_export($linkPara?->tagAt(1.0, 5.0), true)),
 );
+check(
+    'RichText · cursorAt：链接上 PointingHand、普通文字 null（按位置变，不是整段）',
+    $linkBox instanceof RenderRichText
+        && $linkRun !== null
+        && $linkBox->cursorAt($linkStartX + $linkRun->width / 2.0, 5.0) === CursorShape::PointingHand
+        && $linkBox->cursorAt(1.0, 5.0) === null,
+    sprintf(
+        'link=%s plain=%s',
+        $linkBox instanceof RenderRichText && $linkRun !== null
+            ? ($linkBox->cursorAt($linkStartX + $linkRun->width / 2.0, 5.0)?->name ?? 'null')
+            : 'n/a',
+        $linkBox instanceof RenderRichText ? ($linkBox->cursorAt(1.0, 5.0)?->name ?? 'null') : 'n/a',
+    ),
+);
 
 // —— 扁平按钮：盒样式 isNone（无底无边框），字色走正文色
 $flatBox = Button::make('导航项')->variant(ButtonVariant::Flat)->createRenderObject($context);

@@ -7,6 +7,7 @@ use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Scale;
 use Drift\Geometry\Size;
+use Drift\Input\CursorShape;
 use Drift\Rendering\Canvas;
 use Drift\Rendering\Color;
 use Drift\Rendering\DisplayList;
@@ -77,20 +78,34 @@ final class RenderRichText extends RenderBox
     }
 
     /**
-     * 客户区坐标 → 链接触发标识（`''` = 不是链接）。
+     * 本盒**局部**坐标 → 链接触发标识（`''` = 不是链接）。
      *
      * ★ 命中走 `Paragraph::tagAt()`（内部用 `indexAt()` 的字节偏移映射），
      *   与光标 / 选中同一套几何，不在这里重算 pen。
      */
+    public function tagAt(float $x, float $y): string
+    {
+        return $this->paragraph?->tagAt($x, $y) ?? '';
+    }
+
+    /** 客户区坐标 → 链接触发标识（`''` = 不是链接） */
     public function tagAtClient(float $clientX, float $clientY): string
     {
-        if ($this->paragraph === null) {
-            return '';
-        }
-
         [$ox, $oy] = RenderBox::absoluteOrigin($this);
 
-        return $this->paragraph->tagAt($clientX - $ox, $clientY - $oy);
+        return $this->tagAt($clientX - $ox, $clientY - $oy);
+    }
+
+    /**
+     * 链接上给手型，其余不表态（回落到 `cursor()` 的链）。
+     *
+     * ★ 这是"同一个控件里按位置变光标"的**唯一**实现；`Widget::cursor()` 只能
+     *   整段声明（整段手型会把说明文字也变成手型）。
+     */
+    #[\Override]
+    public function cursorAt(float $x, float $y): ?CursorShape
+    {
+        return $this->tagAt($x, $y) !== '' ? CursorShape::PointingHand : null;
     }
 
     protected function performLayout(BoxConstraints $constraints): Size

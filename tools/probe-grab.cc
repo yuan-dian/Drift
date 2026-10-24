@@ -943,6 +943,33 @@ int wmain(int argc, wchar_t** argv)
         ::SetCursorPos(target.x, target.y);
         std::printf("cursor=%d,%d\n", options.cursorX, options.cursorY);
         ::Sleep(80);   // 让 TrackMouseEvent 先看到"指针在窗内"
+
+        // ★ 光标形状判据（W8-5 盒级光标）：壳用 `LoadCursorW(NULL, IDC_*)`
+        //   （系统预定义光标、跨进程共享句柄）⇒ 这里拿到的 HCURSOR 可以直接比。
+        CURSORINFO ci{};
+        ci.cbSize = sizeof(ci);
+        if (::GetCursorInfo(&ci) != 0 && ci.hCursor != nullptr) {
+            const struct { LPCSTR id; const char* name; } known[] = {
+                {IDC_ARROW, "arrow"},
+                {IDC_IBEAM, "ibeam"},
+                {IDC_HAND, "hand"},
+                {IDC_SIZEALL, "sizeall"},
+                {IDC_SIZENS, "sizens"},
+                {IDC_SIZEWE, "sizewe"},
+                {IDC_WAIT, "wait"},
+                {IDC_NO, "no"},
+            };
+            const char* shapeName = "other";
+
+            for (const auto& entry : known) {
+                if (ci.hCursor == ::LoadCursorA(nullptr, entry.id)) {
+                    shapeName = entry.name;
+                    break;
+                }
+            }
+
+            std::printf("cursor_shape=%s\n", shapeName);
+        }
     }
     if (options.click) {
         // ★★ WM_LBUTTONDOWN 的 lParam 是**客户区**坐标，**不能** ClientToScreen

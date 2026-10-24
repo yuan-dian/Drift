@@ -3039,6 +3039,27 @@ abstract class Application
      * ★ 回调抛异常 ⇒ 报错 + **释放捕获**：留着一个会抛的捕获者等于之后每个
      *   指针事件都炸一次，而且树里没有别的东西能收到事件（静默冻住）。
      */
+    /**
+     * 光标解析的**唯一入口**：先问命中的盒"这个位置要什么"（`cursorAt`），
+     * 它不表态才回落到 `Widget::cursor()` 的父链声明。
+     *
+     * ★ 盒级优先：位置比控件更具体（富文本的链接只在几个字上是手型，
+     *   整段 `cursor()` 做不到）。
+     * ★ 局部坐标 = 客户区 − `absoluteOrigin()`，与 `hitTest()` 同口径。
+     */
+    private function cursorFor(?RenderBox $hit, float $x, float $y): CursorShape
+    {
+        if ($hit !== null) {
+            [$ox, $oy] = RenderBox::absoluteOrigin($hit);
+            $shape = $hit->cursorAt($x - $ox, $y - $oy);
+            if ($shape !== null) {
+                return $shape;
+            }
+        }
+
+        return $this->focus?->cursorOf($hit) ?? CursorShape::Default;
+    }
+
     private function dispatchToCapture(Element $node, PointerEvent $event): ?CursorShape
     {
         $handler = null;
@@ -3143,7 +3164,7 @@ abstract class Application
                     $focus->hoverTo(null);
                 }
 
-                return $event->isDown() || $event->isMove() ? $focus->cursorOf($hit) : null;
+                return $event->isDown() || $event->isMove() ? $this->cursorFor($hit, $event->x, $event->y) : null;
             }
 
             // 点在条目盒外
@@ -3254,7 +3275,7 @@ abstract class Application
             if ($this->draggableOwner($element) !== null) {
                 $this->beginGestureArena($element, $hit, $root, $focus, $event->x, $event->y);
 
-                return $focus->cursorOf($hit);
+                return $this->cursorFor($hit, $event->x, $event->y);
             }
 
             // 无 `Draggable` 竞争者 ⇒ 维持 M3 行为：焦点真落在本次点击上 ⇒ 立即
@@ -3269,7 +3290,7 @@ abstract class Application
                 $this->beginTextSelection($event->x);
             }
 
-            return $focus->cursorOf($hit);
+            return $this->cursorFor($hit, $event->x, $event->y);
         }
 
         if ($event->isMove()) {
@@ -3291,7 +3312,7 @@ abstract class Application
 
             $focus->hoverTo($element);
 
-            return $focus->cursorOf($hit);
+            return $this->cursorFor($hit, $event->x, $event->y);
         }
 
         if ($event->isUp()) {
