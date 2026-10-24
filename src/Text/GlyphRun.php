@@ -32,17 +32,19 @@ final readonly class GlyphRun
         /** 链接触发标识（空串 = 非链接），由 `TextSpan` 透传 */
         public string $tag = '',
         public bool $underline = false,
+        /** 背景色（ARGB）；`-1` = 无 */
+        public int $background = -1,
     ) {
     }
 
     /** 同几何、换颜色（`-1` = 回到"用 Paint"） */
     public function withColor(int $argb): self
     {
-        return $this->withSpan($argb, $this->tag, $this->underline);
+        return $this->withSpan($argb, $this->tag, $this->underline, $this->background);
     }
 
-    /** 同几何、换 span 语义（颜色 / 链接标识 / 下划线）—— 富文本整条一次设 */
-    public function withSpan(int $argb, string $tag, bool $underline): self
+    /** 同几何、换 span 语义（颜色 / 链接标识 / 下划线 / 背景）—— 富文本整条一次设 */
+    public function withSpan(int $argb, string $tag, bool $underline, int $background = -1): self
     {
         return new self(
             $this->glyphs,
@@ -54,6 +56,7 @@ final readonly class GlyphRun
             $argb,
             $tag,
             $underline,
+            $background,
         );
     }
 
@@ -79,6 +82,7 @@ final readonly class GlyphRun
             $this->argb,
             $this->tag,
             $this->underline,
+            $this->background,
         );
     }
 

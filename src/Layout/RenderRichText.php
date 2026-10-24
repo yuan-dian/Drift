@@ -154,21 +154,7 @@ final class RenderRichText extends RenderBox
 
         $recorder = new RecordingCanvas($this->list);
 
-        // ★ 下划线在**盒内**画（不进 Canvas 后端）：坐标是盒局部，随 DisplayList
-        //   一起 replay ⇒ Raster / Skia 两条路自动一致，后端一行都不用改。
-        foreach ($this->paragraph->lines as $line) {
-            $pen = $line->offsetX;
-            foreach ($line->runs as $run) {
-                if ($run->underline) {
-                    $underlineColor = $run->argb >= 0 ? Color::fromArgb($run->argb) : $this->color;
-                    $recorder->drawRect(
-                        new Rect($pen, $line->baseline + 2.0, $run->width, 1.0),
-                        Paint::fill($underlineColor),
-                    );
-                }
-                $pen += $run->width;
-            }
-        }
+        $this->paintRunDecorations($recorder);
 
         $recorder->drawParagraph(
             $this->paragraph,
@@ -177,5 +163,48 @@ final class RenderRichText extends RenderBox
             0.0,
         );
         $this->list->replay($canvas);
+    }
+
+    /**
+     * 按 run 画装饰（背景 / 下划线）—— **盒内**，不进 Canvas 后端。
+     *
+     * ★ 坐标是盒局部，随 DisplayList 一起 replay ⇒ Raster / Skia 两条路自动一致，
+     *   后端一行都不用改。
+     * ★ 必须排在字形**之前**：背景要垫在字下面。
+     * ★ 背景高度 = 该 run 的**字体内容区**（`baseline − ascent .. baseline + descent`），
+     *   不是整行高 —— 大字号 span 的背景才贴着字，不会把行距也涂上。字号取 run 自己的
+     *   （同一行里 32pt 与 14pt 混排时各行其道）。
+     */
+    private function paintRunDecorations(RecordingCanvas $recorder): void
+    {
+        if ($this->paragraph === null) {
+            return;
+        }
+
+        foreach ($this->paragraph->lines as $line) {
+            $pen = $line->offsetX;
+
+            foreach ($line->runs as $run) {
+                if ($run->background >= 0) {
+                    $metrics = $run->face->metrics();
+                    $size = $run->style->size;
+                    $ascent = $metrics->ascentPx($size);
+                    $recorder->drawRect(
+                        new Rect($pen, $line->baseline - $ascent, $run->width, $ascent + $metrics->descentPx($size)),
+                        Paint::fill(Color::fromArgb($run->background)),
+                    );
+                }
+
+                if ($run->underline) {
+                    $underlineColor = $run->argb >= 0 ? Color::fromArgb($run->argb) : $this->color;
+                    $recorder->drawRect(
+                        new Rect($pen, $line->baseline + 2.0, $run->width, 1.0),
+                        Paint::fill($underlineColor),
+                    );
+                }
+
+                $pen += $run->width;
+            }
+        }
     }
 }

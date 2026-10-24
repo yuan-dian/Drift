@@ -9082,6 +9082,38 @@ check(
     ),
 );
 
+// —— W8-5 续作三：背景色（绘制输入，不进缓存键）——
+$bgEl = RichText::make([
+    Span::make('正常 '),
+    Span::make('高亮')->background(Color::fromHex('#fff3cd')),
+])->createElement();
+$bgEl->mount(null, $context);
+$bgBox = $bgEl->effectiveBox();
+$bgBox?->layout(BoxConstraints::loose(new Size(400.0, 60.0)));
+$bgPara = $bgBox instanceof RenderRichText ? $bgBox->paragraph() : null;
+$bgRun = null;
+foreach ($bgPara?->lines[0]->runs ?? [] as $bgCandidate) {
+    if ($bgCandidate->background >= 0) {
+        $bgRun = $bgCandidate;
+        break;
+    }
+}
+check(
+    'RichText · background 落在 run 上（ARGB 透传，与 argb 分开）',
+    $bgRun !== null
+        && $bgRun->background === Color::fromHex('#fff3cd')->toArgb()
+        && $bgRun->argb === -1,
+    sprintf('bg=%s fg=%s', var_export($bgRun?->background, true), var_export($bgRun?->argb, true)),
+);
+
+$bgKeyA = Paragraph::keyForSpans([new TextSpan('x', $richBaseStyle, -1, '', false, -1)], $richBaseStyle, 100.0, new Scale(1.0));
+$bgKeyB = Paragraph::keyForSpans([new TextSpan('x', $richBaseStyle, -1, '', false, 0xFFFFFF00)], $richBaseStyle, 100.0, new Scale(1.0));
+check(
+    'RichText · 缓存键不含背景色（改背景不重排，与颜色同一条纪律）',
+    $bgKeyA === $bgKeyB,
+    sprintf('A=%s B=%s', substr($bgKeyA, 0, 8), substr($bgKeyB, 0, 8)),
+);
+
 // —— 扁平按钮：盒样式 isNone（无底无边框），字色走正文色
 $flatBox = Button::make('导航项')->variant(ButtonVariant::Flat)->createRenderObject($context);
 check(

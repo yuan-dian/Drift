@@ -85,6 +85,14 @@ final class RichTextPageState extends State
                         });
                     }
                 }),
+
+                self::sectionBar('⑥ 背景色高亮（字体内容区，不涂行距）'),
+                RichText::make([
+                    Span::make('提示：'),
+                    Span::make(' 已保存 ')->background(Color::fromHex('#e8f5e9')),
+                    Span::make('  修改 ')->background(Color::fromHex('#fff3cd')),
+                    Span::make('（背景按各自字号的内容区算）'),
+                ])->size(16.0),
             ])
         );
     }

@@ -32,6 +32,7 @@ final class Span
     private float $size = -1.0;  // 负值 = 未设
     private string $tag = '';    // 空 = 不是链接
     private bool $underline = false;
+    private int $background = -1; // ARGB；-1 = 无
 
     private function __construct(string $content)
     {
@@ -84,6 +85,18 @@ final class Span
         return $this;
     }
 
+    /**
+     * 背景色（覆盖该段的**字体内容区**：基线上下按 ascent / descent 算）。
+     *
+     * ★ 与 `color()` 同一条纪律：绘制输入，不进排版缓存键。
+     */
+    public function background(Color $color): static
+    {
+        $this->background = $color->toArgb();
+
+        return $this;
+    }
+
     public function content(): string
     {
         return $this->content;
@@ -108,6 +121,6 @@ final class Span
             $style = $style->withWeight(FontWeight::Regular);
         }
 
-        return new TextSpan($this->content, $style, $this->argb, $this->tag, $this->underline);
+        return new TextSpan($this->content, $style, $this->argb, $this->tag, $this->underline, $this->background);
     }
 }

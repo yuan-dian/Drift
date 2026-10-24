@@ -27,11 +27,17 @@ final readonly class TextSpan
          */
         public string $tag = '',
         public bool $underline = false,
+        /**
+         * 背景色（ARGB）；`-1` = 无。
+         *
+         * ★ 与 `argb` 同一条纪律：绘制输入，**不进** `TextStyle` / 排版缓存键。
+         */
+        public int $background = -1,
     ) {
     }
 
     public function withColor(int $argb): self
     {
-        return new self($this->text, $this->style, $argb, $this->tag, $this->underline);
+        return new self($this->text, $this->style, $argb, $this->tag, $this->underline, $this->background);
     }
 }
