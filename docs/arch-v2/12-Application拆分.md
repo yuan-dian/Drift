@@ -147,13 +147,45 @@ docref 68/0、api-surface diff = **+0 @api / +2 @internal**（两个查询方法
 
 ---
 
+## 4d. 第四步已完成：TextEditingBridge 最小片（2026-10-24）
+
+**目的**：验证「Application 持片、片经窄接口回调」的装配模式 —— 用最小片
+踩遍所有坑（生命周期、依赖注入时序、API 位置），后续三片照此复制。
+
+**装配模式（本步要验证的核心）**：
+- `TextEditingHost` 接口只两个口子：`focus(): ?FocusManager` +
+  `clipboard(): ?Clipboard` —— **片经 getter 不用值**（焦点 attach 时才建、
+  剪贴板由组合根挂进来，就绪时序都不确定）
+- `Application implements TextEditingHost` + 构造期 `new TextEditingBridge($this)`
+  （host = 自己，构造期建无时序问题）
+- **API 位置不动、实现搬走**：`Application::imeCaretRect()` 留委托壳 ——
+  三个 Bootstrap（组合根）按 `$app->imeCaretRect()` 调，不能断
+
+**搬入片的资产**：`editingText()` / `textSelectBox()` / `beginTextSelection()` /
+`extendTextSelection()` / `dispatchEditCommand()` / `imeCaretRect()` + `$textSelect`
+字段；顺带新增 `finishSelection()`（把 Application 里 4 处 `$this->textSelect = null`
+的裸摸字段收成一处收口），`textSelectBox()` 换用第 3 步的 `findBoxOf()`。
+
+**顺带**：`Application::focus()` 新增 public（host 契约的强制产物）——标
+`@internal` 而非 `@api`：唯一消费者是片，不是应用扩展点（若将来组合根
+要读焦点是显式升级 @api 的时刻）。
+
+**行数**：Application 3834 → 3663（**−171**；路线表的 ~250 估计含 docblock
+净转移，实际净减 171）。
+
+**验收**：smoke 1392/0（两个变异测试：`finishSelection` 打挂 ⇒ 1 FAIL；
+`dispatchEditCommand` 打挂 ⇒ 3 FAIL）、lint 0/0、docref 68/0、
+api-surface diff = **+0 @api / +3 @internal**（Bridge / Host / focus()）。
+
+---
+
 ## 5. 剩余路线（每步的验收）
 
 | 步 | 动作 | 验收 |
 |---|---|---|
 | 2 | ~~8 处 `instanceof StatefulElement` 收进 `FocusManager::focusedState()`~~（✅ 2026-10-24，见 §4b） | smoke 绿 + App 层该 instanceof 归零 |
 | 3 | ~~`Scrollable` 已合规；`RenderScrollView` 5 处收成 `Scrollable`（盒侧接口）~~（✅ 2026-10-24，方案已修正，见 §4c） | 同上 |
-| 4 | 拆 `TextEditingBridge`（最小片，验证装配模式） | smoke 绿 + Application 行数 −250 |
+| 4 | ~~拆 `TextEditingBridge`（最小片，验证装配模式）~~（✅ 2026-10-24，见 §4d） | smoke 绿 + Application 行数 −250 |
 | 5 | 拆 `OverlayHost` | 同上 |
 | 6 | 拆 `InputRouter` | 同上 |
 | 7 | 拆 `FrameEngine`（九段表驱动） | 同上 |

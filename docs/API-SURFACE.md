@@ -8,7 +8,7 @@
 
 | 层 | @api | @internal |
 |---|---|---|
-| App | 51 | 24 |
+| App | 51 | 27 |
 | Commands | 7 | 0 |
 | Core | 2 | 0 |
 | Errors.php | 1 | 3 |
@@ -23,9 +23,9 @@
 | Text | 29 | 3 |
 | Theme | 3 | 0 |
 | Widget | 121 | 160 |
-| **合计** | **335** | **243** |
+| **合计** | **335** | **246** |
 
-覆盖 271 个文件 · 描述性提及 15 处（grep 口径的污染源，不计入）
+覆盖 273 个文件 · 描述性提及 18 处（grep 口径的污染源，不计入）
 
 ## App 层
 
@@ -33,29 +33,29 @@
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
-| `Application` | class | src/App/Application.php:61 |
-| `Application::commands()` | method | src/App/Application.php:438 |
-| `Application::taskHost()` | method | src/App/Application.php:464 |
-| `Application::accelerators()` | method | src/App/Application.php:496 |
-| `Application::clipboard()` | method | src/App/Application.php:518 |
-| `Application::metrics()` | method | src/App/Application.php:547 |
-| `Application::attach()` | method | src/App/Application.php:597 |
-| `Application::showMenu()` | method | src/App/Application.php:700 |
-| `Application::showSnackbar()` | method | src/App/Application.php:889 |
-| `Application::overlays()` | method | src/App/Application.php:1034 |
-| `Application::showModal()` | method | src/App/Application.php:1065 |
-| `Application::closeModal()` | method | src/App/Application.php:1101 |
-| `Application::onSystemThemeChanged()` | method | src/App/Application.php:1781 |
-| `Application::frame()` | method | src/App/Application.php:1823 |
-| `Application::repaintForResize()` | method | src/App/Application.php:2016 |
-| `Application::after()` | method | src/App/Application.php:2063 |
-| `Application::wantsFrame()` | method | src/App/Application.php:2135 |
-| `Application::submitSliced()` | method | src/App/Application.php:2492 |
-| `Application::io()` | method | src/App/Application.php:2581 |
-| `Application::capturePointer()` | method | src/App/Application.php:2624 |
-| `Application::releasePointer()` | method | src/App/Application.php:2644 |
-| `Application::dispatchInput()` | method | src/App/Application.php:2660 |
-| `Application::dispatch()` | method | src/App/Application.php:3534 |
+| `Application` | class | src/App/Application.php:59 |
+| `Application::commands()` | method | src/App/Application.php:456 |
+| `Application::taskHost()` | method | src/App/Application.php:482 |
+| `Application::accelerators()` | method | src/App/Application.php:514 |
+| `Application::clipboard()` | method | src/App/Application.php:536 |
+| `Application::metrics()` | method | src/App/Application.php:565 |
+| `Application::attach()` | method | src/App/Application.php:615 |
+| `Application::showMenu()` | method | src/App/Application.php:718 |
+| `Application::showSnackbar()` | method | src/App/Application.php:907 |
+| `Application::overlays()` | method | src/App/Application.php:1052 |
+| `Application::showModal()` | method | src/App/Application.php:1083 |
+| `Application::closeModal()` | method | src/App/Application.php:1119 |
+| `Application::onSystemThemeChanged()` | method | src/App/Application.php:1610 |
+| `Application::frame()` | method | src/App/Application.php:1652 |
+| `Application::repaintForResize()` | method | src/App/Application.php:1845 |
+| `Application::after()` | method | src/App/Application.php:1892 |
+| `Application::wantsFrame()` | method | src/App/Application.php:1964 |
+| `Application::submitSliced()` | method | src/App/Application.php:2321 |
+| `Application::io()` | method | src/App/Application.php:2410 |
+| `Application::capturePointer()` | method | src/App/Application.php:2453 |
+| `Application::releasePointer()` | method | src/App/Application.php:2473 |
+| `Application::dispatchInput()` | method | src/App/Application.php:2489 |
+| `Application::dispatch()` | method | src/App/Application.php:3363 |
 | `Frame` | class | src/App/Frame.php:17 |
 | `Frame::run()` | method | src/App/Frame.php:79 |
 | `FrameClock` | class | src/App/FrameClock.php:10 |
@@ -85,34 +85,37 @@
 | `WindowStateStore::restore()` | method | src/App/WindowStateStore.php:76 |
 | `WindowStateStore::persist()` | method | src/App/WindowStateStore.php:142 |
 
-### @internal（框架内部） · 24
+### @internal（框架内部） · 27
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
-| `Application::tasks()` | method | src/App/Application.php:487 |
-| `Application::$metricsCache` | property | src/App/Application.php:540 |
-| `Application::uiThreadId()` | method | src/App/Application.php:665 |
-| `Application::assertUiThread()` | method | src/App/Application.php:675 |
-| `Application::syncPanelSignatures()` | method | src/App/Application.php:1289 |
-| `Application::semanticsMode()` | method | src/App/Application.php:2386 |
-| `Application::slicedCount()` | method | src/App/Application.php:2575 |
-| `Application::captureNode()` | method | src/App/Application.php:2654 |
-| `Application::scrollThumbAt()` | method | src/App/Application.php:2848 |
-| `Application::cancelActiveGestures()` | method | src/App/Application.php:3408 |
-| `Application::beginGestureArena()` | method | src/App/Application.php:3446 |
-| `Application::activateFocused()` | method | src/App/Application.php:3587 |
-| `Application::register()` | method | src/App/Application.php:3756 |
-| `Application::beginDrag()` | method | src/App/Application.php:3779 |
-| `Application::updateDrag()` | method | src/App/Application.php:3789 |
-| `Application::dropDrag()` | method | src/App/Application.php:3807 |
-| `Application::cancelDrag()` | method | src/App/Application.php:3817 |
-| `Application::rootBox()` | method | src/App/Application.php:3823 |
+| `Application::focus()` | method | src/App/Application.php:432 |
+| `Application::tasks()` | method | src/App/Application.php:505 |
+| `Application::$metricsCache` | property | src/App/Application.php:558 |
+| `Application::uiThreadId()` | method | src/App/Application.php:683 |
+| `Application::assertUiThread()` | method | src/App/Application.php:693 |
+| `Application::syncPanelSignatures()` | method | src/App/Application.php:1307 |
+| `Application::semanticsMode()` | method | src/App/Application.php:2215 |
+| `Application::slicedCount()` | method | src/App/Application.php:2404 |
+| `Application::captureNode()` | method | src/App/Application.php:2483 |
+| `Application::scrollThumbAt()` | method | src/App/Application.php:2677 |
+| `Application::cancelActiveGestures()` | method | src/App/Application.php:3236 |
+| `Application::beginGestureArena()` | method | src/App/Application.php:3275 |
+| `Application::activateFocused()` | method | src/App/Application.php:3416 |
+| `Application::register()` | method | src/App/Application.php:3585 |
+| `Application::beginDrag()` | method | src/App/Application.php:3608 |
+| `Application::updateDrag()` | method | src/App/Application.php:3618 |
+| `Application::dropDrag()` | method | src/App/Application.php:3636 |
+| `Application::cancelDrag()` | method | src/App/Application.php:3646 |
+| `Application::rootBox()` | method | src/App/Application.php:3652 |
 | `Completion` | class | src/App/Completion.php:6 |
 | `DragController` | class | src/App/DragController.php:10 |
 | `FocusManager` | class | src/App/FocusManager.php:17 |
 | `FrameClock::isArmed()` | method | src/App/FrameClock.php:177 |
 | `FrameClock::stallCount()` | method | src/App/FrameClock.php:183 |
 | `FrameClock::worstGapMs()` | method | src/App/FrameClock.php:189 |
+| `TextEditingBridge` | class | src/App/TextEditingBridge.php:14 |
+| `TextEditingHost` | interface | src/App/TextEditingHost.php:8 |
 
 ## Commands 层
 

@@ -22,7 +22,6 @@ use Drift\Input\ThemeChangedEvent;
 use Drift\Input\WindowDeactivatedEvent;
 use Drift\Platform\Clipboard;
 use Drift\Layout\RenderBox;
-use Drift\Layout\RenderTextField;
 use Drift\Layout\LayoutTolerance;
 use Drift\Layout\RenderObject;
 use Drift\Layout\RenderPopupPanel;
@@ -39,7 +38,6 @@ use Drift\Text\FontLocator;
 use Drift\Text\TtfFace;
 use Drift\Geometry\Rect;
 use Drift\Text\TextMetricsProvider;
-use Drift\Widget\EditableText;
 use Drift\Widget\Scrollable;
 use Drift\Theme\ThemeData;
 use Drift\Widget\BuildContext;
@@ -82,7 +80,7 @@ use Drift\Widget\TooltipPanel;
  *
  * @api
  */
-abstract class Application
+abstract class Application implements TextEditingHost
 {
     protected ?Element $root = null;
 
@@ -157,14 +155,14 @@ abstract class Application
     private ?Element $captureNode = null;
 
     /**
-     * 文本框选手势（2026-10-21，§A.2.9 的指针侧）：
-     * `down` 落**编辑中**的输入框 ⇒ 记 State，`move` 延伸、`up` / `leave` 收口。
+     * 文本编辑三侧的桥（S1 第 4 步拆出的最小片）：IME 光标 / 指针框选 /
+     * 编辑命令。构造期建（host = 本类），Application 只"持片 + 转交"。
      *
-     * ★ **只记 State，不记盒**：编辑只标脏 ⇒ 帧末 flush 会重建盒
-     *   （`effectiveBox()` 是新对象）⇒ 缓存盒等于拿上一帧的几何算这一帧
-     *   的偏移。盒每步现取（`textSelectBox()`）。
+     * ★ 为什么整个搬走而不留代理方法：这三侧在 Application 里散成 6 个
+     *   方法 + 1 个字段，只共享"焦点里在编辑的输入框"一个判据；收成一片
+     *   后，IME 合成 / 选区矩形 / 双击选词的演进都落在一个文件里。
      */
-    private ?EditableText $textSelect = null;
+    private TextEditingBridge $textEditing;
 
     /**
      * 语义树消费闭包（§9 / M5 UIA，per-app opt-in，同 taskHost() 形态）。
@@ -418,12 +416,32 @@ abstract class Application
         $this->router = CommandRouter::make();
         $this->overlays = new OverlayStack();
 
+        // S1 第 4 步：文本编辑三侧（IME / 指针框选 / 编辑命令）收成最小片。
+        // host = $this（片只经 TextEditingHost 摸焦点与剪贴板）—— 构造期
+        // 建无时序问题：两个 getter 都是运行期就绪的依赖，片内每次现读。
+        $this->textEditing = new TextEditingBridge($this);
+
         // 只注册**显式传进来**的那些。`commands()` **不在构造器里调** ——
         // PHP 的构造链是"父先子后"，此刻子类构造器里的字段（`$this->store` 之类）
         // 还都是 null ⇒ 照 §A.2 的样例会直接炸。注册推迟到 `attach()`（见那儿）。
         foreach ($handlers as $name => $handler) {
             $this->router->on((string) $name, $handler);
         }
+    }
+
+    /**
+     * 焦点链（S1 第 4 步：`TextEditingHost` 契约的强制产物）。
+     *
+     * ★ 不是应用扩展点（对比 `clipboard()` 的 @api）—— 目前唯一消费者是
+     *   `TextEditingBridge`（片只经 host 摸焦点）。标 `@internal`：若将来
+     *   组合根真要读焦点（如 UIA 推送），那是显式升级 @api 的时刻，
+     *   不是默认放它进应用面。
+     *
+     * @internal
+     */
+    public function focus(): ?FocusManager
+    {
+        return $this->focus;
     }
 
     /** 应用子树（§4.5：只写这一个方法就能跑起来） */
@@ -1577,206 +1595,17 @@ abstract class Application
     }
 
     /**
-     * IME 定位用的光标矩形（§8.4）—— **逻辑像素**的窗口坐标 `[x, y, h]`。
+     * IME 定位用的光标矩形（§8.4）—— 转交 `TextEditingBridge`（S1 第 4 步）。
      *
-     * ★ 返回 null = 无插入符（无焦点 / 焦点不在编辑态 / 光标矩形算不出来）。
-     *   组合根把它喂给 `Platform::imeCaret()`；平台侧负责 × dpr（§6.1：
-     *   **量化只发生在平台侧** —— 这里给逻辑值，与 `BoxConstraints`/视口同单位）。
-     *
-     * ★ 为什么不做在框架里每帧自动同步：**框架不持平台**（§5.1「平台名只出现
-     *   在组合根」）⇒ 这一行的驱动归组合根。几何算在框架侧是为了可头侧测试
-     *   （见 smoke 的 IME 夹具）—— 坐标换算是这条链上最容易错的一段。
+     * ★ 几何与门控都住在片里（IME / 框选 / 编辑命令是同一族认知）；这里留
+     *   public 壳是因为组合根（`Bootstrap.php` 的 `imeCaret()` 喂值）按
+     *   `Application::imeCaretRect()` 调 —— **API 位置不动，实现搬走**。
      */
     public function imeCaretRect(): ?array
     {
-        // ★ 与 `editingText()` 同一个判据、同一份实现（焦点穿透 + `EditableText`
-        //   + `isEditing`）—— 复制一份就会有"两个门控行为不同"的那天。
-        $state = $this->editingText();
-        if ($state === null) {
-            return null;
-        }
-
-        $box = $this->focus?->focused()?->effectiveBox();
-        if ($box === null) {
-            return null;
-        }
-
-        $local = $state->caretRect();   // 盒内坐标（含内边距）
-        if (!$local instanceof Rect) {
-            return null;
-        }
-
-        [$originX, $originY] = self::absoluteOrigin($box);
-        $padLeft = $box->contentOriginX();
-        $padTop = $box->contentOriginY();
-
-        // ★ **必须加 padding**（arch-v2 `02` §4.1.1）：`caretRect()` 是**内容盒**
-        //   坐标（插入符自己走 `paintContent()` 那条路，画得是对的），而
-        //   `absoluteOrigin()` 给的是**边框盒**原点。W5 之前两者是同一个（padding
-        //   是祖先盒），之后差一个 `(padLeft, padTop)`。
-        //   漏了 ⇒ IME 候选框偏一个 padding；而候选框是**独立原生窗口**，不在应用
-        //   截图里 ⇒ 四类"只有真机能抓"的失败模式一条也抓不到它。
-        return [
-            $originX + $padLeft + $local->left,
-            $originY + $padTop + $local->top,
-            $local->height,
-        ];
+        return $this->textEditing->imeCaretRect();
     }
 
-
-    /**
-     * 焦点里**在编辑**的输入框（§9.1 第 ③ 环与指针框选共用的门控）。
-     *
-     * ★ 判据只此一份：`FocusManager::focusedState()` 穿透 + `EditableText`
-     *   + `isEditing()`。编辑命令、框选起手与 `imeCaretRect()` 全都走这里
-     *   ⇒ 不可能一个放行、另一个拦住。
-     */
-    private function editingText(): ?EditableText
-    {
-        $state = $this->focus?->focusedState();
-        if (!$state instanceof EditableText || !$state->isEditing()) {
-            return null;
-        }
-
-        return $state;
-    }
-
-    /**
-     * 输入框的**真实字段盒**（穿过包装层现取，不缓存 —— 见 `$textSelect`）。
-     *
-     * ★ 有 `label()` 的字段 build() 出来是 `Column[Text, 字段]` ⇒ 焦点元素的
-     *   `effectiveBox()` 是 Column 的盒；拿它算 x 偏移会整体错一个标签宽
-     *   （2026-10-19 IME 候选框贴角的同一个坑，见 `Element::findBox()`）。
-     */
-    private function textSelectBox(EditableText $state): ?RenderTextField
-    {
-        $focused = $this->focus?->focused();
-        if (States::of($focused) !== $state) {
-            return null;
-        }
-
-        $box = $focused->findBox(static fn(RenderBox $b): bool => $b instanceof RenderTextField);
-
-        return $box instanceof RenderTextField ? $box : null;
-    }
-
-    /**
-     * down 落在输入框上（`focusHit()` 已成功 ⇒ 焦点就是它）⇒ 插入符落到
-     * 指针处 + 记下框选手势（`move` 延伸、`up` / `leave` 收口）。
-     *
-     * ★ `moveCaret()` 折叠既有选区 —— "点一下 = 重新定位"（与各平台一致），
-     *   选区靠随后的拖动重建，不继承上一轮。
-     * ★ `offsetAt()` 收**盒内** x（它自己减左内边距）⇒ 先扣掉盒的绝对原点。
-     */
-    private function beginTextSelection(float $x): void
-    {
-        $state = $this->editingText();
-        if ($state === null) {
-            return;
-        }
-
-        $box = $this->textSelectBox($state);
-        if ($box === null) {
-            return;
-        }
-
-        [$originX] = self::absoluteOrigin($box);
-        $padLeft = $box->contentOriginX();
-        // ★ `offsetAt()` 要的是**内容盒** x（它自己再减一次 `insets->left`）⇒
-        //   先扣边框盒原点，再扣 padding（`02` §4.1.1）。漏了 ⇒ 插入符落点偏右
-        //   一个 padding，点到的是后面几个字。
-        $state->moveCaret($box->offsetAt($x - $originX - $padLeft));
-
-        $this->textSelect = $state;
-    }
-
-    /**
-     * 框选推进（`move`）：选区活动端延伸到指针处。
-     *
-     * ★ 取不到盒（控件卸载 / 焦点被挪走）⇒ 就地收口，不拖着坏手势。
-     */
-    private function extendTextSelection(float $x): void
-    {
-        $state = $this->textSelect;
-        if ($state === null) {
-            return;
-        }
-
-        $box = $this->textSelectBox($state);
-        if ($box === null) {
-            $this->textSelect = null;
-
-            return;
-        }
-
-        [$originX] = self::absoluteOrigin($box);
-        $padLeft = $box->contentOriginX();
-        // ★ 同 `beginTextSelection()`：`offsetAt()` 收内容盒 x。
-        $state->extendSelectionTo($box->offsetAt($x - $originX - $padLeft));
-    }
-
-    /**
-     * 编辑命令环（§9.1）：`Ctrl+C` 复制 / `Ctrl+X` 剪切 / `Ctrl+V` 粘贴。
-     *
-     * 位置在加速键**之前**（§9.1 让位规则 ② 的"编辑命令优先"）：焦点里有个
-     * 在编辑的输入框时，这三个组合归它。返回 `false` = 这一环没吃，事件
-     * **原样**继续往加速键走 —— 四条门控任一不满足都放行（不吞键）：
-     *
-     *   ① 不是 C / X / V
-     *   ② 焦点里没有在编辑的输入框（§5.1：`State` 拿不到平台 ⇒ 环住 `App`）
-     *   ③ 平台没递剪贴板进来（`clipboard()` 返回 null）
-     *   ④ C / X 没有选区；V 剪贴板没有文本
-     *
-     * ★ ④ 的设计：**没有剪贴板时 `Ctrl+C` 不是死键** —— 回落给加速键，应用
-     *   照样能把它绑成"复制选中行"之类的命令（"声明独占却没人接"让键失效，
-     *   正是 §9.1 让位规则想避免的）。
-     * ★ `V` 不经 `claimKeys` 声明独占：声明了就得有人接，没人接就是死键；
-     *   这里的"环在加速键之前"已经达到同一优先级，且门控不满足时自动让位。
-     */
-    private function dispatchEditCommand(KeyEvent $event): bool
-    {
-        $chord = $event->chord;
-
-        $copy = $chord->is(KeyChord::ctrl('C'));
-        $cut = $chord->is(KeyChord::ctrl('X'));
-        $paste = $chord->is(KeyChord::ctrl('V'));
-
-        if (!$copy && !$cut && !$paste) {
-            return false;
-        }
-
-        $state = $this->editingText();
-        if ($state === null) {
-            return false;
-        }
-
-        $clipboard = $this->clipboard();
-        if ($clipboard === null) {
-            return false;
-        }
-
-        if ($paste) {
-            if (!$clipboard->hasText()) {
-                return false;
-            }
-
-            $state->replaceSelection($clipboard->readText());
-
-            return true;
-        }
-
-        if (!$state->hasSelection()) {
-            return false;
-        }
-
-        $clipboard->writeText($state->selectedText());
-
-        if ($cut) {
-            $state->deleteSelection();
-        }
-
-        return true;
-    }
 
     /**
      * 系统主题变了（§9.2 / §A.2.5 的应用钩子）—— **应用扩展点**。
@@ -2765,12 +2594,12 @@ abstract class Application
 
                 // ESC 同样取消文本框选手势（选区折叠归焦点控件的 Esc 分支，
                 // 见 `EditableText::handleKey()`）
-                $this->textSelect = null;
+                $this->textEditing->finishSelection();
             }
 
             // §9.1 第 ① 环**之前**：编辑命令（Ctrl+C / X / V，§9.1 让位规则 ②
             // 的"编辑命令优先"）。返回 false = 这一环没吃 ⇒ 原样落给加速键。
-            if ($this->dispatchEditCommand($event)) {
+            if ($this->textEditing->dispatchEditCommand($event)) {
                 return null;
             }
 
@@ -3352,7 +3181,7 @@ abstract class Application
 
                 // 点进**编辑中**的输入框 ⇒ 插入符落到指针处 + 起框选手势
                 // （§A.2.9 的指针侧：与 Shift+方向键同一个选区模型）
-                $this->beginTextSelection($event->x);
+                $this->textEditing->beginTextSelection($event->x);
             }
 
             return $this->cursorFor($hit, $event->x, $event->y);
@@ -3360,9 +3189,8 @@ abstract class Application
 
         if ($event->isMove()) {
             // 框选推进：down 在输入框上起的手势 ⇒ 延伸选区活动端
-            if ($this->textSelect !== null) {
-                $this->extendTextSelection($event->x);
-            }
+            // （无手势时片内直接返回，调用方不必先问）
+            $this->textEditing->extendTextSelection($event->x);
 
             // 手势竞技场推进：过阈值 ⇒ Drag claim（begin + 刷新悬停目标）
             $arena = $this->gestureArena;
@@ -3393,7 +3221,7 @@ abstract class Application
                 $this->dropDrag();
             }
 
-            $this->textSelect = null;   // 框选手势收口（选区本身留在字段里）
+            $this->textEditing->finishSelection();   // 框选手势收口（选区本身留在字段里）
 
             return null;
         }
@@ -3415,8 +3243,9 @@ abstract class Application
      *   | `$captureNode` | 指针事件永远只发给那个节点，别的控件点不动 |
      *   | `$gestureArena` | Tap/Drag 卡在未裁决，下次 down 覆盖前一直挂着 |
      *   | `$drag` | 拖动中：悬停目标永远停在上一个、`drop` 永远不来 |
-     *   | `$textSelect` | 框选没松手，之后每次 `move` 都在延伸选区 |
      *   | `$thumbDrag` | 滚动条拇指跟着指针跑（哪怕没按键） |
+     *   | 框选手势 | `TextEditingBridge::finishSelection()` 漏了 ⇒ 没松手，
+     *     之后每次 `move` 都在延伸选区 |
      *
      * ★ **不关浮层**（W3 裁决：失焦 ≠ 放弃，`06` §10「关闭四来源」里没有这一条）。
      *
@@ -3428,7 +3257,7 @@ abstract class Application
     {
         $this->releasePointer();
         $this->thumbDrag = null;
-        $this->textSelect = null;
+        $this->textEditing->finishSelection();
 
         if ($this->gestureArena !== null) {
             $this->gestureArena->leave();
