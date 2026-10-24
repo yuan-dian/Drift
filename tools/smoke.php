@@ -9191,6 +9191,23 @@ check(
     'wantsFrame=' . ($ringApp->wantsFrame() ? 'y' : 'n'),
 );
 
+// :focus-visible —— 指针交互后隐藏（焦点可能没变，环仍然该消失）
+$ringApp->dispatchInput(PointerEvent::down(5.0, 5.0));
+$ringAfterClickWants = $ringApp->wantsFrame();
+$ringApp->frame(2.0, BoxConstraints::tight(new Size(300.0, 200.0)));
+$ringAfterClick = $ringProbe->canvas?->pixelAt(19, 19);
+
+check(
+    '焦点环 · 指针点击后隐藏（:focus-visible —— 鼠标操作后不该再看到蓝框）',
+    $ringAfterClick !== null && !$ringAfterClick->equals($ringAccent),
+    'rgb=' . ($ringAfterClick === null ? 'null' : $ringAfterClick->r . ',' . $ringAfterClick->g . ',' . $ringAfterClick->b),
+);
+check(
+    '焦点环 · "隐藏"本身也请求一帧（目标 null，不靠下次输入才消失）',
+    $ringAfterClickWants === true,
+    'wantsFrame=' . ($ringAfterClickWants ? 'y' : 'n'),
+);
+
 // —— 扁平按钮：盒样式 isNone（无底无边框），字色走正文色
 $flatBox = Button::make('导航项')->variant(ButtonVariant::Flat)->createRenderObject($context);
 check(

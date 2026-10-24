@@ -97,7 +97,16 @@ abstract class Application
      */
     protected ?FocusManager $focus = null;
 
-    /** 上一次**画过**的焦点（`wantsFrame()` 的第七判据：焦点变过就再画一帧） */
+    /**
+     * 输入模态：最近一次是键盘（`true`）还是指针（`false`）—— `:focus-visible` 的依据。
+     *
+     * ★ 指针（点击 / 移动 / 滚轮）之后**隐藏**焦点环，键盘之后**显示** —— Windows
+     *   惯例。否则每次点按钮都闪一圈蓝框。
+     * ★ 初值 `false`：启动时没人按过键盘 ⇒ 第一次点击不该看到环。
+     */
+    private bool $keyboardFocusVisible = false;
+
+    /** 上一次**画过**的环目标（`wantsFrame()` 第七判据；`null` = 上次没画环） */
     private ?Element $paintedFocus = null;
 
     /**
@@ -1955,7 +1964,7 @@ abstract class Application
         });
 
         // 环已经落盘 ⇒ `wantsFrame()` 的第七判据从这里回落 false（有界）
-        $this->paintedFocus = $this->focus?->focused();
+        $this->paintedFocus = $this->focusRingTarget();
 
         // ★ ⓹ 迟到挂载补 tick（2026-10-20 修的框架洞，2026-10-22 换成登记表）：
         //   ⓸ 在 settle **之前**跑，而页面挂载发生在 `Frame::run()` 的 settle 段 ——
@@ -2197,12 +2206,13 @@ abstract class Application
         // ★★ 第六个判据（W8-2 远程搜索，2026-10-24）：**面板内容落后一帧**。
         //   见 `panelsLagBehind()` —— 少了它，远程搜索的结果到了、数据也对，
         //   面板却**永远**停在旧内容（真机现象，smoke 因为显式跑两帧看不见）。
-        // ★★ 第七个判据（W8-5 焦点视觉，2026-10-24）：**焦点变过但还没画**。
+        // ★★ 第七个判据（W8-5 焦点视觉，2026-10-24）：**环目标变过但还没画**。
         //   焦点环是应用级叠加（`paintFocusRing`），不经过任何 `setState` ⇒
-        //   没有这条，键盘 Tab 换焦点后环要等**下一次鼠标移动**才出现（真机现象：
-        //   点击普通文字把焦点落到 RichText，画面 md5 一点没变）。
-        //   有界：画完把 `$paintedFocus` 记成当前焦点 ⇒ 立刻回落 false。
-        if ($this->focus?->focused() !== $this->paintedFocus) {
+        //   没有这条，键盘 Tab 换焦点后环要等**下一次鼠标移动**才出现（真机现象）。
+        //   ★ 比的是 `focusRingTarget()` 而不是 `focused()`：指针模态下目标恒 `null`
+        //     ⇒ 点击隐藏环也能立刻触发一帧（否则点击后环要等下次输入才消失）。
+        //   有界：画完把 `$paintedFocus` 记成当前目标 ⇒ 立刻回落 false。
+        if ($this->focusRingTarget() !== $this->paintedFocus) {
             return true;
         }
 
@@ -2712,6 +2722,16 @@ abstract class Application
             $this->lastInputMs = $timestampMs;
         }
 
+        // ★ 输入模态（`:focus-visible`，W8-5 续作六）：最近一次是键盘还是指针。
+        //   键盘 ⇒ 显示焦点环；指针（点击 / 移动 / 滚轮）⇒ 隐藏。
+        //   ★ 放在最前面：失活事件不改模态（它不是"用户操作控件"），但它下面会
+        //     提前 return，别让模态逻辑被它跳过。
+        if ($event instanceof KeyEvent) {
+            $this->keyboardFocusVisible = true;
+        } elseif ($event instanceof PointerEvent || $event instanceof ScrollEvent) {
+            $this->keyboardFocusVisible = false;
+        }
+
         // ★ 失活**先于**"未挂载"守卫：窗口可能在拆卸途中失去前台（Alt+Tab 关窗），
         //   那一刻树可能已经没了，但手势状态仍要清 —— 它不依赖树。
         if ($event instanceof WindowDeactivatedEvent) {
@@ -3094,9 +3114,20 @@ abstract class Application
      * ★ 样式：**2px 外扩**描边（`drawRect` 只有填充 ⇒ 四条边拼），主题 `Accent` 色。
      *   直角、不跟随控件圆角（MVP，见文档能力边界）。
      */
+    /**
+     * 焦点环的**目标**（`null` = 本帧不画）。
+     *
+     * ★ 一个纯函数收口两处消费者：`paintFocusRing()` 画它、`wantsFrame()` 比对它。
+     *   分开写两份判据会出现"焦点变了但环不该画（指针模态）"却仍请求一帧的死循环。
+     */
+    private function focusRingTarget(): ?Element
+    {
+        return $this->keyboardFocusVisible ? $this->focus?->focused() : null;
+    }
+
     private function paintFocusRing(Canvas $canvas): void
     {
-        $focused = $this->focus?->focused();
+        $focused = $this->focusRingTarget();
 
         if ($focused === null) {
             return;
