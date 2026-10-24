@@ -179,6 +179,33 @@ api-surface diff = **+0 @api / +3 @internal**（Bridge / Host / focus()）。
 
 ---
 
+## 4e. 第五步已完成：ScrollInputRouter + 拆片顺序调整（2026-10-24）
+
+**动工前的评估**（本步的产物不只是代码，还有顺序决策）：原步 5 是拆
+OverlayHost，实测 `$this->overlays` 在 Application 里有 ~25 处引用、散布
+6 类集成点（帧循环喂树 / 焦点 collect / 输入浮层优先 / 命令后关菜单 /
+受控同步 / 重绘判据）—— 先拆它要把 25 处全改窄面调用，单步改动面过大。
+滚动输入族边界极干净（只经 host 的 `focus()` 一个口子），且是 InputRouter
+主体拆分的前哨。**按路线表自己的原则「被依赖多的晚拆」调整顺序**：
+5 = ScrollInputRouter → 6 = InputRouter → 7 = OverlayHost → 8 = FrameEngine
+→ 9 = lint 规则。
+
+**搬入片的资产**：`scrollAt()` / `scrollThumbAt()` / `dragScrollThumb()` /
+`nearestScrollable()` / `revealFocused()` + `$thumbDrag` 字段。thumb 拖动
+的「先于内容接管」逻辑收成 `beginThumbDrag(): bool`（true = 吞掉本次按下）
+—— Application 的 down 分支从 8 行缩到 3 行。
+
+**装配模式同第 4 步**：`ScrollInputRouter` 持 `TextEditingHost`（只要
+`focus()`），构造期建。
+
+**行数**：Application 3663 → 3487（−176）。
+
+**验收**：smoke 1392/0（变异测试：`nearestScrollable` 打挂 ⇒ **12 FAIL** ——
+滚轮 / thumb / 焦点三类测试全覆盖）、lint 0/0、docref 68/0、
+api-surface diff = **+0 @api / +1 @internal**（ScrollInputRouter）。
+
+---
+
 ## 5. 剩余路线（每步的验收）
 
 | 步 | 动作 | 验收 |
@@ -186,9 +213,18 @@ api-surface diff = **+0 @api / +3 @internal**（Bridge / Host / focus()）。
 | 2 | ~~8 处 `instanceof StatefulElement` 收进 `FocusManager::focusedState()`~~（✅ 2026-10-24，见 §4b） | smoke 绿 + App 层该 instanceof 归零 |
 | 3 | ~~`Scrollable` 已合规；`RenderScrollView` 5 处收成 `Scrollable`（盒侧接口）~~（✅ 2026-10-24，方案已修正，见 §4c） | 同上 |
 | 4 | ~~拆 `TextEditingBridge`（最小片，验证装配模式）~~（✅ 2026-10-24，见 §4d） | smoke 绿 + Application 行数 −250 |
-| 5 | 拆 `OverlayHost` | 同上 |
-| 6 | 拆 `InputRouter` | 同上 |
-| 7 | 拆 `FrameEngine`（九段表驱动） | 同上 |
-| 8 | **加 lint 规则**：`src/App/` 里 `instanceof` 只许出现在接口上（I2 的闸门，现在加会红 39 处，拆完才绿） | selftest 红绿双向 |
+| 5 | ~~拆 `OverlayHost`~~ → **已调整为 `ScrollInputRouter`**（滚动输入族，2026-10-24 拆片顺序调整 + 完成，见 §4e） | 同上 |
+| 6 | 拆 `InputRouter`（dispatchInput / dispatchPointer 主体 + 手势状态 + 光标） | 同上 |
+| 7 | 拆 `OverlayHost`（原步 5 推迟到这里：被帧/焦点/输入/命令四方依赖，"被依赖多的晚拆"） | 同上 |
+| 8 | 拆 `FrameEngine`（九段表驱动） | 同上 |
+| 9 | **加 lint 规则**：`src/App/` 里 `instanceof` 只许出现在接口上（I2 的闸门，现在加会红 39 处，拆完才绿） | selftest 红绿双向 |
 
 ★ 每步独立可提交；`--api` diff 每步审（API 面只许有意变化）。
+
+★ **为什么调整 5/6/7 的顺序**（2026-10-24 第 5 步动工前的评估）：
+OverlayHost 是**横切**关注点 —— `$this->overlays` 在 Application 里有 ~25 处
+引用、散布 6 类集成点（帧循环喂树 / 焦点 collect / 输入浮层优先 / 命令后关
+菜单 / 受控同步 / 重绘判据），先拆它要把 25 处引用全改成窄面调用，单步
+改动面过大。而滚动输入族边界极干净：只经 host 的 `focus()` 一个口子，
+且是 InputRouter 主体拆分的天然前哨。原路线表自己的原则「被依赖多的
+晚拆」正指向这个顺序（Overlay 被依赖最多 ⇒ 最后拆）。

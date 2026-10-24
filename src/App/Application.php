@@ -132,14 +132,10 @@ abstract class Application implements TextEditingHost
     protected ?GestureArena $gestureArena = null;
 
     /**
-     * 滚动条 thumb 拖动状态（§12.3，2026-10-19）。
-     *
-     * `['state' => Scrollable, 'box' => RenderScrollView, 'last' => float]`。
-     * ★ 为什么单独一个状态而不是并进 `DragController`：thumb 不是控件（它是
-     *   paint 期画的），没有 Draggable 声明、不进手势竞技场 —— 混进去会让
-     *   "拖动的是控件"这条判据失真。
+     * 滚动输入路由（S1 第 5 步拆出的片）：滚轮 / 滚动条 thumb 拖动 /
+     * 焦点滚进视口。构造期建（host = 本类，只经 `focus()` 摸焦点链）。
      */
-    private ?array $thumbDrag = null;
+    private ScrollInputRouter $scrollInput;
 
     /**
      * 捕获指针的节点（`06` §5，W3-L5-6）：非空 ⇒ 指针事件**只发给它**，
@@ -147,7 +143,7 @@ abstract class Application implements TextEditingHost
      *
      * ★ **捕获的全部意义就是"不命中测试"**：拖到控件外面仍然归它 —— 否则
      *   "拖出边界就断"这类 bug 每个控件都要自己防一遍（现在已经有
-     *   `DragController` 和 `$thumbDrag` 两套手写版本，第三套必然走样）。
+     *   `DragController` 和 thumb 拖动两套手写版本，第三套必然走样）。
      * ★ 四条释放路径（少一条就是"事件永远发给死节点"）：
      *   ① 指针抬起（UP / CANCEL）② 捕获者卸载（`frame()` 里清扫 + DIAGNOSTIC）
      *   ③ 窗口失焦 ④ 浮层外的 `down`（浮层优先于捕获，见 `dispatchPointer`）。
@@ -420,6 +416,9 @@ abstract class Application implements TextEditingHost
         // host = $this（片只经 TextEditingHost 摸焦点与剪贴板）—— 构造期
         // 建无时序问题：两个 getter 都是运行期就绪的依赖，片内每次现读。
         $this->textEditing = new TextEditingBridge($this);
+
+        // S1 第 5 步：滚动输入路由（滚轮 / thumb 拖动 / 焦点滚进视口）。
+        $this->scrollInput = new ScrollInputRouter($this);
 
         // 只注册**显式传进来**的那些。`commands()` **不在构造器里调** ——
         // PHP 的构造链是"父先子后"，此刻子类构造器里的字段（`$this->store` 之类）
@@ -2619,7 +2618,7 @@ abstract class Application implements TextEditingHost
             $focusedBefore = $focus->focused();
             if ($focus->dispatchKey($event)) {
                 if ($focus->focused() !== $focusedBefore) {
-                    $this->revealFocused();
+                    $this->scrollInput->revealFocused();
                 }
 
                 return null;
@@ -2654,7 +2653,7 @@ abstract class Application implements TextEditingHost
 
                 $hit = $focus->hitTest($event->x - $e->x, $event->y - $e->y, $e->element);
                 if ($hit !== null) {
-                    $this->scrollAt($focus->elementAt($e->element, $hit), $px);
+                    $this->scrollInput->scrollAt($focus->elementAt($e->element, $hit), $px);
 
                     return null;
                 }
@@ -2666,184 +2665,12 @@ abstract class Application implements TextEditingHost
 
             $hit = $focus->hitTest($event->x, $event->y, $root);
             $element = $hit === null ? null : $focus->elementAt($root, $hit);
-            $this->scrollAt($element, $px);
+            $this->scrollInput->scrollAt($element, $px);
 
             return null;
         }
 
         return null;
-    }
-
-    /**
-     * 沿命中 Element 的父链找**最近**的可滚动视口并滚动它（滚轮路由）。
-     *
-     * ★ 找不到 ⇒ 无事发生（轮在不可滚动的区域上是合法的，不报错、不改光标）。
-     * ★ **只找最近的**：嵌套滚动容器里，轮落在内层上就只滚内层 —— 外层的
-     *   视口不吞内层的事件（§A.15：不预先发明没消费者的相位/规则，嵌套滚动的
-     *   "滚动到边界再传给外层"留给真有消费者时）。
-     *
-     * @internal 由 dispatchInput() 的 ScrollEvent 分支调
-     */
-    /**
-     * 命中滚动条 thumb（返回拖动状态；`null` = 没点中）。
-     *
-     * ★ 沿命中链找**最近**的可滚动视口，再问它的 `thumbRect()` —— 两个条件都满足
-     *   才算点中：视觉上 thumb 压在那个视口的右缘（横向在底缘），点在那里
-     *   用户的意思就是"拖这条"。
-     * ★ 容差 2px：条只有 6px 宽，像素级精确抓取对鼠标过于苛刻。
-     *
-     * @return null|array{state: Scrollable, box: RenderScrollView, last: float}
-     */
-    private function scrollThumbAt(float $x, float $y, Element $root, FocusManager $focus): ?array
-    {
-        $hit = $focus->hitTest($x, $y, $root);
-        $element = $hit === null ? null : $focus->elementAt($root, $hit);
-
-        // ★ 盒失败（有 `Scrollable` 却没有 `RenderScrollView`）⇒ `null` 而非
-        //   继续往上找：视觉上这里没有条，事件就该落到别处，而不是隔着一个
-        //   不是滚动器的祖先去抓外层的条。
-        $state = $this->nearestScrollable($element);
-        if ($state === null) {
-            return null;
-        }
-
-        /** @var RenderScrollView|null $box */
-        $box = $state->element()?->findBoxOf(RenderScrollView::class);
-        if ($box === null) {
-            return null;
-        }
-
-        $bar = $box->thumbRect();
-        if ($bar === null) {
-            return null;   // 内容不溢出：没有条可拖
-        }
-
-        [$originX, $originY] = self::absoluteOrigin($box);
-        $left = $originX + $bar->left - 2.0;
-        $top = $originY + $bar->top - 2.0;
-
-        if ($x < $left || $x > $left + $bar->width + 4.0
-            || $y < $top || $y > $top + $bar->height + 4.0) {
-            return null;
-        }
-
-        return [
-            'state' => $state,
-            'box' => $box,
-            'last' => $box->isVertical() ? $y : $x,
-        ];
-    }
-
-    /**
-     * thumb 拖动的一步：位移 → 滚动量（主轴方向按视口取向取 x 或 y）。
-     *
-     * ★ 映射是"thumb 走多远、内容走多远"：`dy * maxScroll / thumbTravel`。
-     *   thumb 下移 ⇒ offset 增大（看到下面）—— 与 `scrollBy` 的正向语义一致，
-     *   所以**不需要额外取反**（滚轮那层已经在壳里翻译过了）。
-     */
-    private function dragScrollThumb(PointerEvent $event): void
-    {
-        $drag = $this->thumbDrag;
-        if ($drag === null) {
-            return;
-        }
-
-        /** @var Scrollable $state */
-        $state = $drag['state'];
-        /** @var RenderScrollView $box */
-        $box = $drag['box'];
-
-        $travel = $box->thumbTravel();
-        $max = $box->maxScroll();
-        if ($travel <= 0.0 || $max <= 0.0) {
-            return;
-        }
-
-        $now = $box->isVertical() ? $event->y : $event->x;
-        $delta = ($now - (float) $drag['last']) * $max / $travel;
-        if ($delta !== 0.0) {
-            $state->scrollBy($delta);
-        }
-
-        $this->thumbDrag['last'] = $now;
-    }
-
-    /**
-     * 沿父链（含起点）找**最近**的可滚动视口（S1 第 2 步：`Scrollable`
-     * 穿透知识的唯一出口）。
-     *
-     * ★ 滚轮路由（`scrollAt`）、键盘可达性（`revealFocused`）、thumb 命中
-     *   （`scrollThumbAt`）三处共用同一口径：只找最近的，不逐层上报（`04` §6.2）。
-     * ★ 要盒的调用方经 `State::element()` 回 Element 再 `findBox()` ——
-     *   穿透知识与盒查找不混在一处。
-     */
-    private function nearestScrollable(?Element $from): ?Scrollable
-    {
-        for ($node = $from; $node !== null; $node = $node->parent()) {
-            $state = States::of($node);
-            if ($state instanceof Scrollable) {
-                return $state;
-            }
-        }
-
-        return null;
-    }
-
-    private function scrollAt(?Element $element, float $delta): void
-    {
-        $this->nearestScrollable($element)?->scrollBy($delta);
-    }
-
-    /**
-     * 把**当前焦点**滚进它所在的滚动视口（`04` §6.3：键盘可达性硬要求）。
-     *
-     * ★ 沿父链找**最近**的 `Scrollable`（与滚轮路由 `scrollAt()` 同一口径）：
-     *   嵌套视口只滚最里面那个，不逐层上报（`04` §6.2 的裁决）。
-     *
-     * ★ 目标矩形用**绝对坐标之差**换算成内容坐标，不自己沿父链累加偏移：
-     *   `absoluteOrigin()` 已经把滚动偏移算进去了（偏移住子盒的 `offsetX/Y`），
-     *   再加回 `appliedOffset()` 就回到内容坐标。手抄累加是 M2-3 那一族
-     *   bug 的温床（padding 被算两次、偏移被算两次 —— 都不报错）。
-     *
-     * ★ 焦点控件**还没挂盒**（虚拟列表里没造出来的行 / 刚换过树）⇒ 不动。
-     *   这也是 `LazyColumn` 的既有边界：Tab 只能在已造出来的行之间走。
-     */
-    private function revealFocused(): void
-    {
-        $focused = $this->focus?->focused();
-        $box = $focused?->effectiveBox();
-        if ($focused === null || $box === null) {
-            return;
-        }
-
-        $size = $box->size();
-        if ($size === null) {
-            return;
-        }
-
-        $state = $this->nearestScrollable($focused->parent());
-        if ($state === null) {
-            return;
-        }
-
-        /** @var RenderScrollView|null $scroll */
-        $scroll = $state->element()?->findBoxOf(RenderScrollView::class);
-        if ($scroll === null || $scroll->size() === null) {
-            return;
-        }
-
-        [$scrollX, $scrollY] = self::absoluteOrigin($scroll);
-        [$boxX, $boxY] = self::absoluteOrigin($box);
-        $dx = $boxX - $scrollX;
-        $dy = $boxY - $scrollY;
-        $offset = $scroll->appliedOffset();
-
-        // ★ 偏移只在**主轴**上加回；交叉轴上的绝对差就是内容坐标。
-        $target = $scroll->isVertical()
-            ? new Rect($dx, $dy + $offset, $size->width, $size->height)
-            : new Rect($dx + $offset, $dy, $size->width, $size->height);
-
-        $state->ensureVisible($target);
     }
 
     /**
@@ -3103,25 +2930,21 @@ abstract class Application implements TextEditingHost
         // thumb 是 `paint()` 画的胶囊，**不是子盒** ⇒ 命中测试看不见它，
         // 所以必须先于内容接管：down 落在 thumb 上就吃掉本次手势（不喂
         // focusHit、不派发给内容），move 按位移映射成滚动量，up/leave 结束。
-        if ($this->thumbDrag !== null) {
+        if ($this->scrollInput->isDraggingThumb()) {
             if ($event->isMove()) {
-                $this->dragScrollThumb($event);
+                $this->scrollInput->dragThumb($event);
 
                 return null;
             }
 
-            $this->thumbDrag = null;   // up / leave / 其它相位：本次拖动结束
+            $this->scrollInput->finishThumbDrag();   // up / leave / 其它相位：本次拖动结束
 
             return null;
         }
 
-        if ($event->isDown() && $event->isPrimary()) {
-            $thumb = $this->scrollThumbAt($event->x, $event->y, $root, $focus);
-            if ($thumb !== null) {
-                $this->thumbDrag = $thumb;
-
-                return null;   // 吞掉：大拇指上的按下不算"点内容"
-            }
+        if ($event->isDown() && $event->isPrimary()
+            && $this->scrollInput->beginThumbDrag($event->x, $event->y, $root, $focus)) {
+            return null;   // 吞掉：大拇指上的按下不算"点内容"
         }
 
         $hit = $focus->hitTest($event->x, $event->y, $root);   // ★ 只走一次树
@@ -3243,7 +3066,8 @@ abstract class Application implements TextEditingHost
      *   | `$captureNode` | 指针事件永远只发给那个节点，别的控件点不动 |
      *   | `$gestureArena` | Tap/Drag 卡在未裁决，下次 down 覆盖前一直挂着 |
      *   | `$drag` | 拖动中：悬停目标永远停在上一个、`drop` 永远不来 |
-     *   | `$thumbDrag` | 滚动条拇指跟着指针跑（哪怕没按键） |
+     *   | thumb 拖动 | `ScrollInputRouter::finishThumbDrag()` 漏了 ⇒ 拇指跟着
+     *     指针跑（哪怕没按键） |
      *   | 框选手势 | `TextEditingBridge::finishSelection()` 漏了 ⇒ 没松手，
      *     之后每次 `move` 都在延伸选区 |
      *
@@ -3256,7 +3080,7 @@ abstract class Application implements TextEditingHost
     private function cancelActiveGestures(): void
     {
         $this->releasePointer();
-        $this->thumbDrag = null;
+        $this->scrollInput->finishThumbDrag();
         $this->textEditing->finishSelection();
 
         if ($this->gestureArena !== null) {
