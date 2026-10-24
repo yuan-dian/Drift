@@ -65,6 +65,8 @@ final class SelectState extends State
 
     private string $short = '';
 
+    private string $row = '';
+
     /** @return list<Option> 30 项（行高由主题定，这里不猜） */
     private static function manyOptions(): array
     {
@@ -147,6 +149,18 @@ final class SelectState extends State
                 . '键是数字也照收（内部转回 string）。裸值（`[\'甲\', \'乙\']`）会 Fatal —— '
                 . 'PHP 里 `[0 => \'x\']` 与 `[\'x\']` 是同一个数组，"值 0"与"标签列表"分不开。')->caption(),
 
+            $this->sectionBar('⑥ 行数组 · `Option::fromRows($rows, \'name\', \'id\')`（DB / HTTP 的形状）'),
+            Card::make(Row::make()->spacing(12.0)->children([
+                // 这段 $rows 就是 DB fetchAll / HTTP JSON 解出来的东西，原样喂进去。
+                Select::make(Option::fromRows(self::cityRows(), 'name', 'id'))
+                    ->value($this->row)->placeholder('请选城市')
+                    ->onChanged(fn(string $v) => $this->pick('row', $v)),
+                Text::make($this->row === '' ? '还没选' : '收到值：' . $this->row)->caption(),
+            ]))->paddingAll(12.0),
+            Text::make('对应 WPF 的 `DisplayMemberPath` / antd 的 `fieldNames`。区别在失败形态：'
+                . '那两家字段名拼错是**静默**的（整列空白），这里缺字段直接 Fatal 并报出'
+                . '「哪一行、缺哪个字段、现有哪几列」。')->caption(),
+
             $this->sectionBar('能力边界（如实记录）'),
             Text::make('① 方向键换值：没有 —— 面板只在**打开那一刻**建一次，选中高亮会停在'
                 . '旧值上 ⇒ 宁可不做，也不做一个会自相矛盾的。补齐要先让"面板随控件重建"。')->caption(),
@@ -161,6 +175,16 @@ final class SelectState extends State
         ]);
     }
 
+    /** @return list<array{id: int, name: string}> 假装是 DB fetchAll 的结果 */
+    private static function cityRows(): array
+    {
+        return [
+            ['id' => 110000, 'name' => '北京市'],
+            ['id' => 310000, 'name' => '上海市'],
+            ['id' => 440100, 'name' => '广州市'],
+        ];
+    }
+
     private function pick(string $which, string $value): void
     {
         $this->setState(function () use ($which, $value): void {
@@ -172,6 +196,8 @@ final class SelectState extends State
                 $this->many = $value;
             } elseif ($which === 'short') {
                 $this->short = $value;
+            } elseif ($which === 'row') {
+                $this->row = $value;
             } else {
                 $this->wide = $value;
             }

@@ -457,6 +457,16 @@ if (str_starts_with($caseArg, '--case=')) {
         Option::normalize(['' => '请选择']);
     }
 
+    if ($case === 'optnofield') {
+        // 行里没有显示名列 ⇒ 静默变成整列空白（WPF / antd 就是这样）⇒ 这里 Fatal
+        Option::fromRows([['id' => 1, 'title' => '北京市']], 'name', 'id');
+    }
+
+    if ($case === 'optbadrow') {
+        // 行不是数组（比如直接给了 list<string>）⇒ 形状不对，必须响亮失败
+        Option::fromRows(['北京市', '上海市'], 'name', 'id');
+    }
+
     if ($case === 'taskerr') {
         // 后台任务失败且**没给 onError** ⇒ 必须走 Fatal 序列（§17.4.2 的错误通道）：
         // 吞掉就是"界面永远转圈"，与三态的 Error 分支（§A.2.9）矛盾。
@@ -13038,6 +13048,27 @@ check(
     'value=' . var_export($normCombo[0]->value ?? null, true)
 );
 
+// ── `Option::fromRows()`：DB / HTTP 的行数组直接组装 ──
+$normRows = [
+    ['id' => 1, 'name' => '北京市'],
+    ['id' => 2, 'name' => '上海市'],
+];
+$normFrom = Option::fromRows($normRows, 'name', 'id');
+check(
+    'Option · fromRows：行数组 ⇒ 选项表（label 取 name、value 取 id）',
+    count($normFrom) === 2 && $normFrom[0]->label === '北京市' && $normFrom[1]->value === '2',
+    'n=' . count($normFrom)
+);
+check(
+    'Option · fromRows：数字 id 转成 string（与映射形态同一条收口）',
+    $normFrom[0]->value === '1',
+    'value=' . var_export($normFrom[0]->value ?? null, true)
+);
+check(
+    'Select · fromRows 直接喂 ⇒ 受控值能命中',
+    Select::make(Option::fromRows($normRows, 'name', 'id'))->value('2')->selectedIndex() === 1
+);
+
 // 反例：list 里的裸值 ⇒ Fatal（身份不明确，猜就是替应用做决定）
 fresh($log);
 [$codeBare, $outBare] = runCase(__FILE__, 'optbare', null);
@@ -13060,6 +13091,29 @@ check(
     '实际 ' . $codeKey . ' / ' . $outKey
 );
 check('Option · 反例：空键 Fatal 时说明了哨兵冲突', str_contains(logText($log), '未选'));
+
+// 反例：行里缺字段 ⇒ Fatal 并报出「哪一行、缺哪个字段、现有哪几列」
+//   （WPF `DisplayMemberPath` / antd `fieldNames` 拼错是**静默**的，这里不静默）
+fresh($log);
+[$codeNoField, $outNoField] = runCase(__FILE__, 'optnofield', null);
+check(
+    'Option · 反例：fromRows 缺字段 ⇒ Fatal（不静默变成整列空白）',
+    $codeNoField === 3,
+    '实际 ' . $codeNoField . ' / ' . $outNoField
+);
+check(
+    'Option · 反例：缺字段时报出字段名与现有列',
+    str_contains(logText($log), '没有显示名列') && str_contains(logText($log), 'id')
+);
+
+// 反例：行不是数组 ⇒ Fatal
+fresh($log);
+[$codeBadRow, $outBadRow] = runCase(__FILE__, 'optbadrow', null);
+check(
+    'Option · 反例：fromRows 的行不是数组 ⇒ Fatal',
+    $codeBadRow === 3,
+    '实际 ' . $codeBadRow . ' / ' . $outBadRow
+);
 
 // ── W8-2 Select（下拉选择 + 声明式浮层面板，2026-10-23）──
 // ★ 这一块钉住四件事：① 激活 ⇒ 框架开面板（`Widget::overlayPanel()` 的通用缝）；

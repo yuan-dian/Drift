@@ -155,4 +155,83 @@ final class Option
 
         return $out;
     }
+
+    /**
+     * 从"行数组"组装选项表 —— DB / HTTP 最常见的那一种形状（2026-10-24）。
+     *
+     * ```php
+     * // $rows = [['id' => 1, 'name' => '北京市'], ['id' => 2, 'name' => '上海市']]
+     * Select::make(Option::fromRows($rows, 'name', 'id'))->value($this->city);
+     * ```
+     *
+     * ★ 对应 WPF 的 `DisplayMemberPath` / `SelectedValuePath` 与 antd 的
+     *   `fieldNames`。**区别在失败形态**：那两家字段名拼错是**静默**的（整列空白，
+     *   要自己盯着看），这里缺字段直接 Fatal 并报出「哪一行、缺哪个字段、现有哪几列」。
+     *
+     * ★ 为什么是 `Option::fromRows()` 而不是 `Select::fromRows()`：它产出的是
+     *   `list<Option>`，`Select` / `ComboBox` 乃至以后任何吃选项表的控件都能用；
+     *   挂到某个控件上，第二个控件就得再抄一遍。
+     *
+     * @param array<array-key, array<array-key, mixed>> $rows 行数组（每行是关联数组）
+     * @param string $labelField 显示名取哪一列
+     * @param string $valueField 身份取哪一列（数字会被转成 string，见 `normalize()` 的坑 1）
+     * @return list<Option>
+     * @api
+     */
+    public static function fromRows(array $rows, string $labelField, string $valueField): array
+    {
+        $out = [];
+
+        foreach ($rows as $index => $row) {
+            if (!\is_array($row)) {
+                Errors::report(sprintf(
+                    'Option::fromRows() 的第 %s 行不是数组 ⇒ 期望 `list<array<string, mixed>>`'
+                        . "\n" . '（DB 的 fetchAll / HTTP 的 JSON 行形状）。',
+                    var_export($index, true),
+                ));
+                continue;
+            }
+
+            if (!isset($row[$labelField])) {
+                Errors::report(sprintf(
+                    'Option::fromRows() 的第 %s 行没有显示名列 %s（现有列：%s）。'
+                        . "\n" . '★ 字段名拼错在这里是 Fatal，不是"整列空白"（WPF / antd 那两家是静默的）。',
+                    var_export($index, true),
+                    var_export($labelField, true),
+                    implode(', ', array_keys($row)),
+                ));
+                continue;
+            }
+
+            if (!isset($row[$valueField])) {
+                Errors::report(sprintf(
+                    'Option::fromRows() 的第 %s 行没有身份列 %s（现有列：%s）。',
+                    var_export($index, true),
+                    var_export($valueField, true),
+                    implode(', ', array_keys($row)),
+                ));
+                continue;
+            }
+
+            $label = $row[$labelField];
+            $value = $row[$valueField];
+
+            if (!\is_scalar($label) || !\is_scalar($value)) {
+                Errors::report(sprintf(
+                    'Option::fromRows() 的第 %s 行的 %s / %s 不是标量（label 是 %s、value 是 %s）'
+                        . "\n" . '⇒ 选项的显示名与身份都必须是标量。',
+                    var_export($index, true),
+                    var_export($labelField, true),
+                    var_export($valueField, true),
+                    \is_array($label) ? 'array' : (\is_object($label) ? 'object' : 'null'),
+                    \is_array($value) ? 'array' : (\is_object($value) ? 'object' : 'null'),
+                ));
+                continue;
+            }
+
+            $out[] = self::make((string) $label, (string) $value);
+        }
+
+        return $out;
+    }
 }
