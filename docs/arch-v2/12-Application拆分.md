@@ -1,6 +1,6 @@
 # 12 · Application 拆分（S1）
 
-> 状态：拆解中 · 2026-10-24 · 第一~六步已落地（收接口 + 三片：TextEditingBridge / ScrollInputRouter / InputRouter）
+> 状态：拆解中 · 2026-10-24 · 第一~七步已落地（收接口 + 四片：TextEditingBridge / ScrollInputRouter / InputRouter / OverlayLayout）
 > 上游：ARCH-REVIEW-2026-10-24 §2.2（唯一的架构性缺陷）/ §3.2 I1+I2 / §7 第一步
 > 护栏：smoke 1392 条 + lint 19 条 + docref 3 条 + api-surface diff
 > 回答三个问题：**39 处 instanceof 的真实版图是什么？四片怎么切？先收接口还是先搬家？**
@@ -262,6 +262,73 @@ lint 0/0、docref 68/0、api-surface diff = **+0 @api / +1 @internal**
 
 ---
 
+## 4g. 第七步已完成：OverlayLayout 前哨（2026-10-24）
+
+**动工前的版图**（`$this->overlays` 在 Application 的 24 处引用，按归属分六类）：
+
+| 类 | 资产 | 归属判断 |
+|---|---|---|
+| A 栈所有权 | 字段 205 / 构造 377 / attach 兜底 600 / closeMenu 全清 726 / overlays() getter 1027 / pushOverlay 1117 / removeOverlay 1126 / widgetPanelEntry+closeWidgetPanel 2730 | 步 8 OverlayHost 主体 |
+| B 栈查询 | isMenuOpen 1039 / focusTrapRoots 1157 / topModalEntry 1187（喂 closeModal / isModalOpen / modal） | 步 8 |
+| C 帧循环消费 | applyNewContext 1627 / Frame::run 喂树 1740+1862 / focus collect 1800 / tickAnimations 2210 | 步 8（末三处 1740/1862/2210 是帧循环读栈，步 9 FrameEngine 时再定窄面） |
+| D 几何布局 | placeOverlays 1225 / syncPanelSignatures 1321 / panelsLagBehind 2015 / placeEntry 1361 / anchorRect 1446 / originFor 1470 / absoluteOrigin 1572 | **本步（前哨）** |
+| E 时序件 | onHoverHit 758 / tooltipOwner 805 / showTooltip 830 / hideTooltip 862 / snackbar 全家 899-1017 / 四字段 tooltip* / 三字段 snack* | 步 8（与 after/cancelAfter 定时器强耦合） |
+| F 入口 API | showMenu/closeMenu 702/723 / showModal/closeModal 1068/1094 / toggleWidgetPanel 2681 | 步 8 |
+
+**为什么不一步拆 OverlayHost**（对原路线的修正，同第 5 步的逻辑）：
+host 口子预估 10+（focus/root/theme/metrics/after/cancelAfter/overlays/
+dismiss/showMenu/toggleWidgetPanel）⇒ 退化成"第二个 Application"；且
+`InputHost` 契约的 4 个浮层口子（overlays/dismissOverlay/showMenu/
+toggleWidgetPanel）+ 帧循环 6 处消费要同时改指向，单步 diff 1000+ 行，
+变异测试无法定位回归点。
+
+**为什么前哨选几何段**：`placeOverlays` 家族与输入/命令/snackbar/tooltip
+**零耦合** —— 只读栈、读盒、写盒；host 只需 2 个口子（`overlays()` 读 +
+`dismissOverlay()` 收窄）。且它是双重前哨：既是步 8 OverlayHost 的
+"帧循环侧消费预演"（settle→清扫→定位的帧内次序整体搬走），又是步 9
+FrameEngine 拆 `frame()` 时"每段一次纯策略"的样板。
+
+**与输入侧同构**：ScrollInputRouter ← InputRouter ← Application 壳；
+浮层侧 OverlayLayout ← OverlayHost ← Application 壳。路线表 9→10 步。
+
+**两处执行细节**：
+① `panelsLagBehind()`（wantsFrame 第六判据）**跟着搬** —— 它与
+`syncPanelSignatures()` 是同一判据的两半（一个跑在布局前、一个跑在
+判帧时），分开留 = 同一锚点比对逻辑两处实现；
+② 清扫走 host 的 `dismissOverlay()`（与 `InputHost` 同形同义）——
+前哨只表达"关掉这个条目"，卸载/焦点回锚策略整个住 Application。
+
+**兼容性**：搬走的 7 个方法全是 `private`，@api 面 0 变化；`OverlayStack`
+仍经 `overlays()`（@api）暴露，测试/devtools 面不动。
+
+**装配**：`new OverlayLayout($this)`，`OverlayLayoutHost`（2 口子，
+@internal）由 Application 实现并转调 `overlays()` / `dismissOverlay()`。
+
+**执行结果**：Application 2817 → 2445 行（−372）；新增 `OverlayLayout.php`
+（类，7 方法）+ `OverlayLayoutHost.php`（接口 2 口子）。三个调用点改经片：
+`frame()` / `repaintForResize()` 的 `placeOverlays()`、`wantsFrame()` 的
+`panelsLagBehind()`。@api 面 **0 变化**。
+
+**踩坑（PSR-4 一符号一文件）**：先把接口与类写进同一个 `OverlayLayout.php`，
+smoke 在 259 条处 Fatal（`Interface OverlayLayoutHost not found`）——
+`tools/autoload.php` 是纯 PSR-4，`Drift\App\OverlayLayoutHost` 只会去
+`src/App/OverlayLayoutHost.php` 找。第 6 步的 `InputHost` 本来就是独立
+文件，本轮组装时图省事合在了一起。教训同第 6 步「组装后立即 php -l」：
+**组装后先过一次 autoload 可见性**（至少确认每个新符号有同名文件）。
+
+**验收**：smoke 1392/0、lint 502 文件 0/0、docref 68/0、selftest 通过；
+api-surface diff = **+0 @api / +2 @internal**（新片类 `OverlayLayout` +
+host 接口 `OverlayLayoutHost`；`syncPanelSignatures` 从 Application 的
+@internal 列表平移过来，数量不变）。变异测试三处该红都红：
+① `originFor` 的 BELOW 翻上分支打挂 ⇒ **1 FAIL**（锚点贴底不翻）
+② `ABOVE_CENTER` 优先级对调 ⇒ **2 FAIL**（Tooltip 垂直落位 + 连带穿透用例）
+③ `syncPanelSignatures` 整体打挂 ⇒ **11 FAIL**（Select 三态/跨树 5 条 +
+ComboBox 跨树/远程 4 条 + **wantsFrame 回落**）—— 最后一条正是
+「panelsLagBehind 与 syncPanelSignatures 必须同住」的活证据：seenAnchor
+不更新 ⇒ 判帧恒真 ⇒ 自旋。分开留就会以更隐晦的方式红。
+
+---
+
 ## 5. 剩余路线（每步的验收）
 
 | 步 | 动作 | 验收 |
@@ -271,9 +338,10 @@ lint 0/0、docref 68/0、api-surface diff = **+0 @api / +1 @internal**
 | 4 | ~~拆 `TextEditingBridge`（最小片，验证装配模式）~~（✅ 2026-10-24，见 §4d） | smoke 绿 + Application 行数 −250 |
 | 5 | ~~拆 `OverlayHost`~~ → **已调整为 `ScrollInputRouter`**（滚动输入族，2026-10-24 拆片顺序调整 + 完成，见 §4e） | 同上 |
 | 6 | ~~拆 `InputRouter`（dispatchInput / dispatchPointer 主体 + 手势状态 + 光标）~~（✅ 2026-10-24，见 §4f） | 同上 |
-| 7 | 拆 `OverlayHost`（原步 5 推迟到这里：被帧/焦点/输入/命令四方依赖，"被依赖多的晚拆"） | 同上 |
-| 8 | 拆 `FrameEngine`（九段表驱动） | 同上 |
-| 9 | **加 lint 规则**：`src/App/` 里 `instanceof` 只许出现在接口上（I2 的闸门，现在加会红 39 处，拆完才绿） | selftest 红绿双向 |
+| 7 | ~~拆 `OverlayLayout` 前哨（几何布局族：placeOverlays/syncPanelSignatures/panelsLagBehind/placeEntry/anchorRect/originFor/absoluteOrigin，见 §4g）~~（✅ 2026-10-24） | smoke 绿 + Application 行数 −372 |
+| 8 | 拆 `OverlayHost` 主体（栈所有权 A + 栈查询 B + 时序件 E + 入口 API F；InputHost 的 4 个浮层口子改指 host） | 同上 |
+| 9 | 拆 `FrameEngine`（九段表驱动；帧循环读栈的 1740/1862/2210 定窄面） | 同上 |
+| 10 | **加 lint 规则**：`src/App/` 里 `instanceof` 只许出现在接口上（I2 的闸门，现在加会红 39 处，拆完才绿） | selftest 红绿双向 |
 
 ★ 每步独立可提交；`--api` diff 每步审（API 面只许有意变化）。
 
@@ -284,3 +352,9 @@ OverlayHost 是**横切**关注点 —— `$this->overlays` 在 Application 里�
 改动面过大。而滚动输入族边界极干净：只经 host 的 `focus()` 一个口子，
 且是 InputRouter 主体拆分的天然前哨。原路线表自己的原则「被依赖多的
 晚拆」正指向这个顺序（Overlay 被依赖最多 ⇒ 最后拆）。
+
+★ **为什么 Overlay 自己也要分两刀**（2026-10-24 第 7 步动工前的评估，
+§4g）：第 5 步的评估只说"Overlay 最后拆"，第 7 步摸排 24 处引用后发现
+"最后拆"内部还有先后 —— 几何布局族（D 类）零耦合、host 只 2 口子，先拆；
+栈所有权 + 时序件 + 入口 API（A/B/E/F）与输入契约 4 口子、帧循环 6 处
+消费纠缠，后拆。同一条原则递归应用到自己身上。
