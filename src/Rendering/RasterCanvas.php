@@ -1423,36 +1423,6 @@ final class RasterCanvas implements Canvas
         return [];
     }
 
-    /**
-     * 一行上的可绘区间 [lo, hi) 与路径掩码求交，切成 0..n 个子段。
-     *
-     * 掩码与 Rect clip 是两层独立裁剪：Rect 那层在 `spanToPixels` / `rowRange`
-     * 里，这一层在像素层。两层都过 ⇒ 交集的交集。
-     *
-     * @return list<array{int, int}>
-     */
-    private function clipRow(int $y, int $lo, int $hi): array
-    {
-        if ($lo >= $hi) {
-            return [];
-        }
-        $spans = $this->clipRowSpansForRow($y);
-        if ($spans === null) {
-            return [[$lo, $hi]];
-        }
-
-        $out = [];
-        foreach ($spans as $s) {
-            $a = max($lo, $s[0]);
-            $b = min($hi, $s[1]);
-            if ($a < $b) {
-                $out[] = [$a, $b];
-            }
-        }
-
-        return $out;
-    }
-
     private function unsupportedOp(string $op, string $tier): void
     {
         Errors::report(CanvasCapabilities::unsupportedMessage($op, 'RasterCanvas', $tier));
@@ -1593,13 +1563,41 @@ final class RasterCanvas implements Canvas
     {
         // ★ 路径裁剪的行掩码在这里统一施加 —— 它是**所有**填充的最终出口
         //   （`rasterize` 的矩形/圆角/描边洞、`fillEdges` 的扫描线全经过它），
-        //   一个注入点覆盖整条绘制路径。无路径裁剪时 `clipRow` 一次调用就放行。
-        foreach ($this->clipRow($y, $xa, $xb) as $span) {
+        //   一个注入点覆盖整条绘制路径。
+        // ★ 无路径裁剪（`null`）时**整段直画**：原先每行每段都要过 `clipRow()`，
+        //   而无裁剪时它返回 `[[$lo, $hi]]` —— 每行新分配 1 个数组 + 1 个内数组
+        //   （全屏矩形 ≈ 1080 行）。`analysis/17` §2.1 点名的就是这个。
+        // ★ `[]`（有掩码但本行不在任何裁剪区间）与 `null` 语义不同：前者是"这一行
+        //   整段不可画"，落到下面的 `foreach` 自然零次迭代。
+        $spans = $this->clipRowSpansForRow($y);
+
+        if ($spans === null) {
             if ($gradient === null) {
-                $this->fillSpan($y, $span[0], $span[1], $color, $opaque, $lut);
+                $this->fillSpan($y, $xa, $xb, $color, $opaque, $lut);
+
+                return;
+            }
+
+            $this->fillSpanGrad($y, $xa, $xb, $gradient);
+
+            return;
+        }
+
+        foreach ($spans as $s) {
+            $a = max($xa, $s[0]);
+            $b = min($xb, $s[1]);
+
+            if ($a >= $b) {
                 continue;
             }
-            $this->fillSpanGrad($y, $span[0], $span[1], $gradient);
+
+            if ($gradient === null) {
+                $this->fillSpan($y, $a, $b, $color, $opaque, $lut);
+
+                continue;
+            }
+
+            $this->fillSpanGrad($y, $a, $b, $gradient);
         }
     }
 
