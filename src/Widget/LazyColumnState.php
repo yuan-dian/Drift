@@ -195,8 +195,9 @@ final class LazyColumnState extends State implements Scrollable
      */
     public function ensureVisible(Rect $target, float $margin = 8.0): void
     {
-        $box = $this->element()?->effectiveBox();
-        if (!$box instanceof RenderScrollView) {
+        /** @var RenderScrollView|null $box */
+        $box = $this->element()?->effectiveBoxOf(RenderScrollView::class);
+        if ($box === null) {
             return;
         }
 
@@ -259,8 +260,9 @@ final class LazyColumnState extends State implements Scrollable
      */
     private function viewportEstimate(BuildContext $ctx): float
     {
-        $box = $this->element()?->effectiveBox();
-        if ($box instanceof RenderScrollView) {
+        /** @var RenderScrollView|null $box */
+        $box = $this->element()?->effectiveBoxOf(RenderScrollView::class);
+        if ($box !== null) {
             $size = $box->size();
             if ($size !== null && $size->height > 0.0) {
                 $viewport = $size->height;

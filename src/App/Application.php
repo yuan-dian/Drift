@@ -2878,8 +2878,9 @@ abstract class Application
             return null;
         }
 
-        $box = $state->element()?->findBox(static fn(RenderBox $b): bool => $b instanceof RenderScrollView);
-        if (!$box instanceof RenderScrollView) {
+        /** @var RenderScrollView|null $box */
+        $box = $state->element()?->findBoxOf(RenderScrollView::class);
+        if ($box === null) {
             return null;
         }
 
@@ -2996,8 +2997,9 @@ abstract class Application
             return;
         }
 
-        $scroll = $state->element()?->findBox(static fn(RenderBox $b): bool => $b instanceof RenderScrollView);
-        if (!$scroll instanceof RenderScrollView || $scroll->size() === null) {
+        /** @var RenderScrollView|null $scroll */
+        $scroll = $state->element()?->findBoxOf(RenderScrollView::class);
+        if ($scroll === null || $scroll->size() === null) {
             return;
         }
 

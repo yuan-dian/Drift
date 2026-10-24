@@ -115,12 +115,44 @@ ComboBox 控件内部 1 处，均非 App 层认知）。
 
 ---
 
+## 4c. 第三步已完成：类型化盒查询（2026-10-24）—— 含原方案修正
+
+**实测版图**：`instanceof RenderScrollView` **7 处**（路线表写的 5 处少了控件
+内部两处），分两组：
+- **App 层 2 处**（`scrollThumbAt` / `revealFocused`，第 2 步刚重写过）
+- **控件内部 3 处**（`ScrollViewState::ensureVisible`、
+  `LazyColumnState::ensureVisible` / `viewportEstimate`）
+
+**原方案「收成 `Scrollable` 盒侧接口」评估后不成立**，三条理由：
+1. App 层要的盒侧操作各不相同（`thumbRect` / `appliedOffset` /
+   `isVertical` / `viewportSize` / 绝对坐标换算）—— 全塞进 `Scrollable`
+   会让**滚动语义接口背盒几何**，从 2 方法膨胀到 6+；
+2. 即使加 `viewportBox(): ?RenderScrollView`，PHP 无泛型收窄 ⇒ 调用方
+   仍要 `instanceof RenderScrollView` 判空 ⇒ App 层认知没消失，只是转移；
+3. Widget 层接口认 Layout 具体盒类型，方向暧昧。
+
+**修正方案：类型化盒查询**（与 `States::of()` 同构——查询知识单一来源）：
+- `Element::findBoxOf(string $boxClass): ?RenderBox` —— `findBox()` 的类型化特化
+- `Element::effectiveBoxOf(string $boxClass): ?RenderBox` —— `effectiveBox()` 的
+  类型化特化，给「控件认自己的盒」用
+- 调用方 `@var` 声明具体类型（沿用 `dragScrollThumb()` 既有模式）
+
+**收益**：5 处调用点的 closure 样板 + instanceof 双料消除；仓内
+`instanceof RenderScrollView` 7 → 2（都在 Element 内，单一来源）；App 层
+对 `RenderScrollView` 的认知**清零**（步 8 的 App 层 instanceof  lint 的前置）。
+
+**验收**：smoke 1392/0（变异测试：`findBoxOf` 打挂 ⇒ 2 FAIL）、lint 0/0、
+docref 68/0、api-surface diff = **+0 @api / +2 @internal**（两个查询方法
+标 `@internal`，与 `findBox()` / `effectiveBox()` 邻居口径一致）。
+
+---
+
 ## 5. 剩余路线（每步的验收）
 
 | 步 | 动作 | 验收 |
 |---|---|---|
 | 2 | ~~8 处 `instanceof StatefulElement` 收进 `FocusManager::focusedState()`~~（✅ 2026-10-24，见 §4b） | smoke 绿 + App 层该 instanceof 归零 |
-| 3 | `Scrollable` 已合规；`RenderScrollView` 5 处收成 `Scrollable`（盒侧接口） | 同上 |
+| 3 | ~~`Scrollable` 已合规；`RenderScrollView` 5 处收成 `Scrollable`（盒侧接口）~~（✅ 2026-10-24，方案已修正，见 §4c） | 同上 |
 | 4 | 拆 `TextEditingBridge`（最小片，验证装配模式） | smoke 绿 + Application 行数 −250 |
 | 5 | 拆 `OverlayHost` | 同上 |
 | 6 | 拆 `InputRouter` | 同上 |

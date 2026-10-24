@@ -22,8 +22,8 @@
 | State | 9 | 11 |
 | Text | 29 | 3 |
 | Theme | 3 | 0 |
-| Widget | 121 | 158 |
-| **合计** | **335** | **241** |
+| Widget | 121 | 160 |
+| **合计** | **335** | **243** |
 
 覆盖 271 个文件 · 描述性提及 15 处（grep 口径的污染源，不计入）
 
@@ -55,7 +55,7 @@
 | `Application::capturePointer()` | method | src/App/Application.php:2624 |
 | `Application::releasePointer()` | method | src/App/Application.php:2644 |
 | `Application::dispatchInput()` | method | src/App/Application.php:2660 |
-| `Application::dispatch()` | method | src/App/Application.php:3532 |
+| `Application::dispatch()` | method | src/App/Application.php:3534 |
 | `Frame` | class | src/App/Frame.php:17 |
 | `Frame::run()` | method | src/App/Frame.php:79 |
 | `FrameClock` | class | src/App/FrameClock.php:10 |
@@ -98,15 +98,15 @@
 | `Application::slicedCount()` | method | src/App/Application.php:2575 |
 | `Application::captureNode()` | method | src/App/Application.php:2654 |
 | `Application::scrollThumbAt()` | method | src/App/Application.php:2848 |
-| `Application::cancelActiveGestures()` | method | src/App/Application.php:3406 |
-| `Application::beginGestureArena()` | method | src/App/Application.php:3444 |
-| `Application::activateFocused()` | method | src/App/Application.php:3585 |
-| `Application::register()` | method | src/App/Application.php:3754 |
-| `Application::beginDrag()` | method | src/App/Application.php:3777 |
-| `Application::updateDrag()` | method | src/App/Application.php:3787 |
-| `Application::dropDrag()` | method | src/App/Application.php:3805 |
-| `Application::cancelDrag()` | method | src/App/Application.php:3815 |
-| `Application::rootBox()` | method | src/App/Application.php:3821 |
+| `Application::cancelActiveGestures()` | method | src/App/Application.php:3408 |
+| `Application::beginGestureArena()` | method | src/App/Application.php:3446 |
+| `Application::activateFocused()` | method | src/App/Application.php:3587 |
+| `Application::register()` | method | src/App/Application.php:3756 |
+| `Application::beginDrag()` | method | src/App/Application.php:3779 |
+| `Application::updateDrag()` | method | src/App/Application.php:3789 |
+| `Application::dropDrag()` | method | src/App/Application.php:3807 |
+| `Application::cancelDrag()` | method | src/App/Application.php:3817 |
+| `Application::rootBox()` | method | src/App/Application.php:3823 |
 | `Completion` | class | src/App/Completion.php:6 |
 | `DragController` | class | src/App/DragController.php:10 |
 | `FocusManager` | class | src/App/FocusManager.php:17 |
@@ -595,7 +595,7 @@
 | `Widget::overlaySignature()` | method | src/Widget/Widget.php:1010 |
 | `Widget::semantics()` | method | src/Widget/Widget.php:1064 |
 
-### @internal（框架内部） · 158
+### @internal（框架内部） · 160
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -646,10 +646,12 @@
 | `Element::effectiveBox()` | method | src/Widget/Element.php:182 |
 | `Element::markNeedsBuild()` | method | src/Widget/Element.php:209 |
 | `Element::findBox()` | method | src/Widget/Element.php:228 |
-| `Element::adoptBoxes()` | method | src/Widget/Element.php:258 |
-| `Element::didUpdateWidget()` | method | src/Widget/Element.php:284 |
-| `Element::applyContext()` | method | src/Widget/Element.php:300 |
-| `Element::settle()` | method | src/Widget/Element.php:342 |
+| `Element::findBoxOf()` | method | src/Widget/Element.php:258 |
+| `Element::effectiveBoxOf()` | method | src/Widget/Element.php:276 |
+| `Element::adoptBoxes()` | method | src/Widget/Element.php:294 |
+| `Element::didUpdateWidget()` | method | src/Widget/Element.php:320 |
+| `Element::applyContext()` | method | src/Widget/Element.php:336 |
+| `Element::settle()` | method | src/Widget/Element.php:378 |
 | `Grid::rowOf()` | method | src/Widget/Grid.php:151 |
 | `Grid::chunk()` | method | src/Widget/Grid.php:181 |
 | `LazyColumn::keyMapper()` | method | src/Widget/LazyColumn.php:128 |

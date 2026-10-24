@@ -256,6 +256,42 @@ abstract class Element
     }
 
     /**
+     * `findBox()` 的类型化特化：子树里第一个**指定类**的盒（找不到 ⇒ null）。
+     *
+     * ★ 与 `States::of()` 同一条纪律：查询知识（"是不是某类盒"）只写一份。
+     *   调用方各自 `findBox(closure)` + `instanceof` 时，漏的形状会有好几版
+     *   （判据写反、忘了 null）—— 收在这里只有一版。
+     *
+     * ★ 返回 `?RenderBox`（PHP 无泛型收窄）：调用方用 `@var` 声明具体类型
+     *   （同 `Application::dragScrollThumb()` 的既有模式）。
+     *
+     * @param class-string<RenderBox> $boxClass
+     * @internal 同 `findBox()`
+     */
+    public function findBoxOf(string $boxClass): ?RenderBox
+    {
+        return $this->findBox(static fn(RenderBox $b): bool => $b instanceof $boxClass);
+    }
+
+    /**
+     * `effectiveBox()` 的类型化特化：自己的有效盒是**指定类**时才返回。
+     *
+     * ★ 给「控件认自己的盒」用（`ScrollViewState` / `LazyColumnState` 的
+     *   `ensureVisible()` 与视口估计）：首帧前 / 盒被换掉 ⇒ null（没有视口
+     *   就没有"可见"可言）。语义同 `effectiveBox()` —— 会下沉到后代第一个
+     *   盒，但这三处的 element 恒有自己的渲染盒，实际等价。
+     *
+     * @param class-string<RenderBox> $boxClass
+     * @internal 同 `findBox()`
+     */
+    public function effectiveBoxOf(string $boxClass): ?RenderBox
+    {
+        $box = $this->effectiveBox();
+
+        return $box instanceof $boxClass ? $box : null;
+    }
+
+    /**
      * 子树建完后把**子节点的盒**收进自己的盒（C1：父管挂接，子不自定位）。
      *
      * 基类是空操作：叶子没有子盒要收。容器覆写它 —— 从 `children` 里拉盒。

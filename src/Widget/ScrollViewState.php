@@ -65,8 +65,9 @@ final class ScrollViewState extends State implements Scrollable
      */
     public function ensureVisible(Rect $target, float $margin = 8.0): void
     {
-        $box = $this->element()?->effectiveBox();
-        if (!$box instanceof RenderScrollView) {
+        /** @var RenderScrollView|null $box */
+        $box = $this->element()?->effectiveBoxOf(RenderScrollView::class);
+        if ($box === null) {
             return;
         }
 
