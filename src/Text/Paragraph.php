@@ -130,4 +130,31 @@ final readonly class Paragraph
         }
         return max(0, count($this->lines) - 1);
     }
+
+    /**
+     * 命中链接触发标识（W8-5）：`(x, y)` 是**段落局部**坐标。
+     *
+     * ★ 返回 `''` = 那个位置不是链接。用 `indexAt()` 把坐标换成字节偏移，
+     *   再找覆盖它的 run —— 与光标用同一套映射，不另写一份几何。
+     */
+    public function tagAt(float $x, float $y): string
+    {
+        if ($this->lines === []) {
+            return '';
+        }
+
+        $cluster = $this->indexAt($x, $y);
+        foreach ($this->lines as $line) {
+            foreach ($line->runs as $run) {
+                if ($run->tag === '') {
+                    continue;
+                }
+                if ($cluster >= $run->textStart && $cluster < $run->textStart + $run->textLength) {
+                    return $run->tag;
+                }
+            }
+        }
+
+        return '';
+    }
 }

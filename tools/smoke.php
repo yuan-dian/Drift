@@ -9032,6 +9032,42 @@ check(
     sprintf('A=%s B=%s', substr($richKeyA, 0, 8), substr($richKeyB, 0, 8)),
 );
 
+// —— W8-5 续：行内链接（tag 命中）与下划线 ——
+$linkEl = RichText::make([
+    Span::make('加载失败，'),
+    Span::make('重试')->tag('retry')->underline()->color(Color::fromHex('#009688')),
+    Span::make('。'),
+])->createElement();
+$linkEl->mount(null, $context);
+$linkBox = $linkEl->effectiveBox();
+$linkBox?->layout(BoxConstraints::loose(new Size(500.0, 60.0)));
+$linkPara = $linkBox instanceof RenderRichText ? $linkBox->paragraph() : null;
+$linkRun = null;
+$linkStartX = 0.0;
+foreach ($linkPara?->lines[0]->runs ?? [] as $linkCandidate) {
+    if ($linkCandidate->tag === 'retry') {
+        $linkRun = $linkCandidate;
+        break;
+    }
+    $linkStartX += $linkCandidate->width;
+}
+check(
+    'RichText · tag 与下划线落在同一个 run 上',
+    $linkRun !== null && $linkRun->underline === true,
+    sprintf('tag=%s underline=%s', $linkRun?->tag ?? '(null)', $linkRun !== null && $linkRun->underline ? 'y' : 'n'),
+);
+check(
+    'RichText · tagAt 命中链接中点（字节偏移映射，不另算 pen）',
+    $linkRun !== null && $linkPara !== null
+        && $linkPara->tagAt($linkStartX + $linkRun->width / 2.0, 5.0) === 'retry',
+    sprintf('tagAt=%s', var_export($linkPara?->tagAt($linkStartX + ($linkRun?->width ?? 0.0) / 2.0, 5.0), true)),
+);
+check(
+    'RichText · tagAt 在普通文本上返回空串（不是"整段都是链接"）',
+    $linkPara !== null && $linkPara->tagAt(1.0, 5.0) === '',
+    sprintf('tagAt=%s', var_export($linkPara?->tagAt(1.0, 5.0), true)),
+);
+
 // —— 扁平按钮：盒样式 isNone（无底无边框），字色走正文色
 $flatBox = Button::make('导航项')->variant(ButtonVariant::Flat)->createRenderObject($context);
 check(

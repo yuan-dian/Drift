@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Layout;
 
 use Drift\Geometry\BoxConstraints;
+use Drift\Geometry\Rect;
 use Drift\Geometry\Scale;
 use Drift\Geometry\Size;
 use Drift\Rendering\Canvas;
@@ -75,6 +76,23 @@ final class RenderRichText extends RenderBox
         return $this->spans;
     }
 
+    /**
+     * 客户区坐标 → 链接触发标识（`''` = 不是链接）。
+     *
+     * ★ 命中走 `Paragraph::tagAt()`（内部用 `indexAt()` 的字节偏移映射），
+     *   与光标 / 选中同一套几何，不在这里重算 pen。
+     */
+    public function tagAtClient(float $clientX, float $clientY): string
+    {
+        if ($this->paragraph === null) {
+            return '';
+        }
+
+        [$ox, $oy] = RenderBox::absoluteOrigin($this);
+
+        return $this->paragraph->tagAt($clientX - $ox, $clientY - $oy);
+    }
+
     protected function performLayout(BoxConstraints $constraints): Size
     {
         $maxWidth = $constraints->hasBoundedWidth() ? $constraints->maxWidth : INF;
@@ -119,7 +137,25 @@ final class RenderRichText extends RenderBox
         $this->list ??= new DisplayList();
         $this->list->reset();
 
-        (new RecordingCanvas($this->list))->drawParagraph(
+        $recorder = new RecordingCanvas($this->list);
+
+        // ★ 下划线在**盒内**画（不进 Canvas 后端）：坐标是盒局部，随 DisplayList
+        //   一起 replay ⇒ Raster / Skia 两条路自动一致，后端一行都不用改。
+        foreach ($this->paragraph->lines as $line) {
+            $pen = $line->offsetX;
+            foreach ($line->runs as $run) {
+                if ($run->underline) {
+                    $underlineColor = $run->argb >= 0 ? Color::fromArgb($run->argb) : $this->color;
+                    $recorder->drawRect(
+                        new Rect($pen, $line->baseline + 2.0, $run->width, 1.0),
+                        Paint::fill($underlineColor),
+                    );
+                }
+                $pen += $run->width;
+            }
+        }
+
+        $recorder->drawParagraph(
             $this->paragraph,
             Paint::fill($this->color),
             0.0,

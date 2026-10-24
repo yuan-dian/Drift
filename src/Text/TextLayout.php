@@ -79,7 +79,7 @@ final class TextLayout
         foreach ($spans as $span) {
             $spanRuns = $this->shaper->shape($span->text, $span->style, $collection, $scale->dpr);
             foreach ($spanRuns as $run) {
-                $runs[] = $run->shifted($offset)->withColor($span->argb);
+                $runs[] = $run->shifted($offset)->withSpan($span->argb, $span->tag, $span->underline);
             }
             $offset += strlen($span->text);
             $texts[] = $span->text;
@@ -315,7 +315,7 @@ final class TextLayout
             $owner = $flat[$i]['r'];
             if ($active !== $owner) {
                 if ($active !== null) {
-                    $runs[] = $this->makeRun($glyphs, $active->face, $active->style, $width, $active->argb);
+                    $runs[] = $this->makeRun($glyphs, $active->face, $active->style, $width, $active->argb, $active->tag, $active->underline);
                 }
                 $active = $owner;
                 $glyphs = [];
@@ -336,14 +336,14 @@ final class TextLayout
             $width += $advance;
         }
         if ($active !== null) {
-            $runs[] = $this->makeRun($glyphs, $active->face, $active->style, $width, $active->argb);
+            $runs[] = $this->makeRun($glyphs, $active->face, $active->style, $width, $active->argb, $active->tag, $active->underline);
         }
 
         return $runs;
     }
 
     /** @param list<Glyph> $glyphs */
-    private function makeRun(array $glyphs, FontFace $face, TextStyle $style, float $width, int $argb = -1): GlyphRun
+    private function makeRun(array $glyphs, FontFace $face, TextStyle $style, float $width, int $argb = -1, string $tag = '', bool $underline = false): GlyphRun
     {
         $first = $glyphs[0];
         $last = $glyphs[count($glyphs) - 1];
@@ -357,6 +357,8 @@ final class TextLayout
             $start,
             $last->cluster + strlen(Utf8::encode($last->codepoint)) - $start,
             $argb,
+            $tag,
+            $underline,
         );
     }
 

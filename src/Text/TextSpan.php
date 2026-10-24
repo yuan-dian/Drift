@@ -19,11 +19,19 @@ final readonly class TextSpan
         public string $text,
         public TextStyle $style,
         public int $argb = -1,
+        /**
+         * 链接触发标识（空串 = 不是链接）。
+         *
+         * ★ 用 `''` 而不是 `?string`：可空标量在 AOT 下退化（`tooltipTextValue()`
+         *   的同一条判据）。
+         */
+        public string $tag = '',
+        public bool $underline = false,
     ) {
     }
 
     public function withColor(int $argb): self
     {
-        return new self($this->text, $this->style, $argb);
+        return new self($this->text, $this->style, $argb, $this->tag, $this->underline);
     }
 }

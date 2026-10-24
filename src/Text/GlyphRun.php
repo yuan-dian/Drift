@@ -29,13 +29,32 @@ final readonly class GlyphRun
          * ★ 用 `int` 而不是 `?Color`：可空对象在 AOT 下退化。
          */
         public int $argb = -1,
+        /** 链接触发标识（空串 = 非链接），由 `TextSpan` 透传 */
+        public string $tag = '',
+        public bool $underline = false,
     ) {
     }
 
     /** 同几何、换颜色（`-1` = 回到"用 Paint"） */
     public function withColor(int $argb): self
     {
-        return new self($this->glyphs, $this->face, $this->style, $this->width, $this->textStart, $this->textLength, $argb);
+        return $this->withSpan($argb, $this->tag, $this->underline);
+    }
+
+    /** 同几何、换 span 语义（颜色 / 链接标识 / 下划线）—— 富文本整条一次设 */
+    public function withSpan(int $argb, string $tag, bool $underline): self
+    {
+        return new self(
+            $this->glyphs,
+            $this->face,
+            $this->style,
+            $this->width,
+            $this->textStart,
+            $this->textLength,
+            $argb,
+            $tag,
+            $underline,
+        );
     }
 
     /** 跨 span 拼接：字形 cluster 与 `textStart` 一起抬到全文偏移 */
@@ -58,6 +77,8 @@ final readonly class GlyphRun
             $this->textStart + $offset,
             $this->textLength,
             $this->argb,
+            $this->tag,
+            $this->underline,
         );
     }
 

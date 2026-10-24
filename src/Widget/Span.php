@@ -30,6 +30,8 @@ final class Span
     private int $argb = -1;
     private int $bold = -1;      // -1 未设 / 0 否 / 1 是
     private float $size = -1.0;  // 负值 = 未设
+    private string $tag = '';    // 空 = 不是链接
+    private bool $underline = false;
 
     private function __construct(string $content)
     {
@@ -62,6 +64,26 @@ final class Span
         return $this;
     }
 
+    /**
+     * 让这一段可以被点击（`RichText::onSpanTap()` 收到这个标识）。
+     *
+     * ★ 只标"身份"，不绑定回调：回调只有一处（控件级），否则同一段文本的
+     *   每个 span 都持一个闭包，`GlyphRun` 会被迫携带不可序列化的东西。
+     */
+    public function tag(string $tag): static
+    {
+        $this->tag = $tag;
+
+        return $this;
+    }
+
+    public function underline(bool $value = true): static
+    {
+        $this->underline = $value;
+
+        return $this;
+    }
+
     public function content(): string
     {
         return $this->content;
@@ -86,6 +108,6 @@ final class Span
             $style = $style->withWeight(FontWeight::Regular);
         }
 
-        return new TextSpan($this->content, $style, $this->argb);
+        return new TextSpan($this->content, $style, $this->argb, $this->tag, $this->underline);
     }
 }

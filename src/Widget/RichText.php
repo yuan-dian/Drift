@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Widget;
 
+use Drift\Input\PointerEvent;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderRichText;
 use Drift\Text\TextRole;
@@ -78,6 +79,44 @@ final class RichText extends RenderBoxWidget
     public function ellipsizeValue(): bool
     {
         return $this->ellipsize === 1;
+    }
+
+    /**
+     * 点了带 `tag` 的 span 就回调。
+     *
+     * ```php
+     * RichText::make([Span::make('加载失败，')->body(), Span::make('重试')->tag('retry')->underline()])
+     *     ->onSpanTap(function (string $tag): void { if ($tag === 'retry') { $this->reload(); } });
+     * ```
+     *
+     * ★ 复用既有的 `pointer()` 缝：按下被本控件接管（不走 `activateFocusedWidget`），
+     *   之后的 move / up 也直达同一回调 —— **不引入第六个手势状态**。
+     * ★ 命中用 `RenderRichText::tagAtClient()`（客户区 → 字节偏移 → run 的 tag），
+     *   不在这里手抄 pen。
+     * ★ **不做手型光标**：当前光标是"整个控件"的声明，不能按位置变；要按位置变
+     *   得先有盒级光标（另一步）。
+     */
+    public function onSpanTap(\Closure $handler): static
+    {
+        $this->mutate();
+
+        $this->pointer(function (PointerEvent $event, Element $self) use ($handler): void {
+            if (!$event->isDown()) {
+                return;
+            }
+
+            $box = $self->effectiveBox();
+            if (!$box instanceof RenderRichText) {
+                return;
+            }
+
+            $tag = $box->tagAtClient($event->x, $event->y);
+            if ($tag !== '') {
+                $handler($tag);
+            }
+        }, true);
+
+        return $this;
     }
 
     public function createRenderObject(BuildContext $context): RenderBox

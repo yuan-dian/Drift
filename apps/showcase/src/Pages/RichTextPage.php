@@ -11,24 +11,37 @@ use Drift\Widget\RichText;
 use Drift\Widget\Row;
 use Drift\Widget\ScrollView;
 use Drift\Widget\Span;
-use Drift\Widget\StatelessWidget;
+use Drift\Widget\State;
+use Drift\Widget\StatefulWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
 
 /**
- * 页 19「富文本 RichText」—— W8-5 的第一件（2026-10-24）。
+ * 页 19「富文本 RichText」—— W8-5（2026-10-24）。
  *
- * 三段演示：
+ * 五段演示：
  *
- *   ① 错误提示（加粗 + 换色）—— 最常用的场景；
- *   ② 混合字号（32pt 数字 + 14pt 说明）—— 行高按**最大字号**算，大字不被压扁；
- *   ③ 长文本跨 span 断行（定宽 420）—— 断行点落在任意位置，不在 span 边界强制换行。
+ *   ① 错误提示（加粗 + 换色）；
+ *   ② 混合字号（32pt + 14pt）—— 行高按最大字号；
+ *   ③ 长文本跨 span 断行（定宽 420）；
+ *   ④ 对照：同内容用 `Text`（单样式）；
+ *   ⑤ 行内链接：`Span::tag('retry')` + `onSpanTap()`，点击后计数。
  *
- * ★ 判据是"同一行里三种样式、换行点跟着宽度走"；颜色/字号由 run 自带，
- *   排版仍是一次成段。
+ * ★ ⑤ 的判据是"点链接计数 +1、点文字其他地方不变"—— tag 命中靠字节偏移，
+ *   不是"整个控件都是链接"。
  */
-final class RichTextPage extends StatelessWidget
+final class RichTextPage extends StatefulWidget
 {
+    public function createState(): State
+    {
+        return new RichTextPageState();
+    }
+}
+
+final class RichTextPageState extends State
+{
+    private int $clicks = 0;
+
     public function build(BuildContext $ctx): Widget
     {
         return ScrollView::make(
@@ -59,6 +72,19 @@ final class RichTextPage extends StatelessWidget
 
                 self::sectionBar('④ 对照：同内容用 Text（单样式，不能混排）'),
                 Text::make('保存失败：磁盘空间不足（剩余 12 MB）')->size(16.0),
+
+                self::sectionBar('⑤ 行内链接：点「重试」计数（tag + onSpanTap）'),
+                RichText::make([
+                    Span::make('加载失败，'),
+                    Span::make('重试')->tag('retry')->underline()->color(Color::fromHex('#009688')),
+                    Span::make('　（已点击 ' . $this->clicks . ' 次；点旁边的文字不会加）'),
+                ])->onSpanTap(function (string $tag): void {
+                    if ($tag === 'retry') {
+                        $this->setState(function (): void {
+                            $this->clicks++;
+                        });
+                    }
+                }),
             ])
         );
     }
