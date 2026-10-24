@@ -66,6 +66,7 @@ use Drift\Dev\Smoke\App\KeyAncestorApplication;
 use Drift\Dev\Smoke\App\CompositeRootApp;
 use Drift\Dev\Smoke\App\CountJob;
 use Drift\Dev\Smoke\App\MenuApplication;
+use Drift\Dev\Smoke\App\FocusTwoApplication;
 use Drift\Dev\Smoke\App\LazyApplication;
 use Drift\Dev\Smoke\App\RevealApplication;
 use Drift\Dev\Smoke\App\SlowFrameApplication;
@@ -12223,6 +12224,40 @@ check(
     '语义两档 · 虚拟列表滚动换了行 ⇒ 结构变 ⇒ 立即 full（不攒）',
     Element::structureVersion() > $svLazyBefore && $lazyPushes === 1 && $svLazy->semanticsMode() === 'full',
     'ver=' . $svLazyBefore . '->' . Element::structureVersion() . ' pushes=' . $lazyPushes . ' mode=' . $svLazy->semanticsMode(),
+);
+
+// ㉗ **纯焦点变 ⇒ 立即 full**（2026-10-24 补，`pumpSemantics` 的 `|| $focusChanged`）
+//    ★ 这条与 ⑱ 的区别（也是它存在的理由）：⑱ 里 `overBudget` 是混进来的
+//      （skip=3 已经在），它测的是"节流期间焦点仍能穿过去"。
+//    ★★ **必须带动画**，否则证伪不了（2026-10-24 实测）：不带动画时，删掉
+//      `|| $focusChanged` 后焦点变的帧会落到 ③ 的**无条件落地推**，仍然推 1 次、
+//      mode 仍是 `full` ⇒ 断言分不出 ① 与 ③。
+//      带动画就不一样了：①（焦点变）⇒ `full`；③ 走 ②（动画）⇒ `coalesce`。
+//      **这就是能区分两种实现的唯一形状** —— 前提不成立的断言比没有断言更坏。
+$focusApp = new FocusTwoApplication();
+$focusPushes = 0;
+$focusApp->setSemanticsSink(function (array $nodes) use (&$focusPushes): void {
+    ++$focusPushes;
+});
+$focusApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 200.0)));
+$focusApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
+$focusApp->frame(16.0, BoxConstraints::tight(new Size(320.0, 200.0)));
+$focusPushes = 0;
+$focusLabelBefore = $focusApp->focusedLabel();
+$focusVerBefore = Element::structureVersion();
+$focusApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
+$focusLabelAfter = $focusApp->focusedLabel();
+$focusApp->frame(16.0, BoxConstraints::tight(new Size(320.0, 200.0)));
+check(
+    '语义两档 · 焦点移动（甲→乙）+ 动画中 ⇒ 仍立即 full（绕过 coalesce）',
+    $focusPushes === 1
+        && $focusApp->semanticsMode() === 'full'
+        && $focusLabelBefore === '甲'
+        && $focusLabelAfter === '乙'
+        && Element::structureVersion() === $focusVerBefore,
+    'pushes=' . $focusPushes . ' mode=' . $focusApp->semanticsMode()
+        . ' focus=' . $focusLabelBefore . '->' . $focusLabelAfter
+        . ' ver=' . $focusVerBefore . '->' . Element::structureVersion(),
 );
 // ── TestApp：声明式场景（`07` §4.2 / §4.3，W7 第 42 步）──
 //   三条场景各验一类，都用 `TestApp` 的**同一个**执行器：
