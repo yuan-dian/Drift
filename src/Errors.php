@@ -3,6 +3,9 @@ declare(strict_types=1);
 
 namespace Drift;
 
+use Drift\Logging\Log;
+use Drift\Logging\PatternFormatter;
+
 /**
  * 框架唯一的错误出口（§1.2）。
  *
@@ -69,6 +72,10 @@ final class Errors
             if (count(self::$ring) > self::RING_SIZE) {
                 array_shift(self::$ring);
             }
+            // ★ 桥 ①：**同时**落一份到 `Log`（WARN 级，带时间/级别/分类）。
+            //   `self::$ring` 这边**一字不动** —— 它是测试契约（78 处断言
+            //   "没有 diagnostic"），改了会一次搞红一大片（`12` §4.6）。
+            Log::get('framework')->warn($message);
             return;
         }
 
@@ -139,7 +146,8 @@ final class Errors
         self::$aborting = true;
 
         // ① 写 Errors.log：错误 + 栈 + 最近 100 条 Diagnostic 的环形缓冲
-        self::appendLog($label, $message . "\n" . self::stack() . self::ringDump());
+        //   （外加 `Log` 的全级别环 —— 桥 ②，见 `logDump()`）
+        self::appendLog($label, $message . "\n" . self::stack() . self::ringDump() . self::logDump());
 
         // ② 弹原生错误框 —— 不依赖渲染栈，因为渲染栈可能正是崩掉的那一环。
         //    引导阶段（Platform 未建立）没有 fatalBox，退化到"写日志 + 中止"（§24.3）。
@@ -176,6 +184,28 @@ final class Errors
         $lines = ['  --- 最近 ' . count(self::$ring) . ' 条 Diagnostic ---'];
         foreach (self::$ring as $entry) {
             $lines[] = '  · ' . $entry;
+        }
+        return implode("\n", $lines) . "\n";
+    }
+
+    /**
+     * 桥 ②：`Log` 的全级别环（带时间/级别/分类）也进中止报告。
+     *
+     * ★ 用 `PatternFormatter` 而不是自己拼：格式随 sink 的配置走，
+     *   这里只保证"dump 里看得见最近发生了什么"。
+     * ★ 独立于 `ringDump()` —— 两个环语义不同（见 `12` §4.6），
+     *   合并会让"没有 Diagnostic"与"什么都没记"混成一种。
+     */
+    private static function logDump(): string
+    {
+        $recent = Log::recent();
+        if ($recent === []) {
+            return "  (无 Log)\n";
+        }
+        $fmt = PatternFormatter::compile('  · %T %l %c: %m %f');
+        $lines = ['  --- 最近 ' . count($recent) . ' 条 Log ---'];
+        foreach ($recent as $entry) {
+            $lines[] = $fmt->format($entry);
         }
         return implode("\n", $lines) . "\n";
     }

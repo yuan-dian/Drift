@@ -19,6 +19,7 @@ final class DependencyDirection implements Rule
     private const LAYERS = [
         'Geometry', 'Platform', 'Text', 'Rendering', 'Input',
         'Widget', 'Layout', 'State', 'Commands', 'Theme', 'Routing', 'App',
+        'Logging',
     ];
 
     /**
@@ -51,18 +52,25 @@ final class DependencyDirection implements Rule
      *      检查（将来若要把某条边收紧，改这一行就有抓手）。
      */
     private const ALLOWED = [
-        'Geometry'  => ['Geometry', 'Errors'],
-        'Platform'  => ['Platform', 'Geometry', 'Errors', 'Rendering', 'Input', 'Theme'],
-        'Text'      => ['Text', 'Geometry', 'Errors'],
-        'Rendering' => ['Rendering', 'Geometry', 'Text', 'Errors'],
-        'Input'     => ['Input', 'Geometry', 'Errors', 'Text', 'Layout'],
-        'Widget'    => ['Widget', 'Layout', 'State', 'Rendering', 'Text', 'Geometry', 'Input', 'Platform', 'Errors'],
-        'Layout'    => ['Widget', 'Layout', 'State', 'Rendering', 'Text', 'Geometry', 'Input', 'Platform', 'Errors'],
-        'State'     => ['Widget', 'Layout', 'State', 'Rendering', 'Text', 'Geometry', 'Input', 'Platform', 'Errors'],
-        'Commands'  => ['Commands', 'Geometry', 'Errors', 'State'],
-        'Theme'     => ['Theme', 'Widget', 'Layout', 'State', 'Text', 'Geometry', 'Rendering', 'Input', 'Errors'],
-        'Routing'   => ['Routing', 'Widget', 'Layout', 'State', 'Text', 'Geometry', 'Rendering', 'Input', 'Errors'],
-        'App'       => ['App', 'Geometry', 'Platform', 'Text', 'Rendering', 'Input', 'Widget', 'Layout', 'State', 'Commands', 'Theme', 'Routing', 'Errors'],
+        'Geometry'  => ['Geometry', 'Errors', 'Logging'],
+        'Platform'  => ['Platform', 'Geometry', 'Errors', 'Rendering', 'Input', 'Theme', 'Logging'],
+        'Text'      => ['Text', 'Geometry', 'Errors', 'Logging'],
+        'Rendering' => ['Rendering', 'Geometry', 'Text', 'Errors', 'Logging'],
+        'Input'     => ['Input', 'Geometry', 'Errors', 'Text', 'Layout', 'Logging'],
+        'Widget'    => ['Widget', 'Layout', 'State', 'Rendering', 'Text', 'Geometry', 'Input', 'Platform', 'Errors', 'Logging'],
+        'Layout'    => ['Widget', 'Layout', 'State', 'Rendering', 'Text', 'Geometry', 'Input', 'Platform', 'Errors', 'Logging'],
+        'State'     => ['Widget', 'Layout', 'State', 'Rendering', 'Text', 'Geometry', 'Input', 'Platform', 'Errors', 'Logging'],
+        'Commands'  => ['Commands', 'Geometry', 'Errors', 'State', 'Logging'],
+        'Theme'     => ['Theme', 'Widget', 'Layout', 'State', 'Text', 'Geometry', 'Rendering', 'Input', 'Errors', 'Logging'],
+        'Routing'   => ['Routing', 'Widget', 'Layout', 'State', 'Text', 'Geometry', 'Rendering', 'Input', 'Errors', 'Logging'],
+        'App'       => ['App', 'Geometry', 'Platform', 'Text', 'Rendering', 'Input', 'Widget', 'Layout', 'State', 'Commands', 'Theme', 'Routing', 'Errors', 'Logging'],
+
+        // ★ `Logging` 是横切层（与 `Errors` 同性质），2026-10-24 随日志系统补登记。
+        //   **不登记 = 完全不受检查**：`layerOf()` 对不在 `LAYERS` 里的段返回 null，
+        //   `check()` 会把 from / to 两侧都跳过 —— 新层默默进了检查盲区。
+        //   允许集的形状是"各层可依赖 Logging、Logging 只依赖 Errors"：
+        //   日志是最低位的横切能力，任何层都该能记；而它自己不得反向拽住业务层。
+        'Logging'   => ['Logging', 'Errors'],
     ];
 
     /**
