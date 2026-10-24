@@ -139,6 +139,13 @@ abstract class Element
      */
     protected function syncBox(): void
     {
+        // ★★ **全仓唯一的盒创建点** ⇒ "新盒 ⇒ 必须重排"这个事实就记在这里。
+        //   不记的后果是静默的：`Frame` 用 `settle()` 的**帧内**重建差判"本帧有没有
+        //   变"，而 `update()` / `applyContext()` 这些**帧外**路径换盒不经过 settle
+        //   ⇒ 判成"没变" ⇒ 跳过 layout ⇒ 新盒 `size()` 恒 `null` ⇒ 命中测试全落空。
+        //   详见 `State::$boxEpoch`。
+        State::noteBoxReplaced();
+
         $this->box = $this->widget instanceof RenderBoxWidget
             ? $this->widget->createRenderObject($this->context)
             : null;

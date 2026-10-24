@@ -10,6 +10,7 @@ use Drift\Layout\RenderBox;
 use Drift\Rendering\RenderSurface;
 use Drift\Rendering\SurfaceProfile;
 use Drift\Widget\Element;
+use Drift\Widget\State;
 use Drift\Widget\StatefulElement;
 use Throwable;
 
@@ -44,6 +45,21 @@ final class Frame
     private float $lastMinHeight = 0.0;
 
     private float $lastMaxHeight = 0.0;
+
+    /**
+     * 上一帧排版时看到的**盒换代序号**（`State::boxEpoch()`）。
+     *
+     * ★★ 存在的理由是一条真实缺陷（2026-10-24 定位）：`$didRebuild` 来自
+     *   `settle()` 的**帧内**重建差，而 `Element::update()` / `applyContext()`
+     *   这些**帧外**路径会换盒却不在 settle 里计数 ⇒ 判成"本帧没变" ⇒ 跳过
+     *   layout ⇒ 新盒 `size()` 恒 `null` ⇒ **整棵子树命中测试落空**，而 overlay
+     *   计数、焦点、声明看起来全对。
+     *
+     * ★ 判据从"本帧重建过吗"改成"**盒换过代吗**"：`Element::syncBox()` 是唯一的
+     *   盒创建点，任何来路的换盒都会让序号变 ⇒ 这条缝在结构上不可能再漏。
+     *   而"没重建 ⇒ 序号不变 ⇒ 照旧跳过 layout"的原优化（`05` §5.4 第三步）保留。
+     */
+    private int $lastBoxEpoch = -1;
 
     public function __construct(
         private readonly RenderSurface $surface,
@@ -124,8 +140,18 @@ final class Frame
         //   真机上守（`04` §5.2：先证明纯，才有资格说不缓存）。
         //   ★ 自校验必须先于本步上线：没有它，跳过 layout 会把"布局不纯"的
         //     后果从**漂移**放大成**完全不更新**（`05` §13 的推翻条件）。
-        if ($didRebuild || $this->constraintsChanged($constraints)) {
+        //
+        //   ★★ **第三条判据 `$boxEpoch`**（2026-10-24）：`$didRebuild` 只覆盖
+        //     "settle 期间重建过"。帧**外**换盒的路径（直调 `Element::update()`、
+        //     `applyContext()` 切主题、`OffstageElement` 放回停放子树）换盒却不
+        //     进 settle 计数 ⇒ 只靠前两条会判成"没变"而跳过 layout ⇒ 新盒没有
+        //     `size` ⇒ 命中测试全落空（静默）。序号来自唯一盒创建点
+        //     `Element::syncBox()`，所以这条判据**不可能漏**。
+        //   ★ 读序号的位置必须在 settle **之后**（这样本帧重建造成的换盒也算进来）。
+        $boxEpoch = State::boxEpoch();
+        if ($didRebuild || $boxEpoch !== $this->lastBoxEpoch || $this->constraintsChanged($constraints)) {
             $this->laidOut = true;
+            $this->lastBoxEpoch = $boxEpoch;
             $this->lastMinWidth = $constraints->minWidth;
             $this->lastMaxWidth = $constraints->maxWidth;
             $this->lastMinHeight = $constraints->minHeight;

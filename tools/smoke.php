@@ -42,6 +42,7 @@ use Drift\Dev\Smoke\ErrorBoundary\ConstructBoom;
 use Drift\Dev\Smoke\ErrorBoundary\LayoutBoomBox;
 use Drift\Dev\Smoke\ErrorBoundary\PaintBoomBox;
 use Drift\Dev\Smoke\Frame\QuietWidget;
+use Drift\Dev\Smoke\Frame\EpochWidget;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Smoke\Frame\TickerWidget;
 use Drift\Dev\Smoke\Frame\TickerState;
@@ -6133,6 +6134,30 @@ check(
     'Frame · layout → paint → present 一路通到表面（画布上有墨）',
     $surface2->canvas !== null && inkCount($surface2->canvas) > 0,
     '墨点数 ' . (string) ($surface2->canvas !== null ? inkCount($surface2->canvas) : -1)
+);
+
+// ★★ 回归（2026-10-24）：**帧外换盒必须触发重排**（`State::$boxEpoch`）。
+//   缺陷形态：直调 `Element::update()` 换盒**不经过 settle** ⇒ `settle()` 的
+//   "帧内重建差"为 0 ⇒ `Frame` 判"本帧没变" ⇒ 跳过 layout ⇒ 新盒 `size` 恒
+//   `null` ⇒ **之后所有命中测试落空**。而 overlay 计数 / 焦点 / 声明全对 ⇒ 极难定位。
+//   ★ 特意用**有状态根**：`update()` 会走 `StatefulElement::rebuild()` →
+//     `noteRebuilt()`，但那一次发生在 settle 的**快照之前** ⇒ 旧判据照样看不见。
+//     这是本缺陷最难的一条（"明明计数加了，为什么说没重建"）。
+$epSurface = new SurfaceProbe();
+$epSurface->resize(320, 240, 1.0);
+$epFrame = new Frame($epSurface);
+$epRoot = (new EpochWidget())->createElement();
+$epRoot->mount(null, $context);
+$epFrame->run($epRoot, BoxConstraints::tight(new Size(320.0, 240.0)), 0.0);
+check('Frame · 首帧排过（根盒有尺寸）', $epRoot->effectiveBox()?->hasSize() === true);
+
+$epRoot->update(new EpochWidget());   // 帧外换盒：不经过 settle
+$epFrame->run($epRoot, BoxConstraints::tight(new Size(320.0, 240.0)), 16.0);
+$epBox = $epRoot->effectiveBox();
+check(
+    'Frame · 帧外换盒（update 直调）⇒ 新盒照样排过（不跳过 layout）',
+    $epBox !== null && $epBox->hasSize(),
+    $epBox === null ? 'effectiveBox=null' : ($epBox->hasSize() ? 'ok' : 'size=null')
 );
 
 // ── ㉖ Routing：RouteTable（数据）+ Offstage（保状态，§12.1 第 4/7 条）──

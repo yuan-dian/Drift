@@ -48,6 +48,24 @@ abstract class State
     private static int $rebuiltCount = 0;
 
     /**
+     * 盒被换过的累计次数（**单调递增，永不归零**）。
+     *
+     * ★★ 与 `$rebuiltCount` 的区别是这条的全部理由：`$rebuiltCount` 只在
+     *   `StatefulElement::rebuild()` 里加，而 `settle()` 用**帧内前后差**判"有没有
+     *   重建" ⇒ **settle 之前**发生的重建（`Element::update()` 直调、`applyContext()`
+     *   换主题、`OffstageElement` 放回停放的子树）一律看不见 ⇒ 判成"本帧没变"
+     *   ⇒ `Frame` 跳过 layout ⇒ 新盒 `size()` 恒 `null` ⇒ **之后所有命中测试落空**
+     *   （画面还在画旧盒的内容，overlay / 焦点 / 声明全对，极具欺骗性）。
+     *
+     * ★ 所以这里记的是**绝对序号**，由 `Frame` 自己跨帧比对，而不是帧内差。
+     *   判据也就从"本帧重建过吗"变成更准的"**根盒底下有盒被换过吗**"——
+     *   `Element::syncBox()` 是全仓唯一的盒创建点，加在这里不会漏。
+     *
+     * @internal `Frame` 的"跳过 layout"判据之一
+     */
+    private static int $boxEpoch = 0;
+
+    /**
      * 本帧挂载的 State（`callInit()` 登记，`Application::frame()` 第 ⑦ 段消费）。
      *
      * ★ 存在理由（`06` §4.2）：`tickFrame()` **必须**在 settle 之前跑，而挂载**必然**
@@ -306,6 +324,25 @@ abstract class State
     public static function rebuiltCount(): int
     {
         return self::$rebuiltCount;
+    }
+
+    /**
+     * @internal 盒换代的绝对序号 —— `Frame` 与它**上一帧记下的值**比对（见 `$boxEpoch`）。
+     */
+    public static function boxEpoch(): int
+    {
+        return self::$boxEpoch;
+    }
+
+    /**
+     * @internal `Element::syncBox()` 每调一次就加一（那里是唯一的盒创建点）。
+     *
+     * ★ 故意做成**静态**而不是 `Element` 的字段：判据要跨**整棵树**（含浮层那棵
+     *   第二根树），逐个 Element 记账需要遍历；一个全局序号就能表达"有没有换过"。
+     */
+    public static function noteBoxReplaced(): void
+    {
+        self::$boxEpoch++;
     }
 
     /**
