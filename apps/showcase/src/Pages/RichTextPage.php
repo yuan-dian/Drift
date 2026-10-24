@@ -77,7 +77,7 @@ final class RichTextPageState extends State
                 RichText::make([
                     Span::make('加载失败，'),
                     Span::make('重试')->tag('retry')->underline()->color(Color::fromHex('#009688')),
-                    Span::make('　（已点击 ' . $this->clicks . ' 次；点旁边的文字不会加）'),
+                    Span::make('　（已点击 ' . $this->clicks . ' 次；点链接，或 Tab 聚焦后按 Enter）'),
                 ])->onSpanTap(function (string $tag): void {
                     if ($tag === 'retry') {
                         $this->setState(function (): void {

@@ -9114,6 +9114,46 @@ check(
     sprintf('A=%s B=%s', substr($bgKeyA, 0, 8), substr($bgKeyB, 0, 8)),
 );
 
+// —— W8-5 续作四：富文本键盘可达（焦点变化走 `State::didChangeFocus`）——
+$taps = [];
+$kbRoot = Column::make()->children([
+    RichText::make([
+        Span::make('加载失败，'),
+        Span::make('重试')->tag('retry')->underline(),
+    ])->onSpanTap(function (string $tag) use (&$taps): void {
+        $taps[] = $tag;
+    }),
+])->createElement();
+$kbRoot->mount(null, $curContext);
+$kbRoot->effectiveBox()?->layout(BoxConstraints::loose(new Size(400.0, 60.0)));
+
+$kbFm = new FocusManager();
+$kbFm->collect([$kbRoot]);
+check(
+    'RichText · onSpanTap ⇒ 声明可聚焦（进 Tab 序）',
+    count($kbFm->order()) === 1,
+    'order=' . count($kbFm->order()),
+);
+
+$kbEl = $kbFm->order()[0] ?? null;
+$kbBox = $kbEl?->effectiveBox();
+check(
+    'RichText · firstTag 找到第一个链接（Enter 的落点）',
+    $kbBox instanceof RenderRichText && $kbBox->firstTag() === 'retry',
+    'tag=' . ($kbBox instanceof RenderRichText ? $kbBox->firstTag() : 'n/a'),
+);
+
+if ($kbEl !== null) {
+    $kbFm->focus($kbEl);
+}
+
+$kbConsumed = $kbFm->dispatchKey(KeyEvent::down(KeyChord::enter()));
+check(
+    'RichText · Enter 触发第一个链接（keyboard 缝，键被消费）',
+    $kbConsumed && $taps === ['retry'],
+    sprintf('consumed=%s taps=%s', $kbConsumed ? 'y' : 'n', implode(',', $taps)),
+);
+
 // —— 扁平按钮：盒样式 isNone（无底无边框），字色走正文色
 $flatBox = Button::make('导航项')->variant(ButtonVariant::Flat)->createRenderObject($context);
 check(

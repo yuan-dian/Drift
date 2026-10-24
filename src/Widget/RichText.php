@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace Drift\Widget;
 
+use Drift\Input\KeyChord;
+use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderRichText;
@@ -115,6 +117,36 @@ final class RichText extends RenderBoxWidget
                 $handler($tag);
             }
         }, true);
+
+        // —— 键盘可达（W8-5 续作四）——
+        // ★ 可聚焦 + Enter 触发**第一个**链接。
+        // ★ **没有焦点高亮**：全仓还没有焦点视觉（Button / Slider 也没有）；而盒状态
+        //   跨重建会丢（`syncBox()` 每次造新盒）⇒ 高亮要 State 级状态，是另一件事。
+        // ★ 多链接的 Tab 细分**未做**：需要"焦点子项"（一个 Element 内多个停靠点），
+        //   是焦点组级别的改动。
+        $this->markFocusable();
+
+        $this->keyboard(function (KeyEvent $event, Element $self) use ($handler): bool {
+            if (!$event->chord->is(KeyChord::enter())) {
+                return false;
+            }
+
+            $box = $self->effectiveBox();
+
+            if (!$box instanceof RenderRichText) {
+                return false;
+            }
+
+            $tag = $box->firstTag();
+
+            if ($tag === '') {
+                return false;
+            }
+
+            $handler($tag);
+
+            return true;
+        });
 
         return $this;
     }

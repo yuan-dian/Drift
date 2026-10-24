@@ -227,6 +227,22 @@ abstract class State
     }
 
     /**
+     * 焦点进入 / 离开本控件时（`FocusManager::enter/leave` 调）。
+     *
+     * ★ **默认空**：绝大多数 State 不关心焦点；覆写即可（`TextFieldState`
+     *   用它进出编辑态）。
+     * ★ 为什么是 `State` 钩子而不是 `Widget` 上的闭包：焦点态必须存在**跨重建
+     *   存活**的地方 —— Widget 每次 `setState` 都是新实例、盒也会被
+     *   `syncBox()` 造新的（2026-10-24 实测：盒里的 `$focused` 一重建就丢）。
+     *   `State` 是唯一生命期与 Element 对齐的对象。
+     *
+     * @api
+     */
+    public function didChangeFocus(bool $focused): void
+    {
+    }
+
+    /**
      * 唯一的 `Cell` 创建入口（§11.3.1）。
      *
      * ★ 为什么不能 `new Cell(-1)` 直接放属性初始化器：PHP 的属性初始化器

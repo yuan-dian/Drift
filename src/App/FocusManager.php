@@ -257,7 +257,10 @@ final class FocusManager
                 continue;
             }
 
-            if ($handler($event) === true) {
+            // ★ 与 `pointer()` / `hover()` 同形：`(KeyEvent, Element)`。
+            //   老的单参 handler（`function (KeyEvent $e)`）在 PHP 里会忽略多余参数
+            //   ⇒ 不需要一次性改所有调用点；新控件（`RichText`）可以拿 Element 找盒。
+            if ($handler($event, $node) === true) {
                 return true;
             }
 
@@ -513,20 +516,12 @@ final class FocusManager
 
     private function enter(?Element $element): void
     {
-        $state = $this->stateOf($element);
-
-        if ($state instanceof TextFieldState) {
-            $state->beginEditing();
-        }
+        $this->stateOf($element)?->didChangeFocus(true);
     }
 
     private function leave(?Element $element): void
     {
-        $state = $this->stateOf($element);
-
-        if ($state instanceof TextFieldState) {
-            $state->endEditing();
-        }
+        $this->stateOf($element)?->didChangeFocus(false);
     }
 
     private function stateOf(?Element $element): ?State

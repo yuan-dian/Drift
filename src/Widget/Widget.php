@@ -877,7 +877,10 @@ abstract class Widget
      * Slider::make()->value($v)->keyboard(fn(KeyEvent $e) => $this->nudge($e));
      * ```
      *
-     * ★ 回调 `\Closure(KeyEvent): bool`，返回 `true` = 吃掉这个键。
+     * ★ 回调 `\Closure(KeyEvent, Element): bool`，返回 `true` = 吃掉这个键。
+     *   ★ 第二个参数是**焦点所在的 Element**（2026-10-24 起与 `pointer()` /
+     *     `hover()` 同形）—— 控件要按"盒上的状态"决定行为时靠它拿 `effectiveBox()`。
+     *     老的单参写法（`function (KeyEvent $e)`）在 PHP 里忽略多余参数，仍然有效。
      * ★ **沿焦点控件的父链找"最近的声明者"**（`FocusManager::dispatchKey`）——
      *   所以**包裹式控件也能挂**：`ComboBox` 包一个 `TextField` 时，焦点落在
      *   `TextField` 上，而 `ComboBox` 自己声明的 `keyboard()` 照样收得到

@@ -105,6 +105,23 @@ final class TextFieldState extends State
         return $this->editing;
     }
 
+    /**
+     * 焦点进出 ⇒ 编辑态。
+     *
+     * ★ 这条本来是 `FocusManager` 里的 `instanceof TextFieldState` 特例；2026-10-24
+     *   迁到 `State::didChangeFocus()`，框架不再认识具体控件。
+     */
+    public function didChangeFocus(bool $focused): void
+    {
+        if ($focused) {
+            $this->beginEditing();
+
+            return;
+        }
+
+        $this->endEditing();
+    }
+
     /** 进入编辑态 ⇒ 插入符出现（M3 由 `FocusNode` 驱动） */
     public function beginEditing(): void
     {

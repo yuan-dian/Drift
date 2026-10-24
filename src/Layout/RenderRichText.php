@@ -77,6 +77,24 @@ final class RenderRichText extends RenderBox
         return $this->spans;
     }
 
+    /** 第一个带 tag 的 run 的标识（`''` = 没有链接）—— Enter 的落点 */
+    public function firstTag(): string
+    {
+        if ($this->paragraph === null) {
+            return '';
+        }
+
+        foreach ($this->paragraph->lines as $line) {
+            foreach ($line->runs as $run) {
+                if ($run->tag !== '') {
+                    return $run->tag;
+                }
+            }
+        }
+
+        return '';
+    }
+
     /**
      * 本盒**局部**坐标 → 链接触发标识（`''` = 不是链接）。
      *
