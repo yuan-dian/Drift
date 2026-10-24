@@ -11,6 +11,7 @@ use Drift\Widget\ButtonVariant;
 use Drift\Widget\Card;
 use Drift\Widget\Column;
 use Drift\Widget\Option;
+use Drift\Widget\OptionStatus;
 use Drift\Widget\Row;
 use Drift\Widget\ScrollView;
 use Drift\Widget\Select;
@@ -83,40 +84,46 @@ final class SelectState extends State
 
     private string $remoteValue = '';
 
-    private bool $remoteLoading = false;
-
-    private string $remoteError = '';
+    /** 选项表的就绪度 —— 三态**互斥**（`OptionStatus`，2026-10-24） */
+    private OptionStatus $remoteStatus;
 
     /** `onOpen` 被调了几次（证明它只在"要开面板"时触发，不是每次重建） */
     private int $openCount = 0;
 
+    #[\Override]
+    public function initState(): void
+    {
+        $this->remoteStatus = OptionStatus::empty('还没取数');
+    }
+
     /**
      * 把远程那段状态切到某一态（示例台不联网，**直接摆姿势**）。
      *
-     * ★ 刻意做成"点了就一直停在这一态"：`loading` 若在同一帧里被立刻改成 `false`，
-     *   你就永远看不到"正在加载"那个面板 —— 而这一页要给人看的恰恰是那个面板。
-     * ★ 真应用的写法是：`onOpen` 里 `loading(true)` + 发请求，`Job::onDone` 里
-     *   `loading(false)` + 换选项表。控件侧一行都不用改（三态全是受控属性）。
+     * ★ 刻意做成"点了就一直停在这一态"：若同一帧里立刻改回 `ready`，你就永远看不到
+     *   "正在加载"那个面板 —— 而这一页要给人看的恰恰是那个面板。
+     * ★ 真应用的写法是：`onOpen` 里 `status(loading())` + 发请求，`Job::onDone` 里
+     *   `status(ready())` + 换选项表。控件侧一行都不用改（三态全是受控属性）。
+     * ★ 三态是**一个值**，所以这里不存在"先清 error 再设 loading"那种顺序问题。
      */
     private function setRemoteState(string $state): void
     {
         $this->setState(function () use ($state): void {
-            $this->remoteError = '';
-            $this->remoteLoading = false;
             $this->remote = [];
 
             if ($state === 'loading') {
-                $this->remoteLoading = true;
+                $this->remoteStatus = OptionStatus::loading();
             } elseif ($state === 'error') {
-                $this->remoteError = '连接超时（换一态再来）';
-            } elseif ($state === 'ok') {
+                $this->remoteStatus = OptionStatus::error('连接超时（换一态再来）');
+            } elseif ($state === 'empty') {
+                $this->remoteStatus = OptionStatus::empty('没有匹配的城市');
+            } else {
+                $this->remoteStatus = OptionStatus::ready();
                 $this->remote = [
                     Option::make('北京市', '110000'),
                     Option::make('上海市', '310000'),
                     Option::make('广州市', '440100'),
                 ];
             }
-            // 'empty' ⇒ 什么都不设：选项表为空、不在加载、没有错误
         });
     }
 
@@ -222,9 +229,7 @@ final class SelectState extends State
                         ->placeholder('请选择城市')
                         // ★ 定宽：不定宽时占位文字会把框撑成两行（Row 只给内容宽）
                         ->triggerWidth(200.0)
-                        ->loading($this->remoteLoading)
-                        ->errorText($this->remoteError)
-                        ->emptyText('没有匹配的城市')
+                        ->status($this->remoteStatus)
                         ->onOpen(function (): void {
                             // ★ 只在**要开面板**那一刻触发一次（不是每次应用重建）
                             $this->setState(function (): void {
@@ -249,12 +254,14 @@ final class SelectState extends State
                         ->onPressed(fn() => $this->setRemoteState('empty')),
                 ]),
             ]))->paddingAll(12.0),
-            Text::make('优先级：`loading` > `errorText` > 空表 `emptyText` > 选项行 —— 重试时'
-                . '两个都真，用户该看到的是"正在加载"。三态全是**受控属性**（什么时候算加载完'
-                . '只有应用知道），控件只负责"显示成什么样"。')->caption(),
-            Text::make('★ 面板是**第二棵根渲染树**：主树重建不带动它 ⇒ 这三条能跨树生效，'
-                . '靠的是 `Select` 有态化之后在 `didUpdateWidget()` 里比对签名再 publish。'
-                . '把 `Select` 改回无态，这一段就会"点了按钮面板纹丝不动"。')->caption(),
+            Text::make('三态是**一个值**（`OptionStatus::loading() / error() / empty() / '
+                . 'ready()`），不是三个开关 —— 所以没有"同时成立时显示谁"这种问题。')->caption(),
+            Text::make('旧版靠"loading 优先于 error"这条规则；2026-10-24 收成互斥值之后'
+                . '那条规则**不存在了**。三态全是受控属性（什么时候算加载完只有应用知道），'
+                . '控件只负责"显示成什么样"。')->caption(),
+            Text::make('★ 面板是**第二棵根渲染树**：主树重建不带动它 ⇒ 三态能跨树生效，'
+                . '靠的是框架的 `overlaySignature()`（控件声明一个内容签名，框架在锚点'
+                . 'Widget 换了之后比对，变了就标脏面板）。')->caption(),
 
             $this->sectionBar('能力边界（如实记录）'),
             Text::make('① 方向键换值：**有了**（2026-10-24）—— 面板打开后 ↓/↑ 移高亮（到顶'

@@ -281,6 +281,7 @@ use Drift\Dev\Smoke\App\SelectApplication;
 use Drift\Dev\Smoke\App\SelectStateApplication;
 use Drift\Dev\Smoke\App\ComboBoxApplication;
 use Drift\Widget\Option;
+use Drift\Widget\OptionStatus;
 use Drift\Widget\Select;
 use Drift\Widget\Snackbar;
 use Drift\Widget\TooltipPanel;
@@ -13474,7 +13475,7 @@ $ssSettle = function (float $t) use ($ssApp, $ssC): void {
 
 $ssApp->dispatchInput(KeyEvent::down(KeyChord::enter()));
 $ssApp->frame(2000.0, $ssC);
-$ssHost?->setLoading(true);
+$ssHost?->setStatus(OptionStatus::loading());
 $ssSettle(2100.0);
 check(
     'Select 三态 · loading ⇒ 面板 0 个候选按钮（不是还列着旧选项）',
@@ -13487,8 +13488,7 @@ check(
     'texts=' . implode('|', $ssApp->panelTexts())
 );
 
-$ssHost?->setLoading(false);
-$ssHost?->setError('加载失败');
+$ssHost?->setStatus(OptionStatus::error('加载失败'));
 $ssSettle(2200.0);
 check(
     'Select 三态 · error ⇒ 面板里是错误行',
@@ -13496,25 +13496,38 @@ check(
     'texts=' . implode('|', $ssApp->panelTexts())
 );
 
-// 优先级：loading 盖过 error（重试时两个都真，该看到"正在加载"）
-$ssHost?->setLoading(true);
+// ★ 2026-10-24：三态收成 `OptionStatus` 之后这里**没有优先级**可测了 ——
+//   值互斥，后设的替换先设的。"重试时 error 与 loading 都真"那个场景在类型上
+//   就不存在（旧版专门有一条"loading 优先于 error"的用例，见附八）。
+$ssHost?->setStatus(OptionStatus::loading());
 $ssSettle(2300.0);
 check(
-    'Select 三态 · loading 优先于 error（重试时该看到"正在加载"）',
-    in_array('正在加载…', $ssApp->panelTexts(), true) && !in_array('加载失败', $ssApp->panelTexts(), true)
+    'Select 三态 · error 之后设 loading ⇒ 只剩"正在加载…"（值替换，不是优先级）',
+    in_array('正在加载…', $ssApp->panelTexts(), true) && !in_array('加载失败', $ssApp->panelTexts(), true),
+    'texts=' . implode('|', $ssApp->panelTexts())
 );
 
-$ssHost?->setLoading(false);
-$ssHost?->setError('');
+// 选项表空了但应用没说这是空态 ⇒ **控件内置**兜底文案（不是可配置的 `emptyText`）
+$ssHost?->setStatus(OptionStatus::ready());
 $ssHost?->setOptions([]);
 $ssSettle(2400.0);
 check(
-    'Select 三态 · 空表 ⇒ emptyText 那一行（不是一片空白）',
+    'Select 三态 · 空表 + ready ⇒ 内置"没有可选项"（不是一片空白）',
     in_array('没有可选项', $ssApp->panelTexts(), true) && $ssApp->optionButtons() === [],
     'texts=' . implode('|', $ssApp->panelTexts())
 );
 
-// 面板开着时换选项表 ⇒ 项数跟着变（`didUpdateWidget` 的签名比对在起作用）
+// 应用**主动声明**空态 ⇒ 用它给的文案（与上面那条的区别：文案归应用）
+$ssHost?->setStatus(OptionStatus::empty('没有匹配的城市'));
+$ssSettle(2450.0);
+check(
+    'Select 三态 · OptionStatus::empty(文案) ⇒ 面板用应用的文案',
+    in_array('没有匹配的城市', $ssApp->panelTexts(), true) && $ssApp->optionButtons() === [],
+    'texts=' . implode('|', $ssApp->panelTexts())
+);
+
+// 面板开着时换选项表 ⇒ 项数跟着变（框架的 `overlaySignature()` 在起作用）
+$ssHost?->setStatus(OptionStatus::ready());
 $ssHost?->setOptions([Option::of('甲'), Option::of('乙')]);
 $ssSettle(2500.0);
 check(

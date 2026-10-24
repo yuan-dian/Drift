@@ -8,6 +8,7 @@ use Drift\App\OverlayEntry;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Element;
 use Drift\Widget\Option;
+use Drift\Widget\OptionStatus;
 use Drift\Widget\Select;
 use Drift\Widget\State;
 use Drift\Widget\StatefulWidget;
@@ -112,11 +113,8 @@ final class SelectStateHostState extends State
     /** `onOpen` 被调了几次 */
     public int $openCount = 0;
 
-    public bool $loading = false;
-
-    public string $error = '';
-
-    public string $emptyText = '没有可选项';
+    /** 选项表的就绪度（三态互斥，2026-10-24 收成 `OptionStatus`） */
+    public OptionStatus $status;
 
     /** @var list<Option> */
     public array $options = [];
@@ -124,6 +122,7 @@ final class SelectStateHostState extends State
     #[\Override]
     public function initState(): void
     {
+        $this->status = OptionStatus::ready();
         $this->options = [
             Option::make('北京市', '110000'),
             Option::make('上海市', '310000'),
@@ -135,9 +134,7 @@ final class SelectStateHostState extends State
     {
         return Select::make($this->options)
             ->value('310000')
-            ->loading($this->loading)
-            ->errorText($this->error)
-            ->emptyText($this->emptyText)
+            ->status($this->status)
             ->onOpen(function (): void {
                 $this->setState(function (): void {
                     $this->openCount++;
@@ -150,17 +147,11 @@ final class SelectStateHostState extends State
             });
     }
 
-    public function setLoading(bool $on): void
+    /** 换就绪度（`loading()` / `error()` / `empty()` / `ready()` 之一） */
+    public function setStatus(OptionStatus $status): void
     {
-        $this->setState(function () use ($on): void {
-            $this->loading = $on;
-        });
-    }
-
-    public function setError(string $text): void
-    {
-        $this->setState(function () use ($text): void {
-            $this->error = $text;
+        $this->setState(function () use ($status): void {
+            $this->status = $status;
         });
     }
 

@@ -26,9 +26,7 @@ use Drift\State\Subject;
  *
  * // 远程数据三态 + 打开才取
  * Select::make($this->cities)
- *     ->loading($this->loading)
- *     ->emptyText('没有匹配的城市')
- *     ->errorText($this->error)
+ *     ->status($this->status)                   // OptionStatus::loading() / error() / empty() / ready()
  *     ->onOpen(fn() => $this->loadCities());    // 面板打开那一刻触发取数
  * ```
  *
@@ -134,27 +132,28 @@ final class Select extends StatefulWidget
 
     private ?\Closure $onChanged = null;
 
-    /** 远程取数中 ⇒ 面板只显示一行"正在加载…"（优先于 errorText 与选项行） */
-    private bool $loading = false;
+    /**
+     * 选项表的就绪度（三态）—— `ready` / `loading` / `empty` / `error`，**互斥**。
+     *
+     * ★ 2026-10-24 之前是三个独立字段（`loading` / `emptyText` / `errorText`）+ 一条
+     *   "loading 优先"的优先级规则。收成 `OptionStatus` 之后那条规则**不存在了**：
+     *   设了 `loading()` 就没有错误态可言。见 `OptionStatus` 的类头。
+     */
+    private OptionStatus $status;
 
-    /** 选项表为空时面板里那一行（不是 placeholder：那是**触发框**里的字） */
-    private string $emptyText = '没有可选项';
-
-    /** 非空 ⇒ 面板只显示这一行（优先于 emptyText 与选项行，低于 loading） */
-    private string $errorText = '';
-
-    /** 面板**打开那一刻**触发（应用在这里发起取数；`setState` 换 `loading` / 选项表） */
+    /** 面板**打开那一刻**触发（应用在这里发起取数；`setState` 换 `status` / 选项表） */
     private ?\Closure $onOpen = null;
 
     /**
      * @param list<Option>|array<array-key, string> $options 选项表。两种形态都过
      *        `Option::normalize()`（映射形态 = 键是值、值是显示名），空表 ⇒ 面板
-     *        显示 `emptyText`，不炸。
+     *        画一行内置的"没有可选项"（要用别的文案就 `status(OptionStatus::empty('…'))`）。
      */
     public function __construct(array $options)
     {
         parent::__construct();
         $this->options = Option::normalize($options);
+        $this->status = OptionStatus::ready();
     }
 
     /** @param list<Option>|array<array-key, string> $options 见 `Option::normalize()` */
@@ -199,33 +198,23 @@ final class Select extends StatefulWidget
     }
 
     /**
-     * 远程取数中（受控）。
+     * 选项表的就绪度（受控）—— 取数中 / 失败 / 空表 / 正常，**四者互斥**。
+     *
+     * ```php
+     * ->status($this->loading ? OptionStatus::loading() : OptionStatus::ready())
+     * ->status(OptionStatus::error('连接超时'))
+     * ->status(OptionStatus::empty('没有匹配的城市'))
+     * ```
      *
      * ★ 这是**受控属性**，不是控件自己管的状态：什么时候开始、什么时候算结束，
      *   只有应用知道（`Job` + `TaskHost` 的 `onDone`）。控件只负责"显示成什么样"。
+     * ★★ 为什么是一个值而不是三个 setter：见 `OptionStatus` 类头 —— 三个独立字段
+     *   必须回答"同时成立时显示谁"，而那个场景本身不该存在。
      */
-    public function loading(bool $on): static
+    public function status(OptionStatus $status): static
     {
         $this->mutate();
-        $this->loading = $on;
-
-        return $this;
-    }
-
-    /** 选项表为空时面板里那一行（例如"没有匹配的城市"） */
-    public function emptyText(string $text): static
-    {
-        $this->mutate();
-        $this->emptyText = $text;
-
-        return $this;
-    }
-
-    /** 非空 ⇒ 面板只显示这一行（取数失败时用）。优先级低于 `loading()` */
-    public function errorText(string $text): static
-    {
-        $this->mutate();
-        $this->errorText = $text;
+        $this->status = $status;
 
         return $this;
     }
@@ -276,21 +265,9 @@ final class Select extends StatefulWidget
     }
 
     /** @internal */
-    public function loadingValue(): bool
+    public function statusValue(): OptionStatus
     {
-        return $this->loading;
-    }
-
-    /** @internal */
-    public function emptyTextValue(): string
-    {
-        return $this->emptyText;
-    }
-
-    /** @internal */
-    public function errorTextValue(): string
-    {
-        return $this->errorText;
+        return $this->status;
     }
 
     /** @internal */
@@ -427,23 +404,25 @@ final class SelectState extends State
     /**
      * 面板内容 —— `OptionPanel` **每次重建都会调**它，所以读的全是当前值。
      *
-     * ★ 优先级：`loading` > `errorText` > 空表 `emptyText` > 选项行。
-     *   加载中盖过错误是刻意的：重试时两个都真，用户该看到的是"正在加载"。
+     * ★ 三态与选项行**互斥**（`OptionStatus::showsOptions()`），所以这里没有优先级
+     *   判断链：状态不 ready ⇒ 画那一行；ready ⇒ 画选项（空表时画内置兜底文案）。
      */
     private function panelContent(): Widget
     {
         $select = $this->select();
         $rows = [];
+        $status = $select->statusValue();
+        $statusRow = $status->row();
 
-        if ($select->loadingValue()) {
-            $rows[] = Text::make('正在加载…')->caption();
-        } elseif ($select->errorTextValue() !== '') {
-            $rows[] = Text::make($select->errorTextValue())->caption();
+        if ($statusRow !== null) {
+            $rows[] = $statusRow;
         } else {
             $options = $select->optionsValue();
 
             if ($options === []) {
-                $rows[] = Text::make($select->emptyTextValue())->caption();
+                // ★ "选项表恰好是空的、但应用没说这是空态" ⇒ 内置兜底。与
+                //   `OptionStatus::empty('…')` 的区别见那个方法的注释。
+                $rows[] = Text::make('没有可选项')->caption();
             } else {
                 foreach ($options as $index => $option) {
                     // ★ 选中项用 Primary 底（强调色），方向键光标也用它 —— 两者同形
@@ -600,9 +579,8 @@ final class SelectState extends State
     {
         $select = $this->select();
         $parts = [
-            $select->loadingValue() ? 'L1' : 'L0',
-            $select->errorTextValue(),
-            $select->emptyTextValue(),
+            // ★ 三态那一段由 `OptionStatus` 自己给 —— 与 `ComboBox` 共用一处实现
+            $select->statusValue()->signature(),
             $select->valueValue(),
         ];
 
