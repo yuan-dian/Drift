@@ -12,7 +12,7 @@ use Drift\Layout\RenderBox;
 use Drift\Widget\Element;
 use Drift\Widget\State;
 use Drift\Widget\StatefulElement;
-use Drift\Widget\TextFieldState;
+use Drift\Widget\EditableText;
 
 /**
  * **焦点链 + 输入路由的最小实现**（§9.1 路由链的 ②③ 环与命中测试）。
@@ -23,7 +23,7 @@ use Drift\Widget\TextFieldState;
  * ```
  *
  * ★ **为什么住 `Drift\App` 而不是 `Drift\Input`**：`Input` 按 §4.3 **不许依赖
- *   `Widget` / `Rendering`**，而本类必须引用 `Element` 与 `TextFieldState`。
+ *   `Widget` / `Rendering`**，而本类必须引用 `Element` 与 `EditableText`。
  *   §9.1 本来就把路由判给 `EventLoop`（`Drift\App`）—— 这里只是把那条裁决落成代码，
  *   不含 EventLoop 的**循环**能力（`pump()` 由平台驱动，§5.2 裁决 1）。
  *
@@ -32,8 +32,8 @@ use Drift\Widget\TextFieldState;
  *   `KeyEvent` / `PointerEvent`（数据），都在 `Drift\Input`。
  *
  * ★ **焦点链是"渲染态"**（§9.1）：本类只存 `?Element`，不碰任何业务值。
- *   切焦点时同步 `TextFieldState` 的 `beginEditing()` / `endEditing()` ——
- *   于是"插入符画不画"自动跟着焦点走。
+ *   切焦点时经 `State::didChangeFocus()` 同步编辑态（`EditableText` 的
+ *   `beginEditing()` / `endEditing()`）—— 于是"插入符画不画"自动跟着焦点走。
  *
  * @internal
  */
@@ -231,8 +231,8 @@ final class FocusManager
      *   （`Slider` / `Select` / `PressLabApplication`）都挂在**自己就是焦点控件**
      *   的 widget 上 ⇒ 父链第一跳就命中，逐字节不变。
      *
-     * ★ 为什么 `keyboard()` 仍排在 `TextFieldState` 之前：两者都是"焦点控件处理按键"，
-     *   但 `keyboard()` 是**声明式**的（任何控件都能挂），`TextFieldState` 是状态机。
+     * ★ 为什么 `keyboard()` 仍排在 `EditableText` 之前：两者都是"焦点控件处理按键"，
+     *   但 `keyboard()` 是**声明式**的（任何控件都能挂），`EditableText` 是状态机。
      *   一个控件同时有两者几乎不可能（输入框不会自己声明方向键语义），
      *   真撞上了让显式声明优先 —— 应用总比框架更知道这个键该干嘛。
      * ★ 这条缝让"新交互控件"不必再往 `Application::activateFocusedWidget()`
@@ -269,7 +269,7 @@ final class FocusManager
 
         $state = $this->stateOf($this->focused);
 
-        if ($state instanceof TextFieldState) {
+        if ($state instanceof EditableText) {
             return $state->handleKey($event);
         }
 

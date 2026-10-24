@@ -34,7 +34,7 @@ use Drift\Text\Utf8;
  *
  * @api
  */
-final class TextFieldState extends State
+final class TextFieldState extends State implements EditableText
 {
     /** @internal 当前文本（受控：外部推新值经 `didUpdateWidget()` 采纳） */
     private string $buffer = '';

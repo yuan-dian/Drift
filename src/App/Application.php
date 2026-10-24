@@ -39,7 +39,7 @@ use Drift\Text\FontLocator;
 use Drift\Text\TtfFace;
 use Drift\Geometry\Rect;
 use Drift\Text\TextMetricsProvider;
-use Drift\Widget\TextFieldState;
+use Drift\Widget\EditableText;
 use Drift\Widget\Scrollable;
 use Drift\Theme\ThemeData;
 use Drift\Widget\BuildContext;
@@ -164,7 +164,7 @@ abstract class Application
      *   （`effectiveBox()` 是新对象）⇒ 缓存盒等于拿上一帧的几何算这一帧
      *   的偏移。盒每步现取（`textSelectBox()`）。
      */
-    private ?TextFieldState $textSelect = null;
+    private ?EditableText $textSelect = null;
 
     /**
      * 语义树消费闭包（§9 / M5 UIA，per-app opt-in，同 taskHost() 形态）。
@@ -1595,7 +1595,7 @@ abstract class Application
         }
 
         $state = $focused->state();
-        if (!$state instanceof TextFieldState || !$state->isEditing()) {
+        if (!$state instanceof EditableText || !$state->isEditing()) {
             return null;
         }
 
@@ -1631,10 +1631,10 @@ abstract class Application
      * 焦点里**在编辑**的输入框（§9.1 第 ③ 环与指针框选共用的门控）。
      *
      * ★ 与 `imeCaretRect()` 同一个判据：焦点链上的 `StatefulElement` 且
-     *   `TextFieldState::isEditing()`。编辑命令与框选起手走同一个助手
+     *   `EditableText::isEditing()`。编辑命令与框选起手走同一个助手
      *   ⇒ 不可能一个放行、另一个拦住。
      */
-    private function editingTextFieldState(): ?TextFieldState
+    private function editingText(): ?EditableText
     {
         $focused = $this->focus?->focused();
         if (!$focused instanceof StatefulElement) {
@@ -1642,7 +1642,7 @@ abstract class Application
         }
 
         $state = $focused->state();
-        if (!$state instanceof TextFieldState || !$state->isEditing()) {
+        if (!$state instanceof EditableText || !$state->isEditing()) {
             return null;
         }
 
@@ -1656,7 +1656,7 @@ abstract class Application
      *   `effectiveBox()` 是 Column 的盒；拿它算 x 偏移会整体错一个标签宽
      *   （2026-10-19 IME 候选框贴角的同一个坑，见 `Element::findBox()`）。
      */
-    private function textSelectBox(TextFieldState $state): ?RenderTextField
+    private function textSelectBox(EditableText $state): ?RenderTextField
     {
         $focused = $this->focus?->focused();
         if (!$focused instanceof StatefulElement || $focused->state() !== $state) {
@@ -1678,7 +1678,7 @@ abstract class Application
      */
     private function beginTextSelection(float $x): void
     {
-        $state = $this->editingTextFieldState();
+        $state = $this->editingText();
         if ($state === null) {
             return;
         }
@@ -1753,7 +1753,7 @@ abstract class Application
             return false;
         }
 
-        $state = $this->editingTextFieldState();
+        $state = $this->editingText();
         if ($state === null) {
             return false;
         }
@@ -2774,7 +2774,7 @@ abstract class Application
                 }
 
                 // ESC 同样取消文本框选手势（选区折叠归焦点控件的 Esc 分支，
-                // 见 `TextFieldState::handleKey()`）
+                // 见 `EditableText::handleKey()`）
                 $this->textSelect = null;
             }
 

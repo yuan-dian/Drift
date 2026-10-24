@@ -23,6 +23,9 @@ final class ApiSurface
     /** 扫描范围与排除（与 DocRef/DocSet 同口径：夹具/产物/归档不是 API 面） */
     private const EXCLUDE = ['/fixtures/', '/build/', '/_build/', '/.git/', '/vendor/', '/node_modules/'];
 
+    /** 承载成员的类型声明（interface 的方法签名也带 @api） */
+    private const TYPE_KINDS = ['class', 'interface', 'trait', 'enum'];
+
     /**
      * 解析单个源文件。
      *
@@ -80,7 +83,7 @@ final class ApiSurface
 
             // 无 docblock 也要跟踪当前类（方法的 owner 靠它）
             $decl = self::parseDeclaration($trim);
-            if ($decl !== null && $decl['kind'] === 'class') {
+            if ($decl !== null && \in_array($decl['kind'], self::TYPE_KINDS, true)) {
                 $currentClass = $decl['symbol'];
             }
         }
@@ -295,7 +298,7 @@ final class ApiSurface
                 $unmatched = $pending === [] ? 0 : 1;
                 break;
             }
-            if ($decl['kind'] === 'class') {
+            if (\in_array($decl['kind'], self::TYPE_KINDS, true)) {
                 $currentClass = $decl['symbol'];
             }
             foreach ($pending as $vis) {
@@ -364,7 +367,7 @@ final class ApiSurface
     private static function parseDeclaration(string $trim): ?array
     {
         if (preg_match('/^(?:final\s+|abstract\s+|readonly\s+)*(class|interface|trait|enum)\s+(\w+)/', $trim, $m) === 1) {
-            return ['kind' => 'class', 'symbol' => $m[2]];
+            return ['kind' => $m[1], 'symbol' => $m[2]];
         }
         if (preg_match('/^(?:(?:final|abstract)\s+)?(?:public\s+|protected\s+|private\s+)?(?:static\s+)?function\s+(\w+)/', $trim, $m) === 1) {
             return ['kind' => 'method', 'symbol' => $m[1] . '()'];
@@ -385,7 +388,8 @@ final class ApiSurface
     /** @param array{kind: string, symbol: string} $decl */
     private static function symbolOf(array $decl, ?string $currentClass): string
     {
-        if ($decl['kind'] === 'class' || $currentClass === null) {
+        $typeKinds = ['class', 'interface', 'trait', 'enum'];
+        if (\in_array($decl['kind'], $typeKinds, true) || $currentClass === null) {
             return $decl['symbol'];
         }
         return $currentClass . '::' . $decl['symbol'];

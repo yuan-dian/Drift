@@ -22,10 +22,10 @@
 | State | 9 | 11 |
 | Text | 29 | 3 |
 | Theme | 3 | 0 |
-| Widget | 119 | 158 |
-| **合计** | **333** | **241** |
+| Widget | 120 | 158 |
+| **合计** | **334** | **241** |
 
-覆盖 269 个文件 · 描述性提及 15 处（grep 口径的污染源，不计入）
+覆盖 270 个文件 · 描述性提及 15 处（grep 口径的污染源，不计入）
 
 ## App 层
 
@@ -63,9 +63,9 @@
 | `IoPoller` | class | src/App/Io/IoPoller.php:6 |
 | `IoPoller::watch()` | method | src/App/Io/IoPoller.php:39 |
 | `IoPoller::unwatch()` | method | src/App/Io/IoPoller.php:68 |
-| `Job` | class | src/App/Job.php:6 |
+| `Job` | interface | src/App/Job.php:6 |
 | `Job::run()` | method | src/App/Job.php:24 |
-| `NamedJob` | class | src/App/NamedJob.php:6 |
+| `NamedJob` | interface | src/App/NamedJob.php:6 |
 | `Paths` | class | src/App/Paths.php:9 |
 | `Paths::userConfig()` | method | src/App/Paths.php:32 |
 | `ProcessTaskHost` | class | src/App/ProcessTaskHost.php:6 |
@@ -73,11 +73,11 @@
 | `ProcessTaskHost::shutdown()` | method | src/App/ProcessTaskHost.php:200 |
 | `ProcessWorker` | class | src/App/ProcessWorker.php:6 |
 | `ProcessWorker::serve()` | method | src/App/ProcessWorker.php:30 |
-| `SlicedJob` | class | src/App/SlicedJob.php:6 |
+| `SlicedJob` | interface | src/App/SlicedJob.php:6 |
 | `SlicedJob::step()` | method | src/App/SlicedJob.php:30 |
 | `SlicedJob::result()` | method | src/App/SlicedJob.php:47 |
 | `SyncTaskHost` | class | src/App/SyncTaskHost.php:6 |
-| `TaskHost` | class | src/App/TaskHost.php:6 |
+| `TaskHost` | interface | src/App/TaskHost.php:6 |
 | `TaskHost::submit()` | method | src/App/TaskHost.php:50 |
 | `TaskHost::pending()` | method | src/App/TaskHost.php:70 |
 | `TaskHost::drain()` | method | src/App/TaskHost.php:83 |
@@ -121,7 +121,7 @@
 | 符号 | 种类 | 位置 |
 |---|---|---|
 | `CommandArg` | class | src/Commands/CommandArg.php:6 |
-| `CommandHandler` | class | src/Commands/CommandHandler.php:6 |
+| `CommandHandler` | interface | src/Commands/CommandHandler.php:6 |
 | `CommandHandler::handle()` | method | src/Commands/CommandHandler.php:22 |
 | `CommandRouter` | class | src/Commands/CommandRouter.php:8 |
 | `CommandRouter::make()` | method | src/Commands/CommandRouter.php:31 |
@@ -135,7 +135,7 @@
 | 符号 | 种类 | 位置 |
 |---|---|---|
 | `Computed` | class | src/Core/Computed.php:8 |
-| `Versioned` | class | src/Core/Versioned.php:6 |
+| `Versioned` | interface | src/Core/Versioned.php:6 |
 
 ## Errors.php 层
 
@@ -173,16 +173,16 @@
 | 符号 | 种类 | 位置 |
 |---|---|---|
 | `AcceleratorTable` | class | src/Input/AcceleratorTable.php:8 |
-| `CursorShape` | class | src/Input/CursorShape.php:6 |
+| `CursorShape` | enum | src/Input/CursorShape.php:6 |
 | `FocusNode` | class | src/Input/FocusNode.php:6 |
-| `InputEvent` | class | src/Input/InputEvent.php:6 |
+| `InputEvent` | interface | src/Input/InputEvent.php:6 |
 | `KeyChord` | class | src/Input/KeyChord.php:6 |
 | `KeyEvent` | class | src/Input/KeyEvent.php:6 |
 | `PointerEvent` | class | src/Input/PointerEvent.php:6 |
-| `PointerPhase` | class | src/Input/PointerPhase.php:6 |
+| `PointerPhase` | enum | src/Input/PointerPhase.php:6 |
 | `ScrollEvent` | class | src/Input/ScrollEvent.php:6 |
 | `SemanticsNode` | class | src/Input/SemanticsNode.php:6 |
-| `SemanticsRole` | class | src/Input/SemanticsRole.php:6 |
+| `SemanticsRole` | enum | src/Input/SemanticsRole.php:6 |
 | `SemanticsTree` | class | src/Input/SemanticsTree.php:6 |
 | `ThemeChangedEvent` | class | src/Input/ThemeChangedEvent.php:6 |
 | `WindowDeactivatedEvent` | class | src/Input/WindowDeactivatedEvent.php:6 |
@@ -202,10 +202,10 @@
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
-| `FlexAlign` | class | src/Layout/FlexAlign.php:6 |
-| `ImageFit` | class | src/Layout/ImageFit.php:6 |
+| `FlexAlign` | enum | src/Layout/FlexAlign.php:6 |
+| `ImageFit` | enum | src/Layout/ImageFit.php:6 |
 | `LayoutSelfCheck` | class | src/Layout/LayoutSelfCheck.php:9 |
-| `Overflow` | class | src/Layout/Overflow.php:6 |
+| `Overflow` | enum | src/Layout/Overflow.php:6 |
 | `RenderAppBar` | class | src/Layout/RenderAppBar.php:13 |
 | `RenderBox` | class | src/Layout/RenderBox.php:13 |
 | `RenderBox::overflow()` | method | src/Layout/RenderBox.php:485 |
@@ -235,8 +235,8 @@
 | `RenderText` | class | src/Layout/RenderText.php:16 |
 | `RenderTextField` | class | src/Layout/RenderTextField.php:20 |
 | `RenderToggle` | class | src/Layout/RenderToggle.php:16 |
-| `StackAlign` | class | src/Layout/StackAlign.php:6 |
-| `StackFit` | class | src/Layout/StackFit.php:6 |
+| `StackAlign` | enum | src/Layout/StackAlign.php:6 |
+| `StackFit` | enum | src/Layout/StackFit.php:6 |
 
 ### @internal（框架内部） · 19
 
@@ -271,8 +271,8 @@
 | `CategoryLogger` | class | src/Logging/CategoryLogger.php:6 |
 | `Log` | class | src/Logging/Log.php:8 |
 | `LogEntry` | class | src/Logging/LogEntry.php:6 |
-| `LogFormatter` | class | src/Logging/LogFormatter.php:6 |
-| `LogSink` | class | src/Logging/LogSink.php:6 |
+| `LogFormatter` | interface | src/Logging/LogFormatter.php:6 |
+| `LogSink` | interface | src/Logging/LogSink.php:6 |
 | `PatternFormatter` | class | src/Logging/PatternFormatter.php:8 |
 | `RingSink` | class | src/Logging/RingSink.php:8 |
 | `StderrSink` | class | src/Logging/StderrSink.php:6 |
@@ -292,16 +292,16 @@
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
-| `Clipboard` | class | src/Platform/Clipboard.php:6 |
-| `Dialog` | class | src/Platform/Dialog.php:6 |
-| `InputSource` | class | src/Platform/InputSource.php:8 |
-| `Platform` | class | src/Platform/Platform.php:6 |
-| `Screen` | class | src/Platform/Screen.php:9 |
-| `SurfaceProvider` | class | src/Platform/SurfaceProvider.php:8 |
-| `TimerHost` | class | src/Platform/TimerHost.php:6 |
-| `Tray` | class | src/Platform/Tray.php:6 |
+| `Clipboard` | interface | src/Platform/Clipboard.php:6 |
+| `Dialog` | interface | src/Platform/Dialog.php:6 |
+| `InputSource` | interface | src/Platform/InputSource.php:8 |
+| `Platform` | interface | src/Platform/Platform.php:6 |
+| `Screen` | interface | src/Platform/Screen.php:9 |
+| `SurfaceProvider` | interface | src/Platform/SurfaceProvider.php:8 |
+| `TimerHost` | interface | src/Platform/TimerHost.php:6 |
+| `Tray` | interface | src/Platform/Tray.php:6 |
 | `Win32Platform` | class | src/Platform/Win32/Win32Platform.php:28 |
-| `WindowHost` | class | src/Platform/WindowHost.php:11 |
+| `WindowHost` | interface | src/Platform/WindowHost.php:11 |
 | `WindowHost::setCursor()` | method | src/Platform/WindowHost.php:102 |
 | `WindowHost::pushSemantics()` | method | src/Platform/WindowHost.php:114 |
 
@@ -327,27 +327,27 @@
 | 符号 | 种类 | 位置 |
 |---|---|---|
 | `BoxStyle` | class | src/Rendering/BoxStyle.php:6 |
-| `Canvas` | class | src/Rendering/Canvas.php:9 |
+| `Canvas` | interface | src/Rendering/Canvas.php:9 |
 | `CanvasCapabilities` | class | src/Rendering/CanvasCapabilities.php:8 |
 | `Color` | class | src/Rendering/Color.php:8 |
-| `ColorToken` | class | src/Rendering/ColorToken.php:8 |
+| `ColorToken` | enum | src/Rendering/ColorToken.php:8 |
 | `DashPattern` | class | src/Rendering/DashPattern.php:8 |
 | `DisplayList` | class | src/Rendering/DisplayList.php:8 |
 | `DividerStyle` | class | src/Rendering/DividerStyle.php:6 |
-| `GpuContext` | class | src/Rendering/GpuContext.php:7 |
+| `GpuContext` | interface | src/Rendering/GpuContext.php:7 |
 | `Gradient` | class | src/Rendering/Gradient.php:8 |
 | `ImageHandle` | class | src/Rendering/ImageHandle.php:8 |
 | `ImageLoader` | class | src/Rendering/ImageLoader.php:8 |
-| `MetricToken` | class | src/Rendering/MetricToken.php:6 |
+| `MetricToken` | enum | src/Rendering/MetricToken.php:6 |
 | `Modifier` | class | src/Rendering/Modifier.php:11 |
 | `Paint` | class | src/Rendering/Paint.php:8 |
-| `PaintStyle` | class | src/Rendering/PaintStyle.php:6 |
+| `PaintStyle` | enum | src/Rendering/PaintStyle.php:6 |
 | `Path` | class | src/Rendering/Path.php:8 |
 | `PngDecoder` | class | src/Rendering/PngDecoder.php:8 |
 | `ProgressStyle` | class | src/Rendering/ProgressStyle.php:6 |
 | `RasterCanvas` | class | src/Rendering/RasterCanvas.php:12 |
 | `RecordingCanvas` | class | src/Rendering/RecordingCanvas.php:9 |
-| `RenderSurface` | class | src/Rendering/RenderSurface.php:7 |
+| `RenderSurface` | interface | src/Rendering/RenderSurface.php:7 |
 | `SegmentedStyle` | class | src/Rendering/SegmentedStyle.php:6 |
 | `Shadow` | class | src/Rendering/Shadow.php:9 |
 | `SkiaCanvas` | class | src/Rendering/SkiaCanvas.php:34 |
@@ -394,7 +394,7 @@
 | `SubjectBuilder::make()` | method | src/State/SubjectBuilder.php:50 |
 | `SubjectBuilder::select()` | method | src/State/SubjectBuilder.php:63 |
 | `SubjectBuilder::builder()` | method | src/State/SubjectBuilder.php:79 |
-| `SubscribingWidget` | class | src/State/SubscribingWidget.php:6 |
+| `SubscribingWidget` | interface | src/State/SubscribingWidget.php:6 |
 | `Subscription` | class | src/State/Subscription.php:6 |
 
 ### @internal（框架内部） · 11
@@ -424,25 +424,25 @@
 | `DeterministicFontManager` | class | src/Text/DeterministicFontManager.php:8 |
 | `DeterministicMetricsProvider` | class | src/Text/DeterministicMetricsProvider.php:8 |
 | `DeterministicShaper` | class | src/Text/DeterministicShaper.php:6 |
-| `FontCollection` | class | src/Text/FontCollection.php:6 |
-| `FontFace` | class | src/Text/FontFace.php:6 |
+| `FontCollection` | interface | src/Text/FontCollection.php:6 |
+| `FontFace` | interface | src/Text/FontFace.php:6 |
 | `FontFamily` | class | src/Text/FontFamily.php:6 |
 | `FontLocator` | class | src/Text/FontLocator.php:6 |
-| `FontManager` | class | src/Text/FontManager.php:6 |
+| `FontManager` | interface | src/Text/FontManager.php:6 |
 | `FontMetrics` | class | src/Text/FontMetrics.php:6 |
-| `FontSlant` | class | src/Text/FontSlant.php:6 |
-| `FontWeight` | class | src/Text/FontWeight.php:6 |
+| `FontSlant` | enum | src/Text/FontSlant.php:6 |
+| `FontWeight` | enum | src/Text/FontWeight.php:6 |
 | `Glyph` | class | src/Text/Glyph.php:6 |
 | `GlyphBitmap` | class | src/Text/GlyphBitmap.php:6 |
 | `GlyphRun` | class | src/Text/GlyphRun.php:6 |
 | `NotdefFontFace` | class | src/Text/NotdefFontFace.php:6 |
 | `Paragraph` | class | src/Text/Paragraph.php:8 |
-| `TextAlign` | class | src/Text/TextAlign.php:6 |
-| `TextInputClient` | class | src/Text/TextInputClient.php:8 |
+| `TextAlign` | enum | src/Text/TextAlign.php:6 |
+| `TextInputClient` | interface | src/Text/TextInputClient.php:8 |
 | `TextLayout` | class | src/Text/TextLayout.php:9 |
 | `TextLine` | class | src/Text/TextLine.php:6 |
-| `TextMetricsProvider` | class | src/Text/TextMetricsProvider.php:8 |
-| `TextShaper` | class | src/Text/TextShaper.php:6 |
+| `TextMetricsProvider` | interface | src/Text/TextMetricsProvider.php:8 |
+| `TextShaper` | interface | src/Text/TextShaper.php:6 |
 | `TextSpan` | class | src/Text/TextSpan.php:6 |
 | `TextStyle` | class | src/Text/TextStyle.php:6 |
 | `TtfFace` | class | src/Text/TtfFace.php:8 |
@@ -463,13 +463,13 @@
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
-| `SystemTheme` | class | src/Theme/SystemTheme.php:6 |
+| `SystemTheme` | enum | src/Theme/SystemTheme.php:6 |
 | `ThemeData` | class | src/Theme/ThemeData.php:11 |
 | `ThemeScope` | class | src/Theme/ThemeScope.php:11 |
 
 ## Widget 层
 
-### @api（应用可读面） · 119
+### @api（应用可读面） · 120
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -479,7 +479,7 @@
 | `BoxWidget` | class | src/Widget/BoxWidget.php:9 |
 | `BuildContext` | class | src/Widget/BuildContext.php:13 |
 | `Button` | class | src/Widget/Button.php:17 |
-| `ButtonVariant` | class | src/Widget/ButtonVariant.php:6 |
+| `ButtonVariant` | enum | src/Widget/ButtonVariant.php:6 |
 | `Card` | class | src/Widget/Card.php:11 |
 | `Center` | class | src/Widget/Center.php:9 |
 | `Checkbox` | class | src/Widget/Checkbox.php:9 |
@@ -494,6 +494,7 @@
 | `Draggable` | class | src/Widget/Drag/Draggable.php:8 |
 | `DragTarget` | class | src/Widget/Drag/DragTarget.php:6 |
 | `Each` | class | src/Widget/Each.php:9 |
+| `EditableText` | interface | src/Widget/EditableText.php:9 |
 | `Element` | class | src/Widget/Element.php:9 |
 | `ErrorBoundary` | class | src/Widget/ErrorBoundary.php:9 |
 | `ErrorBoundaryElement` | class | src/Widget/ErrorBoundaryElement.php:10 |
@@ -528,7 +529,7 @@
 | `RenderBoxWidget` | class | src/Widget/RenderBoxWidget.php:8 |
 | `RichText` | class | src/Widget/RichText.php:14 |
 | `Row` | class | src/Widget/Row.php:6 |
-| `Scrollable` | class | src/Widget/Scrollable.php:8 |
+| `Scrollable` | interface | src/Widget/Scrollable.php:8 |
 | `ScrollView` | class | src/Widget/ScrollView.php:8 |
 | `ScrollViewState` | class | src/Widget/ScrollViewState.php:10 |
 | `Segment` | class | src/Widget/Segment.php:14 |
