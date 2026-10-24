@@ -22,10 +22,10 @@
 | State | 9 | 11 |
 | Text | 29 | 3 |
 | Theme | 3 | 0 |
-| Widget | 120 | 158 |
-| **合计** | **334** | **241** |
+| Widget | 121 | 158 |
+| **合计** | **335** | **241** |
 
-覆盖 270 个文件 · 描述性提及 15 处（grep 口径的污染源，不计入）
+覆盖 271 个文件 · 描述性提及 15 处（grep 口径的污染源，不计入）
 
 ## App 层
 
@@ -45,17 +45,17 @@
 | `Application::overlays()` | method | src/App/Application.php:1034 |
 | `Application::showModal()` | method | src/App/Application.php:1065 |
 | `Application::closeModal()` | method | src/App/Application.php:1101 |
-| `Application::onSystemThemeChanged()` | method | src/App/Application.php:1789 |
-| `Application::frame()` | method | src/App/Application.php:1831 |
-| `Application::repaintForResize()` | method | src/App/Application.php:2024 |
-| `Application::after()` | method | src/App/Application.php:2071 |
-| `Application::wantsFrame()` | method | src/App/Application.php:2143 |
-| `Application::submitSliced()` | method | src/App/Application.php:2502 |
-| `Application::io()` | method | src/App/Application.php:2591 |
-| `Application::capturePointer()` | method | src/App/Application.php:2634 |
-| `Application::releasePointer()` | method | src/App/Application.php:2654 |
-| `Application::dispatchInput()` | method | src/App/Application.php:2670 |
-| `Application::dispatch()` | method | src/App/Application.php:3545 |
+| `Application::onSystemThemeChanged()` | method | src/App/Application.php:1781 |
+| `Application::frame()` | method | src/App/Application.php:1823 |
+| `Application::repaintForResize()` | method | src/App/Application.php:2016 |
+| `Application::after()` | method | src/App/Application.php:2063 |
+| `Application::wantsFrame()` | method | src/App/Application.php:2135 |
+| `Application::submitSliced()` | method | src/App/Application.php:2492 |
+| `Application::io()` | method | src/App/Application.php:2581 |
+| `Application::capturePointer()` | method | src/App/Application.php:2624 |
+| `Application::releasePointer()` | method | src/App/Application.php:2644 |
+| `Application::dispatchInput()` | method | src/App/Application.php:2660 |
+| `Application::dispatch()` | method | src/App/Application.php:3532 |
 | `Frame` | class | src/App/Frame.php:17 |
 | `Frame::run()` | method | src/App/Frame.php:79 |
 | `FrameClock` | class | src/App/FrameClock.php:10 |
@@ -94,19 +94,19 @@
 | `Application::uiThreadId()` | method | src/App/Application.php:665 |
 | `Application::assertUiThread()` | method | src/App/Application.php:675 |
 | `Application::syncPanelSignatures()` | method | src/App/Application.php:1289 |
-| `Application::semanticsMode()` | method | src/App/Application.php:2394 |
-| `Application::slicedCount()` | method | src/App/Application.php:2585 |
-| `Application::captureNode()` | method | src/App/Application.php:2664 |
-| `Application::scrollThumbAt()` | method | src/App/Application.php:2858 |
-| `Application::cancelActiveGestures()` | method | src/App/Application.php:3419 |
-| `Application::beginGestureArena()` | method | src/App/Application.php:3457 |
-| `Application::activateFocused()` | method | src/App/Application.php:3599 |
-| `Application::register()` | method | src/App/Application.php:3768 |
-| `Application::beginDrag()` | method | src/App/Application.php:3791 |
-| `Application::updateDrag()` | method | src/App/Application.php:3801 |
-| `Application::dropDrag()` | method | src/App/Application.php:3819 |
-| `Application::cancelDrag()` | method | src/App/Application.php:3829 |
-| `Application::rootBox()` | method | src/App/Application.php:3835 |
+| `Application::semanticsMode()` | method | src/App/Application.php:2386 |
+| `Application::slicedCount()` | method | src/App/Application.php:2575 |
+| `Application::captureNode()` | method | src/App/Application.php:2654 |
+| `Application::scrollThumbAt()` | method | src/App/Application.php:2848 |
+| `Application::cancelActiveGestures()` | method | src/App/Application.php:3406 |
+| `Application::beginGestureArena()` | method | src/App/Application.php:3444 |
+| `Application::activateFocused()` | method | src/App/Application.php:3585 |
+| `Application::register()` | method | src/App/Application.php:3754 |
+| `Application::beginDrag()` | method | src/App/Application.php:3777 |
+| `Application::updateDrag()` | method | src/App/Application.php:3787 |
+| `Application::dropDrag()` | method | src/App/Application.php:3805 |
+| `Application::cancelDrag()` | method | src/App/Application.php:3815 |
+| `Application::rootBox()` | method | src/App/Application.php:3821 |
 | `Completion` | class | src/App/Completion.php:6 |
 | `DragController` | class | src/App/DragController.php:10 |
 | `FocusManager` | class | src/App/FocusManager.php:17 |
@@ -469,7 +469,7 @@
 
 ## Widget 层
 
-### @api（应用可读面） · 120
+### @api（应用可读面） · 121
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -559,6 +559,7 @@
 | `StatefulWidget::createRenderObjectFromState()` | method | src/Widget/StatefulWidget.php:27 |
 | `StatelessElement` | class | src/Widget/StatelessElement.php:6 |
 | `StatelessWidget` | class | src/Widget/StatelessWidget.php:6 |
+| `States` | class | src/Widget/States.php:6 |
 | `Text` | class | src/Widget/Text.php:10 |
 | `TextField` | class | src/Widget/TextField.php:9 |
 | `TextFieldState` | class | src/Widget/TextFieldState.php:14 |

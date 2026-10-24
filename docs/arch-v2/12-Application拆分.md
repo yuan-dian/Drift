@@ -88,11 +88,38 @@ api-surface diff = **+1 @api（EditableText）/ 0 移除**（纯增量）。
 
 ---
 
+## 4b. 第二步已完成：States::of + focusedState（2026-10-24）
+
+**版图**：App 层 8 处分两组：
+- **A 组 3 处**（`imeCaretRect` / `editingText` / `textSelectBox`）——「焦点
+  ⇒ State ⇒ EditableText」焦点穿透
+- **B 组 5 处**（`tickSubtree` / `scrollThumbAt` / `scrollAt` / `revealFocused` /
+  `bubble`）—— 子树 / 父链遍历中逐个穿透
+
+**改法**（三处新知识归位，不是把 instanceof 换个写法）：
+1. **新建 `src/Widget/States.php`** —— 「Element 有没有 State」的通用穿透，
+   单一来源。`FocusManager` 原私有 `stateOf()` 同源，删除并改调本类。
+2. **`FocusManager::focusedState(): ?State`**（public）—— 焦点穿透的唯一出口，
+   与 `focused()` 并列（调用方要的是"焦点上的 State"而非 Element 本身）。
+3. **`Application::nearestScrollable(?Element): ?Scrollable`**（private）——
+   滚动路由三处（滚轮 / 键盘可达性 / thumb 命中）共用「最近的可滚动祖先」口径；
+   要盒经 `State::element()` 回 Element 再 `findBox()`，穿透知识与盒查找不混。
+
+**顺带消重**：`imeCaretRect()` 前 4 行与 `editingText()` 完全同构 ⇒ 改调
+`editingText()`（判据单一来源，不可能一个放行另一个拦住）。
+
+**验收**：smoke 1392/0（含变异测试：`States::of` 打挂 ⇒ smoke 立即抛异常）、
+lint selftest 0/0、docref 68/0、api-surface diff = **+1 @api（States）/ 0 移除**。
+App 层 `instanceof StatefulElement` **清零**（剩 Element 树自身 3 处 +
+ComboBox 控件内部 1 处，均非 App 层认知）。
+
+---
+
 ## 5. 剩余路线（每步的验收）
 
 | 步 | 动作 | 验收 |
 |---|---|---|
-| 2 | 8 处 `instanceof StatefulElement` 收进 `FocusManager::focusedState()`（焦点穿透知识归位） | smoke 绿 + App 层该 instanceof 归零 |
+| 2 | ~~8 处 `instanceof StatefulElement` 收进 `FocusManager::focusedState()`~~（✅ 2026-10-24，见 §4b） | smoke 绿 + App 层该 instanceof 归零 |
 | 3 | `Scrollable` 已合规；`RenderScrollView` 5 处收成 `Scrollable`（盒侧接口） | 同上 |
 | 4 | 拆 `TextEditingBridge`（最小片，验证装配模式） | smoke 绿 + Application 行数 −250 |
 | 5 | 拆 `OverlayHost` | 同上 |

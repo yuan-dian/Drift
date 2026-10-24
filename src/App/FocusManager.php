@@ -11,8 +11,8 @@ use Drift\Input\PointerEvent;
 use Drift\Layout\RenderBox;
 use Drift\Widget\Element;
 use Drift\Widget\State;
-use Drift\Widget\StatefulElement;
 use Drift\Widget\EditableText;
+use Drift\Widget\States;
 
 /**
  * **焦点链 + 输入路由的最小实现**（§9.1 路由链的 ②③ 环与命中测试）。
@@ -185,6 +185,18 @@ final class FocusManager
         return $this->focused;
     }
 
+    /**
+     * 焦点节点的 `State`（S1 第 2 步：焦点穿透知识的**唯一出口**）。
+     *
+     * ★ 调用方（IME 光标 / 编辑态门控）要的都是"焦点上的 State"，不是
+     *   "焦点 Element 本身"；让它们各自 `focused()` + `instanceof StatefulElement`
+     *   一遍，就是本步要收编的那几处认知。
+     */
+    public function focusedState(): ?State
+    {
+        return States::of($this->focused);
+    }
+
     /** 焦点落在一个节点上（切走旧焦点、进入新焦点，编辑态跟着走） */
     public function focus(Element $element): void
     {
@@ -267,7 +279,7 @@ final class FocusManager
             break;   // 最近的声明者没吃掉 ⇒ 不再往上找（更远的祖先更不具体）
         }
 
-        $state = $this->stateOf($this->focused);
+        $state = $this->focusedState();
 
         if ($state instanceof EditableText) {
             return $state->handleKey($event);
@@ -516,17 +528,12 @@ final class FocusManager
 
     private function enter(?Element $element): void
     {
-        $this->stateOf($element)?->didChangeFocus(true);
+        States::of($element)?->didChangeFocus(true);
     }
 
     private function leave(?Element $element): void
     {
-        $this->stateOf($element)?->didChangeFocus(false);
-    }
-
-    private function stateOf(?Element $element): ?State
-    {
-        return $element instanceof StatefulElement ? $element->state() : null;
+        States::of($element)?->didChangeFocus(false);
     }
 
     /** 沿父链找最近的悬停声明者（子声明覆盖祖先 —— 与光标同判据） */

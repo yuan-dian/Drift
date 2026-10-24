@@ -49,7 +49,7 @@ use Drift\Widget\Element;
 use Drift\Widget\Menu\Menu;
 use Drift\Widget\Modal;
 use Drift\Widget\State;
-use Drift\Widget\StatefulElement;
+use Drift\Widget\States;
 use Drift\Widget\Widget;
 use Drift\Widget\SemanticsBuilder;
 use Drift\Widget\Segment;
@@ -1589,17 +1589,14 @@ abstract class Application
      */
     public function imeCaretRect(): ?array
     {
-        $focused = $this->focus?->focused();
-        if (!$focused instanceof StatefulElement) {
+        // ★ 与 `editingText()` 同一个判据、同一份实现（焦点穿透 + `EditableText`
+        //   + `isEditing`）—— 复制一份就会有"两个门控行为不同"的那天。
+        $state = $this->editingText();
+        if ($state === null) {
             return null;
         }
 
-        $state = $focused->state();
-        if (!$state instanceof EditableText || !$state->isEditing()) {
-            return null;
-        }
-
-        $box = $focused->effectiveBox();
+        $box = $this->focus?->focused()?->effectiveBox();
         if ($box === null) {
             return null;
         }
@@ -1630,18 +1627,13 @@ abstract class Application
     /**
      * 焦点里**在编辑**的输入框（§9.1 第 ③ 环与指针框选共用的门控）。
      *
-     * ★ 与 `imeCaretRect()` 同一个判据：焦点链上的 `StatefulElement` 且
-     *   `EditableText::isEditing()`。编辑命令与框选起手走同一个助手
+     * ★ 判据只此一份：`FocusManager::focusedState()` 穿透 + `EditableText`
+     *   + `isEditing()`。编辑命令、框选起手与 `imeCaretRect()` 全都走这里
      *   ⇒ 不可能一个放行、另一个拦住。
      */
     private function editingText(): ?EditableText
     {
-        $focused = $this->focus?->focused();
-        if (!$focused instanceof StatefulElement) {
-            return null;
-        }
-
-        $state = $focused->state();
+        $state = $this->focus?->focusedState();
         if (!$state instanceof EditableText || !$state->isEditing()) {
             return null;
         }
@@ -1659,7 +1651,7 @@ abstract class Application
     private function textSelectBox(EditableText $state): ?RenderTextField
     {
         $focused = $this->focus?->focused();
-        if (!$focused instanceof StatefulElement || $focused->state() !== $state) {
+        if (States::of($focused) !== $state) {
             return null;
         }
 
@@ -2425,11 +2417,9 @@ abstract class Application
     {
         $busy = false;
 
-        if ($element instanceof StatefulElement) {
-            $state = $element->state();
-            if ($state !== null && $state->tickFrameStamped($timestampMs, $this->frameSerial)) {
-                $busy = true;
-            }
+        $state = States::of($element);
+        if ($state !== null && $state->tickFrameStamped($timestampMs, $this->frameSerial)) {
+            $busy = true;
         }
 
         $element->visitChildren(function (Element $child) use ($timestampMs, &$busy): void {
@@ -2880,43 +2870,38 @@ abstract class Application
         $hit = $focus->hitTest($x, $y, $root);
         $element = $hit === null ? null : $focus->elementAt($root, $hit);
 
-        for ($node = $element; $node !== null; $node = $node->parent()) {
-            if (!$node instanceof StatefulElement) {
-                continue;
-            }
-
-            $state = $node->state();
-            if (!$state instanceof Scrollable) {
-                continue;
-            }
-
-            $box = $node->findBox(static fn(RenderBox $b): bool => $b instanceof RenderScrollView);
-            if (!$box instanceof RenderScrollView) {
-                return null;
-            }
-
-            $bar = $box->thumbRect();
-            if ($bar === null) {
-                return null;   // 内容不溢出：没有条可拖
-            }
-
-            [$originX, $originY] = self::absoluteOrigin($box);
-            $left = $originX + $bar->left - 2.0;
-            $top = $originY + $bar->top - 2.0;
-
-            if ($x < $left || $x > $left + $bar->width + 4.0
-                || $y < $top || $y > $top + $bar->height + 4.0) {
-                return null;
-            }
-
-            return [
-                'state' => $state,
-                'box' => $box,
-                'last' => $box->isVertical() ? $y : $x,
-            ];
+        // ★ 盒失败（有 `Scrollable` 却没有 `RenderScrollView`）⇒ `null` 而非
+        //   继续往上找：视觉上这里没有条，事件就该落到别处，而不是隔着一个
+        //   不是滚动器的祖先去抓外层的条。
+        $state = $this->nearestScrollable($element);
+        if ($state === null) {
+            return null;
         }
 
-        return null;
+        $box = $state->element()?->findBox(static fn(RenderBox $b): bool => $b instanceof RenderScrollView);
+        if (!$box instanceof RenderScrollView) {
+            return null;
+        }
+
+        $bar = $box->thumbRect();
+        if ($bar === null) {
+            return null;   // 内容不溢出：没有条可拖
+        }
+
+        [$originX, $originY] = self::absoluteOrigin($box);
+        $left = $originX + $bar->left - 2.0;
+        $top = $originY + $bar->top - 2.0;
+
+        if ($x < $left || $x > $left + $bar->width + 4.0
+            || $y < $top || $y > $top + $bar->height + 4.0) {
+            return null;
+        }
+
+        return [
+            'state' => $state,
+            'box' => $box,
+            'last' => $box->isVertical() ? $y : $x,
+        ];
     }
 
     /**
@@ -2953,20 +2938,30 @@ abstract class Application
         $this->thumbDrag['last'] = $now;
     }
 
-    private function scrollAt(?Element $element, float $delta): void
+    /**
+     * 沿父链（含起点）找**最近**的可滚动视口（S1 第 2 步：`Scrollable`
+     * 穿透知识的唯一出口）。
+     *
+     * ★ 滚轮路由（`scrollAt`）、键盘可达性（`revealFocused`）、thumb 命中
+     *   （`scrollThumbAt`）三处共用同一口径：只找最近的，不逐层上报（`04` §6.2）。
+     * ★ 要盒的调用方经 `State::element()` 回 Element 再 `findBox()` ——
+     *   穿透知识与盒查找不混在一处。
+     */
+    private function nearestScrollable(?Element $from): ?Scrollable
     {
-        for ($node = $element; $node !== null; $node = $node->parent()) {
-            if (!$node instanceof StatefulElement) {
-                continue;
-            }
-
-            $state = $node->state();
+        for ($node = $from; $node !== null; $node = $node->parent()) {
+            $state = States::of($node);
             if ($state instanceof Scrollable) {
-                $state->scrollBy($delta);
-
-                return;
+                return $state;
             }
         }
+
+        return null;
+    }
+
+    private function scrollAt(?Element $element, float $delta): void
+    {
+        $this->nearestScrollable($element)?->scrollBy($delta);
     }
 
     /**
@@ -2996,36 +2991,28 @@ abstract class Application
             return;
         }
 
-        for ($node = $focused->parent(); $node !== null; $node = $node->parent()) {
-            if (!$node instanceof StatefulElement) {
-                continue;
-            }
-
-            $state = $node->state();
-            if (!$state instanceof Scrollable) {
-                continue;
-            }
-
-            $scroll = $node->findBox(static fn(RenderBox $b): bool => $b instanceof RenderScrollView);
-            if (!$scroll instanceof RenderScrollView || $scroll->size() === null) {
-                return;
-            }
-
-            [$scrollX, $scrollY] = self::absoluteOrigin($scroll);
-            [$boxX, $boxY] = self::absoluteOrigin($box);
-            $dx = $boxX - $scrollX;
-            $dy = $boxY - $scrollY;
-            $offset = $scroll->appliedOffset();
-
-            // ★ 偏移只在**主轴**上加回；交叉轴上的绝对差就是内容坐标。
-            $target = $scroll->isVertical()
-                ? new Rect($dx, $dy + $offset, $size->width, $size->height)
-                : new Rect($dx + $offset, $dy, $size->width, $size->height);
-
-            $state->ensureVisible($target);
-
+        $state = $this->nearestScrollable($focused->parent());
+        if ($state === null) {
             return;
         }
+
+        $scroll = $state->element()?->findBox(static fn(RenderBox $b): bool => $b instanceof RenderScrollView);
+        if (!$scroll instanceof RenderScrollView || $scroll->size() === null) {
+            return;
+        }
+
+        [$scrollX, $scrollY] = self::absoluteOrigin($scroll);
+        [$boxX, $boxY] = self::absoluteOrigin($box);
+        $dx = $boxX - $scrollX;
+        $dy = $boxY - $scrollY;
+        $offset = $scroll->appliedOffset();
+
+        // ★ 偏移只在**主轴**上加回；交叉轴上的绝对差就是内容坐标。
+        $target = $scroll->isVertical()
+            ? new Rect($dx, $dy + $offset, $size->width, $size->height)
+            : new Rect($dx + $offset, $dy, $size->width, $size->height);
+
+        $state->ensureVisible($target);
     }
 
     /**
@@ -3581,8 +3568,7 @@ abstract class Application
     /** 深度优先找第一个接得的 `State`（第 ①② 环） */
     private function bubble(Element $element, string $name, CommandArg $arg): bool
     {
-        if ($element instanceof StatefulElement
-            && $element->state()?->handleCommand($name, $arg) === true) {
+        if (States::of($element)?->handleCommand($name, $arg) === true) {
             return true;
         }
 
