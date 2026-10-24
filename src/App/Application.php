@@ -1063,29 +1063,6 @@ abstract class Application
     }
 
     /**
-     * 栈顶条目的 Element（测试 / devtools）。
-     *
-     * @deprecated 用 `overlays()->top()?->element` —— 本方法只是旧槽位的投影，
-     *             "栈顶"在有模态压着时返回的是模态的元素，名字会骗人。
-     */
-    public function menuElement(): ?Element
-    {
-        return $this->overlays->top()?->element;
-    }
-
-    /**
-     * 栈顶条目的落点（夹紧后；测试 / devtools）。
-     *
-     * @deprecated 用 `overlays()->top()` 的 `x`/`y`（同上：栈顶 ≠ 菜单）。
-     */
-    public function menuOrigin(): array
-    {
-        $top = $this->overlays->top();
-
-        return [$top?->x ?? 0.0, $top?->y ?? 0.0];
-    }
-
-    /**
      * 打开模态（§A.3.7 / §12.1 第 6 条）—— 与菜单**共用**同一个浮层槽位。
      *
      * ```php

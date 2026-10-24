@@ -70,7 +70,7 @@ final class MenuApplication extends Application
      */
     public function panelScrollView(): ?RenderScrollView
     {
-        $box = $this->menuElement()?->effectiveBox();
+        $box = $this->overlays()->top()?->element?->effectiveBox();
         if ($box === null) {
             return null;
         }

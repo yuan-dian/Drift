@@ -7531,7 +7531,7 @@ check(
     '浮层 · 锚点 = 标题 Element（菜单钉在被点的控件旁）',
     $menuApp->anchor !== null && $menuApp->anchor->widget() instanceof Menu,
 );
-$panelBox = $menuApp->menuElement()?->effectiveBox();
+$panelBox = $menuApp->overlays()->top()?->element?->effectiveBox();
 check('浮层 · 面板盒是 RenderPopupPanel（与根树同构：一个 Widget 一个 Element）', $panelBox instanceof RenderPopupPanel);
 
 // —— 渲染：主树先画、浮层后画（顺序即层叠）
@@ -7544,7 +7544,8 @@ check(
 );
 
 // —— 落位：面板左上角 = 锚点左下；夹进客户区（按**面板**矩形算）
-[$mx, $my] = $menuApp->menuOrigin();
+$menuTop = $menuApp->overlays()->top();
+[$mx, $my] = [$menuTop?->x ?? 0.0, $menuTop?->y ?? 0.0];
 $titleBox = $menuApp->anchor?->effectiveBox();
 $titleBottom = $titleBox === null ? 0.0 : boxOrigin($titleBox)[1] + $titleBox->size()->height;
 $panelInset = $panelBox instanceof RenderPopupPanel ? $panelBox->panelRect()->left : 0.0;
@@ -7607,9 +7608,10 @@ check('浮层 · ESC ⇒ 关（语义 #3：在 dispatchKey 之前拦，不被焦
 //     行为。本用例要测的是"点空白不关"，故移到面板右下 padding
 //     （项区右界 x=150、下界 y≈70.6，取 (w−6, h−6) 必空白）。
 $menuApp->showMenu($fileMenu->panel());
-$menuApp->frame(32.0, $tight320); // 走一帧 ⇒ 落位算过（menuOrigin 才准）
-[$mx2, $my2] = $menuApp->menuOrigin();
-$panelBox2 = $menuApp->menuElement()?->effectiveBox();
+$menuApp->frame(32.0, $tight320); // 走一帧 ⇒ 落位算过（overlays()->top() 才准）
+$menuTop2 = $menuApp->overlays()->top();
+[$mx2, $my2] = [$menuTop2?->x ?? 0.0, $menuTop2?->y ?? 0.0];
+$panelBox2 = $menuApp->overlays()->top()?->element?->effectiveBox();
 $menuApp->dispatchInput(PointerEvent::down(
     $mx2 + ($panelBox2?->size()?->width ?? 160.0) - 6.0,
     $my2 + ($panelBox2?->size()?->height ?? 80.0) - 6.0,
@@ -7622,12 +7624,12 @@ $ptrMenuApp = new MenuApplication();
 $ptrMenuApp->attach($menuSurface, BoxConstraints::tight(new Size(320.0, 240.0)));
 $ptrMenuApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
 $ptrMenuApp->dispatchInput(KeyEvent::down(KeyChord::enter()));   // 键盘打开「文件」菜单
-$ptrMenuApp->frame(16.0, $tight320);                             // 走一帧 ⇒ 浮层落位（menuOrigin 才准、盒才有尺寸）
+$ptrMenuApp->frame(16.0, $tight320);                             // 走一帧 ⇒ 浮层落位（overlays()->top() 才准、盒才有尺寸）
 check('浮层 · 菜单已开（指针项激活用例前置）', $ptrMenuApp->isMenuOpen());
-$itemEl = findElement($ptrMenuApp->menuElement(), fn (Element $e): bool => $e->widget() instanceof MenuItem);
+$itemEl = findElement($ptrMenuApp->overlays()->top()?->element, fn (Element $e): bool => $e->widget() instanceof MenuItem);
 $itemBox = $itemEl?->effectiveBox();
 // ★ `boxOrigin()` 现在给**绝对**原点（委派 `absoluteOrigin()`，浮层根会加自己的
-//   落点）⇒ 再叠一次 `menuOrigin()` 就是加两遍，点会落到面板外、静默不生效
+//   落点）⇒ 再叠一次 `overlays()->top()` 就是加两遍，点会落到面板外、静默不生效
 //   （2026-10-22 实测：`seen=` 空而 `open=yes`）。
 [$ibx, $iby] = $itemBox === null ? [0.0, 0.0] : boxOrigin($itemBox);
 $ibw = $itemBox?->size()?->width ?? 0.0;
@@ -7749,7 +7751,7 @@ $menuCapTight = BoxConstraints::tight(new Size(320.0, 900.0));
 $menuCapApp->showMenu($menuCapApp->longMenu()->panel());
 $menuCapApp->frame(16.0, $menuCapTight);   // 走一帧 ⇒ 落位算过
 
-$menuCapPanel = $menuCapApp->menuElement()?->effectiveBox();
+$menuCapPanel = $menuCapApp->overlays()->top()?->element?->effectiveBox();
 $menuCapSv = $menuCapApp->panelScrollView();
 check(
     '菜单 · 长菜单（30 项）⇒ 面板高 = PANEL_MAX_HEIGHT（超长才滚）',
@@ -7879,8 +7881,8 @@ check(
 check(
     '菜单 · 滚完之后面板仍在、高度仍是上限',
     $menuCapApp->isMenuOpen()
-        && $menuCapApp->menuElement()?->effectiveBox()?->size() !== null
-        && abs($menuCapApp->menuElement()->effectiveBox()->size()->height - Menu::PANEL_MAX_HEIGHT) < 0.01,
+        && $menuCapApp->overlays()->top()?->element?->effectiveBox()?->size() !== null
+        && abs(($menuCapApp->overlays()->top()?->element?->effectiveBox()?->size()?->height ?? 0.0) - Menu::PANEL_MAX_HEIGHT) < 0.01,
 );
 $menuCapApp->dispatchInput(KeyEvent::down(KeyChord::escape()));
 
@@ -7889,7 +7891,7 @@ $menuShortApp = new MenuApplication();
 $menuShortApp->attach($menuCapSurface, BoxConstraints::tight(new Size(320.0, 900.0)));
 $menuShortApp->showMenu($menuShortApp->fileMenu()->panel());
 $menuShortApp->frame(16.0, $menuCapTight);
-$menuShortPanel = $menuShortApp->menuElement()?->effectiveBox();
+$menuShortPanel = $menuShortApp->overlays()->top()?->element?->effectiveBox();
 check(
     '菜单 · 反例：短菜单（3 项）⇒ 面板高 < 上限（**贴着内容**，不凭空撑高一截空白）',
     $menuShortPanel?->size() !== null
@@ -7922,10 +7924,10 @@ $modalApp->openConfirm();
 $modalApp->frame(16.0, $modalTight);
 check(
     '模态 · showModal ⇒ 打开（浮层槽位被占，但 isMenuOpen() 仍为假）',
-    $modalApp->isModalOpen() && $modalApp->menuElement() !== null && !$modalApp->isMenuOpen(),
+    $modalApp->isModalOpen() && $modalApp->overlays()->top()?->element !== null && !$modalApp->isMenuOpen(),
 );
 
-$modalBox = $modalApp->menuElement()?->effectiveBox();
+$modalBox = $modalApp->overlays()->top()?->element?->effectiveBox();
 check('模态 · 浮层盒是 RenderModalHost（遮罩 + 盖满住同一个盒）', $modalBox instanceof RenderModalHost);
 check(
     '模态 · 紧约束盖满客户区（不是自尺寸 —— 盖不满就"后面还能点"）',
@@ -7934,7 +7936,8 @@ check(
         && abs($modalBox->size()->height - 360.0) < 0.01,
     sprintf('实际 %.6g × %.6g', $modalBox?->size()?->width ?? -1.0, $modalBox?->size()?->height ?? -1.0),
 );
-check('模态 · 原点归零（模态不钉锚点）', $modalApp->menuOrigin() === [0.0, 0.0]);
+$modalTop = $modalApp->overlays()->top();
+check('模态 · 原点归零（模态不钉锚点）', $modalTop !== null && $modalTop->x === 0.0 && $modalTop->y === 0.0);
 
 // —— 面板：沿盒树找 PopupPanel（模态不自造 chrome，形体复用菜单那套）
 $modalPanel = null;
@@ -8010,7 +8013,7 @@ $modalApp->dispatchInput(KeyEvent::down(KeyChord::escape()));
 check('模态 · ESC ⇒ 关（dismissible 默认 true）', !$modalApp->isModalOpen());
 check(
     '模态 · 关后槽位清空 + 模态标记归零（不留脏状态）',
-    $modalApp->menuElement() === null && $modalApp->modal() === null && !$modalApp->isMenuOpen(),
+    $modalApp->overlays()->top()?->element === null && $modalApp->modal() === null && !$modalApp->isMenuOpen(),
 );
 $modalApp->closeModal();
 check('模态 · closeModal 幂等（没开再关一次不炸）', !$modalApp->isModalOpen());
@@ -8056,8 +8059,8 @@ check(
 $modalApp->openConfirm();
 $modalApp->frame(16.0, $modalTight);
 $modalApp->seen = [];
-$confirmEl = $modalApp->menuElement() === null ? null : findElement(
-    $modalApp->menuElement(),
+$confirmEl = $modalApp->overlays()->top()?->element === null ? null : findElement(
+    $modalApp->overlays()->top()?->element,
     fn (Element $e): bool => $e->widget() instanceof Button && $e->widget()->commandName() === 'modal.confirm',
 );
 $confirmBox = $confirmEl?->effectiveBox();
