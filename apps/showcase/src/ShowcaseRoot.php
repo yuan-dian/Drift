@@ -31,6 +31,7 @@ use App\Showcase\Pages\ComboBoxPage;
 use App\Showcase\Pages\CustomPaintPage;
 use App\Showcase\Pages\FeedbackPage;
 use App\Showcase\Pages\FormPage;
+use App\Showcase\Pages\GridPage;
 use App\Showcase\Pages\ImagePage;
 use App\Showcase\Pages\LayoutPage;
 use App\Showcase\Pages\ListPage;
@@ -143,6 +144,7 @@ final class ShowcaseState extends State
             ['通知 Snackbar', fn(): Widget => new SnackbarPage($this->notify)],
             ['下拉 Select', static fn(): Widget => new SelectPage()],
             ['可编辑 Combo', fn(): Widget => new ComboBoxPage($this->delay)],
+            ['网格 Grid', static fn(): Widget => new GridPage()],
         ];
     }
 
