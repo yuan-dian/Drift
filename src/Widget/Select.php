@@ -16,6 +16,10 @@ use Drift\Layout\FlexAlign;
  *     Option::make('上海市', '310000'),
  * ])->value($this->city)                       // 受控：值住应用的 State
  *   ->onChanged(fn(string $v) => $this->setState(fn() => $this->city = $v));
+ *
+ * // 短形式（2026-10-24）：键 = 值、值 = 显示名。DB / HTTP 拿来就是 `id => name`
+ * // 时不用再手写一遍 `array_map`。键是数字也照收（内部 `(string)` 收口）。
+ * Select::make(['110000' => '北京市', '310000' => '上海市'])->value($this->city);
  * ```
  *
  * ## 形状从哪来（为什么是组合，不是新渲染盒）
@@ -64,6 +68,11 @@ use Drift\Layout\FlexAlign;
  *   v1 用"有底有边的框 + 占位文字"表达可点。
  * - **可编辑（输入过滤）**：不在本类 —— 那是 `ComboBox`（2026-10-24 已建：
  *   `TextField` + 过滤浮层，与 `Select` 同一条"不写新渲染盒"的裁决）。
+ * - **远程数据三态**（正在加载 / 空 / 出错）：没有 —— 面板只会画选项行。现在能做
+ *   的是应用自己在 `overlayPanel` 工厂里触发取数（工厂在**开面板那一刻**被调），
+ *   但"正在加载"这一行**无处可放**（空数组只会得到一个空面板，与"没加载完"分不开）。
+ *   补的时候加 `loading()` / `emptyText()` 两个受控属性就够，**不需要新机制**
+ *   —— 取数走已有的 `Job` + `TaskHost`，`onDone` 里 `setState` 换选项表。
  * - **滚动**：有了 —— 面板内容套 `ScrollView` + `PopupPanel::maxHeight(260)`，
  *   **贴着内容还是滚动由实测自然高决定**（不是按条目数猜）。超过一屏仍建议应用
  *   自己做搜索 / 分页（几百项靠滚屏找仍然慢，且没有虚拟化）。
@@ -102,14 +111,18 @@ final class Select extends StatelessWidget
 
     private ?\Closure $onChanged = null;
 
-    /** @param list<Option> $options 选项表（空表 = 面板里一行都没有，不炸） */
+    /**
+     * @param list<Option>|array<array-key, string> $options 选项表。两种形态都过
+     *        `Option::normalize()`（映射形态 = 键是值、值是显示名），空表 ⇒ 面板
+     *        里一行都没有，不炸。
+     */
     public function __construct(array $options)
     {
         parent::__construct();
-        $this->options = $options;
+        $this->options = Option::normalize($options);
     }
 
-    /** @param list<Option> $options */
+    /** @param list<Option>|array<array-key, string> $options 见 `Option::normalize()` */
     public static function make(array $options): self
     {
         return new self($options);

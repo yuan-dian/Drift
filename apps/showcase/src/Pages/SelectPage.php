@@ -63,6 +63,8 @@ final class SelectState extends State
 
     private string $many = '';
 
+    private string $short = '';
+
     /** @return list<Option> 30 项（行高由主题定，这里不猜） */
     private static function manyOptions(): array
     {
@@ -129,6 +131,22 @@ final class SelectState extends State
             Text::make('打开后把光标移进面板，用滚轮往下翻 —— 第 30 项一开始在面板下沿之外，'
                 . '不限高就永远点不到它。')->caption(),
 
+            $this->sectionBar('⑤ 映射短形式 · 键 = 值、值 = 显示名（`Option::normalize()`，2026-10-24）'),
+            Card::make(Row::make()->spacing(12.0)->children([
+                // ★ 键故意用**数字串**：PHP 会把 `'110000'` 转成 `int 110000`，全靠
+                //   `Option::normalize()` 里的 `(string)` 收口才装得进 string 值域。
+                Select::make([
+                    '110000' => '北京市',
+                    '310000' => '上海市',
+                    '440100' => '广州市',
+                ])->value($this->short)->placeholder('请选城市')
+                    ->onChanged(fn(string $v) => $this->pick('short', $v)),
+                Text::make($this->short === '' ? '还没选' : '收到值：' . $this->short)->caption(),
+            ]))->paddingAll(12.0),
+            Text::make('DB / HTTP 拿来就是 `id => name` 时不用再手写 `array_map`。'
+                . '键是数字也照收（内部转回 string）。裸值（`[\'甲\', \'乙\']`）会 Fatal —— '
+                . 'PHP 里 `[0 => \'x\']` 与 `[\'x\']` 是同一个数组，"值 0"与"标签列表"分不开。')->caption(),
+
             $this->sectionBar('能力边界（如实记录）'),
             Text::make('① 方向键换值：没有 —— 面板只在**打开那一刻**建一次，选中高亮会停在'
                 . '旧值上 ⇒ 宁可不做，也不做一个会自相矛盾的。补齐要先让"面板随控件重建"。')->caption(),
@@ -152,6 +170,8 @@ final class SelectState extends State
                 $this->plain = $value;
             } elseif ($which === 'many') {
                 $this->many = $value;
+            } elseif ($which === 'short') {
+                $this->short = $value;
             } else {
                 $this->wide = $value;
             }

@@ -228,6 +228,7 @@ use Drift\Widget\AppBar;
 use Drift\Widget\BoxWidget;
 use Drift\Widget\Center;
 use Drift\Widget\Column;
+use Drift\Widget\ComboBox;
 use Drift\Widget\Image;
 use Drift\Widget\Dock;
 use Drift\Widget\Drag\Draggable;
@@ -443,6 +444,17 @@ if (str_starts_with($caseArg, '--case=')) {
     if ($case === 'cmdup') {
         // 同名注册两次 ⇒ 后一次静默覆盖前一次。上线后"点了没反应"且查不出为什么。
         CommandRouter::make()->on('a.b', new EchoCommands())->on('a.b', new EchoCommands());
+    }
+
+    if ($case === 'optbare') {
+        // 选项表给了裸值（`['甲','乙']`）⇒ 身份不明确。`[0 => 'x']` 与 `['x']` 在
+        // PHP 里是同一个数组，"值 0"与"标签列表"无法区分 ⇒ 猜就是替应用做决定。
+        Option::normalize(['甲', '乙']);
+    }
+
+    if ($case === 'optemptykey') {
+        // 空字符串键与 `value('')`（"未选"哨兵）语义冲突 ⇒ 必须响亮失败
+        Option::normalize(['' => '请选择']);
     }
 
     if ($case === 'taskerr') {
@@ -12987,6 +12999,67 @@ check(
     !$sbApp->hasSnackbar() && $sbApp->snackbarQueueLength() === 0,
     'has=' . ($sbApp->hasSnackbar() ? 'yes' : 'no'),
 );
+
+// ── W8-2 选项表形态（`Option::normalize()`，2026-10-24）──
+// ★ 钉住两件事：① 映射形态的**键类型收口**（PHP 把 `'110000'` 转成 int ⇒ 必须
+//   转回 string，否则 `value()` 永远比不中、静默显示 placeholder）；② list 形态
+//   **只收 Option**（`[0 => 'x']` 与 `['x']` 在 PHP 里是**同一个数组** ⇒ "值 0"与
+//   "标签列表"在语言层面无法区分 ⇒ 裸值报错丢弃，不猜）。
+
+check('Option · 空表 ⇒ 空（不炸）', Option::normalize([]) === []);
+
+$normObjs = [Option::make('北京市', '110000')];
+check('Option · list<Option> 原样通过（实例身份不变）', Option::normalize($normObjs) === $normObjs);
+
+$normMap = Option::normalize(['110000' => '北京市', '01' => '某地']);
+check(
+    'Option · 映射形态：键 = 值、值 = 显示名',
+    count($normMap) === 2
+        && $normMap[0]->label === '北京市' && $normMap[0]->value === '110000'
+        && $normMap[1]->value === '01',
+    'n=' . count($normMap)
+);
+// ★★ 这条是反向自检的对象：把 `(string) $key` 去掉 ⇒ 键是 int 装不进 string 值域
+//   （TypeError ⇒ 整个 smoke 崩），而 `['110000' => ...]` 是最常见的城市码写法。
+check(
+    'Option · ★ 数字键被 PHP 转成 int ⇒ 必须收口回 string（否则这种写法根本装不进去）',
+    $normMap[0]->value === '110000',
+    'value=' . var_export($normMap[0]->value, true)
+);
+check(
+    'Select · 映射形态直接喂 ⇒ 受控值能命中（键类型收口的端到端证据）',
+    Select::make(['110000' => '北京市'])->value('110000')->selectedIndex() === 0,
+    'idx=' . Select::make(['110000' => '北京市'])->value('110000')->selectedIndex()
+);
+$normCombo = ComboBox::make(['110000' => '北京市'])->optionsValue();
+check(
+    'ComboBox · 映射形态直接喂 ⇒ 选项表同样收口（与 Select 走同一处）',
+    count($normCombo) === 1 && $normCombo[0]->value === '110000',
+    'value=' . var_export($normCombo[0]->value ?? null, true)
+);
+
+// 反例：list 里的裸值 ⇒ Fatal（身份不明确，猜就是替应用做决定）
+fresh($log);
+[$codeBare, $outBare] = runCase(__FILE__, 'optbare', null);
+check(
+    'Option · 反例：list 里的裸值 ⇒ Fatal（不猜身份）',
+    $codeBare === 3,
+    '实际 ' . $codeBare . ' / ' . $outBare
+);
+check(
+    'Option · 反例：裸值 Fatal 时给出两种正确写法',
+    str_contains(logText($log), 'list 形态只收 Option') && str_contains(logText($log), 'Option::of')
+);
+
+// 反例：空字符串键 ⇒ Fatal（"没选"与"选了空"不能混）
+fresh($log);
+[$codeKey, $outKey] = runCase(__FILE__, 'optemptykey', null);
+check(
+    'Option · 反例：空字符串键 ⇒ Fatal（不静默当一个真选项）',
+    $codeKey === 3,
+    '实际 ' . $codeKey . ' / ' . $outKey
+);
+check('Option · 反例：空键 Fatal 时说明了哨兵冲突', str_contains(logText($log), '未选'));
 
 // ── W8-2 Select（下拉选择 + 声明式浮层面板，2026-10-23）──
 // ★ 这一块钉住四件事：① 激活 ⇒ 框架开面板（`Widget::overlayPanel()` 的通用缝）；

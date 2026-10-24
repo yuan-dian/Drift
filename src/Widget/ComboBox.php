@@ -126,14 +126,18 @@ final class ComboBox extends StatefulWidget
 
     private ?\Closure $onChanged = null;
 
-    /** @param list<Option> $options 选项表（空表 = 面板里只有"无匹配项"一行，不炸） */
+    /**
+     * @param list<Option>|array<array-key, string> $options 选项表。两种形态都过
+     *        `Option::normalize()`（映射形态 = 键是值、值是显示名），空表 ⇒ 面板
+     *        里只有"无匹配项"一行，不炸。
+     */
     public function __construct(array $options)
     {
         parent::__construct();
-        $this->options = $options;
+        $this->options = Option::normalize($options);
     }
 
-    /** @param list<Option> $options */
+    /** @param list<Option>|array<array-key, string> $options 见 `Option::normalize()` */
     public static function make(array $options): self
     {
         return new self($options);
