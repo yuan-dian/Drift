@@ -18,14 +18,29 @@ use Drift\Errors;
  *
  * @api
  */
-final readonly class Paint
+final class Paint
 {
+    /**
+     * `fill()` 的 interning 表（`argb → 实例`）。
+     *
+     * ★ 安全前提：`Paint` 的字段全是 `readonly` ⇒ 共享同一实例无副作用。
+     * ★ 收益：每帧几十个 `Paint::fill()`（`Modifier::paintBehind` 的阴影层、
+     *   `RenderScrollView`、`RenderRichText::paintRunDecorations` 的每个背景/下划线 run）
+     *   ⇒ 同色现在命中同一支。
+     * ★ 表**不设上限**：颜色种类由主题 + 业务常量决定（量级几十），不是每帧新增，
+     *   与 `ImageLoader::$cache` 同一判断。
+     * ★ 为什么不是 `readonly class`：那个糖会把**静态**属性也标 readonly，
+     *   而 readonly 属性不能带默认值 ⇒ 缓存表写不出来。这里退回"逐属性 readonly"，
+     *   语义与糖完全等价（`final` 已封死继承）。
+     */
+    private static array $fillCache = [];
+
     public function __construct(
-        public Color $color,
-        public PaintStyle $style = PaintStyle::Fill,
-        public float $strokeWidth = 1.0,
-        public ?Gradient $gradient = null,
-        public ?DashPattern $dash = null,
+        public readonly Color $color,
+        public readonly PaintStyle $style = PaintStyle::Fill,
+        public readonly float $strokeWidth = 1.0,
+        public readonly ?Gradient $gradient = null,
+        public readonly ?DashPattern $dash = null,
     ) {
         if ($style === PaintStyle::Stroke && $strokeWidth <= 0.0) {
             Errors::report('Paint：描边宽度必须为正，收到 ' . (string) $strokeWidth);
@@ -37,7 +52,7 @@ final readonly class Paint
 
     public static function fill(Color $color): self
     {
-        return new self($color, PaintStyle::Fill);
+        return self::$fillCache[$color->toArgb()] ??= new self($color, PaintStyle::Fill);
     }
 
     public static function stroke(Color $color, float $width = 1.0): self

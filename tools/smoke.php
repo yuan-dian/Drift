@@ -3279,6 +3279,20 @@ check(
     $graded19->equals(Paint::fill(Color::white())->withGradient(Gradient::linear(0, 0, 10, 0, [Color::white(), Color::black()])))
 );
 
+// interning：同色 `fill()` 复用同一实例（字段全 readonly ⇒ 共享安全，`analysis/17` §6.6）
+check(
+    'Paint · fill() 同色 interned（同一 argb 复用实例，省每帧几十个对象）',
+    Paint::fill(Color::fromRgb(0x11, 0x22, 0x33)) === Paint::fill(Color::fromRgb(0x11, 0x22, 0x33)),
+);
+check(
+    'Paint · fill() 不同色不串（interning 的键是 argb）',
+    Paint::fill(Color::fromRgb(0x11, 0x22, 0x33)) !== Paint::fill(Color::fromRgb(0x11, 0x22, 0x34)),
+);
+check(
+    'Paint · stroke() 不进 interning（同色不同 style 不能共用实例）',
+    Paint::fill(Color::fromRgb(0x11, 0x22, 0x33)) !== Paint::stroke(Color::fromRgb(0x11, 0x22, 0x33)),
+);
+
 // DisplayList 6 槽与新 opcode（LINE 是 5 操作数的命令）
 $list19 = new DisplayList();
 $list19->record(DisplayList::OP_DRAW_LINE, 1.0, 2.0, 3.0, 4.0, $plain19);

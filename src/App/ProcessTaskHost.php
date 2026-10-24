@@ -70,6 +70,12 @@ final class ProcessTaskHost implements TaskHost
 
     private int $seq = 0;
 
+    /** 上次 `reap()` 的时刻（µs，`hrtime` 单调）—— 空闲期降频用 */
+    private int $lastReapUs = 0;
+
+    /** 空闲期 `reap` 的最小间隔（500ms ≈ 33 帧） */
+    private const REAP_IDLE_INTERVAL_US = 500_000;
+
     /** worker 索引发号器（只增不减，见 `$workers` 的注释） */
     private int $workerSeq = 0;
 
@@ -431,6 +437,20 @@ final class ProcessTaskHost implements TaskHost
      */
     private function reap(callable $onEach): void
     {
+        // ★ **空闲才降频**：有在途任务时立即查（崩溃要尽快变成 `onError`），
+        //   空闲时每 500ms 查一次就够 —— 那时只是回收僵尸进程，没人等结果。
+        //   每次 `proc_get_status` 是**一个系统调用 × worker 数**，每帧付不划算
+        //   （`analysis/16` §2 / `20` P0-3）。
+        //   ★ 实时性没丢：有任务在跑时管道 EOF 已被 `readReplies()` 当场发现
+        //     （见 `readReplies()` 里"管道断了"那条），这里只是补"空闲期间崩"的回收。
+        $now = intdiv(\hrtime(true), 1000);
+
+        if ($this->inflight === [] && $now - $this->lastReapUs < self::REAP_IDLE_INTERVAL_US) {
+            return;
+        }
+
+        $this->lastReapUs = $now;
+
         foreach ($this->workers as $index => $worker) {
             $status = proc_get_status($worker['proc']);
             if ($status['running']) {
