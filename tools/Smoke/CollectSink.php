@@ -18,8 +18,22 @@ final class CollectSink implements LogSink
     /** @var list<LogEntry> */
     public array $got = [];
 
+    /** flush / close 各被调了几次（断言 `Log::flush()` / `Log::close()` 真的走过来） */
+    public int $flushes = 0;
+    public int $closes = 0;
+
     public function write(LogEntry $entry): void
     {
         $this->got[] = $entry;
+    }
+
+    public function flush(): void
+    {
+        $this->flushes++;
+    }
+
+    public function close(): void
+    {
+        $this->closes++;
     }
 }

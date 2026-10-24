@@ -28,4 +28,17 @@ final class StderrSink implements LogSink
     {
         error_log($this->formatter->format($entry));
     }
+
+    /**
+     * `error_log()` 每条即写，无缓冲可落 —— 但**显式实现**而不是靠"默认空实现"：
+     * 将来若改成 `fwrite` 到某个流，这里就是收口点。
+     */
+    public function flush(): void
+    {
+    }
+
+    /** 不持有句柄（`error_log()` 自己开合） */
+    public function close(): void
+    {
+    }
 }

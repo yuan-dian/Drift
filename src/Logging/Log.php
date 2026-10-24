@@ -118,6 +118,41 @@ final class Log
         return self::$sinks;
     }
 
+    /**
+     * 收口：让所有 sink 落盘 / 送出仍在缓冲里的部分。
+     *
+     * ★ **进程退出路径**（组合根的 `atexit` / 析构）调这个，而不是逐个 sink。
+     * ★ 顺序按注册序 —— 与 `emit()` 一致，避免"落盘顺序与产生顺序不一致"。
+     * ★ 逐个 catch：一个 sink 收不了口不影响其他（同 `emit()` 的判断）。
+     */
+    public static function flush(): void
+    {
+        foreach (self::$sinks as $sink) {
+            try {
+                $sink->flush();
+            } catch (\Throwable) {
+                // 收口失败不得让业务挂掉（§4.5）
+            }
+        }
+    }
+
+    /**
+     * 释放全部 sink 资源（关文件句柄等）。**幂等** —— 退出路径可能走多次。
+     *
+     * ★ 不清 `self::$sinks`：`close()` 之后再写是调用方的错（该响），
+     *   而"悄悄少了一个 sink"是静默降级（G2 禁止）。
+     */
+    public static function close(): void
+    {
+        foreach (self::$sinks as $sink) {
+            try {
+                $sink->close();
+            } catch (\Throwable) {
+                // 同上
+            }
+        }
+    }
+
     // ── 读回（devtools / 测试）──────────────────────────────────
 
     /**

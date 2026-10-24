@@ -89,4 +89,14 @@ final class RingSink implements LogSink
         $this->head = 0;
         $this->count = 0;
     }
+
+    /** 内存环，无缓冲可落 */
+    public function flush(): void
+    {
+    }
+
+    /** 内存环，无资源可释放 */
+    public function close(): void
+    {
+    }
 }

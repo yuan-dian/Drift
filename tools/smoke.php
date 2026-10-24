@@ -132,6 +132,7 @@ use Drift\Logging\Log;
 use Drift\Logging\LogEntry;
 use Drift\Logging\PatternFormatter;
 use Drift\Logging\RingSink;
+use Drift\Logging\StreamSink;
 use Drift\Commands\CommandArg;
 use Drift\Commands\CommandHandler;
 use Drift\Commands\CommandRouter;
@@ -14545,6 +14546,99 @@ check(
         'got=' . $line,
     );
 
+    Log::reset();
+    Errors::reset();
+}
+
+// ── 日志 P1：文件 sink / 轮转 / 收口（`12` §6，2026-10-24）──
+{
+    // ⑩ StreamSink 落盘 + 默认 pattern 带时间戳
+    Log::reset();
+    $tmp = sys_get_temp_dir() . '/drift-log-' . getmypid();
+    if (is_dir($tmp)) {
+        foreach (glob($tmp . '/*') ?: [] as $f) {
+            unlink($f);
+        }
+    }
+    mkdir($tmp, 0777, true);
+    $sink = new StreamSink($tmp . '/app.log', 0, PatternFormatter::compile('%c: %m'));
+    Log::addSink($sink);
+    Log::get('net')->info('第一次');
+    Log::get('net')->warn('第二次');
+    $text = is_file($tmp . '/app.log') ? file_get_contents($tmp . '/app.log') : '';
+    check(
+        'Log · StreamSink 落盘，两行各自成型',
+        $text === "net: 第一次\nnet: 第二次\n",
+        'got=' . var_export($text, true),
+    );
+
+    // ⑪ 轮转：上限 10 字节。**一条就超上限的长消息**是关键夹具 ——
+    //    只有"轮转检查在 `write()` 开头"才能保证它整条落进新文件；
+    //    若检查在结尾（写完再看），它会被劈成"尾巴在旧文件、没有在新文件"。
+    Log::reset();
+    $sink = new StreamSink($tmp . '/rot.log', 10, PatternFormatter::compile('%m'));
+    Log::addSink($sink);
+    Log::get('t')->info('AAAAAAAAAA'); // 11 字节（含 \n）⇒ 已超
+    Log::get('t')->info('BBBBBBBBBB'); // 开头检查 ⇒ 先转，整条进新文件
+    $cur = is_file($tmp . '/rot.log') ? file_get_contents($tmp . '/rot.log') : '';
+    $old = is_file($tmp . '/rot.log.1') ? file_get_contents($tmp . '/rot.log.1') : '';
+    check(
+        'Log · 超上限轮转（旧的成 .1；单条超上限也整条落新文件，不被劈开）',
+        $old === "AAAAAAAAAA\n" && $cur === "BBBBBBBBBB\n",
+        'old=' . var_export($old, true) . ' cur=' . var_export($cur, true),
+    );
+
+    // ⑫ `Log::flush()` / `Log::close()` 转发到每个 sink
+    Log::reset();
+    $collect = new CollectSink();
+    $ring = new RingSink(4);
+    Log::addSink($collect);
+    Log::addSink($ring);
+    Log::flush();
+    Log::close();
+    check(
+        'Log · flush() / close() 逐个转发到全部 sink',
+        $collect->flushes === 1 && $collect->closes === 1,
+        'flushes=' . $collect->flushes . ' closes=' . $collect->closes,
+    );
+
+    // ⑬ 一个 sink 收不了口不影响其他（逐个 catch）
+    Log::reset();
+    $collect = new CollectSink();
+    $boom = new class implements \Drift\Logging\LogSink {
+        public function write(LogEntry $entry): void
+        {
+        }
+
+        public function flush(): void
+        {
+            throw new \RuntimeException('sink 炸了');
+        }
+
+        public function close(): void
+        {
+            throw new \RuntimeException('sink 炸了');
+        }
+    };
+    Log::addSink($boom);
+    Log::addSink($collect);
+    $threw = false;
+    try {
+        Log::flush();
+        Log::close();
+    } catch (\Throwable) {
+        $threw = true;
+    }
+    check(
+        'Log · 一个 sink 收不了口不影响其他（且不冒泡到业务）',
+        $threw === false && $collect->flushes === 1 && $collect->closes === 1,
+        'threw=' . var_export($threw, true),
+    );
+
+    foreach (glob($tmp . '/*') ?: [] as $f) {
+        unlink($f);
+    }
+    @rmdir($tmp);
     Log::reset();
     Errors::reset();
 }
