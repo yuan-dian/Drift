@@ -3,7 +3,6 @@ declare(strict_types=1);
 
 namespace Drift\Widget;
 
-use Drift\Geometry\EdgeInsets;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
 use Drift\Layout\FlexAlign;
@@ -286,6 +285,41 @@ final class ComboBoxState extends State
     }
 
     /**
+     * @internal 面板内容 —— `OptionPanel` **每次重建都会调**它（所以读的是当前值，
+     *   不是建面板那一刻的快照）。
+     *
+     * ★ 全部 `Flat`、**不标已选项**：Enter 取的是"第一项"，标了已选项会让
+     *   "回车会选谁"变含糊（见 `ComboBox` 类头的能力边界）。
+     */
+    public function panelContent(): Widget
+    {
+        $rows = [];
+
+        foreach ($this->matches() as $option) {
+            $rows[] = Button::make($option->label)
+                ->variant(ButtonVariant::Flat)
+                ->onPressed(function () use ($option): void {
+                    $this->commit($option);
+                });
+        }
+
+        if ($rows === []) {
+            $rows[] = Text::make('无匹配项')->caption();
+        }
+
+        // ★ `cross(Stretch)`：面板给内容的是**有界宽**（`RenderPopupPanel` 先量
+        //   统一宽再 tight 布局）⇒ 整行可点、高亮横贯。
+        return Column::make()
+            ->cross(FlexAlign::Stretch)
+            ->children($rows)
+            // ★ 焦点在行上时的按键转发（见 `forwardKey()`）：这条声明只有**焦点在
+            //   这一支**时才会命中，不影响输入框那一侧。
+            ->keyboard(function (KeyEvent $event): bool {
+                return $this->forwardKey($event);
+            });
+    }
+
+    /**
      * @internal 当前过滤结果（查询词为空 ⇒ 全部候选）。
      *
      * ★ 匹配规则：标签的**大小写不敏感子串**。用 `mb_strtoupper()` 而不是
@@ -421,7 +455,14 @@ final class ComboBoxState extends State
                 $this->markDirty();
             }
 
-            return ComboBoxPanel::make($this);
+            return OptionPanel::make(
+                $this->query,
+                fn (): Widget => $this->panelContent(),
+                ComboBox::PANEL_MIN_WIDTH,
+                ComboBox::PANEL_MAX_HEIGHT,
+                // ★ 面板被回收 ⇒ 复位"开着"的唯一判据（三条关闭路径都汇到这里）
+                fn (): mixed => $this->onPanelClosed(),
+            );
         };
     }
 
@@ -543,113 +584,6 @@ final class ComboBoxState extends State
         }
 
         return $widget;
-    }
-}
-
-/**
- * 候选面板（`ComboBox` 的浮层内容）—— **本仓第一个住进浮层树的 `StatefulWidget`**。
- *
- * 它必须是有态的：主树重建不会带动它（第二棵根渲染树），只能自己订阅
- * `ComboBoxQuery` 然后自己标脏。`OverlayEntry::$panel` 的字段注释就是这条设计。
- *
- * @internal
- */
-final class ComboBoxPanel extends StatefulWidget
-{
-    private function __construct(private readonly ComboBoxState $owner)
-    {
-        parent::__construct();
-    }
-
-    /** @internal */
-    public static function make(ComboBoxState $owner): self
-    {
-        return new self($owner);
-    }
-
-    /** @internal */
-    public function owner(): ComboBoxState
-    {
-        return $this->owner;
-    }
-
-    public function createState(): State
-    {
-        return new ComboBoxPanelState();
-    }
-}
-
-/**
- * @internal `ComboBoxPanel` 的私有 State —— 和控件同文件，不进公共面。
- */
-final class ComboBoxPanelState extends State
-{
-    #[\Override]
-    public function initState(): void
-    {
-        // ★ 订阅**只能**在 initState()（§11.3 RT-1 / A4）：build 里订阅会让订阅数
-        //   随重建次数增长。面板每敲一个字就重建一次，在 build 里订阅会指数爆炸。
-        $this->watch($this->owner()->querySubject(), function (): void {
-            $this->markDirty();
-        });
-    }
-
-    public function build(BuildContext $ctx): Widget
-    {
-        $owner = $this->owner();
-        $rows = [];
-
-        foreach ($owner->matches() as $option) {
-            // ★ 全部 `Flat`、**不标已选项**：Enter 取的是"第一项"，标了已选项会让
-            //   "回车会选谁"变含糊（见 `ComboBox` 类头的能力边界）。
-            $rows[] = Button::make($option->label)
-                ->variant(ButtonVariant::Flat)
-                ->onPressed(function () use ($owner, $option): void {
-                    $owner->commit($option);
-                });
-        }
-
-        if ($rows === []) {
-            $rows[] = Text::make('无匹配项')->caption();
-        }
-
-        // ★ `cross(Stretch)`：面板给内容的是**有界宽**（`RenderPopupPanel` 先量
-        //   统一宽再 tight 布局）⇒ 整行可点、高亮横贯（与 `Select` 同一条前提）。
-        // ★ **必须套 `ScrollView`**：`PopupPanel::maxHeight()` 只给上限，
-        //   "超高就滚"是靠内容自己是滚动视口实现的。
-        $column = Column::make()
-            ->cross(FlexAlign::Stretch)
-            ->children($rows)
-            // ★ 焦点在行上时的按键转发（见 `ComboBoxState::forwardKey()`）：
-            //   这条声明只有**焦点在这一支**时才会命中，不影响输入框那一侧。
-            ->keyboard(function (KeyEvent $event): bool {
-                return $this->owner()->forwardKey($event);
-            });
-
-        return PopupPanel::make(ScrollView::make($column))
-            ->minWidth(ComboBox::PANEL_MIN_WIDTH)
-            ->maxHeight(ComboBox::PANEL_MAX_HEIGHT)
-            ->padding(EdgeInsets::symmetric(4.0, 4.0))
-            ->elevation(4.0);
-    }
-
-    public function dispose(): void
-    {
-        // ★ "面板关着"的唯一判据在 owner 身上 ⇒ 任何关闭路径都要走到这里复位
-        //   （点面板外 / owner 清扫 / Esc）。只在 `cancel()` 里复位会漏掉前两条。
-        $this->owner()->onPanelClosed();
-        parent::dispose();
-    }
-
-    private function owner(): ComboBoxState
-    {
-        $widget = $this->widget();
-        if (!$widget instanceof ComboBoxPanel) {
-            // 框架不变量：StatefulElement 按 get_class 配对，配错不可能发生
-            \Drift\Errors::report('ComboBoxPanelState 只能配 ComboBoxPanel（框架内部不变量被破坏）');
-        }
-
-        return $widget->owner();
     }
 }
 
