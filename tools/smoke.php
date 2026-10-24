@@ -7642,6 +7642,175 @@ check(
     sprintf('实际宽 %.6g', $panelProbeBox?->size()?->width ?? -1),
 );
 
+// ── ㉞a 菜单面板限高 + 滚动（`PopupPanel::maxHeight()`，2026-10-24）──
+//    ★ 客户区取 **320×900（高视口）**：`RenderPopupPanel` 的上限会与"约束允许的内容高"
+//      取小，320×240 那种矮视口会把面板夹成视口高 ⇒ 分不清"被 PANEL_MAX_HEIGHT 限"
+//      还是"被客户区限"，这条用例就白写了。
+//    ★ 长菜单（30 项）**刻意不进 MenuBar**：菜单栏自然宽有既有断言（标题 + 导航 + 菜单），
+//      加一个标题会把它顶翻。照 `fileMenu()` 的用法直接 `showMenu($m->panel())`。
+$menuCapSurface = new SvgSurface();
+$menuCapSurface->resize(320, 900, 1.0);
+$menuCapApp = new MenuApplication();
+$menuCapApp->attach($menuCapSurface, BoxConstraints::tight(new Size(320.0, 900.0)));
+$menuCapTight = BoxConstraints::tight(new Size(320.0, 900.0));
+
+$menuCapApp->showMenu($menuCapApp->longMenu()->panel());
+$menuCapApp->frame(16.0, $menuCapTight);   // 走一帧 ⇒ 落位算过
+
+$menuCapPanel = $menuCapApp->menuElement()?->effectiveBox();
+$menuCapSv = $menuCapApp->panelScrollView();
+check(
+    '菜单 · 长菜单（30 项）⇒ 面板高 = PANEL_MAX_HEIGHT（超长才滚）',
+    $menuCapPanel?->size() !== null
+        && abs($menuCapPanel->size()->height - Menu::PANEL_MAX_HEIGHT) < 0.01,
+    sprintf('实际高 %.6g（上限 %.6g）', $menuCapPanel?->size()?->height ?? -1, Menu::PANEL_MAX_HEIGHT),
+);
+
+// 反例：自然高必须**真的**超过上限，否则这条用例没在验限高
+$menuCapContent = null;
+$menuCapSv?->visitChildren(static function ($c) use (&$menuCapContent): void {
+    $menuCapContent = $c;
+});
+$menuCapNatural = $menuCapContent instanceof RenderBox ? $menuCapContent->size()?->height ?? -1 : -1;
+check(
+    '菜单 · 反例：自然高（30 项）远超上限 ⇒ 这条用例真的在验限高',
+    $menuCapNatural > Menu::PANEL_MAX_HEIGHT,
+    sprintf('自然高 %.6g vs 上限 %.6g', $menuCapNatural, Menu::PANEL_MAX_HEIGHT),
+);
+
+check(
+    '菜单 · 面板里有滚动视口，且视口比面板矮（内容变成可滚视口）',
+    $menuCapSv !== null
+        && $menuCapSv->size() !== null
+        && $menuCapPanel?->size() !== null
+        && $menuCapSv->size()->height < $menuCapPanel->size()->height
+        && $menuCapSv->maxScroll() > 0.0,
+    sprintf(
+        '视口高 %.6g / 面板高 %.6g / maxScroll=%.6g',
+        $menuCapSv?->size()?->height ?? -1,
+        $menuCapPanel?->size()?->height ?? -1,
+        $menuCapSv?->maxScroll() ?? -1,
+    ),
+);
+
+// 推导：30 项里 6 条分隔线（i%5==0）⇒ 24 行 × 行高 + 6 × 分隔线高。
+// 行高分两种（带 / 不带加速键显示），一律从盒子现推，不写死。
+$menuCapRows = [];
+$menuCapSv?->visitChildren(static function ($c) use (&$menuCapRows): void {
+    $menuCapRows[] = $c;
+});
+$menuCapRowH = 0.0;
+$menuCapSepH = 0.0;
+foreach ($menuCapRows as $r) {
+    if (!$r instanceof RenderBox || $r->size() === null) {
+        continue;
+    }
+    $h = $r->size()->height;
+    if ($h <= 8.0) {
+        $menuCapSepH = $menuCapSepH > 0.0 ? $menuCapSepH : $h;
+    } else {
+        $menuCapRowH = $menuCapRowH > 0.0 ? $menuCapRowH : $h;
+    }
+}
+$menuCapItems = 0;
+$menuCapSeps = 0;
+foreach ($menuCapRows as $r) {
+    if (!$r instanceof RenderBox || $r->size() === null) {
+        continue;
+    }
+    if ($r->size()->height <= 8.0) {
+        $menuCapSeps++;
+    } else {
+        $menuCapItems++;
+    }
+}
+$menuCapView = $menuCapSv?->size()?->height ?? -1.0;
+check(
+    '菜单 · maxScroll = 自然内容高 − 视口高（推导，数字全从盒子现推）',
+    $menuCapSv !== null
+        && abs($menuCapSv->maxScroll() - ($menuCapItems * $menuCapRowH + $menuCapSeps * $menuCapSepH - $menuCapView)) < 0.01,
+    sprintf(
+        '%d 行×%.6g + %d 分隔×%.6g − 视口 %.6g = %.6g，实际 maxScroll=%.6g',
+        $menuCapItems,
+        $menuCapRowH,
+        $menuCapSeps,
+        $menuCapSepH,
+        $menuCapView,
+        $menuCapItems * $menuCapRowH + $menuCapSeps * $menuCapSepH - $menuCapView,
+        $menuCapSv?->maxScroll() ?? -1,
+    ),
+);
+
+// 限高的**动机**：最后一项在面板下沿之外 ⇒ 不限高就永远点不到它
+$menuCapLast = null;
+$menuCapLastY = -1.0;
+$menuCapLastH = 0.0;
+foreach ($menuCapRows as $r) {
+    if (!$r instanceof RenderBox || $r->size() === null || $r->size()->height <= 8.0) {
+        continue;
+    }
+    $menuCapLast = $r;
+}
+if ($menuCapLast !== null) {
+    [$menuCapLastX, $menuCapLastY] = RenderBox::absoluteOrigin($menuCapLast);
+    $menuCapLastH = $menuCapLast->size()->height;
+}
+check(
+    '菜单 · 最后一项在面板下沿之外（不限高就点不到它 —— 限高的动机）',
+    $menuCapLast !== null
+        && $menuCapPanel !== null
+        && $menuCapLastY + $menuCapLastH > RenderBox::absoluteOrigin($menuCapPanel)[1] + $menuCapPanel->size()->height,
+    sprintf('末项底 y=%.6g，面板底 y=%.6g', $menuCapLastY + $menuCapLastH, RenderBox::absoluteOrigin($menuCapPanel)[1] + $menuCapPanel->size()->height),
+);
+
+// 滚一格 ⇒ appliedOffset = 48（`Application::WHEEL_NOTCH_PX`，真实 `ScrollEvent` 通道）
+// ★ 常量是 private ⇒ 表达式里写字面量、名字进消息（与 `Scroll · 应用` 那条同款）。
+// ★★ 每滚一次必须**重取** ScrollView：`scrollBy()` → `setState` → `update()` 会换一个
+//    新渲染盒，拿旧盒读 `appliedOffset()` 恒为上一帧的值（看着像"滚轮没生效"）。
+[$menuCapCx, $menuCapCy] = RenderBox::absoluteOrigin($menuCapPanel);
+$menuCapCx += $menuCapPanel->size()->width / 2.0;
+$menuCapCy += $menuCapPanel->size()->height / 2.0;
+$menuCapApp->dispatchInput(ScrollEvent::make($menuCapCx, $menuCapCy, 1.0));
+$menuCapApp->frame(32.0, $menuCapTight);
+check(
+    '菜单 · 滚一格 ⇒ appliedOffset = WHEEL_NOTCH_PX（真实滚轮通道）',
+    abs($menuCapApp->panelScrollView()?->appliedOffset() - 48.0) < 0.01,
+    sprintf('appliedOffset=%.6g', $menuCapApp->panelScrollView()?->appliedOffset() ?? -1),
+);
+$menuCapApp->dispatchInput(ScrollEvent::make($menuCapCx, $menuCapCy, 1.0));
+$menuCapApp->frame(48.0, $menuCapTight);
+check(
+    '菜单 · 滚两格 ⇒ appliedOffset = 2 × WHEEL_NOTCH_PX（量对，不是只动一下）',
+    abs($menuCapApp->panelScrollView()?->appliedOffset() - 96.0) < 0.01,
+    sprintf('appliedOffset=%.6g', $menuCapApp->panelScrollView()?->appliedOffset() ?? -1),
+);
+check(
+    '菜单 · 滚完之后面板仍在、高度仍是上限',
+    $menuCapApp->isMenuOpen()
+        && $menuCapApp->menuElement()?->effectiveBox()?->size() !== null
+        && abs($menuCapApp->menuElement()->effectiveBox()->size()->height - Menu::PANEL_MAX_HEIGHT) < 0.01,
+);
+$menuCapApp->dispatchInput(KeyEvent::down(KeyChord::escape()));
+
+// 反例：短菜单（3 项）⇒ **贴着内容**，不撑到上限、也不滚
+$menuShortApp = new MenuApplication();
+$menuShortApp->attach($menuCapSurface, BoxConstraints::tight(new Size(320.0, 900.0)));
+$menuShortApp->showMenu($menuShortApp->fileMenu()->panel());
+$menuShortApp->frame(16.0, $menuCapTight);
+$menuShortPanel = $menuShortApp->menuElement()?->effectiveBox();
+check(
+    '菜单 · 反例：短菜单（3 项）⇒ 面板高 < 上限（**贴着内容**，不凭空撑高一截空白）',
+    $menuShortPanel?->size() !== null
+        && $menuShortPanel->size()->height < Menu::PANEL_MAX_HEIGHT,
+    sprintf('实际高 %.6g（上限 %.6g）', $menuShortPanel?->size()?->height ?? -1, Menu::PANEL_MAX_HEIGHT),
+);
+check(
+    '菜单 · 反例：短菜单 maxScroll = 0（内容不溢出 ⇒ 不画滚动条，浏览器同行为）',
+    $menuShortApp->panelScrollView()?->maxScroll() === 0.0,
+    sprintf('maxScroll=%.6g', $menuShortApp->panelScrollView()?->maxScroll() ?? -1),
+);
+$menuShortApp->dispatchInput(KeyEvent::down(KeyChord::escape()));
+
 // ── ㉞b 模态（§A.3.7 / §12.1 第 6 条：复用浮层槽位 + 紧约束盖满 + 遮罩自绘）──
 //    ★ 客户区取 480×360（不是 320）：Modal 默认 minWidth=320，320 宽的客户区
 //      会让面板几乎盖满 ⇒ 遮罩区只剩投影留白，"四角都是遮罩"这条判据就废了。

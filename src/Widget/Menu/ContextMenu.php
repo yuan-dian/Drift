@@ -5,6 +5,7 @@ namespace Drift\Widget\Menu;
 
 use Drift\Widget\Column;
 use Drift\Widget\PopupPanel;
+use Drift\Widget\ScrollView;
 use Drift\Widget\Widget;
 
 /**
@@ -35,6 +36,16 @@ final class ContextMenu
     private array $items = [];
 
     private float $minWidth = 140.0;
+
+    /**
+     * 面板内容高度上限（逻辑像素）。
+     *
+     * ★ 与 `Menu::PANEL_MAX_HEIGHT` **同值同理**（两个类的 `panel()` 本就是同一形态，
+     *   文档已说明这种不对称是刻意的）：不设上限时超长菜单会被夹成整个客户区高、
+     *   超出部分被裁 ⇒ **第 N 项之后点不到**。值是策略圆整数，"贴着还是滚"由
+     *   `RenderPopupPanel` 按实测自然高决定。
+     */
+    public const PANEL_MAX_HEIGHT = 320.0;
 
     private function __construct()
     {
@@ -69,6 +80,12 @@ final class ContextMenu
     /** 要浮起来的面板（`Application::showMenu()` 的入参） */
     public function panel(): Widget
     {
-        return PopupPanel::make(Column::make()->children($this->items))->minWidth($this->minWidth);
+        // ★ 套 `ScrollView` + `maxHeight()`：右键菜单同样可能很长（"对这一行可做的
+        //   操作"常常是动态列表）。Tab 导航由 `revealFocused()` 自动滚焦点项进视口。
+        return PopupPanel::make(
+            ScrollView::make(Column::make()->children($this->items))
+        )
+            ->minWidth($this->minWidth)
+            ->maxHeight(self::PANEL_MAX_HEIGHT);
     }
 }

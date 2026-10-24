@@ -7,6 +7,7 @@ use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
 use Drift\Widget\Column;
 use Drift\Widget\PopupPanel;
+use Drift\Widget\ScrollView;
 use Drift\Widget\Widget;
 
 /**
@@ -36,6 +37,20 @@ final class Menu extends Button
     private array $items = [];
 
     private float $minWidth = 120.0;
+
+    /**
+     * 面板内容高度上限（逻辑像素）。
+     *
+     * ★ 与 `Select::PANEL_MAX_HEIGHT` 同一条理由：不设上限时，一列很长的菜单会被
+     *   `placeEntry()` 的"超大退化"夹成**整个客户区那么高**，超出部分被面板自己的
+     *   `Overflow::Clip` 裁掉 ⇒ **第 N 项之后点不到**（Tab 也走不到 —— 焦点环
+     *   画在视口外，用户看不见焦点在哪）。
+     *
+     * ★ 值是**策略圆整数**（菜单行约 28–32px ⇒ 约 10 行），不是布局计算：
+     *   "贴着内容还是滚动"由 `RenderPopupPanel` 按**实测自然高**决定（2026-10-24），
+     *   所以短菜单不会因为上限设得大就凭空变长，也不会因为设得小就无故滚。
+     */
+    public const PANEL_MAX_HEIGHT = 320.0;
 
     /** @var null|callable(self, ?\Drift\Widget\Element): void */
     private $openHandler = null;
@@ -97,7 +112,15 @@ final class Menu extends Button
     /** 要浮起来的面板（`Application::showMenu()` 的入参） */
     public function panel(): Widget
     {
-        return PopupPanel::make(Column::make()->children($this->items))->minWidth($this->minWidth);
+        // ★ **必须套 `ScrollView`**：`PopupPanel::maxHeight()` 只负责给上限，
+        //   "超高就滚"是靠内容自己是滚动视口实现的（它不会替内容滚）。
+        // ★ Tab 导航不用额外接线：`MenuItem` 是 `Button`（可聚焦），焦点变化时
+        //   `Application::revealFocused()` 会把焦点项滚进视口（`04` §6.3）。
+        return PopupPanel::make(
+            ScrollView::make(Column::make()->children($this->items))
+        )
+            ->minWidth($this->minWidth)
+            ->maxHeight(self::PANEL_MAX_HEIGHT);
     }
 
     public function title(): string
