@@ -203,4 +203,4 @@ _build/const-bug-probe/scalar/     # 标量常量版（对照，不触发）
 
 ---
 
-**关联 Drift2 内部记录**：`DESIGN.md` §24.1 #41（上游 tpc codegen 缺陷）。
+**关联 Drift2 内部记录**：`docs/_archive/changelog-v2.md` §24.1 #41（上游 tpc codegen 缺陷）。

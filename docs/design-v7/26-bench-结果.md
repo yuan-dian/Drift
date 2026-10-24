@@ -304,5 +304,5 @@ Drift2 的 `RenderFlex::performLayout` 正是旧形态：第一遍连 `flex > 0`
 ★ 附带更正 `13` 册 D8 的**推翻条件写错了方向**：它只写"若 `place` 里出现需要重新量孩子的需求"，
 真正发生的推翻理由是"**分离本身是 no-op**" —— 后者应补进 D8。
 
-★ 本册不再新增章节；后续结论记入 `docs/EVAL-design-v7-*.md` 与 DESIGN §13.5。
+★ 本册不再新增章节；后续结论记入 `docs/EVAL-design-v7-2026-10-21.md` 与 `DESIGN.md` §13.5。
 

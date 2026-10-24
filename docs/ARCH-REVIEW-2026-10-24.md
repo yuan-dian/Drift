@@ -1,0 +1,304 @@
+# Drift2 全维度体检（架构 / 实现 / 扩展性 / 易用性 / 长期维护）
+
+> 日期：2026-10-24 · 性质：**只读分析，不改代码**
+> 输入（全部真跑过命令核对，取数可复算）：
+> - `src/` 268 文件 / 31 332 行 PHP（`find src -name '*.php' | xargs wc -l`）
+> - `docs/`（`architecture/` 13 册 · `arch-v2/` 12 册 · `design-v7/` 27 册 · `ARCH-REVIEW` / `ARCH-V2-REVIEW` 两份已落地评审）
+> - `D:\TypePHP\Drift3\docs\research\` **11 份成熟 GUI 调研 + 12 横向提炼**（逐份读过）
+> - `.workbuddy-ai/memory/`（`MEMORY.md` 100 行 + `PITFALLS.md` 510 行 + 11 天日志）
+> - 真实源码现场（下面所有 `file:line` 都是本轮当场读到的，不复述旧评审的转述）
+>
+> 本轮立场与 `docs/ARCH-REVIEW-2026-10-21.md` **不同**：那份是「做之前」的诊断，
+> 这份是「**W8 收盘之后**」的体检 —— 那份提出的 A1/A2/A3 三件"结构缺口"，
+> **A1（覆盖层栈）与 A3（双后端 drawPath）已落地**，A2 未做。
+> 所以本文不重复那三条，只写"**现在这个状态下**"还剩什么。
+
+---
+
+## 0. 一句话结论
+
+**架构主干经受住了 W8 的压力测试，"补丁驱动"已经变回"结构驱动"。
+剩下的问题是**四个"边角契约没类型化 / 没收口"**的点 —— 它们正在让 `Application.php`
+继续膨胀（2192 → **3846 行**），而膨胀的方式恰好是上一轮认定的"补丁形状"。
+不需要重写任何主干，要做的是 4 个收口改造 + 3 项非功能欠账。**
+
+| 维度 | 评分 | 一句话 |
+|---|---|---|
+| **架构** | ★★★★☆ | 三层树 / 五阶段帧 / 浮层栈 / 双后端 / 端口分离 都立住了，**反向依赖 0 处** |
+| **实现** | ★★★★☆ | 错误边界 / 静默失败抑制 / 反向自检做得比多数成熟框架都严；**巨型类**是唯一短板 |
+| **扩展性** | ★★★☆☆ | 横向（加控件）通畅，**纵向（新平台 / 新输入模态 / 可访问性）明显欠账** |
+| **易用性** | ★★★☆☆ | 三条声明式缝好用；但 **438 个 `@api`/`@internal`** 没有应用可读的 API 索引 |
+| **长期维护** | ★★★★☆ | 闸门（smoke 1390 / lint 19 规则 / selftest / T2 真机 md5）是最大资产；**文档漂移**与**知识靠注释堆**是两大隐患 |
+
+**四个该收口的（按性价比）**：
+
+| # | 问题 | 现在的代价 | 收口动作 | 破坏性 |
+|---|---|---|---|---|
+| **S1** | `Application.php` **3846 行**，`instanceof` 39 处，`@api/@internal` 42 处 —— 它同时是"帧引擎 + 输入分派 + 浮层 + 焦点 + 语义 + 文本编辑 + 动画 + 通知 + 计时"九件事 | 每加一类全局能力（焦点环、`:focus-visible`、盒级光标、光标语义…）都要再动它；W8 里"焦点环 / 光标 / `:focus-visible`"三件连做的就是证据 | 拆四块：`FrameEngine`（泵 + 时钟）、`InputRouter`（分派 + 命中 + 光标）、`OverlayHost`（栈 + 定位）、`TextEditingBridge`（`instanceof TextFieldState` 收成接口） | 中（**纯搬家**，1390 条 smoke 当护栏） |
+| **S2** | **控件三件套样板仍在**：`TextFieldBox` / `ScrollViewBox` / `SpinnerState` + 4 个 `*State` 与 Box 仍为 `instanceof RenderBoxWidget` 而非基座 | 上一轮 P2 已判"纯样板"，但 A2 没做 ⇒ 新控件还在抄；`StatefulWidget` 套修饰仍会响亮失败（`Element.php:159-175` 那段注释就是 A2 没做的化石） | 提 `StatefulControl` + `ControlElement`（**上一轮 A2 的处方，可直接抄**），`TextField`/`ScrollView`/`Spinner`/`LazyColumn` 改继承 | 低（等价重构） |
+| **S3** | **输入模态是三值 + 三处特判**：`Application` 持 `$inputModality`（键盘/指针），`:focus-visible` 与焦点环分别在 `paintFocusRing()` 与 `focusRingTarget()` 里各判一次；且 `W8-4` 记忆里明确"**long-press 壳侧无 `WM_TOUCH`/`WM_POINTER` ⇒ 做不了**" —— 这是平台端口的**能力边界没进契约** | 下一个"跟模态走的视觉/语义"（hover 高亮、拖放影子、IME 位置…）还得再加一处判据 | 把"模态 × 焦点 → 视觉"做成**纯函数表**（已是 `focusRingTarget()` 的形状，但只覆盖焦点环），并把 `Platform` 端口的**输入能力位**（`CAP_TOUCH`/`CAP_POINTER`/`CAP_IME`）显式进契约 | 中 |
+| **S4** | **非功能欠账三件**：① **UIA 桥是"接口就位、实现未接"**（`WindowHost::pushSemantics()` 有，但 `Win32WindowHost` 侧只有数组接受，**没有 provider**）② **i18n/RTL 为 0**（`grep TextDirection/locale` 全仓零命中）③ **`ErrorBoundary` 与 `Errors` 是两套**（前者拦异常、后者报契约，但应用分不清何时用哪个） | 无障碍是"树推了、没人听"；出海/多语言要重排整个 `Text` 栈；错误处理的"什么时候 Fatal / Recoverable"全靠翻文档 | ① ③ 各一个小 spike；② 是**长线**，先定 `TextDirection` 进 `BoxConstraints` 还是进 `RenderBox` 的位置 | ① 中 ② 大 ③ 低 |
+
+★ **不建议做的**（写下来免得再讨论）：
+- **`Wrap` / 双轴虚拟化**：`MEMORY.md` 已判"推翻条件是'子项数运行时才知道 + 必须自动换行'"，无此需求。
+- **Measure/Place 分离**、**Compose 链式 Modifier**、**GPUI base/component 两层库**：上一轮已否决，理由仍成立。
+- **为 `Application` 引入"全静态 Service Locator"**：会把"谁依赖谁"这个可静态检查的性质毁掉，与 `dependency-direction` lint 规则直接冲突。
+
+---
+
+## 1. 现状基线（全部本轮实测）
+
+| 项 | 值 | 命令 |
+|---|---|---|
+| 源码规模 | 268 文件 / **31 332 行** | `find src -name '*.php' \| xargs wc -l` |
+| 各层行数 | `Widget` **12 708** · `App` 6 914 · `Rendering` 5 412 · `Layout` 5 406 · `Text` 3 850 | `wc -l src/*/*.php` |
+| 最大单文件 | **`Application.php` 3 846 行**（上一轮 2192，**+75%**） | `wc -l src/App/Application.php` |
+| 控件数 | `src/Widget/` **88 文件**（上一轮 63） | `ls src/Widget \| wc -l` |
+| 闸门 | smoke **1 390** · lint **484 文件 / 0 err 0 warn / 19 规则** · selftest 全过 · T2 AOT **~200s** | `.workbuddy-ai/memory/MEMORY.md` 10-24 记 |
+| `@api` / `@internal` | **332 / 253** | `grep -rc "@api\|@internal" src` |
+| `Application` 的 `instanceof` | **39 处** | `grep -c "instanceof" src/App/Application.php` |
+| 反向依赖 | `use Drift\App` 在 `src/App/` 之外 = **0** | `grep -rln "use Drift\\\\App" src \| grep -v src/App` |
+| 端口 | `Platform` 9 接口 + `Win32/` 11 文件 1 066 行；`drift_win32.cc` 1 858 行 | `ls src/Platform/Win32 \| wc -l` |
+| 双后端能力差 | 仅 `CAP_SHADOW`（Skia 独占），`CAP_IMAGE`/`CAP_PATH` 已双向 | `grep unsupportedOp src/Rendering/RasterCanvas.php` = **1 处** |
+
+⇒ **W8 是真正的压力测试**：控件数 63 → 88、`Application.php` 2192 → 3846、
+smoke 936 → 1390。**主干没崩**（反向依赖 0、分层守住了），但**横向增长全部堆在
+`Application.php`**，这是本轮最该关注的信号。
+
+---
+
+## 2. 架构维度
+
+### 2.1 立住的骨架（五条，每条都有"为什么不能再动"的理由）
+
+| 骨架 | 现场证据 | 为什么不能动 |
+|---|---|---|
+| **三层树**（Widget 不可变 / Element 身份 / RenderBox 几何） | `Element::syncBox()` 是**全仓唯一盒创建点**（`Element.php:142-158`，注释原话就写着这条） | 任何"第二个盒创建点"都会重现 `Frame` 跳过 layout 那个 bug（`State::$boxEpoch` 的由来） |
+| **五阶段帧**（settle → layout → paint → present + 泵前置） | `Application::frame()` 1838 起九段，每段 `SurfaceProfile` 计时 + `FramePhase` trace | 泵必须在 settle 之前（`pumpTasks` 注释明写），顺序一变就是"loading 闪一帧空" |
+| **浮层栈 = 绘制序 = 命中序**（`OverlayStack` 唯一真源） | `Application.php:240-247` 明写"01-a/01-b 期间挂七个镜像字段，01-c 已删" | 上一轮 P1 的病根已除；现在只在 `syncPanelSignatures()` 处有一处签名同步 |
+| **双后端能力等价** | `RasterCanvas` 仅 `drawShadow` 一处置 `unsupportedOp`；`CAP_IMAGE`/`CAP_PATH`/`CAP_LAYER`/`CAP_CLIP_PATH` 都已双向 | 上一轮 P3 的病根已除；`Memory.md` 明确"两后端要么都支持要么都响亮失败" |
+| **平台端口分离** | `Platform` 9 接口 + `Win32/` 收敛；`use Drift\App` 反向 0 | `docs/_archive/CROSS-PLATFORM.md` 2026-10-20 实测"框架 PHP 198 文件零平台耦合" |
+
+★ 这五条**是这份体检最重要的一句话**：**W8 没有一条新控件推翻它们**，
+上一轮担心的"补丁会再长"没有发生（除了下面 §2.2 的 Application 膨胀）。
+
+### 2.2 唯一的架构性缺陷：`Application.php` 是"九合一"巨型类
+
+**证据链**（全部本轮读到）：
+
+```
+3 846 行 · 19 个 App 类里它一家占 3 846 / 6 914 = 56%
+instanceof 39 处（跨层 type-switch）
+@api 42 处 · @internal 多处
+public frame() 一个方法 285 行（1838-2123），九个泵 + 浮层 + 焦点环 + 语义
+```
+
+它**同时**是：
+1. **帧引擎**（`frame()` 九段 + `FrameClock` 协作）
+2. **输入分派**（`dispatchInput()` 2694-2878，含 `instanceof TextFieldState`、`scrollThumbAt`、`hitsModalPanel`、`cursorFor`）
+3. **浮层宿主**（`placeOverlays` / `syncPanelSignatures` / `placeEntry` / `anchorRect` / `focusTrapRoots` / `topModalEntry`）
+4. **文本编辑桥**（`editingTextFieldState` / `textSelectBox` / `beginTextSelection` / `extendTextSelection` / `dispatchEditCommand`，全部 `instanceof TextFieldState`）
+5. **焦点与视觉**（`paintFocusRing` / `focusRingTarget` / `revealFocused`）
+6. **通知**（`showSnackbar` / `shiftSnackQueue` / `presentSnackbar` / `snackEntry`）
+7. **语义**（`pumpSemantics` / `pushSemantics` / `semanticsFrameSkip` / `lastStructureVersion`）
+8. **计时/延时**（`after()` / `pumpTimers` / `panelsLagBehind`）
+9. **测试与 devtools 观察面**（十余处 `@api 测试 / devtools 读它`）
+
+**这就是上一轮 P5 的第二季**：`frame()` 从 8 段补丁变成 9 段（多出 `pumpTimers`），
+`wantsFrame()` 判据从 5 条变 7 条（多出 `panelsLagBehind` 与焦点环），
+**每一件新跨切面能力都在这里加一段**。现在还能撑，再加两类能力就会重演
+`Frame.php` 早期"一帧只能收一个浮层"那种形状。
+
+**为什么这是"架构"而不是"实现"**：
+`instanceof TextFieldState` 39 处意味着 **`Application` 知道 `TextField` 的内部状态类**。
+这是上一轮 P6「受控值是事后统一」的直接后果 —— 没有"文本编辑"这个抽象，
+框架只能特判具体控件。今天只有一个 `TextField`，明天加 `TextArea` / `CodeEditor`
+就再抄一遍 39 处。
+
+### 2.3 借成熟框架对照（`D:\TypePHP\Drift3\docs\research\` 11 份）
+
+上一轮已对 11 份做过分类（4 已兑现 / 5 该借 / 5 不借 / 4 反面警示）。本轮只取
+**W8 之后能落到具体文件**的四条，不重复那张总账：
+
+| 借鉴点 | 出处 | Drift2 现状 | 动作 |
+|---|---|---|---|
+| **`Widget` 面按"四类正交"分组**（盒样式 / 输入声明 / 语义 / 布局约束） | Compose（借分类法，**不借**链式 API） | `Widget.php` 1 147 行一个平铺的链式 API 面，`cursor()` / `hover()` / `pointer()` / `keyboard()` / `overlayPanel()` / `tooltip()` / `semantics()` / `focusOrder()` 交错排列 | **不改代码**，只在 `docs/architecture/08` 加一张"修饰需求四类对照表"+ lint 规则（漏一类就报） |
+| **能力位进端口契约**（`CAP_TOUCH` / `CAP_POINTER` / `CAP_IME`） | UDA `SupportLevel`（只借"**降级要可解释**"这一条） | `W8-4` 记忆："pinch **做不了**（壳无 `WM_TOUCH`/`WM_POINTER`）" —— 这是**文档级**事实，代码里无从表达 | `Platform` 端口加能力位；控件声明"需要 `CAP_TOUCH`"，缺则响亮失败 |
+| **观测面 = 产品需求**（"看不见就没法修"） | Flutter DevTools / React DevTools / Vue Devtools（三家都把 Inspector 当一等公民） | `Application` 有十余处 `@api 测试 / devtools 读它`，但 **apps/tools 里 devtools 只有 5 处 grep 命中**（`grep -rn devtools apps tools` = 5）⇒ **观察面是"暴露了但没人用"** | 起一个最小 Inspector（帧时序 + 脏节点 + 浮层栈），消费 `SurfaceProfile` / `FramePhase` / `overlays()` |
+| **反面：Provider/AutoDispose 的"订阅地狱"** | Flutter Riverpod | `Subject` / `Subscription` / `watch()` 已经是这一族；`DeadSubscription` / `NestedSubscribe` / `CachedSubscriber` 三条 lint 在守 | **不借**（已是最小形状），但把三条 lint 的"什么算违规"写进 `docs/architecture/07` |
+| **反面：Qt 双轨（QWidget + QML）** | Qt | 上一轮已借过（P3 双后端等价），W8 已兑现 | 无需再动，写进"永久判据" |
+
+★ **11 份里有 4 份（Aria / MoUI / UniDesktop / Vue）本轮没有新增借鉴点** ——
+不是它们没价值，是上一轮已把能落到文件的都取走了，剩下的都是概念。
+
+---
+
+## 3. 实现维度
+
+### 3.1 做得比成熟框架更严的三点（W8 之后依然成立）
+
+1. **反向自检是全仓纪律**，不是测试可选项。`PITFALLS.md` 10-24 那条"反例自检形状：
+   摘掉 `parent::didUpdateWidget()` ⇒ 红 6 / 绿 3"是**逐缺陷**记录的；lint 19 条规则
+   自带 `tools/selftest.php`（"该响会响 + 不该响不误响"）。Flutter / Qt 的框架层测试
+   都没这么严。
+2. **"未消费的分支 = 未实现"** 已经是硬约束（`MEMORY.md` 反复出现），W8-4 的
+   `long-press` 直接判"壳侧无能力 ⇒ 不做"，而不是写一个空壳。这比大多数框架
+   留一堆 `notImplemented` 强。
+3. **静默失败的抑制是系统性的**：`Element::syncBox()` 修饰丢失 ⇒ `Errors::report`
+   （响亮）；`didUpdateWidget()` 漏 `parent::` ⇒ 反向自检抓；`frame()` 跳过 layout ⇒
+   `State::$boxEpoch` 记账。`Errors` 是**判决器**不是日志（`12` 册明写），定位准确。
+
+### 3.2 该修的实现问题
+
+| # | 问题 | 证据 | 收口 |
+|---|---|---|---|
+| **I1** | **巨型方法**：`Application::frame()` 285 行、`dispatchInput()` 184 行、`RasterCanvas` 1 816 行 | `wc -l` | `frame()` 拆成 `FrameEngine`（九段表驱动）；`dispatchInput()` 拆成 `InputRouter`；`RasterCanvas` 的扫描线/描边/裁剪已分私有方法（好），**不用动** |
+| **I2** | **`instanceof` 分支表没有守卫**：39 处散在 `Application`，`Element::syncBox()` 与 `StatefulElement` 各有特判 | `grep -c instanceof` | 拆 `S1` 时一并收成接口（`EditableText` / `Scrollable`），并加一条 lint：`instanceof` 于 `src/App/` 里只许出现在接口上 |
+| **I3** | **两套错误通道**：`ErrorBoundary`（拦异常、画占位）与 `Errors`（报契约、Fatal/Recoverable/Diagnostic）职责分得清但**入口没类型**：应用不知道什么时候 `throw` 什么时候 `Errors::report` | `src/Widget/ErrorBoundary.php` + `src/Errors.php` | 加一张 3 行的判定表进 `docs/architecture/17`：**契约破坏 → `Errors`；用户输入导致的渲染失败 → `ErrorBoundary`；外部 IO → `Job` + `after()`** |
+| **I4** | **死分支仍在**：`RenderFlex`/`RenderDock` 的 `Scroll`/`Wrap` 溢出策略仍是"未实现"分支（`RenderFlex.php:572`、`RenderDock.php:234`） | `grep 尚未实现 src/Layout` = 5 处 | 与 §0 的"否决清单"一致：**把 `Scroll`/`Wrap` 从 `Overflow` 枚举里删掉**（`MEMORY.md` 已判 `Overflow::Wrap` 是类别错误）—— 删比留好，留着就是"未被消费的分支 = 未实现"的反面 |
+
+---
+
+## 4. 扩展性维度
+
+### 4.1 横向（加控件 / 加页面）：★★★★★
+
+这是 W8 证明得最充分的一点。新增一个叶子控件的最小面：
+`Widget` + `State` + `RenderBox` + 语义 + smoke（含反例）+ 真机一图。
+`Grid`/`LazyGrid` 是**纯组合**（`MEMORY.md`：`LazyColumn` 套 `Grid`，不新增原语），
+`AspectRatio` **零新渲染盒**（`Modifier` 字段），`RichText` 复用 `paintRunDecorations`。
+**"加一个控件"的成本已经接近线性**，这是上一轮 P2 没做 A2 但也没崩的原因：
+控制件"三件套样板"的绝对量在 88 个控件下也还不到 500 行（`ScrollViewBox` 85 +
+`TextFieldBox` 133 + 4 个 State ≈ 300 行）。
+
+★ **但**：下一批叶子（`DatePicker` / `Pagination` / `Badge` / `Chip`）**全是浮层或组合**，
+不是新原语 ⇒ 三件套样板不再是瓶颈。真正会再长样板的是 **`TextArea` / `CodeEditor`
+这类"有文本状态 + 有编辑行为"的控件**，届时 S2 的 `StatefulControl` 才会显出价值。
+
+### 4.2 纵向（新平台 / 新输入模态 / 可访问性）：★★☆☆☆
+
+这是 W8 **没碰**、而长期必然要碰的一维，也是评分最低的一维：
+
+| 缺口 | 证据 | 为什么是扩展性问题 |
+|---|---|---|
+| **触摸 / 笔 / 手势** | `MEMORY.md`：pinch **做不了**（壳只收 `WM_MOUSEMOVE`/`WM_MOUSEWHEEL`） | 端口契约里没有"输入能力位" ⇒ 控件无法声明"我需要 CAP_TOUCH"，只能靠文档记"做不了" |
+| **无障碍 UIA** | `WindowHost::pushSemantics()` 存在、`Win32WindowHost.php:186` 只有数组接受，**没有 provider** | 树推了没人听 ⇒ 屏幕阅读器拿到空树；"per-app opt-in"（`Application.php:170`）的闭包接线还没消费者 |
+| **i18n / RTL** | `grep TextDirection\|locale` 全仓 0 | `Text` 栈 / `RenderFlex` / `Row` 都没方向概念 ⇒ 支持阿拉伯语要重排布局算法 |
+| **多窗口** | `WindowStateStore` 249 行是唯一相关物 | 没有"窗口 ↔ 树"的映射契约；`OverlayStack` 是**单窗口**设计 |
+| **GPU / 合成层** | `GpuContext` 是留口；3.14ms / 5.3× 余量 | 不阻塞，但**层叠合成**（`CAP_LAYER` 已在 Raster 落地）在 Skia 侧是浅封装，将来要合成器（`Compositor`）时会动 `Frame::run` |
+
+★ **建议的顺序**（与 §0 的 S3/S4 对应）：
+1. **输入能力位进 `Platform` 契约**（S3）—— 最便宜，**先把"做不了"从文档变类型**。
+2. **UIA provider spike**（S4①）—— 有 `pushSemantics` 在前，补 provider 大概几百行 C++。
+3. **`TextDirection` 定位裁决**（S4②）—— 这是个**设计裁决**不是实现：进 `BoxConstraints`
+   还是进 `RenderBox`，会决定 `intrinsic*` 要不要跟着改（`P4` 那条"两套布局路径"会重演）。
+4. 多窗口 / GPU 留到有真实需求。
+
+---
+
+## 5. 易用性维度
+
+### 5.1 好的部分
+
+- **三条声明式缝**（`pointer($h, ownsPress:)` / `keyboard($h)` / `overlayPanel(\Closure)`）
+  形态一致、语义正交，且 `MEMORY.md` 明确"别再往 `activateFocusedWidget()` 加 instanceof"。
+- **受控值统一形态**：值住应用 `State`，激活走单一入口；`OptionStatus` 用互斥不可变值
+  表达三态（`MEMORY.md`：设了 `loading()` 就没有错误态）—— **这个设计比 Flutter 的
+  `isLoading`/`error`/`data` 三字段更类型安全**。
+- **组合根接线清晰**：`Menu::onOpen` / `Widget::tooltip()` / `buildRoot()` 递闭包，
+  `Widget` 层够不到 `Application` 时**不许** `$this->application()`（已成纪律）。
+
+### 5.2 差的部分
+
+| # | 问题 | 证据 | 收口 |
+|---|---|---|---|
+| **U1** | **API 面没有"应用可读的索引"**：332 `@api` + 253 `@internal`，但没有工具能列出"我作为应用开发者能用什么" | `grep -rc` | 加一条 lint 规则 `api-surface`：`php tools/lint.php --api` 输出 `@api` 面清单（按层分组），**当文档用** |
+| **U2** | **文档与代码漂移**：`docs/arch-v2/11` §0 的"收盘现状表"与 `MEMORY.md` 10-24 那段几乎逐字重复，但**两处都有可能过时**（`11` 写"`LazyRow` 待做"，`MEMORY.md` 未提） | 两处 grep | `docs/arch-v2/11` 的 §0 改成**指向 `src/` 的自检命令**（"控件在不在：`grep -rl "class X" src/`"，`MEMORY.md` 已有这条判据），文档只留"为什么不做" |
+| **U3** | **示例台是唯一真实消费者，但没有"API 教程"分层**：`apps/showcase/` 19 个页面全是能力展示，没有"从 0 到 1 写一个应用"的引导 | `ls apps/showcase/src/Pages` | 加 `apps/tutorial/`（hello-world → 计数器 → 异步 → 浮层），**这是新人/未来的你唯一能"照抄"的路径** |
+| **U4** | **错误消息好，但没有"怎么修"的链接**：`Element.php:166-175` 的修饰丢失消息给了两条修法，但**没有文档锚点** | `Errors::report` 的文案 | 文案尾部加 `详见 docs/architecture/08 §x.y`，且文档锚点可由 lint 校验 |
+
+---
+
+## 6. 长期维护维度
+
+### 6.1 最大资产：闸门是**可复算**的
+
+smoke 1390 / lint 19 规则 / selftest 15+18 / T2 AOT / 真机 md5 连跑 2–3 次 ——
+这套闸门在 11 天里撑住了 **W8 全程**，且 `MEMORY.md` 的判据条条是"**反向自检形状**"
+（"摘掉 parent ⇒ 红 6 绿 3"这种）。**这是这份代码库最不该动的东西。**
+
+`ARCH-V2-REVIEW` 用脚本核过 78 处 `file:line` 0 越界、406 处跨册 § 引用 0 断链。
+**这个"文档可复算"的纪律也应该进闸门**（上一轮 B 级建议的 `tools/docref.php`，目前仍未做）。
+
+### 6.2 三个长期隐患
+
+| # | 隐患 | 证据 | 收口 |
+|---|---|---|---|
+| **M1** | **知识全在注释与 `PITFALLS.md`，没有"机制文档"**：`★` 注释从上一轮 974 处涨到目前**约 1 100+**（`MEMORY.md` 11 天日志里每天都有 ★★★）；`PITFALLS.md` 510 行是按主题堆的，**没有从"坑"到"机制"的提炼** | `grep -ro "★" src \| wc -l` | 每季度做一次"坑 → 机制"的提炼（把 3 条同类坑合成 1 条不变量），否则 `PITFALLS.md` 会变成第二个 `HISTORY.md` |
+| **M2** | **文档漂移无防**：`arch-v2` 11 686 行 + `design-v7` 19 198 行 + `architecture` 13 册，三套并行；`ARCH-V2-REVIEW` 自己都指出"文档即规格但没防漂移机制" | `wc -l docs/**` | 上一轮 B 级建议的 `tools/docref.php`（`file:line` 越界 + 跨册 § 断链）**建议立刻做**，半天收益；再加一条"文档里的文件行数必须与实际差 ≤ 10%" |
+| **M3** | **`Application.php` 3846 行没有"分片所有权"**：19 个 App 类里它一家占 56%；`docs/arch-v2` 的分册是按"主题"分（覆盖层/布局/状态…），代码没按同样方式分片 ⇒ **改一个主题要在一个文件里跳 5 处** | `wc -l src/App/*` | 与 S1 同一动作：拆 `FrameEngine` / `InputRouter` / `OverlayHost` / `TextEditingBridge` 四片，**每片与 `docs/arch-v2` 一册对齐** |
+
+---
+
+## 7. 建议的执行顺序（按性价比）
+
+```
+第零步（半天）   M2 tools/docref.php        ← 独立、零冲突、立刻止住文档漂移
+第零步（半天）   U1 api-surface lint        ← 把 332 个 @api 变成可打印清单
+第一步（1 周）   S1 拆 Application 四片     ← 纯搬家，1390 条 smoke 当护栏；
+                                              与 docs/arch-v2 分册对齐（M3 一并解决）
+第二步（2–3 天） S2 StatefulControl 基座    ← 上一轮 A2 的处方，等价重构
+第三步（3–4 天） S3 输入能力位进 Platform    ← 把"做不了"从文档变类型；连带把
+                                              "模态 × 焦点 → 视觉"收成纯函数表
+第四步（穿插）   U2 文档改自检 / U3 tutorial / I3 错误通道判定表 / I4 删 Overflow::Scroll|Wrap
+第五步（按需）   S4① UIA provider spike    ← 有真实无障碍需求再做
+长线（有需求）   S4② TextDirection 裁决 + i18n
+```
+
+★ **顺序理由**：
+- **M2 排最前**：它是唯一"不做就会继续恶化"的（文档 3 万行且三套并行），
+  半天做完，之后所有文档改动都有闸门。
+- **S1 排第二**：它是 §2.2 的根因；`S2`/`S3`/`I2` 都会在拆的过程中自然收口
+  （拆 `TextEditingBridge` 就消灭 39 处 `instanceof TextFieldState`）。
+- **S2 在 S1 之后**：`StatefulControl` 的 `ControlElement` 会与 `Element::syncBox()`
+  重叠，先拆 `Application` 再动 `Element`，冲突面小。
+- **S3 独立**，随时可做，但**必须在 UIA 之前**（UIA 的节点能力位要复用它）。
+- **S4②（i18n）是设计裁决不是实现**，不要在没有真实需求时启动。
+
+---
+
+## 8. 取数口径（怎么复核这份报告）
+
+```bash
+# 现状基线
+find src -name '*.php' | xargs wc -l | tail -1              # 31332
+wc -l src/App/Application.php                               # 3846
+ls src/Widget | wc -l                                       # 88
+grep -c "instanceof" src/App/Application.php                # 39
+grep -rln "use Drift\\\\App" src | grep -v src/App           # 空
+grep -rc "@api" src --include="*.php" -r | awk -F: '{s+=$2} END {print s}'      # 332
+grep -rc "@internal" src --include="*.php" -r | awk -F: '{s+=$2} END {print s}' # 253
+
+# 双后端能力差
+grep -n "unsupportedOp" src/Rendering/RasterCanvas.php       # 仅 1 处（drawShadow）
+
+# 死分支
+grep -rn "尚未实现" src/Layout                               # 5 处（RenderFlex/RenderDock）
+
+# 输入能力边界（文档级，代码无表达）
+grep -rn "WM_TOUCH\|WM_POINTER\|long-press\|pinch" .workbuddy-ai/memory/
+
+# 无障碍 / i18n
+grep -rn "pushSemantics" src/Platform                        # 接口在、provider 未接
+grep -rln "TextDirection\|locale" src --include="*.php"      # 0 命中
+
+# 文档规模
+wc -l docs/arch-v2/*.md docs/design-v7/*.md docs/architecture/*.md | tail -1
+```
+
+★ 与上一轮两份评审的关系：
+- `ARCH-REVIEW-2026-10-21.md` 的 **A1 / A3 已落地**（浮层栈、双后端 drawPath），
+  **A2 未做**（即本轮的 S2）；其 P5 的 `frame()` 巨型方法**恶化**了（285 行）。
+- `ARCH-V2-REVIEW-2026-10-21.md` 的 §5.1「文档即规格但没防漂移」**仍是最大长期风险**，
+  即本轮的 M2；其 §5.2「1002 条 smoke 全无头」部分缓解（真机 md5 + 探针已成纪律），
+  但**UIA / 无障碍仍无自动验证**。

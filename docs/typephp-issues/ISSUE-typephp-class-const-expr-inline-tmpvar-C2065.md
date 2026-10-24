@@ -254,4 +254,4 @@ sed -n '17,26p' build/src/main.cc       # 看 tmp_var_0 自引用 / tmp_var_1 �
 ---
 
 **关联**：本仓另有一条同家族常量缺陷 issue —— 类常量与同类方法同名 ⇒ `C2872`（`docs/ISSUE-typephp-class-const-vs-method-C2872.md`）。
-**关联 Drift2 内部记录**：`DESIGN.md` §24.1 系列；`src/Rendering/CanvasCapabilities.php:56-64`（规避注释）。
+**关联 Drift2 内部记录**：`docs/_archive/changelog-v2.md` §24.1 系列；`src/Rendering/CanvasCapabilities.php:56-64`（规避注释）。
