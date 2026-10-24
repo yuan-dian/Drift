@@ -108,3 +108,17 @@
 
 ★ **改文档的纪律**：引用 `file:line` 必须**当场核对**（`wc -l` 看总行数），
 不要凭记忆写行号；本表的行数是 `wc -l` 实测的，不是估的。
+
+---
+
+## 7. API 面清单（U1）
+
+「我作为应用开发者能用什么」—— `php tools/lint.php --api` 输出 `@api` /
+`@internal` 清单（按层分组），快照在 [`API-SURFACE.md`](API-SURFACE.md)
+（自动生成，勿手改）。
+
+★ 口径：docblock **独立标注行**。单行 `/** @api … */` 与行内描述性提及
+（如「它本身是 `@internal` 的实现细节」）都按规则区分 —— grep 口径两者都算错
+（实测：@api 真标注 333 / @internal 241，而 grep 字样是 332 / 253）。
+★ 这份快照是 **API 面变更的 diff 基线** —— 拆 `Application`（ARCH-REVIEW §7 的
+S1）时重跑 `--api`，与快照的 diff 就是该审的 API 面变化。
