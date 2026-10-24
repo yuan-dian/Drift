@@ -142,6 +142,16 @@ struct Options {
     // ── 字符输入（`--chars`：PostMessage(WM_CHAR)）──────────────────
     bool typeChars = false;        // --chars=<hex UTF-16>
     std::wstring charsHex;
+    // ── 虚拟键（`--vk=28,28,0D`：SendInput 真实键盘，2026-10-24）──────
+    // ★ 为什么必须有：`--chars` 只能发 WM_CHAR（字符），而**方向键 / Enter /
+    //   Esc / Tab 不产生字符** —— 壳侧从 `WM_KEYDOWN` 造 KeyEvent ⇒ 没有虚拟键
+    //   通道就**根本验不了**"↓↑ 移高亮 / Enter 提交"这类键盘判据
+    //   （现象：只能靠 smoke 的解释器结论，而"smoke 全绿 ≠ 真机正确"）。
+    // ★ 与 `--keys` 同一条约束：`SendInput` 只进**前台**窗口 ⇒ 内部先
+    //   `activateWindow()`，否则整批键送进 IDE。
+    bool typeVk = false;
+    std::wstring vkList;           // 逗号分隔的**十六进制**虚拟键码（28=Down 26=Up 0D=Enter 1B=Esc 09=Tab）
+    int vkWaitMs = 700;            // 敲完等多久再抓
     // ── 提前台（`--activate`）──────────────────────────────────────
     // ★ 悬停类判据（Tooltip / hover 高亮）必需：`--cursor` 用 `SetCursorPos` 挪
     //   **物理光标**，而 WM_MOUSEMOVE 只会送到"光标底下那扇窗"—— 目标窗在后台、
@@ -810,6 +820,11 @@ int wmain(int argc, wchar_t** argv)
             //   ⇒ 语义等价、且不依赖窗口层级。焦点仍由 `--click` 给。
             options.typeChars = true;
             options.charsHex = value;
+        } else if (key == L"vk") {
+            options.typeVk = true;
+            options.vkList = value;
+        } else if (key == L"vk-wait" && parseInt(value, number)) {
+            options.vkWaitMs = static_cast<int>(number);
         } else if (key == L"png") {
             options.savePng = true;
             options.pngPath = value;
@@ -1032,6 +1047,39 @@ int wmain(int argc, wchar_t** argv)
 
         std::printf("keys=%d,%d,units=%zu\n", options.keysX, options.keysY, text.size());
         ::Sleep(static_cast<DWORD>(options.keysWaitMs));
+    }
+
+    if (options.typeVk) {
+        // ★ 同 `--keys`：SendInput 只进前台队列 ⇒ 先把目标窗提前台
+        activateWindow(hwnd);
+
+        size_t start = 0;
+        int sent = 0;
+        while (start <= options.vkList.size()) {
+            const size_t comma = options.vkList.find(L',', start);
+            const std::wstring item = options.vkList.substr(
+                start, comma == std::wstring::npos ? std::wstring::npos : comma - start);
+            if (!item.empty()) {
+                const WORD vk = static_cast<WORD>(wcstol(item.c_str(), nullptr, 16));
+                INPUT in[2] = {};
+                in[0].type = INPUT_KEYBOARD;
+                in[0].ki.wVk = vk;
+                in[1] = in[0];
+                in[1].ki.dwFlags = KEYEVENTF_KEYUP;
+                ::SendInput(2, in, sizeof(INPUT));
+                sent++;
+                // ★ 每键之间留一帧：同帧连发会被应用合成成"一帧内多个键"，
+                //   而方向键判据恰恰要看**每按一次**的结果（高亮移动一格）。
+                ::Sleep(120);
+            }
+            if (comma == std::wstring::npos) {
+                break;
+            }
+            start = comma + 1;
+        }
+
+        std::printf("vk_sent=%d\n", sent);
+        ::Sleep(static_cast<DWORD>(options.vkWaitMs));
     }
 
     // ── 字符输入（PostMessage(WM_CHAR)，见参数解析处的分工说明）─────
