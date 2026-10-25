@@ -11,12 +11,21 @@ namespace Drift\Widget;
  *   判据的前提是壳控件有名字），且激活态高亮（当前页对应项）将来有落点。
  *
  * ★ 行为就是 `Button`：链式 / 盒样式 / 焦点 / `command()` / `onPressed()`
- *   全部继承，本类不加机制 —— 加机制的应该是新原语，不是新名字。
+ *   全部继承，本类只改两件事：
+ *   1. **内容左对齐**（`centerLabel = false`）—— 菜单项居中会让"图标 + 文字"
+ *      按标签长度各自漂移，一列图标参差不齐；LayUI / 侧栏都是左对齐。
+ *   2. 名字是 `NavButton`，供静态识别。
  *
  * @api
  */
 final class NavButton extends Button
 {
+    public function __construct(string $label)
+    {
+        parent::__construct($label);
+        $this->centerLabel = false;
+    }
+
     #[\Override]
     public static function make(string $label): self
     {

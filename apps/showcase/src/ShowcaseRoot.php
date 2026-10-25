@@ -10,13 +10,14 @@ use Drift\Theme\ThemeData;
 use Drift\Theme\ThemeScope;
 use Drift\Widget\AppBar;
 use Drift\Widget\BuildContext;
-use Drift\Widget\Button;
 use Drift\Widget\ButtonVariant;
 use Drift\Widget\Card;
 use Drift\Widget\Column;
 use Drift\Widget\Dock;
 use Drift\Layout\FlexAlign;
 use Drift\Widget\Expanded;
+use Drift\Widget\IconName;
+use Drift\Widget\NavButton;
 use Drift\Widget\Row;
 use Drift\Widget\ScrollView;
 use Drift\Widget\SizedBox;
@@ -103,7 +104,9 @@ final class ShowcaseRoot extends StatefulWidget
 /**
  * 导航条目 + 选中态。
  *
- * ★ `$entries` 平行存 `[名称, 页工厂]`（**不是** map：PHP 数组键不能是 Closure）。
+ * ★ `$entries` 存 `NavEntry`（图标 + 名称 + 页工厂）—— 2026-10-25 从
+ *   `[名称, 页工厂]` 二元数组升级：加图标若继续用数组，就要靠 `[2]` 魔数，
+ *   而且"图标和名字写反"在数组里不报错。
  * ★ 工厂是 `Closure` 而不是类型名：页类构造**至多一个闭包参数**，`static fn(): Widget
  *   => new XxxPage()` 对 AOT 直白（类名常量字符串形态还没在 codegen 验过）。
  *   ★ 通知页是唯一带参的：它要 `$notify`（浮层归 `Application`，页面够不到 —— §4.3）。
@@ -113,7 +116,7 @@ final class ShowcaseState extends State
     /** 未选中导航按钮的底色（LayUI 式浅灰） */
     private const NAV_IDLE = 0xF2F2F2;
 
-    /** @var list<array{0: string, 1: \Closure(): Widget}> */
+    /** @var list<NavEntry> */
     private array $entries = [];
 
     private int $selected = 0;
@@ -131,30 +134,30 @@ final class ShowcaseState extends State
     public function initState(): void
     {
         $this->entries = [
-            ['布局 Layout', static fn(): Widget => new LayoutPage()],
-            ['文本 Text', static fn(): Widget => new TextPage()],
-            ['按钮 Button', static fn(): Widget => new ButtonsPage()],
-            ['表单 Form', static fn(): Widget => new FormPage()],
-            ['列表 List', static fn(): Widget => new ListPage()],
-            ['长列表 Big', static fn(): Widget => new BigListPage()],
-            ['自绘 Paint', static fn(): Widget => new CustomPaintPage()],
-            ['反馈 Feedback', static fn(): Widget => new FeedbackPage()],
+            new NavEntry(IconName::Grid, '布局 Layout', static fn(): Widget => new LayoutPage()),
+            new NavEntry(IconName::TextLines, '文本 Text', static fn(): Widget => new TextPage()),
+            new NavEntry(IconName::Square, '按钮 Button', static fn(): Widget => new ButtonsPage()),
+            new NavEntry(IconName::Check, '表单 Form', static fn(): Widget => new FormPage()),
+            new NavEntry(IconName::ListBullets, '列表 List', static fn(): Widget => new ListPage()),
+            new NavEntry(IconName::ListBullets, '长列表 Big', static fn(): Widget => new BigListPage()),
+            new NavEntry(IconName::Brush, '自绘 Paint', static fn(): Widget => new CustomPaintPage()),
+            new NavEntry(IconName::Bell, '反馈 Feedback', static fn(): Widget => new FeedbackPage()),
             // ★ 追加**在末尾**：前 10 项的 y 坐标不变 ⇒ 既有真机探针量出的坐标不用改。
-            ['动画 Motion', static fn(): Widget => new MotionPage()],
-            ['分段 Segmented', static fn(): Widget => new SegmentedPage()],
-            ['图片 Image', static fn(): Widget => new ImagePage()],
-            ['滑杆 Slider', static fn(): Widget => new SliderPage()],
-            ['提示 Tooltip', static fn(): Widget => new TooltipPage()],
-            ['通知 Snackbar', fn(): Widget => new SnackbarPage($this->notify)],
-            ['下拉 Select', static fn(): Widget => new SelectPage()],
-            ['可编辑 Combo', fn(): Widget => new ComboBoxPage($this->delay)],
-            ['网格 Grid', static fn(): Widget => new GridPage()],
-            ['宽高比 Aspect', static fn(): Widget => new AspectPage()],
-            ['富文本 Rich', static fn(): Widget => new RichTextPage()],
+            new NavEntry(IconName::Play, '动画 Motion', static fn(): Widget => new MotionPage()),
+            new NavEntry(IconName::Menu, '分段 Segmented', static fn(): Widget => new SegmentedPage()),
+            new NavEntry(IconName::Image, '图片 Image', static fn(): Widget => new ImagePage()),
+            new NavEntry(IconName::Sliders, '滑杆 Slider', static fn(): Widget => new SliderPage()),
+            new NavEntry(IconName::Info, '提示 Tooltip', static fn(): Widget => new TooltipPage()),
+            new NavEntry(IconName::Bell, '通知 Snackbar', fn(): Widget => new SnackbarPage($this->notify)),
+            new NavEntry(IconName::ChevronDown, '下拉 Select', static fn(): Widget => new SelectPage()),
+            new NavEntry(IconName::Search, '可编辑 Combo', fn(): Widget => new ComboBoxPage($this->delay)),
+            new NavEntry(IconName::Grid, '网格 Grid', static fn(): Widget => new GridPage()),
+            new NavEntry(IconName::Square, '宽高比 Aspect', static fn(): Widget => new AspectPage()),
+            new NavEntry(IconName::TextLines, '富文本 Rich', static fn(): Widget => new RichTextPage()),
             // ★ 追加**在末尾**（同上条注释）：前 19 项的 y 坐标不变 ⇒ 既有真机探针不用改。
-            ['日志 Log', static fn(): Widget => new LogPage()],
+            new NavEntry(IconName::ListBullets, '日志 Log', static fn(): Widget => new LogPage()),
             // ★ 同上：图标页追加在最末，前 20 项的 y 坐标不变。
-            ['图标 Icon', static fn(): Widget => new IconPage()],
+            new NavEntry(IconName::Plus, '图标 Icon', static fn(): Widget => new IconPage()),
         ];
     }
 
@@ -213,19 +216,21 @@ final class ShowcaseState extends State
     {
         $out = [];
         foreach ($this->entries as $index => $entry) {
-            $name = $entry[0];
-            $out[] = $this->navButton($name, $index);
+            $out[] = $this->navButton($entry, $index);
         }
         return $out;
     }
 
-    private function navButton(string $name, int $index): Widget
+    private function navButton(NavEntry $entry, int $index): Widget
     {
         $isHere = $index === $this->selected;
 
         // ★ 未选中用 `Flat`（无底无边框 ⇒ 看起来像菜单项，不像一排按钮）；
         //   选中用 `Primary` + 显式主色（主题的 Accent 是蓝的，示例台要 LayUI 的墨绿）。
-        $button = Button::make($name)
+        // ★ 用 `NavButton` 而不是裸 `Button`：壳控件词汇要可静态识别，且它把内容
+        //   设成左对齐（图标列必须齐，居中会按标签长度各自漂移）。
+        $button = NavButton::make($entry->label)
+            ->icon($entry->icon)
             ->variant($isHere ? ButtonVariant::Primary : ButtonVariant::Flat)
             ->onPressed(function () use ($index): void {
                 // ★ `$this` 在闭包里（**不能** static fn —— 要调 setState）
@@ -253,9 +258,9 @@ final class ShowcaseState extends State
         $entry = $this->entries[$index] ?? null;
         if ($entry === null) {
             // 索引越界只能在测试里出现：兜底回第 0 页（不静默成空窗）
-            return $this->entries[0][1];
+            return $this->entries[0]->page;
         }
-        return $entry[1];
+        return $entry->page;
     }
 
     private function select(int $index): void

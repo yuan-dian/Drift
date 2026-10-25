@@ -46,4 +46,36 @@ enum IconName: string
 
     /** 三个点（更多操作） */
     case More = 'more';
+
+    // ── 导航 / 分类用（2026-10-25 加：21 个页面若共用 10 个图标就失去区分度）──
+
+    /** 2×2 方格（布局 / 网格） */
+    case Grid = 'grid';
+
+    /** 三条长短不一的横线（文本 / 富文本） */
+    case TextLines = 'text-lines';
+
+    /** 方框（画布 / 容器 / 宽高比） */
+    case Square = 'square';
+
+    /** 左侧圆点 + 右侧横线（列表） */
+    case ListBullets = 'list-bullets';
+
+    /** 铃（通知 / 反馈） */
+    case Bell = 'bell';
+
+    /** 三角（播放 / 动画） */
+    case Play = 'play';
+
+    /** 方框 + 山形（图片） */
+    case Image = 'image';
+
+    /** 两条轨道 + 两个把手（滑杆 / 调节） */
+    case Sliders = 'sliders';
+
+    /** 圆 + 感叹号（提示 / 信息） */
+    case Info = 'info';
+
+    /** 斜置的笔（自绘 / 编辑） */
+    case Brush = 'brush';
 }

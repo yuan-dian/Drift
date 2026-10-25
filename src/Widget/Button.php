@@ -58,6 +58,32 @@ class Button extends BoxWidget implements Activatable
 
     protected ?CommandArg $commandArg = null;
 
+    /**
+     * 前置图标（`null` = 无图标）。
+     *
+     * ★ 图标与标签在**同一个渲染盒**里排（不是 `Row`）—— `Flex::createRenderObject()`
+     *   只建 `RenderFlex` 空壳、子盒由 Element 挂，手工拼 `Row(图标, 文字)` 会得到
+     *   一个没有孩子的 `RenderFlex`（详见 `RenderButton` 类注释）。
+     */
+    protected ?IconName $icon = null;
+
+    /**
+     * 标签是否**画出来**（`false` = 纯图标按钮，标签只作可访问名）。
+     *
+     * ★ 用字段而不是让 `IconButton` 覆写虚方法：tpc 全程序去虚化会让"基类默认 +
+     *   子类覆写"静默失效（见 `Widget::semantics()` 同款注释）。
+     */
+    protected bool $labelVisible = true;
+
+    /**
+     * 内容是否在盒内居中（`false` = 左对齐）。
+     *
+     * ★ `NavButton` 构造时置 `false`：菜单 / 导航项左对齐，否则"图标 + 文字"这个
+     *   整体会按标签长度各自漂移（短标签的图标比长标签靠右 20+ px，看着没对齐）。
+     * ★ 与 `labelVisible` 同一条纪律：字段而不是覆写虚方法（tpc 去虚化）。
+     */
+    protected bool $centerLabel = true;
+
     public function __construct(protected readonly string $label)
     {
         parent::__construct();
@@ -119,6 +145,27 @@ class Button extends BoxWidget implements Activatable
         return $this;
     }
 
+    /**
+     * 前置图标（工具条 / 导航项用）。
+     *
+     * ```php
+     * Button::make('刷新')->icon(IconName::Refresh);
+     * NavButton::make('列表 List')->icon(IconName::ListBullets);
+     * ```
+     */
+    public function icon(IconName $icon): static
+    {
+        $this->mutate();
+        $this->icon = $icon;
+
+        return $this;
+    }
+
+    public function iconValue(): ?IconName
+    {
+        return $this->icon;
+    }
+
     public function label(): string
     {
         return $this->label;
@@ -174,65 +221,105 @@ class Button extends BoxWidget implements Activatable
     {
         // §15.7 纪律 3：变体 → token → 值，**只在这里合并一次**。
         // 经 BuildContext 取（Widget 层唯一被允许碰主题的入口），Render 层只收值。
-        $theme = $context;
-        $radius = $theme->metric(MetricToken::Radius);
-        $gap = $theme->metric(MetricToken::Gap);
-        $border = $theme->metric(MetricToken::BorderWidth);
+        $gap = $context->metric(MetricToken::Gap);
+        $fontSize = $context->textSize(TextRole::Body);
 
-        [$themeBox, $labelColor] = match ($this->variant) {
-            ButtonVariant::Default => [
-                new BoxStyle(
-                    $theme->color(ColorToken::Chrome),
-                    $theme->color(ColorToken::Border),
-                    $border,
-                    $radius,
-                ),
-                $theme->color(ColorToken::Text),
-            ],
-            ButtonVariant::Primary => [
-                new BoxStyle($theme->color(ColorToken::Accent), null, 0.0, $radius),
-                $theme->color(ColorToken::Pane), // 强调底上用画布色当字色 ⇒ 明暗自适应
-            ],
-            ButtonVariant::Danger => [
-                new BoxStyle($theme->color(ColorToken::Danger), null, 0.0, $radius),
-                $theme->color(ColorToken::Pane),
-            ],
+        // ★ 纯图标按钮要**正方形**：文字按钮的横向内边距原本是纵向的两倍（给字宽
+        //   留呼吸），图标没有字宽，两倍横向会把 40 高撑成 56 宽的胶囊。
+        // ★ 不用三元：两支类型不同 ⇒ tpc 的 `operator?:` 编译成 C2678（AOT 约束 A2）。
+        $insets = EdgeInsets::symmetric($gap * 2.0, $gap);
+        if (!$this->labelVisible) {
+            $insets = EdgeInsets::all($gap * 1.5);
+        }
+
+        // 图标与文字同高（+4 让笔画不显局促）；线宽按 §RenderIcon 的同一口径推
+        $iconSize = $fontSize + 4.0;
+
+        $label = $this->label;
+        if (!$this->labelVisible) {
+            $label = '';
+        }
+
+        $iconPath = null;
+        if ($this->icon !== null) {
+            $iconPath = IconSet::path($this->icon, $iconSize);
+        }
+
+        return new RenderButton(
+            $label,
+            $this->resolveBoxStyle($context),
+            $this->resolveForeground($context),
+            $insets,
+            $fontSize,
+            $context->metrics(),
+            $this->resolveHoverOverlay($context),
+            $iconPath,
+            $iconSize,
+            $gap,
+            max(1.0, $iconSize * 0.09),
+            $this->centerLabel,
+        );
+    }
+
+    /**
+     * 变体 → 盒样式（**用户经 `background()/border()/radius()` 设的优先**）。
+     *
+     * ★ §15.7 修正：用户设的盒样式此前被忽略 ⇒ 修饰符是死代码（其 docblock 写"渲染层读它"）。
+     *   字段级合并：用户设了（非 null/非零）就用用户的，否则回退主题默认盒。
+     *   ★ 边缘：radius 取 `> 0` 才用用户的（BoxStyle 以 0 表示"未设/直角"），故无法用修饰符把圆角显式设回 0。
+     */
+    protected function resolveBoxStyle(BuildContext $context): BoxStyle
+    {
+        $radius = $context->metric(MetricToken::Radius);
+        $border = $context->metric(MetricToken::BorderWidth);
+
+        $themeBox = match ($this->variant) {
+            ButtonVariant::Default => new BoxStyle(
+                $context->color(ColorToken::Chrome),
+                $context->color(ColorToken::Border),
+                $border,
+                $radius,
+            ),
+            ButtonVariant::Primary => new BoxStyle($context->color(ColorToken::Accent), null, 0.0, $radius),
+            ButtonVariant::Danger => new BoxStyle($context->color(ColorToken::Danger), null, 0.0, $radius),
             // ★ 扁平：什么都不画（`BoxStyle::none()`），字色走正文色。
             //   渲染盒照常占位、照常命中 ⇒ 视觉上"没有盒子"但行为仍是按钮。
-            ButtonVariant::Flat => [
-                BoxStyle::none(),
-                $theme->color(ColorToken::Text),
-            ],
+            ButtonVariant::Flat => BoxStyle::none(),
         };
 
-        // ★ §15.7 修正：用户经 `BoxWidget::background()/border()/radius()` 设的盒样式
-        //   （`$this->box()`）此前被这里忽略 ⇒ 修饰符是死代码（其 docblock 写"渲染层读它"）。
-        //   字段级合并：用户设了（非 null/非零）就用用户的，否则回退主题默认盒。
-        //   ★ 边缘：radius 取 `> 0` 才用用户的（BoxStyle 以 0 表示"未设/直角"），故无法用修饰符把圆角显式设回 0。
         $userBox = $this->box();
-        $box = $userBox === null ? $themeBox : new BoxStyle(
+        if ($userBox === null) {
+            return $themeBox;
+        }
+
+        return new BoxStyle(
             $userBox->hasBackground() ? $userBox->background : $themeBox->background,
             $userBox->hasBorder() ? $userBox->borderColor : $themeBox->borderColor,
             $userBox->hasBorder() ? $userBox->borderWidth : $themeBox->borderWidth,
             $userBox->radius > 0.0 ? $userBox->radius : $themeBox->radius,
         );
+    }
 
-        // 悬停状态色（`08` §4.1）：Default/Flat 用主题 Hover 底；Primary/Danger 是
-        // 实心强调底，叠 Hover 会被染成灰 ⇒ 改用白色半透明（提亮）。
-        // ★ 解析在这里（Widget 层能碰主题），RenderButton 只收值。
-        $hoverOverlay = match ($this->variant) {
-            ButtonVariant::Default, ButtonVariant::Flat => $theme->color(ColorToken::Hover),
+    /** 变体 → 前景色（标签与图标共用；强调底上用画布色 ⇒ 明暗自适应） */
+    protected function resolveForeground(BuildContext $context): Color
+    {
+        return match ($this->variant) {
+            ButtonVariant::Primary, ButtonVariant::Danger => $context->color(ColorToken::Pane),
+            default => $context->color(ColorToken::Text),
+        };
+    }
+
+    /**
+     * 悬停状态色（`08` §4.1）：Default/Flat 用主题 Hover 底；Primary/Danger 是
+     * 实心强调底，叠 Hover 会被染成灰 ⇒ 改用白色半透明（提亮）。
+     *
+     * ★ 解析在这里（Widget 层能碰主题），RenderButton 只收值。
+     */
+    protected function resolveHoverOverlay(BuildContext $context): ?Color
+    {
+        return match ($this->variant) {
+            ButtonVariant::Default, ButtonVariant::Flat => $context->color(ColorToken::Hover),
             ButtonVariant::Primary, ButtonVariant::Danger => new Color(255, 255, 255, 40),
         };
-
-        return new RenderButton(
-            $this->label,
-            $box,
-            $labelColor,
-            EdgeInsets::symmetric($gap * 2.0, $gap),
-            $theme->textSize(TextRole::Body),
-            $context->metrics(),
-            $hoverOverlay,
-        );
     }
 }

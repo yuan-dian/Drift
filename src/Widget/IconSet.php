@@ -85,6 +85,99 @@ final class IconSet
             return $p;
         }
 
+        // ── 导航 / 分类用（2026-10-25）────────────────────────────────
+
+        if ($name === IconName::Grid) {
+            return $p
+                ->moveTo($x(0.22), $y(0.22))->lineTo($x(0.78), $y(0.22))
+                ->lineTo($x(0.78), $y(0.78))->lineTo($x(0.22), $y(0.78))
+                ->lineTo($x(0.22), $y(0.22))
+                ->moveTo($x(0.5), $y(0.22))->lineTo($x(0.5), $y(0.78))
+                ->moveTo($x(0.22), $y(0.5))->lineTo($x(0.78), $y(0.5));
+        }
+
+        if ($name === IconName::TextLines) {
+            return $p
+                ->moveTo($x(0.24), $y(0.3))->lineTo($x(0.76), $y(0.3))
+                ->moveTo($x(0.24), $y(0.5))->lineTo($x(0.76), $y(0.5))
+                ->moveTo($x(0.24), $y(0.7))->lineTo($x(0.56), $y(0.7));
+        }
+
+        if ($name === IconName::Square) {
+            return $p
+                ->moveTo($x(0.26), $y(0.28))->lineTo($x(0.74), $y(0.28))
+                ->lineTo($x(0.74), $y(0.72))->lineTo($x(0.26), $y(0.72))
+                ->lineTo($x(0.26), $y(0.28));
+        }
+
+        if ($name === IconName::ListBullets) {
+            // 左侧圆点用极短横线代替（`Path` 画不出"零长描边"的点，同 `More`）
+            foreach ([0.3, 0.5, 0.7] as $v) {
+                $p->moveTo($x(0.22), $y($v))->lineTo($x(0.3), $y($v))
+                    ->moveTo($x(0.4), $y($v))->lineTo($x(0.78), $y($v));
+            }
+
+            return $p;
+        }
+
+        if ($name === IconName::Bell) {
+            return $p
+                ->moveTo($x(0.28), $y(0.66))->lineTo($x(0.28), $y(0.46))
+                ->quadTo($x(0.28), $y(0.2), $x(0.5), $y(0.2))
+                ->quadTo($x(0.72), $y(0.2), $x(0.72), $y(0.46))
+                ->lineTo($x(0.72), $y(0.66))
+                ->moveTo($x(0.22), $y(0.66))->lineTo($x(0.78), $y(0.66))
+                ->moveTo($x(0.44), $y(0.76))->lineTo($x(0.56), $y(0.76));
+        }
+
+        if ($name === IconName::Play) {
+            return $p
+                ->moveTo($x(0.34), $y(0.24))->lineTo($x(0.74), $y(0.5))
+                ->lineTo($x(0.34), $y(0.76))->lineTo($x(0.34), $y(0.24));
+        }
+
+        if ($name === IconName::Image) {
+            return $p
+                ->moveTo($x(0.22), $y(0.3))->lineTo($x(0.78), $y(0.3))
+                ->lineTo($x(0.78), $y(0.72))->lineTo($x(0.22), $y(0.72))
+                ->lineTo($x(0.22), $y(0.3))
+                ->moveTo($x(0.28), $y(0.66))->lineTo($x(0.44), $y(0.48))
+                ->lineTo($x(0.56), $y(0.6))->lineTo($x(0.64), $y(0.52))
+                ->lineTo($x(0.74), $y(0.64));
+        }
+
+        if ($name === IconName::Sliders) {
+            return $p
+                ->moveTo($x(0.22), $y(0.36))->lineTo($x(0.78), $y(0.36))
+                ->moveTo($x(0.4), $y(0.28))->lineTo($x(0.4), $y(0.44))
+                ->moveTo($x(0.22), $y(0.64))->lineTo($x(0.78), $y(0.64))
+                ->moveTo($x(0.62), $y(0.56))->lineTo($x(0.62), $y(0.72));
+        }
+
+        if ($name === IconName::Info) {
+            $cx = 0.5;
+            $cy = 0.5;
+            $r = 0.28;
+            $k = self::KAPPA * $r;
+            $p->moveTo($x($cx), $y($cy - $r))
+                ->quadTo($x($cx + $k), $y($cy - $r), $x($cx + $r), $y($cy))
+                ->quadTo($x($cx + $r), $y($cy + $k), $x($cx), $y($cy + $r))
+                ->quadTo($x($cx - $k), $y($cy + $r), $x($cx - $r), $y($cy))
+                ->quadTo($x($cx - $r), $y($cy - $k), $x($cx), $y($cy - $r))
+                ->moveTo($x(0.5), $y(0.34))->lineTo($x(0.5), $y(0.36))
+                ->moveTo($x(0.5), $y(0.44))->lineTo($x(0.5), $y(0.66));
+
+            return $p;
+        }
+
+        if ($name === IconName::Brush) {
+            // 斜置的笔：笔身（方头）+ 笔尖（两条收束到左下角）
+            return $p
+                ->moveTo($x(0.6), $y(0.26))->lineTo($x(0.74), $y(0.4))
+                ->lineTo($x(0.36), $y(0.78))->lineTo($x(0.22), $y(0.78))
+                ->lineTo($x(0.22), $y(0.64))->lineTo($x(0.6), $y(0.26));
+        }
+
         // Search：圆（四段 quadTo）+ 柄
         $cx = 0.43;
         $cy = 0.43;
