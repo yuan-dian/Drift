@@ -26,6 +26,16 @@ abstract class RenderObject
     /** @internal null = 本节点未声明光标形状（命中链会向上找更近的声明者，§9.1） */
     protected ?CursorShape $cursor = null;
 
+    /**
+     * 是否处于**悬停态**（交互状态层，`08` §4.1）。
+     *
+     * ★ 状态由 `FocusManager::hoverTo()` 推（`App` 层只认 `acceptsHover()` 能力方法，
+     *   不认具体盒类 —— I2 闸门）；怎么用是盒自己的事（`RenderButton` 叠一层状态色）。
+     * ★ **不需要脏标记**：本框架 Render 层没有脏边界（每帧全量 paint），且 hover 由
+     *   `WM_MOUSEMOVE` 驱动 —— 同一条消息的那一轮循环里 `tick()` 紧接着就重绘。
+     */
+    protected bool $hovered = false;
+
     public function parent(): ?RenderObject
     {
         return $this->parent;
@@ -91,6 +101,39 @@ abstract class RenderObject
     public function panelRect(): ?Rect
     {
         return null;
+    }
+
+    /**
+     * 这个盒接不接受"悬停态"（默认 `false`）。
+     *
+     * ★ 为什么是能力方法而不是 `instanceof RenderButton`：`FocusManager` 在 `App` 层，
+     *   按 I2 闸门不得认识 `Layout` 的具体类。它沿**盒父链**问这个方法，第一个回答
+     *   `true` 的就是"该变色的那个盒" —— 与 `panelRect()`（4j-c）同一条纪律。
+     * ★ 默认 `false`：布局容器（`Column`/`Row`/`Padding`）不接，否则整列都会变色。
+     * ★ 覆写者通常写成"声明了状态色才接"（见 `RenderButton`），这样没声明状态的盒
+     *   连一次 `setHovered` 都不会收到。
+     *
+     * @api
+     */
+    public function acceptsHover(): bool
+    {
+        return false;
+    }
+
+    /** @internal `FocusManager::hoverTo()` 推状态（唯一写点） */
+    public function setHovered(bool $hovered): void
+    {
+        $this->hovered = $hovered;
+    }
+
+    /**
+     * 本盒当前是否悬停（给覆写了 `paintContent()` 的盒读）。
+     *
+     * ★ 只有 `acceptsHover()` 返回 `true` 的盒会收到 `true` —— 其余恒 `false`。
+     */
+    public function hovered(): bool
+    {
+        return $this->hovered;
     }
 
     /**

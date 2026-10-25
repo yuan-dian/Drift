@@ -10,6 +10,7 @@ use Drift\Input\SemanticsRole;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderButton;
 use Drift\Rendering\BoxStyle;
+use Drift\Rendering\Color;
 use Drift\Text\TextRole;
 use Drift\Rendering\ColorToken;
 use Drift\Rendering\MetricToken;
@@ -216,6 +217,14 @@ class Button extends BoxWidget implements Activatable
             $userBox->radius > 0.0 ? $userBox->radius : $themeBox->radius,
         );
 
+        // 悬停状态色（`08` §4.1）：Default/Flat 用主题 Hover 底；Primary/Danger 是
+        // 实心强调底，叠 Hover 会被染成灰 ⇒ 改用白色半透明（提亮）。
+        // ★ 解析在这里（Widget 层能碰主题），RenderButton 只收值。
+        $hoverOverlay = match ($this->variant) {
+            ButtonVariant::Default, ButtonVariant::Flat => $theme->color(ColorToken::Hover),
+            ButtonVariant::Primary, ButtonVariant::Danger => new Color(255, 255, 255, 40),
+        };
+
         return new RenderButton(
             $this->label,
             $box,
@@ -223,6 +232,7 @@ class Button extends BoxWidget implements Activatable
             EdgeInsets::symmetric($gap * 2.0, $gap),
             $theme->textSize(TextRole::Body),
             $context->metrics(),
+            $hoverOverlay,
         );
     }
 }

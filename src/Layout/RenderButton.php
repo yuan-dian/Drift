@@ -36,6 +36,14 @@ final class RenderButton extends RenderProxyBox
         private readonly EdgeInsets $insets,
         private readonly float $fontSize,
         TextMetricsProvider $metrics,
+        /**
+         * 悬停态叠加色（`null` = 本按钮不做悬停反馈）。
+         *
+         * ★ 由 `Button::createRenderObject()` 按变体从主题解析后传入 —— Layout 层
+         *   **只吃值**，不依赖 Theme（§4.3 / §15.7 纪律 3）。
+         * ★ 叠在底色之上、标签之下（`paintContent()` 的顺序）。
+         */
+        private readonly ?Color $hoverOverlay = null,
     ) {
         $this->setChild(new RenderText(
             $label,
@@ -48,6 +56,16 @@ final class RenderButton extends RenderProxyBox
     public function boxStyle(): BoxStyle
     {
         return $this->box;
+    }
+
+    /**
+     * 声明了状态色才接受悬停（`08` §4.1）—— 没声明时连一次 `setHovered()` 都不收，
+     * 免得父链询问"这一层要不要变色"时白跑。
+     */
+    #[\Override]
+    public function acceptsHover(): bool
+    {
+        return $this->hoverOverlay !== null;
     }
 
     /**
@@ -108,6 +126,12 @@ final class RenderButton extends RenderProxyBox
         }
         if ($this->box->borderColor !== null && $this->box->borderWidth > 0.0) {
             $canvas->drawRect($rect, Paint::stroke($this->box->borderColor, $this->box->borderWidth), $this->box->radius);
+        }
+
+        // 状态层（悬停）：叠在底色/边框之上、标签之下 —— "压暗还是提亮"由状态色自己
+        // 表达（Primary/Danger 给白色半透明，Default/Flat 给主题 Hover 色）。
+        if ($this->hoverOverlay !== null && $this->hovered()) {
+            $canvas->drawRect($rect, Paint::fill($this->hoverOverlay), $this->box->radius);
         }
 
         $canvas->save();

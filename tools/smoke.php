@@ -7407,6 +7407,39 @@ check(
     'idx=' . $slSvIdx . ' events=' . json_encode($slSvApp->events),
 );
 
+// ── 交互状态层（08 §4.1）：hover 推给 acceptsHover() 的盒 ──
+//   ★ 判据落在**盒的状态**上（不是"方法被调用"）：hoverTo 是把状态推到盒，
+//     画不画由盒的 paintContent 决定 —— 状态没推对，视觉一定不对。
+//   ★ 反例：悬停在布局容器上 ⇒ 没有盒接受，按钮不该整块变亮。
+$hvRoot = Column::make()->children([
+    Button::make('悬停我'),
+])->createElement();
+$hvRoot->mount(null, $context);
+$hvRoot->effectiveBox()?->layout(BoxConstraints::loose(new Size(320.0, 200.0)));
+$hvEl = findElement($hvRoot, static fn (Element $e): bool => $e->widget() instanceof Button);
+$hvBox = $hvEl?->effectiveBox();
+$hvFm = new FocusManager();
+check(
+    '状态层 · RenderButton 声明了状态色 ⇒ acceptsHover=true',
+    $hvBox !== null && $hvBox->acceptsHover() === true,
+);
+$hvFm->hoverTo($hvEl);
+check(
+    '状态层 · hoverTo(Button) ⇒ 它的盒 hovered=true',
+    $hvBox !== null && $hvBox->hovered() === true,
+);
+$hvFm->hoverTo($hvRoot);   // 悬停在布局容器上
+check(
+    '状态层 · 悬停容器 ⇒ 按钮复位（列不会整块变色）',
+    $hvBox?->hovered() === false,
+);
+$hvFm->hoverTo($hvEl);
+$hvFm->hoverTo(null);      // 离开窗口
+check(
+    '状态层 · hoverTo(null) ⇒ 复位（离开不留"常亮"）',
+    $hvBox?->hovered() === false,
+);
+
 // —— 指针侧激活（§9.1 动作缝的另一半：鼠标**按下**即触发，与 Enter/Space 同入口）
 //   ★ 按下即激活：当前指针只有 down 相位（up 相位要 P1 的指针事件）。
 //   ★ 判据设计：点空白（无焦点可落）必须**不**触发 —— 若实现退化成

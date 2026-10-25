@@ -9,6 +9,7 @@ use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
 use Drift\Layout\RenderBox;
+use Drift\Layout\RenderObject;
 use Drift\Widget\Element;
 use Drift\Widget\State;
 use Drift\Widget\EditableText;
@@ -96,6 +97,18 @@ final class FocusManager
      *   本字段是"指针真的落在谁身上"—— 悬停高亮要前者，Tooltip 要后者。
      */
     private ?Element $hoverHit = null;
+
+    /**
+     * 当前处于**悬停态**的渲染盒（交互状态层，`08` §4.1）。
+     *
+     * ★ 与 `$hovered` / `$hoverHit` 是**三条独立判据**：
+     *   - `$hoverHit` = 指针真的落在谁身上（Tooltip 要）；
+     *   - `$hovered` = 有 `hover()` 声明的最近祖先（回调要）；
+     *   - `$hoverBox` = 沿盒父链第一个 `acceptsHover()` 的盒（视觉要）。
+     * ★ 存盒而不是 Element：`acceptsHover()` 在 `RenderObject` 上；盒在重建时会换新的，
+     *   但每次 move 都会重推到新盒，旧盒已离开树，不会留着"永远亮着"。
+     */
+    private ?RenderObject $hoverBox = null;
 
     /** 注入悬停命中监听（`null` 回调不注册即默认行为） */
     public function onHoverChanged(\Closure $listener): void
@@ -343,6 +356,12 @@ final class FocusManager
      */
     public function hoverTo(?Element $element): void
     {
+        // 悬停态视觉先推（`08` §4.1）—— 与下面的 `hoverOwner`（回调）是**两条独立
+        // 判据**：一条只认 `acceptsHover()` 的盒，一条只认声明了 `hover()` 的祖先。
+        // 同一个 Button 通常两条都命中；"没声明 hover() 的 Button"只走这条（正是
+        // "悬停毫无反馈"的修法）。
+        $this->applyHoverState($element);
+
         // ★ 原始命中先过监听口（Tooltip）：与下面的 `hoverOwner` **两条独立判据**
         //   —— 指针停在同一个元素上移动时两者都不该再派发一次。
         if ($element !== $this->hoverHit) {
@@ -370,6 +389,36 @@ final class FocusManager
     public function hovered(): ?Element
     {
         return $this->hovered;
+    }
+
+    /**
+     * 悬停态视觉（`08` §4.1）：沿**盒父链**找第一个 `acceptsHover()` 的盒，
+     * 旧的复位、新的置位。
+     *
+     * ★ 从 `effectiveBox()` 起：命中的 Element 可能是 `StatefulWidget`（自己的盒在
+     *   子元素上），`effectiveBox()` 已经处理了这一点。
+     * ★ 问 `acceptsHover()` 而不是 `instanceof RenderButton`：`App` 层不得认识
+     *   `Layout` 的具体类（I2 闸门）—— 这是"能力方法"的第二个消费者（第一个是
+     *   `hitsModalPanel()` 问 `panelRect()`）。
+     */
+    private function applyHoverState(?Element $element): void
+    {
+        $next = null;
+        for ($box = $element?->effectiveBox(); $box !== null; $box = $box->parent()) {
+            if ($box->acceptsHover()) {
+                $next = $box;
+
+                break;
+            }
+        }
+
+        if ($next === $this->hoverBox) {
+            return;
+        }
+
+        $this->hoverBox?->setHovered(false);
+        $this->hoverBox = $next;
+        $this->hoverBox?->setHovered(true);
     }
 
     /**
