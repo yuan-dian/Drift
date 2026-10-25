@@ -20,7 +20,7 @@ use Drift\Layout\RenderProxy;
  *   与 `Text::make('hi')->paddingAll(8)` 走**同一条路**。这正是 W5 要的：
  *   修饰是字段，不是节点。
  *
- * ★ `all` / `symmetric` / `only` 三个便利方法保留：`apps/` 与 `LazyColumnState`
+ * ★ `all` / `symmetric` / `only` 三个便利方法保留：`apps/` 与 `LazyListState`
  *   在用，而且这里的 `only()` 是"没给的边就是 0"，与 `Widget::paddingOnly()` 的
  *   "`null` = 不动那一边"语义不同 —— 合并会静默改掉调用点的意思。
  *

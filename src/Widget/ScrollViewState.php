@@ -58,7 +58,7 @@ final class ScrollViewState extends State implements Scrollable
      * 把内容坐标里的矩形滚进视口（`04` §6.3）。
      *
      * ★ 算术全在 `RenderScrollView::revealDelta()`，这里只做"找盒 → 交给
-     *   `scrollBy()`"。`LazyColumnState` 是**同一形状** —— 两个实现不各算一遍。
+     *   `scrollBy()`"。`LazyListState` 是**同一形状** —— 两个实现不各算一遍。
      *
      * ★ 还没挂盒（首帧之前 / 盒被换掉）⇒ **什么都不做**：没有视口就没有
      *   "可见"可言。不猜一个默认视口高 —— 猜错就是滚到错的位置，比不滚更坏。

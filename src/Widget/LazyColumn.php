@@ -3,17 +3,13 @@ declare(strict_types=1);
 
 namespace Drift\Widget;
 
-use Drift\Errors;
-use Drift\Geometry\EdgeInsets;
-use Drift\Input\SemanticsRole;
-
 /**
  * **按视口造子层**的纵向列表（虚拟化，§13.1 / M5）。
  *
  * ```php
  * LazyColumn::make(56.0)                                  // 每行 56 逻辑像素
  *     ->items($users, fn(User $u): Widget => UserRow::make($u))
- *     ->overscan(56.0)                                    // 视口外多造一行
+ *     ->overscan(56.0);                                   // 视口外多造一行
  * ```
  *
  * ★ **与 `Each` 的分工**：`Each` 是"全量列表" —— `items()` 在构建期把**每个**
@@ -29,169 +25,26 @@ use Drift\Input\SemanticsRole;
  *
  *   ⇒ 全量列表的成本**随行数线性增长**（约 0.076ms/行），虚拟列表与行数**无关**。
  *
- * ★★ **`itemExtent` 是必填的，不是可选的**：定高才能 O(1) 算出"第几行到第几行
- *   可见"（`first = floor(offset / extent)`）。变高行需要一份行高测量缓存 +
- *   数据变化时的失效策略 —— 那是另一个原语，今天**没有真实消费者**逼它
- *   （§24.2 #25 的教训：未被执行的分支等于未实现）。行高由 `SizedBox` 强制，
- *   内容比它高会被裁、比它矮会留白 —— 与 Flutter 的 `itemExtent` 同语义。
- *
- * ★★ **它自己就是滚动容器**（不是塞进 `ScrollView` 里）：窗口取决于滚动偏移，
- *   偏移取决于视口，两者都在它这里。⇒ 用法上**替换** `ScrollView + Column + Each`，
- *   而不是与它们叠加。塞进外层 `ScrollView` 会拿到无界高度 ⇒ 窗口无法计算
- *   （`RenderScrollView` 会响亮报错，见下）。
- *
- * ★ **行内不能有"随滚动保留的 UI 态"**：行 Element 在滚出窗口时被回收（这正是
- *   虚拟化的定义）。行内要跨滚动保留的东西放 Store（§12.3）。
+ * ★ 与 `LazyRow` 的差别只有主轴：本类是**纵向**（内容沿 y 变长、子层是 `Column`、
+ *   每行定高）；共同部分（窗口换算 / 锚点 / `sliceOrigin` / 可滚上限）全在
+ *   `LazyList` + `LazyListState` 一处，**不要再复制一份**。
  *
  * @api
  */
-final class LazyColumn extends StatefulWidget
+final class LazyColumn extends LazyList
 {
-    /** 默认"视口外多造几行"= 0：窗口恰好覆盖视口，翻页时靠下一帧补齐 */
-    private const DEFAULT_OVERSCAN = 0.0;
-
-    /** @var list<mixed> */
-    private array $items = [];
-
-    private ?\Closure $builder = null;
-
-    /** 每行的**身份 key**（`null` = 没配，锚点只能按行号夹） */
-    private ?\Closure $keyMapper = null;
-
-    private float $overscanPx = self::DEFAULT_OVERSCAN;
-
-    private EdgeInsets $insets;
-
-    private function __construct(private readonly float $itemExtent)
-    {
-        parent::__construct();
-        $this->insets = EdgeInsets::zero();
-        // §9 无障碍：虚拟列表也是一种"可滚动区域"，与 `ScrollView` 同角色
-        $this->semantics(SemanticsRole::Scroll);
-    }
-
     /**
      * @param float $itemExtent 每行的高度（逻辑像素，**必须 > 0**）
-     *
-     * ★ 0 / 负数 ⇒ 构造期就响亮失败：`first = floor(offset / 0)` 是除零，
-     *   而"每行 0 高"本身也没有意义（永远只看得到第 0 行）。
      */
     public static function make(float $itemExtent): self
     {
-        if ($itemExtent <= 0.0) {
-            Errors::report(sprintf(
-                'LazyColumn 的 itemExtent 必须 > 0（收到 %s）—— 行高是窗口计算的除数',
-                (string) $itemExtent,
-            ));
-        }
+        self::checkExtent($itemExtent);
 
-        return new self($itemExtent);
-    }
-
-    /**
-     * @param list<mixed> $items
-     * @param callable(mixed): Widget $builder
-     */
-    public function items(array $items, callable $builder): static
-    {
-        $this->mutate();
-        $this->items = $items;
-        $this->builder = \Closure::fromCallable($builder);
-
-        return $this;
-    }
-
-    /**
-     * 每行的**身份 key**（`fn(mixed $item): string|int`）—— 内容变了之后保持
-     * 滚动位置用（`04` §7.3）。
-     *
-     * ★ **不配也能跑**，但"搜索把 10000 行筛成 30 行"时会跳：锚点只能按**行号**
-     *   夹，而筛选后第 500 行已经不是原来那一行。这是**诚实的边界** —— 框架不能
-     *   凭空知道"两批数据里哪一行是同一行"。
-     *
-     * ★ **只用于锚点**：行的 Element key 仍然是**绝对行号**。改成身份 key 是
-     *   Element 级 diff（跨内容复用行 Element）的另一个话题，本步不做 —— 它不
-     *   影响锚点，因为锚点是在算窗口**之前**恢复的。
-     *
-     * ★ key **必须唯一**（同一份 items 内）：锚点查找取第一个命中的。不校验是
-     *   因为校验要 O(n)、而它在滚动路径上；重复 key 的代价是"锚点可能落到
-     *   另一个同 key 的行"，不会崩。
-     */
-    public function keyOf(callable $keyOf): static
-    {
-        $this->mutate();
-        $this->keyMapper = \Closure::fromCallable($keyOf);
-
-        return $this;
-    }
-
-    /** @internal 锚点保持用（`null` = 没配） */
-    public function keyMapper(): ?\Closure
-    {
-        return $this->keyMapper;
-    }
-
-    /**
-     * 视口外多造多少像素的行（默认 0）。
-     *
-     * ★ 用途只有"滚动时少一帧白边"：窗口是按**上一帧**的视口算的，视口尺寸
-     *   变化（窗口 resize / 布局变化）时那一帧会短一截。overscan ≥ 一行的行高
-     *   就能盖住。**不做**"预测滚动方向"那类提前量 —— 没有消费者。
-     */
-    public function overscan(float $px): static
-    {
-        $this->mutate();
-        $this->overscanPx = max(0.0, $px);
-
-        return $this;
-    }
-
-    /**
-     * 内边距（逻辑像素）。★ 与 `Column::padding()` 的差别只在**上下**：
-     * 上内边距是"完整内容"的一部分（进 `sliceOrigin`），下内边距同理进总长度；
-     * 左右是每行都要让开的横向空间。
-     */
-    public function padding(EdgeInsets $value): static
-    {
-        $this->mutate();
-        $this->insets = $value;
-
-        return $this;
-    }
-
-    public function itemExtent(): float
-    {
-        return $this->itemExtent;
-    }
-
-    /** @return list<mixed> */
-    public function itemsList(): array
-    {
-        return $this->items;
-    }
-
-    /** @internal 窗口内逐行调；应用只经 `items()` 递进来 */
-    public function buildItem(mixed $item): Widget
-    {
-        if ($this->builder === null) {
-            Errors::report('LazyColumn 没有 builder —— 必须调 items($items, $builder)');
-        }
-
-        return ($this->builder)($item);
-    }
-
-    public function overscanPx(): float
-    {
-        return $this->overscanPx;
-    }
-
-    public function insets(): EdgeInsets
-    {
-        return $this->insets;
+        return new self($itemExtent, true);
     }
 
     public function createState(): State
     {
-        return new LazyColumnState();
+        return new LazyListState();
     }
 }

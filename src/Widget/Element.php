@@ -276,7 +276,7 @@ abstract class Element
     /**
      * `effectiveBox()` 的类型化特化：自己的有效盒是**指定类**时才返回。
      *
-     * ★ 给「控件认自己的盒」用（`ScrollViewState` / `LazyColumnState` 的
+     * ★ 给「控件认自己的盒」用（`ScrollViewState` / `LazyListState` 的
      *   `ensureVisible()` 与视口估计）：首帧前 / 盒被换掉 ⇒ null（没有视口
      *   就没有"可见"可言）。语义同 `effectiveBox()` —— 会下沉到后代第一个
      *   盒，但这三处的 element 恒有自己的渲染盒，实际等价。

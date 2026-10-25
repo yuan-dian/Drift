@@ -250,7 +250,9 @@ use Drift\Widget\Drag\Draggable;
 use Drift\Widget\Drag\DragTarget;
 use Drift\Widget\Each;
 use Drift\Widget\LazyColumn;
-use Drift\Widget\LazyColumnState;
+use Drift\Widget\LazyList;
+use Drift\Widget\LazyListState;
+use Drift\Widget\LazyRow;
 use Drift\Widget\Grid;
 use Drift\Widget\LazyGrid;
 use Drift\Widget\Scrollable;
@@ -10982,7 +10984,7 @@ $lazyBuild = static function (int $count, float $extent, ?EdgeInsets $pad = null
 };
 
 /** 挂树 + 按 320×240 布局（smokeContext 的规格） */
-$lazyMount = static function (LazyColumn $widget): Element {
+$lazyMount = static function (LazyList $widget): Element {
     $element = $widget->createElement();
     $element->mount(null, smokeContext());
     $element->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
@@ -11001,15 +11003,15 @@ $lazyKids = static function (Element $root): int {
     return $n;
 };
 
-$lazyStateOf = static function (Element $root): ?LazyColumnState {
+$lazyStateOf = static function (Element $root): ?LazyListState {
     $hit = findElement(
         $root,
-        static fn(Element $e): bool => $e instanceof StatefulElement && $e->state() instanceof LazyColumnState,
+        static fn(Element $e): bool => $e instanceof StatefulElement && $e->state() instanceof LazyListState,
     );
 
     $state = $hit instanceof StatefulElement ? $hit->state() : null;
 
-    return $state instanceof LazyColumnState ? $state : null;
+    return $state instanceof LazyListState ? $state : null;
 };
 
 $lazyColumnBoxOf = static function (Element $root): ?RenderBox {
@@ -11095,7 +11097,7 @@ $lazySvgOf = static function (float $offset, bool $virtual): string {
             if ($virtual) {
                 $st = findElement(
                     $el,
-                    static fn(Element $e): bool => $e instanceof StatefulElement && $e->state() instanceof LazyColumnState,
+                    static fn(Element $e): bool => $e instanceof StatefulElement && $e->state() instanceof LazyListState,
                 )?->state();
             } else {
                 $st = findElement(
@@ -11129,7 +11131,7 @@ check(
     implode(' · ', $lazySizes),
 );
 
-// ⑧ 应用层：滚轮经 `Scrollable` 路由到 `LazyColumnState`（接口的第一个真实消费者）
+// ⑧ 应用层：滚轮经 `Scrollable` 路由到 `LazyListState`（接口的第一个真实消费者）
 $lazyApp = new LazyApplication();
 $lazyApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
 $lazyApp->dispatchInput(ScrollEvent::make(150.0, 100.0, 1.0));   // 一格 = 48px
@@ -11137,7 +11139,7 @@ $lazyApp->frame(16.0, BoxConstraints::loose(new Size(300.0, 200.0)));
 $lazyAppState = $lazyApp->lazyState();
 $lazyAppBox = $lazyApp->scrollBox();
 check(
-    'Lazy · 滚轮一格 ⇒ offset 48（`Scrollable` 接口路由到 LazyColumnState）',
+    'Lazy · 滚轮一格 ⇒ offset 48（`Scrollable` 接口路由到 LazyListState）',
     $lazyAppState?->offset() === 48.0,
     (string) ($lazyAppState?->offset() ?? -1.0),
 );
@@ -11150,6 +11152,100 @@ check(
             static fn(Element $e): bool => $e->widget() instanceof Column,
         )?->renderObject()?->offsetY() === -8.0,
     'maxScroll=' . ($lazyAppBox?->maxScroll() ?? -1.0),
+);
+
+// ⑨–⑬ 横向（`LazyRow`）：轴是**一个参数**，不是一份拷贝。
+//   ★ 判据选"确定会变"的量：视口 320 **宽** / 格 56 ⇒ 6 列（ceil(320/56)）；
+//     纵向同规格是 5 行（240/56）—— 两个数字不同本身就是"取的是 width 不是
+//     height"的证据（若误用纵向公式，这里会得 5）。
+$lazyRowKids = static function (Element $root): int {
+    $row = findElement($root, static fn(Element $e): bool => $e->widget() instanceof Row);
+    $n = 0;
+    $row?->visitChildren(static function (Element $child) use (&$n): void {
+        $n++;
+    });
+
+    return $n;
+};
+
+$lazyRowBuild = static function (int $count, float $extent, ?EdgeInsets $pad = null) use ($lazyRows): LazyRow {
+    $widget = LazyRow::make($extent)->items(
+        $lazyRows($count),
+        static fn(int $i): Widget => Text::make('格 ' . $i),
+    );
+
+    return $pad === null ? $widget : $widget->padding($pad);
+};
+
+$lazyRowBoxOf = static function (Element $root): ?RenderBox {
+    return findElement($root, static fn(Element $e): bool => $e->widget() instanceof Row)?->renderObject();
+};
+
+$lazyRowBig = $lazyMount($lazyRowBuild(20000, 56.0));
+check(
+    'LazyRow · 窗口只造视口覆盖的列（20000 项 ⇒ 6 列，按 width 算不是 height）',
+    $lazyRowKids($lazyRowBig) === 6,
+    (string) $lazyRowKids($lazyRowBig),
+);
+
+$lazyRowMax = $lazyRowBig->effectiveBox()?->maxScroll() ?? -1.0;
+check(
+    'LazyRow · maxScroll 按完整内容宽算（20000×56−320 = 1119680）',
+    $lazyRowMax === 1119680.0,
+    (string) $lazyRowMax,
+);
+
+$lazyRowState = $lazyStateOf($lazyRowBig);
+$lazyRowState?->scrollBy(400.0);
+$lazyRowBig->settle();
+$lazyRowBig->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
+$lazyRowCell = $lazyRowBoxOf($lazyRowBig);
+check(
+    'LazyRow · 滚动 400 ⇒ 窗起点 392、子盒 offsetX = −8 且 offsetY = 0（横向不许动 y）',
+    $lazyRowCell?->offsetX() === -8.0 && $lazyRowCell?->offsetY() === 0.0,
+    'offsetX=' . ($lazyRowCell?->offsetX() ?? -1.0) . ' offsetY=' . ($lazyRowCell?->offsetY() ?? -1.0),
+);
+
+$lazyRowHit = $lazyRowBig->effectiveBox()?->hitTest(10.0, 100.0);
+$lazyRowHitX = $lazyRowHit === null ? null : boxOrigin($lazyRowHit)[0];
+check(
+    'LazyRow · 命中跟随窗：视口 (10,100) 命中第 7 列，绝对 x = −8（画在哪 = 点在哪）',
+    $lazyRowHitX === -8.0,
+    $lazyRowHitX === null ? 'miss' : (string) $lazyRowHitX,
+);
+
+// 横向的"主轴起始"是**左**（不是上）：pad.left 进 sliceOrigin
+$lazyRowPad = $lazyMount($lazyRowBuild(100, 56.0, EdgeInsets::only(24.0, 0.0, 0.0, 0.0)));
+check(
+    'LazyRow · 左内边距是内容的一部分（pad.left 24 ⇒ 子盒右移 +24）',
+    $lazyRowBoxOf($lazyRowPad)?->offsetX() === 24.0,
+    (string) ($lazyRowBoxOf($lazyRowPad)?->offsetX() ?? -1.0),
+);
+
+// 应用层：滚轮经 `Scrollable` 路由到 `LazyRow` 的 State。
+//   ★ 滚轮与轴无关（只递一个标量 Δ），所以"横向也能滚"必须在**这条链**上走通一次 ——
+//     否则 `LazyRow` 的滚动只是"代码看起来对"（F8 那类"缺的是驱动方"的同族）。
+$lazyRowApp = new LazyApplication(false);
+$lazyRowApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
+$lazyRowApp->dispatchInput(ScrollEvent::make(150.0, 100.0, 1.0));
+$lazyRowApp->frame(16.0, BoxConstraints::loose(new Size(300.0, 200.0)));
+check(
+    'LazyRow · 滚轮一格 ⇒ offset 48（`Scrollable` 只递标量，轴在 State 里）',
+    $lazyRowApp->lazyState()?->offset() === 48.0,
+    (string) ($lazyRowApp->lazyState()?->offset() ?? -1.0),
+);
+
+// ⑭ 格宽真的是 extent。★ 这条补的是"窗口算得对、排出来却是竖的"那种半对：
+//   若 `sizedCell()` 横向也写成 `->height($extent)`，上面五条**全都还是绿的**
+//   （窗口只看 extent 这个数，不看子盒实际尺寸）⇒ 必须有一条量几何。
+$lazyRowCellW = findElement(
+    $lazyRowBig,
+    static fn(Element $e): bool => $e->widget() instanceof SizedBox,
+)?->renderObject()?->size()?->width;
+check(
+    'LazyRow · 每格宽 = itemExtent 56（定的是 width，不是 height）',
+    $lazyRowCellW === 56.0,
+    (string) ($lazyRowCellW ?? -1.0),
 );
 
 // ════════════════════════════════════════ ensureVisible（W6 L4-6，`04` §6.3）══
@@ -11319,14 +11415,14 @@ $anchorTopRow = static function (Element $root): string {
 
     return $text instanceof Text ? $text->content() : '?';
 };
-$anchorStateOf = static function (Element $root): ?LazyColumnState {
+$anchorStateOf = static function (Element $root): ?LazyListState {
     $hit = findElement(
         $root,
-        static fn(Element $e): bool => $e instanceof StatefulElement && $e->state() instanceof LazyColumnState,
+        static fn(Element $e): bool => $e instanceof StatefulElement && $e->state() instanceof LazyListState,
     );
     $state = $hit instanceof StatefulElement ? $hit->state() : null;
 
-    return $state instanceof LazyColumnState ? $state : null;
+    return $state instanceof LazyListState ? $state : null;
 };
 
 // ⑩ 有 keyOf：删掉第 1 行 ⇒ **同一行**仍在视口顶部（offset 4000 → 3960）

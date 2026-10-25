@@ -7,7 +7,8 @@ use Drift\App\Application;
 use Drift\Layout\RenderScrollView;
 use Drift\Widget\Element;
 use Drift\Widget\LazyColumn;
-use Drift\Widget\LazyColumnState;
+use Drift\Widget\LazyListState;
+use Drift\Widget\LazyRow;
 use Drift\Widget\StatefulElement;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
@@ -29,6 +30,18 @@ final class LazyApplication extends Application
     public const ROWS = 500;
     public const EXTENT = 20.0;
 
+    /**
+     * @param bool $vertical true = `LazyColumn`（纵向）/ false = `LazyRow`（横向）
+     *
+     * ★ 两个轴共用一套夹具的理由：滚轮路由（`Scrollable`）与轴无关 —— 它只递
+     *   一个标量 Δ。所以"横向也能滚"这件事**必须**在这条链上被走通一次，否则
+     *   `LazyRow` 的滚动就只是"代码看起来对"。
+     */
+    public function __construct(private readonly bool $vertical = true)
+    {
+        parent::__construct();
+    }
+
     public function buildRoot(): Widget
     {
         $rows = [];
@@ -36,9 +49,16 @@ final class LazyApplication extends Application
             $rows[] = $i;
         }
 
-        return LazyColumn::make(self::EXTENT)->items(
+        if ($this->vertical) {
+            return LazyColumn::make(self::EXTENT)->items(
+                $rows,
+                static fn(int $i): Widget => Text::make('row ' . $i),
+            );
+        }
+
+        return LazyRow::make(self::EXTENT)->items(
             $rows,
-            static fn(int $i): Widget => Text::make('row ' . $i),
+            static fn(int $i): Widget => Text::make('col ' . $i),
         );
     }
 
@@ -49,7 +69,7 @@ final class LazyApplication extends Application
     }
 
     /** 夹具用：列表的 State（断言偏移真的被滚轮改了） */
-    public function lazyState(): ?LazyColumnState
+    public function lazyState(): ?LazyListState
     {
         return $this->root === null ? null : $this->findState($this->root);
     }
@@ -71,11 +91,11 @@ final class LazyApplication extends Application
         return $found;
     }
 
-    private function findState(Element $element): ?LazyColumnState
+    private function findState(Element $element): ?LazyListState
     {
         if ($element instanceof StatefulElement) {
             $state = $element->state();
-            if ($state instanceof LazyColumnState) {
+            if ($state instanceof LazyListState) {
                 return $state;
             }
         }

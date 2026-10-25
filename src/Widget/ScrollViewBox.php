@@ -36,7 +36,7 @@ final class ScrollViewBox extends RenderBoxWidget
     }
 
     /**
-     * @internal 由 `ScrollViewState::build()` / `LazyColumnState::build()` 调
+     * @internal 由 `ScrollViewState::build()` / `LazyListState::build()` 调
      *
      * ★ 后两个参数是**虚拟列表**的（`LazyColumn`）：`$virtualExtent` = 完整内容的
      *   主轴长度、`$sliceOrigin` = 这扇窗在完整内容里的起点。`ScrollView` 不传

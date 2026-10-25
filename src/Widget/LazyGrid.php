@@ -218,7 +218,7 @@ final class LazyGrid extends StatelessWidget
 
         $keyMapper = $this->keyMapper;
         if ($keyMapper !== null) {
-            // ★ 不写 `: string|int` 返回类型：`LazyColumnState` 那边本来就 `(string)`
+            // ★ 不写 `: string|int` 返回类型：`LazyListState` 那边本来就 `(string)`
             //   强转，而**闭包的联合返回类型**在 AOT 侧没有先例（`Key` 的联合类型是
             //   构造形参，不是返回值）⇒ 不为一个装饰性的类型标注赌 codegen。
             $column->keyOf(function (array $chunk) use ($keyMapper) {

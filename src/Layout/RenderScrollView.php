@@ -90,7 +90,7 @@ final class RenderScrollView extends RenderProxyBox
      * 把**内容坐标**里的矩形滚进视口所需的偏移**增量**（`0.0` = 已经可见）。
      *
      * ★ 几何只算这一处：两个 `Scrollable` 实现（`ScrollViewState` /
-     *   `LazyColumnState`）都只是"找到自己的盒 → 把增量交给 `scrollBy()`"，
+     *   `LazyListState`）都只是"找到自己的盒 → 把增量交给 `scrollBy()`"，
      *   不各算一遍 —— 各算一遍迟早会漂（一个按视口高、一个按窗口高之类）。
      *
      * ★ 返回**增量**不是绝对偏移：`scrollBy()` 是唯一的写入口，夹取在它
