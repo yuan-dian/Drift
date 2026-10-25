@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Widget\Menu;
 
+use Drift\Widget\ActivationContext;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
 use Drift\Widget\Column;
@@ -107,6 +108,29 @@ final class Menu extends Button
     public function openHandler(): ?\Closure
     {
         return $this->openHandler;
+    }
+
+    /**
+     * 激活 = **打开菜单**，不是"按一下"。
+     *
+     * ★ 覆写 `Button::activate()` 且**不调 parent** —— 菜单标题不跑命令、也不跑
+     *   `onPressed`（`Menu` 从来不给内层按钮设 `onPressed`，见 `Select` 的同款裁决）。
+     *
+     * ★★ **这一处覆写就是旧代码那段"顺序脆弱"的解药**：以前 `InputRouter` 必须把
+     *   `Menu` 分支写在 `Button` 之前（"子类会被 `instanceof` 认成父类"）。改成虚方法
+     *   之后多态天然优先 —— 顺序不存在了，也就不需要注释提醒。
+     *
+     * ★ `onOpen` 为 `null` 时**什么都不做**（与搬迁前一致：那时也是先 `return`，
+     *   不会掉进 `Button` 分支）。
+     */
+    public function activate(ActivationContext $context): void
+    {
+        $open = $this->openHandler();
+        if ($open === null) {
+            return;
+        }
+
+        $open($this, $context->element());
     }
 
     /** 要浮起来的面板（`Application::showMenu()` 的入参） */

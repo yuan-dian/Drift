@@ -31,9 +31,6 @@ use Drift\Dev\Lint\SourceQuery;
  */
 final class InstanceofMissingUse implements Rule
 {
-    /** @var list<string> 语言结构关键字，不是类名 */
-    private const KEYWORDS = ['self', 'static', 'parent'];
-
     public function name(): string
     {
         return 'instanceof-missing-use';
@@ -65,7 +62,7 @@ final class InstanceofMissingUse implements Rule
         $found = [];
 
         foreach ($project->files() as $file) {
-            foreach ($this->instanceofNames($file->tokens()) as [$name, $line]) {
+            foreach (SourceQuery::instanceofNames($file->tokens()) as [$name, $line]) {
                 $resolved = $file->resolveName($name);
                 if ($this->visible($project, $byLowerFqn, $resolved)) {
                     continue; // use 过 / 同命名空间 / 全局项目类 ⇒ 看得见
@@ -99,39 +96,5 @@ final class InstanceofMissingUse implements Rule
     private function visible(Project $project, array $byLowerFqn, string $resolved): bool
     {
         return $project->symbol($resolved) !== null || isset($byLowerFqn[strtolower($resolved)]);
-    }
-
-    /**
-     * 全部 instanceof 右侧的候选类名（短名 / 相对限定名）+ 行号。
-     *
-     * @param list<mixed> $tokens
-     * @return list<array{0: string, 1: int}>
-     */
-    private function instanceofNames(array $tokens): array
-    {
-        $out = [];
-
-        foreach ($tokens as $i => $tok) {
-            if (!is_array($tok) || $tok[0] !== T_INSTANCEOF) {
-                continue;
-            }
-            $nextI = SourceQuery::nextIndex($tokens, $i + 1);
-            if ($nextI === null) {
-                continue;
-            }
-            $next = $tokens[$nextI];
-            if (!is_array($next)) {
-                continue; // `$x instanceof $y`（变量右侧）不判
-            }
-            if ($next[0] !== T_STRING && $next[0] !== T_NAME_QUALIFIED) {
-                continue; // 全限定名（写全了不会错）/ 其它形态不判
-            }
-            if (in_array(strtolower($next[1]), self::KEYWORDS, true)) {
-                continue;
-            }
-            $out[] = [$next[1], $next[2]];
-        }
-
-        return $out;
     }
 }

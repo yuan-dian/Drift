@@ -43,7 +43,7 @@ use Drift\Text\TextRole;
  *
  * @api
  */
-abstract class ToggleBase extends RenderBoxWidget
+abstract class ToggleBase extends RenderBoxWidget implements Activatable
 {
     protected readonly string $label;
 
@@ -125,12 +125,15 @@ abstract class ToggleBase extends RenderBoxWidget
     }
 
     /**
-     * 激活（`Application::activateFocusedWidget()` 的唯一入口）。
+     * 激活（`Activatable`）—— 键盘 Enter/Space 与指针按下的唯一落点。
      *
      * - 禁用 / 没接回调 ⇒ 什么都不做（**不**吞掉焦点变化）
      * - 单选钮已选中 ⇒ 不重复回调（与 HTML radio / Win32 `BM_CLICK` 一致）
+     *
+     * ★ 换值不需要 `$context` 里的任何东西（不派发命令、不用 element）—— 参数是
+     *   接口契约带来的，不是本类需要。`ActivationContext::none()` 即可直接调用。
      */
-    public function activate(): void
+    public function activate(ActivationContext $context): void
     {
         if (!$this->enabled || $this->onChanged === null) {
             return;

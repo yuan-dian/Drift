@@ -4,6 +4,8 @@ declare(strict_types=1);
 namespace Drift\Dev\Lint;
 
 use Drift\Dev\Lint\Rules\AliasMutate;
+use Drift\Dev\Lint\Rules\AppInstanceofConcrete;
+use Drift\Dev\Lint\Rules\AppSubclassCtorParent;
 use Drift\Dev\Lint\Rules\AttributeUnqualified;
 use Drift\Dev\Lint\Rules\BackendBranch;
 use Drift\Dev\Lint\Rules\CachedSubscriber;
@@ -54,6 +56,13 @@ final class Linter
             new NestedSubscribe(),
             // instanceof 漏 use（2026-10-19：静默恒 false 缺陷模式，本仓咬过 ≥3 次）
             new InstanceofMissingUse(),
+            // I2 闸门（2026-10-25 S1 第 10 步）：App 层不得认下层实现的具体类
+            //   ★ 判据是"不许认具体类"，不是"只许接口" —— 见规则类头的两条反例
+            new AppInstanceofConcrete(),
+            // I2 闸门（2026-10-25）：Application 子类覆写构造器必须调父构造器
+            //   ★ 真事故：ShowcaseApplication 漏调 ⇒ 七个拆分片未初始化 ⇒ 真机
+            //     启动 exit=255 且无行号，而 smoke 79 处 attach() 全绿
+            new AppSubclassCtorParent(),
             // 内建编译期注解漏 \（2026-10-21 W0/A0：`#[Override]` 解析成 `当前命名空间\Override`，静默无效）
             new AttributeUnqualified(),
             // W1/L3-6（`05` §2.5 两条）：禁后端分叉 / 发 Optional op 前查能力位

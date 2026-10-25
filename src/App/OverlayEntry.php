@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\App;
 
 use Drift\Widget\Element;
+use Drift\Widget\Modal;
 use Drift\Widget\Widget;
 
 /**
@@ -64,6 +65,20 @@ final class OverlayEntry
 
     /** 面板描述。★ 是 Widget 不是 Closure：StatefulWidget 自己订阅状态自己重建 */
     public Widget $panel;
+
+    /**
+     * 若本条目是**模态**，这里是那个 `Modal`（`null` = 不是模态）。
+     *
+     * ★ 为什么单独记一笔而不是事后 `$panel instanceof Modal` 反查：**"是不是模态"
+     *   是入栈时的事实**（`showModal()` 决定的），不该靠类型反推 —— 将来
+     *   `Sheet` / `Dialog` 也可能以模态入栈，那时反查就得改判据，而记账不用。
+     *   同 `$scrim` / `$barrier` / `$focusTrap` 的口径：入栈方声明意图，条目只是记录。
+     *
+     * ★ 它同时让 `App` 层不必 `instanceof` 具体控件类（S1 第 10 步 4j-c）——
+     *   但注意 `Modal` 这个**类型**仍在签名里（`OverlayManager::modal(): ?Modal`），
+     *   那是返回值契约，不是"认识实现"。
+     */
+    public ?Modal $modal = null;
 
     /** 锚节点；null ⇒ 无锚（模态 / Toast） */
     public ?Element $anchor = null;

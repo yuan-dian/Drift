@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Layout;
 
+use Drift\Geometry\Rect;
 use Drift\Input\CursorShape;
 use Drift\Rendering\Canvas;
 
@@ -65,6 +66,29 @@ abstract class RenderObject
      * @api
      */
     public function cursorAt(float $x, float $y): ?CursorShape
+    {
+        return null;
+    }
+
+    /**
+     * 本盒作为**浮层面板**时，面板自身的矩形（盒坐标系；`null` = 本盒不是面板）。
+     *
+     * ★ 存在的理由：`App` 层有两处要问"这是不是面板 / 面板多大"，以前靠
+     *   `instanceof RenderPopupPanel` —— 框架核心认识具体盒类，与 `Activatable`
+     *   同一条纪律（§4.3 依赖方向：`App` 不该认识 `Layout` 的具体类）。
+     *   收成能力方法后，`hitsModalPanel()` 问 `panelRect() !== null`，
+     *   `OverlayLayout` 问矩形本身，两处都不再需要 `use RenderPopupPanel`。
+     *
+     * ★ **为什么返回矩形而不是布尔**：`OverlayLayout` 要的是"含投影留白内缩
+     *   `elevation` 之后的面板矩形"，布尔表达不了。一个方法同时满足两种问法 ——
+     *   布尔用 `!== null`，几何用返回值。两个方法（`isPanel()` + `panelRect()`）
+     *   会逼出"两者不一致"的可能。
+     *
+     * ★ 默认 `null`：绝大多数盒不是面板，不表态。
+     *
+     * @api
+     */
+    public function panelRect(): ?Rect
     {
         return null;
     }

@@ -192,6 +192,7 @@ use Drift\Rendering\Color;
 use Drift\Rendering\ColorToken;
 use Drift\Rendering\DashPattern;
 use Drift\Rendering\DisplayList;
+use Drift\Rendering\DividerStyle;
 use Drift\Rendering\Gradient;
 use Drift\Rendering\ImageHandle;
 use Drift\Rendering\ImageLoader;
@@ -227,6 +228,8 @@ use Drift\Text\TextStyle;
 use Drift\Theme\SystemTheme;
 use Drift\Theme\ThemeData;
 use Drift\Theme\ThemeScope;
+use Drift\Widget\Activatable;
+use Drift\Widget\ActivationContext;
 use Drift\Widget\AspectRatio;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
@@ -7166,6 +7169,87 @@ check(
     $quietApp->recorder()->seen === [] && $quietApp->pressed === [],
 );
 
+// —— 能力接口 `Activatable`（S1 第 10 步 4j-b，2026-10-25）——
+//   ★ 为什么要有这一组：重构把 `InputRouter::activateFocusedWidget()` 的 4 条
+//     `instanceof`（Menu / ToggleBase / Segment / Button）换成了一次能力判断。
+//     **漏 implements 的后果是静默的** —— 框架 `return`、Enter 什么都不做，
+//     而"直调 activate()"的用例照样绿（那种调用不经过框架）。
+check(
+    'Activatable · 四个可激活控件都声明了能力（漏一个 ⇒ 框架激活静默失效）',
+    Button::make('b') instanceof Activatable
+        && Menu::make('m') instanceof Activatable
+        && Checkbox::make('c') instanceof Activatable
+        && Segment::make('s', 1) instanceof Activatable,
+);
+
+// Menu 覆写 ⇒ 只走 onOpen，**不**落 Button 的命令。
+//   ★ 旧实现靠"Menu 分支必须排在 Button 之前"达到同一语义（顺序脆弱，注释自己写着）；
+//     现在是虚方法覆写。
+//   ★★ 判据必须**两边都记**：只记 onOpen 的话，"命令也派发了"这件事看不出来
+//      （实测：第一版断言就是这么写的，把 Menu 改成 `parent::activate()` 之后
+//      它照样绿）。所以 dispatcher 与 onOpen 记进同一个数组 —— 谁多跑一次都红。
+$menuSaw = [];
+$menuProbe = Menu::make('文件')
+    ->command('menu.should.not.fire')
+    ->onOpen(function (Menu $m, ?Element $anchor) use (&$menuSaw): void {
+        $menuSaw[] = $anchor === null ? 'open:no-anchor' : 'open:anchor';
+    });
+$menuProbe->activate(new ActivationContext(null, function (string $command, CommandArg $arg) use (&$menuSaw): void {
+    $menuSaw[] = 'cmd:' . $command;
+}));
+check(
+    'Activatable · Menu::activate ⇒ 只走 onOpen（Button 的命令不被派发）',
+    $menuSaw === ['open:no-anchor'],
+    implode(',', $menuSaw),
+);
+
+// Button：命令优先；无命令才回落 onPressed（与搬迁前逐字相同）
+$cmdSaw = [];
+$cmdProbe = Button::make('b')
+    ->command('cmd.a')
+    ->onPressed(function () use (&$cmdSaw): void {
+        $cmdSaw[] = 'pressed';
+    });
+$cmdProbe->activate(new ActivationContext(null, function (string $command, CommandArg $arg) use (&$cmdSaw): void {
+    $cmdSaw[] = $command;
+}));
+check(
+    'Activatable · Button::activate ⇒ 命令优先，onPressed 不调',
+    $cmdSaw === ['cmd.a'],
+    implode(',', $cmdSaw),
+);
+
+$pressSaw = [];
+$pressProbe = Button::make('b')->onPressed(function () use (&$pressSaw): void {
+    $pressSaw[] = 'pressed';
+});
+$pressProbe->activate(ActivationContext::none());
+check(
+    'Activatable · 无命令的 Button::activate ⇒ 回落 onPressed（上下文可以什么都不给）',
+    $pressSaw === ['pressed'],
+    implode(',', $pressSaw),
+);
+
+// ToggleBase / Segment：激活 = 换值，上下文里没有它们要的东西
+$toggleSaw = [];
+$cbProbe = Checkbox::make('c')->checked(false)->onChanged(function (bool $on) use (&$toggleSaw): void {
+    $toggleSaw[] = $on ? 'on' : 'off';
+});
+$cbProbe->activate(ActivationContext::none());
+check(
+    'Activatable · Checkbox::activate ⇒ 换值（false ⇒ true）',
+    $toggleSaw === ['on'],
+    implode(',', $toggleSaw),
+);
+
+// —— `RenderObject::panelRect()` 能力方法（4j-c）——
+//   ★ 判据必须成对：普通盒**不表态**（否则 `hitsModalPanel()` 对所有命中都返回
+//     true ⇒ 点遮罩关不掉模态）；面板盒**表态**（否则 `OverlayLayout` 拿不到
+//     面板矩形 ⇒ 落位算错）。只测一边等于没测。
+$plainBox = new RenderDivider(new DividerStyle(Color::fromRgba(0, 0, 0, 255), 1.0), 100.0);
+check('panelRect · 普通盒默认 null（不表态）', $plainBox->panelRect() === null);
+check('panelRect · 面板盒覆写（表态，供落位与模态判定）', (new RenderPopupPanel())->panelRect() !== null);
+
 // ── ㉝ 错误边界容器 + AcceleratorTable（任务 #5：M3，O-12 A′ + §9.1 第 ① 环）──
 
 // A. AcceleratorTable 单元（§9.1）
@@ -12591,9 +12675,9 @@ $scFired = 0;
 $scFire = static function () use (&$scFired): void {
     $scFired++;
 };
-Segment::make('周', 1)->selected(false)->onChanged($scFire)->activate();
-Segment::make('周', 1)->selected(true)->onChanged($scFire)->activate();
-Segment::make('周', 1)->selected(false)->enabled(false)->onChanged($scFire)->activate();
+Segment::make('周', 1)->selected(false)->onChanged($scFire)->activate(ActivationContext::none());
+Segment::make('周', 1)->selected(true)->onChanged($scFire)->activate(ActivationContext::none());
+Segment::make('周', 1)->selected(false)->enabled(false)->onChanged($scFire)->activate(ActivationContext::none());
 check('Seg · activate()：未选段才回调；已选/禁用都不回调', $scFired === 1, 'fired=' . $scFired);
 
 // 全不选 ⇒ 整幅零 accent（没有"默认选中第一项"这回事）

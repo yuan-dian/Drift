@@ -6,7 +6,6 @@ namespace Drift\App;
 use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
 use Drift\Layout\RenderBox;
-use Drift\Layout\RenderPopupPanel;
 
 /**
  * 浮层**几何布局**策略（arch-v2 `01` §4）—— 帧循环每帧一次的纯几何段。
@@ -221,8 +220,10 @@ final class OverlayLayout
         }
 
         // ② 面板矩形（含投影留白的盒要内缩 `elevation` 才是"面板"本身）
-        if ($box instanceof RenderPopupPanel) {
-            $panel = $box->panelRect();
+        //   ★ 走能力方法而不是 `instanceof RenderPopupPanel`（S1 第 10 步 4j-c）：
+        //     App 层不该认识 `Layout` 的具体盒类（与 `Activatable` 同一条纪律）。
+        $panel = $box->panelRect();
+        if ($panel !== null) {
             $w = $panel->width;
             $h = $panel->height;
             $pad = $panel->left;

@@ -25,12 +25,29 @@ use Drift\Widget\Widget;
  */
 final class ShowcaseApplication extends Application
 {
+    /**
+     * ★★★ **必须调 `parent::__construct()`**（2026-10-25 修）：基类在构造器里建
+     *   七个拆分片（`router` / `textEditing` / `scrollInput` / `overlayHost` /
+     *   `input` / `overlayLayout` / `pumps`），本类覆写构造器却不调父构造器
+     *   ⇒ 那七个字段**全是未初始化**。
+     *
+     *   现象（真机实测，2026-10-21 → 2026-10-25 一直存在）：`attach()` 第一句
+     *   `$this->pumps->attach()` 读未初始化属性 ⇒ 进程 `exit=255`、只剩
+     *   "Attempt to read property on null"，**没有任何文件名与行号**。
+     *   ★ 解释器本该抛 `Typed property must not be accessed before initialization`，
+     *     但 AOT 给的是 `null` ⇒ 错误信息更含糊、更难点。
+     *   ★ smoke 抓不到：79 处 `->attach()` 用的都是**调了父构造器**的测试应用
+     *     ⇒ 这条只有真机能证伪（"smoke 全绿 ≠ 真机正确"的又一例）。
+     *   闸门：`tools/Lint/Rules/AppSubclassCtorParent.php`（I2 同期加，判据写死）。
+     */
     public function __construct(private ?Clipboard $clipboard = null)
     {
+        parent::__construct();
     }
 
     public function buildRoot(): Widget
     {
+
         // ★ **应用侧接线**（§4.3 禁 `Widget → App`，`Menu::onOpen` 同款）：
         //   浮层归 `Application` 管，而页面在 `Drift\Widget` 层够不到它 ⇒ 由这里
         //   （唯一持有 `$this` 的地方）把"弹一条通知"这个能力递下去。

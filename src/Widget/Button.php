@@ -40,7 +40,7 @@ use Drift\Rendering\MetricToken;
  *
  * @api
  */
-class Button extends BoxWidget
+class Button extends BoxWidget implements Activatable
 {
     // ★ **AOT：会被继承的类，字段不能是 private** —— tpc 按**运行时类型**查属性表，
     //   而父类的 `private` 不进子类属性表 ⇒ 子类实例（`NavButton` / `Menu` / `MenuItem`）
@@ -141,6 +141,32 @@ class Button extends BoxWidget
     public function commandArg(): ?CommandArg
     {
         return $this->commandArg;
+    }
+
+    /**
+     * 激活（`Activatable`）—— 命令优先，`onPressed` 兜底。
+     *
+     * ★ 这段逻辑原先住 `InputRouter::activateFocusedWidget()` 的末段，且前面要挡
+     *   三个 `instanceof`（`Menu` / `ToggleBase` / `Segment`）。搬到控件自己身上之后
+     *   框架不再需要知道"按钮长什么样"，而 `Menu` 只需覆写本方法就能改变激活语义
+     *   （见 `Menu::activate()`）。
+     *
+     * ★ **命令优先**：`->command('x')` 声明了就走全链（冒泡 → 注册表），
+     *   `onPressed` 是纯 UI 回调，作为没声明命令时的兜底 —— 与搬迁前逐字相同。
+     */
+    public function activate(ActivationContext $context): void
+    {
+        $name = $this->commandName();
+        if ($name !== null) {
+            $context->dispatch($name, $this->commandArg() ?? CommandArg::none());
+
+            return;
+        }
+
+        $handler = $this->pressedHandler();
+        if ($handler !== null) {
+            $handler();
+        }
     }
 
     public function createRenderObject(BuildContext $context): RenderBox

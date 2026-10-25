@@ -20,7 +20,6 @@ use Drift\Input\WindowDeactivatedEvent;
 use Drift\Platform\Clipboard;
 use Drift\Layout\RenderBox;
 use Drift\Layout\LayoutTolerance;
-use Drift\Layout\RenderPopupPanel;
 use Drift\Layout\RenderScrollView;
 use Drift\Rendering\Canvas;
 use Drift\Rendering\ColorToken;

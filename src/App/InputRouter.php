@@ -15,13 +15,10 @@ use Drift\Input\PointerEvent;
 use Drift\Input\ScrollEvent;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderObject;
-use Drift\Layout\RenderPopupPanel;
-use Drift\Widget\Button;
+use Drift\Widget\Activatable;
+use Drift\Widget\ActivationContext;
 use Drift\Widget\Drag\Draggable;
 use Drift\Widget\Element;
-use Drift\Widget\Menu\Menu;
-use Drift\Widget\Segment;
-use Drift\Widget\ToggleBase;
 
 /**
  * **输入路由主体**（S1 第 6 步）：§9.1 路由链的键 / 指针 / 滚轮三侧 + 手势状态。
@@ -614,9 +611,13 @@ final class InputRouter
     /**
      * 激活当前焦点控件 —— 键盘（Enter/Space）与指针（按下）两路径的**唯一**入口。
      *
-     * §9.1 动作缝：Menu 走 `onOpen`（应用接线到 `showMenu()`）、Button 走
-     * 命令（全链）或 `onPressed`。Menu 分支必须在 Button 之前 —— 子类会被
-     * `instanceof` 认成父类。
+     * ★★ **激活的语义归控件自己**（`Activatable`，S1 第 10 步 4j-b）：本方法只做两件
+     *   框架该做的事 —— ① 声明式浮层优先（`overlayPanelValue()`，比"按一下"更具体）；
+     *   ② 把上下文打包交给控件。**零具体控件类认知**。
+     *
+     * ★ 搬迁前这里是一条 `instanceof` 塔（`Menu` / `ToggleBase` / `Segment` / `Button`），
+     *   且 `Menu extends Button` 逼出一条顺序纪律（"子类分支必须排在父类前"）。
+     *   改成虚方法之后：`Menu` 覆写 `activate()` 即生效，顺序问题**不存在**了。
      */
     private function activateFocusedWidget(): void
     {
@@ -635,52 +636,22 @@ final class InputRouter
             return;
         }
 
-        // ★ 菜单标题（`Menu extends Button`）⇒ 走 `onOpen`（应用接线到 `showMenu()`）。
-        //   分支必须在 `Button` 之前 —— 子类会被 `instanceof` 认成父类。
-        if ($widget instanceof Menu) {
-            $open = $widget->openHandler();
-            if ($open !== null) {
-                $open($widget, $element);
-            }
-
+        // ★★ **能力接口**（S1 第 10 步 4j-b，2026-10-25）：激活的语义归控件自己。
+        //   以前这里是一条 `instanceof` 塔（`Menu` / `ToggleBase` / `Segment` /
+        //   `Button`），框架核心去认具体控件 —— 加一种可激活控件就要改这里，且
+        //   `Menu extends Button` 逼出"子类分支必须排在父类前"的顺序纪律。
+        //   改成 `Activatable` 之后：`Menu` 覆写即生效（多态天然优先），本方法
+        //   **零具体控件类认知** —— 唯一的 `instanceof` 右侧是接口。
+        if (!$widget instanceof Activatable) {
             return;
         }
 
-        // ★ 开关类（`Checkbox` / `Radio` / `Toggle`）：与按钮同一入口，但"激活"
-        //   的含义是**换值**（回调收新值）。分支必须在 `Button` 之前 —— 二者互不
-        //   继承，但放在 `!$widget instanceof Button` 早退之后会永远进不来。
-        if ($widget instanceof ToggleBase) {
-            $widget->activate();
-
-            return;
-        }
-
-        // ★ 分段控件的一段（`Segment`）：激活 = 选中自己（one-of-N），语义与
-        //   ToggleBase 同族，但形状是"轨内一段"不是方框/圆点/轨道 ⇒ 不进
-        //   ToggleBase 继承（组合不同，见 `SegmentedControl` 类头）。
-        //   分支与 ToggleBase 互不继承，放它前后都能进；挨着放是为读起来一类。
-        if ($widget instanceof Segment) {
-            $widget->activate();
-
-            return;
-        }
-
-        if (!$widget instanceof Button) {
-            return;
-        }
-
-        // 命令优先（走全链：冒泡 → 注册表）；onPressed 是纯 UI 回调，框架兜底调
-        $name = $widget->commandName();
-        if ($name !== null) {
-            $this->host->dispatch($name, $widget->commandArg() ?? CommandArg::none());
-
-            return;
-        }
-
-        $handler = $widget->pressedHandler();
-        if ($handler !== null) {
-            $handler();
-        }
+        $widget->activate(new ActivationContext(
+            $element,
+            function (string $command, CommandArg $arg): void {
+                $this->host->dispatch($command, $arg);
+            },
+        ));
     }
 
     /**
@@ -688,16 +659,20 @@ final class InputRouter
      *
      * ★ `Modal` 的 build 把面板包成 `ModalHost → Center → PopupPanel`，遮罩上的
      *   命中停在 `Center` / `ModalHost`（默认 `hitTest()`：子都不中 ⇒ 返回自己）
-     *   ⇒ "父链上有 `RenderPopupPanel`" 就是"点在面板里"的判据。用父链而不是
-     *   "命中的是不是 Center"，是为了面板外面再包布局（比如加个底部按钮栏）也成立。
+     *   ⇒ "父链上有一个**自称面板**的盒"（`panelRect() !== null`）就是"点在面板里"。
+     *   用父链而不是"命中的是不是 Center"，是为了面板外面再包布局（比如加个底部
+     *   按钮栏）也成立。
+     * ★ 走能力方法而不是 `instanceof RenderPopupPanel`（S1 第 10 步 4j-c）：App 层
+     *   不该认识 `Layout` 的具体盒类。判据的**含义没变** —— `RenderPopupPanel` 是
+     *   目前唯一覆写 `panelRect()` 的盒。
      * ★ 边界：面板盒含 `elevation` 的投影留白 ⇒ 投影那 6 逻辑像素也算"面板内"
-     *   （点它不关模态）。要精确到 `panelRect()` 得把坐标换算进盒坐标系，
-     *   收益不值这个复杂度 —— 记在这里而不是假装没有。
+     *   （点它不关模态）。要精确到矩形内部得把坐标换算进盒坐标系，收益不值这个
+     *   复杂度 —— 记在这里而不是假装没有。
      */
     private function hitsModalPanel(?RenderObject $hit): bool
     {
         for ($node = $hit; $node !== null; $node = $node->parent()) {
-            if ($node instanceof RenderPopupPanel) {
+            if ($node->panelRect() !== null) {
                 return true;
             }
         }

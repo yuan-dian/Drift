@@ -481,6 +481,7 @@ final class OverlayManager
         }
 
         $e = new OverlayEntry($modal);
+        $e->modal = $modal;   // ← "是模态"记在入栈这一笔上（`modal()` 靠它，不靠 instanceof）
         $e->anchor = null;
         $e->prefer = OverlayEntry::CENTER;
         $e->barrier = true;
@@ -615,11 +616,8 @@ final class OverlayManager
     public function modal(): ?Modal
     {
         $e = $this->topModalEntry();
-        if ($e === null || !$e->panel instanceof Modal) {
-            return null;
-        }
 
-        return $e->panel;
+        return $e?->modal;
     }
 
     /** 浮层的渲染环境（复用主树的 —— 同主题 / 同度量） */

@@ -69,6 +69,49 @@ final class SourceQuery
     }
 
     /**
+     * 全部 `instanceof` 右侧的候选类名（短名 / 相对限定名）+ 行号。
+     *
+     * ★ 抽在这里的理由：两条规则都要它 —— `instanceof-missing-use`（短名看不看得见）
+     *   与 `app-instanceof-concrete`（认的是接口还是下层具体类）。同一份 token 遍历
+     *   写两遍，判据迟早会漂移（一处补了边界、另一处没补）。
+     *
+     * 边界（两条规则共用，改这里就是两条一起改）：
+     * - 右侧是变量（`$x instanceof $y`）⇒ 不判
+     * - 右侧是全限定名（`\A\B`）⇒ 不判（写全了不会错）
+     * - `self` / `static` / `parent` ⇒ 不判（语言结构关键字，不是类名）
+     *
+     * @param list<mixed> $tokens
+     * @return list<array{0: string, 1: int}> [类名, 行号]
+     */
+    public static function instanceofNames(array $tokens): array
+    {
+        $out = [];
+
+        foreach ($tokens as $i => $tok) {
+            if (!is_array($tok) || $tok[0] !== T_INSTANCEOF) {
+                continue;
+            }
+            $nextI = self::nextIndex($tokens, $i + 1);
+            if ($nextI === null) {
+                continue;
+            }
+            $next = $tokens[$nextI];
+            if (!is_array($next)) {
+                continue;
+            }
+            if ($next[0] !== T_STRING && $next[0] !== T_NAME_QUALIFIED) {
+                continue;
+            }
+            if (in_array(strtolower($next[1]), ['self', 'static', 'parent'], true)) {
+                continue;
+            }
+            $out[] = [$next[1], $next[2]];
+        }
+
+        return $out;
+    }
+
+    /**
      * 区间内的**实例方法调用**：`->name(` 且 `name` 命中 `$names`。
      *
      * ★ 为什么放在 `SourceQuery` 而不是各规则自己写：`subscriber-mark` 与
@@ -77,7 +120,6 @@ final class SourceQuery
      * ★ 只认 `->`（实例调用）。静态调用 `Foo::select(` 是 `::`，不在此列 ——
      *   它不产生"谁在订阅"的问题。
      *
-     * @param list<mixed> $tokens
      * @param list<string> $names 小写方法名
      * @return list<array{name: string, line: int}>
      */

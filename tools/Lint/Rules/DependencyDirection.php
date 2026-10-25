@@ -89,11 +89,19 @@ final class DependencyDirection implements Rule
      * 参数（§11.4.3 的动作缝，§A.2.10 / §A.3.7 样板），`CommandArg` 是必须穿越
      * `Widget → Commands` 的值对象。链的其余部分（派发）住 `Drift\App`，Widget 侧
      * 只碰这一个值类型 —— 与 `State` 例完全同构，不为它放开整层。
+     *
+     * `ActivationContext` 是**第四例、同一条缝**（2026-10-25，S1 第 10 步 4j-b）：
+     * 它把"激活时框架能给什么"打包给控件，其中"派发命令"这一项要 `CommandArg`。
+     * ★ 为什么是加一条例外而不是放开整层：这条缝的形状始终是"**一个值类型**穿过
+     *   `Widget → Commands`，派发实现仍住 `Drift\App`"。四处都是同一个 `CommandArg`，
+     *   没有第二类型在穿 —— 放开整层会让 `Widget` 去 `new` 命令路由，那才是越界。
+     *   （若将来出现第二个穿层的 Commands 类型，就该重审这条边界，而不是继续加行。）
      */
     private const FILE_EXCEPTIONS = [
         'src/Widget/BuildContext.php' => ['Theme'],
         'src/Widget/State.php' => ['Commands'],
         'src/Widget/Button.php' => ['Commands'],
+        'src/Widget/ActivationContext.php' => ['Commands'],
     ];
 
     public function name(): string

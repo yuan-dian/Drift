@@ -592,3 +592,239 @@ readable）。真正可复用的是「四泵」这个**稳定子结构**，不�
 - 两处变异还原后均回到 1396/0。
 
 **兼容性破坏**：0（委托壳照留；`BUDGET_MS`/`OVER_BUDGET_FRAMES`/`STAGE_BUDGET_MS` 不动；`SLICE_BUDGET_MS` 随默认值搬走且无外部引用）。
+
+---
+
+## 4j. 第十步动工前分析：I2 闸门不能裸加（2026-10-25）
+
+> ★ **本节有三处判断被实测推翻**（27→22 处、D 类本来就合规、判据不该是"只许接口"）
+> ⇒ 先读末尾 **§4j-落地** 的修正表，再回头看本节的分析过程。
+
+### 字面计划与它的当前阻塞
+
+路线表第 10 步 = 「加 lint 规则：`src/App/` 里 `instanceof` 只许出现在接口上」（I2 闸门，
+出处 `ARCH-REVIEW-2026-10-24` §3.2）。规划原话「现在加会红 39 处，拆完才绿」—— 意思是
+闸门是 S1 的**收口网**，应在 instanceof 归零后变绿。
+
+**实测现状**：`src/App/` 内 `instanceof` 仍有 **27 处**，按文件：
+
+| 文件 | 处数 | 类型（具体类为主） |
+|---|---|---|
+| `InputRouter.php` | 13 | `KeyEvent`/`PointerEvent`/`ScrollEvent`（事件分派 3）+ `Menu`/`ToggleBase`/`Segment`/`Button`（控件识别 4）+ `RenderPopupPanel`/`CursorShape`（渲染/返回 2）+ 注释 2 处 |
+| `Application.php` | 4 | `KeyEvent`/`PointerEvent`/`ScrollEvent`/`WindowDeactivatedEvent`/`ThemeChangedEvent`（事件分派） |
+| `FocusManager.php` | 3 | 文本编辑焦点陷阱（`EditableText` 系） |
+| `TextEditingBridge.php` | 2 | 文本编辑 |
+| `ScrollInputRouter`/`ProcessWorker`/`ProcessTaskHost`/`OverlayManager`/`OverlayLayout` | 各 1 | 渲染/重载类型 |
+
+⇒ **闸门现在加必然红**，且「只许接口」这条**字面判据对其中一类是错的**：
+`InputRouter` 按具体事件类分派是**输入域的本职**，而 `Application.dispatchInput`
+(1354–1380) 又对它**重复**做了一次同类分派。真要「只许接口」，会把合法的事件分派也逼成
+访问者模式（过度），却放过了真正的控件泄漏（`activateFocusedWidget()` 的
+`Menu`/`ToggleBase`/`Segment`/`Button` 识别——那行注释自己就写着「子类会被 `instanceof`
+认成父类」）。
+
+### 27 处的真实分类（决定闸门该怎么写）
+
+- **A 类 · 事件类型分派（域本职，应豁免或抽 `InputEvent` 接口）**：`Application` 4 处 +
+  `InputRouter` 112/183/187 三处。**两处重复**是首先要杀的（Application 先按类型判断要不要
+  路由，InputRouter 再按类型分派——同一份知识两份拷贝）。
+- **B 类 · 控件识别（S1 主旨要灭的泄漏）**：`InputRouter` 640/652/662/668 的
+  `Menu`/`ToggleBase`/`Segment`/`Button`。这正是「框架认识具体控件类」的化石，且顺序脆弱
+  （子类必须在父类前判）。**这是闸门真正要防的对象。**
+- **C 类 · 渲染/返回类型检查（跨层 instanceof）**：`InputRouter` 700 `RenderPopupPanel`
+  （沿父链认渲染盒）、747 `CursorShape`（返回值类型检查）。
+- **D 类 · 文本编辑焦点（域本职，可收成接口）**：`FocusManager` 3 + `TextEditingBridge` 2。
+
+### 三个候选方案（结构 / 实现 / 扩展性权衡）
+
+**方案 1 · 字面路线：现在加 I2 闸门（红），再机械地把每个违规类抽空标记接口**
+- 结构：差。空标记接口是「未消费的分支 = 未实现」纪律的反面，本仓明确反对。
+- 扩展：零。新控件/新事件仍要改 InputRouter/Application 的类型判断（没达到开闭）。
+- 实现：闸门口径对 A 类（事件分派）是错的，会逼出访问者或空接口。
+- **否决**：闸门成了负担而非护栏。
+
+**方案 2 · 先重构、后收口网（推荐）**：把闸门要防的泄漏当作真重构做掉，再上一个**精炼后**
+的 I2 闸门。
+- 4j-a 杀 A 类重复：`Application.dispatchInput` 不再按类型预判断，直接把事件交给
+  `InputRouter`（或抽 `InputEvent::dispatch(InputHandler)` 让每个事件自路由——对加新事件
+  类型开闭友好）。`Application` 的 4 处 instanceof 消失。
+- 4j-b 灭 B 类泄漏：仿照**已落地的 `overlayPanelValue()` 能力模式**，给 `Widget` 加一个
+  `activationBehavior(): ?ActivationHandler`（或 `Activatable` 接口 + `activate()`）。
+  `Menu`/`ToggleBase`/`Segment`/`Button` 各自覆写返回自己的激活行为；子类覆写天然解决
+  「子类先于父类」的顺序问题（与 `overlayPanelValue()` 排最前同构）。`InputRouter` 改调
+  `$widget->activationBehavior()?->activate()`，**零 instanceof**。
+- 4j-c 折 C/D 类：`RenderPopupPanel` 父链认面板 → 收成 `$element->isInsideModalPanel()`
+  （或渲染盒接口）；`CursorShape` 返回值检查 → 把 `dispatchToCapture()` 返回类型改成
+  `?CursorShape`（调用点 `instanceof` 消失）；`FocusManager`/`TextEditingBridge` 的文本编辑
+  焦点收成已有 `TextEditingHost` 接口能力。
+- 4j-d 收口网：加精炼后的 I2 闸门 = 「`src/App/` 内 `instanceof` 于具体类**默认 banned**，
+  **allowlist** 仅 `InputRouter` 的事件分派（`KeyEvent`/`PointerEvent`/`ScrollEvent` 等，
+  因它拥有输入域）。其余一律接口/能力方法。」
+- 结构：B 类能力化是 S1 主旨的终章，顺带把「加新激活控件要改 InputRouter」变成开闭。
+- 扩展：**加新控件/新事件类型不再动 InputRouter**（遵从 `overlayPanelValue()` 已验证的形态）。
+- 实现：改动面集中在 `InputRouter` + 4 个控件类 + `Widget` 加一个能力方法，smoke 当护栏。
+- 兼容破坏：有（4 个控件类需实现激活能力接口 / 覆写能力方法）—— 用户已授权「适当破坏」。
+
+**方案 3 · 只精炼判据、不重构**：闸门直接写成「具体类 banned 但 InputRouter 事件分派
+allowlist」，27 处里只修 D 类零星几处，B/C 类留着。
+- 结构：半吊子。B 类泄漏（最该灭的）原封不动，闸门也抓不到它（allowlist 把 InputRouter 整体
+  放过了）。
+- **否决**：没解决根因，只是让闸门「能绿」。
+
+### 裁决：取方案 2（4j-a → 4j-b → 4j-c → 4j-d）
+
+理由：
+1. 闸门的字面判据对 A 类（事件分派）是错的，必须先处理重复分派才能谈「只许接口」。
+2. B 类（`activateFocusedWidget` 的控件识别）是 S1「instanceof = 知道具体类」主旨的最后一
+   块化石，且代码自己标注了顺序脆弱——这是**结构债**，不是纪律债，该用能力接口还。
+3. `overlayPanelValue()` 已经证明「控件自报能力、框架不认具体类」这形态在本仓成立且好用，
+   4j-b 是它的一比一复制，风险低、收益高（开闭）。
+4. 用户授权「兼容性适当破坏」⇒ 4 个控件类实现激活能力接口是可接受的硬约束，换来「加控件不改
+   InputRouter」。
+
+### 待确认的破坏面（执行前先对齐）
+
+- 4j-b 选 **`Activatable` 接口 + `activate()`**（统一入口，但丢优先级，需用 `priority()`
+  补），还是 **`Widget::activationBehavior(): ?ActivationHandler`**（与 `overlayPanelValue()`
+  同构、优先级由返回与否天然处理）？→ 推荐后者（与本仓已验证形态一致，少一个概念）。
+- 4j-a 选 **Application 直接委托 InputRouter**（最小改动，但 InputRouter 仍自持事件分派
+  instanceof，靠网关 allowlist 豁免），还是 **抽 `InputEvent::dispatch()` 接口**（彻底消灭
+  事件分派 instanceof，对新事件类型开闭，但要给每个事件类加方法）？→ 推荐前者（先把重复
+  杀掉、闸门能绿；`InputEvent` 接口留作后续 S3 输入能力位的顺手改造）。
+- 是否把 4j-c/D 类的文本编辑焦点 instanceof 一并收进 `TextEditingHost`（改动面稍大），还是
+  本步只做 A+B+C、D 类留到文本编辑专题？→ 推荐本步只动 A+B+C，D 类随 S1 主线收口即可。
+
+### §4j-落地（2026-10-25 完成）
+
+#### 三处判断被实测推翻
+
+| §4j 原判 | 实测 |
+|---|---|
+| `src/App/` 有 **27 处** `instanceof` | 代码里 **22 处**（原数把 5 处**注释里**的字样也算进去了） |
+| D 类（`FocusManager` 3 + `TextEditingBridge` 2）"可收成接口" | **本来就是接口**（`EditableText` / `Scrollable` / `Job` / `NamedJob` 全已是 `interface`）⇒ 一步都不用动 |
+| 闸门判据 = 「只许接口」+ allowlist 白名单 | 判据改成 **「App 不得 `instanceof` 下层（Widget / Layout / Rendering）的具体类」**，**零白名单** |
+
+**判据为什么必须改**（本步最重要的产出）：见 `tools/Lint/Rules/AppInstanceofConcrete.php`
+类头。字面判据对两类**合法**用法是错的 —— ① 事件类型分派（`KeyEvent`/`PointerEvent`/
+`ScrollEvent` 是输入域本职，要"只许接口"就得给每个事件类加 `accept()` 做双分派）；
+② 返回值类型收窄（`instanceof Rect` / `instanceof CursorShape` 是"确认拿到的就是声明的
+类型"）。照字面写会**逼出访问者模式**，却放过了真正的泄漏（B 类控件识别）。
+
+⇒ 改成表达本意的那条：**App 层要抽象的是下层实现**。好处是**零白名单** ——
+不是"记住今天的例外"，而是"把规则本身写对"：新加一种事件类型、一个值对象都不用改规则。
+
+#### 四个子步的实际取舍
+
+- **4j-b（做）能力接口** —— 新建 `src/Widget/Activatable.php`（`activate(ActivationContext)`
+  `: void`）+ `src/Widget/ActivationContext.php`（值对象，`element()` + `dispatch()`）；
+  `Button` / `ToggleBase` / `Segment` 声明 `implements Activatable`；`Menu extends Button`
+  **覆写** `activate()` 只走 `onOpen`、**不调 parent**。`InputRouter::activateFocusedWidget()`
+  的 4 条 `instanceof` 塔收成一条。
+  - ★ 选**接口方法**而不是 `activationBehavior(): ?\Closure`：行为是控件自己的事
+    （`activate()`），而闭包是"数据要交给别人"（`overlayPanelValue()` 那种）。把行为
+    包成闭包 = 用闭包模拟虚方法。
+  - ★ `ActivationContext::$dispatcher` 是闭包而不是 host 接口 —— §4.3 禁 `Widget → App`。
+  - ★ 收益是**顺序纪律消失**：以前 `Menu` 分支必须写在 `Button` 分支**之前**（代码注释
+    自写"子类会被 `instanceof` 认成父类"）；覆写后顺序问题不存在。
+- **4j-c（做）能力方法 + 记账** —— `RenderObject::panelRect(): ?Rect`（默认 `null`，与
+  `cursorAt()` 同形）；`RenderPopupPanel` 覆写成 `Rect`（**协变返回**；AOT 下生成
+  `ZEND_METHOD` 动态派发，不撞 C++ 重载）。`OverlayLayout` / `InputRouter::hitsModalPanel()`
+  改判 `$box->panelRect() !== null`。`OverlayEntry` 新增 `public ?Modal $modal`，
+  `OverlayManager::modal()` 改读它 —— **记录入栈事实**，而不是事后 `instanceof` 反查。
+- **4j-a（不做）** —— `Application::dispatchInput` 的 4 处事件分派在**新判据下天然豁免**
+  （`Input` 层不在禁止目录）⇒「杀重复分派」从"闸门必需项"降级为"可选重构"，
+  不值当在本步做；留作 S3 输入能力位。
+- **4j-d（做）闸门** —— `tools/Lint/Rules/AppInstanceofConcrete.php` + `Linter` 注册。
+  按**物理路径**判层（`str_starts_with($symbol['file'], 'src/Widget/')`，不按命名空间 ——
+  `ResizeHook.php` 刻意无 namespace 的先例说明"命名空间 = 层"在本仓不成立）；
+  `kind` 取 `Project::symbols()` 的一等字段（`ApiSurface::TYPE_KINDS`）⇒ 判据写实。
+
+#### 反向自检（每条都确认"红在该红的地方"，不只是"红了"）
+
+| 自检动作 | 期望 | 实际 |
+|---|---|---|
+| `InputRouter` 的 `Activatable` 换成 `Draggable`（Widget 层具体类） | lint 红 1 | 红 1，层名 / kind / 位置全对 |
+| `TextEditingBridge` 的 `Rect` 换成 `RenderBox`（Layout 层具体类） | lint 红 1 | 红 1 |
+| `Menu::activate` 改成 `parent::activate($context); return;` | smoke 红 | 红 8，第一条精确报 `cmd:menu.should.not.fire` |
+| `ToggleBase` 摘掉 `implements Activatable` | smoke 红 | 红 2（能力声明 + 已有端到端 `Toggle · Tab+Space 五次`） |
+| `ShowcaseApplication` 摘掉 `parent::__construct()` | lint 红 1 | 红 1（新闸门，见 §4k） |
+| 把 `parent::__construct()` 挪进 `buildRoot()` | lint 仍红 1 | 仍红 1（证明只扫方法体区间） |
+
+★ **其中一条自己写弱了、被自检抓出来**：`Activatable · Menu::activate ⇒ 只走 onOpen`
+第一版把 `ActivationContext::none()` 传进去、**没给 dispatcher** ⇒ 把 `Menu::activate()`
+改成 `parent::activate($context); return;` 之后这条断言**照样绿**（因为命令"没法被派发"）。
+改成 dispatcher 与 `onOpen` 记进**同一个**数组 —— 谁多跑一次都红。
+
+#### 闸门与真机
+
+smoke **1403 ok / 0 FAIL**（+7 条）、lint **509 文件 0/0**、docref **68/0**、
+selftest **exit=0**；AOT `showcase.exe` 构建成功（172.5s，10.3 MB），真机三项见 §4k。
+
+---
+
+## 4k. T2 真机撞出来的既有崩溃：`ShowcaseApplication` 漏调父构造器（2026-10-25）
+
+**这一节不是本步计划内的**，是 T2 真机验证被卡住后二分出来的既有缺陷。
+
+### 现象
+
+```text
+showcase.exe running=no exitcode=255
+Fatal error: Uncaught Error: Attempt to read property on null in
+  D:/TypePHP/Drift2/apps/showcase/main.php:12
+Stack trace:
+#0 ...main.php(12): main()
+#1 {main}
+```
+
+- **没有行号**：报的 `apps/showcase/main.php:12` 是 `function main(): void` 那一行（AOT
+  报的是函数声明行），真正出错的属性读位置**完全丢失**。
+- **`set_exception_handler` 在 AOT 下不生效**：装了、`Uncaught Error` 也发生了，
+  处理器一行都没执行 ⇒ 拿不到栈。
+- **与 S1 改动无关**：`git stash` 全部改动后重编基线 ⇒ 同样崩；删整个 `build/`
+  全量重编 ⇒ 同样崩。`hello.exe` / `users.exe` 正常。
+
+### 根因
+
+```php
+// apps/showcase/src/ShowcaseApplication.php（2026-10-21 起）
+public function __construct(private ?Clipboard $clipboard = null)
+{
+}   // ← 没有 parent::__construct()
+```
+
+`Application::__construct()` 里建**七个拆分片**（`router` / `textEditing` /
+`scrollInput` / `overlayHost` / `input` / `overlayLayout` / `pumps`）。覆写构造器却不调
+父构造器 ⇒ 七个字段**全是未初始化**。`attach()` 第一句 `$this->pumps->attach()` 就崩。
+
+### 为什么三道闸门全绿
+
+| 闸门 | 为什么没抓到 |
+|---|---|
+| smoke | **79 处** `->attach()` 用的都是**调了父构造器**的测试应用 ⇒ 这条路径没被走过 |
+| lint | 当时没有"覆写构造器必须调父构造器"这条规则 |
+| AOT 构建 | 未初始化属性不参与可达性分析 ⇒ 编译通过 |
+
+而**解释器本该抛** `Typed property must not be accessed before initialization`（带文件名
+行号），**AOT 给的是 `null`** ⇒ 错误信息退化成一句没有位置的话。这是解释器 / AOT 的
+行为分歧，也是它难查的原因。
+
+### 修法与闸门
+
+1. `ShowcaseApplication::__construct()` 补 `parent::__construct();`（并写清为什么）。
+2. 新增 lint 规则 `AppSubclassCtorParent`：**`Application` 的后代覆写 `__construct`
+   就必须出现 `parent::__construct`**（扫**方法体区间**，不扫整个类 —— 否则把调用点
+   搬到别的方法也会假绿）。
+   - ★ 判据刻意**不**推广成"覆写构造器一律必须调父构造器"：那会误报大量合法覆写
+     （父构造器是空壳）。**误报比漏报贵** —— 一条误报就会让人给闸门加白名单，
+     之后真问题一起被绕。
+   - 将来若有第二个基类的构造器承担"必做初始化"，加进 `REQUIRES_PARENT_CTOR` 即可。
+
+### 教训（已进 `MEMORY.md` / `PITFALLS.md`）
+
+- **"smoke 全绿 ≠ 真机正确"** 的又一例，而且是最贵的一例：**一个 app 从 2026-10-21
+  起真机一直是崩的**，四天里所有 W8 控件的"真机看图"都不是在 showcase 上做的。
+- **定位手段**：`proc_open` 用了管道却不读 ⇒ 崩溃信息全丢（只剩 `exit=255`）；
+  必须 **stdout/stderr 落文件**。然后靠**逐层 `fwrite(STDERR, ...)` 探针 + 每轮 33s
+  增量重编**二分 —— 第一层探针落在 `attach()` 里**完全打不出来**，因为崩在
+  **调用本身**、不在被调方。

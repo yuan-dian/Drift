@@ -39,7 +39,7 @@ use Drift\Text\TextRole;
  *
  * @api
  */
-final class Segment extends RenderBoxWidget
+final class Segment extends RenderBoxWidget implements Activatable
 {
     private readonly string $label;
 
@@ -109,11 +109,15 @@ final class Segment extends RenderBoxWidget
     }
 
     /**
-     * 激活（`Application::activateFocusedWidget()` 的 `Segment` 分支唯一入口）。
+     * 激活（`Activatable`）—— 选中自己（one-of-N）。
      *
      * - 禁用 / 没接回调 / **已选中** ⇒ 什么都不做（不吞焦点变化）
+     *
+     * ★ 与 `ToggleBase` 语义同族（"激活 = 换值"），但**不继承它**：`Segment` 的形状是
+     *   "轨内一段"而不是方框/圆点/轨道，组合不同（见 `SegmentedControl` 类头）。
+     *   `Activatable` 只承诺"能被激活"，不承诺"怎么换值"，两者各自实现。
      */
-    public function activate(): void
+    public function activate(ActivationContext $context): void
     {
         if (!$this->enabled || $this->onChanged === null || $this->selected) {
             return;
