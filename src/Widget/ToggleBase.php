@@ -204,8 +204,8 @@ abstract class ToggleBase extends RenderBoxWidget implements Activatable
         $style = new ToggleStyle(
             $context->color(ColorToken::Accent),
             $context->color(ColorToken::Border),
-            $context->color(ColorToken::Pane),
-            $context->color(ColorToken::Pane),
+            $context->color(ColorToken::Surface),
+            $context->color(ColorToken::Surface),
             $labelColor,
             $context->color(ColorToken::Muted),
             $boxSize,

@@ -307,7 +307,7 @@ final class Slider extends RenderBoxWidget implements SemanticsValueEditable
         $border = $context->color(ColorToken::Border);
         if ($this->enabled) {
             $accent = $context->color(ColorToken::Accent);
-            $border = $context->color(ColorToken::Pane);
+            $border = $context->color(ColorToken::Surface);
         }
 
         $style = new SliderStyle(

@@ -304,7 +304,7 @@ class Button extends BoxWidget implements Activatable
     protected function resolveForeground(BuildContext $context): Color
     {
         return match ($this->variant) {
-            ButtonVariant::Primary, ButtonVariant::Danger => $context->color(ColorToken::Pane),
+            ButtonVariant::Primary, ButtonVariant::Danger => $context->color(ColorToken::Surface),
             default => $context->color(ColorToken::Text),
         };
     }

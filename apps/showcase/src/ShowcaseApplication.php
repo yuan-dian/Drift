@@ -4,9 +4,13 @@ declare(strict_types=1);
 namespace App\Showcase;
 
 use Drift\App\Application;
+use Drift\Commands\CommandHandler;
 use Drift\Platform\Clipboard;
+use Drift\Widget\Modal;
 use Drift\Widget\Snackbar;
 use Drift\Widget\Widget;
+
+use App\Showcase\Commands\ShowcaseCommands;
 
 /**
  * 示例台应用：只写三样（§4.5）—— `buildRoot()` / `title()`。
@@ -64,6 +68,13 @@ final class ShowcaseApplication extends Application
             function (int $milliseconds, \Closure $callback): void {
                 $this->after($milliseconds, $callback);
             },
+            // ★ 第三个能力：**开一个模态**。Feedback 页的对话框演示用 ——
+            //   `Modal` 是 Widget，而"打开"归 `Application`（§5.1 裁决 1）。
+            //   `bindDismiss()` 的注入由 `OverlayManager::showModal()` 自己做，
+            //   这里只递"能开"这一半。
+            function (Modal $modal): void {
+                $this->showModal($modal);
+            },
         );
     }
 
@@ -75,5 +86,26 @@ final class ShowcaseApplication extends Application
     public function clipboard(): ?Clipboard
     {
         return $this->clipboard;
+    }
+
+    /**
+     * 动作缝注册表（§11.4.3）：可枚举、可 lint、可单测。
+     *
+     * ★ 框架在 `attach()` 里调它，用 `router()->on()` 拼好链的第 ③ 环。
+     * ★ 这是示例台**第一个**命令族：顶条右侧"刷新"图标按钮
+     *   （`AppBar::actions()` 里）走它。此前示例台刻意零命令（页切换是纯 UI 态，
+     *   §12.3 / §11.4.3 A15：没有消费者不预先发明）—— 现在有消费者了。
+     *
+     * @return iterable<string, CommandHandler> `命令名 => handler 实例`
+     */
+    public function commands(): iterable
+    {
+        $notify = function (Snackbar $snackbar): void {
+            $this->showSnackbar($snackbar);
+        };
+
+        return [
+            'showcase.refresh' => new ShowcaseCommands($notify),
+        ];
     }
 }

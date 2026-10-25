@@ -31,6 +31,7 @@ use Drift\App\FrameClock;
 use Drift\Platform\Win32\Win32SurfaceProvider;
 use Drift\App\FocusManager;
 use App\Hello\HelloApplication;
+use App\Showcase\ShowcaseApplication;
 use App\Tutorial\TutorialApplication;
 use Drift\App\Frame;
 use Drift\App\FramePhase;
@@ -885,7 +886,17 @@ function inkCount(RasterCanvas $canvas, ?Color $background = null): int
     return $ink;
 }
 
-/** 把一个盒画到白底光栅上，数非背景像素（用来断言"插入符真的画上了"） */
+/**
+ * 把一个盒画到光栅上，数"与盒自己底色不同"的像素（断言"插入符 / 选区真的画上了"）。
+ *
+ * ★★ **背景必须取盒自己的底色，不能写死白色**（2026-10-25 踩）：色阶拆分前
+ *   `ColorToken::Pane` 是 #FFFFFF，输入框底正好等于光栅背景 ⇒ "多出墨"等价于
+ *   "多画了东西"。拆分后 `Pane` 变成画布灰 #E9EBEF，底色本身就产墨，插入符只是
+ *   把一片**已经非白**的像素换个颜色 ⇒ 两个态墨数恒等（实测 993 = 993），
+ *   断言恒假。
+ *   ⇒ 正确度量是"相对自己的底色的差异"，与底色取值无关。底色为 null（没设底）
+ *   时才回退白色。
+ */
 function fieldInk(?RenderBox $box, int $width, int $height): int
 {
     if ($box === null) {
@@ -895,10 +906,18 @@ function fieldInk(?RenderBox $box, int $width, int $height): int
     $list = new DisplayList();
     $box->paint(new RecordingCanvas($list));
 
-    $canvas = new RasterCanvas($width, $height, Color::white(), Scale::of(1.0));
+    $background = Color::white();
+    if ($box instanceof RenderTextField) {
+        $own = $box->boxStyle()->background;
+        if ($own !== null) {
+            $background = $own;
+        }
+    }
+
+    $canvas = new RasterCanvas($width, $height, $background, Scale::of(1.0));
     $list->replay($canvas);
 
-    return inkCount($canvas);
+    return inkCount($canvas, $background);
 }
 
 /**
@@ -7002,6 +7021,118 @@ check(
     $tutHasText($tutApp->root(), '结果到了')
 );
 
+// ── ㊷b apps/showcase：示例台无头挂载（2026-10-25 补的闸门）─────────────────
+// ★★ **为什么必须有这一段**：composer.json 早就注册了 `App\Showcase\`，但 smoke
+//   从来没挂过这个应用 ⇒ 应用侧代码是"只有真机能证伪"的盲区。2026-10-25 真机
+//   实测：`ShowcaseRoot` 里写了一个**不存在的** `IconName::Refresh`
+//   （解释器 = Fatal "Undefined constant"，AOT = **Segmentation fault**、
+//   没有任何文件名行号），而 smoke 1461 全绿。
+//   ⇒ 这一段把"应用能挂起来"变成 smoke 断言，未定义的 enum case / 构造期错误
+//     在解释器面就红，不等真机。
+// ★ 视口取 **1920×1017**（真机客户区的实测值）：示例台左导航有 22 项，
+//   800 高会 `RenderFlex 放不下` 直接 FATAL（那是视口不够，不是缺陷）——
+//   夹具必须用真实尺寸，否则断言红得没有意义。
+$sc2App = new ShowcaseApplication();
+$sc2Surface = new SurfaceProbe();
+$sc2Surface->resize(1920, 1017, 1.0);
+$sc2Constraints = BoxConstraints::loose(new Size(1920.0, 1017.0));
+$sc2App->attach($sc2Surface, $sc2Constraints);
+$sc2App->frame(16.0, $sc2Constraints);
+check('apps/showcase · 应用只写 buildRoot/title/commands（§4.5）', $sc2App->title() === 'Drift 示例台');
+check('apps/showcase · 无平台也能挂载（表面是注入的，§7.2 裁决 4）', $sc2App->root() !== null);
+check(
+    'apps/showcase · 首屏有墨（顶条 + 侧栏 + 内容都排开了，不是静默空白）',
+    $sc2Surface->canvas !== null && inkCount($sc2Surface->canvas) > 0,
+    '墨点数 ' . (string) ($sc2Surface->canvas !== null ? inkCount($sc2Surface->canvas) : -1)
+);
+
+// AppBar::actions()（2026-10-25 新增的右动作位）：两个图标按钮必须在树上。
+// ★ 按**可访问名**找（`IconButton` 的 label 不进视觉，只作 UIA Name）——
+//   这正是"纯图标按钮必须有两个参数"的理由在测试面的兑现。
+$sc2Actions = 0;
+findElement(
+    $sc2App->root(),
+    static function (Element $e) use (&$sc2Actions): bool {
+        if ($e->widget() instanceof IconButton && \in_array($e->widget()->label(), ['搜索', '刷新'], true)) {
+            $sc2Actions++;
+
+            return false;
+        }
+
+        return false;
+    }
+);
+check(
+    'apps/showcase · AppBar::actions() 的两个图标按钮在树上（按可访问名）',
+    $sc2Actions === 2,
+    '找到 ' . $sc2Actions . ' / 2'
+);
+
+// 命令缝（§11.4.3）：`showcase.refresh` 必须真有注册的 handler。
+// ★ 未注册命令会走 `Errors::DIAGNOSTIC`（CommandRouter）—— 那种失败**不抛**，
+//   所以"点了没反应"只能靠"handler 在表里"这条正断言来堵。
+$sc2HasRefresh = false;
+foreach ($sc2App->commands() as $sc2Name => $sc2Handler) {
+    if ($sc2Name === 'showcase.refresh' && $sc2Handler instanceof CommandHandler) {
+        $sc2HasRefresh = true;
+    }
+}
+check(
+    'apps/showcase · showcase.refresh 有注册的 handler（不是死命令）',
+    $sc2HasRefresh,
+    'commands=' . implode(',', array_keys(iterator_to_array($sc2App->commands())))
+);
+
+// ★ Feedback 页的模态演示（2026-10-25）：`Modal` 在此前**没有任何应用侧消费者**，
+//   关闭按钮落地后补的入口。这条断言盯的是"组合根 → 页面 → showModal"这条链
+//   真的通（缺一环就是"按钮点了没反应"，而那种失败不抛错）。
+// ★ 必须**先切到 Feedback 页**：showcase 的页是按需建的（`pageFor($selected)()`），
+//   首屏只有第 0 页 ⇒ 不点导航的话 Feedback 页的按钮根本不在树上。
+//   （第一版直接 findElement ⇒ 假红。）
+$sc2NavFeedback = static fn (Element $e): bool => $e->widget() instanceof NavButton
+    && $e->widget()->label() === '反馈 Feedback';
+$sc2NavEl = findElement($sc2App->root(), $sc2NavFeedback);
+$sc2NavBox = $sc2NavEl?->renderObject();
+check('apps/showcase · 左导航找得到「反馈 Feedback」', $sc2NavBox !== null && $sc2NavBox->size() !== null);
+if ($sc2NavBox !== null && $sc2NavBox->size() !== null) {
+    [$sc2NavX, $sc2NavY] = boxOrigin($sc2NavBox);
+    $sc2NavW = $sc2NavBox->size()->width;
+    $sc2NavH = $sc2NavBox->size()->height;
+    $sc2App->dispatchInput(PointerEvent::down($sc2NavX + $sc2NavW / 2.0, $sc2NavY + $sc2NavH / 2.0), 100.0);
+    $sc2App->frame(102.0, $sc2Constraints);
+}
+check(
+    'apps/showcase · 切到 Feedback 页（标题出现在树上）',
+    $tutHasText($sc2App->root(), '反馈 Feedback')
+);
+$sc2ModalBtn = findElement(
+    $sc2App->root(),
+    static fn (Element $e): bool => $e->widget() instanceof Button && $e->widget()->label() === '打开对话框'
+);
+check(
+    'apps/showcase · Feedback 页有「打开对话框」入口（Modal 有应用侧消费者）',
+    $sc2ModalBtn !== null,
+);
+// 端到端：点它 ⇒ `showModal` 闭包被调 ⇒ 模态真的开着
+if ($sc2ModalBtn !== null) {
+    $sc2BtnBox = $sc2ModalBtn->renderObject();
+    if ($sc2BtnBox !== null && $sc2BtnBox->size() !== null) {
+        [$sc2BtnX, $sc2BtnY] = boxOrigin($sc2BtnBox);
+        $sc2BtnW = $sc2BtnBox->size()->width;
+        $sc2BtnH = $sc2BtnBox->size()->height;
+        $sc2App->dispatchInput(PointerEvent::down($sc2BtnX + $sc2BtnW / 2.0, $sc2BtnY + $sc2BtnH / 2.0), 200.0);
+        $sc2App->frame(202.0, $sc2Constraints);
+    }
+}
+check(
+    'apps/showcase · 点「打开对话框」⇒ 模态真的开着（组合根接线通）',
+    $sc2App->isModalOpen() && $sc2App->modal()?->showsCloseIcon() === true,
+    'open=' . ($sc2App->isModalOpen() ? 'yes' : 'no'),
+);
+// 关掉它（走刚注入的那条 dismiss），验证"开 → 关"闭环
+$sc2App->closeModal();
+check('apps/showcase · closeModal 关掉（闭环，不残留）', !$sc2App->isModalOpen());
+
 // ── ㉜ 光标形状（§9.1「一次命中，三方消费」的第 ③ 方）──
 // ★ 三方 = 事件路由 / 语义 / **光标形状**。前两方早就在（`focusHit()`；语义树是
 //   M4 的活）；第 ③ 方此前**完全缺位** ⇒ 真机窗口的指针永远是箭头，**且不报错**
@@ -8658,6 +8789,44 @@ check(
     $modalApp->seen === ['modal.confirm'] && $modalApp->isModalOpen(),
     'seen=' . implode(',', $modalApp->seen) . ' open=' . ($modalApp->isModalOpen() ? 'yes' : 'no'),
 );
+
+// —— ★ 关闭按钮（2026-10-25）：`OverlayManager::showModal()` 注入 dismiss，
+//   `Modal::build()` 据此决定画不画那个 X。三条各自独立：
+//   ① 框架注入了 ⇒ 画；② `dismissible=false` ⇒ 不画（点了没反应的 X 比没有更糟）；
+//   ③ 按钮真的在树上，且**点它 => 模态关**（端到端，不是"盒在那儿"）。
+$modalCloseSeen = $modalApp->modal();
+check(
+    '模态 · showModal 注入了 dismiss ⇒ showsCloseIcon() 为真',
+    $modalCloseSeen instanceof Modal && $modalCloseSeen->showsCloseIcon(),
+);
+$modalCloseEl = $modalApp->overlays()->top()?->element === null ? null : findElement(
+    $modalApp->overlays()->top()?->element,
+    fn (Element $e): bool => $e->widget() instanceof IconButton && $e->widget()->label() === '关闭',
+);
+check('模态 · 关闭按钮在树上（按可访问名「关闭」）', $modalCloseEl !== null);
+$modalCloseBox = $modalCloseEl?->effectiveBox();
+[$modalCloseX, $modalCloseY] = $modalCloseBox === null ? [0.0, 0.0] : boxOrigin($modalCloseBox);
+$modalCloseW = $modalCloseBox?->size()?->width ?? 0.0;
+$modalCloseH = $modalCloseBox?->size()?->height ?? 0.0;
+$modalApp->dispatchInput(
+    PointerEvent::down($modalCloseX + $modalCloseW / 2.0, $modalCloseY + $modalCloseH / 2.0)
+);
+check(
+    '模态 · 点关闭按钮 ⇒ 模态关（框架注入的 dismiss 真的接了线）',
+    !$modalApp->isModalOpen(),
+    'open=' . ($modalApp->isModalOpen() ? 'yes' : 'no'),
+);
+
+// 反例：`dismissible=false` ⇒ 没有 X（不是"有个点了没反应的 X"）
+$modalApp->dismissible = false;
+$modalApp->openConfirm();
+$modalApp->frame(16.0, $modalTight);
+check(
+    '模态 · dismissible=false ⇒ 不画关闭按钮（与"拒绝用户关闭"同一条语义）',
+    $modalApp->modal()?->showsCloseIcon() === false,
+);
+$modalApp->closeModal();
+$modalApp->dismissible = true;
 
 // —— ★ W3 行为变化（`01` §8）：模态**盖在菜单之上**，不再清菜单
 //   旧语义"同一槽位 ⇒ 打开模态先清菜单"是槽位的产物，不是需求：

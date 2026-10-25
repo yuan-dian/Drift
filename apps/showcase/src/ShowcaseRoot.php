@@ -16,6 +16,7 @@ use Drift\Widget\Column;
 use Drift\Widget\Dock;
 use Drift\Layout\FlexAlign;
 use Drift\Widget\Expanded;
+use Drift\Widget\IconButton;
 use Drift\Widget\IconName;
 use Drift\Widget\NavButton;
 use Drift\Widget\Row;
@@ -73,6 +74,9 @@ final class ShowcaseRoot extends StatefulWidget
      * @param \Closure(Snackbar): void $notify 「弹一条底部通知」—— 由组合根接线
      * @param \Closure(int, \Closure): void $delay 「N 毫秒后跑这个回调」—— 由组合根接线
      *        （`Application::after()`）。ComboBox 页用它模拟远程搜索的**异步到达**。
+     * @param \Closure(Modal): void $showModal 「开一个模态」—— 由组合根接线。
+     *        Feedback 页的模态对话框演示用（2026-10-25 随 `Modal` 关闭按钮补：
+     *        没有它示例台没有任何一处 `Modal::make()`，新机制真机不可见）。
      *
      * ★ 为什么是**闭包**而不是 `Application`：`Widget` 层不该认识 `Drift\App`
      *   （§4.3），而且页面只该拿到"我能做什么"，不是"整个应用"。
@@ -82,6 +86,7 @@ final class ShowcaseRoot extends StatefulWidget
     public function __construct(
         private \Closure $notify,
         private \Closure $delay,
+        private \Closure $showModal,
     ) {
         parent::__construct();
     }
@@ -89,15 +94,19 @@ final class ShowcaseRoot extends StatefulWidget
     /**
      * @param \Closure(Snackbar): void $notify
      * @param \Closure(int, \Closure): void $delay
+     * @param \Closure(Modal): void $showModal
      */
-    public static function make(\Closure $notify, \Closure $delay): self
-    {
-        return new self($notify, $delay);
+    public static function make(
+        \Closure $notify,
+        \Closure $delay,
+        \Closure $showModal,
+    ): self {
+        return new self($notify, $delay, $showModal);
     }
 
     public function createState(): State
     {
-        return new ShowcaseState($this->notify, $this->delay);
+        return new ShowcaseState($this->notify, $this->delay, $this->showModal);
     }
 }
 
@@ -109,7 +118,8 @@ final class ShowcaseRoot extends StatefulWidget
  *   而且"图标和名字写反"在数组里不报错。
  * ★ 工厂是 `Closure` 而不是类型名：页类构造**至多一个闭包参数**，`static fn(): Widget
  *   => new XxxPage()` 对 AOT 直白（类名常量字符串形态还没在 codegen 验过）。
- *   ★ 通知页是唯一带参的：它要 `$notify`（浮层归 `Application`，页面够不到 —— §4.3）。
+ *   ★ 带参的页：通知页要 `$notify`、Combo 页要 `$delay`、反馈页要 `$showModal`
+ *     —— 三者都是"浮层归 `Application`，页面够不到"（§4.3）的那一族能力。
  */
 final class ShowcaseState extends State
 {
@@ -124,10 +134,12 @@ final class ShowcaseState extends State
     /**
      * @param \Closure(Snackbar): void $notify 组合根接线的通知能力（转手给通知页）
      * @param \Closure(int, \Closure): void $delay 组合根接线的延时能力（转手给 ComboBox 页）
+     * @param \Closure(Modal): void $showModal 组合根接线的开模态能力（转手给反馈页）
      */
     public function __construct(
         private \Closure $notify,
         private \Closure $delay,
+        private \Closure $showModal,
     ) {
     }
 
@@ -141,7 +153,7 @@ final class ShowcaseState extends State
             new NavEntry(IconName::ListBullets, '列表 List', static fn(): Widget => new ListPage()),
             new NavEntry(IconName::ListBullets, '长列表 Big', static fn(): Widget => new BigListPage()),
             new NavEntry(IconName::Brush, '自绘 Paint', static fn(): Widget => new CustomPaintPage()),
-            new NavEntry(IconName::Bell, '反馈 Feedback', static fn(): Widget => new FeedbackPage()),
+            new NavEntry(IconName::Bell, '反馈 Feedback', fn(): Widget => new FeedbackPage($this->showModal)),
             // ★ 追加**在末尾**：前 10 项的 y 坐标不变 ⇒ 既有真机探针量出的坐标不用改。
             new NavEntry(IconName::Play, '动画 Motion', static fn(): Widget => new MotionPage()),
             new NavEntry(IconName::Menu, '分段 Segmented', static fn(): Widget => new SegmentedPage()),
@@ -165,22 +177,42 @@ final class ShowcaseState extends State
     {
         // ★ 全局色板：LayUI 招牌色（与 GUI 仓 ShowcaseRoot::palette() 同键）——
         //   ThemeScope 覆盖整棵子树，Text 的角色色从主题解析 ⇒ 换主题字号/色跟着走。
+        // ★ **只覆盖 Accent**：`Pane` 交给框架默认（2026-10-25 色阶拆分后它是
+        //   画布底 #E9EBEF）。原先这里把 Pane 覆写回 #FFFFFF，顶条(AppBar 的
+        //   Chrome #F3F3F3)就和背景板糊成一片 —— 覆盖值恰好约等于 Chrome，
+        //   层次差被自己的覆盖吃掉了。
+        $canvas = $ctx->theme()->color(ColorToken::Pane);
+
         return ThemeScope::make(
             ThemeData::light()
-                ->withColor(ColorToken::Accent, Color::fromRgb(0x00, 0x96, 0x88))
-                ->withColor(ColorToken::Pane, Color::fromRgb(0xFF, 0xFF, 0xFF)),
+                ->withColor(ColorToken::Accent, Color::fromRgb(0x00, 0x96, 0x88)),
             Dock::make()
                 ->top($this->buildTopBar())
-                ->center($this->buildBody())
+                ->center($this->buildBody($canvas))
         );
     }
 
     private function buildTopBar(): Widget
     {
+        // ★ 右侧动作区：两个 Flat 图标按钮（无底 ⇒ 顶条上不出现第二个实心块）。
+        //   AppBar::actions() 内部自动插弹性占位，导航短时这组仍贴右边缘。
         return AppBar::make()
             ->title('Drift 示例台')
             ->children([
                 Text::make('LayUI 式布局 · 覆盖现有控件面'),
+            ])
+            ->actions([
+                // ★ 演示"动作位"两种接线：纯 UI 回调（左）与命令（右）。
+                //   `showcase.refresh` 由 ShowcaseApplication 注册（未注册命令会
+                //   走 Errors::DIAGNOSTIC，见 CommandRouter）。
+                IconButton::of(IconName::Search, '搜索')
+                    ->variant(ButtonVariant::Flat)
+                    ->onPressed(function (): void {
+                        // 示例台：只演示动作位接线，不真做搜索
+                    }),
+                IconButton::of(IconName::More, '刷新')
+                    ->variant(ButtonVariant::Flat)
+                    ->command('showcase.refresh'),
             ]);
     }
 
@@ -191,10 +223,12 @@ final class ShowcaseState extends State
      *   `BoxWidget` 的默认边框/圆角就整套让位 —— §15.7 纪律 3），中间那层是
      *   **真正的卡片**（白底 + 1px 边框 + 圆角 2 + 内边距），内容页里每个 demo
      *   再各自一张卡片。
+     * ★ `$canvas` 由 `build()` 从主题取（`ColorToken::Pane`）而不是硬编码
+     *   #F2F3F5：硬编码值既不跟随明暗表，也会和 `Chrome` 撞成一片（2026-10-25）。
      * ★ `cross(Stretch)` 让导航面板拉满高：LayUI 的左侧导航就是全高白底，
      *   少了它导航只有内容那么高，下面露出灰底 —— 一眼就"没做完"。
      */
-    private function buildBody(): Widget
+    private function buildBody(Color $canvas): Widget
     {
         return Card::make(
             Row::make()->cross(FlexAlign::Stretch)->children([
@@ -207,7 +241,7 @@ final class ShowcaseState extends State
                 Expanded::make($this->pageFor($this->selected)()),
             ])
         )
-            ->background(Color::fromRgb(0xF2, 0xF3, 0xF5))
+            ->background($canvas)
             ->paddingAll(10.0);
     }
 

@@ -350,7 +350,7 @@
 | `Canvas` | interface | src/Rendering/Canvas.php:9 |
 | `CanvasCapabilities` | class | src/Rendering/CanvasCapabilities.php:8 |
 | `Color` | class | src/Rendering/Color.php:8 |
-| `ColorToken` | enum | src/Rendering/ColorToken.php:8 |
+| `ColorToken` | enum | src/Rendering/ColorToken.php:36 |
 | `DashPattern` | class | src/Rendering/DashPattern.php:8 |
 | `DisplayList` | class | src/Rendering/DisplayList.php:8 |
 | `DividerStyle` | class | src/Rendering/DividerStyle.php:6 |
@@ -496,7 +496,7 @@
 | `Activatable` | interface | src/Widget/Activatable.php:6 |
 | `ActivationContext` | class | src/Widget/ActivationContext.php:8 |
 | `AnimationController` | class | src/Widget/AnimationController.php:6 |
-| `AppBar` | class | src/Widget/AppBar.php:13 |
+| `AppBar` | class | src/Widget/AppBar.php:40 |
 | `AspectRatio` | class | src/Widget/AspectRatio.php:9 |
 | `BoxWidget` | class | src/Widget/BoxWidget.php:9 |
 | `BuildContext` | class | src/Widget/BuildContext.php:13 |
@@ -535,7 +535,7 @@
 | `Menu` | class | src/Widget/Menu/Menu.php:14 |
 | `MenuBar` | class | src/Widget/Menu/MenuBar.php:11 |
 | `MenuItem` | class | src/Widget/Menu/MenuItem.php:15 |
-| `Modal` | class | src/Widget/Modal.php:9 |
+| `Modal` | class | src/Widget/Modal.php:50 |
 | `NavButton` | class | src/Widget/NavButton.php:6 |
 | `Offstage` | class | src/Widget/Offstage.php:6 |
 | `Offstage::make()` | method | src/Widget/Offstage.php:32 |
@@ -625,8 +625,10 @@
 |---|---|---|
 | `AnimationController::start()` | method | src/Widget/AnimationController.php:253 |
 | `AnimationController::finish()` | method | src/Widget/AnimationController.php:276 |
-| `AppBar::titleText()` | method | src/Widget/AppBar.php:63 |
-| `AppBar::kidList()` | method | src/Widget/AppBar.php:69 |
+| `AppBar::titleText()` | method | src/Widget/AppBar.php:93 |
+| `AppBar::kidList()` | method | src/Widget/AppBar.php:99 |
+| `AppBar::actionList()` | method | src/Widget/AppBar.php:105 |
+| `AppBar::barKids()` | method | src/Widget/AppBar.php:119 |
 | `AppBarElement` | class | src/Widget/AppBarElement.php:8 |
 | `BoxWidget::$box` | property | src/Widget/BoxWidget.php:27 |
 | `BoxWidget::box()` | method | src/Widget/BoxWidget.php:30 |

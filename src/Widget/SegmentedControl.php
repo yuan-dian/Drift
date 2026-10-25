@@ -169,7 +169,7 @@ final class SegmentedControl extends RenderBoxWidget
             SegmentedStyle::DEFAULT_GAP,
             SegmentedStyle::DEFAULT_INSET,
             $context->color(ColorToken::Accent),
-            $context->color(ColorToken::Pane),
+            $context->color(ColorToken::Surface),
             $context->color(ColorToken::Text),
             $context->textSize(TextRole::Body),
         );

@@ -162,7 +162,7 @@ final class Card extends StatelessWidget
         $theme = $ctx->theme();
 
         $style = $this->box ?? BoxStyle::none()
-            ->withBackground($theme->color(ColorToken::Pane))
+            ->withBackground($theme->color(ColorToken::Surface))
             ->withBorder($theme->color(ColorToken::Border), 1.0)
             ->withRadius(2.0);
 

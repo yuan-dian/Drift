@@ -164,7 +164,7 @@ final class Segment extends RenderBoxWidget implements Activatable
             SegmentedStyle::DEFAULT_GAP,
             SegmentedStyle::DEFAULT_INSET,
             $fill,
-            $context->color(ColorToken::Pane),
+            $context->color(ColorToken::Surface),
             $labelColor,
             $context->textSize(TextRole::Body),
         );

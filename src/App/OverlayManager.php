@@ -480,6 +480,18 @@ final class OverlayManager
             return; // 未挂载：没有客户区，模态无处安放（同 showMenu）
         }
 
+        // ★ 关闭按钮接线（2026-10-25）：`Modal` 自己拿不到 `Application`（§4.3），
+        //   而"对话框右上角那个 X"必须真的能关 —— 与 `presentSnackbar()` 给
+        //   `SnackbarPanel::make()` 注入 `$onDismiss` 是同一条模式：控件只声明
+        //   口子，动作由框架接。
+        // ★ 放在 `new OverlayEntry` 之前：注入要赶在 `pushOverlay()` 建 Element、
+        //   `build()` 读 `showsCloseIcon()` 之前。
+        // ★ 用 `bindDismiss()` 而不是 `->onClose()`：同一实例可被开两次，第二次
+        //   已 seal，走 `mutate()` 会当场抛。
+        $modal->bindDismiss(function (): void {
+            $this->closeModal();
+        });
+
         $e = new OverlayEntry($modal);
         $e->modal = $modal;   // ← "是模态"记在入栈这一笔上（`modal()` 靠它，不靠 instanceof）
         $e->anchor = null;

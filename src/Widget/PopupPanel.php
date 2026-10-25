@@ -115,7 +115,7 @@ final class PopupPanel extends BoxWidget
 
         // §15.7 纪律 3：token → 值只在这里合并一次；用户显式声明则整体覆盖
         $style = $this->box() ?? BoxStyle::none()
-            ->withBackground($theme->color(ColorToken::Pane))
+            ->withBackground($theme->color(ColorToken::Surface))
             ->withBorder($theme->color(ColorToken::Border), 1.0);
 
         return new RenderPopupPanel(

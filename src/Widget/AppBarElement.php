@@ -6,10 +6,10 @@ namespace Drift\Widget;
 use Drift\Layout\RenderFlex;
 
 /**
- * `AppBar` 的 Element：标题 + children 是一行子层（§13.2）。
+ * `AppBar` 的 Element：标题 + 导航 + 动作是一行子层（§13.2）。
  *
- * ★ 标题 Text 每次 expand 现造 —— 与 `StatelessWidget::build()` 同一条纪律
- *   （重建即换新描述，diff 按位置复用 Element），不引入缓存字段。
+ * ★ 子序列由 `AppBar::barKids()` 一次算清（含"有动作才插占位"的分枝）——
+ *   Element 只负责挂盒，不再自己拼标题 / 判空。
  *
  * @internal
  */
@@ -23,15 +23,7 @@ final class AppBarElement extends StatelessElement
             return [];
         }
 
-        $kids = [];
-        if ($bar->titleText() !== '') {
-            $kids[] = Text::make($bar->titleText())->title();
-        }
-        foreach ($bar->kidList() as $kid) {
-            $kids[] = $kid;
-        }
-
-        return $kids;
+        return $bar->barKids();
     }
 
     #[\Override]

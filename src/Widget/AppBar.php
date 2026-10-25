@@ -19,6 +19,13 @@ use Drift\Rendering\MetricToken;
  * ])
  * ```
  *
+ * ★ **左右两组，不是一组长条**（2026-10-25）：`children()` 是**导航区**（左），
+ *   `actions()` 是**动作区**（右）—— 顶条的形态本来就是"左边指路、右边动手"，
+ *   合成一组就得让每个调用点自己记着塞 `Spacer`。`actions()` 非空时内部自动插
+ *   一个弹性占位，导航短、动作多时右侧那组仍贴右边（不是被导航推着走）。
+ *   ★ 只有一组时（`actions` 为空）**不插占位** —— 少一个无意义的弹性项，
+ *   既省一次布局分枝，也让"纯菜单栏形态"（§A.2.6）的子序列逐字不变。
+ *
  * ★ **外壳类容器**（W4 / §24.1 #36 的类别判据）：溢出策略由 `RenderAppBar`
  *   **显式声明 `Clip`**（2026-10-19 改，原 `Report`）—— 顶条宽度**随窗口变化**，
  *   用户拖窄窗口时放不下是**用户行为**、不是编程错误；`Report` 会让拖动缩窗
@@ -34,8 +41,11 @@ final class AppBar extends BoxWidget
 {
     private string $title = '';
 
-    /** @var list<Widget> */
+    /** @var list<Widget> 导航区（左） */
     private array $kids = [];
+
+    /** @var list<Widget> 动作区（右） */
+    private array $actions = [];
 
     public static function make(): self
     {
@@ -51,11 +61,30 @@ final class AppBar extends BoxWidget
         return $this;
     }
 
-    /** @param list<Widget> $kids */
+    /** @param list<Widget> $kids 导航区（左） */
     public function children(array $kids): static
     {
         $this->mutate();
         $this->kids = $kids;
+
+        return $this;
+    }
+
+    /**
+     * 动作区（右）—— 通常是纯图标按钮。
+     *
+     * ```php
+     * AppBar::make()->title('用户管理')
+     *     ->children([NavButton::make('列表')->command('nav.users')])
+     *     ->actions([
+     *         IconButton::of(IconName::Search, '搜索')->variant(ButtonVariant::Flat),
+     *     ]);
+     * ```
+     */
+    public function actions(array $kids): static
+    {
+        $this->mutate();
+        $this->actions = $kids;
 
         return $this;
     }
@@ -70,6 +99,42 @@ final class AppBar extends BoxWidget
     public function kidList(): array
     {
         return $this->kids;
+    }
+
+    /** @internal */
+    public function actionList(): array
+    {
+        return $this->actions;
+    }
+
+    /**
+     * 展开后的完整子序列：标题 + 导航 + （有动作时）弹性占位 + 动作。
+     *
+     * ★ 标题 Text 在这里现造 —— 与 `StatelessWidget::build()` 同一条纪律
+     *   （重建即换新描述，diff 按位置复用 Element），不引入缓存字段。
+     * ★ 占位只在 `actions` 非空时出现：纯导航条的子序列逐字不变（见类注释）。
+     *
+     * @internal
+     */
+    public function barKids(): array
+    {
+        $out = [];
+
+        if ($this->title !== '') {
+            $out[] = Text::make($this->title)->title();
+        }
+        foreach ($this->kids as $kid) {
+            $out[] = $kid;
+        }
+
+        if ($this->actions !== []) {
+            $out[] = Spacer::make();
+            foreach ($this->actions as $kid) {
+                $out[] = $kid;
+            }
+        }
+
+        return $out;
     }
 
     public function createRenderObject(BuildContext $context): RenderBox

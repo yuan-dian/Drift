@@ -12,6 +12,7 @@ use Drift\Widget\ButtonVariant;
 use Drift\Widget\Column;
 use Drift\Widget\Divider;
 use Drift\Widget\Expanded;
+use Drift\Widget\Modal;
 use Drift\Widget\Progress;
 use Drift\Widget\ErrorPlaceholder;
 use Drift\Layout\FlexAlign;
@@ -25,27 +26,34 @@ use Drift\Widget\Text;
 use Drift\Widget\Widget;
 
 /**
- * 页 6「反馈 Feedback」—— 三态（Loading / Error / Empty）+ Spinner。
+ * 页 6「反馈 Feedback」—— 三态（Loading / Error / Empty）+ Spinner + 模态对话框。
  *
  * 对照 LayUI 的提示体系（提示条 / 加载态 / 空数据）。Drift2 的三态用
  * **封闭域 match 无 default**（§12.1 第 2 条：加一个状态编译期就叫）——
  * 本页把三种状态摆在同一屏，用 `Offstage` 切换（保留各自状态，不销毁）。
+ *
+ * ★ **模态对话框演示在 2026-10-25 补**：`Modal` 的关闭按钮（`X`）那天落地，
+ *   而示例台此前**没有任何一处** `Modal::make()` ⇒ 新机制在真机上不可见。
+ *   示例台的职责就是"覆盖现有控件面"（见 `ShowcaseRoot` 类注释），所以这里
+ *   给它一个入口，顺带把 `dismissible(false)` 的对照也摆上。
  */
 final class FeedbackPage extends StatefulWidget
 {
-    public function __construct()
+    /** @param \Closure(Modal): void $showModal 「开一个模态」—— 由组合根接线 */
+    public function __construct(private \Closure $showModal)
     {
         parent::__construct();
     }
 
-    public static function make(): self
+    /** @param \Closure(Modal): void $showModal */
+    public static function make(\Closure $showModal): self
     {
-        return new self();
+        return new self($showModal);
     }
 
     public function createState(): State
     {
-        return new FeedbackState();
+        return new FeedbackState($this->showModal);
     }
 }
 
@@ -60,6 +68,11 @@ enum StubState
 final class FeedbackState extends State
 {
     private StubState $tab = StubState::Loading;
+
+    /** @param \Closure(Modal): void $showModal */
+    public function __construct(private \Closure $showModal)
+    {
+    }
 
     public function build(BuildContext $ctx): Widget
     {
@@ -139,7 +152,56 @@ final class FeedbackState extends State
                 Text::make('100%'),
                 Expanded::make(Progress::make(1.0)),
             ]),
+
+            // ── 模态对话框（§A.3.7）──
+            // ★ 右上角那个 X 的处理器由 `OverlayManager::showModal()` **注入**
+            //   （`Modal::bindDismiss()`），不是控件自己关自己 —— 与
+            //   `SnackbarPanel::make($s, $onDismiss)` 同一条模式。
+            Text::make('模态对话框 Modal')->heading(),
+            Text::make('左：可关闭（X + ESC + 点遮罩三条路）。右：dismissible(false) —— '
+                . '三条路全被吞掉，且**不画 X**（画一个点了没反应的 X 比没有更糟）。')
+                ->caption(),
+            Row::make()->spacing(8.0)->children([
+                Button::make('打开对话框')
+                    ->variant(ButtonVariant::Primary)
+                    ->onPressed(fn() => $this->openConfirm()),
+                Button::make('打开不可关闭的对话框')
+                    ->onPressed(fn() => $this->openStubborn()),
+            ]),
+            Text::make('面板内按钮只派发命令 / 回调，**不自动关模态** —— 关不关归应用（§A.3.7）。')
+                ->caption(),
         ]);
+    }
+
+    /** 可关闭的确认框（默认 `dismissible=true` ⇒ 画 X） */
+    private function openConfirm(): void
+    {
+        ($this->showModal)(
+            Modal::make()
+                ->title('确认删除')
+                ->child(Column::make()->spacing(12.0)->children([
+                    Text::make('删除后不可恢复，确定吗？')->body(),
+                    Row::make()->spacing(8.0)->children([
+                        Button::make('取消'),
+                        Button::make('删除')->variant(ButtonVariant::Danger),
+                    ]),
+                ]))
+        );
+    }
+
+    /** 反例：`dismissible(false)` ⇒ 没有 X、ESC 与遮罩都被吞 */
+    private function openStubborn(): void
+    {
+        ($this->showModal)(
+            Modal::make()
+                ->title('必须处理')
+                ->dismissible(false)
+                ->child(Column::make()->spacing(12.0)->children([
+                    Text::make('这个对话框没有关闭按钮：ESC 被吞、点遮罩也被吞，'
+                        . '只能点下面的按钮（那条路永远有效）。')->body(),
+                    Button::make('知道了')->variant(ButtonVariant::Primary),
+                ]))
+        );
     }
 
     private function panel(StubState $which, Widget $kid): Widget
