@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Showcase\Pages;
 
+use Drift\Geometry\EdgeInsets;
 use Drift\Layout\FlexAlign;
 use Drift\Rendering\Color;
 use Drift\Widget\BuildContext;
@@ -32,8 +33,11 @@ final class IconPage extends StatelessWidget
 {
     public function build(BuildContext $ctx): Widget
     {
+        // ★ padding 必须在 `Column` 上：`ScrollView` 不产渲染盒，装饰会静默失效
+        //   （框架会 Fatal 拦住，这是守卫而非 bug）。
         return ScrollView::make(
-            Column::make()->spacing(14.0)->cross(FlexAlign::Stretch)->children([
+            Column::make()->spacing(14.0)->cross(FlexAlign::Stretch)
+                ->padding(EdgeInsets::all(24.0))->children([
                 Text::make('图标 Icon')->title(),
 
                 Card::make(Column::make()->spacing(12.0)->children([
@@ -72,6 +76,6 @@ final class IconPage extends StatelessWidget
                     ]),
                 ]))->paddingAll(16.0),
             ]),
-        )->paddingAll(24.0);
+        );
     }
 }

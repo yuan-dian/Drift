@@ -386,6 +386,8 @@ if (str_starts_with($caseArg, '--case=')) {
             DeterministicFontManager::standard()->collection(),
             new DeterministicShaper(),
         ));
+        // @nonbox-decoration-allowed: 负向用例 —— 这一行**故意**撞运行期守卫，
+        //   `tools/lint.php` 的静态规则对它无意义（不撞才是失败）。
         $modEl = TextField::make()->value('x')->paddingAll(8.0)->createElement();
         $modEl->mount(null, $modCtx);
         echo "mounted-without-error\n";

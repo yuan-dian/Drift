@@ -101,6 +101,14 @@ function drift_lint_selftest(string $root, Linter $linter): bool
         'optional-op-guard' => [
             'apps/OptionalOpBad.php:' . Diagnostic::ERROR,
         ],
+        // 不产盒的控件套修饰（运行期 §11.7 守卫的静态前置）
+        // ★ 只报 Bad 的两条；`NonBoxDecorationGood.php` 一条都不该有 ——
+        //   它验的四件"看着像但不是"：产盒 / 覆写转发（`Card` 形态，误报过一次）/
+        //   StatefulWidget 产盒 / 接收者是变量（不猜）。
+        'nonbox-decoration' => [
+            'apps/NonBoxDecorationBad.php:' . Diagnostic::ERROR,
+            'apps/NonBoxDecorationBad.php:' . Diagnostic::ERROR,
+        ],
     ];
 
     $ok = true;

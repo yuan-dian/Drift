@@ -18,6 +18,7 @@ use Drift\Dev\Lint\Rules\InstanceofMissingUse;
 use Drift\Dev\Lint\Rules\NamespaceMismatch;
 use Drift\Dev\Lint\Rules\NestedSubscribe;
 use Drift\Dev\Lint\Rules\NanoHygiene;
+use Drift\Dev\Lint\Rules\NonBoxDecoration;
 use Drift\Dev\Lint\Rules\OptionalOpGuard;
 use Drift\Dev\Lint\Rules\OrphanTrait;
 use Drift\Dev\Lint\Rules\SelectPurity;
@@ -73,6 +74,10 @@ final class Linter
             // W1/L3-6（`05` §2.5 两条）：禁后端分叉 / 发 Optional op 前查能力位
             new BackendBranch(),
             new OptionalOpGuard(),
+            // 不产盒的控件套修饰（2026-10-25：运行期 §11.7 守卫的静态前置）
+            //   ★ 真事故：`showcase` 第 21 页 `ScrollView->paddingAll()` —— 点开才炸，
+            //     `Card.php` 的注释记着同一个坑已咬过"7 个页面"
+            new NonBoxDecoration(),
         ]);
     }
 

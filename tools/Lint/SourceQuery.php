@@ -194,6 +194,47 @@ final class SourceQuery
     }
 
     /**
+     * 从闭括号往回找它的开括号（`matchBracket()` 的逆运算）。
+     *
+     * 用途：判定链式调用的**接收者起点** —— `X::make(…)->padding()` 里
+     * `padding` 的接收者是前面那个 `(…)`，要知道它属于谁就必须先回退到开括号。
+     *
+     * @param list<mixed> $tokens
+     * @return null|int
+     */
+    public static function matchOpenBracket(array $tokens, int $close): ?int
+    {
+        $closeChar = is_array($tokens[$close]) ? null : $tokens[$close];
+        $openChar = match ($closeChar) {
+            ')' => '(',
+            '}' => '{',
+            ']' => '[',
+            default => null,
+        };
+        if ($openChar === null) {
+            return null;
+        }
+        $depth = 0;
+        for ($i = $close; $i >= 0; $i--) {
+            $tok = $tokens[$i];
+            if (is_array($tok)) {
+                continue;
+            }
+            if ($tok === $closeChar) {
+                $depth++;
+                continue;
+            }
+            if ($tok === $openChar) {
+                $depth--;
+                if ($depth === 0) {
+                    return $i;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
      * 文件内每个类的结构。
      *
      * ★ **多命名空间文件**：fqn 用的是**该类所在位置当时生效的** namespace，
