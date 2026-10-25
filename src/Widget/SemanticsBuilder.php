@@ -76,7 +76,15 @@ final class SemanticsBuilder
             $n->parent = $parentIdx;
             $n->depth = $depth;
 
-            $box = $el->renderObject();
+            // ★★ 用 `effectiveBox()`（自己的盒，没有就往下找第一个有盒的子孙），
+            //   **不是** `renderObject()`。语义只声明在控件上，而"组合型"控件的盒
+            //   在**子元素**上：`Button extends BoxWidget` 自己产盒（有几何），
+            //   但 `TextField` / `ScrollView extends StatefulWidget` 的 `build()`
+            //   返回 `TextFieldBox` / `ScrollViewBox` ⇒ `renderObject()` 是 null ⇒
+            //   几何恒为 0 ⇒ UIA 侧 `BoundingRectangle` 变成 `Rect.Empty`（读屏
+            //   无法高亮/命中）。2026-10-25 真机实测：`搜索`(Edit) 与 `列表`(List)
+            //   两个节点没有包围盒，其余按钮都有。
+            $box = $el->effectiveBox();
             if ($box !== null && $box->hasSize()) {
                 [$ox, $oy] = RenderBox::absoluteOrigin($box);
                 $n->x = (int) $ox;

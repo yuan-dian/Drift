@@ -11864,6 +11864,19 @@ check(
         ? 'name=' . $semField->node($fieldIdx)->name . ' v=' . $semField->node($fieldIdx)->value
         : 'not found'
 );
+// ★ 几何必须落在「真正代表这个控件的盒」上：`TextField` 是 `StatefulWidget`，
+//   盒在**子元素**（`TextFieldBox`）上 ⇒ 读自己的 `renderObject()` 恒为 null，
+//   几何恒为 0 ⇒ UIA 侧 `BoundingRectangle` 退化成 `Rect.Empty`（读屏无法高亮）。
+//   反例就是按钮（`Button extends BoxWidget` 自己产盒）—— 所以只测按钮抓不到。
+check(
+    'Sem · 组合型控件的几何取自 effectiveBox（TextField 的 w/h 不为 0）',
+    $fieldIdx >= 0
+        && $semField->node($fieldIdx)->w > 0
+        && $semField->node($fieldIdx)->h > 0,
+    $fieldIdx >= 0
+        ? 'w=' . $semField->node($fieldIdx)->w . ' h=' . $semField->node($fieldIdx)->h
+        : 'not found'
+);
 
 // ⑤ 焦点标记：build(root, focused) 只给焦点元素打 focused（UIA focus changed 的数据源）
 $semFocusRoot = $semLay(Column::make()->children([
