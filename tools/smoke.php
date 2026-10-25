@@ -11983,6 +11983,13 @@ check(
     'count=' . ($semArr['count'] ?? -1) . ' nodes=' . count($semArr['nodes'] ?? [])
 );
 
+// 反例：非 range 控件不声明区间 ⇒ 恒 0/0（不会凭空被默认成 0..100）。
+check(
+    'Sem · 非 range 控件区间恒 0/0（不凭空给默认区间）',
+    $semBtn->node(0)->rangeMin === 0.0 && $semBtn->node(0)->rangeMax === 0.0,
+    'min=' . $semBtn->node(0)->rangeMin . ' max=' . $semBtn->node(0)->rangeMax
+);
+
 // ⑩ text() 转储（数组 + implode，不逐字节累加 —— AOT 多字节堆损坏）
 check(
     'Sem · text() 转储含角色与名字',
@@ -13399,6 +13406,23 @@ check(
     'Slider · 语义：role=slider、name=label、value=读数（42）',
     $slSemIdx >= 0 && $slSem->node($slSemIdx)->value === '42',
     $slSemIdx < 0 ? 'no slider node (count=' . $slSem->count() . ')' : 'value=' . $slSem->node($slSemIdx)->value,
+);
+
+// 语义区间（§4.4）：`range(0,100)` ⇒ 节点与 `toArrays` 都带 rangeMin/rangeMax。
+// 反例自检：删 `SemanticsBuilder` 的 range 填充 / 删 `Slider` 的 `semanticsRange()`
+// ⇒ 本条 FAIL（不是恒真断言）。
+$slArr = $slSem->toArrays();
+check(
+    'Slider · 语义区间：range(0,100) ⇒ 节点与 toArrays 都带 rangeMin/rangeMax（§4.4）',
+    $slSemIdx >= 0
+        && $slSem->node($slSemIdx)->rangeMin === 0.0
+        && $slSem->node($slSemIdx)->rangeMax === 100.0
+        && ($slArr['nodes'][$slSemIdx]['rangeMin'] ?? -1.0) === 0.0
+        && ($slArr['nodes'][$slSemIdx]['rangeMax'] ?? -1.0) === 100.0,
+    $slSemIdx < 0
+        ? 'no slider node'
+        : 'min=' . $slSem->node($slSemIdx)->rangeMin . ' max=' . $slSem->node($slSemIdx)->rangeMax
+            . ' arr=' . json_encode($slArr['nodes'][$slSemIdx] ?? null),
 );
 
 // ── W8-2 Tooltip（声明式 + 框架托管浮层，2026-10-23）──────────────────

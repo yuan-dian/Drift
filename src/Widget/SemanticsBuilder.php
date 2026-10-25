@@ -71,6 +71,8 @@ final class SemanticsBuilder
             $n->key = self::keyText($w->identity());
             $n->name = $w->semanticsName();
             $n->value = $w->semanticsValue();
+            $n->rangeMin = $w->semanticsRangeMin();
+            $n->rangeMax = $w->semanticsRangeMax();
             $n->enabled = $w->semanticsEnabled();
             $n->focused = $focused !== null && $el === $focused;
             $n->parent = $parentIdx;

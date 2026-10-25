@@ -139,6 +139,19 @@ abstract class Widget
     private bool $semEnabled = true;
 
     /**
+     * @internal 取值区间的下界/上界（只对 `range` 族角色有意义：`Slider` / `Progress`）。
+     *
+     * ★ 与 `semValue` **正交**：`semValue` 是"人读的当前值"，这里是"这个值能在哪个
+     *   区间里"。分成两个字段而不是塞进 `semantics()` 的签名，是因为只有少数控件
+     *   需要区间，且 `semantics()` 的 4 参签名已被多处调用（不膨胀它）。
+     * ★ `UIA IRangeValueProvider` 必须有 `Minimum`/`Maximum` ⇒ 没有这两个值，
+     *   滑块的 `RangeValuePattern` 给不出合法应答。
+     */
+    private float $semRangeMin = 0.0;
+
+    private float $semRangeMax = 0.0;
+
+    /**
      * ★ 子类必须调 `parent::__construct()`。
      *
      * @api
@@ -1102,6 +1115,34 @@ abstract class Widget
         return $this;
     }
 
+    /**
+     * 声明取值区间（只对 `range` 族角色有意义：`Slider` / `Progress`）。
+     *
+     * ```php
+     * $w->semantics(SemanticsRole::Slider, $label, '42', true)->semanticsRange(0, 100);
+     * ```
+     *
+     * ★ 与 `semantics()` **正交**、可单独调用（`semantics()` 之后再链也行）。
+     *   不塞进 `semantics()` 的 4 参签名，是因为只有少数控件需要区间。
+     * ★ `UIA IRangeValueProvider` 必须有 `Minimum`/`Maximum`，就取自这里；
+     *   不给 ⇒ 两者都是 0（读屏读到空区间，而不是被默认成 0..100）。
+     *
+     * @api
+     */
+    public function semanticsRange(float $min, float $max): static
+    {
+        $this->mutate();
+        if ($min <= $max) {
+            $this->semRangeMin = $min;
+            $this->semRangeMax = $max;
+        } else {
+            $this->semRangeMin = $max;
+            $this->semRangeMax = $min;
+        }
+
+        return $this;
+    }
+
     /** @internal `SemanticsBuilder` 读它；`null` = 不在语义树里 */
     public function semanticsRole(): ?SemanticsRole
     {
@@ -1124,6 +1165,18 @@ abstract class Widget
     public function semanticsEnabled(): bool
     {
         return $this->semEnabled;
+    }
+
+    /** @internal `SemanticsBuilder` 读它（`range` 族角色的取值下界） */
+    public function semanticsRangeMin(): float
+    {
+        return $this->semRangeMin;
+    }
+
+    /** @internal `SemanticsBuilder` 读它（`range` 族角色的取值上界） */
+    public function semanticsRangeMax(): float
+    {
+        return $this->semRangeMax;
     }
 
     /**

@@ -36,6 +36,17 @@ final class SemanticsNode
     /** 扁平的取值/状态，如文本框的当前文本 */
     public string $value = '';
 
+    /**
+     * 取值区间（只对 `range` 族角色有意义：`slider` / `progress`）。
+     *
+     * ★ `UIA IRangeValueProvider` 的 `Minimum`/`Maximum` 从这里出；非 range 角色
+     *   恒 0/0（客户端不会去问）。与 `value` 同属"值"这一族，但分开存是因为
+     *   `value` 是字符串（人读），区间是数值（契约必需）。
+     */
+    public float $rangeMin = 0.0;
+
+    public float $rangeMax = 0.0;
+
     /** 是否可用（声明面；默认 true） */
     public bool $enabled = true;
 

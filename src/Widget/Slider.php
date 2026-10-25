@@ -175,7 +175,8 @@ final class Slider extends RenderBoxWidget
      */
     private function refreshSemantics(): void
     {
-        $this->semantics(SemanticsRole::Slider, $this->label, \sprintf('%.0f', $this->value), $this->enabled);
+        $this->semantics(SemanticsRole::Slider, $this->label, \sprintf('%.0f', $this->value), $this->enabled)
+            ->semanticsRange($this->min, $this->max);
     }
 
     /**

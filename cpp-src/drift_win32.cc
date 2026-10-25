@@ -209,6 +209,11 @@ struct UiaNode {
     double w = 0.0;
     double h = 0.0;
     bool isControl = true;
+    // 值型 Pattern（§4.4）：IValueProvider / IToggleProvider / IRangeValueProvider。
+    // ★ value 是"人读串"（PHP SemanticsNode::$value）；range 只对 slider/progress 有意义。
+    std::wstring value;
+    double rangeMin = 0.0;
+    double rangeMax = 0.0;
 };
 static std::vector<UiaNode> g_uiaNodes;
 static int g_lastFocusIdx = -2;   // 上次 push 时的焦点节点索引（-2 = 未初始化）
@@ -220,6 +225,15 @@ static long uiaControlTypeFor(const std::string &role) {
     if (role == "textfield") return UIA_EditControlTypeId;
     if (role == "scroll") return UIA_ListControlTypeId;
     if (role == "dialog") return UIA_WindowControlTypeId;
+    // 值型角色（§4.4）：没有这层映射，客户端认不出"这是复选框/滑块" ⇒ 根本不会
+    // 来问 TogglePattern / RangeValuePattern（Pattern 给了也没人问）。
+    // ★ `switch` 没有独立的 UIA ControlType，用 CheckBox 承载开/关语义
+    //   （两者都需要 TogglePattern；客户端据此能读出 On/Off）。
+    if (role == "checkbox") return UIA_CheckBoxControlTypeId;
+    if (role == "radio") return UIA_RadioButtonControlTypeId;
+    if (role == "switch") return UIA_CheckBoxControlTypeId;
+    if (role == "progress") return UIA_ProgressBarControlTypeId;
+    if (role == "slider") return UIA_SliderControlTypeId;
     return UIA_CustomControlTypeId;
 }
 
@@ -293,21 +307,18 @@ private:
     CProvider *m_host;
 };
 
-// ★★ IInvokeProvider 的 tear-off（§9 / M5 无障碍的"可操作"半边）。
-//   每次 `GetPatternProvider(UIA_InvokePatternId)` 新造一个，由调用方 Release。
-//   它只做一件事：把"第 m_index 个语义节点被 Invoke"转投成一条**窗口消息**，
-//   由 WndProc 入队、PHP 侧翻成 `SemanticsInvokeEvent`。
-//   ★ **激活语义本身不在这里复制**：PHP 落成"在节点中心派发一次合成 tap"，
-//     复用输入路由 → 命中 → `Activatable::activate()` 那条唯一的路。
-//     在这里按角色写一份"按钮该调什么"，每加一个控件就要补一支，且"读屏点"与
-//     "鼠标点"行为不同是没人测得出来的那类缺陷。
-class InvokeAdapter : public IInvokeProvider {
+// ── COM tear-off 的公共样板（§4.4）─────────────────────────────────
+// 每个 UIA Pattern 都是"新造一个实现该接口的小对象、调用方 Release"。四个
+// adapter 的 QI/AddRef/Release 逐字相同 ⇒ 收敛到这里，子类只写自己的 Pattern 方法。
+// ★ CRTP（`D` = 派生类）是为了 `delete` 走真实类型：基类里 `delete this` 只调基类
+//   析构，派生类若有成员就是泄漏；`static_cast<D*>(this)` 才对。
+template <class D, class I>
+class ComTearOff : public I {
 public:
-    explicit InvokeAdapter(int index) : m_ref(1), m_index(index) {}
     STDMETHOD(QueryInterface)(REFIID riid, void **ppv) override {
         if (ppv == nullptr) return E_INVALIDARG;
-        if (riid == __uuidof(IUnknown) || riid == __uuidof(IInvokeProvider)) {
-            *ppv = static_cast<IInvokeProvider *>(this);
+        if (riid == __uuidof(IUnknown) || riid == __uuidof(I)) {
+            *ppv = static_cast<I *>(this);
             AddRef();
             return S_OK;
         }
@@ -317,9 +328,25 @@ public:
     STDMETHOD_(ULONG, AddRef)() override { return ++m_ref; }
     STDMETHOD_(ULONG, Release)() override {
         ULONG r = --m_ref;
-        if (r == 0) delete this;
+        if (r == 0) delete static_cast<D *>(this);
         return r;
     }
+
+protected:
+    ULONG m_ref = 1;
+};
+
+// ★★ IInvokeProvider 的 tear-off（§9 / M5 无障碍的"可操作"半边）。
+//   每次 `GetPatternProvider(UIA_InvokePatternId)` 新造一个，由调用方 Release。
+//   它只做一件事：把"第 m_index 个语义节点被 Invoke"转投成一条**窗口消息**，
+//   由 WndProc 入队、PHP 侧翻成 `SemanticsInvokeEvent`。
+//   ★ **激活语义本身不在这里复制**：PHP 落成"在节点中心派发一次合成 tap"，
+//     复用输入路由 → 命中 → `Activatable::activate()` 那条唯一的路。
+//     在这里按角色写一份"按钮该调什么"，每加一个控件就要补一支，且"读屏点"与
+//     "鼠标点"行为不同是没人测得出来的那类缺陷。
+class InvokeAdapter : public ComTearOff<InvokeAdapter, IInvokeProvider> {
+public:
+    explicit InvokeAdapter(int index) : m_index(index) {}
     STDMETHOD(Invoke)() override {
         // ★ 只投消息，**不**在这里进 PHP（理由见 `kMsgUiaInvoke` 的注释）：
         //   这是跨进程 COM 回调，重入 PHP 会让进程静默消失。
@@ -330,7 +357,110 @@ public:
     }
 
 private:
-    ULONG m_ref;
+    int m_index;
+};
+
+// ── 值型 Pattern 的只读半边（§4.4 提交 1）──────────────────────────
+// ★ 写方法（SetValue / Toggle）本提交明确回 `UIA_E_NOTSUPPORTED`，且
+//   `get_IsReadOnly` = TRUE —— 客户端据此**不会**去调写方法（不是静默空壳，是
+//   UIA 契约里的"这只读"）。写回路径（新事件 + 能力接口）见 §4.4 提交 2。
+// ★ 数据全部来自 `g_uiaNodes[m_index]`，与 Invoke 同源，不另存状态。
+class ValueAdapter : public ComTearOff<ValueAdapter, IValueProvider> {
+public:
+    explicit ValueAdapter(int index) : m_index(index) {}
+    STDMETHOD(SetValue)(LPCWSTR) override { return UIA_E_NOTSUPPORTED; }
+    STDMETHOD(get_Value)(BSTR *ret) override {
+        if (ret == nullptr) return E_INVALIDARG;
+        std::wstring v;
+        if (m_index >= 0 && m_index < (int)g_uiaNodes.size()) {
+            v = g_uiaNodes[m_index].value;
+        }
+        *ret = SysAllocString(v.c_str());
+        return S_OK;
+    }
+    STDMETHOD(get_IsReadOnly)(BOOL *ret) override {
+        if (ret == nullptr) return E_INVALIDARG;
+        *ret = TRUE;
+        return S_OK;
+    }
+
+private:
+    int m_index;
+};
+
+class ToggleAdapter : public ComTearOff<ToggleAdapter, IToggleProvider> {
+public:
+    explicit ToggleAdapter(int index) : m_index(index) {}
+    STDMETHOD(Toggle)() override { return UIA_E_NOTSUPPORTED; }
+    STDMETHOD(get_ToggleState)(ToggleState *ret) override {
+        if (ret == nullptr) return E_INVALIDARG;
+        *ret = ToggleState_Off;
+        if (m_index >= 0 && m_index < (int)g_uiaNodes.size()) {
+            const std::wstring &v = g_uiaNodes[m_index].value;
+            // radio 的 value = 选中时自己的值 / 未选中空串；checkbox、switch 是
+            // checked / unchecked（见 `ToggleBase::refreshSemantics()`）。
+            if (g_uiaNodes[m_index].controlType == UIA_RadioButtonControlTypeId) {
+                *ret = v.empty() ? ToggleState_Off : ToggleState_On;
+            } else {
+                *ret = (v == L"checked") ? ToggleState_On : ToggleState_Off;
+            }
+        }
+        return S_OK;
+    }
+
+private:
+    int m_index;
+};
+
+class RangeAdapter : public ComTearOff<RangeAdapter, IRangeValueProvider> {
+public:
+    explicit RangeAdapter(int index) : m_index(index) {}
+    STDMETHOD(SetValue)(double) override { return UIA_E_NOTSUPPORTED; }
+    STDMETHOD(get_Value)(double *ret) override {
+        if (ret == nullptr) return E_INVALIDARG;
+        *ret = wcstod(valueAt().c_str(), nullptr);
+        return S_OK;
+    }
+    STDMETHOD(get_Minimum)(double *ret) override {
+        if (ret == nullptr) return E_INVALIDARG;
+        *ret = nodeOrZero().rangeMin;
+        return S_OK;
+    }
+    STDMETHOD(get_Maximum)(double *ret) override {
+        if (ret == nullptr) return E_INVALIDARG;
+        *ret = nodeOrZero().rangeMax;
+        return S_OK;
+    }
+    STDMETHOD(get_SmallChange)(double *ret) override {
+        if (ret == nullptr) return E_INVALIDARG;
+        *ret = 1.0;
+        return S_OK;
+    }
+    STDMETHOD(get_LargeChange)(double *ret) override {
+        if (ret == nullptr) return E_INVALIDARG;
+        double mn = nodeOrZero().rangeMin;
+        double mx = nodeOrZero().rangeMax;
+        *ret = (mx > mn) ? (mx - mn) / 10.0 : 1.0;
+        return S_OK;
+    }
+    STDMETHOD(get_IsReadOnly)(BOOL *ret) override {
+        if (ret == nullptr) return E_INVALIDARG;
+        *ret = TRUE;
+        return S_OK;
+    }
+
+private:
+    // value 是"人读串"（Slider 以 `%.0f` 格式化）；越界/空 ⇒ 空串（wcstod 得 0）。
+    std::wstring valueAt() const {
+        if (m_index < 0 || m_index >= (int)g_uiaNodes.size()) return std::wstring();
+        return g_uiaNodes[m_index].value;
+    }
+    // 取"有则用之、无则全 0"的节点（Min/Max/大变化共用）。
+    const UiaNode &nodeOrZero() const {
+        static const UiaNode zero;
+        if (m_index < 0 || m_index >= (int)g_uiaNodes.size()) return zero;
+        return g_uiaNodes[m_index];
+    }
     int m_index;
 };
 
@@ -412,13 +542,21 @@ public:
     }
     HRESULT simplePattern(PATTERNID id, IUnknown **ppv) {
         *ppv = nullptr;
-        // ★ 只给"按得动"的节点 `InvokePattern`（当前 = button）。其余角色还没做：
-        //   textfield 要 `ValuePattern` / `TextPattern`、toggle 要 `TogglePattern`、
-        //   slider 要 `RangeValuePattern` —— 见 docs/architecture/09 §4.3 末段。
-        if (id == UIA_InvokePatternId && m_index >= 0
-            && m_index < (int)g_uiaNodes.size()
-            && g_uiaNodes[m_index].controlType == UIA_ButtonControlTypeId) {
+        if (m_index < 0 || m_index >= (int)g_uiaNodes.size()) return S_OK;
+        long ctrl = g_uiaNodes[m_index].controlType;
+        // 按 ControlType 分派（§4.4）：控件"是什么"决定"能问什么 Pattern"。
+        // ★ 不按 role 判 —— role→ControlType 已在 `uiaControlTypeFor` 收敛，
+        //   多一层判据就是两处要同步。
+        if (id == UIA_InvokePatternId && ctrl == UIA_ButtonControlTypeId) {
             *ppv = new InvokeAdapter(m_index);
+        } else if (id == UIA_ValuePatternId && ctrl == UIA_EditControlTypeId) {
+            *ppv = new ValueAdapter(m_index);
+        } else if (id == UIA_TogglePatternId
+                   && (ctrl == UIA_CheckBoxControlTypeId || ctrl == UIA_RadioButtonControlTypeId)) {
+            *ppv = new ToggleAdapter(m_index);
+        } else if (id == UIA_RangeValuePatternId
+                   && (ctrl == UIA_SliderControlTypeId || ctrl == UIA_ProgressBarControlTypeId)) {
+            *ppv = new RangeAdapter(m_index);
         }
         return S_OK;
     }
@@ -1995,8 +2133,13 @@ void php_drift_win_uia_push(Array nodes) {
         UiaNode node;
         std::string name(a.get("name").toCString());
         std::string role(a.get("role").toCString());
+        std::string value(a.get("value").toCString());
         node.name = toWide(String(name));
         node.controlType = uiaControlTypeFor(role);
+        // 值型 Pattern 的数据源（§4.4）。缺键 ⇒ 空串 / 0（老调用方不推也安全）。
+        node.value = toWide(String(value));
+        node.rangeMin = a.get("rangeMin").toFloat();
+        node.rangeMax = a.get("rangeMax").toFloat();
         node.parent = (int)a.get("parent").toInt();
         node.x = a.get("x").toFloat();
         node.y = a.get("y").toFloat();

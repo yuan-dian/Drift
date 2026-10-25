@@ -160,6 +160,8 @@ final class SemanticsTree
                 'key' => $n->key,
                 'name' => $n->name,
                 'value' => $n->value,
+                'rangeMin' => $n->rangeMin,
+                'rangeMax' => $n->rangeMax,
                 'enabled' => $n->enabled,
                 'focused' => $n->focused,
                 'x' => $n->x,
