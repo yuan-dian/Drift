@@ -269,6 +269,15 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     /** 每帧自增的序列号 —— `State::tickFrameStamped` 用它做同帧幂等（迟到挂载补 tick 用） */
     private int $frameSerial = 0;
 
+    /**
+     * 被跳过的零视口帧数（最小化 / 桌面临时切走）。
+     *
+     * ★ 只用于夹具观测"这一帧确实被跳过了"，不参与任何决策。
+     *
+     * @internal
+     */
+    private int $zeroViewportFrames = 0;
+
     /** 上一帧的时间戳（`repaintForResize()` 复用：拖动重排不该自己读环境时钟） */
     private float $lastTimestampMs = 0.0;
 
@@ -773,6 +782,20 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
             SurfaceProfile::add('anim', \hrtime(true) - $t);
         }
 
+        // ★★ **零视口不是"内容放不下"，是"没有像素可画"**（2026-10-25 用户实测最小化即崩）。
+        //   最小化时 `GetClientRect` 给 0×0，`Win32Screen::viewport()` 诚实地翻成
+        //   `tight(0,0)`；拿它布局时 `Text` 只能每字一行（宽 0 ⇒ 换行），高度约束
+        //   又是 0 ⇒ `RenderText 实际 0.0 × 86.4，最多只能用 0.0 × 0.0` 当场 C6 Fatal。
+        //   ★ **泵已经全部跑完**（IO / 任务 / 分片 / 延时 / 动画都在上面），这里只跳过
+        //   布局与绘制 —— 动画与 `after()` 在最小化期间照常推进，还原时不跳变。
+        //   ★ 不做"缓存上次视口继续画"：画进不可见 surface 纯属浪费，且会让
+        //   `viewport()` 撒谎。还原时系统必发新的 `WM_SIZE`（带真实尺寸）⇒ 重新布局。
+        if ($constraints->maxWidth <= 0.0 || $constraints->maxHeight <= 0.0) {
+            $this->zeroViewportFrames++;
+
+            return;
+        }
+
         // 浮层布局段（逐层自尺寸 + 钉锚点 + 夹进客户区）—— 见 placeOverlays()
         $t = $prof ? \hrtime(true) : 0;
         if ($trace !== null) {
@@ -900,6 +923,14 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         }
 
         $this->assertUiThread('repaintForResize');
+
+        // 零视口（最小化时 `WM_SIZE` 的 lp 就是 0×0）⇒ 没有可画的东西，也没有
+        // 可用于布局的约束（`tight(0,0)` 会让 Text 每字一行 ⇒ C6 Fatal，`02` §2.1）。
+        // ★ 与 `frame()` 同一条判据，但这里**不跑泵** —— 拖动重排本来就不碰
+        //   任务/动画/语义，跳过整段是对的。
+        if ($constraints->maxWidth <= 0.0 || $constraints->maxHeight <= 0.0) {
+            return;
+        }
 
         // ★ 预览期（拖动中的瞬时尺寸）：`Overflow::Report` 降级为裁剪 —— 用户把窗口
         //   拖窄时「内容暂时放不下」是**合法状态**，不能弹 Fatal 打断拖动；松手后
@@ -1077,6 +1108,18 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     public function worstFrameMs(): float
     {
         return $this->worstFrameMs;
+    }
+
+    /**
+     * 被跳过的零视口帧数（最小化 / 桌面临时切走时 `frame()` 早退的次数）。
+     *
+     * ★ 夹具用它证明"那一帧确实被跳过了"，而不是"恰好没崩"。
+     *
+     * @internal
+     */
+    public function zeroViewportFrames(): int
+    {
+        return $this->zeroViewportFrames;
     }
 
     /** 六阶段预算拼成一行（诊断文案用；数字的唯一来源是 {@see self::STAGE_BUDGET_MS}） */

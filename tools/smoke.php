@@ -104,6 +104,7 @@ use Drift\Dev\Smoke\App\PressLabApplication;
 use Drift\Dev\Smoke\App\SemValueApplication;
 use Drift\Dev\Smoke\App\TfApplication;
 use Drift\Dev\Smoke\App\TfLabeledApplication;
+use Drift\Dev\Smoke\App\ZeroViewportApplication;
 use Drift\Dev\Smoke\App\ThemeApplication;
 use Drift\Dev\Smoke\App\PointerApplication;
 use Drift\Dev\Smoke\App\ScrollApplication;
@@ -5673,6 +5674,41 @@ check(
         && $resizeSurface->lastTimestamp === $resizeTsBefore,
     'frames=' . $resizeSurface->frames . ' ends=' . $resizeSurface->ends
         . ' ts=' . var_export($resizeSurface->lastTimestamp, true)
+);
+
+// ── 零视口（最小化）：不构成可布局的一帧 ────────────────────────────
+//   用户实测（2026-10-25）：最小化 ⇒ `GetClientRect` 给 0×0 ⇒ `tight(0,0)` 拿去
+//   布局 ⇒ `RenderText 实际 0.0 × 86.4，最多只能用 0.0 × 0.0` 当场 C6 Fatal。
+//   ★ 判据不是"没崩"，而是三件事：帧被**计数跳过**、表面**一帧都没起**、根盒
+//   **保持旧尺寸**（不被 0 覆盖）—— 后者才是"还原后能正常重排"的前提。
+$zeroApp = new ZeroViewportApplication();
+$zeroSurface = new SurfaceProbe();
+$zeroApp->attach($zeroSurface, BoxConstraints::tight(new Size(320.0, 240.0)));
+$zeroApp->frame(16.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$zeroRootW = $zeroApp->root()?->effectiveBox()?->size()?->width ?? -1.0;
+$zeroFramesBefore = $zeroSurface->frames;
+$zeroApp->frame(32.0, BoxConstraints::tight(new Size(0.0, 0.0)));
+check(
+    '零视口 · frame(tight(0,0)) 跳过布局与绘制（不 C6，表面不起帧，根盒保持 320）',
+    $zeroRootW === 320.0
+        && $zeroApp->zeroViewportFrames() === 1
+        && $zeroSurface->frames === $zeroFramesBefore
+        && ($zeroApp->root()?->effectiveBox()?->size()?->width ?? -1.0) === $zeroRootW,
+    'frames=' . $zeroSurface->frames . '/' . $zeroFramesBefore
+        . ' zero=' . $zeroApp->zeroViewportFrames()
+        . ' rootW=' . ($zeroApp->root()?->effectiveBox()?->size()?->width ?? -1.0)
+);
+$zeroApp->repaintForResize(BoxConstraints::tight(new Size(0.0, 0.0)));
+check(
+    '零视口 · repaintForResize(tight(0,0)) 与 frame() 同一条判据（表面仍不起帧）',
+    $zeroSurface->frames === $zeroFramesBefore,
+    'frames=' . $zeroSurface->frames,
+);
+$zeroApp->frame(48.0, BoxConstraints::tight(new Size(200.0, 120.0)));
+check(
+    '零视口 · 还原后按新尺寸重排（早退不留死状态）',
+    ($zeroApp->root()?->effectiveBox()?->size()?->width ?? -1.0) === 200.0,
+    'rootW=' . ($zeroApp->root()?->effectiveBox()?->size()?->width ?? -1.0),
 );
 
 // ── AppBar 窄窗口（§12.1 / W4）：宽度随窗口变化 ⇒ 裁剪，不弹 Fatal ──────
