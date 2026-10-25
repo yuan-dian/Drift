@@ -141,6 +141,12 @@ final class Bootstrap
             $window->pushSemantics($nodes);
         });
 
+        // ★ UIA 的**可操作**半边（§9 / M5）**不需要在这里接线**：壳把 `Invoke`
+        //   转投成一条 `SemanticsInvokeEvent` 塞进输入队列，框架的
+        //   `Application::dispatchInput()` 自己接住（见该事件类注释）。
+        //   ★ 这里曾经有一个 `UiaInvokeState::$handler = ...` 的静态槽 ——
+        //     已随"壳里零 PHP 调用"一起删掉：跨进程回调里重入 PHP 会让进程静默消失。
+
         // ★ **事件队列必须每帧前抽干**（§5.2 裁决 1：派发归框架）—— 不抽干的话
         //   队列会无限增长，而窗口对点击/按键**毫无反应**，且不报错。
         // ★ `dispatchInput()` 对指针事件返回命中链解析出的光标形状 ⇒ 由这里喂给

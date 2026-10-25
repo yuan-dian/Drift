@@ -7,6 +7,7 @@ use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
 use Drift\Input\ScrollEvent;
+use Drift\Input\SemanticsInvokeEvent;
 use Drift\Input\ThemeChangedEvent;
 use Drift\Input\WindowDeactivatedEvent;
 use Drift\Platform\Clipboard;
@@ -139,6 +140,9 @@ final class Win32Platform implements Platform
      * | `char` | ⇒ `KeyEvent::character()` |
      * | `theme` | ⇒ `ThemeChangedEvent`（§9.2 系统主题变更；载荷为空，
      *   新主题由消费者查 `Screen::systemTheme()` —— Win32 侧查询实时） |
+     * | `uia-invoke` | ⇒ `SemanticsInvokeEvent`（§9 / M5 无障碍的"可操作"半边：
+     *   UIA `Invoke` 要求激活第 `idx` 个语义节点。★ 它必须走**队列**而不是在
+     *   消息派发里回调应用 —— 理由见该类注释） |
      * | 其它 | 丢弃 —— 桥已经保证"只回传 Drift 关心的"，这里是防御性兜底 |
      *
      * ★ **`resize` 必须同时喂表面**：`Screen::viewport()` 读的是桥里的客户区尺寸
@@ -192,6 +196,23 @@ final class Win32Platform implements Platform
         }
 
         $input = $this->input();
+
+        if ($type === 'uia-invoke') {
+            // UIA `Invoke`（§9 / M5）：壳把"第 idx 个语义节点被要求激活"翻成一条
+            // 输入事件，**在壳里一次 PHP 都不进**（`kMsgUiaInvoke` 的 WndProc 分支
+            // 只入队 + 叫醒泵）。
+            // ★ 为什么不做成"壳回调应用"：见 `SemanticsInvokeEvent` 的类注释 ——
+            //   消息泵的契约是"一次调用交一条事件"，在派发里跑完 PHP 就没人保证
+            //   下一帧会跑（真机现象：命令执行了、画面一动不动）。
+            // ★ 索引 < 0 = 壳给了坏载荷（不该发生）⇒ 不投事件，但**照旧返回 true**：
+            //   泵的职责只是"这条消息处理完了"，不是"断言载荷合法"。
+            $index = (int) ($event['idx'] ?? -1);
+            if ($index >= 0) {
+                $input->push(new SemanticsInvokeEvent($index));
+            }
+
+            return true;
+        }
 
         if ($type === 'pointer') {
             // ★ 四相位（2026-10-17 move/up/leave 通路）：桥给 `phase`

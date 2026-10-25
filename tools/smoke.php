@@ -155,6 +155,7 @@ use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
 use Drift\Input\PointerPhase;
 use Drift\Input\ScrollEvent;
+use Drift\Input\SemanticsInvokeEvent;
 use Drift\Input\SemanticsRole;
 use Drift\Layout\FlexAlign;
 use Drift\Layout\Overflow;
@@ -7314,6 +7315,41 @@ check(
     '激活 · 焦点 Button 的 Space ⇒ onPressed 被调（纯 UI 回调路径）',
     $navApp->pressed === ['cancelled'],
     implode(',', $navApp->pressed),
+);
+
+// —— 语义节点激活（§9 / M5 无障碍的"可操作"半边 = UIA `InvokePattern` 的 PHP 侧）
+//   ★ 实现落成"在节点中心派发一次合成 tap"，所以判据必须落在**效果**上
+//     （`pressed` 变了），不是"方法返回 true" —— 后者在"点歪了 / 点空了"
+//     的时候照样绿，等于没测。
+//   ★ 这条同时锁住"激活语义只有一处"：读屏点与鼠标点走同一条
+//     输入路由 → 命中 → `Activatable::activate()`。
+$invApp = new NavApplication();
+$invApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
+$invTree = SemanticsBuilder::build($invApp->rootElement(), null);
+$invIdx = $invTree->findByRoleAndName(SemanticsRole::Button->value, '取消');
+check(
+    '语义激活 · 按节点索引点中「取消」⇒ onPressed 被调（Invoke 走合成 tap）',
+    $invIdx >= 0 && $invApp->invokeSemanticsNode($invIdx) === true && $invApp->pressed === ['cancelled'],
+    'idx=' . $invIdx . ' pressed=' . implode(',', $invApp->pressed),
+);
+check(
+    '语义激活 · 越界索引 ⇒ false（壳据此回 UIA_E_ELEMENTNOTAVAILABLE，不能假装成功）',
+    $invApp->invokeSemanticsNode(-1) === false && $invApp->invokeSemanticsNode(9999) === false,
+    'ok',
+);
+// ★ 事件缝本身：壳把 UIA `Invoke` 翻成 `SemanticsInvokeEvent` 塞进输入队列，
+//   `dispatchInput()` 必须接住并激活。**这条测的是"平台→框架"的接缝**，
+//   上一条测的是"框架内部动作"—— 少了本条，接缝断了（事件被 `dispatch()` 的
+//   `else` 兜底吞掉）也只有真机才发现，而真机现象是"命令执行了、画面不动"。
+$invEvtApp = new NavApplication();
+$invEvtApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
+$invEvtIdx = SemanticsBuilder::build($invEvtApp->rootElement(), null)
+    ->findByRoleAndName(SemanticsRole::Button->value, '取消');
+$invEvtApp->dispatchInput(new SemanticsInvokeEvent($invEvtIdx));
+check(
+    '语义激活 · SemanticsInvokeEvent 经 dispatchInput 落地（壳的接缝，不是框架内部直调）',
+    $invEvtIdx >= 0 && $invEvtApp->pressed === ['cancelled'],
+    'idx=' . $invEvtIdx . ' pressed=' . implode(',', $invEvtApp->pressed),
 );
 
 // —— 指针侧激活（§9.1 动作缝的另一半：鼠标**按下**即触发，与 Enter/Space 同入口）

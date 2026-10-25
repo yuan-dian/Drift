@@ -46,6 +46,11 @@ using namespace php;
 //   （实测 LNK2019）。
 extern void php_drift_resize_hook_pump();
 
+// ★ **这里曾经还有一个 `php_drift_uia_invoke()`**（UIA `Invoke` 直接回调 PHP）。
+//   2026-10-25 删掉：跨进程 COM 回调里重入 PHP 会让进程静默消失；改成"投消息 ⇒
+//   入队 ⇒ 交一条 `SemanticsInvokeEvent`"之后，壳里**一次 PHP 都不进**，
+//   顺带消掉"形参必须是 `php::Int`"与"增量构建不认新增 .php"这两个 AOT 坑。
+
 namespace {
 
 // ─────────────────────────────────────────────────────────────── 常量 ──
@@ -62,6 +67,20 @@ const wchar_t *const kWindowClass = L"DriftWindowClass";
  *   队列元素是自定义结构体，所以 WndProc 直接 push，再用这条消息把泵**叫醒**。
  */
 const UINT kMsgWake = WM_APP + 1;
+/**
+ * UIA `Invoke` 的**转投消息**（§9 / M5）。
+ *
+ * ★★ 为什么要转投：`Invoke()` 跑在 COM 的 RPC 线程上（跨进程编组），栈上压着
+ *   UIA 的状态。在里面重入 PHP 实测会**让进程静默消失**（无异常、无日志，
+ *   客户端只看到 `ElementNotAvailable`）。转投到窗口线程后 `Invoke()` 立刻返回。
+ *
+ * ★★ 转投到窗口线程之后**仍然不直接跑 PHP**，只把"第 idx 个节点被要求激活"
+ *   入队（`kEvUiaInvoke`）。理由不是重入安全，而是**泵的契约**：`pump()` 一次
+ *   只交一条事件，在派发里跑完 PHP 就没人保证下一帧会跑 —— 真机现象是
+ *   "命令执行了、状态变了、画面一动不动"（要等下一条用户输入才刷出来）。
+ *   入队则让组合根抽完事件立刻 `FrameClock::tick()`，同一轮循环就落盘。
+ */
+const UINT kMsgUiaInvoke = WM_APP + 2;
 
 /** 队列元素种类（壳内部用；跨边界的名字在 `toArray()` 里给） */
 enum EventKind {
@@ -74,6 +93,7 @@ enum EventKind {
     kEvTheme,
     kEvWheel,
     kEvDeactivate,
+    kEvUiaInvoke,
 };
 
 struct PendingEvent {
@@ -273,6 +293,47 @@ private:
     CProvider *m_host;
 };
 
+// ★★ IInvokeProvider 的 tear-off（§9 / M5 无障碍的"可操作"半边）。
+//   每次 `GetPatternProvider(UIA_InvokePatternId)` 新造一个，由调用方 Release。
+//   它只做一件事：把"第 m_index 个语义节点被 Invoke"转投成一条**窗口消息**，
+//   由 WndProc 入队、PHP 侧翻成 `SemanticsInvokeEvent`。
+//   ★ **激活语义本身不在这里复制**：PHP 落成"在节点中心派发一次合成 tap"，
+//     复用输入路由 → 命中 → `Activatable::activate()` 那条唯一的路。
+//     在这里按角色写一份"按钮该调什么"，每加一个控件就要补一支，且"读屏点"与
+//     "鼠标点"行为不同是没人测得出来的那类缺陷。
+class InvokeAdapter : public IInvokeProvider {
+public:
+    explicit InvokeAdapter(int index) : m_ref(1), m_index(index) {}
+    STDMETHOD(QueryInterface)(REFIID riid, void **ppv) override {
+        if (ppv == nullptr) return E_INVALIDARG;
+        if (riid == __uuidof(IUnknown) || riid == __uuidof(IInvokeProvider)) {
+            *ppv = static_cast<IInvokeProvider *>(this);
+            AddRef();
+            return S_OK;
+        }
+        *ppv = nullptr;
+        return E_NOINTERFACE;
+    }
+    STDMETHOD_(ULONG, AddRef)() override { return ++m_ref; }
+    STDMETHOD_(ULONG, Release)() override {
+        ULONG r = --m_ref;
+        if (r == 0) delete this;
+        return r;
+    }
+    STDMETHOD(Invoke)() override {
+        // ★ 只投消息，**不**在这里进 PHP（理由见 `kMsgUiaInvoke` 的注释）：
+        //   这是跨进程 COM 回调，重入 PHP 会让进程静默消失。
+        if (g_main != NULL) {
+            PostMessageW(g_main, kMsgUiaInvoke, (WPARAM)m_index, 0);
+        }
+        return S_OK;
+    }
+
+private:
+    ULONG m_ref;
+    int m_index;
+};
+
 class CProvider : public IRawElementProviderFragmentRoot {
 public:
     explicit CProvider(int index)
@@ -349,8 +410,16 @@ public:
         *p = ProviderOptions_ServerSideProvider;
         return S_OK;
     }
-    HRESULT simplePattern(PATTERNID, IUnknown **ppv) {
+    HRESULT simplePattern(PATTERNID id, IUnknown **ppv) {
         *ppv = nullptr;
+        // ★ 只给"按得动"的节点 `InvokePattern`（当前 = button）。其余角色还没做：
+        //   textfield 要 `ValuePattern` / `TextPattern`、toggle 要 `TogglePattern`、
+        //   slider 要 `RangeValuePattern` —— 见 docs/architecture/09 §4.3 末段。
+        if (id == UIA_InvokePatternId && m_index >= 0
+            && m_index < (int)g_uiaNodes.size()
+            && g_uiaNodes[m_index].controlType == UIA_ButtonControlTypeId) {
+            *ppv = new InvokeAdapter(m_index);
+        }
         return S_OK;
     }
     HRESULT simpleProperty(PROPERTYID id, VARIANT *out) {
@@ -761,6 +830,28 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 }
             }
             break;
+        case kMsgUiaInvoke: {
+            // UIA `Invoke` 的落地（§9 / M5）：**只入队，不进 PHP**。
+            //
+            // ★★ 为什么不是"在这里直接跑 PHP"：`Invoke()` 来自 COM 的 RPC 线程，
+            //   我们已经把它转投到窗口线程（不能在那儿重入 PHP —— 实测进程静默消失）。
+            //   但即便到了窗口线程也还有第二个坑：消息泵的契约是"一次调用交一条
+            //   事件"，在派发里跑完 PHP 就没人保证**下一帧会跑** —— 真机现象是
+            //   "命令执行了、状态也变了、画面一动不动"（要等下一条用户输入才刷）。
+            //   ⇒ 入队 ⇒ `pump()` 交出去 ⇒ 组合根抽完事件立刻 `FrameClock::tick()`
+            //     跑帧，激活引起的那次重建**同一轮循环**就落盘。
+            PendingEvent event;
+            event.kind = kEvUiaInvoke;
+            event.a = (int) (INT_PTR) wp;
+            event.b = 0;
+            event.c = 0;
+            event.d = 0;
+            g_queue.push_back(event);
+            // 叫醒阻塞在 `GetMessageW` 的泵（同 WM_SIZE / WM_TIMER 的做法）
+            PostMessageW(hwnd, kMsgWake, 0, 0);
+            return 0;
+        }
+
         case WM_CLOSE:
             // 不调 DefWindowProc：它会走"关闭确认"那套，而 Drift 的退出语义
             // 只有一条（销毁 ⇒ WM_QUIT ⇒ 泵返回 quit，见 WindowHost::close 的 docblock）。
@@ -1216,6 +1307,11 @@ Array toArray(const PendingEvent &event) {
 
         case kEvDeactivate:
             out.set("type", "deactivate");
+            break;
+
+        case kEvUiaInvoke:
+            out.set("type", "uia-invoke");
+            out.set("idx", (Int)event.a);
             break;
 
         default:

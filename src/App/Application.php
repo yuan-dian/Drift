@@ -15,6 +15,7 @@ use Drift\Input\InputEvent;
 use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
 use Drift\Input\ScrollEvent;
+use Drift\Input\SemanticsInvokeEvent;
 use Drift\Input\ThemeChangedEvent;
 use Drift\Input\WindowDeactivatedEvent;
 use Drift\Platform\Clipboard;
@@ -1169,6 +1170,53 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         ($sink)($tree->toArrays()['nodes']);
     }
 
+    /**
+     * 按**语义节点索引**激活一次（§9 / M5 无障碍的"可操作"半边）。
+     *
+     * 消费者：`dispatchInput()` 收到 `SemanticsInvokeEvent` 时转调（UIA
+     * `IInvokeProvider::Invoke()` ⇒ 壳入队 ⇒ 平台翻成该事件）。也直接可调
+     * （冒烟夹具、devtools）—— 它不依赖"事件从哪来"。
+     *
+     * ★★ **落成"在节点中心派发一次合成 tap"，而不是"直接调控件的动作"**：
+     *   激活语义只有一处（输入路由 → 命中 → `Activatable::activate()`）。
+     *   另写一条"按角色找动作"的路会与它漂移 —— 按钮走 `command`、`Segment` 走
+     *   `onSelected`、`Toggle` 走 `onChanged`…每加一个控件就要补一支，而且
+     *   "读屏点"与"鼠标点"行为不同是**没人测得出来**的那类缺陷。
+     *
+     * ★ 坐标：语义节点几何就是渲染树的逻辑坐标（与命中测试同一套），
+     *   所以中心点可以直接喂给 `dispatchInput()`。
+     *
+     * ★ 索引口径：`SemanticsBuilder::toArrays()['nodes']` 的下标（前序），与推给
+     *   UIA 的那份快照同一套编号。树在两次推送之间变了 ⇒ 索引可能指到别的节点
+     *   （与任何 UI 自动化一样是竞态）；结构变化会立刻触发整棵重推，窗口很短。
+     *
+     * @return bool 真的派发了（越界 / 零面积 ⇒ false —— 消费方据此回
+     *   `UIA_E_ELEMENTNOTAVAILABLE`，不能假装成功）
+     */
+    public function invokeSemanticsNode(int $index): bool
+    {
+        $tree = SemanticsBuilder::build($this->root, null);
+        if ($index < 0 || $index >= $tree->count()) {
+            return false;
+        }
+        $node = $tree->node($index);
+        if ($node->w <= 0 || $node->h <= 0) {
+            return false;
+        }
+        $x = $node->x + $node->w / 2.0;
+        $y = $node->y + $node->h / 2.0;
+
+        // ★ 合成一次**完整**指针手势：先 move 再 down/up。
+        //   真实的鼠标点击永远先有 `WM_MOUSEMOVE`（悬停链先建立）——
+        //   "凭空 down"在真机上不激活（`CursorShape` 退默认），别把它当成
+        //   "少一条事件无所谓"。
+        $this->dispatchInput(PointerEvent::move($x, $y));
+        $this->dispatchInput(PointerEvent::down($x, $y));
+        $this->dispatchInput(PointerEvent::up($x, $y));
+
+        return true;
+    }
+
     /** @internal 夹具 / devtools：上次推送用的是哪一档（`full` / `coalesce` / `none`） */
     public function semanticsMode(): string
     {
@@ -1374,6 +1422,16 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
 
         if ($root === null || $focus === null) {
             return null;   // 未挂载：没有树就没有路由
+        }
+
+        // ★ UIA 的"可操作"半边（§9 / M5）：读屏要求激活一个语义节点。
+        //   走 `dispatchInput()` 而不是壳直接回调 —— 平台把它翻成一条**输入事件**
+        //   （`SemanticsInvokeEvent`），于是它与其他事件同队、同轮循环，激活引起的
+        //   重建由紧随的 `FrameClock::tick()` 落盘。见该事件的类注释。
+        if ($event instanceof SemanticsInvokeEvent) {
+            $this->invokeSemanticsNode($event->index);
+
+            return null;   // 不是指针事件 ⇒ 不改光标
         }
 
         if ($event instanceof ThemeChangedEvent) {
