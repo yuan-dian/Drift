@@ -11,6 +11,7 @@ use Drift\Geometry\Size;
 use Drift\Rendering\BoxStyle;
 use Drift\Rendering\Canvas;
 use Drift\Rendering\Paint;
+use Drift\Rendering\ShadowPainter;
 
 /**
  * 浮层面板的渲染盒（O-20 A 的必要子项，§5.1 裁决 1 / §9.1 菜单行）。
@@ -134,13 +135,27 @@ final class RenderPopupPanel extends RenderProxyBox
 
         $panel = $this->panelRect();
 
-        // ① 投影：整盒矩形垫一层半透明黑（面板随后盖住中间 ⇒ 视觉上只剩外圈）
+        // ① 投影：有 `CAP_SHADOW` 就在**面板矩形**上做真模糊（扩散 ~1.5×elevation，
+        //    落在 `performLayout()` 预留的 `2×elevation` 里 ⇒ 不溢出盒外）；否则降级成
+        //    "整盒垫一层半透明黑"（面板随后盖住中间，视觉上只剩外圈）。
+        //    ★ 用 `$panel` 而不是整盒：盒的留白是给投影用的，阴影必须从面板边起算。
         if ($this->elevation > 0.0) {
-            $canvas->drawRect(
-                Rect::fromOrigin(new Point(0.0, 0.0), $size),
-                Paint::fill(\Drift\Rendering\Color::fromRgba(0, 0, 0, 48)),
+            $drawn = ShadowPainter::tryPaint(
+                $canvas,
+                $panel,
                 $this->style->radius,
+                $this->elevation,
+                $this->elevation * 0.35,
+                48,
             );
+
+            if (!$drawn) {
+                $canvas->drawRect(
+                    Rect::fromOrigin(new Point(0.0, 0.0), $size),
+                    Paint::fill(\Drift\Rendering\Color::fromRgba(0, 0, 0, 48)),
+                    $this->style->radius,
+                );
+            }
         }
 
         // ② 底 ③ 边框（BoxStyle 只管盒内 —— 见类 docblock）

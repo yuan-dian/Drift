@@ -16,8 +16,32 @@ use Drift\Text\Paragraph;
  */
 final class RecordingCanvas implements Canvas
 {
-    public function __construct(private readonly DisplayList $list)
+    /**
+     * @param int $capabilities 录制层**对外声称**的能力位。
+     *
+     * ★ 默认 `ALL_MASK`（"全录，回放裁决"）；但**离屏回放**的消费者（测试夹具、
+     *   预览）必须传**回放后端**的能力 —— 否则会录下 Optional op（如 `drawShadow`），
+     *   回放时 `unsupportedOp` 响亮失败。2026-10-25 给阴影接第一个消费者时踩到：
+     *   `RecordingSurface` 全能力录 → `RasterCanvas` 回放 → `drawShadow` 崩。
+     * ★ 传 `RasterCanvas::supportedCapabilities()` 而不是再拼一份常量：tpc 对
+     *   "常量链"会生成坏代码（见 `CanvasCapabilities::ALL_MASK` 注释），一份定义更稳。
+     */
+    private readonly DisplayList $list;
+
+    private readonly int $capabilities;
+
+    public function __construct(DisplayList $list, int $capabilities = -1)
     {
+        $this->list = $list;
+        // ★ 默认 = **离屏回放端（Raster）的能力**，不是 `ALL_MASK`。
+        //   理由：`RecordingCanvas` 的真实消费者只有"录下来再离线回放"（测试夹具、
+        //   预览），回放端就是 `RasterCanvas`；真机 `Frame` 是 `paintComposed($canvas)`
+        //   **直接画**到 `SkiaCanvas`，根本不经过这里。默认 `ALL_MASK` 会让它录下
+        //   Optional op（`drawShadow`），回放时 `unsupportedOp` 响亮失败 ——
+        //   2026-10-25 给阴影接第一个消费者时，smoke 的 Card / 浮层段全崩。
+        // ★ 默认值**不能**写成参数默认值 `RasterCanvas::supportedCapabilities()`：
+        //   外部类静态调用做默认参数在 AOT 下不安全。用 -1 哨兵，在**方法体内**解析。
+        $this->capabilities = $capabilities < 0 ? RasterCanvas::supportedCapabilities() : $capabilities;
     }
 
     public static function create(): self
@@ -66,12 +90,14 @@ final class RecordingCanvas implements Canvas
     }
 
     /**
-     * 录制侧**全能力**：它只把命令写进 `DisplayList`，能不能画由回放时的
-     * 画布裁决（失败发生在回放侧，消息里带的是真后端名，见 `Canvas` 契约）。
+     * 录制侧的**声称能力**（构造时注入，默认全能力）。
+     *
+     * ★ 默认"全录，回放裁决"（失败消息带真后端名，见 `Canvas` 契约）；离屏回放
+     *   的消费者改成传回放后端的能力，让 Optional op 在**录制时**就降级。
      */
     public function capabilities(): int
     {
-        return CanvasCapabilities::ALL_MASK;
+        return $this->capabilities;
     }
 
     public function drawEllipse(Rect $rect, Paint $paint): void

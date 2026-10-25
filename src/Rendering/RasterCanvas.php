@@ -264,6 +264,21 @@ final class RasterCanvas implements Canvas
      *   Raster 这一份是硬边无抗锯齿、奇偶规则、只做 Miter+Butt（`05` §3.3/§3.4）。
      *   两个后端的像素级 golden 本来就不互比（既有约定），能力位只回答"能不能画"。
      */
+    /**
+     * 软光栅的**支持面**（静态版本；`RecordingCanvas` 录制时按回放端降级要用它）。
+     *
+     * ★ 平铺叶子常量的一次 `|` —— tpc 对"常量链"会生成坏代码，见
+     *   `CanvasCapabilities::ALL_MASK` 的注释。一份定义、两处引用（这里与
+     *   `RecordingSurface`），避免"录制能力"和"回放能力"各拼一份然后漂移。
+     */
+    public static function supportedCapabilities(): int
+    {
+        return CanvasCapabilities::CAP_ELLIPSE | CanvasCapabilities::CAP_LINE
+            | CanvasCapabilities::CAP_GRADIENT | CanvasCapabilities::CAP_DASH
+            | CanvasCapabilities::CAP_CLIP_PATH | CanvasCapabilities::CAP_PATH
+            | CanvasCapabilities::CAP_LAYER | CanvasCapabilities::CAP_IMAGE;
+    }
+
     public function capabilities(): int
     {
         // ★ Extended 层：Raster 允许降级近似（§7.2 D2 表）—— 渐变做逐像素实渐变
@@ -278,10 +293,7 @@ final class RasterCanvas implements Canvas
         // ★ `CAP_IMAGE` 在 W8-1 置位：`drawImage` 走最近邻 blit（见该方法 docblock）。
         //   1:1 时与 Skia 逐字节相同；缩放时 Skia 双线性、Raster 最近邻 —— 这是
         //   **有意的双端差异**，conformance 基线只钉 1:1（详见 drawImage 注释）。
-        return CanvasCapabilities::CAP_ELLIPSE | CanvasCapabilities::CAP_LINE
-            | CanvasCapabilities::CAP_GRADIENT | CanvasCapabilities::CAP_DASH
-            | CanvasCapabilities::CAP_CLIP_PATH | CanvasCapabilities::CAP_PATH
-            | CanvasCapabilities::CAP_LAYER | CanvasCapabilities::CAP_IMAGE;
+        return self::supportedCapabilities();
     }
 
     /**

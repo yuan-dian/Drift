@@ -1587,12 +1587,15 @@ check(
 $bleedShadow = new BleedBox(new Size(40.0, 40.0));
 $bleedShadow->setMods((new Modifier())->withClip(true)->withShadow(0.6));
 $bleedShadow->layout(BoxConstraints::tight(new Size(20.0, 20.0)));
-$shadowList = new DisplayList();
-$shadowRec = new RecordingCanvas($shadowList);
-$shadowRec->translate(10.0, 10.0);
-$bleedShadow->paint($shadowRec);
+// ★ 不能经 `DisplayList` 回放到 Raster：录制层的 `capabilities()` 是**全能力**
+//   （契约："回放时裁决"），于是它会录下 `drawShadow`（Optional，仅 Skia）⇒
+//   Raster 回放时 `unsupportedOp` 响亮失败。本用例要测的是"阴影画在裁剪之外"，
+//   直接在 Raster 上画同样成立（且自动走三层降级）。
 $shadowRaster = new RasterCanvas(60, 60, Color::white(), Scale::of(1.0));
-$shadowList->replay($shadowRaster);
+$shadowRaster->save();
+$shadowRaster->translate(10.0, 10.0);
+$bleedShadow->paint($shadowRaster);
+$shadowRaster->restore();
 check(
     '裁剪 · 阴影不被裁（盒 (10,10)-(30,30)，(8,20) 处仍有影子）',
     !$shadowRaster->pixelAt(8, 20)->equals(Color::white()),
@@ -2333,9 +2336,17 @@ check(
         | CanvasCapabilities::CAP_CLIP_PATH)
 );
 $capsRec = RecordingCanvas::create();
+// ★ 默认值在 2026-10-25 改成"回放端（Raster）的支持面"：`RecordingCanvas` 的真实
+//   消费者只有离屏回放，默认 ALL_MASK 会让它录下 Optional op（drawShadow）然后
+//   回放时响亮失败（smoke 的 Card / 浮层段当场全崩）。
 check(
-    'Canvas · Recording capabilities() = ALL_MASK（录制侧全录，支持与否由回放侧裁决）',
-    $capsRec->capabilities() === CanvasCapabilities::ALL_MASK
+    'Canvas · Recording 默认能力 = Raster 支持面（离屏回放端，不录 Optional）',
+    $capsRec->capabilities() === RasterCanvas::supportedCapabilities()
+);
+check(
+    'Canvas · Recording 显式传 ALL_MASK ⇒ 全录（"回放裁决"模式仍可用）',
+    (new RecordingCanvas(new DisplayList(), CanvasCapabilities::ALL_MASK))->capabilities()
+        === CanvasCapabilities::ALL_MASK
 );
 
 // ── W8-1 图像：RasterCanvas::drawImage（最近邻 blit）────────────────────────

@@ -39,6 +39,8 @@ final class RecordingSurface implements RenderSurface
     {
         $this->list = new DisplayList();
 
+        // 默认能力 = `RasterCanvas` 的支持面（`RecordingCanvas` 构造函数已按
+        // "离屏回放端"取默认，见它的注释）⇒ 不会录下 Optional op。
         return new RecordingCanvas($this->list);
     }
 
