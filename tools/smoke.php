@@ -101,6 +101,7 @@ use Drift\Dev\Smoke\App\EchoApplication;
 use Drift\Dev\Smoke\App\FailSliceJob;
 use Drift\Dev\Smoke\App\GestureApplication;
 use Drift\Dev\Smoke\App\PressLabApplication;
+use Drift\Dev\Smoke\App\SemValueApplication;
 use Drift\Dev\Smoke\App\TfApplication;
 use Drift\Dev\Smoke\App\TfLabeledApplication;
 use Drift\Dev\Smoke\App\ThemeApplication;
@@ -156,6 +157,7 @@ use Drift\Input\PointerEvent;
 use Drift\Input\PointerPhase;
 use Drift\Input\ScrollEvent;
 use Drift\Input\SemanticsInvokeEvent;
+use Drift\Input\SemanticsSetValueEvent;
 use Drift\Input\SemanticsRole;
 use Drift\Layout\FlexAlign;
 use Drift\Layout\Overflow;
@@ -7352,6 +7354,59 @@ check(
     'idx=' . $invEvtIdx . ' pressed=' . implode(',', $invEvtApp->pressed),
 );
 
+// —— 语义写值（§4.4 提交 2 = UIA `ValuePattern` / `RangeValuePattern` 的 PHP 侧）
+//   ★ 判据落在**回写值**上（`onChanged` 真收到），不是"方法返回 true"——
+//     后者在"顺着父链找到了控件但没人接值"时照样绿，等于没测。
+//   ★ 反例两条：受控但没人接 onChanged（TfApplication）⇒ false；越界 ⇒ false。
+$svApp = new SemValueApplication();
+$svApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
+$svIdx = SemanticsBuilder::build($svApp->rootElement(), null)
+    ->findByRoleAndName(SemanticsRole::TextField->value, '搜索');
+check(
+    '语义写值 · TextField 按节点索引 ⇒ onChanged 收到新值（ValuePattern 回写路径）',
+    $svIdx >= 0 && $svApp->setSemanticsValue($svIdx, 'hi') === true && $svApp->got === 'hi',
+    'idx=' . $svIdx . ' got=' . var_export($svApp->got, true),
+);
+check(
+    '语义写值 · 越界索引 ⇒ false（壳据此回 UIA_E_ELEMENTNOTAVAILABLE，不假装成功）',
+    $svApp->setSemanticsValue(-1, 'x') === false && $svApp->setSemanticsValue(9999, 'x') === false,
+    'ok',
+);
+$tfNoCb = new TfApplication();
+$tfNoCb->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
+$tfNoCbIdx = SemanticsBuilder::build($tfNoCb->rootElement(), null)
+    ->findByRole(SemanticsRole::TextField->value);
+check(
+    '语义写值 · TextField 没接 onChanged ⇒ false（受控值没人接，不假装写成功）',
+    $tfNoCbIdx >= 0 && $tfNoCb->setSemanticsValue($tfNoCbIdx, 'x') === false,
+    'idx=' . $tfNoCbIdx,
+);
+// 事件接缝：壳把 UIA `SetValue` 翻成 `SemanticsSetValueEvent`，`dispatchInput` 必须接住。
+// 少了本条，接缝断了（事件被 `dispatch()` 兜底吞掉）也只有真机才发现。
+$svEvtApp = new SemValueApplication();
+$svEvtApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
+$svEvtIdx = SemanticsBuilder::build($svEvtApp->rootElement(), null)
+    ->findByRoleAndName(SemanticsRole::TextField->value, '搜索');
+$svEvtApp->dispatchInput(new SemanticsSetValueEvent($svEvtIdx, '派发来的'));
+check(
+    '语义写值 · SemanticsSetValueEvent 经 dispatchInput 落地（壳的接缝）',
+    $svEvtIdx >= 0 && $svEvtApp->got === '派发来的',
+    'idx=' . $svEvtIdx . ' got=' . var_export($svEvtApp->got, true),
+);
+
+// Slider 的 Application 层：与 TextField 同一条 `SemanticsValueEditable` 路，
+// 但回写走 `emit()`（夹区间）。这条同时证明"按节点索引找到的就是 Slider 本身"。
+$slSvApp = new SliderApplication();
+$slSvApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 400.0)));
+$slSvIdx = SemanticsBuilder::build($slSvApp->root(), null)
+    ->findByRole(SemanticsRole::Slider->value);
+check(
+    '语义写值 · Slider 按节点索引 ⇒ onChanged(77)（RangeValuePattern 回写路径）',
+    $slSvIdx >= 0 && $slSvApp->setSemanticsValue($slSvIdx, '77') === true
+        && $slSvApp->events === [['a', 77.0]],
+    'idx=' . $slSvIdx . ' events=' . json_encode($slSvApp->events),
+);
+
 // —— 指针侧激活（§9.1 动作缝的另一半：鼠标**按下**即触发，与 Enter/Space 同入口）
 //   ★ 按下即激活：当前指针只有 down 相位（up 相位要 P1 的指针事件）。
 //   ★ 判据设计：点空白（无焦点可落）必须**不**触发 —— 若实现退化成
@@ -13423,6 +13478,26 @@ check(
         ? 'no slider node'
         : 'min=' . $slSem->node($slSemIdx)->rangeMin . ' max=' . $slSem->node($slSemIdx)->rangeMax
             . ' arr=' . json_encode($slArr['nodes'][$slSemIdx] ?? null),
+);
+
+// 语义写值（§4.4 提交 2）：`setSemanticsValue` 转 `emit()`（夹区间 + 只在变化时回调）。
+$slSetGot = null;
+$slSetW = Slider::make()->range(0.0, 100.0)->value(42.0)->onChanged(function (float $v) use (&$slSetGot): void {
+    $slSetGot = $v;
+});
+check(
+    'Slider · setSemanticsValue(70) ⇒ onChanged(70)（RangeValuePattern 回写路径）',
+    $slSetW->setSemanticsValue('70') === true && $slSetGot === 70.0,
+    'got=' . var_export($slSetGot, true),
+);
+check(
+    'Slider · setSemanticsValue(999) ⇒ emit 夹到 max 100',
+    $slSetW->setSemanticsValue('999') === true && $slSetGot === 100.0,
+    'got=' . var_export($slSetGot, true),
+);
+check(
+    'Slider · setSemanticsValue("abc") ⇒ false（非数字，读屏据此知道没生效）',
+    $slSetW->setSemanticsValue('abc') === false,
 );
 
 // ── W8-2 Tooltip（声明式 + 框架托管浮层，2026-10-23）──────────────────

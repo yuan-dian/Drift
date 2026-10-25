@@ -82,6 +82,17 @@ const UINT kMsgWake = WM_APP + 1;
  */
 const UINT kMsgUiaInvoke = WM_APP + 2;
 
+/**
+ * UIA `SetValue` 的**转投消息**（§4.4 提交 2）。
+ *
+ * ★ 与 `kMsgUiaInvoke` 同形，唯一多出来的是**字符串载荷**：lParam 只能传整数，
+ *   所以 `ValueAdapter`/`RangeAdapter` 把值 `new std::wstring(...)` 后传指针，
+ *   WndProc 取出、转 UTF-8 入队、随即 `delete`（所有权一次性转移）。
+ * ★ `Toggle()` **不走这条**：Checkbox 的 activate 就是"换值"，直接复用
+ *   `kMsgUiaInvoke`（读屏 Toggle 与鼠标点击同一条路）。
+ */
+const UINT kMsgUiaSetValue = WM_APP + 3;
+
 /** 队列元素种类（壳内部用；跨边界的名字在 `toArray()` 里给） */
 enum EventKind {
     kEvResize = 1,
@@ -94,6 +105,7 @@ enum EventKind {
     kEvWheel,
     kEvDeactivate,
     kEvUiaInvoke,
+    kEvUiaSetValue,
 };
 
 struct PendingEvent {
@@ -209,6 +221,11 @@ struct UiaNode {
     double w = 0.0;
     double h = 0.0;
     bool isControl = true;
+    // UIA `IsEnabled`（§4.4）：不实现它 ⇒ 客户端默认 false ⇒ `RangeValuePattern.SetValue`
+    // 在客户端侧就抛 `ElementNotEnabledException`（**根本到不了 provider**）。
+    // ★ `Toggle()` 的 .NET 封装不检查 IsEnabled，所以 Checkbox 当时"看起来能用"——
+    //   这是"只验证一条 Pattern 会漏掉共用属性"的活证据。
+    bool enabled = true;
     // 值型 Pattern（§4.4）：IValueProvider / IToggleProvider / IRangeValueProvider。
     // ★ value 是"人读串"（PHP SemanticsNode::$value）；range 只对 slider/progress 有意义。
     std::wstring value;
@@ -368,7 +385,17 @@ private:
 class ValueAdapter : public ComTearOff<ValueAdapter, IValueProvider> {
 public:
     explicit ValueAdapter(int index) : m_index(index) {}
-    STDMETHOD(SetValue)(LPCWSTR) override { return UIA_E_NOTSUPPORTED; }
+    STDMETHOD(SetValue)(LPCWSTR value) override {
+        // 转投窗口线程（与 Invoke 同一理由：COM RPC 线程里不能进 PHP）。
+        // 字符串载荷用 `new std::wstring` 过消息 —— lParam 只能传整数；
+        // WndProc 取走后 delete（所有权一次转移）。应用层是否接受由
+        // `SemanticsValueEditable::setSemanticsValue()` 回答。
+        if (g_main != NULL) {
+            PostMessageW(g_main, kMsgUiaSetValue, (WPARAM)m_index,
+                         (LPARAM)new std::wstring(value != nullptr ? value : L""));
+        }
+        return S_OK;
+    }
     STDMETHOD(get_Value)(BSTR *ret) override {
         if (ret == nullptr) return E_INVALIDARG;
         std::wstring v;
@@ -380,7 +407,10 @@ public:
     }
     STDMETHOD(get_IsReadOnly)(BOOL *ret) override {
         if (ret == nullptr) return E_INVALIDARG;
-        *ret = TRUE;
+        // 可写：应用侧若没接 `onChanged`，`setSemanticsValue()` 会回 false
+        // ⇒ 壳回 `UIA_E_ELEMENTNOTAVAILABLE`（不假装成功）。这里报"可写"是
+        // 因为 adapter 不知道控件接没接回调，那是应用层的事实。
+        *ret = FALSE;
         return S_OK;
     }
 
@@ -391,7 +421,15 @@ private:
 class ToggleAdapter : public ComTearOff<ToggleAdapter, IToggleProvider> {
 public:
     explicit ToggleAdapter(int index) : m_index(index) {}
-    STDMETHOD(Toggle)() override { return UIA_E_NOTSUPPORTED; }
+    STDMETHOD(Toggle)() override {
+        // 复用 Invoke 的转投（§4.4 提交 2）：Checkbox 的 activate 语义就是"换值"，
+        // ⇒ "读屏 Toggle"与"鼠标点击"走同一条 `Activatable::activate()`。
+        // 零新消息、零新事件。
+        if (g_main != NULL) {
+            PostMessageW(g_main, kMsgUiaInvoke, (WPARAM)m_index, 0);
+        }
+        return S_OK;
+    }
     STDMETHOD(get_ToggleState)(ToggleState *ret) override {
         if (ret == nullptr) return E_INVALIDARG;
         *ret = ToggleState_Off;
@@ -415,7 +453,17 @@ private:
 class RangeAdapter : public ComTearOff<RangeAdapter, IRangeValueProvider> {
 public:
     explicit RangeAdapter(int index) : m_index(index) {}
-    STDMETHOD(SetValue)(double) override { return UIA_E_NOTSUPPORTED; }
+    STDMETHOD(SetValue)(double value) override {
+        // 与 ValueAdapter 同一条转投；double 先格式化成串（`%.17g` 能无损往返），
+        // 由 `Slider::setSemanticsValue()` 解析后走 `emit()`（夹区间 + 只在变化时回调）。
+        if (g_main != NULL) {
+            wchar_t buf[64];
+            swprintf_s(buf, 64, L"%.17g", value);
+            PostMessageW(g_main, kMsgUiaSetValue, (WPARAM)m_index,
+                         (LPARAM)new std::wstring(buf));
+        }
+        return S_OK;
+    }
     STDMETHOD(get_Value)(double *ret) override {
         if (ret == nullptr) return E_INVALIDARG;
         *ret = wcstod(valueAt().c_str(), nullptr);
@@ -445,7 +493,10 @@ public:
     }
     STDMETHOD(get_IsReadOnly)(BOOL *ret) override {
         if (ret == nullptr) return E_INVALIDARG;
-        *ret = TRUE;
+        // Slider 可写（应用接 `onChanged` 即可）；ProgressBar 是纯读数 ⇒ 只读。
+        // adapter 分不出"这个控件实现没实现接口"，只能按 ControlType 判。
+        *ret = (m_index >= 0 && m_index < (int)g_uiaNodes.size()
+                && g_uiaNodes[m_index].controlType == UIA_ProgressBarControlTypeId) ? TRUE : FALSE;
         return S_OK;
     }
 
@@ -564,11 +615,13 @@ public:
         VariantInit(out);
         std::wstring name = L"Drift";
         long ctrl = UIA_CustomControlTypeId;
+        bool enabled = true;
         if (m_index == -1) {
             ctrl = UIA_WindowControlTypeId;
         } else if (m_index >= 0 && m_index < (int)g_uiaNodes.size()) {
             name = g_uiaNodes[m_index].name;
             ctrl = g_uiaNodes[m_index].controlType;
+            enabled = g_uiaNodes[m_index].enabled;
         }
         if (id == UIA_NamePropertyId) {
             out->vt = VT_BSTR;
@@ -579,6 +632,11 @@ public:
         } else if (id == UIA_IsControlElementPropertyId || id == UIA_IsContentElementPropertyId) {
             out->vt = VT_BOOL;
             out->boolVal = VARIANT_TRUE;
+        } else if (id == UIA_IsEnabledPropertyId) {
+            // ★ 不实现它 ⇒ 客户端默认 false ⇒ `SetValue` 在客户端就抛
+            //   `ElementNotEnabledException`（provider 根本收不到调）。
+            out->vt = VT_BOOL;
+            out->boolVal = enabled ? VARIANT_TRUE : VARIANT_FALSE;
         }
         return S_OK;
     }
@@ -986,6 +1044,25 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             event.d = 0;
             g_queue.push_back(event);
             // 叫醒阻塞在 `GetMessageW` 的泵（同 WM_SIZE / WM_TIMER 的做法）
+            PostMessageW(hwnd, kMsgWake, 0, 0);
+            return 0;
+        }
+
+        case kMsgUiaSetValue: {
+            // UIA `SetValue` 的落地（§4.4 提交 2）：与 Invoke 同一条"入队 + 叫醒"，
+            // 唯一多出来的是字符串载荷（lParam 是 `new std::wstring`，这里接管所有权）。
+            std::wstring *payload = (std::wstring *) lp;
+            PendingEvent event;
+            event.kind = kEvUiaSetValue;
+            event.a = (int) (INT_PTR) wp;
+            event.b = 0;
+            event.c = 0;
+            event.d = 0;
+            if (payload != nullptr) {
+                event.text = toUtf8(payload->c_str(), (int) payload->size());
+                delete payload;
+            }
+            g_queue.push_back(event);
             PostMessageW(hwnd, kMsgWake, 0, 0);
             return 0;
         }
@@ -1450,6 +1527,12 @@ Array toArray(const PendingEvent &event) {
         case kEvUiaInvoke:
             out.set("type", "uia-invoke");
             out.set("idx", (Int)event.a);
+            break;
+
+        case kEvUiaSetValue:
+            out.set("type", "uia-set-value");
+            out.set("idx", (Int)event.a);
+            out.set("value", String(event.text));
             break;
 
         default:
@@ -2140,6 +2223,7 @@ void php_drift_win_uia_push(Array nodes) {
         node.value = toWide(String(value));
         node.rangeMin = a.get("rangeMin").toFloat();
         node.rangeMax = a.get("rangeMax").toFloat();
+        node.enabled = a.get("enabled").toBool();
         node.parent = (int)a.get("parent").toInt();
         node.x = a.get("x").toFloat();
         node.y = a.get("y").toFloat();

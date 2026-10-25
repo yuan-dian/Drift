@@ -110,6 +110,14 @@ final class Bootstrap
             $app->repaintForResize($vp);
         };
 
+        // ★ UIA 无障碍（§9 / M5）：把语义树消费者接到窗口 —— 框架只产
+        //   SemanticsTree、经闭包交给平台（框架不持平台，§5.1）。不接 ⇒ 不建语义树、
+        //   零开销。★ showcase 此前没接 ⇒ UIA 客户端只看到根节点（值型 Pattern
+        //   无从验证）；接上后它是无障碍能力的**展示台**，与 users 同形。
+        $app->setSemanticsSink(static function (array $nodes) use ($window): void {
+            $window->pushSemantics($nodes);
+        });
+
         // ★ **事件队列必须每帧前抽干**：平台把 Win32 消息翻成 Drift 事件推进
         //   `input()`，而**派发是框架的活**（§5.2 裁决 1：循环归平台，派发归框架）。
         //   不抽干的话队列会无限增长，而窗口对点击/按键**毫无反应** —— 且不报错。

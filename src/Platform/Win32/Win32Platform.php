@@ -8,6 +8,7 @@ use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
 use Drift\Input\ScrollEvent;
 use Drift\Input\SemanticsInvokeEvent;
+use Drift\Input\SemanticsSetValueEvent;
 use Drift\Input\ThemeChangedEvent;
 use Drift\Input\WindowDeactivatedEvent;
 use Drift\Platform\Clipboard;
@@ -209,6 +210,18 @@ final class Win32Platform implements Platform
             $index = (int) ($event['idx'] ?? -1);
             if ($index >= 0) {
                 $input->push(new SemanticsInvokeEvent($index));
+            }
+
+            return true;
+        }
+
+        if ($type === 'uia-set-value') {
+            // UIA `SetValue`（§4.4 提交 2）：壳把"第 idx 个节点的值改成 X"翻成一条
+            // 输入事件。载荷是字符串（数值型已由壳 `%.17g` 格式化）。
+            // ★ 索引 < 0 = 坏载荷 ⇒ 不投事件但照旧返回 true（泵只负责"处理完"）。
+            $index = (int) ($event['idx'] ?? -1);
+            if ($index >= 0) {
+                $input->push(new SemanticsSetValueEvent($index, (string) ($event['value'] ?? '')));
             }
 
             return true;

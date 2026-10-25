@@ -45,7 +45,7 @@ use Drift\Input\SemanticsRole;
  *
  * @api
  */
-final class TextField extends StatefulWidget
+final class TextField extends StatefulWidget implements SemanticsValueEditable
 {
     private string $value = '';
     private ?string $label = null;
@@ -133,6 +133,24 @@ final class TextField extends StatefulWidget
     public function changedHandler(): ?\Closure
     {
         return $this->onChanged;
+    }
+
+    /**
+     * 语义层写值（UIA `ValuePattern.SetValue`）：等价于"用户把文本改成 `$value`"，
+     * 走 `onChanged` 一条回写路（受控值归应用 State）。
+     *
+     * ★ 没接 `onChanged` ⇒ `false`：控件没有把值写出去的通道，假装成功会让读屏
+     *   以为改成功了而画面不变。
+     */
+    public function setSemanticsValue(string $value): bool
+    {
+        $handler = $this->onChanged;
+        if ($handler === null) {
+            return false;
+        }
+        $handler($value);
+
+        return true;
     }
 
     public function createState(): State

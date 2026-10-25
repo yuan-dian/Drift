@@ -57,7 +57,7 @@ use Drift\Rendering\SliderStyle;
  *
  * @api
  */
-final class Slider extends RenderBoxWidget
+final class Slider extends RenderBoxWidget implements SemanticsValueEditable
 {
     /** 没显式给宽时的默认宽（与 `RenderSlider` 的无界兜底同值） */
     public const DEFAULT_WIDTH = 160.0;
@@ -165,6 +165,22 @@ final class Slider extends RenderBoxWidget
         $this->onChanged = \Closure::fromCallable($handler);
 
         return $this;
+    }
+
+    /**
+     * 语义层写值（UIA `RangeValuePattern.SetValue`）：转 `emit()` —— 它会夹到
+     * `[min,max]`、并只在**值真的变了**时回调（与点轨道/拖拇指同一条路）。
+     *
+     * ★ 非数字 / 禁用 ⇒ `false`（读屏据此知道没生效）。
+     */
+    public function setSemanticsValue(string $value): bool
+    {
+        if (!$this->enabled || !is_numeric($value)) {
+            return false;
+        }
+        $this->emit((float) $value);
+
+        return true;
     }
 
     /**

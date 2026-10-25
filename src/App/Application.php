@@ -16,6 +16,7 @@ use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
 use Drift\Input\ScrollEvent;
 use Drift\Input\SemanticsInvokeEvent;
+use Drift\Input\SemanticsSetValueEvent;
 use Drift\Input\ThemeChangedEvent;
 use Drift\Input\WindowDeactivatedEvent;
 use Drift\Platform\Clipboard;
@@ -35,6 +36,7 @@ use Drift\Text\TtfFace;
 use Drift\Geometry\Rect;
 use Drift\Text\TextMetricsProvider;
 use Drift\Widget\Scrollable;
+use Drift\Widget\SemanticsValueEditable;
 use Drift\Theme\ThemeData;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Drag\Draggable;
@@ -1217,6 +1219,44 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         return true;
     }
 
+    /**
+     * 按**语义节点索引**写入一个值（UIA `IValueProvider` / `IRangeValueProvider`
+     * 的 `SetValue`，§4.4 提交 2）。
+     *
+     * ★ 寻址与 `invokeSemanticsNode()` 同源（节点几何中心 → 命中 → Element），
+     *   区别只在最后一步：**不派发 tap**，而是沿命中 Element 的父链找
+     *   `SemanticsValueEditable`（与 `activateFocusedWidget()` 找 `Activatable`
+     *   同构）。`SetValue` 是"把值改成 X"，不是"点一下"。
+     * ★ 返回 false 的四种情形（越界 / 零面积 / 未挂载 / 无人接）⇒ 消费方回
+     *   `UIA_E_ELEMENTNOTAVAILABLE`，**不能假装成功**。
+     */
+    public function setSemanticsValue(int $index, string $value): bool
+    {
+        $tree = SemanticsBuilder::build($this->root, null);
+        if ($index < 0 || $index >= $tree->count()) {
+            return false;
+        }
+        $node = $tree->node($index);
+        if ($node->w <= 0 || $node->h <= 0) {
+            return false;
+        }
+        $root = $this->root;
+        $focus = $this->focus;
+        if ($root === null || $focus === null) {
+            return false;
+        }
+        $hit = $focus->hitTest($node->x + $node->w / 2.0, $node->y + $node->h / 2.0, $root);
+        $element = $hit === null ? null : $focus->elementAt($root, $hit);
+        for ($e = $element; $e !== null; $e = $e->parent()) {
+            $widget = $e->widget();
+            if ($widget instanceof SemanticsValueEditable) {
+                return $widget->setSemanticsValue($value);
+            }
+        }
+
+        return false;
+    }
+
     /** @internal 夹具 / devtools：上次推送用的是哪一档（`full` / `coalesce` / `none`） */
     public function semanticsMode(): string
     {
@@ -1432,6 +1472,15 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
             $this->invokeSemanticsNode($event->index);
 
             return null;   // 不是指针事件 ⇒ 不改光标
+        }
+
+        // ★ UIA 的"可写"半边（§4.4）：读屏要求把某个语义节点的值改成 X。
+        //   与 Invoke 同一条队列/同轮循环；区别只在落到 `setSemanticsValue()`
+        //   （不派发点击 —— `SetValue` 不是"点一下"）。
+        if ($event instanceof SemanticsSetValueEvent) {
+            $this->setSemanticsValue($event->index, $event->value);
+
+            return null;
         }
 
         if ($event instanceof ThemeChangedEvent) {
