@@ -332,6 +332,81 @@ S2 / S3 划掉，第二、三步空出来 ⇒ 直接进**第四步（穿插批�
    这是唯一能**从外部**测出 API 易用性缺陷的手段（`$this->application()` 那类
    "能编译、能跑、就是崩"的坑，只有从零写一个应用才会撞到）。
 
+## 7.2 U3 执行复核（2026-10-25）：动工前重测「写一个应用到底要多少行」
+
+U3 的处方是"加 `apps/tutorial/`"。动工前先量了一遍**从零写一个应用的真实成本**，
+结论是：**处方方向对，但四条预设缺陷里有三条不该改框架**。
+
+### 实测：一个 Hello World 应用 = 4 个文件 / 188 行
+
+| 文件 | 行数 | 应用自己写的部分 |
+|---|---|---|
+| `main.php` | 26 | 1 行（`Bootstrap::run()`）+ 25 行注释 |
+| `project.yml` | 41 | 6 行有效（`name` / `version` / `info` / `include` / `sources`） |
+| `bin/win32/Bootstrap.php` | **121** | **1 行**（`new HelloApplication()`） |
+| `src/HelloApplication.php` | 22 | `buildRoot()` 的 3 行 |
+
+★ 四个应用的 `Bootstrap` 分别是 **121 / 190 / 157 行**（hello / users / showcase），
+归一化后**骨架逐行同构**（`apps/showcase/bin/win32/Bootstrap.php` 自己就写着
+"本文件与 hello / users 的 Bootstrap 逐行同构 —— 换应用只换 `new XApplication()` 一行"）。
+差异只有三处：① 窗口几何常量 ② 是否读回窗口状态（`WindowStateStore`）
+③ 是否在循环里泵 `FrameClock` / `ProcessTaskHost::reap()`。
+
+### 四条候选缺陷的判决
+
+| # | 缺陷 | 判决 | 理由 / 推翻条件 |
+|---|---|---|---|
+| **F1** | **121 行组合根样板要照抄** | **不改框架** | §5.2 裁决 1 是"框架绝不自建循环"，而**主循环恰好归应用**：`users` 要在循环里 `ProcessTaskHost::reap()`、`showcase` 要泵 `FrameClock` 并在关窗时存窗口状态。抽成框架 helper 就必然长出"每帧钩子 / 关窗钩子 / 启动钩子" —— 那是 A15「没有消费者不预先发明机制」明令禁止的形状（消费者只有 3 个，且各自需要不同的钩子）。⇒ **F1 的正确修法就是 U3 本身**：把 121 行变成**带解释的模板**，而不是把它藏进框架。推翻条件：出现第 4 个"循环里什么都不干"的应用，且样板涨到 200 行以上 |
+| **F2** | **`buildRoot()` 递能力用位置参数闭包** | **暂不改** | `ShowcaseRoot::make(\Closure $snackbar, \Closure $after)` —— 两个形参类型都是 `\Closure`，只靠签名区分，**tpc 对闭包 arity 没有系统验证**（`Widget::overlayPanel()` 的 docblock 已写死这条）⇒ 传反位置要到"点了才炸"。但 tutorial 只需要 **1 个**能力、showcase 是 **2 个**，改成具名能力对象在 1–2 个字段时是净增概念。推翻条件：某应用需要 **≥3 个**能力时，改成 `final class HostCapabilities`（具名字段 + 可加性），一次性替换所有 root |
+| **F3** | **没有入门路径** | **U3 修** | `docs/00-README.md` §2「读者路径」7 行里**没有**"我想写一个应用"—— 唯一路径是照抄 `apps/hello`。U3 交付 `docs/tutorial.md` + 在 §2 补一行 |
+| **F4** | **`overlayPanel()` 只有内部消费者** | **U3 顺带验** | `grep -rn "overlayPanel(" src/ apps/` 除定义外只有 `Select` / `ComboBox`（都是框架自己的控件）⇒ "应用侧能不能用"从未被验证过。tutorial 的浮层段用 `Button::make()->overlayPanel(...)` 成为**第一个外部消费者** |
+
+### 与原处方的一处修正：**段序改成 hello → 计数器 → 浮层 → 异步**
+
+原序是 "hello-world → 计数器 → 异步 → 浮层"。实测三条缝的**接线成本**后要换：
+
+| 段 | 需要组合根接线吗 | 依据 |
+|---|---|---|
+| hello | 否 | 只写 `buildRoot()` / `title()` |
+| 计数器 | 否 | `setState()` 在 `State` 内自洽 |
+| **浮层** | **否** | `Widget::overlayPanel(\Closure $factory)` 是**声明式缝**：`dismiss` 由 `Application` 在开面板那一刻注入（`Select` / `ComboBox` 同款）。`apps/showcase/src/Pages/SelectPage.php:43` 原话："不需要组合根接线（与 Snackbar 相反）" |
+| **异步** | **是** | `after()` / `TaskHost` 都在 `Application` 上，控件层够不到（§4.3 禁 `Widget → App`）⇒ 只能由 `buildRoot()` 递闭包 |
+
+⇒ 把"零接线"的浮层放第 3 段、"唯一要接线"的异步放最后一段，**最后一段才教接线**，
+读者不会在第 3 段就撞墙。这也让 tutorial 里**只出现一个闭包**（`after`），
+把 F2 的样板成本压到最低。
+
+### 动工后新增的三条（写应用时真撞到的）
+
+上面四条是**动工前**的预判。写的过程又撞到三条，其中一条是**真框架缺陷**：
+
+| # | 缺陷 | 判决 | 依据 |
+|---|---|---|---|
+| **F5** | **新增应用必须在仓库根 `composer.json` 登记 `App\<Name>\`**，否则 `php.exe` 侧（smoke / preview / 解释器）找不到类，而 **AOT 侧靠 `project.yml` 的 `sources` 自动收** ⇒ 两边不同源，只有内环炸 | **不改** | `composer.json` 在本仓是**物理边界表**（`tools/autoload.php` 与 `tools/Lint/Project.php` 都读它，`NamespaceMismatch` 按它判）⇒ 自动 glob 会让"登记表"与"实际能加载的类"分叉。**正确做法是把它写进教程第 0 节**（已写） |
+| **F6** | **新增中文文案会静默无墨**：内置点阵字模是生成物，覆盖范围 = 上次扫描时全仓字面量里出现过的字符。新字不在表里 ⇒ **不画 tofu、不报错、零宽隐形** ⇒ 一句话少了一截（本次 45 个字，含「和」「十」「北」「京」「市」） | **修（重跑生成器）** | `php tools/font-scan-chars.php && python tools/font-gen-glyphs.py`。★ 实测是**纯新增**：补 45 字、**240 行插入 0 行删除**（既有字形逐字节不动）⇒ smoke 的 md5 断言不受影响。顺带清掉"内置字模缺 164 个中文字符"这条遗留 |
+| **F7** | **`RenderButton` 的内禀宽漏了自身内边距** ⇒ `PopupPanel` 按 `child->intrinsicWidth(INF)` 定面板宽时，面板比标签还窄 ⇒ **中文逐字竖排**（实测面板 48 宽、按钮 28 宽、"北京"排两行） | **修（框架缺陷）** | 内边距在本类 `performLayout()` 里 `deflate`/`inflate`，**不进 `mods`** ⇒ 基类 `intrinsicWidth()` 补的 `mods` padding 恒为 0。`RenderMenuItem` 早就补过同一句（注释记着"漏了 insets ⇒ 面板偏窄 ⇒ 行内内容溢出报 C5"），`RenderButton` 是同一个坑，只是**从没有外部消费者**：`PopupPanel` 的既有消费者 `Select`/`Menu` 用的都是 `Option`/`MenuItem`，**裸 `Button` 从没进过面板** |
+
+★ F7 是这份评审里**唯一一条"必须从外部写应用才测得出来"的缺陷** —— 框架内部三条
+`intrinsicWidth` 断言（Card / SizedBox / SegmentedControl）都覆盖了自己那条路，
+唯独按钮没有；而"按钮进 `PopupPanel`"这个组合此前**一个消费者都没有**。
+修法与判据都按既有形状办：`contentIntrinsicWidth/Height` 加 `insets`，
+smoke 加一条"内禀宽 === 自然排出来的宽"（摘掉修复 ⇒ 恰好红 1 条，`内禀 16 / 实排 48`）。
+
+### F8 · 最小 `Bootstrap` 里的 `after()` 永远不响 —— **最贵的一条**
+
+| 项 | 内容 |
+|---|---|
+| **现象** | `apps/tutorial` ④ 段真机：点「开始加载」→ 出现「加载中…」→ **停在那里**。1500ms 后的截图与 400ms 时 **md5 逐字节相同**。而 smoke 全绿（14 条断言全过） |
+| **根因** | `pump()` 阻塞在壳的 `GetMessageW`。**没有输入事件时循环一直睡**。`Application::wantsFrame()` 只是"回答要不要跑下一帧"，**没人问就没人答** ⇒ 定时器从不上膛 ⇒ `after()` 排的回调永不触发、`Spinner` 永不转 |
+| **为什么闸门抓不到** | smoke 里每一帧都是**显式跑**的（`$app->frame(1200.0, ...)`），永远不需要"有人把循环叫醒"；`wantsFrame()` 那六条判据本身也是对的 —— 缺的是**驱动方**，不是判据 |
+| **谁是对的** | `apps/users` 与 `apps/showcase` 的 `Bootstrap` **都**建了 `FrameClock` 并 `pace()`；`apps/hello` 没有（它不用异步/动画，所以从不显形）。而 `hello` 恰恰是**所有新应用的抄写来源** ⇒ 抄它就得到一个"异步永远不动"的应用 |
+| **修法** | ① `apps/tutorial` 的循环改用 `FrameClock::tick()`；② **`apps/hello` 同步改**（模板必须是对的，哪怕它自己不用）；③ `docs/tutorial.md` 第 3 节把"把 `tick` 换成 `frame`"列进"删了就静默坏"表 |
+| **判决** | **不抽进框架**。`FrameClock` 已在 `src/App/`（不是应用代码），需要应用的只是"每轮问一次 `wantsFrame()`"这一行 —— 抽掉它就得让 `Application` 自己持有平台定时器，直接违反 §5.1「平台引用止于组合根」 |
+
+★ 这条把 U3 的价值说满了：**F7 是"从外部才看得见的渲染缺陷"，F8 是"从外部才看得见的
+生命周期缺陷"**，两条都通过了 smoke + lint + docref + selftest 四道闸门。
+"smoke 全绿 ≠ 真机正确"这句判据，这一轮又兑现了两次。
+
 ---
 
 ## 8. 取数口径（怎么复核这份报告）

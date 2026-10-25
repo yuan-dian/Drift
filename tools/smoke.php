@@ -31,6 +31,7 @@ use Drift\App\FrameClock;
 use Drift\Platform\Win32\Win32SurfaceProvider;
 use Drift\App\FocusManager;
 use App\Hello\HelloApplication;
+use App\Tutorial\TutorialApplication;
 use Drift\App\Frame;
 use Drift\App\FramePhase;
 use Drift\App\Paths;
@@ -6638,6 +6639,198 @@ check(
         && abs(($helloBounds[0] + $helloBounds[1]) / 2 - 160) <= 4
         && abs(($helloBounds[2] + $helloBounds[3]) / 2 - 120) <= 4,
     '包围盒 ' . ($helloBounds === null ? 'null' : implode(',', $helloBounds))
+);
+
+// ── ㊷ apps/tutorial：从零写一个应用（`docs/tutorial.md` 的配套代码）───────
+//
+// ★ 这一节的作用不是"证明 tutorial 能跑"，是**给教程绑一条闸门**：
+//   `docs/tutorial.md` 讲的那几条（四段结构 / overlayPanel 零接线 / after 要接线）
+//   一旦被后续改动打破，这里先红，而不是等下一次有人照抄教程时才发现。
+// ★ 断言全部走**公开面**（`dispatchInput` + `findElement`），不碰 State 私有字段
+//   —— 教程要教的就是"从外面看得见的行为"。
+
+$tutConstraints = BoxConstraints::tight(new Size(720.0, 900.0));
+$tutApp = new TutorialApplication();
+$tutSurface = new SurfaceProbe();
+$tutSurface->resize(720, 900, 1.0);
+$tutApp->attach($tutSurface, $tutConstraints);
+
+check('apps/tutorial · 应用只写 buildRoot/title（§4.5）', $tutApp->title() === 'Drift 教程');
+check(
+    'apps/tutorial · 首屏有墨（四段都排开了，不是静默空白）',
+    $tutSurface->canvas !== null && inkCount($tutSurface->canvas) > 0,
+    '墨点数 ' . (string) ($tutSurface->canvas !== null ? inkCount($tutSurface->canvas) : -1)
+);
+
+// 四段标题都在树上 —— 少一段 = 那段建树失败（它自己**不会报错**，只是不出现）
+$tutTitles = ['① 最小应用', '② 计数器', '③ 浮层（声明式缝，零接线）', '④ 异步（唯一需要接线的一段）'];
+$tutFound = 0;
+foreach ($tutTitles as $tutTitle) {
+    if (findElement(
+        $tutApp->root(),
+        static fn (Element $e): bool => $e->widget() instanceof Text && $e->widget()->content() === $tutTitle
+    ) !== null) {
+        $tutFound++;
+    }
+}
+check('apps/tutorial · 四段标题都在树上', $tutFound === 4, '找到 ' . $tutFound . ' / 4');
+
+/** 按控件标签点一下（盒中心）并走一帧；找不到盒 ⇒ 返回 false（断言会因此红） */
+$tutClick = static function (
+    Application $app,
+    callable $pred,
+    float $timestamp,
+    BoxConstraints $constraints,
+): bool {
+    $element = findElement($app->root(), $pred);
+    $box = $element?->renderObject();
+    $size = $box?->size();
+    if ($box === null || $size === null) {
+        return false;
+    }
+    $origin = boxOrigin($box);
+    $x = $origin[0] + $size->width / 2;
+    $y = $origin[1] + $size->height / 2;
+    $app->dispatchInput(PointerEvent::down($x, $y), $timestamp);
+    $app->dispatchInput(PointerEvent::up($x, $y), $timestamp + 1.0);
+    $app->frame($timestamp + 2.0, $constraints);
+
+    return true;
+};
+
+/** 树上有没有这段文字 */
+$tutHasText = static function (Element $root, string $needle): bool {
+    return findElement(
+        $root,
+        static fn (Element $e): bool => $e->widget() instanceof Text
+            && str_contains($e->widget()->content(), $needle)
+    ) !== null;
+};
+
+/**
+ * 浮层（任一 entry）里有没有这个标签。
+ *
+ * ★ 不取 `top()`：浮层栈顶可能是遮罩那一层，面板在它下面 —— 扫全部 entry
+ *   才不会"看着开了、内容却找不到"。
+ * ★ 同时认 `Text` 与 `Button`：面板里的选项是 `Button::make($city)`，
+ *   **不是** `Text`（第一版只找 `Text` ⇒ 假红一次）。
+ */
+$tutOverlayHasLabel = static function (Application $app, string $needle): bool {
+    foreach ($app->overlays()->all() as $entry) {
+        $element = $entry->element;
+        if ($element === null) {
+            continue;
+        }
+        if (findElement(
+            $element,
+            static function (Element $e) use ($needle): bool {
+                $widget = $e->widget();
+                if ($widget instanceof Button) {
+                    return $widget->label() === $needle;
+                }
+
+                return $widget instanceof Text && str_contains($widget->content(), $needle);
+            }
+        ) !== null) {
+            return true;
+        }
+    }
+
+    return false;
+};
+
+// ── ② 计数器：点 +1 ⇒ 文本真的变（State + setState 全链）──
+check(
+    'apps/tutorial · ② 计数器初始为 0',
+    $tutHasText($tutApp->root(), 'count = 0')
+);
+$tutClicked = $tutClick(
+    $tutApp,
+    static fn (Element $e): bool => $e->widget() instanceof Button && $e->widget()->label() === '+1',
+    100.0,
+    $tutConstraints
+);
+check('apps/tutorial · ② 找得到 +1 按钮并点中（盒中心命中）', $tutClicked);
+check(
+    'apps/tutorial · ② 点一次 ⇒ count = 1（setState 帧末统一重建）',
+    $tutHasText($tutApp->root(), 'count = 1'),
+    '树上仍是 ' . ($tutHasText($tutApp->root(), 'count = 0') ? 'count = 0' : '别的值')
+);
+
+// ── ③ 浮层：`overlayPanel()` 是声明式缝 ⇒ 激活即开，不需要组合根接线 ──
+$tutOverlayBase = $tutApp->overlays()->count();
+$tutOpened = $tutClick(
+    $tutApp,
+    static fn (Element $e): bool => $e->widget() instanceof Button && $e->widget()->label() === '选择城市',
+    200.0,
+    $tutConstraints
+);
+check('apps/tutorial · ③ 找得到「选择城市」并点中', $tutOpened);
+check(
+    'apps/tutorial · ③ 激活 ⇒ 浮层多一层（overlayPanel 缝真的通）',
+    $tutApp->overlays()->count() === $tutOverlayBase + 1,
+    '层数 ' . (string) $tutApp->overlays()->count() . ' / 基线 ' . (string) $tutOverlayBase
+);
+// ★ 再走一帧：`placeOverlays()` 在 settle **之前**跑 ⇒ 面板内容是**下一帧**才建出来的
+//   （真机上靠 `panelsLagBehind()` 把帧时钟上膛，用例里得自己多跑一帧）。
+$tutApp->frame(210.0, $tutConstraints);
+check(
+    'apps/tutorial · ③ 浮层里是那三个选项（面板内容真建出来了）',
+    $tutOverlayHasLabel($tutApp, '上海'),
+    '浮层层数 ' . (string) $tutApp->overlays()->count()
+);
+
+// ★★ 浮层暴露的**框架缺陷**回归（2026-10-25，`RenderButton` 内禀宽漏 insets）：
+//   `PopupPanel` 按 `child->intrinsicWidth(INF)` 定面板宽 ⇒ 按钮内禀宽若只算标签、
+//   不算自己的左右内边距，面板就会比标签还窄 ⇒ **中文逐字竖排**（实测面板 48 宽、
+//   按钮 28 宽、"北京"两行）。修前 `intrinsicWidth(INF)` 是 28 而实际排出 60。
+//
+//   ★ 判据取**「自然排出来的宽 === 内禀宽」**这条不变量，不写死像素：
+//     它是"内禀宽表达的是真尺寸"的定义本身，改字号 / 换主题都不会假红。
+//   ★ 用 `+1` 按钮（在 `Row` 里按自然宽排，没被 `Spacer` 挤）而不是面板里的按钮 ——
+//     面板里那个正是被压的对象，拿它判会两边一起变小、看着"相等"。
+$tutPlusBox = findElement(
+    $tutApp->root(),
+    static fn (Element $e): bool => $e->widget() instanceof Button && $e->widget()->label() === '+1'
+)?->renderObject();
+$tutPlusSize = $tutPlusBox?->size();
+check(
+    'Layout · Button 内禀宽 = 自然排出来的宽（含内边距；漏了 ⇒ PopupPanel 挤成竖排）',
+    $tutPlusBox !== null && $tutPlusSize !== null
+        && $tutPlusBox->intrinsicWidth(INF) === $tutPlusSize->width,
+    '内禀 ' . (string) ($tutPlusBox?->intrinsicWidth(INF) ?? -1.0)
+        . ' / 实排 ' . (string) ($tutPlusSize?->width ?? -1.0)
+);
+
+// 再点一次 ⇒ 收回去（"激活 = 开/关"）；关掉之后 ④ 的点击才不会被遮罩吞掉
+$tutClosed = $tutClick(
+    $tutApp,
+    static fn (Element $e): bool => $e->widget() instanceof Button && $e->widget()->label() === '选择城市',
+    220.0,
+    $tutConstraints
+);
+check('apps/tutorial · ③ 再激活一次 ⇒ 浮层收回（开/关是同一个入口）', $tutClosed && $tutApp->overlays()->count() === $tutOverlayBase);
+
+// ── ④ 异步：`after()` 由组合根递下来；700ms 后结果到达 ──
+$tutLoad = $tutClick(
+    $tutApp,
+    static fn (Element $e): bool => $e->widget() instanceof Button && $e->widget()->label() === '开始加载',
+    300.0,
+    $tutConstraints
+);
+check('apps/tutorial · ④ 找得到「开始加载」并点中', $tutLoad);
+check(
+    'apps/tutorial · ④ 点了 ⇒ 进加载态（loading 一帧都不能少）',
+    $tutHasText($tutApp->root(), '加载中')
+);
+check(
+    'apps/tutorial · ④ 还没到点 ⇒ 结果不出现（防"当场触发"）',
+    !$tutHasText($tutApp->root(), '结果到了')
+);
+$tutApp->frame(1200.0, $tutConstraints);
+check(
+    'apps/tutorial · ④ 700ms 后 ⇒ 结果到达（after 的回调在 UI 线程 setState）',
+    $tutHasText($tutApp->root(), '结果到了')
 );
 
 // ── ㉜ 光标形状（§9.1「一次命中，三方消费」的第 ③ 方）──

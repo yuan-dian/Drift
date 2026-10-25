@@ -36,6 +36,7 @@
 | 我是谁 / 我想干什么 | 看哪套 | 入口 |
 |---|---|---|
 | **改代码前想了解现状** | `docs/architecture/` | [`00-README.md`](architecture/00-README.md) |
+| **想从零写一个应用** | [`tutorial.md`](tutorial.md) + `apps/tutorial/` | [`tutorial.md`](tutorial.md) |
 | **想加一个新控件** | `docs/architecture/08-控件面.md` + 根 `DESIGN.md §15` | — |
 | **想懂设计裁决为什么这么定** | 根 `DESIGN.md` | [`../DESIGN.md`](../DESIGN.md) |
 | **想知道 v7 有哪些值得搬** | `docs/design-v7/24-v7-vs-实现.md` | [`design-v7/24-v7-vs-实现.md`](design-v7/24-v7-vs-实现.md) |
@@ -51,6 +52,7 @@
 | 文件 | 角色 | 权威度 |
 |---|---|---|
 | [`AOT-CONSTRAINTS.md`](AOT-CONSTRAINTS.md) | **AOT 编译约束与实测**（TypePHP `tpc.php` 的边界） | ★★★★★ |
+| [`tutorial.md`](tutorial.md) | **从零写一个应用**（五个文件 / 四段代码 / 四个静默坑）；配套 `apps/tutorial/` | ★★★★★ |
 | [`ARCH-REVIEW-2026-10-24.md`](ARCH-REVIEW-2026-10-24.md) | **W8 收盘后的全维度体检**（架构/实现/扩展性/易用性/长期维护） | ★★★★☆ |
 | [`ARCH-REVIEW-2026-10-21.md`](ARCH-REVIEW-2026-10-21.md) | W8 之前的诊断（A1/A3 已落地，A2 未做） | ★★★☆☆ |
 | [`ARCH-V2-REVIEW-2026-10-21.md`](ARCH-V2-REVIEW-2026-10-21.md) | v2 文档体系评审（§5.1"文档即规格但没防漂移"是 M2 的来源） | ★★★☆☆ |

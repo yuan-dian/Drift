@@ -1,0 +1,37 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# apps/tutorial/project.yml —— 第 2 个文件：告诉 tpc「这个应用由哪些源码组成」
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# ★★ **从仓库根调用**：`tpc apps/tutorial/project.yml -O2 -m bin`
+#   （或 `php tools/drift-build.php tutorial`，它替你拼这条命令）
+#
+#   为什么必须从根调用：
+#     ① `cxx-flags` / `ld-flags` 不经过 tpc 的路径解析 ⇒ 相对**编译进程的 cwd**；
+#     ② 输出 exe 落在 **cwd**（`name:` 只决定文件名）；
+#     ③ 运行期资源的相对路径也相对 cwd。
+#   ⇒ 反过来，**被 tpc 解析的路径**（`sources` / `build-dir`）以**本文件所在目录**
+#     为基准 ⇒ 必须写 `../../` 前缀。
+#
+# ★ 编译参数（`no-console` / `cxx-std` / flags / libs / `ignore` / `build-dir`）
+#   都在 `../../build/base.yml`，四个应用共用；本文件只写**本应用独有**的。
+
+name: tutorial
+version: 0.1.0
+
+info:
+  Author: Drift
+  Description: 从零写一个 Drift 应用 —— hello / 计数器 / 浮层 / 异步四段
+
+include: ../../build/base.yml
+
+# ── 源码（路径相对**本文件所在目录**）──
+#   `.`             本应用全部：main.php（全局 main()）+ src/ + bin/win32/
+#   `../../src`     Drift 框架本体（bin 模式 = 整程序 AOT，框架随应用一起编进 exe）
+#   `../../cpp-src` Win32 桥：drift_win32.stub.php（ABI 声明）+ drift_win32.cc（实现）
+#
+# ★ `sources` 必须留在各应用文件里、不能进 base：tpc 的 YAML **list 型项是整体替换**
+#   （不是追加），放 base 里会被子文件顶掉 —— 而每项都含各应用自己的相对路径。
+sources:
+  - .
+  - ../../src
+  - ../../cpp-src

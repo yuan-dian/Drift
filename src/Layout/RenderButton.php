@@ -50,6 +50,36 @@ final class RenderButton extends RenderProxyBox
         return $this->box;
     }
 
+    /**
+     * 内禀宽 = **标签宽 + 左右内边距**。
+     *
+     * ★★★ 必须自己加 `insets`：本类的内边距**不进 `mods`**，而是在
+     *   `performLayout()` 里 `deflate`/`inflate` 出来的 ⇒ 基类 `intrinsicWidth()`
+     *   补的是 `mods` 的 padding（本类恒为 0）⇒ 不加这一句，内禀宽就等于**纯标签宽**。
+     *
+     *   后果不是"偏小几个像素"，是**按内禀定宽的容器会把按钮挤到放不下一行**：
+     *   `RenderPopupPanel::performLayout()` 用 `child->intrinsicWidth(INF)` 定面板宽
+     *   ⇒ 面板宽 ≈ 标签宽 + 面板内边距 ⇒ 按钮拿到的可用宽比标签还窄 ⇒ 中文逐字竖排。
+     *   2026-10-25 从 `apps/tutorial` 的浮层段实测到（48 宽的面板里「北京」竖着排，
+     *   而闸门全绿 —— `PopupPanel` 的既有消费者 `Select`/`Menu` 都用 `Option`/
+     *   `MenuItem`，从没让裸 `Button` 进过面板）。
+     *
+     *   ★ `RenderMenuItem` 早就补了同一句，注释里记着同款症状（"漏了 insets ⇒
+     *     面板偏窄 ⇒ 行内内容溢出报 C5"）—— 本类是同一个坑，只是没有外部消费者。
+     */
+    #[\Override]
+    protected function contentIntrinsicWidth(float $height): float
+    {
+        return $this->insets->horizontal() + parent::contentIntrinsicWidth($height);
+    }
+
+    /** 内禀高 = 标签高 + 上下内边距（同 `contentIntrinsicWidth` 的理由） */
+    #[\Override]
+    protected function contentIntrinsicHeight(float $width): float
+    {
+        return $this->insets->vertical() + parent::contentIntrinsicHeight($width);
+    }
+
     protected function performLayout(BoxConstraints $constraints): Size
     {
         $inner = $constraints->deflate($this->insets);
