@@ -33,6 +33,7 @@ use App\Showcase\Pages\CustomPaintPage;
 use App\Showcase\Pages\FeedbackPage;
 use App\Showcase\Pages\FormPage;
 use App\Showcase\Pages\GridPage;
+use App\Showcase\Pages\IconPage;
 use App\Showcase\Pages\ImagePage;
 use App\Showcase\Pages\LayoutPage;
 use App\Showcase\Pages\ListPage;
@@ -152,6 +153,8 @@ final class ShowcaseState extends State
             ['富文本 Rich', static fn(): Widget => new RichTextPage()],
             // ★ 追加**在末尾**（同上条注释）：前 19 项的 y 坐标不变 ⇒ 既有真机探针不用改。
             ['日志 Log', static fn(): Widget => new LogPage()],
+            // ★ 同上：图标页追加在最末，前 20 项的 y 坐标不变。
+            ['图标 Icon', static fn(): Widget => new IconPage()],
         ];
     }
 

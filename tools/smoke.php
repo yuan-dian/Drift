@@ -283,9 +283,13 @@ use Drift\Widget\SpinnerState;
 use Drift\Widget\Checkbox;
 use Drift\Widget\Radio;
 use Drift\Layout\RenderDivider;
+use Drift\Layout\RenderIcon;
 use Drift\Layout\RenderProgress;
 use Drift\Widget\Divider;
 use Drift\Widget\Toggle;
+use Drift\Widget\Icon;
+use Drift\Widget\IconName;
+use Drift\Widget\IconSet;
 use Drift\Widget\Progress;
 use Drift\Widget\SegmentedControl;
 use Drift\Widget\Segment;
@@ -12414,6 +12418,50 @@ check(
     $pgIdx >= 0 && $pgTree->node($pgIdx)->value === '42%',
     'idx=' . $pgIdx,
 );
+
+// ── 图标（08 §4.2）：Path 图形、固定正方形、不进语义树 ──
+//   ★ 判据落在几何与像素上 —— 图标最容易的失败是"数据表漏了一项"（空 Path ⇒
+//     什么都不画、且不报错）与"尺寸被父约束撑满"。
+$icRoot = Icon::make(IconName::Menu, 16.0)->createElement();
+$icRoot->mount(null, $context);
+$icBox = $icRoot->effectiveBox();
+check('Icon · 挂载即建出 RenderIcon', $icBox instanceof RenderIcon);
+$icBox?->layout(BoxConstraints::loose(new Size(80.0, 80.0)));
+check(
+    'Icon · 固定正方形 16×16（不撑满父约束）',
+    $icBox?->size()?->width === 16.0 && $icBox?->size()?->height === 16.0,
+);
+$icCanvas = new RasterCanvas(16, 16, Color::white(), Scale::of(1.0));
+$icBox?->paint($icCanvas);
+$icInk = 0;
+for ($yy = 0; $yy < 16; $yy++) {
+    for ($xx = 0; $xx < 16; $xx++) {
+        if (!$icCanvas->pixelAt($xx, $yy)->equals(Color::white())) {
+            $icInk++;
+        }
+    }
+}
+check('Icon · Menu 画出了墨（三条横线）', $icInk > 0, 'ink=' . $icInk);
+
+// 枚举与数据表一一对应：漏一项 ⇒ 空 Path ⇒ 静默不画（最隐蔽的失败）
+$icMissing = [];
+foreach (IconName::cases() as $icName) {
+    if (IconSet::path($icName, 16.0)->isEmpty()) {
+        $icMissing[] = $icName->value;
+    }
+}
+check(
+    'Icon · 每个 IconName 都有图形数据（空 Path = 静默不画）',
+    $icMissing === [],
+    'missing=' . implode(',', $icMissing),
+);
+
+// 装饰性叶子：不进语义树
+$icTree = SemanticsBuilder::build($semLay(Column::make()->children([
+    Icon::make(IconName::Search),
+])));
+check('Sem · Icon 不进语义树（装饰性叶子）', $icTree->count() === 0, 'count=' . $icTree->count());
+
 // ── ㊹ 动画：`AnimationController` / `Curve`（2026-10-21，#52：§17.4.11）──────
 //    ★ 两层判据：① 控制器算术（曲线端点 / 夹取 / 打断 / 回调一次性）；
 //      ② **链条**（State::tickFrame → animating → wantsFrame → 帧真的重建）。
