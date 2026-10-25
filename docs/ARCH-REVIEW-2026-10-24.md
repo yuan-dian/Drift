@@ -267,6 +267,73 @@ smoke 1390 / lint 19 规则 / selftest 15+18 / T2 AOT / 真机 md5 连跑 2–3 
 
 ---
 
+## 7.1 执行复核（2026-10-25）：**S2 与 S3 的前提已被 W8 消解，I4 的处方要改一半**
+
+第零步（M2 `docref`、U1 `api-surface`）与第一步（S1 拆 `Application`）已完成。
+执行第二步前重测了一遍 S2 / S3 的**前提**，结论是两条都不该按原处方做。
+
+### S2 · `StatefulControl` 基座 —— **否决（不是"做不了"，是"已经做完了，只是不叫这个名字"）**
+
+原处方的三条收益，逐条实测：
+
+| 处方里的收益 | 实测 | 证据 |
+|---|---|---|
+| ① 光标陷阱消失（`setCursor()` 只有**一个**写点） | **已达成** | 写点从 12+ 处收到 `Element::syncBox()` 与 `StatefulElement::syncBox()` 两处，且**都在造盒的同一个方法里** ⇒ "盒为 null 时落光标"这个陷阱在结构上不存在 |
+| ② `Element::syncBox()` 的 `instanceof` **分支表**删 4 条 | **已达成** | `Element.php:149` 只剩**一条** `$this->widget instanceof RenderBoxWidget`（接口判定，不是分支表）；`ProxyElement.php:21` 的注释记着"原来这里是 7 个 `instanceof` 分支" |
+| ③ 新控件少写两个类 | **已达成** | `createRenderObjectFromState()`（`02` §6.2，2026-10-23）让"有态 + 有盒 + **无子**"两段就够 —— `Spinner` 已改造、`SpinnerBox` 已删 |
+
+**处方本身还基于一个读错了的事实**：它说"`TextFieldBox` / `ScrollViewBox` / `SpinnerState` + 4 个 `*State` 与 Box 仍为 `instanceof RenderBoxWidget` 而非基座"。
+但 `TextFieldBox` / `ScrollViewBox` **是 `RenderBoxWidget`（普通 Widget），不是 Element**
+—— 它们是"把主题 token 解析成值"的那一层（§15.7 纪律 3），本来就不该由 Element 基座承担。
+
+实测 Element 家族**只有 4 个类**（`Element` / `StatefulElement` / `StatelessElement` /
+`OffstageElement`），**没有任何按控件分的 Element 子类** —— 即"三件套样板"的 Element
+那一半**已经归零**。剩下两个 `*Box` 是"有子"的特例（`TextField` 有 label、`ScrollView`
+有滚动内容），而 `createRenderObjectFromState()` 的语义是"**不产子**"⇒ 套上去会静默
+丢掉子层（`TextFieldBox` 类头已写死这条判据）。
+
+⇒ 若照处方做，`StatefulControl` + `ControlElement` 只是给 `StatefulElement` 套一层
+没有信息的壳，**净增 120 行、零收益**。真正还长样板的是 `TextArea` / `CodeEditor`
+这类"有文本态 + 有编辑行为"的控件，届时该解决的是"有子 + 有态 + 有盒"的组合路径，
+不是这个基座。
+
+### S3 · 输入能力位 —— **否决（两半各自都不成立）**
+
+| 处方里的动作 | 实测 |
+|---|---|
+| 把"模态 × 焦点 → 视觉"做成纯函数表（"现在 `paintFocusRing()` 与 `focusRingTarget()` 各判一次"） | **已经是同一个纯函数**：`focusRingTarget()` 被 3 处消费（`paintedFocus` 赋值 / `wantsFrame()` 判据 / 绘制），`paintFocusRing()` 不再自己判 |
+| 输入能力位（`CAP_TOUCH` / `CAP_POINTER` / `CAP_IME`）显式进 `Platform` 契约 | **无消费者**：全仓没有一个控件声明"我需要 `CAP_TOUCH`"（`pinch` / `long-press` 已判"壳侧无 `WM_TOUCH` ⇒ 不做"）。按 A15「**没有消费者不预先发明机制**」，这是"为一个不存在的控件写契约" |
+
+★ 但 S3 的**诊断**是对的、只是**处方**错了：`pinch` 做不了这件事现在只活在
+`MEMORY.md` 的一句话里，没有任何**类型**约束它。这条的正确落点不是"加能力位"，
+而是**等第一个真实消费者**（触摸控件）出现时再一次性加，否则能力位会先长成一个
+没有读者的枚举。**推翻条件写死**：出现任一控件需要 `CAP_TOUCH`/`CAP_POINTER` 时，
+按"能力位 + 声明式需求 + `attach()` 时对不上就响亮失败"一次做齐。
+
+### I4 · 删 `Overflow::Scroll|Wrap` —— **只该删 `Wrap`，`Scroll` 要留**
+
+| 枚举值 | 实测消费者 | 判决 |
+|---|---|---|
+| `Wrap` | **零**（只有 `RenderFlex`/`RenderDock` 两个 `=> Errors::report('尚未实现')` 死分支） | **删**（`04` §4.4 已判它是**类别错误**：`Overflow` 的语义是"舍弃方式"，`Wrap` 是"重排"） |
+| `Scroll` | `RenderScrollView::overflow()` 真的返回它，且 `M2Conformance` 拿它做 `!== Report` 的检查 | **留**。但要把话说清：**没有"按值分支"的读者**，`RenderScrollView` 的裁剪是自己 `paintContent()` 里 `pushClip()` 做的，不走 `clipsOverflow()` ⇒ 它是**行为声明**，不是调度开关 |
+
+★ 顺带记一条判据：`overflow()` 与 `clipsOverflow()` 是**两件事**（前者声明策略、后者是
+裁剪开关，默认 `false` 且**故意与 `overflow()` 的默认 `Clip` 相反**）。看到
+"`overflow()` 返回 `Scroll` 却没覆写 `clipsOverflow()`"**不是**缺陷 —— 裁剪在
+`paintContent()` 里自己做，别急着"修"。
+
+### 修正后的下一步
+
+S2 / S3 划掉，第二、三步空出来 ⇒ 直接进**第四步（穿插批）**，顺序按"减面 → 止漂移 → 补引导"：
+
+1. **I4（修正版）**：删 `Overflow::Wrap` + 两个死分支臂 —— 真删除、零行为改动。
+2. **U2**：`11` §0 的"收盘现状表"改成**自检命令**（表会过时，命令不会）。
+3. **U3**：`apps/tutorial/`（hello-world → 计数器 → 异步 → 浮层）——
+   这是唯一能**从外部**测出 API 易用性缺陷的手段（`$this->application()` 那类
+   "能编译、能跑、就是崩"的坑，只有从零写一个应用才会撞到）。
+
+---
+
 ## 8. 取数口径（怎么复核这份报告）
 
 ```bash

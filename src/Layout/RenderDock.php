@@ -19,7 +19,8 @@ use Drift\Rendering\Canvas;
  *   （`PageHost` 内部把旧页 `Offstage` 化），条与轨不重建（§12.1 第 3 条）。
  *
  * ★ **C5/W4**：外壳是会超的容器 ⇒ 溢出策略必填（`Report` 默认响亮失败，
- *   `Clip` 要应用显式选）。`Scroll` / `Wrap` 未实现（M3 只有 Clip / Report）。
+ *   `Clip` 要应用显式选）。★ `Scroll` **不支持**（与 `ScrollView` 职责重叠，`04`
+ *   §1058 否决）；`Wrap` 已从 `Overflow` 枚举删除（2026-10-25，类别错误）。
  *
  * @api
  */
@@ -201,7 +202,8 @@ final class RenderDock extends RenderBox
     }
 
     /**
-     * 溢出裁决：Report ⇒ Fatal；Clip ⇒ 夹到 0（条轨重叠，画面烂但不崩）；其余 ⇒ 未实现。
+     * 溢出裁决：Report ⇒ Fatal；Clip ⇒ 夹到 0（条轨重叠，画面烂但不崩）；
+     * `Scroll` ⇒ 响亮失败并指路 `ScrollView`（不支持，不是未实现）。
      *
      * ★ 消息写成三段（**谁**放不下 / **差多少** / **怎么修**）：
      *   · 槽名直说 `top + bottom` / `left + right` —— 不写"横向/纵向"：读者要的是
@@ -230,10 +232,12 @@ final class RenderDock extends RenderBox
                 $need - $have,
                 $slots,
             )),
-            Overflow::Scroll, Overflow::Wrap => Errors::report(sprintf(
-                'Dock 的溢出策略 %s 尚未实现（M3 只有 Clip / Report）',
-                $this->policy->name,
-            )),
+            // ★★ 同 `RenderFlex::handleOverflow()`（2026-10-25，I4）：容器上不支持 `Scroll`
+            //   —— 不是"还没做"，是"别这么做"（与 `ScrollView` 职责重叠，`04` §1058 否决）。
+            Overflow::Scroll => Errors::report(
+                'Dock 不支持 overflow(Overflow::Scroll) —— 容器自己滚动与 ScrollView 职责重叠（已否决）。'
+                    . "\n" . '修法：① 把内容包进 `ScrollView`；② 只想裁掉超出部分则用 `Overflow::Clip`。'
+            ),
         };
 
         return 0.0;

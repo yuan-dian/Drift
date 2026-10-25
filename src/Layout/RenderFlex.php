@@ -225,8 +225,9 @@ class RenderFlex extends RenderBox
         $mainSize = array_sum($mains) + $gap;
 
         // ── C5：溢出策略是布局期行为，不是绘制期补丁 ────────────────
-        // Report / 未实现的策略都在 handleOverflow 里中止了；能走到这里的只有
-        // Clip ⇒ 盒子自己夹到可用主轴，子项仍按自然位置排（超出部分交给裁剪）。
+        // Report / Scroll 都在 handleOverflow 里中止了（后者是"不支持"，指路
+        // ScrollView）；能走到这里的只有 Clip ⇒ 盒子自己夹到可用主轴，子项仍按
+        // 自然位置排（超出部分交给裁剪）。
         $reported = $mainSize;
         if ($mainBounded && $mainSize > $maxMain) {
             $this->handleOverflow($mainSize, $maxMain);
@@ -568,10 +569,15 @@ class RenderFlex extends RenderBox
                 $maxMain,
                 $mainSize - $maxMain,
             )),
-            Overflow::Scroll, Overflow::Wrap => Errors::report(sprintf(
-                '%s 的溢出策略 %s 尚未实现（M2 只有 Clip / Report）',
+            // ★★ `Scroll` 在**容器上不支持**（2026-10-25，I4）：本枚举的 `Scroll` 是
+            //   `RenderScrollView` 的行为声明；容器自己滚与 `ScrollView` 职责重叠，
+            //   `04` §1058 已否决。⇒ 这不是"还没做"，是"别这么做" —— 消息必须**指路**，
+            //   否则读者只会以为"等以后实现"。
+            Overflow::Scroll => Errors::report(sprintf(
+                '%s 不支持 overflow(Overflow::Scroll) —— 容器自己滚动与 ScrollView 职责重叠（已否决）。'
+                    . "\n" . '修法：① 把内容包进 `ScrollView`（它持滚动偏移并做视口裁剪）；'
+                    . '② 只想裁掉超出部分则用 `Overflow::Clip`。',
                 static::class,
-                $this->overflow->name,
             )),
         };
     }

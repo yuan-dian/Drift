@@ -642,7 +642,8 @@ if (str_starts_with($caseArg, '--case=')) {
     }
 
     if ($case === 'flexscroll') {
-        // Scroll / Wrap：M2 没实现 ⇒ 响亮失败，不是静默按 Clip 走
+        // 容器上的 Scroll **不支持**（2026-10-25，I4）⇒ 响亮失败并指路 ScrollView，
+        // 不是静默按 Clip 走。（`Overflow::Wrap` 已从枚举删除：它是"重排"不是"舍弃方式"。）
         $column = new RenderFlex(true, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Scroll);
         $column->addChild(new SolidBox(new Size(10.0, 40.0), 10.0, 40.0));
         $column->addChild(new SolidBox(new Size(10.0, 40.0), 10.0, 40.0));
@@ -4500,11 +4501,16 @@ fresh($log);
 check('Layout · shrink 压到 0 仍放不下 ⇒ C5 中止退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
 check('Layout · shrink 的 C5 消息写的是"放不下"（不是"所有子都变 0 宽"）', str_contains(logText($log), '放不下'));
 
-// Scroll / Wrap：声明了但没实现 ⇒ 响亮失败，不是空壳
+// 容器上声明 Scroll **不支持**（不是"还没做"）⇒ 响亮失败，且消息必须**指路** ScrollView
+//   ★ 判据里同时查"不支持"与"ScrollView"：只查前半句的话，一条
+//     "尚未实现"的旧文案也能过（那是本次 I4 之前的形态）。
 fresh($log);
 [$code, $output] = runCase(__FILE__, 'flexscroll', null);
-check('Layout · Scroll / Wrap 未实现 ⇒ 响亮失败退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
-check('Layout · Scroll / Wrap 未实现写了 Errors.log', str_contains(logText($log), '尚未实现'));
+check('Layout · 容器上 Scroll 不支持 ⇒ 响亮失败退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
+check(
+    'Layout · 容器上 Scroll 不支持写了 Errors.log 且指路 ScrollView',
+    str_contains(logText($log), '不支持') && str_contains(logText($log), 'ScrollView')
+);
 
 // flex 份额 < 1 是构造成员错误（G2：绝不静默夹紧）⇒ 子进程里验
 fresh($log);
