@@ -32,7 +32,7 @@
 | 检查 | 方法 | 结果 |
 |---|---|---|
 | `file:line` 引用是否越界 | 抽取全部 `Xxx.php:NNN`，比对目标文件行数 | **78 处，0 越界** |
-| 引用内容是否对得上 | 抽查 10 处最吃重的（`Element.php:282` / `ErrorBoundaryElement.php:45` / `Application.php:1718`、`:688` / `RasterCanvas.php:449`、`:422` / `Frame.php:135` / `DisplayList.php:156` / `Cell.php:61` / `State.php:165`） | **10/10 逐字命中** |
+| 引用内容是否对得上 | 抽查 10 处最吃重的（`Element.php:282` / `ErrorBoundaryElement.php:45` / `Application.php` frameCostMs（S1 拆片后行号漂移，已不按行引）、`:688` / `RasterCanvas.php:449`、`:422` / `Frame.php:135` / `DisplayList.php:156` / `Cell.php:61` / `State.php:165`） | **10/10 逐字命中** |
 | 跨册 `§` 引用是否断链 | 抽取全部 `` `NN` §A.B ``，比对目标册标题表 | **406 处，0 断链**（3 处报警是 v5/v6 外部引用，误报） |
 | `00` §9 的 12 项取数 | 逐条重跑 | **12/12 一致**：223 文件 / 222 带 namespace / 974 个 ★ / `Application.php` 2192 行 / 21 个 RenderBox 子类 / 12 个代理盒 / 9 处可空返回 / 187 处 `readonly` / 32 个 `final readonly class` / 22 处 `paint(Canvas)` / 15 条 lint / 936 ok |
 | 43 步 | 数 `09` 的步骤表行 | **43** ✓ |

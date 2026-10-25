@@ -70,7 +70,7 @@ use Drift\Widget\Snackbar;
  *
  * @api
  */
-abstract class Application implements TextEditingHost, InputHost, OverlayHost
+abstract class Application implements TextEditingHost, InputHost, OverlayHost, PumpHostHost
 {
     protected ?Element $root = null;
 
@@ -150,21 +150,20 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost
     private OverlayLayout $overlayLayout;
 
     /**
+     * 异步泵片（S1 第 9 步）：`frame()` 里 settle 之前的四个泵 + 定时器 +
+     * 分片提交。构造期建（host = 本类）—— 泵只依赖自持的 tasks/io/sliced/
+     * timers 四个状态 + 宿主的 UI 线程断言与时间基准，不读 root / focus /
+     * overlays（真正零耦合）。
+     */
+    private PumpHost $pumps;
+
+    /**
      * 语义树消费闭包（§9 / M5 UIA，per-app opt-in，同 taskHost() 形态）。
      *
      * ★ **默认 null ⇒ 不建语义树**（SemanticsBuilder"没人调就不建"，零开销）；
      *   应用覆写返回闭包即接入 UIA（组合根把闭包接到 WindowHost::pushSemantics）。
      */
     protected ?\Closure $semanticsSink = null;
-    /**
-     * 分片任务每帧的时间预算（毫秒，§17.4.3）。
-     *
-     * ★ 4 的来历：一帧 16.7ms，留 12ms 给布局 / 绘制 / 输入（§13.3 全树重排）
-     *   ⇒ 分片最多吃掉四分之一帧。`SlicedJob::step()` 自己决定一次干多少，
-     *   这只是**建议值**（"干到超预算就返回"）。
-     */
-    private const SLICE_BUDGET_MS = 4;
-
     /**
      * 一帧的预算（毫秒）—— 60fps 的 16.7ms（`06` §3.2）。
      *
@@ -262,32 +261,6 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost
     /** 上次推送的档位（`full` / `coalesce` / `none`）—— 夹具与 devtools 读它 */
     private string $semanticsMode = 'none';
 
-    /**
-     * 后台执行端口（§17.2）—— `attach()` 时由 `taskHost()` 建一次并缓存。
-     *
-     * ★ **必须缓存实例**：后端持有结果队列，每次现建一个会让"这一帧入队、
-     *   下一帧 drain"落空（队列被换掉 ⇒ 结果永远等不到）。
-     *   ⇒ 与 `accelerators()`（每次现建也行）不同，本端口是**有状态**的。
-     *
-     * ★ `null` = 本应用不用后台任务（`taskHost()` 返回 null）⇒ `frame()` 的那段
-     *   drain 整个跳过，零开销。
-     */
-    protected ?TaskHost $tasks = null;
-
-    /**
-     * 排队中的分片任务（§17.4.3，P1）—— 每帧推一次 `step()`。
-     *
-     * ★ **不走 `TaskHost`**：分片永远在 UI 线程跑（它解决的是"别把一帧卡死"，
-     *   不是"别占 UI 线程"）。所以它和端口正交：换后端不影响分片。
-     *
-     * ★ 元素是数组而不是对象：只有四个字段、生命周期一帧内、不需要身份 ——
-     *   为它造一个类只会多一层没有信息的壳（对比 `Completion`：那个要跨边界传，
-     *   有语义）。
-     *
-     * @var list<array{job: SlicedJob, onDone: \Closure, onError: ?\Closure, budgetMs: int}>
-     */
-    protected array $sliced = [];
-
     /** 上一帧有没有动画在跑（§17.4.9 的第四个判据，由 `tickAnimations()` 写） */
     private bool $animating = false;
 
@@ -296,26 +269,6 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost
 
     /** 上一帧的时间戳（`repaintForResize()` 复用：拖动重排不该自己读环境时钟） */
     private float $lastTimestampMs = 0.0;
-
-    /**
-     * 待触发的延时回调（W8-2，2026-10-23）—— `after()` 排进来，`pumpTimers()` 消费。
-     *
-     * ★ **为什么不做成"平台多开几个 `TimerHost` id"**：`TimerHost` 是**周期**定时器
-     *   （`SetTimer` 会一直响），而这里要的是**一次性**延时；再者在平台层做 id 分配
-     *   就要在 `pump()` 里把 `timer` 事件按 id 分发回框架 —— 一圈下来只换来
-     *   15.6ms → 0ms 的精度提升，而 Tooltip / Snackbar 的 500ms 停留对 15ms 无感。
-     *   ★ 代价必须说清楚：**有定时器待触发期间帧时钟保持上膛**（每 15ms 一帧空转，
-     *   直到到期）。这是 `wantsFrame()` 必须加第 5 条判据的另一面 —— 不加就永远
-     *   不响，加了就有这段空转。Tooltip 停留期最多 500ms（约 33 帧），可接受。
-     *
-     * ★★ `due` 的基准是 `max(上一帧, 上一次输入)` —— 见 `after()` 与 `$lastInputMs`。
-     *   2026-10-24 之前只用"上一帧"：`after()` 常被**帧外**的回调调用（指针点击 →
-     *   `onOpen`），而空闲应用的"上一帧"可能是几百毫秒前 ⇒ `due` 落在过去 ⇒
-     *   **定时器当场触发**。现象（真机实测）：远程搜索的"正在加载…"一帧都没出现过。
-     *
-     * @var array<int, array{due: float, cb: \Closure}>
-     */
-    private array $timers = [];
 
     /**
      * **最近一次输入派发**的时间戳（`dispatchInput()` 的第 2 参，由壳注入）。
@@ -328,18 +281,6 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost
      *   （`max(上一帧, 0)` = 上一帧）。
      */
     private float $lastInputMs = 0.0;
-
-    /** 下一个定时器 id（进程内自增，`cancelAfter()` 用它） */
-    private int $nextTimerId = 1;
-
-    /**
-     * 非阻塞 I/O 轮询器（§17.4.4，P2）—— 每帧 `select(0)` 问一轮，就绪了就回调。
-     *
-     * ★ 挂载时建一次（它持有监听表，是**有状态**的，同 `$tasks`）。
-     * ★ 为什么不是"线程里阻塞读"：见 §17.2.6 —— 线程要 30ms 起、进程要 275ms 起，
-     *   而 `select(0)` 的代价是微秒级，且回调天然落在 UI 线程的帧内。
-     */
-    protected ?IoPoller $io = null;
 
     /** @param iterable<string, CommandHandler> $handlers `commands()` 的返回值 */
     public function __construct(iterable $handlers = [])
@@ -372,6 +313,10 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost
         // S1 第 7 步：浮层几何布局策略（帧循环每帧一次的纯几何段）。
         // ★ 建在 overlayHost 之后（经它读栈）、建在帧循环之前（frame() 第一处消费）。
         $this->overlayLayout = new OverlayLayout($this->overlayHost);
+
+        // S1 第 9 步：异步泵片（四个泵 + 定时器 + 分片）。host = 本类（片只经
+        // PumpHostHost 摸时间基准与 taskHost()），构造期建无时序问题。
+        $this->pumps = new PumpHost($this);
 
         // 只注册**显式传进来**的那些。`commands()` **不在构造器里调** ——
         // PHP 的构造链是"父先子后"，此刻子类构造器里的字段（`$this->store` 之类）
@@ -449,7 +394,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost
      *
      * @api
      */
-    protected function taskHost(): ?TaskHost
+    public function taskHost(): ?TaskHost
     {
         return new SyncTaskHost();
     }
@@ -461,7 +406,27 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost
      */
     public function tasks(): ?TaskHost
     {
-        return $this->tasks;
+        return $this->pumps->tasks();
+    }
+
+    /**
+     * 时间基准（`PumpHostHost` 的口子）：上一帧的时间戳。
+     *
+     * @internal 片间契约口子（`PumpHost` 经它算 `after()` 的基准），不是应用扩展点
+     */
+    public function lastTimestampMs(): float
+    {
+        return $this->lastTimestampMs;
+    }
+
+    /**
+     * 时间基准（`PumpHostHost` 的口子）：最近一次输入派发的时刻。
+     *
+     * @internal 片间契约口子，同上
+     */
+    public function lastInputMs(): float
+    {
+        return $this->lastInputMs;
     }
     /**
      * 加速键表（§9.1 路由链第 ① 环，焦点之前）。
@@ -580,11 +545,8 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost
         // ★ UI 线程身份在**挂载之前**记：之后的任何回调都以此为准（§17.4.2.1）。
         $this->uiThreadId = \drift_thread_id();
 
-        // ★ 端口在挂载时建一次并缓存（它持有结果队列，不能每帧现建）。
-        $this->tasks = $this->taskHost();
-
-        // ★ 轮询器同理：监听表是它的状态，每帧现建等于每帧丢掉所有监听。
-        $this->io = new IoPoller();
+        // ★ 端口 / 轮询器在挂载时建一次并缓存（见 PumpHost::attach()）。
+        $this->pumps->attach();
 
         $context ??= new BuildContext(
             $constraints->maxWidth,
@@ -756,7 +718,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost
         if ($trace !== null) {
             $trace[] = 'pumpIo';
         }
-        $this->pumpIo();
+        $this->pumps->pumpIo();
         if ($prof) {
             SurfaceProfile::add('pumpIo', \hrtime(true) - $t);
         }
@@ -769,7 +731,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost
         if ($trace !== null) {
             $trace[] = 'pumpTasks';
         }
-        $this->pumpTasks();
+        $this->pumps->pumpTasks();
         if ($prof) {
             SurfaceProfile::add('pumpTasks', \hrtime(true) - $t);
         }
@@ -780,7 +742,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost
         if ($trace !== null) {
             $trace[] = 'pumpSliced';
         }
-        $this->pumpSliced();
+        $this->pumps->pumpSliced();
         if ($prof) {
             SurfaceProfile::add('pumpSliced', \hrtime(true) - $t);
         }
@@ -792,7 +754,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost
         if ($trace !== null) {
             $trace[] = 'pumpTimers';
         }
-        $this->pumpTimers($timestampMs);
+        $this->pumps->pumpTimers($timestampMs);
         if ($prof) {
             SurfaceProfile::add('pumpTimers', \hrtime(true) - $t);
         }
@@ -958,6 +920,12 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost
         }
     }
 
+    // ------------------------------------------------------------------
+    // 异步泵 API 委托壳（S1 第 9 步）：实现搬进 {@see PumpHost}，
+    // **API 位置不动** —— 应用 / 组合根 / 测试照旧按 Application 调。
+    // frame() 的四泵与 wantsFrame() 判据直调片，不经这些壳。
+    // ------------------------------------------------------------------
+
     /**
      * 排一个**一次性延时回调**（W8-2，2026-10-23）。
      *
@@ -983,51 +951,13 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost
      */
     public function after(int $milliseconds, \Closure $callback): int
     {
-        $id = $this->nextTimerId++;
-        $this->timers[$id] = [
-            // ★ 基准取"上一帧"与"上一次输入"的**较大者**（见 `$lastInputMs`）：
-            //   在输入回调里排的定时器必须以**输入那一刻**起算 —— 用"上一帧"会让
-            //   空闲应用上的 400ms 变成"立刻"（真机实测：加载态一帧都没出现）。
-            'due' => \max($this->lastTimestampMs, $this->lastInputMs)
-                + (float) ($milliseconds < 0 ? 0 : $milliseconds),
-            'cb' => $callback,
-        ];
-
-        return $id;
+        return $this->pumps->after($milliseconds, $callback);
     }
 
     /** 撤销一个延时回调（已触发 / id 不存在 ⇒ 无事发生，幂等） */
     public function cancelAfter(int $id): void
     {
-        unset($this->timers[$id]);
-    }
-
-    /**
-     * 推进到期的延时回调（每帧一次，在 `settle()` 之前）。
-     *
-     * ★ **先摘再调**：回调里可以安全地 `after()` 新定时器 / `cancelAfter()` 别的
-     *   —— 否则遍历中改 `$this->timers` 会漏掉或重复触发。
-     * ★ 回调抛异常**不吞**（与 `pumpTasks()` / `pumpSliced()` 同策略：S3 无边界
-     *   ⇒ Fatal 序列）。
-     */
-    private function pumpTimers(float $timestampMs): void
-    {
-        if ($this->timers === []) {
-            return;
-        }
-
-        // ★ 先把到期的挑出来（不在遍历里改数组）
-        $due = [];
-        foreach ($this->timers as $id => $timer) {
-            if ($timer['due'] <= $timestampMs) {
-                $due[$id] = $timer['cb'];
-            }
-        }
-
-        foreach ($due as $id => $callback) {
-            unset($this->timers[$id]);
-            $callback();
-        }
+        $this->pumps->cancelAfter($id);
     }
 
     /**
@@ -1050,23 +980,13 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost
             return true;
         }
 
-        if ($this->sliced !== []) {
-            return true;
-        }
-
-        $io = $this->io;
-        if ($io !== null && $io->watchCount() > 0) {
-            return true;
-        }
-
-        $tasks = $this->tasks;
-        if ($tasks !== null && $tasks->pending() > 0) {
+        if ($this->pumps->hasAsync()) {
             return true;
         }
 
         // ★ 第五个判据（W8-2）：有延时回调在等 ⇒ 必须保持上膛，否则永远不响。
         //   排最后 —— 它**通常为空**（一次 `===` 比较），而前四条在活跃场景下更常为真。
-        if ($this->timers !== []) {
+        if ($this->pumps->hasTimers()) {
             return true;
         }
 
@@ -1299,64 +1219,6 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost
     }
 
     /**
-     * 取后台结果并分派（§17.4.2 的第一步）。
-     *
-     * ★ 队列只能由 UI 线程消费 ⇒ 断言在这里（§17.4.2.1 的第二条断言位）。
-     * ★ 整体包一层 try/catch：用户回调抛异常**不许**穿过帧循环的剩余阶段。
-     *   处理策略与 `Frame::run()` 的 settle 段一致（S3：无边界 ⇒ Fatal 序列）——
-     *   **不吞**，吞掉就是"界面停在上一次的样子且不报错"（G2 明令禁止）。
-     */
-    private function pumpTasks(): void
-    {
-        $tasks = $this->tasks;
-        if ($tasks === null) {
-            return;
-        }
-
-        $this->assertUiThread('drain');
-
-        try {
-            $tasks->drain(function (Completion $completion): void {
-                $this->complete($completion);
-            });
-        } catch (\Throwable $e) {
-            Errors::report(sprintf(
-                '帧循环：后台结果回调未捕获异常 —— %s（%s:%d）',
-                $e->getMessage(),
-                basename($e->getFile()),
-                $e->getLine(),
-            ));
-        }
-    }
-
-    /**
-     * 把一条 `Completion` 送到对应回调（成功 → `onDone`，失败 → `onError`）。
-     *
-     * ★ **没给 `$onError` ⇒ Fatal 序列**：任务失败被静默吞掉就是"界面永远转圈"，
-     *   与三态的 `Error` 分支（§A.2.9）矛盾 —— 那是 G2 禁止的半静默。
-     */
-    private function complete(Completion $completion): void
-    {
-        if ($completion->error !== null) {
-            if ($completion->onError === null) {
-                Errors::report(sprintf(
-                    '后台任务失败（未提供 onError）—— %s: %s',
-                    get_class($completion->error),
-                    $completion->error->getMessage(),
-                ));
-
-                return;
-            }
-
-            ($completion->onError)($completion->error);
-
-            return;
-        }
-
-        ($completion->onDone)($completion->value);
-    }
-
-    /**
      * 提交一个**可分片**的长任务（§17.4.3，P1）：每帧推一次 `step()`，不占一帧。
      *
      * ```php
@@ -1368,7 +1230,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost
      *
      * ★ 与 `TaskHost::submit()` 的差别只在**怎么跑**：分片在 UI 线程的帧间跑，
      *   回调同样**在帧内**、同样在 `settle()` 之前（所以改 Store 同帧生效）。
-     * ★ 预算默认 {@see self::SLICE_BUDGET_MS}；任务自己决定一次干多少。
+     * ★ 预算默认 4ms（见 `PumpHost`）；任务自己决定一次干多少。
      *
      * @param callable(mixed): void $onDone 完成后回调（帧内执行）
      * @param null|callable(\Throwable): void $onError 失败回调；`null` ⇒ Fatal 序列
@@ -1379,70 +1241,15 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost
         SlicedJob $job,
         callable $onDone,
         ?callable $onError = null,
-        int $budgetMs = self::SLICE_BUDGET_MS,
+        int $budgetMs = 4,
     ): void {
-        $this->assertUiThread('submitSliced');
-
-        $this->sliced[] = [
-            'job' => $job,
-            'onDone' => \Closure::fromCallable($onDone),
-            'onError' => $onError === null ? null : \Closure::fromCallable($onError),
-            'budgetMs' => $budgetMs,
-        ];
-    }
-
-    /**
-     * 推进所有分片任务（§17.4.3）—— 每帧一次，在 `settle()` 之前。
-     *
-     * ★ **swap 语义**：先取快照再清空，未完成的回填 ⇒ 回调里 `submitSliced()`
-     *   的新任务不会丢（也不会让本帧无限长）。与 `SyncTaskHost::drain()` 同一手法。
-     * ★ `step()` 抛异常 ⇒ 该任务终止、走 `$onError`（不再回填）——
-     *   与 `Job::run()` 同一条错误通道，不新增第四态。
-     */
-    private function pumpSliced(): void
-    {
-        if ($this->sliced === []) {
-            return;
-        }
-
-        $this->assertUiThread('slice');
-
-        $queue = $this->sliced;
-        $this->sliced = [];
-
-        try {
-            foreach ($queue as $item) {
-                try {
-                    $more = $item['job']->step($item['budgetMs']);
-                } catch (\Throwable $e) {
-                    $this->complete(new Completion(null, $e, $item['onDone'], $item['onError']));
-
-                    continue;
-                }
-
-                if ($more) {
-                    $this->sliced[] = $item;
-
-                    continue;
-                }
-
-                $this->complete(new Completion($item['job']->result(), null, $item['onDone'], $item['onError']));
-            }
-        } catch (\Throwable $e) {
-            // 回调抛异常：与 `pumpTasks()` 同策略（S3：无边界 ⇒ Fatal 序列，不吞）
-            Errors::report(sprintf(
-                '帧循环：分片任务回调未捕获异常 —— %s（%s:%d）',
-                $e->getMessage(),
-                basename($e->getFile()),
-                $e->getLine(),
-            ));
-        }
+        $this->pumps->submitSliced($job, $onDone, $onError, $budgetMs);
     }
 
     /** @internal 测试与 devtools：还有几个分片任务在排队 */
     public function slicedCount(): int
     {
-        return count($this->sliced);
+        return $this->pumps->slicedCount();
     }
 
     /**
@@ -1458,34 +1265,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost
      */
     public function io(): ?IoPoller
     {
-        return $this->io;
-    }
-
-    /**
-     * 问一轮非阻塞 I/O（§17.4.4）—— 每帧一次，在 `settle()` 之前。
-     *
-     * ★ 与 `pumpTasks()` / `pumpSliced()` 同策略：回调异常不吞（S3 ⇒ Fatal 序列），
-     *   但要用 try/catch 把它变成"指明来源的错误"，而不是裸栈冒到组合根。
-     */
-    private function pumpIo(): void
-    {
-        $io = $this->io;
-        if ($io === null) {
-            return;
-        }
-
-        $this->assertUiThread('poll');
-
-        try {
-            $io->poll();
-        } catch (\Throwable $e) {
-            Errors::report(sprintf(
-                '帧循环：IO 就绪回调未捕获异常 —— %s（%s:%d）',
-                $e->getMessage(),
-                basename($e->getFile()),
-                $e->getLine(),
-            ));
-        }
+        return $this->pumps->io();
     }
 
     /**

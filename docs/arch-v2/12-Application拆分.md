@@ -453,7 +453,7 @@ overlayHost）→ overlayLayout（收 overlayHost）。帧循环的 5 处读栈�
 | 6 | ~~拆 `InputRouter`（dispatchInput / dispatchPointer 主体 + 手势状态 + 光标）~~（✅ 2026-10-24，见 §4f） | 同上 |
 | 7 | ~~拆 `OverlayLayout` 前哨（几何布局族：placeOverlays/syncPanelSignatures/panelsLagBehind/placeEntry/anchorRect/originFor/absoluteOrigin，见 §4g）~~（✅ 2026-10-24） | smoke 绿 + Application 行数 −372 |
 | 8 | ~~拆 `OverlayManager` 主体（栈所有权 A + 栈查询 B + 时序件 E + 入口 API F；InputHost 8→4 口子、OverlayLayout 改指本片）~~（✅ 2026-10-24，动工前分析见 §4h，落地见 §4h-落地） | smoke 绿 + Application 行数 −600（实际 −525） |
-| 9 | 拆 `FrameEngine`（九段表驱动；帧循环读栈的 1740/1862/2210 定窄面） | 同上 |
+| 9 | ~~拆 `FrameEngine`（九段表驱动；帧循环读栈的 1740/1862/2210 定窄面）~~ → **已调整为拆 `PumpHost`（B 异步泵，A/C 留壳；2026-10-25 落地，见 §4i 与 §4i-落地）** | smoke 绿 + lint 0 + 0 兼容破坏 |
 | 10 | **加 lint 规则**：`src/App/` 里 `instanceof` 只许出现在接口上（I2 的闸门，现在加会红 39 处，拆完才绿） | selftest 红绿双向 |
 
 ★ 每步独立可提交；`--api` diff 每步审（API 面只许有意变化）。
@@ -471,3 +471,124 @@ OverlayHost 是**横切**关注点 —— `$this->overlays` 在 Application 里�
 "最后拆"内部还有先后 —— 几何布局族（D 类）零耦合、host 只 2 口子，先拆；
 栈所有权 + 时序件 + 入口 API（A/B/E/F）与输入契约 4 口子、帧循环 6 处
 消费纠缠，后拆。同一条原则递归应用到自己身上。
+
+---
+
+## 4i. 第九步动工前分析：帧循环的切法（2026-10-25）
+
+**目标**：把 `Application::frame()` 里「settle 之前」的四个异步泵搬出组合根。
+
+### 版图（摸排结论，Application 现 1919 行）
+
+帧循环族**三簇，不是一簇**：
+
+| 簇 | 方法 | 状态字段 |
+|---|---|---|
+| **A 九段编排**（帧的骨架） | `frame()` / `repaintForResize()` / `wantsFrame()` | `frameSerial` / `animating` / `paintedFocus` / `lastTimestampMs` |
+| **B 异步泵**（settle 之前的四泵） | `pumpIo` / `pumpTasks` / `pumpSliced` / `pumpTimers` + `submitSliced` / `complete` / `after` / `cancelAfter` | `sliced` / `tasks` / `io` / `timers` / `nextTimerId` |
+| **C 收尾段**（帧末三件） | `tickAnimations` / `tickSubtree` / `tickLateMount` / `pumpSemantics` / `pushSemantics` / `applyNewContext` | `semantics*` 六字段 |
+| **D 观测记账** | `noteFrameCost` / `overBudget` / `frameCostMs` / `worstFrameMs` | `overBudgetStreak` / `frameCostMs` / `worstFrameMs` |
+
+### 三个候选方案
+
+**方案一（路线表原案）：拆一个 `FrameEngine` 包住 A+B+C+D 整段**。
+- 缺点：① **它就是第二个 Application**——把 frame() 原样搬一遍，只换类名，
+  边界没有变窄；② C 簇读 `$this->animating` / `focus` / `root` 等宿主状态
+  ⇒ host 口子 10+，与前 8 步「host 只摸应用状态、2-6 个口子」背离；
+  ③ `frame()` 是 `@api`（组合根入口）位置不能动，拆走也得留壳。
+
+**方案二（中间态）：A 留 Application（帧编排 = 组合根职责），只拆 B 异步泵
+→ `PumpHost`**。
+- 优点：B 簇**边界最干净**——四泵 + submitSliced/complete/after/cancelAfter
+  只依赖 `tasks`/`io`/`sliced`/`timers` 四个自持状态 + `assertUiThread`，
+  **不读 root/focus/overlays**（真正零耦合）。而 C 簇读 root/overlays/focus/
+  animating，耦合面大。
+- 这是「被依赖多的晚拆」的同一原则：B 簇被 frame/wantsFrame/OverlayManager
+  (after/cancelAfter)/应用(submitSliced/io) 消费，但**它不依赖别人**。
+- host 口子 1 个：`assertUiThread(string)`（读宿主 `uiThreadId`）。
+
+**方案三（最激进）：连 A 也拆（frame 编排 → FrameEngine），Application 只剩
+壳 + 状态**。
+- 缺点：同方案一的①，且 A 簇读全部三簇状态 ⇒ host 口子 12+，得不偿失。
+
+### 裁决：方案二（B 异步泵拆 `PumpHost`，A/C 留壳）
+
+**为什么不是「九段表驱动」**：路线表写的「九段表驱动」是把 frame() 九段的
+**顺序**抽成数据表。但九段每段的入参/出参/副作用各不相同（pumpIo 无参、
+tickAnimations 返回 bool、placeOverlays 要 constraints、focusCollect 要
+root+overlays、pumpSemantics 要 sink）⇒ 表驱动要给每段造 `Closure` 适配器，
+PHP 里是**间接层没换来灵活性**（九段是固定次序，顺序写死在代码里反而
+readable）。真正可复用的是「四泵」这个**稳定子结构**，不是「九段」这个
+**一次性顺序**。
+
+⇒ **拆 `PumpHost`（B 簇）是结构收益最大的一刀**：它把「异步结果何时被消费」
+这个时序契约（**必须在 settle 之前**）收进一个类，而这正是 frame() 里四泵
+共同满足的同一条不变量。
+
+### PumpHost 边界
+
+**搬走**：方法 `pumpIo` / `pumpTasks` / `pumpSliced` / `pumpTimers` /
+`complete` / `submitSliced` / `after` / `cancelAfter`（8 个）；字段 `sliced` /
+`tasks` / `io` / `timers` / `nextTimerId`（5 个）；常量 `SLICE_BUDGET_MS`。
+
+**委托壳留 Application**（API 位置不动）：`after` / `cancelAfter` /
+`submitSliced` / `io()` / `slicedCount()`（5 个 public @api / @internal）。
+
+**host 口子**：`assertUiThread(string $where)`。四泵都断言 UI 线程身份，
+它读宿主 `uiThreadId`（同 `InputHost` 第 6 步口径：host = 宿主状态的只读口）。
+
+**frame() 改动**：四泵调用改 `$this->pumps->pumpXxx()`；`wantsFrame()` 第五
+判据（定时器在等）改读 `$this->pumps->hasTimers()`（新 @internal getter）；
+`$this->animating` / `frameSerial` 的写入留 Application（C 簇消费它们）。
+
+### 为什么 C 簇（语义 / 动画）**不拆**
+
+`tickAnimations` / `pumpSemantics` 读 `root` / `overlays` / `focus` /
+`animating` / `frameSerial` / `overBudget` 六个宿主状态 ⇒ host 口子 6 个，
+收益递减（语义泵只有 2 个方法，tickSubtree 是 20 行递归）。拆它是「为拆而拆」。
+留壳里，等真正的 FrameEngine 需求（如帧分段重排）出现再说。
+
+### 兼容性破坏（预期 0）
+
+- 委托壳 5 个照留（API 位置不动）；`Application::BUDGET_MS` /
+  `OVER_BUDGET_FRAMES` / `STAGE_BUDGET_MS` **不动**（smoke.php:11172/11211
+  直接引用它们做超预算用例）。
+- `SLICE_BUDGET_MS` 随 `submitSliced` 默认值搬走（零外部引用）。
+- `OverlayHost` 的 `after`/`cancelAfter` 口子**不动**（Application 仍是宿主，
+  经委托壳转调 PumpHost）。
+
+### 顺手修：FrameClock.php 的过期措辞（第 7 步遗留）
+
+`FrameClock::tick()` 注释说「`Application::wantsFrame()` 把任务在途 /
+分片没跑完 / 有流在监听三件事收成一个是非题」—— 这三件事的**状态**在第
+4/5/8 步拆进了 `PumpHost`（tasks/sliced/io），判据实际经 `PumpHost` 与
+`OverlayLayout::panelsLagBehind` 问。措辞改成「wantsFrame() 经 `PumpHost`
+与 `OverlayLayout` 问那几件事」，避免读者以为 Application 自持那些状态。
+（docref 只查行号越界、不查措辞漂移 ⇒ 主动 grep 语义位置。）
+
+### §4i-落地（2026-10-25）
+
+**实际落地**（与上面裁决一致，只拆 B 簇进 `PumpHost`）：
+
+- 新建 `src/App/PumpHost.php`（`@internal final class`：8 方法 + 5 字段 + `SLICE_BUDGET_MS` + `hasTimers()`/`hasAsync()`）与 `src/App/PumpHostHost.php`（4 口子：`assertUiThread` / `lastTimestampMs` / `lastInputMs` / `taskHost`）。
+- `Application`：删 8 方法（`pumpIo`/`pumpTasks`/`pumpSliced`/`pumpTimers`/`complete`/`submitSliced`/`after`/`cancelAfter`）+ 5 字段（`tasks`/`sliced`/`timers`/`nextTimerId`/`io`）+ `SLICE_BUDGET_MS`；`implements` 加 `PumpHostHost`；`taskHost()` 由 `protected` 升 `public`（接口协变要求）；加 `lastTimestampMs()`/`lastInputMs()` 两个 host getter；构造器建 `$this->pumps = new PumpHost($this)`，`attach()` 里 `$this->pumps->attach()`。
+- `frame()` 四泵改 `$this->pumps->pumpXxx()`；`wantsFrame()` 的 sliced/io/tasks 三判据收成 `$this->pumps->hasAsync()`、定时器判据收成 `$this->pumps->hasTimers()`。
+- 5 个 public 方法（`after`/`cancelAfter`/`submitSliced`/`io()`/`slicedCount()`）留一行委托壳（**API 位置不动**）。
+- `apps/users/src/UsersApplication.php` 与 `tools/Smoke/App/TaskApplication.php` 的 `taskHost()` 覆写由 `protected` 升 `public`。
+- 顺手修 `FrameClock.php` 过期措辞（上面「顺手修」条已记）。
+
+**行数**：`Application.php` 约 1919 → 1640（−~280，含委托壳与 host getter）；新增 `PumpHost.php` 385 行、`PumpHostHost.php` ~30 行。
+
+**验证链全绿**：
+
+- `php tools/lint.php`：505 文件 · 0 error · 0 warn。
+- `php tools/smoke.php`：1396 ok / 0 FAIL（拆片路径全部经 Application 委托壳，smoke 64 处调用无感知）。
+- `php tools/docref.php`：68 ok / 0 FAIL（另修两处过期行号引用：`ARCH-V2-REVIEW-2026-10-21.md` 的 `:1718` 与 `01-覆盖层.md` 的 `:1790-1794` → `InputRouter` 关闭语义）。
+
+**变异测试（该响会响）**：
+
+- 变异 A（吞掉 `complete()` 的 `onError` 调用）→ 2 FAIL（`P0 · 应用层失败走 onError`、`P1 · step 抛异常 ⇒ onError 且出队），证明「异常不吞」被覆盖。
+- 变异 B（删 `pumpTimers()` 的回调触发）→ 10 FAIL（含「先摘再调」`inner` 下一帧、`Tooltip` 延时弹出全链路），证明「定时器能不能响」被覆盖。
+- 两处变异还原后均回到 1396/0。
+
+**兼容性破坏**：0（委托壳照留；`BUDGET_MS`/`OVER_BUDGET_FRAMES`/`STAGE_BUDGET_MS` 不动；`SLICE_BUDGET_MS` 随默认值搬走且无外部引用）。

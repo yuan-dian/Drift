@@ -34,7 +34,7 @@ final class TaskApplication extends Application
         $this->store = new FakeStore();
     }
 
-    protected function taskHost(): ?TaskHost
+    public function taskHost(): ?TaskHost
     {
         return $this->withTasks ? new SyncTaskHost() : null;
     }

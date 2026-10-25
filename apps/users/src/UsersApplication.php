@@ -129,7 +129,7 @@ final class UsersApplication extends Application
      *     而 `frame()` 用默认新建的 `SyncTaskHost` drain —— **两个实例、两套队列**，
      *     worker 早把结果回了，UI 却永远 `Loading`（不报错、不卡帧，最坏的那种静默）。
      */
-    protected function taskHost(): ?TaskHost
+    public function taskHost(): ?TaskHost
     {
         return $this->host;
     }

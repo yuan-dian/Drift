@@ -8,7 +8,7 @@
 
 | 层 | @api | @internal |
 |---|---|---|
-| App | 51 | 35 |
+| App | 54 | 40 |
 | Commands | 7 | 0 |
 | Core | 2 | 0 |
 | Errors.php | 1 | 3 |
@@ -23,39 +23,39 @@
 | Text | 29 | 3 |
 | Theme | 3 | 0 |
 | Widget | 121 | 160 |
-| **合计** | **335** | **254** |
+| **合计** | **338** | **259** |
 
-覆盖 279 个文件 · 描述性提及 25 处（grep 口径的污染源，不计入）
+覆盖 281 个文件 · 描述性提及 25 处（grep 口径的污染源，不计入）
 
 ## App 层
 
-### @api（应用可读面） · 51
+### @api（应用可读面） · 54
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
 | `Application` | class | src/App/Application.php:49 |
-| `Application::commands()` | method | src/App/Application.php:408 |
-| `Application::taskHost()` | method | src/App/Application.php:434 |
-| `Application::accelerators()` | method | src/App/Application.php:466 |
-| `Application::clipboard()` | method | src/App/Application.php:488 |
-| `Application::metrics()` | method | src/App/Application.php:517 |
-| `Application::attach()` | method | src/App/Application.php:567 |
-| `Application::onSystemThemeChanged()` | method | src/App/Application.php:679 |
-| `Application::frame()` | method | src/App/Application.php:721 |
-| `Application::repaintForResize()` | method | src/App/Application.php:914 |
-| `Application::after()` | method | src/App/Application.php:961 |
-| `Application::wantsFrame()` | method | src/App/Application.php:1033 |
-| `Application::submitSliced()` | method | src/App/Application.php:1359 |
-| `Application::io()` | method | src/App/Application.php:1448 |
-| `Application::capturePointer()` | method | src/App/Application.php:1491 |
-| `Application::releasePointer()` | method | src/App/Application.php:1513 |
-| `Application::dispatchInput()` | method | src/App/Application.php:1532 |
-| `Application::dispatch()` | method | src/App/Application.php:1672 |
-| `Application::showMenu()` | method | src/App/Application.php:1798 |
-| `Application::showSnackbar()` | method | src/App/Application.php:1814 |
-| `Application::overlays()` | method | src/App/Application.php:1848 |
-| `Application::showModal()` | method | src/App/Application.php:1868 |
-| `Application::closeModal()` | method | src/App/Application.php:1878 |
+| `Application::commands()` | method | src/App/Application.php:353 |
+| `Application::taskHost()` | method | src/App/Application.php:379 |
+| `Application::accelerators()` | method | src/App/Application.php:431 |
+| `Application::clipboard()` | method | src/App/Application.php:453 |
+| `Application::metrics()` | method | src/App/Application.php:482 |
+| `Application::attach()` | method | src/App/Application.php:532 |
+| `Application::onSystemThemeChanged()` | method | src/App/Application.php:641 |
+| `Application::frame()` | method | src/App/Application.php:683 |
+| `Application::repaintForResize()` | method | src/App/Application.php:876 |
+| `Application::after()` | method | src/App/Application.php:929 |
+| `Application::wantsFrame()` | method | src/App/Application.php:963 |
+| `Application::submitSliced()` | method | src/App/Application.php:1221 |
+| `Application::io()` | method | src/App/Application.php:1255 |
+| `Application::capturePointer()` | method | src/App/Application.php:1271 |
+| `Application::releasePointer()` | method | src/App/Application.php:1293 |
+| `Application::dispatchInput()` | method | src/App/Application.php:1312 |
+| `Application::dispatch()` | method | src/App/Application.php:1452 |
+| `Application::showMenu()` | method | src/App/Application.php:1578 |
+| `Application::showSnackbar()` | method | src/App/Application.php:1594 |
+| `Application::overlays()` | method | src/App/Application.php:1628 |
+| `Application::showModal()` | method | src/App/Application.php:1648 |
+| `Application::closeModal()` | method | src/App/Application.php:1658 |
 | `Frame` | class | src/App/Frame.php:17 |
 | `Frame::run()` | method | src/App/Frame.php:79 |
 | `FrameClock` | class | src/App/FrameClock.php:10 |
@@ -73,6 +73,9 @@
 | `ProcessTaskHost::shutdown()` | method | src/App/ProcessTaskHost.php:200 |
 | `ProcessWorker` | class | src/App/ProcessWorker.php:6 |
 | `ProcessWorker::serve()` | method | src/App/ProcessWorker.php:30 |
+| `PumpHost::after()` | method | src/App/PumpHost.php:111 |
+| `PumpHost::io()` | method | src/App/PumpHost.php:257 |
+| `PumpHost::submitSliced()` | method | src/App/PumpHost.php:273 |
 | `SlicedJob` | interface | src/App/SlicedJob.php:6 |
 | `SlicedJob::step()` | method | src/App/SlicedJob.php:30 |
 | `SlicedJob::result()` | method | src/App/SlicedJob.php:47 |
@@ -85,26 +88,28 @@
 | `WindowStateStore::restore()` | method | src/App/WindowStateStore.php:76 |
 | `WindowStateStore::persist()` | method | src/App/WindowStateStore.php:142 |
 
-### @internal（框架内部） · 35
+### @internal（框架内部） · 40
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
-| `Application::focus()` | method | src/App/Application.php:384 |
-| `Application::tasks()` | method | src/App/Application.php:457 |
-| `Application::$metricsCache` | property | src/App/Application.php:510 |
-| `Application::uiThreadId()` | method | src/App/Application.php:631 |
-| `Application::assertUiThread()` | method | src/App/Application.php:641 |
-| `Application::semanticsMode()` | method | src/App/Application.php:1253 |
-| `Application::slicedCount()` | method | src/App/Application.php:1442 |
-| `Application::captureNode()` | method | src/App/Application.php:1525 |
-| `Application::register()` | method | src/App/Application.php:1725 |
-| `Application::beginDrag()` | method | src/App/Application.php:1748 |
-| `Application::updateDrag()` | method | src/App/Application.php:1756 |
-| `Application::dropDrag()` | method | src/App/Application.php:1764 |
-| `Application::cancelDrag()` | method | src/App/Application.php:1774 |
-| `Application::rootBox()` | method | src/App/Application.php:1781 |
-| `Application::dismissOverlay()` | method | src/App/Application.php:1888 |
-| `Application::toggleWidgetPanel()` | method | src/App/Application.php:1910 |
+| `Application::focus()` | method | src/App/Application.php:329 |
+| `Application::tasks()` | method | src/App/Application.php:402 |
+| `Application::lastTimestampMs()` | method | src/App/Application.php:412 |
+| `Application::lastInputMs()` | method | src/App/Application.php:422 |
+| `Application::$metricsCache` | property | src/App/Application.php:475 |
+| `Application::uiThreadId()` | method | src/App/Application.php:593 |
+| `Application::assertUiThread()` | method | src/App/Application.php:603 |
+| `Application::semanticsMode()` | method | src/App/Application.php:1173 |
+| `Application::slicedCount()` | method | src/App/Application.php:1249 |
+| `Application::captureNode()` | method | src/App/Application.php:1305 |
+| `Application::register()` | method | src/App/Application.php:1505 |
+| `Application::beginDrag()` | method | src/App/Application.php:1528 |
+| `Application::updateDrag()` | method | src/App/Application.php:1536 |
+| `Application::dropDrag()` | method | src/App/Application.php:1544 |
+| `Application::cancelDrag()` | method | src/App/Application.php:1554 |
+| `Application::rootBox()` | method | src/App/Application.php:1561 |
+| `Application::dismissOverlay()` | method | src/App/Application.php:1668 |
+| `Application::toggleWidgetPanel()` | method | src/App/Application.php:1690 |
 | `Completion` | class | src/App/Completion.php:6 |
 | `DragController` | class | src/App/DragController.php:10 |
 | `FocusManager` | class | src/App/FocusManager.php:17 |
@@ -121,6 +126,9 @@
 | `OverlayManager::dismissOverlay()` | method | src/App/OverlayManager.php:545 |
 | `OverlayManager::focusTrapRoots()` | method | src/App/OverlayManager.php:558 |
 | `OverlayManager::toggleWidgetPanel()` | method | src/App/OverlayManager.php:632 |
+| `PumpHost` | class | src/App/PumpHost.php:9 |
+| `PumpHost::slicedCount()` | method | src/App/PumpHost.php:251 |
+| `PumpHostHost` | interface | src/App/PumpHostHost.php:6 |
 | `ScrollInputRouter` | class | src/App/ScrollInputRouter.php:14 |
 | `TextEditingBridge` | class | src/App/TextEditingBridge.php:14 |
 | `TextEditingHost` | interface | src/App/TextEditingHost.php:8 |
