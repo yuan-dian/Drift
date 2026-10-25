@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Hello;
 
+use Drift\App\FrameClock;
 use Drift\Errors;
 use Drift\Platform\Win32\Win32Platform;
 use Drift\Platform\Win32\ResizeHookState;
@@ -97,6 +98,19 @@ final class Bootstrap
         // ★ `dispatchInput()` 对指针事件返回命中链解析出的光标形状 ⇒ 由**这里**
         //   喂给 `setCursor()`：应用它需要 `WindowHost`，而框架不持平台（§5.1）。
         $input = $platform->input();
+
+        // ★★★ **自适应帧时钟**（少了这段，异步与动画在真机上永远不动）。
+        //
+        //   根因：`pump()` 阻塞在壳的 `GetMessageW` —— 没有输入事件时循环一直睡。
+        //   `Application::wantsFrame()` 只是"回答要不要跑下一帧"，**没人问就没人答**：
+        //   定时器不上膛 ⇒ `after()` 排的回调永远不响、`Spinner` 永远不转。
+        //   **闸门抓不到**（smoke 自己推进时钟，每一帧都是显式跑的）。
+        //   2026-10-25 在 `apps/tutorial` 的异步段真机实测：点「开始加载」后停住，
+        //   1500ms 后截图与 400ms 时**逐字节相同**。
+        //   ★ 本应用自己不用异步/动画，但它是**所有新应用的抄写来源** ⇒ 这段必须在。
+        $clock = new FrameClock($platform->timers());
+        $clock->pace($app->wantsFrame());
+
         while ($platform->pump()) {
             while (($event = $input->poll()) !== null) {
                 $shape = $app->dispatchInput($event, $platform->now());
@@ -110,12 +124,15 @@ final class Bootstrap
                 $platform->imeCaret($app->imeCaretRect());
             }
 
-            $app->frame($platform->now(), $screen->viewport());
+            // 帧由帧时钟跑（内含 `frame()` + 按 `wantsFrame()` 重新上膛）
+            $clock->tick($app, $platform->now(), $screen->viewport());
 
             // ★ IME 定位（§8.4）：框架算几何（逻辑像素）、平台做量化。
             //   组合根不调这一行 = 输入法候选框贴在窗口左上角（能打字、
             //   候选框位置错）—— 半可用失败形态，故三行注释写死原因。
             $platform->imeCaret($app->imeCaretRect());
         }
+
+        $clock->stop();
     }
 }
