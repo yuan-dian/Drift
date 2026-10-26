@@ -28,25 +28,53 @@ final readonly class PointerEvent implements InputEvent
         public float $y,
         public int $button,
         public PointerPhase $phase = PointerPhase::Down,
+        public bool $ctrl = false,
+        public bool $alt = false,
+        public bool $shift = false,
     ) {
     }
 
-    /** `$button`：0 = 主键（左键），1 = 中键，2 = 右键（§9.1 上下文菜单走右键手势） */
-    public static function down(float $x, float $y, int $button = 0): self
-    {
-        return new self($x, $y, $button, PointerPhase::Down);
+    /**
+     * `$button`：0 = 主键（左键），1 = 中键，2 = 右键（§9.1 上下文菜单走右键手势）
+     *
+     * ★ 后三个是**按下这一刻**的修饰键（2026-10-26 加）。它们是 Ctrl/Shift+点击的
+     *   唯一通道：表格的多选（Ctrl 切换 / Shift 连选）、拖拽修饰都靠它。缺了它，
+     *   "多选"只能退化成"点一下就切换"，而 Shift 连选**表达不出来**。
+     *   ★ 三个都有默认值 ⇒ 既有调用点（`src/` 15 处 + `tools/` 夹具）一字不改。
+     */
+    public static function down(
+        float $x,
+        float $y,
+        int $button = 0,
+        bool $ctrl = false,
+        bool $alt = false,
+        bool $shift = false,
+    ): self {
+        return new self($x, $y, $button, PointerPhase::Down, $ctrl, $alt, $shift);
     }
 
     /** 移动。`$button` 是**当前按住**的键（没按 = 0）—— 拖动过程由此识别 */
-    public static function move(float $x, float $y, int $button = 0): self
-    {
-        return new self($x, $y, $button, PointerPhase::Move);
+    public static function move(
+        float $x,
+        float $y,
+        int $button = 0,
+        bool $ctrl = false,
+        bool $alt = false,
+        bool $shift = false,
+    ): self {
+        return new self($x, $y, $button, PointerPhase::Move, $ctrl, $alt, $shift);
     }
 
     /** 抬起。`$button` 是**松开**的那个键 */
-    public static function up(float $x, float $y, int $button = 0): self
-    {
-        return new self($x, $y, $button, PointerPhase::Up);
+    public static function up(
+        float $x,
+        float $y,
+        int $button = 0,
+        bool $ctrl = false,
+        bool $alt = false,
+        bool $shift = false,
+    ): self {
+        return new self($x, $y, $button, PointerPhase::Up, $ctrl, $alt, $shift);
     }
 
     /**
@@ -66,14 +94,28 @@ final readonly class PointerEvent implements InputEvent
      *   ★ 未知 phase 按 Down 兜（防御性：桥保证只发 0–3，与 `pump()` 的
      *   "其它 ⇒ 丢弃"同一档）。
      */
-    public static function fromBridge(float $x, float $y, int $button, int $phase): self
-    {
+    public static function fromBridge(
+        float $x,
+        float $y,
+        int $button,
+        int $phase,
+        bool $ctrl = false,
+        bool $alt = false,
+        bool $shift = false,
+    ): self {
         return match (PointerPhase::tryFrom($phase) ?? PointerPhase::Down) {
-            PointerPhase::Down => self::down($x, $y, $button),
-            PointerPhase::Move => self::move($x, $y),
-            PointerPhase::Up => self::up($x, $y, $button),
+            PointerPhase::Down => self::down($x, $y, $button, $ctrl, $alt, $shift),
+            PointerPhase::Move => self::move($x, $y, 0, $ctrl, $alt, $shift),
+            PointerPhase::Up => self::up($x, $y, $button, $ctrl, $alt, $shift),
+            // Leave 不带修饰键：消费方只看"离开了"
             PointerPhase::Leave => self::leave($x, $y),
         };
+    }
+
+    /** 有没有按住任何修饰键（"纯点击" vs "带修饰的点击"的分叉点） */
+    public function hasModifier(): bool
+    {
+        return $this->ctrl || $this->alt || $this->shift;
     }
 
     public function isPrimary(): bool

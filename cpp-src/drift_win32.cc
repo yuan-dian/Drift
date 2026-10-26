@@ -154,6 +154,11 @@ struct PendingEvent {
     int b;   // resize: h ／ pointer: y ／ wheel: y ／ —
     int c;   // pointer: button（move 恒 0 —— 按住态由应用自己的拖动状态跟踪）／ wheel: delta（WHEEL_DELTA=120 为一格；壳已取负 ⇒ 正=回拉=内容上移，见 WM_MOUSEWHEEL 注释）／ key: modifier 位（1=ctrl 2=alt 4=shift）／ —
     int d;   // pointer: 相位（0=down 1=move 2=up 3=leave，与 Drift\Input\PointerPhase 同值）／ —
+    // ★ pointer 的**修饰键位**（1=ctrl 2=alt 4=shift，与 `key` 同一套编码）。
+    //   为什么要它：Ctrl/Shift+点击是表格多选、拖拽修饰（Ctrl 拖 = 复制）的唯一
+    //   输入通道；Win32 的鼠标消息 wParam 里只有 MK_CONTROL/MK_SHIFT，Alt 不在其中
+    //   ⇒ 三个都走 `GetKeyState`（同一处读、同一套编码，见 `modifierMask()`）。
+    int e;   // pointer: modifier 位 ／ —
     std::string text;   // key: 键名 ／ char: UTF-8 文本
 };
 
@@ -996,6 +1001,24 @@ void enqueue(const PendingEvent &event) {
  * ★ `phase` 与 `Drift\Input\PointerPhase` 的 value 同值（0=down 1=move 2=up
  *   3=leave）—— 与 `CursorShape` 同一条纪律：跨边界的枚举值是 ABI。
  */
+/**
+ * 当前按住的修饰键位（1=ctrl 2=alt 4=shift）—— 与 `key` 事件同一套编码。
+ *
+ * ★ 为什么不用鼠标消息 wParam 里的 MK_CONTROL / MK_SHIFT：那里**没有 Alt**
+ *   （MK_MBUTTON 之类占着那些位），而"Alt+点击"在表格/画布类控件里是真实手势
+ *   （列宽拖拽的"仅此列"、画布的平移）。三个都读 `GetKeyState` 才是一致的口径。
+ * ★ 读的是**当前**状态而不是消息发生时的状态：两者只在"按住鼠标的同时按/放
+ *   修饰键"这一瞬间可能有差别，而这个瞬间本来就没有消费者。
+ */
+int modifierMask() {
+    int mask = 0;
+    if ((GetKeyState(VK_CONTROL) & 0x8000) != 0) mask |= 1;
+    if ((GetKeyState(VK_MENU) & 0x8000) != 0) mask |= 2;
+    if ((GetKeyState(VK_SHIFT) & 0x8000) != 0) mask |= 4;
+
+    return mask;
+}
+
 void pushPointer(int x, int y, int button, int phase) {
     g_ptrX = x;
     g_ptrY = y;
@@ -1006,6 +1029,7 @@ void pushPointer(int x, int y, int button, int phase) {
     event.b = y;
     event.c = button;
     event.d = phase;
+    event.e = modifierMask();
     enqueue(event);
 }
 
@@ -1823,6 +1847,10 @@ Array toArray(const PendingEvent &event) {
             out.set("y", (Int)event.b);
             out.set("button", (Int)event.c);
             out.set("phase", (Int)event.d);
+            // 修饰键（1=ctrl 2=alt 4=shift ⇒ 与 `key` 事件同样的三个布尔）
+            out.set("ctrl", (Bool)((event.e & 1) != 0));
+            out.set("alt", (Bool)((event.e & 2) != 0));
+            out.set("shift", (Bool)((event.e & 4) != 0));
             break;
 
         case kEvKey:

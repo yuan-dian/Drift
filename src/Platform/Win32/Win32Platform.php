@@ -241,6 +241,12 @@ final class Win32Platform implements Platform
                 (float) ((int) ($event['y'] ?? 0)) / $dpr,
                 (int) ($event['button'] ?? 0),
                 (int) ($event['phase'] ?? 0),
+                // 修饰键（2026-10-26）：壳从 `GetKeyState` 读三个位再拆成布尔。
+                // ★ 缺了它 Ctrl/Shift+点击在 `Input` 层**无法表达** ⇒ 表格多选退化成
+                //   "点一下切换"，Shift 连选做不到（真前置于阶段 2 的东西）。
+                (bool) ($event['ctrl'] ?? false),
+                (bool) ($event['alt'] ?? false),
+                (bool) ($event['shift'] ?? false),
             ));
 
             return true;

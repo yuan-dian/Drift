@@ -577,8 +577,21 @@ final class InputRouter
     private function pointerOwner(?Element $element): ?Element
     {
         for ($node = $element; $node !== null; $node = $node->parent()) {
-            if ($node->widget()->pointerOwnsPressValue()) {
+            $widget = $node->widget();
+
+            if ($widget->pointerOwnsPressValue()) {
                 return $node;
+            }
+
+            // ★★ 更近的"自己处理按下"的控件 ⇒ **让位**（2026-10-26，`Table` 行点击立的规矩）。
+            //   行级 `pointer(ownsPress: true)` 让"整行可点"成立，但它会顺手抢走
+            //   cell 里按钮的按下（行在父链上更近地声明了 ownsPress）⇒ 表格里放按钮
+            //   点不动，且**不报错**。
+            //   判据与 `windowDragOwner()` 同构：可聚焦 / `Activatable` 的控件本来就
+            //   有"按下 ⇒ 自己激活"的语义（走 `focusHit` + `activateFocusedWidget()`），
+            //   祖先没有资格替它决定。命中点**在**这种东西上面时直接交回原路。
+            if ($widget->isFocusable() || $widget instanceof Activatable) {
+                return null;
             }
         }
 
