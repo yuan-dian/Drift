@@ -62,6 +62,16 @@ function drift_win_set_title(int $hwnd, string $title): void {}
 function drift_win_set_min_size(int $hwnd, int $width, int $height): void {}
 
 /**
+ * 整窗不透明度（P1 / §质感）。`$alpha` 0..1（1 = 不透明，越小越透）。
+ *
+ * ★ **懒挂**：首次以 `$alpha < 1` 调用时壳才给窗口加 `WS_EX_LAYERED` ——
+ *   其余窗口保持纯 GDI 上屏，不承担分层窗在旧驱动 / 远程桌面下的合成怪癖。
+ * ★ 当前只做**全局** alpha（整窗统一透明）；逐像素 alpha / 毛玻璃是下一阶段
+ *   （要替换 present 路径为 `UpdateLayeredWindow` + DWM 亚克力背景）。
+ */
+function drift_win_set_opacity(int $hwnd, float $alpha): void {}
+
+/**
  * 客户区尺寸（**物理**像素，`['w'=>int,'h'=>int]`；失败为空数组）。
  *
  * ★ 返回**物理**像素而不是逻辑：逻辑↔物理的换算**只能发生一次**（§6.1），

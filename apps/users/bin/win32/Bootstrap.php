@@ -79,6 +79,15 @@ final class Bootstrap
         $handle = $window->createWindow('用户管理', self::WINDOW_WIDTH, self::WINDOW_HEIGHT);
         $window->show($handle);
 
+        // ★ 窗口不透明度（P1 §质感 / Stage 1a）：环境变量驱动，**默认不变**。
+        //   `DRIFT_WINDOW_OPACITY=0.85` ⇒ 整窗 85% 不透明（半透明）。
+        //   ★ 这是 `WindowHost::setOpacity()` 的**真实消费者**（否则它是个没人用的
+        //     API）；真正"内容透、控件不透"的毛玻璃是 Stage 2（逐像素 alpha + DWM 亚克力）。
+        $opacityEnv = \getenv('DRIFT_WINDOW_OPACITY');
+        if ($opacityEnv !== false && $opacityEnv !== '') {
+            $window->setOpacity($handle, (float) $opacityEnv);
+        }
+
         // ★ 窗口状态读回（§5.4 / §19 M5）：**启动一次同步 IO**，不在帧内。
         //   ★ 顺序在 `surface->resize()` **之前** —— resize 定首帧尺寸，而首帧就该是
         //     还原后的尺寸；放到后面用户会先看到一帧默认尺寸再被拽过去。

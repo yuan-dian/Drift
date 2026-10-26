@@ -56,6 +56,14 @@ final class FakeWindowHost implements WindowHost
         $this->minSize = [$width, $height];
     }
 
+    /** 夹具：记录最后一次设的不透明度（P1 §质感；真机行为由 `WS_EX_LAYERED` 承担，头侧只验接线） */
+    public ?float $opacity = null;
+
+    public function setOpacity(int $windowHandle, float $opacity): void
+    {
+        $this->opacity = $opacity;
+    }
+
     public function clientSize(int $windowHandle): Size
     {
         return $this->client;

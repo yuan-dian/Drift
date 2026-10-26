@@ -18,6 +18,7 @@ use function drift_win_dpi;
 use function drift_win_is_maximized;
 use function drift_win_place_window;
 use function drift_win_set_min_size;
+use function drift_win_set_opacity;
 use function drift_win_set_cursor;
 use function drift_win_set_title;
 use function drift_win_show;
@@ -88,6 +89,19 @@ final class Win32WindowHost implements WindowHost
         }
 
         drift_win_set_min_size($handle, (int) round($width * $dpr), (int) round($height * $dpr));
+    }
+
+    /**
+     * 整窗不透明度（0..1；1 = 不透明）。P1 §质感。
+     *
+     * ★ 这是**平台能力**，不是正确性：不支持的平台可 no-op（外观增强）。
+     *   Win32 走 `WS_EX_LAYERED` + `SetLayeredWindowAttributes`（**全局** alpha，
+     *   首次 <1 才懒挂 LAYERED）。
+     * ★ 当前只做整窗统一透明；逐像素 alpha / 毛玻璃是 P1-Stage2（改 present 路径）。
+     */
+    public function setOpacity(int $windowHandle, float $opacity): void
+    {
+        drift_win_set_opacity($windowHandle, $opacity);
     }
 
     /**

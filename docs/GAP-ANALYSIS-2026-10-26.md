@@ -171,3 +171,20 @@ ScrollView / LazyColumn / LazyRow / LazyGrid / Grid / Stack / Image / Icon / Ric
   等真实性能瓶颈出现再说（`GpuContext` 接口已留好）。
 - **脏矩形**：同上，先用基准数据说话。
 - **原生控件**（`CreateMenu` 等系统菜单）：自绘 `MenuBar` 已有，混用原生控件会割裂主题。
+
+---
+
+## 8. 落地记录（2026-10-26 续）
+
+**P1-6 窗口级透明 —— Stage 1a 已落地**（`WindowHost::setOpacity` ⇄ `drift_win_set_opacity`）：
+
+- **懒挂** `WS_EX_LAYERED` + `SetLayeredWindowAttributes(LWA_ALPHA)`（**全局** alpha），
+  与既有 `WM_PAINT` + `SetDIBitsToDevice` 上屏**共存**，零回归 —— 只有应用真要
+  半透明时才加 LAYERED，其余窗口保持纯 GDI（不承担分层窗的合成怪癖）。
+- 建窗即加 DWM 圆角（`DWMWA_WINDOW_CORNER_PREFERENCE=ROUND`；旧系统/旧 SDK 静默忽略）。
+- 消费者：`users` 组合根读 `DRIFT_WINDOW_OPACITY`（**默认不变**，opt-in）。
+- 真机判据：`DRIFT_WINDOW_OPACITY=0.8` ⇒ 整窗透出背后桌面（`_build/stage1a-full-trans.png`），
+  不设 ⇒ 与改动前逐像素一致。
+- **尚未做**：P1-5 无边框 + 自绘标题栏；**P1-7 毛玻璃**（要 P1-6 的**逐像素** alpha：
+  换 `UpdateLayeredWindow` + `DWMWA_SYSTEMBACKDROP_TYPE` 亚克力，并让主题画半透明表面）；
+  P1-8 混合模式 + `Opacity` 控件。

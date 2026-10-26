@@ -59,6 +59,17 @@ interface WindowHost
     public function setMinSize(int $width, int $height): void;
 
     /**
+     * 整窗不透明度（0..1；1 = 不透明）。P1 §质感。
+     *
+     * ★ **平台能力，不是正确性**：不支持的平台可 no-op —— 应用不该因为
+     *   "这个平台不能半透明"就报错。Win32 实现走 `WS_EX_LAYERED`（首次 <1 懒挂）
+     *   + `SetLayeredWindowAttributes`（**全局** alpha，与既有 GDI 上屏共存）。
+     * ★ 当前只做整窗统一透明；**逐像素 alpha / 毛玻璃**是后续阶段（要替换
+     *   present 路径为 `UpdateLayeredWindow` + DWM 亚克力背景）。
+     */
+    public function setOpacity(int $windowHandle, float $opacity): void;
+
+    /**
      * 客户区尺寸（**逻辑**像素；物理像素的换算归 `Screen::scale()`） */
     public function clientSize(int $windowHandle): Size;
 

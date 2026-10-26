@@ -30,10 +30,22 @@
 #include <UIAutomationCore.h>    // IRawElementProviderSimple / ProviderOptions
 #include <UIAutomationClient.h>  // UIA_*ControlTypeId / UIA_*PropertyId 常量
 #include <uiautomationcoreapi.h> // UiaReturnRawElementProvider / UiaRootObjectId
+#include <dwmapi.h>              // DwmSetWindowAttribute —— 窗口圆角/背景（P1 质感）
 #pragma comment(lib, "UIAutomationCore.lib")  // UiaReturnRawElementProvider
 #pragma comment(lib, "oleaut32.lib")          // SysAllocString / VariantInit / BSTR
 #pragma comment(lib, "ole32.lib")             // COM（IUnknown 基类）
 #pragma comment(lib, "uuid.lib")              // __uuidof(IRawElementProviderSimple / IUnknown)
+#pragma comment(lib, "dwmapi.lib")             // DwmSetWindowAttribute（P1 圆角/背景）
+
+// ★ Win11 DWM 常量兜底：旧 SDK 的 `dwmapi.h` 没有这两个成员。值取自
+//   `DWMWINDOWATTRIBUTE` / `DWM_WINDOW_CORNER_PREFERENCE` 的真实枚举值 ——
+//   与系统 ABI 绑定，**不要**改成"看起来顺眼"的数。
+#ifndef DWMWA_WINDOW_CORNER_PREFERENCE
+#define DWMWA_WINDOW_CORNER_PREFERENCE 33
+#endif
+#ifndef DWMWCP_ROUND
+#define DWMWCP_ROUND 2
+#endif
 
 #include <string>
 #include <vector>
@@ -1744,6 +1756,14 @@ Int php_drift_win_create(String title, Int width, Int height) {
                      SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
 
+    // ★ 窗口圆角（P1 / §质感）：Win11 DWM 圆角。旧系统没有这个属性 ⇒ 调用返回
+    //   失败，**静默忽略**（窗口保持直角）。这是纯外观增强，失败不该阻断建窗，
+    //   所以**不检查返回值**。
+    //   ★ 圆角由 DWM 画在**外框**上（`probe-grab` 抓客户区看不到）⇒ 验证要走
+    //   整窗屏幕矩形（PowerShell `CopyFromScreen`）。
+    int corner = DWMWCP_ROUND;
+    DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(corner));
+
     // UIA 无障碍（§9 / M5，P2）：建窗即挂 provider（数据由 php_drift_win_uia_push 喂）。
     g_uiaProvider = new CProvider(-1);   // 根 provider（m_index=-1 = 窗口根）
 
@@ -1764,6 +1784,42 @@ void php_drift_win_close(Int hwnd) {
     if (target != NULL) {
         DestroyWindow(target);
     }
+}
+
+/**
+ * 整窗不透明度（P1 / §质感）。`alpha` 0.0..1.0：1 = 不透明，越小越透。
+ *
+ * ★★ **懒挂 LAYERED**（不是建窗时就挂）：只有应用真的要半透明时才加
+ *   `WS_EX_LAYERED`，其余窗口保持纯 GDI 上屏 —— 分层窗在旧驱动 / 远程桌面 /
+ *   部分合成器下有怪癖（透明度、子窗口重绘），用不到就不要。这是"能力按需开启"，
+ *   与 §11 的能力查询纪律同源。
+ *
+ * ★ 走 `SetLayeredWindowAttributes(LWA_ALPHA)`（**全局** alpha），**不是**
+ *   `UpdateLayeredWindow`（逐像素）—— 后者要替换整条 present 路径（P1-Stage2：
+ *   逐像素 alpha + 毛玻璃）。全局 alpha 与现有 `WM_PAINT` + `SetDIBitsToDevice`
+ *   上屏**共存**，零回归。
+ */
+void php_drift_win_set_opacity(Int hwnd, Float alpha) {
+    HWND target = (HWND)(INT_PTR)hwnd;
+    if (target == NULL) {
+        return;
+    }
+    int a255 = (int)(alpha * 255.0f + 0.5f);
+    if (a255 < 0) {
+        a255 = 0;
+    } else if (a255 > 255) {
+        a255 = 255;
+    }
+    BYTE a = (BYTE)a255;
+
+    LONG_PTR ex = GetWindowLongPtrW(target, GWL_EXSTYLE);
+    if ((ex & WS_EX_LAYERED) == 0) {
+        SetWindowLongPtrW(target, GWL_EXSTYLE, ex | WS_EX_LAYERED);
+        // 改扩展样式后必须 SWP_FRAMECHANGED 让系统重算非客户区（否则不生效）
+        SetWindowPos(target, NULL, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    }
+    SetLayeredWindowAttributes(target, 0, a, LWA_ALPHA);
 }
 
 void php_drift_win_set_cursor(Int hwnd, Int shape) {
