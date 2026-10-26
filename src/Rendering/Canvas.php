@@ -19,8 +19,8 @@ use Drift\Text\Paragraph;
  * **能力分级**（D2，2026-10-20 采纳）：7-op 时代的原语（`drawRect` /
  * `drawParagraph` / `save` / `pushClip` …）无条件支持；19 op 回植新增的面
  * 分三层 —— Core（`drawEllipse` / `drawLine`，所有后端必须）/ Extended
- * （渐变 / 虚线 / `pushClipPath`，Raster 允许降级近似）/ Optional
- * （`drawPath` / `drawImage` / `drawShadow` / `pushLayer`，仅 Skia 级）。
+ * （渐变 / 虚线 / `pushClipPath` / `blurBackdrop`，Raster 允许降级近似）/
+ * Optional（`drawPath` / `drawImage` / `drawShadow` / `pushLayer`，仅 Skia 级）。
  * `capabilities()` 是各后端对外的能力位掩码，`CustomPaint` 在拿到画布时
  * **查一次**，不在每次绘制时查。位语义见 `CanvasCapabilities`。
  *
@@ -145,4 +145,31 @@ interface Canvas
      *   "裁什么形状"，弹栈语义完全一致（W8 的 `clipDepth` 同口径计深）。
      */
     public function pushClipPath(Path $path): void;
+
+    /**
+     * 把**已经画上去的背景**模糊掉，范围限制在 `$rect`（Extended 层）。
+     *
+     * 语义三条，缺一条就不是"毛玻璃"而是别的东西：
+     * ① **只模糊背景** —— 本调用之后画的任何东西都是清晰的。毛玻璃面板的
+     *    文字必须在模糊**之后**画，否则字也被糊掉（这是它与 `pushLayer()`
+     *    最容易被混淆的地方：那个管"整体变透"，这个管"背后变糊"）。
+     * ② **范围是 `$rect`**，不是当前裁剪 —— 裁剪可以更大（父容器裁的），
+     *    但模糊只发生在这块矩形里，矩形外一个像素都不动。
+     * ③ **一次性操作，不是栈** —— 没有 `pop`，没有配对，不进 `assertBalanced()`
+     *    的深度计数。理由见下。
+     *
+     * ★★ **为什么不做成 `pushBackdropBlur()` / `popBackdropBlur()` 一对**：
+     *   那样"层里到底该有什么"就有歧义 —— 子内容画在层里会被一起模糊
+     *   （Skia 的 `saveLayer` 图像滤镜作用在**整个层**上），画在层外又需要
+     *   另一套配对规则。做成一次性操作，"层里只有背景"由调用时机保证，
+     *   子内容天然清晰，也不新增栈深度语义。
+     *
+     * ★ **坐标系同 `pushClip`**：`$rect` 按当前偏移解释（盒局部坐标）。
+     * ★ `$sigma <= 0` 或矩形退化 ⇒ 什么都不做（不是错误：模糊半径 0 就是
+     *   不模糊，与 `Shadow.blur = 0` 走硬边捷径同一口径）。
+     * ★ **Raster 后端近似为"不模糊"**（`CAP_BACKDROP` 仍置位）：像素结果
+     *   只少了模糊，结构与透明度照常 —— 与 `CAP_LAYER` 的 alpha 乘数栈同一档
+     *   "Extended 允许降级近似"。金色基线不覆盖模糊质量。
+     */
+    public function blurBackdrop(float $sigma, Rect $rect): void;
 }

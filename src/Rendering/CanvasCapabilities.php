@@ -18,7 +18,7 @@ use Drift\Errors;
  * | 层 | op | 所有后端 | RasterCanvas | SkiaCanvas |
  * |---|---|---|---|---|
  * | Core | ELLIPSE / LINE | **必须实现**（缺一个就是缺陷） | 必须（golden 用它） | 必须 |
- * | Extended | GRADIENT / DASH / CLIP_PATH / PATH / LAYER | Skia 级必须 | **可降级近似**（渐变→分带、虚线→实线；路径硬边无抗锯齿且只做 Miter+Butt；路径裁剪 = 每行 x 区间掩码；层 = alpha 乘数栈） | 必须 |
+ * | Extended | GRADIENT / DASH / CLIP_PATH / PATH / LAYER / BACKDROP | Skia 级必须 | **可降级近似**（渐变→分带、虚线→实线；路径硬边无抗锯齿且只做 Miter+Butt；路径裁剪 = 每行 x 区间掩码；层 = alpha 乘数栈；模糊背景 = 不模糊） | 必须 |
  * | Optional | IMAGE / SHADOW | 仅 Skia 级 | **报 E-OP-UNSUPPORTED** | 必须 |
  *
  * **位置位 = "该后端能处理这个 op"**（Extended 的近似也算处理 —— 输出质量
@@ -55,6 +55,17 @@ final class CanvasCapabilities
     //   全部经常量名引用）。
     public const CAP_LAYER = 1 << 6;
 
+    /**
+     * 模糊背景（`Canvas::blurBackdrop()`）—— Extended 层，Raster 近似为**不模糊**。
+     *
+     * ★ 为什么算 Extended 而不是 Optional：缺了它"控件画不出来"这条不成立
+     *   —— 毛玻璃面板退化成半透明面板，结构、透明度、层级全对，只少一层糊。
+     *   与 `CAP_LAYER`（alpha 乘数栈近似真离屏）同一档取舍：**近似也算处理**。
+     * ★ 与 `CAP_SHADOW` 的区别：阴影缺了会让卡片看起来"浮不起来"（结构性的
+     *   层次信息丢失），所以 Raster 响亮失败；模糊缺了只是"不够精致"。
+     */
+    public const CAP_BACKDROP = 1 << 9;
+
     // ── Optional 层 ──
     // ★ `CAP_IMAGE` 自 W8-1 起**两个后端都有**：Skia 走 `drawImageRect` 原生
     //   codec，Raster 走内存 RGBA 的最近邻 blit（纯整数、可复现）。1:1 时两者
@@ -75,7 +86,8 @@ final class CanvasCapabilities
      */
     public const ALL_MASK = self::CAP_ELLIPSE | self::CAP_LINE
         | self::CAP_GRADIENT | self::CAP_DASH | self::CAP_CLIP_PATH
-        | self::CAP_PATH | self::CAP_IMAGE | self::CAP_SHADOW | self::CAP_LAYER;
+        | self::CAP_PATH | self::CAP_IMAGE | self::CAP_SHADOW | self::CAP_LAYER
+        | self::CAP_BACKDROP;
 
     /**
      * 后端遇到**自己没实现**的 op 时的失败消息（E-OP-UNSUPPORTED）。

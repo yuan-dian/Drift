@@ -13,6 +13,7 @@ use Drift\Rendering\Path;
 use Drift\Rendering\Shadow;
 use Drift\Text\Paragraph;
 
+use function drift_skia_blur_backdrop;
 use function drift_skia_canvas_create;
 use function drift_skia_canvas_destroy;
 use function drift_skia_clear_source;
@@ -293,7 +294,7 @@ final class SkiaCanvas implements Canvas
             | CanvasCapabilities::CAP_GRADIENT | CanvasCapabilities::CAP_DASH
             | CanvasCapabilities::CAP_PATH | CanvasCapabilities::CAP_IMAGE
             | CanvasCapabilities::CAP_SHADOW | CanvasCapabilities::CAP_LAYER
-            | CanvasCapabilities::CAP_CLIP_PATH;
+            | CanvasCapabilities::CAP_CLIP_PATH | CanvasCapabilities::CAP_BACKDROP;
     }
 
     /**
@@ -464,6 +465,35 @@ final class SkiaCanvas implements Canvas
             return;
         }
         drift_skia_pop_layer($this->handle);
+    }
+
+    /**
+     * 模糊背景（毛玻璃底，Extended）。
+     *
+     * ★ `sigma` 按 dpr 放大：模糊半径是**视觉量**（逻辑像素），设备像素要跟着
+     *   dpr 走，否则 200% 缩放下玻璃会比设计稿"更硬"。
+     * ★ 坐标走 `toDevice()` —— 与 `pushClip()` 同一条换算（偏移 + dpr + 量化），
+     *   否则"先裁剪再模糊"两者的边界会差一个亚像素。
+     */
+    public function blurBackdrop(float $sigma, Rect $rect): void
+    {
+        if ($this->handle === 0 || $sigma <= 0.0) {
+            return;
+        }
+
+        $device = $this->toDevice($rect);
+        if ($device->width <= 0.0 || $device->height <= 0.0) {
+            return;
+        }
+
+        drift_skia_blur_backdrop(
+            $this->handle,
+            $sigma * $this->scale->dpr,
+            $device->left,
+            $device->top,
+            $device->width,
+            $device->height,
+        );
     }
 
     /**

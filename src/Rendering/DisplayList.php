@@ -39,6 +39,7 @@ final class DisplayList
     public const OP_LAYER_PUSH = 13;   // [opacity]                         Optional
     public const OP_LAYER_POP = 14;    // []                                Optional
     public const OP_PUSH_CLIP_PATH = 15; // [path]                          Extended
+    public const OP_BLUR_BACKDROP = 16;  // [sigma, rect]                   Extended
 
     /**
      * 每条命令占的槽位数：`[op, a, b, c, d, ref]`。
@@ -236,6 +237,12 @@ final class DisplayList
                 $canvas->popLayer();
             } elseif ($op === self::OP_PUSH_CLIP_PATH) {
                 $canvas->pushClipPath($this->buffer[$base + 1]);
+            } elseif ($op === self::OP_BLUR_BACKDROP) {
+                // ★ 一次性操作，**不动任何深度计数**（不是层栈，见 `Canvas::blurBackdrop()`）
+                $canvas->blurBackdrop(
+                    (float) $this->buffer[$base + 1],
+                    $this->buffer[$base + 2],
+                );
             }
         }
     }

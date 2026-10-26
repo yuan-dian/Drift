@@ -219,3 +219,42 @@ ScrollView / LazyColumn / LazyRow / LazyGrid / Grid / Stack / Image / Icon / Ric
   `UpdateLayeredWindow` 的位图才与窗口矩形对齐）；`HTMAXBUTTON` 快照布局
   （Win11 悬停最大化按钮弹布局菜单）；关闭按钮 hover 变红（要 Pressed/Hover 色阶
   接到 `Danger`）。
+
+**P1-8 画布合成：毛玻璃（背景模糊）—— Stage 2a 已落地**
+（`Canvas::blurBackdrop()` + `CAP_BACKDROP` + `BackdropFilter` 控件）：
+
+- **改了执行序，理由写在这里**：原计划 Stage 2 直接做窗口**逐像素** alpha
+  （`UpdateLayeredWindow` + DWM 亚克力）。重估后先做**背景模糊**，三条依据：
+  ① Stage 1a 的 `LWA_ALPHA` 已经能给"整窗均匀半透明"，ULW 多出来的只有
+  **逐像素**控制，而逐像素透明的**唯一价值**是"面板透、文字不透" ——
+  没有模糊时那就是一块廉价透明板，可读性反而更差；
+  ② 亚克力（`DWMWA_SYSTEMBACKDROP_TYPE`）只是**模糊源**，alpha 才是**开口**；
+  没有开口，亚克力一点都看不见 ⇒ 反过来，模糊原语才是承重件；
+  ③ 应用内背景模糊**不碰平台上屏路径** ⇒ 与 ULW 的风险彻底隔离，且
+  Win10/Win11 通用（不依赖 DWM 合成策略）。
+- **契约**：`Canvas::blurBackdrop(float $sigma, Rect $rect)` —— **一次性操作，
+  不是 push/pop 对**。做成一对的话"层里到底有什么"有歧义（子内容画在层里会被
+  一起模糊），而不进栈深度计数也就不会污染 `DisplayList::assertBalanced()`。
+- **Skia 配方**：`saveLayer(kInitWithPrevious)` + **立刻** `restore()` ⇒ 层里只有
+  背景，子内容天然清晰。**边缘用 `SkTileMode::kClamp`**（Flutter 同款）而不是
+  "把层 bounds 放大 3σ"：放大版靠外层裁剪收口，而 `saveLayer` 的种子内容会被
+  当前裁剪一起裁掉 ⇒ 放大出来那一圈是空的，褪色暗边原样还在（第一版就这么错的）。
+- **Raster 是空实现**（`CAP_BACKDROP` 置位但近似为"不模糊"）：与 `CAP_LAYER`
+  的 alpha 乘数栈同一档"Extended 允许降级近似"。**没有**走 `CAP_SHADOW` 的
+  响亮失败 —— 模糊是质感，不是层次信息，缺了面板仍然读得出"浮在内容之上"。
+- **控件**：`BackdropFilter::make($child)->sigma(16)`（`RenderBackdropFilter`
+  extends `RenderProxyBox`）。顺序钉死为「裁到内容盒 → 模糊 → 画子」，
+  三条不变量都有 smoke 覆盖（含带内边距时"矩形跟内容盒走而不是边框盒"）。
+- **真机判据**（`apps/showcase` 第 22 页「毛玻璃 Glass」，默认首页点导航可达）：
+  ① 面板内的 12 个色块边缘**完全消失**、面板外的色块边缘**仍是硬的**、
+  面板上的文字**清晰**（`_build/glass-panel.png`）；
+  ② sigma 4 / 12 / 28 三连梯度肉眼可分级（`_build/glass-sigma.png`）；
+  ③ 无 `Errors.log`。
+- **撞出并修掉的两处应用侧溢出**（真机第一次跑就 Fatal，smoke 的 showcase 夹具
+  同款复现）：`Grid` 在松约束下铺满可用宽度 ⇒ 三个 `Stack` 各占整行、`Row`
+  "共需 5004 / 可用 1660"；以及行高由内容撑时小尺寸格子"共需 105.2 / 可用 70"。
+  修法都是给容器定尺寸（`SizedBox` / `Grid::cellHeight`），不是给叶子定尺寸。
+- **尚未做**：窗口**逐像素** alpha（`UpdateLayeredWindow` + 半透明根层清屏色，
+  让面板能透出**桌面**而不只是应用内容）；`Opacity` 独立控件（`->opacity()`
+  修饰已覆盖，独立控件只是便利性）；混合模式；圆角模糊（要 `Path::addRoundRect`
+  或圆角裁剪，当前模糊区是矩形）。

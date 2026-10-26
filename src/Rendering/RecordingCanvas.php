@@ -139,4 +139,10 @@ final class RecordingCanvas implements Canvas
     {
         $this->list->record(DisplayList::OP_PUSH_CLIP_PATH, $path);
     }
+
+    /** 模糊背景（Extended）—— 录制侧无条件录：Raster 回放时空实现，Skia 回放时真糊 */
+    public function blurBackdrop(float $sigma, Rect $rect): void
+    {
+        $this->list->record(DisplayList::OP_BLUR_BACKDROP, $sigma, $rect);
+    }
 }

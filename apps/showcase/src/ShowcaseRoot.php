@@ -34,6 +34,7 @@ use App\Showcase\Pages\ComboBoxPage;
 use App\Showcase\Pages\CustomPaintPage;
 use App\Showcase\Pages\FeedbackPage;
 use App\Showcase\Pages\FormPage;
+use App\Showcase\Pages\GlassPage;
 use App\Showcase\Pages\GridPage;
 use App\Showcase\Pages\IconPage;
 use App\Showcase\Pages\ImagePage;
@@ -170,6 +171,8 @@ final class ShowcaseState extends State
             new NavEntry(IconName::ListBullets, '日志 Log', static fn(): Widget => new LogPage()),
             // ★ 同上：图标页追加在最末，前 20 项的 y 坐标不变。
             new NavEntry(IconName::Plus, '图标 Icon', static fn(): Widget => new IconPage()),
+            // ★ 同上：毛玻璃页追加在最末，前 21 项的 y 坐标不变。
+            new NavEntry(IconName::Brush, '毛玻璃 Glass', static fn(): Widget => new GlassPage()),
         ];
     }
 

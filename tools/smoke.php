@@ -165,6 +165,7 @@ use Drift\Input\SemanticsRole;
 use Drift\Layout\FlexAlign;
 use Drift\Layout\Overflow;
 use Drift\Layout\RenderAppBar;
+use Drift\Layout\RenderBackdropFilter;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderButton;
 use Drift\Layout\RenderDock;
@@ -238,6 +239,7 @@ use Drift\Theme\ThemeScope;
 use Drift\Widget\Activatable;
 use Drift\Widget\ActivationContext;
 use Drift\Widget\AspectRatio;
+use Drift\Widget\BackdropFilter;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
 use Drift\Widget\Card;
@@ -1170,6 +1172,18 @@ if (!function_exists('drift_skia_canvas_create')) {
     function drift_skia_pop_layer(int $canvas): void
     {
         $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][] = ['pop_layer'];
+    }
+
+    /** 毛玻璃：真桥只存在于 AOT ⇒ 这里记下"Skia 收到什么"（sigma 是否乘了 dpr、矩形是否进了设备空间） */
+    function drift_skia_blur_backdrop(
+        int $canvas,
+        float $sigma,
+        float $x,
+        float $y,
+        float $w,
+        float $h,
+    ): void {
+        $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][] = ['blur_backdrop', $sigma, $x, $y, $w, $h];
     }
 
     function drift_skia_push_clip_path(
@@ -2353,7 +2367,8 @@ check(
     $capsRaster->capabilities() === (CanvasCapabilities::CAP_ELLIPSE | CanvasCapabilities::CAP_LINE
         | CanvasCapabilities::CAP_GRADIENT | CanvasCapabilities::CAP_DASH
         | CanvasCapabilities::CAP_CLIP_PATH | CanvasCapabilities::CAP_PATH
-        | CanvasCapabilities::CAP_LAYER | CanvasCapabilities::CAP_IMAGE)
+        | CanvasCapabilities::CAP_LAYER | CanvasCapabilities::CAP_IMAGE
+        | CanvasCapabilities::CAP_BACKDROP)
 );
 $capsSkia = new SkiaCanvas(8, 8, null, Scale::of(1.0));
 check(
@@ -2362,7 +2377,7 @@ check(
         | CanvasCapabilities::CAP_GRADIENT | CanvasCapabilities::CAP_DASH
         | CanvasCapabilities::CAP_PATH | CanvasCapabilities::CAP_IMAGE
         | CanvasCapabilities::CAP_SHADOW | CanvasCapabilities::CAP_LAYER
-        | CanvasCapabilities::CAP_CLIP_PATH)
+        | CanvasCapabilities::CAP_CLIP_PATH | CanvasCapabilities::CAP_BACKDROP)
 );
 $capsRec = RecordingCanvas::create();
 // ★ 默认值在 2026-10-25 改成"回放端（Raster）的支持面"：`RecordingCanvas` 的真实
@@ -15942,6 +15957,177 @@ check(
     @rmdir($tmp);
     Log::reset();
     Errors::reset();
+}
+
+// ── 毛玻璃（BackdropFilter / Canvas::blurBackdrop）──
+// ★ 这一组钉的是**顺序与范围**，不是"糊得好不好看"：
+//   ① 模糊必须在子内容之前（否则字被糊）—— 用命令流里的下标比较；
+//   ② 模糊矩形 = 内容盒（不是边框盒，不是整屏）；
+//   ③ 一次性操作，不进任何栈深度（`assertBalanced()` 必须过）。
+//   Raster 不实现模糊（空实现），所以像素级验证只能真机做 —— 这里验结构。
+{
+    $glassKid = SizedBox::make()->width(120.0)->height(80.0);
+    $glassEl = BackdropFilter::make($glassKid, 16.0)->createElement();
+    $glassEl->mount(null, $context);
+    $glassBox = $glassEl->effectiveBox();
+
+    check(
+        'BackdropFilter · 挂载即建出 RenderBackdropFilter（ProxyElement 走单子路径）',
+        $glassBox instanceof RenderBackdropFilter,
+    );
+
+    $glassBox?->layout(BoxConstraints::loose(new Size(400.0, 300.0)));
+    check(
+        'BackdropFilter · 尺寸 = 子尺寸（不自己撑开、不额外占位）',
+        $glassBox?->size()?->width === 120.0 && $glassBox?->size()?->height === 80.0,
+        'size=' . var_export($glassBox?->size(), true),
+    );
+
+    // ★ 用 RecordingCanvas 录命令流：能同时验"录了什么"与"顺序对不对"。
+    $glassList = new DisplayList();
+    $glassBox?->paint(new RecordingCanvas($glassList));
+
+    $blurAt = -1;
+    $blurSigma = 0.0;
+    $blurRect = null;
+    for ($gi = 0; $gi < $glassList->count(); $gi++) {
+        if ($glassList->opAt($gi) === DisplayList::OP_BLUR_BACKDROP) {
+            $blurAt = $gi;
+            $blurSigma = (float) $glassList->argAt($gi, 0);
+            $blurRect = $glassList->argAt($gi, 1);
+            break;
+        }
+    }
+
+    check(
+        'BackdropFilter · 录下 OP_BLUR_BACKDROP 且 sigma 原样传下去',
+        $blurAt >= 0 && $blurSigma === 16.0,
+        'blurAt=' . $blurAt . ' sigma=' . $blurSigma,
+    );
+
+    // ★ 断言落在**被测语义**上：模糊矩形必须是内容盒 (0,0,120,80)。
+    //   写 `$blurRect !== null` 之类是恒真断言，等于没测。
+    check(
+        'BackdropFilter · 模糊矩形 = 内容盒（0,0,120,80），不是边框盒也不是整屏',
+        $blurRect instanceof Rect
+            && $blurRect->left === 0.0 && $blurRect->top === 0.0
+            && $blurRect->width === 120.0 && $blurRect->height === 80.0,
+        $blurRect instanceof Rect
+            ? sprintf('rect=%.1f,%.1f,%.1f,%.1f', $blurRect->left, $blurRect->top, $blurRect->width, $blurRect->height)
+            : 'rect=' . var_export($blurRect, true),
+    );
+
+    // ★ 顺序：模糊必须排在**所有绘制子内容的命令之前**。子内容此刻只有背景/
+    //   无墨，所以用"模糊命令的位置"和"裁剪压栈之后"两条一起钉：模糊前一条
+    //   是 pushClip（说明确实在裁剪之内），且模糊不是最后一条（后面还有子）。
+    check(
+        'BackdropFilter · 顺序 = 压裁剪 → 模糊 → 画子（反了就变成"糊自己"）',
+        $blurAt >= 1
+            && $glassList->opAt($blurAt - 1) === DisplayList::OP_PUSH_CLIP
+            && $blurAt < $glassList->count() - 2,
+        'blurAt=' . $blurAt . ' prev=' . ($blurAt >= 1 ? $glassList->opAt($blurAt - 1) : -1)
+            . ' count=' . $glassList->count(),
+    );
+
+    // ★ 一次性操作 ⇒ 栈必须仍然平衡（若哪天改成 push/pop 对，这条会立刻炸）
+    $glassBalanced = true;
+    try {
+        $glassList->assertBalanced();
+    } catch (\Throwable) {
+        $glassBalanced = false;
+    }
+    check(
+        'BackdropFilter · 录制栈平衡（blurBackdrop 不进 save/clip/layer 深度）',
+        $glassBalanced && $glassList->saveDepth() === 0 && $glassList->clipDepth() === 0,
+        'save=' . $glassList->saveDepth() . ' clip=' . $glassList->clipDepth(),
+    );
+
+    // 回放：Raster 空实现 ⇒ 不崩、尺寸不变（"不模糊"是有意的降级）
+    $glassRaster = new RasterCanvas(200, 200, Color::white(), Scale::of(1.0));
+    $glassReplayOk = true;
+    try {
+        $glassList->replay($glassRaster);
+    } catch (\Throwable) {
+        $glassReplayOk = false;
+    }
+    check(
+        'BackdropFilter · 回放到 Raster 不崩（CAP_BACKDROP 是 Extended 近似，不响亮失败）',
+        $glassReplayOk && $glassRaster->width() === 200,
+    );
+
+    check(
+        'Canvas · Raster 也置 CAP_BACKDROP（近似 = 不模糊，与 CAP_LAYER 同档）',
+        ($glassRaster->capabilities() & CanvasCapabilities::CAP_BACKDROP) !== 0,
+    );
+
+    // ★ Skia 侧：解释器里桥是假函数 ⇒ 验"Skia 收到了什么"。这一段钉的是
+    //   **单位换算**：sigma 必须乘 dpr、矩形必须进设备像素（含当前偏移）。
+    //   漏了 dpr ⇒ 200% 缩放下玻璃比设计稿"更硬"；漏了偏移 ⇒ 糊错位置。
+    $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'] = [];
+    $dprCanvas = new SkiaCanvas(400, 400, null, Scale::of(2.0));
+    $dprCanvas->translate(10.0, 20.0);
+    $dprCanvas->blurBackdrop(6.0, new Rect(0.0, 0.0, 50.0, 30.0));
+    $dprCall = null;
+    foreach ($GLOBALS['DRIFT_SMOKE_SKIA_CALLS'] as $dprEntry) {
+        if ($dprEntry[0] === 'blur_backdrop') {
+            $dprCall = $dprEntry;
+        }
+    }
+    check(
+        'SkiaCanvas · blurBackdrop 按 dpr + 偏移换算成设备像素（sigma 6→12，矩形 20,40,100,60）',
+        $dprCall !== null
+            && $dprCall[1] === 12.0
+            && $dprCall[2] === 20.0 && $dprCall[3] === 40.0
+            && $dprCall[4] === 100.0 && $dprCall[5] === 60.0,
+        $dprCall === null ? 'no call' : implode(',', array_map('strval', $dprCall)),
+    );
+
+    // 反例：sigma=0 不该惊动桥（模糊半径 0 就是不模糊，连一次跨边界调用都不值）
+    $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'] = [];
+    $dprCanvas->blurBackdrop(0.0, new Rect(0.0, 0.0, 50.0, 30.0));
+    $zeroCalls = 0;
+    foreach ($GLOBALS['DRIFT_SMOKE_SKIA_CALLS'] as $zeroEntry) {
+        if ($zeroEntry[0] === 'blur_backdrop') {
+            $zeroCalls++;
+        }
+    }
+    check('SkiaCanvas · sigma=0 ⇒ 不发桥调用（早退在 PHP 侧）', $zeroCalls === 0);
+
+    // ★ 反例自检：没有内边距时"内容盒 == 边框盒"，上面那条断言**证伪不了**
+    //   "误用 $this->size()" 的实现。加 5 的内边距把它们分开：
+    //   边框盒 130×90、内容盒 120×80 —— 模糊矩形必须跟着**内容盒**走。
+    $padEl = BackdropFilter::make(SizedBox::make()->width(120.0)->height(80.0), 8.0)
+        ->padding(EdgeInsets::all(5.0))
+        ->createElement();
+    $padEl->mount(null, $context);
+    $padBox = $padEl->effectiveBox();
+    $padBox?->layout(BoxConstraints::loose(new Size(400.0, 300.0)));
+    $padList = new DisplayList();
+    $padBox?->paint(new RecordingCanvas($padList));
+    $padRect = null;
+    for ($pi = 0; $pi < $padList->count(); $pi++) {
+        if ($padList->opAt($pi) === DisplayList::OP_BLUR_BACKDROP) {
+            $padRect = $padList->argAt($pi, 1);
+            break;
+        }
+    }
+    check(
+        'BackdropFilter · 带内边距时模糊矩形仍 = 内容盒 120×80（不是边框盒 130×90）',
+        $padBox?->size()?->width === 130.0 && $padBox?->size()?->height === 90.0
+            && $padRect instanceof Rect
+            && $padRect->width === 120.0 && $padRect->height === 80.0,
+        'box=' . var_export($padBox?->size(), true)
+            . ' rect=' . ($padRect instanceof Rect ? sprintf('%.1fx%.1f', $padRect->width, $padRect->height) : 'null'),
+    );
+
+    // 反例：sigma(0) 语义上就是"不模糊"，不该被当成错误
+    $zeroSigmaOk = true;
+    try {
+        BackdropFilter::make(SizedBox::make()->width(10.0)->height(10.0), 0.0);
+    } catch (\Throwable) {
+        $zeroSigmaOk = false;
+    }
+    check('BackdropFilter · sigma=0 合法（= 不模糊，不是错误）', $zeroSigmaOk);
 }
 
 // ── 汇总 + 退出码（2026-10-18）──

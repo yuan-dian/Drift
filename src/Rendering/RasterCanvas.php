@@ -276,7 +276,8 @@ final class RasterCanvas implements Canvas
         return CanvasCapabilities::CAP_ELLIPSE | CanvasCapabilities::CAP_LINE
             | CanvasCapabilities::CAP_GRADIENT | CanvasCapabilities::CAP_DASH
             | CanvasCapabilities::CAP_CLIP_PATH | CanvasCapabilities::CAP_PATH
-            | CanvasCapabilities::CAP_LAYER | CanvasCapabilities::CAP_IMAGE;
+            | CanvasCapabilities::CAP_LAYER | CanvasCapabilities::CAP_IMAGE
+            | CanvasCapabilities::CAP_BACKDROP;
     }
 
     public function capabilities(): int
@@ -293,6 +294,8 @@ final class RasterCanvas implements Canvas
         // ★ `CAP_IMAGE` 在 W8-1 置位：`drawImage` 走最近邻 blit（见该方法 docblock）。
         //   1:1 时与 Skia 逐字节相同；缩放时 Skia 双线性、Raster 最近邻 —— 这是
         //   **有意的双端差异**，conformance 基线只钉 1:1（详见 drawImage 注释）。
+        // ★ `CAP_BACKDROP` 也置位：`blurBackdrop()` 是**空实现**（不模糊）。
+        //   与 `CAP_LAYER` 同一档"近似也算处理" —— 结构/透明度对，只少一层糊。
         return self::supportedCapabilities();
     }
 
@@ -1297,6 +1300,24 @@ final class RasterCanvas implements Canvas
         }
 
         return new Color($color->r, $color->g, $color->b, (int) round($color->a * $factor));
+    }
+
+    /**
+     * 模糊背景（毛玻璃底，Extended）—— **Raster 不做模糊**。
+     *
+     * 这是 `CAP_BACKDROP` 这一位"置位但近似"的全部内容：调用合法、不报错、
+     * 一个像素都不改。效果 = 毛玻璃面板退化成半透明面板（结构与透明度照常，
+     * 只少一层糊）。
+     *
+     * ★ 为什么不响亮失败（对比 `drawShadow`）：模糊是**质感**，不是层次信息。
+     *   缺了它卡片仍然读得出"浮在内容之上"；而缺了阴影，浮起关系就丢了。
+     *   所以阴影是 Optional（Raster 报 E-OP-UNSUPPORTED），模糊是 Extended。
+     * ★ 为什么不实现真模糊：软光栅要在 PHP 里对整块面板做可分离卷积
+     *   （1080p 面板 ~2M 像素 × 2 遍 × ~17 抽头）—— 每帧几十毫秒，而它只服务
+     *   测试后端。金色基线本来也不覆盖模糊质量。
+     */
+    public function blurBackdrop(float $sigma, Rect $rect): void
+    {
     }
 
     /**

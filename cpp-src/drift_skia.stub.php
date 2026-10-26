@@ -162,6 +162,17 @@ function drift_skia_push_layer(int $canvas, float $opacity): void {}
 function drift_skia_pop_layer(int $canvas): void {}
 
 /**
+ * 模糊**背景**（毛玻璃底）：`(x,y,w,h)` 设备像素内的"已画内容"被模糊，之后画的
+ * 一切保持清晰。一次性操作，无配对（不进栈深度计数）。
+ * `$sigma <= 0` / 矩形退化 ⇒ 不做任何事。
+ */
+function drift_skia_blur_backdrop(
+    int $canvas,
+    float $sigma,
+    float $x, float $y, float $w, float $h,
+): void {}
+
+/**
  * P4 · 压入路径裁剪（与当前裁剪求交，单设备像素）。复用裁剪栈，弹栈仍用 `pop_clip()`。
  * `$verbs`/`$coords` 打包格式同 `draw_path`。
  */

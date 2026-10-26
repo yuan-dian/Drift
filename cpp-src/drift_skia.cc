@@ -58,9 +58,11 @@
 #include "include/core/SkPixmap.h"
 #include "include/core/SkRRect.h"
 #include "include/core/SkRect.h"
+#include "include/core/SkTileMode.h"
 #include "include/core/SkTypeface.h"
 #include "include/effects/SkGradient.h"
 #include "include/effects/SkDashPathEffect.h"
+#include "include/effects/SkImageFilters.h"
 #include "include/ports/SkFontMgr_directory.h"
 
 using namespace php;
@@ -598,6 +600,62 @@ void php_drift_skia_pop_layer(Int canvas) {
     if (c != NULL) {
         c->restore();
     }
+}
+
+/**
+ * 模糊**背景**（毛玻璃底），范围 `(x,y,w,h)` 设备像素；之后画的都是清晰的。
+ *
+ * ## 配方：`saveLayer(kInitWithPrevious)` + 立刻 `restore()`
+ *
+ * `kInitWithPrevious_SaveLayerFlag` 让新层的**初始内容 = 当前画布内容**（即背景），
+ * 而 `paint` 上的图像滤镜在层合成回画布时作用于层内容 ⇒ 画布上得到"模糊后的
+ * 背景"。**层里除了背景什么都没画过**，所以"子内容不会被一起模糊"这条由结构
+ * 保证，不依赖滤镜到底是"入层时"还是"出层时"生效 —— 后者正是 Skia 语义里
+ * 最容易记反的一处，不去赌它。
+ *
+ * ## 边缘为什么用 `kClamp` 而不是放大层的 bounds
+ *
+ * 模糊在矩形边缘要取样"矩形外"的像素。默认的 `kDecal` 把界外当透明 ⇒ 结果是
+ * 一圈**往透明褪的暗边**（sigma 越大越明显）。
+ *
+ * 先写的第一版靠"把层 bounds 放大 3σ"绕开它，**那是错的**：`saveLayer` 的种子
+ * 内容来自当前画布，而当前裁剪（调用方为了收口压的那层）会把种子一起裁到可见
+ * 矩形 ⇒ 放大出来的那一圈是空的，褪色暗边原样还在。想在层里"去掉裁剪"是做不到的
+ * （Skia 的 `clipRect` 只做求交，没有"临时取消"）。
+ *
+ * 正解是换平铺模式：`kClamp` 让界外取样**钳到边缘像素**（Flutter 的
+ * `ImageFilter.blur` 默认也是 clamp）⇒ 层 bounds 就等于可见矩形，既没有褪色
+ * 暗边、又天然满足"矩形外一个像素都不动"，还省掉一次 save/clip。
+ *
+ * ★ `sigma <= 0` / 矩形退化 ⇒ 直接返回：模糊半径 0 就是不模糊（同
+ *   `drawShadow` 的 `blur == 0` 走硬边捷径），不是错误。
+ */
+void php_drift_skia_blur_backdrop(
+    Int canvas,
+    Float sigma,
+    Float x,
+    Float y,
+    Float w,
+    Float h
+) {
+    SkCanvas *c = canvasFor(canvas);
+    const SkScalar s = (SkScalar)sigma;
+    const SkScalar rw = (SkScalar)w;
+    const SkScalar rh = (SkScalar)h;
+    if (c == NULL || s <= 0.0f || rw <= 0.0f || rh <= 0.0f) {
+        return;
+    }
+
+    const SkRect visible = SkRect::MakeXYWH((SkScalar)x, (SkScalar)y, rw, rh);
+
+    SkPaint paint;
+    paint.setImageFilter(SkImageFilters::Blur(s, s, SkTileMode::kClamp, nullptr));
+
+    // 层 bounds = 可见矩形 ⇒ 合成范围也被它夹住，矩形外一个像素都不动。
+    c->saveLayer(
+        SkCanvas::SaveLayerRec(&visible, &paint, SkCanvas::kInitWithPrevious_SaveLayerFlag)
+    );
+    c->restore();
 }
 
 /**
