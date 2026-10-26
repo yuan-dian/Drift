@@ -304,8 +304,10 @@ ScrollView / LazyColumn / LazyRow / LazyGrid / Grid / Stack / Image / Icon / Ric
   （`_build/ulw-opacity.png`）；
   ⑤ ULW 下改尺寸（`--move` 到 700×520）⇒ 重排正确、透明保持、**无 runaway 缩小**
   （`psize` == 窗口尺寸，不会形成反馈环，`_build/ulw-resize.png`）。
+- **圆角在 ULW 下仍然生效**（实测）：不透明洋红底 + 抓窗口左上角 6×6 ⇒ 洋红 **0%**、
+  抓到的是桌面壁纸 ⇒ DWM 的 `DWMWCP_ROUND` 对分层窗照样裁角。不需要自己画 alpha 掩码。
 - **尚未做**：DWM 亚克力 / 毛玻璃**桌面**背景（`DWMWA_SYSTEMBACKDROP_TYPE`，Win11；
   Win10 要未公开的 `SetWindowCompositionAttribute`）—— 现在透明区是"平铺桌面"，
-  不是"模糊桌面"；窗口圆角在 ULW 模式下是否仍由 DWM 生效未验；多窗口时
-  `g_frame` / `g_ulwBitmap` / `g_layerBind` 这几个进程级全局要改成 `map<HWND, …>`。
+  不是"模糊桌面"；多窗口时 `g_frame` / `g_ulwBitmap` / `g_layerBind` 这几个进程级
+  全局要改成 `map<HWND, …>`。
 
