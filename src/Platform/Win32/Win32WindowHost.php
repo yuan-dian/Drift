@@ -9,6 +9,7 @@ use Drift\Geometry\Rect;
 use Drift\Geometry\Scale;
 use Drift\Geometry\Size;
 use Drift\Input\CursorShape;
+use Drift\Platform\Backdrop;
 use Drift\Platform\WindowHost;
 
 use function drift_win_begin_drag;
@@ -20,6 +21,7 @@ use function drift_win_is_maximized;
 use function drift_win_maximize_toggle;
 use function drift_win_minimize;
 use function drift_win_place_window;
+use function drift_win_set_backdrop;
 use function drift_win_set_frameless;
 use function drift_win_set_min_size;
 use function drift_win_set_opacity;
@@ -101,11 +103,27 @@ final class Win32WindowHost implements WindowHost
      * ★ 这是**平台能力**，不是正确性：不支持的平台可 no-op（外观增强）。
      *   Win32 走 `WS_EX_LAYERED` + `SetLayeredWindowAttributes`（**全局** alpha，
      *   首次 <1 才懒挂 LAYERED）。
-     * ★ 当前只做整窗统一透明；逐像素 alpha / 毛玻璃是 P1-Stage2（改 present 路径）。
+     * ★ 逐像素 alpha 是另一条路（`setBackground()` 带 alpha ⇒ `UpdateLayeredWindow`），
+     *   两者互斥；那条路上 alpha 由 `BLENDFUNCTION` 带上，语义一致。
      */
     public function setOpacity(int $windowHandle, float $opacity): void
     {
         drift_win_set_opacity($windowHandle, $opacity);
+    }
+
+    /**
+     * 窗口背后的材质（`null` = 关）。P1 §质感 / Stage 3。
+     *
+     * ★ 走**未公开**的 `user32!SetWindowCompositionAttribute`（accent 策略）——
+     *   Win10 上 `DWMWA_SYSTEMBACKDROP_TYPE` 不存在（要 Win11 22621+），
+     *   这是唯一一条路。壳侧 `GetProcAddress` 动态取，取不到就静默 no-op。
+     * ★★ **只在"应用没画到"的地方可见**：DWM 把模糊画在窗口**背后**，应用像素在
+     *   上面 ⇒ 不透明窗口设了等于没设（没有观察通道，不是失败）。
+     * ★ `null` → 桥的 `0`（关）；枚举的 `value` 就是桥的 ABI 编号。
+     */
+    public function setBackdrop(int $windowHandle, ?Backdrop $backdrop): void
+    {
+        drift_win_set_backdrop($windowHandle, $backdrop === null ? 0 : $backdrop->value);
     }
 
     /**

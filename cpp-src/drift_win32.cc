@@ -47,6 +47,34 @@
 #define DWMWCP_ROUND 2
 #endif
 
+// ★ **Win10 未公开**的 `user32!SetWindowCompositionAttribute`（无头文件、无 import lib）。
+//   结构体定义来自逆向社区、在 Win32 生态里被广泛使用，**字段顺序与系统 ABI 绑定** ——
+//   不要重排、不要"改成看起来顺眼的类型"。Win11 起由 `DWMWA_SYSTEMBACKDROP_TYPE`
+//   取代，但本机是 Win10 19045，只剩这一条路。详见 `php_drift_win_set_backdrop()`。
+enum DriftAccentState {
+    DRIFT_ACCENT_DISABLED = 0,
+    DRIFT_ACCENT_ENABLE_GRADIENT = 1,
+    DRIFT_ACCENT_ENABLE_TRANSPARENTGRADIENT = 2,
+    DRIFT_ACCENT_ENABLE_BLURBEHIND = 3,
+    DRIFT_ACCENT_ENABLE_ACRYLICBLURBEHIND = 4,
+    DRIFT_ACCENT_ENABLE_HOSTBACKDROP = 5,
+};
+
+struct DriftAccentPolicy {
+    int  accentState;     /**< `DRIFT_ACCENT_*` */
+    int  accentFlags;     /**< 文档未定义；社区实测 2 = 四边都画 */
+    int  gradientColor;   /**< ★ `0xAABBGGRR`（**BGRA**，与 `Color::toArgb()` 相反） */
+    int  animationId;
+};
+
+struct DriftWindowCompositionAttribData {
+    int     attrib;       /**< `WCA_ACCENT_POLICY` = 19 */
+    void   *data;
+    size_t  size;
+};
+
+typedef BOOL (WINAPI *DriftSetWindowCompositionAttribute)(HWND, DriftWindowCompositionAttribData *);
+
 #include <string>
 #include <vector>
 
@@ -2136,6 +2164,72 @@ void php_drift_win_set_pixel_alpha(Int hwnd, Bool on) {
         return;
     }
     g_pixelAlpha = (on != 0);
+}
+
+/**
+ * 窗口背后的材质（P1 §质感 / Stage 3）。`kind`：`0` 关 / `1` 轻模糊 / `2` 磨砂。
+ *
+ * ★★ **为什么是未公开 API**：`DWMWA_SYSTEMBACKDROP_TYPE` 要 Win11 22621+，本机是
+ *   Win10 19045（实测该属性返回失败、画面零变化）⇒ `SetWindowCompositionAttribute`
+ *   是 Win10 上**唯一**一条路。它无头文件、无 import lib ⇒ `GetProcAddress` 动态取
+ *   （`GetModuleHandleW(L"user32.dll")` 不增引用计数，不必 `FreeLibrary`）；
+ *   取不到（更老的系统）静默 no-op。
+ *
+ * ★★ **只在"应用没画到"的地方可见**：DWM 把模糊画在窗口**背后**，应用像素压在上面
+ *   ⇒ 不透明窗口设了等于没设（没有观察通道，不是失败）。
+ *
+ * ★ 色调固定 `0x99000000`：本机实测 `GradientColor` 的 alpha `0` = 关、`≥1` = 生效，
+ *   而 `0x01 / 0x20 / 0x99 / 0xFF` 四档的**高频量完全一致**（`detail` 1.63 / 1.63 /
+ *   1.67 / 1.64）⇒ 看不出"强度"；亮度是否随 alpha 变**未做受控测量**，所以不收强度参数。
+ *   RGB 改红改黑画面无差别 ⇒ 也不收色调参数。轻模糊模式传 `0`
+ *   （实测 alpha=0 时 `BLURBEHIND` 照样生效）。
+ *
+ * ★ 失败静默（外观增强，不是正确性）—— 与 `set_opacity` 同一口径。
+ */
+void php_drift_win_set_backdrop(Int hwnd, Int kind) {
+    HWND target = (HWND)(INT_PTR)hwnd;
+    if (target == NULL) {
+        return;
+    }
+
+    int state;
+    int tint;
+    switch ((int)kind) {
+        case 0:  state = DRIFT_ACCENT_DISABLED;             tint = 0;          break;
+        case 1:  state = DRIFT_ACCENT_ENABLE_BLURBEHIND;    tint = 0;          break;
+        case 2:  state = DRIFT_ACCENT_ENABLE_ACRYLICBLURBEHIND; tint = (int)0x99000000u; break;
+        default:
+            // 未知编号：ABI 由 `Backdrop::value` 定义，不该出现。静默忽略而不是
+            // 报错 —— 壳不承担校验职责，越界值只影响外观。
+            return;
+    }
+
+    static DriftSetWindowCompositionAttribute setAttr = NULL;
+    static bool looked = false;
+    if (!looked) {
+        looked = true;
+        HMODULE user32 = GetModuleHandleW(L"user32.dll");
+        if (user32 != NULL) {
+            setAttr = (DriftSetWindowCompositionAttribute)(void *)
+                GetProcAddress(user32, "SetWindowCompositionAttribute");
+        }
+    }
+    if (setAttr == NULL) {
+        return;
+    }
+
+    DriftAccentPolicy policy;
+    policy.accentState = state;
+    policy.accentFlags = 2;      // 文档未定义；社区实测 2 = 四边都画
+    policy.gradientColor = tint; // 已是 0xAABBGGRR 口径，不再换算
+    policy.animationId = 0;
+
+    DriftWindowCompositionAttribData data;
+    data.attrib = 19;            // WCA_ACCENT_POLICY
+    data.data = &policy;
+    data.size = sizeof(policy);
+
+    setAttr(target, &data);
 }
 
 /**

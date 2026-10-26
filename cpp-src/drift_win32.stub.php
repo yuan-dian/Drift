@@ -91,6 +91,41 @@ function drift_win_set_opacity(int $hwnd, float $alpha): void {}
 function drift_win_set_pixel_alpha(int $hwnd, bool $on): void {}
 
 /**
+ * 窗口背后的材质（P1 §质感 / Stage 3）。`$kind`：`0` 关 / `1` 轻模糊 / `2` 磨砂。
+ *
+ * 走**未公开**的 `user32!SetWindowCompositionAttribute`（accent 策略）：
+ *   · `1` → `ACCENT_ENABLE_BLURBEHIND`（只压高频，背后轮廓仍可辨）
+ *   · `2` → `ACCENT_ENABLE_ACRYLICBLURBEHIND`（重模糊 + 系统色调层）
+ * 编号与 `Drift\Platform\Backdrop` 的 `value` 一一对应（那边是 ABI 的唯一出处）。
+ *
+ * ★★ **为什么是未公开 API**：`DWMWA_SYSTEMBACKDROP_TYPE` 要 Win11 22621+，
+ *   本机是 **Win10 19045**（实测该属性返回失败、画面零变化）⇒ Win10 上这是
+ *   **唯一**一条路。壳用 `GetProcAddress` 动态取，取不到（更老的系统）静默 no-op。
+ *
+ * ★★ **只在"应用没画到"的地方可见**：DWM 把模糊画在窗口**背后**，应用像素压在上面。
+ *   不透明窗口设了等于没设 —— 这不是失败，是**没有观察通道**。正常用法是配
+ *   `RenderSurface::setBackground()` 给带 alpha 的底色（⇒ `UpdateLayeredWindow`）。
+ *
+ * ★ **真机实测**（Win10 19045，`--screen --detail`，全透明底 + 无边框，窗口 900×560）：
+ *   判据是**相对同一块矩形的桌面基准**（背景窗口先激活、被测窗口后建 ⇒ 三次跑同一背景，
+ *   读数逐位可复现）：
+ *   · 桌面基准 `detail=4.80`；对照组（不调本函数）`4.65`（≈ 基准，只是被应用内容盖掉一点）；
+ *     `2`（磨砂）**1.57**（基准的 33%）；`1`（轻模糊）**0.87**（18%）
+ *   · 改尺寸（900×560 → 700×420）后模糊仍在，无需重设
+ *   · 与 `drift_win_set_opacity(0.6)` 叠加 ⇒ 两者同时生效，不冲突
+ *   · 色调（`GradientColor`）的 alpha：`0` = 关；`0x01 / 0x20 / 0x99 / 0xFF` 四档
+ *     **同背景连测**的 `detail` 一致 ⇒ **高频上看不出强度差异**（亮度是否随 alpha 变
+ *     **未做受控测量**，所以"强度"这个旋钮不发货）。RGB 通道在同背景的前后两次抓图里
+ *     改红改黑画面一致 ⇒ 本机观察不到色调效果。
+ *     **所以不接受色调参数**，固定传 `0x99000000`（社区常用的中性值）。
+ *   ★ `0`（关）只验了"新建窗口上调用不出错、画面与不设一致"；
+ *     **运行期从有到无的切换未验**（本仓暂无切换的消费者）。
+ *
+ * ★ 失败静默（外观增强，不是正确性）：返回 `void`，调用方不需要分支。
+ */
+function drift_win_set_backdrop(int $hwnd, int $kind): void {}
+
+/**
  * 无边框模式（P1-Stage 1b / §质感）。`$dragHeight` = 顶部拖动带高度（**物理**像素）。
  *
  * ★ 走 `WM_NCCALCSIZE`（客户区=整窗）而**不改窗口样式** ⇒ 贴边吸附 / 快照布局 /

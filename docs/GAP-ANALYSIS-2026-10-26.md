@@ -143,7 +143,10 @@ ScrollView / LazyColumn / LazyRow / LazyGrid / Grid / Stack / Image / Icon / Ric
 ### P1 —— 窗口表现力（成本中，差异化强）
 5. 无边框窗口 + 自绘标题栏（`WS_POPUP` + 拖拽移动 + 双击最大化 + 系统阴影/圆角）。
 6. 窗口半透明 / per-pixel alpha（`WS_EX_LAYERED`）。
-7. 毛玻璃（`DwmSetWindowAttribute` + `DWMWA_SYSTEMBACKDROP_TYPE`，Win11 原生；降级为纯色）。
+7. 毛玻璃 —— **已落地**（分两层：应用内 `BackdropFilter` / `Canvas::blurBackdrop`；
+   窗口背后 `Backdrop` + `WindowHost::setBackdrop()`。★ 原处方写的是
+   `DWMWA_SYSTEMBACKDROP_TYPE`，本机 Win10 19045 上不可用，实走未公开的 accent 策略，
+   见 §8 P1-10）。
 8. 混合模式 + Opacity 控件（补渲染原语空洞）。
 
 ### P2 —— 控件库存（按业务需要推进，不阻塞）
@@ -315,8 +318,60 @@ ScrollView / LazyColumn / LazyRow / LazyGrid / Grid / Stack / Image / Icon / Ric
 - **★ 判据教训**：验圆角要抓的是**角上的圆弧区**（圆角成立时那块本该没有任何窗口像素）。
   无边框窗四角全是**应用自己画的内容**，左上角尤其容易取样点根本不在窗口里
   ⇒ 那次"抓到壁纸"其实什么都没证明。**先确认取样点在窗口矩形内**，再谈结论。
-- **尚未做**：DWM 亚克力 / 毛玻璃**桌面**背景（`DWMWA_SYSTEMBACKDROP_TYPE`，Win11；
-  Win10 要未公开的 `SetWindowCompositionAttribute`）—— 现在透明区是"平铺桌面"，
-  不是"模糊桌面"；多窗口时 `g_frame` / `g_ulwBitmap` / `g_layerBind` 这几个进程级
-  全局要改成 `map<HWND, …>`。
+- **尚未做**：多窗口时 `g_frame` / `g_ulwBitmap` / `g_layerBind` 这几个进程级全局
+  要改成 `map<HWND, …>`（Stage 3 已把"模糊桌面"补上，见下）。
+
+### P1-10 窗口背后材质（DWM 亚克力）—— Stage 3 已落地
+
+**为什么先探针、后接口**：`WS_EX_LAYERED` + `UpdateLayeredWindow` 与 DWM 背景效果都在
+"替换窗口表面"这一层，能否叠加**没有任何文档**。结论未知之前写进公共接口，会得到一个
+永远填不上的方法 ⇒ 先做 `drift_win_probe_backdrop()` 验，验成了才升格成契约。
+
+**这台机器是 Windows 10 22H2（build 19045）**，这直接改写方案：`DWMWA_SYSTEMBACKDROP_TYPE`
+要 Win11 22621+，**实测该属性返回失败、画面零变化** ⇒ Win10 上只剩**未公开**的
+`user32!SetWindowCompositionAttribute`（accent 策略）。所以最终实现只有 accent 策略一条路，
+Win11 分支**不进代码**（验不了的路径不发货）。
+
+**契约**：`Drift\Platform\Backdrop`（enum：`Blur = 1` / `Acrylic = 2`，`value` 就是桥的
+ABI 编号，`0` 留给"关"）+ `WindowHost::setBackdrop(int $h, ?Backdrop $b)`。
+`null` = 关（与 `CursorShape` 同一套约定：`null` 是"不声明"，枚举 case 是明确的决定，
+所以**没有** `None` 这个 case）。
+
+**真机判据**（`_build/backdrop-shot.php` + 探针新增 `--detail`）：
+`detail` = 相邻像素平均绝对差 —— 模糊**不改平均色**、只压高频，所以它是这件事唯一
+可证伪的指标（"看着糊"不是判据，同一天我已经靠目测把方角当成了圆角）。
+
+判据取**相对同一块矩形的桌面基准**（背景窗口先激活、被测窗口后建 ⇒ 三次跑同一背景）：
+
+| 配置 | `detail` | 占基准 |
+|---|---|---|
+| 桌面基准（窗口不在） | **4.80** | 100% |
+| `off`（对照） | **4.65** | 97% —— 只是被应用内容盖掉一点 |
+| `acrylic` | **1.57** | **33%** |
+| `blur` | **0.87** | **18%** |
+
+两次独立运行读数**逐位相同**（4.65 / 1.57 / 0.87）。改尺寸（900×560 → 700×420）后
+模糊仍在（无需重设）；与 `setOpacity(0.6)` 叠加两者同时生效、不冲突。
+**结论：`UpdateLayeredWindow` 与 accent 策略可以叠加** —— 这是整件事的唯一决定性
+未知数，答案是"能"。
+
+**踩到的点**：
+- ★★★ **桌面模糊只有"逐像素 alpha"这一条观察通道**：不透明窗口的每个像素都由应用画满，
+  DWM 画在**背后**的模糊被整块盖住 ⇒ 设了也看不出来（不是失败，是看不见）。所以
+  `setBackdrop` 的正常用法必须配带 alpha 的底色，这条写进了 stub 与接口的 docblock。
+- ★★★ **`detail` 是相对量，背景不受控时判据不成立**：桌面切到空白页时基准只有 ~1.5，
+  "模糊后"也是 1.5 ⇒ 看起来像"模糊没生效"。两次误判都是这个原因。
+  ⇒ 取证脚本必须**先激活一个高细节的背景窗口、再启动被测窗口**（顺序反了就要靠
+  `SetForegroundWindow` 抢前台，而它有前台锁 ⇒ 时灵时不灵：同一条命令一次抓到窗口、
+  一次抓到桌面，`detail` 与基准**完全相等**）。
+- ★★ **`GradientColor` 的 alpha 在高频上看不出强度**：`0` = 关；`0x01 / 0x20 / 0x99 / 0xFF`
+  四档同背景连测 `detail` 一致。亮度是否随 alpha 变**未做受控测量** ⇒ "强度"这个旋钮
+  **不发货**。RGB 在同背景的前后两次抓图里改红改黑画面一致 ⇒ 本机观察不到色调效果。
+  **所以不接受色调参数**，固定 `0x99000000`。
+- ★ **轻模糊不需要色调**：`BLURBEHIND` 在 `GradientColor = 0` 时照样生效。
+- ★ `0`（关）只验了"新建窗口上调用不出错、画面与不设一致"；**运行期从有到无的切换未验**
+  （本仓暂无切换的消费者）。
+
+**待做**：Win11 的 `DWMWA_SYSTEMBACKDROP_TYPE`（本机验不了）/ 圆角模糊（ULW 位图里做
+alpha 掩码）/ 多窗口化（`g_layerBind` 等要按 HWND 分槽）。
 

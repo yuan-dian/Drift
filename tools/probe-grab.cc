@@ -172,6 +172,13 @@ struct Options {
     /** `--color=RRGGBB`：统计该颜色在抓到的图里占多少百分比（验"透明色不该出现"） */
     bool countColor = false;
     unsigned char countR = 0, countG = 0, countB = 0;
+    /** `--detail`：量图的**局部细节量**（相邻像素平均差）。
+     *
+     *  ★ 存在的理由：验"桌面模糊"没有颜色可数 —— 模糊不改变平均色，只压掉高频。
+     *    桌面基准（清晰）与模糊后同一块区域的 `detail` 差好几倍，这才是**可证伪**
+     *    的判据；"看着糊"不是判据（我 2026-10-26 就栽在目测上）。
+     *  ★ 必须和 `--region` 配：先抓窗口矩形得到模糊值，再抓**同一矩形**的桌面基准。 */
+    bool measureDetail = false;
     bool deactivate = false;       // --deactivate（发 WM_ACTIVATE/WA_INACTIVE，模拟"用户切走"）
     // ── 键盘输入（2026-10-23：S5 搜索框真机验证用）──
     bool typeKeys = false;         // --keys=x,y,<hex UTF-16>
@@ -495,6 +502,41 @@ double colorPct(const Shot& shot, unsigned char r, unsigned char g, unsigned cha
         }
     }
     return 100.0 * static_cast<double>(hits) / static_cast<double>(pixels);
+}
+
+/**
+ * 局部细节量（`--detail`）：相邻像素的平均绝对差（0..255）。
+ *
+ * ★ 判据用法：验"桌面模糊"没有颜色可数 —— 模糊**不改变平均色**，只压掉高频。
+ *   清晰背景的 `detail` 通常 4–20；同一块区域被模糊后掉到 1–3（实测 `4.80 → 1.57`）。
+ *   两者相差数倍，是**可证伪**的。
+ * ★★ **它是相对量**：背景越素，基准越低，判据越弱 ⇒ 必须同时打印**同一矩形**的
+ *   桌面基准，并把结论写成"占基准的比例"（绝对值不可跨会话移植）。
+ * ★ 只量**水平**相邻：模糊是各向同性的，水平差已经足够；省一半循环。
+ * ★ 走 BGRA 内存布局（`Shot` 的原生序），三通道等权。
+ */
+double detailLevel(const Shot& shot)
+{
+    if (shot.width < 2 || shot.height < 1) {
+        return 0.0;
+    }
+    long long sum = 0;
+    long long pairs = 0;
+    for (int y = 0; y < shot.height; ++y) {
+        const unsigned char* row = &shot.pixels[static_cast<size_t>(y) * static_cast<size_t>(shot.width) * 4];
+        for (int x = 1; x < shot.width; ++x) {
+            const unsigned char* a = row + static_cast<size_t>(x - 1) * 4;
+            const unsigned char* b = row + static_cast<size_t>(x) * 4;
+            sum += std::abs(static_cast<int>(a[0]) - static_cast<int>(b[0]));
+            sum += std::abs(static_cast<int>(a[1]) - static_cast<int>(b[1]));
+            sum += std::abs(static_cast<int>(a[2]) - static_cast<int>(b[2]));
+            pairs += 3;
+        }
+    }
+    if (pairs == 0) {
+        return 0.0;
+    }
+    return static_cast<double>(sum) / static_cast<double>(pairs);
 }
 
 /** 只量 `y0..y1` 这几行的墨量（`y1 <= 0` ⇒ 到底）。
@@ -996,6 +1038,8 @@ int wmain(int argc, wchar_t** argv)
             options.deactivate = true;
         } else if (key == L"activate") {
             options.activateFirst = true;
+        } else if (key == L"detail") {
+            options.measureDetail = true;
         } else if (key == L"keys") {
             // x,y,<hex UTF-16> —— 三段。hex 而不是原文：bash 传的非 ASCII 参数经
             // `CommandLineToArgvW` 按 ANSI 码页转换会丢字 ⇒ 一律 hex 才可复现。
@@ -1109,6 +1153,9 @@ int wmain(int argc, wchar_t** argv)
         if (options.countColor) {
             std::printf("color_pct=%.2f\n",
                         colorPct(shot, options.countR, options.countG, options.countB));
+        }
+        if (options.measureDetail) {
+            std::printf("detail=%.2f\n", detailLevel(shot));
         }
         if (options.savePng && savePng(shot, options.pngPath)) {
             std::printf("png=%ls\n", options.pngPath.c_str());
@@ -1506,6 +1553,9 @@ int wmain(int argc, wchar_t** argv)
     std::printf("ink_all_pct=%.1f\n", inkPct(shot, 0, 0));
     if (options.countColor) {
         std::printf("color_pct=%.2f\n", colorPct(shot, options.countR, options.countG, options.countB));
+    }
+    if (options.measureDetail) {
+        std::printf("detail=%.2f\n", detailLevel(shot));
     }
 
     if (options.savePng) {

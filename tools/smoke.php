@@ -28,9 +28,11 @@ use Drift\Dev\Smoke\Commands\EchoCommands;
 use Drift\Dev\Smoke\Commands\PickyCommands;
 use Drift\App\Application;
 use Drift\App\FrameClock;
+use Drift\Platform\Backdrop;
 use Drift\Platform\Win32\Win32RasterSurface;
 use Drift\Platform\Win32\Win32SkiaSurface;
 use Drift\Platform\Win32\Win32SurfaceProvider;
+use Drift\Platform\Win32\Win32WindowHost;
 use Drift\App\FocusManager;
 use App\Hello\HelloApplication;
 use App\Showcase\ShowcaseApplication;
@@ -1225,6 +1227,22 @@ if (!function_exists('drift_win_set_pixel_alpha')) {
 function winPixelAlphaCalls(): array
 {
     return $GLOBALS['DRIFT_SMOKE_WIN_PIXEL_ALPHA'] ?? [];
+}
+
+// ── 窗口背景材质（`drift_win_set_backdrop`）────────────────────────────
+// ★ 与上面同一个理由：smoke 从不构造真窗口，只验"PHP 侧把意图翻成了哪个 ABI 编号"。
+// ★ 签名与 `cpp-src/drift_win32.stub.php` 逐字一致。
+if (!function_exists('drift_win_set_backdrop')) {
+    function drift_win_set_backdrop(int $hwnd, int $kind): void
+    {
+        $GLOBALS['DRIFT_SMOKE_WIN_BACKDROP'][] = [$hwnd, $kind];
+    }
+}
+
+/** @return list<array{int, int}> 背景材质调用记录：[hwnd, kind] */
+function winBackdropCalls(): array
+{
+    return $GLOBALS['DRIFT_SMOKE_WIN_BACKDROP'] ?? [];
 }
 
 // ── 假桥记录的访问器与换算（⑨+1 用）──────────────────────────────
@@ -16246,6 +16264,29 @@ check(
         $bgRecPixel->r === 0x10 && $bgRecPixel->g === 0x20
             && $bgRecPixel->b === 0x30 && $bgRecPixel->a === 255,
         sprintf('%d,%d,%d,%d', $bgRecPixel->r, $bgRecPixel->g, $bgRecPixel->b, $bgRecPixel->a),
+    );
+
+    // ── 窗口背景材质（P1 §质感 / Stage 3）──────────────────────────────
+    // ① ABI 护栏：枚举 `value` **就是**桥的编号（`0` 留给"关"）⇒ 改它等于改 ABI，
+    //    而改了之后"磨砂变轻模糊"这种错**不报错、只是看着不对**。
+    check(
+        'Backdrop · value 就是桥的 ABI 编号（Blur=1 / Acrylic=2，0 留给"关"）',
+        Backdrop::Blur->value === 1 && Backdrop::Acrylic->value === 2,
+        sprintf('%d / %d', Backdrop::Blur->value, Backdrop::Acrylic->value),
+    );
+
+    // ② 意图 → 编号：三种都要过一遍。
+    //   ★ `null` 必须是**发 0**，不能是"不发调用" —— 不发的话窗口上已经生效的
+    //     材质会一直留着，"关掉"静默失效（本仓最讨厌的那种 bug）。
+    $GLOBALS['DRIFT_SMOKE_WIN_BACKDROP'] = [];
+    $bdHost = new Win32WindowHost();
+    $bdHost->setBackdrop(9001, Backdrop::Blur);
+    $bdHost->setBackdrop(9001, Backdrop::Acrylic);
+    $bdHost->setBackdrop(9001, null);
+    check(
+        'Win32WindowHost · setBackdrop 映射 Blur→1 / Acrylic→2 / null→0（关也要发调用）',
+        winBackdropCalls() === [[9001, 1], [9001, 2], [9001, 0]],
+        var_export(winBackdropCalls(), true),
     );
 }
 

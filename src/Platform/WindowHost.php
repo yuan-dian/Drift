@@ -64,10 +64,25 @@ interface WindowHost
      * ★ **平台能力，不是正确性**：不支持的平台可 no-op —— 应用不该因为
      *   "这个平台不能半透明"就报错。Win32 实现走 `WS_EX_LAYERED`（首次 <1 懒挂）
      *   + `SetLayeredWindowAttributes`（**全局** alpha，与既有 GDI 上屏共存）。
-     * ★ 当前只做整窗统一透明；**逐像素 alpha / 毛玻璃**是后续阶段（要替换
-     *   present 路径为 `UpdateLayeredWindow` + DWM 亚克力背景）。
+     * ★ 逐像素 alpha 是**另一条路**（`RenderSurface::setBackground()` 带 alpha 底色
+     *   ⇒ 壳切 `UpdateLayeredWindow`），两者共用 `WS_EX_LAYERED` 但**互斥**；
+     *   逐像素模式下本方法的 alpha 由 `BLENDFUNCTION.SourceConstantAlpha` 带上，
+     *   语义一致。
      */
     public function setOpacity(int $windowHandle, float $opacity): void;
+
+    /**
+     * 窗口背后的材质（`null` = 关）。P1 §质感 / Stage 3。
+     *
+     * ★ **平台能力，可 no-op**。Win32（Win10 19045 实测）：走未公开的
+     *   `user32!SetWindowCompositionAttribute` 的 accent 策略 —— `Blur` 轻模糊、
+     *   `Acrylic` 磨砂。Win11 有 `DWMWA_SYSTEMBACKDROP_TYPE`（本机验不了，未接）。
+     * ★★ **只在"应用没画到"的地方可见** ⇒ 通常要配合 `RenderSurface::setBackground()`
+     *   给带 alpha 的底色，否则模糊被应用内容整块盖住（不是没生效，是看不见）。
+     * ★ 与本框架的应用内毛玻璃（`BackdropFilter`）分工：那个模糊**应用自己的内容**
+     *   （浮层压在主界面上），这个模糊**窗口背后的桌面**（整窗透出）。
+     */
+    public function setBackdrop(int $windowHandle, ?Backdrop $backdrop): void;
 
     /**
      * 无边框模式（P1-Stage 1b / §质感）。`$dragHeight` = 顶部拖动带高度（**逻辑**像素）。

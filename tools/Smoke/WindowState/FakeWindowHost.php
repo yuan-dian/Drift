@@ -7,6 +7,7 @@ use Drift\Geometry\Point;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Size;
 use Drift\Input\CursorShape;
+use Drift\Platform\Backdrop;
 use Drift\Platform\WindowHost;
 
 /**
@@ -62,6 +63,19 @@ final class FakeWindowHost implements WindowHost
     public function setOpacity(int $windowHandle, float $opacity): void
     {
         $this->opacity = $opacity;
+    }
+
+    /**
+     * 夹具：记录**每一次**背景材质请求（含 `null` = 关）。
+     *
+     * ★ 记成列表而不是"最后一次"：`setBackdrop(acrylic)` → `setBackdrop(null)`
+     *   是真实用法（开关切换），只留最后一个值会把"先开再关"和"从没开过"混为一谈。
+     */
+    public array $backdrops = [];
+
+    public function setBackdrop(int $windowHandle, ?Backdrop $backdrop): void
+    {
+        $this->backdrops[] = $backdrop;
     }
 
     /** 夹具：记录无边框请求的拖动带高度（逻辑像素；真机行为在壳里，头侧只验接线） */

@@ -9,6 +9,7 @@ use Drift\App\ProcessTaskHost;
 use Drift\App\ProcessWorker;
 use Drift\App\WindowStateStore;
 use Drift\Errors;
+use Drift\Platform\Backdrop;
 use Drift\Platform\Win32\Win32Platform;
 use Drift\Rendering\Color;
 
@@ -152,6 +153,31 @@ final class Bootstrap
         $bgEnv = \getenv('DRIFT_WINDOW_BACKGROUND');
         if ($bgEnv !== false && $bgEnv !== '') {
             $surface->setBackground(Color::fromHex($bgEnv));
+        }
+
+        // ★ 窗口背后材质（P1 §质感 / Stage 3）：环境变量驱动，**默认不变**。
+        //   `DRIFT_WINDOW_BACKDROP=blur` ⇒ 轻模糊；`=acrylic` ⇒ 磨砂玻璃；`=off` ⇒ 关。
+        //   ★★ **必须配合 `DRIFT_WINDOW_BACKGROUND` 带 alpha 才有观察通道**：
+        //     不透明窗口的每个像素都由应用画满，DWM 画在**背后**的模糊被整块盖住 ⇒
+        //     设了也看不出来（不是失败，是看不见）。这是它唯一的正常用法。
+        //   ★ 平台能力、可 no-op（Win10 走未公开的 accent 策略，取不到就静默跳过）。
+        //   ★ 写在 `setFrameless()` **之后**：无边框是逐像素 alpha 的前提，
+        //     而逐像素 alpha 是看见模糊的前提 —— 顺序表达依赖，不是巧合。
+        $backdropEnv = \getenv('DRIFT_WINDOW_BACKDROP');
+        if ($backdropEnv !== false && $backdropEnv !== '') {
+            // ★ 用 if/else 而不是 `match`：tpc 对 `match` 的窄化支持没有验证过，
+            //   而这里要的是"三种已知值 + 一个 Fatal 兜底"，if/else 零风险。
+            // ★ 写错**不静默退化**：`Errors::report()` 走 §1.2 中止序列
+            //   —— 与 `Color::fromHex` 同口径：环境变量写错不该悄悄变成"没设"。
+            if ($backdropEnv === 'blur') {
+                $window->setBackdrop($handle, Backdrop::Blur);
+            } elseif ($backdropEnv === 'acrylic') {
+                $window->setBackdrop($handle, Backdrop::Acrylic);
+            } elseif ($backdropEnv === 'off') {
+                $window->setBackdrop($handle, null);
+            } else {
+                Errors::report('DRIFT_WINDOW_BACKDROP 只认 blur / acrylic / off，收到：' . $backdropEnv);
+            }
         }
 
         // 首帧之前把表面尺寸定下来：`attach()` 内部就会跑一帧（`Application::attach`），
