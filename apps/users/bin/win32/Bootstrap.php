@@ -10,6 +10,7 @@ use Drift\App\ProcessWorker;
 use Drift\App\WindowStateStore;
 use Drift\Errors;
 use Drift\Platform\Win32\Win32Platform;
+use Drift\Rendering\Color;
 
 use App\Users\Store\MemoryUserSource;
 use App\Users\Jobs\JobRegistry;
@@ -133,6 +134,25 @@ final class Bootstrap
 
         $screen = $platform->screen();
         $surface = $provider->surface();
+
+        // ★ 窗口底色 / 逐像素透明（P1 §质感 / Stage 2b）：环境变量驱动，**默认不变**。
+        //   `DRIFT_WINDOW_BACKGROUND=#FFFFFF00` ⇒ 全透明底：应用没画到的地方**透出桌面**；
+        //   `#FFFFFFB0` ⇒ 半透明底（透出桌面、内容仍可读）。
+        //   ★ 这是 `RenderSurface::setBackground()` 的**真实消费者**，也是
+        //     `drift_win_set_pixel_alpha()` 的**唯一入口**（带 alpha 的底色 ⇒ 壳切
+        //     `UpdateLayeredWindow`）。不设 ⇒ 白底 + GDI 贴屏，零回归。
+        //   ★ 必须在 `attach()` **之前**：`attach()` 内部就跑首帧，那一刻底色就得对，
+        //     否则首帧按白底画、第二帧才变透明（用户看到闪一下白）。
+        //   ★ 解析失败是 Fatal（`Color::fromHex` 只认 `#RGB/#RRGGBB/#RRGGBBAA`）——
+        //     环境变量写错不该静默退化成白底。
+        //   ★★ **带 alpha 时必须同时 `DRIFT_WINDOW_FRAMELESS=1`**：`UpdateLayeredWindow`
+        //     把位图贴在窗口左上角，有标题栏时客户区起点比窗口原点低一个标题栏 ⇒
+        //     画面整体上移。壳在"帧尺寸 ≠ 窗口矩形"时会**回落 GDI**（整窗不透明），
+        //     所以漏设不会黑屏，只是透明没生效。
+        $bgEnv = \getenv('DRIFT_WINDOW_BACKGROUND');
+        if ($bgEnv !== false && $bgEnv !== '') {
+            $surface->setBackground(Color::fromHex($bgEnv));
+        }
 
         // 首帧之前把表面尺寸定下来：`attach()` 内部就会跑一帧（`Application::attach`），
         // 而那帧要往表面上画 ⇒ 尺寸为 0 时那一帧会被丢弃（画面到第二次 resize 才出现）。

@@ -1036,6 +1036,165 @@ void presentTo(HDC dc, int dstW = 0, int dstH = 0) {
     }
 }
 
+// ─────────────────────────────────── 逐像素上屏（ULW，Stage 2b）──
+
+/**
+ * 分层窗口的**绑定态**。
+ *
+ * ★★ `SetLayeredWindowAttributes`（LWA）与 `UpdateLayeredWindow`（ULW）**互斥**，
+ *   而且互相切换的**唯一**合法方式是：摘掉 `WS_EX_LAYERED` 再挂上（MSDN 原文）。
+ *   只调另一个 API 是**没用的**：画面还是上一条路径留下的，且不报错 ——
+ *   这就是为什么要有这个状态机，而不是"调一下就行"。
+ */
+enum { kBindNone = 0, kBindLwa = 1, kBindUlw = 2 };
+int g_layerBind = kBindNone;
+
+/**
+ * ULW 用的 DIB section（懒建、按帧尺寸重建）。
+ *
+ * ★ 为什么不用 `CreateCompatibleBitmap`：`UpdateLayeredWindow` 要求源是
+ *   **32bpp 预乘 BGRA**，而 `CreateCompatibleBitmap` 给的是设备相关格式（可能是
+ *   16bpp / 非预乘），送进去的结果是"能显示但颜色错、半透明区发白"。
+ *   `CreateDIBSection` + `BI_RGB` 的字节序与 `g_frame` **逐字节相同** ⇒ 一次 memcpy。
+ */
+HBITMAP g_ulwBitmap = NULL;
+HDC g_ulwDc = NULL;
+HBITMAP g_ulwOldBitmap = NULL;
+void *g_ulwBits = NULL;
+int g_ulwW = 0;
+int g_ulwH = 0;
+
+static void releaseUlwSurface() {
+    if (g_ulwDc != NULL) {
+        if (g_ulwOldBitmap != NULL) {
+            SelectObject(g_ulwDc, g_ulwOldBitmap);
+            g_ulwOldBitmap = NULL;
+        }
+        DeleteDC(g_ulwDc);
+        g_ulwDc = NULL;
+    }
+    if (g_ulwBitmap != NULL) {
+        DeleteObject(g_ulwBitmap);
+        g_ulwBitmap = NULL;
+    }
+    g_ulwBits = NULL;
+    g_ulwW = 0;
+    g_ulwH = 0;
+}
+
+/**
+ * 把窗口的绑定态切到 `want`（`kBindLwa` / `kBindUlw`），并把该模式的属性设上。
+ *
+ * ★ 只有**模式变了**才摘挂 `WS_EX_LAYERED`；LWA 的 alpha 每次都给一遍（幂等）——
+ *   否则第二次 `set_opacity()` 会因为"已经在 LWA 模式"而**静默不生效**。
+ * ★ 摘挂会丢掉之前设的 alpha ⇒ 重设一遍，否则"切回来以后整窗突然全不透明"。
+ * ★ 切到 ULW 时**不**设任何东西：`SourceConstantAlpha` 每次 present 都带。
+ */
+static void bindLayered(HWND hwnd, int want) {
+    if (g_layerBind != want) {
+        LONG_PTR ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex & ~WS_EX_LAYERED);
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED);
+        SetWindowPos(hwnd, NULL, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        g_layerBind = want;
+    }
+
+    if (want == kBindLwa) {
+        SetLayeredWindowAttributes(hwnd, 0, g_opacity, LWA_ALPHA);
+    }
+}
+
+/**
+ * 用 `UpdateLayeredWindow` 把 `g_frame`（**预乘 BGRA**）交给合成器。返回是否真的贴了。
+ *
+ * ★★ 四条不变量，少一条都是"画面不对但**不报错**"：
+ *   ① **预乘**：`BLENDFUNCTION.AlphaFormat = AC_SRC_ALPHA` 的语义就是"源已预乘"
+ *      ⇒ 再乘一次 alpha 会让半透明区二次压暗（看起来像"底色比设计稿深一档"）。
+ *   ② **`pptDst` / `psize` 必须给具体值，不能传 NULL**（本机实测，踩过）：
+ *      两个都传 NULL 时 `UpdateLayeredWindow` **返回成功但画面一个像素都不变** ——
+ *      现象是"窗口完全不可见、日志干净、`g_frame` 里像素全对"。MSDN 说
+ *      "位置/尺寸不变时可以为 NULL"，但那条路在本机 Win10/11 上不生效。
+ *      给的值就是**当前窗口矩形** ⇒ 既不动位置也不改尺寸（与 `WM_SIZE` 不打架）。
+ *   ③ **帧尺寸必须等于窗口矩形**才贴：不等就是 resize 中途（新帧还没来），或者
+ *      窗口还有标题栏（客户区比窗口小一个标题栏 ⇒ 位图会整体上移）。
+ *      ULW 没有"余区"可填，位图多大就多大 ⇒ 这里**返回 false**，让调用方回落 GDI。
+ *   ④ 失败也返回 false（**绝不留下"分层窗但没内容"的状态** —— 那等于窗口凭空消失）。
+ *
+ * ★ **前提是无边框**（`set_frameless`）：客户区=整窗，位图才与窗口矩形一一对齐。
+ */
+static bool presentLayered(HWND hwnd) {
+    if (g_frame.empty() || g_frameW <= 0 || g_frameH <= 0) {
+        return false;
+    }
+
+    RECT wr;
+    if (!::GetWindowRect(hwnd, &wr)) {
+        return false;
+    }
+    if ((int)(wr.right - wr.left) != g_frameW || (int)(wr.bottom - wr.top) != g_frameH) {
+        return false;   // 见不变量 ③
+    }
+
+    bindLayered(hwnd, kBindUlw);
+
+    if (g_ulwBitmap == NULL || g_ulwW != g_frameW || g_ulwH != g_frameH) {
+        releaseUlwSurface();
+
+        HDC screen = GetDC(NULL);
+        g_ulwDc = CreateCompatibleDC(screen);
+        if (screen != NULL) {
+            ReleaseDC(NULL, screen);
+        }
+        if (g_ulwDc == NULL) {
+            return false;
+        }
+
+        BITMAPINFO info = {};
+        info.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
+        info.bmiHeader.biWidth       = g_frameW;
+        info.bmiHeader.biHeight      = -g_frameH;   // 负高 = 自上而下，与 g_frame 行序一致
+        info.bmiHeader.biPlanes      = 1;
+        info.bmiHeader.biBitCount    = 32;
+        info.bmiHeader.biCompression = BI_RGB;
+
+        void *bits = NULL;
+        g_ulwBitmap = CreateDIBSection(g_ulwDc, &info, DIB_RGB_COLORS, &bits, NULL, 0);
+        if (g_ulwBitmap == NULL || bits == NULL) {
+            releaseUlwSurface();
+            return false;
+        }
+        g_ulwOldBitmap = (HBITMAP)SelectObject(g_ulwDc, g_ulwBitmap);
+        g_ulwBits = bits;
+        g_ulwW = g_frameW;
+        g_ulwH = g_frameH;
+    }
+
+    memcpy(g_ulwBits, g_frame.data(), (size_t)g_frameW * (size_t)g_frameH * 4u);
+
+    POINT src = {0, 0};
+    POINT dst = {wr.left, wr.top};        // 当前位置 ⇒ 不移动窗口
+    SIZE size = {g_frameW, g_frameH};     // 当前尺寸 ⇒ 不改窗口大小
+
+    BLENDFUNCTION blend = {};
+    blend.BlendOp             = AC_SRC_OVER;
+    blend.SourceConstantAlpha = g_opacity;   // `set_opacity` 在两种模式下语义一致
+    blend.AlphaFormat         = AC_SRC_ALPHA;
+
+    return UpdateLayeredWindow(hwnd, NULL, &dst, &size, g_ulwDc, &src, 0, &blend, ULW_ALPHA) != FALSE;
+}
+
+/**
+ * 这一帧能不能走逐像素上屏：要"声明过 + 无边框"。
+ *
+ * ★ **无边框是硬前提**（见 `presentLayered()` 的不变量 ③）：有标题栏时位图会与
+ *   客户区错开一个标题栏高度，画面上移、底边缺一条 —— 那种"半对"比不透明更糟。
+ *   不满足就**回落 GDI**（整窗不透明），应用侧只是"透明没生效"，不是黑屏。
+ */
+static bool layeredPixelReady() {
+    return g_pixelAlpha && g_frameless;
+}
+
 // ─────────────────────────────────────── 拖动重排入口（§5.2 模态循环）──
 // 拖窗口边缘时系统进入模态尺寸循环，PHP 主循环被挂起 ⇒ 拖动中的刷新只能由壳
 // **同步**调回 PHP 跑一帧。这是编译期已知的具名函数（不是回调穿越边界）：
@@ -1132,6 +1291,10 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // ★ 销毁**之前**抓最后几何（§5.4 的救命一发：persist 会在这个窗口
             //   死透之后才来问它，见 g_lastGeom* 的注释）。
             cacheFinalGeometry(hwnd);
+            // ★ ULW 的 DIB section / 内存 DC 是**进程级**全局（与 g_frame 同一条
+            //   单窗口假设）⇒ 这里必须释放，否则每开一次窗口漏一张整屏位图。
+            releaseUlwSurface();
+            g_layerBind = kBindNone;
             PostQuitMessage(0);
             return 0;
 
@@ -1256,9 +1419,13 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 // ★ 2026-10-19：**不清帧**。旧实现在这里 clear() ⇒ WM_PAINT 时
                 //   presentTo 无内容可贴，resize 拖动中新露出的区域全黑。
                 //   尺寸不匹配时由 presentTo 走"原尺寸贴 + 余区填底色"（**不拉伸**）。
-                if (!resizeHookProducedFrame()
+                if (g_layerBind != kBindUlw
+                    && !resizeHookProducedFrame()
                     && !g_frame.empty() && g_frameW > 0 && g_frameH > 0
                     && (g_frameW != w || g_frameH != h)) {
+                    // ★ 逐像素模式下没有这条兜底：ULW 没有"余区"，位图多大就多大
+                    //   （见 `presentLayered()` 的不变量 ③）⇒ 拖动中露出的一块在
+                    //   新帧到达前是透明的。这是"不拉伸"裁决在 ULW 下的必然结果。
                     HDC dc = GetDC(hwnd);
                     if (dc != NULL) {
                         presentTo(dc, w, h);
@@ -1343,10 +1510,19 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_PAINT: {
             PAINTSTRUCT ps;
             HDC dc = BeginPaint(hwnd, &ps);
-            // 帧尺寸与客户区不同（resize 后 PHP 新帧未到）⇒ 拉伸贴，不留黑边
-            RECT rc;
-            presentTo(dc, GetClientRect(hwnd, &rc) ? (int)(rc.right - rc.left) : 0,
-                      rc.bottom - rc.top);
+            // ★ 逐像素模式下**不贴**：内容由 `UpdateLayeredWindow` 交给合成器，
+            //   GDI 往客户区画的会被分层表面整个盖住 —— 白费一次 4MB 贴屏，还会在
+            //   "刚被遮住又露出来"时闪一下不透明内容。
+            //   ★ `BeginPaint`/`EndPaint` 仍然必须配对：不配对 = 重绘区域永不失效 ⇒
+            //     `WM_PAINT` 连发，CPU 烧在空转上（而画面看起来"没什么不对"）。
+            //   ★ 判据是**绑定态**而不是 `g_pixelAlpha`：ULW 没贴上时会回落 GDI
+            //     （见 `presentLayered()` 的返回值），那时 GDI 内容才是屏幕上的真相。
+            if (g_layerBind != kBindUlw) {
+                // 帧尺寸与客户区不同（resize 后 PHP 新帧未到）⇒ 原尺寸贴 + 余区填底色
+                RECT rc;
+                presentTo(dc, GetClientRect(hwnd, &rc) ? (int)(rc.right - rc.left) : 0,
+                          rc.bottom - rc.top);
+            }
             EndPaint(hwnd, &ps);
             return 0;
         }
@@ -1928,18 +2104,12 @@ void php_drift_win_set_opacity(Int hwnd, Float alpha) {
 
     if (g_pixelAlpha) {
         // 逐像素模式：值已记下，下一次 present 的 BLENDFUNCTION 会带上。
-        // 这里**不能**碰 SetLayeredWindowAttributes（会把模式切回 LWA，见上）。
+        // 这里**不能**碰 `SetLayeredWindowAttributes`（会把绑定态切回 LWA，
+        // ULW 交上去的位图当场失效 ⇒ 窗口空白）。
         return;
     }
 
-    LONG_PTR ex = GetWindowLongPtrW(target, GWL_EXSTYLE);
-    if ((ex & WS_EX_LAYERED) == 0) {
-        SetWindowLongPtrW(target, GWL_EXSTYLE, ex | WS_EX_LAYERED);
-        // 改扩展样式后必须 SWP_FRAMECHANGED 让系统重算非客户区（否则不生效）
-        SetWindowPos(target, NULL, 0, 0, 0, 0,
-                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-    }
-    SetLayeredWindowAttributes(target, 0, g_opacity, LWA_ALPHA);
+    bindLayered(target, kBindLwa);
 }
 
 /**
@@ -1950,31 +2120,22 @@ void php_drift_win_set_opacity(Int hwnd, Float alpha) {
  *   会让"某帧碰巧全不透明"触发一次无谓往返，还会让模式抖动成为默认行为。
  *   底色是应用级常量，声明一次就够。
  *
- * ★ 置位时**懒挂 `WS_EX_LAYERED`**（与 `set_opacity` 同款纪律：用不到就不要，
- *   分层窗在旧驱动 / 远程桌面 / 部分合成器下有怪癖）。
+ * ★★ **本函数不动窗口样式**（第一版动了，是个坑）：只置位一个标志，真正挂
+ *   `WS_EX_LAYERED` 推迟到**第一次 present**（`presentLayered()` → `bindLayered()`）。
+ *   理由：`WS_EX_LAYERED` 挂上而 LWA / ULW 一个都还没调过时，窗口**可能完全不显示**
+ *   （MSDN：分层窗要等其中一个 API 被调用才可见）。而 `setBackground()` 发生在
+ *   `attach()` 之前、首帧之后几百微秒 —— 那段时间足够用户看到窗口闪一下。
+ *   推迟到 present 就没有这个空窗：窗口一直是 GDI 贴屏的不透明画面，切换发生在
+ *   一帧之内。
  *
- * ★ 清零**不摘 `WS_EX_LAYERED`**：`set_opacity` 可能还在用它。真正需要摘的时机
- *   是"两个功能都不要了"，而那时窗口多半已经在销毁路上 —— 摘了反而多一次
- *   `SWP_FRAMECHANGED` 让窗口闪一下。切回 GDI 只需把 `g_pixelAlpha` 清零，
- *   `present` 自然会走 `SetDIBitsToDevice`。
+ * ★ 清零同样不动样式：`set_opacity` 可能还在用 `WS_EX_LAYERED`。切回 GDI 只需
+ *   把 `g_pixelAlpha` 清零，`present` 自然会走 `SetDIBitsToDevice`。
  */
 void php_drift_win_set_pixel_alpha(Int hwnd, Bool on) {
-    HWND target = (HWND)(INT_PTR)hwnd;
-    if (target == NULL) {
+    if ((HWND)(INT_PTR)hwnd == NULL) {
         return;
     }
     g_pixelAlpha = (on != 0);
-
-    if (!g_pixelAlpha) {
-        return;
-    }
-
-    LONG_PTR ex = GetWindowLongPtrW(target, GWL_EXSTYLE);
-    if ((ex & WS_EX_LAYERED) == 0) {
-        SetWindowLongPtrW(target, GWL_EXSTYLE, ex | WS_EX_LAYERED);
-        SetWindowPos(target, NULL, 0, 0, 0, 0,
-                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-    }
 }
 
 /**
@@ -2416,9 +2577,27 @@ void php_drift_win_present(Int hwnd, String rgba, Int width, Int height) {
     }
 
     const unsigned char *src = (const unsigned char *)rgba.data();
+    if (layeredPixelReady()) {
+        // ★★ 预乘 BGRA，**只换 R↔B**：`RasterCanvas` 的像素缓冲本来就是**预乘**的
+        //   （混合公式 `dst = src·a + dst·(1−a)`，见 `toRgba()` 的长注释）⇒
+        //   这里再乘一次 alpha 会把半透明区二次压暗。alpha 原样带过去。
+        for (size_t i = 0; i < need; i += 4) {
+            g_frame[i + 0] = src[i + 2];
+            g_frame[i + 1] = src[i + 1];
+            g_frame[i + 2] = src[i + 0];
+            g_frame[i + 3] = src[i + 3];
+        }
+
+        if (presentLayered(target)) {
+            return;
+        }
+        // 回落：ULW 没贴上（尺寸不匹配 / API 失败）⇒ 下面的 GDI 路径接手。
+        // ★ 必须补满 alpha：GDI 的 32bpp `BI_RGB` 忽略 alpha，但留着半透明值会让
+        //   远程桌面 / 截图路径按 alpha 混合，出现"半透明窗口"。
+    }
+
     for (size_t i = 0; i < need; i += 4) {
-        // RGBA（画布）⇒ BGRA（32bpp DIB）。alpha 置满：32bpp BI_RGB 忽略它，
-        // 但留着半透明值会让某些远程桌面/截图路径按 alpha 混合，出现半透明窗口。
+        // RGBA（画布）⇒ BGRA（32bpp DIB）。alpha 置满（理由见上）。
         g_frame[i + 0] = src[i + 2];
         g_frame[i + 1] = src[i + 1];
         g_frame[i + 2] = src[i + 0];
@@ -2476,6 +2655,18 @@ void php_drift_win_present_skia(Int hwnd, Int canvas) {
     const size_t rowPixels = (size_t)w * 4u;
     for (int y = 0; y < h; y++) {
         memcpy(g_frame.data() + (size_t)y * rowPixels, src + (size_t)y * rowBytes, rowPixels);
+    }
+
+    if (layeredPixelReady()) {
+        // Skia 的 N32 就是**预乘** BGRA（`N32Premul`）⇒ 上面那次 memcpy 已经把
+        // ULW 要的字节原样搬过来了，**不需要任何换算**。
+        if (presentLayered(target)) {
+            return;
+        }
+        // 回落 GDI：alpha 必须补满（见 `php_drift_win_present` 的同款注释）
+        for (size_t i = 3; i < need; i += 4) {
+            g_frame[i] = 0xFF;
+        }
     }
 
     HDC dc = GetDC(target);

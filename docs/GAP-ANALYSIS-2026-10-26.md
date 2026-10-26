@@ -258,3 +258,54 @@ ScrollView / LazyColumn / LazyRow / LazyGrid / Grid / Stack / Image / Icon / Ric
   让面板能透出**桌面**而不只是应用内容）；`Opacity` 独立控件（`->opacity()`
   修饰已覆盖，独立控件只是便利性）；混合模式；圆角模糊（要 `Path::addRoundRect`
   或圆角裁剪，当前模糊区是矩形）。
+
+**P1-9 窗口逐像素 alpha —— Stage 2b 已落地**
+（`RenderSurface::setBackground()` + `drift_win_set_pixel_alpha` + `UpdateLayeredWindow`）：
+
+- **契约放在表面上，不在窗口上**：`setOpacity()` 改的是**合成器**怎么合成已画好的
+  像素（`LWA_ALPHA`，像素一个不变）；底色改的是**画出来是什么像素**。两者分属不同
+  层，底色一旦挪进 `WindowHost`，`SurfaceProvider` 这层"后端可换"就漏了。
+  ⇒ `RenderSurface::setBackground(Color)` 是**接口方法**（7 个实现同步）。
+  `a < 255` ⇒ 该窗口逐像素透明。
+- **模式是"声明"不是"每帧从像素里猜"**：`drift_win_set_pixel_alpha(hwnd, bool)` 由
+  表面在改底色时调一次。理由：模式切换要 `SetWindowLongPtr` + `SWP_FRAMECHANGED`
+  （DWM 重建表面），是重操作；从像素猜会让"某帧碰巧全不透明"触发无谓往返，还会让
+  模式抖动成为默认行为。
+- ★★ **`set_pixel_alpha` 不动窗口样式**（第一版动了，是个坑）：只置位标志，真正挂
+  `WS_EX_LAYERED` 推迟到**第一次 present**。`WS_EX_LAYERED` 挂着而 LWA / ULW 一个都
+  没调过时窗口**可能完全不显示**，而 `setBackground()` 发生在首帧之前 ⇒ 那会闪一下。
+- **LWA 与 ULW 互斥**，切换的**唯一**合法方式是摘掉再挂上 `WS_EX_LAYERED`
+  ⇒ 壳里有个三态 `g_layerBind`（none / lwa / ulw）。`set_opacity` 在逐像素模式下
+  **只记值不调 API**（调 `SetLayeredWindowAttributes` 会把 ULW 的位图当场踢掉），
+  透明度由 `BLENDFUNCTION.SourceConstantAlpha` 每次 present 带上 ⇒ **两种模式语义一致**。
+- ★★★ **`UpdateLayeredWindow` 的 `pptDst` / `psize` 不能都传 NULL**（本机实测）：
+  两个都 NULL 时它**返回成功但画面一个像素都不变** —— 现象是"窗口完全不可见、
+  `Errors.log` 干净、`g_frame` 里像素全对（alpha 全非零、内容像素正确）"。
+  MSDN 说"位置/尺寸不变时可以为 NULL"，那条路在本机 Win10/11 上不生效。
+  给的值就是**当前窗口矩形** ⇒ 既不动位置也不改尺寸（与 `WM_SIZE` 不打架）。
+  这个坑花掉了整轮排查（`--screen` 抓屏幕 + `--region` 抓桌面基准才定位到）。
+- **失败必回落 GDI**：`presentLayered()` 返回 bool；`WM_PAINT` / `WM_SIZE` 的 GDI
+  贴屏判据是**绑定态**（`g_layerBind != kBindUlw`）而不是"声明过" —— 否则 ULW 一失败
+  就是"分层窗 + 没人喂内容" = 窗口凭空消失。
+- **前提是无边框**（Stage 1b）：客户区=整窗，位图才与窗口矩形一一对齐。有标题栏时
+  位图会整体上移一个标题栏 ⇒ `layeredPixelReady()` 要求 `g_frameless`，否则回落 GDI
+  （应用侧只是"透明没生效"，不是黑屏）。
+- **预乘口径终于统一**：`RasterCanvas` 的缓冲本来就是**预乘**（混合公式
+  `dst = src·a + dst·(1−a)`），Skia 的 `N32` 也是预乘 ⇒ 两个后端都**只换 R↔B、
+  不再乘 alpha**（再乘一次会让半透明区二次压暗）。`toRgba()` 的 docblock 已按事实改写
+  —— 底色不透明时预乘 == 直通，所以 M1 阶段这个区别从未显形。
+- **消费者**：`users` 组合根读 `DRIFT_WINDOW_BACKGROUND=#RRGGBBAA`（默认不变）。
+- **真机判据**（`_build/ulw-shot.php` + 探针新增 `--screen` / `--region` / `--color`）：
+  ① `#FF00FF`（不透明洋红）⇒ 屏幕上洋红占 **90.3%**（证明底色真到了屏幕、抓图抓得到）；
+  ② `#FF00FF00`（全透明洋红）⇒ 洋红 **0%**，应用自己的顶条/按钮/文字在，**IDE 从
+  空白处透出来**（`_build/ulw-transparent.png`）；
+  ③ `#FF00FF80` ⇒ 50% 洋红压住整窗、背后代码隐约可见（`_build/ulw-half.png`）；
+  ④ `DRIFT_WINDOW_OPACITY=0.55` 叠加 ⇒ 两种透明度语义同时生效
+  （`_build/ulw-opacity.png`）；
+  ⑤ ULW 下改尺寸（`--move` 到 700×520）⇒ 重排正确、透明保持、**无 runaway 缩小**
+  （`psize` == 窗口尺寸，不会形成反馈环，`_build/ulw-resize.png`）。
+- **尚未做**：DWM 亚克力 / 毛玻璃**桌面**背景（`DWMWA_SYSTEMBACKDROP_TYPE`，Win11；
+  Win10 要未公开的 `SetWindowCompositionAttribute`）—— 现在透明区是"平铺桌面"，
+  不是"模糊桌面"；窗口圆角在 ULW 模式下是否仍由 DWM 生效未验；多窗口时
+  `g_frame` / `g_ulwBitmap` / `g_layerBind` 这几个进程级全局要改成 `map<HWND, …>`。
+

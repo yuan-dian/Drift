@@ -83,7 +83,10 @@ function drift_win_set_opacity(int $hwnd, float $alpha): void {}
  *   `SWP_FRAMECHANGED`（DWM 重建表面），是重操作；底色是应用级常量，声明一次就够。
  * ★ 消费者只有一处：`Win32SkiaSurface::setBackground()` / `Win32RasterSurface::
  *   setBackground()`，按底色 `a < 255` 决定传什么（`Color::isOpaque()`）。
- * ★ 置位时**懒挂 `WS_EX_LAYERED`**；清零不摘（`drift_win_set_opacity` 可能还在用）。
+ * ★★ **本函数不动窗口样式**：只置位一个标志，真正挂 `WS_EX_LAYERED` 推迟到
+ *   **第一次 present**。`WS_EX_LAYERED` 挂着而 LWA / ULW 一个都没调过时窗口
+ *   可能完全不显示，而 `setBackground()` 发生在首帧之前 ⇒ 那会闪一下。
+ * ★ 清零同样不动样式（`drift_win_set_opacity` 可能还在用 `WS_EX_LAYERED`）。
  */
 function drift_win_set_pixel_alpha(int $hwnd, bool $on): void {}
 

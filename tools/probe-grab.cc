@@ -154,6 +154,24 @@ struct Options {
     int wheelWaitMs = 600;         // 发完滚轮等多久再抓（让帧循环产出新帧）
     bool savePng = false;          // --png=path（WIC 编码，供 Read 直接看）
     std::wstring pngPath;
+    /**
+     * `--screen`：抓**屏幕**上窗口外框那一块，而不是窗口 DC。
+     *
+     * ★ 为什么必须有：`--png` 走 `GetDC(hwnd)` + `BitBlt`，而 `UpdateLayeredWindow`
+     *   的窗口**没有 GDI 表面** ⇒ 那条路拿不到合成后的画面。验"逐像素透明"只能
+     *   抓屏幕，才看得见**桌面透过来**。内部用 `SRCCOPY | CAPTUREBLT`：
+     *   不加 `CAPTUREBLT` 时 `BitBlt` **不含分层窗口**（抓到的是桌面，窗口像不存在）。
+     */
+    bool screenShot = false;
+    /** `--region=x,y,w,h`：直接抓屏幕上的这块矩形（**不需要窗口**）。
+     *
+     *  ★ 存在的理由：验"逐像素透明"要拿**桌面本身**当基准，而桌面没有窗口可挂。
+     *    有了它就能：开窗前抓一次（桌面）→ 开窗后抓同一块 → 逐像素比。 */
+    bool hasRegion = false;
+    int regX = 0, regY = 0, regW = 0, regH = 0;
+    /** `--color=RRGGBB`：统计该颜色在抓到的图里占多少百分比（验"透明色不该出现"） */
+    bool countColor = false;
+    unsigned char countR = 0, countG = 0, countB = 0;
     bool deactivate = false;       // --deactivate（发 WM_ACTIVATE/WA_INACTIVE，模拟"用户切走"）
     // ── 键盘输入（2026-10-23：S5 搜索框真机验证用）──
     bool typeKeys = false;         // --keys=x,y,<hex UTF-16>
@@ -377,6 +395,106 @@ bool grab(HWND hwnd, Shot& shot, std::string& error)
         shot.height = height;
     }
     return ok;
+}
+
+/**
+ * 从**屏幕 DC** 抓窗口外框那一块（`--screen`）。
+ *
+ * ★ 为什么必须有这条：`--png` 走 `GetDC(hwnd)` + `BitBlt`，而 `UpdateLayeredWindow`
+ *   的窗口**没有 GDI 表面** ⇒ 那条路拿不到合成后的画面（分层窗要么全黑要么残留）。
+ *   验"逐像素透明"只能抓屏幕，才看得见**桌面透过来**。
+ * ★★ `CAPTUREBLT` 不能省：不带它时 `BitBlt` **不含分层窗口**（抓到的是桌面本身，
+ *   窗口像不存在 ⇒ 会被误读成"整窗全透明"）。
+ */
+bool grabScreenRegion(int x, int y, int width, int height, Shot& shot, std::string& error)
+{
+    if (width <= 0 || height <= 0) {
+        error = "region is empty";
+        return false;
+    }
+
+    HDC screenDc = ::GetDC(nullptr);
+    if (screenDc == nullptr) {
+        error = "GetDC(NULL) failed";
+        return false;
+    }
+    HDC memoryDc = ::CreateCompatibleDC(screenDc);
+    HBITMAP bitmap = ::CreateCompatibleBitmap(screenDc, width, height);
+    HGDIOBJ previous = ::SelectObject(memoryDc, bitmap);
+
+    bool ok = ::BitBlt(memoryDc, 0, 0, width, height, screenDc,
+                       x, y, SRCCOPY | CAPTUREBLT) != FALSE;
+
+    BITMAPINFO info{};
+    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = width;
+    info.bmiHeader.biHeight = -height;   // ★ 负高 = 自顶向下
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+
+    shot.pixels.assign(static_cast<size_t>(width) * static_cast<size_t>(height) * 4, 0);
+    int lines = 0;
+    if (ok) {
+        lines = ::GetDIBits(memoryDc, bitmap, 0, static_cast<UINT>(height),
+                            shot.pixels.data(), &info, DIB_RGB_COLORS);
+    }
+    if (!ok || lines == 0) {
+        char buffer[128];
+        std::snprintf(buffer, sizeof(buffer), "screen GetDIBits returned %d lines (error %lu)",
+                      lines, static_cast<unsigned long>(::GetLastError()));
+        error = buffer;
+        ok = false;
+    }
+
+    ::SelectObject(memoryDc, previous);
+    ::DeleteObject(bitmap);
+    ::DeleteDC(memoryDc);
+    ::ReleaseDC(nullptr, screenDc);
+
+    if (ok) {
+        shot.width = width;
+        shot.height = height;
+    }
+    return ok;
+}
+
+/** 抓窗口外框那一块屏幕（`--screen`）；矩形由 `GetWindowRect` 给。 */
+bool grabScreen(HWND hwnd, Shot& shot, std::string& error)
+{
+    RECT frame{};
+    if (!::GetWindowRect(hwnd, &frame)) {
+        error = "GetWindowRect failed";
+        return false;
+    }
+    return grabScreenRegion(frame.left, frame.top,
+                            static_cast<int>(frame.right - frame.left),
+                            static_cast<int>(frame.bottom - frame.top), shot, error);
+}
+
+/**
+ * 该颜色在整张图里占多少百分比（`--color=RRGGBB`）。
+ *
+ * ★ 判据用法：应用把底色设成 `#FF00FF00`（**全透明**的洋红）——
+ *   ULW 生效 ⇒ 洋红被合成掉，屏幕上**一个像素都不该是它**（≈0%）；
+ *   ULW 没生效（走了 GDI 忽略 alpha）⇒ 洋红整块可见（几十 %）。
+ *   ★ 这个方向是**可证伪**的：如果窗口根本没显示，占比也是 0 —— 所以必须同时
+ *     看 `--png` 存下来的图，确认应用自己的内容（文字/侧栏）在。
+ */
+double colorPct(const Shot& shot, unsigned char r, unsigned char g, unsigned char b)
+{
+    const size_t pixels = shot.pixels.size() / 4;
+    if (pixels == 0) {
+        return 0.0;
+    }
+    size_t hits = 0;
+    for (size_t i = 0; i < pixels; ++i) {
+        const unsigned char* p = &shot.pixels[i * 4];   // BGRA
+        if (p[0] == b && p[1] == g && p[2] == r) {
+            ++hits;
+        }
+    }
+    return 100.0 * static_cast<double>(hits) / static_cast<double>(pixels);
 }
 
 /** 只量 `y0..y1` 这几行的墨量（`y1 <= 0` ⇒ 到底）。
@@ -930,11 +1048,74 @@ int wmain(int argc, wchar_t** argv)
         } else if (key == L"png") {
             options.savePng = true;
             options.pngPath = value;
+        } else if (key == L"screen") {
+            options.screenShot = value != L"0";
+        } else if (key == L"region") {
+            int parts[4] = {0, 0, 0, 0};
+            int index = 0;
+            size_t start = 0;
+            for (size_t i = 0; i <= value.size(); ++i) {
+                if (i == value.size() || value[i] == L',') {
+                    long long parsed = 0;
+                    if (!parseInt(value.substr(start, i - start), parsed) || index >= 4) {
+                        std::fprintf(stderr, "err=--region wants x,y,w,h\n");
+                        return 2;
+                    }
+                    parts[index++] = static_cast<int>(parsed);
+                    start = i + 1;
+                }
+            }
+            if (index != 4) {
+                std::fprintf(stderr, "err=--region wants exactly 4 numbers\n");
+                return 2;
+            }
+            options.hasRegion = true;
+            options.regX = parts[0];
+            options.regY = parts[1];
+            options.regW = parts[2];
+            options.regH = parts[3];
+        } else if (key == L"color") {
+            // RRGGBB（6 位 hex，不带 #）
+            if (value.size() != 6) {
+                std::fprintf(stderr, "err=--color wants RRGGBB\n");
+                return 2;
+            }
+            long long packed = 0;
+            wchar_t* end = nullptr;
+            packed = std::wcstoll(value.c_str(), &end, 16);
+            if (end == nullptr || *end != L'\0') {
+                std::fprintf(stderr, "err=--color wants RRGGBB\n");
+                return 2;
+            }
+            options.countColor = true;
+            options.countR = static_cast<unsigned char>((packed >> 16) & 0xFF);
+            options.countG = static_cast<unsigned char>((packed >> 8) & 0xFF);
+            options.countB = static_cast<unsigned char>(packed & 0xFF);
         }
     }
 
     // 抓的是**物理**像素；不声明 DPI 感知的话 GetClientRect 会被虚拟化成逻辑像素。
     ::SetProcessDPIAware();
+
+    // `--region`：直接抓屏幕上的那块矩形，**不需要窗口**（见 Options 里的注释）
+    if (options.hasRegion) {
+        Shot shot{};
+        std::string error;
+        if (!grabScreenRegion(options.regX, options.regY, options.regW, options.regH, shot, error)) {
+            std::fprintf(stderr, "err=%s\n", error.c_str());
+            return 3;
+        }
+        std::printf("region=%dx%d\n", shot.width, shot.height);
+        if (options.countColor) {
+            std::printf("color_pct=%.2f\n",
+                        colorPct(shot, options.countR, options.countG, options.countB));
+        }
+        if (options.savePng && savePng(shot, options.pngPath)) {
+            std::printf("png=%ls\n", options.pngPath.c_str());
+        }
+        std::fflush(stdout);
+        return 0;
+    }
 
     if (options.countOnly) {
         if (options.image.empty()) {
@@ -1315,13 +1496,17 @@ int wmain(int argc, wchar_t** argv)
 
     Shot shot{};
     std::string error;
-    if (!grab(hwnd, shot, error)) {
+    const bool grabbed = options.screenShot ? grabScreen(hwnd, shot, error) : grab(hwnd, shot, error);
+    if (!grabbed) {
         std::fprintf(stderr, "err=%s\n", error.c_str());
         return 3;
     }
 
     std::printf("client=%dx%d\n", shot.width, shot.height);
     std::printf("ink_all_pct=%.1f\n", inkPct(shot, 0, 0));
+    if (options.countColor) {
+        std::printf("color_pct=%.2f\n", colorPct(shot, options.countR, options.countG, options.countB));
+    }
 
     if (options.savePng) {
         if (savePng(shot, options.pngPath)) {
