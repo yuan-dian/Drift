@@ -18,6 +18,16 @@
 name: tutorial
 version: 0.1.0
 
+# PE 属性页里的四项（其余三项在 build/base.yml 的 resource.version-info）。
+# ★ file-version 与上面的 version 是两处真相，改版本时一起改。
+resource:
+  version-info:
+    internal-name: tutorial
+    original-filename: tutorial.exe
+    file-version: 0.1.0
+    product-version: 0.1.0
+    file-description: Drift 教程
+
 info:
   Author: Drift
   Description: 从零写一个 Drift 应用 —— hello / 计数器 / 浮层 / 异步四段

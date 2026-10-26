@@ -161,8 +161,42 @@ build-dir: build
 #   （`ResourceFileGenerator::generateHeader`）。壳侧 `drift_win_create()` 按
 #   101 取图标、取不到回落系统默认 —— 两头是同一个约定，换 tpc 时那边要跟着改。
 #
-# ★ 只配 icon、不配 `version-info`：版本信息每个应用都不同（internal-name /
-#   original-filename / product-name 只能各写一份），而它与 project.yml 的
-#   `name`/`version` 构成**两处真相** ⇒ 得先设计同步机制，不塞进这次改动。
+# ★ `version-info` 只放**四个应用完全相同**的字段，应用独有的四项下沉到各自的
+#   project.yml（见下方分段注释）—— tpc 不支持变量插值，这是能做到的最小重复。
 resource:
   icon: ../../assets/Drift-app-icon.ico
+
+  # ── 版本信息（PE 属性页）──────────────────────────────────────────────
+  # ★ 放这里的都是**四个应用完全相同**的三项；应用独有的四项
+  #   （internal-name / original-filename / file-description / file-version）
+  #   写在各自 project.yml 里，靠递归合并拼起来。
+  # ★ tpc **不支持 yml 变量插值**（核过 `ProjectYamlLoader`：没有任何 `${}`
+  #   处理）⇒ `product-name: ${name}` 这种写法无效，重复消不掉，只能靠"放得
+  #   近 + 注释"约束。
+  # ★ `file-version` 与 app 的 `version:` 是**两处真相**：改版本时两处都要改。
+  #   漏改的症状是"属性页版本没变"——不报错、只是看着不对。各 app 里我把
+  #   resource 段紧挨着 `version:` 放，扫一眼就能看见。
+  # ★ `product-version` **不能省**：tpc 的数字 `PRODUCTVERSION` 会落回
+  #   file-version，但 StringFileInfo 里只在 `isset` 时才写这一项 ⇒ 省掉的话
+  #   属性页"产品版本"显示**空白**（PowerShell 读到 ProductVersion 为空字符串）。
+  #   两行写同一值，是 Windows 惯例（FileVersion 与 ProductVersion 通常一致）。
+  # ★ `file-os` / `file-type` / `file-flags` 也不写：tpc 的默认值就是
+  #   VOS_NT_WINDOWS32 / VFT_APP / 0x0L，正好是我们想要的。
+  version-info:
+    company-name: Drift
+    product-name: Drift
+    legal-copyright: Copyright (C) 2026 Drift
+
+# ───────────────────────────────────────────────────────────────────────────
+# 应用清单 —— comctl32 v6，让进程**激活视觉样式**
+#
+# 影响面只有系统绘制的窗口（原生 MessageBox / IME 候选窗）：没有它，
+# `Errors::installFatalBox()` 的 MessageBoxW 是 Win95 外观。Drift2 自己的界面
+# 全部自绘，不受影响。
+#
+# ★★ 清单里**不要**写 dpiAwareness —— DPI 感知是运行期由 `drift_win_create()`
+#   设 PER_MONITOR_AWARE_V2 的（§24.1 #43）。两边都写以 manifest 为准，会悄悄
+#   盖掉框架的选择（症状：跨屏变糊、收不到 WM_DPICHANGED）。`build/app.manifest`
+#   的文件头重复了这条警告，`tools/probe-window.py` 判据 ④ 守着它。
+# ★ 路径基准与 resource 相同（各应用 project.yml 目录）⇒ ../.. 对全部成立。
+manifest: ../../build/app.manifest

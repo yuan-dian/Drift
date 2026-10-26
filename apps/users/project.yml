@@ -14,6 +14,18 @@
 name: users
 version: 0.1.0
 
+# PE 属性页里的四项（其余三项在 build/base.yml 的 resource.version-info，
+# 靠 include 的递归合并拼起来）。
+# ★ file-version 与上面的 version 是**两处真相**，改版本时一起改 —— 所以这里
+#   紧挨着放，不留隔断。
+resource:
+  version-info:
+    internal-name: users
+    original-filename: users.exe
+    file-version: 0.1.0
+    product-version: 0.1.0
+    file-description: 用户管理
+
 info:
   Author: Drift
   Description: Drift 框架 M3 出口判据 —— §A.2 的完整应用（值缝 / 动作缝 / 多页 / 表单 / 加速键）

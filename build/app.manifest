@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  应用清单 —— 由 build/base.yml 的 `manifest:` 引用（四个应用共用一份）。
+
+  ★ 只有一件事：声明 comctl32 v6 依赖，让进程**激活视觉样式**。系统绘制的窗口
+    （原生 MessageBox / IME 候选窗 / 文件对话框）因此拿到现代外观 —— 没有它，
+    `Errors::installFatalBox()` 的 MessageBoxW 是 Win95 外观。
+    Drift2 自己的一切界面都是自绘（GDI / Skia），不受这项影响。
+
+  ★★ **不要在这里写 dpiAwareness / dpiAware / dpiAwarenessContext**。
+     DPI 感知是**运行期**由 `drift_win_create()` 调
+     `SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)` 设定的（§24.1 #43）。
+     两边都写时以 manifest 为准，会**悄悄盖掉**框架的选择，症状是跨屏变糊且收不到
+     `WM_DPICHANGED` —— 这正是 `tools/probe-window.py` 判据 ④ 守的那条线。
+     它专门带反例：V1（SYSTEM_AWARE）必须 FAIL。
+
+  ★ 不写 requestedExecutionLevel：默认 asInvoker，与当前行为一致。
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+
+  <assemblyIdentity type="win32" name="Drift.Application"
+                    version="1.0.0.0" processorArchitecture="*"/>
+
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls"
+                        version="6.0.0.0" processorArchitecture="*"
+                        publicKeyToken="6595b64144ccf1df" language="*"/>
+    </dependentAssembly>
+  </dependency>
+
+</assembly>

@@ -22,6 +22,16 @@
 name: hello
 version: 0.1.0
 
+# PE 属性页里的四项（其余三项在 build/base.yml 的 resource.version-info）。
+# ★ file-version 与上面的 version 是两处真相，改版本时一起改。
+resource:
+  version-info:
+    internal-name: hello
+    original-filename: hello.exe
+    file-version: 0.1.0
+    product-version: 0.1.0
+    file-description: Hello Drift
+
 info:
   Author: Drift
   Description: Drift 框架 M1 出口判据 —— 一个窗口画出「Hello Drift」（§19）

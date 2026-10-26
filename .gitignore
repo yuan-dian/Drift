@@ -4,6 +4,7 @@
 #   **要提交**）就进不来。这样写：忽略 build 下的一切，但对 base.yml 开白名单。
 /build/*
 !/build/base.yml
+!/build/app.manifest
 apps/*/build/
 *.exe
 *.obj
