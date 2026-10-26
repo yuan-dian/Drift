@@ -5,6 +5,7 @@ namespace Drift\Layout;
 
 use Drift\Geometry\Rect;
 use Drift\Input\CursorShape;
+use Drift\Rendering\AnimatedValue;
 use Drift\Rendering\Canvas;
 
 /**
@@ -35,6 +36,16 @@ abstract class RenderObject
      *   `WM_MOUSEMOVE` 驱动 —— 同一条消息的那一轮循环里 `tick()` 紧接着就重绘。
      */
     protected bool $hovered = false;
+
+    /**
+     * 悬停态的**过渡进度**（`0..1`）；`null` = 这个盒没有声明要用过渡。
+     *
+     * ★ 懒创建（第一次 `setHovered()` 才建）：本仓 95% 的盒对悬停无感，给每个
+     *   节点常驻一个驱动器等于给全树加一份无用的分配。
+     * ★ 起手值取**切换前**的状态 ⇒ 第一次 hover 也是从 0 淡上去，而不是
+     *   "头一次直接跳到 1、第二次才有过渡"（那是最容易漏的一处不对称）。
+     */
+    private ?AnimatedValue $hoverAnim = null;
 
     public function parent(): ?RenderObject
     {
@@ -123,7 +134,21 @@ abstract class RenderObject
     /** @internal `FocusManager::hoverTo()` 推状态（唯一写点） */
     public function setHovered(bool $hovered): void
     {
+        // ★ 同值早退：`WM_MOUSEMOVE` 每帧都在推，不早退就会把已收口的过渡
+        //   反复打回"在跑"⇒ 帧时钟永不落闸（空闲空转）。
+        if ($this->hovered === $hovered) {
+            return;
+        }
+
+        // 槽按**切换前**的状态起手 ⇒ 第一次 hover 也是从 0 淡上去。
+        $anim = $this->hoverAnim;
+        if ($anim === null) {
+            $anim = new AnimatedValue($this->hovered ? 1.0 : 0.0);
+            $this->hoverAnim = $anim;
+        }
+
         $this->hovered = $hovered;
+        $anim->toward($hovered ? 1.0 : 0.0);
     }
 
     /**
@@ -134,6 +159,35 @@ abstract class RenderObject
     public function hovered(): bool
     {
         return $this->hovered;
+    }
+
+    /**
+     * 悬停**过渡进度**（`0..1`）—— 与 `hovered()` 的差别只在这条斜坡上。
+     *
+     * ★ 没起过过渡（从未被 hover 过 / 不需要过渡）⇒ 直接给 0 或 1，与旧
+     *   `hovered()` 的第二元完全一致 ⇒ 调用方换成它不会有行为突变。
+     */
+    public function hoverProgress(): float
+    {
+        $anim = $this->hoverAnim;
+        if ($anim === null) {
+            return $this->hovered ? 1.0 : 0.0;
+        }
+
+        return $anim->value();
+    }
+
+    /**
+     * 推进本节点自己的动画，回答"**还要下一帧吗**"（`Application::tickSubtree` 调）。
+     *
+     * ★ 没有槽 ⇒ `false`，一次判空就返回：这是每帧每节点的一次方法调用，
+     *   别在里面做别的。
+     */
+    public function tickAnimations(float $timestampMs): bool
+    {
+        $anim = $this->hoverAnim;
+
+        return $anim !== null && $anim->tick($timestampMs);
     }
 
     /**

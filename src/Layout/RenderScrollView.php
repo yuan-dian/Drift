@@ -8,6 +8,7 @@ use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Size;
+use Drift\Rendering\AnimatedValue;
 use Drift\Rendering\Canvas;
 use Drift\Rendering\Color;
 use Drift\Rendering\Paint;
@@ -46,6 +47,9 @@ final class RenderScrollView extends RenderProxyBox
     private const BAR_MARGIN = 3.0;
     private const BAR_MIN_THUMB = 24.0;
 
+    /** 滚动条透明度（`0..1`）—— `ScrollBarFade` 每帧把当前值推过来 */
+    private float $barOpacity;
+
     /** 本次布局算出的可滚动上限（供夹具与未来滚动条读） */
     private float $maxScroll = 0.0;
 
@@ -71,7 +75,22 @@ final class RenderScrollView extends RenderProxyBox
         private readonly bool $vertical = true,
         private readonly ?float $virtualExtent = null,
         private readonly float $sliceOrigin = 0.0,
+        /**
+         * 滚动条透明度（`0..1`）。
+         *
+         * ★ 由 `ScrollBarFade`（住 State 层）推 —— **不是** readonly：盒每帧重造，
+         *   淡出动画在两次重建之间靠 `setBarOpacity()` 就地改，免得为了动画
+         *   每帧重建整棵滚动内容。
+         */
+        float $barOpacity = 1.0,
     ) {
+        $this->barOpacity = $barOpacity;
+    }
+
+    /** @internal `ScrollBarFade` 每帧把值推过来（不重建、不重排） */
+    public function setBarOpacity(float $value): void
+    {
+        $this->barOpacity = $value;
     }
 
     /** 可滚动上限（布局后才有意义） */
@@ -258,7 +277,13 @@ final class RenderScrollView extends RenderProxyBox
             return;
         }
 
-        $canvas->drawRect($bar, Paint::fill($this->thumb), self::BAR_THICKNESS * 0.5);
+        // 透明度由 `ScrollBarFade` 推（滚动时 1、停手 ~900ms 后 0.35）
+        $alpha = (int) \round($this->thumb->a * $this->barOpacity);
+        if ($alpha <= 0) {
+            return;
+        }
+
+        $canvas->drawRect($bar, Paint::fill($this->thumb->withAlpha($alpha)), self::BAR_THICKNESS * 0.5);
     }
 
     /**

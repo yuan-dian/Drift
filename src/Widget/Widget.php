@@ -583,17 +583,19 @@ abstract class Widget
     }
 
     /**
-     * 柔和投影（值域 = 黑色透明度；`0.0` = 不画）。
+     * 柔和投影（`$alpha` = 黑色浓度，`0.0` = 不画；档位见 `Elevation`）。
      *
+     * ★ 参数是**浓度**不是像素高度：模糊与下移由渲染层按浓度等比推出
+     *   （`Modifier::paintBehind()`）—— 一个数控制"浮起多少"。
      * ★ 阴影画在**盒外** ⇒ 父布局不会为它留白，块之间要留 ≥ 4px 间距，
      *   否则邻块底色会盖掉它。
      *
      * @api
      */
-    public function shadow(float $elevation): static
+    public function shadow(float $alpha): static
     {
         $this->mutate();
-        $this->mods = $this->mods->withShadow($elevation);
+        $this->mods = $this->mods->withShadow($alpha);
 
         return $this;
     }

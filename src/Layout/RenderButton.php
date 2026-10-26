@@ -12,6 +12,7 @@ use Drift\Rendering\Canvas;
 use Drift\Rendering\Color;
 use Drift\Rendering\Paint;
 use Drift\Rendering\Path;
+use Drift\Rendering\ShadowPainter;
 use Drift\Text\TextMetricsProvider;
 use Drift\Text\TextStyle;
 
@@ -70,6 +71,14 @@ final class RenderButton extends RenderProxyBox
          *   各自漂移（短标签的图标比长标签靠右 20+ px，一眼就是没对齐）。
          */
         private readonly bool $centerContent = true,
+        /**
+         * 悬停时的**浮起档位**（`Elevation` 口径；`0.0` = 不浮）。
+         *
+         * ★ 与 `hoverOverlay` 分工：那个是"变色"（状态层），这个是"离地"
+         *   （影子）。`Flat` 变体只变色不浮起 —— 顶条上的图标按钮浮起来会动得
+         *   太吵。
+         */
+        private readonly float $hoverElevation = 0.0,
     ) {
         if ($label === '') {
             return;   // 纯图标：不建 `RenderText`（空串仍占一行行高）
@@ -95,13 +104,13 @@ final class RenderButton extends RenderProxyBox
     }
 
     /**
-     * 声明了状态色才接受悬停（`08` §4.1）—— 没声明时连一次 `setHovered()` 都不收，
-     * 免得父链询问"这一层要不要变色"时白跑。
+     * 声明了状态色或浮起档位才接受悬停（`08` §4.1）—— 都不声明时连一次
+     * `setHovered()` 都不收，免得父链询问"这一层要不要变色"时白跑。
      */
     #[\Override]
     public function acceptsHover(): bool
     {
-        return $this->hoverOverlay !== null;
+        return $this->hoverOverlay !== null || $this->hoverElevation > 0.0;
     }
 
     /**
@@ -206,25 +215,55 @@ final class RenderButton extends RenderProxyBox
         return $boxSize;
     }
 
+    /**
+     * 底 / 边 / 悬停层 / 浮起影子。
+     *
+     * ★ **为什么在 `paintOwnChrome()` 而不是 `paintContent()`**：`paintContent()`
+     *   跑在裁剪**之内**，而浮起影子按定义要画到盒外 ⇒ 按钮一旦声明 `clip()`
+     *   或 `Overflow::Clip`，影子会被整齐切掉一圈（描边跨边界的一半同理，`AppBar`
+     *   的 1px 底边就是这么消失过）。盒坐标系两者一致，位置不动。
+     */
+    #[\Override]
+    protected function paintOwnChrome(Canvas $canvas): void
+    {
+        $size = $this->size;
+        if ($size === null) {
+            return;
+        }
+
+        $rect = new Rect(0.0, 0.0, $size->width, $size->height);
+        $radius = $this->box->radius;
+
+        // ★ `hoverProgress()` 不建槽：没被悬停过就直接是 0，不会给每个按钮常驻
+        //   一份动画状态（建槽只发生在 `setHovered()`）。
+        $progress = $this->hoverProgress();
+
+        if ($this->hoverElevation > 0.0 && $progress > 0.0) {
+            ShadowPainter::paintOutside($canvas, $rect, $radius, $this->hoverElevation * $progress);
+        }
+
+        if ($this->box->background !== null) {
+            $canvas->drawRect($rect, Paint::fill($this->box->background), $radius);
+        }
+        if ($this->box->borderColor !== null && $this->box->borderWidth > 0.0) {
+            $canvas->drawRect($rect, Paint::stroke($this->box->borderColor, $this->box->borderWidth), $radius);
+        }
+
+        // 状态层（悬停）：叠在底色/边框之上、内容之下 —— "压暗还是提亮"由状态色
+        // 自己表达（Primary/Danger 给白色半透明，Default/Flat 给主题 Hover 色）。
+        // ★ 颜色自带的 alpha 再乘过渡进度 ⇒ 淡入而不是硬切。
+        $overlay = $this->hoverOverlay;
+        if ($overlay !== null) {
+            $alpha = (int) \round($overlay->a * $progress);
+            if ($alpha > 0) {
+                $canvas->drawRect($rect, Paint::fill($overlay->withAlpha($alpha)), $radius);
+            }
+        }
+    }
+
     #[\Override]
     protected function paintContent(Canvas $canvas): void
     {
-        $size = $this->size ?? new Size(0.0, 0.0);
-        $rect = new Rect(0.0, 0.0, $size->width, $size->height);
-
-        if ($this->box->background !== null) {
-            $canvas->drawRect($rect, Paint::fill($this->box->background), $this->box->radius);
-        }
-        if ($this->box->borderColor !== null && $this->box->borderWidth > 0.0) {
-            $canvas->drawRect($rect, Paint::stroke($this->box->borderColor, $this->box->borderWidth), $this->box->radius);
-        }
-
-        // 状态层（悬停）：叠在底色/边框之上、内容之下 —— "压暗还是提亮"由状态色自己
-        // 表达（Primary/Danger 给白色半透明，Default/Flat 给主题 Hover 色）。
-        if ($this->hoverOverlay !== null && $this->hovered()) {
-            $canvas->drawRect($rect, Paint::fill($this->hoverOverlay), $this->box->radius);
-        }
-
         // 图标与文字同色（`labelColor` 已按变体解析：Primary/Danger 上是画布色）
         if ($this->iconPath !== null && $this->iconStrokeWidth > 0.0) {
             $canvas->save();

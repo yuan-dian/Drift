@@ -1039,18 +1039,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         return $this->overlayLayout->panelsLagBehind();
     }
 
-    /**
-     * 遍历树推进所有动画，并回答"**还有动画在跑吗**"（§17.4.9）。
-     *
-     * ★ **浮层是第二棵树**（与 `focus->collect()` / `placeOverlays()` 同一个坑）：只走
-     *   `$root` 的话，菜单里放一个 `Spinner` 就永远不转，而且**没有任何报错**。
-     * ★ 成本 O(树)，与同帧的 `layout()` 同阶（§13.3：Render 层本就全树重排）。
-     */
-    /**
-     * 注入语义树消费者（§9 / M5 UIA）—— 组合根把它接到 `WindowHost::pushSemantics()`。
-     *
-     * ★ 框架只存闭包、**不碰平台**（§5.1：平台引用止于组合根）；默认不注入 ⇒ 不建语义树。
-     */
+    /** 记一次帧耗时（诊断 / 语义推送节流的输入） */
     public function noteFrameCost(float $milliseconds): void
     {
         // ★ 量坏了（NaN / 负值）⇒ **不立超预算**：一次坏样本把降级打开，
@@ -1133,6 +1122,11 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         return implode(' / ', $parts);
     }
 
+    /**
+     * 注入语义树消费者（§9 / M5 UIA）—— 组合根把它接到 `WindowHost::pushSemantics()`。
+     *
+     * ★ 框架只存闭包、**不碰平台**（§5.1：平台引用止于组合根）；默认不注入 ⇒ 不建语义树。
+     */
     public function setSemanticsSink(callable $sink): void
     {
         $this->semanticsSink = \Closure::fromCallable($sink);
@@ -1306,6 +1300,13 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         return $this->semanticsMode;
     }
 
+    /**
+     * 遍历树推进所有动画，并回答"**还有动画在跑吗**"（§17.4.9）。
+     *
+     * ★ **浮层是第二棵树**（与 `focus->collect()` / `placeOverlays()` 同一个坑）：只走
+     *   `$root` 的话，菜单里放一个 `Spinner` 就永远不转，而且**没有任何报错**。
+     * ★ 成本 O(树)，与同帧的 `layout()` 同阶（§13.3：Render 层本就全树重排）。
+     */
     private function tickAnimations(float $timestampMs): bool
     {
         $busy = false;
@@ -1329,6 +1330,11 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      *
      * ★ **不许短路**：即使已经知道 `$busy` 为真，兄弟子树里的动画也必须收到这一帧，
      *   否则"整棵树里只推进第一个动画"——现象是多个 Spinner 只有一个在转。
+     *
+     * ★ **State 与盒的动画在同一次遍历里推进**（`RenderObject::tickAnimations`）：
+     *   悬停过渡这类"盒态"动画住在 Render 层、不进 State，再走一遍树找它们就是
+     *   白白多一次 O(树)。同一次访问顺手问一句，`wantsFrame()` 的"有动画在跑"
+     *   判据自动覆盖 —— **不需要加第八条判据**。
      */
     private function tickSubtree(Element $element, float $timestampMs): bool
     {
@@ -1336,6 +1342,11 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
 
         $state = States::of($element);
         if ($state !== null && $state->tickFrameStamped($timestampMs, $this->frameSerial)) {
+            $busy = true;
+        }
+
+        $box = $element->renderObject();
+        if ($box !== null && $box->tickAnimations($timestampMs)) {
             $busy = true;
         }
 

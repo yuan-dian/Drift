@@ -25,6 +25,9 @@ final class ScrollViewState extends State implements Scrollable
 {
     private float $offset = 0.0;
 
+    /** 滚动条淡出节律（懒建；`null` = 这个视口还没滚过） */
+    private ?ScrollBarFade $barFade = null;
+
     /** 当前偏移（逻辑像素，≥ 0） */
     public function offset(): float
     {
@@ -49,9 +52,36 @@ final class ScrollViewState extends State implements Scrollable
             return;   // 已在边界：不标脏（省一次重建）
         }
 
+        $this->bar()->noteScroll();
+
         $this->setState(function () use ($next): void {
             $this->offset = $next;
         });
+    }
+
+    /**
+     * 滚动条的显隐节律（懒建：没滚过的视口不建，滚动条恒亮）。
+     */
+    private function bar(): ScrollBarFade
+    {
+        $bar = $this->barFade;
+        if ($bar === null) {
+            $bar = new ScrollBarFade();
+            $this->barFade = $bar;
+        }
+
+        return $bar;
+    }
+
+    /**
+     * 推进滚动条的淡出（细节见 `ScrollBarFade::tickFor()`）。
+     */
+    #[\Override]
+    public function tickFrame(float $timestampMs): bool
+    {
+        $bar = $this->barFade;
+
+        return $bar !== null && $bar->tickFor($this, $timestampMs);
     }
 
     /**
@@ -81,7 +111,20 @@ final class ScrollViewState extends State implements Scrollable
 
     public function build(BuildContext $ctx): Widget
     {
-        return ScrollViewBox::make($this->offset, $this->view()->vertical(), $this->view()->child());
+        $bar = $this->barFade;
+        $opacity = 1.0;
+        if ($bar !== null) {
+            $opacity = $bar->opacity();
+        }
+
+        return ScrollViewBox::make(
+            $this->offset,
+            $this->view()->vertical(),
+            $this->view()->child(),
+            null,
+            0.0,
+            $opacity,
+        );
     }
 
     private function view(): ScrollView

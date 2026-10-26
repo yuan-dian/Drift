@@ -68,4 +68,55 @@ final class ShadowPainter
 
         return true;
     }
+
+    /**
+     * 在**盒外**画一层柔和阴影：真阴影优先，软光栅走"三层递减外扩"。
+     *
+     * ★ **只给"盒不含阴影留白"的调用方**（`Modifier::paintBehind()`、悬停浮起的
+     *   按钮）：阴影画在盒外，父布局靠间距让位。`RenderPopupPanel` 那种"盒尺寸里
+     *   已预留 `2×elevation`"的相反模型不能调它 —— 那会用 `tryPaint()` 自己决定
+     *   降级形状（见类注释）。
+     *
+     * ★ 收在这里的理由：三层外扩的权重表原本内联在 `paintBehind()` 里，第二个
+     *   "盒外阴影"消费者（悬停浮起）一来就会抄第二份，而两份一旦漂移，表现是
+     *   "某个控件还是假阴影"—— 本仓最难查的那类。
+     *
+     * @param float $alpha01 阴影浓度（0..1）；`<= 0` ⇒ 不画
+     */
+    public static function paintOutside(
+        Canvas $canvas,
+        Rect $rect,
+        float $radius,
+        float $alpha01,
+    ): void {
+        if ($alpha01 <= 0.0) {
+            return;
+        }
+
+        $t = \min(1.0, $alpha01);
+        $alpha = (int) \round(255.0 * $t);
+
+        // 真软阴影（`CAP_SHADOW`）：blur/dy 按浓度等比放大。0.06 ⇒ blur 3.5、dy 1.2，
+        // 与下面三层外扩（±3px）同量级 —— 不会从"贴地的一点点"变成"炸开的大投影"。
+        if (self::tryPaint($canvas, $rect, $radius, 3.0 + 9.0 * $t, 1.0 + 3.0 * $t, $alpha)) {
+            return;
+        }
+
+        // 降级（软光栅 / 未来后端）：三层递减外扩。
+        // 单层实心矩形看起来像描边（"生硬"），三层叠出过渡带才像影子。
+        $steps = [3 => 0.35, 2 => 0.60, 1 => 1.00];
+
+        foreach ($steps as $grow => $weight) {
+            $canvas->drawRect(
+                new Rect(
+                    $rect->left - $grow,
+                    $rect->top - $grow,
+                    $rect->width + 2 * $grow,
+                    $rect->height + 2 * $grow,
+                ),
+                Paint::fill(new Color(0, 0, 0, \max(1, (int) \round($alpha * $weight)))),
+                $radius + $grow,
+            );
+        }
+    }
 }

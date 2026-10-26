@@ -35,6 +35,9 @@ final class LazyListState extends State implements Scrollable
 {
     private float $offset = 0.0;
 
+    /** 滚动条淡出节律（懒建；与 `ScrollViewState` 同一份实现） */
+    private ?ScrollBarFade $barFade = null;
+
     /**
      * 锚点（`04` §7.3）：视口起点那一格在**完整内容**里的位置 —— 序号 + 格内
      * 滚过的比例（`0..1`，保留"没对齐到格"的那点偏移）。
@@ -63,10 +66,33 @@ final class LazyListState extends State implements Scrollable
             return;   // 已在边界：不标脏（省一次重建）
         }
 
+        $this->bar()->noteScroll();
+
         $this->setState(function () use ($next): void {
             $this->offset = $next;
             $this->rememberAnchor();
         });
+    }
+
+    /** 滚动条的显隐节律（懒建：没滚过的列表不建，滚动条恒亮） */
+    private function bar(): ScrollBarFade
+    {
+        $bar = $this->barFade;
+        if ($bar === null) {
+            $bar = new ScrollBarFade();
+            $this->barFade = $bar;
+        }
+
+        return $bar;
+    }
+
+    /** 推进滚动条的淡出（细节见 `ScrollBarFade::tickFor()`） */
+    #[\Override]
+    public function tickFrame(float $timestampMs): bool
+    {
+        $bar = $this->barFade;
+
+        return $bar !== null && $bar->tickFor($this, $timestampMs);
     }
 
     /**
@@ -266,7 +292,13 @@ final class LazyListState extends State implements Scrollable
         }
 
         // 窗的起点 = 完整内容里"第 first 格"的主轴坐标
-        return ScrollViewBox::make($offset, $vertical, $kid, $total, $start + $first * $extent);
+        $bar = $this->barFade;
+        $opacity = 1.0;
+        if ($bar !== null) {
+            $opacity = $bar->opacity();
+        }
+
+        return ScrollViewBox::make($offset, $vertical, $kid, $total, $start + $first * $extent, $opacity);
     }
 
     /**

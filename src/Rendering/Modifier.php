@@ -347,39 +347,10 @@ final class Modifier
     {
         $rect = new Rect(0.0, 0.0, $size->width, $size->height);
 
-        // ① 柔和阴影：三层递减外扩
-        //    单层实心矩形看起来像描边（"生硬"），三层叠出过渡带才像影子。
-        //    ★ 阴影画在盒外 ⇒ 父布局不会为它留白，块之间要留 ≥ 4px 间距，
-        //      否则邻块底色盖掉它。
+        // ① 柔和阴影：画在盒外（父布局不会为它留白，块之间要留 ≥ 4px 间距）。
+        //    形状（真模糊 / 三层外扩降级）收在 `ShadowPainter::paintOutside()`。
         if ($this->shadow > 0.0) {
-            $base = (int) \round(255.0 * \min(1.0, $this->shadow));
-
-            // 真软阴影（`CAP_SHADOW`，当前仅 Skia）：blur/dy 按浓度等比放大。
-            // 0.06 ⇒ blur ≈ 3.5px、dy ≈ 1.2px —— 与下面三层外扩（±3px）同量级，
-            // 不会从"贴地的一点点"突然变成"炸开的大投影"。
-            $drawn = ShadowPainter::tryPaint(
-                $canvas,
-                $rect,
-                $this->radius,
-                3.0 + 9.0 * \min(1.0, $this->shadow),
-                1.0 + 3.0 * \min(1.0, $this->shadow),
-                $base,
-            );
-
-            if (!$drawn) {
-                // 降级（软光栅 / 未来后端）：三层递减外扩。
-                // 单层实心矩形看起来像描边（"生硬"），三层叠出过渡带才像影子。
-                $steps = [3 => 0.35, 2 => 0.60, 1 => 1.00];
-
-                foreach ($steps as $grow => $weight) {
-                    $alpha = \max(1, (int) \round($base * $weight));
-                    $canvas->drawRect(
-                        new Rect(-$grow, -$grow, $size->width + 2 * $grow, $size->height + 2 * $grow),
-                        Paint::fill(new Color(0, 0, 0, $alpha)),
-                        $this->radius + $grow,
-                    );
-                }
-            }
+            ShadowPainter::paintOutside($canvas, $rect, $this->radius, $this->shadow);
         }
 
         // ② 底
@@ -527,10 +498,13 @@ final class Modifier
         return $c;
     }
 
-    public function withShadow(float $elevation): self
+    /**
+     * @param float $alpha 阴影浓度（0..1），见 `Elevation` 的档位约定
+     */
+    public function withShadow(float $alpha): self
     {
         $c = clone $this;
-        $c->shadow = $elevation;
+        $c->shadow = $alpha;
 
         return $c;
     }

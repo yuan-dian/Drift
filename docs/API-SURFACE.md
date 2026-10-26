@@ -8,24 +8,24 @@
 
 | 层 | @api | @internal |
 |---|---|---|
-| App | 54 | 40 |
+| App | 54 | 42 |
 | Commands | 7 | 0 |
 | Core | 2 | 0 |
 | Errors.php | 1 | 3 |
 | Geometry | 6 | 0 |
-| Input | 14 | 4 |
-| Layout | 36 | 19 |
+| Input | 16 | 4 |
+| Layout | 38 | 21 |
 | Logging | 9 | 3 |
 | Platform | 12 | 10 |
-| Rendering | 28 | 0 |
+| Rendering | 31 | 0 |
 | Routing | 8 | 6 |
 | State | 9 | 11 |
 | Text | 29 | 3 |
 | Theme | 3 | 0 |
-| Widget | 125 | 160 |
-| **合计** | **343** | **259** |
+| Widget | 131 | 167 |
+| **合计** | **356** | **270** |
 
-覆盖 285 个文件 · 描述性提及 25 处（grep 口径的污染源，不计入）
+覆盖 297 个文件 · 描述性提及 25 处（grep 口径的污染源，不计入）
 
 ## App 层
 
@@ -33,29 +33,29 @@
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
-| `Application` | class | src/App/Application.php:48 |
-| `Application::commands()` | method | src/App/Application.php:352 |
-| `Application::taskHost()` | method | src/App/Application.php:378 |
-| `Application::accelerators()` | method | src/App/Application.php:430 |
-| `Application::clipboard()` | method | src/App/Application.php:452 |
-| `Application::metrics()` | method | src/App/Application.php:481 |
-| `Application::attach()` | method | src/App/Application.php:531 |
-| `Application::onSystemThemeChanged()` | method | src/App/Application.php:640 |
-| `Application::frame()` | method | src/App/Application.php:682 |
-| `Application::repaintForResize()` | method | src/App/Application.php:875 |
-| `Application::after()` | method | src/App/Application.php:928 |
-| `Application::wantsFrame()` | method | src/App/Application.php:962 |
-| `Application::submitSliced()` | method | src/App/Application.php:1220 |
-| `Application::io()` | method | src/App/Application.php:1254 |
-| `Application::capturePointer()` | method | src/App/Application.php:1270 |
-| `Application::releasePointer()` | method | src/App/Application.php:1292 |
-| `Application::dispatchInput()` | method | src/App/Application.php:1311 |
-| `Application::dispatch()` | method | src/App/Application.php:1451 |
-| `Application::showMenu()` | method | src/App/Application.php:1577 |
-| `Application::showSnackbar()` | method | src/App/Application.php:1593 |
-| `Application::overlays()` | method | src/App/Application.php:1627 |
-| `Application::showModal()` | method | src/App/Application.php:1647 |
-| `Application::closeModal()` | method | src/App/Application.php:1657 |
+| `Application` | class | src/App/Application.php:51 |
+| `Application::commands()` | method | src/App/Application.php:364 |
+| `Application::taskHost()` | method | src/App/Application.php:390 |
+| `Application::accelerators()` | method | src/App/Application.php:442 |
+| `Application::clipboard()` | method | src/App/Application.php:464 |
+| `Application::metrics()` | method | src/App/Application.php:493 |
+| `Application::attach()` | method | src/App/Application.php:543 |
+| `Application::onSystemThemeChanged()` | method | src/App/Application.php:652 |
+| `Application::frame()` | method | src/App/Application.php:694 |
+| `Application::repaintForResize()` | method | src/App/Application.php:901 |
+| `Application::after()` | method | src/App/Application.php:962 |
+| `Application::wantsFrame()` | method | src/App/Application.php:996 |
+| `Application::submitSliced()` | method | src/App/Application.php:1362 |
+| `Application::io()` | method | src/App/Application.php:1396 |
+| `Application::capturePointer()` | method | src/App/Application.php:1412 |
+| `Application::releasePointer()` | method | src/App/Application.php:1434 |
+| `Application::dispatchInput()` | method | src/App/Application.php:1453 |
+| `Application::dispatch()` | method | src/App/Application.php:1612 |
+| `Application::showMenu()` | method | src/App/Application.php:1738 |
+| `Application::showSnackbar()` | method | src/App/Application.php:1754 |
+| `Application::overlays()` | method | src/App/Application.php:1788 |
+| `Application::showModal()` | method | src/App/Application.php:1808 |
+| `Application::closeModal()` | method | src/App/Application.php:1818 |
 | `Frame` | class | src/App/Frame.php:17 |
 | `Frame::run()` | method | src/App/Frame.php:79 |
 | `FrameClock` | class | src/App/FrameClock.php:10 |
@@ -88,31 +88,33 @@
 | `WindowStateStore::restore()` | method | src/App/WindowStateStore.php:76 |
 | `WindowStateStore::persist()` | method | src/App/WindowStateStore.php:142 |
 
-### @internal（框架内部） · 40
+### @internal（框架内部） · 42
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
-| `Application::focus()` | method | src/App/Application.php:328 |
-| `Application::tasks()` | method | src/App/Application.php:401 |
-| `Application::lastTimestampMs()` | method | src/App/Application.php:411 |
-| `Application::lastInputMs()` | method | src/App/Application.php:421 |
-| `Application::$metricsCache` | property | src/App/Application.php:474 |
-| `Application::uiThreadId()` | method | src/App/Application.php:592 |
-| `Application::assertUiThread()` | method | src/App/Application.php:602 |
-| `Application::semanticsMode()` | method | src/App/Application.php:1172 |
-| `Application::slicedCount()` | method | src/App/Application.php:1248 |
-| `Application::captureNode()` | method | src/App/Application.php:1304 |
-| `Application::register()` | method | src/App/Application.php:1504 |
-| `Application::beginDrag()` | method | src/App/Application.php:1527 |
-| `Application::updateDrag()` | method | src/App/Application.php:1535 |
-| `Application::dropDrag()` | method | src/App/Application.php:1543 |
-| `Application::cancelDrag()` | method | src/App/Application.php:1553 |
-| `Application::rootBox()` | method | src/App/Application.php:1560 |
-| `Application::dismissOverlay()` | method | src/App/Application.php:1667 |
-| `Application::toggleWidgetPanel()` | method | src/App/Application.php:1689 |
+| `Application::$zeroViewportFrames` | property | src/App/Application.php:272 |
+| `Application::focus()` | method | src/App/Application.php:340 |
+| `Application::tasks()` | method | src/App/Application.php:413 |
+| `Application::lastTimestampMs()` | method | src/App/Application.php:423 |
+| `Application::lastInputMs()` | method | src/App/Application.php:433 |
+| `Application::$metricsCache` | property | src/App/Application.php:486 |
+| `Application::uiThreadId()` | method | src/App/Application.php:604 |
+| `Application::assertUiThread()` | method | src/App/Application.php:614 |
+| `Application::zeroViewportFrames()` | method | src/App/Application.php:1102 |
+| `Application::semanticsMode()` | method | src/App/Application.php:1297 |
+| `Application::slicedCount()` | method | src/App/Application.php:1390 |
+| `Application::captureNode()` | method | src/App/Application.php:1446 |
+| `Application::register()` | method | src/App/Application.php:1665 |
+| `Application::beginDrag()` | method | src/App/Application.php:1688 |
+| `Application::updateDrag()` | method | src/App/Application.php:1696 |
+| `Application::dropDrag()` | method | src/App/Application.php:1704 |
+| `Application::cancelDrag()` | method | src/App/Application.php:1714 |
+| `Application::rootBox()` | method | src/App/Application.php:1721 |
+| `Application::dismissOverlay()` | method | src/App/Application.php:1828 |
+| `Application::toggleWidgetPanel()` | method | src/App/Application.php:1850 |
 | `Completion` | class | src/App/Completion.php:6 |
 | `DragController` | class | src/App/DragController.php:10 |
-| `FocusManager` | class | src/App/FocusManager.php:17 |
+| `FocusManager` | class | src/App/FocusManager.php:18 |
 | `FrameClock::isArmed()` | method | src/App/FrameClock.php:178 |
 | `FrameClock::stallCount()` | method | src/App/FrameClock.php:184 |
 | `FrameClock::worstGapMs()` | method | src/App/FrameClock.php:190 |
@@ -123,9 +125,9 @@
 | `OverlayLayout::syncPanelSignatures()` | method | src/App/OverlayLayout.php:100 |
 | `OverlayManager` | class | src/App/OverlayManager.php:14 |
 | `OverlayManager::onHoverHit()` | method | src/App/OverlayManager.php:153 |
-| `OverlayManager::dismissOverlay()` | method | src/App/OverlayManager.php:546 |
-| `OverlayManager::focusTrapRoots()` | method | src/App/OverlayManager.php:559 |
-| `OverlayManager::toggleWidgetPanel()` | method | src/App/OverlayManager.php:630 |
+| `OverlayManager::dismissOverlay()` | method | src/App/OverlayManager.php:558 |
+| `OverlayManager::focusTrapRoots()` | method | src/App/OverlayManager.php:571 |
+| `OverlayManager::toggleWidgetPanel()` | method | src/App/OverlayManager.php:642 |
 | `PumpHost` | class | src/App/PumpHost.php:9 |
 | `PumpHost::slicedCount()` | method | src/App/PumpHost.php:251 |
 | `PumpHostHost` | interface | src/App/PumpHostHost.php:6 |
@@ -187,7 +189,7 @@
 
 ## Input 层
 
-### @api（应用可读面） · 14
+### @api（应用可读面） · 16
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -200,8 +202,10 @@
 | `PointerEvent` | class | src/Input/PointerEvent.php:6 |
 | `PointerPhase` | enum | src/Input/PointerPhase.php:6 |
 | `ScrollEvent` | class | src/Input/ScrollEvent.php:6 |
+| `SemanticsInvokeEvent` | class | src/Input/SemanticsInvokeEvent.php:6 |
 | `SemanticsNode` | class | src/Input/SemanticsNode.php:6 |
 | `SemanticsRole` | enum | src/Input/SemanticsRole.php:6 |
+| `SemanticsSetValueEvent` | class | src/Input/SemanticsSetValueEvent.php:6 |
 | `SemanticsTree` | class | src/Input/SemanticsTree.php:6 |
 | `ThemeChangedEvent` | class | src/Input/ThemeChangedEvent.php:6 |
 | `WindowDeactivatedEvent` | class | src/Input/WindowDeactivatedEvent.php:6 |
@@ -217,7 +221,7 @@
 
 ## Layout 层
 
-### @api（应用可读面） · 36
+### @api（应用可读面） · 38
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -231,22 +235,24 @@
 | `RenderBox::setCompose()` | method | src/Layout/RenderBox.php:617 |
 | `RenderBox::paintComposed()` | method | src/Layout/RenderBox.php:655 |
 | `RenderBox::hitTest()` | method | src/Layout/RenderBox.php:698 |
-| `RenderButton` | class | src/Layout/RenderButton.php:17 |
+| `RenderButton` | class | src/Layout/RenderButton.php:19 |
 | `RenderDivider` | class | src/Layout/RenderDivider.php:13 |
 | `RenderDock` | class | src/Layout/RenderDock.php:12 |
 | `RenderFlex` | class | src/Layout/RenderFlex.php:12 |
+| `RenderIcon` | class | src/Layout/RenderIcon.php:13 |
 | `RenderImage` | class | src/Layout/RenderImage.php:13 |
 | `RenderMenuItem` | class | src/Layout/RenderMenuItem.php:16 |
-| `RenderObject` | class | src/Layout/RenderObject.php:10 |
-| `RenderObject::cursor()` | method | src/Layout/RenderObject.php:34 |
-| `RenderObject::cursorAt()` | method | src/Layout/RenderObject.php:56 |
-| `RenderObject::panelRect()` | method | src/Layout/RenderObject.php:73 |
-| `RenderPopupPanel` | class | src/Layout/RenderPopupPanel.php:15 |
+| `RenderObject` | class | src/Layout/RenderObject.php:11 |
+| `RenderObject::cursor()` | method | src/Layout/RenderObject.php:55 |
+| `RenderObject::cursorAt()` | method | src/Layout/RenderObject.php:77 |
+| `RenderObject::panelRect()` | method | src/Layout/RenderObject.php:94 |
+| `RenderObject::acceptsHover()` | method | src/Layout/RenderObject.php:117 |
+| `RenderPopupPanel` | class | src/Layout/RenderPopupPanel.php:16 |
 | `RenderProgress` | class | src/Layout/RenderProgress.php:13 |
 | `RenderProxy` | class | src/Layout/RenderProxy.php:9 |
 | `RenderProxyBox` | class | src/Layout/RenderProxyBox.php:8 |
 | `RenderRichText` | class | src/Layout/RenderRichText.php:19 |
-| `RenderScrollView` | class | src/Layout/RenderScrollView.php:15 |
+| `RenderScrollView` | class | src/Layout/RenderScrollView.php:16 |
 | `RenderSegment` | class | src/Layout/RenderSegment.php:15 |
 | `RenderSegmentedControl` | class | src/Layout/RenderSegmentedControl.php:13 |
 | `RenderSlider` | class | src/Layout/RenderSlider.php:13 |
@@ -258,7 +264,7 @@
 | `StackAlign` | enum | src/Layout/StackAlign.php:6 |
 | `StackFit` | enum | src/Layout/StackFit.php:6 |
 
-### @internal（框架内部） · 19
+### @internal（框架内部） · 21
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -268,13 +274,15 @@
 | `RenderDock::slot()` | method | src/Layout/RenderDock.php:44 |
 | `RenderFlex::clearChildren()` | method | src/Layout/RenderFlex.php:98 |
 | `RenderModalHost` | class | src/Layout/RenderModalHost.php:14 |
-| `RenderObject::$cursor` | property | src/Layout/RenderObject.php:26 |
-| `RenderObject::setCursor()` | method | src/Layout/RenderObject.php:48 |
-| `RenderObject::adoptChild()` | method | src/Layout/RenderObject.php:96 |
+| `RenderObject::$cursor` | property | src/Layout/RenderObject.php:27 |
+| `RenderObject::setCursor()` | method | src/Layout/RenderObject.php:69 |
+| `RenderObject::setHovered()` | method | src/Layout/RenderObject.php:134 |
+| `RenderObject::adoptChild()` | method | src/Layout/RenderObject.php:193 |
 | `RenderRichText::styleSize()` | method | src/Layout/RenderRichText.php:50 |
 | `RenderRichText::lineCount()` | method | src/Layout/RenderRichText.php:56 |
 | `RenderRichText::paragraph()` | method | src/Layout/RenderRichText.php:62 |
 | `RenderRichText::spans()` | method | src/Layout/RenderRichText.php:68 |
+| `RenderScrollView::setBarOpacity()` | method | src/Layout/RenderScrollView.php:90 |
 | `RenderSegmentedControl::clearChildren()` | method | src/Layout/RenderSegmentedControl.php:66 |
 | `RenderStack::clearChildren()` | method | src/Layout/RenderStack.php:67 |
 | `RenderText::styleSize()` | method | src/Layout/RenderText.php:50 |
@@ -320,7 +328,7 @@
 | `SurfaceProvider` | interface | src/Platform/SurfaceProvider.php:8 |
 | `TimerHost` | interface | src/Platform/TimerHost.php:6 |
 | `Tray` | interface | src/Platform/Tray.php:6 |
-| `Win32Platform` | class | src/Platform/Win32/Win32Platform.php:28 |
+| `Win32Platform` | class | src/Platform/Win32/Win32Platform.php:30 |
 | `WindowHost` | interface | src/Platform/WindowHost.php:11 |
 | `WindowHost::setCursor()` | method | src/Platform/WindowHost.php:102 |
 | `WindowHost::pushSemantics()` | method | src/Platform/WindowHost.php:114 |
@@ -342,18 +350,20 @@
 
 ## Rendering 层
 
-### @api（应用可读面） · 28
+### @api（应用可读面） · 31
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
+| `AnimatedValue` | class | src/Rendering/AnimatedValue.php:6 |
 | `BoxStyle` | class | src/Rendering/BoxStyle.php:6 |
 | `Canvas` | interface | src/Rendering/Canvas.php:9 |
 | `CanvasCapabilities` | class | src/Rendering/CanvasCapabilities.php:8 |
 | `Color` | class | src/Rendering/Color.php:8 |
-| `ColorToken` | enum | src/Rendering/ColorToken.php:36 |
+| `ColorToken` | enum | src/Rendering/ColorToken.php:8 |
 | `DashPattern` | class | src/Rendering/DashPattern.php:8 |
 | `DisplayList` | class | src/Rendering/DisplayList.php:8 |
 | `DividerStyle` | class | src/Rendering/DividerStyle.php:6 |
+| `Elevation` | class | src/Rendering/Elevation.php:6 |
 | `GpuContext` | interface | src/Rendering/GpuContext.php:7 |
 | `Gradient` | class | src/Rendering/Gradient.php:8 |
 | `ImageHandle` | class | src/Rendering/ImageHandle.php:8 |
@@ -370,6 +380,7 @@
 | `RenderSurface` | interface | src/Rendering/RenderSurface.php:7 |
 | `SegmentedStyle` | class | src/Rendering/SegmentedStyle.php:6 |
 | `Shadow` | class | src/Rendering/Shadow.php:9 |
+| `ShadowPainter` | class | src/Rendering/ShadowPainter.php:8 |
 | `SkiaCanvas` | class | src/Rendering/SkiaCanvas.php:34 |
 | `SkiaCanvas::handle()` | method | src/Rendering/SkiaCanvas.php:107 |
 | `SurfaceProfile` | class | src/Rendering/SurfaceProfile.php:6 |
@@ -489,18 +500,18 @@
 
 ## Widget 层
 
-### @api（应用可读面） · 125
+### @api（应用可读面） · 131
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
 | `Activatable` | interface | src/Widget/Activatable.php:6 |
 | `ActivationContext` | class | src/Widget/ActivationContext.php:8 |
 | `AnimationController` | class | src/Widget/AnimationController.php:6 |
-| `AppBar` | class | src/Widget/AppBar.php:40 |
+| `AppBar` | class | src/Widget/AppBar.php:13 |
 | `AspectRatio` | class | src/Widget/AspectRatio.php:9 |
 | `BoxWidget` | class | src/Widget/BoxWidget.php:9 |
 | `BuildContext` | class | src/Widget/BuildContext.php:13 |
-| `Button` | class | src/Widget/Button.php:17 |
+| `Button` | class | src/Widget/Button.php:19 |
 | `ButtonVariant` | enum | src/Widget/ButtonVariant.php:6 |
 | `Card` | class | src/Widget/Card.php:11 |
 | `Center` | class | src/Widget/Center.php:9 |
@@ -525,6 +536,10 @@
 | `Flex` | class | src/Widget/Flex.php:12 |
 | `FlexElement` | class | src/Widget/FlexElement.php:8 |
 | `Grid` | class | src/Widget/Grid.php:8 |
+| `Icon` | class | src/Widget/Icon.php:11 |
+| `IconButton` | class | src/Widget/IconButton.php:6 |
+| `IconName` | enum | src/Widget/IconName.php:6 |
+| `IconSet` | class | src/Widget/IconSet.php:8 |
 | `Image` | class | src/Widget/Image.php:12 |
 | `Key` | class | src/Widget/Key.php:6 |
 | `LazyColumn` | class | src/Widget/LazyColumn.php:6 |
@@ -535,7 +550,7 @@
 | `Menu` | class | src/Widget/Menu/Menu.php:14 |
 | `MenuBar` | class | src/Widget/Menu/MenuBar.php:11 |
 | `MenuItem` | class | src/Widget/Menu/MenuItem.php:15 |
-| `Modal` | class | src/Widget/Modal.php:50 |
+| `Modal` | class | src/Widget/Modal.php:9 |
 | `NavButton` | class | src/Widget/NavButton.php:6 |
 | `Offstage` | class | src/Widget/Offstage.php:6 |
 | `Offstage::make()` | method | src/Widget/Offstage.php:32 |
@@ -561,6 +576,7 @@
 | `SegmentedControlElement` | class | src/Widget/SegmentedControlElement.php:8 |
 | `Select` | class | src/Widget/Select.php:11 |
 | `SemanticsBuilder` | class | src/Widget/SemanticsBuilder.php:11 |
+| `SemanticsValueEditable` | interface | src/Widget/SemanticsValueEditable.php:6 |
 | `SizedBox` | class | src/Widget/SizedBox.php:9 |
 | `Slider` | class | src/Widget/Slider.php:17 |
 | `Snackbar` | class | src/Widget/Snackbar.php:6 |
@@ -592,43 +608,44 @@
 | `ToggleBase` | class | src/Widget/ToggleBase.php:14 |
 | `TooltipPanel` | class | src/Widget/TooltipPanel.php:8 |
 | `Widget` | class | src/Widget/Widget.php:17 |
-| `Widget::__construct()` | method | src/Widget/Widget.php:141 |
-| `Widget::key()` | method | src/Widget/Widget.php:168 |
-| `Widget::mutate()` | method | src/Widget/Widget.php:245 |
-| `Widget::focusOrder()` | method | src/Widget/Widget.php:270 |
-| `Widget::skipFocus()` | method | src/Widget/Widget.php:288 |
-| `Widget::claimKeys()` | method | src/Widget/Widget.php:303 |
-| `Widget::cursor()` | method | src/Widget/Widget.php:326 |
-| `Widget::padding()` | method | src/Widget/Widget.php:397 |
-| `Widget::boxSize()` | method | src/Widget/Widget.php:466 |
-| `Widget::background()` | method | src/Widget/Widget.php:539 |
-| `Widget::shadow()` | method | src/Widget/Widget.php:572 |
-| `Widget::opacity()` | method | src/Widget/Widget.php:588 |
-| `Widget::translate()` | method | src/Widget/Widget.php:610 |
-| `Widget::clip()` | method | src/Widget/Widget.php:623 |
-| `Widget::centerContent()` | method | src/Widget/Widget.php:641 |
-| `Widget::grow()` | method | src/Widget/Widget.php:658 |
-| `Widget::draggable()` | method | src/Widget/Widget.php:725 |
-| `Widget::dragTarget()` | method | src/Widget/Widget.php:752 |
-| `Widget::contextMenu()` | method | src/Widget/Widget.php:775 |
-| `Widget::hover()` | method | src/Widget/Widget.php:798 |
-| `Widget::pointer()` | method | src/Widget/Widget.php:827 |
-| `Widget::keyboard()` | method | src/Widget/Widget.php:873 |
-| `Widget::tooltip()` | method | src/Widget/Widget.php:916 |
-| `Widget::overlayPanel()` | method | src/Widget/Widget.php:955 |
-| `Widget::overlaySignature()` | method | src/Widget/Widget.php:1010 |
-| `Widget::semantics()` | method | src/Widget/Widget.php:1064 |
+| `Widget::__construct()` | method | src/Widget/Widget.php:154 |
+| `Widget::key()` | method | src/Widget/Widget.php:181 |
+| `Widget::mutate()` | method | src/Widget/Widget.php:258 |
+| `Widget::focusOrder()` | method | src/Widget/Widget.php:283 |
+| `Widget::skipFocus()` | method | src/Widget/Widget.php:301 |
+| `Widget::claimKeys()` | method | src/Widget/Widget.php:316 |
+| `Widget::cursor()` | method | src/Widget/Widget.php:339 |
+| `Widget::padding()` | method | src/Widget/Widget.php:410 |
+| `Widget::boxSize()` | method | src/Widget/Widget.php:479 |
+| `Widget::background()` | method | src/Widget/Widget.php:552 |
+| `Widget::shadow()` | method | src/Widget/Widget.php:585 |
+| `Widget::opacity()` | method | src/Widget/Widget.php:603 |
+| `Widget::translate()` | method | src/Widget/Widget.php:625 |
+| `Widget::clip()` | method | src/Widget/Widget.php:638 |
+| `Widget::centerContent()` | method | src/Widget/Widget.php:656 |
+| `Widget::grow()` | method | src/Widget/Widget.php:673 |
+| `Widget::draggable()` | method | src/Widget/Widget.php:740 |
+| `Widget::dragTarget()` | method | src/Widget/Widget.php:767 |
+| `Widget::contextMenu()` | method | src/Widget/Widget.php:790 |
+| `Widget::hover()` | method | src/Widget/Widget.php:813 |
+| `Widget::pointer()` | method | src/Widget/Widget.php:842 |
+| `Widget::keyboard()` | method | src/Widget/Widget.php:888 |
+| `Widget::tooltip()` | method | src/Widget/Widget.php:931 |
+| `Widget::overlayPanel()` | method | src/Widget/Widget.php:970 |
+| `Widget::overlaySignature()` | method | src/Widget/Widget.php:1025 |
+| `Widget::semantics()` | method | src/Widget/Widget.php:1079 |
+| `Widget::semanticsRange()` | method | src/Widget/Widget.php:1120 |
 
-### @internal（框架内部） · 160
+### @internal（框架内部） · 167
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
 | `AnimationController::start()` | method | src/Widget/AnimationController.php:253 |
 | `AnimationController::finish()` | method | src/Widget/AnimationController.php:276 |
-| `AppBar::titleText()` | method | src/Widget/AppBar.php:93 |
-| `AppBar::kidList()` | method | src/Widget/AppBar.php:99 |
-| `AppBar::actionList()` | method | src/Widget/AppBar.php:105 |
-| `AppBar::barKids()` | method | src/Widget/AppBar.php:119 |
+| `AppBar::titleText()` | method | src/Widget/AppBar.php:92 |
+| `AppBar::kidList()` | method | src/Widget/AppBar.php:98 |
+| `AppBar::actionList()` | method | src/Widget/AppBar.php:104 |
+| `AppBar::barKids()` | method | src/Widget/AppBar.php:110 |
 | `AppBarElement` | class | src/Widget/AppBarElement.php:8 |
 | `BoxWidget::$box` | property | src/Widget/BoxWidget.php:27 |
 | `BoxWidget::box()` | method | src/Widget/BoxWidget.php:30 |
@@ -683,6 +700,7 @@
 | `LazyList::keyMapper()` | method | src/Widget/LazyList.php:126 |
 | `LazyList::buildItem()` | method | src/Widget/LazyList.php:187 |
 | `LazyListState` | class | src/Widget/LazyListState.php:11 |
+| `Modal::bindDismiss()` | method | src/Widget/Modal.php:169 |
 | `ModalHost` | class | src/Widget/ModalHost.php:10 |
 | `OffstageElement::$parked` | property | src/Widget/OffstageElement.php:22 |
 | `OptionPanel` | class | src/Widget/OptionPanel.php:10 |
@@ -692,8 +710,9 @@
 | `OptionPanel::maxHeightValue()` | method | src/Widget/OptionPanel.php:88 |
 | `OptionPanel::notifyClosed()` | method | src/Widget/OptionPanel.php:94 |
 | `OptionPanelState` | class | src/Widget/OptionPanel.php:110 |
+| `ScrollBarFade` | class | src/Widget/ScrollBarFade.php:9 |
 | `ScrollViewBox` | class | src/Widget/ScrollViewBox.php:10 |
-| `ScrollViewBox::make()` | method | src/Widget/ScrollViewBox.php:38 |
+| `ScrollViewBox::make()` | method | src/Widget/ScrollViewBox.php:39 |
 | `Select::optionsValue()` | method | src/Widget/Select.php:243 |
 | `Select::valueValue()` | method | src/Widget/Select.php:249 |
 | `Select::placeholderText()` | method | src/Widget/Select.php:255 |
@@ -759,31 +778,34 @@
 | `Widget::$semName` | property | src/Widget/Widget.php:132 |
 | `Widget::$semValue` | property | src/Widget/Widget.php:135 |
 | `Widget::$semEnabled` | property | src/Widget/Widget.php:138 |
-| `Widget::__clone()` | method | src/Widget/Widget.php:151 |
-| `Widget::childContext()` | method | src/Widget/Widget.php:184 |
-| `Widget::createElement()` | method | src/Widget/Widget.php:199 |
-| `Widget::identity()` | method | src/Widget/Widget.php:215 |
-| `Widget::seal()` | method | src/Widget/Widget.php:225 |
-| `Widget::isSealed()` | method | src/Widget/Widget.php:239 |
-| `Widget::focusNode()` | method | src/Widget/Widget.php:320 |
-| `Widget::cursorShape()` | method | src/Widget/Widget.php:350 |
-| `Widget::mods()` | method | src/Widget/Widget.php:375 |
-| `Widget::expandChildren()` | method | src/Widget/Widget.php:381 |
-| `Widget::draggableValue()` | method | src/Widget/Widget.php:746 |
-| `Widget::dragTargetValue()` | method | src/Widget/Widget.php:769 |
-| `Widget::contextMenuValue()` | method | src/Widget/Widget.php:792 |
-| `Widget::hoverHandlerValue()` | method | src/Widget/Widget.php:821 |
-| `Widget::pointerHandlerValue()` | method | src/Widget/Widget.php:861 |
-| `Widget::pointerOwnsPressValue()` | method | src/Widget/Widget.php:867 |
-| `Widget::keyHandlerValue()` | method | src/Widget/Widget.php:910 |
-| `Widget::tooltipTextValue()` | method | src/Widget/Widget.php:947 |
-| `Widget::overlayPanelValue()` | method | src/Widget/Widget.php:1004 |
-| `Widget::overlaySignatureValue()` | method | src/Widget/Widget.php:1058 |
-| `Widget::semanticsRole()` | method | src/Widget/Widget.php:1105 |
-| `Widget::semanticsName()` | method | src/Widget/Widget.php:1111 |
-| `Widget::semanticsValue()` | method | src/Widget/Widget.php:1117 |
-| `Widget::semanticsEnabled()` | method | src/Widget/Widget.php:1123 |
-| `Widget::markFocusable()` | method | src/Widget/Widget.php:1129 |
-| `Widget::isFocusable()` | method | src/Widget/Widget.php:1142 |
+| `Widget::$semRangeMin` | property | src/Widget/Widget.php:141 |
+| `Widget::__clone()` | method | src/Widget/Widget.php:164 |
+| `Widget::childContext()` | method | src/Widget/Widget.php:197 |
+| `Widget::createElement()` | method | src/Widget/Widget.php:212 |
+| `Widget::identity()` | method | src/Widget/Widget.php:228 |
+| `Widget::seal()` | method | src/Widget/Widget.php:238 |
+| `Widget::isSealed()` | method | src/Widget/Widget.php:252 |
+| `Widget::focusNode()` | method | src/Widget/Widget.php:333 |
+| `Widget::cursorShape()` | method | src/Widget/Widget.php:363 |
+| `Widget::mods()` | method | src/Widget/Widget.php:388 |
+| `Widget::expandChildren()` | method | src/Widget/Widget.php:394 |
+| `Widget::draggableValue()` | method | src/Widget/Widget.php:761 |
+| `Widget::dragTargetValue()` | method | src/Widget/Widget.php:784 |
+| `Widget::contextMenuValue()` | method | src/Widget/Widget.php:807 |
+| `Widget::hoverHandlerValue()` | method | src/Widget/Widget.php:836 |
+| `Widget::pointerHandlerValue()` | method | src/Widget/Widget.php:876 |
+| `Widget::pointerOwnsPressValue()` | method | src/Widget/Widget.php:882 |
+| `Widget::keyHandlerValue()` | method | src/Widget/Widget.php:925 |
+| `Widget::tooltipTextValue()` | method | src/Widget/Widget.php:962 |
+| `Widget::overlayPanelValue()` | method | src/Widget/Widget.php:1019 |
+| `Widget::overlaySignatureValue()` | method | src/Widget/Widget.php:1073 |
+| `Widget::semanticsRole()` | method | src/Widget/Widget.php:1148 |
+| `Widget::semanticsName()` | method | src/Widget/Widget.php:1154 |
+| `Widget::semanticsValue()` | method | src/Widget/Widget.php:1160 |
+| `Widget::semanticsEnabled()` | method | src/Widget/Widget.php:1166 |
+| `Widget::semanticsRangeMin()` | method | src/Widget/Widget.php:1172 |
+| `Widget::semanticsRangeMax()` | method | src/Widget/Widget.php:1178 |
+| `Widget::markFocusable()` | method | src/Widget/Widget.php:1184 |
+| `Widget::isFocusable()` | method | src/Widget/Widget.php:1197 |
 
 

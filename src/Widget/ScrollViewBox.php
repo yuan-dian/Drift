@@ -31,6 +31,7 @@ final class ScrollViewBox extends RenderBoxWidget
         private readonly Widget $kid,
         private readonly ?float $virtualExtent = null,
         private readonly float $sliceOrigin = 0.0,
+        private readonly float $barOpacity = 1.0,
     ) {
         parent::__construct();
     }
@@ -48,8 +49,9 @@ final class ScrollViewBox extends RenderBoxWidget
         Widget $kid,
         ?float $virtualExtent = null,
         float $sliceOrigin = 0.0,
+        float $barOpacity = 1.0,
     ): self {
-        return new self($offset, $vertical, $kid, $virtualExtent, $sliceOrigin);
+        return new self($offset, $vertical, $kid, $virtualExtent, $sliceOrigin, $barOpacity);
     }
 
     /** 被滚动的内容 */
@@ -74,6 +76,7 @@ final class ScrollViewBox extends RenderBoxWidget
             $this->vertical,
             $this->virtualExtent,
             $this->sliceOrigin,
+            $this->barOpacity,
         );
     }
 

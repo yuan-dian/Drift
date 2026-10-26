@@ -13,6 +13,7 @@ use Drift\Rendering\BoxStyle;
 use Drift\Rendering\Color;
 use Drift\Text\TextRole;
 use Drift\Rendering\ColorToken;
+use Drift\Rendering\Elevation;
 use Drift\Rendering\MetricToken;
 
 /**
@@ -258,7 +259,23 @@ class Button extends BoxWidget implements Activatable
             $gap,
             max(1.0, $iconSize * 0.09),
             $this->centerLabel,
+            $this->resolveHoverElevation(),
         );
+    }
+
+    /**
+     * 悬停浮起档位（`Elevation` 口径）。
+     *
+     * ★ `Flat` 不浮：它是"没有容器的文字/图标"（顶条动作、行内操作），浮起来
+     *   会凭空长出一个不存在的盒子 —— 状态色已经足够表达悬停。
+     * ★ 不放 `BuildContext`：与变体绑定，不随主题变。
+     */
+    protected function resolveHoverElevation(): float
+    {
+        return match ($this->variant) {
+            ButtonVariant::Flat => Elevation::Flat,
+            ButtonVariant::Default, ButtonVariant::Primary, ButtonVariant::Danger => Elevation::Raised,
+        };
     }
 
     /**

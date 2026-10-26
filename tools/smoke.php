@@ -243,6 +243,7 @@ use Drift\Widget\Card;
 use Drift\Widget\CustomPaint;
 use Drift\Widget\CustomPainter;
 use Drift\Widget\SizedBox;
+use Drift\Widget\ScrollBarFade;
 use Drift\Widget\ButtonVariant;
 use Drift\Widget\AppBar;
 use Drift\Widget\BoxWidget;
@@ -5085,6 +5086,147 @@ check(
     'NavButton · 内容左对齐（三种长度标签的 offset 相同 —— 居中会各不相同）',
     count(array_unique($navXs)) === 1 && ($navXs[0] ?? -1.0) >= 0.0,
     'xs=' . implode(',', $navXs),
+);
+
+// ── 盒级跟手动画（`AnimatedValue` + `RenderObject::hoverProgress`，2026-10-26）──
+// ★ 钉的是"状态变化有一条斜坡"本身：① 首帧必须自报"在跑"（报 false 会让帧时钟
+//   当场停摆、值永远停在起点）② 单调逼近 ③ 收口后自己停下（否则空闲空转）。
+$hoverBtn = Button::make('悬停浮起')->variant(ButtonVariant::Default)->createRenderObject($context);
+$hoverBtn->layout(BoxConstraints::tight(new Size(120.0, 36.0)));
+check(
+    'hover · 从未悬停过 ⇒ progress 就是 0（不建槽，也没有半截状态）',
+    $hoverBtn->hoverProgress() === 0.0,
+    'p=' . $hoverBtn->hoverProgress(),
+);
+
+$hoverBtn->setHovered(true);
+check(
+    'hover · 刚进入那一帧 ⇒ 值仍是 0（一进来就是 1 的话"有过渡"是假的）',
+    $hoverBtn->hoverProgress() === 0.0,
+    'p=' . $hoverBtn->hoverProgress(),
+);
+check(
+    'hover · 首帧 tick 必须自报"在跑"（报 false ⇒ 帧时钟停摆 ⇒ 永远停在起点）',
+    $hoverBtn->tickAnimations(1000.0) === true,
+);
+
+$hoverSamples = [];
+for ($hfi = 1; $hfi <= 24; $hfi++) {
+    $hoverBtn->tickAnimations(1000.0 + $hfi * 16.0);
+    $hoverSamples[] = $hoverBtn->hoverProgress();
+}
+$hoverMonotonic = true;
+for ($hfi = 1; $hfi < count($hoverSamples); $hfi++) {
+    if ($hoverSamples[$hfi] < $hoverSamples[$hfi - 1]) {
+        $hoverMonotonic = false;
+    }
+}
+check(
+    'hover · 24 帧内单调逼近 1（指数逼近不会回头）',
+    $hoverMonotonic && $hoverBtn->hoverProgress() > 0.98,
+    'p=' . $hoverBtn->hoverProgress() . ' monotonic=' . ($hoverMonotonic ? 'yes' : 'no'),
+);
+check(
+    'hover · 走到目标就收口（tick 返回 false ⇒ 帧时钟能落闸、空闲不空转）',
+    $hoverBtn->tickAnimations(1000.0 + 25 * 16.0) === false,
+);
+
+// —— 浮起真的画了墨：给按钮套 8px 留白，收口后"盒外那一圈"必须从全白变成有墨 ——
+//    ★ 必须从**盒外**数：浮起的全部意义是影子落在盒外；只数盒内会把
+//    "状态色变深"当成"浮起"（两者在盒内无法区分）。
+$hoverHostEl = SizedBox::make(Button::make('影')->variant(ButtonVariant::Default))
+    ->padding(EdgeInsets::all(8.0))
+    ->createElement();
+$hoverHostEl->mount(null, $context);
+$hoverHostBox = $hoverHostEl->effectiveBox();
+$hoverHostBox?->layout(BoxConstraints::loose(new Size(300.0, 200.0)));
+$hoverHostSize = $hoverHostBox?->size();
+$hoverInner = $hoverHostEl->findBoxOf(RenderButton::class);
+
+$ringInk = static function (RenderBox $box, int $w, int $h, int $pad): int {
+    $list = new DisplayList();
+    $box->paint(new RecordingCanvas($list));
+    $canvas = new RasterCanvas($w, $h, Color::white(), Scale::of(1.0));
+    $list->replay($canvas);
+
+    $n = 0;
+    for ($y = 0; $y < $h; $y++) {
+        for ($x = 0; $x < $w; $x++) {
+            $inside = $x >= $pad && $x < $w - $pad && $y >= $pad && $y < $h - $pad;
+            if ($inside) {
+                continue;
+            }
+            if (!$canvas->pixelAt($x, $y)->equals(Color::white())) {
+                $n++;
+            }
+        }
+    }
+
+    return $n;
+};
+
+if ($hoverHostBox !== null && $hoverHostSize !== null && $hoverInner !== null) {
+    $ringW = (int) \round($hoverHostSize->width);
+    $ringH = (int) \round($hoverHostSize->height);
+    $ringBefore = $ringInk($hoverHostBox, $ringW, $ringH, 8);
+
+    $hoverInner->setHovered(true);
+    $hoverInner->tickAnimations(2000.0);
+    for ($hfi = 1; $hfi <= 30; $hfi++) {
+        $hoverInner->tickAnimations(2000.0 + $hfi * 16.0);
+    }
+    $ringAfter = $ringInk($hoverHostBox, $ringW, $ringH, 8);
+
+    check(
+        'hover · 浮起把影子画到盒外（静息时那一圈全白，收口后有墨）',
+        $ringBefore === 0 && $ringAfter > 20,
+        'ringBefore=' . $ringBefore . ' ringAfter=' . $ringAfter,
+    );
+} else {
+    check('hover · 浮起把影子画到盒外（静息时那一圈全白，收口后有墨）', false, '夹具没挂上');
+}
+
+// ── 滚动条空闲淡出（替代"滚动惯性"：滚轮是离散输入，见 `ScrollBarFade` 类注释）──
+$barFade = new ScrollBarFade();
+check(
+    '滚动条 · 从没滚过 ⇒ 恒亮 1.0（静态截图的像素一个不变）',
+    $barFade->opacity() === 1.0,
+    'o=' . $barFade->opacity(),
+);
+check('滚动条 · 没滚过时 tick 直接返回 false（不建槽、不占帧）', $barFade->tick(0.0) === false);
+
+$barFade->noteScroll();
+check('滚动条 · 刚滚过 ⇒ 立刻全亮（不会先淡入一遍）', $barFade->opacity() === 1.0, 'o=' . $barFade->opacity());
+
+for ($bfi = 1; $bfi <= 51; $bfi++) {
+    $barFade->tick($bfi * 16.0);   // 到 816ms，还没到 900ms 的空闲线
+}
+check(
+    '滚动条 · 空闲未满 900ms ⇒ 仍全亮（停手就淡是另一种毛病）',
+    $barFade->opacity() === 1.0,
+    'o=' . $barFade->opacity(),
+);
+
+for ($bfi = 52; $bfi <= 120; $bfi++) {
+    $barFade->tick($bfi * 16.0);
+}
+check(
+    '滚动条 · 空闲超 900ms ⇒ 淡到 0.35（不是 0：消失之后用户不知道这里能滚）',
+    abs($barFade->opacity() - 0.35) < 0.02,
+    'o=' . $barFade->opacity(),
+);
+check(
+    '滚动条 · 淡完就收口（再 tick 返回 false ⇒ 帧时钟落闸）',
+    $barFade->tick(121.0 * 16.0) === false,
+);
+$barFade->noteScroll();
+for ($bfi = 1; $bfi <= 12; $bfi++) {
+    $barFade->tick(121.0 * 16.0 + $bfi * 16.0);
+}
+check(
+    '滚动条 · 再滚一下 ⇒ 很快回到全亮（收口后仍能重新起飞）',
+    $barFade->opacity() > 0.9,
+    'o=' . $barFade->opacity(),
 );
 
 // 纯图标：正方形、不建 RenderText
@@ -14176,10 +14318,13 @@ check(
     'count=' . $ttApp->overlayCount(),
 );
 $ttApp->frame(4600.0, $ttConstraints);
+// ★ 这条原本判 `!wantsFrame()` —— 那是"没排期"的**代理判据**。悬停过渡（盒级
+//   `AnimatedValue`）上线后，指针刚移过来就有几百毫秒的合法动画在跑 ⇒ 代理判据
+//   失效。改成直接判本意：**时间过了也不弹**（真排了期的话 900ms 早该弹了）。
 check(
-    'Tooltip · 反例：悬停无 tooltip() 的按钮 ⇒ 走满 500ms 也不弹、也不排期',
-    $ttApp->overlayCount() === 0 && !$ttApp->wantsFrame(),
-    'count=' . $ttApp->overlayCount() . ' wantsFrame=' . ($ttApp->wantsFrame() ? 'true' : 'false'),
+    'Tooltip · 反例：悬停无 tooltip() 的按钮 ⇒ 走满 500ms 也不弹',
+    $ttApp->overlayCount() === 0,
+    'count=' . $ttApp->overlayCount(),
 );
 
 // —— ⑦ 已显示时移到相邻带提示的控件 ⇒ 立即换（不再等 500ms）——
