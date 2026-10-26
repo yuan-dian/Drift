@@ -150,11 +150,18 @@ ScrollView / LazyColumn / LazyRow / LazyGrid / Grid / Stack / Image / Icon / Ric
 8. 混合模式 + Opacity 控件（补渲染原语空洞）。
 
 ### P2 —— 控件库存（按业务需要推进，不阻塞）
-9. Table / DataGrid（分两步：先只读表格，再列宽拖拽 + 多选）。
+9. Table / DataGrid —— **结构与分阶段见 `docs/DESIGN-TABLE-2026-10-26.md`**（七阶段，每阶段不推翻前一阶段）。
 10. TabView / TabBar。
 11. Wrap + `ConstrainedBox`/`IntrinsicWidth`（布局补齐）。
+    ★ **Wrap 不是"加个控件"**：`Overflow.php` 的 docblock 已记它被删的理由（类别错误——
+    重排不是舍弃），推翻条件是"子项数运行时才知道 + 必须自动换行"，届时它是**独立布局
+    原语**（两遍布局，先量全部子固有宽）。成本按新原语估，不按控件估。
 12. DatePicker / TimePicker + Badge/Tag/Avatar。
-13. 手势识别器家族（long-press / pan / pinch）——Table 列宽拖拽与 TreeView 都要它。
+13. 手势识别器家族（long-press / double-tap / pinch）。
+    ★ **不是 Table 列宽拖拽的前置**（2026-10-26 修正）：列宽拖拽与 `Slider` 同类
+    （位置即语义的连续拖拽），走 `pointer(ownsPress: true)` + 框架捕获，`Slider` 的
+    docblock 已三条理由否掉 `GestureArena` 那条路。手势族的真实欠债是**时间维度**
+    ——`GestureArena::claims()` 只有位移没有时钟，long-press / double-tap 都要它。
 
 ### P3 —— 架构长期项（不影响当前可用性）
 14. i18n / RTL。

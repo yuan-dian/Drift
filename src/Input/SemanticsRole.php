@@ -47,6 +47,15 @@ enum SemanticsRole: string
     /** 可滚动视口（`ScrollView` / `LazyColumn`） */
     case Scroll = 'scroll';
 
+    /**
+     * 表格（`Table`，2026-10-26）—— name 取表名。
+     *
+     * ★ 一个控件只声明**一个**角色（`Widget::semantics()` 只存一个 `semRole`），
+     *   所以 `Table` 声明的是本角色而不是 `Scroll`：滚轮路由走的是
+     *   `Scrollable` 接口（State 层），与语义树无关，两者不会打架。
+     */
+    case Table = 'table';
+
     /** 模态对话框（`Modal`）—— name 取标题 */
     case Dialog = 'dialog';
 

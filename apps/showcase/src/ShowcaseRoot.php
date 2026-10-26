@@ -29,6 +29,7 @@ use Drift\Widget\Widget;
 
 use App\Showcase\Pages\AspectPage;
 use App\Showcase\Pages\BigListPage;
+use App\Showcase\Pages\TablePage;
 use App\Showcase\Pages\ButtonsPage;
 use App\Showcase\Pages\ComboBoxPage;
 use App\Showcase\Pages\CustomPaintPage;
@@ -173,6 +174,8 @@ final class ShowcaseState extends State
             new NavEntry(IconName::Plus, '图标 Icon', static fn(): Widget => new IconPage()),
             // ★ 同上：毛玻璃页追加在最末，前 21 项的 y 坐标不变。
             new NavEntry(IconName::Brush, '毛玻璃 Glass', static fn(): Widget => new GlassPage()),
+            // ★ 同上：表格页追加在最末，前 22 项的 y 坐标不变。
+            new NavEntry(IconName::Grid, '表格 Table', static fn(): Widget => new TablePage()),
         ];
     }
 

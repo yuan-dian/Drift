@@ -333,6 +333,11 @@ use Drift\Input\WindowDeactivatedEvent;
 use Drift\Widget\TextField;
 use Drift\Widget\TextFieldState;
 use Drift\Widget\Widget;
+use Drift\Widget\Table;
+use Drift\Widget\TableColumn;
+use Drift\Widget\TableColumnWidth;
+use Drift\Widget\TableState;
+use Drift\Layout\RenderTable;
 use Drift\Dev\TestApp;
 
 require __DIR__ . '/autoload.php';
@@ -388,6 +393,55 @@ if (str_starts_with($caseArg, '--case=')) {
         $widget = new BoxProbe();
         $widget->seal();
         $widget->background(Color::white()); // 封存后改样式 ⇒ 必须响亮失败
+    }
+
+    if ($case === 'table-nokey') {
+        // ★ `keyOf` 是列宽覆盖 / 选择集 / Shift 锚点的唯一身份 ⇒ 缺了必须**响亮**
+        //   失败，不能退化成"按序号"（那会让选中行在数据变化后指向另一行，
+        //   而界面上看起来完全正常）。
+        $table = Table::make(
+            [TableColumn::make('a', 'A')->field('a')],
+            [['a' => 1]],
+        );
+        $el = $table->createElement();
+        $el->mount(null, smokeContext());
+        echo "mounted-without-error\n";
+        exit(0);
+    }
+
+    if ($case === 'table-width-zero') {
+        // 0 宽的列让 `flex` 分配出现除零/零宽格 ⇒ 构造期就该停下
+        TableColumnWidth::fixed(0.0);
+        echo "no-error\n";
+        exit(0);
+    }
+
+    if ($case === 'table-field-and-cell') {
+        // field() 与 cell() 都写 ⇒ 两条取值路都声明了（"后写的赢"是静默坑）
+        $table = Table::make(
+            [
+                TableColumn::make('a', 'A')
+                    ->field('a')
+                    ->cell(static fn(array $row): Widget => Text::make('x')),
+            ],
+            [['a' => 1]],
+        )->keyOf(static fn(array $row): int => (int) $row['a']);
+        $el = $table->createElement();
+        $el->mount(null, smokeContext());
+        echo "mounted-without-error\n";
+        exit(0);
+    }
+
+    if ($case === 'table-missing-field') {
+        // 字段拼错 ⇒ 必须报"第几行 / 缺哪个 / 有哪些"，不是整列空白
+        $table = Table::make(
+            [TableColumn::make('a', 'A')->field('nmae')],
+            [['name' => 'x']],
+        )->keyOf(static fn(array $row): string => (string) $row['name']);
+        $el = $table->createElement();
+        $el->mount(null, smokeContext());
+        echo "mounted-without-error\n";
+        exit(0);
     }
 
     if ($case === 'modstateful') {
@@ -16334,6 +16388,438 @@ check(
         ),
     );
 }
+
+// ── ㊾ P2 阶段 1：`Table`（固定表头 + 虚拟行 + 列宽三层）────────────────────
+//   四条验收闸门（`docs/DESIGN-TABLE-2026-10-26.md` §6）在这里变成可证伪断言：
+//   ① 10000 行只造一屏 ② 表头不随竖向滚动移动 ③ 表头与数据行逐像素对齐
+//   ④ 未滚动时行区紧贴表头下方（"表头 + 行区简单堆叠"的等价性，为阶段 5 留退路）
+//   ★ 反例自检：① 窗口改成"全部行" ⇒ ①红（6 → 10000）；
+//     ② 表头也吃 offsetY ⇒ ②红；③ 两处各算一次列宽 ⇒ ③红（宽序列不等）；
+//     ④ 把表头高算进内容坐标 ⇒ ④红（行区 offsetY 32 → 64，整条错位）。
+$tableRowsOf = static function (int $count): array {
+    $rows = [];
+    for ($i = 0; $i < $count; $i++) {
+        $rows[] = ['id' => $i, 'name' => '用户 ' . $i, 'city' => '城市 ' . ($i % 7)];
+    }
+
+    return $rows;
+};
+
+$tableBuild = static function (int $count) use ($tableRowsOf): Table {
+    $columns = [
+        TableColumn::make('id', 'ID')->field('id')->width(TableColumnWidth::fixed(60.0)),
+        TableColumn::make('name', '姓名')->field('name')->width(TableColumnWidth::flex(2.0)),
+        TableColumn::make('city', '城市')->field('city')->width(TableColumnWidth::flex(1.0)),
+    ];
+
+    return Table::make($columns, $tableRowsOf($count))
+        ->keyOf(static fn(array $row): int => $row['id'])
+        ->rowHeight(40.0)
+        ->headerHeight(32.0);
+};
+
+/** 挂树 + 按 320×240 布局（smokeContext 的规格） */
+$tableMount = static function (Table $widget): Element {
+    $element = $widget->createElement();
+    $element->mount(null, smokeContext());
+    $element->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
+
+    return $element;
+};
+
+/** 重建 + 重排（`scrollBy` 只标脏，帧末才生效 —— 这里手动推一帧） */
+$tablePump = static function (Element $root): void {
+    $root->rebuild();
+    $root->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
+};
+
+$tableStateOf = static function (Element $root): ?TableState {
+    $hit = findElement(
+        $root,
+        static fn(Element $e): bool => $e instanceof StatefulElement && $e->state() instanceof TableState,
+    );
+    $state = $hit instanceof StatefulElement ? $hit->state() : null;
+
+    return $state instanceof TableState ? $state : null;
+};
+
+$tableBoxOf = static function (Element $root): ?RenderTable {
+    $box = $root->effectiveBoxOf(RenderTable::class);
+
+    return $box instanceof RenderTable ? $box : null;
+};
+
+/** 窗口里实际造了几行（= 行区 `Column` 的直接子节点数） */
+$tableRowsInWindow = static function (Element $root): int {
+    $column = findElement($root, static fn(Element $e): bool => $e->widget() instanceof Column);
+    $n = 0;
+    $column?->visitChildren(static function (Element $child) use (&$n): void {
+        $n++;
+    });
+
+    return $n;
+};
+
+/** `RenderTable` 的两个子盒：[表头, 行区] */
+$tableKidsOf = static function (?RenderTable $box): array {
+    $kids = [];
+    $box?->visitChildren(static function (RenderObject $child) use (&$kids): void {
+        $kids[] = $child;
+    });
+
+    return $kids;
+};
+
+/** 某个盒是否在指定祖先的子树下（命中断言的归属判定） */
+$tableUnder = static function (?RenderBox $hit, ?RenderObject $ancestor): bool {
+    for ($node = $hit; $node !== null; $node = $node->parent()) {
+        if ($node === $ancestor) {
+            return true;
+        }
+    }
+
+    return false;
+};
+
+$tableBig = $tableMount($tableBuild(10000));
+$tableBigState = $tableStateOf($tableBig);
+$tableBigBox = $tableBoxOf($tableBig);
+
+// ① 虚拟化：视口 240 − 表头 32 = 行区可见 208 ⇒ ceil(208/40) = 6 行
+check(
+    'Table · 10000 行只造一屏（行区 208 / 行高 40 ⇒ 6 行，不是 10000）',
+    $tableBigState?->createdRows() === 6 && $tableRowsInWindow($tableBig) === 6,
+    'created=' . ($tableBigState?->createdRows() ?? -1) . ' / 树内=' . $tableRowsInWindow($tableBig),
+);
+
+// ② 可滚上限按**完整行高**算：10000×40 − 208 = 399792
+//    （按窗长算会得到 32 —— 滚动条会假装"只有一屏"）
+$tableMax = $tableBigBox?->maxScroll() ?? -1.0;
+check(
+    'Table · maxScroll = 总行高 − 行区可见高（400000 − 208 = 399792，不是窗长）',
+    $tableMax === 399792.0,
+    (string) $tableMax,
+);
+
+// ③ 列宽三层：avail 320 / fixed 60 / flex 2:1 分 260 ⇒ [60, 173.33, 86.67]
+$tableRowEls = [];
+$tableCollectRows = static function (Element $el) use (&$tableCollectRows, &$tableRowEls): void {
+    if ($el->widget() instanceof Row) {
+        $tableRowEls[] = $el;
+
+        return;
+    }
+
+    $el->visitChildren($tableCollectRows);
+};
+$tableCollectRows($tableBig);
+
+$tableWidthsOf = static function (Element $rowEl): array {
+    $box = $rowEl->renderObject();
+    if (!$box instanceof RenderFlex) {
+        return [];
+    }
+
+    $out = [];
+    foreach ($box->children() as $kid) {
+        $size = $kid->size();
+        $out[] = $size === null ? -1.0 : \round($size->width, 2);
+    }
+
+    return $out;
+};
+
+$tableHeaderWidths = isset($tableRowEls[0]) ? $tableWidthsOf($tableRowEls[0]) : [];
+$tableFirstRowWidths = isset($tableRowEls[1]) ? $tableWidthsOf($tableRowEls[1]) : [];
+
+check(
+    'Table · 列宽三层：fixed 60 + flex 2:1 分 260 ⇒ [60, 173.33, 86.67]',
+    \count($tableHeaderWidths) === 3
+        && abs($tableHeaderWidths[0] - 60.0) < 0.5
+        && abs($tableHeaderWidths[1] - 173.33) < 1.0
+        && abs($tableHeaderWidths[2] - 86.67) < 1.0,
+    \json_encode($tableHeaderWidths),
+);
+
+// ④ 表头与数据行**逐像素对齐**（最容易错的一处：两处各算一次列宽必然漂）
+check(
+    'Table · 表头与数据行的列宽逐像素一致（两处 Row 的子宽序列完全相同）',
+    $tableHeaderWidths !== [] && $tableHeaderWidths === $tableFirstRowWidths,
+    \json_encode([$tableHeaderWidths, $tableFirstRowWidths]),
+);
+
+// ⑤ 未滚：行区紧贴表头下方（"表头 + 行区堆叠"的等价性 —— 阶段 5 的退路证明）
+$tableKids = $tableKidsOf($tableBigBox);
+check(
+    'Table · 未滚动时表头在 y=0、行区在 y=表头高（32）',
+    isset($tableKids[0], $tableKids[1])
+        && $tableKids[0]->offsetY() === 0.0
+        && $tableKids[1]->offsetY() === 32.0,
+    isset($tableKids[0], $tableKids[1])
+        ? sprintf('%s / %s', (string) $tableKids[0]->offsetY(), (string) $tableKids[1]->offsetY())
+        : '子盒缺失',
+);
+
+// ⑥ 滚动 48：表头**不动**，行区上移（32 − (48 − 40) = 24）
+$tableBigState?->scrollBy(48.0);
+$tablePump($tableBig);
+$tableKidsScrolled = $tableKidsOf($tableBoxOf($tableBig));
+check(
+    'Table · 竖向滚动后表头不动（offsetY 恒 0）',
+    isset($tableKidsScrolled[0]) && $tableKidsScrolled[0]->offsetY() === 0.0,
+    isset($tableKidsScrolled[0]) ? (string) $tableKidsScrolled[0]->offsetY() : '缺失',
+);
+check(
+    'Table · 竖向滚动后行区上移（48 ⇒ 24 = 表头高 − 已滚 8）',
+    isset($tableKidsScrolled[1]) && $tableKidsScrolled[1]->offsetY() === 24.0,
+    isset($tableKidsScrolled[1]) ? (string) $tableKidsScrolled[1]->offsetY() : '缺失',
+);
+
+// ⑦ 命中分区：表头区的点进表头子树，行区的点进行区子树
+$tableBoxNow = $tableBoxOf($tableBig);
+$tableHitHeader = $tableBoxNow?->hitTest(100.0, 10.0);
+$tableHitBody = $tableBoxNow?->hitTest(100.0, 230.0);
+check(
+    'Table · 命中分区：表头区的点落在表头子树',
+    isset($tableKidsScrolled[0]) && $tableUnder($tableHitHeader, $tableKidsScrolled[0]),
+    $tableHitHeader === null ? 'miss' : \get_debug_type($tableHitHeader),
+);
+check(
+    'Table · 命中分区：行区的点落在行区子树（不是被表头吞掉）',
+    isset($tableKidsScrolled[1]) && $tableUnder($tableHitBody, $tableKidsScrolled[1]),
+    $tableHitBody === null ? 'miss' : \get_debug_type($tableHitBody),
+);
+
+// ⑧ 斑马行：奇数行才有背景（2 行的小表、**未滚动** ⇒ 子 0 = 第 0 行、子 1 = 第 1 行。
+//   ★ 不能用 `$tableBig`：它在 ⑥ 里已经滚过 48 ⇒ 窗内第 0 个 Element 是**第 1 行**，
+//   断言会反过来（这条正是被自己抓到过一次的）。
+$tableSmall = $tableMount($tableBuild(2));
+$tableColumnBox = findElement(
+    $tableSmall,
+    static fn(Element $e): bool => $e->widget() instanceof Column,
+)?->renderObject();
+$tableLine0 = null;
+$tableLine1 = null;
+if ($tableColumnBox instanceof RenderFlex) {
+    $tableLine0 = $tableColumnBox->children()[0] ?? null;
+    $tableLine1 = $tableColumnBox->children()[1] ?? null;
+}
+check(
+    'Table · 斑马行只给奇数行（第 0 行无背景、第 1 行有）',
+    $tableLine0 !== null && $tableLine1 !== null
+        && $tableLine0->mods()?->hasVisual() === false
+        && $tableLine1->mods()?->hasVisual() === true,
+    sprintf(
+        '%s / %s',
+        $tableLine0?->mods()?->hasVisual() === true ? '有' : '无',
+        $tableLine1?->mods()?->hasVisual() === true ? '有' : '无',
+    ),
+);
+
+// ⑨ 滚动条：内容溢出才画（2 行 ⇒ 不溢出 ⇒ 没有条）
+$tableSmallBox = $tableBoxOf($tableSmall);
+check(
+    'Table · 内容不溢出 ⇒ maxScroll = 0 且不画滚动条',
+    $tableSmallBox?->maxScroll() === 0.0 && $tableSmallBox->thumbRect() === null,
+    'maxScroll=' . (string) ($tableSmallBox?->maxScroll() ?? -1.0),
+);
+check(
+    'Table · 内容溢出 ⇒ 有滚动条（几何与 ScrollView 同一份 `ScrollBarGeometry`）',
+    $tableBigBox !== null && $tableBigBox->thumbRect() !== null,
+    $tableBigBox?->thumbRect() === null ? 'null' : '有',
+);
+check(
+    'Table · RenderTable 实现 ScrollBarHost（滚动条可拖 —— 与 ScrollView 同一接口）',
+    $tableBigBox instanceof \Drift\Layout\ScrollBarHost,
+    $tableBigBox instanceof \Drift\Layout\ScrollBarHost ? 'ok' : '未实现',
+);
+
+// ⑩ 像素级：把盒画到光栅上，验"画出来的位置"（结构断言抓不到平移/裁剪的错位）
+//   ★ 这是 `RenderScrollView` 那次教训的同一条：偏移进 offset 的属性断言能过，
+//     而 paint 期多一次 translate 照样错位 ⇒ 必须有一组判"像素落在哪"的断言。
+//   ★ 清屏色用**洋红**而不是白：表格底 `Surface` 本身就是纯白（`ColorToken`
+//     三套主题都是 0xFFFFFF），白底画布会让"这里画了 Surface"与"这里什么都没画"
+//     无法区分 —— 一条恒真的断言等于没有。
+//   ★ 取 x=305：竖滚动条占 `[320 − 3 − 6, 320 − 3]` = `[311, 317]`，
+//     用 315 会落在条上（踩过一次：表头底被验成 `Muted` 的 110,119,129）。
+//     最后一列是 fixed 96 + Center 对齐，右侧是空白 ⇒ 露出的一定是背景色。
+$tableRasterOf = static function (?RenderBox $box, int $w, int $h): RasterCanvas {
+    $list = new DisplayList();
+    $box?->paint(new RecordingCanvas($list));
+    $canvas = new RasterCanvas($w, $h, Color::fromRgb(0xFF, 0x00, 0xFF), Scale::of(1.0));
+    $list->replay($canvas);
+
+    return $canvas;
+};
+
+$tableTheme = ThemeData::light();
+$tableChromeInk = $tableTheme->color(ColorToken::Chrome);
+$tableSurfaceInk = $tableTheme->color(ColorToken::Surface);
+$tablePaneInk = $tableTheme->color(ColorToken::Pane);
+
+$tablePx = static function (?RasterCanvas $raster, int $x, int $y): string {
+    if ($raster === null) {
+        return '无图';
+    }
+    $c = $raster->pixelAt($x, $y);
+
+    return sprintf('rgb(%d,%d,%d,%d)', $c->r, $c->g, $c->b, $c->a);
+};
+
+$tableSmallRaster = $tableSmallBox === null ? null : $tableRasterOf($tableSmallBox, 320, 240);
+check(
+    'Table · 像素：表头区是表头底色（y=10）',
+    $tableSmallRaster !== null && $tableSmallRaster->pixelAt(305, 10)->equals($tableChromeInk),
+    $tablePx($tableSmallRaster, 305, 10),
+);
+check(
+    'Table · 像素：第 0 行（偶数行）是表格底色、第 1 行（奇数行）是斑马色',
+    $tableSmallRaster !== null
+        && $tableSmallRaster->pixelAt(305, 50)->equals($tableSurfaceInk)
+        && $tableSmallRaster->pixelAt(305, 90)->equals($tablePaneInk),
+    $tablePx($tableSmallRaster, 305, 50) . ' / ' . $tablePx($tableSmallRaster, 305, 90),
+);
+check(
+    'Table · 像素：内容不足一屏时，行区下方的空白仍是表格底色（不是窗口底色透出来）',
+    $tableSmallRaster !== null && $tableSmallRaster->pixelAt(305, 200)->equals($tableSurfaceInk),
+    $tablePx($tableSmallRaster, 305, 200),
+);
+
+// ★★ 关键一条：滚动后**表头区必须还是表头底色** —— 行区上的那一半会被裁掉。
+//   不裁的话首行会画到表头上（表头整个被行盖住），而属性断言全都能过。
+//   ★ 盒必须用**滚动后**重新取的 `$tableBoxNow`：`syncBox()` 每次 build 都造新盒，
+//   ⑥ 之前的 `$tableBigBox` 是滚动前的旧对象（拿它画出来是未滚画面 ⇒ y=40 落在
+//   第 0 行，验成 Surface 白，正是这次踩到的坑）。
+$tableBigRaster = $tableBoxNow === null ? null : $tableRasterOf($tableBoxNow, 320, 240);
+check(
+    'Table · 像素：滚动后表头没被行区盖住（y=10 仍是表头底色，裁剪生效）',
+    $tableBigRaster !== null && $tableBigRaster->pixelAt(305, 10)->equals($tableChromeInk),
+    $tablePx($tableBigRaster, 305, 10),
+);
+check(
+    'Table · 像素：滚动 48 后第 1 行落在 y=40（行区上移 8，斑马色）',
+    $tableBigRaster !== null && $tableBigRaster->pixelAt(305, 40)->equals($tablePaneInk),
+    $tablePx($tableBigRaster, 305, 40),
+);
+
+// ⑩bis 首帧视口宽漂移 ⇒ 自查一帧
+//   ★ 真机踩到的坑：`BuildContext::$width` 是**窗口**宽（根 context 全树共用），
+//     而表格的可用宽还要减掉导航栏 / 卡片 padding。首帧没有盒 ⇒ 只能拿窗口宽当
+//     上界 ⇒ flex 列按偏大的宽分完，行宽超出表盒 ⇒ **右边的列被裁掉**（真机现象：
+//     5 列只看见前 3 列，滚一下才对）。这里把"窗口宽 320 / 实际宽 200"做成夹具，
+//     断言"多要一帧 + 下一帧按真实宽重算 + 收敛后不再空转"。
+$tableHeaderWidthsIn = static function (Element $root) use ($tableWidthsOf): array {
+    $rows = [];
+    $walk = static function (Element $e) use (&$walk, &$rows): void {
+        if ($e->widget() instanceof Row) {
+            $rows[] = $e;
+
+            return;
+        }
+
+        $e->visitChildren($walk);
+    };
+    $walk($root);
+
+    return isset($rows[0]) ? $tableWidthsOf($rows[0]) : [];
+};
+
+$tableDrift = $tableBuild(5);
+$tableDriftEl = $tableDrift->createElement();
+$tableDriftEl->mount(null, smokeContext());   // ctx 宽 320 = 窗口宽
+$tableDriftEl->effectiveBox()?->layout(BoxConstraints::tight(new Size(200.0, 240.0)));
+$tableDriftState = $tableStateOf($tableDriftEl);
+$tableDriftWanted = $tableDriftState?->tickFrame(0.0) === true;
+check(
+    'Table · 首帧视口宽用了窗口宽 ⇒ 下一帧自查并要一帧',
+    $tableDriftWanted,
+    $tableDriftWanted ? '要了' : '没要（差异没被看到 ⇒ 列会一直溢出）',
+);
+
+$tableDriftEl->rebuild();
+$tableDriftEl->effectiveBox()?->layout(BoxConstraints::tight(new Size(200.0, 240.0)));
+$tableDriftWidths = $tableHeaderWidthsIn($tableDriftEl);
+check(
+    'Table · 重建后列宽按真实盒宽分配（200 − 60 = 140 ⇒ 93.33 / 46.67）',
+    \count($tableDriftWidths) === 3
+        && abs($tableDriftWidths[0] - 60.0) < 0.5
+        && abs($tableDriftWidths[1] - 93.33) < 1.0
+        && abs($tableDriftWidths[2] - 46.67) < 1.0,
+    \json_encode($tableDriftWidths),
+);
+$tableDriftAgain = $tableDriftState?->tickFrame(16.0);
+check(
+    'Table · 宽差收敛后不再要帧（不会每帧空转）',
+    $tableDriftAgain === false,
+    $tableDriftAgain === false ? '已收敛' : '仍在要帧',
+);
+
+// ⑪ 列宽的 min/max 夹（第 ② 层）：flex 分到 173 但 maxWidth 100 ⇒ 停在 100
+$tableClamp = $tableMount(
+    Table::make(
+        [
+            TableColumn::make('id', 'ID')->field('id')->width(TableColumnWidth::fixed(60.0)),
+            TableColumn::make('name', '姓名')->field('name')
+                ->width(TableColumnWidth::flex(2.0))->maxWidth(100.0),
+            TableColumn::make('city', '城市')->field('city')->width(TableColumnWidth::flex(1.0)),
+        ],
+        $tableRowsOf(3),
+    )->keyOf(static fn(array $row): int => $row['id'])->rowHeight(40.0)->headerHeight(32.0),
+);
+$tableClampRows = [];
+$tableCollectClamp = static function (Element $el) use (&$tableCollectClamp, &$tableClampRows): void {
+    if ($el->widget() instanceof Row) {
+        $tableClampRows[] = $el;
+
+        return;
+    }
+
+    $el->visitChildren($tableCollectClamp);
+};
+$tableCollectClamp($tableClamp);
+$tableClampWidths = isset($tableClampRows[0]) ? $tableWidthsOf($tableClampRows[0]) : [];
+check(
+    'Table · maxWidth 夹住 flex 分配（173.33 ⇒ 100）',
+    isset($tableClampWidths[1]) && abs($tableClampWidths[1] - 100.0) < 0.5,
+    \json_encode($tableClampWidths),
+);
+
+// ⑪ Fatal 面：四类配置错都必须在挂载期停下（不是静默画错）
+fresh($log);
+[$tableCode, $tableOut] = runCase(__FILE__, 'table-nokey', null);
+check('Table · 缺 keyOf ⇒ 退出码 3', $tableCode === 3, '实际 ' . $tableCode . ' / ' . $tableOut);
+check(
+    'Table · 缺 keyOf 的报错点名 keyOf 并给理由',
+    str_contains(logText($log), 'keyOf'),
+    logText($log) === '' ? '空日志' : '有日志',
+);
+
+fresh($log);
+[$tableCode, $tableOut] = runCase(__FILE__, 'table-width-zero', null);
+check('TableColumnWidth · fixed(0) ⇒ 退出码 3', $tableCode === 3, '实际 ' . $tableCode . ' / ' . $tableOut);
+check(
+    'TableColumnWidth · fixed(0) 的报错说明它是正数约束',
+    str_contains(logText($log), '正数'),
+    logText($log) === '' ? '空日志' : '有日志',
+);
+
+fresh($log);
+[$tableCode, $tableOut] = runCase(__FILE__, 'table-field-and-cell', null);
+check('TableColumn · field + cell 同时声明 ⇒ 退出码 3', $tableCode === 3, '实际 ' . $tableCode . ' / ' . $tableOut);
+check(
+    'TableColumn · field + cell 的报错给出二选一的修法',
+    str_contains(logText($log), '二选一'),
+    logText($log) === '' ? '空日志' : '有日志',
+);
+
+fresh($log);
+[$tableCode, $tableOut] = runCase(__FILE__, 'table-missing-field', null);
+check('TableColumn · field 拼错 ⇒ 退出码 3（不是整列空白）', $tableCode === 3, '实际 ' . $tableCode . ' / ' . $tableOut);
+check(
+    'TableColumn · 缺字段的报错带"第几行 / 缺哪个 / 有哪些"',
+    str_contains(logText($log), 'nmae') && str_contains(logText($log), '现有字段'),
+    logText($log) === '' ? '空日志' : '有日志',
+);
 
 // ── 汇总 + 退出码（2026-10-18）──
 // ★ 以前只打印 FAIL、**从不汇总、也从不非零退出** ⇒ 打印 3 个 FAIL 仍然 exit 0：
