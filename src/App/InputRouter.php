@@ -364,6 +364,19 @@ final class InputRouter
                 return null;
             }
 
+            // ★ 窗口拖动（P1-Stage 1b 无边框窗）：命中链上有 `windowDrag()`
+            //   声明者、且**途中没有"自己处理按下"的控件** ⇒ 这次按下是抓标题栏。
+            //   ★ 排在 `pointerOwner` **之前**：它比"接管按下"更早 —— 拖窗时这次
+            //     按下根本不进控件树（不捕获、不改焦点、不激活）。`WM_NCHITTEST`
+            //     返 `HTCAPTION` 做不到这一点：壳看不见控件树，AppBar 上的按钮会
+            //     连点击一起被拖走。
+            $windowDrag = $this->windowDragOwner($element);
+            if ($windowDrag !== null) {
+                $this->beginWindowDrag($windowDrag);
+
+                return null;
+            }
+
             // ★ W8-2（Slider 立的口子）：命中链上有**声明"按下归我"**的
             //   `pointer()`（`pointer($h, ownsPress: true)`）⇒ 它接管本次按下。
             //
@@ -570,6 +583,69 @@ final class InputRouter
         }
 
         return null;
+    }
+
+    /**
+     * 沿父链找最近的、**声明"窗口拖动"**的控件（P1-Stage 1b 无边框窗）。
+     *
+     * ★ 与 `pointerOwner()` 的关键差别：这里**遇到"自己处理按下"的控件就让位**
+     *   （返回 `null`），不是"找到更近的就换人"。理由 —— 窗口拖动是**兜底**语义：
+     *   只有当这次按下谁也不要（点在 AppBar 的空白处 / 标题文字上）才拖窗。
+     *   若照 `pointerOwner()` 那样"往上继续找"，AppBar 上的按钮会被祖先抢走按下。
+     * ★ 让位判据三条，缺一条都会静默吞掉点击：
+     *   | 判据 | 漏了会怎样 |
+     *   |---|---|
+     *   | `isFocusable()` | 点 AppBar 里的搜索框 ⇒ 拖窗（输入框拿不到焦点）|
+     *   | `Activatable` | 点 AppBar 上的按钮 ⇒ 拖窗（命令不响）|
+     *   | `pointer()` 声明 | Slider / 自绘控件 ⇒ 拖窗（拖不动控件）|
+     * ★ 命中**标题文字**仍算抓标题栏（`Text` 三条都不满足）—— 这是对的：
+     *   真实窗口的标题栏上按下去就是拖窗。
+     */
+    private function windowDragOwner(?Element $element): ?Element
+    {
+        for ($node = $element; $node !== null; $node = $node->parent()) {
+            $widget = $node->widget();
+
+            if ($widget->isFocusable()
+                || $widget instanceof Activatable
+                || $widget->pointerHandlerValue() !== null) {
+                return null;
+            }
+
+            if ($widget->windowDragHandlerValue() !== null) {
+                return $node;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * 调一次窗口拖动闭包（组合根递进来的 `fn () => $window->beginDrag($handle)`）。
+     *
+     * ★ **不捕获指针**：Win32 的 `WM_NCLBUTTONDOWN` 自己 `SetCapture` 并进入模态
+     *   移动循环（阻塞到用户松手）。框架再捕获一次 ⇒ 拖动结束后 `$captureNode`
+     *   还钉在这个控件上，之后每个指针事件都发给它（别的控件点不动）。
+     * ★ 异常 ⇒ 报错但不吞掉整个泵：拖窗失败最多是"这次没拖动"，不该让窗口冻住。
+     */
+    private function beginWindowDrag(Element $owner): void
+    {
+        $handler = $owner->widget()->windowDragHandlerValue();
+
+        if ($handler === null) {
+            return;
+        }
+
+        try {
+            $handler();
+        } catch (\Throwable $e) {
+            Errors::report(sprintf(
+                '窗口拖动：回调未捕获异常 —— %s（%s:%d）',
+                $e->getMessage(),
+                basename($e->getFile()),
+                $e->getLine(),
+            ));
+        }
     }
 
     /**

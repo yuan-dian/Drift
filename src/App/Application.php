@@ -783,9 +783,11 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         }
 
         // ★★ **零视口不是"内容放不下"，是"没有像素可画"**（2026-10-25 用户实测最小化即崩）。
-        //   最小化时 `GetClientRect` 给 0×0，`Win32Screen::viewport()` 诚实地翻成
-        //   `tight(0,0)`；拿它布局时 `Text` 只能每字一行（宽 0 ⇒ 换行），高度约束
-        //   又是 0 ⇒ `RenderText 实际 0.0 × 86.4，最多只能用 0.0 × 0.0` 当场 C6 Fatal。
+        //   最小化时平台报客户区 0×0（`Win32Screen::viewport()` 翻成 `tight(0,0)`；
+        //   **口径由壳保证** —— `IsIconic` 直接报 0，别指望 `GetClientRect` 自己给 0，
+        //   无边框窗的客户区就是那个 160×28 小方块）。拿它布局时 `Text` 只能每字一行
+        //   （宽 0 ⇒ 换行），高度约束又是 0 ⇒ `RenderText 实际 0.0 × 86.4，最多只能用
+        //   0.0 × 0.0` 当场 C6 Fatal。
         //   ★ **泵已经全部跑完**（IO / 任务 / 分片 / 延时 / 动画都在上面），这里只跳过
         //   布局与绘制 —— 动画与 `after()` 在最小化期间照常推进，还原时不跳变。
         //   ★ 不做"缓存上次视口继续画"：画进不可见 surface 纯属浪费，且会让

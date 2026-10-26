@@ -220,6 +220,29 @@ std::vector<unsigned char> g_frame;
 int g_frameW = 0;
 int g_frameH = 0;
 
+/**
+ * 无边框模式（P1-Stage 1b / §质感）。
+ *
+ * ★ 走 `WM_NCCALCSIZE` 而不是 `WS_POPUP`：**样式不变**（仍是
+ *   `WS_OVERLAPPEDWINDOW`）⇒ 贴边吸附 / 快照布局 / 最大化动画全部由系统照旧，
+ *   只是让**客户区覆盖整个窗口**（标题栏不再画）。`WS_POPUP` 会丢掉这些原生行为。
+ * ★ opt-in：`php_drift_win_set_frameless()` 才置位，默认 `false` ⇒ 现有应用零影响。
+ * ★ **进程级开关（不是 per-HWND）**：与 `g_frame` / `g_queue` 同一条单窗口假设 ——
+ *   本仓是单窗口应用；多窗口时这三个全局都要改成 `map<HWND, …>`。
+ */
+bool g_frameless = false;
+/** 顶部拖动带高度（物理像素）：该带内 `WM_NCHITTEST` 返 `HTCAPTION`（可拖窗） */
+int g_dragHeight = 0;
+
+/**
+ * 窗口 DPI（**每显示器**，优先 `GetDpiForWindow`）。
+ *
+ * ★ 前置声明：定义在 1600 行之后（要用 `LoadLibraryW` 动态取符号），而
+ *   `WM_NCHITTEST` 的缩放热区在 1100 行就要按 DPI 换算 —— 不声明就是
+ *   "未声明的标识符"（构建期就炸，不会静默）。
+ */
+UINT dpiOfWindow(HWND hwnd);
+
 // ── UIA 无障碍（§9 / M5，P2 数据流）─────────────────────────────────
 // PHP 把 SemanticsTree 扁平节点推进来（php_drift_win_uia_push）；provider 从
 // 这份数组应答 UIA 客户端。P2 只到"根属性可达"，树导航（Fragment）归 P3。
@@ -1126,6 +1149,76 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
 
+        case WM_NCCALCSIZE: {
+            // ★ 无边框（P1-Stage 1b）：`wp == TRUE` = "窗口尺寸/位置变了，重算
+            //   非客户区"。**返回 0 且不改 `rgrc[0]`** ⇒ 系统把"整个窗口矩形"当客户区
+            //   （标题栏消失），而窗口样式仍是 `WS_OVERLAPPEDWINDOW` ⇒ 贴边吸附 /
+            //   快照布局 / 最大化动画全部由系统照旧。`WS_POPUP` 会丢掉这些原生行为。
+            if (wp != TRUE || !g_frameless) {
+                break;
+            }
+            // ★ **最大化必须扣回"不可见缩放边框"**：系统给最大化窗口的矩形比显示器
+            //   大一圈（四边各约 8px 的 resize frame），原样返回 ⇒ 内容超出屏幕、
+            //   **盖住任务栏**。这是无边框实现最经典的一个坑（真机才看得见）。
+            if (IsZoomed(hwnd) != FALSE) {
+                NCCALCSIZE_PARAMS *p = (NCCALCSIZE_PARAMS *) lp;
+                int fx = GetSystemMetrics(SM_CXSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+                int fy = GetSystemMetrics(SM_CYSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+                p->rgrc[0].left += fx;
+                p->rgrc[0].right -= fx;
+                p->rgrc[0].top += fy;
+                p->rgrc[0].bottom -= fy;
+            }
+            return 0;
+        }
+
+        case WM_NCHITTEST: {
+            // 非无边框 ⇒ 交给系统默认（原生标题栏/边框的命中语义）。
+            if (!g_frameless) {
+                break;
+            }
+            POINT client = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+            ScreenToClient(hwnd, &client);
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+
+            // ★ 最大化：不可缩放 ⇒ 只剩"顶部拖动带"，四边/四角一律 `HTCLIENT`。
+            //   漏了这条，最大化后拖窗口边缘会让系统"还原 + 缩放"（真机怪异）。
+            if (IsZoomed(hwnd) != FALSE) {
+                if (g_dragHeight > 0 && client.y < g_dragHeight) {
+                    return HTCAPTION;
+                }
+                return HTCLIENT;
+            }
+
+            // 边缘缩放热区按 DPI 缩放（6 逻辑像素）：不缩放的话 200% 下只有 3 逻辑像素宽。
+            UINT dpi = dpiOfWindow(hwnd);
+            if (dpi == 0) {
+                dpi = 96;
+            }
+            const int edge = (int) MulDiv(6, (int) dpi, 96);
+            const bool inLeft   = client.x < edge;
+            const bool inRight  = client.x >= rc.right - edge;
+            const bool inTop    = client.y < edge;
+            const bool inBottom = client.y >= rc.bottom - edge;
+            // 四角优先（对角缩放）
+            if (inTop && inLeft)     { return HTTOPLEFT; }
+            if (inTop && inRight)    { return HTTOPRIGHT; }
+            if (inBottom && inLeft)  { return HTBOTTOMLEFT; }
+            if (inBottom && inRight) { return HTBOTTOMRIGHT; }
+            if (inLeft)              { return HTLEFT; }
+            if (inRight)             { return HTRIGHT; }
+            if (inBottom)            { return HTBOTTOM; }
+            // 顶部拖动带（`setFrameless()` 的第 2 参）⇒ 拖窗不吞按钮点击。
+            // ★ 本仓应用走**另一条路**：`AppBar::windowDrag()` 由框架精确判断
+            //   "命中的是顶条自己而不是按钮"，所以组合根传 `dragHeight = 0`
+            //   （这条原生带留给"不画顶条的应用"当兜底）。
+            if (g_dragHeight > 0 && client.y < g_dragHeight) {
+                return HTCAPTION;
+            }
+            return HTCLIENT;
+        }
+
         case WM_SIZE: {
             int w = LOWORD(lp);
             int h = HIWORD(lp);
@@ -1822,6 +1915,64 @@ void php_drift_win_set_opacity(Int hwnd, Float alpha) {
     SetLayeredWindowAttributes(target, 0, a, LWA_ALPHA);
 }
 
+/**
+ * 无边框模式（P1-Stage 1b / §质感）。`dragHeight` = 顶部拖动带高度（**物理**像素）。
+ *
+ * ★ opt-in：调用即置位 `g_frameless`。走 `WM_NCCALCSIZE` 让客户区=整窗（见
+ *   WndProc），**样式不变** ⇒ 原生贴边吸附 / 快照布局 / 最大化动画不丢。
+ * ★ 置位后必须 `SWP_FRAMECHANGED` 让系统重算非客户区（否则要等下一次尺寸变化）。
+ */
+void php_drift_win_set_frameless(Int hwnd, Int dragHeight) {
+    HWND target = (HWND)(INT_PTR)hwnd;
+    if (target == NULL) {
+        return;
+    }
+    g_frameless = true;
+    int dh = (int)dragHeight;
+    g_dragHeight = dh < 0 ? 0 : dh;
+
+    SetWindowPos(target, NULL, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+
+    int corner = DWMWCP_ROUND;
+    DwmSetWindowAttribute(target, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(corner));
+}
+
+/**
+ * 由**应用内容**发起窗口拖动（无边框窗没有原生标题栏可抓）。
+ *
+ * ★ 消费者是 `Drift\Widget\Widget::windowDrag()`：框架在**命中的是声明者自己**
+ *   （不是它的子按钮/输入框）时调一次。走 `WM_NCHITTEST` 返 `HTCAPTION` 做不到
+ *   这种精确度 —— 壳看不见控件树，顶条上的按钮会连点击一起被拖走。
+ * ★ 实现是 Windows 惯例组合：`ReleaseCapture()` + `WM_NCLBUTTONDOWN/HTCAPTION`
+ *   ⇒ 交给系统走**原生标题栏拖动**（贴边吸附随之生效）。
+ * ★ **阻塞**到用户松手（模态移动循环）—— 与原生标题栏一致，调用方不必等。
+ */
+void php_drift_win_begin_drag(Int hwnd) {
+    HWND target = (HWND)(INT_PTR)hwnd;
+    if (target == NULL) {
+        return;
+    }
+    POINT pt;
+    GetCursorPos(&pt);
+    ReleaseCapture();
+    SendMessageW(target, WM_NCLBUTTONDOWN, HTCAPTION, MAKELPARAM(pt.x, pt.y));
+}
+
+void php_drift_win_minimize(Int hwnd) {
+    HWND target = (HWND)(INT_PTR)hwnd;
+    if (target != NULL) {
+        ShowWindow(target, SW_MINIMIZE);
+    }
+}
+
+void php_drift_win_maximize_toggle(Int hwnd) {
+    HWND target = (HWND)(INT_PTR)hwnd;
+    if (target != NULL) {
+        ShowWindow(target, IsZoomed(target) ? SW_RESTORE : SW_MAXIMIZE);
+    }
+}
+
 void php_drift_win_set_cursor(Int hwnd, Int shape) {
     // ★ `shape` 是 `Drift\Input\CursorShape` 的 value（`src/Input/CursorShape.php`）；
     //   名字→`IDC_*` 的映射只有 `cursorIdForShape()` 一处 —— 两边必须同步改。
@@ -1896,6 +2047,22 @@ Array php_drift_win_client_size(Int hwnd) {
     RECT rect;
     if (target == NULL || !GetClientRect(target, &rect)) {
         fillGeomFromCache(out);
+        return out;
+    }
+
+    // ★★ **最小化 ⇒ 报 0×0**（2026-10-26，无边框窗撞出来的真机 bug）。
+    //   最小化后窗口是经典的 160×28 小方块。**有标题栏时**客户区高度被标题栏
+    //   扣成 0（≈144×0），`Application::frame()` 的零视口保护正好兜住；
+    //   **无边框窗**客户区 = 整窗 = 160×28 ⇒ 保护不触发 ⇒ 框架按 160×28 布局，
+    //   顶条只能给标题文字 136×16（自然高 21.6）⇒ C6 Fatal。
+    //   真机现象：点自绘的最小化按钮 ⇒ 窗口确实最小化了，随后弹
+    //   "Drift FATAL / RenderText 画出的尺寸超出父容器给的可用空间：72.0×21.6，
+    //   最多只能用 136.0×16.0"。
+    //   ⇒ 这里**诚实地**报 0：最小化的窗口没有"能画的客户区"。这与
+    //     `position()` 在最小化时返 null 是同一条语义（都是"此刻不可信"）。
+    if (IsIconic(target) != FALSE) {
+        out.set("w", (Int)0);
+        out.set("h", (Int)0);
         return out;
     }
 

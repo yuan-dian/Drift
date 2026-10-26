@@ -72,6 +72,28 @@ function drift_win_set_min_size(int $hwnd, int $width, int $height): void {}
 function drift_win_set_opacity(int $hwnd, float $alpha): void {}
 
 /**
+ * 无边框模式（P1-Stage 1b / §质感）。`$dragHeight` = 顶部拖动带高度（**物理**像素）。
+ *
+ * ★ 走 `WM_NCCALCSIZE`（客户区=整窗）而**不改窗口样式** ⇒ 贴边吸附 / 快照布局 /
+ *   最大化动画全部由系统保留（`WS_POPUP` 会丢掉它们）。opt-in：调用才置位。
+ * ★ 去标题栏后**原生最小化/最大化/关闭按钮一并消失** ⇒ 应用要在 AppBar 里自绘
+ *   窗口控制按钮（`drift_win_minimize` / `drift_win_maximize_toggle` / `drift_win_close`）。
+ */
+function drift_win_set_frameless(int $hwnd, int $dragHeight): void {}
+
+/**
+ * 由应用内容发起窗口拖动（无边框窗没有原生标题栏可抓）。
+ *
+ * ★ 实现：`ReleaseCapture()` + `WM_NCLBUTTONDOWN/HTCAPTION` ⇒ 交给系统走原生
+ *   标题栏拖动（贴边吸附随之生效）。消费者 = `RenderAppBar`（命中自己而非子按钮时）。
+ */
+function drift_win_begin_drag(int $hwnd): void {}
+
+function drift_win_minimize(int $hwnd): void {}
+
+function drift_win_maximize_toggle(int $hwnd): void {}
+
+/**
  * 客户区尺寸（**物理**像素，`['w'=>int,'h'=>int]`；失败为空数组）。
  *
  * ★ 返回**物理**像素而不是逻辑：逻辑↔物理的换算**只能发生一次**（§6.1），

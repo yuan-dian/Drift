@@ -70,6 +70,29 @@ interface WindowHost
     public function setOpacity(int $windowHandle, float $opacity): void;
 
     /**
+     * 无边框模式（P1-Stage 1b / §质感）。`$dragHeight` = 顶部拖动带高度（**逻辑**像素）。
+     *
+     * ★ **平台能力，可 no-op**。Win32 走 `WM_NCCALCSIZE`（客户区=整窗，样式不变）
+     *   ⇒ 原生贴边吸附 / 快照布局 / 最大化动画保留。
+     * ★ 去标题栏会**一并去掉原生最小化/最大化/关闭按钮** ⇒ 应用要在 AppBar 里自绘，
+     *   接 `minimize()` / `maximizeToggle()` / `close()`。
+     */
+    public function setFrameless(int $windowHandle, int $dragHeight): void;
+
+    /**
+     * 由应用内容发起窗口拖动（无边框窗没有原生标题栏可抓）。
+     *
+     * ★ 消费者是 `AppBar`（命中自己而非子按钮时调）。平台能力，可 no-op。
+     */
+    public function beginDrag(int $windowHandle): void;
+
+    /** 最小化（无边框窗自绘的窗口按钮接这里；非无边框时等价原生按钮） */
+    public function minimize(int $windowHandle): void;
+
+    /** 最大化 ⇄ 还原（无边框窗自绘的窗口按钮接这里） */
+    public function maximizeToggle(int $windowHandle): void;
+
+    /**
      * 客户区尺寸（**逻辑**像素；物理像素的换算归 `Screen::scale()`） */
     public function clientSize(int $windowHandle): Size;
 

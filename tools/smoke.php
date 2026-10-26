@@ -105,6 +105,7 @@ use Drift\Dev\Smoke\App\PressLabApplication;
 use Drift\Dev\Smoke\App\SemValueApplication;
 use Drift\Dev\Smoke\App\TfApplication;
 use Drift\Dev\Smoke\App\TfLabeledApplication;
+use Drift\Dev\Smoke\App\TitleBarLabApplication;
 use Drift\Dev\Smoke\App\ZeroViewportApplication;
 use Drift\Dev\Smoke\App\ThemeApplication;
 use Drift\Dev\Smoke\App\PointerApplication;
@@ -7719,6 +7720,41 @@ check(
 );
 check('AppBar · chrome 底有墨（底色真的画了）', inkCount(spinCanvas($barBox, 300, 60)) > 0);
 
+// AppBar::windowButtons()（P1-Stage 1b 无边框窗）：三个窗口按钮 + 标准命令名。
+// ★ 命令名是 `AppBar` 与组合根 `WindowCommands` 之间的**唯一契约** —— 写错一个字
+//   的现象是"按钮点了没反应"（没人注册那个命令），不报错、不写日志。
+// ★ 判据落在**顺序**上（最小化 / 最大化 / 关闭 从左到右），且必须是**最后三个**、
+//   前面紧跟弹性占位（否则按钮不贴右边）。
+$wbBar = AppBar::make()->title('条')->windowButtons();
+$wbKids = $wbBar->barKids();
+$wbNames = [];
+foreach ($wbKids as $wbKid) {
+    if ($wbKid instanceof Button) {
+        $wbNames[] = $wbKid->commandName();
+    }
+}
+check(
+    'AppBar · windowButtons ⇒ 三个窗口按钮（标准命令名，顺序固定）',
+    $wbNames === ['window.minimize', 'window.maximize', 'window.close'],
+    'names=' . implode(',', array_map(static fn(?string $n): string => (string) $n, $wbNames)),
+);
+check(
+    'AppBar · windowButtons ⇒ 按钮贴右边（前面紧跟弹性占位，且是最后三个子项）',
+    count($wbKids) === 5
+        && $wbKids[1] instanceof Spacer
+        && $wbKids[2] instanceof IconButton
+        && $wbKids[4] instanceof IconButton,
+    'kids=' . count($wbKids),
+);
+check(
+    'AppBar · 不声明 windowButtons ⇒ 一个窗口按钮都不画（有原生标题栏的窗口不该有两排）',
+    array_filter(
+        AppBar::make()->title('条')->barKids(),
+        static fn($k): bool => $k instanceof Button && str_starts_with((string) $k->commandName(), 'window.'),
+    ) === [],
+    '意外画了窗口按钮',
+);
+
 // AppBar::skipFocus() ⇒ 整组工具按钮不进 Tab 序（§A.3.4）
 $skipRoot = AppBar::make()->children([
     NavButton::make('a')->command('x'),
@@ -11449,6 +11485,96 @@ check(
     $pl->keyLog === ['Right', 'Enter'],
     'keyLog=' . implode(',', $pl->keyLog),
 );
+
+// i. ★★ 顶条当标题栏（P1-Stage 1b 无边框窗）
+//
+// 失败形态是**静默吞掉点击**（按钮点了没反应），不是崩溃 —— 所以判据必须两边
+// 都钉住：该拖的（标题文字 / 顶条空白）真拖，不该拖的（按钮 / 自绘控件）真不拖。
+// 只验"点空白能拖"无法发现按钮被吞。
+$tb = new TitleBarLabApplication();
+$tb->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(320.0, 400.0)));
+
+$tbBarEl = findElement(
+    $tb->root(),
+    static fn(Element $e): bool => $e->widget()->windowDragHandlerValue() !== null,
+);
+$tbTitleEl = findElement(
+    $tb->root(),
+    static fn(Element $e): bool => $e->widget() instanceof Text && $e->widget()->content() === '用户管理',
+);
+$tbBtnEl = findElement(
+    $tb->root(),
+    static fn(Element $e): bool => $e->widget() instanceof Button,
+);
+$tbPaintEl = findElement(
+    $tb->root(),
+    static fn(Element $e): bool => $e->widget()->pointerOwnsPressValue(),
+);
+
+[$tbTx, $tbTy] = $plCenter($tbTitleEl);
+[$tbBx, $tbBy] = $plCenter($tbBtnEl);
+[$tbPx, $tbPy] = $plCenter($tbPaintEl);
+
+// i-1. 点标题文字 ⇒ 拖窗（真实窗口的标题栏上按下去就是拖窗，文字不是例外）
+$tb->dispatchInput(PointerEvent::down($tbTx, $tbTy));
+check(
+    'TitleBar · 点标题文字 ⇒ 开始拖窗（沿父链找到顶条的 windowDrag 声明）',
+    $tb->dragStarts === 1,
+    'dragStarts=' . $tb->dragStarts,
+);
+check(
+    'TitleBar · 拖窗**不捕获指针**（拖窗的鼠标循环归平台，框架再捕获会锁死后续事件）',
+    $tb->captureNode() === null,
+    'captured=' . ($tb->captureNode() === null ? 'no' : 'yes'),
+);
+check(
+    'TitleBar · 拖窗**不改焦点**（抓标题栏不是"选中"）',
+    $tb->focusedElement() === null,
+    'focused=' . ($tb->focusedElement() === null ? 'none' : 'other'),
+);
+
+// i-2. 拖动期间后续 move / up 不该再触发一次（否则每帧重开一次模态移动循环）
+$tb->dispatchInput(PointerEvent::move($tbTx + 30.0, $tbTy + 12.0));
+$tb->dispatchInput(PointerEvent::up($tbTx + 30.0, $tbTy + 12.0));
+check(
+    'TitleBar · 一次按下只拖一次（move / up 不重复触发）',
+    $tb->dragStarts === 1,
+    'dragStarts=' . $tb->dragStarts,
+);
+
+// i-3. 点顶条里的按钮 ⇒ **不拖窗**，命令照发（Activatable 让位）
+$tb->dispatchInput(PointerEvent::down($tbBx, $tbBy));
+check(
+    'TitleBar · 点顶条按钮 ⇒ 不拖窗且命令照发（可激活控件让位）',
+    $tb->dragStarts === 1 && $tb->actionPresses === 1,
+    'dragStarts=' . $tb->dragStarts . ' actionPresses=' . $tb->actionPresses,
+);
+$tb->dispatchInput(PointerEvent::up($tbBx, $tbBy));
+
+// i-4. 点顶条里的自绘控件（`pointer()` 声明者）⇒ **不拖窗**（第三让位判据）
+$tb->dispatchInput(PointerEvent::down($tbPx, $tbPy));
+check(
+    'TitleBar · 点顶条里的 pointer() 声明者 ⇒ 不拖窗（自绘控件让位）',
+    $tb->dragStarts === 1 && $tb->paintedLog === ['down'],
+    'dragStarts=' . $tb->dragStarts . ' paintedLog=' . implode(',', $tb->paintedLog),
+);
+$tb->dispatchInput(PointerEvent::up($tbPx, $tbPy));
+
+// i-5. 反例：点在顶条**外面**（内容区）⇒ 不拖窗
+//      ★ 没有这一条，`windowDragOwner()` 写成"沿父链一路找"也能过前四条
+//        （内容区往上就是根，找不到声明者 —— 但实现若写成"无条件返回根"就露馅）。
+$tbOutEl = findElement(
+    $tb->root(),
+    static fn(Element $e): bool => $e->widget() instanceof Text && $e->widget()->content() === '内容',
+);
+[$tbOx, $tbOy] = $plCenter($tbOutEl);
+$tb->dispatchInput(PointerEvent::down($tbOx, $tbOy));
+check(
+    'TitleBar · 反例：点在顶条外 ⇒ 不拖窗（声明只在顶条子树内生效）',
+    $tb->dragStarts === 1,
+    'dragStarts=' . $tb->dragStarts,
+);
+$tb->dispatchInput(PointerEvent::up($tbOx, $tbOy));
 
 // h2. ★★ `keyboard()` 沿**父链**找最近的声明者（2026-10-24 修）
 //     此前只读焦点控件自己的 widget ⇒ 包裹式控件的声明是**死的**，而

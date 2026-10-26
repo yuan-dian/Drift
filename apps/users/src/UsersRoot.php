@@ -42,6 +42,15 @@ final class UsersRoot extends StatelessWidget
     /** @var null|callable(Menu, ?\Drift\Widget\Element): void */
     private $menuOpener = null;
 
+    /**
+     * 窗口拖动闭包（P1-Stage 1b 无边框窗）；`null` = 有原生标题栏，顶条不是标题栏。
+     *
+     * ★ 非 null 就**同时**意味着两件事：顶条可拖动 + 画三个窗口按钮。它们不是
+     *   两个开关而是同一件事的两面 —— "无边框"这个事实的两个后果。分成两个
+     *   注入点会让"可拖但没按钮"（拖得动、关不掉）这种状态写得出来。
+     */
+    private ?\Closure $windowDrag = null;
+
     public function __construct(
         private readonly AppStore $app,
         private readonly UserStore $users,
@@ -74,27 +83,47 @@ final class UsersRoot extends StatelessWidget
         return $this->menuOpener;
     }
 
+    /**
+     * 声明"顶条就是标题栏"（P1-Stage 1b 无边框窗）：可拖窗 + 画窗口按钮。
+     *
+     * @param \Closure(): void $drag 组合根递的 `fn () => $window->beginDrag($handle)`
+     */
+    public function windowDrag(\Closure $drag): static
+    {
+        $this->mutate();
+        $this->windowDrag = $drag;
+
+        return $this;
+    }
+
     public function build(BuildContext $ctx): Widget
     {
         $theme = $this->app->systemTheme() === SystemTheme::Dark
             ? ThemeData::dark()
             : ThemeData::light();
 
+        $bar = AppBar::make()->title('用户管理')->children([
+            NavButton::make('列表')->command('nav.users'),
+            NavButton::make('注册')->command('nav.signup'),
+            NavButton::make('设置')->command('nav.settings'),
+            MenuBar::make()->menus([
+                Menu::make('文件')->items([
+                    MenuItem::make('刷新')->chord(KeyChord::ctrl('R'))->command('users.refresh'),
+                    MenuItem::make('新建')->chord(KeyChord::ctrl('N'))->command('nav.signup'),
+                    MenuItem::separator(),
+                    MenuItem::make('退出')->command('app.quit'),
+                ])->onOpen($this->menuOpener ?? static function (Menu $m, ?\Drift\Widget\Element $a): void {
+                }),
+            ]),
+        ]);
+
+        // ★ 无边框窗：顶条当标题栏（可拖 + 三个窗口按钮）。两件事同源，见字段注释。
+        if ($this->windowDrag !== null) {
+            $bar->windowDrag($this->windowDrag)->windowButtons(true);
+        }
+
         return ThemeScope::make($theme, Dock::make()
-            ->top(AppBar::make()->title('用户管理')->children([
-                NavButton::make('列表')->command('nav.users'),
-                NavButton::make('注册')->command('nav.signup'),
-                NavButton::make('设置')->command('nav.settings'),
-                MenuBar::make()->menus([
-                    Menu::make('文件')->items([
-                        MenuItem::make('刷新')->chord(KeyChord::ctrl('R'))->command('users.refresh'),
-                        MenuItem::make('新建')->chord(KeyChord::ctrl('N'))->command('nav.signup'),
-                        MenuItem::separator(),
-                        MenuItem::make('退出')->command('app.quit'),
-                    ])->onOpen($this->menuOpener ?? static function (Menu $m, ?\Drift\Widget\Element $a): void {
-                    }),
-                ]),
-            ]))
+            ->top($bar)
             // ★ 传 store + 切片函数，由 StatusBar 内部 select 订阅
             ->bottom(StatusBar::make()
                 ->source($this->app)

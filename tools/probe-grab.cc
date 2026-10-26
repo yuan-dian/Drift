@@ -122,6 +122,29 @@ struct Options {
     int cursorY = 0;
     bool mouseDrag = false;        // --mdrag=x1,y1,x2,y2（**客户区**坐标：按下-移动-抬起）
     int mdragX1 = 0, mdragY1 = 0, mdragX2 = 0, mdragY2 = 0;
+    /**
+     * `--rdrag=x1,y1,x2,y2`：**真实**鼠标拖动（客户区坐标）。
+     *
+     * ★ 与 `--mdrag` 的本质差别：`--mdrag` 用 `PostMessage` 合成 `WM_LBUTTONDOWN`，
+     *   **物理按键状态没变**（`GetKeyState(VK_LBUTTON)` 仍为 0）⇒ 系统一进入
+     *   "标题栏移动/缩放"的**模态循环**就立刻退出（它靠真实按键状态跟踪）⇒
+     *   窗口纹丝不动，而消息确实送到了 PHP。验"拖窗 / 拖边框"必须走这条。
+     * ★ 需要目标窗在**前台**（见 `activateWindow`）。
+     */
+    bool realDrag = false;
+    int rdragX1 = 0, rdragY1 = 0, rdragX2 = 0, rdragY2 = 0;
+    /**
+     * `--dump-all`：枚举该进程的**全部顶层窗口**（标题 / 类名 / 矩形），并逐个打印
+     * 其**子控件文本**。
+     *
+     * ★ 为什么要它：应用抛 Fatal 时会弹一个 `Drift FATAL` 消息框，而那个框
+     *   **不是**主窗口 —— `--pid` / `--auto` 都解析到主窗口上，抓图只看到一片白。
+     *   报错文案在消息框的 `Static` 子控件里，只能这样读出来。
+     * ★ 打印完直接退出（不抓图）。
+     */
+    bool dumpAll = false;
+    /** `--restore`：`ShowWindow(SW_RESTORE)`（验"最小化 → 还原"这条往返） */
+    bool restoreFirst = false;
     bool dragResize = false;       // --drag=x1,y1,x2,y2（屏幕坐标；从左下角拖到新尺寸）
     int dragX1 = 0, dragY1 = 0, dragX2 = 0, dragY2 = 0;
     int dragSteps = 12;            // 拖动分几步发 WM_MOUSEMOVE（模拟真实拖动节奏）
@@ -236,6 +259,52 @@ int countOwnerWindows(DWORD pid)
     ::EnumWindows(&countWindowsProc, reinterpret_cast<LPARAM>(&context));
     return context.count;
 }
+
+// ── `--dump-all` 的枚举（诊断 FATAL 消息框文案用）────────────────────
+BOOL CALLBACK dumpChildProc(HWND hwnd, LPARAM)
+{
+    wchar_t cls[128] = {0};
+    ::GetClassNameW(hwnd, cls, 128);
+    wchar_t text[4096] = {0};
+    ::GetWindowTextW(hwnd, text, 4096);
+    // ★ 换行折成 `|`：MessageBox 的正文是多行的，直接打会把后续行和别的窗口输出混在一起。
+    for (wchar_t* p = text; *p != L'\0'; ++p) {
+        if (*p == L'\r' || *p == L'\n') {
+            *p = L'|';
+        }
+    }
+    std::printf("    child class=%ls text=[%ls]\n", cls, text);
+    return TRUE;
+}
+
+BOOL CALLBACK dumpWindowProc(HWND hwnd, LPARAM param)
+{
+    const DWORD pid = static_cast<DWORD>(param);
+    DWORD owner = 0;
+    ::GetWindowThreadProcessId(hwnd, &owner);
+    if (owner != pid) {
+        return TRUE;
+    }
+    wchar_t cls[128] = {0};
+    ::GetClassNameW(hwnd, cls, 128);
+    wchar_t title[512] = {0};
+    ::GetWindowTextW(hwnd, title, 512);
+    RECT rc{0, 0, 0, 0};
+    ::GetWindowRect(hwnd, &rc);
+    std::printf("  hwnd=0x%llx vis=%d icon=%d rect=%ld,%ld,%ld,%ld class=%ls title=[%ls]\n",
+                static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(hwnd)),
+                ::IsWindowVisible(hwnd) ? 1 : 0, ::IsIconic(hwnd) ? 1 : 0,
+                rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, cls, title);
+    ::EnumChildWindows(hwnd, &dumpChildProc, 0);
+    return TRUE;
+}
+
+void dumpWindowsOf(DWORD pid)
+{
+    std::printf("pid=%lu\n", static_cast<unsigned long>(pid));
+    ::EnumWindows(&dumpWindowProc, static_cast<LPARAM>(pid));
+}
+
 
 HWND waitWindow(DWORD pid, int waitMs)
 {
@@ -737,6 +806,39 @@ int wmain(int argc, wchar_t** argv)
             options.mdragY1 = parts[1];
             options.mdragX2 = parts[2];
             options.mdragY2 = parts[3];
+        } else if (key == L"dump-all") {
+            options.dumpAll = value != L"0";
+        } else if (key == L"restore") {
+            options.restoreFirst = value != L"0";
+        } else if (key == L"rdrag") {
+            // x1,y1,x2,y2 —— **客户区**坐标，真实鼠标按键（见 `realDrag` 注释）
+            int parts[4] = {0, 0, 0, 0};
+            int index = 0;
+            size_t start = 0;
+            for (size_t i = 0; i <= value.size(); ++i) {
+                if (i == value.size() || value[i] == L',') {
+                    long long parsed = 0;
+                    if (!parseInt(value.substr(start, i - start), parsed)) {
+                        std::fprintf(stderr, "err=--rdrag wants x1,y1,x2,y2\n");
+                        return 2;
+                    }
+                    if (index >= 4) {
+                        std::fprintf(stderr, "err=--rdrag wants exactly 4 numbers\n");
+                        return 2;
+                    }
+                    parts[index++] = static_cast<int>(parsed);
+                    start = i + 1;
+                }
+            }
+            if (index != 4) {
+                std::fprintf(stderr, "err=--rdrag wants exactly 4 numbers\n");
+                return 2;
+            }
+            options.realDrag = true;
+            options.rdragX1 = parts[0];
+            options.rdragY1 = parts[1];
+            options.rdragX2 = parts[2];
+            options.rdragY2 = parts[3];
         } else if (key == L"drag") {
             // dx,dy —— 从窗口右下角起算的**放大量**（正=拖大、负=拖小）。
             // 走 WM_NCLBUTTONDOWN(HTBOTTOMRIGHT) + 若干 WM_MOUSEMOVE + WM_LBUTTONUP，
@@ -844,6 +946,21 @@ int wmain(int argc, wchar_t** argv)
         return count < 0 ? 3 : 0;
     }
 
+    if (options.dumpAll) {
+        // 不要求"有可用窗口"—— FATAL 框出现时主窗口可能已经不可用。
+        if (options.pid != 0) {
+            dumpWindowsOf(options.pid);
+        } else if (!options.image.empty()) {
+            for (const DWORD candidate : resolveAllImages(options.image)) {
+                dumpWindowsOf(candidate);
+            }
+        } else {
+            std::fprintf(stderr, "err=--dump-all needs --pid or --image\n");
+            return 2;
+        }
+        return 0;
+    }
+
     HWND hwnd = nullptr;
     if (options.pid == 0) {
         if (options.autoResolve && !options.image.empty()) {
@@ -883,6 +1000,13 @@ int wmain(int argc, wchar_t** argv)
         return 2;
     }
     std::printf("hwnd=0x%llx\n", static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(hwnd)));
+    if (options.restoreFirst) {
+        // 最小化 → 还原：`SW_RESTORE` 会带一条真实尺寸的 `WM_SIZE` ⇒ 应用重排。
+        ::ShowWindow(hwnd, SW_RESTORE);
+        ::SetForegroundWindow(hwnd);
+        ::Sleep(600);
+        std::printf("restored=1\n");
+    }
     if (options.printForeground) {
         printForegroundInfo("fg0", hwnd);
     }
@@ -1011,6 +1135,36 @@ int wmain(int argc, wchar_t** argv)
                        MAKELPARAM(static_cast<WORD>(options.mdragX2), static_cast<WORD>(options.mdragY2)));
         std::printf("mdrag=%d,%d,%d,%d\n", options.mdragX1, options.mdragY1, options.mdragX2, options.mdragY2);
         ::Sleep(static_cast<DWORD>(options.wheelWaitMs));
+    }
+    if (options.realDrag) {
+        // 真实鼠标拖动：物理按键按下 → 分步挪光标 → 抬起。
+        // ★ 与 `--mdrag` 的分工见 `realDrag` 的字段注释：验"系统模态循环"必须走这条。
+        activateWindow(hwnd);
+
+        // ★★ **先一次性换算到屏幕坐标，再按屏幕步进**：窗口一移动，`ClientToScreen`
+        //   的结果就跟着变 ⇒ 每步都重算客户区→屏幕会形成正反馈（窗口越跑越远，
+        //   实测拖 100px 跑了 646px）。起点/终点只算一次，之后全是屏幕坐标。
+        POINT p1{options.rdragX1, options.rdragY1};
+        POINT p2{options.rdragX2, options.rdragY2};
+        ::ClientToScreen(hwnd, &p1);
+        ::ClientToScreen(hwnd, &p2);
+
+        ::SetCursorPos(p1.x, p1.y);
+        ::Sleep(120);   // 让 TrackMouseEvent 先看到"指针在窗内"
+        ::mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+        ::Sleep(120);   // 让应用处理完 down（拖窗在这里进入系统模态循环）
+
+        const int steps = 12;
+        for (int s = 1; s <= steps; ++s) {
+            ::SetCursorPos(p1.x + (p2.x - p1.x) * s / steps,
+                           p1.y + (p2.y - p1.y) * s / steps);
+            ::Sleep(40);
+        }
+        ::Sleep(80);
+        ::mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+        ::Sleep(250);
+        std::printf("rdrag=%d,%d,%d,%d\n", options.rdragX1, options.rdragY1,
+                    options.rdragX2, options.rdragY2);
     }
     if (options.wheel) {
         POINT pt{options.wheelX, options.wheelY};

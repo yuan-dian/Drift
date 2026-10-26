@@ -11,12 +11,16 @@ use Drift\Geometry\Size;
 use Drift\Input\CursorShape;
 use Drift\Platform\WindowHost;
 
+use function drift_win_begin_drag;
 use function drift_win_client_size;
 use function drift_win_close;
 use function drift_win_create;
 use function drift_win_dpi;
 use function drift_win_is_maximized;
+use function drift_win_maximize_toggle;
+use function drift_win_minimize;
 use function drift_win_place_window;
+use function drift_win_set_frameless;
 use function drift_win_set_min_size;
 use function drift_win_set_opacity;
 use function drift_win_set_cursor;
@@ -102,6 +106,40 @@ final class Win32WindowHost implements WindowHost
     public function setOpacity(int $windowHandle, float $opacity): void
     {
         drift_win_set_opacity($windowHandle, $opacity);
+    }
+
+    /**
+     * 无边框模式（P1-Stage 1b）。`$dragHeight` 是**逻辑**像素，这里折成物理。
+     *
+     * ★ 换算口径与 `setMinSize()` 完全一致（`Scale::fromDpi()`，§6.1 的量化点
+     *   只有一个）—— 直接把手感尺寸交给壳会让 125% 缩放下拖动带窄 20%。
+     * ★ 壳侧走 `WM_NCCALCSIZE`（样式不变、客户区=整窗），所以**调用后客户区会
+     *   变大**（多出原标题栏高度）。组合根必须在 `setFrameless()` **之后**再读
+     *   `clientSize()`，否则第一帧按旧尺寸排版（然后被 `WM_SIZE` 纠正，闪一下）。
+     */
+    public function setFrameless(int $windowHandle, int $dragHeight): void
+    {
+        $dpr = Scale::fromDpi((float) drift_win_dpi($windowHandle))->dpr;
+        if ($dpr <= 0.0) {
+            $dpr = 1.0;
+        }
+
+        drift_win_set_frameless($windowHandle, (int) round($dragHeight * $dpr));
+    }
+
+    public function beginDrag(int $windowHandle): void
+    {
+        drift_win_begin_drag($windowHandle);
+    }
+
+    public function minimize(int $windowHandle): void
+    {
+        drift_win_minimize($windowHandle);
+    }
+
+    public function maximizeToggle(int $windowHandle): void
+    {
+        drift_win_maximize_toggle($windowHandle);
     }
 
     /**

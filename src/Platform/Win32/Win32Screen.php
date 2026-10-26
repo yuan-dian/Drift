@@ -51,8 +51,13 @@ final class Win32Screen implements Screen
         // clientSize() 已经是逻辑像素（换算在 Win32WindowHost 里走 Scale）
         $size = $this->windows->clientSize($handle);
 
-        // 负尺寸不可能来自 Win32，但"最小化 ⇒ 0×0"是真实状态（WM_SIZE 的 lp 为 0）
-        // ⇒ 夹到 0 而不是让 BoxConstraints 收到负数（那会让 enforce() 算出反向区间）。
+        // 负尺寸不可能来自 Win32，但"最小化 ⇒ 0×0"是真实状态。
+        // ★ 这条口径由**平台侧**保证（`drift_win_client_size` 对 `IsIconic` 直接报
+        //   0×0）：不能指望 `GetClientRect` 自己给 0 —— 最小化后窗口是 160×28 的
+        //   小方块，**无边框窗**的客户区就是整窗 160×28（有标题栏时才被扣成高度 0）。
+        //   2026-10-26 真机实证：漏了这一步，无边框窗最小化后按 160×28 布局 ⇒
+        //   顶条文字溢出 ⇒ C6 Fatal。
+        // 夹到 0 而不是让 BoxConstraints 收到负数（那会让 enforce() 算出反向区间）。
         return BoxConstraints::tight(Size::of(
             max(0.0, $size->width),
             max(0.0, $size->height),

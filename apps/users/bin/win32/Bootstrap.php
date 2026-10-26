@@ -88,6 +88,31 @@ final class Bootstrap
             $window->setOpacity($handle, (float) $opacityEnv);
         }
 
+        // ★ 无边框窗（P1 §质感 / Stage 1b）：环境变量驱动，**默认不变**。
+        //   `DRIFT_WINDOW_FRAMELESS=1` ⇒ 去标题栏，顶条自己当标题栏。
+        //   ★ 三件事必须**一起**做，少一件就是"半可用"：
+        //     ① `setFrameless()` —— 客户区=整窗（`WM_NCCALCSIZE`，样式不变 ⇒
+        //        贴边吸附 / 快照布局 / 最大化动画仍是系统的）；
+        //     ② `windowDrag()` —— 顶条可拖（否则窗口拖不动）；
+        //     ③ `window.*` 三条命令 —— 顶条右侧的自绘窗口按钮（否则关不掉）。
+        //   ★ 拖动带传 **0**：壳的原生拖动带（`WM_NCHITTEST` → `HTCAPTION`）只
+        //     适用于"应用不画顶条"的场景；这里顶条自己声明拖动，能精确让位给
+        //     按钮（壳看不见控件树，原生带会把按钮点击一起吞掉）。
+        //   ★ 必须在 `$state->restore()` **之前**：无边框会让客户区变大（多出
+        //     原标题栏高度），restore 的客户区↔外框换算得按**新**口径算。
+        $framelessEnv = \getenv('DRIFT_WINDOW_FRAMELESS');
+        if ($framelessEnv !== false && $framelessEnv !== '' && $framelessEnv !== '0') {
+            $window->setFrameless($handle, 0);
+            $app->windowDrag(static function () use ($window, $handle): void {
+                $window->beginDrag($handle);
+            });
+
+            $winCommands = new WindowCommands($window, $handle);
+            $app->router()->on('window.minimize', $winCommands);
+            $app->router()->on('window.maximize', $winCommands);
+            $app->router()->on('window.close', $winCommands);
+        }
+
         // ★ 窗口状态读回（§5.4 / §19 M5）：**启动一次同步 IO**，不在帧内。
         //   ★ 顺序在 `surface->resize()` **之前** —— resize 定首帧尺寸，而首帧就该是
         //     还原后的尺寸；放到后面用户会先看到一帧默认尺寸再被拽过去。

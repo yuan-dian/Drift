@@ -47,9 +47,42 @@ final class AppBar extends BoxWidget
     /** @var list<Widget> 动作区（右） */
     private array $actions = [];
 
+    /**
+     * 是否在动作区右侧画三个窗口按钮（最小化 / 最大化 / 关闭）。P1-Stage 1b。
+     *
+     * ★ 默认 `false`：有原生标题栏的窗口**不该**再画一套 —— 会出现两排按钮，
+     *   而且上面那排是死的（原生按钮在非客户区，客户区里的那排才是我们的）。
+     */
+    private bool $windowButtons = false;
+
     public static function make(): self
     {
         return new self();
+    }
+
+    /**
+     * 画三个窗口控制按钮（P1-Stage 1b 无边框窗）。
+     *
+     * ```php
+     * // 组合根（无边框 opt-in）
+     * AppBar::make()->title('用户管理')->windowButtons(true)
+     * ```
+     *
+     * ★ 三个按钮发的是**标准命令名**（`window.minimize` / `window.maximize` /
+     *   `window.close`），由组合根注册 —— 共享代码里不该出现 `WindowHost`
+     *   （§5.1：句柄不跨层）。命令名固定是为了"换应用不用改顶条"。
+     * ★ 按钮**必须**是真正的 `Activatable`：`InputRouter::windowDragOwner()`
+     *   遇到可激活控件就让位，所以点按钮不会被顶条拖动吃掉。
+     * ★ 三个按钮都用 `Flat`（无实心底）：与 Windows / macOS 的窗口按钮一致 ——
+     *   关闭是**常用但非破坏性**的动作，常驻红底会把注意力从内容上拽走。
+     *   `Danger` 变体留给真正的"不可撤销"按钮（删除 / 清空）。
+     */
+    public function windowButtons(bool $enabled = true): static
+    {
+        $this->mutate();
+        $this->windowButtons = $enabled;
+
+        return $this;
     }
 
     /** 条首标题（`''` = 不画 —— §A.2.6 的纯菜单栏形态） */
@@ -127,11 +160,22 @@ final class AppBar extends BoxWidget
             $out[] = $kid;
         }
 
-        if ($this->actions !== []) {
+        if ($this->actions !== [] || $this->windowButtons) {
             $out[] = Spacer::make();
             foreach ($this->actions as $kid) {
                 $out[] = $kid;
             }
+        }
+
+        if ($this->windowButtons) {
+            // ★ 三个按钮是**普通命令按钮**，不是"框架魔法"：组合根注册
+            //   `window.*` 三个 handler 即可，换应用不用改这里（P1-Stage 1b）。
+            $out[] = IconButton::of(IconName::Minus, '最小化')
+                ->variant(ButtonVariant::Flat)->command('window.minimize');
+            $out[] = IconButton::of(IconName::Square, '最大化')
+                ->variant(ButtonVariant::Flat)->command('window.maximize');
+            $out[] = IconButton::of(IconName::Close, '关闭')
+                ->variant(ButtonVariant::Flat)->command('window.close');
         }
 
         return $out;

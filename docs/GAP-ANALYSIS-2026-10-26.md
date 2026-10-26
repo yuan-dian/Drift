@@ -188,3 +188,34 @@ ScrollView / LazyColumn / LazyRow / LazyGrid / Grid / Stack / Image / Icon / Ric
 - **尚未做**：P1-5 无边框 + 自绘标题栏；**P1-7 毛玻璃**（要 P1-6 的**逐像素** alpha：
   换 `UpdateLayeredWindow` + `DWMWA_SYSTEMBACKDROP_TYPE` 亚克力，并让主题画半透明表面）；
   P1-8 混合模式 + `Opacity` 控件。
+
+**P1-5 无边框 + 自绘标题栏 —— Stage 1b 已落地**（`WindowHost::setFrameless` /
+`beginDrag` / `minimize` / `maximizeToggle`）：
+
+- **走 `WM_NCCALCSIZE` 而不是 `WS_POPUP`**：客户区=整窗（标题栏消失），但窗口
+  样式仍是 `WS_OVERLAPPEDWINDOW` ⇒ **贴边吸附 / 快照布局 / 最大化动画全部由系统
+  照旧**。`WS_POPUP` 会丢掉这些原生行为。真机判据：拖顶条到屏幕顶边 ⇒ 原生
+  Aero Snap 最大化（`rect=-8,-8,1936,1056`）。
+- **拖动归应用内容，不归壳**：`Widget::windowDrag()` 是声明式能力，`InputRouter`
+  在按下相位消费它，**途中遇到"自己处理按下"的控件（可聚焦 / `Activatable` /
+  `pointer()`）就让位** ⇒ 顶条可拖、顶条上的按钮照常点击。壳里的
+  `WM_NCHITTEST` 拖动带保留（`dragHeight`，默认 0）当"不画顶条的应用"的兜底 ——
+  壳看不见控件树，用它做顶条会把按钮点击一起吞掉。
+- **三个窗口按钮是普通命令按钮**（`window.minimize` / `window.maximize` /
+  `window.close`，`AppBar::windowButtons()`）：共享代码零平台引用，组合根注册
+  handler（`apps/users/bin/win32/WindowCommands.php`）。三者都 `Flat` ——
+  与 Windows/macOS 一致，常驻红底会把注意力从内容上拽走。
+- 真机判据（`DRIFT_WINDOW_FRAMELESS=1`）：外框 == 客户区（无标题栏）；拖顶条
+  +100/+136 ⇒ 位移逐像素精确；点按钮不拖窗；关闭真退出；最小化 → 还原几何与
+  画面完好；最大化客户区 == 工作区（`1920×1040`，任务栏 40px 未被盖）；拖右下角
+  +80/+60 ⇒ 尺寸精确。
+- **撞出并修掉一个真缺陷**：最小化后窗口是经典的 160×28 小方块。**有标题栏时**
+  客户区高度被扣成 0，`Application::frame()` 的零视口保护正好兜住；**无边框窗**
+  客户区 = 整窗 = 160×28 ⇒ 保护不触发 ⇒ 按 160×28 布局、顶条只给标题文字
+  136×16（自然高 21.6）⇒ C6 Fatal。修法：壳对 `IsIconic` 直接报客户区 `0×0`
+  （最小化的窗口没有"能画的客户区"，与 `position()` 返 null 同一条语义）。
+  ★ smoke 全绿也抓不到 —— 这是平台口径，只有真机能验。
+- **尚未做**：P1-7 毛玻璃（技术前置已就位：无边框后客户区=整窗，
+  `UpdateLayeredWindow` 的位图才与窗口矩形对齐）；`HTMAXBUTTON` 快照布局
+  （Win11 悬停最大化按钮弹布局菜单）；关闭按钮 hover 变红（要 Pressed/Hover 色阶
+  接到 `Danger`）。

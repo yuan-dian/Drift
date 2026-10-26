@@ -64,6 +64,37 @@ final class FakeWindowHost implements WindowHost
         $this->opacity = $opacity;
     }
 
+    /** 夹具：记录无边框请求的拖动带高度（逻辑像素；真机行为在壳里，头侧只验接线） */
+    public ?int $framelessDragHeight = null;
+
+    public function setFrameless(int $windowHandle, int $dragHeight): void
+    {
+        $this->framelessDragHeight = $dragHeight;
+    }
+
+    /** 夹具：`beginDrag()` 调用次数（AppBar 拖动接线的断言目标） */
+    public int $dragStarts = 0;
+
+    public function beginDrag(int $windowHandle): void
+    {
+        ++$this->dragStarts;
+    }
+
+    /** 夹具：窗口按钮调用次数（自绘最小化/最大化按钮的接线断言） */
+    public int $minimizes = 0;
+
+    public function minimize(int $windowHandle): void
+    {
+        ++$this->minimizes;
+    }
+
+    public int $maximizeToggles = 0;
+
+    public function maximizeToggle(int $windowHandle): void
+    {
+        ++$this->maximizeToggles;
+    }
+
     public function clientSize(int $windowHandle): Size
     {
         return $this->client;

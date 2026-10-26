@@ -87,6 +87,17 @@ abstract class Widget
     private bool $pointerOwnsPress = false;
 
     /**
+     * @internal null = 本控件不声明"窗口拖动"（P1-Stage 1b 无边框窗）
+     *
+     * `\Closure(): void` —— 按在本控件**自身**（不是它的子控件）上时调一次。
+     * ★ 为什么是闭包而不是让框架直接调 `WindowHost`：拖窗是**平台动作**，而
+     *   `Drift\App` 的输入路由不该认识 `WindowHost`（§5.1 纪律 1：句柄不跨层）。
+     *   组合根（持有 `WindowHost`）递一个闭包进来 —— 与 `semanticsSink` 同一条
+     *   "组合根接线"的路，框架核心零平台认知。
+     */
+    private ?\Closure $windowDragHandler = null;
+
+    /**
      * @internal null = 本控件不处理键盘（按键落给焦点链的默认路径）
      *
      * `\Closure(KeyEvent): bool`，返回 `true` = 吃掉这个键。
@@ -883,6 +894,41 @@ abstract class Widget
     public function pointerOwnsPressValue(): bool
     {
         return $this->pointerOwnsPress;
+    }
+
+    /**
+     * 声明"按在本控件上就拖动窗口"（P1-Stage 1b，无边框窗的标题栏替代品）。
+     *
+     * ```php
+     * // 组合根（持有 WindowHost，句柄在它手里）
+     * AppBar::make()->title('用户管理')->windowDrag(
+     *     fn () => $window->beginDrag($handle),
+     * );
+     * ```
+     *
+     * ★ **只在命中的是"本控件这一层"时生效**：从命中点沿父链往上找，途中遇到
+     *   任何**自己处理按下**的控件（可聚焦 / `Activatable` / 有 `pointer()`）就
+     *   立刻让位 —— 否则 AppBar 上的按钮和搜索框会连点击一起被拖走（这正是
+     *   `WM_NCHITTEST` 返 `HTCAPTION` 的做法做不到精确的地方：壳看不见控件树）。
+     * ★ 闭包**无参**：坐标、句柄、怎么拖都是组合根的事，框架只负责"什么时候"。
+     * ★ 只在按下时调**一次**，**不捕获指针** —— 拖窗的鼠标循环归平台（Win32 的
+     *   `WM_NCLBUTTONDOWN` 自己 `SetCapture`），框架再捕获一次反而会在拖动结束后
+     *   把后续事件全锁在这个控件上。
+     *
+     * @api
+     */
+    public function windowDrag(\Closure $handler): static
+    {
+        $this->mutate();
+        $this->windowDragHandler = $handler;
+
+        return $this;
+    }
+
+    /** @internal 按下路由读它；`null` = 本控件不声明窗口拖动 */
+    public function windowDragHandlerValue(): ?\Closure
+    {
+        return $this->windowDragHandler;
     }
 
     /**
