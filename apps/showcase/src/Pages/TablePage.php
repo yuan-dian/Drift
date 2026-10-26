@@ -6,18 +6,23 @@ namespace App\Showcase\Pages;
 use Drift\Geometry\EdgeInsets;
 use Drift\Text\TextAlign;
 use Drift\Widget\BuildContext;
+use Drift\Widget\Button;
 use Drift\Widget\Card;
 use Drift\Widget\Column;
 use Drift\Widget\Expanded;
-use Drift\Widget\StatelessWidget;
+use Drift\Widget\Row;
+use Drift\Widget\Spacer;
+use Drift\Widget\State;
+use Drift\Widget\StatefulWidget;
 use Drift\Widget\Table;
 use Drift\Widget\TableColumn;
 use Drift\Widget\TableColumnWidth;
+use Drift\Widget\TableSelection;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
 
 /**
- * 页 24「表格（Table）」—— P2 阶段 1 的**真实消费者**（2026-10-26）。
+ * 页 24「表格（Table）」—— P2 阶段 1 + 阶段 2 的**真实消费者**（2026-10-26）。
  *
  * ★ 它存在的理由同 `BigListPage`：让"表头固定 + 行虚拟化"在**生产形态**下被走通
  *   一次。10000 行 × 5 列只造视口覆盖的六行；换成 `Each` 全量，同数据单帧数秒。
@@ -31,10 +36,32 @@ use Drift\Widget\Widget;
  *   （姓名 / 邮箱按权重分剩余）、`minWidth`（姓名再挤也不小于 120）。
  *   对齐三种都有：`Start`（默认）/ `End`（数字右对齐）/ `Center`。
  *
- * ★ **阶段 1 的诚实边界**（页面上也写了一句）：无排序、无选择、无列宽拖拽、
- *   列装不下时被裁。它们不是"忘了做"，是阶段 2~5；结构都已预留。
+ * ★ **阶段 2 的选择是受控的**：选中集住本页的 State，`Table` 只回调"点完之后应该
+ *   是什么"。所以"已选 N 项"与"清空"都能工作 —— 如果选中集住在控件的 `State` 里，
+ *   应用**永远读不到**（`State` 外部无引用通道，本仓也没有 `GlobalKey`）。
+ *
+ * ★ **诚实边界**（页面底部也写了一句）：无排序、无列宽拖拽、无键盘焦点格、
+ *   列装不下时被裁。它们是阶段 3~7，结构都已预留。
  */
-final class TablePage extends StatelessWidget
+final class TablePage extends StatefulWidget
+{
+    public function __construct()
+    {
+        parent::__construct();
+    }
+
+    public static function make(): self
+    {
+        return new self();
+    }
+
+    public function createState(): State
+    {
+        return new TablePageState();
+    }
+}
+
+final class TablePageState extends State
 {
     private const ROWS = 10000;
 
@@ -45,6 +72,24 @@ final class TablePage extends StatelessWidget
     /** @var list<string> */
     private const CITIES = ['北京', '上海', '广州', '深圳', '杭州'];
 
+    /**
+     * 选中集（**受控**：应用持有，`Table` 只上报新值）。
+     *
+     * ★ 初值写成 `null` 而不是 `TableSelection::none()`：属性默认值必须是**常量
+     *   表达式**，而 `none()` 是方法调用（tpc 直接拒："Constant expression contains
+     *   invalid operations"）。这是 PHP 的规矩，不是本仓的。
+     */
+    private ?TableSelection $selection = null;
+
+    private function selectionNow(): TableSelection
+    {
+        if ($this->selection === null) {
+            $this->selection = TableSelection::none();
+        }
+
+        return $this->selection;
+    }
+
     public function build(BuildContext $ctx): Widget
     {
         return Card::make(
@@ -53,8 +98,11 @@ final class TablePage extends StatelessWidget
                 Text::make(
                     '10000 行 × 5 列 —— 表头固定不滚，行虚拟化（只造视口覆盖的那几行）。'
                     . '列宽三层：fixed / flex / min-max 夹；奇数行斑马。'
-                    . '阶段 1 边界：无排序、无选择、无列宽拖拽；列装不下时被裁。'
+                    . '选择受控：点行选中、Ctrl 加选、Shift 连选、单选模式只留一行。'
+                    . '阶段 2 边界：无键盘焦点格；无排序、无列宽拖拽；列装不下时被裁。'
                 )->caption(),
+
+                $this->selectionBar(),
 
                 // ★ 必须放进**有界高度**：`Table` 自己就是滚动容器（同 `LazyColumn`），
                 //   塞进无界主轴会按内容高铺开 ⇒ 虚拟化失效（窗口变成全部行）。
@@ -63,9 +111,46 @@ final class TablePage extends StatelessWidget
                         ->keyOf(static fn(array $row): int => $row['id'])
                         ->rowHeight(self::ROW_HEIGHT)
                         ->headerHeight(self::HEADER_HEIGHT)
+                        ->selection($this->selectionNow())
+                        ->onSelectionChange(fn(TableSelection $next) => $this->setState(
+                            function () use ($next): void {
+                                $this->selection = $next;
+                            }
+                        ))
                 ),
             ])
         )->paddingAll(0.0);
+    }
+
+    /** "已选 N 项" + 清空（受控选择才可能做出这一行） */
+    private function selectionBar(): Widget
+    {
+        $count = $this->selectionNow()->count();
+
+        return Row::make()->spacing(12.0)->children([
+            Text::make($count === 0 ? '未选中任何行' : '已选 ' . $count . ' 项（首尾可见）')->caption(),
+            Text::make($count === 0 ? '' : $this->readoutOfSelection())->caption(),
+            Spacer::make(),
+            Button::make('清空选择')->onPressed(fn() => $this->setState(
+                function (): void {
+                    $this->selection = TableSelection::none();
+                }
+            )),
+        ]);
+    }
+
+    /** 只印前 3 个 key —— 选中一万行时不该把文本撑爆 */
+    private function readoutOfSelection(): string
+    {
+        $keys = $this->selectionNow()->keys();
+        $head = \array_slice($keys, 0, 3);
+        $more = \count($keys) > 3 ? ' …' : '';
+        $labels = [];
+        foreach ($head as $key) {
+            $labels[] = (string) $key;
+        }
+
+        return 'key = ' . \implode(', ', $labels) . $more;
     }
 
     /** @return list<TableColumn> */

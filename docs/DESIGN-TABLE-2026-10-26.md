@@ -670,3 +670,129 @@ final class UsersPage extends StatelessWidget
 > 取值靠列上的 `field()` / `cell()`，选择与排序**受控**，变更走"重建 + 按 key diff"。
 > **不做** `TableRow` 值对象、**不做** `ObservableList` 增量通知、**不做** Model/View ——
 > 三条都是"数据规模 + 框架既有形状"共同决定的，不是省事。
+
+---
+
+## 12. 阶段 2 落地：选择（受控）+ 行态（2026-10-26）
+
+### 12.1 前置被再次重新识别：不是手势家族，是 `PointerEvent` 的修饰键
+
+§8.1 已经纠正过一次"手势识别器家族是列宽拖拽的前置"。阶段 2 又碰到同型误判：
+多选的**真前置**既不是手势家族，也不是 `TableSelection` 值对象，而是
+
+> `PointerEvent` **没有修饰键**。
+
+没有它，Ctrl+点击与 Shift+点击在 `Input` 层**无法表达** ⇒ "多选"只能退化成
+"点一下切换"，区间选择做不出来（而这正是表格多选的标准手感）。
+本仓的键事件有 `KeyChord`（`ctrl/alt/shift` 三个布尔），指针事件一直是
+`x/y/button/phase` 四个量 —— 缺口在数据结构，不在控件。
+
+修法（纯增量，破坏面 = 桥 payload）：
+
+| 层 | 改动 |
+|---|---|
+| `cpp-src/drift_win32.cc` | `PendingEvent` 加 `e` 槽；`pushPointer()` 内 `event.e = modifierMask()`；`toArray` 的 `kEvPointer` 多输出 `ctrl/alt/shift`（与 `kEvKey` 同一套位编码 1/2/4） |
+| `src/Platform/Win32/Win32Platform.php` | 读三个字段传给 `fromBridge()` |
+| `src/Input/PointerEvent.php` | 三个 `readonly bool` + 工厂默认参数（既有调用点一字不改）+ `hasModifier()` |
+
+★ 为什么不用鼠标消息的 `wParam`（那里有 `MK_CONTROL` / `MK_SHIFT`）：**没有 Alt**
+（那些位被 `MK_MBUTTON` 之类占了），而 Alt+点击在表格/画布类控件里是真实手势。
+三个都走 `GetKeyState` 才是一致的口径 —— 壳里只写一处 `modifierMask()`。
+
+★ 诚实边界：`probe-grab` 的模拟点击**不带修饰键**（它只发 `WM_LBUTTONDOWN`），
+所以真机验收只能验"点击能选中"，Ctrl/Shift 只在 smoke 里用构造的 `PointerEvent` 验。
+
+### 12.2 行态在**行容器**上合一，cell 不知道自己是第几行
+
+`TableState::rowBackground()` 一处决定：**选中 > 悬停 > 斑马**，都不适用才 `null`
+（透出表格底）。
+
+- 选中 = `Accent` + alpha 36（约 14%）压在 `Surface` 上。**不加 `AccentContainer`
+  之类的主题 token**：那要同时维护三套主题的三个值，而它们全都等于"把 Accent 按
+  同一比例淡下去" —— 那是公式，不是设计决策。
+- 悬停 = `Hover`（不透明）。不叠加（选中色 + 悬停色）：叠出来的颜色在两套主题下
+  都不可控，而"选中"本来就该压过"悬停"。
+- 行级 `pointer()` / `hover()` 声明挂在**行容器**（`SizedBox`）上：派发规则是
+  "沿父链找最深的声明者" ⇒ cell 里的按钮自己声明时自然赢，行不抢。
+
+★ **纯展示表不挂这些**（`selection` 与 `onRowTap` 都没声明时）：悬停高亮是
+"这里能点"的暗示，给不可点的行只会误导；同时 `keyOf` 也不必逐行调（零成本）。
+这一条写在 `$interactive` 上，是**一个**判据，不是三处 `if`。
+
+### 12.3 点击语义（受控：只算下一步，改不改由应用决定）
+
+| 修饰键 | `Single` | `Multiple` |
+|---|---|---|
+| 无 | 替换为该行 | 替换为该行（`WPF DataGrid` / `ag-Grid` 默认） |
+| Ctrl | 同无修饰 | 反选该行 |
+| Shift | 同无修饰 | 从**锚点**到该行，**替换**为整个区间 |
+
+- 锚点住 `TableState`（纯 UI 态），Shift 自身不动锚点，无修饰点击把锚点挪过来。
+- 锚点存 **key** 不存行号：排序/过滤后行号会漂。代价是 Shift 点击要线性扫一次行
+  找下标 —— 点击是低频操作，10000 行 ≈ 亚毫秒。
+- 用 **Down** 而不是 Up 触发：列表/表格类控件的既有手感是"按下即选"。
+
+### 12.4 `onRowTap()` 与选择**互不替代**
+
+启用选择的表同样需要"点行打开详情"。所以两个回调并存：先 `onRowTap($row, $index)`，
+再算选择并 `onSelectionChange($next)`。只想处理点击不要选择 ⇒ 不声明 `selection()`。
+
+### 12.5 新增的两个响亮失败
+
+1. `selection()` 声明了但 `onSelectionChange()` 没接 ⇒ 挂载期 Fatal。
+   理由：受控模型的全部意义是"应用读得到"，不接就等于"点了没反应"，而控件画的
+   选中色还停在旧值 ⇒ 每点一次差异放大一层。
+2. 沿用阶段 1 的 `keyOf()` 必填 —— 它现在是选择集与锚点的身份。
+
+### 12.6 验收
+
+smoke 12 条新断言（1562 ok / 0 FAIL）：
+- 值对象：不可变 / `int 7` 与 `'7'` 是两个 key / `toggle` 反选 / `withAll` 幂等 / `only`
+- 点击语义四条（无修饰、Ctrl、Shift 区间、单选忽略 Ctrl）
+- 纯展示表不挂 pointer
+- 像素：选中行淡 Accent、未选中行是表格底白、悬停行是 `Hover` 底
+- 缺上报的 Fatal + 报错文案
+
+★ 断言都做了**变异自检**：把 `SELECTED_ALPHA` 改成 0 ⇒ 像素断言当场红
+（"选中 rgb(255,255,255) / 未选 rgb(255,255,255)"）。
+
+### 12.7 阶段 2b（未做，结构已定）
+
+- **键盘焦点格**：整个表格占一个 `Tab` 位，进入后方向键在 `TableState` 里移
+  `focusedRow/focusedCol`（走 `Widget::keyboard()`），`Space` 切换选中、
+  `Ctrl+A` 全选。裁决 5 已定"不进 `FocusManager`"。
+- **内置勾选列 / 全选**：`cell()` 已能表达（闭包捕获 selection）；做成内置会同时牵连
+  列宽、表头全选框、阶段 3 的排序箭头与阶段 4 的拖拽手柄 ⇒ 等阶段 4 一起裁决。
+- **语义树**：`SemanticsRole::Table` 已声明，但行/格的语义节点要等焦点格就位
+  （否则 UIA 里是一张没有行概念的表格）。
+
+### 12.8 同批改判的框架行为：`pointerOwner()` 遇到"自己处理按下"的控件就让位
+
+行级 `pointer(ownsPress: true)` 让"整行可点"成立，但它会**顺手抢走 cell 里按钮的
+按下**（行在父链上更近地声明了 `ownsPress`）⇒ 表格里放按钮点不动，而且**不报错**。
+
+修法在 `InputRouter::pointerOwner()`，判据与 `windowDragOwner()` 同构：
+
+```php
+for ($node = $element; $node !== null; $node = $node->parent()) {
+    $widget = $node->widget();
+    if ($widget->pointerOwnsPressValue()) return $node;                           // 自己声明"按下归我" ⇒ 赢
+    if ($widget->isFocusable() || $widget instanceof Activatable) return null;    // 更近的"自己处理按下" ⇒ 让位
+}
+```
+
+★ **这改判了一条既有断言**：smoke 原来断言"祖先 ownsPress ⇒ 子按钮命令不发"
+（"Press · 祖先 ownsPress"）。判据改成"子按钮赢"。
+理由：那条断言记的是**实现当时的行为**，不是有消费者的裁决 —— 真实消费者只有
+`Slider`（自己 ownsPress，第一轮就命中自己，不受影响），而"祖先吞掉子按钮"在
+真实控件里没有任何正当场景（模态遮罩走的是 `Modal` 的独立命中链，不是这条路）。
+
+### 12.9 一条 AOT 与 PHP 解释器的行为差异
+
+`pointer()` 回调必须是**两参** `(PointerEvent, Element)`：捕获期派发固定给两个
+（`InputRouter::dispatchToCapture()` 的 `$handler($event, $node)`）。
+
+- 解释器（smoke）：闭包只写一个参数**不会报错**（PHP 允许用户函数多传参）。
+- AOT 编译产物：当场 `Fatal: expects exactly 1 argument, 2 given`，而它被捕获期
+  路径的 `try/catch` 接住 ⇒ 现象是**整页变成错误占位**，不是崩溃。
+  ⇒ 每次给 `pointer()` / `hover()` / `keyboard()` 写回调，都按**完整签名**写。

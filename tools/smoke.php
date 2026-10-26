@@ -336,6 +336,8 @@ use Drift\Widget\Widget;
 use Drift\Widget\Table;
 use Drift\Widget\TableColumn;
 use Drift\Widget\TableColumnWidth;
+use Drift\Widget\TableSelection;
+use Drift\Widget\TableSelectionMode;
 use Drift\Widget\TableState;
 use Drift\Layout\RenderTable;
 use Drift\Dev\TestApp;
@@ -438,6 +440,20 @@ if (str_starts_with($caseArg, '--case=')) {
             [TableColumn::make('a', 'A')->field('nmae')],
             [['name' => 'x']],
         )->keyOf(static fn(array $row): string => (string) $row['name']);
+        $el = $table->createElement();
+        $el->mount(null, smokeContext());
+        echo "mounted-without-error\n";
+        exit(0);
+    }
+
+    if ($case === 'table-selection-noreport') {
+        // 声明了 selection 却没接 onSelectionChange ⇒ 点了没人收到（选中色停在旧值，
+        // 而每点一次差异放大一层）⇒ 挂载期响亮失败，不是"静默不生效"
+        $table = Table::make(
+            [TableColumn::make('a', 'A')->field('a')],
+            [['a' => 1]],
+        )->keyOf(static fn(array $row): int => (int) $row['a'])
+            ->selection(TableSelection::none());
         $el = $table->createElement();
         $el->mount(null, smokeContext());
         echo "mounted-without-error\n";
@@ -11562,11 +11578,16 @@ check(
     'presses=' . $pl->watchPresses . ' log=' . implode(',', $pl->watchLog),
 );
 
-// e. 祖先接管：子按钮没声明，祖先声明了 ⇒ 按下归祖先，子按钮命令不发
+// e. 让位：子按钮（Activatable）没声明，祖先声明了 ownsPress ⇒ **子按钮赢**
+//   ★ 2026-10-26 改判（阶段 2 的 Table 行立的口子）：原先这里断言"祖先吞掉按下"。
+//     行级 `ownsPress` 让"整行可点"成立，但它会顺手抢走 cell 里按钮的按下 ⇒
+//     表格里放按钮点不动且不报错。判据改成与 `windowDragOwner()` 同构：
+//     命中点**在**可聚焦 / `Activatable` 的控件上 ⇒ 这次按下归它（它本来就有
+//     "按下 ⇒ 自己激活"的语义），祖先没有资格替它决定。
 $pl->dispatchInput(PointerEvent::down($plCx, $plCy));
 check(
-    'Press · 祖先 ownsPress：点子按钮 ⇒ 按下归祖先（子命令不发）',
-    $pl->ancestorLog === ['down'] && $pl->childPresses === 0,
+    'Press · 祖先 ownsPress + 子按钮 ⇒ 子按钮赢（表格行里放按钮能点）',
+    $pl->ancestorLog === [] && $pl->childPresses === 1,
     'log=' . implode(',', $pl->ancestorLog) . ' childPresses=' . $pl->childPresses,
 );
 $pl->dispatchInput(PointerEvent::up($plCx, $plCy));
@@ -16752,6 +16773,165 @@ check(
     'Table · 宽差收敛后不再要帧（不会每帧空转）',
     $tableDriftAgain === false,
     $tableDriftAgain === false ? '已收敛' : '仍在要帧',
+);
+
+// ── ㊿ P2 阶段 2：选择（受控）+ 行态（悬停 / 选中）──────────────────
+//   三条判据（`docs/DESIGN-TABLE-2026-10-26.md` §4 裁决 4）：
+//   ① 选中集是**受控值对象**：应用持有、控件只上报"点完之后应该是什么"
+//   ② Shift 连选的真前置是 `PointerEvent` 的修饰键（本轮才补的通道，
+//      不补的话"多选"只能退化成"点一下切换"，区间表达不出来）
+//   ③ 行态在**行容器**上合一，`cellBuilder` 不知道自己被选中
+
+// ① 值对象：不可变 + int / string key 分开
+$tableSelEmpty = TableSelection::none();
+$tableSelInt = $tableSelEmpty->add(7);
+$tableSelStr = $tableSelInt->add('7');
+check(
+    'TableSelection · 不可变：add 返回新实例，原对象仍是空的',
+    $tableSelEmpty->isEmpty() && $tableSelInt->count() === 1 && $tableSelEmpty !== $tableSelInt,
+    sprintf('原 %d / 新 %d', $tableSelEmpty->count(), $tableSelInt->count()),
+);
+check(
+    'TableSelection · int 7 与 string "7" 是两个 key（PHP 数组键会把它们静默合并）',
+    $tableSelInt->has(7) && !$tableSelInt->has('7') && $tableSelStr->count() === 2,
+    sprintf('单独 %d / 都有 %d', $tableSelInt->count(), $tableSelStr->count()),
+);
+check(
+    'TableSelection · toggle 反选 / withAll 幂等 / only 只留一个',
+    $tableSelStr->toggle(7)->count() === 1
+        && $tableSelInt->withAll([7]) === $tableSelInt
+        && $tableSelStr->only([9])->keys() === [9],
+    \json_encode([$tableSelStr->toggle(7)->keys(), $tableSelStr->only([9])->keys()]),
+);
+
+/** 阶段的表：可选 + 上报（受控，应用侧就是那个 `use (&$next)`） */
+$tableSelNext = null;
+$tableSelBuild = static function (TableSelection $sel, ?TableSelectionMode $mode = null) use (&$tableSelNext, $tableRowsOf): Table {
+    $table = Table::make(
+        [
+            TableColumn::make('id', 'ID')->field('id')->width(TableColumnWidth::fixed(60.0)),
+            TableColumn::make('name', '姓名')->field('name'),
+        ],
+        $tableRowsOf(6),
+    )->keyOf(static fn(array $row): int => $row['id'])
+        ->rowHeight(40.0)
+        ->headerHeight(32.0)
+        ->selection($sel)
+        ->onSelectionChange(static function (TableSelection $next) use (&$tableSelNext): void {
+            $tableSelNext = $next;
+        });
+
+    return $mode === null ? $table : $table->selectionMode($mode);
+};
+
+/** 行区 `Column` 的直接子（= 窗内各行） */
+$tableRowElsOf = static function (Element $root): array {
+    $column = findElement($root, static fn(Element $e): bool => $e->widget() instanceof Column);
+    $out = [];
+    $column?->visitChildren(static function (Element $child) use (&$out): void {
+        $out[] = $child;
+    });
+
+    return $out;
+};
+
+/** 模拟"按在第 k 行上"（走的是行容器声明的 pointer，不是直接调 State） */
+$tableTapRow = static function (Element $root, int $index, PointerEvent $event) use ($tableRowElsOf): void {
+    $rowEl = $tableRowElsOf($root)[$index] ?? null;
+    if ($rowEl === null) {
+        return;
+    }
+
+    $handler = $rowEl->widget()->pointerHandlerValue();
+    $handler?->__invoke($event, $rowEl);
+};
+
+// ② 点击语义：无修饰 ⇒ 替换
+$tableSelEl = $tableMount($tableSelBuild(TableSelection::none()));
+$tableTapRow($tableSelEl, 0, PointerEvent::down(10.0, 10.0));
+check(
+    'Table · 无修饰点行 ⇒ 替换为这一行（不是"加上"）',
+    $tableSelNext?->keys() === [0],
+    \json_encode($tableSelNext?->keys()),
+);
+
+// Ctrl ⇒ 反选并保留已有（前置：行 0 已选）
+$tableCtrlEl = $tableMount($tableSelBuild(TableSelection::of([0])));
+$tableTapRow($tableCtrlEl, 1, PointerEvent::down(10.0, 10.0, 0, true));
+check(
+    'Table · Ctrl 点行 ⇒ 反选并保留已有（{0} + Ctrl 点 1 ⇒ {0,1}）',
+    $tableSelNext?->keys() === [0, 1],
+    \json_encode($tableSelNext?->keys()),
+);
+
+// Shift ⇒ 从锚点到该行的区间（前置：先无修饰点行 0 立锚点）
+$tableShiftEl = $tableMount($tableSelBuild(TableSelection::of([0])));
+$tableTapRow($tableShiftEl, 0, PointerEvent::down(10.0, 10.0));
+$tableTapRow($tableShiftEl, 3, PointerEvent::down(10.0, 10.0, 0, false, false, true));
+check(
+    'Table · Shift 点行 ⇒ 锚点到该行的区间被整体选中（0..3）',
+    $tableSelNext?->keys() === [0, 1, 2, 3],
+    \json_encode($tableSelNext?->keys()),
+);
+
+// 单选模式 ⇒ 永远只有一个
+$tableSingleEl = $tableMount($tableSelBuild(TableSelection::of([0]), TableSelectionMode::Single));
+$tableTapRow($tableSingleEl, 3, PointerEvent::down(10.0, 10.0, 0, true));
+check(
+    'Table · 单选模式忽略 Ctrl ⇒ 仍是替换（只剩这一行）',
+    $tableSelNext?->keys() === [3],
+    \json_encode($tableSelNext?->keys()),
+);
+
+// ③ 纯展示表不挂交互声明（"悬停高亮"是"这里能点"的暗示，不该给）
+$tablePlainEl = $tableMount($tableBuild(3));
+$tablePlainRows = $tableRowElsOf($tablePlainEl);
+check(
+    'Table · 未声明 selection / onRowTap ⇒ 行不挂 pointer（纯展示表零开销）',
+    $tablePlainRows !== [] && $tablePlainRows[0]->widget()->pointerHandlerValue() === null,
+    $tablePlainRows === [] ? '没有行' : ($tablePlainRows[0]->widget()->pointerHandlerValue() === null ? '没挂' : '挂了'),
+);
+
+// ④ 行底色：选中行是淡 Accent（压在表格底 Surface 上），未选中且偶数行是通透的白
+$tableInkEl = $tableMount($tableSelBuild(TableSelection::of([0])));
+$tableInkRaster = $tableRasterOf($tableBoxOf($tableInkEl), 320, 240);
+$tableInkSel = $tableInkRaster->pixelAt(305, 52);     // 第 0 行（选中）
+$tableInkIdle = $tableInkRaster->pixelAt(305, 132);   // 第 2 行（未选中、偶数行 ⇒ 透出表格底）
+check(
+    'Table · 像素：选中行被染成淡 Accent（蓝 ≥ 红），未选中行是表格底的白',
+    $tableInkSel->b > $tableInkSel->r + 15
+        && $tableInkIdle->r === 255 && $tableInkIdle->g === 255 && $tableInkIdle->b === 255,
+    sprintf(
+        '选中 rgb(%d,%d,%d) / 未选 rgb(%d,%d,%d)',
+        $tableInkSel->r, $tableInkSel->g, $tableInkSel->b,
+        $tableInkIdle->r, $tableInkIdle->g, $tableInkIdle->b,
+    ),
+);
+
+// ⑤ 悬停行：`Hover` 底色（不透明）压过斑马
+$tableHoverEl = $tableMount($tableSelBuild(TableSelection::none()));
+$tableHoverRows = $tableRowElsOf($tableHoverEl);
+$tableHoverHandler = $tableHoverRows[1]->widget()->hoverHandlerValue();
+$tableHoverHandler?->__invoke(true);
+$tableHoverEl->rebuild();
+$tableHoverEl->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
+$tableHoverPx = $tableRasterOf($tableBoxOf($tableHoverEl), 320, 240)->pixelAt(305, 92);
+$tableHoverInk = ThemeData::light()->color(ColorToken::Hover);
+check(
+    'Table · 像素：悬停行是 `Hover` 底色（第 1 行，压过它的斑马底）',
+    $tableHoverPx->equals($tableHoverInk),
+    sprintf('rgb(%d,%d,%d) vs 期望 rgb(%d,%d,%d)', $tableHoverPx->r, $tableHoverPx->g, $tableHoverPx->b,
+        $tableHoverInk->r, $tableHoverInk->g, $tableHoverInk->b),
+);
+
+// ⑥ 声明了 selection 却没接上报 ⇒ 挂载期 Fatal
+fresh($log);
+[$tableCode, $tableOut] = runCase(__FILE__, 'table-selection-noreport', null);
+check('Table · 声明 selection 但没接 onSelectionChange ⇒ 退出码 3', $tableCode === 3, '实际 ' . $tableCode . ' / ' . $tableOut);
+check(
+    'Table · 缺上报的报错给出两条修法（接上报 / 去掉 selection）',
+    str_contains(logText($log), 'onSelectionChange'),
+    logText($log) === '' ? '空日志' : '有日志',
 );
 
 // ⑪ 列宽的 min/max 夹（第 ② 层）：flex 分到 173 但 maxWidth 100 ⇒ 停在 100

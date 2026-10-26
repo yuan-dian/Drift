@@ -39,14 +39,16 @@ use Drift\Input\SemanticsRole;
  * 偏移取决于视口，两者都在它这里。塞进外层滚动视口会拿到无界主轴 ⇒
  * `RenderTable` 会按"内容高"铺开、窗口变成全部行（虚拟化失效）。
  *
- * ## 诚实边界（阶段 1，`docs/DESIGN-TABLE-2026-10-26.md` §7）
+ * ## 诚实边界（阶段 2，`docs/DESIGN-TABLE-2026-10-26.md` §7）
  *
  * | 不做 | 理由 |
  * |---|---|
  * | 变长行高 | 虚拟化要 `first = floor(offset / extent)` 的 O(1) 换算 |
  * | 列合并 / 分组 / 树形 | 破坏"每行同构"，窗口不再是矩形 |
- * | 横向滚动 | 偏移通道已在（`RenderTable::maxScrollX()`），但要等阶段 5 接输入与横条；**阶段 1 列装不下时被裁**（不是无声失效：内容右侧看得到截断） |
- * | 排序 / 选择 / 列宽拖拽 / 编辑 | 阶段 2~4、7；结构与字段都已预留（`TableColumn::keyName()` 是它们的身份） |
+ * | 横向滚动 | 偏移通道已在（`RenderTable::maxScrollX()`），但要等阶段 5 接输入与横条；**列装不下时被裁**（不是无声失效：内容右侧看得到截断） |
+ * | 排序 / 列宽拖拽 / 编辑 | 阶段 3~4、7；结构与字段都已预留（`TableColumn::keyName()` 是它们的身份） |
+ * | 键盘焦点格 | 阶段 2b（裁决 5：整个表格占一个 Tab 位，方向键在 `TableState` 里移动焦点格） |
+ * | 内置勾选列 / 全选 | `cell()` 已能表达（闭包捕获 selection）；内置列会同时牵连列宽、表头全选框、排序箭头与拖拽手柄 ⇒ 等阶段 4 一起裁决 |
  *
  * ★ **子项内不能有"随滚动保留的 UI 态"**：行 Element 在滚出窗口时被回收
  *   （虚拟化的定义）⇒ 单元格里正在编辑的草稿必须外置（同 `LazyColumn` 的纪律）。
@@ -81,6 +83,23 @@ final class Table extends StatefulWidget
      *   要纯色调 `striped(false)`。
      */
     private int $stripedOn = 1;
+
+    /**
+     * 当前选中集（`null` = **没启用选择**，此时点行不进选择逻辑）。
+     *
+     * ★ 受控：应用每次 build 递进来，控件只读、只回调新值（§11.4）。
+     *   `null` 与 `TableSelection::none()` 不同 —— 前者连"选中"这个概念都不存在
+     *   （纯展示表），后者是"启用了但当前没选"。这个区别决定行点击要不要改选择。
+     */
+    private ?TableSelection $selection = null;
+
+    private TableSelectionMode $selectionMode = TableSelectionMode::Multiple;
+
+    /** 选择变化上报（`fn(TableSelection $next): void`） */
+    private ?\Closure $onSelectionChange = null;
+
+    /** 行点击上报（`fn(mixed $row, int $index): void`）—— 与选择**互不替代**，见 `onRowTap()` */
+    private ?\Closure $onRowTap = null;
 
     /**
      * @param list<TableColumn> $columns
@@ -208,6 +227,60 @@ final class Table extends StatefulWidget
         return $this;
     }
 
+    /**
+     * 选中集（**受控**）—— 声明它才启用选择。
+     *
+     * ★ 不声明 ⇒ 行不可选（纯展示表）：点行只走 `onRowTap()`。这与"声明了但为空"
+     *   是两件事 —— 后者是可选的表，只是现在一个都没选。
+     * ★ 单选模式下调它只需一个 key：`TableSelection::of([$id])`。
+     */
+    public function selection(TableSelection $selection): static
+    {
+        $this->mutate();
+        $this->selection = $selection;
+
+        return $this;
+    }
+
+    /** 选择模式（默认多选）—— 只在声明了 `selection()` 后有意义 */
+    public function selectionMode(TableSelectionMode $mode): static
+    {
+        $this->mutate();
+        $this->selectionMode = $mode;
+
+        return $this;
+    }
+
+    /**
+     * 选择变化上报（`fn(TableSelection $next): void`）。
+     *
+     * ★ 控件**不自己改**选择：它算出"点完之后应该是什么"并交出去，应用决定采纳。
+     *   不提供上报就等于"点了没反应"（而选中色是控件画的 ⇒ 会一直停在旧值）。
+     *   ⇒ 声明了 `selection()` 却没声明它，`TableState` 挂载期响亮失败。
+     */
+    public function onSelectionChange(callable $handler): static
+    {
+        $this->mutate();
+        $this->onSelectionChange = \Closure::fromCallable($handler);
+
+        return $this;
+    }
+
+    /**
+     * 行点击上报（`fn(mixed $row, int $index): void`）。
+     *
+     * ★ **与选择互不替代**：启用选择时，点行仍然会先按模式算选择变化并上报
+     *   （这是表格该有的默认行为）；`onRowTap()` 是"还想干点别的"（打开详情 /
+     *   导航）。只想处理点击、不要选择 ⇒ 不声明 `selection()`。
+     */
+    public function onRowTap(callable $handler): static
+    {
+        $this->mutate();
+        $this->onRowTap = \Closure::fromCallable($handler);
+
+        return $this;
+    }
+
     public function createState(): State
     {
         return new TableState();
@@ -249,5 +322,28 @@ final class Table extends StatefulWidget
     public function isStriped(): bool
     {
         return $this->stripedOn === 1;
+    }
+
+    /** 当前选中集（`null` = 未启用选择） */
+    public function selectionSet(): ?TableSelection
+    {
+        return $this->selection;
+    }
+
+    public function selectionModeValue(): TableSelectionMode
+    {
+        return $this->selectionMode;
+    }
+
+    /** @internal 点击后的新选中集往这里交（`null` = 应用没接） */
+    public function selectionChangeHandler(): ?\Closure
+    {
+        return $this->onSelectionChange;
+    }
+
+    /** @internal 行点击回调（`null` = 不关心） */
+    public function rowTapHandler(): ?\Closure
+    {
+        return $this->onRowTap;
     }
 }

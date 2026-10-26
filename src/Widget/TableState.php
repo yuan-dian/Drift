@@ -5,7 +5,10 @@ namespace Drift\Widget;
 
 use Drift\Errors;
 use Drift\Geometry\Rect;
+use Drift\Input\CursorShape;
+use Drift\Input\PointerEvent;
 use Drift\Layout\RenderTable;
+use Drift\Rendering\Color;
 use Drift\Rendering\ColorToken;
 use Drift\Text\TextAlign;
 
@@ -72,6 +75,33 @@ final class TableState extends State implements Scrollable
      *   ⇒ 读得到本帧刚排出的盒尺寸。
      */
     private ?float $widthUsedInBuild = null;
+
+    /**
+     * 选中行的染色透明度（0–255，约 14%）。
+     *
+     * ★ 为什么是**半透明的 `Accent`** 而不是新加一个 `AccentContainer` 主题 token：
+     *   压在表格底 `Surface` 上要得到"淡蓝"只需要 alpha，多一个 token 就得同时
+     *   维护三套主题（light / dark / high-contrast）的三个值，而它们全都等于
+     *   "把 Accent 按同一比例淡下去" —— 那是公式，不是设计决策。
+     */
+    private const SELECTED_ALPHA = 36;
+
+    /**
+     * 鼠标悬停在哪一行（**纯 UI 态**，住 State 而不是受控）。
+     *
+     * ★ 判据是"应用要不要读它、要不要从外部改它"：批量删除要读**选中集**，
+     *   没人要读"鼠标现在悬停在第几行"（§11.4）。
+     */
+    private string|int|null $hoverKey = null;
+
+    /**
+     * Shift 连选的锚点（**纯 UI 态**）。
+     *
+     * ★ 存 key 而不是行号：排序/过滤后行号会漂，key 不会（这也是 `keyOf()` 必填的
+     *   原因之一）。代价是 Shift 点击时要线性扫一次行找它的下标 —— 点击是低频操作，
+     *   而 10000 行线性扫 ≈ 亚毫秒。
+     */
+    private string|int|null $anchorKey = null;
 
     /** 当前偏移（逻辑像素，≥ 0，已按上一帧内容长度夹过上界） */
     public function offsetY(): float
@@ -167,6 +197,172 @@ final class TableState extends State implements Scrollable
         return true;
     }
 
+    /**
+     * 行的底色：**选中 > 悬停 > 斑马**，都不适用才 `null`（透出表格底）。
+     *
+     * ★ 三态合成在**一处**决定：行容器只接收一个颜色，`cellBuilder` 完全不知道
+     *   自己被选中（这是"加选择不用改每列 cell"的唯一办法，§4 裁决 4）。
+     * ★ 不做多层叠加（选中色 + 悬停色）——叠加出来的颜色在两套主题下都不可控，
+     *   而"选中"本来就该压过"悬停"。
+     */
+    private function rowBackground(int $index, string|int|null $key, BuildContext $ctx, bool $striped): ?Color
+    {
+        if ($key !== null) {
+            $selection = $this->view()->selectionSet();
+            if ($selection !== null && $selection->has($key)) {
+                return $ctx->color(ColorToken::Accent)->withAlpha(self::SELECTED_ALPHA);
+            }
+
+            if ($this->hoverKey === $key) {
+                return $ctx->color(ColorToken::Hover);
+            }
+        }
+
+        return $striped && $index % 2 === 1 ? $ctx->color(ColorToken::Pane) : null;
+    }
+
+    /** 悬停进入/离开——只在**目标真的变了**时才 setState（指针在一行内移动不重建） */
+    private function noteRowHover(string|int $key, bool $entered): void
+    {
+        if ($entered) {
+            if ($this->hoverKey === $key) {
+                return;
+            }
+
+            $this->setState(function () use ($key): void {
+                $this->hoverKey = $key;
+            });
+
+            return;
+        }
+
+        // 别的行的"离开"消息不该清掉当前悬停行（快速划过时顺序不保证）
+        if ($this->hoverKey !== $key) {
+            return;
+        }
+
+        $this->setState(function (): void {
+            $this->hoverKey = null;
+        });
+    }
+
+    /**
+     * 行被按下：先交 `onRowTap()`，再按模式算选择变化并交出去。
+     *
+     * ★ 两者**互不替代**（`Table::onRowTap()` 的 docblock）：启用选择的表也需要
+     *   "点行打开详情"。
+     * ★ 用 **Down** 而不是 Up 触发：列表/表格类控件的既有手感是"按下即选"
+     *   （`Explorer` / `DataGrid` 同款）。拖拽场景下 Up 更稳，但阶段 2 没有行拖拽。
+     */
+    private function noteRowTap(mixed $row, int $index, PointerEvent $event): void
+    {
+        $view = $this->view();
+
+        $tap = $view->rowTapHandler();
+        if ($tap !== null) {
+            $tap($row, $index);
+        }
+
+        $selection = $view->selectionSet();
+        if ($selection === null) {
+            return;
+        }
+
+        $keyOf = $view->keyMapper();
+        $key = $keyOf === null ? null : $keyOf($row);
+        if ($key === null) {
+            return;
+        }
+
+        $next = $this->nextSelection($selection, $key, $index, $event);
+
+        // 锚点：无修饰的点击把锚点挪到这里（Shift 的起点）；Shift 自身不动锚点
+        if (!$event->ctrl && !$event->shift) {
+            $this->anchorKey = $key;
+        } elseif ($event->shift && $this->anchorKey === null) {
+            $this->anchorKey = $key;
+        }
+
+        $notify = $view->selectionChangeHandler();
+        $notify?->__invoke($next);
+    }
+
+    /**
+     * 点完之后"应该"是什么选中集（受控：只是算出来，改不改由应用决定）。
+     *
+     * | 修饰键 | 单选 | 多选 |
+     * |---|---|---|
+     * | 无 | 替换为该行 | 替换为该行（`WPF DataGrid` / `ag-Grid` 的默认） |
+     * | Ctrl | 同无修饰 | 反选该行 |
+     * | Shift | 同无修饰 | 从锚点到该行**替换**为区间 |
+     */
+    private function nextSelection(
+        TableSelection $current,
+        string|int $key,
+        int $index,
+        PointerEvent $event,
+    ): TableSelection {
+        if ($this->view()->selectionModeValue() === TableSelectionMode::Single) {
+            return $current->only([$key]);
+        }
+
+        if ($event->shift && $this->anchorKey !== null) {
+            $anchorIndex = $this->keyIndex($this->anchorKey);
+            if ($anchorIndex !== null) {
+                return TableSelection::of($this->keysBetween($anchorIndex, $index));
+            }
+        }
+
+        return $event->ctrl ? $current->toggle($key) : $current->only([$key]);
+    }
+
+    /** 某个 key 在**当前行序**里的下标（排序/过滤后行序会变 ⇒ 不能缓存行号） */
+    private function keyIndex(string|int $key): ?int
+    {
+        $keyOf = $this->view()->keyMapper();
+        if ($keyOf === null) {
+            return null;
+        }
+
+        foreach ($this->view()->rowList() as $index => $row) {
+            if ($keyOf($row) === $key) {
+                return $index;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * 两个行下标之间的所有 key（含两端）—— Shift 连选的区间。
+     *
+     * @return list<string|int>
+     */
+    private function keysBetween(int $from, int $to): array
+    {
+        $keyOf = $this->view()->keyMapper();
+        if ($keyOf === null) {
+            return [];
+        }
+
+        $rows = $this->view()->rowList();
+        $low = min($from, $to);
+        $high = max($from, $to);
+        $keys = [];
+        for ($i = $low; $i <= $high; $i++) {
+            if (!isset($rows[$i])) {
+                continue;
+            }
+
+            $key = $keyOf($rows[$i]);
+            if ($key !== null) {
+                $keys[] = $key;
+            }
+        }
+
+        return $keys;
+    }
+
     public function build(BuildContext $ctx): Widget
     {
         $view = $this->view();
@@ -181,6 +377,17 @@ final class TableState extends State implements Scrollable
             Errors::report(
                 'Table 没有 keyOf —— 必须调 keyOf(fn(mixed $row): string|int => ...)。'
                     . "\n" . '理由：它是列宽覆盖、选择集、Shift 锚点的唯一身份（阶段 2~4 全靠它）。'
+            );
+        }
+
+        // ★ 声明了选择却没接上报 = "点行改了选中但没人收到"（选中色停在旧值，
+        //   而点一次就把差异放大一层）。这与 `Table` 的 docblock 承诺一致：响亮失败。
+        if ($view->selectionSet() !== null && $view->selectionChangeHandler() === null) {
+            Errors::report(
+                'Table 声明了 selection() 却没有 onSelectionChange() —— 选择是受控的，'
+                    . "\n" . '控件只算"点完之后该是什么"并交出去，应用不接就等于点了没反应。'
+                    . "\n" . '修法：加上 ->onSelectionChange(fn(TableSelection $next) => ...)，'
+                    . '或去掉 ->selection()（纯展示表不启用选择）。'
             );
         }
 
@@ -215,8 +422,12 @@ final class TableState extends State implements Scrollable
         $last = max($first, min($last, $count));
 
         $headerKid = $this->headerRow($columns, $widths, $contentW, $headerH, $spacing);
-        $zebra = $ctx->color(ColorToken::Pane);
         $striped = $view->isStriped();
+        $keyOf = $view->keyMapper();
+        $selectable = $view->selectionSet() !== null;
+        // ★ 交互行 = 可选中 或 有 tap 回调。两者都没有 ⇒ 纯展示表：
+        //   不挂 hover（悬停高亮是"这里能点"的暗示，会误导）、不算 key（零成本）。
+        $interactive = $selectable || $view->rowTapHandler() !== null;
 
         $lines = [];
         for ($i = $first; $i < $last; $i++) {
@@ -233,8 +444,47 @@ final class TableState extends State implements Scrollable
                 ->height($rowH)
                 ->key($i);
 
-            if ($striped && $i % 2 === 1) {
-                $line = $line->background($zebra);
+            // ★★ 行身份只在**需要**时算：`keyOf` 是应用的回调，虚拟化表里逐行调它
+            //   是 O(可见行) 但不是零 —— 纯展示表没有理由付这笔钱。
+            $rowKey = $interactive && $keyOf !== null ? $keyOf($row) : null;
+
+            $bg = $this->rowBackground($i, $rowKey, $ctx, $striped);
+            if ($bg !== null) {
+                $line = $line->background($bg);
+            }
+
+            if ($interactive) {
+                // ★ 行级输入声明挂在**行容器**上（不是每个 cell）：`hover()` / `pointer()`
+                //   沿父链找"最深的声明者" ⇒ cell 里的按钮自己声明时自然赢，行不抢。
+                //
+                // ★★ 必须 `ownsPress: true`：`pointer()` 的**捕获期**只在"按下归我"之后
+                //   才建立（`InputRouter` 的按下路由：`ownsPress` ⇒ 捕获 + 派发；
+                //   否则走 `focusHit` + `activateFocusedWidget()`，回调根本收不到 down）。
+                //   行没有"激活"语义（它不是 `Activatable`、也不该占 Tab 位），
+                //   所以只能走这一条。
+                //   ⚠️ 曾担心"抢走 cell 里按钮的按下"：`InputRouter::pointerOwner()`
+                //   现在遇到更近的可聚焦 / `Activatable` 控件就让位（2026-10-26 同批改的）
+                //   ⇒ "整行可点 + 格内放按钮"两者能共存。
+                // ★ 签名必须是**两参** `(PointerEvent, Element)`：捕获期派发固定给两个
+                //   （`InputRouter::dispatchToCapture()` 的 `$handler($event, $node)`）。
+                //   AOT 下只写一个参数会当场 Fatal（"expects exactly 1 argument, 2 given"），
+                //   而它被捕获期路径的 try/catch 接住 ⇒ 现象是整页变错误占位，不是崩溃。
+                $line = $line->pointer(
+                    function (PointerEvent $event, Element $self) use ($row, $i): ?CursorShape {
+                        if ($event->isDown() && $event->isPrimary()) {
+                            $this->noteRowTap($row, $i, $event);
+                        }
+
+                        return null;
+                    },
+                    ownsPress: true,
+                );
+
+                if ($rowKey !== null) {
+                    $line = $line->hover(function (bool $entered) use ($rowKey): void {
+                        $this->noteRowHover($rowKey, $entered);
+                    });
+                }
             }
 
             $lines[] = $line;
