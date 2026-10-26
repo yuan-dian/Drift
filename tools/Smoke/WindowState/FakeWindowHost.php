@@ -7,8 +7,9 @@ use Drift\Geometry\Point;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Size;
 use Drift\Input\CursorShape;
-use Drift\Platform\Backdrop;
 use Drift\Platform\WindowHost;
+use Drift\Platform\WindowMaterial;
+use Drift\Platform\WindowMaterialCapabilities;
 
 /**
  * `WindowHost` 的测试替身（§5.4 `WindowStateStore` 的夹具底）。
@@ -57,25 +58,30 @@ final class FakeWindowHost implements WindowHost
         $this->minSize = [$width, $height];
     }
 
-    /** 夹具：记录最后一次设的不透明度（P1 §质感；真机行为由 `WS_EX_LAYERED` 承担，头侧只验接线） */
-    public ?float $opacity = null;
+    /**
+     * 夹具：记录**最后一次**应用的材质（P1 收敛，2026-10-26）。
+     *
+     * ★ 记一份而不是"列表"：材质是**一次性快照**（壳按值调和、与调用顺序无关），
+     *   没有"先开再关"的真实用法 —— 要改外观就重新 `applyMaterial()` 一份新值对象。
+     *   ★ `$windowHandle` 在这里被忽略（假窗不区分句柄）—— 与 `place()` 等夹具一致。
+     */
+    public ?WindowMaterial $material = null;
 
-    public function setOpacity(int $windowHandle, float $opacity): void
+    public function applyMaterial(int $windowHandle, WindowMaterial $material): void
     {
-        $this->opacity = $opacity;
+        $this->material = $material;
     }
 
     /**
-     * 夹具：记录**每一次**背景材质请求（含 `null` = 关）。
+     * 夹具：报告一份"全能力"平台（opacity / 逐像素 / blur / acrylic / 圆角都支持）。
      *
-     * ★ 记成列表而不是"最后一次"：`setBackdrop(acrylic)` → `setBackdrop(null)`
-     *   是真实用法（开关切换），只留最后一个值会把"先开再关"和"从没开过"混为一谈。
+     * ★ 替身的目的不是模拟 Win10 限制，而是让"应用的自适应分支"能跑 —— 返回全 true
+     *   才能让测试覆盖到"能力齐全"那条路径。要测"降级"分支应由测试自行构造
+     *   一个 `materialCapabilities()` 返回受限值的替身，而不是在这里分叉。
      */
-    public array $backdrops = [];
-
-    public function setBackdrop(int $windowHandle, ?Backdrop $backdrop): void
+    public function materialCapabilities(int $windowHandle): WindowMaterialCapabilities
     {
-        $this->backdrops[] = $backdrop;
+        return WindowMaterialCapabilities::fromBits(0x01 | 0x02 | 0x04 | 0x08 | 0x10);
     }
 
     /** 夹具：记录无边框请求的拖动带高度（逻辑像素；真机行为在壳里，头侧只验接线） */

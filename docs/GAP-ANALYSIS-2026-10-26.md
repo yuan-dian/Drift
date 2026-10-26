@@ -375,3 +375,26 @@ ABI 编号，`0` 留给"关"）+ `WindowHost::setBackdrop(int $h, ?Backdrop $b)`
 **待做**：Win11 的 `DWMWA_SYSTEMBACKDROP_TYPE`（本机验不了）/ 圆角模糊（ULW 位图里做
 alpha 掩码）/ 多窗口化（`g_layerBind` 等要按 HWND 分槽）。
 
+---
+
+## 更新 2026-10-26 晚：P1 三入口收敛为 `WindowMaterial`
+
+上文描述的三个外观入口（`RenderSurface::setBackground()` 的逐像素 alpha /
+`WindowHost::setOpacity()` 的整窗 alpha / `WindowHost::setBackdrop()` 的背后材质）
+是**收敛前**的形态，保留作历史。现况：
+
+- **新 API**：`WindowMaterial`（`src/Platform/WindowMaterial.php`，不可变：`background` /
+  `opacity` / `backdrop`，`wantsPixelAlpha()` 由底色 alpha 推出）+ `WindowMaterialCapabilities`
+  （位掩码能力，位值即 ABI）。`WindowHost::applyMaterial(int, WindowMaterial)` 一次交完整快照；
+  `materialCapabilities(int)` 回答"平台能不能"。
+- **删**：`setOpacity()` / `setBackdrop()` 与桥 `drift_win_set_opacity` / `drift_win_set_pixel_alpha` /
+  `drift_win_set_backdrop`。合成 `drift_win_apply_material(hwnd, bool pixelAlpha, float opacity, int backdropKind)`
+  + `drift_win_material_caps(): int`。
+- **耦合从"注释"变"契约"**：① 逐像素 alpha 要无边框 ⇒ `applyMaterial()` 硬 Fatal；
+  ③ 整窗 alpha（LWA）与逐像素（ULW）互斥 ⇒ 壳一次快照按值调和，与调用顺序无关；
+  ② 背后材质要 alpha 底色才有观察通道 —— 仍由应用组装时保证。
+- **像素仍归表面**：`Color` 不过桥。应用侧两步（`$surface->setBackground(...)` +
+  `$window->applyMaterial(...)`），示例见 `WindowMaterial` 类注释。
+- **行为变更**：带 alpha 的 `DRIFT_WINDOW_BACKGROUND` 缺 `DRIFT_WINDOW_FRAMELESS=1` 现在
+  当场 Fatal（原为静默回落 GDI）。
+

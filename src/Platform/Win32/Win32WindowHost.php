@@ -9,22 +9,23 @@ use Drift\Geometry\Rect;
 use Drift\Geometry\Scale;
 use Drift\Geometry\Size;
 use Drift\Input\CursorShape;
-use Drift\Platform\Backdrop;
 use Drift\Platform\WindowHost;
+use Drift\Platform\WindowMaterial;
+use Drift\Platform\WindowMaterialCapabilities;
 
+use function drift_win_apply_material;
 use function drift_win_begin_drag;
 use function drift_win_client_size;
 use function drift_win_close;
 use function drift_win_create;
 use function drift_win_dpi;
 use function drift_win_is_maximized;
+use function drift_win_material_caps;
 use function drift_win_maximize_toggle;
 use function drift_win_minimize;
 use function drift_win_place_window;
-use function drift_win_set_backdrop;
 use function drift_win_set_frameless;
 use function drift_win_set_min_size;
-use function drift_win_set_opacity;
 use function drift_win_set_cursor;
 use function drift_win_set_title;
 use function drift_win_show;
@@ -47,6 +48,15 @@ use function drift_win_window_position;
 final class Win32WindowHost implements WindowHost
 {
     private ?int $handle = null;
+
+    /**
+     * 是否已请求无边框（`setFrameless()` 记一次）。
+     *
+     * ★ 供 `applyMaterial()` 校验"逐像素 alpha 要无边框"这条耦合 —— 壳看不见
+     *   PHP 侧的调用历史，而这条校验恰恰需要跨两次调用的知识，所以记在实现
+     *   对象上（单窗假设与 `$handle` 同源；多窗口化时改 map，见 GAP §8 待做）。
+     */
+    private bool $frameless = false;
 
     public function createWindow(string $title, int $width, int $height): int
     {
@@ -98,32 +108,43 @@ final class Win32WindowHost implements WindowHost
     }
 
     /**
-     * 整窗不透明度（0..1；1 = 不透明）。P1 §质感。
+     * 一次应用窗口外观材质（P1 收敛裁决）。见 `WindowHost::applyMaterial()`。
      *
-     * ★ 这是**平台能力**，不是正确性：不支持的平台可 no-op（外观增强）。
-     *   Win32 走 `WS_EX_LAYERED` + `SetLayeredWindowAttributes`（**全局** alpha，
-     *   首次 <1 才懒挂 LAYERED）。
-     * ★ 逐像素 alpha 是另一条路（`setBackground()` 带 alpha ⇒ `UpdateLayeredWindow`），
-     *   两者互斥；那条路上 alpha 由 `BLENDFUNCTION` 带上，语义一致。
+     * ★★ **在这里硬校验"逐像素 alpha 要无边框"**：这条耦合收敛前只活在组合根
+     *   的注释里（"带 alpha 时必须同时 DRIFT_WINDOW_FRAMELESS=1"），漏设的表现
+     *   是壳静默回落 GDI —— "透明没生效"且无任何报错。配置矛盾属于编程错误，
+     *   与"环境变量写错是 Fatal"同口径：当场报，不留静默态。
+     * ★ 传给桥的只有**模式与数值**：`pixelAlpha` 由材质的底色 alpha 推出，
+     *   `Color` 本身不过桥（§5.1 只传原语；颜色是像素的事，归表面）。
      */
-    public function setOpacity(int $windowHandle, float $opacity): void
+    public function applyMaterial(int $windowHandle, WindowMaterial $material): void
     {
-        drift_win_set_opacity($windowHandle, $opacity);
+        $pixelAlpha = $material->wantsPixelAlpha();
+        if ($pixelAlpha && !$this->frameless) {
+            Errors::report(
+                'WindowMaterial: 带 alpha 的底色（逐像素透明）必须先 setFrameless() '
+                . '—— 无边框是 UpdateLayeredWindow 位图对齐窗口矩形的前提，'
+                . '漏设只会"透明没生效"（壳静默回落 GDI）',
+            );
+        }
+
+        drift_win_apply_material(
+            $windowHandle,
+            $pixelAlpha,
+            $material->opacityValue(),
+            $material->backdropKind() === null ? 0 : $material->backdropKind()->value,
+        );
     }
 
     /**
-     * 窗口背后的材质（`null` = 关）。P1 §质感 / Stage 3。
+     * 平台能力查询（位掩码从壳一次探来）。见 `WindowMaterialCapabilities`。
      *
-     * ★ 走**未公开**的 `user32!SetWindowCompositionAttribute`（accent 策略）——
-     *   Win10 上 `DWMWA_SYSTEMBACKDROP_TYPE` 不存在（要 Win11 22621+），
-     *   这是唯一一条路。壳侧 `GetProcAddress` 动态取，取不到就静默 no-op。
-     * ★★ **只在"应用没画到"的地方可见**：DWM 把模糊画在窗口**背后**，应用像素在
-     *   上面 ⇒ 不透明窗口设了等于没设（没有观察通道，不是失败）。
-     * ★ `null` → 桥的 `0`（关）；枚举的 `value` 就是桥的 ABI 编号。
+     * ★ 桥侧结果进程内缓存（答案不变），这里不做二次缓存 —— 多一层缓存就多一个
+     *   "测试替身要不要跟着假"的问题。
      */
-    public function setBackdrop(int $windowHandle, ?Backdrop $backdrop): void
+    public function materialCapabilities(int $windowHandle): WindowMaterialCapabilities
     {
-        drift_win_set_backdrop($windowHandle, $backdrop === null ? 0 : $backdrop->value);
+        return WindowMaterialCapabilities::fromBits(drift_win_material_caps());
     }
 
     /**
@@ -137,6 +158,8 @@ final class Win32WindowHost implements WindowHost
      */
     public function setFrameless(int $windowHandle, int $dragHeight): void
     {
+        $this->frameless = true;
+
         $dpr = Scale::fromDpi((float) drift_win_dpi($windowHandle))->dpr;
         if ($dpr <= 0.0) {
             $dpr = 1.0;

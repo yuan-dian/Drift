@@ -33,6 +33,7 @@ use Drift\Platform\Win32\Win32RasterSurface;
 use Drift\Platform\Win32\Win32SkiaSurface;
 use Drift\Platform\Win32\Win32SurfaceProvider;
 use Drift\Platform\Win32\Win32WindowHost;
+use Drift\Platform\WindowMaterial;
 use Drift\App\FocusManager;
 use App\Hello\HelloApplication;
 use App\Showcase\ShowcaseApplication;
@@ -1210,39 +1211,46 @@ if (!function_exists('drift_skia_canvas_create')) {
     }
 }
 
-// ── Win32 桥的假实现（只假"逐像素 alpha 模式声明"这一个）──────────────
-// ★ 为什么只假这一个就够：smoke 从不构造真窗口，而 Win32 表面里唯一在
-//   **非 present 路径**上被调用的桥函数就是它 —— `present` 只在 `endFrame()`
-//   里，smoke 断言 `setBackground` 的语义时不跑 `endFrame`。
+// ── Win32 桥的假实现（窗口外观材质，P1 收敛 2026-10-26）────────────────
+// ★ smoke 从不构造真窗口，只验"PHP 侧把意图翻成了哪个 ABI 编号 / 哪个 bool"。
 // ★ 签名与 `cpp-src/drift_win32.stub.php` 逐字一致（stub 原话：签名不一致是
-//   链接期静默失败）。
-if (!function_exists('drift_win_set_pixel_alpha')) {
-    function drift_win_set_pixel_alpha(int $hwnd, bool $on): void
+//   链接期静默失败）。收敛后三个散落入口（set_opacity / set_pixel_alpha /
+//   set_backdrop）合成一个 `apply_material`，外加能力查询 `material_caps`。
+// ★ `set_frameless` / `dpi` 也假：像素 alpha 要无边框，`applyMaterial()` 的
+//   正路径测试需要先 `setFrameless()`，而它内部会读 `dpi` 折物理像素。
+if (!function_exists('drift_win_apply_material')) {
+    function drift_win_apply_material(int $hwnd, bool $pixelAlpha, float $opacity, int $backdropKind): void
     {
-        $GLOBALS['DRIFT_SMOKE_WIN_PIXEL_ALPHA'][] = [$hwnd, $on];
+        $GLOBALS['DRIFT_SMOKE_WIN_MATERIAL'][] = [$hwnd, $pixelAlpha, $opacity, $backdropKind];
     }
 }
 
-/** @return list<array{int, bool}> 逐像素 alpha 的声明记录：[hwnd, on] */
-function winPixelAlphaCalls(): array
+/** @return list<array{int, bool, float, int}> 材质调用记录：[hwnd, pixelAlpha, opacity, backdropKind] */
+function winMaterialCalls(): array
 {
-    return $GLOBALS['DRIFT_SMOKE_WIN_PIXEL_ALPHA'] ?? [];
+    return $GLOBALS['DRIFT_SMOKE_WIN_MATERIAL'] ?? [];
 }
 
-// ── 窗口背景材质（`drift_win_set_backdrop`）────────────────────────────
-// ★ 与上面同一个理由：smoke 从不构造真窗口，只验"PHP 侧把意图翻成了哪个 ABI 编号"。
-// ★ 签名与 `cpp-src/drift_win32.stub.php` 逐字一致。
-if (!function_exists('drift_win_set_backdrop')) {
-    function drift_win_set_backdrop(int $hwnd, int $kind): void
+if (!function_exists('drift_win_set_frameless')) {
+    function drift_win_set_frameless(int $hwnd, int $dragHeight): void
     {
-        $GLOBALS['DRIFT_SMOKE_WIN_BACKDROP'][] = [$hwnd, $kind];
+        $GLOBALS['DRIFT_SMOKE_WIN_FRAMELESS'][] = [$hwnd, $dragHeight];
     }
 }
 
-/** @return list<array{int, int}> 背景材质调用记录：[hwnd, kind] */
-function winBackdropCalls(): array
-{
-    return $GLOBALS['DRIFT_SMOKE_WIN_BACKDROP'] ?? [];
+if (!function_exists('drift_win_dpi')) {
+    function drift_win_dpi(int $hwnd): int
+    {
+        return 96;   // 假成 96 DPI ⇒ dpr 1.0；真实 Win32 的一致性由真机闸门保证
+    }
+}
+
+if (!function_exists('drift_win_material_caps')) {
+    function drift_win_material_caps(): int
+    {
+        // 假桥报告"全能力"（Win11 形态）：opacity | pixelAlpha | blur | acrylic | 圆角
+        return 0x01 | 0x02 | 0x04 | 0x08 | 0x10;
+    }
 }
 
 // ── 假桥记录的访问器与换算（⑨+1 用）──────────────────────────────
@@ -16219,37 +16227,60 @@ check(
         $bgCreate === null ? 'no create' : sprintf('0x%08X', $bgCreate[3]),
     );
 
-    // ② 声明：带 alpha ⇒ 逐像素模式；再设不透明 ⇒ 明确关掉（不能只开不关）
-    $GLOBALS['DRIFT_SMOKE_WIN_PIXEL_ALPHA'] = [];
-    $alphaSurface = new Win32SkiaSurface(4242);
-    $alphaSurface->setBackground(new Color(0xFF, 0xFF, 0xFF, 0xB0));
-    $alphaSurface->setBackground(Color::white());
+    // ── WindowMaterial 值对象（P1 收敛，2026-10-26）────────────────────
+    // ★ 纯值语义：make() 全中性、链式返回新实例（不改原对象）、wantsPixelAlpha()
+    //   只由底色 alpha 决定 —— 这是跨桥唯一的底色衍生量（Color 本身不过桥）。
+    $mBase = WindowMaterial::make();
+    $mAlpha = $mBase->background(new Color(0xFF, 0xFF, 0xFF, 0xB0));
     check(
-        'Win32SkiaSurface · alpha<255 声明逐像素、再设不透明声明关掉（[4242,true]→[4242,false]）',
-        winPixelAlphaCalls() === [[4242, true], [4242, false]],
-        var_export(winPixelAlphaCalls(), true),
+        'WindowMaterial · make() 全中性 / 链式不改原对象 / wantsPixelAlpha 只由底色 alpha 决定',
+        $mBase->backgroundColor() === null
+            && $mBase->opacityValue() === 1.0
+            && $mBase->backdropKind() === null
+            && $mBase->wantsPixelAlpha() === false
+            && $mAlpha->wantsPixelAlpha() === true
+            && $mBase->wantsPixelAlpha() === false   // 原对象不可变
+            && $mAlpha->background(Color::white())->wantsPixelAlpha() === false
+            && WindowMaterial::make()->background(new Color(0, 0, 0, 0))->wantsPixelAlpha() === true,
+        'base=' . var_export($mBase->wantsPixelAlpha(), true)
+            . ' alpha=' . var_export($mAlpha->wantsPixelAlpha(), true),
+    );
+
+    // ② 声明：带 alpha 底色 ⇒ 逐像素模式；再设不透明 ⇒ 明确关掉（不能只开不关）
+    //   ★ 收敛后"声明"归 `WindowHost::applyMaterial()`：`Surface::setBackground()` 不再
+    //     过桥（底色只管"画出来是什么像素"）。逐像素要无边框是硬前提，故先 setFrameless。
+    $GLOBALS['DRIFT_SMOKE_WIN_MATERIAL'] = [];
+    $alphaHost = new Win32WindowHost();
+    $alphaHost->setFrameless(9001, 0);
+    $alphaHost->applyMaterial(9001, WindowMaterial::make()->background(new Color(0xFF, 0xFF, 0xFF, 0xB0)));
+    $alphaHost->applyMaterial(9001, WindowMaterial::make()->background(Color::white()));
+    check(
+        'Win32WindowHost · alpha<255 声明逐像素、再设不透明声明关掉（pixelAlpha true→false）',
+        winMaterialCalls() === [[9001, true, 1.0, 0], [9001, false, 1.0, 0]],
+        var_export(winMaterialCalls(), true),
     );
 
     // ★ 反例自检：`a === 0` 是"全透明"而不是"没设"，必须照样声明
     //   （用 `> 0` 判"有没有 alpha"会漏掉全透明窗口 —— 那正是最想透明的那种）
-    $GLOBALS['DRIFT_SMOKE_WIN_PIXEL_ALPHA'] = [];
-    $clearSurface = new Win32RasterSurface(777);
-    $clearSurface->setBackground(new Color(0, 0, 0, 0));
+    $GLOBALS['DRIFT_SMOKE_WIN_MATERIAL'] = [];
+    $clearHost = new Win32WindowHost();
+    $clearHost->setFrameless(777, 0);
+    $clearHost->applyMaterial(777, WindowMaterial::make()->background(new Color(0, 0, 0, 0)));
     check(
-        'Win32RasterSurface · 全透明底色（a=0）照样声明逐像素',
-        winPixelAlphaCalls() === [[777, true]],
-        var_export(winPixelAlphaCalls(), true),
+        'Win32WindowHost · 全透明底色（a=0）照样声明逐像素',
+        winMaterialCalls() === [[777, true, 1.0, 0]],
+        var_export(winMaterialCalls(), true),
     );
 
-    // ③ 零回归：默认白 ⇒ 构造 + 跑一帧都不该发声明
-    $GLOBALS['DRIFT_SMOKE_WIN_PIXEL_ALPHA'] = [];
-    $plainSurface = new Win32SkiaSurface(1);
-    $plainSurface->resize(8, 8, 1.0);
-    $plainSurface->beginFrame(0.0);
+    // ③ 零回归：中性材质（不声明任何旋钮）⇒ 发一次完整快照，但 pixelAlpha=false /
+    //    opacity=1.0 / backdrop=0（壳据此把窗口调回默认；与 Surface::setBackground 解耦）。
+    $GLOBALS['DRIFT_SMOKE_WIN_MATERIAL'] = [];
+    $plainHost = new Win32WindowHost();
+    $plainHost->applyMaterial(1, WindowMaterial::make());
     check(
-        'Win32SkiaSurface · 默认白底 ⇒ 一次 set_pixel_alpha 都不发（零回归）',
-        winPixelAlphaCalls() === [],
-        var_export(winPixelAlphaCalls(), true),
+        'Win32WindowHost · 中性材质 ⇒ 发一次快照、pixelAlpha=false / opacity=1.0 / backdrop=0',
+        winMaterialCalls() === [[1, false, 1.0, 0]],
+        var_export(winMaterialCalls(), true),
     );
 
     // 回放底色：`RecordingSurface::raster()` 是浮层像素断言的取像口，
@@ -16266,7 +16297,7 @@ check(
         sprintf('%d,%d,%d,%d', $bgRecPixel->r, $bgRecPixel->g, $bgRecPixel->b, $bgRecPixel->a),
     );
 
-    // ── 窗口背景材质（P1 §质感 / Stage 3）──────────────────────────────
+    // ── 窗口背后材质（P1 §质感 / Stage 3，收敛进 WindowMaterial）────────────
     // ① ABI 护栏：枚举 `value` **就是**桥的编号（`0` 留给"关"）⇒ 改它等于改 ABI，
     //    而改了之后"磨砂变轻模糊"这种错**不报错、只是看着不对**。
     check(
@@ -16275,18 +16306,32 @@ check(
         sprintf('%d / %d', Backdrop::Blur->value, Backdrop::Acrylic->value),
     );
 
-    // ② 意图 → 编号：三种都要过一遍。
+    // ② 意图 → 编号：三种都要过一遍（走 applyMaterial 一次快照）。
     //   ★ `null` 必须是**发 0**，不能是"不发调用" —— 不发的话窗口上已经生效的
     //     材质会一直留着，"关掉"静默失效（本仓最讨厌的那种 bug）。
-    $GLOBALS['DRIFT_SMOKE_WIN_BACKDROP'] = [];
+    $GLOBALS['DRIFT_SMOKE_WIN_MATERIAL'] = [];
     $bdHost = new Win32WindowHost();
-    $bdHost->setBackdrop(9001, Backdrop::Blur);
-    $bdHost->setBackdrop(9001, Backdrop::Acrylic);
-    $bdHost->setBackdrop(9001, null);
+    $bdHost->applyMaterial(9001, WindowMaterial::make()->backdrop(Backdrop::Blur));
+    $bdHost->applyMaterial(9001, WindowMaterial::make()->backdrop(Backdrop::Acrylic));
+    $bdHost->applyMaterial(9001, WindowMaterial::make()->backdrop(null));
     check(
-        'Win32WindowHost · setBackdrop 映射 Blur→1 / Acrylic→2 / null→0（关也要发调用）',
-        winBackdropCalls() === [[9001, 1], [9001, 2], [9001, 0]],
-        var_export(winBackdropCalls(), true),
+        'Win32WindowHost · applyMaterial 映射 Blur→1 / Acrylic→2 / null→0（关也要发调用）',
+        winMaterialCalls() === [[9001, false, 1.0, 1], [9001, false, 1.0, 2], [9001, false, 1.0, 0]],
+        var_export(winMaterialCalls(), true),
+    );
+
+    // ③ 能力查询：位掩码按 ABI 编号解析（位1 opacity / 位2 pixelAlpha / 位4 blur /
+    //   位8 acrylic / 位16 圆角）；假桥报"全能力" ⇒ 五项全 true。
+    $caps = (new Win32WindowHost())->materialCapabilities(9001);
+    check(
+        'Win32WindowHost · materialCapabilities 解析位掩码（假桥全能力 ⇒ 五项全 true）',
+        $caps->opacity() && $caps->pixelAlpha() && $caps->backdropBlur()
+            && $caps->backdropAcrylic() && $caps->roundedCorners(),
+        sprintf(
+            '%d/%d/%d/%d/%d',
+            (int) $caps->opacity(), (int) $caps->pixelAlpha(), (int) $caps->backdropBlur(),
+            (int) $caps->backdropAcrylic(), (int) $caps->roundedCorners(),
+        ),
     );
 }
 

@@ -59,30 +59,28 @@ interface WindowHost
     public function setMinSize(int $width, int $height): void;
 
     /**
-     * 整窗不透明度（0..1；1 = 不透明）。P1 §质感。
+     * 一次应用窗口外观材质（P1 收敛裁决，2026-10-26）。
      *
-     * ★ **平台能力，不是正确性**：不支持的平台可 no-op —— 应用不该因为
-     *   "这个平台不能半透明"就报错。Win32 实现走 `WS_EX_LAYERED`（首次 <1 懒挂）
-     *   + `SetLayeredWindowAttributes`（**全局** alpha，与既有 GDI 上屏共存）。
-     * ★ 逐像素 alpha 是**另一条路**（`RenderSurface::setBackground()` 带 alpha 底色
-     *   ⇒ 壳切 `UpdateLayeredWindow`），两者共用 `WS_EX_LAYERED` 但**互斥**；
-     *   逐像素模式下本方法的 alpha 由 `BLENDFUNCTION.SourceConstantAlpha` 带上，
-     *   语义一致。
+     * ★ 收的是 `WindowMaterial` 值对象，不是三个 setter —— 整窗 alpha、逐像素
+     *   alpha、背后材质三者**互斥/耦合**（LWA 与 ULW 互斥、逐像素要无边框、
+     *   背后材质要 alpha 底色才有观察通道），分开调就得靠"调用顺序对了才对"。
+     *   壳一次拿到完整快照，按值调和，与顺序无关。耦合规则见 `WindowMaterial`
+     *   类注释；"没 setFrameless 就要逐像素"在 Win32 实现里**硬校验**。
+     * ★ **像素归表面**：底色的颜色仍由 `RenderSurface::setBackground()` 画，
+     *   这里只收"模式"（逐像素 on/off）—— `Color` 不过桥（§5.1 只传原语）。
+     * ★ 平台能力，不是正确性：不支持的旋钮 no-op（外观增强）；要问"能不能"
+     *   走 `materialCapabilities()`。
      */
-    public function setOpacity(int $windowHandle, float $opacity): void;
+    public function applyMaterial(int $windowHandle, WindowMaterial $material): void;
 
     /**
-     * 窗口背后的材质（`null` = 关）。P1 §质感 / Stage 3。
+     * 当前平台对 `WindowMaterial` 各旋钮的实际支持（能力半边）。
      *
-     * ★ **平台能力，可 no-op**。Win32（Win10 19045 实测）：走未公开的
-     *   `user32!SetWindowCompositionAttribute` 的 accent 策略 —— `Blur` 轻模糊、
-     *   `Acrylic` 磨砂。Win11 有 `DWMWA_SYSTEMBACKDROP_TYPE`（本机验不了，未接）。
-     * ★★ **只在"应用没画到"的地方可见** ⇒ 通常要配合 `RenderSurface::setBackground()`
-     *   给带 alpha 的底色，否则模糊被应用内容整块盖住（不是没生效，是看不见）。
-     * ★ 与本框架的应用内毛玻璃（`BackdropFilter`）分工：那个模糊**应用自己的内容**
-     *   （浮层压在主界面上），这个模糊**窗口背后的桌面**（整窗透出）。
+     * ★ 位掩码从壳一次性探来（OS 版本 / API 入口探测），缓存无害 —— 答案在
+     *   进程生命周期内不变。应用问它做**自适应**（不支持亚克力退回 Blur），
+     *   不是为了报错：不支持的旋钮本来就是 no-op。
      */
-    public function setBackdrop(int $windowHandle, ?Backdrop $backdrop): void;
+    public function materialCapabilities(int $windowHandle): WindowMaterialCapabilities;
 
     /**
      * 无边框模式（P1-Stage 1b / §质感）。`$dragHeight` = 顶部拖动带高度（**逻辑**像素）。

@@ -62,68 +62,61 @@ function drift_win_set_title(int $hwnd, string $title): void {}
 function drift_win_set_min_size(int $hwnd, int $width, int $height): void {}
 
 /**
- * 整窗不透明度（P1 / §质感）。`$alpha` 0..1（1 = 不透明，越小越透）。
+ * 一次应用窗口外观材质（P1 收敛裁决，2026-10-26）。取代原先的三个独立入口
+ * （`set_opacity` / `set_pixel_alpha` / `set_backdrop` —— 已删，签名不一致是
+ * 链接期静默失败，改桥必须两边同步）。
  *
- * ★ **懒挂**：首次以 `$alpha < 1` 调用时壳才给窗口加 `WS_EX_LAYERED` ——
- *   其余窗口保持纯 GDI 上屏，不承担分层窗在旧驱动 / 远程桌面下的合成怪癖。
- * ★ 与逐像素 alpha（`drift_win_set_pixel_alpha`）共用 `WS_EX_LAYERED` 但**互斥**：
- *   逐像素模式下本函数只记值、不调 `SetLayeredWindowAttributes`（那会把窗口切回
- *   LWA 模式、让 ULW 交上去的位图当场失效），透明度由下一次 present 的
+ * `$pixelAlpha` = 逐像素 alpha 上屏（present 走 `UpdateLayeredWindow`：画布像素
+ * 自带的 alpha 生效，应用没画到的地方透出桌面）；`false` = GDI 贴屏。
+ * `$opacity` 0..1 = 整窗不透明度（1 = 不透明）；`$backdropKind` 与
+ * `Drift\Platform\Backdrop` 的 `value` 一一对应（`0` 关 / `1` 轻模糊 / `2` 磨砂）。
+ *
+ * ★★ **为什么收成一个函数**：三个旋钮**互斥/耦合** —— LWA 与 ULW 共用
+ *   `WS_EX_LAYERED` 但互斥、逐像素要无边框（位图才与窗口矩形对齐）、背后材质
+ *   只在带 alpha 底色时有观察通道。三个 setter 分开调，壳就得靠"调用顺序对了
+ *   才对"来调和；一次拿到完整快照，调和变成按值的确定性逻辑。
+ *   （"要无边框"那条的**校验**在 PHP 侧 `Win32WindowHost::applyMaterial()` ——
+ *   壳看不见调用历史。）
+ *
+ * ★ `$pixelAlpha` 的语义是**声明**不是"每帧从像素里猜"：模式切换要
+ *   `SetWindowLongPtr` + `SWP_FRAMECHANGED`（DWM 重建表面），是重操作；
+ *   底色是应用级常量，声明一次就够。
+ * ★★ **本函数不因 `$pixelAlpha` 动窗口样式**（老 `set_pixel_alpha` 的坑）：
+ *   只置位标志，真正挂 `WS_EX_LAYERED` 推迟到**第一次 present**。挂着 LAYERED
+ *   而 LWA / ULW 一个都没调过时窗口可能完全不显示 ⇒ 首帧前调它会闪一下。
+ * ★ **整窗 alpha 的懒挂**：`$opacity < 1` 且非逐像素模式时挂 LWA（其余窗口保持
+ *   纯 GDI 上屏）；逐像素模式下 `$opacity` 由每次 present 的
  *   `BLENDFUNCTION.SourceConstantAlpha` 带上 ⇒ **两种模式语义一致**。
- */
-function drift_win_set_opacity(int $hwnd, float $alpha): void {}
-
-/**
- * 逐像素 alpha 上屏开关（P1-Stage 2b / §质感）。
- *
- * `$on = true` ⇒ 之后每次 present 走 `UpdateLayeredWindow`：**画布像素自带的 alpha
- * 生效**，应用没画到的地方透出桌面。`false` ⇒ 回到 `SetDIBitsToDevice`（GDI 贴屏）。
- *
- * ★ **这是"声明"不是"每帧从像素里猜"**：模式切换要 `SetWindowLongPtr` +
- *   `SWP_FRAMECHANGED`（DWM 重建表面），是重操作；底色是应用级常量，声明一次就够。
- * ★ 消费者只有一处：`Win32SkiaSurface::setBackground()` / `Win32RasterSurface::
- *   setBackground()`，按底色 `a < 255` 决定传什么（`Color::isOpaque()`）。
- * ★★ **本函数不动窗口样式**：只置位一个标志，真正挂 `WS_EX_LAYERED` 推迟到
- *   **第一次 present**。`WS_EX_LAYERED` 挂着而 LWA / ULW 一个都没调过时窗口
- *   可能完全不显示，而 `setBackground()` 发生在首帧之前 ⇒ 那会闪一下。
- * ★ 清零同样不动样式（`drift_win_set_opacity` 可能还在用 `WS_EX_LAYERED`）。
- */
-function drift_win_set_pixel_alpha(int $hwnd, bool $on): void {}
-
-/**
- * 窗口背后的材质（P1 §质感 / Stage 3）。`$kind`：`0` 关 / `1` 轻模糊 / `2` 磨砂。
- *
- * 走**未公开**的 `user32!SetWindowCompositionAttribute`（accent 策略）：
- *   · `1` → `ACCENT_ENABLE_BLURBEHIND`（只压高频，背后轮廓仍可辨）
- *   · `2` → `ACCENT_ENABLE_ACRYLICBLURBEHIND`（重模糊 + 系统色调层）
- * 编号与 `Drift\Platform\Backdrop` 的 `value` 一一对应（那边是 ABI 的唯一出处）。
- *
- * ★★ **为什么是未公开 API**：`DWMWA_SYSTEMBACKDROP_TYPE` 要 Win11 22621+，
- *   本机是 **Win10 19045**（实测该属性返回失败、画面零变化）⇒ Win10 上这是
- *   **唯一**一条路。壳用 `GetProcAddress` 动态取，取不到（更老的系统）静默 no-op。
- *
- * ★★ **只在"应用没画到"的地方可见**：DWM 把模糊画在窗口**背后**，应用像素压在上面。
- *   不透明窗口设了等于没设 —— 这不是失败，是**没有观察通道**。正常用法是配
- *   `RenderSurface::setBackground()` 给带 alpha 的底色（⇒ `UpdateLayeredWindow`）。
- *
- * ★ **真机实测**（Win10 19045，`--screen --detail`，全透明底 + 无边框，窗口 900×560）：
- *   判据是**相对同一块矩形的桌面基准**（背景窗口先激活、被测窗口后建 ⇒ 三次跑同一背景，
- *   读数逐位可复现）：
- *   · 桌面基准 `detail=4.80`；对照组（不调本函数）`4.65`（≈ 基准，只是被应用内容盖掉一点）；
- *     `2`（磨砂）**1.57**（基准的 33%）；`1`（轻模糊）**0.87**（18%）
- *   · 改尺寸（900×560 → 700×420）后模糊仍在，无需重设
- *   · 与 `drift_win_set_opacity(0.6)` 叠加 ⇒ 两者同时生效，不冲突
- *   · 色调（`GradientColor`）的 alpha：`0` = 关；`0x01 / 0x20 / 0x99 / 0xFF` 四档
- *     **同背景连测**的 `detail` 一致 ⇒ **高频上看不出强度差异**（亮度是否随 alpha 变
- *     **未做受控测量**，所以"强度"这个旋钮不发货）。RGB 通道在同背景的前后两次抓图里
- *     改红改黑画面一致 ⇒ 本机观察不到色调效果。
- *     **所以不接受色调参数**，固定传 `0x99000000`（社区常用的中性值）。
- *   ★ `0`（关）只验了"新建窗口上调用不出错、画面与不设一致"；
- *     **运行期从有到无的切换未验**（本仓暂无切换的消费者）。
- *
+ * ★ `$backdropKind` 走**未公开**的 `user32!SetWindowCompositionAttribute`
+ *   （accent 策略）：`DWMWA_SYSTEMBACKDROP_TYPE` 要 Win11 22621+，本机是
+ *   **Win10 19045**（实测该属性返回失败、画面零变化）⇒ 这是唯一一条路，
+ *   `GetProcAddress` 动态取，取不到静默 no-op。
+ *   ★ 真机实测（Win10 19045，`--screen --detail`，全透明底 + 无边框，窗口 900×560，
+ *   判据 = 相对同一块矩形的桌面基准，读数逐位可复现）：基准 `detail=4.80`；
+ *   对照组 `4.65`；磨砂 **1.57**（33%）；轻模糊 **0.87**（18%）；改尺寸后模糊仍在；
+ *   与 `$opacity=0.6` 叠加两者同时生效。色调（`GradientColor`）四档 alpha 同背景
+ *   连测 `detail` 一致 ⇒ **强度旋钮不发货**，固定 `0x99000000`；轻模糊传 `0`
+ *   （alpha=0 时 `BLURBEHIND` 照样生效）。`0`（关）只验了"调用不出错"。
  * ★ 失败静默（外观增强，不是正确性）：返回 `void`，调用方不需要分支。
  */
-function drift_win_set_backdrop(int $hwnd, int $kind): void {}
+function drift_win_apply_material(int $hwnd, bool $pixelAlpha, float $opacity, int $backdropKind): void {}
+
+/**
+ * 当前平台对窗口材质各旋钮的**实际支持**（位掩码；位值 = ABI，与
+ * `Drift\Platform\WindowMaterialCapabilities::fromBits()` 一一对应）：
+ *   · 位 1（`0x01`）  整窗不透明度（LWA，Win2000+，实际恒置位）
+ *   · 位 2（`0x02`）  逐像素透明（`UpdateLayeredWindow`，XP+；**仍要求无边框**）
+ *   · 位 4（`0x04`）  背后轻模糊（accent 策略入口探得到）
+ *   · 位 8（`0x08`）  背后磨砂（同上；Win11 的 `DWMWA_SYSTEMBACKDROP_TYPE`
+ *                     路线接入后并进这一位）
+ *   · 位 16（`0x10`） 系统圆角（`DWMWCP_ROUND` 要 Win11 build 22000+；Win10 上
+ *                     API 返回 S_OK 但**静默不裁角** —— 2026-10-26 真机证伪过
+ *                     "分层窗照样裁角"的误判，所以这里按 OS 版本如实报 false）
+ *
+ * ★ 未知位置零 —— 前向兼容：新平台多出的位不该让旧应用崩。
+ * ★ 结果进程内缓存：答案在进程生命周期内不变（OS 版本 / API 入口不会中途变）。
+ */
+function drift_win_material_caps(): int {}
 
 /**
  * 无边框模式（P1-Stage 1b / §质感）。`$dragHeight` = 顶部拖动带高度（**物理**像素）。

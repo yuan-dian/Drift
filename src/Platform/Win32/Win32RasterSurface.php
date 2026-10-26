@@ -10,7 +10,6 @@ use Drift\Rendering\RasterCanvas;
 use Drift\Rendering\RenderSurface;
 
 use function drift_win_present;
-use function drift_win_set_pixel_alpha;
 
 /**
  * Win32 的 M1 表面：**PHP 软光栅 + 贴屏**（§7.3 的 M1 分期）。
@@ -40,7 +39,7 @@ final class Win32RasterSurface implements RenderSurface
 
     private ?RasterCanvas $canvas = null;
 
-    /** 每帧清屏色；`a < 255` ⇒ 该窗口走逐像素透明（`drift_win_set_pixel_alpha`） */
+    /** 每帧清屏色；`a < 255` 的**模式声明**归 `WindowMaterial`（逐像素 on/off 不过这里） */
     private Color $background;
 
     /** @param int $windowHandle 不透明句柄（只传给桥，这里不解引用） */
@@ -58,14 +57,15 @@ final class Win32RasterSurface implements RenderSurface
     }
 
     /**
-     * ★ 只在**改底色时**过一次桥（不是每帧）：模式是窗口属性，帧是像素。
-     *   带 alpha 的底色 ⇒ 告诉壳"这扇窗要按逐像素 alpha 上屏"，壳据此切到
-     *   `UpdateLayeredWindow`（见 `drift_win_set_pixel_alpha` 的长注释）。
+     * ★ **纯像素职责，零过桥**（2026-10-26 收敛）：底色是"画出来是什么像素"，
+     *   每帧清屏用它；"合成器按什么模式上屏"（逐像素 on/off）是另一层的事，
+     *   归 `WindowMaterial` + `WindowHost::applyMaterial()` 一次声明。以前这里
+     *   顺手调 `drift_win_set_pixel_alpha()` —— 三个外观旋钮散在两个对象上、
+     *   耦合靠调用顺序维持，正是那次收敛要消灭的形态。
      */
     public function setBackground(Color $color): void
     {
         $this->background = $color;
-        drift_win_set_pixel_alpha($this->windowHandle, !$color->isOpaque());
     }
 
     public function beginFrame(float $timestampMs): Canvas

@@ -50,7 +50,7 @@
 // ★ **Win10 未公开**的 `user32!SetWindowCompositionAttribute`（无头文件、无 import lib）。
 //   结构体定义来自逆向社区、在 Win32 生态里被广泛使用，**字段顺序与系统 ABI 绑定** ——
 //   不要重排、不要"改成看起来顺眼的类型"。Win11 起由 `DWMWA_SYSTEMBACKDROP_TYPE`
-//   取代，但本机是 Win10 19045，只剩这一条路。详见 `php_drift_win_set_backdrop()`。
+//   取代，但本机是 Win10 19045，只剩这一条路。详见 `php_drift_win_apply_material()`。
 enum DriftAccentState {
     DRIFT_ACCENT_DISABLED = 0,
     DRIFT_ACCENT_ENABLE_GRADIENT = 1,
@@ -2104,97 +2104,14 @@ void php_drift_win_close(Int hwnd) {
 }
 
 /**
- * 整窗不透明度（P1 / §质感）。`alpha` 0.0..1.0：1 = 不透明，越小越透。
- *
- * ★★ **懒挂 LAYERED**（不是建窗时就挂）：只有应用真的要半透明时才加
- *   `WS_EX_LAYERED`，其余窗口保持纯 GDI 上屏 —— 分层窗在旧驱动 / 远程桌面 /
- *   部分合成器下有怪癖（透明度、子窗口重绘），用不到就不要。这是"能力按需开启"，
- *   与 §11 的能力查询纪律同源。
- *
- * ★ 走 `SetLayeredWindowAttributes(LWA_ALPHA)`（**全局** alpha）。逐像素 alpha 是
- *   另一件事，见 `php_drift_win_set_pixel_alpha()` —— 两者共用 `WS_EX_LAYERED`
- *   但**互斥**：一旦某帧走了 `UpdateLayeredWindow`，再调本函数会把窗口切回
- *   "LWA 模式"，ULW 交上去的位图当场失效（窗口空白一帧）。所以逐像素模式下
- *   本函数**只记值不调 API**，由下一次 present 通过 `BLENDFUNCTION` 带上。
+ * 窗口背后材质的 accent 策略本体（P1-Stage 3 落地，从老的 `set_backdrop` 原样搬入；
+ * 真机实测与"为什么是未公开 API"见 stub 的 `drift_win_apply_material` docblock）。
+ * `kind`：`0` 关 / `1` 轻模糊 / `2` 磨砂（= `Backdrop::value`）。
  */
-void php_drift_win_set_opacity(Int hwnd, Float alpha) {
-    HWND target = (HWND)(INT_PTR)hwnd;
-    if (target == NULL) {
-        return;
-    }
-    int a255 = (int)(alpha * 255.0f + 0.5f);
-    if (a255 < 0) {
-        a255 = 0;
-    } else if (a255 > 255) {
-        a255 = 255;
-    }
-    g_opacity = (BYTE)a255;
-
-    if (g_pixelAlpha) {
-        // 逐像素模式：值已记下，下一次 present 的 BLENDFUNCTION 会带上。
-        // 这里**不能**碰 `SetLayeredWindowAttributes`（会把绑定态切回 LWA，
-        // ULW 交上去的位图当场失效 ⇒ 窗口空白）。
-        return;
-    }
-
-    bindLayered(target, kBindLwa);
-}
-
-/**
- * 逐像素 alpha 上屏开关（P1-Stage 2b / §质感）。
- *
- * ★★ **为什么是"声明"而不是每帧从像素里猜**：模式切换要 `SetWindowLongPtr` +
- *   `SWP_FRAMECHANGED`（系统重算非客户区、DWM 重建表面），是**重操作**。从像素猜
- *   会让"某帧碰巧全不透明"触发一次无谓往返，还会让模式抖动成为默认行为。
- *   底色是应用级常量，声明一次就够。
- *
- * ★★ **本函数不动窗口样式**（第一版动了，是个坑）：只置位一个标志，真正挂
- *   `WS_EX_LAYERED` 推迟到**第一次 present**（`presentLayered()` → `bindLayered()`）。
- *   理由：`WS_EX_LAYERED` 挂上而 LWA / ULW 一个都还没调过时，窗口**可能完全不显示**
- *   （MSDN：分层窗要等其中一个 API 被调用才可见）。而 `setBackground()` 发生在
- *   `attach()` 之前、首帧之后几百微秒 —— 那段时间足够用户看到窗口闪一下。
- *   推迟到 present 就没有这个空窗：窗口一直是 GDI 贴屏的不透明画面，切换发生在
- *   一帧之内。
- *
- * ★ 清零同样不动样式：`set_opacity` 可能还在用 `WS_EX_LAYERED`。切回 GDI 只需
- *   把 `g_pixelAlpha` 清零，`present` 自然会走 `SetDIBitsToDevice`。
- */
-void php_drift_win_set_pixel_alpha(Int hwnd, Bool on) {
-    if ((HWND)(INT_PTR)hwnd == NULL) {
-        return;
-    }
-    g_pixelAlpha = (on != 0);
-}
-
-/**
- * 窗口背后的材质（P1 §质感 / Stage 3）。`kind`：`0` 关 / `1` 轻模糊 / `2` 磨砂。
- *
- * ★★ **为什么是未公开 API**：`DWMWA_SYSTEMBACKDROP_TYPE` 要 Win11 22621+，本机是
- *   Win10 19045（实测该属性返回失败、画面零变化）⇒ `SetWindowCompositionAttribute`
- *   是 Win10 上**唯一**一条路。它无头文件、无 import lib ⇒ `GetProcAddress` 动态取
- *   （`GetModuleHandleW(L"user32.dll")` 不增引用计数，不必 `FreeLibrary`）；
- *   取不到（更老的系统）静默 no-op。
- *
- * ★★ **只在"应用没画到"的地方可见**：DWM 把模糊画在窗口**背后**，应用像素压在上面
- *   ⇒ 不透明窗口设了等于没设（没有观察通道，不是失败）。
- *
- * ★ 色调固定 `0x99000000`：本机实测 `GradientColor` 的 alpha `0` = 关、`≥1` = 生效，
- *   而 `0x01 / 0x20 / 0x99 / 0xFF` 四档的**高频量完全一致**（`detail` 1.63 / 1.63 /
- *   1.67 / 1.64）⇒ 看不出"强度"；亮度是否随 alpha 变**未做受控测量**，所以不收强度参数。
- *   RGB 改红改黑画面无差别 ⇒ 也不收色调参数。轻模糊模式传 `0`
- *   （实测 alpha=0 时 `BLURBEHIND` 照样生效）。
- *
- * ★ 失败静默（外观增强，不是正确性）—— 与 `set_opacity` 同一口径。
- */
-void php_drift_win_set_backdrop(Int hwnd, Int kind) {
-    HWND target = (HWND)(INT_PTR)hwnd;
-    if (target == NULL) {
-        return;
-    }
-
+static void applyBackdrop(HWND target, int kind) {
     int state;
     int tint;
-    switch ((int)kind) {
+    switch (kind) {
         case 0:  state = DRIFT_ACCENT_DISABLED;             tint = 0;          break;
         case 1:  state = DRIFT_ACCENT_ENABLE_BLURBEHIND;    tint = 0;          break;
         case 2:  state = DRIFT_ACCENT_ENABLE_ACRYLICBLURBEHIND; tint = (int)0x99000000u; break;
@@ -2230,6 +2147,91 @@ void php_drift_win_set_backdrop(Int hwnd, Int kind) {
     data.size = sizeof(policy);
 
     setAttr(target, &data);
+}
+
+/**
+ * 一次应用窗口外观材质（P1 收敛裁决，2026-10-26）。取代 `set_opacity` /
+ * `set_pixel_alpha` / `set_backdrop` 三个入口（已删）—— 三个旋钮互斥/耦合，
+ * 分开调就得靠"调用顺序对了才对"；一次拿到完整快照，调和是按值的确定性逻辑。
+ * 参数语义与耦合规则见 stub 的 `drift_win_apply_material` docblock。
+ */
+void php_drift_win_apply_material(Int hwnd, Bool pixelAlpha, Float opacity, Int backdropKind) {
+    HWND target = (HWND)(INT_PTR)hwnd;
+    if (target == NULL) {
+        return;
+    }
+
+    // 逐像素模式：只置位标志，**不动窗口样式**（老 set_pixel_alpha 的坑）——
+    // 真正挂 WS_EX_LAYERED 推迟到第一次 present，避免"挂着 LAYERED 而谁都没调"
+    // 的不可见空窗。清零同样不动样式：切回 GDI 只需 present 走 SetDIBitsToDevice。
+    g_pixelAlpha = (pixelAlpha != 0);
+
+    int a255 = (int)(opacity * 255.0f + 0.5f);
+    if (a255 < 0) {
+        a255 = 0;
+    } else if (a255 > 255) {
+        a255 = 255;
+    }
+    g_opacity = (BYTE)a255;
+
+    applyBackdrop(target, (int)backdropKind);
+
+    // 整窗 alpha 的懒挂：只在"要半透明且不是逐像素模式"时挂 LWA —— 其余窗口
+    // 保持纯 GDI 上屏，不承担分层窗的合成怪癖。逐像素模式下不能调
+    // SetLayeredWindowAttributes（会把绑定态切回 LWA，ULW 的位图当场失效），
+    // 整窗 alpha 由 present 的 BLENDFUNCTION.SourceConstantAlpha 带上，语义一致。
+    if (!g_pixelAlpha && a255 < 255) {
+        bindLayered(target, kBindLwa);
+    }
+}
+
+/** RtlGetVersion：不被兼容清单骗的 OS 版本读取（material_caps 用） */
+typedef struct DriftOsVersionInfoW {
+    ULONG dwOSVersionInfoSize;
+    ULONG dwMajorVersion;
+    ULONG dwMinorVersion;
+    ULONG dwBuildNumber;
+    ULONG dwPlatformId;
+    WCHAR szCSDVersion[128];
+} DriftOsVersionInfoW;
+typedef LONG (WINAPI *DriftRtlGetVersionFn)(DriftOsVersionInfoW *);
+
+/**
+ * 当前平台对窗口材质各旋钮的实际支持（位掩码；位值 = ABI，见 stub docblock）。
+ *
+ * ★ 结果缓存：OS 版本 / API 入口在进程生命周期内不变，探一次就够。
+ * ★ 圆角按 OS 版本判（build 22000+），**不试 API**：`DwmSetWindowAttribute` 在
+ *   Win10 上返回 S_OK 但静默不裁角（2026-10-26 真机证伪过"分层窗照样裁角"）
+ *   —— 返回值骗人，版本号不会。
+ */
+Int php_drift_win_material_caps() {
+    static int cached = -1;
+    if (cached >= 0) {
+        return (Int)cached;
+    }
+
+    int caps = 0x01 | 0x02;   // LWA（Win2000+）/ ULW（XP+）：实际恒可用
+
+    HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    if (user32 != NULL && GetProcAddress(user32, "SetWindowCompositionAttribute") != NULL) {
+        caps |= 0x04 | 0x08;   // 轻模糊 / 磨砂：accent 策略入口探得到
+    }
+
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    if (ntdll != NULL) {
+        DriftRtlGetVersionFn rtl =
+            (DriftRtlGetVersionFn)(void *)GetProcAddress(ntdll, "RtlGetVersion");
+        if (rtl != NULL) {
+            DriftOsVersionInfoW info = {};
+            info.dwOSVersionInfoSize = sizeof(info);
+            if (rtl(&info) == 0 && (int)info.dwBuildNumber >= 22000) {
+                caps |= 0x10;   // 系统圆角（Win11+）
+            }
+        }
+    }
+
+    cached = caps;
+    return (Int)caps;
 }
 
 /**

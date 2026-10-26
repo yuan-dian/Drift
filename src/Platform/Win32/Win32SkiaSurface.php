@@ -11,7 +11,6 @@ use Drift\Rendering\SkiaCanvas;
 use Drift\Rendering\SurfaceProfile;
 
 use function drift_win_present_skia;
-use function drift_win_set_pixel_alpha;
 
 /**
  * Win32 的 Skia 表面：**Skia 光栅 + 贴屏**（§7.3 的 M1 后端之二）。
@@ -61,17 +60,16 @@ final class Win32SkiaSurface implements RenderSurface
     }
 
     /**
-     * ★ 底色带 alpha 时**两件事同时发生**，缺一不可：
-     *   ① `SkiaCanvas` 用带 alpha 的底色清屏，且桥按底色 alpha 决定
-     *      `allocN32Pixels(…, isOpaque)` —— 不翻 `isOpaque` 的话 Skia 会把
-     *      alpha 通道写成恒 255（`kSrc` 覆盖写），逐像素透明无从谈起；
-     *   ② 告诉壳这扇窗要按逐像素 alpha 上屏（`UpdateLayeredWindow`）。
-     *   ①改像素、②改合成路径。只做①=窗口全黑，只做②=整窗不透明。
+     * ★ 底色带 alpha 时 `SkiaCanvas` 用它清屏，且桥按底色 alpha 决定
+     *   `allocN32Pixels(…, isOpaque)` —— 不翻 `isOpaque` 的话 Skia 会把
+     *   alpha 通道写成恒 255（`kSrc` 覆盖写），逐像素透明无从谈起。
+     * ★ **模式声明不在这里**（2026-10-26 收敛）：告诉壳"按逐像素上屏"归
+     *   `WindowMaterial` + `WindowHost::applyMaterial()` —— 三个外观旋钮
+     *   一次声明，壳按快照调和，不再靠调用顺序。
      */
     public function setBackground(Color $color): void
     {
         $this->background = $color;
-        drift_win_set_pixel_alpha($this->windowHandle, !$color->isOpaque());
     }
 
     public function beginFrame(float $timestampMs): Canvas

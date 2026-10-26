@@ -11,18 +11,18 @@ namespace Drift\Platform;
  * 与本框架的应用内毛玻璃（`BackdropFilter` / `Canvas::blurBackdrop`）**不是一回事**：
  * 那个模糊的是**应用自己的内容**，这个模糊的是**窗口背后的桌面/别的窗口**。
  *
- * ★★ **只有逐像素 alpha 才能看见它**：`setBackdrop()` 让 DWM 在窗口**背后**画一层
+ * ★★ **只有逐像素 alpha 才能看见它**：背后材质让 DWM 在窗口**背后**画一层
  *   模糊，而应用画的像素在它上面。不透明窗口的每个像素都由应用画满 ⇒ 模糊被完全
  *   盖住，设了也看不出来（不是没生效，是没有观察通道）。所以它的正常用法是
- *   搭配 `RenderSurface::setBackground()` 给一个带 alpha 的底色。
+ *   搭配带 alpha 的底色（`WindowMaterial::background()` + `RenderSurface::setBackground()`）。
  *
- * ★★ **`value` 就是桥的 ABI 编号** —— `drift_win_set_backdrop(int $hwnd, int $kind)`
- *   收的就是它；`0` 保留给"关掉"（PHP 侧由 `null` 表达）。**改这里的 value 等于
- *   改 ABI**，必须与 `cpp-src/drift_win32.cc` 的 switch 同步。
+ * ★★ **`value` 就是桥的 ABI 编号** —— `drift_win_apply_material()` 的
+ *   `$backdropKind` 收的就是它；`0` 保留给"关掉"（PHP 侧由 `null` 表达）。
+ *   **改这里的 value 等于改 ABI**，必须与 `cpp-src/drift_win32.cc` 的 switch 同步。
  *
  * ★ **`null` 才是"不要背景"**（与 `CursorShape` 同一套约定：`null` = 不声明，
  *   枚举 case = 一个明确的决定）。所以这里**没有** `None` 这个 case ——
- *   `setBackdrop(null)` 就是关。
+ *   `WindowMaterial::backdrop(null)` 就是关。
  *
  * @api
  */

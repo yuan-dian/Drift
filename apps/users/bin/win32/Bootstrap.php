@@ -10,6 +10,7 @@ use Drift\App\ProcessWorker;
 use Drift\App\WindowStateStore;
 use Drift\Errors;
 use Drift\Platform\Backdrop;
+use Drift\Platform\WindowMaterial;
 use Drift\Platform\Win32\Win32Platform;
 use Drift\Rendering\Color;
 
@@ -81,13 +82,17 @@ final class Bootstrap
         $handle = $window->createWindow('用户管理', self::WINDOW_WIDTH, self::WINDOW_HEIGHT);
         $window->show($handle);
 
-        // ★ 窗口不透明度（P1 §质感 / Stage 1a）：环境变量驱动，**默认不变**。
+        // ★ 窗口外观材质（P1 收敛，2026-10-26）：整窗 alpha / 逐像素 alpha / 背后材质
+        //   三个散落入口收成一个 `WindowMaterial` 值对象、一次 `applyMaterial()`。
+        //   各环境变量独立驱动、**默认不变**；缺失 = 该旋钮"不声明"（中性）。
+        $material = WindowMaterial::make();
+
+        // ★ 整窗不透明度（P1 §质感 / Stage 1a）：环境变量驱动，**默认不变**。
         //   `DRIFT_WINDOW_OPACITY=0.85` ⇒ 整窗 85% 不透明（半透明）。
-        //   ★ 这是 `WindowHost::setOpacity()` 的**真实消费者**（否则它是个没人用的
-        //     API）；真正"内容透、控件不透"的毛玻璃是 Stage 2（逐像素 alpha + DWM 亚克力）。
+        //   ★ 真"内容透、控件不透"的毛玻璃是 Stage 2（逐像素 alpha + DWM 亚克力）。
         $opacityEnv = \getenv('DRIFT_WINDOW_OPACITY');
         if ($opacityEnv !== false && $opacityEnv !== '') {
-            $window->setOpacity($handle, (float) $opacityEnv);
+            $material = $material->opacity((float) $opacityEnv);
         }
 
         // ★ 无边框窗（P1 §质感 / Stage 1b）：环境变量驱动，**默认不变**。
@@ -136,23 +141,18 @@ final class Bootstrap
         $screen = $platform->screen();
         $surface = $provider->surface();
 
-        // ★ 窗口底色 / 逐像素透明（P1 §质感 / Stage 2b）：环境变量驱动，**默认不变**。
-        //   `DRIFT_WINDOW_BACKGROUND=#FFFFFF00` ⇒ 全透明底：应用没画到的地方**透出桌面**；
-        //   `#FFFFFFB0` ⇒ 半透明底（透出桌面、内容仍可读）。
-        //   ★ 这是 `RenderSurface::setBackground()` 的**真实消费者**，也是
-        //     `drift_win_set_pixel_alpha()` 的**唯一入口**（带 alpha 的底色 ⇒ 壳切
-        //     `UpdateLayeredWindow`）。不设 ⇒ 白底 + GDI 贴屏，零回归。
-        //   ★ 必须在 `attach()` **之前**：`attach()` 内部就跑首帧，那一刻底色就得对，
-        //     否则首帧按白底画、第二帧才变透明（用户看到闪一下白）。
-        //   ★ 解析失败是 Fatal（`Color::fromHex` 只认 `#RGB/#RRGGBB/#RRGGBBAA`）——
+        // ★ 窗口底色 / 逐像素透明（P1 §质感 / Stage 2b，收敛进 WindowMaterial）：
+        //   环境变量驱动、**默认不变**。`DRIFT_WINDOW_BACKGROUND=#FFFFFF00` ⇒ 全透明底：
+        //   应用没画到的地方**透出桌面**；`#FFFFFFB0` ⇒ 半透明底（透出桌面、内容仍可读）。
+        //   ★ 这是 `RenderSurface::setBackground()` 的**真实消费者**，也是逐像素透明的
+        //     唯一入口（`WindowMaterial` 据底色 alpha 推出逐像素模式）。不设 ⇒ 白底，零回归。
+        //   ★ 解析失败是 Fatal（`Color::fromHex` 仅认 `#RGB/#RRGGBB/#RRGGBBAA`）——
         //     环境变量写错不该静默退化成白底。
-        //   ★★ **带 alpha 时必须同时 `DRIFT_WINDOW_FRAMELESS=1`**：`UpdateLayeredWindow`
-        //     把位图贴在窗口左上角，有标题栏时客户区起点比窗口原点低一个标题栏 ⇒
-        //     画面整体上移。壳在"帧尺寸 ≠ 窗口矩形"时会**回落 GDI**（整窗不透明），
-        //     所以漏设不会黑屏，只是透明没生效。
+        //   ★★ **带 alpha 时必须同时 `DRIFT_WINDOW_FRAMELESS=1`**：收敛后这条耦合由
+        //     `applyMaterial()` 硬校验（漏设当场 Fatal，不再静默回落 GDI）。
         $bgEnv = \getenv('DRIFT_WINDOW_BACKGROUND');
         if ($bgEnv !== false && $bgEnv !== '') {
-            $surface->setBackground(Color::fromHex($bgEnv));
+            $material = $material->background(Color::fromHex($bgEnv));
         }
 
         // ★ 窗口背后材质（P1 §质感 / Stage 3）：环境变量驱动，**默认不变**。
@@ -170,15 +170,25 @@ final class Bootstrap
             // ★ 写错**不静默退化**：`Errors::report()` 走 §1.2 中止序列
             //   —— 与 `Color::fromHex` 同口径：环境变量写错不该悄悄变成"没设"。
             if ($backdropEnv === 'blur') {
-                $window->setBackdrop($handle, Backdrop::Blur);
+                $material = $material->backdrop(Backdrop::Blur);
             } elseif ($backdropEnv === 'acrylic') {
-                $window->setBackdrop($handle, Backdrop::Acrylic);
+                $material = $material->backdrop(Backdrop::Acrylic);
             } elseif ($backdropEnv === 'off') {
-                $window->setBackdrop($handle, null);
+                $material = $material->backdrop(null);
             } else {
                 Errors::report('DRIFT_WINDOW_BACKDROP 只认 blur / acrylic / off，收到：' . $backdropEnv);
             }
         }
+
+        // ★ 一次应用完整材质快照（P1 收敛，2026-10-26）：壳按值调和三个旋钮，
+        //   与调用顺序无关。必须在 `setFrameless()` **之后**（逐像素要无边框，
+        //   否则 `applyMaterial()` 硬 Fatal）；必须在 `attach()` **之前**（首帧就该
+        //   带上正确外观，否则闪一下默认外观）。
+        // ★ 底色像素仍归 Surface 画（`setBackground` 不动它的职责）；这里只交"模式"。
+        if ($material->backgroundColor() !== null) {
+            $surface->setBackground($material->backgroundColor());
+        }
+        $window->applyMaterial($handle, $material);
 
         // 首帧之前把表面尺寸定下来：`attach()` 内部就会跑一帧（`Application::attach`），
         // 而那帧要往表面上画 ⇒ 尺寸为 0 时那一帧会被丢弃（画面到第二次 resize 才出现）。
