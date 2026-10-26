@@ -28,6 +28,8 @@ use Drift\Dev\Smoke\Commands\EchoCommands;
 use Drift\Dev\Smoke\Commands\PickyCommands;
 use Drift\App\Application;
 use Drift\App\FrameClock;
+use Drift\Platform\Win32\Win32RasterSurface;
+use Drift\Platform\Win32\Win32SkiaSurface;
 use Drift\Platform\Win32\Win32SurfaceProvider;
 use Drift\App\FocusManager;
 use App\Hello\HelloApplication;
@@ -1204,6 +1206,25 @@ if (!function_exists('drift_skia_canvas_create')) {
     {
         return true;
     }
+}
+
+// ── Win32 桥的假实现（只假"逐像素 alpha 模式声明"这一个）──────────────
+// ★ 为什么只假这一个就够：smoke 从不构造真窗口，而 Win32 表面里唯一在
+//   **非 present 路径**上被调用的桥函数就是它 —— `present` 只在 `endFrame()`
+//   里，smoke 断言 `setBackground` 的语义时不跑 `endFrame`。
+// ★ 签名与 `cpp-src/drift_win32.stub.php` 逐字一致（stub 原话：签名不一致是
+//   链接期静默失败）。
+if (!function_exists('drift_win_set_pixel_alpha')) {
+    function drift_win_set_pixel_alpha(int $hwnd, bool $on): void
+    {
+        $GLOBALS['DRIFT_SMOKE_WIN_PIXEL_ALPHA'][] = [$hwnd, $on];
+    }
+}
+
+/** @return list<array{int, bool}> 逐像素 alpha 的声明记录：[hwnd, on] */
+function winPixelAlphaCalls(): array
+{
+    return $GLOBALS['DRIFT_SMOKE_WIN_PIXEL_ALPHA'] ?? [];
 }
 
 // ── 假桥记录的访问器与换算（⑨+1 用）──────────────────────────────
@@ -16128,6 +16149,104 @@ check(
         $zeroSigmaOk = false;
     }
     check('BackdropFilter · sigma=0 合法（= 不模糊，不是错误）', $zeroSigmaOk);
+}
+
+// ── 表面底色（`RenderSurface::setBackground`）──
+// ★ 这一组钉三件事，一件都不能少：
+//   ① 底色**真的落到像素上**（不是只存字段）—— 读清屏后的像素，且按**预乘**口径读；
+//   ② 带 alpha 的底色 ⇒ Win32 表面**声明**逐像素模式（壳切 ULW 的唯一入口）；
+//   ③ 默认白 ⇒ **一个桥调用都不发**（零回归：现有应用行为不变）。
+{
+    // ①-a Raster 侧：清屏像素就是底色（按预乘）
+    $bgProbe = new SurfaceProbe();
+    $bgProbe->resize(20, 10, 1.0);
+    $bgProbe->setBackground(new Color(0x33, 0x66, 0x99, 0x80));
+    $bgProbe->beginFrame(0.0);
+    $bgPixel = $bgProbe->canvas?->pixelAt(0, 0);
+
+    // ★ 期望值必须**算**出来，不能抄字面量：`RasterCanvas` 的混合公式是
+    //   `dst = src·a + dst·(1−a)`，落在全零缓冲上 ⇒ rgb 各乘一次 a/255。
+    //   51·128/255 = 25.6 → 26、102·128/255 = 51.2 → 51、153·128/255 = 76.8 → 77。
+    //   写直通值 (51,102,153) 会红 —— 而那个红正是"漏了预乘"这个 bug 的形状。
+    check(
+        'RenderSurface · setBackground 落到清屏像素（预乘：51,102,153,128 → 26,51,77,128）',
+        $bgPixel instanceof Color
+            && $bgPixel->r === 26 && $bgPixel->g === 51 && $bgPixel->b === 77
+            && $bgPixel->a === 128,
+        $bgPixel instanceof Color
+            ? sprintf('%d,%d,%d,%d', $bgPixel->r, $bgPixel->g, $bgPixel->b, $bgPixel->a)
+            : 'null',
+    );
+
+    // ①-b Skia 侧：底色（含 alpha）必须原样进 `clear` 的参数 —— 那是逐像素透明
+    //   的**唯一**来源（画布是 N32Premul，`clear` 等价 `drawColor(kSrc)`）。
+    //   漏掉 alpha ⇒ 窗口全不透明，且**不报错**。
+    $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'] = [];
+    $bgSkiaSurface = new Win32SkiaSurface(2);
+    $bgSkiaSurface->resize(30, 20, 1.0);
+    $bgSkiaSurface->setBackground(new Color(0x11, 0x22, 0x33, 0x44));
+    $bgSkiaSurface->beginFrame(0.0);
+    $bgCreate = null;
+    foreach ($GLOBALS['DRIFT_SMOKE_SKIA_CALLS'] as $bgEntry) {
+        if ($bgEntry[0] === 'create') {
+            $bgCreate = $bgEntry;
+            break;
+        }
+    }
+    check(
+        'Win32SkiaSurface · 底色原样进 Skia 的 clear 参数（含 alpha：a=44 r=11 g=22 b=33）',
+        // ★ `Color::toArgb()` 是 `0xAARRGGBB` ⇒ 期望值写成 a/r/g/b 拼出来的样子，
+        //   别照 `new Color($r,$g,$b,$a)` 的实参顺序抄（抄错方向会"看起来对"）。
+        $bgCreate !== null && $bgCreate[3] === 0x44112233,
+        $bgCreate === null ? 'no create' : sprintf('0x%08X', $bgCreate[3]),
+    );
+
+    // ② 声明：带 alpha ⇒ 逐像素模式；再设不透明 ⇒ 明确关掉（不能只开不关）
+    $GLOBALS['DRIFT_SMOKE_WIN_PIXEL_ALPHA'] = [];
+    $alphaSurface = new Win32SkiaSurface(4242);
+    $alphaSurface->setBackground(new Color(0xFF, 0xFF, 0xFF, 0xB0));
+    $alphaSurface->setBackground(Color::white());
+    check(
+        'Win32SkiaSurface · alpha<255 声明逐像素、再设不透明声明关掉（[4242,true]→[4242,false]）',
+        winPixelAlphaCalls() === [[4242, true], [4242, false]],
+        var_export(winPixelAlphaCalls(), true),
+    );
+
+    // ★ 反例自检：`a === 0` 是"全透明"而不是"没设"，必须照样声明
+    //   （用 `> 0` 判"有没有 alpha"会漏掉全透明窗口 —— 那正是最想透明的那种）
+    $GLOBALS['DRIFT_SMOKE_WIN_PIXEL_ALPHA'] = [];
+    $clearSurface = new Win32RasterSurface(777);
+    $clearSurface->setBackground(new Color(0, 0, 0, 0));
+    check(
+        'Win32RasterSurface · 全透明底色（a=0）照样声明逐像素',
+        winPixelAlphaCalls() === [[777, true]],
+        var_export(winPixelAlphaCalls(), true),
+    );
+
+    // ③ 零回归：默认白 ⇒ 构造 + 跑一帧都不该发声明
+    $GLOBALS['DRIFT_SMOKE_WIN_PIXEL_ALPHA'] = [];
+    $plainSurface = new Win32SkiaSurface(1);
+    $plainSurface->resize(8, 8, 1.0);
+    $plainSurface->beginFrame(0.0);
+    check(
+        'Win32SkiaSurface · 默认白底 ⇒ 一次 set_pixel_alpha 都不发（零回归）',
+        winPixelAlphaCalls() === [],
+        var_export(winPixelAlphaCalls(), true),
+    );
+
+    // 回放底色：`RecordingSurface::raster()` 是浮层像素断言的取像口，
+    // 它必须用同一个底色（否则半透明浮层的像素断言全按白底算）
+    $bgRecSurface = new RecordingSurface();
+    $bgRecSurface->resize(4, 4, 1.0);
+    $bgRecSurface->setBackground(new Color(0x10, 0x20, 0x30));
+    $bgRecSurface->beginFrame(0.0);
+    $bgRecPixel = $bgRecSurface->raster()->pixelAt(0, 0);
+    check(
+        'RecordingSurface · raster() 用 setBackground 的底色回放（不是写死白）',
+        $bgRecPixel->r === 0x10 && $bgRecPixel->g === 0x20
+            && $bgRecPixel->b === 0x30 && $bgRecPixel->a === 255,
+        sprintf('%d,%d,%d,%d', $bgRecPixel->r, $bgRecPixel->g, $bgRecPixel->b, $bgRecPixel->a),
+    );
 }
 
 // ── 汇总 + 退出码（2026-10-18）──

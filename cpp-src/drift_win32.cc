@@ -235,6 +235,26 @@ bool g_frameless = false;
 int g_dragHeight = 0;
 
 /**
+ * 逐像素 alpha 上屏（P1-Stage 2b / §质感）。
+ *
+ * ★ 置位后 `present` 改走 `UpdateLayeredWindow`：画布像素**自带的 alpha** 生效，
+ *   应用没画到的地方透出桌面。清零则回到 `SetDIBitsToDevice`（GDI 贴屏）。
+ * ★ 与 `g_opacity` 互补：本开关决定"像素的 alpha 算不算数"，`g_opacity` 决定
+ *   "整窗再乘一个 alpha"。ULW 模式下后者由 `BLENDFUNCTION.SourceConstantAlpha` 承载
+ *   ⇒ **两种模式的透明度语义一致**，应用侧不用知道自己在哪个模式。
+ * ★ **进程级开关**：与 `g_frame` / `g_frameless` 同一条单窗口假设。
+ */
+bool g_pixelAlpha = false;
+
+/**
+ * 整窗不透明度（`set_opacity` 存下来的值，0..255）。
+ *
+ * ★ 必须存：`LWA_ALPHA` 是"设一次、系统记住"，而 ULW 的 `SourceConstantAlpha`
+ *   是**每次 present 都要重给**的 ⇒ 切模式 / 每帧上屏都要能读到它。
+ */
+BYTE g_opacity = 255;
+
+/**
  * 窗口 DPI（**每显示器**，优先 `GetDpiForWindow`）。
  *
  * ★ 前置声明：定义在 1600 行之后（要用 `LoadLibraryW` 动态取符号），而
@@ -1887,10 +1907,11 @@ void php_drift_win_close(Int hwnd) {
  *   部分合成器下有怪癖（透明度、子窗口重绘），用不到就不要。这是"能力按需开启"，
  *   与 §11 的能力查询纪律同源。
  *
- * ★ 走 `SetLayeredWindowAttributes(LWA_ALPHA)`（**全局** alpha），**不是**
- *   `UpdateLayeredWindow`（逐像素）—— 后者要替换整条 present 路径（P1-Stage2：
- *   逐像素 alpha + 毛玻璃）。全局 alpha 与现有 `WM_PAINT` + `SetDIBitsToDevice`
- *   上屏**共存**，零回归。
+ * ★ 走 `SetLayeredWindowAttributes(LWA_ALPHA)`（**全局** alpha）。逐像素 alpha 是
+ *   另一件事，见 `php_drift_win_set_pixel_alpha()` —— 两者共用 `WS_EX_LAYERED`
+ *   但**互斥**：一旦某帧走了 `UpdateLayeredWindow`，再调本函数会把窗口切回
+ *   "LWA 模式"，ULW 交上去的位图当场失效（窗口空白一帧）。所以逐像素模式下
+ *   本函数**只记值不调 API**，由下一次 present 通过 `BLENDFUNCTION` 带上。
  */
 void php_drift_win_set_opacity(Int hwnd, Float alpha) {
     HWND target = (HWND)(INT_PTR)hwnd;
@@ -1903,7 +1924,13 @@ void php_drift_win_set_opacity(Int hwnd, Float alpha) {
     } else if (a255 > 255) {
         a255 = 255;
     }
-    BYTE a = (BYTE)a255;
+    g_opacity = (BYTE)a255;
+
+    if (g_pixelAlpha) {
+        // 逐像素模式：值已记下，下一次 present 的 BLENDFUNCTION 会带上。
+        // 这里**不能**碰 SetLayeredWindowAttributes（会把模式切回 LWA，见上）。
+        return;
+    }
 
     LONG_PTR ex = GetWindowLongPtrW(target, GWL_EXSTYLE);
     if ((ex & WS_EX_LAYERED) == 0) {
@@ -1912,7 +1939,42 @@ void php_drift_win_set_opacity(Int hwnd, Float alpha) {
         SetWindowPos(target, NULL, 0, 0, 0, 0,
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
     }
-    SetLayeredWindowAttributes(target, 0, a, LWA_ALPHA);
+    SetLayeredWindowAttributes(target, 0, g_opacity, LWA_ALPHA);
+}
+
+/**
+ * 逐像素 alpha 上屏开关（P1-Stage 2b / §质感）。
+ *
+ * ★★ **为什么是"声明"而不是每帧从像素里猜**：模式切换要 `SetWindowLongPtr` +
+ *   `SWP_FRAMECHANGED`（系统重算非客户区、DWM 重建表面），是**重操作**。从像素猜
+ *   会让"某帧碰巧全不透明"触发一次无谓往返，还会让模式抖动成为默认行为。
+ *   底色是应用级常量，声明一次就够。
+ *
+ * ★ 置位时**懒挂 `WS_EX_LAYERED`**（与 `set_opacity` 同款纪律：用不到就不要，
+ *   分层窗在旧驱动 / 远程桌面 / 部分合成器下有怪癖）。
+ *
+ * ★ 清零**不摘 `WS_EX_LAYERED`**：`set_opacity` 可能还在用它。真正需要摘的时机
+ *   是"两个功能都不要了"，而那时窗口多半已经在销毁路上 —— 摘了反而多一次
+ *   `SWP_FRAMECHANGED` 让窗口闪一下。切回 GDI 只需把 `g_pixelAlpha` 清零，
+ *   `present` 自然会走 `SetDIBitsToDevice`。
+ */
+void php_drift_win_set_pixel_alpha(Int hwnd, Bool on) {
+    HWND target = (HWND)(INT_PTR)hwnd;
+    if (target == NULL) {
+        return;
+    }
+    g_pixelAlpha = (on != 0);
+
+    if (!g_pixelAlpha) {
+        return;
+    }
+
+    LONG_PTR ex = GetWindowLongPtrW(target, GWL_EXSTYLE);
+    if ((ex & WS_EX_LAYERED) == 0) {
+        SetWindowLongPtrW(target, GWL_EXSTYLE, ex | WS_EX_LAYERED);
+        SetWindowPos(target, NULL, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    }
 }
 
 /**

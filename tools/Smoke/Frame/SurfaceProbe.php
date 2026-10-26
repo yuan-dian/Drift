@@ -30,6 +30,14 @@ final class SurfaceProbe implements RenderSurface
     private int $width = 0;
     private int $height = 0;
 
+    /** 清屏色（`setBackground` 改它）—— 断言"底色真的落到像素上"就看它 */
+    private Color $background;
+
+    public function __construct()
+    {
+        $this->background = Color::white();
+    }
+
     public function resize(int $width, int $height, float $dpr): void
     {
         $this->width = (int) round($width * $dpr);
@@ -37,11 +45,16 @@ final class SurfaceProbe implements RenderSurface
         $this->resizes++;
     }
 
+    public function setBackground(Color $color): void
+    {
+        $this->background = $color;
+    }
+
     public function beginFrame(float $timestampMs): Canvas
     {
         $this->frames++;
         $this->lastTimestamp = $timestampMs;
-        $this->canvas = new RasterCanvas($this->width, $this->height, Color::white(), Scale::of(1.0));
+        $this->canvas = new RasterCanvas($this->width, $this->height, $this->background, Scale::of(1.0));
 
         return $this->canvas;
     }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Bench;
 
 use Drift\Rendering\Canvas;
+use Drift\Rendering\Color;
 use Drift\Rendering\DisplayList;
 use Drift\Rendering\RecordingCanvas;
 use Drift\Rendering\RenderSurface;
@@ -48,6 +49,19 @@ final class Surface implements RenderSurface
     public int $width = 0;
 
     public int $height = 0;
+
+    /** 清屏色（只记录，不影响任何数字 —— 本表面没有像素） */
+    public ?Color $background = null;
+
+    /**
+     * ★ **没有清屏这一步**：`RecordingCanvas` 只追加命令，不清任何东西。
+     *   所以这里只记录（报告里能写明"按什么底色假设"），不产生 op ——
+     *   造一条 `clear` op 会污染 `lastOps` 这个诊断数字。
+     */
+    public function setBackground(Color $color): void
+    {
+        $this->background = $color;
+    }
 
     public function beginFrame(float $timestampMs): Canvas
     {

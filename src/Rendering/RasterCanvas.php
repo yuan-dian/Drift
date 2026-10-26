@@ -127,12 +127,25 @@ final class RasterCanvas implements Canvas
         return $this->height;
     }
 
-    /** 原始 RGBA 字节流（行优先，每像素 4 字节） */
+    /**
+     * 原始 RGBA 字节流（行优先，每像素 4 字节）。
+     *
+     * ★★ **是预乘（premultiplied）RGBA，不是直通 alpha**：混合公式
+     *   `dst = src·a + dst·(1−a)`（见 `blend()`）算出来的就是预乘结果。
+     *   底色全不透明时两者**逐字节相同**（`a == 255` ⇒ 预乘 = 直通），所以这个
+     *   区别在 M1 阶段从未显形；底色一旦带 alpha 就立刻分开 ——
+     *   `#33669980` 清屏后这里是 `(26, 51, 76, 128)`，不是 `(51, 102, 153, 128)`。
+     *
+     * ★ 这个事实是**承重**的：`UpdateLayeredWindow` 要的正是预乘 BGRA ⇒
+     *   壳侧只需 R↔B 换位，**不能再乘一次 alpha**（否则半透明区被二次压暗）。
+     *   Skia 侧同样是预乘（`N32Premul`）⇒ 两个后端在这一层终于口径一致。
+     */
     public function toRgba(): string
     {
         return $this->pixels;
     }
 
+    /** 读一个像素（**预乘** RGBA，见 `toRgba()` 的长注释） */
     public function pixelAt(int $x, int $y): Color
     {
         $i = ($y * $this->width + $x) * 4;

@@ -29,8 +29,16 @@ final class SvgSurface implements RenderSurface
 
     private ?RasterCanvas $raster = null;
 
+    /** 清屏色（`setBackground` 改它）：既当光栅底色，也当 SVG 里"不输出"的底色 */
+    private Color $background;
+
     /** @var list<string> 已产出的帧（多帧只在 devtools 场景用） */
     private array $frames = [];
+
+    public function __construct()
+    {
+        $this->background = Color::white();
+    }
 
     public function resize(int $width, int $height, float $dpr): void
     {
@@ -39,9 +47,14 @@ final class SvgSurface implements RenderSurface
         $this->height = (int) $size->height;
     }
 
+    public function setBackground(Color $color): void
+    {
+        $this->background = $color;
+    }
+
     public function beginFrame(float $timestampMs): Canvas
     {
-        $this->raster = new RasterCanvas($this->width, $this->height, Color::white(), Scale::of(1.0));
+        $this->raster = new RasterCanvas($this->width, $this->height, $this->background, Scale::of(1.0));
 
         return $this->raster;
     }
@@ -82,6 +95,8 @@ final class SvgSurface implements RenderSurface
             $this->height,
         );
         $out[] = sprintf('<rect width="%d" height="%d" fill="%s"/>', $this->width, $this->height, 'rgb(255,255,255)');
+        // 底色当"透明"处理：不输出成 rect（默认白 ⇒ 与旧行为逐字节相同）
+        $bgArgb = $this->background->toArgb();
 
         for ($y = 0; $y < $this->height; $y++) {
             $x = 0;
@@ -91,7 +106,7 @@ final class SvgSurface implements RenderSurface
                 while ($x < $this->width && $raster->pixelAt($x, $y)->toArgb() === $color->toArgb()) {
                     $x++;
                 }
-                if ($color->toArgb() === Color::white()->toArgb()) {
+                if ($color->toArgb() === $bgArgb) {
                     continue; // 背景不输出
                 }
                 $out[] = sprintf(

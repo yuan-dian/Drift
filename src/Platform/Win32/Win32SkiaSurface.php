@@ -11,6 +11,7 @@ use Drift\Rendering\SkiaCanvas;
 use Drift\Rendering\SurfaceProfile;
 
 use function drift_win_present_skia;
+use function drift_win_set_pixel_alpha;
 
 /**
  * Win32 的 Skia 表面：**Skia 光栅 + 贴屏**（§7.3 的 M1 后端之二）。
@@ -42,10 +43,14 @@ final class Win32SkiaSurface implements RenderSurface
 
     private ?SkiaCanvas $canvas = null;
 
+    /** 每帧清屏色；`a < 255` ⇒ Skia 位图非不透明 + 窗口走逐像素 alpha 上屏 */
+    private Color $background;
+
     /** @param int $windowHandle 不透明句柄（只传给桥，这里不解引用） */
     public function __construct(
         private readonly int $windowHandle,
     ) {
+        $this->background = Color::white();
     }
 
     public function resize(int $width, int $height, float $dpr): void
@@ -55,17 +60,31 @@ final class Win32SkiaSurface implements RenderSurface
         $this->dpr = $dpr > 0.0 ? $dpr : 1.0;
     }
 
+    /**
+     * ★ 底色带 alpha 时**两件事同时发生**，缺一不可：
+     *   ① `SkiaCanvas` 用带 alpha 的底色清屏，且桥按底色 alpha 决定
+     *      `allocN32Pixels(…, isOpaque)` —— 不翻 `isOpaque` 的话 Skia 会把
+     *      alpha 通道写成恒 255（`kSrc` 覆盖写），逐像素透明无从谈起；
+     *   ② 告诉壳这扇窗要按逐像素 alpha 上屏（`UpdateLayeredWindow`）。
+     *   ①改像素、②改合成路径。只做①=窗口全黑，只做②=整窗不透明。
+     */
+    public function setBackground(Color $color): void
+    {
+        $this->background = $color;
+        drift_win_set_pixel_alpha($this->windowHandle, !$color->isOpaque());
+    }
+
     public function beginFrame(float $timestampMs): Canvas
     {
         $prof = SurfaceProfile::$on;
         $t0 = $prof ? \hrtime(true) : 0;
 
-        // 背景白：Skia 的 bitmap 初值不确定，不清底色的话窗口会是黑的/花的，
+        // 底色：Skia 的 bitmap 初值不确定，不清底色的话窗口会是黑的/花的，
         // 而布局与绘制完全正确 —— 现象像"渲染没跑"（`Win32RasterSurface` 同款）。
         $this->canvas = new SkiaCanvas(
             $this->width,
             $this->height,
-            Color::white(),
+            $this->background,
             Scale::of($this->dpr),
         );
 

@@ -250,7 +250,20 @@ Int php_drift_skia_canvas_create(Int width, Int height, Int backgroundRgba) {
     }
 
     SkiaSlot *slot = nullptr;
-    if (g_recycleSlot != nullptr && g_recycleW == w && g_recycleH == h) {
+    // ★★ 不透明位由**底色 alpha** 决定（不新增参数）：`a == 255` ⇒ 这扇窗本来就全不
+    //   透明，`isOpaque = true` 让位图元数据如实（也少一层 dst alpha 混合的可能）。
+    //   底色带 alpha ⇒ `isOpaque = false`。
+    // ★ **承重的不是这个 flag，而是 `clear()` 的底色**：`MakeRasterDirectN32` 建的画布
+    //   是 `N32Premul`（不是 `N32Opaque`）⇒ 混合与 alpha 写入行为**与 flag 无关**；
+    //   底色 `a < 255` 时 `clear()`（= `drawColor(kSrc)`）就把半透明**预乘**写进去了。
+    //   翻 flag 是为了**元数据诚实**：位图声明不透明却装着 alpha，将来任何走
+    //   `bitmap.isOpaque()` 快路径的读取（`readPixels` 转换、`eraseColor`）都会算错。
+    const uint32_t bg = (uint32_t)backgroundRgba;
+    const bool opaque = ((bg >> 24) & 0xFFu) == 0xFFu;
+
+    if (g_recycleSlot != nullptr && g_recycleW == w && g_recycleH == h
+        && g_recycleSlot->bitmap.isOpaque() == opaque) {
+        // ★ 复用条件必须带 `isOpaque` 一致：flag 是分配时定的，复用错就是元数据撒谎。
         // ★ 命中复用缓存：bitmap 与 canvas 都活着，只把画布状态复位成"新画布"：
         //   restoreToCount(1) 兜住上一帧可能漏出的 save/clip（正常应已平衡）；
         //   resetMatrix 把 CTM 还原成创建时的单位矩阵（光栅 direct 的初态）。
@@ -260,9 +273,7 @@ Int php_drift_skia_canvas_create(Int width, Int height, Int backgroundRgba) {
         slot->canvas->resetMatrix();
     } else {
         slot = new SkiaSlot();
-        // isOpaque = true：画布不透明 ⇒ Skia 直接覆盖写，不做 dst alpha 混合；
-        // 取回像素时 alpha 固定 255，与 `drift_win_present()` 的约定一致。
-        slot->bitmap.allocN32Pixels(w, h, true);
+        slot->bitmap.allocN32Pixels(w, h, opaque);
         if (slot->bitmap.getPixels() == NULL) {
             delete slot;
             return (Int)0;
@@ -282,6 +293,9 @@ Int php_drift_skia_canvas_create(Int width, Int height, Int backgroundRgba) {
 
     // 必须清底色：bitmap 初值不确定，不清的话窗口会是黑的/花的，而布局与绘制全对
     // ⇒ 现象像"渲染没跑"（`RasterCanvas` 在 PHP 侧踩过同款，见 Win32RasterSurface）。
+    // ★★ 底色带 alpha 时，**这一行就是逐像素透明的唯一来源**：`clear()` 等价于
+    //   `drawColor(color, kSrc)` ⇒ 直接把半透明（预乘后的）值写进去，不与任何东西
+    //   混合。应用没画到的像素就保留这个 alpha，壳走 `UpdateLayeredWindow` 时生效。
     slot->canvas->clear((SkColor)(uint32_t)backgroundRgba);
 
     int handle = g_nextHandle++;

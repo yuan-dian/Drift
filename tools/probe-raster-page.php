@@ -48,17 +48,26 @@ $out = $argv[4] ?? ('D:\TypePHP\Drift2\_build\raster-page.png');
 $surface = new class($w, $h) implements RenderSurface {
     public ?RasterCanvas $last = null;
 
+    /** 清屏色（`setBackground` 改它） */
+    public Color $background;
+
     public function __construct(public int $w, public int $h)
     {
+        $this->background = Color::white();
     }
 
     public function resize(int $width, int $height, float $dpr): void
     {
     }
 
+    public function setBackground(Color $color): void
+    {
+        $this->background = $color;
+    }
+
     public function beginFrame(float $timestampMs): Canvas
     {
-        $this->last = new RasterCanvas($this->w, $this->h, Color::white(), Scale::of(1.0));
+        $this->last = new RasterCanvas($this->w, $this->h, $this->background, Scale::of(1.0));
 
         return $this->last;
     }

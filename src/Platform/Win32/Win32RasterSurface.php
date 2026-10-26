@@ -10,6 +10,7 @@ use Drift\Rendering\RasterCanvas;
 use Drift\Rendering\RenderSurface;
 
 use function drift_win_present;
+use function drift_win_set_pixel_alpha;
 
 /**
  * Win32 的 M1 表面：**PHP 软光栅 + 贴屏**（§7.3 的 M1 分期）。
@@ -39,10 +40,14 @@ final class Win32RasterSurface implements RenderSurface
 
     private ?RasterCanvas $canvas = null;
 
+    /** 每帧清屏色；`a < 255` ⇒ 该窗口走逐像素透明（`drift_win_set_pixel_alpha`） */
+    private Color $background;
+
     /** @param int $windowHandle 不透明句柄（只传给桥，这里不解引用） */
     public function __construct(
         private readonly int $windowHandle,
     ) {
+        $this->background = Color::white();
     }
 
     public function resize(int $width, int $height, float $dpr): void
@@ -52,14 +57,25 @@ final class Win32RasterSurface implements RenderSurface
         $this->dpr = $dpr > 0.0 ? $dpr : 1.0;
     }
 
+    /**
+     * ★ 只在**改底色时**过一次桥（不是每帧）：模式是窗口属性，帧是像素。
+     *   带 alpha 的底色 ⇒ 告诉壳"这扇窗要按逐像素 alpha 上屏"，壳据此切到
+     *   `UpdateLayeredWindow`（见 `drift_win_set_pixel_alpha` 的长注释）。
+     */
+    public function setBackground(Color $color): void
+    {
+        $this->background = $color;
+        drift_win_set_pixel_alpha($this->windowHandle, !$color->isOpaque());
+    }
+
     public function beginFrame(float $timestampMs): Canvas
     {
-        // 背景白：`RasterCanvas` 的像素缓冲初始是**全零**（= 全透明黑），
+        // 底色：`RasterCanvas` 的像素缓冲初始是**全零**（= 全透明黑），
         // 不清底色的话窗口会是黑的，而布局/绘制完全正确 —— 现象像"渲染没跑"。
         $this->canvas = new RasterCanvas(
             $this->width,
             $this->height,
-            Color::white(),
+            $this->background,
             Scale::of($this->dpr),
         );
 

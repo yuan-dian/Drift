@@ -66,10 +66,26 @@ function drift_win_set_min_size(int $hwnd, int $width, int $height): void {}
  *
  * ★ **懒挂**：首次以 `$alpha < 1` 调用时壳才给窗口加 `WS_EX_LAYERED` ——
  *   其余窗口保持纯 GDI 上屏，不承担分层窗在旧驱动 / 远程桌面下的合成怪癖。
- * ★ 当前只做**全局** alpha（整窗统一透明）；逐像素 alpha / 毛玻璃是下一阶段
- *   （要替换 present 路径为 `UpdateLayeredWindow` + DWM 亚克力背景）。
+ * ★ 与逐像素 alpha（`drift_win_set_pixel_alpha`）共用 `WS_EX_LAYERED` 但**互斥**：
+ *   逐像素模式下本函数只记值、不调 `SetLayeredWindowAttributes`（那会把窗口切回
+ *   LWA 模式、让 ULW 交上去的位图当场失效），透明度由下一次 present 的
+ *   `BLENDFUNCTION.SourceConstantAlpha` 带上 ⇒ **两种模式语义一致**。
  */
 function drift_win_set_opacity(int $hwnd, float $alpha): void {}
+
+/**
+ * 逐像素 alpha 上屏开关（P1-Stage 2b / §质感）。
+ *
+ * `$on = true` ⇒ 之后每次 present 走 `UpdateLayeredWindow`：**画布像素自带的 alpha
+ * 生效**，应用没画到的地方透出桌面。`false` ⇒ 回到 `SetDIBitsToDevice`（GDI 贴屏）。
+ *
+ * ★ **这是"声明"不是"每帧从像素里猜"**：模式切换要 `SetWindowLongPtr` +
+ *   `SWP_FRAMECHANGED`（DWM 重建表面），是重操作；底色是应用级常量，声明一次就够。
+ * ★ 消费者只有一处：`Win32SkiaSurface::setBackground()` / `Win32RasterSurface::
+ *   setBackground()`，按底色 `a < 255` 决定传什么（`Color::isOpaque()`）。
+ * ★ 置位时**懒挂 `WS_EX_LAYERED`**；清零不摘（`drift_win_set_opacity` 可能还在用）。
+ */
+function drift_win_set_pixel_alpha(int $hwnd, bool $on): void {}
 
 /**
  * 无边框模式（P1-Stage 1b / §质感）。`$dragHeight` = 顶部拖动带高度（**物理**像素）。

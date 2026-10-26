@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Dev\Smoke\Overlay;
 
 use Drift\Rendering\Canvas;
+use Drift\Rendering\Color;
 use Drift\Rendering\DisplayList;
 use Drift\Rendering\RasterCanvas;
 use Drift\Rendering\RecordingCanvas;
@@ -24,15 +25,24 @@ final class RecordingSurface implements RenderSurface
 
     private DisplayList $list;
 
+    /** 回放到光栅时的底色（`setBackground` 改它；默认白 = 沿用旧行为） */
+    private Color $background;
+
     public function __construct()
     {
         $this->list = new DisplayList();
+        $this->background = Color::white();
     }
 
     public function resize(int $width, int $height, float $dpr): void
     {
         $this->width = $width;
         $this->height = $height;
+    }
+
+    public function setBackground(Color $color): void
+    {
+        $this->background = $color;
     }
 
     public function beginFrame(float $timestampMs): Canvas
@@ -54,13 +64,13 @@ final class RecordingSurface implements RenderSurface
         return $this->list;
     }
 
-    /** 把上一帧画到白底光栅上（读像素用） */
+    /** 把上一帧画到光栅上（读像素用）；底色 = `setBackground` 设的那个 */
     public function raster(): RasterCanvas
     {
         $raster = new RasterCanvas(
             max(1, $this->width),
             max(1, $this->height),
-            \Drift\Rendering\Color::white(),
+            $this->background,
         );
         $this->list->replay($raster);
 
