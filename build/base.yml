@@ -51,9 +51,10 @@
 #     → +文本栈（SkParagraph/SkShaper/HarfBuzz/ICU）**5.89 MiB**（+1.86）
 #     → +SVG/SkSG/expat **6.41 MiB**（+0.52）。对照 Drift2 `users.exe`（无 Skia）2.90 MiB。
 #
-#   ★ 另有一件 GUI 做了、Drift2 还没做的事：`resource:`（图标 + 版本信息）与
-#     `manifest:`（comctl32 v6 —— 没有它，**原生** MessageBox 是 Win95 外观）。
-#     Drift2 的 `Errors::installFatalBox` 正是用 `MessageBoxW` ⇒ M4 起 exe 时应一起加。
+#   ★ `resource:` 的**图标已接**（见文件末尾）；版本信息与 `manifest:`
+#     （comctl32 v6 —— 没有它，**原生** MessageBox 是 Win95 外观）仍未接。
+#     Drift2 的 `Errors::installFatalBox` 正是用 `MessageBoxW` ⇒ 接 manifest 时
+#     要一起验原生框的外观。
 #     ★ **DPI 感知不在 manifest 的清单里**：它在**运行期**由 `drift_win_create()` 用
 #       `SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)` 设定（§24.1 #43）。
 #       走 manifest 也能做，但当前实现选了运行期 ⇒ 加 `manifest:` 时**不要**再写一份
@@ -143,3 +144,25 @@ ignore:
   - build
 
 build-dir: build
+
+# ───────────────────────────────────────────────────────────────────────────
+# 品牌图标（`resource:`）—— 2026-10-26
+#
+# ★ 一处配置、四个应用全生效：`include` 的合并是**递归**的
+#   （`ProjectYamlLoader::mergeConfig` 对非 list 的嵌套 map 递归合并），所以各
+#   应用的 project.yml 只管自己独有的项（name / 版本 / sources），resource 留这里。
+#
+# ★ 路径基准是**各应用 project.yml 所在的目录**，不是本文件目录 —— tpc 把
+#   `resource.icon` 直接拼在 projectDir 后面（`Translator.php:4814`）。所有
+#   include 本文件的应用都在 `apps/<name>/` 同一深度 ⇒ `../../assets/...` 对
+#   全部成立。★ 写错不会静默：编译期报 `Icon file not exists`。
+#
+# ★ 资源 ID 由 tpc 写死为 `MAINICON` = **101**
+#   （`ResourceFileGenerator::generateHeader`）。壳侧 `drift_win_create()` 按
+#   101 取图标、取不到回落系统默认 —— 两头是同一个约定，换 tpc 时那边要跟着改。
+#
+# ★ 只配 icon、不配 `version-info`：版本信息每个应用都不同（internal-name /
+#   original-filename / product-name 只能各写一份），而它与 project.yml 的
+#   `name`/`version` 构成**两处真相** ⇒ 得先设计同步机制，不塞进这次改动。
+resource:
+  icon: ../../assets/Drift-app-icon.ico

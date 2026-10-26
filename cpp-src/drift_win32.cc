@@ -1985,6 +1985,25 @@ void adjustFrameForDpi(RECT *rect, DWORD style, BOOL menu, DWORD exStyle, UINT d
     AdjustWindowRectEx(rect, style, menu, exStyle);
 }
 
+// 取 PE 里的品牌图标（tpc 由 `resource.icon` 编进 exe，见 build/base.yml）。
+//
+// ★ 按**名字**取，不按 101：tpc 生成的 .rc 写的是 `MAINICON ICON "..."`，而它
+//   **不**给 rc 下 `#define MAINICON 101`（只有 `generateHeader()` 会产出那个
+//   define，且没有消费者）⇒ rc.exe 把 MAINICON 当成**字符串 ID**。实测
+//   `FindResource(RT_GROUP_ICON, 101)` 返回 0，按 101 加载必然拿不到。
+// ★ 数字 101 再试一次：tpc 哪天补上 define，资源就变成数字 ID —— 两级都试，
+//   免得那边一改这边**静默**退回系统默认图标（那种错不报错、只是看着不对）。
+// ★ 用 LoadImage 而不是 LoadIcon：后者固定给 32x32，高 DPI 下标题栏 / Alt-Tab 会糊。
+static HICON loadModuleIcon(HINSTANCE instance, int cx, int cy)
+{
+    HICON icon = (HICON)LoadImageW(instance, L"MAINICON", IMAGE_ICON, cx, cy, LR_SHARED);
+    if (icon == NULL) {
+        icon = (HICON)LoadImageW(instance, MAKEINTRESOURCEW(101), IMAGE_ICON, cx, cy, LR_SHARED);
+    }
+
+    return icon;
+}
+
 }  // namespace
 
 // ══════════════════════════════════════════════════════ 窗口生命周期 ══
@@ -2022,8 +2041,15 @@ Int php_drift_win_create(String title, Int width, Int height) {
     windowClass.hCursor       = LoadCursor(NULL, IDC_ARROW);
     windowClass.hbrBackground = NULL;   // 自绘：不要系统背景刷
     windowClass.lpszClassName = kWindowClass;
-    windowClass.hIcon         = LoadIcon(NULL, IDI_APPLICATION);
-    windowClass.hIconSm       = LoadIcon(NULL, IDI_APPLICATION);
+
+    // 图标：PE 里有品牌图标就用它，取不到回落系统默认 —— 漏配资源的应用不该连
+    // 图标都没了。ID 取法的坑见 loadModuleIcon 的注释。
+    HICON appIcon = loadModuleIcon(
+        instance, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON));
+    HICON appIconSm = loadModuleIcon(
+        instance, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON));
+    windowClass.hIcon   = appIcon   != NULL ? appIcon   : LoadIcon(NULL, IDI_APPLICATION);
+    windowClass.hIconSm = appIconSm != NULL ? appIconSm : LoadIcon(NULL, IDI_APPLICATION);
     RegisterClassExW(&windowClass);
 
     // 请求的是**客户区**尺寸（逻辑像素）⇒ 先按 DPI 放大，再让系统把外框算进去。
