@@ -40,13 +40,8 @@ use Drift\Rendering\Paint;
  *
  * @api
  */
-final class RenderScrollView extends RenderProxyBox
+final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
 {
-    /** 滚动条形体（逻辑像素） */
-    private const BAR_THICKNESS = 6.0;
-    private const BAR_MARGIN = 3.0;
-    private const BAR_MIN_THUMB = 24.0;
-
     /** 滚动条透明度（`0..1`）—— `ScrollBarFade` 每帧把当前值推过来 */
     private float $barOpacity;
 
@@ -98,7 +93,6 @@ final class RenderScrollView extends RenderProxyBox
     {
         return $this->maxScroll;
     }
-
     /** 实际生效的偏移（已按 maxScroll 夹取） */
     public function appliedOffset(): float
     {
@@ -283,33 +277,37 @@ final class RenderScrollView extends RenderProxyBox
             return;
         }
 
-        $canvas->drawRect($bar, Paint::fill($this->thumb->withAlpha($alpha)), self::BAR_THICKNESS * 0.5);
+        $canvas->drawRect($bar, Paint::fill($this->thumb->withAlpha($alpha)), ScrollBarGeometry::THICKNESS * 0.5);
     }
 
     /**
      * 滚动条 thumb 的矩形（**盒内**坐标；`null` = 内容不溢出 / 还没布局）。
      *
-     * ★ 几何只算这一处：`paintScrollbar()` 用它画，`Application` 的滚动条拖动
-     *   用它命中 —— 两处各算一遍迟早会漂（条画在这里、抓在别处）。
+     * ★ 几何只算一处（`ScrollBarGeometry`）：`paintScrollbar()` 用它画，
+     *   `Application` 的滚动条拖动用它命中 —— 两处各算一遍迟早会漂
+     *   （条画在这里、抓在别处）。`RenderTable` 用的是同一份。
      */
     public function thumbRect(): ?Rect
     {
         $size = $this->size;
-        if ($size === null || $this->maxScroll <= 0.0) {
+        if ($size === null) {
             return null;
         }
 
-        $vertical = $this->vertical;
-        $track = $vertical ? $size->height : $size->width;
-        $cross = $vertical ? $size->width : $size->height;
+        return ScrollBarGeometry::thumbRect($size, $this->maxScroll, $this->appliedOffset(), $this->vertical);
+    }
 
-        $thumbLen = min($track, max(self::BAR_MIN_THUMB, $track * $track / ($track + $this->maxScroll)));
-        $travel = max(0.0, $track - 2.0 * self::BAR_MARGIN - $thumbLen);
-        $thumbPos = self::BAR_MARGIN + ($this->appliedOffset() / $this->maxScroll) * $travel;
+    /** @internal 事件命中用：thumb 在渲染树根坐标里的矩形（见 `ScrollBarHost`） */
+    public function thumbRectInRoot(): ?Rect
+    {
+        $bar = $this->thumbRect();
+        if ($bar === null) {
+            return null;
+        }
 
-        return $vertical
-            ? new Rect($cross - self::BAR_THICKNESS - self::BAR_MARGIN, $thumbPos, self::BAR_THICKNESS, $thumbLen)
-            : new Rect($thumbPos, $cross - self::BAR_THICKNESS - self::BAR_MARGIN, $thumbLen, self::BAR_THICKNESS);
+        [$originX, $originY] = RenderBox::absoluteOrigin($this);
+
+        return new Rect($originX + $bar->left, $originY + $bar->top, $bar->width, $bar->height);
     }
 
     /**
@@ -325,10 +323,7 @@ final class RenderScrollView extends RenderProxyBox
             return 0.0;
         }
 
-        $track = $this->vertical ? $size->height : $size->width;
-        $thumbLen = min($track, max(self::BAR_MIN_THUMB, $track * $track / ($track + $this->maxScroll)));
-
-        return max(0.0, $track - 2.0 * self::BAR_MARGIN - $thumbLen);
+        return ScrollBarGeometry::travel($this->vertical ? $size->height : $size->width, $this->maxScroll);
     }
 
     /** 滚动主轴（拖动映射用：纵向看 y，横向看 x） */

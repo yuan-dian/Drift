@@ -6,6 +6,7 @@ namespace Drift\App;
 use Drift\Geometry\Rect;
 use Drift\Input\PointerEvent;
 use Drift\Layout\RenderBox;
+use Drift\Layout\ScrollBarHost;
 use Drift\Layout\RenderScrollView;
 use Drift\Widget\Element;
 use Drift\Widget\Scrollable;
@@ -40,7 +41,7 @@ final class ScrollInputRouter
     /**
      * 进行中的 thumb 拖动状态（`null` = 没有）。
      *
-     * ★ `array{state: Scrollable, box: RenderScrollView, last: float}` ——
+     * ★ `array{state: Scrollable, box: ScrollBarHost, last: float}` ——
      *   `last` 是上一事件的指针位置（映射"thumb 走多远、内容走多远"用）。
      *   **只记 State 不缓存盒的兄弟问题**：盒每步现取会丢（帧末 flush 重建），
      *   但 thumb 拖动的几何必须**同一帧内连续** ⇒ 这里记盒（拖动不跨帧重建，
@@ -93,11 +94,11 @@ final class ScrollInputRouter
      *   才算点中：视觉上 thumb 压在那个视口的右缘（横向在底缘），点在那里
      *   用户的意思就是"拖这条"。
      * ★ 容差 2px：条只有 6px 宽，像素级精确抓取对鼠标过于苛刻。
-     * ★ 盒失败（有 `Scrollable` 却没有 `RenderScrollView`）⇒ `null` 而非
+     * ★ 盒失败（有 `Scrollable` 却没有滚动条宿主盒）⇒ `null` 而非
      *   继续往上找：视觉上这里没有条，事件就该落到别处，而不是隔着一个
      *   不是滚动器的祖先去抓外层的条。
      *
-     * @return null|array{state: Scrollable, box: RenderScrollView, last: float}
+     * @return null|array{state: Scrollable, box: ScrollBarHost, last: float}
      */
     private function scrollThumbAt(float $x, float $y, Element $root, FocusManager $focus): ?array
     {
@@ -109,20 +110,18 @@ final class ScrollInputRouter
             return null;
         }
 
-        /** @var RenderScrollView|null $box */
-        $box = $state->element()?->findBoxOf(RenderScrollView::class);
-        if ($box === null) {
+        $host = $this->barHostOf($state->element());
+        if ($host === null) {
             return null;
         }
 
-        $bar = $box->thumbRect();
+        $bar = $host->thumbRectInRoot();
         if ($bar === null) {
             return null;   // 内容不溢出：没有条可拖
         }
 
-        [$originX, $originY] = RenderBox::absoluteOrigin($box);
-        $left = $originX + $bar->left - 2.0;
-        $top = $originY + $bar->top - 2.0;
+        $left = $bar->left - 2.0;
+        $top = $bar->top - 2.0;
 
         if ($x < $left || $x > $left + $bar->width + 4.0
             || $y < $top || $y > $top + $bar->height + 4.0) {
@@ -131,9 +130,23 @@ final class ScrollInputRouter
 
         return [
             'state' => $state,
-            'box' => $box,
-            'last' => $box->isVertical() ? $y : $x,
+            'box' => $host,
+            'last' => $host->isVertical() ? $y : $x,
         ];
+    }
+
+    /**
+     * 找 State 对应的滚动条宿主盒（**类型转换只在这一处**）。
+     *
+     * ★ 写成独立方法而不是就地 `instanceof`：返回类型声明成 `?ScrollBarHost`
+     *   才是干净的窄化（与 `nearestScrollable()` 同一形态）。就地窄化会让
+     *   调用处的变量同时被当成 `RenderBox` 与接口，那是 tpc 静态推断的地雷区。
+     */
+    private function barHostOf(?Element $element): ?ScrollBarHost
+    {
+        $box = $element?->findBoxOf(ScrollBarHost::class);
+
+        return $box instanceof ScrollBarHost ? $box : null;
     }
 
     /**
@@ -175,7 +188,7 @@ final class ScrollInputRouter
 
         /** @var Scrollable $state */
         $state = $drag['state'];
-        /** @var RenderScrollView $box */
+        /** @var ScrollBarHost $box */
         $box = $drag['box'];
 
         $travel = $box->thumbTravel();

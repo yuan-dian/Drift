@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Widget;
 
-use Drift\Layout\RenderScrollView;
+use Drift\Layout\ScrollBarHost;
 use Drift\Rendering\AnimatedValue;
 
 /**
@@ -109,8 +109,8 @@ final class ScrollBarFade
     {
         $busy = $this->tick($timestampMs);
 
-        $box = $state->element()?->effectiveBoxOf(RenderScrollView::class);
-        if ($box !== null) {
+        $box = $state->element()?->effectiveBoxOf(ScrollBarHost::class);
+        if ($box instanceof ScrollBarHost) {
             $box->setBarOpacity($this->opacity());
         }
 
