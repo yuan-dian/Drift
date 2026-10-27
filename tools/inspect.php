@@ -14,8 +14,19 @@ declare(strict_types=1);
  * php tools/inspect.php --page=App\Showcase\Pages\TablePage --json     # 完整快照
  * php tools/inspect.php --page=… --update=_build/base.json             # 写基线
  * php tools/inspect.php --page=… --check=_build/base.json              # 与基线比（不同 ⇒ 退出码 1）
+ * php tools/inspect.php --app=App\Showcase\ShowcaseApplication --w=1920 --h=1017 --point=5   # 真机定位
  * ```
  *
+ * ★★ `--page` vs `--app`（**P1' 真机定位的关键区别**）：
+ *   - `--page` 挂**页面**：矩形是**页面内**坐标。真机上页面只是客户区的一块，
+ *     还差一层壳偏移（顶条 + 左导航）⇒ **不能直接喂 probe-grab**。
+ *   - `--app`  挂**整个应用根**（走 `Application::buildRoot()`，对任何应用通用）
+ *     ⇒ 顶层矩形就是**窗口坐标**，配上真机客户区尺寸（`--w/--h`）即可直接用。
+ *   ★ 挂哪个决定"坐标属于哪个坐标系" —— 这正是真机点击差 8–10px 就**静默失效**的根因。
+ *
+ * ★ `--point` / `--emit`：把"身份"翻译成"真机能用的一个点"。
+ *   `--point=<key>` 或 `--point=path:0.3.2` 或 `--point=x,y`（自动判别三种选择器），
+ *   `--emit=click|dblclick|move|wheel|hwheel` 直接拼出 probe-grab 的参数串。
  * ★ **它不替代 smoke / golden**：
  *   - smoke 断言"某个值必须等于某数"（判据写死在代码里，改行为要先改断言）
  *   - golden 断言"像素一个字节都不许变"（外观）
@@ -29,6 +40,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/autoload.php';
 
+use Drift\App\Application;
 use Drift\Dev\Inspect\Snapshot;
 use Drift\Widget\Widget;
 
@@ -52,23 +64,151 @@ function inspectArgs(array $argv): array
     return $out;
 }
 
+/**
+ * 取**最深层**的包含节点（= 视觉最上层）。
+ *
+ * ★ `--at` 与 `--point=坐标` 共用这一份：命中规则只有一处，改行为不会只改一边。
+ *
+ * @param list<mixed> $elements
+ * @return array<string, mixed>|null
+ */
+function deepestAt(array $elements, float $x, float $y): ?array
+{
+    $best = null;
+    foreach ($elements as $n) {
+        if (!is_array($n)) {
+            continue;
+        }
+        $r = $n['r'] ?? [null, null, null, null];
+        if ($r[0] === null) {
+            continue;
+        }
+        if ($x >= (float) $r[0] && $x <= (float) $r[0] + (float) $r[2]
+            && $y >= (float) $r[1] && $y <= (float) $r[1] + (float) $r[3]) {
+            if ($best === null || $n['d'] > $best['d']) {
+                $best = $n;
+            }
+        }
+    }
+
+    return $best;
+}
+
+/**
+ * 身份 → 节点。三种选择器自动判别：`path:0.3.2` / `key` / `x,y`。
+ *
+ * @return array<string, mixed>|null
+ */
+function resolveTarget(array $snapshot, string $selector): ?array
+{
+    $elements = $snapshot['trees']['elements'] ?? [];
+    if (!is_array($elements)) {
+        return null;
+    }
+    if (str_contains($selector, ',')) {
+        [$ax, $ay] = array_map('floatval', explode(',', $selector));
+
+        return deepestAt($elements, $ax, $ay);
+    }
+    if (str_starts_with($selector, 'path:')) {
+        $want = substr($selector, 5);
+        foreach ($elements as $n) {
+            if (is_array($n) && ($n['p'] ?? null) === $want) {
+                return $n;
+            }
+        }
+
+        return null;
+    }
+    foreach ($elements as $n) {
+        if (is_array($n) && ($n['key'] ?? null) !== null && (string) $n['key'] === $selector) {
+            return $n;
+        }
+    }
+
+    return null;
+}
+
+/**
+ * 节点 → 动作点。`anchor` 只影响 x（真机点击常要落在左/右边缘，比如插入符落点）。
+ *
+ * @param array<string, mixed> $node
+ * @return array{0: float, 1: float}
+ */
+function pointOf(array $node, string $anchor): array
+{
+    $r = $node['r'];
+    $x = (float) $r[0];
+    $y = (float) $r[1];
+    $w = (float) $r[2];
+    $h = (float) $r[3];
+    if ($anchor === 'left') {
+        $cx = $x + 1.0;
+    } elseif ($anchor === 'right') {
+        $cx = $x + $w - 1.0;
+    } else {
+        $cx = $x + $w / 2.0;
+    }
+
+    return [$cx, $y + $h / 2.0];
+}
+
+/** 把动作点拼成 probe-grab 的参数（P1' 真机外壳直接消费这一行输出） */
+function emitProbe(string $op, float $x, float $y, int $delta): string
+{
+    $xy = number_format($x, 0, '.', '') . ',' . number_format($y, 0, '.', '');
+    if ($op === 'click') {
+        return '--click=' . $xy;
+    }
+    if ($op === 'dblclick') {
+        return '--dblclick=' . $xy;
+    }
+    if ($op === 'move') {
+        return '--move=' . $xy;
+    }
+    if ($op === 'wheel') {
+        return '--wheel=' . $xy . ',' . $delta;
+    }
+    if ($op === 'hwheel') {
+        return '--hwheel=' . $xy . ',' . $delta;
+    }
+    if ($op === 'at') {
+        return $xy;
+    }
+    fwrite(STDERR, "未知 --emit 动作：{$op}（at / click / dblclick / move / wheel / hwheel）\n");
+    exit(2);
+}
+
 $args = inspectArgs($argv);
+$appClass = $args['app'] ?? null;
 $pageClass = $args['page'] ?? 'App\\Showcase\\Pages\\TablePage';
 $width = (int) ($args['w'] ?? 900);
 $height = (int) ($args['h'] ?? 640);
 $depth = (int) ($args['depth'] ?? 99);
 $limit = (int) ($args['limit'] ?? 20);
 
-if (!class_exists($pageClass)) {
-    fwrite(STDERR, "找不到页面类：{$pageClass}\n");
-    exit(2);
+// ★ `--app=` 挂**整个应用根**（顶条 + 导航 + 内容都在这一棵树里）⇒ 矩形即**窗口坐标**，
+//   真机探针可直接用。`--page` 只挂页面 ⇒ 坐标还差一层壳偏移，喂给 probe-grab 会点偏。
+if ($appClass !== null) {
+    if (!class_exists($appClass) || !is_subclass_of($appClass, Application::class)) {
+        fwrite(STDERR, "--app 必须是 Application 子类：{$appClass}\n");
+        exit(2);
+    }
+    /** @var Application $app */
+    $app = new $appClass();
+    $root = $app->buildRoot();
+    $pageClass = $appClass; // 后续文案统一用它
+} else {
+    if (!class_exists($pageClass)) {
+        fwrite(STDERR, "找不到页面类：{$pageClass}\n");
+        exit(2);
+    }
+    /** @var Widget $root */
+    $root = new $pageClass();
 }
 
-/** @var Widget $page */
-$page = new $pageClass();
-
 $t0 = hrtime(true);
-$snapshot = Snapshot::ofPage($page, $width, $height);
+$snapshot = Snapshot::ofPage($root, $width, $height);
 $elapsed = (hrtime(true) - $t0) / 1e6;
 
 // ★ `JSON_PRESERVE_ZERO_FRACTION`：不加它 `0.0` 会被写成 `0`，读回来是 int
@@ -88,21 +228,7 @@ if ($json === false) {
 if (isset($args['at'])) {
     [$ax, $ay] = array_map('floatval', explode(',', $args['at']));
     $elements = is_array($snapshot['trees']['elements'] ?? null) ? $snapshot['trees']['elements'] : [];
-    $best = null;
-    foreach ($elements as $n) {
-        if (!is_array($n)) {
-            continue;
-        }
-        $r = $n['r'] ?? [null, null, null, null];
-        if ($r[0] === null) {
-            continue;
-        }
-        if ($ax >= $r[0] && $ax <= $r[0] + $r[2] && $ay >= $r[1] && $ay <= $r[1] + $r[3]) {
-            if ($best === null || $n['d'] > $best['d']) {
-                $best = $n; // 取**最深层**的包含节点（= 视觉最上层）
-            }
-        }
-    }
+    $best = deepestAt($elements, $ax, $ay);
     if ($best === null) {
         echo "点 ({$ax},{$ay}) 未命中任何节点\n";
         exit(1);
@@ -157,6 +283,27 @@ if (isset($args['locate'])) {
         echo '  ' . $n['p'] . ' ' . $n['w'] . ' → ' . $n['b'] . ' @('
             . number_format((float) $r[0], 1) . ',' . number_format((float) $r[1], 1) . ' '
             . number_format((float) $r[2], 1) . '×' . number_format((float) $r[3], 1) . ")\n";
+    }
+    exit(0);
+}
+
+// ── 模式：身份 → 动作点（**P1' 真机外壳**消费的就是这一行）──
+// ★ 为什么还要它：`--locate` 给的是**矩形**，而 probe-grab 要的是**一个点**；
+//   且这点必须是窗口坐标 ⇒ 配合 `--app=` + 真机客户区尺寸使用。
+if (isset($args['point'])) {
+    $selector = (string) $args['point'];
+    $node = resolveTarget($snapshot, $selector);
+    if ($node === null) {
+        fwrite(STDERR, "定位不到目标：{$selector}\n");
+        exit(1);
+    }
+    $anchor = (string) ($args['anchor'] ?? 'center');
+    [$px, $py] = pointOf($node, $anchor);
+    echo '目标 ' . $node['p'] . ' ' . $node['w']
+        . ($node['key'] !== null ? ' #' . $node['key'] : '')
+        . ' @(' . number_format($px, 1) . ',' . number_format($py, 1) . ")\n";
+    if (isset($args['emit'])) {
+        echo emitProbe((string) $args['emit'], $px, $py, (int) ($args['delta'] ?? 120)) . "\n";
     }
     exit(0);
 }
