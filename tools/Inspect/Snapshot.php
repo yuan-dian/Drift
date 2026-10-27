@@ -160,12 +160,14 @@ final class Snapshot
             $r = is_array($rect) ? $rect : [null, null, null, null];
             $widget = (string) ($node['w'] ?? '?');
             $box = (string) ($node['b'] ?? '');
+            $key = $node['key'] ?? null;
             $geom = ($r[0] === null)
                 ? '(无盒)'
                 : sprintf('@(%.1f,%.1f %.1f×%.1f)', (float) $r[0], (float) $r[1], (float) $r[2], (float) $r[3]);
 
             $lines[] = str_repeat('  ', $depth) . $widget
                 . ($box !== '' && $box !== $widget ? ' → ' . $box : '')
+                . ($key !== null ? ' #' . $key : '')
                 . ' ' . $geom;
         }
 
@@ -306,12 +308,19 @@ final class Snapshot
             $rect = [$ax, $ay, $size?->width, $size?->height];
         }
 
+        // ★ `key`：控件跨位置稳定的身份（Widget::identity() ⇒ ?Key）。是"节点↔坐标"
+        //   映射的基石——S4（点元素高亮）与 P1'（真机按 #key 点坐标）共用同一份快照。
+        //   纯增量字段：旧基线无它、diff 也不比它 ⇒ 零破坏、零误报。
+        $idKey = $el->widget()->identity();
+        $keyVal = $idKey === null ? null : $idKey->value;
+
         $out[] = [
             'p' => $path,
             'd' => $depth,
             'w' => self::shortName($el->widget()),
             'b' => $boxClass,
             'r' => $rect,
+            'key' => $keyVal,
         ];
 
         $kids = [];

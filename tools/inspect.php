@@ -82,6 +82,85 @@ if ($json === false) {
     exit(2);
 }
 
+// ── 模式：按坐标命中 / 按 key 定位（S4 交互式 Inspector 与 P1' 真机定位的共享核心）──
+// 两者都依赖"节点↔坐标"的可机读映射：本模式只产出数据，窗口外壳（S4）与真机探针
+// （P1'）都是它的薄消费者。纯离线、与 Snapshot 同管线 ⇒ 现在就能验证。
+if (isset($args['at'])) {
+    [$ax, $ay] = array_map('floatval', explode(',', $args['at']));
+    $elements = is_array($snapshot['trees']['elements'] ?? null) ? $snapshot['trees']['elements'] : [];
+    $best = null;
+    foreach ($elements as $n) {
+        if (!is_array($n)) {
+            continue;
+        }
+        $r = $n['r'] ?? [null, null, null, null];
+        if ($r[0] === null) {
+            continue;
+        }
+        if ($ax >= $r[0] && $ax <= $r[0] + $r[2] && $ay >= $r[1] && $ay <= $r[1] + $r[3]) {
+            if ($best === null || $n['d'] > $best['d']) {
+                $best = $n; // 取**最深层**的包含节点（= 视觉最上层）
+            }
+        }
+    }
+    if ($best === null) {
+        echo "点 ({$ax},{$ay}) 未命中任何节点\n";
+        exit(1);
+    }
+    $idx = [];
+    foreach ($elements as $n) {
+        if (is_array($n) && isset($n['p'])) {
+            $idx[$n['p']] = $n;
+        }
+    }
+    $chain = []; // 祖先链（按结构路径前缀逐级收拢）
+    $cur = '';
+    foreach (explode('.', $best['p']) as $seg) {
+        $cur = $cur === '' ? $seg : $cur . '.' . $seg;
+        if (isset($idx[$cur])) {
+            $chain[] = $idx[$cur];
+        }
+    }
+    $rb = $best['r'];
+    echo '命中 ' . $best['p'] . ' ' . $best['w'] . ' → ' . $best['b'] . ' @('
+        . number_format((float) $rb[0], 1) . ',' . number_format((float) $rb[1], 1) . ' '
+        . number_format((float) $rb[2], 1) . '×' . number_format((float) $rb[3], 1) . ")\n";
+    echo "祖先链：\n";
+    foreach ($chain as $c) {
+        echo '  ' . $c['p'] . ' ' . $c['w'] . ($c['key'] !== null ? ' #' . $c['key'] : '') . "\n";
+    }
+    exit(0);
+}
+
+if (isset($args['locate'])) {
+    $kv = $args['locate'];
+    $found = [];
+    foreach (($snapshot['trees']['elements'] ?? []) as $n) {
+        if (!is_array($n)) {
+            continue;
+        }
+        $k = $n['key'] ?? null;
+        if ($k === null) {
+            continue;
+        }
+        if ((string) $k === (string) $kv) {
+            $found[] = $n;
+        }
+    }
+    if ($found === []) {
+        echo "未找到 key={$kv} 的节点\n";
+        exit(1);
+    }
+    echo '定位 key=' . $kv . '：' . count($found) . " 个节点\n";
+    foreach ($found as $n) {
+        $r = $n['r'];
+        echo '  ' . $n['p'] . ' ' . $n['w'] . ' → ' . $n['b'] . ' @('
+            . number_format((float) $r[0], 1) . ',' . number_format((float) $r[1], 1) . ' '
+            . number_format((float) $r[2], 1) . '×' . number_format((float) $r[3], 1) . ")\n";
+    }
+    exit(0);
+}
+
 // ── 模式一：与基线比对 ──
 if (isset($args['check'])) {
     $file = $args['check'];
