@@ -60,12 +60,101 @@ function envOr(string $name, string $fallback): string
     return is_string($value) && $value !== '' ? $value : $fallback;
 }
 
+/**
+ * 目录内所有指定后缀文件的内容哈希（确定性：按相对路径排序）。
+ *
+ * ★ 用于「输入清单」：判断自上次构建以来源文件是否变了。
+ *   ★ 只认**内容**（`hash_file`），不认 mtime —— `git checkout` / `touch` 会改
+ *     mtime 但内容不变，按 mtime 判会误报"变了"从而白清一次缓存。
+ *
+ * @param string $suffix 只要这个后缀；'' ⇒ 全部文件
+ */
+function hashTree(string $dir, string $suffix = '.php'): string
+{
+    if (!is_dir($dir)) {
+        return '';
+    }
+
+    $files = [];
+    $walker = new \RecursiveIteratorIterator(
+        new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS)
+    );
+    foreach ($walker as $file) {
+        if (!$file instanceof \SplFileInfo || !$file->isFile()) {
+            continue;
+        }
+        if ($suffix !== '' && !str_ends_with($file->getFilename(), $suffix)) {
+            continue;
+        }
+        $files[] = $file->getPathname();
+    }
+    sort($files, SORT_STRING);
+
+    $ctx = hash_init('sha256');
+    foreach ($files as $path) {
+        // 相对路径进哈希：文件改名也算「输入变了」
+        hash_update($ctx, str_replace('\\', '/', substr($path, strlen($dir))));
+        hash_update($ctx, "\0");
+        hash_update($ctx, (string) hash_file('sha256', $path));
+        hash_update($ctx, "\n");
+    }
+
+    return hash_final($ctx);
+}
+
+/**
+ * 清空 tpc 缓存目录，**保留**受版本控制的 `base.yml` / `app.manifest`。
+ *
+ * ★ 为什么不直接 `rm -rf build`：那两个文件是 tpc 的配置与 Windows 清单，
+ *   删了下次构建直接失败（`manifest: ../../build/app.manifest` 找不到）——
+ *   而失败现场看起来像"清缓存把构建弄坏了"，把排查方向带偏。
+ */
+function wipeCache(string $buildDir): void
+{
+    if (!is_dir($buildDir)) {
+        return;
+    }
+
+    $keep = ['base.yml', 'app.manifest'];
+    foreach (new \DirectoryIterator($buildDir) as $item) {
+        if ($item->isDot()) {
+            continue;
+        }
+        if (in_array($item->getFilename(), $keep, true)) {
+            continue;
+        }
+
+        $path = $item->getPathname();
+        if ($item->isDir()) {
+            $inner = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($path, \FilesystemIterator::SKIP_DOTS),
+                \RecursiveIteratorIterator::CHILD_FIRST
+            );
+            foreach ($inner as $child) {
+                if ($child->isDir()) {
+                    rmdir($child->getPathname());
+                } else {
+                    unlink($child->getPathname());
+                }
+            }
+            rmdir($path);
+        } else {
+            unlink($path);
+        }
+    }
+}
+
 function usage(): never
 {
     fwrite(STDOUT, <<<TXT
     drift-build —— 真机构建一个应用（调用 cl.exe / link.exe 出 exe）
 
-      用法： php tools/drift-build.php [应用名]
+      用法： php tools/drift-build.php [应用名] [--full] [--dry]
+
+      --full   清空 tpc 缓存后全量重建（约 3 分钟；保留 build/base.yml 与
+               build/app.manifest 这两个受控文件）。默认**不清** ⇒ 走增量
+               （约 30–60s）。只在里程碑、或怀疑增量构建 stale 时才需要它。
+      --dry    只算输入清单并打印「这次会增量还是全量」，**不构建**。
 
     环境变量（换机器时覆盖，都有本机实测的默认值）：
       DRIFT_TPC_ENTRY    tpc 入口（默认 ../typephp/bin/tpc.php —— **源码树**，见下）
@@ -87,6 +176,13 @@ $argvRest = array_slice($argv, 1);
 if (in_array('--help', $argvRest, true) || in_array('-h', $argvRest, true)) {
     usage();
 }
+
+// `--full`：显式全量重建（清 tpc 缓存，保留受控的 base.yml / app.manifest）。
+// 默认**不清** ⇒ 走 tpc 增量（约 30–60s）；只有里程碑、或怀疑增量 stale 时才传它。
+$full = in_array('--full', $argvRest, true);
+
+// `--dry`：只算输入清单并打印「这次会增量还是全量」，**不构建**（廉价诊断）。
+$dry = in_array('--dry', $argvRest, true);
 
 $app = 'hello';
 foreach ($argvRest as $argument) {
@@ -207,6 +303,47 @@ $env['PATH'] = implode(';', [
     (string) ($env['PATH'] ?? ''),
 ]);
 
+// ─────────────────────── 输入清单 + 缓存策略（M2）───────────────────────
+//
+// 目的：把"要不要全量重建"从**人工直觉**变成**可核对的事实**。
+//   · 默认不清缓存 ⇒ tpc 走增量（约 30–60s）；
+//   · `--full` 才清 ⇒ 全量（约 3 分钟），只在里程碑 / 怀疑 stale 时用；
+//   · 输入清单（`_build/inputs.sha`）告诉你"自上次构建以来源文件变没变"，
+//     变了就提示增量会重编哪些 —— 不再靠"防御性全量清理"。
+//
+// ★ 清单落 `_build/`（drift-build 自己的 scratch，.gitignore 已忽略），不落
+//   `build/`：后者会被 `--full` 清空。
+$manifestFile = "{$work}/inputs.sha";
+
+$inputs = hash_init('sha256');
+hash_update($inputs, 'src:' . hashTree("{$root}/src") . "\n");
+hash_update($inputs, 'app:' . hashTree("{$root}/apps/{$app}") . "\n");
+hash_update($inputs, 'cpp:' . hashTree("{$root}/cpp-src") . "\n");
+// 配置与清单是**受控文件**：改了它们同样影响构建结果
+hash_update($inputs, 'base:' . (is_file("{$root}/build/base.yml") ? (string) hash_file('sha256', "{$root}/build/base.yml") : '') . "\n");
+hash_update($inputs, 'manifest:' . (is_file("{$root}/build/app.manifest") ? (string) hash_file('sha256', "{$root}/build/app.manifest") : '') . "\n");
+// tpc 编译器本身（源码树入口）变了 ⇒ 旧缓存可能不兼容
+hash_update($inputs, 'tpc:' . (string) hash_file('sha256', $entry) . "\n");
+$inputsHash = hash_final($inputs);
+
+$previous = is_file($manifestFile) ? trim((string) file_get_contents($manifestFile)) : '';
+
+if ($full) {
+    fwrite(STDOUT, "[drift-build] --full：清空 tpc 缓存（保留 base.yml / app.manifest）\n");
+    wipeCache("{$root}/build");
+} elseif ($previous === '') {
+    fwrite(STDOUT, "[drift-build] 首次构建（无清单）⇒ tpc 自行决定增量/全量\n");
+} elseif ($previous !== $inputsHash) {
+    fwrite(STDOUT, "[drift-build] 输入已变 ⇒ 增量会重编受影响文件（约 30–60s）\n");
+} else {
+    fwrite(STDOUT, "[drift-build] 输入未变 ⇒ 增量只重链（最快）\n");
+}
+
+if ($dry) {
+    fwrite(STDOUT, "[drift-build] --dry：只算清单，不构建（输入指纹 " . substr($inputsHash, 0, 12) . "）\n");
+    exit(0);
+}
+
 // ───────────────────────────────────────────────────────────── 构建 ──
 
 $command = [$phpBinary, $entry, '--project', $project, '-O2', '-m', 'bin'];
@@ -294,6 +431,9 @@ fwrite(STDOUT, sprintf(
     (float) filesize($exe) / 1048576.0,
     $elapsed
 ));
+
+// 记下本次构建的输入清单：下次构建据此判断"变没变"
+file_put_contents($manifestFile, $inputsHash . "\n");
 
 // ─────────────────────── 随 exe 分发运行时 ini（坑 ⑤） ───────────────────────
 // ★ AOT 运行时靠 php.ini 加载扩展：exe 双击运行时 cwd = 自身目录，会读同目录
