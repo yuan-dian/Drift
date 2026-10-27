@@ -110,6 +110,16 @@ final class Table extends StatefulWidget
     private ?\Closure $onSortChange = null;
 
     /**
+     * 用户拖出来的列宽（`列key ⇒ 逻辑像素`）—— **受控**，第 ④ 层宽度。
+     *
+     * ★ 按 **key** 存而不是列序号：插列/换序之后拖出来的宽度仍落在原来那一列上。
+     * ★ 空数组 = 全部按 `TableColumn::width()` 的声明算（第 ①②③ 层）。
+     */
+    private array $columnWidths = [];
+
+    private ?\Closure $onColumnResize = null;
+
+    /**
      * @param list<TableColumn> $columns
      * @param list<mixed>       $rows
      */
@@ -321,6 +331,47 @@ final class Table extends StatefulWidget
         return $this;
     }
 
+    /**
+     * 用户拖出来的列宽（**受控**，第 ④ 层，最优先但仍夹 `minWidth`/`maxWidth`）。
+     *
+     * ```php
+     * ->columnWidths(['name' => 220.0])
+     * ```
+     *
+     * ★ 与 `selection()` / `sort()` 同一条哲学：控件不持有这份数据。列宽是**用户
+     *   偏好**，应用要能存盘（下次开窗恢复）、要能"重置列宽"——住在控件 `State`
+     *   里就再也读不出来了（本仓没有 `GlobalKey`）。
+     * ★ 值不在这里夹：`resolveWidths()` 统一走 `TableColumn::clampWidth()`。
+     *   在这里夹会让"存盘的宽度"与"应用看到的宽度"不一致。
+     *
+     * @param array<string, float> $overrides 列 key ⇒ 逻辑像素
+     */
+    public function columnWidths(array $overrides): static
+    {
+        $this->mutate();
+        $this->columnWidths = $overrides;
+
+        return $this;
+    }
+
+    /**
+     * 列宽变化上报（`fn(string $key, float $width, bool $finished): void`）。
+     *
+     * ★ `$finished` = 这一次拖动**结束了**（抬起 / 拖出窗口）。拖动中每次指针移动
+     *   都会回调，`$finished` 为 `false` ⇒ 应用可以"拖动中只 `setState`，
+     *   结束时才写盘"，不必自己猜抬起时机。
+     * ★ 单回调三参数，不是 `onColumnResize` + `onColumnResizeEnd` 两个：两个回调
+     *   会造出"必须先接前者才能接后者"的隐式依赖，而应用通常只想要其中一个。
+     * ★ 任一列声明了 `resizable()` 却没接它 ⇒ 挂载期响亮失败（同 `sortable()`）。
+     */
+    public function onColumnResize(callable $handler): static
+    {
+        $this->mutate();
+        $this->onColumnResize = \Closure::fromCallable($handler);
+
+        return $this;
+    }
+
     public function createState(): State
     {
         return new TableState();
@@ -394,6 +445,17 @@ final class Table extends StatefulWidget
     }
 
     /** @internal 点击表头后的下一态往这里交（`null` = 应用没接） */
+    /** 用户拖出来的列宽（`列key ⇒ 像素`）；空数组 = 全按声明算 */
+    public function columnWidthOverrides(): array
+    {
+        return $this->columnWidths;
+    }
+
+    public function columnResizeHandler(): ?\Closure
+    {
+        return $this->onColumnResize;
+    }
+
     public function sortChangeHandler(): ?\Closure
     {
         return $this->onSortChange;

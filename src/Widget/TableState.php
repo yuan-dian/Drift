@@ -8,6 +8,7 @@ use Drift\Geometry\Rect;
 use Drift\Input\CursorShape;
 use Drift\Input\PointerEvent;
 use Drift\Layout\FlexAlign;
+use Drift\Layout\StackAlign;
 use Drift\Layout\RenderTable;
 use Drift\Rendering\Color;
 use Drift\Rendering\ColorToken;
@@ -78,6 +79,24 @@ final class TableState extends State implements Scrollable
     private ?float $widthUsedInBuild = null;
 
     /**
+     * 列宽拖拽的临时量（`null` = 当前没在拖）。
+     *
+     * ★ 是**手势进行中**的量，不是数据所有权 —— 拖出来的最终宽度照样交回应用
+     *   （`onColumnResize`）。放在 `State` 里因为只有它能在 down 与 move 之间记住起点。
+     * ★ 记"起始宽度 + 增量"而不是"列宽 = 指针位置"：指针按下的位置在手柄上（列的
+     *   右缘），直接按位置算会让列宽瞬间缩掉一个手柄宽，视觉上"跳一下"。
+     */
+    private ?float $resizeStartX = null;
+
+    private float $resizeStartWidth = 0.0;
+
+    /** 拖动中最后一次上报的宽度 —— 抬起/拖出窗口都报它（不回退，应用已采纳） */
+    private float $resizeLastWidth = 0.0;
+
+    /** 真的动过没有（纯点一下手柄不算"用户改了列宽"，不产生上报） */
+    private bool $resizeMoved = false;
+
+    /**
      * 选中行的染色透明度（0–255，约 14%）。
      *
      * ★ 为什么是**半透明的 `Accent`** 而不是新加一个 `AccentContainer` 主题 token：
@@ -86,6 +105,9 @@ final class TableState extends State implements Scrollable
      *   "把 Accent 按同一比例淡下去" —— 那是公式，不是设计决策。
      */
     private const SELECTED_ALPHA = 36;
+
+    /** 列宽手柄的命中区宽（逻辑像素）—— 与 Excel 同量级 */
+    private const RESIZE_HANDLE_W = 5.0;
 
     /**
      * 鼠标悬停在哪一行（**纯 UI 态**，住 State 而不是受控）。
@@ -392,7 +414,7 @@ final class TableState extends State implements Scrollable
             );
         }
 
-        $this->assertSortDeclared($view, $columns);
+        $this->assertInteractivityDeclared($view, $columns);
 
         // 完整内容高（含表头）—— 滚动条与可滚上限都按它算
         $contentH = $headerH + $count * $rowH;
@@ -575,6 +597,16 @@ final class TableState extends State implements Scrollable
 
         $cell = $this->cellShell($content, $width, $column);
 
+        // ★ 手柄包在**排序 pointer 里面**（Stack 的子 vs Stack 自己）：
+        //   `InputRouter::pointerOwner()` 从命中点往上遇到**第一个**声明 ownsPress
+        //   的节点就返回 ⇒ 命中手柄时是手柄赢，命中格内其它地方是整格赢。
+        //   **不需要改路由**，也不需要给手柄加"可聚焦/Activatable"的假身份。
+        if ($column->isResizable()) {
+            $cell = Stack::make()
+                ->alignment(StackAlign::TopRight)
+                ->children([$cell, $this->resizeHandle($column, $width)]);
+        }
+
         if (!$column->isSortable()) {
             return $cell;
         }
@@ -594,6 +626,107 @@ final class TableState extends State implements Scrollable
                 },
                 ownsPress: true,
             );
+    }
+
+    /**
+     * 列宽手柄：表头右缘一条 5px 的透明命中区。
+     *
+     * ★ **不画任何东西**：平时透明，靠光标变 `SizeWE` 提示（Excel 同款）。要画视觉
+     *   反馈就得决定"平时什么色 / hover 什么色 / 深色主题什么色"——那是三个 token
+     *   的决策，而光标已经足够表达"这里能拖"。
+     * ★ 用 `Stack(TopRight)` 做成**浮在格子上的一层**，不是格内第 N 个子节点：
+     *   后者会被列宽分配算进去（内容宽被手柄吃掉 5px，而且越拖越窄）。
+     * ★ 高度取表头高 ⇒ Stack 被撑满整条表头，命中区覆盖上下的完整高度。
+     */
+    private function resizeHandle(TableColumn $column, float $width): Widget
+    {
+        return SizedBox::make()
+            ->width(self::RESIZE_HANDLE_W)
+            ->height($this->view()->headerHeightPx())
+            ->cursor(CursorShape::SizeWE)
+            ->pointer(
+                function (PointerEvent $event, Element $self) use ($column, $width): ?CursorShape {
+                    if ($event->isDown() && $event->isPrimary()) {
+                        $this->resizeStartX = $event->x;
+                        $this->resizeStartWidth = $width;
+                        $this->resizeLastWidth = $width;
+                        $this->resizeMoved = false;
+
+                        return null;
+                    }
+
+                    if ($event->isMove()) {
+                        $this->dragResize($column, $event->x);
+
+                        return null;
+                    }
+
+                    if ($event->isUp() || $event->isLeave()) {
+                        $this->endResize($column);
+                    }
+
+                    return null;
+                },
+                ownsPress: true,
+            );
+    }
+
+    /**
+     * 拖动中：`起始宽 + 增量`，再过一遍 `clampWidth()`。
+     *
+     * ★ 增量用**事件坐标系**直接相减（不减 `absoluteOrigin`）：只有差值有意义，
+     *   平移不影响。Slider 之所以要减原点，是因为它拿的是绝对位置。
+     * ★ 夹在这里而不是交给应用：`minWidth` / `maxWidth` 是列自己的硬约束，应用拿到
+     *   超出范围的值再夹一次等于同一件事做两遍。
+     */
+    private function dragResize(TableColumn $column, float $pointerX): void
+    {
+        $startX = $this->resizeStartX;
+        if ($startX === null) {
+            return;
+        }
+
+        $notify = $this->view()->columnResizeHandler();
+        if ($notify === null) {
+            return;
+        }
+
+        $width = $column->clampWidth($this->resizeStartWidth + ($pointerX - $startX));
+        if ($width === $this->resizeLastWidth) {
+            return;   // 夹住之后没变（拖到 min 还在继续拖）⇒ 不刷帧
+        }
+
+        $this->resizeLastWidth = $width;
+        $this->resizeMoved = true;
+        $notify($column->keyName(), $width, false);
+    }
+
+    /**
+     * 抬起 / 拖出窗口：上报 `$finished = true`，清掉临时量。
+     *
+     * ★ 报**最后那个值**而不是按抬起位置重算：`leave`（拖出窗口）时指针已经在
+     *   窗口外，位置没有意义；而应用早就采纳了拖动中的值，回退会让列"跳回去"。
+     * ★ 纯点一下手柄（没 move）不上报：那不是"用户改了列宽"，报一次会把应用的
+     *   "有变化才存盘"逻辑打成"每次点表头都存盘"。
+     */
+    private function endResize(TableColumn $column): void
+    {
+        if ($this->resizeStartX === null) {
+            return;
+        }
+
+        $this->resizeStartX = null;
+
+        if (!$this->resizeMoved) {
+            return;
+        }
+
+        $this->resizeMoved = false;
+
+        $notify = $this->view()->columnResizeHandler();
+        if ($notify !== null) {
+            $notify($column->keyName(), $this->resizeLastWidth, true);
+        }
     }
 
     /**
@@ -639,22 +772,42 @@ final class TableState extends State implements Scrollable
     }
 
     /**
-     * 排序声明的两条响亮失败。
+     * 交互声明的响亮失败（排序 + 列宽）。
      *
      * 1. 有列 `sortable()` 但没接 `onSortChange()` ⇒ 表头可点、点了没反应，箭头停在旧值。
      * 2. `sort()` 指向的列不存在 ⇒ 箭头永远画不出来（列 key 拼错时**完全静默**）。
+     * 3. 有列 `resizable()` 但没接 `onColumnResize()` ⇒ 手柄在、光标也变，拖半天
+     *    列宽不动，**且不报错**。
+     *
+     * ★ 第 3 条不检查 `columnWidths()` 里的多余 key：那是**历史偏好**（列删了、
+     *   存盘的旧值还在），静默忽略才是对的。第 2 条不同 —— 排序是当前状态，
+     *   拼错就是拼错。两者的差别在"这是历史还是现在"。
      *
      * @param list<TableColumn> $columns
      */
-    private function assertSortDeclared(Table $view, array $columns): void
+    private function assertInteractivityDeclared(Table $view, array $columns): void
     {
         $keys = [];
         $sortable = null;
+        $resizable = null;
         foreach ($columns as $column) {
             $keys[$column->keyName()] = true;
             if ($sortable === null && $column->isSortable()) {
                 $sortable = $column->keyName();
             }
+            if ($resizable === null && $column->isResizable()) {
+                $resizable = $column->keyName();
+            }
+        }
+
+        if ($resizable !== null && $view->columnResizeHandler() === null) {
+            Errors::report(sprintf(
+                'Table 的列 "%s" 声明了 resizable() 却没有 onColumnResize() —— 列宽是受控的，'
+                    . "\n" . '控件只算"拖到了多宽"并交出去，应用不接就等于拖了没反应。'
+                    . "\n" . '修法：加上 ->onColumnResize(fn(string $key, float $w, bool $done) => ...)，'
+                    . "\n" . '或去掉 ->resizable()。',
+                $resizable,
+            ));
         }
 
         if ($sortable !== null && $view->sortChangeHandler() === null) {
@@ -730,7 +883,20 @@ final class TableState extends State implements Scrollable
         $used = 0.0;
         $flexSum = 0.0;
 
+        // ④ 用户拖出来的宽度**最优先**，且**不参与 flex 分配**（拖过就变固定宽）。
+        //   ★ 指向不存在的列时**静默忽略**（与 `sort()` 不同）：override 是"历史
+        //     偏好"——列被删掉之后存盘的旧值还在，是正常情况，不是拼写错误。
+        $overrides = $this->view()->columnWidthOverrides();
+
         foreach ($columns as $i => $column) {
+            $override = $overrides[$column->keyName()] ?? null;
+            if ($override !== null) {
+                $widths[$i] = $override;
+                $used += $override;
+
+                continue;
+            }
+
             $spec = $column->widthSpec();
             if ($spec->isFlex()) {
                 $widths[$i] = 0.0;   // 占位：等固定列量完才知道剩余
@@ -750,7 +916,11 @@ final class TableState extends State implements Scrollable
 
             foreach ($columns as $i => $column) {
                 $spec = $column->widthSpec();
-                if (!$spec->isFlex()) {
+
+                // ★ 被 override 的列**不参与重算**：它的 `widthSpec()` 可能还是 flex，
+                //   只按 isFlex() 判会让第 ④ 层被第 ② 层覆盖回去（真机表现：拖宽
+                //   一列，松手后又弹回原值 —— 因为 override 只挡住了"初值"没挡住"重算"）。
+                if (!$spec->isFlex() || isset($overrides[$column->keyName()])) {
                     continue;
                 }
 

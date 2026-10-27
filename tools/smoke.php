@@ -107,6 +107,7 @@ use Drift\Dev\Smoke\App\EchoApplication;
 use Drift\Dev\Smoke\App\FailSliceJob;
 use Drift\Dev\Smoke\App\GestureApplication;
 use Drift\Dev\Smoke\App\PressLabApplication;
+use Drift\Dev\Smoke\App\TableResizeApplication;
 use Drift\Dev\Smoke\App\SemValueApplication;
 use Drift\Dev\Smoke\App\TfApplication;
 use Drift\Dev\Smoke\App\TfLabeledApplication;
@@ -251,6 +252,7 @@ use Drift\Widget\Card;
 use Drift\Widget\CustomPaint;
 use Drift\Widget\CustomPainter;
 use Drift\Widget\SizedBox;
+use Drift\Widget\Stack;
 use Drift\Widget\ScrollBarFade;
 use Drift\Widget\ButtonVariant;
 use Drift\Widget\AppBar;
@@ -467,6 +469,19 @@ if (str_starts_with($caseArg, '--case=')) {
         // 箭头还停在旧值 ⇒ 挂载期响亮失败（与 selection 缺上报同一条纪律）
         $table = Table::make(
             [TableColumn::make('a', 'A')->field('a')->sortable()],
+            [['a' => 1]],
+        )->keyOf(static fn(array $row): int => (int) $row['a']);
+        $el = $table->createElement();
+        $el->mount(null, smokeContext());
+        echo "mounted-without-error\n";
+        exit(0);
+    }
+
+    if ($case === 'table-resize-noreport') {
+        // 列声明了 resizable() 却没接 onColumnResize ⇒ 手柄在、光标也变，
+        // 拖半天列宽不动且不报错 ⇒ 挂载期响亮失败（同 sortable 的纪律）
+        $table = Table::make(
+            [TableColumn::make('a', 'A')->field('a')->resizable()],
             [['a' => 1]],
         )->keyOf(static fn(array $row): int => (int) $row['a']);
         $el = $table->createElement();
@@ -17197,6 +17212,213 @@ check(
         && \abs($tableCenterY - (40.0 - $tableCenterH) / 2.0) <= 1.0,
     $tableCenterH === null ? '没有单元格' : sprintf('cell 高 %s / offsetY %s（期望 %s）',
         (string) $tableCenterH, (string) $tableCenterY, (string) ((40.0 - $tableCenterH) / 2.0)),
+);
+
+// ── ⑩+1 P2 阶段 4：列宽拖拽（受控第 ④ 层 + 手柄是表头格的子 widget）──────
+//   ★ 验的是三件事：① 手柄在不在 / 只挂在 resizable() 的列上；② 拖动上报的
+//     值对不对（含 clamp 与"没拖动就不报"）；③ 第 ④ 层真的压过 ①②③。
+//   ⚠️ **本块验不出"手柄赢下按下"**：它直接调 `pointerHandlerValue()`，绕过了
+//     `InputRouter::pointerOwner()` 的父链遍历。那条由"手柄是 Stack 的子、
+//     比整格更近"保证（阶段 4 的 §14.3），真机拖动是它的验收。
+$tableResizeLog = [];
+$tableResizeBuild = static function (array $overrides = []) use ($tableRowsOf, &$tableResizeLog): Table {
+    return Table::make(
+        [
+            TableColumn::make('id', 'ID')->field('id')->width(TableColumnWidth::fixed(60.0))->resizable(),
+            TableColumn::make('name', '姓名')->field('name')->resizable()->minWidth(120.0)->maxWidth(260.0),
+            TableColumn::make('city', '城市')->field('city'),   // ← 不 resizable：不该有手柄
+        ],
+        $tableRowsOf(4),
+    )->keyOf(static fn(array $row): int => $row['id'])
+        ->rowHeight(40.0)
+        ->headerHeight(32.0)
+        ->columnWidths($overrides)
+        ->onColumnResize(static function (string $key, float $width, bool $finished) use (&$tableResizeLog): void {
+            $tableResizeLog[] = [$key, \round($width, 2), $finished];
+        });
+};
+
+/** 表头行 Element（`Row` 本身，用来量列宽序列） */
+$tableHeaderRowOf = static function (Element $root): ?Element {
+    return findElement($root, static fn(Element $e): bool => $e->widget() instanceof Row);
+};
+
+/** 从表头格的 `Stack` 里取手柄（第二个子：`[内容, 手柄]`） */
+$tableHandleOf = static function (?Element $stackEl): ?Element {
+    if ($stackEl === null || !$stackEl->widget() instanceof Stack) {
+        return null;
+    }
+
+    $kids = [];
+    $stackEl->visitChildren(static function (Element $c) use (&$kids): void {
+        $kids[] = $c;
+    });
+
+    return $kids[1] ?? null;
+};
+
+// ① 默认关
+check(
+    'TableColumn · resizable() 默认关（不接上报就不该出现手柄）',
+    TableColumn::make('x', 'X')->isResizable() === false
+        && TableColumn::make('x', 'X')->resizable()->isResizable() === true,
+    TableColumn::make('x', 'X')->isResizable() ? '默认开' : '默认关',
+);
+
+// ② 手柄只挂在 resizable() 的列上，光标 SizeWE，且不占列宽
+$tableResizeEl = $tableMount($tableResizeBuild());
+$tableResizeCells = $tableHeaderCellsOf($tableResizeEl);
+$tableResizeRow = $tableHeaderRowOf($tableResizeEl);
+$tableResizeWidths = $tableResizeRow === null ? [] : $tableWidthsOf($tableResizeRow);
+$tableResizeHandle = $tableHandleOf($tableResizeCells[1] ?? null);
+
+check(
+    'Table · 手柄只挂在 resizable() 的列上，光标 SizeWE',
+    $tableResizeHandle !== null
+        && $tableResizeHandle->widget()->cursorShape() === CursorShape::SizeWE
+        && $tableHandleOf($tableResizeCells[2] ?? null) === null,
+    $tableResizeHandle === null ? '第 2 列没有手柄' : '第 2 列有手柄，第 3 列没有',
+);
+check(
+    'Table · 手柄是浮层，不占列宽（3 列宽序列仍是 [60, 130, 130]）',
+    \count($tableResizeWidths) === 3
+        && abs($tableResizeWidths[0] - 60.0) < 0.5
+        && abs($tableResizeWidths[1] - 130.0) < 0.5
+        && abs($tableResizeWidths[2] - 130.0) < 0.5,
+    \json_encode($tableResizeWidths),
+);
+
+// ③ 拖动：move 上报 finished=false，up 再报一次 finished=true，值相同
+$tableResizeBase = $tableResizeWidths[1] ?? 0.0;
+$tableResizeFire = static function (Element $handleEl, PointerEvent $event): void {
+    $handleEl->widget()->pointerHandlerValue()?->__invoke($event, $handleEl);
+};
+$tableResizeFire($tableResizeHandle, PointerEvent::down(100.0, 10.0));
+$tableResizeFire($tableResizeHandle, PointerEvent::move(140.0, 10.0));
+$tableResizeFire($tableResizeHandle, PointerEvent::up(140.0, 10.0));
+
+check(
+    'Table · 拖动上报 (列key, 起始宽+增量, finished)：拖动中 false、抬起 true 且值相同',
+    \count($tableResizeLog) === 2
+        && $tableResizeLog[0][0] === 'name' && $tableResizeLog[0][2] === false
+        && $tableResizeLog[1][0] === 'name' && $tableResizeLog[1][2] === true
+        && abs($tableResizeLog[0][1] - ($tableResizeBase + 40.0)) < 0.5
+        && $tableResizeLog[0][1] === $tableResizeLog[1][1],
+    \json_encode($tableResizeLog) . ' base=' . $tableResizeBase,
+);
+
+// ④ 纯点一下手柄（没 move）不产生上报 —— 否则应用的"有变化才存盘"会被打成每次都存
+$tableResizeLog = [];
+$tableResizeEl2 = $tableMount($tableResizeBuild());
+$tableResizeHandle2 = $tableHandleOf($tableHeaderCellsOf($tableResizeEl2)[1] ?? null);
+$tableResizeFire($tableResizeHandle2, PointerEvent::down(100.0, 10.0));
+$tableResizeFire($tableResizeHandle2, PointerEvent::up(100.0, 10.0));
+check(
+    'Table · 只按下不拖动 ⇒ 不上报（"点了手柄"不等于"改了列宽"）',
+    $tableResizeLog === [],
+    \json_encode($tableResizeLog),
+);
+
+// ⑤ clamp：拖到 -500 停在 minWidth(120)，拖到 +500 停在 maxWidth(260)
+$tableResizeLog = [];
+$tableResizeEl3 = $tableMount($tableResizeBuild());
+$tableResizeHandle3 = $tableHandleOf($tableHeaderCellsOf($tableResizeEl3)[1] ?? null);
+$tableResizeFire($tableResizeHandle3, PointerEvent::down(0.0, 10.0));
+$tableResizeFire($tableResizeHandle3, PointerEvent::move(-500.0, 10.0));
+$tableResizeFire($tableResizeHandle3, PointerEvent::move(500.0, 10.0));
+check(
+    'Table · 拖拽也过 clampWidth：左拖停在 minWidth(120)，右拖停在 maxWidth(260)',
+    \count($tableResizeLog) === 2
+        && abs($tableResizeLog[0][1] - 120.0) < 0.5
+        && abs($tableResizeLog[1][1] - 260.0) < 0.5,
+    \json_encode($tableResizeLog),
+);
+
+// ⑥ 第 ④ 层真的压过 flex 分配：override name=200 ⇒ [60, 200, 60]（city 拿剩下）
+$tableOverrideEl = $tableMount($tableResizeBuild(['name' => 200.0]));
+$tableOverrideWidths = $tableWidthsOf($tableHeaderRowOf($tableOverrideEl));
+check(
+    'Table · columnWidths() 是最优先的第 ④ 层：flex 列被 override 后不再分剩余（[60,200,60]）',
+    \count($tableOverrideWidths) === 3
+        && abs($tableOverrideWidths[0] - 60.0) < 0.5
+        && abs($tableOverrideWidths[1] - 200.0) < 0.5
+        && abs($tableOverrideWidths[2] - 60.0) < 0.5,
+    \json_encode($tableOverrideWidths),
+);
+
+// ⑦ override 指向不存在的列 ⇒ 静默忽略（历史偏好 vs 现在状态，见 assertInteractivityDeclared）
+$tableGhostEl = $tableMount($tableResizeBuild(['nope' => 999.0]));
+$tableGhostWidths = $tableWidthsOf($tableHeaderRowOf($tableGhostEl));
+check(
+    'Table · columnWidths() 指向已不存在的列 ⇒ 静默忽略（列删了、存盘的旧值还在是常态）',
+    \count($tableGhostWidths) === 3
+        && abs($tableGhostWidths[1] - 130.0) < 0.5
+        && abs($tableGhostWidths[2] - 130.0) < 0.5,
+    \json_encode($tableGhostWidths),
+);
+
+// ⑧ 响亮失败：resizable() 但没接 onColumnResize
+fresh($log);
+[$tableResizeCode, $tableResizeOut] = runCase(__FILE__, 'table-resize-noreport', null);
+check('Table · 列 resizable() 但没接 onColumnResize ⇒ 退出码 3', $tableResizeCode === 3, '实际 ' . $tableResizeCode . ' / ' . $tableResizeOut);
+check(
+    'Table · 缺列宽上报的报错指路 onColumnResize（并给出"去掉 resizable()"这条退路）',
+    str_contains(logText($log), 'onColumnResize') && str_contains(logText($log), 'resizable()'),
+    logText($log) === '' ? '空日志' : '有日志',
+);
+
+// ⑨ **真实路由**：手柄赢下按下，表头整格收不到
+//   ★ 这是阶段 4 唯一"smoke 常规断言验不到"的点：上面全部直接调
+//     `pointerHandlerValue()`，绕过了 `InputRouter::pointerOwner()` 的父链遍历。
+//     判据：同一格上，按右缘（手柄）⇒ 只有 resizeLog；按标题 ⇒ 只有 sortLog。
+$tableRouteApp = new TableResizeApplication();
+$tableRouteApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
+
+$tableRouteHandle = findElement(
+    $tableRouteApp->root(),
+    static fn(Element $e): bool => $e->widget()->cursorShape() === CursorShape::SizeWE,
+);
+$tableRouteCenter = static function (?Element $e): array {
+    $box = $e?->effectiveBox();
+    if ($box === null || $box->size() === null) {
+        return [0.0, 0.0];
+    }
+    $origin = \Drift\Layout\RenderBox::absoluteOrigin($box);
+
+    return [$origin[0] + $box->size()->width / 2.0, $origin[1] + $box->size()->height / 2.0];
+};
+
+[$tableRouteHx, $tableRouteHy] = $tableRouteCenter($tableRouteHandle);
+$tableRouteApp->dispatchInput(PointerEvent::down($tableRouteHx, $tableRouteHy));
+$tableRouteApp->dispatchInput(PointerEvent::move($tableRouteHx + 30.0, $tableRouteHy));
+$tableRouteApp->dispatchInput(PointerEvent::up($tableRouteHx + 30.0, $tableRouteHy));
+
+check(
+    'Table · 真实路由：按在手柄上拖 ⇒ 只走列宽，表头排序收不到（手柄比整格近）',
+    \count($tableRouteApp->resizeLog) === 2
+        && $tableRouteApp->sortLog === []
+        && $tableRouteApp->resizeLog[0][2] === false
+        && $tableRouteApp->resizeLog[1][2] === true,
+    'resize=' . \json_encode($tableRouteApp->resizeLog) . ' sort=' . \json_encode($tableRouteApp->sortLog)
+        . ' handle=' . ($tableRouteHandle === null ? 'MISSING' : 'ok'),
+);
+
+// 对照：按同一格的标题区（远离右缘）⇒ 只有排序，没有列宽
+$tableRouteTitle = findElement(
+    $tableRouteApp->root(),
+    static fn(Element $e): bool => $e->widget() instanceof Widget && $e->widget()->pointerOwnsPressValue()
+        && $e->widget()->cursorShape() === CursorShape::PointingHand,
+);
+[$tableRouteTx, $tableRouteTy] = $tableRouteCenter($tableRouteTitle);
+$tableRouteApp->sortLog = [];
+$tableRouteApp->resizeLog = [];
+$tableRouteApp->dispatchInput(PointerEvent::down($tableRouteTx, $tableRouteTy));
+$tableRouteApp->dispatchInput(PointerEvent::up($tableRouteTx, $tableRouteTy));
+
+check(
+    'Table · 真实路由：按在表头标题上 ⇒ 只走排序，不产生列宽上报',
+    \count($tableRouteApp->sortLog) === 1 && $tableRouteApp->resizeLog === [],
+    'resize=' . \json_encode($tableRouteApp->resizeLog) . ' sort=' . \json_encode($tableRouteApp->sortLog),
 );
 
 // ⑪ 列宽的 min/max 夹（第 ② 层）：flex 分到 173 但 maxWidth 100 ⇒ 停在 100

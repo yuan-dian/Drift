@@ -78,6 +78,9 @@ final class TableColumn
      */
     private bool $sortable = false;
 
+    /** 表头右缘可拖动改宽吗（默认关，见 `resizable()`） */
+    private bool $resizable = false;
+
     private function __construct(
         private readonly string $colKey,
         string $title,
@@ -196,6 +199,24 @@ final class TableColumn
         return $this;
     }
 
+    /**
+     * 表头右缘可以拖动改宽（默认关）。
+     *
+     * ★ 与 `sortable()` 同一条理由默认关：拖了必须有人接。不接 `onColumnResize()`
+     *   就显示手柄 ⇒ 用户拖半天列宽不动，比"没有手柄"更糟（挂载期直接 Fatal，
+     *   见 `TableState::assertInteractiveDeclared()`）。
+     * ★ 拖出来的宽度是**第 ④ 层**（最优先），但仍然夹 `minWidth` / `maxWidth`：
+     *   第 ③ 层是硬约束，用户拖不出违反它的列。
+     * ★ 与 `widthSpec()` 互不约束：`flex` 列被拖之后变成固定宽（Excel / ag-Grid
+     *   同款），其余 flex 列重新分剩余。
+     */
+    public function resizable(bool $on = true): static
+    {
+        $this->resizable = $on;
+
+        return $this;
+    }
+
     public function keyName(): string
     {
         return $this->colKey;
@@ -225,6 +246,12 @@ final class TableColumn
     public function paddingX(): float
     {
         return $this->paddingX;
+    }
+
+    /** 表头右缘可拖动改宽吗（见 `resizable()`） */
+    public function isResizable(): bool
+    {
+        return $this->resizable;
     }
 
     /** 表头可点排序吗（见 `sortable()`） */

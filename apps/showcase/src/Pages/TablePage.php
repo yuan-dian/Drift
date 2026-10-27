@@ -47,8 +47,8 @@ use Drift\Widget\Widget;
  *   日期，比较规则只有应用知道。看 `comparators()` —— 连"状态"这个**派生列**都能排，
  *   因为闭包与 `sortable()` 互不约束。
  *
- * ★ **诚实边界**（页面底部也写了一句）：无列宽拖拽、无键盘焦点格、列装不下时被裁。
- *   它们是阶段 4~7，结构都已预留。
+ * ★ **诚实边界**（页面底部也写了一句）：无键盘焦点格、列装不下时被裁、无横滚。
+ *   它们是阶段 2b/5~7，结构都已预留。
  */
 final class TablePage extends StatefulWidget
 {
@@ -114,6 +114,15 @@ final class TablePageState extends State
     /** 当前显示的行（排序后；`null` = 与原始顺序相同） */
     private ?array $viewRows = null;
 
+    /**
+     * 用户拖出来的列宽（**受控**第 ④ 层：列 key ⇒ 逻辑像素）。
+     *
+     * ★ 本页只做"拖动中实时更新"，没有存盘 —— 真实应用该在这里 `json_encode`
+     *   落盘、下次开窗 `columnWidths()` 传回来。这正是它必须受控的理由：
+     *   住在控件里就没有地方能存。
+     */
+    private array $widthOverrides = [];
+
 
     private function selectionNow(): TableSelection
     {
@@ -153,7 +162,8 @@ final class TablePageState extends State
                     . '列宽三层：fixed / flex / min-max 夹；奇数行斑马。'
                     . '选择受控：点行选中、Ctrl 加选、Shift 连选。'
                     . '排序受控：点表头三态循环（升 → 降 → 取消），重排由本页做。'
-                    . '阶段 3 边界：无列宽拖拽、无键盘焦点格；列装不下时被裁。'
+                    . '列宽可拖：拖表头右缘（光标变左右箭头），重置按钮回到声明值。'
+                    . '边界：无键盘焦点格、装不下时被裁、无横滚。'
                 )->caption(),
 
                 $this->selectionBar(),
@@ -170,6 +180,12 @@ final class TablePageState extends State
                         ->onSelectionChange(fn(TableSelection $next) => $this->setState(
                             function () use ($next): void {
                                 $this->selection = $next;
+                            }
+                        ))
+                        ->columnWidths($this->widthOverrides)
+                        ->onColumnResize(fn(string $key, float $width, bool $done) => $this->setState(
+                            function () use ($key, $width): void {
+                                $this->widthOverrides[$key] = $width;
                             }
                         ))
                         ->sort($this->sortNow())
@@ -223,6 +239,11 @@ final class TablePageState extends State
                     $this->sort = TableSort::none();
                     $this->sortColumnIndex = -1;
                     $this->viewRows = null;
+                }
+            )),
+            Button::make('重置列宽')->onPressed(fn() => $this->setState(
+                function (): void {
+                    $this->widthOverrides = [];
                 }
             )),
         ]);
@@ -365,25 +386,32 @@ final class TablePageState extends State
             TableColumn::make('id', 'ID')
                 ->field('id')
                 ->width(TableColumnWidth::fixed(72.0))
+                ->minWidth(48.0)
                 ->align(TextAlign::End)
-                ->sortable(),
+                ->sortable()
+                ->resizable(),
 
             TableColumn::make('name', '姓名')
                 ->field('name')
                 ->width(TableColumnWidth::flex(2.0))
                 ->minWidth(120.0)
-                ->sortable(),
+                ->sortable()
+                ->resizable(),
 
             TableColumn::make('email', '邮箱')
                 ->field('email')
                 ->width(TableColumnWidth::flex(3.0))
-                ->sortable(),
+                ->minWidth(160.0)
+                ->sortable()
+                ->resizable(),
 
             TableColumn::make('city', '城市')
                 ->field('city')
                 ->width(TableColumnWidth::fixed(96.0))
+                ->minWidth(64.0)
                 ->align(TextAlign::Center)
-                ->sortable(),
+                ->sortable()
+                ->resizable(),
 
             // ★ 派生值走 `cell()`：状态不是行里的字段，而是由 id 算出来的。
             //   ★★ 它**照样能排** —— `sortable()` 与 `cell()` 互不约束（见 comparators()）
@@ -392,8 +420,10 @@ final class TablePageState extends State
                     ? '停用'
                     : '正常')->caption())
                 ->width(TableColumnWidth::fixed(88.0))
+                ->minWidth(64.0)
                 ->align(TextAlign::Center)
-                ->sortable(),
+                ->sortable()
+                ->resizable(),
         ];
     }
 

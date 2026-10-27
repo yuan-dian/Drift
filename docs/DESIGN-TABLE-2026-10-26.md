@@ -960,3 +960,146 @@ smoke 新增 15 条（1577 ok / 0 FAIL）：
 ⇒ 阶段 4 走第 2 条：排序 handler 一行不改，只往 `headerCell()` 里插一个手柄。
 这也解释了为什么阶段 3 不先把"格内 x 分区"这套算术写出来 —— 它会被手柄替代。
 
+---
+
+## 14. 阶段 4 落地：列宽拖拽（受控第 ④ 层，2026-10-27）
+
+### 14.1 第 ④ 层不是新机制，是 `resolveWidths()` 里多一个分支
+
+三层列宽（`① 初值 / ② 分剩余 / ③ 夹`）早就把第 ④ 层的位置写进了注释。**列宽的唯一
+真相来源是 `resolveWidths()`**（行 Widget 是 `Row[SizedBox(宽)…]`，宽度必须在造行之
+前算好），所以这次没有新增任何"宽度计算"路径 —— 只在第一轮循环里插了 4 行：
+
+```php
+$override = $overrides[$column->keyName()] ?? null;
+if ($override !== null) { $widths[$i] = $override; $used += $override; continue; }
+```
+
+**override 的列不参与 flex 分配**（拖过就变固定宽，Excel / ag-Grid 同款）。
+
+### 14.2 受控，以及为什么回调要三个参数
+
+`Table::columnWidths(array<string,float>)` + `Table::onColumnResize(fn(string $key,
+float $width, bool $finished))`。受控的理由与 `selection()` / `sort()` 同源，但**列宽
+比它们更硬**：列宽是**用户偏好**，应用必须能存盘（下次开窗恢复）、能"重置"。住在控件
+`State` 里就再也读不出来（本仓没有 `GlobalKey`）。
+
+| 决定 | 理由 |
+|---|---|
+| 按 **key** 存不按列序号 | 插列 / 换序后拖出来的宽度仍落在原来那一列 |
+| 值**不在 setter 里夹** | 夹会让"存盘的宽度"与"应用看到的宽度"不一致；夹只有一处（`clampWidth`）|
+| 单回调三参数，不做 `onColumnResize` + `onColumnResizeEnd` | 两个回调会造出"必须先接前者才能接后者"的隐式依赖 |
+| `$finished` 区分拖动中 / 结束 | 应用可以"拖动中只 `setState`，结束时才写盘"，不必自己猜抬起时机 |
+| override 指向**不存在**的列 ⇒ 静默忽略 | 那是**历史偏好**（列删了、存盘值还在）——与 `sort()` 拼错是两回事 |
+
+### 14.3 ★ 路由零改动 —— 但理由与 §13.9 的预判不同
+
+§13.9 预判"手柄靠父链更近天然赢，判据是阶段 2 的'更近的可聚焦/Activatable 让位'"。
+**读完 `InputRouter::pointerOwner()` 才发现根本不是那条判据**：
+
+```php
+for ($node = $element; $node !== null; $node = $node->parent()) {
+    if ($widget->pointerOwnsPressValue()) return $node;   // ← 从命中点往上，第一个就返回
+    if ($widget->isFocusable() || $widget instanceof Activatable) return null;
+}
+```
+
+它是**从命中点往上取第一个 `ownsPress` 声明者**。手柄作为表头格 `Stack` 的子节点，
+在父链上比整格更近 ⇒ 天然先被返回。**不需要改 `pointerOwner()`，也不需要给手柄加
+"可聚焦"的假身份。**
+
+⇒ 阶段 4 对 `InputRouter` / `GestureArena` / `InputEvent` **零改动**。
+
+### 14.4 记"起始增量"，不记"列宽 = 指针位置"
+
+Slider 能用后者是因为它的值**就是**位置。列宽不行：指针按下的位置在手柄上（列右缘），
+按位置直接算会让列宽瞬间缩掉一个手柄宽，视觉上"跳一下"。所以 `TableState` 存四个
+临时量：
+
+| 字段 | 用途 |
+|---|---|
+| `$resizeStartX` | 按下时的指针 x（`null` = 没在拖）|
+| `$resizeStartWidth` | 按下时的列宽 |
+| `$resizeLastWidth` | 拖动中最后一次上报的值 |
+| `$resizeMoved` | 真的 move 过没有 |
+
+**它们不是数据所有权**：拖出来的最终宽度照样交回应用。放在 `State` 里是因为只有它
+能在 down 与 move 之间记住起点。
+
+两个由此而来的细节：
+- **`leave`（拖出窗口）报"最后那个值"而不是按位置重算**：指针已在窗口外，位置没有
+  意义；而应用早就采纳了拖动中的值，回退会让列"跳回去"。
+- **纯点一下手柄（没 move）不上报**：那不是"用户改了列宽"，报一次会把应用的
+  "有变化才存盘"打成"每次点表头都存盘"。
+
+### 14.5 手柄：`Stack(TopRight)` 的浮层，不是格内第 N 个子节点
+
+```php
+$cell = Stack::make()->alignment(StackAlign::TopRight)
+    ->children([$cell, $this->resizeHandle($column, $width)]);
+```
+
+放进 `Row` 当第 N 个子节点不行：那 5px 会被列宽分配算进去（内容宽被吃掉、而且越拖
+越窄）。本仓 `Stack` 只有整体对齐、**没有 `Positioned`**，但 `TopRight` + 手柄显式
+高度（`headerHeightPx()`）已经够把它压在右缘并撑满表头高。
+
+**不画任何东西**：平时透明，靠光标变 `SizeWE` 提示（Excel 同款）。要画视觉反馈就得
+决定"平时什么色 / hover 什么色 / 深色主题什么色"——三个 token 的决策，而光标已经足够
+表达"这里能拖"。
+
+### 14.6 ★ 同批修掉的一个真 bug：override 只挡住"初值"，没挡住"重算"
+
+第一版实现只在第 ① 轮循环里 `continue`，第 ② 轮"分剩余"仍按 `isFlex()` 判断 ⇒ 被
+override 的 flex 列**又被重算一次**。真机表现会是"拖宽一列、松手弹回原值"。
+
+被 smoke 当场抓住（`[60, 120, 60]` 而不是 `[60, 200, 60]`，`120` 正是 `minWidth`
+——那是 `clamp(60)` 的结果）。修法是第 ② 轮也跳过 override 的列：
+
+```php
+if (!$spec->isFlex() || isset($overrides[$column->keyName()])) continue;
+```
+
+**这条值得记下来**：三层列宽是**三个独立循环**，"在第 ① 层生效"不等于"在第 ② 层也
+生效"——新增一层优先级时，每一个旧循环都得检查一遍。
+
+### 14.7 验收
+
+smoke **1591 ok / 0 FAIL**（新增 12 条）：
+
+| 断言 | 钉住什么 |
+|---|---|
+| `resizable()` 默认关 | 不接上报就不出现手柄 |
+| 手柄只挂在 `resizable()` 的列上 + `SizeWE` | 不可调列不挂（第 3 列没有）|
+| 手柄是浮层，不占列宽 | 宽序列仍是 `[60, 130, 130]` |
+| 拖动上报 `(key, 起始宽+增量, finished)` | 拖动中 `false`、抬起 `true`，值相同 |
+| 纯按下不拖动 ⇒ 不上报 | "点了手柄"≠"改了列宽" |
+| 拖拽过 `clampWidth()` | 左拖停 `minWidth(120)`、右拖停 `maxWidth(260)` |
+| `columnWidths()` 压过 flex 分配 | `[60, 200, 60]` |
+| override 指向不存在的列 ⇒ 静默 | `[60, 130, 130]` |
+| 缺 `onColumnResize()` ⇒ 退出码 3 | 响亮失败 + 指路 |
+
+**★ 两条"真实路由"断言是这一阶段最有价值的产出**：它们在
+`TableResizeApplication` 夹具里走 `dispatchInput()`（真 `InputRouter`），验的是
+"同一格上，按右缘 ⇒ 只有列宽上报；按标题 ⇒ 只有排序上报"。
+
+理由：其余全部断言都直接调 `pointerHandlerValue()`，**绕过了 `pointerOwner()` 的
+父链遍历** —— 而阶段 4 的整个可行性都押在那条遍历上。阶段 3 就是因为验不到这一点，
+只能去真机点像素，然后掉进坐标死胡同（§13.8）。
+
+**变异自检（实测为红）**：把 `Stack` 的层叠顺序反过来（手柄在下层、被整格盖住）⇒
+4 条红，其中关键那条的诊断直接指出病因：
+
+```
+FAIL 真实路由：按在手柄上拖 ⇒ 只走列宽，表头排序收不到
+     —— resize=[] sort=[["id",0]] handle=ok
+```
+
+### 14.8 边界（阶段 4 不做）
+
+| 不做 | 为什么 / 留给谁 |
+|---|---|
+| 双击手柄"自适应内容宽" | 要量每列内容的固有宽度（`IntrinsicWidth` 全表扫一遍），阶段 6 的列虚拟化同批做 |
+| 拖拽时的竖线高亮 | 要 hover 视觉 + 一个新 token；光标已经够表达 |
+| 手柄放宽到 spacing 区域（跨格） | 本仓 `Stack` 没有负偏移 / `Positioned`，5px 命中区是当前结构下的上限 |
+| 总宽超视口时的横滚 | 阶段 5 |
+| 键盘改列宽（焦点格 + Alt+方向）| 阶段 2b 的键盘焦点格是它的前置 |
