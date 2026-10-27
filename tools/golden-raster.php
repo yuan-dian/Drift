@@ -592,6 +592,14 @@ if ($mode === 'check') {
         $fail++;
         $diffPixels = 0;
         $maxDelta = 0;
+        // ★ 变化区域的包围盒 + 逐行命中数：FAIL 行直接说"哪一块变了"。
+        //   省掉"打开 actual.png 用眼睛找"那一步 —— 那一步正是 golden 最烦的地方
+        //   （也最容易判错：人眼对"少了一条 1px 线"几乎无能为力，对坐标却很敏感）。
+        $minX = $W;
+        $minY = $H;
+        $maxX = -1;
+        $maxY = -1;
+        $rowHits = array_fill(0, $H, 0);
         $len = min(strlen($expected), strlen($rgba));
         for ($i = 0; $i + 3 < $len; $i += 4) {
             $d = 0;
@@ -601,13 +609,62 @@ if ($mode === 'check') {
                     $d = $delta;
                 }
             }
-            if ($d > 0) {
-                $diffPixels++;
-                if ($d > $maxDelta) {
-                    $maxDelta = $d;
+            if ($d === 0) {
+                continue;
+            }
+            $diffPixels++;
+            if ($d > $maxDelta) {
+                $maxDelta = $d;
+            }
+            $pixel = intdiv($i, 4);
+            $x = $pixel % $W;
+            $y = intdiv($pixel, $W);
+            if ($x < $minX) {
+                $minX = $x;
+            }
+            if ($x > $maxX) {
+                $maxX = $x;
+            }
+            if ($y < $minY) {
+                $minY = $y;
+            }
+            if ($y > $maxY) {
+                $maxY = $y;
+            }
+            $rowHits[$y]++;
+        }
+
+        if ($maxX < 0) {
+            // 逐像素全同但整体不等 ⇒ 只可能是长度不同（尺寸变了）
+            echo "FAIL {$name}：长度不同（基线 " . strlen($expected) . ' / 实际 ' . strlen($rgba) . "）\n";
+            continue;
+        }
+
+        // 行命中的连续段，按命中像素数取前三 —— "变在哪几条横带"比包围盒更指向病灶
+        $bands = [];
+        $bandStart = -1;
+        $bandCount = 0;
+        for ($y = 0; $y <= $H; $y++) {
+            if ($y < $H && $rowHits[$y] > 0) {
+                if ($bandStart < 0) {
+                    $bandStart = $y;
+                    $bandCount = 0;
                 }
+                $bandCount += $rowHits[$y];
+            } elseif ($bandStart >= 0) {
+                $bands[] = [$bandStart, $y - 1, $bandCount];
+                $bandStart = -1;
             }
         }
+        usort($bands, static function (array $a, array $b): int {
+            return $b[2] <=> $a[2];
+        });
+        $bandText = '';
+        foreach (array_slice($bands, 0, 3) as $band) {
+            $bandText .= " y={$band[0]}..{$band[1]}({$band[2]}px)";
+        }
+
+        $pct = $W * $H > 0 ? 100.0 * $diffPixels / ($W * $H) : 0.0;
 
         $actualDir = $sceneDir . '/actual';
         $diffDir = $sceneDir . '/diff';
@@ -632,7 +689,10 @@ if ($mode === 'check') {
         }
         file_put_contents($diffDir . '/diff.png', goldenPng($diff, $W, $H));
 
-        echo "FAIL {$name}：{$diffPixels} 像素差（max Δ={$maxDelta}）；见 {$sceneDir}/actual/ 与 diff/\n";
+        echo "FAIL {$name}：{$diffPixels} 像素差（max Δ={$maxDelta}，占 "
+            . number_format($pct, 2) . '%），区域 x=' . $minX . '..' . $maxX
+            . ' y=' . $minY . '..' . $maxY . '；条带' . $bandText
+            . "；见 {$sceneDir}/actual/ 与 diff/\n";
     }
     echo $fail === 0 ? "GOLDEN OK\n" : "{$fail} FAIL\n";
     exit($fail === 0 ? 0 : 1);
