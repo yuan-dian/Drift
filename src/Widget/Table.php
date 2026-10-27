@@ -49,13 +49,25 @@ use Drift\Input\SemanticsRole;
  * | 横向滚动的**滚轮** | 已通（阶段 5b）：壳把 `WM_MOUSEHWHEEL` 与 Shift+竖轮都翻成 `Axis::Horizontal` ⇒ 横条、横轮、Shift+竖轮三条入口一致 |
  * | **控件内**排序 | 数据所有权不分裂：控件画箭头 + 上报意图，重排由应用做（§13） |
  * | 多列排序的 **UI** | `TableSort::thenBy()` 与"每列各画箭头"结构上已成立，只是点表头只上报单键（Shift+点留给后续） |
- * | 列宽拖拽 / 单元格编辑 | 列宽已做（阶段 4）；编辑是阶段 7 |
+ * | 列宽拖拽 / 单元格编辑 | 列宽已做（阶段 4）；单元格编辑已做（阶段 7a，`TableColumn::editable()` + `onCellEdit()`）|
  * | 键盘光标格的**扩展选择** | 方向键移格已做（阶段 2b）；Ctrl/Shift + 方向键扩选要先把选择与光标的关系定死 |
  * | 表头列高亮 | 光标格有框，表头**不**跟着高亮 —— 那是"当前列"的第二种表达，等编辑（阶段 7）有消费者再加 |
  * | 内置勾选列 / 全选 | `cell()` 已能表达（闭包捕获 selection）；内置列会同时牵连列宽、表头全选框、排序箭头与拖拽手柄 ⇒ 等阶段 4 一起裁决 |
  *
  * ★ **子项内不能有"随滚动保留的 UI 态"**：行 Element 在滚出窗口时被回收
- *   （虚拟化的定义）⇒ 单元格里正在编辑的草稿必须外置（同 `LazyColumn` 的纪律）。
+ *   （虚拟化的定义）⇒ 单元格里正在编辑的**草稿住在 `TableState`**（不随行回收），
+ *   插入符与选区跟着草稿一起（`TextDraft`，与 `TextField` 共用同一份状态机）。
+ *
+ * ## 单元格编辑（阶段 7a）
+ *
+ * `TableColumn::editable()` 声明可编辑的列（**只对 `field()` 列**），`Enter` / `F2`
+ * 进入编辑；`Enter` / `↑` / `↓` 提交并移动、`Esc` 取消、失焦或滚动提交。
+ * 提交经 `onCellEdit(fn($rowKey, $columnKey, string $value))` 交给应用。
+ *
+ * ★ **编辑会话认 key 不认下标**：排序 / 过滤换了行序之后，编辑器跟着**数据**走
+ *   （光标格仍用下标 —— 它是"眼睛在哪"，编辑是"我改的是哪条数据"）。
+ * ★ **双击进入编辑不在本阶段**：它要判断两次点击的间隔，而 `PointerEvent` 没有
+ *   时间戳（手势族缺时钟，见 `GAP-ANALYSIS` P2-13）。
  *
  * @api
  */
@@ -120,6 +132,9 @@ final class Table extends StatefulWidget
     private array $columnWidths = [];
 
     private ?\Closure $onColumnResize = null;
+
+    /** 单元格编辑提交（`fn(string|int $rowKey, string $columnKey, string $value): void`） */
+    private ?\Closure $onCellEdit = null;
 
     /**
      * @param list<TableColumn> $columns
@@ -391,6 +406,31 @@ final class Table extends StatefulWidget
         return $this;
     }
 
+    /**
+     * 单元格编辑提交（`fn(string|int $rowKey, string $columnKey, string $value): void`）。
+     *
+     * ★ **提交的是"一行身份 + 列身份 + 新文本"**，不是行下标：
+     *   - 行 key（`keyOf()` 的返回值）⇒ 编辑期间排序/过滤换了行序也不会写错行；
+     *   - 列 key ⇒ 插列/换序之后仍落在原来那一列上。
+     * ★ 值是**字符串**：表格不知道列的数据类型（int / float / 日期 / 枚举），
+     *   类型转换与校验是应用侧知识。这与"控件不排序"同源：数据所有权不分裂。
+     * ★ 只在**值真的变了**时回调（同 G2：宁可少报，不可错报）。`Esc` 取消不回调。
+     * ★ 任一列声明了 `editable()` 却没接它 ⇒ 挂载期响亮失败（同 `sortable()`）。
+     *
+     * ```php
+     * ->onCellEdit(function (int $id, string $col, string $value) use ($store): void {
+     *     $store->rename($id, $col, $value);   // 写库由应用决定
+     * })
+     * ```
+     */
+    public function onCellEdit(callable $handler): static
+    {
+        $this->mutate();
+        $this->onCellEdit = \Closure::fromCallable($handler);
+
+        return $this;
+    }
+
     public function createState(): State
     {
         return new TableState();
@@ -478,5 +518,10 @@ final class Table extends StatefulWidget
     public function sortChangeHandler(): ?\Closure
     {
         return $this->onSortChange;
+    }
+
+    public function cellEditHandler(): ?\Closure
+    {
+        return $this->onCellEdit;
     }
 }

@@ -47,8 +47,9 @@ use Drift\Widget\Widget;
  *   日期，比较规则只有应用知道。看 `comparators()` —— 连"状态"这个**派生列**都能排，
  *   因为闭包与 `sortable()` 互不约束。
  *
- * ★ **诚实边界**（页面底部也写了一句）：无 Ctrl+方向键扩选、无单元格编辑 ——
- *   都是阶段 7 及其前置。横向滚轮已在（阶段 5b：触控板横滑 / Shift+竖轮）。
+ * ★ **诚实边界**（页面底部也写了一句）：无 Ctrl+方向键扩选、无双击进编辑（手势族缺
+ *   时钟）—— 都是阶段 7 后半及其前置。单元格编辑本身已在（阶段 7a：`editable()` +
+ *   `onCellEdit()`）。横向滚轮已在（阶段 5b：触控板横滑 / Shift+竖轮）。
  */
 final class TablePage extends StatefulWidget
 {
@@ -166,7 +167,9 @@ final class TablePageState extends State
                     . '横向可滚：把列拖宽到超出表格宽 ⇒ 底部出现横条，拖它看右边（与竖条同时在右下角交叠，角上归竖条）；'
                     . '不抓条也行 —— 触控板横滑，或按住 Shift 滚竖轮。'
                     . '键盘：Tab 进来出现光标框，方向键移格、Home/End 到首末行（移出视口会自动滚过去）。'
-                    . '边界：无 Ctrl+方向键扩选、无单元格编辑。'
+                    . '单元格编辑：光标停在「姓名」列按 Enter 或 F2 进入，直接打字；'
+                    . 'Enter 提交并下移、Esc 取消、点到别的行/失焦/滚动都会提交。'
+                    . '边界：无 Ctrl+方向键扩选、无双击进编辑（要手势时钟）。'
                 )->caption(),
 
                 $this->selectionBar(),
@@ -197,6 +200,25 @@ final class TablePageState extends State
                                 $this->sort = $next;
                                 $this->sortColumnIndex = $columnIndex;
                                 $this->viewRows = $this->sortRows($next, $columnIndex);
+                            }
+                        ))
+                        // ★ 单元格编辑（阶段 7a）：提交的是**行 key + 列 key + 新文本**，
+                        //   写回数据由本页做（控件不碰数据）。改完按当前排序重排一次 ——
+                        //   否则改了"姓名"列而正按姓名排序时，行序会与数据不一致。
+                        ->onCellEdit(fn(int $rowKey, string $column, string $value) => $this->setState(
+                            function () use ($rowKey, $column, $value): void {
+                                if ($this->allRows === null) {
+                                    $this->allRows = self::generateRows();
+                                }
+
+                                foreach ($this->allRows as $index => $row) {
+                                    if ((int) $row['id'] === $rowKey) {
+                                        $this->allRows[$index][$column] = $value;
+                                        break;
+                                    }
+                                }
+
+                                $this->viewRows = $this->sortRows($this->sortNow(), $this->sortColumnIndex);
                             }
                         ))
                 ),
@@ -399,7 +421,9 @@ final class TablePageState extends State
                 ->width(TableColumnWidth::flex(2.0))
                 ->minWidth(120.0)
                 ->sortable()
-                ->resizable(),
+                ->resizable()
+                // ★ 唯一可编辑的列（阶段 7a）：`field()` 列才有"起始文本 + 提交字段"
+                ->editable(),
 
             TableColumn::make('email', '邮箱')
                 ->field('email')

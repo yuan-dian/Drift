@@ -11,11 +11,15 @@ use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
 use Drift\Layout\FlexAlign;
-use Drift\Layout\StackAlign;
+use Drift\Layout\RenderBox;
 use Drift\Layout\RenderTable;
+use Drift\Layout\RenderTextField;
+use Drift\Layout\StackAlign;
 use Drift\Rendering\Color;
 use Drift\Rendering\ColorToken;
 use Drift\Text\TextAlign;
+use Drift\Text\TextChange;
+use Drift\Text\TextDraft;
 
 /**
  * `Table` 的 State：**持纵向偏移 + 算这一帧造哪几行 + 分配列宽**。
@@ -24,7 +28,15 @@ use Drift\Text\TextAlign;
  *
  * §12.3 的判据是"承载它的 Element 会不会被回收"。被回收的是**行**，本 State
  * 挂在表格自己身上（滚动容器不随滚动消失）⇒ 成立。反过来，**行内**的 UI 态
- * （正在编辑的草稿）会被回收，必须外置。
+ * （正在编辑的草稿）会被回收，必须外置 —— 阶段 7a 的草稿正是外置到**本类**
+ * （`$draft`），而不是放进行里。
+ *
+ * ## 单元格编辑（阶段 7a）：本类**就是**那个文本面
+ *
+ * 编辑中的表格实现 `EditableText`（不是往单元格里塞一个 `TextField`）：
+ * 焦点仍然只有表这一个节点（一格一个 Tab 位会被虚拟化打碎），而 IME 候选窗与
+ * 剪贴板环靠 `focusedState() instanceof EditableText` 门控 —— 表格自己实现它，
+ * 那两个环一行不改就能用在单元格上。文本状态机与 `TextField` 共用 `TextDraft`。
  *
  * ## 为什么窗口在 build 期算
  *
@@ -48,7 +60,7 @@ use Drift\Text\TextAlign;
  *
  * @internal 应用只认 `Table`
  */
-final class TableState extends State implements Scrollable
+final class TableState extends State implements Scrollable, EditableText
 {
     private float $offsetY = 0.0;
 
@@ -192,6 +204,43 @@ final class TableState extends State implements Scrollable
      */
     private string|int|null $anchorKey = null;
 
+    /**
+     * 正在编辑的格：**行 key + 列 key**（`null` = 没在编辑）。阶段 7a。
+     *
+     * ★★ 不用下标（光标格用下标）：编辑是一个**跨多帧的会话**，而排序 / 过滤会在
+     *   会话中途换行序 —— 下标会指向另一条数据（把 A 的修改写进 B）。key 不会。
+     *   这与"光标是位置、选择是身份"是同一个分工的第三种用法：
+     *   **编辑是身份**（我改的是哪条数据、哪个字段）。
+     * ★ 列也用 key：插列 / 换序之后仍落在原来那一列上。
+     *
+     * @var array{row: string|int, col: string}|null
+     */
+    private ?array $editingRef = null;
+
+    /**
+     * 编辑中的草稿（`null` = 没在编辑）。
+     *
+     * ★★ 草稿**必须住在表上**，不能住在行里：虚拟化会在行滚出窗口时回收它的
+     *   Element（`Table` 类注释已裁决），草稿跟着蒸发。表自己不随滚动消失
+     *   ⇒ 草稿在这里跨帧存活，甚至"滚出去再滚回来"也不丢。
+     * ★ 它同时是插入符与选区的家（`TextDraft` 三者同源）—— 分开存会让
+     *   "插入符与高亮不在同一处"这种画面上看不出病因的 bug 成为可能。
+     */
+    private ?TextDraft $draft = null;
+
+    /** 进入编辑时的原文本（判"值到底改没改"，同值不回调 —— G2：宁可少报） */
+    private string $draftOrigin = '';
+
+    /**
+     * 正在执行 `ensureVisible()` 自己的滚动（`true` = 不算"用户滚动了表格"）。
+     *
+     * ★ 存在的理由：用户滚动要**提交**编辑（否则编辑中的行可能滚出窗口，
+     *   用户继续打字就是对着看不见的格子打），而 `ensureVisible()` 内部也走
+     *   `scrollBy()` —— 不区分的话"进入编辑 → 把格子滚进视口 → 立刻提交"，
+     *   编辑根本进不去。
+     */
+    private bool $revealScrollInFlight = false;
+
     /** 当前偏移（逻辑像素，≥ 0，已按上一帧内容长度夹过上界） */
     public function offsetY(): float
     {
@@ -212,6 +261,8 @@ final class TableState extends State implements Scrollable
 
     public function scrollBy(float $delta): void
     {
+        $this->commitIfUserScrolled();
+
         $next = max(0.0, $this->offsetY + $delta);
 
         if ($next === $this->offsetY) {
@@ -245,6 +296,7 @@ final class TableState extends State implements Scrollable
             return;
         }
 
+        $this->commitIfUserScrolled();
 
         $contentW = $this->contentWInBuild;
         $viewportW = $this->widthUsedInBuild;
@@ -282,16 +334,24 @@ final class TableState extends State implements Scrollable
             return;
         }
 
-        $dy = $box->revealDelta($target, $margin, $this->offsetY);
-        if ($dy !== 0.0) {
-            $this->scrollBy($dy);
-        }
+        // ★ 这里面的滚动是**框架自己**在把格子带进视口，不是用户滚 ⇒ 不能提交编辑
+        //   （见 `$revealScrollInFlight` 的注释）。`finally` 是必须的：`revealDelta()`
+        //   理论上不会抛，但标记一旦漏复位，"用户滚动提交编辑"就永久失效且无声。
+        $this->revealScrollInFlight = true;
 
-        $dx = $box->revealDeltaX($target, $margin, $this->offsetX);
-        if ($dx !== 0.0) {
-            $this->scrollByAxis(Axis::Horizontal, $dx);
-        }
+        try {
+            $dy = $box->revealDelta($target, $margin, $this->offsetY);
+            if ($dy !== 0.0) {
+                $this->scrollBy($dy);
+            }
 
+            $dx = $box->revealDeltaX($target, $margin, $this->offsetX);
+            if ($dx !== 0.0) {
+                $this->scrollByAxis(Axis::Horizontal, $dx);
+            }
+        } finally {
+            $this->revealScrollInFlight = false;
+        }
     }
 
     /**
@@ -322,6 +382,13 @@ final class TableState extends State implements Scrollable
             return;
         }
 
+        // ★ 焦点走了 ⇒ 编辑会话**提交**（各平台的"点到别处就落库"）。
+        //   顺序在改 `$hasFocus` 之前：提交回调里若应用重建了表，`$hasFocus`
+        //   还没被写脏，不会出现"半提交"的中间态。
+        if (!$focused && $this->editingRef !== null) {
+            $this->commitEditing();
+        }
+
         $this->setState(function () use ($focused): void {
             $this->hasFocus = $focused;
         });
@@ -350,6 +417,12 @@ final class TableState extends State implements Scrollable
             return false;
         }
 
+        // ★★ 编辑中：键盘**整个**归草稿（方向键移插入符、Enter 提交、Esc 取消）。
+        //   放在行列数检查之前 —— 有编辑格就一定有行列。
+        if ($this->editingRef !== null) {
+            return $this->editKey($event);
+        }
+
         $rows = \count($this->view()->rowList());
         $cols = \count($this->view()->columnList());
 
@@ -358,6 +431,16 @@ final class TableState extends State implements Scrollable
         }
 
         $chord = $event->chord;
+
+        // ★ 进入编辑：`Enter` / `F2`（Excel 与资源管理器都吃这两个）。
+        //   **只在当前列可编辑时才吃** —— 不可编辑的列上把 Enter 吞掉，等于
+        //   堵死应用自定义语义（"空格翻转选中"同一条纪律，见方法注释）。
+        //   ★ 双击进入编辑属手势族，前置是**时钟**（`PointerEvent` 没有时间戳，
+        //     判断不了两次点击的间隔）⇒ 不在本阶段，见 `DESIGN-TABLE` §18。
+        if ($chord->is(KeyChord::enter()) || $chord->is(KeyChord::f(2))) {
+            return $this->beginEdit($this->focusedRow, $this->focusedCol);
+        }
+
         $row = $this->focusedRow;
         $col = $this->focusedCol;
 
@@ -392,6 +475,433 @@ final class TableState extends State implements Scrollable
         $this->revealFocus();
 
         return true;
+    }
+
+    // ── 单元格编辑（阶段 7a）────────────────────────────────────────────
+    //
+    // 形状与选择 / 排序 / 列宽一致：**控件只算"改成了什么"并交出去**，写库由应用做。
+    // 不同的是"会话"这一段（正在编辑哪一格、草稿、插入符）住在 State 里 ——
+    // 它没有外部读者，也没有外部写者（程序化进入编辑要 `TableController`，
+    // 与"聚焦某格"是同一条预留通道，见 `DESIGN-TABLE` §5）。
+
+    /**
+     * 当前正在编辑的格（**下标**；没在编辑 ⇒ `null`）。
+     *
+     * ★ 对外报下标、对内存 key：调用方（断言 / 将来的无障碍桥）关心的是"屏幕上
+     *   哪一格"，而会话本身关心"哪条数据的哪个字段"。
+     *
+     * @return array{row: int, col: int}|null
+     */
+    public function editingCell(): ?array
+    {
+        if ($this->editingRef === null) {
+            return null;
+        }
+
+        $row = $this->keyIndex($this->editingRef['row']);
+        $col = $this->columnIndexOf($this->editingRef['col']);
+        if ($row === null || $col === null) {
+            return null;
+        }
+
+        return ['row' => $row, 'col' => $col];
+    }
+
+    /** 在编辑中（`EditableText` 的门控；`Application` 的剪贴板环靠它） */
+    public function isEditing(): bool
+    {
+        return $this->editingRef !== null;
+    }
+
+    /**
+     * 进入编辑（`Enter` / `F2`）。返回 `false` = 这一格不能编辑 ⇒ **键不吃**。
+     *
+     * ★ 返回 `bool` 而不是 `void`：调用方（`handleFocusKey`）必须据此决定
+     *   "吃掉这个键还是放行给应用" —— 不可编辑的列上吞掉 Enter，就把
+     *   "回车触发某个命令"这类自定义语义堵死了。
+     */
+    private function beginEdit(int $row, int $col): bool
+    {
+        $view = $this->view();
+        $rows = $view->rowList();
+        $columns = $view->columnList();
+
+        if (!isset($rows[$row], $columns[$col])) {
+            return false;
+        }
+
+        $column = $columns[$col];
+        if (!$column->isEditable()) {
+            return false;
+        }
+
+        $keyOf = $view->keyMapper();
+        if ($keyOf === null) {
+            // `build()` 已经为"没配 keyOf"响亮失败过，这里只是不崩
+            return false;
+        }
+
+        // ★ 起始文本与静态渲染同源（`TableColumn::editableText()` 走同一个
+        //   `textOf()`）⇒ 进入编辑的瞬间文字不跳。
+        $seed = $column->editableText($rows[$row], $row);
+        $rowKey = $keyOf($rows[$row]);
+        $columnKey = $column->keyName();
+
+        $this->setState(function () use ($seed, $rowKey, $columnKey): void {
+            $this->draft = new TextDraft($seed);
+            $this->draftOrigin = $seed;
+            $this->editingRef = ['row' => $rowKey, 'col' => $columnKey];
+        });
+
+        // 编辑格可能在视口外（键盘把光标移到这里之后又滚走了）
+        $this->revealFocus();
+
+        return true;
+    }
+
+    /**
+     * 提交：**值真的变了才回调**，然后无条件结束会话。
+     *
+     * ★ 先清会话再回调：应用在回调里重建表时看到的是"没在编辑"的干净状态，
+     *   不会出现"回调里又读到草稿"的半个状态。
+     * ★ 不夹取 / 不校验：类型转换与合法性是应用侧知识（与"控件不排序"同源）。
+     */
+    private function commitEditing(): void
+    {
+        $ref = $this->editingRef;
+        $draft = $this->draft;
+
+        if ($ref === null || $draft === null) {
+            return;
+        }
+
+        $value = $draft->text();
+        $changed = $value !== $this->draftOrigin;
+
+        $this->editingRef = null;
+        $this->draft = null;
+        $this->draftOrigin = '';
+
+        $this->markDirty();
+
+        if (!$changed) {
+            return;   // 没改 ⇒ 不回调（G2：宁可少报，不可错报）
+        }
+
+        $handler = $this->view()->cellEditHandler();
+        if ($handler !== null) {
+            $handler($ref['row'], $ref['col'], $value);
+        }
+    }
+
+    /** 取消：丢弃草稿，不回调（`Esc`） */
+    private function cancelEditing(): void
+    {
+        if ($this->editingRef === null) {
+            return;
+        }
+
+        $this->editingRef = null;
+        $this->draft = null;
+        $this->draftOrigin = '';
+
+        $this->markDirty();
+    }
+
+    /** 草稿变了 ⇒ 只重画（草稿不是应用数据，提交时才通知） */
+    private function settleDraft(TextChange $change): void
+    {
+        if ($change === TextChange::None) {
+            return;
+        }
+
+        $this->markDirty();
+    }
+
+    /** 用户滚动 ⇒ 提交编辑（框架自己的 `ensureVisible()` 不算，见字段注释） */
+    private function commitIfUserScrolled(): void
+    {
+        if ($this->revealScrollInFlight || $this->editingRef === null) {
+            return;
+        }
+
+        $this->commitEditing();
+    }
+
+    /**
+     * 编辑中的键位（**只在这一格可编辑时才有机会跑到**）。
+     *
+     * 与 `TextField` 的差别只有"收口键"：编辑键（字符 / 退格 / 方向 / Home / End /
+     * Shift+方向 / Ctrl+A）逐字同义，而 `Enter` / `↑` / `↓` / `F2` **提交**、
+     * `Esc` **取消** —— 单元格编辑必须有"改完走人"和"算了"两条出路，
+     * 输入框里这两件事由应用自己安排。
+     */
+    private function editKey(KeyEvent $event): bool
+    {
+        $draft = $this->draft;
+        if ($draft === null) {
+            return false;
+        }
+
+        $chord = $event->chord;
+
+        if ($chord->is(KeyChord::escape())) {
+            $this->cancelEditing();
+
+            return true;
+        }
+
+        // ★ 提交 + 下移（Excel 的"回车往下走"）：连打几十行时手不用回键盘上半区。
+        //   `F2` 只提交不移动 —— 它本来就是"进出编辑"的开关键。
+        if ($chord->is(KeyChord::enter())) {
+            $this->commitEditing();
+            $this->moveFocusTo($this->focusedRow + 1, $this->focusedCol);
+
+            return true;
+        }
+
+        if ($chord->is(KeyChord::f(2))) {
+            $this->commitEditing();
+
+            return true;
+        }
+
+        if ($chord->is(KeyChord::up())) {
+            $this->commitEditing();
+            $this->moveFocusTo($this->focusedRow - 1, $this->focusedCol);
+
+            return true;
+        }
+
+        if ($chord->is(KeyChord::down())) {
+            $this->commitEditing();
+            $this->moveFocusTo($this->focusedRow + 1, $this->focusedCol);
+
+            return true;
+        }
+
+        if ($chord->is(KeyChord::backspace())) {
+            $this->settleDraft($draft->deleteBackward());
+
+            return true;
+        }
+
+        if ($chord->is(KeyChord::delete())) {
+            $this->settleDraft($draft->deleteForward());
+
+            return true;
+        }
+
+        if ($chord->is(KeyChord::left())) {
+            $this->settleDraft($draft->moveCaret($draft->previousBoundary()));
+
+            return true;
+        }
+
+        if ($chord->is(KeyChord::right())) {
+            $this->settleDraft($draft->moveCaret($draft->nextBoundary()));
+
+            return true;
+        }
+
+        if ($chord->is(KeyChord::home())) {
+            $this->settleDraft($draft->moveCaret(0));
+
+            return true;
+        }
+
+        if ($chord->is(KeyChord::end())) {
+            $this->settleDraft($draft->moveCaretToEnd());
+
+            return true;
+        }
+
+        if ($chord->is(KeyChord::ctrl('A'))) {
+            $this->settleDraft($draft->selectAll());
+
+            return true;
+        }
+
+        if ($chord->is(KeyChord::shift('Left'))) {
+            $this->settleDraft($draft->extendSelectionTo($draft->previousBoundary()));
+
+            return true;
+        }
+
+        if ($chord->is(KeyChord::shift('Right'))) {
+            $this->settleDraft($draft->extendSelectionTo($draft->nextBoundary()));
+
+            return true;
+        }
+
+        if ($chord->is(KeyChord::shift('Home'))) {
+            $this->settleDraft($draft->extendSelectionTo(0));
+
+            return true;
+        }
+
+        if ($chord->is(KeyChord::shift('End'))) {
+            $this->settleDraft($draft->extendSelectionTo(\strlen($draft->text())));
+
+            return true;
+        }
+
+        if ($event->isText()) {
+            $this->settleDraft($draft->insert($event->text));
+
+            return true;
+        }
+
+        return false;   // 其余（含加速键）放行 —— 编辑中也要能按 Ctrl+S
+    }
+
+    /** 把光标格移到 `(row, col)`（夹取后）；不动选择，只动光标 */
+    private function moveFocusTo(int $row, int $col): void
+    {
+        $rows = \count($this->view()->rowList());
+        $cols = \count($this->view()->columnList());
+
+        if ($rows === 0 || $cols === 0) {
+            return;
+        }
+
+        $row = max(0, min($row, $rows - 1));
+        $col = max(0, min($col, $cols - 1));
+
+        if ($row === $this->focusedRow && $col === $this->focusedCol) {
+            return;
+        }
+
+        $this->setState(function () use ($row, $col): void {
+            $this->focusedRow = $row;
+            $this->focusedCol = $col;
+        });
+
+        $this->revealFocus();
+    }
+
+    /** 列 key ⇒ 可见列下标（`null` = 这一列已经不存在了） */
+    private function columnIndexOf(string $key): ?int
+    {
+        foreach ($this->view()->columnList() as $index => $column) {
+            if ($column->keyName() === $key) {
+                return $index;
+            }
+        }
+
+        return null;
+    }
+
+    // ── `EditableText`（让 IME / 剪贴板环认识表格的编辑会话）──────────────
+    //
+    // ★ 为什么实现这个接口而不是在单元格里放一个 `TextField`：
+    //   1. **焦点节点**：`TextField` 自带 `markFocusable()`，放进虚拟化的行里
+    //      会随行回收一起消失（焦点丢在虚空的同一个坑，见阶段 2b 的裁决）；
+    //      而且没有任何"程序化聚焦后代"的通道（本仓无 `GlobalKey`、无 autoFocus）。
+    //   2. **IME / 剪贴板**：`Application` 的环靠 `focusedState() instanceof
+    //      EditableText && isEditing()` 门控 —— 表格自己实现它，两个环一行不改
+    //      就能用在单元格上（`caretRect()` 给候选窗定位、`Ctrl+C/V` 走选区）。
+    //   3. 文本状态机与 `TextField` 共用 `TextDraft` ⇒ 不存在第二套字节数学。
+
+    /**
+     * 插入符矩形（**表盒内容坐标**；`null` = 不在编辑 / 还没出盒）。
+     *
+     * ★ 与 `TextFieldState::caretRect()` 的分工完全一致：只给几何，不假装知道
+     *   自己在屏幕上的位置。差别是这里要**跨一层**换算：插入符在编辑盒里，
+     *   而 `TextEditingBridge` 加的是表盒的原点 ⇒ 先把编辑盒的原点减掉。
+     */
+    public function caretRect(): ?Rect
+    {
+        if ($this->draft === null) {
+            return null;
+        }
+
+        $element = $this->element();
+        if ($element === null) {
+            return null;
+        }
+
+        /** @var RenderTable|null $tableBox */
+        $tableBox = $element->effectiveBoxOf(RenderTable::class);
+        if ($tableBox === null) {
+            return null;
+        }
+
+        // ★ 取的是**编辑盒**（`InlineEditorBox` 产出的 `RenderTextField`）：
+        //   编辑中表内至多一个这样的盒（编辑格唯一），所以"第一个"就是它。
+        /** @var RenderTextField|null $editorBox */
+        $editorBox = $element->findBox(
+            static fn(RenderBox $candidate): bool => $candidate instanceof RenderTextField,
+        );
+        if ($editorBox === null) {
+            return null;   // 编辑行被滚出窗口 / 还没 build 出盒
+        }
+
+        $local = $editorBox->caretRect();
+        [$tableX, $tableY] = RenderBox::absoluteOrigin($tableBox);
+        [$editorX, $editorY] = RenderBox::absoluteOrigin($editorBox);
+
+        return new Rect(
+            $editorX - $tableX - $tableBox->contentOriginX() + $local->left,
+            $editorY - $tableY - $tableBox->contentOriginY() + $local->top,
+            $local->width,
+            $local->height,
+        );
+    }
+
+    /**
+     * `EditableText` 的按键入口。
+     *
+     * ★ 实际上**走不到**：`Table` 声明了 `keyboard()`，而 `FocusManager::dispatchKey()`
+     *   先问 `keyboard()` 再问 `EditableText`（同一个对象，`handleFocusKey()` 已经
+     *   转给 `editKey()`）。实现它是接口要求，也让"将来某张表不声明 keyboard()"
+     *   时行为不变。
+     */
+    public function handleKey(KeyEvent $event): bool
+    {
+        return $this->editKey($event);
+    }
+
+    public function moveCaret(int $offset): void
+    {
+        $draft = $this->draft;
+        if ($draft !== null) {
+            $this->settleDraft($draft->moveCaret($offset));
+        }
+    }
+
+    public function extendSelectionTo(int $offset): void
+    {
+        $draft = $this->draft;
+        if ($draft !== null) {
+            $this->settleDraft($draft->extendSelectionTo($offset));
+        }
+    }
+
+    public function hasSelection(): bool
+    {
+        return $this->draft?->hasSelection() ?? false;
+    }
+
+    public function selectedText(): string
+    {
+        return $this->draft?->selectedText() ?? '';
+    }
+
+    public function replaceSelection(string $text): void
+    {
+        $draft = $this->draft;
+        if ($draft !== null) {
+            $this->settleDraft($draft->replaceSelection($text));
+        }
+    }
+
+    public function deleteSelection(): void
+    {
+        $draft = $this->draft;
+        if ($draft !== null) {
+            $this->settleDraft($draft->deleteSelection());
+        }
     }
 
     /** 把光标格滚进视口（用上一帧列宽算位置；还没布局过 ⇒ 什么也不做） */
@@ -547,9 +1057,20 @@ final class TableState extends State implements Scrollable
      */
     private function noteRowTap(mixed $row, int $index, PointerEvent $event): void
     {
+        // ★ 点到**别的行** ⇒ 提交编辑（各平台"点到别处就落库"）。
+        //   同一行**不**提交：行容器用 `ownsPress` 抢走了按下，拿不到"点在格内还是
+        //   格外"的可靠判据 —— 而误提交（用户只是想挪一下鼠标）比"再按一次 Esc"
+        //   更烦人。指针落插入符 / 双击进编辑都属 7b（前置是手势时钟）。
+        if ($this->editingRef !== null) {
+            $editingRow = $this->keyIndex($this->editingRef['row']);
+            if ($editingRow !== null && $editingRow !== $index) {
+                $this->commitEditing();
+            }
+        }
+
         // 光标行跟着点击走（**列不动**）：算"点在哪个格"要用根坐标减去行区原点再
         // 累加列宽，而"点行 ⇒ 光标行=该行"在语义上完全够（资源管理器同款）。
-        // 列定位留给阶段 7 的编辑 —— 那时双击某格需要更准的列，由 cell 自己声明。
+        // 列定位留给编辑的后续阶段 —— 那时双击某格需要更准的列，由 cell 自己声明。
         if ($this->focusedRow !== $index) {
             $this->setState(function () use ($index): void {
                 $this->focusedRow = $index;
@@ -693,6 +1214,18 @@ final class TableState extends State implements Scrollable
 
         $this->assertInteractivityDeclared($view, $columns);
 
+        // ★ 编辑会话的**存活检查**（阶段 7a）：行被删 / 列被删 / 换了数据源之后，
+        //   `editingRef` 会指向不存在的 key —— 那种"编辑一个不存在的格子"必须
+        //   当场结束，否则用户继续打字就是对着空气改（提交时也找不到行）。
+        //   ★ 这里是 build 期直接改字段（同偏移夹取）：不标脏、不多一帧。
+        if ($this->editingRef !== null
+            && ($this->keyIndex($this->editingRef['row']) === null
+                || $this->columnIndexOf($this->editingRef['col']) === null)) {
+            $this->editingRef = null;
+            $this->draft = null;
+            $this->draftOrigin = '';
+        }
+
         // 完整内容高（含表头）—— 滚动条与可滚上限都按它算
         $contentH = $headerH + $count * $rowH;
 
@@ -759,9 +1292,23 @@ final class TableState extends State implements Scrollable
         $lines = [];
         for ($i = $first; $i < $last; $i++) {
             $row = $rows[$i];
+            $rowKey = null;
+
+            // ★★ 行身份在**需要**时算：`keyOf` 是应用的回调，虚拟化表里逐行调它
+            //   是 O(可见行) 但不是零 —— 纯展示表没有理由付这笔钱。
+            //   ★ 编辑中的表也要算：编辑格的定位靠 row key（见 `$editingRef`），
+            //     而"纯展示 + 可编辑"的表 `$interactive` 是 false。
+            if (($interactive || $this->editingRef !== null) && $keyOf !== null) {
+                $rowKey = $keyOf($row);
+            }
+
             $cells = [];
             foreach ($columns as $j => $column) {
-                $cells[] = $this->cellShell($column->buildCell($row, $i), $widths[$j], $column);
+                $cells[] = $this->cellShell(
+                    $this->cellContent($row, $i, $column, $rowKey),
+                    $widths[$j],
+                    $column,
+                );
             }
 
             // ★ key = **绝对序号**（不是窗内序号）：窗口滑动一格时第 k 行仍是第 k 行
@@ -770,10 +1317,6 @@ final class TableState extends State implements Scrollable
                 ->width($contentW)
                 ->height($rowH)
                 ->key($i);
-
-            // ★★ 行身份只在**需要**时算：`keyOf` 是应用的回调，虚拟化表里逐行调它
-            //   是 O(可见行) 但不是零 —— 纯展示表没有理由付这笔钱。
-            $rowKey = $interactive && $keyOf !== null ? $keyOf($row) : null;
 
             $bg = $this->rowBackground($i, $rowKey, $ctx, $striped);
             if ($bg !== null) {
@@ -1168,6 +1711,7 @@ final class TableState extends State implements Scrollable
         $keys = [];
         $sortable = null;
         $resizable = null;
+        $editable = null;
         foreach ($columns as $column) {
             $keys[$column->keyName()] = true;
             if ($sortable === null && $column->isSortable()) {
@@ -1176,6 +1720,30 @@ final class TableState extends State implements Scrollable
             if ($resizable === null && $column->isResizable()) {
                 $resizable = $column->keyName();
             }
+            if ($editable === null && $column->isEditable()) {
+                $editable = $column->keyName();
+            }
+
+            // ★ `cell()` 列不能编辑，**在挂载期就说**：等到用户按 Enter 才报，
+            //   那时候他已经在等结果了（"能不能编辑"是结构问题，不是运行期问题）。
+            if ($column->isEditable() && $column->fieldName() === null) {
+                Errors::report(sprintf(
+                    'Table 的列 "%s" 声明了 editable()，但它没有 field() —— 单元格编辑要'
+                        . "\n" . '"起始文本 + 提交到哪个字段"，而 cell() 只给一个任意 Widget。'
+                        . "\n" . '修法：该列改用 field("字段名")，或去掉 editable()。',
+                    $column->keyName(),
+                ));
+            }
+        }
+
+        if ($editable !== null && $view->cellEditHandler() === null) {
+            Errors::report(sprintf(
+                'Table 的列 "%s" 声明了 editable() 却没有 onCellEdit() —— 编辑是受控的，'
+                    . "\n" . '控件只算"改成了什么"并交出去，应用不接就等于改完没人收（回车后什么都没发生）。'
+                    . "\n" . '修法：加上 ->onCellEdit(fn($rowKey, string $col, string $value) => ...)，'
+                    . "\n" . '或去掉 ->editable()。',
+                $editable,
+            ));
         }
 
         if ($resizable !== null && $view->columnResizeHandler() === null) {
@@ -1206,6 +1774,33 @@ final class TableState extends State implements Scrollable
                 ));
             }
         }
+    }
+
+    /**
+     * 一格的内容：**正在编辑的那一格换成原地编辑器**，其余照列定义造。
+     *
+     * ★ 换的是**内容**、不换容器：宽度 / 内边距 / 对齐仍由 `cellShell()` 给 ⇒
+     *   进入编辑时文字一个像素都不动（`InlineEditorBox` 零内边距就是为了这个）。
+     * ★ 判"是不是这一格"用 **row key + 列 key**，不用下标：排序换了行序之后
+     *   编辑器跟着**数据**走，而不是留在第 N 行。
+     */
+    private function cellContent(mixed $row, int $index, TableColumn $column, string|int|null $rowKey): Widget
+    {
+        $draft = $this->draft;
+        $ref = $this->editingRef;
+
+        if ($draft !== null && $ref !== null && $rowKey !== null
+            && $ref['row'] === $rowKey
+            && $ref['col'] === $column->keyName()) {
+            return InlineEditorBox::make(
+                $draft->text(),
+                $draft->caretOffset(),
+                $draft->selectionStart(),
+                $draft->selectionEnd(),
+            );
+        }
+
+        return $column->buildCell($row, $index);
     }
 
     /**

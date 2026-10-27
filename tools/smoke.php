@@ -241,6 +241,8 @@ use Drift\Text\TextLine;
 use Drift\Text\TextRole;
 use Drift\Text\TextSpan;
 use Drift\Text\TextStyle;
+use Drift\Text\TextChange;
+use Drift\Text\TextDraft;
 use Drift\Theme\SystemTheme;
 use Drift\Theme\ThemeData;
 use Drift\Theme\ThemeScope;
@@ -345,8 +347,10 @@ use Drift\Widget\TableSelectionMode;
 use Drift\Widget\TableSort;
 use Drift\Widget\TableSortDirection;
 use Drift\Widget\TableState;
+use Drift\Widget\InlineEditorBox;
 use Drift\Layout\RenderTable;
 use Drift\Dev\TestApp;
+use Drift\Dev\Smoke\App\TableCellEditApplication;
 
 require __DIR__ . '/autoload.php';
 
@@ -434,6 +438,32 @@ if (str_starts_with($caseArg, '--case=')) {
             ],
             [['a' => 1]],
         )->keyOf(static fn(array $row): int => (int) $row['a']);
+        $el = $table->createElement();
+        $el->mount(null, smokeContext());
+        echo "mounted-without-error\n";
+        exit(0);
+    }
+
+    if ($case === 'table-cell-edit-no-handler') {
+        // editable() 却没接 onCellEdit ⇒ 用户改完按回车**什么都没发生**（而格子已经
+        // 显示新值了，因为编辑时画的是草稿）⇒ 挂载期响亮失败，不是静默不生效
+        $table = Table::make(
+            [TableColumn::make('a', 'A')->field('a')->editable()],
+            [['a' => 'x']],
+        )->keyOf(static fn(array $row): string => (string) $row['a']);
+        $el = $table->createElement();
+        $el->mount(null, smokeContext());
+        echo "mounted-without-error\n";
+        exit(0);
+    }
+
+    if ($case === 'table-cell-edit-on-cell-column') {
+        // cell() 列没有"起始文本 + 提交到哪个字段"，编辑结构上无从谈起 ⇒ 挂载期就说
+        $table = Table::make(
+            [TableColumn::make('a', 'A')->cell(static fn(array $row): Widget => Text::make('x'))->editable()],
+            [['a' => 'x']],
+        )->keyOf(static fn(array $row): string => (string) $row['a'])
+            ->onCellEdit(static function (): void {});
         $el = $table->createElement();
         $el->mount(null, smokeContext());
         echo "mounted-without-error\n";
@@ -18013,6 +18043,275 @@ check('TableColumn · field 拼错 ⇒ 退出码 3（不是整列空白）', $ta
 check(
     'TableColumn · 缺字段的报错带"第几行 / 缺哪个 / 有哪些"',
     str_contains(logText($log), 'nmae') && str_contains(logText($log), '现有字段'),
+    logText($log) === '' ? '空日志' : '有日志',
+);
+
+// ═══════════════════════════════════════════════════════════════════════
+// P2 阶段 7a：单元格编辑（2026-10-27）
+// ═══════════════════════════════════════════════════════════════════════
+
+// ① `TextDraft`：字节数学（这块的错法都是"按一下退格删掉半个汉字"级别，
+//    而且不会报错 —— 所以必须逐条钉）
+$draftCjk = new TextDraft('中文ab');
+$draftCjk->deleteBackward();
+check(
+    'TextDraft · 退格按**码位**删（不是字节）："中文ab" ⇒ "中文a"',
+    $draftCjk->text() === '中文a' && $draftCjk->caretOffset() === \strlen('中文a'),
+    $draftCjk->text() . ' @' . $draftCjk->caretOffset(),
+);
+
+$draftSnap = new TextDraft('中文');
+$draftSnapChange = $draftSnap->moveCaret(1);   // 偏移 1 落在"中"的字节中间
+check(
+    'TextDraft · 插入符吸附到字符边界（偏移 1 落在"中"内部 ⇒ 回到 0）',
+    $draftSnap->caretOffset() === 0 && $draftSnapChange === TextChange::Caret,
+    'caret=' . $draftSnap->caretOffset() . ' change=' . $draftSnapChange->name,
+);
+
+$draftSame = new TextDraft('abc');
+check(
+    'TextDraft · 同位置移动 ⇒ None（不重画、不通知）',
+    $draftSame->moveCaret(3) === TextChange::None,
+    $draftSame->moveCaret(3)->name,
+);
+
+$draftAll = new TextDraft('abc');
+$draftAll->selectAll();
+check(
+    'TextDraft · 全选两次：第二次是 None（幂等，不白标脏）',
+    $draftAll->selectedText() === 'abc' && $draftAll->selectAll() === TextChange::None,
+    'sel=' . $draftAll->selectedText(),
+);
+
+$draftReplace = new TextDraft('abcd');
+$draftReplace->moveCaret(0);
+$draftReplace->extendSelectionTo(2);
+$draftReplace->insert('XY');
+check(
+    'TextDraft · 有选区时键入 ⇒ 整段替换（不是"在插入符处再插一段"）',
+    $draftReplace->text() === 'XYcd' && !$draftReplace->hasSelection(),
+    $draftReplace->text(),
+);
+
+/**
+ * 建一张干净的可编辑表：焦点 Tab 进来、帧已推过。
+ *
+ * @return array{0: TableCellEditApplication, 1: Element, 2: TableState|null, 3: mixed}
+ */
+$editSetup = static function () use ($tableStateOf): array {
+    $app = new TableCellEditApplication();
+    $app->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
+    $app->focus()?->focusNext();
+    $app->frame(16.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+
+    return [$app, $app->root(), $tableStateOf($app->root()), $app->focus()];
+};
+
+/** 表里那个编辑盒（`null` = 当前没有编辑格在画） */
+$editBoxOf = static function (Element $root): ?RenderTextField {
+    $box = $root->findBox(
+        static fn(RenderBox $candidate): bool => $candidate instanceof RenderTextField,
+    );
+
+    return $box instanceof RenderTextField ? $box : null;
+};
+
+/** 表里那个编辑 Widget（拿文本与插入符；`null` = 没在画编辑格） */
+$editWidgetOf = static function (Element $root): ?InlineEditorBox {
+    $element = findElement(
+        $root,
+        static fn(Element $e): bool => $e->widget() instanceof InlineEditorBox,
+    );
+    $widget = $element?->widget();
+
+    return $widget instanceof InlineEditorBox ? $widget : null;
+};
+
+// ② 不可编辑的列：Enter 必须**放行**（吞掉就抢走了应用的自定义语义）
+[$editApp, $editRoot, $editState, $editFocus] = $editSetup();
+$editAte = $editFocus?->dispatchKey(KeyEvent::down(KeyChord::enter())) ?? true;
+$editApp->frame(17.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+check(
+    'Table · 编辑：不可编辑列上 Enter ⇒ **不吃键**、不进编辑',
+    $editAte === false && $editState?->isEditing() === false,
+    'ate=' . ($editAte ? 'y' : 'n') . ' editing=' . ($editState?->isEditing() ? 'y' : 'n'),
+);
+
+// ③ 可编辑列：Enter 进编辑；编辑盒与静态文字的**左缘完全一致**（文字不跳）
+[$editApp, $editRoot, $editState, $editFocus] = $editSetup();
+$editFocus?->dispatchKey(KeyEvent::down(KeyChord::right()));
+$editApp->frame(17.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$editAte = $editFocus?->dispatchKey(KeyEvent::down(KeyChord::enter())) ?? false;
+$editApp->frame(18.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$editBox = $editBoxOf($editRoot);
+[$editBoxX] = $editBox === null ? [null] : RenderBox::absoluteOrigin($editBox);
+check(
+    'Table · 编辑：可编辑列上 Enter ⇒ 进编辑（光标格 (0,1)）',
+    $editAte && $editState?->isEditing() === true
+        && $editState?->editingCell() === ['row' => 0, 'col' => 1],
+    'ate=' . ($editAte ? 'y' : 'n') . ' cell=' . \json_encode($editState?->editingCell()),
+);
+check(
+    'Table · 编辑：编辑格画的是 `RenderTextField`，左缘 = 列起点 100 + 列内边距 8'
+        . '（零内边距 ⇒ 进入编辑时文字一个像素都不动）',
+    $editBoxX !== null && abs($editBoxX - 108.0) < 0.01,
+    'x=' . ($editBoxX === null ? 'null' : sprintf('%.2f', $editBoxX)),
+);
+
+// ★★ 插入符**必须有宽度**：`caretRect()` 的宽就是 `caretWidth`，传 0 的后果是
+//   "进入编辑后看不见插入符"—— 不报错、不写日志，1920×1017 整图 diff 都是 0
+//   （2026-10-27 真机取证才发现首版传了 `0.0`）。判据落在**可见性**上，不落在参数上。
+$editCaret = $editBox?->caretRect();
+check(
+    'Table · 编辑：插入符有宽度（> 0）—— 宽度为 0 等于"看不见插入符"，且不报错',
+    $editCaret !== null && $editCaret->width > 0.0,
+    'w=' . ($editCaret === null ? 'null' : sprintf('%.2f', $editCaret->width)),
+);
+
+// ④ 键入 ⇒ 草稿变（画面上的编辑盒跟着变）
+$editFocus?->dispatchKey(KeyEvent::character('X'));
+$editApp->frame(19.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$editWidget = $editWidgetOf($editRoot);
+check(
+    'Table · 编辑：键入写进草稿（编辑盒文本 = "甲X"，插入符在末尾）',
+    $editWidget !== null && $editWidget->text() === '甲X'
+        && $editWidget->caretOffset() === \strlen('甲X'),
+    $editWidget === null ? 'null' : $editWidget->text() . ' @' . $editWidget->caretOffset(),
+);
+
+// ⑤ Enter ⇒ 提交（row key / 列 key / 新值）、退出编辑、光标下移一行
+$editFocus?->dispatchKey(KeyEvent::down(KeyChord::enter()));
+$editApp->frame(20.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+check(
+    'Table · 编辑：Enter ⇒ 提交 [行 key 1, 列 name, "甲X"]，退出编辑，光标下移',
+    $editApp->editLog === [[1, 'name', '甲X']]
+        && $editState?->isEditing() === false
+        && $editState?->focusedCell() === ['row' => 1, 'col' => 1],
+    'log=' . \json_encode($editApp->editLog) . ' cell=' . \json_encode($editState?->focusedCell()),
+);
+check(
+    'Table · 编辑：提交后格子画的是**新值**（甲X），编辑盒已消失',
+    findElement(
+        $editRoot,
+        static fn(Element $e): bool => $e->widget() instanceof Text && $e->widget()->content() === '甲X',
+    ) !== null && $editBoxOf($editRoot) === null,
+    'text=' . (findElement(
+        $editRoot,
+        static fn(Element $e): bool => $e->widget() instanceof Text && $e->widget()->content() === '甲X',
+    ) !== null ? 'y' : 'n') . ' box=' . ($editBoxOf($editRoot) === null ? 'null' : '有'),
+);
+
+// ⑥ Esc ⇒ 丢弃草稿、不回调
+[$editApp, $editRoot, $editState, $editFocus] = $editSetup();
+$editFocus?->dispatchKey(KeyEvent::down(KeyChord::right()));
+$editFocus?->dispatchKey(KeyEvent::down(KeyChord::enter()));
+$editApp->frame(17.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$editFocus?->dispatchKey(KeyEvent::character('Z'));
+$editApp->frame(18.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$editFocus?->dispatchKey(KeyEvent::down(KeyChord::escape()));
+$editApp->frame(19.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+check(
+    'Table · 编辑：Esc ⇒ 退出编辑、**不回调**、格子回到旧值（甲）',
+    $editApp->editLog === [] && $editState?->isEditing() === false
+        && findElement(
+            $editRoot,
+            static fn(Element $e): bool => $e->widget() instanceof Text && $e->widget()->content() === '甲',
+        ) !== null,
+    'log=' . \json_encode($editApp->editLog) . ' editing=' . ($editState?->isEditing() ? 'y' : 'n'),
+);
+
+// ⑦ 没改就提交 ⇒ 不回调（G2：宁可少报）
+[$editApp, $editRoot, $editState, $editFocus] = $editSetup();
+$editFocus?->dispatchKey(KeyEvent::down(KeyChord::right()));
+$editFocus?->dispatchKey(KeyEvent::down(KeyChord::enter()));
+$editApp->frame(17.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$editFocus?->dispatchKey(KeyEvent::down(KeyChord::enter()));
+$editApp->frame(18.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+check(
+    'Table · 编辑：没改就 Enter ⇒ 不回调（同值不是"改动"）',
+    $editApp->editLog === [] && $editState?->isEditing() === false,
+    'log=' . \json_encode($editApp->editLog),
+);
+
+// ⑧ 失焦 ⇒ 提交（`FocusManager` 的落点就是 `didChangeFocus(false)`）
+[$editApp, $editRoot, $editState, $editFocus] = $editSetup();
+$editFocus?->dispatchKey(KeyEvent::down(KeyChord::right()));
+$editFocus?->dispatchKey(KeyEvent::down(KeyChord::enter()));
+$editApp->frame(17.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$editFocus?->dispatchKey(KeyEvent::character('W'));
+$editApp->frame(18.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$editState?->didChangeFocus(false);
+$editApp->frame(19.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+check(
+    'Table · 编辑：失焦 ⇒ 提交（焦点走人等于"点到别处"，草稿不能悬着）',
+    $editApp->editLog === [[1, 'name', '甲W']] && $editState?->isEditing() === false,
+    'log=' . \json_encode($editApp->editLog),
+);
+
+// ⑨ 用户滚动 ⇒ 提交（否则编辑中的行可能滚出窗口，用户对着看不见的格子打字）
+[$editApp, $editRoot, $editState, $editFocus] = $editSetup();
+$editFocus?->dispatchKey(KeyEvent::down(KeyChord::right()));
+$editFocus?->dispatchKey(KeyEvent::down(KeyChord::enter()));
+$editApp->frame(17.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$editFocus?->dispatchKey(KeyEvent::character('V'));
+$editApp->frame(18.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$editState?->scrollBy(40.0);
+$editApp->frame(19.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+check(
+    'Table · 编辑：用户滚动 ⇒ 提交',
+    $editApp->editLog === [[1, 'name', '甲V']] && $editState?->isEditing() === false,
+    'log=' . \json_encode($editApp->editLog),
+);
+
+// ⑩ 编辑期间**行序变了** ⇒ 提交仍落在原来那条数据上（会话认 key 不认下标）
+[$editApp, $editRoot, $editState, $editFocus] = $editSetup();
+$editFocus?->dispatchKey(KeyEvent::down(KeyChord::right()));
+$editFocus?->dispatchKey(KeyEvent::down(KeyChord::enter()));
+$editApp->frame(17.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$editFocus?->dispatchKey(KeyEvent::character('S'));
+$editApp->frame(18.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+// 反序（模拟排序换了行序）：id 1 从第 0 行跑到第 2 行
+$editApp->store->setRows(\array_reverse($editApp->store->rows));
+$editApp->frame(19.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$editFocus?->dispatchKey(KeyEvent::down(KeyChord::enter()));
+$editApp->frame(20.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+check(
+    'Table · 编辑：编辑中行序变了 ⇒ 提交仍写回**原来那条数据**（key=1，不是第 0 行）',
+    $editApp->editLog === [[1, 'name', '甲S']]
+        && ($editApp->store->rows[2]['name'] ?? null) === '甲S'
+        && ($editApp->store->rows[0]['name'] ?? null) === '丙',
+    'log=' . \json_encode($editApp->editLog) . ' rows=' . \json_encode($editApp->store->rows),
+);
+
+// ⑪ 编辑中的行被删掉 ⇒ 会话当场结束（不能对着空气改字）
+[$editApp, $editRoot, $editState, $editFocus] = $editSetup();
+$editFocus?->dispatchKey(KeyEvent::down(KeyChord::right()));
+$editFocus?->dispatchKey(KeyEvent::down(KeyChord::enter()));
+$editApp->frame(17.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$editApp->store->setRows([]);
+$editApp->frame(18.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+check(
+    'Table · 编辑：编辑中的行被删 ⇒ 会话自动结束（不崩、不回调）',
+    $editState?->isEditing() === false && $editApp->editLog === [],
+    'editing=' . ($editState?->isEditing() ? 'y' : 'n') . ' log=' . \json_encode($editApp->editLog),
+);
+
+// ⑫ 两条"期望响亮失败"（子进程：`Errors::report` 会 abort，进程内接不住）
+fresh($log);
+[$editCode, $editOut] = runCase(__FILE__, 'table-cell-edit-no-handler', null);
+check('Table · editable() 却没接 onCellEdit ⇒ 退出码 3', $editCode === 3, '实际 ' . $editCode . ' / ' . $editOut);
+check(
+    'Table · 缺 onCellEdit 的报错点名"回车后什么都没发生"并给修法',
+    str_contains(logText($log), 'onCellEdit') && str_contains(logText($log), '修法'),
+    logText($log) === '' ? '空日志' : '有日志',
+);
+
+fresh($log);
+[$editCode, $editOut] = runCase(__FILE__, 'table-cell-edit-on-cell-column', null);
+check('Table · cell() 列声明 editable() ⇒ 退出码 3', $editCode === 3, '实际 ' . $editCode . ' / ' . $editOut);
+check(
+    'Table · cell() 列可编辑的报错给出"改用 field()"的修法',
+    str_contains(logText($log), 'field('),
     logText($log) === '' ? '空日志' : '有日志',
 );
 

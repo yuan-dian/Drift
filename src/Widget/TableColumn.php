@@ -12,6 +12,7 @@ use Drift\Text\TextAlign;
  * ```php
  * TableColumn::make('name', '姓名')
  *     ->field('name')                       // 关联数组行：按字段名取
+ *     ->editable()                          // 可原地编辑（★ 只对 field() 列）
  *     ->width(TableColumnWidth::flex(2.0))
  *     ->minWidth(80.0)
  *     ->align(TextAlign::End);
@@ -80,6 +81,15 @@ final class TableColumn
 
     /** 表头右缘可拖动改宽吗（默认关，见 `resizable()`） */
     private bool $resizable = false;
+
+    /**
+     * 单元格可原地编辑吗（默认**不可**）。
+     *
+     * ★ 默认关，与 `sortable()` / `resizable()` 同一条纪律：能编辑就必须有人接收
+     *   提交（`Table::onCellEdit()`），否则用户改完字一按回车什么都没发生 ——
+     *   那比"不能编辑"更糟。声明了却没接 ⇒ 挂载期响亮失败。
+     */
+    private bool $editable = false;
 
     private function __construct(
         private readonly string $colKey,
@@ -217,6 +227,23 @@ final class TableColumn
         return $this;
     }
 
+    /**
+     * 单元格可原地编辑（默认关）。
+     *
+     * ★ **只对 `field()` 列有效**：编辑要有"起始文本"，而 `cell()` 给的是一个任意
+     *   Widget —— 框架既取不出它显示的文字，也不知道提交时该写回哪个字段。
+     *   在 `cell()` 列上开它 ⇒ 挂载期响亮失败并给出修法（不是静默不生效）。
+     *   `cell()` 列的编辑形态（应用自带编辑器 + `value` 读写）是后续阶段的事。
+     * ★ 提交的是**字符串**（`onCellEdit` 的第三个参数）：表格不知道列的数据类型，
+     *   类型转换 / 校验是应用侧知识（与"控件不排序"同一条：数据所有权不分裂）。
+     */
+    public function editable(bool $on = true): static
+    {
+        $this->editable = $on;
+
+        return $this;
+    }
+
     public function keyName(): string
     {
         return $this->colKey;
@@ -258,6 +285,41 @@ final class TableColumn
     public function isSortable(): bool
     {
         return $this->sortable;
+    }
+
+    /** 单元格可原地编辑吗（见 `editable()`） */
+    public function isEditable(): bool
+    {
+        return $this->editable;
+    }
+
+    /**
+     * 进入编辑时的**起始文本**（与静态渲染**同源**：都走 `textOf()`）。
+     *
+     * ★ 同源是硬要求：两条取值路会让"进入编辑的瞬间文字跳一下"（显示的是 A，
+     *   编辑器里是 B），而那种差异极难归因。
+     * ★ `cell()` 列 ⇒ 响亮失败（见 `editable()`）：框架没有它的文本。
+     */
+    public function editableText(mixed $row, int $index): string
+    {
+        if ($this->cell !== null) {
+            Errors::report(sprintf(
+                'Table 的列 "%s" 声明了 editable()，但它用的是 cell() —— 单元格编辑需要'
+                    . "\n" . '"起始文本 + 提交到哪个字段"，而 cell() 只给一个任意 Widget。'
+                    . "\n" . '修法：该列改用 field("%s")（或 field(字段名)），或去掉 editable()。',
+                $this->colKey,
+                $this->field ?? '字段名',
+            ));
+        }
+
+        if ($this->field === null) {
+            Errors::report(sprintf(
+                'Table 的列 "%s" 既没有 field() 也没有 cell() —— 它不知道要画什么。',
+                $this->colKey,
+            ));
+        }
+
+        return $this->textOf($row, $index);
     }
 
     /** 把任意宽度夹进 `[minWidth, maxWidth]`（三层宽度里的第 ② 层） */
