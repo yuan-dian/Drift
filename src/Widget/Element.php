@@ -94,6 +94,25 @@ abstract class Element
     }
 
     /**
+     * 配对尝试的累计次数（`updateChildren()` 每为一个新子"问一次旧子"就 +1）。
+     *
+     * ★ **存在的理由只有一个：让"复杂度"成为可断言的东西**。复用行为对不对，
+     *   smoke 用"元素实例是否还是同一个"断言；但"是不是又退回平方扫描了"没有任何
+     *   行为差异 —— 它只在树大了以后表现为慢。没有这个计数器，一次重构把
+     *   `O(n)` 改回 `O(n²)` 会**全绿通过**。
+     * ★ 成本是一次自增（AOT 下就是一条 `add`），留在热路径上是划算的。
+     *
+     * @internal 量具；消费者是 smoke（`Element::pairChecks()`）
+     */
+    private static int $pairChecks = 0;
+
+    /** @internal 见 `$pairChecks` */
+    public static function pairChecks(): int
+    {
+        return self::$pairChecks;
+    }
+
+    /**
      * 挂载到父链下，并建整棵子树。
      *
      * @param BuildContext $context 父链解析后的渲染环境（§3.4）
@@ -514,6 +533,25 @@ abstract class Element
      * - 类型 + `Key` 都一致 ⇒ 复用同一个 Element（`State` / 子树身份稳定）
      * - 位置相同而都没 Key ⇒ 视为可复用（身份退化为位置）
      * - 槽位变了 ⇒ 卸载旧的、挂新的
+     *
+     * ## 为什么是两段（2026-10-27 改）
+     *
+     * 旧实现是"每个新子扫一遍整张旧表"⇒ **O(k²)**（k = 本节点的子数）。k 小的时候
+     * 无所谓，但它是**每帧 rebuild 的固定税**：100 子 = 5,000 次配对，1000 子 =
+     * 500,000 次。而本框架的 `build()` 每帧都重跑，宽容器（表格行、标签云、工具栏）
+     * 正好踩在这条线上。
+     *
+     * 现在是两段，**语义与旧实现逐字相同**（"按旧表升序取第一个未用的同类同键槽位"）：
+     *
+     * 1. **前缀同步**：从 0 开始逐位置比，类型 + 键都对上就直接复用。**不分配任何
+     *    数组** —— 列表顺序没变（绝大多数帧）时，这一条就把所有子都配完了。
+     * 2. **剩余段建索引**：把没配上的旧子按 `(class, key)` 装桶（桶内保持旧表升序），
+     *    再逐个 O(1) 取桶头。跨位置搬家（拖拽排序、页面换槽）走这条。
+     *
+     * ★ 为什么不做"三扫"（Flutter 的尾同步 + keyed map）：尾同步只在**尾部插入/删除**
+     *   时省下几个桶，而这里第二段的索引本身是 O(剩余)，省不出量级；多一段就多一份
+     *   "哪段先命中"的推理成本。
+     * ★ `$pairChecks` 是这段复杂度的**唯一可断言形式**（见该属性的注释）。
      */
     protected function updateChildren(array $newWidgets): void
     {
@@ -521,40 +559,66 @@ abstract class Element
         $used = [];
         $next = [];
 
-        foreach ($newWidgets as $newWidget) {
-            $slot = null;
-            foreach ($old as $index => $candidate) {
-                if (isset($used[$index])) {
-                    continue;
-                }
-                if (get_class($candidate->widget()) === get_class($newWidget)
-                    && Key::same($candidate->widget()->identity(), $newWidget->identity())
-                ) {
-                    $slot = $index;
-                    break;
-                }
+        $oldCount = \count($old);
+        $newCount = \count($newWidgets);
+        $index = 0;
+
+        // ① 前缀同步：位置、类型、键三者都对上就复用（顺序不变时的全部开销）
+        $limit = $oldCount < $newCount ? $oldCount : $newCount;
+        for (; $index < $limit; $index++) {
+            $candidate = $old[$index];
+            $newWidget = $newWidgets[$index];
+            ++self::$pairChecks;
+
+            if (get_class($candidate->widget()) !== get_class($newWidget)
+                || !Key::same($candidate->widget()->identity(), $newWidget->identity())
+            ) {
+                break;   // 前缀到此为止，剩下的交给索引
             }
 
-            if ($slot === null) {
+            $used[$index] = true;
+            $next[] = $this->reuseChild($candidate, $newWidget);
+        }
+
+        // ② 剩余段：按 (class, key) 建桶，逐个子取桶头（O(剩余)）
+        if ($index < $newCount) {
+            /** @var array<string, list<int>> $buckets 键 ⇒ 旧槽位（桶内升序） */
+            $buckets = [];
+            for ($j = $index; $j < $oldCount; $j++) {
+                $buckets[self::slotKey($old[$j]->widget())][] = $j;
+            }
+
+            /** @var array<string, int> $cursor 每个桶取到第几个（不用 array_shift：那是 O(n)） */
+            $cursor = [];
+
+            for (; $index < $newCount; $index++) {
+                $newWidget = $newWidgets[$index];
+                $slotKey = self::slotKey($newWidget);
+                $bucket = $buckets[$slotKey] ?? null;
+                $at = $cursor[$slotKey] ?? 0;
+
+                if ($bucket !== null && isset($bucket[$at])) {
+                    ++self::$pairChecks;
+
+                    $slot = $bucket[$at];
+                    $cursor[$slotKey] = $at + 1;
+                    $used[$slot] = true;
+                    $next[] = $this->reuseChild($old[$slot], $newWidget);
+                    continue;
+                }
+
                 $element = $newWidget->createElement();
                 $element->mount($this, $this->childContext());
                 $next[] = $element;
-                continue;
             }
-
-            $used[$slot] = true;
-            $element = $old[$slot];
-            if ($element->widget() !== $newWidget) {
-                $element->update($newWidget);
-            }
-            // 本节点的 ctx 结论换了（ThemeScope light → dark）⇒ 已存在的子层
-            // 也必须拿到新值。只更新新挂的子层会让"切主题"对老子树静默失效。
-            $element->applyContext($this->childContext());
-            $next[] = $element;
         }
 
-        foreach ($old as $index => $candidate) {
-            if (!isset($used[$index])) {
+        // ★ 循环变量**不能叫 `$index`**：上面那段已经把它定型成 `php::Int`，而
+        //   `foreach ($arr as $k => ...)` 的 `$k` 是 `php::Var` ⇒ tpc 报
+        //   "Cannot assign value to variable $index of type php::Int with type php::Var"。
+        //   **解释器与 smoke 都不报**，只有 AOT 构建炸 —— 这正是 T2 存在的理由。
+        foreach ($old as $oldIndex => $candidate) {
+            if (!isset($used[$oldIndex])) {
                 $candidate->unmount();
             }
         }
@@ -568,6 +632,51 @@ abstract class Element
         }
 
         $this->children = $next;
+    }
+
+    /**
+     * 复用一个旧子：换新描述（实例相同则跳过）+ 递新环境。
+     *
+     * ★ `applyContext()` **对每个复用子都要调**：本节点的 ctx 结论换了
+     *   （`ThemeScope` light → dark）⇒ 已存在的子层也必须拿到新值。只更新新挂的
+     *   子层会让"切主题"对老子树静默失效。
+     * ★ `$element->widget() !== $newWidget` 才 `update()`：同一 Widget 实例被复用到
+     *   多处是合法的（Widget 是纯描述），此时**不需要**再更新一次。
+     */
+    private function reuseChild(Element $element, Widget $newWidget): Element
+    {
+        if ($element->widget() !== $newWidget) {
+            $element->update($newWidget);
+        }
+
+        $element->applyContext($this->childContext());
+
+        return $element;
+    }
+
+    /**
+     * 配对用的桶键：`class` + `Key` 的**单射**编码（同 `Key::same()` 的等价类）。
+     *
+     * ★ `Key::same()` 的规则：都无 key ⇒ 相等（身份退化为位置）；一方有 ⇒ 不等；
+     *   都有 ⇒ `===` 比值且**不做类型互转**（`1` 与 `'1'` 不等）⇒ 编码必须带类型前缀。
+     * ★ 字符串键带长度前缀：否则 `'i5'` 与 `5`（int）可能撞进同一个桶。
+     */
+    private static function slotKey(Widget $widget): string
+    {
+        $class = get_class($widget);
+        $key = $widget->identity();
+
+        if ($key === null) {
+            return $class . "\0#";
+        }
+
+        $value = $key->value;
+
+        if (\is_int($value)) {
+            return $class . "\0i" . $value;
+        }
+
+        return $class . "\0s" . \strlen($value) . ':' . $value;
     }
 
     /**

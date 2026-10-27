@@ -47,13 +47,24 @@ final class M3
     private const WARMUP = 10;
 
     /**
+     * @param null|\Closure(): Widget $factory 给了就**每帧重建**（模拟"这一帧 State 重建了"）：
+     *        在 settle 计时区内新建一份等价树并 `update()` 根，于是整棵树走
+     *        `rebuild()` + `updateChildren()`。不给 ⇒ 干净帧（只有 settlePass 的
+     *        无条件全遍，测的是"没有任何脏节点时每帧的固定税"）。
+     *
      * @return array{
      *   label: string, nodes: int, frames: int,
      *   settle: int, layout: int, paint: int, present: int, total: int
      * }
      */
-    public static function runTree(string $label, Widget $rootWidget, float $w, float $h, int $frames): array
-    {
+    public static function runTree(
+        string $label,
+        Widget $rootWidget,
+        float $w,
+        float $h,
+        int $frames,
+        ?\Closure $factory = null,
+    ): array {
         $metrics = new DeterministicMetricsProvider(
             DeterministicFontManager::standard()->collection(),
             new DeterministicShaper(),
@@ -80,6 +91,11 @@ final class M3
 
             // ① settle（帧末统一重建，§5.2 裁决 3）
             $t0 = \hrtime(true);
+            if ($factory !== null) {
+                // ★ 重建要**在计时区内**：生产里 `build()` 就是 settle 的一部分，
+                //   挪到外面会把"配对 + 重建"的成本藏起来。
+                $root->update($factory());
+            }
             $root->settle();
             $t1 = \hrtime(true);
 

@@ -4027,6 +4027,113 @@ check('Key · 双方都没有 ⇒ 可复用（位置相同）', Key::same(null, 
 check('Key · 一方有一方没有 ⇒ 不复用', !Key::same(new Key(1), null));
 check('Key · key() 走 mutate()（返回同一实例）', $keyProbe->key(7) === $keyProbe);
 
+// ⑪-b 子表配对的**复用语义**与**复杂度**（2026-10-27）
+//   ★ 复用语义用"元素实例是不是同一个"断言；复杂度用 `Element::pairChecks()`
+//     —— 后者是"退回平方扫描"的**唯一可观察症状**（行为全对、只是慢）。
+$mountColumn = static function (Column $column): Element {
+    $element = $column->createElement();
+    $element->mount(null, smokeContext());
+
+    return $element;
+};
+
+// 顺序不变 ⇒ 走前缀同步：200 子只做 200 次配对（旧实现是 20,100 次）
+$kidsOld = [];
+$kidsNew = [];
+for ($i = 0; $i < 200; $i++) {
+    $kidsOld[] = Text::make('n' . $i);
+    $kidsNew[] = Text::make('n' . $i);   // 新实例：真实 build 每帧都造新 Widget
+}
+$pairRoot = $mountColumn(Column::make()->children($kidsOld));
+$kidFirst = $pairRoot->childAt(0);
+$kidLast = $pairRoot->childAt(199);
+$checksBefore = Element::pairChecks();
+$pairRoot->update(Column::make()->children($kidsNew));
+$checksDelta = Element::pairChecks() - $checksBefore;
+check(
+    'Element · 顺序不变的 200 子 ⇒ 配对次数 = 子数（不是平方）',
+    $checksDelta === 200,
+    'delta=' . $checksDelta . '（旧实现 20100）',
+);
+check(
+    'Element · 顺序不变的 200 子 ⇒ 元素全部复用（首尾同一实例）',
+    $pairRoot->childAt(0) === $kidFirst && $pairRoot->childAt(199) === $kidLast,
+);
+
+// 跨位置搬家（带 Key）⇒ 元素跟着 Key 走 —— 走的是第二段（建桶）
+$pairRoot = $mountColumn(Column::make()->children([
+    Text::make('a')->key(1),
+    Text::make('b')->key(2),
+]));
+$kidA = $pairRoot->childAt(0);
+$kidB = $pairRoot->childAt(1);
+$pairRoot->update(Column::make()->children([
+    Text::make('b')->key(2),
+    Text::make('a')->key(1),
+]));
+check(
+    'Element · 带 Key 换序 ⇒ 元素跟着 Key 走（0 号是原来的 1 号）',
+    $pairRoot->childAt(0) === $kidB && $pairRoot->childAt(1) === $kidA,
+);
+
+// 中间删一个 ⇒ 前缀同步只覆盖前半段，后半段由桶接手
+$pairRoot = $mountColumn(Column::make()->children([
+    Text::make('a')->key(1),
+    Text::make('b')->key(2),
+    Text::make('c')->key(3),
+]));
+$kidC = $pairRoot->childAt(2);
+$kidB = $pairRoot->childAt(1);
+$pairRoot->update(Column::make()->children([
+    Text::make('a')->key(1),
+    Text::make('c')->key(3),
+]));
+check(
+    'Element · 中间删一个 ⇒ 后面的元素上移复用、被删的那个已卸载',
+    $pairRoot->childCount() === 2
+        && $pairRoot->childAt(1) === $kidC
+        && !$kidB->isMounted(),
+    'count=' . $pairRoot->childCount(),
+);
+
+// 重复 Key ⇒ 按**旧表升序**取槽位（与旧实现逐字相同的语义）
+//   ★ 首子换成另一种类型 ⇒ 前缀同步在 0 号就断，**强制走建桶那条路**
+//     （否则同类同键的两个子会被前缀同步按位置配掉，桶根本没被走到）。
+$pairRoot = $mountColumn(Column::make()->children([
+    Text::make('a')->key(9),
+    Text::make('b')->key(9),
+]));
+$kid9a = $pairRoot->childAt(0);
+$kid9b = $pairRoot->childAt(1);
+$pairRoot->update(Column::make()->children([
+    SizedBox::make(),
+    Text::make('c')->key(9),
+    Text::make('d')->key(9),
+]));
+check(
+    'Element · 重复 Key ⇒ 按旧表升序取槽位（前缀断了也升序）',
+    $pairRoot->childAt(1) === $kid9a && $pairRoot->childAt(2) === $kid9b,
+    'c1=' . ($pairRoot->childAt(1) === $kid9a ? 'a' : 'b') . ' c2=' . ($pairRoot->childAt(2) === $kid9b ? 'b' : 'a'),
+);
+
+// Key 类型不互转：`1` 与 `'1'` 分属两个桶（桶键带类型前缀）
+$pairRoot = $mountColumn(Column::make()->children([Text::make('a')->key(1)]));
+$kidInt = $pairRoot->childAt(0);
+$pairRoot->update(Column::make()->children([Text::make('a')->key('1')]));
+check(
+    'Element · Key 1 与 "1" 不同桶 ⇒ 不复用（元素换新）',
+    $pairRoot->childAt(0) !== $kidInt,
+);
+
+// 类型变了 ⇒ 换新元素，旧元素卸载
+$pairRoot = $mountColumn(Column::make()->children([Text::make('a')]));
+$kidText = $pairRoot->childAt(0);
+$pairRoot->update(Column::make()->children([SizedBox::make()]));
+check(
+    'Element · 类型变了 ⇒ 换新元素且旧元素已卸载',
+    $pairRoot->childAt(0) !== $kidText && !$kidText->isMounted(),
+);
+
 fresh($log);
 [$code, $output] = runCase(__FILE__, 'key', null);
 check('Key · 封存后再给 Key 退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);

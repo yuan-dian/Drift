@@ -241,6 +241,35 @@ final class Runner
         self::oneCase('参数化 20×3', Trees::build(20, 3), 1280.0, 800.0, 200);
         self::oneCase('参数化 50×8', Trees::build(50, 8), 1280.0, 800.0, 120);
         self::oneCase('参数化 100×14', Trees::build(100, 14), 1280.0, 800.0, 60);
+
+        // ★ **重建帧**：上面四档都是"干净帧"（没有脏节点 ⇒ 只有 `settlePass()` 的
+        //   无条件全遍）。真实交互（滚动 / 动画 / 输入）每帧都重建，那时才走
+        //   `build()` + `updateChildren()` —— 两档成本量级完全不同，必须分开测。
+        //   不测这一档，就会把"配对成本"错记到"干净帧的固定税"上。
+        self::line('   ↑ 以上是**干净帧**（无脏节点）；以下是**每帧重建**');
+        self::line('');
+        self::flush();
+
+        self::oneCase(
+            '参数化 50×8（每帧重建）',
+            Trees::build(50, 8),
+            1280.0,
+            800.0,
+            120,
+            static function (): Widget {
+                return Trees::build(50, 8);
+            },
+        );
+        self::oneCase(
+            '参数化 100×14（每帧重建）',
+            Trees::build(100, 14),
+            1280.0,
+            800.0,
+            60,
+            static function (): Widget {
+                return Trees::build(100, 14);
+            },
+        );
     }
 
     private static function oneCase(
@@ -249,8 +278,9 @@ final class Runner
         float $w,
         float $h,
         int $frames,
+        ?\Closure $factory = null,
     ): void {
-        $r = M3::runTree($label, $widget, $w, $h, $frames);
+        $r = M3::runTree($label, $widget, $w, $h, $frames, $factory);
         $nodes = \max(1, (int) $r['nodes']);
 
         self::line(\sprintf('   ── %s', $label));
