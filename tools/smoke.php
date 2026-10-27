@@ -170,6 +170,7 @@ use Drift\Input\ScrollEvent;
 use Drift\Input\SemanticsInvokeEvent;
 use Drift\Input\SemanticsSetValueEvent;
 use Drift\Input\SemanticsRole;
+use Drift\Input\TapTracker;
 use Drift\Layout\FlexAlign;
 use Drift\Layout\Overflow;
 use Drift\Layout\RenderAppBar;
@@ -18296,7 +18297,174 @@ check(
     'editing=' . ($editState?->isEditing() ? 'y' : 'n') . ' log=' . \json_encode($editApp->editLog),
 );
 
-// ⑫ 两条"期望响亮失败"（子进程：`Errors::report` 会 abort，进程内接不住）
+// ⑫ 点击链（`TapTracker`，阶段 7b）—— 双击 / 三击的**四条规则**各一条断言。
+//   ★ 这是"手势时钟"的全部判据：时间由壳注入，这里用**显式时间戳**驱动，一秒不睡。
+//   ★ 判据落在"第几下"上，不落在"睡多久之后是什么"上 —— 后者在 CI 里必然抖。
+$tapAt = static fn(float $x, float $y, int $button = 0, bool $ctrl = false): PointerEvent
+    => PointerEvent::down($x, $y, $button, $ctrl);
+
+$taps = new TapTracker();
+$tapsFirst = $taps->annotate($tapAt(10.0, 10.0), 1000.0);
+$tapsSecond = $taps->annotate($tapAt(11.0, 12.0), 1200.0);
+check(
+    'TapTracker · 间隔内 + 位移在 slop 内 ⇒ 第二下是双击（count=2）',
+    $tapsFirst->clickCount === 1 && $tapsSecond->isDoubleClick(),
+    'c1=' . $tapsFirst->clickCount . ' c2=' . $tapsSecond->clickCount,
+);
+
+$taps = new TapTracker();
+$taps->annotate($tapAt(10.0, 10.0), 1000.0);
+$tapsLate = $taps->annotate($tapAt(10.0, 10.0), 1600.0);
+check(
+    'TapTracker · 超过间隔（600ms）⇒ 断链（慢速双击 = 两次单击）',
+    $tapsLate->clickCount === 1,
+    'c=' . $tapsLate->clickCount,
+);
+
+$taps = new TapTracker();
+$taps->annotate($tapAt(10.0, 10.0), 1000.0);
+$tapsFar = $taps->annotate($tapAt(30.0, 10.0), 1100.0);
+check(
+    'TapTracker · 位移超 slop（20px）⇒ 断链（手抖几像素仍算，跨格不算）',
+    $tapsFar->clickCount === 1,
+    'c=' . $tapsFar->clickCount,
+);
+
+$taps = new TapTracker();
+$taps->annotate($tapAt(10.0, 10.0), 1000.0);
+$tapsOther = $taps->annotate($tapAt(10.0, 10.0, 2), 1100.0);
+check(
+    'TapTracker · 换了按键 ⇒ 各自成链（右键不与左键串成双击）',
+    $tapsOther->clickCount === 1,
+    'c=' . $tapsOther->clickCount,
+);
+
+$taps = new TapTracker();
+$taps->annotate($tapAt(10.0, 10.0), 1000.0);
+$tapsCtrl = $taps->annotate($tapAt(10.0, 10.0, 0, true), 1100.0);
+check(
+    'TapTracker · 修饰键变了 ⇒ 断链（Ctrl+点两次不许当成双击 —— 多选时会突然进编辑）',
+    $tapsCtrl->clickCount === 1,
+    'c=' . $tapsCtrl->clickCount,
+);
+
+$taps = new TapTracker();
+$taps->annotate($tapAt(10.0, 10.0), 1000.0);
+$taps->annotate(PointerEvent::leave(10.0, 10.0), 1050.0);
+$tapsAfterLeave = $taps->annotate($tapAt(10.0, 10.0), 1100.0);
+check(
+    'TapTracker · 指针离开过客户区 ⇒ 断链',
+    $tapsAfterLeave->clickCount === 1,
+    'c=' . $tapsAfterLeave->clickCount,
+);
+
+$taps = new TapTracker();
+$taps->annotate($tapAt(10.0, 10.0), 1000.0);
+$taps->annotate($tapAt(10.0, 10.0), 1100.0);
+$tapsThird = $taps->annotate($tapAt(10.0, 10.0), 1200.0);
+check(
+    'TapTracker · 三连击 ⇒ count=3，且**不算**双击（`isDoubleClick()` 只认 2）',
+    $tapsThird->clickCount === 3 && !$tapsThird->isDoubleClick(),
+    'c=' . $tapsThird->clickCount,
+);
+
+$taps = new TapTracker();
+$taps->annotate($tapAt(10.0, 10.0), 1000.0);
+$tapsBack = $taps->annotate($tapAt(10.0, 10.0), 900.0);
+check(
+    'TapTracker · 时间倒退（注入的假钟/校时）⇒ 断链（负间隔不许恒小于阈值）',
+    $tapsBack->clickCount === 1,
+    'c=' . $tapsBack->clickCount,
+);
+
+$taps = new TapTracker();
+$taps->annotate($tapAt(10.0, 10.0), 1000.0);
+$tapsMove = $taps->annotate(PointerEvent::move(10.0, 10.0), 1050.0);
+$tapsUp = $taps->annotate(PointerEvent::up(10.0, 10.0), 1060.0);
+check(
+    'TapTracker · 只有按下才标注（move / up 保持 1，且不推进链）',
+    $tapsMove->clickCount === 1 && $tapsUp->clickCount === 1 && $taps->count() === 1,
+    'move=' . $tapsMove->clickCount . ' up=' . $tapsUp->clickCount . ' count=' . $taps->count(),
+);
+
+// ⑬ 表格的指针侧（阶段 7b）：单击落光标格、双击进编辑、指针落插入符。
+//   ★ 全部走 `dispatchInput()` 的**真实路由**（命中 → 行容器 `ownsPress` → noteRowTap）。
+//   ★ 时间戳显式给：这就是"手势时钟"接到真链路上的证明 —— 若 `dispatchInput()`
+//     忘了标注 clickCount，双击那两条会红。
+$clickAt = static function (Application $app, float $x, float $y, float $at): void {
+    $app->dispatchInput(PointerEvent::down($x, $y), $at);
+    $app->dispatchInput(PointerEvent::up($x, $y), $at + 20.0);
+};
+
+// 夹具几何：表头 32 + 行高 40 ⇒ 行 1 的 y ∈ [72,112)；id 列 [0,100)、姓名列 [100,300)
+[$editApp, $editRoot, $editState, $editFocus] = $editSetup();
+$clickAt($editApp, 150.0, 92.0, 1000.0);
+$editApp->frame(17.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+check(
+    'Table · 指针：单击 ⇒ 光标格落到**指针那一格**（行 1 / 列 1，以前列不动）',
+    $editState?->focusedCell() === ['row' => 1, 'col' => 1],
+    'cell=' . \json_encode($editState?->focusedCell()),
+);
+
+[$editApp, $editRoot, $editState, $editFocus] = $editSetup();
+$clickAt($editApp, 150.0, 92.0, 1000.0);
+$clickAt($editApp, 150.0, 92.0, 1100.0);
+$editApp->frame(17.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+check(
+    'Table · 指针：双击可编辑格 ⇒ 进编辑（`editingCell()` 把 key 解析回行下标）',
+    $editState?->isEditing() === true && $editState?->editingCell() === ['row' => 1, 'col' => 1],
+    'editing=' . ($editState?->isEditing() ? 'y' : 'n') . ' cell=' . \json_encode($editState?->editingCell()),
+);
+
+[$editApp, $editRoot, $editState, $editFocus] = $editSetup();
+$clickAt($editApp, 150.0, 92.0, 1000.0);
+$clickAt($editApp, 150.0, 92.0, 1600.0);
+$editApp->frame(17.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+check(
+    'Table · 指针：两次点击隔 600ms ⇒ **不进编辑**（壳给的时间真的传到了判据里）',
+    $editState?->isEditing() === false,
+    'editing=' . ($editState?->isEditing() ? 'y' : 'n'),
+);
+
+[$editApp, $editRoot, $editState, $editFocus] = $editSetup();
+$clickAt($editApp, 50.0, 92.0, 1000.0);
+$clickAt($editApp, 50.0, 92.0, 1100.0);
+$editApp->frame(17.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+check(
+    'Table · 指针：双击**不可编辑**列 ⇒ 不进编辑，光标格仍落到该列',
+    $editState?->isEditing() === false && $editState?->focusedCell() === ['row' => 1, 'col' => 0],
+    'editing=' . ($editState?->isEditing() ? 'y' : 'n') . ' cell=' . \json_encode($editState?->focusedCell()),
+);
+
+// 指针落插入符：文字左缘 = 列起点 100 + 内边距 8；点在字的左 1/4 ⇒ 插入符在字**前**，
+// 右 3/4 ⇒ 在字**后**（吸附按字符中点，与输入框同一个换算 `offsetAtX()`）。
+$caretProbe = new BuildContext(320.0, 240.0, $editApp->theme(), $editApp->metrics());
+$caretStyle = InlineEditorBox::editorStyle($caretProbe);
+$glyphW = $editApp->metrics()->advance('乙', $caretStyle, new Scale(1.0));
+
+[$editApp, $editRoot, $editState, $editFocus] = $editSetup();
+$clickAt($editApp, 108.0 + $glyphW * 0.25, 92.0, 1000.0);
+$clickAt($editApp, 108.0 + $glyphW * 0.25, 92.0, 1100.0);
+$editApp->frame(17.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$caretLeft = $editState?->caretRect();
+check(
+    'Table · 指针：双击字的**左半边** ⇒ 插入符落在字前（x=108，文字一个像素没动）',
+    $caretLeft !== null && abs($caretLeft->left - 108.0) < 0.01,
+    'w=' . sprintf('%.2f', $glyphW) . ' x=' . ($caretLeft === null ? 'null' : sprintf('%.2f', $caretLeft->left)),
+);
+
+[$editApp, $editRoot, $editState, $editFocus] = $editSetup();
+$clickAt($editApp, 108.0 + $glyphW * 0.75, 92.0, 1000.0);
+$clickAt($editApp, 108.0 + $glyphW * 0.75, 92.0, 1100.0);
+$editApp->frame(17.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$caretRight = $editState?->caretRect();
+check(
+    'Table · 指针：双击字的**右半边** ⇒ 插入符落在字后（x=108+字宽）',
+    $caretRight !== null && abs($caretRight->left - (108.0 + $glyphW)) < 0.01,
+    'w=' . sprintf('%.2f', $glyphW) . ' x=' . ($caretRight === null ? 'null' : sprintf('%.2f', $caretRight->left)),
+);
+
+// ⑭ 两条"期望响亮失败"（子进程：`Errors::report` 会 abort，进程内接不住）
 fresh($log);
 [$editCode, $editOut] = runCase(__FILE__, 'table-cell-edit-no-handler', null);
 check('Table · editable() 却没接 onCellEdit ⇒ 退出码 3', $editCode === 3, '实际 ' . $editCode . ' / ' . $editOut);

@@ -61,6 +61,21 @@ final class InlineEditorBox extends RenderBoxWidget
         return new self($text, $caretOffset, $selectionStart, $selectionEnd);
     }
 
+    /**
+     * 编辑盒的文本样式 —— **唯一来源**。
+     *
+     * ★ 建盒（`createRenderObject()`）与"建盒之前算插入符"（表格双击：指针 x ⇒
+     *   字符边界，见 `TableState::pointerCaretOffset()`）必须用同一个样式，
+     *   否则量出来的宽度与实际排版差一点点 ⇒ 插入符落在相邻字符上。
+     * ★ 单行（`maxLines(1)`）：`RenderTextField` 的插入符几何依赖它。
+     *
+     * @internal
+     */
+    public static function editorStyle(BuildContext $context): TextStyle
+    {
+        return TextStyle::of($context->textSize(TextRole::Body))->withMaxLines(1);
+    }
+
     public function text(): string
     {
         return $this->text;
@@ -73,12 +88,9 @@ final class InlineEditorBox extends RenderBoxWidget
 
     public function createRenderObject(BuildContext $context): RenderBox
     {
-        // 单行：插入符几何依赖它（`RenderTextField` 的契约）
-        $style = TextStyle::of($context->textSize(TextRole::Body))->withMaxLines(1);
-
         return new RenderTextField(
             $this->text,
-            $style,
+            self::editorStyle($context),
             $context->textColor(TextRole::Body),
             '',                                   // 无占位符：单元格里没有"空值提示"这回事
             $context->textColor(TextRole::Caption),

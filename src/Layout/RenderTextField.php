@@ -188,22 +188,47 @@ final class RenderTextField extends RenderBox
      *
      * ★ 判据是"哪个字符的**中点**更近"，与 `moveCaret()` 的吸附同向（不会把
      *   多字节字符切成半个）。指针拖动框选、以及"点一下落插入符"都用它。
+     * ★ 换算只在 `offsetAtX()` 里写一次：表格的"双击落插入符"没有盒可问
+     *   （编辑器要下一帧才建出来），必须能在**建盒之前**算同一个答案。
      */
     public function offsetAt(float $x): int
     {
-        $local = $x - $this->insets->left;
-        if ($local <= 0.0) {
+        return self::offsetAtX(
+            $this->text,
+            $this->style,
+            $x - $this->insets->left,
+            $this->metrics,
+            $this->scale,
+        );
+    }
+
+    /**
+     * **文本区内** x ⇒ 最近的插入点（字节偏移，恒字符边界）—— `offsetAt()` 的唯一实现。
+     *
+     * ★ 静态是为了"还没建盒"的调用方（表格双击：指针落在哪一格、插入符该在哪个
+     *   字符之间，必须在 `beginEdit()` 那一刻就定下来，而编辑盒要下一帧才存在）。
+     *   两条路共用这一个换算 ⇒ 不会出现"点下去落这儿、盒子画在那儿"。
+     * ★ `$x <= 0` ⇒ 0（左缘之前一律落到开头）；超出末字 ⇒ `strlen()`。
+     */
+    public static function offsetAtX(
+        string $text,
+        TextStyle $style,
+        float $x,
+        TextMetricsProvider $metrics,
+        Scale $scale,
+    ): int {
+        if ($x <= 0.0) {
             return 0;
         }
 
-        $length = strlen($this->text);
+        $length = strlen($text);
         $previousOffset = 0;
         $previousX = 0.0;
 
-        foreach (Utf8::decode($this->text) as $glyph) {
+        foreach (Utf8::decode($text) as $glyph) {
             $bound = $glyph[1] + $glyph[2];
-            $boundX = $this->metrics->advance(substr($this->text, 0, $bound), $this->style, $this->scale);
-            if ($local <= ($previousX + $boundX) * 0.5) {
+            $boundX = $metrics->advance(substr($text, 0, $bound), $style, $scale);
+            if ($x <= ($previousX + $boundX) * 0.5) {
                 return $previousOffset;
             }
             $previousOffset = $bound;

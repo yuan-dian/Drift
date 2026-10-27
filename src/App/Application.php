@@ -17,6 +17,7 @@ use Drift\Input\PointerEvent;
 use Drift\Input\ScrollEvent;
 use Drift\Input\SemanticsInvokeEvent;
 use Drift\Input\SemanticsSetValueEvent;
+use Drift\Input\TapTracker;
 use Drift\Input\ThemeChangedEvent;
 use Drift\Input\WindowDeactivatedEvent;
 use Drift\Platform\Clipboard;
@@ -293,10 +294,22 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      */
     private float $lastInputMs = 0.0;
 
+    /**
+     * 点击链（"这一下是第几次点击"）。
+     *
+     * ★ 住在**应用**而不是 `InputRouter`：路由层是"无时钟"的策略层，而时间只有
+     *   壳递进来的这一条（`dispatchInput()` 的第 2 参）。放在这里 ⇒ 时间与"用时间
+     *   算出来的东西"在同一处，路由层不用为它改签名。
+     * ★ 规则见 `TapTracker`（间隔 / 距离 / 按键 / 修饰键四条）。
+     */
+    private TapTracker $taps;
+
     /** @param iterable<string, CommandHandler> $handlers `commands()` 的返回值 */
     public function __construct(iterable $handlers = [])
     {
         $this->router = CommandRouter::make();
+
+        $this->taps = new TapTracker();
 
         // S1 第 4 步：文本编辑三侧（IME / 指针框选 / 编辑命令）收成最小片。
         // host = $this（片只经 TextEditingHost 摸焦点与剪贴板）—— 构造期
@@ -1490,6 +1503,14 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
             $this->lastInputMs = $timestampMs;
         }
 
+        // ★ 点击链（2026-10-27）：把"第几次点击"标在事件上，供控件判双击。
+        //   **只在有时间戳时标**：没有时间就没有间隔，"这一下是第几次"无从谈起 ⇒
+        //   保持默认 `1`（测试与解释器不传时间戳，行为与之前逐字节相同）。
+        //   放在这里而不是路由层：时间是壳给 Application 的，路由层不持钟。
+        if ($event instanceof PointerEvent && $timestampMs !== null) {
+            $event = $this->taps->annotate($event, $timestampMs);
+        }
+
         // ★ 输入模态（`:focus-visible`，W8-5 续作六）：最近一次是键盘还是指针。
         //   键盘 ⇒ 显示焦点环；指针（点击 / 移动 / 滚轮）⇒ 隐藏。
         //   ★ 放在最前面：失活事件不改模态（它不是"用户操作控件"），但它下面会
@@ -1509,6 +1530,9 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
             // （系统不发 `WM_MOUSEMOVE`，`WM_LBUTTONUP` 落在别的窗口）
             // ⇒ 必须靠窗口级信号补这一刀。
             $this->input->cancelActiveGestures();
+
+            // 点击链同样断：失活期间不会再有"同一串点击"的第二下
+            $this->taps->reset();
 
             return null;
         }

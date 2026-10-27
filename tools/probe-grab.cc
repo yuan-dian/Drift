@@ -126,6 +126,15 @@ struct Options {
     bool click = false;            // --click=x,y（客户区坐标；down+up 一次完整点击）
     int clickX = 0;
     int clickY = 0;
+    /**
+     * `--dblclick=x,y`：**双击**（客户区坐标）。
+     * ★ 存在理由：双击的判据是"两次按下之间的间隔"，而一次 `--click` 之间隔着
+     *   一次 `--settle`（数百毫秒，且每趟 `probe-grab` 是独立进程）⇒ 两次 `--click`
+     *   永远落在连击窗口之外，双击在真机上**无从验证**。
+     */
+    bool doubleClick = false;
+    int dblClickX = 0;
+    int dblClickY = 0;
     bool setCursor = false;        // --cursor=x,y（客户区坐标；把**物理光标**挪进去）
     int cursorX = 0;
     int cursorY = 0;
@@ -888,8 +897,9 @@ int wmain(int argc, wchar_t** argv)
             options.wheelDelta = parts[2];
         } else if (key == L"wheel-wait" && parseInt(value, number)) {
             options.wheelWaitMs = static_cast<int>(number);
-        } else if (key == L"click") {
-            // x,y —— 客户区坐标；down+up 一次完整点击（导航切换用）
+        } else if (key == L"click" || key == L"dblclick") {
+            // x,y —— 客户区坐标；down+up 一次完整点击（导航切换用）；
+            // `dblclick` 是同一坐标上的**两轮** down+up（间隔 60ms）。
             int parts[2] = {0, 0};
             int index = 0;
             size_t start = 0;
@@ -915,6 +925,13 @@ int wmain(int argc, wchar_t** argv)
             options.click = true;
             options.clickX = parts[0];
             options.clickY = parts[1];
+
+            if (key == L"dblclick") {
+                options.click = false;
+                options.doubleClick = true;
+                options.dblClickX = parts[0];
+                options.dblClickY = parts[1];
+            }
         } else if (key == L"click-wait" && parseInt(value, number)) {
             options.clickWaitMs = static_cast<int>(number);
         } else if (key == L"cursor") {
@@ -1343,6 +1360,22 @@ int wmain(int argc, wchar_t** argv)
         ::PostMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, lpPt);
         ::PostMessageW(hwnd, WM_LBUTTONUP, 0, lpPt);
         std::printf("click=%d,%d\n", options.clickX, options.clickY);
+        ::Sleep(static_cast<DWORD>(options.clickWaitMs));
+    }
+    if (options.doubleClick) {
+        // 同一坐标两轮 down+up，间隔 60ms（连击窗口默认 500ms ⇒ 落在窗口内）。
+        // ★ 仍然只发客户区坐标（同 `--click` 的口径，见上）。
+        // ★ 应用侧算的是**收到消息那一刻**的 `Platform::now()`：两条消息可能被同
+        //   一次泵排空（间隔≈0）⇒ 同样是连击，不影响判据。
+        LPARAM lpPt = MAKELPARAM(static_cast<WORD>(options.dblClickX), static_cast<WORD>(options.dblClickY));
+        for (int round = 0; round < 2; ++round) {
+            if (round > 0) {
+                ::Sleep(60);
+            }
+            ::PostMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, lpPt);
+            ::PostMessageW(hwnd, WM_LBUTTONUP, 0, lpPt);
+        }
+        std::printf("dblclick=%d,%d\n", options.dblClickX, options.dblClickY);
         ::Sleep(static_cast<DWORD>(options.clickWaitMs));
     }
     if (options.mouseDrag) {

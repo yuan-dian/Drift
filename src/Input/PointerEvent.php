@@ -19,6 +19,10 @@ namespace Drift\Input;
  *   消费（一次 hitTest 喂光标/焦点/拖放）⇒ 是"指针事件的不同相位"。对照
  *   `ScrollEvent`：滚轮无相位、不参与焦点/光标 ⇒ 才独立成类。
  *
+ * ★ **`clickCount`（2026-10-27）**：同一次按下是"第几次点击"。它不是平台的字段
+ *   （Win32 的 `WM_LBUTTONDBLCLK` 是另一条路，判据在 C++ 里就测不到了），而是
+ *   `TapTracker` 用壳注入的时间算出来的 —— 见该类的四条规则。未标注恒 `1`。
+ *
  * @api
  */
 final readonly class PointerEvent implements InputEvent
@@ -31,6 +35,7 @@ final readonly class PointerEvent implements InputEvent
         public bool $ctrl = false,
         public bool $alt = false,
         public bool $shift = false,
+        public int $clickCount = 1,
     ) {
     }
 
@@ -116,6 +121,34 @@ final readonly class PointerEvent implements InputEvent
     public function hasModifier(): bool
     {
         return $this->ctrl || $this->alt || $this->shift;
+    }
+
+    /**
+     * 标上"这是第几次点击"（返回**新实例**：事件是值，标注也是值）。
+     *
+     * ★ 唯一的生产者是 `TapTracker`（经 `Application::dispatchInput()`）：链的
+     *   四条规则（间隔 / 距离 / 按键 / 修饰键）住在那里，**不散到控件里** ——
+     *   否则每个消费方各写一遍"两次点击够不够近"，同一台机器上会出现两套手感。
+     * ★ 没有经过标注的事件恒 `1`：手工造事件（夹具 / 桥的异常路径）不需要关心它。
+     */
+    public function withClickCount(int $count): self
+    {
+        return new self(
+            $this->x,
+            $this->y,
+            $this->button,
+            $this->phase,
+            $this->ctrl,
+            $this->alt,
+            $this->shift,
+            $count,
+        );
+    }
+
+    /** 是不是一次双击的**第二下**（`clickCount === 2`；三击及以上不算） */
+    public function isDoubleClick(): bool
+    {
+        return $this->clickCount === 2;
     }
 
     public function isPrimary(): bool

@@ -6,6 +6,7 @@ namespace Drift\Widget;
 use Drift\Errors;
 use Drift\Geometry\Axis;
 use Drift\Geometry\Rect;
+use Drift\Geometry\Scale;
 use Drift\Input\CursorShape;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
@@ -20,6 +21,8 @@ use Drift\Rendering\ColorToken;
 use Drift\Text\TextAlign;
 use Drift\Text\TextChange;
 use Drift\Text\TextDraft;
+use Drift\Text\TextMetricsProvider;
+use Drift\Text\TextStyle;
 
 /**
  * `Table` 的 State：**持纵向偏移 + 算这一帧造哪几行 + 分配列宽**。
@@ -101,6 +104,20 @@ final class TableState extends State implements Scrollable, EditableText
      *   `RenderTable::revealDelta()` 对"没尺寸"的裁决）。
      */
     private array $widthsInBuild = [];
+
+    /**
+     * 上一帧的文本度量与编辑样式（阶段 7b）。
+     *
+     * ★ 为什么留一份：**双击落插入符**要在 `beginEdit()` 那一刻把"指针 x"翻成
+     *   "第几个字符之间"，而那一刻编辑盒还不存在（它下一帧才建出来）。能用的
+     *   度量只有上一帧 build 里拿到的那份 —— 与 `$widthsInBuild` 同一个理由
+     *   （几何只在 build 里可得，而键盘/指针动作必须**当场**响应）。
+     * ★ 样式取 `InlineEditorBox::editorStyle()`（唯一来源）：量宽与实际排版必须是
+     *   同一个样式，否则插入符会落在相邻字符上。
+     */
+    private ?TextMetricsProvider $editorMetrics = null;
+
+    private ?TextStyle $editorStyle = null;
 
     /** 滚动条淡出节律（懒建；与 `ScrollViewState` / `LazyListState` 同一份实现） */
     private ?ScrollBarFade $barFade = null;
@@ -514,14 +531,24 @@ final class TableState extends State implements Scrollable, EditableText
     }
 
     /**
-     * 进入编辑（`Enter` / `F2`）。返回 `false` = 这一格不能编辑 ⇒ **键不吃**。
+     * 进入编辑（键盘：`Enter` / `F2`；指针：双击）。返回 `false` = 这一格不能编辑 ⇒ **键不吃**。
      *
      * ★ 返回 `bool` 而不是 `void`：调用方（`handleFocusKey`）必须据此决定
      *   "吃掉这个键还是放行给应用" —— 不可编辑的列上吞掉 Enter，就把
      *   "回车触发某个命令"这类自定义语义堵死了。
+     *
+     * @param float|null $caretX **指针的内容坐标 x**（`null` = 键盘进入 ⇒ 插入符落末尾）。
+     *                          指针进编辑必须"点在哪个字之间就落哪儿"，否则用户还得
+     *                          再按一次方向键 —— 那是双击进编辑唯一比 F2 强的地方。
      */
-    private function beginEdit(int $row, int $col): bool
+    private function beginEdit(int $row, int $col, ?float $caretX = null): bool
     {
+        // ★ 已有会话 ⇒ **先收口**：双击同一行的另一格时，旧草稿不能悄悄丢掉
+        //   （`noteRowTap` 只对"点到别的行"提交，同一行是留到这里的）。
+        if ($this->editingRef !== null) {
+            $this->commitEditing();
+        }
+
         $view = $this->view();
         $rows = $view->rowList();
         $columns = $view->columnList();
@@ -546,10 +573,16 @@ final class TableState extends State implements Scrollable, EditableText
         $seed = $column->editableText($rows[$row], $row);
         $rowKey = $keyOf($rows[$row]);
         $columnKey = $column->keyName();
+        $caret = $caretX === null ? null : $this->pointerCaretOffset($column, $seed, $col, $caretX);
 
-        $this->setState(function () use ($seed, $rowKey, $columnKey): void {
+        $this->setState(function () use ($seed, $rowKey, $columnKey, $caret): void {
             $this->draft = new TextDraft($seed);
             $this->draftOrigin = $seed;
+
+            if ($caret !== null) {
+                $this->draft->moveCaret($caret);
+            }
+
             $this->editingRef = ['row' => $rowKey, 'col' => $columnKey];
         });
 
@@ -952,6 +985,105 @@ final class TableState extends State implements Scrollable, EditableText
         return new Rect($x, $row * $rowH, $widths[$col], $rowH);
     }
 
+    /** 有没有哪一列声明了 `editable()`（决定行要不要挂 pointer —— 见 `$interactive`） */
+    private function hasEditableColumn(array $columns): bool
+    {
+        foreach ($columns as $column) {
+            if ($column->isEditable()) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * 客户区 x ⇒ **行区内容坐标** x（`null` = 还没布局过）。
+     *
+     * ★ 与 `caretRect()` 的换算**方向相反**，两条都要写清楚：
+     *   - 盒子 → 内容：`absoluteOrigin()` 已经含了滚动平移 ⇒ 直接减原点与内边距；
+     *   - 指针 → 内容：指针是**视口**坐标，不受滚动影响 ⇒ 减原点与内边距之后
+     *     还要**加回** `offsetX`。
+     *   抄错一条的现象是"滚过之后点的格子和落下的插入符差一个滚动量"。
+     */
+    private function pointerContentX(float $clientX): ?float
+    {
+        $tableBox = $this->element()?->effectiveBoxOf(RenderTable::class);
+        if ($tableBox === null) {
+            return null;
+        }
+
+        [$tableX] = RenderBox::absoluteOrigin($tableBox);
+
+        return $clientX - $tableX - $tableBox->contentOriginX() + $this->offsetX;
+    }
+
+    /**
+     * 内容坐标 x ⇒ 列下标（`null` = 落在最后一列右侧的空白里 / 还没布局过）。
+     *
+     * ★ 列间缝隙归**左**格：视觉上它是那一格的右内边距，点到那里仍算点那一格。
+     * ★ 列宽取上一帧的（`$widthsInBuild`）—— 与 `currentFocusRect()` 同一个理由。
+     */
+    private function columnAtX(float $contentX): ?int
+    {
+        $widths = $this->widthsInBuild;
+        if ($widths === []) {
+            return null;
+        }
+
+        $spacing = $this->view()->columnSpacingPx();
+        $x = 0.0;
+
+        foreach ($widths as $index => $width) {
+            if ($contentX < $x + $width + $spacing) {
+                return $index;
+            }
+
+            $x += $width + $spacing;
+        }
+
+        return null;
+    }
+
+    /**
+     * 指针 x ⇒ 这一格文本里的插入点（字节偏移，恒字符边界）。
+     *
+     * 三步：① 内容坐标 x 减到**格内**；② 再减掉文字在这一格里的**起点**（对齐方式
+     * 决定它：左对齐 = 内边距、右对齐 = 宽 − 内边距 − 文字宽、居中 = 居中）；
+     * ③ 交给 `RenderTextField::offsetAtX()`（与输入框**同一个**换算）。
+     *
+     * ★ ② 漏了就会"右对齐的列点哪儿都落末尾"—— 而单元格编辑最常见的对齐恰恰是
+     *   右对齐（数字列）。
+     * ★ 没有度量（还没 build 过）⇒ 落末尾：宁可"点哪都到末尾"，也不猜一个可能
+     *   差半个字的偏移。
+     */
+    private function pointerCaretOffset(TableColumn $column, string $seed, int $col, float $contentX): int
+    {
+        $metrics = $this->editorMetrics;
+        $style = $this->editorStyle;
+        if ($metrics === null || $style === null) {
+            return \strlen($seed);
+        }
+
+        // 行号/行高只影响 y，这里只取 x 与宽
+        $rect = $this->cellRect(0, $col, $this->widthsInBuild, 0.0, $this->view()->columnSpacingPx());
+        if ($rect === null) {
+            return \strlen($seed);
+        }
+
+        $scale = new Scale(1.0);
+        $pad = $column->paddingX();
+        $textW = $metrics->advance($seed, $style, $scale);
+
+        $textX = match ($column->alignMode()) {
+            TextAlign::End => $rect->width - $pad - $textW,
+            TextAlign::Center => ($rect->width - $textW) * 0.5,
+            default => $pad,
+        };
+
+        return RenderTextField::offsetAtX($seed, $style, $contentX - $rect->left - $textX, $metrics, $scale);
+    }
+
     /** 滚动条的显隐节律（懒建：没滚过的表不建，滚动条恒亮） */
     private function bar(): ScrollBarFade
     {
@@ -1060,7 +1192,7 @@ final class TableState extends State implements Scrollable, EditableText
         // ★ 点到**别的行** ⇒ 提交编辑（各平台"点到别处就落库"）。
         //   同一行**不**提交：行容器用 `ownsPress` 抢走了按下，拿不到"点在格内还是
         //   格外"的可靠判据 —— 而误提交（用户只是想挪一下鼠标）比"再按一次 Esc"
-        //   更烦人。指针落插入符 / 双击进编辑都属 7b（前置是手势时钟）。
+        //   更烦人。双击同一行的**另一格**由 `beginEdit()` 先收口（见那边）。
         if ($this->editingRef !== null) {
             $editingRow = $this->keyIndex($this->editingRef['row']);
             if ($editingRow !== null && $editingRow !== $index) {
@@ -1068,13 +1200,29 @@ final class TableState extends State implements Scrollable, EditableText
             }
         }
 
-        // 光标行跟着点击走（**列不动**）：算"点在哪个格"要用根坐标减去行区原点再
-        // 累加列宽，而"点行 ⇒ 光标行=该行"在语义上完全够（资源管理器同款）。
-        // 列定位留给编辑的后续阶段 —— 那时双击某格需要更准的列，由 cell 自己声明。
-        if ($this->focusedRow !== $index) {
-            $this->setState(function () use ($index): void {
+        // ★ 光标格跟着指针走（**行 + 列**，阶段 7b）：列要靠"根坐标减行区原点再累加
+        //   列宽"算出来，而这套几何在 build 之外也可得（`$widthsInBuild`）。
+        //   以前只落行（"资源管理器同款"）：那时没有消费者要列 —— 双击进编辑有了。
+        $contentX = $this->pointerContentX($event->x);
+        $col = $contentX === null
+            ? $this->focusedCol
+            : ($this->columnAtX($contentX) ?? $this->focusedCol);
+
+        if ($this->focusedRow !== $index || $this->focusedCol !== $col) {
+            $this->setState(function () use ($index, $col): void {
                 $this->focusedRow = $index;
+                $this->focusedCol = $col;
             });
+        }
+
+        // ★ 双击进编辑（阶段 7b）：**放在选择之前** —— 本方法尾部有三处早退
+        //   （没配 `selection()` / 没有 `keyOf` 的结果），双击不该被它们吃掉。
+        //   ★ 判据是 `isDoubleClick()`（`=== 2`）而不是"≥ 2"：三击的第三下会落到
+        //     刚建出来的编辑器上，用"≥"会把刚进的编辑**收口再重开**（闪一下）。
+        //   ★ 不可编辑的列 ⇒ `beginEdit()` 自己返回 false，这里什么都不做（单击
+        //     只落光标格）—— 与"Enter 在不可编辑列上放行"是同一条纪律。
+        if ($event->isDoubleClick() && $contentX !== null) {
+            $this->beginEdit($index, $col, $contentX);
         }
 
         $view = $this->view();
@@ -1214,6 +1362,10 @@ final class TableState extends State implements Scrollable, EditableText
 
         $this->assertInteractivityDeclared($view, $columns);
 
+        // 指针落插入符要"建盒之前"量宽（见 `$editorMetrics` 的注释）
+        $this->editorMetrics = $ctx->metrics();
+        $this->editorStyle = InlineEditorBox::editorStyle($ctx);
+
         // ★ 编辑会话的**存活检查**（阶段 7a）：行被删 / 列被删 / 换了数据源之后，
         //   `editingRef` 会指向不存在的 key —— 那种"编辑一个不存在的格子"必须
         //   当场结束，否则用户继续打字就是对着空气改（提交时也找不到行）。
@@ -1285,9 +1437,14 @@ final class TableState extends State implements Scrollable, EditableText
         $striped = $view->isStriped();
         $keyOf = $view->keyMapper();
         $selectable = $view->selectionSet() !== null;
-        // ★ 交互行 = 可选中 或 有 tap 回调。两者都没有 ⇒ 纯展示表：
+        // ★ 交互行 = 可选中 或 有 tap 回调 或 **有可编辑列**。都没有 ⇒ 纯展示表：
         //   不挂 hover（悬停高亮是"这里能点"的暗示，会误导）、不算 key（零成本）。
-        $interactive = $selectable || $view->rowTapHandler() !== null;
+        // ★ 可编辑列必须算进来（阶段 7b）：双击进编辑走的是**行容器**的 pointer
+        //   （`ownsPress`），行不可交互 ⇒ 声明了 `editable()` 却怎么点都进不去，
+        //   而且**不报错** —— 只有 Tab + Enter 能用。这是"声明了就得生效"的底线。
+        $interactive = $selectable
+            || $view->rowTapHandler() !== null
+            || $this->hasEditableColumn($columns);
 
         $lines = [];
         for ($i = $first; $i < $last; $i++) {
