@@ -97,6 +97,18 @@ final class TableState extends State implements Scrollable
     private bool $resizeMoved = false;
 
     /**
+     * 鼠标停在哪一列的分割线上 / 正在拖哪一列（`null` = 都没有）。
+     *
+     * ★ 只影响那条线的**颜色**，不影响布局 —— 所以不需要 key、不需要 Element 身份，
+     *   重建时靠父链上的 `hover()` / `pointer()` 声明继续生效。
+     * ★ 两个字段而不是一个：拖动时指针可能已经离开手柄（拖出表头），此时 hover
+     *   已经 false，但线还该保持高亮 —— 合成一个字段会让拖动中的高亮闪断。
+     */
+    private ?string $dividerHoverKey = null;
+
+    private ?string $dividerDragKey = null;
+
+    /**
      * 选中行的染色透明度（0–255，约 14%）。
      *
      * ★ 为什么是**半透明的 `Accent`** 而不是新加一个 `AccentContainer` 主题 token：
@@ -108,6 +120,9 @@ final class TableState extends State implements Scrollable
 
     /** 列宽手柄的命中区宽（逻辑像素）—— 与 Excel 同量级 */
     private const RESIZE_HANDLE_W = 5.0;
+
+    /** 表头列分割线宽（逻辑像素）—— 发丝线，1px 是 DPI 下的最小可辨宽度 */
+    private const DIVIDER_W = 1.0;
 
     /**
      * 鼠标悬停在哪一行（**纯 UI 态**，住 State 而不是受控）。
@@ -597,15 +612,21 @@ final class TableState extends State implements Scrollable
 
         $cell = $this->cellShell($content, $width, $column);
 
-        // ★ 手柄包在**排序 pointer 里面**（Stack 的子 vs Stack 自己）：
-        //   `InputRouter::pointerOwner()` 从命中点往上遇到**第一个**声明 ownsPress
-        //   的节点就返回 ⇒ 命中手柄时是手柄赢，命中格内其它地方是整格赢。
-        //   **不需要改路由**，也不需要给手柄加"可聚焦/Activatable"的假身份。
+        // 叠层顺序 = 从下到上：内容 → 右缘分割线 → 手柄。
+        //   ★ **每一列都叠**（原来只在 resizable 时叠）：分割线是"列边界"，每列都有；
+        //     只有手柄才是可调的列才有。两者位置重合但职责分层 —— 线看得见、手柄按得到。
+        //   ★ 分割线**必须是浮层**，不能当 `Row` 的兄弟节点：那 1px 会被列宽分配算进去
+        //     （行是 `Row[SizedBox(宽)…]`，表头多出 n-1 个 1px ⇒ 表头与数据行错位）。
+        //   ★ 手柄包在 `Stack` 里（子 vs 自己）：`InputRouter::pointerOwner()` 从命中点
+        //     往上遇到**第一个**声明 ownsPress 的节点就返回 ⇒ 命中手柄时是手柄赢，
+        //     命中格内其它地方是整格赢。**不需要改路由**。
+        $overlay = [$cell, $this->headerDivider($ctx, $column)];
+
         if ($column->isResizable()) {
-            $cell = Stack::make()
-                ->alignment(StackAlign::TopRight)
-                ->children([$cell, $this->resizeHandle($column, $width)]);
+            $overlay[] = $this->resizeHandle($column, $width);
         }
+
+        $cell = Stack::make()->alignment(StackAlign::TopRight)->children($overlay);
 
         if (!$column->isSortable()) {
             return $cell;
@@ -629,11 +650,75 @@ final class TableState extends State implements Scrollable
     }
 
     /**
+     * 表头列右缘的分割线（1px 发丝线，全表头高）。
+     *
+     * ★ **每列都画**，包括最后一列：最后一列的那条就是表格的右边框。内容宽铺不满
+     *   视口时（`contentW` 被撑到视口宽、右侧留白）它也是"表格到此为止"的界。
+     * ★ 平时 `Border` 色，鼠标停到该列右缘或正在拖该列时变 `Accent`：这就是"哪里
+     *   能拖"的**事前**提示 —— 光标变 `SizeWE` 只在已经命中之后才出现，来不及定位。
+     * ★ 高度取表头高而不是 `Stack` 的整体高：`Stack` 的尺寸取 `max(子)`，若内容
+     *   比表头矮，线会跟着变矮，上下留下缺口。
+     */
+    private function headerDivider(BuildContext $ctx, TableColumn $column): Widget
+    {
+        return SizedBox::make()
+            ->width(self::DIVIDER_W)
+            ->height($this->view()->headerHeightPx())
+            ->background($this->dividerColor($ctx, $column));
+    }
+
+    /**
+     * 分割线取色：悬停 / 拖动该列 ⇒ `Accent`，否则 `Border`。
+     *
+     * ★ 用列 key 比对而不是列序号：拖动中被重建的是整个表头，序号会随 `columns`
+     *   顺序稳定，但 key 是本仓一贯的"列身份"（`TableSort` / `columnWidths` 也用它）。
+     */
+    private function dividerColor(BuildContext $ctx, TableColumn $column): Color
+    {
+        $key = $column->keyName();
+        if ($this->dividerHoverKey === $key || $this->dividerDragKey === $key) {
+            return $ctx->color(ColorToken::Accent);
+        }
+
+        return $ctx->color(ColorToken::Border);
+    }
+
+    /**
+     * 鼠标停到 / 离开某列的分割线。
+     *
+     * ★ 与 `noteRowHover()` 同一条纪律：**状态没变就不 setState**。表头有 N 列，
+     *   鼠标横向扫过会连续 enter/leave N 次，每次都重建整表的话扫一遍就是 N 帧。
+     */
+    private function noteDividerHover(string $key, bool $entered): void
+    {
+        if ($entered) {
+            if ($this->dividerHoverKey === $key) {
+                return;
+            }
+
+            $this->setState(function () use ($key): void {
+                $this->dividerHoverKey = $key;
+            });
+
+            return;
+        }
+
+        // 别的列的"离开"不该清掉当前悬停列（快速划过时顺序不保证）
+        if ($this->dividerHoverKey !== $key) {
+            return;
+        }
+
+        $this->setState(function (): void {
+            $this->dividerHoverKey = null;
+        });
+    }
+
+    /**
      * 列宽手柄：表头右缘一条 5px 的透明命中区。
      *
-     * ★ **不画任何东西**：平时透明，靠光标变 `SizeWE` 提示（Excel 同款）。要画视觉
-     *   反馈就得决定"平时什么色 / hover 什么色 / 深色主题什么色"——那是三个 token
-     *   的决策，而光标已经足够表达"这里能拖"。
+     * ★ **自己不画任何东西**：可见的那条线是 `headerDivider()`（每列都有）。手柄只
+     *   负责命中区 + 光标 + 把 hover / 拖动上报给那条线取色。分开的理由：线要每列都
+     *   有（视觉统一），命中区只能可调的列才有（不该拖的列不该出现可拖的暗示）。
      * ★ 用 `Stack(TopRight)` 做成**浮在格子上的一层**，不是格内第 N 个子节点：
      *   后者会被列宽分配算进去（内容宽被手柄吃掉 5px，而且越拖越窄）。
      * ★ 高度取表头高 ⇒ Stack 被撑满整条表头，命中区覆盖上下的完整高度。
@@ -644,6 +729,9 @@ final class TableState extends State implements Scrollable
             ->width(self::RESIZE_HANDLE_W)
             ->height($this->view()->headerHeightPx())
             ->cursor(CursorShape::SizeWE)
+            ->hover(function (bool $entered) use ($column): void {
+                $this->noteDividerHover($column->keyName(), $entered);
+            })
             ->pointer(
                 function (PointerEvent $event, Element $self) use ($column, $width): ?CursorShape {
                     if ($event->isDown() && $event->isPrimary()) {
@@ -651,6 +739,7 @@ final class TableState extends State implements Scrollable
                         $this->resizeStartWidth = $width;
                         $this->resizeLastWidth = $width;
                         $this->resizeMoved = false;
+                        $this->dividerDragKey = $column->keyName();
 
                         return null;
                     }
@@ -716,6 +805,7 @@ final class TableState extends State implements Scrollable
         }
 
         $this->resizeStartX = null;
+        $this->dividerDragKey = null;
 
         if (!$this->resizeMoved) {
             return;

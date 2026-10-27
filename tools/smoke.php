@@ -17243,19 +17243,43 @@ $tableHeaderRowOf = static function (Element $root): ?Element {
     return findElement($root, static fn(Element $e): bool => $e->widget() instanceof Row);
 };
 
-/** 从表头格的 `Stack` 里取手柄（第二个子：`[内容, 手柄]`） */
-$tableHandleOf = static function (?Element $stackEl): ?Element {
+/**
+ * 从表头格的 `Stack` 里按**谓词**取子。
+ *
+ * ★ 不用下标：叠层是 `[内容, 分割线, 手柄?]`，第三层只在可调的列才有 ⇒ 下标会随
+ *   列配置漂移（阶段 4 加分割线时，按 `$kids[1]` 取"手柄"当场取到了分割线）。
+ */
+$tableStackKidOf = static function (?Element $stackEl, callable $pick): ?Element {
     if ($stackEl === null || !$stackEl->widget() instanceof Stack) {
         return null;
     }
 
-    $kids = [];
-    $stackEl->visitChildren(static function (Element $c) use (&$kids): void {
-        $kids[] = $c;
+    $found = null;
+    $stackEl->visitChildren(static function (Element $c) use (&$found, $pick): void {
+        if ($found === null && $pick($c->widget())) {
+            $found = $c;
+        }
     });
 
-    return $kids[1] ?? null;
+    return $found;
 };
+
+/** 手柄 = 光标变 `SizeWE` 的那个子 */
+$tableHandleOf = static fn(?Element $el): ?Element => $tableStackKidOf(
+    $el,
+    static fn(Widget $w): bool => $w->cursorShape() === CursorShape::SizeWE,
+);
+
+/**
+ * 分割线 = 表头格里**自己带底色**的那个子。
+ *
+ * ★ 内容格不设 `background`（表头底色是 `RenderTable` 画的），手柄刻意透明 ⇒
+ *   "有底色"在表头格里唯一命中分割线。
+ */
+$tableDividerOf = static fn(?Element $el): ?Element => $tableStackKidOf(
+    $el,
+    static fn(Widget $w): bool => $w->mods()->fillColor() !== null,
+);
 
 // ① 默认关
 check(
@@ -17365,6 +17389,91 @@ check(
     'Table · 缺列宽上报的报错指路 onColumnResize（并给出"去掉 resizable()"这条退路）',
     str_contains(logText($log), 'onColumnResize') && str_contains(logText($log), 'resizable()'),
     logText($log) === '' ? '空日志' : '有日志',
+);
+
+// ⑩ 表头列分割线：每列右缘一条 1px 竖线（含末列），平时 `Border`、悬停/拖动 `Accent`
+//   ★ 起因是真机反馈"拖动列宽不好定位"：手柄是 5px 的**透明**命中区，光标变
+//     `SizeWE` 只在已经命中之后才出现 —— 用户没法在移动前看到边界在哪。
+//   ★ 验两层：结构层（每格都有线、1px、全表头高、不占列宽）+ 像素层（线真的画出来
+//     了，且取色随悬停/拖动变）。只验结构会漏掉"线被盖住 / 取色没接上"。
+$tableDividerEl = $tableMount($tableResizeBuild());
+$tableDividerCells = $tableHeaderCellsOf($tableDividerEl);
+$tableDivider0 = $tableDividerOf($tableDividerCells[0] ?? null);
+$tableDividerLast = $tableDividerOf($tableDividerCells[2] ?? null);
+$tableDividerSize0 = $tableDivider0?->effectiveBox()?->size();
+
+check(
+    'Table · 每列表头右缘都有分割线（含最后一列 —— 它就是表格的右边框）',
+    $tableDivider0 !== null && $tableDividerLast !== null,
+    '第 1 列=' . ($tableDivider0 === null ? '无' : '有')
+        . ' 末列=' . ($tableDividerLast === null ? '无' : '有'),
+);
+check(
+    'Table · 分割线 1px 宽、全表头高，且是浮层不占列宽（宽序列仍 [60,130,130]）',
+    $tableDividerSize0 !== null
+        && abs($tableDividerSize0->width - 1.0) < 0.01
+        && abs($tableDividerSize0->height - 32.0) < 0.5
+        && abs(($tableWidthsOf($tableHeaderRowOf($tableDividerEl))[1] ?? 0.0) - 130.0) < 0.5,
+    $tableDividerSize0 === null
+        ? '量不到尺寸'
+        : sprintf('%.2f×%.2f 宽序=%s', $tableDividerSize0->width, $tableDividerSize0->height,
+            \json_encode($tableWidthsOf($tableHeaderRowOf($tableDividerEl)))),
+);
+
+// 像素：第 1 列的线在 x=59（列宽 60，线贴右缘 1px），表头纵向取中点 y=16
+$tableDividerBorderInk = $tableTheme->color(ColorToken::Border);
+$tableDividerAccentInk = $tableTheme->color(ColorToken::Accent);
+$tableDividerShot = $tableRasterOf($tableBoxOf($tableDividerEl), 320, 240);
+$tableDividerPx = $tableDividerShot->pixelAt(59, 16);
+check(
+    'Table · 像素：分割线是 `Border` 色（与表头下那条横线同色，视觉上是同一套边界）',
+    $tableDividerPx->equals($tableDividerBorderInk),
+    $tablePx($tableDividerShot, 59, 16) . ' / 期望 ' . sprintf('rgb(%d,%d,%d)',
+        $tableDividerBorderInk->r, $tableDividerBorderInk->g, $tableDividerBorderInk->b),
+);
+
+// 悬停第 2 列的手柄 ⇒ 第 2 列那条线（x=189）变 Accent，第 1 列（x=59）保持 Border
+$tableDividerHandle = $tableHandleOf($tableDividerCells[1] ?? null);
+$tableDividerHandle?->widget()->hoverHandlerValue()?->__invoke(true);
+$tablePump($tableDividerEl);
+$tableDividerShot = $tableRasterOf($tableBoxOf($tableDividerEl), 320, 240);
+check(
+    'Table · 悬停手柄 ⇒ 那一列的线变 `Accent`（"这里能拖"的事前提示，光标来不及定位）',
+    $tableDividerShot->pixelAt(189, 16)->equals($tableDividerAccentInk),
+    $tablePx($tableDividerShot, 189, 16),
+);
+check(
+    'Table · 悬停只染**那一列**的线（相邻列仍是 `Border`）',
+    $tableDividerShot->pixelAt(59, 16)->equals($tableDividerBorderInk)
+        && $tableDividerShot->pixelAt(319, 16)->equals($tableDividerBorderInk),
+    'x=59 ' . $tablePx($tableDividerShot, 59, 16) . ' / x=319 ' . $tablePx($tableDividerShot, 319, 16),
+);
+
+// 拖动中：指针已离开手柄（hover 报 leave），线仍要保持 Accent；抬起后回到 Border
+$tableDragEl = $tableMount($tableResizeBuild());
+$tableDragCells = $tableHeaderCellsOf($tableDragEl);
+$tableDragHandle = $tableHandleOf($tableDragCells[1] ?? null);
+$tableDragHandle?->widget()->pointerHandlerValue()
+    ?->__invoke(PointerEvent::down(100.0, 16.0), $tableDragHandle);
+$tableDragHandle?->widget()->hoverHandlerValue()?->__invoke(false);
+$tableDragHandle?->widget()->pointerHandlerValue()
+    ?->__invoke(PointerEvent::move(100.0, 16.0), $tableDragHandle);
+$tablePump($tableDragEl);
+$tableDragShot = $tableRasterOf($tableBoxOf($tableDragEl), 320, 240);
+check(
+    'Table · 拖动中指针已离开手柄（hover=false）⇒ 线保持 `Accent`（拖动中不闪断）',
+    $tableDragShot->pixelAt(189, 16)->equals($tableDividerAccentInk),
+    $tablePx($tableDragShot, 189, 16),
+);
+
+$tableDragHandle?->widget()->pointerHandlerValue()
+    ?->__invoke(PointerEvent::up(100.0, 16.0), $tableDragHandle);
+$tablePump($tableDragEl);
+$tableDragShot = $tableRasterOf($tableBoxOf($tableDragEl), 320, 240);
+check(
+    'Table · 抬起后高亮消失（线回到 `Border`）',
+    $tableDragShot->pixelAt(189, 16)->equals($tableDividerBorderInk),
+    $tablePx($tableDragShot, 189, 16),
 );
 
 // ⑨ **真实路由**：手柄赢下按下，表头整格收不到

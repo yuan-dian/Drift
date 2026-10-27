@@ -324,6 +324,17 @@ final class Modifier
     // ── 读：绘制（`RenderBox::paint()` 每帧读）─────────────────────
 
     /** 无背景 / 边框 / 阴影 ⇒ false（省一次 `paintBehind()` 调用） */
+    /**
+     * 底色；`null` = 没设。
+     *
+     * ★ 必须返回 `?Color` 而不是 `Color`：未设时 `$background` 是占位的黑色
+     *   （构造函数里初始化的），直接返回它等于把"没设"报成"黑色"。
+     */
+    public function fillColor(): ?Color
+    {
+        return $this->hasBackground ? $this->background : null;
+    }
+
     public function hasVisual(): bool
     {
         return $this->hasBackground || ($this->hasBorder && $this->borderWidth > 0.0) || $this->shadow > 0.0;
