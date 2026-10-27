@@ -711,19 +711,26 @@ if ($mode === 'update') {
 
 if ($mode === 'check') {
     $fail = 0;
+    // ★ S3 manifest：测量层与呈现层之间的契约（新增，不破坏 --check 的文本输出）。
+    //   呈现层 `golden-report.php` 读它 + 现场产物生成自包含 HTML；S4 也可复用。
+    $manifest = [];
+    $buildDir = dirname(__DIR__) . '/_build';
     foreach ($scenes as $name => $make) {
+        $kind = str_starts_with($name, 'page/') ? 'page' : 'canvas';
         $rgba = $make();
         $sceneDir = $dir . '/' . $name;
         $expFile = $sceneDir . '/expected.rgba.gz';
         if (!is_file($expFile)) {
             echo "FAIL {$name}：无基线（先跑 php tools/golden-raster.php --update）\n";
             $fail++;
+            $manifest[] = ['name' => $name, 'kind' => $kind, 'pass' => false, 'reason' => 'no-baseline'];
             continue;
         }
 
         $expected = gzdecode((string) file_get_contents($expFile));
         if ($expected === $rgba) {
             echo "ok   {$name}\n";
+            $manifest[] = ['name' => $name, 'kind' => $kind, 'pass' => true];
             continue;
         }
 
@@ -775,6 +782,7 @@ if ($mode === 'check') {
         if ($maxX < 0) {
             // 逐像素全同但整体不等 ⇒ 只可能是长度不同（尺寸变了）
             echo "FAIL {$name}：长度不同（基线 " . strlen($expected) . ' / 实际 ' . strlen($rgba) . "）\n";
+            $manifest[] = ['name' => $name, 'kind' => $kind, 'pass' => false, 'reason' => 'size'];
             continue;
         }
 
@@ -838,6 +846,41 @@ if ($mode === 'check') {
         }
 
         echo $msg . "\n";
+
+        // ★ 记录 S3 现场产物路径（相对 golden 根），呈现层据此拼 HTML。
+        $artifacts = [
+            'expectedGz' => $name . '/expected.rgba.gz',
+            'actualPng' => $name . '/actual/actual.png',
+            'diffPng' => $name . '/diff/diff.png',
+        ];
+        if (str_starts_with($name, 'page/') && isset($pageClasses[$name])) {
+            $artifacts['inspectJson'] = $name . '/inspect/actual.json';
+        }
+        $manifest[] = [
+            'name' => $name,
+            'kind' => $kind,
+            'pass' => false,
+            'diffPixels' => $diffPixels,
+            'maxDelta' => $maxDelta,
+            'pct' => $pct,
+            'bbox' => [$minX, $minY, $maxX, $maxY],
+            'bands' => array_slice($bands, 0, 3),
+            'artifacts' => $artifacts,
+        ];
+    }
+
+    // 落 manifest（测量层 → 呈现层的契约）。失败与否都写，便于"全绿时也有状态表"。
+    if (!is_dir($buildDir) && !mkdir($buildDir, 0777, true) && !is_dir($buildDir)) {
+        fwrite(STDERR, "建不了 {$buildDir}\n");
+    } else {
+        $manifestMeta = [
+            'schema' => 1,
+            'w' => $W,
+            'h' => $H,
+            'goldenRoot' => $dir,
+            'scenes' => $manifest,
+        ];
+        file_put_contents($buildDir . '/golden-manifest.json', json_encode($manifestMeta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT) . "\n");
     }
     echo $fail === 0 ? "GOLDEN OK\n" : "{$fail} FAIL\n";
     exit($fail === 0 ? 0 : 1);
