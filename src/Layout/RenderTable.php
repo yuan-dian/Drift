@@ -74,6 +74,17 @@ final class RenderTable extends RenderBox implements ScrollBarHost
     /** 滚动条透明度（`0..1`）—— `ScrollBarFade` 每帧把当前值推过来 */
     private float $barOpacity;
 
+    /**
+     * 两轴偏移（逻辑像素）—— `setScrollOffset()` 就地改。
+     *
+     * ★ 不 readonly 的理由与 `RenderScrollView::$scrollOffset` 同源：滚一格不该
+     *   重建整棵行区（实测滚动帧里 `settle` 占 55%）。State 仍是权威值，
+     *   盒是它的投影；换盒时新偏移由构造参数递进来。
+     */
+    private float $scrollX;
+
+    private float $scrollY;
+
     /** 纵向可滚上限（布局后才有意义） */
     private float $maxScroll = 0.0;
 
@@ -111,8 +122,8 @@ final class RenderTable extends RenderBox implements ScrollBarHost
      * ★ 参数序：必选在前、可选在后（`04` §5.4：反过来 tpc 预处理器直接 Fatal）。
      */
     public function __construct(
-        private readonly float $scrollX,
-        private readonly float $scrollY,
+        float $scrollX,
+        float $scrollY,
         private readonly float $contentWidth,
         private readonly float $headerHeight,
         private readonly float $contentHeight,
@@ -125,9 +136,50 @@ final class RenderTable extends RenderBox implements ScrollBarHost
         ?Rect $focusRect,
         float $barOpacity = 1.0,
     ) {
+        $this->scrollX = $scrollX;
+        $this->scrollY = $scrollY;
         $this->barOpacity = $barOpacity;
         $this->focusInk = $focusInk;
         $this->focusRect = $focusRect;
+    }
+
+    /**
+     * 就地改某一轴的偏移（见 `ScrollBarHost::setScrollOffset()`）。
+     *
+     * ★ 表格是**双轴**盒，所以这里按轴分派；单轴视口的同形方法在
+     *   `RenderScrollView` 上。两个实现都只做"改字段 + 标重排 + 回夹取值"。
+     * ★★ 还没排过 ⇒ **不夹**（同 `RenderScrollView` 的理由：`maxScroll` 恒 0 时
+     *   夹一下会把首帧之前设的偏移吞掉，且不报错）。
+     */
+    public function setScrollOffset(Axis $axis, float $value): float
+    {
+        if ($axis === Axis::Vertical) {
+            $this->scrollY = $value;
+        } else {
+            $this->scrollX = $value;
+        }
+
+        RenderBox::markNeedsLayout();
+
+        return $this->hasSize() ? $this->appliedOffset($axis) : $value;
+    }
+
+    /**
+     * 行区**可见高**（= 视口高 − 表头高，上一次布局的结果）。
+     *
+     * ★ 存在的理由：`TableState` 要在**不重建**的前提下算"该建哪几行"，
+     *   而它拿不到 `BuildContext`（`viewportEstimate()` 要 ctx 的度量）。
+     *   盒有 `size()` 与 `headerBoxH`，是唯一在滚动期可靠的口径。
+     *   ⇒ 窗口判断与布局同源，不会出现"State 以为可见 20 行、盒只给 19 行高"。
+     */
+    public function bodyHeight(): float
+    {
+        $size = $this->size;
+        if ($size === null) {
+            return 0.0;
+        }
+
+        return max(0.0, $size->height - $this->headerBoxH);
     }
 
     /** @internal `TableElement` 挂接期调（子盒由 Element 的事，不在 Widget 里挂） */

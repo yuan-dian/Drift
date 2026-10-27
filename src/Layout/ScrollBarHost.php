@@ -65,6 +65,28 @@ interface ScrollBarHost
     /** 该轴实际生效的偏移（已按 `maxScroll` 夹取） */
     public function appliedOffset(Axis $axis): float;
 
+    /**
+     * **就地**改滚动偏移 —— 不重建 Widget 树、只重排（+重画）。
+     *
+     * ★★ 存在的理由（2026-10-27，A 批第 1 项）：偏移原先只作为**构造参数**递进来
+     *   ⇒ 滚一格 = `setState()` = 整棵滚动内容重建。实测（AOT，`bench` 的
+     *   虚拟化表格档）滚动帧 **10.53ms**，其中 `settle`（重建）**5.84ms = 55%**；
+     *   不重建就只剩 **4.62ms**。偏移在语义上只改两个数，不该动"有哪些子"。
+     *
+     * ★ 返回值是**实际生效**的偏移（已按 `maxScroll` 夹取）：调用方必须拿它回写
+     *   自己的字段，否则 State 里存的是"用户增量累加值"，而内容会变短
+     *   （过滤 / 列宽变窄）⇒ 旧值长期大于上限，之后每笔增量都先消耗那段死区
+     *   （真机表现："拖着条，画面不动"）。
+     *
+     * ★ 实现**必须**调 `RenderBox::markNeedsLayout()`：本帧既没 `rebuild()` 也没换盒，
+     *   `Frame` 的跳过判据看不到任何变化 ⇒ 不重排就是画面停在旧位置（不报错）。
+     *
+     * @param float $value 目标偏移（**内容坐标**，调用方已夹下界 0）
+     * @return float 实际生效的偏移
+     * @internal 只有 `Scrollable` 的 State 实现调它
+     */
+    public function setScrollOffset(Axis $axis, float $value): float;
+
     /** @internal `ScrollBarFade` 每帧把当前透明度推过来（不重建、不重排） */
     public function setBarOpacity(float $value): void;
 }

@@ -51,6 +51,9 @@ final class M3
      *        在 settle 计时区内新建一份等价树并 `update()` 根，于是整棵树走
      *        `rebuild()` + `updateChildren()`。不给 ⇒ 干净帧（只有 settlePass 的
      *        无条件全遍，测的是"没有任何脏节点时每帧的固定税"）。
+     * @param null|\Closure(Element): void $perFrame 每帧**在 settle 之前**、**计时区内**调一次
+     *        （收到根 Element）。给"真实交互"用：滚动就是"改状态 + 本帧落盘"，
+     *        把 `scrollBy()` 放在计时区外会把它的成本藏起来 —— 而它正是被测对象。
      *
      * @return array{
      *   label: string, nodes: int, frames: int,
@@ -64,6 +67,7 @@ final class M3
         float $h,
         int $frames,
         ?\Closure $factory = null,
+        ?\Closure $perFrame = null,
     ): array {
         $metrics = new DeterministicMetricsProvider(
             DeterministicFontManager::standard()->collection(),
@@ -91,6 +95,11 @@ final class M3
 
             // ① settle（帧末统一重建，§5.2 裁决 3）
             $t0 = \hrtime(true);
+            if ($perFrame !== null) {
+                // ★ 交互要**在计时区内**：生产里它发生在输入派发之后、settle 之前，
+                //   本帧的成本就是"改状态 + 落盘 + 重排 + 重画"的合计。
+                $perFrame($root);
+            }
             if ($factory !== null) {
                 // ★ 重建要**在计时区内**：生产里 `build()` 就是 settle 的一部分，
                 //   挪到外面会把"配对 + 重建"的成本藏起来。

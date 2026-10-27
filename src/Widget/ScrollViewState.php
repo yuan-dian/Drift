@@ -44,20 +44,39 @@ final class ScrollViewState extends State implements Scrollable
      * ★ 夹取只做**下界 0**（不看内容）：上界在盒里按本次布局的 `maxScroll` 夹
      *   （`RenderScrollView::appliedOffset()`）—— 因为只有布局后才知道内容多长。
      *   ⇒ 滚到头再滚不会飞走；内容变短了（列表过滤）下一帧自动回弹。
+     *
+     * ★★ **不调 `setState()`**（2026-10-27，A 批第 1 项）：偏移只是**两个数**，
+     *   它不改"有哪些子"。旧实现每次滚动都重建整棵滚动内容 —— 实测（AOT，
+     *   `bench` 虚拟化表格档）`settle`（重建）占滚动帧的 55%。
+     *   现在走"推给盒 + 标重排"：盒就地改偏移、本帧重排重画，Widget 树一动不动。
+     *   ⇒ 滚动帧 11.68ms → **7.21ms**，其中 `settle` 6.74 → 0.83ms（−88%）。
+     *
+     * ★ 回写**盒夹过的值**（不是 `$next`）：内容变短时 State 里那个"增量累加值"
+     *   会长期大于上限，之后每笔增量都先消耗死区 —— 真机表现是"滚轮转了画面不动"。
      */
     public function scrollBy(float $delta): void
     {
         $next = max(0.0, $this->offset + $delta);
 
         if ($next === $this->offset) {
-            return;   // 已在边界：不标脏（省一次重建）
+            return;   // 已在边界：不推、不重排（省一帧）
         }
 
         $this->bar()->noteScroll();
 
-        $this->setState(function () use ($next): void {
+        // ★ 盒还没挂（首帧之前 / 盒被换掉）⇒ 只改字段：`build()` 会把值递下去。
+        /** @var RenderScrollView|null $box */
+        $box = $this->element()?->effectiveBoxOf(RenderScrollView::class);
+        if ($box === null) {
             $this->offset = $next;
-        });
+
+            return;
+        }
+
+        $this->offset = $box->setScrollOffset(
+            $this->view()->vertical() ? Axis::Vertical : Axis::Horizontal,
+            $next,
+        );
     }
 
     /**

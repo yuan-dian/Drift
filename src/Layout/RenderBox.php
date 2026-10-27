@@ -134,6 +134,40 @@ abstract class RenderBox extends RenderObject
         return $this->size !== null;
     }
 
+    /**
+     * 渲染树**需要重排**的绝对序号（跨整棵树，含浮层那棵第二根树）。
+     *
+     * ★ 存在的理由（2026-10-27，A 批第 1 项）：`Frame` 跳过 layout 的判据是
+     *   "没重建 + 约束没变 + 盒没换代"。前两条覆盖不了**盒就地更新** ——
+     *   滚动偏移改成推给盒之后，本帧既没有 `rebuild()`、也没有换盒，
+     *   而盒里那两个数变了 ⇒ 不重排就是**画面停在旧位置**（且不报错）。
+     *
+     * ★ 为什么序号住 `Layout` 而不是 `Widget\State`：`RenderBox` 不能依赖
+     *   Widget 层（依赖方向 Widget → Layout）。`State::boxEpoch()` 现在**转发**
+     *   到这里 ⇒ 全仓仍然只有**一个**序号、一个含义："渲染树有东西变了，必须重排"。
+     *   两个序号迟早会漂（一处记得加、另一处忘了）。
+     */
+    private static int $layoutEpoch = 0;
+
+    /** @internal `Frame` 的"跳过 layout"判据之一（`05` §5.4 第三步） */
+    public static function layoutEpoch(): int
+    {
+        return self::$layoutEpoch;
+    }
+
+    /**
+     * 声明"本盒的输入变了，必须重排"（**不换盒、不重建**）。
+     *
+     * ★ 只给"改了盒内状态"的实现调（`setScrollOffset()`）；换盒走
+     *   `Element::syncBox()`（那里也加这个序号，同一个计数器）。
+     * ★ 它**不触发绘制**：本仓每帧无条件 paint（无脏边界），所以重排完自然会画。
+     * @internal
+     */
+    public static function markNeedsLayout(): void
+    {
+        self::$layoutEpoch++;
+    }
+
     /** 父定位子（C1）：子不自定位，所以这两个只有父会写 */
     public function offsetX(): float
     {

@@ -131,6 +131,18 @@ final class TableState extends State implements Scrollable, EditableText
     private int $createdRows = 0;
 
     /**
+     * 上一帧造的行窗口在**行区内容坐标**里的范围 `[start, end)`（= `first*rowH` 到 `last*rowH`）。
+     *
+     * ★ 存在的理由（2026-10-27，A 批第 1 项）：滚动不再 `setState()`，于是
+     *   "窗还盖不盖得住视口"必须**在 build 之外**能判 —— 盖得住就只推偏移
+     *   （0 重建），盖不住才标脏。没有这两个数，滚出缓冲带之后行区下方就是
+     *   一片空白（且不报错：盒照样画，只是没行）。
+     */
+    private float $windowStart = 0.0;
+
+    private float $windowEnd = 0.0;
+
+    /**
      * 上一次 `build()` 用的视口宽 —— 与盒实测宽比对，不一致就再来一帧。
      *
      * ★★ 为什么必须比对：`BuildContext::$width` 是**窗口**宽（根 context 由
@@ -276,6 +288,19 @@ final class TableState extends State implements Scrollable, EditableText
         return $this->createdRows;
     }
 
+    /**
+     * 滚动 Δ（**逻辑像素**；正 = 行区内容上移，即"往下看"）。
+     *
+     * ★★ **能不重建就不重建**（2026-10-27，A 批第 1 项）：偏移只改两个数，
+     *   不改"有哪些行"。窗口仍盖得住视口 ⇒ 推给盒（就地改 + 标重排）即可；
+     *   只有滚出缓冲带（`Table::cacheExtent()`）才标脏重建。
+     *   实测（AOT，`bench` 滚动帧档）：滚动帧 11.68ms → **7.21ms**，
+     *   其中 `settle`（重建）6.74 → 0.83ms（−88%）；`layout`/`paint` 略涨
+     *   （2.83→3.65 / 2.19→2.70），那是缓冲带把窗从 395 节点撑到 475 的代价。
+     *
+     * ★ 回写**盒夹过的值**（不是 `$next`）：内容变短时 State 里那个"增量累加值"
+     *   会长期大于上限，之后每笔增量都先消耗死区 —— 真机表现是"拖着条，画面不动"。
+     */
     public function scrollBy(float $delta): void
     {
         $this->commitIfUserScrolled();
@@ -283,14 +308,57 @@ final class TableState extends State implements Scrollable, EditableText
         $next = max(0.0, $this->offsetY + $delta);
 
         if ($next === $this->offsetY) {
-            return;   // 已在边界：不标脏（省一次重建）
+            return;   // 已在边界：不推、不重排（省一帧）
         }
 
         $this->bar()->noteScroll();
 
-        $this->setState(function () use ($next): void {
-            $this->offsetY = $next;
-        });
+        $this->offsetY = $this->pushOffset(Axis::Vertical, $next);
+
+        // 窗口盖不住视口 ⇒ 必须重建（否则上/下会露出没建的空行）
+        if (!$this->windowCovers()) {
+            $this->markDirty();
+        }
+    }
+
+    /**
+     * 把偏移推给盒并拿回**实际生效值**（`ScrollBarHost::setScrollOffset()`）。
+     *
+     * ★ 盒不在（首帧之前 / 盒被换掉）⇒ 原样返回：`build()` 会把字段递下去。
+     * ★ 两个轴共用这一处 —— 夹取与"标重排"只写一遍。
+     */
+    private function pushOffset(Axis $axis, float $value): float
+    {
+        /** @var RenderTable|null $box */
+        $box = $this->element()?->effectiveBoxOf(RenderTable::class);
+        if ($box === null) {
+            return $value;
+        }
+
+        return $box->setScrollOffset($axis, $value);
+    }
+
+    /**
+     * 上一帧造的行窗口是否**完整盖住**当前行区视口 `[offsetY, offsetY+bodyH)`。
+     *
+     * ★ 视口高取**盒的** `bodyHeight()`（= 盒高 − 表头高）而不是 build 里的估算：
+     *   滚动期没有 `BuildContext`，而盒是唯一可靠口径 ⇒ 判据与布局同源。
+     * ★ 还没排过（盒无 size）⇒ 判"盖不住"（宁可多重建一次，也不要露空行）。
+     */
+    private function windowCovers(): bool
+    {
+        /** @var RenderTable|null $box */
+        $box = $this->element()?->effectiveBoxOf(RenderTable::class);
+        if ($box === null) {
+            return false;
+        }
+
+        $bodyH = $box->bodyHeight();
+        if ($bodyH <= 0.0) {
+            return false;
+        }
+
+        return $this->offsetY >= $this->windowStart && $this->offsetY + $bodyH <= $this->windowEnd;
     }
 
     /**
@@ -329,9 +397,9 @@ final class TableState extends State implements Scrollable, EditableText
 
         $this->bar()->noteScroll();
 
-        $this->setState(function () use ($next): void {
-            $this->offsetX = $next;
-        });
+        // ★ 横向**永不改行窗口**（行是定宽的，横滚只是平移）⇒ 只推偏移、
+        //   不标脏。这正是本项优化在横轴上最干净的一档：横滚一帧 0 重建。
+        $this->offsetX = $this->pushOffset(Axis::Horizontal, $next);
     }
 
     /**
@@ -1428,10 +1496,20 @@ final class TableState extends State implements Scrollable, EditableText
             ? $this->cellRect($this->focusedRow, $this->focusedCol, $widths, $rowH, $spacing)
             : null;
 
-        $first = (int) \floor($offsetY / $rowH);
-        $last = (int) \ceil(($offsetY + $bodyH) / $rowH);
+        // ★★ 窗口 = 可视行 ± **缓冲带**（`cacheExtent`，2026-10-27 起）。
+        //   没有缓冲带时 `first = floor(offsetY/rowH)`：偏移一动 `first` 就动
+        //   ⇒ 窗口每滚一行就变 ⇒ 又退回"每帧重建"（本项优化当场归零）。
+        //   缓冲带让"滚一小段不重建"成立，代价是窗口变大、每次 layout 更贵
+        //   （行区 layout 是全树 O(n)）⇒ 取值是权衡，见 `Table::$cacheExtentPx`。
+        $cache = $view->cacheExtentPx();
+        $first = (int) \floor(max(0.0, $offsetY - $cache) / $rowH);
+        $last = (int) \ceil(($offsetY + $bodyH + $cache) / $rowH);
         $first = max(0, min($first, $count));
         $last = max($first, min($last, $count));
+
+        // ★ 记下窗口的**内容坐标**范围 —— 滚动期靠它判"要不要重建"（见 `$windowStart`）
+        $this->windowStart = $first * $rowH;
+        $this->windowEnd = $last * $rowH;
 
         $headerKid = $this->headerRow($ctx, $columns, $widths, $contentW, $headerH, $spacing);
         $striped = $view->isStriped();

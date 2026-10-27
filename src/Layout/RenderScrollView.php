@@ -31,10 +31,11 @@ use Drift\Rendering\Paint;
  *   - `maxScroll = max(0, 内容主轴 − 视口主轴)`，偏移夹进 `[0, maxScroll]`
  *     ⇒ 滚不到头、也滚不出界（越界是"内容飞走"的静默形态）。
  *
- * ★ 偏移量是**构造参数**（不提供 setter）：Widget 不可变 ⇒ 参数只会整体换新
- *   （`RenderBoxWidget::createRenderObject()` 的纪律），不存在字段级半同步。
- *   滚动由 `ScrollViewState` 持值、经重建把新偏移递进来（与 `TextField`
- *   打字的路径完全同构）。
+ * ★ 偏移量**不是**构造参数里那个只读值：构造时给初值，之后由
+ *   `setScrollOffset()` **就地**改（`ScrollBarHost` 的接口方法）。理由见那个方法 ——
+ *   一句话：滚一格不该重建整棵内容（实测占滚动帧的 55%）。
+ *   ★ 盒仍会在重建时**换新**（`Element::syncBox()` 的纪律不变）⇒ State 才是
+ *   权威值，盒只是它的投影；换盒时新偏移由构造参数递进来。
  *
  * ★ **滚动条**（2026-10-17）：`paint()` 在内容之上画一条胶囊形 thumb
  *   （`maxScroll == 0` 不画）。纯视觉层 —— 不新增状态、不改夹取、不碰命中。
@@ -43,6 +44,8 @@ use Drift\Rendering\Paint;
  */
 final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
 {
+    /** 滚动偏移（逻辑像素，≥ 0）—— `setScrollOffset()` 就地改 */
+    private float $scrollOffset;
     /** 滚动条透明度（`0..1`）—— `ScrollBarFade` 每帧把当前值推过来 */
     private float $barOpacity;
 
@@ -66,7 +69,7 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
      *   required parameter"）⇒ 解释器三门全绿也过不了 codegen（2026-10-17 踩过）。
      */
     public function __construct(
-        private readonly float $scrollOffset,
+        float $scrollOffset,
         private readonly Color $thumb,
         private readonly bool $vertical = true,
         private readonly ?float $virtualExtent = null,
@@ -80,7 +83,29 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
          */
         float $barOpacity = 1.0,
     ) {
+        $this->scrollOffset = $scrollOffset;
         $this->barOpacity = $barOpacity;
+    }
+
+    /**
+     * 就地改偏移（见 `ScrollBarHost::setScrollOffset()`）。
+     *
+     * ★ 夹取用**上一次布局**的 `maxScroll`：滚动期间内容长度不变 ⇒ 那个值仍然有效。
+     *   内容真的变短时下一帧会重建（build 里有夹取写回），不会留下越界值。
+     * ★★ **还没排过（`size()` 为 null）⇒ 不夹、原样返回**：那时 `maxScroll` 恒 0，
+     *   夹一下会把"首帧之前设的偏移"整个吞掉 —— 现象是预览 / 测试里
+     *   `render()` 的 prepare 阶段滚了 400，画出来还在顶部，**不报错**。
+     */
+    public function setScrollOffset(Axis $axis, float $value): float
+    {
+        if ($axis !== $this->axis()) {
+            return 0.0;   // 单轴视口：不认识的轴按接口纪律返回 0（同 appliedOffset）
+        }
+
+        $this->scrollOffset = $value;
+        RenderBox::markNeedsLayout();
+
+        return $this->hasSize() ? $this->applied() : $value;
     }
 
     /** @internal `ScrollBarFade` 每帧把值推过来（不重建、不重排） */

@@ -4,6 +4,9 @@ declare(strict_types=1);
 namespace Drift\Bench;
 
 use Drift\Errors;
+use Drift\Widget\Element;
+use Drift\Widget\Scrollable;
+use Drift\Widget\StatefulElement;
 use Drift\Widget\Widget;
 
 /**
@@ -270,6 +273,74 @@ final class Runner
                 return Trees::build(100, 14);
             },
         );
+
+        // ★★ **虚拟化表格**（2026-10-27 补）：前六档要么是全量树、要么是手搭的
+        //   Row/Text。生产里最大的表面是 `Table`，它**只建可见行** ⇒ 树小但滚动
+        //   必重建窗口。这两档回答"滚动一帧到底贵在哪" —— 拿全量树的 8–18 倍差
+        //   去推表格是错的（那笔账里有一半是"树大"，与滚动无关）。
+        self::line('   ↑ 以下是**虚拟化表格**（1000 行数据，只有可见行在树里）');
+        self::line('');
+        self::flush();
+
+        self::oneCase('虚拟化表格 1000×6（干净帧）', Trees::table(1000, 6), 1280.0, 800.0, 200);
+        self::oneCase(
+            '虚拟化表格 1000×6（每帧重建）',
+            Trees::table(1000, 6),
+            1280.0,
+            800.0,
+            200,
+            static function (): Widget {
+                return Trees::table(1000, 6);
+            },
+        );
+
+        // ★★ **滚动帧**（2026-10-27，A 批第 1 项之后新增）：每帧真的 `scrollBy(40)`。
+        //   这一档才是"改完之后滚动要多少"的判据 —— 上面那档"每帧重建"是**改之前**
+        //   的形状（每次滚动都 setState），留着当对照。
+        //   ★ `scrollBy()` 在**计时区内**（`perFrame`）：生产里它发生在输入派发之后、
+        //     帧末 settle 之前，把它挪到外面就等于不计成本。
+        $tableScroller = null;
+        self::oneCase(
+            '虚拟化表格 1000×6（滚动帧：每帧滚 40px）',
+            Trees::table(1000, 6),
+            1280.0,
+            800.0,
+            200,
+            null,
+            static function (Element $root) use (&$tableScroller): void {
+                if ($tableScroller === null) {
+                    $tableScroller = self::scrollableOf($root);
+                }
+                if ($tableScroller instanceof Scrollable) {
+                    $tableScroller->scrollBy(40.0);
+                }
+            },
+        );
+    }
+
+    /**
+     * 子树里第一个 `Scrollable` 的 State（bench 的滚动档用）。
+     *
+     * ★ 用 `Scrollable` 接口而不是 `TableState`：基准只关心"能不能滚"，不该
+     *   认识具体控件（同一份代码也能给 `LazyColumn` / `ScrollView` 用）。
+     */
+    private static function scrollableOf(Element $element): ?Scrollable
+    {
+        if ($element instanceof StatefulElement) {
+            $state = $element->state();
+            if ($state instanceof Scrollable) {
+                return $state;
+            }
+        }
+
+        $found = null;
+        $element->visitChildren(static function (Element $child) use (&$found): void {
+            if ($found === null) {
+                $found = self::scrollableOf($child);
+            }
+        });
+
+        return $found;
     }
 
     private static function oneCase(
@@ -279,8 +350,9 @@ final class Runner
         float $h,
         int $frames,
         ?\Closure $factory = null,
+        ?\Closure $perFrame = null,
     ): void {
-        $r = M3::runTree($label, $widget, $w, $h, $frames, $factory);
+        $r = M3::runTree($label, $widget, $w, $h, $frames, $factory, $perFrame);
         $nodes = \max(1, (int) $r['nodes']);
 
         self::line(\sprintf('   ── %s', $label));

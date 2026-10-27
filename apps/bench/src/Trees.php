@@ -10,6 +10,8 @@ use Drift\Widget\Modal;
 use Drift\Widget\Row;
 use Drift\Widget\ScrollView;
 use Drift\Widget\Snackbar;
+use Drift\Widget\Table;
+use Drift\Widget\TableColumn;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
 
@@ -47,6 +49,64 @@ final class Trees
         }
 
         return ScrollView::make(Column::make()->children($list));
+    }
+
+    /**
+     * **虚拟化表格**（`Table`，默认 1000 行 × 6 列）—— M3 的"真实滚动容器"档。
+     *
+     * ★ 存在的理由：上面 `build()` 那几档是**全量树**（行全在树里），而生产里
+     *   最大的表面是 `Table` / `LazyColumn` —— 它们**只建可见行** ⇒ 树小、但每次
+     *   滚动都会重建窗口里的行。两种成本形状完全不同，不能拿全量树的数字去推
+     *   "滚动一帧要多少"（那会把"树大"的成本错算到"重建"头上）。
+     *
+     * ★ 1000 行只是**数据量**，进树的只有可见的十几行 —— 这正是要证明的事：
+     *   数据量不影响帧成本，**窗口重建频率**才影响。
+     *
+     * ★★ **数据与列定义必须缓存**（第一版没缓存，量出来的数是错的）：不缓存的话
+     *   "每帧重建"这一档每次都重造 1000 行数组 + 6 个 `TableColumn`，那部分成本
+     *   与滚动毫无关系（真实滚动不会重造数据源）⇒ 会把 `settle` 虚高，
+     *   进而把"重建有多贵"这个结论建立在假数字上。
+     */
+    public static function table(int $rows, int $cols): Widget
+    {
+        [$columns, $data] = self::tableData($rows, $cols);
+
+        return Table::make($columns, $data)
+            ->keyOf(static fn(array $row): int => (int) $row['id']);
+    }
+
+    /** @var array<string, array{0: list<TableColumn>, 1: list<array<string, mixed>>}> */
+    private static array $tableCache = [];
+
+    /**
+     * @return array{0: list<TableColumn>, 1: list<array<string, mixed>>}
+     */
+    private static function tableData(int $rows, int $cols): array
+    {
+        $id = (string) $rows . 'x' . (string) $cols;
+        $hit = self::$tableCache[$id] ?? null;
+        if ($hit !== null) {
+            return $hit;
+        }
+
+        $columns = [];
+        for ($c = 0; $c < $cols; $c++) {
+            $columns[] = TableColumn::make('c' . (string) $c, 'C' . (string) $c)
+                ->field('c' . (string) $c);
+        }
+
+        $data = [];
+        for ($r = 0; $r < $rows; $r++) {
+            $row = ['id' => $r];
+            for ($c = 0; $c < $cols; $c++) {
+                $row['c' . (string) $c] = 'R' . (string) $r . 'C' . (string) $c;
+            }
+            $data[] = $row;
+        }
+
+        self::$tableCache[$id] = [$columns, $data];
+
+        return [$columns, $data];
     }
 
     /**

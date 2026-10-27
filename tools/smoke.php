@@ -16700,10 +16700,21 @@ $tableBigState = $tableStateOf($tableBig);
 $tableBigBox = $tableBoxOf($tableBig);
 
 // ① 虚拟化：视口 240 − 表头 32 = 行区可见 208 ⇒ ceil(208/40) = 6 行
+//   ★★ 2026-10-27 起是"**可见行 + 缓冲带**"（`Table::cacheExtent()`，默认 200）：
+//   没有缓冲带的话 `first = floor(offsetY/rowH)`，偏移一动窗口就变 ⇒ 滚动每帧
+//   都要重建，A 批第 1 项的收益当场归零。断言因此写成**上界**而不是等于 6：
+//   `ceil((208 + 2×200)/40) = ceil(15.2) = 16` 是"窗口最多多大"，11 是当前实际值
+//   （缓冲只向下延伸：offset=0 时上方没有内容可建）。
 check(
-    'Table · 10000 行只造一屏（行区 208 / 行高 40 ⇒ 6 行，不是 10000）',
-    $tableBigState?->createdRows() === 6 && $tableRowsInWindow($tableBig) === 6,
+    'Table · 10000 行只造一屏 + 缓冲（行区 208 / 行高 40 / 缓冲 200 ⇒ 11 行，不是 10000）',
+    $tableBigState?->createdRows() === 11 && $tableRowsInWindow($tableBig) === 11,
     'created=' . ($tableBigState?->createdRows() ?? -1) . ' / 树内=' . $tableRowsInWindow($tableBig),
+);
+// ★ 契约断言（与具体缓冲值解耦）：窗口永远 ≤ 可见行 + 两侧缓冲
+check(
+    'Table · 行窗口有上界（≤ 可见行 + 2×缓冲/行高，与缓冲取值无关）',
+    ($tableBigState?->createdRows() ?? PHP_INT_MAX) <= (int) \ceil((208.0 + 2.0 * 200.0) / 40.0),
+    'created=' . ($tableBigState?->createdRows() ?? -1),
 );
 
 // ② 可滚上限按**完整行高**算：10000×40 − 208 = 399792
@@ -16774,7 +16785,24 @@ check(
         : '子盒缺失',
 );
 
-// ⑥ 滚动 48：表头**不动**，行区上移（32 − (48 − 40) = 24）
+// ⑥ 滚动 48：表头**不动**，行区上移。
+//   ★★ 断言从"行区盒 offsetY === 24"改成"**第 1 行的顶边落在盒内 y=24**"
+//   （2026-10-27）：加了缓冲带之后窗不再从第 1 行开始（`first = floor((offset−200)/40) = 0`），
+//   于是行区盒自己上移到 −16 —— 那个数只反映"窗起点在哪"，**不是**被测语义。
+//   被测语义是"内容坐标 c 落在盒内 y = 表头高 − offset + c"（与窗起点无关）：
+//   第 1 行（内容 y=40）⇒ 32 − 48 + 40 = 24。这也是**能证伪**的：窗起点算错、
+//   或表头高被算进内容坐标，这个数就变。
+$tableRowBoxOf = static function (Element $root, int $index): ?RenderBox {
+    $el = findElement(
+        $root,
+        static fn(Element $e): bool => $e->widget() instanceof SizedBox
+            && $e->widget()->identity()?->value === $index,
+    );
+    $box = $el?->effectiveBox();
+
+    return $box instanceof RenderBox ? $box : null;
+};
+
 $tableBigState?->scrollBy(48.0);
 $tablePump($tableBig);
 $tableKidsScrolled = $tableKidsOf($tableBoxOf($tableBig));
@@ -16783,10 +16811,197 @@ check(
     isset($tableKidsScrolled[0]) && $tableKidsScrolled[0]->offsetY() === 0.0,
     isset($tableKidsScrolled[0]) ? (string) $tableKidsScrolled[0]->offsetY() : '缺失',
 );
+$tableRow1Box = $tableRowBoxOf($tableBig, 1);
+$tableRow1Y = $tableRow1Box === null ? null : RenderBox::absoluteOrigin($tableRow1Box)[1];
 check(
-    'Table · 竖向滚动后行区上移（48 ⇒ 24 = 表头高 − 已滚 8）',
-    isset($tableKidsScrolled[1]) && $tableKidsScrolled[1]->offsetY() === 24.0,
-    isset($tableKidsScrolled[1]) ? (string) $tableKidsScrolled[1]->offsetY() : '缺失',
+    'Table · 竖向滚动 48 后第 1 行顶边落在 y=24（= 表头高 32 − 已滚 8）',
+    $tableRow1Y === 24.0,
+    $tableRow1Y === null ? '第 1 行不在树里' : (string) $tableRow1Y,
+);
+// ★ 缓冲带生效的直接证据：滚到 48 时**第 0 行仍在树里**（窗从 0 起，不是从 1 起）。
+//   没有缓冲带的话 first=1 ⇒ 第 0 行被卸掉 ⇒ 往上滚一格就要重建。
+check(
+    'Table · 缓冲带生效：滚动 48 后第 0 行仍在树里（窗没跟着行边界走）',
+    $tableRowBoxOf($tableBig, 0) !== null,
+    '第 0 行=' . ($tableRowBoxOf($tableBig, 0) === null ? '已卸载' : '在树里'),
+);
+
+// ── ⑨ A 批第 1 项：**滚动不重建**（2026-10-27）─────────────────────────────
+//   判据只有一条能用：**重建次数**。滚动照样让画面动，"有没有重建"在画面上
+//   没有任何痕迹（这正是它能藏这么久的原因）⇒ 没有计数器就无法证伪。
+//   ★ 反向自检：把 `scrollBy()` 改回 `setState()` ⇒ 下面三条全红（delta 变 1）；
+//     把 `setScrollOffset()` 里的 `markNeedsLayout()` 删掉 ⇒ 偏移断言红（画面不动）。
+$tableFrame = static function (Element $root): void {
+    $root->settle();
+    $root->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
+};
+
+$tableScroll = $tableMount($tableBuild(10000));
+$tableScrollState = $tableStateOf($tableScroll);
+$tableFrame($tableScroll);   // 首帧排定：此刻窗 = [0, 12×40 = 480)
+
+$tableRebuildsBefore = State::rebuiltCount();
+$tableScrollState?->scrollBy(40.0);   // 滚一行：窗仍盖得住 [40, 248)
+$tableFrame($tableScroll);
+$tableScrollDelta = State::rebuiltCount() - $tableRebuildsBefore;
+check(
+    'Table · 滚动一行（缓冲带内）⇒ 重建 0 次',
+    $tableScrollDelta === 0,
+    'rebuilt=' . $tableScrollDelta,
+);
+check(
+    'Table · 滚动确实生效（盒的 appliedOffset 从 0 变 40，不是"什么都没发生"）',
+    $tableBoxOf($tableScroll)?->appliedOffset(Axis::Vertical) === 40.0,
+    (string) ($tableBoxOf($tableScroll)?->appliedOffset(Axis::Vertical) ?? -1.0),
+);
+
+$tableRebuildsBefore = State::rebuiltCount();
+$tableScrollState?->scrollBy(400.0);   // 滚出缓冲带：[440, 648) 超出 [0, 480)
+$tableFrame($tableScroll);
+$tableScrollDelta = State::rebuiltCount() - $tableRebuildsBefore;
+check(
+    'Table · 滚出缓冲带 ⇒ 恰好重建 1 次（窗口必须换，这不是缺陷）',
+    $tableScrollDelta === 1,
+    'rebuilt=' . $tableScrollDelta,
+);
+check(
+    'Table · 换窗后新偏移仍然生效（440）',
+    $tableBoxOf($tableScroll)?->appliedOffset(Axis::Vertical) === 440.0,
+    (string) ($tableBoxOf($tableScroll)?->appliedOffset(Axis::Vertical) ?? -1.0),
+);
+
+// ★ **回夹取值**的守卫：内容装得下时滚 100 ⇒ 偏移必须回 0。
+//   推偏移之后 State 不再每帧重建，于是"State 里存的是用户增量累加值"这条
+//   旧账**没人替它擦**了 —— 不回写盒夹过的值，State 会停在 100（盒画 0），
+//   之后每笔增量都先消耗这段死区（真机现象："滚轮转了画面不动"）。
+$tableClamp = $tableMount($tableBuild(3));
+$tableClampState = $tableStateOf($tableClamp);
+$tableFrame($tableClamp);
+$tableClampState?->scrollBy(100.0);
+$tableFrame($tableClamp);
+check(
+    'Table · 内容装得下时滚动 ⇒ State 的偏移回夹到 0（不许停在 100）',
+    $tableClampState?->offsetY() === 0.0,
+    (string) ($tableClampState?->offsetY() ?? -1.0),
+);
+
+// `ScrollView` 的内容是**外部递进来的同一个 Widget 实例** ⇒ 窗口概念不存在
+// ⇒ 滚动**永远** 0 重建（这是"偏移不进 build"最纯的一档）。
+$svKids = [];
+for ($i = 0; $i < 40; $i++) {
+    $svKids[] = Text::make('行 ' . $i);
+}
+$svRoot = ScrollView::make(Column::make()->children($svKids))->createElement();
+$svRoot->mount(null, smokeContext());
+$tableFrame($svRoot);
+$svState = findElement(
+    $svRoot,
+    static fn(Element $e): bool => $e instanceof StatefulElement && $e->state() instanceof ScrollViewState,
+)?->state();
+$svRebuildsBefore = State::rebuiltCount();
+if ($svState instanceof ScrollViewState) {
+    $svState->scrollBy(120.0);
+}
+$tableFrame($svRoot);
+$svDelta = State::rebuiltCount() - $svRebuildsBefore;
+check(
+    'ScrollView · 滚动 ⇒ 重建 0 次（内容不是 build 的输入，本来就不该重建）',
+    $svDelta === 0,
+    'rebuilt=' . $svDelta,
+);
+check(
+    'ScrollView · 滚动确实生效（appliedOffset = 120）',
+    $svRoot->effectiveBoxOf(RenderScrollView::class)?->appliedOffset(Axis::Vertical) === 120.0,
+    (string) ($svRoot->effectiveBoxOf(RenderScrollView::class)?->appliedOffset(Axis::Vertical) ?? -1.0),
+);
+
+// ★★ **端到端判据**：真跑两帧 `Frame`，第二帧的画面必须与第一帧不同。
+//   这条抓的是"推了偏移但没人重排"——`Frame` 跳过 layout 的判据是
+//   "没重建 + 约束没变 + 盒没换代"，而推偏移三样都不满足 ⇒ 删掉
+//   `setScrollOffset()` 里的 `RenderBox::markNeedsLayout()` 时**画面停在旧位置**
+//   （且不报错、不写日志）。上面那些 `layout()` 直调的断言抓不到这个坑。
+$svFrameSurface = new SvgSurface();
+$svFrameSurface->resize(320, 240, 1.0);
+$svFrameEl = ScrollView::make(Column::make()->children($svKids))->createElement();
+$svFrameEl->mount(null, smokeContext());
+$svFrame = new Frame($svFrameSurface);
+$svTight = BoxConstraints::tight(new Size(320.0, 240.0));
+$svFrame->run($svFrameEl, $svTight, 0.0);
+$svSvgBefore = $svFrameSurface->svg();
+$svFrameState = findElement(
+    $svFrameEl,
+    static fn(Element $e): bool => $e instanceof StatefulElement && $e->state() instanceof ScrollViewState,
+)?->state();
+if ($svFrameState instanceof ScrollViewState) {
+    $svFrameState->scrollBy(120.0);
+}
+$svFrame->run($svFrameEl, $svTight, 16.0);
+$svSvgAfter = $svFrameSurface->svg();
+check(
+    'ScrollView · 滚动后**下一帧画面真的变了**（推偏移会标重排，Frame 不许跳过 layout）',
+    $svSvgBefore !== $svSvgAfter && $svSvgBefore !== '',
+    'before=' . \strlen($svSvgBefore) . ' / after=' . \strlen($svSvgAfter),
+);
+
+// ★ **回夹取值**的守卫（`ScrollView` 这一档才守得住）：内容装得下时滚 100 ⇒
+//   State 的偏移必须回 0。`ScrollView` 没有窗口概念 ⇒ 不会因为标脏而重建 ⇒
+//   build 里那次"夹取写回"**不会发生** ⇒ 只有 `setScrollOffset()` 的返回值能救它。
+//   （`Table` 那一档守不住：夹取必然伴随换窗 ⇒ 重建时的写回会把变异掩盖掉。）
+$svTightRoot = ScrollView::make(Column::make()->children([Text::make('一行')]))->createElement();
+$svTightRoot->mount(null, smokeContext());
+$tableFrame($svTightRoot);
+$svTightState = findElement(
+    $svTightRoot,
+    static fn(Element $e): bool => $e instanceof StatefulElement && $e->state() instanceof ScrollViewState,
+)?->state();
+if ($svTightState instanceof ScrollViewState) {
+    $svTightState->scrollBy(100.0);
+}
+check(
+    'ScrollView · 内容装得下时滚动 ⇒ State 的偏移回夹到 0（不许停在 100）',
+    $svTightState instanceof ScrollViewState && $svTightState->offset() === 0.0,
+    $svTightState instanceof ScrollViewState ? (string) $svTightState->offset() : '无 State',
+);
+
+// `LazyColumn` 的缓冲带由 `overscan()` 显式给（**默认 0**，与 `Table::cacheExtent`
+// 默认 200 不同 —— 那边是数据面、行高 40+ 所以 200px 只是 4~5 行；这边格高可能
+// 很小，按 px 给固定值会把 6 格的列表撑成 16 格）。两档都断言，把默认行为写实：
+//   ① 默认 overscan 0 ⇒ 滚一行就换窗（1 次重建）—— 这不是缺陷，是没配缓冲
+//   ② overscan 200 ⇒ 缓冲带内 0 重建（与表格同一条机制）
+$lazyRebuildsOf = static function (LazyColumn $widget, float $delta) use ($anchorStateOf): array {
+    $root = $widget->createElement();
+    $root->mount(null, smokeContext());
+    $root->settle();
+    $root->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
+
+    $state = $anchorStateOf($root);
+    $before = State::rebuiltCount();
+    $state?->scrollBy($delta);
+    $root->settle();
+    $root->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
+
+    $box = $root->effectiveBoxOf(RenderScrollView::class);
+
+    return [
+        State::rebuiltCount() - $before,
+        $box instanceof RenderScrollView ? $box->appliedOffset(Axis::Vertical) : -1.0,
+    ];
+};
+
+[$lazyDelta0, $lazyOffset0] = $lazyRebuildsOf($anchorWidget($anchorItems(0, 60), false), 40.0);
+check(
+    'LazyColumn · 默认（overscan 0）滚一行 ⇒ 重建 1 次（没配缓冲，行为写实）',
+    $lazyDelta0 === 1 && $lazyOffset0 === 40.0,
+    'rebuilt=' . $lazyDelta0 . ' / offset=' . $lazyOffset0,
+);
+[$lazyDelta200, $lazyOffset200] = $lazyRebuildsOf(
+    $anchorWidget($anchorItems(0, 60), false)->overscan(200.0),
+    40.0,
+);
+check(
+    'LazyColumn · overscan 200 ⇒ 缓冲带内滚一行重建 0 次（与表格同一机制）',
+    $lazyDelta200 === 0 && $lazyOffset200 === 40.0,
+    'rebuilt=' . $lazyDelta200 . ' / offset=' . $lazyOffset200,
 );
 
 // ⑦ 命中分区：表头区的点进表头子树，行区的点进行区子树

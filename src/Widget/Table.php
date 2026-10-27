@@ -76,6 +76,21 @@ final class Table extends StatefulWidget
     private const DEFAULT_ROW_HEIGHT = 44.0;
     private const DEFAULT_HEADER_HEIGHT = 40.0;
 
+    /**
+     * 窗口缓冲带（逻辑像素）—— 行区**可视范围之外**多建一段。
+     *
+     * ★★ 存在的理由（2026-10-27，A 批第 1 项）：滚动不再重建整棵行区之后，
+     *   重建只发生在"窗口盖不住视口"时。缓冲带 = 那个余量：滚过 `cacheExtent`
+     *   才付一次重建。没有它，窗口必须**每滚一行**就变 ⇒ 又退回每帧重建
+     *   （`first = floor(offset/rowH)`，offset 一动 first 就动）。
+     *
+     * ★ 取值是**权衡**，不是越大越好：重建频率 ∝ 1/cache，而**每次 layout 都
+     *   要排完整个窗口**（行区 layout 是全树 O(n)）⇒ 缓冲越大，每帧的 layout
+     *   越贵。默认 200px ≈ 4–5 行，与 RecyclerView 的 `cacheExtent` 同量级。
+     *   数据行特别高（`rowHeight(88)`）时它自然只有 2 行 —— 那时也不该更多。
+     */
+    private float $cacheExtentPx = 200.0;
+
     /** @var list<TableColumn> */
     private array $columns;
 
@@ -237,6 +252,25 @@ final class Table extends StatefulWidget
 
         $this->mutate();
         $this->headerHeightPx = $px;
+
+        return $this;
+    }
+
+    /**
+     * 窗口缓冲带（逻辑像素；默认 200）。
+     *
+     * ★ 语义：行区**可视范围之外**多建一段。滚动时不重建，只有滚出这段余量
+     *   才重建窗口 ⇒ 缓冲越大、重建越少，但每帧 layout 越贵（全窗口都要排）。
+     *   `0` 合法（等价于"滚一行重建一次"，即旧行为），但那就白改了。
+     */
+    public function cacheExtent(float $px): static
+    {
+        if ($px < 0.0) {
+            Errors::report(sprintf('Table 的 cacheExtent 不能为负，收到 %s', (string) $px));
+        }
+
+        $this->mutate();
+        $this->cacheExtentPx = $px;
 
         return $this;
     }
@@ -456,6 +490,11 @@ final class Table extends StatefulWidget
     public function headerHeightPx(): float
     {
         return $this->headerHeightPx;
+    }
+
+    public function cacheExtentPx(): float
+    {
+        return $this->cacheExtentPx;
     }
 
     /** @internal 行身份（`null` = 没配 —— `TableState` 会响亮失败） */

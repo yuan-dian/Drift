@@ -53,26 +53,77 @@ final class LazyListState extends State implements Scrollable
     /** 上一次见到的项数（没配 `keyOf` 时用它判断"内容变了没有"） */
     private int $lastCount = -1;
 
+    /**
+     * 上一次 `build()` 造出来的窗口在**完整内容坐标**里的范围 `[start, end)`。
+     *
+     * ★ 存在的理由（2026-10-27，A 批第 1 项）：滚动不再 `setState()`，于是"窗还
+     *   盖不盖得住视口"必须**在 build 之外**能判 —— 盖得住就只推偏移（0 重建），
+     *   盖不住才标脏（重建窗口）。没有这两个数，滚出缓冲带之后下方就是一片空白
+     *   （且不报错：盒照样画，只是没内容）。
+     */
+    private float $windowStart = 0.0;
+
+    private float $windowEnd = 0.0;
+
     /** 当前偏移（逻辑像素，≥ 0，已按上一帧的内容长度夹过上界） */
     public function offset(): float
     {
         return $this->offset;
     }
 
+    /**
+     * 滚动 Δ（**逻辑像素**；正 = 内容上移，即"往下看"）。
+     *
+     * ★★ **能不重建就不重建**（2026-10-27，A 批第 1 项）：偏移只改两个数，
+     *   不改"有哪些子"。窗口仍盖得住视口 ⇒ 推给盒（就地改 + 标重排）即可；
+     *   只有滚出缓冲带（`overscanPx()` 决定的余量）才标脏重建。
+     *   实测依据见 `ScrollViewState::scrollBy()` 的注释。
+     *
+     * ★ 回写**盒夹过的值**（不是 `$next`）：内容变短时 State 里那个"增量累加值"
+     *   会长期大于上限，之后每笔增量都先消耗死区 —— 真机表现是"滚轮转了画面不动"。
+     */
     public function scrollBy(float $delta): void
     {
         $next = max(0.0, $this->offset + $delta);
 
         if ($next === $this->offset) {
-            return;   // 已在边界：不标脏（省一次重建）
+            return;   // 已在边界：不推、不重排（省一帧）
         }
 
         $this->bar()->noteScroll();
 
-        $this->setState(function () use ($next): void {
-            $this->offset = $next;
-            $this->rememberAnchor();
-        });
+        /** @var RenderScrollView|null $box */
+        $box = $this->element()?->effectiveBoxOf(RenderScrollView::class);
+        if ($box === null) {
+            $this->setState(function () use ($next): void {
+                $this->offset = $next;
+                $this->rememberAnchor();
+            });
+
+            return;
+        }
+
+        $vertical = $this->view()->isVertical();
+        $this->offset = $box->setScrollOffset($vertical ? Axis::Vertical : Axis::Horizontal, $next);
+        $this->rememberAnchor();
+
+        // 窗口盖不住视口 ⇒ 必须重建（否则下方/上方是空白）
+        $size = $box->size();
+        $viewport = $size === null ? 0.0 : ($vertical ? $size->height : $size->width);
+        if ($viewport <= 0.0 || !$this->windowCovers($viewport)) {
+            $this->markDirty();
+        }
+    }
+
+    /**
+     * 上一帧造的窗口是否**完整盖住**当前视口 `[offset, offset+viewport)`。
+     *
+     * ★ 用 `offset`（盒已夹过）而不是调用方传的 `$next`：滚到边界时盒会把值夹回来，
+     *   按未夹的值判会以为"还没滚到" ⇒ 多标一次脏。
+     */
+    private function windowCovers(float $viewport): bool
+    {
+        return $this->offset >= $this->windowStart && $this->offset + $viewport <= $this->windowEnd;
     }
 
     /**
@@ -285,6 +336,13 @@ final class LazyListState extends State implements Scrollable
         $last = (int) ceil(max(0.0, $offset + $viewport + $overscan - $start) / $extent);
         $first = max(0, min($first, $count));
         $last = max($first, min($last, $count));
+
+        // ★ 记下这扇窗的**内容坐标**范围 —— 滚动期靠它判"要不要重建窗口"
+        //   （见 `$windowStart` 的注释）。写成 `$start + 序号×格长` 而不是
+        //   "sliceOrigin + 窗长"：两者等价，但这个形式与下面的 `sliceOrigin`
+        //   同源，改一处不会漂。
+        $this->windowStart = $start + $first * $extent;
+        $this->windowEnd = $start + $last * $extent;
 
         $cells = [];
         for ($i = $first; $i < $last; $i++) {
