@@ -250,6 +250,12 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
             return $constraints->constrain(new Size(0.0, 0.0));
         }
 
+        // 内容区是天然的重绘边界：偏移进的是**子盒 offset**（见类注释），
+        // 不在内容自己的 `paint()` 里 ⇒ 缓存与偏移无关 ⇒ 滚动只重放。
+        // ★ `setRepaintBoundary()` 自己有"值不变则不动"的守卫，放这里不会
+        //   每帧清缓存（清了命中率就是 0）。
+        $child->setRepaintBoundary(true);
+
         // ① 内容：主轴**无界** —— 有界的话内容会被压进视口，永远量不出溢出
         $content = $child->layout($this->vertical
             ? new BoxConstraints($constraints->minWidth, $constraints->maxWidth, 0.0, BoxConstraints::INFINITY)

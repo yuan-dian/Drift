@@ -221,6 +221,9 @@ final class RenderTable extends RenderBox implements ScrollBarHost
     {
         $this->header = $box;
         $this->adoptChild($box);
+        // ★ 表头**不开**边界：它只有几个单元格，命令极少 ⇒ 重放的固定开销
+        //   ≈ 省下的 `paint()`，bench 实测落在噪声里（1.744/1.849/1.739 三跑，
+        //   与只开行区时无法区分）。边界只给**粗粒度**子树（行区 / 滚动容器内容）。
     }
 
     /** @internal 同上 */
@@ -228,6 +231,10 @@ final class RenderTable extends RenderBox implements ScrollBarHost
     {
         $this->body = $box;
         $this->adoptChild($box);
+
+        // 行区是天然的重绘边界：偏移由**本类的 `translate`** 施加（见类注释），
+        // 不在 body 的 `paint()` 里 ⇒ 缓存与偏移无关 ⇒ 缓冲带内滚动只重放。
+        $box->setRepaintBoundary(true);
     }
 
     /** @internal 淡出动画每帧推值（不重建、不重排） */

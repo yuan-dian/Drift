@@ -16886,13 +16886,29 @@ $tblFrame->run($tblEl, $tblTight, 0.0);   // 首帧：约束变了 ⇒ 必排
 $tblState = $tableStateOf($tblEl);
 
 $layoutsBefore = RenderBox::layoutCount();
+$paintsBefore = RenderBox::paintCount();
+$replaysBefore = RenderBox::replayCount();
 $tblState?->scrollBy(40.0);
 $tblFrame->run($tblEl, $tblTight, 16.0);
 $layoutsScrolled = RenderBox::layoutCount() - $layoutsBefore;
+$paintsScrolled = RenderBox::paintCount() - $paintsBefore;
+$replaysScrolled = RenderBox::replayCount() - $replaysBefore;
 check(
     'Table · 滚动一帧 ⇒ 重排 0 次（Frame 跳过 layout，paint 读到新 offset）',
     $layoutsScrolled === 0,
     'layouts=' . $layoutsScrolled,
+);
+// ── ⑩b 那一帧行区**命中层缓存**（A 批② `RepaintBoundary`）──
+//   ★★ 又是只能靠计数器：缓存的判据是"等价替换"⇒ 命中与否**逐像素完全相同**，
+//   golden 与 SVG 对它零分辨力（与上面 `layoutCount` 同一类困境）。
+//   ★ 两条一起才有效：只断言"命中"会被"永远命中"骗过（那等于画错），
+//     所以下面换窗那条必须反过来要求**未命中**。
+check(
+    'Table · 滚动帧 ⇒ 边界全部命中层缓存（真画 0 次，且确实重放了）',
+    // ★ 断言"真画 0"而不是"重放 N"：前者才是**不变量**（一处都没重画），
+    //   后者会随边界数量变（开几处就写几，改一处断言就得跟着改）。
+    $paintsScrolled === 0 && $replaysScrolled >= 1,
+    "replay={$replaysScrolled} paint={$paintsScrolled}",
 );
 check(
     'Table · 上面那一帧确实滚了（appliedOffset=40，不是"没滚所以没重排"）',
@@ -16902,13 +16918,63 @@ check(
 
 // ★ 换窗那一帧**必须**重排：新窗口里的行是新盒，没有 `size` 就是一片空白
 $layoutsBefore = RenderBox::layoutCount();
+$paintsBefore = RenderBox::paintCount();
 $tblState?->scrollBy(400.0);   // 滚出缓冲带 ⇒ 换窗 ⇒ 重建 + 换盒
 $tblFrame->run($tblEl, $tblTight, 32.0);
 $layoutsReWindow = RenderBox::layoutCount() - $layoutsBefore;
+$paintsReWindow = RenderBox::paintCount() - $paintsBefore;
 check(
     'Table · 滚出缓冲带换窗 ⇒ 重排 > 0（新行必须有 size，不许借"不重排"省掉）',
     $layoutsReWindow > 0,
     'layouts=' . $layoutsReWindow,
+);
+// ★ 反向守卫：内容真的变了 ⇒ 缓存**必须**失效（重录一次）。
+//   没有这条，"判据恒真 ⇒ 永远命中"会是一张永久的绿卡，而画面是旧的。
+check(
+    'Table · 换窗帧 ⇒ 缓存失效（真画 ≥1 次，不许拿旧命令糊上去）',
+    $paintsReWindow >= 1,
+    "paint={$paintsReWindow}",
+);
+// ★★ 真正测到**失效判据**的是下面这一段（单元级）。
+//   ① "换窗"那条测的是**换盒** —— 新盒的缓存本来就是空的，判据怎么写都绿
+//      （变异「不比 epoch/size」实测：上面那条全绿，一条没红）。
+//   ② 视口变窄也测不到：Table 行区的 size 是**列宽之和**、与视口无关 ⇒
+//      视口变了缓存仍然命中，那是**对的**（且正是收益）。
+//   ⇒ 只能直接拿同一棵盒改 size：epoch 不动，只有尺寸判据能拦住。
+$lbSurf = new SvgSurface();
+$lbSurf->resize(200, 200, 1.0);
+$lbCanvas = $lbSurf->beginFrame(0.0);
+$lb = new SolidBox(new Size(50.0, 50.0), 50.0, 50.0);
+$lb->setRepaintBoundary(true);
+$lb->layout(BoxConstraints::tight(new Size(50.0, 50.0)));
+
+$lbP = RenderBox::paintCount();
+$lb->paintComposed($lbCanvas);
+$lbPainted1 = RenderBox::paintCount() - $lbP;
+
+$lbR = RenderBox::replayCount();
+$lb->paintComposed($lbCanvas);   // 尺寸没变 ⇒ 应当命中
+$lbReplayed = RenderBox::replayCount() - $lbR;
+
+$lb->layout(BoxConstraints::tight(new Size(80.0, 50.0)));   // 同一棵盒，只有 size 变
+$lbP = RenderBox::paintCount();
+$lb->paintComposed($lbCanvas);
+$lbPainted2 = RenderBox::paintCount() - $lbP;
+
+check(
+    '层缓存 · 首帧录制（paint 1 / replay 0）',
+    $lbPainted1 === 1,
+    "paint={$lbPainted1}",
+);
+check(
+    '层缓存 · 尺寸没变 ⇒ 命中（replay 1，同一棵盒不重画）',
+    $lbReplayed === 1,
+    "replay={$lbReplayed}",
+);
+check(
+    '层缓存 · 同一棵盒 size 变 ⇒ 失效（paint 1，不许拿旧命令糊上去）',
+    $lbPainted2 === 1,
+    "paint={$lbPainted2}",
 );
 
 // ★ **回夹取值**的守卫：内容装得下时滚 100 ⇒ 偏移必须回 0。

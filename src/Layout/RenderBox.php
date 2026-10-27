@@ -8,6 +8,7 @@ use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Size;
 use Drift\Rendering\Canvas;
+use Drift\Rendering\LayerCache;
 use Drift\Rendering\Modifier;
 
 /**
@@ -67,6 +68,8 @@ abstract class RenderBox extends RenderObject
         $this->composeOpacity = $mods->composeOpacity();
         $this->composeDx = $mods->composeDx();
         $this->composeDy = $mods->composeDy();
+
+        $this->setRepaintBoundary($mods->repaintBoundary());
 
         $this->setFlexIntent($mods->flexGrow(), $mods->flexShrink(), $mods->flexBasis(), $mods->flexAlign());
     }
@@ -168,6 +171,29 @@ abstract class RenderBox extends RenderObject
     public static function layoutCount(): int
     {
         return self::$layoutCount;
+    }
+
+    /**
+     * 层缓存的量具：真画（`paint()`）与重放（`DisplayList::replay()`）的累计次数。
+     *
+     * ★ 为什么又是计数器：缓存命中与否在**画面上完全相同**（判据就是"等价替换"），
+     *   与 `$layoutCount` 同一类困境 ⇒ 只能计数证伪（见 `$layoutCount` 的注）。
+     *   命中率 = replay / (paint + replay)。
+     */
+    private static int $paintCount = 0;
+
+    private static int $replayCount = 0;
+
+    /** @internal 量具：真画累计次数（见 `$paintCount`） */
+    public static function paintCount(): int
+    {
+        return self::$paintCount;
+    }
+
+    /** @internal 量具：层缓存重放累计次数（见 `$replayCount`） */
+    public static function replayCount(): int
+    {
+        return self::$replayCount;
     }
 
     /**
@@ -668,6 +694,18 @@ abstract class RenderBox extends RenderObject
 
     private float $composeDy = 0.0;
 
+    // ── 层缓存（A 批② `RepaintBoundary`）──────────────────────────────
+    // 缓存的是 `paint()` 的**命令序列**。它画的是自身局部坐标：位置的两种来源
+    // （父的 `translate`、本盒的 compose）都在 `paint()` **之外**施加 ⇒ 缓存天生
+    // 与位置无关 ⇒ 滚动（只改偏移、不改内容）命中，这正是收益的全部来源。
+    //
+    // ★ 反直觉点：失效判据**不含** composeDx/Dy/Opacity，也不含滚动偏移。
+    //   含了就等于"一动就失效"，缓存退化成每帧录一遍（比不缓存还慢）。
+
+    private bool $repaintBoundary = false;
+
+    private ?LayerCache $layer = null;
+
     /**
      * 就地改合成参数（不重建、不重排、不置任何脏位）。
      *
@@ -725,7 +763,7 @@ abstract class RenderBox extends RenderObject
         $layered = $opacity < 1.0;
 
         if (!$translated && !$layered) {
-            $this->paint($canvas);   // 零开销快路：绝大多数盒一辈子走这里
+            $this->paintOrReplay($canvas);   // 零开销快路：绝大多数盒一辈子走这里
 
             return;
         }
@@ -740,13 +778,73 @@ abstract class RenderBox extends RenderObject
             $canvas->pushLayer(max(0.0, $opacity));
         }
 
-        $this->paint($canvas);
+        $this->paintOrReplay($canvas);
 
         if ($layered) {
             $canvas->popLayer();
         }
 
         $canvas->restore();
+    }
+
+    /**
+     * 画这一个盒，或从层缓存重放（**缓存的唯一出口**）。
+     *
+     * 命中 ⇒ 整棵子树一次 `paint()` 都不跑；未命中 ⇒ 录一遍 + 立刻重放出画，
+     * 所以开启边界**不会**让首帧变黑（录与放是同一次调用里完成的）。
+     */
+    private function paintOrReplay(Canvas $canvas): void
+    {
+        if (!$this->repaintBoundary) {
+            $this->paint($canvas);
+
+            return;
+        }
+
+        $layer = $this->layer;
+        if ($layer !== null) {
+            $s = $this->size;
+            $w = $s === null ? -1.0 : $s->width;
+            $h = $s === null ? -1.0 : $s->height;
+
+            $rec = $layer->beginRecord($canvas, self::$layoutEpoch, $w, $h);
+            if ($rec === null) {   // 命中：整棵子树一次 paint() 都不跑
+                self::$replayCount++;
+
+                return;
+            }
+            self::$paintCount++;
+            $this->paint($rec);
+            $layer->endRecord($canvas, self::$layoutEpoch, $w, $h);
+
+            return;
+        }
+
+        $this->paint($canvas);
+    }
+
+    /**
+     * 声明本盒是重绘边界（`Modifier::repaintBoundary()` → `setMods()` → 这里）。
+     *
+     * ★★ `on` 没变就**什么都不做**：`setMods()` 每次 rebuild 都调，这里若无条件
+     *   丢掉缓存，命中率恒为 0 —— 边界开了等于没开，且不报错。
+     *
+     * ★ 只给**粗粒度**子树开：滚动容器内容区、`LazyColumn` 的行、`Table` 的行区。
+     *   细粒度开（每个文本盒一层）是纯亏 —— `RenderText` 早先缓存过一层
+     *   `DisplayList`，每帧 reset 录一条命令，比直接画还慢（见该类注释）。
+     */
+    public function setRepaintBoundary(bool $on): void
+    {
+        if ($this->repaintBoundary === $on) {
+            return;
+        }
+        $this->repaintBoundary = $on;
+        $this->layer = $on ? new LayerCache() : null;
+    }
+
+    public function isRepaintBoundary(): bool
+    {
+        return $this->repaintBoundary;
     }
 
     /**

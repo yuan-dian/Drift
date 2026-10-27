@@ -665,6 +665,23 @@ abstract class Widget
     }
 
     /**
+     * 声明本盒为**重绘边界**：内容没变时只重放上次录下的绘制命令，跳过整棵子树的 `paint()`。
+     *
+     * ★ 只给**粗粒度**子树开：滚动容器内容区、`LazyColumn` 的行、`Table` 的行区。
+     *   给小盒（每个文本一层）开是负收益 —— 每帧录一条命令比直接画还慢。
+     * ★ 开了不等于一定更快：内容常变的盒会每次录 + 每次放，比不缓存多一份命令数组。
+     *
+     * @api
+     */
+    public function repaintBoundary(bool $on = true): static
+    {
+        $this->mutate();
+        $this->mods = $this->mods->withRepaintBoundary($on);
+
+        return $this;
+    }
+
+    /**
      * 把**内容**在本盒内居中（`Center` 的字段形态）。
      *
      * ★ 与 `alignSelf()` 不是一件事：`alignSelf` 只在 `RenderFlex` 里被消费

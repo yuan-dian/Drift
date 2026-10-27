@@ -135,6 +135,14 @@ final class Modifier
      */
     private bool $clip = false;
 
+    /**
+     * 本盒是否声明为**重绘边界**（A 批②）。
+     *
+     * ★ 不是视觉属性，与 `clip` 同类 —— 放这里是因为 `setMods()` 已经是
+     *   Widget → 盒的**唯一**落点，再开一条通道就多一处"记得同步"的地方。
+     */
+    private bool $repaintBoundary = false;
+
     public function __construct()
     {
         // 占位：`hasBackground` / `hasBorder` 为假时这两个值无意义
@@ -291,6 +299,12 @@ final class Modifier
     public function hasClip(): bool
     {
         return $this->clip;
+    }
+
+    /** 是否声明为重绘边界（未变则重放上次命令，跳过整棵子树的 `paint()`） */
+    public function repaintBoundary(): bool
+    {
+        return $this->repaintBoundary;
     }
 
     /** 内容是否要在盒内居中 */
@@ -559,6 +573,14 @@ final class Modifier
     {
         $c = clone $this;
         $c->clip = $clip;
+
+        return $c;
+    }
+
+    public function withRepaintBoundary(bool $on): self
+    {
+        $c = clone $this;
+        $c->repaintBoundary = $on;
 
         return $c;
     }
