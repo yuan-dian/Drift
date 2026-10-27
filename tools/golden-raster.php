@@ -527,19 +527,30 @@ if ($skippedPages !== []) {
         . " —— 构造器要参数，需 app 接线）\n");
 }
 
-// ─────────────────── 模式：默认 md5 文本 / --update / --check ───────────────────
+// ─────────────────── 模式：默认 md5 文本 / --update / --check / --png ───────────────────
 //
 // 默认（旧行为）：输出 `name: len md5`，人手动前后 diff。
 // --update：把每个场景的 RGBA 基线写进 golden/<scene>/（expected.rgba.gz 供比对、
 //           expected.png 供人看）。
 // --check ：渲染并与基线**逐字节**比；不一致 ⇒ 写 actual/ 与 diff/（可看的 PNG），
 //           退出码 1。RasterCanvas 是确定性的（纯 PHP、无抗锯齿抖动）⇒ 逐字节比成立。
+// --png   ：从 `.rgba.gz` **还原** `expected.png`（不渲染、不比对）。
+//
+// ★ 为什么 `.png` **不入库**、只在本地生成：
+//   它是 `.rgba.gz` 的**纯派生物**（`goldenPng()` 确定性，任何时候都能还原），
+//   唯一用途是人眼看。入库等于把编译产物入库，还引入"两个文件不同步"的隐患
+//   （没有任何机制能发现有人只重生成了一个）。2026-10-27 实测：png 748KB +
+//   gz 720KB ⇒ 只留 gz 省一半，且 git 对 png 无法 delta（每次合法 UI 改动重刷
+//   20 页 = 历史再压一份 1.5MB，删不掉）。
+//   代价是"看基线图"要多跑一条 `--png`，换来基线目录体积减半 + 单一真相。
 $mode = 'text';
 foreach (array_slice($argv, 1) as $a) {
     if ($a === '--update') {
         $mode = 'update';
     } elseif ($a === '--check') {
         $mode = 'check';
+    } elseif ($a === '--png') {
+        $mode = 'png';
     }
 }
 
@@ -555,6 +566,33 @@ if ($onlyPages && !$onlyCanvas) {
 }
 
 $dir = __DIR__ . '/../golden';
+
+// ── 模式：从基线还原 PNG（不渲染、不比对）──
+// ★ 走场景表而不是 glob 目录：场景表知道每页的 `$W`/`$H`，而 `.rgba.gz` 里
+//   只有像素、没有尺寸。基线长度对不上就跳过并报出来（尺寸变了 = 基线该重生成）。
+if ($mode === 'png') {
+    $restored = 0;
+    $skipped = 0;
+    foreach ($scenes as $name => $make) {
+        $sceneDir = $dir . '/' . $name;
+        $expFile = $sceneDir . '/expected.rgba.gz';
+        if (!is_file($expFile)) {
+            echo "skip {$name}：无基线\n";
+            $skipped++;
+            continue;
+        }
+        $rgba = gzdecode((string) file_get_contents($expFile));
+        if ($rgba === false || strlen($rgba) !== $W * $H * 4) {
+            echo "skip {$name}：基线尺寸不是 {$W}×{$H}\n";
+            $skipped++;
+            continue;
+        }
+        file_put_contents($sceneDir . '/expected.png', goldenPng($rgba, $W, $H));
+        $restored++;
+    }
+    echo "PNG 还原 {$restored} 张" . ($skipped > 0 ? "（跳过 {$skipped}）" : '') . "\n";
+    exit(0);
+}
 
 if ($mode === 'update') {
     foreach ($scenes as $name => $make) {
