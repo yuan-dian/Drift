@@ -12,15 +12,19 @@ declare(strict_types=1);
 // 覆盖路径：opaque/半透明/圆角/描边-hole/裁剪/save-translate/段落字形。
 require __DIR__ . '/../tools/autoload.php';
 
+use Drift\App\Frame;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Rect;
+use Drift\Geometry\Scale;
 use Drift\Geometry\Size;
+use Drift\Rendering\Canvas;
 use Drift\Rendering\Color;
 use Drift\Rendering\DashPattern;
 use Drift\Rendering\Gradient;
 use Drift\Rendering\Paint;
 use Drift\Rendering\Path;
 use Drift\Rendering\RasterCanvas;
+use Drift\Rendering\RenderSurface;
 use Drift\Text\DeterministicFontManager;
 use Drift\Text\DeterministicMetricsProvider;
 use Drift\Text\DeterministicShaper;
@@ -430,6 +434,99 @@ $scenes['opacity'] = static function () use ($W, $H): string {
     return $c->toRgba();
 };
 
+// ────────────── 页面场景：showcase 整页（自动发现） ──────────────
+//
+// 为什么要有这一层：真机截图验证慢、且靠人眼判"画得对不对"。但整页在
+// `Frame → DisplayList → RasterCanvas` 这条路上是**纯 PHP 且确定性**的
+// （实测 20 页同进程连渲两次 md5 全同）⇒ 真机那张图可以先在无头下逐字节比。
+// 于是 T2 只剩"平台特有"（窗口 / DPI / 输入 / 模态循环），不再需要人眼看像素。
+//
+// ★ 噪声与改动面成正比：改了公共控件（Card 圆角之类）会一次破很多页基线。
+//   这是 golden 的正常形态，但 **`--update` 之前必须看 diff 图** —— 无脑更新
+//   等于把网撤了（这是 golden 唯一能失效的方式）。
+// ★ 只收**构造器无必填参数**的页：要参数的页（ComboBox / Feedback / Snackbar）
+//   依赖 app 接线（命令环 / 浮层宿主），不是页面自己画得出来 ⇒ 跳过并报出名字，
+//   不许静默丢（"少了一张网"和"这张网本来就是空的"必须能分辨）。
+$pageScenes = [];
+$skippedPages = [];
+$pageFiles = glob(dirname(__DIR__) . '/apps/showcase/src/Pages/*.php') ?: [];
+sort($pageFiles);
+
+foreach ($pageFiles as $pageFile) {
+    $pageName = basename($pageFile, '.php');
+    $pageClass = 'App\\Showcase\\Pages\\' . $pageName;
+    if (!class_exists($pageClass)) {
+        continue;
+    }
+    $pageCtor = (new ReflectionClass($pageClass))->getConstructor();
+    $pageRequired = $pageCtor === null ? 0 : $pageCtor->getNumberOfRequiredParameters();
+    if ($pageRequired > 0) {
+        $skippedPages[] = $pageName;
+        continue;
+    }
+
+    $pageScenes['page/' . $pageName] = static function () use ($pageClass, $W, $H): string {
+        $context = new BuildContext(
+            (float) $W,
+            (float) $H,
+            ThemeData::light(),
+            new DeterministicMetricsProvider(
+                DeterministicFontManager::standard()->collection(),
+                new DeterministicShaper(),
+            ),
+        );
+
+        // 匿名类（不是命名类）：入口脚本里出现命名类会被 `namespace-mismatch`
+        // 当成 PSR-4 类文件管 ⇒ 误报。
+        $surface = new class($W, $H) implements RenderSurface {
+            public ?RasterCanvas $last = null;
+            public Color $background;
+
+            public function __construct(public int $w, public int $h)
+            {
+                $this->background = Color::white();
+            }
+
+            public function resize(int $width, int $height, float $dpr): void
+            {
+            }
+
+            public function setBackground(Color $color): void
+            {
+                $this->background = $color;
+            }
+
+            public function beginFrame(float $timestampMs): Canvas
+            {
+                $this->last = new RasterCanvas($this->w, $this->h, $this->background, Scale::of(1.0));
+
+                return $this->last;
+            }
+
+            public function endFrame(): void
+            {
+            }
+        };
+
+        /** @var Widget $page */
+        $page = new $pageClass();
+        $element = $page->createElement();
+        $element->mount(null, $context);
+        (new Frame($surface))->run(
+            $element,
+            BoxConstraints::tight(new Size((float) $W, (float) $H)),
+            0.0,
+        );
+
+        return $surface->last === null ? '' : $surface->last->toRgba();
+    };
+}
+
+if ($skippedPages !== []) {
+    fwrite(STDERR, '（跳过 ' . count($skippedPages) . ' 页：' . implode('/', $skippedPages)
+        . " —— 构造器要参数，需 app 接线）\n");
+}
+
 // ─────────────────── 模式：默认 md5 文本 / --update / --check ───────────────────
 //
 // 默认（旧行为）：输出 `name: len md5`，人手动前后 diff。
@@ -444,6 +541,17 @@ foreach (array_slice($argv, 1) as $a) {
     } elseif ($a === '--check') {
         $mode = 'check';
     }
+}
+
+// 场景选择：默认两层都跑（canvas 原语 + 整页）；`--canvas` / `--pages` 只跑一层。
+// ★ 两层分开的理由是**代价差一个量级**（canvas 1.6s / 整页 ~4s）：改注释时
+//   不该等整页；而"改了公共控件"时必须两层都跑。
+$onlyPages = in_array('--pages', $argv, true);
+$onlyCanvas = in_array('--canvas', $argv, true);
+if ($onlyPages && !$onlyCanvas) {
+    $scenes = $pageScenes;
+} elseif (!$onlyPages && !$onlyCanvas) {
+    $scenes = $scenes + $pageScenes;
 }
 
 $dir = __DIR__ . '/../golden';

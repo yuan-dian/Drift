@@ -13,18 +13,19 @@ declare(strict_types=1);
  * ★ 本脚本只覆盖 **T0（无头、解释器）**。AOT（T1）与真机（T2）仍是显式动作：
  *   `php tools/drift-build.php <app>`（构建）+ 真机探针。分层纪律见 `09` §8。
  *
- * 检查项（顺序即执行顺序，廉价优先）：
- *   lint      php tools/lint.php               570 文件 · 0 error     ~4s
+ * 检查项（顺序即执行顺序，廉价优先；★ 标 slow 的在 `--fast` 下跳过）：
+ *   lint      php tools/lint.php               571 文件 · 0 error     ~4s
  *   selftest  php tools/lint.php --selftest    规则双向自检            ~1s
  *   docref    php tools/docref.php             十册 file:line / § 引用 ~2s
- *   golden    php tools/golden-raster.php --check  9 场景像素基线      ~1.6s
- *   smoke     php tools/smoke.php              1686 条断言             ~50s
+ *   golden    golden-raster --check --canvas   9 个原语场景像素基线    ~1.6s
+ *   pages★    golden-raster --check --pages    20 个整页像素基线       ~5s
+ *   smoke★    php tools/smoke.php              1686 条断言             ~48s
  *
  * 用法：
- *   php tools/gate.php              # 全部（含 smoke，约 58s）
- *   php tools/gate.php --fast       # 跳过 smoke（约 9s，日常迭代）
+ *   php tools/gate.php              # 全部（含整页 + smoke，约 62s）
+ *   php tools/gate.php --fast       # 只跑廉价项（约 8s，日常迭代）
  *   php tools/gate.php --full       # 同默认（显式写法）
- *   php tools/gate.php --only=golden,smoke
+ *   php tools/gate.php --only=golden,pages,smoke
  *   php tools/gate.php --list
  *
  * 退出码：0 = 全过；否则 = **第一个失败项**的退出码（fail-fast，不再往下跑）。
@@ -36,13 +37,17 @@ declare(strict_types=1);
 
 $root = dirname(__DIR__);
 
-/** @var array<string, array{0: string, 1: list<string>}> 键 = 短名，值 = [显示名, 命令] */
+/**
+ * @var array<string, array{0: string, 1: list<string>, 2: bool}> 键 = 短名，
+ *      值 = [显示名, 命令, 是否慢项]
+ */
 $checks = [
-    'lint'     => ['lint', [PHP_BINARY, $root . '/tools/lint.php']],
-    'selftest' => ['lint 自检', [PHP_BINARY, $root . '/tools/lint.php', '--selftest']],
-    'docref'   => ['docref', [PHP_BINARY, $root . '/tools/docref.php']],
-    'golden'   => ['golden 基线', [PHP_BINARY, $root . '/tools/golden-raster.php', '--check']],
-    'smoke'    => ['smoke', [PHP_BINARY, $root . '/tools/smoke.php']],
+    'lint'     => ['lint', [PHP_BINARY, $root . '/tools/lint.php'], false],
+    'selftest' => ['lint 自检', [PHP_BINARY, $root . '/tools/lint.php', '--selftest'], false],
+    'docref'   => ['docref', [PHP_BINARY, $root . '/tools/docref.php'], false],
+    'golden'   => ['golden 原语', [PHP_BINARY, $root . '/tools/golden-raster.php', '--check', '--canvas'], false],
+    'pages'    => ['golden 整页', [PHP_BINARY, $root . '/tools/golden-raster.php', '--check', '--pages'], true],
+    'smoke'    => ['smoke', [PHP_BINARY, $root . '/tools/smoke.php'], true],
 ];
 
 // ── 参数 ──
@@ -58,8 +63,8 @@ foreach ($args as $a) {
 }
 
 if ($list) {
-    foreach ($checks as $key => [$label, $_]) {
-        echo "  {$key}\t{$label}\n";
+    foreach ($checks as $key => [$label, $_cmd, $slow]) {
+        echo '  ' . $key . "\t" . $label . ($slow ? "\t(slow：--fast 跳过)" : '') . "\n";
     }
     exit(0);
 }
@@ -76,8 +81,8 @@ if ($only !== null) {
     }
 } else {
     foreach ($checks as $k => $c) {
-        if ($fast && $k === 'smoke') {
-            continue; // --fast：跳过唯一的慢项
+        if ($fast && $c[2]) {
+            continue; // --fast：跳过慢项（整页 golden / smoke）
         }
         $selected[$k] = $c;
     }
@@ -93,7 +98,7 @@ $started = microtime(true);
 $index = 0;
 $total = count($selected);
 
-foreach ($selected as $key => [$label, $cmd]) {
+foreach ($selected as $key => [$label, $cmd, $_slow]) {
     $index++;
     fwrite(STDOUT, sprintf("\n▶ [%d/%d] %s\n", $index, $total, $label));
 

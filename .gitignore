@@ -22,8 +22,9 @@ apps/*/build/
 /Errors.log
 /errors.log
 /tools/api-surface.json
-/golden/*/actual/
-/golden/*/diff/
+# 失败现场（actual/ 与 diff/）不入库；`**` 是为了 golden/page/<Page>/ 这层嵌套
+/golden/**/actual/
+/golden/**/diff/
 
 # ── 依赖 ──
 /vendor/
