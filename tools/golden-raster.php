@@ -33,6 +33,7 @@ use Drift\Widget\BuildContext;
 use Drift\Widget\Card;
 use Drift\Widget\CustomPaint;
 use Drift\Widget\CustomPainter;
+use Drift\Dev\Inspect\Snapshot;
 use Drift\Dev\Smoke\Golden\GoldenGaugePainter;
 use Drift\Dev\Smoke\Golden\GoldenSparkPainter;
 use Drift\Widget\Column;
@@ -69,6 +70,102 @@ function goldenPng(string $rgba, int $w, int $h): string
         . $chunk('IHDR', pack('NNCCCCC', $w, $h, 8, 2, 0, 0, 0))
         . $chunk('IDAT', gzcompress($raw, 6))
         . $chunk('IEND', '');
+}
+
+// ─────────────────── S2：像素差异区域 → 节点反查（DevTools 方向的"快照说谁"）───────────────────
+//
+// 背景：golden 失败消息现在能说"哪一块像素变了"（包围盒 + 横带），但那一步之后
+// 还是要人眼打开 actual.png 找"是哪一个控件"。这一步把"像素告诉你哪里"接上
+// "快照告诉你谁"——同样一份整页快照（`Snapshot`，走真管线、与 golden 同口径的
+// 900×640 mount + Frame::run ⇒ 坐标零对齐），按差异框反查出"落在那一带的节点"。
+//
+// ★ 这是**提示**不是**判据**：差异框大时（如背景色变）几乎每个节点都命中，于是
+//   排序优先"中心落在差异框内"再按"重叠面积"排，把最可能病灶的节点顶到前面。
+// ★ 只给 page/ 场景用：canvas 原语场景没有元素树，反查无意义（会直接报"无节点"）。
+// ★ 顺手把快照 JSON 落盘（`inspect.json`）——S3 的 HTML 报告直接读它做可折叠树。
+/**
+ * @param array{0:int,1:int,2:int,3:int} $bbox [minX,minY,maxX,maxY]（像素差异包围盒）
+ * @return string 多行文本：节点路径 + 控件类 + 盒类 + 绝对矩形（按相关度排序）
+ */
+function regionNodes(string $pageClass, int $W, int $H, array $bbox, string $sceneDir): string
+{
+    if (!class_exists($pageClass)) {
+        return "（找不到页面类 {$pageClass}，跳过节点反查）\n";
+    }
+
+    /** @var \Drift\Widget\Widget $page */
+    $page = new $pageClass();
+    $snapshot = Snapshot::ofPage($page, $W, $H);
+
+    // 落盘：给 S3 HTML 报告消费（可折叠树 + 点节点看属性）。
+    if ($sceneDir !== '') {
+        $inspectDir = $sceneDir . '/inspect';
+        if (!is_dir($inspectDir)) {
+            mkdir($inspectDir, 0777, true);
+        }
+        file_put_contents(
+            $inspectDir . '/actual.json',
+            json_encode($snapshot, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT | JSON_PRESERVE_ZERO_FRACTION) . "\n",
+        );
+    }
+
+    $elements = $snapshot['trees']['elements'] ?? [];
+    if (!is_array($elements) || $elements === []) {
+        return "（快照无元素树，跳过节点反查）\n";
+    }
+
+    [$bx0, $by0, $bx1, $by1] = array_map('floatval', $bbox);
+    $hits = [];
+    foreach ($elements as $node) {
+        if (!is_array($node)) {
+            continue;
+        }
+        $r = $node['r'] ?? [null, null, null, null];
+        if ($r[0] === null) {
+            continue; // 无盒节点（StatelessWidget 之类）不参与几何命中
+        }
+        $ax = (float) $r[0];
+        $ay = (float) $r[1];
+        $w = (float) $r[2];
+        $h = (float) $r[3];
+
+        // 与差异框求交
+        $nx0 = max($ax, $bx0);
+        $ny0 = max($ay, $by0);
+        $nx1 = min($ax + $w, $bx1);
+        $ny1 = min($ay + $h, $by1);
+        if ($nx1 <= $nx0 || $ny1 <= $ny0) {
+            continue;
+        }
+        $overlap = ($nx1 - $nx0) * ($ny1 - $ny0);
+        // 中心是否落在差异框内：比单纯重叠面积更能指向"画偏/多画"的病灶节点
+        $cx = $ax + $w / 2.0;
+        $cy = $ay + $h / 2.0;
+        $centerIn = ($cx >= $bx0 && $cx <= $bx1 && $cy >= $by0 && $cy <= $by1) ? 1 : 0;
+        $hits[] = [$centerIn, $overlap, $node['p'], $node['w'], $node['b'], $ax, $ay, $w, $h];
+    }
+
+    if ($hits === []) {
+        return "（差异区域无节点几何覆盖——可能是裁剪/阴影/无盒绘制，需看 inspect 树）\n";
+    }
+
+    // 排序：中心在框内者优先，其次重叠面积大者优先
+    usort($hits, static function (array $a, array $b): int {
+        if ($b[0] !== $a[0]) {
+            return $b[0] <=> $a[0];
+        }
+        return $b[1] <=> $a[1];
+    });
+
+    $lines = ["（差异区域相关节点，最多 8 个；坐标=绝对像素，与像素图零对齐）\n"];
+    foreach (array_slice($hits, 0, 8) as $hit) {
+        $lines[] = sprintf(
+            '    · %s %s → %s @(%.0f,%.0f %.0f×%.0f)',
+            $hit[2], $hit[3], $hit[4], $hit[5], $hit[6], $hit[7], $hit[8],
+        );
+    }
+
+    return implode('', array_map(static fn ($l) => $l . "\n", $lines));
 }
 
 $scenes = [];
@@ -448,6 +545,7 @@ $scenes['opacity'] = static function () use ($W, $H): string {
 //   依赖 app 接线（命令环 / 浮层宿主），不是页面自己画得出来 ⇒ 跳过并报出名字，
 //   不许静默丢（"少了一张网"和"这张网本来就是空的"必须能分辨）。
 $pageScenes = [];
+$pageClasses = [];
 $skippedPages = [];
 $pageFiles = glob(dirname(__DIR__) . '/apps/showcase/src/Pages/*.php') ?: [];
 sort($pageFiles);
@@ -520,6 +618,8 @@ foreach ($pageFiles as $pageFile) {
 
         return $surface->last === null ? '' : $surface->last->toRgba();
     };
+    // 失败时要按场景名找回页面类（把像素差异翻译成节点，见 regionNodes()）
+    $pageClasses['page/' . $pageName] = $pageClass;
 }
 
 if ($skippedPages !== []) {
@@ -727,10 +827,17 @@ if ($mode === 'check') {
         }
         file_put_contents($diffDir . '/diff.png', goldenPng($diff, $W, $H));
 
-        echo "FAIL {$name}：{$diffPixels} 像素差（max Δ={$maxDelta}，占 "
+        $msg = "FAIL {$name}：{$diffPixels} 像素差（max Δ={$maxDelta}，占 "
             . number_format($pct, 2) . '%），区域 x=' . $minX . '..' . $maxX
             . ' y=' . $minY . '..' . $maxY . '；条带' . $bandText
-            . "；见 {$sceneDir}/actual/ 与 diff/\n";
+            . "；见 {$sceneDir}/actual/ 与 diff/";
+
+        // S2：整页场景失败时，把"像素条带"翻译成"这一带是哪些节点"（像素说哪里、快照说谁）
+        if (str_starts_with($name, 'page/') && isset($pageClasses[$name])) {
+            $msg .= "\n" . regionNodes($pageClasses[$name], $W, $H, [$minX, $minY, $maxX, $maxY], $sceneDir);
+        }
+
+        echo $msg . "\n";
     }
     echo $fail === 0 ? "GOLDEN OK\n" : "{$fail} FAIL\n";
     exit($fail === 0 ? 0 : 1);

@@ -22,9 +22,11 @@ apps/*/build/
 /Errors.log
 /errors.log
 /tools/api-surface.json
-# 失败现场（actual/ 与 diff/）不入库；`**` 是为了 golden/page/<Page>/ 这层嵌套
+# 失败现场（actual/ 与 diff/ 与 inspect/）不入库；`**` 是为了 golden/page/<Page>/ 这层嵌套
+# inspect/ 是 S2 失败时落盘的快照 JSON（actual.json），给 S3 HTML 报告消费，非判据
 /golden/**/actual/
 /golden/**/diff/
+/golden/**/inspect/
 # 基线 PNG 是 `.rgba.gz` 的**纯派生物**（`golden-raster --png` 可确定性还原），
 # 唯一用途是人眼看 ⇒ 不入库：省一半体积，且不会与 gz 出现"两份不同步"。
 /golden/**/expected.png
