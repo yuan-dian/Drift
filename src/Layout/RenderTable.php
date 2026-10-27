@@ -147,9 +147,14 @@ final class RenderTable extends RenderBox implements ScrollBarHost
      * 就地改某一轴的偏移（见 `ScrollBarHost::setScrollOffset()`）。
      *
      * ★ 表格是**双轴**盒，所以这里按轴分派；单轴视口的同形方法在
-     *   `RenderScrollView` 上。两个实现都只做"改字段 + 标重排 + 回夹取值"。
-     * ★★ 还没排过 ⇒ **不夹**（同 `RenderScrollView` 的理由：`maxScroll` 恒 0 时
-     *   夹一下会把首帧之前设的偏移吞掉，且不报错）。
+     *   `RenderScrollView` 上。两个实现都只做"改字段 + 应用 + 回夹取值"。
+     * ★★ 还没排过 ⇒ **不夹、不应用**（同 `RenderScrollView` 的理由：
+     *   `maxScroll` 恒 0 时夹一下会把首帧之前设的偏移吞掉，且不报错）。
+     * ★★ **不标重排**（2026-10-27 第二版）：偏移只改子盒 `offset`（表头吃横向、
+     *   行区吃两向），不改任何盒的 `size` ⇒ 由 `applyScrollOffsets()` 就地应用。
+     *   早先借 `markNeedsLayout()` 让偏移生效，代价是每滚一格 `Frame` 重排
+     *   **整棵树**；而 paint 无条件跑且读的就是子盒 offset ⇒ 不重排也不会
+     *   "画面停在旧位置"。
      */
     public function setScrollOffset(Axis $axis, float $value): float
     {
@@ -159,9 +164,38 @@ final class RenderTable extends RenderBox implements ScrollBarHost
             $this->scrollX = $value;
         }
 
-        RenderBox::markNeedsLayout();
+        if (!$this->hasSize()) {
+            return $value;
+        }
 
-        return $this->hasSize() ? $this->appliedOffset($axis) : $value;
+        $this->applyScrollOffsets();
+
+        return $this->appliedOffset($axis);
+    }
+
+    /**
+     * 把两轴偏移应用到子盒 `offset`（**布局末尾与滚动期共用**）。
+     *
+     * ★★ 抽出来的理由与 `RenderScrollView::applyScrollOffsets()` 同源：
+     *   这段原先只住 `performLayout()` 末尾 ⇒ "让偏移生效"与"重排整棵树"
+     *   被绑成一件事。它只依赖上一次布局留下的 `maxScroll*` /
+     *   `headerBoxH` / `sliceOrigin` ⇒ 可以在布局之外单独调。
+     * ★ 表头只吃横向（纵向永远贴顶）；行区吃两向，且要减去窗起点
+     *   （`sliceOrigin` 是这扇窗在完整内容里的 y，同 `RenderScrollView`）。
+     */
+    private function applyScrollOffsets(): void
+    {
+        $header = $this->header;
+        $body = $this->body;
+        if ($header === null || $body === null) {
+            return;
+        }
+
+        $offsetX = $this->appliedOffsetX();
+        $offsetY = $this->appliedOffsetY();
+
+        $header->setOffset(-$offsetX, 0.0);
+        $body->setOffset(-$offsetX, $this->headerBoxH - ($offsetY - $this->sliceOrigin));
     }
 
     /**
@@ -430,14 +464,11 @@ final class RenderTable extends RenderBox implements ScrollBarHost
         // ③ 夹取
         $this->maxScroll = max(0.0, $this->contentHeight - $viewportH);
         $this->maxScrollX = max(0.0, $this->contentWidth - $viewportW);
-        $offsetY = $this->appliedOffsetY();
-        $offsetX = $this->appliedOffsetX();
 
         // ④ 偏移进子盒 offset（不是 paint 期 translate）—— 见类注释
-        //    表头只吃横向偏移（纵向永远贴顶）；行区吃两个方向，且要减去窗起点
-        //    （`sliceOrigin` 是这扇窗在完整内容里的 y，同 RenderScrollView）。
-        $header->setOffset(-$offsetX, 0.0);
-        $body->setOffset(-$offsetX, $hh - ($offsetY - $this->sliceOrigin));
+        // ★★ 抽成 `applyScrollOffsets()`（2026-10-27）：滚动期也要用同一段，
+        //   而那时**不该重排**（见 `setScrollOffset()`）。
+        $this->applyScrollOffsets();
 
         return $constraints->constrain(new Size($viewportW, $viewportH));
     }

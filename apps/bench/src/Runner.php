@@ -299,9 +299,13 @@ final class Runner
         //   的形状（每次滚动都 setState），留着当对照。
         //   ★ `scrollBy()` 在**计时区内**（`perFrame`）：生产里它发生在输入派发之后、
         //     帧末 settle 之前，把它挪到外面就等于不计成本。
+        //   ★★ 走**真 `Frame`**（第 8 参 true）：滚动是"没重建 + 约束没变 + 盒没换代"
+        //     的形态，生产里 `Frame` 会**跳过 layout**；用直调 `layout()` 的旧口径
+        //     去量它，会把"生产里根本不会发生的重排"算进账（3.65ms，占一半）⇒
+        //     结论必然是"优化无效"。这一档与上面两档**口径不同**，不可直接相减。
         $tableScroller = null;
         self::oneCase(
-            '虚拟化表格 1000×6（滚动帧：每帧滚 40px）',
+            '虚拟化表格 1000×6（滚动帧：每帧滚 40px，走 Frame 判据）',
             Trees::table(1000, 6),
             1280.0,
             800.0,
@@ -315,6 +319,7 @@ final class Runner
                     $tableScroller->scrollBy(40.0);
                 }
             },
+            true,
         );
     }
 
@@ -351,8 +356,9 @@ final class Runner
         int $frames,
         ?\Closure $factory = null,
         ?\Closure $perFrame = null,
+        bool $frameGates = false,
     ): void {
-        $r = M3::runTree($label, $widget, $w, $h, $frames, $factory, $perFrame);
+        $r = M3::runTree($label, $widget, $w, $h, $frames, $factory, $perFrame, $frameGates);
         $nodes = \max(1, (int) $r['nodes']);
 
         self::line(\sprintf('   ── %s', $label));
@@ -360,7 +366,12 @@ final class Runner
         self::line(\sprintf('      settle  %10s ms', Stats::ms((int) $r['settle'])));
         self::line(\sprintf('      layout  %10s ms', Stats::ms((int) $r['layout'])));
         self::line(\sprintf('      paint   %10s ms', Stats::ms((int) $r['paint'])));
-        self::line(\sprintf('      present %10s ms', Stats::ms((int) $r['present'])));
+        if ($frameGates) {
+            // `Frame` 的 paint 段已含 beginFrame/endFrame ⇒ present 不单列
+            self::line('      present   含在 paint 段（Frame 口径）');
+        } else {
+            self::line(\sprintf('      present %10s ms', Stats::ms((int) $r['present'])));
+        }
         self::line(\sprintf('      total   %10s ms', Stats::ms((int) $r['total'])));
         self::line(\sprintf(
             '      每节点 layout %s us',

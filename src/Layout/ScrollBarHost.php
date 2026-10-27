@@ -66,7 +66,7 @@ interface ScrollBarHost
     public function appliedOffset(Axis $axis): float;
 
     /**
-     * **就地**改滚动偏移 —— 不重建 Widget 树、只重排（+重画）。
+     * **就地**改滚动偏移 —— 不重建 Widget 树、**不重排**、只重画。
      *
      * ★★ 存在的理由（2026-10-27，A 批第 1 项）：偏移原先只作为**构造参数**递进来
      *   ⇒ 滚一格 = `setState()` = 整棵滚动内容重建。实测（AOT，`bench` 的
@@ -78,8 +78,12 @@ interface ScrollBarHost
      *   （过滤 / 列宽变窄）⇒ 旧值长期大于上限，之后每笔增量都先消耗那段死区
      *   （真机表现："拖着条，画面不动"）。
      *
-     * ★ 实现**必须**调 `RenderBox::markNeedsLayout()`：本帧既没 `rebuild()` 也没换盒，
-     *   `Frame` 的跳过判据看不到任何变化 ⇒ 不重排就是画面停在旧位置（不报错）。
+     * ★★ 实现**必须**把新偏移**应用到子盒 `offset`**（`applyScrollOffsets()`），
+     *   而不是只改字段：`Frame` 每帧无条件 paint，而 paint 读的就是子盒 offset
+     *   ⇒ 只改字段 = 画面停在旧位置（不报错、不写日志）。
+     *   ★ **不要**借 `RenderBox::markNeedsLayout()` 去"让偏移生效"（2026-10-27
+     *   第二版已改掉）：那会让 `Frame` 重排**整棵树**，而偏移不改任何盒的
+     *   `size` ⇒ 重排是纯浪费（实测滚动帧 `layout` 3.65ms，占一半）。
      *
      * @param float $value 目标偏移（**内容坐标**，调用方已夹下界 0）
      * @return float 实际生效的偏移

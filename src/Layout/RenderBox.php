@@ -149,17 +149,35 @@ abstract class RenderBox extends RenderObject
      */
     private static int $layoutEpoch = 0;
 
+    /**
+     * `layout()` 被调用的累计次数 —— **量具**（`smoke` 用它断言"滚动不重排"）。
+     *
+     * ★★ 为什么必须有它：滚动期"重排了"与"没重排"在**画面上完全一样**
+     *   （偏移的应用已抽成 `applyScrollOffsets()`，两条路得到同样的子盒
+     *   offset）⇒ 复杂度没有行为差异 ⇒ 只能靠计数器证伪。同 `Element::$pairChecks`。
+     */
+    private static int $layoutCount = 0;
+
     /** @internal `Frame` 的"跳过 layout"判据之一（`05` §5.4 第三步） */
     public static function layoutEpoch(): int
     {
         return self::$layoutEpoch;
     }
 
+    /** @internal 量具：`layout()` 累计次数（见 `$layoutCount`） */
+    public static function layoutCount(): int
+    {
+        return self::$layoutCount;
+    }
+
     /**
-     * 声明"本盒的输入变了，必须重排"（**不换盒、不重建**）。
+     * 声明"**整棵树**需要重排"（盒换代 ⇒ 新盒还没有 `size`）。
      *
-     * ★ 只给"改了盒内状态"的实现调（`setScrollOffset()`）；换盒走
-     *   `Element::syncBox()`（那里也加这个序号，同一个计数器）。
+     * ★ 只给换盒那条路调（`State::noteBoxReplaced()` ← `Element::syncBox()`）。
+     *   **滚动偏移不走这里**（2026-10-27 第二版）：偏移只改子盒的 `offset`，
+     *   不改任何盒的 `size` ⇒ 由 `applyScrollOffsets()` 就地应用即可；
+     *   借这条通道去"让偏移生效"会让 `Frame` 重排整棵树（实测滚动帧
+     *   `layout` 3.65ms，占掉一半）。
      * ★ 它**不触发绘制**：本仓每帧无条件 paint（无脏边界），所以重排完自然会画。
      * @internal
      */
@@ -283,6 +301,8 @@ abstract class RenderBox extends RenderObject
      */
     final public function layout(BoxConstraints $constraints): Size
     {
+        self::$layoutCount++;
+
         $m = $this->mods;
 
         // ① 尺寸修饰收紧约束（设了的那一轴变成紧的）

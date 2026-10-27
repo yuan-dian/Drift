@@ -3,8 +3,10 @@ declare(strict_types=1);
 
 namespace Drift\Bench;
 
+use Drift\App\Frame;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Size;
+use Drift\Rendering\SurfaceProfile;
 use Drift\Text\DeterministicFontManager;
 use Drift\Text\DeterministicMetricsProvider;
 use Drift\Text\DeterministicShaper;
@@ -27,6 +29,11 @@ use Drift\Widget\Widget;
  * ★★ **同步义务**：`Frame::run()` 的结构一旦变化（加段 / 改顺序 / 改 early return），
  *   这里必须同步改，否则 M3 量的就不是真实管线。改动时把 `src/App/Frame.php`
  *   和本文件一起看。
+ *
+ * ★★ **例外（2026-10-27）**：`$frameGates` 为真时**不再复刻**，直接调 `Frame::run()`
+ *   —— 因为"跳过 layout"这类**判据**是管线的语义，复刻一份必然漂（`Frame` 加一条
+ *   判据、这里忘同步 ⇒ 量出来的成本不是生产成本，而且错得很安静：数字照样有、
+ *   只是偏大）。滚动帧那一档走这条路。
  *
  * ── 分母怎么取 ──────────────────────────────────────────────────────────
  * 无头 `RecordingCanvas` 的 `endFrame()` 只是计数（≈ 0ns），而真机 Skia 的 present
@@ -54,6 +61,16 @@ final class M3
      * @param null|\Closure(Element): void $perFrame 每帧**在 settle 之前**、**计时区内**调一次
      *        （收到根 Element）。给"真实交互"用：滚动就是"改状态 + 本帧落盘"，
      *        把 `scrollBy()` 放在计时区外会把它的成本藏起来 —— 而它正是被测对象。
+     * @param bool $frameGates 走**真 `Frame`**（含"跳过 layout"的判据）而不是每帧
+     *        无条件 `$box->layout()`。
+     *
+     *        ★★ 为什么必须有这个开关（2026-10-27）：本方法原本每帧无条件排一次，
+     *        测的是"layout 本身多贵"。而生产走 `Frame`，它在"没重建 + 约束没变 +
+     *        盒没换代"时会**跳过 layout** —— 滚动帧正是这种形态 ⇒ 用直调
+     *        `layout()` 的口径去量滚动，会把"生产里根本不会发生的重排"算进账
+     *        （实测 3.65ms，占一半），结论必然是"优化无效"。
+     *        ★ 分段改由 `SurfaceProfile` 出（`Frame` 自己 add 三段）；`paint`
+     *        段**含** `beginFrame`/`endFrame` ⇒ 与旧口径的 `paint + present` 对应。
      *
      * @return array{
      *   label: string, nodes: int, frames: int,
@@ -68,6 +85,7 @@ final class M3
         int $frames,
         ?\Closure $factory = null,
         ?\Closure $perFrame = null,
+        bool $frameGates = false,
     ): array {
         $metrics = new DeterministicMetricsProvider(
             DeterministicFontManager::standard()->collection(),
@@ -84,6 +102,14 @@ final class M3
 
         $constraints = BoxConstraints::tight(new Size($w, $h));
 
+        // ★ `$frameGates` 为真 ⇒ 用**生产同一条**管线（`Frame::run()`）。
+        //   分段靠 `SurfaceProfile`（默认关，这里显式打开）。
+        $frame = $frameGates ? new Frame($surface) : null;
+        if ($frameGates) {
+            SurfaceProfile::$on = true;
+            SurfaceProfile::reset();
+        }
+
         $settle = [];
         $layout = [];
         $paint = [];
@@ -92,6 +118,35 @@ final class M3
 
         for ($i = 0; $i < $frames; $i++) {
             $ts = (float) $i * 16.6667;
+
+            // ★★ 真 `Frame` 分支（`$frameGates`）：settle / layout（含跳过判据）/
+            //   paint / present 全在 `Frame::run()` 里，分段由它自己 add 到
+            //   `SurfaceProfile`。每帧 reset 一次 ⇒ 拿到的是**稳态单帧**的三段。
+            //   ★ `$perFrame`（输入派发）刻意放在 reset 之前：它既不属于 settle
+            //   也不属于 layout，只应计入 `total`。
+            if ($frameGates && $frame !== null) {
+                $t0 = \hrtime(true);
+                if ($i >= self::WARMUP) {
+                    SurfaceProfile::reset();
+                }
+                if ($perFrame !== null) {
+                    $perFrame($root);
+                }
+                $frame->run($root, $constraints, $ts);
+                $t4 = \hrtime(true);
+
+                if ($i >= self::WARMUP) {
+                    $settle[] = (int) (SurfaceProfile::$ns['settle'] ?? 0);
+                    $layout[] = (int) (SurfaceProfile::$ns['layout'] ?? 0);
+                    // `Frame` 的 paint 段**含** begin/endFrame ⇒ 对应旧口径的
+                    // paint + present，所以 present 单列 0（不是漏了）。
+                    $paint[] = (int) (SurfaceProfile::$ns['paint'] ?? 0);
+                    $present[] = 0;
+                    $total[] = $t4 - $t0;
+                }
+
+                continue;
+            }
 
             // ① settle（帧末统一重建，§5.2 裁决 3）
             $t0 = \hrtime(true);

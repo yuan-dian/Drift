@@ -92,9 +92,15 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
      *
      * ★ 夹取用**上一次布局**的 `maxScroll`：滚动期间内容长度不变 ⇒ 那个值仍然有效。
      *   内容真的变短时下一帧会重建（build 里有夹取写回），不会留下越界值。
-     * ★★ **还没排过（`size()` 为 null）⇒ 不夹、原样返回**：那时 `maxScroll` 恒 0，
-     *   夹一下会把"首帧之前设的偏移"整个吞掉 —— 现象是预览 / 测试里
-     *   `render()` 的 prepare 阶段滚了 400，画出来还在顶部，**不报错**。
+     * ★★ **还没排过（`size()` 为 null）⇒ 不夹、不应用、原样返回**：那时
+     *   `maxScroll` 恒 0，夹一下会把"首帧之前设的偏移"整个吞掉 —— 现象是
+     *   预览 / 测试里 `render()` 的 prepare 阶段滚了 400，画出来还在顶部，
+     *   **不报错**。（也不应用：没有 size 就没有布局期算出的 `sliceOrigin`。）
+     * ★★ **不标重排**（2026-10-27 第二版）：偏移只改子盒 `offset`，不改任何盒的
+     *   `size` ⇒ 由 `applyScrollOffsets()` 就地应用即可。早先借
+     *   `markNeedsLayout()` 让偏移生效，代价是 `Frame` 每滚一格重排**整棵树**
+     *   （实测滚动帧 `layout` 3.65ms，占一半）。paint 无条件跑且读的就是子盒
+     *   offset ⇒ 不重排也不会"画面停在旧位置"。
      */
     public function setScrollOffset(Axis $axis, float $value): float
     {
@@ -103,9 +109,39 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
         }
 
         $this->scrollOffset = $value;
-        RenderBox::markNeedsLayout();
 
-        return $this->hasSize() ? $this->applied() : $value;
+        if (!$this->hasSize()) {
+            return $value;
+        }
+
+        $this->applyScrollOffsets();
+
+        return $this->applied();
+    }
+
+    /**
+     * 把当前偏移应用到子盒的 `offset`（**布局末尾与滚动期共用**）。
+     *
+     * ★★ 抽出来的理由（2026-10-27）：这段原先只住 `performLayout()` 里 ⇒
+     *   "让偏移生效"与"重排整棵树"被绑成一件事。而它只依赖**上一次布局**
+     *   留下的三个数（`maxScroll` / `sliceOrigin` / 子盒本身），与本次约束
+     *   无关 ⇒ 可以在布局之外单独调。
+     * ★ 内容长度变化必然伴随 `rebuild()`（State 标脏）⇒ 走完整 layout ⇒
+     *   `maxScroll` 与 `sliceOrigin` 重算。滚动期沿用旧值是安全的。
+     */
+    private function applyScrollOffsets(): void
+    {
+        $child = $this->child;
+        if ($child === null) {
+            return;
+        }
+
+        $shift = $this->applied() - $this->sliceOrigin;
+        if ($this->vertical) {
+            $child->setOffset(0.0, -$shift);
+        } else {
+            $child->setOffset(-$shift, 0.0);
+        }
     }
 
     /** @internal `ScrollBarFade` 每帧把值推过来（不重建、不重排） */
@@ -256,18 +292,12 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
         // ★ 虚拟列表：可滚上限按**完整内容**算，不是按这扇窗的实测长度。
         $virtualMain = $this->virtualExtent ?? $contentMain;
         $this->maxScroll = max(0.0, $virtualMain - $viewportMain);
-        $offset = $this->applied();
 
         // ④ ★ 偏移进子盒 offset（不是 paint 期 translate）—— 见类注释
-        // ★ 虚拟列表：窗只含 [sliceOrigin, sliceOrigin+窗长)，所以窗要挪的
-        //   距离是"完整内容偏移 − 窗起点"。普通 ScrollView 的 sliceOrigin 恒 0
-        //   ⇒ 与旧式 `-offset` 完全等价。
-        $shift = $offset - $this->sliceOrigin;
-        if ($this->vertical) {
-            $child->setOffset(0.0, -$shift);
-        } else {
-            $child->setOffset(-$shift, 0.0);
-        }
+        // ★★ 抽成 `applyScrollOffsets()`（2026-10-27）：滚动期也要用同一段，
+        //   而那时**不该重排**（见 `setScrollOffset()`）。这段只依赖
+        //   `maxScroll` / `sliceOrigin` / 子盒，都是上一次布局留下的 ⇒ 可以单独调。
+        $this->applyScrollOffsets();
 
         return $this->vertical
             ? new Size($viewportCross, $viewportMain)

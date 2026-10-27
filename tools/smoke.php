@@ -16830,7 +16830,7 @@ check(
 //   判据只有一条能用：**重建次数**。滚动照样让画面动，"有没有重建"在画面上
 //   没有任何痕迹（这正是它能藏这么久的原因）⇒ 没有计数器就无法证伪。
 //   ★ 反向自检：把 `scrollBy()` 改回 `setState()` ⇒ 下面三条全红（delta 变 1）；
-//     把 `setScrollOffset()` 里的 `markNeedsLayout()` 删掉 ⇒ 偏移断言红（画面不动）。
+//     把 `applyScrollOffsets()` 从 `setScrollOffset()` 里删掉 ⇒ 偏移断言红（画面不动）。
 $tableFrame = static function (Element $root): void {
     $root->settle();
     $root->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
@@ -16868,6 +16868,47 @@ check(
     'Table · 换窗后新偏移仍然生效（440）',
     $tableBoxOf($tableScroll)?->appliedOffset(Axis::Vertical) === 440.0,
     (string) ($tableBoxOf($tableScroll)?->appliedOffset(Axis::Vertical) ?? -1.0),
+);
+
+// ── ⑩ 滚动**不重排**（2026-10-27 第二版：偏移的应用从 `performLayout()` 抽出）──
+//   ★★ 这一条**只能**靠计数器：`applyScrollOffsets()` 让"重排"与"不重排"画出来
+//   逐像素相同 ⇒ 下面那条端到端 SVG 比对对它**完全没有分辨力**（实测：改完
+//   1683 条全绿，一条都没红）。这正是"复杂度没有行为差异 ⇒ 必须加计数器"。
+//   ★ 反向自检：把 `setScrollOffset()` 改回 `RenderBox::markNeedsLayout()`
+//   （或把 `applyScrollOffsets()` 只留在 `performLayout()` 里）⇒ 本断言红。
+$tblSurface = new SvgSurface();
+$tblSurface->resize(320, 240, 1.0);
+$tblEl = $tableBuild(10000)->createElement();
+$tblEl->mount(null, smokeContext());
+$tblFrame = new Frame($tblSurface);
+$tblTight = BoxConstraints::tight(new Size(320.0, 240.0));
+$tblFrame->run($tblEl, $tblTight, 0.0);   // 首帧：约束变了 ⇒ 必排
+$tblState = $tableStateOf($tblEl);
+
+$layoutsBefore = RenderBox::layoutCount();
+$tblState?->scrollBy(40.0);
+$tblFrame->run($tblEl, $tblTight, 16.0);
+$layoutsScrolled = RenderBox::layoutCount() - $layoutsBefore;
+check(
+    'Table · 滚动一帧 ⇒ 重排 0 次（Frame 跳过 layout，paint 读到新 offset）',
+    $layoutsScrolled === 0,
+    'layouts=' . $layoutsScrolled,
+);
+check(
+    'Table · 上面那一帧确实滚了（appliedOffset=40，不是"没滚所以没重排"）',
+    $tableBoxOf($tblEl)?->appliedOffset(Axis::Vertical) === 40.0,
+    (string) ($tableBoxOf($tblEl)?->appliedOffset(Axis::Vertical) ?? -1.0),
+);
+
+// ★ 换窗那一帧**必须**重排：新窗口里的行是新盒，没有 `size` 就是一片空白
+$layoutsBefore = RenderBox::layoutCount();
+$tblState?->scrollBy(400.0);   // 滚出缓冲带 ⇒ 换窗 ⇒ 重建 + 换盒
+$tblFrame->run($tblEl, $tblTight, 32.0);
+$layoutsReWindow = RenderBox::layoutCount() - $layoutsBefore;
+check(
+    'Table · 滚出缓冲带换窗 ⇒ 重排 > 0（新行必须有 size，不许借"不重排"省掉）',
+    $layoutsReWindow > 0,
+    'layouts=' . $layoutsReWindow,
 );
 
 // ★ **回夹取值**的守卫：内容装得下时滚 100 ⇒ 偏移必须回 0。
@@ -16916,10 +16957,11 @@ check(
 );
 
 // ★★ **端到端判据**：真跑两帧 `Frame`，第二帧的画面必须与第一帧不同。
-//   这条抓的是"推了偏移但没人重排"——`Frame` 跳过 layout 的判据是
-//   "没重建 + 约束没变 + 盒没换代"，而推偏移三样都不满足 ⇒ 删掉
-//   `setScrollOffset()` 里的 `RenderBox::markNeedsLayout()` 时**画面停在旧位置**
-//   （且不报错、不写日志）。上面那些 `layout()` 直调的断言抓不到这个坑。
+//   这条抓的是"改了偏移但没应用到子盒 offset"——`Frame` 会跳过 layout
+//   （没重建 + 约束没变 + 盒没换代），于是 `performLayout()` 里那段
+//   `setOffset()` 不跑 ⇒ 删掉 `setScrollOffset()` 里的 `applyScrollOffsets()`
+//   时**画面停在旧位置**（且不报错、不写日志）。上面那些 `layout()` 直调的
+//   断言抓不到这个坑（它们每帧都手动重排）。
 $svFrameSurface = new SvgSurface();
 $svFrameSurface->resize(320, 240, 1.0);
 $svFrameEl = ScrollView::make(Column::make()->children($svKids))->createElement();
@@ -16938,7 +16980,7 @@ if ($svFrameState instanceof ScrollViewState) {
 $svFrame->run($svFrameEl, $svTight, 16.0);
 $svSvgAfter = $svFrameSurface->svg();
 check(
-    'ScrollView · 滚动后**下一帧画面真的变了**（推偏移会标重排，Frame 不许跳过 layout）',
+    'ScrollView · 滚动后**下一帧画面真的变了**（偏移必须应用到子盒 offset，Frame 会跳过 layout）',
     $svSvgBefore !== $svSvgAfter && $svSvgBefore !== '',
     'before=' . \strlen($svSvgBefore) . ' / after=' . \strlen($svSvgAfter),
 );
