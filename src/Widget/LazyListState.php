@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Widget;
 
 use Drift\Errors;
+use Drift\Geometry\Axis;
 use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Rect;
 use Drift\Layout\RenderScrollView;
@@ -72,6 +73,21 @@ final class LazyListState extends State implements Scrollable
             $this->offset = $next;
             $this->rememberAnchor();
         });
+    }
+
+    /**
+     * 按轴滚动：**只有主轴接受**（`LazyRow` 的主轴是 x）。
+     *
+     * ★ 主轴来自 Widget（`LazyList::isVertical()`），不由调用方猜 —— 与
+     *   `ScrollViewState` 同一个形态。
+     */
+    public function scrollByAxis(Axis $axis, float $delta): void
+    {
+        if (($axis === Axis::Vertical) !== $this->view()->isVertical()) {
+            return;
+        }
+
+        $this->scrollBy($delta);
     }
 
     /** 滚动条的显隐节律（懒建：没滚过的列表不建，滚动条恒亮） */

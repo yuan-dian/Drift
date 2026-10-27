@@ -3,9 +3,11 @@ declare(strict_types=1);
 
 namespace Drift\App;
 
+use Drift\Geometry\Axis;
 use Drift\Geometry\Rect;
 use Drift\Input\PointerEvent;
 use Drift\Layout\RenderBox;
+use Drift\Layout\ScrollBarGeometry;
 use Drift\Layout\ScrollBarHost;
 use Drift\Layout\RenderScrollView;
 use Drift\Widget\Element;
@@ -41,8 +43,10 @@ final class ScrollInputRouter
     /**
      * 进行中的 thumb 拖动状态（`null` = 没有）。
      *
-     * ★ `array{state: Scrollable, box: ScrollBarHost, last: float}` ——
-     *   `last` 是上一事件的指针位置（映射"thumb 走多远、内容走多远"用）。
+     * ★ `array{state: Scrollable, box: ScrollBarHost, axis: Axis, last: float}` ——
+     *   `axis` 是**这条** thumb 的轴（表有两根条，拖动中必须记住拖的是哪根，
+     *   否则每帧重新判定会把横向拖动判成纵向）；`last` 是该轴上的上一次指针位置
+     *   （映射"thumb 走多远、内容走多远"用）。
      *   **只记 State 不缓存盒的兄弟问题**：盒每步现取会丢（帧末 flush 重建），
      *   但 thumb 拖动的几何必须**同一帧内连续** ⇒ 这里记盒（拖动不跨帧重建，
      *   指针 move 之间没有 settle）。
@@ -90,15 +94,18 @@ final class ScrollInputRouter
     /**
      * 命中滚动条 thumb（返回拖动状态；`null` = 没点中）。
      *
-     * ★ 沿命中链找**最近**的可滚动视口，再问它的 `thumbRect()` —— 两个条件都满足
-     *   才算点中：视觉上 thumb 压在那个视口的右缘（横向在底缘），点在那里
-     *   用户的意思就是"拖这条"。
+     * ★ 沿命中链找**最近**的可滚动视口，再问它各轴的 `thumbRectInRoot()` ——
+     *   两个条件都满足才算点中：视觉上 thumb 压在那个视口的右缘 / 底缘，
+     *   点在那里用户的意思就是"拖这条"。
+     * ★ **按反序遍历 `scrollAxes()`**：那份清单是**绘制顺序**（先画的在前），
+     *   后画的压在先画的上面 ⇒ 命中要反过来问，否则右下角那 6×6 会抓到横条
+     *   （看得见的是竖条）。与 `RenderBox` 逆序问子盒是同一条惯例。
      * ★ 容差 2px：条只有 6px 宽，像素级精确抓取对鼠标过于苛刻。
      * ★ 盒失败（有 `Scrollable` 却没有滚动条宿主盒）⇒ `null` 而非
      *   继续往上找：视觉上这里没有条，事件就该落到别处，而不是隔着一个
      *   不是滚动器的祖先去抓外层的条。
      *
-     * @return null|array{state: Scrollable, box: ScrollBarHost, last: float}
+     * @return null|array{state: Scrollable, box: ScrollBarHost, axis: Axis, last: float}
      */
     private function scrollThumbAt(float $x, float $y, Element $root, FocusManager $focus): ?array
     {
@@ -115,24 +122,31 @@ final class ScrollInputRouter
             return null;
         }
 
-        $bar = $host->thumbRectInRoot();
-        if ($bar === null) {
-            return null;   // 内容不溢出：没有条可拖
+        $axes = $host->scrollAxes();
+        for ($i = \count($axes) - 1; $i >= 0; $i--) {
+            $axis = $axes[$i];
+            $bar = $host->thumbRectInRoot($axis);
+            if ($bar === null) {
+                continue;   // 该轴内容不溢出：没有条可拖
+            }
+
+            $left = $bar->left - 2.0;
+            $top = $bar->top - 2.0;
+
+            if ($x < $left || $x > $left + $bar->width + 4.0
+                || $y < $top || $y > $top + $bar->height + 4.0) {
+                continue;
+            }
+
+            return [
+                'state' => $state,
+                'box' => $host,
+                'axis' => $axis,
+                'last' => ScrollBarGeometry::project($x, $y, $axis),
+            ];
         }
 
-        $left = $bar->left - 2.0;
-        $top = $bar->top - 2.0;
-
-        if ($x < $left || $x > $left + $bar->width + 4.0
-            || $y < $top || $y > $top + $bar->height + 4.0) {
-            return null;
-        }
-
-        return [
-            'state' => $state,
-            'box' => $host,
-            'last' => $host->isVertical() ? $y : $x,
-        ];
+        return null;
     }
 
     /**
@@ -173,11 +187,13 @@ final class ScrollInputRouter
     }
 
     /**
-     * thumb 拖动的一步：位移 → 滚动量（主轴方向按视口取向取 x 或 y）。
+     * thumb 拖动的一步：位移 → 滚动量（按**拖的那条轴的**分量算）。
      *
      * ★ 映射是"thumb 走多远、内容走多远"：`dy * maxScroll / thumbTravel`。
      *   thumb 下移 ⇒ offset 增大（看到下面）—— 与 `scrollBy` 的正向语义一致，
      *   所以**不需要额外取反**（滚轮那层已经在壳里翻译过了）。
+     * ★ 走 `scrollByAxis()` 而不是 `scrollBy()`：后者是**主轴**语义，表的横条
+     *   在主轴（纵向）之外 —— 用 `scrollBy()` 会把横向拖动喂给纵向偏移。
      */
     public function dragThumb(PointerEvent $event): void
     {
@@ -190,17 +206,19 @@ final class ScrollInputRouter
         $state = $drag['state'];
         /** @var ScrollBarHost $box */
         $box = $drag['box'];
+        /** @var Axis $axis */
+        $axis = $drag['axis'];
 
-        $travel = $box->thumbTravel();
-        $max = $box->maxScroll();
+        $travel = $box->thumbTravel($axis);
+        $max = $box->maxScroll($axis);
         if ($travel <= 0.0 || $max <= 0.0) {
             return;
         }
 
-        $now = $box->isVertical() ? $event->y : $event->x;
+        $now = ScrollBarGeometry::project($event->x, $event->y, $axis);
         $delta = ($now - (float) $drag['last']) * $max / $travel;
         if ($delta !== 0.0) {
-            $state->scrollBy($delta);
+            $state->scrollByAxis($axis, $delta);
         }
 
         $this->thumbDrag['last'] = $now;
@@ -254,10 +272,14 @@ final class ScrollInputRouter
         [$boxX, $boxY] = RenderBox::absoluteOrigin($box);
         $dx = $boxX - $scrollX;
         $dy = $boxY - $scrollY;
-        $offset = $scroll->appliedOffset();
 
-        // ★ 偏移只在**主轴**上加回；交叉轴上的绝对差就是内容坐标。
-        $target = $scroll->isVertical()
+        // ★ 单轴视口只报一根轴（`scrollAxes()` 恒非空）；偏移只在**主轴**上加回，
+        //   交叉轴上的绝对差就是内容坐标。
+        $axes = $scroll->scrollAxes();
+        $axis = \count($axes) > 0 ? $axes[0] : Axis::Vertical;
+        $offset = $scroll->appliedOffset($axis);
+
+        $target = $axis === Axis::Vertical
             ? new Rect($dx, $dy + $offset, $size->width, $size->height)
             : new Rect($dx + $offset, $dy, $size->width, $size->height);
 

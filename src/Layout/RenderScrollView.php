@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Drift\Layout;
 
 use Drift\Errors;
+use Drift\Geometry\Axis;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Size;
@@ -88,13 +89,37 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
         $this->barOpacity = $value;
     }
 
-    /** 可滚动上限（布局后才有意义） */
-    public function maxScroll(): float
+    /** 本视口的唯一轴（单轴视口 ⇒ `scrollAxes()` 只有一个元素） */
+    private function axis(): Axis
     {
-        return $this->maxScroll;
+        return $this->vertical ? Axis::Vertical : Axis::Horizontal;
     }
-    /** 实际生效的偏移（已按 maxScroll 夹取） */
-    public function appliedOffset(): float
+
+    /** @internal 见 `ScrollBarHost` —— 单轴视口只报一根轴 */
+    public function scrollAxes(): array
+    {
+        return [$this->axis()];
+    }
+
+    /**
+     * 可滚动上限（布局后才有意义）。
+     *
+     * ★ 轴不匹配 ⇒ `0.0`（而不是报错）：调用方按 `scrollAxes()` 循环，不该先
+     *   `if` 再问；报错会让"随便问一下"变成噪声。
+     */
+    public function maxScroll(Axis $axis): float
+    {
+        return $axis === $this->axis() ? $this->maxScroll : 0.0;
+    }
+
+    /** 实际生效的偏移（已按 `maxScroll` 夹取） */
+    public function appliedOffset(Axis $axis): float
+    {
+        return $axis === $this->axis() ? $this->applied() : 0.0;
+    }
+
+    /** 本轴的实际偏移（内部用：`performLayout` 不该为了一个轴去走接口） */
+    private function applied(): float
     {
         return min(max(0.0, $this->scrollOffset), $this->maxScroll);
     }
@@ -206,7 +231,7 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
         // ★ 虚拟列表：可滚上限按**完整内容**算，不是按这扇窗的实测长度。
         $virtualMain = $this->virtualExtent ?? $contentMain;
         $this->maxScroll = max(0.0, $virtualMain - $viewportMain);
-        $offset = $this->appliedOffset();
+        $offset = $this->applied();
 
         // ④ ★ 偏移进子盒 offset（不是 paint 期 translate）—— 见类注释
         // ★ 虚拟列表：窗只含 [sliceOrigin, sliceOrigin+窗长)，所以窗要挪的
@@ -266,7 +291,7 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
      */
     private function paintScrollbar(Canvas $canvas): void
     {
-        $bar = $this->thumbRect();
+        $bar = $this->thumbRect($this->axis());
         if ($bar === null) {
             return;
         }
@@ -287,20 +312,20 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
      *   `Application` 的滚动条拖动用它命中 —— 两处各算一遍迟早会漂
      *   （条画在这里、抓在别处）。`RenderTable` 用的是同一份。
      */
-    public function thumbRect(): ?Rect
+    public function thumbRect(Axis $axis): ?Rect
     {
         $size = $this->size;
-        if ($size === null) {
+        if ($size === null || $axis !== $this->axis()) {
             return null;
         }
 
-        return ScrollBarGeometry::thumbRect($size, $this->maxScroll, $this->appliedOffset(), $this->vertical);
+        return ScrollBarGeometry::thumbRect($size, $this->maxScroll, $this->applied(), $axis);
     }
 
     /** @internal 事件命中用：thumb 在渲染树根坐标里的矩形（见 `ScrollBarHost`） */
-    public function thumbRectInRoot(): ?Rect
+    public function thumbRectInRoot(Axis $axis): ?Rect
     {
-        $bar = $this->thumbRect();
+        $bar = $this->thumbRect($axis);
         if ($bar === null) {
             return null;
         }
@@ -316,20 +341,14 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
      * ★ 与 `thumbRect()` 分开是因为拖动只要这一个标量，拿整条矩形回来还得
      *   再抠一遍长度；两处口子都从同一组常量推，不引入第二个"条长"定义。
      */
-    public function thumbTravel(): float
+    public function thumbTravel(Axis $axis): float
     {
         $size = $this->size;
-        if ($size === null) {
+        if ($size === null || $axis !== $this->axis()) {
             return 0.0;
         }
 
-        return ScrollBarGeometry::travel($this->vertical ? $size->height : $size->width, $this->maxScroll);
-    }
-
-    /** 滚动主轴（拖动映射用：纵向看 y，横向看 x） */
-    public function isVertical(): bool
-    {
-        return $this->vertical;
+        return ScrollBarGeometry::travel(ScrollBarGeometry::extent($size, $axis), $this->maxScroll);
     }
 
     /**

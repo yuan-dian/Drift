@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Widget;
 
 use Drift\Errors;
+use Drift\Geometry\Axis;
 use Drift\Geometry\Rect;
 use Drift\Input\CursorShape;
 use Drift\Input\PointerEvent;
@@ -48,6 +49,15 @@ use Drift\Text\TextAlign;
 final class TableState extends State implements Scrollable
 {
     private float $offsetY = 0.0;
+
+    /**
+     * 横向偏移（阶段 5）。
+     *
+     * ★ 与 `$offsetY` **分开存**而不是合成一个 `Point`：两者的夹取上限来自不同的
+     *   量（`contentW − 视口宽` vs `行数 × 行高 − 行区高`），且纵向的坐标系是
+     *   **行区**（不含表头）。合成一个结构体只会让"哪一轴用哪套夹取"藏起来。
+     */
+    private float $offsetX = 0.0;
 
     /** 滚动条淡出节律（懒建；与 `ScrollViewState` / `LazyListState` 同一份实现） */
     private ?ScrollBarFade $barFade = null;
@@ -147,6 +157,12 @@ final class TableState extends State implements Scrollable
         return $this->offsetY;
     }
 
+    /** 当前横向偏移（逻辑像素，≥ 0；上界 = 内容宽 − 视口宽，布局期夹取） */
+    public function offsetX(): float
+    {
+        return $this->offsetX;
+    }
+
     /** 上一帧实际造出的行数（虚拟化的验收判据，不参与逻辑） */
     public function createdRows(): int
     {
@@ -165,6 +181,35 @@ final class TableState extends State implements Scrollable
 
         $this->setState(function () use ($next): void {
             $this->offsetY = $next;
+        });
+    }
+
+    /**
+     * 按轴滚动（横条拖动走这里；滚轮 / 竖条仍走 `scrollBy()`）。
+     *
+     * ★ 两个轴共用同一份 `ScrollBarFade`：横条与竖条同时淡出是对的 —— 它们提示
+     *   的是同一件事"这块区域还能滚"，分两套节律只会出现"一根亮一根暗"。
+     * ★ 上界不在这里夹（`scrollBy()` 同一裁决）：横向内容宽要等 `resolveWidths()`
+     *   算完才知道，那是 build 期的事。
+     */
+    public function scrollByAxis(Axis $axis, float $delta): void
+    {
+        if ($axis === Axis::Vertical) {
+            $this->scrollBy($delta);
+
+            return;
+        }
+
+        $next = max(0.0, $this->offsetX + $delta);
+
+        if ($next === $this->offsetX) {
+            return;
+        }
+
+        $this->bar()->noteScroll();
+
+        $this->setState(function () use ($next): void {
+            $this->offsetX = $next;
         });
     }
 
@@ -455,7 +500,18 @@ final class TableState extends State implements Scrollable
         // ★ 内容宽至少铺满视口：固定列加起来不满时，右侧不能露出一条"没有底色"的缝
         $contentW = max($viewportW, $sum + $spacing * max(0, \count($columns) - 1));
 
-        // 窗口：行区内容坐标 [offsetY, offsetY+bodyH) 换成行号区间
+        // ★ 横向夹取与纵向同一条纪律：State 只夹下界，上界按**本帧**算出的内容宽
+        //   夹一次。列宽被拖窄 / 窗口变宽之后，这里当场回弹，不必等用户再滚一下。
+        $offsetX = min(max(0.0, $this->offsetX), max(0.0, $contentW - $viewportW));
+
+        // ★ 夹取结果**写回字段**（不经 `setState` ⇒ 不标脏、不多一帧）。
+        //   理由不是洁癖：State 里存的是"用户增量累加值"，而内容会变短
+        //   （过滤 / 列宽被拖窄 / 窗口变宽）。旧值一旦长期大于新上限，之后每一笔
+        //   增量都先拿去消耗这段**死区** —— 真机表现是"拖着条，画面不动"，
+        //   而条本身贴在末端，看起来像"拖不动"。写回之后增量立刻生效。
+        $this->offsetY = $offsetY;
+        $this->offsetX = $offsetX;
+
         $first = (int) \floor($offsetY / $rowH);
         $last = (int) \ceil(($offsetY + $bodyH) / $rowH);
         $first = max(0, min($first, $count));
@@ -541,7 +597,7 @@ final class TableState extends State implements Scrollable
         // 窗的起点 = 行区内容坐标里"第 first 行"的 y —— 与 `RenderScrollView` 的
         // `sliceOrigin` 同一含义（**行区**坐标，不含表头高；见上面 $bodyH 的注释）。
         return TableBox::make(
-            0.0,
+            $offsetX,
             $offsetY,
             $contentW,
             $headerH,

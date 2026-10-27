@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Layout;
 
+use Drift\Geometry\Axis;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Size;
 
@@ -54,15 +55,19 @@ final class ScrollBarGeometry
      *
      * ★ `null` 的三条来源都是"画了就是撒谎"：不溢出（暗示能滚）、
      *   还没有尺寸（没布局）、轨道为 0（条会比盒还长）。
+     *
+     * ★ 轴换算与 `extent()` / `crossExtent()` / `project()` 共用一套（`Axis` 只是
+     *   值，不该在每个调用点各写一次三元式 —— 漏一处就是"条按宽画、按高命中"）。
      */
-    public static function thumbRect(Size $size, float $maxScroll, float $offset, bool $vertical): ?Rect
+    public static function thumbRect(Size $size, float $maxScroll, float $offset, Axis $axis): ?Rect
     {
         if ($maxScroll <= 0.0) {
             return null;
         }
 
-        $track = $vertical ? $size->height : $size->width;
-        $cross = $vertical ? $size->width : $size->height;
+        $vertical = $axis === Axis::Vertical;
+        $track = self::extent($size, $axis);
+        $cross = self::crossExtent($size, $axis);
         if ($track <= 0.0) {
             return null;
         }
@@ -76,5 +81,23 @@ final class ScrollBarGeometry
         return $vertical
             ? new Rect($cross - self::THICKNESS - self::MARGIN, $pos, self::THICKNESS, $len)
             : new Rect($pos, $cross - self::THICKNESS - self::MARGIN, $len, self::THICKNESS);
+    }
+
+    /** 该轴上的长度（纵向 ⇒ 高、横向 ⇒ 宽） */
+    public static function extent(Size $size, Axis $axis): float
+    {
+        return $axis === Axis::Vertical ? $size->height : $size->width;
+    }
+
+    /** 该轴的交叉长度（纵向 ⇒ 宽）：条贴的那一侧从它扣 */
+    public static function crossExtent(Size $size, Axis $axis): float
+    {
+        return $axis === Axis::Vertical ? $size->width : $size->height;
+    }
+
+    /** 点在该轴上的分量（拖动映射：纵向取 y、横向取 x） */
+    public static function project(float $x, float $y, Axis $axis): float
+    {
+        return $axis === Axis::Vertical ? $y : $x;
     }
 }

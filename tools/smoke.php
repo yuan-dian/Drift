@@ -108,6 +108,7 @@ use Drift\Dev\Smoke\App\FailSliceJob;
 use Drift\Dev\Smoke\App\GestureApplication;
 use Drift\Dev\Smoke\App\PressLabApplication;
 use Drift\Dev\Smoke\App\TableResizeApplication;
+use Drift\Dev\Smoke\App\TableScrollApplication;
 use Drift\Dev\Smoke\App\SemValueApplication;
 use Drift\Dev\Smoke\App\TfApplication;
 use Drift\Dev\Smoke\App\TfLabeledApplication;
@@ -148,6 +149,7 @@ use Drift\Logging\StreamSink;
 use Drift\Commands\CommandArg;
 use Drift\Commands\CommandHandler;
 use Drift\Commands\CommandRouter;
+use Drift\Geometry\Axis;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Point;
@@ -8856,12 +8858,12 @@ check(
         && $menuCapSv->size() !== null
         && $menuCapPanel?->size() !== null
         && $menuCapSv->size()->height < $menuCapPanel->size()->height
-        && $menuCapSv->maxScroll() > 0.0,
+        && $menuCapSv->maxScroll(Axis::Vertical) > 0.0,
     sprintf(
         '视口高 %.6g / 面板高 %.6g / maxScroll=%.6g',
         $menuCapSv?->size()?->height ?? -1,
         $menuCapPanel?->size()?->height ?? -1,
-        $menuCapSv?->maxScroll() ?? -1,
+        $menuCapSv?->maxScroll(Axis::Vertical) ?? -1,
     ),
 );
 
@@ -8900,7 +8902,7 @@ $menuCapView = $menuCapSv?->size()?->height ?? -1.0;
 check(
     '菜单 · maxScroll = 自然内容高 − 视口高（推导，数字全从盒子现推）',
     $menuCapSv !== null
-        && abs($menuCapSv->maxScroll() - ($menuCapItems * $menuCapRowH + $menuCapSeps * $menuCapSepH - $menuCapView)) < 0.01,
+        && abs($menuCapSv->maxScroll(Axis::Vertical) - ($menuCapItems * $menuCapRowH + $menuCapSeps * $menuCapSepH - $menuCapView)) < 0.01,
     sprintf(
         '%d 行×%.6g + %d 分隔×%.6g − 视口 %.6g = %.6g，实际 maxScroll=%.6g',
         $menuCapItems,
@@ -8909,7 +8911,7 @@ check(
         $menuCapSepH,
         $menuCapView,
         $menuCapItems * $menuCapRowH + $menuCapSeps * $menuCapSepH - $menuCapView,
-        $menuCapSv?->maxScroll() ?? -1,
+        $menuCapSv?->maxScroll(Axis::Vertical) ?? -1,
     ),
 );
 
@@ -8946,15 +8948,15 @@ $menuCapApp->dispatchInput(ScrollEvent::make($menuCapCx, $menuCapCy, 1.0));
 $menuCapApp->frame(32.0, $menuCapTight);
 check(
     '菜单 · 滚一格 ⇒ appliedOffset = WHEEL_NOTCH_PX（真实滚轮通道）',
-    abs($menuCapApp->panelScrollView()?->appliedOffset() - 48.0) < 0.01,
-    sprintf('appliedOffset=%.6g', $menuCapApp->panelScrollView()?->appliedOffset() ?? -1),
+    abs($menuCapApp->panelScrollView()?->appliedOffset(Axis::Vertical) - 48.0) < 0.01,
+    sprintf('appliedOffset=%.6g', $menuCapApp->panelScrollView()?->appliedOffset(Axis::Vertical) ?? -1),
 );
 $menuCapApp->dispatchInput(ScrollEvent::make($menuCapCx, $menuCapCy, 1.0));
 $menuCapApp->frame(48.0, $menuCapTight);
 check(
     '菜单 · 滚两格 ⇒ appliedOffset = 2 × WHEEL_NOTCH_PX（量对，不是只动一下）',
-    abs($menuCapApp->panelScrollView()?->appliedOffset() - 96.0) < 0.01,
-    sprintf('appliedOffset=%.6g', $menuCapApp->panelScrollView()?->appliedOffset() ?? -1),
+    abs($menuCapApp->panelScrollView()?->appliedOffset(Axis::Vertical) - 96.0) < 0.01,
+    sprintf('appliedOffset=%.6g', $menuCapApp->panelScrollView()?->appliedOffset(Axis::Vertical) ?? -1),
 );
 check(
     '菜单 · 滚完之后面板仍在、高度仍是上限',
@@ -8978,8 +8980,8 @@ check(
 );
 check(
     '菜单 · 反例：短菜单 maxScroll = 0（内容不溢出 ⇒ 不画滚动条，浏览器同行为）',
-    $menuShortApp->panelScrollView()?->maxScroll() === 0.0,
-    sprintf('maxScroll=%.6g', $menuShortApp->panelScrollView()?->maxScroll() ?? -1),
+    $menuShortApp->panelScrollView()?->maxScroll(Axis::Vertical) === 0.0,
+    sprintf('maxScroll=%.6g', $menuShortApp->panelScrollView()?->maxScroll(Axis::Vertical) ?? -1),
 );
 $menuShortApp->dispatchInput(KeyEvent::down(KeyChord::escape()));
 
@@ -11136,8 +11138,8 @@ check(
 );
 check(
     'Scroll · maxScroll = 内容主轴 − 视口主轴（1000−300 = 700）',
-    $sv0->maxScroll() === 700.0,
-    (string) $sv0->maxScroll(),
+    $sv0->maxScroll(Axis::Vertical) === 700.0,
+    (string) $sv0->maxScroll(Axis::Vertical),
 );
 check(
     'Scroll · 偏移 0 ⇒ 子盒 offsetY = 0（偏移落在子盒 offset 上，不是别处）',
@@ -11162,8 +11164,8 @@ $sv1->layout(new BoxConstraints(0.0, 100.0, 0.0, 300.0));
 $sv1Kid = $scrollChildOf($sv1);
 check(
     'Scroll · 偏移 300 ⇒ 子盒 offsetY = −300（★ 偏移进子盒 offset，不是 paint 期 translate）',
-    $sv1Kid?->offsetY() === -300.0 && $sv1->appliedOffset() === 300.0,
-    'offsetY=' . ($sv1Kid?->offsetY() ?? -1.0) . ' applied=' . $sv1->appliedOffset(),
+    $sv1Kid?->offsetY() === -300.0 && $sv1->appliedOffset(Axis::Vertical) === 300.0,
+    'offsetY=' . ($sv1Kid?->offsetY() ?? -1.0) . ' applied=' . $sv1->appliedOffset(Axis::Vertical),
 );
 check(
     'Scroll · 滚动后命中跟随偏移：视口 (50,250) 命中内容第 550 行（局部坐标跟着偏移走）',
@@ -11177,8 +11179,8 @@ $sv2->setChild(new SolidBox(new Size(100.0, 1000.0), 100.0, 1000.0));
 $sv2->layout(new BoxConstraints(0.0, 100.0, 0.0, 300.0));
 check(
     'Scroll · 越界偏移被 maxScroll 夹住（9999 ⇒ 700 ⇒ offsetY = −700）',
-    $sv2->appliedOffset() === 700.0 && $scrollChildOf($sv2)?->offsetY() === -700.0,
-    'applied=' . $sv2->appliedOffset(),
+    $sv2->appliedOffset(Axis::Vertical) === 700.0 && $scrollChildOf($sv2)?->offsetY() === -700.0,
+    'applied=' . $sv2->appliedOffset(Axis::Vertical),
 );
 
 // ① 布局层：父无界 ⇒ 视口跟着内容走（不滚）
@@ -11187,8 +11189,8 @@ $sv3->setChild(new SolidBox(new Size(100.0, 1000.0), 100.0, 1000.0));
 $sv3->layout(BoxConstraints::unbounded());
 check(
     'Scroll · 父无界 ⇒ 视口跟着内容走（不滚：maxScroll = 0，偏移归 0）',
-    $sv3->maxScroll() === 0.0 && $sv3->appliedOffset() === 0.0 && $scrollChildOf($sv3)?->offsetY() === 0.0,
-    'maxScroll=' . $sv3->maxScroll(),
+    $sv3->maxScroll(Axis::Vertical) === 0.0 && $sv3->appliedOffset(Axis::Vertical) === 0.0 && $scrollChildOf($sv3)?->offsetY() === 0.0,
+    'maxScroll=' . $sv3->maxScroll(Axis::Vertical),
 );
 
 // ① 布局层：横向
@@ -11197,8 +11199,8 @@ $sv4->setChild(new SolidBox(new Size(800.0, 50.0), 800.0, 50.0));
 $sv4->layout(new BoxConstraints(0.0, 400.0, 0.0, 50.0));
 check(
     'Scroll · 横向滚动：偏移进 offsetX（内容 800 宽，视口 400 ⇒ maxScroll = 400）',
-    $sv4->maxScroll() === 400.0 && $scrollChildOf($sv4)?->offsetX() === -120.0,
-    'maxScroll=' . $sv4->maxScroll(),
+    $sv4->maxScroll(Axis::Horizontal) === 400.0 && $scrollChildOf($sv4)?->offsetX() === -120.0,
+    'maxScroll=' . $sv4->maxScroll(Axis::Horizontal),
 );
 
 // ① 布局层：滚动条（2026-10-17 补齐的第一个滚动缺口 —— 纯视觉层）
@@ -11292,7 +11294,7 @@ check(
 $scrollApp->assertUiThread('smoke');
 check('App · assertUiThread 在 UI 线程上放行', true, 'ok');
 $sb0 = $scrollApp->scrollBox();
-$scrollMax = $sb0?->maxScroll() ?? 0.0;
+$scrollMax = $sb0?->maxScroll(Axis::Vertical) ?? 0.0;
 check(
     'Scroll · 应用：视口盒存在且内容超长（maxScroll > 100 ⇒ 真能滚）',
     $sb0 !== null && $scrollMax > 100.0,
@@ -11325,12 +11327,12 @@ check(
 //   判据两条：① 在 thumb 上按下并下拖 30px ⇒ 偏移按 maxScroll/thumbTravel 放大；
 //   ② 在内容区同向拖 ⇒ 偏移**不变**（内容区拖动不是拖条）。
 $barBox = $scrollApp->scrollBox();
-$barRect = $barBox?->thumbRect();
-$barOffsetBefore = $barBox?->appliedOffset() ?? -1.0;
+$barRect = $barBox?->thumbRect(Axis::Vertical);
+$barOffsetBefore = $barBox?->appliedOffset(Axis::Vertical) ?? -1.0;
 $barCx = ($barRect?->left ?? 0.0) + ($barRect?->width ?? 0.0) / 2.0;
 $barCy = ($barRect?->top ?? 0.0) + ($barRect?->height ?? 0.0) / 2.0;
-$barTravel = $barBox?->thumbTravel() ?? 0.0;
-$barMax = $barBox?->maxScroll() ?? 0.0;
+$barTravel = $barBox?->thumbTravel(Axis::Vertical) ?? 0.0;
+$barMax = $barBox?->maxScroll(Axis::Vertical) ?? 0.0;
 
 $scrollApp->dispatchInput(PointerEvent::down($barCx, $barCy));
 $scrollApp->dispatchInput(PointerEvent::move($barCx, $barCy + 30.0));
@@ -11341,7 +11343,7 @@ $scrollApp->dispatchInput(PointerEvent::up($barCx, $barCy + 30.0));
 $scrollApp->frame(18.0, BoxConstraints::loose(new Size(300.0, 200.0)));
 
 $barExpected = $barOffsetBefore + ($barTravel > 0.0 ? 30.0 * $barMax / $barTravel : 0.0);
-$barNow = ($scrollApp->scrollBox())?->appliedOffset() ?? -1.0;
+$barNow = ($scrollApp->scrollBox())?->appliedOffset(Axis::Vertical) ?? -1.0;
 check(
     'Scroll · 拖滚动条：thumb 下拖 30px ⇒ 偏移按 maxScroll/thumbTravel 放大',
     $barRect !== null && abs($barNow - $barExpected) < 0.51,
@@ -11363,8 +11365,8 @@ $scrollApp->dispatchInput(PointerEvent::up(40.0, 70.0));
 $scrollApp->frame(18.5, BoxConstraints::loose(new Size(300.0, 200.0)));
 check(
     'Scroll · 内容区拖动不是拖条（偏移不变）',
-    ($scrollApp->scrollBox())?->appliedOffset() === $bodyOffsetBefore,
-    'before=' . $bodyOffsetBefore . ' now=' . (($scrollApp->scrollBox())?->appliedOffset() ?? -1.0)
+    ($scrollApp->scrollBox())?->appliedOffset(Axis::Vertical) === $bodyOffsetBefore,
+    'before=' . $bodyOffsetBefore . ' now=' . (($scrollApp->scrollBox())?->appliedOffset(Axis::Vertical) ?? -1.0)
 );
 
 // ★ scrollBy 是**相对**滚动（Δ 累加）⇒ 夹取测试用远超当前偏移的量：
@@ -11950,7 +11952,7 @@ check(
 
 // ③ 可滚上限按**完整内容**算：20000×56 − 240 = 1119760
 //    （按窗长算会得到 280 —— 滚动条会假装"只有一屏"）
-$lazyMax = $lazyBig->effectiveBox()?->maxScroll() ?? -1.0;
+$lazyMax = $lazyBig->effectiveBox()?->maxScroll(Axis::Vertical) ?? -1.0;
 check(
     'Lazy · maxScroll = 完整内容 − 视口（20000×56−240 = 1119760，不是窗长）',
     $lazyMax === 1119760.0,
@@ -12060,12 +12062,12 @@ check(
 // 行高 20 ⇒ 窗起点 floor(48/20)×20 = 40 ⇒ 子盒 offsetY = −8
 check(
     'Lazy · 滚轮后窗滑两行（起点 40 ⇒ 子盒 offsetY = −8）',
-    $lazyAppBox?->maxScroll() === 9800.0
+    $lazyAppBox?->maxScroll(Axis::Vertical) === 9800.0
         && findElement(
             $lazyApp->root(),
             static fn(Element $e): bool => $e->widget() instanceof Column,
         )?->renderObject()?->offsetY() === -8.0,
-    'maxScroll=' . ($lazyAppBox?->maxScroll() ?? -1.0),
+    'maxScroll=' . ($lazyAppBox?->maxScroll(Axis::Vertical) ?? -1.0),
 );
 
 // ⑨–⑬ 横向（`LazyRow`）：轴是**一个参数**，不是一份拷贝。
@@ -12102,7 +12104,7 @@ check(
     (string) $lazyRowKids($lazyRowBig),
 );
 
-$lazyRowMax = $lazyRowBig->effectiveBox()?->maxScroll() ?? -1.0;
+$lazyRowMax = $lazyRowBig->effectiveBox()?->maxScroll(Axis::Horizontal) ?? -1.0;
 check(
     'LazyRow · maxScroll 按完整内容宽算（20000×56−320 = 1119680）',
     $lazyRowMax === 1119680.0,
@@ -12181,7 +12183,7 @@ $revApp->frame(16.0, BoxConstraints::tight(new Size(320.0, 200.0)));
 //   frame() 之后重新取。拿首帧那个盒（`scrollOffset` 恒 0）算出来永远是 0 ——
 //   这条是首跑红掉的：`revealDelta()` 得 0，看着像公式错、其实是基准旧。
 $revBox = $revApp->scrollBox();
-$revUp = $revBox?->revealDelta(new Rect(0.0, 100.0, 100.0, 20.0), 8.0, $revBox->appliedOffset()) ?? -999.0;
+$revUp = $revBox?->revealDelta(new Rect(0.0, 100.0, 100.0, 20.0), 8.0, $revBox->appliedOffset(Axis::Vertical)) ?? -999.0;
 check(
     'ensureVisible · revealDelta：目标在视口上方 ⇒ −308（100 − 8 − 400）',
     $revUp === -308.0,
@@ -15135,7 +15137,7 @@ check(
 
 $selLSv = $selApp->panelScrollView();
 $selLView = $selLSv?->size()?->height ?? 0.0;
-$selLMax = $selLSv?->maxScroll() ?? -1.0;
+$selLMax = $selLSv?->maxScroll(Axis::Vertical) ?? -1.0;
 check(
     'Select · 长列表面板里有 ScrollView，视口比盒矮（chrome 扣掉了）且 maxScroll > 0',
     $selLSv !== null && $selLView > 0.0 && $selLView < $selLH && $selLMax > 0.0,
@@ -15194,7 +15196,7 @@ $selSBox = $selApp->topEntry()?->element?->effectiveBox();
 $selSH = $selSBox?->size()?->height ?? 0.0;
 $selSSv = $selApp->panelScrollView();
 $selSView = $selSSv?->size()?->height ?? 0.0;
-$selSMax = $selSSv?->maxScroll() ?? -1.0;
+$selSMax = $selSSv?->maxScroll(Axis::Vertical) ?? -1.0;
 $selSRow = $selApp->optionButtons()[0]?->effectiveBox()?->size()?->height ?? 0.0;
 check(
     'Select · 反例：短列表（3 项）⇒ 面板高 = 3 行 + chrome（**贴着内容**，不撑到上限）',
@@ -16567,7 +16569,7 @@ check(
 
 // ② 可滚上限按**完整行高**算：10000×40 − 208 = 399792
 //    （按窗长算会得到 32 —— 滚动条会假装"只有一屏"）
-$tableMax = $tableBigBox?->maxScroll() ?? -1.0;
+$tableMax = $tableBigBox?->maxScroll(Axis::Vertical) ?? -1.0;
 check(
     'Table · maxScroll = 总行高 − 行区可见高（400000 − 208 = 399792，不是窗长）',
     $tableMax === 399792.0,
@@ -16693,13 +16695,13 @@ check(
 $tableSmallBox = $tableBoxOf($tableSmall);
 check(
     'Table · 内容不溢出 ⇒ maxScroll = 0 且不画滚动条',
-    $tableSmallBox?->maxScroll() === 0.0 && $tableSmallBox->thumbRect() === null,
-    'maxScroll=' . (string) ($tableSmallBox?->maxScroll() ?? -1.0),
+    $tableSmallBox?->maxScroll(Axis::Vertical) === 0.0 && $tableSmallBox->thumbRect(Axis::Vertical) === null,
+    'maxScroll=' . (string) ($tableSmallBox?->maxScroll(Axis::Vertical) ?? -1.0),
 );
 check(
     'Table · 内容溢出 ⇒ 有滚动条（几何与 ScrollView 同一份 `ScrollBarGeometry`）',
-    $tableBigBox !== null && $tableBigBox->thumbRect() !== null,
-    $tableBigBox?->thumbRect() === null ? 'null' : '有',
+    $tableBigBox !== null && $tableBigBox->thumbRect(Axis::Vertical) !== null,
+    $tableBigBox?->thumbRect(Axis::Vertical) === null ? 'null' : '有',
 );
 check(
     'Table · RenderTable 实现 ScrollBarHost（滚动条可拖 —— 与 ScrollView 同一接口）',
@@ -17528,6 +17530,188 @@ check(
     'Table · 真实路由：按在表头标题上 ⇒ 只走排序，不产生列宽上报',
     \count($tableRouteApp->sortLog) === 1 && $tableRouteApp->resizeLog === [],
     'resize=' . \json_encode($tableRouteApp->resizeLog) . ' sort=' . \json_encode($tableRouteApp->sortLog),
+);
+
+// ⑫ 横向溢出（阶段 5）：override 把三列撑到 1200，视口 320 ⇒ maxScrollX = 880
+//    ★ 纵向同时断言 0：两轴的上限来自不同的量，只验横向证明不了"没串味"。
+$tableWideCols = [
+    TableColumn::make('id', 'ID')->field('id')->width(TableColumnWidth::fixed(60.0)),
+    TableColumn::make('name', '姓名')->field('name')->width(TableColumnWidth::flex(2.0)),
+    TableColumn::make('city', '城市')->field('city')->width(TableColumnWidth::flex(1.0)),
+];
+$tableWideTable = static fn(int $count): Table => Table::make($tableWideCols, $tableRowsOf($count))
+    ->keyOf(static fn(array $row): int => $row['id'])
+    ->columnWidths(['id' => 500.0, 'name' => 400.0, 'city' => 300.0])
+    ->rowHeight(40.0)
+    ->headerHeight(32.0);
+
+$tableWide = $tableMount($tableWideTable(3));
+$tableWideState = $tableStateOf($tableWide);
+$tableWideBox = $tableBoxOf($tableWide);
+check(
+    'Table · 横向：内容 1200 > 视口 320 ⇒ maxScroll(Horizontal) = 880，纵向仍 0',
+    $tableWideBox?->maxScroll(Axis::Horizontal) === 880.0
+        && $tableWideBox->maxScroll(Axis::Vertical) === 0.0,
+    'x=' . (string) ($tableWideBox?->maxScroll(Axis::Horizontal) ?? -1.0)
+        . ' y=' . (string) ($tableWideBox?->maxScroll(Axis::Vertical) ?? -1.0),
+);
+
+// ⑬ 按轴写偏移：横向走 offsetX，不碰 offsetY（两轴各有各的夹取）
+$tableWideState?->scrollByAxis(Axis::Horizontal, 120.0);
+$tablePump($tableWide);
+// ★ 重建会换新盒（Widget 不可变）⇒ 必须重新取，拿旧盒读子偏移恒是上一帧的值
+$tableWideBox = $tableBoxOf($tableWide);
+$tableWideKids = $tableKidsOf($tableWideBox);
+check(
+    'Table · 横向：scrollByAxis(Horizontal) 只改 offsetX（120 ⇒ 表头与行区都平移 −120）',
+    $tableWideState?->offsetX() === 120.0
+        && $tableWideState->offsetY() === 0.0
+        && ($tableWideKids[0] ?? null)?->offsetX() === -120.0
+        && ($tableWideKids[1] ?? null)?->offsetX() === -120.0,
+    'x=' . (string) ($tableWideState?->offsetX() ?? -1.0)
+        . ' header=' . (string) (($tableWideKids[0] ?? null)?->offsetX() ?? -9.0)
+        . ' body=' . (string) (($tableWideKids[1] ?? null)?->offsetX() ?? -9.0),
+);
+check(
+    'Table · 横向：纵向偏移不受影响（scrollByAxis 不串轴）',
+    $tableWideState?->offsetY() === 0.0 && ($tableWideKids[1] ?? null)?->offsetY() === 32.0,
+    'offsetY=' . (string) ($tableWideState?->offsetY() ?? -1.0),
+);
+
+// ⑭ 横条几何：贴底缘（H − 条粗 − 空隙），纵向不溢出 ⇒ 没有竖条
+$tableWideHBar = $tableWideBox?->thumbRect(Axis::Horizontal);
+$tableWideVBar = $tableWideBox?->thumbRect(Axis::Vertical);
+check(
+    'Table · 横条贴底缘（240 − 6 − 3 = 231），宽度按视口占比；纵向不溢出 ⇒ 无竖条',
+    $tableWideHBar !== null
+        && abs($tableWideHBar->top - 231.0) < 0.01
+        && abs($tableWideHBar->height - 6.0) < 0.01
+        && $tableWideHBar->width > 24.0
+        && $tableWideVBar === null,
+    $tableWideHBar === null ? 'no-hbar' : sprintf('top=%.2f w=%.2f', $tableWideHBar->top, $tableWideHBar->width),
+);
+
+// ⑭b 横条**真的画出来了**：几何对了不等于画对（方向参数写反会画到右缘去）
+//    offsetX=120 / maxX=880 ⇒ 条起点 3 + (120/880)×143.33 ≈ 22.55，够长到 x=100。
+$tableWideShot = $tableRasterOf($tableWideBox, 320, 240);
+$tableWideBarInk = $tableTheme->color(ColorToken::Muted);
+check(
+    'Table · 横条：底部 y=234 处有 `Muted` 像素（条画在底缘，不是右缘）',
+    $tableWideShot->pixelAt(100, 234)->equals($tableWideBarInk)
+        && !$tableWideShot->pixelAt(100, 16)->equals($tableWideBarInk),
+    'y=234 ' . $tablePx($tableWideShot, 100, 234) . ' / y=16 ' . $tablePx($tableWideShot, 100, 16),
+);
+
+// ⑮ 两根条并存 + 轴的清单顺序（绘制顺序：先横后竖 ⇒ 竖条压角）
+$tableDual = $tableMount($tableWideTable(100));
+$tableDualBox = $tableBoxOf($tableDual);
+$tableAxes = $tableDualBox?->scrollAxes() ?? [];
+$tableDualH = $tableDualBox?->thumbRect(Axis::Horizontal);
+$tableDualV = $tableDualBox?->thumbRect(Axis::Vertical);
+check(
+    'Table · 双轴：scrollAxes = [Horizontal, Vertical]（先横后竖 = 绘制顺序）',
+    \count($tableAxes) === 2 && $tableAxes[0] === Axis::Horizontal && $tableAxes[1] === Axis::Vertical,
+    \count($tableAxes) !== 2
+        ? 'n=' . \count($tableAxes)
+        : ($tableAxes[0] === Axis::Horizontal ? 'H,V' : 'V,H'),
+);
+check(
+    'Table · 双轴：内容宽高都溢出 ⇒ 两根条同时存在（竖条贴右缘、横条贴底缘，互不覆盖）',
+    $tableDualH !== null && $tableDualV !== null && $tableDualV->left > $tableDualH->left,
+    'h=' . ($tableDualH === null ? 'null' : 'ok') . ' v=' . ($tableDualV === null ? 'null' : 'ok'),
+);
+
+// ⑯ **真实路由**：拖横条只改横向偏移（阶段 5 唯一"直接调 dragThumb 验不到"的点）
+$tableScrollApp = new TableScrollApplication();
+$tableScrollApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
+$tableScrollBox = $tableScrollApp->root()->effectiveBoxOf(RenderTable::class);
+$tableScrollBox = $tableScrollBox instanceof RenderTable ? $tableScrollBox : null;
+$tableScrollState = $tableStateOf($tableScrollApp->root());
+$tableScrollHBar = $tableScrollBox?->thumbRect(Axis::Horizontal);
+[$tableScrollOx, $tableScrollOy] = $tableScrollBox === null
+    ? [0.0, 0.0]
+    : \Drift\Layout\RenderBox::absoluteOrigin($tableScrollBox);
+$tableScrollHx = $tableScrollOx + ($tableScrollHBar?->left ?? 0.0) + ($tableScrollHBar?->width ?? 0.0) / 2.0;
+$tableScrollHy = $tableScrollOy + ($tableScrollHBar?->top ?? 0.0) + ($tableScrollHBar?->height ?? 0.0) / 2.0;
+$tableScrollTravel = $tableScrollBox?->thumbTravel(Axis::Horizontal) ?? 0.0;
+$tableScrollMaxX = $tableScrollBox?->maxScroll(Axis::Horizontal) ?? 0.0;
+$tableScrollExpect = $tableScrollTravel > 0.0 ? 20.0 * $tableScrollMaxX / $tableScrollTravel : -1.0;
+
+$tableScrollApp->dispatchInput(PointerEvent::down($tableScrollHx, $tableScrollHy));
+$tableScrollApp->dispatchInput(PointerEvent::move($tableScrollHx + 20.0, $tableScrollHy));
+$tableScrollApp->dispatchInput(PointerEvent::up($tableScrollHx + 20.0, $tableScrollHy));
+$tableScrollApp->frame(16.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+
+check(
+    'Table · 真实路由：拖横条 ⇒ offsetX 按 max/travel 放大（20px ⇒ 约 39px），offsetY 不动',
+    $tableScrollState !== null
+        && $tableScrollExpect > 0.0
+        && abs($tableScrollState->offsetX() - $tableScrollExpect) < 0.51
+        && $tableScrollState->offsetY() === 0.0,
+    'x=' . (string) ($tableScrollState?->offsetX() ?? -1.0)
+        . ' expect=' . sprintf('%.2f', $tableScrollExpect)
+        . ' y=' . (string) ($tableScrollState?->offsetY() ?? -1.0),
+);
+
+// ⑰ 真实路由：角落（两轴交叠 6×6）归**竖条**（命中按反序 = 后画的在上层）
+//    ★ 两根条只在**各自滚到末端**时才在右下角交叠（thumb 从 MARGIN 起步），
+//      所以先把两轴都推到头，否则"角落"那块其实什么都没有。
+$tableScrollApp2 = new TableScrollApplication();
+$tableScrollApp2->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
+$tableScrollState2 = $tableStateOf($tableScrollApp2->root());
+$tableScrollState2?->scrollByAxis(Axis::Vertical, 99999.0);
+$tableScrollState2?->scrollByAxis(Axis::Horizontal, 99999.0);
+$tableScrollApp2->frame(16.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+
+$tableScrollBox2 = $tableScrollApp2->root()->effectiveBoxOf(RenderTable::class);
+$tableScrollBox2 = $tableScrollBox2 instanceof RenderTable ? $tableScrollBox2 : null;
+$tableScrollVBar = $tableScrollBox2?->thumbRect(Axis::Vertical);
+$tableScrollHBar2 = $tableScrollBox2?->thumbRect(Axis::Horizontal);
+[$tableScrollOx2, $tableScrollOy2] = $tableScrollBox2 === null
+    ? [0.0, 0.0]
+    : \Drift\Layout\RenderBox::absoluteOrigin($tableScrollBox2);
+// 竖条中心 x + 横条中心 y = 交叠区中心（两条都贴在末端时那一块就是右下角）
+$tableCornerX = $tableScrollOx2 + ($tableScrollVBar?->left ?? 0.0) + ($tableScrollVBar?->width ?? 0.0) / 2.0;
+$tableCornerY = $tableScrollOy2 + ($tableScrollHBar2?->top ?? 0.0) + ($tableScrollHBar2?->height ?? 0.0) / 2.0;
+$tableCornerHit = $tableScrollApp2->dispatchInput(PointerEvent::down($tableCornerX, $tableCornerY));
+$tableScrollApp2->dispatchInput(PointerEvent::move($tableCornerX, $tableCornerY - 20.0));
+$tableScrollApp2->dispatchInput(PointerEvent::up($tableCornerX, $tableCornerY - 20.0));
+$tableScrollApp2->frame(17.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+
+// 拖动后再取一次盒（拖一次就重建一次，旧盒的 appliedOffset 恒是上一帧的值）
+$tableScrollBox3 = $tableScrollApp2->root()->effectiveBoxOf(RenderTable::class);
+$tableScrollBox3 = $tableScrollBox3 instanceof RenderTable ? $tableScrollBox3 : null;
+$tableScrollAfterY = $tableScrollBox3?->appliedOffset(Axis::Vertical) ?? -1.0;
+$tableScrollAfterX = $tableScrollBox3?->appliedOffset(Axis::Horizontal) ?? -1.0;
+$tableScrollMaxY3 = $tableScrollBox3?->maxScroll(Axis::Vertical) ?? 0.0;
+$tableScrollMaxX3 = $tableScrollBox3?->maxScroll(Axis::Horizontal) ?? 0.0;
+check(
+    'Table · 真实路由：角落按下 ⇒ 归竖条（拖竖条不会把表横向拽走）：纵向回退，横向仍在末端',
+    $tableScrollVBar !== null && $tableScrollHBar2 !== null
+        && $tableScrollAfterY < $tableScrollMaxY3
+        && $tableScrollAfterX === $tableScrollMaxX3,
+    'y=' . sprintf('%.1f', $tableScrollAfterY) . ' x=' . sprintf('%.1f', $tableScrollAfterX)
+        . ' corner=' . sprintf('(%.1f,%.1f)', $tableCornerX, $tableCornerY)
+        . ' hit=' . ($tableCornerHit === null ? 'null' : 'ok'),
+);
+
+// ⑱ 单轴容器的按轴语义：问错轴 ⇒ 什么都不做（不是报错）
+$tableRevBefore = $revState?->offset() ?? -1.0;
+$tableHorizBefore = $hState?->offset() ?? -1.0;
+$revState?->scrollByAxis(Axis::Horizontal, 50.0);
+$hState?->scrollByAxis(Axis::Vertical, 50.0);
+check(
+    'Scroll · 按轴：纵向视口收到 Horizontal / 横向视口收到 Vertical ⇒ 都不动',
+    $revState !== null && $hState !== null
+        && $revState->offset() === $tableRevBefore
+        && $hState->offset() === $tableHorizBefore,
+    'v=' . (string) ($revState?->offset() ?? -1.0) . ' h=' . (string) ($hState?->offset() ?? -1.0),
+);
+$hState?->scrollByAxis(Axis::Horizontal, 50.0);
+check(
+    'Scroll · 按轴：横向视口收到 Horizontal ⇒ 生效（主轴由 Widget 决定，不由调用方猜）',
+    $hState !== null && $hState->offset() === $tableHorizBefore + 50.0,
+    'h=' . (string) ($hState?->offset() ?? -1.0) . ' expect=' . ($tableHorizBefore + 50.0),
 );
 
 // ⑪ 列宽的 min/max 夹（第 ② 层）：flex 分到 173 但 maxWidth 100 ⇒ 停在 100

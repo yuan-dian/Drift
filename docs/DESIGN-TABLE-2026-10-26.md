@@ -1202,3 +1202,79 @@ FAIL Table · 拖动中指针已离开手柄（hover=false）⇒ 线保持 `Acce
 | 悬停时线加粗到 2px | 线宽变化会让它的左边缘移 1px，视觉上"线在抖"；变色已经够醒目 |
 | 拖动时显示宽度数值气泡 | 要一个浮动层 + 文本测量，`Stack` 没有 `Positioned`（§14.5 同一条限制）|
 | 分割线可配置（thickness / 颜色）| `Table` 已有 20+ 个配置项，这条先不给；要定制时再收成 `TableStyle` |
+
+## 15. 阶段 5 落地：横向滚动（双轴条，2026-10-27）
+
+### 15.1 真问题不在表格，在"一个盒一根条"
+
+阶段 1 给 `RenderTable` 留了横向通道（`scrollX` 进夹取、`appliedOffsetX()`），当时
+判词是"阶段 5 只需 `TableState` 允许 `offsetX ≠ 0`，本盒一行不改"。**对了一半**：
+布局与绘制确实没改，但滚动条的**接口形状**卡住了：
+
+```php
+interface ScrollBarHost {           // 阶段 1~4
+    public function thumbRect(): ?Rect;
+    public function maxScroll(): float;
+    public function isVertical(): bool;   // ← 一个盒只能有一根条
+}
+```
+
+`isVertical()` 把"轴"写进了每个方法的隐含前提，`ScrollBarHost` 因此无法表达"第二根条"；
+`Scrollable::scrollBy($delta)` 同理（只有"主轴"）。横向落地必须先拆这个形状。
+
+### 15.2 结构裁决：轴成为值
+
+| 改动 | 形状 | 理由 |
+|---|---|---|
+| `Drift\Geometry\Axis` | 纯枚举 `Horizontal/Vertical` | 不带方法：本仓 20 个 enum 全无方法，AOT 无先例；换算放 `ScrollBarGeometry` |
+| `ScrollBarHost` | `scrollAxes(): list<Axis>` + 每个几何方法带 `Axis` | 单轴视口返回一个轴、表格返回两个，路由层一次循环，不需要知道谁是主轴 |
+| `Scrollable` | 保留 `scrollBy()`，新增 `scrollByAxis(Axis, float)` | `scrollBy()` 是**主轴**语义（`ScrollView` 本来就可能是横向），改签名会让每个调用点被迫知道控件朝向 |
+| `ScrollInputRouter` | 命中按 `scrollAxes()` **反序**、拖动按轴取分量 | 反序 = 后画的在上层（与 `RenderBox` 逆序问子盒同一条惯例） |
+
+`ScrollBarGeometry` 顺带收三个换算：`extent()` / `crossExtent()` / `project()`。
+**不收的话就是三处各写一遍三元式** —— 漏一处就是"条按宽画、按高命中"。
+
+### 15.3 表格侧：两根条与一个死区
+
+- `TableState` 持 `$offsetX`（与 `$offsetY` 分开：夹取上限来自不同的量，纵向坐标还是行区）。
+- `build()` 用 `contentW − 视口宽` 夹上界后传给 `TableBox`；`TableBox` 早已接 `offsetX`，一行未改。
+- `RenderTable::scrollAxes()` 返回 `[Horizontal, Vertical]`（**绘制**顺序），画条时正序、
+  命中时反序 ⇒ 右下角 6×6 交叠归竖条，"拖竖条把表横向拽走"结构上不可能。
+
+**顺带修掉的真 bug（阶段 1 遗留，阶段 4 后才可能发生）**：`State` 里存的偏移是
+"用户增量累加值"，而夹取只发生在盒里。列被拖窄 / 窗口变宽之后，State 值会长期大于
+新上限 ⇒ 之后每一笔增量都先消耗这段**死区**，表现是"拖着条、画面不动"。
+修法：`build()` 把夹取结果**写回字段**（不经 `setState` ⇒ 不标脏、不多一帧）。
+
+### 15.4 验收
+
+smoke **1608 ok / 0 FAIL**；lint 564 文件 0 error / 0 warn。新增断言集中在：
+
+| 断言 | 证的是什么 |
+|---|---|
+| `maxScroll(Horizontal) = 880` 且 `maxScroll(Vertical) = 0` | 两轴上限互不串味 |
+| `scrollByAxis(Horizontal, 120)` ⇒ 表头与行区子盒 `offsetX` 都是 −120 | 横滚时表头跟着走（这是"表格必须是一个盒"的那条） |
+| 横条 `top = 231`（H − 6 − 3）、纵向不溢出不画竖条 | 几何与 `ScrollBarGeometry` 同源 |
+| `scrollAxes = [Horizontal, Vertical]` 且两根条同时存在 | 双轴清单与绘制顺序 |
+| **真实路由**：拖横条 20px ⇒ `offsetX ≈ 39.07`（20 × 280 / 143.33），`offsetY = 0` | 拖动按轴映射 |
+| **真实路由**：角落按下 ⇒ 纵向回退、横向仍在末端 | 命中反序（后画的在上层） |
+| 纵向视口收到 `Horizontal` / 横向视口收到 `Vertical` ⇒ 不动 | 单轴实现"问错轴就忽略" |
+
+**变异自检（实测为红）**：
+
+```
+① scrollAxes 返回 [Vertical, Horizontal]     ⇒ 2 红（清单顺序 + 角落归属）
+② dragThumb 改回 scrollBy($delta)            ⇒ 1 红（x=0 y=39.07 —— 横向拖动喂给了纵向）
+③ 删掉 build() 里的偏移写回                  ⇒ 1 红（角落用例，死区导致"拖了不动"）
+```
+
+③ 是这次最值得记的一条：**它证明了那个死区 bug 是真的**，不是理论洁癖。
+
+### 15.5 边界（本节不做）
+
+| 不做 | 为什么 |
+|---|---|
+| 横向滚轮（`WM_MOUSEHWHEEL` / Shift+滚轮）| `ScrollEvent` 只有一条 delta、壳的 wheel 也不带修饰位 ⇒ 要改 `cpp-src/drift_win32.cc` 并重编扩展。单独一步（5b）做，不与框架改造混在一起 |
+| 横向的 `ensureVisible` | 表内还没有可聚焦的格子（阶段 2b），当前没有消费者 |
+| 键盘横向滚（Shift+方向键等）| 同上，等焦点格落地后与方向键一起设计 |
+| 横条的角落挖角（在条上抠掉竖条宽）| 6×6 交叠靠绘制顺序压住即可，挖角要改 `ScrollBarGeometry` 的轨道定义（条长会跟着变），不值 |

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Layout;
 
+use Drift\Geometry\Axis;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Size;
@@ -44,11 +45,18 @@ use Drift\Rendering\Paint;
  * 中间时第一行会画到表头**上面**（行区坐标上移到负数），而表头本该盖住它。
  * ⇒ 裁剪顺序也固定：先表头、再行区，最后滚动条（条永远在最上）。
  *
- * ## 诚实边界（阶段 1）
+ * ## 双轴与两根条（阶段 5，2026-10-27）
  *
- * - **横向通道在、但不驱动**：`offsetX` 参与夹取（`maxScrollX`），若内容比视口宽
- *   会被裁掉左侧对齐的部分。阶段 5 才接横向输入与横向条 —— 那时只需
- *   `TableState` 允许 `offsetX ≠ 0`，本盒一行不改。
+ * 横向在阶段 1 只留了通道（`scrollX` 进夹取、但 State 恒传 0）。阶段 5 接通之后
+ * 本盒的"双向"才完整：表头吃 x 偏移、行区吃两个方向、两根条各自按溢出出现。
+ *
+ * ★ 阶段 1 的原判词是"只需 `TableState` 允许 `offsetX ≠ 0`，本盒一行不改"——
+ *   **对了一半**：布局与绘制确实一行不改，但**滚动条的接口**当时是单轴的
+ *   （`isVertical()` 定轴、`thumbRect()` 无参），一个盒表达不了"第二根条"。
+ *   那条假设被 `ScrollBarHost` 的轴化推翻，是本阶段唯一的破坏性改动。
+ *
+ * ## 诚实边界
+ *
  * - **行高定死**（`TableState` 给的是 `rowHeight × 行数`）：变长行高需要测量缓存
  *   与失效策略，与 `LazyColumn::itemExtent` 同源裁决。
  *
@@ -66,14 +74,14 @@ final class RenderTable extends RenderBox implements ScrollBarHost
     /** 纵向可滚上限（布局后才有意义） */
     private float $maxScroll = 0.0;
 
-    /** 横向可滚上限（阶段 5 才驱动；阶段 1 恒 0 当且仅当内容不宽于视口） */
+    /** 横向可滚上限（内容宽 > 视口宽时非 0，阶段 5 起真的会出横条） */
     private float $maxScrollX = 0.0;
 
     /** 本次布局生效的表头高（可能被视口夹短；paint / hitTest 都用它） */
     private float $headerBoxH = 0.0;
 
     /**
-     * @param float $scrollX       横向偏移（阶段 1 恒 0；通道为阶段 5 留）
+     * @param float $scrollX       横向偏移（**视口**坐标：表头与行区共享，见 `TableState`）
      * @param float $scrollY       纵向偏移（**行区**坐标，见 `TableState` 的 $bodyH 注释）
      * @param float $contentWidth  完整内容宽（= Σ列宽 + 间距，由 `TableState` 算好）
      * @param float $headerHeight  表头期望高
@@ -122,56 +130,56 @@ final class RenderTable extends RenderBox implements ScrollBarHost
         $this->barOpacity = $value;
     }
 
-    /** 纵向可滚上限（布局后才有意义） */
-    public function maxScroll(): float
+    /** @internal 见 `ScrollBarHost` —— 表格是双轴盒，两根条都可能出现 */
+    public function scrollAxes(): array
     {
-        return $this->maxScroll;
+        // 顺序 = **绘制**顺序：先横后竖 ⇒ 竖条压在右下角上（与浏览器同观感）。
+        // 命中侧按反序问（后画的在上层），于是角落那 6×6 归竖条 ——
+        // 拖竖条不会把表横向拽走（见 `ScrollInputRouter::scrollThumbAt()`）。
+        return [Axis::Horizontal, Axis::Vertical];
     }
 
-    /** 横向可滚上限（阶段 5 起才非 0） */
-    public function maxScrollX(): float
+    /** 该轴的可滚上限（布局后才有意义） */
+    public function maxScroll(Axis $axis): float
     {
-        return $this->maxScrollX;
+        return $axis === Axis::Vertical ? $this->maxScroll : $this->maxScrollX;
     }
 
-    /** 实际生效的纵向偏移（已按 `maxScroll` 夹取） */
-    public function appliedOffset(): float
+    /** 该轴实际生效的偏移（已按 `maxScroll` 夹取） */
+    public function appliedOffset(Axis $axis): float
+    {
+        return $axis === Axis::Vertical ? $this->appliedOffsetY() : $this->appliedOffsetX();
+    }
+
+    private function appliedOffsetY(): float
     {
         return min(max(0.0, $this->scrollY), $this->maxScroll);
     }
 
-    /** 实际生效的横向偏移（阶段 1 恒 0） */
-    public function appliedOffsetX(): float
+    private function appliedOffsetX(): float
     {
         return min(max(0.0, $this->scrollX), $this->maxScrollX);
     }
 
     /**
-     * ★ 表格的条**只画纵向那根**（阶段 1）。
-     *
-     * 横向溢出时内容会被裁掉而不是出现横条 —— 这与"还没接横向输入"一致：
-     * 画一条拖不动的横条比不画更容易误导（`ScrollBarGeometry::thumbRect()`
-     * 对"内容不溢出"的裁决也是同一条：画了就是撒谎）。
+     * ★ 表格的条**可以有两根**（阶段 5）：内容宽溢出 ⇒ 底部横条，行数溢出 ⇒
+     *   右缘竖条，两者独立出现。谁不溢出谁就没有条（`ScrollBarGeometry` 的
+     *   `thumbRect()` 对"不溢出"的裁决同一条：画了就是撒谎）。
      */
-    public function isVertical(): bool
-    {
-        return true;
-    }
-
-    public function thumbRect(): ?Rect
+    public function thumbRect(Axis $axis): ?Rect
     {
         $size = $this->size;
         if ($size === null) {
             return null;
         }
 
-        return ScrollBarGeometry::thumbRect($size, $this->maxScroll, $this->appliedOffset(), true);
+        return ScrollBarGeometry::thumbRect($size, $this->maxScroll($axis), $this->appliedOffset($axis), $axis);
     }
 
     /** @internal 事件命中用：thumb 在渲染树根坐标里的矩形 */
-    public function thumbRectInRoot(): ?Rect
+    public function thumbRectInRoot(Axis $axis): ?Rect
     {
-        $bar = $this->thumbRect();
+        $bar = $this->thumbRect($axis);
         if ($bar === null) {
             return null;
         }
@@ -181,14 +189,17 @@ final class RenderTable extends RenderBox implements ScrollBarHost
         return new Rect($originX + $bar->left, $originY + $bar->top, $bar->width, $bar->height);
     }
 
-    public function thumbTravel(): float
+    public function thumbTravel(Axis $axis): float
     {
         $size = $this->size;
         if ($size === null) {
             return 0.0;
         }
 
-        return ScrollBarGeometry::travel($size->height, $this->maxScroll);
+        return ScrollBarGeometry::travel(
+            ScrollBarGeometry::extent($size, $axis),
+            $this->maxScroll($axis),
+        );
     }
 
     /**
@@ -297,7 +308,7 @@ final class RenderTable extends RenderBox implements ScrollBarHost
         // ③ 夹取
         $this->maxScroll = max(0.0, $this->contentHeight - $viewportH);
         $this->maxScrollX = max(0.0, $this->contentWidth - $viewportW);
-        $offsetY = $this->appliedOffset();
+        $offsetY = $this->appliedOffsetY();
         $offsetX = $this->appliedOffsetX();
 
         // ④ 偏移进子盒 offset（不是 paint 期 translate）—— 见类注释
@@ -378,10 +389,14 @@ final class RenderTable extends RenderBox implements ScrollBarHost
             $canvas->restore();
         }
 
-        // ③ 滚动条：视口坐标（不在任何一份的平移里），裁在盒内
+        // ③ 滚动条：视口坐标（不在任何一份的平移里），裁在盒内。
+        //    ★ 按 `scrollAxes()` 的顺序画（先横后竖）—— 与命中判定同一个顺序，
+        //      所以"看到压在角上的是竖条，抓到的也是竖条"。
         $canvas->save();
         $canvas->pushClip(new Rect(0.0, 0.0, $size->width, $size->height));
-        $this->paintScrollbar($canvas);
+        foreach ($this->scrollAxes() as $axis) {
+            $this->paintScrollbar($canvas, $axis);
+        }
         $canvas->popClip();
         $canvas->restore();
     }
@@ -435,9 +450,9 @@ final class RenderTable extends RenderBox implements ScrollBarHost
     }
 
     /** 滚动条（纯视觉；几何在 `ScrollBarGeometry`，与 `RenderScrollView` 同一份） */
-    private function paintScrollbar(Canvas $canvas): void
+    private function paintScrollbar(Canvas $canvas, Axis $axis): void
     {
-        $bar = $this->thumbRect();
+        $bar = $this->thumbRect($axis);
         if ($bar === null) {
             return;
         }
@@ -465,7 +480,7 @@ final class RenderTable extends RenderBox implements ScrollBarHost
     }
 
     /**
-     * ★ 溢出策略是 **Clip**：内容比视口宽（阶段 1 没有横滚）或行区超出时裁掉。
+     * ★ 溢出策略是 **Clip**：内容比视口宽（横滚到两端时）/ 行区超出时裁掉。
      *   声明它让基类在 `paint()` 里再裁一次盒矩形（双保险），也回答了 C5 的
      *   契约查询 —— 结构性"会超"的容器必须显式声明。
      */

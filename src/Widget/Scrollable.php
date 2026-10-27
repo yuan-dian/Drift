@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Widget;
 
+use Drift\Geometry\Axis;
 use Drift\Geometry\Rect;
 
 /**
@@ -32,6 +33,23 @@ interface Scrollable
      *   的内容长度决定这一帧能不能滚"，内容变长后要多滚一帧才生效。
      */
     public function scrollBy(float $delta): void;
+
+    /**
+     * 按**轴**滚动 Δ（正 = 内容在该轴上负向移动，即"往下 / 往右看"）。
+     *
+     * ★ 为什么不是把 `scrollBy()` 改成两参：`scrollBy()` 一直是**主轴**语义
+     *   （`ScrollView` 可以横向，那时它的主轴就是 x）—— 改成"必须传轴"会让
+     *   既有的每次调用都要先知道控件的朝向，而那些调用点恰恰不知道。
+     *   两条入口分工明确：`scrollBy()` = 主轴、`scrollByAxis()` = 指定轴。
+     *
+     * ★ 单轴容器收到另一个轴 ⇒ **什么都不做**（不是报错）：`ScrollInputRouter`
+     *   按 `ScrollBarHost::scrollAxes()` 派发，正常不会问错；但"问一下没关系"
+     *   是接口该有的宽容度 —— 报错只会让将来加轴向时的试探变成噪声。
+     *
+     * ★ 表（`TableState`）是第一个真的用得上的实现：横条拖动走这里，
+     *   竖条/滚轮仍走 `scrollBy()`，两者共享同一份夹取。
+     */
+    public function scrollByAxis(Axis $axis, float $delta): void;
 
     /**
      * 把**内容坐标**里的矩形滚进视口，四周留 `$margin` 逻辑像素。

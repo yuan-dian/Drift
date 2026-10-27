@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Widget;
 
 use Drift\Errors;
+use Drift\Geometry\Axis;
 use Drift\Geometry\Rect;
 use Drift\Layout\RenderScrollView;
 
@@ -57,6 +58,21 @@ final class ScrollViewState extends State implements Scrollable
         $this->setState(function () use ($next): void {
             $this->offset = $next;
         });
+    }
+
+    /**
+     * 按轴滚动：**只有主轴接受**，交叉轴忽略（见 `Scrollable::scrollByAxis()`）。
+     *
+     * ★ 主轴由 Widget 决定（`ScrollView::vertical()`），不由调用方猜 —— 同一个
+     *   `ScrollViewState` 既可能是纵向也可能是横向。
+     */
+    public function scrollByAxis(Axis $axis, float $delta): void
+    {
+        if (($axis === Axis::Vertical) !== $this->view()->vertical()) {
+            return;
+        }
+
+        $this->scrollBy($delta);
     }
 
     /**
