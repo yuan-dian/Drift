@@ -17695,6 +17695,157 @@ check(
         . ' hit=' . ($tableCornerHit === null ? 'null' : 'ok'),
 );
 
+// ── 阶段 2b：键盘光标格（表 = 一个 Tab 位，格 = 表内光标）───────────────────
+//    ★ 不用"每格一个焦点节点"：1000 行 × 5 列 = 5000 个 Tab 位，Tab 键就废了；
+//      而虚拟化会回收不可见行 ⇒ 焦点节点跟着消失（焦点丢在虚空里）。
+//    ★ 光标格存**下标**、选择集存 **key**：前者是"眼睛在哪"（排序后留在原位置），
+//      后者是"哪些数据被选中"（排序后跟着数据走）。
+$tableKbApp = new TableScrollApplication();
+$tableKbApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
+$tableKbRoot = $tableKbApp->root();
+$tableKbState = $tableStateOf($tableKbRoot);
+$tableKbFocus = $tableKbApp->focus();
+
+check(
+    'Table · 键盘：整张表只占**一个** Tab 位（焦点链里只有它自己）',
+    $tableKbRoot->widget()->isFocusable() && \count($tableKbFocus?->order() ?? []) === 1,
+    'focusable=' . ($tableKbRoot->widget()->isFocusable() ? 'y' : 'n')
+        . ' order=' . \count($tableKbFocus?->order() ?? []),
+);
+
+check(
+    'Table · 键盘：光标格初始 (0,0)；**没焦点不画框**（焦点在别处却有框就是撒谎）',
+    $tableKbState?->focusedCell() === ['row' => 0, 'col' => 0]
+        && $tableBoxOf($tableKbRoot)?->focusRect() === null,
+    'cell=' . \json_encode($tableKbState?->focusedCell())
+        . ' rect=' . ($tableBoxOf($tableKbRoot)?->focusRect() === null ? 'null' : '有'),
+);
+
+// ② 真实焦点链：Tab ⇒ 焦点落表上 ⇒ 第一格画出 300×40 的框
+$tableKbFocus?->focusNext();
+$tableKbApp->frame(16.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$tableKbRect = $tableBoxOf($tableKbRoot)?->focusRect();
+check(
+    'Table · 键盘：Tab 进来 ⇒ 焦点落在表上，第一格画出 300×40 的框（内容坐标 0,0）',
+    $tableKbRect !== null
+        && abs($tableKbRect->left) < 0.01 && abs($tableKbRect->top) < 0.01
+        && abs($tableKbRect->width - 300.0) < 0.01 && abs($tableKbRect->height - 40.0) < 0.01,
+    $tableKbRect === null ? 'null' : sprintf(
+        '(%.1f,%.1f) %.1f×%.1f',
+        $tableKbRect->left,
+        $tableKbRect->top,
+        $tableKbRect->width,
+        $tableKbRect->height,
+    ),
+);
+
+// ③ 方向键：走真 FocusManager ⇒ Widget::keyboard() 第一跳命中（焦点就在表上）⇒ TableState
+$tableKbFocus?->dispatchKey(KeyEvent::down(KeyChord::down()));
+$tableKbApp->frame(17.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$tableKbRect = $tableBoxOf($tableKbRoot)?->focusRect();
+check(
+    'Table · 键盘：↓ ⇒ 光标行 +1（框顶 = 行高 40）',
+    $tableKbState?->focusedCell() === ['row' => 1, 'col' => 0]
+        && $tableKbRect !== null && abs($tableKbRect->top - 40.0) < 0.01,
+    'cell=' . \json_encode($tableKbState?->focusedCell())
+        . ' top=' . ($tableKbRect === null ? 'null' : sprintf('%.1f', $tableKbRect->top)),
+);
+
+$tableKbFocus?->dispatchKey(KeyEvent::down(KeyChord::right()));
+$tableKbApp->frame(18.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$tableKbRect = $tableBoxOf($tableKbRoot)?->focusRect();
+check(
+    'Table · 键盘：→ ⇒ 光标列 +1（框左 = 第 1 列宽 300，间距 0）',
+    $tableKbState?->focusedCell() === ['row' => 1, 'col' => 1]
+        && $tableKbRect !== null && abs($tableKbRect->left - 300.0) < 0.01,
+    'cell=' . \json_encode($tableKbState?->focusedCell())
+        . ' left=' . ($tableKbRect === null ? 'null' : sprintf('%.1f', $tableKbRect->left)),
+);
+
+// ④ 边界：吃掉键但不越界（不吃就漏给上层，越界就是"光标跑到不存在的列"）
+$tableKbAte = $tableKbFocus?->dispatchKey(KeyEvent::down(KeyChord::right())) ?? false;
+$tableKbApp->frame(19.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+check(
+    'Table · 键盘：右边界再按 → ⇒ 吃掉这个键、光标不越界（仍 col 1）',
+    $tableKbAte && $tableKbState?->focusedCell() === ['row' => 1, 'col' => 1],
+    'ate=' . ($tableKbAte ? 'y' : 'n') . ' cell=' . \json_encode($tableKbState?->focusedCell()),
+);
+
+// ⑤ End ⇒ 末行 + 纵向 ensureVisible（100 行 × 40 ⇒ 行区 208，末端 offsetY = 3792）
+$tableKbFocus?->dispatchKey(KeyEvent::down(KeyChord::end()));
+$tableKbApp->frame(20.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$tableKbBox = $tableBoxOf($tableKbRoot);
+$tableKbRectEnd = $tableKbBox?->focusRect();
+$tableKbOffsetEnd = $tableKbBox?->appliedOffset(Axis::Vertical) ?? -1.0;
+check(
+    'Table · 键盘：End ⇒ 末行 99，并自动滚到能看见（offsetY = 3792，框底 ≤ 行区底）',
+    $tableKbState?->focusedCell() === ['row' => 99, 'col' => 1]
+        && abs($tableKbOffsetEnd - 3792.0) < 0.01
+        && $tableKbRectEnd !== null
+        && $tableKbRectEnd->top >= $tableKbOffsetEnd
+        && $tableKbRectEnd->top + $tableKbRectEnd->height <= $tableKbOffsetEnd + 208.0 + 0.01,
+    'cell=' . \json_encode($tableKbState?->focusedCell())
+        . ' offsetY=' . sprintf('%.1f', $tableKbOffsetEnd)
+        . ' rectTop=' . ($tableKbRectEnd === null ? 'null' : sprintf('%.1f', $tableKbRectEnd->top)),
+);
+
+// ⑥ 横向 ensureVisible：→ 到第 2 列（x=300..600）⇒ 右缘 600 > 视口 320 ⇒ 滚到末端 280
+//    ★ 另一个实例：⑤ 里纵向已在末端，同一条断言里两个轴会互相掩盖
+$tableKbApp2 = new TableScrollApplication();
+$tableKbApp2->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
+$tableKbApp2->focus()?->focusNext();
+$tableKbApp2->frame(16.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$tableKbApp2->focus()?->dispatchKey(KeyEvent::down(KeyChord::right()));
+$tableKbApp2->frame(17.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$tableKbBox2 = $tableKbApp2->root()->effectiveBoxOf(RenderTable::class);
+$tableKbBox2 = $tableKbBox2 instanceof RenderTable ? $tableKbBox2 : null;
+$tableKbState2 = $tableStateOf($tableKbApp2->root());
+check(
+    'Table · 键盘：→ 到右边列 ⇒ 横向自动滚过去（offsetX = maxScrollX = 280）',
+    $tableKbBox2?->appliedOffset(Axis::Horizontal) === 280.0,
+    'offsetX=' . sprintf('%.1f', $tableKbBox2?->appliedOffset(Axis::Horizontal) ?? -1.0),
+);
+
+// ⑦ 失焦：不画框，但光标格保留（Tab 出去再回来停在原处）
+$tableKbState2?->didChangeFocus(false);
+$tableKbApp2->frame(18.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+check(
+    'Table · 键盘：失焦 ⇒ 不画框，但光标格**保留**（Tab 回来停在原处）',
+    $tableBoxOf($tableKbApp2->root())?->focusRect() === null
+        && $tableKbState2?->focusedCell() === ['row' => 0, 'col' => 1],
+    'rect=' . ($tableBoxOf($tableKbApp2->root())?->focusRect() === null ? 'null' : '有')
+        . ' cell=' . \json_encode($tableKbState2?->focusedCell()),
+);
+
+// ⑦b 焦点在**表内子控件**上时让位：`keyboard()` 沿父链找最近声明者 ⇒ 单元格里的
+//     输入框按 → 也会先落到表的闭包；那时方向键必须归输入框（移光标），不是移格子。
+check(
+    'Table · 键盘：焦点在表内子控件上（表本身失焦）⇒ 方向键让位（不吃、光标不动）',
+    $tableKbState2?->handleFocusKey(KeyEvent::down(KeyChord::down())) === false
+        && $tableKbState2->focusedCell() === ['row' => 0, 'col' => 1],
+    'cell=' . \json_encode($tableKbState2?->focusedCell()),
+);
+
+// ⑧ 像素：框真的画在**格子内部**（2px 内描边；stroke 会向相邻格溢 1px）
+$tableKbApp3 = new TableScrollApplication();
+$tableKbApp3->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
+$tableKbApp3->focus()?->focusNext();
+$tableKbApp3->frame(16.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$tableKbKbShot = $tableRasterOf($tableBoxOf($tableKbApp3->root()), 320, 240);
+check(
+    'Table · 像素：光标框是 2px 内描边（顶边在 y=32..33、左竖边贴 x=0）',
+    $tableKbKbShot->pixelAt(150, 32)->equals($tableDividerAccentInk)
+        && $tableKbKbShot->pixelAt(150, 33)->equals($tableDividerAccentInk)
+        && $tableKbKbShot->pixelAt(0, 50)->equals($tableDividerAccentInk),
+    'top=' . $tablePx($tableKbKbShot, 150, 32) . ' left=' . $tablePx($tableKbKbShot, 0, 50),
+);
+check(
+    'Table · 像素：框只占 2px —— 格内 y=34 已是内容底（不是一条实心色带）',
+    !$tableKbKbShot->pixelAt(150, 34)->equals($tableDividerAccentInk)
+        && $tableKbKbShot->pixelAt(150, 60)->equals($tableSurfaceInk),
+    'y34=' . $tablePx($tableKbKbShot, 150, 34) . ' y60=' . $tablePx($tableKbKbShot, 150, 60),
+);
+
 // ⑱ 单轴容器的按轴语义：问错轴 ⇒ 什么都不做（不是报错）
 $tableRevBefore = $revState?->offset() ?? -1.0;
 $tableHorizBefore = $hState?->offset() ?? -1.0;

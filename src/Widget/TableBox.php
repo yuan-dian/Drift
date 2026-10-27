@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Widget;
 
+use Drift\Geometry\Rect;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderTable;
 use Drift\Rendering\ColorToken;
@@ -36,6 +37,7 @@ final class TableBox extends RenderBoxWidget
         private readonly Widget $headerKid,
         private readonly Widget $bodyKid,
         private readonly float $barOpacity,
+        private readonly ?Rect $focusRect,
     ) {
         parent::__construct();
     }
@@ -51,6 +53,7 @@ final class TableBox extends RenderBoxWidget
         Widget $headerKid,
         Widget $bodyKid,
         float $barOpacity,
+        ?Rect $focusRect = null,
     ): self {
         return new self(
             $offsetX,
@@ -62,6 +65,7 @@ final class TableBox extends RenderBoxWidget
             $headerKid,
             $bodyKid,
             $barOpacity,
+            $focusRect,
         );
     }
 
@@ -88,6 +92,8 @@ final class TableBox extends RenderBoxWidget
             $context->color(ColorToken::Chrome),
             $context->color(ColorToken::Border),
             $context->color(ColorToken::Muted),
+            $context->color(ColorToken::Accent),
+            $this->focusRect,
             $this->barOpacity,
         );
     }

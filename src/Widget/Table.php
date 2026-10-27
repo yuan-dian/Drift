@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Widget;
 
 use Drift\Errors;
+use Drift\Input\KeyEvent;
 use Drift\Input\SemanticsRole;
 
 /**
@@ -48,8 +49,9 @@ use Drift\Input\SemanticsRole;
  * | 横向滚动的**滚轮** | 横条可拖（阶段 5），但滚轮横向需要壳给 `WM_MOUSEHWHEEL` / Shift 位，单独一步做（`ScrollEvent` 目前只有一条 delta） |
  * | **控件内**排序 | 数据所有权不分裂：控件画箭头 + 上报意图，重排由应用做（§13） |
  * | 多列排序的 **UI** | `TableSort::thenBy()` 与"每列各画箭头"结构上已成立，只是点表头只上报单键（Shift+点留给后续） |
- * | 列宽拖拽 / 单元格编辑 | 阶段 4、7；列宽三层已在（第 ④ 层留给拖拽） |
- * | 键盘焦点格 | 阶段 2b（裁决 5：整个表格占一个 Tab 位，方向键在 `TableState` 里移动焦点格） |
+ * | 列宽拖拽 / 单元格编辑 | 列宽已做（阶段 4）；编辑是阶段 7 |
+ * | 键盘光标格的**扩展选择** | 方向键移格已做（阶段 2b）；Ctrl/Shift + 方向键扩选要先把选择与光标的关系定死 |
+ * | 表头列高亮 | 光标格有框，表头**不**跟着高亮 —— 那是"当前列"的第二种表达，等编辑（阶段 7）有消费者再加 |
  * | 内置勾选列 / 全选 | `cell()` 已能表达（闭包捕获 selection）；内置列会同时牵连列宽、表头全选框、排序箭头与拖拽手柄 ⇒ 等阶段 4 一起裁决 |
  *
  * ★ **子项内不能有"随滚动保留的 UI 态"**：行 Element 在滚出窗口时被回收
@@ -131,6 +133,23 @@ final class Table extends StatefulWidget
         $this->sortState = TableSort::none();
         // §9 无障碍：表格是集合角色（滚轮路由走 Scrollable 接口，与语义无关）
         $this->semantics(SemanticsRole::Table);
+
+        // ★ 整张表**一个** Tab 位，不是每格一个（阶段 2b 的核心裁决）：
+        //   1000 行 × 5 列 = 5000 个焦点节点，Tab 键就废了；而虚拟化会把不可见行
+        //   回收 ⇒ 焦点节点跟着消失（焦点丢在虚空里）。所以"光标格"是表内状态，
+        //   焦点本身仍落在表上。
+        $this->markFocusable();
+
+        // ★ 声明两参：`FocusManager::dispatchKey()` 给的是 `(KeyEvent, Element)`。
+        //   只写一参在 AOT 下当场 Fatal（"expects exactly 1 argument"），且被捕获期
+        //   的 try/catch 接住 ⇒ 现象是整页变错误占位（阶段 2 的同一坑）。
+        // ★ 经 Element 找 State 而不是让闭包捕 `$this`：光标格必须跨重建存活，
+        //   而 Widget 每次 setState 都是新实例（`State::didChangeFocus` 同一理由）。
+        $this->keyboard(function (KeyEvent $event, Element $node): bool {
+            $state = States::of($node);
+
+            return $state instanceof TableState && $state->handleFocusKey($event);
+        });
     }
 
     /**

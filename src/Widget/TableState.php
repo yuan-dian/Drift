@@ -7,6 +7,8 @@ use Drift\Errors;
 use Drift\Geometry\Axis;
 use Drift\Geometry\Rect;
 use Drift\Input\CursorShape;
+use Drift\Input\KeyChord;
+use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
 use Drift\Layout\FlexAlign;
 use Drift\Layout\StackAlign;
@@ -58,6 +60,35 @@ final class TableState extends State implements Scrollable
      *   **行区**（不含表头）。合成一个结构体只会让"哪一轴用哪套夹取"藏起来。
      */
     private float $offsetX = 0.0;
+
+    /**
+     * 光标格（阶段 2b）：行 / 列 **下标**，不是 key。
+     *
+     * ★★ 与选择集故意用两种身份：选择回答"哪些数据被选中"，要跟着数据走
+     *   （排序后选中的还是那几条）；光标回答"眼睛在哪"，要留在原位置
+     *   （排序后那一行内容变了，光标还停在那儿 —— 与 Excel / 资源管理器一致）。
+     *   混成一个状态会让**移动光标**触发 `onSelectionChange`，语义就脏了。
+     */
+    private int $focusedRow = 0;
+
+    private int $focusedCol = 0;
+
+    /**
+     * 焦点是否在本表 —— 失焦**不画**描边，但光标格保留。
+     *
+     * ★ 保留光标是为了"Tab 出去再 Tab 回来停在原处"；不画描边是因为"焦点在
+     *   别处却有焦点框"就是撒谎（`ScrollBarGeometry::thumbRect()` 同一条纪律）。
+     */
+    private bool $hasFocus = false;
+
+    /**
+     * 上一帧的列宽 —— `focusRect()` 要在 build **之外**算光标格位置（键盘移动后
+     * 立刻 `ensureVisible()`），而列宽只有 build 里才算得出来。
+     *
+     * ★ 空数组 = 还没布局过 ⇒ 没有可信位置，`ensureVisible` 让开（同
+     *   `RenderTable::revealDelta()` 对"没尺寸"的裁决）。
+     */
+    private array $widthsInBuild = [];
 
     /** 滚动条淡出节律（懒建；与 `ScrollViewState` / `LazyListState` 同一份实现） */
     private ?ScrollBarFade $barFade = null;
@@ -214,11 +245,13 @@ final class TableState extends State implements Scrollable
     }
 
     /**
-     * 把**内容坐标**里的矩形滚进可见行区（`04` §6.3 的键盘可达性要求）。
+     * 把**内容坐标**里的矩形滚进可见区（`04` §6.3 的键盘可达性要求）。
      *
      * ★ 形状与 `LazyListState::ensureVisible()` 逐字同构：算术都在
      *   `RenderTable::revealDelta()`（那边知道表头占掉多少），本方法只"找盒 + 转交"。
-     * ★ 阶段 1 没有单元格焦点 ⇒ 无调用方；阶段 2 的 `Widget::keyboard()` 一接就有。
+     * ★ **两个轴各算一次**（阶段 2b 起有消费者）：纵向的视口是行区（减表头），
+     *   横向的视口是全宽（表头与行区共享 x）。两轴的视口定义不同 ⇒ 不能用同一个
+     *   函数，`revealDeltaX()` 是镜像而不是特例。
      */
     public function ensureVisible(Rect $target, float $margin = 8.0): void
     {
@@ -228,10 +261,164 @@ final class TableState extends State implements Scrollable
             return;
         }
 
-        $delta = $box->revealDelta($target, $margin, $this->offsetY);
-        if ($delta !== 0.0) {
-            $this->scrollBy($delta);
+        $dy = $box->revealDelta($target, $margin, $this->offsetY);
+        if ($dy !== 0.0) {
+            $this->scrollBy($dy);
         }
+
+        $dx = $box->revealDeltaX($target, $margin, $this->offsetX);
+        if ($dx !== 0.0) {
+            $this->scrollByAxis(Axis::Horizontal, $dx);
+        }
+
+    }
+
+    /**
+     * 当前光标格（行 / 列**下标**；空格子表 ⇒ `null`）。
+     *
+     * @return array{row: int, col: int}|null
+     */
+    public function focusedCell(): ?array
+    {
+        if ($this->view()->rowList() === [] || $this->view()->columnList() === []) {
+            return null;
+        }
+
+        return ['row' => $this->focusedRow, 'col' => $this->focusedCol];
+    }
+
+    /**
+     * 焦点进出（`FocusManager` 驱动）。
+     *
+     * ★ 这是 `State` 钩子而不是 Widget 字段：Widget 每次重建都是新实例，
+     *   `TextFieldState` 的同一条理由（2026-10-24 实测：盒里的 `$focused`
+     *   一重建就丢）。
+     */
+    #[\Override]
+    public function didChangeFocus(bool $focused): void
+    {
+        if ($this->hasFocus === $focused) {
+            return;
+        }
+
+        $this->setState(function () use ($focused): void {
+            $this->hasFocus = $focused;
+        });
+
+        if ($focused) {
+            // 光标可能在视口外（上次滚走过 / 行了变化）⇒ 进来就把它带回来
+            $this->revealFocus();
+        }
+    }
+
+    /**
+     * 键盘：方向键移格、Home/End 到首末行。返回 `true` = 吃掉这个键。
+     *
+     * ★ 只吃这四个方向 + 首末键。**Enter/Space 不吃**：表格没有"激活格"语义，
+     *   编辑（阶段 7）才需要，届时由 `TableColumn::editable()` 决定 —— 现在吃
+     *   掉就等于提前占位，把"空格翻转选中"这类应用自定义语义堵死。
+     * ★ 已在边界时**吃掉键但不重建**：否则每按一次边界键就白画一帧。
+     */
+    public function handleFocusKey(KeyEvent $event): bool
+    {
+        // ★ 焦点不一定在表上：`keyboard()` 沿父链找**最近声明者**（2026-10-24 为
+        //   ComboBox 开的缝），于是表内子控件（单元格里的输入框 / 滑块）的按键
+        //   会先飘到这儿来。焦点不在表上时，方向键属于那个控件自己
+        //   （输入框里 → 是移光标，不是移格子）。
+        if (!$this->hasFocus) {
+            return false;
+        }
+
+        $rows = \count($this->view()->rowList());
+        $cols = \count($this->view()->columnList());
+
+        if ($rows === 0 || $cols === 0) {
+            return false;   // 空格子表：方向键让给上层（页面滚动）
+        }
+
+        $chord = $event->chord;
+        $row = $this->focusedRow;
+        $col = $this->focusedCol;
+
+        if ($chord->is(KeyChord::up())) {
+            $row--;
+        } elseif ($chord->is(KeyChord::down())) {
+            $row++;
+        } elseif ($chord->is(KeyChord::left())) {
+            $col--;
+        } elseif ($chord->is(KeyChord::right())) {
+            $col++;
+        } elseif ($chord->is(KeyChord::home())) {
+            $row = 0;
+        } elseif ($chord->is(KeyChord::end())) {
+            $row = $rows - 1;
+        } else {
+            return false;
+        }
+
+        $row = max(0, min($row, $rows - 1));
+        $col = max(0, min($col, $cols - 1));
+
+        if ($row === $this->focusedRow && $col === $this->focusedCol) {
+            return true;
+        }
+
+        $this->setState(function () use ($row, $col): void {
+            $this->focusedRow = $row;
+            $this->focusedCol = $col;
+        });
+
+        $this->revealFocus();
+
+        return true;
+    }
+
+    /** 把光标格滚进视口（用上一帧列宽算位置；还没布局过 ⇒ 什么也不做） */
+    private function revealFocus(): void
+    {
+        $rect = $this->currentFocusRect();
+        if ($rect !== null) {
+            $this->ensureVisible($rect);
+        }
+    }
+
+    /**
+     * 光标格在**行区内容坐标**里的矩形（`null` = 还没布局过 / 空格子表）。
+     *
+     * ★ 用上一帧的列宽（`$widthsInBuild`）：列宽只在 build 里算得出来，而键盘
+     *   移动必须**当场**把格子滚进视口（等帧末 build 再滚会先闪一帧空白）。
+     *   列宽刚被拖动时也一样 —— 拖动与键盘不同时发生。
+     */
+    private function currentFocusRect(): ?Rect
+    {
+        $widths = $this->widthsInBuild;
+        if ($widths === []) {
+            return null;
+        }
+
+        $rowH = $this->view()->rowHeightPx();
+        $spacing = $this->view()->columnSpacingPx();
+
+        return $this->cellRect($this->focusedRow, $this->focusedCol, $widths, $rowH, $spacing);
+    }
+
+    /**
+     * 某一格的内容坐标（列宽前缀和 + 间距；`y` 是**行区**坐标，不含表头）。
+     *
+     * @param array<int, float> $widths
+     */
+    private function cellRect(int $row, int $col, array $widths, float $rowH, float $spacing): ?Rect
+    {
+        if (!isset($widths[$col])) {
+            return null;
+        }
+
+        $x = 0.0;
+        for ($j = 0; $j < $col; $j++) {
+            $x += $widths[$j] + $spacing;
+        }
+
+        return new Rect($x, $row * $rowH, $widths[$col], $rowH);
     }
 
     /** 滚动条的显隐节律（懒建：没滚过的表不建，滚动条恒亮） */
@@ -339,6 +526,15 @@ final class TableState extends State implements Scrollable
      */
     private function noteRowTap(mixed $row, int $index, PointerEvent $event): void
     {
+        // 光标行跟着点击走（**列不动**）：算"点在哪个格"要用根坐标减去行区原点再
+        // 累加列宽，而"点行 ⇒ 光标行=该行"在语义上完全够（资源管理器同款）。
+        // 列定位留给阶段 7 的编辑 —— 那时双击某格需要更准的列，由 cell 自己声明。
+        if ($this->focusedRow !== $index) {
+            $this->setState(function () use ($index): void {
+                $this->focusedRow = $index;
+            });
+        }
+
         $view = $this->view();
 
         $tap = $view->rowTapHandler();
@@ -492,6 +688,8 @@ final class TableState extends State implements Scrollable
         $viewportW = $this->viewportEstimate($ctx, false);
         $widths = $this->resolveWidths($columns, $viewportW);
         $this->widthUsedInBuild = $viewportW;
+        // `focusRect()` 在 build 之外算光标位置要用它（见字段注释）
+        $this->widthsInBuild = $widths;
 
         $sum = 0.0;
         foreach ($widths as $w) {
@@ -511,6 +709,17 @@ final class TableState extends State implements Scrollable
         //   而条本身贴在末端，看起来像"拖不动"。写回之后增量立刻生效。
         $this->offsetY = $offsetY;
         $this->offsetX = $offsetX;
+
+        // 光标格跟着行列数夹（行被删 / 列被删之后不能停在不存在的位置）。
+        // 与偏移写回同一条纪律：build 期直接写字段，不经 `setState`（不标脏）。
+        $this->focusedRow = $count === 0 ? 0 : min($this->focusedRow, $count - 1);
+        $this->focusedCol = $columns === [] ? 0 : min($this->focusedCol, \count($columns) - 1);
+
+        // ★ 只在**有焦点**时给框：失焦却画焦点框就是撒谎（见字段注释）。
+        //   没焦点 ⇒ `null`，盒那一侧不需要知道焦点概念。
+        $focusRect = $this->hasFocus
+            ? $this->cellRect($this->focusedRow, $this->focusedCol, $widths, $rowH, $spacing)
+            : null;
 
         $first = (int) \floor($offsetY / $rowH);
         $last = (int) \ceil(($offsetY + $bodyH) / $rowH);
@@ -606,6 +815,7 @@ final class TableState extends State implements Scrollable
             $headerKid,
             Column::make()->children($lines),
             $opacity,
+            $focusRect,
         );
     }
 

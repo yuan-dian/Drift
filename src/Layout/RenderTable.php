@@ -64,6 +64,9 @@ use Drift\Rendering\Paint;
  */
 final class RenderTable extends RenderBox implements ScrollBarHost
 {
+    /** 光标格描边的厚度（内描边，不入布局） */
+    public const FOCUS_RING_W = 2.0;
+
     private ?RenderBox $header = null;
 
     private ?RenderBox $body = null;
@@ -81,6 +84,17 @@ final class RenderTable extends RenderBox implements ScrollBarHost
     private float $headerBoxH = 0.0;
 
     /**
+     * 光标格（**行区内容坐标**；`null` = 不画）。
+     *
+     * ★ 由 `TableState` 算好递进来，本盒不做"第几列在哪 x"的算术 —— 列宽只有
+     *   `resolveWidths()` 一处真相，在盒里再算一遍就是第二份（阶段 4 的
+     *   "表头比行多 n−1 像素"正是这么来的）。
+     */
+    private ?Rect $focusRect;
+
+    private Color $focusInk;
+
+    /**
      * @param float $scrollX       横向偏移（**视口**坐标：表头与行区共享，见 `TableState`）
      * @param float $scrollY       纵向偏移（**行区**坐标，见 `TableState` 的 $bodyH 注释）
      * @param float $contentWidth  完整内容宽（= Σ列宽 + 间距，由 `TableState` 算好）
@@ -91,6 +105,8 @@ final class RenderTable extends RenderBox implements ScrollBarHost
      * @param Color $headerInk     表头底
      * @param Color $borderInk     表头下方的 1px 分隔线
      * @param Color $thumb         滚动条色
+     * @param Color $focusInk      光标格描边色
+     * @param ?Rect $focusRect     光标格（行区内容坐标；`null` = 失焦或没布局）
      *
      * ★ 参数序：必选在前、可选在后（`04` §5.4：反过来 tpc 预处理器直接 Fatal）。
      */
@@ -105,9 +121,13 @@ final class RenderTable extends RenderBox implements ScrollBarHost
         private readonly Color $headerInk,
         private readonly Color $borderInk,
         private readonly Color $thumb,
+        Color $focusInk,
+        ?Rect $focusRect,
         float $barOpacity = 1.0,
     ) {
         $this->barOpacity = $barOpacity;
+        $this->focusInk = $focusInk;
+        $this->focusRect = $focusRect;
     }
 
     /** @internal `TableElement` 挂接期调（子盒由 Element 的事，不在 Widget 里挂） */
@@ -128,6 +148,17 @@ final class RenderTable extends RenderBox implements ScrollBarHost
     public function setBarOpacity(float $value): void
     {
         $this->barOpacity = $value;
+    }
+
+    /**
+     * @internal 光标格（行区内容坐标；`null` = 不画）
+     *
+     * ★ 给断言与将来的命中用。**不**在内部二次换算成视口坐标：调用方多半是
+     *   "格子在不在视口里"这类判断，内容坐标才是稳定参照（滚动不动它）。
+     */
+    public function focusRect(): ?Rect
+    {
+        return $this->focusRect;
     }
 
     /** @internal 见 `ScrollBarHost` —— 表格是双轴盒，两根条都可能出现 */
@@ -248,6 +279,45 @@ final class RenderTable extends RenderBox implements ScrollBarHost
 
         if ($targetBottom > $visibleBottom) {
             return $targetBottom - $visibleBottom;
+        }
+
+        return 0.0;
+    }
+
+    /**
+     * 横向的 `revealDelta()`（阶段 2b：光标格向右移时把它带进视口）。
+     *
+     * ★ 是**镜像**不是复用：纵向的视口是行区（要减表头高），横向的视口是整宽
+     *   （表头与行区共享 x）。把两者硬塞进一个函数，就得再多一个"要不要减表头"
+     *   的布尔参数 —— 那正是 `ScrollBarHost::isVertical()` 被拆掉的形状。
+     */
+    public function revealDeltaX(Rect $target, float $margin, float $base): float
+    {
+        $size = $this->size;
+        if ($size === null) {
+            return 0.0;
+        }
+
+        $visibleW = $size->width;
+        if ($visibleW <= 0.0) {
+            return 0.0;
+        }
+
+        $visibleLeft = $base + $margin;
+        $visibleRight = $base + $visibleW - $margin;
+        $targetLeft = $target->left;
+        $targetRight = $target->left + $target->width;
+
+        if ($target->width + $margin * 2.0 > $visibleW) {
+            return $targetLeft - $visibleLeft;
+        }
+
+        if ($targetLeft < $visibleLeft) {
+            return $targetLeft - $visibleLeft;
+        }
+
+        if ($targetRight > $visibleRight) {
+            return $targetRight - $visibleRight;
         }
 
         return 0.0;
@@ -385,6 +455,12 @@ final class RenderTable extends RenderBox implements ScrollBarHost
             $canvas->translate($body->offsetX(), $body->offsetY());
             $body->paintComposed($canvas);
             $canvas->restore();
+
+            // ★ 光标框画在**行区内容之上**，且回到视口坐标（`translate` 之外）：
+            //   内容坐标 → 屏幕 = 减偏移、加表头高。若跟着 translate 画，还得再补
+            //   `sliceOrigin`（这扇窗的起点），那是第二处会算错的地方。
+            $this->paintFocusRing($canvas, $hh, $this->appliedOffsetX(), $this->appliedOffsetY());
+
             $canvas->popClip();
             $canvas->restore();
         }
@@ -399,6 +475,40 @@ final class RenderTable extends RenderBox implements ScrollBarHost
         }
         $canvas->popClip();
         $canvas->restore();
+    }
+
+    /**
+     * 光标格的 2px **内**描边（阶段 2b）。
+     *
+     * ★ 四条实心矩形而不是 `Paint::stroke()`：stroke 以路径为中心向两侧各画一半
+     *   ⇒ 框会向相邻格溢出 1px，"内描边"就名不副实。四条 fill 全落在格子矩形
+     *   内部，像素位置可控（smoke 按像素断言它，靠的就是这点）。
+     * ★ 不走 `Modifier::border()`：那条路是"给盒加装饰"，而光标格不是一个盒
+     *   （cell 里可能是按钮 / 任意 Widget），而且描边必须压在**行背景之上**。
+     */
+    private function paintFocusRing(Canvas $canvas, float $bodyTop, float $offsetX, float $offsetY): void
+    {
+        $rect = $this->focusRect;
+        if ($rect === null) {
+            return;
+        }
+
+        $x = $rect->left - $offsetX;
+        $y = $bodyTop + $rect->top - $offsetY;
+        $w = $rect->width;
+        $h = $rect->height;
+        if ($w <= 0.0 || $h <= 0.0) {
+            return;
+        }
+
+        // 格子比描边还窄时按半宽收敛（否则左右两条会叠成一片实心，看起来像选中）
+        $t = min(self::FOCUS_RING_W, $w / 2.0, $h / 2.0);
+        $paint = Paint::fill($this->focusInk);
+
+        $canvas->drawRect(new Rect($x, $y, $w, $t), $paint);
+        $canvas->drawRect(new Rect($x, $y + $h - $t, $w, $t), $paint);
+        $canvas->drawRect(new Rect($x, $y + $t, $t, $h - $t * 2.0), $paint);
+        $canvas->drawRect(new Rect($x + $w - $t, $y + $t, $t, $h - $t * 2.0), $paint);
     }
 
     /**
