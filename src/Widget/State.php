@@ -33,6 +33,9 @@ abstract class State
      */
     private static int $pendingDirty = 0;
 
+    /** 标脏累计次数（只增不减）—— 见 `markedCount()` */
+    private static int $markedCount = 0;
+
     /**
      * @internal 正在 `build()` 的 State —— `markDirty()` 用它识别"build 期写自己"
      *
@@ -154,6 +157,7 @@ abstract class State
         }
         $this->dirty = true;
         self::$pendingDirty++;
+        self::$markedCount++;
     }
 
     /**
@@ -317,6 +321,18 @@ abstract class State
     public static function pendingDirty(): int
     {
         return self::$pendingDirty;
+    }
+
+    /**
+     * @internal **只增不减**的标脏序号（`Frame` 判"本帧有没有新标脏"）。
+     *
+     * ★ 为什么不用 `pendingDirty()`：它是全局的、且**会漂移**（已卸载或不在本树
+     *   的 State 脏着不消费 ⇒ 永远 >0 —— 实测 smoke 跑到一半时是 38）。
+     *   只看"有没有**新**标脏"就不受漂移影响：漂移是历史存量，不产生新标记。
+     */
+    public static function markedCount(): int
+    {
+        return self::$markedCount;
     }
 
     /** @internal 本帧累计 rebuild 次数（`settle()` 用前后差判断"有没有重建"） */

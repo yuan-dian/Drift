@@ -16885,18 +16885,62 @@ $tblTight = BoxConstraints::tight(new Size(320.0, 240.0));
 $tblFrame->run($tblEl, $tblTight, 0.0);   // 首帧：约束变了 ⇒ 必排
 $tblState = $tableStateOf($tblEl);
 
+/** 诊断：settle 三信号的「当前 / Frame 记下的上一帧」对比（都是私有字段，用反射读） */
+$frameSignals = static function (Frame $f): string {
+    $read = static function (string $name) use ($f): int {
+        $p = new ReflectionProperty(Frame::class, $name);
+        $p->setAccessible(true);
+
+        return (int) $p->getValue($f);
+    };
+
+    return 'marked=' . State::markedCount() . '/' . $read('lastMarkedCount')
+        . ' box=' . State::boxEpoch() . '/' . $read('lastBoxEpoch')
+        . ' struct=' . Element::structureVersion() . '/' . $read('lastSettleStructure');
+};
 $layoutsBefore = RenderBox::layoutCount();
 $paintsBefore = RenderBox::paintCount();
 $replaysBefore = RenderBox::replayCount();
+$settleRunsBefore = Frame::settleRunCount();
+$settleSkipsBefore = Frame::settleSkipCount();
 $tblState?->scrollBy(40.0);
 $tblFrame->run($tblEl, $tblTight, 16.0);
 $layoutsScrolled = RenderBox::layoutCount() - $layoutsBefore;
 $paintsScrolled = RenderBox::paintCount() - $paintsBefore;
 $replaysScrolled = RenderBox::replayCount() - $replaysBefore;
+$settleRunsScrolled = Frame::settleRunCount() - $settleRunsBefore;
+$settleSkipsScrolled = Frame::settleSkipCount() - $settleSkipsBefore;
 check(
     'Table · 滚动一帧 ⇒ 重排 0 次（Frame 跳过 layout，paint 读到新 offset）',
     $layoutsScrolled === 0,
     'layouts=' . $layoutsScrolled,
+);
+// ★ 滚动帧什么都不变（不重建、不换盒、不增删节点）⇒ settle 整段跳过。
+//   没有这条，下面"全绿"也可能是"判据恒真、一次没跳过"的假绿。
+check(
+    'Table · 滚动帧 ⇒ settle 整段跳过（跑 0 次、跳 1 次）',
+    $settleRunsScrolled === 0 && $settleSkipsScrolled === 1,
+    "run={$settleRunsScrolled} skip={$settleSkipsScrolled} " . $frameSignals($tblFrame),
+);
+// ★★ 反向：**帧外**直调 `update()` 换盒 ⇒ settle **不许**跳过。
+//    `update()` = `syncBox()` + `rebuild()`，**不标脏**（无状态节点不走 setState）
+//    ⇒ markedCount 不动，只有"盒换代"这条能拦。漏了就是 Frame 注释里那条真实
+//    缺陷：新盒没人挂、命中测试全落空、不报错。
+$outSurface = new SvgSurface();
+$outSurface->resize(200, 100, 1.0);
+$outEl = Text::make('a')->createElement();
+$outEl->mount(null, smokeContext());
+$outFrame = new Frame($outSurface);
+$outTight = BoxConstraints::tight(new Size(200.0, 100.0));
+$outFrame->run($outEl, $outTight, 0.0);
+$outRunsBefore = Frame::settleRunCount();
+$outEl->update(Text::make('b'));
+$outFrame->run($outEl, $outTight, 16.0);
+$outRuns = Frame::settleRunCount() - $outRunsBefore;
+check(
+    '帧外直调 update() 换盒 ⇒ settle 必须跑（无 setState，只靠盒换代拦）',
+    $outRuns === 1,
+    "run={$outRuns}",
 );
 // ── ⑩b 那一帧行区**命中层缓存**（A 批② `RepaintBoundary`）──
 //   ★★ 又是只能靠计数器：缓存的判据是"等价替换"⇒ 命中与否**逐像素完全相同**，

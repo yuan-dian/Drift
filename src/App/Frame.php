@@ -36,7 +36,31 @@ final class Frame
      *   AOT 下退化成 `php::Var`（`08` 的类型退化表）⇒ 比较与取值都变慢且类型
      *   不确定。这里只做相等判断，摊平存储没有代价。
      */
+    /**
+     * 上一帧 settle 时看到的**结构版本号**（`Element::structureVersion()`）。
+     *
+     * ★ 为什么 settle 要单独记结构（而盒换代复用 `$lastBoxEpoch`）：节点的
+     *   增删/重排会让**父的 `adoptBoxes()`** 变成必需，这件事不被盒换代覆盖
+     *   （重排复用子、`mount()`/`unmount()` 之外不换盒）。
+     */
+    /**
+     * 上一帧 settle 时看到的**标脏序号**（`State::markedCount()`）。
+     *
+     * ★ 用只增不减的序号而不是 `pendingDirty()`：后者是全局的且**会漂移**
+     *   （已卸载 / 不在本树的 State 脏着不被消费 ⇒ 永远 >0），拿它判"要不要
+     *   settle"会退化成永不跳过。看"有没有**新**标脏"则不受存量影响。
+     */
+    private int $lastMarkedCount = -1;
+
+    private int $lastSettleStructure = -1;
+
     private bool $laidOut = false;
+
+    /** @internal 量具：settle 段**真跑**的帧数（对 `$settleSkipCount`） */
+    private static int $settleRunCount = 0;
+
+    /** @internal 量具：settle 段**整段跳过**的帧数 */
+    private static int $settleSkipCount = 0;
 
     private float $lastMinWidth = 0.0;
 
@@ -77,6 +101,49 @@ final class Frame
     }
 
     /**
+     * 本帧 settle 是否**有事可做** —— 无事则整段跳过（含浮层那棵第二根树）。
+     *
+     * ★★ 三条信号覆盖 `adoptBoxes()` 的**全部**必要性（漏一条就是静默的：
+     *   祖先握着旧盒、画面不更新、不报错）：
+     *   ① `markedCount` 变 —— 有新 `setState()` 等着被消费；
+     *   ② `boxEpoch` 变 —— 换过盒（`Element::syncBox()` 是唯一创建点）；
+     *   ③ `structureVersion` 变 —— 节点增删或**重排**（`updateChildren()` 里
+     *      `compositionChanged()` 单独判的那一次，复用子不 mount/unmount）。
+     *   三者都没动 ⇒ 树与上一帧逐位相同 ⇒ 既不重建也不挂接。
+     *
+     * ★★ 变异自检：拆 ① ⇒ 大面积红（setState 全不生效）；拆 ② ⇒ 帧外直调
+     *   `Element::update()` 那条红（它换盒却**不标脏**，是 ② 的专属路径）；
+     *   **拆 ③ ⇒ 全绿** —— 已知路径里结构变化的源头都是某次 `setState`
+     *   （`updateChildren()` 由 rebuild 调）⇒ 被 ① 挡住。③ 因此是**防御性
+     *   冗余**，不是被证明的必需 —— 留着的理由只是"万一将来出现只变结构的
+     *   路径，漏了就是静默的"，而成本是每帧一次整数比较。别误读成有测试守着。
+     *
+     * ★ 收益：干净帧与滚动帧的 settle 从 O(N) 全遍（实测 0.9–1.5 µs/节点，
+     *   475 节点 0.716ms、1503 节点 1.345ms）降到 O(1)。
+     *
+     * ★ 盒换代**复用** `$lastBoxEpoch`（不另记一份）：settle 与 layout 对"这帧
+     *   变没变"必须是同一个看法，两份记录迟早漂。
+     */
+    private function needsSettle(): bool
+    {
+        return State::markedCount() !== $this->lastMarkedCount
+            || State::boxEpoch() !== $this->lastBoxEpoch
+            || Element::structureVersion() !== $this->lastSettleStructure;
+    }
+
+    /** @internal 量具：settle 段真跑的累计帧数 */
+    public static function settleRunCount(): int
+    {
+        return self::$settleRunCount;
+    }
+
+    /** @internal 量具：settle 段整段跳过的累计帧数 */
+    public static function settleSkipCount(): int
+    {
+        return self::$settleSkipCount;
+    }
+
+    /**
      * 跑一帧。
      *
      * @param BoxConstraints $constraints 表面给出的约束（通常 = 表面尺寸的紧约束）
@@ -106,10 +173,16 @@ final class Frame
         $t = $prof ? \hrtime(true) : 0;
         $didRebuild = false;
         try {
-            $didRebuild = $root->settle();
-            foreach ($overlays as $e) {
-                // 浮层各自的帧末重建（W3）；任一浮层重建 ⇒ 本帧不能跳过 layout
-                $didRebuild = ($e->element?->settle() ?? false) || $didRebuild;
+            if ($this->needsSettle()) {
+                self::$settleRunCount++;
+                $didRebuild = $root->settle();
+                foreach ($overlays as $e) {
+                    // 浮层各自的帧末重建（W3）；任一浮层重建 ⇒ 本帧不能跳过 layout
+                    $didRebuild = ($e->element?->settle() ?? false) || $didRebuild;
+                }
+            } else {
+                // 树与上一帧逐位相同 ⇒ 既不重建也不挂接（判据见 `needsSettle()`）
+                self::$settleSkipCount++;
             }
         } catch (Throwable $e) {
             Errors::report(sprintf(
@@ -119,6 +192,9 @@ final class Frame
                 $e->getLine(),
             ));
         }
+        // ★ 结构快照必须在 settle **之后**取：本帧的增删/重排要进下一帧的判据
+        $this->lastSettleStructure = Element::structureVersion();
+        $this->lastMarkedCount = State::markedCount();
         if ($prof) {
             SurfaceProfile::add('settle', \hrtime(true) - $t);
         }
