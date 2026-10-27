@@ -120,6 +120,16 @@ final class TableState extends State implements Scrollable
     private ?float $widthUsedInBuild = null;
 
     /**
+     * 上一次 `build()` 算出的**内容宽**（`null` = 还没 build 过）。
+     *
+     * ★ 唯一的消费者是 `scrollByAxis(Horizontal)` 的"要不要标脏"早退：横向偏移
+     *   累加却永远被夹回 0 的表，每来一格滚轮就白重建一次（触控板每秒几十格）。
+     * ★ 它**不参与任何坐标计算**（列宽真相仍只有 `resolveWidths()` 一处）——
+     *   这里存的只是 build 手边本来就有、顺手留下的那个数。
+     */
+    private ?float $contentWInBuild = null;
+
+    /**
      * 列宽拖拽的临时量（`null` = 当前没在拖）。
      *
      * ★ 是**手势进行中**的量，不是数据所有权 —— 拖出来的最终宽度照样交回应用
@@ -216,12 +226,16 @@ final class TableState extends State implements Scrollable
     }
 
     /**
-     * 按轴滚动（横条拖动走这里；滚轮 / 竖条仍走 `scrollBy()`）。
+     * 按轴滚动（横条拖动、横向滚轮走这里；纵向仍走 `scrollBy()`）。
      *
      * ★ 两个轴共用同一份 `ScrollBarFade`：横条与竖条同时淡出是对的 —— 它们提示
      *   的是同一件事"这块区域还能滚"，分两套节律只会出现"一根亮一根暗"。
      * ★ 上界不在这里夹（`scrollBy()` 同一裁决）：横向内容宽要等 `resolveWidths()`
      *   算完才知道，那是 build 期的事。
+     * ★ 但**无横向溢出时这里直接早退**：不早退的话，每一格滚轮都会改一次
+     *   `offsetX`、标一次脏，然后 build 里被夹回 0 —— 触控板每秒几十格就是
+     *   几十次白重建。`contentWInBuild` 是上一帧 build 留下的（`null` = 还没
+     *   排过 ⇒ 放行，别拿"不知道"当"没有"）。
      */
     public function scrollByAxis(Axis $axis, float $delta): void
     {
@@ -229,6 +243,13 @@ final class TableState extends State implements Scrollable
             $this->scrollBy($delta);
 
             return;
+        }
+
+
+        $contentW = $this->contentWInBuild;
+        $viewportW = $this->widthUsedInBuild;
+        if ($contentW !== null && $viewportW !== null && $contentW <= $viewportW) {
+            return;   // 横向没得滚：滚轮来了也不标脏
         }
 
         $next = max(0.0, $this->offsetX + $delta);
@@ -697,6 +718,7 @@ final class TableState extends State implements Scrollable
         }
         // ★ 内容宽至少铺满视口：固定列加起来不满时，右侧不能露出一条"没有底色"的缝
         $contentW = max($viewportW, $sum + $spacing * max(0, \count($columns) - 1));
+        $this->contentWInBuild = $contentW;
 
         // ★ 横向夹取与纵向同一条纪律：State 只夹下界，上界按**本帧**算出的内容宽
         //   夹一次。列宽被拖窄 / 窗口变宽之后，这里当场回弹，不必等用户再滚一下。

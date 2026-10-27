@@ -12138,15 +12138,16 @@ check(
     (string) ($lazyRowBoxOf($lazyRowPad)?->offsetX() ?? -1.0),
 );
 
-// 应用层：滚轮经 `Scrollable` 路由到 `LazyRow` 的 State。
-//   ★ 滚轮与轴无关（只递一个标量 Δ），所以"横向也能滚"必须在**这条链**上走通一次 ——
-//     否则 `LazyRow` 的滚动只是"代码看起来对"（F8 那类"缺的是驱动方"的同族）。
+// 应用层：滚轮经路由落到 `LazyRow` 的 State。
+//   ★ 竖轮是**默认手势**：横向容器只有一根轴 ⇒ 回落到那根（阶段 5b 明确保留，
+//     与 Windows 横向 ListView 同款）。不回落的话 `LazyRow` 的滚动就只剩
+//     "代码看起来对"（F8 那类"缺的是驱动方"的同族）。
 $lazyRowApp = new LazyApplication(false);
 $lazyRowApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
 $lazyRowApp->dispatchInput(ScrollEvent::make(150.0, 100.0, 1.0));
 $lazyRowApp->frame(16.0, BoxConstraints::loose(new Size(300.0, 200.0)));
 check(
-    'LazyRow · 滚轮一格 ⇒ offset 48（`Scrollable` 只递标量，轴在 State 里）',
+    'LazyRow · 竖轮一格 ⇒ offset 48（竖向回落到容器唯一那根轴，不由调用方猜）',
     $lazyRowApp->lazyState()?->offset() === 48.0,
     (string) ($lazyRowApp->lazyState()?->offset() ?? -1.0),
 );
@@ -17865,6 +17866,89 @@ check(
     'h=' . (string) ($hState?->offset() ?? -1.0) . ' expect=' . ($tableHorizBefore + 50.0),
 );
 
+// ⑲ 阶段 5b：滚轮**带轴**（触控板横滑 / Shift+竖轮）
+//   链路：ScrollEvent(axis) → InputRouter（格→像素）→ scrollAt（按 scrollAxes 分派）
+//   ★ 断言的是"轴由**事件**决定"，不是"容器自己猜"：同一张表，换轴就该换轴动。
+$tableWheelH = new TableScrollApplication();
+$tableWheelH->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
+$tableWheelH->frame(16.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$tableWheelH->dispatchInput(ScrollEvent::make(100.0, 100.0, 1.0, Axis::Horizontal));
+$tableWheelH->frame(17.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$tableWheelHBox = $tableBoxOf($tableWheelH->root());
+check(
+    'Table · 滚轮：横轴一格 ⇒ offsetX = 48、offsetY = 0（轴来自事件，不由容器猜）',
+    $tableWheelHBox?->appliedOffset(Axis::Horizontal) === 48.0
+        && $tableWheelHBox->appliedOffset(Axis::Vertical) === 0.0,
+    'x=' . sprintf('%.1f', $tableWheelHBox?->appliedOffset(Axis::Horizontal) ?? -1.0)
+        . ' y=' . sprintf('%.1f', $tableWheelHBox?->appliedOffset(Axis::Vertical) ?? -1.0),
+);
+
+// 再发**竖轴**一格（缺省轴）：横轴停在 48 ⇒ 两轴不串味（同一张表、同一次命中）
+$tableWheelH->dispatchInput(ScrollEvent::make(100.0, 100.0, 1.0));
+$tableWheelH->frame(18.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$tableWheelHBox = $tableBoxOf($tableWheelH->root());
+check(
+    'Table · 滚轮：接着竖轴一格 ⇒ offsetY = 48 且 offsetX 仍是 48（两轴互不串味）',
+    $tableWheelHBox?->appliedOffset(Axis::Vertical) === 48.0
+        && $tableWheelHBox->appliedOffset(Axis::Horizontal) === 48.0,
+    'x=' . sprintf('%.1f', $tableWheelHBox?->appliedOffset(Axis::Horizontal) ?? -1.0)
+        . ' y=' . sprintf('%.1f', $tableWheelHBox?->appliedOffset(Axis::Vertical) ?? -1.0),
+);
+
+// ① 横向**装得下**时，横轴滚轮一格 ⇒ 不标脏（否则触控板每秒几十次白重建）
+$tableWheelNarrow = $tableMount(Table::make(
+    [
+        TableColumn::make('id', 'ID')->field('id')->width(TableColumnWidth::fixed(60.0)),
+        TableColumn::make('name', '姓名')->field('name')->width(TableColumnWidth::fixed(60.0)),
+    ],
+    [['id' => 1, 'name' => 'a'], ['id' => 2, 'name' => 'b']],
+)->keyOf(static fn(array $row): int => (int) $row['id'])
+    ->rowHeight(40.0)->headerHeight(32.0));
+$tableWheelNarrowState = $tableStateOf($tableWheelNarrow);
+$tableWheelNarrowClean = $tableWheelNarrowState?->needsBuild() === false;
+$tableWheelNarrowState?->scrollByAxis(Axis::Horizontal, 48.0);
+check(
+    'Table · 滚轮：横向装得下 ⇒ 横轴滚轮不标脏（`contentWInBuild` 早退）',
+    $tableWheelNarrowClean && $tableWheelNarrowState?->needsBuild() === false,
+    'clean=' . ($tableWheelNarrowClean ? 'yes' : 'no')
+        . ' dirty=' . ($tableWheelNarrowState?->needsBuild() === true ? 'yes' : 'no'),
+);
+
+// ③ 竖轮落在"纵向装得下、横向溢出"的表上 ⇒ 不动：**回落只发生在单轴容器**
+//   （双轴容器两轴都"支持"，竖向没得滚就是没得滚 —— 不能因为横向有溢出就横着跑）
+$tableWheelShort = new TableScrollApplication(3);
+$tableWheelShort->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
+$tableWheelShort->frame(16.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$tableWheelShort->dispatchInput(ScrollEvent::make(100.0, 100.0, 1.0));
+$tableWheelShort->frame(17.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+$tableWheelShortBox = $tableBoxOf($tableWheelShort->root());
+// ★ 也看 State 的**未夹值**：回落一旦发生，`offsetY` 会累加上去（appliedOffset 仍被
+//   夹回 0，看不出来），等将来行数变多会突然跳一下。
+$tableWheelShortState = $tableStateOf($tableWheelShort->root());
+check(
+    'Table · 滚轮：竖轮落在"纵向装得下、横向溢出"的表上 ⇒ 两轴都不动（双轴不回落）',
+    $tableWheelShortBox?->maxScroll(Axis::Vertical) === 0.0
+        && $tableWheelShortBox->maxScroll(Axis::Horizontal) > 0.0
+        && $tableWheelShortBox->appliedOffset(Axis::Horizontal) === 0.0
+        && $tableWheelShortBox->appliedOffset(Axis::Vertical) === 0.0
+        && $tableWheelShortState?->offsetY() === 0.0
+        && $tableWheelShortState->offsetX() === 0.0,
+    'maxV=' . sprintf('%.1f', $tableWheelShortBox?->maxScroll(Axis::Vertical) ?? -1.0)
+        . ' maxH=' . sprintf('%.1f', $tableWheelShortBox?->maxScroll(Axis::Horizontal) ?? -1.0)
+        . ' raw=(x=' . sprintf('%.1f', $tableWheelShortState?->offsetX() ?? -1.0)
+        . ',y=' . sprintf('%.1f', $tableWheelShortState?->offsetY() ?? -1.0) . ')',
+);
+// ④ 横轴落在**纵向**视口上 ⇒ 什么都不做（只有竖向才回落；横划不许把页面上下带走）
+$tableWheelOnlyV = new ScrollApplication();
+$tableWheelOnlyV->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
+$tableWheelOnlyV->frame(16.0, BoxConstraints::loose(new Size(300.0, 200.0)));
+$tableWheelOnlyV->dispatchInput(ScrollEvent::make(150.0, 100.0, 1.0, Axis::Horizontal));
+$tableWheelOnlyV->frame(17.0, BoxConstraints::loose(new Size(300.0, 200.0)));
+check(
+    'Scroll · 滚轮：横轴落在纵向视口 ⇒ 不动（只有**竖向**回落到容器唯一那根轴）',
+    $tableWheelOnlyV->scrollBox()?->appliedOffset(Axis::Vertical) === 0.0,
+    'offsetY=' . sprintf('%.1f', $tableWheelOnlyV->scrollBox()?->appliedOffset(Axis::Vertical) ?? -1.0),
+);
 // ⑪ 列宽的 min/max 夹（第 ② 层）：flex 分到 173 但 maxWidth 100 ⇒ 停在 100
 $tableClamp = $tableMount(
     Table::make(

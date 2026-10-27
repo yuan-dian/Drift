@@ -47,6 +47,12 @@
 #define DWMWCP_ROUND 2
 #endif
 
+// ★ `WM_MOUSEHWHEEL` 在 `WINVER >= 0x0600` 才由 winuser.h 给出，而本工程不抬
+//   `WINVER`（见 `enablePerMonitorDpi` 的注释）。值取自 winuser.h，与系统 ABI 绑定。
+#ifndef WM_MOUSEHWHEEL
+#define WM_MOUSEHWHEEL 0x020E
+#endif
+
 // ★ **Win10 未公开**的 `user32!SetWindowCompositionAttribute`（无头文件、无 import lib）。
 //   结构体定义来自逆向社区、在 Win32 生态里被广泛使用，**字段顺序与系统 ABI 绑定** ——
 //   不要重排、不要"改成看起来顺眼的类型"。Win11 起由 `DWMWA_SYSTEMBACKDROP_TYPE`
@@ -152,13 +158,13 @@ struct PendingEvent {
     int kind;
     int a;   // resize: w ／ dpi: dpi ／ timer: id ／ pointer: x ／ wheel: x ／ key: — ／ char: —
     int b;   // resize: h ／ pointer: y ／ wheel: y ／ —
-    int c;   // pointer: button（move 恒 0 —— 按住态由应用自己的拖动状态跟踪）／ wheel: delta（WHEEL_DELTA=120 为一格；壳已取负 ⇒ 正=回拉=内容上移，见 WM_MOUSEWHEEL 注释）／ key: modifier 位（1=ctrl 2=alt 4=shift）／ —
+    int c;   // pointer: button（move 恒 0 —— 按住态由应用自己的拖动状态跟踪）／ wheel: delta（WHEEL_DELTA=120 为一格；纵向壳已取负 ⇒ 正=回拉=内容上移，见 WM_MOUSEWHEEL 注释；横向**不取负**，见 WM_MOUSEHWHEEL）／ key: modifier 位（1=ctrl 2=alt 4=shift）／ —
     int d;   // pointer: 相位（0=down 1=move 2=up 3=leave，与 Drift\Input\PointerPhase 同值）／ —
     // ★ pointer 的**修饰键位**（1=ctrl 2=alt 4=shift，与 `key` 同一套编码）。
     //   为什么要它：Ctrl/Shift+点击是表格多选、拖拽修饰（Ctrl 拖 = 复制）的唯一
     //   输入通道；Win32 的鼠标消息 wParam 里只有 MK_CONTROL/MK_SHIFT，Alt 不在其中
     //   ⇒ 三个都走 `GetKeyState`（同一处读、同一套编码，见 `modifierMask()`）。
-    int e;   // pointer: modifier 位 ／ —
+    int e;   // pointer: modifier 位 ／ wheel: 轴（0=纵向 1=横向）／ —
     std::string text;   // key: 键名 ／ char: UTF-8 文本
 };
 
@@ -1658,11 +1664,38 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
             ScreenToClient(g_main, &pt);
 
+            // ★ Shift+竖轮 = 横轮（2026-10-27）：没有横向滚轮 / 触控板时，这是
+            //   用户唯一能横向滚的入口，也是 Windows 应用的通用手势。
+            //   翻译放在壳里而不是 PHP：与上面的取反同一条纪律 ——
+            //   "平台惯例 → 框架语义"只发生在这一处，`ScrollEvent` 只认轴、
+            //   不认修饰键（否则每个消费方都要自己再判一次 Shift）。
+            // ★ 符号：横向前推 = 看右边 = 原生正方向 ⇒ **不取负**。纵向取负是
+            //   用户对纵向手感的明确要求（见上），横向没有这条要求。
+            const int raw = GET_WHEEL_DELTA_WPARAM(wp);
+            const bool horiz = (modifierBits() & 4) != 0;   // 4 = shift
+
             PendingEvent event = {};
             event.kind = kEvWheel;
             event.a = (int)pt.x;
             event.b = (int)pt.y;
-            event.c = -GET_WHEEL_DELTA_WPARAM(wp);
+            event.c = horiz ? raw : -raw;
+            event.e = horiz ? 1 : 0;
+            enqueue(event);
+            return 0;
+        }
+
+        case WM_MOUSEHWHEEL: {
+            // 触控板横滑 / 横向滚轮。★ 坐标同样是**屏幕**坐标（理由见上）。
+            // ★ 原生 delta 正 = 向右滚 = 看右边，与框架横向正向一致 ⇒ 不取负。
+            POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+            ScreenToClient(g_main, &pt);
+
+            PendingEvent event = {};
+            event.kind = kEvWheel;
+            event.a = (int)pt.x;
+            event.b = (int)pt.y;
+            event.c = GET_WHEEL_DELTA_WPARAM(wp);
+            event.e = 1;
             enqueue(event);
             return 0;
         }
@@ -1871,6 +1904,11 @@ Array toArray(const PendingEvent &event) {
             out.set("x", (Int)event.a);
             out.set("y", (Int)event.b);
             out.set("delta", (Int)event.c);
+            // ★ 横向才带这个字段：纵向是缺省（PHP 侧 `?? vertical`）⇒ 老壳 /
+            //   老断言不带轴时行为不变。
+            if (event.e != 0) {
+                out.set("axis", String("horizontal"));
+            }
             break;
 
         case kEvTheme:

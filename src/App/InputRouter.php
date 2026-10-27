@@ -189,8 +189,12 @@ final class InputRouter
             //   ★ 命中一次、就滚那一个：指针停在哪个视口里就滚哪个 —— 多个滚动
             //   容器各自滚动，外层的视口不吞内层的事件（scrollAt 只找最近的）。
             // ★ **格 → 像素只在这里发生一次**（策略层）：`$event->delta` 是平台
-            //   量化出的"格"（WHEEL_DELTA/120），`scrollBy()` 起收的是逻辑像素。
+            //   量化出的"格"（WHEEL_DELTA/120），`scrollByAxis()` 起收的是逻辑像素。
+            // ★ **轴由事件带来**（2026-10-27 阶段 5b）：壳把 `WM_MOUSEHWHEEL` 与
+            //   Shift+竖轮都翻成 `Axis::Horizontal`，路由不再判修饰键 ——
+            //   "平台惯例 → 框架语义"只发生在壳里一处。
             $px = $event->delta * self::WHEEL_NOTCH_PX;
+            $axis = $event->axis;
 
             for ($i = $this->overlayHost->overlays()->count() - 1; $i >= 0; $i--) {
                 $e = $this->overlayHost->overlays()->at($i);
@@ -200,7 +204,7 @@ final class InputRouter
 
                 $hit = $focus->hitTest($event->x - $e->x, $event->y - $e->y, $e->element);
                 if ($hit !== null) {
-                    $this->scrollInput->scrollAt($focus->elementAt($e->element, $hit), $px);
+                    $this->scrollInput->scrollAt($focus->elementAt($e->element, $hit), $axis, $px);
 
                     return null;
                 }
@@ -212,7 +216,7 @@ final class InputRouter
 
             $hit = $focus->hitTest($event->x, $event->y, $root);
             $element = $hit === null ? null : $focus->elementAt($root, $hit);
-            $this->scrollInput->scrollAt($element, $px);
+            $this->scrollInput->scrollAt($element, $axis, $px);
 
             return null;
         }

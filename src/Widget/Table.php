@@ -46,7 +46,7 @@ use Drift\Input\SemanticsRole;
  * |---|---|
  * | 变长行高 | 虚拟化要 `first = floor(offset / extent)` 的 O(1) 换算 |
  * | 列合并 / 分组 / 树形 | 破坏"每行同构"，窗口不再是矩形 |
- * | 横向滚动的**滚轮** | 横条可拖（阶段 5），但滚轮横向需要壳给 `WM_MOUSEHWHEEL` / Shift 位，单独一步做（`ScrollEvent` 目前只有一条 delta） |
+ * | 横向滚动的**滚轮** | 已通（阶段 5b）：壳把 `WM_MOUSEHWHEEL` 与 Shift+竖轮都翻成 `Axis::Horizontal` ⇒ 横条、横轮、Shift+竖轮三条入口一致 |
  * | **控件内**排序 | 数据所有权不分裂：控件画箭头 + 上报意图，重排由应用做（§13） |
  * | 多列排序的 **UI** | `TableSort::thenBy()` 与"每列各画箭头"结构上已成立，只是点表头只上报单键（Shift+点留给后续） |
  * | 列宽拖拽 / 单元格编辑 | 列宽已做（阶段 4）；编辑是阶段 7 |

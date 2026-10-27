@@ -14,6 +14,11 @@
  *              --samples=30 --interval=100 --y0=220 --y1=640 --close --motion
  *   probe-grab --count-only --image=users.exe
  *   probe-grab --pid=1234 --settle=800 --move=300,200,1100,760 --rect --close
+ *   probe-grab --pid=1234 --settle=500 --wheel=200,300,120 --png=v.png --close
+ *                                                    （竖轮 WM_MOUSEWHEEL；delta 正 = 前推）
+ *   probe-grab --pid=1234 --settle=500 --hwheel=200,300,120 --png=h.png --close
+ *                                                    （**横轮** WM_MOUSEHWHEEL：触控板
+ *                                                      横滑 / 横向滚轮走的是这条消息）
  *   probe-grab --pid=1234 --settle=1500 --rect --no-grab --close
  *   probe-grab --pid=1234 --settle=500 --cursor=250,456 --mdrag=250,456,400,456 \
  *              --png=drag.png                       （框选/拖动类手势）
@@ -114,6 +119,10 @@ struct Options {
     int wheelX = 0;
     int wheelY = 0;
     int wheelDelta = 0;
+    // --hwheel=x,y,delta：送 `WM_MOUSEHWHEEL`（触控板横滑 / 横向滚轮）。
+    // ★ 存在理由：横向滚轮走的是**另一条 Windows 消息**，`--wheel` 发不出来 ⇒
+    //   "壳把横轮翻成 Horizontal"这条链在真机上无从验证（smoke 只能验 PHP 侧）。
+    bool wheelHorizontal = false;
     bool click = false;            // --click=x,y（客户区坐标；down+up 一次完整点击）
     int clickX = 0;
     int clickY = 0;
@@ -849,7 +858,7 @@ int wmain(int argc, wchar_t** argv)
             options.noGrab = value != L"0";
         } else if (key == L"auto") {
             options.autoResolve = value != L"0";
-        } else if (key == L"wheel") {
+        } else if (key == L"wheel" || key == L"hwheel") {
             int parts[3] = {0, 0, 0};
             int index = 0;
             size_t start = 0;
@@ -857,11 +866,11 @@ int wmain(int argc, wchar_t** argv)
                 if (i == value.size() || value[i] == L',') {
                     long long parsed = 0;
                     if (!parseInt(value.substr(start, i - start), parsed)) {
-                        std::fprintf(stderr, "err=--wheel wants x,y,delta\n");
+                        std::fprintf(stderr, "err=%ls wants x,y,delta\n", key.c_str());
                         return 2;
                     }
                     if (index >= 3) {
-                        std::fprintf(stderr, "err=--wheel wants exactly 3 numbers\n");
+                        std::fprintf(stderr, "err=%ls wants exactly 3 numbers\n", key.c_str());
                         return 2;
                     }
                     parts[index++] = static_cast<int>(parsed);
@@ -869,10 +878,11 @@ int wmain(int argc, wchar_t** argv)
                 }
             }
             if (index != 3) {
-                std::fprintf(stderr, "err=--wheel wants exactly 3 numbers\n");
+                std::fprintf(stderr, "err=%ls wants exactly 3 numbers\n", key.c_str());
                 return 2;
             }
             options.wheel = true;
+            options.wheelHorizontal = (key == L"hwheel");
             options.wheelX = parts[0];
             options.wheelY = parts[1];
             options.wheelDelta = parts[2];
@@ -1399,8 +1409,9 @@ int wmain(int argc, wchar_t** argv)
         ::ClientToScreen(hwnd, &pt);
         WPARAM wheelWp = MAKEWPARAM(0, static_cast<WORD>(options.wheelDelta));
         LPARAM wheelLp = MAKELPARAM(static_cast<WORD>(pt.x), static_cast<WORD>(pt.y));
-        ::PostMessageW(hwnd, WM_MOUSEWHEEL, wheelWp, wheelLp);
-        std::printf("wheel=%d,%d,%d\n", options.wheelX, options.wheelY, options.wheelDelta);
+        ::PostMessageW(hwnd, options.wheelHorizontal ? WM_MOUSEHWHEEL : WM_MOUSEWHEEL, wheelWp, wheelLp);
+        std::printf("%s=%d,%d,%d\n", options.wheelHorizontal ? "hwheel" : "wheel",
+                    options.wheelX, options.wheelY, options.wheelDelta);
         ::Sleep(static_cast<DWORD>(options.wheelWaitMs));
     }
 

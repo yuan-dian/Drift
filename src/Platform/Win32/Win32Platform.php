@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Platform\Win32;
 
+use Drift\Geometry\Axis;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
@@ -136,7 +137,7 @@ final class Win32Platform implements Platform
      *   消费方是组合根的 `FrameClock`（§17.4.9）：`pump()` 返回 true 就已经是
      *   它要的全部信号 |
      * | `pointer` | ⇒ `PointerEvent::fromBridge()`（四相位 down/move/up/leave，坐标除 dpr 转**逻辑**单位） |
-     * | `wheel` | ⇒ `ScrollEvent::make()`（坐标除 dpr；delta 收成"格"= 原始值 / 120） |
+     * | `wheel` | ⇒ `ScrollEvent::make()`（坐标除 dpr；delta 收成"格"= 原始值 / 120；`axis` 缺省纵向） |
      * | `key` | ⇒ `KeyEvent::down(KeyChord::make(键名, ctrl, alt, shift))` |
      * | `char` | ⇒ `KeyEvent::character()` |
      * | `theme` | ⇒ `ThemeChangedEvent`（§9.2 系统主题变更；载荷为空，
@@ -256,6 +257,8 @@ final class Win32Platform implements Platform
             // ★ 与指针同口径：坐标除 dpr 转逻辑单位；delta 是桥给的原始
             //   WHEEL_DELTA 倍数（一格 = 120），这里收成"格"—— 逻辑单位才是
             //   §6.1 的量化点分界（平台只做一次量化，框架侧不做位运算）。
+            // ★ `axis` 缺省 = 纵向（老壳不带该字段；壳只在横向时才发它）。
+            //   壳已经把 Shift+竖轮翻成横轴了，这里不做修饰键判断。
             $dpr = $this->screen()->scale();
             if ($dpr <= 0.0) {
                 $dpr = 1.0;
@@ -264,6 +267,7 @@ final class Win32Platform implements Platform
                 (float) ((int) ($event['x'] ?? 0)) / $dpr,
                 (float) ((int) ($event['y'] ?? 0)) / $dpr,
                 (float) ((int) ($event['delta'] ?? 0)) / 120.0,
+                ($event['axis'] ?? '') === 'horizontal' ? Axis::Horizontal : Axis::Vertical,
             ));
 
             return true;

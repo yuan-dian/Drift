@@ -31,10 +31,20 @@ use Drift\Widget\Widget;
  */
 final class TableScrollApplication extends Application
 {
+    /**
+     * @param int $rows 行数。默认 100 ⇒ 纵向必溢出（两根条同时在，才谈角落归属）；
+     *   传 3 ⇒ 纵向装得下、横向仍溢出 —— "双轴容器的竖轮**不回落**"那条要靠它
+     *   （回落只发生在**单轴**容器上）。
+     */
+    public function __construct(private readonly int $rows = 100)
+    {
+        parent::__construct();
+    }
+
     public function buildRoot(): Widget
     {
         $rows = [];
-        for ($i = 1; $i <= 100; $i++) {
+        for ($i = 1; $i <= $this->rows; $i++) {
             $rows[] = ['id' => $i, 'name' => '用户 ' . $i];
         }
 

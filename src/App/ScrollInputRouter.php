@@ -79,16 +79,71 @@ final class ScrollInputRouter
     }
 
     /**
-     * 沿命中 Element 的父链找**最近**的可滚动视口并滚动它（滚轮路由）。
+     * 沿命中 Element 的父链找**最近**的可滚动视口并按轴滚动它（滚轮路由）。
      *
      * ★ 找不到 ⇒ 无事发生（轮在不可滚动的区域上是合法的，不报错、不改光标）。
      * ★ **只找最近的**：嵌套滚动容器里，轮落在内层上就只滚内层 —— 外层的
      *   视口不吞内层的事件（§A.15：不预先发明没消费者的相位/规则，嵌套滚动的
      *   "滚动到边界再传给外层"留给真有消费者时）。
+     *
+     * ## 轴的分派：竖向是**默认手势**，横向是**明确意图**
+     *
+     * | 请求 | 容器支持该轴 | 容器只有别的轴 |
+     * |---|---|---|
+     * | 竖向（普通滚轮）| 滚竖轴 | **回落到它唯一那根**（横向 `LazyRow` 照样能滚）|
+     * | 横向（横轮 / Shift+竖轮）| 滚横轴 | 不回落（纵向列表不能被触控板横划带着上下跑）|
+     *
+     * 竖向回落保的是既有手感（Windows 横向 ListView 同款）：竖轮是用户唯一的
+     * 默认手势，落到"只能横着滚"的区域上，他不可能是想让它不动。
+     *
+     * ★ 判据是 `scrollAxes()`（**结构性**：这个容器有几根轴），不是 `maxScroll()`
+     *   （**状态性**：这根轴当前有没有溢出）。用后者会在"盒还没布局 / 上限恒 0"
+     *   时把事件吞掉 —— 滚轮必须先于布局正确工作。
      */
-    public function scrollAt(?Element $element, float $delta): void
+    public function scrollAt(?Element $element, Axis $axis, float $delta): void
     {
-        $this->nearestScrollable($element)?->scrollBy($delta);
+        $state = $this->nearestScrollable($element);
+        if ($state === null) {
+            return;
+        }
+
+        $host = $this->barHostOf($state->element());
+        if ($host === null) {
+            // 没有滚动条宿主盒 ⇒ 不知道它有几根轴，交给 State 自己判（问错轴它忽略）
+            $state->scrollByAxis($axis, $delta);
+
+            return;
+        }
+
+        $axes = $host->scrollAxes();
+        if ($this->axisListed($axes, $axis)) {
+            $state->scrollByAxis($axis, $delta);
+
+            return;
+        }
+
+        if ($axis === Axis::Vertical && \count($axes) === 1) {
+            $state->scrollByAxis($axes[0], $delta);
+        }
+    }
+
+    /**
+     * `Axis` 是否在某份轴清单里。
+     *
+     * ★ 手写循环而不是 `in_array()`：AOT 下对 enum 的松散比较是不可靠的
+     *   （`in_array` 默认非 strict），而 `===` 是阶段 5 已经验过的比较方式。
+     *
+     * @param list<Axis> $axes
+     */
+    private function axisListed(array $axes, Axis $axis): bool
+    {
+        foreach ($axes as $candidate) {
+            if ($candidate === $axis) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
