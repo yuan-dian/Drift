@@ -3,7 +3,6 @@ declare(strict_types=1);
 
 namespace Drift\Bench;
 
-use App\Showcase\ShowcaseRoot;
 use Drift\App\Application;
 use Drift\Platform\Win32\Win32Platform;
 use Drift\Rendering\SurfaceProfile;
@@ -16,7 +15,7 @@ final class BenchApplication extends Application
 {
     public function buildRoot(): Widget
     {
-        return new ShowcaseRoot();
+        return Trees::showcase();
     }
 
     public function title(): string

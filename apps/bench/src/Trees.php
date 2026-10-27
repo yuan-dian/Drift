@@ -3,10 +3,13 @@ declare(strict_types=1);
 
 namespace Drift\Bench;
 
+use App\Showcase\ShowcaseRoot;
 use Drift\Layout\Overflow;
 use Drift\Widget\Column;
+use Drift\Widget\Modal;
 use Drift\Widget\Row;
 use Drift\Widget\ScrollView;
+use Drift\Widget\Snackbar;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
 
@@ -44,5 +47,28 @@ final class Trees
         }
 
         return ScrollView::make(Column::make()->children($list));
+    }
+
+    /**
+     * showcase 的真实应用根（M3 第一档 / M4 的窗口内容）。
+     *
+     * ★ **必须显式传三个能力闭包**：`ShowcaseRoot` 的构造器要
+     *   `(notify, delay, showModal)`，而 `new ShowcaseRoot()` 在 AOT 下是
+     *   `ArgumentCountError`（tpc 不会因为"参数没默认值"放过）—— 现象是
+     *   **M0–M2 全跑完、M3 一行不出、进程 exit=255**，`bench-out.txt` 停在 M2
+     *   末尾，看着像"M3 没写"。
+     * ★ 这里递的是**空实现**而不是真接线：基准只量"建树 + 布局 + 绘制"，
+     *   浮层/定时器/模态在无头基准里没有宿主，接真的反而要造一个假 Application。
+     */
+    public static function showcase(): ShowcaseRoot
+    {
+        return ShowcaseRoot::make(
+            static function (Snackbar $snackbar): void {
+            },
+            static function (int $milliseconds, \Closure $callback): void {
+            },
+            static function (Modal $modal): void {
+            },
+        );
     }
 }

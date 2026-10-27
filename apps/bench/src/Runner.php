@@ -3,7 +3,6 @@ declare(strict_types=1);
 
 namespace Drift\Bench;
 
-use App\Showcase\ShowcaseRoot;
 use Drift\Errors;
 use Drift\Widget\Widget;
 
@@ -234,7 +233,11 @@ final class Runner
         // ★ 不用 `foreach ($cases as [$label, $widget, ...])`：数组里存 Widget 对象，
         //   取出来是 `php::Var`，再传给 `Widget` 形参要靠运行期定型 —— 没必要。
         //   四次直调，形状清楚、零类型恢复。
-        self::oneCase('showcase（真实应用根）', new ShowcaseRoot(), 1280.0, 800.0, 200);
+        // ★ showcase 的**最小尺寸由它自己决定**（导航列 + 内容列的最窄排布）：
+        //   1280×800 下首页横向 Flex 共需 826、只有 706 ⇒ C5 当场 Fatal。
+        //   这不是基准该测的东西（"放不下"是应用布局问题，不是性能问题）
+        //   ⇒ 给足 1600×1000，与真机窗口同量级。
+        self::oneCase('showcase（真实应用根）', Trees::showcase(), 1600.0, 1000.0, 200);
         self::oneCase('参数化 20×3', Trees::build(20, 3), 1280.0, 800.0, 200);
         self::oneCase('参数化 50×8', Trees::build(50, 8), 1280.0, 800.0, 120);
         self::oneCase('参数化 100×14', Trees::build(100, 14), 1280.0, 800.0, 60);
