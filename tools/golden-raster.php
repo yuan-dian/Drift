@@ -40,6 +40,33 @@ use Drift\Widget\Widget;
 $W = 900;
 $H = 640;
 
+/**
+ * RGBA 原始串 → PNG（color type 2 = RGB，filter 0 逐行；白底不透明 ⇒ 丢 alpha）。
+ * ★ 与 `tools/probe-raster-page.php` 的编码器同口径（那份是探针里的临时副本，
+ *   这里固化成基线落盘与失败 diff 图共用的一份）。
+ */
+function goldenPng(string $rgba, int $w, int $h): string
+{
+    $raw = '';
+    for ($y = 0; $y < $h; $y++) {
+        $raw .= "\x00";
+        $base = $y * $w * 4;
+        for ($x = 0; $x < $w; $x++) {
+            $o = $base + $x * 4;
+            $raw .= $rgba[$o] . $rgba[$o + 1] . $rgba[$o + 2];
+        }
+    }
+
+    $chunk = static function (string $type, string $body): string {
+        return pack('N', strlen($body)) . $type . $body . pack('N', crc32($type . $body));
+    };
+
+    return "\x89PNG\r\n\x1a\n"
+        . $chunk('IHDR', pack('NNCCCCC', $w, $h, 8, 2, 0, 0, 0))
+        . $chunk('IDAT', gzcompress($raw, 6))
+        . $chunk('IEND', '');
+}
+
 $scenes = [];
 
 // ── 场景 1：canvas 图元直绘（覆盖 rasterize 各分支）──
@@ -403,13 +430,111 @@ $scenes['opacity'] = static function () use ($W, $H): string {
     return $c->toRgba();
 };
 
-$out = [];foreach ($scenes as $name => $make) {
+// ─────────────────── 模式：默认 md5 文本 / --update / --check ───────────────────
+//
+// 默认（旧行为）：输出 `name: len md5`，人手动前后 diff。
+// --update：把每个场景的 RGBA 基线写进 golden/<scene>/（expected.rgba.gz 供比对、
+//           expected.png 供人看）。
+// --check ：渲染并与基线**逐字节**比；不一致 ⇒ 写 actual/ 与 diff/（可看的 PNG），
+//           退出码 1。RasterCanvas 是确定性的（纯 PHP、无抗锯齿抖动）⇒ 逐字节比成立。
+$mode = 'text';
+foreach (array_slice($argv, 1) as $a) {
+    if ($a === '--update') {
+        $mode = 'update';
+    } elseif ($a === '--check') {
+        $mode = 'check';
+    }
+}
+
+$dir = __DIR__ . '/../golden';
+
+if ($mode === 'update') {
+    foreach ($scenes as $name => $make) {
+        $rgba = $make();
+        $sceneDir = $dir . '/' . $name;
+        if (!is_dir($sceneDir) && !mkdir($sceneDir, 0777, true) && !is_dir($sceneDir)) {
+            fwrite(STDERR, "建不了 {$sceneDir}\n");
+            exit(2);
+        }
+        file_put_contents($sceneDir . '/expected.rgba.gz', gzencode($rgba, 9));
+        file_put_contents($sceneDir . '/expected.png', goldenPng($rgba, $W, $H));
+        echo "updated {$name}\n";
+    }
+    exit(0);
+}
+
+if ($mode === 'check') {
+    $fail = 0;
+    foreach ($scenes as $name => $make) {
+        $rgba = $make();
+        $sceneDir = $dir . '/' . $name;
+        $expFile = $sceneDir . '/expected.rgba.gz';
+        if (!is_file($expFile)) {
+            echo "FAIL {$name}：无基线（先跑 php tools/golden-raster.php --update）\n";
+            $fail++;
+            continue;
+        }
+
+        $expected = gzdecode((string) file_get_contents($expFile));
+        if ($expected === $rgba) {
+            echo "ok   {$name}\n";
+            continue;
+        }
+
+        $fail++;
+        $diffPixels = 0;
+        $maxDelta = 0;
+        $len = min(strlen($expected), strlen($rgba));
+        for ($i = 0; $i + 3 < $len; $i += 4) {
+            $d = 0;
+            for ($k = 0; $k < 4; $k++) {
+                $delta = abs(ord($expected[$i + $k]) - ord($rgba[$i + $k]));
+                if ($delta > $d) {
+                    $d = $delta;
+                }
+            }
+            if ($d > 0) {
+                $diffPixels++;
+                if ($d > $maxDelta) {
+                    $maxDelta = $d;
+                }
+            }
+        }
+
+        $actualDir = $sceneDir . '/actual';
+        $diffDir = $sceneDir . '/diff';
+        if (!is_dir($actualDir)) {
+            mkdir($actualDir, 0777, true);
+        }
+        if (!is_dir($diffDir)) {
+            mkdir($diffDir, 0777, true);
+        }
+        file_put_contents($actualDir . '/actual.rgba.gz', gzencode($rgba, 9));
+        file_put_contents($actualDir . '/actual.png', goldenPng($rgba, $W, $H));
+
+        // diff 图：不同像素标红、相同标灰（一眼看出哪里变了）
+        $diff = '';
+        for ($y = 0; $y < $H; $y++) {
+            $base = $y * $W * 4;
+            for ($x = 0; $x < $W; $x++) {
+                $o = $base + $x * 4;
+                $same = substr($expected, $o, 4) === substr($rgba, $o, 4);
+                $diff .= $same ? "\x20\x20\x20\xFF" : "\xFF\x00\x00\xFF";
+            }
+        }
+        file_put_contents($diffDir . '/diff.png', goldenPng($diff, $W, $H));
+
+        echo "FAIL {$name}：{$diffPixels} 像素差（max Δ={$maxDelta}）；见 {$sceneDir}/actual/ 与 diff/\n";
+    }
+    echo $fail === 0 ? "GOLDEN OK\n" : "{$fail} FAIL\n";
+    exit($fail === 0 ? 0 : 1);
+}
+
+// 默认：旧行为（md5 文本，人手动前后 diff）
+$out = [];
+foreach ($scenes as $name => $make) {
     $rgba = $make();
     $out[] = sprintf('%s: len=%d md5=%s', $name, strlen($rgba), md5($rgba));
 }
-
-file_put_contents(
-    $argv[1] ?? 'php://stdout',
-    implode("\n", $out) . "\n"
-);
+file_put_contents($argv[1] ?? 'php://stdout', implode("\n", $out) . "\n");
 echo implode("\n", $out), "\n";
