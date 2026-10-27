@@ -72,6 +72,17 @@ final class Icon extends RenderBoxWidget
         return $this;
     }
 
+    /**
+     * 画的是哪个图标。
+     *
+     * ★ 存在的理由不是"给应用读"（应用自己传进去的），而是**可断言**：
+     *   "箭头方向对不对"只能从这个字段判（`IconSet` 的 Path 数据不透明）。
+     */
+    public function iconName(): IconName
+    {
+        return $this->name;
+    }
+
     public function createRenderObject(BuildContext $context): RenderBox
     {
         return new RenderIcon(

@@ -70,6 +70,14 @@ final class TableColumn
 
     private float $paddingX = self::DEFAULT_PADDING_X;
 
+    /**
+     * 表头可点排序吗（默认**不可排**）。
+     *
+     * ★ 默认关而不是开：有些列不该排（操作列、`cell()` 拼出来的派生值、图片列），
+     *   而"每个表头都能点"会让用户点了没反应 —— 那比"少一个功能"更差。
+     */
+    private bool $sortable = false;
+
     private function __construct(
         private readonly string $colKey,
         string $title,
@@ -173,6 +181,21 @@ final class TableColumn
         return $this;
     }
 
+    /**
+     * 表头可点排序（默认关）。
+     *
+     * ★ 控件**不排序**：点击只上报"点完之后该是什么 `TableSort`"，重排由应用做
+     *   （`$row` 是任意值，数字/日期/拼音/空值的比较规则全是应用侧知识）。
+     * ★ `sortable()` 与 `field()` / `cell()` **互不约束**：`cell()` 的派生列只要
+     *   应用知道怎么比，一样能排。
+     */
+    public function sortable(bool $on = true): static
+    {
+        $this->sortable = $on;
+
+        return $this;
+    }
+
     public function keyName(): string
     {
         return $this->colKey;
@@ -202,6 +225,12 @@ final class TableColumn
     public function paddingX(): float
     {
         return $this->paddingX;
+    }
+
+    /** 表头可点排序吗（见 `sortable()`） */
+    public function isSortable(): bool
+    {
+        return $this->sortable;
     }
 
     /** 把任意宽度夹进 `[minWidth, maxWidth]`（三层宽度里的第 ② 层） */

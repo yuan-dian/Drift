@@ -46,7 +46,9 @@ use Drift\Input\SemanticsRole;
  * | 变长行高 | 虚拟化要 `first = floor(offset / extent)` 的 O(1) 换算 |
  * | 列合并 / 分组 / 树形 | 破坏"每行同构"，窗口不再是矩形 |
  * | 横向滚动 | 偏移通道已在（`RenderTable::maxScrollX()`），但要等阶段 5 接输入与横条；**列装不下时被裁**（不是无声失效：内容右侧看得到截断） |
- * | 排序 / 列宽拖拽 / 编辑 | 阶段 3~4、7；结构与字段都已预留（`TableColumn::keyName()` 是它们的身份） |
+ * | **控件内**排序 | 数据所有权不分裂：控件画箭头 + 上报意图，重排由应用做（§13） |
+ * | 多列排序的 **UI** | `TableSort::thenBy()` 与"每列各画箭头"结构上已成立，只是点表头只上报单键（Shift+点留给后续） |
+ * | 列宽拖拽 / 单元格编辑 | 阶段 4、7；列宽三层已在（第 ④ 层留给拖拽） |
  * | 键盘焦点格 | 阶段 2b（裁决 5：整个表格占一个 Tab 位，方向键在 `TableState` 里移动焦点格） |
  * | 内置勾选列 / 全选 | `cell()` 已能表达（闭包捕获 selection）；内置列会同时牵连列宽、表头全选框、排序箭头与拖拽手柄 ⇒ 等阶段 4 一起裁决 |
  *
@@ -101,6 +103,12 @@ final class Table extends StatefulWidget
     /** 行点击上报（`fn(mixed $row, int $index): void`）—— 与选择**互不替代**，见 `onRowTap()` */
     private ?\Closure $onRowTap = null;
 
+    /** 当前排序状态（**受控**，默认 `TableSort::none()`） */
+    private TableSort $sortState;
+
+    /** 排序变化上报（`fn(TableSort $next): void`） */
+    private ?\Closure $onSortChange = null;
+
     /**
      * @param list<TableColumn> $columns
      * @param list<mixed>       $rows
@@ -110,6 +118,7 @@ final class Table extends StatefulWidget
         parent::__construct();
         $this->columns = $columns;
         $this->rows = $rows;
+        $this->sortState = TableSort::none();
         // §9 无障碍：表格是集合角色（滚轮路由走 Scrollable 接口，与语义无关）
         $this->semantics(SemanticsRole::Table);
     }
@@ -281,6 +290,37 @@ final class Table extends StatefulWidget
         return $this;
     }
 
+    /**
+     * 当前排序状态（**受控**）—— 只用来画表头箭头与决定点击后的下一态。
+     *
+     * ★ 控件**不重排 `$rows`**：`$row` 是任意值，"数字按数值 / 日期按时间戳 /
+     *   中文按拼音 / 空值排前还是排后"全是应用侧知识。控件画箭头 + 上报意图，
+     *   应用重排后把新数组传回来（`docs/DESIGN-TABLE-2026-10-26.md` §13）。
+     * ★ 多键（`thenBy()`）在结构上已成立：`directionOf()` 对每个参与键都返回方向
+     *   ⇒ 每列各画自己的箭头。阶段 3 的 UI 只上报单键（Shift+点表头留给后续）。
+     */
+    public function sort(TableSort $sort): static
+    {
+        $this->mutate();
+        $this->sortState = $sort;
+
+        return $this;
+    }
+
+    /**
+     * 排序变化上报（`fn(TableSort $next): void`）—— 与 `selection()` 同为受控。
+     *
+     * ★ 任一列声明了 `sortable()` 却没接它 ⇒ `TableState` 挂载期响亮失败：
+     *   表头可点却不接上报 = 点了没反应，箭头还停在旧值（差异每点一次放大一层）。
+     */
+    public function onSortChange(callable $handler): static
+    {
+        $this->mutate();
+        $this->onSortChange = \Closure::fromCallable($handler);
+
+        return $this;
+    }
+
     public function createState(): State
     {
         return new TableState();
@@ -345,5 +385,17 @@ final class Table extends StatefulWidget
     public function rowTapHandler(): ?\Closure
     {
         return $this->onRowTap;
+    }
+
+    /** 当前排序状态（永不为 `null`：没排序时是 `TableSort::none()`） */
+    public function sortState(): TableSort
+    {
+        return $this->sortState;
+    }
+
+    /** @internal 点击表头后的下一态往这里交（`null` = 应用没接） */
+    public function sortChangeHandler(): ?\Closure
+    {
+        return $this->onSortChange;
     }
 }

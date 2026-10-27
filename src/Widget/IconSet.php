@@ -61,6 +61,18 @@ final class IconSet
                 ->moveTo($x(0.38), $y(0.22))->lineTo($x(0.64), $y(0.5))->lineTo($x(0.38), $y(0.78));
         }
 
+        if ($name === IconName::ArrowUp) {
+            return $p
+                ->moveTo($x(0.5), $y(0.78))->lineTo($x(0.5), $y(0.22))
+                ->moveTo($x(0.26), $y(0.46))->lineTo($x(0.5), $y(0.22))->lineTo($x(0.74), $y(0.46));
+        }
+
+        if ($name === IconName::ArrowDown) {
+            return $p
+                ->moveTo($x(0.5), $y(0.22))->lineTo($x(0.5), $y(0.78))
+                ->moveTo($x(0.26), $y(0.54))->lineTo($x(0.5), $y(0.78))->lineTo($x(0.74), $y(0.54));
+        }
+
         if ($name === IconName::ChevronDown) {
             return $p
                 ->moveTo($x(0.24), $y(0.4))->lineTo($x(0.5), $y(0.64))->lineTo($x(0.76), $y(0.4));

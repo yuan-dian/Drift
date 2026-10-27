@@ -338,6 +338,8 @@ use Drift\Widget\TableColumn;
 use Drift\Widget\TableColumnWidth;
 use Drift\Widget\TableSelection;
 use Drift\Widget\TableSelectionMode;
+use Drift\Widget\TableSort;
+use Drift\Widget\TableSortDirection;
 use Drift\Widget\TableState;
 use Drift\Layout\RenderTable;
 use Drift\Dev\TestApp;
@@ -457,6 +459,41 @@ if (str_starts_with($caseArg, '--case=')) {
         $el = $table->createElement();
         $el->mount(null, smokeContext());
         echo "mounted-without-error\n";
+        exit(0);
+    }
+
+    if ($case === 'table-sort-noreport') {
+        // 列声明了 sortable() 却没接 onSortChange ⇒ 表头可点、点了没反应，
+        // 箭头还停在旧值 ⇒ 挂载期响亮失败（与 selection 缺上报同一条纪律）
+        $table = Table::make(
+            [TableColumn::make('a', 'A')->field('a')->sortable()],
+            [['a' => 1]],
+        )->keyOf(static fn(array $row): int => (int) $row['a']);
+        $el = $table->createElement();
+        $el->mount(null, smokeContext());
+        echo "mounted-without-error\n";
+        exit(0);
+    }
+
+    if ($case === 'table-sort-unknown-column') {
+        // sort() 指向不存在的列 ⇒ 箭头永远画不出来（列 key 拼错时完全静默）
+        $table = Table::make(
+            [TableColumn::make('a', 'A')->field('a')->sortable()],
+            [['a' => 1]],
+        )->keyOf(static fn(array $row): int => (int) $row['a'])
+            ->sort(TableSort::by('nope'))
+            ->onSortChange(static function (TableSort $next, int $columnIndex): void {
+            });
+        $el = $table->createElement();
+        $el->mount(null, smokeContext());
+        echo "mounted-without-error\n";
+        exit(0);
+    }
+
+    if ($case === 'table-sort-empty-column') {
+        // 空列 key 是列的**身份**，不是"没排序"的另一种写法（那用 TableSort::none()）
+        TableSort::by('');
+        echo "no-error\n";
         exit(0);
     }
 
@@ -16932,6 +16969,234 @@ check(
     'Table · 缺上报的报错给出两条修法（接上报 / 去掉 selection）',
     str_contains(logText($log), 'onSelectionChange'),
     logText($log) === '' ? '空日志' : '有日志',
+);
+
+// ── ㊿ P2 阶段 3：`Table` 排序（受控三态 + 表头箭头）──────────────────────
+//   ★ 控件**不排序**：点击只上报"点完之后该是什么"，重排由应用做（§13）。
+//     所以这里验的是"下一态"与"箭头"，不是数据顺序（那是应用的事，控件无从知道
+//     某列该按数值还是按拼音比）。
+//   ★ 反例自检（两条都实测为红）：三态循环改成两态（升 ⇄ 降，不取消）⇒ 第三条红
+//     （诊断印 `id↑`）；箭头改成"可排的列都画"⇒ "没排序时表头不画箭头"红。
+//   ⚠️ **本块验不出 `ownsPress`**：它直接调 `pointerHandlerValue()`，绕过了按下路由
+//     —— 行点击那次就是这样漏的（只有真机点得出"没反应"）。
+$tableHeaderCellsOf = static function (Element $root): array {
+    $row = findElement($root, static fn(Element $e): bool => $e->widget() instanceof Row);
+    $out = [];
+    $row?->visitChildren(static function (Element $child) use (&$out): void {
+        $out[] = $child;
+    });
+
+    return $out;
+};
+
+/** 模拟"按在表头第 j 格上"（走的是表头声明的 pointer，不是直接调 State） */
+$tableTapHeader = static function (Element $cellEl): void {
+    $cellEl->widget()->pointerHandlerValue()?->__invoke(PointerEvent::down(30.0, 10.0), $cellEl);
+};
+
+/**
+ * 把 `TableSort` 印成 `id↑ → name↓`（**不能 `json_encode`**：`TableSortDirection` 是
+ * 非 backed 枚举，JSON 里没有默认表示 ⇒ `json_encode()` 返回 `false`，而 `check()`
+ * 的 detail 要求 string ⇒ 直接 TypeError 崩掉整轮 smoke）。
+ */
+$tableSortDescribe = static function (TableSort $sort): string {
+    if ($sort->isEmpty()) {
+        return '（无排序）';
+    }
+
+    $parts = [];
+    foreach ($sort->keys() as [$key, $dir]) {
+        $parts[] = $key . ($dir === TableSortDirection::Ascending ? '↑' : '↓');
+    }
+
+    return \implode(' → ', $parts);
+};
+
+$tableSortNext = null;
+$tableSortNextIndex = -1;
+$tableSortBuild = static function (?TableSort $sort = null) use (&$tableSortNext, &$tableSortNextIndex, $tableRowsOf): Table {
+    return Table::make(
+        [
+            TableColumn::make('id', 'ID')->field('id')->width(TableColumnWidth::fixed(60.0))->sortable(),
+            TableColumn::make('name', '姓名')->field('name')->sortable(),
+            TableColumn::make('city', '城市')->field('city'),   // ← 不可排（操作列 / 图片列就是这样）
+        ],
+        $tableRowsOf(6),
+    )->keyOf(static fn(array $row): int => $row['id'])
+        ->rowHeight(40.0)
+        ->headerHeight(32.0)
+        ->sort($sort ?? TableSort::none())
+        ->onSortChange(static function (TableSort $next, int $columnIndex) use (&$tableSortNext, &$tableSortNextIndex): void {
+            $tableSortNext = $next;
+            $tableSortNextIndex = $columnIndex;
+        });
+};
+
+// ① 值对象：空态 / 方向 / 无关列
+$tableSortEmpty = TableSort::none();
+check(
+    'TableSort · none() 为空且没有主键 / by() 记住方向 / 无关列返回 null',
+    $tableSortEmpty->isEmpty() && $tableSortEmpty->primaryColumn() === null
+        && TableSort::by('name', TableSortDirection::Descending)->directionOf('name') === TableSortDirection::Descending
+        && TableSort::by('name')->directionOf('id') === null,
+    $tableSortDescribe($tableSortEmpty) . ' / ' . $tableSortDescribe(TableSort::by('name')),
+);
+
+// ② thenBy：追加次键；已存在的列被移到末尾（而不是留在主键位）
+$tableSortTwo = TableSort::by('a')->thenBy('b', TableSortDirection::Descending);
+$tableSortMoved = $tableSortTwo->thenBy('a', TableSortDirection::Descending);
+check(
+    'TableSort · thenBy 追加次键，已存在的列被移到末尾（主键换成 b，不是把 b 变成次键）',
+    \array_column($tableSortTwo->keys(), 0) === ['a', 'b']
+        && $tableSortTwo->primaryColumn() === 'a'
+        && $tableSortMoved->primaryColumn() === 'b'
+        && $tableSortMoved->directionOf('a') === TableSortDirection::Descending,
+    $tableSortDescribe($tableSortTwo) . ' / ' . $tableSortDescribe($tableSortMoved),
+);
+
+// ③ 只有 sortable() 的列挂点击与手形指针
+$tableSortEl = $tableMount($tableSortBuild());
+$tableSortCells = $tableHeaderCellsOf($tableSortEl);
+check(
+    'Table · 可排列的表头挂 pointer + PointingHand，不可排列不挂（3 列 ⇒ 2 个可点）',
+    \count($tableSortCells) === 3
+        && $tableSortCells[0]->widget()->pointerHandlerValue() !== null
+        && $tableSortCells[1]->widget()->pointerHandlerValue() !== null
+        && $tableSortCells[2]->widget()->pointerHandlerValue() === null
+        && $tableSortCells[0]->widget()->cursorShape() === CursorShape::PointingHand,
+    sprintf('cell=%d', \count($tableSortCells)),
+);
+
+// ④ 三态循环：无 → 升 → 降 → 无
+$tableSortNext = null;
+$tableTapHeader($tableSortCells[0]);
+check(
+    'Table · 点表头（无排序）⇒ 上报该列升序',
+    $tableSortNext?->primaryColumn() === 'id'
+        && $tableSortNext?->primaryDirection() === TableSortDirection::Ascending,
+    $tableSortNext === null ? '没有上报' : $tableSortDescribe($tableSortNext),
+);
+
+$tableSortAscEl = $tableMount($tableSortBuild(TableSort::by('id', TableSortDirection::Ascending)));
+$tableSortNext = null;
+$tableTapHeader($tableHeaderCellsOf($tableSortAscEl)[0]);
+check(
+    'Table · 再点（已升序）⇒ 上报降序',
+    $tableSortNext?->primaryDirection() === TableSortDirection::Descending,
+    $tableSortNext === null ? '没有上报' : $tableSortDescribe($tableSortNext),
+);
+
+$tableSortDescEl = $tableMount($tableSortBuild(TableSort::by('id', TableSortDirection::Descending)));
+$tableSortNext = null;
+$tableTapHeader($tableHeaderCellsOf($tableSortDescEl)[0]);
+check(
+    'Table · 第三次点（已降序）⇒ 上报取消排序（TableSort::none()）',
+    $tableSortNext !== null && $tableSortNext->isEmpty(),
+    $tableSortNext === null ? '没有上报' : $tableSortDescribe($tableSortNext),
+);
+
+// ⑤ 点非主键列 ⇒ 升格为主键升序
+$tableSortOtherEl = $tableMount($tableSortBuild(TableSort::by('id', TableSortDirection::Ascending)));
+$tableSortNext = null;
+$tableSortNextIndex = -1;
+$tableTapHeader($tableHeaderCellsOf($tableSortOtherEl)[1]);
+check(
+    'Table · 点另一列 ⇒ 该列升格为主键升序（不是"点一下没反应"）',
+    $tableSortNext?->primaryColumn() === 'name'
+        && $tableSortNext?->primaryDirection() === TableSortDirection::Ascending
+        && $tableSortNext?->directionOf('id') === null,
+    $tableSortNext === null ? '没有上报' : $tableSortDescribe($tableSortNext),
+);
+check(
+    'Table · 上报带列序号（应用按"第几列"分派比较规则时直接当下标用）',
+    $tableSortNextIndex === 1,
+    '实际 ' . $tableSortNextIndex,
+);
+
+// ⑥ 箭头：只在**参与排序**的列上，且方向对
+$tableAscIcon = findElement($tableSortAscEl, static fn(Element $e): bool => $e->widget() instanceof Icon);
+$tableDescIcon = findElement($tableSortDescEl, static fn(Element $e): bool => $e->widget() instanceof Icon);
+check(
+    'Table · 升序列表头画 ArrowUp、降序画 ArrowDown',
+    $tableAscIcon?->widget() instanceof Icon
+        && $tableAscIcon->widget()->iconName() === IconName::ArrowUp
+        && $tableDescIcon?->widget() instanceof Icon
+        && $tableDescIcon->widget()->iconName() === IconName::ArrowDown,
+    sprintf(
+        '升=%s / 降=%s',
+        $tableAscIcon === null ? '无' : $tableAscIcon->widget()->iconName()->value,
+        $tableDescIcon === null ? '无' : $tableDescIcon->widget()->iconName()->value,
+    ),
+);
+check(
+    'Table · 没排序时表头不画箭头（"有箭头"就等于"这列在排序"）',
+    findElement($tableSortEl, static fn(Element $e): bool => $e->widget() instanceof Icon) === null,
+    '表头里出现了 Icon',
+);
+
+// ⑦ 表头点击不碰行选择（表头不是行 —— 两条通道互不串）
+$tableSortSelNext = null;
+$tableSortSelEl = $tableMount(
+    Table::make(
+        [TableColumn::make('id', 'ID')->field('id')->sortable()],
+        $tableRowsOf(6),
+    )->keyOf(static fn(array $row): int => $row['id'])
+        ->rowHeight(40.0)
+        ->headerHeight(32.0)
+        ->selection(TableSelection::none())
+        ->onSelectionChange(static function (TableSelection $next) use (&$tableSortSelNext): void {
+            $tableSortSelNext = $next;
+        })
+        ->onSortChange(static function (TableSort $next, int $columnIndex): void {
+        }),
+);
+$tableTapHeader($tableHeaderCellsOf($tableSortSelEl)[0]);
+check(
+    'Table · 点表头不改变行选择（表头点击与行点击是两条通道）',
+    $tableSortSelNext === null,
+    $tableSortSelNext === null ? '选择未变' : \json_encode($tableSortSelNext->keys()),
+);
+
+// ⑧ 三条响亮失败
+fresh($log);
+[$tableSortCode, $tableSortOut] = runCase(__FILE__, 'table-sort-noreport', null);
+check('Table · 列 sortable() 但没接 onSortChange ⇒ 退出码 3', $tableSortCode === 3, '实际 ' . $tableSortCode . ' / ' . $tableSortOut);
+check(
+    'Table · 缺上报的报错指路 onSortChange（并给出"去掉 sortable()"这条退路）',
+    str_contains(logText($log), 'onSortChange') && str_contains(logText($log), 'sortable()'),
+    logText($log) === '' ? '空日志' : '有日志',
+);
+
+fresh($log);
+[$tableSortCode2, $tableSortOut2] = runCase(__FILE__, 'table-sort-unknown-column', null);
+check('Table · sort() 指向不存在的列 ⇒ 退出码 3', $tableSortCode2 === 3, '实际 ' . $tableSortCode2 . ' / ' . $tableSortOut2);
+check(
+    'Table · 列 key 拼错时报"不存在的列"并列出已有列',
+    str_contains(logText($log), '不存在的列') && str_contains(logText($log), '现有列'),
+    logText($log) === '' ? '空日志' : '有日志',
+);
+
+fresh($log);
+[$tableSortCode3, $tableSortOut3] = runCase(__FILE__, 'table-sort-empty-column', null);
+check(
+    'TableSort · 空列 key ⇒ Fatal（"没排序"要写 TableSort::none()）',
+    $tableSortCode3 === 3,
+    '实际 ' . $tableSortCode3 . ' / ' . $tableSortOut3,
+);
+
+// ⑨ 行内容在行高里**垂直居中**（与排序无关，是同批真机发现的问题：
+//    行容器是 `SizedBox(高)` 包 `Row`，Row 的交叉轴默认 `Start` ⇒ 文字贴顶、
+//    下方留一大片空 ⇒ 看起来像"行高买大了"。表头同理，箭头与标题也要对齐）
+$tableCenterFlex = isset($tableRowEls[1]) ? $tableRowEls[1]->renderObject() : null;
+$tableCenterCell = $tableCenterFlex instanceof RenderFlex ? ($tableCenterFlex->children()[0] ?? null) : null;
+$tableCenterH = $tableCenterCell?->size()?->height;
+$tableCenterY = $tableCenterCell?->offsetY();
+check(
+    'Table · 行内容在行高里垂直居中（不是贴顶 —— 贴顶看起来像"行高买大了"）',
+    $tableCenterH !== null && $tableCenterY !== null
+        && \abs($tableCenterY - (40.0 - $tableCenterH) / 2.0) <= 1.0,
+    $tableCenterH === null ? '没有单元格' : sprintf('cell 高 %s / offsetY %s（期望 %s）',
+        (string) $tableCenterH, (string) $tableCenterY, (string) ((40.0 - $tableCenterH) / 2.0)),
 );
 
 // ⑪ 列宽的 min/max 夹（第 ② 层）：flex 分到 173 但 maxWidth 100 ⇒ 停在 100

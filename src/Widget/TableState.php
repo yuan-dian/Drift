@@ -7,6 +7,7 @@ use Drift\Errors;
 use Drift\Geometry\Rect;
 use Drift\Input\CursorShape;
 use Drift\Input\PointerEvent;
+use Drift\Layout\FlexAlign;
 use Drift\Layout\RenderTable;
 use Drift\Rendering\Color;
 use Drift\Rendering\ColorToken;
@@ -391,6 +392,8 @@ final class TableState extends State implements Scrollable
             );
         }
 
+        $this->assertSortDeclared($view, $columns);
+
         // 完整内容高（含表头）—— 滚动条与可滚上限都按它算
         $contentH = $headerH + $count * $rowH;
 
@@ -421,7 +424,7 @@ final class TableState extends State implements Scrollable
         $first = max(0, min($first, $count));
         $last = max($first, min($last, $count));
 
-        $headerKid = $this->headerRow($columns, $widths, $contentW, $headerH, $spacing);
+        $headerKid = $this->headerRow($ctx, $columns, $widths, $contentW, $headerH, $spacing);
         $striped = $view->isStriped();
         $keyOf = $view->keyMapper();
         $selectable = $view->selectionSet() !== null;
@@ -439,7 +442,7 @@ final class TableState extends State implements Scrollable
 
             // ★ key = **绝对序号**（不是窗内序号）：窗口滑动一格时第 k 行仍是第 k 行
             //   ⇒ diff 只增删两端各一个 Element，中间全部复用（同 LazyListState）。
-            $line = SizedBox::make(Row::make()->children($cells)->spacing($spacing))
+            $line = SizedBox::make(Row::make()->children($cells)->spacing($spacing)->cross(FlexAlign::Center))
                 ->width($contentW)
                 ->height($rowH)
                 ->key($i);
@@ -522,16 +525,156 @@ final class TableState extends State implements Scrollable
      * @param list<TableColumn> $columns
      * @param array<int, float> $widths
      */
-    private function headerRow(array $columns, array $widths, float $contentW, float $headerH, float $spacing): Widget
-    {
+    private function headerRow(
+        BuildContext $ctx,
+        array $columns,
+        array $widths,
+        float $contentW,
+        float $headerH,
+        float $spacing,
+    ): Widget {
+        $sort = $this->view()->sortState();
+
         $cells = [];
         foreach ($columns as $j => $column) {
-            $cells[] = $this->cellShell(Text::make($column->titleText())->bold(), $widths[$j], $column);
+            $cells[] = $this->headerCell($ctx, $column, $widths[$j], $sort, $j);
         }
 
-        return SizedBox::make(Row::make()->children($cells)->spacing($spacing))
+        return SizedBox::make(Row::make()->children($cells)->spacing($spacing)->cross(FlexAlign::Center))
             ->width($contentW)
             ->height($headerH);
+    }
+
+    /**
+     * 一格表头：标题 +（参与排序时的）方向箭头 +（可排时的）点击。
+     *
+     * ★ 箭头**只画在当前参与排序的列**上（不是所有可排序列都画个灰箭头）：
+     *   "有箭头"就等于"这一列正在排序"，省掉一个"未激活态颜色"的决策，也让
+     *   画面上只有一个视觉焦点。可排但未排的列靠指针变手形提示。
+     * ★ 箭头在标题**右侧**、标题左对齐 ⇒ 箭头出现/消失时文字位置不动。
+     */
+    private function headerCell(
+        BuildContext $ctx,
+        TableColumn $column,
+        float $width,
+        TableSort $sort,
+        int $columnIndex,
+    ): Widget
+    {
+        $title = Text::make($column->titleText())->bold();
+        $dir = $sort->directionOf($column->keyName());
+
+        $content = $title;
+        if ($dir !== null) {
+            $icon = $dir === TableSortDirection::Ascending ? IconName::ArrowUp : IconName::ArrowDown;
+            $content = Row::make()
+                ->children([$title, Icon::make($icon, 12.0)->color($ctx->color(ColorToken::Accent))])
+                ->spacing(4.0)
+                ->cross(FlexAlign::Center);
+        }
+
+        $cell = $this->cellShell($content, $width, $column);
+
+        if (!$column->isSortable()) {
+            return $cell;
+        }
+
+        // ★ `ownsPress: true` 与行级点击同一条理由：表头既不可聚焦也不是
+        //   `Activatable` ⇒ 默认路径走 `focusHit + activateFocusedWidget()`，
+        //   回调根本收不到 down（`PITFALLS.md`「pointer() 的三种静默不生效」）。
+        return $cell
+            ->cursor(CursorShape::PointingHand)
+            ->pointer(
+                function (PointerEvent $event, Element $self) use ($column, $columnIndex): ?CursorShape {
+                    if ($event->isDown() && $event->isPrimary()) {
+                        $this->noteHeaderTap($column, $columnIndex);
+                    }
+
+                    return null;
+                },
+                ownsPress: true,
+            );
+    }
+
+    /**
+     * 表头被按下：算出"点完之后该是什么排序"并交出去（受控，不改自己的任何状态）。
+     *
+     * ★ 控件没有"当前排序"的私有副本 —— 箭头画的是 `$view->sortState()`，与
+     *   选择一样：应用不采纳，画面就停在旧值（所以不接上报是挂载期 Fatal）。
+     * ★ 上报带**列序号**（`int`）：应用若按"第几列"分派比较规则，直接拿它当数组
+     *   下标即可，不必把 key 再翻译一遍。`TableSort` 里的列 key 仍然给出（那是跨插列
+     *   稳定的身份）—— 两条通道用途不同，不是同一个东西的两种写法。
+     */
+    private function noteHeaderTap(TableColumn $column, int $columnIndex): void
+    {
+        $notify = $this->view()->sortChangeHandler();
+        if ($notify === null) {
+            return;
+        }
+
+        $notify($this->nextSort($column->keyName()), $columnIndex);
+    }
+
+    /**
+     * 三态循环：无 → 升 → 降 → 无（`ag-Grid` / `WPF DataGrid` 同款）。
+     *
+     * ★ 点**非主键列**（含"它是次键"）⇒ 升格为主键升序，而不是在次键上循环：
+     *   阶段 3 的 UI 只有单键（多键要 Shift+点，见 `TableSort` 的 docblock）。
+     *   否则"点一下次键列，箭头出现在主键列上"会显得毫无反应。
+     */
+    private function nextSort(string $column): TableSort
+    {
+        $current = $this->view()->sortState();
+        $dir = $current->directionOf($column);
+
+        if ($dir === null || $current->primaryColumn() !== $column) {
+            return TableSort::by($column, TableSortDirection::Ascending);
+        }
+
+        if ($dir === TableSortDirection::Ascending) {
+            return TableSort::by($column, TableSortDirection::Descending);
+        }
+
+        return TableSort::none();
+    }
+
+    /**
+     * 排序声明的两条响亮失败。
+     *
+     * 1. 有列 `sortable()` 但没接 `onSortChange()` ⇒ 表头可点、点了没反应，箭头停在旧值。
+     * 2. `sort()` 指向的列不存在 ⇒ 箭头永远画不出来（列 key 拼错时**完全静默**）。
+     *
+     * @param list<TableColumn> $columns
+     */
+    private function assertSortDeclared(Table $view, array $columns): void
+    {
+        $keys = [];
+        $sortable = null;
+        foreach ($columns as $column) {
+            $keys[$column->keyName()] = true;
+            if ($sortable === null && $column->isSortable()) {
+                $sortable = $column->keyName();
+            }
+        }
+
+        if ($sortable !== null && $view->sortChangeHandler() === null) {
+            Errors::report(sprintf(
+                'Table 的列 "%s" 声明了 sortable() 却没有 onSortChange() —— 排序是受控的，'
+                    . "\n" . '控件只算"点完之后该是什么排序"并交出去，应用不接就等于点了没反应。'
+                    . "\n" . '修法：加上 ->onSortChange(fn(TableSort $next) => ...)，或去掉 ->sortable()。',
+                $sortable,
+            ));
+        }
+
+        foreach ($view->sortState()->keys() as [$key, $_direction]) {
+            if (!isset($keys[$key])) {
+                Errors::report(sprintf(
+                    'Table 的排序指向了不存在的列 "%s"。现有列：%s',
+                    $key,
+                    \implode(', ', \array_keys($keys)),
+                ));
+            }
+        }
     }
 
     /**
@@ -545,12 +688,12 @@ final class TableState extends State implements Scrollable
         $align = $column->alignMode();
 
         if ($align === TextAlign::End) {
-            return $this->paddedCell(Row::make()->children([Spacer::make(), $content]), $width, $column);
+            return $this->paddedCell(Row::make()->children([Spacer::make(), $content])->cross(FlexAlign::Center), $width, $column);
         }
 
         if ($align === TextAlign::Center) {
             return $this->paddedCell(
-                Row::make()->children([Spacer::make(), $content, Spacer::make()]),
+                Row::make()->children([Spacer::make(), $content, Spacer::make()])->cross(FlexAlign::Center),
                 $width,
                 $column,
             );

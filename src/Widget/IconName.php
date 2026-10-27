@@ -32,6 +32,12 @@ enum IconName: string
     /** 右箭头（进入 / 下一页） */
     case ArrowRight = 'arrow-right';
 
+    /** 上箭头（升序 / 上移） */
+    case ArrowUp = 'arrow-up';
+
+    /** 下箭头（降序 / 下移） */
+    case ArrowDown = 'arrow-down';
+
     /** 下折角（展开 / 更多） */
     case ChevronDown = 'chevron-down';
 
