@@ -12,6 +12,8 @@ declare(strict_types=1);
 
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Layout\RenderBox;
+use Drift\Rendering\Color;
+use Drift\Rendering\RasterCanvas;
 use Drift\Text\DeterministicFontManager;
 use Drift\Text\DeterministicMetricsProvider;
 use Drift\Text\DeterministicShaper;
@@ -161,5 +163,28 @@ if (!\function_exists('logText')) {
     function logText(string $log): string
     {
         return is_file($log) ? (string) file_get_contents($log) : '';
+    }
+}
+
+if (!\function_exists('inkCount')) {
+    /**
+     * 非背景像素数：用来断言"真的画了东西 / 真的被挡住了"。
+     *
+     * ★ 唯一实现。此前 `TextFieldTest` 里有一份私有副本 —— 同一个量具两份实现会各自
+     *   漂移，第三处要用时立刻下沉到这里。
+     */
+    function inkCount(RasterCanvas $canvas, ?Color $background = null): int
+    {
+        $background ??= Color::white();
+        $ink = 0;
+        for ($y = 0; $y < $canvas->height(); $y++) {
+            for ($x = 0; $x < $canvas->width(); $x++) {
+                if (!$canvas->pixelAt($x, $y)->equals($background)) {
+                    $ink++;
+                }
+            }
+        }
+
+        return $ink;
     }
 }

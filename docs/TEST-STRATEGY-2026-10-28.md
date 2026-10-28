@@ -193,7 +193,8 @@ PHPUnit 默认第一条断言失败就中止方法。GUI 断言不适用：一�
 | &nbsp;&nbsp;· 选区模型 / 选区渲染 ✅ | `tests/Unit/Widget/TextFieldSelectionTest` + `tests/Feature/Widget/TextFieldTest::testSelectionGeometryAndPaint` | 1320 → 1292（−28） |
 | &nbsp;&nbsp;· 状态层（SubjectBuilder / Cell / Computed / RT-3 / settle 漂移） ✅ | `tests/Unit/State/{SubjectBuilderTest,CellTest,ComputedTest}` + `tests/Feature/State/{SubscriptionIsolationTest,SettleDriftTest}` | 1292 → 1264（−28） |
 | &nbsp;&nbsp;· 窗口帧（resize / 零视口 / AppBar 窄窗 / 预览降级）+ 主题切换 ✅ | `tests/Feature/App/WindowFrameTest` + `tests/Feature/Theme/ThemeSwitchTest` | 1264 → 1253（−11） |
-| &nbsp;&nbsp;· 待搬 | 光标形状 / Spinner / 错误边界 / 命令与路由 / 主题作用域 / 语义推送 / 渲染图像 / ensureVisible / 虚拟列表锚点 / 浮层·模态·菜单族 / W8-2 控件族 / Table / LazyColumn / 日志 / 毛玻璃 | |
+| &nbsp;&nbsp;· 错误边界三层兜底 + 加速键/编辑命令环/指针框选 ✅ | `tests/Unit/Input/AcceleratorTableTest` + `tests/Feature/Widget/ErrorBoundaryTest` + `tests/Feature/Input/{KeyRoutingPriorityTest,EditingCommandLoopTest,PointerSelectionTest}` | 1253 → 1214（−39） |
+| &nbsp;&nbsp;· 待搬 | 光标形状 / Spinner / 命令与路由 / 主题作用域 / 页宿主 / 语义推送 / 渲染图像 / ensureVisible / 虚拟列表锚点 / 浮层·模态·菜单族 / W8-2 控件族 / Table / LazyColumn / 日志 / 毛玻璃 | |
 | **S4** | 纯单元（485 条里的）改成标准 `TestCase`：`assertSame` + `#[DataProvider]` | `--testsuite=unit` 覆盖它们 |
 
 ★ S1–S3 是**纯搬迁**（断言一行不改，只改"在哪个文件哪个方法里"）。
@@ -395,7 +396,7 @@ smoke 那一份保留**（它服务的是"还没搬走的后续段"，不是历�
 ★ `spinCanvas` 的 `Scale` 在 `Drift\Geometry`（不是 `Drift\Rendering`）—— 又踩一次
 "命名空间别按目录推"（见 §9）。已在 functions.php 写全限定名，不再依赖 `use`。
 
-### 10.8 S3 5~15 批落地的文件账
+### 10.8 S3 5~16 批落地的文件账
 
 | 批 | 文件 | 断言 | smoke 对账 |
 |---|---|---|---|
@@ -410,6 +411,21 @@ smoke 那一份保留**（它服务的是"还没搬走的后续段"，不是历�
 | 13 选区 | `tests/Unit/Widget/TextFieldSelectionTest.php`（23）+ `tests/Feature/Widget/TextFieldTest::testSelectionGeometryAndPaint`（5） | 28（锚点模型/Shift 只挪活动端/键入与删除吃整段/多字节吸附/选区几何与墨） | 1320 → 1292（−28） |
 | 14 状态层 | `tests/Unit/State/SubjectBuilderTest.php`（8）+ `CellTest.php`（7）+ `ComputedTest.php`（7）+ `tests/Feature/State/SubscriptionIsolationTest.php`（4）+ `SettleDriftTest.php`（1） | 28（select 门控/Cell 同值不标脏/Computed 缓存与嵌套/RT-3 隔离/settle 不漂移） | 1292 → 1264（−28） |
 | 15 窗口帧+主题 | `tests/Feature/App/WindowFrameTest.php`（7）+ `tests/Feature/Theme/ThemeSwitchTest.php`（4） | 11（resize 只跑一帧·不读时钟 / 零视口跳过且根盒保旧尺寸 / AppBar 窄窗裁剪 / 预览期降级 / 主题递归下发） | 1264 → 1253（−11） |
+| 16 错误边界+按键路由 | `tests/Unit/Input/AcceleratorTableTest.php`（4）+ `tests/Feature/Widget/ErrorBoundaryTest.php`（13）+ `tests/Feature/Input/KeyRoutingPriorityTest.php`（5）+ `EditingCommandLoopTest.php`（9）+ `PointerSelectionTest.php`（8） | 39（加速键值语义 / 构造·build·渲染三层兜底 / 第①环优先于焦点链 / 让位规则② / 编辑门控 ②③④ / 指针框选 + IBeam） | 1253 → 1214（−39） |
+
+★ 第 16 批的结构决策：**同一段的判据按"被测对象"分家，不按"段号"**。`㉝` 一段里其实装了
+五个对象：`AcceleratorTable`（值对象 → Unit）、`ErrorBoundary`+`RenderErrorBoundary`（一个类
+两个面 → 同一个 Feature 文件）、`Application` 的按键路由（第①环 vs 焦点链）、`TextEditingBridge`
+的编辑命令环、`TextFieldState` 的指针侧。后三者共用 `AccelApplication`/`EditApplication` 夹具，
+但判据互不参照（路由优先级 / 门控回落 / 手势生命周期），拆开才能一眼看出"哪一层坏了"。
+
+★ 第 16 批同时把 `inkCount()` 下沉到 `tests/Support/functions.php` 并删掉 `TextFieldTest`
+的私有副本 —— 第四个使用者出现时就必须收成单一来源，否则两份实现会各自漂移。
+
+★ 第 16 批的坑：`FakeClipboard` 与 `EditApplication` 同类文件、PSR-4 加载不到第二个类。
+smoke 里能跑是因为它先 `new EditApplication()`（顺带定义），换到测试里 `new FakeClipboard()`
+先求值就 `class not found`。修法是**拆文件**（`tools/Smoke/App/FakeClipboard.php`），
+不是调整调用顺序 —— 顺序依赖是定时炸弹。
 
 ★ 第 12 批的切法按"依赖强度"分三层：纯值对象与声明（`KeyChord`/`KeyEvent`/`FocusNode`
 + Widget 侧 `focusNode()`）→ Unit；需要真 Element 树与布局（`FocusManager` 路由、命中→焦点、

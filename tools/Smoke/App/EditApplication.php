@@ -72,29 +72,6 @@ final class EditApplication extends Application
     }
 }
 
-/** @internal 冒烟夹具：内存剪贴板（`hasText()` 与内容分开灌，验门控 ④） */
-final class FakeClipboard implements Clipboard
-{
-    public string $text = '';
-
-    public bool $available = true;
-
-    public function readText(): string
-    {
-        return $this->text;
-    }
-
-    public function writeText(string $text): void
-    {
-        $this->text = $text;
-    }
-
-    public function hasText(): bool
-    {
-        return $this->available && $this->text !== '';
-    }
-}
-
 /** @internal 冒烟夹具 */
 final class EditHandler implements CommandHandler
 {

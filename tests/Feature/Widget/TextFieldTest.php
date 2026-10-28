@@ -35,22 +35,6 @@ use Drift\Widget\TextFieldState;
  */
 final class TextFieldTest extends SmokeTestCase
 {
-    /** 数"与背景不同"的像素（与 smoke `inkCount` 同实现） */
-    private function inkCount(\Drift\Rendering\RasterCanvas $canvas, ?Color $background = null): int
-    {
-        $background ??= Color::white();
-        $ink = 0;
-        for ($y = 0; $y < $canvas->height(); $y++) {
-            for ($x = 0; $x < $canvas->width(); $x++) {
-                if (!$canvas->pixelAt($x, $y)->equals($background)) {
-                    $ink++;
-                }
-            }
-        }
-
-        return $ink;
-    }
-
     /**
      * 数输入框的墨（与 smoke `fieldInk` 同实现）。
      *
@@ -77,7 +61,7 @@ final class TextFieldTest extends SmokeTestCase
         $canvas = new \Drift\Rendering\RasterCanvas($width, $height, $background, \Drift\Geometry\Scale::of(1.0));
         $list->replay($canvas);
 
-        return $this->inkCount($canvas, $background);
+        return inkCount($canvas, $background);
     }
 
     public function testDeclarationLayer(): void

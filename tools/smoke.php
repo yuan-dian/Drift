@@ -43,10 +43,6 @@ use Drift\App\Paths;
 use Drift\App\WindowStateStore;
 use Drift\Dev\Smoke\WindowState\FakeWindowHost;
 use Drift\Dev\Smoke\ErrorBoundary\BoomPage;
-use Drift\Dev\Smoke\ErrorBoundary\BoomState;
-use Drift\Dev\Smoke\ErrorBoundary\ConstructBoom;
-use Drift\Dev\Smoke\ErrorBoundary\LayoutBoomBox;
-use Drift\Dev\Smoke\ErrorBoundary\PaintBoomBox;
 use Drift\Dev\Smoke\Frame\QuietWidget;
 use Drift\Dev\Smoke\Frame\EpochWidget;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
@@ -61,12 +57,9 @@ use Drift\Dev\Smoke\Rendering\ProbePainter;
 use Drift\Dev\Preview\DemoPage;
 use Drift\Dev\Preview\Renderer;
 use Drift\Dev\Preview\SvgSurface;
-use Drift\Dev\Smoke\App\AccelApplication;
-use Drift\Dev\Smoke\App\EditApplication;
 use Drift\Dev\Smoke\App\MotionApplication;
 use Drift\Widget\AnimationController;
 use Drift\Widget\Curve;
-use Drift\Dev\Smoke\App\FakeClipboard;
 use Drift\Dev\Smoke\App\KeyAncestorApplication;
 use Drift\Dev\Smoke\App\CompositeRootApp;
 use Drift\Dev\Smoke\App\CountJob;
@@ -173,7 +166,6 @@ use Drift\Layout\RenderBackdropFilter;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderButton;
 use Drift\Layout\RenderDock;
-use Drift\Layout\RenderErrorBoundary;
 use Drift\Layout\RenderFlex;
 use Drift\Layout\RenderScrollView;
 use Drift\Layout\RenderProxy;
@@ -272,9 +264,6 @@ use Drift\Widget\ScrollView;
 use Drift\Widget\ScrollViewState;
 use Drift\Widget\SemanticsBuilder;
 use Drift\Widget\Element;
-use Drift\Widget\ErrorBoundary;
-use Drift\Widget\ErrorBoundaryElement;
-use Drift\Widget\ErrorPlaceholder;
 use Drift\Widget\Expanded;
 use Drift\Widget\Menu\ContextMenu;
 use Drift\Widget\Menu\Menu;
@@ -6315,26 +6304,16 @@ $plainBox = new RenderDivider(new DividerStyle(Color::fromRgba(0, 0, 0, 255), 1.
 check('panelRect · 普通盒默认 null（不表态）', $plainBox->panelRect() === null);
 check('panelRect · 面板盒覆写（表态，供落位与模态判定）', (new RenderPopupPanel())->panelRect() !== null);
 
-// ── ㉝ 错误边界容器 + AcceleratorTable（任务 #5：M3，O-12 A′ + §9.1 第 ① 环）──
-
-// A. AcceleratorTable 单元（§9.1）
-$accel = AcceleratorTable::make()
-    ->bind(KeyChord::ctrl('R'), 'users.refresh')
-    ->bind(KeyChord::f(5), 'users.refresh');
-check(
-    'AcceleratorTable · 绑定后可查（Ctrl+R / F5 ⇒ 同一命令）',
-    $accel->resolve(KeyChord::ctrl('R')) === 'users.refresh'
-        && $accel->resolve(KeyChord::f(5)) === 'users.refresh',
-);
-check(
-    'AcceleratorTable · 未绑定的组合 ⇒ null（调用方继续走焦点链）',
-    $accel->resolve(KeyChord::ctrl('N')) === null,
-);
-check(
-    'AcceleratorTable · 修饰键不同 ⇒ 不同组合（Ctrl+R ≠ Ctrl+Shift+R）',
-    $accel->resolve(KeyChord::make('R', true, false, true)) === null,
-);
-check('AcceleratorTable · 计数 2 / 空表 isEmpty', $accel->count() === 2 && AcceleratorTable::make()->isEmpty());
+// ── ㉝ 错误边界容器 + AcceleratorTable：主体已迁出，余子进程判据 ────────────
+//   · `tests/Unit/Input/AcceleratorTableTest.php` —— 绑定后可查 / 未绑定 ⇒ null /
+//     修饰键不同即不同组合 / count 与 isEmpty
+//   · `tests/Feature/Input/KeyRoutingPriorityTest.php` —— 加速键第 ① 环在焦点之前 /
+//     未绑定的键落到焦点链 / 让位规则 ② / TextField 自带 Ctrl+A 独占且全选真的发生
+//   · `tests/Feature/Input/EditingCommandLoopTest.php` —— 编辑命令环四道门控的回落语义
+//     （无焦点 / 无剪贴板端口 / 剪贴板空 / 无选区），每条都成对验"该吞的吞、该放的放"
+//   · `tests/Feature/Input/PointerSelectionTest.php` —— 指针框选 down/move/up/leave
+//     与反向拖动 + IBeam 光标
+//   ★ 下面 4 条是**子进程**判据（冲突 Fatal / 无边界 Fatal），依赖 `runCase(__FILE__)`。
 
 [$code, $output] = runCase(__FILE__, 'accelconflict', null);
 check(
@@ -6347,107 +6326,11 @@ check(
     str_contains(logText($log), 'AcceleratorTable'),
 );
 
-// B. 错误边界 · 构造期（O-12 第 ① 层：createRenderObject 抛 ⇒ rebuild 的 try 捕获）
-$ebCtor = ErrorBoundary::make(ConstructBoom::make())->createElement();
-$ebCtor->mount(null, $context);
-check(
-    '错误边界 · 构造期异常被容器捕获（不冒泡，窗口其余部分继续）',
-    $ebCtor instanceof ErrorBoundaryElement && $ebCtor->hasCaught(),
-);
-check(
-    '错误边界 · 捕获后子树换成占位（ErrorPlaceholder）',
-    $ebCtor->childAt(0)?->widget() instanceof ErrorPlaceholder,
-);
-check(
-    '错误边界 · 占位带错误原文（G2：不吞不改写）',
-    str_contains((string) $ebCtor->caughtMessage(), 'construct boom'),
-);
-$ebCtor->effectiveBox()?->layout(BoxConstraints::tight(new Size(240.0, 80.0)));
-check(
-    '错误边界 · 占位可布局出墨（Center+Text 真画了东西）',
-    inkCount(spinCanvas($ebCtor->effectiveBox(), 240, 80), Color::white()) > 0,
-);
-// ★ 2026-10-16 改判：确定性测试字体已补上**示例/应用字符串里用到的全部非 ASCII 字符**
-//   （`CjkGlyphData`，含中文标点与箭头）⇒ 中文文本现在**有墨**。真正的通用 CJK 后端
-//   （任意码位、按需打包）仍归 M4（O-08）；这条断言从此守"补的字模真的上屏"。
-//   ★ 旧版是**空断言**：探针盒从未 `layout()` ⇒ `RenderText::lineCount()===0` ⇒ 恒 0 墨，
-//     加字之前也是 0 ⇒ 它一直通过，却什么都没测到（量具无自检的又一处）。
-$cjkProbe = Text::make('出错')->createElement();
-$cjkProbe->mount(null, $context);
-$cjkBox = $cjkProbe->effectiveBox();
-$cjkBox?->layout(BoxConstraints::tight(new Size(240.0, 80.0)));
-$cjkInk = inkCount(spinCanvas($cjkBox, 240, 80), Color::white());
-check(
-    '字体边界 · 确定性测试字体覆盖示例用字 ⇒ 中文有墨',
-    $cjkInk > 0,
-    (string) $cjkInk,
-);
-
-// C. 错误边界 · build 期（第 ② 层：State::build 抛 ⇒ settle 的 try 捕获）
-$ebBuild = ErrorBoundary::make(BoomPage::make())->createElement();
-$ebBuild->mount(null, $context);
-check(
-    '错误边界 · 健康时完全透明（孩子就是原页面）',
-    $ebBuild->childAt(0)?->widget() instanceof BoomPage && !$ebBuild->hasCaught(),
-);
-$boomState = $ebBuild->childAt(0) instanceof StatefulElement ? $ebBuild->childAt(0)->state() : null;
-if ($boomState instanceof BoomState) {
-    $boomState->boom(); // 标脏 ⇒ 帧末重建 ⇒ 第二次 build 抛
-}
-$ebBuild->settle();
-check(
-    '错误边界 · build 期异常被 settle() 捕获（帧末重建路径）',
-    $ebBuild->hasCaught() && str_contains((string) $ebBuild->caughtMessage(), 'build boom'),
-);
-check(
-    '错误边界 · build 期捕获后也换占位',
-    $ebBuild->childAt(0)?->widget() instanceof ErrorPlaceholder,
-);
-// ★ W2/S3：settle() 从"单遍"变成"多轮循环"后，这一条才真的有意义 ——
-//   边界覆写的已改名 settlePass() ⇒ **每一遍**都在边界内，异常不会从第 2 遍起
-//   绕过边界直冒帧循环（那会让错误边界粒度从"到节点"退化成"到整帧"且不报错）。
-check(
-    '错误边界 · 多轮收敛下仍到节点（异常没冒到帧循环）',
-    !str_contains(implode('|', Errors::recentDiagnostics()), '帧循环：未捕获异常'),
-    '环形缓冲里出现了帧循环级未捕获异常',
-);
-
-// D. 错误边界 · 渲染期（第 ③ 层：盒自己兜底，不冒泡）
-//    ★ loose 下才看得到"自然尺寸"：tight 的 constrain 会把下界提到上限
-//      （Spinner 任务确认过的语义 —— 紧约束下父把尺寸定死），fallback 的
-//      160×48 会被撑成 200×200，那是约束语义不是兜底失效。
-$rebLayout = new RenderErrorBoundary();
-$rebLayout->setChild(new LayoutBoomBox());
-$rebLayout->layout(BoxConstraints::loose(new Size(200.0, 200.0)));
-check(
-    '错误边界 · 渲染期 layout 异常 ⇒ 兜底自然尺寸（160×48，不放大到 INF）',
-    $rebLayout->size()?->width === 160.0 && $rebLayout->size()?->height === 48.0,
-    sprintf('实际 %.6g × %.6g', $rebLayout->size()?->width ?? -1, $rebLayout->size()?->height ?? -1),
-);
-$rebTight = new RenderErrorBoundary();
-$rebTight->setChild(new LayoutBoomBox());
-$rebTight->layout(BoxConstraints::tight(new Size(200.0, 200.0)));
-check(
-    '错误边界 · tight 约束下兜底地被提到上限（constrain 语义，非失效）',
-    $rebTight->size()?->width === 200.0,
-);
-$rebPaint = new RenderErrorBoundary();
-$rebPaint->setChild(new PaintBoomBox());
-$rebPaint->layout(BoxConstraints::tight(new Size(100.0, 60.0)));
-$paintThrew = false;
-try {
-    $rebPaint->paint(new RecordingCanvas(new DisplayList()));
-} catch (Throwable) {
-    $paintThrew = true;
-}
-check(
-    '错误边界 · 渲染期 paint 异常 ⇒ 盒兜底（paint 不冒泡）',
-    !$paintThrew,
-);
-check(
-    '错误边界 · paint 兜底有墨（红底叉框真的画了）',
-    inkCount(spinCanvas($rebPaint, 100, 60)) > 0,
-);
+// ── B/C/D 三层兜底（构造期 / build 期 / 渲染期）已迁出 ─────────────────────
+//   · `tests/Feature/Widget/ErrorBoundaryTest.php` —— 构造期（rebuild 捕获 · 换占位 ·
+//     带原文 · 占位出墨）· build 期（settle 捕获 · 多轮收敛仍在边界内）· 渲染期
+//     （layout 兜底 160×48 / tight 被提到上限 / paint 不冒泡且兜底有墨）+ CJK 上屏
+//   ★ 第 ④ 层（无边界 ⇒ 帧循环 Fatal）留下面两条子进程判据。
 
 // E. 无边界 ⇒ Fatal 序列（S3 的另半边：帧循环吞异常是 G2 不容的半静默）
 [$code, $output] = runCase(__FILE__, 'noboundary', null);
@@ -6461,215 +6344,6 @@ check(
     str_contains(logText($log), '未捕获异常冒到帧末'),
 );
 
-// F. 加速键接线（§9.1 第 ① 环：焦点之前）
-$accelApp = new AccelApplication();
-$accelApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
-$accelApp->dispatchInput(KeyEvent::down(KeyChord::ctrl('R')));
-check(
-    '加速键 · Ctrl+R ⇒ 命令走全链（第 ① 环命中，焦点之前）',
-    $accelApp->seen === ['accel.fire'],
-);
-$accelApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
-check(
-    '加速键 · 未绑定的键不走第 ① 环（Tab 仍归焦点链，seen 不变）',
-    $accelApp->seen === ['accel.fire'],
-);
-
-// G. 让位规则 ②：焦点控件声明独占 ⇒ 不吃快捷键
-$claimApp = new AccelApplication();
-$claimApp->withClaimer = true;
-$claimApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
-$claimApp->dispatchInput(KeyEvent::down(KeyChord::tab())); // 焦点落到 TextField（文档序第一个可聚焦）
-check(
-    '加速键 · 焦点控件声明独占 Ctrl+A ⇒ 让位给输入框（seen 为空）',
-    $claimApp->seen === [],
-);
-$claimApp->dispatchInput(KeyEvent::down(KeyChord::ctrl('R')));
-check(
-    '加速键 · 未独占的组合照常命中（Ctrl+R 仍走第 ① 环）',
-    $claimApp->seen === ['accel.fire'],
-);
-
-// ★ 2026-10-21：`TextField` 构造时自带 `claimKeys([ctrl('A')])` —— 让位规则 ②
-//   的**第一个生产消费者**（此前 claims() 只有夹具在声明）。不带 withClaimer
-//   也照样让位，且键真的落到 `TextFieldState::handleKey()`（全选发生）。
-$prodApp = new AccelApplication();
-$prodApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
-$prodApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
-$prodApp->dispatchInput(KeyEvent::down(KeyChord::ctrl('A')));
-$prodEl = findElement($prodApp->rootElement(), fn(Element $el) => $el->widget() instanceof TextField);
-$prodState = $prodEl instanceof StatefulElement ? $prodEl->state() : null;
-check(
-    '让位规则② · TextField 自带 Ctrl+A 独占（让位给输入框，且全选真的发生）',
-    $prodApp->seen === [] && $prodState instanceof TextFieldState
-        && $prodState->selectionStart() === 0 && $prodState->selectionEnd() === 3,
-    'seen=[' . implode(',', $prodApp->seen) . '] sel='
-        . ($prodState?->selectionStart() ?? -1) . '..' . ($prodState?->selectionEnd() ?? -1),
-);
-
-// H. 编辑命令环 + 指针框选（2026-10-21，#50：§9.1 让位规则 ② 的剪贴板侧）
-//    夹具应用：padding24 里两个字段（abc / xyz），Ctrl+C / Ctrl+V **另绑**
-//    加速键 ⇒ 门控放行时它们必须开火（证明键没被吞），环吃掉时 seen 必须
-//    不动（证明优先级正确）。
-$editApp = new EditApplication();
-$editApp->clip = new FakeClipboard();
-$editApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(300.0, 200.0)));
-$editApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
-$editEl = findElement($editApp->rootElement(), fn(Element $el) => $el->widget() instanceof TextField);
-$editState = $editEl instanceof StatefulElement ? $editEl->state() : null;
-check(
-    '编辑命令 · Tab 焦点进第一个字段（编辑态同步开）',
-    $editState instanceof TextFieldState && $editState->isEditing(),
-    var_export($editState instanceof TextFieldState, true),
-);
-
-// —— 门控 ④（C/X 无选区）⇒ 整族回落给加速键
-$editApp->dispatchInput(KeyEvent::down(KeyChord::ctrl('C')));
-check(
-    '编辑命令 · 无选区（门控④）⇒ Ctrl+C 回落加速键（键没被吞）',
-    $editApp->seen === ['app.copy'] && $editApp->clip->text === '',
-    'seen=[' . implode(',', $editApp->seen) . '] clip=' . var_export($editApp->clip->text, true),
-);
-
-// —— Ctrl+A：让位后的键落点（不进加速键，全选发生）
-$editApp->dispatchInput(KeyEvent::down(KeyChord::ctrl('A')));
-check(
-    '编辑命令 · Ctrl+A 归输入框（加速键不吃，全选 [0,3]）',
-    $editState?->selectionStart() === 0 && $editState?->selectionEnd() === 3
-        && $editApp->seen === ['app.copy'],
-    'sel=' . ($editState?->selectionStart() ?? -1) . '..' . ($editState?->selectionEnd() ?? -1),
-);
-
-// —— 环吃掉：复制（有选区 + 有剪贴板）
-$editApp->dispatchInput(KeyEvent::down(KeyChord::ctrl('C')));
-check(
-    '编辑命令 · 有选区 + 有剪贴板 ⇒ 复制进剪贴板，加速键不吃',
-    $editApp->clip->text === 'abc' && $editApp->seen === ['app.copy'],
-    'clip=' . var_export($editApp->clip->text, true) . ' seen=[' . implode(',', $editApp->seen) . ']',
-);
-
-// —— 剪切：写剪贴板 + 删掉选区（不等同于复制）
-$editApp->dispatchInput(KeyEvent::down(KeyChord::ctrl('X')));
-check(
-    '编辑命令 · 剪切 = 写剪贴板 + 删掉选区（字段空了）',
-    $editApp->clip->text === 'abc' && $editState?->text() === '',
-    'clip=' . var_export($editApp->clip->text, true) . ' text=' . var_export($editState?->text(), true),
-);
-
-// —— 粘贴：替换选区（此处无选区 ⇒ 插在插入符）
-$editApp->clip->text = 'XY';
-$editApp->dispatchInput(KeyEvent::down(KeyChord::ctrl('V')));
-check(
-    '编辑命令 · 粘贴把剪贴板内容写进字段（加速键不吃）',
-    $editState?->text() === 'XY' && $editApp->seen === ['app.copy'],
-    'text=' . var_export($editState?->text(), true) . ' seen=[' . implode(',', $editApp->seen) . ']',
-);
-
-// —— 门控 ③（平台没递剪贴板）⇒ 有选区也回落
-$noClipApp = new EditApplication();
-$noClipApp->clip = null;
-$noClipApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(300.0, 200.0)));
-$noClipApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
-$noClipApp->dispatchInput(KeyEvent::down(KeyChord::ctrl('A')));
-$noClipApp->dispatchInput(KeyEvent::down(KeyChord::ctrl('C')));
-check(
-    '编辑命令 · 平台没递剪贴板（门控③）⇒ 有选区也回落给加速键',
-    $noClipApp->seen === ['app.copy'],
-    'seen=[' . implode(',', $noClipApp->seen) . ']',
-);
-
-// —— 门控 ④（V 的剪贴板空）⇒ 回落
-$emptyClipApp = new EditApplication();
-$emptyClipApp->clip = new FakeClipboard();   // text='' ⇒ hasText() false
-$emptyClipApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(300.0, 200.0)));
-$emptyClipApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
-$emptyClipApp->dispatchInput(KeyEvent::down(KeyChord::ctrl('V')));
-$emptyEl = findElement($emptyClipApp->rootElement(), fn(Element $el) => $el->widget() instanceof TextField);
-$emptyState = $emptyEl instanceof StatefulElement ? $emptyEl->state() : null;
-check(
-    '编辑命令 · 剪贴板空（门控④）⇒ Ctrl+V 回落加速键，字段不动',
-    $emptyClipApp->seen === ['app.paste'] && $emptyState?->text() === 'abc',
-    'seen=[' . implode(',', $emptyClipApp->seen) . '] text=' . var_export($emptyState?->text(), true),
-);
-
-// —— 门控 ②（焦点不在输入框）⇒ 回落
-$idleApp = new EditApplication();
-$idleApp->clip = new FakeClipboard();
-$idleApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(300.0, 200.0)));
-$idleApp->dispatchInput(KeyEvent::down(KeyChord::ctrl('C')));
-check(
-    '编辑命令 · 无焦点（门控②）⇒ 整族回落给加速键',
-    $idleApp->seen === ['app.copy'],
-    'seen=[' . implode(',', $idleApp->seen) . ']',
-);
-
-// —— 指针框选（§A.2.9 的指针侧）：down 落插入符 / move 延伸 / up·leave 收口
-$selApp = new EditApplication();
-$selApp->clip = new FakeClipboard();
-$selApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(300.0, 200.0)));
-$selEl = findElement($selApp->rootElement(), fn(Element $el) => $el->widget() instanceof TextField);
-$selState = $selEl instanceof StatefulElement ? $selEl->state() : null;
-$selBox = $selEl?->effectiveBox();
-check(
-    '框选 · 夹具就绪（字段盒在 padding 24 处，宽度由内容定）',
-    $selBox instanceof RenderTextField && boxOrigin($selBox) === [24.0, 24.0],
-    'origin=' . implode(',', $selBox === null ? [] : boxOrigin($selBox)),
-);
-[$bx, $by] = boxOrigin($selBox);
-$bw = $selBox->size()->width;   // 字段盒宽（点"右端"必须点在盒内 —— 盒外焦点落不上）
-
-$selApp->dispatchInput(PointerEvent::down($bx + 1.0, $by + 1.0));
-check(
-    '框选 · down 落左边缘 ⇒ 插入符 0、无选区（点一下不继承旧选区）',
-    $selState?->caretOffset() === 0 && $selState?->hasSelection() === false,
-    'caret=' . ($selState?->caretOffset() ?? -1) . ' sel=' . var_export($selState?->hasSelection(), true),
-);
-
-$selApp->dispatchInput(PointerEvent::move($bx + 200.0, $by + 4.0));
-check(
-    '框选 · 向右拖 ⇒ 选区延伸到末尾（[0,3]，selectedText 完整）',
-    $selState?->selectionStart() === 0 && $selState?->selectionEnd() === 3
-        && $selState?->selectedText() === 'abc',
-    'sel=' . ($selState?->selectionStart() ?? -1) . '..' . ($selState?->selectionEnd() ?? -1),
-);
-
-$selApp->dispatchInput(PointerEvent::up($bx + 200.0, $by + 4.0));
-$selApp->dispatchInput(PointerEvent::move($bx + 250.0, $by + 4.0));
-check(
-    '框选 · up 收口后再 move 不延伸（手势结束，选区留在字段里）',
-    $selState?->selectionStart() === 0 && $selState?->selectionEnd() === 3
-        && $selState?->selectedText() === 'abc',
-    'sel=' . ($selState?->selectionStart() ?? -1) . '..' . ($selState?->selectionEnd() ?? -1),
-);
-
-// 反向：点在右端（折叠）⇒ 向左拖 ⇒ 活动端在左；leave 收口后不再延伸
-$selApp->dispatchInput(PointerEvent::down($bx + $bw - 1.0, $by + 4.0));
-check(
-    '框选 · 再点一次 ⇒ 旧选区折叠、插入符移到点中处',
-    $selState?->caretOffset() === 3 && $selState?->hasSelection() === false,
-    'caret=' . ($selState?->caretOffset() ?? -1) . ' sel=' . var_export($selState?->hasSelection(), true),
-);
-$selApp->dispatchInput(PointerEvent::move($bx + 1.0, $by + 4.0));
-check(
-    '框选 · 反向拖动同样成选区（活动端在左，[0,3]）',
-    $selState?->selectionStart() === 0 && $selState?->selectionEnd() === 3,
-    'sel=' . ($selState?->selectionStart() ?? -1) . '..' . ($selState?->selectionEnd() ?? -1),
-);
-$selApp->dispatchInput(PointerEvent::leave($bx + 1.0, $by + 4.0));
-$selApp->dispatchInput(PointerEvent::move($bx + 200.0, $by + 4.0));
-check(
-    '框选 · leave 收口后再 move 不延伸（指针无捕获的诚实边界）',
-    $selState?->selectionStart() === 0 && $selState?->selectionEnd() === 3
-        && $selState?->selectedText() === 'abc',
-    'sel=' . ($selState?->selectionStart() ?? -1) . '..' . ($selState?->selectionEnd() ?? -1),
-);
-
-$selCursor = $selApp->dispatchInput(PointerEvent::move($bx + 2.0, $by + 2.0));
-check(
-    '光标 · 指针移入字段 ⇒ IBeam（§9.1 三方消费第三项）',
-    $selCursor === CursorShape::IBeam,
-    var_export($selCursor, true),
-);
 
 // ── ㉞ 菜单 / 浮层 / 拖放（任务 #6：O-20 方案 A + §9.1 关闭语义 + §A.3.5）──
 
