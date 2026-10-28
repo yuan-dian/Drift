@@ -27,11 +27,17 @@ declare(strict_types=1);
  */
 
 require __DIR__ . '/../../tools/autoload.php';
+// 桥的解释器替身（与 smoke / phpunit 同一份）。`material-alpha-no-frameless` 在
+// 走到桥之前就 Fatal 了，但加载它才能保证"崩在硬校验上"而不是"崩在缺函数上"。
+require_once __DIR__ . '/../../tools/fakes/win32.php';
 
 use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Size;
 use Drift\Logging\PatternFormatter;
+use Drift\Platform\Win32\Win32WindowHost;
+use Drift\Platform\WindowMaterial;
+use Drift\Rendering\Color;
 use Drift\Text\DeterministicFontManager;
 use Drift\Text\DeterministicMetricsProvider;
 use Drift\Text\DeterministicShaper;
@@ -111,6 +117,16 @@ $cases = [
     // 日志 pattern 未知占位符 ⇒ Fatal（G2：不静默产出缺字段的行）。
     'log-bad-pattern' => static function (): void {
         PatternFormatter::compile('%l %x oops');
+    },
+
+    // 带 alpha 的底色却没 setFrameless() ⇒ Fatal。
+    // ★ 失效形态是"壳静默回落 GDI ⇒ 透明没生效且无任何报错"，属本仓最讨厌的一类
+    //   （`Win32WindowHost::applyMaterial()` 里那条 ★★ 硬校验）。
+    'material-alpha-no-frameless' => static function (): void {
+        (new Win32WindowHost())->applyMaterial(
+            1,
+            WindowMaterial::make()->background(new Color(0xFF, 0xFF, 0xFF, 0xB0)),
+        );
     },
 ];
 
