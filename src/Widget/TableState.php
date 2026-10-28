@@ -1559,14 +1559,14 @@ final class TableState extends State implements Scrollable, EditableText
             });
         }
 
-        // ★ 双击进编辑（阶段 7b）：**放在选择之前** —— 本方法尾部有三处早退
+        // ★ 双击 / 三击（阶段 7b + 9）：**放在选择之前** —— 本方法尾部有三处早退
         //   （没配 `selection()` / 没有 `keyOf` 的结果），双击不该被它们吃掉。
         //   ★ 判据是 `isDoubleClick()`（`=== 2`）而不是"≥ 2"：三击的第三下会落到
         //     刚建出来的编辑器上，用"≥"会把刚进的编辑**收口再重开**（闪一下）。
         //   ★ 不可编辑的列 ⇒ `beginEdit()` 自己返回 false，这里什么都不做（单击
         //     只落光标格）—— 与"Enter 在不可编辑列上放行"是同一条纪律。
-        if ($event->isDoubleClick() && $contentX !== null) {
-            $this->beginEdit($index, $col, $contentX);
+        if ($contentX !== null && $event->clickCount >= 2) {
+            $this->handleMultiClick($index, $col, $contentX, $event->clickCount);
         }
 
         $view = $this->view();
@@ -1609,6 +1609,100 @@ final class TableState extends State implements Scrollable, EditableText
 
         $notify = $view->selectionChangeHandler();
         $notify?->__invoke($picked[0]);
+    }
+
+    /**
+     * 双击 / 三击的分流（**选词 / 选段**，阶段 9）。
+     *
+     * ## 为什么不是"三击选段"单独一条分支
+     *
+     * 连击计数是**累加**的（`TapTracker` 不封顶），所以同一格上第 2、3、4 下都会
+     * 走到这里。真正要分的不是"第几下"，而是**当下在不在编辑**：
+     *
+     * | 状态 | 双击 | 三击 |
+     * |---|---|---|
+     * | 还没编辑 | 进编辑 + 落插入符（阶段 7b 的既有手感，不变） | 进编辑 + **选中整段** |
+     * | 已在**这一格**编辑 | **选中词** | **选中整段** |
+     *
+     * ## ★ 已在编辑时**不重开**：这里以前有一条静默丢字的路径
+     *
+     * 旧实现无条件 `beginEdit()`，而它的第一句是 `commitEditing()`：把用户刚打的字
+     * 当成"提交"发给应用，若应用没把值写回行数据，`editableText()` 又会取回旧文本
+     * ⇒ **双击一下，刚输入的内容消失**。没有报错、没有日志（G2 禁止的半静默）。
+     * 现在"同一格"直接走选区，连草稿都不重建。
+     *
+     * ★ 不可编辑的列 / 拿不到指针内容坐标 ⇒ 什么都不做（与单击同一条纪律）。
+     */
+    private function handleMultiClick(int $row, int $col, float $contentX, int $count): void
+    {
+        if ($this->isEditingCell($row, $col)) {
+            $this->selectInEditingDraft($col, $contentX, $count);
+
+            return;
+        }
+
+        if ($count === 2) {
+            $this->beginEdit($row, $col, $contentX);
+
+            return;
+        }
+
+        // 三击及以上、还没在编辑 ⇒ 进编辑后立刻整段选中（"三击选中单元格"）
+        if ($this->beginEdit($row, $col, $contentX)) {
+            $this->selectInEditingDraft($col, $contentX, $count);
+        }
+    }
+
+    /**
+     * 当前编辑会话是不是**正好这一格**。
+     *
+     * ★ 不能拿行下标比：`editingRef` 存的是 **key**（排序后行下标会变），
+     *   所以两边都按 key 解析一次（`keyIndex()` 那条路只答"还在不在"）。
+     */
+    private function isEditingCell(int $row, int $col): bool
+    {
+        $ref = $this->editingRef;
+        if ($ref === null) {
+            return false;
+        }
+
+        $view = $this->view();
+        $rows = $view->rowList();
+        $columns = $view->columnList();
+        $keyOf = $view->keyMapper();
+        if ($keyOf === null || !isset($rows[$row], $columns[$col])) {
+            return false;
+        }
+
+        return $keyOf($rows[$row]) === $ref['row'] && $columns[$col]->keyName() === $ref['col'];
+    }
+
+    /**
+     * 按指针位置选中词（双击）或段（三击）。
+     *
+     * ★ 偏移必须**从指针重算**，不能用草稿当前的插入符：那一下双击发生在词的
+     *   中间，而插入符还停在上一次点击的位置 —— 用后者会"选到另一个词"，
+     *   且离得近时看不出错。
+     * ★ 换算走 `pointerCaretOffset()`（与双击进编辑同一个函数）：两份换算的表现是
+     *   "选中的词比指针所在的那个偏一个字符"。
+     */
+    private function selectInEditingDraft(int $col, float $contentX, int $count): void
+    {
+        $draft = $this->draft;
+        $columns = $this->view()->columnList();
+        if ($draft === null || !isset($columns[$col])) {
+            return;
+        }
+
+        $offset = $this->pointerCaretOffset($columns[$col], $draft->text(), $col, $contentX);
+
+        if ($count >= 3) {
+            $this->settleDraft($draft->selectParagraphAt($offset));
+
+            return;
+        }
+
+        $this->settleDraft($draft->selectWordAt($offset));
     }
 
     /**

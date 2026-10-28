@@ -64,4 +64,70 @@ final class TextDraftTest extends TestCase
         self::assertSame('XYcd', $draft->text());
         self::assertFalse($draft->hasSelection());
     }
+
+    // ── 按词 / 段选（双击 / 三击的手感来源）────────────────────────────
+
+    /**
+     * 活动端落在**选区末尾**。
+     *
+     * ★ 这条不报"选了什么"，报的是"接下来按 Shift+→ 从哪走"：活动端若在词首，
+     *   扩选会从词首往右重选，用户看到的是"选区缩回去再长出来"。
+     */
+    public function testSelectWordLeavesActiveEndAtSelectionEnd(): void
+    {
+        $draft = new TextDraft('hello world');
+        $draft->moveCaret(7);
+
+        self::assertSame(TextChange::Caret, $draft->selectWordAt(7));
+        self::assertSame('world', $draft->selectedText());
+        self::assertSame(11, $draft->caretOffset(), '插入符（活动端）在选区末尾');
+    }
+
+    /** 同一处再选一次 ⇒ `None`（不重画）；否则双击连击的每一下都会标脏 */
+    public function testSelectWordIsIdempotent(): void
+    {
+        $draft = new TextDraft('hello world');
+        $draft->selectWordAt(7);
+
+        self::assertSame(TextChange::None, $draft->selectWordAt(7));
+    }
+
+    /** 段 = 整串（单行编辑器），与 `selectAll()` 同结果但走的是另一条路 */
+    public function testSelectParagraphCoversWholeSingleLine(): void
+    {
+        $draft = new TextDraft('用户 1');
+        $draft->selectParagraphAt(3);
+
+        self::assertSame('用户 1', $draft->selectedText());
+    }
+
+    /**
+     * `selectRange` 的两个端点都吸附到字符边界，且**顺序反了要换过来**。
+     *
+     * ★ 不换的话 `selectionStart() > selectionEnd()`：高亮宽度为负，画面上是
+     *   "什么都没选中"，而 `selectedText()` 返回空串 —— 两处都不知道自己错了。
+     */
+    public function testSelectRangeSnapsAndOrdersEndpoints(): void
+    {
+        $draft = new TextDraft('中文abc');
+        // 0..9 反向给；1 落在"中"的字节中间 ⇒ 吸附到 0
+        $draft->selectRange(9, 1);
+
+        self::assertSame('中文abc', $draft->selectedText());
+        self::assertSame(0, $draft->selectionStart());
+        self::assertSame(9, $draft->selectionEnd());
+    }
+
+    /**
+     * ★ 空区间 = 折叠（等于只挪插入符），不报错：空文本里双击、双击在边界上
+     *   都会走到这里。若这里抛异常，双击空白格会崩在真机上。
+     */
+    public function testSelectRangeOfEmptySpanCollapses(): void
+    {
+        $draft = new TextDraft('');
+        $draft->selectWordAt(0);
+
+        self::assertFalse($draft->hasSelection());
+        self::assertSame(0, $draft->caretOffset());
+    }
 }

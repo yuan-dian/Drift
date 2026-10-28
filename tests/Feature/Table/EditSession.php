@@ -8,6 +8,7 @@ use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Geometry\Rect;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
+use Drift\Input\PointerEvent;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderTextField;
 use Drift\Widget\Element;
@@ -35,10 +36,19 @@ final class EditSession
     ) {
     }
 
-    /** 新会话：焦点已 Tab 进表、首帧已推 */
-    public static function open(): self
+    /**
+     * 新会话：焦点已 Tab 进表、首帧已推。
+     *
+     * @param list<array{id: int, name: string}>|null $rows 换一份行数据（缺省用夹具
+     *        的三行单字）；★ 必须在 `attach()` **之前**换 —— 之后的换法要走
+     *        `store->setRows()`，那会顺带触发一次重建，首帧口径就说不清了。
+     */
+    public static function open(?array $rows = null): self
     {
         $app = new TableCellEditApplication();
+        if ($rows !== null) {
+            $app->store->setRows($rows);
+        }
         $app->attach(new SurfaceProbe(), Fixtures::tight());
         $app->focus()?->focusNext();
         $app->frame(16.0, Fixtures::tight());
@@ -72,6 +82,23 @@ final class EditSession
     public function type(string $char): void
     {
         $this->press(KeyEvent::character($char));
+    }
+
+    /**
+     * 一次点击（按下 + 抬起）+ 推帧。
+     *
+     * ★ `$at` 是**按下**的时间 —— 连击判据只看按下（抬起只用来收口拖动）。
+     * ★ 连击是**跳着给时间**造出来的：`TapTracker` 的窗口 500ms，两次 `$at` 相差
+     *   超过它就成了新的一次单击。想造双击就挨着给（1000/1100），想造"慢双击"
+     *   就隔开给（1000/1600）—— 两者的区别只有这一个数字，别写成注释里的假设。
+     */
+    public function tap(float $x, float $y, float $at): void
+    {
+        $this->app->dispatchInput(PointerEvent::down($x, $y), $at);
+        $this->app->dispatchInput(PointerEvent::up($x, $y), $at + 20.0);
+        // 点完要推帧才看得到布局结果（`caretRect()` / `selectionRect()` 取的是
+        // 盒的**当前**位置，而盒在帧末才换）
+        $this->tick();
     }
 
     /** 编辑盒（`null` = 当前没有编辑格在画） */

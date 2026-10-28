@@ -5,7 +5,6 @@ namespace Drift\Dev\Tests\Feature\Table;
 
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Geometry\Scale;
-use Drift\Input\PointerEvent;
 use Drift\Widget\BuildContext;
 use Drift\Widget\InlineEditorBox;
 
@@ -25,7 +24,7 @@ final class TapTest extends SmokeTestCase
     {
         $s = EditSession::open();
 
-        self::clickAt($s, 150.0, 92.0, 1000.0);
+        $s->tap(150.0, 92.0, 1000.0);
 
         check(
             'Table · 指针：单击 ⇒ 光标格落到**指针那一格**（行 1 / 列 1，以前列不动）',
@@ -40,8 +39,8 @@ final class TapTest extends SmokeTestCase
     {
         $s = EditSession::open();
 
-        self::clickAt($s, 150.0, 92.0, 1000.0);
-        self::clickAt($s, 150.0, 92.0, 1100.0);
+        $s->tap(150.0, 92.0, 1000.0);
+        $s->tap(150.0, 92.0, 1100.0);
 
         check(
             'Table · 指针：双击可编辑格 ⇒ 进编辑（`editingCell()` 把 key 解析回行下标）',
@@ -57,8 +56,8 @@ final class TapTest extends SmokeTestCase
     {
         $s = EditSession::open();
 
-        self::clickAt($s, 150.0, 92.0, 1000.0);
-        self::clickAt($s, 150.0, 92.0, 1600.0);
+        $s->tap(150.0, 92.0, 1000.0);
+        $s->tap(150.0, 92.0, 1600.0);
 
         check(
             'Table · 指针：两次点击隔 600ms ⇒ **不进编辑**（壳给的时间真的传到了判据里）',
@@ -74,8 +73,8 @@ final class TapTest extends SmokeTestCase
         $s = EditSession::open();
 
         // x=50 落在 id 列（不可编辑）
-        self::clickAt($s, 50.0, 92.0, 1000.0);
-        self::clickAt($s, 50.0, 92.0, 1100.0);
+        $s->tap(50.0, 92.0, 1000.0);
+        $s->tap(50.0, 92.0, 1100.0);
 
         check(
             'Table · 指针：双击**不可编辑**列 ⇒ 不进编辑，光标格仍落到该列',
@@ -103,13 +102,13 @@ final class TapTest extends SmokeTestCase
         $split = 108.0 + $glyphW;
 
         $left = EditSession::open();
-        self::clickAt($left, 108.0 + $glyphW * 0.25, 92.0, 1000.0);
-        self::clickAt($left, 108.0 + $glyphW * 0.25, 92.0, 1100.0);
+        $left->tap(108.0 + $glyphW * 0.25, 92.0, 1000.0);
+        $left->tap(108.0 + $glyphW * 0.25, 92.0, 1100.0);
         $leftCaret = $left->caret();
 
         $right = EditSession::open();
-        self::clickAt($right, 108.0 + $glyphW * 0.75, 92.0, 1000.0);
-        self::clickAt($right, 108.0 + $glyphW * 0.75, 92.0, 1100.0);
+        $right->tap(108.0 + $glyphW * 0.75, 92.0, 1000.0);
+        $right->tap(108.0 + $glyphW * 0.75, 92.0, 1100.0);
         $rightCaret = $right->caret();
 
         check(
@@ -126,14 +125,5 @@ final class TapTest extends SmokeTestCase
         );
 
         $this->flushChecks();
-    }
-
-    /** 按下 + 抬起成一次点击；`$at` 是**按下**的时间（链只看按下） */
-    private static function clickAt(EditSession $s, float $x, float $y, float $at): void
-    {
-        $s->app->dispatchInput(PointerEvent::down($x, $y), $at);
-        $s->app->dispatchInput(PointerEvent::up($x, $y), $at + 20.0);
-        // 点完要推帧才看得到布局结果（`caretRect()` 取的是盒的当前位置）
-        $s->tick();
     }
 }

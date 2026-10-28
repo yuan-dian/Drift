@@ -265,6 +265,58 @@ final class TextDraft
     }
 
     /**
+     * 选中 `[start, end)`（两个端点都吸附到字符边界；顺序反了就换过来）。
+     *
+     * ★ 活动端落在 `end`（`caret = extent = end`）：与 `extendSelectionTo()` 同一
+     *   套模型 —— 撤选区的方向键、下一次 Shift 扩选都从活动端出发。把活动端放在
+     *   `start` 的现象是"选完词再按 Shift+→ 变成从词首重选"。
+     * ★ `start === end` ⇒ 折叠（等于"只挪插入符"），不报错：空文本里双击、
+     *   或双击在纯空白上被 `wordAt()` 判成空段时都会走到这里。
+     */
+    public function selectRange(int $start, int $end): TextChange
+    {
+        $from = $this->snap($start);
+        $to = $this->snap($end);
+        if ($to < $from) {
+            $swap = $from;
+            $from = $to;
+            $to = $swap;
+        }
+
+        if ($this->anchor === $from && $this->extent === $to) {
+            return TextChange::None;
+        }
+
+        $this->anchor = $from;
+        $this->extent = $to;
+        $this->caret = $to;
+
+        return TextChange::Caret;
+    }
+
+    /**
+     * 选中插入符处的**词**（双击的手感来源）。
+     *
+     * ★ 边界算法在 `TextBoundary`（纯函数）：这里只做"算边界 → 落到三段状态"的
+     *   转换。放在这里而不是调用方，是因为调用方拿着草稿却还要自己 `snap()`
+     *   两次、自己判断顺序 —— 那正是"两份实现差一个字节"的入口。
+     */
+    public function selectWordAt(int $offset): TextChange
+    {
+        $range = TextBoundary::wordAt($this->buffer, $this->snap($offset));
+
+        return $this->selectRange($range[0], $range[1]);
+    }
+
+    /** 选中插入符处的**段**（三击；单行编辑器里就是整串） */
+    public function selectParagraphAt(int $offset): TextChange
+    {
+        $range = TextBoundary::paragraphAt($this->buffer, $this->snap($offset));
+
+        return $this->selectRange($range[0], $range[1]);
+    }
+
+    /**
      * 用 `$text` 整段替换选区；无选区 ⇒ 退化成在插入符处插入。
      *
      * ★ 键入 / 粘贴 / 剪切三方共用这一个落点 ⇒ 不可能走出两种语义。
