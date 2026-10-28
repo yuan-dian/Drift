@@ -130,4 +130,32 @@ final class ScrollTest extends SmokeTestCase
 
         $this->flushChecks();
     }
+
+    /**
+     * 内容装得下时滚 100 ⇒ State 的偏移必须回夹到 0（不许停在 100）。
+     *
+     * ★ 这条是**弱档**：`Table` 的夹取必然伴随换窗 ⇒ 重建时 build 里那次"夹取写回"
+     *   会把变异掩盖掉，所以它证明不了"`setScrollOffset()` 的返回值救了它"。
+     *   强档在 `Widget/ScrollViewScrollTest::testOffsetClampsBackWhenContentFits`
+     *   （`ScrollView` 没有窗口概念 ⇒ 只有返回值能救）。两档都留：这里守"用户可见
+     *   的行为"，那边守"机制"。
+     */
+    public function testOffsetClampsBackWhenContentFits(): void
+    {
+        $tableFrame = Fixtures::frame(...);
+
+        $root = Fixtures::mount(Fixtures::build(3));   // 3 × 40 = 120 < 行区 208
+        $state = Fixtures::stateOf($root);
+        $tableFrame($root);
+        $state?->scrollBy(100.0);
+        $tableFrame($root);
+
+        check(
+            'Table · 内容装得下时滚动 ⇒ State 的偏移回夹到 0（不许停在 100）',
+            $state?->offsetY() === 0.0,
+            (string) ($state?->offsetY() ?? -1.0),
+        );
+
+        $this->flushChecks();
+    }
 }

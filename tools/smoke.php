@@ -176,7 +176,6 @@ use Drift\Widget\LazyColumn;
 use Drift\Widget\Grid;
 use Drift\Widget\LazyGrid;
 use Drift\Widget\ScrollView;
-use Drift\Widget\ScrollViewState;
 use Drift\Widget\SemanticsBuilder;
 use Drift\Widget\Element;
 use Drift\Widget\Expanded;
@@ -6984,36 +6983,22 @@ check(
 //     `tests/Support/bootstrap.php` 也 require 同一份（否则那 7 条"桥收到什么"的断言
 //     在 PHPUnit 侧加载不到）。`drift_win_material_caps()` 顺带改成可配
 //     （`$GLOBALS['DRIFT_SMOKE_WIN_CAPS']`），否则"位 ↔ getter 名字"证伪不了。
-
-// ── ㊾ P2 阶段 1：`Table`（固定表头 + 虚拟行 + 列宽三层）────────────────────
-//   四条验收闸门（`docs/DESIGN-TABLE-2026-10-26.md` §6）在这里变成可证伪断言：
-//   ① 10000 行只造一屏 ② 表头不随竖向滚动移动 ③ 表头与数据行逐像素对齐
-//   ④ 未滚动时行区紧贴表头下方（"表头 + 行区简单堆叠"的等价性，为阶段 5 留退路）
-//   ★ 反例自检：① 窗口改成"全部行" ⇒ ①红（6 → 10000）；
-//     ② 表头也吃 offsetY ⇒ ②红；③ 两处各算一次列宽 ⇒ ③红（宽序列不等）；
-//     ④ 把表头高算进内容坐标 ⇒ ④红（行区 offsetY 32 → 64，整条错位）。
-$tableRowsOf = static function (int $count): array {
-    $rows = [];
-    for ($i = 0; $i < $count; $i++) {
-        $rows[] = ['id' => $i, 'name' => '用户 ' . $i, 'city' => '城市 ' . ($i % 7)];
-    }
-
-    return $rows;
-};
-
-$tableBuild = static function (int $count) use ($tableRowsOf): Table {
-    $columns = [
-        TableColumn::make('id', 'ID')->field('id')->width(TableColumnWidth::fixed(60.0)),
-        TableColumn::make('name', '姓名')->field('name')->width(TableColumnWidth::flex(2.0)),
-        TableColumn::make('city', '城市')->field('city')->width(TableColumnWidth::flex(1.0)),
-    ];
-
-    return Table::make($columns, $tableRowsOf($count))
-        ->keyOf(static fn(array $row): int => $row['id'])
-        ->rowHeight(40.0)
-        ->headerHeight(32.0);
-};
-
+// ── ㊾ P2 阶段 1：`Table`（固定表头 + 虚拟行 + 列宽三层）已迁出 ──────────────
+//   → `tests/Feature/Table/Phase1Test.php` —— ①10000 行只造一屏+缓冲 / ②maxScroll 按完整行高 /
+//     ③列宽三层 / ④表头与数据行逐像素对齐 / ⑤未滚时行区紧贴表头 / ⑥滚动后表头不动且第 1 行
+//     顶边落在 24 / 缓冲带让第 0 行不卸载。
+//     ★ 这 9 条在 smoke 里是**从未删除的重复副本**（标签、数字、注释与测试文件一字不差）——
+//       2026-10-28 第 26 批清掉，smoke 少 9 条纯冗余。
+//   → `tests/Feature/Table/ChromeTest.php` —— 斑马行 / 滚动条可见性与 `ScrollBarHost` /
+//     5 条像素（表头底色 · 斑马 · 行区下方空白 · 滚动后裁剪 · 滚动后行位置）。
+//   → `tests/Feature/Table/HitPartitionTest.php` —— 命中分区（表头区的点进表头子树 /
+//     行区的点进行区子树，不是"命中了个非 null"）。
+//   → `tests/Feature/Table/WidthDriftTest.php` —— 首帧视口宽漂移（发现差异要一帧 /
+//     按真实盒宽重算 / 收敛后不再空转）。
+//   → `tests/Feature/Table/ScrollTest.php` —— 内容装得下时偏移回夹 0（弱档）。
+//   → `tests/Feature/Widget/ScrollViewScrollTest.php` —— 借来对照的 4 条 `ScrollView` 语义
+//     （0 重建 / appliedOffset / 帧间画面真变 / 回夹强档）：被测是 ScrollView，不是表格。
+//   ★ 下面三个夹具**保留**：后面的「⑲ 滚轮带轴」段还在用（那段的宿主也是 Table）。
 /** 挂树 + 按 320×240 布局（smokeContext 的规格） */
 $tableMount = static function (Table $widget): Element {
     $element = $widget->createElement();
@@ -7023,11 +7008,6 @@ $tableMount = static function (Table $widget): Element {
     return $element;
 };
 
-/** 重建 + 重排（`scrollBy` 只标脏，帧末才生效 —— 这里手动推一帧） */
-$tablePump = static function (Element $root): void {
-    $root->rebuild();
-    $root->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
-};
 
 $tableStateOf = static function (Element $root): ?TableState {
     $hit = findElement(
@@ -7039,457 +7019,12 @@ $tableStateOf = static function (Element $root): ?TableState {
     return $state instanceof TableState ? $state : null;
 };
 
+
 $tableBoxOf = static function (Element $root): ?RenderTable {
     $box = $root->effectiveBoxOf(RenderTable::class);
 
     return $box instanceof RenderTable ? $box : null;
 };
-
-/** 窗口里实际造了几行（= 行区 `Column` 的直接子节点数） */
-$tableRowsInWindow = static function (Element $root): int {
-    $column = findElement($root, static fn(Element $e): bool => $e->widget() instanceof Column);
-    $n = 0;
-    $column?->visitChildren(static function (Element $child) use (&$n): void {
-        $n++;
-    });
-
-    return $n;
-};
-
-/** `RenderTable` 的两个子盒：[表头, 行区] */
-$tableKidsOf = static function (?RenderTable $box): array {
-    $kids = [];
-    $box?->visitChildren(static function (RenderObject $child) use (&$kids): void {
-        $kids[] = $child;
-    });
-
-    return $kids;
-};
-
-/** 某个盒是否在指定祖先的子树下（命中断言的归属判定） */
-$tableUnder = static function (?RenderBox $hit, ?RenderObject $ancestor): bool {
-    for ($node = $hit; $node !== null; $node = $node->parent()) {
-        if ($node === $ancestor) {
-            return true;
-        }
-    }
-
-    return false;
-};
-
-$tableBig = $tableMount($tableBuild(10000));
-$tableBigState = $tableStateOf($tableBig);
-$tableBigBox = $tableBoxOf($tableBig);
-
-// ① 虚拟化：视口 240 − 表头 32 = 行区可见 208 ⇒ ceil(208/40) = 6 行
-//   ★★ 2026-10-27 起是"**可见行 + 缓冲带**"（`Table::cacheExtent()`，默认 200）：
-//   没有缓冲带的话 `first = floor(offsetY/rowH)`，偏移一动窗口就变 ⇒ 滚动每帧
-//   都要重建，A 批第 1 项的收益当场归零。断言因此写成**上界**而不是等于 6：
-//   `ceil((208 + 2×200)/40) = ceil(15.2) = 16` 是"窗口最多多大"，11 是当前实际值
-//   （缓冲只向下延伸：offset=0 时上方没有内容可建）。
-check(
-    'Table · 10000 行只造一屏 + 缓冲（行区 208 / 行高 40 / 缓冲 200 ⇒ 11 行，不是 10000）',
-    $tableBigState?->createdRows() === 11 && $tableRowsInWindow($tableBig) === 11,
-    'created=' . ($tableBigState?->createdRows() ?? -1) . ' / 树内=' . $tableRowsInWindow($tableBig),
-);
-// ★ 契约断言（与具体缓冲值解耦）：窗口永远 ≤ 可见行 + 两侧缓冲
-check(
-    'Table · 行窗口有上界（≤ 可见行 + 2×缓冲/行高，与缓冲取值无关）',
-    ($tableBigState?->createdRows() ?? PHP_INT_MAX) <= (int) \ceil((208.0 + 2.0 * 200.0) / 40.0),
-    'created=' . ($tableBigState?->createdRows() ?? -1),
-);
-
-// ② 可滚上限按**完整行高**算：10000×40 − 208 = 399792
-//    （按窗长算会得到 32 —— 滚动条会假装"只有一屏"）
-$tableMax = $tableBigBox?->maxScroll(Axis::Vertical) ?? -1.0;
-check(
-    'Table · maxScroll = 总行高 − 行区可见高（400000 − 208 = 399792，不是窗长）',
-    $tableMax === 399792.0,
-    (string) $tableMax,
-);
-
-// ③ 列宽三层：avail 320 / fixed 60 / flex 2:1 分 260 ⇒ [60, 173.33, 86.67]
-$tableRowEls = [];
-$tableCollectRows = static function (Element $el) use (&$tableCollectRows, &$tableRowEls): void {
-    if ($el->widget() instanceof Row) {
-        $tableRowEls[] = $el;
-
-        return;
-    }
-
-    $el->visitChildren($tableCollectRows);
-};
-$tableCollectRows($tableBig);
-
-$tableWidthsOf = static function (Element $rowEl): array {
-    $box = $rowEl->renderObject();
-    if (!$box instanceof RenderFlex) {
-        return [];
-    }
-
-    $out = [];
-    foreach ($box->children() as $kid) {
-        $size = $kid->size();
-        $out[] = $size === null ? -1.0 : \round($size->width, 2);
-    }
-
-    return $out;
-};
-
-$tableHeaderWidths = isset($tableRowEls[0]) ? $tableWidthsOf($tableRowEls[0]) : [];
-$tableFirstRowWidths = isset($tableRowEls[1]) ? $tableWidthsOf($tableRowEls[1]) : [];
-
-check(
-    'Table · 列宽三层：fixed 60 + flex 2:1 分 260 ⇒ [60, 173.33, 86.67]',
-    \count($tableHeaderWidths) === 3
-        && abs($tableHeaderWidths[0] - 60.0) < 0.5
-        && abs($tableHeaderWidths[1] - 173.33) < 1.0
-        && abs($tableHeaderWidths[2] - 86.67) < 1.0,
-    \json_encode($tableHeaderWidths),
-);
-
-// ④ 表头与数据行**逐像素对齐**（最容易错的一处：两处各算一次列宽必然漂）
-check(
-    'Table · 表头与数据行的列宽逐像素一致（两处 Row 的子宽序列完全相同）',
-    $tableHeaderWidths !== [] && $tableHeaderWidths === $tableFirstRowWidths,
-    \json_encode([$tableHeaderWidths, $tableFirstRowWidths]),
-);
-
-// ⑤ 未滚：行区紧贴表头下方（"表头 + 行区堆叠"的等价性 —— 阶段 5 的退路证明）
-$tableKids = $tableKidsOf($tableBigBox);
-check(
-    'Table · 未滚动时表头在 y=0、行区在 y=表头高（32）',
-    isset($tableKids[0], $tableKids[1])
-        && $tableKids[0]->offsetY() === 0.0
-        && $tableKids[1]->offsetY() === 32.0,
-    isset($tableKids[0], $tableKids[1])
-        ? sprintf('%s / %s', (string) $tableKids[0]->offsetY(), (string) $tableKids[1]->offsetY())
-        : '子盒缺失',
-);
-
-// ⑥ 滚动 48：表头**不动**，行区上移。
-//   ★★ 断言从"行区盒 offsetY === 24"改成"**第 1 行的顶边落在盒内 y=24**"
-//   （2026-10-27）：加了缓冲带之后窗不再从第 1 行开始（`first = floor((offset−200)/40) = 0`），
-//   于是行区盒自己上移到 −16 —— 那个数只反映"窗起点在哪"，**不是**被测语义。
-//   被测语义是"内容坐标 c 落在盒内 y = 表头高 − offset + c"（与窗起点无关）：
-//   第 1 行（内容 y=40）⇒ 32 − 48 + 40 = 24。这也是**能证伪**的：窗起点算错、
-//   或表头高被算进内容坐标，这个数就变。
-$tableRowBoxOf = static function (Element $root, int $index): ?RenderBox {
-    $el = findElement(
-        $root,
-        static fn(Element $e): bool => $e->widget() instanceof SizedBox
-            && $e->widget()->identity()?->value === $index,
-    );
-    $box = $el?->effectiveBox();
-
-    return $box instanceof RenderBox ? $box : null;
-};
-
-$tableBigState?->scrollBy(48.0);
-$tablePump($tableBig);
-$tableKidsScrolled = $tableKidsOf($tableBoxOf($tableBig));
-check(
-    'Table · 竖向滚动后表头不动（offsetY 恒 0）',
-    isset($tableKidsScrolled[0]) && $tableKidsScrolled[0]->offsetY() === 0.0,
-    isset($tableKidsScrolled[0]) ? (string) $tableKidsScrolled[0]->offsetY() : '缺失',
-);
-$tableRow1Box = $tableRowBoxOf($tableBig, 1);
-$tableRow1Y = $tableRow1Box === null ? null : RenderBox::absoluteOrigin($tableRow1Box)[1];
-check(
-    'Table · 竖向滚动 48 后第 1 行顶边落在 y=24（= 表头高 32 − 已滚 8）',
-    $tableRow1Y === 24.0,
-    $tableRow1Y === null ? '第 1 行不在树里' : (string) $tableRow1Y,
-);
-// ★ 缓冲带生效的直接证据：滚到 48 时**第 0 行仍在树里**（窗从 0 起，不是从 1 起）。
-//   没有缓冲带的话 first=1 ⇒ 第 0 行被卸掉 ⇒ 往上滚一格就要重建。
-check(
-    'Table · 缓冲带生效：滚动 48 后第 0 行仍在树里（窗没跟着行边界走）',
-    $tableRowBoxOf($tableBig, 0) !== null,
-    '第 0 行=' . ($tableRowBoxOf($tableBig, 0) === null ? '已卸载' : '在树里'),
-);
-
-/** 推一帧：settle + layout（与 `$tablePump` 的区别是**不强制 rebuild**） */
-$tableFrame = static function (Element $root): void {
-    $root->settle();
-    $root->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
-};
-
-// ★ **回夹取值**的守卫：内容装得下时滚 100 ⇒ 偏移必须回 0。
-//   推偏移之后 State 不再每帧重建，于是"State 里存的是用户增量累加值"这条
-//   旧账**没人替它擦**了 —— 不回写盒夹过的值，State 会停在 100（盒画 0），
-//   之后每笔增量都先消耗这段死区（真机现象："滚轮转了画面不动"）。
-$tableClamp = $tableMount($tableBuild(3));
-$tableClampState = $tableStateOf($tableClamp);
-$tableFrame($tableClamp);
-$tableClampState?->scrollBy(100.0);
-$tableFrame($tableClamp);
-check(
-    'Table · 内容装得下时滚动 ⇒ State 的偏移回夹到 0（不许停在 100）',
-    $tableClampState?->offsetY() === 0.0,
-    (string) ($tableClampState?->offsetY() ?? -1.0),
-);
-
-// `ScrollView` 的内容是**外部递进来的同一个 Widget 实例** ⇒ 窗口概念不存在
-// ⇒ 滚动**永远** 0 重建（这是"偏移不进 build"最纯的一档）。
-$svKids = [];
-for ($i = 0; $i < 40; $i++) {
-    $svKids[] = Text::make('行 ' . $i);
-}
-$svRoot = ScrollView::make(Column::make()->children($svKids))->createElement();
-$svRoot->mount(null, smokeContext());
-$tableFrame($svRoot);
-$svState = findElement(
-    $svRoot,
-    static fn(Element $e): bool => $e instanceof StatefulElement && $e->state() instanceof ScrollViewState,
-)?->state();
-$svRebuildsBefore = State::rebuiltCount();
-if ($svState instanceof ScrollViewState) {
-    $svState->scrollBy(120.0);
-}
-$tableFrame($svRoot);
-$svDelta = State::rebuiltCount() - $svRebuildsBefore;
-check(
-    'ScrollView · 滚动 ⇒ 重建 0 次（内容不是 build 的输入，本来就不该重建）',
-    $svDelta === 0,
-    'rebuilt=' . $svDelta,
-);
-check(
-    'ScrollView · 滚动确实生效（appliedOffset = 120）',
-    $svRoot->effectiveBoxOf(RenderScrollView::class)?->appliedOffset(Axis::Vertical) === 120.0,
-    (string) ($svRoot->effectiveBoxOf(RenderScrollView::class)?->appliedOffset(Axis::Vertical) ?? -1.0),
-);
-
-// ★★ **端到端判据**：真跑两帧 `Frame`，第二帧的画面必须与第一帧不同。
-//   这条抓的是"改了偏移但没应用到子盒 offset"——`Frame` 会跳过 layout
-//   （没重建 + 约束没变 + 盒没换代），于是 `performLayout()` 里那段
-//   `setOffset()` 不跑 ⇒ 删掉 `setScrollOffset()` 里的 `applyScrollOffsets()`
-//   时**画面停在旧位置**（且不报错、不写日志）。上面那些 `layout()` 直调的
-//   断言抓不到这个坑（它们每帧都手动重排）。
-$svFrameSurface = new SvgSurface();
-$svFrameSurface->resize(320, 240, 1.0);
-$svFrameEl = ScrollView::make(Column::make()->children($svKids))->createElement();
-$svFrameEl->mount(null, smokeContext());
-$svFrame = new Frame($svFrameSurface);
-$svTight = BoxConstraints::tight(new Size(320.0, 240.0));
-$svFrame->run($svFrameEl, $svTight, 0.0);
-$svSvgBefore = $svFrameSurface->svg();
-$svFrameState = findElement(
-    $svFrameEl,
-    static fn(Element $e): bool => $e instanceof StatefulElement && $e->state() instanceof ScrollViewState,
-)?->state();
-if ($svFrameState instanceof ScrollViewState) {
-    $svFrameState->scrollBy(120.0);
-}
-$svFrame->run($svFrameEl, $svTight, 16.0);
-$svSvgAfter = $svFrameSurface->svg();
-check(
-    'ScrollView · 滚动后**下一帧画面真的变了**（偏移必须应用到子盒 offset，Frame 会跳过 layout）',
-    $svSvgBefore !== $svSvgAfter && $svSvgBefore !== '',
-    'before=' . \strlen($svSvgBefore) . ' / after=' . \strlen($svSvgAfter),
-);
-
-// ★ **回夹取值**的守卫（`ScrollView` 这一档才守得住）：内容装得下时滚 100 ⇒
-//   State 的偏移必须回 0。`ScrollView` 没有窗口概念 ⇒ 不会因为标脏而重建 ⇒
-//   build 里那次"夹取写回"**不会发生** ⇒ 只有 `setScrollOffset()` 的返回值能救它。
-//   （`Table` 那一档守不住：夹取必然伴随换窗 ⇒ 重建时的写回会把变异掩盖掉。）
-$svTightRoot = ScrollView::make(Column::make()->children([Text::make('一行')]))->createElement();
-$svTightRoot->mount(null, smokeContext());
-$tableFrame($svTightRoot);
-$svTightState = findElement(
-    $svTightRoot,
-    static fn(Element $e): bool => $e instanceof StatefulElement && $e->state() instanceof ScrollViewState,
-)?->state();
-if ($svTightState instanceof ScrollViewState) {
-    $svTightState->scrollBy(100.0);
-}
-check(
-    'ScrollView · 内容装得下时滚动 ⇒ State 的偏移回夹到 0（不许停在 100）',
-    $svTightState instanceof ScrollViewState && $svTightState->offset() === 0.0,
-    $svTightState instanceof ScrollViewState ? (string) $svTightState->offset() : '无 State',
-);
-
-// ★ `LazyColumn` 的 overscan 两档（默认 0 ⇒ 滚一行重建 1 次 / 200 ⇒ 0 次）已迁到
-//   `tests/Feature/Widget/LazyListTest.php` —— 它和虚拟化那批是同一套夹具
-//   （`$anchorWidget`/`$anchorItems`/`$anchorStateOf`），留在这里会变成"夹具搬一半"。
-// ⑦ 命中分区：表头区的点进表头子树，行区的点进行区子树
-$tableBoxNow = $tableBoxOf($tableBig);
-$tableHitHeader = $tableBoxNow?->hitTest(100.0, 10.0);
-$tableHitBody = $tableBoxNow?->hitTest(100.0, 230.0);
-check(
-    'Table · 命中分区：表头区的点落在表头子树',
-    isset($tableKidsScrolled[0]) && $tableUnder($tableHitHeader, $tableKidsScrolled[0]),
-    $tableHitHeader === null ? 'miss' : \get_debug_type($tableHitHeader),
-);
-check(
-    'Table · 命中分区：行区的点落在行区子树（不是被表头吞掉）',
-    isset($tableKidsScrolled[1]) && $tableUnder($tableHitBody, $tableKidsScrolled[1]),
-    $tableHitBody === null ? 'miss' : \get_debug_type($tableHitBody),
-);
-
-// ⑧ 斑马行：奇数行才有背景（2 行的小表、**未滚动** ⇒ 子 0 = 第 0 行、子 1 = 第 1 行。
-//   ★ 不能用 `$tableBig`：它在 ⑥ 里已经滚过 48 ⇒ 窗内第 0 个 Element 是**第 1 行**，
-//   断言会反过来（这条正是被自己抓到过一次的）。
-$tableSmall = $tableMount($tableBuild(2));
-$tableColumnBox = findElement(
-    $tableSmall,
-    static fn(Element $e): bool => $e->widget() instanceof Column,
-)?->renderObject();
-$tableLine0 = null;
-$tableLine1 = null;
-if ($tableColumnBox instanceof RenderFlex) {
-    $tableLine0 = $tableColumnBox->children()[0] ?? null;
-    $tableLine1 = $tableColumnBox->children()[1] ?? null;
-}
-check(
-    'Table · 斑马行只给奇数行（第 0 行无背景、第 1 行有）',
-    $tableLine0 !== null && $tableLine1 !== null
-        && $tableLine0->mods()?->hasVisual() === false
-        && $tableLine1->mods()?->hasVisual() === true,
-    sprintf(
-        '%s / %s',
-        $tableLine0?->mods()?->hasVisual() === true ? '有' : '无',
-        $tableLine1?->mods()?->hasVisual() === true ? '有' : '无',
-    ),
-);
-
-// ⑨ 滚动条：内容溢出才画（2 行 ⇒ 不溢出 ⇒ 没有条）
-$tableSmallBox = $tableBoxOf($tableSmall);
-check(
-    'Table · 内容不溢出 ⇒ maxScroll = 0 且不画滚动条',
-    $tableSmallBox?->maxScroll(Axis::Vertical) === 0.0 && $tableSmallBox->thumbRect(Axis::Vertical) === null,
-    'maxScroll=' . (string) ($tableSmallBox?->maxScroll(Axis::Vertical) ?? -1.0),
-);
-check(
-    'Table · 内容溢出 ⇒ 有滚动条（几何与 ScrollView 同一份 `ScrollBarGeometry`）',
-    $tableBigBox !== null && $tableBigBox->thumbRect(Axis::Vertical) !== null,
-    $tableBigBox?->thumbRect(Axis::Vertical) === null ? 'null' : '有',
-);
-check(
-    'Table · RenderTable 实现 ScrollBarHost（滚动条可拖 —— 与 ScrollView 同一接口）',
-    $tableBigBox instanceof \Drift\Layout\ScrollBarHost,
-    $tableBigBox instanceof \Drift\Layout\ScrollBarHost ? 'ok' : '未实现',
-);
-
-// ⑩ 像素级：把盒画到光栅上，验"画出来的位置"（结构断言抓不到平移/裁剪的错位）
-//   ★ 这是 `RenderScrollView` 那次教训的同一条：偏移进 offset 的属性断言能过，
-//     而 paint 期多一次 translate 照样错位 ⇒ 必须有一组判"像素落在哪"的断言。
-//   ★ 清屏色用**洋红**而不是白：表格底 `Surface` 本身就是纯白（`ColorToken`
-//     三套主题都是 0xFFFFFF），白底画布会让"这里画了 Surface"与"这里什么都没画"
-//     无法区分 —— 一条恒真的断言等于没有。
-//   ★ 取 x=305：竖滚动条占 `[320 − 3 − 6, 320 − 3]` = `[311, 317]`，
-//     用 315 会落在条上（踩过一次：表头底被验成 `Muted` 的 110,119,129）。
-//     最后一列是 fixed 96 + Center 对齐，右侧是空白 ⇒ 露出的一定是背景色。
-$tableRasterOf = static function (?RenderBox $box, int $w, int $h): RasterCanvas {
-    $list = new DisplayList();
-    $box?->paint(new RecordingCanvas($list));
-    $canvas = new RasterCanvas($w, $h, Color::fromRgb(0xFF, 0x00, 0xFF), Scale::of(1.0));
-    $list->replay($canvas);
-
-    return $canvas;
-};
-
-$tableTheme = ThemeData::light();
-$tableChromeInk = $tableTheme->color(ColorToken::Chrome);
-$tableSurfaceInk = $tableTheme->color(ColorToken::Surface);
-$tablePaneInk = $tableTheme->color(ColorToken::Pane);
-
-$tablePx = static function (?RasterCanvas $raster, int $x, int $y): string {
-    if ($raster === null) {
-        return '无图';
-    }
-    $c = $raster->pixelAt($x, $y);
-
-    return sprintf('rgb(%d,%d,%d,%d)', $c->r, $c->g, $c->b, $c->a);
-};
-
-$tableSmallRaster = $tableSmallBox === null ? null : $tableRasterOf($tableSmallBox, 320, 240);
-check(
-    'Table · 像素：表头区是表头底色（y=10）',
-    $tableSmallRaster !== null && $tableSmallRaster->pixelAt(305, 10)->equals($tableChromeInk),
-    $tablePx($tableSmallRaster, 305, 10),
-);
-check(
-    'Table · 像素：第 0 行（偶数行）是表格底色、第 1 行（奇数行）是斑马色',
-    $tableSmallRaster !== null
-        && $tableSmallRaster->pixelAt(305, 50)->equals($tableSurfaceInk)
-        && $tableSmallRaster->pixelAt(305, 90)->equals($tablePaneInk),
-    $tablePx($tableSmallRaster, 305, 50) . ' / ' . $tablePx($tableSmallRaster, 305, 90),
-);
-check(
-    'Table · 像素：内容不足一屏时，行区下方的空白仍是表格底色（不是窗口底色透出来）',
-    $tableSmallRaster !== null && $tableSmallRaster->pixelAt(305, 200)->equals($tableSurfaceInk),
-    $tablePx($tableSmallRaster, 305, 200),
-);
-
-// ★★ 关键一条：滚动后**表头区必须还是表头底色** —— 行区上的那一半会被裁掉。
-//   不裁的话首行会画到表头上（表头整个被行盖住），而属性断言全都能过。
-//   ★ 盒必须用**滚动后**重新取的 `$tableBoxNow`：`syncBox()` 每次 build 都造新盒，
-//   ⑥ 之前的 `$tableBigBox` 是滚动前的旧对象（拿它画出来是未滚画面 ⇒ y=40 落在
-//   第 0 行，验成 Surface 白，正是这次踩到的坑）。
-$tableBigRaster = $tableBoxNow === null ? null : $tableRasterOf($tableBoxNow, 320, 240);
-check(
-    'Table · 像素：滚动后表头没被行区盖住（y=10 仍是表头底色，裁剪生效）',
-    $tableBigRaster !== null && $tableBigRaster->pixelAt(305, 10)->equals($tableChromeInk),
-    $tablePx($tableBigRaster, 305, 10),
-);
-check(
-    'Table · 像素：滚动 48 后第 1 行落在 y=40（行区上移 8，斑马色）',
-    $tableBigRaster !== null && $tableBigRaster->pixelAt(305, 40)->equals($tablePaneInk),
-    $tablePx($tableBigRaster, 305, 40),
-);
-
-// ⑩bis 首帧视口宽漂移 ⇒ 自查一帧
-//   ★ 真机踩到的坑：`BuildContext::$width` 是**窗口**宽（根 context 全树共用），
-//     而表格的可用宽还要减掉导航栏 / 卡片 padding。首帧没有盒 ⇒ 只能拿窗口宽当
-//     上界 ⇒ flex 列按偏大的宽分完，行宽超出表盒 ⇒ **右边的列被裁掉**（真机现象：
-//     5 列只看见前 3 列，滚一下才对）。这里把"窗口宽 320 / 实际宽 200"做成夹具，
-//     断言"多要一帧 + 下一帧按真实宽重算 + 收敛后不再空转"。
-$tableHeaderWidthsIn = static function (Element $root) use ($tableWidthsOf): array {
-    $rows = [];
-    $walk = static function (Element $e) use (&$walk, &$rows): void {
-        if ($e->widget() instanceof Row) {
-            $rows[] = $e;
-
-            return;
-        }
-
-        $e->visitChildren($walk);
-    };
-    $walk($root);
-
-    return isset($rows[0]) ? $tableWidthsOf($rows[0]) : [];
-};
-
-$tableDrift = $tableBuild(5);
-$tableDriftEl = $tableDrift->createElement();
-$tableDriftEl->mount(null, smokeContext());   // ctx 宽 320 = 窗口宽
-$tableDriftEl->effectiveBox()?->layout(BoxConstraints::tight(new Size(200.0, 240.0)));
-$tableDriftState = $tableStateOf($tableDriftEl);
-$tableDriftWanted = $tableDriftState?->tickFrame(0.0) === true;
-check(
-    'Table · 首帧视口宽用了窗口宽 ⇒ 下一帧自查并要一帧',
-    $tableDriftWanted,
-    $tableDriftWanted ? '要了' : '没要（差异没被看到 ⇒ 列会一直溢出）',
-);
-
-$tableDriftEl->rebuild();
-$tableDriftEl->effectiveBox()?->layout(BoxConstraints::tight(new Size(200.0, 240.0)));
-$tableDriftWidths = $tableHeaderWidthsIn($tableDriftEl);
-check(
-    'Table · 重建后列宽按真实盒宽分配（200 − 60 = 140 ⇒ 93.33 / 46.67）',
-    \count($tableDriftWidths) === 3
-        && abs($tableDriftWidths[0] - 60.0) < 0.5
-        && abs($tableDriftWidths[1] - 93.33) < 1.0
-        && abs($tableDriftWidths[2] - 46.67) < 1.0,
-    \json_encode($tableDriftWidths),
-);
-$tableDriftAgain = $tableDriftState?->tickFrame(16.0);
-check(
-    'Table · 宽差收敛后不再要帧（不会每帧空转）',
-    $tableDriftAgain === false,
-    $tableDriftAgain === false ? '已收敛' : '仍在要帧',
-);
-
 // ── Table 选择：声明 `selection` 却没接上报 ⇒ 挂载期 Fatal ────────────────
 //   ★ 其余选择断言已迁到 `tests/Feature/Table/SelectionTest.php`（点击语义 + 行态像素），
 //     语义底稿在 `tests/Unit/Widget/TableRowPickerTest`。
@@ -7538,9 +7073,6 @@ check(
     $tableSortCode3 === 3,
     '实际 ' . $tableSortCode3 . ' / ' . $tableSortOut3,
 );
-// 表头分割线的取色 —— 键盘光标格那一节也用它验"当前格的线是高亮色"
-$tableDividerBorderInk = $tableTheme->color(ColorToken::Border);
-$tableDividerAccentInk = $tableTheme->color(ColorToken::Accent);
 
 // ── Table 列宽拖拽：`resizable()` 却没接 `onColumnResize` ⇒ 挂载期 Fatal ────────
 //   ★ 其余列宽断言已迁到 `tests/Feature/Table/ColumnResizeTest.php`（手柄 / 拖动 /
