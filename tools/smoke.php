@@ -15,7 +15,6 @@ declare(strict_types=1);
 
 use Drift\Dev\Smoke\BoxProbe;
 use Drift\Dev\Smoke\BuildProbe;
-use Drift\Dev\Smoke\Layout\ConstraintSpy;
 use Drift\Dev\Smoke\Layout\ImpureBox;
 use Drift\Dev\Smoke\Layout\OffsetBox;
 use Drift\Dev\Smoke\Layout\OversizeBox;
@@ -137,7 +136,6 @@ use Drift\Dev\Smoke\State\LeafBoxWidget;
 use Drift\Dev\Smoke\State\LoopPage;
 use Drift\Dev\Smoke\State\VersionProbe;
 use Drift\Core\Computed;
-use Drift\Dev\Smoke\Tree\BranchWidget;
 use Drift\Dev\Smoke\Tree\CounterState;
 use Drift\Dev\Smoke\Tree\CounterWidget;
 use Drift\Dev\Smoke\CollectSink;
@@ -192,7 +190,6 @@ use Drift\Layout\RenderModalHost;
 use Drift\Layout\RenderObject;
 use Drift\Layout\RenderPopupPanel;
 use Drift\Layout\RenderSpinner;
-use Drift\Layout\RenderStack;
 use Drift\Layout\RenderText;
 use Drift\Layout\RenderTextField;
 use Drift\Layout\RenderToggle;
@@ -4490,362 +4487,12 @@ check(
     (new OversizeBox())->overflow() === Overflow::Report
 );
 
-// ── ⑮ Flex：C4 弹性子拿无界主轴 / spacing / flex 分配 / 交叉轴 / 溢出 ──
-
-// C4：有弹性子 ⇒ 弹性子拿无界主轴；非弹性子拿 0..可用
-$elasticSpy = new ConstraintSpy(new Size(40.0, 30.0));
-$plainSpy = new ConstraintSpy(new Size(40.0, 10.0));
-$c4Column = new RenderFlex(true, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Clip);
-$c4Column->addChild($plainSpy);
-$c4Column->addChild(flexProxy(1));
-$c4Column->children()[1]->setChild($elasticSpy);
-$c4Column->layout(new BoxConstraints(0.0, 100.0, 0.0, 60.0));
-check(
-    'Layout · C4 弹性子只在份额定下后量一次（拿紧主轴，不再白排一遍）',
-    $elasticSpy->firstSeen !== null
-        && $elasticSpy->firstSeen === $elasticSpy->lastSeen
-        && $elasticSpy->firstSeen->maxHeight === 50.0,
-    sprintf(
-        '实际第一遍 maxHeight=%.1f（与 lastSeen 同一实例：%s）',
-        $elasticSpy->firstSeen?->maxHeight ?? -1.0,
-        $elasticSpy->firstSeen === $elasticSpy->lastSeen ? '是' : '否'
-    )
-);
-check(
-    'Layout · C4 非弹性子拿 0..可用（同一遍里两者不同）',
-    $plainSpy->firstSeen !== null && !$plainSpy->firstSeen->hasInfiniteHeight() && $plainSpy->firstSeen->maxHeight === 60.0
-);
-
-// flex 分配：1 : 2 分 60 的可用高（两个自然高 0）
-$flexA = new RenderFlex(true, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Clip);
-$flexA->addChild(flexProxy(1));
-$flexA->addChild(flexProxy(2));
-$flexA->layout(BoxConstraints::tight(new Size(100.0, 60.0)));
-$flexA->visitChildren(function (RenderBox $kid) use (&$got): void {
-});
-check(
-    'Layout · flex 按份额分剩余空间（1:2 ⇒ 20 / 40）',
-    $flexA->children()[0]->size()?->height === 20.0 && $flexA->children()[1]->size()?->height === 40.0,
-    sprintf('实际 %.2f / %.2f', $flexA->children()[0]->size()?->height ?? -1.0, $flexA->children()[1]->size()?->height ?? -1.0)
-);
-
-// spacing + 位置由父定（C1）
-$spaced = new RenderFlex(true, 8.0, new EdgeInsets(), FlexAlign::Start, Overflow::Clip);
-$spaced->addChild(new SolidBox(new Size(20.0, 10.0), 20.0, 10.0));
-$spaced->addChild(new SolidBox(new Size(20.0, 12.0), 20.0, 12.0));
-$spaced->addChild(new SolidBox(new Size(20.0, 14.0), 20.0, 12.0));
-$spaced->layout(BoxConstraints::loose(new Size(80.0, 100.0)));
-check(
-    'Layout · spacing 落在相邻子之间（10 / 10+12+8）',
-    $spaced->children()[0]->offsetY() === 0.0 && $spaced->children()[1]->offsetY() === 18.0,
-    sprintf('实际 %.2f / %.2f', $spaced->children()[0]->offsetY(), $spaced->children()[1]->offsetY())
-);
-check(
-    'Layout · 自然主轴高 = 各子相加 + 间距（10+12+14+2×8）',
-    $spaced->size()?->height === 52.0,
-    '实际 ' . (string) ($spaced->size()?->height ?? -1.0)
-);
-
-// 交叉轴对齐
-$centered = new RenderFlex(false, 0.0, new EdgeInsets(), FlexAlign::Center, Overflow::Clip);
-$centered->addChild(new SolidBox(new Size(30.0, 10.0), 30.0, 10.0));
-$centered->layout(BoxConstraints::tight(new Size(100.0, 40.0)));
-check(
-    'Layout · 交叉轴 Center 把短的那轴推到中间',
-    $centered->children()[0]->offsetY() === 15.0,
-    '实际 ' . (string) $centered->children()[0]->offsetY()
-);
-
-// padding：几何面，减约束再加回尺寸
-$padded = new RenderFlex(true, 0.0, EdgeInsets::all(6.0), FlexAlign::Start, Overflow::Clip);
-$padded->addChild(new SolidBox(new Size(10.0, 8.0), 10.0, 8.0));
-$padded->layout(BoxConstraints::loose(new Size(80.0, 80.0)));
-check(
-    'Layout · padding 进尺寸（子 8 + 上下各 6）',
-    $padded->size()?->height === 20.0 && $padded->size()?->width === 22.0,
-    sprintf('实际 %.2f × %.2f', $padded->size()?->width ?? -1.0, $padded->size()?->height ?? -1.0)
-);
-check(
-    'Layout · padding 减约束后子拿到的是内容区（不是 80 高）',
-    $padded->children()[0]->size()?->height === 8.0
-);
-
-// ── ⑮b Flex 分配公式：basis / shrink（W6 L4-2，`04` §3）──
-// ★ 这一节守的是"纯 grow 走快路径"的另一半：只有声明了 `shrink` 或 `basis` 的
-//   容器才走新公式（`allocateAdvanced`），否则 `performLayout` 的老路径逐字节不变。
-
-// `$needsNatural` 判据：有 shrink 子且没声明 basis ⇒ 第一遍必须量它，
-// 而且**拿无界主轴** —— 给 `0..可用` 的话内容比容器长就先撞 C5，shrink 永远用不上
-$naturalSpy = new ConstraintSpy(new Size(300.0, 20.0));
-$naturalSpy->setFlexIntent(0, 1, \NAN, RenderBox::ALIGN_INHERIT);
-$naturalRow = new RenderFlex(false, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Clip);
-$naturalRow->addChild($naturalSpy);
-$naturalRow->layout(BoxConstraints::tight(new Size(100.0, 40.0)));
-check(
-    'Layout · shrink 子第一遍拿无界主轴（否则内容超容器先报 C5，shrink 用不上）',
-    $naturalSpy->firstSeen !== null && $naturalSpy->firstSeen->hasInfiniteWidth(),
-    $naturalSpy->firstSeen === null
-        ? '一次都没量'
-        : sprintf('第一遍 maxWidth=%.1f', $naturalSpy->firstSeen->maxWidth)
-);
-check(
-    'Layout · shrink 子量两次（自然 300 + 紧约束 100），纯 grow 子只量一次',
-    $naturalSpy->firstSeen !== $naturalSpy->lastSeen
-        && $naturalSpy->lastSeen !== null
-        && $naturalSpy->lastSeen->maxWidth === 100.0
-        && $naturalSpy->size()?->width === 100.0,
-    sprintf(
-        '末次 maxWidth=%.1f，尺寸 %.1f',
-        $naturalSpy->lastSeen?->maxWidth ?? -1.0,
-        $naturalSpy->size()?->width ?? -1.0
-    )
-);
-
-// 加权压缩：三个 basis 100 / shrink 1 进 240 ⇒ 各 80（`04` §12.2 #2）
-$evenRow = new RenderFlex(false, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Clip);
-$evenRow->addChild(flexIntent(0, 1, 100.0));
-$evenRow->addChild(flexIntent(0, 1, 100.0));
-$evenRow->addChild(flexIntent(0, 1, 100.0));
-$evenRow->layout(BoxConstraints::tight(new Size(240.0, 40.0)));
-$evenWidths = [];
-foreach ($evenRow->children() as $kid) {
-    $evenWidths[] = $kid->size()?->width ?? -1.0;
-}
-check(
-    'Layout · shrink 加权压缩（三个 basis 100 进 240 ⇒ 各 80）',
-    $evenWidths === [80.0, 80.0, 80.0],
-    '实际 ' . implode(' / ', array_map(static fn (float $v): string => sprintf('%.1f', $v), $evenWidths))
-);
-
-// 冻结迭代：A 的 scaled 份额大 ⇒ 先压到 0 并冻结；B 拿剩下的（`04` §12.2 #4）
-// ★ 方案册写的是 A `shrink` 1 `basis` 10 —— 按加权公式 A 只分到 110×10/2010 ≈ 0.55，
-//   压不到 0（会收敛在 9.45 / 90.55）。要真触发冻结必须让 A 的 scaled 份额够大。
-$freezeA = flexIntent(0, 100, 10.0);
-$freezeB = flexIntent(0, 10, 200.0);
-$freezeRow = new RenderFlex(false, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Clip);
-$freezeRow->addChild($freezeA);
-$freezeRow->addChild($freezeB);
-$freezeRow->layout(BoxConstraints::tight(new Size(100.0, 40.0)));
-check(
-    'Layout · shrink 冻结迭代（A 压到 0 冻结，B 两轮后拿到 100）',
-    $freezeA->size()?->width === 0.0 && $freezeB->size()?->width === 100.0,
-    sprintf('实际 %.1f / %.1f', $freezeA->size()?->width ?? -1.0, $freezeB->size()?->width ?? -1.0)
-);
-
-// basis 优先于自然尺寸（`04` §12.2 #5）：内容 50、basis 80 ⇒ 拿 80
-$basisBox = new RenderProxy();
-$basisBox->setFlexIntent(0, 0, 80.0, RenderBox::ALIGN_INHERIT);
-$basisBox->setChild(new SolidBox(new Size(50.0, 10.0), 50.0, 10.0));
-$basisRow = new RenderFlex(false, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Clip);
-$basisRow->addChild($basisBox);
-$basisRow->layout(BoxConstraints::tight(new Size(100.0, 40.0)));
-check(
-    'Layout · basis 优先于自然尺寸（内容 50、basis 80 ⇒ 拿 80）',
-    $basisBox->size()?->width === 80.0,
-    '实际 ' . (string) ($basisBox->size()?->width ?? -1.0)
-);
-
-// basis + grow 混用：起点之上的**增量**（不是从 0 起算的总量）
-$mixA = flexIntent(1, 0, 40.0);
-$mixB = flexIntent(1, 0, 40.0);
-$mixRow = new RenderFlex(false, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Clip);
-$mixRow->addChild($mixA);
-$mixRow->addChild($mixB);
-$mixRow->layout(BoxConstraints::tight(new Size(160.0, 40.0)));
-check(
-    'Layout · basis + grow 是增量语义（起点 40 各加 40 ⇒ 80 / 80）',
-    $mixA->size()?->width === 80.0 && $mixB->size()?->width === 80.0,
-    sprintf('实际 %.1f / %.1f', $mixA->size()?->width ?? -1.0, $mixB->size()?->width ?? -1.0)
-);
-
-// ── ⑮c alignSelf 覆盖容器（W6 L4-3，`04` §2.4）──
-// ★ 四条一起才有意义：单测"END 靠右"会漏掉"STRETCH 只改偏移、尺寸没拉满"
-//   （那是最典型的"看起来实现了"）。
-
-// 父 `Center`、子 `alignSelf(END)` ⇒ 子贴交叉轴末端
-$selfEnd = new SolidBox(new Size(30.0, 10.0), 30.0, 10.0);
-$selfEnd->setFlexIntent(0, 0, \NAN, RenderBox::ALIGN_END);
-$selfEndRow = new RenderFlex(false, 0.0, new EdgeInsets(), FlexAlign::Center, Overflow::Clip);
-$selfEndRow->addChild($selfEnd);
-$selfEndRow->layout(BoxConstraints::tight(new Size(100.0, 40.0)));
-check(
-    'Layout · alignSelf(END) 覆盖父的 Center ⇒ 子贴交叉轴末端（40−10=30）',
-    $selfEnd->offsetY() === 30.0,
-    '实际 ' . (string) $selfEnd->offsetY()
-);
-
-// 父 `Start`、子 `alignSelf(CENTER)` ⇒ 居中
-$selfCenter = new SolidBox(new Size(30.0, 10.0), 30.0, 10.0);
-$selfCenter->setFlexIntent(0, 0, \NAN, RenderBox::ALIGN_CENTER);
-$selfCenterRow = new RenderFlex(false, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Clip);
-$selfCenterRow->addChild($selfCenter);
-$selfCenterRow->layout(BoxConstraints::tight(new Size(100.0, 40.0)));
-check(
-    'Layout · alignSelf(CENTER) 在 Start 容器里居中（(40−10)/2=15）',
-    $selfCenter->offsetY() === 15.0,
-    '实际 ' . (string) $selfCenter->offsetY()
-);
-
-// 子 `alignSelf(STRETCH)` ⇒ **尺寸**拉满交叉轴（不是只把偏移算成 0）
-$selfStretch = new SolidBox(new Size(30.0, 10.0), 30.0, 10.0);
-$selfStretch->setFlexIntent(0, 0, \NAN, RenderBox::ALIGN_STRETCH);
-$selfStretchRow = new RenderFlex(false, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Clip);
-$selfStretchRow->addChild($selfStretch);
-$selfStretchRow->layout(BoxConstraints::tight(new Size(100.0, 40.0)));
-check(
-    'Layout · alignSelf(STRETCH) 真的拉满交叉轴（子高 10 ⇒ 40，不是只改偏移）',
-    $selfStretch->size()?->height === 40.0 && $selfStretch->offsetY() === 0.0,
-    sprintf('实际高 %.1f，偏移 %.1f', $selfStretch->size()?->height ?? -1.0, $selfStretch->offsetY())
-);
-
-// 未设（ALIGN_INHERIT）⇒ 跟容器（End 容器 + 未设子 ⇒ 靠右）
-$inheritKid = new SolidBox(new Size(30.0, 10.0), 30.0, 10.0);
-$inheritRow = new RenderFlex(false, 0.0, new EdgeInsets(), FlexAlign::End, Overflow::Clip);
-$inheritRow->addChild($inheritKid);
-$inheritRow->layout(BoxConstraints::tight(new Size(100.0, 40.0)));
-check(
-    'Layout · 未设 alignSelf ⇒ 跟容器的 crossAlign（End 容器 ⇒ 30）',
-    $inheritKid->offsetY() === 30.0,
-    '实际 ' . (string) $inheritKid->offsetY()
-);
-
-// ── ⑮d Stack（W6 L4-4，`04` §4）──
-// ★ 四条口径一起守：尺寸 = 最大子 / `Expand` 取父给的尺寸（不是 max(子)）/
-//   `PassThrough` 原样透传 / 内禀值 = max。少任何一条都会漏掉一类"看起来实现了"。
-
-// 尺寸 = 最大子（不是和、不是最后一个）
-$stackA = new SolidBox(new Size(100.0, 20.0), 100.0, 20.0);
-$stackB = new SolidBox(new Size(30.0, 80.0), 30.0, 80.0);
-$looseStack = new RenderStack();
-$looseStack->addChild($stackA);
-$looseStack->addChild($stackB);
-$looseStack->layout(BoxConstraints::loose(new Size(300.0, 300.0)));
-expectBox($looseStack, 0.0, 0.0, 100.0, 80.0, 'Stack · Loose 尺寸 = 最大子（100×20 与 30×80 ⇒ 100×80）');
-check(
-    'Stack · 默认 TopLeft ⇒ 两个子都在 (0,0)',
-    $stackA->offsetX() === 0.0 && $stackA->offsetY() === 0.0
-        && $stackB->offsetX() === 0.0 && $stackB->offsetY() === 0.0,
-    sprintf('实际 A(%.1f,%.1f) B(%.1f,%.1f)', $stackA->offsetX(), $stackA->offsetY(), $stackB->offsetX(), $stackB->offsetY())
-);
-
-// 命中从后往前（守的是**基类**契约：`RenderBox::hitTest` 里 array_reverse）
-$below = new SolidBox(new Size(50.0, 50.0), 50.0, 50.0);
-$above = new SolidBox(new Size(50.0, 50.0), 50.0, 50.0);
-$hitStack = new RenderStack();
-$hitStack->addChild($below);
-$hitStack->addChild($above);
-$hitStack->layout(BoxConstraints::loose(new Size(100.0, 100.0)));
-check(
-    'Stack · 命中从后往前（重叠处命中后加的那个）',
-    $hitStack->hitTest(10.0, 10.0) === $above,
-    '实际命中 ' . (($hitStack->hitTest(10.0, 10.0) ?? $below) === $above ? '后加的' : '先加的')
-);
-
-// Expand：有界轴取**父给的**尺寸（不是 max(子)），子拿到 tight
-$expandSpy = new ConstraintSpy(new Size(30.0, 10.0));
-$expandStack = new RenderStack(StackAlign::TopLeft, StackFit::Expand);
-$expandStack->addChild($expandSpy);
-$expandStack->layout(BoxConstraints::loose(new Size(100.0, 80.0)));
-expectBox($expandStack, 0.0, 0.0, 100.0, 80.0, 'Stack · Expand 有界轴拉满父给的空间（100×80，不是 max(子) 的 30×10）');
-check(
-    'Stack · Expand 给子 tight（min === max === 本盒尺寸）',
-    $expandSpy->lastSeen !== null
-        && $expandSpy->lastSeen->minWidth === 100.0
-        && $expandSpy->lastSeen->maxHeight === 80.0,
-    $expandSpy->lastSeen === null
-        ? '一次都没量'
-        : sprintf('子约束 %.1f..%.1f × %.1f..%.1f', $expandSpy->lastSeen->minWidth, $expandSpy->lastSeen->maxWidth, $expandSpy->lastSeen->minHeight, $expandSpy->lastSeen->maxHeight)
-);
-
-// Expand 的无界轴退化为 Loose（绝不产生 INF 尺寸）
-$halfSpy = new ConstraintSpy(new Size(40.0, 10.0));
-$halfStack = new RenderStack(StackAlign::TopLeft, StackFit::Expand);
-$halfStack->addChild($halfSpy);
-$halfStack->layout(new BoxConstraints(0.0, INF, 0.0, 40.0));
-expectBox($halfStack, 0.0, 0.0, 40.0, 40.0, 'Stack · Expand 的无界轴退化为 Loose（宽按子 40、高拉满 40）');
-
-// 对齐：盒被紧约束撑大后，子按 StackAlign 落位
-$brKid = new SolidBox(new Size(30.0, 10.0), 30.0, 10.0);
-$brStack = new RenderStack(StackAlign::BottomRight, StackFit::Loose);
-$brStack->addChild($brKid);
-$brStack->layout(BoxConstraints::tight(new Size(100.0, 80.0)));
-check(
-    'Stack · BottomRight ⇒ 子落右下（100−30, 80−10 = 70, 70）',
-    $brKid->offsetX() === 70.0 && $brKid->offsetY() === 70.0,
-    sprintf('实际 %.1f, %.1f', $brKid->offsetX(), $brKid->offsetY())
-);
-
-$cKid = new SolidBox(new Size(30.0, 10.0), 30.0, 10.0);
-$cStack = new RenderStack(StackAlign::Center, StackFit::Loose);
-$cStack->addChild($cKid);
-$cStack->layout(BoxConstraints::tight(new Size(100.0, 80.0)));
-check(
-    'Stack · Center ⇒ 子居中（(100−30)/2, (80−10)/2 = 35, 35）',
-    $cKid->offsetX() === 35.0 && $cKid->offsetY() === 35.0,
-    sprintf('实际 %.1f, %.1f', $cKid->offsetX(), $cKid->offsetY())
-);
-
-// PassThrough：子看到的就是父给的约束（下界也透传）
-$ptSpy = new ConstraintSpy(new Size(20.0, 20.0));
-$ptStack = new RenderStack(StackAlign::TopLeft, StackFit::PassThrough);
-$ptStack->addChild($ptSpy);
-$ptStack->layout(new BoxConstraints(10.0, 50.0, 10.0, 50.0));
-check(
-    'Stack · PassThrough 原样透传（子看到 10..50 × 10..50）',
-    $ptSpy->lastSeen !== null
-        && $ptSpy->lastSeen->minWidth === 10.0
-        && $ptSpy->lastSeen->maxWidth === 50.0,
-    $ptSpy->lastSeen === null
-        ? '一次都没量'
-        : sprintf('子约束 %.1f..%.1f', $ptSpy->lastSeen->minWidth, $ptSpy->lastSeen->maxWidth)
-);
-
-// 内禀值 = max（不是和）
-$intrStack = new RenderStack();
-$intrStack->addChild(new SolidBox(new Size(10.0, 10.0), 70.0, 30.0));
-$intrStack->addChild(new SolidBox(new Size(10.0, 10.0), 20.0, 90.0));
-check(
-    'Stack · 内禀值 = max（不是和）：宽 70、高 90',
-    $intrStack->intrinsicWidth(0.0) === 70.0 && $intrStack->intrinsicHeight(0.0) === 90.0,
-    sprintf('实际 %.1f / %.1f', $intrStack->intrinsicWidth(0.0), $intrStack->intrinsicHeight(0.0))
-);
-
-// 每个子只 layout 一次（Expand 也没有第二遍 —— 循环依赖那条的守门夹具）
-$onceA = new LayoutCountBox(new Size(30.0, 10.0));
-$onceB = new LayoutCountBox(new Size(50.0, 20.0));
-$onceStack = new RenderStack(StackAlign::Center, StackFit::Expand);
-$onceStack->addChild($onceA);
-$onceStack->addChild($onceB);
-$onceStack->layout(BoxConstraints::loose(new Size(100.0, 80.0)));
-check(
-    'Stack · 每个子只 layout 一次（Expand 也没有第二遍）',
-    $onceA->layoutCalls === 1 && $onceB->layoutCalls === 1,
-    sprintf('实际 %d / %d 次', $onceA->layoutCalls, $onceB->layoutCalls)
-);
-
-// 单子代理：RenderProxy + mods 内距（W5：padding 是**字段**，不是节点）
-$inner = new SolidBox(new Size(10.0, 6.0), 10.0, 6.0);
-$padBox = new RenderProxy();
-$padBox->setMods((new Modifier())->withPadding(4.0, 2.0, 4.0, 2.0));
-$padBox->setChild($inner);
-$padBox->layout(BoxConstraints::loose(new Size(60.0, 60.0)));
-check(
-    'Layout · RenderProxy + mods 内距：内禀值 = 内边距 + 孩子（不是孩子本身）',
-    $padBox->intrinsicWidth(0.0) === 18.0 && $padBox->intrinsicHeight(0.0) === 10.0,
-    sprintf('实际 %.2f × %.2f', $padBox->intrinsicWidth(0.0), $padBox->intrinsicHeight(0.0))
-);
-expectBox($padBox, 0.0, 0.0, 18.0, 10.0, 'Layout · RenderProxy + mods 内距：盒尺寸也加了内距（10+8 × 6+4）');
-check(
-    'Layout · 子盒偏移住**内容盒**坐标（padding 不进 offset）',
-    $inner->offsetX() === 0.0 && $inner->offsetY() === 0.0,
-    sprintf('实际 %.2f, %.2f', $inner->offsetX(), $inner->offsetY())
-);
-expectBox($inner, 4.0, 2.0, 10.0, 6.0, 'Layout · absoluteOrigin 补回内容原点（0 + 4, 0 + 2），尺寸不变');
-check(
-    'Layout · hitTest 减内容原点：padding 区不命中孩子、内容区命中',
-    $padBox->hitTest(1.0, 1.0) === $padBox && $padBox->hitTest(5.0, 3.0) === $inner,
-    sprintf('(1,1) ⇒ %s，(5,3) ⇒ %s', get_class($padBox->hitTest(1.0, 1.0) ?? $padBox), get_class($padBox->hitTest(5.0, 3.0) ?? $padBox))
-);
+// ── ⑮ Flex / ⑮b basis·shrink / ⑮c alignSelf / Clip 已迁出 ──────────────────────
+//   · tests/Unit/Layout/FlexTest.php —— C4 弹性子量一次 / flex 份额分配 / spacing /
+//     交叉轴 / padding / shrink 公式（加权压缩·冻结迭代·增量语义）/ alignSelf /
+//     Overflow::Clip（19 条，纯布局 Unit 层）
+//   ★ 子进程失败路径（C5 Report / shrink 溢出 / flex scroll / flex 值 / C6）仍留本
+//     文件（runCase 依赖 __FILE__ 为 smoke 入口，见下方保留段）
 
 // C4 / C5 的失败路径（子进程：会 Fatal）
 fresh($log);
@@ -4858,16 +4505,6 @@ check(
         && !str_contains(logText($log), 'C5')
 );
 
-// Clip 是"盒子夹住、子照自然排"——不中止，但自己的尺寸不越界
-$clipColumn = new RenderFlex(true, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Clip);
-$clipColumn->addChild(new SolidBox(new Size(10.0, 40.0), 10.0, 40.0));
-$clipColumn->addChild(new SolidBox(new Size(10.0, 40.0), 10.0, 40.0));
-$clipColumn->layout(BoxConstraints::tight(new Size(10.0, 50.0)));
-check(
-    'Layout · Clip 允许子溢出但自己夹进约束（不撞 C6）',
-    $clipColumn->size()?->height === 50.0 && $clipColumn->children()[1]->offsetY() === 40.0,
-    sprintf('实际 %.2f / %.2f', $clipColumn->size()?->height ?? -1.0, $clipColumn->children()[1]->offsetY())
-);
 
 // shrink 压到 0 之后仍放不下 ⇒ C5 兜底（子进程：会 Fatal）
 fresh($log);
@@ -4901,76 +4538,8 @@ check(
         && !str_contains(logText($log), 'C6')
 );
 
-// ⑯ 三树：Element 的挂载 / diff / 卸载（§3.2 / §12.3）
-fresh($log);
-$treeRoot = (new BranchWidget([new BuildProbe(), new BuildProbe()]))->createElement();
-$treeRoot->mount(null, $context);
-
-// 结构节点(1) + 2 个 Stateless(各带 1 个叶子) = 5
-check('Element · 挂载建出整棵子树（结构节点 → 2 个无状态 → 各 1 叶）', countTree($treeRoot) === 5, (string) countTree($treeRoot));
-check('Element · 挂载时封存 Widget', $treeRoot->widget()->isSealed() && $treeRoot->childAt(0) !== null && $treeRoot->childAt(0)->widget()->isSealed());
-check('Element · 渲染环境沿父链继承（不是每层新建一份）', $treeRoot->childAt(0)?->context() === $context);
-
-// diff：换同一形态的新控件 ⇒ Element 身份稳定（State / 子树不重置）
-$firstKid = $treeRoot->childAt(0);
-$treeRoot->update(new BranchWidget([new BuildProbe(), new BuildProbe()]));
-check(
-    'Element · diff 复用同槽旧子（身份稳定，不重置子树）',
-    $treeRoot->childAt(0) === $firstKid && $treeRoot->isMounted()
-);
-
-// 位置决定身份：无 Key 换位置 ⇒ 还是同两个槽位复用（§12.3 原话）
-$keyless = (new BranchWidget([(new BuildProbe())->key('a'), (new BuildProbe())->key('b')]))->createElement();
-$keyless->mount(null, $context);
-$slotA = $keyless->childAt(0);
-$slotB = $keyless->childAt(1);
-$keyless->update(new BranchWidget([(new BuildProbe())->key('b'), (new BuildProbe())->key('a')]));
-check(
-    'Element · 有 Key ⇒ 位置变了身份不变（换位复用的是同名那个）',
-    $keyless->childAt(0) === $slotB && $keyless->childAt(1) === $slotA
-);
-
-// Key 变了 ⇒ 不复用，换新 Element
-$keyless->update(new BranchWidget([(new BuildProbe())->key('a'), (new BuildProbe())->key('c')]));
-check(
-    'Element · Key 变了 ⇒ 不复用（新 Element 进槽）',
-    $keyless->childAt(0) === $slotA && $keyless->childAt(1) !== $slotB
-);
-
-// 同一实例挂两处合法 ⇒ 两个 Element（身份由位置决定）
-$twice = new BuildProbe();
-$pair = (new BranchWidget([$twice, $twice]))->createElement();
-$pair->mount(null, $context);
-check(
-    'Element · 同一实例挂两处 ⇒ 两个 Element（位置各有一个）',
-    $pair->childCount() === 2 && $pair->childAt(0) !== $pair->childAt(1)
-);
-
-// 卸载：级联到全树
-$unmountRoot = (new BranchWidget([new BuildProbe(), new BuildProbe()]))->createElement();
-$unmountRoot->mount(null, $context);
-$kidsBefore = [];
-$unmountRoot->visitChildren(function (Element $child) use (&$kidsBefore): void {
-    $kidsBefore[] = $child;
-});
-$unmountRoot->unmount();
-$allDown = true;
-foreach ($kidsBefore as $kid) {
-    if ($kid->isMounted()) {
-        $allDown = false;
-    }
-}
-check('Element · unmount 级联到全树', !$unmountRoot->isMounted() && $allDown);
-check('Element · unmount 后子列表清空', $unmountRoot->childCount() === 0);
-
-// update() 换的是新描述，且同样封存
-$rebuilt = (new BranchWidget([new BuildProbe()]))->createElement();
-$rebuilt->mount(null, $context);
-$nextWidget = new BuildProbe();
-$rebuilt->update(new BranchWidget([$nextWidget]));
-check('Element · update 换整体新描述并封存', $rebuilt->childAt(0)?->widget() === $nextWidget && $nextWidget->isSealed());
-
-
+// ── ⑯ 三树 Element（挂载 / diff / 卸载）已迁出 ───────────────────────────────
+//   · tests/Unit/Widget/ElementTreeTest.php（10 条，纯 Element 机制 Unit 层）
 // ── 结构控件：Column / Row / Padding / Center / Spacer / Expanded（⑱）已迁出 ──────
 //   · `tests/Unit/Widget/StructureControlsTest.php` —— 建盒/子盒挂接 / 端到端 flex 分配 /
 //     Row 横主轴 / 弹性子拿全部剩余（A·B·C）/ Padding 进盒 / Center 正中·松约束·带 padding /

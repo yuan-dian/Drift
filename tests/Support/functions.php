@@ -11,6 +11,7 @@ declare(strict_types=1);
  */
 
 use Drift\Dev\Tests\Support\SmokeTestCase;
+use Drift\Layout\RenderBox;
 use Drift\Text\DeterministicFontManager;
 use Drift\Text\DeterministicMetricsProvider;
 use Drift\Text\DeterministicShaper;
@@ -93,5 +94,53 @@ if (!\function_exists('spinCanvas')) {
         $list->replay($canvas);
 
         return $canvas;
+    }
+}
+
+if (!\function_exists('expectBox')) {
+    /**
+     * 断言某个盒的**矩形**（客户区绝对坐标）。
+     *
+     * ★ 与 `tools/smoke.php` 同名函数同实现。四个数一起断言：几何错通常是
+     *   "整体偏了一个 padding"，分开断言会得到四条消息。严格 `===`，不加容差
+     *   （布局是确定性的）。盒为 null / 没 layout 过 ⇒ 断言失败并写明是哪种。
+     */
+    function expectBox(?\Drift\Layout\RenderBox $box, float $x, float $y, float $w, float $h, string $name = ''): void
+    {
+        $label = $name !== '' ? $name : '盒矩形';
+        if ($box === null) {
+            check($label, false, '盒为 null（没挂上 / 没 layout）');
+
+            return;
+        }
+        $size = $box->size();
+        if ($size === null) {
+            check($label, false, '盒 size() 为 null（layout 没跑）');
+
+            return;
+        }
+        [$ax, $ay] = RenderBox::absoluteOrigin($box);
+        check(
+            $label,
+            $ax === $x && $ay === $y && $size->width === $w && $size->height === $h,
+            sprintf(
+                '期望 (%.4g, %.4g) %.4g×%.4g，实际 (%.4g, %.4g) %.4g×%.4g',
+                $x, $y, $w, $h,
+                $ax, $ay, $size->width, $size->height
+            )
+        );
+    }
+}
+
+if (!\function_exists('countTree')) {
+    /** 数整棵子树有多少个 Element（含自己） */
+    function countTree(Element $element): int
+    {
+        $total = 1;
+        $element->visitChildren(static function (Element $child) use (&$total): void {
+            $total += countTree($child);
+        });
+
+        return $total;
     }
 }
