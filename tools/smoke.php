@@ -12596,48 +12596,12 @@ $semLay = static function (Widget $root): Element {
 //   ★ 像素走共享 `spinCanvas()`；语义走共享 `Semantics::element()`。
 
 
-// ── 图标（08 §4.2）：Path 图形、固定正方形、不进语义树 ──
-//   ★ 判据落在几何与像素上 —— 图标最容易的失败是"数据表漏了一项"（空 Path ⇒
-//     什么都不画、且不报错）与"尺寸被父约束撑满"。
-$icRoot = Icon::make(IconName::Menu, 16.0)->createElement();
-$icRoot->mount(null, $context);
-$icBox = $icRoot->effectiveBox();
-check('Icon · 挂载即建出 RenderIcon', $icBox instanceof RenderIcon);
-$icBox?->layout(BoxConstraints::loose(new Size(80.0, 80.0)));
-check(
-    'Icon · 固定正方形 16×16（不撑满父约束）',
-    $icBox?->size()?->width === 16.0 && $icBox?->size()?->height === 16.0,
-);
-$icCanvas = new RasterCanvas(16, 16, Color::white(), Scale::of(1.0));
-$icBox?->paint($icCanvas);
-$icInk = 0;
-for ($yy = 0; $yy < 16; $yy++) {
-    for ($xx = 0; $xx < 16; $xx++) {
-        if (!$icCanvas->pixelAt($xx, $yy)->equals(Color::white())) {
-            $icInk++;
-        }
-    }
-}
-check('Icon · Menu 画出了墨（三条横线）', $icInk > 0, 'ink=' . $icInk);
 
-// 枚举与数据表一一对应：漏一项 ⇒ 空 Path ⇒ 静默不画（最隐蔽的失败）
-$icMissing = [];
-foreach (IconName::cases() as $icName) {
-    if (IconSet::path($icName, 16.0)->isEmpty()) {
-        $icMissing[] = $icName->value;
-    }
-}
-check(
-    'Icon · 每个 IconName 都有图形数据（空 Path = 静默不画）',
-    $icMissing === [],
-    'missing=' . implode(',', $icMissing),
-);
+// ── 图标（Icon / IconName / IconSet）已迁出 ──────────────────────────────
+//   · `tests/Feature/Widget/IconTest.php` —— 挂载 RenderIcon / 固定正方形 16×16 /
+//     Menu 画墨 / 每个 IconName 都有数据 / 装饰不进语义树（5 条）
+//   ★ 像素走共享 `spinCanvas()`；语义走共享 `Semantics::element()`。
 
-// 装饰性叶子：不进语义树
-$icTree = SemanticsBuilder::build($semLay(Column::make()->children([
-    Icon::make(IconName::Search),
-])));
-check('Sem · Icon 不进语义树（装饰性叶子）', $icTree->count() === 0, 'count=' . $icTree->count());
 
 // ── ㊹ 动画：`AnimationController` / `Curve`（2026-10-21，#52：§17.4.11）──────
 //    ★ 两层判据：① 控制器算术（曲线端点 / 夹取 / 打断 / 回调一次性）；
