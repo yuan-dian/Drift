@@ -12,10 +12,14 @@ use Drift\Input\KeyChord;
  *
  * 判据全部落在值语义上，不碰树也不碰帧 ⇒ Unit 层。
  * 「同一组合绑两次 ⇒ Fatal」那条是**冲突不静默**（G2），要真起子进程验
- * `exit 3` + Errors.log，依赖入口脚本是 smoke ⇒ 留在 `tools/smoke.php`。
+ * `exit 3` + Errors.log ⇒ 走 `runFatalCase()`（用例在 `tests/Support/fatal_cases.php`）。
  */
 final class AcceleratorTableTest extends SmokeTestCase
 {
+    private function logPath(): string
+    {
+        return \sys_get_temp_dir() . '/drift-accel-' . \getmypid() . '.log';
+    }
     public function testResolveAndCount(): void
     {
         $accel = AcceleratorTable::make()
@@ -36,6 +40,35 @@ final class AcceleratorTableTest extends SmokeTestCase
             $accel->resolve(KeyChord::make('R', true, false, true)) === null,
         );
         check('AcceleratorTable · 计数 2 / 空表 isEmpty', $accel->count() === 2 && AcceleratorTable::make()->isEmpty());
+
+        $this->flushChecks();
+    }
+
+    /**
+     * G2：同一组合绑两次 ⇒ 响亮失败。
+     *
+     * ★ 后绑覆盖前绑的表现是"用户按了没反应，也不报错" —— 典型的半静默，
+     *   所以这里必须验到 `exit 3`（`Errors::report()` 的 FATAL 落点）而
+     *   不是"返回了什么"。
+     * ★ 退出码用 `=== 3` 而不是 `!== 0`：`2` 是 case 名拼错（`unknown case`），
+     *   照 `!== 0` 判会把"用例根本没跑"当成通过。
+     */
+    public function testDuplicateBindingFailsLoudly(): void
+    {
+        $log = $this->logPath();
+        fresh($log);
+        [$code, $out] = runFatalCase('accel-conflict', $log);
+
+        check(
+            'AcceleratorTable · 同一组合绑两次 ⇒ 退出码 = 3（不后绑覆盖前绑）',
+            $code === 3,
+            '实际 ' . $code . ' / ' . $out,
+        );
+        check(
+            'AcceleratorTable · 冲突写了 Errors.log（点名 AcceleratorTable）',
+            \str_contains(logText($log), 'AcceleratorTable'),
+            '日志：' . \trim(logText($log)),
+        );
 
         $this->flushChecks();
     }

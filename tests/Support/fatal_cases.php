@@ -39,6 +39,8 @@ use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Size;
+use Drift\Input\AcceleratorTable;
+use Drift\Input\KeyChord;
 use Drift\Layout\FlexAlign;
 use Drift\Layout\Overflow;
 use Drift\Layout\RenderBox;
@@ -341,6 +343,14 @@ $cases = [
     //   在这里最难发现（画面看起来完全正常，只是短了 1 像素）。
     'layout-oversize-c6' => static function (): void {
         (new OversizeBox())->layout(new BoxConstraints(0.0, 10.0, 0.0, 10.0));
+    },
+
+    // G2：同一个组合绑两次 ⇒ 响亮失败。后绑覆盖前绑的表现是"用户按了没反应，
+    //   也不报错" —— 典型的半静默。
+    'accel-conflict' => static function (): void {
+        AcceleratorTable::make()
+            ->bind(KeyChord::ctrl('R'), 'users.refresh')
+            ->bind(KeyChord::ctrl('R'), 'users.reload');
     },
 ];
 

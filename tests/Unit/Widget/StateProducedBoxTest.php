@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Dev\Tests\Unit\Widget;
 
 use Drift\Dev\Smoke\Layout\SolidBox;
+use Drift\Dev\Smoke\State\LeafBoxFallbackWidget;
 use Drift\Dev\Smoke\State\LeafBoxState;
 use Drift\Dev\Smoke\State\LeafBoxWidget;
 use Drift\Dev\Tests\Support\SmokeTestCase;
@@ -21,8 +22,9 @@ use Drift\Widget\Spinner;
  * 叶子控件两段就够，`SpinnerBox` 已删。
  *
  * ★ 夹具 `LeafBoxWidget` 数 `build()` 调用次数 —— 叶子路径下一次都不该调。
- *   反向自检（不覆写钩子 ⇒ build 必须被调）留在 smoke 的子进程用例里：
- *   它靠 `runCase(__FILE__, ...)` 起新进程，`__FILE__` 必须是入口脚本。
+ *   反向自检（不覆写钩子 ⇒ build 必须被调）见本文件最后一个方法：
+ *   原先是 smoke 的子进程用例，只因 `runCase(__FILE__, ...)` 要求 `__FILE__` 是入口脚本；
+ *   它本身只读一个计数器 ⇒ 进程内即可（少起一个进程）。
  * ★ 这条路的判据是"**没走** build"，所以三条正例必须一起看：
  *   有盒 + 无子 + 计数为 0。只验"有盒"的话，走 build 也能有盒。
  */
@@ -87,6 +89,28 @@ final class StateProducedBoxTest extends SmokeTestCase
             $built instanceof SizedBox
                 && $root->effectiveBox()?->size()?->width === 0.0
                 && $root->effectiveBox()?->size()?->height === 0.0,
+        );
+    }
+
+    /**
+     * ⑤ 反向自检：**不覆写**钩子的同类控件必须走 `build()`。
+     *
+     * ★ 没有这一条，上面"零调用"的计数器坏掉（恒返回 0）也看不出来 ——
+     *   与 `lint --selftest` 给每条规则配"该响"的反例是同一个思路。
+     * ★ 它只读一个计数器，不需要子进程（原在 smoke 里是子进程，纯粹因为
+     *   `runCase(__FILE__, ...)` 要求 `__FILE__` 是 smoke 入口）。
+     */
+    public function testFallbackWidgetWithoutHookDoesCallBuild(): void
+    {
+        LeafBoxWidget::resetBuildCalls();
+        $fallback = LeafBoxFallbackWidget::make()->createElement();
+        $fallback->mount(null, smokeContext());
+        $fallback->rebuild();
+
+        check(
+            '叶子态控件 · 反向自检：不覆写钩子 ⇒ build() 真被调用（计数器有牙）',
+            LeafBoxWidget::$buildCalls >= 1,
+            'calls=' . LeafBoxWidget::$buildCalls,
         );
     }
 }

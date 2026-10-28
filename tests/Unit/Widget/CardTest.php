@@ -9,12 +9,15 @@ use Drift\Geometry\Scale;
 use Drift\Geometry\Size;
 use Drift\Layout\FlexAlign;
 use Drift\Layout\RenderBox;
+use Drift\Layout\RenderProxy;
 use Drift\Rendering\Color;
 use Drift\Rendering\DisplayList;
 use Drift\Rendering\RasterCanvas;
 use Drift\Rendering\RecordingCanvas;
 use Drift\Widget\Card;
 use Drift\Widget\Column;
+use Drift\Widget\ScrollView;
+use Drift\Widget\SizedBox;
 use Drift\Widget\Text;
 
 /**
@@ -26,9 +29,12 @@ use Drift\Widget\Text;
  *   ③ 内禀宽含 padding（Row/Dock 量出的自然宽窄一圈 ⇒ 文字被挤）
  *   ④ 显式 `->background()` ⇒ 默认边框/圆角**整套让位**（§15.7 纪律 3）
  *   ⑤ 阴影三层外扩且由外向内加深（单层实心 = 描边，不是影子）
+ *   ⑥ **结构节点套代理盒 / 产盒孩子不套壳**（两种孩子两条路，见文末两个方法）
  * ★ M2-5 起 `RenderCard` 已删，Card 是 `StatelessWidget` ⇒ `effectiveBox()` 拿到的
  *   是**子控件自己的盒**，样式住在它的 `mods` 上。判据因此从"是不是那个类"变成
  *   "样式有没有落到那个盒上"（后者才是真正要守的东西）。
+ * ★ ⑥ 的两条来自 smoke 的 `cardproxy` 子进程用例 —— 它长期是**孤儿**（定义了没人跑），
+ *   而它守的正是"Card(结构节点) 一点就炸"那个真回归。孤儿 ≠ 可删，已搬成两个正常方法。
  */
 final class CardTest extends SmokeTestCase
 {
@@ -229,6 +235,74 @@ final class CardTest extends SmokeTestCase
             'Card · 紧宽约束 ⇒ 内容撑满（300 − 2×16 = 268，不是文字自然宽）',
             $kid?->size() !== null && abs($kid->size()->width - 268.0) < 0.01,
             sprintf('内容宽 %.6g', $kid?->size()?->width ?? -1.0),
+        );
+    }
+
+    /**
+     * ⑥ 结构节点（`ScrollView` / `TextField`）**自己不产盒** ⇒ Card 必须先套一层
+     * `SizedBox`（盒是 `RenderProxy`）再写样式。
+     *
+     * ★ 这条**真的炸过**：M2-5（2026-10-22）把 Card 从"自己有盒"改成"注入孩子 mods"
+     *   时漏了结构节点 —— §11.7 守卫当场 FATAL，示例台 7 页一点就炸，而当时四档闸门
+     *   全绿（用例面没有 Card(结构节点)）。与 `fatal_cases.php` 的 `modstateful`
+     *   是同一件事的**正反两面**：那边验"直接写样式 ⇒ 响亮失败"，这边验"套了壳就没事"。
+     * ★ 三条一起才算验到：中间是 SizedBox + 它的盒是 RenderProxy + 样式落在代理盒上。
+     *   只看前两条的话，"套了壳但样式写到了别处"照样过。
+     * ★ 取盒走 `$mid->renderObject()`，**不要** `$sv->parent()`：ScrollView 是**有态**
+     *   控件，盒要等一帧才建，仅 `mount` 之后为 null —— 第一版就错在这儿，
+     *   后两条恒 0（不是实现错，是取盒路径错）。
+     */
+    public function testStructureChildGetsWrappedInProxy(): void
+    {
+        $el = Card::make(ScrollView::make(Text::make('x')))->createElement();
+        $el->mount(null, smokeContext());
+
+        $mid = $el->childAt(0);
+        $proxy = $mid?->renderObject();
+        $midWidget = $mid?->widget();
+
+        check(
+            'Card · 结构节点（ScrollView）被套一层 SizedBox 代理（不产盒的控件不能直接写样式）',
+            $midWidget instanceof SizedBox,
+            '中间节点是 ' . ($midWidget === null ? 'null' : $midWidget::class),
+        );
+        check(
+            'Card · 代理节点的盒就是 RenderProxy',
+            $proxy instanceof RenderProxy,
+            '盒是 ' . ($proxy === null ? 'null' : $proxy::class),
+        );
+        check(
+            'Card · 样式落在代理盒上（不是落在 ScrollView 身上 —— 它没有盒）',
+            $proxy !== null && $proxy->mods() !== null && $proxy->mods()->hasVisual(),
+            'hasVisual=' . ($proxy?->mods()?->hasVisual() === true ? 'true' : 'false'),
+        );
+    }
+
+    /**
+     * ⑥ 的另一半：**产盒**的孩子不套壳，样式直接落它自己（M2-5 之前的行为逐字不变）。
+     *
+     * ★ 判据必须落在**控件类型**上。只看"盒有没有视觉样式"的话，哪天有人给所有孩子
+     *   都套壳，`RenderProxy` 照样有样式 ⇒ 假绿（2026-10-23 真写出过这一版，
+     *   靠 lint 的 `instanceof` 缺 `use` 才抓住）。
+     */
+    public function testBoxProducingChildIsStyledDirectly(): void
+    {
+        $el = Card::make(Text::make('y'))->createElement();
+        $el->mount(null, smokeContext());
+
+        $kid = $el->childAt(0);
+        $box = $kid?->renderObject();
+        $kidWidget = $kid?->widget();
+
+        check(
+            'Card · 产盒孩子（Text）**不套壳**：直接子节点就是 Text 自己',
+            $kidWidget instanceof Text,
+            '直接子是 ' . ($kidWidget === null ? 'null' : $kidWidget::class),
+        );
+        check(
+            'Card · 样式落在 Text 自己的盒上',
+            $box !== null && $box->mods() !== null && $box->mods()->hasVisual(),
+            'hasVisual=' . ($box?->mods()?->hasVisual() === true ? 'true' : 'false'),
         );
     }
 }

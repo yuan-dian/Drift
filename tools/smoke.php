@@ -19,7 +19,6 @@ use Drift\Dev\Smoke\Layout\BleedBox;
 use Drift\Dev\Smoke\Layout\SolidBox;
 use Drift\Dev\Smoke\Commands\EchoCommands;
 use Drift\App\Application;
-use Drift\Platform\Win32\Win32SurfaceProvider;
 use Drift\App\FocusManager;
 use App\Showcase\ShowcaseApplication;
 use App\Tutorial\TutorialApplication;
@@ -64,8 +63,6 @@ use Drift\Dev\Smoke\State\BuildWatchWidget;
 use Drift\Dev\Smoke\State\ChainPage;
 use Drift\Dev\Smoke\State\ChainProbe;
 use Drift\Dev\Smoke\State\FakeStore;
-use Drift\Dev\Smoke\State\LeafBoxFallbackWidget;
-use Drift\Dev\Smoke\State\LeafBoxWidget;
 use Drift\Dev\Smoke\State\LoopPage;
 use Drift\Core\Computed;
 use Drift\Errors;
@@ -77,7 +74,6 @@ use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Scale;
 use Drift\Geometry\Size;
-use Drift\Input\AcceleratorTable;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
@@ -230,50 +226,6 @@ if (str_starts_with($caseArg, '--case=')) {
     // 受控声明缺上报 ×4 / sort 未知列 / 空列 key / cell() 列可编辑）已迁出：
     //   用例 → `tests/Support/fatal_cases.php`
     //   判据 → `tests/Feature/Table/ConfigFailureTest.php`
-
-    if ($case === 'cardproxy') {
-        // ★ 正向（与 `modstateful` 反例配对，反例已搬到 `tests/Support/fatal_cases.php`）：
-        //   `Card` 的样式注入**两种孩子两条路**。
-        //   M2-5（2026-10-22）把 Card 从"自己有盒"改成"注入孩子 mods"后漏过这里：
-        //   结构节点（ScrollView/TextField）自己不产盒 ⇒ §11.7 守卫当场 FATAL，
-        //   示例台 7 页一点就炸，而当时四档闸门全绿（用例面没覆盖 Card(结构节点)）。
-        //   修法：结构节点套一层 `SizedBox`（RenderProxy）再写样式。
-        // ① 结构节点：中间必须是 SizedBox 代理，样式落代理盒上。
-        $ctx = smokeContext();
-        $el = Card::make(ScrollView::make(Text::make('x')))->createElement();
-        $el->mount(null, $ctx);
-        $mid = $el->childAt(0);
-        // 代理盒 = SizedBox 自己的渲染盒（`RenderProxy`），`mount` 后即有（与 Padding/Center 同一 idiom）。
-        // ★ 不能走 `$sv->parent()`：ScrollView 是**有态**控件，盒要等一帧才建，仅 `mount` 后为 null
-        //   ⇒ 第一版那么写，sv-parent-proxy / proxy-visual 两条恒 0（不是实现错，是取盒路径错）。
-        $proxy = $mid?->renderObject();
-        echo 'sv-wrapped=' . ($mid !== null && $mid->widget() instanceof SizedBox ? 1 : 0) . "\n";
-        echo 'sv-parent-proxy=' . ($proxy instanceof RenderProxy ? 1 : 0) . "\n";
-        echo 'proxy-visual=' . ($proxy !== null && $proxy->mods() !== null && $proxy->mods()->hasVisual() ? 1 : 0) . "\n";
-        // ② 产盒孩子：**不套壳**，样式直接落它自己（M2-5 之前的行为逐字不变）。
-        //   ★ 判据必须落在**控件类型**上：只看"盒有没有视觉样式"的话，哪天
-        //   有人给所有孩子都套壳，RenderProxy 照样有样式 ⇒ 假绿（2026-10-23
-        //   调试时我就写出过这一版，靠 lint 的 instanceof-missing-use 才抓住）。
-        $el2 = Card::make(Text::make('y'))->createElement();
-        $el2->mount(null, $ctx);
-        $kid = $el2->childAt(0);
-        $tb = $kid?->renderObject();
-        echo 'text-kid-direct=' . ($kid !== null && $kid->widget() instanceof Text ? 1 : 0) . "\n";
-        echo 'text-box-visual=' . ($tb !== null && $tb->mods() !== null && $tb->mods()->hasVisual() ? 1 : 0) . "\n";
-        exit(0);
-    }
-
-    if ($case === 'leafbox') {
-        // 反向自检（`02` §6.2 叶子路径）：同一个 `LeafBoxState`，**不**覆写
-        // `createRenderObjectFromState()` ⇒ 必须走 `build()`。
-        // ★ 只写正例 = 永远绿 —— 计数器自己坏了也看不出来。
-        LeafBoxWidget::resetBuildCalls();
-        $fallback = LeafBoxFallbackWidget::make()->createElement();
-        $fallback->mount(null, smokeContext());
-        $fallback->rebuild();
-        echo 'buildCalls=' . LeafBoxWidget::$buildCalls . "\n";
-        exit(0);
-    }
 
     if ($case === 'watchbuild') {
         // A4：订阅写在 build 体内 ⇒ 每重建一次多订一份。运行期守卫必须响。
@@ -467,13 +419,6 @@ if (str_starts_with($caseArg, '--case=')) {
         exit(1); // 走到这里 = 该报的没报
     }
 
-    if ($case === 'accelconflict') {
-        // G2：同一个组合绑两次 ⇒ 响亮失败，不是后绑覆盖前绑（用户按了没反应且不报错）
-        AcceleratorTable::make()
-            ->bind(KeyChord::ctrl('R'), 'users.refresh')
-            ->bind(KeyChord::ctrl('R'), 'users.reload');
-    }
-
     if ($case === 'noboundary') {
         // O-12 A′ S3 的"无边界"半边：帧末异常沿途没有 ErrorBoundary 捕获
         //   ⇒ Fatal 序列（exit 3 + Errors.log）。**不吞** —— 吞了就是窗口冻结
@@ -487,25 +432,6 @@ if (str_starts_with($caseArg, '--case=')) {
         $bad->state()?->boom();  // 标脏 ⇒ 帧末重建时抛
         (new Frame(new SurfaceProbe()))->run($bad, BoxConstraints::tight(new Size(240.0, 80.0)), 0.0);
         echo "不该到达这里\n";
-    }
-
-    // ★ W8-3 的两个构造期守卫：`Errors::report` 走 `abort()` ⇒ **真的 exit(3)**，
-    //   进程内 `try/catch` 接不住（`exit()` 不是异常）⇒ 必须走子进程。2026-10-24
-    //   第一稿就是写在进程内的，现象是 smoke 在那一行**静默截断**（无汇总行、
-    //   无 FAIL、退出码还是 0 —— 因为管道吃掉了子进程的退出码）。
-    if ($case === 'gridzero') {
-        Grid::make(0);
-        echo "不该到达这里\n";
-        exit(0);
-    }
-
-    if ($case === 'lazygridpitch') {
-        $bad = LazyGrid::make(3, 96.0)->spacing(96.0)->items([0], static fn(int $i): Widget => Text::make('x'));
-        $element = $bad->createElement();
-        $element->mount(null, smokeContext());
-        $element->effectiveBox()?->layout(BoxConstraints::tight(new Size(336.0, 240.0)));
-        echo "不该到达这里\n";
-        exit(0);
     }
 
     exit(0); // 走到这里说明"该中止的没中止"
@@ -3739,25 +3665,10 @@ check('apps/showcase · closeModal 关掉（闭环，不残留）', !$sc2App->is
 //     纯函数 / 8 档渐隐 / tick 只标脏 / 帧末换盒
 //   · `tests/Feature/App/AnimationClockTest.php`（4）—— attach 首帧即推进 / 每帧一格 /
 //     wantsFrame 两向（有动画要帧、无动画不空转）
-//   · `tests/Unit/Widget/StateProducedBoxTest.php`（6）—— 叶子路径有盒无子且 build 零调用 /
-//     修饰落自己 / Spinner 走叶子 / `State::build()` 默认零尺寸
+//   · `tests/Unit/Widget/StateProducedBoxTest.php`（7）—— 叶子路径有盒无子且 build 零调用 /
+//     修饰落自己 / Spinner 走叶子 / `State::build()` 默认零尺寸 / **反向自检**（不覆写
+//     钩子 ⇒ build 真被调，证明计数器有牙 —— 原先在 smoke 起子进程，其实进程内就够）
 //
-// ── ㉗c 余下：叶子态控件的**反向自检**（子进程）──────────────────────────────
-//   ★ 只有"不覆写钩子 ⇒ build() 被调"这一条留在这里：`runCase()` 依赖 `__FILE__`
-//     是入口脚本，搬到 `tests/` 之后起不了子进程（§9 坑）。
-// 量具反向自检：不覆写钩子 ⇒ `build()` 真被调用（计数器不是死的）
-[$lbCode, $lbOut] = runCase(__FILE__, 'leafbox', null);
-$lbCalls = 0;
-if (preg_match('/buildCalls=(\d+)/', $lbOut, $lbM) === 1) {
-    $lbCalls = (int) $lbM[1];
-}
-check(
-    '叶子态控件 · 反向自检：不覆写钩子 ⇒ build() 被调用（计数器有牙）',
-    $lbCode === 0 && $lbCalls >= 1,
-    'rc=' . $lbCode . ' calls=' . $lbCalls . ' out=' . trim($lbOut),
-);
-
-
 // ── ㉘ 多页外壳：Dock / AppBar / NavButton + 命令激活 已迁出 ──────────────
 //   → `tests/Unit/Layout/DockTest.php`（15）—— 五槽几何（top/bottom 全宽贴边、
 //     左右中带全高、center 填满剩余）+ 无界主轴取内容自然高（自身高 112 /
@@ -3901,19 +3812,9 @@ check(
 //     （无焦点 / 无剪贴板端口 / 剪贴板空 / 无选区），每条都成对验"该吞的吞、该放的放"
 //   · `tests/Feature/Input/PointerSelectionTest.php` —— 指针框选 down/move/up/leave
 //     与反向拖动 + IBeam 光标
-//   ★ 下面 4 条是**子进程**判据（冲突 Fatal / 无边界 Fatal），依赖 `runCase(__FILE__)`。
-
-[$code, $output] = runCase(__FILE__, 'accelconflict', null);
-check(
-    'AcceleratorTable · 同一组合绑两次 ⇒ Fatal（exit 3，G2 冲突不静默）',
-    $code === 3,
-    '实际 ' . $code . ' / ' . $output,
-);
-check(
-    'AcceleratorTable · 冲突写了 Errors.log',
-    str_contains(logText($log), 'AcceleratorTable'),
-);
-
+//   ★ 下面 2 条是**子进程**判据（无边界 Fatal），依赖 `runCase(__FILE__)`。
+//   ★ 冲突 Fatal 那 2 条已并入 `tests/Unit/Input/AcceleratorTableTest.php`
+//     （走 `runFatalCase()`，用例在 `tests/Support/fatal_cases.php`）。
 // ── B/C/D 三层兜底（构造期 / build 期 / 渲染期）已迁出 ─────────────────────
 //   · `tests/Feature/Widget/ErrorBoundaryTest.php` —— 构造期（rebuild 捕获 · 换占位 ·
 //     带原文 · 占位出墨）· build 期（settle 捕获 · 多轮收敛仍在边界内）· 渲染期
@@ -4768,30 +4669,17 @@ if (is_resource($mockProc)) {
 //   → `tests/Feature/Semantics/SemanticsPushTest.php::testSinkPayloadShape`
 //     （载荷形状：两个 Button 各一节点 / role = button / name = 标签）
 
-// ── 平台后端解析（§7.2 裁决 4：2026-10-17 默认从 soft 翻成 skia）──
-// ★ 这两条都钉**静默失败**：默认没翻（界面继续锯齿）与显式 'soft' 被默认值吞掉
-//   （"确定性后端没生效"）都不会报错，只能靠夹具。反例自检：把 resolveBackend
-//   换回"只认 'skia'、其余退回默认" ⇒ 第 2 条 FAIL，另两条照过。
-check(
-    'Platform · 默认后端 = skia（2026-10-17 翻转）',
-    Win32SurfaceProvider::resolveBackend(null) === 'skia',
-    '实际 ' . Win32SurfaceProvider::resolveBackend(null),
-);
-check(
-    'Platform · 显式 soft 不被默认值吞掉',
-    Win32SurfaceProvider::resolveBackend('soft') === 'soft',
-    '实际 ' . Win32SurfaceProvider::resolveBackend('soft'),
-);
-check(
-    'Platform · 未知值退回默认（不报错也不选错）',
-    Win32SurfaceProvider::resolveBackend('vulkan') === 'skia',
-    '实际 ' . Win32SurfaceProvider::resolveBackend('vulkan'),
-);
-
 fresh($log);
 if (is_file($log)) {
     unlink($log);
 }
+
+// ── 平台后端解析（§7.2 裁决 4）已迁出 ──────────────────────────────────────
+//   · `tests/Unit/Platform/BackendResolveTest.php`（5）—— 表驱动四行
+//     （null ⇒ 默认 / 显式 skia / 显式 soft 不被吞 / 未知值退回默认）+ 一条前置
+//     "默认不是 soft"（否则"显式 soft"那行对该值**恒真**，默认翻回去也没人发现）
+//   ★ 两条失败都是静默的：默认没翻 ⇒ 界面继续锯齿；显式 soft 被吞 ⇒ 以为指定了
+//     确定性后端、实际跑 skia（golden 开始漂但没有任何一处报错）。
 
 // ── 虚拟列表 / ensureVisible / 锚点 / 缓冲带 已迁出 ────────────────────────
 //   · `tests/Feature/Widget/LazyListTest.php`（18）—— 窗口只覆盖视口（5000 与 20000 行
