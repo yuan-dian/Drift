@@ -1,0 +1,136 @@
+<?php
+declare(strict_types=1);
+
+namespace Drift\Dev\Tests\Feature\App;
+
+use Drift\Dev\Smoke\App\EchoApplication;
+use Drift\Dev\Smoke\Frame\SurfaceProbe;
+use Drift\Dev\Tests\Support\SmokeTestCase;
+use Drift\Geometry\BoxConstraints;
+use Drift\Geometry\Size;
+use Drift\Input\PointerEvent;
+
+/**
+ * 通用延时能力（`Application::after()` / `cancelAfter()`）。
+ *
+ * 这是 Tooltip / Snackbar / ComboBox 远程搜索的**共同燃料**，所以从控件测试里
+ * 摘出来单独立户：它测的是 `PumpHost` 的定时器泵，不是任何控件的语义。
+ *
+ * ★ `wantsFrame()` 是这条能力的一半：定时器排上了但帧时钟不上膛 ⇒ 永远不响；
+ *   响完不回落 ⇒ 空闲时每 15ms 空转。两个方向都要钉。
+ * ★ 时间基准取 `max(上一帧, 上一次输入)`：只取"上一帧"的话，**空闲应用**上排的
+ *   400ms 会当场触发（真机实测：远程搜索的"正在加载…"一帧都没出现过）。
+ *   这一条用"帧戳 1000、输入戳 5000"摆出来 —— 两者差 4 秒，不只取输入戳就必红。
+ */
+final class AfterSchedulerTest extends SmokeTestCase
+{
+    private const CONSTRAINTS_W = 320.0;
+    private const CONSTRAINTS_H = 400.0;
+
+    private function constraints(): BoxConstraints
+    {
+        return BoxConstraints::loose(new Size(self::CONSTRAINTS_W, self::CONSTRAINTS_H));
+    }
+
+    private function app(): EchoApplication
+    {
+        $app = new EchoApplication();
+        $app->attach(new SurfaceProbe(), $this->constraints());
+
+        return $app;
+    }
+
+    public function testScheduleTickAndIdle(): void
+    {
+        $app = $this->app();
+        $c = $this->constraints();
+        $ticks = [];
+        $app->after(500, function () use (&$ticks): void {
+            $ticks[] = 't500';
+        });
+        check(
+            '延时 · 排期后 wantsFrame() 为真（否则帧时钟不叫醒 ⇒ 定时器永远不响）',
+            $app->wantsFrame(),
+            'wantsFrame=false（帧时钟不会上膛）',
+        );
+
+        $app->frame(400.0, $c);
+        check('延时 · 未到点不触发', $ticks === [], 'ticks=' . \implode(',', $ticks));
+
+        $app->frame(600.0, $c);
+        check('延时 · 到点触发一次', $ticks === ['t500'], 'ticks=' . \implode(',', $ticks));
+        check(
+            '延时 · 触发后 wantsFrame() 归假（空闲不空转）',
+            !$app->wantsFrame(),
+            'wantsFrame=true（会每 15ms 空转）',
+        );
+    }
+
+    public function testCancelAfterIsIdempotent(): void
+    {
+        $app = $this->app();
+        $c = $this->constraints();
+        $cancel = 0;
+        $id = $app->after(100, function () use (&$cancel): void {
+            $cancel++;
+        });
+        $app->cancelAfter($id);
+        $app->frame(2000.0, $c);
+        check('延时 · cancelAfter() 撤销后不触发（幂等）', $cancel === 0, 'cancel=' . $cancel);
+    }
+
+    public function testNestedAfterIsNotLost(): void
+    {
+        $app = $this->app();
+        $c = $this->constraints();
+        $nest = [];
+        $app->after(10, function () use ($app, &$nest): void {
+            $nest[] = 'outer';
+            $app->after(10, function () use (&$nest): void {
+                $nest[] = 'inner';
+            });
+        });
+        $app->frame(2100.0, $c);
+        check(
+            '延时 · 回调里再 after() 不丢（先摘再调，遍历中不改进中的表）',
+            $nest === ['outer'],
+            'nest=' . \implode(',', $nest),
+        );
+
+        $app->frame(2200.0, $c);
+        check(
+            '延时 · 新排的回调下一帧照常触发',
+            $nest === ['outer', 'inner'],
+            'nest=' . \implode(',', $nest),
+        );
+    }
+
+    /**
+     * 基准取"输入时刻"而不是"上一帧"（真机缺陷判据，2026-10-24）。
+     *
+     * ★ 摆法要选"上一帧离得很远"：帧戳 1000、输入戳 5000 —— 只取上一帧的话
+     *   `due=1400` 早就在过去了，两条判据会**同时**红成"已经触发过了"。
+     */
+    public function testDueBaseIsInputTimestamp(): void
+    {
+        $app = $this->app();
+        $c = $this->constraints();
+        $app->frame(1000.0, $c);
+        $app->dispatchInput(PointerEvent::move(5.0, 5.0), 5000.0);
+
+        $fired = 0;
+        $app->after(400, function () use (&$fired): void {
+            $fired++;
+        });
+
+        $app->frame(5100.0, $c);   // 距输入 100ms
+        check(
+            '延时 · 基准取输入时刻（+100ms 不触发；只取上一帧的话这里已经触发了）',
+            $fired === 0,
+            'fired=' . $fired,
+        );
+
+        $app->frame(5400.0, $c);   // 距输入 400ms
+        check('延时 · 基准取输入时刻（+400ms 才触发）', $fired === 1, 'fired=' . $fired);
+    }
+}

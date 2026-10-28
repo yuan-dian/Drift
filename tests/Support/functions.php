@@ -196,6 +196,33 @@ if (!\function_exists('countTree')) {
     }
 }
 
+if (!\function_exists('runFatalCase')) {
+    /**
+     * 起子进程跑一个"必须响亮失败"的用例，返回 `[退出码, 输出]`。
+     *
+     * ★ 只能起进程：`Errors::report()` 的 FATAL 落点是 `exit(3)`，进程内抓不到。
+     *   用例表在 `tests/Support/fatal_cases.php`，加 case 加一行即可。
+     * ★ 退出码 3 = 按预期 Fatal 了；0 = 该崩没崩；2 = case 名拼错（照 3 判会假绿）。
+     *
+     * @return array{0: int, 1: string}
+     */
+    function runFatalCase(string $case, ?string $log = null): array
+    {
+        $command = \escapeshellarg(PHP_BINARY)
+            . ' ' . \escapeshellarg(__DIR__ . '/fatal_cases.php')
+            . ' ' . \escapeshellarg('--case=' . $case);
+        if ($log !== null) {
+            $command .= ' ' . \escapeshellarg($log);
+        }
+
+        $output = [];
+        $code = 0;
+        \exec($command . ' 2>&1', $output, $code);
+
+        return [$code, \implode("\n", $output)];
+    }
+}
+
 if (!\function_exists('fresh')) {
     /** 清掉日志与状态，让每个用例互不污染（与 smoke 同名同义） */
     function fresh(string $log): void
