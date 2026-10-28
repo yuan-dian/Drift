@@ -34,7 +34,6 @@ use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Smoke\Frame\TickerWidget;
 use Drift\Dev\Smoke\Frame\TickerState;
 use Drift\Dev\Smoke\Overlay\RecordingSurface;
-use Drift\Dev\Smoke\App\FocusRingApplication;
 use Drift\Dev\Smoke\Rendering\ProbePainter;
 use Drift\Dev\Preview\SvgSurface;
 use Drift\Dev\Smoke\App\CountJob;
@@ -4752,59 +4751,15 @@ check(
 //     键盘可达要过 `FocusManager`（应用级路由，Feature）。
 //   ★ 缓存键那两条是**性能判据**（改颜色不重排），失败时功能全对、只是慢 ——
 //     所以它们和排版断言分开成方法，不能混在一起。
-// —— W8-5 续作五：焦点环（应用级叠加，零控件改动）——
-$ringApp = new FocusRingApplication();
-$ringProbe = new SurfaceProbe();
-$ringProbe->resize(300, 200, 1.0);
-$ringApp->attach($ringProbe, BoxConstraints::tight(new Size(300.0, 200.0)));
-$ringApp->frame(0.0, BoxConstraints::tight(new Size(300.0, 200.0)));
-$ringBefore = $ringProbe->canvas?->pixelAt(19, 19);
-
-$ringApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
-$ringWants = $ringApp->wantsFrame();
-$ringApp->frame(1.0, BoxConstraints::tight(new Size(300.0, 200.0)));
-$ringAfter = $ringProbe->canvas?->pixelAt(19, 19);
-$ringAccent = Color::fromRgb(0x09, 0x69, 0xDA);
-
-check(
-    '焦点环 · 焦点变了但还没画 ⇒ wantsFrame 为真（第七判据；否则环要等下次输入）',
-    $ringWants === true,
-    'wantsFrame=' . ($ringWants ? 'y' : 'n'),
-);
-
-check(
-    '焦点环 · 无焦点时 (19,19) 不是描边（不是"一直画")',
-    $ringBefore !== null && !$ringBefore->equals($ringAccent),
-    'rgb=' . ($ringBefore === null ? 'null' : $ringBefore->r . ',' . $ringBefore->g . ',' . $ringBefore->b),
-);
-check(
-    '焦点环 · Tab 聚焦后控件左上外扩 1px 是 Accent 描边',
-    $ringAfter !== null && $ringAfter->equals($ringAccent),
-    'rgb=' . ($ringAfter === null ? 'null' : $ringAfter->r . ',' . $ringAfter->g . ',' . $ringAfter->b),
-);
-check(
-    '焦点环 · 画完后悔回落（wantsFrame 的第七判据有界）',
-    $ringApp->wantsFrame() === false,
-    'wantsFrame=' . ($ringApp->wantsFrame() ? 'y' : 'n'),
-);
-
-// :focus-visible —— 指针交互后隐藏（焦点可能没变，环仍然该消失）
-$ringApp->dispatchInput(PointerEvent::down(5.0, 5.0));
-$ringAfterClickWants = $ringApp->wantsFrame();
-$ringApp->frame(2.0, BoxConstraints::tight(new Size(300.0, 200.0)));
-$ringAfterClick = $ringProbe->canvas?->pixelAt(19, 19);
-
-check(
-    '焦点环 · 指针点击后隐藏（:focus-visible —— 鼠标操作后不该再看到蓝框）',
-    $ringAfterClick !== null && !$ringAfterClick->equals($ringAccent),
-    'rgb=' . ($ringAfterClick === null ? 'null' : $ringAfterClick->r . ',' . $ringAfterClick->g . ',' . $ringAfterClick->b),
-);
-check(
-    '焦点环 · "隐藏"本身也请求一帧（目标 null，不靠下次输入才消失）',
-    $ringAfterClickWants === true,
-    'wantsFrame=' . ($ringAfterClickWants ? 'y' : 'n'),
-);
-
+// —— W8-5 续作五：焦点环 已迁出 ───────────────────────────────────────
+//   → `tests/Feature/App/FocusRingTest.php`（7）—— Tab 聚焦：wantsFrame 第七判据
+//     为真 / 无焦点时不画 / 下一帧画出 Accent 描边（(19,19) 外扩 1px）/ 画完回落；
+//     指针点击：环消失（`:focus-visible`）/ "隐藏"本身也请求一帧。
+//   ★ 拆两个方法（键盘出现 / 指针消失），并给后者补一条**前置断言**"点击前是
+//     描边"：smoke 里"点击后不是 Accent"隐式依赖 200 行外的"Tab 后是 Accent"，
+//     独立成方法后那个前提没了 ⇒ 环从没画出来过时它是恒真的。
+//   ★ 第七判据是**真机现象**（Tab 后环要等下次鼠标移动才出现），smoke 因为显式
+//     跑两帧看不见 ⇒ "跑两帧后像素对"与"框架自己知道该跑一帧"必须分开断言。
 // ── ㉟ apps/users 完整样板（§19 M3 出口判据：§A.2 的完整应用可跑）──
 
 $usersSurface = new SvgSurface();
