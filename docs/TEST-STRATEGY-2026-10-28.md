@@ -192,6 +192,7 @@ PHPUnit 默认第一条断言失败就中止方法。GUI 断言不适用：一�
 | &nbsp;&nbsp;· 输入层（按键模型/焦点路由/坐标链/IME） ✅ | `tests/Unit/Input/KeyModelTest` + `tests/Feature/Input/{FocusRoutingTest,CoordinateChainTest}` | 1358 → 1320（−38） |
 | &nbsp;&nbsp;· 选区模型 / 选区渲染 ✅ | `tests/Unit/Widget/TextFieldSelectionTest` + `tests/Feature/Widget/TextFieldTest::testSelectionGeometryAndPaint` | 1320 → 1292（−28） |
 | &nbsp;&nbsp;· 状态层（SubjectBuilder / Cell / Computed / RT-3 / settle 漂移） ✅ | `tests/Unit/State/{SubjectBuilderTest,CellTest,ComputedTest}` + `tests/Feature/State/{SubscriptionIsolationTest,SettleDriftTest}` | 1292 → 1264（−28） |
+| &nbsp;&nbsp;· 窗口帧（resize / 零视口 / AppBar 窄窗 / 预览降级）+ 主题切换 ✅ | `tests/Feature/App/WindowFrameTest` + `tests/Feature/Theme/ThemeSwitchTest` | 1264 → 1253（−11） |
 | &nbsp;&nbsp;· 待搬 | 光标形状 / Spinner / 错误边界 / 命令与路由 / 主题作用域 / 语义推送 / 渲染图像 / ensureVisible / 虚拟列表锚点 / 浮层·模态·菜单族 / W8-2 控件族 / Table / LazyColumn / 日志 / 毛玻璃 | |
 | **S4** | 纯单元（485 条里的）改成标准 `TestCase`：`assertSame` + `#[DataProvider]` | `--testsuite=unit` 覆盖它们 |
 
@@ -394,7 +395,7 @@ smoke 那一份保留**（它服务的是"还没搬走的后续段"，不是历�
 ★ `spinCanvas` 的 `Scale` 在 `Drift\Geometry`（不是 `Drift\Rendering`）—— 又踩一次
 "命名空间别按目录推"（见 §9）。已在 functions.php 写全限定名，不再依赖 `use`。
 
-### 10.8 S3 5~14 批落地的文件账
+### 10.8 S3 5~15 批落地的文件账
 
 | 批 | 文件 | 断言 | smoke 对账 |
 |---|---|---|---|
@@ -408,6 +409,7 @@ smoke 那一份保留**（它服务的是"还没搬走的后续段"，不是历�
 | 12 输入层 | `tests/Unit/Input/KeyModelTest.php`（11）+ `tests/Feature/Input/FocusRoutingTest.php`（21）+ `CoordinateChainTest.php`（6） | 38（按键值语义/焦点路由/帧末挂接/坐标链/IME 定位） | 1358 → 1320（−38） |
 | 13 选区 | `tests/Unit/Widget/TextFieldSelectionTest.php`（23）+ `tests/Feature/Widget/TextFieldTest::testSelectionGeometryAndPaint`（5） | 28（锚点模型/Shift 只挪活动端/键入与删除吃整段/多字节吸附/选区几何与墨） | 1320 → 1292（−28） |
 | 14 状态层 | `tests/Unit/State/SubjectBuilderTest.php`（8）+ `CellTest.php`（7）+ `ComputedTest.php`（7）+ `tests/Feature/State/SubscriptionIsolationTest.php`（4）+ `SettleDriftTest.php`（1） | 28（select 门控/Cell 同值不标脏/Computed 缓存与嵌套/RT-3 隔离/settle 不漂移） | 1292 → 1264（−28） |
+| 15 窗口帧+主题 | `tests/Feature/App/WindowFrameTest.php`（7）+ `tests/Feature/Theme/ThemeSwitchTest.php`（4） | 11（resize 只跑一帧·不读时钟 / 零视口跳过且根盒保旧尺寸 / AppBar 窄窗裁剪 / 预览期降级 / 主题递归下发） | 1264 → 1253（−11） |
 
 ★ 第 12 批的切法按"依赖强度"分三层：纯值对象与声明（`KeyChord`/`KeyEvent`/`FocusNode`
 + Widget 侧 `focusNode()`）→ Unit；需要真 Element 树与布局（`FocusManager` 路由、命中→焦点、

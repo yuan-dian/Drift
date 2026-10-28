@@ -112,8 +112,6 @@ use Drift\Dev\Smoke\App\SemValueApplication;
 use Drift\Dev\Smoke\App\TfApplication;
 use Drift\Dev\Smoke\App\TfLabeledApplication;
 use Drift\Dev\Smoke\App\TitleBarLabApplication;
-use Drift\Dev\Smoke\App\ZeroViewportApplication;
-use Drift\Dev\Smoke\App\ThemeApplication;
 use Drift\Dev\Smoke\App\PointerApplication;
 use Drift\Dev\Smoke\App\ScrollApplication;
 use Drift\Dev\Smoke\App\NavApplication;
@@ -153,7 +151,6 @@ use Drift\Geometry\Rect;
 use Drift\Geometry\Scale;
 use Drift\Geometry\Size;
 use Drift\Layout\LayoutSelfCheck;
-use Drift\Layout\LayoutTolerance;
 use Drift\Layout\RenderRichText;
 use Drift\Input\AcceleratorTable;
 use Drift\Input\CursorShape;
@@ -329,7 +326,6 @@ use Drift\Widget\StatefulElement;
 use Drift\Widget\RichText;
 use Drift\Widget\Span;
 use Drift\Widget\Text;
-use Drift\Input\ThemeChangedEvent;
 use Drift\Input\WindowDeactivatedEvent;
 use Drift\Widget\TextField;
 use Drift\Widget\TextFieldState;
@@ -4597,139 +4593,13 @@ check(
 //     非 null / 右边缘与同偏移插入符左边缘同源 / offsetAt 真实往返 / 全选真的多出墨 /
 //     无选区为 null
 //   ★ `fieldInk()` 已随段删除 —— 测试侧用 TextFieldTest 的同名私有方法（同一量具）。
-// ── 拖动 resize 轻量入口（§5.2）：只重排+重绘，不碰任务/动画/语义 ──────
-//   平台壳在**模态尺寸循环内同步调回**它（C → PHP 重入）⇒ 能碰的状态越少越安全。
-//   头侧可断言的部分：新约束真的生效（根盒宽）、只跑一帧、时间戳复用上一帧。
-$resizeApp = new TfApplication();
-$resizeSurface = new SurfaceProbe();
-$resizeApp->attach($resizeSurface, BoxConstraints::loose(new Size(300.0, 200.0)));
-$resizeApp->frame(16.0, BoxConstraints::loose(new Size(300.0, 200.0)));
-$resizeFramesBefore = $resizeSurface->frames;
-$resizeTsBefore = $resizeSurface->lastTimestamp;
-$resizeApp->repaintForResize(BoxConstraints::tight(new Size(420.0, 260.0)));
-check(
-    'Resize · repaintForResize 按新约束重排（根盒宽 = 420，不是旧的 300）',
-    ($resizeApp->root()?->effectiveBox()?->size()?->width ?? -1.0) === 420.0,
-    'rootW=' . ($resizeApp->root()?->effectiveBox()?->size()?->width ?? -1.0)
-);
-check(
-    'Resize · repaintForResize 只跑一帧、时间戳复用上一帧（不自己读时钟）',
-    $resizeSurface->frames === $resizeFramesBefore + 1
-        && $resizeSurface->ends === $resizeFramesBefore + 1
-        && $resizeSurface->lastTimestamp === $resizeTsBefore,
-    'frames=' . $resizeSurface->frames . ' ends=' . $resizeSurface->ends
-        . ' ts=' . var_export($resizeSurface->lastTimestamp, true)
-);
-
-// ── 零视口（最小化）：不构成可布局的一帧 ────────────────────────────
-//   用户实测（2026-10-25）：最小化 ⇒ `GetClientRect` 给 0×0 ⇒ `tight(0,0)` 拿去
-//   布局 ⇒ `RenderText 实际 0.0 × 86.4，最多只能用 0.0 × 0.0` 当场 C6 Fatal。
-//   ★ 判据不是"没崩"，而是三件事：帧被**计数跳过**、表面**一帧都没起**、根盒
-//   **保持旧尺寸**（不被 0 覆盖）—— 后者才是"还原后能正常重排"的前提。
-$zeroApp = new ZeroViewportApplication();
-$zeroSurface = new SurfaceProbe();
-$zeroApp->attach($zeroSurface, BoxConstraints::tight(new Size(320.0, 240.0)));
-$zeroApp->frame(16.0, BoxConstraints::tight(new Size(320.0, 240.0)));
-$zeroRootW = $zeroApp->root()?->effectiveBox()?->size()?->width ?? -1.0;
-$zeroFramesBefore = $zeroSurface->frames;
-$zeroApp->frame(32.0, BoxConstraints::tight(new Size(0.0, 0.0)));
-check(
-    '零视口 · frame(tight(0,0)) 跳过布局与绘制（不 C6，表面不起帧，根盒保持 320）',
-    $zeroRootW === 320.0
-        && $zeroApp->zeroViewportFrames() === 1
-        && $zeroSurface->frames === $zeroFramesBefore
-        && ($zeroApp->root()?->effectiveBox()?->size()?->width ?? -1.0) === $zeroRootW,
-    'frames=' . $zeroSurface->frames . '/' . $zeroFramesBefore
-        . ' zero=' . $zeroApp->zeroViewportFrames()
-        . ' rootW=' . ($zeroApp->root()?->effectiveBox()?->size()?->width ?? -1.0)
-);
-$zeroApp->repaintForResize(BoxConstraints::tight(new Size(0.0, 0.0)));
-check(
-    '零视口 · repaintForResize(tight(0,0)) 与 frame() 同一条判据（表面仍不起帧）',
-    $zeroSurface->frames === $zeroFramesBefore,
-    'frames=' . $zeroSurface->frames,
-);
-$zeroApp->frame(48.0, BoxConstraints::tight(new Size(200.0, 120.0)));
-check(
-    '零视口 · 还原后按新尺寸重排（早退不留死状态）',
-    ($zeroApp->root()?->effectiveBox()?->size()?->width ?? -1.0) === 200.0,
-    'rootW=' . ($zeroApp->root()?->effectiveBox()?->size()?->width ?? -1.0),
-);
-
-// ── AppBar 窄窗口（§12.1 / W4）：宽度随窗口变化 ⇒ 裁剪，不弹 Fatal ──────
-//   实测回归：窗口拖到可用宽 322、顶条自然宽 327 ⇒ 原 `Overflow::Report` 直接
-//   弹 "RenderFlex 溢出" Fatal，拖动缩窗被中断。顶条放不下是**用户行为**，
-//   正确语义是裁剪（右侧导航项暂时不可见）。
-Errors::reset();
-$barEl = AppBar::make()->title('用户管理')->children([
-    NavButton::make('列表'),
-    NavButton::make('注册'),
-    NavButton::make('设置'),
-])->createElement();
-$barEl->mount(null, smokeContext());
-$barEl->settle();
-// ★ 约束必须**窄于顶条自然宽**（实测自然宽 ≈ 327：标题 + 3 个导航 + 菜单）。
-//   320 已接近，取 280 保证稳定溢出 —— 否则夹具对回归不敏感（反例仍绿）。
-$barEl->effectiveBox()?->layout(BoxConstraints::tight(new Size(100.0, 220.0)));
-$barDiag = Errors::recentDiagnostics();
-check(
-    'AppBar · 可用宽 100 < 自然宽 ⇒ 裁剪（无溢出 Fatal）',
-    $barDiag === []
-        && ($barEl->effectiveBox()?->size()?->width ?? -1.0) === 100.0,
-    'diag=' . count($barDiag) . ' rootW=' . ($barEl->effectiveBox()?->size()?->width ?? -1.0)
-);
-
-// ── 预览期硬校验降级（§5.2）：拖动中的瞬时极小尺寸不弹 Fatal ──────────
-//   用户拖窗口边缘时中间尺寸是**瞬时态**——「窗口比内容小」是合法状态，不是
-//   编程错误。`LayoutTolerance::$previewing` 期间 C5/C6 的硬校验一律降级为裁剪
-//   （RenderFlex / RenderDock / RenderBox 三处都读它）；松手后复位，真溢出照旧报。
-Errors::reset();
-LayoutTolerance::$previewing = true;
-$tolApp = new TfApplication();
-$tolApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
-$tolApp->frame(16.0, BoxConstraints::loose(new Size(300.0, 200.0)));
-$tolApp->repaintForResize(BoxConstraints::tight(new Size(80.0, 50.0)));   // 远小于内容
-$tolDiag = Errors::recentDiagnostics();
-LayoutTolerance::$previewing = false;
-check(
-    'Resize · 预览期极小尺寸不弹 Fatal（C5/C6 降级为裁剪）',
-    $tolDiag === [],
-    'diag=' . count($tolDiag) . ' ' . implode(' | ', array_slice($tolDiag, 0, 2))
-);
-
-// ── 主题切换 ⇒ 界面真的换表（§9.2 / §24.2 #14）────────────────────────
-//   `Element::applyContext()` 本就是"换一份渲染环境（主题切换的唯一入口）"，
-//   但 src/ 里**零生产调用者** ⇒ ThemeChangedEvent 之前只是被显式消费、不做
-//   任何事。本轮把两者接起来（先 `onSystemThemeChanged()` 换源、再下发 context）。
-$thApp = new ThemeApplication();
-$thApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
-$thRoot = $thApp->rootElement();
-check(
-    '主题 · 派发前：根 context 是浅色（对照，证明"没事件就不变"）',
-    $thRoot?->context()->theme()->isDark() === false,
-    $thRoot?->context()->theme()->isDark() ? 'dark' : 'light'
-);
-
-$thApp->dispatchInput(new ThemeChangedEvent());
-check(
-    '主题 · onSystemThemeChanged() 钩子被调 ⇒ 应用换了主题源',
-    $thApp->currentTheme()->isDark() === true,
-    $thApp->currentTheme()->isDark() ? 'dark' : 'light'
-);
-check(
-    '主题 · 根 Element 的 context 换成深色（applyContext 下发）',
-    $thRoot?->context()->theme()->isDark() === true,
-    $thRoot?->context()->theme()->isDark() ? 'dark' : 'light'
-);
-
-// ★ 递归生效才是"界面换表" —— 只换根不换子层，控件仍按旧主题取色（换表不换色）
-$thText = findElement($thRoot, fn($el) => $el->widget() instanceof Text);
-check(
-    '主题 · 子层 context 也换了（applyContext 递归下发 —— 换表**且**换色）',
-    $thText?->context()->theme()->isDark() === true,
-    $thText?->context()->theme()->isDark() ? 'dark' : 'light'
-);
-
+// ── 拖动 resize / 零视口 / AppBar 窄窗 / 预览期降级 / 主题切换 已迁出 ────────
+//   · `tests/Feature/App/WindowFrameTest.php`（7）—— repaintForResize 按新约束重排且
+//     只跑一帧·时间戳复用上一帧 · frame(tight(0,0)) 跳过布局且根盒保持旧尺寸 ·
+//     repaintForResize 同判据 · 还原后按新尺寸重排 · AppBar 窄于自然宽 ⇒ 裁剪无 Fatal ·
+//     LayoutTolerance::$previewing 期间极小尺寸降级为裁剪
+//   · `tests/Feature/Theme/ThemeSwitchTest.php`（4）—— 派发前是浅色（对照）/
+//     onSystemThemeChanged 换源 / 根 context 换深色 / **子层也换**（递归下发才叫换表）
 // 帧末重建（adoptBoxes）/ skipFocus / focusOrder / claimKeys 已迁出
 //   · `tests/Feature/Input/FocusRoutingTest.php` —— 父容器换上重建后的新盒（量具
 //     双向自检：`Element::settle()` 去掉 `adoptBoxes()` 这条必须变红）/
