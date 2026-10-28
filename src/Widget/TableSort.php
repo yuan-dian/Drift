@@ -65,7 +65,7 @@ final readonly class TableSort
     public static function by(string $column, TableSortDirection $dir = TableSortDirection::Ascending): self
     {
         if ($column === '') {
-            Errors::report('TableSort::by() 的列 key 不能为空 —— 它是列的 `TableColumn::keyName()`');
+            Errors::report('TableSort::by() 的列 key 不能为空 —— 它是列的 `TableColumn::keyName()`，不是"没排序"的另一种写法。修法：不排序请用 TableSort::none()。');
         }
 
         return new self([[$column, $dir]]);
@@ -81,7 +81,7 @@ final readonly class TableSort
     public function thenBy(string $column, TableSortDirection $dir = TableSortDirection::Ascending): self
     {
         if ($column === '') {
-            Errors::report('TableSort::thenBy() 的列 key 不能为空 —— 它是列的 `TableColumn::keyName()`');
+            Errors::report('TableSort::thenBy() 的列 key 不能为空 —— 它是列的 `TableColumn::keyName()`，不是"没排序"的另一种写法。修法：不排序请用 TableSort::none()。');
         }
 
         $next = [];

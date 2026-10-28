@@ -307,7 +307,7 @@ final class TableColumn
             Errors::report(sprintf(
                 'Table 的列 "%s" 声明了 editable()，但它用的是 cell() —— 单元格编辑需要'
                     . "\n" . '"起始文本 + 提交到哪个字段"，而 cell() 只给一个任意 Widget。'
-                    . "\n" . '修法：该列改用 field("%s")（或 field(字段名)），或去掉 editable()。',
+                    . "\n" . '修法：该列改用 field("%s")（或 field(字段名)），或去掉 ->editable()。',
                 $this->colKey,
                 $this->field ?? '字段名',
             ));

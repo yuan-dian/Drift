@@ -46,6 +46,11 @@ use Drift\Widget\BuildContext;
 use Drift\Widget\Grid;
 use Drift\Widget\LazyGrid;
 use Drift\Widget\Option;
+use Drift\Widget\Table;
+use Drift\Widget\TableColumn;
+use Drift\Widget\TableColumnWidth;
+use Drift\Widget\TableSelection;
+use Drift\Widget\TableSort;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
 
@@ -65,6 +70,25 @@ foreach (\array_slice($argv, 1) as $arg) {
 
 Errors::setLogPath($logPath);
 Errors::setDebug(true);
+
+/**
+ * 挂一棵 `Table` 树 —— Table 的响亮失败全部发生在**挂载期**。
+ *
+ * ★ 内联构造 `BuildContext`：`smokeContext()` 只在 tests 助手与 smoke.php 各一份，
+ *   子进程不加载（与 `lazygridpitch` 同法）。
+ */
+$mountTable = static function (Table $table): void {
+    $element = $table->createElement();
+    $element->mount(null, new BuildContext(
+        320.0,
+        240.0,
+        ThemeData::light(),
+        new DeterministicMetricsProvider(
+            DeterministicFontManager::standard()->collection(),
+            new DeterministicShaper(),
+        ),
+    ));
+};
 
 /** @var array<string, callable(): void> $cases */
 $cases = [
@@ -127,6 +151,105 @@ $cases = [
             1,
             WindowMaterial::make()->background(new Color(0xFF, 0xFF, 0xFF, 0xB0)),
         );
+    },
+
+    // ── Table 的配置面：11 个"静默画错"的入口，全部在挂载期停 ──────────────
+    // 共同理由（G2）：这些错的形态都是"界面看起来正常，但某个交互永远不发生"
+    // —— 比崩溃难查得多，所以必须当场响。
+
+    // `keyOf` 是列宽覆盖 / 选择集 / Shift 锚点的**唯一身份**。缺了若退化成"按序号"，
+    // 数据一变选中行就指向另一行，而界面上完全正常。
+    'table-nokey' => static function () use ($mountTable): void {
+        $mountTable(Table::make(
+            [TableColumn::make('a', 'A')->field('a')],
+            [['a' => 1]],
+        ));
+    },
+
+    // 0 宽的列让 flex 分配出现除零 / 零宽格。
+    'table-width-zero' => static function (): void {
+        TableColumnWidth::fixed(0.0);
+    },
+
+    // `field()` 与 `cell()` 都写 ⇒ 两条取值路都声明了（"后写的赢"是静默坑）。
+    'table-field-and-cell' => static function () use ($mountTable): void {
+        $mountTable(Table::make(
+            [
+                TableColumn::make('a', 'A')
+                    ->field('a')
+                    ->cell(static fn(array $row): Widget => Text::make('x')),
+            ],
+            [['a' => 1]],
+        )->keyOf(static fn(array $row): int => (int) $row['a']));
+    },
+
+    // 字段拼错 ⇒ 必须报"第几行 / 缺哪个 / 有哪些"，不是整列空白。
+    'table-missing-field' => static function () use ($mountTable): void {
+        $mountTable(Table::make(
+            [TableColumn::make('a', 'A')->field('nmae')],
+            [['name' => 'x']],
+        )->keyOf(static fn(array $row): string => (string) $row['name']));
+    },
+
+    // 声明了 selection 却没接 onSelectionChange ⇒ 点了没人收到（选中色停在旧值，
+    // 每点一次差异放大一层）。
+    'table-selection-noreport' => static function () use ($mountTable): void {
+        $mountTable(Table::make(
+            [TableColumn::make('a', 'A')->field('a')],
+            [['a' => 1]],
+        )->keyOf(static fn(array $row): int => (int) $row['a'])
+            ->selection(TableSelection::none()));
+    },
+
+    // 列声明了 sortable() 却没接 onSortChange ⇒ 表头可点、点了没反应，箭头停在旧值。
+    'table-sort-noreport' => static function () use ($mountTable): void {
+        $mountTable(Table::make(
+            [TableColumn::make('a', 'A')->field('a')->sortable()],
+            [['a' => 1]],
+        )->keyOf(static fn(array $row): int => (int) $row['a']));
+    },
+
+    // 列声明了 resizable() 却没接 onColumnResize ⇒ 手柄在、光标也变，拖半天列宽不动。
+    'table-resize-noreport' => static function () use ($mountTable): void {
+        $mountTable(Table::make(
+            [TableColumn::make('a', 'A')->field('a')->resizable()],
+            [['a' => 1]],
+        )->keyOf(static fn(array $row): int => (int) $row['a']));
+    },
+
+    // sort() 指向不存在的列 ⇒ 箭头永远画不出来（列 key 拼错时完全静默）。
+    'table-sort-unknown-column' => static function () use ($mountTable): void {
+        $mountTable(Table::make(
+            [TableColumn::make('a', 'A')->field('a')->sortable()],
+            [['a' => 1]],
+        )->keyOf(static fn(array $row): int => (int) $row['a'])
+            ->sort(TableSort::by('nope'))
+            ->onSortChange(static function (TableSort $next, int $columnIndex): void {
+            }));
+    },
+
+    // 空列 key 是列的**身份**，不是"没排序"的另一种写法（那用 `TableSort::none()`）。
+    'table-sort-empty-column' => static function (): void {
+        TableSort::by('');
+    },
+
+    // editable() 却没接 onCellEdit ⇒ 改完按回车什么都没发生（而格子已经显示新值了，
+    // 因为编辑时画的是草稿）。
+    'table-cell-edit-no-handler' => static function () use ($mountTable): void {
+        $mountTable(Table::make(
+            [TableColumn::make('a', 'A')->field('a')->editable()],
+            [['a' => 'x']],
+        )->keyOf(static fn(array $row): string => (string) $row['a']));
+    },
+
+    // `cell()` 列没有"起始文本 + 提交到哪个字段"，编辑结构上无从谈起。
+    'table-cell-edit-on-cell-column' => static function () use ($mountTable): void {
+        $mountTable(Table::make(
+            [TableColumn::make('a', 'A')->cell(static fn(array $row): Widget => Text::make('x'))->editable()],
+            [['a' => 'x']],
+        )->keyOf(static fn(array $row): string => (string) $row['a'])
+            ->onCellEdit(static function (): void {
+            }));
     },
 ];
 

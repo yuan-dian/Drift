@@ -2236,7 +2236,7 @@ final class TableState extends State implements Scrollable, EditableText
                 Errors::report(sprintf(
                     'Table 的列 "%s" 声明了 editable()，但它没有 field() —— 单元格编辑要'
                         . "\n" . '"起始文本 + 提交到哪个字段"，而 cell() 只给一个任意 Widget。'
-                        . "\n" . '修法：该列改用 field("字段名")，或去掉 editable()。',
+                        . "\n" . '修法：该列改用 field("字段名")，或去掉 ->editable()。',
                     $column->keyName(),
                 ));
             }

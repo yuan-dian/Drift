@@ -266,142 +266,10 @@ if (str_starts_with($caseArg, '--case=')) {
         $widget->background(Color::white()); // 封存后改样式 ⇒ 必须响亮失败
     }
 
-    if ($case === 'table-nokey') {
-        // ★ `keyOf` 是列宽覆盖 / 选择集 / Shift 锚点的唯一身份 ⇒ 缺了必须**响亮**
-        //   失败，不能退化成"按序号"（那会让选中行在数据变化后指向另一行，
-        //   而界面上看起来完全正常）。
-        $table = Table::make(
-            [TableColumn::make('a', 'A')->field('a')],
-            [['a' => 1]],
-        );
-        $el = $table->createElement();
-        $el->mount(null, smokeContext());
-        echo "mounted-without-error\n";
-        exit(0);
-    }
-
-    if ($case === 'table-width-zero') {
-        // 0 宽的列让 `flex` 分配出现除零/零宽格 ⇒ 构造期就该停下
-        TableColumnWidth::fixed(0.0);
-        echo "no-error\n";
-        exit(0);
-    }
-
-    if ($case === 'table-field-and-cell') {
-        // field() 与 cell() 都写 ⇒ 两条取值路都声明了（"后写的赢"是静默坑）
-        $table = Table::make(
-            [
-                TableColumn::make('a', 'A')
-                    ->field('a')
-                    ->cell(static fn(array $row): Widget => Text::make('x')),
-            ],
-            [['a' => 1]],
-        )->keyOf(static fn(array $row): int => (int) $row['a']);
-        $el = $table->createElement();
-        $el->mount(null, smokeContext());
-        echo "mounted-without-error\n";
-        exit(0);
-    }
-
-    if ($case === 'table-cell-edit-no-handler') {
-        // editable() 却没接 onCellEdit ⇒ 用户改完按回车**什么都没发生**（而格子已经
-        // 显示新值了，因为编辑时画的是草稿）⇒ 挂载期响亮失败，不是静默不生效
-        $table = Table::make(
-            [TableColumn::make('a', 'A')->field('a')->editable()],
-            [['a' => 'x']],
-        )->keyOf(static fn(array $row): string => (string) $row['a']);
-        $el = $table->createElement();
-        $el->mount(null, smokeContext());
-        echo "mounted-without-error\n";
-        exit(0);
-    }
-
-    if ($case === 'table-cell-edit-on-cell-column') {
-        // cell() 列没有"起始文本 + 提交到哪个字段"，编辑结构上无从谈起 ⇒ 挂载期就说
-        $table = Table::make(
-            [TableColumn::make('a', 'A')->cell(static fn(array $row): Widget => Text::make('x'))->editable()],
-            [['a' => 'x']],
-        )->keyOf(static fn(array $row): string => (string) $row['a'])
-            ->onCellEdit(static function (): void {});
-        $el = $table->createElement();
-        $el->mount(null, smokeContext());
-        echo "mounted-without-error\n";
-        exit(0);
-    }
-
-    if ($case === 'table-missing-field') {
-        // 字段拼错 ⇒ 必须报"第几行 / 缺哪个 / 有哪些"，不是整列空白
-        $table = Table::make(
-            [TableColumn::make('a', 'A')->field('nmae')],
-            [['name' => 'x']],
-        )->keyOf(static fn(array $row): string => (string) $row['name']);
-        $el = $table->createElement();
-        $el->mount(null, smokeContext());
-        echo "mounted-without-error\n";
-        exit(0);
-    }
-
-    if ($case === 'table-selection-noreport') {
-        // 声明了 selection 却没接 onSelectionChange ⇒ 点了没人收到（选中色停在旧值，
-        // 而每点一次差异放大一层）⇒ 挂载期响亮失败，不是"静默不生效"
-        $table = Table::make(
-            [TableColumn::make('a', 'A')->field('a')],
-            [['a' => 1]],
-        )->keyOf(static fn(array $row): int => (int) $row['a'])
-            ->selection(TableSelection::none());
-        $el = $table->createElement();
-        $el->mount(null, smokeContext());
-        echo "mounted-without-error\n";
-        exit(0);
-    }
-
-    if ($case === 'table-sort-noreport') {
-        // 列声明了 sortable() 却没接 onSortChange ⇒ 表头可点、点了没反应，
-        // 箭头还停在旧值 ⇒ 挂载期响亮失败（与 selection 缺上报同一条纪律）
-        $table = Table::make(
-            [TableColumn::make('a', 'A')->field('a')->sortable()],
-            [['a' => 1]],
-        )->keyOf(static fn(array $row): int => (int) $row['a']);
-        $el = $table->createElement();
-        $el->mount(null, smokeContext());
-        echo "mounted-without-error\n";
-        exit(0);
-    }
-
-    if ($case === 'table-resize-noreport') {
-        // 列声明了 resizable() 却没接 onColumnResize ⇒ 手柄在、光标也变，
-        // 拖半天列宽不动且不报错 ⇒ 挂载期响亮失败（同 sortable 的纪律）
-        $table = Table::make(
-            [TableColumn::make('a', 'A')->field('a')->resizable()],
-            [['a' => 1]],
-        )->keyOf(static fn(array $row): int => (int) $row['a']);
-        $el = $table->createElement();
-        $el->mount(null, smokeContext());
-        echo "mounted-without-error\n";
-        exit(0);
-    }
-
-    if ($case === 'table-sort-unknown-column') {
-        // sort() 指向不存在的列 ⇒ 箭头永远画不出来（列 key 拼错时完全静默）
-        $table = Table::make(
-            [TableColumn::make('a', 'A')->field('a')->sortable()],
-            [['a' => 1]],
-        )->keyOf(static fn(array $row): int => (int) $row['a'])
-            ->sort(TableSort::by('nope'))
-            ->onSortChange(static function (TableSort $next, int $columnIndex): void {
-            });
-        $el = $table->createElement();
-        $el->mount(null, smokeContext());
-        echo "mounted-without-error\n";
-        exit(0);
-    }
-
-    if ($case === 'table-sort-empty-column') {
-        // 空列 key 是列的**身份**，不是"没排序"的另一种写法（那用 TableSort::none()）
-        TableSort::by('');
-        echo "no-error\n";
-        exit(0);
-    }
+    // Table 的 11 个配置面 case（缺 keyOf / fixed(0) / field+cell / 字段拼错 /
+    // 受控声明缺上报 ×4 / sort 未知列 / 空列 key / cell() 列可编辑）已迁出：
+    //   用例 → `tests/Support/fatal_cases.php`
+    //   判据 → `tests/Feature/Table/ConfigFailureTest.php`
 
     if ($case === 'modstateful') {
         // ★ 修饰落在"不产盒"的控件上 ⇒ 必须响亮失败（`02` §11.7）。
@@ -7025,70 +6893,10 @@ $tableBoxOf = static function (Element $root): ?RenderTable {
 
     return $box instanceof RenderTable ? $box : null;
 };
-// ── Table 选择：声明 `selection` 却没接上报 ⇒ 挂载期 Fatal ────────────────
-//   ★ 其余选择断言已迁到 `tests/Feature/Table/SelectionTest.php`（点击语义 + 行态像素），
-//     语义底稿在 `tests/Unit/Widget/TableRowPickerTest`。
-//   ★ 这两条**留在这里**是因为判据是"子进程退出码 3"：PHPUnit 里跑要自己
-//     `proc_open` 管进程，而它测的是 `Errors` 的上报链路，与"改 Table 只跑 Table"无关。
-
-// ⑥ 声明了 selection 却没接上报 ⇒ 挂载期 Fatal
-fresh($log);
-[$tableCode, $tableOut] = runCase(__FILE__, 'table-selection-noreport', null);
-check('Table · 声明 selection 但没接 onSelectionChange ⇒ 退出码 3', $tableCode === 3, '实际 ' . $tableCode . ' / ' . $tableOut);
-check(
-    'Table · 缺上报的报错给出两条修法（接上报 / 去掉 selection）',
-    str_contains(logText($log), 'onSelectionChange'),
-    logText($log) === '' ? '空日志' : '有日志',
-);
-
-// ── Table 排序：三条响亮失败 ────────────────────────────────────────────────
-//   ★ 其余排序断言已迁到 `tests/Feature/Table/SortTest.php`（三态循环 + 箭头 + 列序号），
-//     值对象在 `tests/Unit/Widget/TableSortTest`。
-//   ★ 这三组留在这里是因为判据是"子进程退出码 3"：它们测的是 `Errors` 的上报链路，
-//     与"改 Table 只跑 Table"无关。
-
-// ⑧ 三条响亮失败
-fresh($log);
-[$tableSortCode, $tableSortOut] = runCase(__FILE__, 'table-sort-noreport', null);
-check('Table · 列 sortable() 但没接 onSortChange ⇒ 退出码 3', $tableSortCode === 3, '实际 ' . $tableSortCode . ' / ' . $tableSortOut);
-check(
-    'Table · 缺上报的报错指路 onSortChange（并给出"去掉 sortable()"这条退路）',
-    str_contains(logText($log), 'onSortChange') && str_contains(logText($log), 'sortable()'),
-    logText($log) === '' ? '空日志' : '有日志',
-);
-
-fresh($log);
-[$tableSortCode2, $tableSortOut2] = runCase(__FILE__, 'table-sort-unknown-column', null);
-check('Table · sort() 指向不存在的列 ⇒ 退出码 3', $tableSortCode2 === 3, '实际 ' . $tableSortCode2 . ' / ' . $tableSortOut2);
-check(
-    'Table · 列 key 拼错时报"不存在的列"并列出已有列',
-    str_contains(logText($log), '不存在的列') && str_contains(logText($log), '现有列'),
-    logText($log) === '' ? '空日志' : '有日志',
-);
-
-fresh($log);
-[$tableSortCode3, $tableSortOut3] = runCase(__FILE__, 'table-sort-empty-column', null);
-check(
-    'TableSort · 空列 key ⇒ Fatal（"没排序"要写 TableSort::none()）',
-    $tableSortCode3 === 3,
-    '实际 ' . $tableSortCode3 . ' / ' . $tableSortOut3,
-);
-
-// ── Table 列宽拖拽：`resizable()` 却没接 `onColumnResize` ⇒ 挂载期 Fatal ────────
-//   ★ 其余列宽断言已迁到 `tests/Feature/Table/ColumnResizeTest.php`（手柄 / 拖动 /
-//     clamp / override / 分割线结构与像素 / 真实路由），滚动条在
-//     `tests/Feature/Table/ScrollBarTest.php`。
-//   ★ 这两条留在这里是因为判据是"子进程退出码 3"。
-
-// ⑧ 响亮失败：resizable() 但没接 onColumnResize
-fresh($log);
-[$tableResizeCode, $tableResizeOut] = runCase(__FILE__, 'table-resize-noreport', null);
-check('Table · 列 resizable() 但没接 onColumnResize ⇒ 退出码 3', $tableResizeCode === 3, '实际 ' . $tableResizeCode . ' / ' . $tableResizeOut);
-check(
-    'Table · 缺列宽上报的报错指路 onColumnResize（并给出"去掉 resizable()"这条退路）',
-    str_contains(logText($log), 'onColumnResize') && str_contains(logText($log), 'resizable()'),
-    logText($log) === '' ? '空日志' : '有日志',
-);
+// ── Table 选择 / 排序 / 列宽拖拽的"响亮失败"已迁出 ───────────────────────────
+//   → `tests/Feature/Table/ConfigFailureTest.php`（11 个配置面 case / 34 条断言）
+//   ★ 迁出的理由不是"判据变了"，而是 `runFatalCase()` 已把子进程入口从 smoke
+//     解耦（`tests/Support/fatal_cases.php`）⇒ 这类用例不再必须留在 smoke 里。
 // ── Table 键盘光标格的断言已迁出 ──────────────────────────────────────────────
 //   → `tests/Feature/Table/KeyboardTest.php`（单 Tab 位 / 方向键 / 边界吞键 /
 //     End 自动滚动 / 横向 ensureVisible / 失焦保留光标格 / 子控件让位 / 2px 描边像素）
@@ -7187,42 +6995,8 @@ check(
     'offsetY=' . sprintf('%.1f', $tableWheelOnlyV->scrollBox()?->appliedOffset(Axis::Vertical) ?? -1.0),
 );
 
-// ⑪ Fatal 面：四类配置错都必须在挂载期停下（不是静默画错）
-fresh($log);
-[$tableCode, $tableOut] = runCase(__FILE__, 'table-nokey', null);
-check('Table · 缺 keyOf ⇒ 退出码 3', $tableCode === 3, '实际 ' . $tableCode . ' / ' . $tableOut);
-check(
-    'Table · 缺 keyOf 的报错点名 keyOf 并给理由',
-    str_contains(logText($log), 'keyOf'),
-    logText($log) === '' ? '空日志' : '有日志',
-);
-
-fresh($log);
-[$tableCode, $tableOut] = runCase(__FILE__, 'table-width-zero', null);
-check('TableColumnWidth · fixed(0) ⇒ 退出码 3', $tableCode === 3, '实际 ' . $tableCode . ' / ' . $tableOut);
-check(
-    'TableColumnWidth · fixed(0) 的报错说明它是正数约束',
-    str_contains(logText($log), '正数'),
-    logText($log) === '' ? '空日志' : '有日志',
-);
-
-fresh($log);
-[$tableCode, $tableOut] = runCase(__FILE__, 'table-field-and-cell', null);
-check('TableColumn · field + cell 同时声明 ⇒ 退出码 3', $tableCode === 3, '实际 ' . $tableCode . ' / ' . $tableOut);
-check(
-    'TableColumn · field + cell 的报错给出二选一的修法',
-    str_contains(logText($log), '二选一'),
-    logText($log) === '' ? '空日志' : '有日志',
-);
-
-fresh($log);
-[$tableCode, $tableOut] = runCase(__FILE__, 'table-missing-field', null);
-check('TableColumn · field 拼错 ⇒ 退出码 3（不是整列空白）', $tableCode === 3, '实际 ' . $tableCode . ' / ' . $tableOut);
-check(
-    'TableColumn · 缺字段的报错带"第几行 / 缺哪个 / 有哪些"',
-    str_contains(logText($log), 'nmae') && str_contains(logText($log), '现有字段'),
-    logText($log) === '' ? '空日志' : '有日志',
-);
+// ⑪ Fatal 面（缺 keyOf / fixed(0) / field+cell / 字段拼错）已迁出
+//   → `tests/Feature/Table/ConfigFailureTest.php`
 
 // ═══════════════════════════════════════════════════════════════════════
 // P2 阶段 7a：单元格编辑（2026-10-27）
@@ -7237,24 +7011,8 @@ check(
 //   ★ 它们共用 `DrivesEditSession`（按键必推帧、帧号自增）。
 
 
-// ⑭ 两条"期望响亮失败"（子进程：`Errors::report` 会 abort，进程内接不住）
-fresh($log);
-[$editCode, $editOut] = runCase(__FILE__, 'table-cell-edit-no-handler', null);
-check('Table · editable() 却没接 onCellEdit ⇒ 退出码 3', $editCode === 3, '实际 ' . $editCode . ' / ' . $editOut);
-check(
-    'Table · 缺 onCellEdit 的报错点名"回车后什么都没发生"并给修法',
-    str_contains(logText($log), 'onCellEdit') && str_contains(logText($log), '修法'),
-    logText($log) === '' ? '空日志' : '有日志',
-);
-
-fresh($log);
-[$editCode, $editOut] = runCase(__FILE__, 'table-cell-edit-on-cell-column', null);
-check('Table · cell() 列声明 editable() ⇒ 退出码 3', $editCode === 3, '实际 ' . $editCode . ' / ' . $editOut);
-check(
-    'Table · cell() 列可编辑的报错给出"改用 field()"的修法',
-    str_contains(logText($log), 'field('),
-    logText($log) === '' ? '空日志' : '有日志',
-);
+// ⑭ 两条"期望响亮失败"已迁出
+//   → `tests/Feature/Table/ConfigFailureTest.php`（受控声明缺上报 / cell() 列可编辑）
 
 // ── 汇总 + 退出码（2026-10-18）──
 // ★ 以前只打印 FAIL、**从不汇总、也从不非零退出** ⇒ 打印 3 个 FAIL 仍然 exit 0：
