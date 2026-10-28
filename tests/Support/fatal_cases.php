@@ -31,6 +31,7 @@ require __DIR__ . '/../../tools/autoload.php';
 use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Size;
+use Drift\Logging\PatternFormatter;
 use Drift\Text\DeterministicFontManager;
 use Drift\Text\DeterministicMetricsProvider;
 use Drift\Text\DeterministicShaper;
@@ -105,6 +106,11 @@ $cases = [
             ),
         ));
         $element->effectiveBox()?->layout(BoxConstraints::tight(new Size(336.0, 240.0)));
+    },
+
+    // 日志 pattern 未知占位符 ⇒ Fatal（G2：不静默产出缺字段的行）。
+    'log-bad-pattern' => static function (): void {
+        PatternFormatter::compile('%l %x oops');
     },
 ];
 

@@ -89,13 +89,7 @@ use Drift\Dev\Smoke\State\LoopPage;
 use Drift\Core\Computed;
 use Drift\Dev\Smoke\Tree\CounterState;
 use Drift\Dev\Smoke\Tree\CounterWidget;
-use Drift\Dev\Smoke\CollectSink;
 use Drift\Errors;
-use Drift\Logging\Log;
-use Drift\Logging\LogEntry;
-use Drift\Logging\PatternFormatter;
-use Drift\Logging\RingSink;
-use Drift\Logging\StreamSink;
 use Drift\Commands\CommandArg;
 use Drift\Commands\CommandHandler;
 use Drift\Commands\CommandRouter;
@@ -259,11 +253,6 @@ if (str_starts_with($caseArg, '--case=')) {
         Errors::report('冒烟：前置诊断 A', Errors::DIAGNOSTIC);
         Errors::report('冒烟：前置诊断 B', Errors::DIAGNOSTIC);
         Errors::report('冒烟：走 Fatal 路径');
-    }
-
-    if ($case === 'log-bad-pattern') {
-        // ★ 未知占位符 ⇒ Fatal（`12` §4.7.1：不静默产出缺字段的行）
-        PatternFormatter::compile('%l %x oops');
     }
 
     if ($case === 'seal') {
@@ -7251,274 +7240,15 @@ check(
 //   · `tests/Feature/Widget/LazyGridTest.php` —— 视口只造 ceil(240/96) 行 / 格宽与全量版一致 / 格子高 = 节距−间距 / 末行不变宽 / 行距≥节距响亮失败。
 //   · 夹具下沉到 `tests/Support/GridFixtures.php`（Grid/LazyGrid 共用）；两个响亮失败用例移到 fatal_cases.php（gridzero / lazygridpitch）。
 
-// ── 日志系统（`12`，2026-10-24）──
-// ★ 这一组是 `12` §6 P0 的验收判据，全部 head 侧可断言。
-// ★ 每条用例前 `Log::reset()` —— 日志是全局静态，不隔离会互相污染。
-{
-    // ① 未达门槛不写
-    Log::reset();
-    $collect = new CollectSink();
-    Log::addSink($collect);
-    Log::setThreshold(Log::INFO);
-    Log::get('layout')->debug('不到门槛');
-    Log::get('layout')->info('到门槛了');
-    check(
-        'Log · 未达门槛不写（DEBUG 在 INFO 门槛下消失）',
-        count($collect->got) === 1 && $collect->got[0]->message === '到门槛了',
-        'got=' . count($collect->got),
-    );
-
-    // ② 分类覆盖生效
-    Log::reset();
-    $collect = new CollectSink();
-    Log::addSink($collect);
-    Log::setThreshold(Log::INFO);
-    Log::setCategoryThreshold('layout', Log::DEBUG);
-    Log::get('layout')->debug('layout 的 debug');
-    Log::get('render')->debug('render 的 debug');
-    check(
-        'Log · 分类点名覆盖门槛（layout=DEBUG 时只 layout 进）',
-        count($collect->got) === 1 && $collect->got[0]->category === 'layout',
-        'got=' . count($collect->got),
-    );
-
-    // ③ 环满丢最旧
-    Log::reset();
-    $ring = new RingSink(3);
-    Log::addSink($ring);
-    foreach ([1, 2, 3, 4] as $i) {
-        Log::get('t')->info('第 ' . $i . ' 条');
-    }
-    $keep = array_map(static fn (LogEntry $e): string => $e->message, $ring->recent());
-    check(
-        'Log · 环满丢最旧（容量 3 写 4 条，第一条不在）',
-        $keep === ['第 2 条', '第 3 条', '第 4 条'],
-        implode(',', $keep),
-    );
-
-    // ④ seq 单调递增
-    Log::reset();
-    $ring = new RingSink(10);
-    Log::addSink($ring);
-    foreach (range(1, 5) as $i) {
-        Log::get('t')->info('n' . $i);
-    }
-    $seqs = array_map(static fn (LogEntry $e): int => $e->seq, $ring->recent());
-    check(
-        'Log · seq 单调递增且从 1 起',
-        $seqs === [1, 2, 3, 4, 5],
-        implode(',', $seqs),
-    );
-
-    // ⑤ Errors::report(DIAGNOSTIC) 落到 Log —— **同时** `Errors::$ring` 不受影响
-    Log::reset();
-    Errors::reset();
-    $ring = new RingSink(10);
-    Log::addSink($ring);
-    Errors::report('诊断桥测试', Errors::DIAGNOSTIC);
-    check(
-        'Log · Errors::report(DIAGNOSTIC) 落到 Log 环（WARN 级）',
-        count($ring->recent()) === 1
-            && $ring->recent()[0]->level === Log::WARN
-            && $ring->recent()[0]->category === 'framework'
-            && $ring->recent()[0]->message === '诊断桥测试',
-    );
-    check(
-        'Log · 桥不动 Errors::$ring（测试契约，78 处断言靠它）',
-        Errors::recentDiagnostics() === ['诊断桥测试'],
-        json_encode(Errors::recentDiagnostics()),
-    );
-
-    // ⑥ `Log::disable()` 后零写入
-    Log::reset();
-    $collect = new CollectSink();
-    Log::addSink($collect);
-    Log::disable();
-    Log::get('t')->error('不该出现');
-    Log::get('t')->log(Log::FATAL, 'FATAL 也不该出现');
-    check(
-        'Log · disable() 后零写入（连 FATAL 也不写）',
-        $collect->got === [],
-        'got=' . count($collect->got),
-    );
-    Log::enable();
-
-    // ⑦ pattern 编译一次 + 未知占位符 ⇒ Fatal
-    Log::reset();
-    $fmt = PatternFormatter::compile('%l %c: %m');
-    $sample = new LogEntry(7, Log::INFO, 'layout', '测量', ['h' => 320], 1_000_000, 0);
-    $one = $fmt->format($sample);
-    $same = true;
-    for ($i = 0; $i < 1000; $i++) {
-        if ($fmt->format($sample) !== $one) {
-            $same = false;
-            break;
-        }
-    }
-    check(
-        'Log · 同一 pattern 1000 次 format 逐字节相同（编译一次，不再解析）',
-        $same && $one === 'INFO layout: 测量',
-        'got=' . $one,
-    );
-
-    [$badCode, $badOut] = runCase(__FILE__, 'log-bad-pattern', null);
-    check(
-        'Log · 未知占位符 ⇒ Fatal（G2 不静默，不产出缺字段的行）',
-        $badCode === 3 && str_contains(logText($log), '未知占位符'),
-        'code=' . $badCode . ' out=' . $badOut,
-    );
-
-    // ⑧ 每 sink 独立 formatter
-    Log::reset();
-    $a = new RingSink(4);
-    $b = new CollectSink();
-    Log::addSink($a);
-    Log::addSink($b);
-    Log::get('render')->info('独立格式', ['k' => 1]);
-    $viaA = PatternFormatter::compile('%s %c %m')->format($a->recent()[0]);
-    $viaB = PatternFormatter::compile('%m')->format($b->got[0]);
-    check(
-        'Log · 每 sink 独立 formatter（同一条 entry 两种成型）',
-        $viaA === '1 render 独立格式' && $viaB === '独立格式',
-        'a=' . $viaA . ' b=' . $viaB,
-    );
-
-    // ⑨ 占位符全集（含 %T 墙钟来自 entry，不是 format() 里的 date()）
-    Log::reset();
-    $all = PatternFormatter::compile('%T|%t|%l|%c|%m|%f|%s|%%');
-    $e = new LogEntry(9, Log::WARN, 'net', '掉线', ['ip' => '127.0.0.1', 'retry' => true], 5_500_000_000, 3_661_234);
-    // wallMs=3_661_234 ⇒ 3661 秒 ⇒ 01:01:01；monotonic=5.5s 相对启动
-    $line = $all->format($e);
-    check(
-        'Log · 占位符全集（%T 由 entry 的 wallMs 算，不是 format() 里取的）',
-        str_contains($line, '01:01:01') && str_contains($line, 'WARN')
-            && str_contains($line, 'net') && str_contains($line, '掉线')
-            && str_contains($line, 'ip=127.0.0.1 retry=true')
-            && str_contains($line, '|9|%'),
-        'got=' . $line,
-    );
-
-    // ⑩ 过滤在数据层（`RingSink::recent($category, $minLevel)`）
-    //    ★ 反例方向：若过滤挪到 UI 层，这里就测不到"数据层真会滤"；
-    //      而两个参数**各自独立**（分类 ⊕ 级别）—— 只测一个会让另一个的
-    //      回归漏过去。
-    Log::reset();
-    $ring = new RingSink(10);
-    Log::addSink($ring);
-    Log::get('layout')->info('layout 的 info');
-    Log::get('layout')->warn('layout 的 warn');
-    Log::get('net')->info('net 的 info');
-    Log::get('net')->error('net 的 error');
-    $mAll = array_map(static fn (LogEntry $e): string => $e->message, $ring->recent());
-    $mLayout = array_map(static fn (LogEntry $e): string => $e->message, $ring->recent('layout'));
-    $mWarnUp = array_map(static fn (LogEntry $e): string => $e->message, $ring->recent(null, Log::WARN));
-    $mBoth = array_map(static fn (LogEntry $e): string => $e->message, $ring->recent('net', Log::WARN));
-    check(
-        'Log · recent() 按分类 / 级别过滤（两个参数各自独立，可叠加）',
-        $mAll === ['layout 的 info', 'layout 的 warn', 'net 的 info', 'net 的 error']
-            && $mLayout === ['layout 的 info', 'layout 的 warn']
-            && $mWarnUp === ['layout 的 warn', 'net 的 error']
-            && $mBoth === ['net 的 error'],
-        'all=' . count($mAll) . ' layout=' . count($mLayout)
-            . ' warnUp=' . count($mWarnUp) . ' both=' . count($mBoth),
-    );
-
-    Log::reset();
-    Errors::reset();
-}
-
-// ── 日志 P1：文件 sink / 轮转 / 收口（`12` §6，2026-10-24）──
-{
-    // ⑩ StreamSink 落盘 + 默认 pattern 带时间戳
-    Log::reset();
-    $tmp = sys_get_temp_dir() . '/drift-log-' . getmypid();
-    if (is_dir($tmp)) {
-        foreach (glob($tmp . '/*') ?: [] as $f) {
-            unlink($f);
-        }
-    }
-    mkdir($tmp, 0777, true);
-    $sink = new StreamSink($tmp . '/app.log', 0, PatternFormatter::compile('%c: %m'));
-    Log::addSink($sink);
-    Log::get('net')->info('第一次');
-    Log::get('net')->warn('第二次');
-    $text = is_file($tmp . '/app.log') ? file_get_contents($tmp . '/app.log') : '';
-    check(
-        'Log · StreamSink 落盘，两行各自成型',
-        $text === "net: 第一次\nnet: 第二次\n",
-        'got=' . var_export($text, true),
-    );
-
-    // ⑪ 轮转：上限 10 字节。**一条就超上限的长消息**是关键夹具 ——
-    //    只有"轮转检查在 `write()` 开头"才能保证它整条落进新文件；
-    //    若检查在结尾（写完再看），它会被劈成"尾巴在旧文件、没有在新文件"。
-    Log::reset();
-    $sink = new StreamSink($tmp . '/rot.log', 10, PatternFormatter::compile('%m'));
-    Log::addSink($sink);
-    Log::get('t')->info('AAAAAAAAAA'); // 11 字节（含 \n）⇒ 已超
-    Log::get('t')->info('BBBBBBBBBB'); // 开头检查 ⇒ 先转，整条进新文件
-    $cur = is_file($tmp . '/rot.log') ? file_get_contents($tmp . '/rot.log') : '';
-    $old = is_file($tmp . '/rot.log.1') ? file_get_contents($tmp . '/rot.log.1') : '';
-    check(
-        'Log · 超上限轮转（旧的成 .1；单条超上限也整条落新文件，不被劈开）',
-        $old === "AAAAAAAAAA\n" && $cur === "BBBBBBBBBB\n",
-        'old=' . var_export($old, true) . ' cur=' . var_export($cur, true),
-    );
-
-    // ⑫ `Log::flush()` / `Log::close()` 转发到每个 sink
-    Log::reset();
-    $collect = new CollectSink();
-    $ring = new RingSink(4);
-    Log::addSink($collect);
-    Log::addSink($ring);
-    Log::flush();
-    Log::close();
-    check(
-        'Log · flush() / close() 逐个转发到全部 sink',
-        $collect->flushes === 1 && $collect->closes === 1,
-        'flushes=' . $collect->flushes . ' closes=' . $collect->closes,
-    );
-
-    // ⑬ 一个 sink 收不了口不影响其他（逐个 catch）
-    Log::reset();
-    $collect = new CollectSink();
-    $boom = new class implements \Drift\Logging\LogSink {
-        public function write(LogEntry $entry): void
-        {
-        }
-
-        public function flush(): void
-        {
-            throw new \RuntimeException('sink 炸了');
-        }
-
-        public function close(): void
-        {
-            throw new \RuntimeException('sink 炸了');
-        }
-    };
-    Log::addSink($boom);
-    Log::addSink($collect);
-    $threw = false;
-    try {
-        Log::flush();
-        Log::close();
-    } catch (\Throwable) {
-        $threw = true;
-    }
-    check(
-        'Log · 一个 sink 收不了口不影响其他（且不冒泡到业务）',
-        $threw === false && $collect->flushes === 1 && $collect->closes === 1,
-        'threw=' . var_export($threw, true),
-    );
-
-    foreach (glob($tmp . '/*') ?: [] as $f) {
-        unlink($f);
-    }
-    @rmdir($tmp);
-    Log::reset();
-    Errors::reset();
-}
+// ── 日志系统 / 日志 P1 已迁出 ──────────────────────────────────────────────
+//   · `tests/Unit/Logging/LogTest.php` —— 门槛（全局 / 分类点名覆盖）/ 环满丢最旧 / seq 从 1 单调 /
+//     Errors→Log 诊断桥（且不动 `Errors::$ring`）/ disable 后零写入（连 FATAL）/
+//     pattern 确定性 + "compile 拆片段、format 只拼接"（反射钉结构）/ 每 sink 独立 formatter /
+//     占位符全集（%T 由 entry 的 wallMs 算）/ recent() 双参数过滤 / flush·close 逐个转发
+//     且单个 sink 炸不影响其他（13 条）。
+//   · `tests/Feature/Logging/LogStreamSinkTest.php` —— 落盘逐字节 / 超上限轮转
+//     （★ 关键夹具是"单条就超上限"：证明轮转检查在 write() 开头，不劈开单条）（2 条）。
+//   · 响亮失败用例 `log-bad-pattern` 移到 `tests/Support/fatal_cases.php`。
 
 // ── 毛玻璃（BackdropFilter / Canvas::blurBackdrop）──
 // ★ 这一组钉的是**顺序与范围**，不是"糊得好不好看"：
