@@ -78,6 +78,7 @@ final class ModifierTest extends SmokeTestCase
             'withAlign' => [static fn(): Modifier => (new Modifier())->withAlign(RenderBox::ALIGN_CENTER), false],
             // ★ 曾漏在 `isDefault()` 之外一整轮（S1 补上，见类注释）
             'withRepaintBoundary' => [static fn(): Modifier => (new Modifier())->withRepaintBoundary(true), false],
+            'withInset' => [static fn(): Modifier => (new Modifier())->withInset(Modifier::INSET_LEFT, 8.0), false],
         ];
     }
 

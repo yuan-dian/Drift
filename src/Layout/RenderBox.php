@@ -72,6 +72,7 @@ abstract class RenderBox extends RenderObject
         $this->setRepaintBoundary($mods->repaintBoundary());
 
         $this->setFlexIntent($mods->flexGrow(), $mods->flexShrink(), $mods->flexBasis(), $mods->flexAlign());
+        $this->setStackIntent($mods->insetLeft(), $mods->insetTop(), $mods->insetRight(), $mods->insetBottom());
     }
 
     /** `null` = 这个盒没有修饰（直接 `new` 出来的测试盒 / 未挂载） */
@@ -126,6 +127,21 @@ abstract class RenderBox extends RenderObject
     private int $shrink = 0;      // 0 = 不参与压缩
     private float $basis = \NAN;  // NAN = 用自然尺寸
     private int $alignSelf = self::ALIGN_INHERIT;
+
+    // ── 层叠定位意图（A4，2026-10-28；`RenderStack` 读）─────────────
+    // ★ 与上面四个**同族**：都是"子给父容器的布局意图"，只有对应的那个父
+    //   （`RenderFlex` / `RenderStack`）会读 ⇒ 没有那个父就是死字段、不报错。
+    //   ★ 这份"认账"由 `ParentIntentTest` 盯着：本族字段数超过上限就红，
+    //     逼出独立的 `ParentData` 值对象，而不是无限加第 N 族。
+    // ★ 四条边独立、**NAN = 未声明**（不是 0）：`left(0)` 与"没说左边在哪"是两件事。
+    // ★ `setMods()` 是唯一写入点，与 `setFlexIntent()` 同形。
+    private float $insetLeft = \NAN;
+
+    private float $insetTop = \NAN;
+
+    private float $insetRight = \NAN;
+
+    private float $insetBottom = \NAN;
 
     public function size(): ?Size
     {
@@ -546,6 +562,50 @@ abstract class RenderBox extends RenderObject
     public function alignSelf(): int
     {
         return $this->alignSelf;
+    }
+
+    /**
+     * 一次性写四条边的层叠定位（`Modifier` 的落点；`Element::syncBox()` 唯一调用点）。
+     *
+     * ★ 与 `setFlexIntent()` 同形（一个 setter 而不是四个）：调用点只有一处，
+     *   四个 setter = 四次"漏调一个"的机会，而漏调的表现是"某条边静默不生效"。
+     */
+    public function setStackIntent(float $left, float $top, float $right, float $bottom): void
+    {
+        $this->insetLeft = $left;
+        $this->insetTop = $top;
+        $this->insetRight = $right;
+        $this->insetBottom = $bottom;
+    }
+
+    /** 有没有声明任何一边的定位（`RenderStack` 用它分"定位子 / 非定位子"） */
+    public function hasInset(): bool
+    {
+        return !\is_nan($this->insetLeft)
+            || !\is_nan($this->insetTop)
+            || !\is_nan($this->insetRight)
+            || !\is_nan($this->insetBottom);
+    }
+
+    /** `NAN` = 该边未声明（未声明的轴按 `StackAlign` 排） */
+    public function insetLeft(): float
+    {
+        return $this->insetLeft;
+    }
+
+    public function insetTop(): float
+    {
+        return $this->insetTop;
+    }
+
+    public function insetRight(): float
+    {
+        return $this->insetRight;
+    }
+
+    public function insetBottom(): float
+    {
+        return $this->insetBottom;
     }
 
     /**

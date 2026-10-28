@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Rendering;
 
+use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Rect;
@@ -134,6 +135,35 @@ final class Modifier
     private float $basis = \NAN;
 
     private int $alignSelf = 0;      // RenderBox::ALIGN_* 常量
+
+    // ── 层叠定位意图（`Stack` 的 `Positioned`，A4 / 2026-10-28）────────
+    //
+    // ★★ **这一族与上面四个是同一类东西**：都是"给**父容器**的布局意图"，只有
+    //   `RenderFlex`（grow/shrink/basis/alignSelf）或 `RenderStack`（下面四个）才读。
+    //   没有那个父 ⇒ 死字段、不报错。这条账 `alignSelf` 的注里已经认过，这里只是把它
+    //   延伸到第二个父容器。
+    //
+    // ★★★ **这是"父意图"的最后一族**。再加第三族（Dock 槽名 / Table 列提示）就该
+    //   引入独立的 `ParentData` 值对象，而不是第 28 个字段 —— 判据：
+    //   本类字段数一旦超过 `ParentIntentFieldLimitTest` 的上限，就该动手了。
+    //
+    // ★ `NAN` = 该边未声明（与 `$width` / `$basis` 同一条"用 NAN 而不是 ?float"的账）。
+    private float $insetLeft = \NAN;
+
+    private float $insetTop = \NAN;
+
+    private float $insetRight = \NAN;
+
+    private float $insetBottom = \NAN;
+
+    /** `withInset()` 的边序 —— 与 CSS 的 left/top/right/bottom 同序 */
+    public const INSET_LEFT = 0;
+
+    public const INSET_TOP = 1;
+
+    public const INSET_RIGHT = 2;
+
+    public const INSET_BOTTOM = 3;
 
     // ── 绘制裁剪（D_PAINT）──────────────────────────────────────────
     /**
@@ -350,6 +380,38 @@ final class Modifier
         return $this->alignSelf;
     }
 
+    // ── 读：层叠定位意图（`RenderStack::performLayout()` 每次布局读）────
+
+    /** 有没有声明任何一边的定位（`Positioned` 用它判"这个子该被定位"） */
+    public function hasInset(): bool
+    {
+        return !\is_nan($this->insetLeft)
+            || !\is_nan($this->insetTop)
+            || !\is_nan($this->insetRight)
+            || !\is_nan($this->insetBottom);
+    }
+
+    /** `NAN` = 该边未声明 */
+    public function insetLeft(): float
+    {
+        return $this->insetLeft;
+    }
+
+    public function insetTop(): float
+    {
+        return $this->insetTop;
+    }
+
+    public function insetRight(): float
+    {
+        return $this->insetRight;
+    }
+
+    public function insetBottom(): float
+    {
+        return $this->insetBottom;
+    }
+
     // ── 读：绘制（`RenderBox::paint()` 每帧读）─────────────────────
 
     /**
@@ -535,6 +597,7 @@ final class Modifier
             && $this->shrink === 0
             && \is_nan($this->basis)
             && $this->alignSelf === 0
+            && !$this->hasInset()
             && !$this->center
             && !$this->clip
             && !$this->repaintBoundary;
@@ -753,6 +816,39 @@ final class Modifier
     {
         $c = clone $this;
         $c->alignSelf = $alignSelf;
+
+        return $c;
+    }
+
+    /**
+     * 声明某一边的层叠定位（`Positioned` 的字段形态）。
+     *
+     * ```php
+     * $m->withInset(Modifier::INSET_LEFT, 8.0)->withInset(Modifier::INSET_TOP, 8.0);
+     * ```
+     *
+     * ★ **一个方法 + 边序常量，而不是四个 `withInsetLeft()`**：四条边是同一个概念
+     *   的四个分量（与 `withPadding(left,top,right,bottom)` 的打包同理），分成四个方法
+     *   会让"设了哪几条边"这件事在 `ModifierTest` 的完整性表里占四行、而它们永远
+     *   一起变。常量序与 CSS 一致（left/top/right/bottom）。
+     * ★ 非法边序**响亮失败**：静默忽略会表现为"`Positioned::right(8)` 没生效"。
+     */
+    public function withInset(int $side, float $value): self
+    {
+        if ($side < self::INSET_LEFT || $side > self::INSET_BOTTOM) {
+            Errors::report(sprintf('Modifier：层叠定位的边序必须是 0..3（left/top/right/bottom），收到 %d', $side));
+        }
+
+        $c = clone $this;
+        if ($side === self::INSET_LEFT) {
+            $c->insetLeft = $value;
+        } elseif ($side === self::INSET_TOP) {
+            $c->insetTop = $value;
+        } elseif ($side === self::INSET_RIGHT) {
+            $c->insetRight = $value;
+        } else {
+            $c->insetBottom = $value;
+        }
 
         return $c;
     }

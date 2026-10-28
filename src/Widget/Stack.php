@@ -15,8 +15,18 @@ use Drift\Layout\StackFit;
  * Stack::make()
  *     ->alignment(StackAlign::TopRight)
  *     ->fit(StackFit::Loose)
- *     ->children([$content, $badge]);
+ *     ->children([$content, $badge->positioned(right: 8.0, top: 8.0)]);
  * ```
+ *
+ * ## 定位（`A4`）
+ *
+ * 子控件上 `->positioned(left:, top:, right:, bottom:)` 声明它相对**本盒**的位置：
+ * 声明**一条边** ⇒ 贴那边；声明**两条对边** ⇒ 那一轴被**拉伸**；没声明的轴按
+ * `alignment()`。细节与三条契约见 `RenderStack::layoutPositioned()` 与
+ * `tests/Unit/Layout/StackPositionedTest.php`。
+ *
+ * ★ **定位子不撑大本盒** ⇒ 只有定位子的 `Stack` 尺寸是 0 ⇒ 那种写法要自己套
+ *   `SizedBox`。这是设计决定（解开"套尺寸 ↔ 摆位置"的循环依赖），不是缺陷。
  *
  * ★ **结构节点，不是 `BoxWidget`**：它有布局职责，样式（背景 / 圆角 / 内距）由
  *   `Widget` 基类的修饰字段提供 —— W5 之后修饰是**字段**，任何控件都有。

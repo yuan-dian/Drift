@@ -6,9 +6,10 @@ namespace Drift\Widget\Traits;
 use Drift\Geometry\EdgeInsets;
 use Drift\Rendering\Color;
 use Drift\Rendering\Gradient;
+use Drift\Rendering\Modifier;
 
 /**
- * `Widget` 的**修饰面**：20 个 fluent setter，全部写同一个 `$this->mods`。
+ * `Widget` 的**修饰面**：22 个 fluent setter，全部写同一个 `$this->mods`。
  *
  * | 组 | 方法 |
  * |---|---|
@@ -16,6 +17,7 @@ use Drift\Rendering\Gradient;
  * | 绘制 | `background` `border` `radius` `shadow` |
  * | 合成 / 裁剪 | `opacity` `translate` `clip` `repaintBoundary` `centerContent` |
  * | 主轴意图 | `grow` `shrink` `basis` `alignSelf` |
+ * | 层叠意图 | `positioned`（`Stack` 定位） |
  *
  * ★ **这些方法子类通常不该覆写**（它们是"给任意控件贴一层"的统一入口）。
  *   例外是自带样式体系的 `BoxWidget` 子类：它们覆写同名方法写自己的 `BoxStyle`
@@ -391,6 +393,56 @@ trait WidgetModifiers
     {
         $this->mutate();
         $this->mods = $this->mods->withBasis($basis);
+
+        return $this;
+    }
+
+    /**
+     * 声明本控件在**层叠父容器**（`Stack`）里的位置（A4，2026-10-28）。
+     *
+     * ```php
+     * Stack::make()->children([
+     *     $photo,
+     *     Text::make('NEW')->positioned(right: 8.0, top: 8.0),   // 右上角标
+     * ]);
+     * ```
+     *
+     * ★ `null` = 该边不声明（不是 0）：
+     *   · 声明**一条** ⇒ 贴那边（`right: 8` = 距右 8，尺寸仍由内容定）；
+     *   · 声明**两条对边** ⇒ 那一轴被**拉伸**（`left: 0, right: 0` = 铺满整层）；
+     *   · 没声明的轴按 `Stack::alignment()`。
+     *
+     * ★ **只有 `Stack` 读它**（与 `alignSelf()` 只有 `Row`/`Column` 读同款）。
+     *   父不是 `Stack` ⇒ 这四条边是死字段、**不报错** —— 这条账记在
+     *   `RenderBox` 的 `$insetLeft` 上，由 `ParentIntentTest` 盯着别再扩族。
+     *
+     * ★ 定位子**不撑大 `Stack`**（`RenderStack::layoutPositioned()` 的注）：全是
+     *   定位子的 `Stack` 尺寸是 0 ⇒ 那种写法要自己套 `SizedBox`。
+     *
+     * @api
+     */
+    public function positioned(
+        ?float $left = null,
+        ?float $top = null,
+        ?float $right = null,
+        ?float $bottom = null,
+    ): static {
+        $this->mutate();
+
+        $mods = $this->mods;
+        if ($left !== null) {
+            $mods = $mods->withInset(Modifier::INSET_LEFT, $left);
+        }
+        if ($top !== null) {
+            $mods = $mods->withInset(Modifier::INSET_TOP, $top);
+        }
+        if ($right !== null) {
+            $mods = $mods->withInset(Modifier::INSET_RIGHT, $right);
+        }
+        if ($bottom !== null) {
+            $mods = $mods->withInset(Modifier::INSET_BOTTOM, $bottom);
+        }
+        $this->mods = $mods;
 
         return $this;
     }
