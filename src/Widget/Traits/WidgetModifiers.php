@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Widget\Traits;
 
+use Drift\Errors;
 use Drift\Geometry\EdgeInsets;
 use Drift\Rendering\Color;
 use Drift\Rendering\Gradient;

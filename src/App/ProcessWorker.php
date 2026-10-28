@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace Drift\App;
 
+use Drift\Errors;
+
 /**
  * worker 进程的**行协议服务端**（§17.4.5，P3）—— 读一行、跑一个、回一行。
  *

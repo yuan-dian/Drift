@@ -86,6 +86,7 @@ use Drift\Widget\TableSort;
 use Drift\Widget\Text;
 use Drift\Widget\TextField;
 use Drift\Widget\Widget;
+use Drift\Widget\Wrap;
 
 $case = '';
 $logPath = \dirname(__DIR__, 2) . '/Errors.log';
@@ -183,6 +184,26 @@ $cases = [
     // 日志 pattern 未知占位符 ⇒ Fatal（G2：不静默产出缺字段的行）。
     'log-bad-pattern' => static function (): void {
         PatternFormatter::compile('%l %x oops');
+    },
+
+    // ── Widget 层的"响亮失败"入口（`LoudFailurePathTest` 的表）──────────
+    // ★ 这一组守的不是"参数校验存在"，而是**校验失败时用户拿到的是人话 + 修法**。
+    //   2026-10-28 A4：`WidgetModifiers` 在 S2 拆 trait 时丢了 `use Drift\Errors;`
+    //   ⇒ 这三条路径实际是 `Class "Drift\Widget\Traits\Errors" not found`（裸 Error，
+    //   没有日志、没有修法、退出码也不是 3）。**响亮失败路径自己坏掉是最坏的一种静默。**
+
+    'mod-grow-negative' => static function (): void {
+        Text::make('x')->grow(-1);
+    },
+
+    'mod-opacity-range' => static function (): void {
+        Text::make('x')->opacity(1.5);
+    },
+
+    // `Wrap` 的 `Stretch`：**尚未实现**（需要第二遍布局），必须写明理由与修法
+    //   —— 不给"静默退化成 Start"这个默认值。
+    'wrap-stretch' => static function (): void {
+        Wrap::make()->alignment(FlexAlign::Stretch);
     },
 
     // 修饰落在**不产盒**的控件上（arch-v2 `02` §11.7）：`TextField` 是

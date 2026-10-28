@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace Drift\App;
 
+use Drift\Errors;
+
 /**
  * `TaskHost` 后端 —— **常驻子进程池**（§17.4.5，P3）：真后台、真隔离、跑的是 AOT 代码。
  *
