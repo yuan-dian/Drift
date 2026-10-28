@@ -13,6 +13,10 @@ use Drift\Rendering\Modifier;
 use Drift\Widget\Drag\Draggable;
 use Drift\Widget\Drag\DragTarget;
 use Drift\Widget\Menu\ContextMenu;
+use Drift\Widget\Traits\WidgetFocus;
+use Drift\Widget\Traits\WidgetInteraction;
+use Drift\Widget\Traits\WidgetModifiers;
+use Drift\Widget\Traits\WidgetSemantics;
 
 /**
  * 所有控件的根基类（§15.2）。
@@ -27,6 +31,31 @@ use Drift\Widget\Menu\ContextMenu;
  */
 abstract class Widget
 {
+    // ── 四个能力面（2026-10-28，S2）────────────────────────────────────
+    //
+    // 本类曾经 1265 行 / 66 个 public 方法，其中 **58 个是样板**
+    // （实测：21 个写 `$mods`、15 个写字段、22 个纯 getter，真逻辑只有 10 个）。
+    // "身份 + 生命周期 + 修饰 + 焦点 + 交互槽 + 语义"六件事挤在一起 ⇒
+    // 加控件的人不知道哪些该覆写、哪些只是转发（`REVIEW-2026-10-28` §1.2 L1/L2）。
+    //
+    // ★★ **"唯一表面"没有被破坏**：那句说的是"调用方看到的 API 只有一个类"
+    //   （不搞"构造器 vs 链式"两套表面），不是"所有方法必须写在同一段文字里"。
+    //   trait 合入后这些方法仍是 `Widget` 的实例方法，`$w->paddingAll(8)` 一个字母都不变
+    //   —— 拆分前后用反射快照逐签名比对过。
+    // ★ 按**能力面**拆而不是按机制拆（"写 mods 的一堆 / 读字段的一堆"）：
+    //   后者会把 `semanticsName()` 与 `semantics()` 分到两个文件里，更难读。
+    // ★ tpc（AOT）约束：traits must be visible at compile time（官方
+    //   `CLASS_INHERITANCE.md`）。本仓是自建 PSR-4 装载器 ⇒ 落地时用
+    //   `tools/drift-build.php showcase` 实测过真机产物（trait + `static` 返回 +
+    //   私有成员访问三者一起过编译）。
+    use WidgetModifiers;
+
+    use WidgetFocus;
+
+    use WidgetInteraction;
+
+    use WidgetSemantics;
+
     /** @internal 0 = 可配置（构建期）；1 = 已封存（挂载后） */
     private int $sealed = 0;
 
@@ -291,91 +320,11 @@ abstract class Widget
     // ★ 这三个是**声明**，不是状态："现在谁聚焦"住在 Drift\App\FocusManager。
     //   Widget 挂载后不可变（§10.1 seal），把可变焦点塞进来会立刻撞纪律。
 
-    /**
-     * 显式指定本控件在**同一父容器内**的 Tab 序（§A.3.4）。
-     *
-     * 不声明 ⇒ 用文档序（深度优先）。★ 同一容器内**混用有/无** `focusOrder`
-     * ⇒ 隐式相对顺序有歧义（§9.1 裁决为 G2 级错误）。
-     * **诚实边界**：该 lint 守卫**尚未落地**（`php tools/lint.php --list` 里没有它）
-     * —— 今天 `FocusManager` 的行为是**有 `focusOrder` 的排在无的前面**、同侧按文档序。
-     *
-     * @api
-     */
-    public function focusOrder(int $order): static
-    {
-        $this->mutate();
-        $this->focus = ($this->focus ?? FocusNode::make())->withOrder($order);
 
-        return $this;
-    }
 
-    /**
-     * 整棵子树**不进** Tab 序（§A.3.4）。
-     *
-     * 典型：`AppBar` 的工具按钮组。**必须显式** —— 不做"智能跳过"。
-     *
-     * @api
-     */
-    public function skipFocus(): static
-    {
-        $this->mutate();
-        $this->focus = ($this->focus ?? FocusNode::make())->skipped();
 
-        return $this;
-    }
 
-    /**
-     * 声明本控件**独占**的键集：命中时不让加速键抢（§9.1 让位规则 ②）。
-     *
-     * `TextField` 的编辑命令（`Ctrl+A/C/V/X/Z`）就是这么声明的。
-     *
-     * @param list<KeyChord> $chords
-     *
-     * @api
-     */
-    public function claimKeys(array $chords): static
-    {
-        $this->mutate();
-        $this->focus = ($this->focus ?? FocusNode::make())->claiming($chords);
 
-        return $this;
-    }
-
-    /** @internal 焦点链读它（`null` = 本控件没声明任何焦点属性） */
-    public function focusNode(): ?FocusNode
-    {
-        return $this->focus;
-    }
-
-    /**
-     * 声明本控件（及其**未覆写**的后代）的鼠标指针形状（§9.1 / §A.3.2）。
-     *
-     * ```php
-     * Row::make()->cursor(CursorShape::PointingHand)->children([...])   // 可点
-     * Text::make('可选中文本')->cursor(CursorShape::IBeam)              // 文本
-     * Column::make()->cursor(CursorShape::SizeAll)                     // 拖动把手
-     * ```
-     *
-     * ★ 这是**声明**，不是状态：谁声明、命中链取**最深**者 —— 解析住在
-     *   `FocusManager`（与焦点链同源，§9.1「一次命中，三方消费」）。
-     * ★ **不给控件开自绘光标的口子**（§9.1 裁决）：自绘光标要自己画、自己跟帧，
-     *   为一个装饰把渲染路径拉进输入态不划算。
-     *
-     * @api
-     */
-    public function cursor(CursorShape $shape): static
-    {
-        $this->mutate();
-        $this->cursor = $shape;
-
-        return $this;
-    }
-
-    /** @internal 造盒时读它（`null` = 未声明 ⇒ 交给命中链上更近的祖先） */
-    public function cursorShape(): ?CursorShape
-    {
-        return $this->cursor;
-    }
 
     // ── 修饰：字段，不是节点（arch-v2 `02` §11）────────────────────────
     //
@@ -418,848 +367,54 @@ abstract class Widget
         return [];
     }
 
-    /**
-     * 四边等距内边距。
-     *
-     * ```php
-     * Text::make('hi')->paddingAll(8.0)          // 简写
-     * $x->padding(EdgeInsets::symmetric(12.0, 8.0));
-     * ```
-     *
-     * ★ 收 `EdgeInsets` 而不是 `float`：`padding(EdgeInsets)` 在 `Flex` /
-     *   `LazyColumn` / `PopupPanel` / `Card` / `Padding` 上**已经存在**且被
-     *   `apps/` 里十几处调用。基类收 `float` 会让那些子类变成"不兼容覆写"
-     *   ⇒ 整个 `src/` 装载不起来。等距用法由 `paddingAll()` 覆盖。
-     *
-     * @api
-     */
-    public function padding(EdgeInsets $insets): static
-    {
-        $this->mutate();
-        $this->mods = $this->mods->withPadding(
-            $insets->left,
-            $insets->top,
-            $insets->right,
-            $insets->bottom,
-        );
-
-        return $this;
-    }
-
-    /** 四边等距（`padding()` 的简写） */
-    public function paddingAll(float $all): static
-    {
-        $this->mutate();
-        $this->mods = $this->mods->withPadding($all, $all, $all, $all);
-
-        return $this;
-    }
-
-    /** 逐边设置；`null` = 不动这一边（便于分次补设） */
-    public function paddingOnly(
-        ?float $left = null,
-        ?float $top = null,
-        ?float $right = null,
-        ?float $bottom = null
-    ): static {
-        $this->mutate();
-
-        $l = $this->mods->padLeft();
-        $t = $this->mods->padTop();
-        $r = $this->mods->padRight();
-        $b = $this->mods->padBottom();
-
-        if ($left !== null) {
-            $l = $left;
-        }
-        if ($top !== null) {
-            $t = $top;
-        }
-        if ($right !== null) {
-            $r = $right;
-        }
-        if ($bottom !== null) {
-            $b = $bottom;
-        }
-
-        $this->mods = $this->mods->withPadding($l, $t, $r, $b);
-
-        return $this;
-    }
-
-    /**
-     * 定尺寸（`SizedBox` 的字段形态）：给了的那一轴**钉死**，`null` = 该轴透传。
-     *
-     * ★ 叫 `boxSize` 而不是 `size`：`Text::size()` 是字号、`SizedBox::size()` 是
-     *   两个必选参数 —— 两个都不兼容，基类叫 `size()` 会让它们变成非法覆写。
-     *
-     * @api
-     */
-    public function boxSize(?float $width = null, ?float $height = null): static
-    {
-        $this->mutate();
-
-        $w = \NAN;
-        if ($width !== null) {
-            $w = $width;
-        }
-        $h = \NAN;
-        if ($height !== null) {
-            $h = $height;
-        }
-
-        $this->mods = $this->mods->withSize($w, $h);
-
-        return $this;
-    }
-
-    /** 只定宽（高随内容） */
-    public function width(float $width): static
-    {
-        $this->mutate();
-        $this->mods = $this->mods->withWidth($width);
-
-        return $this;
-    }
-
-    /** 只定高（宽随内容） */
-    public function height(float $height): static
-    {
-        $this->mutate();
-        $this->mods = $this->mods->withHeight($height);
-
-        return $this;
-    }
-
-    /**
-     * 宽高比（宽 ÷ 高）—— `AspectRatio` 的字段形态，任意控件可用。
-     *
-     * ```php
-     * Image::make('cover.png')->aspect(16 / 9);   // 宽随父容器，高按比例
-     * ```
-     *
-     * ★ **显式尺寸优先**：`->width(320)->aspect(16 / 9)` ⇒ 高 = 320 ÷ (16/9)。
-     *   两轴都显式给了 ⇒ 比例没有自由度（`tighten()` 只把两轴变紧，不再解比例）。
-     * ★ 至少一轴有界才生效；两轴都无界时比例给不出绝对尺寸（保持原约束）。
-     * ★★ **AOT 下写 `16.0 / 9.0`，不要写 `16 / 9`**：后者在 tpc 生成的 C++ 里是
-     *   **整数除法**（= 1），而解释器里是 1.7778 ⇒ 真机悄悄变成 1:1（2026-10-24 实测）。
-     */
-    public function aspect(float $ratio): static
-    {
-        if ($ratio <= 0.0 || \is_nan($ratio) || \is_infinite($ratio)) {
-            Errors::report(\sprintf(
-                '宽高比必须是有限正数，实际传入 %s。' . "\n" . '修法：写成 `->aspect(16 / 9)` 这样的正数；'
-                    . '不需要比例就别调这个方法。',
-                (string) $ratio
-            ));
-        }
-
-        $this->mutate();
-        $this->mods = $this->mods->withAspect($ratio);
-
-        return $this;
-    }
-
-    /**
-     * 底色。
-     *
-     * ★ `BoxWidget` 的子类（`Button` / `PopupPanel` / …）覆写了本方法、写进
-     *   `BoxStyle` —— 那是控件自带的整套样式，与 `mods` 的"贴一层装饰"是两件事，
-     *   刻意不合并。
-     *
-     * @api
-     */
-    public function background(Color $color): static
-    {
-        $this->mutate();
-        $this->mods = $this->mods->withFill($color);
-
-        return $this;
-    }
-
-    public function border(Color $color, float $width = 1.0): static
-    {
-        $this->mutate();
-        $this->mods = $this->mods->withStroke($color, $width);
-
-        return $this;
-    }
-
-    public function radius(float $radius): static
-    {
-        $this->mutate();
-        $this->mods = $this->mods->withRadius($radius);
-
-        return $this;
-    }
-
-    /**
-     * 柔和投影（`$alpha` = 黑色浓度，`0.0` = 不画；档位见 `Elevation`）。
-     *
-     * ★ 参数是**浓度**不是像素高度：模糊与下移由渲染层按浓度等比推出
-     *   （`Modifier::paintBehind()`）—— 一个数控制"浮起多少"。
-     * ★ 阴影画在**盒外** ⇒ 父布局不会为它留白，块之间要留 ≥ 4px 间距，
-     *   否则邻块底色会盖掉它。
-     *
-     * @api
-     */
-    public function shadow(float $alpha): static
-    {
-        $this->mutate();
-        $this->mods = $this->mods->withShadow($alpha);
-
-        return $this;
-    }
-
-    /**
-     * 不透明度（`1.0` = 不透明）。
-     *
-     * ★ 这是**声明值**：`RenderBox::setMods()` 读一次去初始化盒上的合成参数，
-     *   此后动画走 `RenderBox::setCompose()` 直接写盒、不重建不重排。
-     *   rebuild 之后回到这里声明的值（结构变了，动画中间态就不该继续顶着）。
-     *
-     * @api
-     */
-    public function opacity(float $value): static
-    {
-        $this->mutate();
-
-        if ($value < 0.0 || $value > 1.0) {
-            Errors::report(\sprintf('opacity 应在 0.0..1.0，收到 %.3f', $value));
-        }
-
-        $this->mods = $this->mods->withOpacity($value);
-
-        return $this;
-    }
-
-    /**
-     * 绘制期平移（不开层、不重排）—— 合成维，与 `opacity()` 同一组。
-     *
-     * @api
-     */
-    public function translate(float $dx, float $dy): static
-    {
-        $this->mutate();
-        $this->mods = $this->mods->withTranslate($dx, $dy);
-
-        return $this;
-    }
-
-    /**
-     * 把**内容**裁到盒矩形（含内边距）。`clip(false)` 可显式关掉。
-     *
-     * ★ 与容器声明 `->overflow(Overflow::Clip)` 的分工：`Overflow` 管**布局期**
-     *   "放不下时报错还是夹住"，`clip()` 管**绘制期**"画的时候裁掉"。会超的容器
-     *   两者都要 —— 只声明 `Overflow::Clip` 只是"不报错"，内容仍然画到盒外。
-     * ★ 装饰（背景 / 边框 / 圆角 / 阴影）**不**被裁：阴影本来就在盒外。
-     *
-     * @api
-     */
-    public function clip(bool $on = true): static
-    {
-        $this->mutate();
-        $this->mods = $this->mods->withClip($on);
-
-        return $this;
-    }
-
-    /**
-     * 声明本盒为**重绘边界**：内容没变时只重放上次录下的绘制命令，跳过整棵子树的 `paint()`。
-     *
-     * ★ 只给**粗粒度**子树开：滚动容器内容区、`LazyColumn` 的行、`Table` 的行区。
-     *   给小盒（每个文本一层）开是负收益 —— 每帧录一条命令比直接画还慢。
-     * ★ 开了不等于一定更快：内容常变的盒会每次录 + 每次放，比不缓存多一份命令数组。
-     *
-     * @api
-     */
-    public function repaintBoundary(bool $on = true): static
-    {
-        $this->mutate();
-        $this->mods = $this->mods->withRepaintBoundary($on);
-
-        return $this;
-    }
-
-    /**
-     * 把**内容**在本盒内居中（`Center` 的字段形态）。
-     *
-     * ★ 与 `alignSelf()` 不是一件事：`alignSelf` 只在 `RenderFlex` 里被消费
-     *   （没有 Flex 父就是死字段），而 `Center` 常常是页面根。
-     * ★ 叫 `centerContent` 而不是 `center`：`Dock::center(Widget)` 是五区槽位。
-     *
-     * @api
-     */
-    public function centerContent(bool $on = true): static
-    {
-        $this->mutate();
-        $this->mods = $this->mods->withCenter($on);
-
-        return $this;
-    }
-
-    /**
-     * 主轴放大份额（`Expanded` 的字段形态）。
-     *
-     * ★ `RenderFlex` 读的是盒上的 `grow()`，`Element::syncBox()` 把这里声明的值
-     *   递过去 —— 所以 `Expanded::make($x)->child()` 只是 `$x->grow(1)`。
-     *
-     * @api
-     */
-    public function grow(int $weight): static
-    {
-        $this->mutate();
-
-        if ($weight < 0) {
-            Errors::report(\sprintf('grow 份额不能为负，收到 %d', $weight));
-        }
-
-        $this->mods = $this->mods->withGrow($weight);
-
-        return $this;
-    }
-
-    /**
-     * 主轴压缩份额（`Flexible` 的字段形态）。
-     *
-     * 空间不够时按 `shrink × 起始尺寸` 加权压缩（`04` §3.2，≤3 轮冻结迭代）。
-     *
-     * ★ **下限是 0，没有保底**（`04` §3.4）：被压到 0 的控件内容不可见，但
-     *   **不报错**。今天也没有"设 `width` 就压不动"这回事 —— `Modifier::tighten()`
-     *   是把 `width` 夹进父给的区间，紧约束 `(0, 0)` 会把 `width` 一起夹成 0。
-     *   要真正的下限得等 `min-content`，而它需要文本的最小宽度（今天没有）。
-     */
-    public function shrink(int $weight): static
-    {
-        $this->mutate();
-
-        if ($weight < 0) {
-            Errors::report(\sprintf('shrink 份额不能为负，收到 %d', $weight));
-        }
-
-        $this->mods = $this->mods->withShrink($weight);
-
-        return $this;
-    }
-
-    /** 分配前的起始主轴尺寸（不设 = 用自然尺寸） */
-    public function basis(float $basis): static
-    {
-        $this->mutate();
-        $this->mods = $this->mods->withBasis($basis);
-
-        return $this;
-    }
-
-    /**
-     * 交叉轴自对齐（覆盖父容器的 `crossAlign`）。
-     *
-     * @param int $align `RenderBox::ALIGN_INHERIT` / `ALIGN_START` / `ALIGN_CENTER`
-     *                   / `ALIGN_END` / `ALIGN_STRETCH`
-     */
-    public function alignSelf(int $align): static
-    {
-        $this->mutate();
-        $this->mods = $this->mods->withAlign($align);
-
-        return $this;
-    }
-
-    /**
-     * 声明"本控件及其子树可被拖动"（§A.3.5，应用内拖放）。
-     *
-     * ```php
-     * Row::make()->children([...])->draggable(Draggable::make(payload: $user->id))
-     * ```
-     *
-     * ★ 它是**声明**：拖动状态机住 `Drift\App\DragController`（与焦点链同源 ——
-     *   都需要"命中的 Element"）。指针驱动已接线（2026-10-17，§24.2 #16）：
-     *   down 记意图 → move 过阈值 begin → up 放置。
-     *
-     * @api
-     */
-    public function draggable(Draggable $value): static
-    {
-        $this->mutate();
-        $this->draggable = $value;
-
-        return $this;
-    }
-
-    /** @internal 拖动状态机读它；`null` = 不可拖 */
-    public function draggableValue(): ?Draggable
-    {
-        return $this->draggable;
-    }
-
-    /**
-     * 声明"本控件接受放置"（§A.3.5）。
-     *
-     * ```php
-     * Container::make()->dragTarget(DragTarget::make()->onAccept(fn($id) => ...))
-     * ```
-     *
-     * @api
-     */
-    public function dragTarget(DragTarget $value): static
-    {
-        $this->mutate();
-        $this->dragTarget = $value;
-
-        return $this;
-    }
-
-    /** @internal 拖动状态机读它；`null` = 不接受放置 */
-    public function dragTargetValue(): ?DragTarget
-    {
-        return $this->dragTarget;
-    }
-
-    /**
-     * 声明右键弹出的上下文菜单（§A.3.1；挂在**子树**上，命中链向上找最近的声明者）。
-     *
-     * ```php
-     * Row::make()->children([...])->contextMenu(ContextMenu::make()->items([...]))
-     * ```
-     *
-     * @api
-     */
-    public function contextMenu(ContextMenu $value): static
-    {
-        $this->mutate();
-        $this->contextMenu = $value;
-
-        return $this;
-    }
-
-    /** @internal 右键入口读它（`Application::dispatchInput()` 的指针分支） */
-    public function contextMenuValue(): ?ContextMenu
-    {
-        return $this->contextMenu;
-    }
-
-    /**
-     * 声明"指针悬停在我上面时通知我"（§9.1 语义 #5，2026-10-17 随 move 相位落地）。
-     *
-     * ```php
-     * Button::make('删除', 'user.delete')->hover(function (bool $entered): void { ... })
-     * ```
-     *
-     * ★ **只在目标变化时派发**（进入 / 离开各一次，回调里可放心 `setState`）——
-     *   与 `DragController::hoverTo()` 同一条纪律（§9.1 语义 #5 同源）：指针在
-     *   同一控件上移动不会重复通知。
-     * ★ **回调签名** `function (bool $entered): void` —— 与 `DragTarget` 的
-     *   `hoverHandler` 同形（两处悬停是同一契约的两种消费者）。
-     *
-     * @api
-     */
-    public function hover(\Closure $handler): static
-    {
-        $this->mutate();
-        $this->hoverHandler = $handler;
-
-        return $this;
-    }
-
-    /** @internal 悬停派发读它；`null` = 不参与悬停（交给命中链上更近的祖先） */
-    public function hoverHandlerValue(): ?\Closure
-    {
-        return $this->hoverHandler;
-    }
-
-    /**
-     * 声明"我要处理指针事件"（`06` §5 指针捕获 + W8-2 按下接管）。
-     *
-     * ```php
-     * // ① 只要捕获期事件（按下仍走框架的激活/命令派发）
-     * Button::make('锚点')->pointer(fn(PointerEvent $e, Element $self) => null);
-     *
-     * // ② 按下就归我（Slider 这类"位置即语义"的控件）
-     * Slider::make()->value($v)->pointer(
-     *     fn(PointerEvent $e, Element $self) => $this->handlePointer($e, $self),
-     *     ownsPress: true,
-     * );
-     * ```
-     *
-     * ★ **捕获不是"能收到更多事件"**：捕获期指针事件**不再命中测试**（这是捕获的
-     *   全部意义 —— 拖到控件外面仍然归我）。抬起 / 捕获者卸载 / 窗口失焦时自动释放。
-     * ★ `$ownsPress = false`（默认）⇒ 只在捕获期被调，按下仍由框架激活；
-     *   `true` ⇒ 命中链上最近的声明者**接管按下**：框架捕获它并把 `down` 相位交过来，
-     *   跳过 `activateFocusedWidget()`。焦点照旧落上去（键盘可达）。
-     * ★ 坐标是**客户区坐标**，要局部坐标就减 `RenderBox::absoluteOrigin()`。
-     *   回调第二参是**命中的 Element**（盒每帧重建 ⇒ 现取 `effectiveBox()`，
-     *   别缓存盒）。
-     *
-     * @api
-     */
-    public function pointer(\Closure $handler, bool $ownsPress = false): static
-    {
-        $this->mutate();
-        $this->pointerHandler = $handler;
-        $this->pointerOwnsPress = $ownsPress;
-
-        return $this;
-    }
-
-    /** @internal 捕获派发读它；`null` = 本控件不接受捕获期事件 */
-    public function pointerHandlerValue(): ?\Closure
-    {
-        return $this->pointerHandler;
-    }
-
-    /** @internal 按下路由读它；`true` = 本次按下由本控件接管（不激活） */
-    public function pointerOwnsPressValue(): bool
-    {
-        return $this->pointerOwnsPress;
-    }
-
-    /**
-     * 声明"按在本控件上就拖动窗口"（P1-Stage 1b，无边框窗的标题栏替代品）。
-     *
-     * ```php
-     * // 组合根（持有 WindowHost，句柄在它手里）
-     * AppBar::make()->title('用户管理')->windowDrag(
-     *     fn () => $window->beginDrag($handle),
-     * );
-     * ```
-     *
-     * ★ **只在命中的是"本控件这一层"时生效**：从命中点沿父链往上找，途中遇到
-     *   任何**自己处理按下**的控件（可聚焦 / `Activatable` / 有 `pointer()`）就
-     *   立刻让位 —— 否则 AppBar 上的按钮和搜索框会连点击一起被拖走（这正是
-     *   `WM_NCHITTEST` 返 `HTCAPTION` 的做法做不到精确的地方：壳看不见控件树）。
-     * ★ 闭包**无参**：坐标、句柄、怎么拖都是组合根的事，框架只负责"什么时候"。
-     * ★ 只在按下时调**一次**，**不捕获指针** —— 拖窗的鼠标循环归平台（Win32 的
-     *   `WM_NCLBUTTONDOWN` 自己 `SetCapture`），框架再捕获一次反而会在拖动结束后
-     *   把后续事件全锁在这个控件上。
-     *
-     * @api
-     */
-    public function windowDrag(\Closure $handler): static
-    {
-        $this->mutate();
-        $this->windowDragHandler = $handler;
-
-        return $this;
-    }
-
-    /** @internal 按下路由读它；`null` = 本控件不声明窗口拖动 */
-    public function windowDragHandlerValue(): ?\Closure
-    {
-        return $this->windowDragHandler;
-    }
-
-    /**
-     * 声明"我要处理键盘"（W8-2，Slider 立的口子）。
-     *
-     * ```php
-     * Slider::make()->value($v)->keyboard(fn(KeyEvent $e) => $this->nudge($e));
-     * ```
-     *
-     * ★ 回调 `\Closure(KeyEvent, Element): bool`，返回 `true` = 吃掉这个键。
-     *   ★ 第二个参数是**焦点所在的 Element**（2026-10-24 起与 `pointer()` /
-     *     `hover()` 同形）—— 控件要按"盒上的状态"决定行为时靠它拿 `effectiveBox()`。
-     *     老的单参写法（`function (KeyEvent $e)`）在 PHP 里忽略多余参数，仍然有效。
-     * ★ **沿焦点控件的父链找"最近的声明者"**（`FocusManager::dispatchKey`）——
-     *   所以**包裹式控件也能挂**：`ComboBox` 包一个 `TextField` 时，焦点落在
-     *   `TextField` 上，而 `ComboBox` 自己声明的 `keyboard()` 照样收得到
-     *   （它要拦 Enter / 方向键 / Esc 驱动浮层）。与 `pointer()` /
-     *   `contextMenu()` 同一条规则："最深的声明赢"。
-     *   （2026-10-24 之前只读焦点控件自己的 widget ⇒ 包裹层的声明是死的，
-     *   而本条 docblock 一直写着"任何控件都能挂"—— 文档承诺了代码没做到的事。）
-     * ★ 只对**焦点控件那一支**调（Tab/Shift+Tab 之后、`TextFieldState` 之前）
-     *   —— 与"键盘属于焦点"的既有分工一致。
-     * ★ 为什么不复用 `activateFocusedWidget()`：那个入口收的是"激活"语义且**收不到
-     *   按键**，Slider 的方向键调值、Select 的上下选、DatePicker 的翻页都做不到。
-     *   ⇒ 新控件走这条缝，`activateFocusedWidget()` 的 `instanceof` 塔不再增长。
-     * ★ 命名是 `keyboard()` 不是 `key()` —— 后者已被 diff 身份 `key(Key)` 占用
-     *   （`Widget::$key`），两者毫无关系。`pointer()` / `hover()` / `keyboard()`
-     *   是同一族的三个输入类别。
-     *
-     * @api
-     */
-    public function keyboard(\Closure $handler): static
-    {
-        $this->mutate();
-        $this->keyHandler = $handler;
-
-        return $this;
-    }
-
-    /** @internal 键盘派发读它；`null` = 本控件不处理按键 */
-    public function keyHandlerValue(): ?\Closure
-    {
-        return $this->keyHandler;
-    }
-
-    /**
-     * 声明"悬停在我上面时显示这段提示"（W8-2，2026-10-23）。
-     *
-     * ```php
-     * IconButton::make('save')->tooltip('保存当前文档 (Ctrl+S)');
-     * ```
-     *
-     * ★ **为什么是声明而不是 `hover()` 回调**：回调收的是 `\Closure(bool)`，
-     *   **拿不到锚点 Element**（Tooltip 必须知道挂在哪）。加第二个参数在 PHP 侧
-     *   无害，但 tpc 生成的 C++ 侧闭包 arity 行为没有验证过 —— 不值得为一个可选
-     *   能力去赌编译器。声明式还有一个更硬的好处：**时序只在一处**（两个控件相邻
-     *   时"先关旧的再开新的"不需要每个应用自己写对）。
-     * ★ **为什么不做成包裹 Widget**：Tooltip **不产生布局、不产生绘制**，包裹式
-     *   要一个透明 `RenderProxy` + `expandChildren()`（纯开销），还会插进
-     *   `hoverOwner()` 的父链判定 —— 而 `semantics()` / `pointer()` / `keyboard()`
-     *   这一族正是"控件属性"的正确形状。
-     * ★ 浮层生命周期归 `Application`（`§5.1` 裁决 1 的原话："Application 管生命周期
-     *   与落位，控件只管形体"）。本声明只是**把文字交出去**。
-     *
-     * @param string $text 单行提示文本（多行由 `\n` 表达，渲染侧负责换行）
-     *
-     * @api
-     */
-    public function tooltip(string $text): static
-    {
-        $this->mutate();
-        $this->tooltipText = $text;
-
-        return $this;
-    }
-
-    /**
-     * @internal Tooltip 浮层读它；**空串 = 本控件无提示**（不用 `?string`，见字段注释）
-     */
-    public function tooltipTextValue(): string
-    {
-        return $this->tooltipText;
-    }
-
-    /**
-     * 声明"激活我时，给我浮一个面板"（W8-2 Select，2026-10-23）。
-     *
-     * ```php
-     * // 工厂：收"收掉这一层"的闭包，交回面板内容
-     * Button::make($label)->overlayPanel(function (\Closure $dismiss): Widget {
-     *     return PopupPanel::make(Column::make()->children([
-     *         Button::make('北京')->onPressed(function () use ($dismiss): void {
-     *             $this->apply('110000');
-     *             $dismiss();
-     *         }),
-     *     ]));
-     * });
-     * ```
-     *
-     * ## 为什么是"工厂 + 注入 dismiss"而不是直接给一个 Widget
-     *
-     * ★★ **"点了选项要关掉自己"** —— 而面板里的按钮**拿不到 `Application`**
-     *   （§4.3 禁 `Widget → App`）。所以 `dismiss` 只能由 `Application` 在**开面板
-     *   的那一刻**注入进来。这与 `SnackbarPanel::make($s, $onDismiss)` 是**同一条**
-     *   已被真机验证过的路（`119cfd7`）。
-     *
-     * ★★ **工厂只收一个参数是刻意的**：tpc 生成的 C++ 侧**闭包 arity 没有系统验证
-     *   过**（`Menu::onOpen` 的 2 参形态至今没有被示例台消费过）。要往工厂里多塞
-     *   "锚点宽度"这类信息，宁可给 `OverlayEntry` 加字段，也不要加形参。
-     *
-     * ## 为什么是声明而不是回调
-     *
-     * 与 `tooltip()` / `contextMenu()` 同一族：`pointer()` / `keyboard()` 这两条缝
-     * 把事件交给**控件自己的闭包**，而"开浮层"要 `Application` —— 闭包够不着。
-     * 声明式让框架在**激活**那一个入口统一处理（`activateFocusedWidget()` 里只有
-     * **一条**通用分支，不按控件类型加 `instanceof`）。
-     *
-     * ★ 优先级：**声明了本字段的控件，激活时开面板，不走 `onPressed` / 命令**
-     *   （"浮一个面板"比"按一下"更具体）。`Select` 因此不给内层按钮设 `onPressed`。
-     * ★ 面板的落位 / 锚点 / 归属 / 关闭归 `Application`（`§5.1` 裁决 1）。
-     *
-     * @param \Closure(\Closure): Widget $factory 形参 = `dismiss` 闭包，返回值 = 面板内容
-     *
-     * @api
-     */
-    public function overlayPanel(\Closure $factory): static
-    {
-        $this->mutate();
-        $this->overlayPanelFactory = $factory;
-
-        return $this;
-    }
-
-    /** @internal 激活时浮出的面板工厂；`null` = 本控件激活时不开面板 */
-    public function overlayPanelValue(): ?\Closure
-    {
-        return $this->overlayPanelFactory;
-    }
-
-    /**
-     * 声明"我的面板**在意**什么" —— 一个字符串签名（W8-2，2026-10-24）。
-     *
-     * ```php
-     * // Select 里（State 侧）
-     * ->overlayPanel($this->panelFactory())
-     * ->overlaySignature(fn(): string => $this->contentSignature())
-     * ```
-     *
-     * ## 为什么需要这条缝
-     *
-     * ★★ **浮层是第二棵根渲染树**（`OverlayEntry::$panel` 的设计注释就是这条）：
-     *   主树重建**不带动**面板。而 `Select` / `ComboBox` 的面板内容来自**受控属性**
-     *   （`loading` / 选项表 / `emptyText`）—— 应用 `setState` 换了 Widget 之后，
-     *   面板不会自己重读。
-     *
-     * ★★ 2026-10-24 之前这条职责落在**每个控件**身上：持有 `Subject`、`initState`
-     *   里订阅、覆写 `didUpdateWidget()` 且**必须**调 `parent::`、比对签名再 publish。
-     *   四步里漏任何一步都是**全静默**的（`Select` 就漏过 `parent::`，面板永不更新
-     *   而 `didUpdateWidget()` 看起来被调了）。收进框架后，这个坑**结构上不存在**。
-     *
-     * ## 分工（这是本缝的全部理由）
-     *
-     * | 面板内容取决于 | 谁负责传播 |
-     * |---|---|
-     * | **受控属性**（住在 Widget 上） | 框架：本签名变了 ⇒ 标脏面板 |
-     * | **控件私有态**（住在 State 上） | 控件自己：`Subject::notifyChanged()` |
-     *
-     * ★ **签名必须是"语义"而不是"身份"**：应用每次重建都造新的 `Option` 实例，
-     *   用对象身份比必然"天天在变" ⇒ 面板每帧重建 ⇒ 列表滚动位置回顶部。
-     *   写法参考 `Select::contentSignature()`（三态三值 + 受控值 + (value,label) 序列，
-     *   用 `implode` 拼 —— 循环里 `.=` 会被 lint 的 `str-concat-loop` 判错）。
-     *
-     * ★ 求值时机：框架在**锚点 Widget 换了**（= 那个 `State` 重建过）之后才调一次，
-     *   锚点没重建就一次都不调。所以签名函数要**便宜**，但不必极便宜。
-     *
-     * @param \Closure(): string $signature
-     *
-     * @api
-     */
-    public function overlaySignature(\Closure $signature): static
-    {
-        $this->mutate();
-        $this->overlaySignature = $signature;
-
-        return $this;
-    }
-
-    /** @internal 面板内容签名；`null` = 本控件不声明（框架不传播受控值变化） */
-    public function overlaySignatureValue(): ?\Closure
-    {
-        return $this->overlaySignature;
-    }
-
-    /**
-     * 声明"这个控件是什么"（§9 无障碍 / M5）—— 角色 + 人读信息，供
-     * `SemanticsBuilder` 建语义树（检查器 / 自动化 / 将来的朗读消费）。
-     *
-     * ```php
-     * Button::make('保存', 'doc.save')          // 内部即 ->semantics(Button, '保存')
-     * TextField::make()->label('邮箱')           // label 同时是可访问名
-     * Modal::make()->title('确认删除')           // 标题即对话框名
-     * ```
-     *
-     * ★★ **这是字段赋值，不是虚方法覆写**（§9 P3 陷阱）：tpc 有全程序去虚化缺陷，
-     *   "基类给默认实现 + 子类覆写 `semantics()`" 会被**静默忽略** ⇒ 症状是"所有
-     *   节点角色为空"且编译期不报错。控件要么在自己的构造/设值处调本方法
-     *   （`Button` / `TextField::label()` / `Modal::title()` 即如此），要么由应用显式调。
-     * ★ **不声明 = 不进语义树**（加性）：`Text` / `Row` / `Card` 这类结构与叶子
-     *   一律不调它（判据见 `SemanticsRole` 的类注释）。
-     * ★ `null` 参数 = "不动这一项"（便于分次补设，如先角色后取值）。
-     *
-     * @api
-     */
-    public function semantics(
-        SemanticsRole $role,
-        ?string $name = null,
-        ?string $value = null,
-        ?bool $enabled = null
-    ): static {
-        $this->mutate();
-        $this->semRole = $role;
-        if ($name !== null) {
-            $this->semName = $name;
-        }
-        if ($value !== null) {
-            $this->semValue = $value;
-        }
-        if ($enabled !== null) {
-            $this->semEnabled = $enabled;
-        }
-
-        return $this;
-    }
-
-    /**
-     * 声明取值区间（只对 `range` 族角色有意义：`Slider` / `Progress`）。
-     *
-     * ```php
-     * $w->semantics(SemanticsRole::Slider, $label, '42', true)->semanticsRange(0, 100);
-     * ```
-     *
-     * ★ 与 `semantics()` **正交**、可单独调用（`semantics()` 之后再链也行）。
-     *   不塞进 `semantics()` 的 4 参签名，是因为只有少数控件需要区间。
-     * ★ `UIA IRangeValueProvider` 必须有 `Minimum`/`Maximum`，就取自这里；
-     *   不给 ⇒ 两者都是 0（读屏读到空区间，而不是被默认成 0..100）。
-     *
-     * @api
-     */
-    public function semanticsRange(float $min, float $max): static
-    {
-        $this->mutate();
-        if ($min <= $max) {
-            $this->semRangeMin = $min;
-            $this->semRangeMax = $max;
-        } else {
-            $this->semRangeMin = $max;
-            $this->semRangeMax = $min;
-        }
-
-        return $this;
-    }
-
-    /** @internal `SemanticsBuilder` 读它；`null` = 不在语义树里 */
-    public function semanticsRole(): ?SemanticsRole
-    {
-        return $this->semRole;
-    }
-
-    /** @internal `SemanticsBuilder` 读它 */
-    public function semanticsName(): string
-    {
-        return $this->semName;
-    }
-
-    /** @internal `SemanticsBuilder` 读它 */
-    public function semanticsValue(): string
-    {
-        return $this->semValue;
-    }
-
-    /** @internal `SemanticsBuilder` 读它 */
-    public function semanticsEnabled(): bool
-    {
-        return $this->semEnabled;
-    }
-
-    /** @internal `SemanticsBuilder` 读它（`range` 族角色的取值下界） */
-    public function semanticsRangeMin(): float
-    {
-        return $this->semRangeMin;
-    }
-
-    /** @internal `SemanticsBuilder` 读它（`range` 族角色的取值上界） */
-    public function semanticsRangeMax(): float
-    {
-        return $this->semRangeMax;
-    }
-
-    /**
-     * 输入控件在**构造器里**声明"我能收焦点"（§9.1）。
-     *
-     * 默认 false：`Text` / `Column` 这类不该进 Tab 序。声明过的控件才可能被
-     * `FocusManager` 收进焦点链。
-     *
-     * @internal
-     */
-    final protected function markFocusable(): void
-    {
-        $this->focusable = true;
-    }
-
-    /** @internal */
-    final public function isFocusable(): bool
-    {
-        return $this->focusable;
-    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 }
