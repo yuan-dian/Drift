@@ -82,7 +82,7 @@ final class FocusRingTest extends SmokeTestCase
 
     private static function pixel(?SurfaceProbe $probe): ?Color
     {
-        return $probe->canvas?->pixelAt(self::PROBE_X, self::PROBE_Y);
+        return $probe->raster()?->pixelAt(self::PROBE_X, self::PROBE_Y);
     }
 
     /**

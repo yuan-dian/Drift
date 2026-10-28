@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace Drift\Dev\Tests\Feature\Rendering;
 
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
-use Drift\Dev\Smoke\Overlay\RecordingSurface;
+use Drift\Dev\Smoke\Frame\RecordingSurface;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Platform\Win32\Win32SkiaSurface;
 use Drift\Rendering\Color;
@@ -43,7 +43,7 @@ final class SurfaceBackgroundTest extends SmokeTestCase
         $surface->resize(20, 10, 1.0);
         $surface->setBackground(new Color(0x33, 0x66, 0x99, 0x80));
         $surface->beginFrame(0.0);
-        $pixel = $surface->canvas?->pixelAt(0, 0);
+        $pixel = $surface->raster()?->pixelAt(0, 0);
 
         // 51·128/255 = 25.6 → 26；102·128/255 = 51.2 → 51；153·128/255 = 76.8 → 77
         check(

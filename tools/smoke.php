@@ -25,7 +25,7 @@ use App\Tutorial\TutorialApplication;
 use Drift\App\Frame;
 use Drift\Dev\Smoke\ErrorBoundary\BoomPage;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
-use Drift\Dev\Smoke\Overlay\RecordingSurface;
+use Drift\Dev\Smoke\Frame\RecordingSurface;
 use Drift\Dev\Smoke\Rendering\ProbePainter;
 use Drift\Dev\Preview\SvgSurface;
 use Drift\Dev\Smoke\App\CountJob;
@@ -582,6 +582,39 @@ function inkCount(RasterCanvas $canvas, ?Color $background = null): int
         }
     }
     return $ink;
+}
+
+/**
+ * 命令流里某一类 op 的条数（**不花像素钱**）。
+ *
+ * ## 与 `inkCount()` 的分工（2026-10-28）
+ *
+ * 判"整页排开了没有"过去用 `inkCount() > 0`，但那是**弱判据**：夹具里只要有一个字
+ * 就恒真（§20 已记"有墨几乎总是弱判据"）。而"22 个导航项**各上了一次字**"只能数命令
+ * —— 它同时是可证伪的：少画一项就少一条。
+ *
+ * 反过来，**颜色 / 覆盖率 / 抗锯齿**必须读像素（`golden/page` 的 20 张基线就是干这个
+ * 的）。两者不是替代关系：
+ *
+ * | 问题 | 用哪个 |
+ * |---|---|
+ * | "画了 N 个东西吗"（结构、数量、顺序） | `drawOpCount()` / `list()->count()` |
+ * | "画对了吗"（颜色、位置、叠色、AA） | `raster()` + `inkCount()` / `pixelAt()` |
+ *
+ * ★ 一条 op 的代价 ≈ 0；一次 `raster()` 在 1920×1017 上是 1.5s（回放）+ 1.05s
+ *   （`inkCount()` 扫 195 万像素）。**能数命令就别读像素。**
+ */
+function drawOpCount(DisplayList $list, int $op): int
+{
+    $count = 0;
+    $total = $list->count();
+    for ($i = 0; $i < $total; $i++) {
+        if ($list->opAt($i) === $op) {
+            $count++;
+        }
+    }
+
+    return $count;
 }
 
 /**
@@ -3369,10 +3402,15 @@ $tutSurface->resize(720, 900, 1.0);
 $tutApp->attach($tutSurface, $tutConstraints);
 
 check('apps/tutorial · 应用只写 buildRoot/title（§4.5）', $tutApp->title() === 'Drift 教程');
+// ★ 同 `㊷b`：判"四段都排开了"用**命令条数**（四段标题各一条 drawParagraph，实测 19 条），
+//   不用 `inkCount()`（一个墨点就恒真，且 720×900 的扫像素 + 回放要 1.1s）。
+$tutList = $tutSurface->list();
+$tutTextOps = drawOpCount($tutList, DisplayList::OP_DRAW_PARAGRAPH);
+$tutRectOps = drawOpCount($tutList, DisplayList::OP_DRAW_RECT);
 check(
-    'apps/tutorial · 首屏有墨（四段都排开了，不是静默空白）',
-    $tutSurface->canvas !== null && inkCount($tutSurface->canvas) > 0,
-    '墨点数 ' . (string) ($tutSurface->canvas !== null ? inkCount($tutSurface->canvas) : -1)
+    'apps/tutorial · 四段都排开了（四段标题各上了一次字，不是静默空白）',
+    $tutTextOps >= 4 && $tutRectOps >= 3,
+    'drawParagraph ' . $tutTextOps . ' / drawRect ' . $tutRectOps . ' / 命令 ' . $tutList->count() . ' 条'
 );
 
 // 四段标题都在树上 —— 少一段 = 那段建树失败（它自己**不会报错**，只是不出现）
@@ -3565,10 +3603,17 @@ $sc2App->attach($sc2Surface, $sc2Constraints);
 $sc2App->frame(16.0, $sc2Constraints);
 check('apps/showcase · 应用只写 buildRoot/title/commands（§4.5）', $sc2App->title() === 'Drift 示例台');
 check('apps/showcase · 无平台也能挂载（表面是注入的，§7.2 裁决 4）', $sc2App->root() !== null);
+// ★ 判据是**命令条数**不是像素（2026-10-28）：示例台左导航有 22 项，每项一行字
+//   ⇒ `drawParagraph >= 22` 就是"每一项都上字了"，少画一项就红；而 `inkCount() > 0`
+//   只要有**一个**字就恒真。真像素由 `golden/page` 的 20 张整页基线守着。
+//   ★ 换成命令判据顺带把这一段的 1.5s 回放 + 1.05s 扫像素省掉了（原先 12.19s）。
+$sc2List = $sc2Surface->list();
+$sc2Text = drawOpCount($sc2List, DisplayList::OP_DRAW_PARAGRAPH);
+$sc2Rect = drawOpCount($sc2List, DisplayList::OP_DRAW_RECT);
 check(
-    'apps/showcase · 首屏有墨（顶条 + 侧栏 + 内容都排开了，不是静默空白）',
-    $sc2Surface->canvas !== null && inkCount($sc2Surface->canvas) > 0,
-    '墨点数 ' . (string) ($sc2Surface->canvas !== null ? inkCount($sc2Surface->canvas) : -1)
+    'apps/showcase · 首屏 22 个导航项都上了字（顶条/侧栏/内容都排开了，不是静默空白）',
+    $sc2Text >= 22 && $sc2Rect >= 10,
+    'drawParagraph ' . $sc2Text . ' / drawRect ' . $sc2Rect . ' / 命令 ' . $sc2List->count() . ' 条'
 );
 
 // AppBar::actions()（2026-10-25 新增的右动作位）：两个图标按钮必须在树上。

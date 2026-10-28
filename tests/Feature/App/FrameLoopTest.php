@@ -109,8 +109,8 @@ final class FrameLoopTest extends SmokeTestCase
         $frame2->run($columnElement, BoxConstraints::tight(new Size(320.0, 240.0)), 48.0);
         check(
             'Frame · layout → paint → present 一路通到表面（画布上有墨）',
-            $surface2->canvas !== null && inkCount($surface2->canvas) > 0,
-            '墨点数 ' . (string) ($surface2->canvas !== null ? inkCount($surface2->canvas) : -1)
+            $surface2->raster() !== null && inkCount($surface2->raster()) > 0,
+            '墨点数 ' . (string) ($surface2->raster() !== null ? inkCount($surface2->raster()) : -1)
         );
 
         $this->flushChecks();

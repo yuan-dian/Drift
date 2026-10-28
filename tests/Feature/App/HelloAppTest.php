@@ -43,8 +43,8 @@ final class HelloAppTest extends SmokeTestCase
         check('apps/hello · 无平台也能挂载（表面是注入的，§7.2 裁决 4）', $hello->root() !== null);
         check(
             'apps/hello · 屏幕中央有「Hello Drift」（画出墨了）',
-            $helloSurface->canvas !== null && inkCount($helloSurface->canvas) > 0,
-            '墨点数 ' . (string) ($helloSurface->canvas !== null ? inkCount($helloSurface->canvas) : -1)
+            $helloSurface->raster() !== null && inkCount($helloSurface->raster()) > 0,
+            '墨点数 ' . (string) ($helloSurface->raster() !== null ? inkCount($helloSurface->raster()) : -1)
         );
         check(
             'apps/hello · 根排满视口（Center 撑满紧约束）',
@@ -105,7 +105,7 @@ final class HelloAppTest extends SmokeTestCase
         $helloSurface->resize(320, 240, 1.0);
         $hello->attach($helloSurface, BoxConstraints::tight(new Size(320.0, 240.0)));
 
-        $helloBounds = inkBounds($helloSurface->canvas);
+        $helloBounds = inkBounds($helloSurface->raster());
         check(
             'apps/hello · 文字居中（Center 的偏移真被画出来）',
             $helloBounds !== null

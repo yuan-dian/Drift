@@ -14,7 +14,7 @@ declare(strict_types=1);
  *   `php tools/drift-build.php <app>`（构建）+ 真机探针。分层纪律见 `09` §8。
  *
  * 检查项（顺序即执行顺序，廉价优先；★ 标 slow 的在 `--fast` 下跳过）：
- *   ★ 耗时是 2026-10-28 本机实测（同一台机器逐项跑，合计 72.5s）。**别凭印象改**，
+ *   ★ 耗时是 2026-10-28 本机实测（同一台机器逐项跑，合计 63.4s）。**别凭印象改**，
  *     改规模（迁用例 / 加 app 级断言）后要重测：文档里原来写的是 smoke 1727 条 /
  *     feature ~0.1s，那是 phpunit 还没有 660 个用例时的数。
  *   lint      php tools/lint.php               738 文件 · 0 error     ~4.6s
@@ -24,18 +24,22 @@ declare(strict_types=1);
  *   feature★  phpunit-run feature              场景测试（真挂载+推帧） ~21.6s
  *   golden    golden-raster --check --canvas   9 个原语场景像素基线    ~1.4s
  *   pages★    golden-raster --check --pages    20 个整页像素基线       ~5.2s
- *   smoke★    php tools/smoke.php              448 条断言             ~32.4s
+ *   smoke★    php tools/smoke.php              448 条断言             ~22.8s
  *
- * ★ 为什么这么慢（三项，按占比）：① smoke 里 **38 处**子进程调用点（33 处
- *   `runCase()` + 5 处 `runFatalCase()`）各起一个 php.exe（"期望响亮失败"只能
- *   子进程：`Errors::report` 走 `abort()`，`try/catch` 接不住）—— 实测单次
- *   启动+装载 0.24s ⇒ 约 9.1s 纯开机税；② 等真实时间（`php -S` mock / worker 池
- *   各睡 200ms / 一条"≥1.2s 说明真等了网络"）；③ feature 是**每例都真的建树+
- *   layout+paint**（内存峰值 692MB）。
- *   ⇒ 想快先砍 ①（并进程）与拆 B 桶（app 级集成单列一项），别去动 ③ 的断言密度。
+ * ★ 为什么这么慢（2026-10-28 定位后的真实结构）：
+ *   ① **feature 21.6s**：每例都真的建树+layout+paint（内存峰值 692MB）。这是"真挂载"
+ *      的价钱，别去砍它的断言密度。
+ *   ② **smoke 22.8s**：主体是"必须真像素/真进程"的段落 —— ⑩+4 桥结构 golden 2.6s、
+ *      降采样灰度 2.5s、P3 常驻子进程 2.2s、users 真异步（真 HTTP）2.0s，另有
+ *      **38 处子进程调用点**（33 `runCase` + 5 `runFatalCase`，单次装载 0.24s）≈ 9s
+ *      开机税（"期望响亮失败"只能子进程：`Errors::report` 走 `abort()`，接不住）。
+ *      原 32.4s 里有一半是 `㊷b` 一个段 —— 它在大视口上**真画像素**只为断"有墨"，
+ *      2026-10-28 已改成数绘制命令（12.2s → <0.6s，判据还变强了）。
+ *   ③ 想再快只剩两件事：子进程并发（省 5–9s）、八项并行（wall → ~28s，需先确认
+ *      golden/pages 只读、smoke 临时目录不撞）。
  *
  * 用法：
- *   php tools/gate.php              # 全部（含整页 + smoke，实测约 72s）
+ *   php tools/gate.php              # 全部（含整页 + smoke，实测约 63s）
  *   php tools/gate.php --fast       # 只跑廉价项（实测约 13s，日常迭代）
  *   php tools/gate.php --full       # 同默认（显式写法）
  *   php tools/gate.php --only=golden,pages,smoke

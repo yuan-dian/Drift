@@ -30,7 +30,7 @@ final class DragDropTest extends SmokeTestCase
     {
         $app = new MenuApplication();
         $app->attach(
-            new \Drift\Dev\Smoke\Overlay\RecordingSurface(),
+            new \Drift\Dev\Smoke\Frame\RecordingSurface(),
             BoxConstraints::tight(new Size(320.0, 240.0)),
         );
         $app->frame(16.0, BoxConstraints::tight(new Size(320.0, 240.0)));

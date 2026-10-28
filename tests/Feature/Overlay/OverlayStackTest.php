@@ -6,7 +6,7 @@ namespace Drift\Dev\Tests\Feature\Overlay;
 use Drift\App\OverlayEntry;
 use Drift\Dev\Smoke\App\OverlayLabApplication;
 use Drift\Dev\Smoke\Overlay\FlatBox;
-use Drift\Dev\Smoke\Overlay\RecordingSurface;
+use Drift\Dev\Smoke\Frame\RecordingSurface;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Size;

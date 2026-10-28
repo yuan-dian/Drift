@@ -112,8 +112,8 @@ final class ApplicationTest extends SmokeTestCase
         );
         check(
             'Application · 组合根的画面有墨（不是静默空白）',
-            $compositeSurface->canvas !== null && inkCount($compositeSurface->canvas) > 0,
-            '墨点数 ' . (string) ($compositeSurface->canvas !== null ? inkCount($compositeSurface->canvas) : -1)
+            $compositeSurface->raster() !== null && inkCount($compositeSurface->raster()) > 0,
+            '墨点数 ' . (string) ($compositeSurface->raster() !== null ? inkCount($compositeSurface->raster()) : -1)
         );
 
         $this->flushChecks();

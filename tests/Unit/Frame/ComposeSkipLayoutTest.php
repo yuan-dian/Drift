@@ -8,7 +8,7 @@ use Drift\Dev\Smoke\Frame\TickerState;
 use Drift\Dev\Smoke\Frame\TickerWidget;
 use Drift\Dev\Smoke\Layout\LayoutCountBox;
 use Drift\Dev\Smoke\Layout\LayoutCountWidget;
-use Drift\Dev\Smoke\Overlay\RecordingSurface;
+use Drift\Dev\Smoke\Frame\RecordingSurface;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Size;
