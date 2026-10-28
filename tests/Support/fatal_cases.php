@@ -29,7 +29,18 @@ declare(strict_types=1);
 require __DIR__ . '/../../tools/autoload.php';
 
 use Drift\Errors;
+use Drift\Geometry\BoxConstraints;
+use Drift\Geometry\Size;
+use Drift\Text\DeterministicFontManager;
+use Drift\Text\DeterministicMetricsProvider;
+use Drift\Text\DeterministicShaper;
+use Drift\Theme\ThemeData;
+use Drift\Widget\BuildContext;
+use Drift\Widget\Grid;
+use Drift\Widget\LazyGrid;
 use Drift\Widget\Option;
+use Drift\Widget\Text;
+use Drift\Widget\Widget;
 
 $case = '';
 $logPath = \dirname(__DIR__, 2) . '/Errors.log';
@@ -69,6 +80,31 @@ $cases = [
     // 行不是数组（比如直接给了 list<string>）⇒ 形状不对，必须响亮失败。
     'optbadrow' => static function (): void {
         Option::fromRows(['北京市', '上海市'], 'name', 'id');
+    },
+
+    // W8-3：列数非法（0）⇒ 构造期响亮失败（不留到布局期变成"没格子"）。
+    'gridzero' => static function (): void {
+        Grid::make(0);
+    },
+
+    // W8-3：行间距 ≥ 行节距 ⇒ 格子高 ≤ 0，build() 里响亮失败。
+    // ★ 守卫在 build()（mount 时跑）⇒ 这里内联构造 BuildContext（smokeContext() 只在
+    //   tests 助手与 smoke.php 各一份，子进程不加载）。
+    'lazygridpitch' => static function (): void {
+        $bad = LazyGrid::make(3, 96.0)
+            ->spacing(96.0)
+            ->items([0], static fn(int $i): Widget => Text::make('x'));
+        $element = $bad->createElement();
+        $element->mount(null, new BuildContext(
+            320.0,
+            240.0,
+            ThemeData::light(),
+            new DeterministicMetricsProvider(
+                DeterministicFontManager::standard()->collection(),
+                new DeterministicShaper(),
+            ),
+        ));
+        $element->effectiveBox()?->layout(BoxConstraints::tight(new Size(336.0, 240.0)));
     },
 ];
 
