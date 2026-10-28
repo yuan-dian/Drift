@@ -33,9 +33,17 @@ require_once __DIR__ . '/../../tools/fakes/win32.php';
 
 use Drift\App\Application;
 use Drift\Dev\Smoke\App\ScrollApplication;
+use Drift\Dev\Smoke\Layout\OversizeBox;
+use Drift\Dev\Smoke\Layout\SolidBox;
 use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
+use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Size;
+use Drift\Layout\FlexAlign;
+use Drift\Layout\Overflow;
+use Drift\Layout\RenderBox;
+use Drift\Layout\RenderFlex;
+use Drift\Layout\RenderProxy;
 use Drift\Logging\PatternFormatter;
 use Drift\Platform\Win32\Win32WindowHost;
 use Drift\Platform\WindowMaterial;
@@ -45,6 +53,7 @@ use Drift\Text\DeterministicMetricsProvider;
 use Drift\Text\DeterministicShaper;
 use Drift\Theme\ThemeData;
 use Drift\Widget\BuildContext;
+use Drift\Widget\Expanded;
 use Drift\Widget\Grid;
 use Drift\Widget\LazyGrid;
 use Drift\Widget\Option;
@@ -289,6 +298,49 @@ $cases = [
         )->keyOf(static fn(array $row): string => (string) $row['a'])
             ->onCellEdit(static function (): void {
             }));
+    },
+
+    // ── 布局失败路径（§13.1 的 C5 / C6 与 G2；迁自 `tools/smoke.php` 的 ⑮ 段）──
+    // ★ 五条都是"用户照日志能改"的构造/布局错误，不是内部断言 ⇒ 消息必须是人话。
+
+    // C5 Report：列放不下 ⇒ 中止，不画到盒外面去。10+10 高、间距 0，容器只给 50。
+    'flex-report-overflow' => static function (): void {
+        $column = new RenderFlex(true, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Report);
+        $column->addChild(new SolidBox(new Size(10.0, 40.0), 10.0, 40.0));
+        $column->addChild(new SolidBox(new Size(10.0, 40.0), 10.0, 40.0));
+        $column->layout(BoxConstraints::tight(new Size(10.0, 50.0)));
+    },
+
+    // C5 兜底：`shrink` 只能压弹性子，间距与固定子压不动 ⇒ 压到 0 也补不回来。
+    //   ★ 间距 20×2 + 两个 40 的固定子 = 120 > 100，弹性子压到 0 仍差 20。
+    'flex-shrink-exhausted' => static function (): void {
+        $row = new RenderFlex(false, 20.0, new EdgeInsets(), FlexAlign::Start, Overflow::Report);
+        $row->addChild(new SolidBox(new Size(40.0, 10.0), 40.0, 10.0));
+        $intent = new RenderProxy();
+        $intent->setFlexIntent(0, 1, 10.0, RenderBox::ALIGN_INHERIT);
+        $row->addChild($intent);
+        $row->addChild(new SolidBox(new Size(40.0, 10.0), 40.0, 10.0));
+        $row->layout(BoxConstraints::tight(new Size(100.0, 40.0)));
+    },
+
+    // 容器上的 Scroll **不支持**（不是"尚未实现"）：容器不滚，要滚包一层 `ScrollView`。
+    //   ★ `Overflow::Wrap` 已从枚举删除 —— 它是"重排"不是"舍弃方式"，属类别错误。
+    'flex-scroll-unsupported' => static function (): void {
+        $column = new RenderFlex(true, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Scroll);
+        $column->addChild(new SolidBox(new Size(10.0, 40.0), 10.0, 40.0));
+        $column->addChild(new SolidBox(new Size(10.0, 40.0), 10.0, 40.0));
+        $column->layout(BoxConstraints::tight(new Size(10.0, 50.0)));
+    },
+
+    // G2：flex 份额 < 1 分不到空间。静默夹到 1 的表现是"给了 Expanded 却不生效"。
+    'flex-value-below-one' => static function (): void {
+        Expanded::make(Text::make('x'))->flex(0);
+    },
+
+    // C6：`performLayout()` 返回尺寸超出父给的上界 ⇒ 中止。夹具只超 1 —— 静默夹紧
+    //   在这里最难发现（画面看起来完全正常，只是短了 1 像素）。
+    'layout-oversize-c6' => static function (): void {
+        (new OversizeBox())->layout(new BoxConstraints(0.0, 10.0, 0.0, 10.0));
     },
 ];
 

@@ -15,9 +15,6 @@ declare(strict_types=1);
 
 use Drift\Dev\Smoke\BoxProbe;
 use Drift\Dev\Smoke\BuildProbe;
-use Drift\Dev\Smoke\Layout\ImpureBox;
-use Drift\Dev\Smoke\Layout\OffsetBox;
-use Drift\Dev\Smoke\Layout\OversizeBox;
 use Drift\Dev\Smoke\Layout\BleedBox;
 use Drift\Dev\Smoke\Layout\SolidBox;
 use Drift\Dev\Smoke\Commands\EchoCommands;
@@ -80,7 +77,6 @@ use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Scale;
 use Drift\Geometry\Size;
-use Drift\Layout\LayoutSelfCheck;
 use Drift\Input\AcceleratorTable;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
@@ -335,10 +331,6 @@ if (str_starts_with($caseArg, '--case=')) {
         $app->frame(16.0, BoxConstraints::loose(new Size(320.0, 240.0)));
     }
 
-    if ($case === 'layout') {
-        (new OversizeBox())->layout(new BoxConstraints(0.0, 10.0, 0.0, 10.0)); // C6 ⇒ 必须响亮失败
-    }
-
     if ($case === 'constraints') {
         new BoxConstraints(20.0, 10.0); // min > max ⇒ 必须响亮失败（§13.1 C6）
     }
@@ -452,37 +444,6 @@ if (str_starts_with($caseArg, '--case=')) {
         DeterministicFontManager::standard()->registerFile('C:/nope.ttf');
     }
 
-    if ($case === 'flexreport') {
-        // C5：Report 策略 ⇒ 溢出必须中止，不是画到盒外面去
-        $column = new RenderFlex(true, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Report);
-        $column->addChild(new SolidBox(new Size(10.0, 40.0), 10.0, 40.0));
-        $column->addChild(new SolidBox(new Size(10.0, 40.0), 10.0, 40.0));
-        $column->layout(BoxConstraints::tight(new Size(10.0, 50.0)));
-    }
-
-    if ($case === 'shrinkoverflow') {
-        // C5 兜底：压缩把弹性子压到 0 之后**仍然**放不下 ⇒ Report 必须中止
-        //   ★ 怎么才放不下：`shrink` 只能压弹性子，间距与固定子压不动。这里
-        //     间距 20×2 加两个 40 的固定子就吃掉 120 > 100，弹性子压到 0 也补不回来。
-        //   ★ 册子 `04` §12.2 #3 原本写"一个子 basis 200 shrink 1 进 100 ⇒ 该子 0
-        //     且报 C5"：按加权公式它压到 100 就正好装满（根本不用冻结），数字推不出
-        //     那条结论；"给 width 保底"也保不住（`tighten()` 把 width 夹进紧约束）。
-        $row = new RenderFlex(false, 20.0, new EdgeInsets(), FlexAlign::Start, Overflow::Report);
-        $row->addChild(new SolidBox(new Size(40.0, 10.0), 40.0, 10.0));
-        $row->addChild(flexIntent(0, 1, 10.0));
-        $row->addChild(new SolidBox(new Size(40.0, 10.0), 40.0, 10.0));
-        $row->layout(BoxConstraints::tight(new Size(100.0, 40.0)));
-    }
-
-    if ($case === 'flexscroll') {
-        // 容器上的 Scroll **不支持**（2026-10-25，I4）⇒ 响亮失败并指路 ScrollView，
-        // 不是静默按 Clip 走。（`Overflow::Wrap` 已从枚举删除：它是"重排"不是"舍弃方式"。）
-        $column = new RenderFlex(true, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Scroll);
-        $column->addChild(new SolidBox(new Size(10.0, 40.0), 10.0, 40.0));
-        $column->addChild(new SolidBox(new Size(10.0, 40.0), 10.0, 40.0));
-        $column->layout(BoxConstraints::tight(new Size(10.0, 50.0)));
-    }
-
     if ($case === 'dockoverflow') {
         // C5/W4：Dock 默认 Report ⇒ 条轨**合计**超出必须中止（每根各自合规，
         //   冲突在合计层暴露 —— 30+20 > 40）
@@ -504,12 +465,6 @@ if (str_starts_with($caseArg, '--case=')) {
         Each::make(fn(array $u): string|int => $u['id'])
             ->items([['id' => 1], ['id' => '1']], fn(array $u): Widget => Text::make('x'));
         exit(1); // 走到这里 = 该报的没报
-    }
-
-    if ($case === 'flexvalue') {
-        // flex 份额 < 1 分不到空间，静默夹紧只会让"给了 Expanded 却不生效"更难查
-        // ★ 守卫住 `Expanded::flex()`（`RenderFlexible` 的构造器守卫随它一起删了）
-        Expanded::make(Text::make('x'))->flex(0);
     }
 
     if ($case === 'accelconflict') {
@@ -748,28 +703,6 @@ function findElement(Element $root, callable $pred): ?Element
     $walk($root);
 
     return $found;
-}
-
-/**
- * 夹具：带份额的纯转发盒（`RenderFlexible` 在 M2-4 删除后的替代）。
- *
- * ★ 这里直接写盒上的意图字段，而不是 `setMods()` —— 夹具要测的是**盒**的行为，
- *   不该绕一圈 Element。生产路径上份额走 `mods.grow` → `syncBox()` → 同一组字段。
- */
-function flexProxy(int $share): RenderProxy
-{
-    $box = new RenderProxy();
-    $box->setFlexIntent($share, 0, \NAN, RenderBox::ALIGN_INHERIT);
-
-    return $box;
-}
-
-function flexIntent(int $grow, int $shrink, float $basis): RenderProxy
-{
-    $box = new RenderProxy();
-    $box->setFlexIntent($grow, $shrink, $basis, RenderBox::ALIGN_INHERIT);
-
-    return $box;
 }
 
 function boxOrigin(RenderBox $box): array
@@ -3271,167 +3204,17 @@ check(
     (new BuildProbe())->build($context)->width === (new BuildProbe())->build($context)->width
 );
 
-// ⑮ 布局：两阶段 + 六条契约（§13.1）
-fresh($log);
-$solid = new SolidBox(new Size(10.0, 6.0), 24.0, 7.0);
-check(
-    'Layout · 布局是纯函数（同约束两次 ⇒ 同尺寸）',
-    $solid->layout(BoxConstraints::unbounded())->equals($solid->layout(BoxConstraints::unbounded()))
-);
-
-// ── 布局自校验的反例自检（`04` §5 / §12.2 #14）──────────────────────────
-// ★★ 这是"量具自己也会空转"的那一条：`LayoutSelfCheck` 开关打开时如果什么都没
-//   发生（采样没落到这棵树 / 快照字段漏了 / `$on` 从没被翻开），表现是**静默**的。
-//   ⇒ 一条夹具同时驱**两个方向**：纯盒必须 0 不一致（不误报），不纯盒必须 > 0（真在守）。
-//   合成一条 check，免得为对照组单开一条（W0 的 smoke 链按 936+3 记账）。
-$selfCheckConstraints = BoxConstraints::loose(new Size(1000.0, 1000.0));
-LayoutSelfCheck::$on = true;
-
-// ① 对照组：`SolidBox` 的 `performLayout` 只读约束 ⇒ 连排两次必须逐字节相同
-LayoutSelfCheck::reset();
-$pureBox = new SolidBox(new Size(40.0, 20.0), 40.0, 20.0);
-for ($i = 0; $i < 32; $i++) {
-    $pureBox->layout($selfCheckConstraints);
-    LayoutSelfCheck::maybeCheck($pureBox, $selfCheckConstraints);
-}
-$pureChecks = LayoutSelfCheck::$checks;
-$pureMismatches = LayoutSelfCheck::$mismatches;
-
-// ② 反例：`ImpureBox::performLayout()` 读 `$this->size()` ⇒ 每排一次宽 +1
-LayoutSelfCheck::reset();
-$impureBox = new ImpureBox();
-for ($i = 0; $i < 64; $i++) {
-    $impureBox->layout($selfCheckConstraints);
-    LayoutSelfCheck::maybeCheck($impureBox, $selfCheckConstraints);
-}
-LayoutSelfCheck::$on = false;
-
-// ③ 报告文件：真机上 `users.exe` 是独立进程，`Errors` 的环形缓冲外面一条都读不到
-//    ⇒ "mismatches === 0" 会退化成"只能选择相信"。落盘出口必须真的落。
-$selfCheckReport = getcwd() . '/build/layout.check.out';
-$selfCheckReportMismatches = -1;
-if (is_file($selfCheckReport)) {
-    $text = (string) file_get_contents($selfCheckReport);
-    if (preg_match('/^mismatches (\d+)$/m', $text, $mm) === 1) {
-        $selfCheckReportMismatches = (int) $mm[1];
-    }
-}
-
-check(
-    'Layout · 自校验反例自检（纯盒 0 不一致 / 不纯盒 > 0 / 两侧都真采样到 / 报告文件落盘）',
-    $pureChecks > 0 && $pureMismatches === 0
-        && LayoutSelfCheck::$checks > 0 && LayoutSelfCheck::$mismatches > 0
-        && $selfCheckReportMismatches > 0,
-    sprintf(
-        '纯盒 checks=%d mismatches=%d ｜ 不纯盒 checks=%d mismatches=%d ｜ 末条差异=%s ｜ 报告文件 mismatches=%d',
-        $pureChecks,
-        $pureMismatches,
-        LayoutSelfCheck::$checks,
-        LayoutSelfCheck::$mismatches,
-        LayoutSelfCheck::$recent === []
-            ? '(空)'
-            : LayoutSelfCheck::$recent[count(LayoutSelfCheck::$recent) - 1]['class']
-                . ' @ ' . LayoutSelfCheck::$recent[count(LayoutSelfCheck::$recent) - 1]['field'],
-        $selfCheckReportMismatches
-    )
-);
-check(
-    'Layout · layout() 把尺寸存下来（第二阶段 paint 用得上）',
-    $solid->hasSize() && $solid->size()?->equals(new Size(10.0, 6.0)) === true
-);
-check(
-    'Layout · C3 内禀测量带另一轴（不是把自身尺寸回抄）',
-    $solid->intrinsicWidth(0.0) === 24.0 && $solid->intrinsicWidth(0.0) !== $solid->size()?->width
-);
-
-// C1 单向数据流：父给子约束、父定位子
-$childBox = new SolidBox(new Size(8.0, 5.0), 8.0, 5.0);
-$holder = (new OffsetBox(new Size(100.0, 50.0)))->at(20.0, 10.0)->child($childBox);
-$holder->layout(BoxConstraints::tight(new Size(100.0, 50.0)));
-check(
-    'Layout · C1 约束真的往下传了（父给子的是自己那份，不是自己的约束）',
-    $holder->seenChildConstraints !== null && $holder->seenChildConstraints->hasInfiniteWidth()
-);
-check(
-    'Layout · C1 父定位子（偏移由父写）',
-    $childBox->offsetX() === 20.0 && $childBox->offsetY() === 10.0
-);
-$visited = 0;
-$holder->visitChildren(function (RenderBox $visitor) use (&$visited): void {
-    $visited++;
-});
-check('Layout · visitChildren 遍历到子节点', $visited === 1);
-
-// paint：父的 translate 必须落到设备像素上
-$treeList = new DisplayList();
-$holder->paint(new RecordingCanvas($treeList));
-$treeCanvas = new RasterCanvas(40, 30, Color::white(), Scale::of(1.0));
-$treeList->replay($treeCanvas);
-check(
-    'Layout · paint 把父的 translate 落到设备像素上（偏移 20,10 处有墨、原点没有）',
-    $treeCanvas->pixelAt(21, 11)->r < 128 && $treeCanvas->pixelAt(0, 0)->r >= 250
-);
-
-// C4 / C5：溢出策略
-check(
-    'Layout · C5 默认溢出策略 = Clip（只给不会超的容器）',
-    (new SolidBox(new Size(1.0, 1.0), 1.0, 1.0))->overflow() === Overflow::Clip
-);
-check(
-    'Layout · C5 会超的容器显式覆盖默认',
-    (new OversizeBox())->overflow() === Overflow::Report
-);
-
-// ── ⑮ Flex / ⑮b basis·shrink / ⑮c alignSelf / Clip 已迁出 ──────────────────────
-//   · tests/Unit/Layout/FlexTest.php —— C4 弹性子量一次 / flex 份额分配 / spacing /
-//     交叉轴 / padding / shrink 公式（加权压缩·冻结迭代·增量语义）/ alignSelf /
-//     Overflow::Clip（19 条，纯布局 Unit 层）
-//   ★ 子进程失败路径（C5 Report / shrink 溢出 / flex scroll / flex 值 / C6）仍留本
-//     文件（runCase 依赖 __FILE__ 为 smoke 入口，见下方保留段）
-
-// C4 / C5 的失败路径（子进程：会 Fatal）
-fresh($log);
-[$code, $output] = runCase(__FILE__, 'flexreport', null);
-check('Layout · C5 Report 溢出退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
-check(
-    'Layout · 溢出消息写了 Errors.log（含差额与修法，不含内部条款编号）',
-    str_contains(logText($log), '放不下')
-        && str_contains(logText($log), '差 ')
-        && !str_contains(logText($log), 'C5')
-);
-
-
-// shrink 压到 0 之后仍放不下 ⇒ C5 兜底（子进程：会 Fatal）
-fresh($log);
-[$code, $output] = runCase(__FILE__, 'shrinkoverflow', null);
-check('Layout · shrink 压到 0 仍放不下 ⇒ C5 中止退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
-check('Layout · shrink 的 C5 消息写的是"放不下"（不是"所有子都变 0 宽"）', str_contains(logText($log), '放不下'));
-
-// 容器上声明 Scroll **不支持**（不是"还没做"）⇒ 响亮失败，且消息必须**指路** ScrollView
-//   ★ 判据里同时查"不支持"与"ScrollView"：只查前半句的话，一条
-//     "尚未实现"的旧文案也能过（那是本次 I4 之前的形态）。
-fresh($log);
-[$code, $output] = runCase(__FILE__, 'flexscroll', null);
-check('Layout · 容器上 Scroll 不支持 ⇒ 响亮失败退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
-check(
-    'Layout · 容器上 Scroll 不支持写了 Errors.log 且指路 ScrollView',
-    str_contains(logText($log), '不支持') && str_contains(logText($log), 'ScrollView')
-);
-
-// flex 份额 < 1 是构造成员错误（G2：绝不静默夹紧）⇒ 子进程里验
-fresh($log);
-[$code, $output] = runCase(__FILE__, 'flexvalue', null);
-check('Layout · flex 份额 < 1 退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
-check('Layout · flex 份额 < 1 写了 Errors.log', str_contains(logText($log), 'flex 份额'));
-
-fresh($log);
-[$code, $output] = runCase(__FILE__, 'layout', null);
-check('Layout · C6 布局违反约束退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
-check(
-    'Layout · 约束违规消息写了 Errors.log（人话描述，不含内部条款编号）',
-    str_contains(logText($log), '超出父容器给的可用空间')
-        && !str_contains(logText($log), 'C6')
-);
+// ── ⑮ 布局：基类契约 + 契约违反的失败路径 已迁出 ─────────────────────────────
+//   · `tests/Unit/Layout/RenderBoxContractTest.php`（21 条 / 9 方法）—— C1 纯函数**两侧**
+//     （不纯盒必须不同）/ 自校验开关真在守且纯盒不误报 / 尺寸是 layout 的产物 /
+//     C3 内禀读另一轴 / 约束由父定（不是"父自己那份"）/ 父定位子 + absoluteOrigin
+//     沿父链累加 / visitChildren 深度优先 / 父的平移落到设备像素 / 默认 overflow 与
+//     clipsOverflow **故意相反**
+//   · `tests/Feature/Layout/LayoutFailureTest.php`（10 条 / 5 方法）—— C5 Report / shrink
+//     压到 0 仍放不下 / 容器上 Scroll 不支持（指路 ScrollView）/ flex 份额 < 1 / C6 超上界；
+//     每条都是"退出码 = 3 + 人话日志且不含内部条款编号"
+//   ★ 失败路径改走 `runFatalCase()`（用例在 `tests/Support/fatal_cases.php`）：
+//     原来的 `runCase(__FILE__, ...)` 要求 `__FILE__` 是 smoke 入口，搬不动。
 
 // ── ⑯ 三树 Element（挂载 / diff / 卸载）已迁出 ───────────────────────────────
 //   · tests/Unit/Widget/ElementTreeTest.php（10 条，纯 Element 机制 Unit 层）
