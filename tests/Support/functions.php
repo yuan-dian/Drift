@@ -144,3 +144,22 @@ if (!\function_exists('countTree')) {
         return $total;
     }
 }
+
+if (!\function_exists('fresh')) {
+    /** 清掉日志与状态，让每个用例互不污染（与 smoke 同名同义） */
+    function fresh(string $log): void
+    {
+        \Drift\Errors::reset();
+        \Drift\Errors::setLogPath($log);
+        if (is_file($log)) {
+            unlink($log);
+        }
+    }
+}
+
+if (!\function_exists('logText')) {
+    function logText(string $log): string
+    {
+        return is_file($log) ? (string) file_get_contents($log) : '';
+    }
+}

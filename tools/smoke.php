@@ -128,12 +128,10 @@ use Drift\Dev\Smoke\State\BuildWatchWidget;
 use Drift\Dev\Smoke\State\ChainPage;
 use Drift\Dev\Smoke\State\ChainProbe;
 use Drift\Dev\Smoke\State\FakeStore;
-use Drift\Dev\Smoke\State\HoverWidget;
 use Drift\Dev\Smoke\State\LeafBoxFallbackWidget;
 use Drift\Dev\Smoke\State\LeafBoxState;
 use Drift\Dev\Smoke\State\LeafBoxWidget;
 use Drift\Dev\Smoke\State\LoopPage;
-use Drift\Dev\Smoke\State\VersionProbe;
 use Drift\Core\Computed;
 use Drift\Dev\Smoke\Tree\CounterState;
 use Drift\Dev\Smoke\Tree\CounterWidget;
@@ -221,8 +219,6 @@ use Drift\Rendering\Shadow;
 use Drift\Rendering\RasterCanvas;
 use Drift\Rendering\RecordingCanvas;
 use Drift\Rendering\SkiaCanvas;
-use Drift\State\Cell;
-use Drift\State\SubjectBuilder;
 use Drift\State\Subject;
 use Drift\Text\DeterministicFontManager;
 use Drift\Text\FontLocator;
@@ -4785,219 +4781,19 @@ check('State · State 手里的 Widget 换成整份新的', $counter->widget() =
 $counterElement->unmount();
 check('State · unmount 调 dispose()（§12.3 回收纪律）', $counter->disposed);
 
-// ── ㉓ State 层：订阅生命周期 / Cell 门控 / select 切片（§11.3）──
-
-// ① SubjectBuilder：门控比的是**两次 select 输出**，不是 Store 的新旧值（§11.3.3）
-$store = new FakeStore();
-$builderRuns = 0;
-$builderArgs = [];
-$sub = SubjectBuilder::make($store)
-    ->select(static function (FakeStore $s): int { return $s->status(); })
-    ->builder(static function (mixed ...$args) use (&$builderRuns, &$builderArgs): Widget {
-        $builderRuns++;
-        $builderArgs = $args;
-
-        return new LeafProbe(1.0);
-    });
-$subElement = $sub->createElement();
-$subElement->mount(null, $context);
-check(
-    'State · initState 在首帧 build 之前 ⇒ 首帧就拿到选中的值',
-    $builderRuns === 1 && $builderArgs === [0],
-    'runs=' . $builderRuns . ' args=' . json_encode($builderArgs)
-);
-
-// 同值再 notify：select 输出没变 ⇒ **连脏都不标**（门控在回调里就挡掉了）
-$store->setStatus(0);
-check(
-    'State · 同值 notify 被门控挡住（两次 select 输出相等）',
-    $builderRuns === 1 && !$subElement->state()->needsBuild(),
-    'runs=' . $builderRuns
-);
-
-// 改了字段但不 notify ⇒ 订阅者收不到（重建由**通知**驱动，不是由字段变动驱动）
-$store->silentTouch(5);
-check(
-    'State · 改字段但不 notify ⇒ 订阅者收不到',
-    $builderRuns === 1 && !$subElement->state()->needsBuild(),
-    'runs=' . $builderRuns
-);
-
-// notify 且 select 输出变了 ⇒ 标脏
-$store->setStatus(6);
-check('State · notify 后 select 输出变了 ⇒ 标脏', $subElement->state()->needsBuild(), '没有标脏');
-
-// 帧末 flush 的动作。★ flush 循环（走全树消费脏标记）本身属 App 层（#22）——
-// State 层只负责"标脏标对"，这里显式 rebuild 一次来证明链路是通的。
-$subElement->rebuild();
-$subChild = $subElement->childAt(0)?->widget();
-check(
-    'State · 重建后 builder 拿到 select 的新值（不是 null、不是 Store）',
-    $builderRuns === 2 && $builderArgs === [6] && $subChild instanceof LeafProbe,
-    'runs=' . $builderRuns . ' args=' . json_encode($builderArgs)
-);
-
-// ② 卸载后退订 —— 没有"僵尸更新"，且**不依赖用户写 dispose()**
-$subElement->unmount();
-$store->setStatus(9);
-check(
-    'State · unmount 后退订（订阅袋全退，无僵尸更新）',
-    $builderRuns === 2 && !$subElement->state()->needsBuild(),
-    'runs=' . $builderRuns
-);
-
-// ③ 无 select ⇒ builder 收 0 个参数（★ 不是统一传 null）
-$plainRuns = 0;
-$plainArgs = null;
-$plain = SubjectBuilder::make($store)->builder(static function (mixed ...$args) use (&$plainRuns, &$plainArgs): Widget {
-    $plainRuns++;
-    $plainArgs = $args;
-
-    return new LeafProbe(1.0);
-});
-$plainElement = $plain->createElement();
-$plainElement->mount(null, $context);
-check(
-    'State · 无 select ⇒ builder 收 0 个参数',
-    $plainRuns === 1 && $plainArgs === [],
-    'args=' . json_encode($plainArgs)
-);
-$store->setStatus(11);
-check('State · 无 select ⇒ 任何 notify 都标脏', $plainElement->state()->needsBuild(), '没有标脏');
-$plainElement->rebuild();
-check(
-    'State · 无 select ⇒ 重建后 builder 仍收 0 个参数',
-    $plainRuns === 2 && $plainArgs === [],
-    'args=' . json_encode($plainArgs)
-);
-$plainElement->unmount();
-
-// ④ Cell：设同值不标脏（§11.3.1 / RT-4）
-$hoverElement = (new HoverWidget())->createElement();
-$hoverElement->mount(null, $context);
-$hoverState = $hoverElement->state();
-check('State · initState 只跑一次（重复挂载不重复订阅）', $hoverState->inits === 1, '实际 ' . $hoverState->inits);
-$hoverState->onRowHover(2);
-check('State · Cell 换值 ⇒ 标脏', $hoverState->needsBuild(), '没有标脏');
-$hoverElement->rebuild();
-$hoverState->onRowHover(2); // 同一行
-check('State · Cell 设同值不标脏（RT-4：=== 严格比较）', !$hoverState->needsBuild(), '同值也标了脏');
-$hoverState->onRowHover(3);
-check('State · Cell 换新值 ⇒ 再标脏', $hoverState->needsBuild(), '换值没标脏');
-$hoverElement->unmount();
-
-// ⑤ Computed：无脏不重算 / 依赖变重算 / 嵌套求值（`03` §4，W2/S1）
-$vprobe = new VersionProbe(3);
-$computedRuns = 0;
-$computed = new Computed(static function () use (&$computedRuns, $vprobe): int {
-    $computedRuns++;
-
-    return $vprobe->value() * 2;
-}, [$vprobe]);
-check(
-    'Computed · 首次 get ⇒ 求值一次',
-    $computed->get() === 6 && $computedRuns === 1,
-    'runs=' . $computedRuns
-);
-check(
-    'Computed · 无脏不重算（两次 get 之间不改依赖 ⇒ 闭包只跑一次）',
-    $computed->get() === 6 && $computedRuns === 1,
-    'runs=' . $computedRuns
-);
-check('Computed · 版本号没变就不变', $computed->version() === 1, 'version=' . $computed->version());
-
-$vprobe->bump(); // 版本 +1、值不动 ⇒ 必须重算
-check(
-    'Computed · 依赖版本变 ⇒ 重算（闭包跑第二次）',
-    $computed->get() === 6 && $computedRuns === 2,
-    'runs=' . $computedRuns
-);
-check('Computed · 求值成功自己也进一版（可嵌套）', $computed->version() === 2, 'version=' . $computed->version());
-
-// 嵌套：A 依赖 B，B 依赖 C；改 C ⇒ 一次 A.get() 把链算完
-// ★ 这条抓的是一个真会静默的坑：A 的版本和用的是 B.version()，而 B 不重算就不进
-//   版本 ⇒ 若不先刷新下游，A 永远拿缓存（03 原稿的形状就是这样，靠这条夹具才发现）
-$cProbe = new VersionProbe(1);
-$bRuns = 0;
-$computedB = new Computed(static function () use (&$bRuns, $cProbe): int {
-    $bRuns++;
-
-    return $cProbe->value() + 10;
-}, [$cProbe]);
-$aRuns = 0;
-$computedA = new Computed(static function () use (&$aRuns, $computedB): int {
-    $aRuns++;
-
-    return $computedB->get() * 2;
-}, [$computedB]);
-check(
-    'Computed · 嵌套首次求值（A→B→C 一次算完）',
-    $computedA->get() === 22 && $aRuns === 1 && $bRuns === 1,
-    'a=' . var_export($computedA->get(), true) . ' aRuns=' . $aRuns . ' bRuns=' . $bRuns
-);
-$cProbe->bump();
-check(
-    'Computed · 改最底层依赖 ⇒ 一次 A.get() 把整条链算完',
-    $computedA->get() === 22 && $aRuns === 2 && $bRuns === 2,
-    'aRuns=' . $aRuns . ' bRuns=' . $bRuns
-);
-
-// ⑥ RT-3：一个订阅者抛异常，不妨碍其余订阅者收到通知
-$debugWas = Errors::isDebug();
-Errors::setDebug(false); // Recoverable 在 debug 会中止，先关掉才测得着"隔离"
-try {
-    $isoLog = $root . '/iso.log';
-    fresh($isoLog);
-    $ran = [];
-    $ownerA = new FakeStore();
-    $ownerB = new FakeStore();
-    $ownerC = new FakeStore();
-    $iso = new FakeStore();
-    $iso->subscribeFor($ownerA, static function () use (&$ran): void { $ran[] = 'a'; });
-    $iso->subscribeFor($ownerB, static function () use (&$ran): void {
-        $ran[] = 'b';
-        throw new \RuntimeException('订阅者 B 炸了');
-    });
-    $iso->subscribeFor($ownerC, static function () use (&$ran): void { $ran[] = 'c'; });
-    $iso->notifyChanged();
-    check(
-        'State · 一个订阅者抛异常，其余仍收到通知（RT-3）',
-        $ran === ['a', 'b', 'c'],
-        '实际 ' . implode(',', $ran)
-    );
-    check('State · 订阅者异常没有静默（写了 Errors 出口）', str_contains(logText($isoLog), '订阅者异常已隔离'));
-    check('State · 异常报的是 Recoverable 级', str_contains(logText($isoLog), 'RECOVERABLE'));
-    $iso->unsubscribeAllOf($ownerC);
-    $ran = [];
-    $iso->notifyChanged();
-    check('State · unsubscribeAllOf 退掉整个属主的订阅', $ran === ['a', 'b'], '实际 ' . implode(',', $ran));
-    if (is_file($isoLog)) {
-        unlink($isoLog);
-    }
-} finally {
-    Errors::setDebug($debugWas);
-}
-
-// ⑦ settle 多轮收敛（`03` §5.1，W2/S3 + §5.3，W2/S4）
-//    基线先取：pendingDirty 是进程级静态，前面夹具卸载时留的脏要排除在外，
-//    否则"计数不漂移"会被别人的泄漏判红。
-$pendingBase = State::pendingDirty();
-
-// ⑦b 计数不漂移：100 帧、每帧标脏一次 + settle 一次 ⇒ 净增量必须为 0
-$driftElement = (new HoverWidget())->createElement();
-$driftElement->mount(null, $context);
-$driftState = $driftElement->state();
-for ($i = 1; $i <= 100; $i++) {
-    $driftState->onRowHover($i); // Cell 换新值 ⇒ 标脏
-    $driftElement->settle();
-}
-check(
-    'settle · 计数不漂移（100 帧后 pendingDirty 与开局一致）',
-    State::pendingDirty() === $pendingBase,
-    'pending=' . State::pendingDirty() . ' base=' . $pendingBase
-);
-$driftElement->unmount();
-
+// ── ㉓ State 层：订阅生命周期 / Cell 门控 / Computed 切片 已迁出 ─────────────
+//   · `tests/Unit/State/SubjectBuilderTest.php`（8）—— 首帧就拿到 select 值 / 同值 notify
+//     被门控挡住 / 改字段不 notify 收不到 / notify 且变才标脏 / 重建拿新值 / unmount 退订 /
+//     无 select ⇒ builder 收 0 个参数（不是 null）
+//   · `tests/Unit/State/CellTest.php`（7）—— setIfChanged 换值标脏·同值不标脏（RT-4）/ 构造
+//     私有 / makeFor 绑对 Owner
+//   · `tests/Unit/State/ComputedTest.php`（7）—— 无脏不重算 / 依赖版本变则重算 / 自进一版 /
+//     嵌套 A→B→C 一次算完整链
+//   · `tests/Feature/State/SubscriptionIsolationTest.php`（4）—— RT-3 一个订阅者抛异常其余
+//     仍收到（a,b,c 都跑）· 不静默（写 Errors，级别 Recoverable）· unsubscribeAllOf 整属主退订
+//   · `tests/Feature/State/SettleDriftTest.php`（1）—— 100 帧 settle 后 pendingDirty 回基线
+//   ★ 下面 7 条是**子进程**判据（build 期标脏 / 跨 State 写 / build 期订阅 / Computed 自引用
+//     的 Fatal 与 Errors.log 落盘），依赖 `runCase(__FILE__)` ⇒ 留 smoke。
 // ⑦c build 期标脏自己 ⇒ 当帧 Fatal（不是"每帧默默重建一次、CPU 上去没人知道"）
 fresh($log);
 [$code, $output] = runCase(__FILE__, 'flushcycle', null);
@@ -5023,30 +4819,9 @@ fresh($log);
 check('Computed · 自引用 ⇒ Fatal（E-COMPUTED-CYCLE）', $code === 3, '实际 ' . $code . ' / ' . $output);
 check('Computed · 自引用写了 Errors.log', str_contains(logText($log), 'E-COMPUTED-CYCLE'));
 
-// Cell 构造私有 ⇒ new 不出来（W2/S2）。进程内断言：私有构造抛的是**可捕获的
-// Error**，不需要子进程（原来的"未绑定 ⇒ Fatal"用例随 makeFor 一起退役 ——
-// 未绑定的 Cell 现在**造不出来**，比造出来再炸更早）。
-try {
-    new Cell(1);
-    check('State · Cell 构造函数私有 ⇒ new 不出来', false, 'new Cell(1) 竟然成功了');
-} catch (\Error $e) {
-    check(
-        'State · Cell 构造函数私有 ⇒ new 不出来',
-        str_contains($e->getMessage(), 'private'),
-        $e->getMessage()
-    );
-}
-
-// State::cell() 仍可用，且拿到的 Cell 真的绑在本 State 上（makeFor 的回归面）
-$cellElement = (new HoverWidget())->createElement();
-$cellElement->mount(null, $context);
-$cellState = $cellElement->state();
-$madeCell = $cellState->cell(7);
-check('State · State::cell() 仍可用（走 makeFor）', $madeCell->value() === 7);
-$madeCell->setIfChanged(8);
-check('State · makeFor 建的 Cell 绑对了 Owner（标脏到本 State）', $cellState->needsBuild(), '没有标脏');
-$cellElement->unmount();
-
+// ── 下面两块已迁出 ───────────────────────────────────────────────
+//   · `tests/Unit/State/CellTest.php` —— new Cell(1) 抛可捕获的 Error（构造私有）/
+//     State::cell() 可用且绑对 Owner（setIfChanged(8) 标脏到本 State）
 fresh($log);
 if (is_file($log)) {
     unlink($log);
