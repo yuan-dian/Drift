@@ -76,3 +76,22 @@ if (!\function_exists('smokeContext')) {
         );
     }
 }
+
+if (!\function_exists('spinCanvas')) {
+    /**
+     * 把一个 RenderBox 画到软件光栅画布（与 `tools/smoke.php` 同名函数同实现）。
+     *
+     * ★ 像素断言的单一来源：Checkbox/Radio/Toggle/Spinner/Icon/Progress 等控件测试
+     *   都靠它取色，放这里避免每个测试各抄一遍（与 smoke 各自一份，互不加载）。
+     */
+    function spinCanvas(\Drift\Layout\RenderBox $box, int $width, int $height): \Drift\Rendering\RasterCanvas
+    {
+        $list = new \Drift\Rendering\DisplayList();
+        $box->paint(new \Drift\Rendering\RecordingCanvas($list));
+
+        $canvas = new \Drift\Rendering\RasterCanvas($width, $height, \Drift\Rendering\Color::white(), \Drift\Geometry\Scale::of(1.0));
+        $list->replay($canvas);
+
+        return $canvas;
+    }
+}

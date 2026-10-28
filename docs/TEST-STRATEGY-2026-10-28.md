@@ -177,7 +177,7 @@ PHPUnit 默认第一条断言失败就中止方法。GUI 断言不适用：一�
 | **S0** ✅ | 建 `tests/` 骨架 + `ColumnWidths` 纯单元 + `Table/Phase1` 场景 | 20 断言绿 / lint 0 error |
 | **S1** ✅ | 按**被测对象**（不是分节）搬 Table 的 9 个分节 | 每条与 smoke 原断言**条数对得上** |
 | **S2** ✅ | 每搬完一个主题就从 `smoke.php` 删掉对应段 | smoke 条数 = 1731 − 已搬数，且全绿 |
-| **S3** | 其余主题（布局 / 控件 / 输入 / 状态 / 浮层 / 应用 / 异步 / 主题 / 动画 / 日志 / 语义）照同一形状搬 | 每搬一个跑一次全绿 |
+| **S3** 🚧 | 其余主题（布局 / 控件 / 输入 / 状态 / 浮层 / 应用 / 异步 / 主题 / 动画 / 日志 / 语义）照同一形状搬 | 每搬一个跑一次全绿 |
 | **S4** | 纯单元（485 条里的）改成标准 `TestCase`：`assertSame` + `#[DataProvider]` | `--testsuite=unit` 覆盖它们 |
 
 ★ S1–S3 是**纯搬迁**（断言一行不改，只改"在哪个文件哪个方法里"）。
@@ -357,3 +357,24 @@ tests/Feature/
 
 ⇒ smoke 里保留一小块"Table 的响亮失败"，并在注释里指明其余断言已迁到哪里
 （见 `tools/smoke.php` 的"Table 排序：三条响亮失败"段）。
+
+### 10.7 共享夹具下沉到 `tests/Support`（S3 第一批起的新结构）
+
+S1 把 Table 的局部闭包 `$tableXxx` 提升成 `Fixtures.php`。S3 撞到**两个跨段复用**
+的全局助手，沿用"下沉成单一来源"的思路，但落点不同：
+
+- **`spinCanvas(RenderBox, w, h): RasterCanvas`** —— 控件像素断言的取色器。
+  加到 `tests/Support/functions.php`（全局助手落点，与 `check`/`smokeContext` 同处）。
+  smoke 仍保留**自有**一份同名全局函数（两者互不 `require`，运行时不相遇）。
+- **`Semantics::element(Widget): Element`** —— 挂载 + 布局一棵树、返回已布局 Element，
+  是 smoke 里 `$semLay` 闭包的同款。做成 `tests/Support/Semantics.php`
+  （`Drift\Dev\Tests\Support\Semantics`，PSR-4 自动加载）。smoke 仍保留自有 `$semLay`，
+  因为下方 Toggle/Switch/PageIndicator/Icon/SegmentedControl/Slider 的语义断言还在
+  smoke 里，删了会崩。
+
+★ 判据：**凡是被 ≥2 个新测试用到的局部闭包/函数，下沉成 tests/Support 单一来源；
+smoke 那一份保留**（它服务的是"还没搬走的后续段"，不是历史包袱）。这样未来
+6 个语义测试各写 `Semantics::element(...)` 即可，不再各抄 7 行闭包。
+
+★ `spinCanvas` 的 `Scale` 在 `Drift\Geometry`（不是 `Drift\Rendering`）—— 又踩一次
+"命名空间别按目录推"（见 §9）。已在 functions.php 写全限定名，不再依赖 `use`。
