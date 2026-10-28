@@ -17,13 +17,16 @@ final class Project
     public const FRAMEWORK_PREFIX = 'Drift\\';
 
     /** 默认扫描根（相对仓库根） */
-    public const DEFAULT_DIRS = ['src', 'tools', 'apps'];
+    public const DEFAULT_DIRS = ['src', 'tools', 'tests', 'apps'];
 
     /**
-     * 工具链目录。工具跑在 php.exe 里、**永不参与 AOT 编译** ⇒
+     * 工具链目录。工具与测试都跑在 php.exe 里、**永不参与 AOT 编译** ⇒
      * 针对"产物"的纪律（nano-hygiene 等）对它们不适用。
      */
     public const TOOLCHAIN_DIR = 'tools/';
+
+    /** 测试目录，与 `tools/` 同待遇（同属"不产盒"的一侧） */
+    public const TESTS_DIR = 'tests/';
 
     /**
      * @param list<SourceFile> $files
@@ -97,10 +100,11 @@ final class Project
         return $this->dirToPrefix;
     }
 
-    /** 该文件是否属于工具链（不参与 AOT 编译） */
+    /** 该文件是否属于工具链 / 测试（都不参与 AOT 编译） */
     public function isToolchain(SourceFile $file): bool
     {
-        return str_starts_with($file->path(), self::TOOLCHAIN_DIR);
+        return str_starts_with($file->path(), self::TOOLCHAIN_DIR)
+            || str_starts_with($file->path(), self::TESTS_DIR);
     }
 
     /**

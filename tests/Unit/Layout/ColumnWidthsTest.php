@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\Dev\Smoke\Unit;
+namespace Drift\Dev\Tests\Unit\Layout;
 
 use Drift\Layout\ColumnWidths;
 use PHPUnit\Framework\Attributes\DataProvider;

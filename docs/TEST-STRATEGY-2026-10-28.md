@@ -68,14 +68,14 @@ php tools/phpunit.phar -c phpunit.xml
 （8 tests / 10 assertions），覆盖 `ColumnWidths::resolve()` 的四层规则。
 其中 7 条与 smoke 里的 7 条 `check()` 逐条对等 —— 用来量"迁过去值不值"。
 
-## 4. 关键判断：**不要整体迁 PHPUnit**
+## 4. 关键判断：不"重写成纯单元"，但让 PHPUnit 当运行器
 
 三条硬理由：
 
-**① 72% 是集成测试，PHPUnit 对它们是负收益。**
+**① 72% 是集成测试，"重写成纯单元"对它们是负收益。**
 `dispatchInput` 真路由、`Application` 组装、帧时钟、55 个子进程 abort 用例 ——
-PHPUnit 要么 `processIsolation`（每条起一个子进程，48s 会变成几分钟），
-要么照样自己 `exec`。**换壳不减负，只是多一层继承**。
+要重写成无状态单测，得给每个用例造一套假宿主，那是**重写语义**而不是搬家。
+（★ 但仍可以让 PHPUnit 跑它们：不做 `processIsolation`，就是同一个进程里的方法调用。）
 
 **② 一次性改写 1727 条断言，失败时分不清是"搬迁错"还是"语义错"。**
 这不是假想：写 `ColumnWidthsTest` 的第一版就错了 2 条（夹具用了固定宽 100，
@@ -83,66 +83,120 @@ smoke 里是 60；override 是否计入 `used` 我算反了）。**迁移本身�
 而搬迁和改语义混在一步里，红的信号就废了。
 
 **③ 真正的痛点不是"没用 PHPUnit"，是"19407 行不能只跑一段"。**
-改 Table 要陪跑 1242 条无关断言。这个痛点 `--only=` 就能解，不需要 PHPUnit。
+改 Table 要陪跑 1242 条无关断言 —— 解法是"按主题分组 + 过滤"，
+而 `--testsuite` / `--filter` 正好是 PHPUnit 的标准做法，不必自造一套 `--only=`。
 
-## 5. 方案：两条腿，各干各的
+## 5. 目标：标准结构 + 能只跑一处（2026-10-28 用户澄清）
 
-对齐 TypePHP 的分法，但按本仓的实际情况变形：
+> "可以实现一个可以复用的测试用例，验证可快速的验证，不需要每次全量跑，
+> 同时尽量按照 PHP 的标准建立测试，这样别人在使用的时候可以少一些心智成本。"
 
-| 层 | 落点 | 跑法 | 负责什么 |
-|---|---|---|---|
-| **端到端验收**（主体，~1242 条） | `tools/Smoke/Suites/*.php` | `php tools/smoke.php [--only=table]` | 真路由 / 帧 / 应用 / 子进程 abort |
-| **纯单元**（~485 条，逐步搬） | `tools/Smoke/Unit/**/*Test.php` | `php tools/phpunit.phar -c phpunit.xml` | 无状态算术、纯函数、数据结构 |
-| **夹具**（已有） | `tools/Smoke/{App,Layout,Rendering,…}` | 两者共用 | 构造物 |
+所以判据不是"总耗时降到多少"，而是两条：
 
-`tools/smoke.php` 从 19407 行降到约 250 行的 runner（解析 `--only` / `--list`、
-按序跑 suite、汇总、退出码）。
+1. **改 Table 就只跑 Table**（不是 48 秒的陪跑）；
+2. **PHP 开发者打开仓库就能看懂**：`tests/`、`*Test.php`、`phpunit.xml`、
+   `vendor/bin/phpunit` —— 全是 PHPUnit 的默认约定，不需要先读本仓的规矩。
 
-### 拆分不是"切 133 个分节"
+## 6. 落地的结构
 
-现有分节是**按开发时间顺序**排的，不是按主题。同一主题散在多处：
+```
+tests/
+├── Support/
+│   ├── bootstrap.php        # PHPUnit bootstrap（require tools/autoload.php）
+│   ├── functions.php        # 全局 check() / smokeContext() / findElement()
+│   └── SmokeTestCase.php    # 基类：把 check() 桥到 PHPUnit 断言
+├── Unit/                    # 纯单元：无状态算术、纯函数、数据结构
+│   └── Layout/ColumnWidthsTest.php
+└── Feature/                 # 场景：构造控件树 / 真输入路由 / 推帧
+    └── Table/
+        ├── Fixtures.php     # 该主题的夹具（原 smoke 里的 $tableXxx 闭包）
+        └── Phase1Test.php   # 一个测试方法 = 一个关注点
+```
 
-| 主题 | 现分节位置（行） | 跨度 |
+`phpunit.xml` 两个 testsuite：`unit`（秒级，改什么都能全跑）、`feature`（按类过滤）。
+
+### 6.1 关键机制：`check()` 转发，段代码一行不改
+
+1727 条断言不能逐条改写成 `assertX()` —— 那是巨型重构，且红了分不清是搬迁错还是语义错。
+所以保留全局 `check()`，让它转发给"当前活动的 TestCase"：
+
+```php
+function check(string $name, bool $ok, string $detail = ''): void {
+    $case = SmokeTestCase::currentCase();
+    if ($case !== null) { $case->recordCheck($name, $ok, $detail); return; }
+    printf(...);   // 不在 TestCase 里（单跑段脚本调 bug）退回打印
+}
+```
+
+于是**搬迁 = 把代码整段放进方法体**，`check(...)` 一个字都不用动。
+
+### 6.2 为什么 `SmokeTestCase` 不让它"失败即停"
+
+PHPUnit 默认第一条断言失败就中止方法。GUI 断言不适用：一个布局 bug 会连带 10 条红
+（`offsetY` 错 → 对齐错 → 墨迹错），失败即停只能看到第一条；修完再跑，又只看得到第 2 条。
+
+所以 `check()` 只记录，`flushChecks()` 在方法末尾把全部失败一次性抛给 PHPUnit：
+
+```
+1) Drift\Dev\Tests\Feature\Table\Phase1Test::testVirtualRowsHeaderAndColumnWidths
+1 / 9 条失败：
+  - Table · 10000 行只造一屏 + 缓冲（行区 208 / 行高 40 / 缓冲 200 ⇒ 11 行）  —— created=11 / 树内=11
+```
+
+比原来的 `FAIL <名> —— detail` 多两个信息：**失败条数 / 总条数**、以及**精确到方法的行号**。
+断言计数照常交给 `addToAssertionCount()`，PHPUnit 的统计、`--testdox`、JUnit XML 都是真的。
+
+★ `flushChecks()` 里有一条 `assertGreaterThan(0, $total, '这个测试方法一条断言都没跑')` ——
+防止"段没搬进来 / require 静默失败"变成绿着的空壳。
+
+### 6.3 夹具上提到类（这才是"可复用"的落点）
+
+原来 `$tableRowsOf` / `$tableStateOf` / `$tableBoxOf` 这批闭包是**脚本变量**，
+被九个分节共用。留在脚本里意味着"任何一段想单独跑，都得把前面几百行一起带上"。
+
+现在提成 `tests/Feature/Table/Fixtures.php` 的静态方法（`rows()` / `build()` / `mount()` /
+`pump()` / `stateOf()` / `boxOf()` / `rowsInWindow()` / `kidsOf()` / `rowElements()` /
+`widthsOf()` / `rowBoxOf()`），每个测试方法自建夹具、互不依赖。
+
+## 7. 实测结果
+
+| 项 | 结果 |
+|---|---|
+| `phpunit --testsuite=unit` | 8 tests / 10 assertions / **31 ms** |
+| `phpunit --filter=Phase1` | 1 test / 10 assertions / **88 ms** |
+| `phpunit`（两个套件） | 9 tests / 20 assertions / **92 ms** |
+| 变异自检（行数期望 11 → 12） | 红，报 `1 / 9 条失败` + 断言名 + `created=11 / 树内=11` |
+| lint（`tests/` 已纳入扫描） | **588 文件 / 0 error** |
+| gate `--fast` | 5 项 / **7.4s** |
+
+## 8. 迁移顺序（每步都有硬判据）
+
+| 步 | 动作 | 判据 |
 |---|---|---|
-| Table | 16610 / 17342 / 17555 / 17799 / 18027 / 18506 | 2800 行，中间夹着别的 |
-| 布局 | 4493 / 4973 / 5009 / 12014 / 15851 | 散在 11000 行里 |
-| 日志 | 16012 / 16188 | 相邻，罕见的好切点 |
+| **S0** ✅ | 建 `tests/` 骨架 + `ColumnWidths` 纯单元 + `Table/Phase1` 场景 | 20 断言绿 / lint 0 error |
+| **S1** | 把 Table 剩余 8 个分节搬成 8 个测试方法（阶段 1 已做） | 每条与 smoke 原断言**条数对得上** |
+| **S2** | 从 `tools/smoke.php` 删掉已搬走的段 | smoke 条数 = 1731 − 已搬数，且全绿 |
+| **S3** | 其余主题（布局 / 控件 / 输入 / 状态 / 浮层 / 应用 / 异步 / 主题 / 动画 / 日志 / 语义）照同一形状搬 | 每搬一个跑一次全绿 |
+| **S4** | 纯单元（485 条里的）改成标准 `TestCase`：`assertSame` + `#[DataProvider]` | `--testsuite=unit` 覆盖它们 |
 
-所以拆分要**按主题重排**，不是按现有 `// ──` 顺序切。这也意味着**跨节变量依赖**
-是主要风险 —— 现在是线性脚本，后面的节可能复用前面的变量。
+★ S1–S3 是**纯搬迁**（断言一行不改，只改"在哪个文件哪个方法里"）。
+S4 才动断言写法。混淆了，红信号就废了。
 
-## 6. 推进顺序（每步都有硬判据，都可回退）
+★ S2 之前，同一批断言会在两处跑（smoke 和 PHPUnit）—— 这是有意的：
+搬迁正确性由"两边都绿"互相印证，删旧的是最后一步。
 
-| 步 | 动作 | 判据 | 风险 |
-|---|---|---|---|
-| **S0** ✅ | PHPUnit 可行性实证（`phpunit.xml` + `ColumnWidthsTest` + phar） | 8 tests 绿 / lint 582 文件 0 error | 无 |
-| **S1** | 抽 `tools/Smoke/Support/`（工具函数）+ `tools/Smoke/Cases/`（55 个子进程 case，原 374–1420 行） | 1727 全绿 + golden 逐像素不变 | `runCase(__FILE__)` 要改成指向 Cases 入口 |
-| **S2** | 抽 `tools/Smoke/Suites/Table.php`（2800 行，单一主题、刚写完最熟） | 全绿 + `--only=table` 能只跑这段 | 跨节变量：需现场重建夹具 |
-| **S3** | 按主题抽剩余（BackendConformance / Layout / Widgets / Input / State / Overlay / Apps / Async / Theme / Animation / Logging / Semantics） | 每抽一个跑一次全绿 | 同上；顺序依赖会在这里暴露（这是好事） |
-| **S4** | 把已抽出的纯单元（`ColumnWidths` / `ExtentWindow` / `TableRowPicker` / 布局算术）改成 TestCase，并从 smoke 删掉对应 check | 两套都绿，且条数对得上 | 只能搬 28%，别贪 |
+## 9. 坑
 
-★ S1–S3 是**纯搬迁**：一行断言都不改。S4 才动语义。这条界线不能混 ——
-一旦混了，红了就不知道是哪一步的错。
-
-## 7. 坑（写下来避免重踩）
-
-- **`runCase(__FILE__, 'case')`** 依赖 `__FILE__` 就是入口脚本。抽 Cases 之后要么
-  改成 `runCase(SMOKE_CASES, 'case')`，要么让每个 suite 文件自己可当 `--case=` 入口。
-  前者简单，推荐前者。
-- **`fresh($log)` 78 处 + `Errors` 单例**：拆开后 suite 之间不再自动隔离。
-  runner 在每跑一个 suite 前后各 `fresh()` 一次即可，但**不要**在 suite 内部保留
-  "靠上一节留下的日志"这种隐式契约。
-- **`ini_set('memory_limit', '2048M')`**：全量 1727 条会串起几十个 `Application`，
-  每个都持有字模 + 渲染树。拆成 suite 后**单 suite 跑可以要小得多**，但 runner
-  统一跑时仍需 2G。
-- **PHP 的 https 流不可用**（缺 CA）：任何 `file_get_contents('https://…')`
-  在测试里都会失败。已有用例若依赖它，会从"网络抖动"变成"必失败"。
-- **迁移的出错率不是 0**：实测第一版 `ColumnWidthsTest` 7 条里错 2 条。
-  S4 每搬一组，期望值都要对着 smoke 的原断言重新核，不能凭记忆写。
-
-## 8. 待裁决
-
-1. S1 现在开工，还是先做别的（Table 还有 §19.9 的边界没做）？
-2. `tools/phpunit.phar` 不入库（当前做法）是否可接受？CI/换机需要一条 curl。
-3. S4 的边界：只搬 `Layout\*` 的纯算术，还是连"布局结果断言"（要构造 Widget 树、
-   但不碰输入/帧）也搬？后者的判据更模糊。
+- **`phpunit.xml` 的注释里不能有 `--`**（XML 规范）。写 `phpunit -c ... --filter=X`
+  作示例会直接让整个配置加载失败，报 "Comment must not contain '--'"，且不说是哪一行。
+- **`runCase(__FILE__, 'case')`** 依赖 `__FILE__` 就是入口脚本。段搬到 `tests/` 之后，
+  子进程用例要显式指向 `tools/smoke.php`，不能再用 `__FILE__`。
+- **`fresh($log)` + `Errors` 单例**：PHPUnit 里每个方法之间不自动隔离，
+  用到日志的测试方法要在开头自己 `fresh()`。
+- **命名空间别猜**：`BuildContext` 在 `Drift\Widget`、`Axis`/`BoxConstraints`/`Size` 在
+  `Drift\Geometry`（不是 `Drift\Layout`）。抄 `tools/smoke.php` 的 `use` 块，别按目录名推。
+- **`tests/` 要加进 lint 的 `DEFAULT_DIRS`**，否则新目录不受任何规则约束
+  （而且 `isToolchain()` 要把 `tests/` 算进去，否则 nano-hygiene 一类"产物纪律"会误报）。
+- **迁移的出错率不是 0**：手写 `ColumnWidthsTest` 第一版 7 条里错 2 条
+  （夹具固定宽用了 100 而 smoke 是 60；override 是否计入 `used` 算反了）。
+  搬断言必须对着原断言逐行核。

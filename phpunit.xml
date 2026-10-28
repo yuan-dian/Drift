@@ -1,15 +1,22 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  `tools/gate.php` 的 smoke 项之外的第二条腿：**纯单元**测试（PHPUnit）。
+  两条腿：
+    unit     纯单元（无状态算术 / 纯函数 / 数据结构）—— 秒级，改什么都能全跑
+    feature  场景测试（构造控件树 / 走真输入路由 / 推帧）—— 按类过滤只跑一处
 
-  ★ 为什么 bootstrap 是 `tools/autoload.php` 而不是 `vendor/autoload.php`：
-    本仓刻意不生成 vendor/autoload.php（§4.1：composer.json 是物理边界表的
-    唯一来源，见 `tools/autoload.php` 的头注）。vendor 只提供 PHPUnit 自身的类，
-    `Drift\` 仍由自建装载器解析 ⇒ 测的一定是本仓的源码。
+  常用调用（参数名见 PHPUnit 手册的 "TextUI" 一节）：
+    全量            php vendor/bin/phpunit -c phpunit.xml
+    只跑纯单元       php vendor/bin/phpunit -c phpunit.xml testsuite unit
+    只跑 Table      php vendor/bin/phpunit -c phpunit.xml filter Table
+    可读清单         php vendor/bin/phpunit -c phpunit.xml testdox
+
+  bootstrap 是 tests/Support/bootstrap.php（内部 require tools/autoload.php），
+  不用 vendor/autoload.php：本仓刻意不生成它（§4.1：composer.json 是物理边界表
+  的唯一来源）；vendor 只提供 PHPUnit 自己的类，测的一定是本仓源码。
 -->
 <phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/10.5/phpunit.xsd"
-         bootstrap="tools/autoload.php"
+         bootstrap="tests/Support/bootstrap.php"
          colors="true"
          cacheDirectory=".phpunit.cache"
          backupGlobals="false"
@@ -18,7 +25,10 @@
          stopOnFailure="false">
     <testsuites>
         <testsuite name="unit">
-            <directory suffix="Test.php">tools/Smoke/Unit</directory>
+            <directory suffix="Test.php">tests/Unit</directory>
+        </testsuite>
+        <testsuite name="feature">
+            <directory suffix="Test.php">tests/Feature</directory>
         </testsuite>
     </testsuites>
 </phpunit>
