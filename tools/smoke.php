@@ -5872,299 +5872,17 @@ if (is_resource($mockProc)) {
     proc_close($mockProc);
 }
 
-// ── 可滚动容器（P1 / 2026-10-17）：偏移进坐标链 + 滚轮路由 ──────────
-//   两条线：① 布局层直接测 `RenderScrollView`（视口 / maxScroll 夹取 / 命中按视口判 /
-//   **偏移进子盒 offset 而非 paint 期 translate** —— 2026-10-17 padding 缺陷的同族判据，
-//   "画在哪 vs 命中哪"的交叉验证此前是结构性盲区）；② 应用层测
-//   `ScrollEvent → dispatchInput → scrollAt → scrollBy → 帧末重建 → 盒偏移` 全链。
-//   ★ 反例自检：把偏移改回 paint 期 translate（setOffset 去掉、paint 里加 translate）
-//   ⇒ ①线 3 条 FAIL（offsetY 恒 0）+ ②线 2 条 FAIL（命中/绘制错位），诊断值精确显示形态。
-// ★ 滚动条色用品红：SolidBox 画黑 ⇒ 像素断言能区分"thumb 画了"与"只是内容"。
-$scrollInk = Color::fromRgb(0xFF, 0x00, 0xFF);
-
-$scrollChildOf = static function (?RenderScrollView $box): ?RenderBox {
-    if ($box === null) {
-        return null;
-    }
-    $kid = null;
-    $box->visitChildren(function (RenderObject $child) use (&$kid): void {
-        $kid = $child;
-    });
-
-    return $kid instanceof RenderBox ? $kid : null;
-};
-
-// ① 布局层：内容 100×1000，视口 100×300
-$sv0 = new RenderScrollView(0.0, $scrollInk, true);
-$sv0->setChild(new SolidBox(new Size(100.0, 1000.0), 100.0, 1000.0));
-$sv0Size = $sv0->layout(new BoxConstraints(0.0, 100.0, 0.0, 300.0));
-$sv0Kid = $scrollChildOf($sv0);
-check(
-    'Scroll · 视口 = 约束上限（内容 1000 高 ⇒ 盒停在 100×300，不撑成内容高）',
-    $sv0Size->width === 100.0 && $sv0Size->height === 300.0,
-    sprintf('%.1f×%.1f', $sv0Size->width, $sv0Size->height),
-);
-check(
-    'Scroll · maxScroll = 内容主轴 − 视口主轴（1000−300 = 700）',
-    $sv0->maxScroll(Axis::Vertical) === 700.0,
-    (string) $sv0->maxScroll(Axis::Vertical),
-);
-check(
-    'Scroll · 偏移 0 ⇒ 子盒 offsetY = 0（偏移落在子盒 offset 上，不是别处）',
-    $sv0Kid?->offsetY() === 0.0,
-    (string) ($sv0Kid?->offsetY() ?? -1.0),
-);
-check(
-    'Scroll · 命中按视口判定：视口内的点进子树（内容超长仍命中）',
-    $sv0->hitTest(50.0, 250.0) === $sv0Kid,
-    $sv0->hitTest(50.0, 250.0) === $sv0Kid ? 'hit' : 'miss',
-);
-check(
-    'Scroll · 视口外的点进不了子树（"裁掉的部分点不到"是结构保证）',
-    $sv0->hitTest(50.0, 350.0) === null,
-    $sv0->hitTest(50.0, 350.0) === null ? 'null' : 'hit',
-);
-
-// ① 布局层：偏移 300 ⇒ 子盒 offsetY = −300（★ 坐标链判据）
-$sv1 = new RenderScrollView(300.0, $scrollInk, true);
-$sv1->setChild(new SolidBox(new Size(100.0, 1000.0), 100.0, 1000.0));
-$sv1->layout(new BoxConstraints(0.0, 100.0, 0.0, 300.0));
-$sv1Kid = $scrollChildOf($sv1);
-check(
-    'Scroll · 偏移 300 ⇒ 子盒 offsetY = −300（★ 偏移进子盒 offset，不是 paint 期 translate）',
-    $sv1Kid?->offsetY() === -300.0 && $sv1->appliedOffset(Axis::Vertical) === 300.0,
-    'offsetY=' . ($sv1Kid?->offsetY() ?? -1.0) . ' applied=' . $sv1->appliedOffset(Axis::Vertical),
-);
-check(
-    'Scroll · 滚动后命中跟随偏移：视口 (50,250) 命中内容第 550 行（局部坐标跟着偏移走）',
-    $sv1->hitTest(50.0, 250.0) === $sv1Kid,
-    $sv1->hitTest(50.0, 250.0) === $sv1Kid ? 'hit' : 'miss',
-);
-
-// ① 布局层：越界夹取（"内容飞走"的静默形态 ⇒ 结构上不可能）
-$sv2 = new RenderScrollView(9999.0, $scrollInk, true);
-$sv2->setChild(new SolidBox(new Size(100.0, 1000.0), 100.0, 1000.0));
-$sv2->layout(new BoxConstraints(0.0, 100.0, 0.0, 300.0));
-check(
-    'Scroll · 越界偏移被 maxScroll 夹住（9999 ⇒ 700 ⇒ offsetY = −700）',
-    $sv2->appliedOffset(Axis::Vertical) === 700.0 && $scrollChildOf($sv2)?->offsetY() === -700.0,
-    'applied=' . $sv2->appliedOffset(Axis::Vertical),
-);
-
-// ① 布局层：父无界 ⇒ 视口跟着内容走（不滚）
-$sv3 = new RenderScrollView(9999.0, $scrollInk, true);
-$sv3->setChild(new SolidBox(new Size(100.0, 1000.0), 100.0, 1000.0));
-$sv3->layout(BoxConstraints::unbounded());
-check(
-    'Scroll · 父无界 ⇒ 视口跟着内容走（不滚：maxScroll = 0，偏移归 0）',
-    $sv3->maxScroll(Axis::Vertical) === 0.0 && $sv3->appliedOffset(Axis::Vertical) === 0.0 && $scrollChildOf($sv3)?->offsetY() === 0.0,
-    'maxScroll=' . $sv3->maxScroll(Axis::Vertical),
-);
-
-// ① 布局层：横向
-$sv4 = new RenderScrollView(120.0, $scrollInk, false);
-$sv4->setChild(new SolidBox(new Size(800.0, 50.0), 800.0, 50.0));
-$sv4->layout(new BoxConstraints(0.0, 400.0, 0.0, 50.0));
-check(
-    'Scroll · 横向滚动：偏移进 offsetX（内容 800 宽，视口 400 ⇒ maxScroll = 400）',
-    $sv4->maxScroll(Axis::Horizontal) === 400.0 && $scrollChildOf($sv4)?->offsetX() === -120.0,
-    'maxScroll=' . $sv4->maxScroll(Axis::Horizontal),
-);
-
-// ① 布局层：滚动条（2026-10-17 补齐的第一个滚动缺口 —— 纯视觉层）
-//   ★ 判据走像素：把盒画到白底光栅，数区域里的 **thumb 色**像素（SolidBox 画黑，
-//     用品红不会混）。★ 反例自检三发：删 `maxScroll<=0` 早退 ⇒ "不溢出不画"红；
-//     删 `*WHEEL_NOTCH_PX` ⇒ 步长两条红；thumb 位置公式写反 ⇒ "贴底/贴顶"红。
-$scrollRaster = static function (?RenderBox $box, int $w, int $h): RasterCanvas {
-    $list = new DisplayList();
-    $box?->paint(new RecordingCanvas($list));
-    $c = new RasterCanvas($w, $h, Color::white(), Scale::of(1.0));
-    $list->replay($c);
-
-    return $c;
-};
-$inkIn = static function (RasterCanvas $c, int $x0, int $y0, int $x1, int $y1) use ($scrollInk): int {
-    $n = 0;
-    for ($y = $y0; $y < $y1; $y++) {
-        for ($x = $x0; $x < $x1; $x++) {
-            if ($c->pixelAt($x, $y)->equals($scrollInk)) {
-                $n++;
-            }
-        }
-    }
-
-    return $n;
-};
-
-// sv0：视口 100×300 / 内容 1000 / maxScroll 700 / offset 0
-//   thumbLen = 300×300/1000 = 90；travel = 300−6−90 = 204；pos = 3+0 = 3 ⇒ y 3..93
-$sv0Raster = $scrollRaster($sv0, 100, 300);
-check(
-    'Scroll · 滚动条：offset 0 ⇒ thumb 贴顶（y 3..93 有墨，y 0..2 的边距无墨）',
-    $inkIn($sv0Raster, 92, 8, 95, 88) > 0 && $inkIn($sv0Raster, 91, 0, 97, 3) === 0,
-    sprintf('body=%d margin=%d', $inkIn($sv0Raster, 92, 8, 95, 88), $inkIn($sv0Raster, 91, 0, 97, 3)),
-);
-
-// sv2：offset 9999 ⇒ 夹到 700 = maxScroll ⇒ thumb 贴底（pos = 3+204 = 207 ⇒ y 207..297）
-$sv2Raster = $scrollRaster($sv2, 100, 300);
-check(
-    'Scroll · 滚动条：offset = maxScroll ⇒ thumb 贴底（y 290..296 有墨、顶端无墨）',
-    $inkIn($sv2Raster, 92, 291, 95, 296) > 0 && $inkIn($sv2Raster, 91, 0, 97, 3) === 0,
-    sprintf('bottom=%d margin=%d', $inkIn($sv2Raster, 92, 291, 95, 296), $inkIn($sv2Raster, 91, 0, 97, 3)),
-);
-
-// sv3：父无界 ⇒ maxScroll = 0 ⇒ **不画**（画一条满轨 thumb 是撒谎：暗示"可以滚"）
-$sv3Raster = $scrollRaster($sv3, 100, 1000);
-check(
-    'Scroll · 滚动条：内容不溢出（maxScroll=0）⇒ 不画（整条右带无 thumb 色）',
-    $inkIn($sv3Raster, 91, 0, 97, 1000) === 0,
-    (string) $inkIn($sv3Raster, 91, 0, 97, 1000),
-);
-
-// sv1：offset 300（中段）⇒ thumb 不随内容平移（★ 本轮真 bug 的判据：
-//   thumb 若画在 translate 之后 ⇒ 被带到 y −210..−120 ⇒ 整条飞出视口全红）
-//   thumbPos = 3 + 300/700×204 = 90.4 ⇒ thumb y 90..181
-$sv1Raster = $scrollRaster($sv1, 100, 300);
-check(
-    'Scroll · 滚动条：中段偏移 ⇒ thumb 不随内容平移（y 95..178 有墨、顶端边距无墨）',
-    $inkIn($sv1Raster, 92, 95, 95, 178) > 0 && $inkIn($sv1Raster, 91, 0, 97, 3) === 0,
-    sprintf('body=%d margin=%d', $inkIn($sv1Raster, 92, 95, 95, 178), $inkIn($sv1Raster, 91, 0, 97, 3)),
-);
-
-// sv4：横向 —— 轨道 400 / 内容 800 ⇒ thumbLen = 200（占一半，正确）
-//   thumbPos = 3 + 120/400×194 = 61.2 ⇒ thumb x 61..262、y 41..47
-$sv4Raster = $scrollRaster($sv4, 400, 50);
-check(
-    'Scroll · 滚动条：横向 ⇒ thumb 贴底侧（x 70..90 有墨、x 5..55 的 thumb 左缘外无墨）',
-    $inkIn($sv4Raster, 70, 42, 90, 45) > 0 && $inkIn($sv4Raster, 5, 42, 55, 45) === 0,
-    sprintf('body=%d left=%d', $inkIn($sv4Raster, 70, 42, 90, 45), $inkIn($sv4Raster, 5, 42, 55, 45)),
-);
-
-
-// ② 应用层：滚轮全链（命中 → 找视口 → scrollBy → 重建 → 盒偏移）
-$scrollApp = new ScrollApplication();
-$scrollApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
-
-// ── UI 线程身份（§17.4.2.1）：attach 记 id，帧内断言 —— WPF `VerifyAccess()` 的等价物
-//   ★ 解释器下由 `tools/autoload.php` 的 `drift_thread_id()` 替身提供（固定 1）；
-//   ★ AOT 产物里是 `GetCurrentThreadId()`（cpp-src 的桥）。
-check(
-    'App · UI 线程身份在 attach 时记下（!= 0；0 = 未挂载）',
-    $scrollApp->uiThreadId() !== 0,
-    (string) $scrollApp->uiThreadId(),
-);
-check(
-    'App · 当前线程就是 UI 线程（uiThreadId == drift_thread_id()）',
-    $scrollApp->uiThreadId() === \drift_thread_id(),
-    $scrollApp->uiThreadId() . ' vs ' . \drift_thread_id(),
-);
-// 正路径：断言不失败（失败走 Fatal 序列会中止整个 smoke ⇒ 这行本身就是判据）
-$scrollApp->assertUiThread('smoke');
-check('App · assertUiThread 在 UI 线程上放行', true, 'ok');
-$sb0 = $scrollApp->scrollBox();
-$scrollMax = $sb0?->maxScroll(Axis::Vertical) ?? 0.0;
-check(
-    'Scroll · 应用：视口盒存在且内容超长（maxScroll > 100 ⇒ 真能滚）',
-    $sb0 !== null && $scrollMax > 100.0,
-    'maxScroll=' . $scrollMax,
-);
-check(
-    'Scroll · 应用：未滚时子盒 offsetY = 0',
-    $scrollChildOf($sb0)?->offsetY() === 0.0,
-    (string) ($scrollChildOf($sb0)?->offsetY() ?? -1.0),
-);
-
-$scrollApp->dispatchInput(ScrollEvent::make(150.0, 100.0, 1.0));   // 一格
-$scrollApp->frame(16.0, BoxConstraints::loose(new Size(300.0, 200.0)));
-check(
-    'Scroll · 应用：滚轮一格（delta=1.0）⇒ 48px（WHEEL_NOTCH_PX：不跟手的根因修复）',
-    $scrollChildOf($scrollApp->scrollBox())?->offsetY() === -48.0,
-    'offsetY=' . ($scrollChildOf($scrollApp->scrollBox())?->offsetY() ?? -1.0),
-);
-
-// ★ 格是相对量 ⇒ 再滚一格累加（96 = 2×48），证明换算的是"每格"而不是一次性
-$scrollApp->dispatchInput(ScrollEvent::make(150.0, 100.0, 1.0));
-$scrollApp->frame(16.5, BoxConstraints::loose(new Size(300.0, 200.0)));
-check(
-    'Scroll · 应用：第二格累加（offsetY = −96：每格 48 不是一次 48）',
-    $scrollChildOf($scrollApp->scrollBox())?->offsetY() === -96.0,
-    'offsetY=' . ($scrollChildOf($scrollApp->scrollBox())?->offsetY() ?? -1.0),
-);
-
-// ── 滚动条拖动（§12.3，2026-10-19）：thumb 是绘制物，命中必须先于内容 ──
-//   判据两条：① 在 thumb 上按下并下拖 30px ⇒ 偏移按 maxScroll/thumbTravel 放大；
-//   ② 在内容区同向拖 ⇒ 偏移**不变**（内容区拖动不是拖条）。
-$barBox = $scrollApp->scrollBox();
-$barRect = $barBox?->thumbRect(Axis::Vertical);
-$barOffsetBefore = $barBox?->appliedOffset(Axis::Vertical) ?? -1.0;
-$barCx = ($barRect?->left ?? 0.0) + ($barRect?->width ?? 0.0) / 2.0;
-$barCy = ($barRect?->top ?? 0.0) + ($barRect?->height ?? 0.0) / 2.0;
-$barTravel = $barBox?->thumbTravel(Axis::Vertical) ?? 0.0;
-$barMax = $barBox?->maxScroll(Axis::Vertical) ?? 0.0;
-
-$scrollApp->dispatchInput(PointerEvent::down($barCx, $barCy));
-$scrollApp->dispatchInput(PointerEvent::move($barCx, $barCy + 30.0));
-$scrollApp->dispatchInput(PointerEvent::up($barCx, $barCy + 30.0));
-
-// ★ 必须跑一帧：`scrollBy()` 改的是 State 的 offset，`appliedOffset()` 读的是
-//   渲染盒的（布局期才从 state 同步）—— 真机上由帧循环自动完成，头侧要手动补。
-$scrollApp->frame(18.0, BoxConstraints::loose(new Size(300.0, 200.0)));
-
-$barExpected = $barOffsetBefore + ($barTravel > 0.0 ? 30.0 * $barMax / $barTravel : 0.0);
-$barNow = ($scrollApp->scrollBox())?->appliedOffset(Axis::Vertical) ?? -1.0;
-check(
-    'Scroll · 拖滚动条：thumb 下拖 30px ⇒ 偏移按 maxScroll/thumbTravel 放大',
-    $barRect !== null && abs($barNow - $barExpected) < 0.51,
-    sprintf(
-        'rect=%s travel=%.1f max=%.1f before=%.1f now=%.1f expect=%.1f',
-        $barRect === null ? 'null' : sprintf('[%.1f,%.1f,%.1f,%.1f]', $barRect->left, $barRect->top, $barRect->width, $barRect->height),
-        $barTravel,
-        $barMax,
-        $barOffsetBefore,
-        $barNow,
-        $barExpected,
-    )
-);
-
-$bodyOffsetBefore = $barNow;
-$scrollApp->dispatchInput(PointerEvent::down(40.0, 40.0));
-$scrollApp->dispatchInput(PointerEvent::move(40.0, 70.0));
-$scrollApp->dispatchInput(PointerEvent::up(40.0, 70.0));
-$scrollApp->frame(18.5, BoxConstraints::loose(new Size(300.0, 200.0)));
-check(
-    'Scroll · 内容区拖动不是拖条（偏移不变）',
-    ($scrollApp->scrollBox())?->appliedOffset(Axis::Vertical) === $bodyOffsetBefore,
-    'before=' . $bodyOffsetBefore . ' now=' . (($scrollApp->scrollBox())?->appliedOffset(Axis::Vertical) ?? -1.0)
-);
-
-// ★ scrollBy 是**相对**滚动（Δ 累加）⇒ 夹取测试用远超当前偏移的量：
-//   从 60 起 +999999 ⇒ 夹在 maxScroll；再 -9999999 ⇒ 夹在 0。
-$scrollApp->dispatchInput(ScrollEvent::make(150.0, 100.0, 999999.0));
-$scrollApp->frame(17.0, BoxConstraints::loose(new Size(300.0, 200.0)));
-check(
-    'Scroll · 应用：滚出上界 ⇒ 夹在 maxScroll（内容不飞出视口）',
-    $scrollChildOf($scrollApp->scrollBox())?->offsetY() === -$scrollMax,
-    'offsetY=' . ($scrollChildOf($scrollApp->scrollBox())?->offsetY() ?? -1.0) . ' max=' . $scrollMax,
-);
-
-$scrollApp->dispatchInput(ScrollEvent::make(150.0, 100.0, -9999999.0));
-$scrollApp->frame(18.0, BoxConstraints::loose(new Size(300.0, 200.0)));
-check(
-    'Scroll · 应用：滚出下界 ⇒ 夹在 0（scrollBy 的下界夹取生效）',
-    $scrollChildOf($scrollApp->scrollBox())?->offsetY() === 0.0,
-    'offsetY=' . ($scrollChildOf($scrollApp->scrollBox())?->offsetY() ?? -1.0),
-);
-
-$scrollApp->dispatchInput(ScrollEvent::make(150.0, 100.0, 1.0));
-$scrollApp->frame(19.0, BoxConstraints::loose(new Size(300.0, 200.0)));
-$beforeOutside = $scrollChildOf($scrollApp->scrollBox())?->offsetY();
-$scrollApp->dispatchInput(ScrollEvent::make(150.0, 250.0, 1.0));   // y=250 在视口（200）外
-$scrollApp->frame(20.0, BoxConstraints::loose(new Size(300.0, 200.0)));
-check(
-    'Scroll · 应用：轮落在视口外 ⇒ 命不中不滚（偏移不变）',
-    $scrollChildOf($scrollApp->scrollBox())?->offsetY() === $beforeOutside,
-    'before=' . ($beforeOutside ?? -1.0) . ' after=' . ($scrollChildOf($scrollApp->scrollBox())?->offsetY() ?? -1.0),
-);
+// ── 可滚动容器 / 滚动条绘制 / 滚轮全链 / 拖条 / UI 线程身份 已迁出 ─────────────
+//   → `tests/Feature/Rendering/ScrollViewBoxTest.php`（16 条）
+//     盒层：视口 = 约束上限 / maxScroll / ★偏移进子盒 offset 而非 paint translate /
+//     命中按视口 / 越界夹取 / 父无界不滚 / 横向 / 6 条滚动条像素。
+//   → `tests/Feature/App/ScrollWheelTest.php`（11 条）
+//     应用层全链：格→像素→命中→scrollBy→帧末重建→盒偏移；上下界夹取；视口外不滚；
+//     ★轴来自事件（双轴宿主）；装得下的轴不标脏；双轴不回落；单轴不回落横划。
+//   → `tests/Feature/App/ScrollBarDragTest.php`（2 条）
+//     thumb 下拖按 maxScroll/thumbTravel 放大；内容区拖动不是拖条。
+//   → `tests/Feature/App/UiThreadTest.php`（4 条）
+//     UI 线程身份（§17.4.2.1）：未挂载 = 0 / 挂载后 = 当前线程 / 非 UI 线程 ⇒ Fatal。
 
 // ── 指针四相位（2026-10-17 move/up/leave 通路落地）─────────────────
 //   ★ 三个消费者：① 悬停派发（§9.1 语义 #5 —— **目标变化才通知**）② 拖放
@@ -6866,33 +6584,8 @@ check(
 //   → `tests/Feature/Table/ScrollTest.php` —— 内容装得下时偏移回夹 0（弱档）。
 //   → `tests/Feature/Widget/ScrollViewScrollTest.php` —— 借来对照的 4 条 `ScrollView` 语义
 //     （0 重建 / appliedOffset / 帧间画面真变 / 回夹强档）：被测是 ScrollView，不是表格。
-//   ★ 下面三个夹具**保留**：后面的「⑲ 滚轮带轴」段还在用（那段的宿主也是 Table）。
-/** 挂树 + 按 320×240 布局（smokeContext 的规格） */
-$tableMount = static function (Table $widget): Element {
-    $element = $widget->createElement();
-    $element->mount(null, smokeContext());
-    $element->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
-
-    return $element;
-};
-
-
-$tableStateOf = static function (Element $root): ?TableState {
-    $hit = findElement(
-        $root,
-        static fn(Element $e): bool => $e instanceof StatefulElement && $e->state() instanceof TableState,
-    );
-    $state = $hit instanceof StatefulElement ? $hit->state() : null;
-
-    return $state instanceof TableState ? $state : null;
-};
-
-
-$tableBoxOf = static function (Element $root): ?RenderTable {
-    $box = $root->effectiveBoxOf(RenderTable::class);
-
-    return $box instanceof RenderTable ? $box : null;
-};
+//   ★ 那三个 Table 夹具（$tableMount / $tableStateOf / $tableBoxOf）已随
+//     「⑲ 滚轮带轴」一起删除 —— ⑲ 是它们最后一个使用者。
 // ── Table 选择 / 排序 / 列宽拖拽的"响亮失败"已迁出 ───────────────────────────
 //   → `tests/Feature/Table/ConfigFailureTest.php`（11 个配置面 case / 34 条断言）
 //   ★ 迁出的理由不是"判据变了"，而是 `runFatalCase()` 已把子进程入口从 smoke
@@ -6901,7 +6594,7 @@ $tableBoxOf = static function (Element $root): ?RenderTable {
 //   → `tests/Feature/Table/KeyboardTest.php`（单 Tab 位 / 方向键 / 边界吞键 /
 //     End 自动滚动 / 横向 ensureVisible / 失焦保留光标格 / 子控件让位 / 2px 描边像素）
 //   → 列宽带 `maxWidth` 的夹取在 `tests/Feature/Table/ColumnResizeTest.php`
-//   ★ 下面留着的是**滚轮带轴**与**单轴容器的按轴语义**（Scroll 主题，不是键盘）。
+//   ★ 「滚轮带轴」与「单轴容器的按轴语义」都不是键盘语义，已各自迁出（见下）。
 
 
 // ── ⑱ 单轴容器的按轴语义 已迁出 ─────────────────────────────────────────────
@@ -6911,89 +6604,11 @@ $tableBoxOf = static function (Element $root): ?RenderTable {
 //     那两段迁走时一并搬出；主题是滚动容器，不是表格。
 
 
-// ⑲ 阶段 5b：滚轮**带轴**（触控板横滑 / Shift+竖轮）
-//   链路：ScrollEvent(axis) → InputRouter（格→像素）→ scrollAt（按 scrollAxes 分派）
-//   ★ 断言的是"轴由**事件**决定"，不是"容器自己猜"：同一张表，换轴就该换轴动。
-$tableWheelH = new TableScrollApplication();
-$tableWheelH->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
-$tableWheelH->frame(16.0, BoxConstraints::tight(new Size(320.0, 240.0)));
-$tableWheelH->dispatchInput(ScrollEvent::make(100.0, 100.0, 1.0, Axis::Horizontal));
-$tableWheelH->frame(17.0, BoxConstraints::tight(new Size(320.0, 240.0)));
-$tableWheelHBox = $tableBoxOf($tableWheelH->root());
-check(
-    'Table · 滚轮：横轴一格 ⇒ offsetX = 48、offsetY = 0（轴来自事件，不由容器猜）',
-    $tableWheelHBox?->appliedOffset(Axis::Horizontal) === 48.0
-        && $tableWheelHBox->appliedOffset(Axis::Vertical) === 0.0,
-    'x=' . sprintf('%.1f', $tableWheelHBox?->appliedOffset(Axis::Horizontal) ?? -1.0)
-        . ' y=' . sprintf('%.1f', $tableWheelHBox?->appliedOffset(Axis::Vertical) ?? -1.0),
-);
-
-// 再发**竖轴**一格（缺省轴）：横轴停在 48 ⇒ 两轴不串味（同一张表、同一次命中）
-$tableWheelH->dispatchInput(ScrollEvent::make(100.0, 100.0, 1.0));
-$tableWheelH->frame(18.0, BoxConstraints::tight(new Size(320.0, 240.0)));
-$tableWheelHBox = $tableBoxOf($tableWheelH->root());
-check(
-    'Table · 滚轮：接着竖轴一格 ⇒ offsetY = 48 且 offsetX 仍是 48（两轴互不串味）',
-    $tableWheelHBox?->appliedOffset(Axis::Vertical) === 48.0
-        && $tableWheelHBox->appliedOffset(Axis::Horizontal) === 48.0,
-    'x=' . sprintf('%.1f', $tableWheelHBox?->appliedOffset(Axis::Horizontal) ?? -1.0)
-        . ' y=' . sprintf('%.1f', $tableWheelHBox?->appliedOffset(Axis::Vertical) ?? -1.0),
-);
-
-// ① 横向**装得下**时，横轴滚轮一格 ⇒ 不标脏（否则触控板每秒几十次白重建）
-$tableWheelNarrow = $tableMount(Table::make(
-    [
-        TableColumn::make('id', 'ID')->field('id')->width(TableColumnWidth::fixed(60.0)),
-        TableColumn::make('name', '姓名')->field('name')->width(TableColumnWidth::fixed(60.0)),
-    ],
-    [['id' => 1, 'name' => 'a'], ['id' => 2, 'name' => 'b']],
-)->keyOf(static fn(array $row): int => (int) $row['id'])
-    ->rowHeight(40.0)->headerHeight(32.0));
-$tableWheelNarrowState = $tableStateOf($tableWheelNarrow);
-$tableWheelNarrowClean = $tableWheelNarrowState?->needsBuild() === false;
-$tableWheelNarrowState?->scrollByAxis(Axis::Horizontal, 48.0);
-check(
-    'Table · 滚轮：横向装得下 ⇒ 横轴滚轮不标脏（`contentWInBuild` 早退）',
-    $tableWheelNarrowClean && $tableWheelNarrowState?->needsBuild() === false,
-    'clean=' . ($tableWheelNarrowClean ? 'yes' : 'no')
-        . ' dirty=' . ($tableWheelNarrowState?->needsBuild() === true ? 'yes' : 'no'),
-);
-
-// ③ 竖轮落在"纵向装得下、横向溢出"的表上 ⇒ 不动：**回落只发生在单轴容器**
-//   （双轴容器两轴都"支持"，竖向没得滚就是没得滚 —— 不能因为横向有溢出就横着跑）
-$tableWheelShort = new TableScrollApplication(3);
-$tableWheelShort->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
-$tableWheelShort->frame(16.0, BoxConstraints::tight(new Size(320.0, 240.0)));
-$tableWheelShort->dispatchInput(ScrollEvent::make(100.0, 100.0, 1.0));
-$tableWheelShort->frame(17.0, BoxConstraints::tight(new Size(320.0, 240.0)));
-$tableWheelShortBox = $tableBoxOf($tableWheelShort->root());
-// ★ 也看 State 的**未夹值**：回落一旦发生，`offsetY` 会累加上去（appliedOffset 仍被
-//   夹回 0，看不出来），等将来行数变多会突然跳一下。
-$tableWheelShortState = $tableStateOf($tableWheelShort->root());
-check(
-    'Table · 滚轮：竖轮落在"纵向装得下、横向溢出"的表上 ⇒ 两轴都不动（双轴不回落）',
-    $tableWheelShortBox?->maxScroll(Axis::Vertical) === 0.0
-        && $tableWheelShortBox->maxScroll(Axis::Horizontal) > 0.0
-        && $tableWheelShortBox->appliedOffset(Axis::Horizontal) === 0.0
-        && $tableWheelShortBox->appliedOffset(Axis::Vertical) === 0.0
-        && $tableWheelShortState?->offsetY() === 0.0
-        && $tableWheelShortState->offsetX() === 0.0,
-    'maxV=' . sprintf('%.1f', $tableWheelShortBox?->maxScroll(Axis::Vertical) ?? -1.0)
-        . ' maxH=' . sprintf('%.1f', $tableWheelShortBox?->maxScroll(Axis::Horizontal) ?? -1.0)
-        . ' raw=(x=' . sprintf('%.1f', $tableWheelShortState?->offsetX() ?? -1.0)
-        . ',y=' . sprintf('%.1f', $tableWheelShortState?->offsetY() ?? -1.0) . ')',
-);
-// ④ 横轴落在**纵向**视口上 ⇒ 什么都不做（只有竖向才回落；横划不许把页面上下带走）
-$tableWheelOnlyV = new ScrollApplication();
-$tableWheelOnlyV->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
-$tableWheelOnlyV->frame(16.0, BoxConstraints::loose(new Size(300.0, 200.0)));
-$tableWheelOnlyV->dispatchInput(ScrollEvent::make(150.0, 100.0, 1.0, Axis::Horizontal));
-$tableWheelOnlyV->frame(17.0, BoxConstraints::loose(new Size(300.0, 200.0)));
-check(
-    'Scroll · 滚轮：横轴落在纵向视口 ⇒ 不动（只有**竖向**回落到容器唯一那根轴）',
-    $tableWheelOnlyV->scrollBox()?->appliedOffset(Axis::Vertical) === 0.0,
-    'offsetY=' . sprintf('%.1f', $tableWheelOnlyV->scrollBox()?->appliedOffset(Axis::Vertical) ?? -1.0),
-);
+// ⑲ 阶段 5b：滚轮**带轴** 已迁出
+//   → `tests/Feature/App/ScrollWheelTest.php`（轴来自事件 / 两轴不串味 /
+//     装得下的轴不标脏 / 双轴不回落 / 单轴不回落横划）
+//   ★ 主题是"滚动输入"，不是表格 —— 宿主用 Table 只是因为它双轴都支持，
+//     才能把"轴"与"容器有没有那根轴"分开。
 
 // ⑪ Fatal 面（缺 keyOf / fixed(0) / field+cell / 字段拼错）已迁出
 //   → `tests/Feature/Table/ConfigFailureTest.php`

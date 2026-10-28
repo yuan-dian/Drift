@@ -31,6 +31,8 @@ require __DIR__ . '/../../tools/autoload.php';
 // 走到桥之前就 Fatal 了，但加载它才能保证"崩在硬校验上"而不是"崩在缺函数上"。
 require_once __DIR__ . '/../../tools/fakes/win32.php';
 
+use Drift\App\Application;
+use Drift\Dev\Smoke\App\ScrollApplication;
 use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Size;
@@ -141,6 +143,21 @@ $cases = [
     // 日志 pattern 未知占位符 ⇒ Fatal（G2：不静默产出缺字段的行）。
     'log-bad-pattern' => static function (): void {
         PatternFormatter::compile('%l %x oops');
+    },
+
+    // UI 线程断言（§17.4.2.1，WPF `VerifyAccess()` 的等价物）在**非 UI 线程**上
+    // 必须 Fatal —— 静默放行等于给数据竞争留缝，而那类 bug 只在压力下偶发。
+    //
+    // ★ 解释器面的 `drift_thread_id()` 是固定值（`tools/autoload.php` 的替身），
+    //   造不出第二个真线程 ⇒ 用反射把 `uiThreadId` 改成一个"别的线程"，等价于
+    //   "当前线程不是 UI 线程"。
+    'ui-thread-mismatch' => static function (): void {
+        $app = new ScrollApplication();
+        (new \ReflectionProperty(Application::class, 'uiThreadId'))
+            ->setValue($app, \drift_thread_id() + 1);
+        $app->assertUiThread('fatal-case');
+        echo "no-fatal\n";
+        exit(0);
     },
 
     // 带 alpha 的底色却没 setFrameless() ⇒ Fatal。
