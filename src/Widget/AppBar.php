@@ -37,7 +37,7 @@ use Drift\Rendering\MetricToken;
  *
  * @api
  */
-final class AppBar extends BoxWidget
+final class AppBar extends RenderBoxWidget
 {
     private string $title = '';
 
@@ -181,21 +181,49 @@ final class AppBar extends BoxWidget
         return $out;
     }
 
+    /**
+     * 用户设的 `->background()` / `->border()` / `->radius()` **逐字段覆盖**主题盒。
+     *
+     * ★ S1（2026-10-28）之前这三项在 `AppBar` 上是**死字段**：`BoxWidget` 把值存进
+     *   `$box`，而本方法直接 `new BoxStyle(主题…)` —— 存了但没人读。现在样式只有
+     *   `$mods` 一份存储，合并写在这里，与 `Button` / `PopupPanel` 同一口径。
+     */
     public function createRenderObject(BuildContext $context): RenderBox
     {
         $theme = $context;
         $pad = $theme->metric(MetricToken::Padding);
 
+        $themeBox = new BoxStyle(
+            $theme->color(ColorToken::Chrome),
+            $theme->color(ColorToken::Border),
+            $theme->metric(MetricToken::BorderWidth),
+            0.0,
+        );
+
+        $userBox = $this->mods()->boxStyle();
+        if ($userBox === null) {
+            $style = $themeBox;
+        } else {
+            $hasBorder = $userBox->hasBorder();
+            $style = new BoxStyle(
+                $userBox->hasBackground() ? $userBox->background : $themeBox->background,
+                $hasBorder ? $userBox->borderColor : $themeBox->borderColor,
+                $hasBorder ? $userBox->borderWidth : $themeBox->borderWidth,
+                $userBox->radius > 0.0 ? $userBox->radius : $themeBox->radius,
+            );
+        }
+
         return new RenderAppBar(
-            new BoxStyle(
-                $theme->color(ColorToken::Chrome),
-                $theme->color(ColorToken::Border),
-                $theme->metric(MetricToken::BorderWidth),
-                0.0,
-            ),
+            $style,
             $theme->metric(MetricToken::Gap),
             EdgeInsets::symmetric($pad, $pad * 0.5),
         );
+    }
+
+    /** @internal 见 `RenderBoxWidget::paintsBoxChrome()`：`RenderAppBar` 画底与 1px 底边 */
+    public function paintsBoxChrome(): bool
+    {
+        return true;
     }
 
     #[\Override]

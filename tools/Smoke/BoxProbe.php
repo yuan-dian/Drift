@@ -5,16 +5,18 @@ namespace Drift\Dev\Smoke;
 
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderProxy;
-use Drift\Widget\BoxWidget;
 use Drift\Widget\BuildContext;
+use Drift\Widget\RenderBoxWidget;
 
 /**
- * @internal 冒烟夹具：`BoxWidget` 是抽象的，要一个具体子类才能实例化。
+ * @internal 冒烟夹具：**产盒**的空壳控件（`createRenderObject()` 给纯转发的
+ * `RenderProxy`）—— 用来验"修饰真的落了、又真的没多出第二份存储"。
  *
- * `createRenderObject()` 给一个纯转发盒 `RenderProxy` —— 空壳但**真**产盒，
- * 于是"BoxWidget 的子类确实走 RenderBoxWidget 那条路"也被它兜住了。
+ * ★ S1（2026-10-28）之前它 `extends BoxWidget`，用于验双轨制（`BoxWidget` 子类写
+ *   `BoxStyle`、裸 `Widget` 写 `$mods`）。`BoxWidget` 已删 ⇒ 现在它与裸 `Widget`
+ *   走**同一条**路，夹具只需"产盒"这一个属性。
  */
-final class BoxProbe extends BoxWidget
+final class BoxProbe extends RenderBoxWidget
 {
     public function createRenderObject(BuildContext $context): RenderBox
     {

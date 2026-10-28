@@ -176,7 +176,15 @@ abstract class Element
 
         // 修饰同形（`02` §11）：一个引用递给盒，不逐项传递。
         if ($this->box !== null) {
-            $this->box->setMods($this->widget->mods());
+            // ★ 自绘 chrome 的控件（`Button` / `AppBar` / `PopupPanel`）把视觉三字段
+            //   派生进 `BoxStyle` 交给 `Render*` 了 ⇒ 这份 `mods` 要剥掉那三项，
+            //   否则 `RenderBox::paint()` 的 ① 会再画一遍。**描边不幂等**：同色画两遍
+            //   不等于一遍（实测 golden 差 32 / 322 像素，全在边框条带上）。
+            $mods = $this->widget->mods();
+            if ($this->widget instanceof RenderBoxWidget && $this->widget->paintsBoxChrome()) {
+                $mods = $mods->withoutBoxVisual();
+            }
+            $this->box->setMods($mods);
 
             return;
         }

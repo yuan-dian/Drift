@@ -26,23 +26,25 @@ use Drift\Rendering\Modifier;
  * 现在的判据是：① 表必须覆盖**全部** `with*()`（反射比方法名，新增一个 `with*()`
  * 而不补一行就红）；② 每一行都断言 `isDefault()` 的结果。
  *
- * ## ★ 已知缺口：`withRepaintBoundary()`
+ * ## ★ 曾经的缺口 `withRepaintBoundary()`（2026-10-28 已补，S1）
  *
- * `isDefault()` 读了 17 个字段，**没有读 `repaintBoundary`** ⇒ 表里那一行的期望
- * 值是"仍为真"。后果：在**不产盒**的控件上声明 `->repaintBoundary()` 会被静默丢掉
- * （其余修饰都会 Fatal）。
+ * `isDefault()` 原来读 16 个字段、**漏 `repaintBoundary`** ⇒ 在**不产盒**的控件上
+ * 声明 `->repaintBoundary()` 会被静默丢掉（其余修饰都会 Fatal）。当时测试把现状
+ * 钉住、把裁决留给下一轮。
  *
- * 这条**没有**按"实现即真理"处理 —— 它是一个待裁决的缺口：`repaintBoundary` 是
- * 重绘缓存提示（丢了只是慢，不是画错），可能是有意排除的；但 `isDefault()` 的注释
- * 说的是"没有任何修饰"，按字面它该算。测试把**现状**钉住：哪天有人补上这个字段，
- * 这一行会红，逼一次明确决定，而不是静默改变行为。
+ * S1 直接补上了：`isDefault()` 的注释写的是"没有任何修饰"，那它就必须覆盖全部字段；
+ * "重绘边界丢了只是慢"是**后果**的辩解，不是"它不算修饰"的理由 —— 而静默失效的
+ * 检测成本远高于一次多画的代价。
+ *
+ * ⇒ 现在表里**每一行都期待 `false`**，没有例外。
  */
 final class ModifierTest extends SmokeTestCase
 {
     /**
      * 每个 `with*()` 一行：[工厂, 调用后 `isDefault()` 的期望值]。
      *
-     * ★ 期望值是 `true` 的那一行是**已知缺口**（见类注释），不是"正确的默认"。
+     * ★ 期望值**一律 `false`** —— 没有例外（原来 `withRepaintBoundary` 那一行是
+     *   `true`，S1 补字段后改回 `false`，见类注释）。
      *
      * @return array<string, array{0: callable(): Modifier, 1: bool}>
      */
@@ -67,8 +69,8 @@ final class ModifierTest extends SmokeTestCase
             'withShrink' => [static fn(): Modifier => (new Modifier())->withShrink(1), false],
             'withBasis' => [static fn(): Modifier => (new Modifier())->withBasis(10.0), false],
             'withAlign' => [static fn(): Modifier => (new Modifier())->withAlign(RenderBox::ALIGN_CENTER), false],
-            // ★ 已知缺口：`isDefault()` 不读这个字段（见类注释）
-            'withRepaintBoundary' => [static fn(): Modifier => (new Modifier())->withRepaintBoundary(true), true],
+            // ★ 曾漏在 `isDefault()` 之外一整轮（S1 补上，见类注释）
+            'withRepaintBoundary' => [static fn(): Modifier => (new Modifier())->withRepaintBoundary(true), false],
         ];
     }
 
@@ -92,7 +94,11 @@ final class ModifierTest extends SmokeTestCase
     {
         $declared = [];
         foreach ((new \ReflectionClass(Modifier::class))->getMethods(\ReflectionMethod::IS_PUBLIC) as $method) {
-            if (\str_starts_with($method->name, 'with')) {
+            // ★ `with*` = **加**一个字段的写入口，必须进表；`without*` = 派生一份
+            //   **减**字段的副本（`withoutBoxVisual()`），语义相反 ⇒ 不进表。
+            //   第一版只判 `str_starts_with($name, 'with')`，于是 `withoutBoxVisual`
+            //   被算成漏行 —— 前缀判据要连"否定前缀"一起想。
+            if (\str_starts_with($method->name, 'with') && !\str_starts_with($method->name, 'without')) {
                 $declared[] = $method->name;
             }
         }
@@ -114,7 +120,7 @@ final class ModifierTest extends SmokeTestCase
     }
 
     /**
-     * 每一行都断言 `isDefault()` 的结果（唯一期望"真"的是已知缺口那一行）。
+     * 每一行都断言 `isDefault()` 的结果（**全部期望"假"，无例外**）。
      *
      * ★ 汇总成一条：失败消息列出**所有**不符合的行名，不写"第一个就停" ——
      *   一次跑完能看出"是整个表都没生效"还是"只漏了一个字段"。
@@ -130,7 +136,7 @@ final class ModifierTest extends SmokeTestCase
         }
 
         check(
-            'Modifier · 每个 with*() 都改 isDefault()（唯一例外 withRepaintBoundary —— 已知缺口）',
+            'Modifier · 每个 with*() 都改 isDefault()（无例外）',
             $wrong === [],
             \implode('；', $wrong)
         );

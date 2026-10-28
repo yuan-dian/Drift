@@ -21,11 +21,12 @@ use Drift\Rendering\ColorToken;
  * "Application 管生命周期与落位，控件只管形体"。
  *
  * ★ **默认底与边框取主题 token**（`Pane` / `Border`）—— 菜单 / 模态共用一份形体，
- *   应用想改就 `->background()` / `->border()`（`BoxWidget` 的链式，§15.7）。
+ *   应用想改就 `->background()` / `->border()`（`Widget` 的通用修饰，写 `$mods`；
+ *   本类在 `createRenderObject()` 里从 `$mods->boxStyle()` 派生，S1 / 2026-10-28）。
  *
  * @api
  */
-final class PopupPanel extends BoxWidget
+final class PopupPanel extends RenderBoxWidget
 {
     private EdgeInsets $padding;
 
@@ -114,7 +115,7 @@ final class PopupPanel extends BoxWidget
         $theme = $context->theme();
 
         // §15.7 纪律 3：token → 值只在这里合并一次；用户显式声明则整体覆盖
-        $style = $this->box() ?? BoxStyle::none()
+        $style = $this->mods()->boxStyle() ?? BoxStyle::none()
             ->withBackground($theme->color(ColorToken::Surface))
             ->withBorder($theme->color(ColorToken::Border), 1.0);
 
@@ -125,6 +126,12 @@ final class PopupPanel extends BoxWidget
             $style,
             $this->maxHeight,
         );
+    }
+
+    /** @internal 见 `RenderBoxWidget::paintsBoxChrome()`：`RenderPopupPanel` 自己画底与边 */
+    public function paintsBoxChrome(): bool
+    {
+        return true;
     }
 
     #[\Override]

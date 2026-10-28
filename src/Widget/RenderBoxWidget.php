@@ -30,4 +30,25 @@ abstract class RenderBoxWidget extends Widget
      * 子盒不由这里挂 —— 那是 Element 的事（它才知道子 Element 的盒造好了没）。
      */
     abstract public function createRenderObject(BuildContext $context): RenderBox;
+
+    /**
+     * 本控件的盒**自己画底 / 边 / 圆角**吗（画在 `paintOwnChrome()` 里）？
+     *
+     * `true` ⇒ `Element::syncBox()` 交给盒的 `$mods` 会**剥掉**视觉三字段
+     * （`Modifier::withoutBoxVisual()`），否则 `RenderBox::paint()` 的 ① 会跟着画一遍。
+     *
+     * ★★ **描边不幂等** —— 同色画两遍不等于画一遍（`Paint::stroke` 带抗锯齿，
+     *   实测 golden 差 32 / 322 像素，全在边框条带上）。别用"看起来一样"抵赖：
+     *   底色幂等、描边不幂等，恰好是最容易漏的那一半。
+     *
+     * ★ **声明 `true` 的控件要自己把用户设的样式在 `createRenderObject()` 里合并进
+     *   `BoxStyle`**（`Button` / `PopupPanel` 读 `$mods->boxStyle()`）。只声明不合并
+     *   ⇒ 用户的 `->background()` 变成死字段（静默），比双画更糟。
+     *
+     * @internal 只给 Element 用；应用不该调
+     */
+    public function paintsBoxChrome(): bool
+    {
+        return false;
+    }
 }

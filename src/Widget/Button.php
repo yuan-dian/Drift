@@ -24,8 +24,11 @@ use Drift\Rendering\MetricToken;
  * Button::make('取消')->onPressed(fn() => $this->closeModal());
  * ```
  *
- * ★ **继承 `BoxWidget`**（不是结构节点）—— 它有底色 / 边框 / 圆角，正是
- *   §15.7 说"需要盒样式的控件"那一类。
+ * ★ **继承 `RenderBoxWidget`**（不是结构节点）—— 它产渲染盒，几何由 `RenderButton`
+ *   算。盒样式（底 / 边 / 圆角）**不另存**：`->background()` 走 `Widget` 的通用修饰
+ *   写进 `$mods`，本类的 `resolveBoxStyle()` 再从那里**派生**出 `BoxStyle` 交给
+ *   `RenderButton`（S1，2026-10-28 —— 此前是 `BoxWidget` 里的第二份存储，见
+ *   `Modifier::boxStyle()` 的注）。
  *
  * ★ **两条输入路径，语义不同**：
  *   - `->onPressed(闭包)` = 纯 UI 回调，零框架依赖（§A.3.7 就是这么用的）
@@ -42,7 +45,7 @@ use Drift\Rendering\MetricToken;
  *
  * @api
  */
-class Button extends BoxWidget implements Activatable
+class Button extends RenderBoxWidget implements Activatable
 {
     // ★ **AOT：会被继承的类，字段不能是 private** —— tpc 按**运行时类型**查属性表，
     //   而父类的 `private` 不进子类属性表 ⇒ 子类实例（`NavButton` / `Menu` / `MenuItem`）
@@ -264,6 +267,16 @@ class Button extends BoxWidget implements Activatable
     }
 
     /**
+     * @internal 见 `RenderBoxWidget::paintsBoxChrome()`：`RenderButton::paintOwnChrome()`
+     *   自己画底 / 边 / 悬停层 / 浮起影子 ⇒ 交给盒的 `$mods` 要剥掉视觉三字段，
+     *   否则描边会画两遍（**不幂等**，golden 实测差 32 像素）。
+     */
+    public function paintsBoxChrome(): bool
+    {
+        return true;
+    }
+
+    /**
      * 悬停浮起档位（`Elevation` 口径）。
      *
      * ★ `Flat` 不浮：它是"没有容器的文字/图标"（顶条动作、行内操作），浮起来
@@ -284,6 +297,9 @@ class Button extends BoxWidget implements Activatable
      * ★ §15.7 修正：用户设的盒样式此前被忽略 ⇒ 修饰符是死代码（其 docblock 写"渲染层读它"）。
      *   字段级合并：用户设了（非 null/非零）就用用户的，否则回退主题默认盒。
      *   ★ 边缘：radius 取 `> 0` 才用用户的（BoxStyle 以 0 表示"未设/直角"），故无法用修饰符把圆角显式设回 0。
+     * ★ 用户设的那一份**从 `$mods` 派生**（S1）：三个修饰方法不再由 `BoxWidget` 覆写，
+     *   所以"用户设过没有"这个三态由 `Modifier` 的 `$hasBackground` / `$hasBorder`
+     *   / `radius !== 0` 表达 —— 与 `boxStyle()` 的判据是同一处，不会漂。
      */
     protected function resolveBoxStyle(BuildContext $context): BoxStyle
     {
@@ -304,7 +320,7 @@ class Button extends BoxWidget implements Activatable
             ButtonVariant::Flat => BoxStyle::none(),
         };
 
-        $userBox = $this->box();
+        $userBox = $this->mods()->boxStyle();
         if ($userBox === null) {
             return $themeBox;
         }

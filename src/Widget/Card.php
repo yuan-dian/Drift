@@ -20,10 +20,13 @@ use Drift\Rendering\ColorToken;
  *
  * ## 它补的是哪个洞
  *
- * `BoxWidget`（`Button` / `PopupPanel` 的共同基类）只有 **background / border /
- * radius**，**没有 padding**；而 `Column` / `Row` 是结构节点，**刻意不带盒样式**
- * （§15.7：布局节点不该有绘制样式）。`Card` 就是补这一个洞：**盒样式 + 内边距 +
- * 柔和阴影**。
+ * `Column` / `Row` 是结构节点，**刻意不带盒样式**（§15.7：布局节点不该有绘制样式），
+ * 而它们又**不产盒**（`StatelessWidget`）⇒ 给它们套 `->background()` 会撞
+ * `Element::syncBox()` 的守卫（"声明了修饰但不产渲染盒"）。`Card` 就是补这一个洞：
+ * **盒样式 + 内边距 + 柔和阴影**，做法是**替子控件**写 `mods`（见下节）。
+ * ★ 它自己的 `background()` / `border()` / `radius()` 必须**自持一份**（`$box`）而不是
+ *   写 `$mods` —— 因为它**不产盒**，自己写 `$mods` 正好触发那条守卫（S1 的边界：
+ *   产盒的控件把样式存 `$mods`，包装器存自己字段再翻给子控件）。
  *
  * ## W5 之后它不再是"一个盒"，而是**样式预设**（arch-v2 `02` §7.1）
  *
@@ -46,9 +49,10 @@ use Drift\Rendering\ColorToken;
  *   `build(BuildContext)` 是本仓唯一"有 context 又只做组合"的位置。
  *
  * ★ **诚实的边界**：`build()` 是"给子控件加样式"，不是真的再包一层 ⇒ 若子控件
- *   自己是 `BoxWidget`（`Button` / `PopupPanel`），它的 `background()` 会写自己的
- *   `BoxStyle`，卡片的底/边就会**覆盖**它而不是垫在它下面。今天所有调用点传的都是
- *   结构节点 / `Text` / `ScrollView`，走 `mods` 那条路；要真"垫一层"得等 `Stack`。
+ *   自己是盒控件（`Button` / `PopupPanel`），卡片的底/边写进它的 `mods` 之后会被
+ *   它自己的 `resolveBoxStyle()` 当成"用户设的样式"**覆盖**掉按钮底色，而不是垫在
+ *   它下面。今天所有调用点传的都是结构节点 / `Text` / `ScrollView`；要真"垫一层"
+ *   得等 `Stack`（`Stack` 已有，但 `Card` 还没有改用它）。
  *   ★ **结构节点会被套一层代理盒**（`build()` 里的 `instanceof RenderBoxWidget`
  *   分支）：`ScrollView` / `TextField` 这类"盒住在自己 `*Box` 里"的控件，直接收
  *   修饰会撞 §11.7 守卫（M2-5 之后 `Card(ScrollView)` 就这么炸过）—— 套
@@ -123,9 +127,9 @@ final class Card extends StatelessWidget
         return $this;
     }
 
-    // ── 盒样式三项（原来继承 `BoxWidget`；W5 之后自持一份，语义不变）────────
+    // ── 盒样式三项（包装器参数，**不写 `$mods`**；理由见类注释末段）────────
     // ★ 调了任何一个 ⇒ `$this->box` 非空 ⇒ `build()` 里**整套默认让位**
-    //   （§15.7 纪律 3 的既有语义，与 `BoxWidget` 那层逐字一致）。
+    //   （§15.7 纪律 3 的既有语义）。
 
     public function background(Color $color): static
     {

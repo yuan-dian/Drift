@@ -22,10 +22,10 @@
 | State | 9 | 11 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
-| Widget | 143 | 183 |
-| **合计** | **378** | **310** |
+| Widget | 142 | 185 |
+| **合计** | **377** | **312** |
 
-覆盖 329 个文件 · 描述性提及 27 处（grep 口径的污染源，不计入）
+覆盖 328 个文件 · 描述性提及 27 处（grep 口径的污染源，不计入）
 
 ## App 层
 
@@ -539,7 +539,7 @@
 
 ## Widget 层
 
-### @api（应用可读面） · 143
+### @api（应用可读面） · 142
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -551,7 +551,6 @@
 | `BackdropFilter` | class | src/Widget/BackdropFilter.php:10 |
 | `BackdropFilter::make()` | method | src/Widget/BackdropFilter.php:52 |
 | `BackdropFilter::sigma()` | method | src/Widget/BackdropFilter.php:67 |
-| `BoxWidget` | class | src/Widget/BoxWidget.php:9 |
 | `BuildContext` | class | src/Widget/BuildContext.php:13 |
 | `Button` | class | src/Widget/Button.php:19 |
 | `ButtonVariant` | enum | src/Widget/ButtonVariant.php:6 |
@@ -687,7 +686,7 @@
 | `Widget::key()` | method | src/Widget/Widget.php:221 |
 | `Widget::mutate()` | method | src/Widget/Widget.php:298 |
 
-### @internal（框架内部） · 183
+### @internal（框架内部） · 185
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -697,12 +696,12 @@
 | `AppBar::kidList()` | method | src/Widget/AppBar.php:131 |
 | `AppBar::actionList()` | method | src/Widget/AppBar.php:137 |
 | `AppBar::barKids()` | method | src/Widget/AppBar.php:143 |
+| `AppBar::paintsBoxChrome()` | method | src/Widget/AppBar.php:223 |
 | `AppBarElement` | class | src/Widget/AppBarElement.php:8 |
-| `BoxWidget::$box` | property | src/Widget/BoxWidget.php:27 |
-| `BoxWidget::box()` | method | src/Widget/BoxWidget.php:30 |
 | `BuildContext::withTheme()` | method | src/Widget/BuildContext.php:48 |
-| `Card::$box` | property | src/Widget/Card.php:74 |
-| `Card::box()` | method | src/Widget/Card.php:154 |
+| `Button::paintsBoxChrome()` | method | src/Widget/Button.php:269 |
+| `Card::$box` | property | src/Widget/Card.php:78 |
+| `Card::box()` | method | src/Widget/Card.php:158 |
 | `ComboBox::optionsValue()` | method | src/Widget/ComboBox.php:285 |
 | `ComboBox::valueText()` | method | src/Widget/ComboBox.php:291 |
 | `ComboBox::placeholderText()` | method | src/Widget/ComboBox.php:297 |
@@ -739,15 +738,15 @@
 | `Element::pairChecks()` | method | src/Widget/Element.php:109 |
 | `Element::onMount()` | method | src/Widget/Element.php:132 |
 | `Element::syncBox()` | method | src/Widget/Element.php:151 |
-| `Element::effectiveBox()` | method | src/Widget/Element.php:201 |
-| `Element::markNeedsBuild()` | method | src/Widget/Element.php:228 |
-| `Element::findBox()` | method | src/Widget/Element.php:247 |
-| `Element::findBoxOf()` | method | src/Widget/Element.php:277 |
-| `Element::effectiveBoxOf()` | method | src/Widget/Element.php:295 |
-| `Element::adoptBoxes()` | method | src/Widget/Element.php:313 |
-| `Element::didUpdateWidget()` | method | src/Widget/Element.php:339 |
-| `Element::applyContext()` | method | src/Widget/Element.php:355 |
-| `Element::settle()` | method | src/Widget/Element.php:397 |
+| `Element::effectiveBox()` | method | src/Widget/Element.php:209 |
+| `Element::markNeedsBuild()` | method | src/Widget/Element.php:236 |
+| `Element::findBox()` | method | src/Widget/Element.php:255 |
+| `Element::findBoxOf()` | method | src/Widget/Element.php:285 |
+| `Element::effectiveBoxOf()` | method | src/Widget/Element.php:303 |
+| `Element::adoptBoxes()` | method | src/Widget/Element.php:321 |
+| `Element::didUpdateWidget()` | method | src/Widget/Element.php:347 |
+| `Element::applyContext()` | method | src/Widget/Element.php:363 |
+| `Element::settle()` | method | src/Widget/Element.php:405 |
 | `Grid::rowOf()` | method | src/Widget/Grid.php:151 |
 | `Grid::chunk()` | method | src/Widget/Grid.php:181 |
 | `InlineEditorBox` | class | src/Widget/InlineEditorBox.php:17 |
@@ -766,6 +765,8 @@
 | `OptionPanel::maxHeightValue()` | method | src/Widget/OptionPanel.php:88 |
 | `OptionPanel::notifyClosed()` | method | src/Widget/OptionPanel.php:94 |
 | `OptionPanelState` | class | src/Widget/OptionPanel.php:110 |
+| `PopupPanel::paintsBoxChrome()` | method | src/Widget/PopupPanel.php:131 |
+| `RenderBoxWidget::paintsBoxChrome()` | method | src/Widget/RenderBoxWidget.php:34 |
 | `ScrollBarFade` | class | src/Widget/ScrollBarFade.php:9 |
 | `ScrollViewBox` | class | src/Widget/ScrollViewBox.php:10 |
 | `ScrollViewBox::make()` | method | src/Widget/ScrollViewBox.php:39 |

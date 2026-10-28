@@ -39,6 +39,15 @@ trait WidgetModifiers
      *   `apps/` 里十几处调用。基类收 `float` 会让那些子类变成"不兼容覆写"
      *   ⇒ 整个 `src/` 装载不起来。等距用法由 `paddingAll()` 覆盖。
      *
+     * ★★ **`padding` 是唯一一个"不该统一"的修饰**（S1 的边界，2026-10-28）。
+     *   这一份写 `$mods`，由 `RenderBox::layout()` 的 ②⑤ 统一施加。
+     *   但容器类（`Flex` / `LazyList` / `LazyGrid` / `PopupPanel`）**刻意覆写它**
+     *   写自己的字段 —— 因为它们要拿 padding **参与排布数学**（`RenderFlex` 在
+     *   `deflate()` 之后直接用 `padding->left` 算 pen，`LazyGrid` 把它转给内部
+     *   `Column`）。塞回 `$mods` 会让 ②⑤ 也做一次 ⇒ **双份内距**，且不报错。
+     *   ⇒ 判据：**"盒怎么让位"→ `$mods`；"布局算法怎么用这个数"→ 自己字段**。
+     *   背景/边框/圆角没有这个二义性（渲染层只画一次），所以它们统一到了 `$mods`。
+     *
      * @api
      */
     public function padding(EdgeInsets $insets): static

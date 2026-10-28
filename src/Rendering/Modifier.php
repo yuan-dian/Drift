@@ -337,7 +337,6 @@ final class Modifier
 
     // ── 读：绘制（`RenderBox::paint()` 每帧读）─────────────────────
 
-    /** 无背景 / 边框 / 阴影 ⇒ false（省一次 `paintBehind()` 调用） */
     /**
      * 底色；`null` = 没设。
      *
@@ -349,6 +348,74 @@ final class Modifier
         return $this->hasBackground ? $this->background : null;
     }
 
+    /**
+     * 视觉三字段（底 / 边 / 圆角）打包成 `BoxStyle`；三项全未设 ⇒ `null`。
+     *
+     * ## 为什么需要它（S1，2026-10-28）
+     *
+     * `BoxStyle` 曾是**第二份存储**：`BoxWidget` 子类（`Button` / `PopupPanel`）把
+     * `->background()` 写进自己的 `private ?BoxStyle $box`，而其余控件写 `$mods`。
+     * 于是同一个 API 名有两个落点，而"声明了修饰但修饰无处可去"那条守卫
+     * （`Element::syncBox()` 读 `isDefault()`）**只看得到 `$mods`** —— 另一半静默。
+     *
+     * 现在存储只有 `$mods`；`BoxStyle` 降级为 **Layout 层的渲染参数**，需要它的控件
+     * （`Button` / `PopupPanel` / `AppBar` 要交给 `Render*` 的构造器）从这里**派生**。
+     *
+     * ★ **派生不改变分层**：`paintBehind()` 画装饰层、`paintOwnChrome()` 画本体层，
+     *   两者仍是两层不同的东西。变的只是"本体样式的数据从哪来"。
+     * ★ **派生物与源幂等**：自绘 chrome 的控件会把这里派生出的值合并进 `BoxStyle`
+     *   交给 `Render*` ⇒ 同一个矩形同一颜色可能被画两遍（`paintBehind` + `paintOwnChrome`），
+     *   视觉与命令语义上都无害（值来自同一处，不可能不一致）。
+     */
+    public function boxStyle(): ?BoxStyle
+    {
+        $hasBorder = $this->hasBorder && $this->borderWidth > 0.0;
+        if (!$this->hasBackground && !$hasBorder && $this->radius === 0.0) {
+            return null;
+        }
+
+        return new BoxStyle(
+            $this->hasBackground ? $this->background : null,
+            $hasBorder ? $this->borderColor : null,
+            $hasBorder ? $this->borderWidth : 0.0,
+            $this->radius,
+        );
+    }
+
+    /**
+     * 派生一份**去掉视觉三字段**（底 / 边 / 圆角）的副本，其余字段原样保留。
+     *
+     * ## 为什么需要它（S1 的收尾）
+     *
+     * 自绘 chrome 的控件（`Button` / `AppBar` / `PopupPanel`）把"用户设的样式"从
+     * `$mods` 派生进 `BoxStyle` 交给 `Render*`，由 `paintOwnChrome()` 画。若把同一份
+     * `$mods` 原样交给盒，`RenderBox::paint()` 的 ① 会**再画一遍**。
+     *
+     * ★★ **描边不幂等**：`Paint::stroke` 是带抗锯齿的部分覆盖，同色画两遍**不等于**
+     *   画一遍 —— 实测 `golden/page` 红了两页（`ButtonsPage` 32 像素、`ListPage`
+     *   322 像素，差异全落在**边框条带**上，max Δ=13/25）。底色倒是幂等的
+     *   （不透明矩形全覆盖），所以只靠"看起来一样"发现不了这条。
+     *
+     * ★ **只剥这三项**：`shadow` 必须留着 —— `Button` 的浮起影子走
+     *   `ShadowPainter::paintOutside()`，与 `hoverElevation` 是两套，剥掉就丢了
+     *   用户显式声明的 `->shadow()`。`padding` / 尺寸 / 合成 / 弹性意图同理。
+     */
+    public function withoutBoxVisual(): self
+    {
+        if (!$this->hasBackground && !$this->hasBorder && $this->radius === 0.0) {
+            return $this;
+        }
+
+        $copy = clone $this;
+        $copy->hasBackground = false;
+        $copy->hasBorder = false;
+        $copy->borderWidth = 0.0;
+        $copy->radius = 0.0;
+
+        return $copy;
+    }
+
+    /** 无背景 / 边框 / 阴影 ⇒ false（省一次 `paintBehind()` 调用） */
     public function hasVisual(): bool
     {
         return $this->hasBackground || ($this->hasBorder && $this->borderWidth > 0.0) || $this->shadow > 0.0;
@@ -408,6 +475,9 @@ final class Modifier
      *   —— 那种情况下修饰**无处可去**，必须响亮失败而不是静默丢掉（见 `02` §11.7）。
      * ★ 不放进热路径：`layout()` / `paint()` 走的是 `hasPadding()` / `hasVisual()` /
      *   `hasCompose()` 三个窄判据，没有"全字段扫一遍"的开销。
+     * ★★ **每一个字段都必须出现在这里**：漏一个 ⇒ 那个修饰在"不产盒"的控件上是
+     *   **静默失效**（不报错、不写日志、只是没效果）。`repaintBoundary` 就漏过一整轮
+     *   （2026-10-28 补上，S1）；`ModifierTest` 用反射枚举全部 `with*()` 守着这条。
      */
     public function isDefault(): bool
     {
@@ -427,7 +497,8 @@ final class Modifier
             && \is_nan($this->basis)
             && $this->alignSelf === 0
             && !$this->center
-            && !$this->clip;
+            && !$this->clip
+            && !$this->repaintBoundary;
     }
 
     public function composeOpacity(): float

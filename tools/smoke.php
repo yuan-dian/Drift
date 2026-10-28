@@ -124,7 +124,7 @@ use Drift\Widget\Button;
 use Drift\Widget\Card;
 use Drift\Widget\CustomPaint;
 use Drift\Widget\SizedBox;
-use Drift\Widget\BoxWidget;
+use Drift\Widget\AppBar;
 use Drift\Widget\Center;
 use Drift\Widget\Column;
 use Drift\Widget\ComboBox;
@@ -2845,36 +2845,56 @@ fresh($log);
 check('Key · 封存后再给 Key 退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
 check('Key · 封存后再给 Key 写了 Errors.log', str_contains(logText($log), 'Widget 已封存'));
 
-// ⑫ 盒样式：值对象 + 中间基类（§15.7）
+// ⑫ 盒样式：**唯一存储**（S1，2026-10-28）
+// ★★ 此前是双轨：`BoxWidget` 子类把 `->background()` 写进自己的 `private ?BoxStyle`，
+//   其余控件写 `$mods`。同一个 API 名两个落点，而 `Element::syncBox()` 那条"声明了
+//   修饰但修饰无处可去"的守卫**只看得到 `$mods`** —— 另一半静默失效。
+//   S1 删掉 `BoxWidget`：产盒控件一律写 `$mods`，`BoxStyle` 降为 Layout 层的渲染
+//   参数、需要时由 `Modifier::boxStyle()` **派生**（`Button` / `PopupPanel` 这么用）。
 fresh($log);
 $boxProbe = new BoxProbe();
-check('BoxWidget · 不用样式 ⇒ 不分配 BoxStyle（零成本）', $boxProbe->box() === null);
-// ★★ W5 起 `background()` 是**所有控件**的修饰（arch-v2 `02` §11），不再是
-//   `BoxWidget` 专属。边界从"有没有这个方法"变成**分道**：`BoxWidget` 子类写
-//   `BoxStyle`（控件自带的整套样式，含主题派生默认值），裸 `Widget` 写 `mods`
-//   （给任意控件贴一层装饰）。两套存储刻意不合并。
-$plainProbe = new SealProbe();
+check('盒样式 · 不用样式 ⇒ 派生结果为 null（零成本）', $boxProbe->mods()->boxStyle() === null);
+
+// 结构判据：产盒控件上**没有** `BoxStyle` 类型的字段 ⇒ 不可能有第二份存储。
+$strayStyleFields = [];
+foreach ([Button::class, PopupPanel::class, AppBar::class] as $cls) {
+    foreach ((new \ReflectionClass($cls))->getProperties() as $prop) {
+        if ((string) $prop->getType() === BoxStyle::class) {
+            $strayStyleFields[] = $cls . '::$' . $prop->getName();
+        }
+    }
+}
 check(
-    'BoxWidget · 修饰分道：裸 Widget 也有 background()',
-    method_exists(SealProbe::class, 'background') && !is_subclass_of(SealProbe::class, BoxWidget::class)
+    '盒样式 · 产盒控件上没有 BoxStyle 字段（唯一存储是 $mods）',
+    $strayStyleFields === [],
+    \implode(', ', $strayStyleFields)
 );
+
+// 裸 Widget 与产盒控件**走同一条路**
+$plainProbe = new SealProbe();
 $plainProbe->background(Color::white());
-check('BoxWidget · 修饰分道：裸 Widget 的 background() 进 mods', $plainProbe->mods()->hasVisual());
+check('盒样式 · 裸 Widget 的 background() 进 mods', $plainProbe->mods()->hasVisual());
 
 $boxProbe->background(Color::white());
-check('BoxWidget · background 落进 BoxStyle', $boxProbe->box()?->hasBackground() === true);
-check(
-    'BoxWidget · 修饰分道：BoxWidget 子类的 background() 不进 mods',
-    $boxProbe->mods()->hasVisual() === false
-);
+check('盒样式 · 产盒控件的 background() 也进 mods（不再有第二条存储）', $boxProbe->mods()->hasVisual());
+check('盒样式 · boxStyle() 从 mods 派生出来', $boxProbe->mods()->boxStyle()?->hasBackground() === true);
 $boxProbe->border(Color::black(), 2.0);
 check(
-    'BoxWidget · 链式叠加是整体替换，不丢前一项',
-    $boxProbe->box()?->hasBackground() === true && $boxProbe->box()?->borderWidth === 2.0
+    '盒样式 · 链式叠加是整体替换，不丢前一项',
+    $boxProbe->mods()->boxStyle()?->hasBackground() === true
+        && $boxProbe->mods()->boxStyle()?->borderWidth === 2.0
 );
 $boxProbe->radius(8.0);
-check('BoxWidget · radius 独立改写', $boxProbe->box()?->radius === 8.0);
-check('BoxWidget · 链式返回自身（不产生新实例）', $boxProbe->radius(4.0) === $boxProbe);
+check('盒样式 · radius 独立改写', $boxProbe->mods()->boxStyle()?->radius === 8.0);
+check('盒样式 · 链式返回自身（不产生新实例）', $boxProbe->radius(4.0) === $boxProbe);
+
+// 派生判据的边界：只有圆角、没有底也没有边 ⇒ 仍要有 BoxStyle（不能让 radius 丢在半路）
+$radiusOnly = new BoxProbe();
+$radiusOnly->radius(6.0);
+check(
+    '盒样式 · 只设 radius（无底无边）也派生得出来',
+    $radiusOnly->mods()->boxStyle()?->radius === 6.0
+);
 
 // ⑫b 修饰是字段（arch-v2 `02` §11，M2-1）—— 值对象 + 15 个 Widget setter
 $modProbe = new SealProbe();
@@ -2980,8 +3000,8 @@ check(
 
 fresh($log);
 [$code, $output] = runCase(__FILE__, 'box', null);
-check('BoxWidget · 封存后改样式退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
-check('BoxWidget · 封存后改样式写了 Errors.log', str_contains(logText($log), 'Widget 已封存'));
+check('盒样式 · 封存后改样式退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
+check('盒样式 · 封存后改样式写了 Errors.log', str_contains(logText($log), 'Widget 已封存'));
 
 // ⑬ 主题：角色 → 值的一次解析（§11.5 / §15.7）
 fresh($log);
@@ -3098,7 +3118,7 @@ check(
 // ── 结构控件：Column / Row / Padding / Center / Spacer / Expanded（⑱）已迁出 ──────
 //   · `tests/Unit/Widget/StructureControlsTest.php` —— 建盒/子盒挂接 / 端到端 flex 分配 /
 //     Row 横主轴 / 弹性子拿全部剩余（A·B·C）/ Padding 进盒 / Center 正中·松约束·带 padding /
-//     不是 BoxWidget · 无 build() · update 换盒（16 条）
+//     不是盒控件 · 无 build() · update 换盒（16 条）
 //   ★ 纯布局，不依赖帧驱动，放 Unit 层。
 
 // ── ⑲ Text 控件 / ㉑ Each：声明层与列表 diff 已迁出 ─────────────────────────────

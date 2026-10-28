@@ -10,7 +10,6 @@ use Drift\Layout\Overflow;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderFlex;
 use Drift\Layout\RenderProxy;
-use Drift\Widget\BoxWidget;
 use Drift\Widget\Center;
 use Drift\Widget\Column;
 use Drift\Widget\Element;
@@ -23,7 +22,7 @@ use Drift\Widget\Spacer;
  * 结构控件（Column / Row / Padding / Center / Spacer / Expanded）。
  *
  * 判据（与 `tools/smoke.php` ⑱ 段一致）：
- *   ① 结构节点只管"挂接 + 布局"，不画、不进语义、不是 BoxWidget、没有 build()；
+ *   ① 结构节点只管"挂接 + 布局"，不画、不进语义、没有自己的盒样式存储、没有 build()；
  *   ② flex 分配：弹性子整组拿走全部剩余（分母只含非弹性子）—— 这是 2026-10-17 修的
  *      双重扣减病灶，A/B 是正面判据、C 是溢出行为不变守卫；
  *   ③ Center：tight 下推到正中、loose 下盒=内容尺寸且子不越界、带 padding 偏移按内容区算。
@@ -239,11 +238,30 @@ final class StructureControlsTest extends SmokeTestCase
         $this->flushChecks();
     }
 
-    public function testStructureNodesAreNotBoxWidgets(): void
+    /**
+     * 结构节点不该有**自己的盒样式存储**。
+     *
+     * ★ 原文是「不是 `BoxWidget`」—— `BoxWidget` 在 S1（2026-10-28）已删（它那三个
+     *   方法与 `Widget` 的修饰面重复，且构成了第二份样式存储）。判据改成表达本意：
+     *   **结构节点的样式只能走 `$mods`**（走 `paintBehind()` 的装饰层），不能自带
+     *   一份 `BoxStyle` 让子类去自绘 —— 那会让"结构节点没有绘制样式"这条纪律重新
+     *   变成口头约定。
+     */
+    public function testStructureNodesHaveNoOwnStyleStorage(): void
     {
+        $stray = [];
+        foreach ([Column::class, Row::class, Spacer::class] as $cls) {
+            foreach ((new \ReflectionClass($cls))->getProperties() as $prop) {
+                if ((string) $prop->getType() === \Drift\Rendering\BoxStyle::class) {
+                    $stray[] = $cls . '::$' . $prop->getName();
+                }
+            }
+        }
+
         check(
-            '结构控件 · Column / Row / Spacer 不是 BoxWidget',
-            !is_subclass_of(Column::class, BoxWidget::class) && !is_subclass_of(Row::class, BoxWidget::class),
+            '结构控件 · Column / Row / Spacer 没有自己的 BoxStyle 存储（样式只能走 mods）',
+            $stray === [],
+            \implode(', ', $stray),
         );
 
         $this->flushChecks();
