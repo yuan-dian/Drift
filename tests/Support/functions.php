@@ -58,6 +58,20 @@ if (!\function_exists('findElement')) {
     }
 }
 
+if (!\function_exists('repoRoot')) {
+    /**
+     * 仓库根目录的绝对路径。
+     *
+     * ★ 搬迁前真资源路径写的是 `__DIR__ . '/../assets/...'`（相对 `tools/`）；
+     *   测试在 `tests/Unit/Rendering/` 这类深两级的目录里，`__DIR__` 不能再用。
+     *   也别用 `getcwd()`：phpunit 从哪个目录启动都能跑，cwd 不是契约。
+     */
+    function repoRoot(): string
+    {
+        return \dirname(__DIR__, 2);
+    }
+}
+
 if (!\function_exists('smokeContext')) {
     /**
      * 320×240 的标准上下文（与 `tools/smoke.php` 同规格）。
@@ -96,6 +110,21 @@ if (!\function_exists('spinCanvas')) {
         $list->replay($canvas);
 
         return $canvas;
+    }
+}
+
+if (!\function_exists('boxOrigin')) {
+    /**
+     * 盒在客户区的绝对原点（沿父链累加相对偏移）。
+     *
+     * ★ 委派 `RenderBox::absoluteOrigin()`，**不要**在这里手抄一遍累加：
+     *   W5 之后子盒 offset 住**内容盒**坐标，"内容原点 → 边框盒原点"那一步在
+     *   `absoluteOrigin()` 里补。手抄版少补一次 ⇒ `Padding::all(24)` 的字段盒
+     *   原点算成 (0,0)，7 条框选/光标断言全红（2026-10-22 实测）。
+     */
+    function boxOrigin(\Drift\Layout\RenderBox $box): array
+    {
+        return \Drift\Layout\RenderBox::absoluteOrigin($box);
     }
 }
 

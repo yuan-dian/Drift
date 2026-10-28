@@ -24,9 +24,7 @@ use Drift\Dev\Smoke\Layout\LayoutCountBox;
 use Drift\Dev\Smoke\Layout\LayoutCountWidget;
 use Drift\Dev\Smoke\Commands\EchoCommands;
 use Drift\App\Application;
-use Drift\App\FrameClock;
 use Drift\Platform\Backdrop;
-use Drift\Platform\Win32\Win32RasterSurface;
 use Drift\Platform\Win32\Win32SkiaSurface;
 use Drift\Platform\Win32\Win32SurfaceProvider;
 use Drift\Platform\Win32\Win32WindowHost;
@@ -35,10 +33,6 @@ use Drift\App\FocusManager;
 use App\Showcase\ShowcaseApplication;
 use App\Tutorial\TutorialApplication;
 use Drift\App\Frame;
-use Drift\App\FramePhase;
-use Drift\App\Paths;
-use Drift\App\WindowStateStore;
-use Drift\Dev\Smoke\WindowState\FakeWindowHost;
 use Drift\Dev\Smoke\ErrorBoundary\BoomPage;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Smoke\Frame\TickerWidget;
@@ -49,35 +43,24 @@ use Drift\Dev\Smoke\App\FocusRingApplication;
 use Drift\Dev\Smoke\App\OverlayLabApplication;
 use Drift\App\OverlayEntry;
 use Drift\Dev\Smoke\Rendering\ProbePainter;
-use Drift\Dev\Preview\Renderer;
 use Drift\Dev\Preview\SvgSurface;
-use Drift\Dev\Smoke\App\MotionApplication;
-use Drift\Widget\AnimationController;
-use Drift\Widget\Curve;
 use Drift\Dev\Smoke\App\KeyAncestorApplication;
 use Drift\Dev\Smoke\App\CountJob;
 use Drift\Dev\Smoke\App\MenuApplication;
-use Drift\Dev\Smoke\App\FocusTwoApplication;
 use Drift\Dev\Smoke\App\LazyApplication;
-use Drift\Dev\Smoke\App\RevealApplication;
-use Drift\Dev\Smoke\App\SlowFrameApplication;
-use Drift\Dev\Smoke\Frame\FakeTimers;
 use Drift\Dev\Smoke\App\NamedBoomJob;
 use Drift\Dev\Smoke\App\NamedExitJob;
 use Drift\Dev\Smoke\App\NamedSumJob;
 use Drift\Dev\Smoke\App\ModalApplication;
-use Drift\Dev\Smoke\App\RecordingHandler;
 use Drift\Dev\Smoke\App\SmokeJobRegistry;
 use Drift\Dev\Smoke\App\TaskRow;
 use Drift\Dev\Smoke\App\TaskApplication;
 use Drift\Dev\Smoke\App\TaskRowJob;
-use Drift\Dev\Smoke\App\TaskWatcherState;
 use Drift\Dev\Smoke\App\ThrowingJob;
 use Drift\Dev\Smoke\App\SumJob;
 use Drift\App\Completion;
 use Drift\App\Io\IoPoller;
 use Drift\App\Job;
-use Drift\App\NamedJob;
 use Drift\App\ProcessTaskHost;
 use Drift\App\SyncTaskHost;
 use Drift\App\TaskHost;
@@ -86,24 +69,18 @@ use App\Users\UsersRoot;
 use App\Users\Jobs\JobRegistry;
 use App\Users\Store\MemoryUserSource;
 use App\Users\Store\LoadStatus;
-use Drift\Dev\Smoke\App\CursorApplication;
-use Drift\Dev\Smoke\App\EchoApplication;
 use Drift\Dev\Smoke\App\FailSliceJob;
 use Drift\Dev\Smoke\App\GestureApplication;
 use Drift\Dev\Smoke\App\PressLabApplication;
-use Drift\Dev\Smoke\App\TableResizeApplication;
-use Drift\Dev\Smoke\App\TableDragSelectApplication;
 use Drift\Dev\Smoke\App\TableScrollApplication;
 use Drift\Dev\Smoke\App\SemValueApplication;
 use Drift\Dev\Smoke\App\TfApplication;
-use Drift\Dev\Smoke\App\TfLabeledApplication;
 use Drift\Dev\Smoke\App\TitleBarLabApplication;
 use Drift\Dev\Smoke\App\PointerApplication;
 use Drift\Dev\Smoke\App\ScrollApplication;
 use Drift\Dev\Smoke\App\NavApplication;
 use Drift\Dev\Smoke\App\NamedSleepJob;
 use Drift\Dev\Smoke\App\SpinnerApplication;
-use Drift\Dev\Smoke\App\ToggleApplication;
 use Drift\Dev\Smoke\LeafProbe;
 use Drift\Dev\Smoke\SealProbe;
 use Drift\Dev\Smoke\State\BuildWatchWidget;
@@ -111,7 +88,6 @@ use Drift\Dev\Smoke\State\ChainPage;
 use Drift\Dev\Smoke\State\ChainProbe;
 use Drift\Dev\Smoke\State\FakeStore;
 use Drift\Dev\Smoke\State\LeafBoxFallbackWidget;
-use Drift\Dev\Smoke\State\LeafBoxState;
 use Drift\Dev\Smoke\State\LeafBoxWidget;
 use Drift\Dev\Smoke\State\LoopPage;
 use Drift\Core\Computed;
@@ -130,7 +106,6 @@ use Drift\Commands\CommandRouter;
 use Drift\Geometry\Axis;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\EdgeInsets;
-use Drift\Geometry\Point;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Scale;
 use Drift\Geometry\Size;
@@ -138,7 +113,6 @@ use Drift\Layout\LayoutSelfCheck;
 use Drift\Layout\RenderRichText;
 use Drift\Input\AcceleratorTable;
 use Drift\Input\CursorShape;
-use Drift\Input\FocusNode;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
@@ -147,9 +121,6 @@ use Drift\Input\ScrollEvent;
 use Drift\Input\SemanticsInvokeEvent;
 use Drift\Input\SemanticsSetValueEvent;
 use Drift\Input\SemanticsRole;
-use Drift\Input\TapTracker;
-use Drift\Layout\ColumnWidths;
-use Drift\Layout\ExtentWindow;
 use Drift\Layout\FlexAlign;
 use Drift\Layout\Overflow;
 use Drift\Layout\RenderAppBar;
@@ -161,23 +132,13 @@ use Drift\Layout\RenderFlex;
 use Drift\Layout\RenderScrollView;
 use Drift\Layout\RenderProxy;
 use Drift\Layout\RenderCustomPaint;
-use Drift\Layout\RenderProxyBox;
 use Drift\Layout\RenderMenuItem;
 use Drift\Layout\RenderModalHost;
 use Drift\Layout\RenderObject;
 use Drift\Layout\RenderPopupPanel;
-use Drift\Layout\RenderSpinner;
-use Drift\Layout\RenderText;
 use Drift\Layout\RenderTextField;
-use Drift\Layout\RenderToggle;
-use Drift\Layout\StackAlign;
-use Drift\Layout\StackFit;
-use Drift\Layout\ImageFit;
-use Drift\Layout\RenderImage;
 use Drift\Rendering\BoxStyle;
-use Drift\Routing\PageHostState;
 use Drift\Routing\RouteTable;
-use Drift\Widget\Offstage;
 use Drift\Rendering\CanvasCapabilities;
 use Drift\Rendering\Color;
 use Drift\Rendering\ColorToken;
@@ -186,12 +147,10 @@ use Drift\Rendering\DisplayList;
 use Drift\Rendering\DividerStyle;
 use Drift\Rendering\Gradient;
 use Drift\Rendering\ImageHandle;
-use Drift\Rendering\ImageLoader;
 use Drift\Rendering\MetricToken;
 use Drift\Rendering\Modifier;
 use Drift\Rendering\Paint;
 use Drift\Rendering\Path;
-use Drift\Rendering\PngDecoder;
 use Drift\Rendering\Shadow;
 use Drift\Rendering\RasterCanvas;
 use Drift\Rendering\RecordingCanvas;
@@ -214,8 +173,6 @@ use Drift\Text\TextLine;
 use Drift\Text\TextRole;
 use Drift\Text\TextSpan;
 use Drift\Text\TextStyle;
-use Drift\Text\TextChange;
-use Drift\Text\TextDraft;
 use Drift\Theme\SystemTheme;
 use Drift\Theme\ThemeData;
 use Drift\Widget\Activatable;
@@ -226,27 +183,20 @@ use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
 use Drift\Widget\Card;
 use Drift\Widget\CustomPaint;
-use Drift\Widget\CustomPainter;
 use Drift\Widget\SizedBox;
-use Drift\Widget\Stack;
 use Drift\Widget\ButtonVariant;
 use Drift\Widget\AppBar;
 use Drift\Widget\BoxWidget;
 use Drift\Widget\Center;
 use Drift\Widget\Column;
 use Drift\Widget\ComboBox;
-use Drift\Widget\Image;
 use Drift\Widget\Dock;
 use Drift\Widget\Drag\Draggable;
 use Drift\Widget\Drag\DragTarget;
 use Drift\Widget\Each;
 use Drift\Widget\LazyColumn;
-use Drift\Widget\LazyList;
-use Drift\Widget\LazyListState;
-use Drift\Widget\LazyRow;
 use Drift\Widget\Grid;
 use Drift\Widget\LazyGrid;
-use Drift\Widget\Scrollable;
 use Drift\Widget\ScrollView;
 use Drift\Widget\ScrollViewState;
 use Drift\Widget\SemanticsBuilder;
@@ -268,15 +218,7 @@ use Drift\Widget\SpinnerState;
 use Drift\Widget\Checkbox;
 use Drift\Widget\Radio;
 use Drift\Layout\RenderDivider;
-use Drift\Layout\RenderIcon;
-use Drift\Layout\RenderProgress;
-use Drift\Widget\Divider;
-use Drift\Widget\Toggle;
-use Drift\Widget\Icon;
 use Drift\Widget\IconButton;
-use Drift\Widget\IconName;
-use Drift\Widget\IconSet;
-use Drift\Widget\Progress;
 use Drift\Widget\SegmentedControl;
 use Drift\Widget\Segment;
 use Drift\Layout\RenderSegmentedControl;
@@ -310,15 +252,10 @@ use Drift\Widget\Table;
 use Drift\Widget\TableColumn;
 use Drift\Widget\TableColumnWidth;
 use Drift\Widget\TableSelection;
-use Drift\Widget\TableRowPicker;
-use Drift\Widget\TableSelectionMode;
 use Drift\Widget\TableSort;
-use Drift\Widget\TableSortDirection;
 use Drift\Widget\TableState;
-use Drift\Widget\InlineEditorBox;
 use Drift\Layout\RenderTable;
 use Drift\Dev\TestApp;
-use Drift\Dev\Smoke\App\TableCellEditApplication;
 
 require __DIR__ . '/autoload.php';
 
@@ -2546,449 +2483,19 @@ check(
         === CanvasCapabilities::ALL_MASK
 );
 
-// ── W8-1 图像：RasterCanvas::drawImage（最近邻 blit）────────────────────────
-// 判据全按公式推，不拟合：
-// ① 1:1 整图 ⇒ 逐像素与源 RGBA 相同（这也是"与 Skia 逐字节一致"的那一档）；
-// ② 源矩形裁剪 ⇒ 只取 src 指定的子块；
-// ③ 整数放大 N 倍 ⇒ 每个源像素铺成 N×N 的同色块（最近邻的可判定形态）；
-// ④ 越界夹紧 ⇒ 不炸、不越界写、可见部分落位正确；
-// ⑤ 半透明 ⇒ source-over 与 blend() 同式（拿解析值对）；
-// ⑥ 命令流 replay 与直接调用**逐字节相同**（OP_DRAW_IMAGE 回放路径）。
-$argb = static fn(int $r, int $g, int $b, int $a = 255): int => ($a << 24) | ($r << 16) | ($g << 8) | $b;
-$mkImage = static function (array $px): ImageHandle {
-    $rgba = '';
-    foreach ($px as $p) {
-        $rgba .= chr($p[0]) . chr($p[1]) . chr($p[2]) . chr($p[3]);
-    }
-
-    return ImageHandle::fromRgba($rgba, 2, 2);
-};
-// 2×2：左上红 / 右上绿 / 左下蓝 / 右下黄（全不透明）
-$imgQuad = $mkImage([[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255], [255, 255, 0, 255]]);
-
-// ① 1:1 整图
-$imgCanvas = new RasterCanvas(4, 4, Color::white(), Scale::of(1.0));
-$imgCanvas->drawImage($imgQuad, null, new Rect(0.0, 0.0, 2.0, 2.0));
-$imgGot = [];
-foreach ([[0, 0], [1, 0], [0, 1], [1, 1], [2, 2]] as [$ix, $iy]) {
-    $imgGot[] = $imgCanvas->pixelAt($ix, $iy)->toArgb();
-}
-check(
-    'Image · 1:1 整图 blit 逐像素 = 源 RGBA（含"盒外不动"）',
-    $imgGot === [
-        $argb(255, 0, 0), $argb(0, 255, 0), $argb(0, 0, 255), $argb(255, 255, 0),
-        $argb(255, 255, 255),
-    ],
-    'got=' . implode(',', $imgGot),
-);
-
-// ② 源矩形裁剪：只取 (1,0) 那颗绿像素，落到 (2,2)
-$imgCanvas2 = new RasterCanvas(4, 4, Color::white(), Scale::of(1.0));
-$imgCanvas2->drawImage($imgQuad, new Rect(1.0, 0.0, 1.0, 1.0), new Rect(2.0, 2.0, 1.0, 1.0));
-check(
-    'Image · 源矩形裁剪：src(1,0,1,1) ⇒ 只有 (2,2) 变绿，别处不动',
-    $imgCanvas2->pixelAt(2, 2)->toArgb() === $argb(0, 255, 0)
-        && $imgCanvas2->pixelAt(1, 1)->toArgb() === $argb(255, 255, 255)
-        && $imgCanvas2->pixelAt(0, 0)->toArgb() === $argb(255, 255, 255),
-    sprintf('p22=%d p11=%d p00=%d', $imgCanvas2->pixelAt(2, 2)->toArgb(), $imgCanvas2->pixelAt(1, 1)->toArgb(), $imgCanvas2->pixelAt(0, 0)->toArgb()),
-);
-
-// ③ 整数放大 2×：2×2 → 4×4，每个源像素铺 2×2 同色块
-$imgCanvas3 = new RasterCanvas(4, 4, Color::white(), Scale::of(1.0));
-$imgCanvas3->drawImage($imgQuad, null, new Rect(0.0, 0.0, 4.0, 4.0));
-$imgUpscaleOk = true;
-for ($uy = 0; $uy < 4; $uy++) {
-    for ($ux = 0; $ux < 4; $ux++) {
-        $want = $imgQuad->rgba()[((intdiv($uy, 2) * 2) + intdiv($ux, 2)) * 4];
-        $got = $imgCanvas3->pixelAt($ux, $uy);
-        if (ord($want) !== $got->r) {
-            $imgUpscaleOk = false;
-        }
-    }
-}
-check(
-    'Image · 整数放大 2×：每个源像素铺成 2×2 同色块（最近邻的可判定形态）',
-    $imgUpscaleOk,
-    '见逐像素核对（R 通道 = 源块 R）',
-);
-
-// ④ 越界夹紧：dst 左上角在画布外 (-1,-1)，只有右下那颗黄像素可见 ⇒ (0,0) 黄
-$imgCanvas4 = new RasterCanvas(2, 2, Color::white(), Scale::of(1.0));
-$imgCanvas4->drawImage($imgQuad, null, new Rect(-1.0, -1.0, 2.0, 2.0));
-check(
-    'Image · 越界夹紧：dst(-1,-1,2,2) ⇒ 只有源右下角可见于 (0,0)，不炸不越界',
-    $imgCanvas4->pixelAt(0, 0)->toArgb() === $argb(255, 255, 0)
-        && $imgCanvas4->pixelAt(1, 1)->toArgb() === $argb(255, 255, 255),
-    sprintf('p00=%d p11=%d', $imgCanvas4->pixelAt(0, 0)->toArgb(), $imgCanvas4->pixelAt(1, 1)->toArgb()),
-);
-
-// ⑤ 半透明：源 (0,0,0,128) 压白底 ⇒ 每通道 = round((0*128 + 255*127)/255) = 127
-$imgHalf = ImageHandle::fromRgba(chr(0) . chr(0) . chr(0) . chr(128), 1, 1);
-$imgCanvas5 = new RasterCanvas(2, 2, Color::white(), Scale::of(1.0));
-$imgCanvas5->drawImage($imgHalf, null, new Rect(0.0, 0.0, 1.0, 1.0));
-$imgHalfWant = (int) round((0 * 128 + 255 * 127) / 255);
-$imgHalfGot = $imgCanvas5->pixelAt(0, 0);
-check(
-    'Image · 半透明 source-over = blend() 同式（解析值 round((0*128+255*127)/255)）',
-    $imgHalfGot->r === $imgHalfWant && $imgHalfGot->g === $imgHalfWant && $imgHalfGot->b === $imgHalfWant
-        && $imgHalfGot->a === 255,
-    sprintf('got=(%d,%d,%d,%d) want=%d', $imgHalfGot->r, $imgHalfGot->g, $imgHalfGot->b, $imgHalfGot->a, $imgHalfWant),
-);
-
-// ⑥ 命令流 replay 与直接调用逐字节相同（OP_DRAW_IMAGE 回放路径，RenderImage 走这条）
-$imgDirect = new RasterCanvas(6, 6, Color::white(), Scale::of(1.0));
-$imgDirect->drawImage($imgQuad, null, new Rect(1.0, 1.0, 2.0, 2.0));
-$imgList = new DisplayList();
-$imgRec = new RecordingCanvas($imgList);
-$imgRec->drawImage($imgQuad, null, new Rect(1.0, 1.0, 2.0, 2.0));
-$imgReplay = new RasterCanvas(6, 6, Color::white(), Scale::of(1.0));
-$imgList->replay($imgReplay);
-check(
-    'Image · 命令流 replay 与直接调用逐字节相同（录制/回放路径等价）',
-    $imgReplay->toRgba() === $imgDirect->toRgba(),
-    'md5 direct=' . md5($imgDirect->toRgba()) . ' replay=' . md5($imgReplay->toRgba()),
-);
-
-// ⑦ 矩形裁剪生效：裁到 (0,0,1,1) 后画 2×2 ⇒ 只有 (0,0) 变红
-$imgCanvas7 = new RasterCanvas(3, 3, Color::white(), Scale::of(1.0));
-$imgCanvas7->pushClip(new Rect(0.0, 0.0, 1.0, 1.0));
-$imgCanvas7->drawImage($imgQuad, null, new Rect(0.0, 0.0, 2.0, 2.0));
-$imgCanvas7->popClip();
-check(
-    'Image · 矩形裁剪生效：clip(1×1) 内只画 (0,0)，(1,0)/(0,1) 保持白',
-    $imgCanvas7->pixelAt(0, 0)->toArgb() === $argb(255, 0, 0)
-        && $imgCanvas7->pixelAt(1, 0)->toArgb() === $argb(255, 255, 255)
-        && $imgCanvas7->pixelAt(0, 1)->toArgb() === $argb(255, 255, 255),
-    sprintf('p00=%d p10=%d p01=%d', $imgCanvas7->pixelAt(0, 0)->toArgb(), $imgCanvas7->pixelAt(1, 0)->toArgb(), $imgCanvas7->pixelAt(0, 1)->toArgb()),
-);
-
-// ⑧ 反例：全透明图 / 源全在界外 / 0 面积目标 ⇒ 不炸、不改一个像素
-//    ★ 不用 `ImageHandle::fromRgba('', 0, 0)`：构造器对 width<=0 会 Errors::report
-//      （那条是防"图坏了静默错位"的响亮失败，不是给正常调用用的）。
-$imgCanvas8 = new RasterCanvas(2, 2, Color::white(), Scale::of(1.0));
-$imgBefore8 = $imgCanvas8->toRgba();
-$imgCanvas8->drawImage(ImageHandle::fromRgba(chr(0) . chr(0) . chr(0) . chr(0), 1, 1), null, new Rect(0.0, 0.0, 1.0, 1.0));
-$imgCanvas8->drawImage($imgQuad, new Rect(5.0, 5.0, 1.0, 1.0), new Rect(0.0, 0.0, 1.0, 1.0));
-$imgCanvas8->drawImage($imgQuad, null, new Rect(0.0, 0.0, 0.0, 0.0));
-check(
-    'Image · 反例：全透明图 / 源全在界外 / 目标 0 面积 ⇒ 一个像素都不改',
-    $imgCanvas8->toRgba() === $imgBefore8,
-    'md5=' . md5($imgCanvas8->toRgba()),
-);
-
-// ══ W8-1 · PNG 解码 / ImageLoader / Image 控件 ═══════════════════════════════
-// ★ 解码器的判据**全部对"按规范手算出来的 RGBA"**，不对"再编回去的字节" ——
-//   编解码共用一份实现时同一个 bug 会两边一起错（量具自检纪律）。下面这个
-//   编码器只负责**造输入**，输出侧一律断言解析值。
-$pngChunk = static function (string $type, string $data): string {
-    return pack('N', strlen($data)) . $type . $data . pack('N', crc32($type . $data));
-};
-
-/**
- * 造一份 PNG 字节流。`$rows` = **原始样本**（每行长度 = stride），`$filter`
- * 对所有行统一（五种滤波各造一份就能把反滤波全走一遍）。
- */
-$pngMake = static function (
-    int $w,
-    int $h,
-    int $colorType,
-    int $depth,
-    array $rows,
-    int $filter = 0,
-    string $extra = '',
-    int $interlace = 0,
-) use ($pngChunk): string {
-    $channels = 1;
-    if ($colorType === 2) {
-        $channels = 3;
-    } elseif ($colorType === 4) {
-        $channels = 2;
-    } elseif ($colorType === 6) {
-        $channels = 4;
-    }
-    $stride = intdiv($w * $channels * $depth + 7, 8);
-    $bpp = intdiv($channels * $depth + 7, 8);
-    if ($bpp < 1) {
-        $bpp = 1;
-    }
-
-    $raw = '';
-    $prev = array_fill(0, $stride, 0);
-    foreach ($rows as $line) {
-        $raw .= chr($filter);
-        for ($i = 0; $i < $stride; $i++) {
-            $a = $i >= $bpp ? $line[$i - $bpp] : 0;
-            $b = $prev[$i];
-            $c = $i >= $bpp ? $prev[$i - $bpp] : 0;
-            if ($filter === 0) {
-                $v = $line[$i];
-            } elseif ($filter === 1) {
-                $v = $line[$i] - $a;
-            } elseif ($filter === 2) {
-                $v = $line[$i] - $b;
-            } elseif ($filter === 3) {
-                $v = $line[$i] - (($a + $b) >> 1);
-            } else {
-                $p = $a + $b - $c;
-                $pa = abs($p - $a);
-                $pb = abs($p - $b);
-                $pc = abs($p - $c);
-                $pred = $c;
-                if ($pa <= $pb && $pa <= $pc) {
-                    $pred = $a;
-                } elseif ($pb <= $pc) {
-                    $pred = $b;
-                }
-                $v = $line[$i] - $pred;
-            }
-            $raw .= chr($v & 0xFF);
-        }
-        $prev = $line;
-    }
-
-    return "\x89PNG\r\n\x1a\n"
-        . $pngChunk('IHDR', pack('NN', $w, $h) . chr($depth) . chr($colorType) . "\x00\x00" . chr($interlace))
-        . $extra
-        . $pngChunk('IDAT', gzcompress($raw, 9))
-        . $pngChunk('IEND', '');
-};
-
-/** 读一个像素成 "r,g,b,a" 字符串（断言里好读） */
-$pngPx = static function (ImageHandle $image, int $x, int $y): string {
-    $s = $image->rgba();
-    $o = ($y * $image->width + $x) * 4;
-
-    return ord($s[$o]) . ',' . ord($s[$o + 1]) . ',' . ord($s[$o + 2]) . ',' . ord($s[$o + 3]);
-};
-
-// ① 五种滤波：同一份 2×2 RGBA 样本，换滤波类型编，解出来必须逐像素相同
-$pngFilterOk = true;
-$pngFilterNote = [];
-foreach ([0, 1, 2, 3, 4] as $pngF) {
-    // 相邻像素刻意不相等 ⇒ Sub/Up/Average/Paeth 的预测器真的被用到
-    $pngRows = [
-        [10, 20, 30, 255, 40, 50, 60, 255],
-        [70, 80, 90, 255, 100, 110, 120, 255],
-    ];
-    $pngImg = PngDecoder::decode($pngMake(2, 2, 6, 8, $pngRows, $pngF), 'filter-' . $pngF);
-    $pngGood = $pngImg !== null
-        && $pngPx($pngImg, 0, 0) === '10,20,30,255'
-        && $pngPx($pngImg, 1, 0) === '40,50,60,255'
-        && $pngPx($pngImg, 0, 1) === '70,80,90,255'
-        && $pngPx($pngImg, 1, 1) === '100,110,120,255';
-    if (!$pngGood) {
-        $pngFilterOk = false;
-    }
-    $pngFilterNote[] = 'f' . $pngF . ($pngGood ? ' ok' : ' FAIL');
-}
-check(
-    'PNG · 五种滤波（None/Sub/Up/Average/Paeth）解码 = 原始样本',
-    $pngFilterOk,
-    implode(' / ', $pngFilterNote),
-);
-
-// ② 色彩类型 2（真彩无 alpha）⇒ alpha 补 255
-$pngRgb = PngDecoder::decode($pngMake(1, 2, 2, 8, [[200, 100, 50], [10, 20, 30]]), 'rgb');
-check(
-    'PNG · 色彩类型 2（RGB）⇒ alpha 补 255',
-    $pngRgb !== null && $pngPx($pngRgb, 0, 0) === '200,100,50,255' && $pngPx($pngRgb, 0, 1) === '10,20,30,255',
-    $pngRgb === null ? 'null' : $pngPx($pngRgb, 0, 0) . ' / ' . $pngPx($pngRgb, 0, 1),
-);
-
-// ③ 色彩类型 0（灰度）⇒ r=g=b
-$pngGray = PngDecoder::decode($pngMake(1, 2, 0, 8, [[128], [255]]), 'gray');
-check(
-    'PNG · 色彩类型 0（灰度 8 位）⇒ r=g=b',
-    $pngGray !== null && $pngPx($pngGray, 0, 0) === '128,128,128,255' && $pngPx($pngGray, 0, 1) === '255,255,255,255',
-    $pngGray === null ? 'null' : $pngPx($pngGray, 0, 0) . ' / ' . $pngPx($pngGray, 0, 1),
-);
-
-// ④ 色彩类型 3（调色板）+ tRNS：索引 0 全透、索引 1 半透、索引 2 不透明
-$pngPlte = $pngChunk('PLTE', chr(10) . chr(20) . chr(30) . chr(40) . chr(50) . chr(60) . chr(70) . chr(80) . chr(90));
-$pngTrns = $pngChunk('tRNS', chr(0) . chr(128));
-$pngPal = PngDecoder::decode($pngMake(3, 1, 3, 8, [[0, 1, 2]], 0, $pngPlte . $pngTrns), 'palette');
-check(
-    'PNG · 色彩类型 3（调色板）+ tRNS：索引色与 alpha 表都对',
-    $pngPal !== null
-        && $pngPx($pngPal, 0, 0) === '10,20,30,0'
-        && $pngPx($pngPal, 1, 0) === '40,50,60,128'
-        && $pngPx($pngPal, 2, 0) === '70,80,90,255',
-    $pngPal === null ? 'null' : $pngPx($pngPal, 0, 0) . ' | ' . $pngPx($pngPal, 1, 0) . ' | ' . $pngPx($pngPal, 2, 0),
-);
-
-// ⑤ 16 位取高字节：0x12FF → 0x12
-$png16 = PngDecoder::decode(
-    $pngMake(1, 1, 6, 16, [[0x12, 0xFF, 0x34, 0xFF, 0x56, 0xFF, 0xFF, 0xFF]]),
-    'rgba16',
-);
-check(
-    'PNG · 16 位取高字节（0x12FF→0x12）',
-    $png16 !== null && $pngPx($png16, 0, 0) === '18,52,86,255',
-    $png16 === null ? 'null' : $pngPx($png16, 0, 0),
-);
-
-// ⑥ 1 位灰度：位打包（MSB 优先），0 → 黑、1 → 白
-//    两个像素 = 1 字节：pixel0 在 bit7、pixel1 在 bit6 ⇒ [0,1] = 0b0100_0000 = 64
-$png1bit = PngDecoder::decode($pngMake(2, 1, 0, 1, [[64]]), 'gray1');
-check(
-    'PNG · 1 位灰度（MSB 打包）⇒ 0/1 拉伸成 0/255',
-    $png1bit !== null && $pngPx($png1bit, 0, 0) === '0,0,0,255' && $pngPx($png1bit, 1, 0) === '255,255,255,255',
-    $png1bit === null ? 'null' : $pngPx($png1bit, 0, 0) . ' / ' . $pngPx($png1bit, 1, 0),
-);
-
-// ⑦ 真资源文件：assets/demo/quad.png（四象限 + 中心白点）
-$pngAsset = PngDecoder::decodeFile(__DIR__ . '/../assets/demo/quad.png');
-check(
-    'PNG · 真文件 assets/demo/quad.png（64×64 四象限 + 中心白点）',
-    $pngAsset !== null
-        && $pngAsset->width === 64 && $pngAsset->height === 64
-        && $pngPx($pngAsset, 8, 8) === '220,40,40,255'
-        && $pngPx($pngAsset, 56, 8) === '40,170,80,255'
-        && $pngPx($pngAsset, 8, 56) === '40,90,210,255'
-        && $pngPx($pngAsset, 56, 56) === '235,190,40,255'
-        && $pngPx($pngAsset, 32, 32) === '255,255,255,255',
-    $pngAsset === null ? 'null' : $pngPx($pngAsset, 8, 8) . ' / ' . $pngPx($pngAsset, 32, 32),
-);
-
-// ⑧ 反例：签名错 / 截断 / 隔行 / 位深非法 ⇒ null + **每条都留痕**
-$pngDiagBefore = count(Errors::recentDiagnostics());
-$pngBad1 = PngDecoder::decode('not a png at all', 'bad-signature');
-$pngBad2 = PngDecoder::decode(substr($pngMake(2, 2, 6, 8, [[1, 2, 3, 4, 5, 6, 7, 8], [9, 10, 11, 12, 13, 14, 15, 16]]), 0, 20), 'truncated');
-$pngBad3 = PngDecoder::decode($pngMake(1, 1, 6, 8, [[1, 2, 3, 4]], 0, '', 1), 'interlaced');
-$pngBad4 = PngDecoder::decode($pngMake(1, 1, 2, 4, [[1, 2]]), 'bad-depth');
-$pngBad5 = PngDecoder::decodeFile(__DIR__ . '/../assets/demo/definitely-missing.png');
-$pngDiagAfter = count(Errors::recentDiagnostics());
-check(
-    'PNG · 反例五条（签名错/截断/隔行/位深非法/文件不存在）⇒ 全部 null 且各留一条诊断',
-    $pngBad1 === null && $pngBad2 === null && $pngBad3 === null && $pngBad4 === null && $pngBad5 === null
-        && $pngDiagAfter - $pngDiagBefore === 5,
-    sprintf('nulls=%s 诊断 +%d', implode(',', array_map(static fn(?ImageHandle $i): string => $i === null ? 'null' : 'ok', [$pngBad1, $pngBad2, $pngBad3, $pngBad4, $pngBad5])), $pngDiagAfter - $pngDiagBefore),
-);
-
-// ⑨ ImageLoader：候选目录解析 + **缓存命中同一实例** + 缺失留痕
-ImageLoader::clearCache();
-$ldrA = ImageLoader::load('demo/quad.png');
-$ldrB = ImageLoader::load('demo/quad.png');
-check(
-    'ImageLoader · 相对路径按候选目录解析，第二次命中缓存（同一实例，不重复解码）',
-    $ldrA !== null && $ldrA === $ldrB && ImageLoader::cacheSize() === 1,
-    sprintf('a=%s b=%s cache=%d', $ldrA === null ? 'null' : 'ok', $ldrB === null ? 'null' : 'ok', ImageLoader::cacheSize()),
-);
-$ldrAbs = __DIR__ . '/../assets/demo/quad.png';
-$ldrResolved = ImageLoader::resolve($ldrAbs);
-check(
-    'ImageLoader · 绝对路径原样使用（不往候选目录上拼）',
-    $ldrResolved !== null && realpath($ldrResolved) === realpath($ldrAbs),
-    'resolved=' . ($ldrResolved ?? 'null'),
-);
-
-// ⑩ RenderImage 几何：自然尺寸 / 只给一边按比例推 / 内禀与实排一致
-$imgQuadAsset = ImageLoader::load('demo/quad.png'); // 64×64
-$imgStripAsset = ImageLoader::load('demo/strip.png'); // 96×24
-$boxNat = new RenderImage($imgQuadAsset, ImageFit::Contain, 0.0, 0.0);
-$natSize = $boxNat->layout(new BoxConstraints(0.0, INF, 0.0, INF));
-check(
-    'Image · 自然尺寸 = 原图像素尺寸（64×64）',
-    abs($natSize->width - 64.0) < 0.01 && abs($natSize->height - 64.0) < 0.01,
-    sprintf('%.2f×%.2f', $natSize->width, $natSize->height),
-);
-$boxWOnly = new RenderImage($imgStripAsset, ImageFit::Contain, 48.0, 0.0);
-$wOnlySize = $boxWOnly->layout(new BoxConstraints(0.0, INF, 0.0, INF));
-check(
-    'Image · 只给宽 48（原图 96×24）⇒ 高按比例 = 12',
-    abs($wOnlySize->width - 48.0) < 0.01 && abs($wOnlySize->height - 12.0) < 0.01,
-    sprintf('%.2f×%.2f', $wOnlySize->width, $wOnlySize->height),
-);
-check(
-    'Image · 内禀 = 实排（contentIntrinsic* 与 performLayout 同式）',
-    abs($boxWOnly->intrinsicWidth(0.0) - 48.0) < 0.01 && abs($boxWOnly->intrinsicHeight(0.0) - 12.0) < 0.01,
-    sprintf('intr=%.2f×%.2f', $boxWOnly->intrinsicWidth(0.0), $boxWOnly->intrinsicHeight(0.0)),
-);
-
-// ⑪ RenderImage 像素：Contain 在方盒里 letterbox（2×1 图进 4×4 盒 ⇒ 上下各留 1 行）
-//     scale = min(4/2, 4/1) = 2 ⇒ dst = (0, 1, 4, 2)
-$imgTwoByOne = ImageHandle::fromRgba(
-    chr(220) . chr(40) . chr(40) . chr(255) . chr(40) . chr(170) . chr(80) . chr(255),
-    2,
-    1,
-);
-$boxContain = new RenderImage($imgTwoByOne, ImageFit::Contain, 4.0, 4.0);
-$boxContain->layout(new BoxConstraints(4.0, 4.0, 4.0, 4.0));
-$cvContain = new RasterCanvas(4, 4, Color::white(), Scale::of(1.0));
-$boxContain->paint($cvContain);
-check(
-    'Image · Contain 在方盒里 letterbox（上下留白、左右铺满、比例不变形）',
-    $cvContain->pixelAt(0, 1)->toArgb() === $argb(220, 40, 40)
-        && $cvContain->pixelAt(0, 2)->toArgb() === $argb(220, 40, 40)
-        && $cvContain->pixelAt(3, 1)->toArgb() === $argb(40, 170, 80)
-        && $cvContain->pixelAt(0, 0)->toArgb() === $argb(255, 255, 255)
-        && $cvContain->pixelAt(0, 3)->toArgb() === $argb(255, 255, 255),
-    sprintf('(0,0)=%d (0,1)=%d (0,2)=%d (3,1)=%d (0,3)=%d', $cvContain->pixelAt(0, 0)->toArgb(), $cvContain->pixelAt(0, 1)->toArgb(), $cvContain->pixelAt(0, 2)->toArgb(), $cvContain->pixelAt(3, 1)->toArgb(), $cvContain->pixelAt(0, 3)->toArgb()),
-);
-
-// ⑫ Cover 的**裁源矩形**：4×2 图进 2×4 盒 ⇒ 盒更窄 ⇒ 保高裁宽
-//     boxAspect=0.5, imgAspect=2 ⇒ sw = ih*0.5 = 1, sh = ih = 2 ⇒ src=(1.5, 0, 1, 2), dst=(0,0,2,4)
-$imgFourByTwo = ImageHandle::fromRgba(str_repeat("\x00\x00\x00\xFF", 8), 4, 2);
-$boxCover = new RenderImage($imgFourByTwo, ImageFit::Cover, 2.0, 4.0);
-$boxCover->layout(new BoxConstraints(2.0, 2.0, 4.0, 4.0));
-$GLOBALS['DRIFT_SMOKE_SKIA_CALLS'] = [];
-$cvCover = new SkiaCanvas(2, 4, null, Scale::of(1.0));
-$boxCover->paint($cvCover);
-$coverCall = null;
-foreach ($GLOBALS['DRIFT_SMOKE_SKIA_CALLS'] as $skCall) {
-    if ($skCall[0] === 'draw_image') {
-        $coverCall = $skCall;
-    }
-}
-check(
-    'Image · Cover 用**裁源矩形**（不是裁目标）：src=(1.5,0,1,2) dst=(0,0,2,4)，双端收到同一设备矩形',
-    $coverCall !== null
-        && abs($coverCall[4] - 1.5) < 0.01 && abs($coverCall[5]) < 0.01
-        && abs($coverCall[6] - 1.0) < 0.01 && abs($coverCall[7] - 2.0) < 0.01
-        && abs($coverCall[8]) < 0.01 && abs($coverCall[9]) < 0.01
-        && abs($coverCall[10] - 2.0) < 0.01 && abs($coverCall[11] - 4.0) < 0.01
-        && $coverCall[12] === true,
-    $coverCall === null ? 'no draw_image call' : implode(',', array_slice($coverCall, 4)),
-);
-
-// ⑬ Image 控件：走 createRenderObject，源来自资源路径；只给宽按比例
-$imgWidget = Image::make()->asset('demo/strip.png')->width(48.0)->fit(ImageFit::Contain);
-$imgWidgetBox = $imgWidget->createRenderObject(smokeContext());
-$imgWidgetSize = $imgWidgetBox->layout(new BoxConstraints(0.0, INF, 0.0, INF));
-check(
-    'Image 控件 · asset() 走 ImageLoader，只给宽 48 ⇒ 48×12',
-    abs($imgWidgetSize->width - 48.0) < 0.01 && abs($imgWidgetSize->height - 12.0) < 0.01,
-    sprintf('%.2f×%.2f', $imgWidgetSize->width, $imgWidgetSize->height),
-);
-
-// ⑭ Image 控件反例：资源不存在 ⇒ 退回 1×1 透明占位（不炸、不静默空白报错）
-$imgMissing = Image::make()->asset('demo/no-such-image.png');
-$imgMissingBox = $imgMissing->createRenderObject(smokeContext());
-$imgMissingSize = $imgMissingBox->layout(new BoxConstraints(0.0, INF, 0.0, INF));
-$cvMissing = new RasterCanvas(2, 2, Color::white(), Scale::of(1.0));
-$imgMissingBox->paint($cvMissing);
-check(
-    'Image 控件 · 缺图 ⇒ 1×1 透明占位（尺寸退化 + 画不出墨，诊断已留痕）',
-    abs($imgMissingSize->width - 1.0) < 0.01 && abs($imgMissingSize->height - 1.0) < 0.01
-        && $cvMissing->pixelAt(0, 0)->toArgb() === $argb(255, 255, 255),
-    sprintf('%.2f×%.2f', $imgMissingSize->width, $imgMissingSize->height),
-);
-
-// ⑮ Image 控件 · 内存句柄路径（image() 不碰文件系统）
-$imgFromHandle = Image::make()->image($imgQuadAsset)->width(32.0)->height(32.0)->fit(ImageFit::Fill);
-$imgFromHandleBox = $imgFromHandle->createRenderObject(smokeContext());
-$imgFromHandleSize = $imgFromHandleBox->layout(new BoxConstraints(0.0, INF, 0.0, INF));
-$cvHandle = new RasterCanvas(32, 32, Color::white(), Scale::of(1.0));
-$imgFromHandleBox->paint($cvHandle);
-check(
-    'Image 控件 · image() 内存句柄（32×32 Fill）⇒ 左上红、右上绿、右下黄',
-    abs($imgFromHandleSize->width - 32.0) < 0.01 && abs($imgFromHandleSize->height - 32.0) < 0.01
-        && $cvHandle->pixelAt(4, 4)->toArgb() === $argb(220, 40, 40)
-        && $cvHandle->pixelAt(28, 4)->toArgb() === $argb(40, 170, 80)
-        && $cvHandle->pixelAt(28, 28)->toArgb() === $argb(235, 190, 40),
-    sprintf('%.2f×%.2f (4,4)=%d (28,4)=%d (28,28)=%d', $imgFromHandleSize->width, $imgFromHandleSize->height, $cvHandle->pixelAt(4, 4)->toArgb(), $cvHandle->pixelAt(28, 4)->toArgb(), $cvHandle->pixelAt(28, 28)->toArgb()),
-);
-
+// ── W8-1 图像（drawImage / PNG 解码 / ImageLoader / Image 控件）已迁出 ───────
+//   · `tests/Unit/Rendering/DrawImageTest.php`（8）—— 1:1 逐像素 / 源矩形裁剪 /
+//     整数放大最近邻 / 越界夹紧 / 半透明 = blend 同式 / replay 与直调等价 /
+//     矩形裁剪 / 反例（全透明·源越界·0 面积）一个像素不改
+//   · `tests/Unit/Rendering/PngDecoderTest.php`（8）—— 五种滤波 / 色彩类型 0·2·3（含 tRNS）/
+//     16 位取高字节 / 1 位 MSB 打包 / 真文件 quad.png / 反例五条各留一条诊断
+//   · `tests/Feature/Rendering/ImageLoaderTest.php`（2）—— 候选目录 + 缓存命中同一实例 /
+//     绝对路径原样使用
+//   · `tests/Feature/Widget/ImageTest.php`（8）—— 自然尺寸 / 只给宽按比例 / 内禀 = 实排 /
+//     Contain letterbox / Cover **裁源**（量具换成了 `OP_DRAW_IMAGE` 的实参：被测对象
+//     产出的是命令流，"是不是裁源"在这层就定死了）/ asset 走 Loader / 缺图 1×1 占位 /
+//     内存句柄
+//   ★ 真资源路径改用 `repoRoot()`：原写法 `__DIR__ . '/../assets'` 只在 `tools/` 下成立。
 // ── W1/L3-1 路径（`05` §3 / §12.2 #1–#4）──────────────────────────────────
 // ★ 这一波的四条夹具全都要"量与已知几何的差"，因为 drawPath 是**新算法**
 //   （扫描线 + 奇偶），而新算法最贵的失败是"画出来但形状不对"。
@@ -8849,550 +8356,18 @@ if (is_file($log)) {
     unlink($log);
 }
 
-// ── ㊷ M5：`LazyColumn` 虚拟列表（按视口造子层）──────────────────────────────
-//   虚拟化的定义是"**没看见的行不存在**"：没有 Widget、没有 Element、没有盒。
-//   三线判据 ——
-//   ① **窗口只覆盖视口**：5000 / 20000 行都只造 5 行（视口 240 ÷ 行高 56）。
-//      全量列表随行数**线性**变慢（`_build/bench-list3.php` 实测：20000 行
-//      mount+layout 2.8s），虚拟列表与行数无关。
-//   ② **坐标链**：窗在完整内容里的起点（`sliceOrigin`）进子盒 offset ⇒
-//      "画在哪 = 点在哪"（与 padding / 滚动偏移同一条纪律）。
-//   ③ **绘制透明**：同一偏移下 SVG 与全量列表**逐字节一致** —— 虚拟化不许改观感。
-//   ★ 反例自检三发：① 窗口改成"全部行" ⇒ 前两条红（行数变 5000）；
-//   ② `sliceOrigin` 恒置 0 ⇒ "滚一格 ⇒ 子盒 offsetY = −8" 红（会得 −48）；
-//   ③ `maxScroll` 按窗长算 ⇒ 可滚上限红（280 而不是 1119760）。
-$lazyRows = static function (int $count): array {
-    $rows = [];
-    for ($i = 0; $i < $count; $i++) {
-        $rows[] = $i;
-    }
-
-    return $rows;
-};
-
-$lazyBuild = static function (int $count, float $extent, ?EdgeInsets $pad = null) use ($lazyRows): LazyColumn {
-    $widget = LazyColumn::make($extent)->items(
-        $lazyRows($count),
-        static fn(int $i): Widget => Text::make('行 ' . $i),
-    );
-
-    return $pad === null ? $widget : $widget->padding($pad);
-};
-
-/** 挂树 + 按 320×240 布局（smokeContext 的规格） */
-$lazyMount = static function (LazyList $widget): Element {
-    $element = $widget->createElement();
-    $element->mount(null, smokeContext());
-    $element->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
-
-    return $element;
-};
-
-/** 窗口里实际造了几行（= Column 的直接子节点数） */
-$lazyKids = static function (Element $root): int {
-    $column = findElement($root, static fn(Element $e): bool => $e->widget() instanceof Column);
-    $n = 0;
-    $column?->visitChildren(static function (Element $child) use (&$n): void {
-        $n++;
-    });
-
-    return $n;
-};
-
-$lazyStateOf = static function (Element $root): ?LazyListState {
-    $hit = findElement(
-        $root,
-        static fn(Element $e): bool => $e instanceof StatefulElement && $e->state() instanceof LazyListState,
-    );
-
-    $state = $hit instanceof StatefulElement ? $hit->state() : null;
-
-    return $state instanceof LazyListState ? $state : null;
-};
-
-$lazyColumnBoxOf = static function (Element $root): ?RenderBox {
-    return findElement($root, static fn(Element $e): bool => $e->widget() instanceof Column)?->renderObject();
-};
-
-// ① 窗口只覆盖视口：视口 240 / 行高 56 ⇒ 5 行（ceil(240/56) = 5）
-$lazySmall = $lazyMount($lazyBuild(5000, 56.0));
-check(
-    'Lazy · 窗口只造视口覆盖的行（5000 行 ⇒ 5 行，不是 5000）',
-    $lazyKids($lazySmall) === 5,
-    (string) $lazyKids($lazySmall),
-);
-
-// ② 与行数无关：20000 行仍然 5 行（这是虚拟化与全量列表的分界判据）
-$lazyBig = $lazyMount($lazyBuild(20000, 56.0));
-check(
-    'Lazy · 窗口行数与总行数无关（20000 行 ⇒ 仍 5 行）',
-    $lazyKids($lazyBig) === 5,
-    (string) $lazyKids($lazyBig),
-);
-
-// ③ 可滚上限按**完整内容**算：20000×56 − 240 = 1119760
-//    （按窗长算会得到 280 —— 滚动条会假装"只有一屏"）
-$lazyMax = $lazyBig->effectiveBox()?->maxScroll(Axis::Vertical) ?? -1.0;
-check(
-    'Lazy · maxScroll = 完整内容 − 视口（20000×56−240 = 1119760，不是窗长）',
-    $lazyMax === 1119760.0,
-    (string) $lazyMax,
-);
-
-// ④ 滚到 400：第 7 行是窗的第一行（400 ÷ 56 = 7.14）⇒ 窗起点 392
-//    ⇒ 子盒 offsetY = −(400 − 392) = −8（★ sliceOrigin 的正负号判据）
-$lazyState = $lazyStateOf($lazyBig);
-$lazyState?->scrollBy(400.0);
-$lazyBig->settle();
-$lazyBig->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
-$lazyCol = $lazyColumnBoxOf($lazyBig);
-check(
-    'Lazy · 滚动 400 ⇒ 窗起点 392、子盒 offsetY = −8（窗在完整内容里的位置进坐标链）',
-    $lazyCol?->offsetY() === -8.0 && $lazyState?->offset() === 400.0,
-    'offsetY=' . ($lazyCol?->offsetY() ?? -1.0) . ' offset=' . ($lazyState?->offset() ?? -1.0),
-);
-
-// ⑤ 命中跟随窗：视口 y=10 落在第 7 行（−8..48）⇒ 命中盒的绝对 y 必须也是 −8
-$lazyHit = $lazyBig->effectiveBox()?->hitTest(100.0, 10.0);
-$lazyHitY = $lazyHit === null ? null : boxOrigin($lazyHit)[1];
-check(
-    'Lazy · 命中跟随窗：视口 (100,10) 命中第 7 行，绝对 y = −8（画在哪 = 点在哪）',
-    $lazyHitY === -8.0,
-    $lazyHitY === null ? 'miss' : (string) $lazyHitY,
-);
-
-// ⑥ 上内边距进 sliceOrigin：offset 0 / pad.top 24 ⇒ 第一行画在 y = 24
-$lazyPad = $lazyMount($lazyBuild(100, 56.0, EdgeInsets::only(0.0, 24.0, 0.0, 0.0)));
-$lazyPadCol = $lazyColumnBoxOf($lazyPad);
-check(
-    'Lazy · 上内边距是内容的一部分（pad.top 24 ⇒ 子盒下移 +24）',
-    $lazyPadCol?->offsetY() === 24.0,
-    (string) ($lazyPadCol?->offsetY() ?? -1.0),
-);
-
-// ⑦ 绘制透明：同一偏移下 SVG 与全量列表逐字节一致
-$lazySvgOf = static function (float $offset, bool $virtual): string {
-    $rows = [];
-    for ($i = 0; $i < 300; $i++) {
-        $rows[] = $i;
-    }
-    $rowOf = static fn(int $i): Widget => SizedBox::make(Text::make('行 ' . $i))->height(56.0);
-
-    $root = $virtual
-        ? LazyColumn::make(56.0)->items($rows, $rowOf)
-        : ScrollView::make(
-            Column::make()->children([Each::make(static fn(int $i): int => $i)->items($rows, $rowOf)])
-        );
-
-    return (new Renderer(new SvgSurface(), smokeContext()->metrics(), ThemeData::light()))->render(
-        $root,
-        320.0,
-        240.0,
-        1.0,
-        static function (Element $el) use ($offset, $virtual): void {
-            if ($virtual) {
-                $st = findElement(
-                    $el,
-                    static fn(Element $e): bool => $e instanceof StatefulElement && $e->state() instanceof LazyListState,
-                )?->state();
-            } else {
-                $st = findElement(
-                    $el,
-                    static fn(Element $e): bool => $e instanceof StatefulElement && $e->state() instanceof ScrollViewState,
-                )?->state();
-            }
-            if ($st instanceof Scrollable) {
-                $st->scrollBy($offset);
-            }
-        },
-    );
-};
-// ★ 先跑一发预热：`DeterministicFontManager` 的字形表是**懒加载**的，第一次
-//   排版会顺带把它建起来（建表前后的度量能差几像素）⇒ 不预热的话"第一份 SVG
-//   与第二份不同"会伪装成虚拟化的缺陷。预热后两份都走同一份已建好的度量。
-$lazySvgOf(0.0, true);
-$lazyPairs = [];
-foreach ([0.0, 400.0] as $off) {
-    $lazyPairs[(string) $off] = [$lazySvgOf($off, false), $lazySvgOf($off, true)];
-}
-$lazySame = true;
-$lazySizes = [];
-foreach ($lazyPairs as $off => [$eachSvg, $virtualSvg]) {
-    $lazySame = $lazySame && $eachSvg === $virtualSvg;
-    $lazySizes[] = sprintf('%s: %d/%d', $off, strlen($eachSvg), strlen($virtualSvg));
-}
-check(
-    'Lazy · 绘制透明：offset 0 与 400 下与全量列表的 SVG 逐字节一致',
-    $lazySame,
-    implode(' · ', $lazySizes),
-);
-
-// ⑧ 应用层：滚轮经 `Scrollable` 路由到 `LazyListState`（接口的第一个真实消费者）
-$lazyApp = new LazyApplication();
-$lazyApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
-$lazyApp->dispatchInput(ScrollEvent::make(150.0, 100.0, 1.0));   // 一格 = 48px
-$lazyApp->frame(16.0, BoxConstraints::loose(new Size(300.0, 200.0)));
-$lazyAppState = $lazyApp->lazyState();
-$lazyAppBox = $lazyApp->scrollBox();
-check(
-    'Lazy · 滚轮一格 ⇒ offset 48（`Scrollable` 接口路由到 LazyListState）',
-    $lazyAppState?->offset() === 48.0,
-    (string) ($lazyAppState?->offset() ?? -1.0),
-);
-// 行高 20 ⇒ 窗起点 floor(48/20)×20 = 40 ⇒ 子盒 offsetY = −8
-check(
-    'Lazy · 滚轮后窗滑两行（起点 40 ⇒ 子盒 offsetY = −8）',
-    $lazyAppBox?->maxScroll(Axis::Vertical) === 9800.0
-        && findElement(
-            $lazyApp->root(),
-            static fn(Element $e): bool => $e->widget() instanceof Column,
-        )?->renderObject()?->offsetY() === -8.0,
-    'maxScroll=' . ($lazyAppBox?->maxScroll(Axis::Vertical) ?? -1.0),
-);
-
-// ⑨–⑬ 横向（`LazyRow`）：轴是**一个参数**，不是一份拷贝。
-//   ★ 判据选"确定会变"的量：视口 320 **宽** / 格 56 ⇒ 6 列（ceil(320/56)）；
-//     纵向同规格是 5 行（240/56）—— 两个数字不同本身就是"取的是 width 不是
-//     height"的证据（若误用纵向公式，这里会得 5）。
-$lazyRowKids = static function (Element $root): int {
-    $row = findElement($root, static fn(Element $e): bool => $e->widget() instanceof Row);
-    $n = 0;
-    $row?->visitChildren(static function (Element $child) use (&$n): void {
-        $n++;
-    });
-
-    return $n;
-};
-
-$lazyRowBuild = static function (int $count, float $extent, ?EdgeInsets $pad = null) use ($lazyRows): LazyRow {
-    $widget = LazyRow::make($extent)->items(
-        $lazyRows($count),
-        static fn(int $i): Widget => Text::make('格 ' . $i),
-    );
-
-    return $pad === null ? $widget : $widget->padding($pad);
-};
-
-$lazyRowBoxOf = static function (Element $root): ?RenderBox {
-    return findElement($root, static fn(Element $e): bool => $e->widget() instanceof Row)?->renderObject();
-};
-
-$lazyRowBig = $lazyMount($lazyRowBuild(20000, 56.0));
-check(
-    'LazyRow · 窗口只造视口覆盖的列（20000 项 ⇒ 6 列，按 width 算不是 height）',
-    $lazyRowKids($lazyRowBig) === 6,
-    (string) $lazyRowKids($lazyRowBig),
-);
-
-$lazyRowMax = $lazyRowBig->effectiveBox()?->maxScroll(Axis::Horizontal) ?? -1.0;
-check(
-    'LazyRow · maxScroll 按完整内容宽算（20000×56−320 = 1119680）',
-    $lazyRowMax === 1119680.0,
-    (string) $lazyRowMax,
-);
-
-$lazyRowState = $lazyStateOf($lazyRowBig);
-$lazyRowState?->scrollBy(400.0);
-$lazyRowBig->settle();
-$lazyRowBig->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
-$lazyRowCell = $lazyRowBoxOf($lazyRowBig);
-check(
-    'LazyRow · 滚动 400 ⇒ 窗起点 392、子盒 offsetX = −8 且 offsetY = 0（横向不许动 y）',
-    $lazyRowCell?->offsetX() === -8.0 && $lazyRowCell?->offsetY() === 0.0,
-    'offsetX=' . ($lazyRowCell?->offsetX() ?? -1.0) . ' offsetY=' . ($lazyRowCell?->offsetY() ?? -1.0),
-);
-
-$lazyRowHit = $lazyRowBig->effectiveBox()?->hitTest(10.0, 100.0);
-$lazyRowHitX = $lazyRowHit === null ? null : boxOrigin($lazyRowHit)[0];
-check(
-    'LazyRow · 命中跟随窗：视口 (10,100) 命中第 7 列，绝对 x = −8（画在哪 = 点在哪）',
-    $lazyRowHitX === -8.0,
-    $lazyRowHitX === null ? 'miss' : (string) $lazyRowHitX,
-);
-
-// 横向的"主轴起始"是**左**（不是上）：pad.left 进 sliceOrigin
-$lazyRowPad = $lazyMount($lazyRowBuild(100, 56.0, EdgeInsets::only(24.0, 0.0, 0.0, 0.0)));
-check(
-    'LazyRow · 左内边距是内容的一部分（pad.left 24 ⇒ 子盒右移 +24）',
-    $lazyRowBoxOf($lazyRowPad)?->offsetX() === 24.0,
-    (string) ($lazyRowBoxOf($lazyRowPad)?->offsetX() ?? -1.0),
-);
-
-// 应用层：滚轮经路由落到 `LazyRow` 的 State。
-//   ★ 竖轮是**默认手势**：横向容器只有一根轴 ⇒ 回落到那根（阶段 5b 明确保留，
-//     与 Windows 横向 ListView 同款）。不回落的话 `LazyRow` 的滚动就只剩
-//     "代码看起来对"（F8 那类"缺的是驱动方"的同族）。
-$lazyRowApp = new LazyApplication(false);
-$lazyRowApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
-$lazyRowApp->dispatchInput(ScrollEvent::make(150.0, 100.0, 1.0));
-$lazyRowApp->frame(16.0, BoxConstraints::loose(new Size(300.0, 200.0)));
-check(
-    'LazyRow · 竖轮一格 ⇒ offset 48（竖向回落到容器唯一那根轴，不由调用方猜）',
-    $lazyRowApp->lazyState()?->offset() === 48.0,
-    (string) ($lazyRowApp->lazyState()?->offset() ?? -1.0),
-);
-
-// ⑭ 格宽真的是 extent。★ 这条补的是"窗口算得对、排出来却是竖的"那种半对：
-//   若 `sizedCell()` 横向也写成 `->height($extent)`，上面五条**全都还是绿的**
-//   （窗口只看 extent 这个数，不看子盒实际尺寸）⇒ 必须有一条量几何。
-$lazyRowCellW = findElement(
-    $lazyRowBig,
-    static fn(Element $e): bool => $e->widget() instanceof SizedBox,
-)?->renderObject()?->size()?->width;
-check(
-    'LazyRow · 每格宽 = itemExtent 56（定的是 width，不是 height）',
-    $lazyRowCellW === 56.0,
-    (string) ($lazyRowCellW ?? -1.0),
-);
-
-// ════════════════════════════════════════ ensureVisible（W6 L4-6，`04` §6.3）══
-//
-// 守的是**键盘可达性**：Tab 把焦点移出视口时，焦点环会画在视口外 ⇒ 用户看不到
-// 焦点在哪。算术只有一处（`RenderScrollView::revealDelta()`），两个 `Scrollable`
-// 实现都只做"找自己的盒 → 转交"。
-//
-// ★ 每条都写了它抓的反例 —— 没有反例的断言是空转。
-
-// ① 盒级算术（不经过 State / 应用）：目标在视口上方 ⇒ 负增量
-//    反例：忘了减 `margin` ⇒ −300；把视口当成窗口高 240 ⇒ 差 40。
-$revApp = new RevealApplication();
-$revApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 200.0)));
-$revState = $revApp->scrollState();
-$revState?->scrollBy(400.0);
-$revApp->frame(16.0, BoxConstraints::tight(new Size(320.0, 200.0)));
-// ★ 盒在重建时**换新**（Widget 不可变 ⇒ 每次 build 造一个新盒）⇒ 必须在
-//   frame() 之后重新取。拿首帧那个盒（`scrollOffset` 恒 0）算出来永远是 0 ——
-//   这条是首跑红掉的：`revealDelta()` 得 0，看着像公式错、其实是基准旧。
-$revBox = $revApp->scrollBox();
-$revUp = $revBox?->revealDelta(new Rect(0.0, 100.0, 100.0, 20.0), 8.0, $revBox->appliedOffset(Axis::Vertical)) ?? -999.0;
-check(
-    'ensureVisible · revealDelta：目标在视口上方 ⇒ −308（100 − 8 − 400）',
-    $revUp === -308.0,
-    (string) $revUp,
-);
-
-// ② State 级：真滚过去（`04` §12.2 #10）
-//    反例：只改盒不算 State ⇒ offset 仍是 400；夹上界夹错 ⇒ 停在 600。
-$revState?->ensureVisible(new Rect(0.0, 100.0, 100.0, 20.0));
-check(
-    'ensureVisible · 上滚到 top − 8（400 → 92：增量 −308 加到 400 上）',
-    $revState?->offset() === 92.0,
-    (string) ($revState?->offset() ?? -1.0),
-);
-
-// ③ 已在视口内 ⇒ 不动、**不标脏**（`04` §12.2 #11）
-//    反例：无条件 `scrollBy(0)` 会走 `setState` ⇒ 每帧重建一次（白烧）。
-$revApp->frame(32.0, BoxConstraints::tight(new Size(320.0, 200.0)));
-$revState?->ensureVisible(new Rect(0.0, 120.0, 100.0, 20.0));
-check(
-    'ensureVisible · 已在视口内 ⇒ 偏移不变且不标脏（省一次重建）',
-    $revState?->offset() === 92.0 && $revState?->needsBuild() === false,
-    'offset=' . ($revState?->offset() ?? -1.0)
-        . ' dirty=' . ($revState?->needsBuild() === true ? '1' : '0'),
-);
-
-// ④ 下滚：`bottom + 8 − 视口`
-//    反例：把目标起点当终点 ⇒ 只滚 12（108 → 120）而不是 420。
-$revState?->ensureVisible(new Rect(0.0, 700.0, 100.0, 20.0));
-check(
-    'ensureVisible · 下滚到 bottom + 8 − 视口（92 → 528，增量 436）',
-    $revState?->offset() === 528.0,
-    (string) ($revState?->offset() ?? -1.0),
-);
-
-// ⑤ 目标比视口还高（300 > 200）⇒ 上沿对齐，且**幂等**
-//    反例：不加这条分支会先滚到底、再滚回顶 —— 连着调两次在两端来回跳。
-$revState?->scrollBy(-528.0);   // 回到 0
-$revState?->ensureVisible(new Rect(0.0, 100.0, 100.0, 300.0));
-$revState?->ensureVisible(new Rect(0.0, 100.0, 100.0, 300.0));
-check(
-    'ensureVisible · 目标比视口高 ⇒ 上沿对齐 92 且幂等（第二次不动）',
-    $revState?->offset() === 92.0,
-    (string) ($revState?->offset() ?? -1.0),
-);
-
-// ⑥ 横向视口取 x/width
-//    反例：只写纵向公式 ⇒ 横向滚动容器里 Tab 永远不跟（静默不生效）。
-$hKids = [];
-for ($i = 0; $i < 20; $i++) {
-    $hKids[] = SizedBox::make()->width(40.0);
-}
-$hRoot = ScrollView::make(Row::make()->children($hKids), false)->createElement();
-$hRoot->mount(null, smokeContext());
-$hRoot->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 100.0)));
-$hState = findElement(
-    $hRoot,
-    static fn(Element $e): bool => $e instanceof StatefulElement && $e->state() instanceof ScrollViewState,
-)?->state();
-$hState?->scrollBy(400.0);
-// ★ 用**下滚**验轴向：上滚的公式（`top − margin − offset`）里没有视口，
-//   横向纵向算出同一个值 ⇒ 验不出"取的是 width 还是 height"。
-//   下滚：`728 − 400 − 320 = 8` ⇒ 408；若错取高 100 ⇒ 628（两个值分得开）。
-$hState?->ensureVisible(new Rect(700.0, 0.0, 20.0, 10.0));
-check(
-    'ensureVisible · 横向视口用 x/width（下滚 400 → 408；按高算会得 628）',
-    $hState instanceof ScrollViewState && $hState->offset() === 408.0,
-    $hState instanceof ScrollViewState ? (string) $hState->offset() : 'no-state',
-);
-
-// ⑦ LazyColumn 是**同一形状**的实现（内容坐标 = 完整内容坐标）
-//    反例：把 `sliceOrigin` 再补一遍 ⇒ 488 变成 448（差两行）。
-$lazyRev = $lazyMount($lazyBuild(500, 40.0));
-$lazyRevState = $lazyStateOf($lazyRev);
-$lazyRevState?->ensureVisible(new Rect(0.0, 700.0, 100.0, 20.0));
-check(
-    'ensureVisible · LazyColumn 同一条算术（488 = 720 + 8 − 240）',
-    $lazyRevState?->offset() === 488.0,
-    (string) ($lazyRevState?->offset() ?? -1.0),
-);
-
-// ⑧ 真消费：Tab 换焦点 ⇒ 自动滚进视口（6 次 Tab 落到 b5，y 200..240）
-//    反例：`revealFocused()` 没接上 ⇒ offset 恒 0（Tab 走得到、看不见）。
-$navApp = new RevealApplication();
-$navApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 200.0)));
-$navTs = 0.0;
-for ($i = 0; $i < 6; $i++) {
-    $navTs += 16.0;
-    $navApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
-    $navApp->frame($navTs, BoxConstraints::tight(new Size(320.0, 200.0)));
-}
-$navState = $navApp->scrollState();
-check(
-    'ensureVisible · Tab 到视口外的按钮 ⇒ 自动滚进来（6 次 ⇒ 焦点 b5、offset 48）',
-    $navApp->focusedLabel() === 'b5' && $navState?->offset() === 48.0,
-    'focus=' . ($navApp->focusedLabel() ?? 'null') . ' offset=' . ($navState?->offset() ?? -1.0),
-);
-
-// ⑨ 反向同样跟：Shift+Tab 回退到 b0 ⇒ offset 回 0
-//    反例：只在 `focusNext()` 侧接线 ⇒ 反向导航时焦点跑到视口上方。
-for ($i = 0; $i < 5; $i++) {
-    $navTs += 16.0;
-    $navApp->dispatchInput(KeyEvent::down(KeyChord::shift('Tab')));
-    $navApp->frame($navTs, BoxConstraints::tight(new Size(320.0, 200.0)));
-}
-check(
-    'ensureVisible · Shift+Tab 反向同样跟（回到 b0 ⇒ offset 回 0）',
-    $navApp->focusedLabel() === 'b0' && $navState?->offset() === 0.0,
-    'focus=' . ($navApp->focusedLabel() ?? 'null') . ' offset=' . ($navState?->offset() ?? -1.0),
-);
-
-// ═══════════════════════════════════════ 虚拟列表锚点（W6 L4-7，`04` §7.3）══
-//
-// 问题：搜索把 10000 行筛成 30 行时，滚动位置怎么办？
-// 按**行号**保持会跳到列表末尾（锚点那一行已经不存在了）⇒ 必须按**身份 key** 保持。
-//
-// ★ 每条都写了它抓的反例。
-
-$anchorItems = static function (int $from, int $to): array {
-    $out = [];
-    for ($i = $from; $i < $to; $i++) {
-        $out[] = $i;
-    }
-
-    return $out;
-};
-$anchorWidget = static function (array $items, bool $withKey): LazyColumn {
-    $widget = LazyColumn::make(40.0)->items(
-        $items,
-        static fn(int $i): Widget => Text::make('行 ' . $i),
-    );
-    if ($withKey) {
-        $widget->keyOf(static fn(int $i): string => 'k' . $i);
-    }
-
-    return $widget;
-};
-$anchorLayout = static function (Element $root): void {
-    $root->settle();
-    $root->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
-};
-/** 视口顶部那一行的文本（窗口第一行 = 文档序第一个 `Text`） */
-$anchorTopRow = static function (Element $root): string {
-    $text = findElement($root, static fn(Element $e): bool => $e->widget() instanceof Text)?->widget();
-
-    return $text instanceof Text ? $text->content() : '?';
-};
-$anchorStateOf = static function (Element $root): ?LazyListState {
-    $hit = findElement(
-        $root,
-        static fn(Element $e): bool => $e instanceof StatefulElement && $e->state() instanceof LazyListState,
-    );
-    $state = $hit instanceof StatefulElement ? $hit->state() : null;
-
-    return $state instanceof LazyListState ? $state : null;
-};
-
-// ⑩ 有 keyOf：删掉第 1 行 ⇒ **同一行**仍在视口顶部（offset 4000 → 3960）
-//    反例：按行号保持 ⇒ offset 仍是 4000 ⇒ 顶部变成"行 101"（跳了一行）。
-$anchorA = $anchorWidget($anchorItems(0, 500), true)->createElement();
-$anchorA->mount(null, smokeContext());
-$anchorA->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
-$anchorStateA = $anchorStateOf($anchorA);
-$anchorStateA?->scrollBy(4000.0);
-$anchorLayout($anchorA);
-$anchorTopBefore = $anchorTopRow($anchorA);
-$anchorA->update($anchorWidget($anchorItems(1, 500), true));
-$anchorLayout($anchorA);
-check(
-    'Lazy 锚点 · 有 keyOf：删掉第 1 行 ⇒ 原第 100 行仍在顶部（4000 → 3960）',
-    $anchorStateA?->offset() === 3960.0
-        && $anchorTopBefore === '行 100'
-        && $anchorTopRow($anchorA) === '行 100',
-    'offset=' . ($anchorStateA?->offset() ?? -1.0)
-        . ' 前=' . $anchorTopBefore . ' 后=' . $anchorTopRow($anchorA),
-);
-
-// ⑪ 无 keyOf：同样的操作 ⇒ 按行号夹，顶部换行（**允许跳**，但行为可预测）
-//    反例：没有 keyOf 也想按身份保持 ⇒ 只能靠猜，猜错就是随机跳。
-$anchorB = $anchorWidget($anchorItems(0, 500), false)->createElement();
-$anchorB->mount(null, smokeContext());
-$anchorB->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
-$anchorStateB = $anchorStateOf($anchorB);
-$anchorStateB?->scrollBy(4000.0);
-$anchorLayout($anchorB);
-$anchorB->update($anchorWidget($anchorItems(1, 500), false));
-$anchorLayout($anchorB);
-check(
-    'Lazy 锚点 · 无 keyOf：按行号夹（offset 仍 4000，顶部变成"行 101"）',
-    $anchorStateB?->offset() === 4000.0 && $anchorTopRow($anchorB) === '行 101',
-    'offset=' . ($anchorStateB?->offset() ?? -1.0) . ' top=' . $anchorTopRow($anchorB),
-);
-
-// ⑫ 父重建但内容没变 ⇒ 偏移一点不动（**守门夹具**）
-//    反例：`didUpdateWidget` 里无条件重算 offset ⇒ 每帧按锚点重算一遍，
-//    浮点误差把滚动位置慢慢磨掉（"滚到 4000 变成 3999.98"）。
-$anchorC = $anchorWidget($anchorItems(0, 500), true)->createElement();
-$anchorC->mount(null, smokeContext());
-$anchorC->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
-$anchorStateC = $anchorStateOf($anchorC);
-$anchorStateC?->scrollBy(4000.0);
-$anchorLayout($anchorC);
-for ($i = 0; $i < 3; $i++) {
-    $anchorC->update($anchorWidget($anchorItems(0, 500), true));
-    $anchorLayout($anchorC);
-}
-check(
-    'Lazy 锚点 · 内容没变的重建不碰偏移（连重建 3 次仍是 4000）',
-    $anchorStateC?->offset() === 4000.0,
-    (string) ($anchorStateC?->offset() ?? -1.0),
-);
-
-// ⑬ 锚点行被筛掉 ⇒ 回顶部（不夹到末尾）
-//    反例：`min($index, $count - 1)` 不加 key 查找 ⇒ 10000 行筛成 30 行时
-//    跳到列表末尾 —— 比跳回顶部更糟。
-$anchorD = $anchorWidget($anchorItems(0, 500), true)->createElement();
-$anchorD->mount(null, smokeContext());
-$anchorD->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
-$anchorStateD = $anchorStateOf($anchorD);
-$anchorStateD?->scrollBy(4000.0);
-$anchorLayout($anchorD);
-$anchorD->update($anchorWidget($anchorItems(0, 51), true));   // 锚点行 100 被筛掉
-$anchorLayout($anchorD);
-check(
-    'Lazy 锚点 · 锚点行被筛掉 ⇒ 回顶部（offset 0，不是跳到末尾）',
-    $anchorStateD?->offset() === 0.0 && $anchorTopRow($anchorD) === '行 0',
-    'offset=' . ($anchorStateD?->offset() ?? -1.0) . ' top=' . $anchorTopRow($anchorD),
-);
+// ── 虚拟列表 / ensureVisible / 锚点 / 缓冲带 已迁出 ────────────────────────
+//   · `tests/Feature/Widget/LazyListTest.php`（18）—— 窗口只覆盖视口（5000 与 20000 行
+//     都只造 5 行）/ maxScroll 按完整内容 / sliceOrigin 进坐标链 / 命中跟随窗 /
+//     pad 是内容的一部分 / SVG 与全量列表逐字节一致 / 滚轮经 Scrollable 路由 /
+//     LazyRow 按 width 算 / 格宽真的是 extent / overscan 两档（0 ⇒ 重建 1 次，200 ⇒ 0）
+//   · `tests/Feature/Widget/EnsureVisibleTest.php`（9）—— revealDelta 盒级 / State 级真滚 /
+//     已在视口内不标脏 / 下滚 / 比视口高则上沿对齐且幂等 / 横向取 x·width /
+//     LazyColumn 同一条算术 / Tab 与 Shift+Tab 双向跟
+//   · `tests/Feature/Widget/LazyAnchorTest.php`（4）—— 有 key 删首行仍钉原行 /
+//     无 key 按行号夹 / 内容没变不碰偏移 / 锚点消失回顶
+//   ★ 夹具统一在 `tests/Support/LazyFixtures.php`（三个文件共用一份，不各抄一遍）。
+//   ★ `$anchorStateOf` 原被下方 Table 段的 overscan 用例借用 —— 那条已一并迁走。
 
 
 // ── 帧预算与 D1 降级 / 挂载登记表 已迁出 ────────────────────────────────────
@@ -12623,47 +11598,9 @@ check(
     $svTightState instanceof ScrollViewState ? (string) $svTightState->offset() : '无 State',
 );
 
-// `LazyColumn` 的缓冲带由 `overscan()` 显式给（**默认 0**，与 `Table::cacheExtent`
-// 默认 200 不同 —— 那边是数据面、行高 40+ 所以 200px 只是 4~5 行；这边格高可能
-// 很小，按 px 给固定值会把 6 格的列表撑成 16 格）。两档都断言，把默认行为写实：
-//   ① 默认 overscan 0 ⇒ 滚一行就换窗（1 次重建）—— 这不是缺陷，是没配缓冲
-//   ② overscan 200 ⇒ 缓冲带内 0 重建（与表格同一条机制）
-$lazyRebuildsOf = static function (LazyColumn $widget, float $delta) use ($anchorStateOf): array {
-    $root = $widget->createElement();
-    $root->mount(null, smokeContext());
-    $root->settle();
-    $root->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
-
-    $state = $anchorStateOf($root);
-    $before = State::rebuiltCount();
-    $state?->scrollBy($delta);
-    $root->settle();
-    $root->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
-
-    $box = $root->effectiveBoxOf(RenderScrollView::class);
-
-    return [
-        State::rebuiltCount() - $before,
-        $box instanceof RenderScrollView ? $box->appliedOffset(Axis::Vertical) : -1.0,
-    ];
-};
-
-[$lazyDelta0, $lazyOffset0] = $lazyRebuildsOf($anchorWidget($anchorItems(0, 60), false), 40.0);
-check(
-    'LazyColumn · 默认（overscan 0）滚一行 ⇒ 重建 1 次（没配缓冲，行为写实）',
-    $lazyDelta0 === 1 && $lazyOffset0 === 40.0,
-    'rebuilt=' . $lazyDelta0 . ' / offset=' . $lazyOffset0,
-);
-[$lazyDelta200, $lazyOffset200] = $lazyRebuildsOf(
-    $anchorWidget($anchorItems(0, 60), false)->overscan(200.0),
-    40.0,
-);
-check(
-    'LazyColumn · overscan 200 ⇒ 缓冲带内滚一行重建 0 次（与表格同一机制）',
-    $lazyDelta200 === 0 && $lazyOffset200 === 40.0,
-    'rebuilt=' . $lazyDelta200 . ' / offset=' . $lazyOffset200,
-);
-
+// ★ `LazyColumn` 的 overscan 两档（默认 0 ⇒ 滚一行重建 1 次 / 200 ⇒ 0 次）已迁到
+//   `tests/Feature/Widget/LazyListTest.php` —— 它和虚拟化那批是同一套夹具
+//   （`$anchorWidget`/`$anchorItems`/`$anchorStateOf`），留在这里会变成"夹具搬一半"。
 // ⑦ 命中分区：表头区的点进表头子树，行区的点进行区子树
 $tableBoxNow = $tableBoxOf($tableBig);
 $tableHitHeader = $tableBoxNow?->hitTest(100.0, 10.0);
@@ -12917,24 +11854,12 @@ check(
 //   ★ 下面留着的是**滚轮带轴**与**单轴容器的按轴语义**（Scroll 主题，不是键盘）。
 
 
-// ⑱ 单轴容器的按轴语义：问错轴 ⇒ 什么都不做（不是报错）
-$tableRevBefore = $revState?->offset() ?? -1.0;
-$tableHorizBefore = $hState?->offset() ?? -1.0;
-$revState?->scrollByAxis(Axis::Horizontal, 50.0);
-$hState?->scrollByAxis(Axis::Vertical, 50.0);
-check(
-    'Scroll · 按轴：纵向视口收到 Horizontal / 横向视口收到 Vertical ⇒ 都不动',
-    $revState !== null && $hState !== null
-        && $revState->offset() === $tableRevBefore
-        && $hState->offset() === $tableHorizBefore,
-    'v=' . (string) ($revState?->offset() ?? -1.0) . ' h=' . (string) ($hState?->offset() ?? -1.0),
-);
-$hState?->scrollByAxis(Axis::Horizontal, 50.0);
-check(
-    'Scroll · 按轴：横向视口收到 Horizontal ⇒ 生效（主轴由 Widget 决定，不由调用方猜）',
-    $hState !== null && $hState->offset() === $tableHorizBefore + 50.0,
-    'h=' . (string) ($hState?->offset() ?? -1.0) . ' expect=' . ($tableHorizBefore + 50.0),
-);
+// ── ⑱ 单轴容器的按轴语义 已迁出 ─────────────────────────────────────────────
+//   → `tests/Feature/Widget/ScrollAxisTest.php`（2）—— 问错轴什么都不做 /
+//     主轴由 Widget 决定（不是"有溢出就换个方向跑"）。
+//   ★ 它原来靠 `ensureVisible` 段的 `$revState`/`$hState` 活着（相距 3000 行），
+//     那两段迁走时一并搬出；主题是滚动容器，不是表格。
+
 
 // ⑲ 阶段 5b：滚轮**带轴**（触控板横滑 / Shift+竖轮）
 //   链路：ScrollEvent(axis) → InputRouter（格→像素）→ scrollAt（按 scrollAxes 分派）

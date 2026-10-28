@@ -197,7 +197,8 @@ PHPUnit 默认第一条断言失败就中止方法。GUI 断言不适用：一�
 | &nbsp;&nbsp;· 命令 / 帧循环 / 路由表 / Offstage ✅ | `tests/Unit/{Commands/CommandTest,Routing/RouteTableTest}` + `tests/Feature/{App/FrameLoopTest,Widget/OffstageTest}` | 1214 → 1182（−32） |
 | &nbsp;&nbsp;· 主题作用域 / 页宿主 / 组合根 / 预览出图 / hello ✅ | `tests/Feature/Theme/ThemeScopeTest` + `tests/Feature/App/{PageHostTest,ApplicationTest,HelloAppTest}` + `tests/Feature/Preview/RendererTest` | 1182 → 1138（−44） |
 | &nbsp;&nbsp;· 光标形状 / Spinner / 帧时钟 / 有态产盒 / 语义推送 ✅ | `tests/Feature/Input/CursorShapeTest` + `tests/Unit/Widget/{SpinnerTest,StateProducedBoxTest}` + `tests/Feature/App/AnimationClockTest` + `tests/Feature/Semantics/SemanticsPushTest` | 1138 → 1092（−46） |
-| &nbsp;&nbsp;· 待搬 | W8-1 渲染图像（26）/ ensureVisible + 虚拟列表锚点（13）/ 浮层·模态·菜单族 / W8-2 控件族 / Table / LazyColumn / 指针四相位 / 日志 / 毛玻璃 / tutorial·showcase·示例 | |
+| &nbsp;&nbsp;· W8-1 图像 / 滚动容器（虚拟化·ensureVisible·锚点·缓冲带·按轴） ✅ | `tests/Unit/Rendering/{DrawImageTest,PngDecoderTest}` + `tests/Feature/Rendering/ImageLoaderTest` + `tests/Feature/Widget/{ImageTest,LazyListTest,LazyAnchorTest,EnsureVisibleTest,ScrollAxisTest}` | 1092 → 1033（−59） |
+| &nbsp;&nbsp;· 待搬 | 浮层·模态·菜单族（~110）/ W8-2 控件族（~154）/ Table（~40）/ LazyGrid / 指针四相位 / 日志 / 毛玻璃 / tutorial·showcase·示例 | |
 | **S4** | 纯单元（485 条里的）改成标准 `TestCase`：`assertSame` + `#[DataProvider]` | `--testsuite=unit` 覆盖它们 |
 
 ★ S1–S3 是**纯搬迁**（断言一行不改，只改"在哪个文件哪个方法里"）。
@@ -418,6 +419,7 @@ smoke 那一份保留**（它服务的是"还没搬走的后续段"，不是历�
 | 17 命令+帧循环+路由+Offstage | `tests/Unit/Commands/CommandTest.php`（8）+ `tests/Unit/Routing/RouteTableTest.php`（4）+ `tests/Feature/App/FrameLoopTest.php`（12）+ `tests/Feature/Widget/OffstageTest.php`（8） | 32（CommandArg 双槽 / 未注册进 Diagnostic / State 冒泡 / setState 延后到帧末 / 时间戳注入 / 脏边界 / layout→paint→present 有墨 / 帧外换盒仍重排 / 隐藏不 dispose·切回立即兑现·卸载才 dispose） | 1214 → 1182（−32） |
 | 18 主题/页宿主/组合根/预览/hello | `tests/Feature/Theme/ThemeScopeTest.php`（12）+ `tests/Feature/App/PageHostTest.php`（9）+ `ApplicationTest.php`（12）+ `HelloAppTest.php`（7）+ `tests/Feature/Preview/RendererTest.php`（4） | 44（覆盖不外溢·嵌套最内层赢 / 有状态延后·无状态立即 / 换页保实例 / 命令四环 / 组合根无盒仍排满 / SVG 出图 / 文字真居中） | 1182 → 1138（−44） |
 | 19 光标/Spinner/帧时钟/产盒/语义推送 | `tests/Feature/Input/CursorShapeTest.php`（15）+ `tests/Unit/Widget/SpinnerTest.php`（14）+ `tests/Feature/App/AnimationClockTest.php`（4）+ `tests/Unit/Widget/StateProducedBoxTest.php`（6）+ `tests/Feature/Semantics/SemanticsPushTest.php`（7） | 46（形状表 = 桥 ABI·命中链取最近·应用出口四态 / 盒与内禀·墨不拉伸·8 档渐隐·tick 只标脏·帧末换盒 / attach 首帧即推进·wantsFrame 两向 / 叶子路径有盒无子且 build 零调用·修饰落自己 / full↔coalesce 两档·滚动算结构变·焦点绕过） | 1138 → 1092（−46） |
+| 20 W8-1 图像 + 滚动容器 | `tests/Unit/Rendering/DrawImageTest.php`（8）+ `tests/Unit/Rendering/PngDecoderTest.php`（8）+ `tests/Feature/Rendering/ImageLoaderTest.php`（2）+ `tests/Feature/Widget/ImageTest.php`（8）+ `tests/Feature/Widget/LazyListTest.php`（18）+ `tests/Feature/Widget/LazyAnchorTest.php`（4）+ `tests/Feature/Widget/EnsureVisibleTest.php`（9）+ `tests/Feature/Widget/ScrollAxisTest.php`（2） | 59（最近邻 blit 六档 + 反例 / PNG 五滤波·四种色彩类型·16 位·1 位·真文件·反例五条留痕 / 候选目录与缓存 / 自然尺寸·比例·内禀=实排·Contain·Cover 裁源·缺图占位·内存句柄 / 窗口只覆盖视口·maxScroll 按完整内容·sliceOrigin 进坐标链·命中跟随·SVG 逐字节·滚轮路由·横向按 width·格宽是 extent·overscan 两档 / key 锚点四态 / revealDelta 六态 + Tab 双向 / scrollByAxis 按轴） | 1092 → 1033（−59） |
 
 ★★ 第 17 批的**方法论发现**（值得在 S4 之前记住）：源码里 `Frame::needsSettle()` 的注释宣称
 "拆掉 `boxEpoch` 判据 ⇒ 帧外直调 `Element::update()` 那条红"，**实测不成立** ——
@@ -549,3 +551,46 @@ cwd 是项目根，落盘路径与 smoke 一致，✅ 通过。
 光标走 `CursorApplication` + `FocusManager`，Spinner 走真光栅取墨，语义推送走
 4 个 App 夹具 + 帧循环。它们唯一的共同点是"段号相邻"，所以不能按段打包，
 只能按被测对象打包。
+
+★★ 第 20 批的结构决策：**先建夹具，再写断言**。
+
+这批要迁的三个滚动容器主题（虚拟化 / 锚点 / ensureVisible）在 smoke 里靠 6 个全局闭包
+活着（`$lazyBuild`/`$lazyMount`/`$lazyKids`/`$lazyStateOf`/`$anchorWidget`/`$anchorStateOf`）。
+按"一个被测对象一个文件"切完，这三个文件**每一个**都要用到其中大半 —— 如果各抄一份，
+就是三份会各自漂移的闭包（smoke 里它是单一来源，正因为是全局的）。
+
+⇒ 先写 `tests/Support/LazyFixtures.php`（静态方法）与 `tests/Support/ScrollFixtures.php`，
+再让测试文件调它。判据：**夹具的第二个使用者出现时下沉**，不是"等第三个"。
+这条已经在 `inkCount`/`inkBounds`/`spinCanvas` 上演过三次，这次是第一次**在写之前**就做对。
+
+★ `repoRoot()` 也顺手进了 `tests/Support/functions.php`：原段里真资源写的是
+`__DIR__ . '/../assets/demo/quad.png'` —— 只在 `tools/` 下成立。搬到 `tests/Unit/Rendering/`
+之后 `__DIR__` 差两级。**别用 `getcwd()` 补**：phpunit 从哪个目录启动都能跑，cwd 不是契约。
+
+★★ 第二次抓到"跨段借变量"，这次距离 **3000 行**。
+
+`$revState`（ensureVisible 段造的纵向视口）与 `$hState`（横向视口）被 Table 段的
+「⑱ 单轴容器的按轴语义」两条断言借用。裸 grep 查 `$revState` 会命中后段自己的
+重新赋值而掩盖，所以仍然要用"删除区定义 × 删除点之后首次使用是否早于重新赋值"的脚本比对。
+
+处置照第 12 批的纪律：**把借用段一并搬走**，不补回变量。这两条的判据是
+`Scrollable::scrollByAxis` 的按轴语义（问错轴什么都不做），主题是**滚动容器**不是表格
+⇒ 独立成 `tests/Feature/Widget/ScrollAxisTest.php`（2 条），自带纵向/横向两个视口。
+
+★★ 换量具的一例（判据不变、量具更近）：Cover 的"裁源不裁目标"原本读
+`$GLOBALS['DRIFT_SMOKE_SKIA_CALLS']` —— 那套 `drift_skia_*` 假桥定义在 `tools/smoke.php` 里，
+而 phpunit 的 bootstrap 只 require `tools/autoload.php` + `functions.php`，桩根本不存在。
+两个选择：把 200 行假桥搬进 `tests/Support/`，或者换一个量具。
+选了后者：`RenderImage::paintContent()` 的最后一句就是 `$canvas->drawImage($this->image, $src, $dst)`，
+用 `RecordingCanvas` 录一份 `DisplayList`，读 `opAt()/argAt()` 拿到的就是**被测对象交给画布的
+src/dst 原值**。比问桥更贴近本层语义（"裁源还是裁目标"在产命令时就已经定死），也少一个全局依赖。
+
+★★ 字段名凭印象写，会让断言**假绿**：
+
+`Rect` 的字段是 `left`/`top`/`width`/`height`，我按习惯写了 `$src->x` / `$src->y`。
+PHP 8 对未定义属性只是 **warning + null**，于是 `abs($src->x - 1.5) < 0.01` 恒假（红对了），
+但如果断言写的是 `abs($src->x) < 0.01`（"期望 0"）就会**恒真**。
+同一次运行还报了 `Warnings: 5` —— 那就是"断言读的东西不存在"的信号。
+
+⇒ 两条纪律：① 字段名对着类型定义抄，不凭印象；② **warning 也是红信号**，
+`OK (N assertions)` 旁边挂着 Warnings 就不算通过（本批修完后 Warnings 归零才收工）。
