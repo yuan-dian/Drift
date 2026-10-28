@@ -108,6 +108,7 @@ use Drift\Dev\Smoke\App\FailSliceJob;
 use Drift\Dev\Smoke\App\GestureApplication;
 use Drift\Dev\Smoke\App\PressLabApplication;
 use Drift\Dev\Smoke\App\TableResizeApplication;
+use Drift\Dev\Smoke\App\TableDragSelectApplication;
 use Drift\Dev\Smoke\App\TableScrollApplication;
 use Drift\Dev\Smoke\App\SemValueApplication;
 use Drift\Dev\Smoke\App\TfApplication;
@@ -171,6 +172,7 @@ use Drift\Input\SemanticsInvokeEvent;
 use Drift\Input\SemanticsSetValueEvent;
 use Drift\Input\SemanticsRole;
 use Drift\Input\TapTracker;
+use Drift\Layout\ColumnWidths;
 use Drift\Layout\ExtentWindow;
 use Drift\Layout\FlexAlign;
 use Drift\Layout\Overflow;
@@ -345,6 +347,7 @@ use Drift\Widget\Table;
 use Drift\Widget\TableColumn;
 use Drift\Widget\TableColumnWidth;
 use Drift\Widget\TableSelection;
+use Drift\Widget\TableRowPicker;
 use Drift\Widget\TableSelectionMode;
 use Drift\Widget\TableSort;
 use Drift\Widget\TableSortDirection;
@@ -17373,6 +17376,88 @@ check(
     \json_encode($ewCase([], 0.0, 0.0, 320.0, 0.0)),
 );
 
+// ★ 列宽分配也是纯算术（`Layout\ColumnWidths`）：四层规则里有三处"写错了不报错、
+//   只在真机上表现为弹回/溢出/不齐"的地方，逐条钉死。
+$cwSpec = static function (
+    string $key,
+    bool $flex = false,
+    float $weight = 1.0,
+    float $px = 0.0,
+    ?float $min = null,
+    ?float $max = null,
+): array {
+    return ['key' => $key, 'flex' => $flex, 'weight' => $weight, 'px' => $px, 'min' => $min, 'max' => $max];
+};
+
+$cwThree = [$cwSpec('a', false, 0.0, 60.0), $cwSpec('b', true, 2.0), $cwSpec('c', true, 1.0)];
+
+$cwRun = ColumnWidths::resolve($cwThree, [], 320.0, 0.0);
+check(
+    'ColumnWidths · fixed 60 + flex 2:1 分 260 ⇒ [60, 173.33, 86.67]',
+    \count($cwRun) === 3
+        && \abs($cwRun[0] - 60.0) < 0.01
+        && \abs($cwRun[1] - 173.33) < 0.5
+        && \abs($cwRun[2] - 86.67) < 0.5,
+    \json_encode($cwRun),
+);
+
+// ★ 坑：override 只挡住"初值"不挡住"重算" ⇒ 拖宽 flex 列松手后弹回原值。
+//   判据是"被覆盖的列不参与 flex 之和"（`$flexSum` 只累计参与分配的列）。
+$cwOverride = ColumnWidths::resolve($cwThree, ['b' => 200.0], 320.0, 0.0);
+check(
+    'ColumnWidths · 拖过宽度的 flex 列：取 override 且**退出 flex 分配**（c 独享 60）',
+    \abs($cwOverride[0] - 60.0) < 0.01
+        && \abs($cwOverride[1] - 200.0) < 0.01
+        && \abs($cwOverride[2] - 60.0) < 0.01,
+    \json_encode($cwOverride),
+);
+
+check(
+    'ColumnWidths · override 指向已删除的列 ⇒ 静默忽略（历史偏好不是拼写错误）',
+    ColumnWidths::resolve($cwThree, ['zzz' => 999.0], 320.0, 0.0) === $cwRun,
+    \json_encode(ColumnWidths::resolve($cwThree, ['zzz' => 999.0], 320.0, 0.0)),
+);
+
+check(
+    'ColumnWidths · 固定列已超宽 ⇒ flex 拿 0（溢出交给裁剪，不出负数）',
+    ColumnWidths::resolve(
+        [$cwSpec('a', false, 0.0, 400.0), $cwSpec('b', true, 1.0)],
+        [],
+        320.0,
+        0.0,
+    ) === [400.0, 0.0],
+    'x',
+);
+
+$cwGap = ColumnWidths::resolve($cwThree, [], 320.0, 10.0);
+check(
+    'ColumnWidths · 列间距从视口里扣 n-1 份（320 − 2×10 ⇒ flex 分 240）',
+    \abs($cwGap[1] - 160.0) < 0.01 && \abs($cwGap[2] - 80.0) < 0.01,
+    \json_encode($cwGap),
+);
+
+// ★ 坑：夹取发生在分配**之后**、且**不回头补偿剩余** ⇒ 夹高的列让总和超过视口
+//   （调用方据此重算内容宽，而不是指望这里"自动补齐"）。
+//   ★ 用例必须能让"先夹再分"与"先分再夹"给出不同结果：min 200 的 flex 列分配只
+//     拿到 160，夹到 200 之后另一列**仍**是 160（若回头补偿就会缩成 120）。
+$cwClamp = ColumnWidths::resolve(
+    [$cwSpec('a', true, 1.0, 0.0, 200.0), $cwSpec('b', true, 1.0)],
+    [],
+    320.0,
+    0.0,
+);
+check(
+    'ColumnWidths · minWidth 夹完不回头补偿剩余（总和可以超视口，交给横向滚动）',
+    $cwClamp === [200.0, 160.0],
+    \json_encode($cwClamp),
+);
+
+check(
+    'ColumnWidths · 空列 ⇒ 空结果（不炸、不算 gap）',
+    ColumnWidths::resolve([], [], 320.0, 10.0) === [],
+    \json_encode(ColumnWidths::resolve([], [], 320.0, 10.0)),
+);
+
 /** 某个文本所在盒的绝对 x（`null` = 没造出来） */
 $tableTextXOf = static function (Element $root, string $content): ?float {
     $hit = findElement(
@@ -17494,6 +17579,91 @@ check(
         && $tableSelInt->withAll([7]) === $tableSelInt
         && $tableSelStr->only([9])->keys() === [9],
     \json_encode([$tableSelStr->toggle(7)->keys(), $tableSelStr->only([9])->keys()]),
+);
+
+// ★ 选择语义是纯函数（`TableRowPicker`）：点击 / Shift 连选 / **拖动框选**共用同一个出口。
+//   下面几条是表格 UI 断言的语义底稿 —— 界面上"看着还行"而语义已经错的情况先在这里红。
+$rpKeys = ['a', 'b', 'c', 'd', 'e'];
+$rpNone = TableSelection::none();
+$rpMulti = TableSelectionMode::Multiple;
+$rpSingle = TableSelectionMode::Single;
+$rp = static function (
+    TableSelection $current,
+    int $target,
+    ?TableSelectionMode $mode,
+    string|int|null $anchor,
+    bool $ctrl = false,
+    bool $shift = false,
+) use ($rpKeys): array {
+    return TableRowPicker::pick($current, $rpKeys, $target, $mode, $anchor, $ctrl, $shift);
+};
+$rpPick = $rp($rpNone, 2, $rpMulti, null);
+check(
+    'TableRowPicker · 无修饰 ⇒ 替换为该行，锚点跟过去',
+    $rpPick[0]->keys() === ['c'] && $rpPick[1] === 'c',
+    \json_encode([$rpPick[0]->keys(), $rpPick[1]]),
+);
+
+$rpCtrl = $rp(TableSelection::of(['c', 'a']), 2, $rpMulti, 'a', true);
+check(
+    'TableRowPicker · Ctrl ⇒ 反选该行（锚点**不动**，否则下一次 Shift 起点会跳）',
+    $rpCtrl[0]->keys() === ['a'] && $rpCtrl[1] === 'a',
+    \json_encode([$rpCtrl[0]->keys(), $rpCtrl[1]]),
+);
+
+$rpRange = $rp($rpNone, 3, $rpMulti, 'a', false, true);
+check(
+    'TableRowPicker · Shift ⇒ 锚点到目标**替换**为区间（不是累加）',
+    $rpRange[0]->keys() === ['a', 'b', 'c', 'd'] && $rpRange[1] === 'a',
+    \json_encode([$rpRange[0]->keys(), $rpRange[1]]),
+);
+
+$rpBack = $rp(TableSelection::of(['a', 'b']), 1, $rpMulti, 'e', false, true);
+check(
+    'TableRowPicker · 反向拖（目标在锚点上方）⇒ 区间同样覆盖，不因顺序反了就空',
+    $rpBack[0]->keys() === ['b', 'c', 'd', 'e'],
+    \json_encode($rpBack[0]->keys()),
+);
+
+$rpFirstShift = $rp($rpNone, 1, $rpMulti, null, false, true);
+check(
+    'TableRowPicker · Shift 时还没有锚点 ⇒ 只选这一行，并把锚点落下来',
+    $rpFirstShift[0]->keys() === ['b'] && $rpFirstShift[1] === 'b',
+    \json_encode([$rpFirstShift[0]->keys(), $rpFirstShift[1]]),
+);
+
+$rpSingleShift = $rp(TableSelection::of(['a', 'b']), 3, $rpSingle, 'a', false, true);
+check(
+    'TableRowPicker · 单选模式忽略 Shift / Ctrl（区间与累加都是多选专属）',
+    $rpSingleShift[0]->keys() === ['d'] && $rpSingleShift[1] === 'd',
+    \json_encode([$rpSingleShift[0]->keys(), $rpSingleShift[1]]),
+);
+
+$rpStale = $rp(TableSelection::of(['x']), 2, $rpMulti, 'zzz', false, true);
+check(
+    'TableRowPicker · 锚点所在行已被过滤掉 ⇒ 退化成"替换为该行"，且不炸',
+    $rpStale[0]->keys() === ['c'] && $rpStale[1] === 'zzz',
+    \json_encode([$rpStale[0]->keys(), $rpStale[1]]),
+);
+
+$rpHole = TableRowPicker::pick($rpNone, ['a', null, 'c'], 1, $rpMulti, 'a', false, false);
+check(
+    'TableRowPicker · 点到没有 key 的行 ⇒ 原样返回（同一个实例，调用方据此跳过通知）',
+    $rpHole[0] === $rpNone && $rpHole[1] === 'a',
+    '',
+);
+
+check(
+    'TableRowPicker · 表没启用选择（mode=null）⇒ 原样返回',
+    TableRowPicker::pick($rpNone, $rpKeys, 2, null, 'a', true, true)[0] === $rpNone,
+    '',
+);
+
+check(
+    'TableRowPicker · 区间跳过没有 key 的孔洞（下标不压缩，取 key 时才滤）',
+    TableRowPicker::between(['a', null, 'c'], 0, 2) === ['a', 'c']
+        && TableRowPicker::between(['a', 'b', 'c'], 2, 0) === ['a', 'b', 'c'],
+    \json_encode(TableRowPicker::between(['a', null, 'c'], 0, 2)),
 );
 
 /** 阶段的表：可选 + 上报（受控，应用侧就是那个 `use (&$next)`） */
@@ -19068,6 +19238,145 @@ check(
     'Table · 指针：双击字的**右半边** ⇒ 插入符落在字后（x=108+字宽）',
     $caretRight !== null && abs($caretRight->left - (108.0 + $glyphW)) < 0.01,
     'w=' . sprintf('%.2f', $glyphW) . ' x=' . ($caretRight === null ? 'null' : sprintf('%.2f', $caretRight->left)),
+);
+
+// ⑮ 行级拖动框选（阶段 8）：按住拖过多行 ⇒ **松手一次**上报区间。
+//   ★ 全走真实路由：down 被行容器 `ownsPress` 捕获，之后的 move/up 经
+//     `dispatchToCapture()` 派给**同一个**回调（拖动时指针底下早已不是那一行）。
+//   几何：表头 32 + 行高 40 ⇒ 行 i 的 y ∈ [32+40i, 72+40i)，行区高 208。
+$dragSetup = static function (
+    int $rows = 6,
+    TableSelectionMode $mode = TableSelectionMode::Multiple,
+): array {
+    $app = new TableDragSelectApplication($rows, $mode);
+    $app->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
+    $app->frame(20.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+
+    return [$app, $app->host()];
+};
+
+/** 行容器的底色（`null` = 没底色 / 该行没造出来） */
+$rowBgOf = static function (Element $root, int $index): ?Color {
+    $element = findElement(
+        $root,
+        static fn(Element $e): bool => $e->widget() instanceof SizedBox
+            && $e->widget()->identity()?->value === $index,
+    );
+
+    return $element?->widget()->mods()->fillColor();
+};
+
+/** 行中心的根坐标 y（行 i 占 [32+40i, 72+40i)） */
+$rowY = static fn(int $i): float => 32.0 + 40.0 * $i + 20.0;
+
+$dragFrame = static function (Application $app, float $t) : void {
+    $app->frame($t, BoxConstraints::tight(new Size(320.0, 240.0)));
+};
+
+// ① 从行 2 按下、拖到行 4、松手 ⇒ 选中行 2/3/4（key 3/4/5）
+[$dragApp, $dragHost] = $dragSetup();
+$dragApp->dispatchInput(PointerEvent::down(150.0, $rowY(2)), 1000.0);
+$dragFrame($dragApp, 21.0);
+$afterDown = $dragHost->notifyCount;
+
+$dragApp->dispatchInput(PointerEvent::move(150.0, $rowY(3)), 1050.0);
+$dragFrame($dragApp, 22.0);
+$dragApp->dispatchInput(PointerEvent::move(150.0, $rowY(4)), 1100.0);
+$dragFrame($dragApp, 23.0);
+
+$dragMidBg = $rowBgOf($dragApp->root(), 3);
+$dragMidNotify = $dragHost->notifyCount;
+
+check(
+    'Table · 拖动框选：拖动中**不逐帧上报**（只有按下那一次）',
+    $afterDown === 1 && $dragMidNotify === 1,
+    sprintf('down 后 %d / 拖到行 4 后 %d', $afterDown, $dragMidNotify),
+);
+check(
+    'Table · 拖动框选：拖过的行立刻高亮（受控值还没变 ⇒ 靠拖动区间自己画）',
+    $dragMidBg !== null && $dragMidBg->a === 36,
+    $dragMidBg === null ? '无底色' : 'alpha=' . $dragMidBg->a,
+);
+
+$dragApp->dispatchInput(PointerEvent::up(150.0, $rowY(4)), 1150.0);
+$dragFrame($dragApp, 24.0);
+check(
+    'Table · 拖动框选：松手 ⇒ 一次上报区间 [3,4,5]',
+    $dragHost->last?->keys() === [3, 4, 5] && $dragHost->notifyCount === 2,
+    \json_encode([$dragHost->last?->keys(), $dragHost->notifyCount]),
+);
+check(
+    'Table · 拖动框选：应用回写的受控选中集就是那个区间（不是只上报不生效）',
+    $dragHost->selection->keys() === [3, 4, 5],
+    \json_encode($dragHost->selection->keys()),
+);
+
+// ② 反向拖（行 4 → 行 2）⇒ 区间一样，不因起点在下就选空
+[$dragApp, $dragHost] = $dragSetup();
+$dragApp->dispatchInput(PointerEvent::down(150.0, $rowY(4)), 1000.0);
+$dragApp->dispatchInput(PointerEvent::move(150.0, $rowY(2)), 1100.0);
+$dragFrame($dragApp, 21.0);
+$dragApp->dispatchInput(PointerEvent::up(150.0, $rowY(2)), 1200.0);
+$dragFrame($dragApp, 22.0);
+check(
+    'Table · 拖动框选：反向往上拖 ⇒ 区间同样 [3,4,5]',
+    $dragHost->last?->keys() === [3, 4, 5],
+    \json_encode($dragHost->last?->keys()),
+);
+
+// ③ 手抖（位移 < 4px 阈值）⇒ 只当点击，不多报一次
+[$dragApp, $dragHost] = $dragSetup();
+$dragApp->dispatchInput(PointerEvent::down(150.0, $rowY(2)), 1000.0);
+$dragApp->dispatchInput(PointerEvent::move(150.0, $rowY(2) + 2.0), 1050.0);
+$dragFrame($dragApp, 21.0);
+$dragApp->dispatchInput(PointerEvent::up(150.0, $rowY(2) + 2.0), 1100.0);
+$dragFrame($dragApp, 22.0);
+check(
+    'Table · 拖动框选：位移不到阈值 ⇒ 只算点击（单行、只报一次）',
+    $dragHost->selection->keys() === [3] && $dragHost->notifyCount === 1,
+    \json_encode([$dragHost->selection->keys(), $dragHost->notifyCount]),
+);
+
+// ④ 单选模式：拖一片也只落最后那一行（区间是多选专属）
+[$dragApp, $dragHost] = $dragSetup(6, TableSelectionMode::Single);
+$dragApp->dispatchInput(PointerEvent::down(150.0, $rowY(1)), 1000.0);
+$dragApp->dispatchInput(PointerEvent::move(150.0, $rowY(4)), 1100.0);
+$dragFrame($dragApp, 21.0);
+$dragApp->dispatchInput(PointerEvent::up(150.0, $rowY(4)), 1200.0);
+$dragFrame($dragApp, 22.0);
+check(
+    'Table · 拖动框选：单选模式拖一片 ⇒ 仍只选终点那一行',
+    $dragHost->selection->keys() === [5],
+    \json_encode($dragHost->selection->keys()),
+);
+
+// ⑤ 松手后高亮回落到受控选中集（拖动区间不能残留）
+[$dragApp, $dragHost] = $dragSetup();
+$dragApp->dispatchInput(PointerEvent::down(150.0, $rowY(0)), 1000.0);
+$dragApp->dispatchInput(PointerEvent::move(150.0, $rowY(1)), 1100.0);
+$dragFrame($dragApp, 21.0);
+$dragApp->dispatchInput(PointerEvent::up(150.0, $rowY(1)), 1200.0);
+$dragFrame($dragApp, 22.0);
+check(
+    'Table · 拖动框选：松手后行 4（没被选中、也没斑马）不再有底色 —— 拖动区间不残留',
+    $rowBgOf($dragApp->root(), 4) === null,
+    $rowBgOf($dragApp->root(), 4) === null ? '无底色' : '仍有底色',
+);
+
+// ⑥ 拖到行区下边界**之外** ⇒ 顺手滚半行（move 驱动；20 行 × 40 = 800 > 行区 208）
+[$dragApp, $dragHost] = $dragSetup(20);
+$dragApp->dispatchInput(PointerEvent::down(150.0, $rowY(1)), 1000.0);
+$dragApp->dispatchInput(PointerEvent::move(150.0, $rowY(2)), 1050.0);   // 第一步只"进拖"，不滚
+$dragFrame($dragApp, 21.0);
+$dragBefore = $tableStateOf($dragApp->root())?->offsetY();
+$dragApp->dispatchInput(PointerEvent::move(150.0, 250.0), 1100.0);      // 行区底 240 之外
+$dragApp->dispatchInput(PointerEvent::move(150.0, 252.0), 1150.0);
+$dragFrame($dragApp, 22.0);
+$dragAfter = $tableStateOf($dragApp->root())?->offsetY();
+check(
+    'Table · 拖动框选：拖到行区下边界外 ⇒ 自动往下滚（半行一步，move 驱动）',
+    $dragBefore === 0.0 && $dragAfter !== null && $dragAfter > 0.0,
+    sprintf('拖前 %s / 拖后 %s', (string) $dragBefore, (string) $dragAfter),
 );
 
 // ⑭ 两条"期望响亮失败"（子进程：`Errors::report` 会 abort，进程内接不住）

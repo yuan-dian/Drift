@@ -12,6 +12,7 @@ use Drift\Input\CursorShape;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
+use Drift\Layout\ColumnWidths;
 use Drift\Layout\ExtentWindow;
 use Drift\Layout\FlexAlign;
 use Drift\Layout\RenderBox;
@@ -252,6 +253,29 @@ final class TableState extends State implements Scrollable, EditableText
      *   而 10000 行线性扫 ≈ 亚毫秒。
      */
     private string|int|null $anchorKey = null;
+
+    /**
+     * 拖动框选的起点行（`null` = 没按住）。
+     *
+     * ★ 与 `$anchorKey` 分开存：锚点是**点击语义**的（Shift 连选用 key，跟着数据走），
+     *   拖动是**手势**（按下那一刻的行下标）。两者绝大多数时候指向同一行，但
+     *   "按下后没拖"必须只是普通点击 —— 用同一个字段会让松手时的收口分不清。
+     */
+    private ?int $dragAnchorRow = null;
+
+    /**
+     * 正在拖到的行（`null` = 按住了但还没过阈值 ⇒ 仍是普通点击）。
+     *
+     * ★ 三个状态用一个 `null` 表达（没按 / 按下未拖 / 在拖），比再开一个 bool 少
+     *   一处"两个字段互相矛盾"的可能。
+     */
+    private ?int $dragRow = null;
+
+    /** 按下时的根坐标 y（判阈值用；拖动中不再需要） */
+    private float $dragStartY = 0.0;
+
+    /** 拖动起判阈值（逻辑像素）—— 手抖几像素不该把"点行"变成"选一片" */
+    private const DRAG_SLOP = 4.0;
 
     /**
      * 正在编辑的格：**行 key + 列 key**（`null` = 没在编辑）。阶段 7a。
@@ -515,6 +539,13 @@ final class TableState extends State implements Scrollable, EditableText
         //   还没被写脏，不会出现"半提交"的中间态。
         if (!$focused && $this->editingRef !== null) {
             $this->commitEditing();
+        }
+
+        // ★ 失焦 ⇒ 拖动多半已经断在半路（捕获在"失焦"这条收口路径上被释放，
+        //   收不到 up）。不在这里清，拖动高亮会一直挂到下一次点击。
+        if (!$focused && $this->dragRow !== null) {
+            $this->dragAnchorRow = null;
+            $this->dragRow = null;
         }
 
         $this->setState(function () use ($focused): void {
@@ -1251,6 +1282,16 @@ final class TableState extends State implements Scrollable, EditableText
      */
     private function rowBackground(int $index, string|int|null $key, BuildContext $ctx, bool $striped): ?Color
     {
+        // ★ 拖动中的区间**压过**受控选中集：选区是受控的（应用收到上报才会变），
+        //   而拖动中刻意不逐帧上报 ⇒ 不叠这一层的话高亮不跟手。
+        if ($this->dragRow !== null && $this->dragAnchorRow !== null) {
+            $low = \min($this->dragAnchorRow, $this->dragRow);
+            $high = \max($this->dragAnchorRow, $this->dragRow);
+            if ($index >= $low && $index <= $high) {
+                return $ctx->color(ColorToken::Accent)->withAlpha(self::SELECTED_ALPHA);
+            }
+        }
+
         if ($key !== null) {
             $selection = $this->view()->selectionSet();
             if ($selection !== null && $selection->has($key)) {
@@ -1288,6 +1329,198 @@ final class TableState extends State implements Scrollable, EditableText
         $this->setState(function (): void {
             $this->hoverKey = null;
         });
+    }
+
+    /**
+     * 行容器的指针入口：**点击**交给 `noteRowTap()`，**拖动框选**在这里收。
+     *
+     * ★★ 拖动不需要另挂一个节点：行容器 `ownsPress: true` 已经建立了捕获，
+     *   随后的 move / up 经 `dispatchToCapture()` 直达**同一个**回调（`InputRouter`），
+     *   而 `$event->x/$y` 始终保持**根坐标** —— 所以"拖到了第几行"可以自己反算，
+     *   不必要求指针底下正好是目标行的盒子（拖动时它是按下那一行）。
+     */
+    private function noteRowPointer(mixed $row, int $index, PointerEvent $event): void
+    {
+        if ($event->isMove()) {
+            $this->extendDrag($event);
+
+            return;
+        }
+
+        if ($event->isUp()) {
+            $this->endDrag();
+
+            return;
+        }
+
+        if (!$event->isDown() || !$event->isPrimary()) {
+            return;
+        }
+
+        $this->dragAnchorRow = $index;
+        $this->dragRow = null;
+        $this->dragStartY = $event->y;
+
+        $this->noteRowTap($row, $index, $event);
+    }
+
+    /**
+     * 拖动中：过了阈值才"算拖"，然后按根坐标反算行。
+     *
+     * ★ 拖出视口上下边界时顺手滚半行 —— **move 驱动**而不是定时器：拖动时指针
+     *   本来就在动。定时器版能做到"指针停在边缘不动也持续滚"，代价是多一条常驻
+     *   的每帧路径（`Frame` 的 ticker 收口），本阶段不换。
+     */
+    private function extendDrag(PointerEvent $event): void
+    {
+        if ($this->dragAnchorRow === null) {
+            return;
+        }
+
+        $row = $this->pointerRowAt($event->y);
+        if ($row === null) {
+            return;
+        }
+
+        if ($this->dragRow === null) {
+            if (\abs($event->y - $this->dragStartY) < self::DRAG_SLOP) {
+                return;   // 还在"手抖"范围内：这一次仍然是点击
+            }
+
+            $this->dragRow = $row;
+            $this->markDirty();
+
+            return;
+        }
+
+        if ($row !== $this->dragRow) {
+            $this->dragRow = $row;
+            $this->markDirty();
+        }
+
+        $this->dragScrollAt($event->y);
+    }
+
+    /**
+     * 松手：把"锚点到终点"变成一次选择上报。
+     *
+     * ★ 复用 `TableRowPicker` 的 **Shift 语义**（锚点到目标替换为区间）—— 拖动就是
+     *   "连续的 Shift 点击"，所以这里不该有新的一份区间算法。
+     * ★ 拖动中**不**上报（选择是受控的，逐帧上报等于让应用每帧 setState 一次）；
+     *   高亮靠 `$dragRow` 自己画（见 `rowBackground()`），松手才通知一次。
+     */
+    private function endDrag(): void
+    {
+        $anchor = $this->dragAnchorRow;
+        $to = $this->dragRow;
+
+        $this->dragAnchorRow = null;
+        $this->dragRow = null;
+
+        if ($to === null) {
+            return;   // 只是点击：down 时已办完，没有要擦的、也没有要报的
+        }
+
+        $this->markDirty();   // 擦掉拖动高亮
+
+        if ($anchor === null || $to === $anchor) {
+            return;
+        }
+
+        $view = $this->view();
+        $selection = $view->selectionSet();
+        $keyOf = $view->keyMapper();
+        if ($selection === null || $keyOf === null) {
+            return;
+        }
+
+        /** @var list<string|int|null> $rowKeys */
+        $rowKeys = [];
+        foreach ($view->rowList() as $each) {
+            $rowKeys[] = $keyOf($each);
+        }
+
+        $picked = TableRowPicker::pick(
+            $selection,
+            $rowKeys,
+            $to,
+            $view->selectionModeValue(),
+            $rowKeys[$anchor] ?? null,
+            false,
+            true,
+        );
+
+        $this->anchorKey = $picked[1];
+
+        $view->selectionChangeHandler()?->__invoke($picked[0]);
+    }
+
+    /** 拖到行区上下边缘**之外**时滚半行（见 `extendDrag()` 的"move 驱动"） */
+    private function dragScrollAt(float $clientY): void
+    {
+        $box = $this->element()?->effectiveBoxOf(RenderTable::class);
+        $size = $box?->size();
+        if ($box === null || $size === null) {
+            return;
+        }
+
+        [, $tableY] = RenderBox::absoluteOrigin($box);
+        $originY = $tableY + $box->contentOriginY();
+
+        // 行区上边界是表头**下沿**（表头不参与滚动，拖进去不该滚）
+        $top = $originY + $box->headerHeight();
+        $bottom = $originY + $size->height;
+
+        $step = $this->view()->rowHeightPx() * 0.5;
+        if ($clientY < $top) {
+            $this->scrollBy(-$step);
+        } elseif ($clientY > $bottom) {
+            $this->scrollBy($step);
+        }
+    }
+
+    /**
+     * 根坐标 y ⇒ 行区**内容坐标**（`null` = 盒还不可用）。
+     *
+     * ★ 与 `pointerContentX()` 的差别只有"减表头高"这一处：行区内容坐标的 `y = 0`
+     *   是第 0 行顶部，而表头是钉住的 chrome（`$offsetY` 也在这套坐标里）。
+     */
+    private function pointerContentY(float $clientY): ?float
+    {
+        $tableBox = $this->element()?->effectiveBoxOf(RenderTable::class);
+        if ($tableBox === null) {
+            return null;
+        }
+
+        [, $tableY] = RenderBox::absoluteOrigin($tableBox);
+
+        return $clientY
+            - $tableY
+            - $tableBox->contentOriginY()
+            - $tableBox->headerHeight()
+            + $this->offsetY;
+    }
+
+    /**
+     * 根坐标 y ⇒ 行下标（拖出上下边界时夹到首/末行）。
+     *
+     * ★ 用 `RenderTable::headerHeight()` 而不是 build 期的 `headerHeightPx()`：
+     *   表头可能被约束压过，量出来的才是真布局。
+     */
+    private function pointerRowAt(float $clientY): ?int
+    {
+        $contentY = $this->pointerContentY($clientY);
+        if ($contentY === null) {
+            return null;
+        }
+
+        $rowH = $this->view()->rowHeightPx();
+        $count = \count($this->view()->rowList());
+        if ($rowH <= 0.0 || $count === 0) {
+            return null;
+        }
+
+        return \max(0, \min($count - 1, (int) \floor($contentY / $rowH)));
     }
 
     /**
@@ -1344,59 +1577,46 @@ final class TableState extends State implements Scrollable, EditableText
         }
 
         $selection = $view->selectionSet();
-        if ($selection === null) {
-            return;
-        }
-
         $keyOf = $view->keyMapper();
-        $key = $keyOf === null ? null : $keyOf($row);
-        if ($key === null) {
+        if ($selection === null || $keyOf === null) {
             return;
         }
 
-        $next = $this->nextSelection($selection, $key, $index, $event);
-
-        // 锚点：无修饰的点击把锚点挪到这里（Shift 的起点）；Shift 自身不动锚点
-        if (!$event->ctrl && !$event->shift) {
-            $this->anchorKey = $key;
-        } elseif ($event->shift && $this->anchorKey === null) {
-            $this->anchorKey = $key;
+        // ★ 整份行序都要（区间是按行下标切的），而不只是被点那一行的 key。
+        //   一次 O(行数) 的摊平，比"先找 key 下标、再找区间"各扫一遍还少一遍。
+        /** @var list<string|int|null> $rowKeys */
+        $rowKeys = [];
+        foreach ($view->rowList() as $each) {
+            $rowKeys[] = $keyOf($each);
         }
+
+        if (($rowKeys[$index] ?? null) === null) {
+            return;
+        }
+
+        $picked = TableRowPicker::pick(
+            $selection,
+            $rowKeys,
+            $index,
+            $view->selectionModeValue(),
+            $this->anchorKey,
+            $event->ctrl,
+            $event->shift,
+        );
+
+        // 锚点只改字段、不标脏：它不参与渲染（只决定下一次 Shift 的起点）
+        $this->anchorKey = $picked[1];
 
         $notify = $view->selectionChangeHandler();
-        $notify?->__invoke($next);
+        $notify?->__invoke($picked[0]);
     }
 
     /**
-     * 点完之后"应该"是什么选中集（受控：只是算出来，改不改由应用决定）。
+     * 某个 key 在**当前行序**里的下标（排序/过滤后行序会变 ⇒ 不能缓存行号）。
      *
-     * | 修饰键 | 单选 | 多选 |
-     * |---|---|---|
-     * | 无 | 替换为该行 | 替换为该行（`WPF DataGrid` / `ag-Grid` 的默认） |
-     * | Ctrl | 同无修饰 | 反选该行 |
-     * | Shift | 同无修饰 | 从锚点到该行**替换**为区间 |
+     * ★ 选择那一路已改走 `TableRowPicker`（它按整份行序算）；这里只剩编辑会话的
+     *   "这个 key 还在不在"用途。
      */
-    private function nextSelection(
-        TableSelection $current,
-        string|int $key,
-        int $index,
-        PointerEvent $event,
-    ): TableSelection {
-        if ($this->view()->selectionModeValue() === TableSelectionMode::Single) {
-            return $current->only([$key]);
-        }
-
-        if ($event->shift && $this->anchorKey !== null) {
-            $anchorIndex = $this->keyIndex($this->anchorKey);
-            if ($anchorIndex !== null) {
-                return TableSelection::of($this->keysBetween($anchorIndex, $index));
-            }
-        }
-
-        return $event->ctrl ? $current->toggle($key) : $current->only([$key]);
-    }
-
-    /** 某个 key 在**当前行序**里的下标（排序/过滤后行序会变 ⇒ 不能缓存行号） */
     private function keyIndex(string|int $key): ?int
     {
         $keyOf = $this->view()->keyMapper();
@@ -1411,36 +1631,6 @@ final class TableState extends State implements Scrollable, EditableText
         }
 
         return null;
-    }
-
-    /**
-     * 两个行下标之间的所有 key（含两端）—— Shift 连选的区间。
-     *
-     * @return list<string|int>
-     */
-    private function keysBetween(int $from, int $to): array
-    {
-        $keyOf = $this->view()->keyMapper();
-        if ($keyOf === null) {
-            return [];
-        }
-
-        $rows = $this->view()->rowList();
-        $low = min($from, $to);
-        $high = max($from, $to);
-        $keys = [];
-        for ($i = $low; $i <= $high; $i++) {
-            if (!isset($rows[$i])) {
-                continue;
-            }
-
-            $key = $keyOf($rows[$i]);
-            if ($key !== null) {
-                $keys[] = $key;
-            }
-        }
-
-        return $keys;
     }
 
     public function build(BuildContext $ctx): Widget
@@ -1647,9 +1837,7 @@ final class TableState extends State implements Scrollable, EditableText
                 //   而它被捕获期路径的 try/catch 接住 ⇒ 现象是整页变错误占位，不是崩溃。
                 $line = $line->pointer(
                     function (PointerEvent $event, Element $self) use ($row, $i): ?CursorShape {
-                        if ($event->isDown() && $event->isPrimary()) {
-                            $this->noteRowTap($row, $i, $event);
-                        }
+                        $this->noteRowPointer($row, $i, $event);
 
                         return null;
                     },
@@ -2163,68 +2351,33 @@ final class TableState extends State implements Scrollable, EditableText
      * @param list<TableColumn> $columns
      * @return array<int, float>
      */
+    /**
+     * 把列声明摊平成 `Layout\ColumnWidths` 的入参。
+     *
+     * ★ 只是搬字段，不含决策 —— 四层分配规则（override 最优先 / flex 吃剩余 /
+     *   逐列夹）全在纯函数里，那里能单测。
+     */
     private function resolveWidths(array $columns, float $viewportW): array
     {
-        $n = \count($columns);
-        $gap = $this->view()->columnSpacingPx() * max(0, $n - 1);
-        $avail = max(0.0, $viewportW - $gap);
-
-        /** @var array<int, float> $widths */
-        $widths = [];
-        $used = 0.0;
-        $flexSum = 0.0;
-
-        // ④ 用户拖出来的宽度**最优先**，且**不参与 flex 分配**（拖过就变固定宽）。
-        //   ★ 指向不存在的列时**静默忽略**（与 `sort()` 不同）：override 是"历史
-        //     偏好"——列被删掉之后存盘的旧值还在，是正常情况，不是拼写错误。
-        $overrides = $this->view()->columnWidthOverrides();
-
-        foreach ($columns as $i => $column) {
-            $override = $overrides[$column->keyName()] ?? null;
-            if ($override !== null) {
-                $widths[$i] = $override;
-                $used += $override;
-
-                continue;
-            }
-
+        $specs = [];
+        foreach ($columns as $column) {
             $spec = $column->widthSpec();
-            if ($spec->isFlex()) {
-                $widths[$i] = 0.0;   // 占位：等固定列量完才知道剩余
-                $flexSum += $spec->weight();
-
-                continue;
-            }
-
-            $widths[$i] = $spec->px();
-            $used += $spec->px();
+            $specs[] = [
+                'key' => $column->keyName(),
+                'flex' => $spec->isFlex(),
+                'weight' => $spec->isFlex() ? $spec->weight() : 0.0,
+                'px' => $spec->isFlex() ? 0.0 : $spec->px(),
+                'min' => $column->minWidthPx(),
+                'max' => $column->maxWidthPx(),
+            ];
         }
 
-        // ② 分剩余。剩余为负（固定列已超宽）⇒ flex 列拿 0，溢出交给裁剪 ——
-        //   不在这里报错：阶段 1 的裁决是"装不下就裁"（有横滚之后这里才会变）。
-        if ($flexSum > 0.0) {
-            $free = max(0.0, $avail - $used);
-
-            foreach ($columns as $i => $column) {
-                $spec = $column->widthSpec();
-
-                // ★ 被 override 的列**不参与重算**：它的 `widthSpec()` 可能还是 flex，
-                //   只按 isFlex() 判会让第 ④ 层被第 ② 层覆盖回去（真机表现：拖宽
-                //   一列，松手后又弹回原值 —— 因为 override 只挡住了"初值"没挡住"重算"）。
-                if (!$spec->isFlex() || isset($overrides[$column->keyName()])) {
-                    continue;
-                }
-
-                $widths[$i] = $free * $spec->weight() / $flexSum;
-            }
-        }
-
-        // ③ 每列夹（★ 夹完总和会变，所以 build 里重算 contentW）
-        foreach ($columns as $i => $column) {
-            $widths[$i] = $column->clampWidth($widths[$i]);
-        }
-
-        return $widths;
+        return ColumnWidths::resolve(
+            $specs,
+            $this->view()->columnWidthOverrides(),
+            $viewportW,
+            $this->view()->columnSpacingPx(),
+        );
     }
 
     /**

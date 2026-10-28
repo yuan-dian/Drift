@@ -216,6 +216,18 @@ final class RenderTable extends RenderBox implements ScrollBarHost
         return max(0.0, $size->height - $this->headerBoxH);
     }
 
+    /**
+     * 表头占掉的高度 —— 行区内容坐标的原点（`y = 0` 是第 0 行顶部）。
+     *
+     * ★ 指针要反算"落在第几行"必须减它（`TableState::pointerRowAt()`）；让它与
+     *   `bodyHeight()` 共用同一个 `$headerBoxH`，而不是让 State 用 build 期估的
+     *   `headerHeightPx()` —— 后者与真实布局不是同一口径（表头可能被约束压过）。
+     */
+    public function headerHeight(): float
+    {
+        return $this->headerBoxH;
+    }
+
     /** @internal `TableElement` 挂接期调（子盒由 Element 的事，不在 Widget 里挂） */
     public function setHeader(RenderBox $box): void
     {

@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Widget;
 
 use Drift\Errors;
+use Drift\Layout\ColumnWidths;
 use Drift\Text\TextAlign;
 
 /**
@@ -322,20 +323,22 @@ final class TableColumn
         return $this->textOf($row, $index);
     }
 
-    /** 把任意宽度夹进 `[minWidth, maxWidth]`（三层宽度里的第 ② 层） */
+    /** 声明的 `minWidth()`（`null` = 不夹）。分配算术在 `Layout\ColumnWidths` */
+    public function minWidthPx(): ?float
+    {
+        return $this->minPx;
+    }
+
+    /** 声明的 `maxWidth()`（`null` = 不夹） */
+    public function maxWidthPx(): ?float
+    {
+        return $this->maxPx;
+    }
+
+    /** 把任意宽度夹进 `[minWidth, maxWidth]`（三层宽度里的第 ③ 层） */
     public function clampWidth(float $width): float
     {
-        $w = max(0.0, $width);
-
-        if ($this->minPx !== null) {
-            $w = max($this->minPx, $w);
-        }
-
-        if ($this->maxPx !== null) {
-            $w = min($this->maxPx, $w);
-        }
-
-        return $w;
+        return ColumnWidths::clamp($width, $this->minPx, $this->maxPx);
     }
 
     /**
