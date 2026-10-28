@@ -187,7 +187,8 @@ PHPUnit 默认第一条断言失败就中止方法。GUI 断言不适用：一�
 | &nbsp;&nbsp;· 动画 ✅ | `AnimationControllerTest`(Unit) + `AnimationChainTest`(Feature) + `FramePhaseTest`(Unit) | 1515 → 1492（−23） |
 | &nbsp;&nbsp;· 结构控件(Column/Row/Padding/Center/Spacer/Expanded) ✅ | `tests/Unit/Widget/StructureControlsTest` | 1492 → 1476（−16） |
 | &nbsp;&nbsp;· 布局原语(Flex/basis·shrink/alignSelf/Stack/RenderProxy) + 三树 Element ✅ | `tests/Unit/Layout/{FlexTest,StackTest,ProxyTest}` + `tests/Unit/Widget/ElementTreeTest` | 1476 → 1431（−45） |
-| &nbsp;&nbsp;· 待搬 | 布局(Text/Button/TextField) / 输入 / 状态层 / 光标形状 / Spinner / 错误边界 / 语义推送 / 渲染图像 / ensureVisible / 虚拟列表锚点 | |
+| &nbsp;&nbsp;· 文本/列表/按钮/盒级动画/滚动条 ✅ | `tests/Unit/Widget/{TextTest,EachTest,ButtonTest,ScrollBarFadeTest}` + `tests/Unit/Layout/HoverAnimationTest` | 1431 → 1384（−47） |
+| &nbsp;&nbsp;· 待搬 | TextField / 输入 / 状态层 / 光标形状 / Spinner / 错误边界 / 语义推送 / 渲染图像 / ensureVisible / 虚拟列表锚点 | |
 | **S4** | 纯单元（485 条里的）改成标准 `TestCase`：`assertSame` + `#[DataProvider]` | `--testsuite=unit` 覆盖它们 |
 
 ★ S1–S3 是**纯搬迁**（断言一行不改，只改"在哪个文件哪个方法里"）。
@@ -389,7 +390,7 @@ smoke 那一份保留**（它服务的是"还没搬走的后续段"，不是历�
 ★ `spinCanvas` 的 `Scale` 在 `Drift\Geometry`（不是 `Drift\Rendering`）—— 又踩一次
 "命名空间别按目录推"（见 §9）。已在 functions.php 写全限定名，不再依赖 `use`。
 
-### 10.8 S3 5~9 批落地的文件账
+### 10.8 S3 5~10 批落地的文件账
 
 | 批 | 文件 | 断言 | smoke 对账 |
 |---|---|---|---|
@@ -398,6 +399,7 @@ smoke 那一份保留**（它服务的是"还没搬走的后续段"，不是历�
 | 7 动画 | `tests/Unit/Widget/AnimationControllerTest.php`（15）+ `tests/Feature/Animation/AnimationChainTest.php`（8）+ `tests/Unit/App/FramePhaseTest.php`（2） | 25 | 1515 → 1492（−23） |
 | 8 结构控件 | `tests/Unit/Widget/StructureControlsTest.php` | 16（建盒/挂接/端到端 flex/Row 主轴/弹性子拿剩余/Padding/Center 三态/无 build/update 换盒） | 1492 → 1476（−16） |
 | 9 布局原语+Element | `tests/Unit/Layout/FlexTest.php`（19）+ `StackTest.php`（11）+ `ProxyTest.php`（5）+ `tests/Unit/Widget/ElementTreeTest.php`（10） | 45 | 1476 → 1431（−45） |
+| 10 文本/列表/按钮/盒级动画/滚动条 | `tests/Unit/Widget/TextTest.php`（12）+ `EachTest.php`（5）+ `ButtonTest.php`（17）+ `ScrollBarFadeTest.php`（7）+ `tests/Unit/Layout/HoverAnimationTest.php`（6） | 47 | 1431 → 1384（−47） |
 
 ★ 第 9 批的结构决策（可扩展性的落点）：**镜像生产类布局**——`src/Layout/{RenderFlex,
 RenderStack,RenderProxy}` → `tests/Unit/Layout/{FlexTest,StackTest,ProxyTest}`；
@@ -406,6 +408,23 @@ RenderStack,RenderProxy}` → `tests/Unit/Layout/{FlexTest,StackTest,ProxyTest}`
 已被 `composer.json` 的 `Drift\Dev\ → tools/` 自动加载（bootstrap 就是 `tools/autoload.php`），
 测试里 `use` 即可，单一来源。只有**真缺的全局助手**（`expectBox` / `countTree`）下沉到
 `tests/Support/functions.php`（带 `function_exists` 守卫，与 `check`/`smokeContext` 同风格）。
+
+★ 第 10 批印证"一段不等于一个主题"：`⑲ Text` 之后紧挨着的 `㉑ Each` / `㉒ Button` /
+盒级 hover / 滚动条淡出 / `IconButton` 是**五个不同被测对象**，按类切五个文件。
+`ButtonTest` 收编 `NavButton` 与 `IconButton`（三者是同一"按钮族"的三条设计线，判据互相
+参照：居中 vs 左对齐 vs 正方形；拆开要重复夹具）。`HoverAnimationTest` 放 `Unit/Layout/`
+因为被测的是 `RenderObject::hoverProgress`（时间由 `tickAnimations(ms)` 手动推进，
+不需要 `Application::frame()`）。
+
+★ 第 10 批的坑：`tests/Support/functions.php` **没有 namespace**（`check`/`smokeContext`/
+`spinCanvas` 都在全局）。测试类里写 `use function Drift\Dev\Tests\Support\spinCanvas;`
+会 fatal（`Call to undefined function`）。**不要写 `use function`**——PHP 在命名空间内找不到
+函数会自动回退全局，直接调 `spinCanvas(...)` 即可。
+
+★ 第 10 批的隐式变量耦合：`⑲ Text` 段定义的 `$darkContext` 被后面 `㉓ TextField` 段
+（`$darkField->mount(null, $darkContext)`）**跨段借用**。删段后该变量悬空 ⇒ 必须在
+TextField 段头补回一行同名构造。这类"段间借变量"grep 单个变量名查不出来（会撞见后段
+自己的同名重新赋值），要用脚本对比"待删区定义集 × 删除点之后的首次使用是否早于重新赋值"。
 
 ★ 第 9 批的坑：独立的 `Overflow::Clip` 断言**夹在子进程失败路径块中间**（`flexreport` 与
 `shrinkoverflow` 两条 `runCase` 之间），删段时不能整块删（会连带删掉子进程判据），要

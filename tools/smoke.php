@@ -258,7 +258,6 @@ use Drift\Widget\CustomPaint;
 use Drift\Widget\CustomPainter;
 use Drift\Widget\SizedBox;
 use Drift\Widget\Stack;
-use Drift\Widget\ScrollBarFade;
 use Drift\Widget\ButtonVariant;
 use Drift\Widget\AppBar;
 use Drift\Widget\BoxWidget;
@@ -4546,121 +4545,13 @@ check(
 //     不是 BoxWidget · 无 build() · update 换盒（16 条）
 //   ★ 纯布局，不依赖帧驱动，放 Unit 层。
 
-// ── ⑲ Text 控件：哨兵三档 + 角色经主题解析（§15.2 / §15.7 纪律 3）──
-
-// 哨兵：Unset 是显式 case ⇒ 0 是合法取值（->body() 解析出来就是它）
-$unsetText = Text::make('x');
-check('Text · 哨兵是 enum case 不是裸数字（Unset 有名字）', TextRole::Unset->value === 0 && $unsetText->role() === TextRole::Unset);
-check('Text · body() 落成 Body（0 是合法值，不是"未设置"）', Text::make('x')->body()->role() === TextRole::Body);
-
-// 三态 bool：未设置 / 否 / 是 三者可区分
-$tristateA = Text::make('x');
-$tristateB = Text::make('x')->bold(false);
-$tristateC = Text::make('x')->bold();
-check(
-    'Text · bold 三态可分（未设置 / 否 / 是）',
-    $tristateA->explicitBold() === null && $tristateB->explicitBold() === false && $tristateC->explicitBold() === true
-);
-
-// float 哨兵：负值域外
-check('Text · size 哨兵是 -1.0（尺寸非负 ⇒ 域外）', Text::make('x')->explicitSize() === null);
-check('Text · 给了 size 就用显式值', Text::make('x')->size(22.0)->explicitSize() === 22.0);
-
-// 角色 → 主题：换肤只换表，调用点不动
-$lightTitle = Text::make('标题')->title()->createRenderObject($context);
-$darkContext = new BuildContext(320.0, 240.0, ThemeData::dark(), $context->metrics());
-$darkTitle = Text::make('标题')->title()->createRenderObject($darkContext);
-check(
-    'Text · title() 的字号来自主题表（明 18）',
-    $lightTitle instanceof RenderText && $lightTitle->styleSize() === 18.0,
-    (string) ($lightTitle instanceof RenderText ? $lightTitle->styleSize() : -1.0)
-);
-check(
-    'Text · caption 比 body 小，title 比 body 大（层次是排出来的不是写死的）',
-    Text::make('x')->caption()->createRenderObject($context)->styleSize() === 12.0
-        && Text::make('x')->title()->createRenderObject($context)->styleSize() === 18.0
-);
-
-// 显式 size 优先于角色
-check(
-    'Text · 显式 size 盖过角色（优先级只在 ThemeData 解析一次）',
-    Text::make('x')->title()->size(40.0)->createRenderObject($context)->styleSize() === 40.0
-);
-
-// 端到端：Element → 盒 → 真实排版（不是"能造出来"）
-$textRoot = Text::make('Hello Drift')->body()->createElement();
-$textRoot->mount(null, $context);
-$textBox = $textRoot->renderObject();
-check('Text · 造出 RenderText', $textBox instanceof RenderText);
-$textBox?->layout(BoxConstraints::loose(new Size(200.0, 100.0)));
-check(
-    'Text · 排版走注入的度量，得到非零尺寸',
-    ($textBox?->size()?->width ?? 0.0) > 0.0 && ($textBox?->size()?->height ?? 0.0) > 0.0,
-    sprintf('实际 %.2f × %.2f', $textBox?->size()?->width ?? -1.0, $textBox?->size()?->height ?? -1.0)
-);
-
-// 受宽度约束 ⇒ 折行 ⇒ 变高（断行依赖可用宽，这是 C1 的必然推论）
-$narrow = Text::make('Hello Drift')->body()->createElement();
-$narrow->mount(null, $context);
-$narrowBox = $narrow->renderObject();
-$narrowBox?->layout(BoxConstraints::loose(new Size(30.0, 1000.0)));
-check(
-    'Text · 收窄约束 ⇒ 折行 ⇒ 更高（宽度变了断行就变）',
-    ($narrowBox?->size()?->height ?? 0.0) > ($textBox?->size()?->height ?? 0.0),
-    sprintf('窄 %.2f vs 宽 %.2f', $narrowBox?->size()?->height ?? -1.0, $textBox?->size()?->height ?? -1.0)
-);
-
-// maxLines / ellipsize 进的是 TextStyle（§8.1：影响排版的输入都必须在 style 里，
-// 否则缓存键 (text, style, maxWidth, scale) 会撒谎）
-$clipped = Text::make('Hello Drift Framework')->body()->maxLines(1)->ellipsize()->createRenderObject($context);
-$clipped->layout(BoxConstraints::loose(new Size(40.0, 1000.0)));
-check(
-    'Text · maxLines 真的限住行数（1 行 ⇒ 高度 = 一行高）',
-    $clipped instanceof RenderText && $clipped->lineCount() === 1,
-    (string) ($clipped instanceof RenderText ? $clipped->lineCount() : -1)
-);
-
-// ── ㉑ Each（原方案的 ForEach —— PHP 保留字撞名，见提交说明）──
-
-$users = [
-    ['id' => 7, 'name' => '甲'],
-    ['id' => 3, 'name' => '乙'],
-    ['id' => 9, 'name' => '丙'],
-];
-$eachWidget = Each::make(fn(array $u): int => $u['id'])
-    ->items($users, fn(array $u): Widget => Text::make($u['name'])->body());
-
-// keyFn 产出的 key 真的落到了子 widget 上 —— 不是"能调用"就算完
-$eachKids = $eachWidget->itemWidgets();
-check('Each · 每个 item 都带上了 keyFn 产出的 key', count($eachKids) === 3 && $eachKids[1]->identity()?->value === 3, var_export($eachKids[1]->identity()?->value, true));
-
-// key 改变了 diff 身份：同位置换新控件但 key 相同 ⇒ 复用；key 不同 ⇒ 卸旧挂新
-$eachRoot = $eachWidget->createElement();
-$eachRoot->mount(null, $context);
-check('Each · 挂载铺出 3 个子 Element', $eachRoot->childCount() === 3);
-$firstKidElement = $eachRoot->childAt(0);
-$eachRoot->update(
-    Each::make(fn(array $u): int => $u['id'])->items($users, fn(array $u): Widget => Text::make($u['name'])->body())
-);
-check(
-    'Each · key 相同 ⇒ diff 复用同一个 Element（State 不重置）',
-    $eachRoot->childAt(0) === $firstKidElement
-);
-$reordered = [['id' => 3, 'name' => '乙'], ['id' => 7, 'name' => '甲'], ['id' => 9, 'name' => '丙']];
-$eachRoot->update(
-    Each::make(fn(array $u): int => $u['id'])->items($reordered, fn(array $u): Widget => Text::make($u['name'])->body())
-);
-check(
-    'Each · 列表重排 ⇒ key 跟随 item（不是跟随槽位）',
-    $eachRoot->childAt(0)?->widget()->identity()?->value === 3
-        && $eachRoot->childAt(1)?->widget()->identity()?->value === 7
-);
-
-// 空列表 ⇒ 0 个子，不炸
-$emptyRoot = Each::make(fn(array $u): int => $u['id'])->items([], fn(array $u): Widget => Text::make('x'))->createElement();
-$emptyRoot->mount(null, $context);
-check('Each · 空列表铺出 0 个子（不塌、不炸）', $emptyRoot->childCount() === 0);
-
+// ── ⑲ Text 控件 / ㉑ Each：声明层与列表 diff 已迁出 ─────────────────────────────
+//   · `tests/Unit/Widget/TextTest.php` —— 哨兵三档（enum case / 三态 bool / -1.0 域外）/
+//     角色经主题解析（title 18 · caption 12 · 显式 size 盖过角色）/ 端到端排版 ·
+//     收窄折行 · maxLines 进 TextStyle（12 条）
+//   · `tests/Unit/Widget/EachTest.php` —— keyFn 落位 / 挂载铺子 / key 相同复用 /
+//     重排 key 跟随 item / 空列表 0 子（5 条）
+//   ★ 重复 key 与 int·字符串 key 撞车靠子进程验 Errors 上报，留下面两条（runCase）。
 // 重复 key ⇒ 响亮失败（G2：绝不静默）
 fresh($log);
 [$code, $output] = runCase(__FILE__, 'eachdup', null);
@@ -4672,306 +4563,15 @@ fresh($log);
 [$code, $output] = runCase(__FILE__, 'eachkeytag', null);
 check("Each · key 1 与 '1' 不算重复（子进程 exit 1 = 该报的没报）", $code === 1, '实际 ' . $code . ' / ' . $output);
 
-// ── ㉒ Button：变体是 make() 的薄壳别名（§15.4 删除测试）──
-
-// "糖只转发"的删除测试：primary/danger 必须等价于 make()->variant(...)
-$primaryDirect = Button::primary('刷新');
-$primaryForward = Button::make('刷新')->variant(ButtonVariant::Primary);
-check(
-    'Button · primary() 是 make()+variant() 的薄壳（糖删掉框架契约不变）',
-    $primaryDirect->variantValue() === $primaryForward->variantValue()
-        && $primaryDirect->variantValue() === ButtonVariant::Primary
-);
-check('Button · danger() 同形', Button::danger('删')->variantValue() === ButtonVariant::Danger);
-
-// onPressed 是纯 UI 回调；Button 本身不依赖命令系统
-$fired = 0;
-$btn = Button::make('取消')->onPressed(function () use (&$fired): void { $fired++; });
-$handler = $btn->pressedHandler();
-check('Button · onPressed 闭包原样递下去（不是包一层的机制）', $handler !== null && $handler() === null && $fired === 1);
-
-// 造盒 → 配色经 BuildContext 解析一次（§15.7 纪律 3），Layout 层不碰主题
-$lightBtn = Button::primary('刷新')->createRenderObject($context);
-$darkBtn = Button::primary('刷新')->createRenderObject($darkContext);
-check('Button · 造出 RenderButton', $lightBtn instanceof RenderButton);
-check(
-    'Button · 同一变体在明/暗下取到不同底色（换肤改表不改控件）',
-    $lightBtn->boxStyle()->background?->toArgb() !== $darkBtn->boxStyle()->background?->toArgb(),
-);
-check(
-    'Button · Default 变体有边框、Primary 没有（描边是 Default 的辨识手段）',
-    Button::make('x')->createRenderObject($context)->boxStyle()->borderColor !== null
-        && Button::primary('x')->createRenderObject($context)->boxStyle()->borderColor === null
-);
-
-// 端到端：盒子尺寸 = 内边距 + 标签，且 Label 是它的孩子（按钮文字换行规则与 Text 一致）
-$btnRoot = Button::primary('刷新')->createElement();
-$btnRoot->mount(null, $context);
-$btnBox = $btnRoot->renderObject();
-$btnBox?->layout(BoxConstraints::loose(new Size(200.0, 60.0)));
-$btnKids = [];
-$btnBox?->visitChildren(function (RenderBox $kid) use (&$btnKids): void { $btnKids[] = $kid; });
-check(
-    'Button · 标签是它的唯一孩子（RenderText）',
-    count($btnKids) === 1 && $btnKids[0] instanceof RenderText,
-);
-check(
-    'Button · 盒尺寸 = 内边距 + 标签（不是 0，也不是填满约束）',
-    ($btnBox?->size()?->width ?? 0.0) > 0.0 && ($btnBox?->size()?->width ?? 0.0) < 200.0,
-    sprintf('实际 %.2f × %.2f', $btnBox?->size()?->width ?? -1.0, $btnBox?->size()?->height ?? -1.0)
-);
-
-// ── 图标按钮（2026-10-25）：图标与标签在**同一个盒**里排 ───────────────────
-//   ★ 不是 `Row(图标, 文字)`：`Flex::createRenderObject()` 只建空壳、子盒由 Element
-//     挂 ⇒ 手工拼出来的 `RenderFlex` 没有孩子（详见 `RenderButton` 类注释）。
-$iconDecl = Button::make('列表')->icon(IconName::ListBullets);
-check(
-    'Button · icon() 把图标声明留在 Widget 上',
-    $iconDecl->iconValue() === IconName::ListBullets,
-);
-
-$plainIconBox = Button::make('列表')->createRenderObject($context);
-$withIconBox = $iconDecl->createRenderObject($context);
-check(
-    'Button · 声明图标后造出的盒带图标（未声明的不带）',
-    $withIconBox instanceof RenderButton && $withIconBox->hasIcon()
-        && $plainIconBox instanceof RenderButton && !$plainIconBox->hasIcon(),
-);
-
-$plainIconBox->layout(BoxConstraints::loose(new Size(300.0, 60.0)));
-$withIconBox->layout(BoxConstraints::loose(new Size(300.0, 60.0)));
-check(
-    'Button · 图标是**加宽**（图标 + 间距），不是替换文字',
-    ($withIconBox->size()?->width ?? 0.0) > ($plainIconBox->size()?->width ?? 0.0) + 16.0,
-    sprintf(
-        'plain=%.1f icon=%.1f',
-        $plainIconBox->size()?->width ?? -1.0,
-        $withIconBox->size()?->width ?? -1.0,
-    ),
-);
-
-// ★ 回归：2026-10-25 之前 `setOffset()` 的偏移**从未被 `paintContent()` 使用**
-//   （那里只 `translate($insets)`）⇒ 文字永远贴内容区左上；加图标后表现为
-//   "图标压在首字上"。判据：标签的 offsetX 至少是一个图标宽。
-$iconKids = [];
-$withIconBox->visitChildren(function (RenderBox $kid) use (&$iconKids): void { $iconKids[] = $kid; });
-check(
-    'Button · 图标排在文字左侧（标签 offsetX ≥ 图标宽，不是 0）',
-    $iconKids !== [] && $iconKids[0]->offsetX() >= 18.0,
-    'offsetX=' . ($iconKids === [] ? 'no-child' : (string) $iconKids[0]->offsetX()),
-);
-
-// ★★ 像素判据：`setOffset()` 设对了 ≠ 画的时候用了它。上面那条只看布局期，
-//   而 2026-10-25 的 bug 恰好是"布局算了偏移、绘制时只用 insets" ⇒ 必须看墨。
-//   判据：紧约束（200 宽）下内容**整体居中** ⇒ 左右留白相等；贴左时右留白远大于左。
-$pixelBtn = Button::make('列表')
-    ->variant(ButtonVariant::Flat)   // 不画盒 ⇒ 墨只来自图标与文字
-    ->icon(IconName::ListBullets)
-    ->createRenderObject($context);
-$pixelBtn->layout(BoxConstraints::tight(new Size(200.0, 40.0)));
-$pixelCanvas = new RasterCanvas(200, 40, Color::white(), Scale::of(1.0));
-$pixelBtn->paintComposed($pixelCanvas);
-$pixelRgba = $pixelCanvas->toRgba();
-
-$firstInk = -1;
-$lastInk = -1;
-for ($x = 0; $x < 200; $x++) {
-    for ($y = 0; $y < 40; $y++) {
-        $o = ($y * 200 + $x) * 4;
-        if (ord($pixelRgba[$o]) < 200 || ord($pixelRgba[$o + 1]) < 200 || ord($pixelRgba[$o + 2]) < 200) {
-            if ($firstInk < 0) {
-                $firstInk = $x;
-            }
-            $lastInk = $x;
-            break;
-        }
-    }
-}
-check(
-    'Button · 图标+文字整体居中（左右留白差 ≤ 3px —— 抓"算了偏移但没画"）',
-    $firstInk >= 0 && $lastInk > $firstInk && abs($firstInk - (199 - $lastInk)) <= 3,
-    sprintf('ink=[%d,%d] left=%d right=%d', $firstInk, $lastInk, $firstInk, 199 - $lastInk),
-);
-
-// ★ 导航左对齐（2026-10-25）：`Button` 内容居中（Material 语义），`NavButton`
-//   左对齐（菜单语义）。判据是**不同长度标签的 label offset 相同** —— 居中时
-//   短标签会明显靠右，一列图标参差不齐（实测 49 / 59.5 / 33.5）。
-$navXs = [];
-foreach (['布局 Layout', '日志 Log', '分段 Segmented'] as $navLabel) {
-    $navBox = NavButton::make($navLabel)->icon(IconName::Grid)->createRenderObject($context);
-    $navBox->layout(BoxConstraints::tight(new Size(180.0, 40.0)));
-    $navKids = [];
-    $navBox->visitChildren(function (RenderBox $kid) use (&$navKids): void { $navKids[] = $kid; });
-    $navXs[] = $navKids === [] ? -1.0 : $navKids[0]->offsetX();
-}
-check(
-    'NavButton · 内容左对齐（三种长度标签的 offset 相同 —— 居中会各不相同）',
-    count(array_unique($navXs)) === 1 && ($navXs[0] ?? -1.0) >= 0.0,
-    'xs=' . implode(',', $navXs),
-);
-
-// ── 盒级跟手动画（`AnimatedValue` + `RenderObject::hoverProgress`，2026-10-26）──
-// ★ 钉的是"状态变化有一条斜坡"本身：① 首帧必须自报"在跑"（报 false 会让帧时钟
-//   当场停摆、值永远停在起点）② 单调逼近 ③ 收口后自己停下（否则空闲空转）。
-$hoverBtn = Button::make('悬停浮起')->variant(ButtonVariant::Default)->createRenderObject($context);
-$hoverBtn->layout(BoxConstraints::tight(new Size(120.0, 36.0)));
-check(
-    'hover · 从未悬停过 ⇒ progress 就是 0（不建槽，也没有半截状态）',
-    $hoverBtn->hoverProgress() === 0.0,
-    'p=' . $hoverBtn->hoverProgress(),
-);
-
-$hoverBtn->setHovered(true);
-check(
-    'hover · 刚进入那一帧 ⇒ 值仍是 0（一进来就是 1 的话"有过渡"是假的）',
-    $hoverBtn->hoverProgress() === 0.0,
-    'p=' . $hoverBtn->hoverProgress(),
-);
-check(
-    'hover · 首帧 tick 必须自报"在跑"（报 false ⇒ 帧时钟停摆 ⇒ 永远停在起点）',
-    $hoverBtn->tickAnimations(1000.0) === true,
-);
-
-$hoverSamples = [];
-for ($hfi = 1; $hfi <= 24; $hfi++) {
-    $hoverBtn->tickAnimations(1000.0 + $hfi * 16.0);
-    $hoverSamples[] = $hoverBtn->hoverProgress();
-}
-$hoverMonotonic = true;
-for ($hfi = 1; $hfi < count($hoverSamples); $hfi++) {
-    if ($hoverSamples[$hfi] < $hoverSamples[$hfi - 1]) {
-        $hoverMonotonic = false;
-    }
-}
-check(
-    'hover · 24 帧内单调逼近 1（指数逼近不会回头）',
-    $hoverMonotonic && $hoverBtn->hoverProgress() > 0.98,
-    'p=' . $hoverBtn->hoverProgress() . ' monotonic=' . ($hoverMonotonic ? 'yes' : 'no'),
-);
-check(
-    'hover · 走到目标就收口（tick 返回 false ⇒ 帧时钟能落闸、空闲不空转）',
-    $hoverBtn->tickAnimations(1000.0 + 25 * 16.0) === false,
-);
-
-// —— 浮起真的画了墨：给按钮套 8px 留白，收口后"盒外那一圈"必须从全白变成有墨 ——
-//    ★ 必须从**盒外**数：浮起的全部意义是影子落在盒外；只数盒内会把
-//    "状态色变深"当成"浮起"（两者在盒内无法区分）。
-$hoverHostEl = SizedBox::make(Button::make('影')->variant(ButtonVariant::Default))
-    ->padding(EdgeInsets::all(8.0))
-    ->createElement();
-$hoverHostEl->mount(null, $context);
-$hoverHostBox = $hoverHostEl->effectiveBox();
-$hoverHostBox?->layout(BoxConstraints::loose(new Size(300.0, 200.0)));
-$hoverHostSize = $hoverHostBox?->size();
-$hoverInner = $hoverHostEl->findBoxOf(RenderButton::class);
-
-$ringInk = static function (RenderBox $box, int $w, int $h, int $pad): int {
-    $list = new DisplayList();
-    $box->paint(new RecordingCanvas($list));
-    $canvas = new RasterCanvas($w, $h, Color::white(), Scale::of(1.0));
-    $list->replay($canvas);
-
-    $n = 0;
-    for ($y = 0; $y < $h; $y++) {
-        for ($x = 0; $x < $w; $x++) {
-            $inside = $x >= $pad && $x < $w - $pad && $y >= $pad && $y < $h - $pad;
-            if ($inside) {
-                continue;
-            }
-            if (!$canvas->pixelAt($x, $y)->equals(Color::white())) {
-                $n++;
-            }
-        }
-    }
-
-    return $n;
-};
-
-if ($hoverHostBox !== null && $hoverHostSize !== null && $hoverInner !== null) {
-    $ringW = (int) \round($hoverHostSize->width);
-    $ringH = (int) \round($hoverHostSize->height);
-    $ringBefore = $ringInk($hoverHostBox, $ringW, $ringH, 8);
-
-    $hoverInner->setHovered(true);
-    $hoverInner->tickAnimations(2000.0);
-    for ($hfi = 1; $hfi <= 30; $hfi++) {
-        $hoverInner->tickAnimations(2000.0 + $hfi * 16.0);
-    }
-    $ringAfter = $ringInk($hoverHostBox, $ringW, $ringH, 8);
-
-    check(
-        'hover · 浮起把影子画到盒外（静息时那一圈全白，收口后有墨）',
-        $ringBefore === 0 && $ringAfter > 20,
-        'ringBefore=' . $ringBefore . ' ringAfter=' . $ringAfter,
-    );
-} else {
-    check('hover · 浮起把影子画到盒外（静息时那一圈全白，收口后有墨）', false, '夹具没挂上');
-}
-
-// ── 滚动条空闲淡出（替代"滚动惯性"：滚轮是离散输入，见 `ScrollBarFade` 类注释）──
-$barFade = new ScrollBarFade();
-check(
-    '滚动条 · 从没滚过 ⇒ 恒亮 1.0（静态截图的像素一个不变）',
-    $barFade->opacity() === 1.0,
-    'o=' . $barFade->opacity(),
-);
-check('滚动条 · 没滚过时 tick 直接返回 false（不建槽、不占帧）', $barFade->tick(0.0) === false);
-
-$barFade->noteScroll();
-check('滚动条 · 刚滚过 ⇒ 立刻全亮（不会先淡入一遍）', $barFade->opacity() === 1.0, 'o=' . $barFade->opacity());
-
-for ($bfi = 1; $bfi <= 51; $bfi++) {
-    $barFade->tick($bfi * 16.0);   // 到 816ms，还没到 900ms 的空闲线
-}
-check(
-    '滚动条 · 空闲未满 900ms ⇒ 仍全亮（停手就淡是另一种毛病）',
-    $barFade->opacity() === 1.0,
-    'o=' . $barFade->opacity(),
-);
-
-for ($bfi = 52; $bfi <= 120; $bfi++) {
-    $barFade->tick($bfi * 16.0);
-}
-check(
-    '滚动条 · 空闲超 900ms ⇒ 淡到 0.35（不是 0：消失之后用户不知道这里能滚）',
-    abs($barFade->opacity() - 0.35) < 0.02,
-    'o=' . $barFade->opacity(),
-);
-check(
-    '滚动条 · 淡完就收口（再 tick 返回 false ⇒ 帧时钟落闸）',
-    $barFade->tick(121.0 * 16.0) === false,
-);
-$barFade->noteScroll();
-for ($bfi = 1; $bfi <= 12; $bfi++) {
-    $barFade->tick(121.0 * 16.0 + $bfi * 16.0);
-}
-check(
-    '滚动条 · 再滚一下 ⇒ 很快回到全亮（收口后仍能重新起飞）',
-    $barFade->opacity() > 0.9,
-    'o=' . $barFade->opacity(),
-);
-
-// 纯图标：正方形、不建 RenderText
-$iconOnlyBox = IconButton::of(IconName::Grid, '网格')->createRenderObject($context);
-$iconOnlyBox->layout(BoxConstraints::loose(new Size(300.0, 60.0)));
-$iconOnlyW = $iconOnlyBox->size()?->width ?? 0.0;
-$iconOnlyH = $iconOnlyBox->size()?->height ?? 0.0;
-$iconOnlyKids = [];
-$iconOnlyBox->visitChildren(function (RenderBox $kid) use (&$iconOnlyKids): void { $iconOnlyKids[] = $kid; });
-check(
-    'IconButton · 纯图标是正方形（横向内边距不翻倍）',
-    $iconOnlyW > 0.0 && abs($iconOnlyW - $iconOnlyH) < 0.01,
-    sprintf('%.1f × %.1f', $iconOnlyW, $iconOnlyH),
-);
-check(
-    'IconButton · 不建 RenderText（空标签会占一行行高、把正方形撑成竖条）',
-    $iconOnlyKids === [],
-);
-check(
-    'IconButton · 可访问名来自 label（纯图标没有可读文本，名必须有）',
-    IconButton::of(IconName::Close, '关闭')->semanticsName() === '关闭',
-);
-
+// ── ㉒ Button / NavButton / IconButton / 盒级 hover / 滚动条淡出 已迁出 ─────────
+//   · `tests/Unit/Widget/ButtonTest.php` —— 变体薄壳 / onPressed 原样递 / 换肤取色 /
+//     盒尺寸 = 内边距 + 标签 / 图标加宽 / 标签排图标右侧 / 像素居中 / NavButton 左对齐 /
+//     IconButton 正方形 · 不建 RenderText · 可访问名（17 条）
+//   · `tests/Unit/Layout/HoverAnimationTest.php` —— progress 起点 0 / 首帧自报在跑 /
+//     24 帧单调逼近 / 收口返回 false / 浮起把影子画到盒外（6 条）
+//   · `tests/Unit/Widget/ScrollBarFadeTest.php` —— 恒亮 · 不建槽 / 900ms 空闲线 /
+//     淡到 0.35 不是 0 / 收口后能重新起飞（7 条）
+//   ★ Dock C5 Report 的失败路径留下面两条（runCase）。
 // command() 在 M2 响亮说没实现（不静默留下一个按了没反应的按钮）
 fresh($log);
 [$code, $output] = runCase(__FILE__, 'dockoverflow', null);
@@ -4984,6 +4584,9 @@ check(
 );
 
 // ── ㉓ TextField：受控输入框（§15.2 / §A.2.9）──
+
+// 暗主题上下文（原先由 ⑲ Text 段定义；那段迁出后在这里自己建）
+$darkContext = new BuildContext(320.0, 240.0, ThemeData::dark(), $context->metrics());
 
 // make() 不吃参数 —— 字段的必填项是 value，由链式给（§A.2.9 的 `TextField::make()`）
 $tf = TextField::make()->value('abc')->label('搜索')->placeholder('输入姓名');
