@@ -32,7 +32,6 @@ use Drift\Platform\Win32\Win32SurfaceProvider;
 use Drift\Platform\Win32\Win32WindowHost;
 use Drift\Platform\WindowMaterial;
 use Drift\App\FocusManager;
-use App\Hello\HelloApplication;
 use App\Showcase\ShowcaseApplication;
 use App\Tutorial\TutorialApplication;
 use Drift\App\Frame;
@@ -50,14 +49,12 @@ use Drift\Dev\Smoke\App\FocusRingApplication;
 use Drift\Dev\Smoke\App\OverlayLabApplication;
 use Drift\App\OverlayEntry;
 use Drift\Dev\Smoke\Rendering\ProbePainter;
-use Drift\Dev\Preview\DemoPage;
 use Drift\Dev\Preview\Renderer;
 use Drift\Dev\Preview\SvgSurface;
 use Drift\Dev\Smoke\App\MotionApplication;
 use Drift\Widget\AnimationController;
 use Drift\Widget\Curve;
 use Drift\Dev\Smoke\App\KeyAncestorApplication;
-use Drift\Dev\Smoke\App\CompositeRootApp;
 use Drift\Dev\Smoke\App\CountJob;
 use Drift\Dev\Smoke\App\MenuApplication;
 use Drift\Dev\Smoke\App\FocusTwoApplication;
@@ -108,8 +105,6 @@ use Drift\Dev\Smoke\App\NamedSleepJob;
 use Drift\Dev\Smoke\App\SpinnerApplication;
 use Drift\Dev\Smoke\App\ToggleApplication;
 use Drift\Dev\Smoke\LeafProbe;
-use Drift\Dev\Smoke\Routing\NavStore;
-use Drift\Dev\Smoke\Theme\ThemeSpy;
 use Drift\Dev\Smoke\SealProbe;
 use Drift\Dev\Smoke\State\BuildWatchWidget;
 use Drift\Dev\Smoke\State\ChainPage;
@@ -180,12 +175,9 @@ use Drift\Layout\StackFit;
 use Drift\Layout\ImageFit;
 use Drift\Layout\RenderImage;
 use Drift\Rendering\BoxStyle;
-use Drift\Routing\PageHost;
 use Drift\Routing\PageHostState;
-use Drift\Routing\NoPage;
 use Drift\Routing\RouteTable;
 use Drift\Widget\Offstage;
-use Drift\Widget\OffstageElement;
 use Drift\Rendering\CanvasCapabilities;
 use Drift\Rendering\Color;
 use Drift\Rendering\ColorToken;
@@ -226,7 +218,6 @@ use Drift\Text\TextChange;
 use Drift\Text\TextDraft;
 use Drift\Theme\SystemTheme;
 use Drift\Theme\ThemeData;
-use Drift\Theme\ThemeScope;
 use Drift\Widget\Activatable;
 use Drift\Widget\ActivationContext;
 use Drift\Widget\AspectRatio;
@@ -4722,332 +4713,20 @@ if (is_file($log)) {
     unlink($log);
 }
 
-// ── ㉗ ThemeScope：面覆盖（§2446 / §3171）──
-
-// ① 子树看到的是覆盖后的主题，外层不受影响
-$lightRoot = ThemeScope::make(ThemeData::light(), new ThemeSpy())->createElement();
-$lightRoot->mount(null, $context);
-$lightSpy = $lightRoot->childAt(0)?->state();
-check('ThemeScope · 外层是浅色 ⇒ 子层看到浅色', $lightSpy !== null && !$lightSpy->sawDark);
-
-$darkRoot = ThemeScope::make(ThemeData::dark(), new ThemeSpy())->createElement();
-$darkRoot->mount(null, $context);
-$darkSpy = $darkRoot->childAt(0)?->state();
-check('ThemeScope · 子树看到覆盖后的暗色', $darkSpy !== null && $darkSpy->sawDark);
-check('ThemeScope · 覆盖不外溢（外层 ctx 仍是浅色）', !$context->theme()->isDark());
-
-// ② 嵌套 ⇒ 最内层赢，没有特异性权重（§2446 原话"谁生效查父链"）
-$nested = ThemeScope::make(
-    ThemeData::light(),
-    ThemeScope::make(ThemeData::dark(), new ThemeSpy()),
-)->createElement();
-$nested->mount(null, $context);
-$nestedSpy = $nested->childAt(0)?->childAt(0)?->state();
-check('ThemeScope · 嵌套 ⇒ 最内层赢（不算特异性权重）', $nestedSpy !== null && $nestedSpy->sawDark);
-
-// ③ 切换主题 ⇒ 子层换表。**两种兑现时机**（Element::applyContext 的注释写清了）：
-//    有状态节点只标脏、等帧末；无状态节点立即重建。两种都在这儿钉住。
-$scopedChild = new ThemeSpy(); // Widget 不可变 ⇒ 复用一个实例（换主题不换控件）
-$switchRoot = ThemeScope::make(ThemeData::light(), $scopedChild)->createElement();
-$switchRoot->mount(null, $context);
-$switchSpy = $switchRoot->childAt(0)?->state();
-check('ThemeScope · 切换前是浅色', $switchSpy !== null && !$switchSpy->sawDark);
-$switchRoot->update(ThemeScope::make(ThemeData::dark(), $scopedChild));
-check(
-    'ThemeScope · 切主题 ⇒ 有状态子层先只标脏（§5.2 裁决 3，不在事件中途重建）',
-    $switchSpy !== null && $switchSpy->needsBuild() && $switchSpy->builds === 1
-);
-$switchRoot->settle(); // 帧末：与 Frame.run 走同一条 settle()
-check(
-    'ThemeScope · 帧末兑现 ⇒ 子层看到暗色，且 State 没换（切主题不丢状态）',
-    $switchSpy !== null && $switchSpy->sawDark && $switchSpy->builds === 2
-        && $switchRoot->childAt(0)?->state() === $switchSpy
-);
-
-// ④ 无状态控件**立即**兑现：它的盒是按 ctx 算的，不重算就是"换表不换色"
-$scopedButton = Button::make('确定');
-$buttonScope = ThemeScope::make(ThemeData::light(), $scopedButton)->createElement();
-$buttonScope->mount(null, $context);
-$lightBox = $buttonScope->childAt(0)?->renderObject();
-check('ThemeScope · scope 内按钮先取到浅色表', $lightBox?->boxStyle()->background !== null);
-$buttonScope->update(ThemeScope::make(ThemeData::dark(), $scopedButton));
-$darkBox = $buttonScope->childAt(0)?->renderObject();
-check(
-    'ThemeScope · 切主题 ⇒ 无状态控件的盒立即重算（不是下一帧）',
-    $darkBox !== null && $darkBox !== $lightBox
-        && $darkBox->boxStyle()->background !== $lightBox->boxStyle()->background
-);
-
-// ④b **容器**也要立即换盒**且子盒已挂上**（§13.2：先换盒、再挂子）。
-//    顺序反了（先 rebuild 后 syncBox）会让新盒为空 ⇒ 容器整棵子树静默消失。
-//    ★ 这条与上面那条**不重复**：上面测叶子（自己就是盒），这条测容器（盒里还要装子盒）。
-$scopedColumn = Column::make()->children([Text::make('a'), Text::make('b')]);
-$columnScope = ThemeScope::make(ThemeData::light(), $scopedColumn)->createElement();
-$columnScope->mount(null, $context);
-$columnScope->update(ThemeScope::make(ThemeData::dark(), $scopedColumn));
-$columnBox = $columnScope->childAt(0)?->renderObject();
-check(
-    'ThemeScope · 切主题 ⇒ 容器的盒立即重算**且子盒已挂上**（§13.2 顺序）',
-    $columnBox instanceof RenderFlex && count($columnBox->children()) === 2,
-    sprintf(
-        'box=%s kids=%s',
-        $columnBox === null ? 'null' : $columnBox::class,
-        $columnBox instanceof RenderFlex ? (string) count($columnBox->children()) : 'n/a',
-    ),
-);
-
-// ⑤ 端到端：同一按钮在两份表下取到不同底色（§15.7 纪律 3 只解析一次）
-$darkButton = Button::make('确定')->createRenderObject(
-    (new BuildContext(320.0, 240.0, ThemeData::dark(), $context->metrics()))
-);
-$lightButton = Button::make('确定')->createRenderObject(
-    (new BuildContext(320.0, 240.0, ThemeData::light(), $context->metrics()))
-);
-check(
-    'ThemeScope · 同一按钮在两份表下取到不同底色（§15.7 纪律 3 只解析一次）',
-    $darkButton->boxStyle()->background !== $lightButton->boxStyle()->background
-);
-
-// ⑤ ThemeScope 是结构节点：W5 起也有 `background()`（修饰是字段），但不产 BoxStyle
-check(
-    'ThemeScope · 结构节点也有 background()，但不产 BoxStyle',
-    method_exists(ThemeScope::class, 'background') && !method_exists(ThemeScope::class, 'box')
-);
-
-fresh($log);
-if (is_file($log)) {
-    unlink($log);
-}
-
-// ── ㉘ PageHost：换页 = 旧页 Offstage 化（§12.1 第 4/7 条）──
-
-$nav = new NavStore();
-$navTable = RouteTable::make()
-    ->route('users', static fn (): Widget => Text::make('用户列表'))
-    ->route('signup', static fn (): Widget => Text::make('注册'));
-$host = PageHost::make()->source($nav)->select(static fn (NavStore $s): string => $s->page())->table($navTable);
-$hostElement = $host->createElement();
-$hostElement->mount(null, $context);
-
-/** @var PageHostState $hostState */
-$hostState = $hostElement->state();
-check('PageHost · 首帧选出当前页', $hostState !== null && $hostState->page() === 'users');
-check('PageHost · 初始就两页都挂上（各一个 Offstage）', $hostElement->childCount() === 1);
-$usersOffstage = $hostElement->childAt(0)?->childAt(0);
-$signupOffstage = $hostElement->childAt(0)?->childAt(1);
-check(
-    'PageHost · 当前页可见、另一页隐藏',
-    $usersOffstage instanceof OffstageElement && $usersOffstage->childCount() === 1
-        && $signupOffstage instanceof OffstageElement && $signupOffstage->childCount() === 0
-);
-
-// 换页：旧页隐藏但**不卸载**（State 留着），新页可见
-$nav->go('signup');
-check('PageHost · notify 后选中新页', $hostState !== null && $hostState->page() === 'signup');
-$hostElement->settle();
-check(
-    'PageHost · 换页 ⇒ 旧页进 Offstage、新页可见',
-    $hostElement->childAt(0)?->childAt(0)?->childCount() === 0
-        && $hostElement->childAt(0)?->childAt(1)?->childCount() === 1
-);
-
-// ★ 每页只造一次：切回来是同一个 Widget 实例（否则"保留状态"是空话）
-$firstUsers = $hostElement->childAt(0)?->childAt(0);
-$nav->go('users');
-$hostElement->settle();
-$backUsers = $hostElement->childAt(0)?->childAt(0);
-check(
-    'PageHost · 切回来 ⇒ 页面是同一个实例（工厂没有二次调用）',
-    $firstUsers !== null && $firstUsers === $backUsers && $hostState !== null && $hostState->cachedCount() === 2,
-    '缓存 ' . (string) ($hostState?->cachedCount() ?? -1) . ' 页'
-);
-
-// 同值 notify 被门控挡住（§11.3.3）：别的字段变了，页名没变 ⇒ 不换页
-$notifiesBefore = $nav->notifyCount();
-$nav->touchOtherField();
-check(
-    'PageHost · 同值 notify 被门控挡住（两次 select 输出相等）',
-    $hostState !== null && !$hostState->needsBuild()
-);
-// 反证：通知真的到了（否则"门控挡下"与"订阅没联上"长得一样）
-check(
-    'PageHost · 被门控挡的通知仍到达订阅者（排除"订阅没联上"）',
-    $nav->notifyCount() === $notifiesBefore + 1
-);
-
-// 未命中：开放域 ⇒ 什么都不显示，不崩（§12.1 第 2 条）
-$nav->go('ghost');
-$hostElement->settle();
-$ghostSlot = $hostElement->childAt(0)?->childAt(2);
-check(
-    'PageHost · 未命中的页名 ⇒ 末槽是可见的 NoPage（不崩、不静默错误）',
-    $ghostSlot instanceof OffstageElement
-        && $ghostSlot->childCount() === 1
-        && $ghostSlot->childAt(0)?->widget() instanceof NoPage
-);
-
-fresh($log);
-if (is_file($log)) {
-    unlink($log);
-}
-
-// ── ㉙ Application：组合根（§4.5 / §11.4.3 全链）──
-
-$surface3 = new SurfaceProbe();
-$surface3->resize(320, 240, 1.0);
-$app = new EchoApplication();
-$app->attach($surface3, BoxConstraints::tight(new Size(320.0, 240.0)));
-
-check('Application · buildRoot 被调一次（组合根只组合）', $app->kerned);
-check('Application · 根 Element 挂上且有盒', $app->root() !== null && $app->rootBox() !== null);
-check('Application · attach 即跑首帧（表面收到 beginFrame）', $surface3->frames === 1);
-check('Application · title() 由应用给', $app->title() === '冒烟应用');
-
-// 平台驱动后续帧：每调一次 surface 多一帧
-$app->frame(16.0, BoxConstraints::tight(new Size(320.0, 240.0)));
-$app->frame(32.0, BoxConstraints::tight(new Size(320.0, 240.0)));
-check('Application · frame() 由平台驱动（每调一次一帧）', $surface3->frames === 3 && $surface3->ends === 3);
-
-// ★ 命令派发链（§11.4.3 四环齐全）
-//   第 ①② 环：树内冒泡；第 ③ 环：CommandRouter；第 ④ 环：谁都没接 ⇒ Diagnostic
-check(
-    'Application · 注册表里的命令接得走（第 ③ 环）',
-    $app->dispatch('echo.hello') === true
-);
-
-// ★ 顺序：树内冒泡**优先于**注册表。同一个名字两边都能接 ⇒ 树内先接，
-//   注册表的 handler 一次都不该被调到。顺序反了页面就永远收不到自己的命令。
-$ordered = new EchoApplication();
-$ordered->withCommandWidget = true;
-$ordered->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
-check(
-    'Application · 树内冒泡优先于注册表（页面自己最知道命令是不是它的）',
-    $ordered->dispatch('widget.echo') === true
-);
-$routerHits = 0;
-$ordered->root()?->visitChildren(function (\Drift\Widget\Element $e) use (&$routerHits): void {
-    $st = $e instanceof \Drift\Widget\StatefulElement ? $e->state() : null;
-    if ($st instanceof \Drift\Dev\Smoke\Commands\CommandState) {
-        $routerHits = count($st->handled);
-    }
-});
-check(
-    'Application · 树内接走后注册表没被调（handler 的 seen 不增长）',
-    $routerHits === 1
-);
-check(
-    'Application · 链上谁都没接 ⇒ 返回 false + Diagnostic（不静默）',
-    $app->dispatch('nobody.wants.this') === false
-);
-check(
-    'Application · 没人接的命令写进环形缓冲',
-    str_contains((string) json_encode(\Drift\Errors::recentDiagnostics()), 'nobody.wants.this')
-);
-
-fresh($log);
-if (is_file($log)) {
-    unlink($log);
-}
-
-// ── ㉚ drift-preview：无头渲染一页到 SVG（§16.3 / §A.5）──
-
-$previewSurface = new SvgSurface();
-$preview = new Renderer($previewSurface, $context->metrics(), ThemeData::light());
-$svg = $preview->render(new DemoPage(), 320.0, 240.0, 1.0);
-check(
-    'Preview · SVG 有内容（像素 run > 0，不是空白页）',
-    substr_count($svg, '<rect x=') > 0,
-    'run 数 ' . (string) substr_count($svg, '<rect x=')
-);
-check(
-    'Preview · 根盒排开到视口尺寸（320 × 240 紧约束）',
-    $preview->effectiveRoot()?->size()->width === 320.0,
-    (string) ($preview->effectiveRoot()?->size()->width ?? -1.0)
-);
-// ★ 组合节点对渲染树透明：页面根是 StatelessWidget（无盒），但其下的 Column
-//   必须被外层视口收到 —— 少了这一步画面整块消失且不报错（0×0 在 tight 下合法）
-check(
-    'Preview · 组合根（无盒）下的渲染盒被外层收到（中间层透明）',
-    $preview->effectiveRoot()?->size()->height === 240.0
-);
-check(
-    'Preview · dpr=2 ⇒ 设备像素翻倍（§6.1 唯一量化点）',
-    substr_count($preview->render(new DemoPage(), 320.0, 240.0, 2.0), 'viewBox="0 0 640 480"') === 1
-);
-
-// ★ 回归：应用根是**组合节点**（`StatelessWidget`，自己没盒、底下才有）
-//   ⇒ 以前 `Frame::run` 拿 `renderObject()` 得到 null ⇒ 直接 return
-//   ⇒ **整屏空白且不报错**（C6 只查上界，什么都不画也不算违反约束）。
-//   现在走 `effectiveBox()`，中间层对渲染树透明。
-$compositeSurface = new SurfaceProbe();
-$compositeSurface->resize(320, 240, 1.0);
-$compositeApp = new CompositeRootApp();
-$compositeApp->attach($compositeSurface, BoxConstraints::tight(new Size(320.0, 240.0)));
-check(
-    'Application · 组合根（无盒）仍能排到视口尺寸',
-    $compositeApp->rootBox()?->size()->width === 320.0,
-    (string) ($compositeApp->rootBox()?->size()->width ?? -1.0)
-);
-check(
-    'Application · 组合根的画面有墨（不是静默空白）',
-    $compositeSurface->canvas !== null && inkCount($compositeSurface->canvas) > 0,
-    '墨点数 ' . (string) ($compositeSurface->canvas !== null ? inkCount($compositeSurface->canvas) : -1)
-);
-
-// ── ㉛ apps/hello：第一个真实消费者（§4.5 / §A.1）──
-
-$hello = new HelloApplication();
-$helloSurface = new SurfaceProbe();
-$helloSurface->resize(320, 240, 1.0);
-$hello->attach($helloSurface, BoxConstraints::tight(new Size(320.0, 240.0)));
-check('apps/hello · 应用只写 buildRoot/title/commands（§4.5）', $hello->title() === 'Hello Drift');
-check('apps/hello · 无平台也能挂载（表面是注入的，§7.2 裁决 4）', $hello->root() !== null);
-check(
-    'apps/hello · 屏幕中央有「Hello Drift」（画出墨了）',
-    $helloSurface->canvas !== null && inkCount($helloSurface->canvas) > 0,
-    '墨点数 ' . (string) ($helloSurface->canvas !== null ? inkCount($helloSurface->canvas) : -1)
-);
-check(
-    'apps/hello · 根排满视口（Center 撑满紧约束）',
-    $hello->rootBox()?->size()->width === 320.0 && $hello->rootBox()?->size()->height === 240.0
-);
-
-// preview 的 --app 路径：Application 也能无头出图（§12.2）
-$helloSvgSurface = new SvgSurface();
-$helloSvg = (new Renderer($helloSvgSurface, $context->metrics(), ThemeData::light()))
-    ->renderApp(new HelloApplication(), 320.0, 240.0, 1.0);
-check(
-    'apps/hello · drift-preview --app 出 SVG（应用可独立预览）',
-    substr_count($helloSvg, '<rect x=') > 0,
-    'run 数 ' . (string) substr_count($helloSvg, '<rect x=')
-);
-
-// ★ 回归：文本**必须吃画布变换**。`drawRect` 走 `toDevice()`（跟变换），
-//   而 `drawParagraph` 曾直接用传入坐标（不跟）⇒ `Center` 布局算出的偏移
-//   在 paint 时被丢掉 ⇒ 文字永远贴左上角，且墨点数一模一样（最难查的一档）。
-$shiftCanvas = new RasterCanvas(320, 240, Color::white(), Scale::of(1.0));
-$shiftCanvas->translate(50.0, 20.0);
-$shiftPara = $context->metrics()->layout('Hi', TextStyle::of(14.0), INF, Scale::of(1.0));
-$shiftList = new DisplayList();
-(new RecordingCanvas($shiftList))->drawParagraph($shiftPara, Paint::fill(Color::black()), 0.0, 0.0);
-$shiftList->replay($shiftCanvas);
-$shiftBounds = inkBounds($shiftCanvas);
-check(
-    'Rendering · 文本吃画布平移（translate 之后墨迹整体挪位）',
-    $shiftBounds !== null && $shiftBounds[0] >= 50 && $shiftBounds[2] >= 20,
-    '包围盒 ' . ($shiftBounds === null ? 'null' : implode(',', $shiftBounds))
-);
-
-// ★ 回归：hello 的「Hello Drift」是**居中**的，不是贴着左上角
-$helloBounds = inkBounds($helloSurface->canvas);
-check(
-    'apps/hello · 文字居中（Center 的偏移真被画出来）',
-    $helloBounds !== null
-        && abs(($helloBounds[0] + $helloBounds[1]) / 2 - 160) <= 4
-        && abs(($helloBounds[2] + $helloBounds[3]) / 2 - 120) <= 4,
-    '包围盒 ' . ($helloBounds === null ? 'null' : implode(',', $helloBounds))
-);
-
+// ── ㉗ ThemeScope / ㉘ PageHost / ㉙ Application / ㉚ Preview / ㉛ hello 已迁出 ──
+//   · `tests/Feature/Theme/ThemeScopeTest.php`（12）—— 覆盖不外溢 · 嵌套最内层赢 ·
+//     有状态子层只标脏、帧末兑现且 State 不换 · 无状态控件立即换盒（叶子与容器两种，
+//     后者验 §13.2 顺序）· 同一按钮两份表取不同底色
+//   · `tests/Feature/App/PageHostTest.php`（9）—— 首帧两页都挂 · 换页旧页进 Offstage ·
+//     切回同一实例（工厂不二次调）· 同值 notify 被门控 + 通知仍到达（成对）·
+//     未命中页名 ⇒ 末槽可见 NoPage
+//   · `tests/Feature/App/ApplicationTest.php`（12）—— attach 即首帧 · frame() 一调一帧 ·
+//     命令四环（注册表 / 树内优先于注册表 / 谁都没接写环形缓冲）· 组合根无盒仍排到
+//     视口且画面有墨
+//   · `tests/Feature/Preview/RendererTest.php`（4）—— SVG 有 run · 根盒排满视口 ·
+//     组合节点对渲染树透明 · dpr=2 设备像素翻倍
+//   · `tests/Feature/App/HelloAppTest.php`（7）—— title/挂载/有墨/排满 · --app 出 SVG ·
+//     文本吃画布平移 · 文字真居中（看包围盒而不是墨点数）
 // ── ㊷ apps/tutorial：从零写一个应用（`docs/tutorial.md` 的配套代码）───────
 //
 // ★ 这一节的作用不是"证明 tutorial 能跑"，是**给教程绑一条闸门**：

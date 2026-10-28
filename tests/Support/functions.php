@@ -166,6 +166,40 @@ if (!\function_exists('logText')) {
     }
 }
 
+if (!\function_exists('inkBounds')) {
+    /**
+     * 墨迹包围盒 `[minX, maxX, minY, maxY]`；无墨 ⇒ null。
+     *
+     * ★ 只数墨点数（`inkCount`）测不出"画在了哪儿" —— `Center` 算对偏移而绘制丢掉它，
+     *   墨点数一样多，画面却贴在左上角。
+     * ★ 扫描范围固定 320×240（与全部用例的画布规格一致），保持与 smoke 同实现。
+     *
+     * @return array{0: int, 1: int, 2: int, 3: int}|null
+     */
+    function inkBounds(RasterCanvas $canvas): ?array
+    {
+        $minX = PHP_INT_MAX;
+        $maxX = -1;
+        $minY = PHP_INT_MAX;
+        $maxY = -1;
+        $w = 320;
+        $h = 240;
+
+        for ($y = 0; $y < $h; $y++) {
+            for ($x = 0; $x < $w; $x++) {
+                if ($canvas->pixelAt($x, $y)->r < 200) {
+                    $minX = min($minX, $x);
+                    $maxX = max($maxX, $x);
+                    $minY = min($minY, $y);
+                    $maxY = max($maxY, $y);
+                }
+            }
+        }
+
+        return $maxX < 0 ? null : [$minX, $maxX, $minY, $maxY];
+    }
+}
+
 if (!\function_exists('inkCount')) {
     /**
      * 非背景像素数：用来断言"真的画了东西 / 真的被挡住了"。

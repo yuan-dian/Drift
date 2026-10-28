@@ -195,7 +195,8 @@ PHPUnit 默认第一条断言失败就中止方法。GUI 断言不适用：一�
 | &nbsp;&nbsp;· 窗口帧（resize / 零视口 / AppBar 窄窗 / 预览降级）+ 主题切换 ✅ | `tests/Feature/App/WindowFrameTest` + `tests/Feature/Theme/ThemeSwitchTest` | 1264 → 1253（−11） |
 | &nbsp;&nbsp;· 错误边界三层兜底 + 加速键/编辑命令环/指针框选 ✅ | `tests/Unit/Input/AcceleratorTableTest` + `tests/Feature/Widget/ErrorBoundaryTest` + `tests/Feature/Input/{KeyRoutingPriorityTest,EditingCommandLoopTest,PointerSelectionTest}` | 1253 → 1214（−39） |
 | &nbsp;&nbsp;· 命令 / 帧循环 / 路由表 / Offstage ✅ | `tests/Unit/{Commands/CommandTest,Routing/RouteTableTest}` + `tests/Feature/{App/FrameLoopTest,Widget/OffstageTest}` | 1214 → 1182（−32） |
-| &nbsp;&nbsp;· 待搬 | 光标形状 / Spinner / 主题作用域 / 页宿主 / 组合根 / 语义推送 / 渲染图像 / ensureVisible / 虚拟列表锚点 / 浮层·模态·菜单族 / W8-2 控件族 / Table / LazyColumn / 日志 / 毛玻璃 | |
+| &nbsp;&nbsp;· 主题作用域 / 页宿主 / 组合根 / 预览出图 / hello ✅ | `tests/Feature/Theme/ThemeScopeTest` + `tests/Feature/App/{PageHostTest,ApplicationTest,HelloAppTest}` + `tests/Feature/Preview/RendererTest` | 1182 → 1138（−44） |
+| &nbsp;&nbsp;· 待搬 | 光标形状 / Spinner / 语义推送 / 渲染图像 / ensureVisible / 虚拟列表锚点 / 浮层·模态·菜单族 / W8-2 控件族 / Table / LazyColumn / 日志 / 毛玻璃 / tutorial·showcase·示例 | |
 | **S4** | 纯单元（485 条里的）改成标准 `TestCase`：`assertSame` + `#[DataProvider]` | `--testsuite=unit` 覆盖它们 |
 
 ★ S1–S3 是**纯搬迁**（断言一行不改，只改"在哪个文件哪个方法里"）。
@@ -397,7 +398,7 @@ smoke 那一份保留**（它服务的是"还没搬走的后续段"，不是历�
 ★ `spinCanvas` 的 `Scale` 在 `Drift\Geometry`（不是 `Drift\Rendering`）—— 又踩一次
 "命名空间别按目录推"（见 §9）。已在 functions.php 写全限定名，不再依赖 `use`。
 
-### 10.8 S3 5~17 批落地的文件账
+### 10.8 S3 5~18 批落地的文件账
 
 | 批 | 文件 | 断言 | smoke 对账 |
 |---|---|---|---|
@@ -414,6 +415,7 @@ smoke 那一份保留**（它服务的是"还没搬走的后续段"，不是历�
 | 15 窗口帧+主题 | `tests/Feature/App/WindowFrameTest.php`（7）+ `tests/Feature/Theme/ThemeSwitchTest.php`（4） | 11（resize 只跑一帧·不读时钟 / 零视口跳过且根盒保旧尺寸 / AppBar 窄窗裁剪 / 预览期降级 / 主题递归下发） | 1264 → 1253（−11） |
 | 16 错误边界+按键路由 | `tests/Unit/Input/AcceleratorTableTest.php`（4）+ `tests/Feature/Widget/ErrorBoundaryTest.php`（13）+ `tests/Feature/Input/KeyRoutingPriorityTest.php`（5）+ `EditingCommandLoopTest.php`（9）+ `PointerSelectionTest.php`（8） | 39（加速键值语义 / 构造·build·渲染三层兜底 / 第①环优先于焦点链 / 让位规则② / 编辑门控 ②③④ / 指针框选 + IBeam） | 1253 → 1214（−39） |
 | 17 命令+帧循环+路由+Offstage | `tests/Unit/Commands/CommandTest.php`（8）+ `tests/Unit/Routing/RouteTableTest.php`（4）+ `tests/Feature/App/FrameLoopTest.php`（12）+ `tests/Feature/Widget/OffstageTest.php`（8） | 32（CommandArg 双槽 / 未注册进 Diagnostic / State 冒泡 / setState 延后到帧末 / 时间戳注入 / 脏边界 / layout→paint→present 有墨 / 帧外换盒仍重排 / 隐藏不 dispose·切回立即兑现·卸载才 dispose） | 1214 → 1182（−32） |
+| 18 主题/页宿主/组合根/预览/hello | `tests/Feature/Theme/ThemeScopeTest.php`（12）+ `tests/Feature/App/PageHostTest.php`（9）+ `ApplicationTest.php`（12）+ `HelloAppTest.php`（7）+ `tests/Feature/Preview/RendererTest.php`（4） | 44（覆盖不外溢·嵌套最内层赢 / 有状态延后·无状态立即 / 换页保实例 / 命令四环 / 组合根无盒仍排满 / SVG 出图 / 文字真居中） | 1182 → 1138（−44） |
 
 ★★ 第 17 批的**方法论发现**（值得在 S4 之前记住）：源码里 `Frame::needsSettle()` 的注释宣称
 "拆掉 `boxEpoch` 判据 ⇒ 帧外直调 `Element::update()` 那条红"，**实测不成立** ——
@@ -424,6 +426,21 @@ smoke 那一份保留**（它服务的是"还没搬走的后续段"，不是历�
 ★ 结论：**注释里的变异承诺不是判据，只有变异自检跑出来的红才是。** 与本批其余五组
 （拆 layout 的 boxEpoch / 未注册不上报 / 隐藏仍在 children / 切回不 settle）对照，
 只有这一条是"注释说了但量具没守住"的。按 S3 纯搬迁纪律先记录、留 S4 补强。
+
+★★ 第 18 批又抓到**同一类**问题的第二例，且这次是**断言文字对、判据挑错**：
+
+`Application · 树内接走后注册表没被调（handler 的 seen 不增长）` 的括号里写的就是
+"seen 不增长"，但实现只读 `CommandState::handled` 的条数 —— 而夹具里 router 绑的是
+`echo.hello`、树内接的是 `widget.echo`，**两个名字不重叠** ⇒ 顺序反转时 router 返回 false，
+树内照样接住，两条断言全绿。
+
+处置：给 `EchoApplication` 加 `overlapHandler`（让 router **也**绑 `widget.echo`），
+断言补成 `$routerHits === 1 && $ordered->overlapHandler->seen === []`。**条数不变**，
+但这条从此真的按它自己写的文字生效 —— 重做变异后报 `tree=0 router=1`，精准红。
+
+★ 两例合起来的判据：**"断言文字描述的机制"必须与"断言实际读的量"一致**。
+文字说 seen 就得读 seen；文字说"帧外换盒"就得验到子盒而不是根盒。这类错位不会
+让测试变红，只会让它变成绿着的空壳 —— 只有变异自检能揭穿。
 
 ★ 第 16 批的结构决策：**同一段的判据按"被测对象"分家，不按"段号"**。`㉝` 一段里其实装了
 五个对象：`AcceleratorTable`（值对象 → Unit）、`ErrorBoundary`+`RenderErrorBoundary`（一个类
