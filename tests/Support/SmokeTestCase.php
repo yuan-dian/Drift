@@ -68,6 +68,34 @@ abstract class SmokeTestCase extends TestCase
         $this->failed[] = $name . ($detail === '' ? '' : '  —— ' . $detail);
     }
 
+    /**
+     * 取走并清空本方法累积的失败（**给"量具自检"用**）。
+     *
+     * ## 为什么需要它
+     *
+     * `expectBox()` / `childBoxes()` 这类全局助手本身也要有"**会红**"的证明 ——
+     * 否则它们恒绿时，所有依赖它们的断言一起变成假绿，而且**永远查不出来**
+     * （G2：量具要有反向自检，与 `lint --selftest` 同理）。
+     *
+     * 自检的做法只能是"故意喂错期望 ⇒ 读回失败列表"，而 `$failed` 是 private。
+     *
+     * ## 为什么是"取走"而不是"读"
+     *
+     * 自检故意制造的失败必须在**同一方法内**被消费掉：留着的话方法末尾的
+     * `flushChecks()` 会把它们当成真失败报出去。取走 = 读 + 清，一次完成。
+     *
+     * ★ 不碰 `$passed`：自检之前跑过的断言仍然算数（计数不会倒退）。
+     *
+     * @return list<string> 每条是 `标题  —— 实测值`
+     */
+    final protected function takeFailures(): array
+    {
+        $failed = $this->failed;
+        $this->failed = [];
+
+        return $failed;
+    }
+
     /** 把本方法累积的失败一次性抛给 PHPUnit（每个测试方法的最后一句话） */
     final protected function flushChecks(): void
     {

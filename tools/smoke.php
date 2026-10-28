@@ -60,10 +60,8 @@ use App\Users\Jobs\JobRegistry;
 use App\Users\Store\MemoryUserSource;
 use App\Users\Store\LoadStatus;
 use Drift\Dev\Smoke\App\FailSliceJob;
-use Drift\Dev\Smoke\App\TableScrollApplication;
 use Drift\Dev\Smoke\App\SemValueApplication;
 use Drift\Dev\Smoke\App\TfApplication;
-use Drift\Dev\Smoke\App\ScrollApplication;
 use Drift\Dev\Smoke\App\NavApplication;
 use Drift\Dev\Smoke\App\NamedSleepJob;
 use Drift\Dev\Smoke\App\SpinnerApplication;
@@ -83,20 +81,16 @@ use Drift\Errors;
 use Drift\Commands\CommandArg;
 use Drift\Commands\CommandHandler;
 use Drift\Commands\CommandRouter;
-use Drift\Geometry\Axis;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Scale;
 use Drift\Geometry\Size;
 use Drift\Layout\LayoutSelfCheck;
-use Drift\Layout\RenderRichText;
 use Drift\Input\AcceleratorTable;
-use Drift\Input\CursorShape;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
-use Drift\Input\ScrollEvent;
 use Drift\Input\SemanticsInvokeEvent;
 use Drift\Input\SemanticsSetValueEvent;
 use Drift\Input\SemanticsRole;
@@ -107,7 +101,6 @@ use Drift\Layout\RenderBox;
 use Drift\Layout\RenderButton;
 use Drift\Layout\RenderDock;
 use Drift\Layout\RenderFlex;
-use Drift\Layout\RenderScrollView;
 use Drift\Layout\RenderProxy;
 use Drift\Layout\RenderCustomPaint;
 use Drift\Layout\RenderObject;
@@ -154,13 +147,10 @@ use Drift\Widget\Button;
 use Drift\Widget\Card;
 use Drift\Widget\CustomPaint;
 use Drift\Widget\SizedBox;
-use Drift\Widget\AppBar;
 use Drift\Widget\BoxWidget;
 use Drift\Widget\Center;
 use Drift\Widget\Column;
 use Drift\Widget\ComboBox;
-use Drift\Widget\Dock;
-use Drift\Widget\Drag\DragTarget;
 use Drift\Widget\Each;
 use Drift\Widget\LazyColumn;
 use Drift\Widget\Grid;
@@ -196,12 +186,6 @@ use Drift\Widget\TextField;
 use Drift\Widget\TextFieldState;
 use Drift\Widget\Widget;
 use Drift\Widget\Table;
-use Drift\Widget\TableColumn;
-use Drift\Widget\TableColumnWidth;
-use Drift\Widget\TableSelection;
-use Drift\Widget\TableSort;
-use Drift\Widget\TableState;
-use Drift\Layout\RenderTable;
 use Drift\Dev\TestApp;
 
 require __DIR__ . '/autoload.php';
@@ -573,25 +557,6 @@ if (str_starts_with($caseArg, '--case=')) {
         echo "不该到达这里\n";
     }
 
-    // ★ 量具反例：`expectBox()` 必须**真的会红**。只写正例的助手等于"永远绿"，
-    //   它自己错了也看不出来（G2：量具要有反向自检，与 `lint --selftest` 同理）。
-    //   三条覆盖三种失败路径：原点不符 / 盒为 null / 盒没 layout。
-    // ★ 必须放在**本链内**：链尾那句 `exit(0)` 是"未知用例静默退出"，
-    //   放链外的话这段永远不执行（2026-10-22 踩到，表现为子进程零输出）。
-    if ($case === 'expectbox') {
-        $probe = new SolidBox(new Size(10.0, 6.0), 10.0, 6.0);
-        $host = new RenderProxy();
-        $host->setMods((new Modifier())->withPadding(4.0, 2.0, 4.0, 2.0));
-        $host->setChild($probe);
-        $host->layout(BoxConstraints::loose(new Size(60.0, 60.0)));
-
-        // 真实矩形是 (4, 2) 10×6 —— 这里故意把 x 写成 5
-        expectBox($probe, 5.0, 2.0, 10.0, 6.0, '量具反例 · 原点差 1px');
-        expectBox(null, 0.0, 0.0, 10.0, 6.0, '量具反例 · 盒为 null');
-        expectBox(new SolidBox(new Size(10.0, 6.0), 10.0, 6.0), 0.0, 0.0, 10.0, 6.0, '量具反例 · 没 layout');
-
-        exit(0); // 断言层自己打印 FAIL，判定交给外层
-    }
     // ★ W8-3 的两个构造期守卫：`Errors::report` 走 `abort()` ⇒ **真的 exit(3)**，
     //   进程内 `try/catch` 接不住（`exit()` 不是异常）⇒ 必须走子进程。2026-10-24
     //   第一稿就是写在进程内的，现象是 smoke 在那一行**静默截断**（无汇总行、
@@ -839,43 +804,6 @@ function boxOrigin(RenderBox $box): array
     return RenderBox::absoluteOrigin($box);
 }
 
-/**
- * 断言某个盒的**矩形**（客户区绝对坐标，`07` §5.2）。
- *
- * ★ 用 `RenderBox::absoluteOrigin()` 而不是自己沿父链累加：W5/M2-3 之后子盒
- *   offset 住**内容盒**坐标，"内容原点 → 边框盒原点"那一步只有它做对了。
- * ★ **四个数一起断言**：几何错通常是"整体偏了一个 padding"，分开断言会得到
- *   四条消息、还得自己拼；合起来一条就够定位。
- * ★ 严格 `===`，**不加容差**（`07` §5.3）：布局是确定性的，容差会掩盖"差
- *   0.3px"的真实 bug。★ 涉及**字体度量**的断言不要用它 —— 那类只能取上界。
- * ★ 盒为 null / 没 layout 过（`size()` 为 null）⇒ 断言失败并写明是哪种，
- *   不是崩溃（`07` §9 第 5 条）。
- */
-function expectBox(?RenderBox $box, float $x, float $y, float $w, float $h, string $name = ''): void
-{
-    $label = $name !== '' ? $name : '盒矩形';
-    if ($box === null) {
-        check($label, false, '盒为 null（没挂上 / 没 layout）');
-
-        return;
-    }
-    $size = $box->size();
-    if ($size === null) {
-        check($label, false, '盒 size() 为 null（layout 没跑）');
-
-        return;
-    }
-    [$ax, $ay] = RenderBox::absoluteOrigin($box);
-    check(
-        $label,
-        $ax === $x && $ay === $y && $size->width === $w && $size->height === $h,
-        sprintf(
-            '期望 (%.4g, %.4g) %.4g×%.4g，实际 (%.4g, %.4g) %.4g×%.4g',
-            $x, $y, $w, $h,
-            $ax, $ay, $size->width, $size->height
-        )
-    );
-}
 // ── 桥的解释器替身：已下沉到 tools/fakes/（smoke 与 PHPUnit 共用一份）────────
 // ★ 为什么在 tools/ 而不是 tests/：`tests/Support/bootstrap.php` 已经 require
 //   `tools/autoload.php`（方向是 tests → tools）；反过来让 tools/smoke.php 去
@@ -4115,203 +4043,26 @@ check(
 );
 
 
-// ── ㉘ 多页外壳：Dock / AppBar / NavButton + 命令激活（§12.1 / §12.2，2026-10-16 落地）──
-
-// RenderDock 五槽布局（直接构造渲染盒，与 C5 负例同一条测试路径）
-$dock = new RenderDock(Overflow::Report);
-$dock->setSlot('top', new SolidBox(new Size(100.0, 20.0), 100.0, 20.0));
-$dock->setSlot('bottom', new SolidBox(new Size(100.0, 15.0), 100.0, 15.0));
-$dock->setSlot('left', new SolidBox(new Size(30.0, 65.0), 30.0, 65.0));
-$dock->setSlot('right', new SolidBox(new Size(25.0, 65.0), 25.0, 65.0));
-$dock->setSlot('center', new SolidBox(new Size(45.0, 65.0), 45.0, 65.0));
-$dock->layout(BoxConstraints::tight(new Size(100.0, 100.0)));
-// ★ 五槽改用 `expectBox()`：**绝对原点 + 尺寸四个数一起断**。原来的写法只断
-//   `offsetX/Y`（相对内容盒）+ 部分尺寸 —— left 槽的 x 和宽、right 槽的宽都
-//   没人管，而"整体偏一个 padding"正是这类断言最容易漏的错。
-expectBox($dock->slot('top'), 0.0, 0.0, 100.0, 20.0, 'Dock · top 槽：全宽贴顶、拿自然高');
-expectBox($dock->slot('bottom'), 0.0, 85.0, 100.0, 15.0, 'Dock · bottom 槽：全宽贴底（100−15）');
-expectBox($dock->slot('left'), 0.0, 20.0, 30.0, 65.0, 'Dock · left 轨：中带全高、贴左');
-expectBox($dock->slot('right'), 75.0, 20.0, 25.0, 65.0, 'Dock · right 轨：贴右（100−25）');
-expectBox($dock->slot('center'), 30.0, 20.0, 45.0, 65.0, 'Dock · center 槽：tight 填满剩余矩形（45×65 @ 30,20）');
-
-// 量具自检：上面 10 条用 `expectBox()` 的断言**全绿**只说明"它们都对"，不说明
-// "助手会红"。这里跑一个故意错的子进程，把"会红"也变成断言（`07` §11.2 #4/#5）。
-[$ebCode, $ebOut] = runCase(__FILE__, 'expectbox', null);
-check(
-    '量具自检 · expectBox 给错期望时会红（三种失败路径各一条，消息带期望与实际）',
-    $ebCode === 0
-        && substr_count($ebOut, 'FAIL') === 3
-        && str_contains($ebOut, '期望 (5, 2) 10×6，实际 (4, 2) 10×6')
-        && str_contains($ebOut, '盒为 null（没挂上 / 没 layout）')
-        && str_contains($ebOut, '盒 size() 为 null（layout 没跑）'),
-    'code=' . $ebCode . ' ｜ ' . str_replace("\n", ' ⏎ ', $ebOut)
-);
-
-// ── 无界主轴：Dock 取内容自然高（§24.2 #18，2026-10-17 修）──
-// 触发形状 = ScrollView 给内容的约束（主轴无界"先量有多长"）。判据：
-// ① 自身高有限且 = 20 + max(左40,中50,右10) + 15 = 85（**不是** INF）
-// ② bottom offsetY = topH + midH = 70（**不是** INF —— 旧行为正是它）
-// ③ 中带三槽铺满 midH=50（不是各自自然高、也不是 INF）
-// ④ bottom 仍贴**内容**底：20 + 50 + 15 == 85
-// SolidBox 的 intrinsic 与 box 故意不同（见其注释）⇒ 这条夹具同时钉住
-// "midH 真的来自 intrinsicHeight"。
-$infDock = new RenderDock(Overflow::Report);
-$infDock->setSlot('top', new SolidBox(new Size(100.0, 20.0), 100.0, 20.0));
-$infDock->setSlot('bottom', new SolidBox(new Size(100.0, 15.0), 100.0, 15.0));
-$infDock->setSlot('left', new SolidBox(new Size(30.0, 40.0), 30.0, 40.0));
-$infDock->setSlot('center', new SolidBox(new Size(45.0, 50.0), 45.0, 77.0)); // intrinsic 77 > 左40 右10 ⇒ max
-$infDock->setSlot('right', new SolidBox(new Size(25.0, 10.0), 25.0, 10.0));
-$infSize = $infDock->layout(new BoxConstraints(0.0, 100.0, 0.0, INF));
-check(
-    'Dock · 无界主轴：自身高 = 内容自然高 112（20+max(40,77,10)+15），不是 INF',
-    $infSize->height === 112.0,
-    var_export($infSize->height, true),
-);
-check(
-    'Dock · 无界主轴：bottom offsetY = 97（topH+midH，不是 INF）',
-    $infDock->slot('bottom')?->offsetY() === 97.0,
-    var_export($infDock->slot('bottom')?->offsetY(), true),
-);
-check(
-    'Dock · 无界主轴：中带三槽铺满 midH=77（来自 center 的 intrinsicHeight）',
-    $infDock->slot('left')?->size()?->height === 77.0
-        && $infDock->slot('center')?->size()?->height === 77.0
-        && $infDock->slot('right')?->size()?->height === 77.0,
-);
-check(
-    'Dock · 无界主轴：有界行为不动（复跑 tight 100x100 五槽数值不变）',
-    $dock->slot('bottom')?->offsetY() === 85.0 && $dock->slot('center')?->offsetY() === 20.0,
-);
-
-// 元素层：挂载、封存、槽盒挂接（盒挂接不变量）
-$shellRoot = Dock::make()
-    ->top(AppBar::make()->title('外壳')->children([NavButton::make('列表')->command('nav.users')]))
-    ->center(Column::make()->children([Text::make('内容')]))
-    ->createElement();
-$shellRoot->mount(null, $context);
-$shellBox = $shellRoot->effectiveBox();
-check('Dock · 挂载即建出 RenderDock', $shellBox instanceof RenderDock);
-check(
-    'Dock · 槽盒按声明挂接（top/center 有盒，left/right/bottom 为空）',
-    $shellBox instanceof RenderDock
-        && $shellBox->slot('top') !== null && $shellBox->slot('center') !== null
-        && $shellBox->slot('left') === null && $shellBox->slot('right') === null && $shellBox->slot('bottom') === null,
-);
-check('Dock · 挂载后全树封存', $shellRoot->widget()->isSealed());
-
-// 条的宽拉满 / 轨的高铺满（§12.1 第 3 条"全宽横条 / 中带全高竖轨"）
-$stretchRoot = Dock::make()
-    ->top(AppBar::make()->title('条')->children([NavButton::make('a')->command('x')]))
-    ->left(Padding::make(Text::make('轨'))->all(4.0))
-    ->center(Text::make('内容'))
-    ->createElement();
-$stretchRoot->mount(null, $context);
-$stretchBox = $stretchRoot->effectiveBox();
-$stretchBox?->layout(BoxConstraints::tight(new Size(300.0, 200.0)));
-check(
-    'Dock · 横条拉满全宽（AppBar 300 宽，不是自然宽）',
-    $stretchBox instanceof RenderDock && $stretchBox->slot('top')?->size()?->width === 300.0,
-    (string) ($stretchBox instanceof RenderDock ? $stretchBox->slot('top')?->size()?->width : -1.0),
-);
-check(
-    'Dock · 竖轨铺满中带高（轨高 = 200 − 条高）',
-    $stretchBox instanceof RenderDock
-        && $stretchBox->slot('left')?->size()?->height === 200.0 - ($stretchBox->slot('top')?->size()?->height ?? 0.0),
-);
-
-// AppBar：标题 + children 一行；chrome 底有墨
-$barRoot = AppBar::make()->title('用户管理')->children([
-    NavButton::make('列表')->command('nav.users'),
-])->createElement();
-$barRoot->mount(null, $context);
-$barBox = $barRoot->effectiveBox();
-$barBox?->layout(BoxConstraints::tight(new Size(300.0, 60.0)));
-check('AppBar · 渲染盒是 RenderAppBar（RenderFlex 的 chrome 子类）', $barBox instanceof RenderAppBar);
-$barKids = [];
-$barBox?->visitChildren(function (RenderObject $kid) use (&$barKids): void {
-    if ($kid instanceof RenderBox) {
-        $barKids[] = $kid;
-    }
-});
-check(
-    'AppBar · 标题与按钮排成一行（按钮在标题右侧、不重叠）',
-    count($barKids) === 2
-        && $barKids[1]->offsetX() >= $barKids[0]->offsetX() + ($barKids[0]->size()?->width ?? 0.0),
-    sprintf('%d 个子盒', count($barKids)),
-);
-check('AppBar · chrome 底有墨（底色真的画了）', inkCount(spinCanvas($barBox, 300, 60)) > 0);
-
-// AppBar::windowButtons()（P1-Stage 1b 无边框窗）：三个窗口按钮 + 标准命令名。
-// ★ 命令名是 `AppBar` 与组合根 `WindowCommands` 之间的**唯一契约** —— 写错一个字
-//   的现象是"按钮点了没反应"（没人注册那个命令），不报错、不写日志。
-// ★ 判据落在**顺序**上（最小化 / 最大化 / 关闭 从左到右），且必须是**最后三个**、
-//   前面紧跟弹性占位（否则按钮不贴右边）。
-$wbBar = AppBar::make()->title('条')->windowButtons();
-$wbKids = $wbBar->barKids();
-$wbNames = [];
-foreach ($wbKids as $wbKid) {
-    if ($wbKid instanceof Button) {
-        $wbNames[] = $wbKid->commandName();
-    }
-}
-check(
-    'AppBar · windowButtons ⇒ 三个窗口按钮（标准命令名，顺序固定）',
-    $wbNames === ['window.minimize', 'window.maximize', 'window.close'],
-    'names=' . implode(',', array_map(static fn(?string $n): string => (string) $n, $wbNames)),
-);
-check(
-    'AppBar · windowButtons ⇒ 按钮贴右边（前面紧跟弹性占位，且是最后三个子项）',
-    count($wbKids) === 5
-        && $wbKids[1] instanceof Spacer
-        && $wbKids[2] instanceof IconButton
-        && $wbKids[4] instanceof IconButton,
-    'kids=' . count($wbKids),
-);
-check(
-    'AppBar · 不声明 windowButtons ⇒ 一个窗口按钮都不画（有原生标题栏的窗口不该有两排）',
-    array_filter(
-        AppBar::make()->title('条')->barKids(),
-        static fn($k): bool => $k instanceof Button && str_starts_with((string) $k->commandName(), 'window.'),
-    ) === [],
-    '意外画了窗口按钮',
-);
-
-// AppBar::skipFocus() ⇒ 整组工具按钮不进 Tab 序（§A.3.4）
-$skipRoot = AppBar::make()->children([
-    NavButton::make('a')->command('x'),
-    NavButton::make('b')->command('y'),
-])->skipFocus()->createElement();
-$skipRoot->mount(null, $context);
-$skipFm = new FocusManager();
-$skipFm->collect([$skipRoot]);
-check('AppBar · skipFocus ⇒ 整组按钮不进 Tab 序', $skipFm->order() === []);
-
-$keepRoot = AppBar::make()->children([
-    NavButton::make('a')->command('x'),
-    NavButton::make('b')->command('y'),
-])->createElement();
-$keepRoot->mount(null, $context);
-$keepFm = new FocusManager();
-$keepFm->collect([$keepRoot]);
-check('AppBar · 不声明 skipFocus ⇒ 按钮照常进 Tab 序（2 个）', count($keepFm->order()) === 2);
-
-// 命令激活（§9.1：焦点按钮"回车/空格能触发"）—— 两条路径各一遍
-$navApp = new NavApplication();
-$navApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
-$navApp->dispatchInput(KeyEvent::down(KeyChord::tab()));      // 焦点 ⇒ 第一个 NavButton
-$navApp->dispatchInput(KeyEvent::down(KeyChord::enter()));    // 激活 ⇒ 命令带 arg 派发
-check(
-    '激活 · 焦点 NavButton 的 Enter ⇒ 命令带 arg 派发（nav.users#7）',
-    $navApp->recorder()->seen === ['nav.users#7/'],
-    implode(',', $navApp->recorder()->seen),
-);
-$navApp->dispatchInput(KeyEvent::down(KeyChord::tab()));      // 焦点 ⇒ 取消按钮
-$navApp->dispatchInput(KeyEvent::down(KeyChord::make('Space'))); // 激活 ⇒ onPressed 纯 UI 回调
-check(
-    '激活 · 焦点 Button 的 Space ⇒ onPressed 被调（纯 UI 回调路径）',
-    $navApp->pressed === ['cancelled'],
-    implode(',', $navApp->pressed),
-);
+// ── ㉘ 多页外壳：Dock / AppBar / NavButton + 命令激活 已迁出 ──────────────
+//   → `tests/Unit/Layout/DockTest.php`（15）—— 五槽几何（top/bottom 全宽贴边、
+//     左右中带全高、center 填满剩余）+ 无界主轴取内容自然高（自身高 112 /
+//     bottom offsetY 97 / 中带三槽铺满 77 / 有界行为不动）+ 元素层挂接与全树封存
+//     + 条拉满全宽、轨铺满中带高 + `expectBox` 量具自检（三种失败路径各一条）。
+//   → `tests/Unit/Widget/AppBarTest.php`（10）—— 标题与按钮一行 + chrome 底铺满
+//     整盒且颜色 = 主题 `Chrome`（**无子项**夹具：有文字时"有墨"恒真，见下）
+//     + `windowButtons()` 三条命令名与顺序（比 smoke 多验了中间那个是 IconButton）
+//     + `skipFocus()` 成对（跳过 / 照常进 Tab 序）。
+//   → `tests/Feature/App/ShellCommandTest.php`（2）—— NavButton 的 Enter ⇒ 命令带
+//     arg（`nav.users#7/`）/ Button 的 Space ⇒ `onPressed`（纯 UI 回调）。
+//   ★ 原段 198 行混了五个主题（五槽布局 / 无界主轴 / 元素挂接 / AppBar 契约 /
+//     命令激活），按"坏法不同"拆三处。
+//   ★ 量具自检从"跑子进程数 FAIL 行"改成 `SmokeTestCase::takeFailures()` 当场
+//     读回 —— `check()` 只记录不抛，故意制造的失败能在同方法内取走、不污染 flush。
+//   ★ `expectBox()` 在 smoke 侧本段是**最后一个使用者** ⇒ 函数与 `expectbox` case
+//     一并删除（死代码）。tests 侧同名实现与自检在 `DockTest` 里。
+//   ★ 迁移中修掉一处假绿：原"chrome 底有墨"用 `inkCount()`（数非白像素），而夹具里
+//     有标题文字 —— **文字自己就有墨**，底色整段没画也绿（变异 M4 实测）⇒ 换成
+//     无子项夹具 + "Chrome 色 ≥ 90% + 中心像素 = 主题 Chrome"。
 
 // —— 语义节点激活（§9 / M5 无障碍的"可操作"半边 = UIA `InvokePattern` 的 PHP 侧）
 //   ★ 实现落成"在节点中心派发一次合成 tap"，所以判据必须落在**效果**上

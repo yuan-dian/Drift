@@ -85,11 +85,6 @@ final class FocusRingTest extends SmokeTestCase
         return $probe->canvas?->pixelAt(self::PROBE_X, self::PROBE_Y);
     }
 
-    private static function describe(?Color $c): string
-    {
-        return $c === null ? 'null' : $c->r . ',' . $c->g . ',' . $c->b;
-    }
-
     /**
      * Tab 聚焦 ⇒ ① 框架自己请求一帧、② 之前无焦点时不画、③ 下一帧画出 Accent 描边、
      * ④ 画完立刻回落（判据有界）。
@@ -125,12 +120,12 @@ final class FocusRingTest extends SmokeTestCase
         check(
             '焦点环 · 首帧（无输入、无焦点）(19,19) 不是描边（不是"一启动就画"）',
             $before !== null && !$before->equals(self::accent()),
-            'rgb=' . self::describe($before)
+            'rgb=' . describeColor($before)
         );
         check(
             '焦点环 · Tab 聚焦后控件左上外扩 1px 是 Accent 描边',
             $after !== null && $after->equals(self::accent()),
-            'rgb=' . self::describe($after)
+            'rgb=' . describeColor($after)
         );
         check(
             '焦点环 · 画完后悔回落（wantsFrame 的第七判据有界）',
@@ -158,7 +153,7 @@ final class FocusRingTest extends SmokeTestCase
         check(
             '焦点环 · 前置：Tab 聚焦后环已画出（否则"点击后消失"恒真）',
             $ringOn !== null && $ringOn->equals(self::accent()),
-            'rgb=' . self::describe($ringOn)
+            'rgb=' . describeColor($ringOn)
         );
 
         // 点 (5,5)：落在 padding 区（Button 原点 20,20）⇒ 不进按钮，但足以切到指针模态
@@ -170,7 +165,7 @@ final class FocusRingTest extends SmokeTestCase
         check(
             '焦点环 · 指针点击后隐藏（:focus-visible —— 鼠标操作后不该再看到蓝框）',
             $ringOff !== null && !$ringOff->equals(self::accent()),
-            'rgb=' . self::describe($ringOff)
+            'rgb=' . describeColor($ringOff)
         );
         check(
             '焦点环 · "隐藏"本身也请求一帧（目标 null，不靠下次输入才消失）',

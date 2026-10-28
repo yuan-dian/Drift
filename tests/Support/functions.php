@@ -298,3 +298,17 @@ if (!\function_exists('inkCount')) {
         return $ink;
     }
 }
+
+if (!\function_exists('describeColor')) {
+    /**
+     * 颜色的失败消息口径：`r,g,b` 三个数。
+     *
+     * ★ 唯一实现。此前 `FocusRingTest` 里有一份私有副本，`AppBarTest` 要用第二份时
+     *   下沉到这里（§20：第二个使用者出现就下沉，不等第三个）。
+     * ★ 不打印 ARGB 整数：像素断言红了要"一眼看出差多少"，`10,20,30` 比 `0xFF0A141E` 好读。
+     */
+    function describeColor(?Color $color): string
+    {
+        return $color === null ? 'null' : $color->r . ',' . $color->g . ',' . $color->b;
+    }
+}
