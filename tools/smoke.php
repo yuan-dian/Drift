@@ -20,8 +20,6 @@ use Drift\Dev\Smoke\Layout\OffsetBox;
 use Drift\Dev\Smoke\Layout\OversizeBox;
 use Drift\Dev\Smoke\Layout\BleedBox;
 use Drift\Dev\Smoke\Layout\SolidBox;
-use Drift\Dev\Smoke\Layout\LayoutCountBox;
-use Drift\Dev\Smoke\Layout\LayoutCountWidget;
 use Drift\Dev\Smoke\Commands\EchoCommands;
 use Drift\App\Application;
 use Drift\Platform\Win32\Win32SurfaceProvider;
@@ -31,8 +29,6 @@ use App\Tutorial\TutorialApplication;
 use Drift\App\Frame;
 use Drift\Dev\Smoke\ErrorBoundary\BoomPage;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
-use Drift\Dev\Smoke\Frame\TickerWidget;
-use Drift\Dev\Smoke\Frame\TickerState;
 use Drift\Dev\Smoke\Overlay\RecordingSurface;
 use Drift\Dev\Smoke\Rendering\ProbePainter;
 use Drift\Dev\Preview\SvgSurface;
@@ -75,8 +71,6 @@ use Drift\Dev\Smoke\State\LeafBoxFallbackWidget;
 use Drift\Dev\Smoke\State\LeafBoxWidget;
 use Drift\Dev\Smoke\State\LoopPage;
 use Drift\Core\Computed;
-use Drift\Dev\Smoke\Tree\CounterState;
-use Drift\Dev\Smoke\Tree\CounterWidget;
 use Drift\Errors;
 use Drift\Commands\CommandArg;
 use Drift\Commands\CommandHandler;
@@ -3583,34 +3577,15 @@ check(
     sprintf('实际 %.2f × %.2f', $mixedBox?->size()?->width ?? -1.0, $mixedBox?->size()?->height ?? -1.0)
 );
 
-// ⑰ State：setState 只标脏（§5.2 / §11.3.1 / §12.3）
-fresh($log);
-$counterElement = (new CounterWidget())->createElement();
-$counterElement->mount(null, $context);
-$counter = $counterElement->state();
-
-check('State · 挂载时造一次，之后是同一个', $counter instanceof CounterState && $counterElement->state() === $counter);
-check('State · build() 经 State 出，并收到渲染环境', $counter->builds === 1 && $counter->seenWidth === 320.0);
-check('State · 挂载时也建出了一层子', countTree($counterElement) === 2);
-
-// ★ §5.2 的核心：setState **只标脏**，不立即重建
-$counter->bump();
-check('State · setState 跑闭包', $counter->bumps === 1);
-check('State · setState 只标脏，不立即重建', $counter->needsBuild() && $counter->builds === 1);
-$counterElement->rebuild();
-check('State · 帧末重建后清脏', !$counter->needsBuild() && $counter->builds === 2);
-check('State · 重建不换 State（纯 UI 态活过整个 build）', $counterElement->state() === $counter);
-
-// §12.3：换描述时 State 跟着走，旧的不丢
-$newCounter = new CounterWidget();
-$counterElement->update($newCounter);
-check('State · 换新描述时 State 不换（状态活过更新）', $counterElement->state() === $counter);
-check('State · State 手里的 Widget 换成整份新的', $counter->widget() === $newCounter);
-
-// §12.3 回收纪律：卸载 ⇒ dispose
-$counterElement->unmount();
-check('State · unmount 调 dispose()（§12.3 回收纪律）', $counter->disposed);
-
+// ⑰ State 生命周期 已迁出
+//   → `tests/Unit/State/StateLifecycleTest.php`（4 方法 / 13 条）——
+//     挂载后就位（多次取到同一个 / build() 收到渲染环境 / 建出一层子）·
+//     setState **只标脏**（bump 前 needsBuild=false ⇒ 之后 true 且 builds 仍 1 ⇒
+//     帧末 rebuild 后清脏且 builds=2）· 重建不换 State · 换描述时 State 不换且
+//     手里换成整份新 Widget · unmount 调 dispose（**卸载前先断 disposed=false**）。
+//   ★ 六条判据共享同一个实例才成立：拆开各建一个夹具，"只标脏"就退化成
+//     "新建的实例 builds=1" —— 恒真。
+//   ★ 三处"写入了"都补了"写入前是另一个值"（needsBuild / widget() / disposed）。
 // ── ㉓ State 层：订阅生命周期 / Cell 门控 / Computed 切片 已迁出 ─────────────
 //   · `tests/Unit/State/SubjectBuilderTest.php`（8）—— 首帧就拿到 select 值 / 同值 notify
 //     被门控挡住 / 改字段不 notify 收不到 / notify 且变才标脏 / 重建拿新值 / unmount 退订 /
@@ -4236,93 +4211,16 @@ check(
 //   ★ 切分判据是**被测对象**不是段号：菜单段里其实混着拖放（主题是 `Drag`）、
 //     浮层栈段里混着指针捕获与窗口失活（主题是"手势什么时候放手"）。
 //   ★ 面板限高与 `panelRect()` 两条另见下一处指针（面板盒本身）。
-
-// ── ㉟ 合成与跳过 layout（arch-v2 `05` §5.4 / §12.2 #10–#12，W4）──
-//    ★ 判据是**调用次数**，不是"画面看起来变了"：画面在"重排了但结果一样"和
-//      "没重排"两种情况下完全一样 ⇒ 只有探针能分辨。
-
-$lcTight = BoxConstraints::tight(new Size(320.0, 240.0));
-$lcWidget = new LayoutCountWidget(new Size(80.0, 40.0));
-$lcEl = $lcWidget->createElement();
-$lcEl->mount(null, $context);
-$lcBox = $lcEl->effectiveBox();
-$lcSurface = new RecordingSurface();
-$lcSurface->resize(320, 240, 1.0);
-$lcFrame = new Frame($lcSurface);
-
-$lcFrame->run($lcEl, $lcTight, 0.0);
-check(
-    '合成 · 首帧：layout 排一次、paint 画一次（量具本身不是空转）',
-    $lcBox instanceof LayoutCountBox && $lcBox->layoutCalls === 1 && $lcBox->paintCalls === 1,
-    $lcBox instanceof LayoutCountBox
-        ? sprintf('layout=%d paint=%d', $lcBox->layoutCalls, $lcBox->paintCalls)
-        : 'no box',
-);
-
-// #12：纯动画帧 —— 没 rebuild、约束没变 ⇒ 跳过 layout，但 paint 照画
-$lcFrame->run($lcEl, $lcTight, 16.0);
-check(
-    '合成 · 纯动画帧跳过 layout、paint 仍执行（§12.2 #12）',
-    $lcBox instanceof LayoutCountBox && $lcBox->layoutCalls === 1 && $lcBox->paintCalls === 2,
-    $lcBox instanceof LayoutCountBox
-        ? sprintf('layout=%d paint=%d', $lcBox->layoutCalls, $lcBox->paintCalls)
-        : 'no box',
-);
-
-// #10：setCompose 只改合成参数，不触发 layout
-$lcBox instanceof LayoutCountBox && $lcBox->setCompose(0.5, 3.0, 0.0);
-$lcFrame->run($lcEl, $lcTight, 32.0);
-check(
-    '合成 · setCompose 不触发 layout（§12.2 #10）',
-    $lcBox instanceof LayoutCountBox
-    && $lcBox->layoutCalls === 1
-    && $lcBox->paintCalls === 3
-    && $lcBox->composeOpacity() === 0.5,
-    $lcBox instanceof LayoutCountBox
-        ? sprintf('layout=%d paint=%d opacity=%.3f', $lcBox->layoutCalls, $lcBox->paintCalls, $lcBox->composeOpacity())
-        : 'no box',
-);
-
-// setCompose 的参数必须**真被画出来**（写而不读 = 未实现）：录到的命令里
-// 要有一条 OP_LAYER_PUSH（opacity < 1 开层）和一条 OP_TRANSLATE（dx ≠ 0）
-$lcList = $lcSurface->list();
-$lcHasLayer = false;
-$lcHasTranslate = false;
-for ($i = 0, $n = $lcList->count(); $i < $n; $i++) {
-    $op = $lcList->opAt($i);
-    if ($op === DisplayList::OP_LAYER_PUSH) {
-        $lcHasLayer = true;
-    } elseif ($op === DisplayList::OP_TRANSLATE) {
-        $lcHasTranslate = true;
-    }
-}
-check(
-    '合成 · 合成参数真被画出来（opacity 开层 + dx 平移各一条命令）',
-    $lcHasLayer && $lcHasTranslate,
-    'layer=' . ($lcHasLayer ? 'yes' : 'no') . ' translate=' . ($lcHasTranslate ? 'yes' : 'no'),
-);
-
-// #11：settle() 的返回值是"本帧有没有 rebuild"—— W4 跳过 layout 的唯一判据
-$tickEl = (new TickerWidget())->createElement();
-$tickEl->mount(null, $context);
-$tickEl->settle(); // 清掉挂载那一轮的脏
-$tickState = $tickEl instanceof StatefulElement ? $tickEl->state() : null;
-if ($tickState instanceof TickerState) {
-    $tickState->tick();
-}
-$tickDirtySettle = $tickEl->settle();
-check(
-    '合成 · settle() 有脏 ⇒ true（W4 靠它判断能不能跳过 layout）',
-    $tickDirtySettle === true,
-    'settle=' . var_export($tickDirtySettle, true)
-    . ' state=' . ($tickState === null ? 'null' : get_class($tickState))
-    . ' builds=' . ($tickState instanceof TickerState ? $tickState->builds : -1),
-);
-check(
-    '合成 · settle() 干净 ⇒ false（不脏还排 = 每帧全树重排，等于没优化）',
-    $tickEl->settle() === false,
-);
-
+// ── ㉟ 合成与跳过 layout 已迁出 ─────────────────────────────────────────────
+//   → `tests/Unit/Frame/ComposeSkipLayoutTest.php`（2 方法 / 7 条）——
+//     首帧 layout 1 / paint 1（**量具自检**：计数器恒 0 时后面全恒真）·
+//     纯动画帧 layout 仍 1 而 paint 涨到 2 · `setCompose()` 不触发 layout 且
+//     opacity 读回 0.5 · 合成参数**真进命令流**（`OP_LAYER_PUSH` + `OP_TRANSLATE`）·
+//     `settle()` 有脏 ⇒ true / 干净 ⇒ false（成对：恒 true 永远不跳过 layout，
+//     恒 false 改了尺寸也不重排）。
+//   ★ 判据必须是**调用次数**：画面在"重排了但结果一样"和"没重排"下逐像素相同。
+//   ★ 与 `Feature/App/WindowFrameTest` 分工：那边判**换尺寸**时的重排，这边判
+//     **不换尺寸**时该省的工作有没有真的省掉。
 
 // ── ㉞c 卡片 / Flex 交叉轴拉伸 已迁出 ──────────────────────────────────────
 //   · `tests/Unit/Widget/CardTest.php`（13）—— 样式落在子控件 mods 上 / 内边距
