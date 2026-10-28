@@ -43,8 +43,10 @@ final class RenderAppBar extends RenderFlex
         $size = $this->size ?? new Size(0.0, 0.0);
         $rect = new Rect(0.0, 0.0, $size->width, $size->height);
 
-        if ($this->box->background !== null) {
-            $canvas->drawRect($rect, Paint::fill($this->box->background), $this->box->radius);
+        // 底（实色或渐变 —— 画笔由 `BoxStyle::backgroundPaint()` 收口）
+        $backgroundPaint = $this->box->backgroundPaint($size->width, $size->height);
+        if ($backgroundPaint !== null) {
+            $canvas->drawRect($rect, $backgroundPaint, $this->box->radius);
         }
         if ($this->box->borderColor !== null && $this->box->borderWidth > 0.0) {
             $canvas->drawRect($rect, Paint::stroke($this->box->borderColor, $this->box->borderWidth), $this->box->radius);

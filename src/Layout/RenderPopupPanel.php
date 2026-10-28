@@ -159,8 +159,11 @@ final class RenderPopupPanel extends RenderProxyBox
         }
 
         // ② 底 ③ 边框（BoxStyle 只管盒内 —— 见类 docblock）
-        if ($this->style->background !== null) {
-            $canvas->drawRect($panel, Paint::fill($this->style->background), $this->style->radius);
+        // ★ 底色画笔由 `BoxStyle::backgroundPaint()` 收口（实色 / 渐变同一入口）；
+        //   按**面板矩形**换算比例坐标，不是整盒（盒的留白是给投影的）。
+        $backgroundPaint = $this->style->backgroundPaint($panel->width, $panel->height);
+        if ($backgroundPaint !== null) {
+            $canvas->drawRect($panel, $backgroundPaint, $this->style->radius);
         }
         if ($this->style->borderColor !== null && $this->style->borderWidth > 0.0) {
             $canvas->drawRect(

@@ -206,10 +206,11 @@ final class AppBar extends RenderBoxWidget
         } else {
             $hasBorder = $userBox->hasBorder();
             $style = new BoxStyle(
-                $userBox->hasBackground() ? $userBox->background : $themeBox->background,
+                $userBox->background ?? $themeBox->background,
                 $hasBorder ? $userBox->borderColor : $themeBox->borderColor,
                 $hasBorder ? $userBox->borderWidth : $themeBox->borderWidth,
                 $userBox->radius > 0.0 ? $userBox->radius : $themeBox->radius,
+                $userBox->backgroundGradient,
             );
         }
 

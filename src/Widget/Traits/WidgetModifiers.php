@@ -5,6 +5,7 @@ namespace Drift\Widget\Traits;
 
 use Drift\Geometry\EdgeInsets;
 use Drift\Rendering\Color;
+use Drift\Rendering\Gradient;
 
 /**
  * `Widget` 的**修饰面**：20 个 fluent setter，全部写同一个 `$this->mods`。
@@ -190,6 +191,32 @@ trait WidgetModifiers
     {
         $this->mutate();
         $this->mods = $this->mods->withFill($color);
+
+        return $this;
+    }
+
+    /**
+     * 底色换成一个**渐变**（盒内比例的形态，不需要知道盒多大）。
+     *
+     * ```php
+     * Card::make($body)->gradient(Gradient::vertical([Color::white(), $shade]))
+     * Button::primary('保存')->gradient(Gradient::horizontal([$a, $b]))
+     * ```
+     *
+     * ★ **渐变赢**：与 `->background($c)` 同时声明时画的是渐变；`->gradient(null)`
+     *   清掉它，实色才算数（`withGradient(null)` 在 `Modifier` 侧叫 `withoutGradient`）。
+     * ★ 坐标是 `0..1` 的比例 —— `Gradient::linear(20,20,180,20,...)` 那种**绝对坐标**
+     *   的渐变照样能传（`resolvedTo()` 会原样放行），但那样就要求你知道盒尺寸，
+     *   一般只有在自定义 `CustomPainter` 里才这么写。
+     *
+     * @api
+     */
+    public function gradient(?Gradient $gradient): static
+    {
+        $this->mutate();
+        $this->mods = $gradient === null
+            ? $this->mods->withoutGradient()
+            : $this->mods->withGradient($gradient);
 
         return $this;
     }

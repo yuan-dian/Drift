@@ -7,6 +7,7 @@ use Drift\Geometry\EdgeInsets;
 use Drift\Rendering\BoxStyle;
 use Drift\Rendering\Color;
 use Drift\Rendering\ColorToken;
+use Drift\Rendering\Gradient;
 
 /**
  * 卡片：**一个内容块**（§15.7 的"需要盒样式的控件"那一类，带内边距）。
@@ -139,6 +140,25 @@ final class Card extends StatelessWidget
         return $this;
     }
 
+    /**
+     * 卡片底改成**渐变**（`Gradient::vertical()` 这类盒内比例的形态）；传 `null` 清掉。
+     *
+     * ★ 与 `background()` 并存时**渐变赢**（`BoxStyle::hasBackground()` 的语义），
+     *   阶梯完全照 `Modifier::withGradient()` —— 两个包装器用同一条规则，用户不用记两套。
+     * ★ 参数**必须可空**：`Widget::gradient()` 是可空的，子类收窄成非空是
+     *   不兼容覆写（`php -l` 查不出，装载期 Fatal）。
+     */
+    public function gradient(?Gradient $gradient): static
+    {
+        $this->mutate();
+        $box = $this->box ?? BoxStyle::none();
+        $this->box = $gradient === null
+            ? $box->withoutBackgroundGradient()
+            : $box->withBackgroundGradient($gradient);
+
+        return $this;
+    }
+
     public function border(Color $color, float $width = 1.0): static
     {
         $this->mutate();
@@ -191,7 +211,10 @@ final class Card extends StatelessWidget
         if ($this->shadow > 0.0) {
             $styled = $styled->shadow($this->shadow);
         }
-        if ($style->background !== null) {
+        // 底：渐变优先（与 `background()` 的并集语义一致 —— 渐变赢）
+        if ($style->backgroundGradient !== null) {
+            $styled = $styled->gradient($style->backgroundGradient);
+        } elseif ($style->background !== null) {
             $styled = $styled->background($style->background);
         }
         if ($style->borderColor !== null && $style->borderWidth > 0.0) {

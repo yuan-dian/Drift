@@ -22,8 +22,8 @@
 | State | 9 | 11 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
-| Widget | 142 | 185 |
-| **合计** | **377** | **312** |
+| Widget | 143 | 185 |
+| **合计** | **378** | **312** |
 
 覆盖 328 个文件 · 描述性提及 27 处（grep 口径的污染源，不计入）
 
@@ -539,7 +539,7 @@
 
 ## Widget 层
 
-### @api（应用可读面） · 142
+### @api（应用可读面） · 143
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -554,7 +554,7 @@
 | `BuildContext` | class | src/Widget/BuildContext.php:13 |
 | `Button` | class | src/Widget/Button.php:19 |
 | `ButtonVariant` | enum | src/Widget/ButtonVariant.php:6 |
-| `Card` | class | src/Widget/Card.php:11 |
+| `Card` | class | src/Widget/Card.php:12 |
 | `Center` | class | src/Widget/Center.php:9 |
 | `Checkbox` | class | src/Widget/Checkbox.php:9 |
 | `Column` | class | src/Widget/Column.php:6 |
@@ -669,16 +669,17 @@
 | `WidgetInteraction::tooltip()` | method | src/Widget/Traits/WidgetInteraction.php:249 |
 | `WidgetInteraction::overlayPanel()` | method | src/Widget/Traits/WidgetInteraction.php:288 |
 | `WidgetInteraction::overlaySignature()` | method | src/Widget/Traits/WidgetInteraction.php:343 |
-| `WidgetModifiers::padding()` | method | src/Widget/Traits/WidgetModifiers.php:29 |
-| `WidgetModifiers::boxSize()` | method | src/Widget/Traits/WidgetModifiers.php:98 |
-| `WidgetModifiers::background()` | method | src/Widget/Traits/WidgetModifiers.php:171 |
-| `WidgetModifiers::shadow()` | method | src/Widget/Traits/WidgetModifiers.php:204 |
-| `WidgetModifiers::opacity()` | method | src/Widget/Traits/WidgetModifiers.php:222 |
-| `WidgetModifiers::translate()` | method | src/Widget/Traits/WidgetModifiers.php:244 |
-| `WidgetModifiers::clip()` | method | src/Widget/Traits/WidgetModifiers.php:257 |
-| `WidgetModifiers::repaintBoundary()` | method | src/Widget/Traits/WidgetModifiers.php:275 |
-| `WidgetModifiers::centerContent()` | method | src/Widget/Traits/WidgetModifiers.php:292 |
-| `WidgetModifiers::grow()` | method | src/Widget/Traits/WidgetModifiers.php:309 |
+| `WidgetModifiers::padding()` | method | src/Widget/Traits/WidgetModifiers.php:30 |
+| `WidgetModifiers::boxSize()` | method | src/Widget/Traits/WidgetModifiers.php:108 |
+| `WidgetModifiers::background()` | method | src/Widget/Traits/WidgetModifiers.php:181 |
+| `WidgetModifiers::gradient()` | method | src/Widget/Traits/WidgetModifiers.php:198 |
+| `WidgetModifiers::shadow()` | method | src/Widget/Traits/WidgetModifiers.php:240 |
+| `WidgetModifiers::opacity()` | method | src/Widget/Traits/WidgetModifiers.php:258 |
+| `WidgetModifiers::translate()` | method | src/Widget/Traits/WidgetModifiers.php:280 |
+| `WidgetModifiers::clip()` | method | src/Widget/Traits/WidgetModifiers.php:293 |
+| `WidgetModifiers::repaintBoundary()` | method | src/Widget/Traits/WidgetModifiers.php:311 |
+| `WidgetModifiers::centerContent()` | method | src/Widget/Traits/WidgetModifiers.php:328 |
+| `WidgetModifiers::grow()` | method | src/Widget/Traits/WidgetModifiers.php:345 |
 | `WidgetSemantics::semantics()` | method | src/Widget/Traits/WidgetSemantics.php:21 |
 | `WidgetSemantics::semanticsRange()` | method | src/Widget/Traits/WidgetSemantics.php:62 |
 | `Widget` | class | src/Widget/Widget.php:21 |
@@ -696,12 +697,12 @@
 | `AppBar::kidList()` | method | src/Widget/AppBar.php:131 |
 | `AppBar::actionList()` | method | src/Widget/AppBar.php:137 |
 | `AppBar::barKids()` | method | src/Widget/AppBar.php:143 |
-| `AppBar::paintsBoxChrome()` | method | src/Widget/AppBar.php:223 |
+| `AppBar::paintsBoxChrome()` | method | src/Widget/AppBar.php:224 |
 | `AppBarElement` | class | src/Widget/AppBarElement.php:8 |
 | `BuildContext::withTheme()` | method | src/Widget/BuildContext.php:48 |
 | `Button::paintsBoxChrome()` | method | src/Widget/Button.php:269 |
-| `Card::$box` | property | src/Widget/Card.php:78 |
-| `Card::box()` | method | src/Widget/Card.php:158 |
+| `Card::$box` | property | src/Widget/Card.php:79 |
+| `Card::box()` | method | src/Widget/Card.php:178 |
 | `ComboBox::optionsValue()` | method | src/Widget/ComboBox.php:285 |
 | `ComboBox::valueText()` | method | src/Widget/ComboBox.php:291 |
 | `ComboBox::placeholderText()` | method | src/Widget/ComboBox.php:297 |
@@ -838,7 +839,7 @@
 | `WidgetInteraction::tooltipTextValue()` | method | src/Widget/Traits/WidgetInteraction.php:280 |
 | `WidgetInteraction::overlayPanelValue()` | method | src/Widget/Traits/WidgetInteraction.php:337 |
 | `WidgetInteraction::overlaySignatureValue()` | method | src/Widget/Traits/WidgetInteraction.php:391 |
-| `WidgetModifiers` | trait | src/Widget/Traits/WidgetModifiers.php:9 |
+| `WidgetModifiers` | trait | src/Widget/Traits/WidgetModifiers.php:10 |
 | `WidgetSemantics` | trait | src/Widget/Traits/WidgetSemantics.php:8 |
 | `WidgetSemantics::semanticsRole()` | method | src/Widget/Traits/WidgetSemantics.php:90 |
 | `WidgetSemantics::semanticsName()` | method | src/Widget/Traits/WidgetSemantics.php:96 |

@@ -96,6 +96,20 @@ final class Modifier
 
     private float $borderWidth = 0.0;
 
+    /**
+     * 底色渐变（paint source 的另一支；与 `$background` 互斥地解释 —— 有渐变时渐
+     * 变赢）。
+     *
+     * ★★ **为什么是"占位对象 + bool"而不是 `?Gradient`**：与 `$background` 完全同
+     *   一条账 —— 可空对象在编译期退化为 `php::Var`（见上面绘制维的段注）。
+     *   照抄成 `?Gradient` 会在 AOT 上静默丢掉类型，`paintBehind()` 里读它变成动态。
+     * ★ 坐标是**盒内比例**（`Gradient::vertical()` 这类工厂产出的形态），
+     *   `paintBehind()` 拿到 `Size` 后调 `resolvedTo()` 换算。用户不需要知道盒多大。
+     */
+    private Gradient $gradient;
+
+    private bool $hasGradient = false;
+
     private float $radius = 0.0;
 
     /** 阴影强度 = 黑色透明度（`0.0` = 不画） */
@@ -145,9 +159,10 @@ final class Modifier
 
     public function __construct()
     {
-        // 占位：`hasBackground` / `hasBorder` 为假时这两个值无意义
+        // 占位：`hasBackground` / `hasBorder` / `hasGradient` 为假时这些值无意义
         $this->background = Color::black();
         $this->borderColor = Color::black();
+        $this->gradient = Gradient::linear(0.0, 0.0, 1.0, 0.0, [Color::black(), Color::black()]);
     }
 
     // ── 读：布局（`RenderBox::layout()` 每帧读）─────────────────────
@@ -348,6 +363,17 @@ final class Modifier
         return $this->hasBackground ? $this->background : null;
     }
 
+    /** 底色渐变；`null` = 没设。坐标是**盒内比例**，画之前要 `resolvedTo()` */
+    public function gradient(): ?Gradient
+    {
+        return $this->hasGradient ? $this->gradient : null;
+    }
+
+    public function hasGradient(): bool
+    {
+        return $this->hasGradient;
+    }
+
     /**
      * 视觉三字段（底 / 边 / 圆角）打包成 `BoxStyle`；三项全未设 ⇒ `null`。
      *
@@ -370,7 +396,7 @@ final class Modifier
     public function boxStyle(): ?BoxStyle
     {
         $hasBorder = $this->hasBorder && $this->borderWidth > 0.0;
-        if (!$this->hasBackground && !$hasBorder && $this->radius === 0.0) {
+        if (!$this->hasBackground && !$this->hasGradient && !$hasBorder && $this->radius === 0.0) {
             return null;
         }
 
@@ -379,6 +405,7 @@ final class Modifier
             $hasBorder ? $this->borderColor : null,
             $hasBorder ? $this->borderWidth : 0.0,
             $this->radius,
+            $this->hasGradient ? $this->gradient : null,
         );
     }
 
@@ -415,10 +442,11 @@ final class Modifier
         return $copy;
     }
 
-    /** 无背景 / 边框 / 阴影 ⇒ false（省一次 `paintBehind()` 调用） */
+    /** 无背景 / 渐变 / 边框 / 阴影 ⇒ false（省一次 `paintBehind()` 调用） */
     public function hasVisual(): bool
     {
-        return $this->hasBackground || ($this->hasBorder && $this->borderWidth > 0.0) || $this->shadow > 0.0;
+        return $this->hasBackground || $this->hasGradient
+            || ($this->hasBorder && $this->borderWidth > 0.0) || $this->shadow > 0.0;
     }
 
     /**
@@ -445,8 +473,18 @@ final class Modifier
             ShadowPainter::paintOutside($canvas, $rect, $this->radius, $this->shadow);
         }
 
-        // ② 底
-        if ($this->hasBackground) {
+        // ② 底 —— 渐变优先（它是"底色是这个渐变"的语义，不是叠加层）
+        //    ★ 渐变坐标是盒内比例 ⇒ 必须先 `resolvedTo()` 换算成绝对像素；这一步
+        //      放在这里而不是 `withGradient()` 里，因为只有画的时候才知道盒多大。
+        if ($this->hasGradient) {
+            $canvas->drawRect(
+                $rect,
+                Paint::fill($this->background)->withGradient(
+                    $this->gradient->resolvedTo($size->width, $size->height),
+                ),
+                $this->radius,
+            );
+        } elseif ($this->hasBackground) {
             $canvas->drawRect($rect, Paint::fill($this->background), $this->radius);
         }
 
@@ -486,6 +524,7 @@ final class Modifier
             && \is_nan($this->height)
             && \is_nan($this->aspect)
             && !$this->hasBackground
+            && !$this->hasGradient
             && !$this->hasBorder
             && $this->radius === 0.0
             && $this->shadow === 0.0
@@ -572,6 +611,36 @@ final class Modifier
         $c = clone $this;
         $c->background = $color;
         $c->hasBackground = true;
+
+        return $c;
+    }
+
+    /**
+     * 把底色换成**渐变**（`Gradient::vertical()` 这类盒内比例的形态）。
+     *
+     * ★ 与 `withFill()` 的关系：**渐变赢**（`paintBehind()` 里先看 `hasGradient`）。
+     *   两者都设是合法状态（用户 `->background($c)->gradient($g)`），语义是"底色是
+     *   这个渐变"，纯色只在渐变被清掉之后才回到画面 —— 这样 `->gradient(null)`
+     *   可以无损回退到实色。
+     */
+    public function withGradient(Gradient $gradient): self
+    {
+        $c = clone $this;
+        $c->gradient = $gradient;
+        $c->hasGradient = true;
+
+        return $c;
+    }
+
+    /** 清掉渐变（回退到 `withFill()` 设的实色，若有） */
+    public function withoutGradient(): self
+    {
+        if (!$this->hasGradient) {
+            return $this;
+        }
+
+        $c = clone $this;
+        $c->hasGradient = false;
 
         return $c;
     }

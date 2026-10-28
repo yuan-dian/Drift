@@ -325,11 +325,16 @@ class Button extends RenderBoxWidget implements Activatable
             return $themeBox;
         }
 
+        // ★ 用户设了渐变 ⇒ 渐变就是底（`BoxStyle::hasBackground()` 已把它算作"有底"）。
+        //   实色那一格用 `??` 而不是 `hasBackground() ?`：只设渐变时
+        //   `$userBox->background` 是 null，取主题色当 base（alpha 更贴近真实观感），
+        //   而渐变本身在 `backgroundPaint()` 里优先生效。
         return new BoxStyle(
-            $userBox->hasBackground() ? $userBox->background : $themeBox->background,
+            $userBox->background ?? $themeBox->background,
             $userBox->hasBorder() ? $userBox->borderColor : $themeBox->borderColor,
             $userBox->hasBorder() ? $userBox->borderWidth : $themeBox->borderWidth,
             $userBox->radius > 0.0 ? $userBox->radius : $themeBox->radius,
+            $userBox->backgroundGradient ?? $themeBox->backgroundGradient,
         );
     }
 

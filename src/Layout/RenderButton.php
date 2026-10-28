@@ -242,8 +242,11 @@ final class RenderButton extends RenderProxyBox
             ShadowPainter::paintOutside($canvas, $rect, $radius, $this->hoverElevation * $progress);
         }
 
-        if ($this->box->background !== null) {
-            $canvas->drawRect($rect, Paint::fill($this->box->background), $radius);
+        // 底（实色或渐变 —— 画笔由 `BoxStyle::backgroundPaint()` 收口，比例坐标在
+        //    那里按盒尺寸落成绝对像素）
+        $backgroundPaint = $this->box->backgroundPaint($size->width, $size->height);
+        if ($backgroundPaint !== null) {
+            $canvas->drawRect($rect, $backgroundPaint, $radius);
         }
         if ($this->box->borderColor !== null && $this->box->borderWidth > 0.0) {
             $canvas->drawRect($rect, Paint::stroke($this->box->borderColor, $this->box->borderWidth), $radius);

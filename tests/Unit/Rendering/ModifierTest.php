@@ -6,6 +6,7 @@ namespace Drift\Dev\Tests\Unit\Rendering;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Layout\RenderBox;
 use Drift\Rendering\Color;
+use Drift\Rendering\Gradient;
 use Drift\Rendering\Modifier;
 
 /**
@@ -57,6 +58,12 @@ final class ModifierTest extends SmokeTestCase
             'withHeight' => [static fn(): Modifier => (new Modifier())->withHeight(10.0), false],
             'withAspect' => [static fn(): Modifier => (new Modifier())->withAspect(2.0), false],
             'withFill' => [static fn(): Modifier => (new Modifier())->withFill(Color::fromRgb(1, 2, 3)), false],
+            'withGradient' => [
+                static fn(): Modifier => (new Modifier())->withGradient(
+                    Gradient::vertical([Color::white(), Color::black()]),
+                ),
+                false,
+            ],
             'withStroke' => [static fn(): Modifier => (new Modifier())->withStroke(Color::fromRgb(1, 2, 3), 1.0), false],
             'withRadius' => [static fn(): Modifier => (new Modifier())->withRadius(4.0), false],
             'withShadow' => [static fn(): Modifier => (new Modifier())->withShadow(0.5), false],
