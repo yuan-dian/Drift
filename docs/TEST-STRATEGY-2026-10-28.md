@@ -175,8 +175,8 @@ PHPUnit 默认第一条断言失败就中止方法。GUI 断言不适用：一�
 | 步 | 动作 | 判据 |
 |---|---|---|
 | **S0** ✅ | 建 `tests/` 骨架 + `ColumnWidths` 纯单元 + `Table/Phase1` 场景 | 20 断言绿 / lint 0 error |
-| **S1** 🚧 | 按**被测对象**（不是分节）搬 Table 的 9 个分节 | 每条与 smoke 原断言**条数对得上** |
-| **S2** 🚧 | 每搬完一个主题就从 `smoke.php` 删掉对应段 | smoke 条数 = 1731 − 已搬数，且全绿 |
+| **S1** ✅ | 按**被测对象**（不是分节）搬 Table 的 9 个分节 | 每条与 smoke 原断言**条数对得上** |
+| **S2** ✅ | 每搬完一个主题就从 `smoke.php` 删掉对应段 | smoke 条数 = 1731 − 已搬数，且全绿 |
 | **S3** | 其余主题（布局 / 控件 / 输入 / 状态 / 浮层 / 应用 / 异步 / 主题 / 动画 / 日志 / 语义）照同一形状搬 | 每搬一个跑一次全绿 |
 | **S4** | 纯单元（485 条里的）改成标准 `TestCase`：`assertSame` + `#[DataProvider]` | `--testsuite=unit` 覆盖它们 |
 
@@ -251,33 +251,52 @@ public function testXxx(): void
 第一次删排序节时它跟着没了，smoke 当场 `Value of type null is not callable`。
 **删任何一段前，先跑一遍"待删区定义的变量在保留区还有谁引用"**（脚本见 10.5）。
 
-### 10.3 落地的文件（本轮新增 13 个）
+### 10.3 落地的文件（S1 收尾时的全貌）
 
 ```
-tests/Unit/
-├── Layout/ColumnWidthsTest.php      四层分配规则（DataProvider）
-├── Layout/ExtentWindowTest.php      列窗口累加 + extentOf
-├── Widget/TableSelectionTest.php    不可变 + int/string 分离
-├── Widget/TableRowPickerTest.php    点击 / Ctrl / Shift / 反向 / 无锚点 / 单选 / 孔洞
-└── Widget/TableSortTest.php         空态 / thenBy 移列到末尾
+tests/Support/
+├── SmokeTestCase.php            check() 转发 + flushChecks()
+└── functions.php                全局 check() / findElement() / smokeContext()
+
+tests/Unit/                      纯值对象：无 Element、无 Application
+├── Input/TapTrackerTest.php     四条规则 + 三个断链边界
+├── Layout/ColumnWidthsTest.php  四层分配规则（DataProvider）
+├── Layout/ExtentWindowTest.php  列窗口累加 + extentOf
+├── Text/TextDraftTest.php       字节数学：退格按码位 / 插入符吸附
+├── Widget/TableSelectionTest.php 不可变 + int/string 分离
+├── Widget/TableRowPickerTest.php 点击 / Ctrl / Shift / 反向 / 无锚点 / 单选 / 孔洞
+└── Widget/TableSortTest.php     空态 / thenBy 移列到末尾
 
 tests/Feature/
-├── App/FrameTest.php                settle 该跳过 + 不该跳过（盒换代）
-├── Rendering/LayerCacheTest.php     录 / 命中 / 同盒改 size 失效
+├── App/FrameTest.php            settle 该跳过 + 不该跳过（盒换代）
+├── Rendering/LayerCacheTest.php 录 / 命中 / 同盒改 size 失效
 └── Table/
-    ├── Fixtures.php                 夹具（原 $tableXxx 闭包）
-    ├── SelectionSink.php / SortSink.php   受控回写的承接者
-    ├── Phase1Test.php               虚拟行 + 列宽三层 + 行内容居中
-    ├── ScrollTest.php               滚动不重建 + 帧不重排 + settle 跳过
-    ├── ColumnWindowTest.php         列虚拟化（8 列 → 3 列 / 列位不漂）
-    ├── LayerCacheTest.php           行区边界命中 + 换窗失效
-    ├── SelectionTest.php            点击语义送达 + 行态像素
-    └── SortTest.php                 三态循环 + 箭头 + 列序号
+    ├── Fixtures.php             夹具（原 $tableXxx 闭包）+ 像素/几何辅助
+    ├── EditSession.php          编辑会话驱动：open / chord / type / tick + 树查询
+    ├── SelectionSink.php        受控回写的承接者
+    ├── SortSink.php             同上（带列序号）
+    ├── ResizeSink.php           同上（拖动日志）
+    ├── Phase1Test.php           虚拟行 + 列宽三层 + 行内容居中
+    ├── ScrollTest.php           滚动不重建 + 帧不重排 + settle 跳过
+    ├── ScrollBarTest.php        maxScroll 双轴 / 不串轴 / 贴底缘 / 真实拖动
+    ├── ColumnWindowTest.php     列虚拟化（8 列 → 3 列 / 列位不漂）
+    ├── ColumnResizeTest.php     手柄 / 拖动 / clamp / maxWidth 夹取 / 分割线像素
+    ├── LayerCacheTest.php       行区边界命中 + 换窗失效
+    ├── SelectionTest.php        点击语义送达 + 行态像素
+    ├── SortTest.php             三态循环 + 箭头 + 列序号
+    ├── KeyboardTest.php         单 Tab 位 / 方向键 / End / ensureVisible / 失焦
+    ├── EditTest.php             进 / 提交 / 丢弃 / 失效（会话生命周期）
+    ├── TapTest.php              单击落格 / 双击进编辑 / 插入符半边
+    └── DragSelectTest.php       区间 / 反向 / 阈值 / 单选 / 自动滚
 ```
 
-`SelectionSink` / `SortSink` 单独成类是刻意的：受控表要"接住上报"，
+`SelectionSink` / `SortSink` / `ResizeSink` 单独成类是刻意的：受控表要"接住上报"，
 而 PHP 的 `&$ref` 在返回类型和箭头函数里会被静默破坏（现象是断言永远 null）。
 用一个一字段对象把身份固定住，读代码时一眼看出谁在接。
+
+`EditSession` 同理是"值对象而不是四元组"：`[$app, $root, $state, $focus] = ...` 顺序
+错了不报错，只会在解构出一堆 `null` 之后才崩 —— 而那正是要防的失败形态。它还把
+**"按键后必须推帧"**收进 `chord()`（漏了不报错，只表现为"断言到了上一帧的值"）。
 
 ### 10.4 删旧的验证（S2）
 
@@ -290,11 +309,16 @@ tests/Feature/
 | 删列虚拟化 | 1685 | −7 |
 | 删选择（留 2 条子进程） | 1678 | −7 |
 | 删排序 + 行居中 | 1666 | −12 |
+| 删列宽拖拽 + 滚动条（留 2 条） | 1640 | −26 |
+| 删键盘光标格 + TextDraft + maxWidth | 1622 | −18 |
+| 删编辑会话 + 点击链 + 拖动框选（留 4 条） | 1585 | −37 |
+
+最后一批的 −37 拆得开：编辑会话 13 + `TapTracker` 9 + 指针侧 6 + 拖动框选 9。
 
 ★ 第一次算"应该减 39"时对不上（以为 40），原因是有一条 `check(` 是单行写法，
 统计脚本的 `^\s*check\(` 漏算 —— **条数对账要用 smoke 自己的汇总行，不要靠静态计数**。
 
-### 10.5 变异自检（本轮 5 组，全红）
+### 10.5 变异自检（本轮 8 组，全红）
 
 | 变异 | 抓到它的断言 |
 |---|---|
@@ -302,6 +326,9 @@ tests/Feature/
 | `TableRowPicker` Ctrl 也挪锚点 | 1 条（Ctrl 不动锚点） |
 | `TableRowPicker` 区间改 `withAll`（累加） | 2 条（反向拖 + 区间外旧选中被丢） |
 | `TableSelection::norm()` 去掉 `i:`/`s:` 前缀 | 2 条（int/string 分离） |
+| `TapTracker::chains()` 去掉 `$elapsed >= 0.0` | 1 条（时间倒退 ⇒ 断链） |
+| `Application::dispatchInput()` 不标注 `clickCount` | 2 条（双击进编辑 + 插入符半边） |
+| `TableState::didChangeFocus()` 失焦不提交 | 1 条（失焦 ⇒ 提交） |
 | —— | |
 
 ★★ 前两组**第一次变异只被 1 条抓到**，说明用例区分度不足，补了两条才有 2 条：
@@ -311,6 +338,13 @@ tests/Feature/
   ⇒ 补 `current = ['x','y']` 的"区间外旧选中被丢掉"。
 
 ★ 这就是"变异自检要测它的**区分度**，不只是'有没有红'"。
+
+★★ 另一类区分度问题：**反向断言没有独立杀伤力**。`TapTest` 里"慢双击不进编辑"、
+"双击不可编辑列不进编辑"在"完全不标注 `clickCount`"的变异下**照样绿** —— 它们断言
+"没有发生某事"，而坏实现下恰好什么都不会发生。它们的价值靠正向那条
+（`testDoubleClickEntersEdit`）撑着。
+⇒ 记法：凡是"X 不该发生"的用例，同一主题下必须有"X 该发生"的那条，否则整组假绿。
+这类用例在变异自检里红 1 条是**对的**（它只属于一条规则），红 0 条才是警号。
 
 ### 10.6 留在 smoke 的部分及理由
 

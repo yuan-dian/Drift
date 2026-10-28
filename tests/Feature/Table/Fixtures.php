@@ -6,6 +6,7 @@ namespace Drift\Dev\Tests\Feature\Table;
 use Drift\Geometry\Axis;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Scale;
+use Drift\Input\CursorShape;
 use Drift\Input\PointerEvent;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderFlex;
@@ -20,6 +21,7 @@ use Drift\Widget\Column;
 use Drift\Widget\Element;
 use Drift\Widget\Row;
 use Drift\Widget\SizedBox;
+use Drift\Widget\Stack;
 use Drift\Widget\StatefulElement;
 use Drift\Widget\Table;
 use Drift\Widget\TableColumn;
@@ -29,6 +31,7 @@ use Drift\Widget\TableSelectionMode;
 use Drift\Widget\TableSort;
 use Drift\Widget\TableState;
 use Drift\Widget\Text;
+use Drift\Widget\Widget;
 
 /**
  * `Table` 测试的夹具 —— 从 `tools/smoke.php` 的那批 `$tableXxx` 闭包提上来。
@@ -342,5 +345,119 @@ final class Fixtures
             ->headerHeight(self::HEADER_H)
             ->sort($sort)
             ->onSortChange($sink->receive(...));
+    }
+
+    /**
+     * 三列：前两列 `resizable()`（`name` 还带 min/max），第三列不可调。
+     *
+     * ★ `name` 的 min/max 是 clamp 断言的靶子：左拖停在 120、右拖停在 260。
+     */
+    public static function resizable(array $overrides, ResizeSink $sink): Table
+    {
+        return Table::make(
+            [
+                TableColumn::make('id', 'ID')->field('id')->width(TableColumnWidth::fixed(60.0))->resizable(),
+                TableColumn::make('name', '姓名')->field('name')->resizable()->minWidth(120.0)->maxWidth(260.0),
+                TableColumn::make('city', '城市')->field('city'),   // ← 不 resizable：不该有手柄
+            ],
+            self::rows(4),
+        )->keyOf(static fn(array $row): int => $row['id'])
+            ->rowHeight(self::ROW_H)
+            ->headerHeight(self::HEADER_H)
+            ->columnWidths($overrides)
+            ->onColumnResize($sink->receive(...));
+    }
+
+    /** 表头行 Element（`Row` 本身，用来量列宽序列） */
+    public static function headerRowOf(Element $root): ?Element
+    {
+        return findElement($root, static fn(Element $e): bool => $e->widget() instanceof Row);
+    }
+
+    /**
+     * 从表头格的 `Stack` 里按**谓词**取子。
+     *
+     * ★ 不用下标：叠层是 `[内容, 分割线, 手柄?]`，第三层只在可调的列才有 ⇒
+     *   下标会随列配置漂移（阶段 4 加分割线时，按 `$kids[1]` 取"手柄"
+     *   当场取到了分割线）。
+     */
+    public static function stackKidOf(?Element $stackEl, callable $pick): ?Element
+    {
+        if ($stackEl === null || !$stackEl->widget() instanceof Stack) {
+            return null;
+        }
+
+        $found = null;
+        $stackEl->visitChildren(static function (Element $c) use (&$found, $pick): void {
+            if ($found === null && $pick($c->widget())) {
+                $found = $c;
+            }
+        });
+
+        return $found;
+    }
+
+    /** 手柄 = 光标变 `SizeWE` 的那个子 */
+    public static function handleOf(?Element $el): ?Element
+    {
+        return self::stackKidOf($el, static fn(Widget $w): bool => $w->cursorShape() === CursorShape::SizeWE);
+    }
+
+    /**
+     * 分割线 = 表头格里**自己带底色**的那个子。
+     *
+     * ★ 内容格不设 `background`（表头底色是 `RenderTable` 画的），手柄刻意透明 ⇒
+     *   "有底色"在表头格里唯一命中分割线。
+     */
+    public static function dividerOf(?Element $el): ?Element
+    {
+        return self::stackKidOf($el, static fn(Widget $w): bool => $w->mods()->fillColor() !== null);
+    }
+
+    /** 往手柄上打一个指针事件（走手柄声明的 pointer） */
+    public static function fireOnHandle(?Element $handleEl, PointerEvent $event): void
+    {
+        $handleEl?->widget()->pointerHandlerValue()?->__invoke($event, $handleEl);
+    }
+
+    /** 光栅画面上某个像素的 `rgb(r,g,b,a)` 文本（断言 detail 用） */
+    public static function pxOf(RasterCanvas $raster, int $x, int $y): string
+    {
+        $c = $raster->pixelAt($x, $y);
+
+        return \sprintf('rgb(%d,%d,%d,%d)', $c->r, $c->g, $c->b, $c->a);
+    }
+
+    /** 元素的中心点（根坐标）——真路由点击要的是坐标，不是 Element */
+    public static function centerOf(?Element $el): array
+    {
+        $box = $el?->effectiveBox();
+        if ($box === null || $box->size() === null) {
+            return [0.0, 0.0];
+        }
+        $origin = RenderBox::absoluteOrigin($box);
+
+        return [$origin[0] + $box->size()->width / 2.0, $origin[1] + $box->size()->height / 2.0];
+    }
+
+    /**
+     * 横向溢出的表：三列被 override 撑到 500+400+300 = 1200，视口 320 ⇒ maxScrollX = 880。
+     *
+     * ★ 用 `columnWidths()` 而不是宽 `fixed()`：这是真机上"用户拖宽过"的形态，
+     *   顺带把第 ④ 层与横向溢出的交互钉在一起。
+     */
+    public static function wide(int $count): Table
+    {
+        return Table::make(
+            [
+                TableColumn::make('id', 'ID')->field('id')->width(TableColumnWidth::fixed(60.0)),
+                TableColumn::make('name', '姓名')->field('name')->width(TableColumnWidth::flex(2.0)),
+                TableColumn::make('city', '城市')->field('city')->width(TableColumnWidth::flex(1.0)),
+            ],
+            self::rows($count),
+        )->keyOf(static fn(array $row): int => $row['id'])
+            ->columnWidths(['id' => 500.0, 'name' => 400.0, 'city' => 300.0])
+            ->rowHeight(self::ROW_H)
+            ->headerHeight(self::HEADER_H);
     }
 }
