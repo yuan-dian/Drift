@@ -18,6 +18,12 @@ final class ChainPage extends StatefulWidget
 
     public function __construct(private ChainProbe $probe)
     {
+        // ★★★ 必须调：`Widget::$mods` 是**无默认值的类型化属性**，由基类构造器初始化。
+        //   漏了这一句 ⇒ `Element::syncBox()` 里 `widget->mods()` 抛
+        //   "Typed property must not be accessed before initialization"（退出码 255）。
+        //   2026-10-28：这个夹具从写下起就一直崩，而 smoke 的判据是 `$code !== 3`
+        //   （"不 Fatal 即可"）⇒ 崩溃也算通过，⑦d 那条**从未真正验过收敛**。
+        parent::__construct();
     }
 
     public function createState(): State

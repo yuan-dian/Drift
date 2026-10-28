@@ -17,13 +17,11 @@ use Drift\Dev\Smoke\BoxProbe;
 use Drift\Dev\Smoke\BuildProbe;
 use Drift\Dev\Smoke\Layout\BleedBox;
 use Drift\Dev\Smoke\Layout\SolidBox;
-use Drift\Dev\Smoke\Commands\EchoCommands;
 use Drift\App\Application;
 use Drift\App\FocusManager;
 use App\Showcase\ShowcaseApplication;
 use App\Tutorial\TutorialApplication;
 use Drift\App\Frame;
-use Drift\Dev\Smoke\ErrorBoundary\BoomPage;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Smoke\Frame\RecordingSurface;
 use Drift\Dev\Smoke\Rendering\ProbePainter;
@@ -57,13 +55,7 @@ use Drift\Dev\Smoke\App\TfApplication;
 use Drift\Dev\Smoke\App\NavApplication;
 use Drift\Dev\Smoke\App\NamedSleepJob;
 use Drift\Dev\Smoke\App\SpinnerApplication;
-use Drift\Dev\Smoke\LeafProbe;
 use Drift\Dev\Smoke\SealProbe;
-use Drift\Dev\Smoke\State\BuildWatchWidget;
-use Drift\Dev\Smoke\State\ChainPage;
-use Drift\Dev\Smoke\State\ChainProbe;
-use Drift\Dev\Smoke\State\FakeStore;
-use Drift\Dev\Smoke\State\LoopPage;
 use Drift\Core\Computed;
 use Drift\Errors;
 use Drift\Commands\CommandArg;
@@ -227,51 +219,11 @@ if (str_starts_with($caseArg, '--case=')) {
     //   用例 → `tests/Support/fatal_cases.php`
     //   判据 → `tests/Feature/Table/ConfigFailureTest.php`
 
-    if ($case === 'watchbuild') {
-        // A4：订阅写在 build 体内 ⇒ 每重建一次多订一份。运行期守卫必须响。
-        $element = (new BuildWatchWidget(new FakeStore()))->createElement();
-        $element->mount(null, smokeContext());
-    }
 
-    if ($case === 'computedcycle') {
-        // 求值期间又触发自己的求值 ⇒ 闭包不纯。E-COMPUTED-CYCLE。
-        $self = new Computed(static function () use (&$self): int {
-            return $self->get() + 1; // phpcs:ignore
-        }, []);
-        $self->get();
-    }
 
-    if ($case === 'flushcycle') {
-        // build() 里标脏自己 ⇒ 每遍都重建 ⇒ 16 轮不收敛 ⇒ E-FLUSH-CYCLE（当帧，不是每帧默默重建）
-        $loop = LoopPage::make()->createElement();
-        $loop->mount(null, smokeContext());
-        $loop->settle();
-    }
 
-    if ($case === 'chainwrite') {
-        // 子的 build 标脏祖先 ⇒ 祖先第二遍重建时又把子标脏 ⇒ 子同帧第二次 rebuild
-        // ⇒ S4 的 noteRebuilt() 当帧 Fatal（E-FLUSH-CYCLE，带类名）。
-        $probe = new ChainProbe();
-        $root = ChainPage::make($probe)->createElement();
-        $root->mount(null, smokeContext());
-        $probe->markOuterOnInnerBuild = true;
-        $inner = $root->childAt(0);
-        if ($inner instanceof StatefulElement) {
-            $inner->state()?->markDirty();
-        }
-        $root->settle();
-    }
 
-    if ($case === 'routedup') {
-        // 同名路由注册两次 ⇒ 后一次静默覆盖 ⇒ 上线后"导航到某页却没反应"
-        RouteTable::make()->route('users', static fn (): Widget => new LeafProbe(1.0))
-            ->route('users', static fn (): Widget => new LeafProbe(2.0));
-    }
 
-    if ($case === 'cmdup') {
-        // 同名注册两次 ⇒ 后一次静默覆盖前一次。上线后"点了没反应"且查不出为什么。
-        CommandRouter::make()->on('a.b', new EchoCommands())->on('a.b', new EchoCommands());
-    }
 
     if ($case === 'taskerr') {
         // 后台任务失败且**没给 onError** ⇒ 必须走 Fatal 序列（§17.4.2 的错误通道）：
@@ -396,43 +348,9 @@ if (str_starts_with($caseArg, '--case=')) {
         DeterministicFontManager::standard()->registerFile('C:/nope.ttf');
     }
 
-    if ($case === 'dockoverflow') {
-        // C5/W4：Dock 默认 Report ⇒ 条轨**合计**超出必须中止（每根各自合规，
-        //   冲突在合计层暴露 —— 30+20 > 40）
-        $dock = new RenderDock(Overflow::Report);
-        $dock->setSlot('top', new SolidBox(new Size(100.0, 30.0), 100.0, 30.0));
-        $dock->setSlot('bottom', new SolidBox(new Size(100.0, 20.0), 100.0, 20.0));
-        $dock->setSlot('center', new SolidBox(new Size(10.0, 10.0), 10.0, 10.0));
-        $dock->layout(BoxConstraints::tight(new Size(100.0, 40.0)));
-    }
 
-    if ($case === 'eachdup') {
-        // 同层重复 key ⇒ diff 复用错乱（R4）。绝不静默 ⇒ Fatal
-        Each::make(fn(array $u): int => $u['id'])
-            ->items([['id' => 1], ['id' => 1]], fn(array $u): Widget => Text::make('x'));
-    }
 
-    if ($case === 'eachkeytag') {
-        // key 1 与 '1' **不**算重复 —— 与 Key::same 同口径，不做类型互转
-        Each::make(fn(array $u): string|int => $u['id'])
-            ->items([['id' => 1], ['id' => '1']], fn(array $u): Widget => Text::make('x'));
-        exit(1); // 走到这里 = 该报的没报
-    }
 
-    if ($case === 'noboundary') {
-        // O-12 A′ S3 的"无边界"半边：帧末异常沿途没有 ErrorBoundary 捕获
-        //   ⇒ Fatal 序列（exit 3 + Errors.log）。**不吞** —— 吞了就是窗口冻结
-        //   在上一帧且不报错（G2 明令禁止的半静默）。
-        $ctx = new BuildContext(240.0, 80.0, ThemeData::light(), new DeterministicMetricsProvider(
-            DeterministicFontManager::standard()->collection(),
-            new DeterministicShaper(),
-        ));
-        $bad = BoomPage::make()->createElement();
-        $bad->mount(null, $ctx); // 首次 build 成功
-        $bad->state()?->boom();  // 标脏 ⇒ 帧末重建时抛
-        (new Frame(new SurfaceProbe()))->run($bad, BoxConstraints::tight(new Size(240.0, 80.0)), 0.0);
-        echo "不该到达这里\n";
-    }
 
     exit(0); // 走到这里说明"该中止的没中止"
 }
@@ -3189,17 +3107,9 @@ check(
 //     收窄折行 · maxLines 进 TextStyle（12 条）
 //   · `tests/Unit/Widget/EachTest.php` —— keyFn 落位 / 挂载铺子 / key 相同复用 /
 //     重排 key 跟随 item / 空列表 0 子（5 条）
-//   ★ 重复 key 与 int·字符串 key 撞车靠子进程验 Errors 上报，留下面两条（runCase）。
-// 重复 key ⇒ 响亮失败（G2：绝不静默）
-fresh($log);
-[$code, $output] = runCase(__FILE__, 'eachdup', null);
-check('Each · 重复 key 退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
-check('Each · 重复 key 写了 Errors.log', str_contains(logText($log), '重复的 key'));
-
-// key 1 与 '1' 不算重复（与 Key::same 同口径）：int id 与字符串 id 不静默撞车
-fresh($log);
-[$code, $output] = runCase(__FILE__, 'eachkeytag', null);
-check("Each · key 1 与 '1' 不算重复（子进程 exit 1 = 该报的没报）", $code === 1, '实际 ' . $code . ' / ' . $output);
+//   ★ 重复 key 与 int·字符串 key 撞车必须**子进程**验（`Errors::report` 走 `abort()`，
+//     进程内接不住）：用例 → `tests/Support/fatal_cases.php` 的 `eachdup` / `eachkeytag`，
+//     判据 → `tests/Unit/Widget/EachTest.php`（第 39 批，2026-10-28）。
 
 // ── ㉒ Button / NavButton / IconButton / 盒级 hover / 滚动条淡出 已迁出 ─────────
 //   · `tests/Unit/Widget/ButtonTest.php` —— 变体薄壳 / onPressed 原样递 / 换肤取色 /
@@ -3209,17 +3119,8 @@ check("Each · key 1 与 '1' 不算重复（子进程 exit 1 = 该报的没报�
 //     24 帧单调逼近 / 收口返回 false / 浮起把影子画到盒外（6 条）
 //   · `tests/Unit/Widget/ScrollBarFadeTest.php` —— 恒亮 · 不建槽 / 900ms 空闲线 /
 //     淡到 0.35 不是 0 / 收口后能重新起飞（7 条）
-//   ★ Dock C5 Report 的失败路径留下面两条（runCase）。
-// command() 在 M2 响亮说没实现（不静默留下一个按了没反应的按钮）
-fresh($log);
-[$code, $output] = runCase(__FILE__, 'dockoverflow', null);
-check('Dock · C5 Report 条轨超出退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
-check(
-    'Dock · Report 超出写了 Errors.log（含槽名与差额，且不含内部条款编号）',
-    str_contains(logText($log), 'Dock 放不下')
-        && str_contains(logText($log), 'top + bottom')
-        && !str_contains(logText($log), 'C5')
-);
+//   ★ Dock C5 Report 的失败路径 → `fatal_cases.php` 的 `dockoverflow`，
+//     判据 → `tests/Unit/Layout/DockTest.php`（第 39 批，2026-10-28）。
 
 // ── ㉓ TextField 已迁出 ───────────────────────────────────────────────────
 //   · `tests/Feature/Widget/TextFieldTest.php` —— 声明层（make 链式 · label 三态 ·
@@ -3298,32 +3199,13 @@ check(
 //   · `tests/Feature/State/SubscriptionIsolationTest.php`（4）—— RT-3 一个订阅者抛异常其余
 //     仍收到（a,b,c 都跑）· 不静默（写 Errors，级别 Recoverable）· unsubscribeAllOf 整属主退订
 //   · `tests/Feature/State/SettleDriftTest.php`（1）—— 100 帧 settle 后 pendingDirty 回基线
-//   ★ 下面 7 条是**子进程**判据（build 期标脏 / 跨 State 写 / build 期订阅 / Computed 自引用
-//     的 Fatal 与 Errors.log 落盘），依赖 `runCase(__FILE__)` ⇒ 留 smoke。
-// ⑦c build 期标脏自己 ⇒ 当帧 Fatal（不是"每帧默默重建一次、CPU 上去没人知道"）
-fresh($log);
-[$code, $output] = runCase(__FILE__, 'flushcycle', null);
-check('settle · build 期标脏自己 ⇒ 当帧 Fatal（E-FLUSH-CYCLE）', $code === 3, '实际 ' . $code . ' / ' . $output);
-check('settle · 不收敛写了 Errors.log', str_contains(logText($log), 'E-FLUSH-CYCLE'));
-
-// ⑦d S4 守卫收紧后的回归：build 期写"自己"才 Fatal；跨 State 的一次性写
-//     （子 build 标脏祖先）是合法的脏传播（§5.2 性质 B），应当收敛、不误杀。
-//     W2/S4 之前粗守卫把这种合法传播也当 build 期写误杀了（showcase 主题切换
-//     走的就是同一形态），收紧到"build 里对自己标脏"后这里必须收敛、不 Fatal。
-fresh($log);
-[$code, $output] = runCase(__FILE__, 'chainwrite', null);
-check('settle · build 期跨 State 一次性写 ⇒ 收敛不 Fatal（守卫不误杀合法传播）', $code !== 3, '实际 ' . $code . ' / ' . $output);
-
-// ⑧ 守卫跑在子进程里（会 exit(3)）
-fresh($log);
-[$code, $output] = runCase(__FILE__, 'watchbuild', null);
-check('State · build 期订阅 ⇒ Fatal（A4 运行期守卫）', $code === 3, '实际 ' . $code . ' / ' . $output);
-check('State · build 期订阅写了 Errors.log', str_contains(logText($log), 'initState'));
-
-fresh($log);
-[$code, $output] = runCase(__FILE__, 'computedcycle', null);
-check('Computed · 自引用 ⇒ Fatal（E-COMPUTED-CYCLE）', $code === 3, '实际 ' . $code . ' / ' . $output);
-check('Computed · 自引用写了 Errors.log', str_contains(logText($log), 'E-COMPUTED-CYCLE'));
+//   ★ ⑦c／⑦d／⑧（build 期标脏 / 跨 State 写 / build 期订阅）与 Computed 自引用都是
+//     **子进程**判据（`Errors::report` 走 `abort()`）⇒ 第 39 批搬走：
+//     用例 → `fatal_cases.php` 的 `flushcycle` / `chainwrite` / `watchbuild` / `computedcycle`；
+//     判据 → `tests/Feature/State/FlushCycleTest.php` 与 `tests/Unit/State/ComputedTest.php`。
+//   ★★ 搬的时候发现 ⑦d 一直是**假绿**：`ChainPage`/`InnerPage` 漏 `parent::__construct()`
+//     ⇒ 子进程崩在"未初始化属性"（255），而旧判据 `$code !== 3` 把崩溃也放过。
+//     夹具已修，新判据是 `code === 0` + "走到末尾"。
 
 // ── 下面两块已迁出 ───────────────────────────────────────────────
 //   · `tests/Unit/State/CellTest.php` —— new Cell(1) 抛可捕获的 Error（构造私有）/
@@ -3337,12 +3219,8 @@ if (is_file($log)) {
 //   · `tests/Unit/Commands/CommandTest.php` —— CommandArg 双槽（i + s）/ on() 链式 /
 //     dispatch 原样递参 / handler 返回 false ⇒ 视为没接 / 未注册 ⇒ Diagnostic 环形缓冲 /
 //     State 默认不接 / 接管自己的命令且其余放行
-//   ★ 同名重复注册 ⇒ Fatal（exit 3 + Errors.log）留下面两条子进程判据。
-// 同名重复注册 ⇒ Fatal（子进程）
-fresh($log);
-[$code, $output] = runCase(__FILE__, 'cmdup', null);
-check('Commands · 同名重复注册 ⇒ Fatal（不静默覆盖）', $code === 3, '实际 ' . $code . ' / ' . $output);
-check('Commands · 重复注册写了 Errors.log', str_contains(logText($log), '重复注册'));
+//   ★ 同名重复注册 ⇒ Fatal → `fatal_cases.php` 的 `cmdup`，
+//     判据 → `tests/Unit/Commands/CommandTest.php`（第 39 批）。
 
 fresh($log);
 if (is_file($log)) {
@@ -3358,11 +3236,8 @@ if (is_file($log)) {
 // ── RouteTable（纯数据）已迁出 ──────────────────────────────────────────────
 //   · `tests/Unit/Routing/RouteTableTest.php` —— 链式登记 + names 可枚举 / 工厂造页 /
 //     未命中 ⇒ null / has 与 names 一致
-//   ★ 同名路由重复注册 ⇒ Fatal 留下面两条子进程判据。
-fresh($log);
-[$code, $output] = runCase(__FILE__, 'routedup', null);
-check('Routing · 同名路由重复注册 ⇒ Fatal（不静默覆盖）', $code === 3, '实际 ' . $code . ' / ' . $output);
-check('Routing · 重复注册写了 Errors.log', str_contains(logText($log), '已注册'));
+//   ★ 同名路由重复注册 ⇒ Fatal → `fatal_cases.php` 的 `routedup`，
+//     判据 → `tests/Unit/Routing/RouteTableTest.php`（第 39 批）。
 
 // ── Offstage（保留档 / 丢弃档）已迁出 ──────────────────────────────────────
 //   · `tests/Feature/Widget/OffstageTest.php` —— 可见在树 / 隐藏摘掉但不 dispose /
@@ -3864,19 +3739,8 @@ check(
 //   · `tests/Feature/Widget/ErrorBoundaryTest.php` —— 构造期（rebuild 捕获 · 换占位 ·
 //     带原文 · 占位出墨）· build 期（settle 捕获 · 多轮收敛仍在边界内）· 渲染期
 //     （layout 兜底 160×48 / tight 被提到上限 / paint 不冒泡且兜底有墨）+ CJK 上屏
-//   ★ 第 ④ 层（无边界 ⇒ 帧循环 Fatal）留下面两条子进程判据。
-
-// E. 无边界 ⇒ Fatal 序列（S3 的另半边：帧循环吞异常是 G2 不容的半静默）
-[$code, $output] = runCase(__FILE__, 'noboundary', null);
-check(
-    '帧循环 S3 · 无边界 ⇒ Fatal 序列（exit 3，绝不吞掉冻窗口）',
-    $code === 3,
-    '实际 ' . $code . ' / ' . $output,
-);
-check(
-    '帧循环 S3 · Fatal 写了 Errors.log（可观测）',
-    str_contains(logText($log), '未捕获异常冒到帧末'),
-);
+//   ★ 第 ④ 层（无边界 ⇒ 帧循环 Fatal）→ `fatal_cases.php` 的 `noboundary`，
+//     判据 → `tests/Feature/Widget/ErrorBoundaryTest.php`（第 39 批）。
 
 
 // ── ㉞ 菜单 / 面板 / 模态 / 浮层栈 / 拖放 已迁出（110 条）──────────────────

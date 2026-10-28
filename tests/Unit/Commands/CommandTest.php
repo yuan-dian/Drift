@@ -111,4 +111,35 @@ final class CommandTest extends SmokeTestCase
 
         $this->flushChecks();
     }
+
+    /**
+     * 同名命令注册两次 ⇒ **Fatal**（不许后一次静默覆盖前一次）。
+     *
+     * ★ 静默覆盖的现场表现是"点了没反应"：表里只剩后注册的 handler，而注册方以为
+     *   自己挂上了 —— 菜单项亮着、点了什么都不发生，最难查的一种。
+     *
+     * @see tests/Support/fatal_cases.php `cmdup`
+     */
+    public function testDuplicateCommandNameFailsLoudly(): void
+    {
+        $log = $this->logPath();
+        @\unlink($log);
+
+        [$code, $out] = runFatalCase('cmdup', $log);
+        $text = \is_file($log) ? (string) \file_get_contents($log) : '';
+        @\unlink($log);
+
+        check(
+            'Commands · 同名重复注册 ⇒ 退出码 3（不静默覆盖）',
+            $code === 3,
+            'code=' . $code . ' out=' . \trim($out)
+        );
+        check(
+            'Commands · 重复注册写了日志（含「重复注册」）',
+            \str_contains($text, '重复注册'),
+            $text === '' ? '日志为空' : \mb_substr($text, 0, 120)
+        );
+
+        $this->flushChecks();
+    }
 }

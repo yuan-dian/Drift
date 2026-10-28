@@ -175,4 +175,36 @@ final class ErrorBoundaryTest extends SmokeTestCase
 
         $this->flushChecks();
     }
+
+    /**
+     * **没有** `ErrorBoundary` 时，帧末重建抛的异常必须走 Fatal 序列。
+     *
+     * ★ 这是"三层兜底"的另一半：上一批验的是"有边界 ⇒ 兜住"，这里验"没边界 ⇒
+     *   不许吞"。吞了的后果是窗口冻结在上一帧且不报错（G2 明令禁止的半静默）——
+     *   界面上只看得出"点了没反应"。
+     *
+     * @see tests/Support/fatal_cases.php `noboundary`
+     */
+    public function testUncaughtFrameExceptionFailsLoudly(): void
+    {
+        $log = \sys_get_temp_dir() . '/drift-noboundary-' . \getmypid() . '.log';
+        @\unlink($log);
+
+        [$code, $out] = runFatalCase('noboundary', $log);
+        $text = \is_file($log) ? (string) \file_get_contents($log) : '';
+        @\unlink($log);
+
+        check(
+            '错误边界 · 无边界时帧末异常 ⇒ 退出码 3（不吞）',
+            $code === 3,
+            'code=' . $code . ' out=' . \trim($out)
+        );
+        check(
+            '错误边界 · 无边界时写了日志（不是只弹个框）',
+            $text !== '' && \str_contains($text, 'FATAL'),
+            $text === '' ? '日志为空' : \mb_substr($text, 0, 140)
+        );
+
+        $this->flushChecks();
+    }
 }

@@ -78,4 +78,35 @@ final class ComputedTest extends SmokeTestCase
 
         $this->flushChecks();
     }
+
+    /**
+     * 求值期间**又触发自己的求值** ⇒ 闭包不纯 ⇒ `E-COMPUTED-CYCLE`。
+     *
+     * ★ 不守的后果不是崩，而是**栈溢出 / 每帧重算**这类只能在真机上看到的病；
+     *   所以判据落在"当帧 Fatal + 日志里带错误码"上。
+     *
+     * @see tests/Support/fatal_cases.php `computedcycle`
+     */
+    public function testSelfReferencingComputedFailsLoudly(): void
+    {
+        $log = \sys_get_temp_dir() . '/drift-computedcycle-' . \getmypid() . '.log';
+        @\unlink($log);
+
+        [$code, $out] = runFatalCase('computedcycle', $log);
+        $text = \is_file($log) ? (string) \file_get_contents($log) : '';
+        @\unlink($log);
+
+        check(
+            'Computed · 自引用求值 ⇒ 退出码 3',
+            $code === 3,
+            'code=' . $code . ' out=' . \trim($out)
+        );
+        check(
+            'Computed · 自引用写了日志（含 E-COMPUTED-CYCLE）',
+            \str_contains($text, 'E-COMPUTED-CYCLE'),
+            $text === '' ? '日志为空' : \mb_substr($text, 0, 120)
+        );
+
+        $this->flushChecks();
+    }
 }

@@ -85,4 +85,55 @@ final class EachTest extends SmokeTestCase
 
         $this->flushChecks();
     }
+
+    /**
+     * 同层重复 key ⇒ **Fatal**（绝不静默：静默的后果是 diff 复用错乱，R4）。
+     *
+     * ★ 必须子进程：`Errors::report()` 走 `abort()`（`exit(3)`），进程内 `try/catch`
+     *   接不住 —— 写在同一进程里的现象是"smoke 静默截断、退出码仍 0"。
+     *
+     * @see tests/Support/fatal_cases.php `eachdup`
+     */
+    public function testDuplicateKeyFailsLoudly(): void
+    {
+        $log = \sys_get_temp_dir() . '/drift-eachdup-' . \getmypid() . '.log';
+        @\unlink($log);
+
+        [$code, $out] = runFatalCase('eachdup', $log);
+        $text = \is_file($log) ? (string) \file_get_contents($log) : '';
+        @\unlink($log);
+
+        check(
+            'Each · 同层重复 key ⇒ 退出码 3（不静默覆盖）',
+            $code === 3,
+            'code=' . $code . ' out=' . \trim($out)
+        );
+        check(
+            'Each · 重复 key 写了日志（含「重复的 key」）',
+            \str_contains($text, '重复的 key'),
+            $text === '' ? '日志为空' : \mb_substr($text, 0, 120)
+        );
+
+        $this->flushChecks();
+    }
+
+    /**
+     * key `1` 与 `'1'` **不**算重复 —— 与 `Key::same` 同口径，不做类型互转。
+     *
+     * ★★ 判据是 `code === 0` **且**输出含 `reached-end-without-fatal`，
+     *   不是 `code !== 3`：后者会被**崩溃**满足（实测 255）—— 这条断言在 smoke 里
+     *   就是这么绿了很久的（`ChainPage` 漏 `parent::__construct()`，见 `FlushCycleTest`）。
+     */
+    public function testIntAndStringKeysAreNotDuplicates(): void
+    {
+        [$code, $out] = runFatalCase('eachkeytag');
+
+        check(
+            'Each · key 1 与 \'1\' 不算重复（收敛：走到末尾且不崩）',
+            $code === 0 && \str_contains($out, 'reached-end-without-fatal'),
+            'code=' . $code . ' out=' . \trim($out)
+        );
+
+        $this->flushChecks();
+    }
 }

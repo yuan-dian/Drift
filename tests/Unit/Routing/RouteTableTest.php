@@ -34,4 +34,35 @@ final class RouteTableTest extends SmokeTestCase
 
         $this->flushChecks();
     }
+
+    /**
+     * 同名路由注册两次 ⇒ **Fatal**（不许后一次静默覆盖）。
+     *
+     * ★ 静默覆盖的现场表现是"导航到某页却没反应"：路由表里只有后注册的那个，
+     *   而调用方以为自己有两条 —— 没有栈、没有日志，只能靠人盯代码。
+     *
+     * @see tests/Support/fatal_cases.php `routedup`
+     */
+    public function testDuplicateRouteNameFailsLoudly(): void
+    {
+        $log = \sys_get_temp_dir() . '/drift-routedup-' . \getmypid() . '.log';
+        @\unlink($log);
+
+        [$code, $out] = runFatalCase('routedup', $log);
+        $text = \is_file($log) ? (string) \file_get_contents($log) : '';
+        @\unlink($log);
+
+        check(
+            'Routing · 同名路由重复注册 ⇒ 退出码 3（不静默覆盖）',
+            $code === 3,
+            'code=' . $code . ' out=' . \trim($out)
+        );
+        check(
+            'Routing · 重复注册写了日志（含「已注册」）',
+            \str_contains($text, '已注册'),
+            $text === '' ? '日志为空' : \mb_substr($text, 0, 120)
+        );
+
+        $this->flushChecks();
+    }
 }

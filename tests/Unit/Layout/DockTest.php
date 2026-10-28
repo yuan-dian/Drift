@@ -210,4 +210,38 @@ final class DockTest extends SmokeTestCase
                 && $box->slot('left')?->size()?->height === 200.0 - ($box->slot('top')?->size()?->height ?? 0.0)
         );
     }
+
+    /**
+     * 条轨**合计**超出必须中止（`Overflow::Report` 的默认语义）。
+     *
+     * ★ 每根轨各自都合规（30 ≤ 40 / 20 ≤ 40），冲突只在**合计层**暴露（30+20 > 40）
+     *   ⇒ 这是"逐根校验"抓不到的那一类，必须有一条合计断言。
+     * ★ 报错文案要能指着修：带槽名与差额，且**不许**漏内部条款编号（`C5`）。
+     *
+     * @see tests/Support/fatal_cases.php `dockoverflow`
+     */
+    public function testSlotSumOverflowFailsLoudly(): void
+    {
+        $log = \sys_get_temp_dir() . '/drift-dockoverflow-' . \getmypid() . '.log';
+        @\unlink($log);
+
+        [$code, $out] = runFatalCase('dockoverflow', $log);
+        $text = \is_file($log) ? (string) \file_get_contents($log) : '';
+        @\unlink($log);
+
+        check(
+            'Dock · C5 Report 条轨合计超出 ⇒ 退出码 3',
+            $code === 3,
+            'code=' . $code . ' out=' . \trim($out)
+        );
+        check(
+            'Dock · 报错带槽名与差额，且不泄露内部条款编号',
+            \str_contains($text, 'Dock 放不下')
+                && \str_contains($text, 'top + bottom')
+                && !\str_contains($text, 'C5'),
+            $text === '' ? '日志为空' : \mb_substr($text, 0, 140)
+        );
+
+        $this->flushChecks();
+    }
 }

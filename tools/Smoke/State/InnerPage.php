@@ -19,6 +19,9 @@ final class InnerPage extends StatefulWidget
 
     public function __construct(private ChainProbe $probe)
     {
+        // ★★★ 同 `ChainPage`：`Widget::$mods` 无默认值，必须由基类构造器初始化，
+        //   否则 `syncBox()` 里读它就是 255（未初始化属性），而不是"收敛"。
+        parent::__construct();
     }
 
     public function createState(): State

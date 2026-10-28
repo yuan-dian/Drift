@@ -713,3 +713,60 @@ md5 核对）：
 
 **能数命令就别读像素**；而"整页真的画出来了"这件事由 `golden/page` 的 20 张基线守，
 不必在每个 app 级断言里再读一遍像素。
+
+---
+
+## 12. 第 39 批：把"已迁出"段里的子进程尾巴清干净（2026-10-28）
+
+### 12.1 迁移弧线到此收口
+
+按"这一段还能不能进 PHPUnit"过了一遍全部 90 个段，结论是**只剩两桶，且都不是待办**：
+
+| 桶 | 规模 | 为什么不迁 |
+|---|---|---|
+| **A · 桥一致性 / 像素等价**（A–H、E1–E4、P1–P4、19 op 回植、W1 路径、字体度量、降采样灰度） | ≈ 310 条 | 判据是"`RecordingCanvas` 与 `RasterCanvas` **同解**" —— 必须在两个真后端上画。搬过去只会把 `paintBoth()` 这个夹具再实现一遍，没有隔离收益 |
+| **B · app 级样板**（tutorial / showcase / users / TaskHost P0–P3 / 真异步） | ≈ 130 条 | 依赖常驻 worker、`php -S` mock、真时序。搬进 PHPUnit 只换来 flaky |
+
+**但有一类真有货**：6 个标着"已迁出"的段里还各留着 2–9 条 —— 全是"必须子进程才验得了的
+响亮失败"（`runCase(__FILE__, …)` 要求 `__FILE__` 是 smoke 入口）。第 39 批把它们搬走：
+
+| 段 | 用例 | 新家 |
+|---|---|---|
+| ⑲ Each | `eachdup` / `eachkeytag` | `Unit/Widget/EachTest.php` |
+| ㉒ Dock | `dockoverflow` | `Unit/Layout/DockTest.php` |
+| ㉓ State | `flushcycle` / `chainwrite` / `watchbuild` | `Feature/State/FlushCycleTest.php`（新） |
+| ㉓ Computed | `computedcycle` | `Unit/State/ComputedTest.php` |
+| ㉔ Commands | `cmdup` | `Unit/Commands/CommandTest.php` |
+| RouteTable | `routedup` | `Unit/Routing/RouteTableTest.php` |
+| B/C/D 兜底 | `noboundary` | `Feature/Widget/ErrorBoundaryTest.php` |
+
+用例体进 `tests/Support/fatal_cases.php`（27 → 37 个）。那 6 个段现在是**真墓碑**：
+只剩注释，没有一行代码。
+
+### 12.2 ★★★ 搬的时候挖出一个假绿（这次错的是判据，不是实现）
+
+`chainwrite` 守的是"build 期**跨 State** 一次性写是合法脏传播，应当收敛、不误杀"。
+它的判据原本是 `$code !== 3`。
+
+而 `ChainPage` / `InnerPage` 两个夹具**都漏了 `parent::__construct()`** ——
+`Widget::$mods` 是**无默认值的类型化属性**，漏调基类构造器后读它就是
+`must not be accessed before initialization`、退出码 **255**。
+
+⇒ `!== 3` 被**崩溃**满足。这条断言从写下那天起就没验过"收敛"，它验的是
+"进程没以 3 退出"。实测复现：`php tools/smoke.php --case=chainwrite` → 255。
+
+修完之后（两个夹具补 `parent::__construct()`）它第一次真的收敛（走到末尾、退出 0）。
+
+**纪律**：否定式判据（`!== 3` / `!== 0` / `!= 1`）对"别的失败形态"天然免疫，
+必须配一条**正向**的"走到末尾"证据 —— 现在 `fatal_cases.php` 的成功路径会打印
+`reached-end-without-fatal`，判据写成 `code === 0 && str_contains($out, …)`。
+变异自检：把 `parent::__construct()` 拿掉 ⇒ `FlushCycleTest:76` 立刻红。
+
+### 12.3 数字
+
+- smoke **448 → 430** 条 · **22.8s → 17.0s**
+- phpunit **660 → 670** tests · **2044 → 2072** 断言
+- lint **739 文件 0-0** · docref 70 · gate 8 项 **63.0s**
+
+★ gate 总时长**几乎没变**（63.4 → 63.0）：这是**搬家不是提速**（子进程成本从 smoke
+转移到 PHPUnit）。换来的是"响亮失败"用例只有一个家、按文件可寻址、6 个段变真墓碑。

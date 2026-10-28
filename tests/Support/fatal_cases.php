@@ -10,7 +10,10 @@ declare(strict_types=1);
  * 所以"该崩的真的崩了、退出码是 3、错误信息里说了用户该怎么改"这三件事只能在
  * 新进程里验。`tools/smoke.php` 一直用 `runCase(__FILE__, $case)` 做这件事，但
  * 那种写法的 `__FILE__` 必须是 smoke 入口 ⇒ 用例搬到 PHPUnit 就只能整段留在
- * smoke 里（`EachTest` / `StateProducedBoxTest` 就是这么留下的，见它们的头注）。
+ * smoke 里（`EachTest` / `StateProducedBoxTest` 早期就是这么留下的）。
+ *
+ * ★ 2026-10-28 第 39 批之后，smoke 里**不再留任何"响亮失败"用例** —— 剩下的十几处
+ *   `runCase` 都是"要真进程/真像素"的桥一致性与 app 级样板（那是分工，不是待办）。
  *
  * 这个脚本把入口从 smoke 里解耦出来：case 名 + 一段会 Fatal 的代码，谁都能加。
  *
@@ -32,9 +35,21 @@ require __DIR__ . '/../../tools/autoload.php';
 require_once __DIR__ . '/../../tools/fakes/win32.php';
 
 use Drift\App\Application;
+use Drift\App\Frame;
+use Drift\Commands\CommandRouter;
+use Drift\Core\Computed;
 use Drift\Dev\Smoke\App\ScrollApplication;
+use Drift\Dev\Smoke\Commands\EchoCommands;
+use Drift\Dev\Smoke\ErrorBoundary\BoomPage;
+use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Smoke\Layout\OversizeBox;
 use Drift\Dev\Smoke\Layout\SolidBox;
+use Drift\Dev\Smoke\LeafProbe;
+use Drift\Dev\Smoke\State\BuildWatchWidget;
+use Drift\Dev\Smoke\State\ChainPage;
+use Drift\Dev\Smoke\State\ChainProbe;
+use Drift\Dev\Smoke\State\FakeStore;
+use Drift\Dev\Smoke\State\LoopPage;
 use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\EdgeInsets;
@@ -44,21 +59,25 @@ use Drift\Input\KeyChord;
 use Drift\Layout\FlexAlign;
 use Drift\Layout\Overflow;
 use Drift\Layout\RenderBox;
+use Drift\Layout\RenderDock;
 use Drift\Layout\RenderFlex;
 use Drift\Layout\RenderProxy;
 use Drift\Logging\PatternFormatter;
 use Drift\Platform\Win32\Win32WindowHost;
 use Drift\Platform\WindowMaterial;
 use Drift\Rendering\Color;
+use Drift\Routing\RouteTable;
 use Drift\Text\DeterministicFontManager;
 use Drift\Text\DeterministicMetricsProvider;
 use Drift\Text\DeterministicShaper;
 use Drift\Theme\ThemeData;
 use Drift\Widget\BuildContext;
+use Drift\Widget\Each;
 use Drift\Widget\Expanded;
 use Drift\Widget\Grid;
 use Drift\Widget\LazyGrid;
 use Drift\Widget\Option;
+use Drift\Widget\StatefulElement;
 use Drift\Widget\Table;
 use Drift\Widget\TableColumn;
 use Drift\Widget\TableColumnWidth;
@@ -86,14 +105,17 @@ Errors::setLogPath($logPath);
 Errors::setDebug(true);
 
 /**
- * 挂一棵 `Table` 树 —— Table 的响亮失败全部发生在**挂载期**。
+ * 建树用的确定性上下文（320×240）。
  *
- * ★ 内联构造 `BuildContext`：`smokeContext()` 只在 tests 助手与 smoke.php 各一份，
- *   子进程不加载（与 `lazygridpitch` 同法）。
+ * ★ 为什么不 `require` 那句 `smokeContext()`：子进程只加载 autoload + `tools/fakes/`，
+ *   把 `tests/Support/functions.php`（依赖 PHPUnit 的 `SmokeTestCase`）拉进来是污染。
+ *   `tools/smoke.php` 与 `functions.php` 各有一份同名实现 —— 这里是**第三处**，
+ *   但它是"同一份 12 行"的最后归宿：本文件里 5 个用例都要建树，
+ *   再内联 5 遍就没人能保证它们还一致了。
  */
-$mountTable = static function (Table $table): void {
-    $element = $table->createElement();
-    $element->mount(null, new BuildContext(
+function fatalContext(): BuildContext
+{
+    return new BuildContext(
         320.0,
         240.0,
         ThemeData::light(),
@@ -101,7 +123,13 @@ $mountTable = static function (Table $table): void {
             DeterministicFontManager::standard()->collection(),
             new DeterministicShaper(),
         ),
-    ));
+    );
+}
+
+/** 挂一棵 `Table` 树 —— Table 的响亮失败全部发生在**挂载期**。 */
+$mountTable = static function (Table $table): void {
+    $element = $table->createElement();
+    $element->mount(null, fatalContext());
 };
 
 /** @var array<string, callable(): void> $cases */
@@ -351,6 +379,91 @@ $cases = [
         AcceleratorTable::make()
             ->bind(KeyChord::ctrl('R'), 'users.refresh')
             ->bind(KeyChord::ctrl('R'), 'users.reload');
+    },
+
+    // ── 第 39 批（2026-10-28）：下面 10 例原住在 `tools/smoke.php` 的
+    //    `if ($case === …)` 长链里。它们守的段落早已搬进 PHPUnit，只剩"要子进程
+    //    才能验"的这一半留在 smoke ⇒ 连同 `runCase(__FILE__, …)` 一起搬过来，
+    //    那 6 个段才真正变成"墓碑"（只剩注释，没有代码）。
+
+    // Each：同层重复 key ⇒ diff 复用错乱（R4）。绝不静默 ⇒ Fatal。
+    'eachdup' => static function (): void {
+        Each::make(static fn(array $u): int => $u['id'])
+            ->items([['id' => 1], ['id' => 1]], static fn(array $u): Widget => Text::make('x'));
+    },
+
+    // Each：key `1` 与 `'1'` **不**算重复 —— 与 `Key::same` 同口径，不做类型互转。
+    // ★ 这一例期望**不崩**：能走到文件末尾 ⇒ 退出码 0（旧判据是 smoke 里的 `exit(1)`）。
+    'eachkeytag' => static function (): void {
+        Each::make(static fn(array $u): string|int => $u['id'])
+            ->items([['id' => 1], ['id' => '1']], static fn(array $u): Widget => Text::make('x'));
+    },
+
+    // Dock：默认 Report ⇒ 条轨**合计**超出必须中止（每根各自合规，冲突在合计层
+    //   暴露 —— 30 + 20 > 40）。
+    'dockoverflow' => static function (): void {
+        $dock = new RenderDock(Overflow::Report);
+        $dock->setSlot('top', new SolidBox(new Size(100.0, 30.0), 100.0, 30.0));
+        $dock->setSlot('bottom', new SolidBox(new Size(100.0, 20.0), 100.0, 20.0));
+        $dock->setSlot('center', new SolidBox(new Size(10.0, 10.0), 10.0, 10.0));
+        $dock->layout(BoxConstraints::tight(new Size(100.0, 40.0)));
+    },
+
+    // A4：订阅写在 build 体内 ⇒ 每重建一次多订一份。运行期守卫必须响。
+    'watchbuild' => static function (): void {
+        $element = (new BuildWatchWidget(new FakeStore()))->createElement();
+        $element->mount(null, fatalContext());
+    },
+
+    // Computed：求值期间又触发自己的求值 ⇒ 闭包不纯（E-COMPUTED-CYCLE）。
+    'computedcycle' => static function (): void {
+        $self = new Computed(static function () use (&$self): int {
+            return $self->get() + 1;
+        }, []);
+        $self->get();
+    },
+
+    // build() 里标脏自己 ⇒ 每遍都重建 ⇒ 16 轮不收敛 ⇒ E-FLUSH-CYCLE
+    //   （**当帧**报，不是每帧默默重建）。
+    'flushcycle' => static function (): void {
+        $loop = LoopPage::make()->createElement();
+        $loop->mount(null, fatalContext());
+        $loop->settle();
+    },
+
+    // 子的 build 标脏祖先 ⇒ 祖先第二遍重建时又把子标脏 ⇒ 子同帧第二次 rebuild
+    //   ⇒ `noteRebuilt()` 当帧 Fatal（带类名）。
+    'chainwrite' => static function (): void {
+        $probe = new ChainProbe();
+        $root = ChainPage::make($probe)->createElement();
+        $root->mount(null, fatalContext());
+        $probe->markOuterOnInnerBuild = true;
+        $inner = $root->childAt(0);
+        if ($inner instanceof StatefulElement) {
+            $inner->state()?->markDirty();
+        }
+        $root->settle();
+    },
+
+    // 同名路由注册两次 ⇒ 后一次静默覆盖 ⇒ 上线后"导航到某页却没反应"。
+    'routedup' => static function (): void {
+        RouteTable::make()->route('users', static fn(): Widget => new LeafProbe(1.0))
+            ->route('users', static fn(): Widget => new LeafProbe(2.0));
+    },
+
+    // 同名命令注册两次 ⇒ 后一次静默覆盖前一次。上线后"点了没反应"且查不出为什么。
+    'cmdup' => static function (): void {
+        CommandRouter::make()->on('a.b', new EchoCommands())->on('a.b', new EchoCommands());
+    },
+
+    // 帧末异常沿途没有 ErrorBoundary 捕获 ⇒ 必须走 Fatal 序列（exit 3 + Errors.log）。
+    //   **不吞** —— 吞了就是窗口冻结在上一帧且不报错（G2 明令禁止的半静默）。
+    'noboundary' => static function (): void {
+        $bad = BoomPage::make()->createElement();
+        $bad->mount(null, fatalContext());   // 首次 build 成功
+        $bad->state()?->boom();              // 标脏 ⇒ 帧末重建时抛
+        (new Frame(new SurfaceProbe()))->run($bad, BoxConstraints::tight(new Size(240.0, 80.0)), 0.0);
+        echo "不该到达这里\n";
     },
 ];
 
