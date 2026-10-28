@@ -37,7 +37,6 @@ use Drift\Dev\Smoke\Overlay\RecordingSurface;
 use Drift\Dev\Smoke\App\FocusRingApplication;
 use Drift\Dev\Smoke\Rendering\ProbePainter;
 use Drift\Dev\Preview\SvgSurface;
-use Drift\Dev\Smoke\App\KeyAncestorApplication;
 use Drift\Dev\Smoke\App\CountJob;
 use Drift\Dev\Smoke\App\LazyApplication;
 use Drift\Dev\Smoke\App\NamedBoomJob;
@@ -62,11 +61,9 @@ use App\Users\Jobs\JobRegistry;
 use App\Users\Store\MemoryUserSource;
 use App\Users\Store\LoadStatus;
 use Drift\Dev\Smoke\App\FailSliceJob;
-use Drift\Dev\Smoke\App\PressLabApplication;
 use Drift\Dev\Smoke\App\TableScrollApplication;
 use Drift\Dev\Smoke\App\SemValueApplication;
 use Drift\Dev\Smoke\App\TfApplication;
-use Drift\Dev\Smoke\App\TitleBarLabApplication;
 use Drift\Dev\Smoke\App\ScrollApplication;
 use Drift\Dev\Smoke\App\NavApplication;
 use Drift\Dev\Smoke\App\NamedSleepJob;
@@ -5892,285 +5889,19 @@ if (is_resource($mockProc)) {
 //   ★ 下面留着的是**声明的让位规则**（ownsPress / keyboard 两条缝 + 顶条
 //     当标题栏）：主题是"谁该接管、谁该让位"，与上面"事件序列本身"不是一回事。
 
-// ⑥ 「按下归我」+「键盘归我」两条缝（W8-2，Slider 立的范式）
-//
-// 背景：`activateFocusedWidget()` 是 `instanceof` 塔（Menu/ToggleBase/Segment/
-// Button），而且**收不到坐标、收不到按键** ⇒ 位置即语义的控件（Slider）做不了。
-// 这两条缝让控件自己声明"按下归我"/"键盘归我"，框架只做路由。
-$pl = new PressLabApplication();
-$pl->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(320.0, 400.0)));
-
-$plOwnEl = findElement(
-    $pl->root(),
-    static fn(Element $e): bool => $e->widget() instanceof Button && $e->widget()->pointerOwnsPressValue(),
-);
-$plWatchEl = findElement(
-    $pl->root(),
-    static fn(Element $e): bool => $e->widget() instanceof Button
-        && $e->widget()->pointerHandlerValue() !== null
-        && !$e->widget()->pointerOwnsPressValue(),
-);
-$plKeyEl = findElement(
-    $pl->root(),
-    static fn(Element $e): bool => $e->widget() instanceof Button && $e->widget()->keyHandlerValue() !== null,
-);
-$plChildEl = findElement(
-    $pl->root(),
-    static fn(Element $e): bool => $e->widget() instanceof Button && $e->widget()->pressedHandler() !== null
-        && $e->widget()->pointerHandlerValue() === null
-        && $e->widget()->keyHandlerValue() === null,
-);
-
-/** 盒中心（夹具一律现取，不赌字模高度） */
-$plCenter = static function (?Element $e): array {
-    $box = $e?->effectiveBox();
-    if ($box === null || $box->size() === null) {
-        return [0.0, 0.0];
-    }
-    [$ox, $oy] = boxOrigin($box);
-
-    return [$ox + $box->size()->width / 2.0, $oy + $box->size()->height / 2.0];
-};
-
-[$plOx, $plOy] = $plCenter($plOwnEl);
-[$plWx, $plWy] = $plCenter($plWatchEl);
-[$plCx, $plCy] = $plCenter($plChildEl);
-
-// a. 接管：down ⇒ 回调收到 down、指针被捕获、**命令不发**
-$pl->dispatchInput(PointerEvent::down($plOx, $plOy));
-check(
-    'Press · ownsPress：down 交给控件（回调收到 down、指针被捕获）',
-    $pl->ownLog === ['down'] && $pl->captureNode() === $plOwnEl,
-    'log=' . implode(',', $pl->ownLog) . ' captured=' . ($pl->captureNode() === $plOwnEl ? 'yes' : 'no'),
-);
-check(
-    'Press · ownsPress：按下**不**走 activateFocusedWidget（命令不发）',
-    $pl->ownPresses === 0,
-    'ownPresses=' . $pl->ownPresses,
-);
-check(
-    'Press · ownsPress：焦点**仍落上去**（键盘可达的前提）',
-    $pl->focusedElement() === $plOwnEl,
-    'focused=' . ($pl->focusedElement() === $plOwnEl ? 'own' : 'other'),
-);
-
-// b. 接管期拖到控件外 ⇒ 仍归它（捕获的全部意义：不做命中测试）
-$pl->dispatchInput(PointerEvent::move(5.0, 5.0));
-check(
-    'Press · ownsPress：拖到控件外仍归它（捕获期不命中测试）',
-    $pl->ownLog === ['down', 'move'] && $pl->captureNode() === $plOwnEl,
-    'log=' . implode(',', $pl->ownLog),
-);
-
-// c. up ⇒ 收口（捕获自动释放；不释放就是"事件永远发给死节点"）
-$pl->dispatchInput(PointerEvent::up(5.0, 5.0));
-check(
-    'Press · ownsPress：up ⇒ 捕获释放且回调收到 up',
-    $pl->ownLog === ['down', 'move', 'up'] && $pl->captureNode() === null,
-    'log=' . implode(',', $pl->ownLog),
-);
-
-// d. 零回归：默认声明（ownsPress=false）⇒ 命令照发、回调一次都不跑
-$pl->dispatchInput(PointerEvent::down($plWx, $plWy));
-check(
-    'Press · 默认 pointer()：down 仍走激活（命令照发）且回调不跑 —— 零回归',
-    $pl->watchPresses === 1 && $pl->watchLog === [] && $pl->captureNode() === null,
-    'presses=' . $pl->watchPresses . ' log=' . implode(',', $pl->watchLog),
-);
-
-// e. 让位：子按钮（Activatable）没声明，祖先声明了 ownsPress ⇒ **子按钮赢**
-//   ★ 2026-10-26 改判（阶段 2 的 Table 行立的口子）：原先这里断言"祖先吞掉按下"。
-//     行级 `ownsPress` 让"整行可点"成立，但它会顺手抢走 cell 里按钮的按下 ⇒
-//     表格里放按钮点不动且不报错。判据改成与 `windowDragOwner()` 同构：
-//     命中点**在**可聚焦 / `Activatable` 的控件上 ⇒ 这次按下归它（它本来就有
-//     "按下 ⇒ 自己激活"的语义），祖先没有资格替它决定。
-$pl->dispatchInput(PointerEvent::down($plCx, $plCy));
-check(
-    'Press · 祖先 ownsPress + 子按钮 ⇒ 子按钮赢（表格行里放按钮能点）',
-    $pl->ancestorLog === [] && $pl->childPresses === 1,
-    'log=' . implode(',', $pl->ancestorLog) . ' childPresses=' . $pl->childPresses,
-);
-$pl->dispatchInput(PointerEvent::up($plCx, $plCy));
-
-// f. 键盘缝：焦点在声明了 keyboard() 的控件上 ⇒ 方向键归它，返回 true 吃掉
-$pl->dispatchInput(PointerEvent::down($plKeyEl === null ? 0.0 : $plCenter($plKeyEl)[0], $plKeyEl === null ? 0.0 : $plCenter($plKeyEl)[1]));
-$pl->dispatchInput(PointerEvent::up($plKeyEl === null ? 0.0 : $plCenter($plKeyEl)[0], $plKeyEl === null ? 0.0 : $plCenter($plKeyEl)[1]));
-$pl->dispatchInput(KeyEvent::down(KeyChord::right()));
-check(
-    'Press · keyboard()：焦点控件收到方向键（框架不认识的键也能被控件吃掉）',
-    $pl->keyLog === ['Right'],
-    'keyLog=' . implode(',', $pl->keyLog),
-);
-
-// g. 键盘缝的让位：返回 false ⇒ 键继续往下走（Enter 落到激活 ⇒ 按钮真被按下）
-// ★ 计数先归零：上面那次点击（down 即激活）已经给它 +1 了。
-$pl->keyPresses = 0;
-$pl->keyHandled = false;
-$pl->dispatchInput(KeyEvent::down(KeyChord::enter()));
-check(
-    'Press · keyboard() 返回 false ⇒ 让位到下游（Enter 仍激活按钮）',
-    $pl->keyLog === ['Right', 'Enter'] && $pl->keyPresses === 1,
-    'keyLog=' . implode(',', $pl->keyLog) . ' keyPresses=' . $pl->keyPresses,
-);
-
-// h. 反例：没声明 keyboard() 的控件收到同一个键 ⇒ 回调不跑（不会被别的控件接走）
-$pl->dispatchInput(PointerEvent::down($plOx, $plOy));
-$pl->dispatchInput(PointerEvent::up($plOx, $plOy));
-$pl->dispatchInput(KeyEvent::down(KeyChord::right()));
-check(
-    'Press · 反例：焦点在没声明 keyboard() 的控件上 ⇒ 该键无人接（不串台）',
-    $pl->keyLog === ['Right', 'Enter'],
-    'keyLog=' . implode(',', $pl->keyLog),
-);
-
-// i. ★★ 顶条当标题栏（P1-Stage 1b 无边框窗）
-//
-// 失败形态是**静默吞掉点击**（按钮点了没反应），不是崩溃 —— 所以判据必须两边
-// 都钉住：该拖的（标题文字 / 顶条空白）真拖，不该拖的（按钮 / 自绘控件）真不拖。
-// 只验"点空白能拖"无法发现按钮被吞。
-$tb = new TitleBarLabApplication();
-$tb->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(320.0, 400.0)));
-
-$tbBarEl = findElement(
-    $tb->root(),
-    static fn(Element $e): bool => $e->widget()->windowDragHandlerValue() !== null,
-);
-$tbTitleEl = findElement(
-    $tb->root(),
-    static fn(Element $e): bool => $e->widget() instanceof Text && $e->widget()->content() === '用户管理',
-);
-$tbBtnEl = findElement(
-    $tb->root(),
-    static fn(Element $e): bool => $e->widget() instanceof Button,
-);
-$tbPaintEl = findElement(
-    $tb->root(),
-    static fn(Element $e): bool => $e->widget()->pointerOwnsPressValue(),
-);
-
-[$tbTx, $tbTy] = $plCenter($tbTitleEl);
-[$tbBx, $tbBy] = $plCenter($tbBtnEl);
-[$tbPx, $tbPy] = $plCenter($tbPaintEl);
-
-// i-1. 点标题文字 ⇒ 拖窗（真实窗口的标题栏上按下去就是拖窗，文字不是例外）
-$tb->dispatchInput(PointerEvent::down($tbTx, $tbTy));
-check(
-    'TitleBar · 点标题文字 ⇒ 开始拖窗（沿父链找到顶条的 windowDrag 声明）',
-    $tb->dragStarts === 1,
-    'dragStarts=' . $tb->dragStarts,
-);
-check(
-    'TitleBar · 拖窗**不捕获指针**（拖窗的鼠标循环归平台，框架再捕获会锁死后续事件）',
-    $tb->captureNode() === null,
-    'captured=' . ($tb->captureNode() === null ? 'no' : 'yes'),
-);
-check(
-    'TitleBar · 拖窗**不改焦点**（抓标题栏不是"选中"）',
-    $tb->focusedElement() === null,
-    'focused=' . ($tb->focusedElement() === null ? 'none' : 'other'),
-);
-
-// i-2. 拖动期间后续 move / up 不该再触发一次（否则每帧重开一次模态移动循环）
-$tb->dispatchInput(PointerEvent::move($tbTx + 30.0, $tbTy + 12.0));
-$tb->dispatchInput(PointerEvent::up($tbTx + 30.0, $tbTy + 12.0));
-check(
-    'TitleBar · 一次按下只拖一次（move / up 不重复触发）',
-    $tb->dragStarts === 1,
-    'dragStarts=' . $tb->dragStarts,
-);
-
-// i-3. 点顶条里的按钮 ⇒ **不拖窗**，命令照发（Activatable 让位）
-$tb->dispatchInput(PointerEvent::down($tbBx, $tbBy));
-check(
-    'TitleBar · 点顶条按钮 ⇒ 不拖窗且命令照发（可激活控件让位）',
-    $tb->dragStarts === 1 && $tb->actionPresses === 1,
-    'dragStarts=' . $tb->dragStarts . ' actionPresses=' . $tb->actionPresses,
-);
-$tb->dispatchInput(PointerEvent::up($tbBx, $tbBy));
-
-// i-4. 点顶条里的自绘控件（`pointer()` 声明者）⇒ **不拖窗**（第三让位判据）
-$tb->dispatchInput(PointerEvent::down($tbPx, $tbPy));
-check(
-    'TitleBar · 点顶条里的 pointer() 声明者 ⇒ 不拖窗（自绘控件让位）',
-    $tb->dragStarts === 1 && $tb->paintedLog === ['down'],
-    'dragStarts=' . $tb->dragStarts . ' paintedLog=' . implode(',', $tb->paintedLog),
-);
-$tb->dispatchInput(PointerEvent::up($tbPx, $tbPy));
-
-// i-5. 反例：点在顶条**外面**（内容区）⇒ 不拖窗
-//      ★ 没有这一条，`windowDragOwner()` 写成"沿父链一路找"也能过前四条
-//        （内容区往上就是根，找不到声明者 —— 但实现若写成"无条件返回根"就露馅）。
-$tbOutEl = findElement(
-    $tb->root(),
-    static fn(Element $e): bool => $e->widget() instanceof Text && $e->widget()->content() === '内容',
-);
-[$tbOx, $tbOy] = $plCenter($tbOutEl);
-$tb->dispatchInput(PointerEvent::down($tbOx, $tbOy));
-check(
-    'TitleBar · 反例：点在顶条外 ⇒ 不拖窗（声明只在顶条子树内生效）',
-    $tb->dragStarts === 1,
-    'dragStarts=' . $tb->dragStarts,
-);
-$tb->dispatchInput(PointerEvent::up($tbOx, $tbOy));
-
-// h2. ★★ `keyboard()` 沿**父链**找最近的声明者（2026-10-24 修）
-//     此前只读焦点控件自己的 widget ⇒ 包裹式控件的声明是**死的**，而
-//     `Widget::keyboard()` 的 docblock 一直写着"任何控件都能挂"（文档承诺了
-//     代码没做到的事）。`ComboBox` 包 `TextField` 时焦点落在 `TextField` 上，
-//     外层声明必须收得到键 —— 否则浮层驱动不了。
-//     判据用 **Backspace + `TextFieldState::text()`**：外层吃掉 ⇒ 文本不变；
-//     让位 ⇒ 文本真被删一个字符。这是"吃没吃到"的可观测差别，不是恒真断言。
-$kaApp = new KeyAncestorApplication();
-$kaC = BoxConstraints::loose(new Size(300.0, 200.0));
-$kaApp->attach(new SurfaceProbe(), $kaC);
-$kaApp->frame(16.0, $kaC);
-$kaField = $kaApp->fieldElement();
-$kaBox = $kaField?->effectiveBox();
-[$kaX, $kaY] = $kaBox === null || $kaBox->size() === null
-    ? [0.0, 0.0]
-    : [RenderBox::absoluteOrigin($kaBox)[0] + $kaBox->size()->width / 2.0,
-        RenderBox::absoluteOrigin($kaBox)[1] + $kaBox->size()->height / 2.0];
-// 点一下 ⇒ 焦点落到 TextField 上（命中测试 ⇒ 焦点）
-$kaApp->dispatchInput(PointerEvent::down($kaX, $kaY));
-$kaApp->dispatchInput(PointerEvent::up($kaX, $kaY));
-// 方向键：`TextFieldState` 不认它 ⇒ 只有外层能收到。这一条单独证明"父链走得通"
-$kaApp->dispatchInput(KeyEvent::down(KeyChord::right()));
-check(
-    'Press · keyboard() 沿父链：焦点在 TextField 上，外层声明的 handler 也收到键',
-    $kaApp->ancestorLog === ['Right'],
-    'ancestorLog=' . implode(',', $kaApp->ancestorLog),
-);
-// 外层吃掉 Backspace ⇒ 键不到 `TextFieldState` ⇒ 文本不动
-$kaApp->ancestorEats = true;
-$kaApp->ancestorLog = [];
-$kaApp->dispatchInput(KeyEvent::down(KeyChord::backspace()));
-check(
-    'Press · keyboard() 沿父链：外层吃掉 Backspace ⇒ 焦点控件的文本不被改',
-    $kaApp->ancestorLog === ['Backspace'] && $kaApp->fieldState()?->text() === 'ab',
-    'ancestorLog=' . implode(',', $kaApp->ancestorLog) . ' text=' . ($kaApp->fieldState()?->text() ?? '-'),
-);
-// 外层让位 ⇒ 键继续往下走到 `TextFieldState::handleKey()` ⇒ 文本真被删一个字符
-//   （这一条同时证明"`keyboard()` 仍排在 `TextFieldState` 之前"的顺序没被改坏）
-//   ★ 期望值从 `caretOffset()` **现推**，不猜插入符在哪：上面的点击落在输入框中部，
-//     插入符就在 'a'/'b' 之间 ⇒ 删的是 'a'（结果 'b'）。写死 'a' 会把正确行为判成 bug。
-$kaCaret = $kaApp->fieldState()->caretOffset();
-$kaBefore = $kaApp->fieldState()->text();
-$kaApp->ancestorEats = false;
-$kaApp->ancestorLog = [];
-$kaApp->dispatchInput(KeyEvent::down(KeyChord::backspace()));
-$kaExpected = substr($kaBefore, 0, $kaCaret - 1) . substr($kaBefore, $kaCaret);
-check(
-    'Press · keyboard() 沿父链：外层让位 ⇒ 键落到 TextFieldState（删掉插入符前一个字符）',
-    $kaApp->ancestorLog === ['Backspace'] && $kaApp->fieldState()?->text() === $kaExpected,
-    sprintf(
-        'ancestorLog=%s caret=%d %s ⇒ %s（期望 %s）',
-        implode(',', $kaApp->ancestorLog),
-        $kaCaret,
-        $kaBefore,
-        $kaApp->fieldState()?->text() ?? '-',
-        $kaExpected,
-    ),
-);
+// ⑥ 「按下归我」/「键盘归我」/ 顶条当标题栏 已迁出
+//   → `tests/Feature/Input/PressClaimTest.php`（7）—— `ownsPress` 接管按下
+//     （回调收到 down + 捕获 + 命令不发 + 焦点仍落上去）、捕获期不命中测试、
+//     up 收口、默认声明零回归、子按钮赢过祖先的 `ownsPress`。
+//   → `tests/Feature/Input/KeyboardSeamTest.php`（6）—— `keyboard()` 自己声明
+//     （框架不认识的键也能吃掉）/ 返回 false 让位到激活 / 反例不串台 +
+//     沿父链三条（方向键走得通 / 外层吃掉 Backspace / 外层让位后落到 TextFieldState）。
+//   → `tests/Feature/App/TitleBarDragTest.php`（7）—— 顶条 `windowDrag()`：
+//     标题文字真拖 / 不捕获 / 不改焦点 / 一次按下只拖一次 / 按钮与 `pointer()`
+//     声明者让位 / 顶条外反例（声明只在子树内生效）。
+//   ★ 迁出时修掉一处恒真判据：smoke 用 `move(5.0, 5.0)` 表示"拖到控件外"，
+//     但接管按钮就在左上角 ⇒ 落点仍在它自己的盒内 ⇒ "捕获期不命中测试"对它
+//     恒真。现在落点由盒现算且落在**下一个控件**上（事件跑掉才可观测）。
 
 // ⑦ UIA 语义推送已迁出
 //   → `tests/Feature/Semantics/SemanticsPushTest.php::testSinkPayloadShape`
