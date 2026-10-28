@@ -1018,6 +1018,24 @@ function inkCount(RasterCanvas $canvas, ?Color $background = null): int
 }
 
 /**
+ * 把盒画到白底光栅上（§14.1：同输入 ⇒ 同指纹，golden 的物质基础）。
+ *
+ * ★ 放在工具区而不是某个断言段里：AppBar / Showcase / SegmentedControl / Slider
+ *   以及已迁出的 Spinner 都在用。原先长在 Spinner 段里，靠"函数声明在编译期
+ *   hoisted"才让前面几百行能用 —— 那是段边界一旦挪动就会断的隐性依赖。
+ */
+function spinCanvas(RenderBox $box, int $width, int $height): RasterCanvas
+{
+    $list = new DisplayList();
+    $box->paint(new RecordingCanvas($list));
+
+    $canvas = new RasterCanvas($width, $height, Color::white(), Scale::of(1.0));
+    $list->replay($canvas);
+
+    return $canvas;
+}
+
+/**
  * 盒在客户区的绝对原点（沿父链累加相对偏移）。
  *
  * 菜单 / 右键 / 拖放的测试要"点在某一行上"，而行的位置只能从盒树反推 ——
@@ -5031,299 +5049,19 @@ check(
 $sc2App->closeModal();
 check('apps/showcase · closeModal 关掉（闭环，不残留）', !$sc2App->isModalOpen());
 
-// ── ㉜ 光标形状（§9.1「一次命中，三方消费」的第 ③ 方）──
-// ★ 三方 = 事件路由 / 语义 / **光标形状**。前两方早就在（`focusHit()`；语义树是
-//   M4 的活）；第 ③ 方此前**完全缺位** ⇒ 真机窗口的指针永远是箭头，**且不报错**
-//   （§9.1 只把"光标形状"写进了名字，没有一行代码兑现它）。
-// ★ 本段只判**解释器面判得了的**：形状表（= 桥的 ABI）· 声明落到盒上 · 命中链
-//   取最近者 · 应用层出口。**"系统光标真的变成手形"只能真机判**（`GetCursorInfo`），
-//   不在这里假装 —— 那是 §20 纪律 1 的双向量具纪律。
-
-check('光标 · Default 是 0（= 桥的 IDC_ARROW，兜底值）', CursorShape::Default->value === 0);
-check(
-    '光标 · IBeam=1 / PointingHand=2（★ value 就是桥的 ABI：改它等于改协议）',
-    CursorShape::IBeam->value === 1 && CursorShape::PointingHand->value === 2,
-);
-$shapeValues = array_map(static fn (CursorShape $c): int => $c->value, CursorShape::cases());
-check(
-    '光标 · 8 个 case、value 恰好是 0..7 且互不重复（桥的 switch 覆盖面）',
-    $shapeValues === [0, 1, 2, 3, 4, 5, 6, 7],
-    'values=' . implode(',', $shapeValues),
-);
-check(
-    '光标 · from() 往返（桥只传编号，PHP 侧能还原形状）',
-    CursorShape::from(2) === CursorShape::PointingHand,
-);
-
-// 声明：Widget::cursor() ⇒ 盒上的 RenderObject::cursor()
-check(
-    '光标 · 没声明 ⇒ cursorShape() 为 null（"我不管，问上面"）',
-    Text::make('x')->cursorShape() === null,
-);
-check(
-    '光标 · Widget::cursor() 是声明（链式 + 可读回）',
-    Text::make('x')->cursor(CursorShape::IBeam)->cursorShape() === CursorShape::IBeam,
-);
-
-// ★ 用 tight 约束：`Center` 的盒是**贴身**的（size = 孩子 size），loose 下盒只有
-//   文字那么大 ⇒ 命中点得算字体度量。tight 下盒铺满，命中点取 (10,10) 即可，
-//   与度量无关（§20 纪律 1：断言不该依赖它不打算测的东西）。
-$curContext = smokeContext();
-$curRoot = Center::make()->cursor(CursorShape::PointingHand)->child(Text::make('hit me'))->createElement();
-$curRoot->mount(null, $curContext);
-$curBox = $curRoot->effectiveBox();
-$curBox?->layout(BoxConstraints::tight(new Size(300.0, 200.0)));
-check(
-    '光标 · 声明落到了盒上（Element::syncBox 是唯一落点）',
-    $curBox?->cursor() === CursorShape::PointingHand,
-);
-
-$curFm = new FocusManager();
-
-// 内层声明盖过外层：Padding(Wait) > Center(PointingHand) > Text(无)
-$nestRoot = Padding::make(Center::make()->cursor(CursorShape::PointingHand)->child(Text::make('deep')))
-    ->cursor(CursorShape::Wait)
-    ->createElement();
-$nestRoot->mount(null, $curContext);
-$nestBox = $nestRoot->effectiveBox();
-$nestBox?->layout(BoxConstraints::tight(new Size(300.0, 200.0)));
-$nestHit = $nestBox?->hitTest(10.0, 10.0);
-check(
-    '光标 · 命中链取**最近**声明者（内层 PointingHand 盖过外层 Wait）',
-    $curFm->cursorOf($nestHit) === CursorShape::PointingHand,
-    'resolved=' . $curFm->cursorOf($nestHit)->name . '｜hit=' . ($nestHit === null ? 'null' : $nestHit::class),
-);
-
-// 命中者自己没声明 ⇒ 沿父链上溯
-$outerRoot = Padding::make(Center::make()->child(Text::make('deep')))
-    ->cursor(CursorShape::Wait)
-    ->createElement();
-$outerRoot->mount(null, $curContext);
-$outerBox = $outerRoot->effectiveBox();
-$outerBox?->layout(BoxConstraints::tight(new Size(300.0, 200.0)));
-$outerHit = $outerBox?->hitTest(10.0, 10.0);
-check(
-    '光标 · 命中者自己没声明 ⇒ 沿父链上溯到声明者（Wait）',
-    $curFm->cursorOf($outerHit) === CursorShape::Wait,
-    'resolved=' . $curFm->cursorOf($outerHit)->name . '｜hit=' . ($outerHit === null ? 'null' : $outerHit::class),
-);
-
-// 整条链没人声明 ⇒ Default（不是 null）
-$bareRoot = Center::make()->child(Text::make('bare'))->createElement();
-$bareRoot->mount(null, $curContext);
-$bareBox = $bareRoot->effectiveBox();
-$bareBox?->layout(BoxConstraints::tight(new Size(300.0, 200.0)));
-check(
-    '光标 · 整条链没人声明 ⇒ Default（★ 不是 null：Default 是**明确决定**）',
-    $curFm->cursorOf($bareBox?->hitTest(10.0, 10.0)) === CursorShape::Default,
-);
-check('光标 · 没命中任何盒（点在根外）⇒ Default', $curFm->cursorOf(null) === CursorShape::Default);
-
-// 应用面：dispatchInput() 的返回值**就是**喂给 WindowHost::setCursor() 的形状
-$curApp = new CursorApplication();
-check(
-    '光标 · 未挂载 ⇒ dispatchInput 返回 null（没有树就没有路由）',
-    $curApp->dispatchInput(PointerEvent::down(1.0, 1.0)) === null,
-);
-$curApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
-check(
-    '光标 · 按键不吃光标（dispatchInput(KeyEvent) 返回 null，焦点链照常走）',
-    $curApp->dispatchInput(KeyEvent::down(KeyChord::tab())) === null,
-);
-check(
-    '光标 · 指针落在控件上 ⇒ dispatchInput 返回声明形状（第 ③ 方的出口）',
-    $curApp->dispatchInput(PointerEvent::down(160.0, 120.0)) === CursorShape::PointingHand,
-);
-check(
-    '光标 · 指针落在窗口外 ⇒ 返回 Default（壳据此把光标还原成箭头）',
-    $curApp->dispatchInput(PointerEvent::down(-5.0, -5.0)) === CursorShape::Default,
-);
-
-// ── ㉗ Widget.Spinner：加载指示器（§11.5 三态 Loading 分支，2026-10-16 落地）──
-
-/** 把一个盒画到白底光栅上（§14.1：同输入 ⇒ 同指纹，golden 的物质基础） */
-function spinCanvas(RenderBox $box, int $width, int $height): RasterCanvas
-{
-    $list = new DisplayList();
-    $box->paint(new RecordingCanvas($list));
-
-    $canvas = new RasterCanvas($width, $height, Color::white(), Scale::of(1.0));
-    $list->replay($canvas);
-
-    return $canvas;
-}
-
-$spinRoot = Spinner::make()->diameter(40.0)->createElement();
-$spinRoot->mount(null, $context);
-$spinBox = $spinRoot->effectiveBox();
-check(
-    'Spinner · 挂载即建出渲染盒（State 直接产盒 → RenderSpinner）',
-    $spinBox instanceof RenderSpinner,
-);
-$spinBox?->layout(BoxConstraints::loose(new Size(200.0, 200.0)));
-check(
-    'Spinner · 宽松约束 ⇒ 拿自然直径（40×40）',
-    $spinBox?->size()?->width === 40.0 && $spinBox?->size()?->height === 40.0,
-);
-check(
-    'Spinner · 内禀尺寸 = 直径（另一轴不限）',
-    $spinBox?->intrinsicWidth(INF) === 40.0 && $spinBox?->intrinsicHeight(INF) === 40.0,
-);
-
-// 约束比直径小 ⇒ 缩小而不报 C6（装饰性控件；C6 只罚"画到盒外"）
-$tightSpin = Spinner::make()->diameter(40.0)->createElement();
-$tightSpin->mount(null, $context);
-$tightSpin->effectiveBox()?->layout(BoxConstraints::tight(new Size(16.0, 16.0)));
-check(
-    'Spinner · 紧约束(16) < 直径(40) ⇒ 缩到约束内（C6 不响）',
-    $tightSpin->effectiveBox()?->size()?->width === 16.0,
-);
-
-// 紧约束比直径大 ⇒ 盒被父定死（C6 下界提升，框架统一行为），但墨迹不拉伸
-$fillSpin = Spinner::make()->diameter(40.0)->createElement();
-$fillSpin->mount(null, $context);
-$fillBox = $fillSpin->effectiveBox();
-$fillBox?->layout(BoxConstraints::tight(new Size(200.0, 200.0)));
-check(
-    'Spinner · 紧约束(200) > 直径(40) ⇒ 盒被父定死 200×200',
-    $fillBox?->size()?->width === 200.0,
-);
-$fillCanvas = spinCanvas($fillBox, 200, 200);
-$fMinX = PHP_INT_MAX;
-$fMaxX = -1;
-$fMinY = PHP_INT_MAX;
-$fMaxY = -1;
-$fInk = 0;
-for ($y = 0; $y < $fillCanvas->height(); $y++) {
-    for ($x = 0; $x < $fillCanvas->width(); $x++) {
-        if (!$fillCanvas->pixelAt($x, $y)->equals(Color::white())) {
-            $fInk++;
-            $fMinX = min($fMinX, $x);
-            $fMaxX = max($fMaxX, $x);
-            $fMinY = min($fMinY, $y);
-            $fMaxY = max($fMaxY, $y);
-        }
-    }
-}
-check(
-    'Spinner · 授予盒 200×200 但墨迹不拉伸（≈40×40 且居中 —— 图标语义）',
-    $fInk > 0
-        && ($fMaxX - $fMinX + 1) <= 42 && ($fMaxY - $fMinY + 1) <= 42
-        && abs($fMinX + $fMaxX - 199) <= 4 && abs($fMinY + $fMaxY - 199) <= 4,
-    sprintf('ink=%d bounds=%d×%d center=(%d,%d)', $fInk, $fMaxX - $fMinX + 1, $fMaxY - $fMinY + 1, (int) (($fMinX + $fMaxX) / 2), (int) (($fMinY + $fMaxY) / 2)),
-);
-
-// 纯函数：同相位渲染两次 ⇒ 同指纹
-$sigA = md5(spinCanvas($spinBox, 200, 200)->toRgba());
-$sigB = md5(spinCanvas($spinBox, 200, 200)->toRgba());
-check('Spinner · 同相位渲染两次指纹一致（§14.1 纯函数）', $sigA === $sigB);
-
-// 墨迹结构：8 个点 = 8 档渐隐 ⇒ 墨里恰好 8 种颜色（alpha 尾迹真的画上了）
-$dotCanvas = spinCanvas($spinBox, 200, 200);
-$spinInk = 0;
-$shades = [];
-for ($y = 0; $y < $dotCanvas->height(); $y++) {
-    for ($x = 0; $x < $dotCanvas->width(); $x++) {
-        $pixel = $dotCanvas->pixelAt($x, $y);
-        if (!$pixel->equals(Color::white())) {
-            $spinInk++;
-            $shades[$pixel->toArgb()] = true;
-        }
-    }
-}
-check('Spinner · 8 个点都有墨（ink > 0）', $spinInk > 0, 'ink=' . $spinInk);
-check(
-    'Spinner · 8 档渐隐 = 8 种颜色（不是 8 个同样实心的点）',
-    count($shades) === 8,
-    'shades=' . count($shades),
-);
-
-// 动画：tick() 只标脏，帧末才重建；重建后墨迹变化
-$spinState = $spinRoot->state();
-check('Spinner · State 只建一次（初相位 0）', $spinState instanceof SpinnerState && $spinState->step() === 0);
-$spinState?->tick();
-check(
-    'Spinner · tick 只标脏、不立即重建（§5.2 裁决 3）',
-    $spinState?->needsBuild() === true,
-);
-$spinSurface = new SurfaceProbe();
-$spinSurface->resize(200, 200, 1.0);
-$spinFrame = new Frame($spinSurface);
-$spinFrame->run($spinRoot, BoxConstraints::tight(new Size(200.0, 200.0)), 16.0);
-$spinBox2 = $spinRoot->effectiveBox();
-check(
-    'Spinner · 帧末重建后换成新盒',
-    $spinBox2 !== $spinBox && $spinBox2 instanceof RenderSpinner,
-);
-check('Spinner · 相位前进一步（step 0 → 1）', $spinState instanceof SpinnerState && $spinState->step() === 1);
-check(
-    'Spinner · 相位变 ⇒ 墨迹变（动画真的在走）',
-    md5(spinCanvas($spinBox2, 200, 200)->toRgba()) !== $sigA,
-);
-
-// ── ㉗b 帧时钟驱动的动画（§17.4.10，2026-10-18）──
-//    ★ 这里量的是"**没人调 `tick()`**，相位也自己走"。真机侧由
-//    `tools/probe-async.php` 的 ⑦⑧（帧间变化像素数）守。
-$spinApp = new SpinnerApplication();
-$spinApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(120.0, 120.0)));
-$spinAppRoot = $spinApp->root();
-$spinAppState = $spinAppRoot instanceof StatefulElement ? $spinAppRoot->state() : null;
-check(
-    '§17.4.10 · 首帧就推进了动画（attach 走同一入口）',
-    $spinAppState instanceof SpinnerState && $spinAppState->step() === 1,
-);
-check('§17.4.10 · 有动画在跑 ⇒ wantsFrame() 为真', $spinApp->wantsFrame() === true);
-$spinApp->frame(16.0, BoxConstraints::tight(new Size(120.0, 120.0)));
-$spinApp->frame(32.0, BoxConstraints::tight(new Size(120.0, 120.0)));
-check(
-    '§17.4.10 · 每帧推进一格（没人调 tick）',
-    $spinAppState instanceof SpinnerState && $spinAppState->step() === 3,
-);
-
-// 反例方向：没有动画的应用不该要求下一帧（**空闲不空转**的另一半）
-$quietApp = new EchoApplication();
-$quietApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(120.0, 120.0)));
-check('§17.4.10 · 无动画的应用 wantsFrame() 为假（空闲不空转）', $quietApp->wantsFrame() === false);
-
-// ── ㉗c `createRenderObjectFromState()`：有态控件直接产盒（`02` §6.2）──
-//    以前"有态"与"有盒"必须是两个类（`Spinner → SpinnerState → SpinnerBox`，
-//    第三类的唯一职责是把相位递进去）。现在 StatefulWidget 可以直接从 State
-//    产盒 ⇒ 叶子控件两段就够，`SpinnerBox` 已删。
-//    ★ 夹具 `LeafBoxWidget` 数 `build()` 调用次数 —— 叶子路径下一次都不该调。
-LeafBoxWidget::resetBuildCalls();
-$leafRoot = LeafBoxWidget::make()->createElement();
-$leafRoot->mount(null, $context);
-check(
-    '叶子态控件 · 挂载即有盒（State 直接产盒，不经过 build）',
-    $leafRoot->effectiveBox() instanceof SolidBox,
-);
-check(
-    '叶子态控件 · 没有子节点（叶子语义：不产子）',
-    $leafRoot->childCount() === 0,
-    'childCount=' . $leafRoot->childCount(),
-);
-check(
-    '叶子态控件 · `State::build()` 零调用',
-    LeafBoxWidget::$buildCalls === 0,
-    'calls=' . LeafBoxWidget::$buildCalls,
-);
-$leafModRoot = LeafBoxWidget::make()->paddingAll(8.0)->createElement();
-$leafModRoot->mount(null, $context);
-check(
-    '叶子态控件 · 修饰落在自己身上（`setMods()` 没被漏掉 —— 漏了会撞 §11.7 守卫）',
-    $leafModRoot->effectiveBox()?->mods()?->padLeft() === 8.0,
-);
-
-// `Spinner` 也走这条路（它的 `SpinnerBox` 已删）—— 结构上不可能再走 build
-$spinLeafRoot = Spinner::make()->diameter(30.0)->createElement();
-$spinLeafRoot->mount(null, $context);
-check(
-    'Spinner · 走叶子路径（有盒、无子 ⇒ 不再需要 SpinnerBox）',
-    $spinLeafRoot->effectiveBox() instanceof RenderSpinner && $spinLeafRoot->childCount() === 0,
-    'box=' . ($spinLeafRoot->effectiveBox() === null ? 'null' : $spinLeafRoot->effectiveBox()::class)
-    . ' childCount=' . $spinLeafRoot->childCount(),
-);
-
+// ── ㉜ 光标形状 / ㉗ Spinner / ㉗b 帧时钟 / ㉗c 有态产盒 已迁出 ─────────────────
+//   · `tests/Feature/Input/CursorShapeTest.php`（15）—— 形状表 = 桥的 ABI / 声明落盒 /
+//     命中链取最近 / 应用出口四态
+//   · `tests/Unit/Widget/SpinnerTest.php`（14）—— 盒与内禀 / 紧约束两向 / 墨不拉伸 /
+//     纯函数 / 8 档渐隐 / tick 只标脏 / 帧末换盒
+//   · `tests/Feature/App/AnimationClockTest.php`（4）—— attach 首帧即推进 / 每帧一格 /
+//     wantsFrame 两向（有动画要帧、无动画不空转）
+//   · `tests/Unit/Widget/StateProducedBoxTest.php`（6）—— 叶子路径有盒无子且 build 零调用 /
+//     修饰落自己 / Spinner 走叶子 / `State::build()` 默认零尺寸
+//
+// ── ㉗c 余下：叶子态控件的**反向自检**（子进程）──────────────────────────────
+//   ★ 只有"不覆写钩子 ⇒ build() 被调"这一条留在这里：`runCase()` 依赖 `__FILE__`
+//     是入口脚本，搬到 `tests/` 之后起不了子进程（§9 坑）。
 // 量具反向自检：不覆写钩子 ⇒ `build()` 真被调用（计数器不是死的）
 [$lbCode, $lbOut] = runCase(__FILE__, 'leafbox', null);
 $lbCalls = 0;
@@ -5336,18 +5074,6 @@ check(
     'rc=' . $lbCode . ' calls=' . $lbCalls . ' out=' . trim($lbOut),
 );
 
-// `State::build()` 的默认实现（§6.3）：只为"直接产盒"的控件存在，返回零尺寸
-$leafDefaultState = new LeafBoxState();
-$defaultBuilt = $leafDefaultState->build($context);
-$defaultBox = $defaultBuilt->createElement();
-$defaultBox->mount(null, $context);
-$defaultBox->effectiveBox()?->layout(BoxConstraints::loose(new Size(100.0, 100.0)));
-check(
-    'State::build() 默认实现 · 返回零尺寸盒（不再抽象，叶子控件不需要它）',
-    $defaultBuilt instanceof SizedBox
-        && $defaultBox->effectiveBox()?->size()?->width === 0.0
-        && $defaultBox->effectiveBox()?->size()?->height === 0.0,
-);
 
 // ── ㉘ 多页外壳：Dock / AppBar / NavButton + 命令激活（§12.1 / §12.2，2026-10-16 落地）──
 
@@ -7514,7 +7240,7 @@ $kbRoot = Column::make()->children([
         $taps[] = $tag;
     }),
 ])->createElement();
-$kbRoot->mount(null, $curContext);
+$kbRoot->mount(null, smokeContext());
 $kbRoot->effectiveBox()?->layout(BoxConstraints::loose(new Size(400.0, 60.0)));
 
 $kbFm = new FocusManager();
@@ -9723,127 +9449,11 @@ $semLay = static function (Widget $root): Element {
 //   ★ 纯逻辑与特征链分离：前者不依赖帧驱动，后者用 MotionApplication 夹具。
 
 
-// ═══════════════════════════════════════════ 语义推送两档（W7 L6-6）══
-//
-// `07` §6.2：结构变了 ⇒ `full`；动画中（结构没变）⇒ `coalesce`（每 4 帧一次）；
-// 焦点变 ⇒ 立即 `full`。★ `delta` 档**诚实降级没做**（§6.4：没有字段表就只能是
-// "每帧仍遍历全树、少一次序列化"的半成品）。
-//
-// ★ 反例方向：若 `updateChildren()` 无条件 `bumpStructure()`（每次 rebuild 都 +1），
-//   则"结构没变"永远判不出来 ⇒ ㉓ 会变成每帧推（8 次而不是 2 次）、㉔ 的版本号会涨。
-
-// ㉑ 结构版本号随挂载增长（`mount()` 里 +1）
-$sv0 = Element::structureVersion();
-$svApp = new EchoApplication();
-$svApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(120.0, 120.0)));
-$sv1 = Element::structureVersion();
-check(
-    '语义两档 · 结构版本号随挂载增长（mount() 里 +1）',
-    $sv1 > $sv0,
-    $sv0 . ' -> ' . $sv1,
-);
-
-// ㉒ 首帧（结构变了）⇒ 推 full
-$modeApp = new SpinnerApplication();
-$modePushes = 0;
-$modeApp->setSemanticsSink(function (array $nodes) use (&$modePushes): void {
-    ++$modePushes;
-});
-$modeApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(120.0, 120.0)));
-check(
-    '语义两档 · 首帧结构变了 ⇒ 推 full',
-    $modePushes === 1 && $modeApp->semanticsMode() === 'full',
-    'pushes=' . $modePushes . ' mode=' . $modeApp->semanticsMode(),
-);
-
-// ㉓ coalesce：动画中 8 帧 ⇒ 2 次（每 4 帧一次），不是 8 次
-// ㉔ 同时钉住"动画每帧重建但**结构没变**" ⇒ 版本号不动
-$modePushes = 0;
-$svSpinBefore = Element::structureVersion();
-$modeTs = 0.0;
-for ($i = 0; $i < 8; $i++) {
-    $modeTs += 16.0;
-    $modeApp->frame($modeTs, BoxConstraints::tight(new Size(120.0, 120.0)));
-}
-$svSpinAfter = Element::structureVersion();
-check(
-    '语义两档 · coalesce：动画中 8 帧 ⇒ 推 2 次（每 4 帧一次）',
-    $modePushes === 2 && $modeApp->semanticsMode() === 'coalesce',
-    'pushes=' . $modePushes . ' mode=' . $modeApp->semanticsMode(),
-);
-check(
-    '语义两档 · 动画每帧重建但结构没变 ⇒ 版本号不动（updateChildren 不无条件 +1）',
-    $svSpinAfter === $svSpinBefore,
-    $svSpinBefore . ' -> ' . $svSpinAfter,
-);
-
-// ㉕ coalesce 的第 1 帧**不推**（攒着）—— 证明它真在攒，不是"没走这条路"
-$spin2 = new SpinnerApplication();
-$spin2Pushes = 0;
-$spin2->setSemanticsSink(function (array $nodes) use (&$spin2Pushes): void {
-    ++$spin2Pushes;
-});
-$spin2->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(120.0, 120.0)));
-$spin2Pushes = 0;
-$spin2->frame(16.0, BoxConstraints::tight(new Size(120.0, 120.0)));
-check(
-    '语义两档 · coalesce 第 1 帧不推（攒着），档位记的是 coalesce',
-    $spin2Pushes === 0 && $spin2->semanticsMode() === 'coalesce',
-    'pushes=' . $spin2Pushes . ' mode=' . $spin2->semanticsMode(),
-);
-
-// ㉖ 虚拟列表滚动换了行 ⇒ **结构变** ⇒ full（不是 coalesce）
-//    这条钉的是"滚动不是一种可以攒的变化"：行换了就必须整棵推，攒着会让读屏
-//    的树与真实树错位（增量表达不了"多了几个节点"）。
-$svLazy = new LazyApplication();
-$lazyPushes = 0;
-$svLazy->setSemanticsSink(function (array $nodes) use (&$lazyPushes): void {
-    ++$lazyPushes;
-});
-$svLazy->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(400.0, 200.0)));
-$lazyPushes = 0;
-$svLazyBefore = Element::structureVersion();
-$svLazy->dispatchInput(ScrollEvent::make(200.0, 100.0, 3.0)); // 3 格 = 144px ⇒ 窗口换行
-$svLazy->frame(16.0, BoxConstraints::tight(new Size(400.0, 200.0)));
-check(
-    '语义两档 · 虚拟列表滚动换了行 ⇒ 结构变 ⇒ 立即 full（不攒）',
-    Element::structureVersion() > $svLazyBefore && $lazyPushes === 1 && $svLazy->semanticsMode() === 'full',
-    'ver=' . $svLazyBefore . '->' . Element::structureVersion() . ' pushes=' . $lazyPushes . ' mode=' . $svLazy->semanticsMode(),
-);
-
-// ㉗ **纯焦点变 ⇒ 立即 full**（2026-10-24 补，`pumpSemantics` 的 `|| $focusChanged`）
-//    ★ 这条与 ⑱ 的区别（也是它存在的理由）：⑱ 里 `overBudget` 是混进来的
-//      （skip=3 已经在），它测的是"节流期间焦点仍能穿过去"。
-//    ★★ **必须带动画**，否则证伪不了（2026-10-24 实测）：不带动画时，删掉
-//      `|| $focusChanged` 后焦点变的帧会落到 ③ 的**无条件落地推**，仍然推 1 次、
-//      mode 仍是 `full` ⇒ 断言分不出 ① 与 ③。
-//      带动画就不一样了：①（焦点变）⇒ `full`；③ 走 ②（动画）⇒ `coalesce`。
-//      **这就是能区分两种实现的唯一形状** —— 前提不成立的断言比没有断言更坏。
-$focusApp = new FocusTwoApplication();
-$focusPushes = 0;
-$focusApp->setSemanticsSink(function (array $nodes) use (&$focusPushes): void {
-    ++$focusPushes;
-});
-$focusApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 200.0)));
-$focusApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
-$focusApp->frame(16.0, BoxConstraints::tight(new Size(320.0, 200.0)));
-$focusPushes = 0;
-$focusLabelBefore = $focusApp->focusedLabel();
-$focusVerBefore = Element::structureVersion();
-$focusApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
-$focusLabelAfter = $focusApp->focusedLabel();
-$focusApp->frame(16.0, BoxConstraints::tight(new Size(320.0, 200.0)));
-check(
-    '语义两档 · 焦点移动（甲→乙）+ 动画中 ⇒ 仍立即 full（绕过 coalesce）',
-    $focusPushes === 1
-        && $focusApp->semanticsMode() === 'full'
-        && $focusLabelBefore === '甲'
-        && $focusLabelAfter === '乙'
-        && Element::structureVersion() === $focusVerBefore,
-    'pushes=' . $focusPushes . ' mode=' . $focusApp->semanticsMode()
-        . ' focus=' . $focusLabelBefore . '->' . $focusLabelAfter
-        . ' ver=' . $focusVerBefore . '->' . Element::structureVersion(),
-);
+// ── 语义推送两档（W7 L6-6）已迁出 ─────────────────────────────────────────
+//   `tests/Feature/Semantics/SemanticsPushTest.php`（7）—— 结构版本号随挂载增长 /
+//   首帧推 full / 动画中 coalesce 每 4 帧一次 / 结构没变时版本号不动 /
+//   coalesce 第 1 帧不推 / 虚拟列表换行算结构变 / 焦点变绕过 coalesce。
+//   ★ 与 `SemanticsTest` 分工：那边判建树（Element 层），这边判推送节流（Application 层）。
 // ── TestApp：声明式场景（`07` §4.2 / §4.3，W7 第 42 步）──
 //   三条场景各验一类，都用 `TestApp` 的**同一个**执行器：
 //     ① 虚拟列表：滚动前后都只造可见行（R1 查树，不查 Widget 声明）

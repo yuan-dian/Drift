@@ -34,6 +34,9 @@ abstract class SmokeTestCase extends TestCase
     /** @var list<string> */
     private array $failed = [];
 
+    /** 本次方法已经 flush 过（显式调用后置钩子不再重复） */
+    private bool $flushed = false;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -68,6 +71,7 @@ abstract class SmokeTestCase extends TestCase
     /** 把本方法累积的失败一次性抛给 PHPUnit（每个测试方法的最后一句话） */
     final protected function flushChecks(): void
     {
+        $this->flushed = true;
         $total = $this->passed + \count($this->failed);
 
         // 一条都没跑 = 段没搬进来 / require 静默失败。放过去就是"绿着的空壳"。
@@ -83,5 +87,29 @@ abstract class SmokeTestCase extends TestCase
             $total,
             \implode("\n  - ", $this->failed),
         ));
+    }
+
+    /**
+     * 后置条件：方法没显式 `flushChecks()` 时**兜住**。
+     *
+     * ★ 为什么需要这道兜底（2026-10-28 第 19 批实测踩到）：`check()` 只往
+     *   `$failed` 里追加，从不主动 fail —— 谁忘了在方法末尾写那一句，整个方法就
+     *   变成"断言全记录、一条也不报"的**绿壳**。本批 5 个新文件 46 条断言一次都没
+     *   调 flush，跑出来是 `OK (46 assertions)`，变异自检六组**全绿**才暴露。
+     *   ★ 这种错不会自然变红，只能靠"不可能忘"的结构。`assertPostConditions()`
+     *   是 PHPUnit 在方法体正常返回后必然调用的钩子，抛出的失败会计为该测试的
+     *   failure（不是 error），正好是这里要的语义。
+     *   ★ 已有 244 处显式调用照旧生效：`$flushed` 让第二次不再重复（否则第二次
+     *   total=0 会误报"一条断言都没跑"）。
+     */
+    protected function assertPostConditions(): void
+    {
+        parent::assertPostConditions();
+
+        if ($this->flushed) {
+            return;
+        }
+
+        $this->flushChecks();
     }
 }

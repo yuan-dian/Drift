@@ -196,7 +196,8 @@ PHPUnit 默认第一条断言失败就中止方法。GUI 断言不适用：一�
 | &nbsp;&nbsp;· 错误边界三层兜底 + 加速键/编辑命令环/指针框选 ✅ | `tests/Unit/Input/AcceleratorTableTest` + `tests/Feature/Widget/ErrorBoundaryTest` + `tests/Feature/Input/{KeyRoutingPriorityTest,EditingCommandLoopTest,PointerSelectionTest}` | 1253 → 1214（−39） |
 | &nbsp;&nbsp;· 命令 / 帧循环 / 路由表 / Offstage ✅ | `tests/Unit/{Commands/CommandTest,Routing/RouteTableTest}` + `tests/Feature/{App/FrameLoopTest,Widget/OffstageTest}` | 1214 → 1182（−32） |
 | &nbsp;&nbsp;· 主题作用域 / 页宿主 / 组合根 / 预览出图 / hello ✅ | `tests/Feature/Theme/ThemeScopeTest` + `tests/Feature/App/{PageHostTest,ApplicationTest,HelloAppTest}` + `tests/Feature/Preview/RendererTest` | 1182 → 1138（−44） |
-| &nbsp;&nbsp;· 待搬 | 光标形状 / Spinner / 语义推送 / 渲染图像 / ensureVisible / 虚拟列表锚点 / 浮层·模态·菜单族 / W8-2 控件族 / Table / LazyColumn / 日志 / 毛玻璃 / tutorial·showcase·示例 | |
+| &nbsp;&nbsp;· 光标形状 / Spinner / 帧时钟 / 有态产盒 / 语义推送 ✅ | `tests/Feature/Input/CursorShapeTest` + `tests/Unit/Widget/{SpinnerTest,StateProducedBoxTest}` + `tests/Feature/App/AnimationClockTest` + `tests/Feature/Semantics/SemanticsPushTest` | 1138 → 1092（−46） |
+| &nbsp;&nbsp;· 待搬 | W8-1 渲染图像（26）/ ensureVisible + 虚拟列表锚点（13）/ 浮层·模态·菜单族 / W8-2 控件族 / Table / LazyColumn / 指针四相位 / 日志 / 毛玻璃 / tutorial·showcase·示例 | |
 | **S4** | 纯单元（485 条里的）改成标准 `TestCase`：`assertSame` + `#[DataProvider]` | `--testsuite=unit` 覆盖它们 |
 
 ★ S1–S3 是**纯搬迁**（断言一行不改，只改"在哪个文件哪个方法里"）。
@@ -416,6 +417,7 @@ smoke 那一份保留**（它服务的是"还没搬走的后续段"，不是历�
 | 16 错误边界+按键路由 | `tests/Unit/Input/AcceleratorTableTest.php`（4）+ `tests/Feature/Widget/ErrorBoundaryTest.php`（13）+ `tests/Feature/Input/KeyRoutingPriorityTest.php`（5）+ `EditingCommandLoopTest.php`（9）+ `PointerSelectionTest.php`（8） | 39（加速键值语义 / 构造·build·渲染三层兜底 / 第①环优先于焦点链 / 让位规则② / 编辑门控 ②③④ / 指针框选 + IBeam） | 1253 → 1214（−39） |
 | 17 命令+帧循环+路由+Offstage | `tests/Unit/Commands/CommandTest.php`（8）+ `tests/Unit/Routing/RouteTableTest.php`（4）+ `tests/Feature/App/FrameLoopTest.php`（12）+ `tests/Feature/Widget/OffstageTest.php`（8） | 32（CommandArg 双槽 / 未注册进 Diagnostic / State 冒泡 / setState 延后到帧末 / 时间戳注入 / 脏边界 / layout→paint→present 有墨 / 帧外换盒仍重排 / 隐藏不 dispose·切回立即兑现·卸载才 dispose） | 1214 → 1182（−32） |
 | 18 主题/页宿主/组合根/预览/hello | `tests/Feature/Theme/ThemeScopeTest.php`（12）+ `tests/Feature/App/PageHostTest.php`（9）+ `ApplicationTest.php`（12）+ `HelloAppTest.php`（7）+ `tests/Feature/Preview/RendererTest.php`（4） | 44（覆盖不外溢·嵌套最内层赢 / 有状态延后·无状态立即 / 换页保实例 / 命令四环 / 组合根无盒仍排满 / SVG 出图 / 文字真居中） | 1182 → 1138（−44） |
+| 19 光标/Spinner/帧时钟/产盒/语义推送 | `tests/Feature/Input/CursorShapeTest.php`（15）+ `tests/Unit/Widget/SpinnerTest.php`（14）+ `tests/Feature/App/AnimationClockTest.php`（4）+ `tests/Unit/Widget/StateProducedBoxTest.php`（6）+ `tests/Feature/Semantics/SemanticsPushTest.php`（7） | 46（形状表 = 桥 ABI·命中链取最近·应用出口四态 / 盒与内禀·墨不拉伸·8 档渐隐·tick 只标脏·帧末换盒 / attach 首帧即推进·wantsFrame 两向 / 叶子路径有盒无子且 build 零调用·修饰落自己 / full↔coalesce 两档·滚动算结构变·焦点绕过） | 1138 → 1092（−46） |
 
 ★★ 第 17 批的**方法论发现**（值得在 S4 之前记住）：源码里 `Frame::needsSettle()` 的注释宣称
 "拆掉 `boxEpoch` 判据 ⇒ 帧外直调 `Element::update()` 那条红"，**实测不成立** ——
@@ -508,3 +510,42 @@ flex scroll / flex 值 / C6，10 条）按规则**留 smoke**：`runCase(__FILE_
 落盘 + `Errors::recentDiagnostics()` 环形缓冲。断言用**前后条数差**而非 `Errors::reset()`，
 避免清掉同进程里别的用例依赖的 `$fatalBox`（与 smoke 同款理由）。在 PHPUnit 全量跑时
 cwd 是项目根，落盘路径与 smoke 一致，✅ 通过。
+
+★★★ 第 19 批发现了一个**会让整批工作变成空气**的结构缺陷，必须记住：
+
+`SmokeTestCase::flushChecks()` 是**方法末尾手动调用**的约定 —— 而 `check()` 只往
+`$failed` 里追加，**从不主动 fail**。谁漏了那一句，整个方法就是"断言全记录、一条也
+不报"的**绿壳**：PHPUnit 输出 `OK (46 assertions)`，看起来 46 条全过，实际一条都没验。
+
+本批 5 个新文件 46 条断言**一次都没调** `flushChecks()`。它们"全绿"，是因为
+**六组变异自检全部 ALL-GREEN** 才暴露 —— 单看测试结果永远不会发现。
+（排查过程本身也踩了一次：先怀疑变异没注入、怀疑 opcache、怀疑加载了别的
+`RenderSpinner`；用"往 `paintContent()` 里扔 `RuntimeException`"这一刀切开，
+证明文件确实生效、于是问题只能在"断言没抛"上。）
+
+处置（结构性，不靠记性）：基类覆写 `assertPostConditions()` —— PHPUnit 在方法体
+正常返回后**必然**调用它，抛出的失败会计为该测试的 **failure**（不是 error），
+正好是要的语义。同时加 `$flushed` 幂等标志，让已有的 244 处显式调用照旧生效
+（否则第二次 `total = 0` 会误报"一条断言都没跑"）。
+
+★ 结论两条：
+1. **新文件不必写显式 `flushChecks()`**（钩子必然执行）；老文件保持原样，两者都合法。
+2. 这类"绿壳"错**不会自然变红**，只有变异自检能揭穿 ⇒ 变异从"可选加强"升级为
+   **每批必做**，且判定口径是"红了几条 / 红的是不是目标那条"，不是"红没红"。
+
+★ 同批两个夹具层的坑：
+
+- **`spinCanvas()` 原来长在 Spinner 断言段里**（`tools/smoke.php` 5145）。PHP 的函数
+  声明在编译期 hoist，所以前面几百行（AppBar / Showcase / SegmentedControl / Slider）
+  都能用 —— 这是"段边界一挪就断"的隐性依赖，删段时它跟着被删，smoke 在 5184 行当场
+  `Call to undefined function`。已挪到工具函数区（`inkCount()` 旁边），并在 docblock 写明
+  为什么不能长在断言段里。
+- **`LeafBoxWidget.php` 一个文件装了三个类**（`LeafBoxWidget` / `LeafBoxState` /
+  `LeafBoxFallbackWidget`），smoke 能跑是因为先调了 `LeafBoxWidget::resetBuildCalls()`
+  触发加载。这是第 16 批 `FakeClipboard` 那个 PSR-4 陷阱的**第二次** ⇒ 拆成三个文件，
+  不依赖调用顺序。
+
+★ 本批的切分判据（供后续批次照抄）：三个家族彼此不共享夹具、不共享判据 —— 
+光标走 `CursorApplication` + `FocusManager`，Spinner 走真光栅取墨，语义推送走
+4 个 App 夹具 + 帧循环。它们唯一的共同点是"段号相邻"，所以不能按段打包，
+只能按被测对象打包。
