@@ -62,13 +62,11 @@ use App\Users\Jobs\JobRegistry;
 use App\Users\Store\MemoryUserSource;
 use App\Users\Store\LoadStatus;
 use Drift\Dev\Smoke\App\FailSliceJob;
-use Drift\Dev\Smoke\App\GestureApplication;
 use Drift\Dev\Smoke\App\PressLabApplication;
 use Drift\Dev\Smoke\App\TableScrollApplication;
 use Drift\Dev\Smoke\App\SemValueApplication;
 use Drift\Dev\Smoke\App\TfApplication;
 use Drift\Dev\Smoke\App\TitleBarLabApplication;
-use Drift\Dev\Smoke\App\PointerApplication;
 use Drift\Dev\Smoke\App\ScrollApplication;
 use Drift\Dev\Smoke\App\NavApplication;
 use Drift\Dev\Smoke\App\NamedSleepJob;
@@ -102,7 +100,6 @@ use Drift\Input\CursorShape;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
-use Drift\Input\PointerPhase;
 use Drift\Input\ScrollEvent;
 use Drift\Input\SemanticsInvokeEvent;
 use Drift\Input\SemanticsSetValueEvent;
@@ -5884,153 +5881,16 @@ if (is_resource($mockProc)) {
 //   → `tests/Feature/App/UiThreadTest.php`（4 条）
 //     UI 线程身份（§17.4.2.1）：未挂载 = 0 / 挂载后 = 当前线程 / 非 UI 线程 ⇒ Fatal。
 
-// ── 指针四相位（2026-10-17 move/up/leave 通路落地）─────────────────
-//   ★ 三个消费者：① 悬停派发（§9.1 语义 #5 —— **目标变化才通知**）② 拖放
-//   阈值状态机（§A.3.5 —— **按下 ≠ 拖动**，过 6 逻辑像素阈值才 begin）
-//   ③ 光标刷新（move 与 down 同一条命中链）。
-//   ★ 反例自检：把 dispatchPointer 的 move 分支去掉 hoverTo/advanceDrag
-//   ⇒ 悬停两条 + 拖放两条 FAIL（诊断值精确显示"没派发/没开始"）。
-
-// ① 相位枚举与桥映射（ABI 编号只该有一处读法 —— 与 CursorShape 同纪律）
-check(
-    'Pointer · PointerPhase 值与桥一致（down=0/move=1/up=2/leave=3）',
-    PointerPhase::Down->value === 0 && PointerPhase::Move->value === 1
-        && PointerPhase::Up->value === 2 && PointerPhase::Leave->value === 3,
-);
-check(
-    'Pointer · fromBridge 四相位映射（未知 phase 兜 Down）',
-    PointerEvent::fromBridge(1.0, 2.0, 2, 0)->isDown()
-        && PointerEvent::fromBridge(1.0, 2.0, 0, 1)->isMove()
-        && PointerEvent::fromBridge(1.0, 2.0, 0, 2)->isUp()
-        && PointerEvent::fromBridge(1.0, 2.0, 0, 3)->isLeave()
-        && PointerEvent::fromBridge(1.0, 2.0, 0, 9)->isDown(),
-);
-
-// ② 悬停：move 命中 ⇒ enter；同目标再 move ⇒ 不重复派发；移开 ⇒ leave
-$ptrApp = new PointerApplication();
-$ptrApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
-
-$shapeOnHover = $ptrApp->dispatchInput(PointerEvent::move(20.0, 20.0));
-check(
-    'Pointer · move 命中悬停目标 ⇒ enter 派发一次',
-    $ptrApp->hoverEnters === 1 && $ptrApp->hoverLeaves === 0,
-    'enter=' . $ptrApp->hoverEnters . ' leave=' . $ptrApp->hoverLeaves,
-);
-check(
-    'Pointer · move 刷新光标（命中声明 PointingHand 的盒）',
-    $shapeOnHover === CursorShape::PointingHand,
-    (string) ($shapeOnHover?->name ?? 'null'),
-);
-$ptrApp->dispatchInput(PointerEvent::move(21.0, 22.0));   // 同目标内移动
-check(
-    'Pointer · 同目标再 move ⇒ 不重复派发（§9.1 语义 #5）',
-    $ptrApp->hoverEnters === 1,
-    'enter=' . $ptrApp->hoverEnters,
-);
-$ptrApp->dispatchInput(PointerEvent::move(20.0, 60.0));   // 移到无悬停声明的源盒
-check(
-    'Pointer · 移出悬停目标 ⇒ leave 派发一次',
-    $ptrApp->hoverLeaves === 1 && $ptrApp->hoverEnters === 1,
-    'enter=' . $ptrApp->hoverEnters . ' leave=' . $ptrApp->hoverLeaves,
-);
-$ptrApp->dispatchInput(PointerEvent::leave(20.0, 60.0));
-check(
-    'Pointer · leave（已在目标外）⇒ 不重复 leave',
-    $ptrApp->hoverLeaves === 1,
-    'leave=' . $ptrApp->hoverLeaves,
-);
-
-// ③ 拖放阈值：小位移不开始、大位移开始并落到目标上、up 交出 payload
-$dragApp = new PointerApplication();
-$dragApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
-
-$dragApp->dispatchInput(PointerEvent::down(20.0, 60.0));   // 落在拖放源上
-$dragApp->dispatchInput(PointerEvent::move(22.0, 62.0));   // 位移 ~2.8 < 6 阈值
-check(
-    'Pointer · 拖放：小位移（< 阈值）⇒ 不开始拖动（按下 ≠ 拖动）',
-    $dragApp->drag()->isDragging() === false,
-);
-$dragApp->dispatchInput(PointerEvent::move(20.0, 100.0));  // 位移 40 > 阈值 ⇒ 开始 + 落到目标
-check(
-    'Pointer · 拖放：大位移 ⇒ 开始拖动且目标 enter 派发',
-    $dragApp->drag()->isDragging() === true && $dragApp->targetEnters === 1,
-    'dragging=' . var_export($dragApp->drag()->isDragging(), true) . ' targetEnter=' . $dragApp->targetEnters,
-);
-$dragApp->dispatchInput(PointerEvent::up(20.0, 100.0));
-check(
-    'Pointer · 拖放：up ⇒ 放下，payload 原样交出',
-    $dragApp->dropped === true && $dragApp->droppedPayload === 'payload-1',
-    'dropped=' . var_export($dragApp->dropped, true) . ' payload=' . var_export($dragApp->droppedPayload, true),
-);
-check(
-    'Pointer · 拖放：放下后状态清空（可再次起拖）',
-    $dragApp->drag()->isDragging() === false,
-);
-
-// ④ 拖出窗口（leave）⇒ 取消，不卡死（无 SetCapture 的诚实边界）
-$leaveApp = new PointerApplication();
-$leaveApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
-$leaveApp->dispatchInput(PointerEvent::down(20.0, 60.0));
-$leaveApp->dispatchInput(PointerEvent::move(20.0, 100.0));
-check(
-    'Pointer · 拖放：拖动中（leave 前置条件）',
-    $leaveApp->drag()->isDragging() === true,
-);
-$leaveApp->dispatchInput(PointerEvent::leave(20.0, 100.0));
-check(
-    'Pointer · 拖放：指针离开客户区 ⇒ 取消（不卡死、不放下）',
-    $leaveApp->drag()->isDragging() === false && $leaveApp->dropped === false && $leaveApp->targetLeaves === 1,
-    'dragging=' . var_export($leaveApp->drag()->isDragging(), true)
-        . ' dropped=' . var_export($leaveApp->dropped, true)
-        . ' targetLeave=' . $leaveApp->targetLeaves,
-);
-
-// ⑤ 手势消歧（GestureArena，§9.1）：可拖 + 可点击控件的 tap/drag 裁决
-$gestApp = new GestureApplication();
-$gestApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
-$dragBtnEl = findElement($gestApp->root(), fn (Element $e): bool => $e->widget() instanceof Button && $e->widget()->draggableValue() !== null);
-$plainBtnEl = findElement($gestApp->root(), fn (Element $e): bool => $e->widget() instanceof Button && $e->widget()->draggableValue() === null);
-$dBox = $dragBtnEl?->effectiveBox();
-[$dox, $doy] = $dBox === null ? [0.0, 0.0] : boxOrigin($dBox);
-$dcx = $dox + ($dBox?->size()?->width ?? 0.0) / 2;
-$dcy = $doy + ($dBox?->size()?->height ?? 0.0) / 2;
-
-// a. 过阈值拖动 ⇒ Drag claim ⇒ Tap 让位 ⇒ **不误激活**命令（修真的缺陷）
-$gestApp->dispatchInput(PointerEvent::down($dcx, $dcy));
-$gestApp->dispatchInput(PointerEvent::move($dcx + 40.0, $dcy));   // 位移 40 > 6 阈值
-check(
-    'Gesture · 可拖控件：过阈值拖动 ⇒ 开始拖动且不误激活命令（拖动中 tap 让位）',
-    $gestApp->drag()->isDragging() === true && $gestApp->dragPresses === 0,
-    'dragging=' . var_export($gestApp->drag()->isDragging(), true) . ' dragPresses=' . $gestApp->dragPresses,
-);
-$gestApp->dispatchInput(PointerEvent::up($dcx + 40.0, $dcy));   // 放下（无 DragTarget ⇒ 退出拖动态）
-check(
-    'Gesture · 可拖控件：拖动后 up ⇒ 仍不激活（命令只在 tap 胜时）',
-    $gestApp->dragPresses === 0,
-    'dragPresses=' . $gestApp->dragPresses,
-);
-
-// b. 未过阈值的 up ⇒ Tap 胜 ⇒ 激活（tap 在可拖控件上仍可用）
-$gestApp->dispatchInput(PointerEvent::down($dcx, $dcy));
-$gestApp->dispatchInput(PointerEvent::move($dcx + 2.0, $dcy + 2.0));   // 位移 ~2.8 < 6
-$gestApp->dispatchInput(PointerEvent::up($dcx + 2.0, $dcy + 2.0));
-check(
-    'Gesture · 可拖控件：未过阈值的 up ⇒ tap 胜 ⇒ 激活',
-    $gestApp->dragPresses === 1,
-    'dragPresses=' . $gestApp->dragPresses,
-);
-
-// c. 非可拖控件 ⇒ down 即激活（防回归，A15 不动）
-$pBox = $plainBtnEl?->effectiveBox();
-[$pox, $poy] = $pBox === null ? [0.0, 0.0] : boxOrigin($pBox);
-$pcx = $pox + ($pBox?->size()?->width ?? 0.0) / 2;
-$pcy = $poy + ($pBox?->size()?->height ?? 0.0) / 2;
-$gestApp->dispatchInput(PointerEvent::down($pcx, $pcy));
-check(
-    'Gesture · 非可拖控件：down 即激活（防回归）',
-    $gestApp->plainPresses === 1,
-    'plainPresses=' . $gestApp->plainPresses,
-);
+// ── 指针相位 / 悬停 / 拖放 / 手势消歧 已迁出 ────────────────────────────────
+//   → `tests/Unit/Input/PointerPhaseTest.php`（3）—— 相位枚举 = 桥的 ABI /
+//     fromBridge 四相位 + 未知值兜 Down（登记：与 G2 有张力的宽松兜底）。
+//   → `tests/Feature/Input/HoverTest.php`（5）—— 目标变化才通知 / 光标出口。
+//   → `tests/Feature/Input/PointerDragTest.php`（6）—— 阈值两侧 / 放下交 payload /
+//     状态清空 / 拖出客户区取消（不卡死）。
+//   → `tests/Feature/Input/GestureArenaTest.php`（4）—— 过阈值 drag 胜 /
+//     松手仍不激活 / 未过阈值 tap 胜 / 非可拖控件 down 即激活。
+//   ★ 下面留着的是**声明的让位规则**（ownsPress / keyboard 两条缝 + 顶条
+//     当标题栏）：主题是"谁该接管、谁该让位"，与上面"事件序列本身"不是一回事。
 
 // ⑥ 「按下归我」+「键盘归我」两条缝（W8-2，Slider 立的范式）
 //
@@ -6312,23 +6172,9 @@ check(
     ),
 );
 
-// ⑦ UIA 语义推送（§9 / M5）：帧末把语义树经 sink 交给平台（头侧；真机 provider 归 AOT）
-$semApp = new GestureApplication();
-$semNodes = [];
-$semApp->setSemanticsSink(function (array $nodes) use (&$semNodes): void {
-    $semNodes = $nodes;
-});
-$semApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
-check(
-    'Semantics · attach 首帧 ⇒ sink 收到语义树（含 Button 角色）',
-    count($semNodes) >= 1 && ($semNodes[0]['role'] ?? '') === 'button',
-    'nodes=' . count($semNodes),
-);
-check(
-    'Semantics · 两个 Button 各贡献一个节点，name = label',
-    count($semNodes) === 2 && ($semNodes[0]['name'] ?? '') !== '' && ($semNodes[1]['name'] ?? '') !== '',
-    'count=' . count($semNodes),
-);
+// ⑦ UIA 语义推送已迁出
+//   → `tests/Feature/Semantics/SemanticsPushTest.php::testSinkPayloadShape`
+//     （载荷形状：两个 Button 各一节点 / role = button / name = 标签）
 
 // ── 平台后端解析（§7.2 裁决 4：2026-10-17 默认从 soft 翻成 skia）──
 // ★ 这两条都钉**静默失败**：默认没翻（界面继续锯齿）与显式 'soft' 被默认值吞掉

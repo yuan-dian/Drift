@@ -5,6 +5,7 @@ namespace Drift\Dev\Tests\Feature\Semantics;
 
 use Drift\Dev\Smoke\App\EchoApplication;
 use Drift\Dev\Smoke\App\FocusTwoApplication;
+use Drift\Dev\Smoke\App\GestureApplication;
 use Drift\Dev\Smoke\App\LazyApplication;
 use Drift\Dev\Smoke\App\SpinnerApplication;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
@@ -156,6 +157,40 @@ final class SemanticsPushTest extends SmokeTestCase
             'pushes=' . $pushes . ' mode=' . $app->semanticsMode()
                 . ' focus=' . $labelBefore . '->' . $labelAfter
                 . ' ver=' . $verBefore . '->' . Element::structureVersion(),
+        );
+    }
+
+    /**
+     * **sink 收到的载荷形状**（不是"推了几次"，是"交出去的是什么"）。
+     *
+     * ★ 与 `SemanticsTest` 分工：那边判 `SemanticsBuilder` 产出的树（Element 层
+     *   的数据结构），这边判**过完序列化之后平台侧看到的数组** —— 形状错了
+     *   （比如 `role` 写成对象、`name` 空了）平台侧就是一块读屏黑洞，而头侧
+     *   一切正常。
+     * ★ 断言 `count === 2` 而不是 `>= 1`：`GestureApplication` 恰好两个按钮，
+     *   `>= 1` 在"只推出第一个节点"的实现下也绿（原来的 smoke 版本就是 `>= 1`，
+     *   与它自己下一条 `=== 2` 自相矛盾）。
+     */
+    public function testSinkPayloadShape(): void
+    {
+        $app = new GestureApplication();
+        $nodes = [];
+        $app->setSemanticsSink(function (array $pushed) use (&$nodes): void {
+            $nodes = $pushed;
+        });
+        $app->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
+
+        $roles = \array_map(static fn(array $n): string => (string) ($n['role'] ?? ''), $nodes);
+        $names = \array_map(static fn(array $n): string => (string) ($n['name'] ?? ''), $nodes);
+        check(
+            '语义推送 · attach 首帧 ⇒ sink 收到完整语义树（两个 Button 各一个节点）',
+            \count($nodes) === 2,
+            'nodes=' . \count($nodes) . ' roles=' . \implode(',', $roles),
+        );
+        check(
+            '语义推送 · 载荷里 role = button、name = 标签（平台侧直接可读）',
+            $roles === ['button', 'button'] && $names === ['拖我', '点我'],
+            'roles=' . \implode(',', $roles) . ' names=' . \implode(',', $names),
         );
     }
 }
