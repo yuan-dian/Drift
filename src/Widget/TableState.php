@@ -5,12 +5,14 @@ namespace Drift\Widget;
 
 use Drift\Errors;
 use Drift\Geometry\Axis;
+use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Scale;
 use Drift\Input\CursorShape;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
+use Drift\Layout\ExtentWindow;
 use Drift\Layout\FlexAlign;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderTable;
@@ -141,6 +143,24 @@ final class TableState extends State implements Scrollable, EditableText
     private float $windowStart = 0.0;
 
     private float $windowEnd = 0.0;
+
+    /**
+     * 上一帧造了几列（与 `$createdRows` 同一职责：虚拟化唯一的可观测量）。
+     *
+     * ★ 不与 `$createdRows` 合成"造了几个格"：行和列的窗口是**两个独立判据**
+     *   （定高 vs 变宽），合成一个数就分不清是哪一侧失效。
+     */
+    private int $createdColumns = 0;
+
+    /**
+     * 上一帧的列窗口在**内容坐标 x** 里的范围 `[start, end)`。
+     *
+     * ★ 与 `$windowStart/$windowEnd`（行）成对，但**不共用**：横滚会改列窗口而
+     *   不影响行窗口，两轴的"盖不盖得住"必须各判一次（见 `windowCovers()`）。
+     */
+    private float $colWindowStart = 0.0;
+
+    private float $colWindowEnd = 0.0;
 
     /**
      * 上一次 `build()` 用的视口宽 —— 与盒实测宽比对，不一致就再来一帧。
@@ -288,6 +308,12 @@ final class TableState extends State implements Scrollable, EditableText
         return $this->createdRows;
     }
 
+    /** 上一帧实际造出的列数（**每个**造出的行里都这么多格；与 `createdRows()` 同职责） */
+    public function createdColumns(): int
+    {
+        return $this->createdColumns;
+    }
+
     /**
      * 滚动 Δ（**逻辑像素**；正 = 行区内容上移，即"往下看"）。
      *
@@ -316,7 +342,7 @@ final class TableState extends State implements Scrollable, EditableText
         $this->offsetY = $this->pushOffset(Axis::Vertical, $next);
 
         // 窗口盖不住视口 ⇒ 必须重建（否则上/下会露出没建的空行）
-        if (!$this->windowCovers()) {
+        if (!$this->windowCovers(Axis::Vertical)) {
             $this->markDirty();
         }
     }
@@ -339,13 +365,16 @@ final class TableState extends State implements Scrollable, EditableText
     }
 
     /**
-     * 上一帧造的行窗口是否**完整盖住**当前行区视口 `[offsetY, offsetY+bodyH)`。
+     * 上一帧造的窗口是否**完整盖住**当前视口（按轴各判一次）。
      *
-     * ★ 视口高取**盒的** `bodyHeight()`（= 盒高 − 表头高）而不是 build 里的估算：
-     *   滚动期没有 `BuildContext`，而盒是唯一可靠口径 ⇒ 判据与布局同源。
-     * ★ 还没排过（盒无 size）⇒ 判"盖不住"（宁可多重建一次，也不要露空行）。
+     * ★ 视口取**盒的**实测值而不是 build 里的估算：滚动期没有 `BuildContext`，
+     *   而盒是唯一可靠口径 ⇒ 判据与布局同源。
+     * ★ 还没排过（盒无 size）⇒ 判"盖不住"（宁可多重建一次，也不要露空行/空列）。
+     * ★★ 两轴**不共用**一个判据：行窗口与列窗口的范围是两对字段，横滚只动列窗口。
+     *   竖向的视口是行区（减表头），横向的视口是全宽（表头与行区共享 x）——
+     *   这两个定义不同，不是同一个式子的两个实例。
      */
-    private function windowCovers(): bool
+    private function windowCovers(Axis $axis): bool
     {
         /** @var RenderTable|null $box */
         $box = $this->element()?->effectiveBoxOf(RenderTable::class);
@@ -353,12 +382,21 @@ final class TableState extends State implements Scrollable, EditableText
             return false;
         }
 
-        $bodyH = $box->bodyHeight();
-        if ($bodyH <= 0.0) {
+        if ($axis === Axis::Vertical) {
+            $bodyH = $box->bodyHeight();
+            if ($bodyH <= 0.0) {
+                return false;
+            }
+
+            return $this->offsetY >= $this->windowStart && $this->offsetY + $bodyH <= $this->windowEnd;
+        }
+
+        $w = $box->size()?->width ?? 0.0;
+        if ($w <= 0.0) {
             return false;
         }
 
-        return $this->offsetY >= $this->windowStart && $this->offsetY + $bodyH <= $this->windowEnd;
+        return $this->offsetX >= $this->colWindowStart && $this->offsetX + $w <= $this->colWindowEnd;
     }
 
     /**
@@ -397,9 +435,14 @@ final class TableState extends State implements Scrollable, EditableText
 
         $this->bar()->noteScroll();
 
-        // ★ 横向**永不改行窗口**（行是定宽的，横滚只是平移）⇒ 只推偏移、
-        //   不标脏。这正是本项优化在横轴上最干净的一档：横滚一帧 0 重建。
+        // ★★ 横向**不改行窗口**（行是定高的，横滚只平移），但**会改列窗口**
+        //   （阶段 6）：滚过缓冲带之后必须换一批列，否则视口边缘露出一截没造的空白。
+        //   所以这里与竖向同一条纪律 —— 盖得住才只推偏移（0 重建），盖不住就标脏。
         $this->offsetX = $this->pushOffset(Axis::Horizontal, $next);
+
+        if (!$this->windowCovers(Axis::Horizontal)) {
+            $this->markDirty();
+        }
     }
 
     /**
@@ -1496,12 +1539,28 @@ final class TableState extends State implements Scrollable, EditableText
             ? $this->cellRect($this->focusedRow, $this->focusedCol, $widths, $rowH, $spacing)
             : null;
 
+        // ★★ 列窗口（阶段 6）：只造看得见的列。窗口的**内容坐标**端点要留给外面判
+        //   "横滚之后还盖不盖得住"（`scrollByAxis(Horizontal)`），否则滚过缓冲带
+        //   之后视口边缘就是一截没造的空白。
+        //   ★ 与行窗口共用同一个 `cacheExtent`：语义相同（"滚这么多以内不重建"），
+        //     多开一个旋钮只让调用方多一个要猜的数。
+        $cache = $view->cacheExtentPx();
+        [$colFirst, $colEnd, $colLeading] = ExtentWindow::visible(
+            $widths,
+            $spacing,
+            $offsetX,
+            $viewportW,
+            $cache,
+        );
+        $this->createdColumns = $colEnd - $colFirst;
+        $this->colWindowStart = $colLeading;
+        $this->colWindowEnd = $colLeading + ExtentWindow::extentOf($widths, $colFirst, $colEnd, $spacing);
+
         // ★★ 窗口 = 可视行 ± **缓冲带**（`cacheExtent`，2026-10-27 起）。
         //   没有缓冲带时 `first = floor(offsetY/rowH)`：偏移一动 `first` 就动
         //   ⇒ 窗口每滚一行就变 ⇒ 又退回"每帧重建"（本项优化当场归零）。
         //   缓冲带让"滚一小段不重建"成立，代价是窗口变大、每次 layout 更贵
         //   （行区 layout 是全树 O(n)）⇒ 取值是权衡，见 `Table::$cacheExtentPx`。
-        $cache = $view->cacheExtentPx();
         $first = (int) \floor(max(0.0, $offsetY - $cache) / $rowH);
         $last = (int) \ceil(($offsetY + $bodyH + $cache) / $rowH);
         $first = max(0, min($first, $count));
@@ -1511,7 +1570,7 @@ final class TableState extends State implements Scrollable, EditableText
         $this->windowStart = $first * $rowH;
         $this->windowEnd = $last * $rowH;
 
-        $headerKid = $this->headerRow($ctx, $columns, $widths, $contentW, $headerH, $spacing);
+        $headerKid = $this->headerRow($ctx, $columns, $widths, $contentW, $headerH, $spacing, $colFirst, $colEnd, $colLeading);
         $striped = $view->isStriped();
         $keyOf = $view->keyMapper();
         $selectable = $view->selectionSet() !== null;
@@ -1538,17 +1597,29 @@ final class TableState extends State implements Scrollable, EditableText
             }
 
             $cells = [];
-            foreach ($columns as $j => $column) {
+            for ($j = $colFirst; $j < $colEnd; $j++) {
                 $cells[] = $this->cellShell(
-                    $this->cellContent($row, $i, $column, $rowKey),
+                    $this->cellContent($row, $i, $columns[$j], $rowKey),
                     $widths[$j],
-                    $column,
+                    $columns[$j],
                 );
             }
 
             // ★ key = **绝对序号**（不是窗内序号）：窗口滑动一格时第 k 行仍是第 k 行
             //   ⇒ diff 只增删两端各一个 Element，中间全部复用（同 LazyListState）。
-            $line = SizedBox::make(Row::make()->children($cells)->spacing($spacing)->cross(FlexAlign::Center))
+            $rowWidget = Row::make()->children($cells)->spacing($spacing)->cross(FlexAlign::Center);
+
+            // ★★ 被裁掉的**前缀列**用左内边距撑住（阶段 6）：只造窗口列之后，行内
+            //   内容会整体左移 —— 必须补回 `colLeading`，否则视口里的列位与"全造"
+            //   时不同（横向越滚越偏，且表头/行区各补一次必然漂）。
+            //   ★ 用内边距而不是插一个 `SizedBox` 占位：`Row` 的 `spacing` 会给
+            //     "占位 ↔ 第一个格"之间**再**加一个 gap ⇒ 每个窗口都多偏 `spacing`。
+            //   ★ 恰好 0 时不加（绝大多数表全部列可见）⇒ 结构与本阶段之前逐位相同。
+            if ($colLeading > 0.0) {
+                $rowWidget = $rowWidget->padding(EdgeInsets::only(left: $colLeading));
+            }
+
+            $line = SizedBox::make($rowWidget)
                 ->width($contentW)
                 ->height($rowH)
                 ->key($i);
@@ -1635,15 +1706,27 @@ final class TableState extends State implements Scrollable, EditableText
         float $contentW,
         float $headerH,
         float $spacing,
+        int $colFirst,
+        int $colEnd,
+        float $colLeading,
     ): Widget {
         $sort = $this->view()->sortState();
 
         $cells = [];
-        foreach ($columns as $j => $column) {
-            $cells[] = $this->headerCell($ctx, $column, $widths[$j], $sort, $j);
+        for ($j = $colFirst; $j < $colEnd; $j++) {
+            $cells[] = $this->headerCell($ctx, $columns[$j], $widths[$j], $sort, $j);
         }
 
-        return SizedBox::make(Row::make()->children($cells)->spacing($spacing)->cross(FlexAlign::Center))
+        $row = Row::make()->children($cells)->spacing($spacing)->cross(FlexAlign::Center);
+
+        // ★ 与数据行**同一个** `$colLeading`、同一处写法（阶段 1 闸门的第 3 条：
+        //   表头与行区各算一次必然漂）。这里是唯一允许出现第二遍的地方，
+        //   所以刻意把 `$cells` 的构造也写成同形 —— 两边结构一样才不会各自漂。
+        if ($colLeading > 0.0) {
+            $row = $row->padding(EdgeInsets::only(left: $colLeading));
+        }
+
+        return SizedBox::make($row)
             ->width($contentW)
             ->height($headerH);
     }

@@ -171,6 +171,7 @@ use Drift\Input\SemanticsInvokeEvent;
 use Drift\Input\SemanticsSetValueEvent;
 use Drift\Input\SemanticsRole;
 use Drift\Input\TapTracker;
+use Drift\Layout\ExtentWindow;
 use Drift\Layout\FlexAlign;
 use Drift\Layout\Overflow;
 use Drift\Layout\RenderAppBar;
@@ -17333,6 +17334,137 @@ check(
     'Table · 宽差收敛后不再要帧（不会每帧空转）',
     $tableDriftAgain === false,
     $tableDriftAgain === false ? '已收敛' : '仍在要帧',
+);
+
+// ── P2 阶段 6：列虚拟化（只造可见列）──────────────────────────────────
+//   三条判据（`docs/DESIGN-TABLE-2026-10-26.md` §6 阶段 6）：
+//   ① 宽表只造可见列（8 列 → 3 列）；② 横滚在缓冲带内 ⇒ 0 重建、跨出去 ⇒ 恰好 1 次；
+//   ③ 裁列后列位不漂（补回的前缀偏移必须精确，否则横向越滚越偏）。
+//   ★ 反例自检（实测）：① 不裁列 ⇒ ①红（3 → 8）；② 横滚无条件标脏 ⇒ ②红（0 → 1）；
+//     ③ 不补前缀偏移 ⇒ ③红（首列 x = −300 而不是 0）。
+
+// ★ 纯计算先单测：`ExtentWindow` 不依赖 Table，坏了就不必往下查。
+$ewCase = static function (array $ext, float $gap, float $off, float $view, float $cache) {
+    return ExtentWindow::visible($ext, $gap, $off, $view, $cache);
+};
+check(
+    'ExtentWindow · 四段各 150 / 视口 320 ⇒ [0,3) 前置 0',
+    $ewCase([150.0, 150.0, 150.0, 150.0], 0.0, 0.0, 320.0, 0.0) === [0, 3, 0.0],
+    \json_encode($ewCase([150.0, 150.0, 150.0, 150.0], 0.0, 0.0, 320.0, 0.0)),
+);
+check(
+    'ExtentWindow · 偏移 300 ⇒ 从第 2 段起、前置 300（累加而不是除法）',
+    $ewCase([150.0, 150.0, 150.0, 150.0], 0.0, 300.0, 320.0, 0.0) === [2, 4, 300.0],
+    \json_encode($ewCase([150.0, 150.0, 150.0, 150.0], 0.0, 300.0, 320.0, 0.0)),
+);
+check(
+    'ExtentWindow · 段间 gap 计入位置（150+10+150 ⇒ 视口 320 只覆盖 2 段）',
+    $ewCase([150.0, 150.0, 150.0, 150.0], 10.0, 0.0, 320.0, 0.0) === [0, 2, 0.0],
+    \json_encode($ewCase([150.0, 150.0, 150.0, 150.0], 10.0, 0.0, 320.0, 0.0)),
+);
+check(
+    'ExtentWindow · 缓冲带把窗口两端都放宽（off=300/150×4/cache=50 ⇒ [1,3)）',
+    $ewCase([150.0, 150.0, 150.0, 150.0], 0.0, 300.0, 100.0, 50.0) === [1, 3, 150.0],
+    \json_encode($ewCase([150.0, 150.0, 150.0, 150.0], 0.0, 300.0, 100.0, 50.0)),
+);
+check(
+    'ExtentWindow · 空列表 ⇒ [0,0) 不炸',
+    $ewCase([], 0.0, 0.0, 320.0, 0.0) === [0, 0, 0.0],
+    \json_encode($ewCase([], 0.0, 0.0, 320.0, 0.0)),
+);
+
+/** 某个文本所在盒的绝对 x（`null` = 没造出来） */
+$tableTextXOf = static function (Element $root, string $content): ?float {
+    $hit = findElement(
+        $root,
+        static fn(Element $e): bool => $e->widget() instanceof Text && $e->widget()->content() === $content,
+    );
+    $box = $hit?->effectiveBox();
+
+    return $box === null ? null : RenderBox::absoluteOrigin($box)[0];
+};
+
+$wideRowsData = [];
+for ($i = 0; $i < 20; $i++) {
+    $wideRow = ['id' => $i];
+    for ($c = 0; $c < 8; $c++) {
+        $wideRow['c' . $c] = 'v' . $i . '-' . $c;
+    }
+    $wideRowsData[] = $wideRow;
+}
+$wideColsData = [];
+for ($c = 0; $c < 8; $c++) {
+    $wideColsData[] = TableColumn::make('c' . $c, 'C' . $c)
+        ->field('c' . $c)
+        ->width(TableColumnWidth::fixed(150.0));
+}
+// ★ `cacheExtent(0)`：窗口边界才可精确断言（有缓冲带时"第几列起"取决于默认值 200）。
+$wideTableEl = $tableMount(
+    Table::make($wideColsData, $wideRowsData)
+        ->keyOf(static fn(array $row): int => $row['id'])
+        ->rowHeight(40.0)
+        ->headerHeight(32.0)
+        ->cacheExtent(0.0),
+);
+$wideTableState = $tableStateOf($wideTableEl);
+
+check(
+    '阶段 6 · 宽表 8 列 × 150 / 视口 320 ⇒ 只造 3 列（虚拟化生效）',
+    $wideTableState?->createdColumns() === 3,
+    'created=' . (string) ($wideTableState?->createdColumns() ?? -1),
+);
+check(
+    '阶段 6 · 首列可见（第 0 列真的造出来了）',
+    $tableTextXOf($wideTableEl, 'v0-0') !== null,
+    (string) ($tableTextXOf($wideTableEl, 'v0-0') ?? 'null'),
+);
+
+// ★ 横滚 100px：窗口 [100,420) 仍在 [0,450) 内 ⇒ 不该重建（否则"滚一点就重排全表"）
+$wideX0 = $tableTextXOf($wideTableEl, 'v0-0');
+$wideRebuildsBefore = State::rebuiltCount();
+$wideTableState?->scrollByAxis(Axis::Horizontal, 100.0);
+$tableFrame($wideTableEl);
+$wideRebuildsInBand = State::rebuiltCount() - $wideRebuildsBefore;
+check(
+    '阶段 6 · 横滚 100px 未跨列 ⇒ 重建 0 次（窗口盖得住就不换列）',
+    $wideRebuildsInBand === 0,
+    'rebuilt=' . $wideRebuildsInBand,
+);
+
+// ★ 再滚 200（累计 300）：跨出 [0,450) ⇒ 必须换一批列
+$wideRebuildsBefore = State::rebuiltCount();
+$wideTableState?->scrollByAxis(Axis::Horizontal, 200.0);
+$tableFrame($wideTableEl);
+$wideRebuildsCross = State::rebuiltCount() - $wideRebuildsBefore;
+check(
+    '阶段 6 · 横滚跨出缓冲带 ⇒ 恰好重建 1 次（换列不是缺陷）',
+    $wideRebuildsCross === 1,
+    'rebuilt=' . $wideRebuildsCross,
+);
+check(
+    '阶段 6 · 换列后仍是 3 列（新窗口同样只造可见的）',
+    $wideTableState?->createdColumns() === 3,
+    'created=' . (string) ($wideTableState?->createdColumns() ?? -1),
+);
+
+// ★★ 最关键的一条：offsetX=300 时第 2 列的屏幕 x 必须与 offsetX=0 时第 0 列的 x 相同。
+//   两者内容坐标差 300、偏移差 300 ⇒ 屏幕坐标必须相等。少补前缀偏移时第 2 列会落在
+//   −300（直接被裁掉），这条立刻红。
+$wideX2 = $tableTextXOf($wideTableEl, 'v0-2');
+check(
+    '阶段 6 · 裁列后列位不漂（第 2 列 x == 第 0 列原 x，前缀偏移精确）',
+    $wideX0 !== null && $wideX2 !== null && abs($wideX2 - $wideX0) < 0.5,
+    'x0=' . (string) $wideX0 . ' x2=' . (string) $wideX2,
+);
+
+// ★ 表头与行区**各写了一遍**前缀偏移（`headerRow()` / 行构造）。阶段 1 闸门第 3 条
+//   的原话是"两处各算一次必然漂"—— 这里正好是那个易漂点：只给行补、忘了表头，
+//   两边就差一个 `$colLeading`。表头第 2 列的标题必须与数据格同一 x。
+$wideHeadX2 = $tableTextXOf($wideTableEl, 'C2');
+check(
+    '阶段 6 · 表头与数据行对齐（表头 C2 的 x == 数据格 v0-2 的 x）',
+    $wideHeadX2 !== null && $wideX2 !== null && abs($wideHeadX2 - $wideX2) < 0.5,
+    'head=' . (string) $wideHeadX2 . ' cell=' . (string) $wideX2,
 );
 
 // ── ㊿ P2 阶段 2：选择（受控）+ 行态（悬停 / 选中）──────────────────

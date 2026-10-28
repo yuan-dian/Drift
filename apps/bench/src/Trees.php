@@ -12,6 +12,7 @@ use Drift\Widget\ScrollView;
 use Drift\Widget\Snackbar;
 use Drift\Widget\Table;
 use Drift\Widget\TableColumn;
+use Drift\Widget\TableColumnWidth;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
 
@@ -67,9 +68,16 @@ final class Trees
      *   与滚动毫无关系（真实滚动不会重造数据源）⇒ 会把 `settle` 虚高，
      *   进而把"重建有多贵"这个结论建立在假数字上。
      */
-    public static function table(int $rows, int $cols): Widget
+    /**
+     * @param float $colWidth 每列固定宽（`0` = 不设宽，即 flex 压缩填满视口）
+     *
+     * ★ 列虚拟化只有在**列宽固定且总宽超出视口**时才有事可做：flex 列会被压到
+     *   视口内 ⇒ 永远填满 ⇒ 每列都可见 ⇒ 裁与不裁结果相同（那是 `flex` 的语义，
+     *   不是 bug）。所以要量这项收益必须给固定宽。
+     */
+    public static function table(int $rows, int $cols, float $colWidth = 0.0): Widget
     {
-        [$columns, $data] = self::tableData($rows, $cols);
+        [$columns, $data] = self::tableData($rows, $cols, $colWidth);
 
         return Table::make($columns, $data)
             ->keyOf(static fn(array $row): int => (int) $row['id']);
@@ -81,9 +89,9 @@ final class Trees
     /**
      * @return array{0: list<TableColumn>, 1: list<array<string, mixed>>}
      */
-    private static function tableData(int $rows, int $cols): array
+    private static function tableData(int $rows, int $cols, float $colWidth = 0.0): array
     {
-        $id = (string) $rows . 'x' . (string) $cols;
+        $id = (string) $rows . 'x' . (string) $cols . ($colWidth > 0.0 ? '@' . (string) $colWidth : '');
         $hit = self::$tableCache[$id] ?? null;
         if ($hit !== null) {
             return $hit;
@@ -91,8 +99,12 @@ final class Trees
 
         $columns = [];
         for ($c = 0; $c < $cols; $c++) {
-            $columns[] = TableColumn::make('c' . (string) $c, 'C' . (string) $c)
+            $column = TableColumn::make('c' . (string) $c, 'C' . (string) $c)
                 ->field('c' . (string) $c);
+            if ($colWidth > 0.0) {
+                $column = $column->width(TableColumnWidth::fixed($colWidth));
+            }
+            $columns[] = $column;
         }
 
         $data = [];

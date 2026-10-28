@@ -328,6 +328,28 @@ final class Runner
         //   同一棵 1503 节点树、同样无输入，只把口径换成生产那条 ⇒ settle 段应当
         //   从 O(N) 全遍降到 O(1)。与"参数化 100×14"那档**口径不同**，不可相减。
         self::oneCase('参数化 100×14（干净帧 · 真 Frame 判据）', Trees::build(100, 14), 1280.0, 800.0, 60, null, null, true);
+
+        // ★★ **宽表 · 列虚拟化**（2026-10-27，阶段 6）：20 列固定宽 120 ⇒ 内容宽
+        //   2400 > 视口 1280 ⇒ 每行只该造视口 ± 缓冲带覆盖的那几列（≈13 列）。
+        //   与上面几档**不同树**（列宽固定 vs flex），只能与本档的变异版对比。
+        $wideScroller = null;
+        self::oneCase(
+            '虚拟化表格 1000×20（列宽 120 固定，滚动帧）',
+            Trees::table(1000, 20, 120.0),
+            1280.0,
+            800.0,
+            200,
+            null,
+            static function (Element $root) use (&$wideScroller): void {
+                if ($wideScroller === null) {
+                    $wideScroller = self::scrollableOf($root);
+                }
+                if ($wideScroller instanceof Scrollable) {
+                    $wideScroller->scrollBy(40.0);
+                }
+            },
+            true,
+        );
     }
 
     /**
