@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  `tools/gate.php` 的 smoke 项之外的第二条腿：**纯单元**测试（PHPUnit）。
+
+  ★ 为什么 bootstrap 是 `tools/autoload.php` 而不是 `vendor/autoload.php`：
+    本仓刻意不生成 vendor/autoload.php（§4.1：composer.json 是物理边界表的
+    唯一来源，见 `tools/autoload.php` 的头注）。vendor 只提供 PHPUnit 自身的类，
+    `Drift\` 仍由自建装载器解析 ⇒ 测的一定是本仓的源码。
+-->
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/10.5/phpunit.xsd"
+         bootstrap="tools/autoload.php"
+         colors="true"
+         cacheDirectory=".phpunit.cache"
+         backupGlobals="false"
+         backupStaticProperties="false"
+         processIsolation="false"
+         stopOnFailure="false">
+    <testsuites>
+        <testsuite name="unit">
+            <directory suffix="Test.php">tools/Smoke/Unit</directory>
+        </testsuite>
+    </testsuites>
+</phpunit>

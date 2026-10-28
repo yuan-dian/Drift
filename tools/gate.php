@@ -14,12 +14,13 @@ declare(strict_types=1);
  *   `php tools/drift-build.php <app>`（构建）+ 真机探针。分层纪律见 `09` §8。
  *
  * 检查项（顺序即执行顺序，廉价优先；★ 标 slow 的在 `--fast` 下跳过）：
- *   lint      php tools/lint.php               571 文件 · 0 error     ~4s
+ *   lint      php tools/lint.php               582 文件 · 0 error     ~4s
  *   selftest  php tools/lint.php --selftest    规则双向自检            ~1s
  *   docref    php tools/docref.php             十册 file:line / § 引用 ~2s
+ *   unit      php tools/phpunit-run.php        纯单元（PHPUnit，可选） ~0.1s
  *   golden    golden-raster --check --canvas   9 个原语场景像素基线    ~1.6s
  *   pages★    golden-raster --check --pages    20 个整页像素基线       ~5s
- *   smoke★    php tools/smoke.php              1686 条断言             ~48s
+ *   smoke★    php tools/smoke.php              1727 条断言             ~48s
  *
  * 用法：
  *   php tools/gate.php              # 全部（含整页 + smoke，约 62s）
@@ -45,6 +46,7 @@ $checks = [
     'lint'     => ['lint', [PHP_BINARY, $root . '/tools/lint.php'], false],
     'selftest' => ['lint 自检', [PHP_BINARY, $root . '/tools/lint.php', '--selftest'], false],
     'docref'   => ['docref', [PHP_BINARY, $root . '/tools/docref.php'], false],
+    'unit'     => ['unit（PHPUnit）', [PHP_BINARY, $root . '/tools/phpunit-run.php'], false],
     'golden'   => ['golden 原语', [PHP_BINARY, $root . '/tools/golden-raster.php', '--check', '--canvas'], false],
     'pages'    => ['golden 整页', [PHP_BINARY, $root . '/tools/golden-raster.php', '--check', '--pages'], true],
     'smoke'    => ['smoke', [PHP_BINARY, $root . '/tools/smoke.php'], true],

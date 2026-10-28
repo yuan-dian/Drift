@@ -33,6 +33,10 @@ apps/*/build/
 
 # ── 依赖 ──
 /vendor/
+# PHPUnit 的 phar（5.2 MB 二进制，与 `/cpp/` 同级：不入库，按需下载）
+#   curl -sSL -o tools/phpunit.phar https://phar.phpunit.de/phpunit-10.phar
+/tools/phpunit.phar
+/.phpunit.cache/
 
 # ── 编辑器 / 系统 ──
 .idea/
