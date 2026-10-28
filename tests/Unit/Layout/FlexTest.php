@@ -14,6 +14,10 @@ use Drift\Layout\Overflow;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderFlex;
 use Drift\Layout\RenderProxy;
+use Drift\Widget\Column;
+use Drift\Widget\Expanded;
+use Drift\Widget\Row;
+use Drift\Widget\Text;
 
 /**
  * RenderFlex 布局引擎（与 `tools/smoke.php` ⑮ / ⑮b / ⑮c + Clip 段一致）。
@@ -303,6 +307,92 @@ final class FlexTest extends SmokeTestCase
             'Layout · Clip 允许子溢出但自己夹进约束（不撞 C6）',
             $clipColumn->size()?->height === 50.0 && $clipColumn->children()[1]->offsetY() === 40.0,
             sprintf('实际 %.2f / %.2f', $clipColumn->size()?->height ?? -1.0, $clipColumn->children()[1]->offsetY())
+        );
+
+        $this->flushChecks();
+    }
+    /** 排一个控件并量它的自然尺寸（不分叉到 `spinCanvas`：这里只要盒） */
+    private static function naturalSize(\Drift\Widget\Widget $widget): ?Size
+    {
+        $el = $widget->createElement();
+        $el->mount(null, smokeContext());
+        $box = $el->effectiveBox();
+        $box?->layout(BoxConstraints::unbounded());
+
+        return $box?->size();
+    }
+
+    private static function laidOut(\Drift\Widget\Widget $widget, float $w, float $h): ?RenderBox
+    {
+        $el = $widget->createElement();
+        $el->mount(null, smokeContext());
+        $box = $el->effectiveBox();
+        $box?->layout(BoxConstraints::tight(new Size($w, $h)));
+
+        return $box;
+    }
+
+    /**
+     * 交叉轴拉伸（`FlexAlign::Stretch`）。
+     *
+     * ★ 这条分支在生产代码里**长期零用法**（示例台的三层卡片外壳是第一个），
+     *   2026-10-17 一用就炸真机：旧实现把**主轴与交叉轴写反了**（`Row` 给了紧宽），
+     *   同级 `Expanded` 被挤成 0 宽 ⇒ 内容区整片空白 + 第一帧 FATAL。
+     *   ⇒ 判据必须同时钉"交叉轴拉满"与"主轴仍自然"两面，只钉一面漏掉的就是这个缺陷。
+     */
+    public function testCrossAxisStretchFillsCrossOnly(): void
+    {
+        $natural = self::naturalSize(Text::make('拉伸'));
+
+        $row = self::laidOut(
+            Row::make()->cross(FlexAlign::Stretch)->children([Text::make('拉伸'), Text::make('自然')]),
+            300.0,
+            120.0,
+        );
+        $kids = childBoxes($row);
+        check(
+            'Flex · Row + cross(Stretch) ⇒ 子盒高拉满 120（交叉轴拉伸）',
+            ($kids[0] ?? null)?->size() !== null && abs($kids[0]->size()->height - 120.0) < 0.01,
+            sprintf('实际高 %.6g', $kids[0]?->size()?->height ?? -1.0),
+        );
+        check(
+            'Flex · Row + cross(Stretch) ⇒ 子盒宽仍自然（紧宽是旧缺陷的形态）',
+            ($kids[0] ?? null)?->size() !== null && $natural !== null
+                && abs($kids[0]->size()->width - $natural->width) < 0.01,
+            sprintf('实际宽 %.6g 自然 %.6g', $kids[0]?->size()?->width ?? -1.0, $natural?->width ?? -1.0),
+        );
+
+        $startKids = childBoxes(self::laidOut(Row::make()->children([Text::make('拉伸')]), 300.0, 120.0));
+        check(
+            'Flex · Row 默认 Start ⇒ 子盒高仍自然（不拉伸是默认语义）',
+            ($startKids[0] ?? null)?->size() !== null && $natural !== null
+                && abs($startKids[0]->size()->height - $natural->height) < 0.01,
+            sprintf('实际高 %.6g 自然 %.6g', $startKids[0]?->size()?->height ?? -1.0, $natural?->height ?? -1.0),
+        );
+
+        $colKids = childBoxes(self::laidOut(
+            Column::make()->cross(FlexAlign::Stretch)->children([Text::make('拉伸')]),
+            200.0,
+            100.0,
+        ));
+        check(
+            'Flex · Column + cross(Stretch) ⇒ 子盒宽拉满 200（交叉轴是宽）',
+            ($colKids[0] ?? null)?->size() !== null && abs($colKids[0]->size()->width - 200.0) < 0.01,
+            sprintf('实际宽 %.6g', $colKids[0]?->size()?->width ?? -1.0),
+        );
+
+        // —— 弹性子也要拉满（第二遍 `tightMain` 的对称修正）——
+        $flexRow = self::laidOut(Row::make()->cross(FlexAlign::Stretch)->children([
+            Text::make('自然'),
+            Expanded::make(Text::make('弹性')),
+        ]), 300.0, 120.0);
+        $flexKids = childBoxes($flexRow);
+        $expandedKid = $flexKids[1] ?? null;
+        $inner = $expandedKid === null ? null : childBoxes($expandedKid)[0] ?? null;
+        check(
+            'Flex · Row + Stretch ⇒ 弹性子也拉满高（否则同行高度参差）',
+            $inner?->size() !== null && abs($inner->size()->height - 120.0) < 0.01,
+            sprintf('弹性子内容高 %.6g', $inner?->size()?->height ?? -1.0),
         );
 
         $this->flushChecks();

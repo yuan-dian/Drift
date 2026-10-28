@@ -198,7 +198,8 @@ PHPUnit 默认第一条断言失败就中止方法。GUI 断言不适用：一�
 | &nbsp;&nbsp;· 主题作用域 / 页宿主 / 组合根 / 预览出图 / hello ✅ | `tests/Feature/Theme/ThemeScopeTest` + `tests/Feature/App/{PageHostTest,ApplicationTest,HelloAppTest}` + `tests/Feature/Preview/RendererTest` | 1182 → 1138（−44） |
 | &nbsp;&nbsp;· 光标形状 / Spinner / 帧时钟 / 有态产盒 / 语义推送 ✅ | `tests/Feature/Input/CursorShapeTest` + `tests/Unit/Widget/{SpinnerTest,StateProducedBoxTest}` + `tests/Feature/App/AnimationClockTest` + `tests/Feature/Semantics/SemanticsPushTest` | 1138 → 1092（−46） |
 | &nbsp;&nbsp;· W8-1 图像 / 滚动容器（虚拟化·ensureVisible·锚点·缓冲带·按轴） ✅ | `tests/Unit/Rendering/{DrawImageTest,PngDecoderTest}` + `tests/Feature/Rendering/ImageLoaderTest` + `tests/Feature/Widget/{ImageTest,LazyListTest,LazyAnchorTest,EnsureVisibleTest,ScrollAxisTest}` | 1092 → 1033（−59） |
-| &nbsp;&nbsp;· 待搬 | 浮层·模态·菜单族（~110）/ W8-2 控件族（~154）/ Table（~40）/ LazyGrid / 指针四相位 / 日志 / 毛玻璃 / tutorial·showcase·示例 | |
+| &nbsp;&nbsp;· 浮层族（菜单·面板·模态·栈·拖放·卡片） ✅ | `tests/Feature/Overlay/{MenuTest,PopupPanelTest,ModalTest,OverlayStackTest}` + `tests/Feature/Input/{PointerCaptureTest,DragDropTest}` + `tests/Unit/Widget/CardTest` + `FlexTest::testCrossAxisStretchFillsCrossOnly` | 1033 → 921（−112） |
+| &nbsp;&nbsp;· 待搬 | W8-2 控件族（~154）/ Table（~40）/ LazyGrid / 指针四相位 / 日志 / 毛玻璃 / tutorial·showcase·示例 | |
 | **S4** | 纯单元（485 条里的）改成标准 `TestCase`：`assertSame` + `#[DataProvider]` | `--testsuite=unit` 覆盖它们 |
 
 ★ S1–S3 是**纯搬迁**（断言一行不改，只改"在哪个文件哪个方法里"）。
@@ -420,6 +421,7 @@ smoke 那一份保留**（它服务的是"还没搬走的后续段"，不是历�
 | 18 主题/页宿主/组合根/预览/hello | `tests/Feature/Theme/ThemeScopeTest.php`（12）+ `tests/Feature/App/PageHostTest.php`（9）+ `ApplicationTest.php`（12）+ `HelloAppTest.php`（7）+ `tests/Feature/Preview/RendererTest.php`（4） | 44（覆盖不外溢·嵌套最内层赢 / 有状态延后·无状态立即 / 换页保实例 / 命令四环 / 组合根无盒仍排满 / SVG 出图 / 文字真居中） | 1182 → 1138（−44） |
 | 19 光标/Spinner/帧时钟/产盒/语义推送 | `tests/Feature/Input/CursorShapeTest.php`（15）+ `tests/Unit/Widget/SpinnerTest.php`（14）+ `tests/Feature/App/AnimationClockTest.php`（4）+ `tests/Unit/Widget/StateProducedBoxTest.php`（6）+ `tests/Feature/Semantics/SemanticsPushTest.php`（7） | 46（形状表 = 桥 ABI·命中链取最近·应用出口四态 / 盒与内禀·墨不拉伸·8 档渐隐·tick 只标脏·帧末换盒 / attach 首帧即推进·wantsFrame 两向 / 叶子路径有盒无子且 build 零调用·修饰落自己 / full↔coalesce 两档·滚动算结构变·焦点绕过） | 1138 → 1092（−46） |
 | 20 W8-1 图像 + 滚动容器 | `tests/Unit/Rendering/DrawImageTest.php`（8）+ `tests/Unit/Rendering/PngDecoderTest.php`（8）+ `tests/Feature/Rendering/ImageLoaderTest.php`（2）+ `tests/Feature/Widget/ImageTest.php`（8）+ `tests/Feature/Widget/LazyListTest.php`（18）+ `tests/Feature/Widget/LazyAnchorTest.php`（4）+ `tests/Feature/Widget/EnsureVisibleTest.php`（9）+ `tests/Feature/Widget/ScrollAxisTest.php`（2） | 59（最近邻 blit 六档 + 反例 / PNG 五滤波·四种色彩类型·16 位·1 位·真文件·反例五条留痕 / 候选目录与缓存 / 自然尺寸·比例·内禀=实排·Contain·Cover 裁源·缺图占位·内存句柄 / 窗口只覆盖视口·maxScroll 按完整内容·sliceOrigin 进坐标链·命中跟随·SVG 逐字节·滚轮路由·横向按 width·格宽是 extent·overscan 两档 / key 锚点四态 / revealDelta 六态 + Tab 双向 / scrollByAxis 按轴） | 1092 → 1033（−59） |
+| 21 浮层族（菜单/面板/模态/栈/拖放/卡片） | `tests/Feature/Overlay/MenuTest.php`（26）+ `PopupPanelTest.php`（13）+ `ModalTest.php`（27）+ `OverlayStackTest.php`（10）+ `tests/Feature/Input/PointerCaptureTest.php`（9）+ `DragDropTest.php`（9）+ `tests/Unit/Widget/CardTest.php`（13）+ `tests/Unit/Layout/FlexTest.php::testCrossAxisStretchFillsCrossOnly`（5） | 112（关闭四来源·锚点钉左下 / panelRect 成对·统一宽·限高三条一起·滚轮通道 / 盖满·居中·遮罩半透明四角·面板在遮罩之上·dismissible 两向·关闭 X 注入·模态叠在菜单上 / 三层同屏·scrim 栈序（像素）·锚点卸载自愈·翻转·嵌套 base·barrier 两向·焦点回锚·陷阱 / 捕获期不命中·三条释放路径·失活不关浮层 / 拖放状态机与三个声明位 / 卡片内边距·内容原点·内禀宽·边框圆角让位·阴影三层·紧宽撑满 / 交叉轴拉伸不串主轴） | 1033 → 921（−112） |
 
 ★★ 第 17 批的**方法论发现**（值得在 S4 之前记住）：源码里 `Frame::needsSettle()` 的注释宣称
 "拆掉 `boxEpoch` 判据 ⇒ 帧外直调 `Element::update()` 那条红"，**实测不成立** ——
@@ -594,3 +596,52 @@ PHP 8 对未定义属性只是 **warning + null**，于是 `abs($src->x - 1.5) <
 
 ⇒ 两条纪律：① 字段名对着类型定义抄，不凭印象；② **warning 也是红信号**，
 `OK (N assertions)` 旁边挂着 Warnings 就不算通过（本批修完后 Warnings 归零才收工）。
+
+★★★ 第 21 批最大的一条：**"单点变异全绿"不等于判据假绿，可能是实现有 N 层冗余防御。**
+
+模态"紧约束盖满客户区"这条判据，改 `OverlayLayout::placeEntry()` 里 CENTER 分支的
+`tight → loose`，8 组变异里的这一组**全绿**。第一反应是"断言空了"，但顺着往下查是：
+
+1. `placeEntry` 给 `tight(480,360)` —— 第一层；
+2. `RenderModalHost::performLayout()` **自己**看 `hasBoundedWidth()` 就把 `$minW` 取成
+   `maxWidth` 给子盒 —— 第二层（给 loose 时它照样顶满）；
+3. 同一个函数的返回又用 `constrain(Size(maxWidth, maxHeight))` —— 第三层
+   （`constrain` 在 tight 约束下会把任何尺寸夹回来）。
+
+所以单点、双点都打不穿；**三点一起改**（loose + `$minW=0` + 不 constrain）才红。
+
+⇒ 纪律补充（接第 17 批"注释承诺 ≠ 有量具"）：**变异全绿时，先数实现的防御层数，
+再判断是"断言空"还是"变异挑错了对象"**。判据有效的证据是"存在一组变异能让它红"，
+不是"随便一改就红"。本批最后是用三点变异把这条钉住的。
+
+★ 同一个坑的姊妹形态：`constrain()` 是**幂等夹取**，所以"给它更大的尺寸"这类变异
+在 tight 约束下天然无效 —— 看到"改了跟没改一样"时先问"这一层下面还有哪几层"。
+
+★★ 切分判据第三次被验证：**按被测对象，不按段号。**
+
+- 菜单段（`㉞` 36 条）里混着 **拖放 9 条** —— 主题是 `Drag/Drop` 状态机，不是浮层；
+  它只是复用了 `MenuApplication` 的三行几何。
+- 浮层栈段（`㉞b` 19 条）里混着 **指针捕获 4 条 + 浮层优先 1 条 + 窗口失活 3 条** ——
+  主题是"手势什么时候放手"；它们需要 `openPanel()` 只是因为"浮层优先于捕获"这条裁决。
+- 卡片段（`㉞c` 18 条）里混着 **5 条 `FlexAlign::Stretch`** —— 主轴与交叉轴曾写反
+  ⇒ 同级 `Expanded` 被挤成 0 宽，跟卡片一点关系没有。
+- `panelRect()` 两条**成对**判据（普通盒不表态 / 面板盒表态）长在"交互状态层"段尾，
+  但被测对象是面板盒 ⇒ 跟 `PopupPanel` 一起走。
+
+每一条都是"段边界 ≠ 主题边界"。判断方法还是那句：**这两条断言改源码时会不会同生同死**。
+
+★ 夹具的处置这次是"留住"，不是"下沉"。
+
+110 条里绝大多数夹具（`MenuApplication` / `ModalApplication` / `OverlayLabApplication` /
+`RecordingSurface` / `FlatBox` / `SvgSurface`）本来就在 `tools/Smoke/**`，由 composer 的
+`Drift\Dev\ → tools/` 自动加载 ⇒ 测试直接 `use`，一行不搬。
+
+只下沉了一个：**`$kidsOf`** —— 卡片段里的局部闭包，第二个使用者出现在 700 行外
+（"侧栏宽度"用例）。它本身就是"取直接子盒列表"这种纯工具 ⇒ 变成 `childBoxes()`，
+`tests/Support/functions.php` 与 `tools/smoke.php` 各一份（同名同实现，互不加载）。
+这是 `spinCanvas()` 之后**第二次**"工具长在断言段里" ⇒ 现在有纪律：
+**段内闭包只要有第二个使用者，一律下沉成全局函数**。
+
+★ 小处但会让人白改一小时：`open($path, 'w').write(open($path).read()...)` 里的
+`open(...,'w')` **先求值**、当场截断文件，于是右边读到空串 ⇒ 整份文件被清空。
+写文件永远"先读到变量，再写"。

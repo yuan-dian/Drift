@@ -551,8 +551,8 @@ readable）。真正可复用的是「四泵」这个**稳定子结构**，不�
 ### 兼容性破坏（预期 0）
 
 - 委托壳 5 个照留（API 位置不动）；`Application::BUDGET_MS` /
-  `OVER_BUDGET_FRAMES` / `STAGE_BUDGET_MS` **不动**（smoke.php:11172/11211
-  直接引用它们做超预算用例）。
+  `OVER_BUDGET_FRAMES` / `STAGE_BUDGET_MS` **不动**（超预算用例在
+  `tests/Feature/Frame/BudgetTest.php` 里直接读 `Application::BUDGET_MS`）。
 - `SLICE_BUDGET_MS` 随 `submitSliced` 默认值搬走（零外部引用）。
 - `OverlayHost` 的 `after`/`cancelAfter` 口子**不动**（Application 仍是宿主，
   经委托壳转调 PumpHost）。

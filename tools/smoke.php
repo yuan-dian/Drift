@@ -37,16 +37,13 @@ use Drift\Dev\Smoke\ErrorBoundary\BoomPage;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Smoke\Frame\TickerWidget;
 use Drift\Dev\Smoke\Frame\TickerState;
-use Drift\Dev\Smoke\Overlay\FlatBox;
 use Drift\Dev\Smoke\Overlay\RecordingSurface;
 use Drift\Dev\Smoke\App\FocusRingApplication;
-use Drift\Dev\Smoke\App\OverlayLabApplication;
 use Drift\App\OverlayEntry;
 use Drift\Dev\Smoke\Rendering\ProbePainter;
 use Drift\Dev\Preview\SvgSurface;
 use Drift\Dev\Smoke\App\KeyAncestorApplication;
 use Drift\Dev\Smoke\App\CountJob;
-use Drift\Dev\Smoke\App\MenuApplication;
 use Drift\Dev\Smoke\App\LazyApplication;
 use Drift\Dev\Smoke\App\NamedBoomJob;
 use Drift\Dev\Smoke\App\NamedExitJob;
@@ -132,10 +129,7 @@ use Drift\Layout\RenderFlex;
 use Drift\Layout\RenderScrollView;
 use Drift\Layout\RenderProxy;
 use Drift\Layout\RenderCustomPaint;
-use Drift\Layout\RenderMenuItem;
-use Drift\Layout\RenderModalHost;
 use Drift\Layout\RenderObject;
-use Drift\Layout\RenderPopupPanel;
 use Drift\Layout\RenderTextField;
 use Drift\Rendering\BoxStyle;
 use Drift\Routing\RouteTable;
@@ -144,7 +138,6 @@ use Drift\Rendering\Color;
 use Drift\Rendering\ColorToken;
 use Drift\Rendering\DashPattern;
 use Drift\Rendering\DisplayList;
-use Drift\Rendering\DividerStyle;
 use Drift\Rendering\Gradient;
 use Drift\Rendering\ImageHandle;
 use Drift\Rendering\MetricToken;
@@ -191,7 +184,6 @@ use Drift\Widget\Center;
 use Drift\Widget\Column;
 use Drift\Widget\ComboBox;
 use Drift\Widget\Dock;
-use Drift\Widget\Drag\Draggable;
 use Drift\Widget\Drag\DragTarget;
 use Drift\Widget\Each;
 use Drift\Widget\LazyColumn;
@@ -202,10 +194,7 @@ use Drift\Widget\ScrollViewState;
 use Drift\Widget\SemanticsBuilder;
 use Drift\Widget\Element;
 use Drift\Widget\Expanded;
-use Drift\Widget\Menu\ContextMenu;
 use Drift\Widget\Menu\Menu;
-use Drift\Widget\Menu\MenuBar;
-use Drift\Widget\Menu\MenuItem;
 use Drift\Widget\Modal;
 use Drift\Widget\PopupPanel;
 use Drift\Widget\Key;
@@ -217,7 +206,6 @@ use Drift\Widget\Spinner;
 use Drift\Widget\SpinnerState;
 use Drift\Widget\Checkbox;
 use Drift\Widget\Radio;
-use Drift\Layout\RenderDivider;
 use Drift\Widget\IconButton;
 use Drift\Widget\SegmentedControl;
 use Drift\Widget\Segment;
@@ -244,7 +232,6 @@ use Drift\Widget\StatefulElement;
 use Drift\Widget\RichText;
 use Drift\Widget\Span;
 use Drift\Widget\Text;
-use Drift\Input\WindowDeactivatedEvent;
 use Drift\Widget\TextField;
 use Drift\Widget\TextFieldState;
 use Drift\Widget\Widget;
@@ -929,6 +916,24 @@ function countTree(Element $element): int
     });
 
     return $total;
+}
+
+/**
+ * 盒的**直接孩子**盒列表（子类不是 RenderBox 的跳过）。
+ *
+ * ★ 与 `tests/Support/functions.php` 同名同实现。原先是卡片段里的局部闭包
+ *   `$kidsOf`，却被 700 行后的「侧栏宽度」用例借去 —— 工具不留在断言段里。
+ */
+function childBoxes(?RenderBox $box): array
+{
+    $out = [];
+    $box?->visitChildren(static function ($child) use (&$out): void {
+        if ($child instanceof RenderBox) {
+            $out[] = $child;
+        }
+    });
+
+    return $out;
 }
 
 function contrast(Color $a, Color $b): float
@@ -5028,13 +5033,11 @@ check(
     implode(',', $toggleSaw),
 );
 
-// —— `RenderObject::panelRect()` 能力方法（4j-c）——
-//   ★ 判据必须成对：普通盒**不表态**（否则 `hitsModalPanel()` 对所有命中都返回
-//     true ⇒ 点遮罩关不掉模态）；面板盒**表态**（否则 `OverlayLayout` 拿不到
-//     面板矩形 ⇒ 落位算错）。只测一边等于没测。
-$plainBox = new RenderDivider(new DividerStyle(Color::fromRgba(0, 0, 0, 255), 1.0), 100.0);
-check('panelRect · 普通盒默认 null（不表态）', $plainBox->panelRect() === null);
-check('panelRect · 面板盒覆写（表态，供落位与模态判定）', (new RenderPopupPanel())->panelRect() !== null);
+// —— `RenderObject::panelRect()` 能力方法 + 面板限高 已迁出 ——
+//   → `tests/Feature/Overlay/PopupPanelTest.php`（13）—— 普通盒不表态 + 面板盒表态
+//     （**成对**：只测一边等于没测）/ 宽 = max(minWidth, 最宽项) / 长菜单高 ==
+//     PANEL_MAX_HEIGHT 且自然高超上限、末项落在面板下沿外（三条一起才算验到限高）/
+//     滚一格 48、滚两格 96（真实滚轮通道）/ 短菜单贴着内容、maxScroll = 0。
 
 // ── ㉝ 错误边界容器 + AcceleratorTable：主体已迁出，余子进程判据 ────────────
 //   · `tests/Unit/Input/AcceleratorTableTest.php` —— 绑定后可查 / 未绑定 ⇒ null /
@@ -5077,1025 +5080,26 @@ check(
 );
 
 
-// ── ㉞ 菜单 / 浮层 / 拖放（任务 #6：O-20 方案 A + §9.1 关闭语义 + §A.3.5）──
-
-$menuSurface = new SvgSurface();
-$menuSurface->resize(320, 240, 1.0);
-$menuApp = new MenuApplication();
-$menuApp->attach($menuSurface, BoxConstraints::tight(new Size(320.0, 240.0)));
-$tight320 = BoxConstraints::tight(new Size(320.0, 240.0));
-
-check('浮层 · attach 后默认没开（浮层槽位为空）', !$menuApp->isMenuOpen());
-
-// —— 键盘路径打开：Tab 到菜单标题 ⇒ Enter（Application::activateFocused 的 Menu 分支）
-$menuApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
-$menuApp->dispatchInput(KeyEvent::down(KeyChord::enter()));
-check(
-    '浮层 · Menu 标题 Enter ⇒ onOpen 被调 + 应用打开面板',
-    $menuApp->opened && $menuApp->isMenuOpen(),
-);
-check(
-    '浮层 · 锚点 = 标题 Element（菜单钉在被点的控件旁）',
-    $menuApp->anchor !== null && $menuApp->anchor->widget() instanceof Menu,
-);
-$panelBox = $menuApp->overlays()->top()?->element?->effectiveBox();
-check('浮层 · 面板盒是 RenderPopupPanel（与根树同构：一个 Widget 一个 Element）', $panelBox instanceof RenderPopupPanel);
-
-// —— 渲染：主树先画、浮层后画（顺序即层叠）
-$svgBefore = $menuSurface->svg();
-$menuApp->frame(16.0, $tight320);
-$svgAfter = $menuSurface->svg();
-check(
-    '浮层 · 渲染多画了一棵（SVG 的 rect 数增加 —— 面板底 / 边框 / 项文本）',
-    substr_count($svgAfter, '<rect') > substr_count($svgBefore, '<rect'),
-);
-
-// —— 落位：面板左上角 = 锚点左下；夹进客户区（按**面板**矩形算）
-$menuTop = $menuApp->overlays()->top();
-[$mx, $my] = [$menuTop?->x ?? 0.0, $menuTop?->y ?? 0.0];
-$titleBox = $menuApp->anchor?->effectiveBox();
-$titleBottom = $titleBox === null ? 0.0 : boxOrigin($titleBox)[1] + $titleBox->size()->height;
-$panelInset = $panelBox instanceof RenderPopupPanel ? $panelBox->panelRect()->left : 0.0;
-check(
-    '浮层 · 面板左上角钉在锚点左下（含投影留白补偿）',
-    abs(($my + $panelInset) - $titleBottom) < 1.0,
-    sprintf('面板 y=%.6g 锚点底=%.6g', $my + $panelInset, $titleBottom),
-);
-check(
-    '浮层 · 面板夹进客户区（右 / 下都不越界）',
-    $panelBox !== null
-        && $mx + $panelBox->size()->width <= 320.5
-        && $my + $panelBox->size()->height <= 240.5,
-);
-
-// —— 关闭语义 ①：点面板外 ⇒ 关 + 吞掉该次按下（不穿透）
-//    ★ 坐标要同时满足两件事：**在面板矩形之外**、**仍在带 `ContextMenu` 的那行上**
-//      —— 面板窄（≈140）而客户区宽 320 ⇒ 取该行右侧（x+200）即可。若穿透，
-//      这次右键会顺手打开下面那个菜单（最容易被抓的形态）。
-$colBox = $menuApp->rootBox();
-$rows = $colBox instanceof RenderFlex ? $colBox->children() : [];
-$rowBox = $rows[1] ?? null;
-$targetBox = $rows[2] ?? null;
-[$rx, $ry] = $rowBox === null ? [0.0, 0.0] : boxOrigin($rowBox);
-[$sx, $sy] = $targetBox === null ? [0.0, 0.0] : boxOrigin($targetBox);
-$outsideX = $rx + 200.0;
-
-$menuApp->dispatchInput(PointerEvent::down($outsideX, $ry + 10.0, 1));
-check(
-    '浮层 · 点面板外 ⇒ 关且**吞掉**按下（不穿透到下面的右键菜单）',
-    !$menuApp->isMenuOpen(),
-    $menuApp->isMenuOpen() ? '穿透了：菜单被重开' : '',
-);
-
-// —— 右键最小集：再点一次（此刻无浮层）⇒ 打开命中的 ContextMenu
-$menuApp->dispatchInput(PointerEvent::down($rx + 10.0, $ry + 10.0, 1));
-check('右键 · 无浮层时右键 ⇒ 打开命中行的 ContextMenu', $menuApp->isMenuOpen());
-
-// —— 关闭语义 ②：命令分发**之后**才关
-$dispatched = $menuApp->dispatch('row.del');
-check(
-    '浮层 · 命令分发之后才关（语义 #2）',
-    $dispatched && !$menuApp->isMenuOpen() && $menuApp->seen === ['row.del'],
-);
-
-// —— 右键落在无声明处 ⇒ 什么也不做（不报错、不落给焦点）
-$menuApp->dispatchInput(PointerEvent::down($sx + 10.0, $sy + 10.0, 1));
-check('右键 · 落在无 ContextMenu 声明的行 ⇒ 什么也不做', !$menuApp->isMenuOpen());
-
-// —— 关闭语义 ③：ESC 在 dispatchKey 之前拦
-$fileMenu = $menuApp->fileMenu();
-$menuApp->showMenu($fileMenu->panel()); // 直接开（不依赖焦点当前在哪儿）
-check('浮层 · 重开（ESC 用例的前置）', $menuApp->isMenuOpen());
-$menuApp->dispatchInput(KeyEvent::down(KeyChord::escape()));
-check('浮层 · ESC ⇒ 关（语义 #3：在 dispatchKey 之前拦，不被焦点控件吃掉）', !$menuApp->isMenuOpen());
-
-// —— 关闭语义 ④：点面板**内**（空白处，非菜单项）⇒ 不关
-//   ★ 2026-10-17 坐标修正：原 (20,20) 落在第一项上。指针激活修复后
-//     （点菜单项 ⇒ 命令分发 + 语义 #2 关浮层），点项会关 —— 那是**正确**
-//     行为。本用例要测的是"点空白不关"，故移到面板右下 padding
-//     （项区右界 x=150、下界 y≈70.6，取 (w−6, h−6) 必空白）。
-$menuApp->showMenu($fileMenu->panel());
-$menuApp->frame(32.0, $tight320); // 走一帧 ⇒ 落位算过（overlays()->top() 才准）
-$menuTop2 = $menuApp->overlays()->top();
-[$mx2, $my2] = [$menuTop2?->x ?? 0.0, $menuTop2?->y ?? 0.0];
-$panelBox2 = $menuApp->overlays()->top()?->element?->effectiveBox();
-$menuApp->dispatchInput(PointerEvent::down(
-    $mx2 + ($panelBox2?->size()?->width ?? 160.0) - 6.0,
-    $my2 + ($panelBox2?->size()?->height ?? 80.0) - 6.0,
-));
-check('浮层 · 点面板内 ⇒ 不关（指针先归浮层，语义 #1 的另一半）', $menuApp->isMenuOpen());
-$menuApp->dispatchInput(KeyEvent::down(KeyChord::escape()));
-
-// —— 浮层项指针激活：点菜单项 ⇒ 命令分发 + 语义 #2 分发后关浮层（与 Enter 同路）
-$ptrMenuApp = new MenuApplication();
-$ptrMenuApp->attach($menuSurface, BoxConstraints::tight(new Size(320.0, 240.0)));
-$ptrMenuApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
-$ptrMenuApp->dispatchInput(KeyEvent::down(KeyChord::enter()));   // 键盘打开「文件」菜单
-$ptrMenuApp->frame(16.0, $tight320);                             // 走一帧 ⇒ 浮层落位（overlays()->top() 才准、盒才有尺寸）
-check('浮层 · 菜单已开（指针项激活用例前置）', $ptrMenuApp->isMenuOpen());
-$itemEl = findElement($ptrMenuApp->overlays()->top()?->element, fn (Element $e): bool => $e->widget() instanceof MenuItem);
-$itemBox = $itemEl?->effectiveBox();
-// ★ `boxOrigin()` 现在给**绝对**原点（委派 `absoluteOrigin()`，浮层根会加自己的
-//   落点）⇒ 再叠一次 `overlays()->top()` 就是加两遍，点会落到面板外、静默不生效
-//   （2026-10-22 实测：`seen=` 空而 `open=yes`）。
-[$ibx, $iby] = $itemBox === null ? [0.0, 0.0] : boxOrigin($itemBox);
-$ibw = $itemBox?->size()?->width ?? 0.0;
-$ibh = $itemBox?->size()?->height ?? 0.0;
-$ptrMenuApp->dispatchInput(PointerEvent::down($ibx + $ibw / 2, $iby + $ibh / 2));
-check(
-    '浮层 · 指针点菜单项 ⇒ 命令分发 + 分发后关浮层（语义 #2，与 Enter 同路）',
-    $ptrMenuApp->seen === ['menu.refresh'] && !$ptrMenuApp->isMenuOpen(),
-    'seen=' . implode(',', $ptrMenuApp->seen) . ' open=' . ($ptrMenuApp->isMenuOpen() ? 'yes' : 'no'),
-);
-
-// —— 应用内拖放（§A.3.5）：状态机可驱动（真机指针序列等 M4）
-$dragApp = $menuApp;
-$dragApp->beginDrag(Draggable::make('user-7'));
-check('拖放 · beginDrag ⇒ 进入拖动态', $dragApp->drag()->isDragging());
-$dragApp->updateDrag($sx + 5.0, $sy + 5.0);
-check('拖放 · 进入 DragTarget ⇒ onHover(true)', $dragApp->hover === [true]);
-$dragApp->updateDrag($sx + 9.0, $sy + 9.0);
-check('拖放 · 目标不变 ⇒ 不重复通知（§9.1 语义 #5 同源）', $dragApp->hover === [true]);
-$dragApp->updateDrag($rx + 5.0, $ry + 5.0);
-check('拖放 · 离开目标 ⇒ onHover(false)', $dragApp->hover === [true, false]);
-$dragApp->updateDrag($sx + 5.0, $sy + 5.0);
-check(
-    '拖放 · drop 把负载交给命中的 DragTarget',
-    $dragApp->dropDrag() === true && $dragApp->drop === ['user-7'],
-);
-check('拖放 · drop 后退出拖动态', !$dragApp->drag()->isDragging());
-$dragApp->beginDrag(Draggable::make('user-9'));
-$dragApp->updateDrag($rx + 5.0, $ry + 5.0); // 拖到没有目标的地方
-check(
-    '拖放 · 拖空 ⇒ drop 返回 false（不派发 onAccept）',
-    $dragApp->dropDrag() === false && count($dragApp->drop) === 1,
-);
-$dragApp->beginDrag(Draggable::make('user-9'));
-$dragApp->dispatchInput(KeyEvent::down(KeyChord::escape()));
-check(
-    '拖放 · ESC 取消（不派发 onAccept）',
-    !$dragApp->drag()->isDragging() && count($dragApp->drop) === 1,
-);
-
-// —— 声明落位（Widget 基类三个新声明位）
-check(
-    '声明 · draggable / contextMenu / dragTarget 落在 widget 上（可被宿主读回）',
-    $rowBox !== null
-        && FlatBox::make(10.0, 10.0)->draggable(Draggable::make(1))->draggableValue()?->payload() === 1
-        && FlatBox::make(10.0, 10.0)->dragTarget(DragTarget::make())->dragTargetValue() instanceof DragTarget
-        && FlatBox::make(10.0, 10.0)->contextMenu(ContextMenu::make())->contextMenuValue() instanceof ContextMenu,
-);
-
-// —— Menu 四件的形体
-$menu = Menu::make('文件')->items([MenuItem::make('刷新')]);
-check('Menu · panel() 是 PopupPanel（浮层形体归 PopupPanel，落位归 App）', $menu->panel() instanceof PopupPanel);
-check('Menu · 是一种按钮（命令 / 焦点 / 激活整套复用，同 NavButton 先例）', $menu instanceof Button && $menu->isFocusable());
-
-$item = MenuItem::make('刷新')->chord(KeyChord::ctrl('R'))->command('menu.refresh');
-check(
-    'MenuItem · 命令 / chord 声明可读',
-    $item->commandName() === 'menu.refresh' && $item->chordValue()?->label() === 'Ctrl+R',
-);
-check('MenuItem · 是一种按钮 + 可聚焦（键盘能选中）', $item instanceof Button && $item->isFocusable());
-check('MenuItem · separator 形态', MenuItem::separator()->isSeparator());
-check('MenuBar · build 出横排（纯组合控件，自己没有盒）', MenuBar::make()->menus([$menu])->build($context) instanceof Row);
-check('ContextMenu · panel() 是 PopupPanel（声明对象，不是 Widget）', ContextMenu::make()->items([
-    MenuItem::make('删除'),
-])->panel() instanceof PopupPanel);
-
-// —— 菜单项盒：两端分布（label 左 / chord 右）+ 分隔线有墨
-//    ★ 约束用 **tight 宽 + loose 高**（与 `RenderPopupPanel` 给内容的一致）——
-//      tight 高会把文本挤爆（C6：内容放不下就该报，这里是我们给的约束不对）
-$itemBox = $item->createRenderObject($context);
-check('MenuItem · 盒是 RenderMenuItem', $itemBox instanceof RenderMenuItem);
-$itemBox->layout(new BoxConstraints(180.0, 180.0, 0.0, 60.0));
-$rowKids = [];
-$itemBox->visitChildren(function (RenderBox $c) use (&$rowKids): void {
-    $c->visitChildren(function (RenderBox $inner) use (&$rowKids): void {
-        $rowKids[] = $inner;
-    });
-});
-$first = $rowKids[0] ?? null;
-$last = $rowKids === [] ? null : $rowKids[count($rowKids) - 1];
-check(
-    'MenuItem · chord 在行的右端（label 与 chord 两端分布 ⇒ 整行可点）',
-    $first !== null && $last !== null && $last->offsetX() > $first->offsetX() + 40.0,
-    sprintf('label x=%.6g chord x=%.6g', $first?->offsetX() ?? -1, $last?->offsetX() ?? -1),
-);
-$sepBox = MenuItem::separator()->createRenderObject($context);
-$sepBox->layout(new BoxConstraints(180.0, 180.0, 0.0, 20.0));
-check(
-    'MenuItem · 分隔线有墨（1px 横线真画了）',
-    inkCount(spinCanvas($sepBox, 180, 8)) > 0,
-);
-
-// —— PopupPanel：统一宽 = max(minWidth, 最宽项)
-//    ★ 要**挂载**后再测：面板的 child 由 Element 层挂接（C1 父管挂接），
-//      光对 createRenderObject 的盒 layout 会拿到"没有孩子"的空盒。
-$panelProbe = $menu->minWidth(200.0)->panel();
-$panelProbeEl = $panelProbe->createElement();
-$panelProbeEl->mount(null, $context);
-$panelProbeBox = $panelProbeEl->effectiveBox();
-$panelProbeBox?->layout(BoxConstraints::unbounded());
-check(
-    'PopupPanel · 宽 = max(minWidth, 最宽项)（面板统一宽 ⇒ 菜单项整行可点）',
-    $panelProbeBox?->size() !== null && $panelProbeBox->size()->width >= 200.0,
-    sprintf('实际宽 %.6g', $panelProbeBox?->size()?->width ?? -1),
-);
-
-// ── ㉞a 菜单面板限高 + 滚动（`PopupPanel::maxHeight()`，2026-10-24）──
-//    ★ 客户区取 **320×900（高视口）**：`RenderPopupPanel` 的上限会与"约束允许的内容高"
-//      取小，320×240 那种矮视口会把面板夹成视口高 ⇒ 分不清"被 PANEL_MAX_HEIGHT 限"
-//      还是"被客户区限"，这条用例就白写了。
-//    ★ 长菜单（30 项）**刻意不进 MenuBar**：菜单栏自然宽有既有断言（标题 + 导航 + 菜单），
-//      加一个标题会把它顶翻。照 `fileMenu()` 的用法直接 `showMenu($m->panel())`。
-$menuCapSurface = new SvgSurface();
-$menuCapSurface->resize(320, 900, 1.0);
-$menuCapApp = new MenuApplication();
-$menuCapApp->attach($menuCapSurface, BoxConstraints::tight(new Size(320.0, 900.0)));
-$menuCapTight = BoxConstraints::tight(new Size(320.0, 900.0));
-
-$menuCapApp->showMenu($menuCapApp->longMenu()->panel());
-$menuCapApp->frame(16.0, $menuCapTight);   // 走一帧 ⇒ 落位算过
-
-$menuCapPanel = $menuCapApp->overlays()->top()?->element?->effectiveBox();
-$menuCapSv = $menuCapApp->panelScrollView();
-check(
-    '菜单 · 长菜单（30 项）⇒ 面板高 = PANEL_MAX_HEIGHT（超长才滚）',
-    $menuCapPanel?->size() !== null
-        && abs($menuCapPanel->size()->height - Menu::PANEL_MAX_HEIGHT) < 0.01,
-    sprintf('实际高 %.6g（上限 %.6g）', $menuCapPanel?->size()?->height ?? -1, Menu::PANEL_MAX_HEIGHT),
-);
-
-// 反例：自然高必须**真的**超过上限，否则这条用例没在验限高
-$menuCapContent = null;
-$menuCapSv?->visitChildren(static function ($c) use (&$menuCapContent): void {
-    $menuCapContent = $c;
-});
-$menuCapNatural = $menuCapContent instanceof RenderBox ? $menuCapContent->size()?->height ?? -1 : -1;
-check(
-    '菜单 · 反例：自然高（30 项）远超上限 ⇒ 这条用例真的在验限高',
-    $menuCapNatural > Menu::PANEL_MAX_HEIGHT,
-    sprintf('自然高 %.6g vs 上限 %.6g', $menuCapNatural, Menu::PANEL_MAX_HEIGHT),
-);
-
-check(
-    '菜单 · 面板里有滚动视口，且视口比面板矮（内容变成可滚视口）',
-    $menuCapSv !== null
-        && $menuCapSv->size() !== null
-        && $menuCapPanel?->size() !== null
-        && $menuCapSv->size()->height < $menuCapPanel->size()->height
-        && $menuCapSv->maxScroll(Axis::Vertical) > 0.0,
-    sprintf(
-        '视口高 %.6g / 面板高 %.6g / maxScroll=%.6g',
-        $menuCapSv?->size()?->height ?? -1,
-        $menuCapPanel?->size()?->height ?? -1,
-        $menuCapSv?->maxScroll(Axis::Vertical) ?? -1,
-    ),
-);
-
-// 推导：30 项里 6 条分隔线（i%5==0）⇒ 24 行 × 行高 + 6 × 分隔线高。
-// 行高分两种（带 / 不带加速键显示），一律从盒子现推，不写死。
-$menuCapRows = [];
-$menuCapSv?->visitChildren(static function ($c) use (&$menuCapRows): void {
-    $menuCapRows[] = $c;
-});
-$menuCapRowH = 0.0;
-$menuCapSepH = 0.0;
-foreach ($menuCapRows as $r) {
-    if (!$r instanceof RenderBox || $r->size() === null) {
-        continue;
-    }
-    $h = $r->size()->height;
-    if ($h <= 8.0) {
-        $menuCapSepH = $menuCapSepH > 0.0 ? $menuCapSepH : $h;
-    } else {
-        $menuCapRowH = $menuCapRowH > 0.0 ? $menuCapRowH : $h;
-    }
-}
-$menuCapItems = 0;
-$menuCapSeps = 0;
-foreach ($menuCapRows as $r) {
-    if (!$r instanceof RenderBox || $r->size() === null) {
-        continue;
-    }
-    if ($r->size()->height <= 8.0) {
-        $menuCapSeps++;
-    } else {
-        $menuCapItems++;
-    }
-}
-$menuCapView = $menuCapSv?->size()?->height ?? -1.0;
-check(
-    '菜单 · maxScroll = 自然内容高 − 视口高（推导，数字全从盒子现推）',
-    $menuCapSv !== null
-        && abs($menuCapSv->maxScroll(Axis::Vertical) - ($menuCapItems * $menuCapRowH + $menuCapSeps * $menuCapSepH - $menuCapView)) < 0.01,
-    sprintf(
-        '%d 行×%.6g + %d 分隔×%.6g − 视口 %.6g = %.6g，实际 maxScroll=%.6g',
-        $menuCapItems,
-        $menuCapRowH,
-        $menuCapSeps,
-        $menuCapSepH,
-        $menuCapView,
-        $menuCapItems * $menuCapRowH + $menuCapSeps * $menuCapSepH - $menuCapView,
-        $menuCapSv?->maxScroll(Axis::Vertical) ?? -1,
-    ),
-);
-
-// 限高的**动机**：最后一项在面板下沿之外 ⇒ 不限高就永远点不到它
-$menuCapLast = null;
-$menuCapLastY = -1.0;
-$menuCapLastH = 0.0;
-foreach ($menuCapRows as $r) {
-    if (!$r instanceof RenderBox || $r->size() === null || $r->size()->height <= 8.0) {
-        continue;
-    }
-    $menuCapLast = $r;
-}
-if ($menuCapLast !== null) {
-    [$menuCapLastX, $menuCapLastY] = RenderBox::absoluteOrigin($menuCapLast);
-    $menuCapLastH = $menuCapLast->size()->height;
-}
-check(
-    '菜单 · 最后一项在面板下沿之外（不限高就点不到它 —— 限高的动机）',
-    $menuCapLast !== null
-        && $menuCapPanel !== null
-        && $menuCapLastY + $menuCapLastH > RenderBox::absoluteOrigin($menuCapPanel)[1] + $menuCapPanel->size()->height,
-    sprintf('末项底 y=%.6g，面板底 y=%.6g', $menuCapLastY + $menuCapLastH, RenderBox::absoluteOrigin($menuCapPanel)[1] + $menuCapPanel->size()->height),
-);
-
-// 滚一格 ⇒ appliedOffset = 48（`Application::WHEEL_NOTCH_PX`，真实 `ScrollEvent` 通道）
-// ★ 常量是 private ⇒ 表达式里写字面量、名字进消息（与 `Scroll · 应用` 那条同款）。
-// ★★ 每滚一次必须**重取** ScrollView：`scrollBy()` → `setState` → `update()` 会换一个
-//    新渲染盒，拿旧盒读 `appliedOffset()` 恒为上一帧的值（看着像"滚轮没生效"）。
-[$menuCapCx, $menuCapCy] = RenderBox::absoluteOrigin($menuCapPanel);
-$menuCapCx += $menuCapPanel->size()->width / 2.0;
-$menuCapCy += $menuCapPanel->size()->height / 2.0;
-$menuCapApp->dispatchInput(ScrollEvent::make($menuCapCx, $menuCapCy, 1.0));
-$menuCapApp->frame(32.0, $menuCapTight);
-check(
-    '菜单 · 滚一格 ⇒ appliedOffset = WHEEL_NOTCH_PX（真实滚轮通道）',
-    abs($menuCapApp->panelScrollView()?->appliedOffset(Axis::Vertical) - 48.0) < 0.01,
-    sprintf('appliedOffset=%.6g', $menuCapApp->panelScrollView()?->appliedOffset(Axis::Vertical) ?? -1),
-);
-$menuCapApp->dispatchInput(ScrollEvent::make($menuCapCx, $menuCapCy, 1.0));
-$menuCapApp->frame(48.0, $menuCapTight);
-check(
-    '菜单 · 滚两格 ⇒ appliedOffset = 2 × WHEEL_NOTCH_PX（量对，不是只动一下）',
-    abs($menuCapApp->panelScrollView()?->appliedOffset(Axis::Vertical) - 96.0) < 0.01,
-    sprintf('appliedOffset=%.6g', $menuCapApp->panelScrollView()?->appliedOffset(Axis::Vertical) ?? -1),
-);
-check(
-    '菜单 · 滚完之后面板仍在、高度仍是上限',
-    $menuCapApp->isMenuOpen()
-        && $menuCapApp->overlays()->top()?->element?->effectiveBox()?->size() !== null
-        && abs(($menuCapApp->overlays()->top()?->element?->effectiveBox()?->size()?->height ?? 0.0) - Menu::PANEL_MAX_HEIGHT) < 0.01,
-);
-$menuCapApp->dispatchInput(KeyEvent::down(KeyChord::escape()));
-
-// 反例：短菜单（3 项）⇒ **贴着内容**，不撑到上限、也不滚
-$menuShortApp = new MenuApplication();
-$menuShortApp->attach($menuCapSurface, BoxConstraints::tight(new Size(320.0, 900.0)));
-$menuShortApp->showMenu($menuShortApp->fileMenu()->panel());
-$menuShortApp->frame(16.0, $menuCapTight);
-$menuShortPanel = $menuShortApp->overlays()->top()?->element?->effectiveBox();
-check(
-    '菜单 · 反例：短菜单（3 项）⇒ 面板高 < 上限（**贴着内容**，不凭空撑高一截空白）',
-    $menuShortPanel?->size() !== null
-        && $menuShortPanel->size()->height < Menu::PANEL_MAX_HEIGHT,
-    sprintf('实际高 %.6g（上限 %.6g）', $menuShortPanel?->size()?->height ?? -1, Menu::PANEL_MAX_HEIGHT),
-);
-check(
-    '菜单 · 反例：短菜单 maxScroll = 0（内容不溢出 ⇒ 不画滚动条，浏览器同行为）',
-    $menuShortApp->panelScrollView()?->maxScroll(Axis::Vertical) === 0.0,
-    sprintf('maxScroll=%.6g', $menuShortApp->panelScrollView()?->maxScroll(Axis::Vertical) ?? -1),
-);
-$menuShortApp->dispatchInput(KeyEvent::down(KeyChord::escape()));
-
-// ── ㉞b 模态（§A.3.7 / §12.1 第 6 条：复用浮层槽位 + 紧约束盖满 + 遮罩自绘）──
-//    ★ 客户区取 480×360（不是 320）：Modal 默认 minWidth=320，320 宽的客户区
-//      会让面板几乎盖满 ⇒ 遮罩区只剩投影留白，"四角都是遮罩"这条判据就废了。
-
-$modalSurface = new SvgSurface();
-$modalSurface->resize(480, 360, 1.0);
-$modalTight = BoxConstraints::tight(new Size(480.0, 360.0));
-$modalApp = new ModalApplication();
-$modalApp->attach($modalSurface, $modalTight);
-
-check(
-    '模态 · attach 后默认没开（槽位与菜单共用，两个开关各自诚实）',
-    !$modalApp->isModalOpen() && $modalApp->modal() === null && !$modalApp->isMenuOpen(),
-);
-
-$modalApp->openConfirm();
-$modalApp->frame(16.0, $modalTight);
-check(
-    '模态 · showModal ⇒ 打开（浮层槽位被占，但 isMenuOpen() 仍为假）',
-    $modalApp->isModalOpen() && $modalApp->overlays()->top()?->element !== null && !$modalApp->isMenuOpen(),
-);
-
-$modalBox = $modalApp->overlays()->top()?->element?->effectiveBox();
-check('模态 · 浮层盒是 RenderModalHost（遮罩 + 盖满住同一个盒）', $modalBox instanceof RenderModalHost);
-check(
-    '模态 · 紧约束盖满客户区（不是自尺寸 —— 盖不满就"后面还能点"）',
-    $modalBox?->size() !== null
-        && abs($modalBox->size()->width - 480.0) < 0.01
-        && abs($modalBox->size()->height - 360.0) < 0.01,
-    sprintf('实际 %.6g × %.6g', $modalBox?->size()?->width ?? -1.0, $modalBox?->size()?->height ?? -1.0),
-);
-$modalTop = $modalApp->overlays()->top();
-check('模态 · 原点归零（模态不钉锚点）', $modalTop !== null && $modalTop->x === 0.0 && $modalTop->y === 0.0);
-
-// —— 面板：沿盒树找 PopupPanel（模态不自造 chrome，形体复用菜单那套）
-$modalPanel = null;
-$scanModal = function (?RenderBox $node) use (&$scanModal, &$modalPanel): void {
-    if ($node === null || $modalPanel !== null) {
-        return;
-    }
-    if ($node instanceof RenderPopupPanel) {
-        $modalPanel = $node;
-
-        return;
-    }
-    $node->visitChildren(function (RenderBox $child) use (&$scanModal): void {
-        $scanModal($child);
-    });
-};
-$scanModal($modalBox);
-check('模态 · 面板是 PopupPanel（形体复用，模态不自造一套 chrome）', $modalPanel instanceof RenderPopupPanel);
-
-$modalPanelRect = $modalPanel instanceof RenderPopupPanel ? $modalPanel->panelRect() : null;
-[$modalPx, $modalPy] = $modalPanel instanceof RenderBox ? boxOrigin($modalPanel) : [0.0, 0.0];
-$modalPanelW = $modalPanelRect?->width ?? 0.0;
-$modalPanelH = $modalPanelRect?->height ?? 0.0;
-$modalPanelX = $modalPx + ($modalPanelRect?->left ?? 0.0);
-$modalPanelY = $modalPy + ($modalPanelRect?->top ?? 0.0);
-check(
-    '模态 · 面板居中（Center 组合出来的，不是盒里写死的偏移）',
-    abs(($modalPanelX + $modalPanelW / 2.0) - 240.0) < 1.0
-        && abs(($modalPanelY + $modalPanelH / 2.0) - 180.0) < 1.0,
-    sprintf(
-        '面板中心 (%.6g, %.6g)，客户区中心 (240, 180)',
-        $modalPanelX + $modalPanelW / 2.0,
-        $modalPanelY + $modalPanelH / 2.0,
-    ),
-);
-
-// —— 遮罩：半透明混色（★ §A.3.7 点名的"实现第一天验"）
-$modalRaster = new RasterCanvas(480, 360, Color::white(), Scale::of(1.0));
-$modalBox?->paint($modalRaster);
-$barrierPx = $modalRaster->pixelAt(2, 2);
-check(
-    '模态 · 遮罩半透明混色（白底 × 35% 黑 ⇒ 灰；纯白/纯黑都说明 alpha 没走通）',
-    $barrierPx->r === $barrierPx->g && $barrierPx->g === $barrierPx->b
-        && $barrierPx->r > 120 && $barrierPx->r < 230,
-    sprintf('角落 rgb(%d,%d,%d)', $barrierPx->r, $barrierPx->g, $barrierPx->b),
-);
-
-$cornersOk = true;
-foreach ([[2, 2], [477, 2], [2, 357], [477, 357]] as $cornerPt) {
-    $p = $modalRaster->pixelAt($cornerPt[0], $cornerPt[1]);
-    if (!$p->equals($barrierPx)) {
-        $cornersOk = false;
-    }
-}
-check('模态 · 遮罩覆盖四角（盖满是真的盖满，不是画了个中间块）', $cornersOk);
-
-$panelPx = $modalRaster->pixelAt(
-    (int) round($modalPanelX + 8.0),
-    (int) round($modalPanelY + 8.0),
-);
-check(
-    '模态 · 面板画在遮罩之上（面板内像素 ≠ 遮罩色）',
-    !$panelPx->equals($barrierPx),
-    sprintf('面板内 rgb(%d,%d,%d)', $panelPx->r, $panelPx->g, $panelPx->b),
-);
-
-// —— 关闭语义：点面板内（空白）⇒ 不关
-$modalApp->dispatchInput(PointerEvent::down($modalPanelX + 8.0, $modalPanelY + 8.0));
-check('模态 · 点面板内 ⇒ 不关（遮罩只挡面板外）', $modalApp->isModalOpen());
-
-// —— 关闭语义：ESC ⇒ 关（dismissible 默认 true）
-$modalApp->dispatchInput(KeyEvent::down(KeyChord::escape()));
-check('模态 · ESC ⇒ 关（dismissible 默认 true）', !$modalApp->isModalOpen());
-check(
-    '模态 · 关后槽位清空 + 模态标记归零（不留脏状态）',
-    $modalApp->overlays()->top()?->element === null && $modalApp->modal() === null && !$modalApp->isMenuOpen(),
-);
-$modalApp->closeModal();
-check('模态 · closeModal 幂等（没开再关一次不炸）', !$modalApp->isModalOpen());
-
-// —— dismissible=false：ESC 与遮罩点击都**吞掉但不关**
-$modalApp->dismissible = false;
-$modalApp->openConfirm();
-$modalApp->frame(16.0, $modalTight);
-$modalApp->seen = [];
-check(
-    '模态 · dismissible=false 的模态已打开（前置）',
-    $modalApp->isModalOpen() && $modalApp->modal()?->isDismissible() === false,
-);
-
-$modalApp->dispatchInput(KeyEvent::down(KeyChord::escape()));
-check(
-    '模态 · dismissible=false ⇒ ESC 不关且被吞（不落到第 ① 环加速键）',
-    $modalApp->isModalOpen() && $modalApp->seen === [],
-    'open=' . ($modalApp->isModalOpen() ? 'yes' : 'no') . ' seen=' . implode(',', $modalApp->seen),
-);
-
-$modalApp->dispatchInput(PointerEvent::down(5.0, 5.0));
-check(
-    '模态 · dismissible=false ⇒ 点遮罩不关且被吞（拒绝 ≠ 放行给下面的按钮）',
-    $modalApp->isModalOpen() && $modalApp->seen === [],
-    'open=' . ($modalApp->isModalOpen() ? 'yes' : 'no') . ' seen=' . implode(',', $modalApp->seen),
-);
-
-// —— dismissible=true：点遮罩 ⇒ 关 + 吞掉该次按下
-$modalApp->closeModal();
-$modalApp->dismissible = true;
-$modalApp->openConfirm();
-$modalApp->frame(16.0, $modalTight);
-$modalApp->seen = [];
-$modalApp->dispatchInput(PointerEvent::down(5.0, 5.0));
-check(
-    '模态 · dismissible=true ⇒ 点遮罩关 + 吞掉该次按下（不穿透到下面的按钮）',
-    !$modalApp->isModalOpen() && $modalApp->seen === [],
-    'open=' . ($modalApp->isModalOpen() ? 'yes' : 'no') . ' seen=' . implode(',', $modalApp->seen),
-);
-
-// —— ★ 核心裁决：点面板内按钮 ⇒ 命令分发，但模态**不自己关**（关不关归应用）
-$modalApp->openConfirm();
-$modalApp->frame(16.0, $modalTight);
-$modalApp->seen = [];
-$confirmEl = $modalApp->overlays()->top()?->element === null ? null : findElement(
-    $modalApp->overlays()->top()?->element,
-    fn (Element $e): bool => $e->widget() instanceof Button && $e->widget()->commandName() === 'modal.confirm',
-);
-$confirmBox = $confirmEl?->effectiveBox();
-[$confirmX, $confirmY] = $confirmBox === null ? [0.0, 0.0] : boxOrigin($confirmBox);
-$confirmW = $confirmBox?->size()?->width ?? 0.0;
-$confirmH = $confirmBox?->size()?->height ?? 0.0;
-$modalApp->dispatchInput(PointerEvent::down($confirmX + $confirmW / 2.0, $confirmY + $confirmH / 2.0));
-check(
-    '模态 · 点面板内按钮 ⇒ 命令分发，模态**不自己关**（§A.3.7：关不关归应用）',
-    $modalApp->seen === ['modal.confirm'] && $modalApp->isModalOpen(),
-    'seen=' . implode(',', $modalApp->seen) . ' open=' . ($modalApp->isModalOpen() ? 'yes' : 'no'),
-);
-
-// —— ★ 关闭按钮（2026-10-25）：`OverlayManager::showModal()` 注入 dismiss，
-//   `Modal::build()` 据此决定画不画那个 X。三条各自独立：
-//   ① 框架注入了 ⇒ 画；② `dismissible=false` ⇒ 不画（点了没反应的 X 比没有更糟）；
-//   ③ 按钮真的在树上，且**点它 => 模态关**（端到端，不是"盒在那儿"）。
-$modalCloseSeen = $modalApp->modal();
-check(
-    '模态 · showModal 注入了 dismiss ⇒ showsCloseIcon() 为真',
-    $modalCloseSeen instanceof Modal && $modalCloseSeen->showsCloseIcon(),
-);
-$modalCloseEl = $modalApp->overlays()->top()?->element === null ? null : findElement(
-    $modalApp->overlays()->top()?->element,
-    fn (Element $e): bool => $e->widget() instanceof IconButton && $e->widget()->label() === '关闭',
-);
-check('模态 · 关闭按钮在树上（按可访问名「关闭」）', $modalCloseEl !== null);
-$modalCloseBox = $modalCloseEl?->effectiveBox();
-[$modalCloseX, $modalCloseY] = $modalCloseBox === null ? [0.0, 0.0] : boxOrigin($modalCloseBox);
-$modalCloseW = $modalCloseBox?->size()?->width ?? 0.0;
-$modalCloseH = $modalCloseBox?->size()?->height ?? 0.0;
-$modalApp->dispatchInput(
-    PointerEvent::down($modalCloseX + $modalCloseW / 2.0, $modalCloseY + $modalCloseH / 2.0)
-);
-check(
-    '模态 · 点关闭按钮 ⇒ 模态关（框架注入的 dismiss 真的接了线）',
-    !$modalApp->isModalOpen(),
-    'open=' . ($modalApp->isModalOpen() ? 'yes' : 'no'),
-);
-
-// 反例：`dismissible=false` ⇒ 没有 X（不是"有个点了没反应的 X"）
-$modalApp->dismissible = false;
-$modalApp->openConfirm();
-$modalApp->frame(16.0, $modalTight);
-check(
-    '模态 · dismissible=false ⇒ 不画关闭按钮（与"拒绝用户关闭"同一条语义）',
-    $modalApp->modal()?->showsCloseIcon() === false,
-);
-$modalApp->closeModal();
-$modalApp->dismissible = true;
-
-// —— ★ W3 行为变化（`01` §8）：模态**盖在菜单之上**，不再清菜单
-//   旧语义"同一槽位 ⇒ 打开模态先清菜单"是槽位的产物，不是需求：
-//   在下拉里点「新建分类…」弹出对话框，关掉对话框后下拉应该还在。
-//   判据三条：① 模态开、菜单仍在 ② 栈深 = 2 ③ 关模态后菜单回到栈顶。
-$modalMutexApp = new ModalApplication();
-$modalMutexApp->attach($modalSurface, $modalTight);
-$modalMutexApp->showMenu(PopupPanel::make(Text::make('菜单项')));
-check('模态 · 前置：菜单开着', $modalMutexApp->isMenuOpen() && !$modalMutexApp->isModalOpen());
-$modalMutexApp->openConfirm();
-check(
-    '模态 · 模态盖在菜单之上（不再清菜单 —— `01` §8 的行为变化）',
-    $modalMutexApp->isModalOpen() && $modalMutexApp->isMenuOpen()
-    && $modalMutexApp->overlays()->count() === 2,
-    'modal=' . ($modalMutexApp->isModalOpen() ? 'yes' : 'no')
-    . ' menu=' . ($modalMutexApp->isMenuOpen() ? 'yes' : 'no')
-    . ' depth=' . $modalMutexApp->overlays()->count(),
-);
-$modalMutexApp->closeModal();
-check(
-    '模态 · 关掉对话框后菜单还在（栈没被连坐清掉）',
-    !$modalMutexApp->isModalOpen() && $modalMutexApp->isMenuOpen()
-    && $modalMutexApp->overlays()->count() === 1,
-    'modal=' . ($modalMutexApp->isModalOpen() ? 'yes' : 'no')
-    . ' menu=' . ($modalMutexApp->isMenuOpen() ? 'yes' : 'no')
-    . ' depth=' . $modalMutexApp->overlays()->count(),
-);
-
-// —— Modal 的 build 结构：ModalHost → Center → PopupPanel
-$modalBareEl = Modal::make()->child(Text::make('只有正文'))->createElement();
-$modalBareEl->mount(null, $context);
-$modalBareBox = $modalBareEl->effectiveBox();
-$modalBareCenter = false;
-$modalBareBox?->visitChildren(function (RenderBox $child) use (&$modalBareCenter): void {
-    $mods = $child->mods();
-    $modalBareCenter = $child instanceof RenderProxy && $mods !== null && $mods->hasCenter();
-});
-check(
-    'Modal · build = ModalHost → Center → PopupPanel（居中靠组合，不是盒里的开关）',
-    $modalBareBox instanceof RenderModalHost && $modalBareCenter,
-);
-
-// ── ㉞b 浮层栈（arch-v2 `01` §12.1 的八条夹具）──
-//    ★ 每条都要能区分"栈版"与"槽位版"：单槽只能放一个 ⇒ 三层、逐层路由、
-//      锚点消失自动关 这三类判据在旧实现下**根本写不出来**。
-
-$labSurface = new RecordingSurface();
-$labSurface->resize(320, 240, 1.0);
-$lab = new OverlayLabApplication();
-$lab->attach($labSurface, BoxConstraints::tight(new Size(320.0, 240.0)));
-
-// ① 三层同屏：栈深 3，栈顶是最新的那一层
-$lab->openPanel(FlatBox::make(80.0, 30.0));
-$lab->openPanel(FlatBox::make(90.0, 30.0));
-$lab->openModalBox(60.0, 24.0, '第三层');
-check(
-    '浮层栈 · 三层同屏（count=3，栈顶是最新的模态）',
-    $lab->overlays()->count() === 3
-    && $lab->overlays()->top()?->scrim === true
-    && $lab->overlays()->at(0)?->scrim === false,
-    'depth=' . $lab->overlays()->count()
-    . ' top-scrim=' . var_export($lab->overlays()->top()?->scrim, true),
-);
-
-// ② scrim 顺序：第二层模态的遮罩**盖在第一层模态的面板上**（栈序 = 绘制序）
-//    ★ 用像素回答，不用字符串：两个同色 rect 换个顺序，SVG 里看不出来。
-//    ★ 采样点必须**在第一层面板内、第二层面板外** —— 否则测的是"第二层的面板
-//      盖住第一层"，与遮罩顺序无关（这个坑踩过一次：两层模态面板都 ≈308 宽，
-//      只有**高度**不同 ⇒ 沿 y 挑点，挑第一层面板的底部）。
-$labTight = BoxConstraints::tight(new Size(320.0, 240.0));
-$lab->overlays()->pop();
-$lab->overlays()->pop();
-$lab->overlays()->pop();
-$lab->frame(16.0, $labTight);
-$lab->openModalBox(200.0, 120.0, '第一层');
-$lab->frame(32.0, $labTight);
-$firstPanelEl = $lab->overlays()->top()?->element;
-$firstPanelBox = $firstPanelEl === null ? null : findElement(
-    $firstPanelEl,
-    static fn(Element $e): bool => $e->widget() instanceof PopupPanel,
-)?->effectiveBox();
-$firstPanel = $firstPanelBox instanceof RenderPopupPanel ? $firstPanelBox->panelRect() : null;
-[$fpX, $fpY] = $firstPanelBox === null ? [0.0, 0.0] : RenderBox::absoluteOrigin($firstPanelBox);
-$probeX = (int) ($fpX + ($firstPanel?->left ?? 0.0) + 20.0);
-$probeY = (int) ($fpY + ($firstPanel?->top ?? 0.0) + ($firstPanel?->height ?? 0.0) - 10.0);
-$oneLayer = $labSurface->raster()->pixelAt($probeX, $probeY);
-$lab->openModalBox(60.0, 24.0, '第二层');
-$lab->frame(48.0, $labTight);
-$twoLayers = $labSurface->raster()->pixelAt($probeX, $probeY);
-check(
-    '浮层栈 · 上层 scrim 盖在下层面板上（栈序 = 绘制序，不是"最后画一层遮罩"）',
-    $twoLayers->r < $oneLayer->r && $oneLayer->r > 200,
-    sprintf('单层 r=%d 两层 r=%d @(%d,%d)', $oneLayer->r, $twoLayers->r, $probeX, $probeY),
-);
-
-// ③ 锚点消失 ⇒ 下一帧自动关（`01` §9 边界 #2）
-$lab2Surface = new RecordingSurface();
-$lab2Surface->resize(320, 240, 1.0);
-$lab2 = new OverlayLabApplication();
-$lab2->attach($lab2Surface, BoxConstraints::tight(new Size(320.0, 240.0)));
-$lab2Tight = BoxConstraints::tight(new Size(320.0, 240.0));
-$anchorEl = findElement(
-    $lab2->root(),
-    static fn(Element $e): bool => $e->widget() instanceof Button
-        && $e->widget()->commandName() === 'lab.anchor',
-);
-$lab2->openPanel(FlatBox::make(80.0, 30.0), $anchorEl);
-check('浮层栈 · 前置：锚点还在 ⇒ 浮层在栈里', $lab2->overlays()->count() === 1);
-$lab2->root()->unmount();
-$lab2->frame(16.0, $lab2Tight);
-check(
-    '浮层栈 · 锚点卸载 ⇒ 下一帧自动关（不悬在左上角冒充别人的框）',
-    $lab2->overlays()->count() === 0,
-    'depth=' . $lab2->overlays()->count(),
-);
-
-// ④ 翻转：锚点贴底边 + BELOW ⇒ 面板翻到锚点上方
-$lab3Surface = new RecordingSurface();
-$lab3Surface->resize(320, 240, 1.0);
-$lab3 = new OverlayLabApplication();
-$lab3->attach($lab3Surface, BoxConstraints::tight(new Size(320.0, 240.0)));
-$lab3Tight = BoxConstraints::tight(new Size(320.0, 240.0));
-$bgEl = findElement(
-    $lab3->root(),
-    static fn(Element $e): bool => $e->widget() instanceof Button
-        && $e->widget()->commandName() === 'lab.bottom',
-);
-$bgBox = $bgEl?->effectiveBox();
-[$bgX, $bgY] = $bgBox === null ? [0.0, 0.0] : RenderBox::absoluteOrigin($bgBox);
-$lab3->openPanel(FlatBox::make(80.0, 60.0), $bgEl, OverlayEntry::BELOW);
-$lab3->frame(16.0, $lab3Tight);
-$flipTop = $lab3->overlays()->top();
-check(
-    '浮层栈 · 锚点贴底边 ⇒ BELOW 翻到上方（只翻一次，不做通用避让）',
-    $flipTop !== null && $flipTop->y + 60.0 <= $bgY + 1.0 && $flipTop->y >= 0.0,
-    $flipTop === null ? 'no entry' : sprintf('面板底 y=%.6g 锚点 y=%.6g', $flipTop->y + 60.0, $bgY),
-);
-$lab3->closeMenu();
-
-// ⑤ 嵌套 base：浮层里的锚点 ⇒ 子浮层落点 = 父浮层原点 + 锚点相对位置
-$parentPanel = FlatBox::make(120.0, 90.0);
-$parentEntry = $lab3->openPanel($parentPanel, $bgEl, OverlayEntry::ABOVE);
-$lab3->frame(32.0, $lab3Tight);
-$parentEntry = $lab3->overlays()->top();
-$innerEl = $parentEntry?->element;
-$innerBox = $innerEl?->effectiveBox();
-[$innerAbsX, $innerAbsY] = $innerBox === null ? [0.0, 0.0] : RenderBox::absoluteOrigin($innerBox);
-$childEntry = $lab3->openPanel(FlatBox::make(40.0, 20.0), $innerEl, OverlayEntry::BELOW);
-$lab3->frame(48.0, $lab3Tight);
-$childEntry = $lab3->overlays()->top();
-check(
-    '浮层栈 · 嵌套浮层的锚点坐标系（父层 base + 相对偏移，不是客户区绝对坐标）',
-    $parentEntry !== null && $childEntry !== null
-    && ($parentEntry->x !== 0.0 || $parentEntry->y !== 0.0)
-    && abs($childEntry->x - $innerAbsX) < 1.0
-    && abs($childEntry->y - ($innerAbsY + ($innerBox?->size()?->height ?? 0.0))) < 1.0,
-    $parentEntry === null || $childEntry === null ? 'no entry' : sprintf(
-        '父=(%.6g,%.6g) 内层绝对=(%.6g,%.6g) 子=(%.6g,%.6g)',
-        $parentEntry->x,
-        $parentEntry->y,
-        $innerAbsX,
-        $innerAbsY,
-        $childEntry->x,
-        $childEntry->y,
-    ),
-);
-
-// ⑥ barrier=true ⇒ 点浮层外不穿透到主树按钮
-$lab4Surface = new RecordingSurface();
-$lab4Surface->resize(320, 240, 1.0);
-$lab4 = new OverlayLabApplication();
-$lab4->attach($lab4Surface, BoxConstraints::tight(new Size(320.0, 240.0)));
-$lab4Tight = BoxConstraints::tight(new Size(320.0, 240.0));
-$lab4Anchor = findElement(
-    $lab4->root(),
-    static fn(Element $e): bool => $e->widget() instanceof Button
-        && $e->widget()->commandName() === 'lab.anchor',
-);
-$lab4->openPanel(FlatBox::make(40.0, 20.0), $lab4Anchor);
-$lab4->frame(16.0, $lab4Tight);
-$lab4Bg = findElement(
-    $lab4->root(),
-    static fn(Element $e): bool => $e->widget() instanceof Button
-        && $e->widget()->commandName() === 'lab.bottom',
-);
-$lab4BgBox = $lab4Bg?->effectiveBox();
-[$l4x, $l4y] = $lab4BgBox === null ? [0.0, 0.0] : RenderBox::absoluteOrigin($lab4BgBox);
-$lab4->seen = [];
-$lab4->dispatchInput(PointerEvent::down(
-    $l4x + ($lab4BgBox?->size()?->width ?? 0.0) / 2.0,
-    $l4y + ($lab4BgBox?->size()?->height ?? 0.0) / 2.0,
-));
-check(
-    '浮层栈 · barrier=true 点浮层外 ⇒ 主树按钮未被激活（吞掉，不穿透）',
-    $lab4->seen === [],
-    'seen=' . implode(',', $lab4->seen),
-);
-
-// ⑦ barrier=false（Tooltip / Toast）⇒ 点浮层外穿透到主树
-$lab5Surface = new RecordingSurface();
-$lab5Surface->resize(320, 240, 1.0);
-$lab5 = new OverlayLabApplication();
-$lab5->attach($lab5Surface, BoxConstraints::tight(new Size(320.0, 240.0)));
-$lab5Tight = BoxConstraints::tight(new Size(320.0, 240.0));
-$lab5Anchor = findElement(
-    $lab5->root(),
-    static fn(Element $e): bool => $e->widget() instanceof Button
-        && $e->widget()->commandName() === 'lab.anchor',
-);
-$lab5->openPanel(FlatBox::make(40.0, 20.0), $lab5Anchor, OverlayEntry::BELOW, false);
-$lab5->frame(16.0, $lab5Tight);
-$lab5Bg = findElement(
-    $lab5->root(),
-    static fn(Element $e): bool => $e->widget() instanceof Button
-        && $e->widget()->commandName() === 'lab.bottom',
-);
-$lab5BgBox = $lab5Bg?->effectiveBox();
-[$l5x, $l5y] = $lab5BgBox === null ? [0.0, 0.0] : RenderBox::absoluteOrigin($lab5BgBox);
-$lab5->seen = [];
-$lab5->dispatchInput(PointerEvent::down(
-    $l5x + ($lab5BgBox?->size()?->width ?? 0.0) / 2.0,
-    $l5y + ($lab5BgBox?->size()?->height ?? 0.0) / 2.0,
-));
-check(
-    '浮层栈 · barrier=false 点浮层外 ⇒ 穿透到主树按钮（Tooltip 不吃点击）',
-    $lab5->seen === ['lab.bottom'],
-    'seen=' . implode(',', $lab5->seen),
-);
-
-// ⑧ 焦点回锚：模态关掉后焦点回到打开前的节点（`01` §6.4）
-$lab6Surface = new RecordingSurface();
-$lab6Surface->resize(320, 240, 1.0);
-$lab6 = new OverlayLabApplication();
-$lab6->attach($lab6Surface, BoxConstraints::tight(new Size(320.0, 240.0)));
-$lab6Tight = BoxConstraints::tight(new Size(320.0, 240.0));
-$lab6Anchor = findElement(
-    $lab6->root(),
-    static fn(Element $e): bool => $e->widget() instanceof Button
-        && $e->widget()->commandName() === 'lab.anchor',
-);
-$lab6->focusForTest($lab6Anchor);
-$lab6->openModalBox(60.0, 24.0, '回锚');
-$lab6->frame(16.0, $lab6Tight);
-$lab6->closeModal();
-$lab6->frame(32.0, $lab6Tight);
-check(
-    '浮层栈 · 关闭后焦点回到打开前的节点（restoreFocus 真被消费）',
-    $lab6->focusedForTest() === $lab6Anchor,
-    $lab6->focusedForTest() === null ? '焦点被清空' : '焦点在别处',
-);
-
-// ⑨ 焦点陷阱：模态开着 ⇒ 主树的按钮不在 Tab 序里（Tab 出不去）
-$lab7Surface = new RecordingSurface();
-$lab7Surface->resize(320, 240, 1.0);
-$lab7 = new OverlayLabApplication();
-$lab7->attach($lab7Surface, BoxConstraints::tight(new Size(320.0, 240.0)));
-$lab7Tight = BoxConstraints::tight(new Size(320.0, 240.0));
-$lab7->openModalBox(60.0, 24.0, '陷阱', true);
-$lab7->frame(16.0, $lab7Tight);
-$tabOrder = $lab7->focusOrderForTest();
-$inMainTree = 0;
-foreach ($tabOrder as $tabEl) {
-    $isAnchor = $tabEl->widget() instanceof Button
-        && in_array($tabEl->widget()->commandName(), ['lab.anchor', 'bg.hit'], true);
-    if ($isAnchor) {
-        $inMainTree++;
-    }
-}
-check(
-    '浮层栈 · 模态开着 ⇒ Tab 序只剩浮层（focusTrap：主树按钮进不来）',
-    $tabOrder !== [] && $inMainTree === 0,
-    '链长=' . count($tabOrder) . ' 主树按钮=' . $inMainTree,
-);
-
-// ⑩ 指针捕获（`06` §5 / §11.2 夹具 #9）：捕获期不命中测试
-$capSurface = new RecordingSurface();
-$capSurface->resize(320, 240, 1.0);
-$cap = new OverlayLabApplication();
-$cap->attach($capSurface, BoxConstraints::tight(new Size(320.0, 240.0)));
-$capAnchor = findElement(
-    $cap->root(),
-    static fn(Element $e): bool => $e->widget() instanceof Button
-        && $e->widget()->commandName() === 'lab.anchor',
-);
-$capBottom = findElement(
-    $cap->root(),
-    static fn(Element $e): bool => $e->widget() instanceof Button
-        && $e->widget()->commandName() === 'lab.bottom',
-);
-$capBottomBox = $capBottom?->effectiveBox();
-[$cbx, $cby] = $capBottomBox === null ? [0.0, 0.0] : RenderBox::absoluteOrigin($capBottomBox);
-$cap->capturePointer($capAnchor);
-$cap->pointerLog = [];
-$cap->dispatchInput(PointerEvent::move($cbx + 5.0, $cby + 5.0));
-check(
-    '指针捕获 · 捕获期 move 落在别的控件上 ⇒ 仍归捕获者（不做命中测试）',
-    $cap->pointerLog === ['move'] && $cap->captureNode() === $capAnchor,
-    'log=' . implode(',', $cap->pointerLog),
-);
-$cap->dispatchInput(PointerEvent::up($cbx + 5.0, $cby + 5.0));
-check(
-    '指针捕获 · 抬起 ⇒ 自动释放（不释放就是"事件永远发给死节点"）',
-    $cap->captureNode() === null && $cap->pointerLog === ['move', 'up'],
-    'log=' . implode(',', $cap->pointerLog),
-);
-$cap->pointerLog = [];
-$cap->dispatchInput(PointerEvent::move($cbx + 6.0, $cby + 6.0));
-check(
-    '指针捕获 · 释放后 move 不再进捕获者（回到正常命中）',
-    $cap->pointerLog === [],
-    'log=' . implode(',', $cap->pointerLog),
-);
-
-// ⑪ 浮层优先于捕获（`06` §10）：捕获中点浮层外 ⇒ 先释放捕获 + 关浮层
-$cap->capturePointer($capAnchor);
-$cap->openPanel(FlatBox::make(40.0, 20.0), $capAnchor);
-$cap->frame(16.0, BoxConstraints::tight(new Size(320.0, 240.0)));
-$cap->pointerLog = [];
-$cap->dispatchInput(PointerEvent::down($cbx + 5.0, $cby + 5.0));
-check(
-    '指针捕获 · 捕获中点浮层外 ⇒ 释放捕获 + 关浮层（浮层优先，down 不转发给捕获者）',
-    $cap->captureNode() === null && $cap->overlays()->count() === 0 && $cap->pointerLog === [],
-    'cap=' . ($cap->captureNode() === null ? 'null' : 'set')
-    . ' depth=' . $cap->overlays()->count()
-    . ' log=' . implode(',', $cap->pointerLog),
-);
-
-// ⑫ 捕获者卸载 ⇒ 自动释放 + DIAGNOSTIC（`06` §5.2 释放路径 ②）
-//    ★ DIAGNOSTIC **不落盘**（只进进程内环形缓冲）⇒ 读 `recentDiagnostics()`，
-//      读日志文件永远是空的（这条差点写成假绿）。
-$cap->capturePointer($capAnchor);
-$cap->root()->unmount();
-$cap->frame(32.0, BoxConstraints::tight(new Size(320.0, 240.0)));
-$captureDiag = false;
-foreach (Errors::recentDiagnostics() as $diag) {
-    $text = is_array($diag) ? (string) ($diag['message'] ?? '') : (string) $diag;
-    if (str_contains($text, '捕获者已卸载')) {
-        $captureDiag = true;
-    }
-}
-check(
-    '指针捕获 · 捕获者卸载 ⇒ 自动释放并报 DIAGNOSTIC（不静默冻住）',
-    $cap->captureNode() === null && $captureDiag,
-    'cap=' . ($cap->captureNode() === null ? 'null' : 'set')
-    . ' diag=' . ($captureDiag ? 'yes' : 'no'),
-);
-
-// ⑬ 窗口失活（`WM_ACTIVATE` + `WA_INACTIVE`）⇒ 收口所有指针手势（`06` §5.2 释放路径 ③）
-//    ★ 为什么必须有这条：指针手势的收口信号**全部来自指针自己**（`up` / `leave`），
-//      而"拖到一半 Alt+Tab 出去"这两个都不会来 —— 指针没动（没有 `WM_MOUSEMOVE`），
-//      用户在别处松手（`WM_LBUTTONUP` 落在别的窗口）⇒ 捕获 / 竞技场 / 拖动 /
-//      框选 / 拇指全部卡在"进行中"。现象是"某个控件永久只收它的事件"。
-$blurSurface = new RecordingSurface();
-$blurSurface->resize(320, 240, 1.0);
-$blur = new OverlayLabApplication();
-$blur->attach($blurSurface, BoxConstraints::tight(new Size(320.0, 240.0)));
-$blurAnchor = findElement(
-    $blur->root(),
-    static fn(Element $e): bool => $e->widget() instanceof Button
-        && $e->widget()->commandName() === 'lab.anchor',
-);
-$blurBottom = findElement(
-    $blur->root(),
-    static fn(Element $e): bool => $e->widget() instanceof Button
-        && $e->widget()->commandName() === 'lab.bottom',
-);
-$blurBottomBox = $blurBottom?->effectiveBox();
-[$bbx, $bby] = $blurBottomBox === null ? [0.0, 0.0] : RenderBox::absoluteOrigin($blurBottomBox);
-
-$blur->capturePointer($blurAnchor);
-$blur->pointerLog = [];
-$blur->dispatchInput(PointerEvent::move($bbx + 5.0, $bby + 5.0));
-$blur->dispatchInput(new WindowDeactivatedEvent());
-check(
-    '窗口失活 · 捕获被释放（否则回到窗口后只有那个节点收事件）',
-    $blur->captureNode() === null && $blur->pointerLog === ['move'],
-    'cap=' . ($blur->captureNode() === null ? 'null' : 'set')
-    . ' log=' . implode(',', $blur->pointerLog),
-);
-$blur->pointerLog = [];
-$blur->dispatchInput(PointerEvent::move($bbx + 6.0, $bby + 6.0));
-check(
-    '窗口失活 · 释放后 move 回到正常命中（不再进原捕获者）',
-    $blur->pointerLog === [],
-    'log=' . implode(',', $blur->pointerLog),
-);
-
-// ⑭ 失活**不关浮层**（W3 裁决：失焦 ≠ 放弃，`06` §10「关闭四来源」里没有这一条）
-//    ★ 反向守卫：以后有人"顺手"把关浮层加进失活路径，这条会红。
-$blur->openPanel(FlatBox::make(40.0, 20.0), $blurAnchor);
-$blur->frame(16.0, BoxConstraints::tight(new Size(320.0, 240.0)));
-$blurDepth = $blur->overlays()->count();
-$blur->dispatchInput(new WindowDeactivatedEvent());
-check(
-    '窗口失活 · 浮层不关（失焦 ≠ 放弃：用户可能只是去别处看一眼）',
-    $blurDepth > 0 && $blur->overlays()->count() === $blurDepth,
-    'before=' . $blurDepth . ' after=' . $blur->overlays()->count(),
-);
-
-// ⑮ 失活幂等 + 未挂载也安全
-//    ★ 后半条钉的是代码形状：失活分支在"未挂载"守卫**之前**（窗口可能在拆卸
-//      途中失去前台，那一刻树已经没了，但手势状态仍要清）。
-$blur->dispatchInput(new WindowDeactivatedEvent());
-$blurDetachedOk = true;
-try {
-    (new OverlayLabApplication())->dispatchInput(new WindowDeactivatedEvent());
-} catch (\Throwable $e) {
-    $blurDetachedOk = false;
-}
-check(
-    '窗口失活 · 幂等，且未挂载时也安全（分支在"未挂载"守卫之前）',
-    $blur->captureNode() === null
-        && $blur->overlays()->count() === $blurDepth
-        && $blurDetachedOk,
-    'cap=' . ($blur->captureNode() === null ? 'null' : 'set')
-    . ' depth=' . $blur->overlays()->count()
-    . ' detached=' . ($blurDetachedOk ? 'ok' : 'threw'),
-);
+// ── ㉞ 菜单 / 面板 / 模态 / 浮层栈 / 拖放 已迁出（110 条）──────────────────
+//   · `tests/Feature/Overlay/MenuTest.php`（26）—— 键盘开 + 锚点钉左下 + 夹进
+//     客户区 / 关闭四来源（点外吞按下 · 分发后才关 · ESC 先拦 · 点内不关）/
+//     右键最小集 / 指针点项 / Menu·MenuItem·MenuBar·ContextMenu 四件形体 /
+//     菜单项盒两端分布 + 分隔线有墨
+//   · `tests/Feature/Overlay/ModalTest.php`（27）—— 盖满客户区 / 面板居中 /
+//     遮罩半透明且四角一致 / 面板在遮罩之上 / dismissible 两向（关 vs 吞）/
+//     点面板内按钮 ⇒ 分发但不自关 / 关闭 X 由框架注入 / 模态叠在菜单之上 /
+//     build = ModalHost → Center → PopupPanel
+//   · `tests/Feature/Overlay/OverlayStackTest.php`（10）—— 三层同屏 / 上层 scrim
+//     盖下层面板（**像素**，不是 SVG 字符串）/ 锚点卸载即关 / 贴底翻转 / 嵌套
+//     base / barrier 两向 / 焦点回锚 / 焦点陷阱
+//   · `tests/Feature/Input/PointerCaptureTest.php`（9）—— 捕获期不命中测试 /
+//     抬起与卸载与失活三条释放路径 / 浮层优先于捕获 / 失活不关浮层（反向守卫）/
+//     失活幂等且未挂载也安全
+//   · `tests/Feature/Input/DragDropTest.php`（9）—— 进入/离开/不重复通知/drop
+//     交接 / 拖空与 ESC 都不派发 / 三个声明位（draggable·contextMenu·dragTarget）
+//   ★ 切分判据是**被测对象**不是段号：菜单段里其实混着拖放（主题是 `Drag`）、
+//     浮层栈段里混着指针捕获与窗口失活（主题是"手势什么时候放手"）。
+//   ★ 面板限高与 `panelRect()` 两条另见下一处指针（面板盒本身）。
 
 // ── ㉟ 合成与跳过 layout（arch-v2 `05` §5.4 / §12.2 #10–#12，W4）──
 //    ★ 判据是**调用次数**，不是"画面看起来变了"：画面在"重排了但结果一样"和
@@ -6184,280 +5188,17 @@ check(
 );
 
 
-// ── ㉞c 卡片（§15.7：带内边距的盒样式控件 —— 示例台"分组/层次"的地基）──
-//    ★ 每条判据都要能区分"有 Card"与"没有 Card"（否则是空转）：
-//      ① 内边距**真进**盒尺寸（少了它内容贴边，卡片退化成一个描边矩形）
-//      ② 内容原点 = padding（盒尺寸对、偏移对不上 ⇒ 内容画在角上）
-//      ③ 内禀宽含 padding（少了它 Row/Dock 量出的自然宽窄一圈 ⇒ 文字被挤）
-//      ④ 显式 ->background() ⇒ 默认边框/圆角**整套让位**（§15.7 纪律 3）
-//      ⑤ 阴影三层外扩且由外向内加深（单层实心 = 描边，不是影子）
-
-$cardTextWidget = Text::make('卡片内容');
-$cardTextEl = $cardTextWidget->createElement();
-$cardTextEl->mount(null, $context);
-$cardTextBox = $cardTextEl->effectiveBox();
-$cardTextBox?->layout(BoxConstraints::unbounded());
-$cardTextSize = $cardTextBox?->size();
-
-$cardWidget = Card::make($cardTextWidget);
-$cardEl = $cardWidget->createElement();
-$cardEl->mount(null, $context);
-$cardBox = $cardEl->effectiveBox();
-$cardBox?->layout(BoxConstraints::unbounded());
-
-// ★ M2-5：`RenderCard` 已删，Card 是 `StatelessWidget` ⇒ `effectiveBox()` 拿到的是
-//   **子控件自己的盒**，卡片样式住在它的 `mods` 上。判据因此从"是不是那个类"变成
-//   "样式有没有落到那个盒上"（后者才是真正要守的东西）。
-check(
-    'Card · 样式落在子控件的 mods 上（不再是独立的 RenderCard 盒）',
-    $cardBox !== null && $cardBox->mods()->hasVisual() && $cardBox->mods()->hasPadding()
-);
-check(
-    'Card · 内边距真进盒尺寸（默认 16 ⇒ 盒 = 文字 + 32，两轴都是）',
-    $cardBox?->size() !== null && $cardTextSize !== null
-        && abs($cardBox->size()->width - ($cardTextSize->width + 32.0)) < 0.01
-        && abs($cardBox->size()->height - ($cardTextSize->height + 32.0)) < 0.01,
-    sprintf(
-        '盒 %.6g×%.6g 文字 %.6g×%.6g',
-        $cardBox?->size()?->width ?? -1.0,
-        $cardBox?->size()?->height ?? -1.0,
-        $cardTextSize?->width ?? -1.0,
-        $cardTextSize?->height ?? -1.0,
-    ),
-);
-
-// ★ M2-5 起内容原点不再靠"父盒平移子盒"，而是 `contentOriginX/Y()`（`02` §4.1.1）
-check(
-    'Card · 内容原点 = padding（不是 0 —— 那内容就贴在描边上）',
-    $cardBox !== null
-        && abs($cardBox->contentOriginX() - 16.0) < 0.01
-        && abs($cardBox->contentOriginY() - 16.0) < 0.01,
-    sprintf('contentOrigin %.6g,%.6g', $cardBox?->contentOriginX() ?? -1.0, $cardBox?->contentOriginY() ?? -1.0),
-);
-check(
-    'Card · 内禀宽含 padding（Row/Dock 量自然宽不会窄一圈 ⇒ 文字不被挤）',
-    $cardBox?->intrinsicWidth(0.0) !== null && $cardTextSize !== null
-        && abs($cardBox->intrinsicWidth(0.0) - ($cardTextSize->width + 32.0)) < 0.01,
-    sprintf('内禀宽 %.6g', $cardBox?->intrinsicWidth(0.0) ?? -1.0),
-);
-
-// —— 空 Card：不崩、尺寸 = 内边距（"没内容也要占住 padding"）——
-// ★ 走 Element 挂载：`build()` 对"没内容"给的是 `SizedBox::make()`（纯转发盒），
-//   盒尺寸 = 内边距由基类 ⑤ 步加回。
-$emptyCardEl = Card::make()->paddingAll(8.0)->createElement();
-$emptyCardEl->mount(null, $context);
-$emptyCardBox = $emptyCardEl->effectiveBox();
-$emptyCardBox?->layout(BoxConstraints::unbounded());
-check(
-    'Card · 无内容 ⇒ 尺寸 = 内边距（不崩、不产生 INF）',
-    $emptyCardBox?->size() !== null
-        && abs($emptyCardBox->size()->width - 16.0) < 0.01
-        && abs($emptyCardBox->size()->height - 16.0) < 0.01,
-    sprintf('%.6g×%.6g', $emptyCardBox?->size()?->width ?? -1.0, $emptyCardBox?->size()?->height ?? -1.0),
-);
-
-/**
- * 把盒画到白底光栅上（先平移，好让"盒外"的阴影有地方落）。
- */
-$paintCardAt = function (RenderBox $box, int $w, int $h, float $dx, float $dy) {
-    $list = new DisplayList();
-    $rec = new RecordingCanvas($list);
-    $rec->save();
-    $rec->translate($dx, $dy);
-    $box->paint($rec);
-    $rec->restore();
-
-    $canvas = new RasterCanvas($w, $h, Color::white(), Scale::of(1.0));
-    $list->replay($canvas);
-
-    return $canvas;
-};
-
-// —— 默认样式：底 Pane + 边 Border（1px）+ 圆角 2 ——
-$defaultCard = Card::make(Text::make('卡片内容'));
-$defaultCardBox = $defaultCard->createElement();
-$defaultCardBox->mount(null, $context);
-$defaultCardElBox = $defaultCardBox->effectiveBox();
-$defaultCardElBox?->layout(BoxConstraints::unbounded());
-$defaultSize = $defaultCardElBox?->size();
-$defaultCanvas = $defaultCardElBox === null
-    ? null
-    : $paintCardAt($defaultCardElBox, (int) ceil($defaultSize->width) + 8, (int) ceil($defaultSize->height) + 8, 4.0, 4.0);
-
-// 左边框中点（x=4 ⇒ 盒的左边界；y 取中线避开圆角）
-$midY = $defaultCanvas === null ? 0 : (int) round(4.0 + $defaultSize->height / 2.0);
-$edgePx = $defaultCanvas?->pixelAt(4, $midY);
-check(
-    'Card · 默认有边框（左边框中点不是白底 —— 有 1px 描边卡片才"立"得住）',
-    $edgePx !== null && !$edgePx->equals(Color::white()),
-    $edgePx === null ? 'no canvas' : sprintf('rgb(%d,%d,%d)', $edgePx->r, $edgePx->g, $edgePx->b),
-);
-check(
-    'Card · 默认圆角（左上角外露白底 —— 直角矩形不是 LayUI 卡片形态）',
-    $defaultCanvas?->pixelAt(4, 4)->equals(Color::white()) === true,
-    $defaultCanvas === null ? 'no canvas' : 'p(4,4) 有墨',
-);
-
-// —— 显式 ->background() ⇒ 默认边框/圆角整套让位（§15.7 纪律 3）——
-$flatCard = Card::make(Text::make('卡片内容'))->background(Color::fromRgb(0xFF, 0x00, 0x00));
-$flatEl = $flatCard->createElement();
-$flatEl->mount(null, $context);
-$flatBox = $flatEl->effectiveBox();
-$flatBox?->layout(BoxConstraints::unbounded());
-$flatSize = $flatBox?->size();
-$flatCanvas = $flatBox === null
-    ? null
-    : $paintCardAt($flatBox, (int) ceil($flatSize->width) + 8, (int) ceil($flatSize->height) + 8, 4.0, 4.0);
-check(
-    'Card · 显式 background ⇒ 默认边框让位（边上就是纯底色，不是灰描边）',
-    $flatCanvas?->pixelAt(4, (int) round(4.0 + $flatSize->height / 2.0))?->equals(Color::fromRgb(0xFF, 0x00, 0x00)) === true,
-    $flatCanvas === null ? 'no canvas' : sprintf(
-        'rgb(%d,%d,%d)',
-        $flatCanvas->pixelAt(4, (int) round(4.0 + $flatSize->height / 2.0))->r,
-        $flatCanvas->pixelAt(4, (int) round(4.0 + $flatSize->height / 2.0))->g,
-        $flatCanvas->pixelAt(4, (int) round(4.0 + $flatSize->height / 2.0))->b,
-    ),
-);
-check(
-    'Card · 显式 background ⇒ 默认圆角也让位（角上是纯底色 ⇒ 直角）',
-    $flatCanvas?->pixelAt(4, 4)?->equals(Color::fromRgb(0xFF, 0x00, 0x00)) === true,
-);
-
-// —— 阴影：三层外扩、由外向内加深（单层实心 = 描边，不是影子）——
-$shadowCard = Card::make(Text::make('卡片内容'))->shadow(0.20);
-$shadowEl = $shadowCard->createElement();
-$shadowEl->mount(null, $context);
-$shadowBox = $shadowEl->effectiveBox();
-$shadowBox?->layout(BoxConstraints::unbounded());
-$shadowSize = $shadowBox?->size();
-$shadowCanvas = $shadowBox === null
-    ? null
-    : $paintCardAt($shadowBox, (int) ceil($shadowSize->width) + 24, (int) ceil($shadowSize->height) + 24, 12.0, 12.0);
-
-// 盒左边界 x=12 ⇒ 外扩 1/2/3 层分别落在 x=11 / 10 / 9
-$r = static fn (?int $x): int => $shadowCanvas === null ? -1 : $shadowCanvas->pixelAt($x, (int) round(12.0 + $shadowSize->height / 2.0))->r;
-check(
-    'Card · 阴影三层外扩且由外向内加深（r9 > r10 > r11 ⇒ 是过渡带不是描边）',
-    $shadowCanvas !== null && $r(9) > $r(10) && $r(10) > $r(11) && $r(11) < 255,
-    sprintf('r(9)=%d r(10)=%d r(11)=%d', $r(9), $r(10), $r(11)),
-);
-check(
-    'Card · 阴影不越过第 3 层（x=8 仍是纯白 —— 影子有边界，不糊一片）',
-    $shadowCanvas?->pixelAt(8, (int) round(12.0 + $shadowSize->height / 2.0))->equals(Color::white()) === true,
-);
-$noShadowCanvas = $defaultCardElBox === null
-    ? null
-    : $paintCardAt($defaultCardElBox, (int) ceil($defaultSize->width) + 24, (int) ceil($defaultSize->height) + 24, 12.0, 12.0);
-check(
-    'Card · shadow 默认 0 ⇒ 盒外纯白（不要影子时一个像素都不多画）',
-    $noShadowCanvas?->pixelAt(11, (int) round(12.0 + $defaultSize->height / 2.0))->equals(Color::white()) === true,
-);
-
-
-// —— flex 的交叉轴拉伸（`FlexAlign::Stretch`）——
-//    ★ 这条分支在生产代码里**长期零用法**（示例台的三层卡片外壳是第一个），
-//      2026-10-17 一用就炸真机：旧实现把**主轴与交叉轴写反了**（`Row` 给了紧宽），
-//      同级 `Expanded` 被挤成 0 宽 ⇒ 内容区整片空白 + 第一帧 FATAL。
-//      ⇒ 判据必须同时钉"交叉轴拉满"与"主轴仍自然"两面，只钉一面漏掉的就是这个缺陷。
-
-$naturalTextSize = static function (string $text) use ($context) {
-    $el = Text::make($text)->createElement();
-    $el->mount(null, $context);
-    $box = $el->effectiveBox();
-    $box?->layout(BoxConstraints::unbounded());
-
-    return $box?->size();
-};
-$kidsOf = static function (?RenderBox $box): array {
-    $out = [];
-    $box?->visitChildren(function (RenderBox $c) use (&$out): void {
-        $out[] = $c;
-    });
-
-    return $out;
-};
-
-$stretchNatural = $naturalTextSize('拉伸');
-
-$stretchRowBox = Row::make()->cross(FlexAlign::Stretch)->children([Text::make('拉伸'), Text::make('自然')])
-    ->createElement();
-$stretchRowBox->mount(null, $context);
-$stretchRow = $stretchRowBox->effectiveBox();
-$stretchRow?->layout(BoxConstraints::tight(new Size(300.0, 120.0)));
-$stretchRowKids = $kidsOf($stretchRow);
-check(
-    'Flex · Row + cross(Stretch) ⇒ 子盒高拉满 120（交叉轴拉伸）',
-    ($stretchRowKids[0] ?? null)?->size() !== null
-        && abs($stretchRowKids[0]->size()->height - 120.0) < 0.01,
-    sprintf('实际高 %.6g', $stretchRowKids[0]?->size()?->height ?? -1.0),
-);
-check(
-    'Flex · Row + cross(Stretch) ⇒ 子盒宽仍自然（紧宽是旧缺陷的形态）',
-    ($stretchRowKids[0] ?? null)?->size() !== null && $stretchNatural !== null
-        && abs($stretchRowKids[0]->size()->width - $stretchNatural->width) < 0.01,
-    sprintf('实际宽 %.6g 自然 %.6g', $stretchRowKids[0]?->size()?->width ?? -1.0, $stretchNatural?->width ?? -1.0),
-);
-
-$startRowBox = Row::make()->children([Text::make('拉伸')])->createElement();
-$startRowBox->mount(null, $context);
-$startRow = $startRowBox->effectiveBox();
-$startRow?->layout(BoxConstraints::tight(new Size(300.0, 120.0)));
-$startRowKids = $kidsOf($startRow);
-check(
-    'Flex · Row 默认 Start ⇒ 子盒高仍自然（不拉伸是默认语义）',
-    ($startRowKids[0] ?? null)?->size() !== null && $stretchNatural !== null
-        && abs($startRowKids[0]->size()->height - $stretchNatural->height) < 0.01,
-    sprintf('实际高 %.6g 自然 %.6g', $startRowKids[0]?->size()?->height ?? -1.0, $stretchNatural?->height ?? -1.0),
-);
-
-$stretchColBox = Column::make()->cross(FlexAlign::Stretch)->children([Text::make('拉伸')])->createElement();
-$stretchColBox->mount(null, $context);
-$stretchCol = $stretchColBox->effectiveBox();
-$stretchCol?->layout(BoxConstraints::tight(new Size(200.0, 100.0)));
-$stretchColKids = $kidsOf($stretchCol);
-check(
-    'Flex · Column + cross(Stretch) ⇒ 子盒宽拉满 200（交叉轴是宽）',
-    ($stretchColKids[0] ?? null)?->size() !== null
-        && abs($stretchColKids[0]->size()->width - 200.0) < 0.01,
-    sprintf('实际宽 %.6g', $stretchColKids[0]?->size()?->width ?? -1.0),
-);
-
-// —— 弹性子也要拉满（第二遍 `tightMain` 的对称修正）——
-$stretchFlexRowBox = Row::make()->cross(FlexAlign::Stretch)->children([
-    Text::make('自然'),
-    Expanded::make(Text::make('弹性')),
-])->createElement();
-$stretchFlexRowBox->mount(null, $context);
-$stretchFlexRow = $stretchFlexRowBox->effectiveBox();
-$stretchFlexRow?->layout(BoxConstraints::tight(new Size(300.0, 120.0)));
-$stretchFlexKids = $kidsOf($stretchFlexRow);
-$flexKid = $stretchFlexKids[1] ?? null;
-$flexKidBox = $flexKid === null ? null : $kidsOf($flexKid)[0] ?? null;
-check(
-    'Flex · Row + Stretch ⇒ 弹性子也拉满高（否则同行高度参差）',
-    $flexKidBox?->size() !== null && abs($flexKidBox->size()->height - 120.0) < 0.01,
-    sprintf('弹性子内容高 %.6g', $flexKidBox?->size()?->height ?? -1.0),
-);
-
-// —— Card 在紧宽约束下内容撑满（不要 `loosen()`）——
-//    ★ 父把宽定死（`Column::cross(Stretch)`）时松掉紧约束 ⇒ 卡片撑满、内容缩在
-//      左边，观感像"没对齐"。与 `RenderPadding` 同口径：只 deflate，不放松。
-// ★ M2-5：`Card` 不再多一层盒 ⇒ `effectiveBox()` 就是**内容自己的盒**，
-//   "内容宽度"得往下再走一层才看得见（用 `Column::cross(Stretch)` —— 也正是
-//   示例台侧栏的真实形态）。
-$tightCardEl = Card::make(
-    Column::make()->cross(FlexAlign::Stretch)->children([Text::make('卡片内容')])
-)->createElement();
-$tightCardEl->mount(null, $context);
-$tightCardCol = $tightCardEl->effectiveBox();
-$tightCardCol?->layout(BoxConstraints::tight(new Size(300.0, 80.0)));
-$tightCardKids = $kidsOf($tightCardCol);
-check(
-    'Card · 紧宽约束 ⇒ 内容撑满（300 − 2×16 = 268，不是文字自然宽）',
-    ($tightCardKids[0] ?? null)?->size() !== null
-        && abs($tightCardKids[0]->size()->width - 268.0) < 0.01,
-    sprintf('内容宽 %.6g', $tightCardKids[0]?->size()?->width ?? -1.0),
-);
+// ── ㉞c 卡片 / Flex 交叉轴拉伸 已迁出 ──────────────────────────────────────
+//   · `tests/Unit/Widget/CardTest.php`（13）—— 样式落在子控件 mods 上 / 内边距
+//     真进盒尺寸 / 内容原点 = padding / 内禀宽含 padding / 空卡片只占内边距 /
+//     默认边框 + 圆角 / 显式 background 让位（边框与圆角**两条分开**）/ 阴影
+//     三层由外向内加深 + 不越过第 3 层 / shadow 默认 0 盒外纯白 / 紧宽下内容撑满
+//   · `tests/Unit/Layout/FlexTest::testCrossAxisStretchFillsCrossOnly`（5）——
+//     ★ 这 5 条原本夹在卡片段中间，但主题是 `FlexAlign::Stretch`（主轴与交叉轴
+//       曾写反 ⇒ 同级 Expanded 被挤成 0 宽），归 Flex 不归 Card。
+//   ★ `$kidsOf` 是段内局部闭包：它的第二个使用者出现在 700 行外（侧栏宽度），
+//     已下沉成 `childBoxes()`（`tests/Support/functions.php` 与 `tools/smoke.php`
+//     各一份，同名同实现）。
 
 
 // ── ㉞e 定尺寸（`SizedBox`）与扁平按钮（`ButtonVariant::Flat`）──
@@ -6863,8 +5604,8 @@ $navProbeEl->mount(null, $context);
 $navProbe = $navProbeEl->effectiveBox();
 $navProbe?->layout(BoxConstraints::loose(new Size(940.0, 600.0)));
 // ★ M2-5：`Card` 不再是盒 ⇒ 树少一层（SizedBox → Column → Button）
-$navCol = $kidsOf($navProbe)[0] ?? null;
-$navBtnKids = $kidsOf($navCol);
+$navCol = childBoxes($navProbe)[0] ?? null;
+$navBtnKids = childBoxes($navCol);
 check(
     '集成 · 侧栏 SizedBox(200) ⇒ 导航项宽 180（整行可点，右边缘齐）',
     ($navBtnKids[0] ?? null)?->size() !== null

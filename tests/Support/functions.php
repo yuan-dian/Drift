@@ -128,6 +128,26 @@ if (!\function_exists('boxOrigin')) {
     }
 }
 
+if (!\function_exists('childBoxes')) {
+    /**
+     * 盒的**直接孩子**盒列表（子类不是 RenderBox 的跳过）。
+     *
+     * ★ 原先只是 smoke 里某个断言段内的局部闭包（`$kidsOf`），却被 700 行后的
+     *   「侧栏宽度」用例借去 —— 与 `spinCanvas()` 同一个坑：工具不该长在断言段里。
+     */
+    function childBoxes(?\Drift\Layout\RenderBox $box): array
+    {
+        $out = [];
+        $box?->visitChildren(static function ($child) use (&$out): void {
+            if ($child instanceof \Drift\Layout\RenderBox) {
+                $out[] = $child;
+            }
+        });
+
+        return $out;
+    }
+}
+
 if (!\function_exists('expectBox')) {
     /**
      * 断言某个盒的**矩形**（客户区绝对坐标）。
