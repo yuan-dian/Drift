@@ -648,6 +648,7 @@
 | `TableSelectionMode` | enum | src/Widget/TableSelectionMode.php:6 |
 | `TableSort` | class | src/Widget/TableSort.php:8 |
 | `TableSortDirection` | enum | src/Widget/TableSortDirection.php:6 |
+| `TabView` | class | src/Widget/TabView.php:74 |
 | `Text` | class | src/Widget/Text.php:10 |
 | `TextField` | class | src/Widget/TextField.php:9 |
 | `TextFieldState` | class | src/Widget/TextFieldState.php:15 |

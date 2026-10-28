@@ -151,7 +151,10 @@ ScrollView / LazyColumn / LazyRow / LazyGrid / Grid / Stack / Image / Icon / Ric
 
 ### P2 —— 控件库存（按业务需要推进，不阻塞）
 9. Table / DataGrid —— **结构与分阶段见 `docs/DESIGN-TABLE-2026-10-26.md`**（七阶段，每阶段不推翻前一阶段）。
-10. TabView / TabBar。
+10. TabView / TabBar —— **2026-10-29 已落地 `TabView`**（`src/Widget/TabView.php`，判据
+    `tests/Feature/Widget/TabViewTest.php`，见 `REVIEW-2026-10-28.md` §15）。
+    ★ **真 `TabBar` 仍未做**：`TabView` 的页签条 v1 直接复用 `SegmentedControl`（等宽胶囊）。
+    内容宽度 + 与内容区相连的指示条、关闭按钮、可滚动页签条都还没做 —— 需要的人先提。
 11. Wrap + `ConstrainedBox`/`IntrinsicWidth`（布局补齐）。
     ★ **Wrap 不是"加个控件"**：`Overflow.php` 的 docblock 已记它被删的理由（类别错误——
     重排不是舍弃），推翻条件是"子项数运行时才知道 + 必须自动换行"，届时它是**独立布局
