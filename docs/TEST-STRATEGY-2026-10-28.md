@@ -177,7 +177,15 @@ PHPUnit 默认第一条断言失败就中止方法。GUI 断言不适用：一�
 | **S0** ✅ | 建 `tests/` 骨架 + `ColumnWidths` 纯单元 + `Table/Phase1` 场景 | 20 断言绿 / lint 0 error |
 | **S1** ✅ | 按**被测对象**（不是分节）搬 Table 的 9 个分节 | 每条与 smoke 原断言**条数对得上** |
 | **S2** ✅ | 每搬完一个主题就从 `smoke.php` 删掉对应段 | smoke 条数 = 1731 − 已搬数，且全绿 |
-| **S3** 🚧 | 其余主题（布局 / 控件 / 输入 / 状态 / 浮层 / 应用 / 异步 / 主题 / 动画 / 日志 / 语义）照同一形状搬 | 每搬一个跑一次全绿 |
+| **S3** 🚧 | 其余主题照同一形状搬（**按被测对象切文件、按关注点切方法**，纯逻辑→Unit、特征链→Feature） | 每搬一个：phpunit 全绿 + smoke 精确对账 + lint 0 error |
+| &nbsp;&nbsp;· 帧预算/挂载登记 ✅ | `tests/Feature/Frame/{BudgetTest,MountRegistryTest}`（共用 `tests/Support/Frame`） | smoke 1585 → 1575（−10） |
+| &nbsp;&nbsp;· 窗口状态 ✅ | `tests/Feature/State/WindowStateTest` | 1575 → 1563（−12） |
+| &nbsp;&nbsp;· 语义树 ✅ | `tests/Feature/Semantics/SemanticsTest`（$semLay 夹具保留在 smoke） | 1563 → 1548（−15） |
+| &nbsp;&nbsp;· 表单控件(Checkbox/Radio/Toggle) ✅ | `tests/Feature/Widget/ToggleTest` | 1548 → 1535（−13） |
+| &nbsp;&nbsp;· 分节原语(Divider/Progress) ✅ | `tests/Feature/Widget/DividerProgressTest` | 1535 → 1520（−15） |
+| &nbsp;&nbsp;· 图标 ✅ | `tests/Feature/Widget/IconTest` | 1520 → 1515（−5） |
+| &nbsp;&nbsp;· 动画 ✅ | `AnimationControllerTest`(Unit) + `AnimationChainTest`(Feature) + `FramePhaseTest`(Unit) | 1515 → 1492（−23） |
+| &nbsp;&nbsp;· 待搬 | 布局(Flex/结构/Text/Button/TextField) / 输入 / 状态层 / 光标形状 / Spinner / 错误边界 / 语义推送 / 渲染图像 / ensureVisible / 虚拟列表锚点 | |
 | **S4** | 纯单元（485 条里的）改成标准 `TestCase`：`assertSame` + `#[DataProvider]` | `--testsuite=unit` 覆盖它们 |
 
 ★ S1–S3 是**纯搬迁**（断言一行不改，只改"在哪个文件哪个方法里"）。
@@ -378,3 +386,20 @@ smoke 那一份保留**（它服务的是"还没搬走的后续段"，不是历�
 
 ★ `spinCanvas` 的 `Scale` 在 `Drift\Geometry`（不是 `Drift\Rendering`）—— 又踩一次
 "命名空间别按目录推"（见 §9）。已在 functions.php 写全限定名，不再依赖 `use`。
+
+### 10.8 S3 5~7 批落地的文件账
+
+| 批 | 文件 | 断言 | smoke 对账 |
+|---|---|---|---|
+| 5 分节原语 | `tests/Feature/Widget/DividerProgressTest.php` | 15（Divider/Progress 全分支） | 1535 → 1520（−15） |
+| 6 图标 | `tests/Feature/Widget/IconTest.php` | 5（挂载/正方形/画墨/枚举完整性/不进语义树） | 1520 → 1515（−5） |
+| 7 动画 | `tests/Unit/Widget/AnimationControllerTest.php`（15）+ `tests/Feature/Animation/AnimationChainTest.php`（8）+ `tests/Unit/App/FramePhaseTest.php`（2） | 25 | 1515 → 1492（−23） |
+
+★ 动画批再次印证"按关注点切文件"：同一 `㊹` 段里，纯算术（Curve/Controller）
+不依赖帧驱动 → 放 Unit 层；"帧真的重建了"必须用真实跑帧夹具应用验 → 放 Feature 层。
+这不是过度拆分，而是让"纯逻辑失败"和"链断了"在报告里一眼分开。
+
+★ 删 `㊹` 段时，帧阶段顺序那条依赖 `getcwd().'/build/frame.trace.out'`
+落盘 + `Errors::recentDiagnostics()` 环形缓冲。断言用**前后条数差**而非 `Errors::reset()`，
+避免清掉同进程里别的用例依赖的 `$fatalBox`（与 smoke 同款理由）。在 PHPUnit 全量跑时
+cwd 是项目根，落盘路径与 smoke 一致，✅ 通过。
