@@ -22,9 +22,7 @@ use Drift\Dev\Smoke\Layout\BleedBox;
 use Drift\Dev\Smoke\Layout\SolidBox;
 use Drift\Dev\Smoke\Layout\LayoutCountBox;
 use Drift\Dev\Smoke\Layout\LayoutCountWidget;
-use Drift\Dev\Smoke\Commands\CommandWidget;
 use Drift\Dev\Smoke\Commands\EchoCommands;
-use Drift\Dev\Smoke\Commands\PickyCommands;
 use Drift\App\Application;
 use Drift\App\FrameClock;
 use Drift\Platform\Backdrop;
@@ -43,8 +41,6 @@ use Drift\App\Paths;
 use Drift\App\WindowStateStore;
 use Drift\Dev\Smoke\WindowState\FakeWindowHost;
 use Drift\Dev\Smoke\ErrorBoundary\BoomPage;
-use Drift\Dev\Smoke\Frame\QuietWidget;
-use Drift\Dev\Smoke\Frame\EpochWidget;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Smoke\Frame\TickerWidget;
 use Drift\Dev\Smoke\Frame\TickerState;
@@ -4686,56 +4682,11 @@ if (is_file($log)) {
     unlink($log);
 }
 
-// ── ㉔ Commands：参数 / 注册表 / 冒泡链第 ① 环（§11.4.3）──
-
-check(
-    'Commands · arg 不是裸 int（int id 与 string key 各有一个槽）',
-    CommandArg::none()->i === 0 && CommandArg::none()->s === ''
-        && CommandArg::id(7)->i === 7 && CommandArg::id(7)->s === ''
-        && CommandArg::key('nav.users')->s === 'nav.users' && CommandArg::key('nav.users')->i === 0
-);
-
-$echo = new EchoCommands();
-$router = CommandRouter::make()->on('user.del', $echo);
-check('Commands · on() 返回同一个注册表（可链式，不每步 new）', $router->names() === ['user.del']);
-check(
-    'Commands · dispatch 把名字与参数原样递给 handler',
-    $router->dispatch('user.del', CommandArg::id(42)) && $echo->seen === [['user.del', 42, '']]
-);
-
-// handler 说"不是我管" ⇒ 视为没接（调用方继续第 ④ 环）
-$picky = new PickyCommands('nav.users');
-$pickyRouter = CommandRouter::make()->on('nav.users', $picky);
-check(
-    'Commands · handler 返回 false ⇒ 视为没接（继续冒泡的语义）',
-    !$pickyRouter->dispatch('nav.signup', CommandArg::none())
-);
-
-// 没人接 ⇒ Diagnostic 级上报，**不静默**（菜单项亮了但点了什么都没发生最难查）
-fresh($log);
-$ringBefore = count(Errors::recentDiagnostics());
-check('Commands · 未注册的名字 ⇒ 返回 false 且不中止', !$pickyRouter->dispatch('ghost.cmd', CommandArg::none()));
-check(
-    'Commands · 未注册 ⇒ 进了 Diagnostic 环形缓冲（不是静默）',
-    count(Errors::recentDiagnostics()) === $ringBefore + 1
-);
-
-// 冒泡链第 ① 环：State 默认"不接"
-check('Commands · State 默认不接命令（不接是常态，不做成抽象）', (new CommandWidget())->createState()->handleCommand('x', CommandArg::none()) === false);
-
-// 第 ① 环接了 ⇒ 不需要走到注册表
-fresh($log);
-$cmdElement = (new CommandWidget())->createElement();
-$cmdElement->mount(null, $context);
-$cmdState = $cmdElement->state();
-$taken = $cmdState->handleCommand('widget.echo', CommandArg::id(3));
-$skipped = $cmdState->handleCommand('other.thing', CommandArg::none());
-check(
-    'Commands · State 接管自己的命令、其余放行（冒泡链有明确返回值）',
-    $taken && !$skipped && $cmdState->handled === ['widget.echo', 'other.thing']
-);
-$cmdElement->unmount();
-
+// ── ㉔ Commands：参数 / 注册表 / 冒泡链第 ① 环 已迁出 ────────────────────────
+//   · `tests/Unit/Commands/CommandTest.php` —— CommandArg 双槽（i + s）/ on() 链式 /
+//     dispatch 原样递参 / handler 返回 false ⇒ 视为没接 / 未注册 ⇒ Diagnostic 环形缓冲 /
+//     State 默认不接 / 接管自己的命令且其余放行
+//   ★ 同名重复注册 ⇒ Fatal（exit 3 + Errors.log）留下面两条子进程判据。
 // 同名重复注册 ⇒ Fatal（子进程）
 fresh($log);
 [$code, $output] = runCase(__FILE__, 'cmdup', null);
@@ -4747,156 +4698,25 @@ if (is_file($log)) {
     unlink($log);
 }
 
-// ── ㉕ App.Frame：flush → layout → paint → present（§5.2）──
+// ── ㉕ App.Frame：flush → layout → paint → present 已迁出 ────────────────────
+//   · `tests/Feature/App/FrameLoopTest.php` —— setState 延后到帧末（builds 1→2）/
+//     时间戳注入不读环境时钟 / beginFrame·endFrame 各一次 / 没脏不重建（脏边界）/
+//     layout → paint → present 一路到表面（画布有墨）/ 帧外 update 换盒照样排过
+//     （2026-10-24 缺陷：settle 的"帧内重建差"为 0 ⇒ 跳过 layout ⇒ size 恒 null）
 
-$surface = new SurfaceProbe();
-$surface->resize(320, 240, 1.0);
-$frame = new Frame($surface);
-
-// setState **不立即重建**，Frame.run 才消费脏标记（§5.2 裁决 3）
-// ★ 根必须是**有盒**的节点（Column）：Frame 在 flush 之后才拿 renderObject，
-//   拿不到就直接返回 —— 这是设计如此（结构根无从排起），不是 bug。
-$rootElement = Column::make()->children([new TickerWidget()])->createElement();
-$rootElement->mount(null, $context);
-$tickerElement = $rootElement->childAt(0);
-check('Frame · 挂载即建出子树', $tickerElement !== null && $tickerElement->childCount() === 1);
-$ticker = $tickerElement?->state();
-check('Frame · 挂载时 State 只建一次', $ticker !== null && $ticker->builds === 1);
-$firstChild = $tickerElement?->childAt(0)?->widget();
-check(
-    'Frame · 首帧 build 的产物来自 State 初值',
-    $firstChild instanceof LeafProbe && $firstChild->width === 0.0
-);
-
-$ticker?->tick(); // 只标脏
-check(
-    'Frame · setState 之后、Frame 之前 ⇒ 还没重建',
-    $ticker !== null && $ticker->builds === 1 && $ticker->needsBuild()
-);
-
-$frame->run($rootElement, BoxConstraints::tight(new Size(320.0, 240.0)), 16.0);
-check(
-    'Frame · 帧末 flush 重建了脏节点',
-    $ticker !== null && $ticker->builds === 2 && !$ticker->needsBuild()
-);
-$secondChild = $tickerElement?->childAt(0)?->widget();
-check(
-    'Frame · 重建后子树换成新产物（setState → flush → 新 widget）',
-    $secondChild instanceof LeafProbe && $secondChild->width === 1.0,
-    (string) ($secondChild instanceof LeafProbe ? $secondChild->width : -1.0)
-);
-
-// 时间戳是**注入**的，不读环境时钟（§5.2 裁决 2 ⇒ G3 的 golden 基础）
-check('Frame · beginFrame 收到注入的时间戳', $surface->lastTimestamp === 16.0);
-check('Frame · beginFrame / endFrame 各一次（不重不漏）', $surface->frames === 1 && $surface->ends === 1);
-
-// 脏边界：没脏的节点不该被重建
-$quietElement = (new QuietWidget())->createElement();
-$quietElement->mount(null, $context);
-$quiet = $quietElement->state();
-$frame->run($quietElement, BoxConstraints::tight(new Size(320.0, 240.0)), 32.0);
-check('Frame · 没脏的节点不重建（flush 有脏边界，不是每帧全树）', $quiet->builds === 1);
-
-// layout + paint 真的跑了：一棵 Column[Text] 有墨上图
-$columnElement = Column::make()->children([Text::make('Hi')])->createElement();
-$columnElement->mount(null, $context);
-$surface2 = new SurfaceProbe();
-$surface2->resize(320, 240, 1.0);
-$frame2 = new Frame($surface2);
-$frame2->run($columnElement, BoxConstraints::tight(new Size(320.0, 240.0)), 48.0);
-check(
-    'Frame · layout → paint → present 一路通到表面（画布上有墨）',
-    $surface2->canvas !== null && inkCount($surface2->canvas) > 0,
-    '墨点数 ' . (string) ($surface2->canvas !== null ? inkCount($surface2->canvas) : -1)
-);
-
-// ★★ 回归（2026-10-24）：**帧外换盒必须触发重排**（`State::$boxEpoch`）。
-//   缺陷形态：直调 `Element::update()` 换盒**不经过 settle** ⇒ `settle()` 的
-//   "帧内重建差"为 0 ⇒ `Frame` 判"本帧没变" ⇒ 跳过 layout ⇒ 新盒 `size` 恒
-//   `null` ⇒ **之后所有命中测试落空**。而 overlay 计数 / 焦点 / 声明全对 ⇒ 极难定位。
-//   ★ 特意用**有状态根**：`update()` 会走 `StatefulElement::rebuild()` →
-//     `noteRebuilt()`，但那一次发生在 settle 的**快照之前** ⇒ 旧判据照样看不见。
-//     这是本缺陷最难的一条（"明明计数加了，为什么说没重建"）。
-$epSurface = new SurfaceProbe();
-$epSurface->resize(320, 240, 1.0);
-$epFrame = new Frame($epSurface);
-$epRoot = (new EpochWidget())->createElement();
-$epRoot->mount(null, $context);
-$epFrame->run($epRoot, BoxConstraints::tight(new Size(320.0, 240.0)), 0.0);
-check('Frame · 首帧排过（根盒有尺寸）', $epRoot->effectiveBox()?->hasSize() === true);
-
-$epRoot->update(new EpochWidget());   // 帧外换盒：不经过 settle
-$epFrame->run($epRoot, BoxConstraints::tight(new Size(320.0, 240.0)), 16.0);
-$epBox = $epRoot->effectiveBox();
-check(
-    'Frame · 帧外换盒（update 直调）⇒ 新盒照样排过（不跳过 layout）',
-    $epBox !== null && $epBox->hasSize(),
-    $epBox === null ? 'effectiveBox=null' : ($epBox->hasSize() ? 'ok' : 'size=null')
-);
-
-// ── ㉖ Routing：RouteTable（数据）+ Offstage（保状态，§12.1 第 4/7 条）──
-
-$table = RouteTable::make()
-    ->route('users', static fn (): Widget => new LeafProbe(1.0))
-    ->route('signup', static fn (): Widget => new LeafProbe(2.0));
-check(
-    'Routing · route() 链式 + names() 可枚举（devtools 列举的输入）',
-    $table->names() === ['users', 'signup']
-);
-$built = $table->build('users');
-check('Routing · build() 调工厂造页', $built instanceof LeafProbe && $built->width === 1.0);
-check('Routing · 未命中 ⇒ null（开放域 ⇒ 由调用方 default 处理）', $table->build('ghost') === null);
-check('Routing · has() 与 names() 一致', $table->has('users') && !$table->has('ghost'));
-
+// ── RouteTable（纯数据）已迁出 ──────────────────────────────────────────────
+//   · `tests/Unit/Routing/RouteTableTest.php` —— 链式登记 + names 可枚举 / 工厂造页 /
+//     未命中 ⇒ null / has 与 names 一致
+//   ★ 同名路由重复注册 ⇒ Fatal 留下面两条子进程判据。
 fresh($log);
 [$code, $output] = runCase(__FILE__, 'routedup', null);
 check('Routing · 同名路由重复注册 ⇒ Fatal（不静默覆盖）', $code === 3, '实际 ' . $code . ' / ' . $output);
 check('Routing · 重复注册写了 Errors.log', str_contains(logText($log), '已注册'));
 
-// ① Offstage 三档里的"保留"档：切走再切回，State 还是同一个
-$offstage = Offstage::make(new CounterWidget());
-$offElement = $offstage->createElement();
-$offElement->mount(null, $context);
-$hidden = $offElement->childAt(0)?->state();
-check('Routing · 可见 ⇒ 子层在树里', $offElement->childCount() === 1);
-check('Routing · 挂载即建出 State', $hidden !== null);
-
-$hidden?->bump(); // 标脏，先不重建
-$updated = Offstage::make($offstage->child(), false);
-$offElement->update($updated);
-check('Routing · 隐藏 ⇒ 子层不在树里（不 layout / 不 paint / flush 走不到）', $offElement->childCount() === 0);
-check('Routing · 隐藏**不卸载**（State 没被 dispose）', $hidden !== null && !$hidden->disposed);
-
-// 隐藏期间 Frame 不该重建它 —— 否则"跳过 layout"是假的
-$frame->run($offElement, BoxConstraints::tight(new Size(320.0, 240.0)), 64.0);
-check('Routing · 隐藏期间的 Frame 走不到它（脏标记留着）', $hidden !== null && $hidden->needsBuild());
-
-// 切回来 ⇒ 同一个 State（§12.3"保留"档的全部意义）
-$backElement = Offstage::make($offstage->child(), true);
-$offElement->update($backElement);
-$restored = $offElement->childAt(0)?->state();
-check('Routing · 切回来 ⇒ State 是同一个对象（状态没丢）', $restored === $hidden);
-// ★ 隐藏期间攒下的脏标记在**切回来那一刻就兑现**（update 内部 settle），
-//   不等下一帧、也不用谁手动 rebuild。这正是"切回来不是旧画面"的机制保证：
-//   若改成"留着等 Frame"，帧还没跑时画面就是旧的 —— 而且是静默的。
-check(
-    'Routing · 切回来 ⇒ 隐藏期间攒的 setState 立即兑现',
-    $hidden !== null && !$hidden->needsBuild() && $hidden->builds === 2 && $hidden->bumps === 1,
-    'builds=' . (string) ($hidden?->builds ?? -1) . ' bumps=' . (string) ($hidden?->bumps ?? -1)
-);
-
-// ② 另一种"消失"是丢弃：整个 Offstage 被卸载 ⇒ State 必须 dispose（不许泄漏）
-//    ★ 先可见再隐藏：隐藏子层拿不到引用（那正是"树里没有它"的证明），
-//      所以要在它还看得见时把 State 抓在手里。
-$doomed = Offstage::make(new CounterWidget());
-$doomElement = $doomed->createElement();
-$doomElement->mount(null, $context);
-$doomState = $doomElement->childAt(0)?->state();
-$offElement->update(Offstage::make($doomed->child(), false));
-$doomElement->update(Offstage::make($doomed->child(), false));
-$doomElement->unmount();
-check('Routing · 隐藏页被卸载 ⇒ State 仍走 dispose（不漏）', $doomState !== null && $doomState->disposed);
-
+// ── Offstage（保留档 / 丢弃档）已迁出 ──────────────────────────────────────
+//   · `tests/Feature/Widget/OffstageTest.php` —— 可见在树 / 隐藏摘掉但不 dispose /
+//     隐藏期间 Frame 走不到（脏标记留着）/ 切回同一 State 且脏标记立即兑现 /
+//     整个 Offstage 被卸载时 State 走 dispose
 fresh($log);
 if (is_file($log)) {
     unlink($log);
