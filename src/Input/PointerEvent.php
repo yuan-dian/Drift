@@ -145,7 +145,13 @@ final readonly class PointerEvent implements InputEvent
         );
     }
 
-    /** 是不是一次双击的**第二下**（`clickCount === 2`；三击及以上不算） */
+    /**
+     * 是不是一次双击的**第二下**（`clickCount === 2`；三击及以上不算）。
+     *
+     * ★ 框架内的表格已改看 `clickCount >= 2`（阶段 9：分流按"在不在编辑"分，
+     *   第 3、4 下也要进来）⇒ **本方法目前没有 `src/` 消费者**，只留作公共面。
+     *   判"是不是双击"时别用它 —— 三击的第三下会落到 `false`，而那一下通常也要处理。
+     */
     public function isDoubleClick(): bool
     {
         return $this->clickCount === 2;

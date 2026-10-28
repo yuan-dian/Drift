@@ -1561,8 +1561,10 @@ final class TableState extends State implements Scrollable, EditableText
 
         // ★ 双击 / 三击（阶段 7b + 9）：**放在选择之前** —— 本方法尾部有三处早退
         //   （没配 `selection()` / 没有 `keyOf` 的结果），双击不该被它们吃掉。
-        //   ★ 判据是 `isDoubleClick()`（`=== 2`）而不是"≥ 2"：三击的第三下会落到
-        //     刚建出来的编辑器上，用"≥"会把刚进的编辑**收口再重开**（闪一下）。
+        //   ★ 判据从 `isDoubleClick()`（`=== 2`）改成了 `clickCount >= 2`：既然分流
+        //     要按"在不在这一格编辑"分（而不是按第几下），就必须让第 3、4 下也进来。
+        //     旧注释担心的"用 ≥ 会把刚进的编辑收口再重开"仍然成立 —— 但它由
+        //     `handleMultiClick()` 里的 `isEditingCell()` 挡住，不再是计数的事。
         //   ★ 不可编辑的列 ⇒ `beginEdit()` 自己返回 false，这里什么都不做（单击
         //     只落光标格）—— 与"Enter 在不可编辑列上放行"是同一条纪律。
         if ($contentX !== null && $event->clickCount >= 2) {
