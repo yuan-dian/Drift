@@ -141,7 +141,6 @@ use Drift\Text\TextStyle;
 use Drift\Theme\SystemTheme;
 use Drift\Theme\ThemeData;
 use Drift\Widget\Activatable;
-use Drift\Widget\ActivationContext;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
 use Drift\Widget\Card;
@@ -173,7 +172,6 @@ use Drift\Widget\Checkbox;
 use Drift\Widget\Radio;
 use Drift\Widget\IconButton;
 use Drift\Widget\SegmentedControl;
-use Drift\Widget\Segment;
 use Drift\Widget\Slider;
 use Drift\Dev\Smoke\App\SliderApplication;
 use Drift\Widget\Option;
@@ -4152,166 +4150,25 @@ check(
     'idx=' . $slSvIdx . ' events=' . json_encode($slSvApp->events),
 );
 
-// ── 交互状态层（08 §4.1）：hover 推给 acceptsHover() 的盒 ──
-//   ★ 判据落在**盒的状态**上（不是"方法被调用"）：hoverTo 是把状态推到盒，
-//     画不画由盒的 paintContent 决定 —— 状态没推对，视觉一定不对。
-//   ★ 反例：悬停在布局容器上 ⇒ 没有盒接受，按钮不该整块变亮。
-$hvRoot = Column::make()->children([
-    Button::make('悬停我'),
-])->createElement();
-$hvRoot->mount(null, $context);
-$hvRoot->effectiveBox()?->layout(BoxConstraints::loose(new Size(320.0, 200.0)));
-$hvEl = findElement($hvRoot, static fn (Element $e): bool => $e->widget() instanceof Button);
-$hvBox = $hvEl?->effectiveBox();
-$hvFm = new FocusManager();
-check(
-    '状态层 · RenderButton 声明了状态色 ⇒ acceptsHover=true',
-    $hvBox !== null && $hvBox->acceptsHover() === true,
-);
-$hvFm->hoverTo($hvEl);
-check(
-    '状态层 · hoverTo(Button) ⇒ 它的盒 hovered=true',
-    $hvBox !== null && $hvBox->hovered() === true,
-);
-$hvFm->hoverTo($hvRoot);   // 悬停在布局容器上
-check(
-    '状态层 · 悬停容器 ⇒ 按钮复位（列不会整块变色）',
-    $hvBox?->hovered() === false,
-);
-$hvFm->hoverTo($hvEl);
-$hvFm->hoverTo(null);      // 离开窗口
-check(
-    '状态层 · hoverTo(null) ⇒ 复位（离开不留"常亮"）',
-    $hvBox?->hovered() === false,
-);
-
-// —— 指针侧激活（§9.1 动作缝的另一半：鼠标**按下**即触发，与 Enter/Space 同入口）
-//   ★ 按下即激活：当前指针只有 down 相位（up 相位要 P1 的指针事件）。
-//   ★ 判据设计：点空白（无焦点可落）必须**不**触发 —— 若实现退化成
-//     "焦点非空就激活"，空点击会误触发上一个焦点控件，本条即 FAIL。
-$ptrApp = new NavApplication();
-$ptrApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
-$navBtnEl = findElement($ptrApp->rootElement(), fn (Element $e): bool => $e->widget() instanceof NavButton);
-$cancelEl = findElement($ptrApp->rootElement(), fn (Element $e): bool => $e->widget() instanceof Button && !$e->widget() instanceof NavButton);
-$navBox = $navBtnEl?->effectiveBox();
-[$nbx, $nby] = $navBox === null ? [0.0, 0.0] : boxOrigin($navBox);
-$nbw = $navBox?->size()?->width ?? 0.0;
-$nbh = $navBox?->size()?->height ?? 0.0;
-$ptrApp->dispatchInput(PointerEvent::down($nbx + $nbw / 2, $nby + $nbh / 2));
-check(
-    '激活 · 鼠标按下「列表」按钮 ⇒ 命令带 arg 派发（与 Enter 同入口）',
-    $ptrApp->recorder()->seen === ['nav.users#7/'],
-    implode(',', $ptrApp->recorder()->seen),
-);
-$ptrApp->dispatchInput(PointerEvent::down(160.0, 210.0));   // Center 区：Text 不可聚焦
-check(
-    '激活 · 点空白（无焦点可落）⇒ 不误触发上一个焦点控件',
-    $ptrApp->recorder()->seen === ['nav.users#7/'],
-    implode(',', $ptrApp->recorder()->seen),
-);
-$cancelBox = $cancelEl?->effectiveBox();
-[$cbx, $cby] = $cancelBox === null ? [0.0, 0.0] : boxOrigin($cancelBox);
-$cbw = $cancelBox?->size()?->width ?? 0.0;
-$cbh = $cancelBox?->size()?->height ?? 0.0;
-$ptrApp->dispatchInput(PointerEvent::down($cbx + $cbw / 2, $cby + $cbh / 2));
-check(
-    '激活 · 鼠标按下「取消」按钮 ⇒ onPressed 被调（焦点随点击转移）',
-    $ptrApp->pressed === ['cancelled'],
-    implode(',', $ptrApp->pressed),
-);
-
-// 无焦点时激活键 ⇒ 无事发生（不崩、不误派发）
-$idleApp = new NavApplication();
-$idleApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
-$idleApp->dispatchInput(KeyEvent::down(KeyChord::enter()));
-check(
-    '激活 · 无焦点时 Enter ⇒ 无事发生',
-    $idleApp->recorder()->seen === [] && $idleApp->pressed === [],
-);
-
-// 非激活键不触发（Enter/Space 之外的键不该激活按钮）
-$quietApp = new NavApplication();
-$quietApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
-$quietApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
-$quietApp->dispatchInput(KeyEvent::down(KeyChord::left()));
-check(
-    '激活 · 方向键不触发激活（只有 Enter/Space）',
-    $quietApp->recorder()->seen === [] && $quietApp->pressed === [],
-);
-
-// —— 能力接口 `Activatable`（S1 第 10 步 4j-b，2026-10-25）——
-//   ★ 为什么要有这一组：重构把 `InputRouter::activateFocusedWidget()` 的 4 条
-//     `instanceof`（Menu / ToggleBase / Segment / Button）换成了一次能力判断。
-//     **漏 implements 的后果是静默的** —— 框架 `return`、Enter 什么都不做，
-//     而"直调 activate()"的用例照样绿（那种调用不经过框架）。
-check(
-    'Activatable · 四个可激活控件都声明了能力（漏一个 ⇒ 框架激活静默失效）',
-    Button::make('b') instanceof Activatable
-        && Menu::make('m') instanceof Activatable
-        && Checkbox::make('c') instanceof Activatable
-        && Segment::make('s', 1) instanceof Activatable,
-);
-
-// Menu 覆写 ⇒ 只走 onOpen，**不**落 Button 的命令。
-//   ★ 旧实现靠"Menu 分支必须排在 Button 之前"达到同一语义（顺序脆弱，注释自己写着）；
-//     现在是虚方法覆写。
-//   ★★ 判据必须**两边都记**：只记 onOpen 的话，"命令也派发了"这件事看不出来
-//      （实测：第一版断言就是这么写的，把 Menu 改成 `parent::activate()` 之后
-//      它照样绿）。所以 dispatcher 与 onOpen 记进同一个数组 —— 谁多跑一次都红。
-$menuSaw = [];
-$menuProbe = Menu::make('文件')
-    ->command('menu.should.not.fire')
-    ->onOpen(function (Menu $m, ?Element $anchor) use (&$menuSaw): void {
-        $menuSaw[] = $anchor === null ? 'open:no-anchor' : 'open:anchor';
-    });
-$menuProbe->activate(new ActivationContext(null, function (string $command, CommandArg $arg) use (&$menuSaw): void {
-    $menuSaw[] = 'cmd:' . $command;
-}));
-check(
-    'Activatable · Menu::activate ⇒ 只走 onOpen（Button 的命令不被派发）',
-    $menuSaw === ['open:no-anchor'],
-    implode(',', $menuSaw),
-);
-
-// Button：命令优先；无命令才回落 onPressed（与搬迁前逐字相同）
-$cmdSaw = [];
-$cmdProbe = Button::make('b')
-    ->command('cmd.a')
-    ->onPressed(function () use (&$cmdSaw): void {
-        $cmdSaw[] = 'pressed';
-    });
-$cmdProbe->activate(new ActivationContext(null, function (string $command, CommandArg $arg) use (&$cmdSaw): void {
-    $cmdSaw[] = $command;
-}));
-check(
-    'Activatable · Button::activate ⇒ 命令优先，onPressed 不调',
-    $cmdSaw === ['cmd.a'],
-    implode(',', $cmdSaw),
-);
-
-$pressSaw = [];
-$pressProbe = Button::make('b')->onPressed(function () use (&$pressSaw): void {
-    $pressSaw[] = 'pressed';
-});
-$pressProbe->activate(ActivationContext::none());
-check(
-    'Activatable · 无命令的 Button::activate ⇒ 回落 onPressed（上下文可以什么都不给）',
-    $pressSaw === ['pressed'],
-    implode(',', $pressSaw),
-);
-
-// ToggleBase / Segment：激活 = 换值，上下文里没有它们要的东西
-$toggleSaw = [];
-$cbProbe = Checkbox::make('c')->checked(false)->onChanged(function (bool $on) use (&$toggleSaw): void {
-    $toggleSaw[] = $on ? 'on' : 'off';
-});
-$cbProbe->activate(ActivationContext::none());
-check(
-    'Activatable · Checkbox::activate ⇒ 换值（false ⇒ true）',
-    $toggleSaw === ['on'],
-    implode(',', $toggleSaw),
-);
-
+// ── 交互状态层 hover / 指针按下激活 / Activatable 能力 已迁出 ────────────────
+//   → `tests/Feature/Input/HoverTest::testHoverStateGoesToTheAcceptingBox`（6）——
+//     悬停**视觉态**。与同文件 `testHoverNotifiesOnlyOnTargetChange` 判的 `hover()`
+//     **回调**是 `FocusManager::hoverTo()` 里**两条独立判据**（一条只认
+//     `acceptsHover()` 的盒，一条只认声明了 `hover()` 的祖先）。
+//     判据：`acceptsHover()` 成对（按钮接受 / 容器不接受）+ 起点未悬停（否则下面
+//     两条"复位"恒真）+ 推给按钮 + 悬停容器复位 + `hoverTo(null)` 复位。
+//   → `tests/Feature/Input/ActivationTest.php`（6 方法 / 19 条）——
+//     ① 指针按下即激活：按下列表 ⇒ 命令带 arg / 点空白 ⇒ **不**重复触发（落点由条高
+//        推出来并复核"不在任何 Button 盒内"，且先证"焦点没被移走"）/ 按下取消 ⇒ onPressed；
+//     ② 激活键的边界：无焦点 Enter 无事、方向键不激活（各带前置，否则"不该发生"恒真）；
+//     ③ **结构性**判据：扫 `src/Widget` 找所有声明了 `activate()` 的类，断言都
+//        implements `Activatable` —— 比白名单强：smoke 原表只写 4 个，漏了
+//        `IconButton` / `NavButton` / `MenuItem` / `Radio` / `Toggle`；
+//     ④ `Menu::activate` 覆写只开面板（命令与 onOpen **同记一个数组**）；
+//     ⑤ Button 命令优先 / 无命令回落 onPressed（成对）；
+//     ⑥ ToggleBase 家族按 kind 分支（开关布尔 / 单选钮给自己的值 / 已选不重复通知）。
+//   ★ 一个段号混了三个主题（悬停视觉态 / 指针出口 / 能力声明）⇒ 按宿主重新归类：
+//     悬停并入既有 `HoverTest`，其余进 `ActivationTest`。
 // —— `RenderObject::panelRect()` 能力方法 + 面板限高 已迁出 ——
 //   → `tests/Feature/Overlay/PopupPanelTest.php`（13）—— 普通盒不表态 + 面板盒表态
 //     （**成对**：只测一边等于没测）/ 宽 = max(minWidth, 最宽项) / 长菜单高 ==
