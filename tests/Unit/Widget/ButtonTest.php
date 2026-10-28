@@ -57,6 +57,58 @@ final class ButtonTest extends SmokeTestCase
         $this->flushChecks();
     }
 
+    /**
+     * `ButtonVariant::Flat`：盒样式 `isNone()`（无底无边框），但**仍占位**。
+     *
+     * ## 为什么三条缺一不可
+     *
+     * ① Flat 的盒样式必须是 `isNone()` —— 这是"看起来像菜单项"的全部内容；
+     * ② **Default 必须仍有边框** —— 防"为了做 Flat 干脆把默认也改扁"的过度修正
+     *    （那会让全仓所有按钮同时失去边界，而且不报错）；
+     * ③ Flat 仍要有尺寸 —— 防把"无底无边框"实现成"不排版"（视觉消失、也点不到）。
+     *
+     * ★ 与 `testIconButtonPixelJudgement` 里那处 `variant(ButtonVariant::Flat)` 分工：
+     *   那边用 Flat 只是为了让"墨只来自图标与文字"（像素判据的前提），
+     *   没验盒样式语义。本方法才是 Flat 自己的判据。
+     * ★★ ③ 的可证伪性要说清：当前实现**没有** Flat 专属的排版分支（`RenderButton`
+     *   对所有变体同一套），所以没有可注入的现实变异能单独打红它 —— 它是防未来
+     *   的守卫。① ② 都有现实变异（第 30 批 M7 / M8 实测红）。
+     */
+    public function testFlatVariantDropsBoxButKeepsItsFootprint(): void
+    {
+        $ctx = smokeContext();
+
+        $flat = Button::make('导航项')->variant(ButtonVariant::Flat)->createRenderObject($ctx);
+        check(
+            'Button · Flat ⇒ 盒样式 isNone（无底无边框 —— 看起来像菜单项而不是按钮）',
+            $flat instanceof RenderButton && $flat->boxStyle()->isNone(),
+            $flat instanceof RenderButton
+                ? \sprintf(
+                    '底 %s 边 %s',
+                    $flat->boxStyle()->background === null ? 'null' : 'set',
+                    $flat->boxStyle()->borderColor === null ? 'null' : 'set',
+                )
+                : 'not RenderButton'
+        );
+
+        $default = Button::make('导航项')->createRenderObject($ctx);
+        check(
+            'Button · Default 仍有边框（Flat 是新形态，不是把默认改扁）',
+            $default instanceof RenderButton && !$default->boxStyle()->isNone()
+        );
+
+        if ($flat instanceof RenderButton) {
+            $flat->layout(BoxConstraints::unbounded());
+        }
+        check(
+            'Button · Flat 仍占位（有尺寸 ⇒ 仍然可点，不是"视觉消失"）',
+            $flat->size() !== null && $flat->size()->width > 0.0 && $flat->size()->height > 0.0,
+            \sprintf('%.6g×%.6g', $flat->size()?->width ?? -1.0, $flat->size()?->height ?? -1.0)
+        );
+
+        $this->flushChecks();
+    }
+
     public function testOnPressedIsPassedThroughVerbatim(): void
     {
         // onPressed 是纯 UI 回调；Button 本身不依赖命令系统

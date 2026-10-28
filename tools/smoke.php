@@ -151,13 +151,11 @@ use Drift\Theme\SystemTheme;
 use Drift\Theme\ThemeData;
 use Drift\Widget\Activatable;
 use Drift\Widget\ActivationContext;
-use Drift\Widget\AspectRatio;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
 use Drift\Widget\Card;
 use Drift\Widget\CustomPaint;
 use Drift\Widget\SizedBox;
-use Drift\Widget\ButtonVariant;
 use Drift\Widget\AppBar;
 use Drift\Widget\BoxWidget;
 use Drift\Widget\Center;
@@ -4735,147 +4733,15 @@ check(
 //     各一份，同名同实现）。
 
 
-// ── ㉞e 定尺寸（`SizedBox`）与扁平按钮（`ButtonVariant::Flat`）──
-//    ★ 两条都是"侧栏定宽 + 像菜单项"的直接依赖，2026-10-17 由示例台逼出来。
-//      判据必须能区分"有 SizedBox"与"没有"：只量盒尺寸不够 —— `Row`/`Dock` 量
-//      **自然宽**走的是 `intrinsicWidth()`，不覆写那里，定尺寸在"量"这一路
-//      完全看不见（静默），所以 ③ 必须单独钉。
-
-$fixedTextSize = static function (string $text) use ($context) {
-    $el = Text::make($text)->createElement();
-    $el->mount(null, $context);
-    $box = $el->effectiveBox();
-    $box?->layout(BoxConstraints::unbounded());
-
-    return $box?->size();
-};
-
-$fixedNatural = $fixedTextSize('侧栏');
-
-$sizedBoxEl = SizedBox::make(Text::make('侧栏'))->width(200.0)->createElement();
-$sizedBoxEl->mount(null, $context);
-$sizedBox = $sizedBoxEl->effectiveBox();
-$sizedBox?->layout(BoxConstraints::loose(new Size(940.0, 620.0)));
-$sizedBoxKids = [];
-$sizedBox?->visitChildren(function (RenderBox $c) use (&$sizedBoxKids): void {
-    $sizedBoxKids[] = $c;
-});
-check(
-    'SizedBox · 定宽 ⇒ 盒宽 200 且孩子被拉满 200（只定盒不定孩子 = 内容缩在左边）',
-    $sizedBox?->size() !== null && abs($sizedBox->size()->width - 200.0) < 0.01
-        && ($sizedBoxKids[0] ?? null)?->size() !== null
-        && abs($sizedBoxKids[0]->size()->width - 200.0) < 0.01,
-    sprintf(
-        '盒 %.6g 孩子 %.6g 内容自然 %.6g',
-        $sizedBox?->size()?->width ?? -1.0,
-        $sizedBoxKids[0]?->size()?->width ?? -1.0,
-        $fixedNatural?->width ?? -1.0,
-    ),
-);
-check(
-    'SizedBox · 未定的轴透传（高随内容，不是 0 也不是约束上限）',
-    $sizedBox?->size() !== null && $fixedNatural !== null
-        && abs($sizedBox->size()->height - $fixedNatural->height) < 0.01,
-    sprintf('实际高 %.6g 内容高 %.6g', $sizedBox?->size()?->height ?? -1.0, $fixedNatural?->height ?? -1.0),
-);
-check(
-    'SizedBox · 内禀宽 == 定宽（Row/Dock 量自然宽也看得见；漏了这条等于没定）',
-    $sizedBox?->intrinsicWidth(0.0) !== null && abs($sizedBox->intrinsicWidth(0.0) - 200.0) < 0.01,
-    sprintf('内禀宽 %.6g', $sizedBox?->intrinsicWidth(0.0) ?? -1.0),
-);
-
-// —— 父更紧时听父（tight(100) 里塞 width(200) ⇒ 100，且不许抛"min 不得大于 max"）
-$clampedEl = SizedBox::make(Text::make('侧栏'))->width(200.0)->createElement();
-$clampedEl->mount(null, $context);
-$clamped = $clampedEl->effectiveBox();
-$clamped?->layout(BoxConstraints::tight(new Size(100.0, 40.0)));
-$clampedKids = [];
-$clamped?->visitChildren(function (RenderBox $c) use (&$clampedKids): void {
-    $clampedKids[] = $c;
-});
-check(
-    'SizedBox · 父更紧时听父（tight 100 里 width 200 ⇒ 盒 100 且孩子 100，不抛约束违规）',
-    $clamped?->size() !== null && abs($clamped->size()->width - 100.0) < 0.01
-        && ($clampedKids[0] ?? null)?->size() !== null
-        && abs($clampedKids[0]->size()->width - 100.0) < 0.01,
-    sprintf('盒 %.6g 孩子 %.6g', $clamped?->size()?->width ?? -1.0, $clampedKids[0]?->size()?->width ?? -1.0),
-);
-
-// —— 无子盒：尺寸就是定值（不崩、不产生 INF）
-// ★ 走 Element 挂载而不是裸 `createRenderObject()`：W5 之后几何住 `mods`，
-//   由 `Element::syncBox()` 递给盒 —— 裸造盒拿不到定值，量出来是 0×0。
-$emptySizedBoxEl = SizedBox::make()->size(24.0, 8.0)->createElement();
-$emptySizedBoxEl->mount(null, $context);
-$emptySizedBox = $emptySizedBoxEl->effectiveBox();
-$emptySizedBox?->layout(BoxConstraints::unbounded());
-check(
-    'SizedBox · 无子盒 ⇒ 尺寸 = 定值（占位空隙的用法）',
-    $emptySizedBox?->size() !== null
-        && abs($emptySizedBox->size()->width - 24.0) < 0.01
-        && abs($emptySizedBox->size()->height - 8.0) < 0.01,
-    sprintf('%.6g×%.6g', $emptySizedBox?->size()?->width ?? -1.0, $emptySizedBox?->size()?->height ?? -1.0),
-);
-
-// —— W8-3 AspectRatio：比例是 `mods.aspect` 字段（不是新渲染盒），由布局管线 ① 步解出
-$aspectEl = AspectRatio::make(2.0, Text::make('封面'))->createElement();
-$aspectEl->mount(null, $context);
-$aspect = $aspectEl->effectiveBox();
-$aspect?->layout(BoxConstraints::loose(new Size(940.0, 620.0)));
-check(
-    'AspectRatio · 宽铺满、高按比例（940 ÷ 2 = 470）',
-    $aspect?->size() !== null
-        && abs($aspect->size()->width - 940.0) < 0.01
-        && abs($aspect->size()->height - 470.0) < 0.01,
-    sprintf('盒 %.6g×%.6g', $aspect?->size()?->width ?? -1.0, $aspect?->size()?->height ?? -1.0),
-);
-
-$aspectCapEl = AspectRatio::make(2.0, Text::make('封面'))->createElement();
-$aspectCapEl->mount(null, $context);
-$aspectCap = $aspectCapEl->effectiveBox();
-$aspectCap?->layout(new BoxConstraints(0.0, 200.0, 0.0, 60.0));
-check(
-    'AspectRatio · 高度不够时按高度回退（宽 200 要 100 高、只有 60 ⇒ 120×60）',
-    $aspectCap?->size() !== null
-        && abs($aspectCap->size()->width - 120.0) < 0.01
-        && abs($aspectCap->size()->height - 60.0) < 0.01,
-    sprintf('盒 %.6g×%.6g', $aspectCap?->size()?->width ?? -1.0, $aspectCap?->size()?->height ?? -1.0),
-);
-
-$aspectFixedEl = AspectRatio::make(2.0, Text::make('封面'))->width(200.0)->createElement();
-$aspectFixedEl->mount(null, $context);
-$aspectFixed = $aspectFixedEl->effectiveBox();
-$aspectFixed?->layout(BoxConstraints::loose(new Size(940.0, 620.0)));
-check(
-    'AspectRatio · 显式 width 优先（200 ÷ 2 = 100）',
-    $aspectFixed?->size() !== null
-        && abs($aspectFixed->size()->width - 200.0) < 0.01
-        && abs($aspectFixed->size()->height - 100.0) < 0.01,
-    sprintf('盒 %.6g×%.6g', $aspectFixed?->size()?->width ?? -1.0, $aspectFixed?->size()?->height ?? -1.0),
-);
-
-$aspectBothEl = AspectRatio::make(2.0, Text::make('封面'))->width(200.0)->height(80.0)->createElement();
-$aspectBothEl->mount(null, $context);
-$aspectBoth = $aspectBothEl->effectiveBox();
-$aspectBoth?->layout(BoxConstraints::loose(new Size(940.0, 620.0)));
-check(
-    'AspectRatio · 两轴都定死 ⇒ 比例无自由度（200×80，不改成 100 高）',
-    $aspectBoth?->size() !== null
-        && abs($aspectBoth->size()->width - 200.0) < 0.01
-        && abs($aspectBoth->size()->height - 80.0) < 0.01,
-    sprintf('盒 %.6g×%.6g', $aspectBoth?->size()?->width ?? -1.0, $aspectBoth?->size()?->height ?? -1.0),
-);
-
-$aspectPadEl = AspectRatio::make(2.0, Text::make('封面'))->paddingAll(10.0)->createElement();
-$aspectPadEl->mount(null, $context);
-$aspectPad = $aspectPadEl->effectiveBox();
-$aspectPad?->layout(BoxConstraints::loose(new Size(240.0, 240.0)));
-check(
-    'AspectRatio · 比例作用于**盒**（含 padding）：240 宽 ⇒ 120 高',
-    $aspectPad?->size() !== null
-        && abs($aspectPad->size()->width - 240.0) < 0.01
-        && abs($aspectPad->size()->height - 120.0) < 0.01,
-    sprintf('盒 %.6g×%.6g', $aspectPad?->size()?->width ?? -1.0, $aspectPad?->size()?->height ?? -1.0),
-);
+// ── ㉞e 定尺寸 / 定比例 / 扁平按钮 已迁出 ──────────────────────────────
+//   → `tests/Unit/Layout/SizingTest.php`（11）—— `SizedBox` 定宽（盒与孩子
+//     一起拉满、未定轴透传、内禀宽 == 定宽、父更紧听父、无子盒 = 定值）+
+//     `AspectRatio` 表驱动 5 口径（loose / 高度不够回退 / 显式 width 优先 /
+//     两轴定死无自由度 / 比例作用于含 padding 的盒）+ 侧栏集成（200 − 2×10 = 180）。
+//   → `tests/Unit/Widget/ButtonTest.php::testFlatVariantDropsBoxButKeepsItsFootprint`（3）
+//     —— `ButtonVariant::Flat` 盒样式 isNone / Default 仍有边框 / Flat 仍占位。
+//   ★ 迁出时发现原段（412 行）混了**四个不相干主题**：定尺寸+比例 / 扁平按钮 /
+//     RichText / 焦点环。只迁前两个；后两个留在下面各自成段。
 
 // —— W8-5 RichText：一段里多个样式；颜色/字号由 run 自带，排版一次成段
 $richEl = RichText::make([
@@ -5103,48 +4969,6 @@ check(
     '焦点环 · "隐藏"本身也请求一帧（目标 null，不靠下次输入才消失）',
     $ringAfterClickWants === true,
     'wantsFrame=' . ($ringAfterClickWants ? 'y' : 'n'),
-);
-
-// —— 扁平按钮：盒样式 isNone（无底无边框），字色走正文色
-$flatBox = Button::make('导航项')->variant(ButtonVariant::Flat)->createRenderObject($context);
-check(
-    'ButtonVariant::Flat ⇒ 盒样式 isNone（无底无边框 —— 看起来像菜单项而不是按钮）',
-    $flatBox instanceof RenderButton && $flatBox->boxStyle()->isNone(),
-    $flatBox instanceof RenderButton
-        ? sprintf('底 %s 边 %s', $flatBox->boxStyle()->background === null ? 'null' : 'set', $flatBox->boxStyle()->borderColor === null ? 'null' : 'set')
-        : 'not RenderButton',
-);
-$flatDefaultBox = Button::make('导航项')->createRenderObject($context);
-check(
-    'ButtonVariant::Default 仍有边框（Flat 是新形态，不是把默认改扁）',
-    $flatDefaultBox instanceof RenderButton && !$flatDefaultBox->boxStyle()->isNone(),
-);
-$flatBox->layout(BoxConstraints::unbounded());
-check(
-    'ButtonVariant::Flat 仍占位（有尺寸 ⇒ 仍然可点，不是"视觉消失"）',
-    $flatBox->size() !== null && $flatBox->size()->width > 0.0 && $flatBox->size()->height > 0.0,
-    sprintf('%.6g×%.6g', $flatBox->size()?->width ?? -1.0, $flatBox->size()?->height ?? -1.0),
-);
-
-// —— 集成：侧栏定宽 + 扁平导航项（示例台的真实组合）
-$navProbeEl = SizedBox::make(
-    Card::make(
-        Column::make()->cross(FlexAlign::Stretch)->children([
-            Button::make('导航项一')->variant(ButtonVariant::Flat),
-        ])
-    )->paddingAll(10.0)
-)->width(200.0)->createElement();
-$navProbeEl->mount(null, $context);
-$navProbe = $navProbeEl->effectiveBox();
-$navProbe?->layout(BoxConstraints::loose(new Size(940.0, 600.0)));
-// ★ M2-5：`Card` 不再是盒 ⇒ 树少一层（SizedBox → Column → Button）
-$navCol = childBoxes($navProbe)[0] ?? null;
-$navBtnKids = childBoxes($navCol);
-check(
-    '集成 · 侧栏 SizedBox(200) ⇒ 导航项宽 180（整行可点，右边缘齐）',
-    ($navBtnKids[0] ?? null)?->size() !== null
-        && abs($navBtnKids[0]->size()->width - 180.0) < 0.01,
-    sprintf('导航项宽 %.6g', $navBtnKids[0]?->size()?->width ?? -1.0),
 );
 
 // ── ㉟ apps/users 完整样板（§19 M3 出口判据：§A.2 的完整应用可跑）──
