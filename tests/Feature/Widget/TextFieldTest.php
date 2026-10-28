@@ -281,6 +281,92 @@ final class TextFieldTest extends SmokeTestCase
         $this->flushChecks();
     }
 
+    /**
+     * 选区渲染：几何 + 反查 + 真的有墨。
+     *
+     * ★ 与 `testCaretGeometryAndPaint` 分开：那条锁插入符，这条锁高亮块。
+     *   两条共用同一个 `fieldInk()` —— "多出墨"必须用同一量具才可判。
+     */
+    public function testSelectionGeometryAndPaint(): void
+    {
+        $ctx = smokeContext();
+
+        $selVisRoot = TextField::make()->value('abcd')->createElement();
+        $selVisRoot->mount(null, $ctx);
+        $selVisState = $selVisRoot->state();
+        $selVisState?->beginEditing();
+        $selVisState?->selectAll();
+        $selVisRoot->settle();
+        $selVisBox = $selVisRoot->effectiveBox();
+        $selVisBox?->layout(BoxConstraints::loose(new Size(300.0, 60.0)));
+
+        check(
+            '选区渲染 · 有选区 ⇒ selectionRect() 非 null 且宽度 > 0',
+            $selVisBox instanceof RenderTextField
+                && ($selVisBox->selectionRect()?->width ?? 0.0) > 0.0,
+            var_export($selVisBox instanceof RenderTextField ? $selVisBox->selectionRect() : null, true)
+        );
+
+        // ★ 同源性：选区右边缘必须与"插入符在选区终点"的插入符左边缘是同一个 x ——
+        //   两个换算若分开写，这里会差出一个亚像素级的缝（选到头时肉眼可见错位）。
+        //   **不能挪插入符来凑**：moveCaret() 会折叠选区，比的时候就只能跟 null 比
+        //   （第一版就这么红的）。全选后插入符本来就在选区终点，直接可比。
+        check(
+            '选区渲染 · 选区右边缘 == 同偏移插入符左边缘（两者共用一次换算）',
+            $selVisBox instanceof RenderTextField
+                && $selVisBox->caretRect()->left === ($selVisBox->selectionRect()?->left ?? -1.0)
+                + ($selVisBox->selectionRect()?->width ?? -1.0),
+            'caret=' . ($selVisBox instanceof RenderTextField ? (string) $selVisBox->caretRect()->left : 'n/a')
+        );
+
+        // offsetAt() 反查：**真实往返** —— 插入符在 i 时的 x，反查必须回到 i。
+        // （第一版只查"返回值落在 0..4"，那等于没查：中点判据写反了也过。）
+        $selVisState?->clearSelection();
+        $roundTripOk = true;
+        $roundTripLog = '';
+        for ($i = 0; $i <= 4; $i++) {
+            $selVisState?->moveCaret($i);
+            $selVisRoot->settle();
+            $probeBox = $selVisRoot->effectiveBox();
+            $probeBox?->layout(BoxConstraints::loose(new Size(300.0, 60.0)));
+            if (!$probeBox instanceof RenderTextField) {
+                $roundTripOk = false;
+                $roundTripLog .= ' no-box';
+                break;
+            }
+            $x = $probeBox->caretRect()->left;
+            $back = $probeBox->offsetAt($x);
+            if ($back !== $i) {
+                $roundTripOk = false;
+                $roundTripLog .= ' ' . $i . '->' . $back;
+            }
+        }
+        check(
+            '选区渲染 · offsetAt() 真实往返（插入符在 i 的 x 反查回 i）',
+            $roundTripOk,
+            'mismatch:' . $roundTripLog
+        );
+
+        // 真的有墨：全选后的像素比无选区多（高亮块）
+        $selInkWith = $this->fieldInk($selVisBox, 200, 40);
+        $selVisState?->clearSelection();
+        $selVisRoot->settle();
+        $selPlainBox = $selVisRoot->effectiveBox();
+        $selPlainBox?->layout(BoxConstraints::loose(new Size(300.0, 60.0)));
+        $selInkWithout = $this->fieldInk($selPlainBox, 200, 40);
+        check(
+            '选区渲染 · 全选后真的多出墨（高亮块画上了）',
+            $selInkWith > $selInkWithout,
+            'with=' . $selInkWith . ' without=' . $selInkWithout
+        );
+        check(
+            '选区渲染 · 无选区时 selectionRect() 为 null（相等即无选区，不画）',
+            $selPlainBox instanceof RenderTextField && $selPlainBox->selectionRect() === null,
+        );
+
+        $this->flushChecks();
+    }
+
     public function testExamplePageRendersHeadless(): void
     {
         $ctx = smokeContext();

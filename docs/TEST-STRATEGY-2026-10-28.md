@@ -190,7 +190,8 @@ PHPUnit 默认第一条断言失败就中止方法。GUI 断言不适用：一�
 | &nbsp;&nbsp;· 文本/列表/按钮/盒级动画/滚动条 ✅ | `tests/Unit/Widget/{TextTest,EachTest,ButtonTest,ScrollBarFadeTest}` + `tests/Unit/Layout/HoverAnimationTest` | 1431 → 1384（−47） |
 | &nbsp;&nbsp;· 输入框 TextField（含编辑态） ✅ | `tests/Feature/Widget/TextFieldTest` | 1384 → 1358（−26） |
 | &nbsp;&nbsp;· 输入层（按键模型/焦点路由/坐标链/IME） ✅ | `tests/Unit/Input/KeyModelTest` + `tests/Feature/Input/{FocusRoutingTest,CoordinateChainTest}` | 1358 → 1320（−38） |
-| &nbsp;&nbsp;· 待搬 | 选区模型 / 选区渲染 / 状态层 / 光标形状 / Spinner / 错误边界 / 语义推送 / 渲染图像 / ensureVisible / 虚拟列表锚点 | |
+| &nbsp;&nbsp;· 选区模型 / 选区渲染 ✅ | `tests/Unit/Widget/TextFieldSelectionTest` + `tests/Feature/Widget/TextFieldTest::testSelectionGeometryAndPaint` | 1320 → 1292（−28） |
+| &nbsp;&nbsp;· 待搬 | 状态层 / 光标形状 / Spinner / 错误边界 / 语义推送 / 渲染图像 / ensureVisible / 虚拟列表锚点 | |
 | **S4** | 纯单元（485 条里的）改成标准 `TestCase`：`assertSame` + `#[DataProvider]` | `--testsuite=unit` 覆盖它们 |
 
 ★ S1–S3 是**纯搬迁**（断言一行不改，只改"在哪个文件哪个方法里"）。
@@ -392,7 +393,7 @@ smoke 那一份保留**（它服务的是"还没搬走的后续段"，不是历�
 ★ `spinCanvas` 的 `Scale` 在 `Drift\Geometry`（不是 `Drift\Rendering`）—— 又踩一次
 "命名空间别按目录推"（见 §9）。已在 functions.php 写全限定名，不再依赖 `use`。
 
-### 10.8 S3 5~12 批落地的文件账
+### 10.8 S3 5~13 批落地的文件账
 
 | 批 | 文件 | 断言 | smoke 对账 |
 |---|---|---|---|
@@ -404,6 +405,7 @@ smoke 那一份保留**（它服务的是"还没搬走的后续段"，不是历�
 | 10 文本/列表/按钮/盒级动画/滚动条 | `tests/Unit/Widget/TextTest.php`（12）+ `EachTest.php`（5）+ `ButtonTest.php`（17）+ `ScrollBarFadeTest.php`（7）+ `tests/Unit/Layout/HoverAnimationTest.php`（6） | 47 | 1431 → 1384（−47） |
 | 11 输入框 | `tests/Feature/Widget/TextFieldTest.php` | 26（声明层/盒几何与换肤/编辑序列/多字节码位/插入符几何与墨/示例页无头出图） | 1384 → 1358（−26） |
 | 12 输入层 | `tests/Unit/Input/KeyModelTest.php`（11）+ `tests/Feature/Input/FocusRoutingTest.php`（21）+ `CoordinateChainTest.php`（6） | 38（按键值语义/焦点路由/帧末挂接/坐标链/IME 定位） | 1358 → 1320（−38） |
+| 13 选区 | `tests/Unit/Widget/TextFieldSelectionTest.php`（23）+ `tests/Feature/Widget/TextFieldTest::testSelectionGeometryAndPaint`（5） | 28（锚点模型/Shift 只挪活动端/键入与删除吃整段/多字节吸附/选区几何与墨） | 1320 → 1292（−28） |
 
 ★ 第 12 批的切法按"依赖强度"分三层：纯值对象与声明（`KeyChord`/`KeyEvent`/`FocusNode`
 + Widget 侧 `focusNode()`）→ Unit；需要真 Element 树与布局（`FocusManager` 路由、命中→焦点、
