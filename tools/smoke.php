@@ -145,7 +145,6 @@ use Drift\Text\Paragraph;
 use Drift\Text\TextAlign;
 use Drift\Text\TextLayout;
 use Drift\Text\TextLine;
-use Drift\Text\TextSpan;
 use Drift\Text\TextStyle;
 use Drift\Theme\SystemTheme;
 use Drift\Theme\ThemeData;
@@ -193,8 +192,6 @@ use Drift\Widget\Select;
 use Drift\Widget\Snackbar;
 use Drift\Widget\State;
 use Drift\Widget\StatefulElement;
-use Drift\Widget\RichText;
-use Drift\Widget\Span;
 use Drift\Widget\Text;
 use Drift\Widget\TextField;
 use Drift\Widget\TextFieldState;
@@ -4743,181 +4740,18 @@ check(
 //   ★ 迁出时发现原段（412 行）混了**四个不相干主题**：定尺寸+比例 / 扁平按钮 /
 //     RichText / 焦点环。只迁前两个；后两个留在下面各自成段。
 
-// —— W8-5 RichText：一段里多个样式；颜色/字号由 run 自带，排版一次成段
-$richEl = RichText::make([
-    Span::make('保存失败：')->bold(),
-    Span::make('磁盘空间不足')->color(Color::fromHex('#d93025')),
-])->createElement();
-$richEl->mount(null, $context);
-$richBox = $richEl->effectiveBox();
-$richBox?->layout(BoxConstraints::loose(new Size(500.0, 120.0)));
-$richPara = $richBox instanceof RenderRichText ? $richBox->paragraph() : null;
-$richRuns = $richPara?->lines[0]->runs ?? [];
-$richLast = $richRuns === [] ? null : $richRuns[count($richRuns) - 1];
-check(
-    'RichText · 两段各自成 run（前段默认色、后段显式色）',
-    count($richRuns) >= 2
-        && $richRuns[0]->argb === -1
-        && $richLast !== null
-        && $richLast->argb === Color::fromHex('#d93025')->toArgb(),
-    sprintf('runs=%d 首=%d 尾=%s', count($richRuns), $richRuns[0]->argb ?? 99, var_export($richLast?->argb, true)),
-);
-$richTailFirst = null;
-foreach ($richRuns as $richRun) {
-    if ($richRun->argb === Color::fromHex('#d93025')->toArgb()) {
-        $richTailFirst = $richRun;
-        break;
-    }
-}
-check(
-    'RichText · 后段 cluster 是全文字节偏移（不是 0；段内回退 run 也一起抬）',
-    $richTailFirst !== null
-        && $richTailFirst->glyphs !== []
-        && $richTailFirst->glyphs[0]->cluster === strlen('保存失败：'),
-    sprintf('后段首 run 的 cluster=%s 期望=%d', var_export($richTailFirst?->glyphs[0]->cluster ?? null, true), strlen('保存失败：')),
-);
-
-$richBigEl = RichText::make([Span::make('大')->size(28.0), Span::make('小')])->createElement();
-$richBigEl->mount(null, $context);
-$richBig = $richBigEl->effectiveBox();
-$richBig?->layout(BoxConstraints::loose(new Size(500.0, 200.0)));
-check(
-    'RichText · 行高按最大 span 字号（28pt ⇒ 高 ≥ 28，不被 14pt 压扁）',
-    $richBig?->size() !== null && $richBig->size()->height >= 28.0,
-    sprintf('高 %.1f', $richBig?->size()?->height ?? -1.0),
-);
-
-$richBaseStyle = TextStyle::of(14.0);
-$richKeyA = Paragraph::keyForSpans([new TextSpan('x', $richBaseStyle, 0xFFFF0000)], $richBaseStyle, 100.0, new Scale(1.0));
-$richKeyB = Paragraph::keyForSpans([new TextSpan('x', $richBaseStyle, 0xFF0000FF)], $richBaseStyle, 100.0, new Scale(1.0));
-check(
-    'RichText · 缓存键不含颜色（只换色不重排 —— §8.1 键只收排版输入）',
-    $richKeyA === $richKeyB,
-    sprintf('A=%s B=%s', substr($richKeyA, 0, 8), substr($richKeyB, 0, 8)),
-);
-
-// —— W8-5 续：行内链接（tag 命中）与下划线 ——
-$linkEl = RichText::make([
-    Span::make('加载失败，'),
-    Span::make('重试')->tag('retry')->underline()->color(Color::fromHex('#009688')),
-    Span::make('。'),
-])->createElement();
-$linkEl->mount(null, $context);
-$linkBox = $linkEl->effectiveBox();
-$linkBox?->layout(BoxConstraints::loose(new Size(500.0, 60.0)));
-$linkPara = $linkBox instanceof RenderRichText ? $linkBox->paragraph() : null;
-$linkRun = null;
-$linkStartX = 0.0;
-foreach ($linkPara?->lines[0]->runs ?? [] as $linkCandidate) {
-    if ($linkCandidate->tag === 'retry') {
-        $linkRun = $linkCandidate;
-        break;
-    }
-    $linkStartX += $linkCandidate->width;
-}
-check(
-    'RichText · tag 与下划线落在同一个 run 上',
-    $linkRun !== null && $linkRun->underline === true,
-    sprintf('tag=%s underline=%s', $linkRun?->tag ?? '(null)', $linkRun !== null && $linkRun->underline ? 'y' : 'n'),
-);
-check(
-    'RichText · tagAt 命中链接中点（字节偏移映射，不另算 pen）',
-    $linkRun !== null && $linkPara !== null
-        && $linkPara->tagAt($linkStartX + $linkRun->width / 2.0, 5.0) === 'retry',
-    sprintf('tagAt=%s', var_export($linkPara?->tagAt($linkStartX + ($linkRun?->width ?? 0.0) / 2.0, 5.0), true)),
-);
-check(
-    'RichText · tagAt 在普通文本上返回空串（不是"整段都是链接"）',
-    $linkPara !== null && $linkPara->tagAt(1.0, 5.0) === '',
-    sprintf('tagAt=%s', var_export($linkPara?->tagAt(1.0, 5.0), true)),
-);
-check(
-    'RichText · cursorAt：链接上 PointingHand、普通文字 null（按位置变，不是整段）',
-    $linkBox instanceof RenderRichText
-        && $linkRun !== null
-        && $linkBox->cursorAt($linkStartX + $linkRun->width / 2.0, 5.0) === CursorShape::PointingHand
-        && $linkBox->cursorAt(1.0, 5.0) === null,
-    sprintf(
-        'link=%s plain=%s',
-        $linkBox instanceof RenderRichText && $linkRun !== null
-            ? ($linkBox->cursorAt($linkStartX + $linkRun->width / 2.0, 5.0)?->name ?? 'null')
-            : 'n/a',
-        $linkBox instanceof RenderRichText ? ($linkBox->cursorAt(1.0, 5.0)?->name ?? 'null') : 'n/a',
-    ),
-);
-
-// —— W8-5 续作三：背景色（绘制输入，不进缓存键）——
-$bgEl = RichText::make([
-    Span::make('正常 '),
-    Span::make('高亮')->background(Color::fromHex('#fff3cd')),
-])->createElement();
-$bgEl->mount(null, $context);
-$bgBox = $bgEl->effectiveBox();
-$bgBox?->layout(BoxConstraints::loose(new Size(400.0, 60.0)));
-$bgPara = $bgBox instanceof RenderRichText ? $bgBox->paragraph() : null;
-$bgRun = null;
-foreach ($bgPara?->lines[0]->runs ?? [] as $bgCandidate) {
-    if ($bgCandidate->background >= 0) {
-        $bgRun = $bgCandidate;
-        break;
-    }
-}
-check(
-    'RichText · background 落在 run 上（ARGB 透传，与 argb 分开）',
-    $bgRun !== null
-        && $bgRun->background === Color::fromHex('#fff3cd')->toArgb()
-        && $bgRun->argb === -1,
-    sprintf('bg=%s fg=%s', var_export($bgRun?->background, true), var_export($bgRun?->argb, true)),
-);
-
-$bgKeyA = Paragraph::keyForSpans([new TextSpan('x', $richBaseStyle, -1, '', false, -1)], $richBaseStyle, 100.0, new Scale(1.0));
-$bgKeyB = Paragraph::keyForSpans([new TextSpan('x', $richBaseStyle, -1, '', false, 0xFFFFFF00)], $richBaseStyle, 100.0, new Scale(1.0));
-check(
-    'RichText · 缓存键不含背景色（改背景不重排，与颜色同一条纪律）',
-    $bgKeyA === $bgKeyB,
-    sprintf('A=%s B=%s', substr($bgKeyA, 0, 8), substr($bgKeyB, 0, 8)),
-);
-
-// —— W8-5 续作四：富文本键盘可达（焦点变化走 `State::didChangeFocus`）——
-$taps = [];
-$kbRoot = Column::make()->children([
-    RichText::make([
-        Span::make('加载失败，'),
-        Span::make('重试')->tag('retry')->underline(),
-    ])->onSpanTap(function (string $tag) use (&$taps): void {
-        $taps[] = $tag;
-    }),
-])->createElement();
-$kbRoot->mount(null, smokeContext());
-$kbRoot->effectiveBox()?->layout(BoxConstraints::loose(new Size(400.0, 60.0)));
-
-$kbFm = new FocusManager();
-$kbFm->collect([$kbRoot]);
-check(
-    'RichText · onSpanTap ⇒ 声明可聚焦（进 Tab 序）',
-    count($kbFm->order()) === 1,
-    'order=' . count($kbFm->order()),
-);
-
-$kbEl = $kbFm->order()[0] ?? null;
-$kbBox = $kbEl?->effectiveBox();
-check(
-    'RichText · firstTag 找到第一个链接（Enter 的落点）',
-    $kbBox instanceof RenderRichText && $kbBox->firstTag() === 'retry',
-    'tag=' . ($kbBox instanceof RenderRichText ? $kbBox->firstTag() : 'n/a'),
-);
-
-if ($kbEl !== null) {
-    $kbFm->focus($kbEl);
-}
-
-$kbConsumed = $kbFm->dispatchKey(KeyEvent::down(KeyChord::enter()));
-check(
-    'RichText · Enter 触发第一个链接（keyboard 缝，键被消费）',
-    $kbConsumed && $taps === ['retry'],
-    sprintf('consumed=%s taps=%s', $kbConsumed ? 'y' : 'n', implode(',', $taps)),
-);
-
+// —— W8-5 RichText 已迁出 ─────────────────────────────────────────────
+//   → `tests/Unit/Text/RichTextTest.php`（10）—— 两段各自成 run（前段默认色
+//     / 后段显式色）+ 后段 cluster 是全文字节偏移 + 行高按最大 span 字号 +
+//     缓存键不收颜色/背景色（两个不同颜色 ⇒ 同一个键）+ tag 与下划线同 run +
+//     tagAt 字节偏移（链接中点命中 / 普通文本空串）+ cursorAt 跟 tagAt 走 +
+//     background 与 argb 分开。
+//   → `tests/Feature/Input/RichTextKeyboardTest.php`（3）—— onSpanTap ⇒ 进 Tab 序
+//     / firstTag 是 Enter 的落点 / Enter 真的把 tag 交出去且键被消费。
+//   ★ 拆两层而不是一个文件：排版与缓存键只要一次 `layout()`（Unit）；
+//     键盘可达要过 `FocusManager`（应用级路由，Feature）。
+//   ★ 缓存键那两条是**性能判据**（改颜色不重排），失败时功能全对、只是慢 ——
+//     所以它们和排版断言分开成方法，不能混在一起。
 // —— W8-5 续作五：焦点环（应用级叠加，零控件改动）——
 $ringApp = new FocusRingApplication();
 $ringProbe = new SurfaceProbe();
