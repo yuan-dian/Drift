@@ -64,9 +64,10 @@ curl -sSL -o tools/phpunit.phar https://phar.phpunit.de/phpunit-10.phar
 php tools/phpunit.phar -c phpunit.xml
 ```
 
-**已落地的最小实证**：`phpunit.xml` + `tools/Smoke/Unit/ColumnWidthsTest.php`
+**已落地的最小实证**：`phpunit.xml` + `tests/Unit/Layout/ColumnWidthsTest.php`
 （8 tests / 10 assertions），覆盖 `ColumnWidths::resolve()` 的四层规则。
 其中 7 条与 smoke 里的 7 条 `check()` 逐条对等 —— 用来量"迁过去值不值"。
+（首版放在 `tools/Smoke/Unit/`，S0 之后统一挪到 `tests/Unit/`。）
 
 ## 4. 关键判断：不"重写成纯单元"，但让 PHPUnit 当运行器
 
@@ -174,8 +175,8 @@ PHPUnit 默认第一条断言失败就中止方法。GUI 断言不适用：一�
 | 步 | 动作 | 判据 |
 |---|---|---|
 | **S0** ✅ | 建 `tests/` 骨架 + `ColumnWidths` 纯单元 + `Table/Phase1` 场景 | 20 断言绿 / lint 0 error |
-| **S1** | 把 Table 剩余 8 个分节搬成 8 个测试方法（阶段 1 已做） | 每条与 smoke 原断言**条数对得上** |
-| **S2** | 从 `tools/smoke.php` 删掉已搬走的段 | smoke 条数 = 1731 − 已搬数，且全绿 |
+| **S1** 🚧 | 按**被测对象**（不是分节）搬 Table 的 9 个分节 | 每条与 smoke 原断言**条数对得上** |
+| **S2** 🚧 | 每搬完一个主题就从 `smoke.php` 删掉对应段 | smoke 条数 = 1731 − 已搬数，且全绿 |
 | **S3** | 其余主题（布局 / 控件 / 输入 / 状态 / 浮层 / 应用 / 异步 / 主题 / 动画 / 日志 / 语义）照同一形状搬 | 每搬一个跑一次全绿 |
 | **S4** | 纯单元（485 条里的）改成标准 `TestCase`：`assertSame` + `#[DataProvider]` | `--testsuite=unit` 覆盖它们 |
 
@@ -200,3 +201,125 @@ S4 才动断言写法。混淆了，红信号就废了。
 - **迁移的出错率不是 0**：手写 `ColumnWidthsTest` 第一版 7 条里错 2 条
   （夹具固定宽用了 100 而 smoke 是 60；override 是否计入 `used` 算反了）。
   搬断言必须对着原断言逐行核。
+
+---
+
+## 10. S1/S2 实际执行（2026-10-28 下半场）
+
+### 10.1 ★★ 关键手法：**first-class callable 别名**
+
+原计划是"把头部的闭包提到 `Fixtures`，然后把段里每个 `$tableBuild(...)` 改成
+`Fixtures::build(...)`"。**不要那么做** —— 段里这类调用有几百处，逐个改名是
+纯手工高危操作，而且改完读起来更啰嗦。
+
+PHP 8.1 的 first-class callable 语法让搬迁退化成加 10 行头部：
+
+```php
+public function testXxx(): void
+{
+    $tableBuild = Fixtures::build(...);      // ← 别名，签名不变
+    $tableMount = Fixtures::mount(...);
+    $tableStateOf = Fixtures::stateOf(...);
+    $tableBoxOf = Fixtures::boxOf(...);
+    $tableFrame = Fixtures::frame(...);
+
+    // 原段代码从这里开始，一个字都不用改：
+    $el = $tableMount($tableBuild(10000));
+    ...
+}
+```
+
+★ 这条把"整段搬"从"逐处改名"变成"贴进来 + 头顶 10 行"，是本轮能一次搬完
+8 个主题的前提。
+
+### 10.2 ★★★ 分节**不是**测试边界（实测）
+
+`// ──` 分节是按**开发时间顺序**排的，一节里经常混着几个主题：
+
+| 分节 | 行数 | check | 实际内容 |
+|---|---|---|---|
+| ⑩b | 393 | 28 | 层缓存单元 3 + Table 回夹 1 + **ScrollView 4** + **LazyColumn 2** + Table 命中/斑马/滚动条 6 + Table 像素 5 + 首帧宽漂移 3 |
+| 阶段 6 列虚拟化 | 213 | 19 | **ExtentWindow 单元 5 + ColumnWidths 单元 7** + 列虚拟化 7 |
+| 选择 | 244 | 22 | **TableSelection 单元 3 + TableRowPicker 单元 11** + UI 8 |
+| 排序 | 228 | 17 | **TableSort 单元 2** + UI 9 + 子进程 6 |
+| 列宽拖拽 | 479 | 28 | 手柄/拖动 20 + **滚动条 7** + 子进程 2 |
+
+⇒ 所以 S1 的口号从"8 个分节 → 8 个方法"改成**"按被测对象切文件、按关注点切方法"**。
+判据是"改 X 只跑 X"，不是"一节一个方法"。
+
+⚠️ 还有**隐式变量耦合**：`$tableHeaderCellsOf` 定义在排序节、被列宽拖拽节借用。
+第一次删排序节时它跟着没了，smoke 当场 `Value of type null is not callable`。
+**删任何一段前，先跑一遍"待删区定义的变量在保留区还有谁引用"**（脚本见 10.5）。
+
+### 10.3 落地的文件（本轮新增 13 个）
+
+```
+tests/Unit/
+├── Layout/ColumnWidthsTest.php      四层分配规则（DataProvider）
+├── Layout/ExtentWindowTest.php      列窗口累加 + extentOf
+├── Widget/TableSelectionTest.php    不可变 + int/string 分离
+├── Widget/TableRowPickerTest.php    点击 / Ctrl / Shift / 反向 / 无锚点 / 单选 / 孔洞
+└── Widget/TableSortTest.php         空态 / thenBy 移列到末尾
+
+tests/Feature/
+├── App/FrameTest.php                settle 该跳过 + 不该跳过（盒换代）
+├── Rendering/LayerCacheTest.php     录 / 命中 / 同盒改 size 失效
+└── Table/
+    ├── Fixtures.php                 夹具（原 $tableXxx 闭包）
+    ├── SelectionSink.php / SortSink.php   受控回写的承接者
+    ├── Phase1Test.php               虚拟行 + 列宽三层 + 行内容居中
+    ├── ScrollTest.php               滚动不重建 + 帧不重排 + settle 跳过
+    ├── ColumnWindowTest.php         列虚拟化（8 列 → 3 列 / 列位不漂）
+    ├── LayerCacheTest.php           行区边界命中 + 换窗失效
+    ├── SelectionTest.php            点击语义送达 + 行态像素
+    └── SortTest.php                 三态循环 + 箭头 + 列序号
+```
+
+`SelectionSink` / `SortSink` 单独成类是刻意的：受控表要"接住上报"，
+而 PHP 的 `&$ref` 在返回类型和箭头函数里会被静默破坏（现象是断言永远 null）。
+用一个一字段对象把身份固定住，读代码时一眼看出谁在接。
+
+### 10.4 删旧的验证（S2）
+
+每搬完一个主题就立刻从 smoke 删掉，然后跑全量。条数必须**精确对上**：
+
+| 步骤 | smoke 条数 | 说明 |
+|---|---|---|
+| 起点 | 1731 | |
+| 删 ⑨⑩ + 层缓存 + 4 批单元 | 1692 | −39 |
+| 删列虚拟化 | 1685 | −7 |
+| 删选择（留 2 条子进程） | 1678 | −7 |
+| 删排序 + 行居中 | 1666 | −12 |
+
+★ 第一次算"应该减 39"时对不上（以为 40），原因是有一条 `check(` 是单行写法，
+统计脚本的 `^\s*check\(` 漏算 —— **条数对账要用 smoke 自己的汇总行，不要靠静态计数**。
+
+### 10.5 变异自检（本轮 5 组，全红）
+
+| 变异 | 抓到它的断言 |
+|---|---|
+| `ExtentWindow` 前置偏移改成 `$offset` | 2 条（缓冲带 + "偏移落在段中间"） |
+| `TableRowPicker` Ctrl 也挪锚点 | 1 条（Ctrl 不动锚点） |
+| `TableRowPicker` 区间改 `withAll`（累加） | 2 条（反向拖 + 区间外旧选中被丢） |
+| `TableSelection::norm()` 去掉 `i:`/`s:` 前缀 | 2 条（int/string 分离） |
+| —— | |
+
+★★ 前两组**第一次变异只被 1 条抓到**，说明用例区分度不足，补了两条才有 2 条：
+- `偏移 300` 那条的 `offset === leading`，区分不出"累加"与"直接拿偏移"
+  ⇒ 补 `偏移 250（落在段中间）⇒ 前置是段起点 150`。
+- 正向 Shift 那条 `current` 是空集，`of` 与 `withAll` 结果相同
+  ⇒ 补 `current = ['x','y']` 的"区间外旧选中被丢掉"。
+
+★ 这就是"变异自检要测它的**区分度**，不只是'有没有红'"。
+
+### 10.6 留在 smoke 的部分及理由
+
+**子进程用例**（`runCase`，约 12 条 Table 相关）**不搬**：
+
+它们的判据是"子进程以退出码 3 结束 + 日志文本里有关键词"。PHPUnit 里跑要么
+`processIsolation`（每条约 0.3s，比 smoke 还慢），要么自己 `proc_open` 管进程。
+更关键的是：它们测的是 `Errors` 的上报链路与挂载期校验，**与"改 Table 只跑 Table"
+无关** —— 改一列排序语义不会让它们红。
+
+⇒ smoke 里保留一小块"Table 的响亮失败"，并在注释里指明其余断言已迁到哪里
+（见 `tools/smoke.php` 的"Table 排序：三条响亮失败"段）。

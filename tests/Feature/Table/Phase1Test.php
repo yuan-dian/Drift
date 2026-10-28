@@ -118,4 +118,34 @@ final class Phase1Test extends SmokeTestCase
 
         $this->flushChecks();
     }
+
+    /**
+     * 行内容在行高里**垂直居中**。
+     *
+     * ★ 来源是同一批真机发现的问题：行容器是 `SizedBox(高)` 包 `Row`，
+     *   `Row` 的交叉轴默认 `Start` ⇒ 文字贴顶、下方留一大片空 ⇒
+     *   看起来像"行高买大了"。属性断言（行高 = 40）全都能过。
+     */
+    public function testRowContentIsVerticallyCentered(): void
+    {
+        $root = Fixtures::mount(Fixtures::build(2));
+        $rows = Fixtures::rowElements($root);
+        $flex = isset($rows[1]) ? $rows[1]->renderObject() : null;
+        $cell = $flex instanceof \Drift\Layout\RenderFlex ? ($flex->children()[0] ?? null) : null;
+        $h = $cell?->size()?->height;
+        $y = $cell?->offsetY();
+
+        check(
+            'Table · 行内容在行高里垂直居中（不是贴顶 —— 贴顶看起来像"行高买大了"）',
+            $h !== null && $y !== null && \abs($y - (Fixtures::ROW_H - $h) / 2.0) <= 1.0,
+            $h === null ? '没有单元格' : \sprintf(
+                'cell 高 %s / offsetY %s（期望 %s）',
+                (string) $h,
+                (string) $y,
+                (string) ((Fixtures::ROW_H - $h) / 2.0),
+            ),
+        );
+
+        $this->flushChecks();
+    }
 }

@@ -5,11 +5,17 @@ namespace Drift\Dev\Tests\Feature\Table;
 
 use Drift\Geometry\Axis;
 use Drift\Geometry\BoxConstraints;
+use Drift\Geometry\Scale;
+use Drift\Input\PointerEvent;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderFlex;
 use Drift\Layout\RenderObject;
 use Drift\Layout\RenderTable;
 use Drift\Geometry\Size;
+use Drift\Rendering\Color;
+use Drift\Rendering\DisplayList;
+use Drift\Rendering\RasterCanvas;
+use Drift\Rendering\RecordingCanvas;
 use Drift\Widget\Column;
 use Drift\Widget\Element;
 use Drift\Widget\Row;
@@ -18,7 +24,11 @@ use Drift\Widget\StatefulElement;
 use Drift\Widget\Table;
 use Drift\Widget\TableColumn;
 use Drift\Widget\TableColumnWidth;
+use Drift\Widget\TableSelection;
+use Drift\Widget\TableSelectionMode;
+use Drift\Widget\TableSort;
 use Drift\Widget\TableState;
+use Drift\Widget\Text;
 
 /**
  * `Table` 测试的夹具 —— 从 `tools/smoke.php` 的那批 `$tableXxx` 闭包提上来。
@@ -78,6 +88,19 @@ final class Fixtures
     public static function pump(Element $root): void
     {
         $root->rebuild();
+        $root->effectiveBox()?->layout(self::tight());
+    }
+
+    /**
+     * 走 `Frame` 的推帧路径（**不是** `pump()`）。
+     *
+     * ★ 与 `pump()` 的区别是判据的分水岭：`pump()` 强制 rebuild + layout，
+     *   于是"滚动该不该重建 / 该不该重排"这两个问题在它上面**恒为'该'**，
+     *   计数器断言永远测不到。只有走 `Frame::run()` 才带上 settle 判据。
+     */
+    public static function frame(Element $root): void
+    {
+        $root->settle();
         $root->effectiveBox()?->layout(self::tight());
     }
 
@@ -194,5 +217,130 @@ final class Fixtures
     public static function maxScrollV(Element $root): float
     {
         return self::boxOf($root)?->maxScroll(Axis::Vertical) ?? -1.0;
+    }
+
+    /**
+     * 某个文本内容所在盒的绝对 x（`null` = 没造出来）。
+     *
+     * ★ 用**绝对坐标**而不是"某行第几列"：列虚拟化之后，"第 2 列"在树里
+     *   可能根本不存在，"第 2 列的屏幕位置"才是被测语义。
+     */
+    public static function textXOf(Element $root, string $content): ?float
+    {
+        $hit = findElement(
+            $root,
+            static fn(Element $e): bool => $e->widget() instanceof Text && $e->widget()->content() === $content,
+        );
+        $box = $hit?->effectiveBox();
+
+        return $box === null ? null : RenderBox::absoluteOrigin($box)[0];
+    }
+
+    /** 行区 `Column` 的直接子（= 窗内各行） */
+    public static function rowElsOf(Element $root): array
+    {
+        $column = findElement($root, static fn(Element $e): bool => $e->widget() instanceof Column);
+        $out = [];
+        $column?->visitChildren(static function (Element $child) use (&$out): void {
+            $out[] = $child;
+        });
+
+        return $out;
+    }
+
+    /**
+     * 模拟"按在第 k 行上"—— 走**行容器声明的 pointer**，不是直接调 State。
+     *
+     * ★ 直接调 `noteRowTap()` 会绕过"有没有挂 pointer"的判断，于是"纯展示表不挂交互"
+     *   那条断言永远绿（它测的正是挂没挂）。
+     */
+    public static function tapRow(Element $root, int $index, PointerEvent $event): void
+    {
+        $rowEl = self::rowElsOf($root)[$index] ?? null;
+        if ($rowEl === null) {
+            return;
+        }
+
+        $handler = $rowEl->widget()->pointerHandlerValue();
+        $handler?->__invoke($event, $rowEl);
+    }
+
+    /**
+     * 把盒画到光栅上（结构断言抓不到平移/裁剪的错位，只有像素能）。
+     *
+     * ★ 清屏色用**洋红**而不是白：表格底本身就是纯白，白底画布会让
+     *   "这里画了 Surface"与"这里什么都没画"无法区分 —— 一条恒真的断言等于没有。
+     */
+    public static function rasterOf(?RenderBox $box, int $w, int $h): RasterCanvas
+    {
+        $list = new DisplayList();
+        $box?->paint(new RecordingCanvas($list));
+        $canvas = new RasterCanvas($w, $h, Color::fromRgb(0xFF, 0x00, 0xFF), Scale::of(1.0));
+        $list->replay($canvas);
+
+        return $canvas;
+    }
+
+    /** 选中集 = 受控 + 上报（应用侧就是那个 `SelectionSink`） */
+    public static function selectable(TableSelection $sel, ?TableSelectionMode $mode, SelectionSink $sink): Table
+    {
+        $table = Table::make(
+            [
+                TableColumn::make('id', 'ID')->field('id')->width(TableColumnWidth::fixed(60.0)),
+                TableColumn::make('name', '姓名')->field('name'),
+            ],
+            self::rows(6),
+        )->keyOf(static fn(array $row): int => $row['id'])
+            ->rowHeight(self::ROW_H)
+            ->headerHeight(self::HEADER_H)
+            ->selection($sel)
+            ->onSelectionChange($sink->receive(...));
+
+        return $mode === null ? $table : $table->selectionMode($mode);
+    }
+
+    /**
+     * 表头 `Row` 的直接子（= 各列表头格，按列序）。
+     *
+     * ★ 取**第一个** `Row`：`RenderTable` 把表头放第一个子，行区是第二个。
+     *   用 `rowElements()` 取 `[0]` 也是一样的，但那边会走完整棵树。
+     */
+    public static function headerCellsOf(Element $root): array
+    {
+        $row = findElement($root, static fn(Element $e): bool => $e->widget() instanceof Row);
+        $out = [];
+        $row?->visitChildren(static function (Element $child) use (&$out): void {
+            $out[] = $child;
+        });
+
+        return $out;
+    }
+
+    /**
+     * 模拟"按在表头第 j 格上"—— 走表头格声明的 pointer，不是直接调 State。
+     *
+     * ⚠️ 这一层**验不出 `ownsPress`**：它绕过了按下路由（行点击那次就是这样漏的，
+     *    只有真机点得出"没反应"）。捕获语义由 `DragSelectTest` 的真路由覆盖。
+     */
+    public static function tapHeader(Element $cellEl): void
+    {
+        $cellEl->widget()->pointerHandlerValue()?->__invoke(PointerEvent::down(30.0, 10.0), $cellEl);
+    }
+
+    /** 三列，前两列 `sortable()`、第三列不可排（操作列 / 图片列就是这样） */
+    public static function sortable(TableSort $sort, SortSink $sink): Table
+    {
+        return Table::make(
+            [
+                TableColumn::make('id', 'ID')->field('id')->width(TableColumnWidth::fixed(60.0))->sortable(),
+                TableColumn::make('name', '姓名')->field('name')->sortable(),
+                TableColumn::make('city', '城市')->field('city'),
+            ],
+            self::rows(6),
+        )->keyOf(static fn(array $row): int => $row['id'])
+            ->rowHeight(self::ROW_H)
+            ->headerHeight(self::HEADER_H)
+            ->sort($sort)
+            ->onSortChange($sink->receive(...));
     }
 }
