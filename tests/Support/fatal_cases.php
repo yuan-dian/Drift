@@ -54,6 +54,7 @@ use Drift\Widget\TableColumnWidth;
 use Drift\Widget\TableSelection;
 use Drift\Widget\TableSort;
 use Drift\Widget\Text;
+use Drift\Widget\TextField;
 use Drift\Widget\Widget;
 
 $case = '';
@@ -143,6 +144,27 @@ $cases = [
     // 日志 pattern 未知占位符 ⇒ Fatal（G2：不静默产出缺字段的行）。
     'log-bad-pattern' => static function (): void {
         PatternFormatter::compile('%l %x oops');
+    },
+
+    // 修饰落在**不产盒**的控件上（arch-v2 `02` §11.7）：`TextField` 是
+    // `StatefulWidget`，盒在 `TextFieldBox` 里 ⇒ 声明的 pad 只留在 Widget 上、
+    // 盒永远读不到。现象是"尺寸一点没变"，不报错、不写日志 —— G2 明令禁止的半静默。
+    // ★ 判据是 `Element::syncBox()` 里的 `Modifier::isDefault()` 守卫：
+    //   声明了修饰却不产盒 ⇒ Fatal。所以这条同时是 `isDefault()` 完整性的**下游**证据
+    //   （哪个字段漏进 `isDefault()`，哪个字段的守卫就静默失效）。
+    'modstateful' => static function (): void {
+        // @nonbox-decoration-allowed: 负向用例 —— 这一行**故意**撞运行期守卫，
+        //   `tools/lint.php` 的静态规则对它无意义（不撞才是失败）。
+        $element = TextField::make()->value('x')->paddingAll(8.0)->createElement();
+        $element->mount(null, new BuildContext(
+            240.0,
+            80.0,
+            ThemeData::light(),
+            new DeterministicMetricsProvider(
+                DeterministicFontManager::standard()->collection(),
+                new DeterministicShaper(),
+            ),
+        ));
     },
 
     // UI 线程断言（§17.4.2.1，WPF `VerifyAccess()` 的等价物）在**非 UI 线程**上

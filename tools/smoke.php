@@ -235,24 +235,9 @@ if (str_starts_with($caseArg, '--case=')) {
     //   用例 → `tests/Support/fatal_cases.php`
     //   判据 → `tests/Feature/Table/ConfigFailureTest.php`
 
-    if ($case === 'modstateful') {
-        // ★ 修饰落在"不产盒"的控件上 ⇒ 必须响亮失败（`02` §11.7）。
-        //   `TextField` 的盒在 `TextFieldBox` 里，`syncBox()` 拿到的是 null ⇒
-        //   声明的 pad 无处可去。静默丢掉是 G2 明令禁止的半静默。
-        $modCtx = new BuildContext(240.0, 80.0, ThemeData::light(), new DeterministicMetricsProvider(
-            DeterministicFontManager::standard()->collection(),
-            new DeterministicShaper(),
-        ));
-        // @nonbox-decoration-allowed: 负向用例 —— 这一行**故意**撞运行期守卫，
-        //   `tools/lint.php` 的静态规则对它无意义（不撞才是失败）。
-        $modEl = TextField::make()->value('x')->paddingAll(8.0)->createElement();
-        $modEl->mount(null, $modCtx);
-        echo "mounted-without-error\n";
-        exit(0);
-    }
-
     if ($case === 'cardproxy') {
-        // ★ 正向（与 `modstateful` 反例配对）：`Card` 的样式注入**两种孩子两条路**。
+        // ★ 正向（与 `modstateful` 反例配对，反例已搬到 `tests/Support/fatal_cases.php`）：
+        //   `Card` 的样式注入**两种孩子两条路**。
         //   M2-5（2026-10-22）把 Card 从"自己有盒"改成"注入孩子 mods"后漏过这里：
         //   结构节点（ScrollView/TextField）自己不产盒 ⇒ §11.7 守卫当场 FATAL，
         //   示例台 7 页一点就炸，而当时四档闸门全绿（用例面没覆盖 Card(结构节点)）。
@@ -3513,31 +3498,18 @@ check(
 //     padding 且沿父链累积 · 无焦点 ⇒ null · 带 label 穿 Column 找真实字段盒
 //   ★ 夹具复用 `Drift\Dev\Smoke\App\{TfApplication,TfLabeledApplication}` 与
 //     `Frame\SurfaceProbe`（composer autoload 已覆盖）。
-// ── 修饰落在"不产盒"的控件上（arch-v2 `02` §11.7）──────────────────────
-//   `StatefulWidget` / `StatelessWidget` 自己不产盒（`TextField` 的盒在
-//   `TextFieldBox` 里）⇒ 声明的 pad 只留在 Widget 上、盒永远读不到。
-//   实测现象是"尺寸一点没变"——**静默失效**是最坏的一种，所以这里断言它响亮失败。
-check('Modifier · isDefault() 对全默认为真', (new Modifier())->isDefault());
-check(
-    'Modifier · isDefault() 对单字段改动为假（21 个字段都在判据里）',
-    !(new Modifier())->withCenter(true)->isDefault()
-        && !(new Modifier())->withShadow(0.1)->isDefault()
-        && !(new Modifier())->withGrow(1)->isDefault()
-        && !(new Modifier())->withBasis(0.0)->isDefault()
-);
 
-// ★ 中止路径跑子进程（与「封存后写入」同型）：断言退出码 + 日志内容。
-fresh($log);
-[$modCode, $modOut] = runCase(__FILE__, 'modstateful', null);
-check(
-    'Modifier · 不产盒的控件上声明修饰 ⇒ 退出码 = 3（不静默丢）',
-    $modCode === 3,
-    '实际 ' . $modCode . ' / ' . $modOut
-);
-check(
-    'Modifier · 该失败写了 Errors.log 并指明修法',
-    str_contains(logText($log), '不产渲染盒')
-);
+// ── 修饰落在"不产盒"的控件上 已迁出 ────────────────────────────────────────
+//   → `tests/Unit/Rendering/ModifierTest.php`（4 方法 / 5 条）——
+//     全默认 ⇒ isDefault() 真 · 表覆盖**全部** `with*()`（反射比方法名，新增一个
+//     不补一行就红）· 每个 `with*()` 都改 isDefault() · 不产盒控件上声明修饰 ⇒
+//     子进程退出码 3 + 日志含"不产渲染盒"。
+//   ★ 原判据标题写"21 个字段都在判据里"，实际只抽了 4 个 —— **过度承诺**。
+//     改成表驱动 + 完整性自检，顺带查出真缺口：`isDefault()` 不读 `repaintBoundary`
+//     ⇒ 在不产盒的控件上声明它会被静默丢掉（其余修饰都 Fatal）。测试把现状钉住，
+//     补字段时那一行会红，逼一次明确决定。
+//   ★ `modstateful` 用例搬到 `tests/Support/fatal_cases.php`（`runFatalCase()`）——
+//     `runCase(__FILE__)` 依赖 `__FILE__` 是入口脚本，用例搬进 tests 之后起不了子进程。
 // ── 选区模型 / 选区渲染 已迁出 ───────────────────────────────────────────────
 //   · `tests/Unit/Widget/TextFieldSelectionTest.php`（23）—— selectAll 两端 / 锚点模型
 //     （Shift+Left·Right·Home·End 只挪活动端）· 不带 Shift 移动折叠 · Ctrl+A 经 handleKey ·
@@ -3558,25 +3530,12 @@ check(
 //   · `tests/Feature/Input/FocusRoutingTest.php` —— 父容器换上重建后的新盒（量具
 //     双向自检：`Element::settle()` 去掉 `adoptBoxes()` 这条必须变红）/
 //     skipFocus 整棵子树不进 Tab 序 / focusOrder 稳定排序 / claimKeys 独占 Ctrl+A
-// ── ⑳ 控件与结构节点混用（§A.1 的形态真的能搭起来）──
-$mixed = Column::make()->spacing(8)->paddingAll(12)->children([
-    Text::make('标题')->title(),
-    Row::make()->spacing(8)->children([
-        Text::make('左')->body(),
-        Spacer::make(),
-        Text::make('右')->caption(),
-    ]),
-]);
-$mixedRoot = $mixed->createElement();
-$mixedRoot->mount(null, $context);
-$mixedBox = $mixedRoot->renderObject();
-$mixedBox?->layout(BoxConstraints::loose(new Size(400.0, 300.0)));
-check(
-    '控件 · Column 包 Text + Row(Text/Spacer/Text) 能一路排到底',
-    ($mixedBox?->size()?->width ?? 0.0) > 0.0 && ($mixedBox?->size()?->height ?? 0.0) > 0.0,
-    sprintf('实际 %.2f × %.2f', $mixedBox?->size()?->width ?? -1.0, $mixedBox?->size()?->height ?? -1.0)
-);
-
+// ── ⑳ 控件与结构节点混用：**已删，不迁** ───────────────────────────────────
+//   原判据是 `width > 0 && height > 0`（"Column 包 Text + Row(Text/Spacer/Text)
+//   能一路排到底"）—— 把 spacing / padding 全写成 0 它也绿，**证伪不了任何语义**。
+//   而它想验的东西已被 `tests/Unit/Widget/StructureControlsTest.php` 覆盖得更硬：
+//   Column/Row/Padding/Center/Spacer/Expanded 各自的几何 + 端到端 flex 分配
+//   （Spacer 1:3 ⇒ 15/45）。留着只是把"能建树"再数一遍。
 // ⑰ State 生命周期 已迁出
 //   → `tests/Unit/State/StateLifecycleTest.php`（4 方法 / 13 条）——
 //     挂载后就位（多次取到同一个 / build() 收到渲染环境 / 建出一层子）·
