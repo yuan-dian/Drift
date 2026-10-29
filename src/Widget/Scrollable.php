@@ -52,6 +52,28 @@ interface Scrollable
     public function scrollByAxis(Axis $axis, float $delta): void;
 
     /**
+     * 按**轴**滚一段**带动画**的 Δ（滚轮专用；滚动条拖动**不该**用它）。
+     *
+     * ★ 与 `scrollByAxis()` 的分工是**语义**而不是"快慢"：
+     *   - `scrollByAxis()` = **立即**（原语）。滚动条 thumb 拖动必须 1:1 跟手，
+     *     `ensureVisible()`（Tab 跳转）必须当帧到位 —— 动画化会让"拖动漂移"、
+     *     让"跳过去"变成"滑过去"而中间那几帧的锚点是错的。
+     *   - `glideByAxis()` = **摊成若干帧**（滚轮）。滚轮是离散事件（一格 48px），
+     *     瞬间跳一格在 120Hz 屏上就是"闪现"；摊开之后是"滑过去"。
+     *
+     * ★★ **为什么不直接把 `scrollByAxis()` 改成动画**：全仓 **81 处**调用依赖
+     *   "调完就到"（21 个测试文件 + `ensureVisible` + thumb 拖动）。改语义等于
+     *   让每一条都变成"跑 N 帧再断言"，那不是新增能力，是把原语拆了重装。
+     *   所以：**原语不动，另开一条"要动画的"入口**。
+     *
+     * ★ 实现**必须**把每一帧的位移仍然交给 `scrollBy()`（`ScrollMotion` 只算
+     *   "这一帧该到哪"）⇒ 夹取 / 换窗 / 锚点 / 提交编辑全部复用既有那一条路。
+     *
+     * ★ 轴问错 ⇒ 什么都不做（与 `scrollByAxis()` 同口径）。
+     */
+    public function glideByAxis(Axis $axis, float $delta): void;
+
+    /**
      * 把**内容坐标**里的矩形滚进视口，四周留 `$margin` 逻辑像素。
      *
      * ★ 坐标系是**内容坐标**（内容自己的坐标，与滚动偏移无关），不是视口坐标：

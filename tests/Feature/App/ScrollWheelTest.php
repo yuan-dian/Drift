@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\App;
 
+use Drift\App\Application;
 use Drift\Dev\Smoke\App\ScrollApplication;
 use Drift\Dev\Smoke\App\TableScrollApplication;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
@@ -38,6 +39,10 @@ use Drift\Widget\TableState;
  * `Table` 是**双轴**容器（两轴都 `scrollAxes()` 都返回支持），所以"轴"与
  * "容器有没有那根轴"能分开：换轴就该换轴动，跟容器能力无关。用单轴
  * `ScrollView` 当宿主时，"竖向没动"既可能是轴判对了、也可能是它本来就不支持。
+ *
+ * ★ 失败消息里的数字一律 `%.6g`（**不是** `%.1f`）：断言是 `=== 48.0`，差 0.01
+ *   也红，而 `%.1f` 会把 `47.9896` 打成 `48.0` ⇒ 消息与结论自相矛盾
+ *   （"显示 48.0 却判红"）。这是变异自检时真踩到的。
  */
 final class ScrollWheelTest extends SmokeTestCase
 {
@@ -80,6 +85,7 @@ final class ScrollWheelTest extends SmokeTestCase
         return $box instanceof RenderTable ? $box : null;
     }
 
+
     /**
      * 全链：视口就绪 → 未滚为 0 → 一格 48 → 第二格累加 → 上下界夹取 → 视口外不滚。
      *
@@ -104,17 +110,29 @@ final class ScrollWheelTest extends SmokeTestCase
             (string) (self::childOffset($box) ?? -1.0)
         );
 
+        $ts = 16.0;
         $app->dispatchInput(ScrollEvent::make(150.0, 100.0, 1.0));
+        // ★ 两帧：`AnimatedValue` 首帧只记起点（不推进），第二帧才开始走
         $app->frame(17.0, self::constraints());
+        $app->frame(18.0, self::constraints());
+        $ts = 18.0;
+        $part = self::childOffset($app->scrollBox());
         check(
-            'Scroll · 应用：滚轮一格（delta=1.0）⇒ 48px（WHEEL_NOTCH_PX：不跟手的根因修复）',
+            'Scroll · 应用：滚轮第二帧**只走一部分**（0 < |Δ| < 48 ⇒ 是滑过去，不是闪现）',
+            $part !== null && $part < 0.0 && $part > -48.0,
+            'part=' . ($part ?? 0.0)
+        );
+
+        pumpScroll($app, self::constraints(), $ts);
+        check(
+            'Scroll · 应用：滚轮一格（delta=1.0）⇒ 收口后 48px（WHEEL_NOTCH_PX：不跟手的根因修复）',
             self::childOffset($app->scrollBox()) === -48.0,
             'offsetY=' . (self::childOffset($app->scrollBox()) ?? -1.0)
         );
 
         // ★ 格是相对量 ⇒ 再滚一格累加（96 = 2×48），证明换算的是"每格"而不是一次性
         $app->dispatchInput(ScrollEvent::make(150.0, 100.0, 1.0));
-        $app->frame(18.0, self::constraints());
+        pumpScroll($app, self::constraints(), $ts);
         check(
             'Scroll · 应用：第二格累加（offsetY = −96：每格 48 不是一次 48）',
             self::childOffset($app->scrollBox()) === -96.0,
@@ -123,7 +141,7 @@ final class ScrollWheelTest extends SmokeTestCase
 
         // ★ `scrollBy` 是**相对**滚动（Δ 累加）⇒ 夹取要用远超当前偏移的量
         $app->dispatchInput(ScrollEvent::make(150.0, 100.0, 999999.0));
-        $app->frame(19.0, self::constraints());
+        pumpScroll($app, self::constraints(), $ts);
         check(
             'Scroll · 应用：滚出上界 ⇒ 夹在 maxScroll（内容不飞出视口）',
             self::childOffset($app->scrollBox()) === -$max,
@@ -131,7 +149,7 @@ final class ScrollWheelTest extends SmokeTestCase
         );
 
         $app->dispatchInput(ScrollEvent::make(150.0, 100.0, -9999999.0));
-        $app->frame(20.0, self::constraints());
+        pumpScroll($app, self::constraints(), $ts);
         check(
             'Scroll · 应用：滚出下界 ⇒ 夹在 0（scrollBy 的下界夹取生效）',
             self::childOffset($app->scrollBox()) === 0.0,
@@ -140,14 +158,89 @@ final class ScrollWheelTest extends SmokeTestCase
 
         // 视口外（y=250 > 高 200）⇒ 命不中 ⇒ 偏移纹丝不动
         $app->dispatchInput(ScrollEvent::make(150.0, 100.0, 1.0));
-        $app->frame(21.0, self::constraints());
+        pumpScroll($app, self::constraints(), $ts);
         $before = self::childOffset($app->scrollBox());
         $app->dispatchInput(ScrollEvent::make(150.0, 250.0, 1.0));
-        $app->frame(22.0, self::constraints());
+        pumpScroll($app, self::constraints(), $ts);
         check(
             'Scroll · 应用：轮落在视口外 ⇒ 命不中不滚（偏移不变）',
             self::childOffset($app->scrollBox()) === $before,
             'before=' . ($before ?? -1.0) . ' after=' . (self::childOffset($app->scrollBox()) ?? -1.0)
+        );
+    }
+
+    /**
+     * ★ **连续滚轮是"累加目标"，不是"重启动画"**。
+     *
+     * `glideByAxis()` 在动画**在跑时**刻意**不** `snapTo($offset)`：那一对齐会把
+     * 第一格还没走完的距离丢掉，改成"从当前位置再走一格" ⇒ 两格只走了"一格多一点"。
+     * 现象是"快滚时越滚越慢"，不报错、不崩、手感不对，而且**单格测试全绿**。
+     *
+     * ★ 判据落在**总位移 = 96**（两格之和）。落在"还在动"上是恒真的
+     * （重启动画也在动），落在"第二格也动了"上也分不出两种实现。
+     */
+    public function testRapidWheelNotchesAccumulateWithoutRestart(): void
+    {
+        $app = self::open();
+        $c = self::constraints();
+        $ts = 16.0;
+
+        $app->dispatchInput(ScrollEvent::make(150.0, 100.0, 1.0));
+        // 只推 4 帧：让第一格**跑到一半**（半衰期 55ms ⇒ 48ms 时约走 45%）
+        for ($i = 0; $i < 4; ++$i) {
+            $ts += 16.0;
+            $app->frame($ts, $c);
+        }
+        $mid = self::childOffset($app->scrollBox());
+        check(
+            'Scroll · 动画：第一格跑到一半（−48 < offsetY < 0）⇒ 下面"累加"才有意义',
+            $mid !== null && $mid < 0.0 && $mid > -48.0,
+            'mid=' . ($mid ?? 0.0)
+        );
+
+        // 半路再来一格：目标必须从 48 累加到 96，而不是从"当前位置"重新起跑
+        $app->dispatchInput(ScrollEvent::make(150.0, 100.0, 1.0));
+        pumpScroll($app, $c, $ts);
+        check(
+            'Scroll · 动画：动画中再滚一格 ⇒ 目标累加（收口 −96，不是"从半路再走 48"）',
+            self::childOffset($app->scrollBox()) === -96.0,
+            'offsetY=' . (self::childOffset($app->scrollBox()) ?? -1.0)
+        );
+    }
+
+    /**
+     * ★★ **滚到边界就收口**：否则 motion 每帧都朝一个**到不了**的目标收敛。
+     *
+     * ★ 这里必须说清一件容易想当然的事：**帧时钟最终会停**，不会真的永动 ——
+     *   `AnimatedValue` 是指数衰减，再远的目标也会在两百帧内落进 `EPSILON`。
+     *   所以"永不停摆"是**错的**描述，真实代价是**多转一百多帧**：
+     *   每帧白跑一次 `tickFrame` + 一次全量 paint，滚动条也跟着多亮一百多帧。
+     *   ⇒ 断言只能落在"**多久**落闸"，落在"会不会落闸"上恒真。
+     *
+     * ★ 帧预算的来历（实测，不是凑的）：收口后 81 帧落闸（这一段的时长由
+     *   `ScrollBarFade` 决定：900ms 空闲 + 一段衰减）；不收口是 190 帧。
+     *   取 120 帧：距 81 有 39 帧余量，距 190 有 70 帧余量，两侧都不擦边。
+     */
+    public function testHittingBoundaryStopsTheFrameClock(): void
+    {
+        $app = self::open();
+        $c = self::constraints();
+        $ts = 16.0;
+        $max = $app->scrollBox()?->maxScroll(Axis::Vertical) ?? 0.0;
+
+        // 一格远超可滚距离 ⇒ 目标落在 maxScroll 之外（必然"推不动"）
+        $app->dispatchInput(ScrollEvent::make(150.0, 100.0, 1.0e6));
+        pumpScroll($app, $c, $ts, 120);
+
+        check(
+            'Scroll · 动画：滚出上界 ⇒ 停在 maxScroll（夹取仍由 scrollBy 统一做）',
+            self::childOffset($app->scrollBox()) === -$max,
+            'offsetY=' . (self::childOffset($app->scrollBox()) ?? -1.0) . ' max=' . $max
+        );
+        check(
+            'Scroll · 动画：到边界后**收口** ⇒ 120 帧内帧时钟落闸（不收口要 190 帧）',
+            $app->wantsFrame() === false,
+            'wantsFrame=' . ($app->wantsFrame() ? 'true' : 'false')
         );
     }
 
@@ -163,26 +256,28 @@ final class ScrollWheelTest extends SmokeTestCase
         $app = new TableScrollApplication();
         $app->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
         $app->frame(16.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+        $c = BoxConstraints::tight(new Size(320.0, 240.0));
+        $ts = 16.0;
         $app->dispatchInput(ScrollEvent::make(100.0, 100.0, 1.0, Axis::Horizontal));
-        $app->frame(17.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+        pumpScroll($app, $c, $ts);
         $box = self::tableBoxOf($app->root());
         check(
             'Table · 滚轮：横轴一格 ⇒ offsetX = 48、offsetY = 0（轴来自事件，不由容器猜）',
             $box?->appliedOffset(Axis::Horizontal) === 48.0
                 && $box->appliedOffset(Axis::Vertical) === 0.0,
-            'x=' . \sprintf('%.1f', $box?->appliedOffset(Axis::Horizontal) ?? -1.0)
-                . ' y=' . \sprintf('%.1f', $box?->appliedOffset(Axis::Vertical) ?? -1.0)
+            'x=' . \sprintf('%.6g', $box?->appliedOffset(Axis::Horizontal) ?? -1.0)
+                . ' y=' . \sprintf('%.6g', $box?->appliedOffset(Axis::Vertical) ?? -1.0)
         );
 
         $app->dispatchInput(ScrollEvent::make(100.0, 100.0, 1.0));
-        $app->frame(18.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+        pumpScroll($app, $c, $ts);
         $box = self::tableBoxOf($app->root());
         check(
             'Table · 滚轮：接着竖轴一格 ⇒ offsetY = 48 且 offsetX 仍是 48（两轴互不串味）',
             $box?->appliedOffset(Axis::Vertical) === 48.0
                 && $box->appliedOffset(Axis::Horizontal) === 48.0,
-            'x=' . \sprintf('%.1f', $box?->appliedOffset(Axis::Horizontal) ?? -1.0)
-                . ' y=' . \sprintf('%.1f', $box?->appliedOffset(Axis::Vertical) ?? -1.0)
+            'x=' . \sprintf('%.6g', $box?->appliedOffset(Axis::Horizontal) ?? -1.0)
+                . ' y=' . \sprintf('%.6g', $box?->appliedOffset(Axis::Vertical) ?? -1.0)
         );
     }
 
@@ -226,10 +321,12 @@ final class ScrollWheelTest extends SmokeTestCase
     public function testVerticalWheelDoesNotFallBackOnDualAxis(): void
     {
         $app = new TableScrollApplication(3);   // 3 行 ⇒ 纵向装得下、横向仍溢出
-        $app->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
-        $app->frame(16.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+        $c = BoxConstraints::tight(new Size(320.0, 240.0));
+        $ts = 16.0;
+        $app->attach(new SurfaceProbe(), $c);
+        $app->frame(16.0, $c);
         $app->dispatchInput(ScrollEvent::make(100.0, 100.0, 1.0));
-        $app->frame(17.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+        pumpScroll($app, $c, $ts);
 
         $box = self::tableBoxOf($app->root());
         $state = Fixtures::stateOf($app->root());
@@ -241,10 +338,10 @@ final class ScrollWheelTest extends SmokeTestCase
                 && $box->appliedOffset(Axis::Vertical) === 0.0
                 && $state?->offsetY() === 0.0
                 && $state->offsetX() === 0.0,
-            'maxV=' . \sprintf('%.1f', $box?->maxScroll(Axis::Vertical) ?? -1.0)
-                . ' maxH=' . \sprintf('%.1f', $box?->maxScroll(Axis::Horizontal) ?? -1.0)
-                . ' raw=(x=' . \sprintf('%.1f', $state?->offsetX() ?? -1.0)
-                . ',y=' . \sprintf('%.1f', $state?->offsetY() ?? -1.0) . ')'
+            'maxV=' . \sprintf('%.6g', $box?->maxScroll(Axis::Vertical) ?? -1.0)
+                . ' maxH=' . \sprintf('%.6g', $box?->maxScroll(Axis::Horizontal) ?? -1.0)
+                . ' raw=(x=' . \sprintf('%.6g', $state?->offsetX() ?? -1.0)
+                . ',y=' . \sprintf('%.6g', $state?->offsetY() ?? -1.0) . ')'
         );
     }
 
@@ -252,14 +349,16 @@ final class ScrollWheelTest extends SmokeTestCase
     public function testHorizontalWheelDoesNotMoveSingleAxisVertical(): void
     {
         $app = new ScrollApplication();
-        $app->attach(new SurfaceProbe(), self::constraints());
-        $app->frame(16.0, self::constraints());
+        $c = self::constraints();
+        $ts = 16.0;
+        $app->attach(new SurfaceProbe(), $c);
+        $app->frame(16.0, $c);
         $app->dispatchInput(ScrollEvent::make(150.0, 100.0, 1.0, Axis::Horizontal));
-        $app->frame(17.0, self::constraints());
+        pumpScroll($app, $c, $ts);
         check(
             'Scroll · 滚轮：横轴落在纵向视口 ⇒ 不动（只有**竖向**回落到容器唯一那根轴）',
             $app->scrollBox()?->appliedOffset(Axis::Vertical) === 0.0,
-            'offsetY=' . \sprintf('%.1f', $app->scrollBox()?->appliedOffset(Axis::Vertical) ?? -1.0)
+            'offsetY=' . \sprintf('%.6g', $app->scrollBox()?->appliedOffset(Axis::Vertical) ?? -1.0)
         );
     }
 }

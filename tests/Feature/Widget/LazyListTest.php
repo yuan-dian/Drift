@@ -145,9 +145,11 @@ final class LazyListTest extends SmokeTestCase
     {
         // ⑧ 滚轮经 `Scrollable` 路由到 `LazyListState`（接口的第一个真实消费者）
         $app = new LazyApplication();
-        $app->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
+        $c = BoxConstraints::loose(new Size(300.0, 200.0));
+        $ts = 16.0;
+        $app->attach(new SurfaceProbe(), $c);
         $app->dispatchInput(ScrollEvent::make(150.0, 100.0, 1.0));   // 一格 = 48px
-        $app->frame(16.0, BoxConstraints::loose(new Size(300.0, 200.0)));
+        pumpScroll($app, $c, $ts);   // 滚轮是动画（`glideByAxis`）⇒ 跑到收口
         check(
             'Lazy · 滚轮一格 ⇒ offset 48（`Scrollable` 接口路由到 LazyListState）',
             $app->lazyState()?->offset() === 48.0,
@@ -224,9 +226,11 @@ final class LazyListTest extends SmokeTestCase
         // 与 Windows 横向 ListView 同款）。不回落的话 `LazyRow` 的滚动就只剩
         // "代码看起来对"（F8 那类"缺的是驱动方"的同族）。
         $app = new LazyApplication(false);
-        $app->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
+        $c = BoxConstraints::loose(new Size(300.0, 200.0));
+        $ts = 16.0;
+        $app->attach(new SurfaceProbe(), $c);
         $app->dispatchInput(ScrollEvent::make(150.0, 100.0, 1.0));
-        $app->frame(16.0, BoxConstraints::loose(new Size(300.0, 200.0)));
+        pumpScroll($app, $c, $ts);   // 滚轮是动画（`glideByAxis`）⇒ 跑到收口
         check(
             'LazyRow · 竖轮一格 ⇒ offset 48（竖向回落到容器唯一那根轴，不由调用方猜）',
             $app->lazyState()?->offset() === 48.0,

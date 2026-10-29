@@ -187,8 +187,11 @@ final class PopupPanelTest extends SmokeTestCase
         // ★★ 每滚一次必须**重取** ScrollView：`scrollBy()` → `setState` → `update()`
         //    会换一个新渲染盒，拿旧盒读 `appliedOffset()` 恒为上一帧的值。
         // ★ 常量是 private ⇒ 表达式里写字面量（48 = WHEEL_NOTCH_PX）、名字进消息。
+        // ★★ 滚轮是**带动画**的（`glideByAxis` 摊成若干帧）⇒ 拍一帧只走一部分，
+        //    必须跑到收口才等于一格；这与"重取盒"是两件不同的事，都要做。
+        $ts = 32.0;
         $app->dispatchInput(ScrollEvent::make($cx, $cy, 1.0));
-        $app->frame(32.0, $tight);
+        pumpScroll($app, $tight, $ts);
         check(
             '菜单 · 滚一格 ⇒ appliedOffset = WHEEL_NOTCH_PX（真实滚轮通道）',
             abs(($app->panelScrollView()?->appliedOffset(Axis::Vertical) ?? -1.0) - 48.0) < 0.01,
@@ -196,7 +199,7 @@ final class PopupPanelTest extends SmokeTestCase
         );
 
         $app->dispatchInput(ScrollEvent::make($cx, $cy, 1.0));
-        $app->frame(48.0, $tight);
+        pumpScroll($app, $tight, $ts);
         check(
             '菜单 · 滚两格 ⇒ appliedOffset = 2 × WHEEL_NOTCH_PX（量对，不是只动一下）',
             abs(($app->panelScrollView()?->appliedOffset(Axis::Vertical) ?? -1.0) - 96.0) < 0.01,

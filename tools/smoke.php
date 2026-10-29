@@ -4715,8 +4715,10 @@ $testAppScenarios = [
         )
         // ★ `scroll()` 的单位是**格**：1 格 = 48px（`Application::WHEEL_NOTCH_PX`）。
         //   这个 48 是**设计值**，改了就该让这条断言红 —— 不是"跑出来再抄回去"。
+        // ★ 滚轮是**带动画**的（`glideByAxis()`）⇒ 必须 `settle()` 跑到收口，
+        //   `pump(1)` 只走一部分（那条"是滑过去不是闪现"由 phpunit 单独钉住）。
         ->scroll(1.0)
-        ->pump(1)
+        ->settle()
         ->expect(
             '滚轮真的改了偏移（1 格 = 48px）',
             static fn(Application $a): bool => $a instanceof LazyApplication && $a->lazyState()?->offset() === 48.0
@@ -4738,7 +4740,7 @@ $testAppScenarios = [
         ->pump(1)
         ->expectBox('LazyColumn', 0.0, 0.0, 400.0, 200.0)
         ->scroll(3.0)
-        ->pump(1)
+        ->settle()
         ->expectBox('LazyColumn', 0.0, 0.0, 400.0, 200.0),
 ];
 

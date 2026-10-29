@@ -10,7 +10,9 @@ declare(strict_types=1);
  * ★ 不在 TestCase 里时（单跑一个段脚本调 bug）退回打印模式，不抛。
  */
 
+use Drift\App\Application;
 use Drift\Dev\Tests\Support\SmokeTestCase;
+use Drift\Geometry\BoxConstraints;
 use Drift\Layout\RenderBox;
 use Drift\Rendering\Color;
 use Drift\Rendering\RasterCanvas;
@@ -296,6 +298,26 @@ if (!\function_exists('inkCount')) {
         }
 
         return $ink;
+    }
+}
+
+if (!\function_exists('pumpScroll')) {
+    /**
+     * 把**滚动动画**跑到收口（滚轮自 2026-10-29 起是动画，见 `Scrollable::glideByAxis()`）。
+     *
+     * ★ 为什么是固定帧数而不是"直到 `wantsFrame()` 为假"：滚动条淡出要跑 ~900ms 的
+     *   节律，`wantsFrame()` 在那期间恒真 ⇒ 用它判"滚动结束"会白跑。
+     * ★ 60 帧够不够是**算出来的**：`AnimatedValue` 半衰期 55ms，一格 48px 收到
+     *   `EPSILON = 0.01` 需 `48·2^(−t/55) ≤ 0.01` ⇒ `t ≥ 673ms` ⇒ 43 帧；取 60 留余量。
+     *
+     * @param float $ts 帧时间戳（**引用**：连续 pump 会一路推进它）
+     */
+    function pumpScroll(Application $app, BoxConstraints $constraints, float &$ts, int $frames = 60): void
+    {
+        for ($i = 0; $i < $frames; $i++) {
+            $ts += 16.0;
+            $app->frame($ts, $constraints);
+        }
     }
 }
 

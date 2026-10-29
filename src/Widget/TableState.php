@@ -125,6 +125,11 @@ final class TableState extends State implements Scrollable, EditableText
     /** 滚动条淡出节律（懒建；与 `ScrollViewState` / `LazyListState` 同一份实现） */
     private ?ScrollBarFade $barFade = null;
 
+    /** 滚轮的动画节律 —— **两根轴各一个**（表的横竖互不干扰） */
+    private ?ScrollMotion $motionY = null;
+
+    private ?ScrollMotion $motionX = null;
+
     /**
      * 上一帧造了几行 —— **验收判据**（§6 阶段 1 闸门 ①：10000 行只造约一屏）。
      *
@@ -445,9 +450,7 @@ final class TableState extends State implements Scrollable, EditableText
 
         $this->commitIfUserScrolled();
 
-        $contentW = $this->contentWInBuild;
-        $viewportW = $this->widthUsedInBuild;
-        if ($contentW !== null && $viewportW !== null && $contentW <= $viewportW) {
+        if (!$this->horizontalOverflows()) {
             return;   // 横向没得滚：滚轮来了也不标脏
         }
 
@@ -467,6 +470,95 @@ final class TableState extends State implements Scrollable, EditableText
         if (!$this->windowCovers(Axis::Horizontal)) {
             $this->markDirty();
         }
+    }
+
+    /**
+     * 横向**装得下**吗（`null` = 还没排过 ⇒ 放行，别拿"不知道"当"没有"）。
+     *
+     * ★ 抽出来是因为它有两个消费者：`scrollByAxis()`（立即滚）与
+     *   `glideByAxis()`（动画滚）。两处各写一遍就是"两个真相"，迟早一处改一处漏。
+     */
+    private function horizontalOverflows(): bool
+    {
+        $contentW = $this->contentWInBuild;
+        $viewportW = $this->widthUsedInBuild;
+
+        return $contentW === null || $viewportW === null || $contentW > $viewportW;
+    }
+
+    /**
+     * 按轴滚动，**带动画**（滚轮专用；细节见 `Scrollable::glideByAxis()`）。
+     *
+     * ★ 横向的"装得下就早退"必须在**起飞前**判：否则 motion 会朝一个到不了的目标
+     *   跑，每帧 `scrollByAxis()` 都早退 ⇒ 得等 `stepMotion()` 发现"推不动"才收口，
+     *   白转一帧。
+     */
+    public function glideByAxis(Axis $axis, float $delta): void
+    {
+        if ($axis === Axis::Horizontal && !$this->horizontalOverflows()) {
+            return;
+        }
+
+        $motion = $this->motionFor($axis);
+        if (!$motion->isAnimating()) {
+            $motion->snapTo($axis === Axis::Vertical ? $this->offsetY : $this->offsetX);
+        }
+        $motion->glideBy($delta);
+
+        $this->bar()->noteScroll();
+    }
+
+    /** 该轴的动画节律（懒建：没被滚轮滚过的轴不建） */
+    private function motionFor(Axis $axis): ScrollMotion
+    {
+        if ($axis === Axis::Vertical) {
+            $motion = $this->motionY;
+            if ($motion === null) {
+                $motion = new ScrollMotion($this->offsetY);
+                $this->motionY = $motion;
+            }
+
+            return $motion;
+        }
+
+        $motion = $this->motionX;
+        if ($motion === null) {
+            $motion = new ScrollMotion($this->offsetX);
+            $this->motionX = $motion;
+        }
+
+        return $motion;
+    }
+
+    /**
+     * 推进一根轴的动画；返回"这一帧动了吗"。
+     *
+     * ★ 位移仍然交给 `scrollByAxis()` —— 夹取、列窗口换批、提交编辑全在那一条路上，
+     *   动画不重写任何一条。
+     */
+    private function stepMotion(Axis $axis, float $timestampMs): bool
+    {
+        $motion = $axis === Axis::Vertical ? $this->motionY : $this->motionX;
+        if ($motion === null) {
+            return false;
+        }
+
+        $next = $motion->tick($timestampMs);
+        if ($next === null) {
+            return false;
+        }
+
+        $before = $axis === Axis::Vertical ? $this->offsetY : $this->offsetX;
+        $this->scrollByAxis($axis, $next - $before);
+        $after = $axis === Axis::Vertical ? $this->offsetY : $this->offsetX;
+
+        // 推不动了（到边界 / 内容变短被夹）⇒ 就地收口；理由与实测帧数见
+        // `ScrollViewState::tickFrame()`（三份实现同一契约，此处不重复展开）。
+        if ($after === $before) {
+            $motion->snapTo($before);
+        }
+
+        return true;
     }
 
     /**
@@ -1241,10 +1333,22 @@ final class TableState extends State implements Scrollable, EditableText
     #[\Override]
     public function tickFrame(float $timestampMs): bool
     {
-        $reflow = $this->reflowIfWidthDrifted();
-        $bar = $this->barFade;
+        $busy = $this->reflowIfWidthDrifted();
 
-        return $reflow || ($bar !== null && $bar->tickFor($this, $timestampMs));
+        // ★ 两轴各推一次：横竖互不干扰（各自的 `ScrollMotion`）。
+        if ($this->stepMotion(Axis::Vertical, $timestampMs)) {
+            $busy = true;
+        }
+        if ($this->stepMotion(Axis::Horizontal, $timestampMs)) {
+            $busy = true;
+        }
+
+        $bar = $this->barFade;
+        if ($bar !== null && $bar->tickFor($this, $timestampMs)) {
+            $busy = true;
+        }
+
+        return $busy;
     }
 
     /**

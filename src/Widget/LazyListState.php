@@ -39,6 +39,9 @@ final class LazyListState extends State implements Scrollable
     /** 滚动条淡出节律（懒建；与 `ScrollViewState` 同一份实现） */
     private ?ScrollBarFade $barFade = null;
 
+    /** 滚轮的动画节律（懒建；与 `ScrollViewState` / `TableState` 同一份实现） */
+    private ?ScrollMotion $motion = null;
+
     /**
      * 锚点（`04` §7.3）：视口起点那一格在**完整内容**里的位置 —— 序号 + 格内
      * 滚过的比例（`0..1`，保留"没对齐到格"的那点偏移）。
@@ -162,6 +165,39 @@ final class LazyListState extends State implements Scrollable
         $this->scrollBy($delta);
     }
 
+    /**
+     * 按轴滚动，**带动画**（滚轮专用；细节见 `Scrollable::glideByAxis()`）。
+     *
+     * ★ 与 `ScrollViewState` 逐字同构 —— 三份实现共用 `ScrollMotion`，
+     *   只有"轴怎么判"不同（这里是 `isVertical()`，那边是 `vertical()`）。
+     */
+    public function glideByAxis(Axis $axis, float $delta): void
+    {
+        if (($axis === Axis::Vertical) !== $this->view()->isVertical()) {
+            return;
+        }
+
+        $motion = $this->motion();
+        if (!$motion->isAnimating()) {
+            $motion->snapTo($this->offset);
+        }
+        $motion->glideBy($delta);
+
+        $this->bar()->noteScroll();
+    }
+
+    /** 滚动的动画节律（懒建：没被滚轮滚过的列表不建） */
+    private function motion(): ScrollMotion
+    {
+        $motion = $this->motion;
+        if ($motion === null) {
+            $motion = new ScrollMotion($this->offset);
+            $this->motion = $motion;
+        }
+
+        return $motion;
+    }
+
     /** 滚动条的显隐节律（懒建：没滚过的列表不建，滚动条恒亮） */
     private function bar(): ScrollBarFade
     {
@@ -174,13 +210,40 @@ final class LazyListState extends State implements Scrollable
         return $bar;
     }
 
-    /** 推进滚动条的淡出（细节见 `ScrollBarFade::tickFor()`） */
+    /**
+     * 推进这一帧的**滚动动画**与**滚动条淡出**（先滚动、后淡出，见 `ScrollViewState`）。
+     *
+     * ★ 这里的 `scrollBy()` 会顺带做 `rememberAnchor()` 与"窗口盖不住就标脏"，
+     *   所以动画期间每帧都走一次换窗判断 —— 那是**必要**的：一步 5px 也可能
+     *   跨过缓冲带边界，跳过它就会出现"滑过去时下方露白"。
+     */
     #[\Override]
     public function tickFrame(float $timestampMs): bool
     {
-        $bar = $this->barFade;
+        $busy = false;
 
-        return $bar !== null && $bar->tickFor($this, $timestampMs);
+        $motion = $this->motion;
+        if ($motion !== null) {
+            $next = $motion->tick($timestampMs);
+            if ($next !== null) {
+                $before = $this->offset;
+                $this->scrollBy($next - $before);
+
+                // 推不动了（到边界 / 内容变短被夹）⇒ 就地收口；理由与实测帧数见
+                // `ScrollViewState::tickFrame()`（三份实现同一契约，此处不重复展开）。
+                if ($this->offset === $before) {
+                    $motion->snapTo($before);
+                }
+                $busy = true;
+            }
+        }
+
+        $bar = $this->barFade;
+        if ($bar !== null && $bar->tickFor($this, $timestampMs)) {
+            $busy = true;
+        }
+
+        return $busy;
     }
 
     /**

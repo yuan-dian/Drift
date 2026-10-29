@@ -99,6 +99,12 @@ final class ScrollInputRouter
      * ★ 判据是 `scrollAxes()`（**结构性**：这个容器有几根轴），不是 `maxScroll()`
      *   （**状态性**：这根轴当前有没有溢出）。用后者会在"盒还没布局 / 上限恒 0"
      *   时把事件吞掉 —— 滚轮必须先于布局正确工作。
+     *
+     * ★★ **走 `glideByAxis()` 而不是 `scrollByAxis()`**（2026-10-29）：滚轮是**离散**
+     *   事件（一格 48px），瞬间跳一格在高刷屏上就是"闪现"。摊成若干帧之后才是
+     *   "滑过去"。★ 动画的每一帧位移仍然交给 `scrollBy()` ⇒ 夹取 / 换窗 / 锚点 /
+     *   提交编辑全部复用既有那一条路，动画不重写任何一条。
+     *   ★ **thumb 拖动不走这里**（见 `dragThumb()`）：拖动必须 1:1 跟手，动画化会漂移。
      */
     public function scrollAt(?Element $element, Axis $axis, float $delta): void
     {
@@ -110,20 +116,20 @@ final class ScrollInputRouter
         $host = $this->barHostOf($state->element());
         if ($host === null) {
             // 没有滚动条宿主盒 ⇒ 不知道它有几根轴，交给 State 自己判（问错轴它忽略）
-            $state->scrollByAxis($axis, $delta);
+            $state->glideByAxis($axis, $delta);
 
             return;
         }
 
         $axes = $host->scrollAxes();
         if ($this->axisListed($axes, $axis)) {
-            $state->scrollByAxis($axis, $delta);
+            $state->glideByAxis($axis, $delta);
 
             return;
         }
 
         if ($axis === Axis::Vertical && \count($axes) === 1) {
-            $state->scrollByAxis($axes[0], $delta);
+            $state->glideByAxis($axes[0], $delta);
         }
     }
 

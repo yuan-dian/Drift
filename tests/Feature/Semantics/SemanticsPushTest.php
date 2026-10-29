@@ -114,11 +114,31 @@ final class SemanticsPushTest extends SmokeTestCase
         $pushes = 0;
         $verBefore = Element::structureVersion();
         $app->dispatchInput(ScrollEvent::make(200.0, 100.0, 3.0)); // 3 格 = 144px ⇒ 窗口换行
-        $app->frame(16.0, BoxConstraints::tight(new Size(400.0, 200.0)));
+
+        // ★ 滚轮是**带动画**的（`glideByAxis` 摊成若干帧）⇒ 结构变发生在**换行那一帧**，
+        //   不是 dispatch 后的第一帧。所以要逐帧推进到"结构真的变了"再断言。
+        // ★★ 不能一口气 `pumpScroll(60)`：动画期间 `animating=true` ⇒ 语义走 `coalesce`，
+        //   节流会额外推几次，`pushes === 1` 就变成假红 —— 那条断言的本意是
+        //   "**换行这一帧**只推一次且是 full"，所以判据必须锚在"结构变的那一帧"。
+        $c = BoxConstraints::tight(new Size(400.0, 200.0));
+        $ts = 16.0;
+        $deltaAtChange = null;
+        $modeAtChange = '';
+        for ($i = 0; $i < 60 && $deltaAtChange === null; ++$i) {
+            $prev = $pushes;
+            $ts += 16.0;
+            $app->frame($ts, $c);
+            if (Element::structureVersion() > $verBefore) {
+                $deltaAtChange = $pushes - $prev;
+                $modeAtChange = $app->semanticsMode();
+            }
+        }
+
         check(
             '语义两档 · 虚拟列表滚动换了行 ⇒ 结构变 ⇒ 立即 full（不攒）',
-            Element::structureVersion() > $verBefore && $pushes === 1 && $app->semanticsMode() === 'full',
-            'ver=' . $verBefore . '->' . Element::structureVersion() . ' pushes=' . $pushes . ' mode=' . $app->semanticsMode(),
+            $deltaAtChange === 1 && $modeAtChange === 'full',
+            'ver=' . $verBefore . '->' . Element::structureVersion()
+                . ' delta=' . ($deltaAtChange ?? -1) . ' mode=' . $modeAtChange,
         );
     }
 

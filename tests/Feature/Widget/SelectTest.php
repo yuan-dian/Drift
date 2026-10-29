@@ -304,13 +304,16 @@ final class SelectTest extends SmokeTestCase
         );
 
         // ★★ 端到端：滚一格（`WHEEL_NOTCH_PX` = 48px）⇒ 第 0 项真的上移 48px。
-        //   走真实 `ScrollEvent` 通道（命中 → 找最近 ScrollViewState → scrollBy），
+        //   走真实 `ScrollEvent` 通道（命中 → 找最近 ScrollViewState → glideByAxis），
         //   不直接改 state。
+        //   ★ 滚轮是**带动画**的（`glideByAxis` 摊成若干帧）⇒ 必须跑到收口才等于 48px；
+        //     拍一帧只走一部分（`ScrollWheelTest` 里已单独钉住"第二帧只走一部分"）。
         $beforePos = $app->optionCenter(0);
         $cx = $px + ($lBox?->size()?->width ?? 0.0) / 2.0;
         $cy = $py + $lh / 2.0;
         $app->dispatchInput(ScrollEvent::make($cx, $cy, 1.0));
-        $app->frame(1900.0, $this->constraints());
+        $ts = 1900.0;
+        pumpScroll($app, $this->constraints(), $ts);
         $afterPos = $app->optionCenter(0);
         check(
             'Select · 长列表面板滚一格 ⇒ 第 0 项上移 48px（WHEEL_NOTCH_PX，真实滚轮通道）',

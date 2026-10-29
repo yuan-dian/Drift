@@ -22,7 +22,7 @@ use Drift\Widget\Element;
  *     ->pump(1)
  *     ->expect('行数 < 20', fn(LazyApplication $a): bool => …)
  *     ->scroll(120.0)
- *     ->pump(1)
+ *     ->settle()          // 滚轮带动画 ⇒ 要跑到帧时钟空闲
  *     ->expectBox('LazyColumn', 0.0, 0.0, 400.0, 200.0)
  *     ->run();
  * ```
@@ -201,6 +201,38 @@ final class TestApp
             $x = $this->width / 2.0;
             $y = $this->height / 2.0;
             $app->dispatchInput(ScrollEvent::make($x, $y, $notches));
+        }];
+
+        return $this;
+    }
+
+    /**
+     * 跑到**动画收口**：一直 `nextFrame()` 到框架自己说"不用下一帧了"。
+     *
+     * ★ 为什么需要这个动词：滚轮是**带动画**的（`Scrollable::glideByAxis()`），
+     *   `scroll()` 之后偏移**不会当场到位** —— 拍一帧只走一部分。写 `pump(60)`
+     *   也行，但那个数字是从"半衰期 55ms"推出来的，曲线一调就得跟着改，
+     *   且改错了的现象是"断言偶尔红"，很难查。这里直接问 `wantsFrame()`：
+     *   框架说停就是停。
+     * ★ 上界 `$maxFrames`：`wantsFrame()` 恒真（真 bug，比如帧时钟停不下来）
+     *   时不能把整条 smoke 挂死 —— 有界失败比无限等待好。
+     * ★ 它等的是"帧时钟空闲"，比"滚动动画走完"更宽（滚动条淡出还要 900ms），
+     *   所以 `scroll()` 之后用它比用固定帧数稳。
+     * ★★ **必须先跑一帧再问**：`wantsFrame()` 反映的是**上一帧**的结果
+     *   （`animating` 在 `frame()` 里才被赋值），`scroll()` 刚 dispatch 完还没跑过帧
+     *   时它一律是 `false` —— 先问就会"立刻收工"，偏移停在 0 而断言全绿到红。
+     *   这是本方法第一版真踩到的（smoke 里 `offset` 一直是 0）。
+     */
+    public function settle(int $maxFrames = 240): self
+    {
+        $this->steps[] = ['settle', function () use ($maxFrames): void {
+            for ($i = 0; $i < $maxFrames; ++$i) {
+                $this->nextFrame();
+                $app = $this->requireApp('settle');
+                if ($app === null || !$app->wantsFrame()) {
+                    return;
+                }
+            }
         }];
 
         return $this;

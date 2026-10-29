@@ -29,6 +29,9 @@ final class ScrollViewState extends State implements Scrollable
     /** 滚动条淡出节律（懒建；`null` = 这个视口还没滚过） */
     private ?ScrollBarFade $barFade = null;
 
+    /** 滚轮的动画节律（懒建；`null` = 这个视口没被滚轮滚过） */
+    private ?ScrollMotion $motion = null;
+
     /** 当前偏移（逻辑像素，≥ 0） */
     public function offset(): float
     {
@@ -95,6 +98,45 @@ final class ScrollViewState extends State implements Scrollable
     }
 
     /**
+     * 按轴滚动，**带动画**（滚轮专用；细节见 `Scrollable::glideByAxis()`）。
+     *
+     * ★ 起飞前对齐：motion 不在跑时，先 `snapTo($this->offset)` —— 这个 offset
+     *   可能刚被 `scrollBy()` / `ensureVisible()` / 盒夹取改过，motion 里那个
+     *   名义值已经过期；不对齐就会"从旧位置滑到新目标"，画面跳一下。
+     *   ★ 在跑时**不对齐**：连续滚轮必须让目标累加（对齐会打断正在跑的动画）。
+     */
+    public function glideByAxis(Axis $axis, float $delta): void
+    {
+        if (($axis === Axis::Vertical) !== $this->view()->vertical()) {
+            return;
+        }
+
+        $motion = $this->motion();
+        if (!$motion->isAnimating()) {
+            $motion->snapTo($this->offset);
+        }
+        $motion->glideBy($delta);
+
+        // 动画可能首帧还不推进（`AnimatedValue` 首帧只记起点）⇒ 条要现在就亮，
+        // 否则"滚了但条没反应"要等第二帧。
+        $this->bar()->noteScroll();
+    }
+
+    /**
+     * 滚动的动画节律（懒建：没被滚轮滚过的视口不建）。
+     */
+    private function motion(): ScrollMotion
+    {
+        $motion = $this->motion;
+        if ($motion === null) {
+            $motion = new ScrollMotion($this->offset);
+            $this->motion = $motion;
+        }
+
+        return $motion;
+    }
+
+    /**
      * 滚动条的显隐节律（懒建：没滚过的视口不建，滚动条恒亮）。
      */
     private function bar(): ScrollBarFade
@@ -109,14 +151,43 @@ final class ScrollViewState extends State implements Scrollable
     }
 
     /**
-     * 推进滚动条的淡出（细节见 `ScrollBarFade::tickFor()`）。
+     * 推进这一帧的**滚动动画**与**滚动条淡出**。
+     *
+     * ★ 顺序：先滚动、后淡出。`scrollBy()` 里会 `noteScroll()`（把条打回全亮），
+     *   反过来就会"这一帧先按旧空闲时长淡一点、再被滚动打回全亮"—— 抖动。
+     *
+     * ★ 返回值是"还要下一帧吗"，由 `Application` 聚合进 `animating` ⇒
+     *   `wantsFrame()` 自动命中"有动画在跑"。**不需要给 `wantsFrame()` 加判据。**
      */
     #[\Override]
     public function tickFrame(float $timestampMs): bool
     {
-        $bar = $this->barFade;
+        $busy = false;
 
-        return $bar !== null && $bar->tickFor($this, $timestampMs);
+        $motion = $this->motion;
+        if ($motion !== null) {
+            $next = $motion->tick($timestampMs);
+            if ($next !== null) {
+                $before = $this->offset;
+                $this->scrollBy($next - $before);
+
+                // 推不动了（到边界 / 内容变短被夹）⇒ 就地收口。否则 motion 会继续朝
+                // 一个**到不了**的目标收敛：指数衰减保证它终会停，但要多转一百多帧
+                // （实测：收口后 81 帧落闸，不收口 190 帧）—— 每帧都白跑一次
+                // `tickFrame` + 一次全量 paint，滚动条也跟着多亮一百多帧。
+                if ($this->offset === $before) {
+                    $motion->snapTo($before);
+                }
+                $busy = true;
+            }
+        }
+
+        $bar = $this->barFade;
+        if ($bar !== null && $bar->tickFor($this, $timestampMs)) {
+            $busy = true;
+        }
+
+        return $busy;
     }
 
     /**
