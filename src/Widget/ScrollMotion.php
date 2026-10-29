@@ -3,8 +3,6 @@ declare(strict_types=1);
 
 namespace Drift\Widget;
 
-use Drift\Rendering\AnimatedValue;
-
 /**
  * 滚动的**动画节律**：把"一次大位移"摊成"若干帧小位移"。
  *
@@ -26,11 +24,9 @@ use Drift\Rendering\AnimatedValue;
  *   （`rememberAnchor`）、提交编辑（`commitIfUserScrolled`）全部复用既有那一条路，
  *   动画不必重写任何一条。**"动画 = 把一次大增量拆成多次小增量"** 是这里唯一的新语义。
  *
- * ★★ **收口帧必须交付**：`AnimatedValue::tick()` 在收敛时会把值**精确**落到
- *   `target`，但那一帧返回 `false`（"不用下一帧了"）。若这里跟着返回 `null`，
- *   最后一小段位移就**永远不会被施加** ⇒ 停在离目标 0.01px 处。对 alpha 无感
- *   （`EPSILON` 就是按"1% 不可见"定的），对**位置**是硬伤：测试断 `=== 48.0` 直接红。
- *   所以用 `$lastApplied` 记"上次交付的值"，只要值变了就再交一次 —— 收口帧因此也交付。
+ * ★ **曲线与"收口帧必须交付"已下沉到 `AnimatedScalar`**（2026-10-29）：
+ *   `AnimatedOpacity` 落地时它成了第三个同样的需求 ⇒ 三份收成一份。
+ *   本类现在只剩"位移是**相对**的"这一条滚动特有的语义。
  *
  * ★ **不做 fling（惯性）**：`arch-v2/04` §6.4 当年的结论仍成立 —— 没有触摸输入，
  *   滚轮是离散事件（一格就是一格，没有速度概念），触控板的惯性由 Win32 自己折进
@@ -42,15 +38,16 @@ use Drift\Rendering\AnimatedValue;
  */
 final class ScrollMotion
 {
-    private AnimatedValue $value;
-
-    /** 上次交给 State 的绝对位置（判"这一帧的值变了没有"，见类注释 ★★） */
-    private float $lastApplied;
+    /**
+     * ★ 曲线与"收口帧交付"住在 `AnimatedScalar`（三份实现共用一份，见那边 ★★）：
+     *   本类**只加**滚动特有的语义 —— 位移是**相对**的（`glideBy(Δ)`），因为滚轮
+     *   事件天然是"再走一格"，而不是"走到第 96 像素"。
+     */
+    private AnimatedScalar $value;
 
     public function __construct(float $start = 0.0)
     {
-        $this->value = new AnimatedValue($start);
-        $this->lastApplied = $start;
+        $this->value = new AnimatedScalar($start);
     }
 
     /**
@@ -73,13 +70,12 @@ final class ScrollMotion
     public function snapTo(float $value): void
     {
         $this->value->snapTo($value);
-        $this->lastApplied = $value;
     }
 
     /** 还在跑吗（= 离目标还有距离） */
     public function isAnimating(): bool
     {
-        return !$this->value->isSettled();
+        return $this->value->isAnimating();
     }
 
     /**
@@ -89,15 +85,6 @@ final class ScrollMotion
      */
     public function tick(float $timestampMs): ?float
     {
-        $this->value->tick($timestampMs);
-
-        $now = $this->value->value();
-        if ($now === $this->lastApplied) {
-            return null;
-        }
-
-        $this->lastApplied = $now;
-
-        return $now;
+        return $this->value->tick($timestampMs);
     }
 }

@@ -36,9 +36,12 @@ namespace Drift\Widget;
  * }
  * ```
  *
- * ★ **`Opacity` / `Transform` 这类"整棵子树一起动"的包装暂不做**（EVAL §7 第 4 项
- *   的前提：要先有层合成语义）。本控制器给的是**值** —— 把它喂给已有控件的
- *   数值入口（`Progress::value()`、`SizedBox::width()`…）就能动，不需要新控件。
+ * ★ **`Opacity` / `Transform` 这类"整棵子树一起动"的包装**：`Opacity` 已经有了
+ *   （2026-10-29，`AnimatedOpacity` 是它的驱动方）—— 层合成语义
+ *   （`Canvas::pushLayer()` / `RenderBox::setCompose()`）早就具备，当年这条
+ *   "前置未满足"的注记是过时的。`Transform` 仍缺（前置是仿射光栅器）。
+ *   本控制器给的是**值** —— 把它喂给已有控件的数值入口
+ *   （`Progress::value()`、`SizedBox::width()`…）就能动，不需要新控件。
  *
  * ★ **它不持时钟、不持平台**：推进发生在 `tick($timestampMs)`，时间戳由
  *   `State::tickFrame()` 注入（§14.1 G3：不读环境时钟）⇒ 同一棵动画树在

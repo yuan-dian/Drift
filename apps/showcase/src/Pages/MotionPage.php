@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Showcase\Pages;
 
 use Drift\Geometry\EdgeInsets;
+use Drift\Widget\AnimatedOpacity;
 use Drift\Widget\AnimationController;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
@@ -58,6 +59,9 @@ final class MotionState extends State
     private AnimationController $eased;
 
     private AnimationController $linear;
+
+    /** `AnimatedOpacity` 的目标不透明度（应用侧全部的代码就是改这个字段） */
+    private float $fadeTarget = 1.0;
 
     public function initState(): void
     {
@@ -147,7 +151,7 @@ final class MotionState extends State
                 Expanded::make(Progress::make($linearValue)),
                 Text::make($this->percent($linearValue)),
             ]),
-            Text::make('缓动值喂的是控件的**数值入口**（这里是 Progress::value）—— 不需要 Opacity / Transform 这类"整棵子树一起动"的包装（那要先有层合成语义，EVAL §7 第 4 项）。')
+            Text::make('缓动值喂的是控件的**数值入口**（这里是 Progress::value）—— 要让"整棵子树一起动"，用下一节的 AnimatedOpacity（层合成语义早已具备：Canvas::pushLayer / RenderBox::setCompose）。')
                 ->caption(),
 
             Divider::make(),
@@ -162,6 +166,27 @@ final class MotionState extends State
                 Card::make(Text::make('滑动块'))
             )->width(80.0 + 160.0 * $easedValue),
             Text::make('宽度 = 80 + 160 × 缓动值 ⇒ 每帧一次重排重画，肉眼可见"盒子变宽"。')
+                ->caption(),
+
+            Divider::make(),
+
+            // ── 隐式动画：只写目标值 ──
+            Text::make('隐式动画：只写目标值')->heading(),
+            Row::make()->spacing(8.0)->children([
+                Button::make('淡出')->onPressed(function (): void {
+                    $this->fadeTarget = 0.25;
+                    $this->markDirty();
+                }),
+                Button::make('淡入')->onPressed(function (): void {
+                    $this->fadeTarget = 1.0;
+                    $this->markDirty();
+                }),
+            ]),
+            AnimatedOpacity::make(
+                $this->fadeTarget,
+                Card::make(Text::make('这块卡片的不透明度由 AnimatedOpacity 追过去'))
+            ),
+            Text::make('应用侧只改一个字段：没有时长、没有控制器、没有 setState 循环。每帧只写盒的合成槽 ⇒ 不重建、不重排，代价是一次 pushLayer()。')
                 ->caption(),
 
             Divider::make(),

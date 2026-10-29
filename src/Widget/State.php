@@ -70,6 +70,21 @@ abstract class State
      */
     private static array $mountedThisFrame = [];
 
+    /**
+     * 累计的"我要下一帧"请求数（**只增不减**，与 `markedCount` 同一条纪律）。
+     *
+     * ★★ 存在理由（2026-10-29，真机抓到）：`tickAnimations()` 跑在 settle
+     *   **之前** ⇒ 在那之后才开始的动画（`didUpdateWidget()` 里 `toward()`）
+     *   当帧**看不见** ⇒ `$animating` 为 false ⇒ 帧时钟不上膛 ⇒ 动画要等
+     *   **下一次输入**才动。真机现象：点「淡入」画面一动不动，再点一次才动。
+     *
+     * ★ **为什么是计数而不是登记表**（第一版写的就是 `list<State>`，真机不生效）：
+     *   登记表要在 `Application` 侧再问一遍 `element()` / `isMounted()` 才敢用，
+     *   而那两跳在 AOT 下任何一个失手都会静默退化成"什么都没发生"。计数只有
+     *   一次 `!==` 比较，没有可以失手的中间环节 —— 与 `markedCount` 同一个理由。
+     */
+    private static int $frameWantedCount = 0;
+
     private Widget $widget;
     private ?StatefulElement $element = null;
     private bool $dirty = false;
@@ -383,6 +398,35 @@ abstract class State
     public static function mountedCount(): int
     {
         return count(self::$mountedThisFrame);
+    }
+
+    /**
+     * 声明"**我还要下一帧**"（隐式动画在 `didUpdateWidget()` 里起飞时用）。
+     *
+     * ★★ 什么时候必须调：动画**在 settle 期间**才开始（`didUpdateWidget()` /
+     *   `build()`）。`tickAnimations()` 在 settle 之前跑，那时目标还是旧的 ⇒
+     *   它看不到"刚起飞" ⇒ 帧时钟落闸 ⇒ 动画停在起点，**且不报错**。
+     *   真机现象：点「淡入」画面一动不动，再点一次才动。
+     *
+     * ★ 什么时候**不用**调：动画在**输入回调**里起飞（`Button::onPressed()` 里
+     *   `forward()`）。那种路径本来就会跑一帧，⓸ 在 settle 之前已经看到它了。
+     *
+     * ★ 语义是"**上膛**"，不是"推进一帧"：本帧不会再 `tickFrame()` 一次
+     *   （那会让同一帧被推进两回）。下一帧照常由 ⓸ 推进。
+     */
+    public function requestFrame(): void
+    {
+        self::$frameWantedCount++;
+    }
+
+    /**
+     * 累计"我要下一帧"的请求数（`Application::frame()` 拿它与上一帧的值比对）。
+     *
+     * @internal 只给 `Application::frame()` 用（与 `markedCount()` 同形）
+     */
+    public static function frameWantedCount(): int
+    {
+        return self::$frameWantedCount;
     }
 
     /**

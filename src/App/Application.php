@@ -267,6 +267,15 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     /** 上一帧有没有动画在跑（§17.4.9 的第四个判据，由 `tickAnimations()` 写） */
     private bool $animating = false;
 
+    /**
+     * 上一帧看到的 `State::frameWantedCount()`（"settle 期间起飞"的动画）。
+     *
+     * ★ 与 `$animating` 分开存：`$animating` 每帧被 `tickAnimations()` **整体
+     *   覆盖**，而这一份要跨帧记住"上次数到哪儿"——否则每帧都会判成"又有人
+     *   要帧"，空闲时永远上膛。
+     */
+    private int $lastFrameWanted = 0;
+
     /** 每帧自增的序列号 —— `State::tickFrameStamped` 用它做同帧幂等（迟到挂载补 tick 用） */
     private int $frameSerial = 0;
 
@@ -862,6 +871,23 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
             if ($mountedState->tickFrameStamped($timestampMs, $this->frameSerial)) {
                 $this->animating = true;
             }
+        }
+
+        // ★ ⓹b 同类的另一半（2026-10-29，真机抓到）：**settle 期间才起飞的动画**。
+        //   `State::didUpdateWidget()` 里 `toward()` 起的隐式动画，在 ⓸ 时目标还是
+        //   旧的 ⇒ `tickAnimations()` 看不到它 ⇒ `$animating` 为 false ⇒ 帧时钟
+        //   落闸 ⇒ **动画停在起点**。真机现象：点「淡入」画面一动不动，再点一次
+        //   才动（第二次点击时 ⓸ 才看到"还在跑"）。
+        //   ★ 这里**只上膛不推进**：推进留给下一帧的 ⓸（同帧再 tick 一次就是
+        //     "一帧走两步"，动画快进）。
+        //   ★★ 判据是**计数器前后差**而不是登记表：登记表要再问 `element()` /
+        //     `isMounted()`，那两跳在 AOT 下任何一个失手都静默退化成"什么都没
+        //     发生"（第一版就是这么失败的）。与 `needsSettle()` 读 `markedCount`
+        //     同一个理由。
+        $frameWanted = State::frameWantedCount();
+        if ($frameWanted !== $this->lastFrameWanted) {
+            $this->lastFrameWanted = $frameWanted;
+            $this->animating = true;
         }
 
         // ★ 每帧重建焦点链：`settle()` 可能重建了子树 ⇒ 旧链里可能握着**已被移除**
