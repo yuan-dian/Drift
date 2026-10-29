@@ -103,6 +103,12 @@ final class RenderButton extends RenderProxyBox
         return $this->iconPath !== null;
     }
 
+    /** 内容是否居中（夹具 / devtools 用）—— `false` 就是左对齐，见 `Button::alignLeft()` */
+    public function centersContent(): bool
+    {
+        return $this->centerContent;
+    }
+
     /**
      * 声明了状态色或浮起档位才接受悬停（`08` §4.1）—— 都不声明时连一次
      * `setHovered()` 都不收，免得父链询问"这一层要不要变色"时白跑。

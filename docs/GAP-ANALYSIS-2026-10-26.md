@@ -90,20 +90,18 @@
 
 ## 4. 业务控件面：企业应用直接缺的东西
 
-**已有（28 类交互/展示控件）**：
+**已有（36 类交互/展示控件）**：
 Button / IconButton / TextField / Checkbox / Radio / Toggle / Slider / Segment /
 SegmentedControl / Select / ComboBox / Progress / Divider / Spinner / Card /
 AppBar / Dock / NavButton / Tooltip / Snackbar / Modal / MenuBar / Menu /
-ScrollView / LazyColumn / LazyRow / LazyGrid / Grid / Stack / Image / Icon / RichText
+ScrollView / LazyColumn / LazyRow / LazyGrid / Grid / Stack / Image / Icon / RichText /
+**Table**（2026-10-26）/ **TabView**（2026-10-28）/ **Wrap**（2026-10-28）/
+**TreeView**（2026-10-29）
 
 **缺失（按企业场景优先级）**：
 
 | 缺失控件 | 为什么重要 | 依赖 |
 |---|---|---|
-| **Table / DataGrid** | 企业第一需求（列表 + 列宽拖拽 + 排序 + 多选） | 需列表基座（`LazyColumn` 已有）+ 手势 pan |
-| **TabView / TabBar** | 多标签工作区比导航栏更常见 | `SegmentedControl` 可复用 |
-| **TreeView** | 文件树 / 组织结构 / 配置树 | 递归 + 缩进 + 展开动画（依赖隐式动画） |
-| **Wrap（流式布局）** | 标签云 / 自适应工具栏 | 布局层新增（无 Render 类） |
 | **DatePicker / TimePicker** | 表单高频 | `PopupPanel` + `Grid` 已有 |
 | Badge / Tag / Avatar | 列表与卡片装饰 | 纯样式 |
 | Breadcrumb / Pagination | 后台页面 | 纯组合 |
@@ -165,6 +163,13 @@ ScrollView / LazyColumn / LazyRow / LazyGrid / Grid / Stack / Image / Icon / Ric
     （位置即语义的连续拖拽），走 `pointer(ownsPress: true)` + 框架捕获，`Slider` 的
     docblock 已三条理由否掉 `GestureArena` 那条路。手势族的真实欠债是**时间维度**
     ——`GestureArena::claims()` 只有位移没有时钟，long-press / double-tap 都要它。
+
+**已落地但不在上面编号内**：`TreeView`（2026-10-29，`src/Widget/TreeView.php` +
+`TreeNode`/`TreeRow`，判据 `tests/Feature/Widget/TreeViewTest.php`，示例台第 24 项
+`TreePage`，见 `REVIEW-2026-10-28.md` §16）。按 §A3 排期（TabView → TreeView → DatePicker）
+插入，落点是"文件树 / 组织结构 / 配置树"。
+★ **仍未做**：展开/折叠的布局动画、行进键盘导航（上下移动 + 左右折叠展开）、多选与半选态、
+环检测（应用给了带环的 `children` 会无限递归 —— 当前契约是"应用不许给环"）。
 
 ### P3 —— 架构长期项（不影响当前可用性）
 14. i18n / RTL。

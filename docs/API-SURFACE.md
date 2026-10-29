@@ -14,7 +14,7 @@
 | Errors.php | 1 | 3 |
 | Geometry | 7 | 0 |
 | Input | 16 | 5 |
-| Layout | 41 | 39 |
+| Layout | 42 | 40 |
 | Logging | 9 | 3 |
 | Platform | 15 | 10 |
 | Rendering | 31 | 1 |
@@ -22,10 +22,10 @@
 | State | 9 | 11 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
-| Widget | 143 | 185 |
-| **合计** | **378** | **312** |
+| Widget | 150 | 187 |
+| **合计** | **386** | **315** |
 
-覆盖 328 个文件 · 描述性提及 27 处（grep 口径的污染源，不计入）
+覆盖 335 个文件 · 描述性提及 28 处（grep 口径的污染源，不计入）
 
 ## App 层
 
@@ -68,11 +68,11 @@
 | `NamedJob` | interface | src/App/NamedJob.php:6 |
 | `Paths` | class | src/App/Paths.php:9 |
 | `Paths::userConfig()` | method | src/App/Paths.php:32 |
-| `ProcessTaskHost` | class | src/App/ProcessTaskHost.php:6 |
-| `ProcessTaskHost::__construct()` | method | src/App/ProcessTaskHost.php:85 |
-| `ProcessTaskHost::shutdown()` | method | src/App/ProcessTaskHost.php:200 |
-| `ProcessWorker` | class | src/App/ProcessWorker.php:6 |
-| `ProcessWorker::serve()` | method | src/App/ProcessWorker.php:30 |
+| `ProcessTaskHost` | class | src/App/ProcessTaskHost.php:8 |
+| `ProcessTaskHost::__construct()` | method | src/App/ProcessTaskHost.php:87 |
+| `ProcessTaskHost::shutdown()` | method | src/App/ProcessTaskHost.php:202 |
+| `ProcessWorker` | class | src/App/ProcessWorker.php:8 |
+| `ProcessWorker::serve()` | method | src/App/ProcessWorker.php:32 |
 | `PumpHost::after()` | method | src/App/PumpHost.php:111 |
 | `PumpHost::io()` | method | src/App/PumpHost.php:257 |
 | `PumpHost::submitSliced()` | method | src/App/PumpHost.php:273 |
@@ -227,7 +227,7 @@
 
 ## Layout 层
 
-### @api（应用可读面） · 41
+### @api（应用可读面） · 42
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -240,10 +240,10 @@
 | `RenderAppBar` | class | src/Layout/RenderAppBar.php:13 |
 | `RenderBackdropFilter` | class | src/Layout/RenderBackdropFilter.php:11 |
 | `RenderBox` | class | src/Layout/RenderBox.php:14 |
-| `RenderBox::overflow()` | method | src/Layout/RenderBox.php:565 |
-| `RenderBox::setCompose()` | method | src/Layout/RenderBox.php:709 |
-| `RenderBox::paintComposed()` | method | src/Layout/RenderBox.php:747 |
-| `RenderBox::hitTest()` | method | src/Layout/RenderBox.php:850 |
+| `RenderBox::overflow()` | method | src/Layout/RenderBox.php:625 |
+| `RenderBox::setCompose()` | method | src/Layout/RenderBox.php:769 |
+| `RenderBox::paintComposed()` | method | src/Layout/RenderBox.php:807 |
+| `RenderBox::hitTest()` | method | src/Layout/RenderBox.php:910 |
 | `RenderButton` | class | src/Layout/RenderButton.php:19 |
 | `RenderDivider` | class | src/Layout/RenderDivider.php:13 |
 | `RenderDock` | class | src/Layout/RenderDock.php:12 |
@@ -270,20 +270,21 @@
 | `RenderText` | class | src/Layout/RenderText.php:16 |
 | `RenderTextField` | class | src/Layout/RenderTextField.php:20 |
 | `RenderToggle` | class | src/Layout/RenderToggle.php:16 |
+| `RenderWrap` | class | src/Layout/RenderWrap.php:11 |
 | `StackAlign` | enum | src/Layout/StackAlign.php:6 |
 | `StackFit` | enum | src/Layout/StackFit.php:6 |
 
-### @internal（框架内部） · 39
+### @internal（框架内部） · 40
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
 | `LayoutTolerance` | class | src/Layout/LayoutTolerance.php:6 |
-| `RenderBox::layoutEpoch()` | method | src/Layout/RenderBox.php:164 |
-| `RenderBox::layoutCount()` | method | src/Layout/RenderBox.php:170 |
-| `RenderBox::paintCount()` | method | src/Layout/RenderBox.php:187 |
-| `RenderBox::replayCount()` | method | src/Layout/RenderBox.php:193 |
-| `RenderBox::markNeedsLayout()` | method | src/Layout/RenderBox.php:199 |
-| `RenderBox::clipsOverflow()` | method | src/Layout/RenderBox.php:576 |
+| `RenderBox::layoutEpoch()` | method | src/Layout/RenderBox.php:180 |
+| `RenderBox::layoutCount()` | method | src/Layout/RenderBox.php:186 |
+| `RenderBox::paintCount()` | method | src/Layout/RenderBox.php:203 |
+| `RenderBox::replayCount()` | method | src/Layout/RenderBox.php:209 |
+| `RenderBox::markNeedsLayout()` | method | src/Layout/RenderBox.php:215 |
+| `RenderBox::clipsOverflow()` | method | src/Layout/RenderBox.php:636 |
 | `RenderCustomPaint` | class | src/Layout/RenderCustomPaint.php:12 |
 | `RenderDock::slot()` | method | src/Layout/RenderDock.php:44 |
 | `RenderFlex::clearChildren()` | method | src/Layout/RenderFlex.php:98 |
@@ -300,7 +301,7 @@
 | `RenderScrollView::scrollAxes()` | method | src/Layout/RenderScrollView.php:159 |
 | `RenderScrollView::thumbRectInRoot()` | method | src/Layout/RenderScrollView.php:386 |
 | `RenderSegmentedControl::clearChildren()` | method | src/Layout/RenderSegmentedControl.php:66 |
-| `RenderStack::clearChildren()` | method | src/Layout/RenderStack.php:67 |
+| `RenderStack::clearChildren()` | method | src/Layout/RenderStack.php:72 |
 | `RenderTable` | class | src/Layout/RenderTable.php:14 |
 | `RenderTable::setHeader()` | method | src/Layout/RenderTable.php:231 |
 | `RenderTable::setBody()` | method | src/Layout/RenderTable.php:241 |
@@ -312,6 +313,7 @@
 | `RenderText::lineCount()` | method | src/Layout/RenderText.php:56 |
 | `RenderTextField::styleSize()` | method | src/Layout/RenderTextField.php:259 |
 | `RenderTextField::isShowingPlaceholder()` | method | src/Layout/RenderTextField.php:265 |
+| `RenderWrap::clearChildren()` | method | src/Layout/RenderWrap.php:96 |
 | `ScrollBarGeometry` | class | src/Layout/ScrollBarGeometry.php:10 |
 | `ScrollBarHost` | interface | src/Layout/ScrollBarHost.php:9 |
 | `ScrollBarHost::setScrollOffset()` | method | src/Layout/ScrollBarHost.php:68 |
@@ -399,7 +401,7 @@
 | `ImageHandle` | class | src/Rendering/ImageHandle.php:8 |
 | `ImageLoader` | class | src/Rendering/ImageLoader.php:8 |
 | `MetricToken` | enum | src/Rendering/MetricToken.php:6 |
-| `Modifier` | class | src/Rendering/Modifier.php:11 |
+| `Modifier` | class | src/Rendering/Modifier.php:12 |
 | `Paint` | class | src/Rendering/Paint.php:8 |
 | `PaintStyle` | enum | src/Rendering/PaintStyle.php:6 |
 | `Path` | class | src/Rendering/Path.php:8 |
@@ -539,7 +541,7 @@
 
 ## Widget 层
 
-### @api（应用可读面） · 143
+### @api（应用可读面） · 150
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -648,7 +650,8 @@
 | `TableSelectionMode` | enum | src/Widget/TableSelectionMode.php:6 |
 | `TableSort` | class | src/Widget/TableSort.php:8 |
 | `TableSortDirection` | enum | src/Widget/TableSortDirection.php:6 |
-| `TabView` | class | src/Widget/TabView.php:74 |
+| `TabView` | class | src/Widget/TabView.php:6 |
+| `TabView::make()` | method | src/Widget/TabView.php:91 |
 | `Text` | class | src/Widget/Text.php:10 |
 | `TextField` | class | src/Widget/TextField.php:9 |
 | `TextFieldState` | class | src/Widget/TextFieldState.php:15 |
@@ -670,25 +673,30 @@
 | `WidgetInteraction::tooltip()` | method | src/Widget/Traits/WidgetInteraction.php:249 |
 | `WidgetInteraction::overlayPanel()` | method | src/Widget/Traits/WidgetInteraction.php:288 |
 | `WidgetInteraction::overlaySignature()` | method | src/Widget/Traits/WidgetInteraction.php:343 |
-| `WidgetModifiers::padding()` | method | src/Widget/Traits/WidgetModifiers.php:30 |
-| `WidgetModifiers::boxSize()` | method | src/Widget/Traits/WidgetModifiers.php:108 |
-| `WidgetModifiers::background()` | method | src/Widget/Traits/WidgetModifiers.php:181 |
-| `WidgetModifiers::gradient()` | method | src/Widget/Traits/WidgetModifiers.php:198 |
-| `WidgetModifiers::shadow()` | method | src/Widget/Traits/WidgetModifiers.php:240 |
-| `WidgetModifiers::opacity()` | method | src/Widget/Traits/WidgetModifiers.php:258 |
-| `WidgetModifiers::translate()` | method | src/Widget/Traits/WidgetModifiers.php:280 |
-| `WidgetModifiers::clip()` | method | src/Widget/Traits/WidgetModifiers.php:293 |
-| `WidgetModifiers::repaintBoundary()` | method | src/Widget/Traits/WidgetModifiers.php:311 |
-| `WidgetModifiers::centerContent()` | method | src/Widget/Traits/WidgetModifiers.php:328 |
-| `WidgetModifiers::grow()` | method | src/Widget/Traits/WidgetModifiers.php:345 |
+| `WidgetModifiers::padding()` | method | src/Widget/Traits/WidgetModifiers.php:33 |
+| `WidgetModifiers::boxSize()` | method | src/Widget/Traits/WidgetModifiers.php:111 |
+| `WidgetModifiers::background()` | method | src/Widget/Traits/WidgetModifiers.php:184 |
+| `WidgetModifiers::gradient()` | method | src/Widget/Traits/WidgetModifiers.php:201 |
+| `WidgetModifiers::shadow()` | method | src/Widget/Traits/WidgetModifiers.php:243 |
+| `WidgetModifiers::opacity()` | method | src/Widget/Traits/WidgetModifiers.php:261 |
+| `WidgetModifiers::translate()` | method | src/Widget/Traits/WidgetModifiers.php:283 |
+| `WidgetModifiers::clip()` | method | src/Widget/Traits/WidgetModifiers.php:296 |
+| `WidgetModifiers::repaintBoundary()` | method | src/Widget/Traits/WidgetModifiers.php:314 |
+| `WidgetModifiers::centerContent()` | method | src/Widget/Traits/WidgetModifiers.php:331 |
+| `WidgetModifiers::grow()` | method | src/Widget/Traits/WidgetModifiers.php:348 |
+| `WidgetModifiers::positioned()` | method | src/Widget/Traits/WidgetModifiers.php:401 |
 | `WidgetSemantics::semantics()` | method | src/Widget/Traits/WidgetSemantics.php:21 |
 | `WidgetSemantics::semanticsRange()` | method | src/Widget/Traits/WidgetSemantics.php:62 |
+| `TreeNode` | class | src/Widget/TreeNode.php:8 |
+| `TreeView` | class | src/Widget/TreeView.php:9 |
 | `Widget` | class | src/Widget/Widget.php:21 |
 | `Widget::__construct()` | method | src/Widget/Widget.php:194 |
 | `Widget::key()` | method | src/Widget/Widget.php:221 |
 | `Widget::mutate()` | method | src/Widget/Widget.php:298 |
+| `Wrap` | class | src/Widget/Wrap.php:12 |
+| `WrapElement` | class | src/Widget/WrapElement.php:8 |
 
-### @internal（框架内部） · 185
+### @internal（框架内部） · 187
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -701,7 +709,7 @@
 | `AppBar::paintsBoxChrome()` | method | src/Widget/AppBar.php:224 |
 | `AppBarElement` | class | src/Widget/AppBarElement.php:8 |
 | `BuildContext::withTheme()` | method | src/Widget/BuildContext.php:48 |
-| `Button::paintsBoxChrome()` | method | src/Widget/Button.php:269 |
+| `Button::paintsBoxChrome()` | method | src/Widget/Button.php:287 |
 | `Card::$box` | property | src/Widget/Card.php:79 |
 | `Card::box()` | method | src/Widget/Card.php:178 |
 | `ComboBox::optionsValue()` | method | src/Widget/ComboBox.php:285 |
@@ -840,7 +848,7 @@
 | `WidgetInteraction::tooltipTextValue()` | method | src/Widget/Traits/WidgetInteraction.php:280 |
 | `WidgetInteraction::overlayPanelValue()` | method | src/Widget/Traits/WidgetInteraction.php:337 |
 | `WidgetInteraction::overlaySignatureValue()` | method | src/Widget/Traits/WidgetInteraction.php:391 |
-| `WidgetModifiers` | trait | src/Widget/Traits/WidgetModifiers.php:10 |
+| `WidgetModifiers` | trait | src/Widget/Traits/WidgetModifiers.php:12 |
 | `WidgetSemantics` | trait | src/Widget/Traits/WidgetSemantics.php:8 |
 | `WidgetSemantics::semanticsRole()` | method | src/Widget/Traits/WidgetSemantics.php:90 |
 | `WidgetSemantics::semanticsName()` | method | src/Widget/Traits/WidgetSemantics.php:96 |
@@ -848,6 +856,8 @@
 | `WidgetSemantics::semanticsEnabled()` | method | src/Widget/Traits/WidgetSemantics.php:108 |
 | `WidgetSemantics::semanticsRangeMin()` | method | src/Widget/Traits/WidgetSemantics.php:114 |
 | `WidgetSemantics::semanticsRangeMax()` | method | src/Widget/Traits/WidgetSemantics.php:120 |
+| `TreeNode::assertNodes()` | method | src/Widget/TreeNode.php:86 |
+| `TreeView::visibleRows()` | method | src/Widget/TreeView.php:246 |
 | `Widget::$sealed` | property | src/Widget/Widget.php:59 |
 | `Widget::$key` | property | src/Widget/Widget.php:72 |
 | `Widget::$focus` | property | src/Widget/Widget.php:75 |

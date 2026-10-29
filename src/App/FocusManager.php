@@ -466,18 +466,30 @@ final class FocusManager
 
     // ── 内部 ────────────────────────────────────────────────────────────
 
-    private function walk(Element $element): void
+    /**
+     * @param bool $skipped 祖先（或自己）声明了 `skipFocus()` ⇒ 本子树不进 Tab 序
+     */
+    private function walk(Element $element, bool $skipped = false): void
     {
         $node = $element->widget()->focusNode();
 
         // `skipFocus()` 是**子树级**（§A.3.4：AppBar 工具组整体不进 Tab 序）
-        if ($node !== null && $node->skip) {
-            return;
-        }
+        $skip = $skipped || ($node !== null && $node->skip);
 
         if ($element->widget()->isFocusable()) {
-            $this->order[] = $element;
+            // ★★ `byId` 与 `order` 是**两件事**（2026-10-29 拆分）：
+            //   · `byId` = "**可聚焦**元素表" —— `focusHit()` 拿它回答"点到的这个东西
+            //     能不能拿焦点"，答案只能是"它自己声明了可聚焦"；
+            //   · `order` = **Tab 序** —— `skipFocus()` 唯一该动的是这张。
+            //   早先两者共用一张表（`skip` 时 `return`，连 `byId` 都不登记）⇒
+            //   `skipFocus()` 的真实语义变成"**这棵子树既不能 Tab 到、也点不动**"。
+            //   踩点：`TreeView` 的行箭头（`IconButton` + `skipFocus()`）点了毫无反应，
+            //   而画面上箭头好好地在那儿 —— 没有任何可观测的线索指向焦点表。
             $this->byId[spl_object_id($element)] = $element;
+
+            if (!$skip) {
+                $this->order[] = $element;
+            }
         }
 
         /** @var list<Element> $children */
@@ -500,7 +512,7 @@ final class FocusManager
         });
 
         foreach ($children as $child) {
-            $this->walk($child);
+            $this->walk($child, $skip);
         }
     }
 

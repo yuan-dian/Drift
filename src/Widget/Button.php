@@ -84,6 +84,8 @@ class Button extends RenderBoxWidget implements Activatable
      *
      * ★ `NavButton` 构造时置 `false`：菜单 / 导航项左对齐，否则"图标 + 文字"这个
      *   整体会按标签长度各自漂移（短标签的图标比长标签靠右 20+ px，看着没对齐）。
+     * ★ 单个按钮要左对齐用 `alignLeft()`（`TreeView` 的行就是这个场景）——
+     *   借 `NavButton` 会把"树行"和"导航项"焊在一起，改侧栏对齐会波及树。
      * ★ 与 `labelVisible` 同一条纪律：字段而不是覆写虚方法（tpc 去虚化）。
      */
     protected bool $centerLabel = true;
@@ -168,6 +170,22 @@ class Button extends RenderBoxWidget implements Activatable
     public function iconValue(): ?IconName
     {
         return $this->icon;
+    }
+
+    /**
+     * 内容左对齐（图标 + 标签靠左）。
+     *
+     * ★ 与 `NavButton` 的分工：那个是"这类按钮**天生**左对齐"（构造期置死），
+     *   本方法是"**这一个**按钮要左对齐"。`TreeView` 的行必须用这个 —— 行里的
+     *   标签被 `Expanded` 撑满剩余宽度（点空白也算点这一行），居中会让整棵树
+     *   看着像一段居中的文字，缩进层级完全读不出来。
+     */
+    public function alignLeft(): static
+    {
+        $this->mutate();
+        $this->centerLabel = false;
+
+        return $this;
     }
 
     public function label(): string

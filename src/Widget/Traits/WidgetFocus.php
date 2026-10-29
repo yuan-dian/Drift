@@ -42,6 +42,11 @@ trait WidgetFocus
      *
      * 典型：`AppBar` 的工具按钮组。**必须显式** —— 不做"智能跳过"。
      *
+     * ★★ **只影响 Tab 序，不影响指针激活**（2026-10-29 修）：跳过 Tab 序的按钮
+     *   仍然点得动。早先实现里"跳过 Tab"与"不可聚焦"共用一张表 ⇒ 加了
+     *   `skipFocus()` 的按钮**完全点不动**，而画面上看不出任何异常（`TreeView`
+     *   的行箭头就是这么静默失效的）。要"点不动"请用 `disabled()`，那是另一件事。
+     *
      * @api
      */
     public function skipFocus(): static

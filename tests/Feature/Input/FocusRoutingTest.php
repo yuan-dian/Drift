@@ -12,6 +12,7 @@ use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
 use Drift\Layout\RenderFlex;
 use Drift\Widget\Column;
+use Drift\Widget\Element;
 use Drift\Widget\StatefulElement;
 use Drift\Widget\TextField;
 use Drift\Widget\TextFieldState;
@@ -180,6 +181,25 @@ final class FocusRoutingTest extends SmokeTestCase
         $fmSkip = new FocusManager();
         $fmSkip->collect([$skipRoot]);
         check('输入层 · skipFocus 整棵子树不进 Tab 序', count($fmSkip->order()) === 1);
+
+        // ★★ 2026-10-29：`skipFocus()` **只该动 Tab 序**，不该让控件点不动。
+        //   早先 `walk()` 用的是同一张表（skip ⇒ 连 `byId` 都不登记）⇒ 加了
+        //   `skipFocus()` 的按钮点了毫无反应。`TreeView` 的行箭头就是这么静默失效的：
+        //   画面上箭头好好地在那儿，日志里什么也没有。
+        $tops = [];
+        $skipRoot->visitChildren(static function (Element $child) use (&$tops): void {
+            $tops[] = $child;
+        });
+        $inner = [];
+        ($tops[1] ?? null)?->visitChildren(static function (Element $child) use (&$inner): void {
+            $inner[] = $child;
+        });
+        $landed = $fmSkip->focusHit(($inner[0] ?? null)?->effectiveBox(), $skipRoot);
+        check(
+            '输入层 · skipFocus 的控件**仍然点得动**（跳过 Tab 序 ≠ 禁用）',
+            $landed === true,
+            'focusHit=' . var_export($landed, true),
+        );
 
         $orderRoot = Column::make()->children([
             TextField::make()->value('first')->focusOrder(2),

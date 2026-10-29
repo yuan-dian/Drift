@@ -345,6 +345,10 @@ static long uiaControlTypeFor(const std::string &role) {
     if (role == "switch") return UIA_CheckBoxControlTypeId;
     if (role == "progress") return UIA_ProgressBarControlTypeId;
     if (role == "slider") return UIA_SliderControlTypeId;
+    // 集合族（2026-10-29 补齐）：`table` 一直漏在这里（掉到 Custom 控制类型，
+    // 客户端认不出"这是表格"），`tree` 随 TreeView 一起接上。
+    if (role == "table") return UIA_TableControlTypeId;
+    if (role == "tree") return UIA_TreeControlTypeId;
     return UIA_CustomControlTypeId;
 }
 

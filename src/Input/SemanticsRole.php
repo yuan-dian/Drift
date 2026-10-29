@@ -56,6 +56,15 @@ enum SemanticsRole: string
      */
     case Table = 'table';
 
+    /**
+     * 层级数据树（`TreeView`，2026-10-29）—— name 取树名（`TreeView::name()`）。
+     *
+     * ★ 与 `Table` 同理：一个控件只声明**一个**角色。树的"可滚动"由内部
+     *   `LazyColumn` 承担（那个也是 `Scroll`），但那是**子节点**的角色，
+     *   不是本节点的 —— 检查器按 `tree` 找树、按 `scroll` 找滚动区，两者不抢。
+     */
+    case Tree = 'tree';
+
     /** 模态对话框（`Modal`）—— name 取标题 */
     case Dialog = 'dialog';
 

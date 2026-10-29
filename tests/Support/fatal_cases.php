@@ -85,6 +85,8 @@ use Drift\Widget\TableSelection;
 use Drift\Widget\TableSort;
 use Drift\Widget\Text;
 use Drift\Widget\TextField;
+use Drift\Widget\TreeNode;
+use Drift\Widget\TreeView;
 use Drift\Widget\Widget;
 use Drift\Widget\Wrap;
 
@@ -485,6 +487,29 @@ $cases = [
         $bad->state()?->boom();              // 标脏 ⇒ 帧末重建时抛
         (new Frame(new SurfaceProbe()))->run($bad, BoxConstraints::tight(new Size(240.0, 80.0)), 0.0);
         echo "不该到达这里\n";
+    },
+
+    // 行高 0 ⇒ LazyColumn 的 itemExtent 是窗口计算的除数（除零 / 永远只看得到第 0 行）。
+    'treebadrow' => static function (): void {
+        TreeView::make([])->rowHeight(0.0);
+    },
+
+    // 空 id 的节点：展开集合与选中值都靠 id 认，空串 ⇒ 点了永远没反应且不报错。
+    'treeemptyid' => static function (): void {
+        TreeNode::make('', '没有身份的节点');
+    },
+
+    // 两个节点同 id ⇒ 展开一个、两个都展开；选中一个、两个都高亮。必须响亮。
+    'treedupid' => static function (): void {
+        TreeView::make([
+            TreeNode::make('same', '甲'),
+            TreeNode::make('same', '乙'),
+        ])->visibleRows();
+    },
+
+    // 行高 28（一个很自然的想法）装不下 42 高的箭头按钮 ⇒ 必然裁切，而裁切不报错。
+    'treeshortrow' => static function (): void {
+        TreeView::make([])->rowHeight(28.0);
     },
 ];
 

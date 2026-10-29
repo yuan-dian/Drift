@@ -50,6 +50,7 @@ use App\Showcase\Pages\SliderPage;
 use App\Showcase\Pages\SnackbarPage;
 use App\Showcase\Pages\TooltipPage;
 use App\Showcase\Pages\TextPage;
+use App\Showcase\Pages\TreePage;
 
 /**
  * 示例台根（LayUI 式 admin 布局）：**顶条 + 左导航 + 右内容**。
@@ -176,6 +177,8 @@ final class ShowcaseState extends State
             new NavEntry(IconName::Brush, '毛玻璃 Glass', static fn(): Widget => new GlassPage()),
             // ★ 同上：表格页追加在最末，前 22 项的 y 坐标不变。
             new NavEntry(IconName::Grid, '表格 Table', static fn(): Widget => new TablePage()),
+            // ★ 同上：树页追加在最末，前 23 项的 y 坐标不变。
+            new NavEntry(IconName::ArrowRight, '树 Tree', static fn(): Widget => new TreePage()),
         ];
     }
 
