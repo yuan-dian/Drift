@@ -13,7 +13,7 @@
 | Core | 2 | 0 |
 | Errors.php | 1 | 3 |
 | Geometry | 9 | 0 |
-| Input | 16 | 5 |
+| Input | 17 | 5 |
 | Layout | 41 | 41 |
 | Logging | 9 | 3 |
 | Platform | 15 | 11 |
@@ -22,10 +22,10 @@
 | State | 9 | 11 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
-| Widget | 166 | 213 |
-| **合计** | **403** | **343** |
+| Widget | 167 | 215 |
+| **合计** | **405** | **345** |
 
-覆盖 352 个文件 · 描述性提及 28 处（grep 口径的污染源，不计入）
+覆盖 353 个文件 · 描述性提及 28 处（grep 口径的污染源，不计入）
 
 ## App 层
 
@@ -123,7 +123,7 @@
 | `FrameClock::stallCount()` | method | src/App/FrameClock.php:184 |
 | `FrameClock::worstGapMs()` | method | src/App/FrameClock.php:190 |
 | `InputHost` | interface | src/App/InputHost.php:10 |
-| `InputRouter` | class | src/App/InputRouter.php:23 |
+| `InputRouter` | class | src/App/InputRouter.php:24 |
 | `OverlayHost` | interface | src/App/OverlayHost.php:10 |
 | `OverlayLayout` | class | src/App/OverlayLayout.php:10 |
 | `OverlayLayout::syncPanelSignatures()` | method | src/App/OverlayLayout.php:100 |
@@ -196,12 +196,13 @@
 
 ## Input 层
 
-### @api（应用可读面） · 16
+### @api（应用可读面） · 17
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
 | `AcceleratorTable` | class | src/Input/AcceleratorTable.php:8 |
 | `CursorShape` | enum | src/Input/CursorShape.php:6 |
+| `FilesDroppedEvent` | class | src/Input/FilesDroppedEvent.php:6 |
 | `FocusNode` | class | src/Input/FocusNode.php:6 |
 | `InputEvent` | interface | src/Input/InputEvent.php:6 |
 | `KeyChord` | class | src/Input/KeyChord.php:6 |
@@ -360,7 +361,7 @@
 | `SurfaceProvider` | interface | src/Platform/SurfaceProvider.php:8 |
 | `TimerHost` | interface | src/Platform/TimerHost.php:6 |
 | `Tray` | interface | src/Platform/Tray.php:6 |
-| `Win32Platform` | class | src/Platform/Win32/Win32Platform.php:31 |
+| `Win32Platform` | class | src/Platform/Win32/Win32Platform.php:32 |
 | `WindowHost` | interface | src/Platform/WindowHost.php:11 |
 | `WindowHost::setCursor()` | method | src/Platform/WindowHost.php:149 |
 | `WindowHost::pushSemantics()` | method | src/Platform/WindowHost.php:161 |
@@ -544,7 +545,7 @@
 
 ## Widget 层
 
-### @api（应用可读面） · 166
+### @api（应用可读面） · 167
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -682,10 +683,11 @@
 | `WidgetInteraction::hover()` | method | src/Widget/Traits/WidgetInteraction.php:96 |
 | `WidgetInteraction::pointer()` | method | src/Widget/Traits/WidgetInteraction.php:125 |
 | `WidgetInteraction::windowDrag()` | method | src/Widget/Traits/WidgetInteraction.php:171 |
-| `WidgetInteraction::keyboard()` | method | src/Widget/Traits/WidgetInteraction.php:206 |
-| `WidgetInteraction::tooltip()` | method | src/Widget/Traits/WidgetInteraction.php:249 |
-| `WidgetInteraction::overlayPanel()` | method | src/Widget/Traits/WidgetInteraction.php:288 |
-| `WidgetInteraction::overlaySignature()` | method | src/Widget/Traits/WidgetInteraction.php:356 |
+| `WidgetInteraction::onFilesDropped()` | method | src/Widget/Traits/WidgetInteraction.php:206 |
+| `WidgetInteraction::keyboard()` | method | src/Widget/Traits/WidgetInteraction.php:236 |
+| `WidgetInteraction::tooltip()` | method | src/Widget/Traits/WidgetInteraction.php:279 |
+| `WidgetInteraction::overlayPanel()` | method | src/Widget/Traits/WidgetInteraction.php:318 |
+| `WidgetInteraction::overlaySignature()` | method | src/Widget/Traits/WidgetInteraction.php:386 |
 | `WidgetModifiers::padding()` | method | src/Widget/Traits/WidgetModifiers.php:36 |
 | `WidgetModifiers::boxSize()` | method | src/Widget/Traits/WidgetModifiers.php:114 |
 | `WidgetModifiers::background()` | method | src/Widget/Traits/WidgetModifiers.php:187 |
@@ -708,14 +710,14 @@
 | `TreeNode` | class | src/Widget/TreeNode.php:8 |
 | `TreeView` | class | src/Widget/TreeView.php:9 |
 | `Widget` | class | src/Widget/Widget.php:21 |
-| `Widget::__construct()` | method | src/Widget/Widget.php:197 |
-| `Widget::key()` | method | src/Widget/Widget.php:224 |
-| `Widget::mutate()` | method | src/Widget/Widget.php:301 |
+| `Widget::__construct()` | method | src/Widget/Widget.php:207 |
+| `Widget::key()` | method | src/Widget/Widget.php:234 |
+| `Widget::mutate()` | method | src/Widget/Widget.php:311 |
 | `Wrap` | class | src/Widget/Wrap.php:12 |
 | `WrapElement` | class | src/Widget/WrapElement.php:8 |
 | `YearMonth` | class | src/Widget/YearMonth.php:8 |
 
-### @internal（框架内部） · 213
+### @internal（框架内部） · 215
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -888,11 +890,12 @@
 | `WidgetInteraction::pointerHandlerValue()` | method | src/Widget/Traits/WidgetInteraction.php:159 |
 | `WidgetInteraction::pointerOwnsPressValue()` | method | src/Widget/Traits/WidgetInteraction.php:165 |
 | `WidgetInteraction::windowDragHandlerValue()` | method | src/Widget/Traits/WidgetInteraction.php:200 |
-| `WidgetInteraction::keyHandlerValue()` | method | src/Widget/Traits/WidgetInteraction.php:243 |
-| `WidgetInteraction::tooltipTextValue()` | method | src/Widget/Traits/WidgetInteraction.php:280 |
-| `WidgetInteraction::overlayPanelValue()` | method | src/Widget/Traits/WidgetInteraction.php:344 |
-| `WidgetInteraction::overlayPanelMaxWidthValue()` | method | src/Widget/Traits/WidgetInteraction.php:350 |
-| `WidgetInteraction::overlaySignatureValue()` | method | src/Widget/Traits/WidgetInteraction.php:404 |
+| `WidgetInteraction::filesDropHandlerValue()` | method | src/Widget/Traits/WidgetInteraction.php:230 |
+| `WidgetInteraction::keyHandlerValue()` | method | src/Widget/Traits/WidgetInteraction.php:273 |
+| `WidgetInteraction::tooltipTextValue()` | method | src/Widget/Traits/WidgetInteraction.php:310 |
+| `WidgetInteraction::overlayPanelValue()` | method | src/Widget/Traits/WidgetInteraction.php:374 |
+| `WidgetInteraction::overlayPanelMaxWidthValue()` | method | src/Widget/Traits/WidgetInteraction.php:380 |
+| `WidgetInteraction::overlaySignatureValue()` | method | src/Widget/Traits/WidgetInteraction.php:434 |
 | `WidgetModifiers` | trait | src/Widget/Traits/WidgetModifiers.php:14 |
 | `WidgetSemantics` | trait | src/Widget/Traits/WidgetSemantics.php:8 |
 | `WidgetSemantics::semanticsRole()` | method | src/Widget/Traits/WidgetSemantics.php:90 |
@@ -915,22 +918,23 @@
 | `Widget::$pointerHandler` | property | src/Widget/Widget.php:96 |
 | `Widget::$pointerOwnsPress` | property | src/Widget/Widget.php:105 |
 | `Widget::$windowDragHandler` | property | src/Widget/Widget.php:118 |
-| `Widget::$keyHandler` | property | src/Widget/Widget.php:129 |
-| `Widget::$tooltipText` | property | src/Widget/Widget.php:137 |
-| `Widget::$overlayPanelFactory` | property | src/Widget/Widget.php:149 |
-| `Widget::$overlaySignature` | property | src/Widget/Widget.php:162 |
-| `Widget::$semRole` | property | src/Widget/Widget.php:172 |
-| `Widget::$semName` | property | src/Widget/Widget.php:175 |
-| `Widget::$semValue` | property | src/Widget/Widget.php:178 |
-| `Widget::$semEnabled` | property | src/Widget/Widget.php:181 |
-| `Widget::$semRangeMin` | property | src/Widget/Widget.php:184 |
-| `Widget::__clone()` | method | src/Widget/Widget.php:207 |
-| `Widget::childContext()` | method | src/Widget/Widget.php:240 |
-| `Widget::createElement()` | method | src/Widget/Widget.php:255 |
-| `Widget::identity()` | method | src/Widget/Widget.php:271 |
-| `Widget::seal()` | method | src/Widget/Widget.php:281 |
-| `Widget::isSealed()` | method | src/Widget/Widget.php:295 |
-| `Widget::mods()` | method | src/Widget/Widget.php:351 |
-| `Widget::expandChildren()` | method | src/Widget/Widget.php:357 |
+| `Widget::$filesDropHandler` | property | src/Widget/Widget.php:129 |
+| `Widget::$keyHandler` | property | src/Widget/Widget.php:139 |
+| `Widget::$tooltipText` | property | src/Widget/Widget.php:147 |
+| `Widget::$overlayPanelFactory` | property | src/Widget/Widget.php:159 |
+| `Widget::$overlaySignature` | property | src/Widget/Widget.php:172 |
+| `Widget::$semRole` | property | src/Widget/Widget.php:182 |
+| `Widget::$semName` | property | src/Widget/Widget.php:185 |
+| `Widget::$semValue` | property | src/Widget/Widget.php:188 |
+| `Widget::$semEnabled` | property | src/Widget/Widget.php:191 |
+| `Widget::$semRangeMin` | property | src/Widget/Widget.php:194 |
+| `Widget::__clone()` | method | src/Widget/Widget.php:217 |
+| `Widget::childContext()` | method | src/Widget/Widget.php:250 |
+| `Widget::createElement()` | method | src/Widget/Widget.php:265 |
+| `Widget::identity()` | method | src/Widget/Widget.php:281 |
+| `Widget::seal()` | method | src/Widget/Widget.php:291 |
+| `Widget::isSealed()` | method | src/Widget/Widget.php:305 |
+| `Widget::mods()` | method | src/Widget/Widget.php:361 |
+| `Widget::expandChildren()` | method | src/Widget/Widget.php:367 |
 
 

@@ -57,7 +57,7 @@
 | 悬停 | 已有 | `FocusManager::hoverTo` + `Widget::hover` 链路 |
 | 剪贴板 | **半成品** | `Win32Clipboard` 只有 `readText`/`writeText`/`hasText` ⇒ 无图像/文件/富文本格式 |
 | 文本编辑 | 部分 | `EditableText::selectedText()` 有选区；`RichText` **无选区**（`grep selection` 0 处）⇒ 无跨控件选中复制 |
-| 系统集成 | **半成品**（2026-10-30 起） | ✅ 文件对话框 / 提示 / 确认：`Win32Dialog` + `drift_win_open_file`/`save_file`/`alert`/`confirm`（A5-①，`REVIEW-2026-10-28` §26）。仍缺：`WM_DROPFILES`/`DragAcceptFiles`（拖文件进窗口）**0**；托盘图标 `Shell_NotifyIcon` **0**；原生菜单 `CreateMenu` **0** |
+| 系统集成 | **半成品**（2026-10-30 起） | ✅ 文件对话框 / 提示 / 确认：`Win32Dialog` + 四个桥函数（A5-①，§26）。✅ 拖文件进窗：`WM_DROPFILES` + `DragAcceptFiles` → `FilesDroppedEvent` → 命中/父链冒泡 → `onFilesDropped`（A5-②，§27）。仍缺：托盘图标 `Shell_NotifyIcon` **0**（`Tray` 端口零消费者）；原生菜单 `CreateMenu` **0** |
 
 **Top3 短板**：① 滚动惯性（手感最容易被用户察觉）② 手势识别器家族 ③ 剪贴板多格式。
 
