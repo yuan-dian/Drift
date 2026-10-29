@@ -528,6 +528,12 @@ $cases = [
     'datebadiso' => static function (): void {
         LocalDate::fromIso('2026/10/29');
     },
+
+    // `plusMonths()` 越界仍要响亮失败 —— `tryPlusMonths()` 的 null 口径是给"翻页"
+    // 用的，不能顺手把 plusMonths 也降级成静默。
+    'ymoverflow' => static function (): void {
+        YearMonth::make(1, 1)->plusMonths(-1);
+    },
 ];
 
 if (!isset($cases[$case])) {

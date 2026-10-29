@@ -64,6 +64,7 @@ final class CalendarPageState extends State
             Column::make()->spacing(10.0)->padding(EdgeInsets::all(20.0))->children([
                 Text::make('日历 CalendarView')->title(),
                 Text::make('7 列 × 5~6 行：前导格数由「1 号是周几」算，行数随月份形状变。')->caption(),
+                Text::make('点标题在「日 → 月 → 年」之间切换：跨年翻月不用按 17 次箭头。')->caption(),
                 Text::make('月份与选中值都在本页 State —— 工具栏和日历箭头改的是同一份数据；格子不进 Tab 序。')->caption(),
                 $this->toolbar(),
                 Row::make()->children([$this->calendarPanel()]),
@@ -94,8 +95,9 @@ final class CalendarPageState extends State
 
     private function calendarPanel(): Widget
     {
-        // ★ 白卡片只负责"框 + 内边距"：`CalendarView` 不产渲染盒（`StatelessWidget`）
-        //   ⇒ 给它套 `padding()` 会响亮失败（修饰无处可去），留白落在外面这层。
+        // ★ 白卡片只负责"框 + 内边距"：`CalendarView` 走 `createRenderObjectFromState()`
+        //   返回 null 那条路（组合型 StatefulWidget），自己**不产渲染盒** ⇒ 给它套
+        //   `padding()` 会响亮失败（修饰无处可去），留白落在外面这层。
         return Card::make(
             CalendarView::make($this->month())
                 ->selected($this->selected)

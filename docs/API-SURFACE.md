@@ -22,8 +22,8 @@
 | State | 9 | 11 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
-| Widget | 153 | 187 |
-| **合计** | **389** | **315** |
+| Widget | 153 | 190 |
+| **合计** | **389** | **318** |
 
 覆盖 338 个文件 · 描述性提及 28 处（grep 口径的污染源，不计入）
 
@@ -556,7 +556,7 @@
 | `BuildContext` | class | src/Widget/BuildContext.php:13 |
 | `Button` | class | src/Widget/Button.php:19 |
 | `ButtonVariant` | enum | src/Widget/ButtonVariant.php:6 |
-| `CalendarView` | class | src/Widget/CalendarView.php:8 |
+| `CalendarView` | class | src/Widget/CalendarView.php:9 |
 | `Card` | class | src/Widget/Card.php:12 |
 | `Center` | class | src/Widget/Center.php:9 |
 | `Checkbox` | class | src/Widget/Checkbox.php:9 |
@@ -699,7 +699,7 @@
 | `WrapElement` | class | src/Widget/WrapElement.php:8 |
 | `YearMonth` | class | src/Widget/YearMonth.php:8 |
 
-### @internal（框架内部） · 187
+### @internal（框架内部） · 190
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -713,6 +713,9 @@
 | `AppBarElement` | class | src/Widget/AppBarElement.php:8 |
 | `BuildContext::withTheme()` | method | src/Widget/BuildContext.php:48 |
 | `Button::paintsBoxChrome()` | method | src/Widget/Button.php:319 |
+| `CalendarView::selectedValue()` | method | src/Widget/CalendarView.php:137 |
+| `CalendarView::onSelectedHandler()` | method | src/Widget/CalendarView.php:143 |
+| `CalendarView::onMonthChangeHandler()` | method | src/Widget/CalendarView.php:149 |
 | `Card::$box` | property | src/Widget/Card.php:79 |
 | `Card::box()` | method | src/Widget/Card.php:178 |
 | `ComboBox::optionsValue()` | method | src/Widget/ComboBox.php:285 |

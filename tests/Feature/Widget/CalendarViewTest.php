@@ -129,12 +129,12 @@ final class CalendarViewTest extends SmokeTestCase
         $root = $this->mount($view);
         $this->frame($root);
 
-        $this->dayButton($root, '15')?->activate(ActivationContext::none());
+        $this->buttonLabeled($root, '15')?->activate(ActivationContext::none());
         check('CalendarView · 点 15 号 ⇒ onSelected 收到 2026-10-15', $seen === ['2026-10-15'], 'seen=' . \json_encode($seen));
 
         // 受控：上报完画面不动 —— 高亮要应用改 `selected()` 才发生
         $this->frame($root);
-        check('CalendarView · 上报后画面不变（15 号仍未高亮）', !$this->isPrimary($root, '15'));
+        check('CalendarView · 上报后画面不变（15 号仍未高亮）', !$this->isPrimaryLabeled($root, '15'));
     }
 
     public function testMonthArrowsReportTargetMonth(): void
@@ -189,7 +189,7 @@ final class CalendarViewTest extends SmokeTestCase
         );
         $this->frame($root);
 
-        check('CalendarView · 选中的 15 号是 Primary', $this->isPrimary($root, '15'));
+        check('CalendarView · 选中的 15 号是 Primary', $this->isPrimaryLabeled($root, '15'));
 
         $primary = 0;
         foreach ($this->collectButtons($root) as $button) {
@@ -217,6 +217,173 @@ final class CalendarViewTest extends SmokeTestCase
         }
 
         check('CalendarView · 选中值在 9 月 ⇒ 10 月一格都不亮', $primary === 0, 'n=' . $primary);
+    }
+
+    // ── ⑦ 三档视图（日 / 月 / 年，2026-10-29 补） ──────────────────────
+
+    public function testTitleCyclesThroughThreeModes(): void
+    {
+        $seen = [];
+        $view = CalendarView::make(YearMonth::make(2026, 10))
+            ->onMonthChange(static function (YearMonth $m) use (&$seen): void {
+                $seen[] = $m->year . '-' . $m->month;
+            });
+
+        $root = $this->mount($view);
+        $this->frame($root);
+
+        check('CalendarView · 日视图标题 = 2026 年 10 月', $this->titleButton($root)?->label() === '2026 年 10 月');
+
+        // 日 → 月
+        $this->titleButton($root)?->activate(ActivationContext::none());
+        $this->frame($root);
+        check('CalendarView · 点标题进月视图（标题变 2026 年）', $this->titleButton($root)?->label() === '2026 年');
+        check(
+            'CalendarView · 月视图画出 1 月..12 月',
+            $this->monthPickerLabels($root) === $this->monthSequence(),
+            \json_encode($this->monthPickerLabels($root))
+        );
+        check('CalendarView · 月视图没有日期格', $this->dayCells($root) === [], 'n=' . \count($this->dayCells($root)));
+
+        // 月 → 年
+        $this->titleButton($root)?->activate(ActivationContext::none());
+        $this->frame($root);
+        check('CalendarView · 年视图标题 = 2021 - 2032（当前年在第 6 位）', $this->titleButton($root)?->label() === '2021 - 2032');
+        check(
+            'CalendarView · 年视图画出 12 个年份',
+            $this->yearPickerLabels($root) === $this->yearSequence(2021, 12),
+            \json_encode($this->yearPickerLabels($root))
+        );
+
+        // 年 → 日（循环回起点）
+        $this->titleButton($root)?->activate(ActivationContext::none());
+        $this->frame($root);
+        check('CalendarView · 再点回到日视图（31 格）', \count($this->dayCells($root)) === 31, 'n=' . \count($this->dayCells($root)));
+
+        // ★ 切视图是纯 UI 态：整圈不该上报任何月份（上报了就是"控件偷偷改了受控值"）
+        check('CalendarView · 切视图不上报月份', $seen === [], 'seen=' . \json_encode($seen));
+    }
+
+    public function testPickingMonthReportsAndFallsBackToDayView(): void
+    {
+        $seen = [];
+        $view = CalendarView::make(YearMonth::make(2026, 10))
+            ->onMonthChange(static function (YearMonth $m) use (&$seen): void {
+                $seen[] = $m->year . '-' . $m->month;
+            });
+
+        $root = $this->mount($view);
+        $this->frame($root);
+        $this->titleButton($root)?->activate(ActivationContext::none());
+        $this->frame($root);
+
+        check('CalendarView · 月视图里当前月（10 月）是 Primary', $this->isPrimaryLabeled($root, '10 月'));
+        check('CalendarView · 月视图里非当前月不是 Primary', !$this->isPrimaryLabeled($root, '3 月'));
+
+        $this->buttonLabeled($root, '3 月')?->activate(ActivationContext::none());
+        check('CalendarView · 点 3 月 ⇒ 上报 2026-3（保留年）', $seen === ['2026-3'], 'seen=' . \json_encode($seen));
+
+        $this->frame($root);
+        check('CalendarView · 选完月回到日视图', \count($this->dayCells($root)) === 31, 'n=' . \count($this->dayCells($root)));
+        // 受控：应用没改 `month()` ⇒ 还停在 10 月 —— 这正是"控件不自持"看得见的那一半
+        check('CalendarView · 应用没改月份 ⇒ 标题仍是 2026 年 10 月', $this->titleButton($root)?->label() === '2026 年 10 月');
+    }
+
+    public function testPickingYearReportsMonthAndFallsBackOneLevel(): void
+    {
+        $seen = [];
+        $view = CalendarView::make(YearMonth::make(2026, 10))
+            ->onMonthChange(static function (YearMonth $m) use (&$seen): void {
+                $seen[] = $m->year . '-' . $m->month;
+            });
+
+        $root = $this->mount($view);
+        $this->frame($root);
+        $this->titleButton($root)?->activate(ActivationContext::none());
+        $this->frame($root);
+        $this->titleButton($root)?->activate(ActivationContext::none());
+        $this->frame($root);
+
+        check('CalendarView · 年视图里当前年（2026）是 Primary', $this->isPrimaryLabeled($root, '2026'));
+        check('CalendarView · 年视图里别的年不是 Primary', !$this->isPrimaryLabeled($root, '2028'));
+
+        $this->buttonLabeled($root, '2028')?->activate(ActivationContext::none());
+        check('CalendarView · 点 2028 ⇒ 上报 2028-10（保留月号）', $seen === ['2028-10'], 'seen=' . \json_encode($seen));
+
+        $this->frame($root);
+        // ★ 只下沉一级：选年的语义是"我要看那一年的月份"，直接落到 10 月反而要多点一次标题
+        check('CalendarView · 选完年回到月视图（不是日视图）', $this->titleButton($root)?->label() === '2026 年');
+    }
+
+    public function testArrowStepFollowsMode(): void
+    {
+        $seen = [];
+        $view = CalendarView::make(YearMonth::make(2026, 10))
+            ->onMonthChange(static function (YearMonth $m) use (&$seen): void {
+                $seen[] = $m->year . '-' . $m->month;
+            });
+
+        $root = $this->mount($view);
+        $this->frame($root);
+
+        // 日视图：一页 = 1 个月
+        $this->collectIconButtons($root)[0]?->activate(ActivationContext::none());
+
+        // 月视图：一页 = 1 年
+        $this->titleButton($root)?->activate(ActivationContext::none());
+        $this->frame($root);
+        $this->collectIconButtons($root)[0]?->activate(ActivationContext::none());
+
+        // 年视图：一页 = 12 年
+        $this->titleButton($root)?->activate(ActivationContext::none());
+        $this->frame($root);
+        $this->collectIconButtons($root)[0]?->activate(ActivationContext::none());
+
+        check(
+            'CalendarView · 左箭头在日/月/年视图分别减 1 月 / 1 年 / 12 年',
+            $seen === ['2026-9', '2025-10', '2014-10'],
+            'seen=' . \json_encode($seen)
+        );
+    }
+
+    public function testYearViewStopsAtBoundaryWithoutReporting(): void
+    {
+        $seen = [];
+        // 3 年往前翻 12 年 ⇒ 越界（YearMonth 下限是 1 年）
+        $view = CalendarView::make(YearMonth::make(3, 1))
+            ->onMonthChange(static function (YearMonth $m) use (&$seen): void {
+                $seen[] = $m->year . '-' . $m->month;
+            });
+
+        $root = $this->mount($view);
+        $this->frame($root);
+        $this->titleButton($root)?->activate(ActivationContext::none());
+        $this->frame($root);
+        $this->titleButton($root)?->activate(ActivationContext::none());
+        $this->frame($root);
+
+        // 屏起点 = max(1, 3 - 5) = 1 ⇒ 1..12
+        check(
+            'CalendarView · 年屏起点钳到 1（1..12）',
+            $this->yearPickerLabels($root) === $this->yearSequence(1, 12),
+            \json_encode($this->yearPickerLabels($root))
+        );
+
+        // ★ 越界那侧不挂回调：点了毫无反应，而不是上报一个"跟当前一样"的月份，
+        //   更不能因为构造越界 YearMonth 把进程打死
+        $this->collectIconButtons($root)[0]?->activate(ActivationContext::none());
+        check('CalendarView · 翻到边界外不上报（点不动）', $seen === [], 'seen=' . \json_encode($seen));
+    }
+
+    public function testTitleIsPlainTextWithoutMonthChangeHandler(): void
+    {
+        // 没有 `onMonthChange` ⇒ 切不到月/年视图 ⇒ 标题不该做成按钮
+        // （能切过去却一格都点不动，比"不能切"更糟）
+        $root = $this->mount(CalendarView::make(YearMonth::make(2026, 10)));
+        $this->frame($root);
+
+        check('CalendarView · 无 onMonthChange 时标题不是按钮', $this->titleButton($root) === null);
+        check('CalendarView · 无回调时日期格照旧画出来', \count($this->dayCells($root)) === 31);
     }
 
     // ── 夹具 ───────────────────────────────────────────────────────────
@@ -257,13 +424,14 @@ final class CalendarViewTest extends SmokeTestCase
         return $out;
     }
 
-    /** @return list<array{string,float,float}> [标签, x, y] */
+    /** @return list<array{string,float,float}> [标签, x, y] —— 只收日期格（1..31 的纯数字） */
     private function dayCells(Element $root): array
     {
         $out = [];
         $walk = function (Element $el) use (&$walk, &$out): void {
             $widget = $el->widget();
-            if ($widget instanceof Button && !$widget instanceof IconButton) {
+            if ($widget instanceof Button && !$widget instanceof IconButton
+                && \preg_match('/^\d{1,2}$/', $widget->label()) === 1) {
                 $box = $el->effectiveBox();
                 if ($box !== null) {
                     [$x, $y] = boxOrigin($box);
@@ -327,7 +495,8 @@ final class CalendarViewTest extends SmokeTestCase
         return $out;
     }
 
-    private function dayButton(Element $root, string $label): ?Button
+    /** 某个标签的文字按钮（不分模式：日期格 / 月格 / 年格 / 标题都走这条） */
+    private function buttonLabeled(Element $root, string $label): ?Button
     {
         foreach ($this->collectButtons($root) as $button) {
             if ($button->label() === $label) {
@@ -338,9 +507,76 @@ final class CalendarViewTest extends SmokeTestCase
         return null;
     }
 
-    private function isPrimary(Element $root, string $label): bool
+    /**
+     * 标题上的按钮（可点时才有）。
+     *
+     * ★ 判定靠**标签形状**而不是"第一个按钮"：日视图标题含「年」、月视图含「年」、
+     *   年视图含「 - 」，而月格以「月」结尾、年格是 4 位纯数字 —— 四者互不撞车。
+     */
+    private function titleButton(Element $root): ?Button
     {
-        return $this->dayButton($root, $label)?->variantValue()->name === 'Primary';
+        foreach ($this->collectButtons($root) as $button) {
+            $label = $button->label();
+            if (\str_contains($label, '年') || \str_contains($label, ' - ')) {
+                return $button;
+            }
+        }
+
+        return null;
+    }
+
+    /** @return list<string> 月视图的 12 个月格标签 */
+    private function monthPickerLabels(Element $root): array
+    {
+        $out = [];
+        foreach ($this->collectButtons($root) as $button) {
+            if (\preg_match('/^\d{1,2} 月$/u', $button->label()) === 1) {
+                $out[] = $button->label();
+            }
+        }
+
+        return $out;
+    }
+
+    /** @return list<string> 年视图的年份格标签 */
+    private function yearPickerLabels(Element $root): array
+    {
+        $out = [];
+        foreach ($this->collectButtons($root) as $button) {
+            // 年份可以是 1..9999，不一定是 4 位（下限 1 年那一屏就是 '1'..'12'）
+            if (\preg_match('/^\d{1,4}$/', $button->label()) === 1) {
+                $out[] = $button->label();
+            }
+        }
+
+        return $out;
+    }
+
+    /** @return list<string> '1 月'..'12 月' */
+    private function monthSequence(): array
+    {
+        $out = [];
+        for ($i = 1; $i <= 12; $i++) {
+            $out[] = $i . ' 月';
+        }
+
+        return $out;
+    }
+
+    /** @return list<string> 从 `$start` 起的 `$count` 个年份 */
+    private function yearSequence(int $start, int $count): array
+    {
+        $out = [];
+        for ($i = 0; $i < $count; $i++) {
+            $out[] = (string) ($start + $i);
+        }
+
+        return $out;
+    }
+
+    private function isPrimaryLabeled(Element $root, string $label): bool
+    {
+        return $this->buttonLabeled($root, $label)?->variantValue()->name === 'Primary';
     }
 
     /** @return list<string> '1'..'31' */

@@ -101,6 +101,30 @@ final class CalendarDateTest extends SmokeTestCase
         }
     }
 
+    /**
+     * `tryPlusMonths()`：越界返回 `null` 而不是响亮失败。
+     *
+     * ★ 它是"翻页"用的口径：`CalendarView` 的年视图一页 12 年，从 5 年往前翻
+     *   就是越界 —— 那是**到头了**，不是错误。误用 `plusMonths()` 会让用户多点
+     *   两下箭头把进程打死。
+     */
+    public function testTryPlusMonthsReturnsNullAtBoundary(): void
+    {
+        $m = YearMonth::make(2026, 10);
+
+        check('YearMonth · tryPlusMonths(1) 正常跨月', $m->tryPlusMonths(1)?->label() === '2026 年 11 月');
+        check('YearMonth · tryPlusMonths(-10) 反向跨年', $m->tryPlusMonths(-10)?->label() === '2025 年 12 月');
+        check('YearMonth · tryPlusMonths(0) 原地', $m->tryPlusMonths(0)?->label() === '2026 年 10 月');
+
+        // 两端各一步之内的极端值仍然合法（不是"沾边就 null"）
+        check('YearMonth · 1 年 1 月不减是合法的', YearMonth::make(1, 1)->tryPlusMonths(0)?->label() === '1 年 1 月');
+        check('YearMonth · 9999 年 12 月不加是合法的', YearMonth::make(9999, 12)->tryPlusMonths(0)?->label() === '9999 年 12 月');
+
+        check('YearMonth · 1 年往前 ⇒ null', YearMonth::make(1, 1)->tryPlusMonths(-1) === null);
+        check('YearMonth · 9999 年往后 ⇒ null', YearMonth::make(9999, 12)->tryPlusMonths(1) === null);
+        check('YearMonth · 一步跨出 12 年 ⇒ null', YearMonth::make(5, 6)->tryPlusMonths(-144) === null);
+    }
+
     // ── ④ ISO 往返 ─────────────────────────────────────────────────────
 
     public function testIsoRoundTripPadsZeros(): void
@@ -174,6 +198,20 @@ final class CalendarDateTest extends SmokeTestCase
         check(
             'LocalDate · 报错给出 YYYY-MM-DD 形态',
             \str_contains(logText($log), 'YYYY-MM-DD'),
+            'log=' . \substr(logText($log), 0, 160)
+        );
+    }
+
+    public function testPlusMonthsOverflowStillFailsLoudly(): void
+    {
+        // `tryPlusMonths()` 加进来之后，`plusMonths()` 不能顺手降级成静默 null
+        $log = \sys_get_temp_dir() . '/drift-ym-' . \getmypid() . '.log';
+        fresh($log);
+        [$code, $out] = runFatalCase('ymoverflow', $log);
+        check('YearMonth · 加 -1 月越过 1 年 ⇒ Fatal', $code === 3, '实际 ' . $code . ' / ' . $out);
+        check(
+            'YearMonth · 报错点名越界的年份范围',
+            \str_contains(logText($log), '1..9999'),
             'log=' . \substr(logText($log), 0, 160)
         );
     }

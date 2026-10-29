@@ -97,9 +97,38 @@ final class YearMonth
      */
     public function plusMonths(int $n): self
     {
+        $next = $this->tryPlusMonths($n);
+
+        if ($next !== null) {
+            return $next;
+        }
+
+        Errors::report(sprintf(
+            'YearMonth 加 %d 月后超出 1..9999 年（从 %d 年 %d 月）',
+            $n,
+            $this->year,
+            $this->month,
+        ));
+
+        return $this;   // 不可达：`Errors::report()` 默认 FATAL
+    }
+
+    /**
+     * 同 `plusMonths()`，但越界返回 `null` 而不是响亮失败。
+     *
+     * ★ 给"翻页"用：`CalendarView` 的年视图一页翻 12 年，从 5 年往前翻就是
+     *   越界 —— 那是**到头了**，不是错误。把"越界"当 FATAL 会让用户多点两次
+     *   箭头就把进程打死。
+     */
+    public function tryPlusMonths(int $n): ?self
+    {
         $total = $this->year * 12 + ($this->month - 1) + $n;
 
         $year = intdiv($total, 12);
+
+        if ($year < 1 || $year > 9999) {
+            return null;
+        }
 
         return new self($year, $total - $year * 12 + 1);
     }

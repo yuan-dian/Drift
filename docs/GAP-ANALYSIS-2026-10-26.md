@@ -160,15 +160,18 @@ ScrollView / LazyColumn / LazyRow / LazyGrid / Grid / Stack / Image / Icon / Ric
 12. DatePicker / TimePicker + Badge/Tag/Avatar。
     ★ **2026-10-29 部分落地**：月历本体 `CalendarView`（`src/Widget/CalendarView.php`，
     配 `YearMonth` / `LocalDate` 两个值对象，示例台第 25 项 `CalendarPage`，
-    见 `REVIEW-2026-10-28.md` §17）。
+    见 `REVIEW-2026-10-28.md` §17）；同日补**日 / 月 / 年三档视图**（点标题循环，
+    跨年翻月不用按 17 次箭头，见 §18）。
     ★ **仍未做（这一条的剩余部分）**：① `DatePicker` 触发框 + 浮层（`PopupPanel` 已有，
-    照 `Select` 的 `overlayPanel` 范式）；② 标题点开**月网格 / 年网格**（跨年翻月现在
-    只能一月一月点，是这条最刚需的缺口）；③ `range` 区间选择（契约留白：
-    `selected()` 与将来的 `range()` 互斥并存）；④ `TimePicker`（需要时分/秒列的选择原语）；
-    ⑤ `min/max` 与"禁用某几天"（要先有禁用态）。
+    照 `Select` 的 `overlayPanel` 范式）；② `range` 区间选择（契约留白：
+    `selected()` 与将来的 `range()` 互斥并存）；③ `TimePicker`（需要时分/秒列的选择原语）；
+    ④ `min/max` 与"禁用某几天"（要先有禁用态）。
     ★ **快捷选项归应用**（2026-10-29 拿 layui `laydate` 的 `shortcuts` 对照后的裁决）：
     它的 `value` 是函数 ⇒ **控件读时钟** ⇒ golden 每天变、用例不可复现，且"近 30 天
     按哪个时区算"是业务知识。应用拿 `selected()` 自己放按钮即可。
+    ★ **点标题弹月/年网格**已落地（曾是这条最刚需的缺口）—— 但它做成了**原地换内容**
+    而不是 laydate 那种嵌套浮层：浮层里再开浮层，`OverlayManager` 的属主清扫会变成
+    两层，收益却只是同一块区域的另一种画法。
 13. 手势识别器家族（long-press / double-tap / pinch）。
     ★ **不是 Table 列宽拖拽的前置**（2026-10-26 修正）：列宽拖拽与 `Slider` 同类
     （位置即语义的连续拖拽），走 `pointer(ownsPress: true)` + 框架捕获，`Slider` 的
