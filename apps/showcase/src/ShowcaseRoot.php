@@ -52,6 +52,7 @@ use App\Showcase\Pages\TooltipPage;
 use App\Showcase\Pages\TextPage;
 use App\Showcase\Pages\TreePage;
 use App\Showcase\Pages\CalendarPage;
+use App\Showcase\Pages\PickerPage;
 
 /**
  * 示例台根（LayUI 式 admin 布局）：**顶条 + 左导航 + 右内容**。
@@ -182,6 +183,8 @@ final class ShowcaseState extends State
             new NavEntry(IconName::ArrowRight, '树 Tree', static fn(): Widget => new TreePage()),
             // ★ 同上：日历页追加在最末，前 24 项的 y 坐标不变。
             new NavEntry(IconName::Grid, '日历 Calendar', static fn(): Widget => new CalendarPage()),
+            // ★ 同上：日期时间页追加在最末，前 25 项的 y 坐标不变。
+            new NavEntry(IconName::ChevronDown, '日期时间 Picker', static fn(): Widget => new PickerPage()),
         ];
     }
 
@@ -247,7 +250,7 @@ final class ShowcaseState extends State
                 // ★ 侧栏**定宽 200**（LayUI 侧栏的形态）：没有 `SizedBox` 时宽度只能由
                 //   "最长那个按钮文字"撑出来，改文案/换语言就变。外层 `Row::cross(Stretch)`
                 //   负责把它拉满高，`SizedBox` 只定宽 —— 两轴各自管一件事。
-                SizedBox::make(Card::make($this->buildNav())->paddingAll(10.0))->width(200.0),
+                SizedBox::make(Card::make(ScrollView::make($this->buildNav()))->paddingAll(10.0))->width(200.0),
                 // ★ 滚动归**页根**（每页自己 `Card(ScrollView(...))`）：外壳再套一层
                 //   就是嵌套滚动 —— 内层永远"量到全部内容"，外层滚不动，两层都白搭。
                 Expanded::make($this->pageFor($this->selected)()),

@@ -44,6 +44,7 @@ final class OptionPanel extends StatefulWidget
         private readonly float $minWidth,
         private readonly float $maxHeight,
         private readonly ?\Closure $onClosed,
+        private readonly bool $scrollable,
     ) {
         parent::__construct();
     }
@@ -54,6 +55,7 @@ final class OptionPanel extends StatefulWidget
      * @param float $minWidth 面板最小宽
      * @param float $maxHeight 面板高度上限（`RenderPopupPanel` 按实测自然高决定"贴着还是滚"）
      * @param (callable(): void)|null $onClosed 面板被回收时调（三条关闭路径的汇合点）
+     * @param bool $scrollable 内容**自己不是**滚动视口时才为真（见 `build()` 的 ★）
      */
     public static function make(
         Subject $source,
@@ -61,10 +63,11 @@ final class OptionPanel extends StatefulWidget
         float $minWidth,
         float $maxHeight,
         ?callable $onClosed = null,
+        bool $scrollable = true,
     ): self {
         $closed = $onClosed === null ? null : $onClosed(...);
 
-        return new self($source, $content, $minWidth, $maxHeight, $closed);
+        return new self($source, $content, $minWidth, $maxHeight, $closed, $scrollable);
     }
 
     /** @internal */
@@ -89,6 +92,12 @@ final class OptionPanel extends StatefulWidget
     public function maxHeightValue(): float
     {
         return $this->maxHeight;
+    }
+
+    /** @internal */
+    public function scrollableValue(): bool
+    {
+        return $this->scrollable;
     }
 
     /** @internal */
@@ -125,10 +134,20 @@ final class OptionPanelState extends State
     public function build(BuildContext $ctx): Widget
     {
         $panel = $this->panel();
+        $content = $panel->content();
 
         // ★ 必须套 `ScrollView`：`PopupPanel::maxHeight()` 只给上限，
         //   "超高就滚"是靠内容自己是滚动视口实现的（它不会替内容滚）。
-        return PopupPanel::make(ScrollView::make($panel->content()))
+        // ★★ 但内容**自己已经是滚动视口**时不能套（`TimeView` 的 `LazyColumn`
+        //   就是）：嵌套滚动会在布局期拿"外层给的无界主轴"算窗口，实测直接崩
+        //   （`RenderScrollView` 的不变量）。`DatePicker` / `DateTimePicker` 传
+        //   `$scrollable = false` —— 日历与时刻列都是定高的，超限由 `PopupPanel`
+        //   裁剪。
+        if ($panel->scrollableValue()) {
+            $content = ScrollView::make($content);
+        }
+
+        return PopupPanel::make($content)
             ->minWidth($panel->minWidthValue())
             ->maxHeight($panel->maxHeightValue())
             ->padding(EdgeInsets::symmetric(OptionPanel::PADDING, OptionPanel::PADDING))

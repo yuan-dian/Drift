@@ -156,6 +156,9 @@ abstract class Widget
      */
     private ?\Closure $overlayPanelFactory = null;
 
+    /** 面板宽上限（`null` = 框架默认，见 `overlayPanel()` 的 `$maxWidth`） */
+    private ?float $overlayPanelMaxWidth = null;
+
     /**
      * 面板内容的**签名**（`\Closure(): string`；`null` = 不声明）。
      *

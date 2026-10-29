@@ -65,6 +65,27 @@ final class LazyListState extends State implements Scrollable
 
     private float $windowEnd = 0.0;
 
+    /**
+     * 播种初始偏移（`LazyList::initialOffset()`）。
+     *
+     * ★ **必须同时播种锚点**：`didUpdateWidget()` 用"锚点那一格的 key 还在原位"判
+     *   内容有没有动，锚点停留在初始值（序号 0、key `null`）时，只要 offset > 0
+     *   就会被判成"锚点丢了" ⇒ 第二次重建直接跳回顶部。播种走的是与滚动同一条
+     *   `rememberAnchor()`，两处口径不会分叉。
+     */
+    #[\Override]
+    public function initState(): void
+    {
+        $px = $this->view()->initialOffsetPx();
+
+        if ($px <= 0.0) {
+            return;
+        }
+
+        $this->offset = $px;
+        $this->rememberAnchor();
+    }
+
     /** 当前偏移（逻辑像素，≥ 0，已按上一帧的内容长度夹过上界） */
     public function offset(): float
     {
@@ -441,6 +462,14 @@ final class LazyListState extends State implements Scrollable
                     return $viewport;
                 }
             }
+        }
+
+        // ★ ② 自己声明了视口 ⇒ 用它。**必须排在 `$ctx` 之前**（2026-10-29）：
+        //   `BuildContext` 的主轴在浮层里是**无界**（`RenderPopupPanel` 按内容自尺寸）
+        //   ⇒ 退到它会把 60 格全部造出来（虚拟化静默失效）。
+        $declared = $this->view()->viewportExtentPx();
+        if ($declared > 0.0) {
+            return $declared;
         }
 
         return max(0.0, $window);

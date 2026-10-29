@@ -691,7 +691,9 @@ final class OverlayManager
         $e->dismissOnTapOutside = true;
         $e->dismissOnEsc = true;
         $e->focusTrap = false;
-        $e->maxWidth = self::PANEL_MAX_WIDTH;
+        // ★ 默认口径是"一列选项"，控件可以自报更宽（`overlayPanel($f, $maxWidth)`）——
+        //   并排两块面板（日历 + 时刻列）不是 320 装得下的，而"上限"归内容语义管。
+        $e->maxWidth = $anchorWidget->overlayPanelMaxWidthValue() ?? self::PANEL_MAX_WIDTH;
 
         // ★ **不动 `restoreFocus`**（与 Tooltip / Snackbar 相反）：那两个是被"悬停"/
         //   "定时器"触发的，打开时焦点根本不在锚点上，快照下来是错的；这里打开它的

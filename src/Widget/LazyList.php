@@ -51,6 +51,10 @@ abstract class LazyList extends StatefulWidget
 
     private float $overscanPx = self::DEFAULT_OVERSCAN;
 
+    private float $initialOffsetPx = 0.0;
+
+    private float $viewportPx = 0.0;
+
     private EdgeInsets $insets;
 
     /**
@@ -142,6 +146,55 @@ abstract class LazyList extends StatefulWidget
         $this->overscanPx = max(0.0, $px);
 
         return $this;
+    }
+
+    /**
+     * **初始**滚动偏移（逻辑像素，`0` = 从第一项开始）。
+     *
+     * 用途只有一个：打开列表就落在第 N 项上（`TimeView` 要"打开时看得见 09 点"）。
+     * 换算是调用方的事 —— 这里只收像素，不收序号，因为它同时要能表达"第 3 项
+     * 滚了一半"这种位置（与滚动偏移同一套坐标）。
+     *
+     * ★ **只读一次**（`LazyListState::initState()`）。之后改它没有效果：那是
+     *   "初始"的语义，运行期改位置走 `scrollBy()` / `ensureVisible()`
+     *   （State 上已有两条路，第三种再进来只会让"谁说了算"变得不可判）。
+     */
+    public function initialOffset(float $px): static
+    {
+        $this->mutate();
+        $this->initialOffsetPx = max(0.0, $px);
+
+        return $this;
+    }
+
+    /**
+     * 声明"我的视口沿主轴是 N 像素"（`0` = 不声明，退回量盒 / 窗口）。
+     *
+     * ★ 只在"**外层给的主轴是无界的**"时需要（2026-10-29，`TimeView` 进浮层踩到）：
+     *   `BuildContext` 的主轴在 `RenderPopupPanel` 里是无限大 ⇒ 窗口换算会把 60 格
+     *   全部造出来（虚拟化静默失效，滚出视口外的格子照样进布局）。
+     * ★ 不能用 `Widget` 的 `->height()` 顶替：本类**不产渲染盒**（盒由 State 造），
+     *   `Element::syncBox()` 的守卫会响亮失败。所以只能自己声明。
+     * ★ 优先级低于"上一帧盒的实测值"—— 父约束可能比声明更紧，实测才是真值。
+     */
+    public function viewportExtent(float $px): static
+    {
+        $this->mutate();
+        $this->viewportPx = max(0.0, $px);
+
+        return $this;
+    }
+
+    /** @internal */
+    public function viewportExtentPx(): float
+    {
+        return $this->viewportPx;
+    }
+
+    /** @internal */
+    public function initialOffsetPx(): float
+    {
+        return $this->initialOffsetPx;
     }
 
     /**

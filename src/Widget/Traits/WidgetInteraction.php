@@ -323,13 +323,20 @@ trait WidgetInteraction
      * ★ 面板的落位 / 锚点 / 归属 / 关闭归 `Application`（`§5.1` 裁决 1）。
      *
      * @param \Closure(\Closure): Widget $factory 形参 = `dismiss` 闭包，返回值 = 面板内容
+     * @param float|null $maxWidth 面板宽上限（逻辑像素）。`null` = 框架默认
+     *        （`Application::PANEL_MAX_WIDTH`，一列选项够用的 320）。
+     *        ★ 需要**并排两块**的面板（`DateTimePicker`）必须自报：默认上限是
+     *        "一列选项"的口径，套在日历 + 时刻列上会把 `Row` 挤爆（2026-10-29 实测
+     *        `RenderFlex 放不下：共需 416，可用 304`）。
+     *        ★ 只影响**上限**：面板仍然按内容自尺寸，报大了不会凭空撑宽。
      *
      * @api
      */
-    public function overlayPanel(\Closure $factory): static
+    public function overlayPanel(\Closure $factory, ?float $maxWidth = null): static
     {
         $this->mutate();
         $this->overlayPanelFactory = $factory;
+        $this->overlayPanelMaxWidth = $maxWidth;
 
         return $this;
     }
@@ -338,6 +345,12 @@ trait WidgetInteraction
     public function overlayPanelValue(): ?\Closure
     {
         return $this->overlayPanelFactory;
+    }
+
+    /** @internal 面板宽上限（`null` = 用框架默认） */
+    public function overlayPanelMaxWidthValue(): ?float
+    {
+        return $this->overlayPanelMaxWidth;
     }
 
     /**

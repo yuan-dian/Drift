@@ -162,10 +162,19 @@ ScrollView / LazyColumn / LazyRow / LazyGrid / Grid / Stack / Image / Icon / Ric
     配 `YearMonth` / `LocalDate` 两个值对象，示例台第 25 项 `CalendarPage`，
     见 `REVIEW-2026-10-28.md` §17）；同日补**日 / 月 / 年三档视图**（点标题循环，
     跨年翻月不用按 17 次箭头，见 §18）。
-    ★ **仍未做（这一条的剩余部分）**：① `DatePicker` 触发框 + 浮层（`PopupPanel` 已有，
-    照 `Select` 的 `overlayPanel` 范式）；② `range` 区间选择（契约留白：
-    `selected()` 与将来的 `range()` 互斥并存）；③ `TimePicker`（需要时分/秒列的选择原语）；
-    ④ `min/max` 与"禁用某几天"（要先有禁用态）。
+    ★ **仍未做（这一条的剩余部分）**：① `range` 区间选择（契约留白：
+    `selected()` 与将来的 `range()` 互斥并存）；② `min/max` 与"禁用某几天"（要先有禁用态）。
+
+    ★ **2026-10-29 同日补全（原第 ③ 条已落地）**：`TimeView`（`src/Widget/TimeView.php`，
+    时/分/秒三列 `LazyColumn`，配 `LocalTime`；默认两列，`withSeconds()` 出第三列）、
+    `DatePicker`（触发框 + 浮层，值 `LocalDate`）、`DateTimePicker`（值 `LocalDateTime`，
+    面板里 `Row[CalendarView, TimeView]` 并排）、`LocalDateTime` 值对象。
+    示例台第 27 项 `PickerPage`，判据 `tests/Feature/Widget/TimeViewTest.php` +
+    `DatePickerTest.php`，见 `REVIEW-2026-10-28.md` §19。
+    ★ **裁决：日期与时刻是两个控件，不是同一个 `type` 分支**（理由见 §19.1）。
+    ★ 顺带补的两条框架缝：`Widget::overlayPanel($f, $maxWidth)`（面板宽上限可自报，
+    默认 320 装不下并排两块）、`LazyList::viewportExtent()`（浮层里 `BuildContext`
+    主轴无界 ⇒ 虚拟化会静默退化成"全量造 60 格"）。
     ★ **快捷选项归应用**（2026-10-29 拿 layui `laydate` 的 `shortcuts` 对照后的裁决）：
     它的 `value` 是函数 ⇒ **控件读时钟** ⇒ golden 每天变、用例不可复现，且"近 30 天
     按哪个时区算"是业务知识。应用拿 `selected()` 自己放按钮即可。

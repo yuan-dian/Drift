@@ -22,10 +22,10 @@
 | State | 9 | 11 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
-| Widget | 153 | 190 |
-| **合计** | **389** | **318** |
+| Widget | 158 | 209 |
+| **合计** | **394** | **337** |
 
-覆盖 338 个文件 · 描述性提及 28 处（grep 口径的污染源，不计入）
+覆盖 344 个文件 · 描述性提及 28 处（grep 口径的污染源，不计入）
 
 ## App 层
 
@@ -541,7 +541,7 @@
 
 ## Widget 层
 
-### @api（应用可读面） · 153
+### @api（应用可读面） · 158
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -566,6 +566,8 @@
 | `Curve` | class | src/Widget/Curve.php:6 |
 | `CustomPaint` | class | src/Widget/CustomPaint.php:9 |
 | `CustomPainter` | class | src/Widget/CustomPainter.php:9 |
+| `DatePicker` | class | src/Widget/DatePicker.php:8 |
+| `DateTimePicker` | class | src/Widget/DateTimePicker.php:8 |
 | `Divider` | class | src/Widget/Divider.php:11 |
 | `Dock` | class | src/Widget/Dock.php:10 |
 | `Draggable` | class | src/Widget/Drag/Draggable.php:8 |
@@ -591,6 +593,8 @@
 | `LazyList` | class | src/Widget/LazyList.php:10 |
 | `LazyRow` | class | src/Widget/LazyRow.php:6 |
 | `LocalDate` | class | src/Widget/LocalDate.php:8 |
+| `LocalDateTime` | class | src/Widget/LocalDateTime.php:8 |
+| `LocalTime` | class | src/Widget/LocalTime.php:8 |
 | `ContextMenu` | class | src/Widget/Menu/ContextMenu.php:11 |
 | `Menu` | class | src/Widget/Menu/Menu.php:14 |
 | `MenuBar` | class | src/Widget/Menu/MenuBar.php:11 |
@@ -658,6 +662,7 @@
 | `TextField` | class | src/Widget/TextField.php:9 |
 | `TextFieldState` | class | src/Widget/TextFieldState.php:15 |
 | `ThemeScopeElement` | class | src/Widget/ThemeScopeElement.php:6 |
+| `TimeView` | class | src/Widget/TimeView.php:8 |
 | `Toggle` | class | src/Widget/Toggle.php:9 |
 | `ToggleBase` | class | src/Widget/ToggleBase.php:14 |
 | `TooltipPanel` | class | src/Widget/TooltipPanel.php:8 |
@@ -674,7 +679,7 @@
 | `WidgetInteraction::keyboard()` | method | src/Widget/Traits/WidgetInteraction.php:206 |
 | `WidgetInteraction::tooltip()` | method | src/Widget/Traits/WidgetInteraction.php:249 |
 | `WidgetInteraction::overlayPanel()` | method | src/Widget/Traits/WidgetInteraction.php:288 |
-| `WidgetInteraction::overlaySignature()` | method | src/Widget/Traits/WidgetInteraction.php:343 |
+| `WidgetInteraction::overlaySignature()` | method | src/Widget/Traits/WidgetInteraction.php:356 |
 | `WidgetModifiers::padding()` | method | src/Widget/Traits/WidgetModifiers.php:33 |
 | `WidgetModifiers::boxSize()` | method | src/Widget/Traits/WidgetModifiers.php:111 |
 | `WidgetModifiers::background()` | method | src/Widget/Traits/WidgetModifiers.php:184 |
@@ -692,14 +697,14 @@
 | `TreeNode` | class | src/Widget/TreeNode.php:8 |
 | `TreeView` | class | src/Widget/TreeView.php:9 |
 | `Widget` | class | src/Widget/Widget.php:21 |
-| `Widget::__construct()` | method | src/Widget/Widget.php:194 |
-| `Widget::key()` | method | src/Widget/Widget.php:221 |
-| `Widget::mutate()` | method | src/Widget/Widget.php:298 |
+| `Widget::__construct()` | method | src/Widget/Widget.php:197 |
+| `Widget::key()` | method | src/Widget/Widget.php:224 |
+| `Widget::mutate()` | method | src/Widget/Widget.php:301 |
 | `Wrap` | class | src/Widget/Wrap.php:12 |
 | `WrapElement` | class | src/Widget/WrapElement.php:8 |
 | `YearMonth` | class | src/Widget/YearMonth.php:8 |
 
-### @internal（框架内部） · 190
+### @internal（框架内部） · 209
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -744,6 +749,20 @@
 | `Curve::EASE_OUT` | const | src/Widget/Curve.php:35 |
 | `Curve::EASE_IN_OUT` | const | src/Widget/Curve.php:38 |
 | `Curve::kind()` | method | src/Widget/Curve.php:65 |
+| `DatePicker::valueOf()` | method | src/Widget/DatePicker.php:125 |
+| `DatePicker::initialMonthValue()` | method | src/Widget/DatePicker.php:131 |
+| `DatePicker::placeholderText()` | method | src/Widget/DatePicker.php:137 |
+| `DatePicker::widthValue()` | method | src/Widget/DatePicker.php:143 |
+| `DatePicker::onChangedHandler()` | method | src/Widget/DatePicker.php:149 |
+| `DatePickerState` | class | src/Widget/DatePicker.php:169 |
+| `DatePickerState::$signal` | property | src/Widget/DatePicker.php:185 |
+| `DateTimePicker::valueOf()` | method | src/Widget/DateTimePicker.php:134 |
+| `DateTimePicker::initialMonthValue()` | method | src/Widget/DateTimePicker.php:140 |
+| `DateTimePicker::placeholderText()` | method | src/Widget/DateTimePicker.php:146 |
+| `DateTimePicker::widthValue()` | method | src/Widget/DateTimePicker.php:152 |
+| `DateTimePicker::showsSeconds()` | method | src/Widget/DateTimePicker.php:158 |
+| `DateTimePicker::onChangedHandler()` | method | src/Widget/DateTimePicker.php:164 |
+| `DateTimePickerState` | class | src/Widget/DateTimePicker.php:183 |
 | `Dock::slotKid()` | method | src/Widget/Dock.php:93 |
 | `Dock::overflowValue()` | method | src/Widget/Dock.php:106 |
 | `DockElement` | class | src/Widget/DockElement.php:8 |
@@ -768,19 +787,23 @@
 | `InlineEditorBox` | class | src/Widget/InlineEditorBox.php:17 |
 | `InlineEditorBox::make()` | method | src/Widget/InlineEditorBox.php:58 |
 | `InlineEditorBox::editorStyle()` | method | src/Widget/InlineEditorBox.php:64 |
-| `LazyList::keyMapper()` | method | src/Widget/LazyList.php:126 |
-| `LazyList::buildItem()` | method | src/Widget/LazyList.php:187 |
+| `LazyList::keyMapper()` | method | src/Widget/LazyList.php:130 |
+| `LazyList::viewportExtentPx()` | method | src/Widget/LazyList.php:188 |
+| `LazyList::initialOffsetPx()` | method | src/Widget/LazyList.php:194 |
+| `LazyList::buildItem()` | method | src/Widget/LazyList.php:240 |
 | `LazyListState` | class | src/Widget/LazyListState.php:12 |
 | `Modal::bindDismiss()` | method | src/Widget/Modal.php:169 |
 | `ModalHost` | class | src/Widget/ModalHost.php:10 |
 | `OffstageElement::$parked` | property | src/Widget/OffstageElement.php:22 |
 | `OptionPanel` | class | src/Widget/OptionPanel.php:10 |
-| `OptionPanel::source()` | method | src/Widget/OptionPanel.php:70 |
-| `OptionPanel::content()` | method | src/Widget/OptionPanel.php:76 |
-| `OptionPanel::minWidthValue()` | method | src/Widget/OptionPanel.php:82 |
-| `OptionPanel::maxHeightValue()` | method | src/Widget/OptionPanel.php:88 |
-| `OptionPanel::notifyClosed()` | method | src/Widget/OptionPanel.php:94 |
-| `OptionPanelState` | class | src/Widget/OptionPanel.php:110 |
+| `OptionPanel::source()` | method | src/Widget/OptionPanel.php:73 |
+| `OptionPanel::content()` | method | src/Widget/OptionPanel.php:79 |
+| `OptionPanel::minWidthValue()` | method | src/Widget/OptionPanel.php:85 |
+| `OptionPanel::maxHeightValue()` | method | src/Widget/OptionPanel.php:91 |
+| `OptionPanel::scrollableValue()` | method | src/Widget/OptionPanel.php:97 |
+| `OptionPanel::notifyClosed()` | method | src/Widget/OptionPanel.php:103 |
+| `OptionPanelState` | class | src/Widget/OptionPanel.php:119 |
+| `PickerPanelSignal` | class | src/Widget/PickerPanelSignal.php:8 |
 | `PopupPanel::paintsBoxChrome()` | method | src/Widget/PopupPanel.php:131 |
 | `RenderBoxWidget::paintsBoxChrome()` | method | src/Widget/RenderBoxWidget.php:34 |
 | `ScrollBarFade` | class | src/Widget/ScrollBarFade.php:9 |
@@ -852,8 +875,9 @@
 | `WidgetInteraction::windowDragHandlerValue()` | method | src/Widget/Traits/WidgetInteraction.php:200 |
 | `WidgetInteraction::keyHandlerValue()` | method | src/Widget/Traits/WidgetInteraction.php:243 |
 | `WidgetInteraction::tooltipTextValue()` | method | src/Widget/Traits/WidgetInteraction.php:280 |
-| `WidgetInteraction::overlayPanelValue()` | method | src/Widget/Traits/WidgetInteraction.php:337 |
-| `WidgetInteraction::overlaySignatureValue()` | method | src/Widget/Traits/WidgetInteraction.php:391 |
+| `WidgetInteraction::overlayPanelValue()` | method | src/Widget/Traits/WidgetInteraction.php:344 |
+| `WidgetInteraction::overlayPanelMaxWidthValue()` | method | src/Widget/Traits/WidgetInteraction.php:350 |
+| `WidgetInteraction::overlaySignatureValue()` | method | src/Widget/Traits/WidgetInteraction.php:404 |
 | `WidgetModifiers` | trait | src/Widget/Traits/WidgetModifiers.php:12 |
 | `WidgetSemantics` | trait | src/Widget/Traits/WidgetSemantics.php:8 |
 | `WidgetSemantics::semanticsRole()` | method | src/Widget/Traits/WidgetSemantics.php:90 |
@@ -879,19 +903,19 @@
 | `Widget::$keyHandler` | property | src/Widget/Widget.php:129 |
 | `Widget::$tooltipText` | property | src/Widget/Widget.php:137 |
 | `Widget::$overlayPanelFactory` | property | src/Widget/Widget.php:149 |
-| `Widget::$overlaySignature` | property | src/Widget/Widget.php:159 |
-| `Widget::$semRole` | property | src/Widget/Widget.php:169 |
-| `Widget::$semName` | property | src/Widget/Widget.php:172 |
-| `Widget::$semValue` | property | src/Widget/Widget.php:175 |
-| `Widget::$semEnabled` | property | src/Widget/Widget.php:178 |
-| `Widget::$semRangeMin` | property | src/Widget/Widget.php:181 |
-| `Widget::__clone()` | method | src/Widget/Widget.php:204 |
-| `Widget::childContext()` | method | src/Widget/Widget.php:237 |
-| `Widget::createElement()` | method | src/Widget/Widget.php:252 |
-| `Widget::identity()` | method | src/Widget/Widget.php:268 |
-| `Widget::seal()` | method | src/Widget/Widget.php:278 |
-| `Widget::isSealed()` | method | src/Widget/Widget.php:292 |
-| `Widget::mods()` | method | src/Widget/Widget.php:348 |
-| `Widget::expandChildren()` | method | src/Widget/Widget.php:354 |
+| `Widget::$overlaySignature` | property | src/Widget/Widget.php:162 |
+| `Widget::$semRole` | property | src/Widget/Widget.php:172 |
+| `Widget::$semName` | property | src/Widget/Widget.php:175 |
+| `Widget::$semValue` | property | src/Widget/Widget.php:178 |
+| `Widget::$semEnabled` | property | src/Widget/Widget.php:181 |
+| `Widget::$semRangeMin` | property | src/Widget/Widget.php:184 |
+| `Widget::__clone()` | method | src/Widget/Widget.php:207 |
+| `Widget::childContext()` | method | src/Widget/Widget.php:240 |
+| `Widget::createElement()` | method | src/Widget/Widget.php:255 |
+| `Widget::identity()` | method | src/Widget/Widget.php:271 |
+| `Widget::seal()` | method | src/Widget/Widget.php:281 |
+| `Widget::isSealed()` | method | src/Widget/Widget.php:295 |
+| `Widget::mods()` | method | src/Widget/Widget.php:351 |
+| `Widget::expandChildren()` | method | src/Widget/Widget.php:357 |
 
 
