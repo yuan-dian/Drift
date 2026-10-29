@@ -25,6 +25,8 @@
 #include <imm.h>
 #include <windowsx.h>   // GET_X_LPARAM / GET_Y_LPARAM（在 windowsx.h，不在 windows.h）
 #include <commdlg.h>    // OPENFILENAMEW / GetOpenFileNameW（A5-① 文件对话框）
+#include <shellapi.h>   // DragAcceptFiles / DragQueryFileW / DragFinish（A5-② 拖文件进窗）
+#include <vector>       // std::vector —— WM_DROPFILES 逐个路径的临时缓冲
 #include <ShlObj.h>     // SHGetKnownFolderPath —— 用户配置目录（§5.4）
 #include <KnownFolders.h>
 #include <objbase.h>             // IUnknown —— UIAutomationCore.h 接口的基类
@@ -38,6 +40,7 @@
 #pragma comment(lib, "uuid.lib")              // __uuidof(IRawElementProviderSimple / IUnknown)
 #pragma comment(lib, "dwmapi.lib")             // DwmSetWindowAttribute（P1 圆角/背景）
 #pragma comment(lib, "comdlg32.lib")           // GetOpenFileNameW / GetSaveFileNameW（A5-①）
+#pragma comment(lib, "shell32.lib")            // DragQueryFileW / DragFinish（A5-②）
 
 // ★ Win11 DWM 常量兜底：旧 SDK 的 `dwmapi.h` 没有这两个成员。值取自
 //   `DWMWINDOWATTRIBUTE` / `DWM_WINDOW_CORNER_PREFERENCE` 的真实枚举值 ——
@@ -154,6 +157,7 @@ enum EventKind {
     kEvDeactivate,
     kEvUiaInvoke,
     kEvUiaSetValue,
+    kEvFilesDropped,
 };
 
 struct PendingEvent {
@@ -1532,6 +1536,41 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             break;
         }
 
+        case WM_DROPFILES: {
+            // A5-② 拖文件进窗（§7 A5 第二件，§27）。老式 shell 拖放：wParam 是 HDROP。
+            //
+            // ★ 只解**文件路径**：DragQueryFileW 逐个取宽字符路径 → UTF-8 → 用 '\n'
+            //   拼进 event.text 一个字符串。为什么不用数组跨 ABI：数组字段跨实例读在
+            //   AOT 上是 C2679/php::Var 高发区（§24）；'\n'(U+000A) 在 Win32 文件名里
+            //   **非法** ⇒ 分隔无损，且 PHP 侧 explode 可单测（同 A5-① filterText 思路）。
+            // ★ 落点用 DragQueryPoint（客户区物理坐标）⇒ PHP 侧除 dpr 转逻辑单位。
+            HDROP drop = (HDROP)wp;
+            UINT count = DragQueryFileW(drop, 0xFFFFFFFF, NULL, 0);
+            POINT point = {0, 0};
+            DragQueryPoint(drop, &point);   // 失败（极少）⇒ 保持 (0,0)，不阻断投递
+
+            std::string joined;
+            for (UINT i = 0; i < count; ++i) {
+                UINT len = DragQueryFileW(drop, i, NULL, 0);   // 不含结尾 NUL 的字符数
+                std::vector<wchar_t> buf((size_t)len + 1, L'\0');
+                DragQueryFileW(drop, i, buf.data(), len + 1);
+                std::string utf8 = toUtf8(buf.data(), (int)len);
+                if (i != 0) {
+                    joined += "\n";
+                }
+                joined += utf8;
+            }
+            DragFinish(drop);   // ★ 必须释放系统为 HDROP 分配的内存，否则每次拖放泄漏
+
+            PendingEvent event = {};
+            event.kind = kEvFilesDropped;
+            event.a = point.x;
+            event.b = point.y;
+            event.text = joined;
+            enqueue(event);
+            return 0;
+        }
+
         case WM_SETTINGCHANGE: {
             // §9.2：系统主题变更（深色/浅色切换）。lParam 是被改的设置区名
             // （宽字符指针）—— 时区、语言、显示设置等也会发这条消息，只认
@@ -1936,6 +1975,14 @@ Array toArray(const PendingEvent &event) {
             out.set("value", String(event.text));
             break;
 
+        case kEvFilesDropped:
+            out.set("type", "files-dropped");
+            out.set("x", (Int)event.a);
+            out.set("y", (Int)event.b);
+            // '\n' 分隔的多路径字符串；PHP 侧 explode 还原数组（见 FilesDroppedEvent）
+            out.set("paths", String(event.text));
+            break;
+
         default:
             out.set("type", "quit");
             break;
@@ -2146,6 +2193,11 @@ Int php_drift_win_create(String title, Int width, Int height) {
     }
 
     g_main = hwnd;
+
+    // ★ A5-② 拖文件进窗：让本窗接受资源管理器的文件拖放。用老式 WM_DROPFILES
+    //   协议（而非 OLE IDropTarget/RegisterDragDrop）—— 今天只需要"一批路径 +
+    //   落点"，那套 COM 悬停反馈没有消费者，不预先发明（§27）。
+    DragAcceptFiles(hwnd, TRUE);
 
     // ★ 假插入符（IME 战史基线）：IME 默认把组字/候选窗贴到"插入符"旁，而
     //   插入符只存在于真实文本框里（系统为每个顶层窗口维护一个 caret 槽）。

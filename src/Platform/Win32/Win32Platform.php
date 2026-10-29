@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Platform\Win32;
 
 use Drift\Geometry\Axis;
+use Drift\Input\FilesDroppedEvent;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
@@ -165,6 +166,8 @@ final class Win32Platform implements Platform
      * | `uia-invoke` | ⇒ `SemanticsInvokeEvent`（§9 / M5 无障碍的"可操作"半边：
      *   UIA `Invoke` 要求激活第 `idx` 个语义节点。★ 它必须走**队列**而不是在
      *   消息派发里回调应用 —— 理由见该类注释） |
+     * | `files-dropped` | ⇒ `FilesDroppedEvent`（A5-② 拖文件进窗：`paths` 是 `'\n'`
+     *   分隔的原始串，坐标除 dpr 转逻辑单位；事件对象里 `explode` 还原数组） |
      * | 其它 | 丢弃 —— 桥已经保证"只回传 Drift 关心的"，这里是防御性兜底 |
      *
      * ★ **`resize` 必须同时喂表面**：`Screen::viewport()` 读的是桥里的客户区尺寸
@@ -213,6 +216,22 @@ final class Win32Platform implements Platform
             // ★ 只发失活、**不发对称的激活**：今天没有东西需要在激活时做
             //   （A15：没有消费者不预先发明线上语义）。
             $this->input()->push(new WindowDeactivatedEvent());
+
+            return true;
+        }
+
+        if ($type === 'files-dropped') {
+            // A5-② 拖文件进窗（§27）：桥给 '\n' 分隔的多路径原始串 + 客户区
+            // 物理坐标。坐标除 dpr 转逻辑单位（与 pointer / wheel 同口径）。
+            $dpr = $this->screen()->scale();
+            if ($dpr <= 0.0) {
+                $dpr = 1.0;
+            }
+            $this->input()->push(new FilesDroppedEvent(
+                (string) ($event['paths'] ?? ''),
+                (float) ((int) ($event['x'] ?? 0)) / $dpr,
+                (float) ((int) ($event['y'] ?? 0)) / $dpr,
+            ));
 
             return true;
         }

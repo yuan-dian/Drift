@@ -6,6 +6,7 @@ namespace Drift\App;
 use Drift\Commands\CommandArg;
 use Drift\Errors;
 use Drift\Input\CursorShape;
+use Drift\Input\FilesDroppedEvent;
 use Drift\Input\GestureArena;
 use Drift\Input\GestureRecognizer;
 use Drift\Input\InputEvent;
@@ -27,7 +28,8 @@ use Drift\Widget\Element;
  * InputEvent ──▶ dispatch() ──┬─ KeyEvent    ：编辑命令 → 加速键 → 焦点链 → 激活
  *                             ├─ PointerEvent：dispatchPointer() 四相位
  *                             │                （浮层优先 → 捕获 → thumb → 命中）
- *                             └─ ScrollEvent ：浮层优先 → scrollAt（最近 Scrollable）
+ *                             ├─ ScrollEvent ：浮层优先 → scrollAt（最近 Scrollable）
+ *                             └─ FilesDropped：浮层优先 → 命中 → 父链冒泡 onFilesDropped
  * 手势状态：gestureArena（Tap/Drag 消歧）· drag（拖放）· captureNode（指针捕获）
  * ```
  *
@@ -221,7 +223,82 @@ final class InputRouter
             return null;
         }
 
+        if ($event instanceof FilesDroppedEvent) {
+            $this->dispatchFilesDropped($event, $root, $focus);
+
+            return null;   // 不是指针事件 ⇒ 不改光标
+        }
+
         return null;
+    }
+
+    /**
+     * 系统拖放派发（§7 A5-②，§27）：命中 → 沿父链冒泡找最近的 `onFilesDropped`
+     * 声明者 → 调它的闭包。
+     *
+     * ★ 与 `dispatchPointer` / ScrollEvent 分支同构：浮层开着先归浮层，`barrier`
+     *   ⇒ 不穿透主树；否则落主树命中。
+     * ★ 命中一次、只投一个：一次拖放只给"落点那条链上最近的声明者"，不广播
+     *   （广播没有消费者，且"谁处理了"无法判定）。
+     * ★ 找不到声明者 ⇒ 静默丢弃：拖到不接收文件的地方是合法的（同
+     *   `openContextMenu()` 的"右键落在没菜单的地方"），不报错也不落给焦点。
+     * ★ 坐标先 `(float)` 落局部再参与运算 —— `$event->x` 跨实例读到的是标量 /
+     *   Var，直接拿去减浮层偏移会在 AOT 侧踩 C2679（§24 纪律③）。
+     */
+    private function dispatchFilesDropped(FilesDroppedEvent $event, Element $root, FocusManager $focus): void
+    {
+        $x = (float) $event->x;
+        $y = (float) $event->y;
+
+        for ($i = $this->overlayHost->overlays()->count() - 1; $i >= 0; $i--) {
+            $e = $this->overlayHost->overlays()->at($i);
+            if ($e === null || $e->element === null) {
+                continue;
+            }
+
+            $hit = $focus->hitTest($x - $e->x, $y - $e->y, $e->element);
+            if ($hit !== null) {
+                $this->deliverFilesDropped($focus->elementAt($e->element, $hit), $event);
+
+                return;
+            }
+
+            if ($e->barrier) {
+                return;
+            }
+        }
+
+        $hit = $focus->hitTest($x, $y, $root);
+        $this->deliverFilesDropped($hit === null ? null : $focus->elementAt($root, $hit), $event);
+    }
+
+    /** 沿父链找最近的 `onFilesDropped` 声明者并调一次（异常兜在路由层，不吞泵）。 */
+    private function deliverFilesDropped(?Element $element, FilesDroppedEvent $event): void
+    {
+        for ($node = $element; $node !== null; $node = $node->parent()) {
+            $handler = $node->widget()->filesDropHandlerValue();
+            if ($handler === null) {
+                continue;
+            }
+
+            try {
+                $handler($event);
+            } catch (\Throwable $e) {
+                // ★ 用 RECOVERABLE 而不是默认 FATAL：`Errors::abort()` 末尾是 `exit()`
+                //   （§1.2 中止序列），一次回调异常就让整个进程退出，与"兜住异常、
+                //   不吞消息泵"正好相反。RECOVERABLE 在 release 下只 appendLog +
+                //   return；在 debug 下仍会中止（同 `Subject::notifyChanged()` 对
+                //   订阅者异常的隔离口径 —— 那也是"一个回调炸了，其余继续"）。
+                Errors::report(sprintf(
+                    '文件拖放回调异常已隔离，后续事件不受影响 —— %s（%s:%d）',
+                    $e->getMessage(),
+                    basename($e->getFile()),
+                    $e->getLine(),
+                ), Errors::RECOVERABLE);
+            }
+
+            return;   // 只投最近的声明者，不继续冒泡
+        }
     }
 
     /**

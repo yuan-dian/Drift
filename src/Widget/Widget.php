@@ -127,6 +127,16 @@ abstract class Widget
     private ?\Closure $windowDragHandler = null;
 
     /**
+     * @internal null = 本控件不接收系统拖放进来的文件（A5-②，§27）
+     *
+     * `\Closure(FilesDroppedEvent): void` —— 命中点沿父链冒泡找到本控件时调一次。
+     * ★ 与 `windowDragHandler` 同族：都是"控件自己处理某类输入"的声明，框架只做
+     *   路由；闭包由页面 State 在构建期递入（State 在 build 里捕获自己即可
+     *   `setState()`）。异常由路由层兜住、不吞消息泵。
+     */
+    private ?\Closure $filesDropHandler = null;
+
+    /**
      * @internal null = 本控件不处理键盘（按键落给焦点链的默认路径）
      *
      * `\Closure(KeyEvent): bool`，返回 `true` = 吃掉这个键。

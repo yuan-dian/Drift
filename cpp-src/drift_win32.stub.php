@@ -234,6 +234,7 @@ function drift_win_ime_caret(float $x, float $y, float $h): void {}
  * | `char` | `text`（UTF-8） | `WM_CHAR`（`TranslateMessage` 合成） |
  * | `theme` | — | `WM_SETTINGCHANGE`（系统主题变更，载荷为空） |
  * | `wheel` | `x` `y`（**物理**像素，客户区原点） `delta`（WHEEL_DELTA=120 为一格；**壳已取负** ⇒ 正=回拉=内容上移=看到下面，与触控板"上划看到下面"同族） | `WM_MOUSEWHEEL`（坐标经 `ScreenToClient` 换算） |
+ * | `files-dropped` | `x` `y`（**物理**像素，客户区原点 = `DragQueryPoint` 落点） `paths`（UTF-8，`'\n'` 分隔的多路径原始串；空串 = 零个文件） | `WM_DROPFILES`（`DragAcceptFiles` 开窗接受拖放） |
  *
  * ★ **壳不关心的事件就地派发后丢掉**（绘制、焦点切换…），绝不交给 PHP
  *   去忽略 —— GUI 仓的教训：把不关心的事件也回传，泵就成了"每帧几百次跨边界调用"。

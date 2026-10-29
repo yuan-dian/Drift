@@ -36,6 +36,7 @@ use App\Showcase\Pages\ButtonsPage;
 use App\Showcase\Pages\ComboBoxPage;
 use App\Showcase\Pages\CustomPaintPage;
 use App\Showcase\Pages\DialogPage;
+use App\Showcase\Pages\DropPage;
 use App\Showcase\Pages\FeedbackPage;
 use App\Showcase\Pages\FormPage;
 use App\Showcase\Pages\GlassPage;
@@ -205,6 +206,8 @@ final class ShowcaseState extends State
             new NavEntry(IconName::Square, '变换 Transform', static fn(): Widget => new TransformPage()),
             new NavEntry(IconName::Square, '对齐 Align', static fn(): Widget => new AlignPage()),
             new NavEntry(IconName::Info, '对话框 Dialog', fn(): Widget => new DialogPage($this->dialog)),
+            // ★ A5-②：拖文件页追加在最末（前 30 项 y 不变；侧栏本身已包 ScrollView）。
+            new NavEntry(IconName::Square, '拖文件 Drop', static fn(): Widget => new DropPage()),
         ];
     }
 

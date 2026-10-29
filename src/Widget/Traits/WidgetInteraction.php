@@ -8,8 +8,8 @@ use Drift\Widget\Drag\DragTarget;
 use Drift\Widget\Menu\ContextMenu;
 
 /**
- * `Widget` 的**交互面**：10 个回调槽（悬停 / 指针 / 窗口拖动 / 键盘 / 拖放 /
- * 右键菜单 / 工具提示 / 浮层面板 / 浮层签名）+ 11 个对应的读侧。
+ * `Widget` 的**交互面**：11 个回调槽（悬停 / 指针 / 窗口拖动 / 键盘 / 应用内拖放 /
+ * 右键菜单 / 工具提示 / 浮层面板 / 浮层签名 / 系统文件拖放）+ 12 个对应的读侧。
  *
  * ★ **成对出现**：每个槽都是一个 `xxx(Closure)` + 一个 `xxxValue()`。
  *   读侧存在的理由只有一个 —— 命中链/帧管线要能问"这个控件声明了什么"，
@@ -201,6 +201,36 @@ trait WidgetInteraction
     public function windowDragHandlerValue(): ?\Closure
     {
         return $this->windowDragHandler;
+    }
+
+    /**
+     * 声明"本控件（及其子树）接收系统拖放进来的文件"（§7 A5-②，§27）。
+     *
+     * ```php
+     * Container::make()->onFilesDropped(fn(FilesDroppedEvent $e) => $this->accept($e->paths()))
+     * ```
+     *
+     * ★ 与 `windowDrag()` / `pointer()` 同构：一个 `\Closure` 槽 + 一个读侧，
+     *   值住 Widget 的私有字段。落点是**命中 → 沿父链冒泡找最近声明者**
+     *   （`InputRouter::dispatchFilesDropped`），所以包裹式控件也能挂。
+     * ★ 闭包签名 `\Closure(FilesDroppedEvent): void`；在 State 的 `build()` 里声明、
+     *   捕获 `$this`（State）即可 `setState()`。异常由路由层兜住、不吞消息泵。
+     * ★ 找不到声明者 ⇒ 静默丢弃（拖到不接收文件的地方是合法的，不报错）。
+     *
+     * @api
+     */
+    public function onFilesDropped(\Closure $handler): static
+    {
+        $this->mutate();
+        $this->filesDropHandler = $handler;
+
+        return $this;
+    }
+
+    /** @internal 拖放路由读它；`null` = 本控件不接收文件拖放 */
+    public function filesDropHandlerValue(): ?\Closure
+    {
+        return $this->filesDropHandler;
     }
 
     /**
