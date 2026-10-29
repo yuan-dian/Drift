@@ -229,7 +229,9 @@ class RenderFlex extends RenderBox
         // ScrollView）；能走到这里的只有 Clip ⇒ 盒子自己夹到可用主轴，子项仍按
         // 自然位置排（超出部分交给裁剪）。
         $reported = $mainSize;
-        if ($mainBounded && $mainSize > $maxMain) {
+        // ★ 容差：等分子项求和会累积浮点误差（344/7×7 = 344.00000000000006），
+        //   裸 `>` 会把"正好放下"报成溢出（2026-10-29 实测）。
+        if ($mainBounded && $mainSize > $maxMain + LayoutTolerance::EPSILON) {
             $this->handleOverflow($mainSize, $maxMain);
             $reported = $maxMain;
         }

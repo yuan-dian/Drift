@@ -76,6 +76,7 @@ use Drift\Widget\Each;
 use Drift\Widget\Expanded;
 use Drift\Widget\Grid;
 use Drift\Widget\LazyGrid;
+use Drift\Widget\LocalDate;
 use Drift\Widget\Option;
 use Drift\Widget\StatefulElement;
 use Drift\Widget\Table;
@@ -89,6 +90,7 @@ use Drift\Widget\TreeNode;
 use Drift\Widget\TreeView;
 use Drift\Widget\Widget;
 use Drift\Widget\Wrap;
+use Drift\Widget\YearMonth;
 
 $case = '';
 $logPath = \dirname(__DIR__, 2) . '/Errors.log';
@@ -510,6 +512,21 @@ $cases = [
     // 行高 28（一个很自然的想法）装不下 42 高的箭头按钮 ⇒ 必然裁切，而裁切不报错。
     'treeshortrow' => static function (): void {
         TreeView::make([])->rowHeight(28.0);
+    },
+
+    // 13 月：日历不会自己"滚动"成次年 1 月 —— 静默进位会让翻月错一个月且看不出来。
+    'ymbadmonth' => static function (): void {
+        YearMonth::make(2026, 13);
+    },
+
+    // 非闰年的 2/29：闰年规则错一条就多出一天，而"多出来的那天"点下去永远选不中。
+    'datebadday' => static function (): void {
+        LocalDate::make(2026, 2, 29);
+    },
+
+    // 宽松解析的典型脏数据：长度对、分隔符不对。
+    'datebadiso' => static function (): void {
+        LocalDate::fromIso('2026/10/29');
     },
 ];
 

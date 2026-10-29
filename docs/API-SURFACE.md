@@ -22,10 +22,10 @@
 | State | 9 | 11 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
-| Widget | 150 | 187 |
-| **合计** | **386** | **315** |
+| Widget | 153 | 187 |
+| **合计** | **389** | **315** |
 
-覆盖 335 个文件 · 描述性提及 28 处（grep 口径的污染源，不计入）
+覆盖 338 个文件 · 描述性提及 28 处（grep 口径的污染源，不计入）
 
 ## App 层
 
@@ -240,10 +240,10 @@
 | `RenderAppBar` | class | src/Layout/RenderAppBar.php:13 |
 | `RenderBackdropFilter` | class | src/Layout/RenderBackdropFilter.php:11 |
 | `RenderBox` | class | src/Layout/RenderBox.php:14 |
-| `RenderBox::overflow()` | method | src/Layout/RenderBox.php:625 |
-| `RenderBox::setCompose()` | method | src/Layout/RenderBox.php:769 |
-| `RenderBox::paintComposed()` | method | src/Layout/RenderBox.php:807 |
-| `RenderBox::hitTest()` | method | src/Layout/RenderBox.php:910 |
+| `RenderBox::overflow()` | method | src/Layout/RenderBox.php:626 |
+| `RenderBox::setCompose()` | method | src/Layout/RenderBox.php:770 |
+| `RenderBox::paintComposed()` | method | src/Layout/RenderBox.php:808 |
+| `RenderBox::hitTest()` | method | src/Layout/RenderBox.php:911 |
 | `RenderButton` | class | src/Layout/RenderButton.php:19 |
 | `RenderDivider` | class | src/Layout/RenderDivider.php:13 |
 | `RenderDock` | class | src/Layout/RenderDock.php:12 |
@@ -284,7 +284,7 @@
 | `RenderBox::paintCount()` | method | src/Layout/RenderBox.php:203 |
 | `RenderBox::replayCount()` | method | src/Layout/RenderBox.php:209 |
 | `RenderBox::markNeedsLayout()` | method | src/Layout/RenderBox.php:215 |
-| `RenderBox::clipsOverflow()` | method | src/Layout/RenderBox.php:636 |
+| `RenderBox::clipsOverflow()` | method | src/Layout/RenderBox.php:637 |
 | `RenderCustomPaint` | class | src/Layout/RenderCustomPaint.php:12 |
 | `RenderDock::slot()` | method | src/Layout/RenderDock.php:44 |
 | `RenderFlex::clearChildren()` | method | src/Layout/RenderFlex.php:98 |
@@ -541,7 +541,7 @@
 
 ## Widget 层
 
-### @api（应用可读面） · 150
+### @api（应用可读面） · 153
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -556,6 +556,7 @@
 | `BuildContext` | class | src/Widget/BuildContext.php:13 |
 | `Button` | class | src/Widget/Button.php:19 |
 | `ButtonVariant` | enum | src/Widget/ButtonVariant.php:6 |
+| `CalendarView` | class | src/Widget/CalendarView.php:8 |
 | `Card` | class | src/Widget/Card.php:12 |
 | `Center` | class | src/Widget/Center.php:9 |
 | `Checkbox` | class | src/Widget/Checkbox.php:9 |
@@ -589,6 +590,7 @@
 | `LazyGrid` | class | src/Widget/LazyGrid.php:9 |
 | `LazyList` | class | src/Widget/LazyList.php:10 |
 | `LazyRow` | class | src/Widget/LazyRow.php:6 |
+| `LocalDate` | class | src/Widget/LocalDate.php:8 |
 | `ContextMenu` | class | src/Widget/Menu/ContextMenu.php:11 |
 | `Menu` | class | src/Widget/Menu/Menu.php:14 |
 | `MenuBar` | class | src/Widget/Menu/MenuBar.php:11 |
@@ -661,8 +663,8 @@
 | `TooltipPanel` | class | src/Widget/TooltipPanel.php:8 |
 | `WidgetFocus::focusOrder()` | method | src/Widget/Traits/WidgetFocus.php:22 |
 | `WidgetFocus::skipFocus()` | method | src/Widget/Traits/WidgetFocus.php:40 |
-| `WidgetFocus::claimKeys()` | method | src/Widget/Traits/WidgetFocus.php:55 |
-| `WidgetFocus::cursor()` | method | src/Widget/Traits/WidgetFocus.php:72 |
+| `WidgetFocus::claimKeys()` | method | src/Widget/Traits/WidgetFocus.php:60 |
+| `WidgetFocus::cursor()` | method | src/Widget/Traits/WidgetFocus.php:77 |
 | `WidgetInteraction::draggable()` | method | src/Widget/Traits/WidgetInteraction.php:23 |
 | `WidgetInteraction::dragTarget()` | method | src/Widget/Traits/WidgetInteraction.php:50 |
 | `WidgetInteraction::contextMenu()` | method | src/Widget/Traits/WidgetInteraction.php:73 |
@@ -695,6 +697,7 @@
 | `Widget::mutate()` | method | src/Widget/Widget.php:298 |
 | `Wrap` | class | src/Widget/Wrap.php:12 |
 | `WrapElement` | class | src/Widget/WrapElement.php:8 |
+| `YearMonth` | class | src/Widget/YearMonth.php:8 |
 
 ### @internal（框架内部） · 187
 
@@ -709,7 +712,7 @@
 | `AppBar::paintsBoxChrome()` | method | src/Widget/AppBar.php:224 |
 | `AppBarElement` | class | src/Widget/AppBarElement.php:8 |
 | `BuildContext::withTheme()` | method | src/Widget/BuildContext.php:48 |
-| `Button::paintsBoxChrome()` | method | src/Widget/Button.php:287 |
+| `Button::paintsBoxChrome()` | method | src/Widget/Button.php:319 |
 | `Card::$box` | property | src/Widget/Card.php:79 |
 | `Card::box()` | method | src/Widget/Card.php:178 |
 | `ComboBox::optionsValue()` | method | src/Widget/ComboBox.php:285 |
@@ -832,10 +835,10 @@
 | `TextFieldBox::make()` | method | src/Widget/TextFieldBox.php:54 |
 | `TextFieldState::$editing` | property | src/Widget/TextFieldState.php:49 |
 | `WidgetFocus` | trait | src/Widget/Traits/WidgetFocus.php:10 |
-| `WidgetFocus::focusNode()` | method | src/Widget/Traits/WidgetFocus.php:96 |
-| `WidgetFocus::cursorShape()` | method | src/Widget/Traits/WidgetFocus.php:102 |
-| `WidgetFocus::markFocusable()` | method | src/Widget/Traits/WidgetFocus.php:108 |
-| `WidgetFocus::isFocusable()` | method | src/Widget/Traits/WidgetFocus.php:121 |
+| `WidgetFocus::focusNode()` | method | src/Widget/Traits/WidgetFocus.php:101 |
+| `WidgetFocus::cursorShape()` | method | src/Widget/Traits/WidgetFocus.php:107 |
+| `WidgetFocus::markFocusable()` | method | src/Widget/Traits/WidgetFocus.php:113 |
+| `WidgetFocus::isFocusable()` | method | src/Widget/Traits/WidgetFocus.php:126 |
 | `WidgetInteraction` | trait | src/Widget/Traits/WidgetInteraction.php:10 |
 | `WidgetInteraction::draggableValue()` | method | src/Widget/Traits/WidgetInteraction.php:44 |
 | `WidgetInteraction::dragTargetValue()` | method | src/Widget/Traits/WidgetInteraction.php:67 |

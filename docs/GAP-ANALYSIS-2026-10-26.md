@@ -158,6 +158,17 @@ ScrollView / LazyColumn / LazyRow / LazyGrid / Grid / Stack / Image / Icon / Ric
     重排不是舍弃），推翻条件是"子项数运行时才知道 + 必须自动换行"，届时它是**独立布局
     原语**（两遍布局，先量全部子固有宽）。成本按新原语估，不按控件估。
 12. DatePicker / TimePicker + Badge/Tag/Avatar。
+    ★ **2026-10-29 部分落地**：月历本体 `CalendarView`（`src/Widget/CalendarView.php`，
+    配 `YearMonth` / `LocalDate` 两个值对象，示例台第 25 项 `CalendarPage`，
+    见 `REVIEW-2026-10-28.md` §17）。
+    ★ **仍未做（这一条的剩余部分）**：① `DatePicker` 触发框 + 浮层（`PopupPanel` 已有，
+    照 `Select` 的 `overlayPanel` 范式）；② 标题点开**月网格 / 年网格**（跨年翻月现在
+    只能一月一月点，是这条最刚需的缺口）；③ `range` 区间选择（契约留白：
+    `selected()` 与将来的 `range()` 互斥并存）；④ `TimePicker`（需要时分/秒列的选择原语）；
+    ⑤ `min/max` 与"禁用某几天"（要先有禁用态）。
+    ★ **快捷选项归应用**（2026-10-29 拿 layui `laydate` 的 `shortcuts` 对照后的裁决）：
+    它的 `value` 是函数 ⇒ **控件读时钟** ⇒ golden 每天变、用例不可复现，且"近 30 天
+    按哪个时区算"是业务知识。应用拿 `selected()` 自己放按钮即可。
 13. 手势识别器家族（long-press / double-tap / pinch）。
     ★ **不是 Table 列宽拖拽的前置**（2026-10-26 修正）：列宽拖拽与 `Slider` 同类
     （位置即语义的连续拖拽），走 `pointer(ownsPress: true)` + 框架捕获，`Slider` 的

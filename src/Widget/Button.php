@@ -90,6 +90,16 @@ class Button extends RenderBoxWidget implements Activatable
      */
     protected bool $centerLabel = true;
 
+    /**
+     * 紧凑内边距（`false` = 常规：横向 `2×gap`、纵向 `1×gap`）。
+     *
+     * ★ 为什么需要它：日历格子这类"内容本身就是一格"的用法必须被父容器**等分**
+     *   （7 列），而常规横向内边距会让按钮的最小宽超过格宽 ⇒ 布局超界 Fatal。
+     *   把内边距压到 `1×gap` 之后，"15px 的字 + 16px 边"能塞进 40px 的格子。
+     * ★ 与 `alignLeft()` 同一条纪律：字段而不是覆写虚方法（tpc 去虚化）。
+     */
+    protected bool $compactPadding = false;
+
     public function __construct(protected readonly string $label)
     {
         parent::__construct();
@@ -188,6 +198,24 @@ class Button extends RenderBoxWidget implements Activatable
         return $this;
     }
 
+    /**
+     * 紧凑内边距（横向 `1×gap`、纵向 `1×gap`）。
+     *
+     * ```php
+     * // 日历格子：7 列等分，常规内边距会让按钮最小宽超过格宽
+     * Button::make('29')->compact()->variant(ButtonVariant::Flat);
+     * ```
+     *
+     * ★ 只解决"塞得进"，不解决"看起来紧凑" —— 间距仍由父容器的 gap 决定。
+     */
+    public function compact(): static
+    {
+        $this->mutate();
+        $this->compactPadding = true;
+
+        return $this;
+    }
+
     public function label(): string
     {
         return $this->label;
@@ -252,6 +280,10 @@ class Button extends RenderBoxWidget implements Activatable
         $insets = EdgeInsets::symmetric($gap * 2.0, $gap);
         if (!$this->labelVisible) {
             $insets = EdgeInsets::all($gap * 1.5);
+        }
+        // 紧凑档最后覆盖：日历格子这类被父容器等分的按钮，最小宽必须让得出来
+        if ($this->compactPadding) {
+            $insets = EdgeInsets::all($gap);
         }
 
         // 图标与文字同高（+4 让笔画不显局促）；线宽按 §RenderIcon 的同一口径推
