@@ -24,7 +24,7 @@ use Drift\Widget\Widget;
  *
  *   ① 三段 + 受控值：点了只回调新序号，值住 State（与 Checkbox / TextField 同纪律）；
  *   ② 两段：最短形态（等宽段在标签长短不齐时也齐）；
- *   ③ 整组禁用：段仍在 Tab 序里、点不动。
+ *   ③ 整组禁用：整组不进 Tab 序、点不动。
  *
  * ★ 这一页同时是**能力边界的如实记录**：方向键在段间移动焦点今天没有
  *   （Tab 一段一格，与 Win32 单选组一致）；悬停高亮没有视觉态。见页末。
@@ -89,7 +89,7 @@ final class SegmentedState extends State
                 SegmentedControl::make(['开', '关'])
                     ->selected(0)
                     ->enabled(false),
-                Text::make('段仍在 Tab 序里（与 Win32 单选组一致），但激活不响应。')
+                Text::make('整组不进 Tab 序（与 HTML / Win32 disabled 一致），段也激活不响应。')
                     ->caption(),
             ]))->paddingAll(12.0),
 

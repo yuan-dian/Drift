@@ -48,8 +48,6 @@ final class Segment extends RenderBoxWidget implements Activatable
 
     private bool $selected = false;
 
-    private bool $enabled = true;
-
     private ?\Closure $onChanged = null;
 
     public function __construct(string $label, int $index)
@@ -79,14 +77,30 @@ final class Segment extends RenderBoxWidget implements Activatable
         return $this;
     }
 
-    /** 禁用：字色降级、不响应激活（仍在 Tab 序里 —— 与 Win32 一致） */
+    /**
+     * 禁用 / 恢复 —— `disabled()` 的别名（见 `ToggleBase::enabled()` 的同款说明）。
+     *
+     * ★ 旧注写的"仍在 Tab 序里 —— 与 Win32 一致"是错的：`WS_DISABLED` 的控件
+     *   `SetFocus` 直接失败。2026-10-29 起与其余控件统一：不进 Tab 序、不吃指针。
+     * ★ 外观由本类自己画（`paintsDisabledLook()`）：字色与填充换 `Muted`，
+     *   不叠框架的 0.38 alpha。
+     */
     public function enabled(bool $enabled): static
     {
-        $this->mutate();
-        $this->enabled = $enabled;
+        $this->disabled(!$enabled);
         $this->refreshSemantics();
 
         return $this;
+    }
+
+    public function isEnabled(): bool
+    {
+        return !$this->mods()->disabled();
+    }
+
+    public function paintsDisabledLook(): bool
+    {
+        return true;
     }
 
     /** 点击/按键回调（无参 —— "选了哪段"由本段自己知道） */
@@ -119,7 +133,7 @@ final class Segment extends RenderBoxWidget implements Activatable
      */
     public function activate(ActivationContext $context): void
     {
-        if (!$this->enabled || $this->onChanged === null || $this->selected) {
+        if ($this->mods()->disabled() || $this->onChanged === null || $this->selected) {
             return;
         }
 
@@ -140,7 +154,7 @@ final class Segment extends RenderBoxWidget implements Activatable
             $value = $this->label;
         }
 
-        $this->semantics(SemanticsRole::Radio, $this->label, $value, $this->enabled);
+        $this->semantics(SemanticsRole::Radio, $this->label, $value, !$this->mods()->disabled());
     }
 
     public function createRenderObject(BuildContext $context): RenderBox
@@ -148,12 +162,9 @@ final class Segment extends RenderBoxWidget implements Activatable
         // ★ 两个 if 都不用三元：`?:` 两支类型不同（Color vs Color 其实同类，
         //   但"按标志选一个已解析值"统一用 if 写，与 ToggleBase 逐字同构）
         $labelColor = $context->color(ColorToken::Muted);
-        if ($this->enabled) {
-            $labelColor = $context->color(ColorToken::Text);
-        }
-
         $fill = $context->color(ColorToken::Muted);
-        if ($this->enabled) {
+        if (!$this->mods()->disabled()) {
+            $labelColor = $context->color(ColorToken::Text);
             $fill = $context->color(ColorToken::Accent);
         }
 

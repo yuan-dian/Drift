@@ -183,18 +183,36 @@ final class ToggleTest extends SmokeTestCase
         //   ToggleBase 分支 ⇒ 回调收新值。只测 `activate()` 测不到分支写错/顺序放错。
         $tglApp = new ToggleApplication();
         $tglApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(320.0, 400.0)));
-        foreach ([1, 2, 3, 4, 5] as $step) {
+        // ★ 四步（不是五步）：夹具第五项是禁用复选框，2026-10-29 起**不在 Tab 序里**
+        foreach ([1, 2, 3, 4] as $step) {
             $tglApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
             $tglApp->dispatchInput(KeyEvent::down(KeyChord::make('Space')));
         }
         check(
-            'Toggle · Tab+Space 五次：未选→on、单选→自己的值、已选不重复、开关→off、禁用不响应',
+            'Toggle · Tab+Space 四步：未选→on、单选→自己的值、开关→off',
             $tglApp->events === [
                 ['checkbox', 'on'],
                 ['radio', 's'],
                 ['switch', 'off'],
             ],
             json_encode($tglApp->events),
+        );
+
+        // 反例（新行为）：禁用项**不占 Tab 位** —— 五次 Tab 停在最后一个可用控件。
+        // ★ 旧行为是"禁用仍在 Tab 序、只是不响应 Space"，那样 Tab 要走五格才绕过它，
+        //   用户按四次 Tab 就到不了最后一个可用控件。
+        $tglApp2 = new ToggleApplication();
+        $tglApp2->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(320.0, 400.0)));
+        $tglFm = $tglApp2->focus();
+        $tglVisited = [];
+        for ($step = 0; $step < 5; $step++) {
+            $tglApp2->dispatchInput(KeyEvent::down(KeyChord::tab()));
+            $tglVisited[] = $tglFm?->focused()?->widget()->semanticsName() ?? '';
+        }
+        check(
+            'Toggle · 禁用项不在 Tab 序：五次 Tab = 同意→小→中→通知→通知（末尾停住）',
+            $tglVisited === ['同意', '小', '中', '通知', '通知'],
+            json_encode($tglVisited, \JSON_UNESCAPED_UNICODE),
         );
 
         $this->flushChecks();

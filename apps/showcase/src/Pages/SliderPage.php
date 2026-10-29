@@ -107,7 +107,7 @@ final class SliderState extends State
             $this->sectionBar('禁用'),
             Card::make(Column::make()->spacing(10.0)->children([
                 Slider::make()->range(0.0, 100.0)->value(35.0)->enabled(false),
-                Text::make('仍在 Tab 序里（与 Win32 一致），但点不动、方向键不吃。')->caption(),
+                Text::make('不进 Tab 序（与 HTML / Win32 disabled 一致），点不动、方向键也不吃。')->caption(),
             ]))->paddingAll(12.0),
 
             $this->sectionBar('能力边界（如实记录）'),

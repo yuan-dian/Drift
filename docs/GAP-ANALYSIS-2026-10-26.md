@@ -164,7 +164,8 @@ ScrollView / LazyColumn / LazyRow / LazyGrid / Grid / Stack / Image / Icon / Ric
     跨年翻月不用按 17 次箭头，见 §18）。
     ★ **仍未做（这一条的剩余部分）**：① `range` 区间选择（契约留白：
     `selected()` 与将来的 `range()` 互斥并存）；② `min/max` 与"禁用某几天"——
-    **前置已落地**：`Widget::disabled()`（2026-10-29，见 `REVIEW-2026-10-28.md` §20），
+    **前置已落地**：`Widget::disabled()`（2026-10-29，见 `REVIEW-2026-10-28.md` §20；
+    同日 §21 把四处既有 `enabled()` 收敛成它的别名，禁用统一不进 Tab 序），
     现在"某几天灰而不可点"写得出来了，缺的只是 `CalendarView` 上的一层日期谓词。
 
     ★ **2026-10-29 同日补全（原第 ③ 条已落地）**：`TimeView`（`src/Widget/TimeView.php`，

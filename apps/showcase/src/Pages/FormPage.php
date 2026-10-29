@@ -163,7 +163,7 @@ final class FormState extends State
                             $this->notify = $on;
                         });
                     }),
-                Checkbox::make('禁用示例（点了没反应，但仍在 Tab 序里）')
+                Checkbox::make('禁用示例（点了没反应，也不进 Tab 序）')
                     ->checked(true)
                     ->enabled(false),
                 Text::make(

@@ -10,6 +10,8 @@ use Drift\Widget\Card;
 use Drift\Widget\Checkbox;
 use Drift\Widget\Column;
 use Drift\Widget\Row;
+use Drift\Widget\SegmentedControl;
+use Drift\Widget\Slider;
 use Drift\Widget\State;
 use Drift\Widget\StatefulWidget;
 use Drift\Widget\Text;
@@ -25,9 +27,9 @@ use Drift\Widget\Widget;
  * 3. 禁用一个 `Column` ⇒ 里面的控件一起点不动（子树级）；
  * 4. 切换锁定后整块**变淡** —— 变淡是合成 alpha 折进去的，不是各控件自己调色。
  *
- * ★ 页面上明确写了与 `ToggleBase::enabled()` 的区别（诚实边界）：
- *   那个是控件级样式开关（只降级形状色、仍留在 Tab 序），两套并存是**已知欠债**，
- *   收敛排在下一件 —— 因为要先裁决"禁用该不该进 Tab 序"，那会动四个控件与基线。
+ * ★ 页面上写明 `enabled(false)` 与 `disabled()` 的关系：**同一个状态**（前者是后者按
+ *   布尔取反的别名），不是两套并存的样式开关。2026-10-29 收敛掉了四份局部实现，
+ *   连带裁决"禁用不进 Tab 序"（见 `REVIEW-2026-10-28.md` §21）。
  */
 final class DisabledPage extends StatefulWidget
 {
@@ -71,7 +73,9 @@ final class DisabledPageState extends State
                 Text::make('已点击：' . $this->clicks . ' 次')->caption(),
                 $this->lockRow(),
                 $this->lockedBlock(),
-                Text::make('边界：ToggleBase / Slider / Segment 各自的 enabled() 是控件级样式开关（降级形状色、仍留在 Tab 序），与这里的 disabled() 不是同一件事。两套并存是已知欠债，收敛排在下一件。')->caption(),
+                $this->enabledAliasRow(),
+                Text::make('上一行三件用的是 enabled(false)，等价于 disabled()。')->caption(),
+                Text::make('边界：ToggleBase / Slider / Segment 上的 enabled(false) 已经是 disabled() 的别名 —— 同一个状态、同一份实现。禁用的控件不进 Tab 序，也不吃指针。')->caption(),
             ])
         )->paddingAll(0.0);
     }
@@ -106,6 +110,22 @@ final class DisabledPageState extends State
                     $this->locked = $on;
                 });
             });
+    }
+
+    /**
+     * `enabled(false)` 等价于 `disabled()` 的三件（2026-10-29 收敛的验收面）。
+     *
+     * ★ 三者都声明了 `paintsDisabledLook()` ⇒ 换 `ColorToken::Muted`（**灰**），
+     *   不叠框架的 0.38 alpha（**淡**）。与上面"锁定整块"对比着看：那块是淡、这里是灰 ——
+     *   两种禁用外观同屏可见，且都没有二次衰减。
+     */
+    private function enabledAliasRow(): Widget
+    {
+        return Row::make()->spacing(18.0)->children([
+            Checkbox::make('复选框')->checked(true)->enabled(false),
+            Slider::make()->value(40.0)->width(120.0)->enabled(false),
+            SegmentedControl::make(['日', '周'])->selected(0)->enabled(false),
+        ]);
     }
 
     /**

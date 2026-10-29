@@ -259,10 +259,13 @@ final class SliderTest extends SmokeTestCase
         [$cx, $cy] = $boxC === null ? [0.0, 0.0] : boxOrigin($boxC);
         $beforeC = \count($app->events);
         $app->dispatchInput(PointerEvent::down($cx + $this->pad + 0.5 * $this->inner, $cy + $this->wantH / 2.0));
+        // ★ 禁用滑杆不响应按下，且**不产生指针捕获**：吞掉发生在 `InputRouter`
+        //   的 down 分支（`isDisabled()` ⇒ return null），widget 层的 `pointer()`
+        //   根本收不到事件（2026-10-29 收敛前是"收到但自己 return null"）。
         check(
-            'Slider · 禁用：按下不回调（仍然吞掉按下 —— 禁用控件不该被激活）',
-            \count($app->events) === $beforeC && $app->captureNode() === $elC,
-            'events=' . \count($app->events),
+            'Slider · 禁用：按下不回调、不产生指针捕获（InputRouter 在 down 就吞掉）',
+            \count($app->events) === $beforeC && $app->captureNode() === null,
+            'events=' . \count($app->events) . ' captured=' . \var_export($app->captureNode() !== null, true),
         );
         $app->dispatchInput(PointerEvent::up($cx + $this->pad + 0.5 * $this->inner, $cy + $this->wantH / 2.0));
 
@@ -312,14 +315,19 @@ final class SliderTest extends SmokeTestCase
             \json_encode($app->events),
         );
 
-        // 反例：禁用滑杆不吃方向键（键继续往下走，不会被吞掉）
+        // 反例：禁用滑杆**不夺焦** —— 点它不改焦点，方向键继续落在原来聚焦的 B 栏。
+        // ★ 收敛前禁用滑杆仍在 Tab 序、也能被点聚焦，只在 keyboard 回调里 return false；
+        //   现在它压根不进可聚焦表，所以"让位"发生在焦点层而不是键盘层。
         $app->events = [];
         $app->dispatchInput(PointerEvent::down($cx + $this->pad + 0.5 * $this->inner, $cy + $this->wantH / 2.0));
         $app->dispatchInput(PointerEvent::up($cx + $this->pad + 0.5 * $this->inner, $cy + $this->wantH / 2.0));
         $app->dispatchInput(KeyEvent::down(KeyChord::right()));
         check(
-            'Slider · 反例：禁用滑杆不吃方向键（keyboard 返回 false 让位）',
-            $app->events === [],
+            'Slider · 反例：点禁用滑杆不夺焦，方向键落在原来聚焦的 B 栏',
+            // 事件里的值是 float（回调签名是 `fn(float $v)`）⇒ 用容差比，别用 ===
+            \count($app->events) === 1
+                && $app->events[0][0] === 'b'
+                && \abs($app->events[0][1] - 4.0) < 0.01,
             \json_encode($app->events),
         );
     }

@@ -71,8 +71,6 @@ final class Slider extends RenderBoxWidget implements SemanticsValueEditable
     /** `0` = 连续（不量化） */
     private float $step = 0.0;
 
-    private bool $enabled = true;
-
     private float $width = self::DEFAULT_WIDTH;
 
     private string $label = '';
@@ -131,13 +129,29 @@ final class Slider extends RenderBoxWidget implements SemanticsValueEditable
         return $this;
     }
 
+    /**
+     * 禁用 / 恢复 —— `disabled()` 的别名（见 `ToggleBase::enabled()` 的同款说明）。
+     *
+     * ★ 状态只有一份（`Modifier::$disabled`）。禁用后**不进 Tab 序、不响应指针**。
+     * ★ 外观由本类自己画（`paintsDisabledLook()`）：轨道/拇指换 `Muted`，
+     *   不叠框架的 0.38 alpha。
+     */
     public function enabled(bool $enabled): static
     {
-        $this->mutate();
-        $this->enabled = $enabled;
+        $this->disabled(!$enabled);
         $this->refreshSemantics();
 
         return $this;
+    }
+
+    public function isEnabled(): bool
+    {
+        return !$this->mods()->disabled();
+    }
+
+    public function paintsDisabledLook(): bool
+    {
+        return true;
     }
 
     /** 盒宽（叶子无内容 ⇒ 宽只能显式给；`<= 0` = 吃满父给的上限） */
@@ -175,7 +189,7 @@ final class Slider extends RenderBoxWidget implements SemanticsValueEditable
      */
     public function setSemanticsValue(string $value): bool
     {
-        if (!$this->enabled || !is_numeric($value)) {
+        if ($this->mods()->disabled() || !is_numeric($value)) {
             return false;
         }
         $this->emit((float) $value);
@@ -191,21 +205,21 @@ final class Slider extends RenderBoxWidget implements SemanticsValueEditable
      */
     private function refreshSemantics(): void
     {
-        $this->semantics(SemanticsRole::Slider, $this->label, \sprintf('%.0f', $this->value), $this->enabled)
+        $this->semantics(SemanticsRole::Slider, $this->label, \sprintf('%.0f', $this->value), !$this->mods()->disabled())
             ->semanticsRange($this->min, $this->max);
     }
 
     /**
      * 接上两条输入缝（`pointer` 接管按下、`keyboard` 接管方向键）。
      *
-     * ★ 回调里判 `$this->enabled` 而不是"禁用时不装"：`enabled()` 可以在构造
+     * ★ 回调里判 `mods()->disabled()` 而不是"禁用时不装"：`disabled()` 可以在构造
      *   之后调（builder 风格），装了再判才跟得上。
      * ★ 禁用时**仍然接管按下**（吞掉），这是对的：禁用控件不该被激活。
      */
     private function wireInput(): void
     {
         $this->pointer(function (PointerEvent $event, Element $self): ?CursorShape {
-            if (!$this->enabled) {
+            if ($this->mods()->disabled()) {
                 return null;
             }
 
@@ -234,7 +248,7 @@ final class Slider extends RenderBoxWidget implements SemanticsValueEditable
     /** 方向键 / Home / End ⇒ 新值。返回 `true` = 吃掉这个键 */
     private function nudge(KeyEvent $event): bool
     {
-        if (!$this->enabled) {
+        if ($this->mods()->disabled()) {
             return false;
         }
 
@@ -305,7 +319,7 @@ final class Slider extends RenderBoxWidget implements SemanticsValueEditable
         // ★ 按标志选已解析值一律 if/else（`?:` 两支类型不同会撞 tpc 的 C2678）
         $accent = $context->color(ColorToken::Muted);
         $border = $context->color(ColorToken::Border);
-        if ($this->enabled) {
+        if (!$this->mods()->disabled()) {
             $accent = $context->color(ColorToken::Accent);
             $border = $context->color(ColorToken::Surface);
         }

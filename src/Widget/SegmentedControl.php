@@ -62,8 +62,6 @@ final class SegmentedControl extends RenderBoxWidget
 
     private int $selected = 0;
 
-    private bool $enabled = true;
-
     private ?\Closure $onChanged = null;
 
     /** @param list<string> $labels 段标签（空表 = 空轨，不炸） */
@@ -92,13 +90,27 @@ final class SegmentedControl extends RenderBoxWidget
         return $this;
     }
 
-    /** 整组禁用：字色降级、不响应激活（段仍在 Tab 序里） */
+    /**
+     * 整组禁用 / 恢复 —— `disabled()` 的别名。
+     *
+     * ★ 本类**不自己画禁用外观**，但照样声明 `paintsDisabledLook()`：禁用要下发给
+     *   每个 `Segment`（各段换 `Muted`），若容器再乘一层 0.38，段里的灰字会被二次
+     *   衰减。声明为真 = "这一层的禁用由子树表达，别在容器上叠 alpha"。
+     * ★ 轨道背景在禁用时**不变**（与旧行为一致：只有段降级）。
+     */
     public function enabled(bool $enabled): static
     {
-        $this->mutate();
-        $this->enabled = $enabled;
+        return $this->disabled(!$enabled);
+    }
 
-        return $this;
+    public function isEnabled(): bool
+    {
+        return !$this->mods()->disabled();
+    }
+
+    public function paintsDisabledLook(): bool
+    {
+        return true;
     }
 
     /** 选中变化回调：收**新序号**（不是"切换了"这个事件） */
@@ -120,11 +132,6 @@ final class SegmentedControl extends RenderBoxWidget
         return $this->selected;
     }
 
-    public function isEnabled(): bool
-    {
-        return $this->enabled;
-    }
-
     /**
      * 段孩子 —— **每次调用建一批新 `Segment`**（`build()`  idiom，不是缓存）。
      *
@@ -144,7 +151,7 @@ final class SegmentedControl extends RenderBoxWidget
         foreach ($this->labels as $label) {
             $segment = Segment::make($label, $index)
                 ->selected($index === $selected)
-                ->enabled($this->enabled);
+                ->enabled(!$this->mods()->disabled());
 
             if ($this->onChanged !== null) {
                 $handler = $this->onChanged;

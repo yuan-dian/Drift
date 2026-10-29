@@ -402,16 +402,32 @@ final class SegmentedControlTest extends SmokeTestCase
     {
         // ★★ 激活链（键盘）：Tab 一段一格 + Space ⇒ Application 的 Segment 分支。
         //   A 组尾段预选中、B 组中段预选中、C 组整组禁用 —— 三个反例各占几步。
+        // ★ 六步（不是八步）：C 组的两段整组禁用，2026-10-29 起**不在 Tab 序里**
         $app = new SegmentedApplication();
         $app->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
-        for ($step = 0; $step < 8; $step++) {
+        for ($step = 0; $step < 6; $step++) {
             $app->dispatchInput(KeyEvent::down(KeyChord::tab()));
             $app->dispatchInput(KeyEvent::down(KeyChord::make('Space')));
         }
         check(
-            'Seg · Tab+Space 八步：未选段回调、已选段不回调、禁用段不回调',
+            'Seg · Tab+Space 六步：未选段回调、已选段不回调',
             $app->events === [['a', 0], ['a', 1], ['b', 0], ['b', 2]],
             \json_encode($app->events),
+        );
+
+        // 反例（新行为）：整组禁用的两段**不占 Tab 位** —— 八次 Tab 只走六格，末尾停住
+        $seqApp = new SegmentedApplication();
+        $seqApp->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
+        $seqFm = $seqApp->focus();
+        $visited = [];
+        for ($step = 0; $step < 8; $step++) {
+            $seqApp->dispatchInput(KeyEvent::down(KeyChord::tab()));
+            $visited[] = $seqFm?->focused()?->widget()->semanticsName() ?? '';
+        }
+        check(
+            'Seg · 禁用组不在 Tab 序：八次 Tab = 日→周→月→小→中→大→大→大',
+            $visited === ['日', '周', '月', '小', '中', '大', '大', '大'],
+            \json_encode($visited, \JSON_UNESCAPED_UNICODE),
         );
     }
 

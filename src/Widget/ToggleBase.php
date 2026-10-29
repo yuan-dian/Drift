@@ -54,8 +54,6 @@ abstract class ToggleBase extends RenderBoxWidget implements Activatable
 
     protected bool $on = false;
 
-    protected bool $enabled = true;
-
     protected ?\Closure $onChanged = null;
 
     /**
@@ -90,14 +88,26 @@ abstract class ToggleBase extends RenderBoxWidget implements Activatable
         return $this;
     }
 
-    /** 禁用：形状色降级、不响应激活（仍在 Tab 序里 —— 与 Win32 一致） */
+    /**
+     * 禁用 / 恢复。
+     *
+     * ★ 这是 `disabled()` 的**别名**（`enabled(false)` ≡ `disabled()`）——
+     *   2026-10-29 收敛：状态只有一份（`Modifier::$disabled`），不再有 `$enabled` 字段。
+     *   保留这个名字是因为它在 `Checkbox` / `Radio` / `Toggle` 上已经写了半年，
+     *   且"enabled(false)"读起来比"disabled()"更贴近表单语义。
+     * ★ 行为随之收紧：**不再留在 Tab 序里**（旧注写的"与 Win32 一致"是错的 ——
+     *   `WS_DISABLED` 的控件 `SetFocus` 直接失败），也不响应指针命中。
+     * ★ 外观不变：`paintsDisabledLook()` 声明为真 ⇒ 标签换 `ColorToken::Muted`，
+     *   且不叠框架那层 0.38 alpha。
+     */
     public function enabled(bool $enabled): static
     {
-        $this->mutate();
-        $this->enabled = $enabled;
-        $this->refreshSemantics();
+        return $this->disabled(!$enabled);
+    }
 
-        return $this;
+    public function isEnabled(): bool
+    {
+        return !$this->mods()->disabled();
     }
 
     /** 点击/按键回调：收**新值**（不是"切换了"这个事件） */
@@ -119,9 +129,15 @@ abstract class ToggleBase extends RenderBoxWidget implements Activatable
         return $this->on;
     }
 
-    public function isEnabled(): bool
+    /**
+     * 禁用外观由本类自己画（标签换 `ColorToken::Muted`）。
+     *
+     * ★ 声明为真 ⇒ `Element::syncBox()` 会给盒子的 `Modifier` 打上 `withoutDim()`，
+     *   不再叠框架那层 0.38 alpha。否则"灰"再"淡"一次，浅底上几乎看不见。
+     */
+    public function paintsDisabledLook(): bool
     {
-        return $this->enabled;
+        return true;
     }
 
     /**
@@ -135,7 +151,7 @@ abstract class ToggleBase extends RenderBoxWidget implements Activatable
      */
     public function activate(ActivationContext $context): void
     {
-        if (!$this->enabled || $this->onChanged === null) {
+        if ($this->mods()->disabled() || $this->onChanged === null) {
             return;
         }
 
@@ -163,24 +179,26 @@ abstract class ToggleBase extends RenderBoxWidget implements Activatable
      */
     final protected function refreshSemantics(): void
     {
+        $enabled = !$this->mods()->disabled();
+
         if ($this->kind === RenderToggle::KIND_RADIO) {
             if ($this->on) {
-                $this->semantics($this->role, $this->label, $this->radioValue, $this->enabled);
+                $this->semantics($this->role, $this->label, $this->radioValue, $enabled);
 
                 return;
             }
-            $this->semantics($this->role, $this->label, '', $this->enabled);
+            $this->semantics($this->role, $this->label, '', $enabled);
 
             return;
         }
 
         if ($this->on) {
-            $this->semantics($this->role, $this->label, 'checked', $this->enabled);
+            $this->semantics($this->role, $this->label, 'checked', $enabled);
 
             return;
         }
 
-        $this->semantics($this->role, $this->label, 'unchecked', $this->enabled);
+        $this->semantics($this->role, $this->label, 'unchecked', $enabled);
     }
 
     /**
@@ -192,7 +210,7 @@ abstract class ToggleBase extends RenderBoxWidget implements Activatable
         // ★ 两个三元表达式都拆成 if/else：`?:` 的两支只要类型不同（或编译器认不出
         //   相同），生成的 C++ 就会撞 C2678。T1 的解释器面完全看不出来。
         $labelColor = $context->color(ColorToken::Muted);
-        if ($this->enabled) {
+        if (!$this->mods()->disabled()) {
             $labelColor = $context->color(ColorToken::Text);
         }
 
@@ -216,7 +234,6 @@ abstract class ToggleBase extends RenderBoxWidget implements Activatable
         return new RenderToggle(
             $this->kind,
             $this->on,
-            $this->enabled,
             $this->label,
             $style,
             $context->metrics(),

@@ -51,4 +51,27 @@ abstract class RenderBoxWidget extends Widget
     {
         return false;
     }
+
+    /**
+     * 本控件**自己画禁用外观**吗？
+     *
+     * `true` ⇒ `Element::syncBox()` 会给盒的 `$mods` 打 `withoutDim()`：
+     * 禁用时**不**再乘 `RenderBox::DISABLED_ALPHA`。
+     *
+     * ★ 为什么需要这个开关：`disabled()` 的默认外观是"整棵子树乘 0.38"（通用、零成本），
+     *   但有些控件有更好的表达 —— `ToggleBase` / `Slider` / `Segment` 把标签色从
+     *   `ColorToken::Text` 换成 `Muted`（**灰**而不是**淡**）。两者叠加会二次衰减：
+     *   已经变灰的字再乘 0.38，在浅底上几乎看不见。
+     * ★ 与 `paintsBoxChrome()` 同一条形状（声明在控件 / 落实在 `syncBox()` / 消费在盒），
+     *   而不是在 `RenderBox` 里 instanceof 判类 —— 后者每加一个控件就要改框架。
+     *
+     * ★ 声明 `true` 的控件有**义务**在 `createRenderObject()` 里真的按禁用换色，
+     *   否则禁用会变成"点不动但看起来完全正常"（比不禁用更误导）。
+     *
+     * @internal 只给 Element 用；应用不该调
+     */
+    public function paintsDisabledLook(): bool
+    {
+        return false;
+    }
 }

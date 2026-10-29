@@ -68,8 +68,11 @@ abstract class RenderBox extends RenderObject
         // ★ 禁用把置灰**折进**合成 alpha，而不是各控件自己调色：`paintComposed()`
         //   在 `opacity < 1` 时已经开层（`pushLayer`）⇒ 整棵子树一起变淡，零新增绘制代码。
         //   与显式 `->opacity()` 是**乘算**：`opacity(0.5)->disabled()` = 0.19，符合直觉。
+        // ★ `dim = false` = 控件自己画禁用外观（`paintsDisabledLook()`）⇒ 不再乘，
+        //   否则"换灰"再叠 alpha 会二次衰减。
         $this->disabled = $mods->disabled();
-        $this->composeOpacity = $this->disabled
+        $dim = $this->disabled && $mods->dimsWhenDisabled();
+        $this->composeOpacity = $dim
             ? $mods->composeOpacity() * self::DISABLED_ALPHA
             : $mods->composeOpacity();
         $this->composeDx = $mods->composeDx();

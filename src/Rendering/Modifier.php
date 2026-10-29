@@ -138,6 +138,19 @@ final class Modifier
     //   都读得到它），所以这里一条声明就能让 20+ 个控件同时正确。
     private bool $disabled = false;
 
+    /**
+     * 禁用时是否由**框架统一变淡**（`RenderBox::DISABLED_ALPHA`）。
+     *
+     * ★ 默认 `true`（大多数控件没有"禁用态配色"，整体变淡是唯一可行的表达）。
+     *   控件若自己会画禁用外观（`ToggleBase` / `Slider` / `Segment` 把标签换成
+     *   `ColorToken::Muted`），必须置 `false` —— 否则"换灰"再叠一层 0.38 的 alpha，
+     *   深灰字会淡到几乎看不见。
+     * ★ 由 `Widget::paintsDisabledLook()` 声明、`Element::syncBox()` 落实
+     *   （`withoutDim()`）—— 与 `paintsBoxChrome()` 同一条形状：**声明在控件、
+     *   落实在 syncBox、消费在盒**。
+     */
+    private bool $dim = true;
+
     // ── 主轴弹性意图（`04` §2）──────────────────────────────────────
     private int $grow = 0;
 
@@ -612,7 +625,8 @@ final class Modifier
             && !$this->center
             && !$this->clip
             && !$this->repaintBoundary
-            && !$this->disabled;
+            && !$this->disabled
+            && $this->dim;
     }
 
     public function composeOpacity(): float
@@ -634,6 +648,12 @@ final class Modifier
     public function disabled(): bool
     {
         return $this->disabled;
+    }
+
+    /** 禁用时是否由框架统一变淡（`false` = 控件自己画禁用外观，见字段注） */
+    public function dimsWhenDisabled(): bool
+    {
+        return $this->dim;
     }
 
     // ── 写：值对象换新（每次 `clone` 一次，原对象不动）──────────────
@@ -794,6 +814,20 @@ final class Modifier
     {
         $c = clone $this;
         $c->disabled = $on;
+
+        return $c;
+    }
+
+    /**
+     * 禁用时**不**统一变淡 —— 控件自己会画禁用外观。
+     *
+     * ★ 只由 `Element::syncBox()` 调（`paintsDisabledLook()` 声明处），应用不该直接调：
+     *   它回答的是"框架要不要替这个控件变淡"，不是"这个控件禁不禁用"（那是 `withDisabled`）。
+     */
+    public function withoutDim(): self
+    {
+        $c = clone $this;
+        $c->dim = false;
 
         return $c;
     }

@@ -44,7 +44,6 @@ final class RenderToggle extends RenderProxyBox
     public function __construct(
         private readonly int $kind,
         private readonly bool $on,
-        private readonly bool $enabled,
         string $label,
         private readonly ToggleStyle $style,
         TextMetricsProvider $metrics,
@@ -117,9 +116,12 @@ final class RenderToggle extends RenderProxyBox
 
         $box = $this->style->boxSize;
         $top = max(0.0, ($size->height - $box) / 2.0);
-        $accent = $this->enabled ? $this->style->accent : $this->style->disabled;
-        $idle = $this->enabled ? $this->style->idle : $this->style->disabled;
-        $mark = $this->enabled ? $this->style->mark : $this->style->thumb;
+        // ★ 不存自己的 `$enabled` 字段：`disabled` 的唯一来源是 `Modifier`（`RenderBox`
+        //   在 `setMods()` 里落成 `$this->disabled`）。控件另存一份 ⇒ 两份真相。
+        $enabled = !$this->isDisabled();
+        $accent = $enabled ? $this->style->accent : $this->style->disabled;
+        $idle = $enabled ? $this->style->idle : $this->style->disabled;
+        $mark = $enabled ? $this->style->mark : $this->style->thumb;
         $ring = max(1.0, $box * 0.09);
 
         if ($this->kind === self::KIND_SWITCH) {

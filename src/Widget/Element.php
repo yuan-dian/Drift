@@ -184,6 +184,12 @@ abstract class Element
             if ($this->widget instanceof RenderBoxWidget && $this->widget->paintsBoxChrome()) {
                 $mods = $mods->withoutBoxVisual();
             }
+
+            // 控件自己画禁用外观 ⇒ 别让框架再乘一层 alpha（见 `paintsDisabledLook()`）
+            if ($this->widget instanceof RenderBoxWidget && $this->widget->paintsDisabledLook()) {
+                $mods = $mods->withoutDim();
+            }
+
             $this->box->setMods($mods);
 
             return;
