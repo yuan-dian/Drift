@@ -803,9 +803,9 @@ abstract class RenderBox extends RenderObject
     // ★ 反直觉点：失效判据**不含** composeDx/Dy/Opacity，也不含滚动偏移。
     //   含了就等于"一动就失效"，缓存退化成每帧录一遍（比不缓存还慢）。
 
-    private bool $repaintBoundary = false;
+    protected bool $repaintBoundary = false;
 
-    private ?LayerCache $layer = null;
+    protected ?LayerCache $layer = null;
 
     /**
      * 就地改合成参数（不重建、不重排、不置**布局**脏位）。
@@ -872,17 +872,43 @@ abstract class RenderBox extends RenderObject
      *   命令、不含 alpha，没脏。而外层边界录的是**整段**命令流（含这条
      *   `pushLayer`）⇒ 只有外层需要重录。
      * ★ 没有外层边界 ⇒ 每帧都真画 ⇒ 无事可做（绝大多数盒走这里）。
+     *
+     * ★★★ **只能走公开方法，不能直接读 `$p->repaintBoundary` / `$p->layer`**
+     *   （2026-10-29 真机抓到）：那两个是**本类的 private**，解释器里跨实例读
+     *   子类实例（`RenderFlex` / `RenderScrollView` …）是合法的，**AOT 下不是**
+     *   —— 父类的 `private` 不进子类属性表，于是每帧刷一行
+     *   `Undefined property: RenderFlex::$repaintBoundary`，失效逻辑**静默变成
+     *   空操作**（正是它要修的那个"值在滑、屏是死的"）。与 `BoxConstraints::INFINITY`
+     *   那条同族：**AOT 只信公开成员**。
      */
     private function invalidateEnclosingLayer(): void
     {
         for ($p = $this->parent(); $p !== null; $p = $p->parent()) {
-            if ($p instanceof self && $p->repaintBoundary) {
-                $p->layer?->invalidate();
+            if ($p instanceof self && $p->isRepaintBoundary()) {
+                $p->invalidateLayerCache();
 
                 return;
             }
         }
     }
+
+    /**
+     * 丢掉本盒的层缓存（下一次绘制必然重录）。
+     *
+     * @internal 只给 `invalidateEnclosingLayer()` 用；公开是因为调用方拿到的是
+     *   **另一个实例**（可能是子类），而 `private` 在 AOT 下跨实例不可见。
+     */
+    public function invalidateLayerCache(): void
+    {
+        // ★ 不用 `?->`：AOT 下"可空链"读**本类字段**会退化成按运行时类名查表
+        //   （`Undefined property: RenderFlex::$layer`，实测刷满 stdout 且失效）
+        //   ⇒ 一律拆成 `if`。与 `?:` 两支类型不同必须拆 if 是同一条纪律。
+        $layer = $this->layer;
+        if ($layer !== null) {
+            $layer->invalidate();
+        }
+    }
+
     /** @return array{0: float, 1: float} `[dx, dy]` */
     public function composeOffset(): array
     {
