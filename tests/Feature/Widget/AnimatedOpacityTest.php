@@ -16,6 +16,7 @@ use Drift\Widget\AnimatedOpacity;
 use Drift\Widget\AnimatedOpacityState;
 use Drift\Widget\Element;
 use Drift\Widget\Opacity;
+use Drift\Widget\Padding;
 use Drift\Widget\StatefulElement;
 use Drift\Widget\Widget;
 
@@ -106,17 +107,50 @@ final class AnimatedOpacityTest extends SmokeTestCase
         return $box;
     }
 
+    /**
+     * ★ 用**递归找**而不是"根必须是 `StatefulElement`"：本类有一组夹具把
+     *   `AnimatedOpacity` 包在 `Padding(->repaintBoundary())` 里（验外层缓存），
+     *   那时根是 `RenderProxyWidget` 的元素，直接判根就会误报"夹具坏了"。
+     */
     private static function stateOf(Element $element): AnimatedOpacityState
     {
-        if (!$element instanceof StatefulElement) {
-            self::fail('AnimatedOpacity 的元素不是 StatefulElement');
-        }
-        $state = $element->state();
-        if (!$state instanceof AnimatedOpacityState) {
-            self::fail('AnimatedOpacity 的 State 类型不对');
+        $found = null;
+        $walk = static function (Element $e) use (&$walk, &$found): void {
+            if ($found === null && $e instanceof StatefulElement && $e->state() instanceof AnimatedOpacityState) {
+                $found = $e->state();
+            }
+            $e->visitChildren($walk);
+        };
+        $walk($element);
+
+        if (!$found instanceof AnimatedOpacityState) {
+            self::fail('AnimatedOpacity 的 State 没找到（夹具坏了）');
         }
 
-        return $state;
+        return $found;
+    }
+
+    /**
+     * 挂一棵 `Padding(->repaintBoundary()) → AnimatedOpacity → …`（模拟"在
+     * `ScrollView` 里"：页面内容区就是一个重绘边界）。
+     *
+     * @return array{0: Element, 1: Frame, 2: RecordingSurface, 3: Widget}
+     */
+    private static function mountUnderBoundary(float $target): array
+    {
+        $leaf = new LayoutCountWidget(new Size(80.0, 40.0));
+        $element = Padding::make(AnimatedOpacity::make($target, $leaf))
+            ->all(8.0)
+            ->repaintBoundary()
+            ->createElement();
+        $element->mount(null, smokeContext());
+
+        $surface = new RecordingSurface();
+        $surface->resize(320, 240, 1.0);
+        $frame = new Frame($surface);
+        $frame->run($element, self::constraints(), 0.0);
+
+        return [$element, $frame, $surface, $leaf];
     }
 
     /** 一帧：先推动画（生产里由 `Application::frame()` 在 `Frame::run()` 之前做），再画 */
@@ -283,6 +317,66 @@ final class AnimatedOpacityTest extends SmokeTestCase
             'AnimatedOpacity · 反例：目标没变 ⇒ 不起动画（tickFrame 直接 false）',
             $state->tickFrame(32.0) === false && self::proxyOf($el)->composeOpacity() === 0.6,
             \sprintf('opacity=%.6g', self::proxyOf($el)->composeOpacity())
+        );
+    }
+
+    /**
+     * ★★★ **合成槽变化必须让外层重绘边界重录**（2026-10-29，真机抓到的"要点两次"）。
+     *
+     * `pushLayer(alpha)` 是**录进 `DisplayList` 的一条命令**，而 `LayerCache` 的
+     * 命中判据是 `layoutEpoch + 尺寸`。只改合成槽时两者都不变 ⇒ 边界命中缓存、
+     * 重放旧 alpha ⇒ **值在滑、屏上是死的**（真机现象：点一次毫无反应，再点一次
+     * 触发 rebuild 才"突然"淡到位）。
+     *
+     * 判据落在**计数器**上（像素在这里分不出来：两种实现画出来的都是"某一帧的
+     * 正确画面"，差别只在"哪一帧"）：
+     *
+     * | 判据 | 挡的退化 |
+     * |---|---|
+     * | 动画期间叶子 `paintCalls` 每帧涨 | 外层缓存命中 ⇒ 重放旧 alpha（本件的病灶） |
+     * | **反例**：目标不变时 `paintCalls` 不涨 | 为了让上一条绿而把缓存整体关掉 |
+     *
+     * ★ 反例那条是必须的：`invalidateEnclosingLayer()` 写成"每次 `setCompose()`
+     *   无条件失效"也全绿，但静止画面会一直重录。
+     */
+    public function testComposeChangeInvalidatesEnclosingRepaintBoundary(): void
+    {
+        // ── 控制组：每帧写**同一个**值 ⇒ 边界仍命中缓存 ⇒ 一次都不重录 ──
+        // ★ 必须显式每帧写一次：动画静止时 `tickFrame()` 返回 null、根本不碰
+        //   `setCompose()` ⇒ 那样测不出"值没变就不失效"这道守卫。
+        [$el, $frame, , ] = self::mountUnderBoundary(1.0);
+        $inner = self::stateOf($el)->element()?->effectiveBox();
+        if ($inner === null) {
+            self::fail('夹具坏了：拿不到 Opacity 的盒');
+        }
+        $base = self::leafBoxOf($el)->paintCalls;
+        for ($i = 1; $i <= 5; ++$i) {
+            $inner->setCompose(1.0);          // 与当前值相同
+            $frame->run($el, self::constraints(), 16.0 * $i);
+        }
+        check(
+            'AnimatedOpacity · 反例：写同值 ⇒ 外层边界仍命中缓存（不白重录）',
+            self::leafBoxOf($el)->paintCalls === $base,
+            \sprintf('base=%d now=%d（涨了 ⇒ 每帧无条件失效，静止画面白烧）', $base, self::leafBoxOf($el)->paintCalls)
+        );
+
+        // ── 实验组：动画中 ⇒ 每帧都要重录（否则重放的是旧 alpha） ──
+        [$el2, $frame2, , $leafWidget2] = self::mountUnderBoundary(1.0);
+        $state = self::stateOf($el2);
+        $el2->update(Padding::make(AnimatedOpacity::make(0.2, $leafWidget2))->all(8.0)->repaintBoundary());
+        $frame2->run($el2, self::constraints(), 16.0);
+
+        $midBase = self::leafBoxOf($el2)->paintCalls;
+        $ts = 16.0;
+        for ($i = 0; $i < 6; ++$i) {
+            $ts += 16.0;
+            $state->tickFrame($ts);
+            $frame2->run($el2, self::constraints(), $ts);
+        }
+        check(
+            'AnimatedOpacity · 合成槽变了 ⇒ 外层边界**每帧重录**（否则屏上停在旧 alpha）',
+            self::leafBoxOf($el2)->paintCalls > $midBase + 3,
+            \sprintf('base=%d now=%d（不涨 ⇒ 重放了旧 alpha）', $midBase, self::leafBoxOf($el2)->paintCalls)
         );
     }
 

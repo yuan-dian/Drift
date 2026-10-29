@@ -72,11 +72,11 @@ abstract class RenderBox extends RenderObject
         //   否则"换灰"再叠 alpha 会二次衰减。
         $this->disabled = $mods->disabled();
         $dim = $this->disabled && $mods->dimsWhenDisabled();
-        $this->composeOpacity = $dim
-            ? $mods->composeOpacity() * self::DISABLED_ALPHA
-            : $mods->composeOpacity();
-        $this->composeDx = $mods->composeDx();
-        $this->composeDy = $mods->composeDy();
+        $this->applyCompose(
+            $dim ? $mods->composeOpacity() * self::DISABLED_ALPHA : $mods->composeOpacity(),
+            $mods->composeDx(),
+            $mods->composeDy(),
+        );
 
         $this->setRepaintBoundary($mods->repaintBoundary());
 
@@ -808,7 +808,7 @@ abstract class RenderBox extends RenderObject
     private ?LayerCache $layer = null;
 
     /**
-     * 就地改合成参数（不重建、不重排、不置任何脏位）。
+     * 就地改合成参数（不重建、不重排、不置**布局**脏位）。
      *
      * ```php
      * // 应用代码（淡入）：State::tickFrame 里直接写盒
@@ -825,13 +825,19 @@ abstract class RenderBox extends RenderObject
      * ★ `opacity >= 1` 且 `dx == dy == 0` ⇒ `paintComposed()` 走**零开销快路**
      *   （不 save / 不开层）⇒ 不用它就没有代价。
      *
+     * ★★★ **但必须让外层重绘边界重录**（2026-10-29，真机抓到）：`pushLayer(alpha)`
+     *   是**录进 `DisplayList` 的一条命令**，而 `LayerCache` 的命中判据是
+     *   `layoutEpoch + 尺寸` —— 只改合成槽时两者都不变 ⇒ 边界**命中缓存**，
+     *   重放的是上一次录的旧 alpha ⇒ **画面一动不动**（值在滑、屏上是死的，
+     *   再点一次触发 rebuild 才"突然"到位）。现象与"要点两次"完全一样。
+     *   ⇒ 值真变了就 `invalidateEnclosingLayer()`（只失效**外层**那一层：
+     *   本盒自己是边界时，alpha 是 `paintComposed()` 现算的，自己的缓存没脏）。
+     *
      * @api
      */
     public function setCompose(float $opacity, float $dx = 0.0, float $dy = 0.0): void
     {
-        $this->composeOpacity = $opacity;
-        $this->composeDx = $dx;
-        $this->composeDy = $dy;
+        $this->applyCompose($opacity, $dx, $dy);
     }
 
     public function composeOpacity(): float
@@ -839,6 +845,44 @@ abstract class RenderBox extends RenderObject
         return $this->composeOpacity;
     }
 
+    /**
+     * 合成槽的**唯一落点**（`setMods()` 与 `setCompose()` 都走这里）。
+     *
+     * ★ 值没变就**什么都不做**：动画收口后每帧仍会写一次同值，若无条件失效
+     *   外层缓存，静止画面也会一直重录（空闲烧 CPU）。
+     */
+    private function applyCompose(float $opacity, float $dx, float $dy): void
+    {
+        if ($this->composeOpacity === $opacity && $this->composeDx === $dx && $this->composeDy === $dy) {
+            return;
+        }
+
+        $this->composeOpacity = $opacity;
+        $this->composeDx = $dx;
+        $this->composeDy = $dy;
+
+        $this->invalidateEnclosingLayer();
+    }
+
+    /**
+     * 让**最近的外层**重绘边界丢掉缓存（`setCompose()` 的正确性前提）。
+     *
+     * ★ 为什么必须是外层而不是自己：本盒若是边界，`paintComposed()` 会在
+     *   `paintOrReplay()` **之外**现算 `pushLayer(alpha)` ⇒ 自己的缓存只装子树
+     *   命令、不含 alpha，没脏。而外层边界录的是**整段**命令流（含这条
+     *   `pushLayer`）⇒ 只有外层需要重录。
+     * ★ 没有外层边界 ⇒ 每帧都真画 ⇒ 无事可做（绝大多数盒走这里）。
+     */
+    private function invalidateEnclosingLayer(): void
+    {
+        for ($p = $this->parent(); $p !== null; $p = $p->parent()) {
+            if ($p instanceof self && $p->repaintBoundary) {
+                $p->layer?->invalidate();
+
+                return;
+            }
+        }
+    }
     /** @return array{0: float, 1: float} `[dx, dy]` */
     public function composeOffset(): array
     {

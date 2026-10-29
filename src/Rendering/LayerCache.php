@@ -32,6 +32,20 @@ final class LayerCache
     private float $h = -1.0;
 
     /**
+     * 丢掉缓存，下一次 `beginRecord()` 必然重录。
+     *
+     * ★ 调用方是 `RenderBox::invalidateEnclosingLayer()`：**合成槽（alpha / 平移）
+     *   是录进命令流里的值**，只改槽不动 `layoutEpoch` ⇒ 缓存会一直重放旧值，
+     *   画面变成死的（`AnimatedOpacity` 在 `ScrollView` 里就是这个症状：
+     *   值在滑、屏不动，直到下一次 rebuild 才"突然"到位）。
+     */
+    public function invalidate(): void
+    {
+        $this->list = null;
+        $this->epoch = -1;
+    }
+
+    /**
      * 命中 ⇒ 重放到 `$canvas` 并返回 `null`；否则返回一张**录制画布**，
      * 调用方往它上面画完后必须调 `endRecord()`。
      */
