@@ -247,14 +247,19 @@ final class SourceQuery
      *     name: string,
      *     fqn: string,
      *     line: int,
+     *     kind: string,
      *     readonly: bool,
      *     extends: list<string>,
      *     implements: list<string>,
      *     properties: array<string, string>,
-     *     methods: array<string, array{start: int, end: int, line: int}>
+     *     methods: array<string, array{start: int, end: int, line: int}>,
+     *     constants: list<string>,
+     *     bodyStart: int, bodyEnd: int
      * }>
      *         `properties`：小写属性名 => 解析后的类型 FQN（无类型声明 ⇒ 空字符串，不入表）
      *         `methods`：小写方法名 => 方法体的 `{`…`}` token 区间（无体的不记）
+     *         `constants`：类常量声明名（原文大小写；边界见 readBody 内注释）
+     *         `bodyStart`/`bodyEnd`：类体 `{`…`}` 的 token 区间
      */
     public static function classes(SourceFile $file): array
     {
@@ -306,10 +311,11 @@ final class SourceQuery
     /**
      * @param list<mixed> $tokens
      * @return null|array{
-     *     name: string, fqn: string, line: int, readonly: bool,
+     *     name: string, fqn: string, line: int, kind: string, readonly: bool,
      *     extends: list<string>, implements: list<string>,
      *     properties: array<string, string>,
      *     methods: array<string, array{start: int, end: int, line: int}>,
+     *     constants: list<string>,
      *     bodyStart: int, bodyEnd: int
      * }
      * @param string $ns 该类位置当时生效的命名空间（多命名空间文件按位置算，见 classes() 注释）
@@ -376,6 +382,7 @@ final class SourceQuery
             'implements' => $implements,
             'properties' => [],
             'methods' => [],
+            'constants' => [],
             'bodyStart' => $open,
             'bodyEnd' => $close,
         ];
@@ -385,6 +392,7 @@ final class SourceQuery
         $body = self::readBody($file, $open, $close);
         $info['properties'] = $body['properties'];
         $info['methods'] = $body['methods'];
+        $info['constants'] = $body['constants'];
 
         return $info;
     }
@@ -437,14 +445,15 @@ final class SourceQuery
      * ★ 单次前进：命中 `function` 就整块跳过方法体 ⇒ 构造器提升参数
      *   （`__construct(private int $x)`）不会被误读成属性。
      *
-     * @param list<mixed> $tokens
-     * @return array{properties: array<string, string>, methods: array<string, array{start: int, end: int, line: int}>}
+     * @return array{properties: array<string, string>, methods: array<string, array{start: int, end: int, line: int}>, constants: list<string>}
+     *         `constants`：类常量声明名（原文大小写；一条多常量声明只记首名）
      */
     private static function readBody(SourceFile $file, int $open, int $close): array
     {
         $tokens = $file->tokens();
         $properties = [];
         $methods = [];
+        $constants = [];
 
         for ($j = $open + 1; $j < $close; $j++) {
             $tok = $tokens[$j];
@@ -504,6 +513,26 @@ final class SourceQuery
                 continue;
             }
 
+            // 类常量（`public const X = …` / `const X = …`）：只记声明名，
+            // 表达式整体略过到 `;`。`stale-capability-claim` 的 const 探针靠这张表
+            // 判"能力已补"。★ `public const` 会先命中下面的 visibility 分支
+            // （readProperty 撞 T_CONST 直接返回 null、不推进 j），循环下一拍才到这里
+            // ⇒ 带不带可见性都收得到。★ 一条声明写多个常量（`const A=1,B=2;`）
+            // 只记第一个：漏报可接受，本仓 DisplayList 的 op 常量都是一行一个。
+            if ($tok[0] === T_CONST) {
+                $nameI = self::nextIndex($tokens, $j + 1);
+                if ($nameI !== null && is_array($tokens[$nameI]) && $tokens[$nameI][0] === T_STRING) {
+                    $constants[] = $tokens[$nameI][1];
+                }
+                for ($k = $nameI ?? $j; $k < $close; $k++) {
+                    if ($tokens[$k] === ';') {
+                        $j = $k;
+                        break;
+                    }
+                }
+                continue;
+            }
+
             if ($tok[0] === T_PUBLIC || $tok[0] === T_PROTECTED || $tok[0] === T_PRIVATE) {
                 $parsed = self::readProperty($file, $j, $close);
                 if ($parsed !== null) {
@@ -516,7 +545,7 @@ final class SourceQuery
             }
         }
 
-        return ['properties' => $properties, 'methods' => $methods];
+        return ['properties' => $properties, 'methods' => $methods, 'constants' => $constants];
     }
 
     /**

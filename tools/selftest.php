@@ -109,6 +109,17 @@ function drift_lint_selftest(string $root, Linter $linter): bool
             'apps/NonBoxDecorationBad.php:' . Diagnostic::ERROR,
             'apps/NonBoxDecorationBad.php:' . Diagnostic::ERROR,
         ],
+        // 能力缺口「诚实边界」声明过期守卫（B2，2026-10-30）
+        // ★ Bad 五条：class/method/const 三种"符号已存在" + 未知探针类型 + 分节数不足；
+        //   `StaleCapabilityClaimGood.php` 一条都不该有 —— 它验的三件"看着像但绿"：
+        //   符号确实还缺（method/const 探针查不到）/ 宿主类不存在 / 自由中文"没有"但没打标记。
+        'stale-capability-claim' => [
+            'apps/StaleCapabilityClaimBad.php:' . Diagnostic::ERROR,
+            'apps/StaleCapabilityClaimBad.php:' . Diagnostic::ERROR,
+            'apps/StaleCapabilityClaimBad.php:' . Diagnostic::ERROR,
+            'apps/StaleCapabilityClaimBad.php:' . Diagnostic::ERROR,
+            'apps/StaleCapabilityClaimBad.php:' . Diagnostic::ERROR,
+        ],
     ];
 
     $ok = true;

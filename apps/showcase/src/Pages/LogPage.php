@@ -159,6 +159,7 @@ final class LogPageState extends State
         $rows = [];
         foreach ($entries as $entry) {
             // ★ `Text` 没有 `mono()`（G2：契约破坏要响亮）——日志条目用 `body()` + `size(12)` 近似等宽。
+            // @capability-gap: method|Drift\Widget\Text|mono 等宽字形方法仍未补
             $rows[] = Text::make($fmt->format($entry))->size(12.0)->body();
         }
 

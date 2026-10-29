@@ -39,6 +39,8 @@ use Drift\Widget\Widget;
  * | 折线下面积填充 | Optional 的 `drawPath`（P4 已接 Skia 后端） | **够**（见 P4 画家） |
  * | 画布内文字（刻度数字） | `drawParagraph` 在，但 Paragraph 构造是重路径 | **绕开**：数字放控件层（`Text`），画家只管几何 |
  *
+ * @capability-gap: const|Drift\Rendering\DisplayList|OP_ARC 圆弧 op 仍未补（现用 11 根线段拼）
+ *
  * ★ **指针动画是画家 + 帧时钟**（§12.3 纯 UI 态）：相位住 `State::tickFrame()`
  *   （每帧一步，返回 true ⇒ 帧时钟不停，与 `Spinner` 同驱动）；画家只按值画。
  * ★ **`painter->version()` 有真实消费者**：HUD 每帧显示内容戳 —— "没人调的

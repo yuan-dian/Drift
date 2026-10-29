@@ -22,6 +22,7 @@ use Drift\Dev\Lint\Rules\NonBoxDecoration;
 use Drift\Dev\Lint\Rules\OptionalOpGuard;
 use Drift\Dev\Lint\Rules\OrphanTrait;
 use Drift\Dev\Lint\Rules\SelectPurity;
+use Drift\Dev\Lint\Rules\StaleCapabilityClaim;
 use Drift\Dev\Lint\Rules\StaleDerived;
 use Drift\Dev\Lint\Rules\StrConcatLoop;
 use Drift\Dev\Lint\Rules\SubscriberMark;
@@ -78,6 +79,9 @@ final class Linter
             //   ★ 真事故：`showcase` 第 21 页 `ScrollView->paddingAll()` —— 点开才炸，
             //     `Card.php` 的注释记着同一个坑已咬过"7 个页面"
             new NonBoxDecoration(),
+            // 能力缺口「诚实边界」声明过期守卫（2026-10-30 B2）：显式标记 + 类型化 probe，
+            //   符号已补即报错；不扫自由中文，避免误伤主动取舍文案。
+            new StaleCapabilityClaim(),
         ]);
     }
 

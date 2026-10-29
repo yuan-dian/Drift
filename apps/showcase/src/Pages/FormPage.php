@@ -37,8 +37,9 @@ use Drift\Widget\Widget;
  *      ⇒ LayUI 的圆角卡片**当前做不出通用容器**（要嘛把每块内容塞进 Button，
  *      要嘛新增控件）。本页用 AppBar 横条做分节标题来近似。
  *   ② **水平表单标签缺席**：`TextField` 的 label 在**字段上方**（caption），
- *      不是 LayUI 的左侧右对齐标签；且框架**没有 SizedBox** ⇒ 固定宽标签做不到
- *      ⇒ 本页用 `Row(cross:End)` + `Text(caption)` 近似"标签 + 输入框"一行。
+ *      不是 LayUI 的左侧右对齐标签。定尺寸原语 `SizedBox` 已于 2026-10-17 补齐
+ *      （见页末②与页面文案），固定宽标签现在做得出；本页仍用
+ *      `Row(cross:End)` + `Text(caption)` 是历史写法，未改。
  *
  * ★ 预览/代码切换（LayUI 的 `</>`）**做得到**：`Offstage`（保留状态、不画）
  *   + `setState` 切换可见性 —— 本页演示这一条。
@@ -229,7 +230,7 @@ final class FormState extends State
 
     /**
      * 一行字段：`Row(cross:End)` 让标签与输入框**底部对齐**、标签用 caption
-     * —— 对 LayUI"标签右对齐固定宽"的最接近近似（缺 SizedBox，见类 docblock ②）。
+     * —— 对 LayUI"标签右对齐固定宽"的最接近近似（历史写法；SizedBox 已补，见类 docblock ②）。
      */
     private function field(string $label, Widget $input): Widget
     {
