@@ -25,7 +25,7 @@
 
 | 能力 | 状态 | 证据 |
 |---|---|---|
-| 阴影原语 | **半成品** | `src/Rendering/Shadow.php`、`ShadowPainter.php` 存在；`grep Shadow src/Widget/` 只命中 `Widget.php`（注释）⇒ **0 消费者** |
+| 阴影原语 | **半成品**（2026-10-26 快照；**2026-10-30 已接线**） | `src/Rendering/Shadow.php`、`ShadowPainter.php` 存在；2026-10-26 时 `grep Shadow src/Widget/` 只命中 `Widget.php`（注释）⇒ 当时 **0 消费者**；现由 `WidgetModifiers::shadow()`/`Card::shadow()`/`PopupPanel::elevation()`/`SnackbarPanel`/`TooltipPanel`/`OptionPanel::elevation()` 消费（见 `REVIEW-2026-10-28.md` §28.1） |
 | 渐变 | ✅ **已接线**（A1a，10-28） | `Widget::gradient()` + `Gradient::vertical/horizontal/diagonal/radialBox`（盒内比例坐标） |
 | 圆角 | 已有 | `BoxStyle::radius` 被 `Card`/`Button`/`PopupPanel` 等消费 |
 | 毛玻璃 / backdrop blur | **缺口** | `grep Blur src/` 只命中阴影与 `Modifier`（阴影半径），无 backdrop filter |
@@ -132,7 +132,9 @@ ScrollView / LazyColumn / LazyRow / LazyGrid / Grid / Stack / Image / Icon / Ric
 
 ### P0 —— 质感接线（成本低，感知最强，不碰结构）
 1. **阴影接入控件**：给 `Card`/`Button`/`PopupPanel`/`Modal` 定义 elevation 层级并画阴影。
-   原语 + 三端实现已就绪，**只差消费者**。
+   原语 + 三端实现已就绪，**只差消费者**。（✅ **2026-10-30 已完成**：现由
+   `WidgetModifiers::shadow()` / `Card::shadow()` / `PopupPanel::elevation()` 等消费，
+   见 `REVIEW-2026-10-28.md` §28.1 盘点表；本行保留 2026-10-26 原判据为历史快照）
 2. **隐式动画**：`AnimatedOpacity`/`AnimatedContainer`（hover 过渡、展开折叠、主题色渐变）。
    `AnimationController` + `Curve` 已在，缺的是"值变化时自动补间"的控件。
 3. **滚动惯性 + 平滑**：`RenderScrollView` 加 velocity 与 fling 衰减（纯策略层，无结构风险）。
