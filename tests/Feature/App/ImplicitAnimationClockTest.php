@@ -3,8 +3,10 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\App;
 
+use Drift\App\FrameClock;
 use Drift\Dev\Smoke\App\FadeApplication;
 use Drift\Dev\Smoke\App\FadeFixtureState;
+use Drift\Dev\Smoke\Frame\FakeTimers;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Geometry\BoxConstraints;
@@ -36,8 +38,11 @@ use Drift\Widget\StatefulElement;
  * | 目标变了那一帧 `wantsFrame()` **为真** | 不叫醒时钟 ⇒ 动画停在起点（不报错） |
  * | 首帧后连续几帧值真的动了 | `requestFrame()` 写成了"多跑一帧就收工" |
  * | 目标没变 ⇒ `wantsFrame()` 为假 | 每帧都无条件 `requestFrame()` ⇒ 空闲 60fps 空转 |
+ * | 经 `FrameClock` 后**定时器真的上膛 / 收口真的落闸** | `pace()` 是幂等的 ⇒ 判错一帧就再也上不了膛 |
  *
  * ★ 第三条是**反例方向**：只测前两条，把 `requestFrame()` 写成无条件调用也全绿。
+ * ★ 第四条是**整条真机链路**（`FakeTimers` 把"上膛"变成可观测事实）：前三条都在问
+ *   `Application`，中间还隔着 `FrameClock::pace()` 那道闸。
  */
 final class ImplicitAnimationClockTest extends SmokeTestCase
 {
@@ -137,6 +142,78 @@ final class ImplicitAnimationClockTest extends SmokeTestCase
             '隐式动画 · 反例：目标没变 ⇒ 不叫醒时钟（wantsFrame() 仍为假）',
             $app->wantsFrame() === false,
             'wantsFrame=true ⇒ 每次重建都白跑一段动画'
+        );
+    }
+
+    /**
+     * **整条真机链路**（2026-10-29，AOT 真机日志反证之后补的判据）。
+     *
+     * 前两个测试直接问 `wantsFrame()`，中间还隔着 `FrameClock::pace()` 那道闸。
+     * 真机上"点一次不动、点两次才动"的最终表现由**定时器有没有上膛**决定 ——
+     * 而 `pace()` 是幂等的（`busy === armed` 直接 return）⇒ 只要有一帧判错，
+     * 后面再也上不了膛。所以这里用 `FakeTimers` 把"上膛 / 落闸"变成可观测事实。
+     *
+     * ```text
+     * 点击那一帧：tickAnimations（看不到刚起飞的动画）→ settle（toward）
+     *            → ⓹b 计数差 ⇒ animating=true ⇒ pace(true) ⇒ SetTimer
+     * ```
+     *
+     * ★ 判据里**没有**"跑一帧就对了"这种写法：`while ($clock->isArmed())` 的循环
+     *   体就是真机上唯一的驱动源（没有鼠标事件时，帧只能由定时器叫醒）。
+     */
+    public function testFrameClockStaysArmedUntilSettle(): void
+    {
+        [$app, $state] = self::mount();
+
+        $timers = new FakeTimers();
+        $clock = new FrameClock($timers);
+
+        // 组合根的姿势：首帧落地后再 pace 一次（此刻没有活 ⇒ 不该上膛）
+        // ★ 必须先跑一帧：首帧之前 `panelsLagBehind()` 恒真（还没画过）⇒ 那一次
+        //   `pace()` 上膛是**对的**，拿它当"静止"反例就是夹具错。
+        $app->frame(0.0, self::constraints());
+        $clock->pace($app->wantsFrame());
+        check(
+            '帧时钟 · 前置：静止时不上膛（空闲 CPU 归零）',
+            $clock->isArmed() === false && $timers->calls === [],
+            \sprintf('armed=%s calls=%d', $clock->isArmed() ? 'T' : 'F', \count($timers->calls))
+        );
+
+        // ── 一次点击（真机上一次鼠标按下就是这一次 setState + 一帧）──
+        $state->setTarget(0.25);
+        $clock->tick($app, 16.0, self::constraints());
+
+        check(
+            '帧时钟 · 目标变了那一帧之后**必须上膛**（否则要点两次）',
+            $clock->isArmed() === true,
+            'isArmed=false ⇒ 没有下一次被叫醒的机会'
+        );
+
+        // ── 之后只靠定时器驱动（真机：用户不再动鼠标）──
+        $t = 16.0;
+        $frames = 0;
+        while ($clock->isArmed() && $frames < 120) {
+            $t += 15.0;                  // `FrameClock::FRAME_MS`
+            $clock->tick($app, $t, self::constraints());
+            ++$frames;
+        }
+
+        check(
+            '帧时钟 · 滑过去是**多帧**（>= 5 帧），不是一帧跳到位',
+            $frames >= 5,
+            \sprintf('只跑了 %d 帧', $frames)
+        );
+        check(
+            '帧时钟 · 收口后落闸（`timers->stop()` 被调过）',
+            $clock->isArmed() === false
+                && $timers->calls !== []
+                && $timers->calls[\count($timers->calls) - 1][0] === 'stop',
+            '没有 stop ⇒ 收口后还在 64fps 空转'
+        );
+        check(
+            '帧时钟 · 收口值精确落在目标（`===` 0.25）',
+            self::composeOf($app) === 0.25,
+            \sprintf('opacity=%.6g', self::composeOf($app))
         );
     }
 }
