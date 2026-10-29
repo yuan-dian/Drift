@@ -27,6 +27,7 @@ use Drift\Dev\Smoke\Frame\RecordingSurface;
 use Drift\Dev\Smoke\Rendering\ProbePainter;
 use Drift\Dev\Preview\SvgSurface;
 use Drift\Dev\Smoke\App\CountJob;
+use Drift\Dev\Smoke\App\FakeDialog;
 use Drift\Dev\Smoke\App\LazyApplication;
 use Drift\Dev\Smoke\App\NamedBoomJob;
 use Drift\Dev\Smoke\App\NamedExitJob;
@@ -3490,7 +3491,7 @@ check(
 // ★ 视口取 **1920×1017**（真机客户区的实测值）：示例台左导航有 22 项，
 //   800 高会 `RenderFlex 放不下` 直接 FATAL（那是视口不够，不是缺陷）——
 //   夹具必须用真实尺寸，否则断言红得没有意义。
-$sc2App = new ShowcaseApplication();
+$sc2App = new ShowcaseApplication(new FakeDialog());
 $sc2Surface = new SurfaceProbe();
 $sc2Surface->resize(1920, 1017, 1.0);
 $sc2Constraints = BoxConstraints::loose(new Size(1920.0, 1017.0));

@@ -35,11 +35,12 @@ use function drift_win_pump;
  *   ② **把桥的命名事件翻译成框架的类型**（`pump()` 里的那张 switch）。
  *   其余一律转发 —— 平台层不该有策略。
  *
- * ★ **两个壳服务返回 `null`**（`dialog()` / `tray()`）：
- *   §5.1 纪律 2 把"不支持"设计成**类型层面**的合法状态。返回 `null` 与
- *   "实现了但什么都不做"的区别是：前者调用方必须处理，后者会被当成能用的服务
- *   静默吞掉。★ **`clipboard()` 2026-10-21 起不再是其中之一** —— 第一个消费者
- *   （`Application` 的 `Ctrl+C/V/X`，§9.1 第 ③ 环）已落地，见 `Win32Clipboard`。
+ * ★ **`dialog()` 2026-10-30 起也不是其中之一**（A5-①）：`Win32Dialog` 落地，
+ *   四个方法全部走原生模态（`GetOpenFileNameW` / `MessageBoxW`）。理由同剪贴板
+ *   —— 端口已经有**真实消费者**（示例台「对话框」页），而"实现了但没人用"与
+ *   "返回 null"一样没用。<br>
+ *   ★ **`tray()` 仍是 `null`**（A5-③ 未做）：`Tray` 端口今天一个消费者都没有，
+ *   先实现等于让"支持"变成一句无法验证的话。
  *
  * ★ `fatalBox()` 走桥的 `MessageBoxW`，**不依赖渲染栈** —— 渲染栈本身可能正是
  *   崩掉的那一环（§1.2）。组合根在 `attach()` 之前就把它装进 `Errors`：
@@ -58,6 +59,8 @@ final class Win32Platform implements Platform
     private ?Win32TimerHost $timers = null;
 
     private ?Win32Clipboard $clipboard = null;
+
+    private ?Win32Dialog $dialog = null;
 
     /** @var array<int, Win32SurfaceProvider> 按窗口句柄缓存（同一窗口只造一个表面） */
     private array $surfaces = [];
@@ -114,7 +117,24 @@ final class Win32Platform implements Platform
 
     public function dialog(): ?Dialog
     {
-        return null;   // M2+
+        if ($this->dialog !== null) {
+            return $this->dialog;
+        }
+
+        // ★ 传**窗口对象**而不是它的句柄：句柄在建窗之前是 `null`，而 owner 必须
+        //   **每次现取**（理由见 `Win32Dialog` 的类注释）。
+        // ★ 这里直接 new 具体类再塞字段，而不是 `new Win32Dialog($this->window())`：
+        //   `window()` 的返回类型是接口 `WindowHost`，而 AOT 对这种"接口值喂进
+        //   类类型形参"不做静态判断 —— 别让它有机会在运行期才失败。
+        $window = $this->window;
+        if ($window === null) {
+            $window = new Win32WindowHost();
+            $this->window = $window;
+        }
+
+        $this->dialog = new Win32Dialog($window);
+
+        return $this->dialog;
     }
 
     public function tray(): ?Tray

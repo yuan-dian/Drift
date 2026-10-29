@@ -6,6 +6,7 @@ namespace App\Showcase;
 use Drift\App\Application;
 use Drift\Commands\CommandHandler;
 use Drift\Platform\Clipboard;
+use Drift\Platform\Dialog;
 use Drift\Widget\Modal;
 use Drift\Widget\Snackbar;
 use Drift\Widget\Widget;
@@ -44,19 +45,28 @@ final class ShowcaseApplication extends Application
      *     ⇒ 这条只有真机能证伪（"smoke 全绿 ≠ 真机正确"的又一例）。
      *   闸门：`tools/Lint/Rules/AppSubclassCtorParent.php`（I2 同期加，判据写死）。
      */
-    public function __construct(private ?Clipboard $clipboard = null)
+    public function __construct(private Dialog $dialog, private ?Clipboard $clipboard = null)
     {
         parent::__construct();
     }
 
     public function buildRoot(): Widget
     {
-
         // ★ **应用侧接线**（§4.3 禁 `Widget → App`，`Menu::onOpen` 同款）：
         //   浮层归 `Application` 管，而页面在 `Drift\Widget` 层够不到它 ⇒ 由这里
         //   （唯一持有 `$this` 的地方）把"弹一条通知"这个能力递下去。
         //   ★ 2026-10-23 之前示例台写的是 `$this->application()->showSnackbar()`，
         //     那个方法**不存在** ⇒ 真机点一下进程直接崩、而 smoke 全绿。
+        //
+        // ★ **对话框端口（A5-①）不走闭包**：它不是"做一件事"，是一个有四种返回
+        //   语义的服务（`?string` × 2 / `void` / `bool`）。包成闭包只会让调用点
+        //   看不出返回值是什么。`Drift\Platform\Dialog` 是**端口接口**（`@api
+        //   platform`），不是平台类 —— §4.3 的边界不变。
+        //
+        // ★ 它排在构造器**第一个且必填**（`?Clipboard` 之后就不行了：tpc 不许
+        //   可选参数排在必选之前）：这一页是 `Dialog` 端口唯一的消费者，缺端口
+        //   等于那个能力没接上 ⇒ 让组合根当场失败，而不是让按钮点了没反应。
+        //   多出来的好处是不必把 `?Dialog` 收窄成 `Dialog`（AOT 收窄会读成 Var）。
         return ShowcaseRoot::make(
             function (Snackbar $snackbar): void {
                 $this->showSnackbar($snackbar);
@@ -75,6 +85,7 @@ final class ShowcaseApplication extends Application
             function (Modal $modal): void {
                 $this->showModal($modal);
             },
+            $this->dialog,
         );
     }
 

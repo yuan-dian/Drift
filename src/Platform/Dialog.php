@@ -15,7 +15,14 @@ namespace Drift\Platform;
  *   （保存吗 / 覆盖吗），走 `Errors` 之外的路径；后者是**框架**在崩之前的最后一句，
  *   不走渲染栈。两者都用 `MessageBoxW`，但**语义不同、调用方不同**，不合并。
  *
- * ⏳ **M1 不实现**：`Win32Platform::dialog()` 返回 `null`。
+ * ⏳ **2026-10-30 起 Win32 已实现**（`Win32Dialog`，A5-①）：四个方法全部走原生
+ *   模态（`GetOpenFileNameW` / `GetSaveFileNameW` / `MessageBoxW`）。
+ *
+ * ★ **本端口表达不了"失败了"**：`openFile` / `saveFile` 只有"取消 / 拿到路径"
+ *   两态，而 `CommDlgExtendedError()` 非 0 是**真失败**（内存不足 / 参数非法）。
+ *   取舍是把真失败交给壳自己弹框喊出来（`cpp-src/drift_win32.cc` 的
+ *   `runFileDialog`），而不是新增第三种返回值 —— 今天没有调用方会为它写
+ *   不同的分支，"多一态"只会变成"多一个永远不走的 if"。
  *
  * @api platform
  */

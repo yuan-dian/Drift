@@ -85,7 +85,12 @@ final class Bootstrap
         //   ⇒ `Application::clipboard()` 默认 null；示例台是 `Ctrl+C/X/V`
         //   （§9.1 让位规则 ② 的编辑命令环）的第一个真实消费者。
         //   ★ 递的是**端口**不是平台实例 —— Win32 实现仍只出现在本文件。
-        $app = new ShowcaseApplication($platform->clipboard());
+        // ★ 对话框端口同理（2026-10-30，A5-①）：`Dialog` 的消费者是「对话框」
+        //   示例页，而页面够不到 `Application`（§4.3）⇒ 端口从本文件经
+        //   `ShowcaseApplication` 递到 `ShowcaseRoot`。
+        //   ★ 它排在第一个：`?Clipboard` 之后不能再接必选参数（tpc：可选参数
+        //     不许排在必选之前）。
+        $app = new ShowcaseApplication($platform->dialog(), $platform->clipboard());
         $app->attach($surface, $screen->viewport());
 
         // ★ 最小窗口尺寸（§5.4）：挡住"拖到比内容更小"——那种状态会踩 C5/C6

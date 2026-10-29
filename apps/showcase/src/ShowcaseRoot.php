@@ -5,6 +5,7 @@ namespace App\Showcase;
 
 use Drift\Rendering\Color;
 use Drift\Rendering\ColorToken;
+use Drift\Platform\Dialog;
 use Drift\Widget\Text;
 use Drift\Theme\ThemeData;
 use Drift\Theme\ThemeScope;
@@ -34,6 +35,7 @@ use App\Showcase\Pages\TablePage;
 use App\Showcase\Pages\ButtonsPage;
 use App\Showcase\Pages\ComboBoxPage;
 use App\Showcase\Pages\CustomPaintPage;
+use App\Showcase\Pages\DialogPage;
 use App\Showcase\Pages\FeedbackPage;
 use App\Showcase\Pages\FormPage;
 use App\Showcase\Pages\GlassPage;
@@ -85,8 +87,14 @@ final class ShowcaseRoot extends StatefulWidget
      * @param \Closure(Modal): void $showModal 「开一个模态」—— 由组合根接线。
      *        Feedback 页的模态对话框演示用（2026-10-25 随 `Modal` 关闭按钮补：
      *        没有它示例台没有任何一处 `Modal::make()`，新机制真机不可见）。
+     * @param Dialog $dialog 原生对话框端口（A5-①）—— 组合根从 `$platform->dialog()`
+     *        取来直接递进来。★ 这里是**接口**不是平台类：平台名仍然只在组合根。
+     *        ★ 为什么不走闭包（`\Closure` 那一族）：它不是"做一件事"，是**一个
+     *        有四种返回语义的服务**；包成闭包只会让调用点看不出返回值是什么。
+     *        ★ 形参不可空（`?Dialog` 在 AOT 侧退化 `php::Var`）⇒ 没有对话框端口的
+     *        平台上这一页根本不会被建出来，那是组合根的判断，不是页面的。
      *
-     * ★ 为什么是**闭包**而不是 `Application`：`Widget` 层不该认识 `Drift\App`
+     * ★ 为什么前三个是**闭包**而不是 `Application`：`Widget` 层不该认识 `Drift\App`
      *   （§4.3），而且页面只该拿到"我能做什么"，不是"整个应用"。
      * ★ 为什么**不可空**：可选对象在 AOT 侧会退化 `php::Var`（同 `?float` 用
      *   `NAN` 那条纪律）⇒ 一律由组合根给一个真的。
@@ -95,6 +103,7 @@ final class ShowcaseRoot extends StatefulWidget
         private \Closure $notify,
         private \Closure $delay,
         private \Closure $showModal,
+        private Dialog $dialog,
     ) {
         parent::__construct();
     }
@@ -108,13 +117,14 @@ final class ShowcaseRoot extends StatefulWidget
         \Closure $notify,
         \Closure $delay,
         \Closure $showModal,
+        Dialog $dialog,
     ): self {
-        return new self($notify, $delay, $showModal);
+        return new self($notify, $delay, $showModal, $dialog);
     }
 
     public function createState(): State
     {
-        return new ShowcaseState($this->notify, $this->delay, $this->showModal);
+        return new ShowcaseState($this->notify, $this->delay, $this->showModal, $this->dialog);
     }
 }
 
@@ -148,6 +158,7 @@ final class ShowcaseState extends State
         private \Closure $notify,
         private \Closure $delay,
         private \Closure $showModal,
+        private Dialog $dialog,
     ) {
     }
 
@@ -193,6 +204,7 @@ final class ShowcaseState extends State
             // ★ 同上：变换页追加在最末（前 27 项 y 不变）。
             new NavEntry(IconName::Square, '变换 Transform', static fn(): Widget => new TransformPage()),
             new NavEntry(IconName::Square, '对齐 Align', static fn(): Widget => new AlignPage()),
+            new NavEntry(IconName::Info, '对话框 Dialog', fn(): Widget => new DialogPage($this->dialog)),
         ];
     }
 

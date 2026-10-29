@@ -375,3 +375,38 @@ function drift_win_clipboard_write_text(string $text): void {}
 
 /** 剪贴板上有没有纯文本 —— 让"粘贴"能先判可用性再改状态 */
 function drift_win_clipboard_has_text(): bool {}
+
+// ---- 原生对话框（§5.1 壳服务，A5-①；`Drift\Platform\Dialog` 的 Win32 实现） ----
+//
+// ★★ **这批函数一律阻塞**（`GetOpenFileNameW` / `MessageBoxW` 都是模态）：模态期间
+//   系统跑自己的内层消息循环，PHP 侧**看不到一帧**（`Application::frame()` 不被调用）。
+//   这是原生对话框的固有语义，不是缺陷 —— 但也意味着**不能在动画/滚动的回调里调**。
+// ★ **`$owner` 是主窗口句柄**（`0` = 没有主窗口）：没有 owner 的模态框会跑到别的
+//   程序后面去（`MB_TASKMODAL` 只挡住**本进程**的窗口，挡不住 z 序）。
+
+/**
+ * 选一个**已有**文件；用户取消 ⇒ 空串。`$owner` 见本节头注。
+ *
+ * `$filters` 是 `Win32Dialog::filterText()` 的产物：`显示名\t通配符` 每行一条，
+ * 行间 `\n`。**分隔符是 `\t` / `\n` 而不是 NUL**：NUL 穿过 ABI 之后在调试器里
+ * 全是一样的点，看不出来；而双 NUL 结尾是 `OPENFILENAMEW` 要的**最终形态**，
+ * 由 C 侧按行拼出来（一次转换，PHP 侧不持有 Win32 编码细节）。
+ *
+ * ★ 空串 = **取消**。`CommDlgExtendedError()` 非 0 才是真失败，而端口
+ *   （`Dialog::openFile(): ?string`）只能表达"取消 / 成功"两态 ⇒ 真失败由壳
+ *   自己弹 MessageBox 喊出来，**不静默当成取消**（§1.2 的响亮失败）。
+ */
+function drift_win_open_file(int $owner, string $title, string $filters, string $defaultName): string {}
+
+/** 选一个**保存**位置；取消 ⇒ 空串。`$defaultName` 只填文件名，不带目录 */
+function drift_win_save_file(int $owner, string $title, string $filters, string $defaultName): string {}
+
+/** 只有一个"确定"的提示框（阻塞到用户点掉） */
+function drift_win_alert(int $owner, string $title, string $body): void {}
+
+/**
+ * 是 / 否（阻塞）；用户关框 ⇒ `false`。
+ *
+ * ★ 默认按钮是**"否"**（`MB_DEFBUTTON2`）：破坏性动作的默认不能是"执行"。
+ */
+function drift_win_confirm(int $owner, string $title, string $body): bool {}

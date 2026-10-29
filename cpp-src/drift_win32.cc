@@ -24,6 +24,7 @@
 #include <windows.h>
 #include <imm.h>
 #include <windowsx.h>   // GET_X_LPARAM / GET_Y_LPARAM（在 windowsx.h，不在 windows.h）
+#include <commdlg.h>    // OPENFILENAMEW / GetOpenFileNameW（A5-① 文件对话框）
 #include <ShlObj.h>     // SHGetKnownFolderPath —— 用户配置目录（§5.4）
 #include <KnownFolders.h>
 #include <objbase.h>             // IUnknown —— UIAutomationCore.h 接口的基类
@@ -36,6 +37,7 @@
 #pragma comment(lib, "ole32.lib")             // COM（IUnknown 基类）
 #pragma comment(lib, "uuid.lib")              // __uuidof(IRawElementProviderSimple / IUnknown)
 #pragma comment(lib, "dwmapi.lib")             // DwmSetWindowAttribute（P1 圆角/背景）
+#pragma comment(lib, "comdlg32.lib")           // GetOpenFileNameW / GetSaveFileNameW（A5-①）
 
 // ★ Win11 DWM 常量兜底：旧 SDK 的 `dwmapi.h` 没有这两个成员。值取自
 //   `DWMWINDOWATTRIBUTE` / `DWM_WINDOW_CORNER_PREFERENCE` 的真实枚举值 ——
@@ -3024,4 +3026,140 @@ Bool php_drift_win_clipboard_has_text() {
     bool has = IsClipboardFormatAvailable(CF_UNICODETEXT) != FALSE;
     CloseClipboard();
     return Bool(has);
+}
+
+// ═══════════════════════════════ 原生对话框（§5.1 壳服务 / A5-①）══
+// `Drift\Platform\Dialog` 的 Win32 实现。四件事：选已有文件 / 选保存位置 /
+// 单键提示 / 是-否确认。
+//
+// ★★ **四个函数全是模态**（`GetOpenFileNameW` / `MessageBoxW`）：模态期间系统跑
+//   自己的内层消息循环，PHP 侧**一帧都跑不到**。这是原生对话框的固有语义，
+//   不是缺陷；但调用点不能在动画/滚动的回调里。
+// ★ 位置纪律同剪贴板那段：必须在全局作用域（任何函数体的收尾 `}` 之后）。
+//   插进函数体内部 ⇒ C2601，而 PHP 侧 smoke 一点都看不出来（2026-10-21 实测）。
+// ★ 这里**没有中文字符串字面量**：本文件不声明 `/utf-8`，MSVC 按系统码页读源码，
+//   中文字面量会变成乱码。所有给用户看的文案都从 PHP 传来（UTF-8 → `toWide`）。
+
+/**
+ * `显示名\t通配符`（行间 `\n`）→ `OPENFILENAMEW::lpstrFilter` 要的
+ * **双 NUL 结尾**宽字符表：`名\0通配符\0名\0通配符\0\0`。
+ *
+ * ★ 为什么不在 PHP 侧直接拼双 NUL：NUL 穿过 ABI 之后在调试器里全是一样的点，
+ *   出了错看不出来；而 `\t` / `\n` 是**可读、可单测**的中间形态
+ *   （`Win32Dialog::filterText()` 有断言），一次转换留在这里。
+ */
+static std::vector<wchar_t> buildFilterWide(const String &filters) {
+    std::vector<wchar_t> out;
+    std::string raw(filters.data(), filters.length());
+
+    size_t start = 0;
+    while (start < raw.size()) {
+        size_t end = raw.find('\n', start);
+        if (end == std::string::npos) {
+            end = raw.size();
+        }
+
+        std::string line = raw.substr(start, end - start);
+        if (!line.empty() && line[line.size() - 1] == '\r') {
+            line.erase(line.size() - 1);   // 容忍 CRLF：调用方用 heredoc 拼也不会坏
+        }
+
+        if (!line.empty()) {
+            size_t tab = line.find('\t');
+            std::string label = tab == std::string::npos ? line : line.substr(0, tab);
+            std::string pattern = tab == std::string::npos ? std::string() : line.substr(tab + 1);
+
+            std::wstring wideLabel = toWide(String(label));
+            std::wstring widePattern = toWide(String(pattern));
+            out.insert(out.end(), wideLabel.begin(), wideLabel.end());
+            out.push_back(L'\0');
+            out.insert(out.end(), widePattern.begin(), widePattern.end());
+            out.push_back(L'\0');
+        }
+
+        if (end == raw.size()) {
+            break;
+        }
+        start = end + 1;
+    }
+
+    if (out.empty()) {
+        return out;   // 空表 ⇒ 调用方给 NULL（PHP 侧保证至少一行，这里是防御）
+    }
+
+    out.push_back(L'\0');   // 双 NUL 的第二个
+    return out;
+}
+
+/** 打开 / 保存 的公共部分：取消与真失败在这里分开处理，成功返回 UTF-8 路径 */
+static std::string runFileDialog(Int owner, const String &title, const String &filters,
+                                 const String &defaultName, bool save) {
+    std::vector<wchar_t> filterWide = buildFilterWide(filters);
+
+    // ★ `nMaxFile` 是**字符数**不是字节数；32K 宽字符 ≈ 14K 个汉字路径，够。
+    std::vector<wchar_t> fileBuf(32768, 0);
+    std::wstring seed = toWide(defaultName);
+    if (!seed.empty() && seed.size() < fileBuf.size()) {
+        std::copy(seed.begin(), seed.end(), fileBuf.begin());
+    }
+
+    std::wstring titleWide = toWide(title);
+
+    OPENFILENAMEW ofn;
+    ZeroMemory(&ofn, sizeof(ofn));
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = (HWND)(INT_PTR)owner;
+    ofn.lpstrFilter = filterWide.empty() ? NULL : filterWide.data();
+    ofn.lpstrFile = fileBuf.data();
+    ofn.nMaxFile = (DWORD)fileBuf.size();
+    ofn.lpstrTitle = titleWide.empty() ? NULL : titleWide.c_str();
+    // ★ `OFN_PATHMUSTEXIST`：路径打错时对话框自己拦住，不把无效路径递回上层。
+    // ★ `OFN_NOCHANGEDIR`：**不许改进程的工作目录** —— 应用侧有相对路径
+    //   （`getcwd()` 那条纪律），读文件之后 cwd 变了会让后面每次读写都错位。
+    ofn.Flags = OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    ofn.Flags |= save ? OFN_OVERWRITEPROMPT : OFN_FILEMUSTEXIST;
+
+    BOOL ok = save ? GetSaveFileNameW(&ofn) : GetOpenFileNameW(&ofn);
+    if (!ok) {
+        DWORD code = CommDlgExtendedError();
+        if (code != 0) {
+            // 端口（`Dialog::openFile(): ?string`）只有"取消 / 成功"两态 ⇒
+            // 真失败**不能**装作用户点了取消：壳自己喊出来（§1.2 响亮失败）。
+            wchar_t message[128];
+            swprintf_s(message, L"file dialog failed: 0x%08lX", (unsigned long)code);
+            MessageBoxW((HWND)(INT_PTR)owner, message, L"Drift",
+                        MB_OK | MB_ICONERROR | MB_TASKMODAL | MB_SETFOREGROUND);
+        }
+        return std::string();
+    }
+
+    return toUtf8(fileBuf.data(), (int)wcslen(fileBuf.data()));
+}
+
+String php_drift_win_open_file(Int owner, String title, String filters, String defaultName) {
+    std::string path = runFileDialog(owner, title, filters, defaultName, false);
+    return String(path.c_str());
+}
+
+String php_drift_win_save_file(Int owner, String title, String filters, String defaultName) {
+    std::string path = runFileDialog(owner, title, filters, defaultName, true);
+    return String(path.c_str());
+}
+
+void php_drift_win_alert(Int owner, String title, String body) {
+    std::wstring wideTitle = toWide(title);
+    std::wstring wideBody = toWide(body);
+    MessageBoxW((HWND)(INT_PTR)owner, wideBody.c_str(), wideTitle.c_str(),
+                MB_OK | MB_ICONINFORMATION | MB_TASKMODAL | MB_SETFOREGROUND);
+}
+
+Bool php_drift_win_confirm(Int owner, String title, String body) {
+    std::wstring wideTitle = toWide(title);
+    std::wstring wideBody = toWide(body);
+    // ★ `MB_DEFBUTTON2`：默认焦点在"否"。破坏性动作的默认不能是"执行"
+    //   （`Dialog::confirm()` 的契约：关掉窗口 ⇒ false）。
+    int result = MessageBoxW((HWND)(INT_PTR)owner, wideBody.c_str(), wideTitle.c_str(),
+                             MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2
+                                 | MB_TASKMODAL | MB_SETFOREGROUND);
+    return Bool(result == IDYES);
 }
