@@ -48,6 +48,61 @@ function drift_skia_push_clip(int $canvas, float $x, float $y, float $w, float $
 
 function drift_skia_pop_clip(int $canvas): void {}
 
+/*
+ * ════════════════ 变换（A1c，2026-10-29：上面的裁决被推翻）════════════════
+ *
+ * **原来写的是**「`save` / `restore` / `translate` 不在本 ABI 里，是有意的：
+ * 变换与量化由 PHP 侧算」。那条对**平移**成立且继续成立（`SkiaCanvas::translate()`
+ * 一行没动，仍是 PHP 累加偏移）。但它对**仿射**不成立，理由不是"图省事"：
+ *
+ *   `SkiaCanvas` 画的每一笔都是"PHP 算好设备坐标 → 桥按下发坐标画"。矩形、椭圆、
+ *   线段、路径都能在 PHP 侧变换（自己乘矩阵即可），**唯独文字不行** ——
+ *   `drift_skia_draw_paragraph` 只收 `(x, y)`，字号与字形位图在 C++ 侧决定。
+ *   若坚持"变换全在 PHP"，`Transform` 就只能平移文字、不能旋转缩放文字，
+ *   也就是"卡片能转、卡片上的字不转"。那不是实现取舍，那是功能不存在。
+ *
+ * 所以：**真变换下推到 Skia 的 CTM**，纯平移仍走 PHP 偏移快路。
+ * 坐标口径随之分两段（`SkiaCanvas` 里写在 `$devMode` 上）：
+ *   - `$devMode = false`（默认）：桥收到设备坐标，与原来逐字节一致；
+ *   - `$devMode = true`：进模式时把已累加的偏移 `save + translate` 下推、归零，
+ *     之后桥收到的是**逻辑坐标 × dpr**，由 CTM 完成剩下的变换。
+ * 两段之间**不混用** —— 混用就是"先取整再变换"与"先变换再取整"的半个像素账，
+ * 那条对平移的担心仍然有效，所以切换点只有一个（`enterDeviceMode()`）。
+ *
+ * `save` / `restore` 下推是**必须**的：CTM 是 Skia 保存栈的一部分，PHP 侧
+ * `restore()` 不弹它 ⇒ 后续所有绘制都带着上一个盒的旋转。
+ */
+
+/** 压入 Skia 保存栈（与 `drift_skia_restore` 配对）。只给 `SkiaCanvas` 的变换模式用 */
+function drift_skia_save(int $canvas): void {}
+
+function drift_skia_restore(int $canvas): void {}
+
+/**
+ * 追加平移（**物理像素**）。
+ *
+ * ★ 只在 `enterDeviceMode()` 里用一次：把 PHP 侧已累加的逻辑偏移换成设备偏移下推。
+ *   常规平移不走这里（那是零成本快路）。
+ */
+function drift_skia_translate(int $canvas, float $dx, float $dy): void {}
+
+/**
+ * 追加仿射变换（`concat`：`CTM' = CTM · M`）。
+ *
+ * 参数是 2×3 矩阵 `[a b c d tx ty]`，语义 `x' = a·x + c·y + tx`、`y' = b·x + d·y + ty`。
+ * ★ `tx/ty` 已是**物理像素**（PHP 侧乘过 dpr），其余四个无量纲。
+ * ★ 不在这里做 save：撤销靠调用方配对的 `save` / `restore`。
+ */
+function drift_skia_concat(
+    int $canvas,
+    float $a,
+    float $b,
+    float $c,
+    float $d,
+    float $tx,
+    float $ty,
+): void {}
+
 /**
  * 画一个轴对齐矩形（物理像素）。
  *

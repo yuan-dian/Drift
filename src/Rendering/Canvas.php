@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Rendering;
 
+use Drift\Geometry\Matrix2D;
 use Drift\Geometry\Rect;
 use Drift\Text\Paragraph;
 
@@ -42,6 +43,30 @@ interface Canvas
     public function restore(): void;
 
     public function translate(float $dx, float $dy): void;
+
+    /**
+     * 追加一个**仿射变换**（作用于后续绘制），与 `translate()` 叠加。
+     *
+     * ★ 语义与 Skia 的 `concat` 完全一致：`CTM' = CTM · matrix`。
+     *   **后调用的变换作用在几何上更内层** —— `transform(R); translate(dx, dy)`
+     *   是"先平移再旋转"，`translate(dx, dy); transform(R)` 是"先旋转再平移"。
+     *   这与 `Matrix2D::then()` 的链式读法**不是**一回事（那个是 `a` 先 `b` 后），
+     *   两种写法各有各的用途：盒内布局用 `transform()`（照抄 Skia 心智），
+     *   算"绕中心旋转"这类复合用 `Matrix2D`（一次算完再交出去）。
+     *
+     * ★★ **纯平移的矩阵走 `translate()` 那条老路**（各实现负责 `isTranslationOnly()`
+     *   的短路）：那条路是"PHP 侧累加偏移"，零成本、golden 一个字节都不动。
+     *   只有真变换（缩放/旋转/斜切）才切换坐标模式 —— 这是本能力**不破坏**既有
+     *   像素基线的前提。
+     *
+     * ★ **必须与 `save()` / `restore()` 配对**才可撤销；不配对会让后续所有绘制
+     *   都带着这个变换（W8 只查深度，查不出"忘了撤销"）。
+     *
+     * ★ 退化矩阵（行列式为 0）**不报错**：视觉上就是把内容压成线/点，Skia 与
+     *   软光栅都按同一个退化结果画。命中测试另有一套判据（`Matrix2D::inverted()`
+     *   返回 `null` ⇒ 点不中）。
+     */
+    public function transform(Matrix2D $matrix): void;
 
     /**
      * 压入裁剪矩形（与当前裁剪求交）。与 `popClip()` 必须配对。

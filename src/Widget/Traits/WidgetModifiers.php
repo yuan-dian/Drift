@@ -5,6 +5,7 @@ namespace Drift\Widget\Traits;
 
 use Drift\Errors;
 use Drift\Geometry\EdgeInsets;
+use Drift\Geometry\Matrix2D;
 use Drift\Rendering\Color;
 use Drift\Rendering\Gradient;
 use Drift\Rendering\Modifier;
@@ -503,5 +504,58 @@ trait WidgetModifiers
         $this->mods = $this->mods->withAlign($align);
 
         return $this;
+    }
+
+    /**
+     * 绘制期**仿射变换**（A1c）：不参与布局，只改画出来的样子。
+     *
+     * ```php
+     * Card::make($content)->rotate(3.0);                 // 轻微倾斜（绕中心）
+     * Image::make(...)->scale(1.08);                     // hover 放大（绕中心）
+     * Banner::make(...)->transform(Matrix2D::rotation(90.0));
+     * ```
+     *
+     * ★ **不影响布局**：子照原约束布局，盒尺寸不变 ⇒ 放大后视觉会溢出到邻居身上
+     *   （标准语义，与 Flutter 的 `Transform` 一致）。要"占位也跟着变"，就改尺寸
+     *   而不是改变换。
+     * ★ **命中测试跟着变换**（`RenderBox::hitTest()` 反变换）：点在变换后的可见
+     *   位置才命中，点在原位不命中。这一条由 `TransformHitTestTest` 双向钉住。
+     * ★ `$aroundCenter` 为真 ⇒ 以**盒中心**为原点（`rotate()` / `scale()` 走这条）。
+     *
+     * @api
+     */
+    public function transform(Matrix2D $matrix, bool $aroundCenter = false): static
+    {
+        $this->mutate();
+        $this->mods = $this->mods->withTransform($matrix, $aroundCenter);
+
+        return $this;
+    }
+
+    /**
+     * 绕**盒中心**旋转 `$degrees` 度（顺时针为正，与 Skia / CSS 同向）。
+     *
+     * ★ 绕中心是 UI 里 99% 的用法（"图标歪一点"、"卡片掀一下"）。绕左上角那种
+     *   需要自己拼矩阵：`->transform(Matrix2D::rotation(3.0))`。
+     *
+     * @api
+     */
+    public function rotate(float $degrees): static
+    {
+        return $this->transform(Matrix2D::rotation($degrees), true);
+    }
+
+    /**
+     * 绕**盒中心**等比缩放（1.0 = 不变；`-1` 之类负值会镜像，不拦）。
+     *
+     * ★ 非等比缩放走 `->transform(Matrix2D::scaling(sx, sy), true)`：两个参数
+     *   版本会让 `WidgetModifiers` 多一个"第二参默认等于第一参"的可空分支，
+     *   而 AOT 下可空 float 形参会退化成 Variant（`MEMORY.md` 的 AOT 纪律）。
+     *
+     * @api
+     */
+    public function scale(float $factor): static
+    {
+        return $this->transform(Matrix2D::scaling($factor, $factor), true);
     }
 }

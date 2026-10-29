@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Rendering;
 
+use Drift\Geometry\Matrix2D;
 use Drift\Geometry\Rect;
 use Drift\Text\Paragraph;
 
@@ -67,6 +68,22 @@ final class RecordingCanvas implements Canvas
     public function translate(float $dx, float $dy): void
     {
         $this->list->record(DisplayList::OP_TRANSLATE, $dx, $dy);
+    }
+
+    /**
+     * ★ 纯平移**降级成 `OP_TRANSLATE`**：三个后端对那条 op 都有"累加偏移"的
+     *   快速路，而 `OP_TRANSFORM` 会让回放端切到坐标模式。录制侧就分好流，
+     *   回放侧与后端都不用再判一次。
+     */
+    public function transform(Matrix2D $matrix): void
+    {
+        if ($matrix->isTranslationOnly()) {
+            $this->list->record(DisplayList::OP_TRANSLATE, $matrix->tx, $matrix->ty);
+
+            return;
+        }
+
+        $this->list->record(DisplayList::OP_TRANSFORM, $matrix);
     }
 
     public function pushClip(Rect $rect): void

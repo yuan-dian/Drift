@@ -40,6 +40,16 @@ final class DisplayList
     public const OP_LAYER_POP = 14;    // []                                Optional
     public const OP_PUSH_CLIP_PATH = 15; // [path]                          Extended
     public const OP_BLUR_BACKDROP = 16;  // [sigma, rect]                   Extended
+    /**
+     * 仿射变换：`[matrix]` —— 整个 `Matrix2D` 走**引用槽**，不拆成 6 个 float。
+     *
+     * ★ 不拆的理由：`SLOTS = 6` 只有 5 个操作数槽，6 个数放不下；扩槽会让**所有**
+     *   命令每条多两个槽（`estimatedBytes` 同步涨）。而 `Rect` / `Path` / `Paint`
+     *   本来就是"对象进槽"，矩阵与它们同类；`Matrix2D` 不可变，重放期不会被改。
+     * ★ 与 `OP_TRANSLATE` 并存：纯平移仍录 `OP_TRANSLATE`（三个后端都有快速路），
+     *   `OP_TRANSFORM` 只承载真变换。
+     */
+    public const OP_TRANSFORM = 17;    // [matrix]                         Extended
 
     /**
      * 每条命令占的槽位数：`[op, a, b, c, d, ref]`。
@@ -243,6 +253,8 @@ final class DisplayList
                     (float) $this->buffer[$base + 1],
                     $this->buffer[$base + 2],
                 );
+            } elseif ($op === self::OP_TRANSFORM) {
+                $canvas->transform($this->buffer[$base + 1]);
             }
         }
     }

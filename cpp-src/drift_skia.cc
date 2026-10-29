@@ -347,6 +347,65 @@ void php_drift_skia_pop_clip(Int canvas) {
     }
 }
 
+// ════════════════════════════════════════════════════════════ 变换（A1c）══
+//
+// ★ 为什么这里需要 save/restore/concat（推翻"变换全在 PHP 侧"的老裁决）：
+//   见 `drift_skia.stub.php` 的对应段落 —— 一句话，**文字的变换只能靠 CTM**，
+//   `draw_paragraph` 只收 (x, y)，字号与字形位图在 C++ 侧决定。
+
+void php_drift_skia_save(Int canvas) {
+    SkCanvas *c = canvasFor(canvas);
+    if (c != NULL) {
+        c->save();
+    }
+}
+
+void php_drift_skia_restore(Int canvas) {
+    SkCanvas *c = canvasFor(canvas);
+    if (c != NULL) {
+        c->restore();
+    }
+}
+
+void php_drift_skia_translate(Int canvas, Float dx, Float dy) {
+    SkCanvas *c = canvasFor(canvas);
+    if (c != NULL) {
+        c->translate((SkScalar)dx, (SkScalar)dy);
+    }
+}
+
+// ★ 形参不叫 a/b/c/d：`c` 会与局部的 SkCanvas* 撞名（C2129 那类"重定义"很难看懂）。
+// ★ `setAll` 的行优先参数序是 [scaleX skewX transX / skewY scaleY transY / persp]，
+//   与本项目的 `x' = a·x + c·y + tx` 对应关系是 skewX=c、skewY=b —— 写反了画出来是
+//   "转反了"，而数值上每个分量都"看起来对"。
+void php_drift_skia_concat(
+    Int canvas,
+    Float ma,
+    Float mb,
+    Float mc,
+    Float md,
+    Float mtx,
+    Float mty
+) {
+    SkCanvas *cv = canvasFor(canvas);
+    if (cv == NULL) {
+        return;
+    }
+    SkMatrix m;
+    m.setAll(
+        (SkScalar)ma,
+        (SkScalar)mc,
+        (SkScalar)mtx,
+        (SkScalar)mb,
+        (SkScalar)md,
+        (SkScalar)mty,
+        0,
+        0,
+        SK_Scalar1
+    );
+    cv->concat(m);
+}
+
 // ════════════════════════════════════════════════════════════════ 绘制 ══
 
 void php_drift_skia_draw_rect(

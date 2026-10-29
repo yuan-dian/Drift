@@ -6,6 +6,7 @@ namespace Drift\Rendering;
 use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\EdgeInsets;
+use Drift\Geometry\Matrix2D;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Size;
 
@@ -188,6 +189,19 @@ final class Modifier
     public const INSET_RIGHT = 2;
 
     public const INSET_BOTTOM = 3;
+
+    // ── 合成变换（A1c / 2026-10-29）────────────────────────────────
+    //
+    // ★ 这是**绘制期**的变换，与上面那族的"父意图"无关：不进布局、不改约束、
+    //   不改子盒尺寸。布局怎么算还是怎么算，只是画的时候整个子树被仿射一下。
+    //   ⇒ 视觉会溢出（放大 2 倍会盖到邻居），这是标准语义而不是缺陷。
+    //
+    // ★ `$transformCentered` 是"绕盒中心"的意图标记，不是另一份矩阵：盒尺寸
+    //   布局期才知道，矩阵只能在 `RenderBox::effectiveTransform()` 里现算
+    //   （`T(c) · M · T(-c)`）。放在这里的东西必须是**声明**，不能是算好的结果。
+    private ?Matrix2D $transform = null;
+
+    private bool $transformCentered = false;
 
     // ── 绘制裁剪（D_PAINT）──────────────────────────────────────────
     /**
@@ -626,7 +640,47 @@ final class Modifier
             && !$this->clip
             && !$this->repaintBoundary
             && !$this->disabled
-            && $this->dim;
+            && $this->dim
+            && $this->transform === null
+            && !$this->transformCentered;
+    }
+
+    // ── 读：合成变换（`Element::syncBox()` → `RenderBox::applyTransform()`）──
+
+    public function transform(): ?Matrix2D
+    {
+        return $this->transform;
+    }
+
+    /** 变换是否以**盒中心**为原点（`rotate()` / `scale()` 用） */
+    public function transformCentered(): bool
+    {
+        return $this->transformCentered;
+    }
+
+    /**
+     * 声明绘制期仿射变换。
+     *
+     * ★ `$aroundCenter` 为真时矩阵作用于**盒中心**（`rotate()` / `scale()` 走这条）：
+     *   真实矩阵要等布局完成才知道尺寸，所以这里只存"意图"，由
+     *   `RenderBox::effectiveTransform()` 现算 `T(c) · M · T(-c)`。
+     * ★ 传 `identity()` 等于不声明（`isDefault()` 仍然为真）—— 调用方不必自己判。
+     */
+    public function withTransform(Matrix2D $matrix, bool $aroundCenter = false): self
+    {
+        $c = clone $this;
+
+        if ($matrix->isIdentity()) {
+            $c->transform = null;
+            $c->transformCentered = false;
+
+            return $c;
+        }
+
+        $c->transform = $matrix;
+        $c->transformCentered = $aroundCenter;
+
+        return $c;
     }
 
     public function composeOpacity(): float

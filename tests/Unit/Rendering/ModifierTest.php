@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Dev\Tests\Unit\Rendering;
 
 use Drift\Dev\Tests\Support\SmokeTestCase;
+use Drift\Geometry\Matrix2D;
 use Drift\Layout\RenderBox;
 use Drift\Rendering\Color;
 use Drift\Rendering\Gradient;
@@ -80,6 +81,7 @@ final class ModifierTest extends SmokeTestCase
             // ★ 曾漏在 `isDefault()` 之外一整轮（S1 补上，见类注释）
             'withRepaintBoundary' => [static fn(): Modifier => (new Modifier())->withRepaintBoundary(true), false],
             'withInset' => [static fn(): Modifier => (new Modifier())->withInset(Modifier::INSET_LEFT, 8.0), false],
+            'withTransform' => [static fn(): Modifier => (new Modifier())->withTransform(Matrix2D::rotation(15.0)), false],
         ];
     }
 

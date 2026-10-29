@@ -50,6 +50,7 @@ use App\Showcase\Pages\SliderPage;
 use App\Showcase\Pages\SnackbarPage;
 use App\Showcase\Pages\TooltipPage;
 use App\Showcase\Pages\TextPage;
+use App\Showcase\Pages\TransformPage;
 use App\Showcase\Pages\TreePage;
 use App\Showcase\Pages\CalendarPage;
 use App\Showcase\Pages\DisabledPage;
@@ -188,6 +189,8 @@ final class ShowcaseState extends State
             new NavEntry(IconName::ChevronDown, '日期时间 Picker', static fn(): Widget => new PickerPage()),
             // ★ 同上：禁用态页追加在最末（前 26 项 y 不变；侧栏本身已包 ScrollView）。
             new NavEntry(IconName::Square, '禁用态 Disabled', static fn(): Widget => new DisabledPage()),
+            // ★ 同上：变换页追加在最末（前 27 项 y 不变）。
+            new NavEntry(IconName::Square, '变换 Transform', static fn(): Widget => new TransformPage()),
         ];
     }
 

@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Rendering;
 
 use Drift\Errors;
+use Drift\Geometry\Matrix2D;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Scale;
 use Drift\Text\GlyphBitmap;
@@ -33,10 +34,20 @@ final class RasterCanvas implements Canvas
     private string $pixels;
     private float $offsetX = 0.0;
     private float $offsetY = 0.0;
+
+    /**
+     * 当前仿射变换（局部 → 父局部）；`null` = 没有（绝大多数绘制走这条路）。
+     *
+     * ★ 与 `$offsetX/$offsetY` 的关系是**互斥的两段**，不是叠加：一旦有了矩阵，
+     *   后续的 `translate()` 会折进矩阵（`translated()`），偏移停在进入时的值并被
+     *   吸收进矩阵的平移分量。两段混用就是"先取整再变换"与"先变换再取整"的
+     *   半个像素账 —— 与 `SkiaCanvas` 的 `$devMode` 是同一条纪律。
+     */
+    private ?Matrix2D $transform = null;
     private Rect $clip;
     private readonly Scale $scale;
 
-    /** @var list<array{float, float}> 变换栈：只有偏移（裁剪独立成栈，与 SkiaCanvas 同口径） */
+    /** @var list<array{float, float, ?Matrix2D}> 变换栈：[offsetX, offsetY, transform]（裁剪独立成栈） */
     private array $stack = [];
 
     /**
@@ -170,7 +181,7 @@ final class RasterCanvas implements Canvas
 
     public function save(): void
     {
-        $this->stack[] = [$this->offsetX, $this->offsetY];
+        $this->stack[] = [$this->offsetX, $this->offsetY, $this->transform];
     }
 
     public function restore(): void
@@ -179,13 +190,80 @@ final class RasterCanvas implements Canvas
         if ($frame === null) {
             return; // 未配对的 restore 由 W8 在录制侧拦截，光栅侧静默忽略即可
         }
-        [$this->offsetX, $this->offsetY] = $frame;
+        $this->offsetX = $frame[0];
+        $this->offsetY = $frame[1];
+        $this->transform = $frame[2];
     }
 
     public function translate(float $dx, float $dy): void
     {
+        // ★ 已在矩阵模式 ⇒ 平移**折进矩阵**（`CTM · T`），不能动 offset：
+        //   offset 是"矩阵之后"的外层平移，混用会让 `rotate(90); translate(10,0)`
+        //   画成 `R(p) + (10,0)` 而不是 `R(p + (10,0))`。
+        if ($this->transform !== null) {
+            $this->transform = $this->transform->translated($dx, $dy);
+
+            return;
+        }
+
         $this->offsetX += $dx;
         $this->offsetY += $dy;
+    }
+
+    /**
+     * 追加仿射变换（`CTM' = CTM · m`）。
+     *
+     * ★ 纯平移且尚未进矩阵模式 ⇒ 并进 offset（老路，零额外成本）。
+     * ★ 进入矩阵模式时把**已累加的 offset 吸收**成矩阵的平移分量，
+     *   之后 offset 恒为 0 且不再变 —— 两段不混用。
+     */
+    public function transform(Matrix2D $matrix): void
+    {
+        // ★★ AOT：读另一个对象的属性是 `php::Var`，`Float += Var` 编译期 C2679
+        //   （解释器/phpunit 全绿，只有构建会红）⇒ 显式 `(float)` 落局部。
+        $tx = (float) $matrix->tx;
+        $ty = (float) $matrix->ty;
+
+        if ($this->transform === null) {
+            if ($matrix->isTranslationOnly()) {
+                $this->offsetX += $tx;
+                $this->offsetY += $ty;
+
+                return;
+            }
+
+            // CTM = T(offset) · m ⇒ 点 p 先被 m 变换、再平移 offset
+            $base = Matrix2D::translation($this->offsetX, $this->offsetY);
+            $this->transform = $matrix->then($base);
+            $this->offsetX = 0.0;
+            $this->offsetY = 0.0;
+
+            return;
+        }
+
+        // CTM' = CTM · m ⇒ 「先 m 再旧 CTM」
+        $this->transform = $matrix->then($this->transform);
+    }
+
+    /** 局部逻辑点 → 设备**浮点**坐标（未取整；取整仍然只在 `Scale` 那一处） */
+    private function deviceX(float $x, float $y): float
+    {
+        $t = $this->transform;
+        if ($t === null) {
+            return ($x + $this->offsetX) * $this->scale->dpr;
+        }
+
+        return $t->applyX($x, $y) * $this->scale->dpr;
+    }
+
+    private function deviceY(float $x, float $y): float
+    {
+        $t = $this->transform;
+        if ($t === null) {
+            return ($y + $this->offsetY) * $this->scale->dpr;
+        }
+
+        return $t->applyY($x, $y) * $this->scale->dpr;
     }
 
     public function pushClip(Rect $rect): void
@@ -245,8 +323,18 @@ final class RasterCanvas implements Canvas
         //   递下去的）。不加上当前偏移 ⇒ `Center` 算好的居中偏移画不出来，
         //   文字永远贴在左上角 —— 而 `drawRect` 走 `toDevice()` 是对的，于是
         //   "矩形跟着变换、文字不跟"这种半边错的状态最难发现。
-        $originX = $x + $this->offsetX;
-        $originY = $y + $this->offsetY;
+        // ★ 矩阵模式下只变换**原点**：字形本身仍是水平位图（软光栅没有字形的
+        //   仿射能力）⇒ 缩放时字号不变、旋转时文字不跟着转。这是 `RasterCanvas`
+        //   有意的降级（见类注释）；真机的 `SkiaCanvas` 把变换下推到 CTM，文字
+        //   是完整变换的 —— 所以 **"文字跟着变换"这条只能靠真机判**。
+        $t = $this->transform;
+        if ($t === null) {
+            $originX = $x + $this->offsetX;
+            $originY = $y + $this->offsetY;
+        } else {
+            $originX = $t->applyX($x, $y);
+            $originY = $t->applyY($x, $y);
+        }
 
         foreach ($paragraph->lines as $line) {
             $baseline = $originY + $line->baseline;
@@ -376,10 +464,10 @@ final class RasterCanvas implements Canvas
 
         $half = $paint->strokeWidth / 2.0;
         $dpr = $this->scale->dpr;
-        $ax = round(($x1 + $this->offsetX) * $dpr);
-        $ay = round(($y1 + $this->offsetY) * $dpr);
-        $bx = round(($x2 + $this->offsetX) * $dpr);
-        $by = round(($y2 + $this->offsetY) * $dpr);
+        $ax = round($this->deviceX($x1, $y1));
+        $ay = round($this->deviceY($x1, $y1));
+        $bx = round($this->deviceX($x2, $y2));
+        $by = round($this->deviceY($x2, $y2));
 
         $xa = max((int) ceil(min($ax, $bx) - $half - 0.5), (int) ceil($this->clip->left - 0.5), 0);
         $xb = min((int) floor(max($ax, $bx) + $half - 0.5) + 1, (int) ceil($this->clip->right() - 0.5), $this->width);
@@ -584,10 +672,6 @@ final class RasterCanvas implements Canvas
         $subpaths = [];
         $current = [];
         $start = null;
-        $dpr = $this->scale->dpr;
-        $ox = $this->offsetX;
-        $oy = $this->offsetY;
-
         foreach ($path->commands() as $c) {
             $verb = (int) $c[0];
 
@@ -595,7 +679,7 @@ final class RasterCanvas implements Canvas
                 if ($current !== []) {
                     $subpaths[] = [$current, false];
                 }
-                $current = [[round(($c[1] + $ox) * $dpr), round(($c[2] + $oy) * $dpr)]];
+                $current = [[round($this->deviceX($c[1], $c[2])), round($this->deviceY($c[1], $c[2]))]];
                 $start = $current[0];
                 continue;
             }
@@ -604,7 +688,7 @@ final class RasterCanvas implements Canvas
                 if ($current === []) {
                     continue; // 没有 MOVE 就打点：忽略（路径未开始）
                 }
-                $current[] = [round(($c[1] + $ox) * $dpr), round(($c[2] + $oy) * $dpr)];
+                $current[] = [round($this->deviceX($c[1], $c[2])), round($this->deviceY($c[1], $c[2]))];
                 continue;
             }
 
@@ -613,10 +697,10 @@ final class RasterCanvas implements Canvas
                     continue;
                 }
                 $p0 = $current[count($current) - 1];
-                $cx = round(($c[1] + $ox) * $dpr);
-                $cy = round(($c[2] + $oy) * $dpr);
-                $px = round(($c[3] + $ox) * $dpr);
-                $py = round(($c[4] + $oy) * $dpr);
+                $cx = round($this->deviceX($c[1], $c[2]));
+                $cy = round($this->deviceY($c[1], $c[2]));
+                $px = round($this->deviceX($c[3], $c[4]));
+                $py = round($this->deviceY($c[3], $c[4]));
                 for ($i = 1; $i <= self::QUAD_SEGMENTS; $i++) {
                     $t = (float) $i / (float) self::QUAD_SEGMENTS;
                     $u = 1.0 - $t;
@@ -1475,6 +1559,12 @@ final class RasterCanvas implements Canvas
     }
     private function toDevice(Rect $rect): Rect
     {
+        $t = $this->transform;
+        if ($t !== null) {
+            // 矩阵模式：轴对齐外接框（旋转矩形的按行扫描无法直接表达，见类注释的降级说明）
+            return $this->scale->quantizeRect($t->applyRect($rect));
+        }
+
         return $this->scale->quantizeRect(
             new Rect($rect->left + $this->offsetX, $rect->top + $this->offsetY, $rect->width, $rect->height)
         );
@@ -1666,21 +1756,19 @@ final class RasterCanvas implements Canvas
     private function gradientColorAt(Gradient $g, float $px, float $py): Color
     {
         $dpr = $this->scale->dpr;
-        $ox = $this->offsetX;
-        $oy = $this->offsetY;
 
         if ($g->isRadial()) {
-            $cx = ($g->x1 + $ox) * $dpr;
-            $cy = ($g->y1 + $oy) * $dpr;
+            $cx = $this->deviceX($g->x1, $g->y1);
+            $cy = $this->deviceY($g->x1, $g->y1);
             $radius = max($g->x2 * $dpr, 1e-6);
             $dx = $px - $cx;
             $dy = $py - $cy;
             $t = sqrt($dx * $dx + $dy * $dy) / $radius;
         } else {
-            $x1 = ($g->x1 + $ox) * $dpr;
-            $y1 = ($g->y1 + $oy) * $dpr;
-            $x2 = ($g->x2 + $ox) * $dpr;
-            $y2 = ($g->y2 + $oy) * $dpr;
+            $x1 = $this->deviceX($g->x1, $g->y1);
+            $y1 = $this->deviceY($g->x1, $g->y1);
+            $x2 = $this->deviceX($g->x2, $g->y2);
+            $y2 = $this->deviceY($g->x2, $g->y2);
             $ex = $x2 - $x1;
             $ey = $y2 - $y1;
             $len2 = $ex * $ex + $ey * $ey;

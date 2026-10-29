@@ -5,6 +5,7 @@ namespace Drift\Layout;
 
 use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
+use Drift\Geometry\Matrix2D;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Size;
 use Drift\Rendering\Canvas;
@@ -82,6 +83,7 @@ abstract class RenderBox extends RenderObject
 
         $this->setFlexIntent($mods->flexGrow(), $mods->flexShrink(), $mods->flexBasis(), $mods->flexAlign());
         $this->setStackIntent($mods->insetLeft(), $mods->insetTop(), $mods->insetRight(), $mods->insetBottom());
+        $this->applyTransform($mods->transform(), $mods->transformCentered());
     }
 
     /** `null` = 这个盒没有修饰（直接 `new` 出来的测试盒 / 未挂载） */
@@ -163,6 +165,16 @@ abstract class RenderBox extends RenderObject
     private float $insetRight = \NAN;
 
     private float $insetBottom = \NAN;
+
+    // ── 合成变换（A1c，2026-10-29）──────────────────────────────────
+    // ★ **绘制期**语义，与上面两族（父意图）无关：不进布局、不改约束、不改子盒尺寸。
+    //   布局照旧，只是画的时候整个子树被仿射一次 ⇒ 视觉会溢出（放大 2 倍盖到邻居），
+    //   这是标准语义（Flutter 的 `Transform` 亦然），不是缺陷。
+    // ★ 矩阵是**声明**，`layout` 之后才知道盒尺寸 ⇒ 绕中心的那份在
+    //   `effectiveTransform()` 里现算，不在字段里存算好的结果（尺寸变了要跟着变）。
+    private ?Matrix2D $composeTransform = null;
+
+    private bool $composeTransformCentered = false;
 
     public function size(): ?Size
     {
@@ -893,6 +905,74 @@ abstract class RenderBox extends RenderObject
     }
 
     /**
+     * 丢本盒的变换声明（`setMods()` 的落点）。
+     *
+     * ★ 只在**声明真变了**时失效外层缓存：`setMods()` 每次 rebuild 都会调，
+     *   而矩阵对象每次是新实例 —— 用"引用不同就失效"会让动画期间每帧重录
+     *   整棵子树（§23.8 的代价放大一百倍）。判据是结构相等。
+     */
+    private function applyTransform(?Matrix2D $matrix, bool $centered): void
+    {
+        $same = false;
+
+        $old = $this->composeTransform;
+        if ($old === null && $matrix === null) {
+            $same = true;
+        } elseif ($old !== null && $matrix !== null) {
+            $same = $old->equals($matrix) && $this->composeTransformCentered === $centered;
+        }
+
+        $this->composeTransform = $matrix;
+        $this->composeTransformCentered = $centered;
+
+        if (!$same) {
+            $this->invalidateEnclosingLayer();
+        }
+    }
+
+    /**
+     * 当前生效的矩阵（绕中心的那份在这里现算）。
+     *
+     * ★ `T(c) · M · T(-c)`：先平移到盒中心、施加矩阵、再平移回去 ——
+     *   等价于"以盒中心为原点做变换"。尺寸在布局前是 `null` ⇒ 退化为原点变换
+     *   （此时还没画，取到的值不会被消费）。
+     * ★ 命中测试必须用**同一份**结果（否则"画在 A、点得中 B"）。
+     */
+    public function effectiveTransform(): ?Matrix2D
+    {
+        $m = $this->composeTransform;
+        if ($m === null) {
+            return null;
+        }
+
+        if (!$this->composeTransformCentered) {
+            return $m;
+        }
+
+        $size = $this->size;
+        if ($size === null) {
+            return $m;
+        }
+
+        $cx = $size->width / 2.0;
+        $cy = $size->height / 2.0;
+
+        // ★ 读法：`a->then(b)` = 先 a 再 b。所以这一行是
+        //   "移到原点 → 施加 M → 移回中心"，即 `T(c) · M · T(-c)`。
+        //   ★ 顺序写反（`T(c)` 先）的后果不是崩溃：中心会**跟着跑** ——
+        //     `scale(2)` 的盒整体偏出去半个自身宽高，看起来像"对齐算错了"。
+        return Matrix2D::translation(-$cx, -$cy)
+            ->then($m)
+            ->then(Matrix2D::translation($cx, $cy));
+    }
+
+    /** 有没有声明变换（`paintComposed()` / `hitTest()` 的快路判断） */
+    public function hasComposeTransform(): bool
+    {
+        return $this->composeTransform !== null;
+    }
+
+    /**
      * 丢掉本盒的层缓存（下一次绘制必然重录）。
      *
      * @internal 只给 `invalidateEnclosingLayer()` 用；公开是因为调用方拿到的是
@@ -930,10 +1010,9 @@ abstract class RenderBox extends RenderObject
         $opacity = $this->composeOpacity;
         $dx = $this->composeDx;
         $dy = $this->composeDy;
-        $translated = $dx !== 0.0 || $dy !== 0.0;
-        $layered = $opacity < 1.0;
+        $matrix = $this->effectiveTransform();
 
-        if (!$translated && !$layered) {
+        if ($matrix === null && $dx === 0.0 && $dy === 0.0 && $opacity >= 1.0) {
             $this->paintOrReplay($canvas);   // 零开销快路：绝大多数盒一辈子走这里
 
             return;
@@ -941,17 +1020,24 @@ abstract class RenderBox extends RenderObject
 
         $canvas->save();
 
-        if ($translated) {
+        // ★ 顺序：先变换、再平移。`Canvas::transform()` 是 `CTM · M`（后调用的更内层）
+        //   ⇒ 这两行的语义是"盒内偏移先加、再整体变换"，与 `hitTest()` 的反变换
+        //   （先反变换、再减盒内偏移）严格互逆。写反了"画在 A、点得中 B"。
+        if ($matrix !== null) {
+            $canvas->transform($matrix);
+        }
+
+        if ($dx !== 0.0 || $dy !== 0.0) {
             $canvas->translate($dx, $dy);
         }
 
-        if ($layered) {
+        if ($opacity < 1.0) {
             $canvas->pushLayer(max(0.0, $opacity));
         }
 
         $this->paintOrReplay($canvas);
 
-        if ($layered) {
+        if ($opacity < 1.0) {
             $canvas->popLayer();
         }
 
@@ -1053,6 +1139,25 @@ abstract class RenderBox extends RenderObject
 
         if ($size === null) {
             return null;
+        }
+
+        // ★★ **反变换必须在边界检查之前**：变换后的盒在视觉上已经不在
+        //   `[0,w]×[0,h]` 里了（旋转 45° 的角落伸到外面）。先判边界会把
+        //   "点在旋转后的可见角上"当成盒外 ⇒ 按钮画得出来、点不动。
+        //   判据：`TransformHitTestTest` 的"变换后位置命中 / 原位不命中"双向断言。
+        $matrix = $this->effectiveTransform();
+        if ($matrix !== null) {
+            $inv = $matrix->inverted();
+            if ($inv === null) {
+                return null;   // 退化：压成线/点 ⇒ 点不中（不是"点得中但位置错"）
+            }
+
+            // ★ 两个分量都用**原值**算：先写 `$x = $inv->applyX(...)` 再拿新 `$x`
+            //   算 `$y` 是错的（会把 x 的变换混进 y），而且画面对、只有点击偏。
+            $px = $inv->applyX($x, $y);
+            $py = $inv->applyY($x, $y);
+            $x = $px;
+            $y = $py;
         }
 
         if ($x < 0.0 || $y < 0.0 || $x >= $size->width || $y >= $size->height) {

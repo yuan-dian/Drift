@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Rendering;
 
 use Drift\Errors;
+use Drift\Geometry\Matrix2D;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Scale;
 use Drift\Rendering\DashPattern;
@@ -16,6 +17,7 @@ use Drift\Text\Paragraph;
 use function drift_skia_blur_backdrop;
 use function drift_skia_canvas_create;
 use function drift_skia_canvas_destroy;
+use function drift_skia_concat;
 use function drift_skia_clear_source;
 use function drift_skia_draw_glyph;
 use function drift_skia_draw_image;
@@ -29,8 +31,11 @@ use function drift_skia_push_clip;
 use function drift_skia_push_clip_path;
 use function drift_skia_push_layer;
 use function drift_skia_read_pixels;
+use function drift_skia_restore;
+use function drift_skia_save;
 use function drift_skia_set_dash;
 use function drift_skia_set_gradient;
+use function drift_skia_translate;
 
 /**
  * Skia 光栅画布（§7.2 裁决 1 的第三个实现；§7.3 的 M1 后端之二）。
@@ -63,7 +68,19 @@ final class SkiaCanvas implements Canvas
     private float $offsetX = 0.0;
     private float $offsetY = 0.0;
 
-    /** @var list<array{float, float}> 状态栈：只有偏移（裁剪由 Skia 自己持） */
+    /**
+     * `true` ⇒ 已累加的偏移**下推**给了 Skia 的 CTM，`toDevice()` 不再加偏移。
+     *
+     * ★ 只有一个切换点（`enterDeviceMode()`），且只由 `transform()` 触发。
+     *   两段之间不混用：混用就是"先取整再变换"与"先变换再取整"的半个像素账
+     *   —— 那条对平移的担心（见 `drift_skia.stub.php`）仍然有效。
+     */
+    private bool $devMode = false;
+
+    /** 已下推的 Skia 保存层数（`restore()` 要按它退回） */
+    private int $skiaDepth = 0;
+
+    /** @var list<array{float, float, bool, int}> 状态栈：[offsetX, offsetY, devMode, skiaDepth] */
     private array $stack = [];
 
     private readonly Scale $scale;
@@ -148,7 +165,7 @@ final class SkiaCanvas implements Canvas
 
     public function save(): void
     {
-        $this->stack[] = [$this->offsetX, $this->offsetY];
+        $this->stack[] = [$this->offsetX, $this->offsetY, $this->devMode, $this->skiaDepth];
     }
 
     public function restore(): void
@@ -157,13 +174,102 @@ final class SkiaCanvas implements Canvas
         if ($frame === null) {
             return;   // 未配对的 restore 由 W8 在录制侧拦截，光栅侧静默忽略即可
         }
-        [$this->offsetX, $this->offsetY] = $frame;
+
+        // ★ 先弹 Skia 的保存层再恢复 PHP 状态：`devMode` 是"CTM 里有没有东西"的
+        //   镜像，顺序反了就会出现"PHP 说没变换、Skia 还带着旋转"。
+        if ($this->handle !== 0) {
+            while ($this->skiaDepth > $frame[3]) {
+                drift_skia_restore($this->handle);
+                --$this->skiaDepth;
+            }
+        }
+
+        $this->offsetX = $frame[0];
+        $this->offsetY = $frame[1];
+        $this->devMode = $frame[2];
     }
 
     public function translate(float $dx, float $dy): void
     {
+        // ★ 设备模式下**不能再累加 offset**：offset 是"在 CTM 之后"的平移，
+        //   而这里语义是 `CTM · T`（后调用的更内层）。累加 offset 会让
+        //   `rotate(90); translate(10,0)` 变成 `R(p) + (10,0)`，正确答案是
+        //   `R(p + (10,0))` —— 差一个旋转矩阵，画出来是"位置偏了一大截"。
+        if ($this->devMode && $this->handle !== 0) {
+            $dpr = $this->scale->dpr;
+            drift_skia_translate($this->handle, $dx * $dpr, $dy * $dpr);
+
+            return;
+        }
+
         $this->offsetX += $dx;
         $this->offsetY += $dy;
+    }
+
+    /**
+     * 追加仿射变换 —— **下推给 Skia 的 CTM**（`CTM' = CTM · m`）。
+     *
+     * ★ 纯平移且尚未进设备模式 ⇒ 并进 `$offsetX/Y`：那是老路，golden 逐字节不变。
+     * ★ 其它变换必须由 Skia 承担 —— 文字的字形位图在 C++ 侧，PHP 变不了。
+     */
+    public function transform(Matrix2D $matrix): void
+    {
+        // ★★ **AOT 纪律**：读**另一个对象**的属性拿到的是 `php::Var`（tpc 不把
+        //   "类类型形参的属性"推成标量）⇒ `Float += Var` 编译期就报 C2679
+        //   「二进制 += 不接受该右操作数」。一律显式 `(float)` 落到局部再算。
+        //   解释器与 phpunit 完全看不出这件事 —— 只有 AOT 构建会红。
+        $tx = (float) $matrix->tx;
+        $ty = (float) $matrix->ty;
+
+        if ($matrix->isTranslationOnly() && !$this->devMode) {
+            $this->offsetX += $tx;
+            $this->offsetY += $ty;
+
+            return;
+        }
+
+        if ($this->handle === 0) {
+            return;   // 画布无效 = 这一帧没画（与其余绘制方法同档）
+        }
+
+        $this->enterDeviceMode();
+
+        $dpr = $this->scale->dpr;
+        drift_skia_concat(
+            $this->handle,
+            (float) $matrix->a,
+            (float) $matrix->b,
+            (float) $matrix->c,
+            (float) $matrix->d,
+            $tx * $dpr,
+            $ty * $dpr,
+        );
+    }
+
+    /**
+     * 进入"设备坐标模式"：把已累加的逻辑偏移换成设备偏移下推，然后归零。
+     *
+     * ★ 压一层 Skia save 作为**撤销锚点**：`restore()` 按 `skiaDepth` 退回。
+     *   不压的话"这个盒的旋转"会漏给后面所有兄弟 —— 且 W8 查不出来
+     *   （`transform()` 不改变 save 深度）。
+     */
+    private function enterDeviceMode(): void
+    {
+        if ($this->devMode) {
+            return;
+        }
+
+        drift_skia_save($this->handle);
+        ++$this->skiaDepth;
+
+        if ($this->offsetX !== 0.0 || $this->offsetY !== 0.0) {
+            $dpr = $this->scale->dpr;
+            drift_skia_translate($this->handle, $this->offsetX * $dpr, $this->offsetY * $dpr);
+            $this->offsetX = 0.0;
+            $this->offsetY = 0.0;
+        }
+
+        $this->devMode = true;
     }
 
     public function pushClip(Rect $rect): void
@@ -651,6 +757,11 @@ final class SkiaCanvas implements Canvas
     /** 逻辑 → 设备（§6.1 的唯一量化点） */
     private function toDevice(Rect $rect): Rect
     {
+        if ($this->devMode) {
+            // 偏移已在 CTM 里 ⇒ 只做 dpr 换算（仍是唯一的量化点，不引入第二套口径）
+            return $this->scale->quantizeRect($rect);
+        }
+
         return $this->scale->quantizeRect(
             new Rect(
                 $rect->left + $this->offsetX,
