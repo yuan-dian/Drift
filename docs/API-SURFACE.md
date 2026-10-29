@@ -16,16 +16,16 @@
 | Input | 16 | 5 |
 | Layout | 41 | 41 |
 | Logging | 9 | 3 |
-| Platform | 15 | 10 |
+| Platform | 15 | 11 |
 | Rendering | 31 | 1 |
 | Routing | 8 | 6 |
 | State | 9 | 11 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
 | Widget | 166 | 213 |
-| **合计** | **403** | **342** |
+| **合计** | **403** | **343** |
 
-覆盖 351 个文件 · 描述性提及 28 处（grep 口径的污染源，不计入）
+覆盖 352 个文件 · 描述性提及 28 处（grep 口径的污染源，不计入）
 
 ## App 层
 
@@ -367,12 +367,13 @@
 | `WindowMaterial` | class | src/Platform/WindowMaterial.php:8 |
 | `WindowMaterialCapabilities` | class | src/Platform/WindowMaterialCapabilities.php:6 |
 
-### @internal（框架内部） · 10
+### @internal（框架内部） · 11
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
 | `ResizeHookState::pump()` | method | src/Platform/Win32/ResizeHookState.php:23 |
 | `Win32Clipboard` | class | src/Platform/Win32/Win32Clipboard.php:12 |
+| `Win32Dialog` | class | src/Platform/Win32/Win32Dialog.php:13 |
 | `Win32InputSource` | class | src/Platform/Win32/Win32InputSource.php:9 |
 | `Win32RasterSurface` | class | src/Platform/Win32/Win32RasterSurface.php:14 |
 | `Win32Screen` | class | src/Platform/Win32/Win32Screen.php:15 |
