@@ -3,9 +3,9 @@ declare(strict_types=1);
 
 namespace Drift\Widget;
 
+use Drift\Geometry\Alignment;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderStack;
-use Drift\Layout\StackAlign;
 use Drift\Layout\StackFit;
 
 /**
@@ -13,7 +13,7 @@ use Drift\Layout\StackFit;
  *
  * ```php
  * Stack::make()
- *     ->alignment(StackAlign::TopRight)
+ *     ->alignment(Alignment::topRight())
  *     ->fit(StackFit::Loose)
  *     ->children([$content, $badge->positioned(right: 8.0, top: 8.0)]);
  * ```
@@ -44,7 +44,7 @@ final class Stack extends RenderBoxWidget
 {
     /** @var list<Widget> */
     private array $kids = [];
-    private StackAlign $align = StackAlign::TopLeft;
+    private ?Alignment $align = null;   // null = TopLeft（RenderStack 的默认）
     private StackFit $fit = StackFit::Loose;
 
     public static function make(): self
@@ -61,7 +61,7 @@ final class Stack extends RenderBoxWidget
         return $this;
     }
 
-    public function alignment(StackAlign $value): static
+    public function alignment(Alignment $value): static
     {
         $this->mutate();
         $this->align = $value;

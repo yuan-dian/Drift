@@ -2978,7 +2978,7 @@ check('Modifier · setMods 把合成初值落到盒上', $flexKeep->composeOpaci
 //   那时份额住在 `RenderFlexible` 的构造器里，按 mods 默认值再写一次会清零、
 //   `Expanded` 全失效且不报错。M2-4 删掉那个类之后，`mods.grow` 成了份额的
 //   **唯一**来源 ⇒ 断言反转：`setMods()` 必须把份额写到盒上。
-$flexKeep->setMods((new Modifier())->withGrow(2)->withShrink(1)->withBasis(40.0)->withAlign(RenderBox::ALIGN_CENTER));
+$flexKeep->setMods((new Modifier())->withGrow(2)->withShrink(1)->withBasis(40.0)->withAlignSelf(RenderBox::ALIGN_CENTER));
 check(
     'Modifier · setMods 把 mods 的弹性意图写到盒上（M2-4 起份额只有一个来源）',
     $flexKeep->grow() === 2 && $flexKeep->shrink() === 1

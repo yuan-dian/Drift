@@ -171,7 +171,7 @@ final class StructureControlsTest extends SmokeTestCase
         $centerBox = $centerRoot->renderObject();
         check(
             '结构控件 · Center 建出 RenderProxy（居中走 mods）',
-            $centerBox instanceof RenderProxy && $centerBox->mods()->hasCenter(),
+            $centerBox instanceof RenderProxy && $centerBox->mods()->alignment() !== null,
         );
         $centerBox?->layout(BoxConstraints::tight(new Size(100.0, 100.0)));
         $centerKid = null;

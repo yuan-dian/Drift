@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Widget\Traits;
 
 use Drift\Errors;
+use Drift\Geometry\Alignment;
 use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Matrix2D;
 use Drift\Rendering\Color;
@@ -11,13 +12,14 @@ use Drift\Rendering\Gradient;
 use Drift\Rendering\Modifier;
 
 /**
- * `Widget` 的**修饰面**：22 个 fluent setter，全部写同一个 `$this->mods`。
+ * `Widget` 的**修饰面**：27 个 fluent setter，全部写同一个 `$this->mods`。
  *
  * | 组 | 方法 |
  * |---|---|
  * | 内边距 / 尺寸 | `padding` `paddingAll` `paddingOnly` `boxSize` `width` `height` `aspect` |
- * | 绘制 | `background` `border` `radius` `shadow` |
- * | 合成 / 裁剪 | `opacity` `translate` `clip` `repaintBoundary` `centerContent` |
+ * | 绘制 | `background` `border` `radius` `shadow` `gradient` |
+ * | 合成 / 裁剪 / 变换 | `opacity` `translate` `clip` `repaintBoundary` `transform` `rotate` `scale` `disabled` |
+ * | 对齐 | `alignContent` `centerContent`（后者是 `Alignment::center()` 的糖） |
  * | 主轴意图 | `grow` `shrink` `basis` `alignSelf` |
  * | 层叠意图 | `positioned`（`Stack` 定位） |
  *
@@ -373,10 +375,32 @@ trait WidgetModifiers
     }
 
     /**
-     * 把**内容**在本盒内居中（`Center` 的字段形态）。
+     * 把**内容**在本盒内按锚点摆放（`Align` / `Stack` 的字段形态）。
+     *
+     * ```php
+     * SizedBox::make(200.0, 120.0)->alignContent(Alignment::bottomRight())
+     * ```
      *
      * ★ 与 `alignSelf()` 不是一件事：`alignSelf` 只在 `RenderFlex` 里被消费
-     *   （没有 Flex 父就是死字段），而 `Center` 常常是页面根。
+     *   （没有 Flex 父就是死字段），而本修饰**任何盒**都消费（基类 `layout()` 的 ③⑦ 步）。
+     * ★ 与 `Stack::alignment()` 是**同一个类型**（`Alignment`）：`Stack` 用它排非定位子，
+     *   本修饰用它排**直接子盒**。`StackAlign` 那个九宫格枚举已退役（2026-10-29）。
+     * ★ 叫 `alignContent` 而不是 `align`：`TableColumn::align(TextAlign)` 已占该名，
+     *   且与 `alignSelf`（单轴、仅 Flex）在语义上必须能一眼分开。
+     *
+     * @api
+     */
+    public function alignContent(Alignment $alignment): static
+    {
+        $this->mutate();
+        $this->mods = $this->mods->withContentAlign($alignment);
+
+        return $this;
+    }
+
+    /**
+     * 把**内容**在本盒内居中（`Alignment::center()` 的糖，保留是为了既有代码不破）。
+     *
      * ★ 叫 `centerContent` 而不是 `center`：`Dock::center(Widget)` 是五区槽位。
      *
      * @api
@@ -384,7 +408,10 @@ trait WidgetModifiers
     public function centerContent(bool $on = true): static
     {
         $this->mutate();
-        $this->mods = $this->mods->withCenter($on);
+        // ★ `false` 是**撤掉声明**（`null`），不是"钉到起点" —— 要钉起点用
+        //   `alignContent(Alignment::topLeft())`。两者在布局上不等价：未声明时
+        //   基类不碰子盒偏移，钉起点时也只是加 0，但语义上"要不要对齐"是两回事。
+        $this->mods = $this->mods->withContentAlign($on ? Alignment::center() : null);
 
         return $this;
     }
@@ -501,7 +528,7 @@ trait WidgetModifiers
     public function alignSelf(int $align): static
     {
         $this->mutate();
-        $this->mods = $this->mods->withAlign($align);
+        $this->mods = $this->mods->withAlignSelf($align);
 
         return $this;
     }

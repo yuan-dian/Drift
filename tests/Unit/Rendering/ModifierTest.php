@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Dev\Tests\Unit\Rendering;
 
 use Drift\Dev\Tests\Support\SmokeTestCase;
+use Drift\Geometry\Alignment;
 use Drift\Geometry\Matrix2D;
 use Drift\Layout\RenderBox;
 use Drift\Rendering\Color;
@@ -68,7 +69,6 @@ final class ModifierTest extends SmokeTestCase
             'withStroke' => [static fn(): Modifier => (new Modifier())->withStroke(Color::fromRgb(1, 2, 3), 1.0), false],
             'withRadius' => [static fn(): Modifier => (new Modifier())->withRadius(4.0), false],
             'withShadow' => [static fn(): Modifier => (new Modifier())->withShadow(0.5), false],
-            'withCenter' => [static fn(): Modifier => (new Modifier())->withCenter(true), false],
             'withCompose' => [static fn(): Modifier => (new Modifier())->withCompose(0.5, 1.0, 1.0), false],
             'withOpacity' => [static fn(): Modifier => (new Modifier())->withOpacity(0.5), false],
             'withTranslate' => [static fn(): Modifier => (new Modifier())->withTranslate(1.0, 1.0), false],
@@ -77,7 +77,8 @@ final class ModifierTest extends SmokeTestCase
             'withGrow' => [static fn(): Modifier => (new Modifier())->withGrow(1), false],
             'withShrink' => [static fn(): Modifier => (new Modifier())->withShrink(1), false],
             'withBasis' => [static fn(): Modifier => (new Modifier())->withBasis(10.0), false],
-            'withAlign' => [static fn(): Modifier => (new Modifier())->withAlign(RenderBox::ALIGN_CENTER), false],
+            'withAlignSelf' => [static fn(): Modifier => (new Modifier())->withAlignSelf(RenderBox::ALIGN_CENTER), false],
+            'withContentAlign' => [static fn(): Modifier => (new Modifier())->withContentAlign(Alignment::topRight()), false],
             // ★ 曾漏在 `isDefault()` 之外一整轮（S1 补上，见类注释）
             'withRepaintBoundary' => [static fn(): Modifier => (new Modifier())->withRepaintBoundary(true), false],
             'withInset' => [static fn(): Modifier => (new Modifier())->withInset(Modifier::INSET_LEFT, 8.0), false],

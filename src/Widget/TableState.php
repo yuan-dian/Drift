@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Widget;
 
 use Drift\Errors;
+use Drift\Geometry\Alignment;
 use Drift\Geometry\Axis;
 use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Rect;
@@ -18,7 +19,6 @@ use Drift\Layout\FlexAlign;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderTable;
 use Drift\Layout\RenderTextField;
-use Drift\Layout\StackAlign;
 use Drift\Rendering\Color;
 use Drift\Rendering\ColorToken;
 use Drift\Text\TextAlign;
@@ -2163,7 +2163,7 @@ final class TableState extends State implements Scrollable, EditableText
             $overlay[] = $this->resizeHandle($column, $width);
         }
 
-        $cell = Stack::make()->alignment(StackAlign::TopRight)->children($overlay);
+        $cell = Stack::make()->alignment(Alignment::topRight())->children($overlay);
 
         if (!$column->isSortable()) {
             return $cell;

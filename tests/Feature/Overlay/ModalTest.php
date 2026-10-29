@@ -323,7 +323,7 @@ final class ModalTest extends SmokeTestCase
         $center = false;
         foreach (childBoxes($box) as $child) {
             $mods = $child->mods();
-            $center = $child instanceof RenderProxy && $mods !== null && $mods->hasCenter();
+            $center = $child instanceof RenderProxy && $mods !== null && $mods->alignment() !== null;
         }
         check(
             'Modal · build = ModalHost → Center → PopupPanel（居中靠组合，不是盒里的开关）',

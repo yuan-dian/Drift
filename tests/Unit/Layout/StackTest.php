@@ -10,7 +10,7 @@ use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Size;
 use Drift\Layout\RenderStack;
-use Drift\Layout\StackAlign;
+use Drift\Geometry\Alignment;
 use Drift\Layout\StackFit;
 
 /**
@@ -62,7 +62,7 @@ final class StackTest extends SmokeTestCase
     public function testExpandFitsParentSpaceAndPassesTight(): void
     {
         $expandSpy = new ConstraintSpy(new Size(30.0, 10.0));
-        $expandStack = new RenderStack(StackAlign::TopLeft, StackFit::Expand);
+        $expandStack = new RenderStack(Alignment::topLeft(), StackFit::Expand);
         $expandStack->addChild($expandSpy);
         $expandStack->layout(BoxConstraints::loose(new Size(100.0, 80.0)));
         expectBox($expandStack, 0.0, 0.0, 100.0, 80.0, 'Stack · Expand 有界轴拉满父给的空间（100×80，不是 max(子) 的 30×10）');
@@ -82,7 +82,7 @@ final class StackTest extends SmokeTestCase
     public function testExpandInfiniteAxisDegradesToLoose(): void
     {
         $halfSpy = new ConstraintSpy(new Size(40.0, 10.0));
-        $halfStack = new RenderStack(StackAlign::TopLeft, StackFit::Expand);
+        $halfStack = new RenderStack(Alignment::topLeft(), StackFit::Expand);
         $halfStack->addChild($halfSpy);
         $halfStack->layout(new BoxConstraints(0.0, INF, 0.0, 40.0));
         expectBox($halfStack, 0.0, 0.0, 40.0, 40.0, 'Stack · Expand 的无界轴退化为 Loose（宽按子 40、高拉满 40）');
@@ -93,7 +93,7 @@ final class StackTest extends SmokeTestCase
     public function testAlignmentsBottomRightAndCenter(): void
     {
         $brKid = new SolidBox(new Size(30.0, 10.0), 30.0, 10.0);
-        $brStack = new RenderStack(StackAlign::BottomRight, StackFit::Loose);
+        $brStack = new RenderStack(Alignment::bottomRight(), StackFit::Loose);
         $brStack->addChild($brKid);
         $brStack->layout(BoxConstraints::tight(new Size(100.0, 80.0)));
         check(
@@ -103,7 +103,7 @@ final class StackTest extends SmokeTestCase
         );
 
         $cKid = new SolidBox(new Size(30.0, 10.0), 30.0, 10.0);
-        $cStack = new RenderStack(StackAlign::Center, StackFit::Loose);
+        $cStack = new RenderStack(Alignment::center(), StackFit::Loose);
         $cStack->addChild($cKid);
         $cStack->layout(BoxConstraints::tight(new Size(100.0, 80.0)));
         check(
@@ -118,7 +118,7 @@ final class StackTest extends SmokeTestCase
     public function testPassThroughTransmitsConstraints(): void
     {
         $ptSpy = new ConstraintSpy(new Size(20.0, 20.0));
-        $ptStack = new RenderStack(StackAlign::TopLeft, StackFit::PassThrough);
+        $ptStack = new RenderStack(Alignment::topLeft(), StackFit::PassThrough);
         $ptStack->addChild($ptSpy);
         $ptStack->layout(new BoxConstraints(10.0, 50.0, 10.0, 50.0));
         check(
@@ -152,7 +152,7 @@ final class StackTest extends SmokeTestCase
     {
         $onceA = new LayoutCountBox(new Size(30.0, 10.0));
         $onceB = new LayoutCountBox(new Size(50.0, 20.0));
-        $onceStack = new RenderStack(StackAlign::Center, StackFit::Expand);
+        $onceStack = new RenderStack(Alignment::center(), StackFit::Expand);
         $onceStack->addChild($onceA);
         $onceStack->addChild($onceB);
         $onceStack->layout(BoxConstraints::loose(new Size(100.0, 80.0)));

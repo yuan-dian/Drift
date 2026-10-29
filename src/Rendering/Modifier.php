@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Rendering;
 
 use Drift\Errors;
+use Drift\Geometry\Alignment;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Matrix2D;
@@ -75,14 +76,18 @@ final class Modifier
     private float $aspect = \NAN;
 
     /**
-     * 内容居中（`Center` 的字段形态）。
+     * 内容在盒内的**对齐锚点**（`Align` 的字段形态）。
      *
      * ★ 与 `alignSelf` 不是一件事：`alignSelf` 只在 `RenderFlex::placeChildren()`
-     *   里被消费（**没有 Flex 父就是死字段**），而 `Center` 常常是页面根。
-     *   居中是"把直接子盒平移" —— 与 padding 同一类操作，由基类 `layout()`
+     *   里被消费（**没有 Flex 父就是死字段**），而 `Align` 常常是页面根。
+     *   对齐是"把直接子盒平移" —— 与 padding 同一类操作，由基类 `layout()`
      *   的收尾步一起施加。
+     *
+     * ★★ 2026-10-29 由 `bool $center` 改成 `?Alignment`：九宫格是**连续**的，
+     *   `center` 只是 `Alignment::center()` 一个点。`null` = 未声明（默认行为，
+     *   与 `?Matrix2D $transform` 同档）。
      */
-    private bool $center = false;
+    private ?Alignment $align = null;
 
     // ── 绘制维（D_PAINT）────────────────────────────────────────────
     // ★ **不用 `?Color`**：可空对象在编译期退化为 `php::Var` ⇒ 用"值 + bool"。
@@ -390,10 +395,10 @@ final class Modifier
         return $this->repaintBoundary;
     }
 
-    /** 内容是否要在盒内居中 */
-    public function hasCenter(): bool
+    /** 内容对齐锚点（`null` = 未声明 ⇒ `layout()` 不动子盒偏移） */
+    public function alignment(): ?Alignment
     {
-        return $this->center;
+        return $this->align;
     }
 
     // ── 读：主轴意图（`RenderBox::setMods()` 每次造盒读一次）────────
@@ -636,7 +641,7 @@ final class Modifier
             && \is_nan($this->basis)
             && $this->alignSelf === 0
             && !$this->hasInset()
-            && !$this->center
+            && $this->align === null
             && !$this->clip
             && !$this->repaintBoundary
             && !$this->disabled
@@ -829,10 +834,16 @@ final class Modifier
         return $c;
     }
 
-    public function withCenter(bool $on): self
+    /**
+     * 声明内容对齐锚点。`null` = 撤掉声明。
+     *
+     * ★ identity 意义上"没有声明"只有 `null` 一种 ⇒ `Alignment::topLeft()` 是**真声明**
+     *   （把内容钉到起点），不能当默认值省掉。
+     */
+    public function withContentAlign(?Alignment $align): self
     {
         $c = clone $this;
-        $c->center = $on;
+        $c->align = $align;
 
         return $c;
     }
@@ -926,7 +937,7 @@ final class Modifier
         return $c;
     }
 
-    public function withAlign(int $alignSelf): self
+    public function withAlignSelf(int $alignSelf): self
     {
         $c = clone $this;
         $c->alignSelf = $alignSelf;

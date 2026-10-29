@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Showcase\Pages;
 
+use Drift\Geometry\Alignment;
 use Drift\Geometry\EdgeInsets;
 use Drift\Rendering\Color;
 use Drift\Widget\BuildContext;
@@ -13,7 +14,6 @@ use Drift\Widget\Center;
 use Drift\Widget\Column;
 use Drift\Widget\Dock;
 use Drift\Layout\FlexAlign;
-use Drift\Layout\StackAlign;
 use Drift\Layout\StackFit;
 use Drift\Widget\Padding;
 use Drift\Widget\Row;
@@ -119,7 +119,7 @@ final class LayoutPage extends StatelessWidget
                 //   （`CjkGlyphData.php` 落后仓库 164 个字符，本机装不上 PIL 无法重生成），
                 //   而缺字是**静默无墨** —— 只有看图才发现。
                 $this->demo('Stack：层叠 + 3×3 方位对齐（后加的子压在上面）', Row::make()->spacing(12.0)->children([
-                    Stack::make()->alignment(StackAlign::TopRight)->children([
+                    Stack::make()->alignment(Alignment::topRight())->children([
                         SizedBox::make()->size(160.0, 64.0)
                             ->background(Color::fromRgb(0xF2, 0xF2, 0xF2))
                             ->border(Color::fromRgb(0xE6, 0xE6, 0xE6), 1.0)
@@ -136,7 +136,7 @@ final class LayoutPage extends StatelessWidget
                             Center::make(Text::make('Expand 铺满')->caption()),
                         ])
                     )->size(160.0, 64.0),
-                    Stack::make()->alignment(StackAlign::BottomRight)->children([
+                    Stack::make()->alignment(Alignment::bottomRight())->children([
                         SizedBox::make()->size(160.0, 64.0)
                             ->background(Color::fromRgb(0xF2, 0xF2, 0xF2))
                             ->border(Color::fromRgb(0xE6, 0xE6, 0xE6), 1.0)

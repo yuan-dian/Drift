@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Layout;
 
+use Drift\Geometry\Alignment;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Size;
 use Drift\Rendering\Canvas;
@@ -12,7 +13,7 @@ use Drift\Rendering\Canvas;
  *
  * ```php
  * Stack::make()
- *     ->alignment(StackAlign::TopRight)
+ *     ->alignment(Alignment::topRight())
  *     ->fit(StackFit::Loose)
  *     ->children([$background, $badge->positioned(right: 8.0, top: 8.0)]);
  * ```
@@ -24,7 +25,7 @@ use Drift\Rendering\Canvas;
  * | ① | 给子约束 | 按 `StackFit`（见 `StackFit` 的注释） |
  * | ② | 量每个子 | **每个子只 layout 一次**（没有第二遍） |
  * | ③ | 本盒尺寸 | `Loose`/`PassThrough` = `constrain(max(非定位子))`；`Expand` 的有界轴 = 父给的 `max` |
- * | ④ | 定位 | 非定位子按 `StackAlign`；**定位子按 `inset`**（`layoutPositioned()`） |
+ * | ④ | 定位 | 非定位子按 `Alignment`；**定位子按 `inset`**（`layoutPositioned()`） |
  * | ⑤ | 定位子的约束 | 声明两条对边 ⇒ 那一轴**紧**（拉伸）；单边 ⇒ 只收上限 |
  *
  * ★ **`Stack` 不是两遍布局**：量完非定位子 → 求 max → 排定位子，是**同一遍里的
@@ -57,10 +58,18 @@ final class RenderStack extends RenderBox
     /** @var list<RenderBox> */
     private array $kids = [];
 
+    private readonly Alignment $align;
+
     public function __construct(
-        private readonly StackAlign $align = StackAlign::TopLeft,
+        ?Alignment $align = null,
         private readonly StackFit $fit = StackFit::Loose,
     ) {
+        // ★ 默认 **TopLeft**（保持 2026-10-26 起的既有行为）。注意这与 `Align` 的默认
+        //   `center` **刻意不同**：`Stack` 的语义是"叠上去、默认贴左上"，改成 center
+        //   会让所有既有 `Stack` 的静态内容整体偏移（golden 会集体漂移）。
+        //   参数写成 `?Alignment = null` 而不是方法调用作默认值：默认参数里不能调用
+        //   静态方法（PHP 层就不允许，与 AOT 无关）。
+        $this->align = $align ?? Alignment::topLeft();
     }
 
     public function addChild(RenderBox $child): void
@@ -243,7 +252,7 @@ final class RenderStack extends RenderBox
      * |---|---|---|
      * | 两边都给 | **紧** `盒宽 − 左 − 右`（拉伸，CSS 的 `left:0;right:0`） | 左 |
      * | 只给一边 | 上限收掉那一边的距离 | 给了的那边 |
-     * | 两边都不给 | 上限 = 盒宽 | 退回 `StackAlign` |
+     * | 两边都不给 | 上限 = 盒宽 | 退回 `Alignment` |
      *
      * ★ **两边都给时子被拉伸**是这三条里唯一"用户没写尺寸却得到尺寸"的形态，
      *   也是 `Positioned` 相对"只能贴九个方位"多出来的真正价值。
@@ -333,6 +342,14 @@ final class RenderStack extends RenderBox
         $kid->setOffset($x, $y);
     }
 
+    /**
+     * 非定位子的水平落点。
+     *
+     * ★ 2026-10-29 由"两个 `match` 枚举九宫格"塌成一次乘法：`Alignment` 的
+     *   `x ∈ -1..1` 直接就是"自由空间的哪一段"（`-1 ⇒ 0`、`0 ⇒ 半`、`+1 ⇒ 全`），
+     *   枚举的 9 个分支原本只是这 3 个系数的查表。**顺带能表达中间值**
+     *   （`Alignment(0.5, 0)` = 起点与中心之间），枚举做不到。
+     */
     private function alignX(RenderBox $kid, Size $own): float
     {
         $kidSize = $kid->size();
@@ -346,19 +363,10 @@ final class RenderStack extends RenderBox
             return 0.0;
         }
 
-        $align = $this->align;
-
-        return match ($align) {
-            StackAlign::TopCenter,
-            StackAlign::Center,
-            StackAlign::BottomCenter => $free / 2.0,
-            StackAlign::TopRight,
-            StackAlign::CenterRight,
-            StackAlign::BottomRight => $free,
-            default => 0.0,
-        };
+        return $this->align->resolveX($free);
     }
 
+    /** 见 {@see alignX()} */
     private function alignY(RenderBox $kid, Size $own): float
     {
         $kidSize = $kid->size();
@@ -371,16 +379,6 @@ final class RenderStack extends RenderBox
             return 0.0;
         }
 
-        $align = $this->align;
-
-        return match ($align) {
-            StackAlign::CenterLeft,
-            StackAlign::Center,
-            StackAlign::CenterRight => $free / 2.0,
-            StackAlign::BottomLeft,
-            StackAlign::BottomCenter,
-            StackAlign::BottomRight => $free,
-            default => 0.0,
-        };
+        return $this->align->resolveY($free);
     }
 }

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Showcase\Pages;
 
+use Drift\Geometry\Alignment;
 use Drift\Geometry\EdgeInsets;
 use Drift\Rendering\Color;
 use Drift\Widget\BackdropFilter;
@@ -18,7 +19,6 @@ use Drift\Widget\Stack;
 use Drift\Widget\StatelessWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
-use Drift\Layout\StackAlign;
 
 /**
  * 页 22「毛玻璃 BackdropFilter」—— 质感层的第四件（2026-10-26）。
@@ -54,7 +54,7 @@ final class GlassPage extends StatelessWidget
                 )->caption(),
 
                 self::sectionBar('① 效果本体：壁纸上的毛玻璃面板（sigma 18）'),
-                Stack::make()->alignment(StackAlign::TopLeft)->children([
+                Stack::make()->alignment(Alignment::topLeft())->children([
                     self::wallpaper(4, 3),
                     Padding::make(
                         BackdropFilter::make(
@@ -140,7 +140,7 @@ final class GlassPage extends StatelessWidget
     private static function chip(float $sigma, string $label): Widget
     {
         return SizedBox::make(
-            Stack::make()->alignment(StackAlign::TopLeft)->children([
+            Stack::make()->alignment(Alignment::topLeft())->children([
                 SizedBox::make(self::wallpaper(2, 2, 6.0, 36.0))->width(160.0)->height(96.0),
                 BackdropFilter::make(
                     Card::make(Text::make($label)->title())

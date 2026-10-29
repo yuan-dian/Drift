@@ -27,6 +27,7 @@ use Drift\Widget\State;
 use Drift\Widget\StatefulWidget;
 use Drift\Widget\Widget;
 
+use App\Showcase\Pages\AlignPage;
 use App\Showcase\Pages\AspectPage;
 use App\Showcase\Pages\BigListPage;
 use App\Showcase\Pages\TablePage;
@@ -191,6 +192,7 @@ final class ShowcaseState extends State
             new NavEntry(IconName::Square, '禁用态 Disabled', static fn(): Widget => new DisabledPage()),
             // ★ 同上：变换页追加在最末（前 27 项 y 不变）。
             new NavEntry(IconName::Square, '变换 Transform', static fn(): Widget => new TransformPage()),
+            new NavEntry(IconName::Square, '对齐 Align', static fn(): Widget => new AlignPage()),
         ];
     }
 

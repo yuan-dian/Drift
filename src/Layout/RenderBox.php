@@ -353,9 +353,9 @@ abstract class RenderBox extends RenderObject
      * |---|---|---|
      * | ① | `width`/`height` 修饰 ⇒ 收紧约束 | "设了就变紧轴"只有一份语义 |
      * | ② | padding 内缩 ⇒ 给子类的是**内容盒**约束 | 内缩只有一份实现 |
-     * | ③ | `center` ⇒ 松掉下界 | 居中要子能缩 |
+     * | ③ | `align` ⇒ 松掉下界 | 对齐要子能缩 |
      * | ⑤ | padding 加回 ⇒ 盒尺寸 | 与 ② 成对 |
-     * | ⑦ | `center` ⇒ 后置平移直接子盒 | 见下 |
+     * | ⑦ | `align` ⇒ 后置平移直接子盒 | 见下 |
      *
      * ★★ **子盒的 offset 住内容盒坐标**：`performLayout()` 收到的是内容盒约束，
      *   容器把子摆在"内容盒原点"坐标系里 —— 这与它们原本的写法**完全一致**
@@ -392,10 +392,16 @@ abstract class RenderBox extends RenderObject
             $inner = $m->deflate($constraints);
         }
 
-        // ③ 居中 ⇒ 松掉下界。不松的话 `Stretch` 的 Flex 里子会被拉满、居中失效
+        // ③ 对齐 ⇒ 松掉下界。不松的话 `Stretch` 的 Flex 里子会被拉满、对齐失效
         //    （`RenderCenter` 原本就是给子 `loosen()`，这里复刻）。
-        $centered = $m !== null && $m->hasCenter();
-        if ($centered) {
+        // ★ 不用 `?->`：AOT 下 `?->` 会走跨实例查表、对本类字段也失效
+        //   （`MEMORY.md` 的 AOT 坑 ②）。拆成显式 null 判断。
+        $align = null;
+        if ($m !== null) {
+            $align = $m->alignment();
+        }
+
+        if ($align !== null) {
             $inner = $inner->loosen();
         }
 
@@ -443,7 +449,7 @@ abstract class RenderBox extends RenderObject
         //   （Flutter 在同样前提下也收缩）。要撑满请让父给 tight（`Dock` 的
         //   `center` 槽 / `Stack(Expand)` / 应用根都是这么做的）。
 
-        // ⑦ 后置平移直接子盒：**只做 `center`**
+        // ⑦ 后置平移直接子盒：**按对齐锚点**（`center` 是它的一个点）
         // ★ padding **不**进子盒偏移 —— 子盒坐标就住内容盒，换算交给 `paint()` 的
         //   `translate()` 与 `hitTest()`/`absoluteOrigin()` 的 `contentOriginX/Y()`
         //   （`02` §4.1.1）。进一次就与绘制重复平移，且不报错。
@@ -452,8 +458,14 @@ abstract class RenderBox extends RenderObject
         //   `$inner->maxWidth - $measured->width`，两个都错：`$inner->maxWidth` 是
         //   **父给的可用宽**（松约束下比盒大 ⇒ 推出盒外），而 `$measured` 在 ⑤ 步
         //   已加回 padding（是**盒**尺寸）⇒ 有 padding 时偏移少算 `(padL+padR)/2`。
-        //   现在用 `$boxSize - padding` 与 `$content`，与 `Align` 的口径一致。
-        if ($centered) {
+        //   现在用 `$boxSize - padding` 与 `$content`。
+        //
+        // ★★ **自由空间先夹到 ≥ 0**：内容比可用区大时不产生负偏移（贴起点）。
+        //   与 `RenderStack::alignX/Y` 同一口径 —— 负偏移会把内容推到盒外左上，
+        //   而"内容超盒"本身是布局错（⑥ / C6 该报的），不该由对齐去掩盖。
+        //   这条同时保证了 `Alignment::center()` 与旧 `bool $center` **逐字节等价**
+        //   （`max(0, free/2)` 就是 `max(0, free) * (0+1)/2`）。
+        if ($align !== null) {
             $contentW = $boxSize->width;
             $contentH = $boxSize->height;
             if ($padded) {
@@ -461,8 +473,17 @@ abstract class RenderBox extends RenderObject
                 $contentH -= $m->padTop() + $m->padBottom();
             }
 
-            $dx = \max(0.0, ($contentW - $content->width) / 2.0);
-            $dy = \max(0.0, ($contentH - $content->height) / 2.0);
+            $freeW = $contentW - $content->width;
+            $freeH = $contentH - $content->height;
+            if ($freeW < 0.0) {
+                $freeW = 0.0;
+            }
+            if ($freeH < 0.0) {
+                $freeH = 0.0;
+            }
+
+            $dx = $align->resolveX($freeW);
+            $dy = $align->resolveY($freeH);
 
             $this->visitChildren(function (RenderObject $child) use ($dx, $dy): void {
                 if ($child instanceof RenderBox) {
@@ -621,7 +642,7 @@ abstract class RenderBox extends RenderObject
             || !\is_nan($this->insetBottom);
     }
 
-    /** `NAN` = 该边未声明（未声明的轴按 `StackAlign` 排） */
+    /** `NAN` = 该边未声明（未声明的轴按 `Alignment` 排） */
     public function insetLeft(): float
     {
         return $this->insetLeft;

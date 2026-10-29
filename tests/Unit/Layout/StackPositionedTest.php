@@ -9,7 +9,7 @@ use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Size;
 use Drift\Layout\RenderStack;
-use Drift\Layout\StackAlign;
+use Drift\Geometry\Alignment;
 use Drift\Widget\SizedBox;
 use Drift\Widget\Stack;
 use Drift\Widget\Widget;
@@ -19,7 +19,7 @@ use Drift\Widget\Widget;
  *
  * ## 补的是什么
  *
- * `Stack` 原来只有 `StackAlign`（九个方位）与 `StackFit`（约束口径）⇒ 子只能
+ * `Stack` 原来只有 `StackAlign`（九个方位，2026-10-29 退休为 `Alignment`）与 `StackFit`（约束口径）⇒ 子只能
  * **贴九个方位之一**。"右上角标（距右 8、距顶 8）"、"铺满整层的蒙版"都写不出来。
  * 这不是锦上添花：叠层布局缺了定位就是半残的。
  *
@@ -46,7 +46,7 @@ use Drift\Widget\Widget;
 final class StackPositionedTest extends SmokeTestCase
 {
     /** @param list<Widget> $kids */
-    private static function stackBox(array $kids, ?StackAlign $align = null): RenderStack
+    private static function stackBox(array $kids, ?Alignment $align = null): RenderStack
     {
         $stack = Stack::make()->children($kids);
         if ($align !== null) {
@@ -164,7 +164,7 @@ final class StackPositionedTest extends SmokeTestCase
     }
 
     /**
-     * 判据 4：没声明的那一轴退回 `StackAlign`（不是默认贴左上）。
+     * 判据 4：没声明的那一轴退回 `Alignment`（不是默认贴左上）。
      *
      * ★ `TopRight` + 只声明 `top` ⇒ x = 100−20 = **80**（对齐给的），y = 8（定位给的）。
      *   两个来源必须**各管一轴** —— 混成一边的表现是"`alignment()` 突然失效"。
@@ -175,13 +175,13 @@ final class StackPositionedTest extends SmokeTestCase
         $badge = new SolidBox(new Size(20.0, 10.0), 20.0, 10.0);
         $badge->setStackIntent(\NAN, 8.0, \NAN, \NAN);   // 只声明 top
 
-        $stack = new RenderStack(StackAlign::TopRight);
+        $stack = new RenderStack(Alignment::topRight());
         $stack->addChild($content);
         $stack->addChild($badge);
         $stack->layout(BoxConstraints::loose(new Size(300.0, 300.0)));
 
         check(
-            'Stack 定位 · 未声明的横轴退回 StackAlign（TopRight ⇒ x = 100−20 = 80，y 仍是定位给的 8）',
+            'Stack 定位 · 未声明的横轴退回 Alignment（TopRight ⇒ x = 100−20 = 80，y 仍是定位给的 8）',
             $badge->offsetX() === 80.0 && $badge->offsetY() === 8.0,
             \sprintf('实际 (%.1f, %.1f)', $badge->offsetX(), $badge->offsetY()),
         );
