@@ -26,14 +26,14 @@
 | 能力 | 状态 | 证据 |
 |---|---|---|
 | 阴影原语 | **半成品** | `src/Rendering/Shadow.php`、`ShadowPainter.php` 存在；`grep Shadow src/Widget/` 只命中 `Widget.php`（注释）⇒ **0 消费者** |
-| 渐变 | **半成品** | `src/Rendering/Gradient.php` + `Paint` 支持；控件层 0 消费者 |
+| 渐变 | ✅ **已接线**（A1a，10-28） | `Widget::gradient()` + `Gradient::vertical/horizontal/diagonal/radialBox`（盒内比例坐标） |
 | 圆角 | 已有 | `BoxStyle::radius` 被 `Card`/`Button`/`PopupPanel` 等消费 |
 | 毛玻璃 / backdrop blur | **缺口** | `grep Blur src/` 只命中阴影与 `Modifier`（阴影半径），无 backdrop filter |
 | 混合模式 | **缺口** | `grep BlendMode\|xfermode` **全仓 0 处** |
-| Opacity 控件 | **缺口** | `src/Widget/` 无 `Opacity`；只有 `AnimationController` 内部用 alpha |
-| Transform（旋转/缩放/斜切） | **缺口** | `src/Widget/` 无 Transform 家族 |
+| Opacity 控件 | ✅ **已有**（A1b） | `Opacity` 控件 + `Widget::opacity()`；走 `Modifier` 合成槽 ⇒ 整棵子树一次 `pushLayer` |
+| Transform（旋转/缩放/斜切） | ✅ **已有**（A1c，10-29） | `Matrix2D` + `Widget::transform()/rotate()/scale()`；**斜切未提供**（无 `skew` 工厂），无 3D 透视 |
 | 动画引擎 | **半成品** | `AnimationController` + `Curve` 完整；`grep AnimationController src/` 只命中 `Application`/`PumpHost`/自身 ⇒ **控件层 0 消费** |
-| 隐式动画 / Tween | **缺口** | `grep AnimatedC\|AnimatedO\|Tween` **0 处** ⇒ 无状态过渡动画 |
+| 隐式动画 / Tween | ✅ **已有**（A1b） | `AnimatedOpacity` / `AnimatedScalar`（后者由 `AnimatedValue` 半衰期模型驱动，不是 `Curve`）；见 `REVIEW-2026-10-28.md` §23 |
 | 页面转场 / Hero | **缺口** | 无 |
 | Hover 视觉 | 已有（弱） | `Widget::hover(fn)` 回调 + 色板；但**只变色、不浮起**（无 elevation 变化） |
 
