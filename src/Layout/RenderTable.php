@@ -634,6 +634,14 @@ final class RenderTable extends RenderBox implements ScrollBarHost
             return null;
         }
 
+        // ★ 与基类同一条（`RenderBox::hitTest()` 的禁用段）：表格覆写了命中，
+        //   禁用的表格得在这里也挡住，否则"表禁用但还能点行"—— 覆写点漏一处
+        //   就是这种半禁用的怪状态。★ 返回 `$this` 而不是 `null`（返回 null 等于
+        //   让上层继续问下一个兄弟 = 穿透）。
+        if ($this->isDisabled()) {
+            return $this;
+        }
+
         $padX = $this->contentOriginX();
         $padY = $this->contentOriginY();
         $hh = $this->headerBoxH;

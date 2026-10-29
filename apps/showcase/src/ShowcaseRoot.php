@@ -52,6 +52,7 @@ use App\Showcase\Pages\TooltipPage;
 use App\Showcase\Pages\TextPage;
 use App\Showcase\Pages\TreePage;
 use App\Showcase\Pages\CalendarPage;
+use App\Showcase\Pages\DisabledPage;
 use App\Showcase\Pages\PickerPage;
 
 /**
@@ -185,6 +186,8 @@ final class ShowcaseState extends State
             new NavEntry(IconName::Grid, '日历 Calendar', static fn(): Widget => new CalendarPage()),
             // ★ 同上：日期时间页追加在最末，前 25 项的 y 坐标不变。
             new NavEntry(IconName::ChevronDown, '日期时间 Picker', static fn(): Widget => new PickerPage()),
+            // ★ 同上：禁用态页追加在最末（前 26 项 y 不变；侧栏本身已包 ScrollView）。
+            new NavEntry(IconName::Square, '禁用态 Disabled', static fn(): Widget => new DisabledPage()),
         ];
     }
 

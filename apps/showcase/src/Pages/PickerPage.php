@@ -69,7 +69,7 @@ final class PickerPageState extends State
             Column::make()->spacing(14.0)->padding(EdgeInsets::all(20.0))->children([
                 Text::make('日期时间 Picker')->title(),
                 Text::make('触发框 + 浮层：面板里就是 CalendarView / TimeView，它们并不知道自己在浮层里。')->caption(),
-                Text::make('日期与时刻是**两个**可复用件，DateTimePicker 只是把它们并排。')->caption(),
+                Text::make('日期与时刻是两个可复用件，DateTimePicker 只是把它们并排。')->caption(),
                 $this->dateRow(),
                 $this->dateTimeRow(),
                 $this->timeRow(),
@@ -100,7 +100,7 @@ final class PickerPageState extends State
     private function dateTimeRow(): Widget
     {
         return Column::make()->spacing(6.0)->children([
-            Text::make('DateTimePicker —— 值是 LocalDateTime，左日历右时刻列；选完**不**收面板')->caption(),
+            Text::make('DateTimePicker —— 值是 LocalDateTime，左日历右时刻列；选完不收面板')->caption(),
             Row::make()->spacing(12.0)->children([
                 DateTimePicker::make($this->month)
                     ->value($this->at)

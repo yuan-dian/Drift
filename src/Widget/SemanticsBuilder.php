@@ -46,7 +46,7 @@ final class SemanticsBuilder
         if ($root === null) {
             return $tree;
         }
-        self::descend($root, $tree, -1, 0, $focused);
+        self::descend($root, $tree, -1, 0, $focused, false);
 
         return $tree;
     }
@@ -57,9 +57,13 @@ final class SemanticsBuilder
      * ★ 用 `childCount()/childAt()` 而**不是闭包 visitChildren** —— 递归里递闭包
      *   在 AOT 下多一层不可见的调用，能用索引循环就别递函数。
      */
-    private static function descend(Element $el, SemanticsTree $tree, int $parentIdx, int $depth, ?Element $focused): void
+    private static function descend(Element $el, SemanticsTree $tree, int $parentIdx, int $depth, ?Element $focused, bool $disabled): void
     {
         $role = $el->widget()->semanticsRole();
+
+        // ★ `disabled()` 是**子树级**（与 `hitTest()` / `FocusManager::walk()` 同一条）：
+        //   禁用容器里的按钮，语义上也是不可用的 —— 读屏必须念出来。
+        $off = $disabled || $el->widget()->mods()->disabled();
         $cur = $parentIdx;
         $nextDepth = $depth;
 
@@ -73,7 +77,12 @@ final class SemanticsBuilder
             $n->value = $w->semanticsValue();
             $n->rangeMin = $w->semanticsRangeMin();
             $n->rangeMax = $w->semanticsRangeMax();
-            $n->enabled = $w->semanticsEnabled();
+            // ★ 声明与实际状态取**与**：`semantics(..., enabled: false)` 是控件自己
+            //   声明的静态事实（"我这个角色天生不可用"），`disabled()` 是运行期状态。
+            //   两者任一为假都该报 `IsEnabled=false`，否则"禁用了但读屏说可用"，
+            //   客户端会在 Invoke 前放行、然后 provider 收不到（`drift_win32.cc`
+            //   里 `UIA_IsEnabledPropertyId` 那段注释说的正是这个坑）。
+            $n->enabled = $w->semanticsEnabled() && !$off;
             $n->focused = $focused !== null && $el === $focused;
             $n->parent = $parentIdx;
             $n->depth = $depth;
@@ -103,7 +112,7 @@ final class SemanticsBuilder
         for ($i = 0; $i < $count; $i++) {
             $kid = $el->childAt($i);
             if ($kid !== null) {
-                self::descend($kid, $tree, $cur, $nextDepth, $focused);
+                self::descend($kid, $tree, $cur, $nextDepth, $focused, $off);
             }
         }
     }

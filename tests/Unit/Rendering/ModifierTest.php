@@ -72,6 +72,7 @@ final class ModifierTest extends SmokeTestCase
             'withOpacity' => [static fn(): Modifier => (new Modifier())->withOpacity(0.5), false],
             'withTranslate' => [static fn(): Modifier => (new Modifier())->withTranslate(1.0, 1.0), false],
             'withClip' => [static fn(): Modifier => (new Modifier())->withClip(true), false],
+            'withDisabled' => [static fn(): Modifier => (new Modifier())->withDisabled(true), false],
             'withGrow' => [static fn(): Modifier => (new Modifier())->withGrow(1), false],
             'withShrink' => [static fn(): Modifier => (new Modifier())->withShrink(1), false],
             'withBasis' => [static fn(): Modifier => (new Modifier())->withBasis(10.0), false],

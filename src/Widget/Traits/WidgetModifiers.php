@@ -294,6 +294,49 @@ trait WidgetModifiers
     }
 
     /**
+     * 禁用：**不接指针、不进 Tab 序、不进可聚焦表、语义 `enabled=false`、置灰**。
+     *
+     * ```php
+     * Button::make('提交')->onPressed($this->submit)->disabled($this->busy);
+     * ```
+     *
+     * ## 一个声明、四处消费（这是它住修饰符而不是控件字段的理由）
+     *
+     * | 消费方 | 位置 | 表现 |
+     * |---|---|---|
+     * | 命中测试 | `RenderBox::hitTest()` | 早退 `null` ⇒ 由**父容器**接住（`hitTest()` 的第 ③ 条规则）⇒ 事件被吞、不穿透到后面的兄弟 |
+     * | 焦点 | `FocusManager::walk()` | 子树既不进 `order`（Tab 序）也不进 `byId`（可聚焦表）；正在聚焦的元素被禁用 ⇒ 下一次 `collect()` 自动失焦 |
+     * | 无障碍 | `SemanticsBuilder` | `enabled = semanticsEnabled() && !disabled` ⇒ UIA `IsEnabled=false`（读屏会念"不可用"，客户端 `Invoke` 前自己就拦） |
+     * | 绘制 | `RenderBox::setMods()` | 合成 alpha 乘 `DISABLED_ALPHA`（`pushLayer`，整棵子树一起变淡） |
+     *
+     * ## 与 `skipFocus()` 的分工（两者都会动 Tab 序，**不能互相替代**）
+     *
+     * - `skipFocus()`：**只**把子树移出 Tab 序，**仍然点得动**。给"工具组整体不该被 Tab 遍历到"
+     *   这种**导航意图**用（`TreeView` 的行箭头、`AppBar` 的按钮组）。
+     * - `disabled()`：连"点得动"一起取消，并改变语义与外观。给**业务状态**用
+     *   （表单校验没过、无权限、提交中、`DatePicker` 的 `min/max` 之外的日期）。
+     *
+     * ## 有意边界
+     *
+     * - **不禁用"已经开始的交互"**：一条正在拖的 `Slider` 中途被禁用，拖动会继续到松手
+     *   （框架没有"中断进行中的手势"的原语）。要更严格得等手势里引入取消路径。
+     * - **置灰是统一 alpha，不是逐控件换色**：`ColorToken` 至今没有 `disabled` 槽，
+     *   给 20 个控件各画一套灰底灰字会把这个契约拖成"每加控件改一遍"。真要精细外观，
+     *   先加 token 槽，再由各控件的 `paintContent()` 自己取 —— 那是 v2。
+     * - **不做 `readOnly`**：只读（能选中、能复制、不接受编辑）与禁用是两种状态，
+     *   `TextField` 需要前者时应该单开一个修饰，而不是把 `disabled` 掰成两半。
+     *
+     * @api
+     */
+    public function disabled(bool $on = true): static
+    {
+        $this->mutate();
+        $this->mods = $this->mods->withDisabled($on);
+
+        return $this;
+    }
+
+    /**
      * 把**内容**裁到盒矩形（含内边距）。`clip(false)` 可显式关掉。
      *
      * ★ 与容器声明 `->overflow(Overflow::Clip)` 的分工：`Overflow` 管**布局期**

@@ -468,15 +468,22 @@ final class FocusManager
 
     /**
      * @param bool $skipped 祖先（或自己）声明了 `skipFocus()` ⇒ 本子树不进 Tab 序
+     * @param bool $disabled 祖先（或自己）声明了 `disabled()` ⇒ 本子树**不可交互**
      */
-    private function walk(Element $element, bool $skipped = false): void
+    private function walk(Element $element, bool $skipped = false, bool $disabled = false): void
     {
         $node = $element->widget()->focusNode();
 
         // `skipFocus()` 是**子树级**（§A.3.4：AppBar 工具组整体不进 Tab 序）
         $skip = $skipped || ($node !== null && $node->skip);
 
-        if ($element->widget()->isFocusable()) {
+        // ★ `disabled()` 也是子树级，但**动的表和 `skipFocus()` 不同**：
+        //   `skipFocus()` 只挡 Tab 序、保留"点了能拿焦点"；禁用连后者一起取消。
+        //   所以这里不并入 `$skip`，而是单独一个开关（并入的话"禁用但可点"就成了
+        //   `skipFocus()` 的隐式副作用，两者再也分不开）。
+        $off = $disabled || $element->widget()->mods()->disabled();
+
+        if (!$off && $element->widget()->isFocusable()) {
             // ★★ `byId` 与 `order` 是**两件事**（2026-10-29 拆分）：
             //   · `byId` = "**可聚焦**元素表" —— `focusHit()` 拿它回答"点到的这个东西
             //     能不能拿焦点"，答案只能是"它自己声明了可聚焦"；
@@ -485,12 +492,17 @@ final class FocusManager
             //   `skipFocus()` 的真实语义变成"**这棵子树既不能 Tab 到、也点不动**"。
             //   踩点：`TreeView` 的行箭头（`IconButton` + `skipFocus()`）点了毫无反应，
             //   而画面上箭头好好地在那儿 —— 没有任何可观测的线索指向焦点表。
+            //
+            // ★ 禁用则**两张都不进**（这正是"不可交互"的定义）；连带的好处是
+            //   `collect()` 末尾那条"focused 不在 byId ⇒ leave()"自动把焦点挪走 ——
+            //   不需要在 `disabled()` 里手工找焦点。
             $this->byId[spl_object_id($element)] = $element;
 
             if (!$skip) {
                 $this->order[] = $element;
             }
         }
+
 
         /** @var list<Element> $children */
         $children = [];
@@ -512,7 +524,7 @@ final class FocusManager
         });
 
         foreach ($children as $child) {
-            $this->walk($child, $skip);
+            $this->walk($child, $skip, $off);
         }
     }
 

@@ -127,6 +127,17 @@ final class Modifier
 
     private float $translateY = 0.0;
 
+    // ── 交互维（D_INTERACT）──────────────────────────────────────────
+    //
+    // ★ 与上面三个的区别：那三个是"画成什么样"，这个是"还接不接事件"。
+    //
+    // ★★ **必须住修饰符，不能让每个控件自己加一个 `disabled` 字段**：它要喂四处
+    //   （命中 / 焦点 / 语义 / 绘制，见 `Widget::disabled()` 的表），而"漏一处"
+    //   的失败形态是**看着灰了但点得动** —— 比不禁用更误导。修饰符是四处唯一的
+    //   共同上游（`RenderBox::setMods()` / `FocusManager` / `SemanticsBuilder`
+    //   都读得到它），所以这里一条声明就能让 20+ 个控件同时正确。
+    private bool $disabled = false;
+
     // ── 主轴弹性意图（`04` §2）──────────────────────────────────────
     private int $grow = 0;
 
@@ -600,7 +611,8 @@ final class Modifier
             && !$this->hasInset()
             && !$this->center
             && !$this->clip
-            && !$this->repaintBoundary;
+            && !$this->repaintBoundary
+            && !$this->disabled;
     }
 
     public function composeOpacity(): float
@@ -616,6 +628,12 @@ final class Modifier
     public function composeDy(): float
     {
         return $this->translateY;
+    }
+
+    /** 禁用（状态位，不是动画量 —— 改了要 rebuild 而不是 `setCompose()`） */
+    public function disabled(): bool
+    {
+        return $this->disabled;
     }
 
     // ── 写：值对象换新（每次 `clone` 一次，原对象不动）──────────────
@@ -768,6 +786,14 @@ final class Modifier
         $c = clone $this;
         $c->translateX = $dx;
         $c->translateY = $dy;
+
+        return $c;
+    }
+
+    public function withDisabled(bool $on): self
+    {
+        $c = clone $this;
+        $c->disabled = $on;
 
         return $c;
     }

@@ -65,7 +65,13 @@ abstract class RenderBox extends RenderObject
     {
         $this->mods = $mods;
 
-        $this->composeOpacity = $mods->composeOpacity();
+        // ★ 禁用把置灰**折进**合成 alpha，而不是各控件自己调色：`paintComposed()`
+        //   在 `opacity < 1` 时已经开层（`pushLayer`）⇒ 整棵子树一起变淡，零新增绘制代码。
+        //   与显式 `->opacity()` 是**乘算**：`opacity(0.5)->disabled()` = 0.19，符合直觉。
+        $this->disabled = $mods->disabled();
+        $this->composeOpacity = $this->disabled
+            ? $mods->composeOpacity() * self::DISABLED_ALPHA
+            : $mods->composeOpacity();
         $this->composeDx = $mods->composeDx();
         $this->composeDy = $mods->composeDy();
 
@@ -79,6 +85,18 @@ abstract class RenderBox extends RenderObject
     public function mods(): ?Modifier
     {
         return $this->mods;
+    }
+
+    /**
+     * 本盒（及其子树）是否被禁用。
+     *
+     * ★ 读的是 `setMods()` 折下来的字段，不是 `mods()->disabled()`（理由见字段注）。
+     * ★ 没有修饰的盒（`mods === null`）⇒ `false`：**"没声明" 与 "声明了可用"
+     *   行为相同**，这是所有修饰符的既有口径（`padding` 缺省 0、`opacity` 缺省 1）。
+     */
+    public function isDisabled(): bool
+    {
+        return $this->disabled;
     }
 
     /**
@@ -755,6 +773,25 @@ abstract class RenderBox extends RenderObject
 
     private float $composeDy = 0.0;
 
+    // ── 交互维（`Widget::disabled()` 的下游，2026-10-29）──────────────
+    //
+    // ★ 与上面三个的差别：那三个**每帧都在变**（动画），这个只在 `setMods()` 时
+    //   变（状态）。所以不需要 `setDisabled()` 那种"直接写盒"的旁路 —— 禁用是
+    //   应用 `setState` 的结果，rebuild 本来就该重算。
+    //
+    // ★ 存成 bool 而不是每次 `$this->mods->disabled()`：`hitTest()` 在指针事件
+    //   里被逐盒调用，而 `mods` 是 `?Obj`（AOT 下退化成 `Var`）—— 见
+    //   `contentOriginX()` 的第二段注：那类读法的代价直接落在命中测试上。
+    private bool $disabled = false;
+
+    /**
+     * 禁用时整棵子树的不透明度（`Widget::disabled()` 的默认外观）。
+     *
+     * ★ 取 0.38 而不是 0.5：0.5 在大色块上仍然"像个可点的主按钮"，0.38 才落进
+     *   Windows 原生禁用控件的观感区间。这个数只该有一处 —— 想调就调这里。
+     */
+    public const DISABLED_ALPHA = 0.38;
+
     // ── 层缓存（A 批② `RepaintBoundary`）──────────────────────────────
     // 缓存的是 `paint()` 的**命令序列**。它画的是自身局部坐标：位置的两种来源
     // （父的 `translate`、本盒的 compose）都在 `paint()` **之外**施加 ⇒ 缓存天生
@@ -920,6 +957,21 @@ abstract class RenderBox extends RenderObject
      * ★ **`Offstage` 无需特判**：它跳过 layout ⇒ `size` 为 null ⇒ 这里直接 `null`。
      * ★ **一次命中、三方消费**（事件路由 / 语义 / 光标形状）⇒ 调用方只走一次树。
      *
+     * ## 禁用（2026-10-29）
+     *
+     * 禁用的盒**照旧返回自己**，只是"命中之后什么也不会发生"：
+     *
+     * | 走法 | 结果 |
+     * |---|---|
+     * | 返回 `null`（最初写的） | 父容器继续问**下一个兄弟** ⇒ 事件落到被盖住的那层 ⇒ **就是穿透** |
+     * | 返回 `$this`（现在） | 父容器立刻收工；`InputRouter` 见 `isDisabled()` 直接吞掉 |
+     *
+     * ★ 这条差别是夹具逼出来的：`Stack[under, over(禁用)]` 里点 `over`，第一版
+     *   `pressed = ["under"]` —— 注释里"禁用 ≠ 穿透"说的是**容器兜底**（第 ③ 条），
+     *   不是"某一层子被禁用"这一格。
+     * ★ **整个子树一起挡**：禁用容器的 `hitTest` 返回它自己，里面的控件根本轮不到
+     *   被问 —— 与"容器吞事件"是同一条递归的两种用法，不需要额外传继承参数。
+     *
      * @api
      */
     public function hitTest(float $x, float $y): ?RenderBox
@@ -932,6 +984,12 @@ abstract class RenderBox extends RenderObject
 
         if ($x < 0.0 || $y < 0.0 || $x >= $size->width || $y >= $size->height) {
             return null;
+        }
+
+        // ★ 排在 size 检查之后：越界本该先判，否则"盒子还没布局"与"被禁用"会混成
+        //   同一个结果，夹具里 setMods 之前调 hitTest 就分不清是哪一种。
+        if ($this->disabled) {
+            return $this;
         }
 
         /** @var list<RenderObject> $children */
