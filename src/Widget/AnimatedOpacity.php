@@ -49,6 +49,22 @@ use Drift\Errors;
  */
 final class AnimatedOpacity extends StatefulWidget
 {
+    /**
+     * 趋近半衰期（毫秒）：每过这么久，离目标的**剩余距离**减半。
+     *
+     * ★ **故意不是 `AnimatedValue` 的默认 55ms**。55 是给"跟手的滚动"定的
+     *   （滚轮/滚动条淡出必须一停就到位），用在隐式动画上太快：1.0 → 0.25
+     *   只要 0.37s，而且前 100ms 就走完 2/3，肉眼读成"一帧跳过去"，于是
+     *   用户会以为"点一次没反应"、再点一次（2026-10-29 真机反馈）。
+     *
+     * ★ 150ms ⇒ 1.0 → 0.25 约 **0.93s**，其中前 450ms 是看得清的主体
+     *   （剩下的是 0.01 以内的收口，本来就看不见）。这个量级能让人明确
+     *   看到"正在变"，又不至于等得不耐烦。
+     *
+     * ★ 别把它挪进 `AnimatedValue` 的默认值：那会同时把滚动拖慢三倍。
+     */
+    public const HALF_LIFE_MS = 150.0;
+
     private function __construct(
         private readonly float $target,
         private readonly Widget $kid,

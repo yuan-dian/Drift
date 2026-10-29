@@ -194,7 +194,9 @@ final class AnimatedOpacityTest extends SmokeTestCase
         );
 
         // 收口
-        for ($i = 0; $i < 60; ++$i) {
+        // ★ 帧数按半衰期算：150ms 半衰期从 1.0 → 0.3 要 0.92s ⇒ 16ms × 90 = 1.44s
+        //   （写 60 帧只有 0.96s，边界上会差一点点没落定）。
+        for ($i = 0; $i < 90; ++$i) {
             $ts += 16.0;
             self::step($el, $frame, $state, $ts);
         }

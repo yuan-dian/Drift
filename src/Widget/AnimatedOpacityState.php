@@ -78,7 +78,9 @@ final class AnimatedOpacityState extends State
         $scalar = $this->scalar;
         if ($scalar === null) {
             // 初值 = 目标值 ⇒ 首次挂载不播（"追目标"语义，不是"入场动画"）
-            $scalar = new AnimatedScalar($this->view()->target());
+            // ★ 半衰期由控件给（150ms），不是 `AnimatedValue` 的默认 55ms ——
+            //   55ms 是给跟手的滚动定的，用在隐式动画上快到看不出是过渡。
+            $scalar = new AnimatedScalar($this->view()->target(), AnimatedOpacity::HALF_LIFE_MS);
             $this->scalar = $scalar;
         }
 

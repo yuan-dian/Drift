@@ -203,6 +203,13 @@ final class ImplicitAnimationClockTest extends SmokeTestCase
             $frames >= 5,
             \sprintf('只跑了 %d 帧', $frames)
         );
+        // ★★ 这条挡的是"把半衰期改回 55ms"：那时只有 ~25 帧（0.37s），肉眼看不出
+        //   是过渡 —— 真机上报成"点一次没反应"。150ms 半衰期 ⇒ 约 62 帧（0.93s）。
+        check(
+            '帧时钟 · 过渡至少 0.6s（40 帧 @15ms）—— 再快就"看不出是过渡"',
+            $frames >= 40,
+            \sprintf('只跑了 %d 帧（%.2fs）⇒ 半衰期被改小了？', $frames, $frames * 15.0 / 1000.0)
+        );
         check(
             '帧时钟 · 收口后落闸（`timers->stop()` 被调过）',
             $clock->isArmed() === false

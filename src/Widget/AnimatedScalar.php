@@ -41,9 +41,15 @@ final class AnimatedScalar
     /** 上次交出去的值（判"这一帧的值变了没有"，见类注释 ★★） */
     private float $lastApplied;
 
-    public function __construct(float $start = 0.0)
+    /**
+     * @param float $start      初值（也是初目标 —— "首次不播"由调用方决定）
+     * @param float $halfLifeMs 趋近半衰期（毫秒）。**默认 55 是"跟手"档**：
+     *                          滚轮平滑 / 滚动条淡出要"一停就到位"。隐式动画
+     *                          嫌它太快，自己传（见 `AnimatedOpacity::HALF_LIFE_MS`）。
+     */
+    public function __construct(float $start = 0.0, float $halfLifeMs = 55.0)
     {
-        $this->value = new AnimatedValue($start);
+        $this->value = new AnimatedValue($start, $halfLifeMs);
         $this->lastApplied = $start;
     }
 

@@ -63,6 +63,17 @@ final class MotionState extends State
     /** `AnimatedOpacity` 的目标不透明度（应用侧全部的代码就是改这个字段） */
     private float $fadeTarget = 1.0;
 
+    /**
+     * 点了多少次「淡出」/「淡入」—— **这不是装饰，是判据**。
+     *
+     * ★ 存在的理由（2026-10-29）：真机上反复报"要点两次才变淡"。有了这个计数，
+     *   一眼就能分开两种完全不同的故障：
+     *   - 点一次**数字就变 1**、画面没动 ⇒ 点击进了回调，问题在动画/绘制；
+     *   - 点一次**数字还是 0** ⇒ 事件根本没到按钮，问题在输入路由。
+     *   没有它，两种故障看起来一模一样，只能靠猜（而抓图会给陈旧帧）。
+     */
+    private int $fadeClicks = 0;
+
     public function initState(): void
     {
         $this->eased = AnimationController::make(self::DURATION_MS)->curve(Curve::easeOut());
@@ -175,10 +186,12 @@ final class MotionState extends State
             Row::make()->spacing(8.0)->children([
                 Button::make('淡出')->onPressed(function (): void {
                     $this->fadeTarget = 0.25;
+                    ++$this->fadeClicks;
                     $this->markDirty();
                 }),
                 Button::make('淡入')->onPressed(function (): void {
                     $this->fadeTarget = 1.0;
+                    ++$this->fadeClicks;
                     $this->markDirty();
                 }),
             ]),
@@ -186,6 +199,8 @@ final class MotionState extends State
                 $this->fadeTarget,
                 Card::make(Text::make('这块卡片的不透明度由 AnimatedOpacity 追过去'))
             ),
+            Text::make(\sprintf('点击 %d 次 · 目标 %.2f', $this->fadeClicks, $this->fadeTarget))
+                ->caption(),
             Text::make('应用侧只改一个字段：没有时长、没有控制器、没有 setState 循环。每帧只写盒的合成槽 ⇒ 不重建、不重排，代价是一次 pushLayer()。')
                 ->caption(),
 
