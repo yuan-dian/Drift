@@ -73,8 +73,11 @@ def main() -> int:
         return 2
 
     if title is None:
-        # ★ 标题是**组合根**给 `createWindow()` 的字面量（不是 `Application::title()`：
-        #   那个方法没有任何运行期消费者，见 `WindowSet::open()` 的第一个参数）。
+        # ★ 标题的来源是 **`Application::title()`**（2026-10-30 裁决）：组合根给
+        #   `WindowSet::open()` 传 `null` ⇒ 用应用自己的；只有"同一个应用类开第二个
+        #   窗口"才在窗口这一层覆盖（`hello` 的第二窗）。
+        #   ⇒ 这张表里的值必须与各 `*Application::title()` **逐字相同**，
+        #     不一致的症状是 `FindWindowW` 返回 0（不是报错）。
         title = {
             "hello": "Hello Drift",
             "showcase": "Drift 示例台",

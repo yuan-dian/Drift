@@ -60,7 +60,7 @@ final class Bootstrap
 
         $set->open(
             'main',
-            'Drift 教程',
+            null,   // ★ 标题来自 TutorialApplication::title()（2026-10-30）
             self::WINDOW_WIDTH,
             self::WINDOW_HEIGHT,
             static function (): TutorialApplication {

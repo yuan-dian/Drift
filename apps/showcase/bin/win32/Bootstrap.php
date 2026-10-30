@@ -72,7 +72,7 @@ final class Bootstrap
         //   递的是**端口**不是平台实例 —— Win32 实现仍只出现在本文件。
         $main = $set->open(
             'main',
-            'Drift 示例台',
+            null,   // ★ 标题来自 ShowcaseApplication::title()（2026-10-30）
             self::WINDOW_WIDTH,
             self::WINDOW_HEIGHT,
             static function () use ($platform, $scope): ShowcaseApplication {

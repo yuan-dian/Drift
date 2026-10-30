@@ -132,6 +132,11 @@ function winPumpRemaining(): int
 if (!function_exists('drift_win_create')) {
     function drift_win_create(string $title, int $width, int $height): int
     {
+        // ★ 记下标题（2026-10-30）：`WindowSet::open()` 的标题现在**默认来自
+        //   `Application::title()`** ⇒ "到底传了什么"必须可观测，否则这条判据
+        //   只能靠读代码（而那正是它要取代的东西）。
+        $GLOBALS['DRIFT_SMOKE_CREATE'][] = [$title, $width, $height];
+
         if (isset($GLOBALS['DRIFT_SMOKE_WIN_HANDLE'])) {
             return $GLOBALS['DRIFT_SMOKE_WIN_HANDLE'];
         }
@@ -142,6 +147,16 @@ if (!function_exists('drift_win_create')) {
 
         return $GLOBALS['DRIFT_SMOKE_WIN_SEQ'];
     }
+}
+
+/**
+ * 建窗调用记录（假桥）。
+ *
+ * @return list<array{0: string, 1: int, 2: int}> `[title, width, height]`
+ */
+function winCreateCalls(): array
+{
+    return $GLOBALS['DRIFT_SMOKE_CREATE'] ?? [];
 }
 
 if (!function_exists('drift_win_client_size')) {
@@ -507,6 +522,7 @@ function winLoopReset(): void
     $GLOBALS['DRIFT_SMOKE_MSGBOX'] = [];
     $GLOBALS['DRIFT_SMOKE_DIALOG'] = [];
     $GLOBALS['DRIFT_SMOKE_PRESENT'] = [];
+    $GLOBALS['DRIFT_SMOKE_CREATE'] = [];
     unset($GLOBALS['DRIFT_SMOKE_LAST_TIMER_ID'], $GLOBALS['DRIFT_SMOKE_WIN_HANDLE'], $GLOBALS['DRIFT_SMOKE_CLIENT']);
     unset($GLOBALS['DRIFT_SMOKE_WIN_SEQ'], $GLOBALS['DRIFT_SMOKE_DEAD']);
 

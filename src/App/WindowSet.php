@@ -72,6 +72,19 @@ final class WindowSet
      *
      * @param string $slot 窗口槽位名 —— **跨运行稳定**（写进状态文件），与句柄无关。
      *   两个窗口用同一个槽位 ⇒ 后写的覆盖先写的（下次启动只有一个还原，**不报错**）。
+     * @param null|string $title 窗口标题；**`null` / 空串 ⇒ 用 `$app->title()`**。
+     *   ★★ 2026-10-30 裁决：标题的**唯一来源**是 `Application::title()`，这里的实参
+     *   只是**窗口级覆盖**。理由有两条，缺一条都不足以定这个形：
+     *   ① 改动之前 4 个组合根各自手写一个与 `title()` **逐字相同**的字面量
+     *      （`'Hello Drift'` / `'Drift 示例台'` …）⇒ 同一个事实存在两处，改一处
+     *      另一处静默过期，而 `Application::title()` 成了**没有任何运行期消费者**
+     *      的分支（"未被消费的分支 = 未实现"）。真机探针当时还得靠一张**标题表**
+     *      去 `FindWindowW`，注释里写着"标题不是 `Application::title()`"。
+     *   ② 但**不能**干脆删掉这个参数：同一个应用类开两个窗口时要不同标题
+     *      （`hello` 的第二窗是 `'Hello Drift · 第二窗'`），而 `title()` 是类级的、
+     *      分不出窗口 ⇒ 覆盖必须留在**窗口**这一层。
+     *   ⇒ 默认值来自应用、覆盖权在窗口。这与成熟 GUI 同形（Flutter `MaterialApp.title`
+     *   作默认、路由可覆盖；WPF `Window.Title` 覆盖类型的默认名）。
      * @param \Closure(): Application $makeApp 造这个窗口的应用。**不传句柄**：
      *   `Application` 构造不该知道窗口（它拿不到，也不需要）。
      * @param null|\Closure(Window):void $beforeRestore 建窗之后、还原几何之前
@@ -81,7 +94,7 @@ final class WindowSet
      */
     public function open(
         string $slot,
-        string $title,
+        ?string $title,
         int $width,
         int $height,
         \Closure $makeApp,
@@ -89,15 +102,27 @@ final class WindowSet
         ?\Closure $beforeAttach = null,
     ): Window {
         $host = $this->platform->window();
-        $handle = $host->createWindow($title, $width, $height);
-        $host->show($handle);
 
+        // ★★ 先造应用、再建窗（2026-10-30）：标题要在 `createWindow()` 那一刻就
+        //   定下来 —— 建完再 `setTitle()` 会让窗口先闪一下默认标题。而应用**不依赖
+        //   句柄**（见上面 `$makeApp` 的注释）⇒ 提前造没有副作用。
+        //   ★ 顺带修掉一处"崩在更晚的地方"：`makeApp` 返回错类型时，现在是
+        //     **还没有窗口**就报 Fatal（原先窗口已经建出来、还 show 了）。
         $app = $makeApp();
         if (!$app instanceof Application) {
             // 闭包返回错类型 ⇒ 后面每一次 `attach()` 都是"读未初始化字段"式的
             // 半崩溃。当场报 Fatal 比让它晚 300 行崩在别处划算。
             Errors::report('WindowSet：makeApp 没有返回 Application 实例');
         }
+
+        // ★ 空串也当"没给"：组合根最容易误传 `''`（AOT 下字符串常量没问题，但
+        //   `title()` 忘记实现时默认返回 `'Drift'`，而 `''` 会让窗口没有标题栏文字）。
+        if ($title === null || $title === '') {
+            $title = $app->title();
+        }
+
+        $handle = $host->createWindow($title, $width, $height);
+        $host->show($handle);
 
         $window = new Window($handle, $app, $host);
 

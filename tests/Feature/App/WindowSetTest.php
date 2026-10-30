@@ -107,6 +107,48 @@ final class WindowSetTest extends SmokeTestCase
     }
 
     /**
+     * 标题：**默认来自 `Application::title()`**，显式实参只是窗口级覆盖（2026-10-30）。
+     *
+     * ★ 这条判据取代的是"读代码才知道标题从哪来"：改动之前 4 个组合根各自手写
+     *   一个与 `title()` 逐字相同的字面量，`Application::title()` 一个运行期消费者
+     *   都没有。现在标题走 `createWindow()` 的第一个实参 ⇒ 假桥记下来就能证伪。
+     * ★ 三种输入都要测：`null`（没给）/ `''`（误传空串）/ 显式串（覆盖）。
+     *   只测 `null` 的话，"实现里根本没写 `??=` 而是把 `$title` 原样往下传"也会绿
+     *   —— 那时 `''` 这条会红，但没人跑它。
+     */
+    public function testTitleDefaultsToApplicationTitleAndCanBeOverridden(): void
+    {
+        $platform = new Win32Platform('soft');
+        $set = new WindowSet($platform, $this->statePath());
+
+        $set->open('main', null, 320, 240, static function (): Application {
+            return new EchoApplication();
+        });
+        $set->open('empty', '', 320, 240, static function (): Application {
+            return new EchoApplication();
+        });
+        $set->open('second', '覆盖后的标题', 320, 240, static function (): Application {
+            return new EchoApplication();
+        });
+
+        $calls = winCreateCalls();
+        check(
+            'WindowSet · 标题默认取 `$app->title()`（`null` 与 `\'\'` 都算"没给"）',
+            \count($calls) === 3
+                && $calls[0][0] === '冒烟应用'
+                && $calls[1][0] === '冒烟应用',
+            \json_encode(\array_column($calls, 0), \JSON_UNESCAPED_UNICODE),
+        );
+        check(
+            'WindowSet · 显式标题覆盖应用默认（同一个应用类开两窗要不同标题）',
+            \count($calls) === 3 && $calls[2][0] === '覆盖后的标题',
+            \json_encode(\array_column($calls, 0), \JSON_UNESCAPED_UNICODE),
+        );
+
+        $this->flushChecks();
+    }
+
+    /**
      * 两个不同槽位 ⇒ 文件里**两组都在**，且各写各的值。
      *
      * ★ 只验"有两个键"不够：整份覆盖的写法最后也会剩一个叫 `second` 的组。

@@ -91,7 +91,7 @@ final class Bootstrap
 
         $set->open(
             'main',
-            '用户管理',
+            null,   // ★ 标题来自 UsersApplication::title()（2026-10-30）
             self::WINDOW_WIDTH,
             self::WINDOW_HEIGHT,
             static function () use ($src, $taskHost): UsersApplication {

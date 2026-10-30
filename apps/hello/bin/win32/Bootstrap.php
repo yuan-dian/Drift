@@ -61,7 +61,7 @@ final class Bootstrap
 
         $set->open(
             'main',
-            'Hello Drift',
+            null,   // ★ 标题来自 HelloApplication::title()（2026-10-30）
             self::WINDOW_WIDTH,
             self::WINDOW_HEIGHT,
             static function (): HelloApplication {
