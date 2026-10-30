@@ -51,6 +51,7 @@ use App\Users\UsersRoot;
 use App\Users\Jobs\JobRegistry;
 use App\Users\Store\MemoryUserSource;
 use App\Users\Store\LoadStatus;
+use App\Users\Store\UserStore;
 use Drift\Dev\Smoke\App\FailSliceJob;
 use Drift\Dev\Smoke\App\SemValueApplication;
 use Drift\Dev\Smoke\App\TfApplication;
@@ -4254,6 +4255,64 @@ check(
     ($sliceErr instanceof \Throwable ? $sliceErr->getMessage() : 'null') . ' queued=' . $taskApp->slicedCount(),
 );
 
+// ⑨ 取消通道：`Future::cancel()` 让分片**真的停下来**（不是只丢结果）
+//
+// ★ 判据必须落在"**不再 step**"上，不能落在"future 没结算"：后者在旧实现里也成立
+//   （`resolve()` 本来就被取消位挡着），测不出"任务还在队列里、每帧照烧 4ms 预算"。
+//   —— 这正是"契约说了取消、实现是空操作"能被闸门放过去的原因。
+$cancelJob = new CountJob(10000000, 1000); // 1 万步都跑不完 ⇒ 不取消就永远在队列里
+$cancelFuture = $taskApp->submitSliced($cancelJob);
+$taskApp->frame(128.0, BoxConstraints::loose(new Size(320.0, 240.0)));
+$taskApp->frame(144.0, BoxConstraints::loose(new Size(320.0, 240.0)));
+$stepsBeforeCancel = $cancelJob->steps();
+check(
+    'N3 · 取消前：2 帧推进 2 步、仍在队列（正对照，证明下面的"不再涨"有意义）',
+    $stepsBeforeCancel === 2 && $taskApp->slicedCount() === 1,
+    'steps=' . $stepsBeforeCancel . ' queued=' . $taskApp->slicedCount(),
+);
+
+$cancelFuture->cancel();
+check(
+    'N3 · cancel() 当场摘出队列（不再占帧预算）',
+    $taskApp->slicedCount() === 0,
+    'queued=' . $taskApp->slicedCount(),
+);
+
+$taskApp->frame(160.0, BoxConstraints::loose(new Size(320.0, 240.0)));
+$taskApp->frame(176.0, BoxConstraints::loose(new Size(320.0, 240.0)));
+check(
+    'N3 · 取消后不再 step（旧实现：队列还在，每帧照烧预算）',
+    $cancelJob->steps() === $stepsBeforeCancel,
+    'steps=' . $cancelJob->steps() . '（取消前 ' . $stepsBeforeCancel . '）',
+);
+check(
+    'N3 · 被取消的 Future 永不结算（既不是成功也不是失败）',
+    $cancelFuture->isDone() === false && $cancelFuture->isCancelled() === true,
+    'done=' . var_export($cancelFuture->isDone(), true) . ' cancelled=' . var_export($cancelFuture->isCancelled(), true),
+);
+
+// ⑩ 帧内取消：一个分片完成时的回调，取消**同一帧里还没轮到的**另一个
+//
+// ★ 这一条守的是"钩子管跨帧、泵里的复查管帧内"那对分工：`pumpSliced()` 先取快照
+//   再清空队列 ⇒ 被取消的那一项**已经不在 `$this->sliced` 里**，钩子的 `unset`
+//   找不到它，只能靠泵里的 `isCancelled()` 拦住。
+// ★ 顺序是判据的一部分：触发者在**前**、受害者在**后**（反过来受害者先被 step，
+//   测的就不是帧内那条路了）。
+$victimFuture = null;
+$taskApp->submitSliced(new CountJob(10, 10))->then(function () use (&$victimFuture): void {
+    if ($victimFuture !== null) {
+        $victimFuture->cancel();
+    }
+});
+$victimJob = new CountJob(10000000, 1000);
+$victimFuture = $taskApp->submitSliced($victimJob);
+$taskApp->frame(192.0, BoxConstraints::loose(new Size(320.0, 240.0)));
+check(
+    'N3 · 帧内取消：同帧里排在后面的分片被拦住（一步都没跑）',
+    $victimJob->steps() === 0 && $taskApp->slicedCount() === 0,
+    'steps=' . $victimJob->steps() . ' queued=' . $taskApp->slicedCount(),
+);
+
 // ── ㊴ P2：`IoPoller` 非阻塞 IO（§17.4.4）────────────────────────────────
 //
 // ★ 前提已实测（probes §12.3 [J3]）：`stream_socket_pair` + `stream_set_blocking(false)`
@@ -4423,6 +4482,72 @@ check(
 $pump($capped, $cappedSink, static fn (array $s): bool => count($s) >= 3);
 check('P3 · 池上限：排队那条最后也跑完了', count($cappedSink) === 3, json_encode($cappedSink));
 $capped->shutdown();
+
+// ②c-2 取消通道：**排队中**的能真停，**在途**的只能"不交付"
+//
+// ★ 两条语义必须分开判，否则测出来的是一团：
+//   - 排队中（还没发给 worker）⇒ 摘出队列 ⇒ `queuedCount()` 少 1，worker 根本不会跑它；
+//   - 在途（已经发给 worker）⇒ **停不了**：杀进程要重拉（一整套 AOT 运行时），
+//     还会丢在途状态 ⇒ `inFlightCount()` 不变，靠 `Future` 忽略迟到结果。
+// ★ 判据选"那条任务**从未执行**"（sink 空），不选"pending 变 0" —— 后者只证明记账变了，
+//   证明不了 worker 没跑它。
+$cancelPool = new ProcessTaskHost([PHP_BINARY, $workerScript], SmokeJobRegistry::make(), 1);
+$blockerSink = [];
+$cancelPool->submit(new NamedSleepJob(200))->then(function ($v) use (&$blockerSink): void { $blockerSink[] = $v; });
+
+$droppedSink = [];
+$dropped = $cancelPool->submit(new NamedSleepJob(50));
+$dropped->then(function ($v) use (&$droppedSink): void { $droppedSink[] = $v; });
+check(
+    'N3 · 取消前：1 在途 + 1 排队（worker 只有一个）',
+    $cancelPool->inFlightCount() === 1 && $cancelPool->queuedCount() === 1,
+    'inflight=' . $cancelPool->inFlightCount() . ' queued=' . $cancelPool->queuedCount(),
+);
+
+$dropped->cancel();
+check(
+    'N3 · 排队中取消 ⇒ 真的摘出队列（worker 不会跑它）',
+    $cancelPool->queuedCount() === 0 && $cancelPool->pending() === 1,
+    'queued=' . $cancelPool->queuedCount() . ' pending=' . $cancelPool->pending(),
+);
+
+$pump($cancelPool, $blockerSink, static fn (array $s): bool => $s !== []);
+// 再转几轮：它要是没被摘掉，就会在 blocker 跑完之后冒出来（50ms 足够）
+$dropDeadline = microtime(true) + 0.3;
+while (microtime(true) < $dropDeadline) {
+    usleep(5000);
+    $cancelPool->drain($settle);
+}
+check(
+    'N3 · 被取消的排队任务从未执行（sink 空 + 永不结算）',
+    $droppedSink === [] && $dropped->isDone() === false,
+    json_encode($droppedSink) . ' done=' . var_export($dropped->isDone(), true),
+);
+$cancelPool->shutdown();
+
+// ②c-3 在途取消：**停不了，但结果不交付**（`pending()` 记账不变，避免帧时钟落闸后
+//   管道里的回包永远读不到 ⇒ worker 写满管道阻塞成僵尸）
+$inflightPool = new ProcessTaskHost([PHP_BINARY, $workerScript], SmokeJobRegistry::make(), 1);
+$victimSink = [];
+$victim = $inflightPool->submit(new NamedSleepJob(150));
+$victim->then(function ($v) use (&$victimSink): void { $victimSink[] = $v; });
+$victim->cancel();
+check(
+    'N3 · 在途取消：记账不变（仍算 pending，否则回包读不到）',
+    $inflightPool->inFlightCount() === 1 && $inflightPool->pending() === 1,
+    'inflight=' . $inflightPool->inFlightCount() . ' pending=' . $inflightPool->pending(),
+);
+$inflightPoolDeadline = microtime(true) + 3.0;
+while (microtime(true) < $inflightPoolDeadline && $inflightPool->pending() > 0) {
+    usleep(5000);
+    $inflightPool->drain($settle);
+}
+check(
+    'N3 · 在途取消：结果不交付（then 一次都不跑），但队列真的清空了',
+    $victimSink === [] && $inflightPool->pending() === 0,
+    json_encode($victimSink) . ' pending=' . $inflightPool->pending(),
+);
+$inflightPool->shutdown();
 
 // ②d `Future::all` 跑在**真并发后端**上 —— N3「多接口并发」的落地判据
 //
@@ -4606,6 +4731,61 @@ if (is_resource($mockProc)) {
     }
     proc_close($mockProc);
 }
+
+// ── ㊷ 陈旧响应：连发两次取数，**先发的慢、后发的快** ──────────────────────────
+//
+// ★ 真实触发路径：刷新按钮连点两次 / 翻页太快 / 注册成功后重载。两个请求同时在途时
+//   "第 1 页有缓存、第 2 页要现算"是常态 ⇒ 迟到的旧结果盖掉新数据，而状态是
+//   `Ready`，**用户看不出任何异常**。成熟框架都在这一层收口（RxJS `switchMap` /
+//   `useEffect` cleanup / `CancellationTokenSource`），本仓的收口是 `Future::cancel()`。
+// ★ 用**手动结算的 TaskHost** 而不是真 HTTP：判据要的是"**顺序**"（旧的后到），
+//   不是"耗时" —— 拿真并发测这一条只能靠 sleep 排序，机器一忙就假红（量具纪律）。
+$manualHost = new class implements TaskHost {
+    /** @var list<Future> */
+    public array $futures = [];
+
+    public function submit(Job $job): Future
+    {
+        $future = Future::pending();
+        $this->futures[] = $future;
+
+        return $future;
+    }
+
+    public function pending(): int
+    {
+        return \count($this->futures);
+    }
+
+    public function drain(callable $onEach): void
+    {
+    }
+};
+
+$staleStore = new UserStore(new MemoryUserSource(), $manualHost);
+$staleStore->load(1);
+$staleStore->load(2); // ⇒ 第 1 条当场被取消
+check(
+    'N3 · 连发两次取数：两个请求都在途，旧的已被取消',
+    \count($manualHost->futures) === 2 && $manualHost->futures[0]->isCancelled() === true,
+    'futures=' . \count($manualHost->futures)
+        . ' oldCancelled=' . var_export($manualHost->futures[0]->isCancelled(), true),
+);
+
+// 新的先回来，旧的迟到（这就是真实世界里的顺序）
+$manualHost->futures[1]->resolve([['id' => 2, 'name' => '第二页', 'email' => 'b@example.com']]);
+$manualHost->futures[0]->resolve([['id' => 1, 'name' => '第一页', 'email' => 'a@example.com']]);
+
+check(
+    'N3 · 迟到的旧响应不覆盖新数据（陈旧响应胜出正是这条要杀的 bug）',
+    \count($staleStore->rows()) === 1 && $staleStore->rows()[0]->name === '第二页',
+    json_encode(array_map(static fn (\App\Users\Store\User $u): string => $u->name, $staleStore->rows())),
+);
+check(
+    'N3 · 旧响应到达后三态仍是 Ready（没有被搅成 Loading/Error）',
+    $staleStore->status() === LoadStatus::Ready,
+    $staleStore->status()->name,
+);
 
 // ── 可滚动容器 / 滚动条绘制 / 滚轮全链 / 拖条 / UI 线程身份 已迁出 ─────────────
 //   → `tests/Feature/Rendering/ScrollViewBoxTest.php`（16 条）

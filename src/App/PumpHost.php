@@ -60,13 +60,21 @@ final class PumpHost
      * ★ **不走 `TaskHost`**：分片永远在 UI 线程跑（它解决的是"别把一帧卡死"，
      *   不是"别占 UI 线程"）。所以它和端口正交：换后端不影响分片。
      *
-     * ★ 元素是数组而不是对象：只有四个字段、生命周期一帧内、不需要身份 ——
+     * ★ 元素是数组而不是对象：只有几个字段、生命周期一帧内、不需要身份 ——
      *   为它造一个类只会多一层没有信息的壳（对比 `Completion`：那个要跨边界传，
      *   有语义）。
      *
-     * @var list<array{job: SlicedJob, future: Future, budgetMs: int}>
+     * ★★ **键是任务号**（2026-10-30）：`Future::cancel()` 的钩子要能把它从队列里
+     *   摘掉，而"按 `SlicedJob` 对象反查"做不到（同一个 job 可以提交两次）。
+     *   列表形态只能标记"结果不要了"，**任务照样每帧烧 4ms 预算** —— 那是
+     *   "取消"这个词在真实任务上完全落空（改造前没有任何后端提供过钩子）。
+     *
+     * @var array<int, array{job: SlicedJob, future: Future, budgetMs: int}>
      */
     private array $sliced = [];
+
+    /** 分片任务号（只增不减；`cancel()` 的钩子靠它定位队列项） */
+    private int $nextSliceId = 1;
 
     /**
      * 待触发的延时回调（W8-2，2026-10-23）—— `after()` 排进来，`pumpTimers()` 消费。
@@ -248,7 +256,15 @@ final class PumpHost
         $this->sliced = [];
 
         try {
-            foreach ($queue as $item) {
+            foreach ($queue as $id => $item) {
+                // ★★ 先查取消位：`cancel()` 可能就发生在**本次 drain 内部**（一个
+                //   分片的回调里取消了另一个）—— 那一项已经不在 `$this->sliced`
+                //   里了，但它在**本帧的快照** `$queue` 里，光靠钩子摘不掉。
+                //   ⇒ 钩子管"跨帧"，这里管"帧内"，两处都要有。
+                if ($item['future']->isCancelled()) {
+                    continue;
+                }
+
                 try {
                     $more = $item['job']->step($item['budgetMs']);
                 } catch (\Throwable $e) {
@@ -258,7 +274,8 @@ final class PumpHost
                 }
 
                 if ($more) {
-                    $this->sliced[] = $item;
+                    // ★ 回填时**带着原任务号**：不然它下一帧就再也取消不掉了。
+                    $this->sliced[$id] = $item;
 
                     continue;
                 }
@@ -313,9 +330,17 @@ final class PumpHost
     {
         $this->host->assertUiThread('submitSliced');
 
-        $future = Future::pending();
+        $id = $this->nextSliceId++;
 
-        $this->sliced[] = [
+        // ★ 取消钩子**真的停**（不是只把结果丢掉）：摘出队列之后 `pumpSliced()`
+        //   再也看不到它 ⇒ 每帧不再白烧那 4ms 预算。
+        //   ★ 与 `ProcessTaskHost` 的差别必须说清：分片在**本进程本线程**，摘掉就
+        //     是真停；跨进程的任务杀了要重拉、还会丢在途状态 ⇒ 那边只能"不交付"。
+        $future = Future::pending(function () use ($id): void {
+            unset($this->sliced[$id]);
+        });
+
+        $this->sliced[$id] = [
             'job' => $job,
             'future' => $future,
             'budgetMs' => $budgetMs,

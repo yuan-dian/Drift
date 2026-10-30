@@ -129,7 +129,14 @@ final class ProcessTaskHost implements TaskHost
 
     public function submit(Job $job): Future
     {
-        $future = Future::pending();
+        // ★ 先占号：取消钩子要拿它去队列里定位"还没发出去的那一条"。
+        //   ★ 提前自增的代价只是"参数写错也会消耗一个号" —— 号本身不对外，
+        //     除了 worker 回包对账（`id` 原样来回）。
+        $id = ++$this->seq;
+
+        $future = Future::pending(function () use ($id): void {
+            $this->dropQueued($id);
+        });
 
         if (!$job instanceof NamedJob) {
             $this->fail($future, 'ProcessTaskHost 只能跑 NamedJob —— ' . get_class($job)
@@ -145,16 +152,15 @@ final class ProcessTaskHost implements TaskHost
             return $future;
         }
 
-        $line = json_encode(['id' => $this->seq + 1, 'job' => $name, 'arg' => $job->args()]);
+        $line = json_encode(['id' => $id, 'job' => $name, 'arg' => $job->args()]);
         if ($line === false) {
             $this->fail($future, 'ProcessTaskHost：参数转不了 JSON —— ' . $name . '：' . json_last_error_msg());
 
             return $future;
         }
 
-        $this->seq++;
         $this->queue[] = [
-            'id' => $this->seq,
+            'id' => $id,
             'line' => $line,
             'future' => $future,
         ];
@@ -162,6 +168,30 @@ final class ProcessTaskHost implements TaskHost
         $this->flush();
 
         return $future;
+    }
+
+    /**
+     * 把**还没发出去**的那一条从队列里摘掉（`Future::cancel()` 的钩子）。
+     *
+     * ★ 能真停的只有"还在排队"的。已发给 worker 的**停不了**：杀进程要重拉
+     *   （一个 worker = 一整套 AOT 运行时，起价 275ms），还会丢在途状态 ——
+     *   代价远大于让它跑完。那些走"**不交付**"：`Future` 被取消后迟到的
+     *   `resolve()` 自己会被忽略（见 `Future::resolve()`）。
+     *
+     * ★★ 但**不能**提前把 `pending()` 减掉：它一落闸，帧时钟就停止上膛，
+     *   管道里的回包永远读不到 ⇒ worker 写满管道后阻塞（僵尸进程）。
+     *   ⇒ 在途的取消只影响"交付"，不影响"记账"。
+     */
+    private function dropQueued(int $id): void
+    {
+        foreach ($this->queue as $k => $item) {
+            if ($item['id'] === $id) {
+                unset($this->queue[$k]);
+                $this->queue = array_values($this->queue);
+
+                return;
+            }
+        }
     }
 
     /**

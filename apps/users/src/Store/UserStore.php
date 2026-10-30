@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Users\Store;
 
 use Drift\App\TaskHost;
+use Drift\Async\Future;
 use Drift\Core\Computed;
 use Drift\State\Subject;
 
@@ -37,6 +38,24 @@ final class UserStore extends Subject
     private string $error = '';
 
     private string $query = '';
+
+    /**
+     * 上一次**还在途**的取数（`null` = 没有 / 已经回来了）。
+     *
+     * ★★ 它是为了**陈旧响应**：`load()` 可以被连点（刷新按钮 / 翻页 / 注册后重载）。
+     *   两个请求同时在途时"先发的慢、后发的快"是常态（第 1 页有缓存、第 2 页要现算）
+     *   —— 迟到的旧结果会盖掉新数据，而且状态是 `Ready`，**用户看不出任何异常**。
+     *   成熟框架都在这一层收口：RxJS `switchMap` / `useEffect` 的 cleanup /
+     *   `CancellationTokenSource`。本仓的收口就是 `Future::cancel()`。
+     *
+     * ★ 存的是**根 Future**（`submit()` 的返回值），不是 `then()` 的产物：
+     *   取消链下游不回溯上游（`Future::chain()` 只往一个方向走）⇒ 取消 `$n1`
+     *   对在途任务毫无作用，它照样跑、照样交付。
+     *
+     * ★ 结算后不必清空：`cancel()` 对已结算的 Future 是幂等的空操作
+     *   （`state !== PENDING` 直接返回）。
+     */
+    private ?Future $inflight = null;
 
     /**
      * 派生值：按 `$query` 过滤 `$rows`。
@@ -117,6 +136,15 @@ final class UserStore extends Subject
      */
     public function load(int $page = 1): void
     {
+        // ★★ 新请求起手 ⇒ 旧请求作废（迟到的结果不许覆盖新数据，见 `$inflight`）。
+        //   放在 `Loading` 之前：万一 `cancel()` 触发的后端钩子里有回调，也还在
+        //   "本次 load 尚未改变任何状态"之前。
+        $previous = $this->inflight;
+        $this->inflight = null;
+        if ($previous !== null) {
+            $previous->cancel();
+        }
+
         $this->status = LoadStatus::Loading;
         $this->error = '';
         $this->notifyChanged();
@@ -135,7 +163,10 @@ final class UserStore extends Subject
         // ★ 形状是 `Future`（N3）：`then()` 收成功、`catch()` 收失败。改造前是
         //   `submit(job, onDone, onError)` —— 两个入口（这个和 `submitSliced`）
         //   各有一套回调，调用方要记两套；现在只有一个 `Future`。
-        $host->submit(new FetchUsersJob($page, $this->apiBase))
+        $inflight = $host->submit(new FetchUsersJob($page, $this->apiBase));
+        $this->inflight = $inflight;
+
+        $inflight
             ->then(function (array $raw): void {
                 // ★ worker 回的是 JSON 数组（不是 `User` 对象）⇒ UI 侧 hydrate
                 $this->applyPage(true, UserSeed::hydrate($raw), '');
