@@ -252,7 +252,7 @@ UI 线程的心智模型就只剩两件事 —— **等消息、跑任务**。Ch
 
 | 形态 | 实现 | 适用 | 现状 | 真机风险 |
 |---|---|---|---|---|
-| **A1 同线程切片** | `curl_multi` 每帧推进（P2b：12µs/轮） | 少量并发 HTTP（≤ 几十条） | 缺 `IoDriver` | **无** |
+| **A1 同线程切片** | `curl_multi` 每帧推进（P2b：12µs/轮） | ~~少量并发 HTTP~~ | **判为不可行**（§11：解释器收尾必崩，进不了闸门） | — |
 | **A2 C++ IO 线程** | 原生线程 + libcurl / IOCP，结果入队列 | 中大规模 IO、需要取消/进度 | **未建**（§5 评估） | 中 |
 | **A3 进程** | `ProcessTaskHost` | CPU 密集、崩溃隔离、跑第三方 | ✅ 已落地 | 无 |
 | **A4 协程** | `Coroutine\run` + `Co\Http\Client` | 多步流水线（取 A → 取 B → 合并） | 零件在，无范式 | 低（P3/P4 已验） |
@@ -864,7 +864,7 @@ git 上已经提交了」*。
 |---|---|---|---|---|
 | **N1** ✅ | **泵帧分离**：`paint` 三重判据 + `RenderObject::paintEpoch` | `src/App/Frame.php` + `src/Layout/` 五个 setter | ❌ | **已落地**：空闲 60 帧 paint=0（原 60）；493MB/s blit 归零 |
 | **N2** | **`waitEvents` + `ControlFlow`**：拆 `pump()`，加 `nextTimeoutMs()` | `Platform` + `Win32Platform` + `Application` | ❌（`waitEvents` 可用假平台测） | 换掉退化轮询；为唤醒铺路 |
-| **N3** | **`Future` + `all/race` + `IoDriver`（A1）** | `src/Async/` 新目录 + `TaskHost` | ❌ | 「多接口并发」可写；写法对齐 Flutter/.NET |
+| **N3** ✅ | **`Future` + `all/race`**（`IoDriver`/A1 判为不可行，见 §11） | `src/Async/` 新目录 + `TaskHost` + 进程池 | ❌ | 「多接口并发」可写（池 + `all`）；写法对齐 Flutter/.NET |
 | **N4** | **`Inbox` + 唤醒通道（B4）** | C++ 壳 + 桥 + `Platform` | ✅ 必须 | 零轮询；后台真能打断等待 |
 | **N5** | **C++ IO 线程（A2）** | C++ 壳（线程池 + 队列 + JSON 桥） | ✅ 必须 | 吞吐 / 取消 / 进度 |
 | **N6** | **多窗口**（依赖 `MULTI-WINDOW-2026-10-30.md` 的 M0/M1） | 壳 + Platform | ✅ 必须 | 见该册 |
@@ -945,12 +945,21 @@ if ($event instanceof CloseRequestedEvent) {
 | `EventLoopTest::testCloseRequestedRefusedLeavesWindowAlone` | 拒绝 ⇒ 不 `destroy()`、循环继续 | `if (true)` ⇒ 红（`[["destroy",1]]`） |
 | `EventLoopTest::testCloseRequestedDoesNotEnterDispatchChain` | 不进 `input()` 队列残留 | — |
 
-### 9.3 N3（`Future`）
+### 9.3 N3（`Future`）—— **已验**（2026-10-30）
 
-- [ ] `Future::all` 5 条 600ms：总耗时 < 1200ms（P2 实测 623ms，留 2 倍余量）
-- [ ] `Future::race` 返回最先完成的那个，其余被 `cancel()`（可观测）
-- [ ] `all` 中任一条失败 ⇒ 整条失败，且**其余被取消**（资源不泄漏）
-- [ ] `Job::onDone` 老路径行为不变（回归）
+- [x] **「多接口并发」改由进程池 + `Future::all` 承载**（原判据写的是 `curl_multi` 5 条
+      600ms < 1200ms；A1 判为不可行，见 §11）。现在的判据在 `tools/smoke.php` 的 `N3 ·` 五条：
+      - 3 条 200/100/300ms 同时进 3 个 worker（`inFlight=3 / workers=3 / queued=0`）
+      - 结果按**入参**顺序 `[200,100,300]`（≠ 完成序 `[100,200,300]`）
+      - `then()` **只跑一次**
+      - 一条失败 ⇒ 整条失败（错误原文带出）
+      - 失败时 `then()` 一次都不跑
+      - ★ **变异验证**：把 `all()` 的顺序重排改成"完成序" ⇒ 精确报 `{"1":100,"0":200,"2":300}`，红
+- [x] `Future::race` 返回最先完成的那个，其余被 `cancel()`（`FutureTest` 单测，
+      "落选者被 cancel" 与 "迟到结果被忽略" 两条都断）
+- [x] `all` 中任一条失败 ⇒ 整条失败，且**其余被取消**（同上，单测 + smoke 各一层）
+- [x] `Job::onDone` 老路径行为不变 —— 该参数已删除（§7.1），替代判据：`submit()` 返回
+      `Future`，回调时序与旧 `$onDone` **同级**（`P0 · then() 里改 Store ⇒ 同帧重建` 仍绿）
 
 ### 9.4 N4（唤醒）
 
@@ -984,6 +993,57 @@ if ($event instanceof CloseRequestedEvent) {
 ---
 
 ## 11. 修订记录
+
+### 2026-10-30 · A1（PHP 侧 `curl_multi`）判为**不可行** —— 工具链缺陷，不是设计问题
+
+**结论先行**：`IoDriver`（A1）**不落地**。「多接口并发」的答案落在**已有的进程池（A3）
++ `Future::all`** 上。A2（C++ IO 线程）的定位因此**变了**：它不再只是"更快的形态"，
+而是「**PHP 侧的 curl 不可信**」这一条硬约束下唯一能让 HTTP 并发既快又可测的路。
+
+**证据**（`D:\TypePHP\typephp-windows-x64\php.exe`，PHP 8.5.11 ZTS x64）：
+
+| # | 动作 | 结果 |
+|---|---|---|
+| 1 | `php -r '$mh = curl_multi_init();'` | **exit 139**（段错误在**模块收尾段**，`register_shutdown_function` 的回调已经跑完之后） |
+| 2 | 加 `curl_multi_close()` + `exit(0)` | 仍 **139** |
+| 3 | `unset()` 全部引用、只 `init` 不 `exec` | 仍 **139** |
+| 4 | `php -r 'echo 1;'` / `curl_exec()`（easy 通道） | 0 ✔ |
+| 5 | `curl_global_init()` / `curl_global_cleanup()` | **函数不存在** |
+
+`php -i` 里同时有 `cURL Information => 8.22.0` 与 `curl-native => enabled` /
+`curl-version => 8.12.1` —— 一个进程里两份 libcurl，`curl_multi_init()` 之后收尾顺序就崩。
+第 5 条说明这**不是官方 curl 扩展**（官方必然有 `curl_global_*`），所以不能指望"以后会修"。
+
+**AOT 侧是好的**（所以问题不是"curl_multi 不能用"，是"**解释器**不能用"）：
+
+```
+[E2]  n=5 ok=5 elapsedMs=622.5 serialWouldBe=3000ms verdict=CONCURRENT
+[E2b] ticks=20001 avgTickUs=11.3 worstTickMs=4.38 verdict=UI-SAFE
+退出码 = 0
+```
+
+（本轮重跑，5 个并发 mock 各自延迟 600ms；数值与 §2.2 的 623ms 一致 ⇒ §2.2 的结论仍然成立。）
+
+**为什么"只在 AOT 可用"也不接受**（三条，按严重程度）：
+
+1. **它是个陷阱**：任何**测试**（smoke / phpunit）只要触到 `fetch()`，进程就 `exit(139)`。
+   一个"调用即污染测试进程"的 API 比没有这个 API 更糟 —— 下一个人会花半天找自己代码的 bug。
+2. **进不了闸门**：`gate.php` 全跑在 php.exe 上。一个住在 `src/` 里、却没有任何一条闸门能碰
+   的能力会腐烂（本仓纪律：**未被消费的分支 = 未实现**）。
+3. **两套 HTTP 的路**：`ProcessTaskHost` 已经在跑 HTTP。再加一条只在编译产物里可用的路
+   ⇒ 用户要记两套时序 —— 与「能替代就只留一套」直接冲突。
+
+**替代方案（已落地，零新机制）**：`Future::all` + `ProcessTaskHost(pool: 3)`。
+判据在 `tools/smoke.php` 的 `N3 ·` 五条，并做了变异验证（把 `all()` 的顺序重排改成"完成序"
+⇒ 精确报 `{"1":100,"0":200,"2":300}`，红）。
+
+**代价（诚实记账）**：进程池每 worker 一套 AOT 运行时（几十 MB）+ 首次 spawn 275ms。
+所以 A3 是**过渡**，不是终局 —— 但 A2 的理由不再是"更快"，而是"**PHP 侧的 curl 不可信**"。
+
+**没做的事**：没有为了让 A1 可用去改 `php.ini` / 换扩展 / 换 php 发行版 ——
+那是改工具链，超出本册范围，且会让"解释器"与"AOT 产物"的运行时**不一致**（那更危险）。
+
+---
 
 ### 2026-10-30 · N2 落地：等待与派发拆开，旧心跳整套删除
 

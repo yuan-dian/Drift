@@ -40,6 +40,7 @@ use Drift\Dev\Smoke\App\TaskRowJob;
 use Drift\Dev\Smoke\App\ThrowingJob;
 use Drift\Dev\Smoke\App\SumJob;
 use Drift\App\Completion;
+use Drift\Async\Future;
 use Drift\App\Io\IoPoller;
 use Drift\App\Job;
 use Drift\App\ProcessTaskHost;
@@ -4422,6 +4423,68 @@ check(
 $pump($capped, $cappedSink, static fn (array $s): bool => count($s) >= 3);
 check('P3 · 池上限：排队那条最后也跑完了', count($cappedSink) === 3, json_encode($cappedSink));
 $capped->shutdown();
+
+// ②d `Future::all` 跑在**真并发后端**上 —— N3「多接口并发」的落地判据
+//
+// ★★ 为什么不是 `curl_multi`（册子里的 A1）：本仓 php.exe 的 `curl` 扩展**残缺**
+//   —— `curl_global_init()` 都不存在，且 `curl_multi_init()` **一句**就会让进程在
+//   模块收尾段 `exit(139)`（不是异常，`try/catch` 接不住）。AOT 产物里它是好的
+//   （探针实测 5×600ms → 622.5ms、退出码 0），但**进不了闸门的东西不进 `src/`**
+//   ⇒ A1 判为不可行，并发落在已有的进程池上。详见 `PITFALLS.md`。
+// ★ 判据选「顺序」而不是「墙钟」：入参序 200,100,300 与**完成序** 100,200,300
+//   不同 ⇒ 顺序断言能证伪"按完成序拼结果"；墙钟会被机器负载打红（量具纪律）。
+$allSink = [];
+$allPool = new ProcessTaskHost([PHP_BINARY, $workerScript], SmokeJobRegistry::make(), 3);
+$allFuture = Future::all([
+    $allPool->submit(new NamedSleepJob(200)),
+    $allPool->submit(new NamedSleepJob(100)),
+    $allPool->submit(new NamedSleepJob(300)),
+]);
+$allThenCount = 0;
+$allFuture->then(function (array $values) use (&$allSink, &$allThenCount): void {
+    $allThenCount = $allThenCount + 1;
+    $allSink = $values;
+});
+check(
+    'N3 · Future::all 在 3 worker 池上：3 条同时在途（真并发，不是排队）',
+    $allPool->inFlightCount() === 3 && $allPool->workerCount() === 3 && $allPool->queuedCount() === 0,
+    'inflight=' . $allPool->inFlightCount() . ' workers=' . $allPool->workerCount() . ' queued=' . $allPool->queuedCount(),
+);
+$pump($allPool, $allSink, static fn (array $s): bool => $s !== []);
+check(
+    'N3 · Future::all：结果按**入参**顺序（200,100,300 ≠ 完成序 100,200,300）',
+    $allSink === [200, 100, 300],
+    json_encode($allSink),
+);
+check('N3 · Future::all：then() 只跑一次（不是每条各跑一次）', $allThenCount === 1, (string) $allThenCount);
+$allPool->shutdown();
+
+// ②e `all` 里一条失败 ⇒ 整条失败（兄弟请求被 cancel，错误原文带出）
+$failThen = 0;
+$failErr = null;
+$failPool = new ProcessTaskHost([PHP_BINARY, $workerScript], SmokeJobRegistry::make(), 3);
+Future::all([
+    $failPool->submit(new NamedSleepJob(400)),
+    $failPool->submit(new NamedBoomJob('接口 B 挂了')),
+])->then(function (array $values) use (&$failThen): void {
+    $failThen = $failThen + 1;
+})->catch(function (\Throwable $e) use (&$failErr): void {
+    $failErr = $e->getMessage();
+});
+
+$failDeadline = microtime(true) + 10.0;
+while ($failErr === null && microtime(true) < $failDeadline) {
+    usleep(5000);
+    $failPool->drain($settle);
+}
+
+check(
+    'N3 · Future::all：一条失败 ⇒ 整条失败（错误原文带出）',
+    is_string($failErr) && str_contains($failErr, '接口 B 挂了'),
+    is_string($failErr) ? $failErr : 'null',
+);
+check('N3 · Future::all：失败时 then() 一次都不跑（两条通道互斥）', $failThen === 0, (string) $failThen);
+$failPool->shutdown();
 
 // ③ 任务失败（worker 里抛）⇒ onError，且**不打死 worker**
 $sink = [];
