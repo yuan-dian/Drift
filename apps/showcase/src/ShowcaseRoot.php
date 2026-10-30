@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Showcase;
 
+use Drift\Async\Future;
 use Drift\Rendering\Color;
 use Drift\Rendering\ColorToken;
 use Drift\Platform\Dialog;
@@ -29,6 +30,7 @@ use Drift\Widget\StatefulWidget;
 use Drift\Widget\Widget;
 
 use App\Showcase\Pages\AlignPage;
+use App\Showcase\Pages\AsyncTablePage;
 use App\Showcase\Pages\AspectPage;
 use App\Showcase\Pages\BigListPage;
 use App\Showcase\Pages\TablePage;
@@ -98,6 +100,13 @@ final class ShowcaseRoot extends StatefulWidget
      *        ★ 方向与上面三个**相反**（页面 → 应用）：它改的是
      *        `Application::onCloseRequested()` 的答案，而那个方法只有应用有。
      *        页面只表达意图，拦截点只有一处（帧边界，`EventLoop` 统一调）。
+     * @param \Closure(int): Future $fetchRows 「取第 N 页」—— 由组合根接线。
+     *        ★ 它是本应用**唯一**的异步入口：页面只认"给我第 N 页的结果"，
+     *        至于背后是 `ProcessTaskHost` 真跑子进程、还是基准里直接 `Future::resolved`，
+     *        页面**不知道也不需要知道**（"业务与 UI 隔离"在接线层的形态）。
+     *        ★ 用闭包而不是把 `TaskHost` 递下去：`TaskHost` 是 `Drift\App` 的端口，
+     *        页面（`App\Showcase\Pages`）拿到它就会自己 `submit(Job)` —— Job 是
+     *        组合根配置，不该下沉到页面。
      *
      * ★ 为什么前三个是**闭包**而不是 `Application`：`Widget` 层不该认识 `Drift\App`
      *   （§4.3），而且页面只该拿到"我能做什么"，不是"整个应用"。
@@ -110,6 +119,7 @@ final class ShowcaseRoot extends StatefulWidget
         private \Closure $showModal,
         private Dialog $dialog,
         private \Closure $setCloseConfirm,
+        private \Closure $fetchRows,
     ) {
         parent::__construct();
     }
@@ -119,6 +129,7 @@ final class ShowcaseRoot extends StatefulWidget
      * @param \Closure(int, \Closure): void $delay
      * @param \Closure(Modal): void $showModal
      * @param \Closure(bool): void $setCloseConfirm
+     * @param \Closure(int): Future $fetchRows
      */
     public static function make(
         \Closure $notify,
@@ -126,13 +137,14 @@ final class ShowcaseRoot extends StatefulWidget
         \Closure $showModal,
         Dialog $dialog,
         \Closure $setCloseConfirm,
+        \Closure $fetchRows,
     ): self {
-        return new self($notify, $delay, $showModal, $dialog, $setCloseConfirm);
+        return new self($notify, $delay, $showModal, $dialog, $setCloseConfirm, $fetchRows);
     }
 
     public function createState(): State
     {
-        return new ShowcaseState($this->notify, $this->delay, $this->showModal, $this->dialog, $this->setCloseConfirm);
+        return new ShowcaseState($this->notify, $this->delay, $this->showModal, $this->dialog, $this->setCloseConfirm, $this->fetchRows);
     }
 }
 
@@ -171,6 +183,7 @@ final class ShowcaseState extends State
      * @param \Closure(int, \Closure): void $delay 组合根接线的延时能力（转手给 ComboBox 页）
      * @param \Closure(Modal): void $showModal 组合根接线的开模态能力（转手给反馈页）
      * @param \Closure(bool): void $setCloseConfirm 组合根接线的"关闭前确认"开关（转手给对话框页）
+     * @param \Closure(int): Future $fetchRows 组合根接线的取数能力（转手给异步表格页）
      */
     public function __construct(
         private \Closure $notify,
@@ -178,6 +191,7 @@ final class ShowcaseState extends State
         private \Closure $showModal,
         private Dialog $dialog,
         private \Closure $setCloseConfirm,
+        private \Closure $fetchRows,
     ) {
     }
 
@@ -226,6 +240,9 @@ final class ShowcaseState extends State
             new NavEntry(IconName::Info, '对话框 Dialog', fn(): Widget => new DialogPage($this->dialog, $this->setCloseConfirm)),
             // ★ A5-②：拖文件页追加在最末（前 30 项 y 不变；侧栏本身已包 ScrollView）。
             new NavEntry(IconName::Square, '拖文件 Drop', static fn(): Widget => new DropPage()),
+            // ★ N6：异步表格页追加在最末（前 31 项 y 不变）。它要 `$fetchRows`
+            //   ⇒ 工厂不是 static（闭包捕获 `$this`）。
+            new NavEntry(IconName::ListBullets, '异步表格 Async', fn(): Widget => new AsyncTablePage($this->fetchRows)),
         ];
     }
 

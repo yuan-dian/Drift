@@ -5,6 +5,7 @@ namespace App\Showcase;
 
 use Drift\App\AppScope;
 use Drift\App\Application;
+use Drift\Async\Future;
 use Drift\Commands\CommandHandler;
 use Drift\Platform\Clipboard;
 use Drift\Platform\Dialog;
@@ -13,6 +14,7 @@ use Drift\Widget\Snackbar;
 use Drift\Widget\Widget;
 
 use App\Showcase\Commands\ShowcaseCommands;
+use App\Showcase\Jobs\FetchRowsJob;
 
 /**
  * 示例台应用：只写三样（§4.5）—— `buildRoot()` / `title()`。
@@ -50,6 +52,7 @@ final class ShowcaseApplication extends Application
         private Dialog $dialog,
         private ?Clipboard $clipboard = null,
         ?AppScope $scope = null,
+        private string $rowsMode = FetchRowsJob::MODE_LOCAL,
     ) {
         // ★ 不传 scope ⇒ 基类自建一个（单窗口时与 2026-10-30 之前逐字节相同）。
         //   多窗口时组合根传入**同一个**实例 ⇒ 字体 / 任务池 / IO 轮询器 / 主题
@@ -100,6 +103,16 @@ final class ShowcaseApplication extends Application
             //     （帧边界、由 `EventLoop` 统一调用），页面只表达意图。
             function (bool $enabled): void {
                 $this->setConfirmClose($enabled);
+            },
+            // ★ 第五个能力，也是本应用**唯一的异步入口**：取第 N 页。
+            //   页面只认"给我第 N 页的结果"（`\Closure(int): Future`），背后是
+            //   子进程池还是 `Future::resolved` 由组合根决定 ⇒ 业务与 UI 隔离
+            //   落在**接线层**，页面零感知。见 `AsyncTablePage` 的类注释。
+            //   ★ 走 `submit()` 而不是自己去拿 `TaskHost`：没有后台端口时它返回
+            //     rejected 的 Future（页面落到 error 态 + 可重试），而"哪里没装"
+            //     这件事在 `submit()` 内部报清楚 —— 这里不需要再写一遍。
+            function (int $page): Future {
+                return $this->submit(new FetchRowsJob($page, 20, $this->rowsMode));
             },
         );
     }
