@@ -143,6 +143,37 @@ class Button extends RenderBoxWidget implements Activatable
         return $this;
     }
 
+    /**
+     * 禁用 / 恢复（`enabled(false)` ≡ `disabled()`）。
+     *
+     * ★ 与 `ToggleBase::enabled()` **同名同义**（那里是别名，这里是第一个接上
+     *   这套的按钮类）：状态只有一份（§2026-10-29：`Modifier::$disabled`），
+     *   没有第二个 `enabled` 字段。
+     *
+     * ★★ **为什么值得补这一个方法** —— 它是"能不能点"的唯一正确表达：
+     *   转圈时禁止翻页、第 1 页禁止「上一页」，在别的 GUI 里都是**禁用态**
+     *   （Flutter `onPressed: null` / WPF `IsEnabled` / Qt `setEnabled(false)`）。
+     *   没有它，页面只能在回调里写 `if ($loading) return;` —— 那是**静默拒绝**：
+     *   用户点了、什么都没发生、也不知道为什么。禁用态则把"现在不能点"画出来。
+     *
+     * ★ 三件事都由框架现成的路完成，**本类只负责开门**：
+     *   ① 不激活（见 `activate()`）；② 外观变淡（`RenderBox` 按
+     *   `Modifier::$disabled` 叠一层 alpha）；③ 不进 Tab 序、语义上报 disabled
+     *   （`FocusManager` / `SemanticsBuilder` 已经读 `mods()->disabled()`）。
+     *
+     * @api
+     */
+    public function enabled(bool $enabled): static
+    {
+        return $this->disabled(!$enabled);
+    }
+
+    /** 见 {@see self::enabled()} */
+    public function isEnabled(): bool
+    {
+        return !$this->mods()->disabled();
+    }
+
     /** 走命令系统（键盘 Enter/Space 与指针按下两路径同激活，§24.2 #16） */
     public function command(string $name): static
     {
@@ -254,6 +285,12 @@ class Button extends RenderBoxWidget implements Activatable
      */
     public function activate(ActivationContext $context): void
     {
+        // ★ 禁用 ⇒ 什么都不做。命中链与焦点链已经各自挡过一次（见 `enabled()`），
+        //   这里是同一条规矩的最后一处：激活是"行为"，不该靠上游记得拦。
+        if ($this->mods()->disabled()) {
+            return;
+        }
+
         $name = $this->commandName();
         if ($name !== null) {
             $context->dispatch($name, $this->commandArg() ?? CommandArg::none());
