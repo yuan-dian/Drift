@@ -41,16 +41,48 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
 
-TITLE_MAIN = "Hello Drift"
-TITLE_SECOND = "Hello Drift · 第二窗"
+# ── 被验的应用（第二个参数选，默认 hello）─────────────────────────────────
+# ★ 一份探针验两个应用，而不是抄一份：七条判据与被验应用无关，只有
+#   "exe / 环境变量 / 标题 / 尺寸 / 槽位名"是参数。抄一份的代价是"改了一处忘了另一处"，
+#   而这类脚本恰恰是最没人重跑的那条路。
+PROFILES = {
+    "hello": {
+        "exe": "hello.exe",
+        "env": "DRIFT_TWO_WINDOWS",
+        "main": ("Hello Drift", 640, 400),
+        "second": ("Hello Drift · 第二窗", 480, 360),
+        "slots": ("main", "second"),
+        "restore": ((700, 420), (520, 340)),
+        "settle": 3.0,
+    },
+    "showcase": {
+        "exe": "showcase.exe",
+        "env": "DRIFT_SECOND_WINDOW",
+        "main": ("Drift 示例台", 960, 640),
+        "second": ("多窗口 · 检查器", 420, 560),
+        "slots": ("main", "inspector"),
+        # ★ 比 hello 大：showcase 在 700 宽下有一个**既有的布局溢出**
+        #   （`RenderFlex 放不下：子项共需 504.0，可用只有 416.0`），
+        #   与本探针要验的东西无关 —— 拿它当还原尺寸会把一条正确行为判成 FAIL。
+        #   那个溢出是另一件待办：`setMinSize(420, 320)` 的承诺大于内容的实际能力。
+        "restore": ((1000, 700), (480, 420)),
+        "settle": 5.0,
+    },
+}
+
+PROFILE = PROFILES[sys.argv[1] if len(sys.argv) > 1 else "hello"]
+
+TITLE_MAIN = PROFILE["main"][0]
+TITLE_SECOND = PROFILE["second"][0]
+SLOT_MAIN, SLOT_SECOND = PROFILE["slots"]
 
 # Bootstrap 里的逻辑尺寸（`WINDOW_WIDTH` / `WINDOW_HEIGHT` 与第二窗的字面量）
-LOGICAL = {TITLE_MAIN: (640, 400), TITLE_SECOND: (480, 360)}
+LOGICAL = {TITLE_MAIN: (PROFILE["main"][1], PROFILE["main"][2]),
+           TITLE_SECOND: (PROFILE["second"][1], PROFILE["second"][2])}
 
-# ⑦ 用：两组**不同**的尺寸，且都不小于 `setMinSize(420, 320)`
+# ⑦ 用：两组**不同**的尺寸，且都不小于两个应用的 `setMinSize`
 #   （小于最小尺寸会被 `WM_GETMINMAXINFO` 顶回去，那样判据会红在一次正确行为的副作用上）
-RESTORE_MAIN = (700, 420)
-RESTORE_SECOND = (520, 340)
+RESTORE_MAIN, RESTORE_SECOND = PROFILE["restore"]
 
 WM_CLOSE = 0x0010
 
@@ -129,9 +161,9 @@ def read_state(path: str) -> dict[str, str]:
 
 
 def main() -> int:
-    exe = os.path.join(ROOT, "hello.exe")
+    exe = os.path.join(ROOT, PROFILE["exe"])
     if not os.path.isfile(exe):
-        print(f"✗ 找不到 {exe} —— 先跑 `php tools/drift-build.php hello`")
+        print(f"✗ 找不到 {exe} —— 先跑 `php tools/drift-build.php {PROFILE['exe'][:-4]}`")
         return 2
 
     ini_dir = tempfile.mkdtemp(prefix="drift-run-")
@@ -141,11 +173,13 @@ def main() -> int:
 
     env = dict(os.environ)
     env["PHPRC"] = ini
-    env["DRIFT_TWO_WINDOWS"] = "1"
+    env[PROFILE["env"]] = "1"
 
     # ★ 状态文件是**用户的真实配置**（`%APPDATA%\Drift`）：探针要反复改它，
     #   必须先备份、结束时原样还回去。不还回去等于"跑一次测试就改掉用户的窗口位置"。
-    state_path = os.path.join(os.environ.get("APPDATA", ""), "Drift", "hello.window")
+    state_path = os.path.join(
+        os.environ.get("APPDATA", ""), "Drift", PROFILE["exe"][:-4] + ".window"
+    )
     backup: bytes | None = None
     if os.path.isfile(state_path):
         with open(state_path, "rb") as fh:
@@ -159,9 +193,9 @@ def main() -> int:
         if not ok:
             fails.append(label)
 
-    def launch(settle: float = 3.0):
+    def launch(settle: float | None = None):
         proc = subprocess.Popen([exe], cwd=ROOT, env=env)
-        time.sleep(settle)
+        time.sleep(PROFILE["settle"] if settle is None else settle)
         return (
             proc,
             user32.FindWindowW(None, TITLE_MAIN),
@@ -214,8 +248,8 @@ def main() -> int:
 
             # ⑥ 状态文件：两组并存，且值**各自**等于该窗口的实际逻辑尺寸
             state = read_state(state_path)
-            main_w = state.get("main.w")
-            second_w = state.get("second.w")
+            main_w = state.get(f"{SLOT_MAIN}.w")
+            second_w = state.get(f"{SLOT_SECOND}.w")
             print(f"state = {os.path.basename(state_path)}: {state}")
 
             def near(text, want) -> bool:
@@ -224,14 +258,14 @@ def main() -> int:
                 except ValueError:
                     return False
 
-            check("⑥ 状态文件里两窗各一组（main / second 都在）",
+            check(f"⑥ 状态文件里两窗各一组（{SLOT_MAIN} / {SLOT_SECOND} 都在）",
                   main_w is not None and second_w is not None,
-                  f"main.w={main_w} second.w={second_w}")
+                  f"{SLOT_MAIN}.w={main_w} {SLOT_SECOND}.w={second_w}")
             # ★ 比**值**而不是比"有没有键"：整份覆盖的最后一次写入照样叫 `second`
             check("⑥ 两组的 w 各自等于本窗尺寸（覆盖式写入会得到两个相同的值）",
                   near(main_w, LOGICAL[TITLE_MAIN][0]) and near(second_w, LOGICAL[TITLE_SECOND][0]),
-                  f"main.w={main_w}（期望 {LOGICAL[TITLE_MAIN][0]}）"
-                  f" second.w={second_w}（期望 {LOGICAL[TITLE_SECOND][0]}）")
+                  f"{SLOT_MAIN}.w={main_w}（期望 {LOGICAL[TITLE_MAIN][0]}）"
+                  f" {SLOT_SECOND}.w={second_w}（期望 {LOGICAL[TITLE_SECOND][0]}）")
             check("⑥ 版本号已抬到 2（v1 是平铺单窗格式）", state.get("v") == "2", f"v={state.get('v')}")
 
         # ── 第二轮：按状态文件各自还原 ────────────────────────────────────
@@ -242,9 +276,10 @@ def main() -> int:
             fh.write(
                 "# Drift window state — do not edit while the app runs\n"
                 "v=2\n"
-                f"main.x=120\nmain.y=120\nmain.w={RESTORE_MAIN[0]}\nmain.h={RESTORE_MAIN[1]}\nmain.max=0\n"
-                f"second.x=800\nsecond.y=160\nsecond.w={RESTORE_SECOND[0]}\nsecond.h={RESTORE_SECOND[1]}\n"
-                "second.max=0\n"
+                f"{SLOT_MAIN}.x=120\n{SLOT_MAIN}.y=120\n{SLOT_MAIN}.w={RESTORE_MAIN[0]}\n"
+                f"{SLOT_MAIN}.h={RESTORE_MAIN[1]}\n{SLOT_MAIN}.max=0\n"
+                f"{SLOT_SECOND}.x=800\n{SLOT_SECOND}.y=160\n{SLOT_SECOND}.w={RESTORE_SECOND[0]}\n"
+                f"{SLOT_SECOND}.h={RESTORE_SECOND[1]}\n{SLOT_SECOND}.max=0\n"
             )
 
         proc2, main2, second2 = launch()

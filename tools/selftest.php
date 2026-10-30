@@ -126,6 +126,15 @@ function drift_lint_selftest(string $root, Linter $linter): bool
         'app-bootstrap-loop' => [
             'apps/Loop/bin/win32/Bootstrap.php:' . Diagnostic::ERROR,
         ],
+        // 子类覆写构造器必须调 `parent::__construct()`。
+        // ★ 到 2026-10-30 为止这条规则**一条夹具都没有** ⇒ 恒是"该响 0"，
+        //   也就是"它能不能响"从来没被证过。当天把 `Widget` 收进基类表时，
+        //   顺手补了反例：`Widget` 漏调父构造器的后果比 `Application` 更难看懂
+        //   （AOT 报 `The parameter object must be object, got null`，指向
+        //   `Widget::mods()`，看不出是哪一层）。
+        'app-subclass-ctor-parent' => [
+            'apps/WidgetCtorWithoutParent.php:' . Diagnostic::ERROR,
+        ],
     ];
 
     $ok = true;

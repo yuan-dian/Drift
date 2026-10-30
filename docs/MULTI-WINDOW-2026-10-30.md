@@ -557,15 +557,85 @@ public function io(): ?IoPoller     { return $this->pumps->io(); }      // 住�
    监听器"的生命周期负担，而窗口表在 M3 才有。
 
 
-### M3 · 组合根 · 第二个窗口 · 测试
+### M3 · 组合根 · 第二个窗口 · 测试（✅ 已落地，2026-10-30）
 
-- 组合根从"一个 (app, surface, clock)"改成 `map<HWND, WindowRuntime>`。
-- 示例台加一个真实消费者：**「多窗口演示」页**（点按钮开第二个窗口，两窗内容不同、
-  各自焦点、关一个另一个还在）。
-- `ResizeHookState::$pump` 单槽改成 `map<HWND, callable>`（否则两个窗口同时拖动会互相抢）。
-- 新的 smoke 骨架：`tools/Smoke/Window/` 下的"双窗"场景（不需要真机，用 `FakeWindowHost`
-  + 两个 `Application` 就够）。
-- 真机验收：**唯一必须真机的一步**。
+原稿五条，落地时**两条变了、一条作废**：
+
+| 原稿 | 实际 | 为什么变 |
+|---|---|---|
+| 组合根改成 `map<HWND, WindowRuntime>` | **`WindowSet` + `Window`（`src/App/`）** | "map" 只是数据结构，真正要消灭的是**四个组合根各写 30 行同一段**。抽成框架类之后，组合根只剩"开几个窗、装什么应用" |
+| 示例台加「多窗口演示」页（点按钮开窗） | **`DRIFT_SECOND_WINDOW=1` + `InspectorApplication`** | 运行中开窗要"在帧边界执行"（否则 `attach()` 在某条事件回调中间跑一整帧 = 重入）⇒ 归 `Inbox`（事件循环册 N4）。未消费的分支不预先发明 |
+| `ResizeHookState::$pump` 单槽改 `map<HWND, callable>` | **作废** | M1-b 已把它改成 `callable(int $hwnd)`。闭包内按句柄分派就够 —— 再包一层 map 是两套写法表达同一件事 |
+| `tools/Smoke/Window/` 双窗骨架 | **`tests/Feature/App/WindowSetTest.php`（6 条）** | `FakeWindowHost` 撑不起"建窗→还原→表面→attach→循环→写回"整条链；改用真 `Win32Platform('soft')` + 假桥（与 `EventLoopTest` 同口径：**桥可假，策略不可假**） |
+| 真机验收 | ✅ `probe-two-windows.py hello` / `showcase` | 探针**参数化**成一份（见下） |
+
+#### 为什么是 `WindowSet`，而不是"第四个组合根再抄一遍"
+
+`tutorial/Bootstrap.php` 的注释自己写着：*"121 行里只有 2 行是本应用自己的…抄的时候整段抄"*。
+而抄的那 30 行里含**三条"漏掉即静默"的次序契约**（还原在 `resize` 之前 / `resize` 用读回的
+客户区 / `attach` 前表面非零）与**一条致命的**（两个静态钩子必须卸，否则关窗 8/8 崩）。
+
+```php
+$set = new WindowSet($platform, Paths::userConfig($platform->configDir(), 'x.window'), static function (): void {
+    ResizeHookState::$pump = null;      // ← 组合根装的两个钩子
+    Errors::installFatalBox(null);      //   由 run() 的 finally 统一卸
+});
+$set->open('main', '标题', 960, 640, static function (): Application { return new XxxApplication($scope); })
+    ->setMinSize(420, 320)->setCloseGuard(true)->onSemantics();
+$set->run();                            // EventLoop + 逐窗 persist + 清表 + GC + $release
+```
+
+三处裁决：
+
+1. **状态文件收"完整路径"而不是文件名**（`Paths::userConfig(...)` 由组合根算）。
+   文件名版本让测试无法指向临时目录 —— 只能去写 `%APPDATA%`。而"文件放哪"本来就是
+   组合根的决定。
+2. **`$release` 是构造参数，不是 `run()` 的参数**：装可以分散（要尽早），卸必须集中在
+   最末尾且只有一处，并且**不可能被异常路径跳过**（`finally`）。
+3. **`ResizeHookState` 的接线仍留在组合根**（一行）。`src/App` 不许引用
+   `Drift\Platform\Win32`，所以"业务逻辑进 `WindowSet::repaintForResize()`、接线留组合根"。
+
+#### 两个新坑（都只在 AOT 真机上现形）
+
+**① AOT 对"多余的实参"不宽容 —— 直接访问冲突。**
+`ShowcaseApplication::__construct($dialog, $clipboard)` 只声明两个参数，组合根按 M2 的
+新形态传了三个（多了 `$scope`）⇒ exe 启动即 `0xC0000005`，而 phpunit / lint / gate 全绿。
+PHP 解释器会忽略多余实参，**tpc 编译产物不会**。
+
+**② `Widget` 子类覆写构造器必须调 `parent::__construct()`。**
+漏调 ⇒ `$mods` 未初始化 ⇒ AOT 报
+`The parameter object must be object, got null`，栈顶落在 `Widget::mods()` / `Element::syncBox()`，
+**看不出是哪一层忘了调父构造器**。这与 `Application` 子类那个坑同族，但报错更难看懂。
+⇒ `app-subclass-ctor-parent` 的基类表加了 `Drift\Widget\Widget`，并**补了第一个反例夹具**
+（这条规则此前一条夹具都没有，恒是"该响 0"）。
+
+★ 取证过程的诚实记录：两次崩溃都是 `php8ts.dll+0x24b30`（已知的 shutdown 段偏移），
+我据此先做了"清表 + `gc_collect_cycles()`"（怀疑 GC 环），**没有修好**。真因是上面第 ② 条
+—— 崩在 `attach()` 里，只是崩的类型恰好是访问冲突。教训：**偏移能告诉你"在哪一段"，不能
+告诉你"为什么"**；`0x24b30` 在这两处是巧合，不是同一个 bug。
+（`gc_collect_cycles()` 那一步留下了：它不是这次崩溃的根因，但"组合根的树是环"这件事是真的，
+主动放手比等 GC 阈值更确定。）
+
+#### 探针参数化（一份验两个应用）
+
+七条判据与被验应用无关，只有 "exe / 环境变量 / 标题 / 尺寸 / 槽位名 / restore 尺寸" 是参数：
+
+```
+python tools/probe-two-windows.py hello
+python tools/probe-two-windows.py showcase
+```
+
+★ showcase 的 `restore` 尺寸（1000×700 / 480×420）比 hello 大，原因是它有一个**既有**的
+布局溢出（见下），不是本轮引入的。
+
+#### ★ 顺带发现的既有缺陷（记入待办，本轮不修）
+
+showcase 在**客户区宽 ~700** 时 `RenderFlex` 溢出 ⇒ 布局硬校验 Fatal：
+`子项共需 504.0，可用只有 416.0（差 88.0）`。
+
+而组合根给它的 `setMinSize(420, 320)` **承诺了 420 宽可用**。也就是说：用户把窗口拖窄到
+420~700 之间就会弹 Fatal 框（"拖小窗口"是合法用户行为，见 `setMinSize` 的注释）。
+两条修法二选一：把最小宽度抬到内容真能容纳的值，或让该 Flex 声明 `overflow(Overflow::Clip)`。
 
 ---
 
@@ -647,7 +717,14 @@ DPI 混用）大多**不报错**，只表现为"怪"。这类问题在本仓历�
 N1 ✅ → M1-c ✅（关闭守卫，不需要窗口身份）→ M2 ✅ → M0 + M1-a ✅（壳/平台窗口身份）
       → N2 ✅ → M1-b ✅（`screen($h)` / `input($h)` / `EventLoop` 窗口表）
       → ⑥ 窗口状态槽位 ✅（`WindowStateStore($path, $slot)`）
-      → 【当前】M3（组合根窗口表 / 第二个真实应用窗）
+      → M3 ✅（`WindowSet` 组合根 / 第二个真实应用窗 / 探针参数化）
+```
+
+**M3 之后还悬着的**（都不在本册的依赖图里，得等别的册子）：
+
+```
+运行中开窗（点按钮弹新窗）← 需要事件循环册 N4 的 `Inbox`（帧边界执行）
+跨 DPI 双屏拖动          ← 需要双屏硬件
 ```
 
 M1-b 与 ⑥ 之间没有停顿：⑥ 是本册 §5 唯一还悬着的裁决，而它**恰好只需要一个

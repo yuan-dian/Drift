@@ -3,14 +3,11 @@ declare(strict_types=1);
 
 namespace App\Hello;
 
-use Drift\App\EventLoop;
 use Drift\App\Paths;
-use Drift\App\WindowStateStore;
+use Drift\App\WindowSet;
 use Drift\Errors;
-use Drift\Platform\Screen;
 use Drift\Platform\Win32\ResizeHookState;
 use Drift\Platform\Win32\Win32Platform;
-use Drift\Rendering\RenderSurface;
 
 /**
  * 组合根：**全应用唯一提到平台实现的地方**（§5.1）。
@@ -20,12 +17,11 @@ use Drift\Rendering\RenderSurface;
  * 换平台 = 换这个文件（`bin/<os>/Bootstrap.php`），§4.5。
  *
  * ★ **循环归平台**（§5.2 裁决 1）：`Application` **没有** `run()`，只提供
- *   `attach($surface, $constraints)` 与 `frame($timestampMs, $constraints)`。
- *   `EventLoop::run($platform, [$handle => $app])` 这一行就是"框架绝不自建循环"
- *   的全部代价（等待仍由平台给：`Platform::waitEvents()`）。
+ *   `attach()` 与 `frame()`；等待仍由 `Platform::waitEvents()` 给，
+ *   `WindowSet::run()` 只编排（等 / 派发 / 跑帧）。
  *
- * ★ **本文件就是 §19 M1 的出口判据**："一个窗口画出「Hello Drift」"。
- *   它是 `apps/hello` 里唯一引用 `Drift\Platform\Win32` 的文件 ⇒ 也因此是
+ * ★ **本文件是 §19 M1 的出口判据**："一个窗口画出「Hello Drift」"。
+ *   它也是 `apps/hello` 里唯一引用 `Drift\Platform\Win32` 的文件 ⇒
  *   `apps` 只依赖 `@api` 这条规则（§4.3）唯一需要 `@api platform` 标注的地方。
  */
 final class Bootstrap
@@ -48,170 +44,57 @@ final class Bootstrap
         $platform = new Win32Platform();
 
         // ★ 中止序列第 ② 步必须在**别的一切之前**装好（§1.2）：引导阶段就崩的话，
-        //   没有错误框就只剩"闪退"。★ 传的是 callable 而不是 Platform 实例 ——
-        //   `Errors` 不依赖 Platform 类型，"平台名只出现在组合根"才不被破坏（§5.1）。
+        //   没有错误框就只剩"闪退"。传 callable 而不是 Platform 实例 ——
+        //   `Errors` 不依赖 Platform 类型（§5.1）。
         Errors::installFatalBox(
             static function (string $title, string $body) use ($platform): void {
                 $platform->fatalBox($title, $body);
             }
         );
 
-        /**
-         * 窗口登记表（键 = 句柄）：拖动重排要的三件 + 这个窗口的状态存取。
-         *
-         * ★ 它是**一张表**而不是三个平行数组（`$apps` / `$drawn` / `$states`）：
-         *   平行的 key 集合迟早有一个漏填，而漏填的那条只在"第二窗"上发生 ——
-         *   最没人跑的那条路上。`$apps` 在喂给 `EventLoop` 时从本表现场派生。
-         *
-         * @var array<int, array{0: HelloApplication, 1: RenderSurface, 2: Screen, 3: WindowStateStore}> $windows
-         */
-        $windows = [];
+        // ★ 第三个参数是**卸载**：两处静态钩子捕获的闭包持有整条应用对象图，
+        //   不卸 ⇒ 活到 PHP shutdown ⇒ AOT 关窗必崩（实测 8/8）。
+        $set = new WindowSet($platform, Paths::userConfig($platform->configDir(), self::STATE_FILE), static function (): void {
+            ResizeHookState::$pump = null;
+            Errors::installFatalBox(null);
+        });
 
-        self::openWindow($platform, 'Hello Drift', 'main', self::WINDOW_WIDTH, self::WINDOW_HEIGHT, $windows);
+        $set->open(
+            'main',
+            'Hello Drift',
+            self::WINDOW_WIDTH,
+            self::WINDOW_HEIGHT,
+            static function (): HelloApplication {
+                return new HelloApplication();
+            },
+        )->setMinSize(self::MIN_WIDTH, self::MIN_HEIGHT);
 
-        // ★★ **真机多窗口探针**（2026-10-30，M1-b）：`DRIFT_TWO_WINDOWS=1` 时再建一个
-        //   窗口、装第二个 `HelloApplication` 实例。
-        //
-        //   为什么这条分支写在这里而不是只写在探针脚本里：多窗口的验收点是
-        //   **"两个窗口各自收自己的事件、各自跑帧、关一个另一个还在"**，而这三条
-        //   只有在**真实的组合根**里才成立（探针脚本跑不进 AOT 产物）。
-        //   同一个 `Application` 类实例化两次是本仓 M2 之后就允许的形态
-        //   （进程级资源在 `AppScope` 上）；hello 不用异步/任务，故各建各的 scope 无害。
-        //
-        //   ★ 两个窗口用**不同的槽位**（`main` / `second`）⇒ 几何各存各的。
-        //     这正是 `WindowStateStore` 多窗口 key 的真机消费点：槽位相同的话，
-        //     第二个窗口会把第一个的几何覆盖掉（不报错，下次启动只有一窗还原）。
-        //
-        //   默认不设变量 ⇒ 单窗，与 2026-10-30 之前逐字节相同。
+        // ★★ **真机多窗口探针**（`DRIFT_TWO_WINDOWS=1`）：再建一个窗口、装第二个
+        //   `HelloApplication` 实例。验收点是"两个窗口各自收自己的事件、各自跑帧、
+        //   关一个另一个还在"—— 这三条只有真实组合根才成立（探针脚本跑不进 AOT 产物）。
+        //   ★ 两窗用**不同的槽位**（`main` / `second`）⇒ 几何各存各的。槽位相同的话
+        //     第二个窗口会覆盖第一个的几何（**不报错**，下次启动只有一窗还原）。
+        //   ★ 默认不设变量 ⇒ 单窗，与 2026-10-30 之前逐字节相同。
         if (\getenv('DRIFT_TWO_WINDOWS') === '1') {
-            self::openWindow($platform, 'Hello Drift · 第二窗', 'second', 480, 360, $windows);
+            $set->open(
+                'second',
+                'Hello Drift · 第二窗',
+                480,
+                360,
+                static function (): HelloApplication {
+                    return new HelloApplication();
+                },
+            )->setMinSize(self::MIN_WIDTH, self::MIN_HEIGHT);
         }
 
-        // ★ 拖动边缘重排（§5.2）：模态尺寸循环里主循环被系统挂起，壳在 WM_SIZE
-        //   里**同步调回** PHP 走轻量重绘（只 settle/layout/paint/present，不碰
-        //   任务/动画/焦点/语义）。入口 `drift_resize_hook_pump()` 是 AOT 具名
-        //   符号（见 src/Platform/Win32/ResizeHook.php）。
-        //   不注入 ⇒ 壳退回"原尺寸贴 + 余区填底色"（拖动中不放大、松手补齐）。
-        //
-        //   ★ **按句柄分发**（2026-10-30，M1-b）：壳已经知道是哪个窗口在拖，
-        //     不按句柄就会让第二窗的拖动去重排第一窗（不报错、只画错窗）。
-        ResizeHookState::$pump = static function (int $windowHandle) use ($windows): void {
-            $entry = $windows[$windowHandle] ?? null;
-            if ($entry === null) {
-                return;   // 该窗口没走本组合根（或已销毁）：静默跳过
-            }
-
-            [$app, $surface, $screen] = $entry;
-            $dpr = $screen->scale();
-            $vp = $screen->viewport();
-            $surface->resize(
-                (int) round($vp->maxWidth * $dpr),
-                (int) round($vp->maxHeight * $dpr),
-                $dpr,
-            );
-            $app->repaintForResize($vp);
+        // ★ 拖动边缘重排（§5.2）：模态尺寸循环里主循环被系统挂起，壳在 `WM_SIZE`
+        //   里**同步调回** PHP 走轻量重绘。业务逻辑在 `WindowSet::repaintForResize()`
+        //   （按句柄分发 —— 不按句柄就会让第二窗的拖动去重排第一窗，不报错、只画错窗）。
+        //   接线留在这里是因为 `ResizeHookState` 是 Win32 静态槽，`src/App` 不许引用它。
+        ResizeHookState::$pump = static function (int $windowHandle) use ($set): void {
+            $set->repaintForResize($windowHandle);
         };
 
-        // ★★★ **主循环交给 `EventLoop`**（N2，2026-10-30）：等 / 派发 / 跑帧。
-        //
-        //   为什么不是自己写那 12 行：`pump()` 阻塞在壳的 `GetMessageW`，没有输入
-        //   事件时循环一直睡 ⇒ `after()` 的回调永远不响、`Spinner` 永远不转、后台
-        //   结果只能等下一次鼠标移动捎带（2026-10-25 真机实测：点「开始加载」后
-        //   1500ms 的截图与 400ms 时**逐字节相同**，日志一个字都没有）。
-        //   现在"等多久"由 `FrameClock::nextWaitMs()` 按**还有什么活**算出来
-        //   （动画/异步在途 ⇒ 15ms 帧节奏；只有定时器 ⇒ 一觉睡到点；没事 ⇒ 无限等），
-        //   光标 / IME / 退出语义都在 `EventLoop` 里各写一次。
-        //   ★ 本应用自己不用异步/动画，但它是**所有新应用的抄写来源** ⇒ 这行必须在。
-        $apps = [];
-        foreach ($windows as $handle => $entry) {
-            $apps[$handle] = $entry[0];
-        }
-
-        EventLoop::run($platform, $apps);
-
-        // ★ 窗口状态写回（§5.4）：**循环之后**，同步 IO 不在帧内。
-        //   ★ 用登记表而不是 `$apps`：后者在循环里被摘掉了已关的窗口，而**已关的
-        //     窗口也要存**（`WindowHost::position()` 对死句柄回填"最后已知几何"，
-        //     见该方法的注释）。用户点 X 关窗是常态，不为它写就等于什么都不记。
-        $window = $platform->window();
-        foreach ($windows as $handle => $entry) {
-            $entry[3]->persist($window, $handle);
-        }
-
-        // ★★ **卸下两个进程级钩子**（2026-10-30）：两处都是**静态**属性，捕获的闭包
-        //   分别持有 `$windows`（整条应用对象图）与 `$platform`（渲染表面 / 句柄）。
-        //   留着 ⇒ 它们在 PHP shutdown 才释放 ⇒ AOT 产物在那时解引用已销毁的类元数据
-        //   ⇒ `php8ts.dll+0x24b30` 访问冲突（窗口已关完、状态也写完，最后一步崩）。
-        //   **两个都要卸**：实测只卸一个仍是 6~7/8 崩，两个都卸是 0/8。
-        //   完整取证见 `Errors::installFatalBox()` 的 docblock。
-        ResizeHookState::$pump = null;
-        Errors::installFatalBox(null);
-    }
-
-    /**
-     * 建一个窗口 + 还原几何 + 装一个应用，登记进窗口表。
-     *
-     * ★ 抽成方法是**因为它有第二个调用点**（`DRIFT_TWO_WINDOWS`），不是为了好看：
-     *   两处手抄 25 行，"第二窗少了一步"（比如忘了 `resize()` 首帧就是空白）
-     *   只在多窗路径上发生 —— 那正是最没人跑的那条路。
-     *
-     * @param string $slot 窗口槽位名：**跨运行稳定**（写进状态文件），与句柄无关
-     * @param array<int, array{0: HelloApplication, 1: RenderSurface, 2: Screen, 3: WindowStateStore}> $windows
-     *   出参：窗口登记表
-     */
-    private static function openWindow(
-        Win32Platform $platform,
-        string $title,
-        string $slot,
-        int $width,
-        int $height,
-        array &$windows,
-    ): void {
-        $window = $platform->window();
-        $handle = $window->createWindow($title, $width, $height);
-        $window->show($handle);
-
-        // ★ 窗口状态读回（§5.4）：**启动一次同步 IO**，不在帧内。
-        //   ★ 顺序在 `surface->resize()` **之前** —— resize 定首帧尺寸，而首帧就该是
-        //     还原后的尺寸；放到后面用户会先看到一帧默认尺寸再被拽过去。
-        //   ★ 没有配置文件 / 读坏了 / 没有这个槽位 / 平台没给配置目录 ⇒ 一律
-        //     **静默降级**到默认几何（§5.4 纪律 2，G2 的显式例外）。
-        $state = new WindowStateStore(Paths::userConfig($platform->configDir(), self::STATE_FILE), $slot);
-        $state->restore($window, $handle);
-
-        $provider = $platform->surface($handle);
-        if ($provider === null) {
-            // `Errors::report()` 是 Fatal ⇒ 走 §1.2 中止序列，不会返回。
-            // 这一行 `return` 只为让下面的类型收窄成立。
-            Errors::report('Win32: 平台没给出渲染表面（窗口句柄无效）');
-
-            return;
-        }
-
-        $screen = $platform->screen($handle);
-        $surface = $provider->surface();
-
-        // 首帧之前把表面尺寸定下来：`attach()` 内部就会跑一帧（`Application::attach`），
-        // 而那帧要往表面上画 ⇒ 尺寸为 0 时那一帧会被丢弃（画面到第二次 resize 才出现）。
-        // ★ 用**读回的实际客户区**而不是 `$width/$height` 常量：还原之后实际尺寸
-        //   可能已经变了（配置里记的是上次的大小）。照常量排 ⇒ 还原了窗口、画面还按
-        //   旧尺寸排 ⇒ 四周拉伸/裁切，且不报错。
-        $actual = $window->clientSize($handle);
-        $dpr = $screen->scale();
-        $surface->resize(
-            (int) round($actual->width * $dpr),
-            (int) round($actual->height * $dpr),
-            $dpr,
-        );
-
-        $app = new HelloApplication();
-        $app->attach($surface, $screen->viewport());
-
-        // ★ 最小窗口尺寸（§5.4）：挡住"拖到比内容更小"——那种状态会踩 C5/C6
-        //   的布局硬校验（用户实测：可用宽 93 vs 条轨 94 ⇒ 弹 Fatal，拖动被打断）。
-        //   "窗口被拖小"是用户行为、不是编程错误；最小尺寸是 Qt/WPF/Flutter 的标配。
-        $window->setMinSize($handle, self::MIN_WIDTH, self::MIN_HEIGHT);
-
-        $windows[$handle] = [$app, $surface, $screen, $state];
+        $set->run();
     }
 }

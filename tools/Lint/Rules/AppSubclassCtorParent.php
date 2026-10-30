@@ -59,6 +59,12 @@ final class AppSubclassCtorParent implements Rule
      */
     private const REQUIRES_PARENT_CTOR = [
         'Drift\App\Application' => '七个拆分片（router / textEditing / scrollInput / overlayHost / input / overlayLayout / pumps）',
+        // ★ 2026-10-30 收进来（第二个真实事故）：`Widget` 在构造器里建 `$mods`。
+        //   漏调它的形态**更难看懂** —— AOT 报的是
+        //   `The parameter object must be object, got null`，栈顶落在
+        //   `Widget::mods()` / `Element::syncBox()`，看不出是哪一层忘了调父构造器。
+        //   触发场景：第二窗口的根部件（`InspectorRoot`）自建构造器装 `AppScope`。
+        'Drift\Widget\Widget' => '`$mods`（`Modifier`）—— 漏调时 AOT 报 `The parameter object must be object, got null`，栈顶指向 `Widget::mods()`，看不出是哪一层',
     ];
 
     public function name(): string

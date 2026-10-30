@@ -151,6 +151,106 @@ if (!function_exists('drift_win_client_size')) {
     }
 }
 
+// ★ 软光栅表面的 `present()` 一帧调一次。假桥里**必须存在**：`WindowSet::open()`
+//   内部会 `attach()` 一帧，缺它整条装配链在无头下不可测（真桥传的是整块 RGBA 字节，
+//   这里只记"哪个窗 + 多大"，像素内容由 golden 那套单独验）。
+if (!function_exists('drift_win_present')) {
+    function drift_win_present(int $hwnd, string $rgba, int $width, int $height): void
+    {
+        $GLOBALS['DRIFT_SMOKE_PRESENT'][] = [$hwnd, $width, $height, \strlen($rgba)];
+    }
+}
+
+/** @return list<array{int, int, int, int}> 上屏记录：[hwnd, w, h, bytes] */
+function winPresentCalls(): array
+{
+    return $GLOBALS['DRIFT_SMOKE_PRESENT'] ?? [];
+}
+
+// ── 装配链（`WindowSet`）用到的"只做记录"的那一族 ─────────────────────────
+// ★ 它们此前在假桥里**不存在**：`WindowState` 那组用例走的是 `FakeWindowHost`，
+//   从没让真 `Win32WindowHost` 在假桥下跑过"建窗 → 还原 → 写回"整条链。
+//   `WindowSet` 的无头用例第一次需要它，缺一个就是未定义函数直接崩。
+
+if (!function_exists('drift_win_show')) {
+    function drift_win_show(int $hwnd): void
+    {
+    }
+}
+
+if (!function_exists('drift_win_set_title')) {
+    function drift_win_set_title(int $hwnd, string $title): void
+    {
+    }
+}
+
+if (!function_exists('drift_win_set_min_size')) {
+    function drift_win_set_min_size(int $hwnd, int $width, int $height): void
+    {
+        $GLOBALS['DRIFT_SMOKE_MIN_SIZE'][$hwnd] = [$width, $height];
+    }
+}
+
+if (!function_exists('drift_win_begin_drag')) {
+    function drift_win_begin_drag(int $hwnd): void
+    {
+    }
+}
+
+if (!function_exists('drift_win_minimize')) {
+    function drift_win_minimize(int $hwnd): void
+    {
+    }
+}
+
+if (!function_exists('drift_win_maximize_toggle')) {
+    function drift_win_maximize_toggle(int $hwnd): void
+    {
+        $GLOBALS['DRIFT_SMOKE_MAXIMIZED'] = !($GLOBALS['DRIFT_SMOKE_MAXIMIZED'] ?? false);
+    }
+}
+
+if (!function_exists('drift_win_is_maximized')) {
+    function drift_win_is_maximized(int $hwnd): bool
+    {
+        return (bool) ($GLOBALS['DRIFT_SMOKE_MAXIMIZED'] ?? false);
+    }
+}
+
+if (!function_exists('drift_win_window_position')) {
+    function drift_win_window_position(int $hwnd): array
+    {
+        // 空数组 = 最小化（`Win32WindowHost::position()` 据此回 null，`persist()` 跳过）
+        if ($GLOBALS['DRIFT_SMOKE_MINIMIZED'] ?? false) {
+            return [];
+        }
+
+        return $GLOBALS['DRIFT_SMOKE_POSITION'] ?? ['x' => 100, 'y' => 80];
+    }
+}
+
+if (!function_exists('drift_win_place_window')) {
+    function drift_win_place_window(
+        int $hwnd,
+        float $x,
+        float $y,
+        float $w,
+        float $h,
+        bool $maximized
+    ): void {
+        $GLOBALS['DRIFT_SMOKE_POSITION'] = ['x' => (int) $x, 'y' => (int) $y];
+        $GLOBALS['DRIFT_SMOKE_CLIENT'] = ['w' => (int) $w, 'h' => (int) $h];
+        $GLOBALS['DRIFT_SMOKE_MAXIMIZED'] = $maximized;
+    }
+}
+
+if (!function_exists('drift_win_uia_push')) {
+    function drift_win_uia_push(int $hwnd, array $nodes): void
+    {
+        $GLOBALS['DRIFT_SMOKE_UIA'][] = [$hwnd, \count($nodes)];
+    }
+}
+
 if (!function_exists('drift_win_set_cursor')) {
     function drift_win_set_cursor(int $hwnd, int $shape): void
     {
@@ -328,6 +428,7 @@ function winLoopReset(): void
     $GLOBALS['DRIFT_SMOKE_IME'] = [];
     $GLOBALS['DRIFT_SMOKE_CLOSE'] = [];
     $GLOBALS['DRIFT_SMOKE_MSGBOX'] = [];
+    $GLOBALS['DRIFT_SMOKE_PRESENT'] = [];
     unset($GLOBALS['DRIFT_SMOKE_LAST_TIMER_ID'], $GLOBALS['DRIFT_SMOKE_WIN_HANDLE'], $GLOBALS['DRIFT_SMOKE_CLIENT']);
     unset($GLOBALS['DRIFT_SMOKE_WIN_SEQ'], $GLOBALS['DRIFT_SMOKE_DEAD']);
 

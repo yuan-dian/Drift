@@ -9,9 +9,9 @@ use Drift\Dev\Lint\Rule;
 use Drift\Dev\Lint\SourceFile;
 
 /**
- * 应用的组合根必须**走 `EventLoop::run()`**，不许自己写消息循环。
+ * 应用的组合根必须**把循环交给框架**（`WindowSet`），且不许自己写循环。
  *
- * ## 这条闸门护的是什么（两次真事故的合并）
+ * ## 这条闸门护的是什么（三次事故的合并）
  *
  * ```text
  * 第一次（2026-10-25，apps/tutorial ④ 段）
@@ -23,11 +23,16 @@ use Drift\Dev\Lint\SourceFile;
  *   把"等多久"交给 `FrameClock::nextWaitMs()` 之后，一个手写循环只要忘了
  *   把 `waitEvents()` 的返回值接到 `pumpEvents()` 上，就变成"事件投不出来 ⇒
  *   窗口对点击毫无反应"，同样**不报错**。
+ *
+ * 第三次（2026-10-30，多窗口 + 状态持久化）
+ *   组合根手抄的那 30 行里含**两个必须卸的静态钩子**（`ResizeHookState::$pump` /
+ *   `Errors::installFatalBox()`）。不卸 ⇒ 对象图活到 PHP shutdown ⇒ AOT 解引用
+ *   已销毁的类元数据 ⇒ **关窗必崩**（实测 8/8）。这条纪律曾写在四个文件里各一遍。
  * ```
  *
- * ⇒ 判据从"必须建 `FrameClock` 并 `tick()`"改成"**必须走 `EventLoop::run()`**"：
- *   等 / 派发 / 跑帧 / 光标 / IME / 退出这六件契约现在只在 `EventLoop` 里各写一次，
- *   组合根再抄一遍就是第六次出错机会。
+ * ⇒ 判据两次收紧：`FrameClock::tick()` → `EventLoop::run()` → **`new WindowSet(`**。
+ *   `WindowSet` 把"建窗 / 还原几何 / 定表面 / attach / 循环 / 写回 / 卸钩子"收成
+ *   一处，组合根只剩"开几个窗、装什么应用"。
  *
  * ## 为什么不给"我有特殊需求"留口子
  *
@@ -58,7 +63,7 @@ final class AppBootstrapLoop implements Rule
 
     public function summary(): string
     {
-        return '应用的组合根必须走 EventLoop::run() —— 手写消息循环会漏掉"等多久 / 派发 / 光标 / IME"其中一条，全部表现为不报错的半失效';
+        return '应用的组合根必须交给 WindowSet（建窗/循环/写回/卸钩子），不许自己写循环 —— 手写会漏掉"等多久 / 派发 / 光标 / IME / 卸静态钩子"其中一条，全部表现为不报错的半失效';
     }
 
     public function check(Project $project): array
@@ -70,7 +75,9 @@ final class AppBootstrapLoop implements Rule
                 continue;
             }
 
-            if ($this->hasLoopCall($file)) {
+            $loopLine = $this->loopLine($file);
+
+            if ($this->delegatesLoop($file) && $loopLine === 0) {
                 continue;
             }
 
@@ -78,13 +85,12 @@ final class AppBootstrapLoop implements Rule
                 $this->name(),
                 Diagnostic::ERROR,
                 $file->path(),
-                $this->loopLine($file),
-                 '组合根没有走 `EventLoop::run($platform, $app, $handle)` —— 自己写消息循环时，'
-                    . '"等多久（FrameClock::nextWaitMs）/ 派发（pumpEvents）/ 光标 / IME / 退出"'
-                    . '五条契约里漏掉任何一条都是**不报错的半失效**（2026-10-25 真机：界面停住、'
-                    . '日志一个字都没有；smoke 全绿，因为用例里每帧都是显式跑的）'
-                    . "\n" . '修法：删掉自己那段 `while (...)`，换成一行 '
-                    . '`EventLoop::run($platform, $app, $handle);`。'
+                $loopLine,
+                '组合根没有把循环交给 `WindowSet`（或自己写了循环）—— 手写时'
+                    . '"等多久（FrameClock::nextWaitMs）/ 派发（pumpEvents）/ 光标 / IME /'
+                    . ' 几何写回 / 卸静态钩子"六条契约里漏掉任何一条都是**不报错的半失效**'
+                    . "\n" . '修法：删掉自己那段 `while (...)`，换成 '
+                    . '`(new WindowSet($platform, \'app.window\'))->open(...)->run();`。'
                     . '确实需要不同循环 ⇒ 给 `EventLoop` 加钩子，不要在组合根里复制它。',
             );
         }
@@ -93,21 +99,21 @@ final class AppBootstrapLoop implements Rule
     }
 
     /**
-     * 组合根里**真的调了** `EventLoop::run()` 吗（注释里的字样不算）。
+     * 组合根里**真的**建了 `WindowSet` 吗（注释里的字样不算）。
      *
-     * ★ 为什么不用 `str_contains($code, 'EventLoop::run(')`：第一版就是那样，结果
+     * ★ 为什么不用 `str_contains($code, ...)` 一把梭：第一版就是那样，结果
      *   夹具（注释里写着"都走 `EventLoop::run()`"）**被判定为合格** —— 一个只在
      *   注释里提过的组合根能过闸，这条规则就是空的。注释行以 `*` / `//` / `/*`
      *   开头，跳过它们即可（不需要 tokenizer：组合根的注释形状很固定）。
      */
-    private function hasLoopCall(SourceFile $file): bool
+    private function delegatesLoop(SourceFile $file): bool
     {
         foreach (explode("\n", $file->code()) as $text) {
             $line = ltrim($text);
             if (str_starts_with($line, '*') || str_starts_with($line, '//') || str_starts_with($line, '/*')) {
                 continue;
             }
-            if (str_contains($line, 'EventLoop::run(')) {
+            if (str_contains($line, 'new WindowSet(')) {
                 return true;
             }
         }
@@ -116,7 +122,7 @@ final class AppBootstrapLoop implements Rule
     }
 
     /**
-     * 报在**自己写的那个循环**那一行；没有循环就报第 1 行。
+     * 组合根里有没有自己写的循环（`while` / `for` / `do`）；没有 ⇒ `0`。
      *
      * ★ 必须锚 `^\s*while`：类头注释里也写着 "`while ($platform->pump())` 里…"
      *   （引用句式），只按 `->pump()` 找会报到注释行上（实测第一版报到 21 行）。
@@ -129,6 +135,6 @@ final class AppBootstrapLoop implements Rule
             }
         }
 
-        return 1;
+        return 0;
     }
 }

@@ -73,7 +73,14 @@ def main() -> int:
         return 2
 
     if title is None:
-        title = "用户管理" if app == "users" else "Hello Drift"
+        # ★ 标题是**组合根**给 `createWindow()` 的字面量（不是 `Application::title()`：
+        #   那个方法没有任何运行期消费者，见 `WindowSet::open()` 的第一个参数）。
+        title = {
+            "hello": "Hello Drift",
+            "showcase": "Drift 示例台",
+            "tutorial": "Drift 教程",
+            "users": "用户管理",
+        }.get(app, "Hello Drift")
 
     ini_dir = tempfile.mkdtemp(prefix="drift-run-")
     ini = os.path.join(ini_dir, "php.ini")

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Showcase;
 
+use Drift\App\AppScope;
 use Drift\App\Application;
 use Drift\Commands\CommandHandler;
 use Drift\Platform\Clipboard;
@@ -45,9 +46,15 @@ final class ShowcaseApplication extends Application
      *     ⇒ 这条只有真机能证伪（"smoke 全绿 ≠ 真机正确"的又一例）。
      *   闸门：`tools/Lint/Rules/AppSubclassCtorParent.php`（I2 同期加，判据写死）。
      */
-    public function __construct(private Dialog $dialog, private ?Clipboard $clipboard = null)
-    {
-        parent::__construct();
+    public function __construct(
+        private Dialog $dialog,
+        private ?Clipboard $clipboard = null,
+        ?AppScope $scope = null,
+    ) {
+        // ★ 不传 scope ⇒ 基类自建一个（单窗口时与 2026-10-30 之前逐字节相同）。
+        //   多窗口时组合根传入**同一个**实例 ⇒ 字体 / 任务池 / IO 轮询器 / 主题
+        //   只有一份（见 `AppScope` 类注释的五项表）。
+        parent::__construct([], $scope);
     }
 
     public function buildRoot(): Widget
