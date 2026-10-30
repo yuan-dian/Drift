@@ -73,7 +73,7 @@ final class Bootstrap
 
         // ★ **M4 的形态到了**：首屏取数不再占 UI 线程 —— 交给常驻子进程（§17.4.5），
         //   它去请求一个**真 HTTP 后端**（`apps/users/mock-server.php`，故意慢 1.2s）。
-        //   ⇒ `LoadStatus::Loading` 第一次真的被用户看见（§11.5 的结论）。
+        //   ⇒ `AsyncValue::loading()` 那一态第一次真的被用户看见（§11.5 的结论）。
         //   ★ 换回同步只改这一行：`new UsersApplication($src)`（host = null）。
         //   ★ `$argv[0]` = 本 exe 路径（AOT 下由启动器给；空则退化为同步，不静默崩）。
         $src = new MemoryUserSource();

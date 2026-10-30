@@ -51,7 +51,6 @@ use App\Users\UsersApplication;
 use App\Users\UsersRoot;
 use App\Users\Jobs\JobRegistry;
 use App\Users\Store\MemoryUserSource;
-use App\Users\Store\LoadStatus;
 use App\Users\Store\UserStore;
 use Drift\Dev\Smoke\App\FailSliceJob;
 use Drift\Dev\Smoke\App\SemValueApplication;
@@ -4772,13 +4771,13 @@ if ($mockReady) {
 
     check(
         '异步 · attach 之后仍是 Loading（取数没占 UI 线程）',
-        $asyncApp->userStore()->status() === LoadStatus::Loading,
-        $asyncApp->userStore()->status()->name,
+        $asyncApp->userStore()->page()->value()->isLoading(),
+        $asyncApp->userStore()->page()->value()->stateName(),
     );
 
     $asyncT0 = microtime(true);
     $asyncFrames = 0;
-    while ($asyncApp->userStore()->status() === LoadStatus::Loading && microtime(true) - $asyncT0 < 10.0) {
+    while ($asyncApp->userStore()->page()->value()->isLoading() && microtime(true) - $asyncT0 < 10.0) {
         usleep(16000);
         $asyncApp->frame((microtime(true) - $asyncT0) * 1000.0, BoxConstraints::loose(new Size(900.0, 640.0)));
         $asyncFrames++;
@@ -4787,8 +4786,8 @@ if ($mockReady) {
     $asyncStore = $asyncApp->userStore();
     check(
         '异步 · 后台取数完成 ⇒ Ready 且 15 行',
-        $asyncStore->status() === LoadStatus::Ready && count($asyncStore->rows()) === 15,
-        $asyncStore->status()->name . ' rows=' . count($asyncStore->rows()) . ' frames=' . $asyncFrames,
+        $asyncStore->page()->value()->hasData() && count($asyncStore->rows()) === 15,
+        $asyncStore->page()->value()->stateName() . ' rows=' . count($asyncStore->rows()) . ' frames=' . $asyncFrames,
     );
     check(
         '异步 · 数据真的来自 HTTP（首行「张伟」经 worker 往返）',
@@ -4871,8 +4870,8 @@ check(
 );
 check(
     'N3 · 旧响应到达后三态仍是 Ready（没有被搅成 Loading/Error）',
-    $staleStore->status() === LoadStatus::Ready,
-    $staleStore->status()->name,
+    $staleStore->page()->value()->hasData(),
+    $staleStore->page()->value()->stateName(),
 );
 
 // ── ㊷ N5 · 「能不能真睡着」的唯一开关（`needsPolling()`）─────────────────────

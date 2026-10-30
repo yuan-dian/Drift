@@ -6,12 +6,13 @@ namespace App\Users\Store;
 use Drift\App\TaskHost;
 use Drift\Async\Future;
 use Drift\Core\Computed;
+use Drift\State\AsyncCommand;
 use Drift\State\Subject;
 
 use App\Users\Jobs\FetchUsersJob;
 
 /**
- * 行数据 + 三态 + 搜索（§A.2.8）。
+ * 行数据 + 四态 + 搜索（§A.2.8）。
  *
  * ★ **派生值用 `Computed`**（`03` §4，W2/S5）：`visible()` 每帧会被 `select` 调一次，
  *   不缓存就是每帧一次全表过滤。原先是"手工缓存 + 4 处复位"（改依赖要记得清缓存），
@@ -20,10 +21,28 @@ use App\Users\Jobs\FetchUsersJob;
  *   粗依赖（`[$this]` = 整个 Store）是 §4.6 有意的取舍：不相干字段变化会多触发
  *   一次重算，换掉漏复位；本派生值算一次远小于 1ms，不触上界。
  *
- * ★★ **两条取数路径**（2026-10-18）：
- *   - 有 `TaskHost` ⇒ 提交 `FetchUsersJob` 到后台（**真异步**：进程池 / 同步队列都行）；
- *   - 没有 ⇒ 老路 `$src->fetchPage()`（同步，解释器与旧测试用）。
- *   ★ 两条路的**出口是同一个** `applyPage()` —— 三态、缓存失效、通知都不会走偏。
+ * ## ★★ 取数已经不是手写状态机了（2026-10-31）
+ *
+ * 之前本类是 `AsyncCommand` 的同款逻辑**手写第二遍**：`LoadStatus` 枚举 +
+ * `$status` / `$error` / `$rows` 三个字段 + `$inflight` + `load()` 六步 +
+ * `applyPage()` 出口。那份手写版的所有理由（旧请求作废、`Loading` 必须先通知、
+ * `catch` 必须挂、出口只能有一个）现在都由命令保证，**全仓一份**：
+ *
+ * ```php
+ * $this->page = AsyncCommand::make(fn(int $p): Future => $this->fetch($p));
+ * $this->page->subscribeFor($this, fn() => $this->absorb());   // 命令变 ⇒ 我变
+ * public function load(int $p = 1): void { $this->page->run($p); }
+ * ```
+ *
+ * ⇒ `LoadStatus` 随之删除（四态已经是 `AsyncValue`），页面改读
+ *   `$store->page()->value()` 并 `fold()`。
+ *
+ * ## 两条取数路径仍然都在，但出口只剩命令那一个
+ *
+ * - 有 `TaskHost` ⇒ 提交 `FetchUsersJob` 到后台（**真异步**：进程池 / 同步队列都行）；
+ * - 没有 ⇒ 老路 `$src->fetchPage()`（同步，解释器与旧测试用）。
+ *   ★ 两条路都回**同一种形态**（原始数组，见 `UserSeed::dehydrate()`）⇒
+ *   "原始数据 → `User`"只在 `absorb()` 一处发生。
  *   ★ 这也是 §11.5 那条结论的兑现："`loading` 只在同步 IO 下不可见" —— 走后台后它
  *     真的能被用户看到（mock 后端故意慢 1.2 秒）。
  */
@@ -32,30 +51,16 @@ final class UserStore extends Subject
     /** @var list<User> */
     private array $rows = [];
 
-    private LoadStatus $status = LoadStatus::Idle;
-
-    /** 失败时的原因（`status === Error` 时有意义） */
-    private string $error = '';
+    /**
+     * 取数命令（**唯一的异步簿记**）。
+     *
+     * ★ 它是 `Subject`（`AsyncCommand` 的基类）⇒ 既是"四态的值"，也能被页面
+     *   直接订阅。本 Store 自己先订一份（见构造器），于是**页面照旧只订 Store
+     *   一个** —— 这是 §11.3 的既有形状，不为命令另开一条路。
+     */
+    private AsyncCommand $page;
 
     private string $query = '';
-
-    /**
-     * 上一次**还在途**的取数（`null` = 没有 / 已经回来了）。
-     *
-     * ★★ 它是为了**陈旧响应**：`load()` 可以被连点（刷新按钮 / 翻页 / 注册后重载）。
-     *   两个请求同时在途时"先发的慢、后发的快"是常态（第 1 页有缓存、第 2 页要现算）
-     *   —— 迟到的旧结果会盖掉新数据，而且状态是 `Ready`，**用户看不出任何异常**。
-     *   成熟框架都在这一层收口：RxJS `switchMap` / `useEffect` 的 cleanup /
-     *   `CancellationTokenSource`。本仓的收口就是 `Future::cancel()`。
-     *
-     * ★ 存的是**根 Future**（`submit()` 的返回值），不是 `then()` 的产物：
-     *   取消链下游不回溯上游（`Future::chain()` 只往一个方向走）⇒ 取消 `$n1`
-     *   对在途任务毫无作用，它照样跑、照样交付。
-     *
-     * ★ 结算后不必清空：`cancel()` 对已结算的 Future 是幂等的空操作
-     *   （`state !== PENDING` 直接返回）。
-     */
-    private ?Future $inflight = null;
 
     /**
      * 派生值：按 `$query` 过滤 `$rows`。
@@ -63,6 +68,7 @@ final class UserStore extends Subject
      * ★ 依赖取**整个 Store**（`[$this]`，粗依赖）：`UserStore extends Subject`
      *   已实现 `Versioned`，`notifyChanged()` 先推版本 ⇒ 订阅者回调里读到的是新
      *   版本。改 `query`/`rows` 都会 `notifyChanged()` ⇒ 版本变 ⇒ 重算，无需手工复位。
+     *   ★ 命令的每次换值都会被 `absorb()` 转成 `notifyChanged()` ⇒ 版本同样变。
      *
      * @var Computed<list<User>>
      */
@@ -76,6 +82,17 @@ final class UserStore extends Subject
         private ?TaskHost $host = null,
         private string $apiBase = FetchUsersJob::DEFAULT_BASE,
     ) {
+        $this->page = AsyncCommand::make(function (int $page): Future {
+            return $this->fetch($page);
+        });
+
+        // ★ 命令换值 ⇒ 本 Store 变（见 `$page` 的注释：页面只订 Store 一个）。
+        //   落在**构造器**里而不是 `load()` 里：订阅一次就够（§11.3 RT-1 ——
+        //   每 load 一次订一份，订阅数会随取数次数增长）。
+        $this->page->subscribeFor($this, function (): void {
+            $this->absorb();
+        });
+
         $this->visibleComputed = new Computed(
             fn(): array => $this->query === ''
                 ? $this->rows
@@ -90,14 +107,10 @@ final class UserStore extends Subject
         );
     }
 
-    public function status(): LoadStatus
+    /** 取数命令（页面读四态 / 禁用刷新按钮都从这里走） */
+    public function page(): AsyncCommand
     {
-        return $this->status;
-    }
-
-    public function error(): string
-    {
-        return $this->error;
+        return $this->page;
     }
 
     /** @return list<User> */
@@ -117,6 +130,12 @@ final class UserStore extends Subject
         return $this->visibleComputed->get();
     }
 
+    /** 取一页 —— 只是"让命令跑一次"（去重 / 作废旧请求 / 重试都由命令管） */
+    public function load(int $page = 1): void
+    {
+        $this->page->run($page);
+    }
+
     public function setQuery(string $q): void
     {
         if ($q === $this->query) {
@@ -126,54 +145,6 @@ final class UserStore extends Subject
         $this->query = $q;
         // ★ 依赖变了 ⇒ notifyChanged() 推版本 ⇒ visibleComputed 下次 get() 自动重算
         $this->notifyChanged();
-    }
-
-    /**
-     * 取一页（三态从 `Loading` 开始）。
-     *
-     * ★ **`Loading` 必须在提交之前就 `notifyChanged()`** —— 否则那一帧的界面
-     *   还是旧的 `Idle`，用户看不到"正在加载"（这是三态存在的全部意义）。
-     */
-    public function load(int $page = 1): void
-    {
-        // ★★ 新请求起手 ⇒ 旧请求作废（迟到的结果不许覆盖新数据，见 `$inflight`）。
-        //   放在 `Loading` 之前：万一 `cancel()` 触发的后端钩子里有回调，也还在
-        //   "本次 load 尚未改变任何状态"之前。
-        $previous = $this->inflight;
-        $this->inflight = null;
-        if ($previous !== null) {
-            $previous->cancel();
-        }
-
-        $this->status = LoadStatus::Loading;
-        $this->error = '';
-        $this->notifyChanged();
-
-        $host = $this->host;
-        if ($host === null) {
-            // 同步路径（解释器 / 没装后台端口的应用）
-            $r = $this->src->fetchPage($page);
-            $this->applyPage($r->ok, $r->items, $r->error);
-
-            return;
-        }
-
-        // ★ 回调在**帧内**执行（`Application::frame()` 的 drain 段，在 settle 之前）
-        //   ⇒ 这里的 `notifyChanged()` 会让同帧重建，看不到"空一帧"。
-        // ★ 形状是 `Future`（N3）：`then()` 收成功、`catch()` 收失败。改造前是
-        //   `submit(job, onDone, onError)` —— 两个入口（这个和 `submitSliced`）
-        //   各有一套回调，调用方要记两套；现在只有一个 `Future`。
-        $inflight = $host->submit(new FetchUsersJob($page, $this->apiBase));
-        $this->inflight = $inflight;
-
-        $inflight
-            ->then(function (array $raw): void {
-                // ★ worker 回的是 JSON 数组（不是 `User` 对象）⇒ UI 侧 hydrate
-                $this->applyPage(true, UserSeed::hydrate($raw), '');
-            })
-            ->catch(function (\Throwable $e): void {
-                $this->applyPage(false, [], $e->getMessage());
-            });
     }
 
     public function remove(int $id): bool
@@ -192,19 +163,46 @@ final class UserStore extends Subject
     }
 
     /**
-     * 两条取数路径的**唯一出口**（三态 / 缓存 / 通知只在这里落）。
+     * 一次取数（**两条路径**）—— 命令要的那个 `\Closure(int): Future`。
      *
-     * @param list<User> $rows
+     * ★ 必须回 `Future`（不能像以前那样"同步路径直接就地改状态"）：命令的统一
+     *   出口在 `then/catch` 上，绕过它 ⇒ 三态、去重、取消又各走各的。
+     * ★ 同步路径失败用 `Future::rejected()`：路径不同、出口相同（以前是
+     *   `applyPage(false, [], $error)`，现在是"一条被拒的 Future"）。
      */
-    private function applyPage(bool $ok, array $rows, string $error): void
+    private function fetch(int $page): Future
     {
-        if ($ok) {
-            $this->rows = $rows;
-            $this->status = LoadStatus::Ready;
-            $this->error = '';
-        } else {
-            $this->status = LoadStatus::Error;
-            $this->error = $error;
+        $host = $this->host;
+        if ($host === null) {
+            // 同步路径（解释器 / 没装后台端口的应用）
+            $r = $this->src->fetchPage($page);
+
+            return $r->ok
+                ? Future::resolved(UserSeed::dehydrate($r->items))
+                : Future::rejected(new \RuntimeException($r->error));
+        }
+
+        // ★ 后台路径：回**根** Future（`submit()` 的返回值），不是 `then()` 的产物
+        //   —— 取消链下游不回溯上游 ⇒ 取消派生出来的那条对在途任务毫无作用。
+        //   命令是这条根 Future 的唯一持有者 ⇒ 它敢 `cancel()`，迟到的旧结果因此
+        //   永不结算（smoke 的「陈旧响应」断言就是这条）。
+        return $host->submit(new FetchUsersJob($page, $this->apiBase));
+    }
+
+    /**
+     * 命令换值 ⇒ 落到本 Store（**唯一的落地口**）。
+     *
+     * ★ 只有 `data` 态改写 `$rows`：失败时保留上一次的行（界面画 error，但列表
+     *   不该被清空 —— 以前 `applyPage()` 也是这个语义）。
+     * ★ 回调在**帧内**执行（`Application::frame()` 的 drain 段，在 settle 之前）
+     *   ⇒ 这里的 `notifyChanged()` 会让同帧重建，看不到"空一帧"。
+     */
+    private function absorb(): void
+    {
+        $value = $this->page->value();
+        if ($value->hasData()) {
+            $raw = $value->value();
+            $this->rows = \is_array($raw) ? UserSeed::hydrate($raw) : [];
         }
 
         $this->notifyChanged();

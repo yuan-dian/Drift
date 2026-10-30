@@ -11,7 +11,7 @@ use Drift\App\NamedJob;
  *
  * ★ 它是"真异步"的演示载体：请求打到一个**慢**的 mock 后端（默认
  *   `php -S 127.0.0.1:8099 apps/users/mock-server.php`，延迟 1.2s），
- *   于是 `LoadStatus::Loading` **真的对用户可见**（§11.5 的结论：同步 IO 下
+ *   于是 `AsyncValue::loading()` 那一态**真的对用户可见**（§11.5 的结论：同步 IO 下
  *   那一态在帧末就被覆盖，用户永远看不到）。
  *
  * ★ 为什么是 HTTP 而不是 `usleep`：`usleep` 只证明"进程活着"，HTTP 才证明
