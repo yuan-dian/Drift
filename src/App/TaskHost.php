@@ -92,6 +92,21 @@ interface TaskHost
     public function pending(): int;
 
     /**
+     * 后端**是否必须靠每帧轮询**才能拿到结果。
+     *
+     * ★★ 这是"能不能真的睡着"的唯一开关。帧时钟的回答只有两种：
+     *   `needsPolling() === true` ⇒ 有活在途就按帧节奏醒（15ms 一次，**空转**）；
+     *   `needsPolling() === false` ⇒ 有活在途也**无限期阻塞**，等后端自己叫醒。
+     *   ⇒ 后者才是"零轮询"，而它成立的前提是后端**真的能叫醒**（A2 的
+     *   `PostMessageW` ⇒ `WakeReason::Woken`）。说 `false` 却叫不醒 = 挂死。
+     *
+     * ★ 为什么放在端口上而不是让 `PumpHost` 判具体类：`PumpHost` 只认 `TaskHost`
+     *   （`AppInstanceofConcrete` 那条纪律），而且"我能不能叫醒你"本来就是
+     *   后端的**能力声明**，不是调用方的猜测。
+     */
+    public function needsPolling(): bool;
+
+    /**
      * 把**已完成**的结果逐个交给 `$onEach`（仅 UI 线程，`Application::frame()` 每帧调一次）。
      *
      * ★ **swap 语义**：取走的是调用瞬间的快照；`drain()` 期间新入队的留在队列里，

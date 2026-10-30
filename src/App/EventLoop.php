@@ -120,6 +120,13 @@ final class EventLoop
                 break;
             }
 
+            // ★ **`WakeReason::Woken` 不需要额外分支**（2026-10-30，N5）：它是
+            //   "被 IO 线程叫醒"，没有载荷 ⇒ `pumpEvents()` 空转一次，照常往下
+            //   跑帧；那一帧里 `pumpTasks()` → `drain()` 把结果取走。
+            //   ⇒ "唤醒"与"超时到点"在这里是**同一条路**（都是"该跑一帧了"），
+            //     只有 `Quit` 是另一条。★ 别为它加 `continue`：跳过帧就等于
+            //     被叫醒了却什么都不干，然后回去接着睡 —— 结果永远取不走。
+
             // ④ 平台暂存的原始事件 → **各自窗口**的队列（`translate()` 按事件自带的 hwnd 投）
             $platform->pumpEvents();
 

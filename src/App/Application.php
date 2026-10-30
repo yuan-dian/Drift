@@ -1147,12 +1147,18 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     }
 
     /**
-     * **连续帧**：动画在跑 / 分片在推 / 流在监听 / 后台在途（§17.4.9 前两条判据）。
+     * **连续帧**：动画在跑 / 分片在推 / 流在监听 / **只能轮询的**后台在途。
      *
      * ★ 这几种需求的性质是"**按帧节奏反复醒**"（15ms 一帧），而不是"到某个时刻醒一次"。
-     *   它们是**轮询**的来源：后台结果与 socket 可读都没有唤醒通道（N4 才有），
-     *   只能每帧问一次 —— 这也是为什么 {@see \Drift\App\FrameClock::nextWaitMs()}
+     *   它们是**轮询**的来源：分片任务、socket 可读、读管道的进程后端都没有唤醒通道
+     *   （只能每帧问一次）—— 这也是为什么 {@see \Drift\App\FrameClock::nextWaitMs()}
      *   对它们给的是帧间隔，而不是 `-1`（无限等会让 socket 永远不被问）。
+     *
+     * ★★ **能叫醒的后端不算在内**（2026-10-30，N5）：`ThreadTaskHost` 的
+     *   `needsPolling()` 是 `false` ⇒ 它在途时**不进**本判据 ⇒ 帧时钟给 `-1`，
+     *   一觉睡到 worker 的 `PostMessageW` 把泵叫醒（`WakeReason::Woken`）。
+     *   ⇒ 判据用的是 `hasPolledAsync()` 而不是 `hasAsync()`：前者回答"要不要空转着等"，
+     *     后者回答"有没有活"。混成一个 = 能叫醒的后端也被按 15ms 空转。
      */
     public function wantsFrameRhythm(): bool
     {
@@ -1161,7 +1167,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
             return true;
         }
 
-        return $this->pumps->hasAsync();
+        return $this->pumps->hasPolledAsync();
     }
 
     /**

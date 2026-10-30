@@ -43,6 +43,7 @@ use Drift\App\Completion;
 use Drift\Async\Future;
 use Drift\App\Io\IoPoller;
 use Drift\App\Job;
+use Drift\App\FrameClock;
 use Drift\App\ProcessTaskHost;
 use Drift\App\SyncTaskHost;
 use Drift\App\TaskHost;
@@ -4757,6 +4758,12 @@ $manualHost = new class implements TaskHost {
         return \count($this->futures);
     }
 
+    /** 手动结算的后端：没有第二线程，只能靠 `drain()` 拉 */
+    public function needsPolling(): bool
+    {
+        return true;
+    }
+
     public function drain(callable $onEach): void
     {
     }
@@ -4785,6 +4792,86 @@ check(
     'N3 · 旧响应到达后三态仍是 Ready（没有被搅成 Loading/Error）',
     $staleStore->status() === LoadStatus::Ready,
     $staleStore->status()->name,
+);
+
+// ── ㊷ N5 · 「能不能真睡着」的唯一开关（`needsPolling()`）─────────────────────
+//
+// ★★ 判据的形状是"**同一夹具、只翻一个布尔**"：三台应用除了 `needsPolling()` 的
+//   返回值（以及第三台多一个分片任务）之外完全一样 ⇒ 结论相反只可能来自那个布尔。
+//   ★ 反例自检：把 `Application::wantsFrameRhythm()` 的 `hasPolledAsync()` 改回
+//     `hasAsync()` ⇒ 第一条立刻红（`wait=-1` 变成 `wait=15`）。
+//   ★ 为什么必须有这一条：N5 的全部收益就是"一条 600ms 的任务从 40 次空唤醒降到
+//     0 次"。没有这条判据，"零轮询"只是注释里的说法。
+//
+// ★ 夹具**不造 Future**：判据只关心"有没有活在途"（`pending() > 0`）与
+//   "能不能叫醒"，造一个没人接的 `Future` 只会把"失败没人接"的 Fatal 判据拖进来。
+
+/** @internal 冒烟夹具：永远"有 1 条在途"，`needsPolling()` 可翻 */
+$inFlightHost = static fn (bool $needsPolling): TaskHost => new class ($needsPolling) implements TaskHost {
+    public function __construct(private readonly bool $needsPolling)
+    {
+    }
+
+    public function submit(Job $job): Future
+    {
+        throw new \LogicException('夹具不跑任务 —— 判据只看 pending() 与 needsPolling()');
+    }
+
+    public function pending(): int
+    {
+        return 1;
+    }
+
+    public function needsPolling(): bool
+    {
+        return $this->needsPolling;
+    }
+
+    public function drain(callable $onEach): void
+    {
+    }
+};
+
+$rhythmConstraints = BoxConstraints::loose(new Size(320.0, 240.0));
+
+// ① 能叫醒的后端在途 ⇒ **无限等**（真睡着）
+$wakeApp = new TaskApplication();
+$wakeApp->scope()->setTaskHost($inFlightHost(false));
+$wakeApp->attach(new SurfaceProbe(), $rhythmConstraints);
+$wakeApp->frame(16.0, $rhythmConstraints);   // 先清掉"一次性欠账"（焦点环 / 面板落后）
+$wakeWait = (new FrameClock())->nextWaitMs($wakeApp, 16.0);
+
+check(
+    'N5 · 能叫醒的后端在途 ⇒ 帧时钟 -1（一觉睡到 worker 叫醒，零空转）',
+    $wakeWait === -1.0,
+    'wait=' . $wakeWait,
+);
+
+// ② 同一形状，只把 needsPolling() 翻成 true ⇒ 回到帧节奏
+$pollApp2 = new TaskApplication();
+$pollApp2->scope()->setTaskHost($inFlightHost(true));
+$pollApp2->attach(new SurfaceProbe(), $rhythmConstraints);
+$pollApp2->frame(16.0, $rhythmConstraints);
+$pollWait = (new FrameClock())->nextWaitMs($pollApp2, 16.0);
+
+check(
+    'N5 · 只能轮询的后端在途 ⇒ 帧时钟 = 帧间隔（同一夹具，只翻一个布尔）',
+    $pollWait === (float) FrameClock::FRAME_MS,
+    'wait=' . $pollWait . '（期望 ' . FrameClock::FRAME_MS . '）',
+);
+
+// ③ 分片任务**恒为轮询** —— 与后端能不能叫醒无关（`step()` 是拉模型）
+$sliceApp2 = new TaskApplication();
+$sliceApp2->scope()->setTaskHost($inFlightHost(false));   // 后端仍然"能叫醒"
+$sliceApp2->attach(new SurfaceProbe(), $rhythmConstraints);
+$sliceApp2->frame(16.0, $rhythmConstraints);
+$sliceApp2->submitSliced(new CountJob(100000, 100));       // 每帧推一小段
+$sliceWait = (new FrameClock())->nextWaitMs($sliceApp2, 16.0);
+
+check(
+    'N5 · 分片在推 ⇒ 仍按帧节奏（分片只能轮询，不受后端能否叫醒影响）',
+    $sliceWait === (float) FrameClock::FRAME_MS,
+    'wait=' . $sliceWait . ' sliced=' . $sliceApp2->slicedCount(),
 );
 
 // ── 可滚动容器 / 滚动条绘制 / 滚轮全链 / 拖条 / UI 线程身份 已迁出 ─────────────

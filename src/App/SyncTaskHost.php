@@ -73,6 +73,18 @@ final class SyncTaskHost implements TaskHost
         return \count($this->queue);
     }
 
+    /**
+     * 本后端**必须**靠每帧 `drain()` 拉 —— 它没有第二个线程可以叫醒 UI。
+     *
+     * ★ 但它并不因此空转：`submit()` 是同步跑完的 ⇒ `pending()` 只在"结果已就绪、
+     *   还没回贴"的那一两帧里大于 0（见上），其余时间帧时钟照样无限期睡。
+     *   ⇒ `true` 在这里的代价是**有界的一次**，不是每帧 15ms 的常态。
+     */
+    public function needsPolling(): bool
+    {
+        return true;
+    }
+
     public function drain(callable $onEach): void
     {
         if ($this->queue === []) {

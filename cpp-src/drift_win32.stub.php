@@ -464,3 +464,51 @@ function drift_win_alert(int $owner, string $title, string $body): void {}
  * ★ 默认按钮是**"否"**（`MB_DEFBUTTON2`）：破坏性动作的默认不能是"执行"。
  */
 function drift_win_confirm(int $owner, string $title, string $body): bool {}
+
+// ══════════════════════════════════════════════════ IO 线程池（A2 / N5） ══
+//
+// ★ 这五个是**唯一一组"会起线程"的桥函数**。它们背后是 C++ 线程池，
+//   与 Zend VM **零接触**（PHP 侧线程不可用，见 `probes/RESULTS.md` §11）。
+//
+// ★ 为什么参数是 `int + string` 两个原语而不是一个 JSON 串：桥的纪律是
+//   "只传原语"，而 `(intArg, strArg)` 覆盖了 `sleep(ms)` 与 `http(url)` 这两种
+//   形状，**C++ 侧不需要 JSON 解析器**。真需要第三个参数时再谈 —— 现在没有消费者。
+
+/**
+ * 起 IO 线程池（幂等）。
+ *
+ * @return int 实际线程数；`0` = 建唤醒窗口失败（池没起，`drift_io_submit()` 一律 false）
+ */
+function drift_io_start(int $threads): int {}
+
+/**
+ * 投一条任务进池。**不阻塞**（只入队 + `notify_one`）。
+ *
+ * @param int    $id      调用方自增的号；结果原样带回（`drift_io_poll()` 里对账）
+ * @param string $handler C++ 侧的处理函数名（`'sleep'` / `'echo'`）
+ * @param int    $intArg  整数参数（`sleep` 的毫秒）
+ * @param string $strArg  字符串参数（`echo` 的回显内容）
+ * @return bool `false` = 池没起（**立刻失败**，别等一个永不来的结果）
+ */
+function drift_io_submit(int $id, string $handler, int $intArg, string $strArg): bool {}
+
+/**
+ * 取走**全部**已完成的结果（非阻塞，空队列立刻返回 `"[]"`）。
+ *
+ * @return string JSON 数组：`[{"id":1,"ok":true,"value":200,"error":""}, …]`
+ */
+function drift_io_poll(): string {}
+
+/** 当前活着的 worker 数（关窗后必须是 0） */
+function drift_io_threads(): int {}
+
+/** 累计执行条数（"0 丢失"判据的分子：它必须等于提交数） */
+function drift_io_handled(): int {}
+
+/**
+ * 关池：置 stop ⇒ 叫醒全部 worker ⇒ **join** ⇒ 销毁唤醒窗口。
+ *
+ * ★ 队列里剩下的活会被干完（`stop` 只表示"不再收新的"）：调用方是关窗路径，
+ *   丢活只会让调用方看到一个永不结算的 `Future`。
+ */
+function drift_io_stop(): int {}

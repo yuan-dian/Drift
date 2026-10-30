@@ -91,6 +91,16 @@ typedef BOOL (WINAPI *DriftSetWindowCompositionAttribute)(HWND, DriftWindowCompo
 #include <string>
 #include <vector>
 
+// ★★ IO 线程池拆成两半（2026-10-30，按"平台边界"切）：
+//   `core/io_pool.*`  池体（纯 C++20，零 `windows.h`）
+//   `win32/io_wake.*` 唤醒通道（`PostMessageW` 到 `HWND_MESSAGE` 窗）
+//   本文件只留**薄 ABI 包装**（`php_drift_io_*`）与泵里的那一句 `consumeWake()`。
+//   ⇒ 接第二个平台时只写它自己的 `io_wake`，池体一行不改。
+//   ★ 用相对路径包含：`cxx-flags` 只有 `/I"cpp/skia"` 一个 include 根，而
+//     MSVC 对引号形式先查**包含者所在目录** ⇒ `core/` / `win32/` 都能落到。
+#include "core/io_pool.h"
+#include "win32/io_wake.h"
+
 using namespace php;
 
 // ★ 拖动重排入口（§5.2）：PHP 侧具名全局函数（src/Platform/Win32/ResizeHook.php）。
@@ -2279,6 +2289,21 @@ Array eventQuit() {
     return out;
 }
 
+/**
+ * 「IO 线程叫醒的，但队列里没有别的事件」（A2 / N5）。
+ *
+ * ★ 为什么需要一个**独立的事件类型**而不是复用 `timer`：PHP 侧要据此回答
+ *   "为什么醒"。`timer` 是"等到点了"、`wake` 是"别处有活"，前者可以让帧时钟
+ *   继续等、后者必须立刻跑一帧去 `poll()` 结果。混在一起就是"结果到了不跑帧"。
+ * ★ 载荷为空：结果在完成队列里，由 `drift_io_poll()` 取（与 `timer` 同一条
+ *   "闹钟不带货"的纪律）。
+ */
+Array eventWake() {
+    Array out;
+    out.set("type", "wake");
+    return out;
+}
+
 // ────────────────────────────────────────────────────────── DPI 感知（§6） ──
 
 /**
@@ -3126,6 +3151,16 @@ Bool php_drift_win_system_dark() {
 
 Array php_drift_win_pump() {
     for (;;) {
+        // ★★ 唤醒标记要在**取消息之前**查（A2 / N5）：标记可能在上一次调用里就被
+        //   置上了（那一次有真事件排在前面、先返回了真事件）。只在取消息之后查的话，
+        //   这条"被叫醒"就永远等不到下一条消息 —— 挂死在 `GetMessageW` 里。
+        //   优先级：真事件 > 唤醒（真事件有载荷，唤醒只是个闹钟）。
+        //   ★ 标记的**读写都在 `win32/io_wake.cc`**（同一线程，不需 atomic）；
+        //     这里只消费，`&&` 短路保证队列非空时不去动它。
+        if (g_queue.empty() && drift::win32::consumeWake()) {
+            return eventWake();
+        }
+
         MSG msg;
         BOOL got = GetMessageW(&msg, NULL, 0, 0);
 
@@ -3172,6 +3207,62 @@ void php_drift_win_kill_timer(Int hwnd, Int id) {
     if (target != NULL) {
         KillTimer(target, (UINT_PTR)(int)id);
     }
+}
+
+// ══════════════════════════════════════════════ IO 线程池的 ABI 包装（A2 / N5） ══
+//
+// ★★ **池体不在这里**（2026-10-30 拆分）：线程 / 互斥量 / 条件变量 / 队列 / 结果
+//   JSON 全在 `core/io_pool.cc`（纯 C++20，零 `windows.h`），唤醒通道在
+//   `win32/io_wake.cc`（`PostMessageW` 到 `HWND_MESSAGE` 窗）。
+//   本文件只做两件事：**php 类型 ↔ std 类型的换算**，以及把"起池"与"建唤醒窗"
+//   绑成一次调用（顺序有讲究，见 `php_drift_io_start()`）。
+//
+// ★ 为什么拆：线程池的**池体**是跨平台的，只有"怎么叫醒 UI"是平台的。混在一个
+//   3927 行的文件里，"这条代码能不能跨平台"就只能靠读代码回答；拆成
+//   `core/` 与 `win32/` 两个目录之后，它变成**路径问题**。
+//
+// ★ 为什么 ABI 包装留在本文件而不是 `core/`：`php_drift_io_start()` 要建 Win32
+//   唤醒窗 ⇒ 它**是平台相关的**。放进 `core/` 会让 `core` 反过来依赖 `win32`
+//   （依赖方向就倒了：`win32 → core` 才是唯一允许的方向）。
+
+/** 起池 = 建唤醒窗 + 起线程。**顺序不能反**（窗没建好，worker 叫醒谁？） */
+Int php_drift_io_start(Int threads) {
+    if (!drift::win32::startIoWake()) {
+        return (Int) 0;
+    }
+
+    return (Int) drift::io::start((int) threads);
+}
+
+Bool php_drift_io_submit(Int id, String handler, Int intArg, String strArg) {
+    // ★ `php::String` 的接口是 `length()` / `data()`，**不是** STL 那套
+    //   `size()` / `c_str()`（AOT 的 String 是自有类型，编译期就报 C2039）。
+    return (Bool) drift::io::submit(
+        (int) id,
+        std::string(handler.data(), handler.length()),
+        (int) intArg,
+        std::string(strArg.data(), strArg.length())
+    );
+}
+
+String php_drift_io_poll() {
+    return String(drift::io::poll());
+}
+
+Int php_drift_io_threads() {
+    return (Int) drift::io::threads();
+}
+
+Int php_drift_io_handled() {
+    return (Int) drift::io::handled();
+}
+
+/** 关池 = join 全部 worker，**再**销毁唤醒窗（顺序反了 = worker 叫醒一个死窗） */
+Int php_drift_io_stop() {
+    drift::io::stop();
+    drift::win32::stopIoWake();
+
+    return (Int) 0;
 }
 
 // ═══════════════════════════════════════════════════════ 失败路径 / 呈现 ══

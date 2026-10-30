@@ -1010,6 +1010,69 @@ C++ 线程。⇒ 与 N5 合并验收，不单独开工（理由见 §11 ②）�
 
 ## 11. 修订记录
 
+### 2026-10-30 · C++ 层按**平台边界**拆开：线程池拆成 `core/` + `win32/`
+
+**问题不是"文件太长"，是"这条代码能不能跨平台"只能靠读代码回答。**
+
+`cpp-src/drift_win32.cc` 当时 **3927 行 / 180 KB**，一个文件里塞着窗口生命周期、
+WndProc、键码归一化、逐像素上屏（ULW）、Skia 直贴、DPI、消息泵、定时器、UIA、
+剪贴板、原生对话框，以及刚写的 IO 线程池。前 7 个都是**壳**（Win32 本体），
+但线程池不是 —— 这是它必须分开的理由。
+
+#### ① 判据：线程那部分**一半跨平台、一半不跨**
+
+| 部分 | 跨平台？ | 依据 |
+|---|---|---|
+| 池体（线程 / 互斥量 / 条件变量 / 任务队列 / 完成队列 / 结果 JSON） | **是** | 全是 `std::thread` / `std::mutex` / `std::condition_variable` / `std::deque`，**零 `windows.h`** |
+| "怎么叫醒 UI 线程" | **否** | Windows 是 `PostMessageW` 到一个 `HWND_MESSAGE` 窗；macOS 是 `dispatch_async(dispatch_get_main_queue())`；Linux/GTK 是 `g_idle_add` 或"自管道 + `select`" |
+
+⇒ 拆法只有一种是对的：**池体 + 一个 `WakeFn` 钩子**，平台侧只实现那个钩子。
+不是"给 C++ 造一套平台抽象基类" —— `WakeFn` 就是一个函数指针加一个 `void*`，
+**只有一个实现时，虚表只换来一次间接调用和一堆 `#include` 纠缠**。
+
+#### ② 落地
+
+```
+cpp-src/
+  core/io_pool.h  · core/io_pool.cc    池体（零 windows.h）；"睡一会儿"用
+                                        std::this_thread::sleep_for，不是 Sleep()
+  win32/io_wake.h · win32/io_wake.cc   唤醒通道（约 60 行：窗口类 + 窗口过程 + PostMessageW）
+  drift_win32.cc                       只剩薄 ABI 包装 php_drift_io_*（类型换算）
+```
+
+- **依赖方向单向 `win32 → core`**。`php_drift_io_start()`（建窗 + 起线程，顺序不能反）
+  留在 `drift_win32.cc`，因为建窗是平台动作 —— 放进 `core/` 会让 core 反过来依赖
+  win32，依赖方向就倒了。
+- `drift_win32.cc` **3927 → 3693 行**。这次只搬了 234 行，但搬的是**唯一一处
+  "平台相关与平台无关混在一起"的地方**；其余 3600 行本来就都是壳。
+- ★ tpc 侧无需改配置：`FileScanner` 是 `RecursiveIteratorIterator`（子目录会收），
+  `.cc` 按扩展名进编译清单（`NATIVE_SRC_EXT`），`.h` 既不编译也不进清单 ⇒
+  新目录**零配置**就能被扫到。`drift-build` 的输入指纹是 `hashTree(cpp-src)` ⇒
+  改 `.h` 也会触发重建。
+- ★ `DESIGN.md` 的"stub 与 `.cc` 成对、同名"那条**改口径**：tpc 只按扩展名收 `.cc`，
+  一个 stub 可以对应多个 `.cc`（stub 只声明 PHP 可见的 ABI）。
+
+#### ③ 顺手修掉一个必然崩的坑
+
+`std::thread` 在**仍 joinable** 时析构 ⇒ `std::terminate`。只要调用方忘了
+`drift_io_stop()`（今天 `apps/*` 就没人调 `ProcessTaskHost::shutdown()`），
+进程退出码就不是 0 —— 看起来像崩溃，其实是"没人收线程"。
+⇒ `core/io_pool.cc` 的 `start()` 注册一次 `atexit` 兜底。顺序成立：
+运行时注册晚于全局静态构造 ⇒ 逆序析构时钩子**先**跑，那时 `g_threads` 还活着。
+
+#### ④ 没做（登记，不是忘了）
+
+**其余 3600 行没有继续拆。** 理由：① N5 还没验完，一次动 3600 行 ABI 实现的
+时候不该同时有两件未验的事；② 闸门只能证明"没崩"，**真机才证明"没变"**
+（`drift_win32.cc` 的 3600 行里，贴屏 / ULW / DPI / UIA 都有"编译通过、真机不对"的
+前科）；③ 拆窗口 / 输入 / 贴屏 / 服务四块**不解决任何当前问题** —— 它们是同一个
+平台、同一份 ABI、同一批真机判据，只是行数多。
+
+**触发条件（写死）**：接第二个平台时（那时 `core/` 就是现成的，只需要写它的
+`win32/` 对位物），或者 `drift_win32.cc` 涨到 5000 行以上。届时顺序是
+`贴屏（present/ULW/Skia 直贴）→ 输入（键码/WndProc/IME）→ 服务（UIA/剪贴板/对话框）`，
+每拆一块跑一次真机看图。
+
 ### 2026-10-30 · N3 补齐：`cancel()` 从"契约"变成"能力"；N4 的 `Inbox` **推迟**
 
 **两件事，一件做了，一件判了"现在不做"。**

@@ -236,6 +236,20 @@ final class ProcessTaskHost implements TaskHost
         return \count($this->inflight) + \count($this->queue) + \count($this->failed);
     }
 
+    /**
+     * 本后端**必须**靠每帧 `drain()` 拉 —— 子进程的管道是"读才知道有没有"，
+     * 没有任何东西能在数据到达时叫醒 UI 线程。
+     *
+     * ★ 这里的 `true` 是**常态代价**（与 `SyncTaskHost` 的"有界一次"不同）：
+     *   一条 600ms 的任务 = 40 次空唤醒。要消掉它得给子进程加一条唤醒通道
+     *   （读端 `PeekNamedPipe` 仍是被动问）—— 真要做，路在 C++ 侧
+     *   `ThreadTaskHost` 那条（`PostMessageW`），而不是在这里加定时器。
+     */
+    public function needsPolling(): bool
+    {
+        return true;
+    }
+
     /** 在途任务数（测试与 devtools 用） */
     public function inFlightCount(): int
     {

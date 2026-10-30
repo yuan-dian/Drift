@@ -209,6 +209,35 @@ final class PumpHost
     }
 
     /**
+     * 其中**只能靠轮询**的那部分（⇒ 帧节奏必须跳，不能无限等）。
+     *
+     * ★★ 与 `hasAsync()` 的差别就是"后端能不能叫醒我"（2026-10-30，N5）：
+     *   - 分片任务：**永远只能轮询**（`step()` 是拉模型，没有"干完了"这一说）；
+     *   - `IoPoller` 的 watcher：本仓拿不到 SOCKET 去等 fd ⇒ 只能每帧问；
+     *   - 后台任务：看后端自己声明的 {@see TaskHost::needsPolling()} ——
+     *     `ProcessTaskHost` 读管道（只能拉），`ThreadTaskHost` 会 `PostMessageW`
+     *     （能推）⇒ 后者在途时帧时钟给 `-1`，一觉睡到 worker 叫醒为止。
+     *
+     * ★ 为什么要有这个"第二谓词"而不是改 `hasAsync()`：`hasAsync()` 回答的是
+     *   "**有没有活**"（`wantsFrame()` 用它），这里回答的是"**要不要空转着等**"。
+     *   混成一个就是"能叫醒的后端也被按 15ms 空转"—— 那正是 N5 要消掉的东西。
+     */
+    public function hasPolledAsync(): bool
+    {
+        if ($this->sliced !== []) {
+            return true;
+        }
+
+        if ($this->io !== null && $this->io->watchCount() > 0) {
+            return true;
+        }
+
+        return $this->tasks !== null
+            && $this->tasks->pending() > 0
+            && $this->tasks->needsPolling();
+    }
+
+    /**
      * 推进到期的延时回调（每帧一次，在 `settle()` 之前）。
      *
      * ★ **先摘再调**：回调里可以安全地 `after()` 新定时器 / `cancelAfter()` 别的

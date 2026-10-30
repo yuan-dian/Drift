@@ -297,6 +297,14 @@ final class Win32Platform implements Platform
             return WakeReason::Timeout;
         }
 
+        // ★ 被 IO 线程叫醒（A2 / N5）：**没有载荷**，活在后端自己的完成队列里。
+        //   ★ 不能落进下面的"暂存"分支 —— 那条路会把一个空事件压进 `$pending`，
+        //     下一轮 `pumpEvents()` 再当"未知类型"丢掉，看起来对，实则每叫醒一次
+        //     就多一条僵尸事件（队列只涨不消，`pending` 永远非空）。
+        if ($type === 'wake') {
+            return WakeReason::Woken;
+        }
+
         // ★ 只暂存，**不派发**：派发归 `pumpEvents()`。拆开是为了让"等"可以被
         //   超时/唤醒打断无数次而不会顺手把事件投进队列（投了却不跑帧 = 队列涨、
         //   画面不动，**不报错**）。
