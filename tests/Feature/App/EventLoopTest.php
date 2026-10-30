@@ -8,8 +8,10 @@ use Drift\App\EventLoop;
 use Drift\Dev\Smoke\App\CloseGuardApplication;
 use Drift\Dev\Smoke\App\CursorApplication;
 use Drift\Dev\Smoke\App\EchoApplication;
+use Drift\Dev\Smoke\App\ModalOnClickApplication;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Tests\Support\SmokeTestCase;
+use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Size;
 use Drift\Input\CursorShape;
@@ -210,6 +212,64 @@ final class EventLoopTest extends SmokeTestCase
         $app->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
 
         return [$platform, $app, $handle];
+    }
+
+    /**
+     * **派发输入时弹的原生模态不算卡顿**（2026-10-30 真机，第二次取证）。
+     *
+     * ★ 事故形状：showcase「Dialog」页点「弹一个原生提示」⇒ `Dialog::alert()` 是
+     *   **同步原生模态**，而它发生在**派发输入**里。模态账本原来只在派发**之前**
+     *   读一次 ⇒ 这段时间没被剔除 ⇒ 关掉框之后弹一条
+     *   「帧时钟：两帧间隔 N ms」的 RECOVERABLE。
+     *   ⇒ 上一轮那次修复只覆盖了「帧**之间**的模态」，漏了「帧**内**的模态」。
+     * ★ 判据必须让**平台时钟真的往前走**：`winDialogLatencyFake()` 既睡真实时间
+     *   （记账）、也推 `DRIFT_SMOKE_NOW`（间隔）。只睡不推 ⇒ 间隔没变 ⇒ 假绿。
+     */
+    public function testModalOpenedWhileDispatchingIsNotAStall(): void
+    {
+        Errors::reset();
+        winDialogLatencyFake(80.0);   // > STALL_MS(60)：不剔除就一定报
+
+        $diag = [];
+
+        try {
+            $platform = new Win32Platform();
+            $handle = $platform->window()->createWindow('模态', 640, 480);
+
+            $dialog = $platform->dialog();
+            check('夹具 · 平台给得出 `Dialog`', $dialog !== null, 'dialog=null');
+
+            if ($dialog !== null) {
+                $app = new ModalOnClickApplication($dialog);
+                $app->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
+
+                winPumpScript([
+                    ['type' => 'timer', 'id' => 'armed'],   // 轮 1：先有一帧，帧时钟才有"上一帧"
+                    ['type' => 'pointer', 'x' => 160, 'y' => 120, 'button' => 0, 'phase' => 1],
+                    ['type' => 'timer', 'id' => 'armed'],
+                    ['type' => 'quit'],
+                ]);
+                EventLoop::run($platform, [$handle => $app]);
+
+                $diag = Errors::recentDiagnostics();
+            }
+        } finally {
+            winDialogLatencyFake(0.0);
+            Errors::reset();
+        }
+
+        check(
+            '主循环 · 派发里弹的原生框确实弹过（不是没走到这条分支）',
+            winDialogCalls() === [['alert', '提示']],
+            \json_encode(winDialogCalls()),
+        );
+        check(
+            '主循环 · 派发中弹窗的停留时长被剔除（关掉系统提示窗不再报"两帧间隔"）',
+            $diag === [],
+            'diag=' . \count($diag) . ' ' . \implode(' | ', \array_slice($diag, 0, 2)),
+        );
+
+        $this->flushChecks();
     }
 
     /**

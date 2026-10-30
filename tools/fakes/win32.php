@@ -402,6 +402,10 @@ if (!function_exists('drift_win_message_box')) {
         $ms = (float) ($GLOBALS['DRIFT_SMOKE_MSGBOX_MS'] ?? 0.0);
         if ($ms > 0.0) {
             \usleep((int) ($ms * 1000));
+            // ★ 模态同样**消耗平台时钟**：真机上 `GetTickCount64` 会往前走。
+            //   不推的话"记账有、间隔没变"，`FrameClock` 那条判据根本触发不了
+            //   ⇒ 用例会以假绿收场。
+            $GLOBALS['DRIFT_SMOKE_NOW'] = (float) ($GLOBALS['DRIFT_SMOKE_NOW'] ?? 0.0) + $ms;
         }
         $GLOBALS['DRIFT_SMOKE_MSGBOX'][] = [$title, $body];
     }
@@ -419,6 +423,79 @@ function winMessageBoxLatencyFake(float $ms): void
     $GLOBALS['DRIFT_SMOKE_MSGBOX_MS'] = $ms;
 }
 
+// ── 原生对话框（2026-10-30）──────────────────────────────────────────────
+// ★ 这四个桥此前**一条假实现都没有**：`Win32Dialog` 只在 AOT 真机上跑过，
+//   无头环境里调 `Dialog::alert()` 直接 "Call to undefined function"。
+//   于是"对话框的模态记账"也没被验过（只有 `fatalBox()` 那条验过）。
+//   ⇒ 补上，并且**与消息框共用一套停留时长**：模态就是模态，不该分两套模拟。
+
+/** 假对话框的停留时长（毫秒）；`0` = 立刻返回 */
+function winDialogLatencyFake(float $ms): void
+{
+    $GLOBALS['DRIFT_SMOKE_DIALOG_MS'] = $ms;
+}
+
+/** @return list<array{0: string, 1: string}> 对话框调用记录：[kind, title] */
+function winDialogCalls(): array
+{
+    return $GLOBALS['DRIFT_SMOKE_DIALOG'] ?? [];
+}
+
+if (!function_exists('drift_win_alert')) {
+    function drift_win_alert(int $owner, string $title, string $body): void
+    {
+        $ms = (float) ($GLOBALS['DRIFT_SMOKE_DIALOG_MS'] ?? 0.0);
+        if ($ms > 0.0) {
+            \usleep((int) ($ms * 1000));
+            $GLOBALS['DRIFT_SMOKE_NOW'] = (float) ($GLOBALS['DRIFT_SMOKE_NOW'] ?? 0.0) + $ms;
+        }
+        $GLOBALS['DRIFT_SMOKE_DIALOG'][] = ['alert', $title];
+    }
+}
+
+if (!function_exists('drift_win_confirm')) {
+    function drift_win_confirm(int $owner, string $title, string $body): bool
+    {
+        $ms = (float) ($GLOBALS['DRIFT_SMOKE_DIALOG_MS'] ?? 0.0);
+        if ($ms > 0.0) {
+            \usleep((int) ($ms * 1000));
+            $GLOBALS['DRIFT_SMOKE_NOW'] = (float) ($GLOBALS['DRIFT_SMOKE_NOW'] ?? 0.0) + $ms;
+        }
+        $GLOBALS['DRIFT_SMOKE_DIALOG'][] = ['confirm', $title];
+
+        return (bool) ($GLOBALS['DRIFT_SMOKE_CONFIRM_ANSWER'] ?? true);
+    }
+}
+
+if (!function_exists('drift_win_open_file')) {
+    function drift_win_open_file(int $owner, string $title, string $filters, string $defaultName): string
+    {
+        $ms = (float) ($GLOBALS['DRIFT_SMOKE_DIALOG_MS'] ?? 0.0);
+        if ($ms > 0.0) {
+            \usleep((int) ($ms * 1000));
+            $GLOBALS['DRIFT_SMOKE_NOW'] = (float) ($GLOBALS['DRIFT_SMOKE_NOW'] ?? 0.0) + $ms;
+        }
+        $GLOBALS['DRIFT_SMOKE_DIALOG'][] = ['open', $title];
+
+        // '' = 用户取消（`Win32Dialog` 的约定：C 侧没选就回空串）
+        return (string) ($GLOBALS['DRIFT_SMOKE_DIALOG_PATH'] ?? '');
+    }
+}
+
+if (!function_exists('drift_win_save_file')) {
+    function drift_win_save_file(int $owner, string $title, string $filters, string $defaultName): string
+    {
+        $ms = (float) ($GLOBALS['DRIFT_SMOKE_DIALOG_MS'] ?? 0.0);
+        if ($ms > 0.0) {
+            \usleep((int) ($ms * 1000));
+            $GLOBALS['DRIFT_SMOKE_NOW'] = (float) ($GLOBALS['DRIFT_SMOKE_NOW'] ?? 0.0) + $ms;
+        }
+        $GLOBALS['DRIFT_SMOKE_DIALOG'][] = ['save', $title];
+
+        return (string) ($GLOBALS['DRIFT_SMOKE_DIALOG_PATH'] ?? '');
+    }
+}
+
 /** 清空泵剧本 / 定时器 / 光标 / IME 记录（每个用例前必调） */
 function winLoopReset(): void
 {
@@ -428,6 +505,7 @@ function winLoopReset(): void
     $GLOBALS['DRIFT_SMOKE_IME'] = [];
     $GLOBALS['DRIFT_SMOKE_CLOSE'] = [];
     $GLOBALS['DRIFT_SMOKE_MSGBOX'] = [];
+    $GLOBALS['DRIFT_SMOKE_DIALOG'] = [];
     $GLOBALS['DRIFT_SMOKE_PRESENT'] = [];
     unset($GLOBALS['DRIFT_SMOKE_LAST_TIMER_ID'], $GLOBALS['DRIFT_SMOKE_WIN_HANDLE'], $GLOBALS['DRIFT_SMOKE_CLIENT']);
     unset($GLOBALS['DRIFT_SMOKE_WIN_SEQ'], $GLOBALS['DRIFT_SMOKE_DEAD']);

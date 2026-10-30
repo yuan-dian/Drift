@@ -109,9 +109,10 @@ while (true) {
     $why = $platform->waitEvents($clock->nextWaitMs($app, $platform->now()));   // ① 等多久
     if ($why === WakeReason::Quit) { break; }             // ③ 先看为什么醒，再派发
     $platform->pumpEvents();                              // ④ 平台暂存 → input()
+    $modal = $platform->consumeModalBlockedMs();          //    等消息期间被模态挂起的时长
     while (($event = $input->poll()) !== null) { /* ⑤ 派发 + 光标 + 事件后 IME */ }
-    $clock->advance($app, $platform->now(), $screen->viewport(),
-                    $platform->consumeModalBlockedMs());  // ⑥ 帧
+    $modal += $platform->consumeModalBlockedMs();         // ★ 派发**期间**弹的原生框
+    $clock->advance($app, $platform->now(), $screen->viewport(), $modal);   // ⑥ 帧
     $platform->imeCaret($handle, $app->imeCaretRect());   // ⑦ 帧末 IME
 }
 ```
