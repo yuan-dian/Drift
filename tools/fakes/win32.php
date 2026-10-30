@@ -132,7 +132,15 @@ function winPumpRemaining(): int
 if (!function_exists('drift_win_create')) {
     function drift_win_create(string $title, int $width, int $height): int
     {
-        return $GLOBALS['DRIFT_SMOKE_WIN_HANDLE'] ?? 1;
+        if (isset($GLOBALS['DRIFT_SMOKE_WIN_HANDLE'])) {
+            return $GLOBALS['DRIFT_SMOKE_WIN_HANDLE'];
+        }
+
+        // ★ 连续建窗依次递增（多窗口用例要能区分两个窗）；`winLoopReset()` 归零
+        //   ⇒ 每个用例的**第一个**窗仍然是 1（既有断言不受影响）。
+        $GLOBALS['DRIFT_SMOKE_WIN_SEQ'] = ($GLOBALS['DRIFT_SMOKE_WIN_SEQ'] ?? 0) + 1;
+
+        return $GLOBALS['DRIFT_SMOKE_WIN_SEQ'];
     }
 }
 
@@ -231,13 +239,49 @@ if (!function_exists('drift_win_destroy')) {
     function drift_win_destroy(int $hwnd): void
     {
         $GLOBALS['DRIFT_SMOKE_CLOSE'][] = ['destroy', $hwnd];
+        winDestroyedByShell($hwnd);   // 销毁之后就不活了（与真壳的 `IsWindow` 一致）
     }
+}
+
+if (!function_exists('drift_win_is_alive')) {
+    /**
+     * 假壳的存活查询：默认活着，被 `winDestroyedByShell()` 标记过的不活。
+     *
+     * ★ **不能靠 `drift_win_destroy()` 的记账推断**：没有声明关闭守卫的窗口是**壳
+     *   自己** `DestroyWindow` 的，那条路上 `drift_win_destroy()` 根本不会被调用。
+     *   多窗口用例里用 `winDestroyedByShell($h)` 显式模拟这一支。
+     */
+    function drift_win_is_alive(int $hwnd): bool
+    {
+        return !\in_array($hwnd, $GLOBALS['DRIFT_SMOKE_DEAD'] ?? [], true);
+    }
+}
+
+/** 模拟"**壳自己**销毁了这个窗口"：没有事件、没有 `destroy()` 调用，就是没了 */
+function winDestroyedByShell(int $hwnd): void
+{
+    $GLOBALS['DRIFT_SMOKE_DEAD'][] = $hwnd;
 }
 
 if (!function_exists('drift_win_set_close_guard')) {
     function drift_win_set_close_guard(int $hwnd, bool $armed): void
     {
         $GLOBALS['DRIFT_SMOKE_CLOSE'][] = ['guard', $hwnd, $armed];
+    }
+}
+
+if (!function_exists('drift_win_live_window')) {
+    /**
+     * 假壳的"任一活窗口"= 那个假句柄。
+     *
+     * ★ 不模拟"活窗口表"：假壳里 `destroy()` 只记账、窗口不会真的消失，而本函数
+     *   唯一用途是给**等待定时器**找个能挂的窗口（`SetTimer` 需要 hwnd）。
+     *   真要验"关一个留一个"的行为，走 `apps/hello` 的双窗真机探针 —— 那才是
+     *   这条语义的验收位置（假壳里没有"活"这个概念）。
+     */
+    function drift_win_live_window(): int
+    {
+        return $GLOBALS['DRIFT_SMOKE_WIN_HANDLE'] ?? 1;
     }
 }
 
@@ -285,6 +329,7 @@ function winLoopReset(): void
     $GLOBALS['DRIFT_SMOKE_CLOSE'] = [];
     $GLOBALS['DRIFT_SMOKE_MSGBOX'] = [];
     unset($GLOBALS['DRIFT_SMOKE_LAST_TIMER_ID'], $GLOBALS['DRIFT_SMOKE_WIN_HANDLE'], $GLOBALS['DRIFT_SMOKE_CLIENT']);
+    unset($GLOBALS['DRIFT_SMOKE_WIN_SEQ'], $GLOBALS['DRIFT_SMOKE_DEAD']);
 
     // ★ 时钟回到 0：每个用例都从同一个原点开始，`after(400)` 的到点时刻才可断言。
     $GLOBALS['DRIFT_SMOKE_NOW'] = 0.0;

@@ -65,6 +65,27 @@ function drift_win_close(int $hwnd): void {}
 function drift_win_destroy(int $hwnd): void {}
 
 /**
+ * 这个句柄还是不是活窗口（`IsWindow`）。
+ *
+ * ★ 为什么需要它（2026-10-30，M1-b）：**没有声明关闭守卫的窗口**是壳直接销毁的，
+ *   PHP 侧不知道；而 `WM_QUIT` 前面可能还排着 `WM_KILLFOCUS` / `WM_ACTIVATE`，
+ *   于是"关窗之后、quit 之前"那一轮会对着死句柄跑一帧 ⇒ 客户区 0×0 ⇒ 布局 Fatal
+ *   （真机：点 X 后闪一下错误框，进程停在框上不退）。
+ * ★ **不能用"客户区 0×0"代替**：最小化也是 0×0，那是合法状态。
+ */
+function drift_win_is_alive(int $hwnd): bool {}
+
+/**
+ * 任意一个**还活着的**窗口句柄；一个都没有 ⇒ `0`。
+ *
+ * ★ 用途只有一个：给"等消息的闹钟定时器"找个能挂的窗口（`SetTimer` 需要 hwnd，
+ *   而"等消息"是进程级动作）。改动前它挂"最后建的窗"，主窗一关就成死句柄 ⇒
+ *   `waitEvents()` 退化成无限阻塞 ⇒ 剩下的窗口动画停摆（**不报错**）。
+ * ★ 不要拿它当"主窗"做别的事：集合顺序任意。
+ */
+function drift_win_live_window(): int {}
+
+/**
  * 声明该窗口的关闭要不要**先问应用**（2026-10-30，可拦截关闭）。
  *
  * `true` ⇒ `WM_CLOSE` 不再销毁，改为入队一条 `close-requested`（帧边界由

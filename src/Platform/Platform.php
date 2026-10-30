@@ -7,7 +7,7 @@ namespace Drift\Platform;
  * 平台 = **能力端口的集合**，不是上帝接口（§5.1）。
  *
  * ★ 本接口只有四类东西：
- *   ① **六个子端口**（`screen()` / `window()` / `surface()` / `input()` / `timers()` /
+ *   ① **五个子端口**（`screen()` / `window()` / `surface()` / `input()` /
  *      `fatalBox()`）—— 每个平台都必须有，故**不进主接口就没有"不支持"这个状态**；
  *   ② **三个可空壳服务**（`clipboard()` / `dialog()` / `tray()`）—— 跨平台语义差异大，
  *      "不支持"在**类型层面**表达（返回 `null`，§24.3 例外登记表）；
@@ -16,11 +16,26 @@ namespace Drift\Platform;
  *   ④ **一个目录查询**（`configDir()`，§5.4）—— 用户文件放哪，平台必然知道；
  *      "不知道"用空字符串表达（不升级成 `null`：消费者只有一个降级动作）。
  *
+ * ★★ **窗口级能力一律"句柄参数化"，不另做视图对象**（2026-10-30，M1-b）：
+ *   `screen($h)` / `input($h)` / `surface($h)` / `imeCaret($h, …)` 与
+ *   `WindowHost` 的 14 个方法同一个风格。设计册原稿的
+ *   `forWindow(int $h): WindowPlatform` 视图**没做** —— 理由不是省事：
+ *   它会让本仓出现**两套**"如何指定窗口"的写法（视图 vs 参数），
+ *   而两者能表达的能力完全一样。★ 判据在每个方法的**返回类型**上：
+ *   - 返回**值对象 / 无状态查询**（`Screen` 每次都现读 DPI 与客户区）⇒ 加参数；
+ *   - 返回**有状态对象**（`InputSource` 是一条队列）⇒ 加参数 + 平台侧按句柄缓存，
+ *     **句柄就是那个状态的 key**，不需要多一层对象来持它。
+ *
+ * ★ `timers()` **已从接口删除**（2026-10-30，M1-b）：唯一消费者是
+ *   `Win32Platform::waitEvents()` 自己（`FrameClock` 在 N2 之后不再持 `TimerHost`）
+ *   —— 接口上的方法必须有**外部**消费者，否则"支持它"是一句无法验证的话。
+ *   需要定时器的应用走 `Application::after()`（框架的定时器属于 `AppScope`）。
+ *
  * ★★ **循环归平台，编排归框架**（§5.2 裁决 1）：框架**绝不自建事件源**。
  *   `waitEvents($timeoutMs)` 阻塞等下一条 OS 消息（事件驱动，**不空转**），
- *   `pumpEvents()` 把取到的消息归一化后交给 `input()` 的队列；`now()` 给的是
- *   **单调**毫秒时钟（`GetTickCount64` / `mach_absolute_time`），帧时间戳由它注入
- *   —— 框架**不读环境时钟**，这是 G3 确定性的物质基础（§5.2 裁决 2）。
+ *   `pumpEvents()` 把取到的消息归一化后交给**该消息所属窗口**的 `input()` 队列；
+ *   `now()` 给的是**单调**毫秒时钟（`GetTickCount64` / `mach_absolute_time`），
+ *   帧时间戳由它注入 —— 框架**不读环境时钟**，这是 G3 确定性的物质基础（§5.2 裁决 2）。
  *
  * ```php
  * // apps/<app>/bin/<platform>/Bootstrap.php —— 组合根（§4.5）
@@ -28,15 +43,15 @@ namespace Drift\Platform;
  * $handle   = $platform->window()->createWindow('Hello Drift', 640, 400);
  * $platform->window()->show($handle);
  *
- * $app->attach($platform->surface($handle)?->surface(), $platform->screen()->viewport());
+ * $app->attach($platform->surface($handle)?->surface(), $platform->screen($handle)->viewport());
  *
- * \Drift\App\EventLoop::run($platform, $app, $handle);      // 等 / 派发 / 跑帧
+ * \Drift\App\EventLoop::run($platform, [$handle => $app]);   // 等 / 派发 / 跑帧
  * // 或手写（等价，两者都不要自己去睡固定间隔）：
  * // while (true) {
  * //     $why = $platform->waitEvents($app->nextWaitMs());   // 由"还有什么活"算出来
  * //     if ($why === \Drift\Platform\WakeReason::Quit) { break; }
  * //     $platform->pumpEvents();
- * //     $app->frame($platform->now(), $platform->screen()->viewport());
+ * //     $app->frame($platform->now(), $platform->screen($handle)->viewport());
  * // }
  * ```
  *
@@ -54,8 +69,15 @@ namespace Drift\Platform;
  */
 interface Platform
 {
-    /** DPI / 视口 / 系统主题（§5.1 / §9.2） */
-    public function screen(): Screen;
+    /**
+     * 该窗口的 DPI / 视口 / 系统主题（§5.1 / §9.2）。
+     *
+     * ★ **带 `$windowHandle`**（2026-10-30，M1-b）：`scale()` 是 per-monitor DPI、
+     *   `viewport()` 是那个窗口的客户区 —— 两窗跨不同 DPI 屏时必然不同值。
+     *   改动前它读"最后建的窗"，多窗口下是**静默用错**（画面按错比例缩放）。
+     * ★ 返回的对象**不需要缓存**：它自己不持状态，每次现读（`Win32Screen` 的类注释）。
+     */
+    public function screen(int $windowHandle): Screen;
 
     /** 窗口生命周期与运行期控制（§5.1 纪律 3："生"与"活"分开） */
     public function window(): WindowHost;
@@ -67,11 +89,14 @@ interface Platform
      */
     public function surface(int $windowHandle): ?SurfaceProvider;
 
-    /** 原始事件泵（§9.1 路由链的输入侧） */
-    public function input(): InputSource;
-
-    /** 定时器：帧时钟（VSync / `WM_TIMER`）由它驱动（§5.2 裁决 1） */
-    public function timers(): TimerHost;
+    /**
+     * 该窗口的原始事件队列（§9.1 路由链的输入侧）。
+     *
+     * ★ **带 `$windowHandle`**（2026-10-30，M1-b）：`pumpEvents()` 按事件自带的
+     *   `hwnd` 投递，`EventLoop` 按窗口抽干。改动前只有**一条**队列 ——
+     *   多窗口下两个应用会**重复消费同一条事件**（点一下，两个窗都响应）。
+     */
+    public function input(int $windowHandle): InputSource;
 
     /**
      * ★ Fatal 中止序列第 ② 步（§1.2）：弹一个**原生**错误框。

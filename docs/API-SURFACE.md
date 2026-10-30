@@ -16,14 +16,14 @@
 | Input | 18 | 5 |
 | Layout | 41 | 43 |
 | Logging | 9 | 3 |
-| Platform | 20 | 14 |
+| Platform | 21 | 14 |
 | Rendering | 31 | 1 |
 | Routing | 8 | 6 |
 | State | 9 | 11 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
 | Widget | 167 | 215 |
-| **合计** | **416** | **353** |
+| **合计** | **417** | **353** |
 
 覆盖 357 个文件 · 描述性提及 29 处（grep 口径的污染源，不计入）
 
@@ -359,7 +359,7 @@
 
 ## Platform 层
 
-### @api（应用可读面） · 20
+### @api（应用可读面） · 21
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -368,19 +368,20 @@
 | `Dialog` | interface | src/Platform/Dialog.php:6 |
 | `InputSource` | interface | src/Platform/InputSource.php:8 |
 | `Platform` | interface | src/Platform/Platform.php:6 |
-| `Platform::consumeModalBlockedMs()` | method | src/Platform/Platform.php:91 |
+| `Platform::consumeModalBlockedMs()` | method | src/Platform/Platform.php:116 |
 | `Screen` | interface | src/Platform/Screen.php:9 |
 | `SurfaceProvider` | interface | src/Platform/SurfaceProvider.php:8 |
 | `TimerHost` | interface | src/Platform/TimerHost.php:6 |
 | `Tray` | interface | src/Platform/Tray.php:6 |
 | `WakeReason` | enum | src/Platform/WakeReason.php:6 |
-| `Win32Platform` | class | src/Platform/Win32/Win32Platform.php:36 |
+| `Win32Platform` | class | src/Platform/Win32/Win32Platform.php:35 |
 | `WindowHost` | interface | src/Platform/WindowHost.php:11 |
 | `WindowHost::close()` | method | src/Platform/WindowHost.php:42 |
-| `WindowHost::setCloseGuard()` | method | src/Platform/WindowHost.php:74 |
-| `WindowHost::setMinSize()` | method | src/Platform/WindowHost.php:95 |
-| `WindowHost::setCursor()` | method | src/Platform/WindowHost.php:195 |
-| `WindowHost::pushSemantics()` | method | src/Platform/WindowHost.php:207 |
+| `WindowHost::isAlive()` | method | src/Platform/WindowHost.php:74 |
+| `WindowHost::setCloseGuard()` | method | src/Platform/WindowHost.php:90 |
+| `WindowHost::setMinSize()` | method | src/Platform/WindowHost.php:111 |
+| `WindowHost::setCursor()` | method | src/Platform/WindowHost.php:211 |
+| `WindowHost::pushSemantics()` | method | src/Platform/WindowHost.php:223 |
 | `WindowMaterial` | class | src/Platform/WindowMaterial.php:8 |
 | `WindowMaterialCapabilities` | class | src/Platform/WindowMaterialCapabilities.php:6 |
 
@@ -388,8 +389,8 @@
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
-| `Platform::imeCaret()` | method | src/Platform/Platform.php:138 |
-| `ResizeHookState::pump()` | method | src/Platform/Win32/ResizeHookState.php:23 |
+| `Platform::imeCaret()` | method | src/Platform/Platform.php:163 |
+| `ResizeHookState::pump()` | method | src/Platform/Win32/ResizeHookState.php:31 |
 | `Win32Clipboard` | class | src/Platform/Win32/Win32Clipboard.php:12 |
 | `Win32Dialog` | class | src/Platform/Win32/Win32Dialog.php:13 |
 | `Win32Dialog::consumeModalBlockedMs()` | method | src/Platform/Win32/Win32Dialog.php:49 |
@@ -400,7 +401,7 @@
 | `Win32SurfaceProvider` | class | src/Platform/Win32/Win32SurfaceProvider.php:9 |
 | `Win32SurfaceProvider::resolveBackend()` | method | src/Platform/Win32/Win32SurfaceProvider.php:75 |
 | `Win32TimerHost` | class | src/Platform/Win32/Win32TimerHost.php:11 |
-| `Win32WindowHost` | class | src/Platform/Win32/Win32WindowHost.php:37 |
+| `Win32WindowHost` | class | src/Platform/Win32/Win32WindowHost.php:39 |
 | `WindowHost::destroy()` | method | src/Platform/WindowHost.php:60 |
 
 ## Rendering 层

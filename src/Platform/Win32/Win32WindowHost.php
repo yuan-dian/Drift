@@ -20,7 +20,9 @@ use function drift_win_close;
 use function drift_win_create;
 use function drift_win_destroy;
 use function drift_win_dpi;
+use function drift_win_is_alive;
 use function drift_win_is_maximized;
+use function drift_win_live_window;
 use function drift_win_material_caps;
 use function drift_win_maximize_toggle;
 use function drift_win_minimize;
@@ -73,10 +75,26 @@ final class Win32WindowHost implements WindowHost
         return $handle;
     }
 
-    /** 最近一次建出来的句柄；未建 ⇒ `null`（`Screen` / `TimerHost` 靠它找窗口） */
+    /** 最近一次建出来的句柄；未建 ⇒ `null` */
     public function handle(): ?int
     {
         return $this->handle;
+    }
+
+    /**
+     * 任意一个**还活着**的句柄；一个都没有 ⇒ 最近建过的那个（可能已死）。
+     *
+     * ★ 谁需要它（2026-10-30，M1-b）：`SetTimer` 必须挂在活窗口上，而"等消息的
+     *   闹钟"服务的是**整个进程**（一次 `GetMessageW` 收所有窗口的消息）。
+     *   ★ 不能用 `handle()`：那是"最后建的窗"—— 主窗关掉、第二窗还在时就是死句柄
+     *   ⇒ `start()` 失败 ⇒ `waitEvents()` 退化成无限阻塞 ⇒ 剩下的窗口**动画停摆**
+     *   （不报错，看起来像"那个窗口卡住了"）。
+     */
+    public function liveHandle(): ?int
+    {
+        $live = drift_win_live_window();
+
+        return $live > 0 ? $live : $this->handle;
     }
 
     public function show(int $windowHandle): void
@@ -105,6 +123,11 @@ final class Win32WindowHost implements WindowHost
     public function destroy(int $windowHandle): void
     {
         drift_win_destroy($windowHandle);
+    }
+
+    public function isAlive(int $windowHandle): bool
+    {
+        return drift_win_is_alive($windowHandle);
     }
 
     /**

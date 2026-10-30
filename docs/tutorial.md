@@ -75,7 +75,7 @@ $handle = $window->createWindow('Drift 教程', 720, 560);  // ← 换标题/尺
 ★ **主循环已经收进框架，组合根只剩一句**：
 
 ```php
-EventLoop::run($platform, $app, $handle);
+EventLoop::run($platform, [$handle => $app]);
 ```
 
 ★ 这条在 2026-10-30 之前是反的：四个应用的组合根各自写着同一段 12 行循环，

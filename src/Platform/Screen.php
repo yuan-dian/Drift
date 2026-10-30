@@ -30,9 +30,12 @@ interface Screen
     public function scale(): float;
 
     /**
-     * 主窗口客户区的**逻辑**尺寸，作为根约束（§A.1）。
+     * **该窗口**客户区的**逻辑**尺寸，作为根约束（§A.1）。
      *
      * 返回紧约束：窗口尺寸就是应用可用的全部空间，根子树没有"想多大就多大"的余地。
+     *
+     * ★ `Screen` 是**窗口级**的（`Platform::screen($windowHandle)`）：多窗口下每个
+     *   窗口的客户区不同 ⇒ 根约束不同 ⇒ 必须由调用方指定是哪个窗口。
      */
     public function viewport(): BoxConstraints;
 

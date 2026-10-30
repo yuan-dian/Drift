@@ -380,7 +380,8 @@ enum WakeReason
 **技术上**成立（语义确实是无损特例），但它留下一个"看起来还能用"的入口，
 而那个入口必然退回恒定心跳（没有超时就无法自适应）。用户的原话是：
 「能不保留 2 套的就直接一套新的机制即可，不然后续维护不方便」。
-⇒ 四个组合根各改一行（`EventLoop::run($platform, $app, $handle)`），删掉
+⇒ 四个组合根各改一行（当时是 `EventLoop::run($platform, $app, $handle)`；
+2026-10-30 M1-b 之后是 `EventLoop::run($platform, [$handle => $app])`），删掉
 `pump()` / `pace()` / `tick()` / `stop()` 四处旧 API，全仓只剩一条路径。
 
 ★ **不破 §9.6 规则 4**（「只有 `fileDialog` 一个自泵方法」）：

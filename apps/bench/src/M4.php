@@ -87,7 +87,7 @@ final class M4
             return $lines;
         }
 
-        $screen = $platform->screen();
+        $screen = $platform->screen($handle);
         $scale = $screen->scale();
         $surface = $provider->surface();
         $surface->resize(

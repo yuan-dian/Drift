@@ -67,7 +67,7 @@ final class Bootstrap
             return;
         }
 
-        $screen = $platform->screen();
+        $screen = $platform->screen($handle);
         $surface = $provider->surface();
 
         // 首帧之前把表面尺寸定下来：`attach()` 内部就会跑一帧，而那帧要往表面上画
@@ -94,7 +94,10 @@ final class Bootstrap
         // 不碰任务/动画/焦点/语义）。入口 `drift_resize_hook_pump()` 是
         // AOT 具名符号（见 src/Platform/Win32/ResizeHook.php）。
         // 不注入 ⇒ 壳退回"原尺寸贴 + 余区填底色"（拖动中不放大、松手补齐）。
-        ResizeHookState::$pump = static function () use ($app, $surface, $screen): void {
+        ResizeHookState::$pump = static function (int $windowHandle) use ($handle, $app, $surface, $screen): void {
+            if ($windowHandle !== $handle) {
+                return;   // 本组合根只建一个窗：别的句柄不归它管（多窗口宿主见 apps/hello）
+            }
             $dpr = $screen->scale();
             $vp = $screen->viewport();
             $surface->resize(
@@ -117,6 +120,6 @@ final class Bootstrap
         //   现在"等多久"由 `FrameClock::nextWaitMs()` 按**还有什么活**算出来：
         //   动画 / 异步在途 ⇒ 15ms 帧节奏；只有定时器 ⇒ 一觉睡到点（不再每 15ms 空醒）；
         //   真的没事 ⇒ 无限等（CPU 归零）。光标 / IME / 退出语义在 `EventLoop` 里各写一次。
-        EventLoop::run($platform, $app, $handle);
+        EventLoop::run($platform, [$handle => $app]);
     }
 }

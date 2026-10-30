@@ -72,6 +72,22 @@ interface WindowHost
     public function destroy(int $windowHandle): void;
 
     /**
+     * 这个句柄还是不是**活窗口**（`IsWindow`）。
+     *
+     * ★ 谁需要它（2026-10-30，M1-b 真机探针发现）：**没有声明关闭守卫的窗口**
+     *   是壳在 `WM_CLOSE` 里**直接销毁**的，框架侧不会收到任何事件；而
+     *   `PostQuitMessage` 只是往队列里塞一条 `WM_QUIT` —— 排在它前面的消息
+     *   （`WM_KILLFOCUS` / `WM_ACTIVATE`）仍会先被取到。于是"关窗之后、quit 之前"
+     *   那一轮会对着死句柄跑一帧 ⇒ 客户区 0×0 紧约束 ⇒ 布局硬校验 Fatal
+     *   （真机现象：点 X 之后闪一下错误框，进程停在框上不退）。
+     * ★ **不能用"客户区 0×0"代替**：**最小化也是 0×0**，那是合法状态
+     *   （`Screen::viewport()` 的注释写着这一条）。所以必须是显式的存活查询。
+     *
+     * @api platform
+     */
+    public function isAlive(int $windowHandle): bool;
+
+    /**
      * 声明这个窗口的关闭要不要**先问应用**（默认 `false`）。
      *
      * ```php

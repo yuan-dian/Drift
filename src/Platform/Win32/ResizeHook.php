@@ -21,10 +21,14 @@ use Drift\Platform\Win32\ResizeHookState;
 /**
  * 同步重排入口：壳在模态拖动循环里按定时器（16ms）调用一次。
  *
+ * ★ 带 `$windowHandle`（2026-10-30，M1-b）：多窗口下"谁在拖"只有壳知道，
+ *   而重排要用**那个窗口**的表面与视口。无参版本会让第二个窗口的拖动
+ *   去重排第一个窗口（不报错、只画错窗）。
+ *
  * 无运行实例 / 未注入（smoke、离屏测试）⇒ 静默返回 —— 壳无从判断 PHP 侧
  * 状态，容错责任放在这一侧。
  */
-function drift_resize_hook_pump(): void
+function drift_resize_hook_pump(int $windowHandle): void
 {
-    ResizeHookState::pump();
+    ResizeHookState::pump($windowHandle);
 }

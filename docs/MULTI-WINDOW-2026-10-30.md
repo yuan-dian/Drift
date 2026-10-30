@@ -59,26 +59,33 @@
 
 ---
 
-## 3. 平台层：7 处缺窗口身份（4 处已补，见下表 ✅）
+## 3. 平台层：7 处缺窗口身份（✅ 全部已补，2026-10-30 M1-a/b）
 
 `WindowHost` 接口**已经按多句柄设计**（`createWindow` / `close(hwnd)` / `place(hwnd)` /
 `clientSize(hwnd)` / `position(hwnd)`），这一层当年就写对了。缺的是另外六个端口：
 
-| 端口方法 | 现状（2026-10-30 M1-a 后） | 为什么必须带窗口 |
+| 端口方法 | 现状（2026-10-30 收口后） | 为什么必须带窗口 |
 |---|---|---|
-| `Platform::screen()` | ⬜ 无参，`Win32Screen` 内部读"最后建的窗" | `scale()` 是 **per-monitor DPI**，两窗跨屏必然不同值 |
-| `Screen::viewport()` | ⬜ 无参 | 每窗客户区不同 = 根约束不同 |
-| `Platform::input()` | ⬜ 无参，单一队列 | 事件无归属 ⇒ N 个 `Application` 会**重复消费同一条事件** |
+| `Platform::screen()` | ✅ `screen(int $h)`（M1-b） | `scale()` 是 **per-monitor DPI**，两窗跨屏必然不同值 |
+| `Screen::viewport()` | ✅ 随 `screen($h)` 一起（M1-b） | 每窗客户区不同 = 根约束不同 |
+| `Platform::input()` | ✅ `input(int $h)`，**每窗一条队列**（M1-b） | 事件无归属 ⇒ N 个 `Application` 会**重复消费同一条事件** |
 | `Platform::pump()` | ✅ 已拆成 `waitEvents()` / `pumpEvents()`（N1 泵帧分离）；退出判据改成"活窗口表空了才 `Quit`"（M1-c） | `false` 表示退出，但"关哪个窗算退出"没答案 |
 | `Platform::imeCaret()` | ✅ 已加 `$windowHandle`（M1-a） | IME 插入符是线程级资源，但**该贴哪个窗口**要指定 |
 | `WindowHost::setMinSize()` | ✅ 已加 `$windowHandle`（M1-a） | 每窗可以有不同的最小尺寸 |
 | `WindowHost::pushSemantics()` | ✅ 已加 `$windowHandle`（M1-a） | UIA provider 挂在 HWND 上，每窗一棵语义树 |
 
 ★ **M1-a 只做了"加参数就够"的那三个**（`imeCaret` / `setMinSize` / `pushSemantics`），
-外加一条隐藏的：`Win32Platform` 内部新增 `dprOf(int $h)`，不再让"窗口 A 的尺寸换算"
-去问 `Screen::scale()`（那个值属于最后建的窗）。**剩下三件（`screen` / `viewport` /
-`input`）不是参数问题，是实例问题** —— 它们返回的是有状态对象（DPI 缓存、根约束、事件队列），
-加参数只会变成"每次调用都新建一个假装是单例的对象"⇒ 归 `Platform::forWindow()` 视图（M1-b）。
+外加一条隐藏的：`dprOf(int $h)` —— `translate()` 里三处"坐标除 dpr"不再问
+`Screen::scale()`（那个值属于最后建的窗）⇒ 多窗跨不同 DPI 屏时鼠标坐标不会按错比例换算。
+
+★ **M1-b 做的是"加参数不够"的那三个**（`screen` / `viewport` / `input`）：它们返回
+**有状态或需要身份**的对象，做法是"加参数 + 平台侧按句柄缓存"（`input`）或"加参数 +
+每次新建"（`screen`，它自己无状态）。**没有**用设计册原稿的 `forWindow()` 视图 ——
+理由见 §6 M1 的落地段。
+
+★ **原表漏了三处同族的**（都不在"端口方法"里，但一样是"最后建的窗"）：
+`Platform::timers()`（已从接口删除，见 §6）、`Win32TimerHost` 的挂靠窗口
+（改用 `liveHandle()`）、`ResizeHookState::$pump`（改成 `callable(int $hwnd)`）。
 
 ★ **`Screen` 最棘手**：它不是"加个参数"就完事 —— `scale()` 变化要触发**全树重建**
 （`DpiChanged`，§9.2）。多窗口下"窗口 A 拖到 4K 屏"只该重建 A 的树。现在 `screen()`
@@ -322,28 +329,71 @@ std::set<HWND> g_closeGuarded;
 
 ### M1 · 平台层补窗口身份 + 关闭可拦截
 
-> **进度（2026-10-30）**：**关闭可拦截已落地**（M1-c，见 §5.1 的"落地"段）；
-> **壳与平台层的窗口身份已落地**（M1-a，见下方表格与 §6 M0）；
-> 剩 **M1-b**：`Platform::forWindow()` 窗口视图（`screen()` / `input()` / `timers()`
-> 三个按窗实例化，`Screen::scale()` 不再读"最后建的窗"的 DPI）与 `EventLoop` 的窗口表。
-> 这两条**表里只有一个窗口时验不着**，按"未被消费的分支 = 未实现"的纪律留到
-> 真有第二个窗口的那一轮（理由见本节末尾 ★）。
+> **进度（2026-10-30，收口）**：**M1 全部落地** —— M1-c（关闭可拦截，§5.1）、
+> M1-a（壳与平台层按句柄参数化，§6 M0）、**M1-b（`screen($h)` / `input($h)` /
+> `EventLoop` 窗口表，见本节末）。**
 
 | 改法 | 破坏面 | 状态 |
 |---|---|---|
-| 新增 `Platform::forWindow(int $h): WindowPlatform`（`screen()` / `input()` / `imeCaret()` / `timers()`） | 纯增量，老方法保留为"主窗"别名 | ⬜ M1-b |
+| ~~新增 `Platform::forWindow(int $h): WindowPlatform`~~ ⇒ **改做 `screen(int $h)` / `input(int $h)`** | **签名破坏**（2 处）+ 删 `timers()`；消费者只有 `EventLoop` 与组合根 | ✅ M1-b（形状不同，见下） |
 | `WindowHost::setMinSize(int $h, int $w, int $h)` / `pushSemantics(int $h, array)` | **签名破坏**（2 处），消费者只有组合根 | ✅ M1-a |
 | `Platform::imeCaret()` 加 `int $windowHandle` | **签名破坏**（1 处），消费者只有 `EventLoop`；caret 是线程级资源，"贴哪个窗口"只有调用方知道 | ✅ M1-a |
-| 桥事件带 `hwnd` 字段；`Win32Platform` 用事件自带的 hwnd（缺字段回落主窗） | 增量（新字段），`translate()` 的 resize 分支已改 | ✅ M1-a（队列仍一条，见下） |
-| dpr 按窗口算（`Win32Platform::dprOf(int $h)`）而不是读 `Screen::scale()` | 增量 | ✅ M1-a |
+| 桥事件带 `hwnd` 字段；`Win32Platform` 按事件自带的 hwnd 投队列（缺字段回落主窗） | 增量（新字段） | ✅ M1-a |
+| dpr 按窗口算（`Win32Platform::dprOf(int $h)`）而不是读 `Screen::scale()` | 增量；`translate()` 三处坐标换算已改 | ✅ M1-a |
 | **不退出**的判据：`waitEvents()` 回 `Quit` 的门槛改成"最后一个窗口销毁" | 壳侧 `WM_DESTROY` 计数 | ✅ M1-c |
-| ~~新增 `WindowHost::setCloseGuard(?callable)` + 桥 `kEvCloseRequested`~~ ✅ **已落地（形状不同）**：`setCloseGuard(int $h, bool)` + `destroy(int $h)`，理由见 §5.1 | 纯增量 | ✅ M1-c |
+| ~~新增 `WindowHost::setCloseGuard(?callable)` + 桥 `kEvCloseRequested`~~ | **已落地（形状不同）**：`setCloseGuard(int $h, bool)` + `destroy(int $h)`，理由见 §5.1 | ✅ M1-c |
+| `EventLoop::run($platform, array<int,Application> $apps)`（键 = 句柄）；`FrameClock` 每窗一个 | **签名破坏**（4 个组合根 + 测试） | ✅ M1-b |
+| `Platform::timers()` **删除**；`Win32TimerHost` 改成平台私有、挂 `liveHandle()` | 接口收缩（外部消费者在 N2 之后归零） | ✅ M1-b |
+| `ResizeHookState::$pump` 变 `callable(int $hwnd)` | **签名破坏**（4 个组合根各 1 处） | ✅ M1-b |
+| 新增 `WindowHost::isAlive(int $h)` + 桥 `drift_win_is_alive()` | 纯增量（1 个方法 + 1 个桥函数） | ✅ M1-b |
 
-★ 表格第 4 行只做到"事件带 hwnd"，**没有**改成"每窗一条队列"：`Win32Platform` 现在是
-一条 `PendingEvent` 队列，靠每条事件自带的 `hwnd` 分发。等到真有第二个窗口、需要
-"按窗口算 `nextWaitMs`"时再决定要不要拆队列 —— 拆队列是为 `EventLoop` 的窗口表服务的，
-而那张表今天不存在。这是同一句纪律的第三次应用（`WakeReason::Woken` / `EventLoop` 的数组 /
-这条）。
+#### ★★ M1-b 的三处裁决（都与本册原稿不同）
+
+**① 不做 `forWindow()` 视图，统一"句柄参数化"。** 原稿的判据是"窗口级能力收进视图、
+`Platform` 不膨胀"，但它在本轮**已经失效**：M1-a 之后 `WindowHost` 的 14 个方法全部带
+`$windowHandle`，而 `surface(int $h)` 从一开始就是参数化。此时再加一个视图接口，本仓就有
+**两套**"如何指定窗口"的写法，而两者能表达的能力完全一样 —— 这正是"留一套"要消灭的东西。
+替换判据（已写进 `Platform` 的类注释）：
+
+- 返回**值对象 / 无状态查询**（`Screen` 每次现读 DPI 与客户区）⇒ 加参数更省，也不必缓存；
+- 返回**有状态对象**（`InputSource` 是一条队列）⇒ 加参数 + 平台侧按句柄缓存 ——
+  **句柄本身就是那个状态的 key**，不需要再包一层对象来持它。
+
+**② `Platform::timers()` 删除。** 唯一消费者是 `Win32Platform::waitEvents()` 自己
+（`FrameClock` 在 N2 之后不再持 `TimerHost`：它只算策略、不动系统）。接口上的方法必须有
+**外部**消费者，否则"支持它"是一句无法验证的话；应用要定时器走 `Application::after()`。
+删它还顺带消掉一处"最后建的窗"：`Win32TimerHost` 原来挂 `handle()`，现在挂 `liveHandle()`
+（新增桥 `drift_win_live_window()` —— 等消息的闹钟是**进程级**资源，主窗关了不该让它变成
+死句柄 ⇒ 否则 `waitEvents()` 退化成无限阻塞、剩下的窗口动画停摆）。
+
+**③ `EventLoop` 的窗口表，以及三个"只有真开两个窗才暴露"的坑。**
+
+`run(Platform, array<int,Application>)`，键 = 句柄；每窗一个 `FrameClock`；
+`nextWaitMs` 取**最急**的那个；关掉一个窗从表里摘掉、继续跑剩下的。
+
+- **`-1` 是"无限等"的哨兵，不能参与 `min`**：`min(4000, -1)` = -1 ⇒ 有定时器的窗口被
+  空闲窗口拖成永远睡（定时器再也不响，**不报错**）。正确写法是"`-1` 不投票，全部为 -1
+  才是 -1"。**单窗口永远碰不到这一支** —— 这是双窗用例直接抓出来的逻辑错误。
+- **模态时长读一次、逐窗都扣**：`consumeModalBlockedMs()` 读后即清，写在 `advance()`
+  的实参里就会"第一个窗口读走、第二个窗口拿到 0"⇒ 第二个窗口白弹一次 RECOVERABLE。
+  同一次原生模态把整个循环挂起了，对每个窗口都是真实发生的阻塞。
+- **壳直接销毁的窗口要主动摘掉**（真机探针抓到的，见下）：没有声明关闭守卫的窗口是壳在
+  `WM_CLOSE` 里直接 `DestroyWindow` 的，框架收不到任何事件；而 `WM_QUIT` 前面还排着
+  `WM_KILLFOCUS` / `WM_ACTIVATE` ⇒ "关窗之后、quit 之前"那一轮会对着死句柄跑一帧 ⇒
+  客户区 0×0 ⇒ **布局硬校验 Fatal**（真机：点 X 之后闪一下错误框、进程停在框上不退，
+  而且**时好时坏**）。判据必须是显式存活查询（`WindowHost::isAlive()`），
+  **不能**用"客户区 0×0"——**最小化也是 0×0**，那是合法状态。
+
+★ 验收三件：
+
+- 无头：`EventLoopTest` 三条新用例（按句柄路由 / 关一个留一个 / 死窗口不跑帧 /
+  空闲窗口不拖长睡），全部配了**变异**验证"拆掉就红"。
+- 真机：`apps/hello` 的 `DRIFT_TWO_WINDOWS=1` + `tools/probe-two-windows.py` 五条判据
+  （两窗都在 / 客户区各自正确 / 两窗都有内容 / **关一个另一个还在、进程还在** /
+  关最后一个 ⇒ 进程退出）。
+- 结构：`hello` 的 `openWindow()` 抽成方法是因为**它有第二个调用点** —— 两处手抄 25 行，
+  "第二窗少了上膛那一步"只会发生在最没人跑的那条路上。
+
 ★ **这条新增的 `closeGuard` 是本轮评估的额外产出**（§5.1）—— 它独立于多窗口也有价值
 （单窗口的"未保存提示"同样需要），但多窗口**必须**有它。
 

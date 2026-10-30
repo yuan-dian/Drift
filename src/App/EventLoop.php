@@ -47,14 +47,23 @@ use Drift\Platform\WakeReason;
  * ## 一轮的次序（不可换）
  *
  * ```text
- * ① 问"还要等多久"        FrameClock::nextWaitMs()   —— 由"还有什么活"算，不是固定 15ms
+ * ① 问"还要等多久"        所有窗口的 FrameClock::nextWaitMs() 取**最小**
  * ② 等                    Platform::waitEvents()     —— 无限 / 到点 / 立刻
  * ③ 看为什么醒            WakeReason::Quit ⇒ 走
- * ④ 派发                  Platform::pumpEvents()     —— 先把平台暂存的事件交给 input()
- * ⑤ 逐条派给应用          dispatchInput()            —— 光标 / IME 必须在每条之后
- * ⑥ 跑一帧                FrameClock::advance()      —— 内含 frame() + 帧耗时记账
- * ⑦ 帧末同步 IME 位置
+ * ④ 派发                  Platform::pumpEvents()     —— 按 hwnd 投进各自窗口的 input()
+ * ⑤ 逐窗逐条派给应用      dispatchInput()            —— 光标 / IME 必须在每条之后
+ * ⑥ 逐窗跑一帧            FrameClock::advance()      —— 内含 frame() + 帧耗时记账
+ * ⑦ 逐窗帧末同步 IME 位置
  * ```
+ *
+ * ★ **多窗口**（2026-10-30，M1-b）：`$apps` 是 `array<int, Application>`，
+ *   **键就是窗口句柄**。每窗一个 `FrameClock`（帧记账 / 卡顿判据都是按窗口的，
+ *   两窗各自有各自的节奏），`nextWaitMs` 取最小 —— "最急的那个窗口决定睡多久"。
+ *   ★ 模态时长（`consumeModalBlockedMs()`）**读一次、每个窗都扣**：同一次原生
+ *     模态把整个循环都挂起了，对每个窗口都是"真实发生过"的阻塞；分成两次读
+ *     只会让第二个窗口白弹一次 RECOVERABLE（第一窗读后即清）。
+ *   ★ **关掉一个窗不退出循环**：把它从 `$apps` 里摘掉继续跑剩下的；表空了才走
+ *     （与壳侧"活窗口表空了才 `PostQuitMessage`"同一判据）。
  *
  * ★ **⑤ 里有一个例外**（2026-10-30）：`CloseRequestedEvent` 不进 `dispatchInput()`
  *   —— 关闭没有命中目标，它是窗口级生命周期（与 `WakeReason::Quit` 同族）。
@@ -70,87 +79,135 @@ use Drift\Platform\WakeReason;
  *   量化到一个系统 tick（~15.6ms），代价与今天的心跳同量级，换来的是**不可能
  *   空转**（没有"某个欠账谓词一直为真 ⇒ 100% CPU 且收不到输入"这种死法）。
  *
- * @api 组合根一行：`EventLoop::run($platform, $app, $handle)`
+ * @api 组合根一行：`EventLoop::run($platform, [$handle => $app])`
  */
 final class EventLoop
 {
     /**
-     * 跑到退出为止（`WakeReason::Quit`）。
+     * 跑到**窗口表空了**为止（单窗口时与 `WakeReason::Quit` 等价）。
      *
      * @param Platform $platform 任意平台实现（架构无关：本类不认识 Win32）
-     * @param Application $app 已 `attach()` 过表面的应用
-     * @param int $windowHandle 光标形状要落到哪个窗口（`window()->createWindow()` 给的句柄）
-     * @param null|FrameClock $clock 注入只为一件事：**测试要能观测/替换时钟**。
-     *   `null`（生产路径）= 现建一个空时钟（它不持有任何平台资源）。
+     * @param array<int, Application> $apps **键 = 窗口句柄**，值 = 已 `attach()` 过
+     *   **该窗口**表面的应用。单窗口也走数组 —— 不留"单窗重载"：两套写法就是
+     *   两条路径，而只有一条会被真机跑到。
      */
-    public static function run(
-        Platform $platform,
-        Application $app,
-        int $windowHandle,
-        ?FrameClock $clock = null,
-    ): void {
-        $clock ??= new FrameClock();
-
-        $input = $platform->input();
+    public static function run(Platform $platform, array $apps): void
+    {
+        /** @var array<int, FrameClock> $clocks 每窗一个：帧记账 / 卡顿判据按窗口算 */
+        $clocks = [];
         $window = $platform->window();
-        $screen = $platform->screen();
 
         while (true) {
-            // ① + ②：等多久由"还有什么活"算出来（见 `FrameClock::nextWaitMs()`）
-            $why = $platform->waitEvents($clock->nextWaitMs($app, $platform->now()));
+            // ① 睡多久：**最急的那个窗口**说了算（两窗节奏不同，取最小不是取平均）
+            //   ★ `-1` 是"无限等"的哨兵，**不能参与取最小**：`min(4000, -1)` 是 -1
+            //     ⇒ 有定时器的窗口会被空闲窗口拖成永远睡（单窗口永远碰不到这一支）。
+            $now = $platform->now();
+            $wait = -1.0;
+            foreach ($apps as $handle => $app) {
+                $clocks[$handle] ??= new FrameClock();
+                $ms = $clocks[$handle]->nextWaitMs($app, $now);
+                if ($ms < 0.0) {
+                    continue;   // 这个窗口没事可做 ⇒ 不投票（全部如此才是 -1）
+                }
+                $wait = $wait < 0.0 ? $ms : \min($wait, $ms);
+            }
+
+            // ② 等
+            $why = $platform->waitEvents($wait);
 
             // ③ 退出：**先走再派发** —— 与拆分前的 `pump()` 同口径（quit 不投事件）
             if ($why === WakeReason::Quit) {
                 break;
             }
-            // ④ 平台暂存的原始事件 → `input()` 队列
+
+            // ④ 平台暂存的原始事件 → **各自窗口**的队列（`translate()` 按事件自带的 hwnd 投）
             $platform->pumpEvents();
 
-            // ⑤ 逐条派给应用
-            while (($event = $input->poll()) !== null) {
-                // ★ 关闭请求**不进命中链**（2026-10-30）：它不是"点在某个控件上"，
-                //   没有命中目标、也不该被浮层拦下 —— 它是**窗口级生命周期**，
-                //   与 `WakeReason::Quit` 同族。所以这一分支在 `dispatchInput()`
-                //   之前，且 `continue` 掉（IME 位置不会因为"有人按了 X"而变）。
-                if ($event instanceof CloseRequestedEvent) {
-                    // ★ 应用说"可以"⇒ **框架**执行销毁（不是应用自己 close —— 那会
-                    //   再发一条 WM_CLOSE，自己问自己）。
-                    if ($app->closeRequested()) {
-                        // ★ 销毁之后必须**立刻收工**：下一轮 `waitEvents()` 会拿到
-                        //   `WM_QUIT`（最后一个窗口没了），而在那之前跑一帧就是
-                        //   "对着死句柄求客户区" ⇒ 0×0 约束 ⇒ 布局硬校验 Fatal。
-                        //   ★ 多窗口（M1）落地时这一句变成"从窗口表里摘掉这一项、
-                        //     继续跑其它窗口"，不是 `return`。
-                        $window->destroy($windowHandle);
+            // ★ **读一次、逐窗都扣**，不放在 `advance()` 的实参里：同一次原生模态
+            //   把整个循环都挂起了，对每个窗口都是真实发生的阻塞。读两次只会让
+            //   第二个窗口拿到 0 ⇒ 白弹一次 RECOVERABLE（读后即清的契约）。
+            $modal = $platform->consumeModalBlockedMs();
 
-                        return;
+            $done = [];
+
+            // ⑤ 逐窗逐条派发
+            foreach ($apps as $handle => $app) {
+                // ★ **壳直接销毁的窗口**（没有声明关闭守卫 ⇒ 用户点 X 就没了）：
+                //   框架收不到任何事件，只能问。不摘掉它就会对着死句柄跑一帧 ⇒
+                //   客户区 0×0 紧约束 ⇒ 布局硬校验 Fatal（真机现象：点 X 之后闪一下
+                //   错误框、进程停在框上不退 —— 且**时好时坏**，取决于 `WM_QUIT`
+                //   前面还排着几条 `WM_KILLFOCUS` / `WM_ACTIVATE`）。
+                //   ★ 判据必须是显式存活查询，**不能**用"客户区 0×0"—— 最小化也是 0×0。
+                if (!$window->isAlive($handle)) {
+                    $done[] = $handle;
+
+                    continue;
+                }
+
+                $input = $platform->input($handle);
+
+                while (($event = $input->poll()) !== null) {
+                    // ★ 关闭请求**不进命中链**（2026-10-30）：它不是"点在某个控件上"，
+                    //   没有命中目标、也不该被浮层拦下 —— 它是**窗口级生命周期**，
+                    //   与 `WakeReason::Quit` 同族。所以这一分支在 `dispatchInput()`
+                    //   之前，且 `continue` 掉（IME 位置不会因为"有人按了 X"而变）。
+                    if ($event instanceof CloseRequestedEvent) {
+                        // ★ 应用说"可以"⇒ **框架**执行销毁（不是应用自己 close ——
+                        //   那会再发一条 WM_CLOSE，自己问自己）。
+                        if ($app->closeRequested()) {
+                            // ★ 销毁之后**这一窗立刻收工**：再跑一帧就是"对着死句柄
+                            //   求客户区" ⇒ 0×0 紧约束 ⇒ 布局硬校验 Fatal（真机现象：
+                            //   点 X 之后闪一下错误框）。
+                            // ★ 但**不退出循环**（2026-10-30，M1-b）：其余窗口继续跑，
+                            //   表空了才走。
+                            $window->destroy($handle);
+                            $done[] = $handle;
+
+                            continue 2;   // 跳过这个窗口剩下的动作，直接看下一个窗
+                        }
+
+                        continue;   // 应用拒绝：窗口原样留着，什么都不做
                     }
 
-                    continue;   // 应用拒绝：窗口原样留着，什么都不做
+                    $shape = $app->dispatchInput($event, $platform->now());
+                    if ($shape !== null) {
+                        // ★ 光标由**这里**喂给 `WindowHost`：应用它需要平台类型，
+                        //   而框架不持平台（§5.1）⇒ 组合根那一层是唯一合法位置。
+                        $window->setCursor($handle, $shape);
+                    }
+                    // ★ IME 时序双保险（2026-10-19）：组字可能发生在同帧的**下一个**输入
+                    //   事件（`TranslateMessage` 在消息循环层触发 WM_IME_STARTCOMPOSITION）
+                    //   ⇒ 事件处理后立即同步 caret，不等帧末（帧末版会晚到，输入法已按旧
+                    //   位置放过一次候选框）。与帧末那次同口径。
+                    $platform->imeCaret($handle, $app->imeCaretRect());
                 }
 
-                $shape = $app->dispatchInput($event, $platform->now());
-                if ($shape !== null) {
-                    // ★ 光标由**这里**喂给 `WindowHost`：应用它需要平台类型，
-                    //   而框架不持平台（§5.1）⇒ 组合根那一层是唯一合法位置。
-                    $window->setCursor($windowHandle, $shape);
-                }
-                // ★ IME 时序双保险（2026-10-19）：组字可能发生在同帧的**下一个**输入
-                //   事件（`TranslateMessage` 在消息循环层触发 WM_IME_STARTCOMPOSITION）
-                //   ⇒ 事件处理后立即同步 caret，不等帧末（帧末版会晚到，输入法已按旧
-                //   位置放过一次候选框）。与帧末那次同口径。
-                $platform->imeCaret($windowHandle, $app->imeCaretRect());
+                // ⑥ 帧（顺序不可换：`wantsFrame()` 读的是跑完这一帧之后的状态）
+                //   ★ 第 ④ 个参数 = 这轮里被原生模态挂起的时长（对话框 / fatalBox）。
+                //     不剔除的话，用户在对话框里停留几秒，下一帧就报一次
+                //     "两帧间隔 N ms"的 RECOVERABLE（2026-10-30 真机取证）。
+                $clocks[$handle]->advance(
+                    $app,
+                    $platform->now(),
+                    $platform->screen($handle)->viewport(),
+                    $modal,
+                );
+
+                // ⑦ IME 定位：框架算几何（逻辑像素）、平台做量化。
+                //   组合根不调这一行 = 输入法候选框贴在窗口左上角（能打字、候选框位置错）。
+                $platform->imeCaret($handle, $app->imeCaretRect());
             }
 
-            // ⑥ 帧（顺序不可换：`wantsFrame()` 读的是跑完这一帧之后的状态）
-            //   ★ 第 ④ 个参数 = 这轮里被原生模态挂起的时长（对话框 / fatalBox）。
-            //     不剔除的话，用户在对话框里停留几秒，下一帧就报一次
-            //     "两帧间隔 N ms"的 RECOVERABLE（2026-10-30 真机取证）。
-            $clock->advance($app, $platform->now(), $screen->viewport(), $platform->consumeModalBlockedMs());
+            // ★ 摘掉已经关掉的窗口：在 `foreach` 里改 `$apps` 会破坏遍历 ⇒ 循环后统一摘
+            foreach ($done as $handle) {
+                unset($apps[$handle], $clocks[$handle]);
+            }
 
-            // ⑦ IME 定位：框架算几何（逻辑像素）、平台做量化。
-            //   组合根不调这一行 = 输入法候选框贴在窗口左上角（能打字、候选框位置错）。
-            $platform->imeCaret($windowHandle, $app->imeCaretRect());
+            // ★ 表空 ⇒ 收工，**不等壳的 `Quit`**：此时 `nextWaitMs` 没有输入，
+            //   下一轮会算出 -1（无限等）而没有窗口能再叫醒它 —— 那不是退出，是挂死。
+            if ($apps === []) {
+                break;
+            }
         }
     }
 }

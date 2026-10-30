@@ -17,6 +17,10 @@ use function drift_win_system_dark;
  *
  * ★ 它**不缓存** `scale()`：窗口跨屏拖动时 DPI 会变，缓存就要配失效逻辑，
  *   而"读一次 DPI"只是一次 `GetDpiForWindow` —— 便宜的调用不该换缓存一致性风险。
+ *   也正因为无状态，`Platform::screen($h)` 每次新建一个即可（不需要按句柄缓存）。
+ *
+ * ★ **句柄是构造参数**（2026-10-30，M1-b）：改动前它问 `Win32WindowHost::handle()`
+ *   —— 那是"最后建的窗"，多窗口下两个窗会读到同一份 DPI / 客户区。
  *
  * ★ `viewport()` 是**紧约束**且单位是**逻辑**像素：它是 `attach()` / `frame()`
  *   的第二个参数（§A.1），而物理像素的量化只发生在 `RenderSurface::resize()`
@@ -26,30 +30,33 @@ use function drift_win_system_dark;
  */
 final class Win32Screen implements Screen
 {
+    /**
+     * @param Win32WindowHost $windows 只为复用它的 `clientSize()`（已含逻辑像素换算）
+     * @param int $handle 这块屏幕属于**哪个窗口**
+     */
     public function __construct(
         private readonly Win32WindowHost $windows,
+        private readonly int $handle,
     ) {
     }
 
     public function scale(): float
     {
-        $handle = $this->windows->handle();
-        if ($handle === null) {
+        if ($this->handle <= 0) {
             return 1.0;   // 还没建窗 ⇒ 96dpi 是唯一安全的默认
         }
 
-        return Scale::fromDpi((float) drift_win_dpi($handle))->dpr;
+        return Scale::fromDpi((float) drift_win_dpi($this->handle))->dpr;
     }
 
     public function viewport(): BoxConstraints
     {
-        $handle = $this->windows->handle();
-        if ($handle === null) {
+        if ($this->handle <= 0) {
             return BoxConstraints::tight(Size::zero());
         }
 
         // clientSize() 已经是逻辑像素（换算在 Win32WindowHost 里走 Scale）
-        $size = $this->windows->clientSize($handle);
+        $size = $this->windows->clientSize($this->handle);
 
         // 负尺寸不可能来自 Win32，但"最小化 ⇒ 0×0"是真实状态。
         // ★ 这条口径由**平台侧**保证（`drift_win_client_size` 对 `IsIconic` 直接报

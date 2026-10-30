@@ -14,7 +14,7 @@ declare(strict_types=1);
 
 $platform = new \Drift\Platform\Win32\Win32Platform();
 $handle = $platform->window()->createWindow('反例', 320, 240);
-$app->attach($platform->surface($handle)?->surface(), $platform->screen()->viewport());
+$app->attach($platform->surface($handle)?->surface(), $platform->screen($handle)->viewport());
 
 while (true) {
     if ($platform->waitEvents(-1.0) === \Drift\Platform\WakeReason::Quit) {
@@ -22,5 +22,5 @@ while (true) {
     }
 
     // ← 少了 `$platform->pumpEvents();`：事件永远进不了 input() 队列
-    $app->frame($platform->now(), $platform->screen()->viewport());
+    $app->frame($platform->now(), $platform->screen($handle)->viewport());
 }

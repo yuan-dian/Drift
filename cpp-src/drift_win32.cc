@@ -97,7 +97,9 @@ using namespace php;
 //   **必须声明在全局作用域**——放进下面那个匿名 namespace 会被链接成
 //   `anonymous namespace::php_drift_resize_hook_pump`，与 AOT 生成的符号对不上
 //   （实测 LNK2019）。
-extern void php_drift_resize_hook_pump();
+//   ★ **带 hwnd**（2026-10-30，M1-b）：多窗口下"谁在拖"必须传给 PHP，
+//     否则两个窗的拖动会去重排同一个表面（不报错、只画错窗）。
+extern void php_drift_resize_hook_pump(Int hwnd);
 
 // ★ **这里曾经还有一个 `php_drift_uia_invoke()`**（UIA `Invoke` 直接回调 PHP）。
 //   2026-10-25 删掉：跨进程 COM 回调里重入 PHP 会让进程静默消失；改成"投消息 ⇒
@@ -1397,7 +1399,7 @@ static void pumpResizeHook(HWND hwnd) {
     }
     win.inResizeHook = true;
     const DWORD started = GetTickCount();
-    ::php_drift_resize_hook_pump();
+    ::php_drift_resize_hook_pump((Int)(INT_PTR)hwnd);
     win.resizeHookMs = GetTickCount() - started;
     win.inResizeHook = false;
 }
@@ -2448,6 +2450,44 @@ void php_drift_win_destroy(Int hwnd) {
     if (target != NULL) {
         DestroyWindow(target);
     }
+}
+
+/**
+ * 这个句柄还是不是一个活窗口？
+ *
+ * ★ 谁需要它（2026-10-30，M1-b 真机探针发现的）：**没有声明关闭守卫的窗口**
+ *   是壳在 `WM_CLOSE` 里直接销毁的，PHP 侧不知道；而 `PostQuitMessage` 只是往队列
+ *   里塞一条 `WM_QUIT` —— 队列里排在它前面的消息（`WM_KILLFOCUS` / `WM_ACTIVATE`）
+ *   仍会先被取到。于是"关窗之后、quit 之前"那一轮会对着死句柄跑一帧 ⇒
+ *   客户区 0×0 紧约束 ⇒ 布局硬校验 Fatal（真机现象：点 X 之后闪一下错误框，
+ *   进程停在错误框上不退）。
+ *   ★ 不能拿"客户区 0×0"当判据：**最小化也是 0×0**（那是合法状态，`Win32Screen`
+ *     的 `viewport()` 注释写着）。所以必须是显式的存活查询。
+ */
+Bool php_drift_win_is_alive(Int hwnd) {
+    HWND target = (HWND)(INT_PTR)hwnd;
+    if (target == NULL) {
+        return false;
+    }
+
+    return IsWindow(target) ? true : false;
+}
+
+/**
+ * 进程里**任意一个还活着的**窗口句柄（没有 ⇒ 0）。
+ *
+ * ★ 谁需要它：`Win32TimerHost` —— `SetTimer` 必须挂在一个活窗口上，而"等消息的
+ *   闹钟"是**进程级**资源（一次 `GetMessageW` 服务所有窗口）。改动前它挂在
+ *   "最后建的窗"上：主窗关掉、第二窗还在时就成了死句柄 ⇒ `start()` 失败
+ *   ⇒ `waitEvents()` 退化成无限阻塞 ⇒ 剩下的那个窗口**动画停摆**（不报错）。
+ * ★ 返回值只用来**起定时器**，不要拿它当"主窗"做别的事 —— 集合顺序是任意的。
+ */
+Int php_drift_win_live_window() {
+    if (g_liveWindows.empty()) {
+        return (Int)0;
+    }
+
+    return (Int)(INT_PTR)(*g_liveWindows.begin());
 }
 
 /**

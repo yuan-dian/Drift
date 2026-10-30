@@ -61,6 +61,20 @@ final class FakeWindowHost implements WindowHost
     public function destroy(int $windowHandle): void
     {
         ++$this->destroys;
+        $this->alive = false;
+    }
+
+    /**
+     * 夹具：窗口是否"还活着"。`destroy()` 之后变 `false`（模拟壳的 `IsWindow`）。
+     *
+     * ★ 可显式置 `false`（`$host->alive = false`）来模拟"**没有守卫的窗口**被
+     *   用户点 X 直接销毁"—— 那条路上框架收不到任何事件，只能靠这个查询发现。
+     */
+    public bool $alive = true;
+
+    public function isAlive(int $windowHandle): bool
+    {
+        return $this->alive;
     }
 
     /** 夹具：最后一次 `setCloseGuard()` 的值（`null` = 从未调用） */

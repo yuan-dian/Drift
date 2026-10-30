@@ -22,7 +22,6 @@ use Drift\Platform\InputSource;
 use Drift\Platform\Platform;
 use Drift\Platform\Screen;
 use Drift\Platform\SurfaceProvider;
-use Drift\Platform\TimerHost;
 use Drift\Platform\Tray;
 use Drift\Platform\WakeReason;
 use Drift\Platform\WindowHost;
@@ -68,9 +67,15 @@ final class Win32Platform implements Platform
 
     private ?Win32WindowHost $window = null;
 
-    private ?Win32Screen $screen = null;
-
-    private ?Win32InputSource $input = null;
+    /**
+     * 按窗口句柄缓存的事件队列（2026-10-30，M1-b）。
+     *
+     * ★ **句柄就是 key**：队列是有状态对象、窗口是它的天然归属 ⇒ 不需要再包一层
+     *   `forWindow()` 视图对象（见 `Platform` 的类注释）。
+     *
+     * @var array<int, Win32InputSource>
+     */
+    private array $inputs = [];
 
     private ?Win32TimerHost $timers = null;
 
@@ -113,12 +118,19 @@ final class Win32Platform implements Platform
     ) {
     }
 
-    public function screen(): Screen
+    public function screen(int $windowHandle): Screen
     {
-        return $this->screen ??= new Win32Screen($this->window());
+        // ★ 不缓存：`Win32Screen` 自己无状态（`scale()` / `viewport()` 都现读），
+        //   缓存只会多一张要失效的表。见 `Win32Screen` 的类注释。
+        return new Win32Screen($this->displayHost(), $windowHandle);
     }
 
     public function window(): WindowHost
+    {
+        return $this->displayHost();
+    }
+
+    private function displayHost(): Win32WindowHost
     {
         return $this->window ??= new Win32WindowHost();
     }
@@ -132,14 +144,36 @@ final class Win32Platform implements Platform
         return $this->surfaces[$windowHandle] ??= new Win32SurfaceProvider($windowHandle, $this->renderer);
     }
 
-    public function input(): InputSource
+    public function input(int $windowHandle): InputSource
     {
-        return $this->input ??= new Win32InputSource();
+        return $this->inputOf($windowHandle);
     }
 
-    public function timers(): TimerHost
+    /**
+     * 某条**事件**该投进哪条队列（`translate()` 用；`input()` 不用它）。
+     *
+     * ★ 与 `input($h)` 的差别只有一条回落：`$windowHandle <= 0` 表示"这条事件没有
+     *   归属"（测试手工造的剧本 / 老壳不带 `hwnd`）⇒ 归**主窗**。单窗时这与
+     *   `input(主窗)` 是同一条队列（多窗口之前的行为逐字节不变）；
+     *   多窗时也不会被塞进任意一个窗口（宁可留在这条没人抽的队列里）。
+     */
+    private function inputOf(int $windowHandle): Win32InputSource
     {
-        return $this->timers ??= new Win32TimerHost($this->window());
+        if ($windowHandle <= 0) {
+            $windowHandle = $this->displayHost()->handle() ?? 0;
+        }
+
+        return $this->inputs[$windowHandle] ??= new Win32InputSource();
+    }
+
+    /**
+     * 等消息的闹钟定时器（**平台私有**，2026-10-30 M1-b 起不在 `Platform` 接口上）。
+     *
+     * ★ 它挂 `liveHandle()`（任一活窗口）而不是"最后建的窗"，理由见 `Win32TimerHost`。
+     */
+    private function timers(): Win32TimerHost
+    {
+        return $this->timers ??= new Win32TimerHost($this->displayHost());
     }
 
     public function fatalBox(string $title, string $body): void
@@ -184,16 +218,9 @@ final class Win32Platform implements Platform
 
         // ★ 传**窗口对象**而不是它的句柄：句柄在建窗之前是 `null`，而 owner 必须
         //   **每次现取**（理由见 `Win32Dialog` 的类注释）。
-        // ★ 这里直接 new 具体类再塞字段，而不是 `new Win32Dialog($this->window())`：
-        //   `window()` 的返回类型是接口 `WindowHost`，而 AOT 对这种"接口值喂进
-        //   类类型形参"不做静态判断 —— 别让它有机会在运行期才失败。
-        $window = $this->window;
-        if ($window === null) {
-            $window = new Win32WindowHost();
-            $this->window = $window;
-        }
-
-        $this->dialog = new Win32Dialog($window);
+        // ★ `displayHost()` 而不是 `window()`：AOT 对"接口值喂进类类型形参"不做
+        //   静态判断 —— 别让它有机会在运行期才失败。
+        $this->dialog = new Win32Dialog($this->displayHost());
 
         return $this->dialog;
     }
@@ -340,17 +367,21 @@ final class Win32Platform implements Platform
             return 0;   // 见 `waitEvents()`：quit 不进 pending
         }
 
+        // ★ **归属窗口**（2026-10-30，M1-b）：桥给每条事件都带 hwnd（`toArray()`
+        //   在 switch 之前统一写）。翻译结果要投进**这个窗口**的队列 —— 否则
+        //   多窗口下两个应用会抢同一条事件（点一下，两个窗都响应）。
+        //   缺字段 ⇒ 0 ⇒ 由 `inputOf()` 归主窗（单窗行为逐字节不变）。
+        $handle = (int) ($event['hwnd'] ?? 0);
+
         if ($type === 'resize') {
-            // ★ 用**事件自带的** hwnd（2026-10-30，M1-a）：改动前 `applyResize()`
-            //   内部取 `$this->window()?->handle()`（= 最后建的窗）⇒ 窗口 A 的
-            //   `WM_SIZE` 会去 resize 窗口 B 的表面。这是多窗口下**最容易在真机
-            //   上看见**的那一条（拖动 A 的边框，B 的画面跟着变形）。
-            //   缺字段 ⇒ 回落"主窗"（老壳 / 测试手工造的事件）。
-            $handle = (int) ($event['hwnd'] ?? 0);
-            if ($handle === 0) {
-                $handle = $this->window()?->handle() ?? 0;
+            // ★ 表面的像素尺寸要显式 `resize()` 才会跟上（§6.1 的量化点）。
+            //   改动前 `applyResize()` 内部取"最后建的窗"⇒ 窗 A 的 `WM_SIZE`
+            //   会去 resize 窗 B 的表面（多窗口下最容易在真机上看见的一条）。
+            $target = $handle;
+            if ($target === 0) {
+                $target = $this->displayHost()->handle() ?? 0;
             }
-            $this->applyResize($handle, (int) ($event['w'] ?? 0), (int) ($event['h'] ?? 0));
+            $this->applyResize($target, (int) ($event['w'] ?? 0), (int) ($event['h'] ?? 0));
 
             return 0;
         }
@@ -362,7 +393,7 @@ final class Win32Platform implements Platform
 
         if ($type === 'theme') {
             // §9.2：载荷为空 —— 新主题查 `Screen::systemTheme()`（不缓存，每次读注册表）。
-            $this->input()->push(new ThemeChangedEvent());
+            $this->inputOf($handle)->push(new ThemeChangedEvent());
 
             return 1;
         }
@@ -371,7 +402,7 @@ final class Win32Platform implements Platform
             // `WM_ACTIVATE` 且 `WA_INACTIVE`：消费者收口指针手势（`capturePointer` 的
             // 释放路径 ③）。★ 只发失活、**不发对称的激活** —— 今天没有东西需要在
             // 激活时做（A15：没有消费者不预先发明线上语义）。
-            $this->input()->push(new WindowDeactivatedEvent());
+            $this->inputOf($handle)->push(new WindowDeactivatedEvent());
 
             return 1;
         }
@@ -383,18 +414,18 @@ final class Win32Platform implements Platform
             // ★ 它进 `input()` 队列而不是当场问应用：关闭的决策要在**帧边界**做
             //   （典型实现是弹模态确认框），在 WndProc 里问就是消息泵重入
             //   （见壳里 `enqueueCloseRequest` 的注释）。
-            $this->input()->push(new CloseRequestedEvent());
+            $this->inputOf($handle)->push(new CloseRequestedEvent());
 
             return 1;
         }
 
         if ($type === 'files-dropped') {
             // A5-②：桥给 '\n' 分隔的多路径原始串 + 客户区物理坐标（除 dpr 转逻辑）。
-            $dpr = $this->screen()->scale();
+            $dpr = $this->dprOf($handle);
             if ($dpr <= 0.0) {
                 $dpr = 1.0;
             }
-            $this->input()->push(new FilesDroppedEvent(
+            $this->inputOf($handle)->push(new FilesDroppedEvent(
                 (string) ($event['paths'] ?? ''),
                 (float) ((int) ($event['x'] ?? 0)) / $dpr,
                 (float) ((int) ($event['y'] ?? 0)) / $dpr,
@@ -403,7 +434,7 @@ final class Win32Platform implements Platform
             return 1;
         }
 
-        $input = $this->input();
+        $input = $this->inputOf($handle);
 
         if ($type === 'uia-invoke') {
             // UIA `Invoke`（§9 / M5）：**在壳里一次 PHP 都不进**（WndProc 只入队 + 叫醒泵）。
@@ -437,7 +468,7 @@ final class Win32Platform implements Platform
             // ★ 四相位（2026-10-17 move/up/leave 通路）：桥给 `phase`
             //   （0=down 1=move 2=up 3=leave，与 `PointerPhase` 同值），坐标除 dpr 转
             //   逻辑单位 —— 与 down 同口径（§6.1 量化只在平台侧）。
-            $dpr = $this->screen()->scale();
+            $dpr = $this->dprOf($handle);
             if ($dpr <= 0.0) {
                 $dpr = 1.0;
             }
@@ -461,7 +492,7 @@ final class Win32Platform implements Platform
             // ★ 与指针同口径：坐标除 dpr 转逻辑单位；delta 是桥给的原始 WHEEL_DELTA
             //   倍数（一格 = 120），这里收成"格"。★ `axis` 缺省 = 纵向（老壳不带该
             //   字段；壳只在横向时才发它）。壳已经把 Shift+竖轮翻成横轴了。
-            $dpr = $this->screen()->scale();
+            $dpr = $this->dprOf($handle);
             if ($dpr <= 0.0) {
                 $dpr = 1.0;
             }

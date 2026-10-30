@@ -26,7 +26,7 @@ use Drift\Platform\Win32\ResizeHookState;
  *
  * ★ **循环归平台**（§5.2 裁决 1）：`Application` 没有 `run()`，只提供
  *   `attach()` 与 `frame()`；等待由 `Platform::waitEvents()` 给。
- *   `EventLoop::run($platform, $app, $handle)` 这一行就是"框架绝不自建循环"
+ *   `EventLoop::run($platform, [$handle => $app])` 这一行就是"框架绝不自建循环"
  *   的全部代价 —— 它只**编排**（等 / 派发 / 跑帧），一行 OS 调用都没有。
  * ★ **中止序列第 ② 步在别的一切之前装好**（§1.2）：引导阶段就崩的话，没有错误框
  *   就只剩"闪退"。传 callable 而不是 Platform 实例（`Errors` 不依赖 Platform 类型）。
@@ -139,7 +139,7 @@ final class Bootstrap
             return;
         }
 
-        $screen = $platform->screen();
+        $screen = $platform->screen($handle);
         $surface = $provider->surface();
 
         // ★ 窗口底色 / 逐像素透明（P1 §质感 / Stage 2b，收敛进 WindowMaterial）：
@@ -215,7 +215,10 @@ final class Bootstrap
         //   任务/动画/焦点/语义）。入口 `drift_resize_hook_pump()` 是 AOT 具名
         //   符号（见 src/Platform/Win32/ResizeHook.php）。
         //   不注入 ⇒ 壳退回"原尺寸贴 + 余区填底色"（拖动中不放大、松手补齐）。
-        ResizeHookState::$pump = static function () use ($app, $surface, $screen): void {
+        ResizeHookState::$pump = static function (int $windowHandle) use ($handle, $app, $surface, $screen): void {
+            if ($windowHandle !== $handle) {
+                return;   // 本组合根只建一个窗：别的句柄不归它管（多窗口宿主见 apps/hello）
+            }
             $dpr = $screen->scale();
             $vp = $screen->viewport();
             $surface->resize(
@@ -246,7 +249,7 @@ final class Bootstrap
         //   完了、界面 3s 后才变，Loading 的转圈图一动不动）。
         //   ★ 进循环前**不需要**先上膛 —— `nextWaitMs()` 一开始就会按"还有在途任务"
         //     算出 15ms（应用构造器里 `load()` 已经提交了首屏取数）。
-        EventLoop::run($platform, $app, $handle);
+        EventLoop::run($platform, [$handle => $app]);
 
         // ★ 窗口状态写回（§5.4）：**退出一次同步 IO**（循环之外，不占帧）。
         //   最小化时退出 ⇒ 平台侧 position() 给 null ⇒ 跳过写入，保留上一份状态。
