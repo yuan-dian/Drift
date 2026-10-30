@@ -52,7 +52,7 @@ use function var_export;
  *
  * ## 退出路径的时序陷阱（2026-10-18 真机实测）
  *
- * `persist()` 跑在 `while ($platform->pump())` **之后**，而 WM_CLOSE 里壳是
+ * `persist()` 跑在 `EventLoop::run()` **返回之后**，而 WM_CLOSE 里壳是
  * **同步** `DestroyWindow` —— 等循环跳出，窗口句柄已经死了。此时任何"问窗口"
  * 的端口方法（`position()` / `clientSize()` / `isMaximized()`）对一个死句柄
  * 的 `GetClientRect` 必然失败 ⇒ 首版实现里 persist 第一关就跳过，**一个字都
@@ -142,7 +142,7 @@ final class WindowStateStore
     /**
      * 退出时写回一次（§5.4）。
      *
-     * ★ **调用时机在组合根的循环之外**：`while ($platform->pump())` 跳出之后。
+     * ★ **调用时机在组合根的循环之外**：`EventLoop::run()` 返回之后。
      *   写文件是同步 IO，放帧内会让某一帧凭空多出几毫秒。
      *
      * @param int $handle `createWindow()` 给的不透明句柄

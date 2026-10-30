@@ -620,7 +620,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
 
         // ★ 首帧走**同一个入口**（§17.4.10）：直接调 `Frame::run()` 会绕过
         //   `tickAnimations()` ⇒ 纯动画应用（根就是一个 `Spinner`、没有异步任务）
-        //   在 `attach()` 之后 `wantsFrame()` 仍是 false ⇒ 帧时钟永不上膛 ⇒
+        //   在 `attach()` 之后 `wantsFrame()` 仍是 false ⇒ 循环再也不按帧节奏醒 ⇒
         //   **转圈图一辈子不动**。这条是给 §17.4.10 写冒烟时抓到的，不是设计时想到的。
         $this->frame(0.0, $constraints);
 
@@ -981,7 +981,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      * ★ 时间戳复用上一帧的：这不是一帧「新时间」，只是「同一时刻换个尺寸再画一次」。
      *   自己读环境时钟会破坏 `frame()` 的单一时钟来源。
      *
-     * ★ 界面要跟手的语义仍由主循环兜底：松手后 `pump()` 恢复，积压的 resize 已
+     * ★ 界面要跟手的语义仍由主循环兜底：松手后 `waitEvents()` 恢复等待，积压的 resize 已
      *   被合并成一条 ⇒ 主循环跑一帧完整 `frame()` 收尾（任务/动画/语义都补上）。
      *
      * @api 由平台壳的拖动重排入口调（`src/Platform/Win32/ResizeHook.php`）
@@ -1074,41 +1074,99 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      *   异步结果只能等下一条用户消息捎带。
      * ★ 三件事都**有界**：任务回贴完、分片跑完、监听解除 ⇒ 立刻返回 `false`，
      *   帧时钟停摆、CPU 归零。**空闲不空转**是这条判据存在的一半理由。
-     * ★ 顺序按"最可能为真"排（分片每帧都在跑，任务队列通常为空）。
+     *
+     * ★★ **2026-10-30（N2）拆成三个命名谓词**：这句 `bool` 原先混着三种**不同的
+     *   需求**，而"等多久"要按需求分别算 —— 混在一起的后果是
+     *   `after(400)` 也算"要帧" ⇒ 按 15ms 帧节奏反复醒 ⇒ **26 次唤醒等一个 400ms
+     *   的定时器**（改之前真的这样）。现在：
+     *   - {@see self::wantsFrameRhythm()} 连续帧（动画 / 异步在途）⇒ 按帧节奏叫醒
+     *   - {@see self::needsFrameNow()} 一次性欠账（环没画 / 面板落后）⇒ 立刻
+     *   - `nextDeadlineMs()` 定时器 ⇒ 到点才醒
+     *   `wantsFrame()` 仍是三者的"或"，**语义逐字节不变**（老读者零影响）。
      *
      * @api 组合根每帧调一次（`FrameClock` 就是这么用的）
      */
     public function wantsFrame(): bool
     {
-        // ★ 第四个判据：有动画在跑（§17.4.9）。排最前 —— Loading 期间它恒为真。
-        if ($this->animating) {
+        if ($this->wantsFrameRhythm()) {
             return true;
         }
 
-        if ($this->pumps->hasAsync()) {
-            return true;
-        }
-
-        // ★ 第五个判据（W8-2）：有延时回调在等 ⇒ 必须保持上膛，否则永远不响。
-        //   排最后 —— 它**通常为空**（一次 `===` 比较），而前四条在活跃场景下更常为真。
+        // ★ 定时器（W8-2）：有延时回调在等 ⇒ 必须被叫醒，否则永远不响。
+        //   `nextDeadlineMs()` 会给出"什么时候"。
         if ($this->pumps->hasTimers()) {
             return true;
         }
 
-        // ★★ 第六个判据（W8-2 远程搜索，2026-10-24）：**面板内容落后一帧**。
-        //   见 `panelsLagBehind()` —— 少了它，远程搜索的结果到了、数据也对，
-        //   面板却**永远**停在旧内容（真机现象，smoke 因为显式跑两帧看不见）。
-        // ★★ 第七个判据（W8-5 焦点视觉，2026-10-24）：**环目标变过但还没画**。
-        //   焦点环是应用级叠加（`paintFocusRing`），不经过任何 `setState` ⇒
-        //   没有这条，键盘 Tab 换焦点后环要等**下一次鼠标移动**才出现（真机现象）。
-        //   ★ 比的是 `focusRingTarget()` 而不是 `focused()`：指针模态下目标恒 `null`
-        //     ⇒ 点击隐藏环也能立刻触发一帧（否则点击后环要等下次输入才消失）。
-        //   有界：画完把 `$paintedFocus` 记成当前目标 ⇒ 立刻回落 false。
+        return $this->needsFrameNow();
+    }
+
+    /**
+     * **连续帧**：动画在跑 / 分片在推 / 流在监听 / 后台在途（§17.4.9 前两条判据）。
+     *
+     * ★ 这几种需求的性质是"**按帧节奏反复醒**"（15ms 一帧），而不是"到某个时刻醒一次"。
+     *   它们是**轮询**的来源：后台结果与 socket 可读都没有唤醒通道（N4 才有），
+     *   只能每帧问一次 —— 这也是为什么 {@see \Drift\App\FrameClock::nextWaitMs()}
+     *   对它们给的是帧间隔，而不是 `-1`（无限等会让 socket 永远不被问）。
+     */
+    public function wantsFrameRhythm(): bool
+    {
+        // ★ 排最前 —— Loading 期间它恒为真。
+        if ($this->animating) {
+            return true;
+        }
+
+        return $this->pumps->hasAsync();
+    }
+
+    /**
+     * **立刻欠一帧**：焦点环目标变过还没画 / 面板内容落后一帧（§17.4.9 后两条判据）。
+     *
+     * ★ 与上面那组的区别：这两条**画一帧就没了**（有界、一次性）。所以等待层给
+     *   它们的是 `0`（马上去跑），而不是帧间隔。
+     * ★★ 第六判据（W8-2 远程搜索，2026-10-24）：`panelsLagBehind()` —— 少了它，
+     *   远程搜索的结果到了、数据也对，面板却**永远**停在旧内容（真机现象，smoke
+     *   因为显式跑两帧看不见）。
+     * ★★ 第七判据（W8-5 焦点视觉，2026-10-24）：**环目标变过但还没画**。焦点环是
+     *   应用级叠加（`paintFocusRing`），不经过任何 `setState` ⇒ 没有这条，键盘 Tab
+     *   换焦点后环要等**下一次鼠标移动**才出现（真机现象）。
+     *   ★ 比的是 `focusRingTarget()` 而不是 `focused()`：指针模态下目标恒 `null`
+     *     ⇒ 点击隐藏环也能立刻触发一帧（否则点击后环要等下次输入才消失）。
+     */
+    public function needsFrameNow(): bool
+    {
         if ($this->focusRingTarget() !== $this->paintedFocus) {
             return true;
         }
 
         return $this->overlayLayout->panelsLagBehind();
+    }
+
+    /**
+     * 下一个**到点的定时器**（绝对毫秒，与 `Platform::now()` 同一时基）；`null` = 没有。
+     *
+     * ★ 它回答的是事实（"最早什么时候有活"），不是策略（"等多久"）—— 后者是
+     *   {@see \Drift\App\FrameClock::nextWaitMs()} 的事，因为那里才知道帧间隔。
+     * ★ 只算 `after()` 的延时回调：后台任务 / socket 可读**没有**到点时刻，
+     *   它们是轮询（见 {@see self::wantsFrameRhythm()}）。
+     *
+     * @api 等待层（`FrameClock::nextWaitMs()`）每轮问一次
+     */
+    public function nextDeadlineMs(): ?float
+    {
+        return $this->pumps->nextDeadlineMs();
+    }
+
+    /**
+     * 本应用一共跑过多少帧（含 `attach()` 的那一帧）。
+     *
+     * ★ **@internal 量具**，不是应用契约：`EventLoop` 验"一轮到底跑没跑帧"时，
+     *   `SurfaceProbe::frames` 已经不够用了（N1 之后"跑帧"≠"画帧"，
+     *   静态树下 paint 整段跳过）⇒ 需要数**帧本身**。
+     */
+    public function frameCount(): int
+    {
+        return $this->frameSerial;
     }
 
     /** 记一次帧耗时（诊断 / 语义推送节流的输入） */
@@ -1526,12 +1584,9 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      * 喂一条平台事件（§9.1 路由链的入口）。
      *
      * ```php
-     * while ($platform->pump()) {
-     *     while (($event = $input->poll()) !== null) {
-     *         $shape = $app->dispatchInput($event);
-     *         if ($shape !== null) { $window->setCursor($handle, $shape); }
-     *     }
-     *     $app->frame($platform->now(), $screen->viewport());
+     * while (($event = $input->poll()) !== null) {   // 由 EventLoop::run() 驱动
+     *     $shape = $app->dispatchInput($event, $platform->now());
+     *     if ($shape !== null) { $window->setCursor($handle, $shape); }
      * }
      * ```
      *

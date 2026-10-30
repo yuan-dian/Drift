@@ -120,6 +120,12 @@ function drift_lint_selftest(string $root, Linter $linter): bool
             'apps/StaleCapabilityClaimBad.php:' . Diagnostic::ERROR,
             'apps/StaleCapabilityClaimBad.php:' . Diagnostic::ERROR,
         ],
+        // 组合根必须走 `EventLoop::run()`（2026-10-25 立，2026-10-30 N2 改判据）
+        // ★ 这条规则之前**一条夹具都没有** ⇒ selftest 里恒是"该响 0 / 不该响 0"，
+        //   也就是说"它能不能响"从来没被证过（路径型规则最容易写成永不触发的空壳）。
+        'app-bootstrap-loop' => [
+            'apps/Loop/bin/win32/Bootstrap.php:' . Diagnostic::ERROR,
+        ],
     ];
 
     $ok = true;

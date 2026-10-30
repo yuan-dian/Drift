@@ -99,7 +99,7 @@ M1 的裁决给的是**乙的最小形态**：只把"必须按窗"的三个收�
 | `InputRouter` | `focus` / `root` / `dispatch` / `accelerators` | 路由只认自己的树 ⇒ 隔离 |
 | `OverlayManager` | `focus` / `root` / `theme` / `metrics` / `after` / `cancelAfter` | 浮层栈自持（`OverlayStack` 的注释早就写了"每个 Surface 一个"） |
 | `OverlayLayout` | 收 `OverlayManager` | 纯几何，无宿主状态 |
-| `PumpHost` | `assertUiThread` / 时间基准 | **定时器 id 是窗口局部的** ⇒ 两窗同用 `FrameClock::TIMER_ID` 也安全（`taskHost` 口子 M2 已移除，端口改从 `AppScope` 递进来） |
+| `PumpHost` | `assertUiThread` / 时间基准 | **定时器 id 是窗口局部的** ⇒ 两窗撞同一个 id 也安全（`taskHost` 口子 M2 已移除，端口改从 `AppScope` 递进来；旧心跳的 `FrameClock::TIMER_ID` N2 已删，见 `Win32Platform::WAIT_TIMER_ID`） |
 
 再加上：`src/` **零静态属性** ⇒ 没有隐藏的跨实例共享态。
 
@@ -240,12 +240,34 @@ static std::map<HWND, WindowSlot> g_windows;
 |---|---|
 | 新增 `Platform::forWindow(int $h): WindowPlatform`（`screen()` / `input()` / `imeCaret()` / `timers()`） | 纯增量，老方法保留为"主窗"别名 |
 | `WindowHost::setMinSize(int $h, int $w, int $h)` / `pushSemantics(int $h, array)` | **签名破坏**（2 处），消费者只有组合根 |
-| 桥事件带 `hwnd` 字段；`Win32Platform::pump()` 按 hwnd 投进对应队列 | 增量（新字段） |
-| `pump()` 返回 `false` 的判据改成"最后一个窗口销毁" | 壳侧 `WM_DESTROY` 计数 |
+| 桥事件带 `hwnd` 字段；`Win32Platform::pumpEvents()` 按 hwnd 投进对应队列 | 增量（新字段） |
+| **不退出**的判据：`waitEvents()` 回 `Quit` 的门槛改成"最后一个窗口销毁" | 壳侧 `WM_DESTROY` 计数 |
 | 新增 `WindowHost::setCloseGuard(?callable)` + 桥 `kEvCloseRequested` | 纯增量 |
 
 ★ **这条新增的 `closeGuard` 是本轮评估的额外产出**（§5.1）—— 它独立于多窗口也有价值
 （单窗口的"未保存提示"同样需要），但多窗口**必须**有它。
+
+#### ★★ 2026-10-30（N2 落地后）M1 多了一件**结构**上的事：`EventLoop` 是单窗的
+
+`EventLoop::run($platform, $app, $windowHandle)` 的签名就是"一个窗口一个应用"：
+循环里 `$screen->viewport()`、`$window->setCursor($handle, …)`、`$app->imeCaretRect()`
+三处都只认**一个**窗口。多窗口下这三种写法全部失效，但**不能**改成"每个窗口跑一个
+`EventLoop`" —— 消息泵只有一个，两个阻塞等待会互相抢消息。
+
+⇒ M1 要把"一窗"变成"一张表"，两种形态二选一：
+
+| 形态 | 形状 | 代价 |
+|---|---|---|
+| **A. 循环持窗口表** | `EventLoop::run($platform, array<int, Application> $apps)`；每轮对表里每个窗口跑一帧、每窗各自算 `nextWaitMs` 后取**最小** | `EventLoop` 与 `FrameClock` 都要按窗口持状态（`lastTs` / `lastWaitMs` / 卡顿计数）⇒ `FrameClock` 变"每窗一个" |
+| **B. 窗口就是应用** | 保留 `EventLoop::run()` 单窗签名，组合根为每个窗口起**一个线程** | 每个线程一套消息队列（`GetMessage` 是线程局部的）⇒ 与今天的"单线程 UI"前提冲突，等于重开一个架构问题 |
+
+**选 A**。它需要的两个前提今天都已经就位：① `AppScope` 已经把"进程一份"的东西
+提出去了（M2），剩下留在 `Application` 上的**本来就该是窗口局部的**；
+② `WakeReason` 已经是枚举而不是 `bool` —— "关了一个窗"和"该退出应用"在类型层面
+就能分开（`WakeReason` 的注释里写着这条理由）。
+
+★ 这也解释了为什么 `EventLoop` 现在**不收** `Application` 的数组：加数组要有
+第二个窗口才验得着，而"未被消费的分支 = 未实现"是本仓纪律（同 `WakeReason::Woken`）。
 
 ### M2 · App 层按作用域二分（✅ 已落地，2026-10-30）
 

@@ -11,15 +11,16 @@ namespace Drift\Platform;
  *      `fatalBox()`）—— 每个平台都必须有，故**不进主接口就没有"不支持"这个状态**；
  *   ② **三个可空壳服务**（`clipboard()` / `dialog()` / `tray()`）—— 跨平台语义差异大，
  *      "不支持"在**类型层面**表达（返回 `null`，§24.3 例外登记表）；
- *   ③ **循环的两个入口**（`pump()` / `now()`）—— 见下；
+ *   ③ **循环的三个入口**（`waitEvents()` / `pumpEvents()` / `now()`）——
+ *      「等」与「派发」**分开**（2026-10-30 N2，`pump()` 已删除，不留两套）；
  *   ④ **一个目录查询**（`configDir()`，§5.4）—— 用户文件放哪，平台必然知道；
  *      "不知道"用空字符串表达（不升级成 `null`：消费者只有一个降级动作）。
  *
- * ★★ **循环归平台，派发归框架**（§5.2 裁决 1）：框架**绝不自建循环**。
- *   `pump()` 阻塞等待下一条 OS 消息（事件驱动，**不空转**），归一化后交给
- *   `input()` 的队列；返回 `false` 表示循环该结束了。`now()` 给的是**单调**毫秒
- *   时钟（`GetTickCount64` / `mach_absolute_time`），帧时间戳由它注入 ——
- *   框架**不读环境时钟**，这是 G3 确定性的物质基础（§5.2 裁决 2）。
+ * ★★ **循环归平台，编排归框架**（§5.2 裁决 1）：框架**绝不自建事件源**。
+ *   `waitEvents($timeoutMs)` 阻塞等下一条 OS 消息（事件驱动，**不空转**），
+ *   `pumpEvents()` 把取到的消息归一化后交给 `input()` 的队列；`now()` 给的是
+ *   **单调**毫秒时钟（`GetTickCount64` / `mach_absolute_time`），帧时间戳由它注入
+ *   —— 框架**不读环境时钟**，这是 G3 确定性的物质基础（§5.2 裁决 2）。
  *
  * ```php
  * // apps/<app>/bin/<platform>/Bootstrap.php —— 组合根（§4.5）
@@ -28,9 +29,15 @@ namespace Drift\Platform;
  * $platform->window()->show($handle);
  *
  * $app->attach($platform->surface($handle)?->surface(), $platform->screen()->viewport());
- * while ($platform->pump()) {
- *     $app->frame($platform->now(), $platform->screen()->viewport());
- * }
+ *
+ * \Drift\App\EventLoop::run($platform, $app, $handle);      // 等 / 派发 / 跑帧
+ * // 或手写（等价，两者都不要自己去睡固定间隔）：
+ * // while (true) {
+ * //     $why = $platform->waitEvents($app->nextWaitMs());   // 由"还有什么活"算出来
+ * //     if ($why === \Drift\Platform\WakeReason::Quit) { break; }
+ * //     $platform->pumpEvents();
+ * //     $app->frame($platform->now(), $platform->screen()->viewport());
+ * // }
  * ```
  *
  * ★ **平台类名只出现在组合根**（§5.1）：共享代码（页面 / 控件 / store / Application
@@ -82,19 +89,29 @@ interface Platform
     public function tray(): ?Tray;
 
     /**
-     * 阻塞等待下一条 OS 消息并归一化，返回**循环是否该继续**（§5.2 裁决 1）。
+     * 等**一条** OS 消息，最多 `$timeoutMs`，返回**为什么醒**（§3.4 轴 B1）。
      *
-     * ★ 语义三条：
-     *   ① **阻塞** —— 没有消息就等，**不空转**（GUI 仓实测形态是手动泵 + 帧睡眠）；
-     *   ② **归一化** —— Win32 `MSG` → Drift 事件，交给 `input()` 的队列；
-     *      PHP 侧因此**不持有任何 Win32 常量、不做位运算**；
-     *   ③ `false` = 收到退出（`WM_QUIT` / 窗口关闭）⇒ 调用方跳出循环。
-     *
-     * ★ 消息泵在**平台**上而不在 `WindowHost` 上（§5.2 的图里写作 `WindowHost::pump`，
-     *   那是本接口定形前的旧写法）：泵要**归一化**事件并投给 `input()`，而
-     *   `input()` 归 `Platform` 所有 —— 拆到 `WindowHost` 上只会让一次操作跨两个对象。
+     * ★ `$timeoutMs` 三态（与 `poll(2)` / `MsgWaitForMultipleObjects` 同一套约定）：
+     *   - `-1.0` 无限等（真的没事可做）
+     *   - `0.0`  不等，只探（这一轮就要跑帧）
+     *   - `> 0`  等到点
+     * ★ **本方法只取不派发**：取到的原始消息先暂存，`pumpEvents()` 才归一化并投进
+     *   `input()`。拆开的理由不是洁癖 —— "等"会被超时/唤醒打断无数次，而"派发"必须
+     *   与「跑一帧」成对出现（派发了却不跑帧 = 队列涨、画面不动，**不报错**）。
+     * ★ **不返回 `bool`** —— 见 {@see WakeReason}。
      */
-    public function pump(): bool;
+    public function waitEvents(float $timeoutMs): WakeReason;
+
+    /**
+     * 把这次唤醒带来的事件**全部**归一化并投给 `input()`，返回投出去的条数。
+     *
+     * 非阻塞。**不等**。为什么要有这一步：
+     * - 桌面：`waitEvents()` 只取一条，这条要在这里才翻译成框架事件；
+     * - 移动端：只能 poll 不能阻塞（`design-v7/08` §9.7 的原始理由）；
+     * - 唤醒（N4）：被 `wake()` 打断时**没有消息要派发**，条数 0 是正常返回值 ——
+     *   老接口用 `true` 表达"继续"就无法区分这两种情况。
+     */
+    public function pumpEvents(): int;
 
     /**
      * IME 光标上报（§8.4）。`null` = 无插入符；`[x, y, h]` = **逻辑像素**窗口坐标

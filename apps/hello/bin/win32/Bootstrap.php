@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace App\Hello;
 
-use Drift\App\FrameClock;
+use Drift\App\EventLoop;
 use Drift\Errors;
 use Drift\Platform\Win32\Win32Platform;
 use Drift\Platform\Win32\ResizeHookState;
@@ -17,7 +17,8 @@ use Drift\Platform\Win32\ResizeHookState;
  *
  * ★ **循环归平台**（§5.2 裁决 1）：`Application` **没有** `run()`，只提供
  *   `attach($surface, $constraints)` 与 `frame($timestampMs, $constraints)`。
- *   `while ($platform->pump())` 这一行就是"框架绝不自建循环"的全部代价。
+ *   `EventLoop::run($platform, $app, $handle)` 这一行就是"框架绝不自建循环"
+ *   的全部代价（等待仍由平台给：`Platform::waitEvents()`）。
  *
  * ★ **本文件就是 §19 M1 的出口判据**："一个窗口画出「Hello Drift」"。
  *   它是 `apps/hello` 里唯一引用 `Drift\Platform\Win32` 的文件 ⇒ 也因此是
@@ -92,47 +93,17 @@ final class Bootstrap
             $app->repaintForResize($vp);
         };
 
-        // ★ **事件队列必须每帧前抽干**：平台把 Win32 消息翻成 Drift 事件推进
-        //   `input()`，而**派发是框架的活**（§5.2 裁决 1：循环归平台，派发归框架）。
-        //   不抽干的话队列会无限增长，而窗口对点击/按键**毫无反应** —— 且不报错。
-        // ★ `dispatchInput()` 对指针事件返回命中链解析出的光标形状 ⇒ 由**这里**
-        //   喂给 `setCursor()`：应用它需要 `WindowHost`，而框架不持平台（§5.1）。
-        $input = $platform->input();
 
-        // ★★★ **自适应帧时钟**（少了这段，异步与动画在真机上永远不动）。
+        // ★★★ **主循环交给 `EventLoop`**（N2，2026-10-30）：等 / 派发 / 跑帧。
         //
-        //   根因：`pump()` 阻塞在壳的 `GetMessageW` —— 没有输入事件时循环一直睡。
-        //   `Application::wantsFrame()` 只是"回答要不要跑下一帧"，**没人问就没人答**：
-        //   定时器不上膛 ⇒ `after()` 排的回调永远不响、`Spinner` 永远不转。
-        //   **闸门抓不到**（smoke 自己推进时钟，每一帧都是显式跑的）。
-        //   2026-10-25 在 `apps/tutorial` 的异步段真机实测：点「开始加载」后停住，
-        //   1500ms 后截图与 400ms 时**逐字节相同**。
-        //   ★ 本应用自己不用异步/动画，但它是**所有新应用的抄写来源** ⇒ 这段必须在。
-        $clock = new FrameClock($platform->timers());
-        $clock->pace($app->wantsFrame());
-
-        while ($platform->pump()) {
-            while (($event = $input->poll()) !== null) {
-                $shape = $app->dispatchInput($event, $platform->now());
-                if ($shape !== null) {
-                    $window->setCursor($handle, $shape);
-                }
-                // ★ IME 时序双保险（2026-10-19）：组字可能在同帧的**下一个**输入
-                //   事件发生（TranslateMessage 在消息循环层触发 WM_IME_STARTCOMPOSITION）
-                //   ⇒ 事件处理后立即同步 caret，不等帧末（FrameClock 空闲睡眠时帧末
-                //   版会晚到，输入法已按旧位置放过一次候选框）。与帧末那次同口径。
-                $platform->imeCaret($app->imeCaretRect());
-            }
-
-            // 帧由帧时钟跑（内含 `frame()` + 按 `wantsFrame()` 重新上膛）
-            $clock->tick($app, $platform->now(), $screen->viewport());
-
-            // ★ IME 定位（§8.4）：框架算几何（逻辑像素）、平台做量化。
-            //   组合根不调这一行 = 输入法候选框贴在窗口左上角（能打字、
-            //   候选框位置错）—— 半可用失败形态，故三行注释写死原因。
-            $platform->imeCaret($app->imeCaretRect());
-        }
-
-        $clock->stop();
+        //   为什么不是自己写那 12 行：`pump()` 阻塞在壳的 `GetMessageW`，没有输入
+        //   事件时循环一直睡 ⇒ `after()` 的回调永远不响、`Spinner` 永远不转、后台
+        //   结果只能等下一次鼠标移动捎带（2026-10-25 真机实测：点「开始加载」后
+        //   1500ms 的截图与 400ms 时**逐字节相同**，日志一个字都没有）。
+        //   现在"等多久"由 `FrameClock::nextWaitMs()` 按**还有什么活**算出来
+        //   （动画/异步在途 ⇒ 15ms 帧节奏；只有定时器 ⇒ 一觉睡到点；没事 ⇒ 无限等），
+        //   光标 / IME / 退出语义都在 `EventLoop` 里各写一次。
+        //   ★ 本应用自己不用异步/动画，但它是**所有新应用的抄写来源** ⇒ 这行必须在。
+        EventLoop::run($platform, $app, $handle);
     }
 }

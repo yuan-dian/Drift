@@ -7,7 +7,6 @@ use Drift\App\Application;
 use Drift\App\FrameClock;
 use Drift\Dev\Smoke\App\RevealApplication;
 use Drift\Dev\Smoke\App\SlowFrameApplication;
-use Drift\Dev\Smoke\Frame\FakeTimers;
 use Drift\Dev\Tests\Support\Frame;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Geometry\BoxConstraints;
@@ -111,10 +110,10 @@ final class BudgetTest extends SmokeTestCase
     // ⑲ FrameClock 真的在量帧耗时（不是只有算术对）
     public function testFrameClockFeedsCostToApp(): void
     {
-        $timers = new FakeTimers();
         $app = Frame::open(new SlowFrameApplication(), 320.0, 200.0);
-        $clock = new FrameClock($timers);
-        $clock->tick($app->app, 16.0, BoxConstraints::tight(new Size(320.0, 200.0)));
+        // ★ N2 起 `FrameClock` 不持定时器、也没有 `tick()`：跑一帧 = `advance()`
+        $clock = new FrameClock();
+        $clock->advance($app->app, 16.0, BoxConstraints::tight(new Size(320.0, 200.0)));
         check(
             '帧预算 · FrameClock 真的把帧耗时喂给应用（慢帧 ⇒ frameCostMs > 预算）',
             $app->app->frameCostMs() > Application::BUDGET_MS,

@@ -21,7 +21,7 @@ interface TimerHost
     /**
      * 启动（或重启）一个周期定时器。
      *
-     * @param int $id 由调用方指定 —— 到点时 `pump()` 会醒来，事件里带的就是这个 id。
+     * @param int $id 由调用方指定 —— 到点时 `waitEvents()` 会醒来，事件里带的就是这个 id。
      *                 平台不分配 id：**分配权在框架**，否则"哪个定时器响了"要查表。
      * @return bool 平台拒绝（id 冲突 / 系统资源不足）⇒ `false`，调用方必须处理
      */

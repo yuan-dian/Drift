@@ -16,7 +16,7 @@ namespace Drift\Input;
  *   统一遍历（例如 devtools 的事件录制），再补方法 —— 今天没有那个消费者（A15）。
  *
  * ★ 实现者是**值对象**（`final readonly`），不是平台句柄的包装：平台在
- *   `Platform::pump()` 里就把 Win32 `MSG` 翻成这些对象，PHP 侧因此不持有任何
+ *   `Platform::pumpEvents()` 里就把 Win32 `MSG` 翻成这些对象，PHP 侧因此不持有任何
  *   Win32 常量、不做 `wParam` 位运算（§9.1）。
  *
  * ```php

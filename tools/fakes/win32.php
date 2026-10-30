@@ -80,3 +80,147 @@ function winMaterialCapsFake(?int $bits = null): void
     }
     $GLOBALS['DRIFT_SMOKE_WIN_CAPS'] = $bits;
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+// 消息泵 / 窗口 / 定时器（2026-10-30 N2：等待与派发拆开后才可能无头测）
+//
+// ★ 为什么这里要有**脚本化的泵**：`Win32Platform::waitEvents()` 里那套
+//   "取一条 → 判断是不是我那个闹钟 → 暂存或退出" 的分支，是 N2 的**唯一**
+//   新增逻辑，而它恰恰只能在"桥回什么"给定的情况下才跑得起来。把它假成
+//   "按剧本回事件"，整段就能在没有窗口的情况下验 —— 这是本仓"桥可假、
+//   策略不可假"的分界（`tools/fakes/skia.php` 同一条思路）。
+// ══════════════════════════════════════════════════════════════════════════
+
+if (!function_exists('drift_win_pump')) {
+    /**
+     * 按剧本回一条桥事件；剧本空了 ⇒ `quit`（测试不会挂死）。
+     *
+     * ★ 剧本里写 `'id' => 'armed'` 的 `timer` 事件会被替换成**最近一次
+     *   `SetTimer` 用的那个 id** —— 现实里壳回的正是那个 id，而测试不该
+     *   去硬编码 `Win32Platform` 的私有常量（那是实现细节）。
+     */
+    function drift_win_pump(): array
+    {
+        $script = &$GLOBALS['DRIFT_SMOKE_PUMP'];
+
+        if (!\is_array($script) || $script === []) {
+            return ['type' => 'quit'];
+        }
+
+        $event = \array_shift($script);
+
+        if (($event['type'] ?? '') === 'timer' && ($event['id'] ?? null) === 'armed') {
+            $event['id'] = $GLOBALS['DRIFT_SMOKE_LAST_TIMER_ID'] ?? 0;
+        }
+
+        return $event;
+    }
+}
+
+/** 设定泵剧本（每次调用重置剧本位置） */
+function winPumpScript(array $events): void
+{
+    $GLOBALS['DRIFT_SMOKE_PUMP'] = $events;
+}
+
+/** 剧本还剩几条（验"泵只取了一条"） */
+function winPumpRemaining(): int
+{
+    return \count($GLOBALS['DRIFT_SMOKE_PUMP'] ?? []);
+}
+
+if (!function_exists('drift_win_create')) {
+    function drift_win_create(string $title, int $width, int $height): int
+    {
+        return $GLOBALS['DRIFT_SMOKE_WIN_HANDLE'] ?? 1;
+    }
+}
+
+if (!function_exists('drift_win_client_size')) {
+    function drift_win_client_size(int $hwnd): array
+    {
+        return $GLOBALS['DRIFT_SMOKE_CLIENT'] ?? ['w' => 640, 'h' => 480];
+    }
+}
+
+if (!function_exists('drift_win_set_cursor')) {
+    function drift_win_set_cursor(int $hwnd, int $shape): void
+    {
+        $GLOBALS['DRIFT_SMOKE_CURSOR'][] = [$hwnd, $shape];
+    }
+}
+
+/** @return list<array{int, int}> 光标调用记录：[hwnd, shape] */
+function winCursorCalls(): array
+{
+    return $GLOBALS['DRIFT_SMOKE_CURSOR'] ?? [];
+}
+
+if (!function_exists('drift_win_ime_caret')) {
+    function drift_win_ime_caret(float $x, float $y, float $h): void
+    {
+        $GLOBALS['DRIFT_SMOKE_IME'][] = [$x, $y, $h];
+    }
+}
+
+if (!function_exists('drift_win_set_timer')) {
+    function drift_win_set_timer(int $hwnd, int $id, int $ms): bool
+    {
+        $GLOBALS['DRIFT_SMOKE_TIMERS'][] = ['start', $id, $ms];
+        $GLOBALS['DRIFT_SMOKE_LAST_TIMER_ID'] = $id;
+
+        return true;
+    }
+}
+
+if (!function_exists('drift_win_kill_timer')) {
+    function drift_win_kill_timer(int $hwnd, int $id): void
+    {
+        $GLOBALS['DRIFT_SMOKE_TIMERS'][] = ['stop', $id, 0];
+    }
+}
+
+/** @return list<array{0: string, 1: int, 2: int}> 定时器调用记录：['start'|'stop', id, ms] */
+function winTimerCalls(): array
+{
+    return $GLOBALS['DRIFT_SMOKE_TIMERS'] ?? [];
+}
+
+if (!function_exists('drift_win_now_ms')) {
+    /**
+     * 单调毫秒（可被夹具推动）。
+     *
+     * ★ 必须**可控**：`EventLoop` 的每一轮都问一次"还要等多久"，而那个答案取决于
+     *   `Platform::now()` 与定时器到点时刻之差。假成 `microtime()` 的话，断言只能
+     *   写"大约 400ms"（在 CI 上就是随机红）。这里给夹具一个可写的时钟。
+     */
+    function drift_win_now_ms(): float
+    {
+        return (float) ($GLOBALS['DRIFT_SMOKE_NOW'] ?? 0.0);
+    }
+}
+
+/** 拨假时钟（毫秒，绝对刻度；`0` = 用例起点） */
+function winNowSet(float $ms): void
+{
+    $GLOBALS['DRIFT_SMOKE_NOW'] = $ms;
+}
+
+/** @return list<array{0: float, 1: float, 2: float}> IME 上报记录：[x, y, h] */
+function winImeCalls(): array
+{
+    return $GLOBALS['DRIFT_SMOKE_IME'] ?? [];
+}
+
+/** 清空泵剧本 / 定时器 / 光标 / IME 记录（每个用例前必调） */
+function winLoopReset(): void
+{
+    $GLOBALS['DRIFT_SMOKE_PUMP'] = [];
+    $GLOBALS['DRIFT_SMOKE_TIMERS'] = [];
+    $GLOBALS['DRIFT_SMOKE_CURSOR'] = [];
+    $GLOBALS['DRIFT_SMOKE_IME'] = [];
+    unset($GLOBALS['DRIFT_SMOKE_LAST_TIMER_ID'], $GLOBALS['DRIFT_SMOKE_WIN_HANDLE'], $GLOBALS['DRIFT_SMOKE_CLIENT']);
+
+    // ★ 时钟回到 0：每个用例都从同一个原点开始，`after(400)` 的到点时刻才可断言。
+    $GLOBALS['DRIFT_SMOKE_NOW'] = 0.0;
+}

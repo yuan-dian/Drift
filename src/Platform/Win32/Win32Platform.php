@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Platform\Win32;
 
+use Drift\Errors;
 use Drift\Geometry\Axis;
 use Drift\Input\FilesDroppedEvent;
 use Drift\Input\KeyChord;
@@ -21,6 +22,7 @@ use Drift\Platform\Screen;
 use Drift\Platform\SurfaceProvider;
 use Drift\Platform\TimerHost;
 use Drift\Platform\Tray;
+use Drift\Platform\WakeReason;
 use Drift\Platform\WindowHost;
 
 use function drift_win_config_dir;
@@ -33,7 +35,7 @@ use function drift_win_pump;
  * Win32 平台实现 —— **Drift 的第一个平台**（§5.1 / §19 M1）。
  *
  * ★ 它只做两件别处做不了的事：① 把六个子端口装配起来（谁持有谁）；
- *   ② **把桥的命名事件翻译成框架的类型**（`pump()` 里的那张 switch）。
+ *   ② **把桥的命名事件翻译成框架的类型**（`translate()` 里的那张表）。
  *   其余一律转发 —— 平台层不该有策略。
  *
  * ★ **`dialog()` 2026-10-30 起也不是其中之一**（A5-①）：`Win32Dialog` 落地，
@@ -51,6 +53,17 @@ use function drift_win_pump;
  */
 final class Win32Platform implements Platform
 {
+    /**
+     * `waitEvents()` 的**闹钟**定时器 id（`SetTimer` 的 `nIDEvent`）。
+     *
+     * ★ 这个 id 在**整个壳的 id 空间里是共用的**（`WM_TIMER` 只带一个 `wParam`），
+     *   所以它必须是 `Win32Platform` 私有的常量、不许任何应用层定时器撞上。
+     *   旧心跳（`FrameClock::TIMER_ID = 0x4452`）在 N2 已随心跳一起删除 ⇒ 今天
+     *   本进程只用这一个 id；将来若再加第二个内部定时器，**必须在这里登记**。
+     * `0x4457` = "DW"（Drift Wait）。
+     */
+    private const WAIT_TIMER_ID = 0x4457;
+
     private ?Win32WindowHost $window = null;
 
     private ?Win32Screen $screen = null;
@@ -65,6 +78,19 @@ final class Win32Platform implements Platform
 
     /** @var array<int, Win32SurfaceProvider> 按窗口句柄缓存（同一窗口只造一个表面） */
     private array $surfaces = [];
+
+    /**
+     * `waitEvents()` 取到、**还没派发**的原始桥事件（`pumpEvents()` 消费）。
+     *
+     * ★ 今天是 `list` 但上限 1 条：桥一次只回一条关心的事件（见 `pumpEvents()`）。
+     *   用列表而不是 `?array`，是为了 N4 给桥加非阻塞取法后**不用改结构**。
+     *
+     * @var list<array<string, mixed>>
+     */
+    private array $pending = [];
+
+    /** 等待定时器起不来只报一次（否则每帧一条，把环形缓冲刷满） */
+    private bool $waitTimerReported = false;
 
     /**
      * @param string|null $renderer 光栅后端（`'skia'`；`null` = 软光栅，§7.2 裁决 4）。
@@ -144,85 +170,170 @@ final class Win32Platform implements Platform
     }
 
     /**
-     * 阻塞等到**一条**事件并把它翻译成框架类型，返回"循环是否继续"。
+     * 等**一条** OS 消息，最多 `$timeoutMs`，返回**为什么醒**（§3.4 轴 B1）。
      *
-     * 翻译表（与 `drift_win32.stub.php` 的 `drift_win_pump()` 表一一对应）：
+     * ## 超时怎么来的（诚实：这是**兜底**，不是终局）
+     *
+     * `GetMessageW` 没有超时参数。真做要换
+     * `MsgWaitForMultipleObjectsEx(…, timeout, QS_ALLINPUT, MWMO_INPUTAVAILABLE)` ——
+     * 那是**桥的改动**，而桥的改动必须真机验（本仓纪律：宣称不构成可用性证据）。
+     * 所以这一版用**系统定时器兜住**：`SetTimer(hwnd, WAIT_TIMER_ID, ceil(t))` 起一个
+     * 闹钟，`GetMessageW` 被它叫醒后立刻 `KillTimer`。
+     *
+     * ★ 三条代价都记在这里（N4 换 `MsgWait` + 唤醒事件时一起消掉）：
+     *   ① **粒度 = 系统 tick（~15.6ms）** ⇒ `waitEvents(4.0)` 实际约 15.6ms。这与今天
+     *      `FrameClock` 的 15ms 心跳**同粒度**，所以不构成回归。`waitEvents(0.0)` 同理
+     *      **不是"立刻返回"**：它落到系统的 1ms 下限，实际仍是一个 tick（~15.6ms）。
+     *      `EventLoop` 明知这一点仍然照调（见那里的注释：跳过等待 = 能跑多快跑多快）。
+     *   ② 每次等待多一对 `SetTimer`/`KillTimer`（各约 2µs），只在"要等"时才有。
+     *   ③ `KillTimer` **不收回**已经排进队列的 `WM_TIMER` ⇒ 下一轮可能看到一个早到的
+     *      `timer` 事件、多跑一帧。无害：帧是幂等的，N1 已把空帧压到近零。
+     *
+     * ★ **定时器真的起不来**（还没建窗 / id 冲突 / 资源不足）⇒ 退回**无限阻塞**
+     *   （与今天同），并记一条 `RECOVERABLE`：此时"等到点"落空、动画会卡在某个相位 —
+     *   必须留痕，否则又是一次"不报错的半失效"。
+     */
+    public function waitEvents(float $timeoutMs): WakeReason
+    {
+        $armed = false;
+
+        if ($timeoutMs >= 0.0) {
+            $ms = (int) \ceil($timeoutMs);
+            if ($ms < 1) {
+                // `SetTimer` 的 0 是"尽快"，但落到系统 tick 上仍是 ~15.6ms ⇒ 1 更诚实
+                $ms = 1;
+            }
+
+            $armed = $this->timers()->start(self::WAIT_TIMER_ID, $ms);
+
+            if (!$armed && !$this->waitTimerReported) {
+                $this->waitTimerReported = true;
+                Errors::report(
+                    'Win32 消息泵：等待定时器起不来（未建窗 / id 冲突 / 资源不足）'
+                    . '—— 退化为无限阻塞，"等到点"落空（动画会卡在某个相位）',
+                    Errors::RECOVERABLE,
+                );
+            }
+        }
+
+        $event = drift_win_pump();
+
+        // ★ **一定要停**：`SetTimer` 是**周期**定时器，不 KillTimer 就是永久
+        //   ~15.6ms 心跳（空闲也 64 次/秒），比不加超时更糟。
+        if ($armed) {
+            $this->timers()->stop(self::WAIT_TIMER_ID);
+        }
+
+        $type = (string) ($event['type'] ?? 'quit');
+
+        if ($type === 'quit') {
+            return WakeReason::Quit;
+        }
+
+        // ★ 只有**我们那个** id 算超时。别的 `timer` 事件（今天框架不用，但壳的 id
+        //   空间是共用的）仍按"有消息"处理 —— 它同样意味着"该跑一帧了"。
+        if ($type === 'timer' && (int) ($event['id'] ?? 0) === self::WAIT_TIMER_ID) {
+            return WakeReason::Timeout;
+        }
+
+        // ★ 只暂存，**不派发**：派发归 `pumpEvents()`。拆开是为了让"等"可以被
+        //   超时/唤醒打断无数次而不会顺手把事件投进队列（投了却不跑帧 = 队列涨、
+        //   画面不动，**不报错**）。
+        $this->pending[] = $event;
+
+        return WakeReason::Message;
+    }
+
+    /**
+     * 把这轮唤醒取到的事件**全部**归一化并投给 `input()`，返回条数。
+     *
+     * ★ 今天的上限是 **1 条**：桥的 `drift_win_pump()` 一次调用只回一条**关心**的事件
+     *   （中间那些不关心的消息它自己在壳里吃掉了）。要一次取多条得给桥加
+     *   `timeout = 0` 的非阻塞取法 —— 那和 `MsgWait` 是同一批改动，归 N4。
+     * ★ 先摘快照再翻译：翻译里会 `input()->push()`，而 `push` 的实现不该被
+     *   "正在遍历 pending"影响（与 `PumpHost::pumpSliced()` 的 swap 同一手法）。
+     */
+    public function pumpEvents(): int
+    {
+        if ($this->pending === []) {
+            return 0;
+        }
+
+        $pending = $this->pending;
+        $this->pending = [];
+
+        $count = 0;
+        foreach ($pending as $event) {
+            $count += $this->translate($event);
+        }
+
+        return $count;
+    }
+
+    /**
+     * 把一条**原始**桥事件翻译成框架类型并投出去，返回投进 `input()` 的条数。
+     *
+     * 翻译表（与 `cpp-src/drift_win32.stub.php` 的 `drift_win_pump()` 表一一对应）：
      *
      * | 桥给的 | 这里做什么 |
      * |--------|-----------|
-     * | `quit` | 返回 `false` ⇒ 组合根的 `while` 跳出 |
-     * | `resize` | 把物理尺寸 + dpr 交给表面 `resize()`（§6.1 的量化点） |
+     * | `quit` | **不在这里处理** —— `waitEvents()` 已经把它变成 `WakeReason::Quit`（防御性返回 0） |
+     * | `resize` | 把物理尺寸 + dpr 交给表面 `resize()`（§6.1 的量化点）。**不算事件**（返回 0） |
      * | `dpi` | **丢弃**（当前无消费者）。表面尺寸/缩放由随行的 `WM_SIZE` ⇒ `resize` 事件驱动（§6.1 的量化点）；`layout()` 本就每帧全树跑（§13.3）⇒ 不需要额外触发 |
-     * | `timer` | 丢弃 —— **不是没人要，而是消费者不在这一层**：`SetTimer` 的
-     *   唯一作用是**把阻塞的 `GetMessageW` 叫醒**，事件本身没有载荷要翻译。
-     *   消费方是组合根的 `FrameClock`（§17.4.9）：`pump()` 返回 true 就已经是
-     *   它要的全部信号 |
+     * | `timer` | 丢弃 —— **不是没人要，而是消费者不在这一层**：`SetTimer` 的唯一作用是**把阻塞的 `GetMessageW` 叫醒**，事件本身没有载荷要翻译 |
      * | `pointer` | ⇒ `PointerEvent::fromBridge()`（四相位 down/move/up/leave，坐标除 dpr 转**逻辑**单位） |
      * | `wheel` | ⇒ `ScrollEvent::make()`（坐标除 dpr；delta 收成"格"= 原始值 / 120；`axis` 缺省纵向） |
      * | `key` | ⇒ `KeyEvent::down(KeyChord::make(键名, ctrl, alt, shift))` |
      * | `char` | ⇒ `KeyEvent::character()` |
-     * | `theme` | ⇒ `ThemeChangedEvent`（§9.2 系统主题变更；载荷为空，
-     *   新主题由消费者查 `Screen::systemTheme()` —— Win32 侧查询实时） |
-     * | `uia-invoke` | ⇒ `SemanticsInvokeEvent`（§9 / M5 无障碍的"可操作"半边：
-     *   UIA `Invoke` 要求激活第 `idx` 个语义节点。★ 它必须走**队列**而不是在
-     *   消息派发里回调应用 —— 理由见该类注释） |
-     * | `files-dropped` | ⇒ `FilesDroppedEvent`（A5-② 拖文件进窗：`paths` 是 `'\n'`
-     *   分隔的原始串，坐标除 dpr 转逻辑单位；事件对象里 `explode` 还原数组） |
+     * | `theme` | ⇒ `ThemeChangedEvent`（§9.2 系统主题变更；载荷为空，新主题由消费者查 `Screen::systemTheme()`） |
+     * | `uia-invoke` | ⇒ `SemanticsInvokeEvent`（§9 / M5 无障碍的"可操作"半边） |
+     * | `files-dropped` | ⇒ `FilesDroppedEvent`（A5-② 拖文件进窗：`paths` 是 `'\n'` 分隔的原始串） |
      * | 其它 | 丢弃 —— 桥已经保证"只回传 Drift 关心的"，这里是防御性兜底 |
      *
      * ★ **`resize` 必须同时喂表面**：`Screen::viewport()` 读的是桥里的客户区尺寸
      *   （已经变了），而表面的像素尺寸要显式 `resize()` 才会跟上 ⇒ 漏掉这一步的
      *   现象是"窗口拉大后画面还贴在左上角一块、右边全白"，**不报错**。
+     * ★ 返回**条数**而不是 `void`：`resize` / `dpi` / `timer` 都不进输入队列，
+     *   "投了几条"是 `EventLoop` 与 `pumpEvents()` 的公开返回值 —— 把它算准，
+     *   否则那个数字只会是"翻译了几个原始事件"的模糊口径。
      */
-    public function pump(): bool
+    private function translate(array $event): int
     {
-        $event = drift_win_pump();
         $type = (string) ($event['type'] ?? 'quit');
 
         if ($type === 'quit') {
-            return false;
+            return 0;   // 见 `waitEvents()`：quit 不进 pending
         }
 
         if ($type === 'resize') {
             $this->applyResize((int) ($event['w'] ?? 0), (int) ($event['h'] ?? 0));
 
-            return true;
+            return 0;
         }
 
         if ($type === 'timer' || $type === 'dpi') {
-            // `timer`：**没有载荷要翻译** —— `pump()` 返回 true 本身就是信号
-            //   （`FrameClock::tick()` 靠它跑下一帧，§17.4.9）。
-            // `dpi`：**不需要消费者** —— 表面跟着随行的 `WM_SIZE` ⇒ `resize` 事件走
-            //   （§6.1 的量化点），而布局每帧本就全树跑（§13.3）⇒ 没有"额外触发 relayout"
-            //   这回事。
-            //   ★ 这里原先写"全树重建由下一帧 `viewport()` 变化驱动" —— **不成立**：跨屏时
-            //     逻辑客户区尺寸不变（物理尺寸变、dpr 也变，两者相抵）⇒ `viewport()` 不变。
-            return true;
+            // 见翻译表：两者都"没有载荷要翻译"，`waitEvents()` 的返回值就是信号本身。
+            return 0;
         }
 
         if ($type === 'theme') {
-            // §9.2：系统主题变更。载荷为空 —— 新主题查 `Screen::systemTheme()`
-            // （Win32Screen 不缓存，每次读注册表）。框架侧显式消费见
-            // `Application::dispatchInput` 的同名分支。
+            // §9.2：载荷为空 —— 新主题查 `Screen::systemTheme()`（不缓存，每次读注册表）。
             $this->input()->push(new ThemeChangedEvent());
 
-            return true;
+            return 1;
         }
 
         if ($type === 'deactivate') {
-            // `WM_ACTIVATE` 且 `WA_INACTIVE`：用户切走了。载荷为空 —— 消费者只
-            // 需要知道"这事发生了"。框架侧收口指针手势（`capturePointer` 的
-            // 释放路径 ③），见 `Application::dispatchInput` 的同名分支。
-            // ★ 只发失活、**不发对称的激活**：今天没有东西需要在激活时做
-            //   （A15：没有消费者不预先发明线上语义）。
+            // `WM_ACTIVATE` 且 `WA_INACTIVE`：消费者收口指针手势（`capturePointer` 的
+            // 释放路径 ③）。★ 只发失活、**不发对称的激活** —— 今天没有东西需要在
+            // 激活时做（A15：没有消费者不预先发明线上语义）。
             $this->input()->push(new WindowDeactivatedEvent());
 
-            return true;
+            return 1;
         }
 
         if ($type === 'files-dropped') {
-            // A5-② 拖文件进窗（§27）：桥给 '\n' 分隔的多路径原始串 + 客户区
-            // 物理坐标。坐标除 dpr 转逻辑单位（与 pointer / wheel 同口径）。
+            // A5-②：桥给 '\n' 分隔的多路径原始串 + 客户区物理坐标（除 dpr 转逻辑）。
             $dpr = $this->screen()->scale();
             if ($dpr <= 0.0) {
                 $dpr = 1.0;
@@ -233,45 +344,43 @@ final class Win32Platform implements Platform
                 (float) ((int) ($event['y'] ?? 0)) / $dpr,
             ));
 
-            return true;
+            return 1;
         }
 
         $input = $this->input();
 
         if ($type === 'uia-invoke') {
-            // UIA `Invoke`（§9 / M5）：壳把"第 idx 个语义节点被要求激活"翻成一条
-            // 输入事件，**在壳里一次 PHP 都不进**（`kMsgUiaInvoke` 的 WndProc 分支
-            // 只入队 + 叫醒泵）。
-            // ★ 为什么不做成"壳回调应用"：见 `SemanticsInvokeEvent` 的类注释 ——
-            //   消息泵的契约是"一次调用交一条事件"，在派发里跑完 PHP 就没人保证
-            //   下一帧会跑（真机现象：命令执行了、画面一动不动）。
-            // ★ 索引 < 0 = 壳给了坏载荷（不该发生）⇒ 不投事件，但**照旧返回 true**：
-            //   泵的职责只是"这条消息处理完了"，不是"断言载荷合法"。
+            // UIA `Invoke`（§9 / M5）：**在壳里一次 PHP 都不进**（WndProc 只入队 + 叫醒泵）。
+            // ★ 为什么不做成"壳回调应用"：消息泵的契约是"一次调用交一条事件"，在派发里
+            //   跑完 PHP 就没人保证下一帧会跑（真机现象：命令执行了、画面一动不动）。
+            // ★ 索引 < 0 = 坏载荷（不该发生）⇒ 不投事件、返回 0：泵的职责是"处理完这条
+            //   消息"，不是"断言载荷合法"。
             $index = (int) ($event['idx'] ?? -1);
             if ($index >= 0) {
                 $input->push(new SemanticsInvokeEvent($index));
+
+                return 1;
             }
 
-            return true;
+            return 0;
         }
 
         if ($type === 'uia-set-value') {
-            // UIA `SetValue`（§4.4 提交 2）：壳把"第 idx 个节点的值改成 X"翻成一条
-            // 输入事件。载荷是字符串（数值型已由壳 `%.17g` 格式化）。
-            // ★ 索引 < 0 = 坏载荷 ⇒ 不投事件但照旧返回 true（泵只负责"处理完"）。
+            // UIA `SetValue`（§4.4 提交 2）：载荷是字符串（数值型已由壳 `%.17g` 格式化）。
             $index = (int) ($event['idx'] ?? -1);
             if ($index >= 0) {
                 $input->push(new SemanticsSetValueEvent($index, (string) ($event['value'] ?? '')));
+
+                return 1;
             }
 
-            return true;
+            return 0;
         }
 
         if ($type === 'pointer') {
             // ★ 四相位（2026-10-17 move/up/leave 通路）：桥给 `phase`
-            //   （0=down 1=move 2=up 3=leave，与 `PointerPhase` 同值），
-            //   坐标除 dpr 转逻辑单位 —— 与 down 同口径（§6.1 量化只在平台侧）。
-            //   相位→工厂的映射住 `PointerEvent::fromBridge()`（唯一一处）。
+            //   （0=down 1=move 2=up 3=leave，与 `PointerPhase` 同值），坐标除 dpr 转
+            //   逻辑单位 —— 与 down 同口径（§6.1 量化只在平台侧）。
             $dpr = $this->screen()->scale();
             if ($dpr <= 0.0) {
                 $dpr = 1.0;
@@ -283,21 +392,19 @@ final class Win32Platform implements Platform
                 (int) ($event['phase'] ?? 0),
                 // 修饰键（2026-10-26）：壳从 `GetKeyState` 读三个位再拆成布尔。
                 // ★ 缺了它 Ctrl/Shift+点击在 `Input` 层**无法表达** ⇒ 表格多选退化成
-                //   "点一下切换"，Shift 连选做不到（真前置于阶段 2 的东西）。
+                //   "点一下切换"，Shift 连选做不到。
                 (bool) ($event['ctrl'] ?? false),
                 (bool) ($event['alt'] ?? false),
                 (bool) ($event['shift'] ?? false),
             ));
 
-            return true;
+            return 1;
         }
 
         if ($type === 'wheel') {
-            // ★ 与指针同口径：坐标除 dpr 转逻辑单位；delta 是桥给的原始
-            //   WHEEL_DELTA 倍数（一格 = 120），这里收成"格"—— 逻辑单位才是
-            //   §6.1 的量化点分界（平台只做一次量化，框架侧不做位运算）。
-            // ★ `axis` 缺省 = 纵向（老壳不带该字段；壳只在横向时才发它）。
-            //   壳已经把 Shift+竖轮翻成横轴了，这里不做修饰键判断。
+            // ★ 与指针同口径：坐标除 dpr 转逻辑单位；delta 是桥给的原始 WHEEL_DELTA
+            //   倍数（一格 = 120），这里收成"格"。★ `axis` 缺省 = 纵向（老壳不带该
+            //   字段；壳只在横向时才发它）。壳已经把 Shift+竖轮翻成横轴了。
             $dpr = $this->screen()->scale();
             if ($dpr <= 0.0) {
                 $dpr = 1.0;
@@ -309,7 +416,7 @@ final class Win32Platform implements Platform
                 ($event['axis'] ?? '') === 'horizontal' ? Axis::Horizontal : Axis::Vertical,
             ));
 
-            return true;
+            return 1;
         }
 
         if ($type === 'key') {
@@ -321,21 +428,25 @@ final class Win32Platform implements Platform
                     (bool) ($event['alt'] ?? false),
                     (bool) ($event['shift'] ?? false),
                 )));
+
+                return 1;
             }
 
-            return true;
+            return 0;
         }
 
         if ($type === 'char') {
             $text = (string) ($event['text'] ?? '');
             if ($text !== '') {
                 $input->push(KeyEvent::character($text));
+
+                return 1;
             }
 
-            return true;
+            return 0;
         }
 
-        return true;
+        return 0;
     }
 
     public function now(): float

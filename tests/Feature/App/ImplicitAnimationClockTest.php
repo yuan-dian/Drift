@@ -146,55 +146,58 @@ final class ImplicitAnimationClockTest extends SmokeTestCase
     }
 
     /**
-     * **整条真机链路**（2026-10-29，AOT 真机日志反证之后补的判据）。
+     * **整条真机链路**（2026-10-29 AOT 真机日志反证之后补；2026-10-30 N2 改判据）。
      *
-     * 前两个测试直接问 `wantsFrame()`，中间还隔着 `FrameClock::pace()` 那道闸。
-     * 真机上"点一次不动、点两次才动"的最终表现由**定时器有没有上膛**决定 ——
-     * 而 `pace()` 是幂等的（`busy === armed` 直接 return）⇒ 只要有一帧判错，
-     * 后面再也上不了膛。所以这里用 `FakeTimers` 把"上膛 / 落闸"变成可观测事实。
+     * 前两个测试直接问 `wantsFrame()`，中间还隔着"循环会不会再醒"那道闸。
+     * 真机上"点一次不动、点两次才动"的最终表现，由**下一轮还会不会被叫醒**决定。
      *
      * ```text
      * 点击那一帧：tickAnimations（看不到刚起飞的动画）→ settle（toward）
-     *            → ⓹b 计数差 ⇒ animating=true ⇒ pace(true) ⇒ SetTimer
+     *            → ⓹b 计数差 ⇒ animating=true ⇒ nextWaitMs() 给出 15ms ⇒ 还会醒
      * ```
      *
-     * ★ 判据里**没有**"跑一帧就对了"这种写法：`while ($clock->isArmed())` 的循环
-     *   体就是真机上唯一的驱动源（没有鼠标事件时，帧只能由定时器叫醒）。
+     * ★★ **N2 之后的判据换了量具，但没有放松**：`pace()` / `isArmed()` 已删
+     *   （用户裁决：能一套就一套），"还会不会醒"现在等于
+     *   `FrameClock::nextWaitMs()` 落在 `[0, FRAME_MS]`；`-1` = 再也不醒（= 旧 `isArmed() === false`）。
+     *   这里驱动帧的方式与 `EventLoop` **逐字同构**：问时长 → 推进时钟 → `advance()`。
      */
-    public function testFrameClockStaysArmedUntilSettle(): void
+    public function testFrameClockKeepsWakingUntilSettle(): void
     {
         [$app, $state] = self::mount();
 
-        $timers = new FakeTimers();
-        $clock = new FrameClock($timers);
+        $clock = new FrameClock();
+        $c = self::constraints();
 
-        // 组合根的姿势：首帧落地后再 pace 一次（此刻没有活 ⇒ 不该上膛）
-        // ★ 必须先跑一帧：首帧之前 `panelsLagBehind()` 恒真（还没画过）⇒ 那一次
-        //   `pace()` 上膛是**对的**，拿它当"静止"反例就是夹具错。
-        $app->frame(0.0, self::constraints());
-        $clock->pace($app->wantsFrame());
+        // 组合根的姿势：首帧落地后问一次"还要等多久"（此刻没有活 ⇒ 无限等）
+        // ★ 必须先跑一帧：首帧之前 `panelsLagBehind()` 恒真（还没画过）⇒ 那时返回
+        //   15ms 是**对的**，拿它当"静止"反例就是夹具错。
+        $app->frame(0.0, $c);
         check(
-            '帧时钟 · 前置：静止时不上膛（空闲 CPU 归零）',
-            $clock->isArmed() === false && $timers->calls === [],
-            \sprintf('armed=%s calls=%d', $clock->isArmed() ? 'T' : 'F', \count($timers->calls))
+            '帧时钟 · 前置：静止时无限等（`-1`，空闲 CPU 归零）',
+            $clock->nextWaitMs($app, 0.0) === -1.0,
+            \sprintf('wait=%.1f', $clock->nextWaitMs($app, 0.0))
         );
 
         // ── 一次点击（真机上一次鼠标按下就是这一次 setState + 一帧）──
         $state->setTarget(0.25);
-        $clock->tick($app, 16.0, self::constraints());
+        $clock->advance($app, 16.0, $c);
 
         check(
-            '帧时钟 · 目标变了那一帧之后**必须上膛**（否则要点两次）',
-            $clock->isArmed() === true,
-            'isArmed=false ⇒ 没有下一次被叫醒的机会'
+            '帧时钟 · 目标变了那一帧之后**必须还会醒**（否则要点两次）',
+            $clock->nextWaitMs($app, 16.0) === (float) FrameClock::FRAME_MS,
+            \sprintf('wait=%.1f', $clock->nextWaitMs($app, 16.0))
         );
 
-        // ── 之后只靠定时器驱动（真机：用户不再动鼠标）──
+        // ── 之后只靠"还会醒"驱动（真机：用户不再动鼠标）──
         $t = 16.0;
         $frames = 0;
-        while ($clock->isArmed() && $frames < 120) {
-            $t += 15.0;                  // `FrameClock::FRAME_MS`
-            $clock->tick($app, $t, self::constraints());
+        while ($frames < 120) {
+            $wait = $clock->nextWaitMs($app, $t);
+            if ($wait < 0.0) {
+                break;                          // 不再需要被叫醒
+            }
+            $t += \max($wait, (float) FrameClock::FRAME_MS);
+            $clock->advance($app, $t, $c);
             ++$frames;
         }
 
@@ -211,11 +214,9 @@ final class ImplicitAnimationClockTest extends SmokeTestCase
             \sprintf('只跑了 %d 帧（%.2fs）⇒ 半衰期被改小了？', $frames, $frames * 15.0 / 1000.0)
         );
         check(
-            '帧时钟 · 收口后落闸（`timers->stop()` 被调过）',
-            $clock->isArmed() === false
-                && $timers->calls !== []
-                && $timers->calls[\count($timers->calls) - 1][0] === 'stop',
-            '没有 stop ⇒ 收口后还在 64fps 空转'
+            '帧时钟 · 收口后回到无限等（`-1`，不再 64fps 空转）',
+            $clock->nextWaitMs($app, $t) === -1.0,
+            \sprintf('wait=%.1f', $clock->nextWaitMs($app, $t))
         );
         check(
             '帧时钟 · 收口值精确落在目标（`===` 0.25）',

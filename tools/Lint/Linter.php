@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace Drift\Dev\Lint;
 
 use Drift\Dev\Lint\Rules\AliasMutate;
-use Drift\Dev\Lint\Rules\AppBootstrapFrameClock;
+use Drift\Dev\Lint\Rules\AppBootstrapLoop;
 use Drift\Dev\Lint\Rules\AppInstanceofConcrete;
 use Drift\Dev\Lint\Rules\AppSubclassCtorParent;
 use Drift\Dev\Lint\Rules\AttributeUnqualified;
@@ -66,10 +66,12 @@ final class Linter
             //   ★ 真事故：ShowcaseApplication 漏调 ⇒ 七个拆分片未初始化 ⇒ 真机
             //     启动 exit=255 且无行号，而 smoke 79 处 attach() 全绿
             new AppSubclassCtorParent(),
-            // I2 闸门（2026-10-25）：组合根必须建 FrameClock 并 tick()
+            // I2 闸门（2026-10-25 立，2026-10-30 N2 改判据）：组合根必须走 EventLoop::run()
             //   ★ 真事故：apps/tutorial 只 frame() ⇒ after() 在真机上永不触发，
             //     而 smoke 全绿（用例里每帧都是显式跑的，不需要"有人叫醒循环"）
-            new AppBootstrapFrameClock(),
+            //   ★ N2 之后"等 / 派发 / 跑帧 / 光标 / IME / 退出"六条契约只在 EventLoop
+            //     里各写一次 ⇒ 判据从"建 FrameClock 并 tick()"改成"走 EventLoop"
+            new AppBootstrapLoop(),
             // 内建编译期注解漏 \（2026-10-21 W0/A0：`#[Override]` 解析成 `当前命名空间\Override`，静默无效）
             new AttributeUnqualified(),
             // W1/L3-6（`05` §2.5 两条）：禁后端分叉 / 发 Optional op 前查能力位

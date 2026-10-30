@@ -72,7 +72,7 @@ final class PumpHost
      *
      * ★ **为什么不做成"平台多开几个 `TimerHost` id"**：`TimerHost` 是**周期**定时器
      *   （`SetTimer` 会一直响），而这里要的是**一次性**延时；再者在平台层做 id 分配
-     *   就要在 `pump()` 里把 `timer` 事件按 id 分发回框架 —— 一圈下来只换来
+     *   就要在 `pumpEvents()` 里把 `timer` 事件按 id 分发回框架 —— 一圈下来只换来
      *   15.6ms → 0ms 的精度提升，而 Tooltip / Snackbar 的 500ms 停留对 15ms 无感。
      *   ★ 代价必须说清楚：**有定时器待触发期间帧时钟保持上膛**（每 15ms 一帧空转，
      *   直到到期）。这是 `wantsFrame()` 必须加那条判据的另一面 —— 不加就永远
@@ -167,6 +167,28 @@ final class PumpHost
     public function hasTimers(): bool
     {
         return $this->timers !== [];
+    }
+
+    /**
+     * 最早的那个**到点时刻**（绝对毫秒，与帧时间戳同一时基）；`null` = 没有定时器。
+     *
+     * ★ 它存在的理由是"**等多久**"这个问题有了答案：改动之前，框架只能回答
+     *   "要不要再跑一帧"，于是 `after(400)` 也要按 15ms 帧节奏反复醒 ——
+     *   一个 400ms 的 Tooltip 停留 = **26 次空唤醒**。有了这个数字，等待层可以直接
+     *   `waitEvents(400)`：一觉睡到点。
+     * ★ 只算 `after()`：后台任务与 socket 可读**没有到点时刻**（它们是轮询，
+     *   见 `hasAsync()` 的注释与 `EVENT-LOOP-DESIGN` §3.5 的诚实边界）。
+     */
+    public function nextDeadlineMs(): ?float
+    {
+        $earliest = null;
+        foreach ($this->timers as $timer) {
+            if ($earliest === null || $timer['due'] < $earliest) {
+                $earliest = $timer['due'];
+            }
+        }
+
+        return $earliest;
     }
 
     /** 后台任务是否在途 / 监听是否开着（`wantsFrame()` 的两条判据） */

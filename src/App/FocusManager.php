@@ -26,7 +26,7 @@ use Drift\Widget\States;
  * ★ **为什么住 `Drift\App` 而不是 `Drift\Input`**：`Input` 按 §4.3 **不许依赖
  *   `Widget` / `Rendering`**，而本类必须引用 `Element` 与 `EditableText`。
  *   §9.1 本来就把路由判给 `EventLoop`（`Drift\App`）—— 这里只是把那条裁决落成代码，
- *   不含 EventLoop 的**循环**能力（`pump()` 由平台驱动，§5.2 裁决 1）。
+ *   不含 EventLoop 的**循环**能力（`waitEvents()` 由平台驱动，§5.2 裁决 1）。
  *
  * ★ **它是 `@internal`**：§4.2 的 `Drift\App` 行没有这个名字 —— 焦点链是
  *   路由的**实现细节**，不是公共契约。公共面是 `FocusNode`（声明）与

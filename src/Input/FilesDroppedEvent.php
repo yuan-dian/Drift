@@ -16,7 +16,7 @@ namespace Drift\Input;
  *   里**非法** ⇒ 多路径用 `'\n'` 分隔是无损的，`paths()` 里 `explode` 还原。
  *   这样"原始串 → 数组"的解析还能被单测钉住（同 A5-① `filterText` 的思路）。
  *
- * ★ 落点坐标是**逻辑单位**（客户区物理坐标 ÷ dpr，由 `Win32Platform::pump()`
+ * ★ 落点坐标是**逻辑单位**（客户区物理坐标 ÷ dpr，由 `Win32Platform::pumpEvents()`
  *   换算），与 `PointerEvent` / `ScrollEvent` 同口径 —— 命中测试拿它直接用。
  *
  * @api

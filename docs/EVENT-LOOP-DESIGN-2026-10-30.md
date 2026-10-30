@@ -327,7 +327,8 @@ IoDriver::poll(): string   ◀──────   drain 完成队列（JSON 数
 > 「v7 第一版只有一个阻塞 `pump()` ⇒ **移动端没法用**。拆开后桌面仍是
 > `waitEvents(∞)` 的单循环，**行为不变**。」
 
-⇒ 所以 §7.2 那个「`pump()` 保留为委托」不是妥协，而是 §9.7 已经预见的路径。
+⇒ 这正是 §9.7 已经预见的路径；本册初稿据此写了「`pump()` 保留为委托」，
+**落地时按用户裁决改成直接删除**（理由见 §7.2 的 2026-10-30 修订）。
 
 现状 `Platform::pump(): bool` 把「等」「派发」「是否该退出」揉在一个调用里，
 且**没有超时参数**（`GetMessageW` 无限阻塞）。这是所有病的根。
@@ -374,9 +375,13 @@ enum WakeReason
 }
 ```
 
-★ **`pump()` 保留为 `waitEvents(-1.0)` 的委托**，老组合根不用改一行。
-这是「可以破坏，但没必要的地方就别破」——`pump()` 的语义（无限等）恰好是
-`waitEvents(-1.0)` 的特例，能无损表达。
+★★ **`pump()` 已删除，不留委托**（2026-10-30 落地时改判，见 §7.2）。
+初稿写的是「保留为 `waitEvents(-1.0)` 的委托，老组合根零改动」—— 那条在
+**技术上**成立（语义确实是无损特例），但它留下一个"看起来还能用"的入口，
+而那个入口必然退回恒定心跳（没有超时就无法自适应）。用户的原话是：
+「能不保留 2 套的就直接一套新的机制即可，不然后续维护不方便」。
+⇒ 四个组合根各改一行（`EventLoop::run($platform, $app, $handle)`），删掉
+`pump()` / `pace()` / `tick()` / `stop()` 四处旧 API，全仓只剩一条路径。
 
 ★ **不破 §9.6 规则 4**（「只有 `fileDialog` 一个自泵方法」）：
 `waitEvents` 是**主循环的入口**，不是桥函数，也不在桥内部被调用。
@@ -790,9 +795,35 @@ git 上已经提交了」*。
 
 | 现状 | 为什么留 |
 |---|---|
-| `Platform::pump()` | 就是 `waitEvents(-1.0)` 的特例，**能无损表达** ⇒ 保留为委托，老组合根零改动 |
 | `Job::onDone()` | `Future::then` 的单消费者特例 ⇒ 保留 |
 | `SlicedJob` / `IoPoller` | A1 的零件就是它们，**不推翻，往上加一层 `IoDriver`** |
+
+#### ★★ 2026-10-30 修订：`Platform::pump()` **不留**，直接删
+
+初稿把它列进"要留的"，理由是"`pump()` ≡ `waitEvents(-1.0)`，语义无损"。
+**技术上没错，工程上是错的**：
+
+- 它**表达不了超时**。留着它，任何一处（旧组合根、示例、第三方壳）都能继续用
+  它写循环，而那样的循环必然退回恒定心跳 —— 也就是 N2 要消灭的那个东西。
+- 更糟的是它**看起来还能用**：不报错、不告警、行为"差不多"（只是空闲烧 22% CPU、
+  `after(400)` 要 27 次唤醒）。这正是本仓最讨厌的失效形态。
+- 维护成本是双份的：`FrameClock` 得同时解释"心跳"与"等待"两条时间线，
+  读者要判断眼前这段代码走的是哪条。
+
+⇒ 落地时按用户裁决（「能不保留 2 套的就直接一套新的机制即可」）**全部删除**：
+
+| 删掉 | 原来做什么 | 现在谁做 |
+|---|---|---|
+| `Platform::pump(): bool` | 等 + 派发 + 是否退出 | `waitEvents()` + `pumpEvents()` + `WakeReason` |
+| `FrameClock::pace(bool)` / `isArmed()` | 开关 15ms 心跳定时器 | `FrameClock::nextWaitMs()`（纯策略）+ 平台的等待 |
+| `FrameClock::tick(...)` | 跑帧 + 上膛 | `FrameClock::advance(...)`（跑帧 + 三笔账） |
+| `FrameClock::stop()` | 退出时拆心跳 | 无需：等待超时是**一次性的**，`waitEvents()` 自己 `KillTimer` |
+| `FrameClock::TIMER_ID` | 心跳定时器 id | `Win32Platform::WAIT_TIMER_ID`（平台私有） |
+
+★ **代价是一处静态闸门要改判据**：`app-bootstrap-frame-clock`（"组合根必须建
+`FrameClock` 并 `tick()`"）换成 `app-bootstrap-loop`（"组合根必须走
+`EventLoop::run()`"）。旧判据在旧机制下是对的，新机制下它只会逼人建一个用不上的
+对象 —— 闸门与机制必须同源。
 | `ProcessTaskHost` | A3 的正式实现，不动 |
 | `FrameClock` | 变成 `ControlFlow` 的一个来源（`animating` 为真时返回 `Poll`），不删 |
 
@@ -814,7 +845,7 @@ git 上已经提交了」*。
 
 | 破坏 | 影响的文件 | 迁移方式 |
 |---|---|---|
-| ① `pump` 拆分 | `Platform` + `Win32Platform` + 各 `Bootstrap.php` + `tests/` | 加方法，`pump()` 保留 ⇒ **零迁移** |
+| ① `pump` 拆分 | `Platform` + `Win32Platform` + 各 `Bootstrap.php` + `tests/` + 一条 lint 规则 | **实做：4 个组合根各 1 行 + 2 个测试改判据 + 1 条规则换判据**（`pump()` 删除，见 §7.2）。★ 初稿估的是"零迁移"，那只是把旧 API 留着的代价 —— 不留就必然要改调用点，而全仓只有 4 个 |
 | ② `Future` | `TaskHost` / `Job` / `ProcessTaskHost` / `apps/users` | `Job implements Future` ⇒ 老代码不动 |
 | ③ paint 门控 | `Frame.php` + 既有 golden | **行为变化**，golden 需重跑确认「首帧仍逐像素相同」 |
 | ④ 作用域二分 | `Application` + 组合根 | 多窗口时一次做完 |
@@ -861,11 +892,34 @@ git 上已经提交了」*。
       ⇒ 4 条测试红（其中 2 条是既有测试：`LayerCacheTest`、`ScrollViewScrollTest`
       直接报"画面没变"）
 
-### 9.2 N2（`waitEvents` + `ControlFlow`）
+### 9.2 N2（`waitEvents` + `ControlFlow`）—— **已验**（2026-10-30）
 
-- [ ] `nextTimeoutMs()` 三态可测：动画中 == 0；无定时器 == -1；有定时器 == 剩余毫秒
-- [ ] 假平台（`FakePlatform`）注入 `WakeReason` 四个值，`tick()` 行为正确
-- [ ] `pump()` 委托等价：`pump()` 与 `waitEvents(-1)` 在假平台上产出一致
+- [x] 三态可测，**但判据换了三条**（初稿的判断有两处是错的，见 §3.5 与
+      `FrameClock::nextWaitMs()` 的注释）：
+  - 动画中 **不是** `0`，是 `FRAME_MS`＝15。本仓没有 vsync ⇒ `0` = 能跑多快跑多快
+    = 300fps 空转，而动画相位是 `f(timestamp)` ⇒ 只会烧 CPU，不会更顺。
+  - 有 IO watcher 但没数据 **不能**走"无限等"：`IoPoller` 只能在帧里被问，
+    无限等 = 把 socket 饿死（N4 有唤醒通道后才可能变）。
+  - 无定时器 ⇒ `-1` ✔；有定时器 ⇒ 剩余毫秒 ✔（这两条初稿是对的）
+- [x] **不用假平台，用真 `Win32Platform` + 假桥**：`WakeReason` 的三个 case 由
+      剧本化 `drift_win_pump()` 注入（`Message` / `Timeout` / `Quit`），
+      因为 `waitEvents()` 里"取一条 → 是不是我那个闹钟 → 暂存/退出"的**分支逻辑
+      只存在于此**，自己写个假平台等于绕开被测代码。
+- [~] `pump()` 委托等价 —— **不适用**：`pump()` 已删除（§7.2 修订）。
+      替代判据：四个组合根都必须走 `EventLoop::run()`（`app-bootstrap-loop` 闸门
+      + 一条反例夹具，`lint --selftest` 该响 1）。
+
+新增的证据（`tools/phpunit-run.php feature`）：
+
+| 用例 | 钉住的事 | 变异验证 |
+|---|---|---|
+| `FrameWaitTest::testTimerSleepsUntilDue` | `after(400)` ⇒ 等 **400**（旧心跳 27 次 × 15ms） | 把定时器分支删掉 ⇒ 红（报 `wait=0.0`） |
+| `FrameWaitTest::testAnimationKeepsFrameRhythm` | 动画 + 远处定时器 ⇒ 仍 15（近者优先） | 同上 |
+| `FrameWaitTest::testStallOnlyMeasuredOnRhythmRounds` | 等到点之后的 400ms 间隔**不算**卡顿 | — |
+| `EventLoopTest::testMessageIsDispatchedThenOneFrameRuns` | `pumpEvents()` 在 `poll()` 之前 + IME 报两次 | 挪到之后 ⇒ 队列不空；删帧末 IME ⇒ 报 0 次 |
+| `EventLoopTest::testTimerWaitIsOneSleepNotManyWakes` | 每轮等待时长都是 400 | 见上 |
+| `EventLoopTest::testDueTimerFiresInsideFrameAndThenSleepsAgain` | Timeout 那轮也跑帧（否则定时器永不触发） | 加 `if ($why !== Timeout)` ⇒ 红（`fired=0`） |
+| `EventLoopTest::testCursorFromDispatchReachesWindowHost` | 光标形状真喂到 `WindowHost` | 删 `setCursor` ⇒ 红（`[]`） |
 
 ### 9.3 N3（`Future`）
 
@@ -906,6 +960,37 @@ git 上已经提交了」*。
 ---
 
 ## 11. 修订记录
+
+### 2026-10-30 · N2 落地：等待与派发拆开，旧心跳整套删除
+
+实做的东西（`src/` + `apps/` + `tests/`）：
+
+| 新增 / 改动 | 说明 |
+|---|---|
+| `Platform::waitEvents(float): WakeReason` | 三态超时（-1 / 0 / >0）+ 「为什么醒」 |
+| `Platform::pumpEvents(): int` | 把暂存的原始事件归一化投进 `input()` |
+| `src/Platform/WakeReason.php` | 三 case（`Message` / `Timeout` / `Quit`）。**第四 case `Woken` 没写**：没有生产者就是没实现 |
+| `src/App/EventLoop.php` | 组合根只留一行；等 / 派发 / 跑帧 / 光标 / IME / 退出各写一次 |
+| `FrameClock` 重写 | 只剩 `nextWaitMs()`（纯策略）+ `advance()`（跑帧 + 三笔账） |
+| `Application` 拆三谓词 | `wantsFrameRhythm()`（连续帧）/ `needsFrameNow()`（一次性欠账）/ `nextDeadlineMs()`（到点） |
+
+三处**与初稿不同**的判断：
+
+1. **`pump()` 删除，不留委托**（§7.2 修订）。初稿说"语义无损 ⇒ 留着零迁移"，
+   落地方发现留着它 = 留一个必然退回恒定心跳的入口。
+2. **动画中给 `FRAME_MS` 而不是 `0`**（§9.2）。`0` 在本仓等于"能跑多快跑多快"，
+   没有 vsync 兜着 ⇒ 300fps 空转。
+3. **卡顿观测要判"上一轮是怎么等的"**（`FrameClock::advance()`）。不判就会把
+   一次 400ms 的**正常**长等待记成卡顿 —— 日志被 Tooltip / Snackbar 刷满，
+   真问题反而被埋掉。
+
+★ **Win32 的 `waitEvents` 是兜底实现，不是终局**：`GetMessageW` 没有超时参数，
+这一版用 `SetTimer(WAIT_TIMER_ID)` 起一个一次性闹钟再 `KillTimer` 兜住。
+粒度 = 系统 tick（~15.6ms），与旧心跳同粒度 ⇒ 不构成回归，但它**不是** N4 的样子
+（`MsgWaitForMultipleObjectsEx` + 唤醒事件才是）。
+★ 顺带修掉一个真缺陷：`KillTimer` 不收回已排进队列的 `WM_TIMER`，所以下一轮可能
+看到一个早到的 `timer` —— 那本来就无害（帧幂等 + N1 已把空帧压到零），现在被显式
+记在 `waitEvents()` 的注释里，免得后人把它当 bug"修"成清队列。
 
 ### 2026-10-30 · N1 落地，§3.8 的方案被自己推翻
 

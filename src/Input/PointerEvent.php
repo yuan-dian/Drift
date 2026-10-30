@@ -96,7 +96,7 @@ final readonly class PointerEvent implements InputEvent
      *
      * ★ **映射只该有一处**（与 `CursorShape` 的 value=ABI 同纪律）：桥发 0–3，
      *   这里翻译成四个工厂 —— 改 `PointerPhase` 的 value 只需同步这一处读法。
-     *   ★ 未知 phase 按 Down 兜（防御性：桥保证只发 0–3，与 `pump()` 的
+     *   ★ 未知 phase 按 Down 兜（防御性：桥保证只发 0–3，与 `pumpEvents()` 的
      *   "其它 ⇒ 丢弃"同一档）。
      */
     public static function fromBridge(

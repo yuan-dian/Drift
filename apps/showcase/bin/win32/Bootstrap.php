@@ -5,7 +5,7 @@ namespace App\Showcase;
 
 use Drift\App\Paths;
 use Drift\App\WindowStateStore;
-use Drift\App\FrameClock;
+use Drift\App\EventLoop;
 use Drift\Errors;
 use Drift\Platform\Win32\Win32Platform;
 use Drift\Platform\Win32\ResizeHookState;
@@ -19,7 +19,8 @@ use Drift\Platform\Win32\ResizeHookState;
  *
  * ★ **循环归平台**（§5.2 裁决 1）：`Application` **没有** `run()`，只提供
  *   `attach($surface, $constraints)` 与 `frame($timestampMs, $constraints)`。
- *   `while ($platform->pump())` 这一行就是"框架绝不自建循环"的全部代价。
+ *   `EventLoop::run($platform, $app, $handle)` 这一行就是"框架绝不自建循环"
+ *   的全部代价（等待仍由平台给：`Platform::waitEvents()`）。
  *
  * ★ 本文件与 hello / users 的 Bootstrap 逐行同构（§4.5 组合根形态）——
  *   换应用只换 `new ShowcaseApplication()` 一行。
@@ -123,45 +124,13 @@ final class Bootstrap
             $window->pushSemantics($nodes);
         });
 
-        // ★ **事件队列必须每帧前抽干**：平台把 Win32 消息翻成 Drift 事件推进
-        //   `input()`，而**派发是框架的活**（§5.2 裁决 1：循环归平台，派发归框架）。
-        //   不抽干的话队列会无限增长，而窗口对点击/按键**毫无反应** —— 且不报错。
-        // ★ `dispatchInput()` 对指针事件返回命中链解析出的光标形状 ⇒ 由**这里**
-        //   喂给 `setCursor()`：应用它需要 `WindowHost`，而框架不持平台（§5.1）。
-        $input = $platform->input();
 
-        // ★★ 自适应帧时钟（§17.4.9）：`pump()` 阻塞在 `GetMessageW` —— 没输入事件时
-        //   循环一直睡，后台结果只能等下一条用户消息捎带（现象：任务完了界面几秒后才变、
-        //   Loading 转圈图不动）。`FrameClock` 按 `Application::wantsFrame()` 起/停 15ms
-        //   定时器：有活才跳、没活就睡（空闲 CPU 归零）。同 users 应用的接线。
-        $clock = new FrameClock($platform->timers());
-        // ★ 进循环前先上膛：此刻可能已有在途任务（首屏取数），不定时器第一次 pump 会无限阻塞。
-        $clock->pace($app->wantsFrame());
-
-        while ($platform->pump()) {
-            while (($event = $input->poll()) !== null) {
-                $shape = $app->dispatchInput($event, $platform->now());
-                if ($shape !== null) {
-                    $window->setCursor($handle, $shape);
-                }
-                // ★ IME 时序双保险（2026-10-19）：组字可能在同帧的**下一个**输入
-                //   事件发生（TranslateMessage 在消息循环层触发 WM_IME_STARTCOMPOSITION）
-                //   ⇒ 事件处理后立即同步 caret，不等帧末（FrameClock 空闲睡眠时帧末
-                //   版会晚到，输入法已按旧位置放过一次候选框）。与帧末那次同口径。
-                $platform->imeCaret($app->imeCaretRect());
-            }
-
-            // ★ 帧由帧时钟跑（同 users）：顺带量两帧间隔，帧后再按 `wantsFrame()`
-            //   决定下次要不要被叫醒（动画在跑 ⇒ 继续跳；都停 ⇒ 定时器停摆、CPU 归零）。
-            $clock->tick($app, $platform->now(), $screen->viewport());
-
-            // ★ IME 定位（§8.4）：框架算几何（逻辑像素）、平台做量化。
-            //   组合根不调这一行 = 输入法候选框贴在窗口左上角（能打字、
-            //   候选框位置错）—— 半可用失败形态，故三行注释写死原因。
-            $platform->imeCaret($app->imeCaretRect());
-        }
-
-        $clock->stop();
+        // ★★ 主循环（§17.4.9 / N2）：等 / 派发 / 跑帧全在 `EventLoop` 里。
+        //   为什么不能自己写：`pump()` 阻塞在壳的 `GetMessageW`，没输入事件时循环
+        //   一直睡 ⇒ 后台结果只能等下一条用户消息捎带（现象：任务完了界面几秒后才变、
+        //   Loading 转圈图不动）。"等多久"现在由 `FrameClock::nextWaitMs()` 按
+        //   **还有什么活**算（动画/异步在途 ⇒ 15ms 帧节奏；只有定时器 ⇒ 睡到点；没事 ⇒ 无限等）。
+        EventLoop::run($platform, $app, $handle);
 
         // ★ 窗口状态写回（§5.4）：**退出一次同步 IO**（循环之外，不占帧）。
         //   最小化时退出 ⇒ 平台侧 position() 给 null ⇒ 跳过写入，保留上一份状态。

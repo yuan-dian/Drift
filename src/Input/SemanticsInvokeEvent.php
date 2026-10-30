@@ -16,9 +16,9 @@ namespace Drift\Input;
  *      （`php_drift_win_pump()`）的契约是"一次调用交一条事件"，在派发里跑完 PHP
  *      就没人保证**下一帧会跑** —— 真机现象是"命令确实执行了、状态也变了、
  *      画面一动不动"（要等下一条用户输入才刷出来）。
- *   ③ 走输入队列则两件事同时成立：**壳里零 PHP 调用**，且事件交到组合根的
- *      `while ($event = $input->poll())` 之后，紧接着就是 `FrameClock::tick()`
- *      —— 激活引起的那次重建**同一轮循环**就落盘。
+ *   ③ 走输入队列则两件事同时成立：**壳里零 PHP 调用**，且事件交到
+ *      `EventLoop` 的 `while ($event = $input->poll())` 之后，紧接着就是
+ *      `FrameClock::advance()` —— 激活引起的那次重建**同一轮循环**就落盘。
  *
  * ★ 与 `ThemeChangedEvent` / `WindowDeactivatedEvent` 同构（同为"平台信号 ⇒
  *   框架语义"），区别只在于它**带载荷**（节点索引）。

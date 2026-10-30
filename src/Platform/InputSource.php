@@ -13,9 +13,10 @@ use Drift\Input\InputEvent;
  *   开头那三条纪律），而"加速键 → IME → 焦点链"与"命中测试 → GestureArena"的
  *   **派发**归 `EventLoop`（`Drift\App`，M4）。
  *
- * ★ **入队由 `Platform::pump()` 驱动**：`pump()` 阻塞等到一条消息、归一化、`push()`
- *   进本队列。于是"等待"与"消费"分开 —— 前者阻塞在平台上，后者由框架在自己方便的
- *   时机抽干（一帧一次）。
+ * ★ **入队由 `Platform::pumpEvents()` 驱动**：`waitEvents()` 阻塞等到一条消息，
+ *   `pumpEvents()` 归一化后 `push()` 进本队列。于是"等待""入队""消费"三步分开 ——
+ *   等待阻塞在平台上，入队与跑帧成对（`EventLoop`），消费由框架在自己方便的时机
+ *   抽干（一帧一次）。
  *
  * ★ 依赖说明：本文件让 `Platform` 层引用了 `Input` 的 `InputEvent`。§9.1 的路由链图
  *   把平台输出逐字写成 `PointerEvent / KeyEvent`，而 §4.3 的 `Platform` 行没登记
