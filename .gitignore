@@ -60,6 +60,7 @@ desktop.ini
 *.orig
 
 /.workbuddy-ai
+/.workbuddy
 
 
 # 预览输出（drift-preview 的产物）
