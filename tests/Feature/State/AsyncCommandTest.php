@@ -28,11 +28,12 @@ use Drift\Widget\State;
  * | 6 | 换参数 ⇒ 旧请求被 `cancel()`、迟到的旧结果不落地 | 旧数据盖掉新数据（**不报错**） |
  * | 7 | `retry()` 用上次参数 | 重试按钮取到的是别的页 |
  * | 8 | `dispose()` 后结算**不标脏** | `pendingDirty` 漂移：每帧多扫一遍，**不报错** |
+ * | 9 | **卸载时框架自动停掉在途任务**（页面不写 `dispose()`） | 转圈中离开页面 ⇒ worker 白跑满 1.2s |
  *
- * ★ 8 是最值钱的一条：它的失败形态是"永远不红"的性能退化，其他七条都是看得见的。
+ * ★ 8 是最值钱的一条：它的失败形态是"永远不红"的性能退化，其他几条都是看得见的。
  *
- * ★ 为什么必须真挂树：命令靠 `State::markDirty()` 通知，而"标脏 → settle →
- *   重建 → `build()` 读到新值"这条链只有跑帧才成立。
+ * ★ 为什么必须真挂树：命令靠 `Subject` 广播、由 `State::asyncCommand()` 转成一个
+ *   `markDirty()`，而"标脏 → settle → 重建 → `build()` 读到新值"这条链只有跑帧才成立。
  */
 final class AsyncCommandTest extends SmokeTestCase
 {
@@ -330,11 +331,12 @@ final class AsyncCommandTest extends SmokeTestCase
     }
 
     /**
-     * 宿主**已经卸载**但命令**没被 `dispose()`**（页面忘了写那一句）时，
+     * 宿主**已经卸载**但命令**没被 `dispose()`**（页面没写那一句、也不需要写）时，
      * 迟到的结算同样不许标脏。
      *
-     * ★ 与上一个用例的差别：上一个走的是"`dispose()` 取消掉在途任务"（正常路径），
-     *   这里走的是 **`emit()` 里那句"宿主还在树上吗"** —— 它是"忘了 dispose"的兜底。
+     * ★ 上一版靠"命令在 `emit()` 里问宿主还在树上吗"兜底；这一版的兜底在
+     *   **`State::dropCommands()`**（`unmount()` 时统一 `dispose()`）—— 更早、也
+     *   更彻底：在途任务当场被 `cancel()`，不是"结算到了再丢掉"。
      * ★★ 这一条守的是**永远不红**的故障：卸了载的 State 若还被标脏，`pendingDirty`
      *   再也不归零 ⇒ `settle()` 每帧多扫一遍全树（性能退化，**不报错**，
      *   `State::$pendingDirty` 的注释点名了它）。
@@ -354,8 +356,8 @@ final class AsyncCommandTest extends SmokeTestCase
 
         $baseline = State::pendingDirty();
 
-        // ★ 只卸载宿主，**不** `dispose()` 命令 —— 夹具页面没覆写 `dispose()`，
-        //   这正是"页面忘了写那一句"的真实形态。
+        // ★ 只卸载宿主，**不** `dispose()` 命令 —— 夹具页面根本没有 `dispose()`，
+        //   这正是"页面什么都不写"的真实形态：停任务的事由框架做。
         $app->root()->unmount();
         $made[0]->resolve('迟到的');
 
@@ -363,6 +365,43 @@ final class AsyncCommandTest extends SmokeTestCase
             'AsyncCommand · 忘了 dispose 也不让迟到的结算标脏（pendingDirty 不漂移）',
             State::pendingDirty() === $baseline,
             'pendingDirty=' . State::pendingDirty() . ' baseline=' . $baseline,
+        );
+
+        $this->flushChecks();
+    }
+
+    /**
+     * ★★ **卸载时框架真的停掉在途任务** —— 页面不写 `dispose()`。
+     *
+     * 这是本轮（2026-10-31）新增能力的判据：命令改成 `Subject` 之后由
+     * `State::asyncCommand()` 绑定，`StatefulElement::unmount()` 统一 `dropCommands()`
+     * ⇒ "转圈中离开页面 ⇒ worker 白跑满 1.2s（翻十页留十个空转进程）"
+     *   **不需要谁记得防**。
+     *
+     * ★ 为什么必须由框架做：`State::dispose()` 是**可覆写**的，"忘了
+     *   `parent::dispose()`"正是 A4 点名的失败模式 —— 与订阅袋同一个理由
+     *   （`Subscription` 的注释：把兜底放在用户侧就是"文档承诺了、机制守不住"）。
+     */
+    public function testUnmountStopsInFlightWithoutPageDispose(): void
+    {
+        $made = [];
+        [$app, $constraints] = self::boot(static function (mixed $arg) use (&$made): Future {
+            $made[] = Future::pending();
+
+            return $made[\count($made) - 1];
+        });
+
+        $app->pageState()->command()->run(1);
+        $app->frame(32.0, $constraints);
+
+        check('AsyncCommand · 跑起来确实有在途任务', !$made[0]->isCancelled());
+
+        $app->root()->unmount();
+
+        check(
+            'AsyncCommand · 卸载即停掉在途任务（页面不写 dispose —— 框架侧兜底）',
+            $made[0]->isCancelled(),
+            'inflight.cancelled=false ⇒ 命令还活着，worker 会白跑满 1.2s',
         );
 
         $this->flushChecks();
