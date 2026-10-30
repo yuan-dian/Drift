@@ -40,9 +40,14 @@ user32.IsWindow.restype = wintypes.BOOL
 
 WM_CLOSE = 0x0010
 
-# 关窗到窗口消失的观察窗。异步路径是"下一轮循环"（≤ 一个帧间隔 + 一次消息往返），
-# 1.2s 足够宽；再短会把"慢"误判成"没关"，再长则拒绝分支的断言失去意义。
+# 关窗到窗口消失的观察窗（**拒绝关闭**分支用固定值：那时"还活着"是期望结果，
+# 等久一点没有信息量）。同意关闭分支改用**轮询 + 上限**（`EXIT_DEADLINE_S`）：
+# 固定 sleep 会把"慢一帧"误判成"没关" —— 2026-10-30 实测 tutorial 冷缓存下 1.25s
+# 才退（收尾要写回几何 + 卸两个静态钩子），而当时的 1.2s 正好卡在边界，偶发 FAIL。
 SETTLE_S = 1.2
+
+# 同意关闭后等进程真正退出的上限。正常是一轮循环 + 一次收尾（实测 0.02~1.3s）。
+EXIT_DEADLINE_S = 3.0
 
 
 def main() -> int:
@@ -82,11 +87,21 @@ def main() -> int:
 
     posted = user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
     print(f"PostMessageW(WM_CLOSE) = {posted}  (0 = 投递失败，通常是窗口线程没有消息队列)")
-    time.sleep(SETTLE_S)
+
+    started = time.time()
+    if expect == "exit":
+        # 轮询而不是定长 sleep：慢一帧不算失败，真挂住也能在 3s 内报出来
+        while time.time() - started < EXIT_DEADLINE_S:
+            if not user32.IsWindow(hwnd) and proc.poll() is not None:
+                break
+            time.sleep(0.05)
+    else:
+        time.sleep(SETTLE_S)
+    waited = time.time() - started
 
     window_alive = bool(user32.IsWindow(hwnd))
     process_alive = proc.poll() is None
-    print(f"关之后（{SETTLE_S}s）：window_alive={window_alive} process_alive={process_alive}")
+    print(f"关之后（{waited:.2f}s）：window_alive={window_alive} process_alive={process_alive}")
 
     if expect == "exit":
         ok = bool(posted) and not window_alive and not process_alive
