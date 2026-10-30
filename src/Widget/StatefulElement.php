@@ -128,6 +128,7 @@ final class StatefulElement extends Element
         if ($state !== null) {
             $state->dispose();             // §12.3 回收纪律
             $state->dropSubscriptions();   // §11.3 RT-1：框架侧兜底全退
+            $state->dropCommands();        // 同上：命令持有的在途任务一并停掉
         }
     }
 }

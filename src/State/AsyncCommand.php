@@ -5,20 +5,38 @@ namespace Drift\State;
 
 use Drift\Async\AsyncValue;
 use Drift\Async\Future;
-use Drift\Widget\State;
 
 /**
- * **一次异步请求的完整生命周期**（2026-10-30）—— 一个住在 `State` 里的命令。
+ * **一次异步请求的完整生命周期**（2026-10-30）—— 一个广播 `AsyncValue` 的命令。
  *
  * ```php
- * // 页面 State
- * $this->rows = AsyncCommand::make($this, $this->fetchRows);  // 组合根给的取数闭包
+ * // 页面（生命周期 = 页面）
+ * $this->rows = $this->asyncCommand($this->fetchRows);   // initState：造 + 绑定
+ * $this->rows->run($page);                               // 发起（翻页 / 重试）
+ * $this->rows->value()                                   // build：读四态
  *
- * public function initState(): void { $this->rows->run(1); }        // 进页面就取第一页
- * private function load(int $p): void { $this->rows->run($p); }     // 翻页
- * public function build($ctx) { return $this->view($this->rows->value()); }
- * public function dispose(): void { $this->rows->dispose(); }       // 离开页面放弃在途
+ * // Store（生命周期 = 应用，跨页共享）—— 同一套，只是不经 `State::asyncCommand()`
+ * $this->page = AsyncCommand::make(fn(int $p): Future => $host->submit(new FetchUsersJob($p)));
  * ```
+ *
+ * ## ★★ 它是 `Subject`：宿主无关，因此**只有一套**
+ *
+ * 上一版构造收 `State`（只能标某个页面的脏）⇒ 跨页共享那条路用不上它，`apps/users`
+ * 的 `UserStore` 于是把同一套状态机**手写第二遍**（`status` + `error` + `rows` +
+ * `$inflight` + `load()` 六步 + `applyPage()`）。那是本轮要消灭的东西。
+ *
+ * 改成 `extends Subject` 之后，"值变了 ⇒ 通知谁"交给**订阅**（本仓既有的
+ * `Subject` / `State::watch()` / `SubjectBuilder` / `Subscription`），
+ * 命令自己不再认识任何 GUI 宿主：
+ *
+ * | 谁持有 | 怎么收到通知 | 生命周期谁收 |
+ * |---|---|---|
+ * | 页面 `State` | `State::asyncCommand()` 内部 `watch()` | 框架 `unmount()` 统一 `dispose()` |
+ * | 跨页 `Store` | 直接 `subscribeFor()`，或经 `SubjectBuilder` 订阅**命令本身** | 应用自己 |
+ *
+ * ⇒ 成熟 GUI 的同一形状：Riverpod `AsyncNotifier`（页面内 `autoDispose` / 全局共享
+ *   是**同一个类型**的两种寿命）、React Query `useQuery`（本地与缓存共用一份机制）。
+ *   **不是**"页面一套、Store 一套"。
  *
  * ## 它替掉了什么（`FutureBuilder` 为什么会是错的解）
  *
@@ -37,19 +55,6 @@ use Drift\Widget\State;
  *   合法地 `cancel()`（`Future` 的注释说"取消是调用方的决定"，那个调用方就是这里）。
  *   `FutureBuilder` 不敢取消，因为传进来的 Future 可能被别人共享。
  *
- * ## 为什么要住在 `State` 里（而不是做成 Widget / Store）
- *
- * ① **生命周期对齐**：命令随页面生灭，`dispose()` 一次就停掉在途任务。
- *   做成 Widget 就要再发明一套"控件卸载 ⇒ 谁去取消"；做成 Store 就要回答
- *   "什么时候清缓存" —— 而这两个问题本仓都已经有答案（`State` / `Subject`）。
- * ② **通知走既有设施**：值一变就 `State::markDirty()`，与 `Cell` 同一条路
- *   ⇒ **UI 侧不需要任何新控件**（`FutureBuilder` 因此没有存在理由）。
- * ③ **跨页共享的数据本来就该住 Store**（§11.5），那种场景用 `Subject` +
- *    `SubjectBuilder`，不是给命令再加一套通知。
- *
- * ★ 构造收 `State` 是**故意的**：标脏不是可选项，把它钉进构造参数 ⇒
- *   "造了命令但没人会重建"这个写法不存在。
- *
  * ## 与成熟 GUI 的对照
  *
  * | 本类 | 对应物 |
@@ -62,16 +67,18 @@ use Drift\Widget\State;
  *
  * ## 不做的事（诚实边界）
  *
- * - **超时**：需要计时端口，而 `Async` 层只认 `Errors`（依赖方向）⇒ 计时端口
- *   属于 `App`（`TimerHost` 在那里）。要超时就让任务侧自己管（`ProcessTaskHost`
- *   的 worker 超时是后端职责），或将来把端口显式注入进来。**不做半个**。
- * - **自动重试 N 次**：重试策略是业务决定（哪些错误值得重试），框架默认重试
- *   会把"幂等性假设"藏进基础设施。给 `retry()`，次数留给调用方。
- * - **缓存 / 跨页共享**：见上面 ③。
+ * - **超时**：需要"到点叫醒我一帧"的计时端口。`State` 层放行 `Platform`，但目前
+ *   **没有一处** `State`/`Widget` 层代码用它（那条边没人走、也没人审）⇒ 不抢这个
+ *   第一次。更要紧的是：客户端超时**停不掉 worker**（未来的 Future 已取消，进程还
+ *   在跑）⇒ 真正的落点是 `TaskHost` 的 per-job 超时（后端能真杀进程）。**不做半个**。
+ * - **自动重试 N 次**：重试策略是业务决定（哪些错误值得重试），框架默认重试会把
+ *   "幂等性假设"藏进基础设施。给 `retry()`，次数留给调用方。
+ * - **缓存**：缓存键策略（`staleTime` / 失效）是 React Query 那一层的课题；
+ *   本类只保证"最后一次 `run()` 的结果"。要缓存就在 `$task` 闭包里做。
  *
  * @api
  */
-final class AsyncCommand
+final class AsyncCommand extends Subject
 {
     /**
      * @var \Closure(mixed): Future 组合根给的"怎么发起一次请求"
@@ -81,9 +88,6 @@ final class AsyncCommand
      *   （`AsyncValue::fold()` 的注释有完整案例）。
      */
     private \Closure $task;
-
-    /** 值的宿主：值一变就标它的脏 */
-    private State $owner;
 
     private AsyncValue $value;
 
@@ -103,17 +107,16 @@ final class AsyncCommand
      *
      * @api
      */
-    public static function make(State $owner, \Closure $task): self
+    public static function make(\Closure $task): self
     {
-        return new self($owner, $task);
+        return new self($task);
     }
 
     /**
      * @param \Closure(mixed): Future $task
      */
-    private function __construct(State $owner, \Closure $task)
+    private function __construct(\Closure $task)
     {
-        $this->owner = $owner;
         $this->task = $task;
         $this->value = AsyncValue::idle();
     }
@@ -200,10 +203,13 @@ final class AsyncCommand
     }
 
     /**
-     * 页面卸载：停掉在途任务，此后所有结算不再落地。
+     * 停掉在途任务，此后所有结算不再落地。
      *
-     * ★ 与 `dispose()` 同名不是巧合 —— 它是 `State::dispose()` 那一半：
-     *   页面走了，worker 不该白跑满 1.2s（翻十页留十个空转进程）。
+     * ★ 页面侧**不需要**手写这一句：`State::asyncCommand()` 造的命令由框架在
+     *   `unmount()` 时统一 `dispose()`（与 `dropSubscriptions()` 同一个理由 ——
+     *   `dispose()` 可覆写，忘了 `parent::dispose()` 正是 A4 列的失败模式，
+     *   兜底只能放框架侧）。
+     *   Store 侧的长命命令（应用级）由应用自己在收摊时调。
      *
      * @api
      */
@@ -214,7 +220,7 @@ final class AsyncCommand
     }
 
     /**
-     * 作废旧请求：真的 `cancel()`（代号 +1 那一步**没有**，理由见 `land()`）。
+     * 作废旧请求：真的 `cancel()`。
      *
      * ★★ 为什么敢只靠 `cancel()` 挡迟到结果：`Future::resolve()` / `reject()`
      *   的第一句就是 `if ($this->state !== self::PENDING || $this->cancelled)
@@ -236,9 +242,6 @@ final class AsyncCommand
         }
     }
 
-    /**
-     * @param mixed $arg
-     */
     private function start(mixed $arg): void
     {
         $this->abandon();
@@ -271,22 +274,15 @@ final class AsyncCommand
     }
 
     /**
-     * 换值 + 标脏。
+     * 换值 + 广播（`Subject::notifyChanged()`）。
      *
-     * ★★ **宿主不在树上就不标脏**：卸载之后迟到的结算若还 `markDirty()`，
-     *   那个脏永远没人消费 ⇒ `State::$pendingDirty` 漂移（每帧多扫一遍，
-     *   **不报错**，是 `State` 注释里点名的失败形态）。这里先问一句挂载状态，
-     *   于是"`dispose()` 忘了调"从"静默的性能退化"降级成"静默丢弃结果"。
+     * ★ 宿主是谁、收到之后干什么（标脏 / 转发 / 重算派生值）**一概不在这里决定** ——
+     *   那是订阅者的事。上一版在这里 `markDirty()`，于是命令被钉死在"只能服务
+     *   某一个页面"，跨页共享那条路就只能把状态机再手写一遍。
      */
     private function emit(AsyncValue $next): void
     {
         $this->value = $next;
-
-        $element = $this->owner->element();
-        if ($element === null || !$element->isMounted()) {
-            return;
-        }
-
-        $this->owner->markDirty();
+        $this->notifyChanged();
     }
 }

@@ -114,7 +114,8 @@ final class AsyncCommandRootState extends State
 
     public function initState(): void
     {
-        $this->command = AsyncCommand::make($this, $this->task);
+        // ★ 走 `State::asyncCommand()`（页面侧唯一入口）：订阅 + 卸载时自动停。
+        $this->command = $this->asyncCommand($this->task);
     }
 
     public function command(): AsyncCommand

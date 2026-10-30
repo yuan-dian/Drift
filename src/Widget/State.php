@@ -6,6 +6,7 @@ namespace Drift\Widget;
 use Drift\Commands\CommandArg;
 use Drift\Errors;
 use Drift\Layout\RenderBox;
+use Drift\State\AsyncCommand;
 use Drift\State\Cell;
 use Drift\State\Subject;
 use Drift\State\Subscription;
@@ -91,6 +92,9 @@ abstract class State
 
     /** @var list<Subscription> 订阅袋（§11.3 RT-1） */
     private array $bag = [];
+
+    /** @var list<AsyncCommand> 本 State 持有的命令（卸载时统一停，见 `dropCommands()`） */
+    private array $commands = [];
 
     /** @internal A4 守卫：只有 `initState()` 期间允许 `watch()` */
     private bool $initializing = false;
@@ -263,6 +267,49 @@ abstract class State
     }
 
     /**
+     * 命令创建 + 绑定（与 `cell()` 同一条路，是**页面侧唯一**的造命令入口）。
+     *
+     * ```php
+     * public function initState(): void
+     * {
+     *     $this->rows = $this->asyncCommand($this->fetchRows);   // 造 + 订阅
+     *     $this->rows->run(1);
+     * }
+     * ```
+     *
+     * ★ **必须在 `initState()` 里调**：内部走 `watch()`，而订阅只允许在那里
+     *   （§11.3 RT-1 / A4：build 期订阅会让订阅数随重建次数增长）。
+     *
+     * ★★ **生命周期由框架收，不由页面收**。上一版要页面自己写
+     *   `dispose() { $this->rows->dispose(); }` —— 而 `dispose()` 是**可覆写**的，
+     *   "忘了 `parent::dispose()`"正是 A4 点名的失败模式；`Subscription` 的注释
+     *   把这条原则写得很清楚（"把兜底放在用户侧就是文档承诺了、机制守不住"）。
+     *   命令是同一类资源 ⇒ 同样由 {@see self::dropCommands()} 在 `unmount()` 时
+     *   统一停掉。于是"转圈中离开页面 ⇒ worker 白跑满 1.2s"不需要谁记得防。
+     *
+     * ★ 这里**没有**"宿主还在树上吗"那句守卫：卸载时命令已经被 `dispose()`，
+     *   迟到的结算根本到不了这个回调（上一版靠那句守卫兜底，是因为当时命令的
+     *   生死归页面管）。留一个不可达的分支比不留更糟 —— 它没有测试能消费，
+     *   读者却要替它想象一个场景（本仓纪律：未消费的分支 = 未实现）。
+     *
+     * @param \Closure(mixed): \Drift\Async\Future $task 组合根接线："怎么发起一次请求"
+     *
+     * @api
+     */
+    public function asyncCommand(\Closure $task): AsyncCommand
+    {
+        $command = AsyncCommand::make($task);
+
+        $this->watch($command, function (): void {
+            $this->markDirty();
+        });
+
+        $this->commands[] = $command;
+
+        return $command;
+    }
+
+    /**
      * 订阅一个 `Subject`，并记进订阅袋（§11.3 RT-1）。
      *
      * @param callable(): void $handler 只在 `initState()` 期间允许
@@ -296,6 +343,23 @@ abstract class State
             $subscription->cancel();
         }
         $this->bag = [];
+    }
+
+    /**
+     * 停掉 {@see self::asyncCommand()} 造出来的全部命令（**框架侧兜底**）。
+     *
+     * ★ 与 `dropSubscriptions()` 同一个理由、同一条路：命令持有在途的 `Future`，
+     *   而"页面走了还在跑"的代价是 worker 空转 + 迟到的结算去标一个没人消费的脏。
+     *   `dispose()` 可覆写 ⇒ 兜底只能放框架侧。
+     *
+     * @internal 由 `StatefulElement::unmount()` 调
+     */
+    public function dropCommands(): void
+    {
+        foreach ($this->commands as $command) {
+            $command->dispose();
+        }
+        $this->commands = [];
     }
 
     /** @internal `StatefulElement` 挂载时调；把"只准 initState 订阅"收在一处 */

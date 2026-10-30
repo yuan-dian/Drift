@@ -218,6 +218,30 @@ final class AsyncValue
         return $arm($this);
     }
 
+    /**
+     * 四态的名字（`'idle'` / `'loading'` / `'data'` / `'error'`）—— **只给诊断**。
+     *
+     * ★ 存在的理由：日志 / 断言 / `Errors.log` 里要说"当时是哪一态"，而除了
+     *   写一个四分支三元之外没有别的写法 —— 那个三元在每个需要打日志的地方
+     *   各写一遍，比一个方法更容易写错。
+     * ★★ **不要拿它做分支**（`if ($v->stateName() === 'data')`）：那是把
+     *   "编译期/抛错期能查的穷尽性"换成**字符串比较**，写错一个字母不报错。
+     *   界面画法一律走 {@see self::fold()}。
+     *
+     * @api
+     */
+    public function stateName(): string
+    {
+        if ($this->state === self::IDLE) {
+            return 'idle';
+        }
+        if ($this->state === self::LOADING) {
+            return 'loading';
+        }
+
+        return $this->state === self::DATA ? 'data' : 'error';
+    }
+
     /** `error` 态的消息（其余三态是 `''`） */
     public function message(): string
     {

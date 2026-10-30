@@ -36,13 +36,17 @@ use Drift\Widget\Widget;
  *   ② 请求的整个生命周期由 `AsyncCommand` 收口（发起 / 去重 / 取消 / 重试）；
  *   ③ 数据到达在**帧内**（`drain` 在 `settle` 之前）⇒ `setState` 同帧生效，不空一帧。
  *
- * ## 页面的异步簿记只有三行
+ * ## 页面的异步簿记只有两行
  *
  * ```php
- * $this->rows = AsyncCommand::make($this, $this->fetchRows);  // initState：造
- * $this->rows->run($page);                                    // 发起（翻页 / 重试）
- * $this->rows->value()                                        // build：读四态
+ * $this->rows = $this->asyncCommand($this->fetchRows);   // initState：造 + 绑定
+ * $this->rows->run($page);                               // 发起
+ * $this->rows->value()                                   // build：读四态
  * ```
+ *
+ * ★ **连 `dispose()` 都不用写**：`State::asyncCommand()` 造的命令由框架在
+ *   `unmount()` 时统一停掉（与订阅袋同一条兜底）—— 于是"转圈中离开页面 ⇒
+ *   worker 白跑满 1.2s"不需要谁记得防。
  *
  * 之前（用 `FutureBuilder`）同一件事要写：一个 `$future` 字段、一个"换 Future
  * 触发重订阅"的提交点、一层 `FutureBuilder::make(...)` 包装、一段"同页 / 在途就
@@ -98,9 +102,8 @@ final class AsyncTablePageState extends State
     /**
      * 取数命令（**唯一的异步簿记**）。
      *
-     * ★ 构造收 `$this`（State）是故意的：命令要标脏的就是本页面，而"造了命令
-     *   但没人会重建"这种写法因此不存在（见 `AsyncCommand` 的类注释）。
-     * ★ 命令住在 `State` 里 ⇒ 生命周期与页面一致 ⇒ `dispose()` 一次就停掉在途任务。
+     * ★ 由 `State::asyncCommand()` 造 ⇒ 已经订阅好、且卸载时会被框架停掉
+     *   （见该方法的注释；页面不写 `dispose()`）。
      */
     private AsyncCommand $rows;
 
@@ -122,22 +125,8 @@ final class AsyncTablePageState extends State
      */
     public function initState(): void
     {
-        $this->rows = AsyncCommand::make($this, $this->fetchRows);
+        $this->rows = $this->asyncCommand($this->fetchRows);
         $this->rows->run(1);
-    }
-
-    /**
-     * 离开页面 ⇒ **停掉在途请求**。
-     *
-     * ★ 这一句就是"翻十页留十个空转 worker"的反面：命令是那条 `Future` 的唯一
-     *   持有者，所以它敢 `cancel()`（裸 `FutureBuilder` 不敢 —— 传进来的 Future
-     *   可能被别人共享）。
-     */
-    public function dispose(): void
-    {
-        $this->rows->dispose();
-
-        parent::dispose();
     }
 
     public function build(BuildContext $ctx): Widget
