@@ -33,7 +33,6 @@ final class WindowFrameTest extends SmokeTestCase
         $resizeApp->attach($resizeSurface, BoxConstraints::loose(new Size(300.0, 200.0)));
         $resizeApp->frame(16.0, BoxConstraints::loose(new Size(300.0, 200.0)));
         $resizeFramesBefore = $resizeSurface->frames;
-        $resizeTsBefore = $resizeSurface->lastTimestamp;
         $resizeApp->repaintForResize(BoxConstraints::tight(new Size(420.0, 260.0)));
         check(
             'Resize · repaintForResize 按新约束重排（根盒宽 = 420，不是旧的 300）',
@@ -44,7 +43,11 @@ final class WindowFrameTest extends SmokeTestCase
             'Resize · repaintForResize 只跑一帧、时间戳复用上一帧（不自己读时钟）',
             $resizeSurface->frames === $resizeFramesBefore + 1
                 && $resizeSurface->ends === $resizeFramesBefore + 1
-                && $resizeSurface->lastTimestamp === $resizeTsBefore,
+                // ★ 比较对象从"surface 的上一个时间戳"改成 `Application::lastTimestampMs()`
+                //   （2026-10-30，N1）：surface 的 `lastTimestamp` 只在**真画**时才更新，
+                //   而静态帧现在会整段跳过 paint ⇒ 它可能停在更早的值上。判据的**意图**
+                //   是"用的是 Application 给的上一帧时间戳，不是环境时钟"，那就直接比它。
+                && $resizeSurface->lastTimestamp === $resizeApp->lastTimestampMs(),
             'frames=' . $resizeSurface->frames . ' ends=' . $resizeSurface->ends
                 . ' ts=' . var_export($resizeSurface->lastTimestamp, true)
         );

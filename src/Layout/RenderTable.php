@@ -153,8 +153,10 @@ final class RenderTable extends RenderBox implements ScrollBarHost
      * ★★ **不标重排**（2026-10-27 第二版）：偏移只改子盒 `offset`（表头吃横向、
      *   行区吃两向），不改任何盒的 `size` ⇒ 由 `applyScrollOffsets()` 就地应用。
      *   早先借 `markNeedsLayout()` 让偏移生效，代价是每滚一格 `Frame` 重排
-     *   **整棵树**；而 paint 无条件跑且读的就是子盒 offset ⇒ 不重排也不会
-     *   "画面停在旧位置"。
+     *   **整棵树**；paint 读的就是子盒 offset ⇒ 不重排也不会"画面停在旧位置"。
+     * ★★ **重绘由 `setOffset()` 自己标**（2026-10-30，N1：paint 不再是无条件跑）。
+     *   这条路径因此**不需要**额外汇总 —— 也正因为如此，"滚动还画不画"必须由
+     *   测试守（`ScrollTest` 里那条"滚动帧必须真画"）。
      */
     public function setScrollOffset(Axis $axis, float $value): float
     {
@@ -249,10 +251,15 @@ final class RenderTable extends RenderBox implements ScrollBarHost
         $box->setRepaintBoundary(true);
     }
 
-    /** @internal 淡出动画每帧推值（不重建、不重排） */
+    /** @internal 淡出动画每帧推值（不重建、不重排；**但必须标重绘**） */
     public function setBarOpacity(float $value): void
     {
+        if ($this->barOpacity === $value) {
+            return;
+        }
+
         $this->barOpacity = $value;
+        self::markNeedsPaint();   // 同 `RenderScrollView::setBarOpacity()`（N1）
     }
 
     /**

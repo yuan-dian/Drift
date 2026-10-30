@@ -11,6 +11,8 @@ use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Size;
+use Drift\Widget\Column;
+use Drift\Widget\Text;
 
 /**
  * Application：组合根（§4.5 / §11.4.3 全链）。
@@ -42,10 +44,28 @@ final class ApplicationTest extends SmokeTestCase
         check('Application · attach 即跑首帧（表面收到 beginFrame）', $surface3->frames === 1);
         check('Application · title() 由应用给', $app->title() === '冒烟应用');
 
-        // 平台驱动后续帧：每调一次 surface 多一帧
+        // ★★ 平台驱动后续帧（N1 之后语义变了，2026-10-30）：
+        //   **"跑一帧"不再等于"画一帧"**。静态树连跑两帧 ⇒ 帧循环照跑（泵、动画、
+        //   语义推送都在），但 `paint` + `present` 整段跳过 —— 这正是泵帧分离的
+        //   目的（空闲窗口不再每秒 60 次整帧 blit）。所以这里断的是"不空转重绘"，
+        //   而"变了就会画"由下一条守着。
         $app->frame(16.0, BoxConstraints::tight(new Size(320.0, 240.0)));
         $app->frame(32.0, BoxConstraints::tight(new Size(320.0, 240.0)));
-        check('Application · frame() 由平台驱动（每调一次一帧）', $surface3->frames === 3 && $surface3->ends === 3);
+        check(
+            'Application · 静态树反复驱动 frame() 不空转重绘（首帧之后 paint 全跳）',
+            $surface3->frames === 1 && $surface3->ends === 1,
+            "frames={$surface3->frames} ends={$surface3->ends}",
+        );
+
+        // ★ 对照组：门控只跳"没事发生"的帧。帧外直调 `update()` 换盒 ⇒ settle +
+        //   layout 必然跑 ⇒ 这一帧必须画出来。没有这条，上面那条用"永远不画"也能绿。
+        $app->root()?->update(Column::make()->children([Text::make('第三行')]));
+        $app->frame(48.0, BoxConstraints::tight(new Size(320.0, 240.0)));
+        check(
+            'Application · 树变了 ⇒ 下一帧立刻重画（门控不漏）',
+            $surface3->frames === 2 && $surface3->ends === 2,
+            "frames={$surface3->frames} ends={$surface3->ends}",
+        );
 
         $this->flushChecks();
     }

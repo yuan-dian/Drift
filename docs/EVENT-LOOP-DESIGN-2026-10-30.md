@@ -481,7 +481,11 @@ bool drift_win_wake(int64_t hwnd) {
 然后 `waitEvents()` 用 `MsgWaitForMultipleObjectsEx(0, NULL, timeout, QS_ALLINPUT, ...)`
 —— 注意是 **0 个 handle**，因为唤醒走消息，不走 handle。这正是 Flutter/WPF 那一派的形状。
 
-### 3.8 前置：泵帧分离
+### 3.8 前置：泵帧分离（**已于 2026-10-30 落地**）
+
+> 本节初稿写的方案是「加一个 `needsPaint` 脏位，来源 `Subject::notifyChanged()`」。
+> **落地前分析推翻了它** —— 见下面的「四条静默通道」，实现改成了另一条。保留这段
+> 推翻过程，因为它比结论更有用。
 
 **顺序不可反**（[`EVENT-LOOP-2026-10-30.md`](EVENT-LOOP-2026-10-30.md) §7.1 已裁）。
 `Frame::run` 三段跳过判据不对称：
@@ -492,17 +496,75 @@ bool drift_win_wake(int64_t hwnd) {
 | `layout` | ✅ `didRebuild` / `boxEpoch` / `constraintsChanged` |
 | **`paint` + `present`** | ❌ **无条件** |
 
-补法是给 `Frame` 加一个脏位：
+#### 为什么不能用 `notifyChanged()`
+
+`markDirty()` 覆盖的只是**重建**那条路。全仓有一整族通道**刻意**绕过重建，
+而且它们全都写着"因为 paint 无条件跑，所以不重排也不会画面停住"：
+
+| 通道 | 改的是什么 | 为什么不重建 | 靠什么上屏（改前） |
+|---|---|---|---|
+| `setCompose()` | 合成 alpha / 平移 | 动画每帧写，重建太贵（`05` §10 #9） | 无条件 paint |
+| `setScrollOffset()` | 子盒 `offset` | 重排整棵树 3.65ms（`RenderScrollView` 2026-10-27） | 无条件 paint |
+| `setBarOpacity()` | 滚动条淡出 | 同上 | 无条件 paint |
+| `tickAnimations()` | hover 过渡进度 | 动画住**盒**上，没有 `State` | 无条件 paint |
+| `setBase()` | 浮层落点 | `placeOverlays()` 在 `Frame::run` **之外**跑 | 无条件 paint |
+
+再加一条**根本不在树里**的：焦点环（`afterPaint` 回调）与"面板落后一帧"
+（`panelsLagBehind()`）—— `wantsFrame()` 的第六 / 第七判据专门为它们存在，
+都是"不经过 `setState` 也要画"。
+
+⇒ 把门控建在 `markDirty()` 上，**这六条同时静默失效**：滚动不动、动画静止、
+滚动条不淡出、hover 无过渡、浮层不跟锚点、焦点环消失。全部不报错。
+
+#### 落地方案：脏位住渲染树，写点收口在 setter
 
 ```php
-// Frame::run 里，paint 之前
-if (!$this->needsPaint && !$this->dirty) {
-    return;                        // 什么都没变，不画
+// RenderObject —— 与 RenderBox::$layoutEpoch 同构：两个序号、两个含义、互不代偿
+private static int $paintEpoch = 0;
+public static function markNeedsPaint(): void { self::$paintEpoch++; }
+public static function paintEpoch(): int { return self::$paintEpoch; }
+```
+
+写点只有五个（都在**改字段的那一行旁边**，不依赖上游记得调）：
+
+`RenderBox::setOffset()` / `setBase()` / `applyCompose()`、`RenderScrollView::setBarOpacity()` /
+`RenderTable::setBarOpacity()`、`RenderObject::tickAnimations()`。全部**先比值再标**
+（`setCompose` 的 `applyCompose()` 本来就有早退）。
+
+`Frame::run` 的判据四条，每条挡一类静默：
+
+```php
+$paintEpoch = RenderObject::paintEpoch();   // 必须在 layout 之后读（布局期 setOffset 会推它）
+if (!$layoutRan && $paintEpoch === $this->lastPaintEpoch && !$paintRequested) {
+    return false;
 }
 ```
 
-`needsPaint` 的来源就是现有的 `Subject::notifyChanged()`（它已经会标脏），
-加上 `ControlFlow::Poll`（动画中强制画）。
+| # | 判据 | 挡的是什么 |
+|---|---|---|
+| ① | `$layoutRan` | 几何变了没重画；顺带覆盖首帧（`!laidOut` ⇒ `constraintsChanged()` 必真） |
+| ② | `$paintEpoch` 变 | 上面那五条"不重建不重排"的通道 |
+| ③ | `$paintRequested` | 焦点环 / 面板落后 —— **根本不经过树**，只能由 `Application` 说进来 |
+| ④ | 初值 `-1` | 首帧（防御性：① 已覆盖，但读序号这条不依赖 ① 将来不变） |
+
+★ **`paint` 抛异常时不记账**（`$painted === false` ⇒ 序号不动）⇒ 下一帧还会画。
+失败后把序号记成"已画" = 从此静默停在残缺画面上，正是 G2 明令禁止的半静默。
+★ `Application` 侧配套：`$paintedFocus` **只在真画之后**更新，且记的是"跑帧前那个环目标"
+（跑帧期间焦点又变了 ⇒ 新目标还没画 ⇒ 判据保持为真 ⇒ 下一帧自然还请求）。
+
+#### 收益实测
+
+`php tools/frame-paint-probe.php`（320×240，静态树）：
+
+| 场景 | paint | skip |
+|---|---|---|
+| 空闲 60 帧 | **0** | 60 |
+| 换根后 1 帧 | 1 | 0 |
+| 动画 10 帧（`setCompose`） | 10 | 0 |
+| 同值反复写 10 帧 | **0** | 10 |
+
+即：**空闲窗口的整帧 blit 从 64 次/秒降到 0 次**（493MB/s → 0）。后三组是对照组 ——
+没有它们，"永远不画"也能让第一组好看。
 
 ★ **为什么必须先做它**：三态之后 `Wait` 会让唤醒变稀疏，但**动画期仍然是
 `Poll`（每帧都跑）**。如果在 paint 门控之前就把等待改成 `WaitUntil(4ms)`，
@@ -721,7 +783,7 @@ git 上已经提交了」*。
 |---|---|---|---|
 | ① | `Platform::pump(): bool` | `waitEvents(float): WakeReason` + `pumpEvents(): int` | 把「等」「派发」「是否退出」三件事拆开。`pump()` 无法表达「等 4ms」和「被唤醒」的区别，这是所有病的根 |
 | ② | `TaskHost::submit(): Job`，`Job` 只能挂一个 `onDone` | `submit(): Future`（`Job implements Future`） | 「同时请求多个接口」在回调模型里**不可组合**（§3.8）。这是能力缺口，不是风格问题 |
-| ③ | `Frame::run` 的 `paint` 无条件 | 加 `needsPaint` 门控 | 22% CPU 空转 + 493MB/s 无效 blit（[`EVENT-LOOP-2026-10-30.md`](EVENT-LOOP-2026-10-30.md) §2.1） |
+| ③ | `Frame::run` 的 `paint` 无条件 | 加**三重判据**（`layoutRan` / `paintEpoch` / `paintRequested`） | 22% CPU 空转 + 493MB/s 无效 blit（[`EVENT-LOOP-2026-10-30.md`](EVENT-LOOP-2026-10-30.md) §2.1）；**已落地**，见 §3.8 |
 | ④ | `Application` 一个实例管一个窗口 | 拆 `AppScope`（进程一份）/ `WindowScope`（每窗一份） | 多窗口前置；顺带解掉 metrics 重解析、taskHost 重复建池等四条浪费 |
 
 ### 7.2 要留的
@@ -757,7 +819,7 @@ git 上已经提交了」*。
 
 | 台阶 | 内容 | 碰什么 | 真机 | 收益 |
 |---|---|---|---|---|
-| **N1** | **泵帧分离**：`Frame::run` 的 paint 加 `needsPaint` | `src/App/Frame.php` | ❌ | 22% → 近 0；493MB/s blit 消失 |
+| **N1** ✅ | **泵帧分离**：`paint` 三重判据 + `RenderObject::paintEpoch` | `src/App/Frame.php` + `src/Layout/` 五个 setter | ❌ | **已落地**：空闲 60 帧 paint=0（原 60）；493MB/s blit 归零 |
 | **N2** | **`waitEvents` + `ControlFlow`**：拆 `pump()`，加 `nextTimeoutMs()` | `Platform` + `Win32Platform` + `Application` | ❌（`waitEvents` 可用假平台测） | 换掉退化轮询；为唤醒铺路 |
 | **N3** | **`Future` + `all/race` + `IoDriver`（A1）** | `src/Async/` 新目录 + `TaskHost` | ❌ | 「多接口并发」可写；写法对齐 Flutter/.NET |
 | **N4** | **`Inbox` + 唤醒通道（B4）** | C++ 壳 + 桥 + `Platform` | ✅ 必须 | 零轮询；后台真能打断等待 |
@@ -776,11 +838,17 @@ git 上已经提交了」*。
 
 每台阶的验收，可直接写进 smoke / phpunit。
 
-### 9.1 N1（泵帧分离）
+### 9.1 N1（泵帧分离）—— **已验**
 
-- [ ] 同一场景下 `paintCount` 从「每帧 +1」降到「只在脏时 +1」
-- [ ] **首帧仍逐像素相同**（既有 29 页 golden 一字节不变）
-- [ ] 有 IO watcher 且无数据时，1 秒内 `paintCount` == 0
+- [x] 同一场景下 paint 从「每帧 +1」降到「只在脏时 +1」
+      （`tools/frame-paint-probe.php`：空闲 60 帧 → **paint=0 / skip=60**）
+- [x] **首帧仍逐像素相同**（golden 29 页 + 整页 8 项 gate 一字节不变）
+- [x] 静态树无变化时，`Frame::paintSkipCount()` 连续 +N 而 `RenderBox::paintCount()` 不动
+- [x] 五条"不重建不重排"通道各自有"必须画"的断言
+      （`Feature/App/FrameTest` 三条 + `Feature/Table/ScrollTest` 一条 + `Unit/Frame/ComposeSkipLayoutTest` 一条）
+- [x] **变异验证**：删掉 `setOffset()` / `tickAnimations()` 里的 `markNeedsPaint()`
+      ⇒ 4 条测试红（其中 2 条是既有测试：`LayerCacheTest`、`ScrollViewScrollTest`
+      直接报"画面没变"）
 
 ### 9.2 N2（`waitEvents` + `ControlFlow`）
 
@@ -828,14 +896,36 @@ git 上已经提交了」*。
 
 ## 11. 修订记录
 
-- **2026-10-30 初稿**。基于：
-  - 七个框架的源码/文档调研（§1）；
-  - 五个探针实测（§2）：把
-    [`ASYNC-2026-10-30.md`](ASYNC-2026-10-30.md) 里两条**标着「未验」的前提**
-    （「泵能否写成协程」§1.2、「协程能否调 tpc 类」§2.3）变成已验，
-    并补上「协程上下文里 `select(0)` 不抛」这另一半；
-    另发现一条工程约束（P5：`curl_multi` 与 swoole 同产物退出崩）；
-  - 用户补充的两条信息：**C++ 线程方案**（§5）、**Swoole 线程已在 git**（§6）。
+### 2026-10-30 · N1 落地，§3.8 的方案被自己推翻
+
+初稿 §3.8 写的是「加 `needsPaint`，来源 `Subject::notifyChanged()`」。**动手前先数依赖**，
+发现全仓有六条通道**刻意**绕过重建（`setCompose` / `setScrollOffset` / `setBarOpacity` /
+`tickAnimations` / `setBase` / 焦点环+面板落后），而它们全部**显式依赖"paint 无条件跑"**
+（代码注释里就写着这句话）。按初稿做，六条同时静默失效。
+
+⇒ 改成：脏位住**渲染树**（`RenderObject::paintEpoch`，与 `layoutEpoch` 同构），
+写点收口在**改字段的那一行旁边**（五个 setter），再加一条由 `Application` 说进来的
+`$paintRequested`（覆盖树外的焦点环 / 面板落后）。
+
+★ 教训：**"加一个脏位"听起来是加法，其实是把一条隐藏耦合显式化。**
+动手前该做的不是设计脏位，是**列出所有"没有脏位也正确"的路径** —— 那些正是脏位会打断的。
+
+★ 由 [`MULTI-WINDOW-2026-10-30.md`](MULTI-WINDOW-2026-10-30.md) 带来的一个已知代价：
+`$paintEpoch` 与 `markedCount` / `boxEpoch` / `structureVersion` 一样是**进程级**的 ⇒
+多窗口下 A 窗滚动会让空闲的 B 窗也重画一帧（保守多画，不会少画）。
+按窗口分片要先有窗口身份（该册 M0/M1）⇒ 记入 M2 的债，不在这里提前做。
+
+### 2026-10-30 · 初稿
+
+基于：
+
+- 七个框架的源码/文档调研（§1）；
+- 五个探针实测（§2）：把
+  [`ASYNC-2026-10-30.md`](ASYNC-2026-10-30.md) 里两条**标着「未验」的前提**
+  （「泵能否写成协程」§1.2、「协程能否调 tpc 类」§2.3）变成已验，
+  并补上「协程上下文里 `select(0)` 不抛」这另一半；
+  另发现一条工程约束（P5：`curl_multi` 与 swoole 同产物退出崩）；
+- 用户补充的两条信息：**C++ 线程方案**（§5）、**Swoole 线程已在 git**（§6）。
 
 ★ 一条方法教训，值得单独记：**前两轮评估错在「只看了 Windows 一种形态就下结论」**。
 这一轮先做七框架横向对照，才看出「等 fd 派 / 不等 fd 派」这个真正的分水岭 ——

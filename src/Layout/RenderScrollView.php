@@ -99,8 +99,13 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
      * ★★ **不标重排**（2026-10-27 第二版）：偏移只改子盒 `offset`，不改任何盒的
      *   `size` ⇒ 由 `applyScrollOffsets()` 就地应用即可。早先借
      *   `markNeedsLayout()` 让偏移生效，代价是 `Frame` 每滚一格重排**整棵树**
-     *   （实测滚动帧 `layout` 3.65ms，占一半）。paint 无条件跑且读的就是子盒
-     *   offset ⇒ 不重排也不会"画面停在旧位置"。
+     *   （实测滚动帧 `layout` 3.65ms，占一半）。paint 读的就是子盒 offset ⇒
+     *   不重排也不会"画面停在旧位置"。
+     * ★★ **但要标重绘**（2026-10-30，N1）：上半句原先还依赖"paint 无条件跑"，
+     *   而 paint 现在有门控（`RenderObject::paintEpoch`）⇒ 只靠"paint 会读它"
+     *   不够，得有人告诉 `Frame` 去画。落点在 `setOffset()` 里（偏移真变了才标），
+     *   所以**这条路径不需要额外的标脏调用** —— 加断言的地方在
+     *   `tests/Feature/Table/ScrollTest.php`（滚动帧必须真画）。
      */
     public function setScrollOffset(Axis $axis, float $value): float
     {
@@ -144,10 +149,18 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
         }
     }
 
-    /** @internal `ScrollBarFade` 每帧把值推过来（不重建、不重排） */
+    /** @internal `ScrollBarFade` 每帧把值推过来（不重建、不重排；**但必须标重绘**） */
     public function setBarOpacity(float $value): void
     {
+        if ($this->barOpacity === $value) {
+            return;
+        }
+
         $this->barOpacity = $value;
+
+        // ★ 2026-10-30（N1）：淡出是"不重建不重排"的通道 ⇒ settle / layout 两条
+        //   判据都拦不住 ⇒ 不标就是"滚动条该消失却一直挂着"（静默）。
+        self::markNeedsPaint();
     }
 
     /** 本视口的唯一轴（单轴视口 ⇒ `scrollAxes()` 只有一个元素） */

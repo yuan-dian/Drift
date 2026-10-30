@@ -122,6 +122,30 @@ M1 的裁决给的是**乙的最小形态**：只把"必须按窗"的三个收�
 - **`theme()` 每实例一份** —— 切主题要**逐个通知** N 个实例，漏一个就是"一半深色一半浅色"。
 - **命令表每实例一份** —— "退出应用"这类全局命令无处安放。
 
+### 4.2b 第三种作用域：**本该窗口级、现在住在 static**
+
+`Application` 的实例字段之外，还有一族**全局静态计数器**，它们决定"这一帧要不要跑哪一段"：
+
+| 计数器 | 谁在读 | 现在的作用域 | 应该的作用域 |
+|---|---|---|---|
+| `State::$markedCount` | `Frame::needsSettle()` | 进程 | 窗口 |
+| `State::$boxEpoch`（转发 `RenderBox::$layoutEpoch`） | `Frame` layout 判据 | 进程 | 窗口 |
+| `Element::$structureVersion` | `Frame::needsSettle()` | 进程 | 窗口 |
+| `RenderObject::$paintEpoch` | `Frame` paint 判据 | 进程 | 窗口 |
+
+后果是**保守多画**，不会少画、不会画错：A 窗有脏 ⇒ B 窗的判据也变 ⇒ B 重排 / 重绘一帧
+（内容逐像素不变）。单窗口下零影响，所以今天看不见。
+
+★ **为什么不现在改成每窗口一份**：分片的前提是"写的时候知道自己在哪个窗口"，而
+`setState()` / `setOffset()` 发生在任意上下文（帧内、任务回调、IO 回调），拿不到窗口身份。
+强行引入"当前窗口"的隐式全局，等于用一个全局去修另一个全局。
+正确的顺序是 **M0/M1 给窗口身份 → M3 的 `map<HWND, WindowRuntime>` 让"当前窗口"成为
+调用栈上的显式参数**，那时这四个计数器才有一致的归属。
+
+★ 所以 **M2 不该动这四个计数器**（它没有窗口身份可用），只把 `AppScope` 抽出来。
+这一条记在这里，是为了让将来做 M3 的人知道：**那边有四个计数器等着搬家**，
+而不是"又发现一个新问题"。
+
 ### 4.3 所以正确的拆法是按**作用域**二分，不是按**门面**四分
 
 §7 S4 想拆的是 `WindowHost` / `OverlayHost` / `TaskHost` / `FrameDriver` 四个**门面** ——
@@ -232,6 +256,35 @@ new ShowcaseApplication($scope);   // 多窗口时 N 个实例共享同一个 $s
   `metrics()` 返回同一个对象"的断言。
 - **这一阶零真机**，是纯 PHP 重构 —— 可以完全在 gate 里验证。
 
+#### ★ 2026-10-30 修正：上面那六个成员里，有两个**不在 `Application` 上**
+
+§4.2 的表格把它们算作 `Application` 的字段，实际是**经 `Application` 转发的门面**：
+
+```php
+public function tasks(): ?TaskHost { return $this->pumps->tasks(); }   // 住在 PumpHost
+public function io(): ?IoPoller     { return $this->pumps->io(); }      // 住在 PumpHost
+```
+
+而 `PumpHost::attach()`（`PumpHost.php:102`）用的是**每窗口一份**的口径：
+
+```php
+$this->tasks = $this->host->taskHost();   // 每窗口建一次
+$this->io    = new IoPoller();            // 每窗口建一次
+```
+
+⇒ M2 要做的其实是**两个类各切一刀**，而不是只动 `Application`：
+
+| 切哪 | 剩下什么 | 切走什么 |
+|---|---|---|
+| `Application` | `$root` / `$frame` / `$focus` / `$overlay*` / `$input*` / `$textEditing` / `$pumps` | `router` / `theme` / `metrics` / `accelerators` |
+| `PumpHost` | `timers`（**窗口局部**的 id 空间）/ `sliced` | `tasks` / `io` |
+
+★ **`io` 的后果不是浪费，是错**：两个 `IoPoller` 各自 `stream_select` 同一批 fd ⇒
+同一个 socket 被 watch 两次、回调跑两次（下单付两次款那种）。`tasks` 只是多建一个池
+（浪费），`io` 是**双投递**。这两条必须在 M2 一起修，不能只做前四条。
+★ 相应的端口方向要改：`PumpHostHost` 现在有 `taskHost()` 这个口子，M2 之后它应该读
+`AppScope`（`$this->scope->tasks()`），而不是每次问 `Application`。
+
 ### M3 · 组合根 · 第二个窗口 · 测试
 
 - 组合根从"一个 (app, surface, clock)"改成 `map<HWND, WindowRuntime>`。
@@ -302,6 +355,21 @@ DPI 混用）大多**不报错**，只表现为"怪"。这类问题在本仓历�
 - 不要为多窗口提前拆 S4 的四个门面（§1 已证明它不是前置条件）
 - 不要在 M0 里顺手"改进"壳的其他部分（M0 的唯一目标是"行为不变地把全局收进表"）
 - 不要先做 A5-③ 托盘来"凑齐平台集成"（托盘零消费者，与多窗口无关）
+
+### 9.1 与事件循环册的顺序关系（2026-10-30 补）
+
+两份册子有一处**真实的交叠**，必须先说清楚，否则会做反：
+
+> `Frame` 是**每窗口一份**的（§4.2 的口径），而它读的四个计数器是**进程级**的（§4.2b）。
+
+⇒ **N1（泵帧分离）落地后，多窗口下是"保守多画"而不是"画错"** —— 可以放心先做。
+但反过来**不行**：如果先做 M3 的多窗口、而 paint 还是无条件的，那就是 **N 个窗口
+各自每秒 60 次整帧 blit**，把 N1 的收益乘 N 地浪费掉。
+
+★ 所以推荐次序没变，只是理由更硬了：
+**N1（已落地）→ M2（AppScope，零真机）→ N2/N3（等待与 Future，零真机）→ M0/M1 → M3**。
+M2 排在 N2 前面的理由：它是纯 PHP 重构、零真机，而 N2 改的是 `Platform` 接口
+（`pump()` 拆分）—— 两者不冲突，但 M2 先做能让 N2 少碰一个已经稳定的 `Application`。
 
 ---
 

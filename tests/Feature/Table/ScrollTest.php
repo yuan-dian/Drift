@@ -104,16 +104,28 @@ final class ScrollTest extends SmokeTestCase
         $layoutsBefore = RenderBox::layoutCount();
         $runsBefore = Frame::settleRunCount();
         $skipsBefore = Frame::settleSkipCount();
+        $paintsBefore = Frame::paintRunCount();
         $state?->scrollBy(40.0);
         $frame->run($el, $tight, 16.0);
         $layouts = RenderBox::layoutCount() - $layoutsBefore;
         $deltaRuns = Frame::settleRunCount() - $runsBefore;
         $deltaSkips = Frame::settleSkipCount() - $skipsBefore;
+        $deltaPaints = Frame::paintRunCount() - $paintsBefore;
 
         check(
             'Table · 滚动一帧 ⇒ 重排 0 次（Frame 跳过 layout，paint 读到新 offset）',
             $layouts === 0,
             'layouts=' . $layouts,
+        );
+        // ★★ **滚动帧必须真画**（2026-10-30，N1）：滚动走的是"不重建不重排"的
+        //   快捷通道 ⇒ settle / layout 两条判据都拦不住它。以前靠"paint 无条件跑"
+        //   兜底，现在 paint 有门控 ⇒ 全靠 `setOffset()` 标脏。这条断言是那条
+        //   依赖的**唯一守卫**：删掉 `setOffset()` 里的 `markNeedsPaint()`，
+        //   上面"0 重排"照绿、画面却停在旧位置 —— 就是这个测试存在的理由。
+        check(
+            'Table · 滚动帧必须真画（N1 门控下，滚动是"变了"的一帧）',
+            $deltaPaints === 1,
+            'paints=' . $deltaPaints,
         );
         // ★ 滚动帧什么都不变（不重建、不换盒、不增删节点）⇒ settle 整段跳过。
         //   没有这条，上面"0 重排"也可能是"判据恒真、一次没跳过"的假绿。

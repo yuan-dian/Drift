@@ -76,20 +76,24 @@ final class ComposeSkipLayoutTest extends SmokeTestCase
             \sprintf('layout=%d paint=%d', $box->layoutCalls, $box->paintCalls)
         );
 
-        // #12：纯动画帧 —— 没 rebuild、约束没变 ⇒ 跳过 layout，但 paint 照画
+        // #12：没有 rebuild、约束也没变 ⇒ 跳过 layout。
+        // ★★ 2026-10-30（N1 泵帧分离）**这条的"paint 仍执行"半边不再成立**：
+        //   什么都没动的一帧现在**整段跳过 paint + present**（否则空闲窗口每秒
+        //   60 次整帧 blit，正是 N1 要治的病）。"动了就必须画"由下一条守着 ——
+        //   两条合起来才是完整判据：**省该省的，不许省掉该画的**。
         $frame->run($element, $tight, 16.0);
         check(
-            '合成 · 纯动画帧跳过 layout、paint 仍执行（§12.2 #12）',
-            $box->layoutCalls === 1 && $box->paintCalls === 2,
+            '合成 · 无变化帧：layout 与 paint 都整段跳过（N1 后判据从"无条件画"改为"按需"）',
+            $box->layoutCalls === 1 && $box->paintCalls === 1,
             \sprintf('layout=%d paint=%d', $box->layoutCalls, $box->paintCalls)
         );
 
-        // #10：setCompose 只改合成参数，不触发 layout
+        // #10：setCompose 只改合成参数 ⇒ 不触发 layout，但**必须触发 paint**
         $box->setCompose(0.5, 3.0, 0.0);
         $frame->run($element, $tight, 32.0);
         check(
-            '合成 · setCompose 不触发 layout（§12.2 #10）',
-            $box->layoutCalls === 1 && $box->paintCalls === 3 && $box->composeOpacity() === 0.5,
+            '合成 · setCompose 不触发 layout、但必须重画（§12.2 #10 + N1）',
+            $box->layoutCalls === 1 && $box->paintCalls === 2 && $box->composeOpacity() === 0.5,
             \sprintf('layout=%d paint=%d opacity=%.3f', $box->layoutCalls, $box->paintCalls, $box->composeOpacity())
         );
 

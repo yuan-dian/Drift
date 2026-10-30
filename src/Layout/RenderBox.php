@@ -253,7 +253,10 @@ abstract class RenderBox extends RenderObject
      *   不改任何盒的 `size` ⇒ 由 `applyScrollOffsets()` 就地应用即可；
      *   借这条通道去"让偏移生效"会让 `Frame` 重排整棵树（实测滚动帧
      *   `layout` 3.65ms，占掉一半）。
-     * ★ 它**不触发绘制**：本仓每帧无条件 paint（无脏边界），所以重排完自然会画。
+     * ★ 它**不触发绘制**：重排过 ⇒ `Frame` 本帧的 `layout` 段跑过 ⇒ 必然要画
+     *   （`Frame::run` 的 paint 判据含"本帧排过"）。**不要**顺手加
+     *   `markNeedsPaint()`：那会让"换盒"同时推进两个序号，将来要按序号定位
+     *   "到底什么变了"时永远分不清。
      * @internal
      */
     public static function markNeedsLayout(): void
@@ -272,18 +275,47 @@ abstract class RenderBox extends RenderObject
         return $this->offsetY;
     }
 
+    /**
+     * 改位置 ⇒ **必须标重绘**（2026-10-30，N1）。
+     *
+     * ★★ 为什么在这里而不是在调用方：位置是**本盒的字段**，而写它的地方有十几处
+     *   （19 个容器的 `setOffset`、滚动偏移的 `applyScrollOffsets`、`Flex` 的对齐
+     *   补差……）。让每个调用方记得标脏 = 将来新增一个容器就得记得一次，漏了
+     *   就是"位置变了但画面不动"（静默）。收口在这里，纪律变成结构。
+     * ★ 布局期被大量调用（每次容器布局、每个子盒一次）：两次 float 比较 + 一次
+     *   静态自增，相比 `layout()` 本身可以忽略。而布局期标脏**无害** —— `Frame`
+     *   在同一帧内消费掉它（layout 跑过 ⇒ 本来就要画）。
+     */
     protected function setOffset(float $x, float $y): void
     {
+        if ($this->offsetX === $x && $this->offsetY === $y) {
+            return;
+        }
+
         $this->offsetX = $x;
         $this->offsetY = $y;
+
+        self::markNeedsPaint();
     }
 
-    /** 标记本盒是浮层树的根，并给它客户区落点（`Application::placeEntry()` 每帧写） */
+    /**
+     * 标记本盒是浮层树的根，并给它客户区落点（`Application::placeEntry()` 每帧写）。
+     *
+     * ★ 落点变了要**标重绘**（2026-10-30，N1）：浮层的位置是**在 `Frame::run` 之外**
+     *   算出来的（`OverlayLayout::placeOverlays()` 要锚点与客户区尺寸）⇒ 主树
+     *   既没重建也没换盒 ⇒ 不标就是"面板该跟着锚点挪、却停在原地"（静默）。
+     */
     public function setBase(float $x, float $y): void
     {
+        if ($this->hasBase && $this->baseX === $x && $this->baseY === $y) {
+            return;
+        }
+
         $this->baseX = $x;
         $this->baseY = $y;
         $this->hasBase = true;
+
+        self::markNeedsPaint();
     }
 
     public function hasBase(): bool
@@ -895,6 +927,13 @@ abstract class RenderBox extends RenderObject
         $this->composeDy = $dy;
 
         $this->invalidateEnclosingLayer();
+
+        // ★★ 同步标"下一帧必须画"（2026-10-30，N1）：`invalidateEnclosingLayer()`
+        //   只让**重绘边界重录**命令流，它不负责把新命令流**上屏**。此前上屏
+        //   靠的是"paint 无条件跑"，门控之后必须显式说一声 —— 否则现象与 2026-10-29
+        //   那个"值在滑、屏上是死的"**一模一样**，只是换了个成因（那次是缓存命中，
+        //   这次是整帧被跳过），排查起来会更难（因为缓存那层已经是对的）。
+        self::markNeedsPaint();
     }
 
     /**

@@ -837,12 +837,28 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
             $trace[] = 'settle';
         }
 
-        $frame->run($root, $constraints, $timestampMs, $this->overlayHost->overlays()->all(), function (Canvas $canvas): void {
-            $this->paintFocusRing($canvas);
-        });
+        // ★★ **本帧要不要画**（2026-10-30，N1）：`Frame` 只看树（settle / layout /
+        //   paintEpoch），**看不见应用级叠加**。这里补上它看不见的两样：
+        //   ① 焦点环目标变了还没画（第七判据的反面）；
+        //   ② 浮层锚点换了但面板内容还落后（第六判据的反面）。
+        //   ★ 取**跑帧前**的目标：paint 只可能把"跑帧前那个环"画进去；跑帧期间
+        //     焦点若又变了，那新目标此刻 **还没画** ⇒ `paintedFocus` 必须停在旧值
+        //     ⇒ 下一帧自然还请求。此前无条件写 `focusRingTarget()` 正是在这里丢帧
+        //     （settle 里 `setState` 挪了焦点 ⇒ 新目标被记成"已画"⇒ 环消失）。
+        $ringBefore = $this->focusRingTarget();
+        $paintRequested = $ringBefore !== $this->paintedFocus
+            || $this->overlayLayout->panelsLagBehind();
 
-        // 环已经落盘 ⇒ `wantsFrame()` 的第七判据从这里回落 false（有界）
-        $this->paintedFocus = $this->focusRingTarget();
+        $painted = $frame->run($root, $constraints, $timestampMs, $this->overlayHost->overlays()->all(), function (Canvas $canvas): void {
+            $this->paintFocusRing($canvas);
+        }, $paintRequested);
+
+        // 环**真的**上屏才记账 ⇒ `wantsFrame()` 的第七判据从这里回落 false（有界）。
+        // ★ 跳过 / paint 抛异常 ⇒ **不记账** ⇒ 判据仍为真 ⇒ 下一帧还会请求 —— 直到
+        //   真画出来为止。这是"有界"的唯一正确方向：不能靠"请求过一次就算数"。
+        if ($painted) {
+            $this->paintedFocus = $ringBefore;
+        }
 
         // ★ ⓹ 迟到挂载补 tick（2026-10-20 修的框架洞，2026-10-22 换成登记表）：
         //   ⓸ 在 settle **之前**跑，而页面挂载发生在 `Frame::run()` 的 settle 段 ——

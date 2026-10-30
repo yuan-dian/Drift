@@ -18,6 +18,12 @@ use Drift\Rendering\Canvas;
  * ★ Render 层**没有脏边界**（§13.3）：`relayout()` 永远全树。想要"只重排脏的
  *   那一块"，要等 M5 与脏矩形成对做 —— 单独做任一个，瓶颈只是搬到对面。
  *
+ * ★★ **但"整帧画不画"是一条独立的、更粗的开关**（2026-10-30）：脏**矩形**没做，
+ *   不代表"什么都没变就不用 blit 整块 framebuffer"。`$paintEpoch` 管的就是这条
+ *   粗开关 —— 它是**全有或全无**（整帧重绘 / 整帧跳过），不改变"画的时候永远
+ *   全量画"这条纪律。两者不冲突：脏矩形是"同一帧内只重绘一块"，`$paintEpoch`
+ *   是"这一帧根本不开始"。
+ *
  * @api
  */
 abstract class RenderObject
@@ -32,8 +38,9 @@ abstract class RenderObject
      *
      * ★ 状态由 `FocusManager::hoverTo()` 推（`App` 层只认 `acceptsHover()` 能力方法，
      *   不认具体盒类 —— I2 闸门）；怎么用是盒自己的事（`RenderButton` 叠一层状态色）。
-     * ★ **不需要脏标记**：本框架 Render 层没有脏边界（每帧全量 paint），且 hover 由
-     *   `WM_MOUSEMOVE` 驱动 —— 同一条消息的那一轮循环里 `tick()` 紧接着就重绘。
+     * ★ **不需要在这里标脏**（2026-10-30 更新）：`setHovered()` 只改"目标是几"，
+     *   真正逐帧变的 `hoverProgress()` 由 `tickAnimations()` 推进，**那里**标脏。
+     *   在这里标只能覆盖"按下/松开"那一刻，过渡中间帧仍会丢。
      */
     protected bool $hovered = false;
 
@@ -46,6 +53,66 @@ abstract class RenderObject
      *   "头一次直接跳到 1、第二次才有过渡"（那是最容易漏的一处不对称）。
      */
     private ?AnimatedValue $hoverAnim = null;
+
+    /**
+     * 渲染树**需要重绘**的绝对序号（跨整棵树，含浮层那棵第二根树）。
+     *
+     * ★★ **存在理由（2026-10-30，N1 泵帧分离）**：`Frame` 的 `settle` 与 `layout`
+     *   两段早就有跳过判据，**只有 `paint` + `present` 无条件跑** —— 于是一个
+     *   只有 IO watcher、没有任何画面变化的空转窗口，每秒仍在做 60 次整帧
+     *   重绘 + 493MB/s 的 blit（[`EVENT-LOOP-2026-10-30.md`](../docs/EVENT-LOOP-2026-10-30.md) §2.1）。
+     *   给 paint 加门控的前提是：**"画面变了"这件事必须有人说得出口**。
+     *
+     * ★★ 为什么不是"加在 `State::markDirty()` 上"（最初的设计）：`markDirty` 覆盖的
+     *   只是**重建**那条路。全仓有一整族通道**刻意**绕过重建：
+     *
+     *   | 通道 | 改的是什么 | 为什么不重建 |
+     *   |---|---|---|
+     *   | `setCompose()` | 合成 alpha / 平移 | 动画每帧写，重建太贵（`05` §10 #9） |
+     *   | `setScrollOffset()` | 子盒 offset | 重排整棵树 3.65ms（`RenderScrollView` 2026-10-27） |
+     *   | `setBarOpacity()` | 滚动条淡出 | 同上 |
+     *   | `tickAnimations()` | hover 过渡进度 | 无 State，动画住盒上 |
+     *
+     *   这四条**全部**依赖"paint 无条件跑"才正确（代码里都写着这句话）。把门控
+     *   建在 `markDirty` 上 ⇒ 四条同时静默失效（滚动不动、动画静止、滚动条不淡出）。
+     *   ⇒ 序号必须住**渲染树**，写点必须落在**盒自己的 setter** 上：谁改了像素
+     *   相关字段，谁就在同一行标脏，不依赖"上游记得调"。
+     *
+     * ★ 与 `RenderBox::$layoutEpoch`（"渲染树有东西变了，必须重排"）同构：
+     *   两个序号、两个含义、互不代偿。偏移只标 paint（不需要重排），换盒只标
+     *   layout（重排完自然会画）—— 混用一个会让"只滚动"退化成"整树重排"。
+     *
+     * ★★ **多窗口下的已知代价**（诚实记账）：序号是**进程级**的，两个窗口共享
+     *   一个计数器 ⇒ A 窗滚动会让空闲的 B 窗也重画一帧。这是**保守的正确**
+     *   （多画，不少画），与现有的 `markedCount` / `boxEpoch` / `structureVersion`
+     *   完全同构 —— 那三个也都在全局。要让"脏"按窗口分片，得先有窗口身份
+     *   （`MULTI-WINDOW-2026-10-30.md` 的 M0/M1）⇒ 那是 M2 的债，不是这里的。
+     */
+    private static int $paintEpoch = 0;
+
+    /**
+     * 声明"**画面变了**，下一帧必须真的画"。
+     *
+     * ★ 只给本层的**就地写点**调：`setOffset()` / `setBase()` / `applyCompose()` /
+     *   `setBarOpacity()` / `tickAnimations()`。业务代码不该碰它 —— 业务改状态走
+     *   `setState()`，那条路有自己的信号（`State::markedCount()`）。
+     * ★ 值没变**不要**调：静态自增很便宜，但一次多余的自增就是一次多余的整帧
+     *   重绘。所有调用点都先做相等比较（`setCompose` 的 `applyCompose` 本来就有）。
+     * ★ 用 `self::` 不用 `static::`：静态字段不参与继承分片，晚静态绑定会解析到
+     *   子类（子类没有这个字段）⇒ AOT 下取到 `null` 再自增就是 1，序号从此失效。
+     *
+     * @internal
+     */
+    public static function markNeedsPaint(): void
+    {
+        self::$paintEpoch++;
+    }
+
+    /** @internal `Frame` 的"跳过 paint"判据 */
+    public static function paintEpoch(): int
+    {
+        return self::$paintEpoch;
+    }
 
     public function parent(): ?RenderObject
     {
@@ -186,8 +253,25 @@ abstract class RenderObject
     public function tickAnimations(float $timestampMs): bool
     {
         $anim = $this->hoverAnim;
+        if ($anim === null) {
+            return false;
+        }
 
-        return $anim !== null && $anim->tick($timestampMs);
+        $before = $anim->value();
+        $more = $anim->tick($timestampMs);
+
+        // ★★ **必须标脏**（2026-10-30，N1）：hover 过渡住盒上、没有 `State` ⇒
+        //   推进时不会 `setState()`。此前无害，因为 paint 无条件跑；加了门控之后，
+        //   不标就是"鼠标移上去、颜色不动"（而且 `wantsFrame()` 还是 true，
+        //   帧照跑、就是不画 —— 最难查的那种静默）。
+        // ★ 判"**值变了**"而不是"`tick()` 返回 true"：`tick()` 在收口的那一帧返回
+        //   `false`，而那一帧的值恰恰是最后一步、必须画出来。拿返回值当判据会把
+        //   终点值丢掉（画面停在 0.93 而不是 1.0）。
+        if ($anim->value() !== $before) {
+            self::markNeedsPaint();
+        }
+
+        return $more;
     }
 
     /**

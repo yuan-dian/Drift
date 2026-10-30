@@ -7,6 +7,7 @@ use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
 use Drift\Layout\LayoutSelfCheck;
 use Drift\Layout\RenderBox;
+use Drift\Layout\RenderObject;
 use Drift\Rendering\RenderSurface;
 use Drift\Rendering\SurfaceProfile;
 use Drift\Widget\Element;
@@ -85,6 +86,21 @@ final class Frame
      */
     private int $lastBoxEpoch = -1;
 
+    /**
+     * 上一帧 paint 时看到的**重绘序号**（`RenderObject::paintEpoch()`）。
+     *
+     * ★★ 初值 `-1` 同时充当"还没画过"的标记：首帧 `paintEpoch()` 至少是 0 ⇒
+     *   `0 !== -1` ⇒ 一定画。**不另设 `hasPainted` 字段** —— 那份状态与 layout
+     *   段的 `$laidOut` 会重复表达同一件事（首帧必排 ⇒ 必画），两份记录迟早漂。
+     */
+    private int $lastPaintEpoch = -1;
+
+    /** @internal 量具：paint 段**真跑**的帧数（对 `$paintSkipCount`） */
+    private static int $paintRunCount = 0;
+
+    /** @internal 量具：paint 段**整段跳过**的帧数 */
+    private static int $paintSkipCount = 0;
+
     public function __construct(
         private readonly RenderSurface $surface,
     ) {
@@ -143,12 +159,30 @@ final class Frame
         return self::$settleSkipCount;
     }
 
+    /** @internal 量具：paint 段真跑的累计帧数 */
+    public static function paintRunCount(): int
+    {
+        return self::$paintRunCount;
+    }
+
+    /** @internal 量具：paint 段整段跳过的累计帧数 */
+    public static function paintSkipCount(): int
+    {
+        return self::$paintSkipCount;
+    }
+
     /**
      * 跑一帧。
      *
      * @param BoxConstraints $constraints 表面给出的约束（通常 = 表面尺寸的紧约束）
      * @param float $timestampMs 帧时间戳，由 `FrameClock` 注入，**不读环境时钟**（§5.2 裁决 2）
      * @param list<\Drift\App\OverlayEntry> $overlays 已由 `Application::placeOverlays()` 算好 x/y
+     * @param bool $paintRequested 应用级叠加（焦点环 / 面板落后）要求本帧画 —— 它们
+     *        不经过树，`Frame` 看不见，只能由 `Application` 说
+     *
+     * @return bool 本帧**真的 paint + present 了吗**（`false` = 整段跳过，或 paint 抛了异常）。
+     *         调用方用它决定"应用级叠加算不算已经上屏"（`Application::$paintedFocus`）。
+     *         ★ 返回 `false` 时屏幕上是**上一帧**的内容 —— 这是设计意图，不是失败。
      *
      * ★ **浮层的布局段不在这里**：settle 与 paint 两段在本类，**layout 段在
      *   `Application::placeOverlays()`** —— 因为浮层是"自尺寸 + 按锚点钉原点 +
@@ -163,7 +197,8 @@ final class Frame
         float $timestampMs,
         array $overlays = [],
         ?\Closure $afterPaint = null,
-    ): void {
+        bool $paintRequested = false,
+    ): bool {
         // ① 帧末统一重建（§5.2 裁决 3）：派发中途的 setState 只标脏
         // ★ O-12 A′ 帧循环异常策略 S3 的"无边界"半边：异常从子树一路冒到这里
         //   （沿途没有 ErrorBoundary 捕获）⇒ Fatal 序列。**不吞**——吞掉就是
@@ -207,7 +242,7 @@ final class Frame
         //   这正是 G2 要消灭的静默形态。
         $box = $root->effectiveBox();
         if ($box === null) {
-            return; // 整棵子树没有任何可绘制内容（例如空页）⇒ 这一帧无事可做
+            return false; // 整棵子树没有任何可绘制内容（例如空页）⇒ 这一帧无事可做
         }
 
         $t = $prof ? \hrtime(true) : 0;
@@ -226,7 +261,9 @@ final class Frame
         //     `Element::syncBox()`，所以这条判据**不可能漏**。
         //   ★ 读序号的位置必须在 settle **之后**（这样本帧重建造成的换盒也算进来）。
         $boxEpoch = State::boxEpoch();
+        $layoutRan = false;
         if ($didRebuild || $boxEpoch !== $this->lastBoxEpoch || $this->constraintsChanged($constraints)) {
+            $layoutRan = true;
             $this->laidOut = true;
             $this->lastBoxEpoch = $boxEpoch;
             $this->lastMinWidth = $constraints->minWidth;
@@ -256,10 +293,31 @@ final class Frame
         //   （要锚点与客户区尺寸），不在本类 ⇒ 自校验看不见它。
         LayoutSelfCheck::maybeCheck($box, $constraints);
 
-        // ③ paint → ④ present
+        // ③ paint → ④ present（**有门控**，见 `$paintEpoch` 的注）
+        // ★★ 判据四条，缺一条就是一类静默（全部有真实通道，不是假想）：
+        //   ① 本帧 **layout 跑过** —— 几何变了一定要重画；同时也覆盖首帧
+        //      （`!$laidOut` ⇒ `constraintsChanged()` 为真 ⇒ layout 必跑）。
+        //   ② **`paintEpoch` 变了** —— 一批"不重建不重排"的通道：`setCompose()`
+        //      （动画）、`setOffset()`（滚动 / 对齐补差）、`setBase()`（浮层落点）、
+        //      `setBarOpacity()`（滚动条淡出）、`tickAnimations()`（hover 过渡）。
+        //      这五条**都不经过 settle / layout** ⇒ 只看 ① 会全部漏掉。
+        //   ③ **应用级叠加要求画**（`$paintRequested`）—— 焦点环是 `afterPaint`
+        //      回调，不经过任何树，`Application` 用 `focusRingTarget()` 比对得出；
+        //      浮层"锚点换了但还没同步"（`panelsLagBehind()`）也走这一条。
+        //   ④ 序号**初值 `-1`** 兜首帧（见 `$lastPaintEpoch` 的注）。
+        // ★ 顺序要紧：`paintEpoch` 必须在 layout **之后**读（布局期 `setOffset()` 会
+        //   推它；在之前读就等于把本帧自己的变化算成"下一帧的"）。
+        $paintEpoch = RenderObject::paintEpoch();
+        if (!$layoutRan && $paintEpoch === $this->lastPaintEpoch && !$paintRequested) {
+            self::$paintSkipCount++;
+
+            return false;
+        }
+
         // ★ 本段**含** beginFrame 与 endFrame（各自另有计时）⇒ 报告里要扣掉，
         //   剩下的才是「画」自己的（DisplayList 记录 + Skia 光栅）。
         $t = $prof ? \hrtime(true) : 0;
+        $painted = false;
         try {
             $canvas = $this->surface->beginFrame($timestampMs);
             $box->paintComposed($canvas);
@@ -284,6 +342,7 @@ final class Frame
             }
 
             $this->surface->endFrame();
+            $painted = true;
         } catch (Throwable $e) {
             Errors::report(sprintf(
                 '帧循环：paint 阶段未捕获异常（沿途无错误边界）—— %s（%s:%d）',
@@ -292,8 +351,20 @@ final class Frame
                 $e->getLine(),
             ));
         }
+
+        // ★★ **失败时不记账**：paint 抛了异常 ⇒ 屏幕上可能只上去了半帧（或者
+        //   压根没 `endFrame`）⇒ 序号必须停在本帧的值上 ⇒ 下一帧（或下一次请求）
+        //   仍然会画。失败后把序号记成"已画"= 从此静默停在残缺画面上，正是 G2
+        //   明令禁止的半静默。
+        if ($painted) {
+            self::$paintRunCount++;
+            $this->lastPaintEpoch = $paintEpoch;
+        }
+
         if ($prof) {
             SurfaceProfile::add('paint', \hrtime(true) - $t);
         }
+
+        return $painted;
     }
 }
