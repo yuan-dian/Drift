@@ -8,10 +8,10 @@
 
 | 层 | @api | @internal |
 |---|---|---|
-| App | 59 | 49 |
+| App | 60 | 49 |
 | Commands | 7 | 0 |
 | Core | 2 | 0 |
-| Errors.php | 1 | 3 |
+| Errors.php | 2 | 3 |
 | Geometry | 9 | 0 |
 | Input | 18 | 5 |
 | Layout | 41 | 43 |
@@ -23,13 +23,13 @@
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
 | Widget | 167 | 215 |
-| **合计** | **417** | **353** |
+| **合计** | **419** | **353** |
 
 覆盖 357 个文件 · 描述性提及 29 处（grep 口径的污染源，不计入）
 
 ## App 层
 
-### @api（应用可读面） · 59
+### @api（应用可读面） · 60
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -89,9 +89,10 @@
 | `TaskHost::submit()` | method | src/App/TaskHost.php:50 |
 | `TaskHost::pending()` | method | src/App/TaskHost.php:70 |
 | `TaskHost::drain()` | method | src/App/TaskHost.php:83 |
-| `WindowStateStore` | class | src/App/WindowStateStore.php:28 |
-| `WindowStateStore::restore()` | method | src/App/WindowStateStore.php:76 |
-| `WindowStateStore::persist()` | method | src/App/WindowStateStore.php:142 |
+| `WindowStateStore` | class | src/App/WindowStateStore.php:32 |
+| `WindowStateStore::__construct()` | method | src/App/WindowStateStore.php:124 |
+| `WindowStateStore::restore()` | method | src/App/WindowStateStore.php:147 |
+| `WindowStateStore::persist()` | method | src/App/WindowStateStore.php:219 |
 
 ### @internal（框架内部） · 49
 
@@ -172,19 +173,20 @@
 
 ## Errors.php 层
 
-### @api（应用可读面） · 1
+### @api（应用可读面） · 2
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
 | `Errors` | class | src/Errors.php:9 |
+| `Errors::installFatalBox()` | method | src/Errors.php:91 |
 
 ### @internal（框架内部） · 3
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
-| `Errors::setLogPath()` | method | src/Errors.php:112 |
-| `Errors::recentDiagnostics()` | method | src/Errors.php:123 |
-| `Errors::reset()` | method | src/Errors.php:129 |
+| `Errors::setLogPath()` | method | src/Errors.php:122 |
+| `Errors::recentDiagnostics()` | method | src/Errors.php:133 |
+| `Errors::reset()` | method | src/Errors.php:139 |
 
 ## Geometry 层
 

@@ -19,6 +19,7 @@
   不依赖外部文件（与 `tools/drift-build.php` 的构建期 ini 是两回事，别混用）。
 """
 
+import atexit
 import ctypes
 import os
 import subprocess
@@ -44,9 +45,27 @@ class BITMAPINFOHEADER(ctypes.Structure):
     ]
 
 
+def dpr_of(hwnd) -> float:
+    """该窗口所在显示器的缩放（96dpi = 1.0）；查不到按 1.0 算，判据容差会兜住。"""
+    try:
+        user32.GetDpiForWindow.restype = wintypes.UINT
+        user32.GetDpiForWindow.argtypes = [wintypes.HWND]
+        return user32.GetDpiForWindow(hwnd) / 96.0
+    except Exception:  # noqa: BLE001
+        return 1.0
+
+
 def main() -> int:
     app = sys.argv[1] if len(sys.argv) > 1 else "users"
     title = sys.argv[2] if len(sys.argv) > 2 else None
+
+    # Bootstrap 声明的客户区**逻辑**尺寸（判据 ② 的期望值）
+    logical = {
+        "hello": (640, 400),
+        "showcase": (960, 640),
+        "tutorial": (720, 560),
+        "users": (900, 640),
+    }
 
     exe = os.path.join(ROOT, f"{app}.exe")
     if not os.path.isfile(exe):
@@ -64,6 +83,28 @@ def main() -> int:
     env = dict(os.environ)
     env["PHPRC"] = ini
 
+    # ★ 状态文件是**用户的真实配置**（`%APPDATA%\Drift`）：应用退出时会写它，
+    #   而判据 ② 要验的是"默认尺寸"—— 留着上次的几何就会把一条正确行为判成 FAIL。
+    #   所以先挪开、跑完（含异常退出）原样还回去：不还回去等于"跑一次测试就改掉
+    #   用户的窗口位置"。
+    state_path = os.path.join(os.environ.get("APPDATA", ""), "Drift", f"{app}.window")
+    stash = None
+    if os.path.isfile(state_path):
+        with open(state_path, "rb") as fh:
+            stash = fh.read()
+        os.remove(state_path)
+
+    def restore_state() -> None:
+        if stash is None:
+            if os.path.isfile(state_path):
+                os.remove(state_path)
+            return
+        os.makedirs(os.path.dirname(state_path), exist_ok=True)
+        with open(state_path, "wb") as fh:
+            fh.write(stash)
+
+    atexit.register(restore_state)
+
     proc = subprocess.Popen([exe], cwd=ROOT, env=env)
     time.sleep(2.5)
 
@@ -76,7 +117,12 @@ def main() -> int:
         rect = wintypes.RECT()
         user32.GetClientRect(hwnd, ctypes.byref(rect))
         w, h = rect.right - rect.left, rect.bottom - rect.top
-        print(f"client rect = {w} x {h}")
+        want_w, want_h = logical.get(app, (w, h))
+        dpr = dpr_of(hwnd)
+        # 允许 2px 误差：客户区尺寸由系统按 dpr 取整，不是我们算的
+        size_ok = abs(w - want_w * dpr) <= 2 and abs(h - want_h * dpr) <= 2
+        print(f"client rect = {w} x {h}（期望 {want_w}x{want_h} × {dpr}）"
+              f"  {'ok' if size_ok else 'FAIL'}")
 
         hdc = user32.GetDC(hwnd)
         mem = gdi32.CreateCompatibleDC(hdc)
@@ -132,12 +178,20 @@ def main() -> int:
         except Exception as exc:   # noqa: BLE001 —— 查不到就是 FAIL，不静默放过
             print(f"DPI 感知查询失败：{exc}")
 
-        ok = nonwhite > 0 and dpi_ok
+        ok = nonwhite > 0 and dpi_ok and size_ok
         user32.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
-        time.sleep(0.8)
+        time.sleep(1.5)
 
-    if proc.poll() is None:
+    # 判据 ⑤：**退出码 0**（2026-10-30 加）。关窗后引擎 shutdown 段曾有一次
+    # `php8ts.dll+0x24b30` 访问冲突（"窗口关得掉、画面也对，最后一步崩"），
+    # 根因是组合根把应用对象图留到 shutdown 才释放；修好后这里盯死 0，
+    # 免得同类退化被"画面对了就算过"盖住。
+    code = proc.poll()
+    if code is None:
         proc.terminate()
+        code = "still-running"
+    print(f"退出码 = {code}")
+    ok = ok and code == 0
 
     print("OK" if ok else "FAIL")
     return 0 if ok else 1

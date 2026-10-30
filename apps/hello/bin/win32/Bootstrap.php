@@ -4,6 +4,8 @@ declare(strict_types=1);
 namespace App\Hello;
 
 use Drift\App\EventLoop;
+use Drift\App\Paths;
+use Drift\App\WindowStateStore;
 use Drift\Errors;
 use Drift\Platform\Screen;
 use Drift\Platform\Win32\ResizeHookState;
@@ -38,6 +40,9 @@ final class Bootstrap
 
     private const MIN_HEIGHT = 320;
 
+    /** 窗口状态文件名（§5.4）：**一个应用一个文件**，里面按槽位分组 */
+    private const STATE_FILE = 'hello.window';
+
     public static function run(): void
     {
         $platform = new Win32Platform();
@@ -51,13 +56,18 @@ final class Bootstrap
             }
         );
 
-        /** @var array<int, HelloApplication> $apps 窗口表（键 = 句柄，交给 `EventLoop`） */
-        $apps = [];
+        /**
+         * 窗口登记表（键 = 句柄）：拖动重排要的三件 + 这个窗口的状态存取。
+         *
+         * ★ 它是**一张表**而不是三个平行数组（`$apps` / `$drawn` / `$states`）：
+         *   平行的 key 集合迟早有一个漏填，而漏填的那条只在"第二窗"上发生 ——
+         *   最没人跑的那条路上。`$apps` 在喂给 `EventLoop` 时从本表现场派生。
+         *
+         * @var array<int, array{0: HelloApplication, 1: RenderSurface, 2: Screen, 3: WindowStateStore}> $windows
+         */
+        $windows = [];
 
-        /** @var array<int, array{0: HelloApplication, 1: RenderSurface, 2: Screen}> $drawn */
-        $drawn = [];
-
-        self::openWindow($platform, 'Hello Drift', self::WINDOW_WIDTH, self::WINDOW_HEIGHT, $apps, $drawn);
+        self::openWindow($platform, 'Hello Drift', 'main', self::WINDOW_WIDTH, self::WINDOW_HEIGHT, $windows);
 
         // ★★ **真机多窗口探针**（2026-10-30，M1-b）：`DRIFT_TWO_WINDOWS=1` 时再建一个
         //   窗口、装第二个 `HelloApplication` 实例。
@@ -68,9 +78,13 @@ final class Bootstrap
         //   同一个 `Application` 类实例化两次是本仓 M2 之后就允许的形态
         //   （进程级资源在 `AppScope` 上）；hello 不用异步/任务，故各建各的 scope 无害。
         //
+        //   ★ 两个窗口用**不同的槽位**（`main` / `second`）⇒ 几何各存各的。
+        //     这正是 `WindowStateStore` 多窗口 key 的真机消费点：槽位相同的话，
+        //     第二个窗口会把第一个的几何覆盖掉（不报错，下次启动只有一窗还原）。
+        //
         //   默认不设变量 ⇒ 单窗，与 2026-10-30 之前逐字节相同。
         if (\getenv('DRIFT_TWO_WINDOWS') === '1') {
-            self::openWindow($platform, 'Hello Drift · 第二窗', 480, 360, $apps, $drawn);
+            self::openWindow($platform, 'Hello Drift · 第二窗', 'second', 480, 360, $windows);
         }
 
         // ★ 拖动边缘重排（§5.2）：模态尺寸循环里主循环被系统挂起，壳在 WM_SIZE
@@ -81,8 +95,8 @@ final class Bootstrap
         //
         //   ★ **按句柄分发**（2026-10-30，M1-b）：壳已经知道是哪个窗口在拖，
         //     不按句柄就会让第二窗的拖动去重排第一窗（不报错、只画错窗）。
-        ResizeHookState::$pump = static function (int $windowHandle) use ($drawn): void {
-            $entry = $drawn[$windowHandle] ?? null;
+        ResizeHookState::$pump = static function (int $windowHandle) use ($windows): void {
+            $entry = $windows[$windowHandle] ?? null;
             if ($entry === null) {
                 return;   // 该窗口没走本组合根（或已销毁）：静默跳过
             }
@@ -108,31 +122,62 @@ final class Bootstrap
         //   （动画/异步在途 ⇒ 15ms 帧节奏；只有定时器 ⇒ 一觉睡到点；没事 ⇒ 无限等），
         //   光标 / IME / 退出语义都在 `EventLoop` 里各写一次。
         //   ★ 本应用自己不用异步/动画，但它是**所有新应用的抄写来源** ⇒ 这行必须在。
+        $apps = [];
+        foreach ($windows as $handle => $entry) {
+            $apps[$handle] = $entry[0];
+        }
+
         EventLoop::run($platform, $apps);
+
+        // ★ 窗口状态写回（§5.4）：**循环之后**，同步 IO 不在帧内。
+        //   ★ 用登记表而不是 `$apps`：后者在循环里被摘掉了已关的窗口，而**已关的
+        //     窗口也要存**（`WindowHost::position()` 对死句柄回填"最后已知几何"，
+        //     见该方法的注释）。用户点 X 关窗是常态，不为它写就等于什么都不记。
+        $window = $platform->window();
+        foreach ($windows as $handle => $entry) {
+            $entry[3]->persist($window, $handle);
+        }
+
+        // ★★ **卸下两个进程级钩子**（2026-10-30）：两处都是**静态**属性，捕获的闭包
+        //   分别持有 `$windows`（整条应用对象图）与 `$platform`（渲染表面 / 句柄）。
+        //   留着 ⇒ 它们在 PHP shutdown 才释放 ⇒ AOT 产物在那时解引用已销毁的类元数据
+        //   ⇒ `php8ts.dll+0x24b30` 访问冲突（窗口已关完、状态也写完，最后一步崩）。
+        //   **两个都要卸**：实测只卸一个仍是 6~7/8 崩，两个都卸是 0/8。
+        //   完整取证见 `Errors::installFatalBox()` 的 docblock。
+        ResizeHookState::$pump = null;
+        Errors::installFatalBox(null);
     }
 
     /**
-     * 建一个窗口 + 装一个应用，登记进窗口表。
+     * 建一个窗口 + 还原几何 + 装一个应用，登记进窗口表。
      *
      * ★ 抽成方法是**因为它有第二个调用点**（`DRIFT_TWO_WINDOWS`），不是为了好看：
      *   两处手抄 25 行，"第二窗少了一步"（比如忘了 `resize()` 首帧就是空白）
      *   只在多窗路径上发生 —— 那正是最没人跑的那条路。
      *
-     * @param array<int, HelloApplication> $apps 出参：窗口表（键 = 句柄）
-     * @param array<int, array{0: HelloApplication, 1: RenderSurface, 2: Screen}> $drawn
-     *   出参：拖动重排要用的三件（应用 / 表面 / 那块屏）
+     * @param string $slot 窗口槽位名：**跨运行稳定**（写进状态文件），与句柄无关
+     * @param array<int, array{0: HelloApplication, 1: RenderSurface, 2: Screen, 3: WindowStateStore}> $windows
+     *   出参：窗口登记表
      */
     private static function openWindow(
         Win32Platform $platform,
         string $title,
+        string $slot,
         int $width,
         int $height,
-        array &$apps,
-        array &$drawn,
-    ): int {
+        array &$windows,
+    ): void {
         $window = $platform->window();
         $handle = $window->createWindow($title, $width, $height);
         $window->show($handle);
+
+        // ★ 窗口状态读回（§5.4）：**启动一次同步 IO**，不在帧内。
+        //   ★ 顺序在 `surface->resize()` **之前** —— resize 定首帧尺寸，而首帧就该是
+        //     还原后的尺寸；放到后面用户会先看到一帧默认尺寸再被拽过去。
+        //   ★ 没有配置文件 / 读坏了 / 没有这个槽位 / 平台没给配置目录 ⇒ 一律
+        //     **静默降级**到默认几何（§5.4 纪律 2，G2 的显式例外）。
+        $state = new WindowStateStore(Paths::userConfig($platform->configDir(), self::STATE_FILE), $slot);
+        $state->restore($window, $handle);
 
         $provider = $platform->surface($handle);
         if ($provider === null) {
@@ -140,7 +185,7 @@ final class Bootstrap
             // 这一行 `return` 只为让下面的类型收窄成立。
             Errors::report('Win32: 平台没给出渲染表面（窗口句柄无效）');
 
-            return $handle;
+            return;
         }
 
         $screen = $platform->screen($handle);
@@ -148,10 +193,15 @@ final class Bootstrap
 
         // 首帧之前把表面尺寸定下来：`attach()` 内部就会跑一帧（`Application::attach`），
         // 而那帧要往表面上画 ⇒ 尺寸为 0 时那一帧会被丢弃（画面到第二次 resize 才出现）。
+        // ★ 用**读回的实际客户区**而不是 `$width/$height` 常量：还原之后实际尺寸
+        //   可能已经变了（配置里记的是上次的大小）。照常量排 ⇒ 还原了窗口、画面还按
+        //   旧尺寸排 ⇒ 四周拉伸/裁切，且不报错。
+        $actual = $window->clientSize($handle);
+        $dpr = $screen->scale();
         $surface->resize(
-            (int) round((float) $width * $screen->scale()),
-            (int) round((float) $height * $screen->scale()),
-            $screen->scale(),
+            (int) round($actual->width * $dpr),
+            (int) round($actual->height * $dpr),
+            $dpr,
         );
 
         $app = new HelloApplication();
@@ -162,9 +212,6 @@ final class Bootstrap
         //   "窗口被拖小"是用户行为、不是编程错误；最小尺寸是 Qt/WPF/Flutter 的标配。
         $window->setMinSize($handle, self::MIN_WIDTH, self::MIN_HEIGHT);
 
-        $apps[$handle] = $app;
-        $drawn[$handle] = [$app, $surface, $screen];
-
-        return $handle;
+        $windows[$handle] = [$app, $surface, $screen, $state];
     }
 }

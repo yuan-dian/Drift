@@ -121,5 +121,14 @@ final class Bootstrap
         //   动画 / 异步在途 ⇒ 15ms 帧节奏；只有定时器 ⇒ 一觉睡到点（不再每 15ms 空醒）；
         //   真的没事 ⇒ 无限等（CPU 归零）。光标 / IME / 退出语义在 `EventLoop` 里各写一次。
         EventLoop::run($platform, [$handle => $app]);
+
+        // ★★ **卸下两个进程级钩子**（2026-10-30）：两处都是**静态**属性，捕获的闭包
+        //   分别持有应用对象图与 `$platform`（渲染表面 / 句柄）。留着 ⇒ 它们在 PHP
+        //   shutdown 才释放 ⇒ AOT 产物在那时解引用已销毁的类元数据 ⇒
+        //   `php8ts.dll+0x24b30` 访问冲突（窗口已关完，最后一步崩，每次都碰运气）。
+        //   **两个都要卸**（实测只卸一个仍是 6~7/8 崩，两个都卸是 0/8）；
+        //   完整取证见 `Errors::installFatalBox()` 的 docblock。
+        ResizeHookState::$pump = null;
+        Errors::installFatalBox(null);
     }
 }

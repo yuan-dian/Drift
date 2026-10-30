@@ -61,18 +61,18 @@ final class WindowStateTest extends SmokeTestCase
     {
         $path = $this->statePath;
 
-        // ② 写回：persist() 把位置/尺寸/最大化写成 kv（含版本号）
+        // ② 写回：persist() 把位置/尺寸/最大化写成 kv（含版本号 + 槽位前缀）
         $win = new FakeWindowHost(Point::of(120.0, 80.0), Size::of(1000.0, 700.0), true);
         (new WindowStateStore($path))->persist($win, 7);
         $text = (string) file_get_contents($path);
         check(
-            'State · persist 写 kv 文件（x=120 y=80 w=1000 h=700 max=1）',
-            str_contains($text, 'x=120')
-                && str_contains($text, 'y=80')
-                && str_contains($text, 'w=1000')
-                && str_contains($text, 'h=700')
-                && str_contains($text, 'max=1')
-                && str_contains($text, 'v=1'),
+            'State · persist 写 kv 文件（main.x=120 main.y=80 main.w=1000 main.h=700 main.max=1）',
+            str_contains($text, 'main.x=120')
+                && str_contains($text, 'main.y=80')
+                && str_contains($text, 'main.w=1000')
+                && str_contains($text, 'main.h=700')
+                && str_contains($text, 'main.max=1')
+                && str_contains($text, 'v=2'),
             trim($text),
         );
 
@@ -188,6 +188,88 @@ final class WindowStateTest extends SmokeTestCase
             'State · 尺寸非正 ⇒ 不 place + 一条 Diagnostic',
             $win9->placed === [] && count(Errors::recentDiagnostics()) === 1,
             'placed=' . count($win9->placed) . ' diag=' . count(Errors::recentDiagnostics()),
+        );
+
+        $this->flushChecks();
+    }
+
+    /**
+     * 多窗口：**一个文件装 N 组状态**，各存各的、各取各的（2026-10-30）。
+     *
+     * 每一条都对着一个"不分组就会静默错"的形态：后写的抹掉先写的、串槽取到对方的
+     * 几何、老文件升级丢位置。这些错误的共同点是**不报错**——窗口照样出现，
+     * 只是位置不对。
+     */
+    public function testMultiWindowSlots(): void
+    {
+        $path = $this->statePath;
+
+        $mainWin = new FakeWindowHost(Point::of(10.0, 20.0), Size::of(800.0, 600.0), false);
+        $sideWin = new FakeWindowHost(Point::of(900.0, 60.0), Size::of(320.0, 240.0), true);
+
+        // ⑪ 两窗各 persist 一次 ⇒ 两组并存（后写的不能抹掉先写的）
+        (new WindowStateStore($path, 'main'))->persist($mainWin, 1);
+        (new WindowStateStore($path, 'side'))->persist($sideWin, 2);
+        $text = (string) file_get_contents($path);
+        check(
+            'State · 两窗各 persist 一次 ⇒ 两组并存（后写的没抹掉先写的）',
+            str_contains($text, 'main.w=800')
+                && str_contains($text, 'side.w=320')
+                && str_contains($text, 'side.max=1'),
+            trim($text),
+        );
+
+        // ⑫ 各取各的：串槽时会取到对方的值，而且不报错
+        $gotMain = new FakeWindowHost();
+        $gotSide = new FakeWindowHost();
+        (new WindowStateStore($path, 'main'))->restore($gotMain, 1);
+        (new WindowStateStore($path, 'side'))->restore($gotSide, 2);
+        check(
+            'State · 两窗各自还原自己的几何（串槽时取到的是对方的值）',
+            count($gotMain->placed) === 1
+                && $gotMain->placed[0][0]->width === 800.0
+                && $gotMain->placed[0][1] === false
+                && count($gotSide->placed) === 1
+                && $gotSide->placed[0][0]->width === 320.0
+                && $gotSide->placed[0][1] === true,
+            'main=' . (count($gotMain->placed) === 1 ? (string) $gotMain->placed[0][0]->width : '-')
+                . ' side=' . (count($gotSide->placed) === 1 ? (string) $gotSide->placed[0][0]->width : '-'),
+        );
+
+        // ⑬ 文件在、但没有本槽位 ⇒ 静默用默认几何（新加的窗口第一次出现，不是错误）
+        Errors::reset();
+        $fresh = new FakeWindowHost();
+        (new WindowStateStore($path, 'third'))->restore($fresh, 3);
+        check(
+            'State · 文件在但没有本槽位 ⇒ 静默用默认几何（新窗口首启不是错误）',
+            $fresh->placed === [] && Errors::recentDiagnostics() === [],
+            'placed=' . count($fresh->placed) . ' diag=' . count(Errors::recentDiagnostics()),
+        );
+
+        // ⑭ v1 老文件（平铺键，单窗时代）⇒ **整体**视为 main 组，升级后位置不丢
+        file_put_contents($path, "v=1\nx=111\ny=222\nw=333\nh=444\nmax=1\n");
+        $legacyMain = new FakeWindowHost();
+        $legacySide = new FakeWindowHost();
+        (new WindowStateStore($path, 'main'))->restore($legacyMain, 1);
+        (new WindowStateStore($path, 'side'))->restore($legacySide, 2);
+        check(
+            'State · v1 老文件整体归到 main（升级不丢位置）；副窗没有记录 ⇒ 默认几何',
+            count($legacyMain->placed) === 1
+                && $legacyMain->placed[0][0]->width === 333.0
+                && $legacyMain->placed[0][1] === true
+                && $legacySide->placed === [],
+            'main=' . count($legacyMain->placed) . ' side=' . count($legacySide->placed),
+        );
+
+        // ⑮ 在 v1 文件上 persist 副窗 ⇒ 抬到 v2，且 main 组随文件带走（不是只写自己那组）
+        (new WindowStateStore($path, 'side'))->persist($sideWin, 2);
+        $upgraded = (string) file_get_contents($path);
+        check(
+            'State · 在 v1 文件上 persist 副窗 ⇒ 抬到 v2 且 main 组被带走',
+            str_contains($upgraded, 'v=2')
+                && str_contains($upgraded, 'main.w=333')
+                && str_contains($upgraded, 'side.w=320'),
+            trim($upgraded),
         );
 
         $this->flushChecks();

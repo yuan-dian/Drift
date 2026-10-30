@@ -17,10 +17,14 @@ use function is_finite;
 use function is_file;
 use function is_numeric;
 use function is_writable;
+use function implode;
+use function ksort;
 use function mkdir;
-use function rtrim;
+use function preg_match;
+use function strlen;
 use function str_replace;
 use function strpos;
+use function strncmp;
 use function substr;
 use function trim;
 use function var_export;
@@ -43,6 +47,43 @@ use function var_export;
  * 3. **存储后端可换**但**不进 `Platform`**：换它只影响 `Drift\App` 内部实现，
  *    不影响分层。本实现是 kv 文本文件（一个物理磁盘小文件，人可读可改）。
  *
+ * ## 槽位：一个文件装 N 个窗口的状态（2026-10-30，多窗口）
+ *
+ * 一个应用开两个窗时，"上次的几何"是**两份**，但**仍在一个文件里**：
+ *
+ * ```php
+ * $state = new WindowStateStore(Paths::userConfig($dir, 'showcase.window'), 'main');
+ * $inspector = new WindowStateStore(Paths::userConfig($dir, 'showcase.window'), 'inspector');
+ * ```
+ *
+ * - **为什么槽位是构造参数而不是 `restore($w, $h, 'main')` 的第三个参数**：
+ *   `$handle` 说"这次运行里的哪个窗口"（每次启动都变），槽位说"跨运行稳定的
+ *   哪个窗口"（写进文件）。放进同一个签名，两个"窗口身份"并排出现 ⇒ 迟早传反，
+ *   而传反的后果是"副窗的几何还原到主窗上"—— 不报错，只是窗口乱跳。
+ *   ★ 构造参数管"我是谁"，方法参数管"这次做什么"，这是本仓的一贯切法。
+ * - **为什么不是"每窗一个文件"**：文件是**应用级**的持久化单元（`Paths::userConfig`
+ *   收到的 `name` 是应用名）。拆成 `showcase.main.window` / `showcase.inspector.window`
+ *   就把窗口名混进了应用身份，退出时还要写 N 个文件（部分失败 ⇒ 一半新一半旧）。
+ * - **槽位名由应用给**：框架只有句柄（每次运行都不同）和创建序号（关一个再开一个
+ *   就会漂移）——**都不能当跨运行的 key**。只有应用知道"这个窗口是什么"。
+ * - **默认 `'main'`**：单窗口应用写 `new WindowStateStore($path)` 一字不改，
+ *   语义就是"这个应用唯一的那个窗口"。
+ *
+ * ## 格式 v2（v1 文件整体吸收，不是"半兼容"）
+ *
+ * ```text
+ * v=2
+ * main.x=120
+ * main.w=1000
+ * inspector.x=760
+ * inspector.w=420
+ * ```
+ *
+ * v1（单窗时代）是平铺的 `x=` / `y=` / ...，没有组前缀。它的语义**100% 确定**
+ * = 主窗那一组 ⇒ 读的时候整体补上 `main.` 前缀（`upgradeFromV1()`），用户升级后
+ * 窗口位置不丢。★ 这与类开头纪律 3 说的"不做半兼容"不冲突：那条禁的是"读一半
+ * （能读的字段用、不能读的丢）"，而这里是**整份识别**。
+ *
  * ## 为什么最小化时不写（`position()` 返 `null`）
  *
  * 最小化窗口的屏幕坐标是"还原后会出现的位置"，而那时用户要的是**退出前的
@@ -64,13 +105,43 @@ use function var_export;
  */
 final class WindowStateStore
 {
-    /** 文件格式版本。改键名 / 加字段时抬它，旧文件整份降级，不做半兼容 */
-    private const FORMAT_VERSION = 1;
+    /**
+     * 文件格式版本。
+     *
+     * v1 → v2（2026-10-30）：键加槽位前缀。**必须抬版本**，因为"无前缀的键 = 主窗"
+     * 这个解释只在 v1 成立；v2 里无前缀的行是非法的（否则两种解释并存，写出来的
+     * 文件自己都读不回去）。
+     */
+    private const FORMAT_VERSION = 2;
 
-    public function __construct(
-        /** 配置文件路径；`''` = 平台没给配置目录 ⇒ 整个 store 退化为空操作 */
-        private string $path,
-    ) {
+    /** 一个窗口存这五个字段；顺序即写入顺序（人读时稳定） */
+    private const FIELDS = ['x', 'y', 'w', 'h', 'max'];
+
+    private string $path;
+
+    private string $slot;
+
+    /**
+     * @param string $path 配置文件路径；`''` = 平台没给配置目录 ⇒ 整个 store 退化为空操作
+     * @param string $slot 槽位名（`[A-Za-z0-9_-]{1,32}`）；单窗口应用不用传
+     *
+     * @api 多窗口的关键一行：`new WindowStateStore($path, 'second')`
+     */
+    public function __construct(string $path, string $slot = 'main')
+    {
+        // ★ 槽位名是**代码里的常量**，不是用户输入 ⇒ 写错当场 Fatal（`Errors::report`
+        //   单参 = 致命），与 `Color::fromHex` 同口径。不做"净化后照用"：`main.x`
+        //   被净化成 `mainx` 就会静默变成另一个槽位 —— 那是数据串页，比崩难查得多。
+        //   禁点号是因为点号是"槽位与字段"的分隔符。
+        if (preg_match('/^[A-Za-z0-9_-]{1,32}$/', $slot) !== 1) {
+            Errors::report(
+                '窗口状态：槽位名不合法（' . var_export($slot, true)
+                . '）—— 只允许 A-Z a-z 0-9 _ -，1~32 个字符'
+            );
+        }
+
+        $this->path = $path;
+        $this->slot = $slot;
     }
 
     /**
@@ -107,22 +178,28 @@ final class WindowStateStore
             return;
         }
 
-        $kv = self::parse($text);
-        if (($kv['v'] ?? '') !== (string) self::FORMAT_VERSION) {
+        $kv = self::normalize(self::parse($text));
+        if ($kv === null) {
             Errors::report(
-                '窗口状态：配置文件版本不符（期望 ' . self::FORMAT_VERSION . '，实际 '
-                . var_export($kv['v'] ?? null, true) . '）—— 用默认窗口几何',
+                '窗口状态：配置文件版本不符（' . $this->path . '）—— 用默认窗口几何',
                 Errors::DIAGNOSTIC
             );
 
             return;
         }
 
-        // ③ 逐字段校验：任何一项不可信 ⇒ 整份放弃（半份状态比没有更糟）
-        $x = self::number($kv, 'x');
-        $y = self::number($kv, 'y');
-        $w = self::number($kv, 'w');
-        $h = self::number($kv, 'h');
+        // ③ 没有我这组：这个槽位第一次出现（新加的窗口 / v1 文件里的副窗）
+        //    ⇒ 正常路径，静默用默认几何，不刷 Diagnostic
+        $group = self::groupOf($kv, $this->slot);
+        if ($group === null) {
+            return;
+        }
+
+        // ④ 逐字段校验：任何一项不可信 ⇒ 整份放弃（半份状态比没有更糟）
+        $x = self::number($group, 'x');
+        $y = self::number($group, 'y');
+        $w = self::number($group, 'w');
+        $h = self::number($group, 'h');
         if ($x === null || $y === null || $w === null || $h === null) {
             Errors::report('窗口状态：配置文件的坐标/尺寸不是数 —— 用默认窗口几何', Errors::DIAGNOSTIC);
 
@@ -134,7 +211,7 @@ final class WindowStateStore
             return;
         }
 
-        $maximized = ($kv['max'] ?? '0') === '1';
+        $maximized = ($group['max'] ?? '0') === '1';
 
         $window->place($handle, new Rect($x, $y, $w, $h), $maximized);
     }
@@ -144,6 +221,12 @@ final class WindowStateStore
      *
      * ★ **调用时机在组合根的循环之外**：`EventLoop::run()` 返回之后。
      *   写文件是同步 IO，放帧内会让某一帧凭空多出几毫秒。
+     *
+     * ★ **只更新自己那一组**：先读回文件里已有的组（别的窗口的），换掉 `$slot`
+     *   这一组再整份写。这样"每个窗口各调一次 persist"就能拼出完整文件 ——
+     *   若整份覆盖，第二个窗口会**抹掉第一个窗口**记下的几何（不报错，
+     *   下次启动只有一个窗还原、另一个跳回默认位置）。
+     *   代价是 N 窗退出时 N 次读 + N 次写；退出路径本来就不在帧内，几次 IO 无所谓。
      *
      * @param int $handle `createWindow()` 给的不透明句柄
      *
@@ -165,21 +248,16 @@ final class WindowStateStore
             return;   // 尺寸非正：客户区还没建起来（或已被销毁），没什么可记的
         }
 
-        $text = "# Drift window state — do not edit while the app runs\n"
-            . 'v=' . self::FORMAT_VERSION . "\n"
-            . 'x=' . $origin->x . "\n"
-            . 'y=' . $origin->y . "\n"
-            . 'w=' . $size->width . "\n"
-            . 'h=' . $size->height . "\n"
-            . 'max=' . ($window->isMaximized($handle) ? '1' : '0') . "\n";
+        $groups = $this->readGroups();
+        $groups[$this->slot] = [
+            'x' => (string) $origin->x,
+            'y' => (string) $origin->y,
+            'w' => (string) $size->width,
+            'h' => (string) $size->height,
+            'max' => $window->isMaximized($handle) ? '1' : '0',
+        ];
+        ksort($groups);   // 槽位名字典序：同一份状态写两次得到同一份字节（diff / 人读都友好）
 
-        // 目录不存在 / 不可写 ⇒ 记一条然后放弃。**不让它把退出路径搞崩**：
-        // 用户关窗必须成功，"记住窗口位置"只是附带服务。
-        // 目录不存在 ⇒ 建它（一次性副作用）：壳只给**路径**不创建（`Platform::configDir()`
-        //   的契约），创建归**写入方**也就是这里。少了这一行，第一次运行永远写不出去 ——
-        //   真机实测：`is_writable()` 对不存在的目录返回 false ⇒ 静默跳过 ⇒ 无痕无文件。
-        // 目录不存在 / 不可写 ⇒ 记一条然后放弃。**不让它把退出路径搞崩**：
-        // 用户关窗必须成功，"记住窗口位置"只是附带服务。
         // 目录不存在 ⇒ 建它（一次性副作用）：壳只给**路径**不创建（`Platform::configDir()`
         //   的契约），创建归**写入方**也就是这里。少了这一行，第一次运行永远写不出去 ——
         //   真机实测：`is_writable()` 对不存在的目录返回 false ⇒ 静默跳过 ⇒ 无痕无文件。
@@ -188,6 +266,8 @@ final class WindowStateStore
             mkdir($dir, 0777, true);
         }
 
+        // 目录不可写 ⇒ 记一条然后放弃。**不让它把退出路径搞崩**：
+        // 用户关窗必须成功，"记住窗口位置"只是附带服务。
         if (!is_writable($dir)) {
             Errors::report(
                 '窗口状态：配置目录不可写（' . $dir . '）—— 本次不保存窗口几何',
@@ -197,12 +277,125 @@ final class WindowStateStore
             return;
         }
 
-        if (file_put_contents($this->path, $text) === false) {
+        if (file_put_contents($this->path, self::serialize($groups)) === false) {
             Errors::report(
                 '窗口状态：写不进配置文件（' . $this->path . '）—— 本次不保存窗口几何',
                 Errors::DIAGNOSTIC
             );
         }
+    }
+
+    /**
+     * 读出文件里**已存在的全部组**（写回时带走别的窗口）。
+     *
+     * 读不出来 / 版本不符 / 空路径 ⇒ 空数组。这不是"静默失败"：调用方是
+     * `persist()`，它接着会写一份**只有自己这组**的文件 —— 与"整份降级"同义，
+     * 而那个文件本来就已经不可信了。
+     *
+     * @return array<string, array<string, string>>
+     */
+    private function readGroups(): array
+    {
+        if ($this->path === '' || !is_file($this->path)) {
+            return [];
+        }
+
+        $text = file_get_contents($this->path);
+        if ($text === false) {
+            return [];
+        }
+
+        $kv = self::normalize(self::parse($text));
+        if ($kv === null) {
+            return [];
+        }
+
+        $groups = [];
+        foreach ($kv as $key => $value) {
+            if ($key === 'v') {
+                continue;
+            }
+            $pos = strpos($key, '.');
+            if ($pos === false || $pos === 0) {
+                continue;   // 无槽位前缀的行：v2 里非法，跳过
+            }
+            $groups[substr($key, 0, $pos)][substr($key, $pos + 1)] = $value;
+        }
+
+        return $groups;
+    }
+
+    /**
+     * 把"任意版本"的 kv 归一到 v2 形状（`v` + `槽位.字段`）。
+     *
+     * @param array<string, string> $kv
+     *
+     * @return array<string, string>|null `null` = 版本不认识 ⇒ 调用方整份降级
+     */
+    private static function normalize(array $kv): ?array
+    {
+        $version = $kv['v'] ?? '';
+
+        if ($version === (string) self::FORMAT_VERSION) {
+            return $kv;
+        }
+
+        if ($version !== '1') {
+            return null;
+        }
+
+        // v1 = 单窗时代：平铺的键**确定**属于唯一那个窗口 ⇒ 整体视为主窗组
+        $out = ['v' => (string) self::FORMAT_VERSION];
+        foreach ($kv as $key => $value) {
+            if ($key !== 'v') {
+                $out['main.' . $key] = $value;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * 取某一个槽位的字段（去掉前缀）。
+     *
+     * @param array<string, string> $kv
+     *
+     * @return array<string, string>|null `null` = 这个槽位在文件里没有记录
+     */
+    private static function groupOf(array $kv, string $slot): ?array
+    {
+        $prefix = $slot . '.';
+        $length = strlen($prefix);
+
+        $out = [];
+        foreach ($kv as $key => $value) {
+            if (strncmp($key, $prefix, $length) === 0) {
+                $out[substr($key, $length)] = $value;
+            }
+        }
+
+        return $out === [] ? null : $out;
+    }
+
+    /** @param array<string, array<string, string>> $groups */
+    private static function serialize(array $groups): string
+    {
+        // ★ 行收集进数组再 `implode`：循环内 `.=` 在 tpc 的多字节路径下会堆损坏
+        //   （§2.4 纪律 2，`tools/lint.php` 的 str-concat-loop 就是拦这个）。
+        $lines = [
+            '# Drift window state — do not edit while the app runs',
+            'v=' . self::FORMAT_VERSION,
+        ];
+
+        foreach ($groups as $slot => $fields) {
+            foreach (self::FIELDS as $field) {
+                if (isset($fields[$field])) {
+                    $lines[] = $slot . '.' . $field . '=' . $fields[$field];
+                }
+            }
+        }
+
+        return implode("\n", $lines) . "\n";
     }
 
     /**

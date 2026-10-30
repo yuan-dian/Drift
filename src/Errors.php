@@ -89,12 +89,22 @@ final class Errors
     }
 
     /**
-     * 组合根注入原生错误框（§1.2 配套约束 1）。
+     * 组合根注入原生错误框（§1.2 配套约束 1）。**传 `null` = 卸下**。
      *
      * ★ 收 callable 而不是 Platform 实例：Errors 不依赖 Platform 类型，
      *   "平台名只出现在组合根"（§5.1）才不被破坏。
+     *
+     * ★★ **退出前必须卸下**（2026-10-30，真机取证）：注入的闭包几乎必然捕获
+     *   `$platform`（错误框要用它），而这里是**静态属性** ⇒ 整个 `Win32Platform`
+     *   （含渲染表面、窗口句柄、对话框端口）会活到 PHP 的 shutdown 才被释放。
+     *   AOT 产物在那时解引用已被销毁的类元数据 ⇒ `php8ts.dll+0x24b30` 访问冲突
+     *   （进程已经关完窗、状态也写完了，最后一步崩；每次关窗都可能弹 WER）。
+     *   实测：只卸这一个 ⇒ 单窗关窗 8 次里 6 次崩；与 `ResizeHookState::$pump`
+     *   一起卸 ⇒ **0 次**。所以"关窗后偶发崩溃"不是玄学，是对象活得太久。
+     *
+     * @api 组合根的两处注入点之一（另一处是 `ResizeHookState::$pump`）
      */
-    public static function installFatalBox(callable $box): void
+    public static function installFatalBox(?callable $box): void
     {
         self::$fatalBox = $box;
     }

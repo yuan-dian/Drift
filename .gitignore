@@ -63,3 +63,6 @@ desktop.ini
 # Skia 预编译包（约 141 MB：include/ + modules/ + src/ + out/Release-x64/*.lib）
 # 与目录字体。**分发方式仍是开放项** —— 当前是从参考实现仓拷一份到本地。
 /cpp/
+
+# Python 探针的字节码缓存
+__pycache__/
