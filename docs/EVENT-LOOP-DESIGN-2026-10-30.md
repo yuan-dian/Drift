@@ -561,6 +561,31 @@ interface Future
 ★ **`Future` 不必等于新机制**：`TaskHost::submit()` 返回的 `Job` 可以直接实现 `Future`
 （`Job` 已经有 `onDone`），`all()` 在 A1 上就是「一个 `curl_multi` handle 里挂 N 个请求」。
 
+### 3.10 扩展点：四个缝，每个只有一个契约
+
+判断架构好坏最省事的办法：**数一数「加一样东西要改几处」**。
+
+| 缝 | 契约（框架侧，窄） | 加一个要改的 | **不该改的** |
+|---|---|---|---|
+| **新平台** | `Platform`：`waitEvents` / `pumpEvents` / `wake` / `now` + 六个子端口 | 一个 `XxxPlatform` 类 + 组合根一行 | `src/` 其余全部、任何页面 / 控件 |
+| **新执行体** | `TaskHost::submit(): Future` 或 `IoDriver` | 一个 Host 类 + 组合根一行 | 等待层、`Inbox`、`Future`、UI 代码 |
+| **新异步范式** | `Future`：`then` / `catch` / `cancel` / `isDone` | 一个实现类 | 所有调用方（只依赖 `then`） |
+| **新事件类型** | `InputSource::push(InputEvent)` + `InputRouter` 的命中 / 冒泡 | 一个事件类 + 一条路由分支 | 等待层、`Frame`、控件（除声明者） |
+
+四条缝的共同形状：**契约在框架侧（窄），实现在后端侧（宽）**。
+这是 `Platform` docblock 里那条「平台 = 能力端口的集合，不是上帝接口」的延续。
+
+**两条反面判据（什么时候说明缝开错了）**：
+
+- 如果一个**新平台**需要改 `src/App/` 里的任何一行 ⇒ 平台抽象漏了。
+- 如果一种**新执行体**需要改 `Frame` 或 `Inbox` ⇒ 「执行体」与「派发」没真正解耦
+  （这正是本册两轴正交要保证的性质）。
+
+★ **已有的扩展证据**（不是空谈）：A5-② 拖文件就是按这个形状加的 ——
+一个 `FilesDroppedEvent` + 一条 `InputRouter` 路由分支 + 一个 `onFilesDropped()` 声明者，
+**没动等待层、没动 `Frame`**。所以这四条缝在今天的代码里**已经成立三条**
+（新事件 / 新平台 / 新异步后端），缺的是「新执行体」那条 —— 因为 A2 还不存在。
+
 ---
 
 ## 4. 桥的扩展：为什么用 JSON 而不是结构体
