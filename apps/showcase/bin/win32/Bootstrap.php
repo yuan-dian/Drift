@@ -5,10 +5,15 @@ namespace App\Showcase;
 
 use Drift\App\AppScope;
 use Drift\App\Paths;
+use Drift\App\ProcessTaskHost;
+use Drift\App\ProcessWorker;
 use Drift\App\WindowSet;
 use Drift\Errors;
 use Drift\Platform\Win32\ResizeHookState;
 use Drift\Platform\Win32\Win32Platform;
+
+use App\Showcase\Jobs\FetchRowsJob;
+use App\Showcase\Jobs\JobRegistry;
 
 /**
  * 组合根：**全应用唯一提到平台实现的地方**（§5.1）。
@@ -45,6 +50,26 @@ final class Bootstrap
 
     public static function run(): void
     {
+        // ★★ worker 分支：**同一个 exe**，靠参数分流（与 `apps/users` 同形）。
+        //   worker 只跑 `ProcessWorker::serve()`（读 stdin、跑任务、回 stdout），
+        //   **不进消息循环、不建窗口、不碰 UI** ⇒ "业务与 UI 隔离"的物质基础。
+        //   ★ `$argv` 在 tpc 编译期被拒 ⇒ 必须走 `$_SERVER['argv']`（`apps/users` 的注释）。
+        $argv = $_SERVER['argv'] ?? [];
+        $isWorker = false;
+        foreach ($argv as $arg) {
+            if ($arg === '--drift-worker') {
+                $isWorker = true;
+
+                break;
+            }
+        }
+
+        if ($isWorker) {
+            ProcessWorker::serve(JobRegistry::make());
+
+            return; // stdin 关闭 = UI 进程走了 ⇒ 正常收工
+        }
+
         $platform = new Win32Platform();
 
         // ★ 中止序列第 ② 步必须在**别的一切之前**装好（§1.2）。传 callable 而不是
@@ -67,6 +92,23 @@ final class Bootstrap
         //   它才是"两窗共用一份"的物质基础 —— 这里显式建一个，让第二窗有东西可共享。
         $scope = AppScope::make();
 
+        // ★★ 后台任务后端（N3/N5）：异步表格要**真慢任务**跑在别的进程里 ——
+        //   默认的 `SyncTaskHost` 会在 `submit()` 那一帧同步跑完 job（慢网络 ⇒ UI 卡死）。
+        //   这里换成常驻子进程池（与 `apps/users` 同形）。
+        //   ★ `$argv[0]` = 本 exe 路径（AOT 下由启动器给）；空则退化为同步，不静默崩。
+        //   ★ 必须在**第一个窗口 attach() 之前**设置：端口在 attach 时被 `PumpHost`
+        //     取走并缓存（中途换掉会让"入队 / drain"分属两个队列）。
+        $exe = (string) ($argv[0] ?? '');
+        if ($exe !== '') {
+            $scope->setTaskHost(new ProcessTaskHost([$exe, '--drift-worker'], JobRegistry::make()));
+        }
+
+        // ★ 数据源模式：默认本地慢任务（开箱即用，零依赖）；
+        //   `DRIFT_SHOWCASE_HTTP=1` ⇒ 真 HTTP（先起 `apps/showcase/mock-server.php`）。
+        $rowsMode = \getenv('DRIFT_SHOWCASE_HTTP') === '1'
+            ? FetchRowsJob::MODE_HTTP
+            : FetchRowsJob::MODE_LOCAL;
+
         // ★ 对话框 / 剪贴板端口从**这里**递进应用（框架不持平台，§5.1）：
         //   示例台是 `Ctrl+C/X/V` 与「对话框」页的唯一消费者。
         //   递的是**端口**不是平台实例 —— Win32 实现仍只出现在本文件。
@@ -75,8 +117,8 @@ final class Bootstrap
             null,   // ★ 标题来自 ShowcaseApplication::title()（2026-10-30）
             self::WINDOW_WIDTH,
             self::WINDOW_HEIGHT,
-            static function () use ($platform, $scope): ShowcaseApplication {
-                return new ShowcaseApplication($platform->dialog(), $platform->clipboard(), $scope);
+            static function () use ($platform, $scope, $rowsMode): ShowcaseApplication {
+                return new ShowcaseApplication($platform->dialog(), $platform->clipboard(), $scope, $rowsMode);
             },
         );
 

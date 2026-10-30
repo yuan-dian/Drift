@@ -58,7 +58,12 @@ final class DependencyDirection implements Rule
         'Text'      => ['Text', 'Geometry', 'Errors', 'Logging'],
         'Rendering' => ['Rendering', 'Geometry', 'Text', 'Errors', 'Logging'],
         'Input'     => ['Input', 'Geometry', 'Errors', 'Text', 'Layout', 'Logging'],
-        'Widget'    => ['Widget', 'Layout', 'State', 'Rendering', 'Text', 'Geometry', 'Input', 'Platform', 'Errors', 'Logging'],
+        // ★ `Async`（2026-10-30，N6）：`FutureBuilder` 要同时认识 `Future` 与
+        //   `AsyncValue`（都是**纯值类型**，`Async` 层只依赖 `Errors`/`Logging`，
+        //   比 `Widget` 更低 ⇒ 方向向下、无环）。N3 引入 `Async` 时没有 Widget
+        //   消费者，这一行是"补登已有裁决"，不是新开边界：
+        //   Widget 侧只碰两个**值类型**，派发/结算仍住 `App`（`PumpHost`）。
+        'Widget'    => ['Widget', 'Layout', 'State', 'Rendering', 'Text', 'Geometry', 'Input', 'Platform', 'Async', 'Errors', 'Logging'],
         'Layout'    => ['Widget', 'Layout', 'State', 'Rendering', 'Text', 'Geometry', 'Input', 'Platform', 'Errors', 'Logging'],
         'State'     => ['Widget', 'Layout', 'State', 'Rendering', 'Text', 'Geometry', 'Input', 'Platform', 'Errors', 'Logging'],
         'Commands'  => ['Commands', 'Geometry', 'Errors', 'State', 'Logging'],

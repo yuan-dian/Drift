@@ -206,20 +206,39 @@ final class ProcessTaskHost implements TaskHost
         $this->failed[] = new Completion(null, new \RuntimeException($message), $future);
     }
 
-    public function drain(callable $onEach): void
+    public function drain(callable $onEach, ?int $budgetMs = null): void
     {
+        // ★ 预算的基准点只取**一次**：三段（failed / readReplies / 簿记）共用它，
+        //   否则每段各算一次，总耗时就是预算的三倍。
+        $deadline = $budgetMs === null || $budgetMs <= 0
+            ? 0
+            : \hrtime(true) + $budgetMs * 1_000_000;
+
         // ★ 发不出去的那些**先结算**：它们比在途的更早（`submit()` 时就定了），
         //   而且结算顺序影响"同一帧里谁先看到失败"。
         if ($this->failed !== []) {
             $failed = $this->failed;
             $this->failed = [];
 
-            foreach ($failed as $completion) {
+            foreach ($failed as $i => $completion) {
+                // 契约①：`$i > 0` 放行首条（否则活锁）。
+                if ($deadline > 0 && $i > 0 && \hrtime(true) >= $deadline) {
+                    // 契约②：放回 `$this->failed` ⇒ `pending()` 仍数得到 ⇒ 不睡死。
+                    $this->failed = \array_merge(\array_slice($failed, $i), $this->failed);
+
+                    break;
+                }
+
                 $onEach($completion);
             }
         }
 
-        $this->readReplies($onEach);
+        $this->readReplies($onEach, $deadline);
+
+        // ★★ 契约③：下面两段**不受预算约束**，无条件跑。
+        //   `flush()` 是把排队任务真正发给 worker —— 跳过它 ⇒ 任务永远发不出去 ⇒
+        //   页面永远转圈；`reap()` 检测 worker 死亡 —— 跳过它 ⇒ 死者名下的在途
+        //   任务永不结算 ⇒ 同样是永挂。**预算限的是"交多少条"，不是"干多少活"。**
         $this->reap($onEach);
         $this->flush();
     }
@@ -430,8 +449,12 @@ final class ProcessTaskHost implements TaskHost
         return true;
     }
 
-    /** 非阻塞读**所有** worker 的回复（按 `\n` 切行，余下的留到下一帧） */
-    private function readReplies(callable $onEach): void
+    /**
+     * 非阻塞读**所有** worker 的回复（按 `\n` 切行，余下的留到下一帧）。
+     *
+     * @param int $deadline `hrtime` 纳秒截止点；`0` = 不限
+     */
+    private function readReplies(callable $onEach, int $deadline): void
     {
         foreach (array_keys($this->workers) as $index) {
             $worker = $this->workers[$index] ?? null;
@@ -439,7 +462,9 @@ final class ProcessTaskHost implements TaskHost
                 continue;
             }
 
-            // stderr 也要读：不读的话管道满了 worker 会阻塞在 warning 上（真正的死锁来源）
+            // ★★ stderr **永远读，不受预算影响**（这一段在预算检查之前，顺序不能换）：
+            //   不读的话管道满了 worker 会阻塞在 warning 上 —— 那是**真正的死锁**，
+            //   代价远大于"这一帧少交付几条结果"。宁可多花几十微秒也不能跳过。
             $errRead = [$worker['err']];
             $noWrite = [];
             $noExcept = [];
@@ -448,6 +473,15 @@ final class ProcessTaskHost implements TaskHost
                 if (is_string($chunk)) {
                     $this->workers[$index]['stderr'] .= $chunk;
                 }
+            }
+
+            // ★ 超预算 ⇒ 这一帧**完全不碰 out**：不读、不切行、不交付。
+            //   剩余全部留在管道 / `buffer` 里，下一帧原样继续 —— 行是按 `\n` 切的，
+            //   停在行边界之外也不会切坏多字节字符（`buffer` 拼接而非覆盖）。
+            //   ★ 这里用 `continue` 而不是 `return`：后面的 worker 还有其他要读的
+            //     stderr（上面那段已经读过当前这个），而 `return` 会把它们一起跳过。
+            if ($deadline > 0 && \hrtime(true) >= $deadline) {
+                continue;
             }
 
             $read = [$worker['out']];
@@ -465,6 +499,12 @@ final class ProcessTaskHost implements TaskHost
             $this->workers[$index]['buffer'] .= $chunk;
 
             while (($pos = strpos($this->workers[$index]['buffer'], "\n")) !== false) {
+                // ★ 行与行之间也要检查：一个 8KB 块可能含几十行，块内就把预算烧完。
+                //   停在行边界 ⇒ 剩余是完整的行，下一帧直接切。
+                if ($deadline > 0 && \hrtime(true) >= $deadline) {
+                    break;
+                }
+
                 $line = substr($this->workers[$index]['buffer'], 0, $pos);
                 $this->workers[$index]['buffer'] = substr($this->workers[$index]['buffer'], $pos + 1);
                 $this->deliver($line, $onEach);

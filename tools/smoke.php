@@ -4153,6 +4153,64 @@ check('P0 · taskHost() 返回 null ⇒ 不装端口', $noTaskApp->tasks() === n
 $noTaskApp->frame(16.0, BoxConstraints::loose(new Size(320.0, 240.0)));
 check('P0 · 无端口时 frame() 行为不变（drain 段整段跳过）', $noTaskApp->root() !== null);
 
+// ⑦ 一帧交付**有预算**（2026-10-30 P1）—— "一次回来几百条"到底会怎样
+//
+// ★ 这是 `docs/UI-THREAD-MODEL-2026-10-30.md` §7 承认"没做过"的那个量具。
+//   场景不是编的：`Future::all()` 聚合几百个请求、批量上传几百个文件，都会
+//   让 `drain()` 一次面对几百条 `Completion`。
+// ★ 判据用**条数**而不是耗时：CI 机器上毫秒数会抖，而"交了几条 / 分了几个帧"
+//   是确定的。三条合起来刚好覆盖三个实现契约：
+//   ① `delivered === 500` ⇒ 一条不漏（剩余没被丢掉）
+//   ② `frames > 1`        ⇒ 预算真的生效（否则 500 条一帧全交）
+//   ③ `frames <= 上限`    ⇒ **每帧至少推进一条**（有帧零推进 ⇒ 帧数跑满上限）
+//      —— 这一条把"首条无条件放行"从"不可证"变成"可证"：那是唯一会让
+//      `pending()` 不下降的形态。
+$burstHost = new SyncTaskHost();
+for ($i = 0; $i < 500; $i++) {
+    $burstHost->submit(new SumJob(1));
+}
+check('P1 · 500 条等交付', $burstHost->pending() === 500, (string) $burstHost->pending());
+
+$burstDelivered = 0;
+$burstFrames = 0;
+$burstWorstMs = 0.0;
+
+// ★ 回调里的活必须用**忙等**模拟，不能用 `usleep`：Windows 上 `usleep(200)`
+//   会被量化到系统时钟中断（~15.6ms）⇒ 每条回调都远超 4ms 预算 ⇒ 每帧只交 1 条
+//   ⇒ 跑满上限也交不完（本量具第一版正是这么红的：400 帧只交 400 条）。
+//   那测的是"睡眠精度"，不是预算。
+$burstSpinNs = 200_000;   // 0.2ms ≈ 一次 JSON 解析 / 一次 diff 的量级
+
+// ★ 上限 400 帧：预算 4ms、每条 0.2ms ⇒ 理论约 25 帧完成；跑到 400 只可能是
+//   实现坏了（零推进 / 丢了剩余），那时 `$burstDelivered === 500` 自然不成立。
+while ($burstHost->pending() > 0 && $burstFrames < 400) {
+    $t0 = hrtime(true);
+    $burstHost->drain(
+        static function (Completion $c) use (&$burstDelivered, $burstSpinNs): void {
+            $burstDelivered++;
+            $until = hrtime(true) + $burstSpinNs;
+            while (hrtime(true) < $until) {
+            }
+        },
+        4,
+    );
+    $burstWorstMs = max($burstWorstMs, (hrtime(true) - $t0) / 1e6);
+    $burstFrames++;
+}
+
+check('P1 · 500 条一条不漏（剩余没被丢掉）', $burstDelivered === 500, (string) $burstDelivered);
+check('P1 · 分了多帧（预算真的生效，不是一帧全交）', $burstFrames > 1, '帧数 ' . $burstFrames);
+check(
+    'P1 · 每帧至少推进一条（没有零推进的帧 ⇒ 不会活锁）',
+    $burstFrames < 400,
+    '帧数 ' . $burstFrames . '（上限 400）',
+);
+check(
+    'P1 · 单帧不超预算太多（预算 + 一条回调的量级）',
+    $burstWorstMs < 20.0,
+    sprintf('最差 %.1fms（预算 4ms）', $burstWorstMs),
+);
+
 // ⑥ 未给 onError ⇒ Fatal 序列（三态的 Error 分支不能被静默吞掉）
 fresh($log);
 [$code, $taskErrOut] = runCase(__FILE__, 'taskerr', null);
@@ -4663,14 +4721,33 @@ check('P3 · shutdown 之后不再有 worker', !$procHost->isRunning());
 // 判据：① attach 之后仍 Loading（没被 HTTP 阻塞）② 若干帧后 Ready + 15 行
 //   ③ 数据真的来自 HTTP（首行姓名）④ 同步路径（host=null）行为不变（既有 18 条已覆盖）
 
-$mockPort = 18000 + (getmypid() % 1000);
-$mockProc = proc_open(
-    [PHP_BINARY, '-S', '127.0.0.1:' . $mockPort, dirname(__DIR__) . '/tools/app-workers/users-mock.php'],
-    [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
-    $mockPipes,
-);
+// ★★ 端口不能"算一个就用"：原写法 `18000 + (pid % 1000)` 会撞上**别的进程**已占用的
+//   端口，症状是 `php -S` 报 WSAEACCES 而 `/healthz` 探到**别人**的 404 ⇒ 判据假红。
+//   2026-10-30 真撞过一次（18488 被宿主进程占着，gate 停在 smoke）。
+//   ⇒ 先自己 bind 一次探空闲。`stream_socket_server` 成功即说明能绑（有极小的
+//   TOCTOU 窗口，但比"撞上了就红"好得多）。
+$mockPort = 0;
+$mockBase = 18000 + (getmypid() % 1000);
+for ($try = 0; $try < 30; $try++) {
+    $candidate = $mockBase + $try * 7;
+    $probeSock = @stream_socket_server('tcp://127.0.0.1:' . $candidate, $probeErrno, $probeErrstr);
+    if ($probeSock !== false) {
+        fclose($probeSock);   // 只是探一下，真监听交给 `php -S`
+        $mockPort = $candidate;
+
+        break;
+    }
+}
+
+$mockProc = $mockPort > 0
+    ? proc_open(
+        [PHP_BINARY, '-S', '127.0.0.1:' . $mockPort, dirname(__DIR__) . '/tools/app-workers/users-mock.php'],
+        [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+        $mockPipes,
+    )
+    : false;
 $mockReady = false;
-for ($i = 0; $i < 120; $i++) {
+for ($i = 0; $i < 120 && $mockProc !== false; $i++) {
     $probe = @file_get_contents('http://127.0.0.1:' . $mockPort . '/healthz');
     if ($probe !== false) {
         $mockReady = true;
@@ -4679,7 +4756,11 @@ for ($i = 0; $i < 120; $i++) {
     }
     usleep(50000);
 }
-check('异步 · mock 后端起来了（php -S）', $mockReady, 'port=' . $mockPort);
+check(
+    '异步 · mock 后端起来了（php -S）',
+    $mockReady,
+    $mockPort > 0 ? 'port=' . $mockPort : '18000 起 30 个候选端口全被占用（不是代码问题，换台机器或关掉占端口的程序）',
+);
 
 if ($mockReady) {
     $asyncHost = new ProcessTaskHost(
@@ -4764,7 +4845,7 @@ $manualHost = new class implements TaskHost {
         return true;
     }
 
-    public function drain(callable $onEach): void
+    public function drain(callable $onEach, ?int $budgetMs = null): void
     {
     }
 };
@@ -4827,7 +4908,7 @@ $inFlightHost = static fn (bool $needsPolling): TaskHost => new class ($needsPol
         return $this->needsPolling;
     }
 
-    public function drain(callable $onEach): void
+    public function drain(callable $onEach, ?int $budgetMs = null): void
     {
     }
 };

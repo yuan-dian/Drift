@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Bench;
 
 use App\Showcase\ShowcaseRoot;
+use Drift\Async\Future;
 use Drift\Layout\Overflow;
 use Drift\Widget\Column;
 use Drift\Widget\Modal;
@@ -145,6 +146,34 @@ final class Trees
             new NullDialog(),
             static function (bool $enabled): void {
             },
+            // ★ N6：取数给**已结算的静态数据**，不是真任务。
+            //   整页快照要稳定 —— `Future::resolved` 在 `initState` 里同步结算
+            //   ⇒ 首帧就是 data，不会把转圈动画画进基线（转圈每帧相位都在变）。
+            static fn(int $page): Future => Future::resolved(self::staticRows($page)),
         );
+    }
+
+    /**
+     * 异步表格页在基准 / 快照里的静态数据（与 `FetchRowsJob` 的 local 形状一致）。
+     *
+     * ★ 与 `FetchRowsJob::simulateSlowLocal()` **不共享代码**：那份在 worker 进程里
+     *   跑（还带 1.2s 睡眠），基准要的是"零耗时、确定性"。共享会把睡眠带进基准。
+     *
+     * @return array{items: list<array<string, mixed>>, total: int, source: string}
+     */
+    private static function staticRows(int $page): array
+    {
+        $cities = ['北京', '上海', '广州', '深圳', '杭州'];
+        $rows = [];
+        for ($i = 1; $i <= 8; $i++) {
+            $rows[] = [
+                'id' => $i,
+                'name' => '用户 ' . $i,
+                'email' => 'user' . $i . '@example.com',
+                'city' => $cities[$i % 5],
+            ];
+        }
+
+        return ['items' => $rows, 'total' => 8, 'source' => '静态数据'];
     }
 }

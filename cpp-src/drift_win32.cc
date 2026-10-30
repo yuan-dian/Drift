@@ -401,6 +401,22 @@ static void fillGeomFromCache(HWND hwnd, Array &out) {
 std::vector<PendingEvent> g_queue;
 
 /**
+ * 消息队列里**是否已有一条我们投的** `kMsgWake`（闹钟合并，2026-10-30 P2）。
+ *
+ * ★ 为什么可以合并：队列是真相，消息只是闹钟。泵一被叫醒就会先把 `g_queue`
+ *   取空（见 `php_drift_win_pump` 开头），所以"还有几条闹钟在飞"对正确性零影响。
+ * ★ 为什么必须合并：`resize` 高频合并时（拖动窗口边缘），每个被合并掉的中间
+ *   尺寸都投一条闹钟 ⇒ N 条事件投 N 条消息，第一次泵就把队列取空了，剩下 N-1 次
+ *   唤醒的是空循环（每条都要过一遍 `waitEvents` → `pumpEvents` → 逐窗 `frame()`，
+ *   帧不脏时不重绘，但帧时钟记账与阶段埋点照付）。
+ *   Win32 自己对 `WM_PAINT` / `WM_MOUSEMOVE` 就是这么干的。
+ *
+ * ★ 只在 UI 线程读写（与 `g_queue` 同线程）：投递点全在 WndProc / `enqueue()`
+ *   的调用栈上，IO 线程走的是 `drift::win32::consumeWake()` 那条独立标记。
+ */
+bool g_wakePosted = false;
+
+/**
  * 窗口 DPI（**每显示器**，优先 `GetDpiForWindow`）。
  *
  * ★ 前置声明：定义在 1600 行之后（要用 `LoadLibraryW` 动态取符号），而
@@ -1187,6 +1203,31 @@ int modifierBits() {
 // ──────────────────────────────────────────────────────────── 队列 ──
 
 /**
+ * 叫醒阻塞在 `GetMessageW` 的泵 —— **合并成"至多一条在飞"**（2026-10-30 P2）。
+ *
+ * ★ 语义：消息只是闹钟，载荷在 `g_queue` 里。闹钟响了泵就来取，取到队列空为止。
+ *   ⇒ 已经有一条在飞时再投没有任何新信息。
+ *
+ * ★ 失败**不置位**：`PostMessageW` 在目标窗口已销毁 / 消息队列满（默认上限
+ *   10000 条）时返回 0。这时若置位，后续 `enqueue()` 都不会再投 ⇒ 队列里已有的
+ *   事件再没人来取（现象：界面冻结，但事件明明还在队列里，且**不报错**）。
+ *   不置位才能下一次重试。
+ *
+ * ★ `hwnd == NULL` 什么都不做：`GetMessageW(NULL, …)` 取的是本线程任意窗口的
+ *   消息，没有窗口就没有消息队列可投 —— 这类事件靠"队列非空"判据在下次
+ *   `pump()` 时交付（见 `php_drift_win_pump` 开头）。
+ */
+void wakePump(HWND hwnd) {
+    if (hwnd == NULL || g_wakePosted) {
+        return;
+    }
+
+    if (PostMessageW(hwnd, kMsgWake, 0, 0) != 0) {
+        g_wakePosted = true;
+    }
+}
+
+/**
  * 入队一条事件，并叫醒阻塞在 `GetMessageW` 的泵。
  *
  * @param hwnd 事件的**来源窗口** —— 由调用方（WndProc）给，`enqueue` 只负责记进
@@ -1207,18 +1248,15 @@ void enqueue(HWND hwnd, PendingEvent event) {
             if (queued.kind == kEvResize && queued.hwnd == hwnd) {
                 queued.a = event.a;
                 queued.b = event.b;
-                if (hwnd != NULL) {
-                    PostMessageW(hwnd, kMsgWake, 0, 0);
-                }
+                // 被合并掉的中间尺寸不再单独占位 ⇒ 排队的闹钟也可能已经有一条
+                wakePump(hwnd);
                 return;
             }
         }
     }
     g_queue.push_back(event);
-    if (hwnd != NULL) {
-        // 把阻塞在 GetMessageW 上的泵叫醒。载荷在队列里，这条消息只是闹钟。
-        PostMessageW(hwnd, kMsgWake, 0, 0);
-    }
+    // 把阻塞在 GetMessageW 上的泵叫醒。载荷在队列里，这条消息只是闹钟。
+    wakePump(hwnd);
 }
 
 /**
@@ -1255,9 +1293,7 @@ void enqueueCloseRequest(HWND hwnd) {
     event.e = 0;
     g_queue.push_back(event);
 
-    if (hwnd != NULL) {
-        PostMessageW(hwnd, kMsgWake, 0, 0);
-    }
+    wakePump(hwnd);
 }
 
 /**
@@ -1577,7 +1613,7 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             event.d = 0;
             g_queue.push_back(event);
             // 叫醒阻塞在 `GetMessageW` 的泵（同 WM_SIZE / WM_TIMER 的做法）
-            PostMessageW(hwnd, kMsgWake, 0, 0);
+            wakePump(hwnd);
             return 0;
         }
 
@@ -1597,7 +1633,7 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 delete payload;
             }
             g_queue.push_back(event);
-            PostMessageW(hwnd, kMsgWake, 0, 0);
+            wakePump(hwnd);
             return 0;
         }
 
@@ -3151,13 +3187,24 @@ Bool php_drift_win_system_dark() {
 
 Array php_drift_win_pump() {
     for (;;) {
+        // ★★ **队列是真相，消息只是闹钟**（2026-10-30 P2）：有货立刻交付。
+        //   改造前这里不查队列，靠"每条事件必配一条 `kMsgWake`"这个巧合保证泵会醒 ——
+        //   闹钟一旦合并（`wakePump`）或投失败（目标窗口已销毁），剩下的积压就再也
+        //   交不出去（现象：界面冻住，事件却明明还在 `g_queue` 里，且**不报错**）。
+        //   放在最前面还多一层好处：某个窗口的闹钟投失败不影响别的窗口取事件。
+        if (!g_queue.empty()) {
+            PendingEvent event = g_queue.front();
+            g_queue.erase(g_queue.begin());
+            return toArray(event);
+        }
+
         // ★★ 唤醒标记要在**取消息之前**查（A2 / N5）：标记可能在上一次调用里就被
         //   置上了（那一次有真事件排在前面、先返回了真事件）。只在取消息之后查的话，
         //   这条"被叫醒"就永远等不到下一条消息 —— 挂死在 `GetMessageW` 里。
         //   优先级：真事件 > 唤醒（真事件有载荷，唤醒只是个闹钟）。
         //   ★ 标记的**读写都在 `win32/io_wake.cc`**（同一线程，不需 atomic）；
-        //     这里只消费，`&&` 短路保证队列非空时不去动它。
-        if (g_queue.empty() && drift::win32::consumeWake()) {
+        //     这里只消费。上面那条"队列非空先返回"保证了它不会跟真事件抢。
+        if (drift::win32::consumeWake()) {
             return eventWake();
         }
 
@@ -3169,16 +3216,16 @@ Array php_drift_win_pump() {
             return eventQuit();
         }
 
+        // ★ 闹钟被取走 ⇒ 清位，`wakePump()` 下次才能再投 —— 这就是合并的复位点。
+        //   在 `DispatchMessageW` **之前**清：这条消息已经离开系统消息队列了。
+        if (msg.message == kMsgWake) {
+            g_wakePosted = false;
+        }
+
         TranslateMessage(&msg);   // WM_KEYDOWN ⇒ WM_CHAR（也是 IME 的入口，M3 才接）
         DispatchMessageW(&msg);   // WndProc 把关心的事件塞进 g_queue
-
-        if (!g_queue.empty()) {
-            PendingEvent event = g_queue.front();
-            g_queue.erase(g_queue.begin());
-            return toArray(event);
-        }
-        // 没有关心的事件 ⇒ 继续等下一条。壳不把"不关心的消息"回传给 PHP
-        // （否则泵会变成每帧几百次跨边界调用）。
+        // 没有关心的事件 ⇒ 回到循环开头（先查队列，再继续等下一条）。
+        // 壳不把"不关心的消息"回传给 PHP（否则泵会变成每帧几百次跨边界调用）。
     }
 }
 

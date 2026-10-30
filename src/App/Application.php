@@ -473,9 +473,56 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     }
 
     /**
+     * 提交一个后台任务（§17.2）—— **应用侧唯一的提交入口**。
+     *
+     * ```php
+     * // 页面 / State 里：提交，拿到一个可组合的 Future
+     * $future = $app->submit(new FetchRowsJob($page));
+     * // 渲染交给 FutureBuilder —— loading / error / data 三态它自己管
+     * FutureBuilder::make($future, fn (AsyncValue $v): Widget => $this->render($v));
+     * ```
+     *
+     * ★ **为什么必须绕这一道**：`tasks()` 是 pumps 的内部口子（`@internal`），
+     *   应用直接伸手拿 `TaskHost` 再 `submit()` 是**看着能用**的错解 ——
+     *   它既逼应用读内部面，又让"提交的端口"与"每帧被 drain 的端口"之间
+     *   多了一层需要人肉保证的不变式。本方法把这件事收敛成一处：
+     *   提交的那个端口，就是 {@see self::attach()} 挂到四个泵上的那个。
+     *
+     * ★ **没有后台端口时返回 `Future::rejected()`，不抛异常**：
+     *   提交点通常就在 `build()` 里（`AsyncTablePage::initState()` 那条链），
+     *   抛异常等于把渲染管线打断（用户看到的是整个页面没了）；返回 rejected
+     *   则让 `FutureBuilder` 落到 error 态，界面显示"没有后台任务后端"并给重试按钮。
+     *   这与 §11.4 的"UI 不因业务失败而消失"是同一条纪律。
+     *   （`Future::rejected()` 造的是**值**，没人接也不会走 Fatal —— 与
+     *   `Future::pending()` 的闸门行为不同。）
+     *
+     * ★★ **默认的 `SyncTaskHost` 会同步跑完**：`submit()` 返回时任务已经结束，
+     *   `Future` 是已结算的。这不是缺陷，是"零装配也能用"的代价 ——
+     *   但真慢的任务（网络 / 磁盘 / 大计算）必须换掉后端，否则 UI 照样卡在
+     *   `submit()` 这一行，而症状（"异步了还是卡"）会把人引向完全错误的方向。
+     *   换法见 {@see self::taskHost()}：一行 `AppScope::setTaskHost()`。
+     *
+     * ★ `final`：与 `taskHost()` 同理 —— 提交路径不允许被覆写成两套。
+     *
+     * @api
+     */
+    final public function submit(Job $job): Future
+    {
+        $host = $this->taskHost();
+        if ($host === null) {
+            return Future::rejected(new \RuntimeException(
+                '本应用没有后台任务端口（AppScope::setTaskHost(null)）：'
+                . \get_class($job) . ' 无处可跑'
+            ));
+        }
+
+        return $host->submit($job);
+    }
+
+    /**
      * 已挂载的后台端口（`null` = 未挂载或应用声明不用）。
      *
-     * @internal 测试与 devtools 读它；应用不该绕过 `submit()` 直接碰后端。
+     * @internal 测试与 devtools 读它；应用走 {@see self::submit()}，不要碰后端。
      */
     public function tasks(): ?TaskHost
     {

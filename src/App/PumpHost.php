@@ -43,6 +43,24 @@ final class PumpHost
     private const SLICE_BUDGET_MS = 4;
 
     /**
+     * 后台结果交付每帧的时间预算（毫秒，2026-10-30 P1）。
+     *
+     * ★ 为什么和 `SLICE_BUDGET_MS` 同量级：它们吃的是**同一帧**的 16.7ms，
+     *   而这一帧还要留 12ms 给布局 / 绘制 / 输入（§13.3 全树重排）。
+     *   两个泵各占 4ms 近似"异步最多吃半帧"，剩下的够画面走完。
+     *
+     * ★ 为什么由**这里**给而不是让后端用自己的默认值：预算是帧的属性，不是
+     *   后端的属性 —— 后端只回答"给我多少我就干多少"。把数字留在帧循环里，
+     *   将来要改成"整帧共享预算"（Flutter 的 frame budget）时只动这一处。
+     *
+     * ★ 为什么必须给（不能传 `null` 沿用无限）：`Future::all()` 聚合几百个请求时
+     *   一次回来几百条回调，每条都改 Store ⇒ 一帧几十毫秒。那是**偶发卡顿**，
+     *   且掉帧的那一帧和提交点隔着几百条回调，几乎不可能归因（见
+     *   `docs/UI-THREAD-MODEL-2026-10-30.md` §4.1）。
+     */
+    private const TASK_BUDGET_MS = 4;
+
+    /**
      * 后台执行端口（§17.2）—— `attach()` 时由**作用域**给一次并缓存。
      *
      * ★ **必须缓存实例**：后端持有结果队列，每次现建一个会让"这一帧入队、
@@ -402,9 +420,15 @@ final class PumpHost
         $this->host->assertUiThread('drain');
 
         try {
-            $tasks->drain(function (Completion $completion): void {
-                $this->complete($completion);
-            });
+            // ★ 传预算（`null` = 一次取空）。超出的留在后端，下一帧继续 ——
+            //   `pending()` 仍 > 0 是这件事成立的前提（三个后端各自的实现契约
+            //   见 {@see TaskHost::drain()}），否则帧时钟判"没活了"就睡死。
+            $tasks->drain(
+                function (Completion $completion): void {
+                    $this->complete($completion);
+                },
+                self::TASK_BUDGET_MS,
+            );
         } catch (\Throwable $e) {
             Errors::report(sprintf(
                 '帧循环：后台结果回调未捕获异常 —— %s（%s:%d）',
