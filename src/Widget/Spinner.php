@@ -9,11 +9,16 @@ use Drift\Layout\RenderSpinner;
 use Drift\Rendering\ColorToken;
 
 /**
- * 加载指示器 —— §11.5 三态的 `Loading` 分支（§A.2 样板 3 处引用的目标形态）。
+ * 加载指示器 —— `AsyncValue` 四态里 `loading` 那一态的画法（§A.2 样板引用的目标形态）。
  *
  * ```php
- * LoadStatus::Loading => Spinner::make(),
+ * // ★ 四态用 `AsyncValue::fold()` 画（`AsyncCommand::value()` 给的）
+ * 'loading' => static fn(AsyncValue $v): Widget => Center::make(Spinner::make()),
  * ```
+ *
+ * ★ 以前这里写的是 `LoadStatus::Loading => Spinner::make()` —— 那个枚举已于
+ *   2026-10-30 被 `AsyncValue` 取代（它多带**载荷**与**消息**，且四态由
+ *   `fold()` 强制写全）。
  *
  * ★ **为什么是 `StatefulWidget`**：动画相位是纯 UI 态（§11.5）且必须跨 build 活
  *   ⇒ 住 `State`；Widget 只持直径（§13.2）。

@@ -3864,15 +3864,22 @@ check(
 
 // ① 值缝 · **跨页共享**（AppStore：状态栏跨页活着）
 $usersApp->dispatch('users.refresh');
+
+// ★★ 这里断言的是"**正在**刷新…"，不是"已刷新"。
+//   `UserCommands::refresh()` 只**发起**（`AsyncCommand::run()` 立刻返回），而
+//   `CommandHandler::handle()` 是**同步**的 —— 它不可能知道异步结果。以前在这里
+//   接一句 `say('已刷新')`，于是转圈还在转、snackbar 却说完成了 —— 那是**谎言**。
+//   "完成了没有"由 `AsyncValue` 那四态回答（页面读 `$store->page()->value()` 画
+//   loading / data / error）。⇒ 判据跟着改成诚实形态。
 check(
-    'apps/users · 跨页共享态：刷新 ⇒ 状态栏播报"已刷新"（AppStore.say）',
-    $usersApp->appStore()->statusLine() === '已刷新',
+    'apps/users · 跨页共享态：刷新 ⇒ 状态栏播报"正在刷新…"（发起，不是完成）',
+    $usersApp->appStore()->statusLine() === '正在刷新…',
 );
 $usersApp->dispatch('nav.signup');
 check('apps/users · 跨页共享态：nav.signup ⇒ currentPage=signup', $usersApp->appStore()->currentPage() === 'signup');
 check(
     'apps/users · 跨页共享态：切页后状态栏仍在（共享态不随页销毁）',
-    $usersApp->appStore()->statusLine() === '已刷新',
+    $usersApp->appStore()->statusLine() === '正在刷新…',
 );
 
 // ② 值缝 · **局部态**（SignupForm：property hooks + 派生缓存）

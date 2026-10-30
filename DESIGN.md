@@ -1421,6 +1421,30 @@ final class SignupCommands implements CommandHandler
 
 ### 11.5 下行：Store + 三态 + 订阅点下移
 
+> ★ **2026-10-30 更新**：下面的手写三态已被 `AsyncCommand` + `AsyncValue` 取代
+> （`LoadStatus` 已删除）。同一份状态机在 `UserStore` 里被手写第二遍，是重复的
+> 不是分工 —— 收敛过程见 `docs/ASYNC-DX-2026-10-30.md` §8。当前形态：
+> Store 持**一条** `AsyncCommand`，构造器订一份（命令换值 ⇒ 我变）；
+> 四态由 `AsyncValue` 携带（**含载荷与消息**），"失败时行还是上一次的"由
+> `if ($value->hasData())` 一句话表达，不再需要 `applyPage()` 那层注释来守。
+>
+> ```php
+> final class UserStore extends Subject
+> {
+>     public function __construct(private UserSource $src) {
+>         // 命令换值 ⇒ 我变 ⇒ 页面照旧只订 Store 一个
+>         $this->page->subscribeFor($this, fn() => $this->absorb());
+>     }
+>
+>     private AsyncCommand $page;   // idle / loading / data / error + 载荷 + 消息
+>     private array $rows = [];
+>
+>     public function load(int $p = 1): void { $this->page->run($p); }
+> }
+> ```
+>
+> ★ 下面这段原文保留作**历史记录**，不要再照它写新代码。
+
 ```php
 enum LoadStatus: int { case Idle = 0; case Loading = 1; case Ready = 2; case Error = 3; }
 
