@@ -4143,7 +4143,7 @@ check(
 
 // ⑤ 不装端口：`taskHost()` 返回 null ⇒ 不建端口、frame() 照常
 $noTaskApp = new TaskApplication();
-$noTaskApp->withTasks = false;
+$noTaskApp->withoutTasks();
 $noTaskApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(320.0, 240.0)));
 check('P0 · taskHost() 返回 null ⇒ 不装端口', $noTaskApp->tasks() === null);
 $noTaskApp->frame(16.0, BoxConstraints::loose(new Size(320.0, 240.0)));

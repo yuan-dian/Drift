@@ -29,11 +29,6 @@ use Drift\Rendering\ColorToken;
 use Drift\Rendering\Paint;
 use Drift\Rendering\RenderSurface;
 use Drift\Rendering\SurfaceProfile;
-use Drift\Text\DeterministicFontManager;
-use Drift\Text\DeterministicMetricsProvider;
-use Drift\Text\DeterministicShaper;
-use Drift\Text\FontLocator;
-use Drift\Text\TtfFace;
 use Drift\Geometry\Rect;
 use Drift\Text\TextMetricsProvider;
 use Drift\Widget\Scrollable;
@@ -109,6 +104,18 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     protected int $uiThreadId = 0;
 
     protected CommandRouter $router;
+
+    /**
+     * **应用作用域**（M2）：一个进程一份的东西（主题 / 度量 / 命令父表 / 加速键 /
+     * 后台端口 / IO 轮询器）住在这里；本类只持"每窗一份"的那些。
+     *
+     * ★ 构造参数可注入 ⇒ 多窗口时 N 个 `Application` 共享同一个实例；
+     *   不注入 ⇒ 自建一个 ⇒ **所有既有应用零改动**。
+     */
+    private readonly AppScope $scope;
+
+    /** 已向 `$scope` 登记过本窗口（`attach()` 可重入 ⇒ 只登记一次） */
+    private bool $scopeEntered = false;
 
     /**
      * 滚动输入路由（S1 第 5 步拆出的片）：滚轮 / 滚动条 thumb 拖动 /
@@ -314,9 +321,15 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     private TapTracker $taps;
 
     /** @param iterable<string, CommandHandler> $handlers `commands()` 的返回值 */
-    public function __construct(iterable $handlers = [])
+    public function __construct(iterable $handlers = [], ?AppScope $scope = null)
     {
-        $this->router = CommandRouter::make();
+        // ★ 作用域先定（M2）：本类对应用级状态的每一处读都经它。
+        $this->scope = $scope ?? AppScope::make();
+
+        // ★ 本窗 router 以**应用级命令表为父**（父链，就近优先）：
+        //   全局命令注册一次、每个窗口可派发；本窗 `commands()` 仍各注册各的
+        //   （handler 持本窗的 Store ⇒ 绝不能被别的窗口派发到）。
+        $this->router = CommandRouter::make($this->scope->commands());
 
         $this->taps = new TapTracker();
 
@@ -403,33 +416,59 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         return [];
     }
 
-    /** 主题：构造时给死；换肤走 `Drift\Theme\ThemeScope`（§2446） */
-    public function theme(): ThemeData
-    {
-        return ThemeData::light();
-    }
-
     /**
-     * 后台执行端口（§17.2）—— **组合根覆写它换后端**（§17.2.3 的"一行"）。
+     * 应用作用域（M2）—— **组合根在多窗口时把同一个实例递给每个 `Application`**。
      *
      * ```php
-     * protected function taskHost(): ?TaskHost
-     * {
-     *     return new ProcessTaskHost(4);   // 换后端只改这一行
-     * }
+     * $scope = AppScope::make()->setTaskHost(new ProcessTaskHost(4));
+     * $a = new ShowcaseApplication($dialog, $clipboard, $scope);   // 窗 1
+     * $b = new ShowcaseApplication($dialog, $clipboard, $scope);   // 窗 2
+     * // 两个窗口共用：字体解析一次、一个线程池、一个 IO 轮询器、一份主题
      * ```
-     *
-     * ★ **只在 `attach()` 调一次**（返回值被缓存）：后端持有队列，每次现建会让
-     *   "入队 / drain"分属两个队列。
-     * ★ 默认给 `SyncTaskHost`（永远可用）⇒ 任何应用**默认就有正确的异步语义**
-     *   （回调在帧内），只是"慢"；换真后端那天业务代码不用动。
-     * ★ 返回 `null` ⇒ 本应用不用后台任务（`frame()` 跳过 drain）。
      *
      * @api
      */
-    public function taskHost(): ?TaskHost
+    public function scope(): AppScope
     {
-        return new SyncTaskHost();
+        return $this->scope;
+    }
+
+    /**
+     * 主题（**应用级**）：默认取 `AppScope` 的值。
+     *
+     * ★ 仍然可以覆写（本窗特化），但多窗口下**不要**覆写 —— 共享 scope 里
+     *   只有一个主题值，覆写的那个窗口会与别的窗口不一致（`AppScope::enter()`
+     *   在 `attach()` 时会把这件事报成 `DIAGNOSTIC`，不会静默）。
+     */
+    public function theme(): ThemeData
+    {
+        return $this->scope->theme();
+    }
+
+    /**
+     * 后台执行端口（§17.2）—— **应用级，一个进程一个池**（M2 从"扩展点"降为只读口）。
+     *
+     * ★★ **`final` 是有意的**（2026-10-30）：在 M2 之前它是应用覆写点
+     *   （`protected function taskHost()`），于是"`UserStore` 拿注入的
+     *   `ProcessTaskHost`、`frame()` 用默认 `SyncTaskHost` drain"这种**两套队列**
+     *   的 bug 只能靠注释防。现在覆写它是**加载期致命错误**
+     *   （`Cannot override final method`）—— 响亮失败，与 G2 一致。
+     *
+     * 换后端的写法搬到装配处（一行、显式、与窗口数无关）：
+     *
+     * ```php
+     * $scope = AppScope::make()->setTaskHost(new ProcessTaskHost(4));
+     * $app = new UsersApplication(new UserSource(), $scope);
+     * ```
+     *
+     * ★ 默认 `SyncTaskHost`（永远可用 ⇒ 回调在帧内）；`null` ⇒ 本应用不用后台
+     *   任务（`frame()` 跳过 drain）。
+     *
+     * @api
+     */
+    final public function taskHost(): ?TaskHost
+    {
+        return $this->scope->taskHost();
     }
 
     /**
@@ -462,25 +501,26 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         return $this->lastInputMs;
     }
     /**
-     * 加速键表（§9.1 路由链第 ① 环，焦点之前）。
+     * 加速键表（§9.1 路由链第 ① 环，焦点之前）—— **应用级**：默认取 `AppScope`。
      *
      * ```php
-     * public function accelerators(): AcceleratorTable
-     * {
-     *     return AcceleratorTable::make()
-     *         ->bind(KeyChord::ctrl('R'), 'users.refresh');
-     * }
+     * // 单窗口：照旧覆写（行为与 M2 之前逐条相同）
+     * public function accelerators(): AcceleratorTable { ... }
+     *
+     * // 多窗口：放进 scope，注册一次全窗生效
+     * $scope->setAccelerators(AcceleratorTable::make()->bind(KeyChord::ctrl('R'), 'users.refresh'));
      * ```
      *
+     * ★ 共享**不会串窗**：加速键只把组合键解析成**命令名**，命令派发走
+     *   `Application::dispatch()`（本窗树 → 本窗 router → 父链）⇒ 同一个 `Ctrl+S`
+     *   在两个窗口里各自落到自己的 handler。
      * ★ 默认空表 ⇒ 不覆写的应用零加速键、也零开销（`isEmpty()` 短路）。
-     * ★ 每帧查询**现取现建**也行（值小、bind 便宜）；要省就缓存到字段——
-     *   应用级数据没有不可变纪律（不是 Widget）。
      *
      * @api
      */
     public function accelerators(): AcceleratorTable
     {
-        return AcceleratorTable::make();
+        return $this->scope->accelerators();
     }
 
     /**
@@ -506,55 +546,19 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     }
 
     /**
-     * 度量实现（缓存住 —— 它现在要读一次字体文件，不能每次问都读 11 MB）。
+     * **布局确定性的注入点**（§14.2）：度量由宿主给，不由平台探测 —— **应用级**。
      *
-     * @internal 缓存字段；子类覆写 `metrics()` 时不受影响
-     */
-    private ?TextMetricsProvider $metricsCache = null;
-
-    /**
-     * **布局确定性的注入点**（§14.2）：度量由宿主给，不由平台探测。
-     *
-     * ## 2026-10-17：从"纯位图"改为"真字体优先，位图作字形源"
-     *
-     * 位图字模只覆盖生成器扫到的那批字（864），表外字符退 `NotdefFontFace`
-     * 按宽/窄猜 1.0 / 0.5 em —— 而 `skia` 后端的字形来自真 TTF（全字集）。
-     * 于是"画得出、宽度是猜的"：长句错位、换行点算错。现在把**度量**接回真字体
-     * （`TtfFace` 解析 cmap + hmtx），位图面降级为 `soft` 后端的**字形源**。
-     *
-     * ★ 顺序要紧：`TtfFace` 注册在**最前**（它 `hasGlyph()` 查真字体 cmap ⇒
-     *   全字集），位图两面跟在后面只服务"TTF 也没有的字"和 `soft` 的字形委托。
-     * ★ 找不到字体文件 ⇒ 退纯位图（**降级留痕**：`TtfFace::fromFile()` 记
-     *   Diagnostic；不是静默 —— 现象会是"表外字宽度不对"，那条日志是唯一线索）。
+     * ★ M2 起实现搬到 `AppScope::metrics()`（**整个进程一份**）：它要读一次
+     *   11MB 字体（`TtfFace::fromFile()`）并注册三套字形面，每窗口一份就是
+     *   解析 N 次 + N 份字形缓存。原来住 `$this->metricsCache`，多窗口下那段
+     *   缓存只对本窗有效。
+     * ★ 仍然可以覆写（本窗特化），但多窗口下**别** —— 与 `theme()` 同一条理由。
      *
      * @api
      */
     public function metrics(): TextMetricsProvider
     {
-        if ($this->metricsCache !== null) {
-            return $this->metricsCache;
-        }
-
-        $latin = DeterministicFontManager::latinFace();
-        $cjk = DeterministicFontManager::cjkFace();
-
-        $manager = new DeterministicFontManager();
-        $fontPath = FontLocator::find('NotoSansSC-Regular.ttf');
-        $ttf = $fontPath === null ? null : TtfFace::fromFile($fontPath, [$latin, $cjk]);
-
-        if ($ttf !== null) {
-            $manager->registerFace($ttf);
-        }
-
-        $manager->registerFace($latin);
-        $manager->registerFace($cjk);
-
-        $this->metricsCache = new DeterministicMetricsProvider(
-            $manager->collection(),
-            new DeterministicShaper(),
-        );
-
-        return $this->metricsCache;
+        return $this->scope->metrics();
     }
 
     public function router(): CommandRouter
@@ -578,8 +582,19 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         // ★ UI 线程身份在**挂载之前**记：之后的任何回调都以此为准（§17.4.2.1）。
         $this->uiThreadId = \drift_thread_id();
 
-        // ★ 端口 / 轮询器在挂载时建一次并缓存（见 PumpHost::attach()）。
-        $this->pumps->attach();
+        // ★ 作用域登记（M2）：第一个窗口把主题灌进 scope，后续窗口必须一致 ——
+        //   不一致在这里报 DIAGNOSTIC（多窗口"一半深色一半浅色"的唯一入口是
+        //   "某个窗口覆写了 theme()"）。只在挂载时查一次，避免进热路径。
+        // ★ `attach()` 可重入（测试会重复挂载）⇒ 同一实例只登记一次，否则
+        //   "第 2 个窗口"的判据会在同一个窗口的第二次 attach 上误报。
+        if (!$this->scopeEntered) {
+            $this->scopeEntered = true;
+            $this->scope->enter($this->theme());
+        }
+
+        // ★ 端口 / 轮询器**从作用域取**（M2）：一个进程一个池、一个监听表。
+        //   `attach()` 只缓存引用，不负责"建"—— 建的时机归装配处。
+        $this->pumps->attach($this->scope->taskHost(), $this->scope->io());
 
         $context ??= new BuildContext(
             $constraints->maxWidth,

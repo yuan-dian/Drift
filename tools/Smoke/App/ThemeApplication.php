@@ -24,9 +24,12 @@ final class ThemeApplication extends Application
 {
     private ThemeData $themeData;
 
-    public function __construct()
+    /**
+     * @param null|\Drift\App\AppScope $scope 共享作用域（M2 的"主题不一致"用例要两个窗口共用一个）
+     */
+    public function __construct(?\Drift\App\AppScope $scope = null)
     {
-        parent::__construct(); // ★ 不调 ⇒ Application 的片（$input 等）未初始化（构造链：父先子后）
+        parent::__construct([], $scope); // ★ 不调 ⇒ Application 的片（$input 等）未初始化（构造链：父先子后）
         $this->themeData = ThemeData::forSystem(SystemTheme::Light);
     }
 

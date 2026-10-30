@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Users;
 
 use Drift\App\Application;
+use Drift\App\AppScope;
 use Drift\App\TaskHost;
 
 use App\Users\Jobs\FetchUsersJob;
@@ -43,8 +44,8 @@ final class UsersApplication extends Application
 
     private UserSource $src;
 
-    /** 后台端口（`null` = 同步路径）；`Application::taskHost()` 覆写它 */
-    private ?TaskHost $host;
+    // ★ M2 起不再持 `?TaskHost` 字段：它归 `AppScope`（一个进程一个池），
+    //   本类只在构造器里把它递给基类的第一行 —— 少一个"两份都像真的"的副本。
 
     /** @internal `buildRoot()` 被调次数（"Root 只组合"的观测面：框架只该调一次） */
     private int $rootBuilds = 0;
@@ -85,11 +86,14 @@ final class UsersApplication extends Application
         UserSource $src,
         ?TaskHost $host = null,
         string $apiBase = FetchUsersJob::DEFAULT_BASE,
+        ?AppScope $scope = null,
     ) {
-        parent::__construct();
+        // ★ M2（2026-10-30）：后台端口是**应用级**的（一个进程一个池）⇒ 放进
+        //   作用域，不再靠覆写 `taskHost()` 把它递给帧循环。装配处递了 scope
+        //   就以它为准（多窗口：N 个 Application 共用一个）。
+        parent::__construct([], $scope ?? AppScope::make()->setTaskHost($host));
 
         $this->src = $src;
-        $this->host = $host;
         $this->app = new AppStore();
         $this->users = new UserStore($this->src, $host, $apiBase);
         $this->form = new SignupForm();
@@ -147,18 +151,14 @@ final class UsersApplication extends Application
     /**
      * 动作缝注册表（§11.4.3）：可枚举、可 lint、可单测。
      *
+     * ★ M2（2026-10-30）：原来这里还有一个 `taskHost()` 覆写，把注入的
+     *   `ProcessTaskHost` 递给帧循环。那个口子**现在已经没有**（`final`）——
+     *   后台端口归 `AppScope`，在构造器第一行就递给基类了 ⇒ 从结构上不可能
+     *   再出现"两个实例、两套队列"（第一版就是这样：worker 早回了结果，
+     *   UI 却永远 `Loading`，不报错、不卡帧）。
+     *
      * @return iterable<string, CommandHandler> `命令名 => handler 实例`
      */
-    /**
-     * ★★ **覆写注入点**（§17.4.2）：`Application` 每帧 drain 的就是这个实例。
-     *   ★ 漏了这一步的后果（第一版就这样）：`UserStore` 拿的是注入的 `ProcessTaskHost`，
-     *     而 `frame()` 用默认新建的 `SyncTaskHost` drain —— **两个实例、两套队列**，
-     *     worker 早把结果回了，UI 却永远 `Loading`（不报错、不卡帧，最坏的那种静默）。
-     */
-    public function taskHost(): ?TaskHost
-    {
-        return $this->host;
-    }
     public function commands(): iterable
     {
         // ★ 方案 E（§23.2 O-15 裁决）：依赖在构造点 new 出来 ⇒ 不需要 provide() / 反射。

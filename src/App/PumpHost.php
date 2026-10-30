@@ -42,13 +42,13 @@ final class PumpHost
     private const SLICE_BUDGET_MS = 4;
 
     /**
-     * 后台执行端口（§17.2）—— `attach()` 时由 `taskHost()` 建一次并缓存。
+     * 后台执行端口（§17.2）—— `attach()` 时由**作用域**给一次并缓存。
      *
      * ★ **必须缓存实例**：后端持有结果队列，每次现建一个会让"这一帧入队、
      *   下一帧 drain"落空（队列被换掉 ⇒ 结果永远等不到）。
      *   ⇒ 与 `accelerators()`（每次现建也行）不同，本端口是**有状态**的。
      *
-     * ★ `null` = 本应用不用后台任务（`taskHost()` 返回 null）⇒ 那段
+     * ★ `null` = 本应用不用后台任务（作用域里显式给了 `null`）⇒ 那段
      *   drain 整个跳过，零开销。
      */
     private ?TaskHost $tasks = null;
@@ -98,14 +98,19 @@ final class PumpHost
     {
     }
 
-    /** 挂载时建端口与轮询器（`taskHost()` / `new IoPoller()`，各建一次并缓存） */
-    public function attach(): void
+    /**
+     * 挂载时**取走**端口与轮询器的引用（M2：它们归 `AppScope`，本片只持引用）。
+     *
+     * ★ 为什么参数是"取"而不是"建"：多窗口下这两个必须是**同一个实例**
+     *   （一个池、一张监听表）。谁建谁就是这个作用域的主人 —— 那件事归装配处
+     *   （`AppScope`），不该由"第几个窗口先挂载"决定。
+     * ★ `attach()` 不建也不换：`tasks` 持结果队列、`io` 持监听表，中途换掉
+     *   就是"入队 / drain 分属两个队列"那类静默 bug 的入口。
+     */
+    public function attach(?TaskHost $tasks, ?IoPoller $io): void
     {
-        // ★ 端口在挂载时建一次并缓存（它持有结果队列，不能每帧现建）。
-        $this->tasks = $this->host->taskHost();
-
-        // ★ 轮询器同理：监听表是它的状态，每帧现建等于每帧丢掉所有监听。
-        $this->io = new IoPoller();
+        $this->tasks = $tasks;
+        $this->io = $io;
     }
 
     /**

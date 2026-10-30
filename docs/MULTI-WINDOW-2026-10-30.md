@@ -99,7 +99,7 @@ M1 的裁决给的是**乙的最小形态**：只把"必须按窗"的三个收�
 | `InputRouter` | `focus` / `root` / `dispatch` / `accelerators` | 路由只认自己的树 ⇒ 隔离 |
 | `OverlayManager` | `focus` / `root` / `theme` / `metrics` / `after` / `cancelAfter` | 浮层栈自持（`OverlayStack` 的注释早就写了"每个 Surface 一个"） |
 | `OverlayLayout` | 收 `OverlayManager` | 纯几何，无宿主状态 |
-| `PumpHost` | `assertUiThread` / 时间基准 / `taskHost` | **定时器 id 是窗口局部的** ⇒ 两窗同用 `FrameClock::TIMER_ID` 也安全 |
+| `PumpHost` | `assertUiThread` / 时间基准 | **定时器 id 是窗口局部的** ⇒ 两窗同用 `FrameClock::TIMER_ID` 也安全（`taskHost` 口子 M2 已移除，端口改从 `AppScope` 递进来） |
 
 再加上：`src/` **零静态属性** ⇒ 没有隐藏的跨实例共享态。
 
@@ -114,13 +114,14 @@ M1 的裁决给的是**乙的最小形态**：只把"必须按窗"的三个收�
 | **窗口级**：`$root` / `$frame` / `$focus` / `$overlayHost` / `$input` / `$scrollInput` / `$textEditing` / `$overlayLayout` / `$pumps` / `$taps` / `$drag` | `Application` 实例字段 | **留实例**（一个实例 = 一个窗口） |
 | **应用级**：命令表（`$router`）/ `theme()` / `metrics()` / `taskHost()` / `io()` / `accelerators()` | 也在 `Application` 实例里 | **要提到 AppScope 共享** |
 
-后果（现在就推得出来，不用等落地）：
-- **`metrics()` 每实例一份** —— 它要 `TtfFace::fromFile()` 解析真字体 + 注册两套位图面
-  （`Application.php:532`）。两窗 = 解析两次、两份字形缓存。
-- **`taskHost()` 每实例一份** —— `SyncTaskHost` 默认还好，换成 `ProcessTaskHost(4)` 就是
-  两个独立的 4 线程池。
-- **`theme()` 每实例一份** —— 切主题要**逐个通知** N 个实例，漏一个就是"一半深色一半浅色"。
-- **命令表每实例一份** —— "退出应用"这类全局命令无处安放。
+后果（现在就推得出来，不用等落地）——**四条全部由 M2 消除**（见 §6 的 M2）：
+
+| 项 | 每实例一份的后果 | M2 的去处 |
+|---|---|---|
+| `metrics()` | `TtfFace::fromFile()` 解析真字体 + 注册三套字形面 ⇒ 两窗解析两次、两份缓存 | `AppScope::metrics()`（惰性，进程一份） |
+| `taskHost()` | 换成 `ProcessTaskHost(4)` 就是两个独立的 4 线程池 | `AppScope::taskHost()`（`Application::taskHost()` 改 `final`） |
+| `theme()` | 切主题要**逐个通知** N 个实例，漏一个就是"一半深色一半浅色" | `AppScope::theme()` + attach 时的一致性检查 |
+| 命令表 | "退出应用"这类全局命令无处安放 | `AppScope::commands()`（**父链**，不是整表共享） |
 
 ### 4.2b 第三种作用域：**本该窗口级、现在住在 static**
 
@@ -153,17 +154,21 @@ M1 的裁决给的是**乙的最小形态**：只把"必须按窗"的三个收�
 
 ```
 AppScope（进程一份）          WindowScope（每窗一份）
-├─ CommandRouter              ├─ Element $root
-├─ ThemeData                  ├─ Frame
-├─ TextMetricsProvider        ├─ FocusManager
-├─ TaskHost                   ├─ OverlayManager + OverlayLayout
-├─ IoPoller                   ├─ InputRouter + ScrollInputRouter + TextEditingBridge
-└─ AcceleratorTable           └─ PumpHost
+├─ CommandRouter（父表）       ├─ CommandRouter（本窗表，父链指向上面的父表）
+├─ ThemeData                  ├─ Element $root
+├─ TextMetricsProvider        ├─ Frame
+├─ TaskHost                   ├─ FocusManager
+├─ IoPoller                   ├─ OverlayManager + OverlayLayout
+└─ AcceleratorTable           ├─ InputRouter + ScrollInputRouter + TextEditingBridge
+                              └─ PumpHost
 ```
 
-★ `WindowScope` **已经存在了** —— 它就是今天的 `Application`（除了那四项应用级状态）。
-所以 M2 的工作不是"拆成四片"，而是"**把应用级那四项抽出去**"。这比 S4 小得多，
+★ `WindowScope` **已经存在了** —— 它就是今天的 `Application`（除了那六项应用级状态）。
+所以 M2 的工作不是"拆成四片"，而是"**把应用级那六项抽出去**"。这比 S4 小得多，
 而且收益直接就是多窗口。
+
+★ 唯一**两边都有**的是命令表（父 / 子）—— 见 §6 M2 的"修正二"：整表共享会让
+全局命令注册两次（Fatal），整表独占会让它无处安放。
 
 ---
 
@@ -242,21 +247,22 @@ static std::map<HWND, WindowSlot> g_windows;
 ★ **这条新增的 `closeGuard` 是本轮评估的额外产出**（§5.1）—— 它独立于多窗口也有价值
 （单窗口的"未保存提示"同样需要），但多窗口**必须**有它。
 
-### M2 · App 层按作用域二分
+### M2 · App 层按作用域二分（✅ 已落地，2026-10-30）
 
 抽出 `AppScope`（`CommandRouter` / `ThemeData` / `TextMetricsProvider` / `TaskHost` /
 `IoPoller` / `AcceleratorTable`），`Application` 构造时**可注入**一个：
 
 ```php
-new ShowcaseApplication($scope);   // 多窗口时 N 个实例共享同一个 $scope
+$scope = AppScope::make()->setTaskHost(new ProcessTaskHost(4));
+$a = new ShowcaseApplication($dialog, $clipboard, $scope);   // 窗 1
+$b = new ShowcaseApplication($dialog, $clipboard, $scope);   // 窗 2
 ```
 
-- **兼容**：`__construct()` 无参时自建一个 `AppScope` ⇒ 所有既有应用零改动。
-- **验收**：smoke 全绿（单实例路径不变）+ 新增"两个 `Application` 共享 `AppScope`，
-  `metrics()` 返回同一个对象"的断言。
-- **这一阶零真机**，是纯 PHP 重构 —— 可以完全在 gate 里验证。
+- **兼容**：`__construct()` 无参时自建一个 `AppScope` ⇒ 所有既有应用零改动
+  （smoke 431 条、feature 520 条逐条不变）。
+- **这一阶零真机**，是纯 PHP 重构 —— 完全在 gate 里验证。
 
-#### ★ 2026-10-30 修正：上面那六个成员里，有两个**不在 `Application` 上**
+#### ★ 2026-10-30 修正一：那六个成员里，有两个**不在 `Application` 上**
 
 §4.2 的表格把它们算作 `Application` 的字段，实际是**经 `Application` 转发的门面**：
 
@@ -265,25 +271,86 @@ public function tasks(): ?TaskHost { return $this->pumps->tasks(); }   // 住在
 public function io(): ?IoPoller     { return $this->pumps->io(); }      // 住在 PumpHost
 ```
 
-而 `PumpHost::attach()`（`PumpHost.php:102`）用的是**每窗口一份**的口径：
+而 `PumpHost::attach()` 用的是**每窗口一份**的口径（旧版自己 `new IoPoller()`）。
 
-```php
-$this->tasks = $this->host->taskHost();   // 每窗口建一次
-$this->io    = new IoPoller();            // 每窗口建一次
-```
-
-⇒ M2 要做的其实是**两个类各切一刀**，而不是只动 `Application`：
+⇒ M2 是**两个类各切一刀**，不是只动 `Application`：
 
 | 切哪 | 剩下什么 | 切走什么 |
 |---|---|---|
-| `Application` | `$root` / `$frame` / `$focus` / `$overlay*` / `$input*` / `$textEditing` / `$pumps` | `router` / `theme` / `metrics` / `accelerators` |
-| `PumpHost` | `timers`（**窗口局部**的 id 空间）/ `sliced` | `tasks` / `io` |
+| `Application` | `$root` / `$frame` / `$focus` / `$overlay*` / `$input*` / `$textEditing` / `$pumps` | `theme` / `metrics` / `accelerators` / **`taskHost()` 的覆写权** |
+| `PumpHost` | `timers`（**窗口局部**的 id 空间）/ `sliced` | `tasks` / `io`（改成 `attach()` 传进来） |
 
 ★ **`io` 的后果不是浪费，是错**：两个 `IoPoller` 各自 `stream_select` 同一批 fd ⇒
 同一个 socket 被 watch 两次、回调跑两次（下单付两次款那种）。`tasks` 只是多建一个池
-（浪费），`io` 是**双投递**。这两条必须在 M2 一起修，不能只做前四条。
-★ 相应的端口方向要改：`PumpHostHost` 现在有 `taskHost()` 这个口子，M2 之后它应该读
-`AppScope`（`$this->scope->tasks()`），而不是每次问 `Application`。
+（浪费），`io` 是**双投递**。
+
+#### ★ 2026-10-30 修正二：`CommandRouter` **不能整表共享**（初稿写错了）
+
+初稿把 `CommandRouter` 直接列进 `AppScope`。动手时数依赖发现它和别的五项性质不同 ——
+它同时有**两种作用域**：
+
+| 表 | 谁注册 | 例子 | 能不能共享 |
+|---|---|---|---|
+| 全局命令 | 组合根 | `app.quit` | 只能注册**一次**（第二窗再注册 ⇒ `on()` 的同名检查当场 Fatal） |
+| 本窗命令 | 本窗 `commands()` | `users.refresh` | **绝不能**共享：handler 持**本窗的 Store**，别的窗派发到它就是改别人家的数据 |
+
+⇒ 整表共享会让"退出应用"被注册两次（Fatal），整表独占会让全局命令无处安放。
+落地方案是**父链**（与冒泡链 / 焦点链同一形状）：`CommandRouter::make($parent)`，
+派发时**就近优先**、本窗同名命令覆盖全局并留一条 `DIAGNOSTIC`。
+
+★ 由此还得到一个反直觉的结论：**加速键表可以整表共享**，因为它是"组合键 → 命令名"
+的声明式映射 —— 真正的窗口隔离发生在下一环（命令派发），所以同一个 `Ctrl+S`
+在两个窗口里各自落到自己的 handler。**共享的是映射，不是行为。**
+
+#### ★ 2026-10-30 修正三：`taskHost()` 从"扩展点"改成 `final`
+
+§17.2 原来把 `protected function taskHost()` 当应用扩展点（"换后端只改这一行"）。
+多窗口一到它就是**静默 bug 的入口**：两个窗口各问出自己那份 ⇒ 两套队列。
+
+`apps/users` 第一版就踩过（`UserStore` 拿注入的 `ProcessTaskHost`、`frame()` 用默认
+`SyncTaskHost` drain ⇒ worker 早回了结果、UI 永远 `Loading`，**不报错**），当时只能
+靠一段注释防。
+
+⇒ M2 把覆写点搬进 `AppScope`（`setTaskHost()`），`Application::taskHost()` 改 `final`：
+**保留覆写 = 加载期致命错误**（`Cannot override final method`）。这是本轮唯一的
+破坏性变更，正面撞上的只有两个内部文件（`apps/users`、`tools/Smoke/App/TaskApplication`）。
+
+★ 教训写进坑位册：**"扩展点"一旦和生命周期冲突，正确做法是把它 `final` 掉再给新口子**，
+不是留一个"两个都对"的旧口子 —— 那是最坏的第三种状态（不报错、有时对、有时错）。
+
+#### 落地清单（改了哪些文件）
+
+| 文件 | 改什么 |
+|---|---|
+| `src/App/AppScope.php` | **新增**：六个槽 + 惰性默认 + `enter()` 主题一致性检查 |
+| `src/App/Application.php` | 构造收 `?AppScope`；`theme`/`metrics`/`accelerators` 委托；`taskHost()` 改 `final`；`attach()` 把端口从 scope 递给 `PumpHost` |
+| `src/App/PumpHost.php` | `attach(?TaskHost, ?IoPoller)`：**取引用**而不是自己建 |
+| `src/App/PumpHostHost.php` | 删掉 `taskHost()` 口子（4 → 3 个） |
+| `src/Commands/CommandRouter.php` | 父链（`make($parent)` / `handlerInChain` / `namesInChain` / `hasInChain`） |
+| `apps/users/src/UsersApplication.php` | 构造里 `AppScope::make()->setTaskHost($host)`；删 `taskHost()` 覆写与 `$host` 字段 |
+| `tools/Smoke/App/TaskApplication.php` | `withTasks=false` → `withoutTasks()`（在 scope 上说"不用后台任务"） |
+| `tests/Feature/App/AppScopeTest.php` | **新增 6 个用例**：五项共享 + 五条反证 + 命令父链 + 主题不一致留痕 + `final` 反射断言 |
+
+#### 验收
+
+- gate 8 项全过；smoke **431 ok / 0 FAIL**；feature **520 tests / 1853 assertions**。
+- 新增断言的关键几条：`metrics()` / `tasks()` / `io()` / `accelerators()` 在共享 scope
+  下**是同一个实例**，且**不注入时必须是两个**（反证 —— 否则 `===` 可能只是测试写错了）；
+  在 A 窗 `watch()` ⇒ B 窗 `watchCount()` 也是 1（一张表，不是两份）。
+- 单窗路径零诊断：不共享时 `Errors::recentDiagnostics()` 为空（共享不该带来新噪音）。
+
+#### 已知的、留给 M3 的两件事（不是遗漏）
+
+1. **多窗口共享 `IoPoller` ⇒ 每窗每帧各 poll 一次**。同一帧里第二窗的 `select(0)`
+   通常查不到新数据（回调已经消费掉了），所以不会双投递；但"同一逻辑帧只 poll 一次"
+   需要**跨窗口的帧序号**，那只有组合根知道（M3 的 `map<HWND, WindowRuntime>`）。
+   今天硬造一个（比如按时间戳比对）在 `repaintForResize()` 复用上一帧时间戳时会**误跳过**，
+   比不修更糟。
+2. **主题只共享"值"，不共享"通知"**。广播本来就不用新机制：平台的
+   `ThemeChangedEvent` 是逐窗口投递的（M1 的 hwnd 分发落地后成立）⇒ 每个窗口自己
+   会收到、自己 `applyNewContext()`。自己再维护一张监听表只会多一份"窗口关了要摘
+   监听器"的生命周期负担，而窗口表在 M3 才有。
+
 
 ### M3 · 组合根 · 第二个窗口 · 测试
 
@@ -367,9 +434,13 @@ DPI 混用）大多**不报错**，只表现为"怪"。这类问题在本仓历�
 各自每秒 60 次整帧 blit**，把 N1 的收益乘 N 地浪费掉。
 
 ★ 所以推荐次序没变，只是理由更硬了：
-**N1（已落地）→ M2（AppScope，零真机）→ N2/N3（等待与 Future，零真机）→ M0/M1 → M3**。
+**N1（✅ 已落地）→ M2（✅ 已落地）→ N2/N3（等待与 Future，零真机）→ M0/M1 → M3**。
 M2 排在 N2 前面的理由：它是纯 PHP 重构、零真机，而 N2 改的是 `Platform` 接口
 （`pump()` 拆分）—— 两者不冲突，但 M2 先做能让 N2 少碰一个已经稳定的 `Application`。
+
+★ **M2 落地后又多了一条理由**：`IoPoller` 现在**真的只有一个**，且它的主人是
+`AppScope`。N2 的 `waitEvents()` 要等"有没有 fd 可等"，那个问题从此有一个明确的
+归属地（问 scope，而不是问某个窗口）—— 这正是 M2 先做省下的返工。
 
 ---
 
