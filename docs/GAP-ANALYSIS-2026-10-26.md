@@ -67,7 +67,7 @@
 
 | 能力 | 状态 | 证据 |
 |---|---|---|
-| 多窗口 | **半成品** | `WindowHost` 接口已按"多句柄"设计（`createWindow`/`close(hwnd)`/`place(hwnd)`）；但 `Application::attach(RenderSurface)` 收**单数表面** ⇒ 一个 Application 一个窗口 |
+| 多窗口 | **缺口**（2026-10-30 评估后降级） | `WindowHost` 接口已按"多句柄"设计（`createWindow`/`close(hwnd)`/`place(hwnd)`），这一层写对了；但**障碍不在 `Application`，在 C++ 壳的 45 个进程级全局 + `Platform` 的 7 处无窗口身份签名**。今天建第二个窗口会**静默互相破坏**（9 条破坏链见评估册 §2）⇒ 评估已完成，路径分四台阶，见 [`MULTI-WINDOW-2026-10-30.md`](MULTI-WINDOW-2026-10-30.md) |
 | 无边框 / 自绘标题栏 | **缺口** | `grep WS_POPUP\|frameless\|borderless` **0 处** ⇒ `Dock`/`AppBar` 是内容区自绘，不是真无边框窗 |
 | 窗口半透明 / per-pixel alpha | **缺口** | `grep WS_EX_LAYERED\|LayeredWindow` **0 处** |
 | 毛玻璃 / DWM 效果 | **缺口** | `grep DwmSetWindowAttribute\|BackdropType\|Acrylic` **0 处**（也无 Win11 圆角 API） |
