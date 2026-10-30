@@ -15,6 +15,7 @@ use Drift\Widget\Widget;
 
 use App\Showcase\Commands\ShowcaseCommands;
 use App\Showcase\Jobs\FetchRowsJob;
+use App\Showcase\ShowcaseCapabilities;
 
 /**
  * 示例台应用：只写三样（§4.5）—— `buildRoot()` / `title()`。
@@ -77,7 +78,7 @@ final class ShowcaseApplication extends Application
         //   可选参数排在必选之前）：这一页是 `Dialog` 端口唯一的消费者，缺端口
         //   等于那个能力没接上 ⇒ 让组合根当场失败，而不是让按钮点了没反应。
         //   多出来的好处是不必把 `?Dialog` 收窄成 `Dialog`（AOT 收窄会读成 Var）。
-        return ShowcaseRoot::make(
+        return ShowcaseRoot::make(new ShowcaseCapabilities(
             function (Snackbar $snackbar): void {
                 $this->showSnackbar($snackbar);
             },
@@ -114,7 +115,7 @@ final class ShowcaseApplication extends Application
             function (int $page): Future {
                 return $this->submit(new FetchRowsJob($page, 20, $this->rowsMode));
             },
-        );
+        ));
     }
 
     public function title(): string

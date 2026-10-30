@@ -113,38 +113,23 @@ final class ShowcaseRoot extends StatefulWidget
      * ★ 为什么**不可空**：可选对象在 AOT 侧会退化 `php::Var`（同 `?float` 用
      *   `NAN` 那条纪律）⇒ 一律由组合根给一个真的。
      */
-    public function __construct(
-        private \Closure $notify,
-        private \Closure $delay,
-        private \Closure $showModal,
-        private Dialog $dialog,
-        private \Closure $setCloseConfirm,
-        private \Closure $fetchRows,
-    ) {
+    public function __construct(private ShowcaseCapabilities $caps)
+    {
         parent::__construct();
     }
 
     /**
-     * @param \Closure(Snackbar): void $notify
-     * @param \Closure(int, \Closure): void $delay
-     * @param \Closure(Modal): void $showModal
-     * @param \Closure(bool): void $setCloseConfirm
-     * @param \Closure(int): Future $fetchRows
+     * @param ShowcaseCapabilities $caps 组合根接线的那一束能力（见该类的注释：
+     *       为什么是**打包**而不是六个参数，以及为什么不做"沿树查找"）
      */
-    public static function make(
-        \Closure $notify,
-        \Closure $delay,
-        \Closure $showModal,
-        Dialog $dialog,
-        \Closure $setCloseConfirm,
-        \Closure $fetchRows,
-    ): self {
-        return new self($notify, $delay, $showModal, $dialog, $setCloseConfirm, $fetchRows);
+    public static function make(ShowcaseCapabilities $caps): self
+    {
+        return new self($caps);
     }
 
     public function createState(): State
     {
-        return new ShowcaseState($this->notify, $this->delay, $this->showModal, $this->dialog, $this->setCloseConfirm, $this->fetchRows);
+        return new ShowcaseState($this->caps);
     }
 }
 
@@ -179,20 +164,10 @@ final class ShowcaseState extends State
     private int $selected = 0;
 
     /**
-     * @param \Closure(Snackbar): void $notify 组合根接线的通知能力（转手给通知页）
-     * @param \Closure(int, \Closure): void $delay 组合根接线的延时能力（转手给 ComboBox 页）
-     * @param \Closure(Modal): void $showModal 组合根接线的开模态能力（转手给反馈页）
-     * @param \Closure(bool): void $setCloseConfirm 组合根接线的"关闭前确认"开关（转手给对话框页）
-     * @param \Closure(int): Future $fetchRows 组合根接线的取数能力（转手给异步表格页）
+     * @param ShowcaseCapabilities $caps 组合根接线的那一束能力（见该类的注释）
      */
-    public function __construct(
-        private \Closure $notify,
-        private \Closure $delay,
-        private \Closure $showModal,
-        private Dialog $dialog,
-        private \Closure $setCloseConfirm,
-        private \Closure $fetchRows,
-    ) {
+    public function __construct(private ShowcaseCapabilities $caps)
+    {
     }
 
     public function initState(): void
@@ -205,16 +180,16 @@ final class ShowcaseState extends State
             new NavEntry(IconName::ListBullets, '列表 List', static fn(): Widget => new ListPage()),
             new NavEntry(IconName::ListBullets, '长列表 Big', static fn(): Widget => new BigListPage()),
             new NavEntry(IconName::Brush, '自绘 Paint', static fn(): Widget => new CustomPaintPage()),
-            new NavEntry(IconName::Bell, '反馈 Feedback', fn(): Widget => new FeedbackPage($this->showModal)),
+            new NavEntry(IconName::Bell, '反馈 Feedback', fn(): Widget => new FeedbackPage($this->caps->showModal)),
             // ★ 追加**在末尾**：前 10 项的 y 坐标不变 ⇒ 既有真机探针量出的坐标不用改。
             new NavEntry(IconName::Play, '动画 Motion', static fn(): Widget => new MotionPage()),
             new NavEntry(IconName::Menu, '分段 Segmented', static fn(): Widget => new SegmentedPage()),
             new NavEntry(IconName::Image, '图片 Image', static fn(): Widget => new ImagePage()),
             new NavEntry(IconName::Sliders, '滑杆 Slider', static fn(): Widget => new SliderPage()),
             new NavEntry(IconName::Info, '提示 Tooltip', static fn(): Widget => new TooltipPage()),
-            new NavEntry(IconName::Bell, '通知 Snackbar', fn(): Widget => new SnackbarPage($this->notify)),
+            new NavEntry(IconName::Bell, '通知 Snackbar', fn(): Widget => new SnackbarPage($this->caps->notify)),
             new NavEntry(IconName::ChevronDown, '下拉 Select', static fn(): Widget => new SelectPage()),
-            new NavEntry(IconName::Search, '可编辑 Combo', fn(): Widget => new ComboBoxPage($this->delay)),
+            new NavEntry(IconName::Search, '可编辑 Combo', fn(): Widget => new ComboBoxPage($this->caps->delay)),
             new NavEntry(IconName::Grid, '网格 Grid', static fn(): Widget => new GridPage()),
             new NavEntry(IconName::Square, '宽高比 Aspect', static fn(): Widget => new AspectPage()),
             new NavEntry(IconName::TextLines, '富文本 Rich', static fn(): Widget => new RichTextPage()),
@@ -237,12 +212,12 @@ final class ShowcaseState extends State
             // ★ 同上：变换页追加在最末（前 27 项 y 不变）。
             new NavEntry(IconName::Square, '变换 Transform', static fn(): Widget => new TransformPage()),
             new NavEntry(IconName::Square, '对齐 Align', static fn(): Widget => new AlignPage()),
-            new NavEntry(IconName::Info, '对话框 Dialog', fn(): Widget => new DialogPage($this->dialog, $this->setCloseConfirm)),
+            new NavEntry(IconName::Info, '对话框 Dialog', fn(): Widget => new DialogPage($this->caps->dialog, $this->caps->setCloseConfirm)),
             // ★ A5-②：拖文件页追加在最末（前 30 项 y 不变；侧栏本身已包 ScrollView）。
             new NavEntry(IconName::Square, '拖文件 Drop', static fn(): Widget => new DropPage()),
             // ★ N6：异步表格页追加在最末（前 31 项 y 不变）。它要 `$fetchRows`
             //   ⇒ 工厂不是 static（闭包捕获 `$this`）。
-            new NavEntry(IconName::ListBullets, '异步表格 Async', fn(): Widget => new AsyncTablePage($this->fetchRows)),
+            new NavEntry(IconName::ListBullets, '异步表格 Async', fn(): Widget => new AsyncTablePage($this->caps->fetchRows)),
         ];
     }
 

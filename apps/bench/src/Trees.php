@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Bench;
 
+use App\Showcase\ShowcaseCapabilities;
 use App\Showcase\ShowcaseRoot;
 use Drift\Async\Future;
 use Drift\Layout\Overflow;
@@ -136,7 +137,7 @@ final class Trees
      */
     public static function showcase(): ShowcaseRoot
     {
-        return ShowcaseRoot::make(
+        return ShowcaseRoot::make(new ShowcaseCapabilities(
             static function (Snackbar $snackbar): void {
             },
             static function (int $milliseconds, \Closure $callback): void {
@@ -150,7 +151,7 @@ final class Trees
             //   整页快照要稳定 —— `Future::resolved` 在 `initState` 里同步结算
             //   ⇒ 首帧就是 data，不会把转圈动画画进基线（转圈每帧相位都在变）。
             static fn(int $page): Future => Future::resolved(self::staticRows($page)),
-        );
+        ));
     }
 
     /**
