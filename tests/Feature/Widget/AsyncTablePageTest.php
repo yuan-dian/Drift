@@ -88,7 +88,7 @@ final class AsyncTablePageTest extends SmokeTestCase
     /**
      * 失败路径：`Future` 失败 ⇒ 页面落到 error 态（可重试），**不打断渲染管线**。
      *
-     * ★ 这是 §11.4「UI 不因业务失败而消失」的判据。如果 `FutureBuilder`
+     * ★ 这是 §11.4「UI 不因业务失败而消失」的判据。如果 `AsyncCommand`
      *   哪天漏了 `catch`，这条会以「进程直接没了」的形式失败 —— 不是断言红。
      */
     public function testRejectedFutureKeepsThePageAlive(): void
@@ -103,7 +103,7 @@ final class AsyncTablePageTest extends SmokeTestCase
         self::frames($app, 3);
 
         check('失败后树还在（error 态渲染得出来）', $app->root() !== null);
-        check('失败不产生诊断（FutureBuilder 的 catch 接住了）', Errors::recentDiagnostics() === []);
+        check('失败不产生诊断（AsyncCommand 的 catch 接住了）', Errors::recentDiagnostics() === []);
         check('失败不影响提交（只请求了 1 次，没有自动重试风暴）', $app->requested === [1]);
 
         $this->flushChecks();

@@ -478,8 +478,9 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      * ```php
      * // 页面 / State 里：提交，拿到一个可组合的 Future
      * $future = $app->submit(new FetchRowsJob($page));
-     * // 渲染交给 FutureBuilder —— loading / error / data 三态它自己管
-     * FutureBuilder::make($future, fn (AsyncValue $v): Widget => $this->render($v));
+     * // 渲染交给 AsyncCommand —— loading / error / data 三态它自己管
+     * $this->rows->run($page);                        // 发起
+     * $this->view($this->rows->value());              // build 里读四态
      * ```
      *
      * ★ **为什么必须绕这一道**：`tasks()` 是 pumps 的内部口子（`@internal`），
@@ -491,7 +492,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      * ★ **没有后台端口时返回 `Future::rejected()`，不抛异常**：
      *   提交点通常就在 `build()` 里（`AsyncTablePage::initState()` 那条链），
      *   抛异常等于把渲染管线打断（用户看到的是整个页面没了）；返回 rejected
-     *   则让 `FutureBuilder` 落到 error 态，界面显示"没有后台任务后端"并给重试按钮。
+     *   则让命令落到 error 态，界面显示"没有后台任务后端"并给重试按钮。
      *   这与 §11.4 的"UI 不因业务失败而消失"是同一条纪律。
      *   （`Future::rejected()` 造的是**值**，没人接也不会走 Fatal —— 与
      *   `Future::pending()` 的闸门行为不同。）

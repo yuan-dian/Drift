@@ -58,14 +58,20 @@ final class DependencyDirection implements Rule
         'Text'      => ['Text', 'Geometry', 'Errors', 'Logging'],
         'Rendering' => ['Rendering', 'Geometry', 'Text', 'Errors', 'Logging'],
         'Input'     => ['Input', 'Geometry', 'Errors', 'Text', 'Layout', 'Logging'],
-        // ★ `Async`（2026-10-30，N6）：`FutureBuilder` 要同时认识 `Future` 与
-        //   `AsyncValue`（都是**纯值类型**，`Async` 层只依赖 `Errors`/`Logging`，
-        //   比 `Widget` 更低 ⇒ 方向向下、无环）。N3 引入 `Async` 时没有 Widget
-        //   消费者，这一行是"补登已有裁决"，不是新开边界：
-        //   Widget 侧只碰两个**值类型**，派发/结算仍住 `App`（`PumpHost`）。
-        'Widget'    => ['Widget', 'Layout', 'State', 'Rendering', 'Text', 'Geometry', 'Input', 'Platform', 'Async', 'Errors', 'Logging'],
+        // ★ `Widget` 行的 `Async`（2026-10-30 增删记录）：加它是为了 `FutureBuilder`
+        //   同时认识 `Future` 与 `AsyncValue`；那个控件已被 `State\AsyncCommand`
+        //   取代（它是 `FutureBuilder` 的超集，且复用既有 `Cell`/`Subject` 通知设施）
+        //   ⇒ **放行随之移除**，否则就是一条"没人走也没人审"的边。
+        //   ★ 现在唯一放行 `Async` 的非 `App` 层是 `State`（见下面那行的注释）。
+        'Widget'    => ['Widget', 'Layout', 'State', 'Rendering', 'Text', 'Geometry', 'Input', 'Platform', 'Errors', 'Logging'],
         'Layout'    => ['Widget', 'Layout', 'State', 'Rendering', 'Text', 'Geometry', 'Input', 'Platform', 'Errors', 'Logging'],
-        'State'     => ['Widget', 'Layout', 'State', 'Rendering', 'Text', 'Geometry', 'Input', 'Platform', 'Errors', 'Logging'],
+        // ★ `Async`（2026-10-30，`AsyncCommand`）：`Drift\State\AsyncCommand` 是
+        //   "异步版的 `Cell`" —— 住在 `State`（生命周期与页面对齐），值为
+        //   `AsyncValue`、发起走 `Future`，两者都在 `Async` 层。
+        //   ★ 为什么改这一行而不是把命令塞进 `Widget`：命令不是控件，而 `Widget`
+        //     已经放行 `Async` ⇒ 方向仍是"上层用下层"，不产生新环
+        //     （`Async` 自己只认 `Errors`/`Logging`）。
+        'State'     => ['Widget', 'Layout', 'State', 'Rendering', 'Text', 'Geometry', 'Input', 'Platform', 'Async', 'Errors', 'Logging'],
         'Commands'  => ['Commands', 'Geometry', 'Errors', 'State', 'Logging'],
         'Theme'     => ['Theme', 'Widget', 'Layout', 'State', 'Text', 'Geometry', 'Rendering', 'Input', 'Errors', 'Logging'],
         'Routing'   => ['Routing', 'Widget', 'Layout', 'State', 'Text', 'Geometry', 'Rendering', 'Input', 'Errors', 'Logging'],

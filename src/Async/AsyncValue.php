@@ -17,8 +17,8 @@ namespace Drift\Async;
  *   ① 忘了 `notifyChanged()` ⇒ 数据到了但界面不动（白屏）；
  *   ② 忘了 `catch()` ⇒ 任务失败没人接 ⇒ `Future` 走 Fatal（进程退出码 3）；
  *   ③ 忘了取消旧请求 ⇒ 迟到的旧结果盖掉新数据，状态仍是 Ready，用户看不出。
- *   ⇒ 把"四态"收进一个**不可变值对象**之后，①②③ 变成 `FutureBuilder` 的
- *     一件事，而不是每个页面的三件事。
+ *   ⇒ 把"四态"收进一个**不可变值对象**之后，①②③ 变成 `AsyncCommand` 的
+ *     一件事（`State\AsyncCommand`），而不是每个页面的三件事。
  *
  * ## 对齐成熟 GUI（逐个能对上，不是自创）
  *
@@ -203,7 +203,7 @@ final class AsyncValue
 
         // ★ 一律"先取到变量再调用"，不写 `($arms['data'])(...)` —— 后者是"对下标
         //   表达式加括号调用"，AOT 下没验证过；`$arm(...)` 与已验证的
-        //   `FutureBuilder` 里 `($this->builder)(...)` 属同一类（先取值后调用）。
+        //   `AsyncCommand` 里 `$task($arg)` 属同一类（先取值后调用）。
         $key = 'loading';
         if ($this->state === self::IDLE) {
             $key = 'idle';

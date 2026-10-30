@@ -468,8 +468,7 @@ abstract class State
      *   `$this->widget` 的地方」。那句话当时是对的，但它把一个**框架自己能做**的
      *   事推给了每一处覆写：漏掉 ⇒ `$this->widget` 停在旧值 ⇒ 读参数得到旧值
      *   （"改了筛选条件但结果不变"），**而且不报错**。本仓四处覆写
-     *   （`FutureBuilder` / `LazyListState` / `AnimatedOpacityState` /
-     *   `TextFieldState`）全都老实写了那一句 —— 说明纪律能守，但不该让纪律存在。
+     *   （`LazyListState` / `AnimatedOpacityState` / `TextFieldState` …）全都老实写了那一句 —— 说明纪律能守，但不该让纪律存在。
      *
      * ⇒ 现在由 {@see StatefulElement} 在调本钩子**之前**用
      *   {@see self::adoptWidget()} 落好。这里保留赋值作**幂等兜底**（覆写者习惯性
