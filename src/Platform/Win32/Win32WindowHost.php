@@ -18,15 +18,17 @@ use function drift_win_begin_drag;
 use function drift_win_client_size;
 use function drift_win_close;
 use function drift_win_create;
+use function drift_win_destroy;
 use function drift_win_dpi;
 use function drift_win_is_maximized;
 use function drift_win_material_caps;
 use function drift_win_maximize_toggle;
 use function drift_win_minimize;
 use function drift_win_place_window;
+use function drift_win_set_close_guard;
+use function drift_win_set_cursor;
 use function drift_win_set_frameless;
 use function drift_win_set_min_size;
-use function drift_win_set_cursor;
 use function drift_win_set_title;
 use function drift_win_show;
 use function drift_win_uia_push;
@@ -82,9 +84,39 @@ final class Win32WindowHost implements WindowHost
         drift_win_show($windowHandle);
     }
 
+    /**
+     * **请求**关闭：桥发 `WM_CLOSE`（与用户点标题栏 X 同一条路）。
+     *
+     * ★ 一次 `PostMessageW` 就返回 —— **不是同步销毁**。没声明守卫的窗口在同一轮
+     *   消息处理里被销毁（体验上与改动前无差别）；声明了守卫的窗口会先变成一条
+     *   `CloseRequestedEvent`。
+     */
     public function close(int $windowHandle): void
     {
         drift_win_close($windowHandle);
+    }
+
+    /**
+     * **执行**关闭：桥直接 `DestroyWindow`，不看守卫（框架在应用同意之后调）。
+     *
+     * ★ 与 `close()` 的两分不是洁癖：它们对应"请求"与"执行"两个语义，
+     *   合成一个方法就等于"能不能被拦"取决于谁在调（2026-10-30 之前的状态）。
+     */
+    public function destroy(int $windowHandle): void
+    {
+        drift_win_destroy($windowHandle);
+    }
+
+    /**
+     * 声明该窗口的关闭要不要先问应用（壳侧按 HWND 记一个集合）。
+     *
+     * ★ 壳**不认识** `Application`：它只知道"这个 HWND 声明了要问"，
+     *   于是把 `WM_CLOSE` 转成一条事件。决定权在 PHP 的帧边界
+     *   （见 `CloseRequestedEvent` 的类注释：为什么不能在 WndProc 里同步问）。
+     */
+    public function setCloseGuard(int $windowHandle, bool $armed): void
+    {
+        drift_win_set_close_guard($windowHandle, $armed);
     }
 
     public function setTitle(int $windowHandle, string $title): void

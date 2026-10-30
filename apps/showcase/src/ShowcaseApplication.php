@@ -86,6 +86,14 @@ final class ShowcaseApplication extends Application
                 $this->showModal($modal);
             },
             $this->dialog,
+            // ★ 第四个能力，方向与上面三个**相反**（页面 → 应用）：打开/关闭
+            //   "关闭前确认"这个开关。它会改变 `onCloseRequested()` 的答案，
+            //   而那个方法只有 `Application` 有 —— 页面够不到（§4.3）。
+            //   ★ 做成一个"设值"能力而不是让页面自己去拦：拦截点只有一处
+            //     （帧边界、由 `EventLoop` 统一调用），页面只表达意图。
+            function (bool $enabled): void {
+                $this->setConfirmClose($enabled);
+            },
         );
     }
 
@@ -118,5 +126,42 @@ final class ShowcaseApplication extends Application
         return [
             'showcase.refresh' => new ShowcaseCommands($notify),
         ];
+    }
+
+    /**
+     * 「关闭前确认」开关（2026-10-30 可拦截关闭的**真实消费者**）。
+     *
+     * ★ 为什么这个状态住在 `Application` 上而不是页面里：回答"要不要关"的是
+     *   `ShowcaseApplication::onCloseRequested()`，而页面够不到它（§4.3）——
+     *   页面只负责**打开/关闭这个开关**（能力由组合根以闭包递下去，
+     *   与 `after()` / `showModal()` 同一形状，方向从"应用→页面"变成"页面→应用"）。
+     */
+    private bool $confirmClose = false;
+
+    /** 由「对话框」页的按钮调（经 `buildRoot()` 递下去的闭包） */
+    public function setConfirmClose(bool $enabled): void
+    {
+        $this->confirmClose = $enabled;
+    }
+
+    /**
+     * 关闭守卫（§5.1「关闭可拦截」）：开着就走原生确认框，关着直接放行。
+     *
+     * ★ 组合根对这个窗口调了 `setCloseGuard($handle, true)` ⇒ `WM_CLOSE` 会变成
+     *   一条 `CloseRequestedEvent` 落到这里。**这就是完整的消费者**：
+     *   拒绝 ⇒ 窗口原样留着（`confirm()` 返回 false）。
+     * ★ 弹框在这里是安全的：调用点在**帧边界**（`EventLoop` 抽完事件之后），
+     *   不在 WndProc 里 —— 壳为什么不能同步问，见 `enqueueCloseRequest` 的注释。
+     */
+    protected function onCloseRequested(): bool
+    {
+        if (!$this->confirmClose) {
+            return true;
+        }
+
+        return $this->dialog->confirm(
+            '关闭示例台',
+            '「关闭前确认」是开着的。点「否」窗口会留着 —— 这是关闭可拦截的演示。',
+        );
     }
 }

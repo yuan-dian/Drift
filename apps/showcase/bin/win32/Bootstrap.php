@@ -94,11 +94,26 @@ final class Bootstrap
         $app = new ShowcaseApplication($platform->dialog(), $platform->clipboard());
         $app->attach($surface, $screen->viewport());
 
+        // ★ 真机探针钩子（`tools/probe-close.py ... stay`）：`DRIFT_CLOSE_CONFIRM=1`
+        //   ⇒ 启动即把守卫答案设成"拒绝"，不必先点导航到「对话框」页再点开关
+        //   （那一页在滚动区深处，坐标脆弱）。默认路径不变：不设变量 ⇒ `false`。
+        if (\getenv('DRIFT_CLOSE_CONFIRM') === '1') {
+            $app->setConfirmClose(true);
+        }
+
         // ★ 最小窗口尺寸（§5.4）：挡住"拖到比内容更小"——那种状态会踩 C5/C6
         //   的布局硬校验（用户实测：可用宽 93 vs 条轨 94 ⇒ 弹 Fatal，拖动被打断）。
         //   "窗口被拖小"是用户行为、不是编程错误；最小尺寸是 Qt/WPF/Flutter 的标配。
         //   420×320 逻辑像素 = 顶条（标题 + 3 个导航 + 文件菜单）留余量 + 状态栏 + 数行列表。
         $window->setMinSize(420, 320);
+
+        // ★ 关闭可拦截（2026-10-30）：声明这个窗口"关之前要问一句"。
+        //   声明之后 `WM_CLOSE` 不再直接销毁 —— 它变成一条 `CloseRequestedEvent`，
+        //   在帧边界落到 `ShowcaseApplication::onCloseRequested()`。
+        //   ★ 示例台的答案取决于「对话框」页那个开关（默认关 ⇒ 行为与之前一样）：
+        //     这条线的**唯一**目的就是让"拒绝关闭"这一支在真机上看得见。
+        //   ★ 声明本身是**窗口级**的：它不改变"谁能关"，只改变"关了会不会先问"。
+        $window->setCloseGuard($handle, true);
 
         // ★ 拖动边缘重排（§5.2）：模态尺寸循环里主循环被系统挂起，壳在 WM_SIZE
         //   里**同步调回** PHP 走轻量重绘（只 settle/layout/paint/present，不碰

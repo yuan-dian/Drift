@@ -99,14 +99,24 @@ final class FrameClock
      * 跑一帧并记三笔账，**不碰任何平台资源**。
      *
      * @param float $timestampMs 平台注入的单调毫秒（`Platform::now()`）
+     * @param float $suspendedMs 上一帧之后被**原生模态**挂起的时长（毫秒，
+     *        `Platform::consumeModalBlockedMs()` 给的，读后即清）。
+     *        ★ 2026-10-30 真机取证（RECOVERABLE 报"两帧间隔 8344ms"）：用户在
+     *        原生对话框里停留的时间全被算进了两帧间隔 —— 模态不是缺陷
+     *        （"模态期间界面不重绘"是 `Dialog` 的固有语义），这段时间必须从
+     *        判据里剔除，否则**每次弹框都可能白弹一个错误框**。剔除只对
+     *        模态生效：慢处理器 / 慢帧照样报（那才是要抓的）。
      */
-    public function advance(Application $app, float $timestampMs, BoxConstraints $constraints): void
+    public function advance(Application $app, float $timestampMs, BoxConstraints $constraints, float $suspendedMs = 0.0): void
     {
         // ★ 只在"上一轮是**按帧节奏**等的"时候量间隔：`-1`（无限等，说明空闲）与
         //   `> FRAME_MS`（等到一个定时器）都不算卡 —— 那是我们要的等待。
         $waited = $this->lastWaitMs;
         if ($waited !== null && $waited >= 0.0 && $waited <= self::FRAME_MS && $this->lastTs !== null) {
-            $gap = $timestampMs - $this->lastTs;
+            // ★ 模态挂起的时间**先扣再比**：扣完还超阈值才是真卡
+            //   （同步 IO / 重计算 / 忘了走 TaskHost）。负数不可能出现
+            //   （模态时间 ⊆ 两帧之间），但防御性夹到 0 便宜且免解释。
+            $gap = \max(0.0, $timestampMs - $this->lastTs - \max(0.0, $suspendedMs));
             if ($gap > self::STALL_MS) {
                 $this->observe($gap);
             }

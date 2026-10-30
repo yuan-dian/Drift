@@ -42,8 +42,33 @@ final class FakeWindowHost implements WindowHost
     {
     }
 
+    /** 夹具：`close()` 被调用的次数（= 请求关闭，不一定会销毁） */
+    public int $closeRequests = 0;
+
     public function close(int $windowHandle): void
     {
+        ++$this->closeRequests;
+    }
+
+    /**
+     * 夹具：**执行**关闭的次数（`EventLoop` 在应用同意之后调的）。
+     *
+     * ★ 与 `closeRequests` 分开记：这正是"请求 / 执行"二分的可证伪点 ——
+     *   应用拒绝时执行次数必须是 0，而请求次数照常增长。
+     */
+    public int $destroys = 0;
+
+    public function destroy(int $windowHandle): void
+    {
+        ++$this->destroys;
+    }
+
+    /** 夹具：最后一次 `setCloseGuard()` 的值（`null` = 从未调用） */
+    public ?bool $closeGuarded = null;
+
+    public function setCloseGuard(int $windowHandle, bool $armed): void
+    {
+        $this->closeGuarded = $armed;
     }
 
     public function setTitle(int $windowHandle, string $title): void

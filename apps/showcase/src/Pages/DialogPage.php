@@ -41,19 +41,22 @@ use Drift\Widget\Widget;
  */
 final class DialogPage extends StatefulWidget
 {
-    public function __construct(private Dialog $dialog)
+    /**
+     * @param \Closure(bool): void $setCloseConfirm 「关闭前确认」开关（应用侧接线）
+     */
+    public function __construct(private Dialog $dialog, private \Closure $setCloseConfirm)
     {
         parent::__construct();
     }
 
-    public static function make(Dialog $dialog): self
+    public static function make(Dialog $dialog, \Closure $setCloseConfirm): self
     {
-        return new self($dialog);
+        return new self($dialog, $setCloseConfirm);
     }
 
     public function createState(): State
     {
-        return new DialogPageState($this->dialog);
+        return new DialogPageState($this->dialog, $this->setCloseConfirm);
     }
 }
 
@@ -72,7 +75,19 @@ final class DialogPageState extends State
 
     private int $no = 0;
 
-    public function __construct(private Dialog $dialog)
+    /**
+     * 「关闭前确认」的**显示用镜像**（真相在 `Application` 的字段里）。
+     *
+     * ★ 为什么这里要留一份：页面拿不到 `Application`（§4.3），而按钮文案与状态行
+     *   需要知道当前是开还是关。★ 它只影响**显示** —— 真正决定"关不关"的是
+     *   `Application::onCloseRequested()`，`setState()` 之后两边恒一致。
+     */
+    private bool $confirmClose = false;
+
+    /**
+     * @param \Closure(bool): void $setCloseConfirm
+     */
+    public function __construct(private Dialog $dialog, private \Closure $setCloseConfirm)
     {
     }
 
@@ -116,6 +131,22 @@ final class DialogPageState extends State
             Text::make('`confirm()` 的默认按钮是**「否」**（`MB_DEFBUTTON2`）：'
                 . '破坏性动作的默认不能是「执行」。')
                 ->caption(),
+
+            $this->sectionBar('③ 关闭前确认 · setCloseGuard'),
+            Card::make(Column::make()->spacing(10.0)->children([
+                Row::make()->spacing(8.0)->children([
+                    Button::make($this->confirmClose ? '关闭「关闭前确认」' : '启用「关闭前确认」')
+                        ->variant(ButtonVariant::Flat)
+                        ->onPressed(fn() => $this->toggleConfirmClose()),
+                ]),
+                Text::make('当前：' . ($this->confirmClose
+                    ? '开 —— 点标题栏 X 会先问一句，点「否」窗口留着'
+                    : '关 —— 点 X 直接退出（与 2026-10-30 之前一样）')),
+            ]))->paddingAll(12.0),
+            Text::make('关闭**请求**与应用**同意**是两件事：`WM_CLOSE` 入队一条 '
+                . '`CloseRequestedEvent`，在**帧边界**问 `Application::onCloseRequested()`；'
+                . '同意之后才由框架 `destroy()`。两条路径合一 ⇒ 用户点 X 与应用调 `close()` '
+                . '的拦截行为一致。')->caption(),
 
             $this->sectionBar('能力边界（如实记录）'),
             Text::make('① **模态期间界面不重绘**：系统跑自己的内层消息循环，'
@@ -195,6 +226,23 @@ final class DialogPageState extends State
     {
         $this->dialog->alert('提示', '这是一个原生 MessageBoxW：它不依赖渲染栈，'
             . '所以应用画不出来的时候它还能弹。');
+    }
+
+    /**
+     * 翻转「关闭前确认」：**先在应用侧生效，再刷新本页的显示镜像**。
+     *
+     * ★ 顺序不能反：如果先 `setState` 再接线，应用侧失败（不会发生，但假设）时
+     *   页面会显示一个不存在的状态。现在的顺序里"显示"跟着"事实"走。
+     * ★ 闭包参数是 `bool`（不是 `?bool` / 三态）：这是一个开关，不是"查询"。
+     */
+    private function toggleConfirmClose(): void
+    {
+        $next = !$this->confirmClose;
+        ($this->setCloseConfirm)($next);
+
+        $this->setState(function () use ($next): void {
+            $this->confirmClose = $next;
+        });
     }
 
     private function ask(): void

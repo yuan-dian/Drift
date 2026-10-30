@@ -198,6 +198,48 @@ AppScope（进程一份）          WindowScope（每窗一份）
 
 ★ 这条要在 M1 就一起做，不能拖到 M3 —— 否则多窗口的第一个真实应用就会数据丢失。
 
+#### ★★ 2026-10-30 落地（M1-c）：它先做了，而且**不需要**窗口身份
+
+评估时的顺序是 M0（壳引入窗口身份）→ M1（平台层身份 + 关闭可拦截）。动手时发现
+"关闭可拦截"和"窗口身份"**没有依赖关系**，而它们的风险与收益完全不对等：
+
+| | 关闭可拦截 | 窗口身份（M0） |
+|---|---|---|
+| 改动面 | 壳 4 处 + 3 个新函数 + PHP 6 个文件 | 壳 3216 行里 **≈230 处**引用 |
+| 单窗就有价值 | **有**（未保存提示） | 没有（多窗口才见效） |
+| 验收判据 | "拒绝之后窗口还在"（可无头 + 可真机） | "单窗像素逐字节不变"（必须真机 md5） |
+
+⇒ 拆成 M1-c（本轮）与 M0/M1-a/b（下一轮）。这不是"先易后难"，是**先做那条
+唯一能独立验收的分支** —— 把它捆进 300 行重构里，等于让一个 30 行的正确改动
+去背 300 行的风险。
+
+**落地形态（三处裁决，都与设计册原稿不同）**：
+
+1. **一个入口，不是两个**。改动之前"关窗"有两条路：应用调 `close()` ⇒ 壳
+   `DestroyWindow`；用户点 X ⇒ `WM_CLOSE` ⇒ `DestroyWindow`。拦截点只能盖住后者
+   ⇒ **保不保护未保存内容取决于用户用哪只手关窗**。
+   ⇒ `drift_win_close()` 改成 `PostMessageW(WM_CLOSE)`，新增
+   `drift_win_destroy()` 做"执行"。`WindowHost` 上是一对：`close()`（请求，
+   可能被拒）/ `destroy()`（执行，只有框架该调）。
+
+2. **异步，不是同步回调**。守卫的典型实现要**弹模态确认框**，而 `MessageBoxW`
+   自己会重入消息循环 ⇒ WndProc 被再入、`ResizeHookState::$pump` 那条 PHP 回调
+   会在中间被调，等于在"半个帧"里跑应用代码。
+   ⇒ `WM_CLOSE` 只入队一条 `kEvCloseRequested` + 叫醒泵（与 `kMsgUiaInvoke` 同形），
+   决策落在**帧边界**（`EventLoop` 抽完事件之后）。
+
+3. **`setCloseGuard(hwnd, bool)` 是显式开关，默认关**。不做成"总能被问"：
+   没声明守卫的窗口（hello / tutorial / users）保持 2026-10-30 之前的路径，
+   零改动、零额外往返。声明了守卫、又忘了覆写 `onCloseRequested()` 的应用
+   得到默认 `true` ⇒ 退回"点了就关"，**不会**变成"点了没反应的死窗口"。
+
+**顺带修好的一条语义**（原来就该是这样）：`WM_DESTROY` 的 `PostQuitMessage(0)`
+改成"**活窗口表空了才退**"（壳里一个 `std::set<HWND>`）。单窗等价，多窗时它是
+§5 裁决 ① 的物质基础 —— 而且它不需要 `WindowSlot` 表。
+
+★ **设计册 M0 原稿"`g_main` 保留为别名"作废**（用户裁决：能一套就一套）：
+M0 落地时直接删 `g_main`，不留"表 + 别名"两套。
+
 ---
 
 ## 6. 实现路径：四个台阶，每阶可独立验收
@@ -236,14 +278,18 @@ static std::map<HWND, WindowSlot> g_windows;
 
 ### M1 · 平台层补窗口身份 + 关闭可拦截
 
+> **进度（2026-10-30）**：**关闭可拦截已落地**（M1-c，见 §5.1 的"落地"段）；
+> 窗口身份（下方表格的五行）与 `EventLoop` 的窗口表**未动** —— 它们捆在一起做，
+> 判定依据写在 §5.1 的对照表里（230 处引用 vs 30 行，且验收判据不同）。
+> ⇒ 下面这张表按原样保留为下一轮的清单。
+
 | 改法 | 破坏面 |
 |---|---|
 | 新增 `Platform::forWindow(int $h): WindowPlatform`（`screen()` / `input()` / `imeCaret()` / `timers()`） | 纯增量，老方法保留为"主窗"别名 |
 | `WindowHost::setMinSize(int $h, int $w, int $h)` / `pushSemantics(int $h, array)` | **签名破坏**（2 处），消费者只有组合根 |
 | 桥事件带 `hwnd` 字段；`Win32Platform::pumpEvents()` 按 hwnd 投进对应队列 | 增量（新字段） |
 | **不退出**的判据：`waitEvents()` 回 `Quit` 的门槛改成"最后一个窗口销毁" | 壳侧 `WM_DESTROY` 计数 |
-| 新增 `WindowHost::setCloseGuard(?callable)` + 桥 `kEvCloseRequested` | 纯增量 |
-
+| ~~新增 `WindowHost::setCloseGuard(?callable)` + 桥 `kEvCloseRequested`~~ ✅ **已落地（形状不同）**：`setCloseGuard(int $h, bool)` + `destroy(int $h)`，理由见 §5.1 | 纯增量 |
 ★ **这条新增的 `closeGuard` 是本轮评估的额外产出**（§5.1）—— 它独立于多窗口也有价值
 （单窗口的"未保存提示"同样需要），但多窗口**必须**有它。
 

@@ -46,8 +46,32 @@ function drift_win_create(string $title, int $width, int $height): int {}
 /** 让窗口可见并激活（`ShowWindow(SW_SHOW)` + `UpdateWindow`） */
 function drift_win_show(int $hwnd): void {}
 
-/** 请求关闭：壳 `DestroyWindow` ⇒ `WM_DESTROY` ⇒ `PostQuitMessage` ⇒ 泵返回 `quit` */
+/**
+ * **请求**关闭：`PostMessageW(WM_CLOSE)` —— 与用户点标题栏 X 完全同路。
+ *
+ * ★ 2026-10-30 之前这里是 `DestroyWindow`，于是"关窗"有两条路：应用调 `close()`
+ *   直接销毁、用户点 X 走 `WM_CLOSE`。两条路意味着**拦截点只能覆盖一半**
+ *   （`setCloseGuard` 对前者无效）⇒ 合并成一条：请求走 `WM_CLOSE`，
+ *   执行走 `drift_win_destroy()`。
+ */
 function drift_win_close(int $hwnd): void {}
+
+/**
+ * **执行**关闭：`DestroyWindow`，不看守卫（只有框架在应用同意之后该调它）。
+ *
+ * ★ 与 `drift_win_close()` 分开是"请求 / 执行"二分，不是一个功能的两个名字：
+ *   前者可以被拒（窗口还在），后者不能（销毁 ⇒ `WM_DESTROY`）。
+ */
+function drift_win_destroy(int $hwnd): void {}
+
+/**
+ * 声明该窗口的关闭要不要**先问应用**（2026-10-30，可拦截关闭）。
+ *
+ * `true` ⇒ `WM_CLOSE` 不再销毁，改为入队一条 `close-requested`（帧边界由
+ * `Application::onCloseRequested()` 决定，框架据此调 `drift_win_destroy`）。
+ * `false`（默认）⇒ 与 2026-10-30 之前逐字节相同。
+ */
+function drift_win_set_close_guard(int $hwnd, bool $armed): void {}
 
 function drift_win_set_title(int $hwnd, string $title): void {}
 
@@ -235,6 +259,7 @@ function drift_win_ime_caret(float $x, float $y, float $h): void {}
  * | `theme` | — | `WM_SETTINGCHANGE`（系统主题变更，载荷为空） |
  * | `wheel` | `x` `y`（**物理**像素，客户区原点） `delta`（WHEEL_DELTA=120 为一格；**壳已取负** ⇒ 正=回拉=内容上移=看到下面，与触控板"上划看到下面"同族） | `WM_MOUSEWHEEL`（坐标经 `ScreenToClient` 换算） |
  * | `files-dropped` | `x` `y`（**物理**像素，客户区原点 = `DragQueryPoint` 落点） `paths`（UTF-8，`'\n'` 分隔的多路径原始串；空串 = 零个文件） | `WM_DROPFILES`（`DragAcceptFiles` 开窗接受拖放） |
+ * | `close-requested` | — | `WM_CLOSE`（**仅当该窗 `drift_win_set_close_guard(hwnd, true)`**；否则直接销毁、不出事件） |
  *
  * ★ **壳不关心的事件就地派发后丢掉**（绘制、焦点切换…），绝不交给 PHP
  *   去忽略 —— GUI 仓的教训：把不关心的事件也回传，泵就成了"每帧几百次跨边界调用"。

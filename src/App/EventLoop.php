@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\App;
 
+use Drift\Input\CloseRequestedEvent;
 use Drift\Platform\Platform;
 use Drift\Platform\WakeReason;
 
@@ -55,6 +56,10 @@ use Drift\Platform\WakeReason;
  * ⑦ 帧末同步 IME 位置
  * ```
  *
+ * ★ **⑤ 里有一个例外**（2026-10-30）：`CloseRequestedEvent` 不进 `dispatchInput()`
+ *   —— 关闭没有命中目标，它是窗口级生命周期（与 `WakeReason::Quit` 同族）。
+ *   应用同意 ⇒ 框架 `destroy()` 并**立刻收工**（理由见那一行的注释）。
+ *
  * ★ **④ 必须在 ⑤ 之前**：`input()` 是队列，`pumpEvents()` 往里投、`poll()` 往外取。
  *   反了就是"取到一个空队列、然后帧里再也没有事件"（不报错，窗口就是不动）。
  * ★ **⑥ 每轮都跑**：`waitEvents` 返回 `Timeout` 也跑（IO 轮询、定时器到点都要在帧里
@@ -103,6 +108,27 @@ final class EventLoop
 
             // ⑤ 逐条派给应用
             while (($event = $input->poll()) !== null) {
+                // ★ 关闭请求**不进命中链**（2026-10-30）：它不是"点在某个控件上"，
+                //   没有命中目标、也不该被浮层拦下 —— 它是**窗口级生命周期**，
+                //   与 `WakeReason::Quit` 同族。所以这一分支在 `dispatchInput()`
+                //   之前，且 `continue` 掉（IME 位置不会因为"有人按了 X"而变）。
+                if ($event instanceof CloseRequestedEvent) {
+                    // ★ 应用说"可以"⇒ **框架**执行销毁（不是应用自己 close —— 那会
+                    //   再发一条 WM_CLOSE，自己问自己）。
+                    if ($app->closeRequested()) {
+                        // ★ 销毁之后必须**立刻收工**：下一轮 `waitEvents()` 会拿到
+                        //   `WM_QUIT`（最后一个窗口没了），而在那之前跑一帧就是
+                        //   "对着死句柄求客户区" ⇒ 0×0 约束 ⇒ 布局硬校验 Fatal。
+                        //   ★ 多窗口（M1）落地时这一句变成"从窗口表里摘掉这一项、
+                        //     继续跑其它窗口"，不是 `return`。
+                        $window->destroy($windowHandle);
+
+                        return;
+                    }
+
+                    continue;   // 应用拒绝：窗口原样留着，什么都不做
+                }
+
                 $shape = $app->dispatchInput($event, $platform->now());
                 if ($shape !== null) {
                     // ★ 光标由**这里**喂给 `WindowHost`：应用它需要平台类型，
@@ -117,7 +143,10 @@ final class EventLoop
             }
 
             // ⑥ 帧（顺序不可换：`wantsFrame()` 读的是跑完这一帧之后的状态）
-            $clock->advance($app, $platform->now(), $screen->viewport());
+            //   ★ 第 ④ 个参数 = 这轮里被原生模态挂起的时长（对话框 / fatalBox）。
+            //     不剔除的话，用户在对话框里停留几秒，下一帧就报一次
+            //     "两帧间隔 N ms"的 RECOVERABLE（2026-10-30 真机取证）。
+            $clock->advance($app, $platform->now(), $screen->viewport(), $platform->consumeModalBlockedMs());
 
             // ⑦ IME 定位：框架算几何（逻辑像素）、平台做量化。
             //   组合根不调这一行 = 输入法候选框贴在窗口左上角（能打字、候选框位置错）。

@@ -703,6 +703,48 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     }
 
     /**
+     * 这个窗口被要求关闭 —— **回答"同意吗"**（2026-10-30）。
+     *
+     * ```php
+     * protected function onCloseRequested(): bool
+     * {
+     *     if (!$this->form->isDirty()) {
+     *         return true;                     // 没什么要问的 ⇒ 关
+     *     }
+     *     return $this->dialog->confirm('未保存', '放弃这次修改？');
+     * }
+     * ```
+     *
+     * ★ **只在组合根声明了守卫的窗口上会被问**（`WindowHost::setCloseGuard($h, true)`）。
+     *   没声明的窗口，`WM_CLOSE` 由壳直接销毁，本方法**永远不会被调** ——
+     *   这是"没声明要问 = 关就是了"，不是遗漏。
+     * ★ 返回 `true` ⇒ 框架调 `WindowHost::destroy()`（同步销毁）；`false` ⇒
+     *   什么都不发生，窗口原样留着（连位置都不动）。**不要**在这里自己调
+     *   `close()`：那会再发一条 `WM_CLOSE`，等于自己问自己。
+     * ★ 调用点在**帧边界**（`EventLoop` 抽完事件之后、跑帧之前），不是在 WndProc 里
+     *   ⇒ 这里可以安全地弹模态框（`Dialog::confirm()`）。壳侧为什么不能同步问，
+     *   见 `cpp-src/drift_win32.cc` 的 `enqueueCloseRequest`。
+     * ★ 默认 `true`：声明了守卫却忘了覆写，行为退回"点了就关" ——
+     *   比"点了没反应、又没有提示"好（那才是真正的死窗口）。
+     *
+     * @api
+     */
+    protected function onCloseRequested(): bool
+    {
+        return true;
+    }
+
+    /**
+     * 供 `EventLoop` 调（`onCloseRequested()` 是 `protected`）。
+     *
+     * @internal 只有 `EventLoop` 该调；应用覆写 {@see self::onCloseRequested()}
+     */
+    public function closeRequested(): bool
+    {
+        return $this->onCloseRequested();
+    }
+
+    /**
      * 把新的渲染环境下发到**根与浮层**两棵树（O-20 差异表 #2：浮层是第二棵树）。
      *
      * ★ **不是新机制**：`Element::applyContext()` 就是"换一份渲染环境（主题切换

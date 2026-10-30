@@ -236,4 +236,43 @@ final class DialogPageTest extends SmokeTestCase
             '实际文案：' . self::textOf($app->root(), '确认的结果：')
         );
     }
+
+    /**
+     * 「关闭前确认」开关（2026-10-30）：点一下 ⇒ **应用侧接线**被调 + 本页文案翻转。
+     *
+     * ★ 这条钉的是**方向相反的那根线**（页面 → 应用）：前三段能力都是"应用给页面
+     *   一个能力"，这一段是"页面告诉应用一个事实"。断错方向（比如只改本地字段、
+     *   不调闭包）会让真机上"开关看着开了、关窗却不问" —— 不报错，最难查。
+     * ⇒ 两条断言缺一不可：闭包收到 `true`、按钮文案变成"关闭「关闭前确认」"。
+     */
+    public function testCloseConfirmToggleReachesTheApplication(): void
+    {
+        $seen = [];
+        $dialog = new FakeDialog();
+        $surface = new SurfaceProbe();
+        $surface->resize((int) self::W, (int) self::H, 1.0);
+        $constraints = BoxConstraints::tight(new Size(self::W, self::H));
+
+        $app = new DialogApplication($dialog, static function (bool $enabled) use (&$seen): void {
+            $seen[] = $enabled;
+        });
+        $app->attach($surface, $constraints);
+        $app->frame(16.0, $constraints);
+
+        $clicked = self::click($app, '启用「关闭前确认」');
+        self::tick($app, $constraints, 33.0);
+
+        check('对话框页 · 关闭守卫开关在树上（第三段真的建出来了）', $clicked);
+        check(
+            '对话框页 · 点开关 ⇒ **应用**收到 `true`（不是只改了本页字段）',
+            $seen === [true],
+            \json_encode($seen)
+        );
+        check(
+            '对话框页 · 按钮文案跟着翻（下一帧读到的是新状态）',
+            self::textOf($app->root(), '当前：') !== ''
+                && str_contains(self::textOf($app->root(), '当前：'), '开 ——'),
+            '实际文案：' . self::textOf($app->root(), '当前：')
+        );
+    }
 }

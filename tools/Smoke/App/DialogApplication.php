@@ -18,13 +18,26 @@ use Drift\Widget\Widget;
  */
 final class DialogApplication extends Application
 {
-    public function __construct(public readonly FakeDialog $dialog)
-    {
+    /**
+     * @param null|\Closure(bool): void $onCloseConfirm 「关闭前确认」开关的回传口
+     *   （为 `null` ⇒ 什么都不做）。★ 它不是端口、是**接线探针**：
+     *   页面 → 应用这条方向只有它一处，用例要能证明"闭包真的被调了"。
+     */
+    public function __construct(
+        public readonly FakeDialog $dialog,
+        private ?\Closure $onCloseConfirm = null,
+    ) {
         parent::__construct();
     }
 
     public function buildRoot(): Widget
     {
-        return DialogPage::make($this->dialog);
+        return DialogPage::make($this->dialog, function (bool $enabled): void {
+            // ★ 先取到局部再判空：AOT 上 `$this->可空字段?->m()` 会读成 null（MEMORY 第 21 条）。
+            $sink = $this->onCloseConfirm;
+            if ($sink !== null) {
+                $sink($enabled);
+            }
+        });
     }
 }

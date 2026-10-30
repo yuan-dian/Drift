@@ -212,6 +212,69 @@ function winImeCalls(): array
     return $GLOBALS['DRIFT_SMOKE_IME'] ?? [];
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// 关闭（2026-10-30：请求 / 执行二分 + 可拦截）
+//
+// ★ 假桥**不模拟**"销毁之后句柄失效"：那会让每个用到它的用例都要改夹具
+//   （`clientSize()` 突然 0×0）。这里只录事实 —— "框架有没有真的执行销毁"，
+//   而这正是 `EventLoop` 那条分支唯一要回答的问题。
+// ══════════════════════════════════════════════════════════════════════════
+
+if (!function_exists('drift_win_close')) {
+    function drift_win_close(int $hwnd): void
+    {
+        $GLOBALS['DRIFT_SMOKE_CLOSE'][] = ['request', $hwnd];
+    }
+}
+
+if (!function_exists('drift_win_destroy')) {
+    function drift_win_destroy(int $hwnd): void
+    {
+        $GLOBALS['DRIFT_SMOKE_CLOSE'][] = ['destroy', $hwnd];
+    }
+}
+
+if (!function_exists('drift_win_set_close_guard')) {
+    function drift_win_set_close_guard(int $hwnd, bool $armed): void
+    {
+        $GLOBALS['DRIFT_SMOKE_CLOSE'][] = ['guard', $hwnd, $armed];
+    }
+}
+
+/** @return list<array{0: string, 1: int, 2?: bool}> 关闭调用记录：['request'|'destroy'|'guard', hwnd, armed] */
+function winCloseCalls(): array
+{
+    return $GLOBALS['DRIFT_SMOKE_CLOSE'] ?? [];
+}
+
+// ── 原生模态记账（2026-10-30：帧时钟要从"两帧间隔"里剔除模态时间）────────
+// ★ 假桥**可以停留**（`winMessageBoxLatencyFake(ms)`）：`fatalBox()` 的账本
+//   记的是"进桥到出桥"，而那个数字是否>0 只有让桥真的耗掉一点时间才验得着
+//   —— 不停留的话 `hrtime` 差值小到无法断言（">= 0"是恒真的空判据）。
+
+if (!function_exists('drift_win_message_box')) {
+    function drift_win_message_box(string $title, string $body): void
+    {
+        $ms = (float) ($GLOBALS['DRIFT_SMOKE_MSGBOX_MS'] ?? 0.0);
+        if ($ms > 0.0) {
+            \usleep((int) ($ms * 1000));
+        }
+        $GLOBALS['DRIFT_SMOKE_MSGBOX'][] = [$title, $body];
+    }
+}
+
+/** @return list<array{0: string, 1: string}> 消息框调用记录：[title, body] */
+function winMessageBoxCalls(): array
+{
+    return $GLOBALS['DRIFT_SMOKE_MSGBOX'] ?? [];
+}
+
+/** 让假消息框停留 N 毫秒（模拟"用户在框里看了一会儿"）；`0` = 立刻返回 */
+function winMessageBoxLatencyFake(float $ms): void
+{
+    $GLOBALS['DRIFT_SMOKE_MSGBOX_MS'] = $ms;
+}
+
 /** 清空泵剧本 / 定时器 / 光标 / IME 记录（每个用例前必调） */
 function winLoopReset(): void
 {
@@ -219,6 +282,8 @@ function winLoopReset(): void
     $GLOBALS['DRIFT_SMOKE_TIMERS'] = [];
     $GLOBALS['DRIFT_SMOKE_CURSOR'] = [];
     $GLOBALS['DRIFT_SMOKE_IME'] = [];
+    $GLOBALS['DRIFT_SMOKE_CLOSE'] = [];
+    $GLOBALS['DRIFT_SMOKE_MSGBOX'] = [];
     unset($GLOBALS['DRIFT_SMOKE_LAST_TIMER_ID'], $GLOBALS['DRIFT_SMOKE_WIN_HANDLE'], $GLOBALS['DRIFT_SMOKE_CLIENT']);
 
     // ★ 时钟回到 0：每个用例都从同一个原点开始，`after(400)` 的到点时刻才可断言。

@@ -363,8 +363,10 @@
 | `Tray` | interface | src/Platform/Tray.php:6 |
 | `Win32Platform` | class | src/Platform/Win32/Win32Platform.php:32 |
 | `WindowHost` | interface | src/Platform/WindowHost.php:11 |
-| `WindowHost::setCursor()` | method | src/Platform/WindowHost.php:149 |
-| `WindowHost::pushSemantics()` | method | src/Platform/WindowHost.php:161 |
+| `WindowHost::destroy()` | method | src/Platform/WindowHost.php:58 |
+| `WindowHost::setCloseGuard()` | method | src/Platform/WindowHost.php:70 |
+| `WindowHost::setCursor()` | method | src/Platform/WindowHost.php:185 |
+| `WindowHost::pushSemantics()` | method | src/Platform/WindowHost.php:197 |
 | `WindowMaterial` | class | src/Platform/WindowMaterial.php:8 |
 | `WindowMaterialCapabilities` | class | src/Platform/WindowMaterialCapabilities.php:6 |
 

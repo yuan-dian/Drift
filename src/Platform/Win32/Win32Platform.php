@@ -5,6 +5,7 @@ namespace Drift\Platform\Win32;
 
 use Drift\Errors;
 use Drift\Geometry\Axis;
+use Drift\Input\CloseRequestedEvent;
 use Drift\Input\FilesDroppedEvent;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
@@ -93,6 +94,14 @@ final class Win32Platform implements Platform
     private bool $waitTimerReported = false;
 
     /**
+     * `fatalBox()` 记下的模态阻塞时间（毫秒）—— `consumeModalBlockedMs()` 取走。
+     *
+     * ★ 对话框那一份在 `Win32Dialog` 上（谁跑的模态谁记账）；这里只放
+     *   `fatalBox()` 自己的。读后即清是 {@see self::consumeModalBlockedMs()} 的契约。
+     */
+    private float $modalBlockedMs = 0.0;
+
+    /**
      * @param string|null $renderer 光栅后端（`'skia'`；`null` = 软光栅，§7.2 裁决 4）。
      *   ★ **归组合根**：换后端是**部署形态**（Skia 让产物多几 MiB，§4.6），
      *   不是运行期配置 ⇒ 由 `bin/<os>/Bootstrap.php` 显式传入。
@@ -134,7 +143,31 @@ final class Win32Platform implements Platform
 
     public function fatalBox(string $title, string $body): void
     {
-        drift_win_message_box($title, $body);
+        // ★ `MessageBoxW` 是**原生模态**（用户看多久它就开多久）—— 与对话框
+        //   同一条账本（2026-10-30：帧时钟要从"两帧间隔"里剔除这段时间，
+        //   否则每次弹框都可能白弹一个 RECOVERABLE）。
+        $startedNs = \hrtime(true);
+        try {
+            drift_win_message_box($title, $body);
+        } finally {
+            $this->modalBlockedMs += (float) (\hrtime(true) - $startedNs) / 1e6;
+        }
+    }
+
+    public function consumeModalBlockedMs(): float
+    {
+        $blocked = $this->modalBlockedMs;
+        $this->modalBlockedMs = 0.0;
+
+        // ★ 对话框的账在 `Win32Dialog` 上（谁跑的模态谁记账），这里只做汇总。
+        //   ★ 用具体类型收窄而不是接口：`dialog()` 返回的是 `?Dialog`，AOT 对
+        //     "接口值喂进类类型形参"不做静态判断 —— 本类自己造的就是具体类。
+        $dialog = $this->dialog;
+        if ($dialog instanceof Win32Dialog) {
+            $blocked += $dialog->consumeModalBlockedMs();
+        }
+
+        return $blocked;
     }
 
     public function clipboard(): ?Clipboard
@@ -288,6 +321,7 @@ final class Win32Platform implements Platform
      * | `theme` | ⇒ `ThemeChangedEvent`（§9.2 系统主题变更；载荷为空，新主题由消费者查 `Screen::systemTheme()`） |
      * | `uia-invoke` | ⇒ `SemanticsInvokeEvent`（§9 / M5 无障碍的"可操作"半边） |
      * | `files-dropped` | ⇒ `FilesDroppedEvent`（A5-② 拖文件进窗：`paths` 是 `'\n'` 分隔的原始串） |
+     * | `close-requested` | ⇒ `CloseRequestedEvent`（仅声明了关闭守卫的窗口；见 `WindowHost::setCloseGuard()`） |
      * | 其它 | 丢弃 —— 桥已经保证"只回传 Drift 关心的"，这里是防御性兜底 |
      *
      * ★ **`resize` 必须同时喂表面**：`Screen::viewport()` 读的是桥里的客户区尺寸
@@ -328,6 +362,18 @@ final class Win32Platform implements Platform
             // 释放路径 ③）。★ 只发失活、**不发对称的激活** —— 今天没有东西需要在
             // 激活时做（A15：没有消费者不预先发明线上语义）。
             $this->input()->push(new WindowDeactivatedEvent());
+
+            return 1;
+        }
+
+        if ($type === 'close-requested') {
+            // 可拦截关闭（2026-10-30）：**只有声明了守卫的窗口**才会走到这里
+            // （`drift_win_set_close_guard`）。没声明的窗口，壳在 WM_CLOSE 里
+            // 直接销毁，这条事件根本不会出现 —— 所以没有"多余的往返"。
+            // ★ 它进 `input()` 队列而不是当场问应用：关闭的决策要在**帧边界**做
+            //   （典型实现是弹模态确认框），在 WndProc 里问就是消息泵重入
+            //   （见壳里 `enqueueCloseRequest` 的注释）。
+            $this->input()->push(new CloseRequestedEvent());
 
             return 1;
         }

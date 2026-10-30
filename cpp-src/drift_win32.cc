@@ -27,6 +27,7 @@
 #include <commdlg.h>    // OPENFILENAMEW / GetOpenFileNameW（A5-① 文件对话框）
 #include <shellapi.h>   // DragAcceptFiles / DragQueryFileW / DragFinish（A5-② 拖文件进窗）
 #include <vector>       // std::vector —— WM_DROPFILES 逐个路径的临时缓冲
+#include <set>          // std::set —— 活窗口表 / 关闭守卫表（多窗口的最小形态）
 #include <ShlObj.h>     // SHGetKnownFolderPath —— 用户配置目录（§5.4）
 #include <KnownFolders.h>
 #include <objbase.h>             // IUnknown —— UIAutomationCore.h 接口的基类
@@ -158,6 +159,7 @@ enum EventKind {
     kEvUiaInvoke,
     kEvUiaSetValue,
     kEvFilesDropped,
+    kEvCloseRequested,
 };
 
 struct PendingEvent {
@@ -180,6 +182,16 @@ HWND g_main = NULL;
 int g_clientW = 0;
 int g_clientH = 0;
 UINT g_dpi = 96;
+
+// ── 窗口身份的两个最小集合（2026-10-30，可拦截关闭 + "关最后一个才退"）──
+// ★ 为什么是**两个 set** 而不是一张 `WindowSlot` 表：本轮只裁决"关闭"这一条语义，
+//   而关闭需要的全部信息就是"这个 HWND 还活着吗"与"它要不要征询"。其余
+//   45 个 per-window 全局（帧缓冲 / DPI / 客户区 / 材质…）是 M0 的事 ——
+//   把它们一起搬进表会让"关闭可拦截"这个 30 行改动变成 300 行重构，
+//   而两者**没有共同的验收判据**（M0 的判据是"单窗像素逐字节不变"）。
+// ⇒ 表是**加**的，不是"临时的第二套"：这两个 set 在多窗口落地后仍然是对的。
+std::set<HWND> g_liveWindows;   // createWindow 成功 ⇒ 加入；WM_DESTROY ⇒ 移除
+std::set<HWND> g_closeGuarded;  // 应用声明"关闭前要问我"的窗口
 
 // ── 最小客户区（§5.4，物理像素；0 = 未设）──────────────────────────
 // ★ 为什么必须有：窗口能被拖到比内容更小 ⇒ C5/C6 的布局硬校验会弹 Fatal，
@@ -1012,6 +1024,45 @@ void enqueue(const PendingEvent &event) {
 }
 
 /**
+ * 关闭请求入队（`WM_CLOSE` 且该窗声明了守卫时走这里）。
+ *
+ * ★ **为什么"关闭"要入队而不是在 WndProc 里同步问 PHP**：转投的理由有两条，
+ *   第二条才是决定性的 ——
+ *   ① 泵的契约是"一次交一条事件"，在 WndProc 里跑应用代码就没有"下一帧会跑"的保证
+ *      （与 `kMsgUiaInvoke` 同一条理由）；
+ *   ② 关闭守卫的典型实现要**弹模态确认框**，而 `MessageBoxW` 自己会重入消息循环
+ *      ⇒ WndProc 会被再入、`ResizeHookState::$pump` 那条 PHP 回调会在中间被调，
+ *      等于在"半个帧"里跑应用代码。入队则让确认框落在**帧边界**。
+ * ★ **合并未消费的请求**：用户连点三下 X、或应用自己在帧里又调了一次 `close()`，
+ *   都会产生多条 `WM_CLOSE`。不合并就是"确认框弹三次"，而三次问的是同一个问题。
+ *   与 `kEvResize` 的 coalesce 同一手法，区别是关闭请求**没有载荷**要合并 ——
+ *   队列里已经有一条就什么都不做。
+ * ★ 叫醒用**发起请求的那个窗口**（不是 `g_main`）：多窗口时泵阻塞在
+ *   `GetMessageW(NULL, …)`（取本线程任意窗口的消息），投给谁都能叫醒，
+ *   但投给请求者更贴近事实，也不依赖"有个 `g_main`"。
+ */
+void enqueueCloseRequest(HWND hwnd) {
+    for (const auto &queued : g_queue) {
+        if (queued.kind == kEvCloseRequested) {
+            return;   // 已有一条未消费的关闭请求
+        }
+    }
+
+    PendingEvent event;
+    event.kind = kEvCloseRequested;
+    event.a = 0;
+    event.b = 0;
+    event.c = 0;
+    event.d = 0;
+    event.e = 0;
+    g_queue.push_back(event);
+
+    if (hwnd != NULL) {
+        PostMessageW(hwnd, kMsgWake, 0, 0);
+    }
+}
+
+/**
  * 指针事件入队（四相位共用一个壳；顺带记最后已知位置供 `WM_MOUSELEAVE` 用）。
  *
  * ★ `phase` 与 `Drift\Input\PointerPhase` 的 value 同值（0=down 1=move 2=up
@@ -1350,8 +1401,15 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
 
         case WM_CLOSE:
-            // 不调 DefWindowProc：它会走"关闭确认"那套，而 Drift 的退出语义
-            // 只有一条（销毁 ⇒ WM_QUIT ⇒ 泵返回 quit，见 WindowHost::close 的 docblock）。
+            // ★ 关闭的**唯一入口**（用户点 X 与应用调 `WindowHost::close()` 同路，
+            //   后者是 `PostMessageW(WM_CLOSE)`）。
+            // ★ 声明了守卫 ⇒ 不销毁，入队一条"有人要关我"，由帧边界决定
+            //   （见 `enqueueCloseRequest`）；否则保持 2026-10-30 之前的行为：
+            //   不调 DefWindowProc、直接销毁（Drift 的退出语义只有一条）。
+            if (g_closeGuarded.count(hwnd) != 0) {
+                enqueueCloseRequest(hwnd);
+                return 0;
+            }
             DestroyWindow(hwnd);
             return 0;
 
@@ -1359,11 +1417,20 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // ★ 销毁**之前**抓最后几何（§5.4 的救命一发：persist 会在这个窗口
             //   死透之后才来问它，见 g_lastGeom* 的注释）。
             cacheFinalGeometry(hwnd);
+            // ★ 守卫与活窗口表都要摘：句柄会被系统复用，留着就是"下一个窗
+            //   莫名继承了上一窗的关闭行为"（不报错、只在特定分配顺序下出现）。
+            g_closeGuarded.erase(hwnd);
+            g_liveWindows.erase(hwnd);
             // ★ ULW 的 DIB section / 内存 DC 是**进程级**全局（与 g_frame 同一条
             //   单窗口假设）⇒ 这里必须释放，否则每开一次窗口漏一张整屏位图。
             releaseUlwSurface();
             g_layerBind = kBindNone;
-            PostQuitMessage(0);
+            // ★ 关**最后一个**窗口才退出进程（2026-10-30）：`PostQuitMessage` 是
+            //   进程级的，多窗口下"关一个 = 全退"正是 §5 裁决 ① 要否掉的语义。
+            //   单窗口时两个分支等价（那个窗就是最后一个）。
+            if (g_liveWindows.empty()) {
+                PostQuitMessage(0);
+            }
             return 0;
 
         case WM_ENTERSIZEMOVE: {
@@ -1983,6 +2050,11 @@ Array toArray(const PendingEvent &event) {
             out.set("paths", String(event.text));
             break;
 
+        case kEvCloseRequested:
+            // 载荷为空：问的是"要不要关"，不是"谁要关"
+            out.set("type", "close-requested");
+            break;
+
         default:
             out.set("type", "quit");
             break;
@@ -2193,6 +2265,9 @@ Int php_drift_win_create(String title, Int width, Int height) {
     }
 
     g_main = hwnd;
+    // ★ 活窗口表：`WM_DESTROY` 里移除，空了才 `PostQuitMessage`
+    //   （"关最后一个才退"的物质基础，见 WM_DESTROY）。
+    g_liveWindows.insert(hwnd);
 
     // ★ A5-② 拖文件进窗：让本窗接受资源管理器的文件拖放。用老式 WM_DROPFILES
     //   协议（而非 OLE IDropTarget/RegisterDragDrop）—— 今天只需要"一批路径 +
@@ -2249,7 +2324,44 @@ void php_drift_win_show(Int hwnd) {
 void php_drift_win_close(Int hwnd) {
     HWND target = (HWND)(INT_PTR)hwnd;
     if (target != NULL) {
+        // ★ 发 `WM_CLOSE` 而不是 `DestroyWindow`（2026-10-30）：**一条关闭路径**。
+        //   改动之前这里有两条 —— 用户点 X 走 `WM_CLOSE`、应用调 `close()` 走
+        //   `DestroyWindow`，于是"能不能拦"取决于用户用哪只手关窗（后者永远拦不住）。
+        //   合成一条之后，拦截点（`g_closeGuarded`）对两个入口天然同时生效。
+        PostMessageW(target, WM_CLOSE, 0, 0);
+    }
+}
+
+/**
+ * **执行**关闭：`DestroyWindow`，不看守卫。
+ *
+ * ★ 只有一处该调它：框架在应用回答"可以关"之后（`EventLoop` 收到
+ *   `CloseRequestedEvent` 且 `Application::onCloseRequested()` 为真）。
+ *   应用侧**不该**有入口走到这里 —— 否则守卫又变成"看调用方走哪条路"。
+ */
+void php_drift_win_destroy(Int hwnd) {
+    HWND target = (HWND)(INT_PTR)hwnd;
+    if (target != NULL) {
         DestroyWindow(target);
+    }
+}
+
+/**
+ * 声明这个窗口的关闭要不要**先问应用**（2026-10-30）。
+ *
+ * ★ `armed = false`（默认）⇒ `WM_CLOSE` 直接销毁，与 2026-10-30 之前逐字节相同。
+ *   所以"没有未保存内容的应用"零改动、零代价。
+ * ★ 与 `apply_material` 同一条纪律：这是**窗口级状态**，按 HWND 记。
+ */
+void php_drift_win_set_close_guard(Int hwnd, Bool armed) {
+    HWND target = (HWND)(INT_PTR)hwnd;
+    if (target == NULL) {
+        return;
+    }
+    if (armed) {
+        g_closeGuarded.insert(target);
+    } else {
+        g_closeGuarded.erase(target);
     }
 }
 

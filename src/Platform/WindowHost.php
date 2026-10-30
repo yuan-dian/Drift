@@ -40,13 +40,49 @@ interface WindowHost
     public function show(int $windowHandle): void;
 
     /**
-     * 请求关闭（Win32：`WM_CLOSE`）。
+     * **请求**关闭（Win32：`PostMessageW(WM_CLOSE)`）—— 与用户点标题栏 X 同一条路。
      *
-     * ★ 这是**应用唯一的正常退出路径**：关闭 ⇒ `WM_QUIT` ⇒ `Platform::pump()`
-     *   返回 `false` ⇒ 组合根的 `while` 跳出。`Platform` 上**不另设 `quit()`**
-     *   —— 那会变成第二条等价的退出路径（同一件事两个入口 = 必有一个是死的）。
+     * ★ 这是**应用侧的关闭入口**，而且它**可能被拒绝**：声明了关闭守卫的窗口
+     *   （{@see self::setCloseGuard()}）会把这条请求变成 `CloseRequestedEvent`，
+     *   由 `Application::onCloseRequested()` 决定。调用方**不能**假设"调完就没了"
+     *   —— 想确认窗口真的关了，只能看循环是否退出。
+     * ★ 为什么不是"立即销毁"：两条关闭路径（应用调 / 用户点）曾经一条能拦、
+     *   一条不能，于是"未保存内容"保不保护取决于用户用哪只手关窗。
+     *   ⇒ 2026-10-30 合并成一条：**请求**走这里、**执行**走 {@see self::destroy()}，
+     *   后者只有框架在应用同意之后才该调。
+     * ★ `Platform` 上**不另设 `quit()`** —— 那会变成第二条等价的退出路径
+     *   （同一件事两个入口 = 必有一个是死的）。
      */
     public function close(int $windowHandle): void;
+
+    /**
+     * **执行**关闭（`DestroyWindow`），不看守卫。
+     *
+     * ★ 唯一合法调用方是**框架**：`EventLoop` 收到 `CloseRequestedEvent`、
+     *   `Application::onCloseRequested()` 回答"可以"之后。应用代码里出现它 =
+     *   绕过守卫，等于把 `setCloseGuard()` 变成一句无约束力的建议。
+     * ★ 语义是**同步**的：返回时窗口已经销毁（`WM_DESTROY` 已跑完）。
+     *   与 `close()` 的异步语义**故意不同** —— 一个请求、一个执行，
+     *   把两者做成同一个方法就是回到"看调用方走哪条路"。
+     */
+    public function destroy(int $windowHandle): void;
+
+    /**
+     * 声明这个窗口的关闭要不要**先问应用**（默认 `false`）。
+     *
+     * ```php
+     * // 组合根：这个窗口有未保存内容 ⇒ 关之前要问
+     * $window->setCloseGuard($handle, true);
+     * ```
+     *
+     * ★ `false` ⇒ `WM_CLOSE` 直接销毁，与 2026-10-30 之前**逐字节相同**。
+     *   所以"没什么要问的应用"零改动、零代价，也不会多一次事件往返。
+     * ★ 声明之后，`WM_CLOSE` 变成一条 `CloseRequestedEvent`，落到
+     *   `Application::onCloseRequested()`；返回 `true` ⇒ 框架调 `destroy()`；
+     *   返回 `false` ⇒ **什么都不发生**（窗口原样留着，连位置都不动）。
+     * ★ 这是**窗口级状态**（按 HWND 记）：多窗口下每个窗各有各的守卫。
+     */
+    public function setCloseGuard(int $windowHandle, bool $armed): void;
 
     public function setTitle(int $windowHandle, string $title): void;
 

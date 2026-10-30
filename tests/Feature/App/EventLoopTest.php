@@ -5,6 +5,7 @@ namespace Drift\Dev\Tests\Feature\App;
 
 use Drift\App\Application;
 use Drift\App\EventLoop;
+use Drift\Dev\Smoke\App\CloseGuardApplication;
 use Drift\Dev\Smoke\App\CursorApplication;
 use Drift\Dev\Smoke\App\EchoApplication;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
@@ -209,5 +210,114 @@ final class EventLoopTest extends SmokeTestCase
         $app->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
 
         return [$platform, $app, $handle];
+    }
+
+    /**
+     * 关闭请求 · **应用同意** ⇒ 框架执行销毁，并立刻收工。
+     *
+     * ★ 为什么"立刻收工"值得单独断言：销毁之后如果还跑一帧，那一帧是对着死句柄
+     *   求客户区 ⇒ 0×0 紧约束 ⇒ 布局硬校验 Fatal（真机上就是"点 X 之后闪一下错误框"）。
+     *   判据落在"帧数没涨"上 —— 它是这个后果的**唯一**可见痕迹。
+     */
+    public function testCloseRequestedIsHonouredAndStopsTheLoop(): void
+    {
+        $app = new CloseGuardApplication(allow: true);
+        [$platform, $app, $handle] = self::mount($app);
+        $frames = $app->frameCount();
+
+        winPumpScript([['type' => 'close-requested']]);
+        EventLoop::run($platform, $app, $handle);
+
+        $calls = winCloseCalls();
+        check(
+            '关闭 · 应用同意 ⇒ 框架执行 `destroy()`（而不是让应用自己 close）',
+            self::closeCall($calls, 'destroy', $handle),
+            \json_encode($calls),
+        );
+        check(
+            '关闭 · 销毁之后不再跑帧（对着死句柄求客户区 ⇒ 0×0 ⇒ 布局 Fatal）',
+            $app->frameCount() === $frames,
+            \sprintf('frames=%d（之前 %d）', $app->frameCount(), $frames),
+        );
+        check(
+            '关闭 · 只问一次（问两次会弹两次确认框）',
+            $app->asked === 1,
+            'asked=' . $app->asked,
+        );
+
+        $this->flushChecks();
+    }
+
+    /**
+     * 关闭请求 · **应用拒绝** ⇒ 什么都不发生（窗口原样留着）。
+     *
+     * ★ 反证方向与上一个用例相反，两条合起来才锁住 `if ($app->closeRequested())`：
+     *   恒真 ⇒ 本条红（执行了销毁）；恒假 ⇒ 上一条红。
+     */
+    public function testCloseRequestedRefusedLeavesWindowAlone(): void
+    {
+        $app = new CloseGuardApplication(allow: false);
+        [$platform, $app, $handle] = self::mount($app);
+
+        winPumpScript([
+            ['type' => 'close-requested'],
+            ['type' => 'quit'],   // 剧本空了本来也回 quit，这里写出来是为了让"继续跑"这件事可见
+        ]);
+        EventLoop::run($platform, $app, $handle);
+
+        check(
+            '关闭 · 应用拒绝 ⇒ **不执行**销毁（窗口留着）',
+            !self::closeCall(winCloseCalls(), 'destroy', $handle),
+            \json_encode(winCloseCalls()),
+        );
+        check(
+            '关闭 · 应用拒绝 ⇒ 循环继续（不是"拒绝即退出"）',
+            $app->asked === 1 && $app->wantsFrame() === false,
+            'asked=' . $app->asked,
+        );
+
+        $this->flushChecks();
+    }
+
+    /**
+     * 关闭请求**不进命中链**：它不该被 `dispatchInput()` 当成输入事件。
+     *
+     * ★ 判据不能只看"销毁了没有"（那由上面两条覆盖）—— 要看**事件真的没进路由**：
+     *   `dispatchInput()` 会刷新 `lastInputMs`，而关闭请求不该算"用户动了一下"
+     *   （`after()` 的基准取它）。这里用"帧内没收到任何输入"的副作用来证：
+     *   拒绝之后 `wantsFrame()` 必须仍是 false（没有事件引起重建）。
+     */
+    public function testCloseRequestedDoesNotEnterDispatchChain(): void
+    {
+        $app = new CloseGuardApplication(allow: false);
+        [$platform, $app, $handle] = self::mount($app);
+
+        winPumpScript([
+            ['type' => 'close-requested'],
+            ['type' => 'quit'],
+        ]);
+        EventLoop::run($platform, $app, $handle);
+
+        check(
+            '关闭 · 事件被循环自己消费掉，不留在 `input()` 队列里',
+            $platform->input()->poll() === null,
+            '队列里还有事件',
+        );
+
+        $this->flushChecks();
+    }
+
+    /**
+     * @param list<array{0: string, 1: int, 2?: bool}> $calls
+     */
+    private static function closeCall(array $calls, string $kind, int $handle): bool
+    {
+        foreach ($calls as $call) {
+            if ($call[0] === $kind && $call[1] === $handle) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

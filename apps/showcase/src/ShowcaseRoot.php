@@ -94,6 +94,10 @@ final class ShowcaseRoot extends StatefulWidget
      *        有四种返回语义的服务**；包成闭包只会让调用点看不出返回值是什么。
      *        ★ 形参不可空（`?Dialog` 在 AOT 侧退化 `php::Var`）⇒ 没有对话框端口的
      *        平台上这一页根本不会被建出来，那是组合根的判断，不是页面的。
+     * @param \Closure(bool): void $setCloseConfirm 「关闭前确认」开关 —— 由组合根接线。
+     *        ★ 方向与上面三个**相反**（页面 → 应用）：它改的是
+     *        `Application::onCloseRequested()` 的答案，而那个方法只有应用有。
+     *        页面只表达意图，拦截点只有一处（帧边界，`EventLoop` 统一调）。
      *
      * ★ 为什么前三个是**闭包**而不是 `Application`：`Widget` 层不该认识 `Drift\App`
      *   （§4.3），而且页面只该拿到"我能做什么"，不是"整个应用"。
@@ -105,6 +109,7 @@ final class ShowcaseRoot extends StatefulWidget
         private \Closure $delay,
         private \Closure $showModal,
         private Dialog $dialog,
+        private \Closure $setCloseConfirm,
     ) {
         parent::__construct();
     }
@@ -113,19 +118,21 @@ final class ShowcaseRoot extends StatefulWidget
      * @param \Closure(Snackbar): void $notify
      * @param \Closure(int, \Closure): void $delay
      * @param \Closure(Modal): void $showModal
+     * @param \Closure(bool): void $setCloseConfirm
      */
     public static function make(
         \Closure $notify,
         \Closure $delay,
         \Closure $showModal,
         Dialog $dialog,
+        \Closure $setCloseConfirm,
     ): self {
-        return new self($notify, $delay, $showModal, $dialog);
+        return new self($notify, $delay, $showModal, $dialog, $setCloseConfirm);
     }
 
     public function createState(): State
     {
-        return new ShowcaseState($this->notify, $this->delay, $this->showModal, $this->dialog);
+        return new ShowcaseState($this->notify, $this->delay, $this->showModal, $this->dialog, $this->setCloseConfirm);
     }
 }
 
@@ -154,12 +161,14 @@ final class ShowcaseState extends State
      * @param \Closure(Snackbar): void $notify 组合根接线的通知能力（转手给通知页）
      * @param \Closure(int, \Closure): void $delay 组合根接线的延时能力（转手给 ComboBox 页）
      * @param \Closure(Modal): void $showModal 组合根接线的开模态能力（转手给反馈页）
+     * @param \Closure(bool): void $setCloseConfirm 组合根接线的"关闭前确认"开关（转手给对话框页）
      */
     public function __construct(
         private \Closure $notify,
         private \Closure $delay,
         private \Closure $showModal,
         private Dialog $dialog,
+        private \Closure $setCloseConfirm,
     ) {
     }
 
@@ -205,7 +214,7 @@ final class ShowcaseState extends State
             // ★ 同上：变换页追加在最末（前 27 项 y 不变）。
             new NavEntry(IconName::Square, '变换 Transform', static fn(): Widget => new TransformPage()),
             new NavEntry(IconName::Square, '对齐 Align', static fn(): Widget => new AlignPage()),
-            new NavEntry(IconName::Info, '对话框 Dialog', fn(): Widget => new DialogPage($this->dialog)),
+            new NavEntry(IconName::Info, '对话框 Dialog', fn(): Widget => new DialogPage($this->dialog, $this->setCloseConfirm)),
             // ★ A5-②：拖文件页追加在最末（前 30 项 y 不变；侧栏本身已包 ScrollView）。
             new NavEntry(IconName::Square, '拖文件 Drop', static fn(): Widget => new DropPage()),
         ];

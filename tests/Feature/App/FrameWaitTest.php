@@ -173,6 +173,53 @@ final class FrameWaitTest extends SmokeTestCase
         $this->flushChecks();
     }
 
+    /**
+     * **原生模态挂起的时长不计入卡顿**（2026-10-30 真机取证）。
+     *
+     * ★ 事故形状：用户在原生对话框里停留 8.3s ⇒ 下一帧的"两帧间隔"= 8344ms
+     *   ⇒ RECOVERABLE 弹框。模态不是缺陷（"模态期间界面不重绘"是 `Dialog`
+     *   的固有语义），这段时间是平台记的账（`Platform::consumeModalBlockedMs()`），
+     *   `advance()` 必须把它从判据里剔除。
+     * ★ 两条都要有：剔除后不报（反例方向：漏传参数 ⇒ 红）；**没剔干净照样报**
+     *   （正向证据：剔除只对模态生效，慢帧 / 慢处理器不受保护）。
+     */
+    public function testModalSuspensionIsSubtractedFromTheGap(): void
+    {
+        $app = self::mount(new SpinnerApplication());
+        $clock = new FrameClock();
+        $c = BoxConstraints::tight(new Size(320.0, 240.0));
+
+        $clock->nextWaitMs($app, 0.0);          // 动画中 ⇒ 帧节奏
+        $clock->advance($app, 1000.0, $c);
+        $clock->nextWaitMs($app, 1000.0);
+
+        // 用户在对话框里停留了 8344ms，模态账本也记了 8344 ⇒ 扣完剩 0 ⇒ 不是卡
+        $clock->advance($app, 9344.0, $c, 8344.0);
+        check(
+            '卡顿 · 模态挂起的时长被剔除（用户停留 8.3s 不再弹 RECOVERABLE）',
+            $clock->stallCount() === 0,
+            \sprintf('stalls=%d worst=%.0f', $clock->stallCount(), $clock->worstGapMs()),
+        );
+
+        // ★ 正向证据：**账本没记全**（只剔了一半）时照样要报 ——
+        //   剔除是"扣账"，不是"豁免"。漏记的 4s 里藏着的真卡顿不该被放过。
+        //   ★ 剩余间隔故意压在 FREEZE_MS(500) 以下：再往上就是 RECOVERABLE，
+        //     测试环境（debug）会当场中止进程 —— 这里要证的是"记账判据"，
+        //     不是"中止序列"（那归 fatal 用例）。
+        $clock2 = new FrameClock();
+        $clock2->nextWaitMs($app, 0.0);
+        $clock2->advance($app, 1000.0, $c);
+        $clock2->nextWaitMs($app, 1000.0);
+        $clock2->advance($app, 9400.0, $c, 8000.0);
+        check(
+            '卡顿 · 账本没记全 ⇒ 剩下的间隔**照报**（剔除不是豁免）',
+            $clock2->stallCount() === 1 && $clock2->worstGapMs() >= 399.0,
+            \sprintf('stalls=%d worst=%.0f', $clock2->stallCount(), $clock2->worstGapMs()),
+        );
+
+        $this->flushChecks();
+    }
+
     private static function mount(Application $app): Application
     {
         $app->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));

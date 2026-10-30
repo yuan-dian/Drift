@@ -124,8 +124,8 @@ final class Trees
     /**
      * showcase 的真实应用根（M3 第一档 / M4 的窗口内容）。
      *
-     * ★ **必须显式传四样**：`ShowcaseRoot` 的构造器要
-     *   `(notify, delay, showModal, dialog)`，而 `new ShowcaseRoot()` 在 AOT 下是
+     * ★ **必须显式传五样**：`ShowcaseRoot` 的构造器要
+     *   `(notify, delay, showModal, dialog, setCloseConfirm)`，而 `new ShowcaseRoot()` 在 AOT 下是
      *   `ArgumentCountError`（tpc 不会因为"参数没默认值"放过）—— 现象是
      *   **M0–M2 全跑完、M3 一行不出、进程 exit=255**，`bench-out.txt` 停在 M2
      *   末尾，看着像"M3 没写"。
@@ -143,6 +143,8 @@ final class Trees
             static function (Modal $modal): void {
             },
             new NullDialog(),
+            static function (bool $enabled): void {
+            },
         );
     }
 }

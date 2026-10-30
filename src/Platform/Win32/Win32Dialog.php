@@ -36,28 +36,75 @@ final class Win32Dialog implements Dialog
     {
     }
 
+    /**
+     * 模态阻塞时间账本（毫秒）—— 四个方法各自往里记，`consumeModalBlockedMs()`
+     * 一次取走（读后即清）。
+     *
+     * ★ 记在这里而不是 `Win32Platform`：**谁跑的模态谁记账** —— 四个方法各自
+     *   包一层 `hrtime`，平台侧只做汇总。账本不清零就会把同一段模态时间反复
+     *   剔除（把真卡顿也剔没了）⇒ 取走即清是契约的一部分。
+     */
+    private float $blockedMs = 0.0;
+
+    /** @internal 只归 `Win32Platform::consumeModalBlockedMs()` 汇总 */
+    public function consumeModalBlockedMs(): float
+    {
+        $blocked = $this->blockedMs;
+        $this->blockedMs = 0.0;
+
+        return $blocked;
+    }
+
+    /**
+     * 把一次**原生模态**调用包进计时里。
+     *
+     * ★ 计的是**整个调用**（进桥到出桥）：模态期间系统跑内层消息循环，
+     *   用户停留多久这里就记多久 —— 它正是帧时钟该剔除的那段时间。
+     *
+     * @template T
+     *
+     * @param callable(): T $call
+     *
+     * @return T
+     */
+    private function modal(callable $call): mixed
+    {
+        $startedNs = \hrtime(true);
+        try {
+            return $call();
+        } finally {
+            $this->blockedMs += (float) (\hrtime(true) - $startedNs) / 1e6;
+        }
+    }
+
     public function openFile(string $title, array $filters = []): ?string
     {
-        $path = drift_win_open_file($this->owner(), $title, self::filterText($filters), '');
+        $path = $this->modal(
+            fn (): string => drift_win_open_file($this->owner(), $title, self::filterText($filters), ''),
+        );
 
         return $path === '' ? null : $path;
     }
 
     public function saveFile(string $title, string $defaultName = '', array $filters = []): ?string
     {
-        $path = drift_win_save_file($this->owner(), $title, self::filterText($filters), $defaultName);
+        $path = $this->modal(
+            fn (): string => drift_win_save_file($this->owner(), $title, self::filterText($filters), $defaultName),
+        );
 
         return $path === '' ? null : $path;
     }
 
     public function alert(string $title, string $body): void
     {
-        drift_win_alert($this->owner(), $title, $body);
+        $this->modal(function () use ($title, $body): void {
+            drift_win_alert($this->owner(), $title, $body);
+        });
     }
 
     public function confirm(string $title, string $body): bool
     {
-        return drift_win_confirm($this->owner(), $title, $body);
+        return $this->modal(fn (): bool => drift_win_confirm($this->owner(), $title, $body));
     }
 
     /** 当前主窗口句柄；未建窗 ⇒ `0`（"没有 owner"，不是错误） */

@@ -921,6 +921,29 @@ git 上已经提交了」*。
 | `EventLoopTest::testDueTimerFiresInsideFrameAndThenSleepsAgain` | Timeout 那轮也跑帧（否则定时器永不触发） | 加 `if ($why !== Timeout)` ⇒ 红（`fired=0`） |
 | `EventLoopTest::testCursorFromDispatchReachesWindowHost` | 光标形状真喂到 `WindowHost` | 删 `setCursor` ⇒ 红（`[]`） |
 
+#### ★ 2026-10-30 追加：`CloseRequestedEvent` 是 ⑤ 的唯一例外
+
+可拦截关闭落地时（`MULTI-WINDOW` §5.1）发现环路里多了一条**不进 `dispatchInput()`
+的事件**：它没有命中目标（不是"点在某个控件上"），也不该被浮层拦下 —— 它是窗口级
+生命周期，与 `WakeReason::Quit` 同族。⇒ ⑤ 里在派发之前先认它：
+
+```php
+if ($event instanceof CloseRequestedEvent) {
+    if ($app->closeRequested()) { $window->destroy($windowHandle); return; }
+    continue;   // 拒绝：窗口原样留着
+}
+```
+
+★ **`return` 不是 `break`**：销毁之后 `waitEvents()` 下一轮会拿到 `WM_QUIT`，
+而在那之前跑一帧就是对着死句柄求客户区（0×0 紧约束 ⇒ 布局硬校验 Fatal）。
+判据落在"帧数没涨"上，变异成 `break` ⇒ 红（`frames=2`）。
+
+| 用例 | 钉住的事 | 变异验证 |
+|---|---|---|
+| `EventLoopTest::testCloseRequestedIsHonouredAndStopsTheLoop` | 同意 ⇒ `destroy()` + 不跑帧 + 只问一次 | `if (true)` ⇒ 红（`asked=0`）；`break` ⇒ 红（`frames=2`） |
+| `EventLoopTest::testCloseRequestedRefusedLeavesWindowAlone` | 拒绝 ⇒ 不 `destroy()`、循环继续 | `if (true)` ⇒ 红（`[["destroy",1]]`） |
+| `EventLoopTest::testCloseRequestedDoesNotEnterDispatchChain` | 不进 `input()` 队列残留 | — |
+
 ### 9.3 N3（`Future`）
 
 - [ ] `Future::all` 5 条 600ms：总耗时 < 1200ms（P2 实测 623ms，留 2 倍余量）

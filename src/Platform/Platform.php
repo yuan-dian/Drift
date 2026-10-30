@@ -89,6 +89,28 @@ interface Platform
     public function tray(): ?Tray;
 
     /**
+     * **原生模态**在这段时间里阻塞了循环多久（毫秒；**读后即清**）。
+     *
+     * ★ 2026-10-30 真机取证（RECOVERABLE 弹框"两帧间隔 8344ms"）：用户在原生
+     *   对话框里停留的每一秒都被算进了"两帧间隔"，而帧时钟的卡顿判据把
+     *   `wait ≤ 15ms` 之后的大间隔一律当成"上一帧里有阻塞调用" ⇒
+     *   **每次模态弹框都可能白弹一个错误框**（模态开多久就报多大的间隔）。
+     *   模态不是缺陷：它是用户在界面上正常操作的一部分（"模态期间界面不重绘"
+     *   是 `Dialog` 的固有语义，`Dialog` 类注释写得明明白白）。
+     *
+     * ★ 为什么只有平台答得出来：模态跑的是**系统自己的内层消息循环**，框架
+     *   一帧都跑不到 —— 循环被挂起的这件事发生在平台侧（`Win32Dialog` 的四个
+     *   方法与 `fatalBox()` 的 `MessageBoxW`），框架只能问。
+     *
+     * ★ **读后即清**：调用方（`EventLoop`）每轮读一次、交给
+     *   `FrameClock::advance()` 从间隔里剔除。不清就会把同一段模态时间
+     *   反复剔除（把真卡顿也剔没了）。没有模态 ⇒ `0.0`，零成本。
+     *
+     * @api platform
+     */
+    public function consumeModalBlockedMs(): float;
+
+    /**
      * 等**一条** OS 消息，最多 `$timeoutMs`，返回**为什么醒**（§3.4 轴 B1）。
      *
      * ★ `$timeoutMs` 三态（与 `poll(2)` / `MsgWaitForMultipleObjects` 同一套约定）：
