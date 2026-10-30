@@ -98,6 +98,38 @@ final class ProcessTaskHost implements TaskHost
     private readonly int $maxWorkers;
 
     /**
+     * ★★ **单条任务的墙钟上限**（毫秒）—— 形态照抄 PHP-FPM 的
+     * `request_terminate_timeout`（进程池 + 墙钟 + 杀 worker + 补一个）。
+     *
+     * ## 为什么是"墙钟"而不是"CPU 钟"
+     *
+     * FPM 的文档把这件事讲得很透：PHP 的 `max_execution_time` 只对**CPU 时间**
+     * 计时（Linux 上是 `setitimer(ITIMER_PROF)`），于是 `sleep()`、慢查询、
+     * 卡住的 curl 一律不计 —— 一条"等数据库等到死"的请求可以永远烧着 worker。
+     * `request_terminate_timeout` 数的是**从派发给 worker 那一刻起的墙钟**，
+     * 所以它是唯一能兜住"卡住"的那一层。本类的任务同样可能卡在 IO 上，
+     * ⇒ 这里也只能是墙钟（`hrtime`）。
+     *
+     * ## 为什么默认**开**（30s）而不是默认关
+     *
+     * FPM 的默认值是 `0`（关），运维界把它叫作 *the dangerous default*：一条
+     * 死锁 / 死循环的请求会永久占住一个 worker，且**没有任何报错** —— 池看起来
+     * 还在跑（活跃数正常），实际吞吐在悄悄掉。
+     * 本仓同一形状更糟：worker 卡住 ⇒ `Future` 永不结算 ⇒ `AsyncCommand`
+     * 永远 `isRunning()` ⇒ 翻页 / 重试按钮**全部禁用** ⇒ 用户**没有任何出路**，
+     * 只能杀掉整个程序。⇒ 默认值必须是一个正数，把"永久转圈"这个洞堵上。
+     *
+     * ## 计时从**派发**开始，不从提交开始
+     *
+     * 与 FPM 一致（"从 master 把请求交给 worker 那一刻起算"）：排队等空闲
+     * worker 的那段时间不是"卡住"，是正常等待。排队会饿死吗 —— 不会，卡住的
+     * worker 会被杀、池会补新的，队列因此一定会往前走。
+     *
+     * @api
+     */
+    private readonly int $requestTerminateMs;
+
+    /**
      * @param list<string> $command worker 的启动命令（如 `[$exe, '--drift-worker']`；
      *   测试里是 `[PHP_BINARY, 'worker.php']`）
      * @param array<string, callable(array<string, mixed>): Job> $registry
@@ -105,6 +137,9 @@ final class ProcessTaskHost implements TaskHost
      *        UI 侧用它做"名字打错就早失败"，worker 侧用它真正重建任务。
      * @param int $maxWorkers 池上限（默认 1 = 串行）。>1 才可能真并行 —— 满载排队，
      *        不会无界起进程。
+     * @param int $requestTerminateMs 单条任务的墙钟上限（毫秒，`0` = 不设上限）。
+     *        默认 30_000 —— 见 {@see self::$requestTerminateMs}：默认关等于保留
+     *        "一条卡死的任务让用户永远没有出路"这个洞。
      *
      * @api
      */
@@ -112,12 +147,17 @@ final class ProcessTaskHost implements TaskHost
         private readonly array $command,
         array $registry,
         int $maxWorkers = 1,
+        int $requestTerminateMs = 30_000,
     ) {
         if ($maxWorkers < 1) {
             Errors::report('ProcessTaskHost：maxWorkers 必须 ≥ 1（给的是 ' . $maxWorkers . '）');
             $maxWorkers = 1;
         }
         $this->maxWorkers = $maxWorkers;
+
+        // ★ 负值按"不设上限"处理：它不是"写错了"，就是"这个池不要这道闸"。
+        //   显式给 `0` 与给负数在本类里是同一个意思，不必再喊一次诊断。
+        $this->requestTerminateMs = $requestTerminateMs > 0 ? $requestTerminateMs : 0;
 
         foreach ($registry as $name => $factory) {
             $this->registry[(string) $name] = \Closure::fromCallable($factory);
@@ -161,6 +201,7 @@ final class ProcessTaskHost implements TaskHost
 
         $this->queue[] = [
             'id' => $id,
+            'name' => $name,
             'line' => $line,
             'future' => $future,
         ];
@@ -239,8 +280,64 @@ final class ProcessTaskHost implements TaskHost
         //   `flush()` 是把排队任务真正发给 worker —— 跳过它 ⇒ 任务永远发不出去 ⇒
         //   页面永远转圈；`reap()` 检测 worker 死亡 —— 跳过它 ⇒ 死者名下的在途
         //   任务永不结算 ⇒ 同样是永挂。**预算限的是"交多少条"，不是"干多少活"。**
+        $this->sweepTimeouts($onEach);
         $this->reap($onEach);
         $this->flush();
+    }
+
+    /**
+     * **超时清扫**：把跑过墙钟上限的在途任务判失败，并**杀掉**它那个 worker。
+     *
+     * ★★ 与 {@see self::reap()} 同属"簿记" ⇒ 放在不受预算约束的那一段
+     *   （`drain()` 契约③）。跳过它的症状与跳过 `reap()` **完全一致**：
+     *   那条任务永不结算 ⇒ 页面永远转圈 ⇒ 且 `pending()` 不为 0 ⇒ 帧时钟一直空转。
+     *
+     * ★ 为什么**必须杀进程**，而不是"只把 Future 判失败"：
+     *   只判失败 = 客户端的 `Task.WaitAsync(timeout)`（.NET 6）—— 原任务**还在跑**，
+     *   而且它的回包迟早会到达、被丢弃。进程池里那更糟：worker 永远占着一个坑，
+     *   池的有效容量悄悄掉一格，且**没有任何报错**（FPM 对默认关的描述原样适用）。
+     *   ⇒ 杀掉，让 {@see self::flush()} 下一帧自动补一个 —— 池容量回到原值。
+     *
+     * ★ 为什么**一个 worker 只会连坐一条**：`pickIdle()` 只挑 `busyOf() === 0`
+     *   的 worker ⇒ 一个 worker 名下在途恒为 1 ⇒ 杀它不会误伤别人的任务。
+     *
+     * ★ 失败形态是 `RuntimeException`（不是 `Errors::report`）：与 `reap()` /
+     *   `fail()` 同一条原则 —— 这是**调用方可以兜住**的失败（页面画"超时，可重试"），
+     *   喊 Fatal 会把可恢复的错误变成崩溃；没人 `catch()` 时 `Future` 自己会走
+     *   Fatal 序列，G2 仍然成立。
+     *
+     * ★★ **不做"慢日志"（FPM 的 `request_slowlog_timeout`）**：那需要一条独立的
+     *   诊断通道与采样策略，本轮没有这个需求；超时消息里带上任务名已经够定位。
+     *   **不做 per-job 覆盖**：两条取数任务都在 1s 量级，池级一个上限足够
+     *   （FPM 也只有池级）。真出现"有的任务就是慢"再按需求加，不提前铺。
+     */
+    private function sweepTimeouts(callable $onEach): void
+    {
+        if ($this->requestTerminateMs === 0 || $this->inflight === []) {
+            return;
+        }
+
+        $now = \hrtime(true);
+        $limit = $this->requestTerminateMs * 1_000_000;
+
+        foreach ($this->inflight as $id => $item) {
+            if ($now - $item['startedAt'] < $limit) {
+                continue;
+            }
+
+            unset($this->inflight[$id]);
+
+            $onEach(new Completion(
+                null,
+                new \RuntimeException(
+                    '后台任务超时：' . $item['name'] . ' 超过 ' . $this->requestTerminateMs
+                    . 'ms 没回来（worker 已终止，池会自动补一个）'
+                ),
+                $item['future'],
+            ));
+
+            $this->dropWorker((int) $item['worker'], true);
+        }
     }
 
     /**
@@ -267,6 +364,19 @@ final class ProcessTaskHost implements TaskHost
     public function needsPolling(): bool
     {
         return true;
+    }
+
+    /**
+     * 单条任务的墙钟上限（毫秒，`0` = 不设上限）—— devtools / 测试读它。
+     *
+     * ★ 与 `workerCount()` / `inFlightCount()` / `queuedCount()` 同类：这个类的
+     *   "池现在什么状态"是可观测的，超时上限是其中一项。
+     * ★★ 它也是"**默认开**"这条决定的**唯一判据**：默认值看不见，那"默认开"就
+     *   只是注释里的一句话（`JobTimeoutTest` 钉着它 `> 0`）。
+     */
+    public function requestTerminateMs(): int
+    {
+        return $this->requestTerminateMs;
     }
 
     /** 在途任务数（测试与 devtools 用） */
@@ -426,7 +536,7 @@ final class ProcessTaskHost implements TaskHost
     /**
      * 往指定 worker 写一行；成功则记进在途表。
      *
-     * @param array{id: int, line: string, future: Future} $item
+     * @param array{id: int, name: string, line: string, future: Future} $item
      */
     private function send(int $index, array $item): bool
     {
@@ -444,6 +554,10 @@ final class ProcessTaskHost implements TaskHost
         $this->inflight[$item['id']] = [
             'future' => $item['future'],
             'worker' => $index,
+            'name' => $item['name'],
+            // ★ 超时计时从**这一刻**（派发给 worker）开始 —— 见
+            //   {@see self::$requestTerminateMs}：排队等空闲不是"卡住"。
+            'startedAt' => \hrtime(true),
         ];
 
         return true;
@@ -592,12 +706,37 @@ final class ProcessTaskHost implements TaskHost
                 unset($this->inflight[$id]);
             }
 
-            @fclose($worker['in']);
-            @fclose($worker['out']);
-            @fclose($worker['err']);
-            @proc_close($worker['proc']);
-
-            unset($this->workers[$index]);
+            // 已经**不 running** 了 ⇒ 不需要再 terminate
+            $this->dropWorker($index, false);
         }
+    }
+
+    /**
+     * 把一个 worker 从池里摘掉并收掉它的三条管道。
+     *
+     * ★ `reap()` 与 `sweepTimeouts()` 唯一差别就是 `$terminate` —— 死者不必再杀，
+     *   卡住者必须杀（不杀它就永远占着那个坑，见 `sweepTimeouts()` 的注释）。
+     *   两处共用这一段，免得"关几条管道"这种簿记出现两份。
+     *
+     * ★ `proc_close()` 放在后：它等子进程真正退出并回收句柄；先 `fclose()` 三条
+     *   管道是给对端一个干净 EOF，免得它卡在写 stderr 上。
+     */
+    private function dropWorker(int $index, bool $terminate): void
+    {
+        $worker = $this->workers[$index] ?? null;
+        if ($worker === null) {
+            return;
+        }
+
+        if ($terminate) {
+            @proc_terminate($worker['proc']);
+        }
+
+        @fclose($worker['in']);
+        @fclose($worker['out']);
+        @fclose($worker['err']);
+        @proc_close($worker['proc']);
+
+        unset($this->workers[$index]);
     }
 }
