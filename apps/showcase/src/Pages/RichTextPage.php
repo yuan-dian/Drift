@@ -99,6 +99,6 @@ final class RichTextPageState extends State
 
     private static function sectionBar(string $title): Widget
     {
-        return Row::make()->spacing(8.0)->children([Text::make($title)->heading()]);
+        return Text::make($title)->heading();
     }
 }

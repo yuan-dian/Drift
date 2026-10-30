@@ -13,6 +13,7 @@ use Drift\Widget\Row;
 use Drift\Widget\StatelessWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
+use Drift\Widget\Wrap;
 
 /**
  * 页 2「文本 Text」—— 五级角色 + 排版控制。
@@ -58,7 +59,7 @@ final class TextPage extends StatelessWidget
 
             // ── 行内组合 ──
             Text::make('行内组合：Row 排布标签与值')->heading(),
-            Row::make()->spacing(8.0)->children([
+            Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
                 Text::make('姓名')->caption(),
                 Text::make('张三')->body(),
                 Text::make('邮箱')->caption(),

@@ -20,6 +20,7 @@ use Drift\Widget\State;
 use Drift\Widget\StatefulWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
+use Drift\Widget\Wrap;
 
 /**
  * 页 20「日志 Log」—— `12` §6 P2 的 devtools 面板。
@@ -99,7 +100,7 @@ final class LogPageState extends State
                 ->caption(),
 
             // ── 过滤档 ──
-            Row::make()->spacing(8.0)->children([
+            Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
                 Button::make('全部')
                     ->variant($this->filter === LogFilter::All ? ButtonVariant::Primary : ButtonVariant::Default)
                     ->onPressed(fn() => $this->pick(LogFilter::All)),
@@ -113,7 +114,7 @@ final class LogPageState extends State
 
             // ── 现场写几条（演示分类 / 级别）──
             Text::make('现场写入')->heading(),
-            Row::make()->spacing(8.0)->children([
+            Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
                 Button::make('写 INFO')->onPressed(function (): void {
                     Log::get('layout')->info('测量完成', ['h' => 320]);
                     $this->touch();

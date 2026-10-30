@@ -154,9 +154,6 @@ final class SliderState extends State
 
     private function sectionBar(string $title): Widget
     {
-        return Row::make()->spacing(8.0)->children([
-            Text::make($title)->heading(),
-            Spacer::make(),
-        ]);
+        return Text::make($title)->heading();
     }
 }

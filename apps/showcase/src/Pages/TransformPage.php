@@ -15,6 +15,7 @@ use Drift\Widget\SizedBox;
 use Drift\Widget\StatelessWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
+use Drift\Widget\Wrap;
 
 /**
  * 页 28「变换 Transform」—— `->rotate()` / `->scale()` / `->transform()` 的第一个消费者。
@@ -46,7 +47,7 @@ final class TransformPage extends StatelessWidget
                 ->caption(),
 
             Text::make('绕中心旋转')->heading(),
-            Row::make()->spacing(16.0)->children([
+            Wrap::make()->runSpacing(16.0)->spacing(16.0)->children([
                 $this->tile('0°', 0.0),
                 $this->tile('8°', 8.0),
                 $this->tile('-8°', -8.0),
@@ -56,7 +57,7 @@ final class TransformPage extends StatelessWidget
                 ->caption(),
 
             Text::make('绕中心缩放')->heading(),
-            Row::make()->spacing(16.0)->children([
+            Wrap::make()->runSpacing(16.0)->spacing(16.0)->children([
                 $this->tile('×1.0', 0.0, 1.0),
                 $this->tile('×1.3', 0.0, 1.3),
                 $this->tile('×0.7', 0.0, 0.7),
@@ -65,7 +66,7 @@ final class TransformPage extends StatelessWidget
                 ->caption(),
 
             Text::make('直接给矩阵')->heading(),
-            Row::make()->spacing(16.0)->children([
+            Wrap::make()->runSpacing(16.0)->spacing(16.0)->children([
                 $this->matrixTile('斜切', Matrix2D::identity()->then(Matrix2D::scaling(1.0, 1.0))),
                 $this->matrixTile('转 45°', Matrix2D::rotation(45.0)),
             ]),

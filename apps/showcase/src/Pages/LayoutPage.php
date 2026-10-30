@@ -24,6 +24,7 @@ use Drift\Widget\Stack;
 use Drift\Widget\StatelessWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
+use Drift\Widget\Wrap;
 
 /**
  * 页 1「布局 Layout」—— 两种定位原语 + flex 排布。
@@ -54,23 +55,23 @@ final class LayoutPage extends StatelessWidget
                 Text::make('布局 Layout')->title(),
                 Text::make('两种定位原语（CenterBox / Dock 的语义）+ flex 排布。以下每块都是可运行的声明。')->caption(),
 
-                // ── Row：主轴排布 + cross 交叉轴对齐 ──
-                $this->demo('Row：主轴排布 + 三种交叉轴对齐', Column::make()->spacing(10.0)->children([
-                    Row::make()->spacing(8.0)->children([
+                // ── flex 排布 + 交叉轴对齐（窄屏自动换行）──
+                $this->demo('flex 排布 + 三种交叉轴对齐（窄屏自动换行）', Column::make()->spacing(10.0)->children([
+                    Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
                         Button::make('cross:Start')->variant(ButtonVariant::Default),
                         Button::make('cross:Center')->variant(ButtonVariant::Default),
                         Button::make('cross:End')->variant(ButtonVariant::Default),
-                    ])->cross(FlexAlign::Center),
-                    Row::make()->spacing(8.0)->children([
+                    ])->alignment(FlexAlign::Center),
+                    Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
                         Text::make('Start（默认）')->caption(),
                         Button::make('中')->variant(ButtonVariant::Primary),
                         Text::make('End')->caption(),
-                    ])->cross(FlexAlign::End),
+                    ])->alignment(FlexAlign::End),
                 ])),
 
                 // ── Spacer + Expanded：把剩余空间吃掉 / 占住 ──
                 $this->demo('Spacer / Expanded：剩余空间的两种用法', Column::make()->spacing(10.0)->children([
-                    Row::make()->spacing(8.0)->children([
+                    Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
                         Button::make('左')->variant(ButtonVariant::Default),
                         Spacer::make(),
                         Text::make('中间被推开')->caption(),
@@ -96,7 +97,7 @@ final class LayoutPage extends StatelessWidget
                     ->bottom($this->slot('bottom（横跨整宽）'))),
 
                 // ── 盒样式：背景 / 边框 / 圆角（§15.7 修正后真的画出来）──
-                $this->demo('盒样式修饰符：background / border / radius', Row::make()->spacing(8.0)->children([
+                $this->demo('盒样式修饰符：background / border / radius', Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
                     Button::make('主色按钮')
                         ->background(Color::fromRgb(0x00, 0x96, 0x88))
                         ->border(Color::fromRgb(0x00, 0x6D, 0x62), 1.5)
@@ -118,7 +119,7 @@ final class LayoutPage extends StatelessWidget
                 // ★ 标题用"3×3 方位"而不是"九宫格"：内置点阵字模缺"九""宫"两个字
                 //   （`CjkGlyphData.php` 落后仓库 164 个字符，本机装不上 PIL 无法重生成），
                 //   而缺字是**静默无墨** —— 只有看图才发现。
-                $this->demo('Stack：层叠 + 3×3 方位对齐（后加的子压在上面）', Row::make()->spacing(12.0)->children([
+                $this->demo('Stack：层叠 + 3×3 方位对齐（后加的子压在上面）', Wrap::make()->runSpacing(12.0)->spacing(12.0)->children([
                     Stack::make()->alignment(Alignment::topRight())->children([
                         SizedBox::make()->size(160.0, 64.0)
                             ->background(Color::fromRgb(0xF2, 0xF2, 0xF2))

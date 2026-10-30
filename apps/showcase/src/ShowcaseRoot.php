@@ -152,6 +152,15 @@ final class ShowcaseState extends State
     /** 未选中导航按钮的底色（LayUI 式浅灰） */
     private const NAV_IDLE = 0xF2F2F2;
 
+    /**
+     * 侧栏定宽（逻辑像素）。
+     *
+     * ★ 公开成常量：`tools/narrow-audit.php` 要用 `Bootstrap::MIN_WINDOW_WIDTH`
+     *   减它，得到"窗口拖到最小时内容区还剩多宽"，再逐页验证装不装得下。
+     *   两边各自写字面量 ⇒ 改了宽度审计还按老值跑，全绿是假的。
+     */
+    public const NAV_WIDTH = 200;
+
     /** @var list<NavEntry> */
     private array $entries = [];
 
@@ -279,10 +288,11 @@ final class ShowcaseState extends State
     {
         return Card::make(
             Row::make()->cross(FlexAlign::Stretch)->children([
-                // ★ 侧栏**定宽 200**（LayUI 侧栏的形态）：没有 `SizedBox` 时宽度只能由
-                //   "最长那个按钮文字"撑出来，改文案/换语言就变。外层 `Row::cross(Stretch)`
-                //   负责把它拉满高，`SizedBox` 只定宽 —— 两轴各自管一件事。
-                SizedBox::make(Card::make(ScrollView::make($this->buildNav()))->paddingAll(10.0))->width(200.0),
+                // ★ 侧栏**定宽**（`self::NAV_WIDTH`，LayUI 侧栏的形态）：没有 `SizedBox`
+                //   时宽度只能由"最长那个按钮文字"撑出来，改文案/换语言就变。外层
+                //   `Row::cross(Stretch)` 负责把它拉满高，`SizedBox` 只定宽 —— 两轴各自管一件事。
+                SizedBox::make(Card::make(ScrollView::make($this->buildNav()))->paddingAll(10.0))
+                    ->width((float) self::NAV_WIDTH),
                 // ★ 滚动归**页根**（每页自己 `Card(ScrollView(...))`）：外壳再套一层
                 //   就是嵌套滚动 —— 内层永远"量到全部内容"，外层滚不动，两层都白搭。
                 Expanded::make($this->pageFor($this->selected)()),

@@ -17,6 +17,7 @@ use Drift\Widget\Text;
 use Drift\Widget\TreeNode;
 use Drift\Widget\TreeView;
 use Drift\Widget\Widget;
+use Drift\Widget\Wrap;
 
 /**
  * 页 25「树（TreeView）」—— A3 第二件（2026-10-29）。
@@ -97,7 +98,7 @@ final class TreePageState extends State
      */
     private function toolbar(): Widget
     {
-        return Row::make()->spacing(8.0)->children([
+        return Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
             Button::make('展开全部')->onPressed(function (): void {
                 $this->setState(function (): void {
                     $this->expanded = self::BRANCHES;

@@ -93,21 +93,24 @@ final class LayoutTolerance
     /**
      * 记一次"因窗口太小而裁剪"。
      *
-     * @param string $scope 触发者（类名）—— **去重键**，同一个类整个进程只报一次：
-     *   拖动时每个像素都会触发，逐条报会把日志刷满、把真问题埋掉。
+     * @param string $scope 触发者（类名）
      * @param string $message 人话：**发生了什么 / 这不是崩溃 / 怎么恢复 / 若想换行该怎么改**
      */
     public static function clipped(string $scope, string $message): void
     {
-        if (isset(self::$noted[$scope])) {
+        // ★ 去重键是 **`类名 + 消息`**，不是只有类名（2026-10-30 改）。
+        //   只按类名去重会在**第一处**溢出后把同类的其余全部吞掉 —— 而一条消息里带着
+        //   "共需多少 / 可用多少 / 子项各多宽"，不同位置的消息本来就不同，去重不会失效。
+        //   实证：示例台窄窗审计一开始每页只报一条，改完才发现每页其实有 2~3 处。
+        //   ★ 同一个位置每帧都会走到这里，消息逐字相同 ⇒ 仍然只报一次，拖动不刷屏。
+        $key = $scope . "\0" . $message;
+        if (isset(self::$noted[$key])) {
             return;
         }
 
-        self::$noted[$scope] = true;
+        self::$noted[$key] = true;
 
-        // ★ 去重是**按类**的 ⇒ 第一处溢出会把同类后续的盖住。所以消息里必须写明
-        //   "只报一次"，否则读者会以为"只有这一处在裁"。
-        Errors::report($message . "\n（同类裁剪只报告一次，避免拖动时每像素一条把日志刷满）", Errors::DIAGNOSTIC);
+        Errors::report($message . "\n（同一处裁剪只报告一次，避免拖动时每像素一条把日志刷满）", Errors::DIAGNOSTIC);
     }
 
     /** @internal 测试清场（每条用例都要从"没报过"开始，否则第二条恒真） */

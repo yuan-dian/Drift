@@ -29,6 +29,17 @@ final class Bootstrap
 
     private const WINDOW_HEIGHT = 640;
 
+    /**
+     * 最小客户区（**逻辑**像素）—— 挡住"拖到比内容更小"。
+     *
+     * ★ 提成常量而不是留在 `setMinSize()` 里：`tools/narrow-audit.php` 要拿它
+     *   减去侧栏宽度，算出"最小窗口时内容区还剩多少"，再逐页审计装不装得下。
+     *   写死在那条命令里 ⇒ 改了这里审计还按老值跑，**全绿是假的**。
+     */
+    private const MIN_WINDOW_WIDTH = 420;
+
+    private const MIN_WINDOW_HEIGHT = 320;
+
     /** 窗口状态文件名（§5.4）：一个应用一个文件，里面按槽位分组 */
     private const STATE_FILE = 'showcase.window';
 
@@ -79,7 +90,9 @@ final class Bootstrap
         $main
             // ★ 最小窗口尺寸（§5.4）：挡住"拖到比内容更小"——那种状态会踩 C5/C6
             //   的布局硬校验（用户实测：可用宽 93 vs 条轨 94 ⇒ 弹 Fatal）。
-            ->setMinSize(420, 320)
+            //   ★ 这两个数不是"随便定一个够大"：`tools/narrow-audit.php` 按它算出
+            //     内容区宽度并逐页验证"装得下"，改小/改大都要重跑那条审计。
+            ->setMinSize(self::MIN_WINDOW_WIDTH, self::MIN_WINDOW_HEIGHT)
             // ★ 关闭可拦截（2026-10-30）：声明之后 `WM_CLOSE` 不再直接销毁 ——
             //   它变成一条 `CloseRequestedEvent`，在帧边界落到
             //   `ShowcaseApplication::onCloseRequested()`。

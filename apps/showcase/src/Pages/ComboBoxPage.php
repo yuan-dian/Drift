@@ -17,6 +17,7 @@ use Drift\Widget\State;
 use Drift\Widget\StatefulWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
+use Drift\Widget\Wrap;
 
 /**
  * 页 16「可编辑下拉 ComboBox」—— W8-2 的第六件（2026-10-24）。
@@ -194,7 +195,7 @@ final class ComboBoxPageState extends State
                 . 'Enter 取第一项、或直接点一项。受控：值住应用的 State。')->caption(),
 
             $this->sectionBar('① 基本 · 打字过滤（试试打「北」：剩北京市 / 北京南站）'),
-            Card::make(Row::make()->spacing(12.0)->children([
+            Card::make(Wrap::make()->runSpacing(12.0)->spacing(12.0)->children([
                 ComboBox::make([
                     Option::make('北京市', '110000'),
                     Option::make('上海市', '310000'),
@@ -206,7 +207,7 @@ final class ComboBoxPageState extends State
             ]))->paddingAll(12.0),
 
             $this->sectionBar('② 值 ≠ 显示名（Option 的 value 是身份，label 是给人看的字）'),
-            Card::make(Row::make()->spacing(12.0)->children([
+            Card::make(Wrap::make()->runSpacing(12.0)->spacing(12.0)->children([
                 ComboBox::make([
                     Option::make('一等座', 'A'),
                     Option::make('二等座', 'B'),
@@ -217,7 +218,7 @@ final class ComboBoxPageState extends State
             ]))->paddingAll(12.0),
 
             $this->sectionBar('③ 宽控件 · triggerWidth 定宽'),
-            Card::make(Row::make()->spacing(12.0)->children([
+            Card::make(Wrap::make()->runSpacing(12.0)->spacing(12.0)->children([
                 ComboBox::make([
                     Option::of('短'),
                     Option::of('中等长度的一项'),
@@ -229,7 +230,7 @@ final class ComboBoxPageState extends State
             ]))->paddingAll(12.0),
 
             $this->sectionBar('④ 30 项 · 面板限高 260 且可以滚（打字比滚屏快得多）'),
-            Card::make(Row::make()->spacing(12.0)->children([
+            Card::make(Wrap::make()->runSpacing(12.0)->spacing(12.0)->children([
                 ComboBox::make(self::manyOptions())->value($this->many)->placeholder('输入编号')
                     ->onChanged(fn(string $v) => $this->pick('many', $v)),
                 Text::make($this->many === '' ? '还没选' : '收到值：' . $this->many)->caption(),
@@ -239,7 +240,7 @@ final class ComboBoxPageState extends State
 
             $this->sectionBar('⑤ 远程搜索 · onSearch + status（示例台不联网：服务端响应由 after() 延时模拟）'),
             Card::make(Column::make()->spacing(8.0)->children([
-                Row::make()->spacing(12.0)->children([
+                Wrap::make()->runSpacing(12.0)->spacing(12.0)->children([
                     ComboBox::make($this->remoteOptions)
                         ->value($this->remote)
                         ->placeholder('输入城市名搜索')
@@ -307,9 +308,6 @@ final class ComboBoxPageState extends State
 
     private function sectionBar(string $title): Widget
     {
-        return Row::make()->spacing(8.0)->children([
-            Text::make($title)->heading(),
-            Spacer::make(),
-        ]);
+        return Text::make($title)->heading();
     }
 }

@@ -24,6 +24,7 @@ use Drift\Widget\State;
 use Drift\Widget\StatefulWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
+use Drift\Widget\Wrap;
 
 /**
  * 页 6「反馈 Feedback」—— 三态（Loading / Error / Empty）+ Spinner + 模态对话框。
@@ -91,7 +92,7 @@ final class FeedbackState extends State
                 ->caption(),
 
             // ── 状态切换条 ──
-            Row::make()->spacing(8.0)->children([
+            Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
                 Button::make('Loading')
                     ->variant($this->tab === StubState::Loading ? ButtonVariant::Primary : ButtonVariant::Default)
                     ->onPressed(fn() => $this->pick(StubState::Loading)),
@@ -161,7 +162,7 @@ final class FeedbackState extends State
             Text::make('左：可关闭（X + ESC + 点遮罩三条路）。右：dismissible(false) —— '
                 . '三条路全被吞掉，且**不画 X**（画一个点了没反应的 X 比没有更糟）。')
                 ->caption(),
-            Row::make()->spacing(8.0)->children([
+            Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
                 Button::make('打开对话框')
                     ->variant(ButtonVariant::Primary)
                     ->onPressed(fn() => $this->openConfirm()),
@@ -181,7 +182,7 @@ final class FeedbackState extends State
                 ->title('确认删除')
                 ->child(Column::make()->spacing(12.0)->children([
                     Text::make('删除后不可恢复，确定吗？')->body(),
-                    Row::make()->spacing(8.0)->children([
+                    Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
                         Button::make('取消'),
                         Button::make('删除')->variant(ButtonVariant::Danger),
                     ]),

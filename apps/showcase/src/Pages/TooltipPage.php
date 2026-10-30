@@ -15,6 +15,7 @@ use Drift\Widget\State;
 use Drift\Widget\StatefulWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
+use Drift\Widget\Wrap;
 
 /**
  * 页 13「悬停提示 Tooltip」—— W8-2 的第三个控件（2026-10-23）。
@@ -70,7 +71,7 @@ final class TooltipState extends State
                 ->caption(),
 
             $this->sectionBar('基础 · 停留 500ms'),
-            Card::make(Row::make()->spacing(8.0)->children([
+            Card::make(Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
                 $this->icon('新建', '新建一个文档 (Ctrl+N)'),
                 $this->icon('打开', '从磁盘打开 (Ctrl+O)'),
                 $this->icon('保存', '保存当前文档 (Ctrl+S)'),
@@ -78,19 +79,19 @@ final class TooltipState extends State
             ]))->paddingAll(12.0),
 
             $this->sectionBar('长文案 · 面板限宽 320，超出换行'),
-            Card::make(Row::make()->spacing(8.0)->children([
+            Card::make(Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
                 $this->icon('说明', '这是一段刻意写长的提示文案，用来验证面板有宽度上限：'
                     . '没有上限的话它会一路横穿整个窗口，右边被裁掉。'),
             ]))->paddingAll(12.0),
 
             $this->sectionBar('相邻切换 · 已显示时移到隔壁，不再等 500ms'),
-            Card::make(Row::make()->spacing(8.0)->children([
+            Card::make(Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
                 $this->icon('上', '上一页 (PageUp)'),
                 $this->icon('下', '下一页 (PageDown)'),
             ]))->paddingAll(12.0),
 
             $this->sectionBar('对照 · 没有 tooltip()'),
-            Card::make(Row::make()->spacing(8.0)->children([
+            Card::make(Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
                 Button::make('没有提示')->onPressed(fn() => $this->bump()),
                 Button::make('有提示')->tooltip('这个有')->onPressed(fn() => $this->bump()),
             ]))->paddingAll(12.0),
@@ -122,9 +123,6 @@ final class TooltipState extends State
 
     private function sectionBar(string $title): Widget
     {
-        return Row::make()->spacing(8.0)->children([
-            Text::make($title)->heading(),
-            Spacer::make(),
-        ]);
+        return Text::make($title)->heading();
     }
 }

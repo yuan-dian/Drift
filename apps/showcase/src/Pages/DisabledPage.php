@@ -10,12 +10,14 @@ use Drift\Widget\Card;
 use Drift\Widget\Checkbox;
 use Drift\Widget\Column;
 use Drift\Widget\Row;
+use Drift\Widget\ScrollView;
 use Drift\Widget\SegmentedControl;
 use Drift\Widget\Slider;
 use Drift\Widget\State;
 use Drift\Widget\StatefulWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
+use Drift\Widget\Wrap;
 
 /**
  * 页 28「禁用态 disabled()」—— 一个声明、四处消费（2026-10-29）。
@@ -63,26 +65,31 @@ final class DisabledPageState extends State
 
     public function build(BuildContext $ctx): Widget
     {
+        // ★ 页面根包 `ScrollView`：窗口被拖矮时内容可纵向滚动拿回来
+        //   （否则 Column 拿到紧高约束，内容比窗口高就被裁且无从滚动——
+        //    "内容被裁且拿不回来"）。其它页同理。
         return Card::make(
-            Column::make()->spacing(14.0)->padding(EdgeInsets::all(20.0))->children([
-                Text::make('禁用态 disabled()')->title(),
-                Text::make('一个声明、四处消费：命中测试 / 焦点表 / 无障碍语义 / 绘制。')->caption(),
-                Text::make('它住在修饰符上，所以对所有控件一次生效 —— 不需要每个控件各加一个字段。')->caption(),
-                $this->buttonsRow(),
-                Text::make('点上面三个按钮：第一个与第三个累加，第二个点不动。')->caption(),
-                Text::make('已点击：' . $this->clicks . ' 次')->caption(),
-                $this->lockRow(),
-                $this->lockedBlock(),
-                $this->enabledAliasRow(),
-                Text::make('上一行三件用的是 enabled(false)，等价于 disabled()。')->caption(),
-                Text::make('边界：ToggleBase / Slider / Segment 上的 enabled(false) 已经是 disabled() 的别名 —— 同一个状态、同一份实现。禁用的控件不进 Tab 序，也不吃指针。')->caption(),
-            ])
+            ScrollView::make(
+                Column::make()->spacing(14.0)->padding(EdgeInsets::all(20.0))->children([
+                    Text::make('禁用态 disabled()')->title(),
+                    Text::make('一个声明、四处消费：命中测试 / 焦点表 / 无障碍语义 / 绘制。')->caption(),
+                    Text::make('它住在修饰符上，所以对所有控件一次生效 —— 不需要每个控件各加一个字段。')->caption(),
+                    $this->buttonsRow(),
+                    Text::make('点上面三个按钮：第一个与第三个累加，第二个点不动。')->caption(),
+                    Text::make('已点击：' . $this->clicks . ' 次')->caption(),
+                    $this->lockRow(),
+                    $this->lockedBlock(),
+                    $this->enabledAliasRow(),
+                    Text::make('上一行三件用的是 enabled(false)，等价于 disabled()。')->caption(),
+                    Text::make('边界：ToggleBase / Slider / Segment 上的 enabled(false) 已经是 disabled() 的别名 —— 同一个状态、同一份实现。禁用的控件不进 Tab 序，也不吃指针。')->caption(),
+                ])
+            )
         )->paddingAll(0.0);
     }
 
     private function buttonsRow(): Widget
     {
-        return Row::make()->spacing(10.0)->children([
+        return Wrap::make()->runSpacing(10.0)->spacing(10.0)->children([
             Button::make('可用按钮')->onPressed(function (): void {
                 $this->setState(function (): void {
                     $this->clicks++;
@@ -121,7 +128,7 @@ final class DisabledPageState extends State
      */
     private function enabledAliasRow(): Widget
     {
-        return Row::make()->spacing(18.0)->children([
+        return Wrap::make()->runSpacing(18.0)->spacing(18.0)->children([
             Checkbox::make('复选框')->checked(true)->enabled(false),
             Slider::make()->value(40.0)->width(120.0)->enabled(false),
             SegmentedControl::make(['日', '周'])->selected(0)->enabled(false),
@@ -139,7 +146,7 @@ final class DisabledPageState extends State
         return Card::make(
             Column::make()->spacing(8.0)->padding(EdgeInsets::all(12.0))->disabled($this->locked)->children([
                 Text::make('这一块被容器统一禁用 —— 里面的按钮没有一处写了 disabled()')->caption(),
-                Row::make()->spacing(10.0)->children([
+                Wrap::make()->runSpacing(10.0)->spacing(10.0)->children([
                     Button::make('里面的按钮 A')->onPressed(function (): void {
                         $this->setState(function (): void {
                             $this->clicks++;

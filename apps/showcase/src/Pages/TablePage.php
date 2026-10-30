@@ -234,9 +234,8 @@ final class TablePageState extends State
         $count = $this->selectionNow()->count();
 
         return Row::make()->spacing(12.0)->children([
-            Text::make($count === 0 ? '未选中任何行' : '已选 ' . $count . ' 项（首尾可见）')->caption(),
-            Text::make($count === 0 ? '' : $this->readoutOfSelection())->caption(),
-            Spacer::make(),
+            Expanded::make(Text::make($count === 0 ? '未选中任何行' : '已选 ' . $count . ' 项（首尾可见）')->caption()),
+            Expanded::make(Text::make($count === 0 ? '' : $this->readoutOfSelection())->caption()),
             Button::make('清空选择')->onPressed(fn() => $this->setState(
                 function (): void {
                     $this->selection = TableSelection::none();
@@ -259,8 +258,7 @@ final class TablePageState extends State
         }
 
         return Row::make()->spacing(12.0)->children([
-            Text::make($label)->caption(),
-            Spacer::make(),
+            Expanded::make(Text::make($label)->caption()),
             Button::make('清除排序')->onPressed(fn() => $this->setState(
                 function (): void {
                     $this->sort = TableSort::none();

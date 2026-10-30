@@ -15,6 +15,7 @@ use Drift\Widget\ScrollView;
 use Drift\Widget\StatelessWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
+use Drift\Widget\Wrap;
 
 /**
  * 页 29「对齐 Align」—— `Alignment` 与 `->alignContent()` 的第一个消费者。
@@ -49,17 +50,17 @@ final class AlignPage extends StatelessWidget
 
             Text::make('九宫格（九个盒尺寸完全一样，变的只有小方块贴在哪）')->heading(),
             Column::make()->spacing(12.0)->children([
-                Row::make()->spacing(12.0)->children([
+                Wrap::make()->runSpacing(12.0)->spacing(12.0)->children([
                     $this->frame('TL', Alignment::topLeft()),
                     $this->frame('TC', Alignment::topCenter()),
                     $this->frame('TR', Alignment::topRight()),
                 ]),
-                Row::make()->spacing(12.0)->children([
+                Wrap::make()->runSpacing(12.0)->spacing(12.0)->children([
                     $this->frame('CL', Alignment::centerLeft()),
                     $this->frame('C', Alignment::center()),
                     $this->frame('CR', Alignment::centerRight()),
                 ]),
-                Row::make()->spacing(12.0)->children([
+                Wrap::make()->runSpacing(12.0)->spacing(12.0)->children([
                     $this->frame('BL', Alignment::bottomLeft()),
                     $this->frame('BC', Alignment::bottomCenter()),
                     $this->frame('BR', Alignment::bottomRight()),
@@ -69,7 +70,7 @@ final class AlignPage extends StatelessWidget
                 ->caption(),
 
             Text::make('任意分数（-1 / -0.5 / 0 / +0.5 / +1）')->heading(),
-            Row::make()->spacing(12.0)->children([
+            Wrap::make()->runSpacing(12.0)->spacing(12.0)->children([
                 $this->frame('-1', new Alignment(-1.0, 0.0), 96.0, 64.0),
                 $this->frame('-0.5', new Alignment(-0.5, 0.0), 96.0, 64.0),
                 $this->frame('0', new Alignment(0.0, 0.0), 96.0, 64.0),
@@ -80,7 +81,7 @@ final class AlignPage extends StatelessWidget
                 ->caption(),
 
             Text::make('三个入口是同一个机制')->heading(),
-            Row::make()->spacing(12.0)->children([
+            Wrap::make()->runSpacing(12.0)->spacing(12.0)->children([
                 $this->frame('Align', new Alignment(1.0, 1.0), 120.0, 84.0),
                 $this->frame('Center', Alignment::center(), 120.0, 84.0),
                 $this->frame('centerContent', Alignment::center(), 120.0, 84.0),

@@ -16,6 +16,7 @@ use Drift\Widget\State;
 use Drift\Widget\StatefulWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
+use Drift\Widget\Wrap;
 use Drift\Widget\YearMonth;
 
 /**
@@ -76,7 +77,7 @@ final class CalendarPageState extends State
     {
         $month = $this->month();
 
-        return Row::make()->spacing(8.0)->children([
+        return Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
             Button::make('上个月')->variant(ButtonVariant::Flat)->onPressed(function (): void {
                 $this->setState(function (): void {
                     $this->month = $this->month()->plusMonths(-1);

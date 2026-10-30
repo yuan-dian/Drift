@@ -232,7 +232,7 @@ class RenderFlex extends RenderBox
         // ★ 容差：等分子项求和会累积浮点误差（344/7×7 = 344.00000000000006），
         //   裸 `>` 会把"正好放下"报成溢出（2026-10-29 实测）。
         if ($mainBounded && $mainSize > $maxMain + LayoutTolerance::EPSILON) {
-            $this->handleOverflow($mainSize, $maxMain);
+            $this->handleOverflow($mainSize, $maxMain, $mains);
             $reported = $maxMain;
         }
 
@@ -556,8 +556,32 @@ class RenderFlex extends RenderBox
         }
     }
 
-    private function handleOverflow(float $mainSize, float $maxMain): void
+    /**
+     * @param array<int, float> $mains 每个子项在主轴上的自然尺寸（诊断用）
+     */
+    private function handleOverflow(float $mainSize, float $maxMain, array $mains = []): void
     {
+        // ★ 溢出消息里带**子项构成**（几个、各是什么、各多宽、间距多少）：只说
+        //   "共需 196 可用 180"的读者还得自己数哪一行。带上类名之后一眼能分开两种
+        //   完全不同的病：**"控件太多"**（`Button + Button + Button`，该换行）与
+        //   **"一个控件太宽"**（`Text 177.0 + Spacer 0.0`，该让它自己收窄）。
+        //   示例台 25 页的窄窗欠债就是靠这个分类的。
+        $detail = '';
+        if ($mains !== []) {
+            $parts = [];
+            foreach ($mains as $index => $m) {
+                $kid = $this->kids[$index] ?? null;
+                $name = $kid === null ? '?' : (new \ReflectionClass($kid))->getShortName();
+                $parts[] = \sprintf('%s %.1f', \preg_replace('/^Render/', '', $name), $m);
+            }
+            $detail = \sprintf(
+                "\n" . '子项：%s（间距 %.1f，%d 个）',
+                \implode(' + ', $parts),
+                $this->spacing,
+                \count($mains),
+            );
+        }
+
         match ($this->overflow) {
             Overflow::Clip => null, // 自己夹住（见 performLayout 的 min），子项照自然位置排
             // ★★ **窗口帧**里"内容比窗口宽"是合法状态（用户拖小了）：裁剪 + 留一条
@@ -566,21 +590,24 @@ class RenderFlex extends RenderBox
             Overflow::Report => LayoutTolerance::$windowDriven
                 ? LayoutTolerance::clipped(static::class, sprintf(
                     '%s 放不下：子项共需 %.1f，可用只有 %.1f（差 %.1f）—— 窗口比内容窄，超出部分已裁掉。'
+                        . '%s'
                         . "\n" . '这不是崩溃：把窗口拖大即可恢复完整显示。'
                         . "\n" . '若想让它自己换行 / 收缩（而不是被裁），改用 Wrap，或给子项加 Flexible / Expanded。',
                     static::class,
                     $mainSize,
                     $maxMain,
                     $mainSize - $maxMain,
+                    $detail,
                 ))
                 : Errors::report(sprintf(
-                '%s 放不下：子项共需 %.1f，可用只有 %.1f（差 %.1f）。'
+                '%s 放不下：子项共需 %.1f，可用只有 %.1f（差 %.1f）。%s'
                     . "\n" . '修法：① 把窗口拖大，或让子项少占一些；'
                     . '② 允许裁剪则给该容器声明 overflow(Overflow::Clip)（默认策略 Report 会中止）。',
                 static::class,
                 $mainSize,
                 $maxMain,
                 $mainSize - $maxMain,
+                $detail,
             )),
             // ★★ `Scroll` 在**容器上不支持**（2026-10-25，I4）：本枚举的 `Scroll` 是
             //   `RenderScrollView` 的行为声明；容器自己滚与 `ScrollView` 职责重叠，

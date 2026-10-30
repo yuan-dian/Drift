@@ -22,6 +22,7 @@ use Drift\Widget\State;
 use Drift\Widget\StatefulWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
+use Drift\Widget\Wrap;
 
 /**
  * 页 9「动画 Motion」—— `AnimationController` + `Curve` 的第一个消费者。
@@ -122,7 +123,7 @@ final class MotionState extends State
                 ->caption(),
 
             // ── 操作条 ──
-            Row::make()->spacing(8.0)->children([
+            Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
                 Button::make('播放')
                     ->variant(ButtonVariant::Primary)
                     ->onPressed(function (): void {
@@ -183,7 +184,7 @@ final class MotionState extends State
 
             // ── 隐式动画：只写目标值 ──
             Text::make('隐式动画：只写目标值')->heading(),
-            Row::make()->spacing(8.0)->children([
+            Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
                 Button::make('淡出')->onPressed(function (): void {
                     $this->fadeTarget = 0.25;
                     ++$this->fadeClicks;

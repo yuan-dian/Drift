@@ -17,6 +17,7 @@ use Drift\Widget\State;
 use Drift\Widget\StatefulWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
+use Drift\Widget\Wrap;
 
 /**
  * 页 30「原生对话框 Dialog」—— A5-① 的唯一消费者。
@@ -105,7 +106,7 @@ final class DialogPageState extends State
 
             $this->sectionBar('① 选文件 · GetOpenFileNameW'),
             Card::make(Column::make()->spacing(10.0)->children([
-                Row::make()->spacing(8.0)->children([
+                Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
                     Button::make('打开一个文件')
                         ->variant(ButtonVariant::Primary)
                         ->onPressed(fn() => $this->pickFile()),
@@ -118,7 +119,7 @@ final class DialogPageState extends State
 
             $this->sectionBar('② 提示与确认 · MessageBoxW'),
             Card::make(Column::make()->spacing(10.0)->children([
-                Row::make()->spacing(8.0)->children([
+                Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
                     Button::make('弹一个提示')
                         ->variant(ButtonVariant::Flat)
                         ->onPressed(fn() => $this->alert()),
@@ -134,7 +135,7 @@ final class DialogPageState extends State
 
             $this->sectionBar('③ 关闭前确认 · setCloseGuard'),
             Card::make(Column::make()->spacing(10.0)->children([
-                Row::make()->spacing(8.0)->children([
+                Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
                     Button::make($this->confirmClose ? '关闭「关闭前确认」' : '启用「关闭前确认」')
                         ->variant(ButtonVariant::Flat)
                         ->onPressed(fn() => $this->toggleConfirmClose()),
@@ -274,9 +275,6 @@ final class DialogPageState extends State
 
     private function sectionBar(string $title): Widget
     {
-        return Row::make()->spacing(8.0)->children([
-            Text::make($title)->heading(),
-            Spacer::make(),
-        ]);
+        return Text::make($title)->heading();
     }
 }

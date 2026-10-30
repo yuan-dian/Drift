@@ -11,6 +11,7 @@ use Drift\Widget\Button;
 use Drift\Widget\ButtonVariant;
 use Drift\Widget\Checkbox;
 use Drift\Widget\Column;
+use Drift\Widget\Expanded;
 use Drift\Layout\FlexAlign;
 use Drift\Widget\Offstage;
 use Drift\Widget\Padding;
@@ -23,6 +24,7 @@ use Drift\Widget\Text;
 use Drift\Widget\TextField;
 use Drift\Widget\Toggle;
 use Drift\Widget\Widget;
+use Drift\Widget\Wrap;
 
 /**
  * 页 4「表单 Form」—— **LayUI 文档页（layui.dev/docs/2/form/）的结构复刻**。
@@ -106,7 +108,7 @@ final class FormState extends State
 
             // ── H3「并排短字段」：LayUI 的 layui-inline ──
             $this->sectionBar('并排短字段（LayUI 的 inline）'),
-            Row::make()->spacing(8.0)->children([
+            Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
                 TextField::make()->label('手机号')->placeholder('11 位手机号'),
                 TextField::make()->label('验证码')->placeholder('6 位数字'),
                 Button::make('获取验证码')->variant(ButtonVariant::Default),
@@ -119,7 +121,7 @@ final class FormState extends State
             $this->sectionBar('文本编辑（选择 / 复制 / 粘贴）'),
             Text::make('点进字段 ⇒ Shift+方向键或拖动选择 ⇒ Ctrl+C 复制 ⇒ 点另一个字段 ⇒ Ctrl+V 粘贴；Ctrl+A 全选、Esc 取消选择。')
                 ->caption(),
-            Row::make()->spacing(8.0)->children([
+            Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
                 TextField::make()->label('源（中英混排）')->value($this->editSrc)
                     ->onChanged(fn(string $v) => $this->editSrc = $v),
                 TextField::make()->label('目标')->value($this->editDst)
@@ -137,7 +139,7 @@ final class FormState extends State
                             $this->agree = $on;
                         });
                     }),
-                Row::make()->spacing(20.0)->children([
+                Wrap::make()->runSpacing(20.0)->spacing(20.0)->children([
                     Radio::make('小号')->value('s')->group($this->size)
                         ->onChanged(function (string $v): void {
                             $this->setState(function () use ($v): void {
@@ -188,7 +190,9 @@ final class FormState extends State
     /** 分节标题条（LayUI 的 H2/H3 + 卡片标题行的组合近似） */
     private function sectionBar(string $title, ?Widget $trailing = null): Widget
     {
-        $kids = [Text::make($title)->heading()];
+        // ★ 标题用 `Expanded` 占满剩余宽并换行（窄屏不再把 trailing 挤出去）；
+        //   `Spacer` 在 `Expanded` 之后自然塌成 0，等价于"标题贴左 / trailing 贴右"。
+        $kids = [Expanded::make(Text::make($title)->heading())];
         if ($trailing !== null) {
             $kids[] = Spacer::make();
             $kids[] = $trailing;
@@ -221,7 +225,7 @@ final class FormState extends State
                 ->placeholder('请输入邮箱')
                 ->value($this->email)
                 ->onChanged(fn(string $v) => $this->email = $v)),
-            Row::make()->spacing(8.0)->children([
+            Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
                 Button::make('确认提交')->variant(ButtonVariant::Primary),
                 Button::make('重置')->variant(ButtonVariant::Default),
             ]),
@@ -235,7 +239,7 @@ final class FormState extends State
     private function field(string $label, Widget $input): Widget
     {
         return Row::make()->spacing(8.0)->children([
-            Text::make($label)->caption(),
+            Expanded::make(Text::make($label)->caption()),
             $input,
         ])->cross(FlexAlign::End);
     }

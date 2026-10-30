@@ -19,6 +19,7 @@ use Drift\Widget\Stack;
 use Drift\Widget\StatelessWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
+use Drift\Widget\Wrap;
 
 /**
  * 页 22「毛玻璃 BackdropFilter」—— 质感层的第四件（2026-10-26）。
@@ -70,7 +71,7 @@ final class GlassPage extends StatelessWidget
                 ]),
 
                 self::sectionBar('② 半径梯度：sigma = 4 / 12 / 28（同内容、同底色）'),
-                Row::make()->spacing(12.0)->children([
+                Wrap::make()->runSpacing(12.0)->spacing(12.0)->children([
                     self::chip(4.0, 'sigma 4'),
                     self::chip(12.0, 'sigma 12'),
                     self::chip(28.0, 'sigma 28'),

@@ -18,6 +18,7 @@ use Drift\Widget\State;
 use Drift\Widget\StatefulWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
+use Drift\Widget\Wrap;
 
 /**
  * 页 3「按钮 Button」—— 三变体 + 盒样式 + 悬停/光标（新落地的两个消费者）。
@@ -68,7 +69,10 @@ final class ButtonsState extends State
 
             // ── 三变体 ──
             Text::make('三变体（主题 token 取色）')->heading(),
-            Row::make()->spacing(8.0)->children([
+            // ★ 用 `Wrap` 而非 `Row`：窗口拖到最小时内容区只剩 180（见
+            //   `tools/narrow-audit.php`），三个按钮共需 196。`Row` 会裁掉右边，
+            //   而页面外壳是**竖向** ScrollView ⇒ 被裁的部分用户拿不回来。
+            Wrap::make()->spacing(8.0)->runSpacing(8.0)->children([
                 Button::make('默认')->variant(ButtonVariant::Default),
                 Button::make('主要')->variant(ButtonVariant::Primary),
                 Button::make('危险')->variant(ButtonVariant::Danger),
@@ -76,7 +80,7 @@ final class ButtonsState extends State
 
             // ── 盒样式修饰符 ──
             Text::make('盒样式：background / border / radius（§15.7）')->heading(),
-            Row::make()->spacing(8.0)->children([
+            Wrap::make()->spacing(8.0)->runSpacing(8.0)->children([
                 Button::make('品牌色')
                     ->background(Color::fromRgb(0x00, 0x96, 0x88))
                     ->border(Color::fromRgb(0x00, 0x6D, 0x62), 1.5)
@@ -99,7 +103,7 @@ final class ButtonsState extends State
             Text::make('悬停 + 光标（§24.2 #16 的两个新消费者）')->heading(),
             Text::make('下面这块悬停计数：鼠标进入 enters +1、离开 leaves +1；命中链同时给出 PointingHand 光标。')
                 ->caption(),
-            Row::make()->spacing(8.0)->children([
+            Wrap::make()->spacing(8.0)->runSpacing(8.0)->children([
                 Button::make('悬停计数区')
                     ->variant(ButtonVariant::Default)
                     ->background(Color::fromRgb(0xF2, 0xF2, 0xF2))
@@ -114,13 +118,11 @@ final class ButtonsState extends State
                             }
                         });
                     }),
-                Spacer::make(),
                 Text::make('enters=' . $this->enters . '  leaves=' . $this->leaves)->body(),
             ]),
-            Row::make()->spacing(8.0)->children([
+            Wrap::make()->spacing(8.0)->runSpacing(8.0)->children([
                 Text::make('最后按下：')->caption(),
                 Text::make($this->lastPressed)->body(),
-            ]),
-        ]);
+            ]),        ]);
     }
 }

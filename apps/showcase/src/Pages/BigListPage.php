@@ -98,8 +98,7 @@ final class BigListPage extends StatelessWidget
     {
         return Padding::make(
             Row::make()->spacing(8.0)->children([
-                Text::make(sprintf('第 %d 行', $index))->body(),
-                Spacer::make(),
+                Expanded::make(Text::make(sprintf('第 %d 行', $index))->body()),
                 Text::make($index % 2 === 0 ? '偶数' : '奇数')->caption(),
             ])
         )->symmetric(12.0, 8.0);

@@ -11,6 +11,7 @@ use Drift\Widget\Button;
 use Drift\Widget\ButtonVariant;
 use Drift\Widget\Column;
 use Drift\Widget\Each;
+use Drift\Widget\Expanded;
 use Drift\Widget\Padding;
 use Drift\Widget\Row;
 use Drift\Widget\ScrollView;
@@ -55,8 +56,7 @@ final class ListPage extends StatelessWidget
     {
         return Padding::make(
             Row::make()->spacing(8.0)->children([
-                Text::make($label)->body(),
-                Spacer::make(),
+                Expanded::make(Text::make($label)->body()),
                 Button::make('操作')
                     ->variant(ButtonVariant::Default)
                     ->background(Color::fromRgb(0xFF, 0xFF, 0xFF))

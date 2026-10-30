@@ -16,6 +16,7 @@ use Drift\Widget\ScrollView;
 use Drift\Widget\StatelessWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
+use Drift\Widget\Wrap;
 
 /**
  * 页 21「图标 Icon」—— `Icon` 控件的形状、尺寸与着色。
@@ -42,7 +43,7 @@ final class IconPage extends StatelessWidget
 
                 Card::make(Column::make()->spacing(12.0)->children([
                     Text::make('10 个内置图标（24px）')->caption(),
-                    Row::make()->spacing(22.0)->children([
+                    Wrap::make()->runSpacing(22.0)->spacing(22.0)->children([
                         Icon::make(IconName::Menu, 24.0),
                         Icon::make(IconName::Close, 24.0),
                         Icon::make(IconName::Check, 24.0),
@@ -58,7 +59,7 @@ final class IconPage extends StatelessWidget
 
                 Card::make(Column::make()->spacing(12.0)->children([
                     Text::make('尺寸：12 / 16 / 24 / 32（同一份路径，形状一致）')->caption(),
-                    Row::make()->spacing(20.0)->children([
+                    Wrap::make()->runSpacing(20.0)->spacing(20.0)->children([
                         Icon::make(IconName::Search, 12.0),
                         Icon::make(IconName::Search, 16.0),
                         Icon::make(IconName::Search, 24.0),
@@ -68,7 +69,7 @@ final class IconPage extends StatelessWidget
 
                 Card::make(Column::make()->spacing(12.0)->children([
                     Text::make('着色：默认 Muted / 显式 color()')->caption(),
-                    Row::make()->spacing(20.0)->children([
+                    Wrap::make()->runSpacing(20.0)->spacing(20.0)->children([
                         Icon::make(IconName::Check, 24.0),
                         Icon::make(IconName::Check, 24.0)->color(Color::fromRgb(0x16, 0x9F, 0xE8)),
                         Icon::make(IconName::Check, 24.0)->color(Color::fromRgb(0xC4, 0x3B, 0x36)),

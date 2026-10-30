@@ -107,17 +107,13 @@ final class GridPage extends StatelessWidget
     {
         return Card::make(
             Row::make()->spacing(6.0)->children([
-                Text::make('格 ' . ($index + 1))->body(),
-                Spacer::make(),
+                Expanded::make(Text::make('格 ' . ($index + 1))->body()),
             ])
         )->paddingAll(8.0);
     }
 
     private static function sectionBar(string $title): Widget
     {
-        return Row::make()->spacing(8.0)->children([
-            Text::make($title)->heading(),
-            Spacer::make(),
-        ]);
+        return Text::make($title)->heading();
     }
 }

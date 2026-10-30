@@ -20,6 +20,7 @@ use Drift\Widget\State;
 use Drift\Widget\StatefulWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
+use Drift\Widget\Wrap;
 
 /**
  * 页 15「下拉选择 Select」—— W8-2 的第五件（2026-10-23）。
@@ -151,7 +152,7 @@ final class SelectState extends State
                 ->caption(),
 
             $this->sectionBar('① 基本 · 选中项在下拉里用强调色标出'),
-            Card::make(Row::make()->spacing(12.0)->children([
+            Card::make(Wrap::make()->runSpacing(12.0)->spacing(12.0)->children([
                 Select::make([
                     Option::make('北京市', '110000'),
                     Option::make('上海市', '310000'),
@@ -162,7 +163,7 @@ final class SelectState extends State
             ]))->paddingAll(12.0),
 
             $this->sectionBar('② 值 ≠ 显示名（Option 的 value 是身份，label 是给人看的字）'),
-            Card::make(Row::make()->spacing(12.0)->children([
+            Card::make(Wrap::make()->runSpacing(12.0)->spacing(12.0)->children([
                 Select::make([
                     Option::make('一等座', 'A'),
                     Option::make('二等座', 'B'),
@@ -173,7 +174,7 @@ final class SelectState extends State
             ]))->paddingAll(12.0),
 
             $this->sectionBar('③ 宽控件 · triggerWidth 定宽（标签靠左，没有下拉箭头）'),
-            Card::make(Row::make()->spacing(12.0)->children([
+            Card::make(Wrap::make()->runSpacing(12.0)->spacing(12.0)->children([
                 Select::make([
                     Option::of('短'),
                     Option::of('中等长度的一项'),
@@ -185,7 +186,7 @@ final class SelectState extends State
             ]))->paddingAll(12.0),
 
             $this->sectionBar('④ 长列表 · 30 项 ⇒ 面板限高 260 且可以滚（够短则贴着内容）'),
-            Card::make(Row::make()->spacing(12.0)->children([
+            Card::make(Wrap::make()->runSpacing(12.0)->spacing(12.0)->children([
                 Select::make(self::manyOptions())->value($this->many)->placeholder('请选择编号')
                     ->onChanged(fn(string $v) => $this->pick('many', $v)),
                 Text::make($this->many === '' ? '还没选' : '收到值：' . $this->many)->caption(),
@@ -194,7 +195,7 @@ final class SelectState extends State
                 . '不限高就永远点不到它。')->caption(),
 
             $this->sectionBar('⑤ 映射短形式 · 键 = 值、值 = 显示名（`Option::normalize()`，2026-10-24）'),
-            Card::make(Row::make()->spacing(12.0)->children([
+            Card::make(Wrap::make()->runSpacing(12.0)->spacing(12.0)->children([
                 // ★ 键故意用**数字串**：PHP 会把 `'110000'` 转成 `int 110000`，全靠
                 //   `Option::normalize()` 里的 `(string)` 收口才装得进 string 值域。
                 Select::make([
@@ -210,7 +211,7 @@ final class SelectState extends State
                 . 'PHP 里 `[0 => \'x\']` 与 `[\'x\']` 是同一个数组，"值 0"与"标签列表"分不开。')->caption(),
 
             $this->sectionBar('⑥ 行数组 · `Option::fromRows($rows, \'name\', \'id\')`（DB / HTTP 的形状）'),
-            Card::make(Row::make()->spacing(12.0)->children([
+            Card::make(Wrap::make()->runSpacing(12.0)->spacing(12.0)->children([
                 // 这段 $rows 就是 DB fetchAll / HTTP JSON 解出来的东西，原样喂进去。
                 Select::make(Option::fromRows(self::cityRows(), 'name', 'id'))
                     ->value($this->row)->placeholder('请选城市')
@@ -223,7 +224,7 @@ final class SelectState extends State
 
             $this->sectionBar('⑦ 远程三态 · 加载中 / 失败 / 空表（2026-10-24）'),
             Card::make(Column::make()->spacing(10.0)->children([
-                Row::make()->spacing(12.0)->children([
+                Wrap::make()->runSpacing(12.0)->spacing(12.0)->children([
                     Select::make($this->remote)
                         ->value($this->remoteValue)
                         ->placeholder('请选择城市')
@@ -242,8 +243,8 @@ final class SelectState extends State
                     Text::make($this->remoteValue === '' ? '还没选' : '收到值：' . $this->remoteValue)
                         ->caption(),
                     Text::make('onOpen 触发 ' . $this->openCount . ' 次')->caption(),
-                ])->cross(FlexAlign::Center),
-                Row::make()->spacing(8.0)->children([
+                ])->alignment(FlexAlign::Center),
+                Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
                     Button::make('加载中')->variant(ButtonVariant::Flat)
                         ->onPressed(fn() => $this->setRemoteState('loading')),
                     Button::make('加载完成（3 项）')->variant(ButtonVariant::Flat)
@@ -310,9 +311,6 @@ final class SelectState extends State
 
     private function sectionBar(string $title): Widget
     {
-        return Row::make()->spacing(8.0)->children([
-            Text::make($title)->heading(),
-            Spacer::make(),
-        ]);
+        return Text::make($title)->heading();
     }
 }

@@ -17,6 +17,7 @@ use Drift\Widget\State;
 use Drift\Widget\StatefulWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
+use Drift\Widget\Wrap;
 
 /**
  * 页 14「底部通知 Snackbar」—— W8-2 的第四个控件（2026-10-23）。
@@ -81,7 +82,7 @@ final class SnackbarState extends State
                 ->caption(),
 
             $this->sectionBar('① 普通通知 · 4s 自动消失'),
-            Card::make(Row::make()->spacing(8.0)->children([
+            Card::make(Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
                 Button::make('已保存')
                     ->variant(ButtonVariant::Flat)
                     ->onPressed(fn() => $this->notify('已保存到本地')),
@@ -94,7 +95,7 @@ final class SnackbarState extends State
             ]))->paddingAll(12.0),
 
             $this->sectionBar('② 带动作 · 点「撤销」先调处理器再收掉'),
-            Card::make(Row::make()->spacing(8.0)->children([
+            Card::make(Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
                 Button::make('删除一条')
                     ->variant(ButtonVariant::Flat)
                     ->onPressed(fn() => $this->notifyUndoable()),
@@ -102,14 +103,14 @@ final class SnackbarState extends State
             ]))->paddingAll(12.0),
 
             $this->sectionBar('③ 排队 · 一次推三条（FIFO）'),
-            Card::make(Row::make()->spacing(8.0)->children([
+            Card::make(Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
                 Button::make('推三条')
                     ->variant(ButtonVariant::Flat)
                     ->onPressed(fn() => $this->burst()),
             ]))->paddingAll(12.0),
 
             $this->sectionBar('④ 不自动消失 · duration(0)'),
-            Card::make(Row::make()->spacing(8.0)->children([
+            Card::make(Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
                 Button::make('弹一条错误')
                     ->variant(ButtonVariant::Flat)
                     ->onPressed(fn() => ($this->notifier)(
@@ -162,9 +163,6 @@ final class SnackbarState extends State
 
     private function sectionBar(string $title): Widget
     {
-        return Row::make()->spacing(8.0)->children([
-            Text::make($title)->heading(),
-            Spacer::make(),
-        ]);
+        return Text::make($title)->heading();
     }
 }
