@@ -10,7 +10,6 @@ use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Size;
-use Drift\Layout\LayoutTolerance;
 use Drift\Widget\AppBar;
 use Drift\Widget\NavButton;
 
@@ -121,30 +120,32 @@ final class WindowFrameTest extends SmokeTestCase
         $this->flushChecks();
     }
 
-    public function testPreviewingDowngradesHardChecksToClipping(): void
+    public function testWindowFramesClipInsteadOfAborting(): void
     {
-        // 用户拖窗口边缘时中间尺寸是**瞬时态**——「窗口比内容小」是合法状态，不是
-        // 编程错误。`LayoutTolerance::$previewing` 期间 C5/C6 的硬校验一律降级为裁剪
-        // （RenderFlex / RenderDock / RenderBox 三处都读它）；松手后复位，真溢出照旧报。
-        Errors::reset();
-        LayoutTolerance::$previewing = true;
-
-        try {
-            $tolApp = new TfApplication();
-            $tolApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(300.0, 200.0)));
-            $tolApp->frame(16.0, BoxConstraints::loose(new Size(300.0, 200.0)));
-            $tolApp->repaintForResize(BoxConstraints::tight(new Size(80.0, 50.0)));   // 远小于内容
-            $tolDiag = Errors::recentDiagnostics();
-        } finally {
-            LayoutTolerance::$previewing = false;
-        }
+        // ★ 窗口的客户区是**用户的东西**：拖小、或上次停在小尺寸后重启，都是合法状态
+        //   ⇒ 窗口帧（`attach()` / `frame()` / `repaintForResize()`）里溢出只裁剪 +
+        //   一条 diagnostic，绝不中止（对齐 Flutter release / Qt / WPF / CSS）。
+        //   ★ 纯布局那一侧仍然中止 —— 见 `LayoutFailureTest` 那一对用例。
+        //   ★★ 走**子进程**：中止是 `exit(3)`，在进程内跑会把 PHPUnit 本身静默杀掉
+        //     （最初写成进程内版，变异测试一开就只剩三个点、连失败信息都没有）。
+        [$code, $out] = runFatalCase('window-frame-app-clipped', $this->logPath());
 
         check(
-            'Resize · 预览期极小尺寸不弹 Fatal（C5/C6 降级为裁剪）',
-            $tolDiag === [],
-            'diag=' . count($tolDiag) . ' ' . implode(' | ', array_slice($tolDiag, 0, 2))
+            '窗口帧 · 极小尺寸不中止（首帧 / 主循环 / 拖动三条路径）',
+            $code === 0,
+            '实际 ' . $code . ' / ' . $out,
+        );
+        check(
+            '窗口帧 · 裁剪留了诊断，且三帧只留一条（同类去重）',
+            \str_contains($out, 'app-frame diag=1'),
+            $out,
         );
 
         $this->flushChecks();
+    }
+
+    private function logPath(): string
+    {
+        return \sys_get_temp_dir() . '/drift-windowframe-' . \getmypid() . '.log';
     }
 }

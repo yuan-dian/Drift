@@ -30,7 +30,7 @@ use Drift\Rendering\MetricToken;
  *   **显式声明 `Clip`**（2026-10-19 改，原 `Report`）—— 顶条宽度**随窗口变化**，
  *   用户拖窄窗口时放不下是**用户行为**、不是编程错误；`Report` 会让拖动缩窗
  *   直接弹 Fatal（实测：可用 322 / 自然 327）。裁剪 = 右侧导航项暂时不可见。
- *   ★ 拖动预览期另有全局兜底：`LayoutTolerance::$previewing`（瞬时溢出一律降级）。
+ *   ★ 窗口帧另有全局兜底：`LayoutTolerance::$windowDriven`（窗口比内容小一律裁剪）。
  *
  * ★ `->skipFocus()` 由 `Widget` 基类给（§A.3.4：工具按钮组整体不进 Tab 序）——
  *   本类不重造焦点机制。

@@ -39,6 +39,7 @@ use Drift\App\Frame;
 use Drift\Commands\CommandRouter;
 use Drift\Core\Computed;
 use Drift\Dev\Smoke\App\ScrollApplication;
+use Drift\Dev\Smoke\App\TfApplication;
 use Drift\Dev\Smoke\Commands\EchoCommands;
 use Drift\Dev\Smoke\ErrorBoundary\BoomPage;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
@@ -57,6 +58,7 @@ use Drift\Geometry\Size;
 use Drift\Input\AcceleratorTable;
 use Drift\Input\KeyChord;
 use Drift\Layout\FlexAlign;
+use Drift\Layout\LayoutTolerance;
 use Drift\Layout\Overflow;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderDock;
@@ -364,6 +366,62 @@ $cases = [
         $column->addChild(new SolidBox(new Size(10.0, 40.0), 10.0, 40.0));
         $column->addChild(new SolidBox(new Size(10.0, 40.0), 10.0, 40.0));
         $column->layout(BoxConstraints::tight(new Size(10.0, 50.0)));
+    },
+
+    // ★★ **窗口帧**里的同一个溢出：**不许中止**，只裁剪 + 留一条 diagnostic。
+    //   与上面 `flex-report-overflow` 成对存在 —— 两条一起才证明"宽容是按层分的"，
+    //   而不是"全局把校验关掉了"。布局层（纯 `Frame` / `RenderBox`）仍然 exit 3。
+    //   连跑三次同一个溢出 ⇒ 诊断只该有 1 条（否则拖动时日志被刷满）。
+    'window-frame-overflow-clipped' => static function (): void {
+        LayoutTolerance::reset();
+
+        $diag = LayoutTolerance::withinWindow(static function (): array {
+            for ($i = 0; $i < 3; $i++) {
+                $column = new RenderFlex(true, 0.0, new EdgeInsets(), FlexAlign::Start, Overflow::Report);
+                $column->addChild(new SolidBox(new Size(10.0, 40.0), 10.0, 40.0));
+                $column->addChild(new SolidBox(new Size(10.0, 40.0), 10.0, 40.0));
+                $column->layout(BoxConstraints::tight(new Size(10.0, 50.0)));
+            }
+
+            return Errors::recentDiagnostics();
+        });
+
+        echo 'clipped diag=' . \count($diag) . ' text=' . ($diag[0] ?? '(none)') . "\n";
+        exit(0);
+    },
+
+    // C6 的同一分裂：控件自己报出比可用空间更大的尺寸。窗口帧里裁剪，纯布局里中止。
+    'window-frame-c6-clipped' => static function (): void {
+        LayoutTolerance::reset();
+
+        LayoutTolerance::withinWindow(static function (): void {
+            (new OversizeBox())->layout(new BoxConstraints(0.0, 10.0, 0.0, 10.0));
+        });
+
+        $diag = Errors::recentDiagnostics();
+        echo 'clipped-c6 diag=' . \count($diag) . ' text=' . ($diag[0] ?? '(none)') . "\n";
+        exit(0);
+    },
+
+    // ★★ **整条 Application 链路**：`attach()` 的首帧 + 主循环帧 + 拖动帧，在远小于
+    //   内容的约束下都**不许中止**。上面那条只验了 `withinWindow()` 这个作用域本身，
+    //   这条验"`Application` 真的把它套在帧上了"—— 接线漏一处，这里就 exit 3。
+    //   ★ 必须在**子进程**里跑：`Errors::report` 是 `exit(3)`，进程内接不住，
+    //     而"接不住"的表现是 PHPUnit 静默死掉（连失败信息都没有）——
+    //     那正是这条用例最初写成进程内时，变异测试暴露出来的问题。
+    'window-frame-app-clipped' => static function (): void {
+        LayoutTolerance::reset();
+
+        $app = new TfApplication();
+        $tiny = BoxConstraints::loose(new Size(80.0, 50.0));
+        $app->attach(new SurfaceProbe(), $tiny);      // 首帧（窗口帧）
+        $app->frame(16.0, $tiny);                      // 主循环帧
+        $app->frame(32.0, $tiny);                      // 再来一帧（不该重复留痕）
+        $app->repaintForResize(BoxConstraints::tight(new Size(80.0, 50.0)));   // 拖动帧
+
+        $diag = Errors::recentDiagnostics();
+        echo 'app-frame diag=' . \count($diag) . ' text=' . ($diag[0] ?? '(none)') . "\n";
+        exit(0);
     },
 
     // C5 兜底：`shrink` 只能压弹性子，间距与固定子压不动 ⇒ 压到 0 也补不回来。

@@ -31,7 +31,7 @@ use Drift\Widget\Widget;
  *
  * ★ ③ 是"要不要夹"的唯一判据。夹在**调用点**而不在 `Alignment` 里：
  *   值对象只做数学，`RenderBox` 与 `RenderStack` 各自选择"内容超盒就贴起点"。
- *   用 `LayoutTolerance::$previewing` 让 C6 降级为裁剪 —— 否则这条判据会被
+ *   用 `LayoutTolerance::$windowDriven` 让 C6 降级为裁剪 —— 否则这条判据会被
  *   "内容超出约束"的响亮失败先打断（那是正确行为，不是本件要测的东西）。
  *
  * ★ 为什么放 Feature 而不是 Unit：判据是"`Modifier` 字段 → 基类 `layout()` ③⑦
@@ -145,7 +145,8 @@ final class AlignTest extends SmokeTestCase
 
     public function testOverflowingContentStaysAtOrigin(): void
     {
-        LayoutTolerance::$previewing = true;
+        // 这条判据要的是"内容比盒大时怎么摆"，不是"溢出要不要中止" ⇒ 显式进窗口帧语义
+        LayoutTolerance::$windowDriven = true;
         try {
             // 20×20 的盒里塞 50×50 的子：free = -30 ⇒ 夹到 0 ⇒ 贴起点
             [, $dx, $dy] = self::offsets(
@@ -153,7 +154,7 @@ final class AlignTest extends SmokeTestCase
                     ->boxSize(20.0, 20.0)
             );
         } finally {
-            LayoutTolerance::$previewing = false;
+            LayoutTolerance::$windowDriven = false;
         }
 
         check(

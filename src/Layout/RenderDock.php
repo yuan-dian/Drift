@@ -219,8 +219,17 @@ final class RenderDock extends RenderBox
     {
         match ($this->policy) {
             Overflow::Clip => null,
-            Overflow::Report => LayoutTolerance::$previewing
-                ? null   // 预览期：条轨溢出不中断（夹到 0，重叠但可继续拖）
+            // ★★ 窗口帧（用户把窗口拖小）：裁剪 + 留痕，不中止 —— 同 `RenderFlex`。
+            Overflow::Report => LayoutTolerance::$windowDriven
+                ? LayoutTolerance::clipped(static::class . ':' . $slots, sprintf(
+                    'Dock 放不下：%s 槽共需 %.1f，%s只有 %.1f（差 %.1f）—— 窗口比内容小，超出部分已裁掉。'
+                        . "\n" . '这不是崩溃：把窗口调大即可恢复完整显示。',
+                    $slots,
+                    $need,
+                    $available,
+                    $have,
+                    $need - $have,
+                ))
                 : Errors::report(sprintf(
                 'Dock 放不下：%s 槽共需 %.1f，%s只有 %.1f（差 %.1f）。'
                     . "\n" . '修法：① 把窗口拖大，或缩小这些槽的内容；'

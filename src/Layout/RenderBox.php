@@ -455,19 +455,34 @@ abstract class RenderBox extends RenderObject
         // 下界提升不是违反：`tight()` 的语义就是父把尺寸定死了，`constrain()`
         // 提下界是它的本职工作（Drift 的 Column 在紧约束下报"最宽子"而不是
         // 硬宽，是正确的——父只是给了上限）。
-        if (($measured->width > $constraints->maxWidth + LayoutTolerance::EPSILON
-                || $measured->height > $constraints->maxHeight + LayoutTolerance::EPSILON)
-            && !LayoutTolerance::$previewing) {   // 预览期（拖动中）：瞬时违规降级为裁剪
-            Errors::report(sprintf(
-                '%s 画出的尺寸超出父容器给的可用空间：实际 %.1f × %.1f，最多只能用 %.1f × %.1f。'
-                    . "\n" . '修法：让这个控件的尺寸跟随约束（不要写死比可用空间更大的尺寸），'
-                    . '或检查父容器为什么只给了这么小。',
-                static::class,
-                $measured->width,
-                $measured->height,
-                $constraints->maxWidth,
-                $constraints->maxHeight
-            ));
+        if ($measured->width > $constraints->maxWidth + LayoutTolerance::EPSILON
+            || $measured->height > $constraints->maxHeight + LayoutTolerance::EPSILON) {
+            if (LayoutTolerance::$windowDriven) {
+                // ★★ 窗口帧（用户把窗口拖小了）：内容自己"比窗口还大"多半是控件写死了
+                //   尺寸，但在窗口帧里仍然只裁剪 + 留痕 —— 用户不该为此看到 Fatal 框。
+                //   纯布局（测试 / 快照）走下面的 `Errors::report`，仍然中止。
+                LayoutTolerance::clipped(static::class . ':C6', sprintf(
+                    '%s 画出的尺寸超出了可用空间：实际 %.1f × %.1f，最多只能用 %.1f × %.1f —— 超出部分已裁掉。'
+                        . "\n" . '这不是崩溃：把窗口调大即可恢复完整显示。'
+                        . "\n" . '若这个控件不该有这么大，让它跟随约束（不要写死大于可用空间的尺寸）。',
+                    static::class,
+                    $measured->width,
+                    $measured->height,
+                    $constraints->maxWidth,
+                    $constraints->maxHeight
+                ));
+            } else {
+                Errors::report(sprintf(
+                    '%s 画出的尺寸超出父容器给的可用空间：实际 %.1f × %.1f，最多只能用 %.1f × %.1f。'
+                        . "\n" . '修法：让这个控件的尺寸跟随约束（不要写死比可用空间更大的尺寸），'
+                        . '或检查父容器为什么只给了这么小。',
+                    static::class,
+                    $measured->width,
+                    $measured->height,
+                    $constraints->maxWidth,
+                    $constraints->maxHeight
+                ));
+            }
         }
 
         $boxSize = $constraints->constrain($measured);

@@ -906,9 +906,16 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         $paintRequested = $ringBefore !== $this->paintedFocus
             || $this->overlayLayout->panelsLagBehind();
 
-        $painted = $frame->run($root, $constraints, $timestampMs, $this->overlayHost->overlays()->all(), function (Canvas $canvas): void {
+        // ★★ **窗口帧**（`LayoutTolerance::withinWindow`）：这一帧的约束来自窗口客户区，
+        //   而客户区是用户的东西 —— "内容比窗口大"是合法状态 ⇒ C5/C6 降级为裁剪 + 一条
+        //   diagnostic，不中止进程（Flutter release / Qt / WPF / CSS 都是裁剪）。
+        //   `attach()` 的首帧也走这里（它调的就是 `frame()`）⇒ 还原成小尺寸启动时
+        //   不会卡在 Fatal 框里进退不得。
+        //   ★ 严格那一侧没丢：直接调 `Frame::run()` 的测试 / 快照 / golden 仍然是
+        //     `$windowDriven = false` ⇒ 写错布局照样红。
+        $painted = LayoutTolerance::withinWindow(fn(): bool => $frame->run($root, $constraints, $timestampMs, $this->overlayHost->overlays()->all(), function (Canvas $canvas): void {
             $this->paintFocusRing($canvas);
-        }, $paintRequested);
+        }, $paintRequested));
 
         // 环**真的**上屏才记账 ⇒ `wantsFrame()` 的第七判据从这里回落 false（有界）。
         // ★ 跳过 / paint 抛异常 ⇒ **不记账** ⇒ 判据仍为真 ⇒ 下一帧还会请求 —— 直到
@@ -1046,12 +1053,9 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
             return;
         }
 
-        // ★ 预览期（拖动中的瞬时尺寸）：`Overflow::Report` 降级为裁剪 —— 用户把窗口
-        //   拖窄时「内容暂时放不下」是**合法状态**，不能弹 Fatal 打断拖动；松手后
-        //   主循环的正式帧照旧响亮失败（真溢出仍会被发现）。
-        $previousTolerant = LayoutTolerance::$previewing;
-        LayoutTolerance::$previewing = true;
-        try {
+        // ★ 拖动中的重排也是**窗口帧**（约束照样来自客户区）—— 与正式帧同一条语义：
+        //   裁剪 + 留痕，不弹 Fatal 打断拖动。两处用同一个入口，不留两套开关。
+        LayoutTolerance::withinWindow(function () use ($constraints, $frame, $root): void {
             $this->overlayLayout->placeOverlays($constraints);
             $frame->run(
                 $root,
@@ -1062,9 +1066,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
                     $this->paintFocusRing($canvas);
                 },
             );
-        } finally {
-            LayoutTolerance::$previewing = $previousTolerant;
-        }
+        });
     }
 
     // ------------------------------------------------------------------

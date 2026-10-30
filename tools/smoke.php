@@ -3187,7 +3187,7 @@ check(
 //   · `tests/Feature/App/WindowFrameTest.php`（7）—— repaintForResize 按新约束重排且
 //     只跑一帧·时间戳复用上一帧 · frame(tight(0,0)) 跳过布局且根盒保持旧尺寸 ·
 //     repaintForResize 同判据 · 还原后按新尺寸重排 · AppBar 窄于自然宽 ⇒ 裁剪无 Fatal ·
-//     LayoutTolerance::$previewing 期间极小尺寸降级为裁剪
+//     `LayoutTolerance::$windowDriven` 期间极小尺寸降级为裁剪
 //   · `tests/Feature/Theme/ThemeSwitchTest.php`（4）—— 派发前是浅色（对照）/
 //     onSystemThemeChanged 换源 / 根 context 换深色 / **子层也换**（递归下发才叫换表）
 // 帧末重建（adoptBoxes）/ skipFocus / focusOrder / claimKeys 已迁出

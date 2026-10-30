@@ -560,8 +560,19 @@ class RenderFlex extends RenderBox
     {
         match ($this->overflow) {
             Overflow::Clip => null, // 自己夹住（见 performLayout 的 min），子项照自然位置排
-            Overflow::Report => LayoutTolerance::$previewing
-                ? null   // 预览期（拖动中）：瞬时溢出降级为裁剪，不弹 Fatal
+            // ★★ **窗口帧**里"内容比窗口宽"是合法状态（用户拖小了）：裁剪 + 留一条
+            //   diagnostic，不中止。中止只留给纯布局（测试 / 快照）—— 那里溢出才是
+            //   写错了。见 `LayoutTolerance` 的对照表（Flutter/Qt/WPF/CSS 都裁剪）。
+            Overflow::Report => LayoutTolerance::$windowDriven
+                ? LayoutTolerance::clipped(static::class, sprintf(
+                    '%s 放不下：子项共需 %.1f，可用只有 %.1f（差 %.1f）—— 窗口比内容窄，超出部分已裁掉。'
+                        . "\n" . '这不是崩溃：把窗口拖大即可恢复完整显示。'
+                        . "\n" . '若想让它自己换行 / 收缩（而不是被裁），改用 Wrap，或给子项加 Flexible / Expanded。',
+                    static::class,
+                    $mainSize,
+                    $maxMain,
+                    $mainSize - $maxMain,
+                ))
                 : Errors::report(sprintf(
                 '%s 放不下：子项共需 %.1f，可用只有 %.1f（差 %.1f）。'
                     . "\n" . '修法：① 把窗口拖大，或让子项少占一些；'
