@@ -764,8 +764,46 @@ public:
     }
 
     // IRawElementProviderFragmentRoot（本 SDK 只剩这两个纯虚）
-    STDMETHOD(ElementProviderFromPoint)(double, double, IRawElementProviderFragment **ret) override {
-        *ret = makeFragment(-1);
+    STDMETHOD(ElementProviderFromPoint)(double x, double y, IRawElementProviderFragment **ret) override {
+        *ret = nullptr;
+        // ★ 客户端给的是**屏幕**坐标 —— 与 `BoundingRectangle` 同一套口径，
+        //   所以这里也必须走同一份几何（`nodeScreenRect()`），不能自己再算一遍。
+        // ★ 以前这里恒返回窗口根（-1）。后果具体：读屏软件的**鼠标追踪**
+        //   （NVDA 的 mouse tracking、讲述人的"鼠标指读"）靠这个入口问
+        //   "鼠标下面是什么"，恒返回根 ⇒ 整窗被读成一个整体，读不到局部控件。
+        //   客户端也没法靠遍历补 —— spec 就是把这个入口定为命中测试的唯一来源。
+        // ★ 取**最深**的命中节点：前序扁平里"最后一个包含该点的"并不等于最深
+        //   （前面兄弟的子树可能排在祖先之后），所以按 parent 链算深度比。
+        //   同深度取后出现的 —— 后画的在上面，与绘制顺序一致。
+        const std::vector<UiaNode> &nodes = slotOf(m_hwnd).uiaNodes;
+        int best = -1;
+        int bestDepth = -1;
+        for (size_t k = 0; k < nodes.size(); k++) {
+            RECT r;
+            if (!nodeScreenRect((int)k, &r)) {
+                continue;
+            }
+            if (x < (double)r.left || x >= (double)r.right
+                || y < (double)r.top || y >= (double)r.bottom) {
+                continue;
+            }
+            int depth = 0;
+            int p = nodes[k].parent;
+            // ★ 上溯**最多 nodes.size() 步**：`parent` 是 PHP 推来的裸整数
+            //   （`node.parent = a.get("parent").toInt()`，没有校验）。成环的话
+            //   这里就是死循环 —— 而且跑在读屏软件的消息回调里，等于整个窗口挂死。
+            //   本文件别处用 parent 都只走**一步**（`uiaParent`），不会绕圈；
+            //   这是唯一一处循环，界必须给。
+            while (p >= 0 && p < (int)nodes.size() && depth <= (int)nodes.size()) {
+                depth++;
+                p = nodes[p].parent;
+            }
+            if (depth >= bestDepth) {
+                bestDepth = depth;
+                best = (int)k;
+            }
+        }
+        *ret = makeFragment(best);
         return S_OK;
     }
     STDMETHOD(GetFocus)(IRawElementProviderFragment **ret) override {
@@ -831,6 +869,30 @@ public:
             //   `ElementNotEnabledException`（provider 根本收不到调）。
             out->vt = VT_BOOL;
             out->boolVal = enabled ? VARIANT_TRUE : VARIANT_FALSE;
+        } else if (id == UIA_IsOffscreenPropertyId) {
+            // ★ 不实现它 ⇒ 客户端默认 false ⇒ 读屏软件会对着**窗口外**画焦点框。
+            //   具体场景：滚动区里滚出视口的列表项仍在语义树里、仍报布局矩形
+            //   （2026-10-30 实测 y 到 1452，而客户区底 712），焦点走到它们时
+            //   放大镜/高亮框就飞到窗口外面去了。
+            // ★ 判据是"矩形有没有落在客户区里"，几何取 `nodeScreenRect()`
+            //   —— 与 `BoundingRectangle` 同一份换算（理由见该函数）。
+            //   ★ 不用"宽度为 0"判：零面积容器（分组）只是画不出东西，不代表不在屏上，
+            //     两者混在一起会让客户端对分组节点做多余的处理。
+            // ★ 窗口根（-1）恒在屏上。
+            bool off = false;
+            RECT r;
+            RECT client;
+            if (m_index >= 0 && GetClientRect(m_hwnd, &client)) {
+                POINT org;
+                org.x = 0;
+                org.y = 0;
+                ClientToScreen(m_hwnd, &org);
+                OffsetRect(&client, org.x, org.y);
+                RECT hit;
+                off = !nodeScreenRect(m_index, &r) || !IntersectRect(&hit, &r, &client);
+            }
+            out->vt = VT_BOOL;
+            out->boolVal = off ? VARIANT_TRUE : VARIANT_FALSE;
         }
         return S_OK;
     }
@@ -891,17 +953,67 @@ public:
         *ret = nullptr;
         return S_OK;
     }
-    HRESULT fragBoundingRect(UiaRect *rect) {
-        const std::vector<UiaNode> &nodes = slotOf(m_hwnd).uiaNodes;
-        if (m_index >= 0 && m_index < (int)nodes.size()) {
-            // 几何是逻辑/客户区，UIA 要屏幕物理 —— 位置近似（尺寸对、原点未加客户区偏移）。
-            rect->left = nodes[m_index].x;
-            rect->top = nodes[m_index].y;
-            rect->width = nodes[m_index].w;
-            rect->height = nodes[m_index].h;
-        } else {
-            rect->left = rect->top = rect->width = rect->height = 0.0;
+    /**
+     * 节点矩形：**逻辑客户区 → 屏幕物理像素**。返回 false = 算不出来（窗口销毁中）。
+     *
+     * ★★ 全仓只有这一处做这两步换算。`BoundingRectangle`（问"在哪"）与
+     *    `IsOffscreen`（问"在不在"）必须**同源** —— 各写一份就会出现
+     *    "矩形说在屏上、offscreen 说不在"这种客户端无法解释的组合。
+     *    成熟 provider（WPF `AutomationPeer` / Chromium `ViewAccessibility`）
+     *    也是这对属性成对提供。
+     *   ★ ① 逻辑 → 物理：× `dpi/96`。取 `dpiOfWindow()` **现查**，不读 `slot.dpi`
+     *     —— 后者靠 `WM_DPICHANGED` 落地，跨屏拖动后消息还没派发的那几帧仍是旧值，
+     *     而 UIA 客户端恰恰会在任意时刻来问（读屏跟随读的是"现在"）。
+     *     `dpiOfWindow()` 优先 `GetDpiForWindow()`，与 `php_drift_win_dpi()` 同源
+     *     ⇒ 全仓一套 DPI 口径，不新增第二个真相源。
+     *   ★ ② 客户区 → 屏幕：`ClientToScreen`。**不能**自己加 `GetWindowRect()` 的原点
+     *     —— 那含标题栏与边框，而节点坐标是客户区内的（差一整圈装饰）。
+     *     漏掉 ② 的后果不是"差一点"：读屏软件拿矩形做**放大镜跟随**和 mouse routing
+     *     （NVDA 的点读），整窗偏移会让焦点框画到标题栏上；FlaUI / WinAppDriver /
+     *     pywinauto 也按屏幕坐标点，一起点偏。
+     *   ★ 2026-10-30 之前这里返回客户区坐标，注释写"位置近似（尺寸对、原点未加
+     *     客户区偏移）"—— 那是把"没做"写成了"近似"，而 UIA 契约里没有近似。
+     */
+    bool nodeScreenRect(int index, RECT *out) {
+        if (m_hwnd == nullptr) {
+            return false;
         }
+        const std::vector<UiaNode> &nodes = slotOf(m_hwnd).uiaNodes;
+        if (index < 0 || index >= (int)nodes.size()) {
+            return false;
+        }
+
+        UINT dpi = dpiOfWindow(m_hwnd);
+        const double scale = (dpi == 0 ? 96.0 : (double)dpi) / 96.0;
+
+        POINT pt;
+        pt.x = (LONG)(nodes[index].x * scale + 0.5);
+        pt.y = (LONG)(nodes[index].y * scale + 0.5);
+        if (!ClientToScreen(m_hwnd, &pt)) {
+            return false;
+        }
+
+        out->left = pt.x;
+        out->top = pt.y;
+        out->right = pt.x + (LONG)(nodes[index].w * scale + 0.5);
+        out->bottom = pt.y + (LONG)(nodes[index].h * scale + 0.5);
+        return true;
+    }
+
+    HRESULT fragBoundingRect(UiaRect *rect) {
+        // 默认零矩形：越界 / 窗口已销毁 / 换算失败都落在这里（理由见末段）。
+        rect->left = rect->top = rect->width = rect->height = 0.0;
+
+        RECT r;
+        if (!nodeScreenRect(m_index, &r)) {
+            return S_OK;
+        }
+        rect->left = (double)r.left;
+        rect->top = (double)r.top;
+        // 用 right-left 而不是再乘一遍 scale：让 `left + width == right` 严格成立，
+        // 客户端拿矩形画焦点框时不会看到 1px 的缝。
+        rect->width = (double)(r.right - r.left);
+        rect->height = (double)(r.bottom - r.top);
         return S_OK;
     }
     HRESULT fragFragmentRoot(IRawElementProviderFragmentRoot **ret) {

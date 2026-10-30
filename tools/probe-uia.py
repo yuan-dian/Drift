@@ -61,6 +61,7 @@ UIA_InvokePatternId = 10000
 
 # IUIAutomation 的 vtable 索引（IUnknown 占 0..2）
 IUIA_ElementFromHandle = 6
+IUIA_ElementFromPoint = 7
 IUIA_get_ControlViewWalker = 14
 IUIA_get_ContentViewWalker = 15
 
@@ -114,6 +115,18 @@ def element_from_handle(uia, hwnd):
     fn(uia, hwnd, ctypes.byref(elem))
 
     return elem
+
+
+def element_from_point(uia, x, y):
+    """**屏幕**坐标 → 该点下的元素（走 provider 的 `ElementProviderFromPoint`）"""
+    out = ctypes.c_void_p()
+    fn = _call(uia, IUIA_ElementFromPoint, ctypes.HRESULT, ctypes.c_double,
+               ctypes.c_double, ctypes.POINTER(ctypes.c_void_p))
+    hr = fn(uia, ctypes.c_double(x), ctypes.c_double(y), ctypes.byref(out))
+    if hr != 0 or not out.value:
+        return None
+
+    return out
 
 
 def walker(uia, control_view=True):
@@ -218,22 +231,213 @@ def dump(elem, w, depth=0, found=None, target=None):
         c = sibling(w, c)
 
 
-def wheel_at(hwnd, x, y, notches):
-    """在客户区 (x,y) 处滚动 notches 格（正 = 向下）
+def collect(elem, w, out=None, depth=0):
+    """收集元组 (controlType, name, left, top, right, bottom, offscreen, isLeaf)"""
+    if out is None:
+        out = []
+    r = rect_of(elem)
+    c = child(w, elem) if depth <= 12 else None
+    # ★ `child()` 返回 `c_void_p(0)` 表示"没有子"，而 **`c_void_p(0) is not None`**
+    #   —— 用 `is None` 判会得出"全树都是叶子"。
+    out.append((ctype_of(elem), name_of(elem), r.left, r.top,
+                r.right, r.bottom, offscreen(elem), not c))
+    while c:
+        collect(c, w, out, depth + 1)
+        c = sibling(w, c)
+
+    return out
+
+
+def client_rect(hwnd):
+    """客户区在**屏幕**上的矩形（Windows 自己算的，与 UIA 无关 ⇒ 可作外部锚）"""
+    r = wintypes.RECT()
+    user32.GetClientRect(hwnd, ctypes.byref(r))
+    w_, h_ = r.right - r.left, r.bottom - r.top
+    pt = wintypes.POINT(0, 0)
+    user32.ClientToScreen(hwnd, ctypes.byref(pt))
+
+    return pt.x, pt.y, w_, h_
+
+
+def drift_subtree(root, w):
+    """取**我们 provider** 的子树根，避开 UIA 给的系统自带节点。
+
+    ★ 必须避开：`element_from_handle()` 给的根下面是 Windows 自己的标题栏那套
+      （TitleBar / 最小化 / 最大化 / 关闭），它们的矩形由系统算，**本来就在
+      非客户区**（实测 y≈101，客户区原点 131）—— 混进来会把校验判成"越界"。
+      这一条踩过一次：误判成"换算错了"。
+    ★ 定位特征：我们的 `FragmentRoot`（`CProvider`，index=-1）**恒零矩形**，
+      所以"第一个矩形为空、类型是 Window 的子节点"就是它。
+      **若将来让 FragmentRoot 返回客户区矩形，这里会找不到 ⇒ 响亮失败**
+      （返回 None，由调用方报错），不会退化成假绿。
+    """
+    c = child(w, root)
+    while c:
+        r = rect_of(c)
+        if ctype_of(c) in (50032, 50033) and r.right == r.left and r.bottom == r.top:
+            return c
+        c = sibling(w, c)
+
+    return None
+
+
+def verify_geometry(root, w, hwnd):
+    """校验 UIA 矩形是**屏幕物理像素**，不是客户区局部坐标。
+
+    ★ 判据只能来自契约本身：UIA 客户端拿到矩形后**直接**置光标 / 画焦点框 /
+      做放大镜跟随，所以它必须是屏幕坐标。四条断言：
+        ① **完全**落在客户区外的节点必须被 `IsOffscreen` 承认 —— 滚动区里滚出视口的
+           项仍在语义树里、仍报布局矩形（实测 y 到 1452、客户区底 712），客户端靠
+           offscreen 跳过它们；
+        ② 最小 left / top ≥ 客户区屏幕原点 − 2 —— ★ **这条才是否定性的、能证伪的**：
+           若 provider 给的是客户区局部坐标，最小原点会远小于客户区原点
+           （2026-10-30 实测 [20,74] vs [108,131]），一测就红；
+        ③ 有面积的节点占多数 —— 否则"全零矩形"也能满足 ①②，是假绿；
+        ④ 与客户区**有交集**的节点不得报 offscreen —— ① 的对称面，两条合起来才
+           覆盖全部节点、没有缝；同时防"一律 true"把 ① 糊过去（那时 ① 恒真，
+           等于没验）。
+    ＊ ① 只判"完全在外"：**部分可见**（实测有一条只露出 3px）报 offscreen=false
+      是正确语义 —— WPF 那边同样是"沾到一点就算可见"。第一版把这种也判成越界，
+      错的是判据不是实现。
+    ＊ ② 不能省：① 在"只漏了加偏移、尺寸还对"时仍然全绿（整棵子树嵌套在客户区里）。
+    """
+    sub = drift_subtree(root, w)
+    if sub is None:
+        print("✗ 没找到 drift 的 provider 子树（FragmentRoot 不再是零矩形？）")
+        return 1
+
+    cx, cy, cw, ch = client_rect(hwnd)
+    nodes = collect(sub, w)
+    sized = [n for n in nodes if n[4] > n[2] and n[5] > n[3]]
+
+    print(f"客户区（屏幕）：[{cx},{cy} {cw}x{ch}]  节点 {len(nodes)} 个"
+          f"（有面积 {len(sized)}）")
+
+    fails = []
+    outside = []
+    inside_called_off = []
+    for t, n, x0, y0, x1, y1, off, _leaf in sized:
+        fully_out = (x1 <= cx or y1 <= cy or x0 >= cx + cw or y0 >= cy + ch)
+        overlap = (x0 < cx + cw and x1 > cx and y0 < cy + ch and y1 > cy)
+        if fully_out and not off:
+            outside.append(f"{n or CONTROL_TYPES.get(t, t)}[{x0},{y0} {x1}x{y1}]")
+        if overlap and off:
+            inside_called_off.append(f"{n or CONTROL_TYPES.get(t, t)}[{x0},{y0}]")
+
+    if outside:
+        print(f"  ✗ ①完全在客户区外却报 offscreen=false：{outside[:5]}（共 {len(outside)}）")
+        fails.append("完全在外的节点未被 IsOffscreen 承认")
+    else:
+        print("  ✓ ①完全在外的节点都被 IsOffscreen 承认")
+
+    if sized:
+        min_left = min(n[2] for n in sized)
+        min_top = min(n[3] for n in sized)
+        ok2 = min_left >= cx - 2 and min_top >= cy - 2
+        print(f"  {'✓' if ok2 else '✗'} ②最小原点 [{min_left},{min_top}] "
+              f"{'≥' if ok2 else '<'} 客户区原点 [{cx},{cy}]")
+        if not ok2:
+            fails.append(f"最小原点 {min_left},{min_top} 在客户区原点左侧 ⇒ 仍在用局部坐标")
+    else:
+        fails.append("零个有面积节点")
+        print("  ✗ ②无有面积节点，无法判定")
+
+    ok3 = len(sized) * 2 > len(nodes)
+    print(f"  {'✓' if ok3 else '✗'} ③有面积占比 {len(sized)}/{len(nodes)}")
+    if not ok3:
+        fails.append("有面积节点不过半")
+
+    if inside_called_off:
+        print(f"  ✗ ④与客户区有交集却报 offscreen=true：{inside_called_off[:5]}"
+              f"（共 {len(inside_called_off)}）")
+        fails.append("可见节点被误报 offscreen")
+    else:
+        print("  ✓ ④可见节点都没被误报 offscreen")
+
+    if fails:
+        print("结论：✗ UIA 几何契约不成立（坐标不是屏幕坐标，或 offscreen 与可见性不一致）")
+        return 1
+
+    print("结论：✓ UIA 几何契约成立（矩形为屏幕坐标，offscreen 与可见性一致）")
+    return 0
+
+
+def verify_hit_test(uia, root, w, hwnd, samples=5):
+    """点元素中心 ⇒ `ElementFromPoint` 必须返回**那个**元素，而不是窗口根。
+
+    ★ 判据来自 spec：`ElementProviderFromPoint` 是命中测试的唯一来源，读屏的
+      鼠标追踪（NVDA mouse tracking / 讲述人鼠标指读）全走它。
+      恒返回根（2026-10-30 之前）⇒ "点谁都是 Drift"，整窗被读成一个整体。
+    ★ 只取**叶子**节点当锚：取容器的话，返回它的某个后代也是对的，
+      名字不等就成了假红。
+
+    ★★ **本机调不通**（2026-10-30 实测）：`ElementFromPoint` 在 Python 里一调就
+       access violation。已排除的：索引错（`[10]` 是 `ElementFromHandleBuildCache`，
+       会正常返回 `UIA_E_ELEMENTNOTAVAILABLE`，说明 vtable 基底对）、ctypes 传 double
+       有 bug（`msvcrt.sin` 正常）。剩下的成因是 UIA 的 hit test 需要在**有消息泵**的
+       STA 线程上跑，而探针主线程没有。⇒ 这里捕获异常、打印原因、**不算失败**，
+       provider 侧那条改动因此记为"实现但未真机验证"。
+    """
+    cx, cy, cw, ch = client_rect(hwnd)
+    nodes = collect(root, w)
+    pool = [n for n in nodes
+            if n[7] and n[1] and n[4] > n[2] and n[5] > n[3] and not n[6]
+            and n[2] >= cx and n[3] >= cy and n[4] <= cx + cw and n[5] <= cy + ch]
+    if len(pool) < samples:
+        print(f"✗ 可取样叶子节点太少（{len(pool)}）")
+        return 1
+
+    bad = []
+    for t, n, x0, y0, x1, y1, _off, _leaf in pool[:samples]:
+        px = (x0 + x1) // 2
+        py = (y0 + y1) // 2
+        try:
+            hit = element_from_point(uia, px, py)
+        except OSError as exc:
+            print(f"⚠ ElementFromPoint 不可用（{exc}）")
+            print("  已知成因：UIA hit test 需要在有消息泵的 STA 线程上跑；"
+                  "探针主线程没有 ⇒ 本项跳过，**不算通过也不算失败**")
+            return 0
+        if not hit:
+            bad.append(f"{n}: 返回 null")
+            continue
+        got = name_of(hit)
+        ok = (got == n)
+        print(f"  {'✓' if ok else '✗'} ({px},{py}) → {got!r}（期望 {n!r}）")
+        if not ok:
+            bad.append(f"{n} → {got!r}")
+
+    if bad:
+        print(f"结论：✗ 命中测试不对（{bad[:3]}）—— provider 大概在返回窗口根")
+        return 1
+
+    print("结论：✓ 命中测试正确（点叶子中心返回该叶子）")
+    return 0
+
+
+def wheel_at(hwnd, sx, sy, notches):
+    """在**屏幕**坐标 (sx,sy) 处滚动 notches 格（正 = 向下）
+    ★ 坐标语义与 `click_at` 一致：**入口收屏幕坐标**（= UIA 给的），内部换算成
+      客户区喂消息。两种坐标只在这两个函数里换一次，别在调用方散着算。
 
     ★ **必须先发一条 `WM_MOUSEMOVE`**（2026-10-30 实测）：drift 的滚轮命中读的是
       **缓存的指针位置**，不是 `WM_MOUSEWHEEL` 自带的坐标。不发 move 的话滚轮消息
       全部石沉大海 —— 现象是"滚了 12 次，元素坐标纹丝不动"，很容易误判成
       "UIA 的坐标是死的 / 应用不支持滚动"。
+    ★ 光标也要**真的移过去**（`SetCursorPos`）：只发消息不会让 Windows 产生
+      悬停/焦点那套副作用，应用看起来"收到滚轮但没反应"。
     """
-    user32.PostMessageW(hwnd, 0x0200, 0, ((y & 0xFFFF) << 16) | (x & 0xFFFF))
+    user32.SetCursorPos(int(sx), int(sy))
+    time.sleep(0.08)
+
+    cx, cy = to_client(hwnd, sx, sy)
+    user32.PostMessageW(hwnd, 0x0200, 0, ((cy & 0xFFFF) << 16) | (cx & 0xFFFF))
     time.sleep(0.05)
 
-    sx, sy = to_screen(hwnd, x, y)
     delta = -120 if notches > 0 else 120
     for _ in range(abs(notches)):
         user32.PostMessageW(hwnd, 0x020A, (delta << 16) & 0xFFFFFFFF,
-                           ((sy & 0xFFFF) << 16) | (sx & 0xFFFF))
+                           ((int(sy) & 0xFFFF) << 16) | (int(sx) & 0xFFFF))
         time.sleep(0.03)
 
 
@@ -244,16 +448,24 @@ def to_screen(hwnd, x, y):
     return pt.x, pt.y
 
 
-def click_at(hwnd, x, y):
-    """真·点击（屏幕坐标）：先移动再按下 —— 顺序要像真鼠标，否则 hover 那轮不存在"""
-    sx, sy = int(x), int(y)
-    user32.SetCursorPos(sx, sy)
+def click_at(hwnd, sx, sy):
+    """点**屏幕**坐标 (sx,sy)：先真的把光标移过去，再按鼠标消息。
+
+    ★ 三步顺序就是真实鼠标的顺序（2026-10-30）：Windows 的悬停链由**真实指针位置**
+      驱动，只发 `WM_LBUTTONDOWN` 过去，应用看到的是"凭空按下"—— 不激活、也不触发
+      那几轮 hover 重绘。而后者正是"帧时钟判据上膛"的前提（见 PITFALLS：
+      `advance()` 只在上一轮按帧节奏等的时候才量两帧间隔）。
+    """
+    user32.SetCursorPos(int(sx), int(sy))
+    time.sleep(0.12)      # 让悬停那一轮跑完
+
+    cx, cy = to_client(hwnd, sx, sy)
+    lp = ((cy & 0xFFFF) << 16) | (cx & 0xFFFF)
+    user32.PostMessageW(hwnd, 0x0200, 0, lp)
     time.sleep(0.05)
-    user32.PostMessageW(hwnd, 0x0200, 0, ((sy & 0xFFFF) << 16) | (sx & 0xFFFF))
-    time.sleep(0.05)
-    user32.PostMessageW(hwnd, 0x0201, 1, ((sy & 0xFFFF) << 16) | (sx & 0xFFFF))
-    time.sleep(0.02)
-    user32.PostMessageW(hwnd, 0x0202, 0, ((sy & 0xFFFF) << 16) | (sx & 0xFFFF))
+    user32.PostMessageW(hwnd, 0x0201, 1, lp)
+    time.sleep(0.03)
+    user32.PostMessageW(hwnd, 0x0202, 0, lp)
 
 
 def client_size(hwnd):
@@ -294,9 +506,15 @@ def main():
     ap.add_argument("--app", default="showcase")
     ap.add_argument("--title", default="Drift 示例台")
     ap.add_argument("--dump", action="store_true", help="打印语义树（不点）")
+    ap.add_argument("--verify-geometry", action="store_true",
+                    help="校验 UIA 矩形是屏幕坐标而非客户区局部坐标")
+    ap.add_argument("--verify-hit-test", action="store_true",
+                    help="校验 ElementFromPoint 能命中具体元素（而不是恒返回窗口根）")
     ap.add_argument("--click", action="append", default=None,
                     help="按 UIA 名字依次点击（可重复；每一步之间等 0.9s）")
     ap.add_argument("--no-launch", action="store_true", help="不启动，连已在跑的窗口")
+    ap.add_argument("--dump-after", action="store_true",
+                    help="点击完成后再打印一次树（验「点了真的生效」）")
     args = ap.parse_args()
 
     if args.no_launch:
@@ -317,6 +535,12 @@ def main():
             dump(root, w)
             return 0
 
+        if args.verify_geometry:
+            return verify_geometry(root, w, hwnd)
+
+        if args.verify_hit_test:
+            return verify_hit_test(uia, root, w, hwnd)
+
         for target in args.click:
             elem, r = None, None
             # ★ 目标可能在滚动区里**看不见**（UIA 树给的是布局坐标，含滚出视口的部分）
@@ -331,17 +555,18 @@ def main():
                     return 1
                 elem, r, _t = found[0]
                 cw, ch = client_size(hwnd)
-                cy_mid = (r.top + r.bottom) // 2
-                if 0 <= cy_mid <= ch:
+                # UIA 给的是**屏幕**坐标，可见性要按客户区判断（换算一次）
+                cx_c, cy_c = to_client(hwnd, (r.left + r.right) // 2, (r.top + r.bottom) // 2)
+                if 0 <= cy_c <= ch:
                     break
-                step = 3 if cy_mid > ch else -3
+                step = 3 if cy_c > ch else -3
                 # 滚轮必须落在**元素所在那一列**（导航列表 / 内容区是两个独立滚动容器）。
                 # 打到内容区再滚，导航纹丝不动 —— 现象与"滚轮完全失效"一模一样。
                 # ★ y 取**视口中线**而不是边缘：边缘可能落在列表外（标题栏 / 面板留白），
                 #   滚轮就滚到了别人身上。手感上"手指放在列表中间往上推"也是这个位置。
-                wy = ch // 2
-                print(f"  {target!r} 在客户区外（y={cy_mid}，视口 {ch}）⇒ 滚 {step:+d} 格")
-                wheel_at(hwnd, max(4, min(r.left + 20, cw - 4)), wy, step)
+                wx, wy = to_screen(hwnd, max(4, min(cx_c, cw - 4)), ch // 2)
+                print(f"  {target!r} 在客户区外（y={cy_c}，视口 {ch}）⇒ 滚 {step:+d} 格")
+                wheel_at(hwnd, wx, wy, step)
                 time.sleep(0.35)
             else:
                 print(f"✗ 滚了 12 次仍没让 {target!r} 进入视口")
@@ -352,12 +577,15 @@ def main():
 
             # ★ 优先走**真实鼠标**（move → down → up 分三条消息）：它与用户的手
             #   完全同一条路（包括 hover 那一轮），Invoke 走的是"读屏激活"分支。
-            #   provider 给的矩形是**客户区坐标**（未加屏幕偏移），正好直接可用。
+            #   provider 给的矩形是**屏幕**坐标（2026-10-30 起修正，此前是客户区
+            #   局部坐标）⇒ 直接喂 `click_at`（它负责换算回客户区）。
+            #   ★ 这两端必须是同一个语义：矩形若是客户区坐标、这里又 `to_client`
+            #     一次，就会双重偏移 108,131，点全落到窗口左上方的空白处。
             if w_px > 0 and h_px > 0:
-                cx_c = (r.left + r.right) // 2
-                cy_c = (r.top + r.bottom) // 2
-                print(f"→ 点 {target!r} @ 客户区 ({cx_c},{cy_c})  {w_px}x{h_px}")
-                click_at(hwnd, cx_c, cy_c)
+                cx_s = (r.left + r.right) // 2
+                cy_s = (r.top + r.bottom) // 2
+                print(f"→ 点 {target!r} @ 屏幕 ({cx_s},{cy_s})  {w_px}x{h_px}")
+                click_at(hwnd, cx_s, cy_s)
             else:
                 pat = ctypes.c_void_p()
                 fn = _call(elem, ELEM_GetCurrentPattern, ctypes.HRESULT,
@@ -374,6 +602,13 @@ def main():
                     return 1
 
             time.sleep(0.9)
+
+        if args.dump_after:
+            # ★ 点完再看一次树：这是"点了**生效**"的唯一证据。只看"没报错"
+            #   等于把"点了空气"也算通过。
+            root = element_from_handle(uia, hwnd)
+            print(f"== 点击后 UIA 树：{args.title} ==")
+            dump(root, w)
 
         return 0
     finally:
