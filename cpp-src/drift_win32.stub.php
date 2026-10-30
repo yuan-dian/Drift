@@ -302,7 +302,13 @@ function drift_win_ime_caret(int $hwnd, float $x, float $y, float $h): void {}
 function drift_win_pump(): array {}
 
 /**
- * **单调**毫秒时钟（`GetTickCount64`）。只做减法用，绝对原点无意义（§5.2 裁决 2）。
+ * **单调**毫秒时钟（`QueryPerformanceCounter`）。只做减法用，绝对原点无意义（§5.2 裁决 2）。
+ *
+ * ★★ 2026-10-30 从 `GetTickCount64` 换成 QPC：前者的粒度是**系统时钟中断**
+ *   （~15.6ms）⇒ 小于一帧的时间差被量化成 0 / 15.6 / 31.2，于是"帧耗时"在一帧
+ *   3ms 的规模上恒为 0、"唤醒延迟 < 5ms"这类判据**根本不可能成立**（实测 32ms
+ *   全是量化误差）。QPC 是 100ns 计数，通常 < 1µs 分辨率。
+ *   ★ 契约不变：仍是**单调毫秒**、只做减法、绝对原点无意义。
  *
  * ★ 不用 `microtime()`：AOT 标准库的 `time()` 粒度是秒且会被系统时间调整，
  *   而动画相位 = f(帧时间戳) ⇒ 时间倒流就是动画倒放。

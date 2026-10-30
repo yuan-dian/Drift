@@ -53,8 +53,10 @@ use Drift\Geometry\BoxConstraints;
  *   间隔本来就该是 400ms —— 那不是卡，是我们自己要求的。判据是
  *   `nextWaitMs()` 上一轮给的值落在 `[0, FRAME_MS]`（见 `advance()`）。
  *
- * ★ 精度边界（诚实）：`GetTickCount64` 的粒度就是系统时钟中断（~15.6ms）⇒ 这个
- *   数字只能判**量级**（"卡了一下" vs "没卡"），不能判"卡了 23ms 还是 31ms"。
+ * ★ 精度边界（2026-10-30 起**不再是边界**）：量具原来用 `GetTickCount64`，粒度是
+ *   系统时钟中断（~15.6ms）⇒ 只能判**量级**。换成 `QueryPerformanceCounter`
+ *   （µs 级）之后，`frameCostMs()` / `worstGapMs()` 才真的能量一帧几毫秒 ——
+ *   ★ 但历史数据（10-30 之前记下的 `worstGapMs`）仍是粗时钟下的数，别拿来比。
  *
  * @api 组合根不直接用 —— `EventLoop` 每轮问一次
  */
@@ -196,8 +198,9 @@ final class FrameClock
     /**
      * 记录一次卡顿。
      *
-     * ★ 间隔来自 `Platform::now()`（`GetTickCount64`），它的粒度就是系统时钟中断
-     *   （~15.6ms）⇒ 这个数字**只能用来判断量级**，不是精确耗时。
+     * ★ 间隔来自 `Platform::now()`（Win32 走 `QueryPerformanceCounter`，µs 级）
+     *   ⇒ 这个数字是**真实耗时**，不是"量级"。★ 前提是平台没有退回粗时钟
+     *   （`Platform::now()` 的注释写了分辨率属于契约）。
      */
     private function observe(float $gap): void
     {

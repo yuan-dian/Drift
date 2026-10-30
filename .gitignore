@@ -16,7 +16,17 @@ apps/*/build/
 *.ilk
 
 # ── 探针
-/probes
+# ★ 与上面 `/build/*` 同一条理由：写 `/probes` 会忽略**整个目录**，而目录被忽略时
+#   子文件的 `!` 否定**不生效** ⇒ 白名单要靠 `/probes/*` + `!/probes/<名字>/`。
+#
+# ★★ 规则（2026-10-30 定）：**探针默认不入库**（一次性的，跑完就废）；
+#   **只有被 `tools/probe-*.py` 依赖的**才开白名单 —— 判据必须可复现：
+#   驱动器在库里而工程不在，等于"这个判据对任何 clone 都是坏的"。
+#   今天唯一的白名单是 `probes/io_pool/`（A2/N5 的常驻真机判据）。
+/probes/*
+!/probes/io_pool/
+/probes/io_pool/build/
+/probes/io_pool/out.log
 
 # ── 工具输出 ──
 /Errors.log

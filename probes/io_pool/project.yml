@@ -1,0 +1,51 @@
+# ───────────────────────────────────────────────────────────────────────────
+# probes/io_pool —— C++ IO 线程池 / 唤醒通道的**真机判据**（A2 / N5）
+#
+# ★ 它不是"用完即弃"的一次性探针（`probes/taskhost_thread` 那种），而是**常驻判据**：
+#   改 `cpp-src/core/io_pool.*` 或 `cpp-src/win32/io_wake.*` 之后重跑它。
+#
+# ★ 为什么是探针而不是第 5 个 app：
+#   ① N5 的 claim 不是"界面能显示结果"，是"**泵能睡着、还能被叫醒**" —— 这句话的
+#      边界就是 `Win32Platform::waitEvents(-1)` + `drift_io_poll()`，**不需要窗口**。
+#      套一个 `Application` 只会引入布局 / 贴屏 / 主题三个无关变量，失败时还得先排除它们。
+#   ② 不需要新 app 的图标 / manifest / golden ⇒ 不碰 `apps/**` 的闸门
+#      （`AppSubclassCtorParent` 只扫 `apps/`）。
+#   ③ `smoke` 跑在 `php.exe` 里，`drift_io_*` **根本不存在**（AOT 才有）⇒ 池的判据
+#      只能在 AOT 产物里跑。
+#
+# ★ 构建：`php tools/drift-build.php probes/io_pool`
+#   （`drift-build` 2026-10-30 起收路径 —— 探针与 app 走同一个入口，不再各抄一份
+#    MSVC 环境配方，且白拿增量缓存 / 输入指纹 / 运行时 ini / 同一套诊断格式）
+# ★ 跑：`python tools/probe-io-pool.py`（驱动器负责超时看门狗 + 空闲 CPU 采样）
+#
+# ★ 目录名 == `name:`（`drift-build` 按目录名算产物路径，见那边的注释）。
+# ───────────────────────────────────────────────────────────────────────────
+
+name: io_pool
+version: 0.1.0
+
+# ★ 继承 `build/base.yml` 只为了 Skia 的编译/链接项 —— 不是因为探针要用 Skia，
+#   而是 `sources` 里含 `../../cpp-src`，而 tpc 会**无条件编译该目录下的每个 `.cc`**
+#   （`FileScanner::NATIVE_SRC_EXT`，不做可达性过滤）⇒ `drift_skia.cc` 也在内。
+#   ⇒ 不链 Skia 就是一堆 C1083。这是"探针复用框架源码"的必然代价，不是设计选择。
+include: ../../build/base.yml
+
+# ★ 覆盖 base.yml 的 `true`：探针要 stdout。
+#   ★ 但**权威输出仍是 `out.log`**（每行一次 write）—— 若某一步掀掉进程，
+#     前面的证据必须已经在盘上（`probes/taskhost_thread` 的教训）。
+no-console: false
+
+# 与 base.yml 的 version-info 递归合并（map 合并、标量覆盖）
+resource:
+  version-info:
+    internal-name: io_pool
+    original-filename: io_pool.exe
+    file-version: 0.1.0
+    product-version: 0.1.0
+    file-description: Drift IO pool probe
+
+# ★ list 型项**整体替换**（不是追加）⇒ 必须在这里写全，base.yml 里没有 `sources`。
+sources:
+  - src
+  - ../../src
+  - ../../cpp-src

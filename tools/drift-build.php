@@ -149,7 +149,11 @@ function usage(): never
     fwrite(STDOUT, <<<TXT
     drift-build —— 真机构建一个应用（调用 cl.exe / link.exe 出 exe）
 
-      用法： php tools/drift-build.php [应用名] [--full] [--dry]
+      用法： php tools/drift-build.php [应用名或工程路径] [--full] [--dry]
+
+      应用名    ⇒ `apps/<名字>/project.yml`（四个应用）
+      工程路径  ⇒ 目录或 `.yml` 文件（`probes/io_pool`）—— 真机探针用同一个入口，
+                   ★ 约定：目录名 == `name:`（产物按目录名算）
 
       --full   清空 tpc 缓存后全量重建（约 3 分钟；保留 build/base.yml 与
                build/app.manifest 这两个受控文件）。默认**不清** ⇒ 走增量
@@ -184,16 +188,18 @@ $full = in_array('--full', $argvRest, true);
 // `--dry`：只算输入清单并打印「这次会增量还是全量」，**不构建**（廉价诊断）。
 $dry = in_array('--dry', $argvRest, true);
 
-$app = 'hello';
+// 位置参数：**应用名或工程路径**（2026-10-30）。
+//   · 名字（`hello`）⇒ `apps/hello/project.yml` —— 四个应用的老路，逐字节不变；
+//   · 含分隔符或以 `.yml` 结尾 ⇒ 当成路径（`probes/io_pool`）—— **真机探针**用。
+//   ★ 为什么要合一：探针自己写一份 `build.sh` 就是第 4 份 MSVC 环境配方
+//     （`INCLUDE` / `LIB` / `PHPRC` 三件套），而它**复制不了**增量缓存、输入指纹、
+//     运行时 ini 与这套诊断格式 ⇒ 按"能替代就只留一套"，让它走同一个入口。
+$target = 'hello';
 foreach ($argvRest as $argument) {
     if ($argument !== '' && $argument[0] !== '-') {
-        $app = $argument;
+        $target = $argument;
         break;
     }
-}
-
-if (preg_match('/^[A-Za-z0-9_-]+$/', $app) !== 1) {
-    fail("应用名不合法：{$app}");
 }
 
 $root = realpath(ROOT);
@@ -201,9 +207,38 @@ if ($root === false) {
     fail('解析仓库根失败');
 }
 
-$project = "{$root}/apps/{$app}/project.yml";
-if (!is_file($project)) {
-    fail("找不到工程文件：{$project}");
+$looksLikePath = str_contains($target, '/') || str_contains($target, '\\')
+    || str_ends_with($target, '.yml') || str_ends_with($target, '.yaml');
+
+if ($looksLikePath) {
+    $project = $target;
+    if (!str_starts_with($project, '/') && preg_match('#^[A-Za-z]:#', $project) !== 1) {
+        $project = $root . '/' . $project;   // 相对**仓库根**（与"从仓库根调用"的约定一致）
+    }
+    if (is_dir($project)) {
+        $project .= '/project.yml';
+    }
+    $resolved = realpath($project);
+    if ($resolved === false || !is_file($resolved)) {
+        fail("找不到工程文件：{$target}");
+    }
+    $project = $resolved;
+    $projectDir = dirname($project);
+
+    // ★ 约定：**目录名 == `name:`**。产物是 `{$root}/{$app}.exe`（tpc 把 exe 落在
+    //   cwd，文件名取自 `name:`），而这里按目录名算路径 ⇒ 两边不一致时症状是
+    //   "构建成功但找不到产物"，排查成本远高于一条命名约定。
+    $app = basename($projectDir);
+} else {
+    $app = $target;
+    if (preg_match('/^[A-Za-z0-9_-]+$/', $app) !== 1) {
+        fail("应用名不合法：{$app}");
+    }
+    $projectDir = "{$root}/apps/{$app}";
+    $project = "{$projectDir}/project.yml";
+    if (!is_file($project)) {
+        fail("找不到工程文件：{$project}");
+    }
 }
 
 // ─────────────────────────────────────────────────── tpc 入口 / PHP ──
@@ -317,7 +352,9 @@ $manifestFile = "{$work}/inputs.sha";
 
 $inputs = hash_init('sha256');
 hash_update($inputs, 'src:' . hashTree("{$root}/src") . "\n");
-hash_update($inputs, 'app:' . hashTree("{$root}/apps/{$app}") . "\n");
+// ★ 指纹算的是**工程目录**（不是 `apps/{$app}`）：应用与探针走同一条路，
+//   而且探针的目录名与 `name:` 一致是约定，两者等价。
+hash_update($inputs, 'app:' . hashTree($projectDir) . "\n");
 hash_update($inputs, 'cpp:' . hashTree("{$root}/cpp-src") . "\n");
 // 配置与清单是**受控文件**：改了它们同样影响构建结果
 hash_update($inputs, 'base:' . (is_file("{$root}/build/base.yml") ? (string) hash_file('sha256', "{$root}/build/base.yml") : '') . "\n");
@@ -349,7 +386,7 @@ if ($dry) {
 $command = [$phpBinary, $entry, '--project', $project, '-O2', '-m', 'bin'];
 
 fwrite(STDOUT, sprintf(
-    "[drift-build] 应用 %s ｜ 入口 %s ｜ MSVC %s ｜ SDK %s\n",
+    "[drift-build] 工程 %s ｜ 入口 %s ｜ MSVC %s ｜ SDK %s\n",
     $app,
     $entry,
     $msvcVersion,

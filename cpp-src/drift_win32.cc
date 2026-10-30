@@ -3182,8 +3182,37 @@ Array php_drift_win_pump() {
     }
 }
 
+/**
+ * **单调**毫秒时钟 —— `QueryPerformanceCounter`（2026-10-30 从 `GetTickCount64` 换掉）。
+ *
+ * ★★ 为什么换：`GetTickCount64` 的粒度是**系统时钟中断**（本机 ~15.6ms）⇒ 任何
+ *   小于一帧的时间差都被量化成 0 / 15.6 / 31.2。后果不是"数字不好看"，是**量具
+ *   量不出要量的事**：
+ *     · 帧耗时（`FrameClock::frameCostMs()`）在一帧 3ms 的规模上恒为 0；
+ *     · "唤醒延迟 < 5ms"这类判据**根本不可能成立**（实测 32ms 全是量化误差）；
+ *     · 15ms 帧节奏的抖动完全看不见。
+ *   QPC 是 Windows 上**高分辨率单调**时钟（100ns 计数，通常 < 1µs 分辨率），
+ *   契约不变：仍是单调毫秒、只做减法、绝对原点无意义（§5.2 裁决 2）。
+ *
+ * ★ 为什么不用 `timeGetTime` / `microtime()`：前者同 `GetTickCount64` 的粒度问题
+ *   （要靠 `timeBeginPeriod` 抬系统定时器，那是全进程副作用）；后者会被系统时间
+ *   调整 ⇒ 时间倒流就是动画倒放。
+ *
+ * ★ 频率只查一次：`QueryPerformanceFrequency` 是常量，每次调用多一次系统调用不值。
+ */
 Float php_drift_win_now_ms() {
-    return (Float)(double)GetTickCount64();
+    // 频率是常量 ⇒ 只换算一次（每次调用多一次系统调用不值）
+    static double msPerTick = 0.0;
+    if (msPerTick == 0.0) {
+        LARGE_INTEGER frequency;
+        QueryPerformanceFrequency(&frequency);
+        msPerTick = 1000.0 / (double) frequency.QuadPart;
+    }
+
+    LARGE_INTEGER counter;
+    QueryPerformanceCounter(&counter);
+
+    return (Float)((double) counter.QuadPart * msPerTick);
 }
 
 /** 当前线程 id —— 供 PHP 侧做 UI 线程身份/断言（§17.4.2.1）。 */
