@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\App;
 
+use Drift\Async\Future;
 use Drift\Errors;
 
 /**
@@ -59,16 +60,28 @@ final class ProcessTaskHost implements TaskHost
     /**
      * 已发出、等回复的任务（`worker` = 记在哪个 worker 名下，用于挑空闲）。
      *
-     * @var array<int, array{onDone: \Closure, onError: ?\Closure, worker: int}>
+     * @var array<int, array{future: Future, worker: int}>
      */
     private array $inflight = [];
 
     /**
      * 还没发出去的任务（没有空闲 worker / worker 没起好）。
      *
-     * @var list<array{id: int, line: string, onDone: \Closure, onError: ?\Closure}>
+     * @var list<array{id: int, line: string, future: Future}>
      */
     private array $queue = [];
+
+    /**
+     * **当场就失败**的任务（不是 `NamedJob` / 名字没注册 / 参数转不了 JSON）。
+     *
+     * ★ 它们不进 `$queue`（那里是"等着发出去"，这些永远发不出去），也不在这里
+     *   直接 `reject()`：`submit()` 返回之后调用方才挂 `catch()`，当场结算会
+     *   让"刚提交就 Fatal"。⇒ 入这个表，由 `drain()` 在**帧内**结算 ——
+     *   与真任务失败走同一条时序，调用方看不出差别。
+     *
+     * @var list<Completion>
+     */
+    private array $failed = [];
 
     private int $seq = 0;
 
@@ -114,44 +127,68 @@ final class ProcessTaskHost implements TaskHost
     /** @var array<string, \Closure> */
     private array $registry = [];
 
-    public function submit(Job $job, callable $onDone, ?callable $onError = null): void
+    public function submit(Job $job): Future
     {
-        if (!$job instanceof NamedJob) {
-            Errors::report(
-                'ProcessTaskHost 只能跑 NamedJob —— ' . get_class($job)
-                . ' 没法跨进程重建（要传对象就摊平成数组，见 NamedJob 的注释）'
-            );
+        $future = Future::pending();
 
-            return;
+        if (!$job instanceof NamedJob) {
+            $this->fail($future, 'ProcessTaskHost 只能跑 NamedJob —— ' . get_class($job)
+                . ' 没法跨进程重建（要传对象就摊平成数组，见 NamedJob 的注释）');
+
+            return $future;
         }
 
         $name = $job->name();
         if (!isset($this->registry[$name])) {
-            Errors::report('ProcessTaskHost：任务未注册 —— ' . $name . '（UI 与 worker 的注册表必须一致）');
+            $this->fail($future, 'ProcessTaskHost：任务未注册 —— ' . $name . '（UI 与 worker 的注册表必须一致）');
 
-            return;
+            return $future;
         }
 
         $line = json_encode(['id' => $this->seq + 1, 'job' => $name, 'arg' => $job->args()]);
         if ($line === false) {
-            Errors::report('ProcessTaskHost：参数转不了 JSON —— ' . $name . '：' . json_last_error_msg());
+            $this->fail($future, 'ProcessTaskHost：参数转不了 JSON —— ' . $name . '：' . json_last_error_msg());
 
-            return;
+            return $future;
         }
 
         $this->seq++;
         $this->queue[] = [
             'id' => $this->seq,
             'line' => $line,
-            'onDone' => \Closure::fromCallable($onDone),
-            'onError' => $onError === null ? null : \Closure::fromCallable($onError),
+            'future' => $future,
         ];
 
         $this->flush();
+
+        return $future;
+    }
+
+    /**
+     * 记一条"发不出去"的失败（帧内结算，见 `$failed` 的注释）。
+     *
+     * ★ 用 `RuntimeException` 而不是 `Errors::report`：这些是**调用方写错了**，
+     *   它有权 `catch()` 兜住并显示；直接喊 Fatal 会把"可恢复的配置错误"变成
+     *   崩溃。而没人 `catch()` 时 `Future` 自己会走 Fatal 序列（G2 仍然成立）。
+     */
+    private function fail(Future $future, string $message): void
+    {
+        $this->failed[] = new Completion(null, new \RuntimeException($message), $future);
     }
 
     public function drain(callable $onEach): void
     {
+        // ★ 发不出去的那些**先结算**：它们比在途的更早（`submit()` 时就定了），
+        //   而且结算顺序影响"同一帧里谁先看到失败"。
+        if ($this->failed !== []) {
+            $failed = $this->failed;
+            $this->failed = [];
+
+            foreach ($failed as $completion) {
+                $onEach($completion);
+            }
+        }
+
         $this->readReplies($onEach);
         $this->reap($onEach);
         $this->flush();
@@ -166,7 +203,7 @@ final class ProcessTaskHost implements TaskHost
      */
     public function pending(): int
     {
-        return \count($this->inflight) + \count($this->queue);
+        return \count($this->inflight) + \count($this->queue) + \count($this->failed);
     }
 
     /** 在途任务数（测试与 devtools 用） */
@@ -326,7 +363,7 @@ final class ProcessTaskHost implements TaskHost
     /**
      * 往指定 worker 写一行；成功则记进在途表。
      *
-     * @param array{id: int, line: string, onDone: \Closure, onError: ?\Closure} $item
+     * @param array{id: int, line: string, future: Future} $item
      */
     private function send(int $index, array $item): bool
     {
@@ -342,8 +379,7 @@ final class ProcessTaskHost implements TaskHost
         @fflush($worker['in']);
 
         $this->inflight[$item['id']] = [
-            'onDone' => $item['onDone'],
-            'onError' => $item['onError'],
+            'future' => $item['future'],
             'worker' => $index,
         ];
 
@@ -417,7 +453,7 @@ final class ProcessTaskHost implements TaskHost
         unset($this->inflight[$id]);
 
         if (!empty($msg['ok'])) {
-            $onEach(new Completion($msg['value'] ?? null, null, $item['onDone'], $item['onError']));
+            $onEach(new Completion($msg['value'] ?? null, null, $item['future']));
 
             return;
         }
@@ -425,8 +461,7 @@ final class ProcessTaskHost implements TaskHost
         $onEach(new Completion(
             null,
             new \RuntimeException((string) ($msg['error'] ?? 'worker 未给出错误信息')),
-            $item['onDone'],
-            $item['onError'],
+            $item['future'],
         ));
     }
 
@@ -469,7 +504,7 @@ final class ProcessTaskHost implements TaskHost
                 if ($item['worker'] !== $index) {
                     continue;
                 }
-                $onEach(new Completion(null, new \RuntimeException($message), $item['onDone'], $item['onError']));
+                $onEach(new Completion(null, new \RuntimeException($message), $item['future']));
                 unset($this->inflight[$id]);
             }
 

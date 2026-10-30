@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\App;
 
 use Drift\App\Io\IoPoller;
+use Drift\Async\Future;
 use Drift\Errors;
 
 /**
@@ -63,7 +64,7 @@ final class PumpHost
      *   为它造一个类只会多一层没有信息的壳（对比 `Completion`：那个要跨边界传，
      *   有语义）。
      *
-     * @var list<array{job: SlicedJob, onDone: \Closure, onError: ?\Closure, budgetMs: int}>
+     * @var list<array{job: SlicedJob, future: Future, budgetMs: int}>
      */
     private array $sliced = [];
 
@@ -251,7 +252,7 @@ final class PumpHost
                 try {
                     $more = $item['job']->step($item['budgetMs']);
                 } catch (\Throwable $e) {
-                    $this->complete(new Completion(null, $e, $item['onDone'], $item['onError']));
+                    $item['future']->reject($e);
 
                     continue;
                 }
@@ -262,7 +263,7 @@ final class PumpHost
                     continue;
                 }
 
-                $this->complete(new Completion($item['job']->result(), null, $item['onDone'], $item['onError']));
+                $item['future']->resolve($item['job']->result());
             }
         } catch (\Throwable $e) {
             // 回调抛异常：与 `pumpTasks()` 同策略（S3：无边界 ⇒ Fatal 序列，不吞）
@@ -304,25 +305,23 @@ final class PumpHost
      *   回调同样**在帧内**、同样在 `settle()` 之前（所以改 Store 同帧生效）。
      * ★ 预算默认 {@see self::SLICE_BUDGET_MS}；任务自己决定一次干多少。
      *
-     * @param callable(mixed): void $onDone 完成后回调（帧内执行）
-     * @param null|callable(\Throwable): void $onError 失败回调；`null` ⇒ Fatal 序列
+     * @return Future 完成时结算（`step()` 的最终结果 / 抛出的异常）
      *
      * @api
      */
-    public function submitSliced(
-        SlicedJob $job,
-        callable $onDone,
-        ?callable $onError = null,
-        int $budgetMs = self::SLICE_BUDGET_MS,
-    ): void {
+    public function submitSliced(SlicedJob $job, int $budgetMs = self::SLICE_BUDGET_MS): Future
+    {
         $this->host->assertUiThread('submitSliced');
+
+        $future = Future::pending();
 
         $this->sliced[] = [
             'job' => $job,
-            'onDone' => \Closure::fromCallable($onDone),
-            'onError' => $onError === null ? null : \Closure::fromCallable($onError),
+            'future' => $future,
             'budgetMs' => $budgetMs,
         ];
+
+        return $future;
     }
 
     /**
@@ -384,29 +383,22 @@ final class PumpHost
     }
 
     /**
-     * 把一条 `Completion` 送到对应回调（成功 → `onDone`，失败 → `onError`）。
+     * 结算一条 `Completion`（成功 → `resolve()`，失败 → `reject()`）。
      *
-     * ★ **没给 `$onError` ⇒ Fatal 序列**：任务失败被静默吞掉就是"界面永远转圈"，
-     *   与三态的 `Error` 分支（§A.2.9）矛盾 —— 那是 G2 禁止的半静默。
+     * ★ **没挂 `catch()` ⇒ Fatal 序列**（`Future::reject()` 自己判）：任务失败被
+     *   静默吞掉就是"界面永远转圈"，与三态的 `Error` 分支（§A.2.9）矛盾 ——
+     *   那是 G2 禁止的半静默。判据从"这里查 `$onError` 是否为 null"搬到
+     *   "`Future` 结算时有没有 err 处理器"，**语义一模一样，位置只有一处**。
      */
     private function complete(Completion $completion): void
     {
-        if ($completion->error !== null) {
-            if ($completion->onError === null) {
-                Errors::report(sprintf(
-                    '后台任务失败（未提供 onError）—— %s: %s',
-                    get_class($completion->error),
-                    $completion->error->getMessage(),
-                ));
-
-                return;
-            }
-
-            ($completion->onError)($completion->error);
+        $error = $completion->error;
+        if ($error !== null) {
+            $completion->future->reject($error);
 
             return;
         }
 
-        ($completion->onDone)($completion->value);
+        $completion->future->resolve($completion->value);
     }
 }

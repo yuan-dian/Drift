@@ -231,7 +231,7 @@ if (str_starts_with($caseArg, '--case=')) {
         // 吞掉就是"界面永远转圈"，与三态的 Error 分支（§A.2.9）矛盾。
         $app = new TaskApplication();
         $app->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(320.0, 240.0)));
-        $app->tasks()?->submit(new ThrowingJob('没人接的失败'), function (int $v): void {
+        $app->tasks()?->submit(new ThrowingJob('没人接的失败'))->then(function (int $v): void {
         });
         $app->frame(16.0, BoxConstraints::loose(new Size(320.0, 240.0)));
     }
@@ -3964,13 +3964,26 @@ check(
 // ★ **诚实边界**：端口的**生产消费者**仍是 `HttpUserSource`（§A.2.8，归 M4）；
 //   本段是"端口契约"的判据，`apps/users` 走的是 `MemoryUserSource`（同步）。
 
+// ★ **统一结算器**（N3）：与 `PumpHost::complete()` 逐字同构 —— 端口层自己搬结果，
+//   不借框架。`Future` 是唯一的结果形状 ⇒ 这里只需 resolve/reject 两个分支。
+$settle = static function (Completion $c): void {
+    $error = $c->error;
+    if ($error !== null) {
+        $c->future->reject($error);
+
+        return;
+    }
+
+    $c->future->resolve($c->value);
+};
+
 $tasks = new SyncTaskHost();
 check('TaskHost · `SyncTaskHost` 是端口的实现', $tasks instanceof TaskHost);
 check('TaskHost · `SumJob` 是 `Job` 的实现（类，不是闭包）', new SumJob(1) instanceof Job);
 
 // ① 当帧不回调：submit 只入队
 $delivered = [];
-$tasks->submit(new SumJob(10), function (int $sum) use (&$delivered): void {
+$tasks->submit(new SumJob(10))->then(function (int $sum) use (&$delivered): void {
     $delivered[] = $sum;
 });
 check(
@@ -3980,28 +3993,24 @@ check(
 );
 
 // ② drain 取出并回调：值正确 + 恰好一次
-$tasks->drain(function (Completion $c): void {
-    ($c->onDone)($c->value);
-});
+$tasks->drain($settle);
 check(
-    'TaskHost · drain() 把结果交给 onDone（1+…+10 = 55）',
+    'TaskHost · drain() 把结果交给 then()（1+…+10 = 55）',
     $delivered === [55],
     'delivered=' . implode(',', $delivered),
 );
 check('TaskHost · 回调恰好一次（不是 0 次也不是 2 次）', count($delivered) === 1);
 
 // ③ drain = 取走：队列已清空 ⇒ 再 drain 不重复回调
-$tasks->drain(function (Completion $c): void {
-    ($c->onDone)($c->value);
-});
+$tasks->drain($settle);
 check('TaskHost · drain() 取走即清空（再 drain 不重复回调）', count($delivered) === 1, (string) count($delivered));
 
 // ④ 顺序：连提交 ⇒ FIFO
 $order = [];
-$tasks->submit(new SumJob(1), function (int $n) use (&$order): void { $order[] = 'a' . $n; });
-$tasks->submit(new SumJob(3), function (int $n) use (&$order): void { $order[] = 'b' . $n; });
-$tasks->submit(new SumJob(6), function (int $n) use (&$order): void { $order[] = 'c' . $n; });
-$tasks->drain(function (Completion $c): void { ($c->onDone)($c->value); });
+$tasks->submit(new SumJob(1))->then(function (int $n) use (&$order): void { $order[] = 'a' . $n; });
+$tasks->submit(new SumJob(3))->then(function (int $n) use (&$order): void { $order[] = 'b' . $n; });
+$tasks->submit(new SumJob(6))->then(function (int $n) use (&$order): void { $order[] = 'c' . $n; });
+$tasks->drain($settle);
 check(
     'TaskHost · 多任务按提交序回贴（FIFO）',
     $order === ['a1', 'b6', 'c21'],
@@ -4010,10 +4019,10 @@ check(
 
 // ⑤ 搬对象：闭包签名把 `mixed` 收窄成 `TaskRow` ⇒ 回调拿到的就是 Job 造的那个实例
 $gotRow = null;
-$tasks->submit(new TaskRowJob('ada'), function (TaskRow $r) use (&$gotRow): void {
+$tasks->submit(new TaskRowJob('ada'))->then(function (TaskRow $r) use (&$gotRow): void {
     $gotRow = $r;
 });
-$tasks->drain(function (Completion $c): void { ($c->onDone)($c->value); });
+$tasks->drain($settle);
 check(
     'TaskHost · 端口搬得动类实例（`mixed` 由调用点闭包签名收窄）',
     $gotRow instanceof TaskRow && $gotRow->name === 'ada' && $gotRow->len === 3,
@@ -4023,56 +4032,50 @@ check(
 // ⑥ 反向自检：收窄不是"随便什么都收" —— 换类型就该被 PHP 拦下。
 //   ★ 抛点在 **drain()**（不是 submit）：队列把"回调时机"挪了，类型检查跟着挪 ——
 //     这正是"回调真的在 drain 里跑"的第二重证据。
-$typeError = '';
-try {
-    $tasks->submit(new SumJob(1), function (TaskRow $r): void {});
-    $tasks->drain(function (Completion $c): void { ($c->onDone)($c->value); });
-} catch (\TypeError $e) {
-    $typeError = $e->getMessage();
-}
+// ★ N3 之后**异常不再逃出 drain**：`Future::then()` 的回调抛错会变成下游 Future
+//   的失败（`catch()` 能接住），没人接才走 Fatal。所以判据从"catch 到 TypeError"
+//   改成"catch 里拿得到 TypeError" —— 证明的仍是**收窄在 drain 时才生效**。
+$typeError = null;
+$tasks->submit(new SumJob(1))->then(function (TaskRow $r): void {
+})->catch(function (\Throwable $e) use (&$typeError): void {
+    $typeError = $e;
+});
+check('TaskHost · 收窄在 drain 之前没有触发（回调确实等到 drain 才跑）', $typeError === null);
+$tasks->drain($settle);
 check(
     'TaskHost · 闭包签名收窄在 drain 时生效（传错类型 ⇒ TypeError，不是静默）',
-    $typeError !== '',
-    $typeError,
+    $typeError instanceof \TypeError,
+    $typeError instanceof \Throwable ? $typeError->getMessage() : 'null',
 );
 
 // ⑦ swap 语义：drain 期间新入队的留到下一帧（否则"回调里再 submit"会让一帧无限长）
 $waves = [];
-$tasks->submit(new SumJob(1), function (int $n) use (&$waves, $tasks): void {
+$tasks->submit(new SumJob(1))->then(function (int $n) use (&$waves, $tasks): void {
     $waves[] = 'a' . $n;
-    $tasks->submit(new SumJob(2), function (int $m) use (&$waves): void { $waves[] = 'b' . $m; });
+    $tasks->submit(new SumJob(2))->then(function (int $m) use (&$waves): void { $waves[] = 'b' . $m; });
 });
-$tasks->drain(function (Completion $c): void { ($c->onDone)($c->value); });
+$tasks->drain($settle);
 check(
     'TaskHost · drain 期间新入队的留到下一帧（一帧的工作量有界）',
     $waves === ['a1'],
     'waves=' . implode(',', $waves),
 );
-$tasks->drain(function (Completion $c): void { ($c->onDone)($c->value); });
+$tasks->drain($settle);
 check('TaskHost · 下一帧取到上一帧入队的（a1, b3 —— SumJob(2) = 3）', $waves === ['a1', 'b3'], 'waves=' . implode(',', $waves));
 
 // ⑧ 错误通道：`run()` 抛异常 ⇒ 走 onError（两条通道**互斥**，不是都调）
 $boom = null;
 $okCalled = 0;
-$tasks->submit(
-    new ThrowingJob('设备离线'),
-    function (int $v) use (&$okCalled): void { $okCalled++; },
-    function (\Throwable $e) use (&$boom): void { $boom = $e; },
-);
-$tasks->drain(function (Completion $c): void {
-    if ($c->error !== null) {
-        ($c->onError)($c->error);
-
-        return;
-    }
-    ($c->onDone)($c->value);
-});
+$tasks->submit(new ThrowingJob('设备离线'))
+    ->then(function (int $v) use (&$okCalled): void { $okCalled++; })
+    ->catch(function (\Throwable $e) use (&$boom): void { $boom = $e; });
+$tasks->drain($settle);
 check(
-    'TaskHost · run() 抛异常 ⇒ 走 onError（异常原文带出）',
+    'TaskHost · run() 抛异常 ⇒ 走 catch()（异常原文带出）',
     $boom instanceof \RuntimeException && str_contains($boom->getMessage(), '设备离线'),
     $boom instanceof \Throwable ? $boom->getMessage() : 'null',
 );
-check('TaskHost · 失败任务**不**调 onDone（两条通道互斥）', $okCalled === 0, (string) $okCalled);
+check('TaskHost · 失败任务**不**调 then()（两条通道互斥）', $okCalled === 0, (string) $okCalled);
 
 // ── ㊲ P0 接线：结果队列接进帧循环（§17.4.2 的帧驱动 + 同帧重建）──────────
 //
@@ -4096,7 +4099,7 @@ check(
 
 // ① 帧驱动：submit 之后当帧不回调，frame() 才回调
 $hit = 0;
-$taskApp->tasks()?->submit(new SumJob(4), function (int $sum) use (&$hit): void {
+$taskApp->tasks()?->submit(new SumJob(4))->then(function (int $sum) use (&$hit): void {
     $hit = $sum;
 });
 check('P0 · submit() 之后回调未执行（帧还没来）', $hit === 0, (string) $hit);
@@ -4105,12 +4108,12 @@ check('P0 · frame() 的 drain 段执行了回调（1+2+3+4 = 10）', $hit === 1
 
 // ② 同帧重建：`onDone` 里改 Store ⇒ 本帧 settle 就重建（drain 在 settle **之前**）
 $buildsBefore = $taskState?->builds ?? -1;
-$taskApp->tasks()?->submit(new SumJob(3), function (int $sum) use ($taskApp): void {
+$taskApp->tasks()?->submit(new SumJob(3))->then(function (int $sum) use ($taskApp): void {
     $taskApp->store->setStatus($sum * 10); // 6 ⇒ 60
 });
 $taskApp->frame(32.0, BoxConstraints::loose(new Size(320.0, 240.0)));
 check(
-    'P0 · onDone 里改 Store ⇒ **同帧**重建（builds +1 且读到新值）',
+    'P0 · then() 里改 Store ⇒ **同帧**重建（builds +1 且读到新值）',
     $taskState !== null && $taskState->builds === $buildsBefore + 1 && $taskState->seen === 60,
     sprintf('builds %d→%d seen=%d', $buildsBefore, $taskState?->builds ?? -1, $taskState?->seen ?? -1),
 );
@@ -4126,17 +4129,15 @@ check(
 
 // ④ 失败走 onError（应用层）：回调抛错不许拖垮帧循环
 $caught = null;
-$taskApp->tasks()?->submit(
-    new ThrowingJob('服务不可达'),
-    function (int $v): void {
-    },
-    function (\Throwable $e) use (&$caught): void {
+$taskApp->tasks()?->submit(new ThrowingJob('服务不可达'))
+    ->then(function (int $v): void {
+    })
+    ->catch(function (\Throwable $e) use (&$caught): void {
         $caught = $e;
-    },
-);
+    });
 $taskApp->frame(64.0, BoxConstraints::loose(new Size(320.0, 240.0)));
 check(
-    'P0 · 应用层失败走 onError（帧照常走完）',
+    'P0 · 应用层失败走 catch()（帧照常走完）',
     $caught instanceof \RuntimeException && $caught->getMessage() === '服务不可达',
     $caught instanceof \Throwable ? $caught->getMessage() : 'null',
 );
@@ -4153,11 +4154,11 @@ check('P0 · 无端口时 frame() 行为不变（drain 段整段跳过）', $noT
 fresh($log);
 [$code, $taskErrOut] = runCase(__FILE__, 'taskerr', null);
 check(
-    'P0 · 任务失败且未给 onError ⇒ Fatal（响亮，不静默）',
+    'P0 · 任务失败且没挂 catch() ⇒ Fatal（响亮，不静默）',
     $code === 3,
     '实际 ' . $code . ' / ' . $taskErrOut,
 );
-check('P0 · 未给 onError 写了 Errors.log', str_contains(logText($log), '未提供 onError'));
+check('P0 · 没挂 catch() 时写了 Errors.log', str_contains(logText($log), '没有 catch()'));
 fresh($log);
 if (is_file($log)) {
     unlink($log);
@@ -4170,14 +4171,14 @@ if (is_file($log)) {
 //   ★ 分片**不走 `TaskHost`** —— 它永远在 UI 线程跑，与"换后端"正交。
 //   判据：① 进队列不执行 ② 一帧只推一步 ③ N 帧后完成 ④ 结果与一次性算相同
 //   ⑤ 完成后出队且不再步进 ⑥ 每步耗时有界 ⑦ 完成回调改 Store ⇒ 同帧重建
-//   ⑧ step 抛异常 ⇒ onError 且出队
+//   ⑧ step 抛异常 ⇒ catch() 且出队
 
 $sliceApp = new TaskApplication();
 $sliceApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(320.0, 240.0)));
 
 $sliceJob = new CountJob(100000, 10000); // 10 万次累加、每帧 1 万 ⇒ 10 帧
 $sliceDone = null;
-$sliceApp->submitSliced($sliceJob, function (int $sum) use (&$sliceDone): void {
+$sliceApp->submitSliced($sliceJob)->then(function (int $sum) use (&$sliceDone): void {
     $sliceDone = $sum;
 });
 check(
@@ -4221,7 +4222,7 @@ check(
 
 // ⑦ 完成回调改 Store ⇒ 同帧重建（与 ㊲ 同一条：pumpSliced 也在 settle 之前）
 $buildsBeforeSlice = $taskState?->builds ?? -1;
-$taskApp->submitSliced(new CountJob(2000, 1000), function (int $sum) use ($taskApp): void {
+$taskApp->submitSliced(new CountJob(2000, 1000))->then(function (int $sum) use ($taskApp): void {
     $taskApp->store->setStatus(7);
 });
 $taskApp->frame(80.0, BoxConstraints::loose(new Size(320.0, 240.0)));
@@ -4239,17 +4240,15 @@ check(
 
 // ⑧ 错误通道：step 抛 ⇒ onError 且出队（不静默、不重试）
 $sliceErr = null;
-$taskApp->submitSliced(
-    new FailSliceJob(),
-    function (mixed $v): void {
-    },
-    function (\Throwable $e) use (&$sliceErr): void {
+$taskApp->submitSliced(new FailSliceJob())
+    ->then(function (mixed $v): void {
+    })
+    ->catch(function (\Throwable $e) use (&$sliceErr): void {
         $sliceErr = $e;
-    },
-);
+    });
 $taskApp->frame(112.0, BoxConstraints::loose(new Size(320.0, 240.0)));
 check(
-    'P1 · step 抛异常 ⇒ onError 且出队（任务终止，不重试）',
+    'P1 · step 抛异常 ⇒ catch() 且出队（任务终止，不重试）',
     $sliceErr instanceof \RuntimeException && $sliceErr->getMessage() === '分片中途失败' && $taskApp->slicedCount() === 0,
     ($sliceErr instanceof \Throwable ? $sliceErr->getMessage() : 'null') . ' queued=' . $taskApp->slicedCount(),
 );
@@ -4345,31 +4344,22 @@ $procHost = new ProcessTaskHost([PHP_BINARY, $workerScript], SmokeJobRegistry::m
 // ★ `$until` 必须**收参数**（不能靠闭包捕获 `$sink`）：`static fn() => $sink !== []`
 //   按值捕获的是**创建时**的空数组 ⇒ 永远 false ⇒ 每次 pump 等满 deadline
 //   （本段第一版就是这样，smoke 从 10s 涨到 78s）。
-$pump = static function (ProcessTaskHost $host, array &$sink, callable $until): void {
+$pump = static function (ProcessTaskHost $host, array &$sink, callable $until) use ($settle): void {
     $deadline = microtime(true) + 10.0;
     while (!$until($sink) && microtime(true) < $deadline) {
         usleep(5000);
-        // ★ 走**生产路径**（`$onDone` / `$onError`），不直接读 `Completion->value` ——
-        //   否则测的是"队列里有值"，测不出"回调真的被调了"（本段第一版就栽在这：
-        //   断言期望 `a1` 却拿到 `1` —— `onDone` 根本没被调）。
-        $host->drain(function (Completion $c) use (&$sink): void {
-            if ($c->error !== null) {
-                if ($c->onError !== null) {
-                    ($c->onError)($c->error);
-                } else {
-                    $sink[] = 'ERR:' . $c->error->getMessage();
-                }
-
-                return;
-            }
-            ($c->onDone)($c->value);
-        });
+        // ★ 走**生产路径**（`drain` 结算 Future，回调由 `then()` / `catch()` 挂），
+        //   不直接读 `Completion->value` —— 否则测的是"队列里有值"，测不出
+        //   "回调真的被调了"（本段第一版就栽在这：断言期望 `a1` 却拿到 `1`
+        //   —— `then()` 根本没被调）。
+        // ★ `$settle` 必须显式 `use`：闭包是 `static`，没有自动捕获。
+        $host->drain($settle);
     }
 };
 
 // ① 懒启动 + 真进程算对
 $sink = [];
-$procHost->submit(new NamedSumJob(10), function ($v) use (&$sink): void {
+$procHost->submit(new NamedSumJob(10))->then(function ($v) use (&$sink): void {
     $sink[] = $v;
 });
 check('P3 · submit 之后未回调（任务在 worker 里跑）', $sink === [], json_encode($sink));
@@ -4381,8 +4371,8 @@ check('P3 · 真进程算对了（跨进程跑 AOT 类：1+…+10 = 55）', $sin
 
 // ② 串行：第二条排队（在途恒 ≤ 1）
 $sink = [];
-$procHost->submit(new NamedSumJob(1), function ($v) use (&$sink): void { $sink[] = 'a' . $v; });
-$procHost->submit(new NamedSumJob(3), function ($v) use (&$sink): void { $sink[] = 'b' . $v; });
+$procHost->submit(new NamedSumJob(1))->then(function ($v) use (&$sink): void { $sink[] = 'a' . $v; });
+$procHost->submit(new NamedSumJob(3))->then(function ($v) use (&$sink): void { $sink[] = 'b' . $v; });
 check(
     'P3 · 串行：第二条在排队（在途仍 1、队列 1）',
     $procHost->inFlightCount() === 1 && $procHost->queuedCount() === 1,
@@ -4398,7 +4388,7 @@ check('P3 · 两条都跑完且按提交序（a1, b6）', $sink === ['a1', 'b6']
 $poolSink = [];
 $pool = new ProcessTaskHost([PHP_BINARY, $workerScript], SmokeJobRegistry::make(), 3);
 foreach ([200, 200, 200] as $ms) {
-    $pool->submit(new NamedSleepJob($ms), function ($v) use (&$poolSink): void { $poolSink[] = $v; });
+    $pool->submit(new NamedSleepJob($ms))->then(function ($v) use (&$poolSink): void { $poolSink[] = $v; });
 }
 check(
     'P3 · 池：3 条同时在途 + 3 个 worker + 0 排队（真并行）',
@@ -4422,7 +4412,7 @@ check(
 $cappedSink = [];
 $capped = new ProcessTaskHost([PHP_BINARY, $workerScript], SmokeJobRegistry::make(), 2);
 foreach ([300, 300, 300] as $ms) {
-    $capped->submit(new NamedSleepJob($ms), function ($v) use (&$cappedSink): void { $cappedSink[] = $v; });
+    $capped->submit(new NamedSleepJob($ms))->then(function ($v) use (&$cappedSink): void { $cappedSink[] = $v; });
 }
 check(
     'P3 · 池上限：第 3 条排队（2 在途 + 1 排队 + 2 个 worker）',
@@ -4435,17 +4425,15 @@ $capped->shutdown();
 
 // ③ 任务失败（worker 里抛）⇒ onError，且**不打死 worker**
 $sink = [];
-$procHost->submit(
-    new NamedBoomJob('设备离线'),
-    function ($v): void {
-    },
-    function (\Throwable $e) use (&$sink): void {
+$procHost->submit(new NamedBoomJob('设备离线'))
+    ->then(function ($v): void {
+    })
+    ->catch(function (\Throwable $e) use (&$sink): void {
         $sink[] = $e->getMessage();
-    },
-);
+    });
 $pump($procHost, $sink, static fn(array $s): bool => $s !== []);
 check(
-    'P3 · worker 里的异常 ⇒ onError（原文带出）',
+    'P3 · worker 里的异常 ⇒ catch()（原文带出）',
     str_contains($sink[0] ?? '', '设备离线'),
     $sink[0] ?? 'null',
 );
@@ -4453,17 +4441,15 @@ check('P3 · 一个任务失败不打死 worker', $procHost->isRunning());
 
 // ④ 崩溃隔离：worker 真的死（`exit 9`，catch 拦不住）⇒ onError + worker 停
 $sink = [];
-$procHost->submit(
-    new NamedExitJob(),
-    function ($v): void {
-    },
-    function (\Throwable $e) use (&$sink): void {
+$procHost->submit(new NamedExitJob())
+    ->then(function ($v): void {
+    })
+    ->catch(function (\Throwable $e) use (&$sink): void {
         $sink[] = $e->getMessage();
-    },
-);
+    });
 $pump($procHost, $sink, static fn(array $s): bool => $s !== []);
 check(
-    'P3 · worker 崩溃 ⇒ 在途任务 onError（不是静默挂住）',
+    'P3 · worker 崩溃 ⇒ 在途任务 catch()（不是静默挂住）',
     str_contains($sink[0] ?? '', '后台进程退出'),
     $sink[0] ?? 'null',
 );
@@ -4471,7 +4457,7 @@ check('P3 · 崩溃后 worker 已停', !$procHost->isRunning());
 
 // ⑤ 崩溃后自动重启（同一实例继续用）
 $sink = [];
-$procHost->submit(new NamedSumJob(4), function ($v) use (&$sink): void { $sink[] = $v; });
+$procHost->submit(new NamedSumJob(4))->then(function ($v) use (&$sink): void { $sink[] = $v; });
 $pump($procHost, $sink, static fn(array $s): bool => $s !== []);
 check('P3 · 崩溃后自动重启并跑完新任务（1+…+4 = 10）', $sink === [10], json_encode($sink));
 

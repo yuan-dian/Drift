@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace Drift\App;
 
+use Drift\Async\Future;
+
 /**
  * 后台执行端口（§17.2）—— **把"别占 UI 线程"收进一个可替换的端口**。
  *
@@ -48,24 +50,33 @@ namespace Drift\App;
 interface TaskHost
 {
     /**
-     * 提交一个后台任务。
+     * 提交一个后台任务，拿到它的 `Future`。
      *
-     * ★ **`$onDone` / `$onError` 一定在 UI 线程的帧内被调用**，且**不在**
+     * ```php
+     * $host->submit(new FetchUsersJob($page))
+     *     ->then(function (array $raw): void { $this->applyPage(true, $raw, ''); })
+     *     ->catch(function (\Throwable $e): void { $this->applyPage(false, [], $e->getMessage()); });
+     * ```
+     *
+     * ★★ **2026-10-30（N3）改形**：原来是 `submit(Job, onDone, onError)`。
+     *   回调没有消失，只是搬到了 `Future` 上 —— 而 `Future` 能 `all` / `race`，
+     *   回调不能。**两套通道 = 两条时序**，这是必须只留一套的理由。
+     *
+     * ★ **`then()` / `catch()` 一定在 UI 线程的帧内被调用**，且**不在**
      *   `submit()` 的调用栈上（P0 的语义变更，§17.4.2）—— 所以回调里可以安全地
      *   `$this->rows = …` + `notifyChanged()`：那一段发生在 `settle()` 之前，
      *   **同帧生效**。
      *
-     * ★ `$onDone` 是闭包、`$job` 是类 —— 这不是双标（§O-03）：闭包**不跨边界**
+     * ★ `then()` 是闭包、`$job` 是类 —— 这不是双标（§O-03）：闭包**不跨边界**
      *   （它在回贴之后才被调），跨边界的那一半必须是类。
      *
-     * @param callable(mixed): void $onDone 成功回调（收 `Job::run()` 的返回值）
-     * @param null|callable(\Throwable): void $onError 失败回调（收 `Job::run()`
-     *   抛出的异常）。`null` ⇒ 框架走 `Errors::report()` 的 Fatal 序列
-     *   （默认最响的一档：任务失败被吞掉就是"界面永远转圈"，G2 禁止）
+     * ★ **结算前必须挂上 `catch()`**：结算那一刻没有 `catch()` ⇒ 框架走
+     *   `Errors::report()` 的 Fatal 序列（任务失败被吞掉就是"界面永远转圈"，
+     *   G2 禁止）。提交与挂回调在同一个同步块里，天然满足。
      *
      * @api
      */
-    public function submit(Job $job, callable $onDone, ?callable $onError = null): void;
+    public function submit(Job $job): Future;
 
     /**
      * 还有多少条任务**没回贴**（在途 + 排队）。

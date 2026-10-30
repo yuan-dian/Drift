@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\App;
 
 use Drift\App\Io\IoPoller;
+use Drift\Async\Future;
 use Drift\Commands\CommandArg;
 use Drift\Commands\CommandHandler;
 use Drift\Commands\CommandRouter;
@@ -1537,28 +1538,24 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      * 提交一个**可分片**的长任务（§17.4.3，P1）：每帧推一次 `step()`，不占一帧。
      *
      * ```php
-     * $app->submitSliced(
-     *     new FilterJob($rows, $query),
-     *     fn (array $hits) => $this->store->replace($hits),
-     * );
+     * $app->submitSliced(new FilterJob($rows, $query))
+     *     ->then(fn (array $hits) => $this->store->replace($hits))
+     *     ->catch(fn (\Throwable $e) => $this->store->fail($e));
      * ```
      *
      * ★ 与 `TaskHost::submit()` 的差别只在**怎么跑**：分片在 UI 线程的帧间跑，
      *   回调同样**在帧内**、同样在 `settle()` 之前（所以改 Store 同帧生效）。
+     *   ★★ **形状已经统一**（2026-10-30，N3）：两个入口都返回 `Future` ——
+     *   改造前一个收两个回调、一个收两个回调 + 预算，调用方要记两套。
      * ★ 预算默认 4ms（见 `PumpHost`）；任务自己决定一次干多少。
      *
-     * @param callable(mixed): void $onDone 完成后回调（帧内执行）
-     * @param null|callable(\Throwable): void $onError 失败回调；`null` ⇒ Fatal 序列
+     * @return Future 完成时结算（`step()` 最终结果 / 抛出的异常）
      *
      * @api
      */
-    public function submitSliced(
-        SlicedJob $job,
-        callable $onDone,
-        ?callable $onError = null,
-        int $budgetMs = 4,
-    ): void {
-        $this->pumps->submitSliced($job, $onDone, $onError, $budgetMs);
+    public function submitSliced(SlicedJob $job, int $budgetMs = 4): Future
+    {
+        return $this->pumps->submitSliced($job, $budgetMs);
     }
 
     /** @internal 测试与 devtools：还有几个分片任务在排队 */

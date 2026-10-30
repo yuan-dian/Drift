@@ -18,7 +18,8 @@ final class DependencyDirection implements Rule
     /** §4.2 的层名（= `Drift\` 之后的第一个命名空间段） */
     private const LAYERS = [
         'Geometry', 'Platform', 'Text', 'Rendering', 'Input',
-        'Widget', 'Layout', 'State', 'Commands', 'Theme', 'Routing', 'App',
+        'Widget', 'Layout', 'State', 'Commands', 'Theme', 'Routing',
+        'Async', 'App',
         'Logging',
     ];
 
@@ -63,7 +64,11 @@ final class DependencyDirection implements Rule
         'Commands'  => ['Commands', 'Geometry', 'Errors', 'State', 'Logging'],
         'Theme'     => ['Theme', 'Widget', 'Layout', 'State', 'Text', 'Geometry', 'Rendering', 'Input', 'Errors', 'Logging'],
         'Routing'   => ['Routing', 'Widget', 'Layout', 'State', 'Text', 'Geometry', 'Rendering', 'Input', 'Errors', 'Logging'],
-        'App'       => ['App', 'Geometry', 'Platform', 'Text', 'Rendering', 'Input', 'Widget', 'Layout', 'State', 'Commands', 'Theme', 'Routing', 'Errors', 'Logging'],
+        // ★ `Async`（2026-10-30，N3）：`Future` 是**纯值类型**，只认 `Errors`
+        //   （失败没人接时要喊 Fatal）与 `Logging`。它比 `App` 低 —— 执行体后端
+        //   （`TaskHost`）住在 `App`，反过来不成立。
+        'Async'     => ['Async', 'Errors', 'Logging'],
+        'App'       => ['App', 'Async', 'Geometry', 'Platform', 'Text', 'Rendering', 'Input', 'Widget', 'Layout', 'State', 'Commands', 'Theme', 'Routing', 'Errors', 'Logging'],
 
         // ★ `Logging` 是横切层（与 `Errors` 同性质），2026-10-24 随日志系统补登记。
         //   **不登记 = 完全不受检查**：`layerOf()` 对不在 `LAYERS` 里的段返回 null，

@@ -132,16 +132,17 @@ final class UserStore extends Subject
 
         // ★ 回调在**帧内**执行（`Application::frame()` 的 drain 段，在 settle 之前）
         //   ⇒ 这里的 `notifyChanged()` 会让同帧重建，看不到"空一帧"。
-        $host->submit(
-            new FetchUsersJob($page, $this->apiBase),
-            function (array $raw): void {
+        // ★ 形状是 `Future`（N3）：`then()` 收成功、`catch()` 收失败。改造前是
+        //   `submit(job, onDone, onError)` —— 两个入口（这个和 `submitSliced`）
+        //   各有一套回调，调用方要记两套；现在只有一个 `Future`。
+        $host->submit(new FetchUsersJob($page, $this->apiBase))
+            ->then(function (array $raw): void {
                 // ★ worker 回的是 JSON 数组（不是 `User` 对象）⇒ UI 侧 hydrate
                 $this->applyPage(true, UserSeed::hydrate($raw), '');
-            },
-            function (\Throwable $e): void {
+            })
+            ->catch(function (\Throwable $e): void {
                 $this->applyPage(false, [], $e->getMessage());
-            },
-        );
+            });
     }
 
     public function remove(int $id): bool

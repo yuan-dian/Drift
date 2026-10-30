@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace Drift\App;
 
+use Drift\Async\Future;
+
 /**
  * `TaskHost` 后端 B —— **同步执行 + 队列回贴**（§17.2.3，M1–M3 默认，永远可用）。
  *
@@ -42,20 +44,21 @@ final class SyncTaskHost implements TaskHost
      */
     private array $queue = [];
 
-    public function submit(Job $job, callable $onDone, ?callable $onError = null): void
+    public function submit(Job $job): Future
     {
-        $done = \Closure::fromCallable($onDone);
-        $fail = $onError === null ? null : \Closure::fromCallable($onError);
+        $future = Future::pending();
 
-        // ★ `run()` 的异常**在这里就被接住**，变成 Completion 的 error 通道 ——
-        //   不是"吞掉"：它有去处（`$onError`，或 `Application::complete()` 的
-        //   Fatal 兜底）。若让它冒出去，`submit()` 的调用点（往往是 Store 的一个
-        //   方法）就得处理后台错误，端口的意义就没了。
+        // ★ `run()` 的异常**在这里就被接住**，变成 `Completion` 的 error 通道 ——
+        //   不是"吞掉"：它有去处（`Future::catch()`，或结算时的 Fatal 兜底）。
+        //   若让它冒出去，`submit()` 的调用点（往往是 Store 的一个方法）就得处理
+        //   后台错误，端口的意义就没了。
         try {
-            $this->queue[] = new Completion($job->run(), null, $done, $fail);
+            $this->queue[] = new Completion($job->run(), null, $future);
         } catch (\Throwable $e) {
-            $this->queue[] = new Completion(null, $e, $done, $fail);
+            $this->queue[] = new Completion(null, $e, $future);
         }
+
+        return $future;
     }
 
     /**
