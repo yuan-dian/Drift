@@ -43,6 +43,7 @@ LOG = os.path.join(PROBE, "out.log")
 WAKE_BUDGET_MS = 5.0
 ROUNDS = 1000
 IDLE_JOB_MS = 1200
+EMPTY_POLL_BUDGET_US = 10.0
 
 #: 全程上限：1000 轮 × (1ms 活 + 往返) + 1.2s 空闲，正常 3–5s
 TOTAL_TIMEOUT_S = 120.0
@@ -240,6 +241,15 @@ def main() -> int:
         "⑥ 收尾：关池后线程数 0 且退出码 0",
         threads_after == 0 and exit_code == 0 and not hung,
         f"threads={threads_after} exit={exit_code}" + (" 挂死(超时被杀)" if hung else ""),
+    )
+
+    # ⑦ 空队列 poll 单次耗时
+    empty_pre = data.get("empty_poll.pre", "MISSING")
+    empty_us = float(data.get("empty_poll_us", "999999"))
+    check(
+        "⑦ 空队列 poll 单次 < 10µs（前置：队列确实是空的）",
+        empty_pre == "empty" and empty_us < EMPTY_POLL_BUDGET_US,
+        f"pre={empty_pre} {empty_us}µs",
     )
 
     verdict = data.get("VERDICT", "MISSING")

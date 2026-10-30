@@ -29,6 +29,7 @@ use function drift_win_now_ms;
 //   J4 ThreadTaskHost 端到端：sleep 任务 resolve(20)、echo 任务 resolve('hi')
 //   J5 空闲 CPU：池里 4 个线程空转？挂一条 1.2s 的活，泵**只被叫醒一次**，
 //      期间进程 CPU 由外部驱动器采样（探针内部拿不到 CPU 时间）
+//   J6 空队列 poll 单次 < 10µs（"非阻塞"要给数字，不能只说"没卡住"）
 //
 // ★★ 为什么必须**外部驱动器**（`tools/probe-io-pool.py`）：
 //   N5 最可能的失败形态不是"算错"，是**挂死** —— 唤醒没接上时 `waitEvents(-1)`
@@ -47,6 +48,12 @@ const WAKE_BUDGET_MS = 5.0;
 
 /** 空闲窗口里那条活的时长（ms）—— 外部驱动器在这段里采 CPU */
 const IDLE_JOB_MS = 1200;
+
+/** J6 空队列 poll 的调用次数（一圈量完再平均，把时钟开销摊薄到可忽略） */
+const EMPTY_POLL_CALLS = 20000;
+
+/** J6 单次空队列 poll 的预算（微秒）—— 设计册 §9.5 第一条 */
+const EMPTY_POLL_BUDGET_US = 10.0;
 
 /**
  * 写一行到 `out.log` 并同步刷到 stdout。
@@ -267,6 +274,24 @@ function run(): void
     drift_io_poll();   // 排空那条
     log_line('idle-end dt_ms=' . \round($idleDt, 1) . ' why=' . reason_name($idleWhy));
 
+    // ── J6 空队列单次耗时（§9.5 第一条）─────────────────────────────────
+    // ★ "非阻塞"是个**性能**判据，必须给数字：只验"没卡住"的话，一次 poll 里偷偷
+    //   加了 5ms 的等待也照样"通过"（本轮的教训就是量具比断言更容易错）。
+    // ★ 量法：一圈 N 次空 poll，**两端各读一次** QPC ⇒ 单次 = 总耗时 / N。
+    //   把 `now_ms()` 自己的开销摊到 1/20000，可忽略；反过来若每次都读钟，
+    //   量到的就是时钟的开销而不是 poll 的。
+    $emptyPre = drift_io_poll() === '[]' ? 'empty' : 'NOT_EMPTY';
+    $emptyT0 = drift_win_now_ms();
+    for ($k = 0; $k < EMPTY_POLL_CALLS; $k++) {
+        drift_io_poll();
+    }
+    $emptyUs = (drift_win_now_ms() - $emptyT0) * 1000.0 / (float) EMPTY_POLL_CALLS;
+    log_line('empty_poll.pre=' . $emptyPre);
+    // ★ `calls` 单独一行：`tools/probe-io-pool.py` 的解析是"按 `=` 切两半"，
+    //   同一行放两个键值会让第二个键变成值的一部分（本轮实测踩到）。
+    log_line('empty_poll.calls=' . EMPTY_POLL_CALLS);
+    log_line('empty_poll_us=' . \round($emptyUs, 3));
+
     // ── J3 关池 ─────────────────────────────────────────────────────────
     $host->shutdown();
     log_line('threads_after_stop=' . drift_io_threads());
@@ -293,6 +318,11 @@ function run(): void
         $pass = false;
     }
     if ($idleWhy !== WakeReason::Woken || $idleDt < (float) IDLE_JOB_MS) {
+        $pass = false;
+    }
+    // ★ 前置条件也进判：队列非空时量到的是"解码一条结果"的耗时，不是空队列的
+    //   —— 那种情况下 10µs 必然假红，而原因不在 poll 实现里。
+    if ($emptyPre !== 'empty' || $emptyUs >= EMPTY_POLL_BUDGET_US) {
         $pass = false;
     }
     if (drift_io_threads() !== 0) {
