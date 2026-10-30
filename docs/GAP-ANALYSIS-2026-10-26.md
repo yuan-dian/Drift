@@ -69,6 +69,7 @@
 |---|---|---|
 | 多窗口 | **缺口**（2026-10-30 评估后降级） | `WindowHost` 接口已按"多句柄"设计（`createWindow`/`close(hwnd)`/`place(hwnd)`），这一层写对了；但**障碍不在 `Application`，在 C++ 壳的 45 个进程级全局 + `Platform` 的 7 处无窗口身份签名**。今天建第二个窗口会**静默互相破坏**（9 条破坏链见评估册 §2）⇒ 评估已完成，路径分四台阶，见 [`MULTI-WINDOW-2026-10-30.md`](MULTI-WINDOW-2026-10-30.md) |
 | 异步 / 并发 | **半成品**（2026-10-30 评估） | ✅ 零件齐全：`TaskHost` 端口 + `SyncTaskHost`（默认，同步）+ `ProcessTaskHost`（多进程常驻池，崩溃隔离）+ `SlicedJob`（切帧 4ms）+ `IoPoller`（每帧 `select(0)`）。**多线程 / 协程已实测否决**（AOT worker 线程缺 Zend 上下文；Fiber 不让出阻塞 IO），裁决与依据见 [`ASYNC-2026-10-30.md`](ASYNC-2026-10-30.md) §1。真缺四条：① 示例台未注入 `TaskHost` ⇒ 走同步后端，「示例即模板」会把异步教成卡顿；② 「同时请求 N 个接口」（并发等待）无零件无示例 ⇒ 该用单 worker 的 `curl_multi`，而不是 N 次 `submit()`；③ 无取消；④ 无框架级超时 ⇒ worker 卡死时 `pending()` 恒正，帧时钟 15ms 空转烧电池 |
+| 事件循环 / IO 等待 | **半成品**（2026-10-30 评估） | `Platform::pump()` **无超时**（`GetMessageW` 无限阻塞）；有 IO watcher ⇒ `hasAsync()` 恒真 ⇒ 15.6ms 定时器常驻 ⇒ 每帧**无条件** `paint` + `present`（`src/App/Frame.php` 中唯一没有跳过判据的阶段）⇒ 空转约 **22% CPU**。`docs/design-v7/08-平台与能力矩阵.md` 的 `waitEvents` 与 `docs/design-v7/09-帧与异步.md` 的 `Io::await` **均未落地**。跨平台三种形态（fd 循环 / 消息队列 / run loop）与「IOCP + `MsgWaitForMultipleObjectsEx`」的裁决见 [`EVENT-LOOP-2026-10-30.md`](EVENT-LOOP-2026-10-30.md) |
 | 无边框 / 自绘标题栏 | **缺口** | `grep WS_POPUP\|frameless\|borderless` **0 处** ⇒ `Dock`/`AppBar` 是内容区自绘，不是真无边框窗 |
 | 窗口半透明 / per-pixel alpha | **缺口** | `grep WS_EX_LAYERED\|LayeredWindow` **0 处** |
 | 毛玻璃 / DWM 效果 | **缺口** | `grep DwmSetWindowAttribute\|BackdropType\|Acrylic` **0 处**（也无 Win11 圆角 API） |
