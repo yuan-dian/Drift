@@ -52,6 +52,8 @@ interface WindowHost
      *   后者只有框架在应用同意之后才该调。
      * ★ `Platform` 上**不另设 `quit()`** —— 那会变成第二条等价的退出路径
      *   （同一件事两个入口 = 必有一个是死的）。
+     *
+     * @api platform
      */
     public function close(int $windowHandle): void;
 
@@ -64,6 +66,8 @@ interface WindowHost
      * ★ 语义是**同步**的：返回时窗口已经销毁（`WM_DESTROY` 已跑完）。
      *   与 `close()` 的异步语义**故意不同** —— 一个请求、一个执行，
      *   把两者做成同一个方法就是回到"看调用方走哪条路"。
+     *
+     * @internal 框架专用；应用代码里出现它就是绕过守卫（见 {@see self::close()}）
      */
     public function destroy(int $windowHandle): void;
 
@@ -81,6 +85,8 @@ interface WindowHost
      *   `Application::onCloseRequested()`；返回 `true` ⇒ 框架调 `destroy()`；
      *   返回 `false` ⇒ **什么都不发生**（窗口原样留着，连位置都不动）。
      * ★ 这是**窗口级状态**（按 HWND 记）：多窗口下每个窗各有各的守卫。
+     *
+     * @api platform
      */
     public function setCloseGuard(int $windowHandle, bool $armed): void;
 
@@ -91,8 +97,12 @@ interface WindowHost
      *
      * ★ 系统据此挡住"拖到比内容更小"——那种状态会让布局硬校验弹 Fatal，
      *   而它不是编程错误。平台侧负责换算到物理像素与**外框**（标题栏/边框）。
+     * ★ **带 `$windowHandle`**（2026-10-30，M1-a）：每窗可以有不同最小尺寸
+     *   （小工具窗 vs 主编辑器窗）。改动前靠 `$this->handle`（最后建的窗）。
+     *
+     * @api platform
      */
-    public function setMinSize(int $width, int $height): void;
+    public function setMinSize(int $windowHandle, int $width, int $height): void;
 
     /**
      * 一次应用窗口外观材质（P1 收敛裁决，2026-10-26）。
@@ -202,9 +212,12 @@ interface WindowHost
      *   形状即 `SemanticsTree::toArrays()['nodes']`。**空数组 = 无障碍关闭**。
      * ★ **窗口级能力**（与 `setCursor` / `setTitle` 同族）：UIA provider 挂在 HWND 上。
      *
+     * ★ **带 `$windowHandle`**（2026-10-30，M1-a）：每窗一棵语义树、每窗一个
+     *   provider（provider 挂在 HWND 上）。改动前是"最后建的窗"。
+     *
      * @param list<array<string,mixed>> $flatNodes 前序扁平节点（父在子前）
      *
      * @api platform
      */
-    public function pushSemantics(array $flatNodes): void;
+    public function pushSemantics(int $windowHandle, array $flatNodes): void;
 }

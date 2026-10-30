@@ -157,9 +157,9 @@ function winCursorCalls(): array
 }
 
 if (!function_exists('drift_win_ime_caret')) {
-    function drift_win_ime_caret(float $x, float $y, float $h): void
+    function drift_win_ime_caret(int $hwnd, float $x, float $y, float $h): void
     {
-        $GLOBALS['DRIFT_SMOKE_IME'][] = [$x, $y, $h];
+        $GLOBALS['DRIFT_SMOKE_IME'][] = [$hwnd, $x, $y, $h];
     }
 }
 

@@ -1,6 +1,8 @@
 # 多窗口评估（2026-10-30）
 
-> 状态：**评估完成，未动工**。这份只出裁决依据与路径，不写一行业务代码。
+> 状态：**评估完成，台阶已陆续落地**（N1 / M1-c / M2 / M0+M1-a，状态以 §6 的 ✅ 标记为准）。
+> 本册原稿只出裁决依据与路径、不写业务代码；落地记录是按 §6 追加的，
+> 每段带日期与验收数字。
 > 上游：`REVIEW-2026-10-28` §7 的 S4 行 · `GAP-ANALYSIS-2026-10-26` §3 的多窗口行
 > 回答三个问题：**能不能做？卡在哪一层？怎么做最省且可验收？**
 
@@ -57,20 +59,26 @@
 
 ---
 
-## 3. 平台层：7 处缺窗口身份
+## 3. 平台层：7 处缺窗口身份（4 处已补，见下表 ✅）
 
 `WindowHost` 接口**已经按多句柄设计**（`createWindow` / `close(hwnd)` / `place(hwnd)` /
 `clientSize(hwnd)` / `position(hwnd)`），这一层当年就写对了。缺的是另外六个端口：
 
-| 端口方法 | 现状 | 为什么必须带窗口 |
+| 端口方法 | 现状（2026-10-30 M1-a 后） | 为什么必须带窗口 |
 |---|---|---|
-| `Platform::screen()` | 无参，`Win32Screen` 内部读"最后建的窗" | `scale()` 是 **per-monitor DPI**，两窗跨屏必然不同值 |
-| `Screen::viewport()` | 无参 | 每窗客户区不同 = 根约束不同 |
-| `Platform::input()` | 无参，单一队列 | 事件无归属 ⇒ N 个 `Application` 会**重复消费同一条事件** |
-| `Platform::pump()` | `bool`，全局 | `false` 表示退出，但"关哪个窗算退出"没答案 |
-| `Platform::imeCaret()` | 无参 | IME 插入符是线程级资源，但**该贴哪个窗口**要指定 |
-| `WindowHost::setMinSize()` | 无句柄，靠 `$this->handle` | 每窗可以有不同的最小尺寸 |
-| `WindowHost::pushSemantics()` | 无句柄 | UIA provider 挂在 HWND 上，每窗一棵语义树 |
+| `Platform::screen()` | ⬜ 无参，`Win32Screen` 内部读"最后建的窗" | `scale()` 是 **per-monitor DPI**，两窗跨屏必然不同值 |
+| `Screen::viewport()` | ⬜ 无参 | 每窗客户区不同 = 根约束不同 |
+| `Platform::input()` | ⬜ 无参，单一队列 | 事件无归属 ⇒ N 个 `Application` 会**重复消费同一条事件** |
+| `Platform::pump()` | ✅ 已拆成 `waitEvents()` / `pumpEvents()`（N1 泵帧分离）；退出判据改成"活窗口表空了才 `Quit`"（M1-c） | `false` 表示退出，但"关哪个窗算退出"没答案 |
+| `Platform::imeCaret()` | ✅ 已加 `$windowHandle`（M1-a） | IME 插入符是线程级资源，但**该贴哪个窗口**要指定 |
+| `WindowHost::setMinSize()` | ✅ 已加 `$windowHandle`（M1-a） | 每窗可以有不同的最小尺寸 |
+| `WindowHost::pushSemantics()` | ✅ 已加 `$windowHandle`（M1-a） | UIA provider 挂在 HWND 上，每窗一棵语义树 |
+
+★ **M1-a 只做了"加参数就够"的那三个**（`imeCaret` / `setMinSize` / `pushSemantics`），
+外加一条隐藏的：`Win32Platform` 内部新增 `dprOf(int $h)`，不再让"窗口 A 的尺寸换算"
+去问 `Screen::scale()`（那个值属于最后建的窗）。**剩下三件（`screen` / `viewport` /
+`input`）不是参数问题，是实例问题** —— 它们返回的是有状态对象（DPI 缓存、根约束、事件队列），
+加参数只会变成"每次调用都新建一个假装是单例的对象"⇒ 归 `Platform::forWindow()` 视图（M1-b）。
 
 ★ **`Screen` 最棘手**：它不是"加个参数"就完事 —— `scale()` 变化要触发**全树重建**
 （`DpiChanged`，§9.2）。多窗口下"窗口 A 拖到 4K 屏"只该重建 A 的树。现在 `screen()`
@@ -246,50 +254,96 @@ M0 落地时直接删 `g_main`，不留"表 + 别名"两套。
 
 设计原则：**每一步都能单独真机验证"没坏"，而不是憋一个 2000 行的大改**。
 
-### M0 · 壳层引入窗口身份（**零行为变化**）
+### M0 · 壳层引入窗口身份（✅ 已落地：M1-a，2026-10-30）
 
-把 `drift_win32.cc` 的 45 个全局收进一张表：
+★ **原稿的"`g_main` 保留为当前主窗别名"按 §5.1 末段的裁决作废**，落地时 `g_main`
+**已彻底删除**，不留"表 + 别名"两套。理由：别名就是过渡态，而过渡态一旦能通过验收
+就不会有人回来删它；更要紧的是"读别名"与"读当前窗"在多窗口下**不报错、只画错窗口** ——
+最难定位的一类错误（与 §4.2b 同一条判断）。
+
+实际形状（`cpp-src/drift_win32.cc`：46 个全局 / 37 个函数 340 处引用 → 1 张表）：
 
 ```cpp
 struct WindowSlot {
-    HWND hwnd;
-    int  clientW, clientH, dpi;
-    int  minClientW, minClientH;
-    bool frameless, pixelAlpha;
-    long opacity;
-    float imeX, imeY, imeH;
-    int  lastPosX, lastPosY, lastClientW, lastClientH;
-    bool lastMaximized, lastGeomValid;
-    // 帧缓冲 / ULW 资源 / UIA provider / caret 状态
-    std::vector<unsigned char> frame;
-    HBITMAP ulwBitmap; HDC ulwDc; ...
-    std::vector<UiaNode> uiaNodes;
-    bool inSizeMove, inResizeHook;
+    // 帧缓冲 / ULW 三件套 / layerBind / frameless + 拖拽高 / pixelAlpha + opacity /
+    // 光标 / 客户区尺寸 / dpi / 最小尺寸 / 几何缓存 / ime + caret /
+    // 拖拽与 resize hook / 指针跟踪 / UIA 节点 + lastFocusIdx + provider  共 30 余字段
 };
-static std::map<HWND, WindowSlot> g_windows;
+std::map<HWND, WindowSlot> g_slots;
+WindowSlot &slotOf(HWND hwnd) { return g_slots[hwnd]; }
+std::set<HWND> g_liveWindows;    // 跨窗口的两张表留在外面（M1-c 的活窗口表 / 关闭守卫）
+std::set<HWND> g_closeGuarded;
 ```
 
-- **行为不变**：`g_main` 保留为一个"当前主窗"的别名，所有桥函数仍操作它 ⇒ 单窗口行为
-  逐字节相同。
-- **验收**：`showcase.exe` 真机跑一遍，所有既有功能（含 A5 的对话框 / 拖文件）不变；
-  golden 29+1 页一字节不动（因为不碰渲染）。
-- **为什么先做它**：它是后面三步的**唯一前提**，而它自己**零行为风险**。把一个高风险
-  方向切成"先做零风险的那一刀"，是这套路径最重要的设计。
+**三处裁决与原稿不同**：
+
+1. **`slotOf()` 返回引用，不是指针**。`std::map` 节点地址稳定（插入不移动既有节点）
+   ⇒ 引用可以跨 `g_slots` 的增长活下去。`driftWndProc` 开头取一次，整条消息用同一个引用。
+2. **槽不 erase**。`WM_DESTROY` 只释放资源（帧缓冲 / ULW 表面 / UIA provider），槽留着 ——
+   因为 `WindowStateStore::persist()` 跑在**退出路径**上，那时窗口已死透、句柄已失效，
+   它还要来问 `clientSize()` / `position()`。删槽 = "记住窗口位置"永远写不出去
+   （2026-10-18 真机实测过的静默失败）。代价 ≈ 200 字节/窗。
+3. **`WM_NCCREATE` 里整槽重置**（`win = WindowSlot{}`）。句柄会被系统**复用**，不重置的话
+   新窗会继承上一窗的 frameless / 最小尺寸 / 材质 / 透明度。选 `WM_NCCREATE` 是因为它
+   最早（早于 `WM_NCCALCSIZE` / `WM_SIZE`），且必须 `break` 落到 `DefWindowProcW`
+   —— 返回 FALSE 会让 `CreateWindowExW` 直接失败。
+
+**另外两条跟着身份一起必须改的**（不改等于没改）：
+
+- **事件必须带来源**。`GetMessageW(NULL, …)` 取的是**本线程任意窗口**的消息 ⇒
+  `PendingEvent` 加 `HWND hwnd` 字段，`toArray()` 在 `switch` **之前**统一写 `'hwnd'`。
+  `enqueue(HWND, PendingEvent)` 强制首参：不让 `enqueue` 自己猜"当前窗口"—— 那只是
+  用一个新的隐式全局去修旧的隐式全局。resize 合并的判据也加了 `queued.hwnd == hwnd`
+  （两窗尺寸互不相干）。
+- **每个窗口一个 UIA provider**。`CProvider(HWND, int index)`，`makeFragment()` /
+  `makeFragmentSimple()` 从 `static` 改成**成员函数** —— 子 provider 必须继承同一个
+  `m_hwnd`，否则就是"窗 A 的无障碍树被窗 B 的 provider 读"。四个树遍历 helper 同步参数化
+  （收 `const std::vector<UiaNode>&` 而不是读全局）。
+
+**验收（全部通过）**：
+
+| 判据 | 结果 |
+|---|---|
+| phpunit | **885 tests / 2889 断言**（零变化：纯结构改动） |
+| lint | **820 文件 0 error 0 warning** |
+| golden | **36 ok / 0 FAIL** —— 像素逐字节不变，这是"单窗行为不变"的硬证据 |
+| smoke | **431 ok / 0 FAIL** |
+| AOT 重建 | `showcase.exe` 13.3 MB / 40.9s |
+| 真机三态 | `exit`（窗口与进程都消失）/ `DRIFT_CLOSE_CONFIRM=1 … stay`（都还在）/ `probe-window`（1920×1016 客户区、42.1% 非白像素、PER_MONITOR_AWARE_V2） |
+| resize 探针 | 1916×1006 → 884×581，非白像素 42.0% → 38.9%，画面按新尺寸重排 |
+
+★ 唯一一处**行为变化**是修好的：`applyResize()` 原来拿"窗 A 的 `WM_SIZE` 去 resize
+窗 B 的表面"，多窗口下这是最容易在真机上看见的一条。单窗时两者恰好是同一个窗口
+⇒ golden 才会一字节不动。**像素不变不是因为没改语义，是因为改动只在多窗时才分叉。**
+
+- **为什么先做它**：它是后面几步的**唯一前提**，而它自己**零行为风险**（单窗下
+  `slotOf(唯一句柄)` 与原来的全局等价）。把一个高风险方向切成"先做零风险的那一刀"，
+  是这套路径最重要的设计。
 
 ### M1 · 平台层补窗口身份 + 关闭可拦截
 
 > **进度（2026-10-30）**：**关闭可拦截已落地**（M1-c，见 §5.1 的"落地"段）；
-> 窗口身份（下方表格的五行）与 `EventLoop` 的窗口表**未动** —— 它们捆在一起做，
-> 判定依据写在 §5.1 的对照表里（230 处引用 vs 30 行，且验收判据不同）。
-> ⇒ 下面这张表按原样保留为下一轮的清单。
+> **壳与平台层的窗口身份已落地**（M1-a，见下方表格与 §6 M0）；
+> 剩 **M1-b**：`Platform::forWindow()` 窗口视图（`screen()` / `input()` / `timers()`
+> 三个按窗实例化，`Screen::scale()` 不再读"最后建的窗"的 DPI）与 `EventLoop` 的窗口表。
+> 这两条**表里只有一个窗口时验不着**，按"未被消费的分支 = 未实现"的纪律留到
+> 真有第二个窗口的那一轮（理由见本节末尾 ★）。
 
-| 改法 | 破坏面 |
-|---|---|
-| 新增 `Platform::forWindow(int $h): WindowPlatform`（`screen()` / `input()` / `imeCaret()` / `timers()`） | 纯增量，老方法保留为"主窗"别名 |
-| `WindowHost::setMinSize(int $h, int $w, int $h)` / `pushSemantics(int $h, array)` | **签名破坏**（2 处），消费者只有组合根 |
-| 桥事件带 `hwnd` 字段；`Win32Platform::pumpEvents()` 按 hwnd 投进对应队列 | 增量（新字段） |
-| **不退出**的判据：`waitEvents()` 回 `Quit` 的门槛改成"最后一个窗口销毁" | 壳侧 `WM_DESTROY` 计数 |
-| ~~新增 `WindowHost::setCloseGuard(?callable)` + 桥 `kEvCloseRequested`~~ ✅ **已落地（形状不同）**：`setCloseGuard(int $h, bool)` + `destroy(int $h)`，理由见 §5.1 | 纯增量 |
+| 改法 | 破坏面 | 状态 |
+|---|---|---|
+| 新增 `Platform::forWindow(int $h): WindowPlatform`（`screen()` / `input()` / `imeCaret()` / `timers()`） | 纯增量，老方法保留为"主窗"别名 | ⬜ M1-b |
+| `WindowHost::setMinSize(int $h, int $w, int $h)` / `pushSemantics(int $h, array)` | **签名破坏**（2 处），消费者只有组合根 | ✅ M1-a |
+| `Platform::imeCaret()` 加 `int $windowHandle` | **签名破坏**（1 处），消费者只有 `EventLoop`；caret 是线程级资源，"贴哪个窗口"只有调用方知道 | ✅ M1-a |
+| 桥事件带 `hwnd` 字段；`Win32Platform` 用事件自带的 hwnd（缺字段回落主窗） | 增量（新字段），`translate()` 的 resize 分支已改 | ✅ M1-a（队列仍一条，见下） |
+| dpr 按窗口算（`Win32Platform::dprOf(int $h)`）而不是读 `Screen::scale()` | 增量 | ✅ M1-a |
+| **不退出**的判据：`waitEvents()` 回 `Quit` 的门槛改成"最后一个窗口销毁" | 壳侧 `WM_DESTROY` 计数 | ✅ M1-c |
+| ~~新增 `WindowHost::setCloseGuard(?callable)` + 桥 `kEvCloseRequested`~~ ✅ **已落地（形状不同）**：`setCloseGuard(int $h, bool)` + `destroy(int $h)`，理由见 §5.1 | 纯增量 | ✅ M1-c |
+
+★ 表格第 4 行只做到"事件带 hwnd"，**没有**改成"每窗一条队列"：`Win32Platform` 现在是
+一条 `PendingEvent` 队列，靠每条事件自带的 `hwnd` 分发。等到真有第二个窗口、需要
+"按窗口算 `nextWaitMs`"时再决定要不要拆队列 —— 拆队列是为 `EventLoop` 的窗口表服务的，
+而那张表今天不存在。这是同一句纪律的第三次应用（`WakeReason::Woken` / `EventLoop` 的数组 /
+这条）。
 ★ **这条新增的 `closeGuard` 是本轮评估的额外产出**（§5.1）—— 它独立于多窗口也有价值
 （单窗口的"未保存提示"同样需要），但多窗口**必须**有它。
 
@@ -503,6 +557,18 @@ DPI 混用）大多**不报错**，只表现为"怪"。这类问题在本仓历�
 
 ★ 所以推荐次序没变，只是理由更硬了：
 **N1（✅ 已落地）→ M2（✅ 已落地）→ N2/N3（等待与 Future，零真机）→ M0/M1 → M3**。
+
+**实际执行次序**（与上面推荐次序不同，判据只有一条：先做**能独立验收**的那个）：
+
+```
+N1 ✅ → M1-c ✅（关闭守卫，不需要窗口身份）→ M2 ✅ → M0 + M1-a ✅（壳/平台窗口身份）
+      → 【当前】N2/N3（零真机）、M1-b（forWindow/Screen）、EventLoop 窗口表、M3
+```
+
+M1-c 插到 M2 前面，是因为它和窗口身份**没有依赖**，而它的验收判据（"拒绝之后窗口还在"）
+比窗口身份的（"单窗像素逐字节不变"）便宜一个数量级 —— 让一个 30 行的正确改动去背
+340 处引用的风险，是这套路径最容易犯的错（§5.1 对照表就是这条裁决的依据）。
+
 M2 排在 N2 前面的理由：它是纯 PHP 重构、零真机，而 N2 改的是 `Platform` 接口
 （`pump()` 拆分）—— 两者不冲突，但 M2 先做能让 N2 少碰一个已经稳定的 `Application`。
 
@@ -514,11 +580,18 @@ M2 排在 N2 前面的理由：它是纯 PHP 重构、零真机，而 N2 改的�
 
 ## 10. 这一份没做的事
 
-- **没写任何代码**，没改 `drift_win32.cc`、没改 `Platform`。
+> ★ **本节记的是评估册写作当时（2026-10-30 上午）的边界**。同日晚间的 M1-c / M2 /
+> M0+M1-a 已经动了代码（`drift_win32.cc` 从 3328 行到约 3200 行，`Platform` 三处签名变化），
+> 状态一律以 §6 各阶段的 ✅/⬜ 标记为准。下面三条"没做"里，**只有 `WindowStateStore`
+> 多窗的 key 方案仍然悬着**。
+
+- **没写任何代码**（写作当时），没改 `drift_win32.cc`、没改 `Platform`。
 - **没跑两窗探针**：§2 的破坏链是**代码级推断**（每条都有行号可查），不是真机实测。
-  第一件真机动作应该在 M0 之后做，而不是现在 —— 现在跑只能证明"确实坏了"，
-  而这一点代码已经说清楚了。
-- **没定 `WindowStateStore` 多窗的 key 方案**（§5 的 ⑥）—— 那是 M1 的细节，
-  且它依赖"窗口有没有稳定 id"这个更上游的裁决。
+  第一件真机动作应该在 M0 之后做 —— **M1-a 落地后跑的仍是单窗探针**（三态 + resize），
+  它们证明"没坏"，但**没有证明"第二个窗口能工作"**：那张表里只有一行。
+  两窗真机要等 M1-b + `EventLoop` 窗口表。
+- **没定 `WindowStateStore` 多窗的 key 方案**（§5 的 ⑥）—— 它依赖"窗口有没有稳定 id"
+  这个更上游的裁决。`WindowSlot` 表给它留了位置（槽不 erase 正是为了 exit 路径上还能读到
+  几何），但 key 本身还没定。
 - **没评估 Linux / macOS 的对应改造**（本仓只有 Win32 后端，跨平台是"各编译一次"，
   真做别的平台时要重新评估 —— 但本份的"窗口身份"结论对它们同样成立）。

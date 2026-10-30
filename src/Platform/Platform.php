@@ -141,8 +141,12 @@ interface Platform
      *
      * ★ 平台侧负责量化（× dpr）—— §6.1「逻辑→物理只走 quantizeRect」的同类：
      *   框架永远给逻辑值。Win32 上它就是 `drift_win_ime_caret()` 那一个桥调用。
+     * ★ **带 `$windowHandle`**（2026-10-30，M1-a）：插入符是线程级资源，
+     *   "贴哪个窗口"必须由调用方指定。`EventLoop` 恰好有句柄，白给。
+     *
+     * @internal 只有 `EventLoop` 调（应用侧给 `Application::imeCaretRect()`）
      */
-    public function imeCaret(?array $rect): void;
+    public function imeCaret(int $windowHandle, ?array $rect): void;
 
     /**
      * **单调**毫秒时钟（帧时间戳的唯一来源，§5.2 裁决 2）。

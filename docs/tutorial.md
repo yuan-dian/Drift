@@ -72,36 +72,48 @@ $app = new TutorialApplication();                       // ← 换类名
 $handle = $window->createWindow('Drift 教程', 720, 560);  // ← 换标题/尺寸
 ```
 
-★ **主循环为什么归应用、不进框架**：`while ($platform->pump())` 里除了派发，
-还要做**应用自己的每帧工作** —— `apps/users` 在这里 reap 子进程、
-`apps/showcase` 在这里泵 `FrameClock` 并在关窗时存窗口几何。抽进框架就必须
-长出"每帧钩子 / 启动钩子 / 关窗钩子"三套回调，而消费者只有 3 个且各需不同钩子。
+★ **主循环已经收进框架，组合根只剩一句**：
+
+```php
+EventLoop::run($platform, $app, $handle);
+```
+
+★ 这条在 2026-10-30 之前是反的：四个应用的组合根各自写着同一段 12 行循环，
+理由是"应用要在这里做自己的每帧工作"（`apps/users` reap 子进程、
+`apps/showcase` 泵 `FrameClock` 并在关窗时存窗口几何）。抽进框架的代价本来是
+"每帧钩子 / 启动钩子 / 关窗钩子"三套回调 —— 真正让它不必长出这些钩子的，是
+`Application` 上已有的三个端口（`frame()` / `after()` / `onCloseRequested()`），
+不是新加一套回调。
 
 ★ `Application` **没有** `run()`，只有 `attach()` 与 `frame()` ——
 "循环"这一行就是这条裁决的全部代价。
 
-★ 循环里有四行**看着多余、删了就静默坏**：
+★ `EventLoop` 里有四行**看着多余、删了就静默坏**（以前是"你的循环"要写、
+现在轮到框架负责，但每一条的失效方式没变）：
 
 | 那一行 | 删了会怎样 |
 |---|---|
 | `while (($event = $input->poll()) !== null)` | 事件队列无限增长，窗口对点击/按键**毫无反应**，不报错 |
 | `$window->setCursor($handle, $shape)` | 光标声明全部失效（命中链算出来的形状没人喂给平台） |
-| `$platform->imeCaret($app->imeCaretRect())` | 输入法候选框贴在窗口左上角（能打字、位置错） |
-| **`$clock->tick($app, ...)` 换成 `$app->frame(...)`** | **异步与动画永远不动**：`pump()` 阻塞在 `GetMessageW`，没有输入事件时循环一直睡；`wantsFrame()` 只是"回答要不要跑下一帧"，**没人问就没人答** ⇒ `after()` 排的回调永不触发、`Spinner` 永不转。**闸门抓不到**（smoke 自己推进时钟） |
+| `$platform->imeCaret($handle, $app->imeCaretRect())` | 输入法候选框贴在窗口左上角（能打字、位置错）。**句柄是 2026-10-30 加的**：插入符是线程级资源，"贴哪个窗口"只有调用方知道 |
+| **每帧走 `FrameClock::advance()` 而不是直接 `$app->frame()`** | **异步与动画永远不动**：`waitEvents()` 阻塞在 `GetMessageW`，没有输入事件时循环一直睡；`wantsFrame()` 只是"回答要不要跑下一帧"，**没人问就没人答** ⇒ `after()` 排的回调永不触发、`Spinner` 永不转。**闸门抓不到**（smoke 自己推进时钟） |
 
 ★ 最后那条是 2026-10-25 从本教程的 ④ 段**真机**测出来的：点「开始加载」后停住，
 1500ms 后的截图与 400ms 时**逐字节相同**（md5 一致），而 smoke 全绿。
 所以 `FrameClock` 不是可选项 —— 它管"什么时候该跑下一帧"，`Application` 只管"这一帧画什么"。
 
+它的内部形状（读源码时对照，你不用写）：
+
 ```php
-$clock = new FrameClock($platform->timers());
-$clock->pace($app->wantsFrame());   // 进循环前先上膛，否则第一次 pump 无限阻塞
-while ($platform->pump()) {
-    /* 抽干事件队列 + dispatchInput + imeCaret */
-    $clock->tick($app, $platform->now(), $screen->viewport());   // = frame() + 重新上膛
-    /* imeCaret */
+while (true) {
+    $why = $platform->waitEvents($clock->nextWaitMs($app, $platform->now()));   // ① 等多久
+    if ($why === WakeReason::Quit) { break; }             // ③ 先看为什么醒，再派发
+    $platform->pumpEvents();                              // ④ 平台暂存 → input()
+    while (($event = $input->poll()) !== null) { /* ⑤ 派发 + 光标 + 事件后 IME */ }
+    $clock->advance($app, $platform->now(), $screen->viewport(),
+                    $platform->consumeModalBlockedMs());  // ⑥ 帧
+    $platform->imeCaret($handle, $app->imeCaretRect());   // ⑦ 帧末 IME
 }
-$clock->stop();
 ```
 
 ---

@@ -238,7 +238,14 @@ function drift_win_dpi(int $hwnd): int {}
 /** 系统是否处于深色模式（§9.2；读 `AppsUseLightTheme`，读不到按浅色） */
 function drift_win_system_dark(): bool {}
 
-function drift_win_ime_caret(float $x, float $y, float $h): void {}
+/**
+ * 报 IME 插入符位置（§8.4）—— x/y/h 是**设备像素**的客户区坐标，(-1,-1,0) = 无插入符。
+ *
+ * ★ **必须带 hwnd**（2026-10-30）：Windows 的插入符是**线程级**的，
+ *   "该贴哪个窗口"只有调用方知道。用"最后建的窗"在多窗口下就是
+ *   "窗口 A 打字的候选框贴在 B 上"。
+ */
+function drift_win_ime_caret(int $hwnd, float $x, float $y, float $h): void {}
 
 // ---- 消息泵 ----
 
@@ -384,7 +391,7 @@ function drift_win_set_cursor(int $hwnd, int $shape): void {}
  * ★ **只传标量**（§5.1 纪律 1）：节点已是扁平关联数组，无对象 / 无 OS 句柄跨边界。
  * ★ C 侧 provider 从这份数组应答 UIA 客户端（P2 只到"根属性可达"，树导航归 P3）。
  */
-function drift_win_uia_push(array $nodes): void {}
+function drift_win_uia_push(int $hwnd, array $nodes): void {}
 
 // ---- 剪贴板（§5.1 壳服务，M3 文本编辑三件套；只做纯文本 CF_UNICODETEXT） ----
 

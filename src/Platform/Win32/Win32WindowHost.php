@@ -124,19 +124,20 @@ final class Win32WindowHost implements WindowHost
         drift_win_set_title($windowHandle, $title);
     }
 
-    public function setMinSize(int $width, int $height): void
+    public function setMinSize(int $windowHandle, int $width, int $height): void
     {
-        $handle = $this->handle;
-        if ($handle === null) {
-            return;   // 还没建窗：调用方顺序错（组合根在 createWindow 之后调）
-        }
-
-        $dpr = Scale::fromDpi((float) drift_win_dpi($handle))->dpr;
+        // ★ 用**传进来的**句柄（2026-10-30，M1-a）：改动前靠 `$this->handle`
+        //   （"最后建的窗"）⇒ 第二个窗口设最小尺寸会设到第一个上。
+        $dpr = Scale::fromDpi((float) drift_win_dpi($windowHandle))->dpr;
         if ($dpr <= 0.0) {
             $dpr = 1.0;
         }
 
-        drift_win_set_min_size($handle, (int) round($width * $dpr), (int) round($height * $dpr));
+        drift_win_set_min_size(
+            $windowHandle,
+            (int) round($width * $dpr),
+            (int) round($height * $dpr),
+        );
     }
 
     /**
@@ -310,8 +311,8 @@ final class Win32WindowHost implements WindowHost
      *
      * ★ 桥侧 provider 从这份数组应答 UIA 客户端；空数组 ⇒ 清空（无障碍关闭）。
      */
-    public function pushSemantics(array $flatNodes): void
+    public function pushSemantics(int $windowHandle, array $flatNodes): void
     {
-        drift_win_uia_push($flatNodes);
+        drift_win_uia_push($windowHandle, $flatNodes);
     }
 }

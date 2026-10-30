@@ -5,6 +5,7 @@ namespace Drift\Platform\Win32;
 
 use Drift\Errors;
 use Drift\Geometry\Axis;
+use Drift\Geometry\Scale;
 use Drift\Input\CloseRequestedEvent;
 use Drift\Input\FilesDroppedEvent;
 use Drift\Input\KeyChord;
@@ -340,7 +341,16 @@ final class Win32Platform implements Platform
         }
 
         if ($type === 'resize') {
-            $this->applyResize((int) ($event['w'] ?? 0), (int) ($event['h'] ?? 0));
+            // ★ 用**事件自带的** hwnd（2026-10-30，M1-a）：改动前 `applyResize()`
+            //   内部取 `$this->window()?->handle()`（= 最后建的窗）⇒ 窗口 A 的
+            //   `WM_SIZE` 会去 resize 窗口 B 的表面。这是多窗口下**最容易在真机
+            //   上看见**的那一条（拖动 A 的边框，B 的画面跟着变形）。
+            //   缺字段 ⇒ 回落"主窗"（老壳 / 测试手工造的事件）。
+            $handle = (int) ($event['hwnd'] ?? 0);
+            if ($handle === 0) {
+                $handle = $this->window()?->handle() ?? 0;
+            }
+            $this->applyResize($handle, (int) ($event['w'] ?? 0), (int) ($event['h'] ?? 0));
 
             return 0;
         }
@@ -513,32 +523,56 @@ final class Win32Platform implements Platform
         return drift_win_config_dir();
     }
 
-    public function imeCaret(?array $rect): void
+    public function imeCaret(int $windowHandle, ?array $rect): void
     {
-        // 空 = 无插入符（(-1,-1,0) 是 C++ 侧的哨兵值，见 g_imeX 的注释）
+        // 空 = 无插入符（(-1,-1,0) 是 C++ 侧的哨兵值，见 `WindowSlot::imeX` 的注释）
         if ($rect === null) {
-            drift_win_ime_caret(-1.0, -1.0, 0.0);
+            drift_win_ime_caret($windowHandle, -1.0, -1.0, 0.0);
             return;
         }
 
         [$x, $y, $h] = $rect;
-        $scale = $this->screen()->scale();
-        drift_win_ime_caret((float)$x * $scale, (float)$y * $scale, (float)$h * $scale);
+        // ★ 用**该窗口**的 DPI（不是 `screen()->scale()` —— 那个是"最后建的窗"）：
+        //   多窗口跨不同 DPI 屏时，用错的那个会把候选框按错误比例放。
+        $scale = $this->dprOf($windowHandle);
+        drift_win_ime_caret(
+            $windowHandle,
+            (float)$x * $scale,
+            (float)$y * $scale,
+            (float)$h * $scale,
+        );
     }
 
-    /** 把客户区的**物理**尺寸交给表面（唯一一次量化，§6.1） */
-    private function applyResize(int $width, int $height): void
+    /**
+     * 把客户区的**物理**尺寸交给表面（唯一一次量化，§6.1）。
+     *
+     * @param int $windowHandle 这条 resize 来自**哪个窗口**
+     */
+    private function applyResize(int $windowHandle, int $width, int $height): void
     {
-        $handle = $this->window()?->handle();
-        if ($handle === null || $width <= 0 || $height <= 0) {
+        if ($windowHandle === 0 || $width <= 0 || $height <= 0) {
             return;
         }
 
-        $provider = $this->surfaces[$handle] ?? null;
+        $provider = $this->surfaces[$windowHandle] ?? null;
         if ($provider === null) {
             return;   // 表面还没被 `attach()` 要过 ⇒ 等它来时 `resize()` 会带上尺寸
         }
 
-        $provider->surface()->resize($width, $height, $this->screen()->scale());
+        $provider->surface()->resize($width, $height, $this->dprOf($windowHandle));
+    }
+
+    /**
+     * 某个窗口的 dpr（96 dpi ⇒ 1.0）。
+     *
+     * ★ **必须按窗口算**：`Screen::scale()` 读的是"最后建的窗"的 DPI —— 多窗口
+     *   跨不同 DPI 屏时，用错的那个会让表面按错误比例缩放（画面糊 / 错位，
+     *   且不报错）。`Screen` 自己的窗口化归 M1-b（`forWindow()`）。
+     */
+    private function dprOf(int $windowHandle): float
+    {
+        $dpr = Scale::fromDpi((float) drift_win_dpi($windowHandle))->dpr;
+
+        return $dpr > 0.0 ? $dpr : 1.0;
     }
 }

@@ -78,7 +78,7 @@ final class FakeWindowHost implements WindowHost
     /** 夹具：记录最后一次设的最小尺寸（真机行为由 WM_GETMINMAXINFO 挡，头侧只验接线） */
     public ?array $minSize = null;
 
-    public function setMinSize(int $width, int $height): void
+    public function setMinSize(int $windowHandle, int $width, int $height): void
     {
         $this->minSize = [$width, $height];
     }
@@ -167,7 +167,7 @@ final class FakeWindowHost implements WindowHost
     /** @var list<array<string,mixed>> 记录 pushSemantics 收到的扁平节点（UIA 夹具断言，§9 / M5） */
     public array $pushedSemantics = [];
 
-    public function pushSemantics(array $flatNodes): void
+    public function pushSemantics(int $windowHandle, array $flatNodes): void
     {
         $this->pushedSemantics = $flatNodes;
     }

@@ -139,7 +139,7 @@ final class EventLoop
                 //   事件（`TranslateMessage` 在消息循环层触发 WM_IME_STARTCOMPOSITION）
                 //   ⇒ 事件处理后立即同步 caret，不等帧末（帧末版会晚到，输入法已按旧
                 //   位置放过一次候选框）。与帧末那次同口径。
-                $platform->imeCaret($app->imeCaretRect());
+                $platform->imeCaret($windowHandle, $app->imeCaretRect());
             }
 
             // ⑥ 帧（顺序不可换：`wantsFrame()` 读的是跑完这一帧之后的状态）
@@ -150,7 +150,7 @@ final class EventLoop
 
             // ⑦ IME 定位：框架算几何（逻辑像素）、平台做量化。
             //   组合根不调这一行 = 输入法候选框贴在窗口左上角（能打字、候选框位置错）。
-            $platform->imeCaret($app->imeCaretRect());
+            $platform->imeCaret($windowHandle, $app->imeCaretRect());
         }
     }
 }

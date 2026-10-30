@@ -27,6 +27,7 @@
 #include <commdlg.h>    // OPENFILENAMEW / GetOpenFileNameW（A5-① 文件对话框）
 #include <shellapi.h>   // DragAcceptFiles / DragQueryFileW / DragFinish（A5-② 拖文件进窗）
 #include <vector>       // std::vector —— WM_DROPFILES 逐个路径的临时缓冲
+#include <map>          // std::map —— 窗口身份表（HWND → WindowSlot，M1-a）
 #include <set>          // std::set —— 活窗口表 / 关闭守卫表（多窗口的最小形态）
 #include <ShlObj.h>     // SHGetKnownFolderPath —— 用户配置目录（§5.4）
 #include <KnownFolders.h>
@@ -163,6 +164,10 @@ enum EventKind {
 };
 
 struct PendingEvent {
+    // ★ 归属窗口（2026-10-30，M1-a）：队列是**线程级一份**（`GetMessageW` 取本线程
+    //   任意窗口的消息），但每条事件的**来源**必须记下来 —— 否则两个窗口轮流投递
+    //   时 PHP 侧无从判断"这条 resize 是哪个窗的"。`enqueue()` 强制填写。
+    HWND hwnd = NULL;
     int kind;
     int a;   // resize: w ／ dpi: dpi ／ timer: id ／ pointer: x ／ wheel: x ／ key: — ／ char: —
     int b;   // resize: h ／ pointer: y ／ wheel: y ／ —
@@ -178,155 +183,41 @@ struct PendingEvent {
 
 // ─────────────────────────────────────────────────────────────── 状态 ──
 
-HWND g_main = NULL;
-int g_clientW = 0;
-int g_clientH = 0;
-UINT g_dpi = 96;
+// ──────────────── 窗口身份：一个窗口的全部壳侧状态（M1-a，2026-10-30）──
+//
+// ★★ 为什么要有这张表：改动之前壳里有 40 多个 per-window 全局（`win.frame` /
+//   `win.dpi` / `win.uiaNodes` / `win.layerBind` …），它们共同依赖一个**没有写出来**
+//   的前提 —— "进程里只有一个窗口"。建第二个窗口不是"半成品"，是**静默互相
+//   破坏**：两窗交替 present 会互相重分配位图（闪烁 + 偶发错帧）、`ScreenToClient`
+//   拿第一个窗的坐标系换算第二个窗的指针、`win.dpi` 只剩最后一个。
+//   ⇒ 全部收进 `WindowSlot`、用 HWND 取槽：**窗口身份是参数，不是全局**。
+//
+// ★★ 为什么不留一个 `slot()` 返回"当前槽"的过渡态：那就是用一个隐式全局去修
+//   另一个隐式全局 —— 多窗口时"用错窗口"不报错、只画错窗口，是最难定位的
+//   错误类型。见 `docs/MULTI-WINDOW-2026-10-30.md` §4.2b 的同一条判断。
+//
+// ★★ 为什么槽**不 erase**（`WM_DESTROY` 只清资源）：`WindowStateStore::persist()`
+//   跑在**退出路径**上 —— 那时窗口已经死透、句柄已经失效，它还要来问
+//   `clientSize()` / `position()`。槽一删，"记住窗口位置"就永远写不出去
+//   （2026-10-18 真机实测的静默失败）。保留一个空槽 ≈ 200 字节，可忽略。
+//   ★ 句柄会被系统复用 ⇒ `createWindow` 里整槽重置（`= WindowSlot{}`），
+//     新窗口不会继承上一个窗口的任何状态。
 
-// ── 窗口身份的两个最小集合（2026-10-30，可拦截关闭 + "关最后一个才退"）──
-// ★ 为什么是**两个 set** 而不是一张 `WindowSlot` 表：本轮只裁决"关闭"这一条语义，
-//   而关闭需要的全部信息就是"这个 HWND 还活着吗"与"它要不要征询"。其余
-//   45 个 per-window 全局（帧缓冲 / DPI / 客户区 / 材质…）是 M0 的事 ——
-//   把它们一起搬进表会让"关闭可拦截"这个 30 行改动变成 300 行重构，
-//   而两者**没有共同的验收判据**（M0 的判据是"单窗像素逐字节不变"）。
-// ⇒ 表是**加**的，不是"临时的第二套"：这两个 set 在多窗口落地后仍然是对的。
-std::set<HWND> g_liveWindows;   // createWindow 成功 ⇒ 加入；WM_DESTROY ⇒ 移除
-std::set<HWND> g_closeGuarded;  // 应用声明"关闭前要问我"的窗口
+/** LWA / ULW 互斥的绑定态（状态机理由见 `bindLayered()` 的注释） */
+enum { kBindNone = 0, kBindLwa = 1, kBindUlw = 2 };
 
-// ── 最小客户区（§5.4，物理像素；0 = 未设）──────────────────────────
-// ★ 为什么必须有：窗口能被拖到比内容更小 ⇒ C5/C6 的布局硬校验会弹 Fatal，
-//   而"窗口被拖小"是**用户行为**、不是编程错误（用户实测：可用宽 93 vs 条轨 94）。
-//   最小尺寸是主流 GUI 的标配（Qt/WPF/Flutter 都有 minimumSize），比让每个
-//   容器在极小空间里优雅降级便宜得多。
-int g_minClientW = 0;
-int g_minClientH = 0;
-
-/** `AdjustWindowRectExForDpi` 的前置声明（定义在文件后部，WndProc 要用） */
-void adjustFrameForDpi(RECT *rect, DWORD style, BOOL menu, DWORD exStyle, UINT dpi);
-
-// ── §5.4 退出路径专用：窗口销毁后的"最后已知几何" ──
-// 为什么需要：WM_CLOSE 里壳**同步** DestroyWindow ⇒ 等组合根的 while(pump())
-// 跳出、WindowStateStore::persist() 来问的时候，窗口句柄已经死了 ⇒
-// GetClientRect 对一个死句柄必然失败 ⇒ "记住窗口位置"永远写不出去。
-// 刷新两条路：① 每次活窗口查询成功（顺手刷新，零额外成本）；
-//           ② WM_DESTROY（决定性的一发 —— 退出前最后一帧的真实几何）。
-// 最小化 ⇒ 整份作废（最小化期间的坐标是屏幕外的，照抄会让下次启动"消失"）。
-static int  g_lastPosX = 0;
-static int  g_lastPosY = 0;
-static int  g_lastClientW = 0;
-static int  g_lastClientH = 0;
-static bool g_lastMaximized = false;
-static bool g_lastGeomValid = false;
-
-/** 窗口还活着 ⇒ 顺手刷新缓存；已死 ⇒ 回填最后已知值（从未记过 ⇒ 空数组） */
-static void cacheFinalGeometry(HWND target) {
-    if (target == NULL) {
-        return;
-    }
-    if (IsIconic(target) != FALSE) {
-        g_lastGeomValid = false;   // 最小化 = 别记，保留上一份
-        return;
-    }
-    RECT client = {0, 0, 0, 0};
-    if (!GetClientRect(target, &client)) {
-        return;   // 抓不到就保留上一份，不清零
-    }
-    POINT origin = {client.left, client.top};
-    if (!ClientToScreen(target, &origin)) {
-        return;
-    }
-    g_lastPosX = origin.x;
-    g_lastPosY = origin.y;
-    g_lastClientW = client.right - client.left;
-    g_lastClientH = client.bottom - client.top;
-    g_lastMaximized = IsZoomed(target) != FALSE;
-    g_lastGeomValid = true;
-}
-
-/** 死句柄查询时把最后已知几何摊进 out（x/y/w/h 四个键一起给，用哪半取哪半） */
-static void fillGeomFromCache(Array &out) {
-    if (g_lastGeomValid) {
-        out.set("x", (Float)(double)g_lastPosX);
-        out.set("y", (Float)(double)g_lastPosY);
-        out.set("w", (Int)g_lastClientW);
-        out.set("h", (Int)g_lastClientH);
-    }
-}
-
-// ── IME 定位（§8.4）── 设备像素的客户区坐标；(-1,-1,0) = 无插入符
-// 两个消费点：组字窗位置（WM_IME_STARTCOMPOSITION / CFS_POINT）与
-// IMR_QUERYCHARPOSITION 应答。内部换算用 g_dpi（与窗口同一 dpr）。
-float g_imeX = -1.0f;
-float g_imeY = -1.0f;
-float g_imeH = 0.0f;
-// 1×1 假 caret 的可见态（IME 定位：输入法经 GetCaretPos 找候选框位置）。
-// 建/销各只有一处（WM_IME_STARTCOMPOSITION / WM_IME_ENDCOMPOSITION）。
-bool g_caretVisible = false;
-
-/** 待交付事件队列。WndProc 填，`php_drift_win_pump()` 取 —— 同线程，无需加锁（§5.3） */
-std::vector<PendingEvent> g_queue;
+class CProvider;   // UIA provider（定义在下方；槽只持指针）
 
 /**
- * 上一帧的像素（BGRA，自上而下）。
+ * UIA 语义节点（§9 / M5，P2 数据流）。
  *
- * ★ 必须缓存：窗口被遮住又露出来时系统重发 `WM_PAINT`，而那一刻 PHP 正阻塞在
- *   `drift_win_pump()` 里等事件 ⇒ 不重贴缓存就是白屏。GUI 仓的 `guiBlitToScreen`
- *   同样依赖 `g_bitmap` 常驻。
+ * ★ 定义**挪到顶部**（原在 UIA 段）：`WindowSlot` 要持有 `vector<UiaNode>`，
+ *   而 `std::vector` 的元素类型必须完整。它是纯数据、无依赖，挪动零风险。
  */
-std::vector<unsigned char> g_frame;
-int g_frameW = 0;
-int g_frameH = 0;
-
-/**
- * 无边框模式（P1-Stage 1b / §质感）。
- *
- * ★ 走 `WM_NCCALCSIZE` 而不是 `WS_POPUP`：**样式不变**（仍是
- *   `WS_OVERLAPPEDWINDOW`）⇒ 贴边吸附 / 快照布局 / 最大化动画全部由系统照旧，
- *   只是让**客户区覆盖整个窗口**（标题栏不再画）。`WS_POPUP` 会丢掉这些原生行为。
- * ★ opt-in：`php_drift_win_set_frameless()` 才置位，默认 `false` ⇒ 现有应用零影响。
- * ★ **进程级开关（不是 per-HWND）**：与 `g_frame` / `g_queue` 同一条单窗口假设 ——
- *   本仓是单窗口应用；多窗口时这三个全局都要改成 `map<HWND, …>`。
- */
-bool g_frameless = false;
-/** 顶部拖动带高度（物理像素）：该带内 `WM_NCHITTEST` 返 `HTCAPTION`（可拖窗） */
-int g_dragHeight = 0;
-
-/**
- * 逐像素 alpha 上屏（P1-Stage 2b / §质感）。
- *
- * ★ 置位后 `present` 改走 `UpdateLayeredWindow`：画布像素**自带的 alpha** 生效，
- *   应用没画到的地方透出桌面。清零则回到 `SetDIBitsToDevice`（GDI 贴屏）。
- * ★ 与 `g_opacity` 互补：本开关决定"像素的 alpha 算不算数"，`g_opacity` 决定
- *   "整窗再乘一个 alpha"。ULW 模式下后者由 `BLENDFUNCTION.SourceConstantAlpha` 承载
- *   ⇒ **两种模式的透明度语义一致**，应用侧不用知道自己在哪个模式。
- * ★ **进程级开关**：与 `g_frame` / `g_frameless` 同一条单窗口假设。
- */
-bool g_pixelAlpha = false;
-
-/**
- * 整窗不透明度（`set_opacity` 存下来的值，0..255）。
- *
- * ★ 必须存：`LWA_ALPHA` 是"设一次、系统记住"，而 ULW 的 `SourceConstantAlpha`
- *   是**每次 present 都要重给**的 ⇒ 切模式 / 每帧上屏都要能读到它。
- */
-BYTE g_opacity = 255;
-
-/**
- * 窗口 DPI（**每显示器**，优先 `GetDpiForWindow`）。
- *
- * ★ 前置声明：定义在 1600 行之后（要用 `LoadLibraryW` 动态取符号），而
- *   `WM_NCHITTEST` 的缩放热区在 1100 行就要按 DPI 换算 —— 不声明就是
- *   "未声明的标识符"（构建期就炸，不会静默）。
- */
-UINT dpiOfWindow(HWND hwnd);
-
-// ── UIA 无障碍（§9 / M5，P2 数据流）─────────────────────────────────
-// PHP 把 SemanticsTree 扁平节点推进来（php_drift_win_uia_push）；provider 从
-// 这份数组应答 UIA 客户端。P2 只到"根属性可达"，树导航（Fragment）归 P3。
 struct UiaNode {
     std::wstring name;
     long controlType = UIA_CustomControlTypeId;
-    int parent = -1;   // 父节点索引（g_uiaNodes），-1 = 顶层（父是窗口根）
+    int parent = -1;   // 父节点索引（本槽的 uiaNodes），-1 = 顶层（父是窗口根）
     bool focused = false;
     double x = 0.0;
     double y = 0.0;
@@ -344,8 +235,173 @@ struct UiaNode {
     double rangeMin = 0.0;
     double rangeMax = 0.0;
 };
-static std::vector<UiaNode> g_uiaNodes;
-static int g_lastFocusIdx = -2;   // 上次 push 时的焦点节点索引（-2 = 未初始化）
+
+/**
+ * 一个窗口的全部壳侧状态。
+ *
+ * ★ 字段的分组顺序就是它们被谁读：**帧缓冲 → 上屏资源 → 外观 → 几何 → IME →
+ *   模态循环 → 指针 → UIA**。查一个字段时顺着这个顺序找。
+ */
+struct WindowSlot {
+    // ── 帧缓冲：present 的落点，也是 `WM_PAINT` 重贴的源 ──
+    // ★ 必须缓存：窗口被遮住又露出来时系统重发 `WM_PAINT`，而那一刻 PHP 正阻塞
+    //   在 `waitEvents()` 里等事件 ⇒ 不重贴缓存就是白屏。
+    std::vector<unsigned char> frame;
+    int frameW = 0;
+    int frameH = 0;
+
+    // ── 逐像素上屏（ULW）资源：懒建、按帧尺寸重建 ──
+    // ★ 为什么不用 `CreateCompatibleBitmap`：ULW 要求源是 **32bpp 预乘 BGRA**，
+    //   而它给的是设备相关格式（可能 16bpp / 非预乘）⇒ 颜色错、半透明区发白。
+    //   `CreateDIBSection` + `BI_RGB` 的字节序与 `frame` **逐字节相同**。
+    HDC ulwDc = NULL;
+    HBITMAP ulwBitmap = NULL;
+    HBITMAP ulwOldBitmap = NULL;
+    void *ulwBits = NULL;
+    int ulwW = 0;
+    int ulwH = 0;
+    int layerBind = kBindNone;   // `kBindNone` / `kBindLwa` / `kBindUlw`
+
+    // ── 外观素材 ──
+    bool frameless = false;      // `WM_NCCALCSIZE` 让客户区=整窗（样式不变）
+    int dragHeight = 0;          // 顶部拖动带高度（物理像素）
+    bool pixelAlpha = false;     // 逐像素 alpha 上屏（与 layerBind 一起决定路径）
+    BYTE opacity = 255;          // 整窗不透明度（LWA 的 alpha / ULW 的 SourceConstantAlpha）
+    // 当前指针形状。★ 必须缓存：`WM_SETCURSOR` 每次鼠标移动都来一次，而那一刻
+    //   PHP 可能正阻塞在等事件里（问不到框架）⇒ 只能重贴**上一次**的决定。
+    HCURSOR cursor = NULL;
+
+    // ── 几何 / DPI ──
+    int clientW = 0;
+    int clientH = 0;
+    UINT dpi = 96;               // **每显示器** DPI（优先 `GetDpiForWindow`）
+    // 最小客户区（物理像素；0 = 未设）。★ 必须有：窗口能被拖到比内容更小 ⇒
+    //   布局硬校验弹 Fatal，而"窗口被拖小"是**用户行为**、不是编程错误。
+    int minClientW = 0;
+    int minClientH = 0;
+
+    // ── 最后已知几何（销毁后仍要可读，见文件头"槽不 erase"的理由）──
+    // 刷新两条路：① 每次活窗口查询成功（顺手刷新，零额外成本）；
+    //           ② `WM_DESTROY`（决定性的一发 —— 退出前最后一帧的真实几何）。
+    // 最小化 ⇒ 整份作废（最小化期间坐标在屏幕外，照抄会让下次启动"消失"）。
+    int lastPosX = 0;
+    int lastPosY = 0;
+    int lastClientW = 0;
+    int lastClientH = 0;
+    bool lastMaximized = false;
+    bool lastGeomValid = false;
+
+    // ── IME 定位（§8.4）── 设备像素的客户区坐标；(-1,-1,0) = 无插入符
+    // 两个消费点：组字窗位置（`WM_IME_STARTCOMPOSITION` / CFS_POINT）与
+    // `IMR_QUERYCHARPOSITION` 应答。
+    float imeX = -1.0f;
+    float imeY = -1.0f;
+    float imeH = 0.0f;
+    // 1×1 假 caret 的可见态（输入法经 `GetCaretPos` 找候选框位置）。
+    bool caretVisible = false;
+
+    // ── 模态尺寸循环（§5.2）──
+    // ★ **Windows 的插入符是线程级的**：第二个窗口 `CreateCaret` 会销毁第一个
+    //   ⇒ 第一个窗的 IME 候选框失去锚点。所以 caret 的建/销必须跟着"当前在
+    //   组字的那个窗口"（本槽）走，不能是进程级。
+    bool inSizeMove = false;     // `WM_ENTERSIZEMOVE..WM_EXITSIZEMOVE`
+    bool inResizeHook = false;   // 防重入：hook 内部再触发 WM_SIZE 不得嵌套进 PHP
+    DWORD resizeHookMs = 0;      // 上一次 hook 耗时；0 = 尚未成功跑过
+
+    // ── 指针跟踪（move / up / leave 通路）──
+    // ★ 不请求 `TrackMouseEvent(TME_LEAVE)` 就没有 `WM_MOUSELEAVE` ⇒ 指针离开
+    //   客户区时框架永远不知道（悬停目标卡在最后一个上、拖动不取消）。
+    int ptrX = -1;
+    int ptrY = -1;
+    bool ptrTracked = false;
+
+    // ── UIA 无障碍（§9 / M5）：每窗一棵语义树 + 一个 provider ──
+    std::vector<UiaNode> uiaNodes;
+    int lastFocusIdx = -2;       // 上次 push 的焦点节点索引（-2 = 未初始化）
+    int lastNodeCount = -1;      // 上次 push 的节点数（结构变化事件用）
+    CProvider *uiaProvider = nullptr;
+};
+
+/** 窗口身份表。取槽即建（未知句柄 ⇒ 全默认空槽，`lastGeomValid=false`） */
+std::map<HWND, WindowSlot> g_slots;
+
+/** 取/建一个窗口的槽。★ 返回引用：`std::map` 节点地址稳定，插入不会让它失效 */
+WindowSlot &slotOf(HWND hwnd) {
+    return g_slots[hwnd];
+}
+
+// ── 跨窗口的两张表（它们**不属于任何单个槽**，所以留在这里）──
+// ★ 为什么用 set 而不是"每槽一个 bool"：`WM_DESTROY` 里要问"这是最后一个吗"，
+//   而那是个**全局**问题（进程级）。UIA 之前的形状见 MULTI-WINDOW §5.1。
+std::set<HWND> g_liveWindows;   // createWindow 成功 ⇒ 加入；WM_DESTROY ⇒ 移除
+std::set<HWND> g_closeGuarded;  // 应用声明"关闭前要问我"的窗口
+
+/** `AdjustWindowRectExForDpi` 的前置声明（定义在文件后部，WndProc 要用） */
+void adjustFrameForDpi(RECT *rect, DWORD style, BOOL menu, DWORD exStyle, UINT dpi);
+
+/** 窗口还活着 ⇒ 顺手刷新缓存；已死 ⇒ 回填最后已知值（从未记过 ⇒ 空数组） */
+static void cacheFinalGeometry(HWND target) {
+    if (target == NULL) {
+        return;
+    }
+    WindowSlot &win = slotOf(target);
+    if (IsIconic(target) != FALSE) {
+        win.lastGeomValid = false;   // 最小化 = 别记，保留上一份
+        return;
+    }
+    RECT client = {0, 0, 0, 0};
+    if (!GetClientRect(target, &client)) {
+        return;   // 抓不到就保留上一份，不清零
+    }
+    POINT origin = {client.left, client.top};
+    if (!ClientToScreen(target, &origin)) {
+        return;
+    }
+    win.lastPosX = origin.x;
+    win.lastPosY = origin.y;
+    win.lastClientW = client.right - client.left;
+    win.lastClientH = client.bottom - client.top;
+    win.lastMaximized = IsZoomed(target) != FALSE;
+    win.lastGeomValid = true;
+}
+
+/** 死句柄查询时把最后已知几何摊进 out（x/y/w/h 四个键一起给，用哪半取哪半） */
+static void fillGeomFromCache(HWND hwnd, Array &out) {
+    WindowSlot &win = slotOf(hwnd);
+    if (win.lastGeomValid) {
+        out.set("x", (Float)(double)win.lastPosX);
+        out.set("y", (Float)(double)win.lastPosY);
+        out.set("w", (Int)win.lastClientW);
+        out.set("h", (Int)win.lastClientH);
+    }
+}
+
+// ★ IME / 帧缓冲 / 材质 / DPI 的字段都在 `WindowSlot` 里（见文件头）。它们原本是
+//   一串进程级全局，共同依赖"只有一个窗口"这个没写出来的前提 —— 那样建第二个窗
+//   就是静默互相破坏（两窗交替 present 互相重分配位图 ⇒ 闪烁 + 偶发错帧）。
+
+/**
+ * 待交付事件队列。WndProc 填，`php_drift_win_pump()` 取 —— 同线程，无需加锁（§5.3）。
+ *
+ * ★ **队列是线程级一份，不是每窗一份**：`GetMessageW(NULL, …)` 取的是本线程任意
+ *   窗口的消息，一条队列天然覆盖全部窗口。归属靠 `PendingEvent::hwnd` 记下来。
+ */
+std::vector<PendingEvent> g_queue;
+
+/**
+ * 窗口 DPI（**每显示器**，优先 `GetDpiForWindow`）。
+ *
+ * ★ 前置声明：定义在 1600 行之后（要用 `LoadLibraryW` 动态取符号），而
+ *   `WM_NCHITTEST` 的缩放热区在 1100 行就要按 DPI 换算 —— 不声明就是
+ *   "未声明的标识符"（构建期就炸，不会静默）。
+ */
+UINT dpiOfWindow(HWND hwnd);
+
+// ── UIA 无障碍（§9 / M5，P2 数据流）─────────────────────────────────
+// PHP 把 SemanticsTree 扁平节点推进来（php_drift_win_uia_push）；provider 从
+// 这份数组应答 UIA 客户端。P2 只到"根属性可达"，树导航（Fragment）归 P3。
+// ★ `UiaNode` 的定义在文件顶部（`WindowSlot` 要持有它）；语义树本身按窗口分，
+//   住 `slot.uiaNodes`。
 
 // Drift 语义角色（SemanticsRole::value，string backed）⇒ UIA ControlTypeId。
 // Windows 编号知识集中在这一处（§5.1 纪律 1：PHP 侧不持平台常量）。
@@ -370,33 +426,35 @@ static long uiaControlTypeFor(const std::string &role) {
     return UIA_CustomControlTypeId;
 }
 
-// ── parent 关系走树 helper（g_uiaNodes 前序扁平，parent 指父索引，-1 = 窗口根）──
-static int uiaFirstChild(int idx) {
-    for (size_t k = 0; k < g_uiaNodes.size(); k++) {
-        if (g_uiaNodes[k].parent == idx) return (int)k;
+// ── parent 关系走树 helper（uiaNodes 前序扁平，parent 指父索引，-1 = 窗口根）──
+// ★ 树 helper 收 `const std::vector<UiaNode> &` 而不是读全局：它们被 provider
+//   （持自己窗口的槽）与推送侧同时调用，参数化是唯一不会"拿错窗的树"的形状。
+static int uiaFirstChild(const std::vector<UiaNode> &nodes, int idx) {
+    for (size_t k = 0; k < nodes.size(); k++) {
+        if (nodes[k].parent == idx) return (int)k;
     }
     return -1;
 }
-static int uiaNextSibling(int idx) {
-    if (idx < 0 || idx >= (int)g_uiaNodes.size()) return -1;
-    int p = g_uiaNodes[idx].parent;
-    for (size_t k = (size_t)idx + 1; k < g_uiaNodes.size(); k++) {
-        if (g_uiaNodes[k].parent == p) return (int)k;
+static int uiaNextSibling(const std::vector<UiaNode> &nodes, int idx) {
+    if (idx < 0 || idx >= (int)nodes.size()) return -1;
+    int p = nodes[idx].parent;
+    for (size_t k = (size_t)idx + 1; k < nodes.size(); k++) {
+        if (nodes[k].parent == p) return (int)k;
     }
     return -1;
 }
-static int uiaPrevSibling(int idx) {
-    if (idx < 0 || idx >= (int)g_uiaNodes.size()) return -1;
-    int p = g_uiaNodes[idx].parent;
+static int uiaPrevSibling(const std::vector<UiaNode> &nodes, int idx) {
+    if (idx < 0 || idx >= (int)nodes.size()) return -1;
+    int p = nodes[idx].parent;
     for (int k = idx - 1; k >= 0; k--) {
-        if (g_uiaNodes[k].parent == p) return k;
+        if (nodes[k].parent == p) return k;
     }
     return -1;
 }
-static int uiaLastChild(int idx) {
+static int uiaLastChild(const std::vector<UiaNode> &nodes, int idx) {
     int last = -1;
-    for (size_t k = 0; k < g_uiaNodes.size(); k++) {
-        if (g_uiaNodes[k].parent == idx) last = (int)k;
+    for (size_t k = 0; k < nodes.size(); k++) {
+        if (nodes[k].parent == idx) last = (int)k;
     }
     return last;
 }
@@ -405,8 +463,10 @@ static int uiaLastChild(int idx) {
 //   Simple 吸收 get_HostRawElementProvider，ShowContextMenu 已移除 ⇒ 多接口继承会
 //   IUnknown 歧义。故主类只继承 IRawElementProviderFragmentRoot，Simple / Fragment 经
 //   内嵌 adapter（QI 分派；adapter 的 IUnknown 委托主对象）。每 provider 持一个
-//   g_uiaNodes 索引（-1 = 窗口根），Navigate 按 parent 走树（§9 / M5，P3）。
-class CProvider;
+//   语义树索引（-1 = 窗口根），Navigate 按 parent 走树（§9 / M5，P3）。
+// ★ **progress 每个窗口一个 provider**（M1-a）：provider 持自己窗口的 HWND，
+//   树的读写全走 `slotOf(hwnd).uiaNodes` —— 多窗口时两个 provider 各管各的树，
+//   不再有"最后一个建窗的 provider 覆盖前一个"（还会连带漏 COM 引用）。
 
 class SimpleAdapter : public IRawElementProviderSimple {
 public:
@@ -479,17 +539,19 @@ protected:
 //     "鼠标点"行为不同是没人测得出来的那类缺陷。
 class InvokeAdapter : public ComTearOff<InvokeAdapter, IInvokeProvider> {
 public:
-    explicit InvokeAdapter(int index) : m_index(index) {}
+    explicit InvokeAdapter(HWND hwnd, int index) : m_hwnd(hwnd), m_index(index) {}
     STDMETHOD(Invoke)() override {
         // ★ 只投消息，**不**在这里进 PHP（理由见 `kMsgUiaInvoke` 的注释）：
         //   这是跨进程 COM 回调，重入 PHP 会让进程静默消失。
-        if (g_main != NULL) {
-            PostMessageW(g_main, kMsgUiaInvoke, (WPARAM)m_index, 0);
+        // ★ 投给**自己窗口**（不是"主窗"）：多窗口时读屏激活必须落到被激活的那棵树。
+        if (m_hwnd != NULL) {
+            PostMessageW(m_hwnd, kMsgUiaInvoke, (WPARAM)m_index, 0);
         }
         return S_OK;
     }
 
 private:
+    HWND m_hwnd;
     int m_index;
 };
 
@@ -497,17 +559,17 @@ private:
 // ★ 写方法（SetValue / Toggle）本提交明确回 `UIA_E_NOTSUPPORTED`，且
 //   `get_IsReadOnly` = TRUE —— 客户端据此**不会**去调写方法（不是静默空壳，是
 //   UIA 契约里的"这只读"）。写回路径（新事件 + 能力接口）见 §4.4 提交 2。
-// ★ 数据全部来自 `g_uiaNodes[m_index]`，与 Invoke 同源，不另存状态。
+// ★ 数据全部来自 `slotOf(m_hwnd).uiaNodes[m_index]`，与 Invoke 同源，不另存状态。
 class ValueAdapter : public ComTearOff<ValueAdapter, IValueProvider> {
 public:
-    explicit ValueAdapter(int index) : m_index(index) {}
+    explicit ValueAdapter(HWND hwnd, int index) : m_hwnd(hwnd), m_index(index) {}
     STDMETHOD(SetValue)(LPCWSTR value) override {
         // 转投窗口线程（与 Invoke 同一理由：COM RPC 线程里不能进 PHP）。
         // 字符串载荷用 `new std::wstring` 过消息 —— lParam 只能传整数；
         // WndProc 取走后 delete（所有权一次转移）。应用层是否接受由
         // `SemanticsValueEditable::setSemanticsValue()` 回答。
-        if (g_main != NULL) {
-            PostMessageW(g_main, kMsgUiaSetValue, (WPARAM)m_index,
+        if (m_hwnd != NULL) {
+            PostMessageW(m_hwnd, kMsgUiaSetValue, (WPARAM)m_index,
                          (LPARAM)new std::wstring(value != nullptr ? value : L""));
         }
         return S_OK;
@@ -515,8 +577,9 @@ public:
     STDMETHOD(get_Value)(BSTR *ret) override {
         if (ret == nullptr) return E_INVALIDARG;
         std::wstring v;
-        if (m_index >= 0 && m_index < (int)g_uiaNodes.size()) {
-            v = g_uiaNodes[m_index].value;
+        const std::vector<UiaNode> &nodes = slotOf(m_hwnd).uiaNodes;
+        if (m_index >= 0 && m_index < (int)nodes.size()) {
+            v = nodes[m_index].value;
         }
         *ret = SysAllocString(v.c_str());
         return S_OK;
@@ -531,29 +594,31 @@ public:
     }
 
 private:
+    HWND m_hwnd;
     int m_index;
 };
 
 class ToggleAdapter : public ComTearOff<ToggleAdapter, IToggleProvider> {
 public:
-    explicit ToggleAdapter(int index) : m_index(index) {}
+    explicit ToggleAdapter(HWND hwnd, int index) : m_hwnd(hwnd), m_index(index) {}
     STDMETHOD(Toggle)() override {
         // 复用 Invoke 的转投（§4.4 提交 2）：Checkbox 的 activate 语义就是"换值"，
         // ⇒ "读屏 Toggle"与"鼠标点击"走同一条 `Activatable::activate()`。
         // 零新消息、零新事件。
-        if (g_main != NULL) {
-            PostMessageW(g_main, kMsgUiaInvoke, (WPARAM)m_index, 0);
+        if (m_hwnd != NULL) {
+            PostMessageW(m_hwnd, kMsgUiaInvoke, (WPARAM)m_index, 0);
         }
         return S_OK;
     }
     STDMETHOD(get_ToggleState)(ToggleState *ret) override {
         if (ret == nullptr) return E_INVALIDARG;
         *ret = ToggleState_Off;
-        if (m_index >= 0 && m_index < (int)g_uiaNodes.size()) {
-            const std::wstring &v = g_uiaNodes[m_index].value;
+        const std::vector<UiaNode> &nodes = slotOf(m_hwnd).uiaNodes;
+        if (m_index >= 0 && m_index < (int)nodes.size()) {
+            const std::wstring &v = nodes[m_index].value;
             // radio 的 value = 选中时自己的值 / 未选中空串；checkbox、switch 是
             // checked / unchecked（见 `ToggleBase::refreshSemantics()`）。
-            if (g_uiaNodes[m_index].controlType == UIA_RadioButtonControlTypeId) {
+            if (nodes[m_index].controlType == UIA_RadioButtonControlTypeId) {
                 *ret = v.empty() ? ToggleState_Off : ToggleState_On;
             } else {
                 *ret = (v == L"checked") ? ToggleState_On : ToggleState_Off;
@@ -563,19 +628,20 @@ public:
     }
 
 private:
+    HWND m_hwnd;
     int m_index;
 };
 
 class RangeAdapter : public ComTearOff<RangeAdapter, IRangeValueProvider> {
 public:
-    explicit RangeAdapter(int index) : m_index(index) {}
+    explicit RangeAdapter(HWND hwnd, int index) : m_hwnd(hwnd), m_index(index) {}
     STDMETHOD(SetValue)(double value) override {
         // 与 ValueAdapter 同一条转投；double 先格式化成串（`%.17g` 能无损往返），
         // 由 `Slider::setSemanticsValue()` 解析后走 `emit()`（夹区间 + 只在变化时回调）。
-        if (g_main != NULL) {
+        if (m_hwnd != NULL) {
             wchar_t buf[64];
             swprintf_s(buf, 64, L"%.17g", value);
-            PostMessageW(g_main, kMsgUiaSetValue, (WPARAM)m_index,
+            PostMessageW(m_hwnd, kMsgUiaSetValue, (WPARAM)m_index,
                          (LPARAM)new std::wstring(buf));
         }
         return S_OK;
@@ -611,30 +677,35 @@ public:
         if (ret == nullptr) return E_INVALIDARG;
         // Slider 可写（应用接 `onChanged` 即可）；ProgressBar 是纯读数 ⇒ 只读。
         // adapter 分不出"这个控件实现没实现接口"，只能按 ControlType 判。
-        *ret = (m_index >= 0 && m_index < (int)g_uiaNodes.size()
-                && g_uiaNodes[m_index].controlType == UIA_ProgressBarControlTypeId) ? TRUE : FALSE;
+        const std::vector<UiaNode> &nodes = slotOf(m_hwnd).uiaNodes;
+        *ret = (m_index >= 0 && m_index < (int)nodes.size()
+                && nodes[m_index].controlType == UIA_ProgressBarControlTypeId) ? TRUE : FALSE;
         return S_OK;
     }
 
 private:
     // value 是"人读串"（Slider 以 `%.0f` 格式化）；越界/空 ⇒ 空串（wcstod 得 0）。
     std::wstring valueAt() const {
-        if (m_index < 0 || m_index >= (int)g_uiaNodes.size()) return std::wstring();
-        return g_uiaNodes[m_index].value;
+        const std::vector<UiaNode> &nodes = slotOf(m_hwnd).uiaNodes;
+        if (m_index < 0 || m_index >= (int)nodes.size()) return std::wstring();
+        return nodes[m_index].value;
     }
     // 取"有则用之、无则全 0"的节点（Min/Max/大变化共用）。
     const UiaNode &nodeOrZero() const {
         static const UiaNode zero;
-        if (m_index < 0 || m_index >= (int)g_uiaNodes.size()) return zero;
-        return g_uiaNodes[m_index];
+        const std::vector<UiaNode> &nodes = slotOf(m_hwnd).uiaNodes;
+        if (m_index < 0 || m_index >= (int)nodes.size()) return zero;
+        return nodes[m_index];
     }
+    HWND m_hwnd;
     int m_index;
 };
 
 class CProvider : public IRawElementProviderFragmentRoot {
 public:
-    explicit CProvider(int index)
-        : m_ref(1), m_index(index), m_simple(new SimpleAdapter(this)), m_frag(new FragmentAdapter(this)) {}
+    /** @param hwnd 这棵树属于哪个窗口（多窗口时每窗一个 provider，各管各的树） */
+    explicit CProvider(HWND hwnd, int index)
+        : m_ref(1), m_hwnd(hwnd), m_index(index), m_simple(new SimpleAdapter(this)), m_frag(new FragmentAdapter(this)) {}
     ~CProvider() {
         delete m_simple;
         delete m_frag;
@@ -670,8 +741,10 @@ public:
 
     // 造一个"能当 IRawElementProviderFragment"的子 provider（QI 取其 Fragment adapter，
     // 归还 new 的引用 ⇒ 返回指针持 host ref=1，客户端 Release 时 delete，引用平衡）。
-    static IRawElementProviderFragment *makeFragment(int idx) {
-        CProvider *p = new CProvider(idx);
+    // ★ 子 provider 必须继承**同一个窗口**（`m_hwnd`）：树是同窗的一棵树，
+    //   跨窗的 provider 读到的会是别的窗的节点数组。
+    IRawElementProviderFragment *makeFragment(int idx) {
+        CProvider *p = new CProvider(m_hwnd, idx);
         IRawElementProviderFragment *frag = nullptr;
         p->QueryInterface(__uuidof(IRawElementProviderFragment), (void **)&frag);
         p->Release();
@@ -680,8 +753,8 @@ public:
 
     // 造一个"能当 IRawElementProviderSimple"的 provider（focus changed raise 用：
     // 通知里带的是焦点元素本身）。引用契约同 makeFragment。
-    static IRawElementProviderSimple *makeFragmentSimple(int idx) {
-        CProvider *p = new CProvider(idx);
+    IRawElementProviderSimple *makeFragmentSimple(int idx) {
+        CProvider *p = new CProvider(m_hwnd, idx);
         IRawElementProviderSimple *simple = nullptr;
         p->QueryInterface(__uuidof(IRawElementProviderSimple), (void **)&simple);
         p->Release();
@@ -695,8 +768,9 @@ public:
     }
     STDMETHOD(GetFocus)(IRawElementProviderFragment **ret) override {
         // 返回真实焦点节点（§9 / M5，B）；无焦点 ⇒ 窗口根（-1）。
-        for (size_t k = 0; k < g_uiaNodes.size(); k++) {
-            if (g_uiaNodes[k].focused) { *ret = makeFragment((int)k); return S_OK; }
+        const std::vector<UiaNode> &nodes = slotOf(m_hwnd).uiaNodes;
+        for (size_t k = 0; k < nodes.size(); k++) {
+            if (nodes[k].focused) { *ret = makeFragment((int)k); return S_OK; }
         }
         *ret = makeFragment(-1);
         return S_OK;
@@ -709,21 +783,22 @@ public:
     }
     HRESULT simplePattern(PATTERNID id, IUnknown **ppv) {
         *ppv = nullptr;
-        if (m_index < 0 || m_index >= (int)g_uiaNodes.size()) return S_OK;
-        long ctrl = g_uiaNodes[m_index].controlType;
+        const std::vector<UiaNode> &nodes = slotOf(m_hwnd).uiaNodes;
+        if (m_index < 0 || m_index >= (int)nodes.size()) return S_OK;
+        long ctrl = nodes[m_index].controlType;
         // 按 ControlType 分派（§4.4）：控件"是什么"决定"能问什么 Pattern"。
         // ★ 不按 role 判 —— role→ControlType 已在 `uiaControlTypeFor` 收敛，
         //   多一层判据就是两处要同步。
         if (id == UIA_InvokePatternId && ctrl == UIA_ButtonControlTypeId) {
-            *ppv = new InvokeAdapter(m_index);
+            *ppv = new InvokeAdapter(m_hwnd, m_index);
         } else if (id == UIA_ValuePatternId && ctrl == UIA_EditControlTypeId) {
-            *ppv = new ValueAdapter(m_index);
+            *ppv = new ValueAdapter(m_hwnd, m_index);
         } else if (id == UIA_TogglePatternId
                    && (ctrl == UIA_CheckBoxControlTypeId || ctrl == UIA_RadioButtonControlTypeId)) {
-            *ppv = new ToggleAdapter(m_index);
+            *ppv = new ToggleAdapter(m_hwnd, m_index);
         } else if (id == UIA_RangeValuePatternId
                    && (ctrl == UIA_SliderControlTypeId || ctrl == UIA_ProgressBarControlTypeId)) {
-            *ppv = new RangeAdapter(m_index);
+            *ppv = new RangeAdapter(m_hwnd, m_index);
         }
         return S_OK;
     }
@@ -732,12 +807,13 @@ public:
         std::wstring name = L"Drift";
         long ctrl = UIA_CustomControlTypeId;
         bool enabled = true;
+        const std::vector<UiaNode> &nodes = slotOf(m_hwnd).uiaNodes;
         if (m_index == -1) {
             ctrl = UIA_WindowControlTypeId;
-        } else if (m_index >= 0 && m_index < (int)g_uiaNodes.size()) {
-            name = g_uiaNodes[m_index].name;
-            ctrl = g_uiaNodes[m_index].controlType;
-            enabled = g_uiaNodes[m_index].enabled;
+        } else if (m_index >= 0 && m_index < (int)nodes.size()) {
+            name = nodes[m_index].name;
+            ctrl = nodes[m_index].controlType;
+            enabled = nodes[m_index].enabled;
         }
         if (id == UIA_NamePropertyId) {
             out->vt = VT_BSTR;
@@ -764,9 +840,10 @@ public:
     // ── Fragment 逻辑（FragmentAdapter 转发；按 parent 走树）──
     HRESULT fragNavigate(NavigateDirection dir, IRawElementProviderFragment **ret) {
         *ret = nullptr;
+        const std::vector<UiaNode> &nodes = slotOf(m_hwnd).uiaNodes;
         if (m_index == -1) {
             if (dir == NavigateDirection_FirstChild) {
-                int c = uiaFirstChild(-1);
+                int c = uiaFirstChild(nodes, -1);
                 if (c >= 0) *ret = makeFragment(c);
             }
             return S_OK;
@@ -775,23 +852,23 @@ public:
         bool valid = false;
         switch (dir) {
             case NavigateDirection_Parent:
-                target = g_uiaNodes[m_index].parent;   // -1 = 窗口根（合法）
+                target = m_index < (int)nodes.size() ? nodes[m_index].parent : -1;   // -1 = 窗口根（合法）
                 valid = true;
                 break;
             case NavigateDirection_FirstChild:
-                target = uiaFirstChild(m_index);
+                target = uiaFirstChild(nodes, m_index);
                 valid = target >= 0;
                 break;
             case NavigateDirection_LastChild:
-                target = uiaLastChild(m_index);
+                target = uiaLastChild(nodes, m_index);
                 valid = target >= 0;
                 break;
             case NavigateDirection_NextSibling:
-                target = uiaNextSibling(m_index);
+                target = uiaNextSibling(nodes, m_index);
                 valid = target >= 0;
                 break;
             case NavigateDirection_PreviousSibling:
-                target = uiaPrevSibling(m_index);
+                target = uiaPrevSibling(nodes, m_index);
                 valid = target >= 0;
                 break;
             default:
@@ -813,24 +890,26 @@ public:
         return S_OK;
     }
     HRESULT fragBoundingRect(UiaRect *rect) {
-        if (m_index >= 0 && m_index < (int)g_uiaNodes.size()) {
+        const std::vector<UiaNode> &nodes = slotOf(m_hwnd).uiaNodes;
+        if (m_index >= 0 && m_index < (int)nodes.size()) {
             // 几何是逻辑/客户区，UIA 要屏幕物理 —— 位置近似（尺寸对、原点未加客户区偏移）。
-            rect->left = g_uiaNodes[m_index].x;
-            rect->top = g_uiaNodes[m_index].y;
-            rect->width = g_uiaNodes[m_index].w;
-            rect->height = g_uiaNodes[m_index].h;
+            rect->left = nodes[m_index].x;
+            rect->top = nodes[m_index].y;
+            rect->width = nodes[m_index].w;
+            rect->height = nodes[m_index].h;
         } else {
             rect->left = rect->top = rect->width = rect->height = 0.0;
         }
         return S_OK;
     }
     HRESULT fragFragmentRoot(IRawElementProviderFragmentRoot **ret) {
-        *ret = new CProvider(-1);   // CProvider* → FragmentRoot*（upcast，直接基类）
+        *ret = new CProvider(m_hwnd, -1);   // CProvider* → FragmentRoot*（upcast，直接基类）
         return S_OK;
     }
 
 private:
     ULONG m_ref;
+    HWND m_hwnd;
     int m_index;
     SimpleAdapter *m_simple;
     FragmentAdapter *m_frag;
@@ -864,23 +943,9 @@ STDMETHODIMP FragmentAdapter::GetRuntimeId(SAFEARRAY **ret) { return m_host->fra
 STDMETHODIMP FragmentAdapter::GetEmbeddedFragmentRoots(SAFEARRAY **ret) { return m_host->fragEmbedded(ret); }
 STDMETHODIMP FragmentAdapter::get_BoundingRectangle(UiaRect *rect) { return m_host->fragBoundingRect(rect); }
 STDMETHODIMP FragmentAdapter::get_FragmentRoot(IRawElementProviderFragmentRoot **ret) { return m_host->fragFragmentRoot(ret); }
-static CProvider *g_uiaProvider = nullptr;
-
-// 当前指针形状。★ **必须缓存**：`WM_SETCURSOR` 每次鼠标移动都会来一次，而那一刻
-// PHP 侧可能正阻塞在 `GetMessageW` 里（问不到框架）⇒ 只能重贴**上一次**的决定。
-// 见 `php_drift_win_set_cursor()` 与 WndProc 的 `WM_SETCURSOR` 分支。
-HCURSOR g_cursor = NULL;
-
-// ── 指针跟踪（2026-10-17 move/up/leave 通路）──
-// 最后已知指针位置（客户区，设备像素）—— `WM_MOUSELEAVE` 不再带坐标，
-// 用它兜底（消费方只看"离开了"，不用坐标，见 PointerEvent::leave 的 docblock）。
-int g_ptrX = -1;
-int g_ptrY = -1;
-
-// `TrackMouseEvent(TME_LEAVE)` 是否已请求。★ 不请求跟踪就没有 `WM_MOUSELEAVE`
-// ⇒ 指针离开客户区时框架永远不知道（悬停目标卡在最后一个上、拖动不取消）——
-// hover 的标准 Win32 模式：首次移动时请求一次，离开后复位、下次重新请求。
-bool g_ptrTracked = false;
+// ★ `win.uiaProvider` / `win.cursor` / `g_ptr*` 都已进 `WindowSlot`（见文件头）：
+//   它们本来就是 per-window 的 —— provider 挂在 HWND 上、`SetCursor` 作用于 HWND、
+//   指针跟踪也是每窗一个 `TrackMouseEvent`。
 
 // ★★ `IDC_*` 是 `MAKEINTRESOURCE(...)` 宏：**非 UNICODE 编译下展开成 `LPSTR`**，
 //   直接喂 `LoadCursorW` 就是 C2664 / C2440（本文件第二次撞这个坑 —— 第一次是
@@ -997,29 +1062,38 @@ int modifierBits() {
 
 // ──────────────────────────────────────────────────────────── 队列 ──
 
-void enqueue(const PendingEvent &event) {
+/**
+ * 入队一条事件，并叫醒阻塞在 `GetMessageW` 的泵。
+ *
+ * @param hwnd 事件的**来源窗口** —— 由调用方（WndProc）给，`enqueue` 只负责记进
+ *   `event.hwnd`。★ 为什么不让 `enqueue` 自己猜：那就是把"当前窗口"重新变成
+ *   全局。多窗口时事件归属错 = 一个窗的 resize 去改另一个窗的表面。
+ */
+void enqueue(HWND hwnd, PendingEvent event) {
+    event.hwnd = hwnd;
     // ★ resize 合并（coalesce，2026-10-19 修"松手后卡顿"）：拖动边缘时系统
     //   高频同步派发 WM_SIZE（ modal resize loop 期间每条都进这里），而应用帧
     //   循环要等 modal loop 退出后才逐条重放 ⇒ N 条中间尺寸各触发一次全树重排
     //   + Skia 重画，大窗口下每帧几十 ms，串行重放就是秒级卡顿。
     //   合并到队列中**最早未消费**的那条（保持顺序位置，只更新尺寸）⇒ 松手后
     //   一帧直达最终尺寸。同尺寸的重复帧对用户零信息（只看最终态）。
+    //   ★ 只合并**同一个窗口**的 resize：两个窗口各自的尺寸互不相干。
     if (event.kind == kEvResize) {
         for (auto &queued : g_queue) {
-            if (queued.kind == kEvResize) {
+            if (queued.kind == kEvResize && queued.hwnd == hwnd) {
                 queued.a = event.a;
                 queued.b = event.b;
-                if (g_main != NULL) {
-                    PostMessageW(g_main, kMsgWake, 0, 0);
+                if (hwnd != NULL) {
+                    PostMessageW(hwnd, kMsgWake, 0, 0);
                 }
                 return;
             }
         }
     }
     g_queue.push_back(event);
-    if (g_main != NULL) {
+    if (hwnd != NULL) {
         // 把阻塞在 GetMessageW 上的泵叫醒。载荷在队列里，这条消息只是闹钟。
-        PostMessageW(g_main, kMsgWake, 0, 0);
+        PostMessageW(hwnd, kMsgWake, 0, 0);
     }
 }
 
@@ -1037,18 +1111,18 @@ void enqueue(const PendingEvent &event) {
  *   都会产生多条 `WM_CLOSE`。不合并就是"确认框弹三次"，而三次问的是同一个问题。
  *   与 `kEvResize` 的 coalesce 同一手法，区别是关闭请求**没有载荷**要合并 ——
  *   队列里已经有一条就什么都不做。
- * ★ 叫醒用**发起请求的那个窗口**（不是 `g_main`）：多窗口时泵阻塞在
- *   `GetMessageW(NULL, …)`（取本线程任意窗口的消息），投给谁都能叫醒，
- *   但投给请求者更贴近事实，也不依赖"有个 `g_main`"。
+ * ★ 叫醒用**发起请求的那个窗口**：泵阻塞在 `GetMessageW(NULL, …)`（取本线程
+ *   任意窗口的消息），投给谁都能叫醒，但投给请求者更贴近事实。
  */
 void enqueueCloseRequest(HWND hwnd) {
     for (const auto &queued : g_queue) {
-        if (queued.kind == kEvCloseRequested) {
-            return;   // 已有一条未消费的关闭请求
+        if (queued.kind == kEvCloseRequested && queued.hwnd == hwnd) {
+            return;   // 这个窗口已有一条未消费的关闭请求
         }
     }
 
     PendingEvent event;
+    event.hwnd = hwnd;
     event.kind = kEvCloseRequested;
     event.a = 0;
     event.b = 0;
@@ -1086,9 +1160,10 @@ int modifierMask() {
     return mask;
 }
 
-void pushPointer(int x, int y, int button, int phase) {
-    g_ptrX = x;
-    g_ptrY = y;
+void pushPointer(HWND hwnd, int x, int y, int button, int phase) {
+    WindowSlot &win = slotOf(hwnd);
+    win.ptrX = x;
+    win.ptrY = y;
 
     PendingEvent event = {};
     event.kind = kEvPointer;
@@ -1097,7 +1172,7 @@ void pushPointer(int x, int y, int button, int phase) {
     event.c = button;
     event.d = phase;
     event.e = modifierMask();
-    enqueue(event);
+    enqueue(hwnd, event);
 }
 
 // ───────────────────────────────────────────────────────────── 贴屏 ──
@@ -1108,37 +1183,40 @@ void pushPointer(int x, int y, int button, int phase) {
  *    客户区已变大）⇒ **原尺寸贴 + 余区填帧底色**。
  *  ★ **不拉伸**（2026-10-19 用户裁决）：拉伸会让用户看到"旧内容被放大/重复"，
  *    比一块同色留白难受得多。余区取帧右下角像素当底色 —— 那就是应用自己的
- *    背景色，深色主题也自动跟随。 */
-void presentTo(HDC dc, int dstW = 0, int dstH = 0) {
-    if (g_frame.empty() || g_frameW <= 0 || g_frameH <= 0 || dc == NULL) {
+ *    背景色，深色主题也自动跟随。
+ *  ★ 带 `hwnd` 是必须的：贴的是**那个窗口**的帧。调用方总是刚好有句柄
+ *    （`WM_PAINT` 的 hwnd / `present()` 的 target），白给。 */
+void presentTo(HWND hwnd, HDC dc, int dstW = 0, int dstH = 0) {
+    WindowSlot &win = slotOf(hwnd);
+    if (win.frame.empty() || win.frameW <= 0 || win.frameH <= 0 || dc == NULL) {
         return;
     }
     if (dstW <= 0 || dstH <= 0) {
-        dstW = g_frameW;
-        dstH = g_frameH;
+        dstW = win.frameW;
+        dstH = win.frameH;
     }
 
     BITMAPINFO info = {};
     info.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
-    info.bmiHeader.biWidth       = g_frameW;
-    info.bmiHeader.biHeight      = -g_frameH;   // 负高 = 自上而下，与 RGBA 行序一致
+    info.bmiHeader.biWidth       = win.frameW;
+    info.bmiHeader.biHeight      = -win.frameH;   // 负高 = 自上而下，与 RGBA 行序一致
     info.bmiHeader.biPlanes      = 1;
     info.bmiHeader.biBitCount    = 32;
     info.bmiHeader.biCompression = BI_RGB;
 
-    if (dstW == g_frameW && dstH == g_frameH) {
-        SetDIBitsToDevice(dc, 0, 0, g_frameW, g_frameH, 0, 0, 0, g_frameH,
-                          g_frame.data(), &info, DIB_RGB_COLORS);
+    if (dstW == win.frameW && dstH == win.frameH) {
+        SetDIBitsToDevice(dc, 0, 0, win.frameW, win.frameH, 0, 0, 0, win.frameH,
+                          win.frame.data(), &info, DIB_RGB_COLORS);
     } else {
         // ★ 尺寸不匹配（拖动中 PHP 新帧未到）：**原尺寸贴 + 余区用帧背景色填**
         //   —— **不拉伸**（2026-10-19 用户裁决：拉伸会看到"旧内容放大/重复"，
         //   比留白更难受）。取帧右下角像素当背景色（那就是应用的底色，零配置、
         //   深色主题也自动跟随）。
-        const int w = dstW < g_frameW ? dstW : g_frameW;
-        const int h = dstH < g_frameH ? dstH : g_frameH;
+        const int w = dstW < win.frameW ? dstW : win.frameW;
+        const int h = dstH < win.frameH ? dstH : win.frameH;
 
         // 余区填底色（右下角像素 = BGRA）；先填两块余区（右、下），再贴帧（不重叠）
-        const unsigned char *last = g_frame.data() + g_frame.size() - 4;
+        const unsigned char *last = win.frame.data() + win.frame.size() - 4;
         HBRUSH brush = CreateSolidBrush(RGB(last[2], last[1], last[0]));
         if (brush != NULL) {
             if (dstW > w) {
@@ -1151,54 +1229,34 @@ void presentTo(HDC dc, int dstW = 0, int dstH = 0) {
             }
             DeleteObject(brush);
         }
-        SetDIBitsToDevice(dc, 0, 0, w, h, 0, 0, 0, h, g_frame.data(), &info, DIB_RGB_COLORS);
+        SetDIBitsToDevice(dc, 0, 0, w, h, 0, 0, 0, h, win.frame.data(), &info, DIB_RGB_COLORS);
     }
 }
 
 // ─────────────────────────────────── 逐像素上屏（ULW，Stage 2b）──
 
-/**
- * 分层窗口的**绑定态**。
- *
- * ★★ `SetLayeredWindowAttributes`（LWA）与 `UpdateLayeredWindow`（ULW）**互斥**，
- *   而且互相切换的**唯一**合法方式是：摘掉 `WS_EX_LAYERED` 再挂上（MSDN 原文）。
- *   只调另一个 API 是**没用的**：画面还是上一条路径留下的，且不报错 ——
- *   这就是为什么要有这个状态机，而不是"调一下就行"。
- */
-enum { kBindNone = 0, kBindLwa = 1, kBindUlw = 2 };
-int g_layerBind = kBindNone;
+// ★ `kBindNone` / `kBindLwa` / `kBindUlw` 这三个绑定态的说明见 `bindLayered()`；
+//   枚举定义在文件顶部（`WindowSlot::layerBind` 的初值要用它）。
+// ★ ULW 的 DIB section / 内存 DC 也都是**每窗一份**（`windowSlot.ulw*`）：
+//   两窗共用一份会互相按对方尺寸重建位图 ⇒ 闪烁 + 偶发错帧。
 
-/**
- * ULW 用的 DIB section（懒建、按帧尺寸重建）。
- *
- * ★ 为什么不用 `CreateCompatibleBitmap`：`UpdateLayeredWindow` 要求源是
- *   **32bpp 预乘 BGRA**，而 `CreateCompatibleBitmap` 给的是设备相关格式（可能是
- *   16bpp / 非预乘），送进去的结果是"能显示但颜色错、半透明区发白"。
- *   `CreateDIBSection` + `BI_RGB` 的字节序与 `g_frame` **逐字节相同** ⇒ 一次 memcpy。
- */
-HBITMAP g_ulwBitmap = NULL;
-HDC g_ulwDc = NULL;
-HBITMAP g_ulwOldBitmap = NULL;
-void *g_ulwBits = NULL;
-int g_ulwW = 0;
-int g_ulwH = 0;
-
-static void releaseUlwSurface() {
-    if (g_ulwDc != NULL) {
-        if (g_ulwOldBitmap != NULL) {
-            SelectObject(g_ulwDc, g_ulwOldBitmap);
-            g_ulwOldBitmap = NULL;
+/** 释放一个窗口的 ULW 资源（DIB section + 内存 DC；幂等） */
+static void releaseUlwSurface(WindowSlot &win) {
+    if (win.ulwDc != NULL) {
+        if (win.ulwOldBitmap != NULL) {
+            SelectObject(win.ulwDc, win.ulwOldBitmap);
+            win.ulwOldBitmap = NULL;
         }
-        DeleteDC(g_ulwDc);
-        g_ulwDc = NULL;
+        DeleteDC(win.ulwDc);
+        win.ulwDc = NULL;
     }
-    if (g_ulwBitmap != NULL) {
-        DeleteObject(g_ulwBitmap);
-        g_ulwBitmap = NULL;
+    if (win.ulwBitmap != NULL) {
+        DeleteObject(win.ulwBitmap);
+        win.ulwBitmap = NULL;
     }
-    g_ulwBits = NULL;
-    g_ulwW = 0;
-    g_ulwH = 0;
+    win.ulwBits = NULL;
+    win.ulwW = 0;
+    win.ulwH = 0;
 }
 
 /**
@@ -1210,29 +1268,30 @@ static void releaseUlwSurface() {
  * ★ 切到 ULW 时**不**设任何东西：`SourceConstantAlpha` 每次 present 都带。
  */
 static void bindLayered(HWND hwnd, int want) {
-    if (g_layerBind != want) {
+    WindowSlot &win = slotOf(hwnd);
+    if (win.layerBind != want) {
         LONG_PTR ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
         SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex & ~WS_EX_LAYERED);
         SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED);
         SetWindowPos(hwnd, NULL, 0, 0, 0, 0,
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-        g_layerBind = want;
+        win.layerBind = want;
     }
 
     if (want == kBindLwa) {
-        SetLayeredWindowAttributes(hwnd, 0, g_opacity, LWA_ALPHA);
+        SetLayeredWindowAttributes(hwnd, 0, win.opacity, LWA_ALPHA);
     }
 }
 
 /**
- * 用 `UpdateLayeredWindow` 把 `g_frame`（**预乘 BGRA**）交给合成器。返回是否真的贴了。
+ * 用 `UpdateLayeredWindow` 把 `win.frame`（**预乘 BGRA**）交给合成器。返回是否真的贴了。
  *
  * ★★ 四条不变量，少一条都是"画面不对但**不报错**"：
  *   ① **预乘**：`BLENDFUNCTION.AlphaFormat = AC_SRC_ALPHA` 的语义就是"源已预乘"
  *      ⇒ 再乘一次 alpha 会让半透明区二次压暗（看起来像"底色比设计稿深一档"）。
  *   ② **`pptDst` / `psize` 必须给具体值，不能传 NULL**（本机实测，踩过）：
  *      两个都传 NULL 时 `UpdateLayeredWindow` **返回成功但画面一个像素都不变** ——
- *      现象是"窗口完全不可见、日志干净、`g_frame` 里像素全对"。MSDN 说
+ *      现象是"窗口完全不可见、日志干净、`win.frame` 里像素全对"。MSDN 说
  *      "位置/尺寸不变时可以为 NULL"，但那条路在本机 Win10/11 上不生效。
  *      给的值就是**当前窗口矩形** ⇒ 既不动位置也不改尺寸（与 `WM_SIZE` 不打架）。
  *   ③ **帧尺寸必须等于窗口矩形**才贴：不等就是 resize 中途（新帧还没来），或者
@@ -1243,7 +1302,8 @@ static void bindLayered(HWND hwnd, int want) {
  * ★ **前提是无边框**（`set_frameless`）：客户区=整窗，位图才与窗口矩形一一对齐。
  */
 static bool presentLayered(HWND hwnd) {
-    if (g_frame.empty() || g_frameW <= 0 || g_frameH <= 0) {
+    WindowSlot &win = slotOf(hwnd);
+    if (win.frame.empty() || win.frameW <= 0 || win.frameH <= 0) {
         return false;
     }
 
@@ -1251,56 +1311,56 @@ static bool presentLayered(HWND hwnd) {
     if (!::GetWindowRect(hwnd, &wr)) {
         return false;
     }
-    if ((int)(wr.right - wr.left) != g_frameW || (int)(wr.bottom - wr.top) != g_frameH) {
+    if ((int)(wr.right - wr.left) != win.frameW || (int)(wr.bottom - wr.top) != win.frameH) {
         return false;   // 见不变量 ③
     }
 
     bindLayered(hwnd, kBindUlw);
 
-    if (g_ulwBitmap == NULL || g_ulwW != g_frameW || g_ulwH != g_frameH) {
-        releaseUlwSurface();
+    if (win.ulwBitmap == NULL || win.ulwW != win.frameW || win.ulwH != win.frameH) {
+        releaseUlwSurface(win);
 
         HDC screen = GetDC(NULL);
-        g_ulwDc = CreateCompatibleDC(screen);
+        win.ulwDc = CreateCompatibleDC(screen);
         if (screen != NULL) {
             ReleaseDC(NULL, screen);
         }
-        if (g_ulwDc == NULL) {
+        if (win.ulwDc == NULL) {
             return false;
         }
 
         BITMAPINFO info = {};
         info.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
-        info.bmiHeader.biWidth       = g_frameW;
-        info.bmiHeader.biHeight      = -g_frameH;   // 负高 = 自上而下，与 g_frame 行序一致
+        info.bmiHeader.biWidth       = win.frameW;
+        info.bmiHeader.biHeight      = -win.frameH;   // 负高 = 自上而下，与 win.frame 行序一致
         info.bmiHeader.biPlanes      = 1;
         info.bmiHeader.biBitCount    = 32;
         info.bmiHeader.biCompression = BI_RGB;
 
         void *bits = NULL;
-        g_ulwBitmap = CreateDIBSection(g_ulwDc, &info, DIB_RGB_COLORS, &bits, NULL, 0);
-        if (g_ulwBitmap == NULL || bits == NULL) {
-            releaseUlwSurface();
+        win.ulwBitmap = CreateDIBSection(win.ulwDc, &info, DIB_RGB_COLORS, &bits, NULL, 0);
+        if (win.ulwBitmap == NULL || bits == NULL) {
+            releaseUlwSurface(win);
             return false;
         }
-        g_ulwOldBitmap = (HBITMAP)SelectObject(g_ulwDc, g_ulwBitmap);
-        g_ulwBits = bits;
-        g_ulwW = g_frameW;
-        g_ulwH = g_frameH;
+        win.ulwOldBitmap = (HBITMAP)SelectObject(win.ulwDc, win.ulwBitmap);
+        win.ulwBits = bits;
+        win.ulwW = win.frameW;
+        win.ulwH = win.frameH;
     }
 
-    memcpy(g_ulwBits, g_frame.data(), (size_t)g_frameW * (size_t)g_frameH * 4u);
+    memcpy(win.ulwBits, win.frame.data(), (size_t)win.frameW * (size_t)win.frameH * 4u);
 
     POINT src = {0, 0};
     POINT dst = {wr.left, wr.top};        // 当前位置 ⇒ 不移动窗口
-    SIZE size = {g_frameW, g_frameH};     // 当前尺寸 ⇒ 不改窗口大小
+    SIZE size = {win.frameW, win.frameH};     // 当前尺寸 ⇒ 不改窗口大小
 
     BLENDFUNCTION blend = {};
     blend.BlendOp             = AC_SRC_OVER;
-    blend.SourceConstantAlpha = g_opacity;   // `set_opacity` 在两种模式下语义一致
+    blend.SourceConstantAlpha = win.opacity;   // `set_opacity` 在两种模式下语义一致
     blend.AlphaFormat         = AC_SRC_ALPHA;
 
-    return UpdateLayeredWindow(hwnd, NULL, &dst, &size, g_ulwDc, &src, 0, &blend, ULW_ALPHA) != FALSE;
+    return UpdateLayeredWindow(hwnd, NULL, &dst, &size, win.ulwDc, &src, 0, &blend, ULW_ALPHA) != FALSE;
 }
 
 /**
@@ -1310,8 +1370,9 @@ static bool presentLayered(HWND hwnd) {
  *   客户区错开一个标题栏高度，画面上移、底边缺一条 —— 那种"半对"比不透明更糟。
  *   不满足就**回落 GDI**（整窗不透明），应用侧只是"透明没生效"，不是黑屏。
  */
-static bool layeredPixelReady() {
-    return g_pixelAlpha && g_frameless;
+static bool layeredPixelReady(HWND hwnd) {
+    WindowSlot &win = slotOf(hwnd);
+    return win.pixelAlpha && win.frameless;
 }
 
 // ─────────────────────────────────────── 拖动重排入口（§5.2 模态循环）──
@@ -1320,41 +1381,55 @@ static bool layeredPixelReady() {
 // PHP 侧 `src/Platform/Win32/ResizeHook.php`（无 namespace，AOT 符号名约定）。
 // 声明在文件顶部**全局作用域**（见那里的注释：匿名 namespace 会改符号名）。
 
-/** 模态拖动会话（WM_ENTERSIZEMOVE..WM_EXITSIZEMOVE） */
-static bool g_inSizeMove = false;
-/** 防重入：hook 内部若再次触发 WM_SIZE/WM_TIMER 不得嵌套再进 PHP */
-static bool g_inResizeHook = false;
-/** 上一次 hook 的耗时（ms）；0 = 尚未成功跑过（此时退回旧帧拉伸兜底） */
-static DWORD g_resizeHookMs = 0;
 /** 跟手预算（ms）：超过则跳过本次（与 §5.2 的 100ms 因果感知上限同源，更严） */
 static const DWORD kResizeHookBudgetMs = 48;
 
-/** 让 PHP 同步重排 + 重绘 + present 一帧（安全封装：防重入 + 预算） */
-static void pumpResizeHook() {
-    if (g_inResizeHook || g_resizeHookMs >= kResizeHookBudgetMs) {
+/**
+ * 让 PHP 同步重排 + 重绘 + present 一帧（安全封装：防重入 + 预算）。
+ *
+ * ★ 带 `hwnd`：模态循环是**那个窗口**在拖（多窗口下可能两个窗同时被拖 ⇒
+ *   各自的 inSizeMove / 预算互不干扰）。PHP 侧转回来 present 时也用它。
+ */
+static void pumpResizeHook(HWND hwnd) {
+    WindowSlot &win = slotOf(hwnd);
+    if (win.inResizeHook || win.resizeHookMs >= kResizeHookBudgetMs) {
         return;   // 正在跑 / 上次太慢：本次跳过，画面由拉伸兜底或松手后收尾
     }
-    g_inResizeHook = true;
+    win.inResizeHook = true;
     const DWORD started = GetTickCount();
     ::php_drift_resize_hook_pump();
-    g_resizeHookMs = GetTickCount() - started;
-    g_inResizeHook = false;
+    win.resizeHookMs = GetTickCount() - started;
+    win.inResizeHook = false;
 }
 
 /** hook 是否真的产出了**匹配当前客户区**的帧（PHP 未注入时 hook 是 no-op） */
-static bool resizeHookProducedFrame() {
-    return g_frameW == g_clientW && g_frameH == g_clientH && g_frameW > 0;
+static bool resizeHookProducedFrame(HWND hwnd) {
+    WindowSlot &win = slotOf(hwnd);
+    return win.frameW == win.clientW && win.frameH == win.clientH && win.frameW > 0;
 }
 
 // ─────────────────────────────────────────── WndProc ──
 
 LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    // ★ 每个窗口一条槽：WndProc 里所有 per-window 读写的**唯一入口**。
+    //   取在 switch 之外（不是每个 case 各取一次）—— 少一次 `map` 查找，
+    //   且"这个函数只管这个窗口"在签名上一眼可见。
+    WindowSlot &win = slotOf(hwnd);
     switch (msg) {
+        case WM_NCCREATE:
+            // ★ 句柄会被系统**复用**：新窗口必须从零开始，否则会继承上一个窗口的
+            //   frameless / 最小尺寸 / 材质 / 透明度（不报错、只在特定分配顺序下
+            //   出现的那种 bug）。选 `WM_NCCREATE` 是因为它最早 —— 早于
+            //   WM_NCCALCSIZE / WM_SIZE，那两条会往槽里写尺寸。
+            // ★ `break` 落到函数末尾的 `DefWindowProcW`：这条消息必须交回系统
+            //   （返回 FALSE 会让 `CreateWindowExW` 直接失败）。
+            win = WindowSlot{};
+            break;
         case WM_GETOBJECT:
             // UIA 无障碍（§9 / M5）：UIA 客户端问窗口 provider ⇒ QI 出 Simple 交出。
-            if (lp == (LPARAM)UiaRootObjectId && g_uiaProvider != nullptr) {
+            if (lp == (LPARAM)UiaRootObjectId && win.uiaProvider != nullptr) {
                 IRawElementProviderSimple *simple = nullptr;
-                if (SUCCEEDED(g_uiaProvider->QueryInterface(__uuidof(IRawElementProviderSimple), (void **)&simple))) {
+                if (SUCCEEDED(win.uiaProvider->QueryInterface(__uuidof(IRawElementProviderSimple), (void **)&simple))) {
                     return UiaReturnRawElementProvider(hwnd, wp, lp, simple);
                 }
             }
@@ -1370,6 +1445,7 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             //   ⇒ 入队 ⇒ `pump()` 交出去 ⇒ 组合根抽完事件立刻 `FrameClock::tick()`
             //     跑帧，激活引起的那次重建**同一轮循环**就落盘。
             PendingEvent event;
+            event.hwnd = hwnd;
             event.kind = kEvUiaInvoke;
             event.a = (int) (INT_PTR) wp;
             event.b = 0;
@@ -1386,6 +1462,7 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // 唯一多出来的是字符串载荷（lParam 是 `new std::wstring`，这里接管所有权）。
             std::wstring *payload = (std::wstring *) lp;
             PendingEvent event;
+            event.hwnd = hwnd;
             event.kind = kEvUiaSetValue;
             event.a = (int) (INT_PTR) wp;
             event.b = 0;
@@ -1415,16 +1492,26 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
         case WM_DESTROY:
             // ★ 销毁**之前**抓最后几何（§5.4 的救命一发：persist 会在这个窗口
-            //   死透之后才来问它，见 g_lastGeom* 的注释）。
+            //   死透之后才来问它，见 `lastGeom*` 的注释）。
             cacheFinalGeometry(hwnd);
             // ★ 守卫与活窗口表都要摘：句柄会被系统复用，留着就是"下一个窗
             //   莫名继承了上一窗的关闭行为"（不报错、只在特定分配顺序下出现）。
             g_closeGuarded.erase(hwnd);
             g_liveWindows.erase(hwnd);
-            // ★ ULW 的 DIB section / 内存 DC 是**进程级**全局（与 g_frame 同一条
-            //   单窗口假设）⇒ 这里必须释放，否则每开一次窗口漏一张整屏位图。
-            releaseUlwSurface();
-            g_layerBind = kBindNone;
+            // ★ 槽里的**资源**必须在这里释放（槽本身留着 —— 退出路径还要读
+            //   `lastGeom*`）：不释放就是每开一次窗口漏一张整屏位图 + 一个
+            //   COM provider。`frame` 一并缩容，否则几十个窗口的历史帧会攒起来。
+            releaseUlwSurface(win);
+            win.layerBind = kBindNone;
+            win.frame.clear();
+            win.frame.shrink_to_fit();
+            win.uiaNodes.clear();
+            win.uiaNodes.shrink_to_fit();
+            if (win.uiaProvider != nullptr) {
+                // Release 而不是 delete：UIA 系统可能仍持一份引用（它是 COM 对象）。
+                win.uiaProvider->Release();
+                win.uiaProvider = nullptr;
+            }
             // ★ 关**最后一个**窗口才退出进程（2026-10-30）：`PostQuitMessage` 是
             //   进程级的，多窗口下"关一个 = 全退"正是 §5 裁决 ① 要否掉的语义。
             //   单窗口时两个分支等价（那个窗就是最后一个）。
@@ -1437,12 +1524,12 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // 模态尺寸循环开始（§5.2）：PHP 主循环即被挂起 ⇒ 由下面的 WM_SIZE
             // 分支**同步**产帧（Flutter Windows embedder 同款：在 WM_SIZE 里等到
             // 一张匹配新尺寸的帧；模态循环是串行的 ⇒ 产帧期间尺寸不会变）。
-            g_inSizeMove = true;
+            win.inSizeMove = true;
             return 0;
         }
 
         case WM_EXITSIZEMOVE: {
-            g_inSizeMove = false;
+            win.inSizeMove = false;
             // 松手：常规循环恢复（积压的 resize 已被合并成一条，见 enqueue）
             return 0;
         }
@@ -1450,16 +1537,16 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_GETMINMAXINFO: {
             // 最小尺寸（§5.4）：客户区 min（物理像素）⇒ 外框 min（路径同建窗换算）。
             // 0 = 未设 ⇒ 交给 DefWindowProc 的系统默认。
-            if (g_minClientW > 0 && g_minClientH > 0) {
+            if (win.minClientW > 0 && win.minClientH > 0) {
                 MINMAXINFO *info = (MINMAXINFO *)lp;
                 if (info != NULL) {
-                    RECT frame = {0, 0, g_minClientW, g_minClientH};
+                    RECT frame = {0, 0, win.minClientW, win.minClientH};
                     adjustFrameForDpi(
                         &frame,
                         (DWORD)GetWindowLongPtrW(hwnd, GWL_STYLE),
                         FALSE,
                         (DWORD)GetWindowLongPtrW(hwnd, GWL_EXSTYLE),
-                        g_dpi);
+                        win.dpi);
                     info->ptMinTrackSize.x = frame.right - frame.left;
                     info->ptMinTrackSize.y = frame.bottom - frame.top;
                 }
@@ -1472,7 +1559,7 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             //   非客户区"。**返回 0 且不改 `rgrc[0]`** ⇒ 系统把"整个窗口矩形"当客户区
             //   （标题栏消失），而窗口样式仍是 `WS_OVERLAPPEDWINDOW` ⇒ 贴边吸附 /
             //   快照布局 / 最大化动画全部由系统照旧。`WS_POPUP` 会丢掉这些原生行为。
-            if (wp != TRUE || !g_frameless) {
+            if (wp != TRUE || !win.frameless) {
                 break;
             }
             // ★ **最大化必须扣回"不可见缩放边框"**：系统给最大化窗口的矩形比显示器
@@ -1492,7 +1579,7 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
         case WM_NCHITTEST: {
             // 非无边框 ⇒ 交给系统默认（原生标题栏/边框的命中语义）。
-            if (!g_frameless) {
+            if (!win.frameless) {
                 break;
             }
             POINT client = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
@@ -1503,7 +1590,7 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // ★ 最大化：不可缩放 ⇒ 只剩"顶部拖动带"，四边/四角一律 `HTCLIENT`。
             //   漏了这条，最大化后拖窗口边缘会让系统"还原 + 缩放"（真机怪异）。
             if (IsZoomed(hwnd) != FALSE) {
-                if (g_dragHeight > 0 && client.y < g_dragHeight) {
+                if (win.dragHeight > 0 && client.y < win.dragHeight) {
                     return HTCAPTION;
                 }
                 return HTCLIENT;
@@ -1531,7 +1618,7 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // ★ 本仓应用走**另一条路**：`AppBar::windowDrag()` 由框架精确判断
             //   "命中的是顶条自己而不是按钮"，所以组合根传 `dragHeight = 0`
             //   （这条原生带留给"不画顶条的应用"当兜底）。
-            if (g_dragHeight > 0 && client.y < g_dragHeight) {
+            if (win.dragHeight > 0 && client.y < win.dragHeight) {
                 return HTCAPTION;
             }
             return HTCLIENT;
@@ -1542,28 +1629,28 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             int h = HIWORD(lp);
             // 最小化时 lp 是 0；宽高非正一律忽略（恢复时会再来一条 WM_SIZE）
             if (w > 0 && h > 0) {
-                g_clientW = w;
-                g_clientH = h;
+                win.clientW = w;
+                win.clientH = h;
                 // ★ 拖动中**同步产帧**（§5.2，Flutter/Qt 同口径）：模态循环串行
                 //   ⇒ 这里产帧期间下一个鼠标消息不会被处理、尺寸不会变 ⇒ 帧必然
                 //   匹配当前客户区。产完再决定要不要拉伸兜底（正常情况下不需要）。
-                if (g_inSizeMove) {
-                    pumpResizeHook();
+                if (win.inSizeMove) {
+                    pumpResizeHook(hwnd);
                 }
 
                 // ★ 2026-10-19：**不清帧**。旧实现在这里 clear() ⇒ WM_PAINT 时
                 //   presentTo 无内容可贴，resize 拖动中新露出的区域全黑。
                 //   尺寸不匹配时由 presentTo 走"原尺寸贴 + 余区填底色"（**不拉伸**）。
-                if (g_layerBind != kBindUlw
-                    && !resizeHookProducedFrame()
-                    && !g_frame.empty() && g_frameW > 0 && g_frameH > 0
-                    && (g_frameW != w || g_frameH != h)) {
+                if (win.layerBind != kBindUlw
+                    && !resizeHookProducedFrame(hwnd)
+                    && !win.frame.empty() && win.frameW > 0 && win.frameH > 0
+                    && (win.frameW != w || win.frameH != h)) {
                     // ★ 逐像素模式下没有这条兜底：ULW 没有"余区"，位图多大就多大
                     //   （见 `presentLayered()` 的不变量 ③）⇒ 拖动中露出的一块在
                     //   新帧到达前是透明的。这是"不拉伸"裁决在 ULW 下的必然结果。
                     HDC dc = GetDC(hwnd);
                     if (dc != NULL) {
-                        presentTo(dc, w, h);
+                        presentTo(hwnd, dc, w, h);
                         ReleaseDC(hwnd, dc);
                     }
                 }
@@ -1572,7 +1659,7 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 event.kind = kEvResize;
                 event.a = w;
                 event.b = h;
-                enqueue(event);
+                enqueue(hwnd, event);
             }
             return 0;
         }
@@ -1596,7 +1683,7 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (LOWORD(wp) == WA_INACTIVE) {
                 PendingEvent event = {};
                 event.kind = kEvDeactivate;
-                enqueue(event);
+                enqueue(hwnd, event);
             }
             // 不 `return 0`：这条消息没有"必须吞掉"的理由，交给 DefWindowProc
             // （其它壳分支 `return 0` 是因为它们**处理**了那条消息，这里只是旁听）。
@@ -1634,7 +1721,7 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             event.a = point.x;
             event.b = point.y;
             event.text = joined;
-            enqueue(event);
+            enqueue(hwnd, event);
             return 0;
         }
 
@@ -1645,13 +1732,13 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (lp != 0 && wcscmp((LPCWSTR)lp, L"ImmersiveColorSet") == 0) {
                 PendingEvent event = {};
                 event.kind = kEvTheme;
-                enqueue(event);
+                enqueue(hwnd, event);
             }
             return 0;
         }
 
         case WM_DPICHANGED: {
-            g_dpi = HIWORD(wp);
+            win.dpi = HIWORD(wp);
             // 系统给了一个建议外框，照它调整（不照做的话窗口在新 DPI 下尺寸不对）
             RECT *suggested = (RECT *)lp;
             if (suggested != NULL) {
@@ -1664,8 +1751,8 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
             PendingEvent event = {};
             event.kind = kEvDpi;
-            event.a = (int)g_dpi;
-            enqueue(event);
+            event.a = (int)win.dpi;
+            enqueue(hwnd, event);
             return 0;
         }
 
@@ -1673,7 +1760,7 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             PendingEvent event = {};
             event.kind = kEvTimer;
             event.a = (int)wp;   // id 是 PHP 给的，这里只是原样回传
-            enqueue(event);
+            enqueue(hwnd, event);
             return 0;
         }
 
@@ -1685,12 +1772,12 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             //   "刚被遮住又露出来"时闪一下不透明内容。
             //   ★ `BeginPaint`/`EndPaint` 仍然必须配对：不配对 = 重绘区域永不失效 ⇒
             //     `WM_PAINT` 连发，CPU 烧在空转上（而画面看起来"没什么不对"）。
-            //   ★ 判据是**绑定态**而不是 `g_pixelAlpha`：ULW 没贴上时会回落 GDI
+            //   ★ 判据是**绑定态**而不是 `win.pixelAlpha`：ULW 没贴上时会回落 GDI
             //     （见 `presentLayered()` 的返回值），那时 GDI 内容才是屏幕上的真相。
-            if (g_layerBind != kBindUlw) {
+            if (win.layerBind != kBindUlw) {
                 // 帧尺寸与客户区不同（resize 后 PHP 新帧未到）⇒ 原尺寸贴 + 余区填底色
                 RECT rc;
-                presentTo(dc, GetClientRect(hwnd, &rc) ? (int)(rc.right - rc.left) : 0,
+                presentTo(hwnd, dc, GetClientRect(hwnd, &rc) ? (int)(rc.right - rc.left) : 0,
                           rc.bottom - rc.top);
             }
             EndPaint(hwnd, &ps);
@@ -1708,7 +1795,7 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // ★ 非客户区（标题栏 / 边框）`break` 交回 DefWindowProc —— 那里的
             //   拉伸/箭头光标该由系统决定，自绘没有好处。
             if (LOWORD(lp) == HTCLIENT) {
-                SetCursor(g_cursor != NULL ? g_cursor : LoadCursorW(NULL, cursorIdForShape(0)));
+                SetCursor(win.cursor != NULL ? win.cursor : LoadCursorW(NULL, cursorIdForShape(0)));
                 return TRUE;
             }
             break;
@@ -1720,7 +1807,7 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (msg == WM_MBUTTONDOWN) button = 1;
             if (msg == WM_RBUTTONDOWN) button = 2;
 
-            pushPointer(GET_X_LPARAM(lp), GET_Y_LPARAM(lp), button, 0);   // Down
+            pushPointer(hwnd, GET_X_LPARAM(lp), GET_Y_LPARAM(lp), button, 0);   // Down
             return 0;
         }
 
@@ -1728,19 +1815,19 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // ★ TrackMouseEvent(TME_LEAVE)：不请求跟踪就没有 WM_MOUSELEAVE ⇒
             //   指针离开客户区时框架永远不知道（悬停目标卡在最后一个上、
             //   拖动不取消）。首次移动时请求一次，离开后复位。
-            if (!g_ptrTracked) {
+            if (!win.ptrTracked) {
                 TRACKMOUSEEVENT tme = {};
                 tme.cbSize = sizeof(tme);
                 tme.dwFlags = TME_LEAVE;
                 tme.hwndTrack = hwnd;
                 TrackMouseEvent(&tme);
-                g_ptrTracked = true;
+                win.ptrTracked = true;
             }
 
             // ★ move 的 button 恒 0：wp 里的 MK_* 位（按住态）没有消费者 ——
             //   拖动状态由应用自己的 pending 记录跟踪（§9.1 / A15：不预先
             //   发明线上语义）。
-            pushPointer(GET_X_LPARAM(lp), GET_Y_LPARAM(lp), 0, 1);   // Move
+            pushPointer(hwnd, GET_X_LPARAM(lp), GET_Y_LPARAM(lp), 0, 1);   // Move
             return 0;
         }
 
@@ -1751,15 +1838,15 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (msg == WM_MBUTTONUP) button = 1;
             if (msg == WM_RBUTTONUP) button = 2;
 
-            pushPointer(GET_X_LPARAM(lp), GET_Y_LPARAM(lp), button, 2);   // Up
+            pushPointer(hwnd, GET_X_LPARAM(lp), GET_Y_LPARAM(lp), button, 2);   // Up
             return 0;
         }
 
         case WM_MOUSELEAVE: {
-            g_ptrTracked = false;   // 下次进入要重新请求跟踪
+            win.ptrTracked = false;   // 下次进入要重新请求跟踪
 
             // 坐标是最后已知位置（系统不再给新坐标）—— 消费方只看"离开了"
-            pushPointer(g_ptrX, g_ptrY, 0, 3);   // Leave
+            pushPointer(hwnd, win.ptrX, win.ptrY, 0, 3);   // Leave
             return 0;
         }
 
@@ -1774,7 +1861,7 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             //   边界上取负 —— 平台惯例 → 框架语义的翻译只发生在这一处。
             //   （Windows 传统映射是前推=看到下面；本仓按用户明确要求取反。）
             POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
-            ScreenToClient(g_main, &pt);
+            ScreenToClient(hwnd, &pt);   // ★ 用 **本窗**（不是"主窗"）：多窗口下各自坐标系
 
             // ★ Shift+竖轮 = 横轮（2026-10-27）：没有横向滚轮 / 触控板时，这是
             //   用户唯一能横向滚的入口，也是 Windows 应用的通用手势。
@@ -1792,7 +1879,7 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             event.b = (int)pt.y;
             event.c = horiz ? raw : -raw;
             event.e = horiz ? 1 : 0;
-            enqueue(event);
+            enqueue(hwnd, event);
             return 0;
         }
 
@@ -1800,7 +1887,7 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // 触控板横滑 / 横向滚轮。★ 坐标同样是**屏幕**坐标（理由见上）。
             // ★ 原生 delta 正 = 向右滚 = 看右边，与框架横向正向一致 ⇒ 不取负。
             POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
-            ScreenToClient(g_main, &pt);
+            ScreenToClient(hwnd, &pt);   // ★ 本窗（理由同上）
 
             PendingEvent event = {};
             event.kind = kEvWheel;
@@ -1808,7 +1895,7 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             event.b = (int)pt.y;
             event.c = GET_WHEEL_DELTA_WPARAM(wp);
             event.e = 1;
-            enqueue(event);
+            enqueue(hwnd, event);
             return 0;
         }
 
@@ -1822,7 +1909,7 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             event.kind = kEvKey;
             event.c = modifierBits();
             event.text = name;
-            enqueue(event);
+            enqueue(hwnd, event);
             return 0;
         }
 
@@ -1838,7 +1925,7 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             PendingEvent event = {};
             event.kind = kEvChar;
             event.text = toUtf8(&ch, 1);
-            enqueue(event);
+            enqueue(hwnd, event);
             return 0;
         }
 
@@ -1847,7 +1934,7 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // 它的位置指到光标处 —— CFS_POINT（GUI 基线：组字窗 CFS_POINT、
             // 候选窗不硬塞，"建议位置"的语义系统可调）。
             // ★ ClientToScreen 是必须的：ImmSetCompositionWindow 吃屏幕坐标，
-            //   而 g_imeX/Y 是设备像素的客户区坐标。
+            //   而 win.imeX/Y 是设备像素的客户区坐标。
             // ★ 2026-10-19 补三件（真机候选框贴屏幕左上角的修复）：
             //   ① 创建 1×1 **可见**系统 caret —— 不少输入法（含部分 TSF 系）
             //      通过 GetCaretPos 定位候选框；caret 不存在时查询失败返回
@@ -1856,14 +1943,14 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             //   ② ImmSetCandidateWindow（默认候选窗，同点）—— IMM32 输入法
             //      （搜鱼/QQ 类）的**候选框**位置由它决定，不设就默认位置。
             //   ③ 见 WM_IME_ENDCOMPOSITION 的清理。
-            if (g_imeX >= 0.0f) {
-                double imeScale = (double)g_dpi / 96.0;
-                LONG cx = (LONG)((double)g_imeX / imeScale);
-                LONG cy = (LONG)((double)g_imeY / imeScale);
-                if (!g_caretVisible) {
-                    CreateCaret(hwnd, nullptr, 1, (int)(g_imeH / imeScale) > 0 ? (int)(g_imeH / imeScale) : 1);
+            if (win.imeX >= 0.0f) {
+                double imeScale = (double)win.dpi / 96.0;
+                LONG cx = (LONG)((double)win.imeX / imeScale);
+                LONG cy = (LONG)((double)win.imeY / imeScale);
+                if (!win.caretVisible) {
+                    CreateCaret(hwnd, nullptr, 1, (int)(win.imeH / imeScale) > 0 ? (int)(win.imeH / imeScale) : 1);
                     ShowCaret(hwnd);
-                    g_caretVisible = true;
+                    win.caretVisible = true;
                 }
                 SetCaretPos(cx, cy);
 
@@ -1888,10 +1975,10 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
         case WM_IME_ENDCOMPOSITION: {
             // 组字结束：收起 caret（否则光标处留一个残留黑点）。
-            if (g_caretVisible) {
+            if (win.caretVisible) {
                 HideCaret(hwnd);
                 DestroyCaret();
-                g_caretVisible = false;
+                win.caretVisible = false;
             }
             return 0;
         }
@@ -1911,7 +1998,7 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                         PendingEvent event = {};
                         event.kind = kEvChar;
                         event.text = toUtf8(buf.data(), (int)wchars);
-                        enqueue(event);
+                        enqueue(hwnd, event);
                     }
                     ImmReleaseContext(hwnd, imc);
                 }
@@ -1927,7 +2014,7 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 if (pos != NULL) {
                     pos->dwSize = sizeof(IMECHARPOSITION);
                     pos->dwCharPos = 0;
-                    if (g_imeX < 0.0f || hwnd == NULL) {
+                    if (win.imeX < 0.0f || hwnd == NULL) {
                         // 无插入符：报客户区左上角（0,0）高度 1 —— 合法值。
                         pos->pt.x = 0;
                         pos->pt.y = 0;
@@ -1936,14 +2023,14 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                         GetClientRect(hwnd, &rc);
                         pos->rcDocument = rc;
                     } else {
-                        double imeScale = (double)g_dpi / 96.0;
-                        LONG cx = (LONG)((double)g_imeX / imeScale);
-                        LONG cy = (LONG)((double)g_imeY / imeScale);
+                        double imeScale = (double)win.dpi / 96.0;
+                        LONG cx = (LONG)((double)win.imeX / imeScale);
+                        LONG cy = (LONG)((double)win.imeY / imeScale);
                         POINT pt = {cx, cy};
                         ClientToScreen(hwnd, &pt);   // 同样吃屏幕坐标
                         pos->pt.x = pt.x;
                         pos->pt.y = pt.y;
-                        pos->cLineHeight = (LONG)((double)g_imeH / imeScale);
+                        pos->cLineHeight = (LONG)((double)win.imeH / imeScale);
                         RECT rc = {};
                         GetClientRect(hwnd, &rc);
                         pos->rcDocument = rc;
@@ -1968,6 +2055,15 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
 Array toArray(const PendingEvent &event) {
     Array out;
+
+    // ★ **每条事件都带来源窗口**（2026-10-30，M1-a）：队列是线程级一份，PHP 侧
+    //   要靠它把 resize / dpi / 输入派给**对的**那个 `Application`。为 `0`
+    //   表示"没有窗口归属"（理论上只有 quit 会这样，而 quit 不走这个函数）。
+    //   ★ 统一在 switch 之前写，而不是每个 case 各补一行 —— 漏一个 case 就是
+    //     "这条事件永远派不对窗口"，且不会报错。
+    if (event.hwnd != NULL) {
+        out.set("hwnd", (Int)(INT_PTR)event.hwnd);
+    }
 
     switch (event.kind) {
         case kEvResize:
@@ -2151,7 +2247,9 @@ UINT dpiOfWindow(HWND hwnd) {
         }
     }
 
-    return g_dpi;
+    // 问不到窗口 DPI（无 `GetDpiForWindow` 且拿不到 DC）⇒ 退回**这个窗口**
+    // 上一次算出来的值。★ 不是"进程里最后算过的那个"：多窗口下那会是别的窗的。
+    return slotOf(hwnd).dpi;
 }
 
 /**
@@ -2207,20 +2305,22 @@ Int php_drift_win_create(String title, Int width, Int height) {
 
     // 建窗前拿不到**窗口** DPI ⇒ 先用**系统** DPI 起算；建窗后再用 GetDpiForWindow
     // 纠正（多显示器时窗口可能落在另一块屏上，见函数尾）。
+    // ★ 这里用**局部变量**而不是槽：此刻还没有窗口，也就没有槽可写。
+    UINT preDpi = 96;
     HDC screen = GetDC(NULL);
     if (screen != NULL) {
         int systemDpi = GetDeviceCaps(screen, LOGPIXELSX);
         ReleaseDC(NULL, screen);
         if (systemDpi > 0) {
-            g_dpi = (UINT)systemDpi;
+            preDpi = (UINT)systemDpi;
         }
     }
-    if (g_dpi == 0) {
-        g_dpi = 96;
+    if (preDpi == 0) {
+        preDpi = 96;
     }
 
     // 建窗用的 DPI（建窗后会用 GetDpiForWindow 纠正；两者不同就得挪窗口）
-    const UINT preCreateDpi = g_dpi;
+    const UINT preCreateDpi = preDpi;
 
     HINSTANCE instance = GetModuleHandleW(NULL);
 
@@ -2245,9 +2345,9 @@ Int php_drift_win_create(String title, Int width, Int height) {
 
     // 请求的是**客户区**尺寸（逻辑像素）⇒ 先按 DPI 放大，再让系统把外框算进去。
     // 不做这一步，用户拿到的是"窗口 640 宽、能画的只有 624"。
-    double scale = (double)g_dpi / 96.0;
+    double scale = (double)preDpi / 96.0;
     RECT frame = {0, 0, (LONG)((double)(int)width * scale), (LONG)((double)(int)height * scale)};
-    adjustFrameForDpi(&frame, WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, FALSE, 0, g_dpi);
+    adjustFrameForDpi(&frame, WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, FALSE, 0, preDpi);
 
     std::wstring wideTitle = toWide(title);
 
@@ -2264,7 +2364,11 @@ Int php_drift_win_create(String title, Int width, Int height) {
         return 0;   // 调用方（Win32WindowHost）负责报 Fatal，这里不静默
     }
 
-    g_main = hwnd;
+    // ★ 槽的**重置**在 `WM_NCCREATE`（那里才知道 hwnd，且早于 WM_SIZE 等消息）；
+    //   这里只补建窗前的 DPI —— `WM_NCCREATE` 跑在 `CreateWindowExW` 内部，
+    //   读不到上面算出来的 `preDpi`。
+    WindowSlot &win = slotOf(hwnd);
+    win.dpi = preDpi;
     // ★ 活窗口表：`WM_DESTROY` 里移除，空了才 `PostQuitMessage`
     //   （"关最后一个才退"的物质基础，见 WM_DESTROY）。
     g_liveWindows.insert(hwnd);
@@ -2287,9 +2391,9 @@ Int php_drift_win_create(String title, Int width, Int height) {
     //   真值 ⇒ 用它重算，并在不同时 `SetWindowPos` 把外框纠正过来。
     UINT actualDpi = dpiOfWindow(hwnd);
     double actualScale = (double)actualDpi / 96.0;
-    g_dpi = actualDpi;
-    g_clientW = (int)((double)(int)width * actualScale);
-    g_clientH = (int)((double)(int)height * actualScale);
+    win.dpi = actualDpi;
+    win.clientW = (int)((double)(int)width * actualScale);
+    win.clientH = (int)((double)(int)height * actualScale);
 
     if (actualDpi != preCreateDpi) {
         RECT fixed = {0, 0, (LONG)((double)(int)width * actualScale), (LONG)((double)(int)height * actualScale)};
@@ -2307,7 +2411,7 @@ Int php_drift_win_create(String title, Int width, Int height) {
     DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(corner));
 
     // UIA 无障碍（§9 / M5，P2）：建窗即挂 provider（数据由 php_drift_win_uia_push 喂）。
-    g_uiaProvider = new CProvider(-1);   // 根 provider（m_index=-1 = 窗口根）
+    win.uiaProvider = new CProvider(hwnd, -1);   // 根 provider（m_index=-1 = 窗口根）
 
     return (Int)(INT_PTR)hwnd;
 }
@@ -2418,6 +2522,7 @@ static void applyBackdrop(HWND target, int kind) {
  * 参数语义与耦合规则见 stub 的 `drift_win_apply_material` docblock。
  */
 void php_drift_win_apply_material(Int hwnd, Bool pixelAlpha, Float opacity, Int backdropKind) {
+    WindowSlot &win = slotOf((HWND)(INT_PTR)hwnd);
     HWND target = (HWND)(INT_PTR)hwnd;
     if (target == NULL) {
         return;
@@ -2426,7 +2531,7 @@ void php_drift_win_apply_material(Int hwnd, Bool pixelAlpha, Float opacity, Int 
     // 逐像素模式：只置位标志，**不动窗口样式**（老 set_pixel_alpha 的坑）——
     // 真正挂 WS_EX_LAYERED 推迟到第一次 present，避免"挂着 LAYERED 而谁都没调"
     // 的不可见空窗。清零同样不动样式：切回 GDI 只需 present 走 SetDIBitsToDevice。
-    g_pixelAlpha = (pixelAlpha != 0);
+    win.pixelAlpha = (pixelAlpha != 0);
 
     int a255 = (int)(opacity * 255.0f + 0.5f);
     if (a255 < 0) {
@@ -2434,7 +2539,7 @@ void php_drift_win_apply_material(Int hwnd, Bool pixelAlpha, Float opacity, Int 
     } else if (a255 > 255) {
         a255 = 255;
     }
-    g_opacity = (BYTE)a255;
+    win.opacity = (BYTE)a255;
 
     applyBackdrop(target, (int)backdropKind);
 
@@ -2442,7 +2547,7 @@ void php_drift_win_apply_material(Int hwnd, Bool pixelAlpha, Float opacity, Int 
     // 保持纯 GDI 上屏，不承担分层窗的合成怪癖。逐像素模式下不能调
     // SetLayeredWindowAttributes（会把绑定态切回 LWA，ULW 的位图当场失效），
     // 整窗 alpha 由 present 的 BLENDFUNCTION.SourceConstantAlpha 带上，语义一致。
-    if (!g_pixelAlpha && a255 < 255) {
+    if (!win.pixelAlpha && a255 < 255) {
         bindLayered(target, kBindLwa);
     }
 }
@@ -2499,18 +2604,19 @@ Int php_drift_win_material_caps() {
 /**
  * 无边框模式（P1-Stage 1b / §质感）。`dragHeight` = 顶部拖动带高度（**物理**像素）。
  *
- * ★ opt-in：调用即置位 `g_frameless`。走 `WM_NCCALCSIZE` 让客户区=整窗（见
+ * ★ opt-in：调用即置位 `win.frameless`。走 `WM_NCCALCSIZE` 让客户区=整窗（见
  *   WndProc），**样式不变** ⇒ 原生贴边吸附 / 快照布局 / 最大化动画不丢。
  * ★ 置位后必须 `SWP_FRAMECHANGED` 让系统重算非客户区（否则要等下一次尺寸变化）。
  */
 void php_drift_win_set_frameless(Int hwnd, Int dragHeight) {
+    WindowSlot &win = slotOf((HWND)(INT_PTR)hwnd);
     HWND target = (HWND)(INT_PTR)hwnd;
     if (target == NULL) {
         return;
     }
-    g_frameless = true;
+    win.frameless = true;
     int dh = (int)dragHeight;
-    g_dragHeight = dh < 0 ? 0 : dh;
+    win.dragHeight = dh < 0 ? 0 : dh;
 
     SetWindowPos(target, NULL, 0, 0, 0, 0,
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
@@ -2555,16 +2661,17 @@ void php_drift_win_maximize_toggle(Int hwnd) {
 }
 
 void php_drift_win_set_cursor(Int hwnd, Int shape) {
+    WindowSlot &win = slotOf((HWND)(INT_PTR)hwnd);
     // ★ `shape` 是 `Drift\Input\CursorShape` 的 value（`src/Input/CursorShape.php`）；
     //   名字→`IDC_*` 的映射只有 `cursorIdForShape()` 一处 —— 两边必须同步改。
     // ★ `LoadCursorW(NULL, …)` 的 IDC_* 是**系统资源**（MAKEINTRESOURCE），
     //   不需要 DestroyCursor，也不随窗口销毁而失效 ⇒ 缓存裸 HCURSOR 是安全的。
-    g_cursor = LoadCursorW(NULL, cursorIdForShape((int)shape));
+    win.cursor = LoadCursorW(NULL, cursorIdForShape((int)shape));
 
     HWND target = (HWND)(INT_PTR)hwnd;
     if (target != NULL) {
         // 立刻生效（不等下一次 WM_SETCURSOR）—— 否则"移进去要动一下才变"
-        SetCursor(g_cursor);
+        SetCursor(win.cursor);
     }
 }
 
@@ -2577,31 +2684,39 @@ void php_drift_win_set_title(Int hwnd, String title) {
 }
 
 void php_drift_win_set_min_size(Int hwnd, Int width, Int height) {
+    WindowSlot &win = slotOf((HWND)(INT_PTR)hwnd);
     // §5.4：客户区最小尺寸（**物理**像素）。WM_GETMINMAXINFO 里换算成外框。
     // 只是"下一次拖动时的限制" —— 当前窗口若已经更小，不强制放大（那会让
     // 用户在窄屏幕上开不出窗口）。
-    g_minClientW = width > 0 ? (int)width : 0;
-    g_minClientH = height > 0 ? (int)height : 0;
-    (void)hwnd;   // 单窗口进程：状态在进程级（同 g_clientW）
+    win.minClientW = width > 0 ? (int)width : 0;
+    win.minClientH = height > 0 ? (int)height : 0;
+    (void)hwnd;   // 单窗口进程：状态在进程级（同 win.clientW）
 }
 
-void php_drift_win_ime_caret(Float x, Float y, Float h) {
+void php_drift_win_ime_caret(Int hwnd, Float x, Float y, Float h) {
     // §8.4：IME 定位管线。x/y/h 是**设备像素**的客户区坐标；(-1,-1,0) = 无插入符。
     // 两个消费点：组字窗位置（WM_IME_STARTCOMPOSITION）与 IMR_QUERYCHARPOSITION。
-    g_imeX = x;
-    g_imeY = y;
-    g_imeH = h;
+    //
+    // ★ **必须带 hwnd**（2026-10-30，M1-a）：Windows 的插入符是**线程级**的，
+    //   `SetCaretPos` 作用于"当前线程的插入符" —— 而"该贴哪个窗口"只有调用方知道
+    //   （→ 每帧报位置的是那个窗口的 `Application`）。用"最后建的窗"在多窗口下
+    //   就是"窗口 A 打字的候选框贴在 B 上"。
+    HWND target = (HWND)(INT_PTR)hwnd;
+    WindowSlot &win = slotOf(target);
+    win.imeX = x;
+    win.imeY = y;
+    win.imeH = h;
 
-    if (g_main == NULL) {
+    if (target == NULL) {
         return;
     }
-    double imeScale = (double)g_dpi / 96.0;
+    double imeScale = (double)win.dpi / 96.0;
     if (x < 0.0f) {
         // 无插入符：收起 caret 并挪到客户区外（IME 查到的位置退左上角）
-        if (g_caretVisible) {
-            HideCaret(g_main);
+        if (win.caretVisible) {
+            HideCaret(target);
             DestroyCaret();
-            g_caretVisible = false;
+            win.caretVisible = false;
         }
         SetCaretPos(-10, -10);
         return;
@@ -2627,7 +2742,7 @@ Array php_drift_win_client_size(Int hwnd) {
     // 窗口已死（退出路径）：给最后已知尺寸（§5.4，见 g_lastGeom* 注释）
     RECT rect;
     if (target == NULL || !GetClientRect(target, &rect)) {
-        fillGeomFromCache(out);
+        fillGeomFromCache(target, out);
         return out;
     }
 
@@ -2654,17 +2769,19 @@ Array php_drift_win_client_size(Int hwnd) {
 }
 
 Bool php_drift_win_is_maximized(Int hwnd) {
+    WindowSlot &win = slotOf((HWND)(INT_PTR)hwnd);
     HWND target = (HWND)(INT_PTR)hwnd;
     if (target == NULL) {
         // 窗口已死（退出路径）：退化到最后已知状态（§5.4）
-        return (Bool)(g_lastGeomValid && g_lastMaximized);
+        return (Bool)(win.lastGeomValid && win.lastMaximized);
     }
     bool zoomed = IsZoomed(target) != FALSE;
-    g_lastMaximized = zoomed;   // 活窗口：顺手刷新，缓存有效性仍归 cacheFinalGeometry 管
+    win.lastMaximized = zoomed;   // 活窗口：顺手刷新，缓存有效性仍归 cacheFinalGeometry 管
     return (Bool)zoomed;
 }
 
 Array php_drift_win_window_position(Int hwnd) {
+    WindowSlot &win = slotOf((HWND)(INT_PTR)hwnd);
     // §5.4 持久化的读向侧。**物理**像素；空数组 = "别记"（最小化，或从未记过）。
     // 为什么不记最小化时的坐标：Windows 在最小化期间把窗口摆在屏幕外
     // （惯例是 (-32000,-32000)），照抄回来下次启动窗口就"消失"了。
@@ -2673,18 +2790,18 @@ Array php_drift_win_window_position(Int hwnd) {
     HWND target = (HWND)(INT_PTR)hwnd;
     Array out;
     if (target != NULL && IsIconic(target) != FALSE) {
-        g_lastGeomValid = false;
+        win.lastGeomValid = false;
         return out;
     }
 
     RECT client = {0, 0, 0, 0};
     if (target == NULL || !GetClientRect(target, &client)) {
-        fillGeomFromCache(out);
+        fillGeomFromCache(target, out);
         return out;
     }
     POINT origin = {client.left, client.top};
     if (!ClientToScreen(target, &origin)) {
-        fillGeomFromCache(out);
+        fillGeomFromCache(target, out);
         return out;
     }
 
@@ -2749,6 +2866,7 @@ static void clampRectToNearestMonitor(RECT &rect) {
 }
 
 void php_drift_win_place_window(Int hwnd, Float x, Float y, Float w, Float h, Bool maximized) {
+    WindowSlot &win = slotOf((HWND)(INT_PTR)hwnd);
     // §5.4 一次性还原：逻辑客户区几何 ⇒ 物理外框 ⇒ 夹取 ⇒ SetWindowPlacement。
     // 为什么用 `WINDOWPLACEMENT` 而不是 `SetWindowPos`：最大化与"还原后回到哪"
     // 在 Windows 里是同一份状态，拆成两个 API 就会丢掉"从最大化还原回原位"。
@@ -2768,12 +2886,12 @@ void php_drift_win_place_window(Int hwnd, Float x, Float y, Float w, Float h, Bo
     //   那种状态会踩布局硬校验（C5/C6）弹 Fatal。拖动由 WM_GETMINMAXINFO 挡，
     //   程序设尺寸（SetWindowPlacement/SetWindowPos 不受 ptMinTrackSize 限制）
     //   在这里挡。min 是**物理客户区**，w/h 是逻辑 ⇒ 先换算再比。
-    if (g_minClientW > 0 && g_minClientH > 0) {
-        if ((double)w * dpr < (double)g_minClientW) {
-            w = (Float)((double)g_minClientW / dpr);
+    if (win.minClientW > 0 && win.minClientH > 0) {
+        if ((double)w * dpr < (double)win.minClientW) {
+            w = (Float)((double)win.minClientW / dpr);
         }
-        if ((double)h * dpr < (double)g_minClientH) {
-            h = (Float)((double)g_minClientH / dpr);
+        if ((double)h * dpr < (double)win.minClientH) {
+            h = (Float)((double)win.minClientH / dpr);
         }
     }
 
@@ -2915,6 +3033,7 @@ void php_drift_win_message_box(String title, String body) {
 }
 
 void php_drift_win_present(Int hwnd, String rgba, Int width, Int height) {
+    WindowSlot &win = slotOf((HWND)(INT_PTR)hwnd);
     HWND target = (HWND)(INT_PTR)hwnd;
     int w = (int)width;
     int h = (int)height;
@@ -2928,22 +3047,22 @@ void php_drift_win_present(Int hwnd, String rgba, Int width, Int height) {
         return;
     }
 
-    if (g_frameW != w || g_frameH != h) {
-        g_frame.assign(need, 0);
-        g_frameW = w;
-        g_frameH = h;
+    if (win.frameW != w || win.frameH != h) {
+        win.frame.assign(need, 0);
+        win.frameW = w;
+        win.frameH = h;
     }
 
     const unsigned char *src = (const unsigned char *)rgba.data();
-    if (layeredPixelReady()) {
+    if (layeredPixelReady(target)) {
         // ★★ 预乘 BGRA，**只换 R↔B**：`RasterCanvas` 的像素缓冲本来就是**预乘**的
         //   （混合公式 `dst = src·a + dst·(1−a)`，见 `toRgba()` 的长注释）⇒
         //   这里再乘一次 alpha 会把半透明区二次压暗。alpha 原样带过去。
         for (size_t i = 0; i < need; i += 4) {
-            g_frame[i + 0] = src[i + 2];
-            g_frame[i + 1] = src[i + 1];
-            g_frame[i + 2] = src[i + 0];
-            g_frame[i + 3] = src[i + 3];
+            win.frame[i + 0] = src[i + 2];
+            win.frame[i + 1] = src[i + 1];
+            win.frame[i + 2] = src[i + 0];
+            win.frame[i + 3] = src[i + 3];
         }
 
         if (presentLayered(target)) {
@@ -2956,15 +3075,15 @@ void php_drift_win_present(Int hwnd, String rgba, Int width, Int height) {
 
     for (size_t i = 0; i < need; i += 4) {
         // RGBA（画布）⇒ BGRA（32bpp DIB）。alpha 置满（理由见上）。
-        g_frame[i + 0] = src[i + 2];
-        g_frame[i + 1] = src[i + 1];
-        g_frame[i + 2] = src[i + 0];
-        g_frame[i + 3] = 0xFF;
+        win.frame[i + 0] = src[i + 2];
+        win.frame[i + 1] = src[i + 1];
+        win.frame[i + 2] = src[i + 0];
+        win.frame[i + 3] = 0xFF;
     }
 
     HDC dc = GetDC(target);
     if (dc != NULL) {
-        presentTo(dc);
+        presentTo(target, dc);
         ReleaseDC(target, dc);
     }
 }
@@ -2989,6 +3108,7 @@ extern "C" bool drift_skia_surface_pixels(
     size_t *rowBytes);
 
 void php_drift_win_present_skia(Int hwnd, Int canvas) {
+    WindowSlot &win = slotOf((HWND)(INT_PTR)hwnd);
     HWND target = (HWND)(INT_PTR)hwnd;
     if (target == NULL) {
         return;
@@ -3003,19 +3123,19 @@ void php_drift_win_present_skia(Int hwnd, Int canvas) {
     }
 
     const size_t need = (size_t)w * (size_t)h * 4u;
-    if (g_frameW != w || g_frameH != h) {
-        g_frame.assign(need, 0);
-        g_frameW = w;
-        g_frameH = h;
+    if (win.frameW != w || win.frameH != h) {
+        win.frame.assign(need, 0);
+        win.frameW = w;
+        win.frameH = h;
     }
 
     // ★★ 零 swizzle：BGRA → BGRA。只拷紧凑宽度，忽略 Skia 的行尾填充。
     const size_t rowPixels = (size_t)w * 4u;
     for (int y = 0; y < h; y++) {
-        memcpy(g_frame.data() + (size_t)y * rowPixels, src + (size_t)y * rowBytes, rowPixels);
+        memcpy(win.frame.data() + (size_t)y * rowPixels, src + (size_t)y * rowBytes, rowPixels);
     }
 
-    if (layeredPixelReady()) {
+    if (layeredPixelReady(target)) {
         // Skia 的 N32 就是**预乘** BGRA（`N32Premul`）⇒ 上面那次 memcpy 已经把
         // ULW 要的字节原样搬过来了，**不需要任何换算**。
         if (presentLayered(target)) {
@@ -3023,13 +3143,13 @@ void php_drift_win_present_skia(Int hwnd, Int canvas) {
         }
         // 回落 GDI：alpha 必须补满（见 `php_drift_win_present` 的同款注释）
         for (size_t i = 3; i < need; i += 4) {
-            g_frame[i] = 0xFF;
+            win.frame[i] = 0xFF;
         }
     }
 
     HDC dc = GetDC(target);
     if (dc != NULL) {
-        presentTo(dc);
+        presentTo(target, dc);
         ReleaseDC(target, dc);
     }
 }
@@ -3037,9 +3157,12 @@ void php_drift_win_present_skia(Int hwnd, Int canvas) {
 // ═══════════════════════════════════════ UIA 无障碍（§9 / M5，P2 数据流）══
 // PHP 侧 SemanticsBuilder::build(root)->toArrays()['nodes'] 推进来；provider 从
 // 这份扁平数组应答 UIA 客户端。空数组 = 无障碍关闭（清空 C 侧树）。
-void php_drift_win_uia_push(Array nodes) {
-    static int g_lastNodeCount = -1;
-    g_uiaNodes.clear();
+//
+// ★ **带 hwnd**（2026-10-30，M1-a）：语义树是**每窗一棵** —— 挂的是各窗的
+//   UIA provider、坐标是各窗的客户区。推错的树 = 读屏器把 A 窗的控件当 B 窗的。
+void php_drift_win_uia_push(Int hwnd, Array nodes) {
+    WindowSlot &win = slotOf((HWND)(INT_PTR)hwnd);
+    win.uiaNodes.clear();
     size_t n = nodes.count();
     for (size_t i = 0; i < n; i++) {
         Variant v = nodes.get((zend_ulong)i);
@@ -3065,17 +3188,17 @@ void php_drift_win_uia_push(Array nodes) {
         node.h = a.get("h").toFloat();
         node.isControl = true;
         node.focused = a.get("focused").toBool();
-        g_uiaNodes.push_back(node);
+        win.uiaNodes.push_back(node);
     }
 
     // 结构变化事件（§9 / M5，P4）：节点数变了 ⇒ 通知 UIA 客户端重新查询树
     // （Loading→Ready、列表增删）。count 触发（同 count 的内容变不 raise，够用）。
-    int cnt = (int)g_uiaNodes.size();
-    if (cnt != g_lastNodeCount) {
-        g_lastNodeCount = cnt;
-        if (g_uiaProvider != nullptr) {
+    int cnt = (int)win.uiaNodes.size();
+    if (cnt != win.lastNodeCount) {
+        win.lastNodeCount = cnt;
+        if (win.uiaProvider != nullptr) {
             IRawElementProviderSimple *simple = nullptr;
-            if (SUCCEEDED(g_uiaProvider->QueryInterface(__uuidof(IRawElementProviderSimple), (void **)&simple)) && simple != nullptr) {
+            if (SUCCEEDED(win.uiaProvider->QueryInterface(__uuidof(IRawElementProviderSimple), (void **)&simple)) && simple != nullptr) {
                 UiaRaiseStructureChangedEvent(simple, StructureChangeType_ChildrenInvalidated, nullptr, 0);
                 simple->Release();
             }
@@ -3085,13 +3208,13 @@ void php_drift_win_uia_push(Array nodes) {
     // 焦点变化事件（§9 / M5，B）：焦点节点索引变了 ⇒ raise。provider 取焦点节点本身
     // （客户端回调里一般会 GetFocusedElement()，这里只负责通知"焦点动过了"）。
     int focusIdx = -1;
-    for (size_t k = 0; k < g_uiaNodes.size(); k++) {
-        if (g_uiaNodes[k].focused) { focusIdx = (int)k; break; }
+    for (size_t k = 0; k < win.uiaNodes.size(); k++) {
+        if (win.uiaNodes[k].focused) { focusIdx = (int)k; break; }
     }
-    if (focusIdx != g_lastFocusIdx) {
-        g_lastFocusIdx = focusIdx;
-        if (focusIdx >= 0 && g_uiaProvider != nullptr) {
-            IRawElementProviderSimple *fsimple = CProvider::makeFragmentSimple(focusIdx);
+    if (focusIdx != win.lastFocusIdx) {
+        win.lastFocusIdx = focusIdx;
+        if (focusIdx >= 0 && win.uiaProvider != nullptr) {
+            IRawElementProviderSimple *fsimple = win.uiaProvider->makeFragmentSimple(focusIdx);
             if (fsimple != nullptr) {
                 UiaRaiseAutomationEvent(fsimple, UIA_AutomationFocusChangedEventId);
                 fsimple->Release();

@@ -8,57 +8,62 @@
 
 | 层 | @api | @internal |
 |---|---|---|
-| App | 54 | 46 |
+| App | 59 | 49 |
 | Commands | 7 | 0 |
 | Core | 2 | 0 |
 | Errors.php | 1 | 3 |
 | Geometry | 9 | 0 |
-| Input | 17 | 5 |
-| Layout | 41 | 41 |
+| Input | 18 | 5 |
+| Layout | 41 | 43 |
 | Logging | 9 | 3 |
-| Platform | 15 | 11 |
+| Platform | 20 | 14 |
 | Rendering | 31 | 1 |
 | Routing | 8 | 6 |
 | State | 9 | 11 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
 | Widget | 167 | 215 |
-| **合计** | **405** | **345** |
+| **合计** | **416** | **353** |
 
-覆盖 353 个文件 · 描述性提及 28 处（grep 口径的污染源，不计入）
+覆盖 357 个文件 · 描述性提及 29 处（grep 口径的污染源，不计入）
 
 ## App 层
 
-### @api（应用可读面） · 54
+### @api（应用可读面） · 59
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
-| `Application` | class | src/App/Application.php:52 |
-| `Application::commands()` | method | src/App/Application.php:386 |
-| `Application::taskHost()` | method | src/App/Application.php:412 |
-| `Application::accelerators()` | method | src/App/Application.php:464 |
-| `Application::clipboard()` | method | src/App/Application.php:486 |
-| `Application::metrics()` | method | src/App/Application.php:515 |
-| `Application::attach()` | method | src/App/Application.php:565 |
-| `Application::onSystemThemeChanged()` | method | src/App/Application.php:674 |
-| `Application::frame()` | method | src/App/Application.php:716 |
-| `Application::repaintForResize()` | method | src/App/Application.php:942 |
-| `Application::after()` | method | src/App/Application.php:1003 |
-| `Application::wantsFrame()` | method | src/App/Application.php:1037 |
-| `Application::submitSliced()` | method | src/App/Application.php:1403 |
-| `Application::io()` | method | src/App/Application.php:1437 |
-| `Application::capturePointer()` | method | src/App/Application.php:1453 |
-| `Application::releasePointer()` | method | src/App/Application.php:1475 |
-| `Application::dispatchInput()` | method | src/App/Application.php:1494 |
-| `Application::dispatch()` | method | src/App/Application.php:1664 |
-| `Application::showMenu()` | method | src/App/Application.php:1790 |
-| `Application::showSnackbar()` | method | src/App/Application.php:1806 |
-| `Application::overlays()` | method | src/App/Application.php:1840 |
-| `Application::showModal()` | method | src/App/Application.php:1860 |
-| `Application::closeModal()` | method | src/App/Application.php:1870 |
-| `Frame` | class | src/App/Frame.php:17 |
-| `Frame::run()` | method | src/App/Frame.php:146 |
-| `FrameClock` | class | src/App/FrameClock.php:10 |
+| `Application` | class | src/App/Application.php:47 |
+| `Application::commands()` | method | src/App/Application.php:399 |
+| `Application::scope()` | method | src/App/Application.php:419 |
+| `Application::taskHost()` | method | src/App/Application.php:448 |
+| `Application::accelerators()` | method | src/App/Application.php:503 |
+| `Application::clipboard()` | method | src/App/Application.php:526 |
+| `Application::metrics()` | method | src/App/Application.php:548 |
+| `Application::attach()` | method | src/App/Application.php:569 |
+| `Application::onSystemThemeChanged()` | method | src/App/Application.php:689 |
+| `Application::onCloseRequested()` | method | src/App/Application.php:705 |
+| `Application::frame()` | method | src/App/Application.php:773 |
+| `Application::repaintForResize()` | method | src/App/Application.php:1015 |
+| `Application::after()` | method | src/App/Application.php:1076 |
+| `Application::wantsFrame()` | method | src/App/Application.php:1110 |
+| `Application::nextDeadlineMs()` | method | src/App/Application.php:1187 |
+| `Application::submitSliced()` | method | src/App/Application.php:1534 |
+| `Application::io()` | method | src/App/Application.php:1568 |
+| `Application::capturePointer()` | method | src/App/Application.php:1584 |
+| `Application::releasePointer()` | method | src/App/Application.php:1606 |
+| `Application::dispatchInput()` | method | src/App/Application.php:1625 |
+| `Application::dispatch()` | method | src/App/Application.php:1792 |
+| `Application::showMenu()` | method | src/App/Application.php:1918 |
+| `Application::showSnackbar()` | method | src/App/Application.php:1934 |
+| `Application::overlays()` | method | src/App/Application.php:1968 |
+| `Application::showModal()` | method | src/App/Application.php:1988 |
+| `Application::closeModal()` | method | src/App/Application.php:1998 |
+| `AppScope` | class | src/App/AppScope.php:18 |
+| `EventLoop` | class | src/App/EventLoop.php:10 |
+| `Frame` | class | src/App/Frame.php:18 |
+| `Frame::run()` | method | src/App/Frame.php:174 |
+| `FrameClock` | class | src/App/FrameClock.php:9 |
 | `FramePhase` | class | src/App/FramePhase.php:8 |
 | `IoPoller` | class | src/App/Io/IoPoller.php:6 |
 | `IoPoller::watch()` | method | src/App/Io/IoPoller.php:39 |
@@ -73,9 +78,9 @@
 | `ProcessTaskHost::shutdown()` | method | src/App/ProcessTaskHost.php:202 |
 | `ProcessWorker` | class | src/App/ProcessWorker.php:8 |
 | `ProcessWorker::serve()` | method | src/App/ProcessWorker.php:32 |
-| `PumpHost::after()` | method | src/App/PumpHost.php:111 |
-| `PumpHost::io()` | method | src/App/PumpHost.php:257 |
-| `PumpHost::submitSliced()` | method | src/App/PumpHost.php:273 |
+| `PumpHost::after()` | method | src/App/PumpHost.php:116 |
+| `PumpHost::io()` | method | src/App/PumpHost.php:284 |
+| `PumpHost::submitSliced()` | method | src/App/PumpHost.php:300 |
 | `SlicedJob` | interface | src/App/SlicedJob.php:6 |
 | `SlicedJob::step()` | method | src/App/SlicedJob.php:30 |
 | `SlicedJob::result()` | method | src/App/SlicedJob.php:47 |
@@ -88,38 +93,41 @@
 | `WindowStateStore::restore()` | method | src/App/WindowStateStore.php:76 |
 | `WindowStateStore::persist()` | method | src/App/WindowStateStore.php:142 |
 
-### @internal（框架内部） · 46
+### @internal（框架内部） · 49
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
-| `Application::$zeroViewportFrames` | property | src/App/Application.php:282 |
-| `Application::focus()` | method | src/App/Application.php:362 |
-| `Application::tasks()` | method | src/App/Application.php:435 |
-| `Application::lastTimestampMs()` | method | src/App/Application.php:445 |
-| `Application::lastInputMs()` | method | src/App/Application.php:455 |
-| `Application::$metricsCache` | property | src/App/Application.php:508 |
-| `Application::uiThreadId()` | method | src/App/Application.php:626 |
-| `Application::assertUiThread()` | method | src/App/Application.php:636 |
-| `Application::zeroViewportFrames()` | method | src/App/Application.php:1143 |
-| `Application::semanticsMode()` | method | src/App/Application.php:1338 |
-| `Application::slicedCount()` | method | src/App/Application.php:1431 |
-| `Application::captureNode()` | method | src/App/Application.php:1487 |
-| `Application::register()` | method | src/App/Application.php:1717 |
-| `Application::beginDrag()` | method | src/App/Application.php:1740 |
-| `Application::updateDrag()` | method | src/App/Application.php:1748 |
-| `Application::dropDrag()` | method | src/App/Application.php:1756 |
-| `Application::cancelDrag()` | method | src/App/Application.php:1766 |
-| `Application::rootBox()` | method | src/App/Application.php:1773 |
-| `Application::dismissOverlay()` | method | src/App/Application.php:1880 |
-| `Application::toggleWidgetPanel()` | method | src/App/Application.php:1902 |
+| `Application::$zeroViewportFrames` | property | src/App/Application.php:289 |
+| `Application::focus()` | method | src/App/Application.php:375 |
+| `Application::tasks()` | method | src/App/Application.php:474 |
+| `Application::lastTimestampMs()` | method | src/App/Application.php:484 |
+| `Application::lastInputMs()` | method | src/App/Application.php:494 |
+| `Application::uiThreadId()` | method | src/App/Application.php:641 |
+| `Application::assertUiThread()` | method | src/App/Application.php:651 |
+| `Application::closeRequested()` | method | src/App/Application.php:737 |
+| `Application::zeroViewportFrames()` | method | src/App/Application.php:1274 |
+| `Application::semanticsMode()` | method | src/App/Application.php:1469 |
+| `Application::slicedCount()` | method | src/App/Application.php:1562 |
+| `Application::captureNode()` | method | src/App/Application.php:1618 |
+| `Application::register()` | method | src/App/Application.php:1845 |
+| `Application::beginDrag()` | method | src/App/Application.php:1868 |
+| `Application::updateDrag()` | method | src/App/Application.php:1876 |
+| `Application::dropDrag()` | method | src/App/Application.php:1884 |
+| `Application::cancelDrag()` | method | src/App/Application.php:1894 |
+| `Application::rootBox()` | method | src/App/Application.php:1901 |
+| `Application::dismissOverlay()` | method | src/App/Application.php:2008 |
+| `Application::toggleWidgetPanel()` | method | src/App/Application.php:2030 |
 | `Completion` | class | src/App/Completion.php:6 |
 | `DragController` | class | src/App/DragController.php:10 |
 | `FocusManager` | class | src/App/FocusManager.php:18 |
-| `Frame::$settleRunCount` | property | src/App/Frame.php:59 |
-| `Frame::$settleSkipCount` | property | src/App/Frame.php:62 |
-| `Frame::settleRunCount()` | method | src/App/Frame.php:134 |
-| `Frame::settleSkipCount()` | method | src/App/Frame.php:140 |
-| `FrameClock::isArmed()` | method | src/App/FrameClock.php:178 |
+| `Frame::$settleRunCount` | property | src/App/Frame.php:60 |
+| `Frame::$settleSkipCount` | property | src/App/Frame.php:63 |
+| `Frame::$paintRunCount` | property | src/App/Frame.php:98 |
+| `Frame::$paintSkipCount` | property | src/App/Frame.php:101 |
+| `Frame::settleRunCount()` | method | src/App/Frame.php:150 |
+| `Frame::settleSkipCount()` | method | src/App/Frame.php:156 |
+| `Frame::paintRunCount()` | method | src/App/Frame.php:162 |
+| `Frame::paintSkipCount()` | method | src/App/Frame.php:168 |
 | `FrameClock::stallCount()` | method | src/App/FrameClock.php:184 |
 | `FrameClock::worstGapMs()` | method | src/App/FrameClock.php:190 |
 | `InputHost` | interface | src/App/InputHost.php:10 |
@@ -133,7 +141,7 @@
 | `OverlayManager::focusTrapRoots()` | method | src/App/OverlayManager.php:571 |
 | `OverlayManager::toggleWidgetPanel()` | method | src/App/OverlayManager.php:642 |
 | `PumpHost` | class | src/App/PumpHost.php:9 |
-| `PumpHost::slicedCount()` | method | src/App/PumpHost.php:251 |
+| `PumpHost::slicedCount()` | method | src/App/PumpHost.php:278 |
 | `PumpHostHost` | interface | src/App/PumpHostHost.php:6 |
 | `ScrollInputRouter` | class | src/App/ScrollInputRouter.php:17 |
 | `TextEditingBridge` | class | src/App/TextEditingBridge.php:14 |
@@ -149,9 +157,9 @@
 | `CommandHandler` | interface | src/Commands/CommandHandler.php:6 |
 | `CommandHandler::handle()` | method | src/Commands/CommandHandler.php:22 |
 | `CommandRouter` | class | src/Commands/CommandRouter.php:8 |
-| `CommandRouter::make()` | method | src/Commands/CommandRouter.php:31 |
-| `CommandRouter::on()` | method | src/Commands/CommandRouter.php:39 |
-| `CommandRouter::dispatch()` | method | src/Commands/CommandRouter.php:63 |
+| `CommandRouter::make()` | method | src/Commands/CommandRouter.php:48 |
+| `CommandRouter::on()` | method | src/Commands/CommandRouter.php:58 |
+| `CommandRouter::dispatch()` | method | src/Commands/CommandRouter.php:90 |
 
 ## Core 层
 
@@ -196,11 +204,12 @@
 
 ## Input 层
 
-### @api（应用可读面） · 17
+### @api（应用可读面） · 18
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
 | `AcceleratorTable` | class | src/Input/AcceleratorTable.php:8 |
+| `CloseRequestedEvent` | class | src/Input/CloseRequestedEvent.php:6 |
 | `CursorShape` | enum | src/Input/CursorShape.php:6 |
 | `FilesDroppedEvent` | class | src/Input/FilesDroppedEvent.php:6 |
 | `FocusNode` | class | src/Input/FocusNode.php:6 |
@@ -243,10 +252,10 @@
 | `RenderAppBar` | class | src/Layout/RenderAppBar.php:13 |
 | `RenderBackdropFilter` | class | src/Layout/RenderBackdropFilter.php:11 |
 | `RenderBox` | class | src/Layout/RenderBox.php:15 |
-| `RenderBox::overflow()` | method | src/Layout/RenderBox.php:680 |
-| `RenderBox::setCompose()` | method | src/Layout/RenderBox.php:843 |
-| `RenderBox::paintComposed()` | method | src/Layout/RenderBox.php:1019 |
-| `RenderBox::hitTest()` | method | src/Layout/RenderBox.php:1128 |
+| `RenderBox::overflow()` | method | src/Layout/RenderBox.php:712 |
+| `RenderBox::setCompose()` | method | src/Layout/RenderBox.php:875 |
+| `RenderBox::paintComposed()` | method | src/Layout/RenderBox.php:1058 |
+| `RenderBox::hitTest()` | method | src/Layout/RenderBox.php:1167 |
 | `RenderButton` | class | src/Layout/RenderButton.php:19 |
 | `RenderDivider` | class | src/Layout/RenderDivider.php:13 |
 | `RenderDock` | class | src/Layout/RenderDock.php:12 |
@@ -255,10 +264,10 @@
 | `RenderImage` | class | src/Layout/RenderImage.php:13 |
 | `RenderMenuItem` | class | src/Layout/RenderMenuItem.php:16 |
 | `RenderObject` | class | src/Layout/RenderObject.php:11 |
-| `RenderObject::cursor()` | method | src/Layout/RenderObject.php:55 |
-| `RenderObject::cursorAt()` | method | src/Layout/RenderObject.php:77 |
-| `RenderObject::panelRect()` | method | src/Layout/RenderObject.php:94 |
-| `RenderObject::acceptsHover()` | method | src/Layout/RenderObject.php:117 |
+| `RenderObject::cursor()` | method | src/Layout/RenderObject.php:122 |
+| `RenderObject::cursorAt()` | method | src/Layout/RenderObject.php:144 |
+| `RenderObject::panelRect()` | method | src/Layout/RenderObject.php:161 |
+| `RenderObject::acceptsHover()` | method | src/Layout/RenderObject.php:184 |
 | `RenderPopupPanel` | class | src/Layout/RenderPopupPanel.php:16 |
 | `RenderProgress` | class | src/Layout/RenderProgress.php:13 |
 | `RenderProxy` | class | src/Layout/RenderProxy.php:9 |
@@ -276,7 +285,7 @@
 | `RenderWrap` | class | src/Layout/RenderWrap.php:11 |
 | `StackFit` | enum | src/Layout/StackFit.php:6 |
 
-### @internal（框架内部） · 41
+### @internal（框架内部） · 43
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -286,32 +295,34 @@
 | `RenderBox::paintCount()` | method | src/Layout/RenderBox.php:236 |
 | `RenderBox::replayCount()` | method | src/Layout/RenderBox.php:242 |
 | `RenderBox::markNeedsLayout()` | method | src/Layout/RenderBox.php:248 |
-| `RenderBox::clipsOverflow()` | method | src/Layout/RenderBox.php:691 |
-| `RenderBox::invalidateLayerCache()` | method | src/Layout/RenderBox.php:996 |
+| `RenderBox::clipsOverflow()` | method | src/Layout/RenderBox.php:723 |
+| `RenderBox::invalidateLayerCache()` | method | src/Layout/RenderBox.php:1035 |
 | `RenderCustomPaint` | class | src/Layout/RenderCustomPaint.php:12 |
 | `RenderDock::slot()` | method | src/Layout/RenderDock.php:44 |
 | `RenderFlex::clearChildren()` | method | src/Layout/RenderFlex.php:98 |
 | `RenderModalHost` | class | src/Layout/RenderModalHost.php:14 |
-| `RenderObject::$cursor` | property | src/Layout/RenderObject.php:27 |
-| `RenderObject::setCursor()` | method | src/Layout/RenderObject.php:69 |
-| `RenderObject::setHovered()` | method | src/Layout/RenderObject.php:134 |
-| `RenderObject::adoptChild()` | method | src/Layout/RenderObject.php:193 |
+| `RenderObject::$cursor` | property | src/Layout/RenderObject.php:33 |
+| `RenderObject::markNeedsPaint()` | method | src/Layout/RenderObject.php:93 |
+| `RenderObject::paintEpoch()` | method | src/Layout/RenderObject.php:111 |
+| `RenderObject::setCursor()` | method | src/Layout/RenderObject.php:136 |
+| `RenderObject::setHovered()` | method | src/Layout/RenderObject.php:201 |
+| `RenderObject::adoptChild()` | method | src/Layout/RenderObject.php:277 |
 | `RenderRichText::styleSize()` | method | src/Layout/RenderRichText.php:50 |
 | `RenderRichText::lineCount()` | method | src/Layout/RenderRichText.php:56 |
 | `RenderRichText::paragraph()` | method | src/Layout/RenderRichText.php:62 |
 | `RenderRichText::spans()` | method | src/Layout/RenderRichText.php:68 |
-| `RenderScrollView::setBarOpacity()` | method | src/Layout/RenderScrollView.php:147 |
-| `RenderScrollView::scrollAxes()` | method | src/Layout/RenderScrollView.php:159 |
-| `RenderScrollView::thumbRectInRoot()` | method | src/Layout/RenderScrollView.php:386 |
+| `RenderScrollView::setBarOpacity()` | method | src/Layout/RenderScrollView.php:152 |
+| `RenderScrollView::scrollAxes()` | method | src/Layout/RenderScrollView.php:172 |
+| `RenderScrollView::thumbRectInRoot()` | method | src/Layout/RenderScrollView.php:399 |
 | `RenderSegmentedControl::clearChildren()` | method | src/Layout/RenderSegmentedControl.php:66 |
 | `RenderStack::clearChildren()` | method | src/Layout/RenderStack.php:81 |
 | `RenderTable` | class | src/Layout/RenderTable.php:14 |
-| `RenderTable::setHeader()` | method | src/Layout/RenderTable.php:231 |
-| `RenderTable::setBody()` | method | src/Layout/RenderTable.php:241 |
-| `RenderTable::setBarOpacity()` | method | src/Layout/RenderTable.php:252 |
-| `RenderTable::focusRect()` | method | src/Layout/RenderTable.php:258 |
-| `RenderTable::scrollAxes()` | method | src/Layout/RenderTable.php:269 |
-| `RenderTable::thumbRectInRoot()` | method | src/Layout/RenderTable.php:315 |
+| `RenderTable::setHeader()` | method | src/Layout/RenderTable.php:233 |
+| `RenderTable::setBody()` | method | src/Layout/RenderTable.php:243 |
+| `RenderTable::setBarOpacity()` | method | src/Layout/RenderTable.php:254 |
+| `RenderTable::focusRect()` | method | src/Layout/RenderTable.php:265 |
+| `RenderTable::scrollAxes()` | method | src/Layout/RenderTable.php:276 |
+| `RenderTable::thumbRectInRoot()` | method | src/Layout/RenderTable.php:322 |
 | `RenderText::styleSize()` | method | src/Layout/RenderText.php:50 |
 | `RenderText::lineCount()` | method | src/Layout/RenderText.php:56 |
 | `RenderTextField::styleSize()` | method | src/Layout/RenderTextField.php:259 |
@@ -348,7 +359,7 @@
 
 ## Platform 层
 
-### @api（应用可读面） · 15
+### @api（应用可读面） · 20
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -357,26 +368,31 @@
 | `Dialog` | interface | src/Platform/Dialog.php:6 |
 | `InputSource` | interface | src/Platform/InputSource.php:8 |
 | `Platform` | interface | src/Platform/Platform.php:6 |
+| `Platform::consumeModalBlockedMs()` | method | src/Platform/Platform.php:91 |
 | `Screen` | interface | src/Platform/Screen.php:9 |
 | `SurfaceProvider` | interface | src/Platform/SurfaceProvider.php:8 |
 | `TimerHost` | interface | src/Platform/TimerHost.php:6 |
 | `Tray` | interface | src/Platform/Tray.php:6 |
-| `Win32Platform` | class | src/Platform/Win32/Win32Platform.php:32 |
+| `WakeReason` | enum | src/Platform/WakeReason.php:6 |
+| `Win32Platform` | class | src/Platform/Win32/Win32Platform.php:36 |
 | `WindowHost` | interface | src/Platform/WindowHost.php:11 |
-| `WindowHost::destroy()` | method | src/Platform/WindowHost.php:58 |
-| `WindowHost::setCloseGuard()` | method | src/Platform/WindowHost.php:70 |
-| `WindowHost::setCursor()` | method | src/Platform/WindowHost.php:185 |
-| `WindowHost::pushSemantics()` | method | src/Platform/WindowHost.php:197 |
+| `WindowHost::close()` | method | src/Platform/WindowHost.php:42 |
+| `WindowHost::setCloseGuard()` | method | src/Platform/WindowHost.php:74 |
+| `WindowHost::setMinSize()` | method | src/Platform/WindowHost.php:95 |
+| `WindowHost::setCursor()` | method | src/Platform/WindowHost.php:195 |
+| `WindowHost::pushSemantics()` | method | src/Platform/WindowHost.php:207 |
 | `WindowMaterial` | class | src/Platform/WindowMaterial.php:8 |
 | `WindowMaterialCapabilities` | class | src/Platform/WindowMaterialCapabilities.php:6 |
 
-### @internal（框架内部） · 11
+### @internal（框架内部） · 14
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
+| `Platform::imeCaret()` | method | src/Platform/Platform.php:138 |
 | `ResizeHookState::pump()` | method | src/Platform/Win32/ResizeHookState.php:23 |
 | `Win32Clipboard` | class | src/Platform/Win32/Win32Clipboard.php:12 |
 | `Win32Dialog` | class | src/Platform/Win32/Win32Dialog.php:13 |
+| `Win32Dialog::consumeModalBlockedMs()` | method | src/Platform/Win32/Win32Dialog.php:49 |
 | `Win32InputSource` | class | src/Platform/Win32/Win32InputSource.php:9 |
 | `Win32RasterSurface` | class | src/Platform/Win32/Win32RasterSurface.php:14 |
 | `Win32Screen` | class | src/Platform/Win32/Win32Screen.php:15 |
@@ -384,7 +400,8 @@
 | `Win32SurfaceProvider` | class | src/Platform/Win32/Win32SurfaceProvider.php:9 |
 | `Win32SurfaceProvider::resolveBackend()` | method | src/Platform/Win32/Win32SurfaceProvider.php:75 |
 | `Win32TimerHost` | class | src/Platform/Win32/Win32TimerHost.php:11 |
-| `Win32WindowHost` | class | src/Platform/Win32/Win32WindowHost.php:35 |
+| `Win32WindowHost` | class | src/Platform/Win32/Win32WindowHost.php:37 |
+| `WindowHost::destroy()` | method | src/Platform/WindowHost.php:60 |
 
 ## Rendering 层
 

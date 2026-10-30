@@ -105,7 +105,7 @@ final class Bootstrap
         //   的布局硬校验（用户实测：可用宽 93 vs 条轨 94 ⇒ 弹 Fatal，拖动被打断）。
         //   "窗口被拖小"是用户行为、不是编程错误；最小尺寸是 Qt/WPF/Flutter 的标配。
         //   420×320 逻辑像素 = 顶条（标题 + 3 个导航 + 文件菜单）留余量 + 状态栏 + 数行列表。
-        $window->setMinSize(420, 320);
+        $window->setMinSize($handle, 420, 320);
 
         // ★ 关闭可拦截（2026-10-30）：声明这个窗口"关之前要问一句"。
         //   声明之后 `WM_CLOSE` 不再直接销毁 —— 它变成一条 `CloseRequestedEvent`，
@@ -135,8 +135,10 @@ final class Bootstrap
         //   SemanticsTree、经闭包交给平台（框架不持平台，§5.1）。不接 ⇒ 不建语义树、
         //   零开销。★ showcase 此前没接 ⇒ UIA 客户端只看到根节点（值型 Pattern
         //   无从验证）；接上后它是无障碍能力的**展示台**，与 users 同形。
-        $app->setSemanticsSink(static function (array $nodes) use ($window): void {
-            $window->pushSemantics($nodes);
+        // ★ `$handle` 一并捕获（2026-10-30，M1-a）：语义树是**每窗一棵**，
+        //   不指定窗口就会推到"最后建的窗"的 provider 上。
+        $app->setSemanticsSink(static function (array $nodes) use ($window, $handle): void {
+            $window->pushSemantics($handle, $nodes);
         });
 
 

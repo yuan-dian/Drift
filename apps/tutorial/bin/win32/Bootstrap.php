@@ -87,7 +87,7 @@ final class Bootstrap
         // 最小窗口尺寸：挡住"拖到比内容更小"——那种状态会踩布局硬校验
         // （用户实测：可用宽 93 vs 条轨 94 ⇒ 弹 Fatal，拖动被打断）。
         // "窗口被拖小"是用户行为、不是编程错误 ⇒ 最小尺寸是标配。
-        $window->setMinSize(480, 360);
+        $window->setMinSize($handle, 480, 360);
 
         // 拖动边缘重排：模态尺寸循环里主循环被系统挂起，壳在 WM_SIZE 里
         // **同步调回** PHP 走轻量重绘（只 settle/layout/paint/present，
