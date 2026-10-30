@@ -462,8 +462,35 @@ abstract class State
      * 换新描述（§13.2）：Widget 不可变 ⇒ 参数**整体换新**。
      *
      * @internal 别在这里做脏活 —— 那是 `rebuild()` 的事。
+     *
+     * ★★ 2026-10-30 之前覆写者的注释写着「第一句必须是
+     *   `parent::didUpdateWidget($widget)`，那是**唯一**把新 Widget 落到
+     *   `$this->widget` 的地方」。那句话当时是对的，但它把一个**框架自己能做**的
+     *   事推给了每一处覆写：漏掉 ⇒ `$this->widget` 停在旧值 ⇒ 读参数得到旧值
+     *   （"改了筛选条件但结果不变"），**而且不报错**。本仓四处覆写
+     *   （`FutureBuilder` / `LazyListState` / `AnimatedOpacityState` /
+     *   `TextFieldState`）全都老实写了那一句 —— 说明纪律能守，但不该让纪律存在。
+     *
+     * ⇒ 现在由 {@see StatefulElement} 在调本钩子**之前**用
+     *   {@see self::adoptWidget()} 落好。这里保留赋值作**幂等兜底**（覆写者习惯性
+     *   调 `parent::` 也完全无害），于是"漏调 parent"从静默 bug 变成本地无副作用。
      */
     public function didUpdateWidget(Widget $widget): void
+    {
+        $this->widget = $widget;
+    }
+
+    /**
+     * 框架落点：`StatefulElement` 在调用**用户钩子** {@see self::didUpdateWidget()}
+     * 之前先把新描述交过来。
+     *
+     * ★ 为什么单独一个方法而不是让 `StatefulElement` 直接写 `$this->widget`：
+     *   字段是 `private`（`State` 之外不该有人碰）。这条封装不该以"每处覆写都要
+     *   记得调 parent"为代价 —— 那是把封装成本转嫁给调用方。
+     *
+     * @internal 只有 `StatefulElement::didUpdateWidget()` 调它。
+     */
+    public function adoptWidget(Widget $widget): void
     {
         $this->widget = $widget;
     }

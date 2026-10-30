@@ -26,9 +26,10 @@ final class AnimatedOpacityState extends State
     /**
      * 目标变了就起一条新曲线。
      *
-     * ★★ 第一句必须 `parent::didUpdateWidget($widget)` —— 那是**唯一**把新
-     *   Widget 落到 `$this->widget` 的地方；漏掉的话 `view()` 读到的还是旧目标，
-     *   签名恒等 ⇒ 跨面板永不更新、且不报错。
+     * ★★ 2026-10-30 之前这里写着「第一句必须 `parent::didUpdateWidget($widget)`」——
+     *   **已经不需要了**：`StatefulElement` 在调本钩子之前就用 `State::adoptWidget()`
+     *   落好了新描述，所以下面 `view()` 读到的必然是**新**目标，漏调 parent 也不会
+     *   "签名恒等 ⇒ 跨面板永不更新"。保留那一句只是幂等兜底（无害）。
      */
     #[\Override]
     public function didUpdateWidget(Widget $widget): void

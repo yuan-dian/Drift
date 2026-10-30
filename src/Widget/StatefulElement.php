@@ -76,6 +76,11 @@ final class StatefulElement extends Element
     #[\Override]
     protected function didUpdateWidget(Widget $newWidget): void
     {
+        // ★★ 顺序不能反：**先**由框架落新描述，**再**交给用户钩子。
+        //   这样覆写者永远不必记得 `parent::didUpdateWidget($widget)` ——
+        //   漏调不再导致 `$this->widget` 停在旧值（`State::adoptWidget()` 的注释）。
+        $this->state?->adoptWidget($newWidget);
+
         // §12.3：换新描述，State 本身不换 —— 所以"跟手输入不丢、展开状态还在"
         $this->state?->didUpdateWidget($newWidget);
     }
