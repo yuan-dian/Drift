@@ -497,6 +497,33 @@ final class Modifier
     }
 
     /**
+     * 用户**一个盒样式字段都没设过**时，填入主题派生的默认样式；设过就原样返回。
+     *
+     * ## 为什么这条判据在 `Modifier` 里，不在消费者里
+     *
+     * "该不该用默认样式"要读**用户设过没有** —— 那是 `isBlank()`（不是 `isNone()`：
+     * 只设 `->radius(4)` 也算设过，此时整套默认让位，与 `Card` 的既有语义一致）。
+     * 让每个需要默认样式的控件各写一遍，就会有人写成 `boxStyle() === null`
+     * （`isNone()` 口径）⇒ `->radius(4)` 时默认底/边**又叠回来**，圆角与描边打架。
+     *
+     * ★ 传进来的 `$style` 是**非空**值对象（`BoxStyle::none()` 也行，等于不填）。
+     * ★ 只填视觉四维，不碰 padding / 尺寸 / 阴影 —— 那些是控件自己的声明。
+     *
+     * @api
+     */
+    public function withBoxStyleIfBlank(BoxStyle $style): self
+    {
+        if (!$this->style->isBlank()) {
+            return $this;
+        }
+
+        $copy = clone $this;
+        $copy->style = $style;
+
+        return $copy;
+    }
+
+    /**
      * 派生一份**去掉视觉四维**（底 / 渐变 / 边 / 圆角）的副本，其余字段原样保留。
      *
      * ## 为什么需要它（S1 的收尾）

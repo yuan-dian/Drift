@@ -7,6 +7,7 @@ use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Geometry\Alignment;
 use Drift\Geometry\Matrix2D;
 use Drift\Layout\RenderBox;
+use Drift\Rendering\BoxStyle;
 use Drift\Rendering\Color;
 use Drift\Rendering\Gradient;
 use Drift\Rendering\Modifier;
@@ -83,6 +84,11 @@ final class ModifierTest extends SmokeTestCase
             'withRepaintBoundary' => [static fn(): Modifier => (new Modifier())->withRepaintBoundary(true), false],
             'withInset' => [static fn(): Modifier => (new Modifier())->withInset(Modifier::INSET_LEFT, 8.0), false],
             'withTransform' => [static fn(): Modifier => (new Modifier())->withTransform(Matrix2D::rotation(15.0)), false],
+            // ★ 传**非空**样式：传 `BoxStyle::none()` 等于没填，`isDefault()` 该保持真
+            'withBoxStyleIfBlank' => [
+                static fn(): Modifier => (new Modifier())->withBoxStyleIfBlank(BoxStyle::none()->withRadius(2.0)),
+                false,
+            ],
         ];
     }
 
@@ -257,6 +263,41 @@ final class ModifierTest extends SmokeTestCase
         check(
             'Modifier · 本来就没有视觉四维 ⇒ 返回自身（不白 clone）',
             $blank->withoutBoxVisual() === $blank,
+        );
+    }
+
+    /**
+     * `withBoxStyleIfBlank()`：**"用户设过没有"用 `isBlank()` 判，不是 `isNone()`**。
+     *
+     * ★ 这是"默认样式该不该填"的唯一判据，而它是**结构性**的：写成
+     *   `boxStyle() === null`（`isNone()` 口径）时，`->radius(4)` 会被当成"没声明"
+     *   ⇒ 默认的底与边**又叠回来**，圆角与 1px 描边打架，且不报错。
+     *   `Card` 的"调了任何一个盒样式 ⇒ 整套默认让位"正是靠这条。
+     */
+    public function testWithBoxStyleIfBlankUsesIsBlankNotIsNone(): void
+    {
+        $default = BoxStyle::none()->withBackground(Color::white())->withBorder(Color::black(), 1.0);
+
+        // 用户只设了圆角 ⇒ 默认**不填**（`isNone()` 会说"什么也没画"）
+        $user = (new Modifier())->withRadius(4.0)->withBoxStyleIfBlank($default);
+        check(
+            'Modifier · 只设了 ->radius(4) ⇒ 默认样式不填（isBlank 口径，不是 isNone）',
+            $user->fillColor() === null && $user->boxStyle()?->radius === 4.0,
+            $user->fillColor() === null ? '圆角 ' . (string) ($user->boxStyle()?->radius ?? -1.0) : '默认底被填进来了',
+        );
+
+        // 一个字段都没设 ⇒ 填
+        $blank = (new Modifier())->withBoxStyleIfBlank($default);
+        check(
+            'Modifier · 一个盒样式字段都没设 ⇒ 填入默认（底与边都到位）',
+            $blank->fillColor() !== null && $blank->boxStyle()?->hasBorder() === true,
+        );
+
+        // 已有的样式不被覆盖（幂等：填过之后再填还是第一份）
+        $twice = $blank->withBoxStyleIfBlank(BoxStyle::none()->withBackground(Color::black()));
+        check(
+            'Modifier · 已有样式 ⇒ 再填一次不覆盖（默认只填一次）',
+            $twice->fillColor()?->equals(Color::white()) === true,
         );
     }
 

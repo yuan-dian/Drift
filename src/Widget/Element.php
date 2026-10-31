@@ -176,11 +176,25 @@ abstract class Element
 
         // 修饰同形（`02` §11）：一个引用递给盒，不逐项传递。
         if ($this->box !== null) {
+            $mods = $this->widget->mods();
+
+            // ★ 主题派生的默认盒样式（`Card` 的底/边/圆角）在这里合，**不在控件里**：
+            //   控件拿不到"用户设过没有"的全局判断，各写一遍就会有人拿
+            //   `boxStyle() === null`（`isNone()` 口径）当判据 ⇒ `->radius(4)` 时
+            //   默认底/边又叠回来，圆角与描边打架。
+            //   ★ 只对**不自绘 chrome** 的控件生效：自绘的那批（`Button` / `PopupPanel`）
+            //     在自己的 `createRenderObject()` 里合并用户样式，再叠一层默认会打架。
+            if ($this->widget instanceof RenderBoxWidget && !$this->widget->paintsBoxChrome()) {
+                $default = $this->widget->defaultBoxStyle($this->context);
+                if ($default !== null) {
+                    $mods = $mods->withBoxStyleIfBlank($default);
+                }
+            }
+
             // ★ 自绘 chrome 的控件（`Button` / `AppBar` / `PopupPanel`）把视觉三字段
             //   派生进 `BoxStyle` 交给 `Render*` 了 ⇒ 这份 `mods` 要剥掉那三项，
             //   否则 `RenderBox::paint()` 的 ① 会再画一遍。**描边不幂等**：同色画两遍
             //   不等于一遍（实测 golden 差 32 / 322 像素，全在边框条带上）。
-            $mods = $this->widget->mods();
             if ($this->widget instanceof RenderBoxWidget && $this->widget->paintsBoxChrome()) {
                 $mods = $mods->withoutBoxVisual();
             }

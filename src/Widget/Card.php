@@ -3,14 +3,13 @@ declare(strict_types=1);
 
 namespace Drift\Widget;
 
-use Drift\Geometry\EdgeInsets;
+use Drift\Layout\RenderBox;
+use Drift\Layout\RenderProxy;
 use Drift\Rendering\BoxStyle;
-use Drift\Rendering\Color;
 use Drift\Rendering\ColorToken;
-use Drift\Rendering\Gradient;
 
 /**
- * 卡片：**一个内容块**（§15.7 的"需要盒样式的控件"那一类，带内边距）。
+ * 卡片：**一个内容块** —— 主题默认的底 / 边 / 圆角 + 16 内距。
  *
  * ```php
  * Card::make(Column::make()->spacing(8.0)->children([
@@ -19,70 +18,61 @@ use Drift\Rendering\Gradient;
  * ]));
  * ```
  *
- * ## 它补的是哪个洞
+ * ## 它是什么：**一个预设，不是一套存储**（2026-10-31 收尾）
  *
- * `Column` / `Row` 是结构节点，**刻意不带盒样式**（§15.7：布局节点不该有绘制样式），
- * 而它们又**不产盒**（`StatelessWidget`）⇒ 给它们套 `->background()` 会撞
- * `Element::syncBox()` 的守卫（"声明了修饰但不产渲染盒"）。`Card` 就是补这一个洞：
- * **盒样式 + 内边距 + 柔和阴影**，做法是**替子控件**写 `mods`（见下节）。
- * ★ 它自己的 `background()` / `border()` / `radius()` 必须**自持一份**（`$box`）而不是
- *   写 `$mods` —— 因为它**不产盒**，自己写 `$mods` 正好触发那条守卫（S1 的边界：
- *   产盒的控件把样式存 `$mods`，包装器存自己字段再翻给子控件）。
+ * 本类曾经是 `StatelessWidget`，`build()` 把「底 / 边 / 圆角 / 阴影 / 内边距」
+ * **逐字段写进孩子控件的 `mods`**，为此自持 `?BoxStyle $box` + `float $shadow` +
+ * `EdgeInsets $padding` 三个字段、7 个覆写方法、`build()` 里 5 个 `if` 分支，
+ * 还要 `clone $kid`（免得样式漏给共享引用）。
  *
- * ## W5 之后它不再是"一个盒"，而是**样式预设**（arch-v2 `02` §7.1）
+ * 那份重复的代价是**结构性的**：`Modifier` 以后新增一个视觉维（图片底 / 图案），
+ * 卡片的 5 个分支**不会**自动流过去 —— 漏了不报错，只是那个维度在卡片上静默不生效。
+ * 这正是 S1 在 `Modifier` 内部修掉的那类 bug（`withoutBoxVisual()` 漏剥渐变），
+ * 只是换了个宿主。
  *
- * `RenderCard` 已删。`build()` 把「底 / 边 / 圆角 / 阴影 / 内边距」写成**子控件的
- * `mods`**，由 `RenderBox::layout()` / `paint()` 施加。三个后果值得知道：
+ * 现在它**一个样式字段都不存**：
  *
- * - **盒尺寸仍是"内容 + 内边距"**（`mods.padding` 的 ②⑤ 步），内禀尺寸也含它；
- * - **内容原点仍是 `(padLeft, padTop)`**，只是换算从"父盒平移子盒"变成
- *   `contentOriginX/Y()`（`02` §4.1.1）—— 所以 IME / 命中测试不用改；
- * - **裁剪矩形变大了一个内边距**：以前 `RenderCard` 是外层盒、子盒是内容区；
- *   现在内边距属于子盒自己 ⇒ 子盒的 `Overflow` 裁剪按含内边距的矩形算。
- *   这与 `Padding` 在 M2-3 的收敛是同一条语义，不是新偏差。
+ * | 职责 | 落点 |
+ * |---|---|
+ * | 用户声明的底 / 边 / 圆角 / 阴影 / 内距 | **继承的 `$mods`**（与所有控件同一条路）|
+ * | 用户没声明时的主题默认 | `defaultBoxStyle()`，由 `Element::syncBox()` 填入 |
+ * | 盒 | `RenderProxy`（纯转发，与 `SizedBox` / `Padding` 同一个）|
  *
- * ★ **`build()` 必须 `clone $kid`**：`Card` 的语义是"包一层"，不是"给这个控件
- *   加样式"。`Widget` 可共享（`children([$a, $a])` 合法）⇒ 就地 `mutate` 会把卡片
- *   样式漏给另一处引用。`Widget::__clone()` 会清封存位，否则克隆出来的写不了。
+ * ⇒ 新增视觉维**零改动**自动生效，`Card` 从此不会漏任何维度。
  *
- * ★ **为什么是 `StatelessWidget` 而不是 `child()` 直接转发**：默认样式要取主题
- *   token（`ColorToken::Pane` / `Border`），而主题只能从 `BuildContext::theme()` 拿。
- *   `build(BuildContext)` 是本仓唯一"有 context 又只做组合"的位置。
+ * ## 它是**一层盒**，样式不再注入孩子
  *
- * ★ **诚实的边界**：`build()` 是"给子控件加样式"，不是真的再包一层 ⇒ 若子控件
- *   自己是盒控件（`Button` / `PopupPanel`），卡片的底/边写进它的 `mods` 之后会被
- *   它自己的 `resolveBoxStyle()` 当成"用户设的样式"**覆盖**掉按钮底色，而不是垫在
- *   它下面。今天所有调用点传的都是结构节点 / `Text` / `ScrollView`；要真"垫一层"
- *   得等 `Stack`（`Stack` 已有，但 `Card` 还没有改用它）。
- *   ★ **结构节点会被套一层代理盒**（`build()` 里的 `instanceof RenderBoxWidget`
- *   分支）：`ScrollView` / `TextField` 这类"盒住在自己 `*Box` 里"的控件，直接收
- *   修饰会撞 §11.7 守卫（M2-5 之后 `Card(ScrollView)` 就这么炸过）—— 套
- *   `SizedBox`（`RenderProxy`）之后样式落到代理盒上，外观与 `RenderCard` 同类。
+ * 旧实现"把样式写进孩子"有两个绕不开的毛病，都已随这次改动消失：
+ *
+ * - **孩子自己的样式被覆盖**：`Card::make(Button::make('x'))->background($red)` 会把
+ *   红色写进按钮的 `mods`，按钮的 `resolveBoxStyle()` 把它当"用户设的样式"用，
+ *   于是**按钮底色变成卡片底色**。旧注释管这叫"诚实的边界"，其实是错的层——
+ *   卡片的底应该**垫在**孩子下面。
+ * - **两种孩子两条路**：孩子产盒（`Text`）就直接写它；孩子不产盒（`ScrollView`）
+ *   就得先套一层 `SizedBox`。两条路各自有判据守着，而"哪条"取决于孩子的类型 ——
+ *   这正是 `instanceof` 分支该消失的地方。
+ *
+ * 现在孩子**永远原样挂**在卡片的代理盒下面：卡片画自己的底，孩子画自己的。
+ *
+ * ★ **代价是多一层盒**（`SizedBox → Card(RenderProxy) → Column → …`）。这是"正确的
+ *   层次"的价格，也是成熟 GUI 的一致选择（`Card` 是盒，样式从不注入子控件）。
+ *   几何等价：代理盒的尺寸 = 孩子 + 内距，内容原点 = 内距（`RenderBox::layout()`
+ *   的 ②⑤ 步）—— 与旧实现逐像素相同，`golden/page` 是这条的判据。
+ * ★ **裁剪矩形变了（变正确了）**：旧实现内距属于孩子的盒 ⇒ 孩子的 `Overflow`
+ *   裁剪按"含内距"的矩形算；现在内距属于卡片的盒 ⇒ 孩子按自己的内容区裁剪。
+ * ★ 默认内距 16 在构造器里落到 `$mods`（不是字段）：`Card::make()` 的尺寸就是
+ *   32×32，与 `Padding::make()->all(16)` 同一条路。
  *
  * @api
  */
-final class Card extends StatelessWidget
+final class Card extends RenderBoxWidget
 {
     private ?Widget $kid = null;
-
-    private EdgeInsets $padding;
-
-    /**
-     * 阴影强度（`0.0` = 不画）。
-     *
-     * ★ 默认 **0**：LayUI 的卡片靠 1px 边框就立住了，阴影只是"贴地"的一点点。
-     *   要"浮起来"的观感再显式 `->shadow(0.08)` —— 值域就是黑色透明度
-     *   （0.05 ≈ `rgba(0,0,0,.05)`）。
-     */
-    private float $shadow = 0.0;
-
-    /** @internal null = 没显式设过 ⇒ 用主题派生默认（§15.7 纪律 1：不用样式就不付分配） */
-    private ?BoxStyle $box = null;
 
     public function __construct(?Widget $kid = null)
     {
         parent::__construct();
-        $this->padding = EdgeInsets::all(16.0);
+        $this->paddingAll(16.0);
 
         if ($kid !== null) {
             $this->kid = $kid;
@@ -107,123 +97,42 @@ final class Card extends StatelessWidget
         return $this->kid;
     }
 
-    public function padding(EdgeInsets $value): static
+    /** 卡片的内容就是**一个**孩子（`null` = 空卡片，尺寸只剩内距） */
+    #[\Override]
+    public function expandChildren(): array
     {
-        $this->mutate();
-        $this->padding = $value;
-
-        return $this;
+        return $this->kid === null ? [] : [$this->kid];
     }
 
-    public function paddingAll(float $value): static
+    /** 纯转发盒：尺寸与内容原点全由 `RenderBox::layout()` 的 ②⑤ 步按 `mods.padding` 施加 */
+    public function createRenderObject(BuildContext $context): RenderBox
     {
-        return $this->padding(EdgeInsets::all($value));
+        return new RenderProxy();
     }
 
-    public function shadow(float $value): static
+    #[\Override]
+    public function createElement(): Element
     {
-        $this->mutate();
-        $this->shadow = $value;
-
-        return $this;
-    }
-
-    // ── 盒样式三项（包装器参数，**不写 `$mods`**；理由见类注释末段）────────
-    // ★ 调了任何一个 ⇒ `$this->box` 非空 ⇒ `build()` 里**整套默认让位**
-    //   （§15.7 纪律 3 的既有语义）。
-
-    public function background(Color $color): static
-    {
-        $this->mutate();
-        $this->box = ($this->box ?? BoxStyle::none())->withBackground($color);
-
-        return $this;
+        return new ProxyElement($this);
     }
 
     /**
-     * 卡片底改成**渐变**（`Gradient::vertical()` 这类盒内比例的形态）；传 `null` 清掉。
+     * 主题默认：`Surface` 底 + 1px `Border` + 2 圆角。
      *
-     * ★ 与 `background()` 并存时**渐变赢**（`BoxStyle::hasBackground()` 的语义），
-     *   阶梯完全照 `Modifier::withGradient()` —— 两个包装器用同一条规则，用户不用记两套。
-     * ★ 参数**必须可空**：`Widget::gradient()` 是可空的，子类收窄成非空是
-     *   不兼容覆写（`php -l` 查不出，装载期 Fatal）。
+     * ★ **只在用户一个盒样式字段都没设过时生效**（判据 `BoxStyle::isBlank()`，
+     *   在 `Modifier::withBoxStyleIfBlank()` 里）。调了 `->background()` / `->border()` /
+     *   `->radius()` 的任何一个 ⇒ 整套默认让位（§15.7 纪律 3 的既有语义，逐字不变）。
+     * ★ 阴影**不在**默认里：LayUI 的卡片靠 1px 边框就立住了，要"浮起来"得显式
+     *   `->shadow(0.08)`（值域就是黑色透明度）。
      */
-    public function gradient(?Gradient $gradient): static
+    #[\Override]
+    public function defaultBoxStyle(BuildContext $context): ?BoxStyle
     {
-        $this->mutate();
-        $box = $this->box ?? BoxStyle::none();
-        $this->box = $gradient === null
-            ? $box->withoutBackgroundGradient()
-            : $box->withBackgroundGradient($gradient);
+        $theme = $context->theme();
 
-        return $this;
-    }
-
-    public function border(Color $color, float $width = 1.0): static
-    {
-        $this->mutate();
-        $this->box = ($this->box ?? BoxStyle::none())->withBorder($color, $width);
-
-        return $this;
-    }
-
-    public function radius(float $radius): static
-    {
-        $this->mutate();
-        $this->box = ($this->box ?? BoxStyle::none())->withRadius($radius);
-
-        return $this;
-    }
-
-    /** @internal 调试 / 夹具读它（渲染层不再需要） */
-    public function box(): ?BoxStyle
-    {
-        return $this->box;
-    }
-
-    public function build(BuildContext $ctx): Widget
-    {
-        $theme = $ctx->theme();
-
-        $style = $this->box ?? BoxStyle::none()
+        return BoxStyle::none()
             ->withBackground($theme->color(ColorToken::Surface))
             ->withBorder($theme->color(ColorToken::Border), 1.0)
             ->withRadius(2.0);
-
-        // ★ 样式总要落到**一个盒**上，分两种情况：
-        // · 孩子自己产盒（`RenderBoxWidget`：`Column` / `Row` / `Text` / `Button`…）
-        //   ⇒ 直接写给它，**不套壳**（这条路上的行为逐字不变）。
-        // · 孩子**不产盒**（`ScrollView` / `TextField` / 页面这类结构节点 —— 它们的盒
-        //   住在自己的 `*Box` 里）⇒ **必须先套一个代理盒**再写。否则修饰无处可去，
-        //   §11.7 的守卫当场 FATAL：2026-10-23 实证，M2-5 把 Card 从"自己有盒"
-        //   改成"样式注入孩子"之后，`Card::make(ScrollView::make(...))` 让示例台
-        //   7 个页面一点就炸（`ScrollView 声明了修饰…但它自己不产渲染盒`）。
-        // ★ 代理盒用 `SizedBox`（纯转发盒 `RenderProxy`）：`RenderBox::paint()` 通用
-        //   画 mods 的 chrome（`paintBehind`：阴影 → 底 → 边），尺寸/内容原点走
-        //   `layout()` ②⑤ 步的同一套 padding 规则 ⇒ 外观与几何都和被删掉的
-        //   `RenderCard` 同类，且与"直接写给盒孩子"口径一致（都不 loosen）。
-        $styled = $this->kid === null
-            ? SizedBox::make()
-            : ($this->kid instanceof RenderBoxWidget ? clone $this->kid : SizedBox::make($this->kid));
-
-        $styled = $styled->padding($this->padding);
-
-        if ($this->shadow > 0.0) {
-            $styled = $styled->shadow($this->shadow);
-        }
-        // 底：渐变优先（与 `background()` 的并集语义一致 —— 渐变赢）
-        if ($style->backgroundGradient !== null) {
-            $styled = $styled->gradient($style->backgroundGradient);
-        } elseif ($style->background !== null) {
-            $styled = $styled->background($style->background);
-        }
-        if ($style->borderColor !== null && $style->borderWidth > 0.0) {
-            $styled = $styled->border($style->borderColor, $style->borderWidth);
-        }
-        if ($style->radius > 0.0) {
-            $styled = $styled->radius($style->radius);
-        }
-
-        return $styled;
     }
 }

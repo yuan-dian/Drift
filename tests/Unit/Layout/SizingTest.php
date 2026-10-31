@@ -273,9 +273,18 @@ final class SizingTest extends SmokeTestCase
         $box = $el->effectiveBox();
         $box?->layout(BoxConstraints::loose(new Size(940.0, 600.0)));
 
-        // ★ M2-5：`Card` 不再是盒 ⇒ 树少一层（SizedBox → Column → Button）
-        $col = childBoxes($box)[0] ?? null;
+        // ★ 2026-10-31：`Card` 重新**是一层盒**（`RenderProxy`）⇒ 链条是
+        //   SizedBox → Card(代理盒) → Column → Button，**四层**。
+        //   ★ 必须按链条逐层取，不能"取第一个孩子"就算了：少取一层会量到 Column 的宽
+        //     （也是 180），断言照样绿 —— 名义上量按钮、实际量容器，是最典型的假绿。
+        $cardBox = childBoxes($box)[0] ?? null;
+        $col = childBoxes($cardBox)[0] ?? null;
         $buttons = childBoxes($col);
+        check(
+            '集成 · 侧栏链条是 SizedBox → Card → Column → Button（四层，Card 自己是一层盒）',
+            $cardBox !== null && $col !== null && \count($buttons) === 1,
+            \sprintf('Card 盒 %s / Column 盒 %s / 按钮数 %d', $cardBox === null ? 'null' : 'ok', $col === null ? 'null' : 'ok', \count($buttons)),
+        );
         check(
             '集成 · 侧栏 SizedBox(200) ⇒ 导航项宽 180（整行可点，右边缘齐）',
             ($buttons[0] ?? null)?->size() !== null

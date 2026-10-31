@@ -220,9 +220,14 @@ abstract class Widget
      * `$sealed` 是 `private int`，`clone` 会连它一起复制 ⇒ 克隆一个已挂载（已封存）
      * 的 Widget，得到的也是封存的，紧接着 `->padding(...)` 里的 `mutate()` 直接 Fatal。
      *
-     * 需要的场景：`Card` 的语义是"**包一层**"而不是"给这个控件加样式"，所以它的
-     * `build()` 必须 `clone $this->kid` 再贴样式 —— 否则样式会漏给另一处共享引用
+     * 需要的场景：任何"**包一层**而不是给这个控件加样式"的包装器，都要
+     * `clone $kid` 再贴自己的东西 —— 否则会漏给另一处共享引用
      * （`children([$a, $a])` 合法）。
+     *
+     * ★ **`Card` 已经不需要它了**（2026-10-31）：它不再克隆孩子、也不再往孩子身上
+     *   写样式，而是自己就是那一层盒（见 `Card` 类注释）。这条保留是因为它是
+     *   `clone` 的**语义修正**而不是某个类的补丁：不归零 ⇒ 克隆出来的描述一改就
+     *   Fatal，而"克隆一份描述"本身是合法的用法。
      *
      * @internal
      */
@@ -351,12 +356,20 @@ abstract class Widget
     //   · `center()` 被 `Dock::center(Widget $kid)`（五区槽位）占了
     //     ⇒ 居中修饰叫 `centerContent()`。
     //
-    // ★ `padding` / `paddingAll` / `background` / `border` / `radius` / `shadow` /
-    //   `width` / `height` 在 `BoxWidget` / `Card` / `Flex` / `PopupPanel` /
-    //   `LazyColumn` / `Divider` / `Progress` 上**已有同名同签名实现** ⇒ 子类覆写
-    //   基类，写它们自己的存储（`BoxStyle` / 自有字段），**行为与今天完全一致**。
-    //   只有裸 `Widget` 的调用才落到 `mods`。这是有意的边界：控件自带的整套样式
-    //   （含主题派生默认值）继续住 `BoxStyle`，`mods` 只管"给任意控件贴一层"。
+    // ★ 视觉四维（`background` / `gradient` / `border` / `radius` / `shadow`）现在
+    //   **没有任何控件覆写**：一律走这一份 `$mods`，由 `RenderBox::paint()` 的 ① 画
+    //   （S1，2026-10-28/31）。自绘 chrome 的控件（`Button` / `AppBar` / `PopupPanel`）
+    //   只是从 `$mods->boxStyle()` **取**用户样式再合并主题默认，取完由
+    //   `Element::syncBox()` 剥掉，不会画两遍。想给控件一套主题默认样式、又不自绘的
+    //   （`Card`），覆写 `RenderBoxWidget::defaultBoxStyle()`。
+    //
+    // ★ 仍**必须**覆写的只有两类，各有硬理由：
+    //   · `padding` —— 容器要拿它**参与排布数学**（`RenderFlex` 用 `padding->left`
+    //     算 pen）。塞回 `$mods` 会让 `RenderBox::layout()` ②⑤ 再做一次 ⇒ 双份内距。
+    //     名单：`Flex` / `LazyList` / `LazyGrid` / `PopupPanel`。
+    //   · `width` / `height` —— 控件自己的尺寸**就是它的语义**（`Divider` 的粗细、
+    //     `Progress` 的条高、`Image` 的自然尺寸），不是"给控件贴一层"。
+    //     名单：`Divider` / `Progress` / `Image` / `Slider` / `DatePicker` / `DateTimePicker`。
 
     /** @internal `Element::syncBox()` 递它；永远非空 */
     public function mods(): Modifier

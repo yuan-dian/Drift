@@ -14,10 +14,10 @@ use Drift\Rendering\Color;
 use Drift\Rendering\DisplayList;
 use Drift\Rendering\RasterCanvas;
 use Drift\Rendering\RecordingCanvas;
+use Drift\Widget\Button;
 use Drift\Widget\Card;
 use Drift\Widget\Column;
 use Drift\Widget\ScrollView;
-use Drift\Widget\SizedBox;
 use Drift\Widget\Text;
 
 /**
@@ -77,7 +77,7 @@ final class CardTest extends SmokeTestCase
         $box = self::laidOut(Card::make($textWidget));
 
         check(
-            'Card · 样式落在子控件的 mods 上（不再是独立的 RenderCard 盒）',
+            'Card · 盒上同时有视觉样式与内距（卡片自己就是那层盒，不再注入孩子）',
             $box !== null && $box->mods()->hasVisual() && $box->mods()->hasPadding(),
         );
         check(
@@ -224,8 +224,8 @@ final class CardTest extends SmokeTestCase
     {
         // ★ 父把宽定死（`Column::cross(Stretch)`）时松掉紧约束 ⇒ 卡片撑满、内容缩在
         //   左边，观感像"没对齐"。与 `RenderPadding` 同口径：只 deflate，不放松。
-        // ★ `Card` 不多一层盒 ⇒ `effectiveBox()` 就是**内容自己的盒**，"内容宽度"
-        //   得往下再走一层才看得见（用 `Column::cross(Stretch)` —— 也正是示例台侧栏的形态）。
+        // ★ 2026-10-31 起卡片**自己是一层盒** ⇒ `$box` 是卡片的代理盒，它唯一的子
+        //   就是内容。量"内容宽"要往下取一层（以前 Card 透明，`$box` 直接就是内容盒）。
         $box = self::laidOut(Card::make(
             Column::make()->cross(FlexAlign::Stretch)->children([Text::make('卡片内容')]),
         ));
@@ -239,70 +239,92 @@ final class CardTest extends SmokeTestCase
     }
 
     /**
-     * ⑥ 结构节点（`ScrollView` / `TextField`）**自己不产盒** ⇒ Card 必须先套一层
-     * `SizedBox`（盒是 `RenderProxy`）再写样式。
+     * ⑥ **孩子原样挂、样式只落在卡片自己的盒上** —— 两种孩子**同一条路**。
      *
-     * ★ 这条**真的炸过**：M2-5（2026-10-22）把 Card 从"自己有盒"改成"注入孩子 mods"
-     *   时漏了结构节点 —— §11.7 守卫当场 FATAL，示例台 7 页一点就炸，而当时四档闸门
-     *   全绿（用例面没有 Card(结构节点)）。与 `fatal_cases.php` 的 `modstateful`
-     *   是同一件事的**正反两面**：那边验"直接写样式 ⇒ 响亮失败"，这边验"套了壳就没事"。
-     * ★ 三条一起才算验到：中间是 SizedBox + 它的盒是 RenderProxy + 样式落在代理盒上。
-     *   只看前两条的话，"套了壳但样式写到了别处"照样过。
-     * ★ 取盒走 `$mid->renderObject()`，**不要** `$sv->parent()`：ScrollView 是**有态**
-     *   控件，盒要等一帧才建，仅 `mount` 之后为 null —— 第一版就错在这儿，
-     *   后两条恒 0（不是实现错，是取盒路径错）。
+     * ## 这条判据替换了原来的两个方法（2026-10-31）
+     *
+     * 旧设计（M2-5）是"把样式写进孩子"：产盒的孩子直接写它，不产盒的孩子
+     * （`ScrollView` / `TextField`）先套一层 `SizedBox` 再写。于是有两条路、两套判据
+     * （`testStructureChildGetsWrappedInProxy` / `testBoxProducingChildIsStyledDirectly`），
+     * 而"走哪条"取决于孩子的**类型**。
+     *
+     * 现在卡片**自己就是那个盒**（`RenderProxy`）⇒ 孩子不再被碰：
+     *
+     * | | 旧 | 新 |
+     * |---|---|---|
+     * | 产盒孩子（`Text`）| 样式写进它的 `mods` | 原样挂 |
+     * | 不产盒孩子（`ScrollView`）| 先套 `SizedBox` 再写 | 原样挂 |
+     *
+     * ★ 判据必须同时断"卡片自己的盒有样式"**和**"孩子的控件就是原来那个、且没被写样式"
+     *   —— 只断前者的话，"套了壳但样式写到了别处"照样过（旧版就是这么假绿的）。
+     * ★ `ScrollView` 是有态控件，盒要等一帧才建 ⇒ 只断**控件身份**，不断它的盒。
      */
-    public function testStructureChildGetsWrappedInProxy(): void
+    public function testChildIsNeverStyledCardOwnsTheBox(): void
     {
-        $el = Card::make(ScrollView::make(Text::make('x')))->createElement();
-        $el->mount(null, smokeContext());
+        $cases = [
+            '产盒孩子（Text）' => Text::make('y'),
+            '不产盒孩子（ScrollView）' => ScrollView::make(Text::make('x')),
+        ];
 
-        $mid = $el->childAt(0);
-        $proxy = $mid?->renderObject();
-        $midWidget = $mid?->widget();
+        $wrong = [];
+        foreach ($cases as $name => $kid) {
+            $el = Card::make($kid)->createElement();
+            $el->mount(null, smokeContext());
+
+            $cardBox = $el->renderObject();
+            $childWidget = $el->childAt(0)?->widget();
+
+            if (!$cardBox instanceof RenderProxy) {
+                $wrong[] = $name . '：卡片的盒是 ' . ($cardBox === null ? 'null' : $cardBox::class) . '（期望 RenderProxy）';
+            }
+            if ($childWidget !== $kid) {
+                $wrong[] = $name . '：孩子被换了/套壳了（'
+                    . ($childWidget === null ? 'null' : $childWidget::class) . '）';
+            }
+            if ($cardBox?->mods()?->hasVisual() !== true) {
+                $wrong[] = $name . '：卡片自己的盒上没有视觉样式（默认样式没落地）';
+            }
+        }
 
         check(
-            'Card · 结构节点（ScrollView）被套一层 SizedBox 代理（不产盒的控件不能直接写样式）',
-            $midWidget instanceof SizedBox,
-            '中间节点是 ' . ($midWidget === null ? 'null' : $midWidget::class),
-        );
-        check(
-            'Card · 代理节点的盒就是 RenderProxy',
-            $proxy instanceof RenderProxy,
-            '盒是 ' . ($proxy === null ? 'null' : $proxy::class),
-        );
-        check(
-            'Card · 样式落在代理盒上（不是落在 ScrollView 身上 —— 它没有盒）',
-            $proxy !== null && $proxy->mods() !== null && $proxy->mods()->hasVisual(),
-            'hasVisual=' . ($proxy?->mods()?->hasVisual() === true ? 'true' : 'false'),
+            'Card · 两种孩子走同一条路：卡片是盒（RenderProxy）+ 孩子原样挂 + 样式在卡片上',
+            $wrong === [],
+            implode('；', $wrong),
         );
     }
 
     /**
-     * ⑥ 的另一半：**产盒**的孩子不套壳，样式直接落它自己（M2-5 之前的行为逐字不变）。
+     * ★ **卡片不再覆盖孩子的样式**（旧实现的真 bug，不是整洁问题）。
      *
-     * ★ 判据必须落在**控件类型**上。只看"盒有没有视觉样式"的话，哪天有人给所有孩子
-     *   都套壳，`RenderProxy` 照样有样式 ⇒ 假绿（2026-10-23 真写出过这一版，
-     *   靠 lint 的 `instanceof` 缺 `use` 才抓住）。
+     * 旧 `build()` 会 `clone $kid` 再往克隆体上写卡片的底 ⇒ `Card(Button)->background(红)`
+     * 让**按钮底色变成卡片底色**（按钮的 `resolveBoxStyle()` 把 `$mods` 当"用户设的样式"）。
+     * 旧注释把这叫"诚实的边界"，其实是错的层：卡片的底该**垫在**按钮下面。
+     *
+     * 判据落点是**两份 `mods` 各自的 `fillColor()`**，不看像素 —— 像素上两块都在、
+     * 顺序也对，看不出"谁被谁覆盖"。
      */
-    public function testBoxProducingChildIsStyledDirectly(): void
+    public function testCardBackgroundDoesNotOverwriteChildStyle(): void
     {
-        $el = Card::make(Text::make('y'))->createElement();
+        $cardBg = Color::fromRgb(0x00, 0x80, 0x00);
+        $btnBg = Color::fromRgb(0xFF, 0x00, 0x00);
+
+        $el = Card::make(Button::make('x')->background($btnBg))->background($cardBg)->createElement();
         $el->mount(null, smokeContext());
 
-        $kid = $el->childAt(0);
-        $box = $kid?->renderObject();
-        $kidWidget = $kid?->widget();
+        $cardFill = $el->renderObject()?->mods()?->fillColor();
+        $childFill = $el->childAt(0)?->widget()->mods()->fillColor();
 
         check(
-            'Card · 产盒孩子（Text）**不套壳**：直接子节点就是 Text 自己',
-            $kidWidget instanceof Text,
-            '直接子是 ' . ($kidWidget === null ? 'null' : $kidWidget::class),
+            'Card · 卡片的底落在卡片自己的盒上',
+            $cardFill?->equals($cardBg) === true,
+            $cardFill === null ? '卡片没有底' : sprintf('rgb(%d,%d,%d)', $cardFill->r, $cardFill->g, $cardFill->b),
         );
         check(
-            'Card · 样式落在 Text 自己的盒上',
-            $box !== null && $box->mods() !== null && $box->mods()->hasVisual(),
-            'hasVisual=' . ($box?->mods()?->hasVisual() === true ? 'true' : 'false'),
+            'Card · 孩子（Button）自己的底**没被覆盖**（旧实现会把按钮刷成卡片色）',
+            $childFill?->equals($btnBg) === true,
+            $childFill === null
+                ? '孩子的底丢了'
+                : sprintf('rgb(%d,%d,%d)', $childFill->r, $childFill->g, $childFill->b),
         );
     }
 }

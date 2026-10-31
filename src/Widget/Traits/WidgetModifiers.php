@@ -42,9 +42,12 @@ trait WidgetModifiers
      * ```
      *
      * ★ 收 `EdgeInsets` 而不是 `float`：`padding(EdgeInsets)` 在 `Flex` /
-     *   `LazyColumn` / `PopupPanel` / `Card` / `Padding` 上**已经存在**且被
+     *   `LazyColumn` / `PopupPanel` / `Padding` 上**已经存在**且被
      *   `apps/` 里十几处调用。基类收 `float` 会让那些子类变成"不兼容覆写"
      *   ⇒ 整个 `src/` 装载不起来。等距用法由 `paddingAll()` 覆盖。
+     *   ★ `Card` **不再**在这张名单里（2026-10-31）：它以前覆写 `padding()` 写自己
+     *     的字段，现在走这一份 `$mods` —— 覆写 `padding()` 的只剩"要拿它参与排布
+     *     数学"的容器（见下条）。
      *
      * ★★ **`padding` 是唯一一个"不该统一"的修饰**（S1 的边界，2026-10-28）。
      *   这一份写 `$mods`，由 `RenderBox::layout()` 的 ②⑤ 统一施加。

@@ -30,7 +30,13 @@ use Drift\Geometry\Size;
  * | `RenderSizedBox` | 逐轴夹取 + 紧约束 | `Modifier::tighten()`（①，同一套夹取规则） | M2-3 |
  * | `RenderCenter` | `loosen()` + 按上限算偏移 | 基类 ③ + ⑦（偏移按可用空间，逐字复刻旧口径） | M2-4 |
  * | `RenderFlexible` | 带 flex 份额 | `mods.grow` ⇒ `setMods()` 里 `setFlexIntent()` | M2-4 |
- * | `RenderCard` | 底 / 边 / 圆角 / 阴影 / 内距 | `Modifier::paintBehind()` + ②⑤⑦；`Card` 改 `StatelessWidget` 在 `build()` 里把样式写成子控件的 `mods` | M2-5 |
+ * | `RenderCard` | 底 / 边 / 圆角 / 阴影 / 内距 | `Modifier::paintBehind()` + ②⑤⑦ | M2-5 |
+ *
+ * ★ **`Card` 回到"自己是一层盒"**（2026-10-31，走本类）：M2-5 曾把它改成
+ *   `StatelessWidget`，在 `build()` 里把样式写成**子控件**的 `mods`。那条路要求
+ *   孩子产盒、不产盒两种各走一条（后者得先套 `SizedBox`），还会**覆盖孩子自己的
+ *   样式**。现在 `Card` 就是 `RenderProxy` + 主题默认样式（`defaultBoxStyle()`），
+ *   孩子原样挂在下面 —— 与 `Padding` / `SizedBox` 同一条路，零 `instanceof` 分支。
  *
  * ⇒ **"修饰是字段，不是节点"这条判据在 W5 兑现完毕**：今天没有任何"只为施加一个
  * 修饰而存在"的 `RenderBox` 子类。
