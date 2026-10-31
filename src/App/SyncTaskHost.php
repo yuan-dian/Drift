@@ -51,15 +51,20 @@ final class SyncTaskHost implements TaskHost
     /**
      * 已完成、等 UI 线程取走的结果。
      *
-     * ★ 纯 PHP 数组即可：`submit()` 与 `drain()` 都在 UI 线程上（本后端没有第二
-     *   个线程可竞争）。线程后端才需要 `mutex + deque`（§17.4.2.1 的表）。
-     *
-     * @var list<Completion>
+     * ★ 纯 PHP 对象即可（无锁）：`submit()` 与 `drain()` 都在 UI 线程上（本后端
+     *   没有第二个线程可竞争）。线程后端才需要 `mutex + deque`（§17.4.2.1 的表）。
+     * ★ **交付算法（至少一条 / 剩余回队头 / 不丢）在 `CompletionQueue` 里** ——
+     *   三个后端共用那一份，不在本类里再写一遍（2026-10-31）。
      */
-    private array $queue = [];
+    private CompletionQueue $queue;
 
     /** 慢任务诊断只报一次（否则每个慢请求一条，日志被刷满就没人看） */
     private bool $slowReported = false;
+
+    public function __construct()
+    {
+        $this->queue = new CompletionQueue();
+    }
 
     public function submit(Job $job): Future
     {
@@ -72,9 +77,9 @@ final class SyncTaskHost implements TaskHost
         $startedAt = \hrtime(true);
 
         try {
-            $this->queue[] = new Completion($job->run(), null, $future);
+            $this->queue->push(new Completion($job->run(), null, $future));
         } catch (\Throwable $e) {
-            $this->queue[] = new Completion(null, $e, $future);
+            $this->queue->push(new Completion(null, $e, $future));
         }
 
         $this->reportIfSlow($job, (\hrtime(true) - $startedAt) / 1_000_000);
@@ -117,7 +122,7 @@ final class SyncTaskHost implements TaskHost
      */
     public function pending(): int
     {
-        return \count($this->queue);
+        return $this->queue->count();
     }
 
     /**
@@ -134,37 +139,17 @@ final class SyncTaskHost implements TaskHost
 
     public function drain(callable $onEach, ?int $budgetMs = null): void
     {
-        if ($this->queue === []) {
+        if ($this->queue->isEmpty()) {
             return;
         }
 
-        // ★ swap：取快照再清空。`$onEach` 里再 `submit()` 的结果留到下一帧，
-        //   否则"回调里提交新任务"会让 drain 永不返回（帧预算失效）。
-        $ready = $this->queue;
-        $this->queue = [];
-
+        // ★ 预算基准点只取一次（三段共用，否则是预算的三倍）
         $deadline = $budgetMs === null || $budgetMs <= 0
             ? 0
             : \hrtime(true) + $budgetMs * 1_000_000;
 
-        foreach ($ready as $i => $completion) {
-            // ★ `$i > 0` = 契约①「至少交一条」。★ 诚实边界：`$deadline` 是在本方法
-            //   开头算的 ⇒ 首条检查时它**恒在未来**，这条分支在**本类里不可证**
-            //   （单测抓不到它的变异，别写"证明了"）。它留着是为了
-            //   `ThreadTaskHost::deliverRows()` 的**跨段**场景 —— 那里积压段可能
-            //   先把预算烧光，新批次开场即过期，没有它就是"这一批一条不交"。
-            if ($deadline > 0 && $i > 0 && \hrtime(true) >= $deadline) {
-                // ★ 剩余放回**队头**：它们比"回调里新 submit 的"更早完成
-                //   （后者在 `$this->queue` 里）。顺序错了会让结果乱序交付 ——
-                //   在 `Table` 分页里就是"翻到第 2 页却看到第 1 页的数据"。
-                // ★ 同时满足契约②：`pending()` 数的是 `$this->queue` ⇒ 仍 > 0 ⇒
-                //   帧时钟不会睡死（本后端 `needsPolling()` 是 true，靠这个跳）。
-                $this->queue = \array_merge(\array_slice($ready, $i), $this->queue);
-
-                return;
-            }
-
-            $onEach($completion);
-        }
+        // ★ 三条规则（至少交一条 / 剩余回队头 / 回调抛异常也不丢）全在
+        //   `CompletionQueue::drain()` —— 三个后端共用**同一份**算法。
+        $this->queue->drain($onEach, $deadline);
     }
 }

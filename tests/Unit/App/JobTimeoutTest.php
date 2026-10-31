@@ -54,6 +54,17 @@ final class JobTimeoutTest extends SmokeTestCase
     /** 一个很短的上限 —— 让"超时"在测试里立刻发生 */
     private const TERMINATE_MS = 300;
 
+    /**
+     * "补一个 worker"那条用例专用的上限（比 {@see self::TERMINATE_MS} 宽得多）。
+     *
+     * ★★ 为什么不复用 300ms：超时计时从**派发那一刻**开始（`send()`），而那条任务
+     *   的 worker 是**刚 spawn 的** ⇒ 预算里含着它的启动时间。300ms 与"启动 + 一条
+     *   任务的往返"同量级，机器一忙就会**假超时**（第一次跑闸门就撞上了：`smoke.sum`
+     *   也被判超时，`values=[]`）。这条用例要判的是"补上了、后续任务跑得通"，
+     *   与预算宽窄无关 ⇒ 给它一个不跟启动时间赛跑的数字。
+     */
+    private const REPLACE_TERMINATE_MS = 2_000;
+
     private static function host(int $terminateMs = self::TERMINATE_MS): ProcessTaskHost
     {
         return new ProcessTaskHost(
@@ -174,12 +185,14 @@ final class JobTimeoutTest extends SmokeTestCase
      */
     public function testPoolSpawnsReplacementAfterKill(): void
     {
-        $host = self::host();
+        // ★ 上限放宽到 2s：那条 3s 的任务照样超时，而**补上来的新 worker** 不再
+        //   被它的启动时间逼到墙角（见 `REPLACE_TERMINATE_MS` 的注释）。
+        $host = self::host(self::REPLACE_TERMINATE_MS);
 
         $errors = [];
         $values = [];
         $stuck = self::submit($host, new NamedSleepJob(3_000), $errors, $values);
-        \usleep(self::TERMINATE_MS * 1000 + 400_000);
+        \usleep(self::REPLACE_TERMINATE_MS * 1000 + 400_000);
         self::pumpUntil($host, static fn(): bool => $stuck->isDone());
 
         $next = self::submit($host, new NamedSumJob(10), $errors, $values);

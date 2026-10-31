@@ -135,6 +135,11 @@ interface TaskHost
      *      发出（永挂）；跳过 `reap` ⇒ 死 worker 名下的任务永不结算。
      *      **预算限的是"交多少条"，不是"干多少活"。**
      *
+     * ★ ①② 的**实现只有一份**：{@see CompletionQueue::drain()}（2026-10-31）。
+     *   改造前三个后端各抄一遍，抄出了 `return` / `break` 两种收尾、以及"回调
+     *   抛异常时剩余丢失"（只有 `ThreadTaskHost` 的行队列用了 `finally`）。
+     *   ③ 无法收进队列（它不知道后端还有哪些活），所以仍写在三个 `drain()` 里。
+     *
      * @param callable(Completion): void $onEach 处理单个完成事件（在 UI 线程执行）
      * @param int|null $budgetMs 本帧交付回调的时间上限（毫秒）；
      *                           `null` = 不限，一次取空（**框架路径永远传正数**，

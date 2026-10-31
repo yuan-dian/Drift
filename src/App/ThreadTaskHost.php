@@ -65,12 +65,12 @@ final class ThreadTaskHost implements TaskHost
      * **当场就失败**的任务（不是 `NamedJob` / 参数转不了）。
      *
      * ★ 不在这里直接 `reject()`：`submit()` 返回之后调用方才挂 `catch()`，
-     *   当场结算会让"刚提交就 Fatal"。入这个表，由 `drain()` 在**帧内**结算 ——
+     *   当场结算会让"刚提交就 Fatal"。入这个队列，由 `drain()` 在**帧内**结算 ——
      *   与真任务失败走同一条时序（与 `ProcessTaskHost` 同一手法）。
-     *
-     * @var list<Completion>
+     * ★ 交付算法（至少一条 / 剩余回队头 / 回调抛异常也不丢）在
+     *   {@see CompletionQueue} 里，三个后端共用那一份（2026-10-31）。
      */
-    private array $failed = [];
+    private CompletionQueue $failed;
 
     /**
      * 上一帧**已从原生池取出、但没来得及交付**的完成事件（P1 预算的副产物）。
@@ -102,6 +102,7 @@ final class ThreadTaskHost implements TaskHost
      */
     public function __construct(private readonly int $threads = 4)
     {
+        $this->failed = new CompletionQueue();
     }
 
     public function submit(Job $job): Future
@@ -160,7 +161,7 @@ final class ThreadTaskHost implements TaskHost
      */
     public function pending(): int
     {
-        return \count($this->inflight) + \count($this->failed);
+        return \count($this->inflight) + $this->failed->count();
     }
 
     /**
@@ -189,21 +190,9 @@ final class ThreadTaskHost implements TaskHost
             : \hrtime(true) + $budgetMs * 1_000_000;
 
         // ★ 发不出去的那些**先结算**：它们比在途的更早（`submit()` 时就定了）。
-        if ($this->failed !== []) {
-            $failed = $this->failed;
-            $this->failed = [];
-
-            foreach ($failed as $i => $completion) {
-                // 契约①：`$i > 0` 放行首条，否则活锁。
-                if ($deadline > 0 && $i > 0 && \hrtime(true) >= $deadline) {
-                    $this->failed = \array_merge(\array_slice($failed, $i), $this->failed);
-
-                    break;
-                }
-
-                $onEach($completion);
-            }
-        }
+        // ★ 超预算之后仍然往下走（积压 / 新批次），不是 `return` —— 那两段用的是
+        //   另一套残留载体（原生池取走即无、只能由本类记账），契约①在那边同样适用。
+        $this->failed->drain($onEach, $deadline);
 
         // ① 先交**上一帧的积压** —— 它们完成的更早，顺序必须优先于新批次。
         if ($this->backlog !== []) {
@@ -350,6 +339,6 @@ final class ThreadTaskHost implements TaskHost
         // ★ 从在途表里摘掉：它永远不会有结果行回来（`pending()` 不能一直算它）。
         unset($this->inflight[$id]);
 
-        $this->failed[] = new Completion(null, new \RuntimeException($message), $future);
+        $this->failed->push(new Completion(null, new \RuntimeException($message), $future));
     }
 }

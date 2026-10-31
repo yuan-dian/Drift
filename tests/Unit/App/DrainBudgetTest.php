@@ -182,4 +182,45 @@ final class DrainBudgetTest extends SmokeTestCase
 
         $this->flushChecks();
     }
+
+    /**
+     * 用例 ⑥：`$onEach` 抛异常 ⇒ **剩下的不许丢**（下一帧还能交出来）。
+     *
+     * ★ 为什么这条值得单独钉：三个后端里只有 `ThreadTaskHost::deliverRows()` 用过
+     *   `finally` 保住剩余的行，另外两处的 Completion 队列**没管** —— 一条回调抛
+     *   异常，被 swap 出去的那几条就永久消失（那几条 `Future` 永不结算 ⇒ 页面
+     *   永远转圈，且没有日志）。现在三个后端共用 `CompletionQueue::drain()`，
+     *   这条判据钉的就是那一份实现（2026-10-31）。
+     * ★ 它同时钉住"异常不被吞"：异常必须继续往上抛 —— 要不要 Fatal 是
+     *   `PumpHost::pumpTasks()` 那一层的决定，队列不替它做主。
+     */
+    public function testThrowingCallbackKeepsTheRestQueued(): void
+    {
+        $host = self::hostWith(3);   // 队列：[1, 2, 3]
+        $seen = [];
+        $threw = false;
+
+        try {
+            $host->drain(function (Completion $completion) use (&$seen, &$threw): void {
+                $seen[] = $completion->value;
+
+                if (!$threw) {
+                    $threw = true;
+
+                    throw new \RuntimeException('回调炸了');
+                }
+            });
+        } catch (\RuntimeException $e) {
+            // ★ 故意接住：这条用例要判的是"异常冒出来了 + 剩余还在"，不是"没抛"
+        }
+
+        check('预算 · 回调抛异常 ⇒ 异常照旧往上抛（不吞）', $threw && \count($seen) === 1, 'seen=' . \count($seen));
+        check('预算 · 抛异常时剩余 2 条仍在队列里（没被 swap 吞掉）', $host->pending() === 2, 'pending=' . $host->pending());
+
+        $rest = [];
+        $host->drain(self::collector($rest));
+        check('预算 · 下一帧把剩下的按顺序交出来', $rest === [2, 3], \json_encode($rest));
+
+        $this->flushChecks();
+    }
 }

@@ -79,12 +79,12 @@ final class ProcessTaskHost implements TaskHost
      *
      * ★ 它们不进 `$queue`（那里是"等着发出去"，这些永远发不出去），也不在这里
      *   直接 `reject()`：`submit()` 返回之后调用方才挂 `catch()`，当场结算会
-     *   让"刚提交就 Fatal"。⇒ 入这个表，由 `drain()` 在**帧内**结算 ——
+     *   让"刚提交就 Fatal"。⇒ 入这个队列，由 `drain()` 在**帧内**结算 ——
      *   与真任务失败走同一条时序，调用方看不出差别。
-     *
-     * @var list<Completion>
+     * ★ 交付算法（至少一条 / 剩余回队头 / 回调抛异常也不丢）在
+     *   {@see CompletionQueue} 里，三个后端共用那一份（2026-10-31）。
      */
-    private array $failed = [];
+    private CompletionQueue $failed;
 
     private int $seq = 0;
 
@@ -157,6 +157,7 @@ final class ProcessTaskHost implements TaskHost
             $maxWorkers = 1;
         }
         $this->maxWorkers = $maxWorkers;
+        $this->failed = new CompletionQueue();
 
         // ★ 负值按"不设上限"处理：它不是"写错了"，就是"这个池不要这道闸"。
         //   显式给 `0` 与给负数在本类里是同一个意思，不必再喊一次诊断。
@@ -247,7 +248,7 @@ final class ProcessTaskHost implements TaskHost
      */
     private function fail(Future $future, string $message): void
     {
-        $this->failed[] = new Completion(null, new \RuntimeException($message), $future);
+        $this->failed->push(new Completion(null, new \RuntimeException($message), $future));
     }
 
     public function drain(callable $onEach, ?int $budgetMs = null): void
@@ -260,22 +261,9 @@ final class ProcessTaskHost implements TaskHost
 
         // ★ 发不出去的那些**先结算**：它们比在途的更早（`submit()` 时就定了），
         //   而且结算顺序影响"同一帧里谁先看到失败"。
-        if ($this->failed !== []) {
-            $failed = $this->failed;
-            $this->failed = [];
-
-            foreach ($failed as $i => $completion) {
-                // 契约①：`$i > 0` 放行首条（否则活锁）。
-                if ($deadline > 0 && $i > 0 && \hrtime(true) >= $deadline) {
-                    // 契约②：放回 `$this->failed` ⇒ `pending()` 仍数得到 ⇒ 不睡死。
-                    $this->failed = \array_merge(\array_slice($failed, $i), $this->failed);
-
-                    break;
-                }
-
-                $onEach($completion);
-            }
-        }
+        // ★ 超预算之后仍然往下走（`readReplies` / 簿记），不是 `return` ——
+        //   那两段是"交付"，簿记则是无条件必须跑的（契约③）。
+        $this->failed->drain($onEach, $deadline);
 
         $this->readReplies($onEach, $deadline);
 
@@ -352,7 +340,7 @@ final class ProcessTaskHost implements TaskHost
      */
     public function pending(): int
     {
-        return \count($this->inflight) + \count($this->queue) + \count($this->failed);
+        return \count($this->inflight) + \count($this->queue) + $this->failed->count();
     }
 
     /**
@@ -560,6 +548,11 @@ final class ProcessTaskHost implements TaskHost
             'name' => $item['name'],
             // ★ 超时计时从**这一刻**（派发给 worker）开始 —— 见
             //   {@see self::$requestTerminateMs}：排队等空闲不是"卡住"。
+            // ★ 诚实边界：对**刚 spawn 的 worker**，这一刻早于"它能干活"（它还在
+            //   启动）⇒ 它的第一条任务，预算里含着启动时间（几百毫秒量级）。
+            //   默认 30s 无感；把上限调到几百毫秒时它会被算进去（`JobTimeoutTest`
+            //   的"补一个 worker"用例因此把上限放宽到 2s）。不加"启动宽限"，是因为
+            //   宽限值只能猜 —— 猜出来的数字没有判据能证伪（本仓：不可证的代码不加）。
             'startedAt' => \hrtime(true),
         ];
 
