@@ -4580,6 +4580,45 @@ check(
 check('N3 · Future::all：失败时 then() 一次都不跑（两条通道互斥）', $failThen === 0, (string) $failThen);
 $failPool->shutdown();
 
+// ②f `Future::allSettled` 在真池上：一条失败**不连坐**，其余照常交付
+//
+// ★ 与 ②e 是**同一条场景的相反判据**（`all` vs `allSettled`）。两个并排放，
+//   读者一眼能看出"选错聚合器"的代价：`all` 会把兄弟任务 cancel 掉 ⇒ 拼看板的
+//   页面只剩一块错误页，而症状看起来像一次普通失败，没人会去查。
+// ★ 判据不用墙钟：看的是"三份结果都回来了 + 失败那条带原因 + 成功的带值"。
+$settledSink = null;
+$settledPool = new ProcessTaskHost([PHP_BINARY, $workerScript], SmokeJobRegistry::make(), 3);
+Future::allSettled([
+    'a' => $settledPool->submit(new NamedSleepJob(120)),
+    'b' => $settledPool->submit(new NamedBoomJob('接口 B 挂了')),
+    'c' => $settledPool->submit(new NamedSleepJob(60)),
+])->then(function (array $values) use (&$settledSink): void {
+    $settledSink = $values;
+});
+
+$settledDeadline = microtime(true) + 10.0;
+while ($settledSink === null && microtime(true) < $settledDeadline) {
+    usleep(5000);
+    $settledPool->drain($settle);
+}
+
+check(
+    'N3 · allSettled：一条失败 ⇒ 聚合体仍交付三份结果（不是 reject）',
+    is_array($settledSink) && array_keys($settledSink) === ['a', 'b', 'c'],
+    json_encode($settledSink, JSON_UNESCAPED_UNICODE) ?: 'null',
+);
+check(
+    'N3 · allSettled：失败那条 ok=false 带原因，另外两条照常带值（兄弟没被取消）',
+    ($settledSink['b']['ok'] ?? null) === false
+        && str_contains((string) ($settledSink['b']['error'] ?? ''), '接口 B 挂了')
+        && ($settledSink['a']['ok'] ?? null) === true
+        && ($settledSink['c']['ok'] ?? null) === true
+        && ($settledSink['a']['value'] ?? null) === 120
+        && ($settledSink['c']['value'] ?? null) === 60,
+    json_encode($settledSink, JSON_UNESCAPED_UNICODE) ?: 'null',
+);
+$settledPool->shutdown();
+
 // ③ 任务失败（worker 里抛）⇒ onError，且**不打死 worker**
 $sink = [];
 $procHost->submit(new NamedBoomJob('设备离线'))

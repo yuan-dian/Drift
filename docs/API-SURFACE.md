@@ -9,7 +9,7 @@
 | 层 | @api | @internal |
 |---|---|---|
 | App | 80 | 50 |
-| Async | 13 | 3 |
+| Async | 14 | 3 |
 | Commands | 7 | 0 |
 | Core | 2 | 0 |
 | Errors.php | 2 | 3 |
@@ -24,7 +24,7 @@
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
 | Widget | 169 | 217 |
-| **合计** | **463** | **360** |
+| **合计** | **464** | **360** |
 
 覆盖 366 个文件 · 描述性提及 30 处（grep 口径的污染源，不计入）
 
@@ -172,7 +172,7 @@
 
 ## Async 层
 
-### @api（应用可读面） · 13
+### @api（应用可读面） · 14
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -187,16 +187,17 @@
 | `Future::then()` | method | src/Async/Future.php:160 |
 | `Future::catch()` | method | src/Async/Future.php:177 |
 | `Future::cancel()` | method | src/Async/Future.php:191 |
-| `Future::all()` | method | src/Async/Future.php:306 |
-| `Future::race()` | method | src/Async/Future.php:378 |
+| `Future::all()` | method | src/Async/Future.php:331 |
+| `Future::allSettled()` | method | src/Async/Future.php:396 |
+| `Future::race()` | method | src/Async/Future.php:475 |
 
 ### @internal（框架内部） · 3
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
 | `Future::__construct()` | method | src/Async/Future.php:102 |
-| `Future::resolve()` | method | src/Async/Future.php:426 |
-| `Future::reject()` | method | src/Async/Future.php:451 |
+| `Future::resolve()` | method | src/Async/Future.php:523 |
+| `Future::reject()` | method | src/Async/Future.php:548 |
 
 ## Commands 层
 

@@ -1002,3 +1002,102 @@ $res->elapsedMs();  $res->url();            // 跟随重定向后是最后一跳
 | 连接复用 / 并发 | **不做**。真要"同域名几百条并发"，A2 池（16 线程上限）与 `curl_multi`（判死）都不成立 ⇒ 那时形状在 worker 里（`curl_share_*`），不是在这里加一个参数 |
 | TLS 证书 | 走 curl 的默认（`VERIFYPEER` / `VERIFYHOST` 开）。**没有**任何关闭开关 —— 关掉证书校验的 API 一旦存在就一定会被用，而它换来的只是"本地自签能跑" |
 | `Http` 在 UI 线程被调用 | **没有运行期断言**。`Http` 不知道自己在哪个线程（要判就得读 `drift_thread_id()`，那是 `App` 层的事）。⇒ 这条只写在类注释第一行，靠 review |
+
+---
+
+## 15. 第十三轮（2026-10-31）：L3「同时等 N 条」有了零件也有示例
+
+> 上一节把 `curl_multi` 判死之后，L3（「同时请求 5 个接口」）的答案落在
+> **池容量 + `Future::allSettled()`**。本轮把它从"一段文档话"落成三样东西：
+> 一个组合器、一个池容量决定、一个可以点开的示例页。
+
+### 15.1 零件：`Future::allSettled()`
+
+`all()` 的语义是「全成功或全失败」—— 一条失败就**取消其余**。这对"取一页表格"
+是对的（要就整页要就别要），对"拼一个看板"是错的：5 个数据源坏了 1 个，
+正常答案是**显示 4 个 + 一条错误提示**，不是整页白屏。这正是 JS `Promise.allSettled()`
+与 Dart `Future.wait(eagerError: false)` 存在的理由。
+
+```php
+// 入参键序保持：结果数组的键就是入参的键
+$settled = Future::allSettled(['a' => $fa, 'b' => $fb, 'c' => $fc]);
+// ['a' => ['ok' => true,  'value' => …, 'error' => null],
+//  'b' => ['ok' => false, 'value' => null, 'error' => 'HTTP 500：…'],   ← 消息字符串，不是 Throwable
+//  'c' => ['ok' => true,  'value' => …, 'error' => null]]
+```
+
+实现判据：
+
+| 判据 | 挡的退化 |
+|---|---|
+| 每条**独立 settle**，一条 reject **不取消**兄弟（与 `all()` 的唯一差别） | 把 `allSettled` 写成 `all` 的别名 ⇒ "失败隔离"是假的 |
+| 聚合体**永不 reject**（`allSettled` 自己只在同步参数错时抛） | 调用方被迫再包一层 try/catch，错误分支写两遍 |
+| 键序按入参（`orderedByInput()` 收成一处，`all()` 共用） | 完成序当结果序：哪条先回来哪条排前面，页面每次刷新顺序都不同 |
+| `all()` 原地内联的 4 行重排换用同一函数 | 第三份"键序重排"拷贝（本仓的老账） |
+
+### 15.2 池容量是**组合根的决定**：`maxWorkers = 3`
+
+一个 worker 是一整套 AOT 运行时（真机 ~31 MB/个）。"开几个"只有应用知道，
+页面无权要求 —— 所以它只出现在 `Bootstrap`：
+
+```php
+// apps/showcase/bin/win32/Bootstrap.php
+$host = new ProcessTaskHost([$exe, '--drift-worker'], JobRegistry::make(), 3);
+```
+
+为什么是 3 而不是 5：那页同时取 3 页数据，3 是最小的"够用"值；
+5 个并发槽 = 5 个常驻子进程，在 8GB 机器上就是"开一个页面崩一次内存"的写法。
+★ 池是**懒扩张**的（`prewarm()` 只发 1 个）：不点那页时进程数与原来完全一样，
+第 2、3 个只在真有第二条任务**同时在途**时才 spawn。代价要写下来：
+满载时 UI 进程 + 3 worker ≈ 100 MB + 3×31 MB；其余 33 页全是单任务，永远只用到第一个。
+
+### 15.3 示例：示例台页 34「并发取数」
+
+`apps/showcase/src/Pages/ConcurrentFetchPage.php`。页面上三张卡并排，
+一条就是一格、成败各自算数；页脚一行把"并发 vs 串行"的账摆在明面上
+（`总 X ms · 3 条逐条之和 Y ms（并发省了 Z ms）`）。同一取数闭包
+（`ShowcaseCapabilities::fetchRows`），页面只是**换了一个组合器**。
+
+测试三件套：
+
+| 层 | 文件 | 钉什么 |
+|---|---|---|
+| 单元 | `tests/Unit/Async/FutureTest.php` | `allSettled` 的成败分拣 / 键序 / 不取消兄弟 / 聚合体不 reject |
+| 页面 | `tests/Feature/Widget/ConcurrentFetchPageTest.php`（3 例 / 22 断言） | 三张卡各自渲染、一条 500 **不连坐**（其余两卡仍有数据）、界面上不出现整块错误页 |
+| 冒烟 | `tools/smoke.php` ②e 后追加 | 真 `ProcessTaskHost(maxWorkers=3)`：三条同时发，逐条之和 > 总耗时（真并发的量化判据）+ `allSettled` 一条失败兄弟在途 |
+
+变异自检（两个方向都红过才敢提交）：页面把 `allSettled` 换成 `all()` ⇒
+页面测试红（一条失败连坐整页）；`allSettled` 去掉键序重排 ⇒ 单元与页面同时红。
+
+### 15.4 验证
+
+| 项 | 结果 |
+|---|---|
+| `php tools/lint.php` | **863** 文件 · 0 error · 0 warn |
+| `php tools/phpunit-run.php unit` | **403** tests / **1195** assertions OK |
+| `php tools/docref.php` | 78 ok / 0 FAIL |
+| `php tools/smoke.php` | **459 ok / 0 FAIL**（+2：③f 并发池那两条） |
+| `php tools/gate.php` | 8 项全通过 · **459 ok / 0 FAIL** · 104.2s |
+| AOT `showcase.exe` | **13.9 MB**，增量构建 122.3s |
+| 真机（点击导航到页 34） | **总 1403 ms · 3 条逐条之和 4196 ms（并发省了 2793 ms）**；三卡 1235 / 1511 / 1450 ms 各自带数据；**进程数 4 = UI + 3 worker**；无 `Errors.log` |
+
+★★ 最后一行是本轮唯一需要真机才敢说的："懒扩张到 3"在 AOT 里**真的发生了**——
+不是 smoke 里 PHP 解释器跑了算数，是 `showcase.exe` 自己 spawn 出了三个同名子进程，
+且总耗时贴着 max 而不是 sum。
+
+### 15.5 量具坑（新的，下次别再踩）
+
+`probe-grab --click` 的 y 与 png 里的目标 y **差一个 0.75 的缩放**（本机 DPI 缩放）：
+png 目标 573 ⇒ 要点 `--click=…,764`。三次实验钉出来的
+（241→179 / 573→435 / 95→71，三组都落在 ×0.75 上）。
+png 是物理像素，点击命中在逻辑像素 —— 以后所有真机点击先按这条换算，
+**先点一个已知项校准再点目标**。
+
+### 15.6 诚实边界
+
+| 项 | 情况 |
+|---|---|
+| N 的上限 | 没有任何机制挡住 `maxWorkers = 20`。代价（内存）写在注释里，靠 review |
+| 一条任务失败后的重试 | 页面上是整组重发（`再发一次`），没有"只重试失败那格"。那是页面的选择，不是框架缺能力（`allSettled` 的结果里每条都够得着） |
+| 超时 | `allSettled` 不管超时；任务卡住就是卡住（`ProcessTaskHost` 有任务级超时，走的是那层） |
+| 同域几百并发 | 仍然没有正解（§14.6），本轮解决的是"几条"不是"几百条" |

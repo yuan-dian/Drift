@@ -100,7 +100,20 @@ final class Bootstrap
         //     取走并缓存（中途换掉会让"入队 / drain"分属两个队列）。
         $exe = (string) ($argv[0] ?? '');
         if ($exe !== '') {
-            $host = new ProcessTaskHost([$exe, '--drift-worker'], JobRegistry::make());
+            // ★★ **池容量 3**（2026-10-31）：这是「并发取数」页真正并行的前置条件。
+            //   `maxWorkers` 是**组合根的决定**，不是页面能提的要求 —— 一个 worker
+            //   是一整套 AOT 运行时（几十 MB），"开几个"只有应用知道。
+            //
+            //   为什么是 3 而不是 5：
+            //   - 那页要同时取 3 页数据，3 是最小的"够用"值；
+            //   - 每个并发槽 = 一个常驻子进程。5 个在 8GB 机器上就是"开一个页面
+            //     崩一次内存"的写法，而收益只是少等几秒（`ASYNC-ARCH-2026-10-31.md` §15）；
+            //   - 池是**懒扩张**的（`prewarm()` 只发 1 个）：不点那页时，进程数与原来
+            //     完全一样，第 2、3 个只在真有第二条任务同时在途时才 spawn。
+            //
+            //   ★ 代价要记住：满载时 UI 进程 + 3 个 worker ≈ 100 MB + 3×31 MB。
+            //     其余 33 页全是单任务，永远只用到第一个 worker。
+            $host = new ProcessTaskHost([$exe, '--drift-worker'], JobRegistry::make(), 3);
 
             // ★ 预热（2026-10-31）：把首条任务的 275ms 进程启动挪到建窗之前。
             //   见 `ProcessTaskHost::prewarm()` —— 它只发起进程，不等就绪。

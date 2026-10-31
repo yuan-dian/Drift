@@ -223,7 +223,7 @@ final class Future
      *     ★ 2026-10-31 这里曾写着"同步那一路按帧跑，不交付就等于真停"——**假的**：
      *       活已经干完了，停的是交付，不是计算。这句话是删分片时顺手改坏的，
      *       本轮订正（`ASYNC-ARCH-2026-10-31.md` §13.2）；
-     *   - `Future::all()` / `race()` —— 自己不干活，只把取消**转给全部入参**
+     *   - `Future::all()` / `race()` / `allSettled()` —— 自己不干活，只把取消**转给全部入参**
      *     （2026-10-31：否则"取消一个组合请求"等于没取消）。⇒ 它属于"剪枝"，
      *     最终落到上面三档之一。
      *   ★ 2026-10-30 之前这里写着"`ProcessTaskHost` 用它杀在途 worker 任务"——
@@ -292,7 +292,7 @@ final class Future
     }
 
     /**
-     * 把取消转给每一条入参（`all()` / `race()` 唯一需要的"批量操作"）。
+     * 把取消转给每一条入参（`all()` / `race()` / `allSettled()` 唯一需要的"批量操作"）。
      *
      * @param array<array-key, self> $list
      */
@@ -301,6 +301,31 @@ final class Future
         foreach ($list as $other) {
             $other->cancel();
         }
+    }
+
+    /**
+     * 按**入参键序**重排结果 —— `all()` / `allSettled()` 共用（2026-10-31）。
+     *
+     * ★ 键序是**契约**不是巧合：`['a' => …, 'b' => …]` 回来后若按完成序排列，
+     *   调用方拿 `$result[0]` 以为是对应用户 A，实际是用户 C —— 不报错，数据张冠李戴。
+     * ★ 这条规则原先在 `all()` 里内联（4 行），`allSettled()` 要用同一句 ⇒
+     *   抄第二份就是"两处各写一遍必然漂"的老账，收在这里。
+     *
+     * @param array<array-key, self> $list 入参（只为取键序）
+     * @param array<array-key, mixed> $got 按完成序攒下的结果
+     *
+     * @return array<array-key, mixed>
+     */
+    private static function orderedByInput(array $list, array $got): array
+    {
+        $ordered = [];
+        foreach ($list as $key => $ignored) {
+            if (\array_key_exists($key, $got)) {
+                $ordered[$key] = $got[$key];
+            }
+        }
+
+        return $ordered;
     }
 
     /**
@@ -349,14 +374,7 @@ final class Future
                 }
 
                 // ★ 按**入参顺序**重排：结果数组的键序是契约的一部分（`list` 更要紧）
-                $ordered = [];
-                foreach ($list as $k => $ignored) {
-                    if (\array_key_exists($k, $got)) {
-                        $ordered[$k] = $got[$k];
-                    }
-                }
-
-                $all->resolve($ordered);
+                $all->resolve(self::orderedByInput($list, $got));
             })->catch(static function (\Throwable $error) use ($all, $list): void {
                 // ★ 任一条失败 ⇒ 其余全部取消（不留无人认领的后台活）
                 self::cancelAll($list);
@@ -373,6 +391,85 @@ final class Future
         $all->task = $anyTask;
 
         return $all;
+    }
+
+    /**
+     * 每一条**各自**成败，结果与入参同键同序；**永不失败**。
+     *
+     * ```
+     * [1 => ['ok' => true,  'value' => [...], 'error' => null],
+     *  2 => ['ok' => false, 'value' => null,   'error' => 'HTTP 500：…']]
+     * ```
+     *
+     * ## 与 `all()` 的差别只有一处，但它决定用途
+     *
+     * | | `all()` | `allSettled()` |
+     * |---|---|---|
+     * | 一条失败 | **整条失败** + 其余被 `cancel()` | 那条记 `ok=false`，**其余照跑照交** |
+     * | 拿到什么 | 全成功时的值数组 | 每条的"成没成" |
+     * | 什么时候用 | 缺一条结论就不成立（多步依赖里的前一步） | 拼看板 / 拼详情页：一个接口挂了不该让整页变成错误页 |
+     *
+     * ★ 位置对应 `Promise.allSettled()` 与 Dart 的 `Future.wait(eagerError: false)`。
+     *   本仓在 2026-10-31 之前只有前者 ⇒ 想拼一个"三块数据"的页面，只能给每条
+     *   手写 `->then()` / `->catch()` 把失败折成值 —— 那段样板每个页面都要抄一遍，
+     *   且抄错的方向（漏 `catch` ⇒ 一个 500 让整页错误 + 另外两条被取消）**看起来
+     *   像正常失败**，没人会去查。
+     *
+     * ## 三条契约
+     *
+     * ★★ **永不失败**：因此没有 `task` 标记（"失败没人接"这件事在聚合体这一层
+     *   不存在）。子任务那层的 `catch()` 是这里接的 ⇒ 连子任务也不会喊 Fatal。
+     * ★ **`error` 是消息字符串，不是 `\Throwable`**：载荷会进 `AsyncValue`、
+     *   会被日志 / 诊断 / 基准快照 `json_encode` —— 异常对象进去只会变成 `{}`
+     *   或让编码失败。要类型化地把异常带出来，请在 `$task` 里自己接。
+     * ★ **取消仍传播给全部入参**（同 `all()`）：聚合体没人要了，子任务也不该继续跑。
+     *   取消后聚合体**永不结算**（与 `all()` / 被取消的普通 Future 一致）。
+     *
+     * @param array<array-key, self> $futures
+     *
+     * @api
+     */
+    public static function allSettled(array $futures): self
+    {
+        [$list] = self::collect($futures, 'allSettled');
+
+        $settled = new self(static function () use (&$list): void {
+            self::cancelAll($list);
+        });
+
+        if ($list === []) {
+            $settled->resolve([]);
+
+            return $settled;
+        }
+
+        $left = \count($list);
+        $got = [];
+
+        foreach ($list as $key => $future) {
+            // ★ 成功 / 失败两个分支的收尾**逐字相同**（只差那条记录），抽成局部
+            //   闭包 —— 抄两遍的话"少减一次 `$left`"会让聚合体永不结算，
+            //   而症状是"页面一直转圈"（与 `all()` 里那个计数坑同源）。
+            $take = static function (array $entry) use (&$got, &$left, $key, $settled, $list): void {
+                $got[$key] = $entry;
+                $left = $left - 1;
+
+                if ($left !== 0) {
+                    return;
+                }
+
+                $settled->resolve(self::orderedByInput($list, $got));
+            };
+
+            $future->then(static function (mixed $value) use ($take): void {
+                $take(['ok' => true, 'value' => $value, 'error' => null]);
+            })->catch(static function (\Throwable $error) use ($take): void {
+                // ★ 不取消兄弟、不冒泡：这一条失败就是这一条的事
+                $take(['ok' => false, 'value' => null, 'error' => $error->getMessage()]);
+            });
+        }
+
+        return $settled;
     }
 
     /**

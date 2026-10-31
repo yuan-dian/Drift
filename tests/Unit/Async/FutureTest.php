@@ -393,4 +393,132 @@ final class FutureTest extends SmokeTestCase
             $allCaught instanceof \RuntimeException && $allCaught->getMessage() === '组里有一条坏',
         );
     }
+
+    /**
+     * `allSettled`：**每条各自成败**，结果按入参键序；一条失败不取消兄弟。
+     *
+     * ★ 与 `testAllCancelsTheRestOnFailure()` 是同一条场景的**相反判据** ——
+     *   两个一起看，才分得清"我测的是 all 还是 allSettled"。
+     * ★ 还有一条只能在"失败时兄弟还在跑"这个窗口里判：**取消没有传播到兄弟**。
+     */
+    public function testAllSettledKeepsEveryArmIndependent(): void
+    {
+        $a = Future::pending();
+        $b = Future::pending();
+        $c = Future::pending();
+
+        $settled = Future::allSettled(['第一' => $a, '第二' => $b, '第三' => $c]);
+        $got = null;
+        $settled->then(function (array $v) use (&$got): void {
+            $got = $v;
+        });
+
+        // 故意乱序：先失败中间那条（此刻 a、c 还没结算）
+        $b->reject(new \RuntimeException('第二块挂了'));
+
+        check('Future::allSettled · 还有两条没回来 ⇒ 不结算', $got === null, \var_export($got, true));
+        check(
+            'Future::allSettled · 一条失败**不连坐**（兄弟没被 cancel）',
+            !$a->isCancelled() && !$c->isCancelled(),
+            'a=' . ($a->isCancelled() ? '1' : '0') . ' c=' . ($c->isCancelled() ? '1' : '0'),
+        );
+
+        $c->resolve('C');
+        $a->resolve('A');
+
+        check(
+            'Future::allSettled · 结果按**入参键序**（第一/第二/第三，不是完成序）',
+            $got !== null && \array_keys($got) === ['第一', '第二', '第三'],
+            \json_encode($got, \JSON_UNESCAPED_UNICODE) ?: '',
+        );
+        check(
+            'Future::allSettled · 成功的带值、失败的带消息（成败各自算数）',
+            ($got['第一']['ok'] ?? null) === true && ($got['第一']['value'] ?? null) === 'A'
+                && ($got['第二']['ok'] ?? null) === false && ($got['第二']['value'] ?? null) === null
+                && ($got['第二']['error'] ?? null) === '第二块挂了'
+                && ($got['第三']['ok'] ?? null) === true,
+            \json_encode($got, \JSON_UNESCAPED_UNICODE) ?: '',
+        );
+    }
+
+    /**
+     * `allSettled`：**永不失败** —— 全部失败也走 `then()`，不碰 `catch()`。
+     *
+     * ★ 这条是本方法与 `all()` 的分水岭：`all()` 在全失败时走 `catch()`，页面
+     *   只能落到错误态；`allSettled()` 让页面拿到三份"失败原因"，各画各的。
+     * ★ `$settled->task` 必须为 false：它不会失败，若被标成"任务"，一旦哪天
+     *   真的 reject 就会在没有 `catch()` 时喊 Fatal（一个永不失败的聚合体
+     *   喊"失败没人接"是纯噪音）。
+     */
+    public function testAllSettledNeverRejects(): void
+    {
+        $a = Future::pending();
+        $b = Future::pending();
+
+        $settled = Future::allSettled([$a, $b]);
+
+        $thenRan = 0;
+        $catchRan = 0;
+        $got = null;
+
+        $settled->then(function (array $v) use (&$thenRan, &$got): void {
+            $thenRan++;
+            $got = $v;
+        })->catch(function (\Throwable $e) use (&$catchRan): void {
+            $catchRan++;
+        });
+
+        $a->reject(new \RuntimeException('左挂了'));
+        $b->reject(new \RuntimeException('右也挂了'));
+
+        check('Future::allSettled · 全失败也走 then()（永不失败）', $thenRan === 1 && $catchRan === 0,
+            'then=' . $thenRan . ' catch=' . $catchRan);
+        check(
+            'Future::allSettled · 两条的失败原因都在结果里',
+            \is_array($got) && ($got[0]['error'] ?? null) === '左挂了' && ($got[1]['error'] ?? null) === '右也挂了',
+            \json_encode($got, \JSON_UNESCAPED_UNICODE) ?: '',
+        );
+    }
+
+    /**
+     * `allSettled`：取消传播给全部入参，此后**永不结算**（同 `all()`）。
+     *
+     * ★ 不传的话，"换了参数"的页面会把三条任务留在后台跑，回来还没人接 ——
+     *   正是 `AsyncCommand` 每次换参数都要取消上一次的那个理由。
+     */
+    public function testAllSettledCancelPropagatesAndNeverSettles(): void
+    {
+        $a = Future::pending();
+        $b = Future::pending();
+
+        $settled = Future::allSettled([$a, $b]);
+
+        $ran = 0;
+        $settled->then(function (array $v) use (&$ran): void {
+            $ran++;
+        });
+
+        $settled->cancel();
+
+        check('Future::allSettled · 取消 ⇒ 全部入参被 cancel()', $a->isCancelled() && $b->isCancelled(),
+            'a=' . ($a->isCancelled() ? '1' : '0') . ' b=' . ($b->isCancelled() ? '1' : '0'));
+
+        $a->resolve('A');
+        $b->resolve('B');
+
+        check('Future::allSettled · 取消后连迟到结果都不交付（聚合体不结算）', $ran === 0, (string) $ran);
+    }
+
+    /**
+     * `allSettled`：空数组 ⇒ 立刻成功（`[]`），与 `all([])` 一致。
+     */
+    public function testAllSettledOfEmptyIsImmediatelyDone(): void
+    {
+        $got = null;
+        Future::allSettled([])->then(function (array $v) use (&$got): void {
+            $got = $v;
+        });
+
+        check('Future::allSettled · 空数组 ⇒ 立刻成功且结果为空', $got === [], \var_export($got, true));
+    }
 }

@@ -31,6 +31,7 @@ use Drift\Widget\Widget;
 
 use App\Showcase\Pages\AlignPage;
 use App\Showcase\Pages\AsyncTablePage;
+use App\Showcase\Pages\ConcurrentFetchPage;
 use App\Showcase\Pages\LoadMorePage;
 use App\Showcase\Pages\AspectPage;
 use App\Showcase\Pages\BigListPage;
@@ -222,6 +223,10 @@ final class ShowcaseState extends State
             // ★ 2026-10-31：加载更多页追加在最末（前 32 项 y 不变）。
             //   与「异步表格」同一个取数闭包，差别只在 `append()` vs `run()`。
             new NavEntry(IconName::ListBullets, '加载更多 More', fn(): Widget => new LoadMorePage($this->caps->fetchRows)),
+            // ★ 2026-10-31：并发取数页追加在最末（前 33 项 y 不变）。
+            //   同一个取数闭包，差别只在"一次发一条" vs "一次发三条 + `allSettled()`"。
+            //   ★ 它要真的并发 ⇒ 组合根把池开到了 3（见 `bin/win32/Bootstrap.php`）。
+            new NavEntry(IconName::Grid, '并发取数 Concurrent', fn(): Widget => new ConcurrentFetchPage($this->caps->fetchRows)),
         ];
     }
 
