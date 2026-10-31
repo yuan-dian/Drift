@@ -868,7 +868,7 @@ git 上已经提交了」*。
 | 台阶 | 内容 | 碰什么 | 真机 | 收益 |
 |---|---|---|---|---|
 | **N1** ✅ | **泵帧分离**：`paint` 三重判据 + `RenderObject::paintEpoch` | `src/App/Frame.php` + `src/Layout/` 五个 setter | ❌ | **已落地**：空闲 60 帧 paint=0（原 60）；493MB/s blit 归零 |
-| **N2** | **`waitEvents` + `ControlFlow`**：拆 `pump()`，加 `nextTimeoutMs()` | `Platform` + `Win32Platform` + `Application` | ❌（`waitEvents` 可用假平台测） | 换掉退化轮询；为唤醒铺路 |
+| **N2** ✅ | **`waitEvents` + `ControlFlow`**：拆 `pump()`，加 `nextTimeoutMs()` | `Platform` + `Win32Platform` + `Application` | ❌（`waitEvents` 可用假平台测） | **已落地**（M1-b 一并收口）：`Platform::waitEvents(float): WakeReason` + `EventLoop` 三入口；`timers()` 从接口删除、`FrameClock` 不再持 `TimerHost` |
 | **N3** ✅ | **`Future` + `all/race`**（`IoDriver`/A1 判为不可行，见 §11） | `src/Async/` 新目录 + `TaskHost` + 进程池 | ❌ | 「多接口并发」可写（池 + `all`）；写法对齐 Flutter/.NET |
 | **N4** | **`Inbox` + 唤醒通道（B4）** | C++ 壳 + 桥 + `Platform` | ❌ | ★★ **2026-10-30 二次改判：不建**（唤醒已由 N5 内建；同线程那半 = `after(0)`；跨上下文投递 PHP 闭包结构上不可能。见 §11 ③） |
 | **N5** ✅ | **C++ IO 线程（A2）** | C++ 壳（线程池 + 队列 + JSON 桥） | ✅ 必须 | **已落地**：`cpp-src/core/` + `win32/`；`wake.max_dt=0.56ms`、空闲 CPU 0.000%、空队列 poll 0.13µs |
