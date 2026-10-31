@@ -91,6 +91,23 @@ final readonly class BoxStyle
     }
 
     /**
+     * **一个样式字段都没设过** —— 与 `isNone()` 是两件事，别互换。
+     *
+     * ★ 差别只在"设了但不画"的组合：只设了圆角（无底无边）、或只设了边框色而宽度
+     *   为 0。那些情况 `isNone()` 为真（画面确实一样），但**声明确实发生过** ——
+     *   `Modifier::isDefault()` 与 `withoutBoxVisual()` 要的正是"发生过没有"：
+     *   前者决定"声明了修饰却无处可去"要不要响亮失败，后者决定要不要剥。
+     *   拿 `isNone()` 当这个判据 ⇒ `->radius(4)` 会被当成"没声明"，静默丢掉。
+     */
+    public function isBlank(): bool
+    {
+        return $this->background === null
+            && $this->backgroundGradient === null
+            && $this->borderColor === null
+            && $this->radius === 0.0;
+    }
+
+    /**
      * 底色的**画笔**（渐变的比例坐标在这里按盒尺寸落成绝对像素）。
      *
      * ## 为什么收口成一个方法（A1a，2026-10-28）

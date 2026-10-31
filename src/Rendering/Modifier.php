@@ -90,34 +90,27 @@ final class Modifier
     private ?Alignment $align = null;
 
     // ── 绘制维（D_PAINT）────────────────────────────────────────────
-    // ★ **不用 `?Color`**：可空对象在编译期退化为 `php::Var` ⇒ 用"值 + bool"。
-    //   `Color` 没有能当属性初始化器的常量（只有 `Color::black()` 静态方法）
-    //   ⇒ 在 `__construct` 里占位。
-    private Color $background;
-
-    private bool $hasBackground = false;
-
-    private Color $borderColor;
-
-    private bool $hasBorder = false;
-
-    private float $borderWidth = 0.0;
-
     /**
-     * 底色渐变（paint source 的另一支；与 `$background` 互斥地解释 —— 有渐变时渐
-     * 变赢）。
+     * 视觉四维（底 / 渐变 / 边 / 圆角）—— **唯一的存储**。
      *
-     * ★★ **为什么是"占位对象 + bool"而不是 `?Gradient`**：与 `$background` 完全同
-     *   一条账 —— 可空对象在编译期退化为 `php::Var`（见上面绘制维的段注）。
-     *   照抄成 `?Gradient` 会在 AOT 上静默丢掉类型，`paintBehind()` 里读它变成动态。
-     * ★ 坐标是**盒内比例**（`Gradient::vertical()` 这类工厂产出的形态），
-     *   `paintBehind()` 拿到 `Size` 后调 `resolvedTo()` 换算。用户不需要知道盒多大。
+     * ## 为什么收成一个字段（S1 收尾，2026-10-31）
+     *
+     * 这四项原先在本类各存一份（`$background` + `$hasBackground`、`$borderColor` +
+     * `$hasBorder` + `$borderWidth`、`$gradient` + `$hasGradient`、`$radius`），
+     * 而 `BoxStyle` 是由它们**派生**出来的第二份表达。两份表达的代价已经实测过一次：
+     * `withoutBoxVisual()` 按"底 / 边 / 圆角"逐字段剥，**漏了渐变** ⇒ 自绘 chrome 的
+     * 控件（`Button` / `AppBar` / `PopupPanel`）把渐变画两遍（半透明渐变偏暗），
+     * 且每帧白画一次，**不报错**。收成一个字段之后，剥 = `BoxStyle::none()`，
+     * **没有字段列表可漏**。
+     *
+     * ★ 顺带消掉三个占位对象（两个 `Color::black()` + 一个全黑渐变）：它们只为
+     *   "非空类型属性"凑初值，任何一处读漏 `has*` 都会把"没设"画成黑色。
+     * ★ 为什么不是 `?Color` 属性：可空**对象属性**在编译期退化为 `php::Var`
+     *   （原段注的那条 AOT 约束仍然成立）。这里存的是**非空**的 `BoxStyle`，
+     *   可空性在它内部 —— 它是 `readonly` 值对象，AOT 侧早就在用（`Render*` 的
+     *   构造器都收它）。
      */
-    private Gradient $gradient;
-
-    private bool $hasGradient = false;
-
-    private float $radius = 0.0;
+    private BoxStyle $style;
 
     /** 阴影强度 = 黑色透明度（`0.0` = 不画） */
     private float $shadow = 0.0;
@@ -232,10 +225,8 @@ final class Modifier
 
     public function __construct()
     {
-        // 占位：`hasBackground` / `hasBorder` / `hasGradient` 为假时这些值无意义
-        $this->background = Color::black();
-        $this->borderColor = Color::black();
-        $this->gradient = Gradient::linear(0.0, 0.0, 1.0, 0.0, [Color::black(), Color::black()]);
+        // 视觉四维的初值 = "什么都没设"（`BoxStyle::none()` 是全空的值对象）
+        $this->style = BoxStyle::none();
     }
 
     // ── 读：布局（`RenderBox::layout()` 每帧读）─────────────────────
@@ -460,98 +451,89 @@ final class Modifier
     /**
      * 底色；`null` = 没设。
      *
-     * ★ 必须返回 `?Color` 而不是 `Color`：未设时 `$background` 是占位的黑色
-     *   （构造函数里初始化的），直接返回它等于把"没设"报成"黑色"。
+     * ★ 必须返回 `?Color`：`BoxStyle` 用 `null` 表达"没设"，直接返回占位色等于把
+     *   "没设"报成"黑色"。
      */
     public function fillColor(): ?Color
     {
-        return $this->hasBackground ? $this->background : null;
+        return $this->style->background;
     }
 
     /** 底色渐变；`null` = 没设。坐标是**盒内比例**，画之前要 `resolvedTo()` */
     public function gradient(): ?Gradient
     {
-        return $this->hasGradient ? $this->gradient : null;
+        return $this->style->backgroundGradient;
     }
 
     public function hasGradient(): bool
     {
-        return $this->hasGradient;
+        return $this->style->backgroundGradient !== null;
     }
 
     /**
-     * 视觉三字段（底 / 边 / 圆角）打包成 `BoxStyle`；三项全未设 ⇒ `null`。
+     * 视觉四维打包成 `BoxStyle`（**不是派生，就是那一个存储**）；什么也不画 ⇒ `null`。
      *
-     * ## 为什么需要它（S1，2026-10-28）
+     * ## 历史（S1，2026-10-28 → 10-31 收尾）
      *
      * `BoxStyle` 曾是**第二份存储**：`BoxWidget` 子类（`Button` / `PopupPanel`）把
      * `->background()` 写进自己的 `private ?BoxStyle $box`，而其余控件写 `$mods`。
      * 于是同一个 API 名有两个落点，而"声明了修饰但修饰无处可去"那条守卫
      * （`Element::syncBox()` 读 `isDefault()`）**只看得到 `$mods`** —— 另一半静默。
+     * 10-28 先把存储收进 `$mods`、`BoxStyle` 降为派生；10-31 再把四项视觉收成
+     * `$mods` 里**一个** `BoxStyle` 字段 ⇒ 现在这里是"取出来"，零派生、零分配。
      *
-     * 现在存储只有 `$mods`；`BoxStyle` 降级为 **Layout 层的渲染参数**，需要它的控件
-     * （`Button` / `PopupPanel` / `AppBar` 要交给 `Render*` 的构造器）从这里**派生**。
-     *
-     * ★ **派生不改变分层**：`paintBehind()` 画装饰层、`paintOwnChrome()` 画本体层，
+     * ★ **`null` 的判据**：`isNone()`（什么也不画）且无圆角。只设了圆角仍然给样式
+     *   —— `Button` 的"用户声明了圆角"要靠它，`null` 会被当成"没声明"。
+     * ★ **两层不合并**：`paintBehind()` 画装饰层、`paintOwnChrome()` 画本体层，
      *   两者仍是两层不同的东西。变的只是"本体样式的数据从哪来"。
-     * ★ **派生物与源幂等**：自绘 chrome 的控件会把这里派生出的值合并进 `BoxStyle`
-     *   交给 `Render*` ⇒ 同一个矩形同一颜色可能被画两遍（`paintBehind` + `paintOwnChrome`），
-     *   视觉与命令语义上都无害（值来自同一处，不可能不一致）。
      */
     public function boxStyle(): ?BoxStyle
     {
-        $hasBorder = $this->hasBorder && $this->borderWidth > 0.0;
-        if (!$this->hasBackground && !$this->hasGradient && !$hasBorder && $this->radius === 0.0) {
+        if ($this->style->isNone() && $this->style->radius === 0.0) {
             return null;
         }
 
-        return new BoxStyle(
-            $this->hasBackground ? $this->background : null,
-            $hasBorder ? $this->borderColor : null,
-            $hasBorder ? $this->borderWidth : 0.0,
-            $this->radius,
-            $this->hasGradient ? $this->gradient : null,
-        );
+        return $this->style;
     }
 
     /**
-     * 派生一份**去掉视觉三字段**（底 / 边 / 圆角）的副本，其余字段原样保留。
+     * 派生一份**去掉视觉四维**（底 / 渐变 / 边 / 圆角）的副本，其余字段原样保留。
      *
      * ## 为什么需要它（S1 的收尾）
      *
      * 自绘 chrome 的控件（`Button` / `AppBar` / `PopupPanel`）把"用户设的样式"从
-     * `$mods` 派生进 `BoxStyle` 交给 `Render*`，由 `paintOwnChrome()` 画。若把同一份
-     * `$mods` 原样交给盒，`RenderBox::paint()` 的 ① 会**再画一遍**。
+     * `$mods` 交给 `Render*`，由 `paintOwnChrome()` 画。若把同一份 `$mods` 原样
+     * 交给盒，`RenderBox::paint()` 的 ① 会**再画一遍**。
      *
      * ★★ **描边不幂等**：`Paint::stroke` 是带抗锯齿的部分覆盖，同色画两遍**不等于**
      *   画一遍 —— 实测 `golden/page` 红了两页（`ButtonsPage` 32 像素、`ListPage`
      *   322 像素，差异全落在**边框条带**上，max Δ=13/25）。底色倒是幂等的
      *   （不透明矩形全覆盖），所以只靠"看起来一样"发现不了这条。
-     *
-     * ★ **只剥这三项**：`shadow` 必须留着 —— `Button` 的浮起影子走
-     *   `ShadowPainter::paintOutside()`，与 `hoverElevation` 是两套，剥掉就丢了
-     *   用户显式声明的 `->shadow()`。`padding` / 尺寸 / 合成 / 弹性意图同理。
+     * ★★ **渐变也必须剥**（2026-10-31 修）：它同样是"底"（`BoxStyle::hasBackground()`
+     *   把实色与渐变算作同一维）。旧实现逐字段剥了 `hasBackground` / `hasBorder` /
+     *   `radius`，**漏了 `hasGradient`** ⇒ 声明了 `->gradient()` 的 `Button` 会被画
+     *   两遍（半透明渐变偏暗），而且每帧白画一次，**不报错**。
+     *   现在剥 = `BoxStyle::none()`：**没有字段列表可漏**。
+     * ★ **`shadow` 必须留着**：`Button` 的浮起影子走 `ShadowPainter::paintOutside()`，
+     *   与 `hoverElevation` 是两套，剥掉就丢了用户显式声明的 `->shadow()`。
+     *   `padding` / 尺寸 / 合成 / 弹性意图同理 —— 它们都不在这个字段里。
      */
     public function withoutBoxVisual(): self
     {
-        if (!$this->hasBackground && !$this->hasBorder && $this->radius === 0.0) {
+        if ($this->style->isBlank()) {
             return $this;
         }
 
         $copy = clone $this;
-        $copy->hasBackground = false;
-        $copy->hasBorder = false;
-        $copy->borderWidth = 0.0;
-        $copy->radius = 0.0;
+        $copy->style = BoxStyle::none();
 
         return $copy;
     }
 
-    /** 无背景 / 渐变 / 边框 / 阴影 ⇒ false（省一次 `paintBehind()` 调用） */
+    /** 无底 / 渐变 / 边框 / 阴影 ⇒ false（省一次 `paintBehind()` 调用） */
     public function hasVisual(): bool
     {
-        return $this->hasBackground || $this->hasGradient
-            || ($this->hasBorder && $this->borderWidth > 0.0) || $this->shadow > 0.0;
+        return !$this->style->isNone() || $this->shadow > 0.0;
     }
 
     /**
@@ -560,45 +542,44 @@ final class Modifier
      * **顺序不能反**（阴影在盒外 ⇒ 先画，否则会被底盖掉）：
      * ① 柔和阴影 → ② 底 → ③ 边框。
      *
-     * ★ 为什么住这里而不上移到 `RenderBox`：它要读 7 个字段。住这里 ⇒ 同类内
-     *   `private` 直读 **0 次方法调用**；住 `RenderBox` ⇒ 每帧每盒 7 次方法调用。
-     *
+     * ★ **"底色怎么画"不在这里写**（2026-10-31）：问 `BoxStyle::backgroundPaint()`。
+     *   那个方法本来就是"自绘 chrome 怎么画底"的唯一答案（`RenderButton` /
+     *   `RenderAppBar` / `RenderPopupPanel` 都走它），这里再手写一遍就是**第二套**：
+     *   加第三种 paint source（图片底 / 图案）时得改两处，漏一处不报错、只是那个
+     *   控件静默不生效。两条路的 base color 也曾不一致（这边用占位黑、那边用第一个
+     *   色标），半透明渐变下会画成不同颜色。
+     * ★ 仍然住在这里而不是 `RenderBox`：它要读 `shadow` 与 `style` 两个私有字段，
+     *   同类内直读 ⇒ 0 次方法调用。
      * ★ **只用 Core op**：`drawRect`（带圆角）三后端都支持。**不要**为阴影去用
      *   `drawPath` / 模糊 mask —— 那是 Optional 层，软光栅会报 `E-OP-UNSUPPORTED`。
-     *
      * ★ 这段逐字搬自 `RenderCard::paint()`（该类在 W5 被删，只剩这十行需要新家）。
      */
     public function paintBehind(Canvas $canvas, Size $size): void
     {
         $rect = new Rect(0.0, 0.0, $size->width, $size->height);
+        $radius = $this->style->radius;
 
         // ① 柔和阴影：画在盒外（父布局不会为它留白，块之间要留 ≥ 4px 间距）。
         //    形状（真模糊 / 三层外扩降级）收在 `ShadowPainter::paintOutside()`。
         if ($this->shadow > 0.0) {
-            ShadowPainter::paintOutside($canvas, $rect, $this->radius, $this->shadow);
+            ShadowPainter::paintOutside($canvas, $rect, $radius, $this->shadow);
         }
 
-        // ② 底 —— 渐变优先（它是"底色是这个渐变"的语义，不是叠加层）
-        //    ★ 渐变坐标是盒内比例 ⇒ 必须先 `resolvedTo()` 换算成绝对像素；这一步
-        //      放在这里而不是 `withGradient()` 里，因为只有画的时候才知道盒多大。
-        if ($this->hasGradient) {
-            $canvas->drawRect(
-                $rect,
-                Paint::fill($this->background)->withGradient(
-                    $this->gradient->resolvedTo($size->width, $size->height),
-                ),
-                $this->radius,
-            );
-        } elseif ($this->hasBackground) {
-            $canvas->drawRect($rect, Paint::fill($this->background), $this->radius);
+        // ② 底 —— 渐变优先由 `backgroundPaint()` 决定（"渐变是底色的另一种填法"）
+        //    ★ 渐变坐标是盒内比例 ⇒ 它内部会 `resolvedTo()` 换算成绝对像素；
+        //      换算只能发生在画的时候，因为只有那时才知道盒多大。
+        $paint = $this->style->backgroundPaint($size->width, $size->height);
+        if ($paint !== null) {
+            $canvas->drawRect($rect, $paint, $radius);
         }
 
         // ③ 边框
-        if ($this->hasBorder && $this->borderWidth > 0.0) {
+        $borderColor = $this->style->borderColor;
+        if ($borderColor !== null && $this->style->borderWidth > 0.0) {
             $canvas->drawRect(
                 $rect,
-                Paint::stroke($this->borderColor, $this->borderWidth),
-                $this->radius,
+                Paint::stroke($borderColor, $this->style->borderWidth),
+                $radius,
             );
         }
     }
@@ -628,10 +609,8 @@ final class Modifier
             && \is_nan($this->width)
             && \is_nan($this->height)
             && \is_nan($this->aspect)
-            && !$this->hasBackground
-            && !$this->hasGradient
-            && !$this->hasBorder
-            && $this->radius === 0.0
+            // 视觉四维**一个判据**（`BoxStyle` 里哪一项被设过，那边说了算）
+            && $this->style->isBlank()
             && $this->shadow === 0.0
             && $this->opacity === 1.0
             && $this->translateX === 0.0
@@ -765,12 +744,11 @@ final class Modifier
         return $c;
     }
 
-    /** 底色（同时置 `hasBackground` —— 单字段 setter 表达不了"有没有"） */
+    /** 底色（写进视觉四维那**一个** `BoxStyle` —— 有没有底由它自己表达） */
     public function withFill(Color $color): self
     {
         $c = clone $this;
-        $c->background = $color;
-        $c->hasBackground = true;
+        $c->style = $c->style->withBackground($color);
 
         return $c;
     }
@@ -778,7 +756,7 @@ final class Modifier
     /**
      * 把底色换成**渐变**（`Gradient::vertical()` 这类盒内比例的形态）。
      *
-     * ★ 与 `withFill()` 的关系：**渐变赢**（`paintBehind()` 里先看 `hasGradient`）。
+     * ★ 与 `withFill()` 的关系：**渐变赢**（`BoxStyle::backgroundPaint()` 里先看渐变）。
      *   两者都设是合法状态（用户 `->background($c)->gradient($g)`），语义是"底色是
      *   这个渐变"，纯色只在渐变被清掉之后才回到画面 —— 这样 `->gradient(null)`
      *   可以无损回退到实色。
@@ -786,8 +764,7 @@ final class Modifier
     public function withGradient(Gradient $gradient): self
     {
         $c = clone $this;
-        $c->gradient = $gradient;
-        $c->hasGradient = true;
+        $c->style = $c->style->withBackgroundGradient($gradient);
 
         return $c;
     }
@@ -795,12 +772,12 @@ final class Modifier
     /** 清掉渐变（回退到 `withFill()` 设的实色，若有） */
     public function withoutGradient(): self
     {
-        if (!$this->hasGradient) {
+        if ($this->style->backgroundGradient === null) {
             return $this;
         }
 
         $c = clone $this;
-        $c->hasGradient = false;
+        $c->style = $c->style->withoutBackgroundGradient();
 
         return $c;
     }
@@ -808,9 +785,7 @@ final class Modifier
     public function withStroke(Color $color, float $width): self
     {
         $c = clone $this;
-        $c->borderColor = $color;
-        $c->hasBorder = true;
-        $c->borderWidth = $width;
+        $c->style = $c->style->withBorder($color, $width);
 
         return $c;
     }
@@ -818,7 +793,7 @@ final class Modifier
     public function withRadius(float $radius): self
     {
         $c = clone $this;
-        $c->radius = $radius;
+        $c->style = $c->style->withRadius($radius);
 
         return $c;
     }

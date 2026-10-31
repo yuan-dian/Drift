@@ -155,6 +155,112 @@ final class ModifierTest extends SmokeTestCase
     }
 
     /**
+     * `withoutBoxVisual()`：**视觉四维全部剥掉，其余字段一个不动**。
+     *
+     * ## 为什么这条必须有（2026-10-31 修的 bug）
+     *
+     * 旧实现逐字段剥 `hasBackground` / `hasBorder` / `radius`，**漏了 `hasGradient`**
+     * ⇒ 声明了 `->gradient()` 的自绘 chrome 控件（`Button` / `AppBar` / `PopupPanel`）
+     * 把同一份渐变画两遍：`paintOwnChrome()` 一遍 + `RenderBox::paint()` 一遍。
+     * 半透明渐变叠加后偏暗，**不报错**，而且每帧白画一次。
+     *
+     * 探针实证（当时的输出）：`hasGradient` 仍为 `true`、`boxStyle()` 仍有值。
+     * 现在剥 = `BoxStyle::none()`，**没有字段列表可漏** —— 但"没有列表"这件事本身
+     * 也要有判据守着，否则哪天有人手写回"逐字段剥"又漏一个，仍然静默。
+     *
+     * ★ 表驱动而不是抽样：**每个视觉维度一行**，漏哪一行就是漏哪个维度。
+     *
+     * @return array<string, array{0: callable(): Modifier}> 每行一个"只设了一维"的修饰
+     */
+    private static function visualOnlyCases(): array
+    {
+        return [
+            'fill' => [static fn(): Modifier => (new Modifier())->withFill(Color::fromRgb(1, 2, 3))],
+            // ★ 漏剥的就是这一行（其余三行旧实现本来就剥了）
+            'gradient' => [
+                static fn(): Modifier => (new Modifier())->withGradient(
+                    Gradient::vertical([Color::fromRgba(9, 9, 9, 100), Color::white()]),
+                ),
+            ],
+            'stroke' => [static fn(): Modifier => (new Modifier())->withStroke(Color::fromRgb(1, 2, 3), 2.0)],
+            'radius' => [static fn(): Modifier => (new Modifier())->withRadius(6.0)],
+        ];
+    }
+
+    public function testWithoutBoxVisualStripsEveryVisualDimension(): void
+    {
+        $wrong = [];
+        foreach (self::visualOnlyCases() as $name => [$factory]) {
+            $stripped = $factory()->withoutBoxVisual();
+
+            if ($stripped->boxStyle() !== null) {
+                $wrong[] = $name . '：boxStyle() 仍非 null（会被画两遍）';
+            }
+            if ($stripped->fillColor() !== null) {
+                $wrong[] = $name . '：fillColor() 仍非 null';
+            }
+            if ($stripped->hasGradient()) {
+                $wrong[] = $name . '：hasGradient() 仍为真（漏剥渐变 ⇒ 渐变画两遍）';
+            }
+            if ($stripped->hasVisual()) {
+                $wrong[] = $name . '：hasVisual() 仍为真';
+            }
+        }
+
+        check(
+            'Modifier · withoutBoxVisual() 剥掉全部视觉四维（底 / 渐变 / 边 / 圆角）',
+            $wrong === [],
+            implode('；', $wrong),
+        );
+    }
+
+    /**
+     * 剥的时候**别多剥**：`shadow` 与布局维必须原样留着。
+     *
+     * ★ 反向判据。只有"剥干净"那一条的话，把 `withoutBoxVisual()` 写成
+     *   `return new Modifier()`（全清空）也全绿 —— 而那会静默丢掉用户显式声明的
+     *   `->shadow()` / `->padding()` / `->opacity()`。
+     */
+    public function testWithoutBoxVisualKeepsEverythingElse(): void
+    {
+        $mods = (new Modifier())
+            ->withFill(Color::fromRgb(1, 2, 3))
+            ->withShadow(0.5)
+            ->withPadding(1.0, 2.0, 3.0, 4.0)
+            ->withOpacity(0.25);
+
+        $stripped = $mods->withoutBoxVisual();
+
+        check(
+            'Modifier · 剥视觉四维后 shadow 仍在（Button 的浮起影子靠它）',
+            $stripped->hasVisual() === true,
+            'hasVisual=' . ($stripped->hasVisual() ? '真' : '假'),
+        );
+        check(
+            'Modifier · 剥视觉四维后布局维 / 合成维原样保留',
+            $stripped->padLeft() === 1.0
+            && $stripped->padTop() === 2.0
+            && $stripped->padRight() === 3.0
+            && $stripped->padBottom() === 4.0
+            && $stripped->composeOpacity() === 0.25,
+            sprintf(
+                'pad=%s/%s/%s/%s opacity=%s',
+                (string) $stripped->padLeft(),
+                (string) $stripped->padTop(),
+                (string) $stripped->padRight(),
+                (string) $stripped->padBottom(),
+                (string) $stripped->composeOpacity(),
+            ),
+        );
+
+        $blank = new Modifier();
+        check(
+            'Modifier · 本来就没有视觉四维 ⇒ 返回自身（不白 clone）',
+            $blank->withoutBoxVisual() === $blank,
+        );
+    }
+
+    /**
      * 下游证据：**不产盒**的控件上声明修饰 ⇒ 退出码 3 + 日志指明修法。
      *
      * ★ 必须子进程：`Errors::report()` 走 `abort()`（`exit(3)`），进程内 `try/catch`
