@@ -41,6 +41,8 @@ use Drift\Dev\Smoke\App\SumJob;
 use Drift\App\Completion;
 use Drift\Async\Future;
 use Drift\App\Io\IoPoller;
+use Drift\App\Io\Http;
+use Drift\App\Io\HttpException;
 use Drift\App\Job;
 use Drift\App\FrameClock;
 use Drift\App\ProcessTaskHost;
@@ -4710,6 +4712,75 @@ if ($mockReady) {
     );
 
     $asyncHost->shutdown();
+
+    // ── ㊶c `Drift\App\Io\Http` 的真往返（同一条 mock 后端，不另起服务器）────────
+    //
+    // ★ 为什么必须有这一段：`Http` 是**唯一**一条 HTTP 路径（2026-10-31 把 `apps/users`
+    //   与 `apps/showcase` 各自那 30 行 curl 收成一套）。它里面全是 curl 的选项映射
+    //   —— 映射错了**不报错**，只是请求发出去的东西不对（body 没带、动词变成 GET、
+    //   头没设）。单测 (`tests/Unit/App/HttpTest.php`) 只能判参数面与失败面，
+    //   "字节真的发出去了吗"只能靠一条真 socket。
+    // ★ 判据：① 200 + JSON + 耗时 > 0 ② POST 的动词/body/Content-Type 都到了对端
+    //   ③ 非 2xx 默认抛且带状态码 ④ `expectOk => false` 时把 404 当数据
+    //   ⑤ 跟随重定向之后 `url()` 是**最后一跳**。
+
+    $httpBase = 'http://127.0.0.1:' . $mockPort;
+
+    $health = Http::get($httpBase . '/healthz');
+    check(
+        'Http · GET 200：状态码 / ok / JSON / 耗时都为真',
+        $health->status() === 200 && $health->ok() && ($health->json()['ok'] ?? null) === true && $health->elapsedMs() > 0.0,
+        'status=' . $health->status() . ' ms=' . sprintf('%.2f', $health->elapsedMs()),
+    );
+    check(
+        'Http · 响应头按名字取得着（大小写不敏感）',
+        is_string($health->header('Content-Type')) && str_contains((string) $health->header('Content-Type'), 'application/json'),
+        var_export($health->header('Content-Type'), true),
+    );
+
+    $echo = Http::post(
+        $httpBase . '/echo',
+        '{"hello":"世界"}',
+        ['headers' => ['Content-Type' => 'application/json']],
+    )->json();
+    check(
+        'Http · POST：动词真的变成了 POST（不是被 curl 悄悄改成 GET）',
+        ($echo['method'] ?? '') === 'POST',
+        (string) ($echo['method'] ?? '(空)'),
+    );
+    check(
+        'Http · POST：body 原样到达对端（中文未损坏）',
+        ($echo['body'] ?? '') === '{"hello":"世界"}',
+        (string) ($echo['body'] ?? '(空)'),
+    );
+    check(
+        'Http · POST：Content-Type 真的发出去了',
+        ($echo['type'] ?? '') === 'application/json',
+        (string) ($echo['type'] ?? '(空)'),
+    );
+
+    $bad = null;
+    try {
+        Http::get($httpBase . '/no-such-page');
+    } catch (HttpException $e) {
+        $bad = $e;
+    }
+    check('Http · 非 2xx 默认抛 HttpException', $bad instanceof HttpException, $bad === null ? '没抛' : '抛了');
+    check('Http · 异常带状态码 404（与传输层失败分得开）', $bad?->status() === 404, var_export($bad?->status(), true));
+
+    $notFound = Http::get($httpBase . '/no-such-page', ['expectOk' => false]);
+    check(
+        'Http · expectOk=false ⇒ 404 当数据返回（自己看 ok()）',
+        $notFound->status() === 404 && !$notFound->ok() && str_contains($notFound->body(), 'not found'),
+        'status=' . $notFound->status(),
+    );
+
+    $redirected = Http::get($httpBase . '/redirect', ['followRedirects' => 2]);
+    check(
+        'Http · 跟随重定向之后 status=200 且 url() 是最后一跳',
+        $redirected->status() === 200 && str_ends_with($redirected->url(), '/healthz'),
+        'status=' . $redirected->status() . ' url=' . $redirected->url(),
+    );
 }
 
 if (is_resource($mockProc)) {

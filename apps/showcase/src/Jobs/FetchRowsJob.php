@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Showcase\Jobs;
 
+use Drift\App\Io\Http;
 use Drift\App\NamedJob;
 
 /**
@@ -18,7 +19,7 @@ use Drift\App\NamedJob;
  * | 模式 | 干什么 | 用途 |
  * |---|---|---|
  * | `local`（默认） | `usleep(1.2s)` + 生成行 | **开箱即用**：零依赖也能演示"慢任务不卡 UI" |
- * | `http` | 真 `curl` 打 mock 后端（同样慢 1.2s） | 演示"真实网络 IO"（socket + 阻塞读 + 超时） |
+ * | `http` | 真 `Http::get()` 打 mock 后端（同样慢 1.2s） | 演示"真实网络 IO"（socket + 阻塞读 + 超时） |
  *
  * ★★★ **两种模式都在 worker 进程里跑** —— 这是本示例的意义所在：不管"慢"来自
  *   `usleep` 还是慢网络，UI 进程都只做三件事（提交 → 每帧看一眼 → 收到结果重绘），
@@ -118,8 +119,8 @@ final class FetchRowsJob implements NamedJob
     /**
      * 真 HTTP：打 mock 后端（`php -S 127.0.0.1:8098 apps/showcase/mock-server.php`）。
      *
-     * ★ 用 **curl** 而不是 `file_get_contents`：连接超时与总超时能分开设、
-     *   能拿 HTTP 状态码、HTTPS 证书校验是一等公民。
+     * ★ 用 `Http::get()`（框架那一条路）而不是在应用里手写 curl：
+     *   超时/状态码/body 截断由 `Drift\App\Io\Http` 一处管，本文件只留"载荷长什么样"。
      * ★ 非 2xx / 解析失败一律抛 —— 页面会进 `error` 态（可重试），不静默。
      *
      * @return array{items: list<array<string, mixed>>, total: int, source: string}
@@ -129,34 +130,18 @@ final class FetchRowsJob implements NamedJob
         $url = \rtrim($this->baseUrl, '/')
             . '/api/rows?page=' . $this->page . '&per=' . $this->perPage;
 
-        $ch = \curl_init($url);
-        if ($ch === false) {
-            throw new \RuntimeException('curl 初始化失败（扩展没加载？）：' . $url);
-        }
-
-        \curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_CONNECTTIMEOUT => self::CONNECT_TIMEOUT_S,
-            CURLOPT_TIMEOUT => self::TIMEOUT_S,
-            CURLOPT_FOLLOWLOCATION => false,
-            CURLOPT_HTTPHEADER => ['Accept: application/json'],
+        // ★ 与 `apps/users` 的 `FetchUsersJob` 走**同一条路**（`Drift\App\Io\Http`）。
+        //   2026-10-31 之前两边各有一份 30 行的 curl（同样的超时、状态码判断、body 截断）
+        //   —— 那一份已经删掉，本文件只剩"这个接口的载荷长什么样"这一条业务知识。
+        $res = Http::get($url, [
+            'headers' => ['Accept' => 'application/json'],
+            'connectTimeout' => self::CONNECT_TIMEOUT_S,
+            'timeout' => self::TIMEOUT_S,
         ]);
+        $data = $res->json();
 
-        $raw = \curl_exec($ch);
-        $status = (int) \curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-        $error = (string) \curl_error($ch);
-
-        if (!\is_string($raw)) {
-            throw new \RuntimeException('取表格失败（连不上）：' . $error . ' —— ' . $url);
-        }
-
-        if ($status < 200 || $status >= 300) {
-            throw new \RuntimeException('取表格失败（HTTP ' . $status . '）：' . \substr($raw, 0, 200));
-        }
-
-        $data = \json_decode($raw, true);
         if (!\is_array($data) || empty($data['ok'])) {
-            throw new \RuntimeException('取表格失败（服务端）：' . \substr($raw, 0, 200));
+            throw new \RuntimeException('取表格失败（服务端）：' . $res->snippet());
         }
 
         $items = $data['items'] ?? [];
@@ -165,7 +150,10 @@ final class FetchRowsJob implements NamedJob
         return [
             'items' => \is_array($items) ? $items : [],
             'total' => (int) $total,
-            'source' => 'HTTP ' . $this->baseUrl,
+            // ★ 往返耗时来自 `HttpResponse::elapsedMs()`：示例台把"真的走了网络"写在
+            //   `source` 里，用户一眼能看出这一页是 HTTP 还是本地造的（`loadMore` 的
+            //   页脚会显示它）。
+            'source' => 'HTTP ' . $this->baseUrl . '（' . \round($res->elapsedMs()) . 'ms）',
         ];
     }
 }

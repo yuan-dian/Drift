@@ -327,7 +327,7 @@ private function pageFor(string $name): ?Widget
 
 | 目录 | 命名空间 | 文件 | 状态（2026-10-15 按 `src/` 核验） |
 |------|---------|------|------|
-| `src/App/` | `Drift\App` | ✅ `Application.php` · `Frame.php`（+ 1 个 `@internal` 实现文件 `FocusManager.php` —— 输入路由最小集，M3；§9.1 的完整链在 M4 的 `EventLoop`）；★ **2026-10-16 新落地三件**（任务 #8）：**`Job.php`** · **`TaskHost.php`** · **`SyncTaskHost.php`**（§17.2 的端口 + **后端 B**；§24.1 #35 点名的 `Job` 0 文件已清零）；★ **2026-10-18 P0**：**`Completion.php`**（`@internal` —— 队列里流动的完成事件，§17.4.2）+ **`DragController.php`**（`@internal`，拖动状态机，§9.1）；★ **P2**：**`Io/IoPoller.php`**（非阻塞 IO 每帧轮询，§17.4.4 —— `src/App/` 的第一个子目录）；★ **P3**：**`NamedJob.php`**（可跨进程描述的任务）· **`ProcessWorker.php`**（worker 侧 JSON Lines 服务端）· **`ProcessTaskHost.php`**（常驻子进程后端，§17.4.5）；★ **2026-10-18 P0 补丁**：**`FrameClock.php`**（自适应帧时钟 —— `TimerHost` 的第一个生产调用者，§17.4.9）；★ **2026-10-18 M5**：**`Paths.php`**（@api —— **只做字符串组装**：配置目录由 `Platform::configDir()` 给，`Drift\App` 因此不碰平台，§5.1）+ **`WindowStateStore.php`**（@api —— §5.4：启动读回 / 退出写回**各一次同步 IO**、kv 文件、恢复失败**静默降级 + 一条 Diagnostic**；`position()` 返 `null` = 最小化不写；显示器夹取归壳）；⏳ `EventLoop.php` · `ThreadPoolTaskHost.php`（**⛔ 被 tpc 能力卡住** —— 探针 K，§17.2.2） | **缺 2**（M4） |
+| `src/App/` | `Drift\App` | ✅ `Application.php` · `Frame.php`（+ 1 个 `@internal` 实现文件 `FocusManager.php` —— 输入路由最小集，M3；§9.1 的完整链在 M4 的 `EventLoop`）；★ **2026-10-16 新落地三件**（任务 #8）：**`Job.php`** · **`TaskHost.php`** · **`SyncTaskHost.php`**（§17.2 的端口 + **后端 B**；§24.1 #35 点名的 `Job` 0 文件已清零）；★ **2026-10-18 P0**：**`Completion.php`**（`@internal` —— 队列里流动的完成事件，§17.4.2）+ **`DragController.php`**（`@internal`，拖动状态机，§9.1）；★ **P2**：**`Io/IoPoller.php`**（非阻塞 IO 每帧轮询，§17.4.4 —— `src/App/` 的第一个子目录）；★ **2026-10-31**：**`Io/Http.php`** + **`Io/HttpResponse.php`** + **`Io/HttpException.php`**（**阻塞**客户端，唯一的 HTTP 路径，§17.4.4.1 —— 在 `Job::run()` 里用，绝不在 UI 线程）；★ **P3**：**`NamedJob.php`**（可跨进程描述的任务）· **`ProcessWorker.php`**（worker 侧 JSON Lines 服务端）· **`ProcessTaskHost.php`**（常驻子进程后端，§17.4.5）；★ **2026-10-18 P0 补丁**：**`FrameClock.php`**（自适应帧时钟 —— `TimerHost` 的第一个生产调用者，§17.4.9）；★ **2026-10-18 M5**：**`Paths.php`**（@api —— **只做字符串组装**：配置目录由 `Platform::configDir()` 给，`Drift\App` 因此不碰平台，§5.1）+ **`WindowStateStore.php`**（@api —— §5.4：启动读回 / 退出写回**各一次同步 IO**、kv 文件、恢复失败**静默降级 + 一条 Diagnostic**；`position()` 返 `null` = 最小化不写；显示器夹取归壳）；⏳ `EventLoop.php` · `ThreadPoolTaskHost.php`（**⛔ 被 tpc 能力卡住** —— 探针 K，§17.2.2） | **缺 2**（M4） |
 | `src/Platform/` | `Drift\Platform` | ✅ 9/9：`Platform` · `WindowHost` · `SurfaceProvider` · `InputSource` · `TimerHost` · `Screen` · `Clipboard` · `Dialog` · `Tray`（★ 2026-10-15 **端口层落地**；**同日 Win32 实现跟进**，见下行 —— `Dialog`/`Tray` 两个壳服务在 Win32 上返回 `null`（§24.3）；`Clipboard` **2026-10-21 已落地** `Win32Clipboard`（C 侧三桥 + 重试打开剪贴板），§24.2 #32；★ 2026-10-18 M5 **两个既有端口各加方法**：`WindowHost` +`position(): ?Point` / `place(Rect, bool)`（§5.4 的读写两侧）、`Platform` +`configDir(): string`（用户配置目录 —— 每个平台必然有，「没有」用**空字符串**表达，不用 `null`）） | ✅（M1） |
 | `src/Platform/Win32/` | `Drift\Platform\Win32` | ✅ 8/8：`Win32Platform` · `Win32WindowHost` · `Win32Screen` · `Win32SurfaceProvider` · `Win32InputSource` · `Win32TimerHost` · `Win32RasterSurface` · **`Win32SkiaSurface`**（★ 2026-10-15 **首个平台实现落地**，配套 `cpp-src/drift_win32.{stub.php,cc}` 窗口桥 ⇒ §19 M1 出口判据兑现。★ `Win32RasterSurface` 是 `RenderSurface` 的**第 4 个**实现，走 `RasterCanvas` + `SetDIBitsToDevice` 位块传送（§7.3 的 M1 分期原文就是"CPU 光栅 + 位块传送"））。★ **2026-10-16 第二个渲染后端落地**（M1 遗留 ②）：`Win32SkiaSurface` = `SkiaCanvas` + **同一个** `drift_win_present()`，与 `Win32RasterSurface` **只差"造哪种画布"一行** ⇒ §7.2 裁决 1「后端可换、应用侧一行不改」兑现。后端由组合根 `new Win32Platform('skia' | 'soft')` 选（★ **2026-10-17 默认从 `soft` 翻成 `skia`**—— 软光栅的字来自位图字体，14px 上屏必然点阵锯齿，且 `Title=18px` 走放大路径；详见 §24.2 #19。`'soft'` 仍是显式可选的确定性测试后端）。真机已验：`hello.exe` 经 Skia 后端画出「Hello Drift」） | ✅（M1） |
 | `src/Geometry/` | `Drift\Geometry` | `Point` · `Size` · `Rect` · `EdgeInsets` · `Scale` · `BoxConstraints` | ✅ 6/6 |
@@ -2788,8 +2788,10 @@ CPU 不可切分（解压/解码/加密）
 4. **调试**：竞态不可复现，且 AOT 下没有动态调试器。
 
 **推荐（Drift 的路线，2026-10-31 修订）**：
-1. **非阻塞 I/O 打底**（`IoPoller`，HTTP/文件；高频 HTTP 的正解是 `curl_multi` 接帧循环 ——
-   见 `ASYNC-ARCH-2026-10-31.md` §11）。
+1. **非阻塞 I/O 打底**（`IoPoller`，长连接 / 自定义协议 / 流式）。
+   ~~高频 HTTP 的正解是 `curl_multi` 接帧循环~~ —— **已判死**：`curl_multi_init()`
+   调用一次，进程退出即 `exit 139`（段错误，与 swoole 无关，见 §17.4.4.1）。
+   ⇒ **HTTP 只走一条路**：worker 进程里的阻塞 `Http`（§17.4.4.1）。
 2. **`TimerHost` 承担"稍后执行"**（已有，只缺一个 `Application` 侧的 id→回调登记）。
 3. **进程池**承担"重活 + 隔离"（当前唯一有真实业务的后端）。
 4. **C++ 原语**承担"解码/压缩"。
@@ -3063,6 +3065,45 @@ unwatch 空操作 ⇒ 两条红；poll 挪到 settle 之后 ⇒ `builds 1→1 se
 ★★ **诚实边界**：AOT 面只到**翻译层**（codegen 207 全翻译）—— `apps/users` 不用 IO，
 所以"resource 存属性 + AOT 下 stream_select"**没有真机运行证据**；这条与 P3（进程池的管道就是 resource）
 一起验，已登记为缺口。
+
+#### 17.4.4.1 `Http`（**阻塞**客户端，worker 侧，2026-10-31）
+
+```php
+namespace Drift\App\Io;
+
+final class Http
+{
+    /** 阻塞；只在 Job::run() 里调（那一段在 worker 进程） */
+    public static function get(string $url, array $opts = []): HttpResponse;
+    public static function post(string $url, string $body = '', array $opts = []): HttpResponse;
+    public static function request(string $method, string $url, array $opts = []): HttpResponse;
+}
+```
+
+- **为什么它和 `IoPoller` 并排却不冲突**：`IoPoller` 在 **UI 线程**上永远不能阻塞，
+  `Http` 在 **worker** 里永远不需要非阻塞 —— 两者不是新旧，是两件事。
+- **为什么 `curl_multi` 那条路走不通**（原文档把它写成"高频 HTTP 的正解"）：
+  本机 PHP 8.5.11 ZTS + curl 8.22.0，**只要调用过一次 `curl_multi_init()`，进程退出就段错误**：
+
+  ```bash
+  php -r '$mh = curl_multi_init(); echo "ok\n";'   # 打印 ok，然后 exit 139
+  ```
+
+  `curl_multi_close()` 后也一样；`php.exe` 与 `typephp/php.exe` 两个入口都复现；
+  **没有 swoole** 也复现（旧记录把它归因于"与 swoole 同产物"，那条归因是错的）。
+  ⇒ 接进帧循环就意味着"应用退出时必崩"，进不了闸门。
+- **为什么不是 A2 池加 `http.request` op**：exe **+6~8 MB**（`libcrypto-3-x64.dll` 6.94 MB
+  是大头），且变成第二套 TLS / 第二套根证书来源（同一 URL 两个结果）。
+- **今天的两处消费者**：`apps/users` 的 `FetchUsersJob`、`apps/showcase` 的 `FetchRowsJob`
+  —— 这两个文件在 2026-10-31 之前各自手写了一份 30 行的 curl（同样的超时、状态码判断、
+  body 截断），现在各剩一行 `Http::get(...)->json()`。
+- **判据**：`tests/Unit/App/HttpTest.php`（参数面 / 传输失败面无网络）+ 冒烟 ㊶c
+  （真 `php -S`：GET 200、POST 的动词与 body 真的发出去了、404 抛且带状态码、
+  `expectOk=>false` 当数据、跟随重定向后 `url()` 是最后一跳）。
+- **刻意不做**：连接复用 / 并发 / 流式下载 / cookie 罐 / 重试 / 代理开关。
+  今天唯一的用法是"取一页 JSON"，这几样每一个都是真实的策略选择，真需要时形状在
+  **worker 里**（`curl_share_*` 或 `IoPoller`），不在这里。
+
 #### 17.4.5 `ProcessTaskHost`（P3：重计算 + 隔离）
 
 - **常驻池**（不是每任务一进程：实测**每任务一进程的往返** 275ms/次，不可接受）。

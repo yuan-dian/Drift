@@ -8,7 +8,7 @@
 
 | 层 | @api | @internal |
 |---|---|---|
-| App | 63 | 50 |
+| App | 80 | 50 |
 | Async | 13 | 3 |
 | Commands | 7 | 0 |
 | Core | 2 | 0 |
@@ -24,13 +24,13 @@
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
 | Widget | 169 | 217 |
-| **合计** | **446** | **360** |
+| **合计** | **463** | **360** |
 
-覆盖 363 个文件 · 描述性提及 30 处（grep 口径的污染源，不计入）
+覆盖 366 个文件 · 描述性提及 30 处（grep 口径的污染源，不计入）
 
 ## App 层
 
-### @api（应用可读面） · 63
+### @api（应用可读面） · 80
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -66,6 +66,23 @@
 | `Frame::run()` | method | src/App/Frame.php:174 |
 | `FrameClock` | class | src/App/FrameClock.php:9 |
 | `FramePhase` | class | src/App/FramePhase.php:8 |
+| `Http` | class | src/App/Io/Http.php:6 |
+| `Http::get()` | method | src/App/Io/Http.php:79 |
+| `Http::post()` | method | src/App/Io/Http.php:93 |
+| `Http::request()` | method | src/App/Io/Http.php:111 |
+| `HttpException` | class | src/App/Io/HttpException.php:6 |
+| `HttpException::url()` | method | src/App/Io/HttpException.php:52 |
+| `HttpException::status()` | method | src/App/Io/HttpException.php:62 |
+| `HttpResponse` | class | src/App/Io/HttpResponse.php:6 |
+| `HttpResponse::status()` | method | src/App/Io/HttpResponse.php:83 |
+| `HttpResponse::ok()` | method | src/App/Io/HttpResponse.php:93 |
+| `HttpResponse::header()` | method | src/App/Io/HttpResponse.php:107 |
+| `HttpResponse::headers()` | method | src/App/Io/HttpResponse.php:117 |
+| `HttpResponse::body()` | method | src/App/Io/HttpResponse.php:127 |
+| `HttpResponse::url()` | method | src/App/Io/HttpResponse.php:137 |
+| `HttpResponse::elapsedMs()` | method | src/App/Io/HttpResponse.php:147 |
+| `HttpResponse::json()` | method | src/App/Io/HttpResponse.php:157 |
+| `HttpResponse::snippet()` | method | src/App/Io/HttpResponse.php:191 |
 | `IoPoller` | class | src/App/Io/IoPoller.php:6 |
 | `IoPoller::watch()` | method | src/App/Io/IoPoller.php:39 |
 | `IoPoller::unwatch()` | method | src/App/Io/IoPoller.php:68 |

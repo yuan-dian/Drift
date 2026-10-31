@@ -37,7 +37,7 @@ C++ 线程池，却只注册了两个量具 op —— 于是**所有真实异步
 
 | 形态 | 实现 | 真实能力 | 有业务消费者吗 |
 |---|---|---|---|
-| **A1 同线程切片** | ~~`curl_multi` 每帧推进~~ | **判死**：解释器收尾必崩，进不了闸门 | — |
+| **A1 同线程切片** | ~~`curl_multi` 每帧推进~~ | **判死**：`curl_multi_init()` 一次，退出即 `exit 139`（§14.1 有最小复现；与 swoole 无关） | — |
 | **A2 C++ IO 线程** | `ThreadTaskHost` + `cpp-src/core/io_pool.cc` | 池体、唤醒、队列、零空转**全部就绪** | **否**（op 表只有 `sleep` / `echo` 两个量具） |
 | **A3 进程** | `ProcessTaskHost` | 跑同一份 AOT 代码、能真杀、崩溃隔离 | **是**（`apps/users` · `apps/showcase` 都是它） |
 | **A4 协程** | 探针验过（`probes/eventloop_design/` §13.2） | `Co\Http\Client` + tpc 类共处一类表 —— **可行** | **否**（无范式、无接入） |
@@ -576,7 +576,7 @@ DLL 形式**被所有进程共享物理页**；静态进 exe 后变成每个实�
 | **A** 静态 `libcurl` + OpenSSL | +6~8 MB | C++ op 分支 + 桥 + `NativeTaskHost`（~300 行 + 构建） | **是**（A3 的 curl + C++ 的 curl） | **否** | 证书校验 / 根证书来源要与 `php_curl` 一致，否则"同一个 URL 两个结果" |
 | **B** 静态 `libcurl` + Schannel | +0.6~1 MB | 同 A | **是**（且**第二套 TLS**） | **否** | TLS 行为、根证书库、代理设置全可能与 OpenSSL 不同 |
 | **C** WinHTTP | ≈0 | 同 A（`WinHttpOpen/SendRequest/ReceiveResponse` 阻塞式，~200 行） | **是** | **否** | 走**系统代理**（不可控）；错误码体系要重写；HTTP/2 行为与 curl 不同 |
-| **D** `curl_multi` 帧内 poll | **+0** | 一个 driver 接帧循环（~150 行），**不新增 `TaskHost`** | **否**（复用 A3 那个 curl） | 否，但它解决的正是 A2 唯一有价值的场景 | AOT 里 `curl_multi_*` 走**动态调用**（未验证）；DNS 是否 threaded resolver 未验证 |
+| **D** `curl_multi` 帧内 poll | **+0** | 一个 driver 接帧循环（~150 行），**不新增 `TaskHost`** | **否**（复用 A3 那个 curl） | 否，但它解决的正是 A2 唯一有价值的场景 | ~~AOT 里 `curl_multi_*` 走**动态调用**（未验证）~~ ⇒ **2026‑10‑31 实测判死**（§14.1）：`curl_multi_init()` 之后进程退出必段错误 |
 | **E** 不做 | **+0** | 0 行 | — | — | — |
 
 ### 11.5 裁决：不做 ②，从"缺口"降级为"决策记录"
@@ -600,6 +600,12 @@ DLL 形式**被所有进程共享物理页**；静态进 exe 后变成每个实�
 
 ⇒ 真要做"轻 HTTP"，正解是 **D**，不是 A/B/C。而 D 不需要碰 C++，
 也不需要碰构建 —— 它需要的是把 `curl_multi` 的 fd 变化接到帧循环上。
+
+★★ **2026-10-31 补记（结论反转）**：上表比的是"**架构**上谁更适合高频 HTTP"，
+那个比较仍然成立 —— 但 D **在这台机器的运行时上根本跑不起来**：
+`curl_multi_init()` 调一次，进程退出就 `exit 139`（§14.1 复现）。⇒ "正解"停在纸上，
+HTTP 只留下一条路（worker 里的阻塞 `curl`）。**上一句"正解是 D"请当历史读，
+不要照着做。**
 
 ### 11.6 A2 池本身：留，但记"未实现"
 
@@ -851,3 +857,148 @@ $ioApp->io()?->watch($ioRead, true, function (): void {});
 | `Future` 595 行（值 + 链 + 聚合） | 拆它会改 `@api` 面（`then`/`catch`/`all`/`race` 都在同一个类上），收益是"文件更短"，代价是所有调用点与文档 |
 | `AsyncValue` 的 11 个读法 | 与 Riverpod `AsyncValue` / Flutter `AsyncSnapshot` 的读法集对齐，没有多余的一个 |
 | `PumpHost` 的两个谓词（`hasAsync` / `hasPolledAsync`） | 回答的是两个不同问题（"有没有活" vs "要不要空转着等"），合并会退化成 N5 要消掉的 15ms 空转 |
+
+---
+
+## 14. 第十二轮（2026-10-31）：`curl_multi` **判死**，HTTP 收成一条路
+
+> 用户："按推荐方向继续推进，先分析……看看是否有更优的方案，能替代就只留一套。"
+> 上一节（§11.5）的推荐方向是**方案 D**（`curl_multi` 接帧循环）。本轮**先量了它一枪**，
+> 结果它连"启动"都过不去 —— 于是问题从"走哪条路"变成"同一条路被写了两遍"。
+
+### 14.1 一行代码证伪了上一节的"正解"
+
+```bash
+$ php -r '$mh = curl_multi_init(); echo "ok\n";'
+ok
+$ echo $?
+139          # ← 段错误（128 + 11），`ok` 已经打印了，崩在**进程退出**
+```
+
+排除法（每一步都单独跑过）：
+
+| 变体 | 结果 |
+|---|---|
+| `curl_multi_init()` 之后 `curl_multi_close()` | 仍然 `139` |
+| `curl_multi_init()` 之后 `unset($mh)` | 仍然 `139` |
+| 加满 3 个 handle、`curl_multi_exec` 跑完、逐个 `remove_handle` + `close` | 仍然 `139` |
+| 用 `typephp-windows-x64/php.exe`（AOT 产物的同一个运行时） | 仍然 `139` |
+| **不碰 `curl_multi`**，只 `curl_exec`（阻塞） | **`exit 0`** |
+| 3 个真实请求跑完、`frames=136`、`maxFrame=1518µs`（功能全对） | 退出时照样 `139` |
+
+★★ **归因订正**：旧记录（`docs/ASYNC-ARCH-2026-10-31.md` 上一版 §7.3、以及第八轮的记忆）
+把这条写成"**`curl_multi` 与 swoole 同产物**退出阶段崩"—— 错的。上面每一条都**没有 swoole**。
+真实归因是"**这个运行时上的 `curl_multi`**"，与协程无关。⇒ 那条因果关系误导了 §11.5 的判断
+（它让 D 看起来"只要不碰 swoole 就行"），本轮把话改回来。
+
+⇒ 结论：**D 不可用**。不是"风险大"，是"应用退出必崩、进不了闸门"。与 A1 同一档。
+
+### 14.2 于是问题变了：不是"走哪条路"，是"同一条路被写了两遍"
+
+D 一死，HTTP 只剩一条路：**worker 进程里的阻塞 `curl`**（`libcurl` 早已在部署包里，
+`php_curl.dll` 1.03 MB 随 `apps/users` 每天在跑）。这条路本身没问题，问题是它被**抄了两份**：
+
+| 位置 | 干什么 | 行数 |
+|---|---|---|
+| `apps/users/src/Jobs/FetchUsersJob::run()` | 取一页用户 | 30 行 curl + 6 行业务 |
+| `apps/showcase/src/Jobs/FetchRowsJob::fetchOverHttp()` | 取一页表格行 | 30 行 curl + 9 行业务 |
+
+两份之间**逐字相同**的四件事：
+
+1. 连接超时 5s / 总超时 10s 分开设（`CURLOPT_CONNECTTIMEOUT` vs `CURLOPT_TIMEOUT`）；
+2. `curl_exec` 之后先看 `is_string($raw)`（连不上），再看状态码是不是 2xx；
+3. 非 2xx 时把 body `substr(..., 0, 200)` 带进异常消息；
+4. `Accept: application/json` + `FOLLOWLOCATION=false`。
+
+**只有错误消息里那个名词不同**（"取用户失败" vs "取表格失败"）。这正是本仓的老账
+（"两处各写一遍必然漂"）—— 上一轮刚用同一条判据删掉了 `SlicedJob`。⇒ 收成一套。
+
+### 14.3 落地：`Drift\App\Io\Http`（+ `HttpResponse` + `HttpException`）
+
+```php
+// worker 里（Job::run()）—— 唯一合法的调用位置
+$res  = Http::get('http://127.0.0.1:8098/api/rows?page=2');
+$data = $res->json();                       // 不是 JSON ⇒ 当场抛
+$res->status();  $res->ok();  $res->header('content-type');
+$res->elapsedMs();  $res->url();            // 跟随重定向后是最后一跳
+```
+
+**为什么放在 `Io/` 而不是新开一层 `Drift\Net`**：`Http` 必须能**在 `Job::run()` 里**被用，
+而"跑什么"的契约 `NamedJob` 住在 `App`。若 `Http` 住在新的 `Net` 层，`Net → App` 就是
+**反向依赖**（依赖方向表里 `App` 在最上层，见 `tools/lint/Rules/DependencyDirection.php`）。
+放 `App\Io\` 与 `IoPoller` 并排，依赖方向不动一根线，而且强制了这个对比被写下来：
+
+| | `IoPoller` | `Http` |
+|---|---|---|
+| 阻塞吗 | 不阻塞（`select(0)` 每帧） | **阻塞**（等响应或超时） |
+| 谁调 | 帧循环（`PumpHost::pumpIo`） | `Job::run()`（worker） |
+| 管什么 | fd 可读/可写 | 一次完整请求-响应 |
+
+**它不是第二套异步机制**：`Http` 不碰 `TaskHost` / `Future` / `AsyncValue`，只把
+"一次阻塞往返"做成一个返回值。异步语义仍然只有一套（`Future` + `AsyncCommand`）。
+
+**四条默认值都是"从既有实现里抄下来的"，不是新决定**：
+
+| 项 | 默认 | 理由 |
+|---|---|---|
+| 连接超时 / 总超时 | 5s / 10s | 两处既有实现都是这两个数 |
+| 跟随重定向 | 0（不跟） | 取数接口不该有 302；悄悄跟随会把"未登录 302 到登录页"变成"解析首页 HTML 失败" |
+| 非 2xx | **抛**（`expectOk`） | 两处既有实现都抛；要自己处理 404 就 `expectOk => false` 再看 `ok()` |
+| 选项名拼错 | **抛** | `'timeOut'` 拼错若静默忽略，就是"调了 10 秒才发现超时没生效" |
+
+`HttpResponse` 只留**七个读法**（`status` / `ok` / `header` / `headers` / `body` / `url` /
+`elapsedMs`）+ 两个"会响"的读法（`json()` 坏 JSON 抛、`snippet()` 给错误消息用）。
+**没有** `toArray()` / `fromArray()`：那对方法只在"响应要跨进程"时有意义，而 `Http`
+**就住在 worker 里** —— 跨进程传的是业务数据（数组），不是响应对象。
+
+两份拷贝的净效果：
+
+| 文件 | 改前 | 改后 |
+|---|---|---|
+| `FetchUsersJob::run()` | 36 行（30 curl + 6 业务） | **11 行**（1 取数 + 5 业务 + 5 注释） |
+| `FetchRowsJob::fetchOverHttp()` | 39 行（30 curl + 9 业务） | **17 行**（含 4 行"为什么走同一条路"） |
+
+### 14.4 判据（以及每条挡的退化）
+
+| 文件 | 判据 | 挡的退化 |
+|---|---|---|
+| `tests/Unit/App/HttpResponseTest.php` | `ok()` 只认 200–299 | 把 302 当成功 ⇒ 去解析 `<html>Moved</html>` |
+| 同上 | 头名大小写不敏感 / 同名按 `", "` 合并 | `Content-Type` 与 `content-type` 变成两把钥匙；重定向链上 Set-Cookie 只剩最后一个 |
+| 同上 | 坏 JSON **抛**、合法 `null` 不抛 | `$data === null` 分不清"空"与"解析失败" |
+| 同上 | 摘要压换行 + 按**字符**截断 | 一条异常消息被 200 个换行切碎；或截出半个汉字 ⇒ 整条 worker 回程 `json_encode` 失败 |
+| `tests/Unit/App/HttpTest.php` | 选项名 / 动词 / 空 URL / `post()` 双 body 都抛 | 静默用默认值；两个 body 谁生效由实现顺序决定 |
+| 同上 | 传输失败 `status() === null`、消息带 URL | 与"服务端 500"混成一档 ⇒ 调用方无法决定"要不要重试" |
+| 冒烟 ㊶c（真 `php -S`） | GET 200 / POST 的**动词+body+Content-Type 真的发出去了** / 404 抛且带状态码 / `expectOk=false` 当数据 / 跟随重定向后 `url()` 是最后一跳 | curl 选项映射错了**不报错**，只是发出去的东西不对（body 没带、动词被改成 GET、头没设） |
+
+★ 为什么 ㊶c 塞在**已有的** mock 后端里（`tools/app-workers/users-mock.php` 加了两条路由
+`/echo` 与 `/redirect`）而不是另起一台服务器：那一段的判据是"字节真的到对端了"，
+没有任何更便宜的等价物 —— 拿假 Transport 测只能测到自己写的假货。而端口探活的逻辑
+（`stream_socket_server` 先试绑）已经在 ㊶ 里写好了，复制一份就是新的"两处各写一遍"。
+
+### 14.5 验证
+
+| 项 | 结果 |
+|---|---|
+| `php tools/lint.php` | **860** 文件 · 0 error · 0 warn（+5 文件） |
+| `php tools/phpunit-run.php unit` | **399** tests / **1182** assertions OK（+12 / +89） |
+| `php tools/smoke.php` | **457 ok / 0 FAIL**（+9：㊶c 全段） |
+| `php tools/gate.php` | 8 项全通过 · **457 ok / 0 FAIL** · 111.5s |
+| `php tools/docref.php` | 78 ok / 0 FAIL（新引的 `§14.1` / `§17.4.4.1` / `§16` 全部可解析） |
+| AOT `users.exe` | **12.6 MB**（+0.1：三个新类），增量构建 55.0s |
+| 真机（`users.exe` + `php -S` mock） | UI + worker 两进程；列表 **15 行真数据**（张伟 / 李娜 …），`ink 9.7% → 16.2%`，无 `Errors.log` |
+| 真机 worker 直喂（`users.exe --drift-worker` + 一行 JSON） | `{"id":7,"ok":true,"value":[…15 条…]}` —— **AOT 里 `Http` 真的发了一次 HTTP**（含 `CURLOPT_HEADERFUNCTION` 那个闭包回调） |
+| 示例台 HTTP 模式（`FetchRowsJob(MODE_HTTP)` + `showcase-mock`） | `items=20 total=137 source=HTTP …（1229ms）` —— `elapsedMs()` 有了真实消费者（页脚那行「这一页从哪来、花了多久」） |
+
+★★ 最后一行是本轮**唯一真正需要真机才敢说**的一句：`Http` 里用了
+`CURLOPT_HEADERFUNCTION => static function (...)`——**从 C 扩展回调进 PHP 闭包**，
+在 AOT 产物里能不能跑，静态分析答不了。喂一行任务给 worker 就答了。
+
+### 14.6 诚实边界
+
+| 项 | 情况 |
+|---|---|
+| 代理 / 环境变量 | curl **自己**会读 `http_proxy` / `https_proxy`（框架没写一行代码）。本轮撞到过一次：同一条"解析不了的域名"测试，直连的终端里是 `Could not resolve host`，闸门里却拿回 **HTTP 403**（有东西应答）⇒ 判据换环境就翻面。这也是把那条测试改成**纯语法**失败（`http://`）的原因 |
+| 大 body / 流式 | 没有上限、没有流式。一次取一整个 body 进内存 —— 与"跨进程要 JSON 一整条"是同一个量级，今天够用 |
+| 连接复用 / 并发 | **不做**。真要"同域名几百条并发"，A2 池（16 线程上限）与 `curl_multi`（判死）都不成立 ⇒ 那时形状在 worker 里（`curl_share_*`），不是在这里加一个参数 |
+| TLS 证书 | 走 curl 的默认（`VERIFYPEER` / `VERIFYHOST` 开）。**没有**任何关闭开关 —— 关掉证书校验的 API 一旦存在就一定会被用，而它换来的只是"本地自签能跑" |
+| `Http` 在 UI 线程被调用 | **没有运行期断言**。`Http` 不知道自己在哪个线程（要判就得读 `drift_thread_id()`，那是 `App` 层的事）。⇒ 这条只写在类注释第一行，靠 review |
