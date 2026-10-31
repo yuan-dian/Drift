@@ -62,6 +62,9 @@ final class TableColumn
 
     private ?string $field = null;
 
+    /** `Ctrl+C` 时这一列贡献什么文本（`null` = 取 `field()` 的值，见 `copyTextOf()`） */
+    private ?\Closure $copy = null;
+
     private TableColumnWidth $widthSpec;
 
     private ?float $minPx = null;
@@ -132,6 +135,38 @@ final class TableColumn
         $this->cell = \Closure::fromCallable($builder);
 
         return $this;
+    }
+
+    /**
+     * 复制成文本（`fn(mixed $row): string`）—— `Ctrl+C` 时这一列贡献什么。
+     *
+     * ★ 只对 `cell()` 列需要：`field()` 列默认取字段值，不必声明。
+     *   没声明又没 `field()` ⇒ 空串（框架不猜"怎么把一个 Widget 变成文本"）。
+     */
+    public function copyText(callable $handler): static
+    {
+        $this->copy = \Closure::fromCallable($handler);
+
+        return $this;
+    }
+
+    /**
+     * 一行在这一列上的**复制文本**（`Ctrl+C` 用）。
+     *
+     * ★ 与 `buildCell()` 分开：那条路要造 Widget（含 Fatal 守卫），复制只要字符串；
+     *   而"纯 `cell()` 列没有文本形态"是合法状态，不该按错误处理。
+     */
+    public function copyTextOf(mixed $row, int $index): string
+    {
+        if ($this->copy !== null) {
+            return (string) ($this->copy)($row);
+        }
+
+        if ($this->field === null) {
+            return '';
+        }
+
+        return $this->textOf($row, $index);
     }
 
     public function width(TableColumnWidth $width): static

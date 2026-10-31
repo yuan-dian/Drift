@@ -126,8 +126,27 @@ final class Table extends StatefulWidget
 
     private TableSelectionMode $selectionMode = TableSelectionMode::Multiple;
 
+    /**
+     * 选择的**单位**：整行（默认）还是单个格子。
+     *
+     * ★ 与 `selectionMode` 是两个正交的轴（Qt `SelectionBehavior` × `SelectionMode`、
+     *   WPF `SelectionUnit` × `SelectionMode` 同款），不是一个枚举的四个 case ——
+     *   以后加"选列"只需多一个 case，不必把现有四种组合再翻一倍。
+     */
+    private TableSelectionBehavior $selectionBehavior = TableSelectionBehavior::Rows;
+
     /** 选择变化上报（`fn(TableSelection $next): void`） */
     private ?\Closure $onSelectionChange = null;
+
+    /**
+     * 复制上报（`fn(string $text): void`）—— `Ctrl+C` 时把选区的 **TSV** 交出来。
+     *
+     * ★ 为什么不自己写剪贴板：`Clipboard` 在 `Platform` 层，控件拿不到宿主
+     *   （`State` 上没有 `application()`，这是既有的分层）。与选择 / 排序 / 列宽
+     *   同一条哲学：**控件只算"该复制什么"，往哪写由应用决定**。
+     * ★ 不声明 ⇒ `Ctrl+C` 不吃这个键（让给应用自己的快捷键），而不是静默吞掉。
+     */
+    private ?\Closure $onCopy = null;
 
     /** 行点击上报（`fn(mixed $row, int $index): void`）—— 与选择**互不替代**，见 `onRowTap()` */
     private ?\Closure $onRowTap = null;
@@ -339,6 +358,46 @@ final class Table extends StatefulWidget
     }
 
     /**
+     * 选择的**单位**（默认 `Rows`）—— 只在声明了 `selection()` 后有意义。
+     *
+     * ```php
+     * ->selection($this->selection)
+     * ->selectionBehavior(TableSelectionBehavior::Cells)   // 点选单格、Shift/拖动扩成矩形
+     * ->onSelectionChange(...)
+     * ```
+     *
+     * ★ 换行为**不改**存储：`TableSelection` 里整行选区与格矩形是同一种值
+     *   （`TableRange`，列端点为 `null` 即整行）。应用侧 `keys()` / `has()`
+     *   照旧可用 —— 格矩形下它们回答"这一行有没有被碰到"。
+     */
+    public function selectionBehavior(TableSelectionBehavior $behavior): static
+    {
+        $this->mutate();
+        $this->selectionBehavior = $behavior;
+
+        return $this;
+    }
+
+    /**
+     * 复制上报（`fn(string $text): void`）—— `Ctrl+C` 把选区交成 **TSV**。
+     *
+     * ```php
+     * ->onCopy(fn(string $tsv) => $app->clipboard()?->writeText($tsv))
+     * ```
+     *
+     * ★ 文本来源：`TableColumn::copyText()` 优先，其次 `field()` 的字段值，
+     *   都没有（纯 `cell()` 闭包列）⇒ 空串 —— 框架不猜怎么把 Widget 变成文本。
+     * ★ 选区为空 / 没声明本回调 ⇒ 不吃 `Ctrl+C`。
+     */
+    public function onCopy(callable $handler): static
+    {
+        $this->mutate();
+        $this->onCopy = \Closure::fromCallable($handler);
+
+        return $this;
+    }
+
+    /**
      * 选择变化上报（`fn(TableSelection $next): void`）。
      *
      * ★ 控件**不自己改**选择：它算出"点完之后应该是什么"并交出去，应用决定采纳。
@@ -522,6 +581,17 @@ final class Table extends StatefulWidget
     public function selectionModeValue(): TableSelectionMode
     {
         return $this->selectionMode;
+    }
+
+    public function selectionBehaviorValue(): TableSelectionBehavior
+    {
+        return $this->selectionBehavior;
+    }
+
+    /** @internal `Ctrl+C` 往这里交 TSV（`null` = 应用没接 ⇒ 不吃这个键） */
+    public function copyHandler(): ?\Closure
+    {
+        return $this->onCopy;
     }
 
     /** @internal 点击后的新选中集往这里交（`null` = 应用没接） */

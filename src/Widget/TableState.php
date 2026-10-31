@@ -251,30 +251,36 @@ final class TableState extends State implements Scrollable, EditableText
     private string|int|null $hoverKey = null;
 
     /**
-     * Shift 连选的锚点（**纯 UI 态**）。
+     * Shift 连选的锚点（**纯 UI 态**）：行 key + 列 key（整行行为下列恒 `null`）。
      *
-     * ★ 存 key 而不是行号：排序/过滤后行号会漂，key 不会（这也是 `keyOf()` 必填的
-     *   原因之一）。代价是 Shift 点击时要线性扫一次行找它的下标 —— 点击是低频操作，
-     *   而 10000 行线性扫 ≈ 亚毫秒。
+     * ★ 存 key 而不是下标：排序/过滤后行号会漂，key 不会（这也是 `keyOf()` 必填的
+     *   原因之一）。列同理 —— `TableColumn::keyName()` 才是稳定身份。代价是 Shift
+     *   点击时要线性扫一次找下标 —— 点击是低频操作，而 10000 行线性扫 ≈ 亚毫秒。
+     *
+     * @var array{row: string|int, col: ?string}|null
      */
-    private string|int|null $anchorKey = null;
+    private ?array $anchor = null;
 
     /**
-     * 拖动框选的起点行（`null` = 没按住）。
+     * 拖动框选的起点格（按下那一刻的**下标**；`null` = 没按住）。
      *
-     * ★ 与 `$anchorKey` 分开存：锚点是**点击语义**的（Shift 连选用 key，跟着数据走），
-     *   拖动是**手势**（按下那一刻的行下标）。两者绝大多数时候指向同一行，但
+     * ★ 与 `$anchor` 分开存：锚点是**点击语义**的（Shift 连选用 key，跟着数据走），
+     *   拖动是**手势**（按下那一刻的下标）。两者绝大多数时候指向同一格，但
      *   "按下后没拖"必须只是普通点击 —— 用同一个字段会让松手时的收口分不清。
+     *
+     * @var array{row: int, col: int}|null
      */
-    private ?int $dragAnchorRow = null;
+    private ?array $dragAnchor = null;
 
     /**
-     * 正在拖到的行（`null` = 按住了但还没过阈值 ⇒ 仍是普通点击）。
+     * 正在拖到的格（`null` = 按住了但还没过阈值 ⇒ 仍是普通点击）。
      *
      * ★ 三个状态用一个 `null` 表达（没按 / 按下未拖 / 在拖），比再开一个 bool 少
      *   一处"两个字段互相矛盾"的可能。
+     *
+     * @var array{row: int, col: int}|null
      */
-    private ?int $dragRow = null;
+    private ?array $dragTo = null;
 
     /** 按下时的根坐标 y（判阈值用；拖动中不再需要） */
     private float $dragStartY = 0.0;
@@ -635,9 +641,9 @@ final class TableState extends State implements Scrollable, EditableText
 
         // ★ 失焦 ⇒ 拖动多半已经断在半路（捕获在"失焦"这条收口路径上被释放，
         //   收不到 up）。不在这里清，拖动高亮会一直挂到下一次点击。
-        if (!$focused && $this->dragRow !== null) {
-            $this->dragAnchorRow = null;
-            $this->dragRow = null;
+        if (!$focused && $this->dragAnchor !== null) {
+            $this->dragAnchor = null;
+            $this->dragTo = null;
         }
 
         $this->setState(function () use ($focused): void {
@@ -683,6 +689,19 @@ final class TableState extends State implements Scrollable, EditableText
 
         $chord = $event->chord;
 
+        // ★ 全表快捷键先于方向键（`Ctrl+A` / `Ctrl+C`）：它们与"光标在哪一格"无关，
+        //   而下面那段是纯导航。放在前面也让"空表 Ctrl+A"能吃掉键（什么都不选，
+        //   但不要漏给上层去滚动页面）。
+        if ($chord->is(KeyChord::make('a', ctrl: true))) {
+            $this->selectAll();
+
+            return true;
+        }
+
+        if ($chord->is(KeyChord::make('c', ctrl: true))) {
+            return $this->copySelection();
+        }
+
         // ★ 进入编辑：`Enter` / `F2`（Excel 与资源管理器都吃这两个）。
         //   **只在当前列可编辑时才吃** —— 不可编辑的列上把 Enter 吞掉，等于
         //   堵死应用自定义语义（"空格翻转选中"同一条纪律，见方法注释）。
@@ -695,17 +714,25 @@ final class TableState extends State implements Scrollable, EditableText
         $row = $this->focusedRow;
         $col = $this->focusedCol;
 
-        if ($chord->is(KeyChord::up())) {
+        // ★★ `KeyChord::is()` 是**全字段**比较（值对象语义），所以带 `Shift` 的方向键
+        //   **不会**命中 `KeyChord::right()` —— 直接比就是"Shift+方向键什么都不发生"。
+        //   这里先把 `Shift` 位摘掉再比：导航键的语义由"按了哪个方向"决定，
+        //   是否扩选由下面 `$chord->shift` 决定。
+        //   ★ 只摘 `Shift`：`Ctrl`/`Alt`+方向键今天没有语义（Excel 的"跳到边缘"没做），
+        //     摘掉会让它们从"不认"变成"当普通方向键"，那是另一条行为。
+        $nav = $chord->shift ? KeyChord::make($chord->key) : $chord;
+
+        if ($nav->is(KeyChord::up())) {
             $row--;
-        } elseif ($chord->is(KeyChord::down())) {
+        } elseif ($nav->is(KeyChord::down())) {
             $row++;
-        } elseif ($chord->is(KeyChord::left())) {
+        } elseif ($nav->is(KeyChord::left())) {
             $col--;
-        } elseif ($chord->is(KeyChord::right())) {
+        } elseif ($nav->is(KeyChord::right())) {
             $col++;
-        } elseif ($chord->is(KeyChord::home())) {
+        } elseif ($nav->is(KeyChord::home())) {
             $row = 0;
-        } elseif ($chord->is(KeyChord::end())) {
+        } elseif ($nav->is(KeyChord::end())) {
             $row = $rows - 1;
         } else {
             return false;
@@ -713,6 +740,16 @@ final class TableState extends State implements Scrollable, EditableText
 
         $row = max(0, min($row, $rows - 1));
         $col = max(0, min($col, $cols - 1));
+
+        // ★ `Shift+方向键` = **扩选**（Excel / 资源管理器 / WPF DataGrid 一致）。
+        //   锚点在"第一次按住 Shift 之前"那一格 —— 所以这里先把锚点落成**旧光标格**，
+        //   再让 picker 用"锚点到目标"算区间。不这么做的话第一次 Shift+Down 只会
+        //   选一行（锚点被落成目标格），与用户的"从这一格往下拉"预期差一格。
+        // ★ 无修饰的移动**不动选区**：选区是受控的（应用持有），键盘挪光标顺手
+        //   清空选中会让"选中一批 → 按键找位置"变成"每次都得重新选"。
+        if ($chord->shift) {
+            $this->extendSelectionByKeyboard($row, $col);
+        }
 
         if ($row === $this->focusedRow && $col === $this->focusedCol) {
             return true;
@@ -726,6 +763,209 @@ final class TableState extends State implements Scrollable, EditableText
         $this->revealFocus();
 
         return true;
+    }
+
+    // ── 选区：Shift+方向键 / Ctrl+A / Ctrl+C（2026-10-31，格级矩形）─────────
+    //
+    // 三条入口（鼠标点击 / 拖动 / 键盘）**都过 `TableGridPicker`**：点法语义只有
+    // 一份实现。这里只负责"把当前行序列 / 列序列递进去，把结果交出去"。
+
+    /**
+     * `Shift+方向键`：从锚点扩到目标格并上报。
+     *
+     * ★ 锚点在**第一次按住 Shift 之前**那一格（不是目标格）—— 否则"从这一格
+     *   往下拉"会差一格。所以第一次进来时先把锚点落成**移动之前**的光标格。
+     * ★ 无修饰的移动**不动选区**（见 `handleFocusKey()` 的注释）。
+     */
+    private function extendSelectionByKeyboard(int $row, int $col): void
+    {
+        $view = $this->view();
+        $selection = $view->selectionSet();
+        if ($selection === null) {
+            return;
+        }
+
+        if ($this->anchor === null) {
+            $this->anchor = $this->anchorAt($this->focusedRow, $this->focusedCol);
+            if ($this->anchor === null) {
+                return;
+            }
+        }
+
+        $picked = TableGridPicker::pick(
+            $selection,
+            $this->rowKeysSnapshot(),
+            $this->colKeysSnapshot(),
+            $row,
+            $col,
+            $view->selectionModeValue(),
+            $view->selectionBehaviorValue(),
+            $this->anchor,
+            false,
+            true,
+        );
+
+        // Shift 不挪锚点（picker 返回的就是旧锚点；这里写回是为了"首次落锚"那条）
+        $this->anchor = $picked[1];
+
+        $view->selectionChangeHandler()?->__invoke($picked[0]);
+    }
+
+    /**
+     * `Ctrl+A`：整表全选。
+     *
+     * ★ 结果已经是空（空格子表 / 行全无身份）且当前也是空 ⇒ **不通知**：
+     *   `Ctrl+A` 在空表上连按十次不该产生十次 `setState`。
+     */
+    private function selectAll(): void
+    {
+        $view = $this->view();
+        $selection = $view->selectionSet();
+        if ($selection === null) {
+            return;
+        }
+
+        $next = TableGridPicker::selectAll(
+            $this->rowKeysSnapshot(),
+            $this->colKeysSnapshot(),
+            $view->selectionBehaviorValue(),
+        );
+
+        if ($next->isEmpty() && $selection->isEmpty()) {
+            return;
+        }
+
+        // 全选之后没有"起点"：下一次 Shift+点 应该重新落锚，而不是从某个角落扩
+        $this->anchor = null;
+
+        $view->selectionChangeHandler()?->__invoke($next);
+    }
+
+    /**
+     * `Ctrl+C`：把选区拼成 **TSV** 交给应用。返回 `true` = 吃掉了这个键。
+     *
+     * ★ 没声明 `onCopy()` ⇒ 返回 `false`（键让给应用自己的快捷键）。这与
+     *   "声明了 `selection()` 却没接上报就响亮失败"不冲突：那边是**声明了但没人收**，
+     *   这边是**根本没声明**，属于合法的"我不要这个快捷键"。
+     * ★ 选区为空 ⇒ 也返回 `false`：复制一片空是噪音，而"没反应"正是用户预期的。
+     */
+    private function copySelection(): bool
+    {
+        $view = $this->view();
+        $copy = $view->copyHandler();
+        if ($copy === null) {
+            return false;
+        }
+
+        $selection = $view->selectionSet();
+        if ($selection === null || $selection->isEmpty()) {
+            return false;
+        }
+
+        $copy($this->selectionAsTsv($selection));
+
+        return true;
+    }
+
+    /**
+     * 选区 ⇒ TSV（行 `\n`、格 `\t`）。
+     *
+     * ★ 只输出**选区覆盖到的格**：整行选区 = 每一列；格矩形 = 矩形内的列。
+     *   这与 Excel / ag-Grid 的复制一致（复制矩形就是矩形）。
+     * ★ 空行（整行都不在选区里）跳过，不产生空行 —— 否则复制一块 2×2 会带出
+     *   一堆空行，粘到 Excel 里就是一片空白行。
+     */
+    private function selectionAsTsv(TableSelection $selection): string
+    {
+        $view = $this->view();
+        $columns = $view->columnList();
+        $keyOf = $view->keyMapper();
+        if ($keyOf === null || $columns === []) {
+            return '';
+        }
+
+        $colKeys = [];
+        foreach ($columns as $column) {
+            $colKeys[] = $column->keyName();
+        }
+
+        $lines = [];
+        foreach ($view->rowList() as $index => $row) {
+            $rowKey = $keyOf($row);
+            if (!$selection->has($rowKey)) {
+                continue;
+            }
+
+            $cells = [];
+            foreach ($columns as $j => $column) {
+                $cells[] = $selection->covers($rowKey, $colKeys[$j])
+                    ? $column->copyTextOf($row, $index)
+                    : '';
+            }
+
+            $lines[] = \implode("\t", $cells);
+        }
+
+        return \implode("\n", $lines);
+    }
+
+    /**
+     * 当前行序的 key 序列（`null` = 该行没有身份，**不压缩**）。
+     *
+     * ★ 每次现算而不是缓存：行序会因排序 / 过滤 / 数据刷新而变，缓存它就要
+     *   在每一处变更点失效 —— 那是"两个字段互相矛盾"的经典温床。行数是可见
+     *   窗口外的全量（`keyOf` 是 O(1) 回调），一万行 ≈ 亚毫秒。
+     *
+     * @return list<string|int|null>
+     */
+    private function rowKeysSnapshot(): array
+    {
+        $keyOf = $this->view()->keyMapper();
+        if ($keyOf === null) {
+            return [];
+        }
+
+        $keys = [];
+        foreach ($this->view()->rowList() as $row) {
+            $keys[] = $keyOf($row);
+        }
+
+        return $keys;
+    }
+
+    /** @return list<string> */
+    private function colKeysSnapshot(): array
+    {
+        $keys = [];
+        foreach ($this->view()->columnList() as $column) {
+            $keys[] = $column->keyName();
+        }
+
+        return $keys;
+    }
+
+    /**
+     * 某一格的锚点（行 key + 列 key；整行行为下 `col` 恒 `null`）。
+     *
+     * @return array{row: string|int, col: ?string}|null
+     */
+    private function anchorAt(int $row, int $col): ?array
+    {
+        $rowKey = $this->rowKeysSnapshot()[$row] ?? null;
+        if ($rowKey === null) {
+            return null;
+        }
+
+        if ($this->view()->selectionBehaviorValue() === TableSelectionBehavior::Rows) {
+            return ['row' => $rowKey, 'col' => null];
+        }
+
+        $colKey = $this->colKeysSnapshot()[$col] ?? null;
+        if ($colKey === null) {
+            return null;
+        }
+
+        return ['row' => $rowKey, 'col' => $colKey];
     }
 
     // ── 单元格编辑（阶段 7a）────────────────────────────────────────────
@@ -1386,28 +1626,72 @@ final class TableState extends State implements Scrollable, EditableText
      */
     private function rowBackground(int $index, string|int|null $key, BuildContext $ctx, bool $striped): ?Color
     {
-        // ★ 拖动中的区间**压过**受控选中集：选区是受控的（应用收到上报才会变），
-        //   而拖动中刻意不逐帧上报 ⇒ 不叠这一层的话高亮不跟手。
-        if ($this->dragRow !== null && $this->dragAnchorRow !== null) {
-            $low = \min($this->dragAnchorRow, $this->dragRow);
-            $high = \max($this->dragAnchorRow, $this->dragRow);
-            if ($index >= $low && $index <= $high) {
-                return $ctx->color(ColorToken::Accent)->withAlpha(self::SELECTED_ALPHA);
+        // ★ 格级行为下，拖动与选中都按**格**染（见 `cellTint()`）—— 整行不再染，
+        //   否则"选了 2 格"会表现成"整行都选中了"，那是另一套语义。
+        if ($this->view()->selectionBehaviorValue() === TableSelectionBehavior::Rows) {
+            // ★ 拖动中的区间**压过**受控选中集：选区是受控的（应用收到上报才会变），
+            //   而拖动中刻意不逐帧上报 ⇒ 不叠这一层的话高亮不跟手。
+            if ($this->dragTo !== null && $this->dragAnchor !== null) {
+                $low = \min($this->dragAnchor['row'], $this->dragTo['row']);
+                $high = \max($this->dragAnchor['row'], $this->dragTo['row']);
+                if ($index >= $low && $index <= $high) {
+                    return $ctx->color(ColorToken::Accent)->withAlpha(self::SELECTED_ALPHA);
+                }
+            }
+
+            if ($key !== null) {
+                $selection = $this->view()->selectionSet();
+                if ($selection !== null && $selection->has($key)) {
+                    return $ctx->color(ColorToken::Accent)->withAlpha(self::SELECTED_ALPHA);
+                }
             }
         }
 
-        if ($key !== null) {
-            $selection = $this->view()->selectionSet();
-            if ($selection !== null && $selection->has($key)) {
-                return $ctx->color(ColorToken::Accent)->withAlpha(self::SELECTED_ALPHA);
-            }
-
-            if ($this->hoverKey === $key) {
-                return $ctx->color(ColorToken::Hover);
-            }
+        if ($key !== null && $this->hoverKey === $key) {
+            return $ctx->color(ColorToken::Hover);
         }
 
         return $striped && $index % 2 === 1 ? $ctx->color(ColorToken::Pane) : null;
+    }
+
+    /**
+     * 一格的选中底色（**只在格级行为下非 `null`**）。
+     *
+     * ★ 拖动中的矩形自己算（拖动刻意不逐帧上报，见 `endDrag()`），受控选区走
+     *   `TableSelection::covers()` —— 两者优先级与整行行为一致：拖动压过受控。
+     * ★ 列 key 由调用方递进来（build 期已经有），这里不再查一次列序。
+     */
+    private function cellTint(
+        int $index,
+        int $col,
+        string|int|null $rowKey,
+        string $colKey,
+        BuildContext $ctx,
+    ): ?Color {
+        if ($this->view()->selectionBehaviorValue() !== TableSelectionBehavior::Cells) {
+            return null;
+        }
+
+        if ($this->dragTo !== null && $this->dragAnchor !== null) {
+            $rowLow = \min($this->dragAnchor['row'], $this->dragTo['row']);
+            $rowHigh = \max($this->dragAnchor['row'], $this->dragTo['row']);
+            $colLow = \min($this->dragAnchor['col'], $this->dragTo['col']);
+            $colHigh = \max($this->dragAnchor['col'], $this->dragTo['col']);
+            if ($index >= $rowLow && $index <= $rowHigh && $col >= $colLow && $col <= $colHigh) {
+                return $ctx->color(ColorToken::Accent)->withAlpha(self::SELECTED_ALPHA);
+            }
+        }
+
+        if ($rowKey === null) {
+            return null;
+        }
+
+        $selection = $this->view()->selectionSet();
+        if ($selection !== null && $selection->covers($rowKey, $colKey)) {
+            return $ctx->color(ColorToken::Accent)->withAlpha(self::SELECTED_ALPHA);
+        }
+
+        return null;
     }
 
     /** 悬停进入/离开——只在**目标真的变了**时才 setState（指针在一行内移动不重建） */
@@ -1461,8 +1745,13 @@ final class TableState extends State implements Scrollable, EditableText
             return;
         }
 
-        $this->dragAnchorRow = $index;
-        $this->dragRow = null;
+        $contentX = $this->pointerContentX($event->x);
+        $col = $contentX === null
+            ? $this->focusedCol
+            : ($this->columnAtX($contentX) ?? $this->focusedCol);
+
+        $this->dragAnchor = ['row' => $index, 'col' => $col];
+        $this->dragTo = null;
         $this->dragStartY = $event->y;
 
         $this->noteRowTap($row, $index, $event);
@@ -1477,7 +1766,7 @@ final class TableState extends State implements Scrollable, EditableText
      */
     private function extendDrag(PointerEvent $event): void
     {
-        if ($this->dragAnchorRow === null) {
+        if ($this->dragAnchor === null) {
             return;
         }
 
@@ -1486,19 +1775,26 @@ final class TableState extends State implements Scrollable, EditableText
             return;
         }
 
-        if ($this->dragRow === null) {
+        // ★ 列同样要反算（格级矩形靠它）：拖出表格右缘 / 落在空白里 ⇒ 停在当前列，
+        //   而不是"整个矩形消失"。
+        $contentX = $this->pointerContentX($event->x);
+        $col = $contentX === null
+            ? $this->dragAnchor['col']
+            : ($this->columnAtX($contentX) ?? $this->dragAnchor['col']);
+
+        if ($this->dragTo === null) {
             if (\abs($event->y - $this->dragStartY) < self::DRAG_SLOP) {
                 return;   // 还在"手抖"范围内：这一次仍然是点击
             }
 
-            $this->dragRow = $row;
+            $this->dragTo = ['row' => $row, 'col' => $col];
             $this->markDirty();
 
             return;
         }
 
-        if ($row !== $this->dragRow) {
-            $this->dragRow = $row;
+        if ($row !== $this->dragTo['row'] || $col !== $this->dragTo['col']) {
+            $this->dragTo = ['row' => $row, 'col' => $col];
             $this->markDirty();
         }
 
@@ -1508,18 +1804,18 @@ final class TableState extends State implements Scrollable, EditableText
     /**
      * 松手：把"锚点到终点"变成一次选择上报。
      *
-     * ★ 复用 `TableRowPicker` 的 **Shift 语义**（锚点到目标替换为区间）—— 拖动就是
+     * ★ 复用 `TableGridPicker` 的 **Shift 语义**（锚点到目标替换为区间）—— 拖动就是
      *   "连续的 Shift 点击"，所以这里不该有新的一份区间算法。
      * ★ 拖动中**不**上报（选择是受控的，逐帧上报等于让应用每帧 setState 一次）；
-     *   高亮靠 `$dragRow` 自己画（见 `rowBackground()`），松手才通知一次。
+     *   高亮靠 `$dragTo` 自己画（见 `rowBackground()` / `cellTint()`），松手才通知一次。
      */
     private function endDrag(): void
     {
-        $anchor = $this->dragAnchorRow;
-        $to = $this->dragRow;
+        $anchor = $this->dragAnchor;
+        $to = $this->dragTo;
 
-        $this->dragAnchorRow = null;
-        $this->dragRow = null;
+        $this->dragAnchor = null;
+        $this->dragTo = null;
 
         if ($to === null) {
             return;   // 只是点击：down 时已办完，没有要擦的、也没有要报的
@@ -1533,28 +1829,30 @@ final class TableState extends State implements Scrollable, EditableText
 
         $view = $this->view();
         $selection = $view->selectionSet();
-        $keyOf = $view->keyMapper();
-        if ($selection === null || $keyOf === null) {
+        if ($selection === null) {
             return;
         }
 
-        /** @var list<string|int|null> $rowKeys */
-        $rowKeys = [];
-        foreach ($view->rowList() as $each) {
-            $rowKeys[] = $keyOf($each);
+        // ★ 锚点由**下标**换回 key：拖动起点是手势（下标），而选区是身份（key）
+        $anchorCell = $this->anchorAt($anchor['row'], $anchor['col']);
+        if ($anchorCell === null) {
+            return;
         }
 
-        $picked = TableRowPicker::pick(
+        $picked = TableGridPicker::pick(
             $selection,
-            $rowKeys,
-            $to,
+            $this->rowKeysSnapshot(),
+            $this->colKeysSnapshot(),
+            $to['row'],
+            $to['col'],
             $view->selectionModeValue(),
-            $rowKeys[$anchor] ?? null,
+            $view->selectionBehaviorValue(),
+            $anchorCell,
             false,
             true,
         );
 
-        $this->anchorKey = $picked[1];
+        $this->anchor = $picked[1];
 
         $view->selectionChangeHandler()?->__invoke($picked[0]);
     }
@@ -1690,28 +1988,26 @@ final class TableState extends State implements Scrollable, EditableText
 
         // ★ 整份行序都要（区间是按行下标切的），而不只是被点那一行的 key。
         //   一次 O(行数) 的摊平，比"先找 key 下标、再找区间"各扫一遍还少一遍。
-        /** @var list<string|int|null> $rowKeys */
-        $rowKeys = [];
-        foreach ($view->rowList() as $each) {
-            $rowKeys[] = $keyOf($each);
-        }
-
+        $rowKeys = $this->rowKeysSnapshot();
         if (($rowKeys[$index] ?? null) === null) {
             return;
         }
 
-        $picked = TableRowPicker::pick(
+        $picked = TableGridPicker::pick(
             $selection,
             $rowKeys,
+            $this->colKeysSnapshot(),
             $index,
+            $col,
             $view->selectionModeValue(),
-            $this->anchorKey,
+            $view->selectionBehaviorValue(),
+            $this->anchor,
             $event->ctrl,
             $event->shift,
         );
 
         // 锚点只改字段、不标脏：它不参与渲染（只决定下一次 Shift 的起点）
-        $this->anchorKey = $picked[1];
+        $this->anchor = $picked[1];
 
         $notify = $view->selectionChangeHandler();
         $notify?->__invoke($picked[0]);
@@ -1814,7 +2110,7 @@ final class TableState extends State implements Scrollable, EditableText
     /**
      * 某个 key 在**当前行序**里的下标（排序/过滤后行序会变 ⇒ 不能缓存行号）。
      *
-     * ★ 选择那一路已改走 `TableRowPicker`（它按整份行序算）；这里只剩编辑会话的
+     * ★ 选择那一路已改走 `TableGridPicker`（它按整份行序算）；这里只剩编辑会话的
      *   "这个 key 还在不在"用途。
      */
     private function keyIndex(string|int $key): ?int
@@ -1992,6 +2288,9 @@ final class TableState extends State implements Scrollable, EditableText
                     $this->cellContent($row, $i, $columns[$j], $rowKey),
                     $widths[$j],
                     $columns[$j],
+                    // ★ 格级选中的底色**按格**加在这一层：`cellBuilder` 完全不知道
+                    //   自己被选中（"加选择不用改每列 cell"这条裁决仍然成立）。
+                    $this->cellTint($i, $j, $rowKey, $columns[$j]->keyName(), $ctx),
                 );
             }
 
@@ -2515,12 +2814,12 @@ final class TableState extends State implements Scrollable, EditableText
      * ★ 对齐用 `Spacer` 推开而不是改文本样式：`cell()` 给的是任意 Widget，
      *   改不到它内部的 `Text`。★ `Start`（绝大多数列）**零额外包装**。
      */
-    private function cellShell(Widget $content, float $width, TableColumn $column): Widget
+    private function cellShell(Widget $content, float $width, TableColumn $column, ?Color $tint = null): Widget
     {
         $align = $column->alignMode();
 
         if ($align === TextAlign::End) {
-            return $this->paddedCell(Row::make()->children([Spacer::make(), $content])->cross(FlexAlign::Center), $width, $column);
+            return $this->paddedCell(Row::make()->children([Spacer::make(), $content])->cross(FlexAlign::Center), $width, $column, $tint);
         }
 
         if ($align === TextAlign::Center) {
@@ -2528,21 +2827,26 @@ final class TableState extends State implements Scrollable, EditableText
                 Row::make()->children([Spacer::make(), $content, Spacer::make()])->cross(FlexAlign::Center),
                 $width,
                 $column,
+                $tint,
             );
         }
 
-        return $this->paddedCell($content, $width, $column);
+        return $this->paddedCell($content, $width, $column, $tint);
     }
 
-    /** 内边距 + 定宽（`0` 内边距时省掉一层 `Padding`） */
-    private function paddedCell(Widget $inner, float $width, TableColumn $column): Widget
+    /** 内边距 + 定宽（`0` 内边距时省掉一层 `Padding`）+ 可选选中底色 */
+    private function paddedCell(Widget $inner, float $width, TableColumn $column, ?Color $tint = null): Widget
     {
         $pad = $column->paddingX();
         if ($pad <= 0.0) {
-            return SizedBox::make($inner)->width($width);
+            $box = SizedBox::make($inner)->width($width);
+        } else {
+            $box = SizedBox::make(Padding::make($inner)->symmetric($pad, 0.0))->width($width);
         }
 
-        return SizedBox::make(Padding::make($inner)->symmetric($pad, 0.0))->width($width);
+        // ★ 底色加在**格子这一层**（不是内层内容）：内边距与对齐都在它里面，
+        //   选中色因此正好铺满"这一格"，不会溢到列间缝隙。
+        return $tint === null ? $box : $box->background($tint);
     }
 
     /**

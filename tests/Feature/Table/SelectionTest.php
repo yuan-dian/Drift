@@ -18,7 +18,7 @@ use Drift\Widget\TableSelectionMode;
  * ② Shift 连选的真前置是 `PointerEvent` 的修饰键；
  * ③ 行态在**行容器**上合一，`cellBuilder` 不知道自己被选中。
  *
- * ★ 语义底稿在 `tests/Unit/Widget/TableRowPickerTest`（纯函数）。这里只验
+ * ★ 语义底稿在 `tests/Unit/Widget/TableGridPickerTest`（纯函数）。这里只验
  *   "行容器的 pointer 真的把事件送到了语义层、上报真的到了应用、行态真的画出来了"。
  * ★ 这里**没有** `runCase` 那两条（声明 selection 不接上报 ⇒ 退出码 3）：
  *   子进程用例留在 `tools/smoke.php`。理由是它的判据是"进程退出码"，

@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace Drift\Widget;
 
 /**
- * 表格的选中集（**不可变值对象**）—— 只装"哪些行被选中"，不装 UI 态。
+ * 表格的选中集（**不可变值对象**）—— 只装"选中了什么"，不装 UI 态。
  *
  * ```php
  * // 应用持有，每次 build 递进来；点击只回调新值（受控，`docs/DESIGN-TABLE-2026-10-26.md` §11.4）
@@ -27,14 +27,26 @@ namespace Drift\Widget;
  *   会让 `1` 与 `'1'` 混为一谈（应用里"用户 id 是字符串"与"是整数"完全可能是两张
  *   表）。所以内部按 `i:` / `s:` 前缀归一化，取出时还原原值。
  *
+ * ## 唯一存储：**选区列表**（`TableRange`），行集是它的投影（2026-10-31）
+ *
+ * 以前内部就是"行 key 的集合"，于是"格级矩形选区"没法表达 —— `DESIGN-TABLE`
+ * §19.9 把这条记成"与『选中集 = 行 key 集』的语义分叉"。现在存储换成
+ * `list<TableRange>`：**整行选区 = 列端点为 `null` 的 range**，格矩形 = 带列端点的
+ * range。两种行为共用一份存储、一套 API、一个回调 —— 不是两套。
+ *
+ * ★ **行级 API 全部保留且语义不变**（`has` / `keys` / `count` / `toggle` / `add` /
+ *   `remove` / `only` / `withAll` / `of`）：它们作用在"整行"这一层，对格矩形选区
+ *   的含义是"这一行有没有被碰到"。`keys()` 的顺序仍是加入顺序 —— 行在 `TableRange`
+ *   里本来就是摊平的列表，顺序天然保留。
+ *
  * @api
  */
 final readonly class TableSelection
 {
     /**
-     * @param array<string, string|int> $byNorm 归一化键 ⇒ 原始 key
+     * @param list<TableRange> $ranges
      */
-    private function __construct(private array $byNorm)
+    private function __construct(private array $ranges)
     {
     }
 
@@ -50,82 +62,171 @@ final readonly class TableSelection
     }
 
     /**
-     * 从 key 列表构造。
+     * 从 key 列表构造（**整行**选区 —— Rows 行为下的一切都走它）。
      *
      * @param iterable<string|int> $keys
      */
     public static function of(iterable $keys): self
     {
-        $byNorm = [];
+        // ★ 去重放在这里（不是 `keys()` 里）：`of(['a','a'])` 与 `of(['a'])` 必须
+        //   是同一份选中集，否则 `count()` 对、`ranges()[0]->rows` 不对 —— 两处
+        //   说法不一致比两处都错更难查。
+        $seen = [];
+        $rows = [];
         foreach ($keys as $key) {
-            $byNorm[self::norm($key)] = $key;
+            $norm = self::norm($key);
+            if (isset($seen[$norm])) {
+                continue;
+            }
+
+            $seen[$norm] = true;
+            $rows[] = $key;
         }
 
-        return new self($byNorm);
+        return $rows === [] ? new self([]) : new self([new TableRange($rows)]);
     }
 
-    /** 选中了没有（O(1)） */
+    /**
+     * 由**一个格矩形**构造（Cells 行为）。
+     *
+     * @param list<string|int> $rows
+     * @param list<string> $cols
+     */
+    public static function ofCells(array $rows, array $cols): self
+    {
+        if ($rows === [] || $cols === []) {
+            return new self([]);
+        }
+
+        return new self([new TableRange($rows, $cols)]);
+    }
+
+    /**
+     * 并入一块选区。
+     *
+     * @param bool $replace `true` = 替换掉现有的全部选区（Shift 扩选的语义：
+     *   "从锚点到目标"是**替换**而不是累加 —— 累加会让"缩小区间"永远做不到）
+     */
+    public function withRange(TableRange $range, bool $replace = true): self
+    {
+        if ($range->isEmpty()) {
+            return $replace ? self::none() : $this;
+        }
+
+        if ($replace) {
+            return new self([$range]);
+        }
+
+        $ranges = $this->ranges;
+        $ranges[] = $range;
+
+        return new self($ranges);
+    }
+
+    /** @return list<TableRange> */
+    public function ranges(): array
+    {
+        return $this->ranges;
+    }
+
+    /** 这一**行**有没有被碰到（整行选区看行；格矩形看"行在不在矩形里"） */
     public function has(string|int $key): bool
     {
-        return isset($this->byNorm[self::norm($key)]);
-    }
-
-    /** 反选：已选 ⇒ 去掉；没选 ⇒ 加上 */
-    public function toggle(string|int $key): self
-    {
-        $norm = self::norm($key);
-        $next = $this->byNorm;
-        if (isset($next[$norm])) {
-            unset($next[$norm]);
-        } else {
-            $next[$norm] = $key;
+        foreach ($this->ranges as $range) {
+            if ($range->coversRow($key)) {
+                return true;
+            }
         }
 
-        return new self($next);
+        return false;
+    }
+
+    /** 这一**格**在不在选区里（Rows 行为下等价于 `has($rowKey)`） */
+    public function covers(string|int $rowKey, string $colKey): bool
+    {
+        foreach ($this->ranges as $range) {
+            if ($range->covers($rowKey, $colKey)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** 反选一行：已选 ⇒ 去掉；没选 ⇒ 加上（Rows 行为的 `Ctrl+点击`） */
+    public function toggle(string|int $key): self
+    {
+        if ($this->has($key)) {
+            return $this->remove($key);
+        }
+
+        return $this->add($key);
     }
 
     public function add(string|int $key): self
     {
-        if (isset($this->byNorm[self::norm($key)])) {
+        if ($this->has($key)) {
             return $this;
         }
 
-        $next = $this->byNorm;
-        $next[self::norm($key)] = $key;
+        $ranges = $this->ranges;
+        $ranges[] = new TableRange([$key]);
 
-        return new self($next);
+        return new self($ranges);
     }
 
     public function remove(string|int $key): self
     {
-        if (!isset($this->byNorm[self::norm($key)])) {
+        if (!$this->has($key)) {
             return $this;
         }
 
-        $next = $this->byNorm;
-        unset($next[self::norm($key)]);
+        $ranges = [];
+        foreach ($this->ranges as $range) {
+            if (!$range->coversRow($key)) {
+                $ranges[] = $range;
+                continue;
+            }
 
-        return new self($next);
+            // 整行 / 单列宽：整条剔掉；多列矩形：剔掉那一行，列端点保留
+            // （矩形减一行仍是矩形，这是唯一能保持矩形形状的减法）
+            $rows = [];
+            foreach ($range->rows as $each) {
+                if ($each !== $key) {
+                    $rows[] = $each;
+                }
+            }
+
+            if ($rows !== []) {
+                $ranges[] = new TableRange($rows, $range->cols);
+            }
+        }
+
+        return new self($ranges);
     }
 
     /**
-     * 并入一批 key（Shift 连选的区间用它 —— 区间由 `TableState` 按行序算出来）。
+     * 并入一批 key（Shift 连选的区间用它 —— 区间由 `TableGridPicker` 按行序算出来）。
      *
      * @param iterable<string|int> $keys
      */
     public function withAll(iterable $keys): self
     {
-        $next = $this->byNorm;
-        $changed = false;
+        $fresh = [];
         foreach ($keys as $key) {
-            $norm = self::norm($key);
-            if (!isset($next[$norm])) {
-                $next[$norm] = $key;
-                $changed = true;
+            if (!$this->has($key)) {
+                $fresh[] = $key;
             }
         }
 
-        return $changed ? new self($next) : $this;
+        if ($fresh === []) {
+            return $this;
+        }
+
+        $ranges = $this->ranges;
+        $ranges[] = new TableRange($fresh);
+
+        return new self($ranges);
     }
 
     /**
@@ -143,23 +244,47 @@ final readonly class TableSelection
     }
 
     /**
-     * 选中的 key（顺序 = 加入顺序）。
+     * 选中的行 key（顺序 = 加入顺序，**去重**）。
+     *
+     * ★ 格矩形选区下这是"被碰到的行"（矩形覆盖到的每一行）—— 想拿格子本身用
+     *   `covers()` / `ranges()`。
      *
      * @return list<string|int>
      */
     public function keys(): array
     {
-        return \array_values($this->byNorm);
+        $seen = [];
+        $keys = [];
+        foreach ($this->ranges as $range) {
+            foreach ($range->rows as $key) {
+                $norm = self::norm($key);
+                if (isset($seen[$norm])) {
+                    continue;
+                }
+
+                $seen[$norm] = true;
+                $keys[] = $key;
+            }
+        }
+
+        return $keys;
     }
 
+    /** 选中的**行数**（格矩形 = 覆盖到的行数，不是格数） */
     public function count(): int
     {
-        return \count($this->byNorm);
+        return \count($this->keys());
     }
 
     public function isEmpty(): bool
     {
-        return $this->byNorm === [];
+        foreach ($this->ranges as $range) {
+            if (!$range->isEmpty()) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
