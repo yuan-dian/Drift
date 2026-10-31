@@ -708,7 +708,7 @@ $ioApp->io()?->watch($ioRead, true, function (): void {});
 
 | 项 | 情况 |
 |---|---|
-| `Future::cancel()` 的"**真停**" | **删掉了**。全仓现在一律是"不交付"，没有"停止计算"。`ProcessTaskHost` / `ThreadTaskHost` 从来如此 ⇒ 语义**反而统一了**（原先只有分片这一路是特例，而它没有消费者） |
+| `Future::cancel()` 的"**真停**" | **只剩一档**：`ProcessTaskHost` 能摘掉**还没发出去**的排队项（那条任务永远不会开始）。已经在跑的停不了 —— `ThreadTaskHost` / `SyncTaskHost` 从来如此，分片那一路"摘出队列即停"随本轮一起没了。⇒ 语义**反而统一了**（原先只有分片是特例，而它没有消费者）。★ 2026-10-31 第十一轮把这个区分写进了 `Future::cancel()` 的 docblock（§13.1 第 2 条） |
 | "在本线程算、且可切分"的需求 | **现在没有实现**。要做的正解是帧调度器的**优先级/空闲预算**（§12.3），不是复活 `SlicedJob` |
 | 4ms 预算范式 | **保留**，且现在只有一套：`PumpHost::TASK_BUDGET_MS`。`TaskHost::drain()` 的注释改成了自述（原本拿 `SlicedJob::step()` 当先例） |
 | `SyncTaskHost::drain()` 的 swap 语义 | **保留**（`CompletionQueue` 已收成一份） |
@@ -763,3 +763,91 @@ $ioApp->io()?->watch($ioRead, true, function (): void {});
 "数字对不对"下判据（lint 只判 `@api` 标注是否合规，不判清单是否最新）
 ⇒ 它会一直漂。今天只是把这次生成的落盘了；要不要给它加一道"`--api` 输出与文件
 一致"的闸门，留到下次复审（加闸门的代价是每次改 `@api` 都要重跑，容易变成噪音）。
+
+---
+
+## 13. 第十一轮（2026-10-31）：复审 —— 五处"注释在说假话"、一处死参数、两处漏收
+
+> 前一轮删了分片链。这一轮**不带假设**重读了一遍异步线（`AsyncValue` / `Future` /
+> `AsyncCommand` / 三个后端 / `PumpHost` / `CompletionQueue`），找的是**不挂测试、
+> 但会让下一个人做错决定**的东西。**零行为改动**（除一处：定时器回调的异常出口）。
+
+### 13.1 七处（按"会不会害人"排序）
+
+| # | 现场 | 形态 | 修法 |
+|---|---|---|---|
+| 1 | `Future::rejectCore($e, bool $report)` | **参数只有 `true` 一个值**（唯一的两个调用点都是 `true`），而注释写着"链式传播时传 `false`，否则一个失败会刷 N 条 Fatal" ⇒ 判据 `&& $report` 恒真，那句话描述的是**不存在的机制** | 删参数；判据只剩 `$links === []` 与 `$task` 两个真的 |
+| 2 | `Future::cancel()` 的生产者清单 | 上一轮我删分片时顺手把它改成"同步那一路按帧跑，不交付就等于真停"——**假的**：`SyncTaskHost::submit()` 里 `Job::run()` 已经跑完，停的是交付，不是计算 | 按"能停到哪一步"重写四档（进程池能摘排队 / 线程池只能不交付 / 同步**没有钩子** / 聚合体只做剪枝） |
+| 3 | `PumpHost::pumpTimers()` | 注释写着"回调抛异常不吞（**与 `pumpTasks()` 同策略**）"，而它**一处 try/catch 都没有** ⇒ 同一个失败，一个说得出"哪个泵"，一个带着裸栈穿过 `frame()` | 三个泵收成 `guarded($what, $work)` 一处出口 |
+| 4 | `ThreadTaskHost::deliverRows()` | **`CompletionQueue` 预算循环的第四份实现**（第七轮"三份收一份"漏下的）：同样的 `$i > 0` 首条放行、同样的 `finally` 回填、同样的 `$done = $i + 1` | `$backlog` 从 `list<array>` 换成 `CompletionQueue`，删掉 `deliverRows()`/`deliverRow()` |
+| 5 | `$deadline` 公式 ×3 | `$budgetMs === null \|\| <= 0 ? 0 : hrtime + $budgetMs * 1_000_000` 抄在三个后端 | `CompletionQueue::deadline()` |
+| 6 | `all()` / `race()` 前置 12 行 ×2 | 校验 + **键序保留** + `$anyTask` 逐字相同（只有报错里的方法名不同） | `collect($futures, $method)` + `cancelAll($list)` |
+| 7 | `run()` / `append()` 去重 3 行 ×2 | 逐字相同；改错一处不报错，而它落在"连点"这种最难手工复现的路径上 | `duplicated($arg)` |
+
+### 13.2 为什么"注释在说假话"比 bug 更值得修
+
+这三类都不会挂测试，但都会让下一个人**基于错误前提做决定**：
+
+| 形态 | 例子 | 后果 |
+|---|---|---|
+| 参数只剩一个值 | `rejectCore(..., bool $report)` | 读的人以为"传播已被去重" ⇒ 不敢动 `$links` 判据 |
+| 注释说"同一策略"，代码不是 | `pumpTimers` | 谁改异常策略都只改两处，第三处悄悄不同 |
+| 引用已删的东西 | 上一轮的 `submitSliced`、这一轮的 `$report` | docref 只判"文件/行号存在"，判不出"这句话还成立吗" |
+
+⇒ **一条可执行的纪律**：注释里每出现一次"与 X 同策略 / 同一手法 / 同一个出口"，
+要么有一处**共用的代码**，要么有一条**判据**。两者都没有时，那句话迟早是假的 ——
+本轮的 3 与 7 就是"有那句话、没有那份代码"。
+
+### 13.3 `ThreadTaskHost` 的积压：为什么敢动，怎么验的
+
+它要 C++ 原生池才跑得起来（`drift_io_*`），端到端判据一直是空的。但"残留载体"
+的三条性质**不需要原生池**：用反射把"上一帧取回来、没交完"的那批塞进 `$backlog`，
+`$started` 保持 `false` ⇒ `drain()` 交完就返回，一条原生调用都不碰。
+
+`tests/Unit/App/ThreadHostBacklogTest.php` 钉三条：
+
+| 判据 | 写错的症状 |
+|---|---|
+| 积压算进 `pending()` | 帧时钟判"没活了" ⇒ **死锁**（界面停在半截） |
+| 积压让 `needsPolling()` 为真 | 后端能叫醒 ⇒ `waitEvents(-1)` ⇒ 睡到用户动鼠标 |
+| 预算不够 ⇒ 只交一条、剩余仍按序 | 结果丢失 / 分页错位 |
+
+变异自检：把 `+ $this->backlog->count()` 去掉 ⇒ **2 红**；`needsPolling()` 恒 `false` ⇒ **2 红**。
+
+★ 记账语义随之一并搬家：行从原生池取出时 `unset($this->inflight[$id])` 并压进队列
+⇒ `pending()` **加一项** `backlog->count()`，总数与改造前一致（"记账晚一步"变成
+"记账搬一步"）。这一步必须同时做 —— 只改一半就是上面那条死锁。
+
+### 13.4 三个"**可达**但零消费者"的部件（记账，不是缺口）
+
+上一轮删 `SlicedJob` 的判据是"**不可达**"（入口挂在 `Application` 上，页面拿不到）。
+这三个不一样，**都可达**，只是没人用：
+
+| 部件 | 页/组合根怎么够到 | 今天的消费者 |
+|---|---|---|
+| `Future::race()` | `@api`，`Future` 是页面直接持有的类型 | 只有 `FutureTest` |
+| `IoPoller` | `AppScope::io()` | 只有 `tools/smoke.php` |
+| `ThreadTaskHost` | `@api`，组合根 `setTaskHost()` 就能装 | 只有 `probes/io-pool` |
+
+⇒ **不删**（可达 + 有判据 + 是端口的一个实现），但也**不列缺口**。
+真要动它们之前先回答一句"谁来用" —— 上一轮那句"补了也没用"（§11.6）对它们同样成立。
+
+### 13.5 验证
+
+| 项 | 结果 |
+|---|---|
+| `php tools/lint.php` | **855** 文件 · 0 error · 0 warn（+1：新测试文件） |
+| `vendor/bin/phpunit` | **974** tests / **3227** assertions OK（+3 / +13：积压三条） |
+| `php tools/gate.php` | 8 项全通过 · **448 ok / 0 FAIL** · 109.7s |
+| `php tools/docref.php` | 78 ok / 0 FAIL |
+| `php tools/drift-build.php users` | ✓ **12.5 MB**（103.5s）—— 验证 AOT 吃下了 `[$a, $b] = …` 与三处新闭包 |
+| 真机 10s | ✓ 两个进程（UI 101 MB + worker 31 MB，预热生效）、**无 `Errors.log`** |
+
+### 13.6 看过但**没动**的（下一轮别重开）
+
+| 项 | 理由 |
+|---|---|
+| `ProcessTaskHost` 796 行 | 内部三件簿记（`readReplies` / `sweepTimeouts` / `reap`）已在 2026-10-31 收过一轮；再拆就是把一个状态机拆成三个共享字段的对象 |
+| `Future` 595 行（值 + 链 + 聚合） | 拆它会改 `@api` 面（`then`/`catch`/`all`/`race` 都在同一个类上），收益是"文件更短"，代价是所有调用点与文档 |
+| `AsyncValue` 的 11 个读法 | 与 Riverpod `AsyncValue` / Flutter `AsyncSnapshot` 的读法集对齐，没有多余的一个 |
+| `PumpHost` 的两个谓词（`hasAsync` / `hasPolledAsync`） | 回答的是两个不同问题（"有没有活" vs "要不要空转着等"），合并会退化成 N5 要消掉的 15ms 空转 |

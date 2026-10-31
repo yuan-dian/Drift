@@ -256,10 +256,7 @@ final class AsyncCommand extends Subject
      *   用本方法做追加会吃掉前面的行（见类注释）。
      *
      * ★ **去重**：同参数且在途 ⇒ 直接返回（挡住"转圈时连点同一页"）。
-     *   判据是 `$arg === $this->arg`（严格比较）：标量参数（页码 / id / 查询串）
-     *   天然有效；数组 / 对象参数判不出相等 ⇒ 不去重、照常起新请求并作废旧的
-     *   —— **不做 `==` 或序列化比较**：那两种在 AOT 下没验证过，而"多跑一次"
-     *   的代价比"少跑一次"小得多。
+     *   判据与规则见 {@see self::duplicated()}（`append()` 用的是同一句）。
      * ★ **换参数 ⇒ 作废旧请求并真的 `cancel()`**（见类注释的所有权论证）。
      * ★★ **同步后端也会先过队列**（`SyncTaskHost` 的 `submit()` 只入队，结算发生在
      *   下一帧 `drain()`，见 §17.4.2 的统一语义）⇒ `run()` 之后那一帧仍是
@@ -284,7 +281,7 @@ final class AsyncCommand extends Subject
             return;
         }
 
-        if ($this->pending !== null && $this->ran && $arg === $this->arg) {
+        if ($this->duplicated($arg)) {
             return; // 同一个请求还在跑 ⇒ 不重复提交
         }
 
@@ -333,7 +330,7 @@ final class AsyncCommand extends Subject
         }
 
         // ★ 与 `run()` 同一条去重：连点「加载更多」不该起第二条请求
-        if ($this->pending !== null && $this->ran && $arg === $this->arg) {
+        if ($this->duplicated($arg)) {
             return;
         }
 
@@ -397,6 +394,27 @@ final class AsyncCommand extends Subject
     {
         $this->abandon();
         $this->disposed = true;
+    }
+
+    /**
+     * 「同一个请求还在跑」⇒ 两个提交点（`run` / `append`）都不该再提交一次。
+     *
+     * ★ 判据是 `$arg === $this->arg`（**严格**比较）：标量参数（页码 / id / 查询串）
+     *   天然有效；数组 / 对象参数判不出相等 ⇒ 不去重、照常起新请求并作废旧的
+     *   —— **不做 `==` 或序列化比较**：那两种在 AOT 下没验证过，而"多跑一次"的
+     *   代价（多一帧 loading、一次可被取消的请求）比"少跑一次"（用户以为刷新了、
+     *   其实没有）小得多。
+     *
+     * ★ `$this->ran` 那一项不能省：首屏那次 `run(null)` 之前 `$arg` 是 `null`、
+     *   `pending` 也是 `null` ⇒ 光看 `pending` 会把"第一次点"当成重复。
+     *
+     * ★ 2026-10-31 收成一处：这段判据原先在 `run()` 与 `append()` 里各写一遍
+     *   （逐字相同）。去重判据改一次要改两处的风险，正好落在"连点"这种最不容易
+     *   被手工复现的路径上。
+     */
+    private function duplicated(mixed $arg): bool
+    {
+        return $this->pending !== null && $this->ran && $arg === $this->arg;
     }
 
     /**

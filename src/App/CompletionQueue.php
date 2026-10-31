@@ -41,6 +41,23 @@ final class CompletionQueue
      */
     private array $items = [];
 
+    /**
+     * `TaskHost::drain()` 的预算换算 —— **三个后端共用这一处**（2026-10-31）。
+     *
+     * ★ 为什么要收：这条公式原先抄在三个后端里（`SyncTaskHost` /
+     *   `ThreadTaskHost` / `ProcessTaskHost`），而它与 {@see self::drain()} 的
+     *   `$deadline` 参数是**同一个度量的两端** —— 换算写错（`* 1000` 而不是
+     *   `* 1_000_000`）会以"预算缩小一千倍"或"永不超预算"两种形态各错一遍。
+     *
+     * ★ `null` / `<= 0` ⇒ `0`（"一次交空"）。`0` 是哨兵值，不是"现在到期"。
+     */
+    public static function deadline(?int $budgetMs): int
+    {
+        return $budgetMs === null || $budgetMs <= 0
+            ? 0
+            : \hrtime(true) + $budgetMs * 1_000_000;
+    }
+
     public function push(Completion $completion): void
     {
         $this->items[] = $completion;

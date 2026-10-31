@@ -232,8 +232,12 @@ final class PumpHost
      *
      * ★ **先摘再调**：回调里可以安全地 `after()` 新定时器 / `cancelAfter()` 别的
      *   —— 否则遍历中改 `$this->timers` 会漏掉或重复触发。
-     * ★ 回调抛异常**不吞**（与 `pumpTasks()` 同策略：S3 无边界
-     *   ⇒ Fatal 序列）。
+     * ★ 回调抛异常**不吞**，且与另外两个泵走**同一个出口**（{@see self::guarded()}）：
+     *   S3 无边界 ⇒ Fatal 序列。
+     *   ★★ 2026-10-31 之前这里**一处 try/catch 都没有**，而注释写着"与
+     *   `pumpTasks()` 同策略" —— 那句话是假的：`pumpTasks` 会把异常转成一条
+     *   带来源的 Fatal，这里让它带着裸栈穿过 `frame()` 冒到事件循环。同一个
+     *   失败，一个说得出"哪个泵"，一个说不出。
      */
     public function pumpTimers(float $timestampMs): void
     {
@@ -249,9 +253,39 @@ final class PumpHost
             }
         }
 
-        foreach ($due as $id => $callback) {
-            unset($this->timers[$id]);
-            $callback();
+        $this->guarded('定时器回调未捕获异常', function () use ($due): void {
+            foreach ($due as $id => $callback) {
+                // ★ 先摘再调：回调里可以安全地 `after()` / `cancelAfter()` 别的
+                unset($this->timers[$id]);
+                $callback();
+            }
+        });
+    }
+
+    /**
+     * 三个泵的**唯一异常出口**：跑一段"会调用户回调"的活，异常不吞、但也不让
+     * 它带着裸栈冒到组合根（`Errors::report()` ⇒ Fatal 序列，S3 无边界）。
+     *
+     * ★ 为什么要收（2026-10-31）：`pumpTasks` / `pumpIo` 各写了一遍 try/catch +
+     *   **同一句格式化**（只差中段那几个字），而 `pumpTimers` 一处都没写 ——
+     *   三条泵、两种行为。收成一处之后，"异常走哪个出口"不再取决于谁记得写。
+     *
+     * ★ 不许改成"吞掉 + 记一条 Diagnostic"：那正是 G2 明令禁止的半静默
+     *   （界面停在上一次的样子，且没人知道）。这里只是把**同一条 Fatal**
+     *   补上一句"是哪个泵抛的"。
+     */
+    private function guarded(string $what, callable $work): void
+    {
+        try {
+            $work();
+        } catch (\Throwable $e) {
+            Errors::report(sprintf(
+                '帧循环：%s —— %s（%s:%d）',
+                $what,
+                $e->getMessage(),
+                basename($e->getFile()),
+                $e->getLine(),
+            ));
         }
     }
 
@@ -288,7 +322,7 @@ final class PumpHost
 
         $this->host->assertUiThread('drain');
 
-        try {
+        $this->guarded('后台结果回调未捕获异常', function () use ($tasks): void {
             // ★ 传预算（`null` = 一次取空）。超出的留在后端，下一帧继续 ——
             //   `pending()` 仍 > 0 是这件事成立的前提（三个后端各自的实现契约
             //   见 {@see TaskHost::drain()}），否则帧时钟判"没活了"就睡死。
@@ -298,14 +332,7 @@ final class PumpHost
                 },
                 self::TASK_BUDGET_MS,
             );
-        } catch (\Throwable $e) {
-            Errors::report(sprintf(
-                '帧循环：后台结果回调未捕获异常 —— %s（%s:%d）',
-                $e->getMessage(),
-                basename($e->getFile()),
-                $e->getLine(),
-            ));
-        }
+        });
     }
 
     /**
@@ -323,16 +350,9 @@ final class PumpHost
 
         $this->host->assertUiThread('poll');
 
-        try {
+        $this->guarded('IO 就绪回调未捕获异常', static function () use ($io): void {
             $io->poll();
-        } catch (\Throwable $e) {
-            Errors::report(sprintf(
-                '帧循环：IO 就绪回调未捕获异常 —— %s（%s:%d）',
-                $e->getMessage(),
-                basename($e->getFile()),
-                $e->getLine(),
-            ));
-        }
+        });
     }
 
     /**

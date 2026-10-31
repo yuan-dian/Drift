@@ -78,19 +78,19 @@
 | `ProcessTaskHost::$requestTerminateMs` | property | src/App/ProcessTaskHost.php:105 |
 | `ProcessTaskHost::__construct()` | method | src/App/ProcessTaskHost.php:137 |
 | `ProcessTaskHost::prewarm()` | method | src/App/ProcessTaskHost.php:176 |
-| `ProcessTaskHost::shutdown()` | method | src/App/ProcessTaskHost.php:461 |
+| `ProcessTaskHost::shutdown()` | method | src/App/ProcessTaskHost.php:460 |
 | `ProcessWorker` | class | src/App/ProcessWorker.php:8 |
 | `ProcessWorker::serve()` | method | src/App/ProcessWorker.php:32 |
 | `PumpHost::after()` | method | src/App/PumpHost.php:115 |
-| `PumpHost::io()` | method | src/App/PumpHost.php:258 |
+| `PumpHost::io()` | method | src/App/PumpHost.php:292 |
 | `SyncTaskHost` | class | src/App/SyncTaskHost.php:9 |
 | `TaskHost` | interface | src/App/TaskHost.php:8 |
 | `TaskHost::submit()` | method | src/App/TaskHost.php:52 |
 | `TaskHost::pending()` | method | src/App/TaskHost.php:90 |
 | `TaskHost::drain()` | method | src/App/TaskHost.php:118 |
 | `ThreadTaskHost` | class | src/App/ThreadTaskHost.php:15 |
-| `ThreadTaskHost::__construct()` | method | src/App/ThreadTaskHost.php:98 |
-| `ThreadTaskHost::shutdown()` | method | src/App/ThreadTaskHost.php:295 |
+| `ThreadTaskHost::__construct()` | method | src/App/ThreadTaskHost.php:102 |
+| `ThreadTaskHost::shutdown()` | method | src/App/ThreadTaskHost.php:277 |
 | `Window` | class | src/App/Window.php:10 |
 | `WindowSet` | class | src/App/WindowSet.php:9 |
 | `WindowStateStore` | class | src/App/WindowStateStore.php:32 |
@@ -170,16 +170,16 @@
 | `Future::then()` | method | src/Async/Future.php:160 |
 | `Future::catch()` | method | src/Async/Future.php:177 |
 | `Future::cancel()` | method | src/Async/Future.php:191 |
-| `Future::all()` | method | src/Async/Future.php:256 |
-| `Future::race()` | method | src/Async/Future.php:341 |
+| `Future::all()` | method | src/Async/Future.php:306 |
+| `Future::race()` | method | src/Async/Future.php:378 |
 
 ### @internal（框架内部） · 3
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
 | `Future::__construct()` | method | src/Async/Future.php:102 |
-| `Future::resolve()` | method | src/Async/Future.php:405 |
-| `Future::reject()` | method | src/Async/Future.php:430 |
+| `Future::resolve()` | method | src/Async/Future.php:426 |
+| `Future::reject()` | method | src/Async/Future.php:451 |
 
 ## Commands 层
 
@@ -521,10 +521,10 @@
 | `AsyncCommand::value()` | method | src/State/AsyncCommand.php:231 |
 | `AsyncCommand::isRunning()` | method | src/State/AsyncCommand.php:241 |
 | `AsyncCommand::run()` | method | src/State/AsyncCommand.php:251 |
-| `AsyncCommand::append()` | method | src/State/AsyncCommand.php:294 |
-| `AsyncCommand::retry()` | method | src/State/AsyncCommand.php:343 |
-| `AsyncCommand::cancel()` | method | src/State/AsyncCommand.php:363 |
-| `AsyncCommand::dispose()` | method | src/State/AsyncCommand.php:385 |
+| `AsyncCommand::append()` | method | src/State/AsyncCommand.php:291 |
+| `AsyncCommand::retry()` | method | src/State/AsyncCommand.php:340 |
+| `AsyncCommand::cancel()` | method | src/State/AsyncCommand.php:360 |
+| `AsyncCommand::dispose()` | method | src/State/AsyncCommand.php:382 |
 | `Cell` | class | src/State/Cell.php:9 |
 | `Cell::setIfChanged()` | method | src/State/Cell.php:76 |
 | `Subject` | class | src/State/Subject.php:9 |

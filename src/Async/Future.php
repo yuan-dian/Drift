@@ -210,17 +210,22 @@ final class Future
      *   （根被取消 ⇒ 永不结算 ⇒ 另一处的 `then` 同样不跑），本机制只是顺手把
      *   "活"也停掉。⇒ 真正的规矩仍然是那条**独有**契约（`AsyncCommand::make()`）：
      *   一条根 Future 只有一个主人，要复用就复用**结果**，不要复用 Future。
-     * ★ 生产者（**只有这几处**，前两处真停、其余只能不交付）：
-     *   - `Future::all()` / `race()` —— 取消落选者；**聚合体自己被取消时，同样把
-     *     取消转给全部入参**（2026-10-31：否则"取消一个组合请求"等于没取消）；
-     *   - `SyncTaskHost` / `PumpHost::pumpTasks()` 这一路：任务本来就在 UI 线程
-     *     上按帧跑，"不交付"就等于真停；
-     *   - `ProcessTaskHost` —— 摘出**还没发出去**的排队项。已发给 worker 的停不了
-     *     （杀进程要重拉、还会丢在途状态），只做"不交付"；
+     * ★ 生产者（**只有这几处** —— 分档按"能停到哪一步"，不按"谁的钩子更多"）：
+     *   - `ProcessTaskHost` —— **唯一能做到"少干活"的**：摘掉**还没发出去**的排队项
+     *     （那条任务永远不会开始）。已发给 worker 的停不了（杀进程要重拉、还会丢
+     *     在途状态），只做"不交付"；
      *   - `ThreadTaskHost` —— **只能"不交付"**：任务已经交给 C++ worker 了，
      *     摘不出来（`core/io_pool.cc` 的队列不在 PHP 侧）。
      *     ★ 但它**不减记账**：`pending()` 仍算这条，直到结果行真的回来 ——
-     *       掉到 0 帧时钟就睡死，那条结果会一直躺在完成队列里。
+     *       掉到 0 帧时钟就睡死，那条结果会一直躺在完成队列里；
+     *   - `SyncTaskHost` —— **没有钩子**。它的 `submit()` 里 `Job::run()` 已经跑完
+     *     （同步后端），取消能做的只有"别把那条已经算好的结果交出去"。
+     *     ★ 2026-10-31 这里曾写着"同步那一路按帧跑，不交付就等于真停"——**假的**：
+     *       活已经干完了，停的是交付，不是计算。这句话是删分片时顺手改坏的，
+     *       本轮订正（`ASYNC-ARCH-2026-10-31.md` §13.2）；
+     *   - `Future::all()` / `race()` —— 自己不干活，只把取消**转给全部入参**
+     *     （2026-10-31：否则"取消一个组合请求"等于没取消）。⇒ 它属于"剪枝"，
+     *     最终落到上面三档之一。
      *   ★ 2026-10-30 之前这里写着"`ProcessTaskHost` 用它杀在途 worker 任务"——
      *     **没有任何后端传过钩子**，`cancel()` 在真实任务上是纯空操作。契约说谎
      *     比没有这个能力更糟：调用方以为停了，实际每帧还在烧预算。
@@ -254,6 +259,51 @@ final class Future
     }
 
     /**
+     * `all()` / `race()` 的共同前置：**校验 + 收集 + "有没有真任务"**。
+     *
+     * ★ 为什么要抽（2026-10-31）：这两个方法的前 12 行原先是**逐字相同**的两份
+     *   （校验消息里只差方法名）。而这几行里藏着两条容易改歪的规则：
+     *   ① 键必须原样保留（`all()` 的结果按入参键序返回，`list` 更要紧）；
+     *   ② `$anyTask` 只看**入参本身**有没有真任务，不看外面包了什么。
+     *   同一个判据抄两遍，改错一遍不报错 —— 只会让"失败没人接"漏喊或误喊。
+     *
+     * @param array<array-key, self> $futures
+     * @param string $method 只用于报错消息（`all` / `race`）
+     *
+     * @return array{0: array<array-key, self>, 1: bool}
+     */
+    private static function collect(array $futures, string $method): array
+    {
+        $list = [];
+        $anyTask = false;
+
+        foreach ($futures as $key => $future) {
+            if (!$future instanceof self) {
+                throw new \InvalidArgumentException(
+                    'Future::' . $method . '() 只接受 Future —— 下标 ' . (string) $key
+                );
+            }
+
+            $list[$key] = $future;
+            $anyTask = $anyTask || $future->task;
+        }
+
+        return [$list, $anyTask];
+    }
+
+    /**
+     * 把取消转给每一条入参（`all()` / `race()` 唯一需要的"批量操作"）。
+     *
+     * @param array<array-key, self> $list
+     */
+    private static function cancelAll(array $list): void
+    {
+        foreach ($list as $other) {
+            $other->cancel();
+        }
+    }
+
+    /**
      * 全部成功才算成功，结果是**与入参同键同序**的数组；总耗时 ≈ 最慢的那条。
      *
      * ★ 任一条失败 ⇒ 整条失败，且**其余被 `cancel()`**（不留无人认领的后台活）。
@@ -273,23 +323,11 @@ final class Future
      */
     public static function all(array $futures): self
     {
-        $list = [];
-        $anyTask = false;
-
-        foreach ($futures as $key => $future) {
-            if (!$future instanceof self) {
-                throw new \InvalidArgumentException('Future::all() 只接受 Future —— 下标 ' . (string) $key);
-            }
-
-            $list[$key] = $future;
-            $anyTask = $anyTask || $future->task;
-        }
+        [$list, $anyTask] = self::collect($futures, 'all');
 
         // ★ 引用捕获：钩子可能在 `$list` 建好之后才被调（`cancel()` 永远是之后的事）
         $all = new self(static function () use (&$list): void {
-            foreach ($list as $other) {
-                $other->cancel();
-            }
+            self::cancelAll($list);
         });
 
         if ($list === []) {
@@ -320,9 +358,8 @@ final class Future
 
                 $all->resolve($ordered);
             })->catch(static function (\Throwable $error) use ($all, $list): void {
-                foreach ($list as $other) {
-                    $other->cancel();
-                }
+                // ★ 任一条失败 ⇒ 其余全部取消（不留无人认领的后台活）
+                self::cancelAll($list);
 
                 $all->reject($error);
             });
@@ -354,22 +391,10 @@ final class Future
      */
     public static function race(array $futures): self
     {
-        $list = [];
-        $anyTask = false;
-
-        foreach ($futures as $key => $future) {
-            if (!$future instanceof self) {
-                throw new \InvalidArgumentException('Future::race() 只接受 Future —— 下标 ' . (string) $key);
-            }
-
-            $list[$key] = $future;
-            $anyTask = $anyTask || $future->task;
-        }
+        [$list, $anyTask] = self::collect($futures, 'race');
 
         $winner = new self(static function () use (&$list): void {
-            foreach ($list as $other) {
-                $other->cancel();
-            }
+            self::cancelAll($list);
         });
 
         foreach ($list as $future) {
@@ -378,9 +403,7 @@ final class Future
                     return;
                 }
 
-                foreach ($list as $other) {
-                    $other->cancel();
-                }
+                self::cancelAll($list);
 
                 $winner->resolve($value);
             })->catch(static function (\Throwable $error) use ($winner, $list): void {
@@ -388,9 +411,7 @@ final class Future
                     return;
                 }
 
-                foreach ($list as $other) {
-                    $other->cancel();
-                }
+                self::cancelAll($list);
 
                 $winner->reject($error);
             });
@@ -434,15 +455,21 @@ final class Future
      */
     public function reject(\Throwable $error): void
     {
-        $this->rejectCore($error, true);
+        $this->rejectCore($error);
     }
 
     /**
-     * 内部结算为失败：`$report` 决定"没人接"时要不要喊。
+     * 内部结算为失败（`reject()` 与链上传播的唯一落点）。
      *
-     * ★ 链式传播时必须是 `false`：喊一次就够，否则一个失败会刷 N 条 Fatal。
+     * ★★ **这里曾经有一个 `bool $report` 参数**，注释写着"链式传播时传 `false`，
+     *   喊一次就够，否则一个失败会刷 N 条 Fatal"。但**没有任何一处传过 `false`**
+     *   （两个调用点都是 `true`）⇒ 判据 `&& $report` 恒真，那句话描述的是一个
+     *   不存在的机制。2026-10-31 删掉参数，判据只剩两个真的：
+     *   **① `$links === []`（没人挂过任何回调）；② `$this->task`（只有任务才喊，
+     *   纯值不喊）**。链式传播不会重复喊，原因不是那个参数，而是"只有链末端
+     *   才满足 ①"—— 中间节点都有 `$links`。
      */
-    private function rejectCore(\Throwable $error, bool $report): void
+    private function rejectCore(\Throwable $error): void
     {
         if ($this->state !== self::PENDING || $this->cancelled) {
             return;
@@ -459,12 +486,13 @@ final class Future
         //   err 处理器，可错误会**传到** `$n1`，而 `$n1` 有 `catch`。只看直连就会
         //   在 `$f` 上喊 Fatal，把一条正常处理的链判成事故。
         //   ⇒ 判据是"**链的末端**没人接"：没有链（没人挂过任何回调）⇒ 现在就喊；
-        //     有链 ⇒ 让错误继续往下走，由末端的 `rejectCore()` 决定（见下面的
-        //     `$links === []` 分支）。`$report` 只用来屏蔽"已经喊过"的重复传播。
+        //     有链 ⇒ 让错误继续往下走，由末端的 `rejectCore()` 决定 —— 而末端
+        //     的 `$links` 同样为空，于是走的还是同一句判断。**"只喊一次"是结构
+        //     保证的**（中间节点必有 `$links`），不需要额外的去重标志。
         // ★★ 再加一条闸：**只有任务才喊**（`$task`）。值（`Future::rejected()`
         //   造的那个、`all`/`race` 的聚合体）在构造那一瞬 `$links` 必然为空，
         //   拿"没人接"去判它就是把正常写法判成事故。
-        if ($links === [] && $report && $this->task) {
+        if ($links === [] && $this->task) {
             Errors::report(\sprintf(
                 '异步任务失败且没有 catch() —— %s: %s',
                 \get_class($error),
@@ -543,8 +571,8 @@ final class Future
                 return;
             }
 
-            // ★ `true`：把"要不要喊 Fatal"的决定权交给链的末端（`links === []` 才喊）
-            $next->rejectCore($arg instanceof \Throwable ? $arg : new \RuntimeException('未知失败'), true);
+            // ★ 决定权在链的末端：`rejectCore()` 只在 `links === []` 时喊。
+            $next->rejectCore($arg instanceof \Throwable ? $arg : new \RuntimeException('未知失败'));
 
             return;
         }
@@ -552,10 +580,10 @@ final class Future
         try {
             $result = $fn($arg);
         } catch (\Throwable $e) {
-            // ★ **回调自己抛异常 = 调用方的 bug**，不是"任务失败" ⇒ 走 `true`：
-            //   下游有 `catch()` 就交给它，没有就走 Fatal 序列（与改造前
+            // ★ **回调自己抛异常 = 调用方的 bug**，不是"任务失败" ⇒ 与任务失败
+            //   走同一条：下游有 `catch()` 就交给它，没有就走 Fatal 序列（与改造前
             //   `PumpHost::pumpTasks()` 的 try/catch 同一条规矩：不许静默吞）。
-            $next->rejectCore($e, true);
+            $next->rejectCore($e);
 
             return;
         }

@@ -81,13 +81,17 @@ final class ThreadTaskHost implements TaskHost
      *   ⇒ 剩余只能由本类保管，下一帧**先交它、再问池子要新的**（顺序不能反：
      *   积压里的结果完成的更早）。
      *
-     * ★ 它们的 Future 仍留在 `$this->inflight` 里（`deliverRow()` 才 `unset`）
-     *   ⇒ `pending()` **天然**把积压算进去了，不需要额外加一项。
-     *   这是"记账晚一步"换来的好处。
+     * ★★ **2026-10-31：从 `list<array>` 换成 {@see CompletionQueue}**。原先这里
+     *   是一个 `array` + 一个私有 `deliverRows()`，而那个方法**逐字重写了
+     *   `CompletionQueue::drain()` 的三条契约**（首条无条件放行 / 剩余回队头 /
+     *   回调抛异常也不丢）—— 第七轮收掉三份交付循环时漏下的第四份。
+     *   换过来之后：积压与"新批次"进**同一个队列**，顺序由 `push()` 的位置保证
+     *   （旧的在前），预算与 `finally` 只有一份实现。
      *
-     * @var list<array<string, mixed>>
+     * ★ 记账：行从原生池取出时就 `unset($this->inflight[$id])` 并压进本队列 ⇒
+     *   `pending()` 把两者相加，**总数不变**（"记账晚一步"变成"记账搬一步"）。
      */
-    private array $backlog = [];
+    private CompletionQueue $backlog;
 
     /** 任务号（只增不减；结果行里的 `id` 原样来回，靠它对账） */
     private int $seq = 0;
@@ -103,6 +107,7 @@ final class ThreadTaskHost implements TaskHost
     public function __construct(private readonly int $threads = 4)
     {
         $this->failed = new CompletionQueue();
+        $this->backlog = new CompletionQueue();
     }
 
     public function submit(Job $job): Future
@@ -156,12 +161,14 @@ final class ThreadTaskHost implements TaskHost
      *   本后端正常态是"有活也能睡"（worker 会 `PostMessageW` 叫醒）；只有**有积压**时
      *   才需要以帧节奏回来续交 —— 见 `needsPolling()`。
      *
-     * ★ 积压（`$this->backlog`）**不用**在这里额外加：那些结果对应的 Future 仍在
-     *   `$this->inflight` 里（`deliverRow()` 才 `unset`）⇒ 已经数进去了。
+     * ★ 积压（`$this->backlog`）**必须**在这里加上（2026-10-31）：行从原生池取出时
+     *   就出了 `$inflight`（结果已经在手上，不再"在途"）⇒ 不加这一项，交不完的那批
+     *   会让 `pending()` 掉到 0 ⇒ `hasAsync()` 假 ⇒ 帧循环停 ⇒ **积压永远交不出去**。
+     *   加完之后总数与改造前一致（`inflight` 减几，`backlog` 就加几）。
      */
     public function pending(): int
     {
-        return \count($this->inflight) + $this->failed->count();
+        return \count($this->inflight) + $this->failed->count() + $this->backlog->count();
     }
 
     /**
@@ -179,15 +186,13 @@ final class ThreadTaskHost implements TaskHost
      */
     public function needsPolling(): bool
     {
-        return $this->backlog !== [];
+        return !$this->backlog->isEmpty();
     }
 
     public function drain(callable $onEach, ?int $budgetMs = null): void
     {
         // ★ 预算基准点只取一次：failed / 积压 / 新批次三段共用（否则是预算的三倍）。
-        $deadline = $budgetMs === null || $budgetMs <= 0
-            ? 0
-            : \hrtime(true) + $budgetMs * 1_000_000;
+        $deadline = CompletionQueue::deadline($budgetMs);
 
         // ★ 发不出去的那些**先结算**：它们比在途的更早（`submit()` 时就定了）。
         // ★ 超预算之后仍然往下走（积压 / 新批次），不是 `return` —— 那两段用的是
@@ -195,12 +200,9 @@ final class ThreadTaskHost implements TaskHost
         $this->failed->drain($onEach, $deadline);
 
         // ① 先交**上一帧的积压** —— 它们完成的更早，顺序必须优先于新批次。
-        if ($this->backlog !== []) {
-            $this->deliverRows($this->backlog, $onEach, $deadline);
-
-            if ($this->backlog !== []) {
-                return;   // 预算用完：这一帧到此为止（原生池这边不用问，也不该问）
-            }
+        //   ★ 交不完 ⇒ 这一帧到此为止（原生池那边不用问，也不该问：这一批还没完）。
+        if (!$this->backlog->drain($onEach, $deadline)) {
+            return;
         }
 
         if (!$this->started) {
@@ -219,77 +221,57 @@ final class ThreadTaskHost implements TaskHost
             throw new \RuntimeException('ThreadTaskHost：IO 池回包不是 JSON —— ' . $raw);
         }
 
-        $this->deliverRows($rows, $onEach, $deadline);
-    }
+        // ② 新批次压到**队尾**（积压可能还有，但上面那一句已经保证它是空的）⇒
+        //   同一个 `drain()` 交付，顺序 = 完成顺序。
+        foreach ($rows as $row) {
+            $completion = $this->completionFor($row);
 
-    /**
-     * 交付一批完成事件；超预算就把**剩余留在 `$this->backlog`**。
-     *
-     * ★ 为什么要 `try/finally` 而不是裸 `foreach`：`$onEach` 里抛异常时，
-     *   剩下的行**必须**留着 —— 丢了就是"Future 永不结算 + 页面永远转圈"。
-     *   这是本方法唯一需要 finally 的理由。
-     *
-     * @param array<int, array<string, mixed>> $rows
-     * @param int $deadline `hrtime` 纳秒截止点；`0` = 不限
-     */
-    private function deliverRows(array $rows, callable $onEach, int $deadline): void
-    {
-        $rows = \array_values($rows);
-        $total = \count($rows);
-        $done = 0;
-
-        $this->backlog = [];
-
-        try {
-            foreach ($rows as $i => $row) {
-                // 契约①：首条无条件放行（`$i > 0`）。
-                if ($deadline > 0 && $i > 0 && \hrtime(true) >= $deadline) {
-                    return;   // `finally` 回填剩余
-                }
-
-                $this->deliverRow($row, $onEach);
-                $done = $i + 1;
+            if ($completion !== null) {
+                $this->backlog->push($completion);
             }
-        } finally {
-            // 正常走完 ⇒ `$done === $total` ⇒ 无积压；
-            // 超预算 / 回调抛异常 ⇒ 剩余留在 `backlog`，下一帧先交它。
-            $this->backlog = $done >= $total ? [] : \array_slice($rows, $done);
         }
+
+        $this->backlog->drain($onEach, $deadline);
     }
 
     /**
-     * 交付单条（原 `foreach` 体，逐字搬出来）。
+     * 一行原生回包 → 一条待交付的完成事件（`null` = 不必交）。
+     *
+     * ★ **记账与"交不交"是两件事，顺序不能反**：先 `unset($this->inflight[$id])`
+     *   （这一条已经有结果了），再看 `isCancelled()`。反过来的话，被取消的任务会
+     *   永远留在 `$inflight` 里 ⇒ `pending()` 永不为 0 ⇒ 帧时钟永远空转。
+     *
+     * ★ 交付本身不在这里做 —— 预算与"剩余怎么办"全交给
+     *   {@see CompletionQueue::drain()}（2026-10-31 之前本类自己抄了一份，
+     *   见 `$backlog` 的注释）。
      *
      * @param array<string, mixed> $row
      */
-    private function deliverRow(array $row, callable $onEach): void
+    private function completionFor(array $row): ?Completion
     {
         $id = (int) ($row['id'] ?? 0);
         $future = $this->inflight[$id] ?? null;
 
         if ($future === null) {
-            return;   // 不该发生（号只增不减）；防御，不抛
+            return null;   // 不该发生（号只增不减）；防御，不抛
         }
 
-        // ★ 无论交不交，**记账要清** —— 这一条已经有结果了。
         unset($this->inflight[$id]);
 
         // ★ 取消 = "不交付"，不是"没发生"。清完账再判，顺序不能反。
         if ($future->isCancelled()) {
-            return;
+            return null;
         }
 
         if (!empty($row['ok'])) {
-            $onEach(new Completion($row['value'] ?? null, null, $future));
-
-            return;
+            return new Completion($row['value'] ?? null, null, $future);
         }
 
-        $onEach(new Completion(
+        return new Completion(
             null,
             new \RuntimeException((string) ($row['error'] ?? 'IO 处理函数未给出错误信息')),
             $future,
-        ));
+        );
     }
 
     /**

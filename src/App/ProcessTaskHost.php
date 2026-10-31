@@ -312,10 +312,9 @@ final class ProcessTaskHost implements TaskHost
     public function drain(callable $onEach, ?int $budgetMs = null): void
     {
         // ★ 预算的基准点只取**一次**：三段（failed / readReplies / 簿记）共用它，
-        //   否则每段各算一次，总耗时就是预算的三倍。
-        $deadline = $budgetMs === null || $budgetMs <= 0
-            ? 0
-            : \hrtime(true) + $budgetMs * 1_000_000;
+        //   否则每段各算一次，总耗时就是预算的三倍。换算式见
+        //   `CompletionQueue::deadline()`（三个后端同一处）。
+        $deadline = CompletionQueue::deadline($budgetMs);
 
         // ★ 发不出去的那些**先结算**：它们比在途的更早（`submit()` 时就定了），
         //   而且结算顺序影响"同一帧里谁先看到失败"。

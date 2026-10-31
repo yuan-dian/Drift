@@ -143,10 +143,9 @@ final class SyncTaskHost implements TaskHost
             return;
         }
 
-        // ★ 预算基准点只取一次（三段共用，否则是预算的三倍）
-        $deadline = $budgetMs === null || $budgetMs <= 0
-            ? 0
-            : \hrtime(true) + $budgetMs * 1_000_000;
+        // ★ 预算基准点只取一次（三段共用，否则是预算的三倍）；换算式见
+        //   `CompletionQueue::deadline()`（三个后端同一处）。
+        $deadline = CompletionQueue::deadline($budgetMs);
 
         // ★ 三条规则（至少交一条 / 剩余回队头 / 回调抛异常也不丢）全在
         //   `CompletionQueue::drain()` —— 三个后端共用**同一份**算法。
