@@ -2993,6 +2993,10 @@ public function submitSliced(SlicedJob $job, callable $onDone, ?callable $onErro
 完成后出队且不再步进 / 单步 < 5ms / 未完不回调 / 完成回调改 Store 同帧重建 / step 抛 ⇒ onError 且出队）；
 两连反例自检全中（分片挪到 settle 之后 ⇒ 同帧重建红，`builds 2→2 seen=60`；未完成任务不回填 ⇒ `steps=1 done=NULL`）。
 ★ **未做**：取消（`cancel()`）—— 没有"页面销毁"事件把它接上，先登记为缺口。
+（**2026-10-31 更新**：缺口已闭 —— `submitSliced()` 现在返回 `Future`，取消会**真的
+把分片摘出队列**（此后不再 `step()`），页面侧由 `State::asyncCommand()` /
+`dropCommands()` 在 `unmount()` 时统一兜底。判据在 smoke 的「N3 · cancel() 当场摘出
+队列」与「N3 · 帧内取消」两条。上面的原文保留作历史记录。）
 #### 17.4.4 `IoPoller`（非阻塞 I/O，P2）
 
 ```php
