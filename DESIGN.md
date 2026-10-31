@@ -1444,6 +1444,15 @@ final class SignupCommands implements CommandHandler
 > ```
 >
 > ★ 下面这段原文保留作**历史记录**，不要再照它写新代码。
+>
+> ★ **2026-10-31 追加两条**（见 `docs/ASYNC-DX-2026-10-30.md` §10）：
+> ① `AsyncValue` 的**载荷可跨状态存活**（`carriedFrom()` / `hasValue()` /
+>    `isRefreshing()`）⇒ 刷新与翻页时列表**不再闪空**，`fold()` 把"刷新中"路由到
+>    `data` 支（`loading` 支因此只表示首屏）。
+> ② **"读 Store 的地方必须在 `select` 之内"这条纪律终于有了判据**：`UsersPage` 的
+>    「刷新」按钮原先直接在 `build()` 里读 `$store->page()->isRunning()`，而页面是
+>    `StatelessWidget`（`build()` 只跑一次）⇒ 首屏正在取数那一刻的 `true` 被永久
+>    浇筑进控件，按钮**再也不亮**。见 `tests/Feature/Widget/UsersRefreshButtonTest.php`。
 
 ```php
 enum LoadStatus: int { case Idle = 0; case Loading = 1; case Ready = 2; case Error = 3; }
