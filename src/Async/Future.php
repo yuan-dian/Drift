@@ -194,6 +194,22 @@ final class Future
      * ★ 语义边界必须说清：`cancel()` 只做两件事 —— ① 调后端的取消钩子（能停就停）；
      *   ② 把本 Future 标成"结果不要了"，此后迟到的 `resolve()` 被忽略。
      *   它**不会**让 Future 变成失败（"取消"不是错误，不该逼调用方写 `catch`）。
+     *
+     * ★★ **取消沿派生链上溯到根任务**（2026-10-31）：`then()` / `catch()` 造出来的
+     *   那条，取消钩子指向**它的上游**（见 `chain()`）⇒ `$submit(...)->then($decode)`
+     *   被取消时，被取消的不只是"派生的那条"，**根任务的钩子也会被调到**
+     *   （排队项被摘、分片被摘）。这是上一版缺的那一半 —— 当时只有 `all`/`race`
+     *   聚合体传播，`then` 这条**最常用的派生**反而是断的，于是应用只能绕：
+     *   `UserStore::fetch()` 曾经刻意返回"根 Future"、把 hydrate 挪到
+     *   `absorb()`，注释写着"取消链下游不回溯上游"。这不是风格问题，是**契约
+     *   在派生上失效**：调用方写的是同义的两种表达，一种能停、一种静默不停。
+     *
+     * ★ 由此带来的一条**边界**（也是唯一被牺牲的东西）：`Future` 的取消是
+     *   **树的剪枝**，不是"我这一枝独立"。若同一个根被两处 `then` 扇出、其中一处
+     *   取消了它，另一处也不会再收到结果 —— 但那在**没有**本机制时就已经坏了
+     *   （根被取消 ⇒ 永不结算 ⇒ 另一处的 `then` 同样不跑），本机制只是顺手把
+     *   "活"也停掉。⇒ 真正的规矩仍然是那条**独有**契约（`AsyncCommand::make()`）：
+     *   一条根 Future 只有一个主人，要复用就复用**结果**，不要复用 Future。
      * ★ 生产者（**只有这几处**，前两处真停、其余只能不交付）：
      *   - `Future::all()` / `race()` —— 取消落选者；**聚合体自己被取消时，同样把
      *     取消转给全部入参**（2026-10-31：否则"取消一个组合请求"等于没取消）；
@@ -463,7 +479,18 @@ final class Future
     /** 挂一条链（`then` / `catch` 的唯一落点） */
     private function chain(?\Closure $ok, ?\Closure $err): self
     {
-        $next = new self();
+        // ★★ 派生出来的这条，**取消要回到上游**（2026-10-31）：链上的每一个节点
+        //   都不是任务的持有者，真正的活在上游的根上。不这么接，`cancel()` 在
+        //   "派生"这条路上就只是把本节点标一下 —— 而 `AsyncCommand` 换参数时
+        //   取消的正是 `$task` 返回的那条（应用很自然写成 `submit()->then($f)`）。
+        //   ⇒ 取消因此沿着钩子一路走到根（根上的钩子才是后端那把"真停"）。
+        // ★ 闭包捕获 `$parent`（本方法的 `$this`）而不是用 `$this` 的隐式绑定：
+        //   写在 `new self(...)` 的实参里时两者碰巧都指向父，但那是**求值时机**
+        //   的巧合；显式捕获读起来没有第二种解释。
+        $parent = $this;
+        $next = new self(static function () use ($parent): void {
+            $parent->cancel();
+        });
         // ★ 下游继承"是任务" —— 否则 `submit()->then()` 漏 `catch()` 的那条
         //   会在链末端静默（判据只看链末端有没有人接，见 `rejectCore()`）
         $next->task = $this->task;
@@ -545,6 +572,17 @@ final class Future
     /** 把本 Future 的结算原样转给 `$next`（摊平用；已结算则立刻转） */
     private function forwardTo(self $next): void
     {
+        // ★★ 摊平 ⇒ 取消的**目标要改指内层**（2026-10-31）：`then` 的回调返回另一条
+        //   Future 时，真正在跑的是它。`$next` 原来的钩子指向外层，而外层此刻
+        //   **已经结算**（`apply()` 只有在父成功时才走到这里）⇒ 那个钩子是空转，
+        //   必须换成内层，否则"取 A 再用 A 的 id 取 B"取消后 B 照跑。
+        // ★ 覆盖是安全的：此刻 `$next` 还没交回给调用方（`chain()` 里
+        //   `settleLink()` 跑完才 `return $next`），不存在"别人已经拿着它"的窗口。
+        $inner = $this;
+        $next->onCancel = static function () use ($inner): void {
+            $inner->cancel();
+        };
+
         if ($this->state === self::PENDING) {
             $this->links[] = ['ok' => null, 'err' => null, 'next' => $next];
 

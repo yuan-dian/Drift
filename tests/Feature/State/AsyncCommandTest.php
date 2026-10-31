@@ -280,8 +280,11 @@ final class AsyncCommandTest extends SmokeTestCase
      * 换请求 ⇒ 旧的那条被真的 `cancel()`，且它迟到的结果**不落地**。
      *
      * ★ "旧结果盖新数据"是异步 UI 的经典静默故障：界面一直显示正常，只是数据是
-     *   上一页的，没有任何报错。命令靠两道闸堵它 —— ① 真的 `cancel()`（`Future`
-     *   此后忽略结算）；② 代号（迟到的落地请求直接丢弃）。
+     *   上一页的，没有任何报错。命令**只有一道闸**：真的 `cancel()` ——
+     *   `Future::resolve()` 的第一句就查取消位 ⇒ 迟到结果**永不结算**。
+     *   ★ 上一版这里写着"② 代号（迟到的落地请求直接丢弃）"：那是 `FutureBuilder`
+     *     时代的两道闸（它不敢取消共享的 Future，只能另配订阅代号）。命令是那条
+     *     Future 的**唯一持有者** ⇒ 代号这一类东西随 `FutureBuilder` 一起删掉了。
      */
     public function testStaleResultDoesNotOverwriteNewer(): void
     {
@@ -316,6 +319,57 @@ final class AsyncCommandTest extends SmokeTestCase
             'AsyncCommand · 新结果照常落地',
             self::last($app)->value() === '第 2 页的新数据',
             'state=' . self::states($app->snapshots),
+        );
+
+        $this->flushChecks();
+    }
+
+    /**
+     * `$task` 返回**派生**出来的 Future（`$root->then($decode)`）时，取消仍到得了后端。
+     *
+     * ★★ 这是"取消只做对了一半"的应用侧判据：`all`/`race` 早就传播了，而 `then()`
+     *   —— 最常用的那种派生 —— 之前是断的。`$task` 里 `submit()->then($decode)` 是
+     *   再自然不过的写法，可上一版它等于让取消静默落空（排队项照发、worker 白跑）。
+     * ★ 判据落在**根上的取消钩子**（后端真停的地方），不落"派生那条 isCancelled()"：
+     *   后者在断掉的实现里**也为真**，测不出任何东西。
+     * ★ 后半段同时钉住"派生没把正常路径搞坏"：`then()` 的返回值必须成为 `data`。
+     */
+    public function testCancelReachesBackendThroughDerivedFuture(): void
+    {
+        $stops = 0;
+        $made = [];
+        [$app, $constraints] = self::boot(static function (mixed $arg) use (&$made, &$stops): Future {
+            $root = Future::pending(function () use (&$stops): void {
+                $stops = $stops + 1;
+            });
+            $made[] = $root;
+
+            return $root->then(static fn(mixed $raw): string => 'decoded:' . (string) $raw);
+        });
+
+        $command = $app->pageState()->command();
+        $command->run(1);
+        $app->frame(32.0, $constraints);
+
+        check('AsyncCommand · 派生任务刚发起时没人取消（正对照）', $stops === 0, 'stops=' . $stops);
+
+        $command->run(2);           // 换页 ⇒ 作废旧请求
+        $app->frame(48.0, $constraints);
+
+        check(
+            'AsyncCommand · 取消沿派生链回到根（后端钩子被调，worker 才停得下来）',
+            $stops === 1,
+            'stops=' . $stops,
+        );
+        check('AsyncCommand · 根自己的 isCancelled() 也是真', $made[0]->isCancelled());
+
+        $made[1]->resolve('第 2 页');
+        $app->frame(64.0, $constraints);
+
+        check(
+            'AsyncCommand · 派生链的解码结果就是 data（`then()` 的返回值原样落地）',
+            self::last($app)->value() === 'decoded:第 2 页',
+            'value=' . \json_encode(self::last($app)->value()),
         );
 
         $this->flushChecks();

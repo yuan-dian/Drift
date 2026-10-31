@@ -247,6 +247,71 @@ final class FutureTest extends SmokeTestCase
     }
 
     /**
+     * 取消沿**派生链**上溯到根任务（`then` / `catch` / 摊平，三条路）。
+     *
+     * ★★ 这是"取消只做对了一半"的第二处破口：上一轮补的是 `all`/`race`（聚合体
+     *   自己的钩子），而 `then()` 走的是 `chain()` —— **两条路互不相干**。只测一条
+     *   会让另一条静默退化，而退化的表现不是报错：`AsyncCommand` 换参数时取消的
+     *   是 `$task` 返回的那条，若它是 `submit()->then($decode)`，取消就停在派生节点上，
+     *   排队项照发、worker 白跑一趟、结果回来没人要（界面**看不出任何异常**）。
+     * ★ 判据落在**根上的取消钩子**（后端真停的地方），不落"派生那条 isCancelled()"：
+     *   后者在断掉的实现里**也为真**（自己标一下而已），测不出任何东西。
+     * ★ 三条都要断：`then` / `catch` 共用 `chain()`，摊平走 `forwardTo()` —— 摊平那条
+     *   是**另一处**赋值（`$next` 的钩子要改指内层），漏了就是"取 A 再用 A 取 B"取消后
+     *   B 照跑。
+     */
+    public function testCancelPropagatesUpThroughDerivedChain(): void
+    {
+        $stopped = 0;
+        $root = Future::pending(function () use (&$stopped): void {
+            $stopped = $stopped + 1;
+        });
+        $derived = $root->then(static fn(mixed $v): mixed => $v);
+
+        $derived->cancel();
+        check('Future · 取消 `then()` 的产物 ⇒ 根上的取消钩子被调到', $stopped === 1, 'stopped=' . $stopped);
+        check(
+            'Future · 根与派生两条都标记为已取消（记账与"真停"一致）',
+            $root->isCancelled() && $derived->isCancelled(),
+            'root=' . var_export($root->isCancelled(), true) . ' derived=' . var_export($derived->isCancelled(), true),
+        );
+
+        // 两级：`then()->catch()`（`catch` 与 `then` 共用 `chain()`，但闭包不同）
+        $stopped2 = 0;
+        $root2 = Future::pending(function () use (&$stopped2): void {
+            $stopped2 = $stopped2 + 1;
+        });
+        $two = $root2->then(static fn(mixed $v): mixed => $v)->catch(static fn(\Throwable $e): mixed => null);
+        $two->cancel();
+        check('Future · 两级派生（then→catch）同样上溯到根', $stopped2 === 1, 'stopped=' . $stopped2);
+
+        // 摊平：回调返回另一条 Future ⇒ 取消外层必须停住**内层**
+        $inner = 0;
+        $innerFuture = Future::pending(function () use (&$inner): void {
+            $inner = $inner + 1;
+        });
+        $outerRoot = Future::pending();
+        $outer = $outerRoot->then(static fn(mixed $v): Future => $innerFuture);
+        $outerRoot->resolve(1);          // 回调跑 ⇒ 摊平到内层，此后取消的目标是内层
+        $outer->cancel();
+        check('Future · 摊平后取消外层 ⇒ 内层被取消（"取 A 再用 A 取 B"停得住）', $inner === 1, 'inner=' . $inner);
+
+        // 正对照：不取消就照常交付（上溯不能顺手把正常路径掐掉）
+        $seen = [];
+        $root3 = Future::pending();
+        $d3 = $root3->then(static function (mixed $v) use (&$seen): int {
+            $seen[] = $v;
+
+            return (int) $v * 2;
+        });
+        $root3->resolve(21);
+        $d3->then(static function (mixed $v) use (&$seen): void {
+            $seen[] = $v;
+        });
+        check('Future · 没取消时派生链照常交付（21 ⇒ 42）', $seen === [21, 42], \json_encode($seen));
+    }
+
+    /**
      * 在**已结算**的 Future 上挂回调 ⇒ 立刻跑。
      *
      * ★ `all` / `race` 的组合器会反复挂到"可能已经好了"的 Future 上；不支持这条，

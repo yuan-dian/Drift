@@ -63,30 +63,4 @@ final class UserSeed
 
         return $out;
     }
-
-    /**
-     * `User` 实例 → 原始数组（{@see self::hydrate()} 的反方向）。
-     *
-     * ★ 存在的理由：**两条取数路径必须回同一种形态**。后台路径回的是 worker 的
-     *   JSON 数组，同步路径（`$src->fetchPage()`）回的是 `User` 对象 —— 若不统一，
-     *   "原始数据 → 行"这一步就得在两处各写一遍、且各自判断"这次来的是哪种"。
-     *   同步路径在这里降到原始形态 ⇒ 落地只有 {@see self::hydrate()} 一处。
-     *
-     * @param list<User> $users
-     *
-     * @return list<array{id: int, name: string, email: string}>
-     */
-    public static function dehydrate(array $users): array
-    {
-        $out = [];
-        foreach ($users as $u) {
-            if (!$u instanceof User) {
-                continue;
-            }
-
-            $out[] = ['id' => $u->id, 'name' => $u->name, 'email' => $u->email];
-        }
-
-        return $out;
-    }
 }

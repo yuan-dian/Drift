@@ -41,8 +41,10 @@ use App\Users\Jobs\FetchUsersJob;
  *
  * - 有 `TaskHost` ⇒ 提交 `FetchUsersJob` 到后台（**真异步**：进程池 / 同步队列都行）；
  * - 没有 ⇒ 老路 `$src->fetchPage()`（同步，解释器与旧测试用）。
- *   ★ 两条路都回**同一种形态**（原始数组，见 `UserSeed::dehydrate()`）⇒
- *   "原始数据 → `User`"只在 `absorb()` 一处发生。
+ *   ★ 两条路都交 `list<User>` 给命令：同步源给的就是对象，后台回的是 JSON
+ *   （唯一的跨进程形态）⇒ **解码只有一处**（`fetch()` 里那个 `then()`），
+ *   `absorb()` 只做赋值。以前为了"统一成原始数组"多写了一个
+ *   `UserSeed::dehydrate()`（同步路径降级 → 再由 absorb 升回来，一趟往返）。
  *   ★ 这也是 §11.5 那条结论的兑现："`loading` 只在同步 IO 下不可见" —— 走后台后它
  *     真的能被用户看到（mock 后端故意慢 1.2 秒）。
  */
@@ -169,6 +171,13 @@ final class UserStore extends Subject
      *   出口在 `then/catch` 上，绕过它 ⇒ 三态、去重、取消又各走各的。
      * ★ 同步路径失败用 `Future::rejected()`：路径不同、出口相同（以前是
      *   `applyPage(false, [], $error)`，现在是"一条被拒的 Future"）。
+     *
+     * ★ 两条路都交 `list<User>`（见类注释）⇒ 命令的 `data` 载荷就是行，
+     *   `absorb()` 不再需要认识"原始数组"。
+     * ★★ 后台路径**派生**（`submit()->then(...)`）是 2026-10-31 之后才合法的
+     *   写法：上一版这里刻意回"根 Future"、把 hydrate 留到 `absorb()`，注释写着
+     *   "取消链下游不回溯上游"。那条限制已经修掉（`Future::cancel()` 现在沿链
+     *   回到根）⇒ 派生出来的这条对在途任务**真的**有效，绕行代码随之消失。
      */
     private function fetch(int $page): Future
     {
@@ -177,16 +186,17 @@ final class UserStore extends Subject
             // 同步路径（解释器 / 没装后台端口的应用）
             $r = $this->src->fetchPage($page);
 
+            // ★ 同步源给的**就是** `User`（`Page::items`）⇒ 不需要"降到原始数组
+            //   再由 absorb 升回来"那一趟往返（`UserSeed::dehydrate()` 因此删除）。
             return $r->ok
-                ? Future::resolved(UserSeed::dehydrate($r->items))
+                ? Future::resolved($r->items)
                 : Future::rejected(new \RuntimeException($r->error));
         }
 
-        // ★ 后台路径：回**根** Future（`submit()` 的返回值），不是 `then()` 的产物
-        //   —— 取消链下游不回溯上游 ⇒ 取消派生出来的那条对在途任务毫无作用。
-        //   命令是这条根 Future 的唯一持有者 ⇒ 它敢 `cancel()`，迟到的旧结果因此
-        //   永不结算（smoke 的「陈旧响应」断言就是这条）。
-        return $host->submit(new FetchUsersJob($page, $this->apiBase));
+        // ★ 后台路径只有**一个**跨边界形态：JSON 数组（`FetchUsersJob` 回的）
+        //   ⇒ 解码就写在这一个 `then()` 里，别处不再判"这次来的是哪种"。
+        return $host->submit(new FetchUsersJob($page, $this->apiBase))
+            ->then(static fn (mixed $raw): array => \is_array($raw) ? UserSeed::hydrate($raw) : []);
     }
 
     /**
@@ -197,6 +207,8 @@ final class UserStore extends Subject
      * ★ 2026-10-31：`error` 现在也**带着**上一次的值（`AsyncValue::carriedFrom()`），
      *   但本方法仍以 `hasData()` 为门 —— 值没变，不必再赋值一遍（那会多推一次版本
      *   ⇒ 多一次派生值重算）。"旧内容还在"由命令保证，不是由这里兜底。
+     * ★ 载荷已经是 `list<User>`（`fetch()` 里 hydrate 过）⇒ 这里只做赋值，
+     *   `is_array` 只是因为 `AsyncValue` 的载荷类型是 `mixed`。
      * ★ 回调在**帧内**执行（`Application::frame()` 的 drain 段，在 settle 之前）
      *   ⇒ 这里的 `notifyChanged()` 会让同帧重建，看不到"空一帧"。
      */
@@ -204,8 +216,8 @@ final class UserStore extends Subject
     {
         $value = $this->page->value();
         if ($value->hasData()) {
-            $raw = $value->value();
-            $this->rows = \is_array($raw) ? UserSeed::hydrate($raw) : [];
+            $rows = $value->value();
+            $this->rows = \is_array($rows) ? $rows : [];
         }
 
         $this->notifyChanged();

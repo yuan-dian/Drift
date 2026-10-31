@@ -4611,6 +4611,36 @@ check(
 );
 $cancelPool->shutdown();
 
+// ②c-2b 派生链上的取消：`submit()->then()` 的产物也必须能摘掉**排队项**
+//
+// ★ 这是"取消只做对了一半"的真机判据：`all`/`race` 上一轮就传播了，而 `then()`
+//   —— 最常用的那种派生 —— 之前是断的。断了的表现是**静默**：排队项照发、worker
+//   白跑一趟、结果回来没人要（界面看不出任何异常，只是白烧一次 1.2s 的活）。
+// ★ 判据选"排队项真的没了"（`queuedCount()`），不选"派生那条 isCancelled()"：
+//   后者在断掉的实现里**也为真**（自己标一下而已），测不出任何东西。
+$derivedPool = new ProcessTaskHost([PHP_BINARY, $workerScript], SmokeJobRegistry::make(), 1);
+$derivedPool->submit(new NamedSleepJob(120))->then(static function ($v) { return $v; });
+$derivedSink = [];
+$derived = $derivedPool->submit(new NamedSleepJob(50))
+    ->then(static function ($v) use (&$derivedSink) {
+        $derivedSink[] = $v;
+
+        return $v;
+    });
+check(
+    'N7 · 派生链取消前：1 在途 + 1 排队',
+    $derivedPool->inFlightCount() === 1 && $derivedPool->queuedCount() === 1,
+    'inflight=' . $derivedPool->inFlightCount() . ' queued=' . $derivedPool->queuedCount(),
+);
+
+$derived->cancel();
+check(
+    'N7 · 取消派生 Future ⇒ 排队项真的被摘掉（取消沿链回到根）',
+    $derivedPool->queuedCount() === 0 && $derivedSink === [],
+    'queued=' . $derivedPool->queuedCount() . ' sink=' . json_encode($derivedSink),
+);
+$derivedPool->shutdown();
+
 // ②c-3 在途取消：**停不了，但结果不交付**（`pending()` 记账不变，避免帧时钟落闸后
 //   管道里的回包永远读不到 ⇒ worker 写满管道阻塞成僵尸）
 $inflightPool = new ProcessTaskHost([PHP_BINARY, $workerScript], SmokeJobRegistry::make(), 1);
