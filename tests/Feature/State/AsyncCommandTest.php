@@ -11,7 +11,9 @@ use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Size;
+use Drift\Widget\Element;
 use Drift\Widget\State;
+use Drift\Widget\Text;
 
 /**
  * `AsyncCommand` —— 一次异步请求的完整生命周期（发起 / 去重 / 取消 / 重试）。
@@ -67,6 +69,25 @@ final class AsyncCommandTest extends SmokeTestCase
         $snapshots = $app->snapshots;
 
         return $snapshots === [] ? null : $snapshots[\count($snapshots) - 1];
+    }
+
+    /** 夹具页面画出来的那一句（`'idle'` / `'loading'` / `'data'` / `'error'`） */
+    private static function painted(AsyncCommandApplication $app): string
+    {
+        $root = $app->root();
+        if ($root === null) {
+            return '(根都没建)';
+        }
+
+        // ★ 走真实的元素树：`fold()` 选了哪一支，只有"画出来的那句话"能证明
+        $element = findElement($root, static fn(Element $e): bool => $e->widget() instanceof Text);
+        if ($element === null) {
+            return '(没画 Text)';
+        }
+
+        $widget = $element->widget();
+
+        return $widget instanceof Text ? $widget->content() : '(画的不是 Text)';
     }
 
     /** @param list<AsyncValue> $snapshots */
@@ -280,6 +301,159 @@ final class AsyncCommandTest extends SmokeTestCase
             'AsyncCommand · retry() 用上次参数重跑（提交两次，第二次还是 7）',
             \count($made) === 2 && self::last($app)->isLoading(),
             'submitted=' . \count($made) . ' state=' . self::states($app->snapshots),
+        );
+
+        $this->flushChecks();
+    }
+
+    /**
+     * **刷新 / 翻页时上一次的值不许消失**（2026-10-31）。
+     *
+     * ## 这条钉的是什么
+     *
+     * 上一版：`run()` 发一个**不带载荷**的 `loading` ⇒ 列表整块换成转圈 ⇒
+     * 内容消失再出现。用户读到的不是"在加载"，是"卡了一下"。成熟 GUI 的解法
+     * 都一样（Riverpod `copyWithPrevious` / React Query `keepPreviousData`）：
+     * 新状态**继承**旧载荷。
+     *
+     * ★ 判据分两层，缺一不可：
+     *   ① **值**：`isLoading()` 与 `hasValue()` 同时成立，`value()` 是上一页；
+     *   ② **画出来的东西**：`fold()` 走 `data` 支 —— 只测①的话，"载荷在但页面
+     *      仍然画转圈"这种实现照样全绿（夹具的 `Text` 内容就是那一支的名字）。
+     */
+    public function testRefreshKeepsPreviousValueAndStillPaintsData(): void
+    {
+        $made = [];
+        [$app, $constraints] = self::boot(static function (mixed $arg) use (&$made): Future {
+            $made[] = Future::pending();
+
+            return $made[\count($made) - 1];
+        });
+
+        $command = $app->pageState()->command();
+        $command->run(1);
+        $app->frame(32.0, $constraints);
+        $made[0]->resolve(['page' => 1]);
+        $app->frame(48.0, $constraints);
+
+        $command->run(2);                       // 翻页：新请求发出，旧数据必须还在
+        $app->frame(64.0, $constraints);
+
+        $last = self::last($app);
+        check(
+            'AsyncCommand · 刷新中 = loading 且带着上一次的值（列表不闪空）',
+            $last->isLoading() && $last->isRefreshing() && $last->value() === ['page' => 1],
+            'state=' . self::states($app->snapshots) . ' value=' . \json_encode($last->value()),
+        );
+
+        $text = self::painted($app);
+        check(
+            'AsyncCommand · 刷新中 fold() 仍走 data 支（画内容，不画整块转圈）',
+            $text === 'data',
+            'painted=' . $text,
+        );
+
+        $made[1]->resolve(['page' => 2]);
+        $app->frame(80.0, $constraints);
+
+        check(
+            'AsyncCommand · 新结果到了就换成新的（不是只留旧的）',
+            self::last($app)->value() === ['page' => 2] && !self::last($app)->isRefreshing(),
+            'value=' . \json_encode(self::last($app)->value()),
+        );
+
+        $this->flushChecks();
+    }
+
+    /**
+     * 刷新**失败**时：错误说得出来，旧内容也还在。
+     *
+     * ★ `fold()` **不**把"带旧值的 error"路由到 `data`（与 Riverpod
+     *   `skipError: false` 一致）：失败必须被看见，否则就是"静默不刷新"——
+     *   用户以为数据是新的，其实是上一次的。
+     */
+    public function testFailedRefreshKeepsPreviousValue(): void
+    {
+        $made = [];
+        [$app, $constraints] = self::boot(static function (mixed $arg) use (&$made): Future {
+            $made[] = Future::pending();
+
+            return $made[\count($made) - 1];
+        });
+
+        $command = $app->pageState()->command();
+        $command->run(1);
+        $app->frame(32.0, $constraints);
+        $made[0]->resolve(['page' => 1]);
+        $app->frame(48.0, $constraints);
+
+        $command->run(2);
+        $app->frame(64.0, $constraints);
+        $made[1]->reject(new \RuntimeException('取数失败：HTTP 502'));
+        $app->frame(80.0, $constraints);
+
+        $last = self::last($app);
+        check(
+            'AsyncCommand · 刷新失败 ⇒ error 且旧值还在（不把已有内容一并抹掉）',
+            $last->hasError() && $last->hasValue() && $last->value() === ['page' => 1]
+            && $last->message() === '取数失败：HTTP 502',
+            'state=' . self::states($app->snapshots) . ' message=' . $last->message(),
+        );
+
+        check(
+            'AsyncCommand · 刷新失败画的是 error 支（失败不许被旧内容盖住）',
+            self::painted($app) === 'error',
+            'painted=' . self::painted($app),
+        );
+
+        $this->flushChecks();
+    }
+
+    /**
+     * `cancel()`（用户不等了）⇒ 回到**上一次确定的值**，不是回到 `idle`。
+     *
+     * ★ 上一版无条件回 `idle`：取消一次刷新就把已经看到的内容清空。
+     *   "取消"是"我不等了"，不是"把看到的东西也扔掉"。
+     * ★ 首屏取消（没有旧值）仍然回 `idle` —— 否则会停在 `loading` 永转圈。
+     */
+    public function testCancelRestoresLastData(): void
+    {
+        $made = [];
+        [$app, $constraints] = self::boot(static function (mixed $arg) use (&$made): Future {
+            $made[] = Future::pending();
+
+            return $made[\count($made) - 1];
+        });
+
+        $command = $app->pageState()->command();
+
+        // ① 首屏：没有旧值可回 ⇒ idle
+        $command->run(1);
+        $app->frame(32.0, $constraints);
+        $command->cancel();
+        $app->frame(48.0, $constraints);
+        check(
+            'AsyncCommand · 首屏取消 ⇒ idle（不能停在永远转圈）',
+            self::last($app)->isIdle() && !$command->isRunning(),
+            'state=' . self::states($app->snapshots),
+        );
+
+        // ② 已有数据再刷新：取消 ⇒ 回到那份数据
+        $command->run(1);
+        $app->frame(64.0, $constraints);
+        $made[1]->resolve(['page' => 1]);
+        $app->frame(80.0, $constraints);
+
+        $command->run(2);
+        $app->frame(96.0, $constraints);
+        $command->cancel();
+        $app->frame(112.0, $constraints);
+
+        $last = self::last($app);
+        check(
+            'AsyncCommand · 刷新中取消 ⇒ 回到上一次的 data（不是 idle）',
+            $last->hasData() && $last->value() === ['page' => 1] && !$command->isRunning(),
+            'state=' . self::states($app->snapshots) . ' value=' . \json_encode($last->value()),
         );
 
         $this->flushChecks();

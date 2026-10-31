@@ -163,8 +163,145 @@ final class AsyncValueTest extends SmokeTestCase
     }
 
     /**
-     * 缺任何一个键都**当场抛**，而不是等真走到那一态才炸。
+     * `carriedFrom()` —— 新状态**继承上一次的载荷**（Riverpod `copyWithPrevious`）。
      *
+     * ## 这条钉的是什么
+     *
+     * 上一版"刷新 ⇒ `loading` ⇒ 载荷扔掉"的直接后果是**列表闪空**。判据分三层：
+     *  ① 刷新中 `isLoading()` 与 `hasValue()` **同时**成立（两维模型，不是"第五态"）；
+     *  ② `dataOr()` 拿得到旧值（消费点不必各自写 `$v->hasData() ? … : $last`）；
+     *  ③ 三条不继承的情形各归各位：没旧值 / 自己是 `data` / `idle` 起手。
+     *
+     * ★ 绝不能拿 `$value !== null` 判"有没有"：`data(null)` 是合法值。
+     *   下面那条 `data(null)` 的断言就是防止实现退化成"看值是不是 null"。
+     */
+    public function testCarriedFromKeepsPreviousPayload(): void
+    {
+        $old = AsyncValue::data(['rows' => 1]);
+        $refreshing = AsyncValue::loading()->carriedFrom($old);
+
+        check(
+            'AsyncValue · 刷新中 = loading 且带旧值（hasData 仍为 false）',
+            $refreshing->isLoading()
+            && $refreshing->hasValue()
+            && !$refreshing->hasData()
+            && $refreshing->isRefreshing()
+            && $refreshing->dataOr([]) === ['rows' => 1],
+            \sprintf(
+                'loading=%s hasValue=%s hasData=%s refreshing=%s value=%s',
+                $refreshing->isLoading() ? '1' : '0',
+                $refreshing->hasValue() ? '1' : '0',
+                $refreshing->hasData() ? '1' : '0',
+                $refreshing->isRefreshing() ? '1' : '0',
+                \json_encode($refreshing->value()),
+            ),
+        );
+
+        $firstLoad = AsyncValue::loading();
+        check(
+            'AsyncValue · 没有旧值 ⇒ carriedFrom 原样返回（首屏照旧整块转圈）',
+            $firstLoad->carriedFrom(AsyncValue::idle()) === $firstLoad
+            && !$firstLoad->hasValue()
+            && !$firstLoad->isRefreshing(),
+            'hasValue=' . ($firstLoad->hasValue() ? '1' : '0'),
+        );
+
+        $fresh = AsyncValue::data(['rows' => 2]);
+        check(
+            'AsyncValue · data 自带载荷 ⇒ 不覆盖（新数据当然盖掉旧的）',
+            $fresh->carriedFrom($old) === $fresh && $fresh->value() === ['rows' => 2],
+            'value=' . \json_encode($fresh->value()),
+        );
+
+        $failed = AsyncValue::error('取数失败：HTTP 500')->carriedFrom($old);
+        check(
+            'AsyncValue · 刷新失败 ⇒ 错误说得出来、旧值也还在；且不算 refreshing',
+            $failed->hasError()
+            && $failed->hasValue()
+            && $failed->dataOr([]) === ['rows' => 1]
+            && $failed->message() === '取数失败：HTTP 500'
+            && !$failed->isRefreshing(),
+            'error=' . ($failed->hasError() ? '1' : '0') . ' value=' . \json_encode($failed->value()),
+        );
+
+        // ★ 实现若把"有没有值"退化成 `$value !== null`，这条会红
+        $nullOld = AsyncValue::data(null);
+        $carriedNull = AsyncValue::loading()->carriedFrom($nullOld);
+        check(
+            'AsyncValue · data(null) 也算有值（不能被 null 判据吃掉）',
+            $carriedNull->hasValue() && $carriedNull->dataOr('fallback') === null,
+            'hasValue=' . ($carriedNull->hasValue() ? '1' : '0')
+                . ' dataOr=' . \json_encode($carriedNull->dataOr('fallback')),
+        );
+
+        $this->flushChecks();
+    }
+
+    /**
+     * `fold()` 的**路由规则**：刷新中（`loading` 且有旧值）走 `data` 支。
+     *
+     * ★ 名字描述的是"现在该画哪一块"，不是"后端在哪个阶段"。`loading` 支因此被
+     *   收窄成**首屏**。这条规则若不存在，页面只能自己判 `isRefreshing()`，
+     *   而不判的页面**看不到任何异常**（列表闪空只是"慢"，不是"错"）。
+     */
+    public function testFoldRoutesRefreshingToDataArm(): void
+    {
+        $this->calls = [];
+
+        $arms = [
+            'idle' => function (AsyncValue $v): string {
+                $this->calls[] = 'idle';
+
+                return 'I';
+            },
+            'loading' => function (AsyncValue $v): string {
+                $this->calls[] = 'loading';
+
+                return 'L';
+            },
+            'data' => function (AsyncValue $v): string {
+                $this->calls[] = 'data:' . \json_encode($v->value());
+
+                return 'D';
+            },
+            'error' => function (AsyncValue $v): string {
+                $this->calls[] = 'error';
+
+                return 'E';
+            },
+        ];
+
+        $refreshing = AsyncValue::loading()->carriedFrom(AsyncValue::data(['n' => 7]));
+        $result = $refreshing->fold($arms);
+
+        check(
+            'AsyncValue::fold · 刷新中走 data 支（旧值照旧画出来）',
+            $result === 'D' && $this->calls === ['data:{"n":7}'],
+            'result=' . $result . ' calls=' . \json_encode($this->calls),
+        );
+
+        $this->calls = [];
+        $firstLoad = AsyncValue::loading()->fold($arms);
+        check(
+            'AsyncValue::fold · 首屏（无旧值）仍走 loading 支',
+            $firstLoad === 'L' && $this->calls === ['loading'],
+            'result=' . $firstLoad . ' calls=' . \json_encode($this->calls),
+        );
+
+        // ★ 失败**不**路由：错误必须让用户看见，哪怕旧内容还在
+        $this->calls = [];
+        $failed = AsyncValue::error('boom')->carriedFrom(AsyncValue::data(['n' => 7]))->fold($arms);
+        check(
+            'AsyncValue::fold · 带旧值的 error 仍走 error 支（失败不许被旧内容盖住）',
+            $failed === 'E' && $this->calls === ['error'],
+            'result=' . $failed . ' calls=' . \json_encode($this->calls),
+        );
+
+        $this->flushChecks();
+    }
+
+    /**
+     * 缺任何一个键都**当场抛**，而不是等真走到那一态才炸。
      * ★ 为什么这条重要：手写 `if/elseif/else` 只有三个出口，漏了 `error` 就落进
      *   `else` 用兜底值画一张空表 —— 用户看到"没有数据"，真相是请求失败。那类
      *   bug 的复现条件是"网络出错"，恰好在开发期最不容易遇到。

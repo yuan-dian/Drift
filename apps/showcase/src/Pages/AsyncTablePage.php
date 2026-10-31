@@ -48,6 +48,16 @@ use Drift\Widget\Widget;
  *   `unmount()` 时统一停掉（与订阅袋同一条兜底）—— 于是"转圈中离开页面 ⇒
  *   worker 白跑满 1.2s"不需要谁记得防。
  *
+ * ## 翻页时**表格不消失**（2026-10-31）
+ *
+ * 点「下一页」发的是 `loading`，但这个 `loading` **带着上一页的行**
+ * （`AsyncValue::carriedFrom()`）⇒ `fold()` 把它路由到 `data` 支 ⇒ 表格照旧画，
+ * 只有标题变成「正在加载第 2 页…」、翻页按钮变灰。上一版这里整块换成转圈，
+ * 内容消失又出现（用户读到的是"卡了一下"）。
+ *
+ * ★ 于是"刷新中"这句话必须由**页面**说（`isRefreshing()`）—— 数据还在，界面
+ *   看起来就和"没在跑"一样。框架不会替页面决定提示长什么样。
+ *
  * 之前（用 `FutureBuilder`）同一件事要写：一个 `$future` 字段、一个"换 Future
  * 触发重订阅"的提交点、一层 `FutureBuilder::make(...)` 包装、一段"同页 / 在途就
  * 不重复提交"的判断。那四样里只有最后一样是业务，其余全是**异步机制的簿记**
@@ -187,11 +197,18 @@ final class AsyncTablePageState extends State
         //   会落进 `else` 被当成"有数据" ⇒ 显示「第 1 页 / 共 0 页 · 共 0 行」。
         // ★ 四支签名完全一致（都收 `AsyncValue`）—— 混合签名在解释器下写错也
         //   静默、只在 AOT 崩（见 `AsyncValue::fold()` 的注释）。
+        // ★★ 刷新中走的是 **`data` 支**（旧值还在 ⇒ `fold()` 按"该画哪一块"路由），
+        //   所以这里要自己判 `isRefreshing()`：此时表格里还是**上一页**的行，
+        //   标题若照旧写「第 2 页」就是在说一句没有依据的话。
         $label = $value->fold([
             'idle' => static fn(AsyncValue $v): string => '尚未请求',
-            'loading' => fn(AsyncValue $v): string => '正在加载第 ' . $this->page . ' 页…',
+            'loading' => fn(AsyncValue $v): string => $this->loadingLabel(),
             'error' => static fn(AsyncValue $v): string => '加载失败（可重试）',
             'data' => function (AsyncValue $v): string {
+                if ($v->isRefreshing()) {
+                    return $this->loadingLabel();
+                }
+
                 $data = $v->value();
                 $total = \is_array($data) ? (int) ($data['total'] ?? 0) : 0;
                 $pages = $total > 0 ? (int) \ceil($total / self::PER_PAGE) : 0;
@@ -219,6 +236,16 @@ final class AsyncTablePageState extends State
                 ->enabled(!$running && $pages > $this->page)
                 ->onPressed(fn() => $this->load($this->page + 1)),
         ]);
+    }
+
+    /**
+     * "正在加载第 N 页…"—— `loading`（首屏）与 `data`+`isRefreshing()`（翻页）共用。
+     *
+     * ★ 一句话只写一遍：两处各写一份，改文案时必然只改一处。
+     */
+    private function loadingLabel(): string
+    {
+        return '正在加载第 ' . $this->page . ' 页…';
     }
 
     /**

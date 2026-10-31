@@ -65,6 +65,18 @@ use Drift\Async\Future;
  * | `cancel()` | `AbortController.abort()` / `CancellationTokenSource.Cancel()` |
  * | 去重 | React Query 的 `dedupe`（本类只做"同参数在途 ⇒ 忽略"这一条） |
  *
+ * ## 刷新时保留上一次的值（2026-10-31）
+ *
+ * 每次 `run()` 都发 `AsyncValue::loading()`，但**带着上一次的载荷**
+ * （`carriedFrom()`）⇒ 翻页 / 点刷新时列表不闪空，`fold()` 也因此在
+ * "刷新中"走 `data` 支（见 `AsyncValue` 的类注释）。失败时同理：错误说得出来，
+ * 旧内容也还在。
+ *
+ * ★ **`isRunning()` 的每一次变化都伴随一次值变化**（`start()` 里先置 `pending`
+ *   再 `emit(loading)`，`land()` 里先清 `pending` 再 `emit(结果)`）⇒ 订阅了值的
+ *   地方不需要给 `isRunning()` 单开一条通知。这条不变式是本类**故意**维持的：
+ *   否则"按钮的禁用态"会需要第二条订阅通道，而两条通道迟早会不同步。
+ *
  * ## 不做的事（诚实边界）
  *
  * - **~~超时~~** —— **2026-10-31 已落地，但落点不在这里**：`ProcessTaskHost`
@@ -193,7 +205,11 @@ final class AsyncCommand extends Subject
     }
 
     /**
-     * 放弃在途请求，回到"没在跑"（`loading` ⇒ `idle`；已有数据则保留数据）。
+     * 放弃在途请求，回到"没在跑"。
+     *
+     * ★ 有上一次的值 ⇒ 回到 `data`（那一帧的画面立刻恢复），没有 ⇒ `idle`。
+     *   上一版无条件回 `idle`：取消一次刷新就把列表清空 —— 取消是"我不等了"，
+     *   不是"把已经看到的东西也扔掉"。
      *
      * @api
      */
@@ -201,9 +217,13 @@ final class AsyncCommand extends Subject
     {
         $this->abandon();
 
-        if ($this->value->isLoading()) {
-            $this->emit(AsyncValue::idle());
+        if (!$this->value->isLoading()) {
+            return;
         }
+
+        $this->emit($this->value->hasValue()
+            ? AsyncValue::data($this->value->value())
+            : AsyncValue::idle());
     }
 
     /**
@@ -257,7 +277,10 @@ final class AsyncCommand extends Subject
         $future = $task($arg);
 
         $this->pending = $future;
-        $this->emit(AsyncValue::loading());
+
+        // ★ 带着上一次的值进 `loading`（2026-10-31）：刷新 / 翻页时列表不闪空。
+        //   首屏没有旧值 ⇒ `carriedFrom()` 原样返回，界面照旧画整块转圈。
+        $this->emit(AsyncValue::loading()->carriedFrom($this->value));
 
         // ★ 先取到变量再调用（AOT 已验证的形态；`($this->task)($arg)` 没验过）
         $future
@@ -270,11 +293,16 @@ final class AsyncCommand extends Subject
             });
     }
 
-    /** 结算（能跑到这里的一定是**当前**那条 Future 的结果 —— 见 `abandon()`） */
+    /**
+     * 结算（能跑到这里的一定是**当前**那条 Future 的结果 —— 见 `abandon()`）。
+     *
+     * ★ 统一在这里 `carriedFrom()`：`data` 自带载荷 ⇒ 不改；`error` ⇒ 继承
+     *   `loading` 时带过来的旧值。失败时"旧的还在、错误也说出来了"两件事同时成立。
+     */
     private function land(AsyncValue $next): void
     {
         $this->pending = null;
-        $this->emit($next);
+        $this->emit($next->carriedFrom($this->value));
     }
 
     /**
