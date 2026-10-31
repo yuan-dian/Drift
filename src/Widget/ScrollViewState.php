@@ -24,18 +24,19 @@ use Drift\Layout\RenderScrollView;
  */
 final class ScrollViewState extends State implements Scrollable
 {
-    private float $offset = 0.0;
-
-    /** 滚动条淡出节律（懒建；`null` = 这个视口还没滚过） */
-    private ?ScrollBarFade $barFade = null;
-
-    /** 滚轮的动画节律（懒建；`null` = 这个视口没被滚轮滚过） */
-    private ?ScrollMotion $motion = null;
+    /**
+     * 这根轴的滚动状态机（偏移 + 动画 + 淡出）。
+     *
+     * ★ 懒建只是为了让"从没滚过的视口"不多造两个对象；`ScrollLane` 与
+     *   `ScrollBarFade` 内部都是懒的 ⇒ 建了也不改任何行为（`opacity()` 恒 1.0、
+     *   `tick()` 恒 `false`）。**没有"有没有滚过"这个额外状态**，别再造一个。
+     */
+    private ?ScrollLane $lane = null;
 
     /** 当前偏移（逻辑像素，≥ 0） */
     public function offset(): float
     {
-        return $this->offset;
+        return $this->lane()->offset();
     }
 
     /**
@@ -54,31 +55,21 @@ final class ScrollViewState extends State implements Scrollable
      *   现在走"推给盒 + 标重排"：盒就地改偏移、本帧重排重画，Widget 树一动不动。
      *   ⇒ 滚动帧 11.68ms → **7.21ms**，其中 `settle` 6.74 → 0.83ms（−88%）。
      *
-     * ★ 回写**盒夹过的值**（不是 `$next`）：内容变短时 State 里那个"增量累加值"
-     *   会长期大于上限，之后每笔增量都先消耗死区 —— 真机表现是"滚轮转了画面不动"。
+     * ★ 夹取与"回写盒夹过的值"的契约收在 `ScrollLane::move()`（三个滚动实现共用
+     *   一份，见那边的 ★★）。本方法只剩"找盒 → 交轴"这层策略。
      */
     public function scrollBy(float $delta): void
     {
-        $next = max(0.0, $this->offset + $delta);
-
-        if ($next === $this->offset) {
-            return;   // 已在边界：不推、不重排（省一帧）
-        }
-
-        $this->bar()->noteScroll();
-
         // ★ 盒还没挂（首帧之前 / 盒被换掉）⇒ 只改字段：`build()` 会把值递下去。
         /** @var RenderScrollView|null $box */
         $box = $this->element()?->effectiveBoxOf(RenderScrollView::class);
-        if ($box === null) {
-            $this->offset = $next;
+        $axis = $this->view()->vertical() ? Axis::Vertical : Axis::Horizontal;
 
-            return;
-        }
-
-        $this->offset = $box->setScrollOffset(
-            $this->view()->vertical() ? Axis::Vertical : Axis::Horizontal,
-            $next,
+        $this->lane()->move(
+            $delta,
+            static function (float $value) use ($box, $axis): float {
+                return $box === null ? $value : $box->setScrollOffset($axis, $value);
+            },
         );
     }
 
@@ -100,10 +91,8 @@ final class ScrollViewState extends State implements Scrollable
     /**
      * 按轴滚动，**带动画**（滚轮专用；细节见 `Scrollable::glideByAxis()`）。
      *
-     * ★ 起飞前对齐：motion 不在跑时，先 `snapTo($this->offset)` —— 这个 offset
-     *   可能刚被 `scrollBy()` / `ensureVisible()` / 盒夹取改过，motion 里那个
-     *   名义值已经过期；不对齐就会"从旧位置滑到新目标"，画面跳一下。
-     *   ★ 在跑时**不对齐**：连续滚轮必须让目标累加（对齐会打断正在跑的动画）。
+     * ★ 本方法只剩"轴对不对"这一层判据 —— 起飞前对齐、目标累加、点亮条都在
+     *   `ScrollLane::glide()`（三个实现共用一份）。
      */
     public function glideByAxis(Axis $axis, float $delta): void
     {
@@ -111,43 +100,19 @@ final class ScrollViewState extends State implements Scrollable
             return;
         }
 
-        $motion = $this->motion();
-        if (!$motion->isAnimating()) {
-            $motion->snapTo($this->offset);
-        }
-        $motion->glideBy($delta);
-
-        // 动画可能首帧还不推进（`AnimatedValue` 首帧只记起点）⇒ 条要现在就亮，
-        // 否则"滚了但条没反应"要等第二帧。
-        $this->bar()->noteScroll();
+        $this->lane()->glide($delta);
     }
 
-    /**
-     * 滚动的动画节律（懒建：没被滚轮滚过的视口不建）。
-     */
-    private function motion(): ScrollMotion
+    /** 这根轴的滚动状态机（懒建：从没滚过的视口不建） */
+    private function lane(): ScrollLane
     {
-        $motion = $this->motion;
-        if ($motion === null) {
-            $motion = new ScrollMotion($this->offset);
-            $this->motion = $motion;
+        $lane = $this->lane;
+        if ($lane === null) {
+            $lane = new ScrollLane();
+            $this->lane = $lane;
         }
 
-        return $motion;
-    }
-
-    /**
-     * 滚动条的显隐节律（懒建：没滚过的视口不建，滚动条恒亮）。
-     */
-    private function bar(): ScrollBarFade
-    {
-        $bar = $this->barFade;
-        if ($bar === null) {
-            $bar = new ScrollBarFade();
-            $this->barFade = $bar;
-        }
-
-        return $bar;
+        return $lane;
     }
 
     /**
@@ -162,28 +127,13 @@ final class ScrollViewState extends State implements Scrollable
     #[\Override]
     public function tickFrame(float $timestampMs): bool
     {
-        $busy = false;
+        $lane = $this->lane();
 
-        $motion = $this->motion;
-        if ($motion !== null) {
-            $next = $motion->tick($timestampMs);
-            if ($next !== null) {
-                $before = $this->offset;
-                $this->scrollBy($next - $before);
+        $busy = $lane->tick($timestampMs, function (float $delta): void {
+            $this->scrollBy($delta);
+        });
 
-                // 推不动了（到边界 / 内容变短被夹）⇒ 就地收口。否则 motion 会继续朝
-                // 一个**到不了**的目标收敛：指数衰减保证它终会停，但要多转一百多帧
-                // （实测：收口后 81 帧落闸，不收口 190 帧）—— 每帧都白跑一次
-                // `tickFrame` + 一次全量 paint，滚动条也跟着多亮一百多帧。
-                if ($this->offset === $before) {
-                    $motion->snapTo($before);
-                }
-                $busy = true;
-            }
-        }
-
-        $bar = $this->barFade;
-        if ($bar !== null && $bar->tickFor($this, $timestampMs)) {
+        if ($lane->fade()->tickFor($this, $timestampMs)) {
             $busy = true;
         }
 
@@ -209,7 +159,7 @@ final class ScrollViewState extends State implements Scrollable
 
         // ★ 基准传**自己待生效的偏移**：盒里那个是上一帧的值，同一帧连按两次
         //   Tab 会把上一段增量再算一遍（见 `revealDelta()` 的 `$base` 说明）。
-        $delta = $box->revealDelta($target, $margin, $this->offset);
+        $delta = $box->revealDelta($target, $margin, $this->lane()->offset());
         if ($delta !== 0.0) {
             $this->scrollBy($delta);
         }
@@ -217,19 +167,13 @@ final class ScrollViewState extends State implements Scrollable
 
     public function build(BuildContext $ctx): Widget
     {
-        $bar = $this->barFade;
-        $opacity = 1.0;
-        if ($bar !== null) {
-            $opacity = $bar->opacity();
-        }
-
         return ScrollViewBox::make(
-            $this->offset,
+            $this->lane()->offset(),
             $this->view()->vertical(),
             $this->view()->child(),
             null,
             0.0,
-            $opacity,
+            $this->lane()->fade()->opacity(),
         );
     }
 

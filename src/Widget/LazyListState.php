@@ -34,13 +34,13 @@ use Drift\Layout\RenderScrollView;
  */
 final class LazyListState extends State implements Scrollable
 {
-    private float $offset = 0.0;
-
-    /** 滚动条淡出节律（懒建；与 `ScrollViewState` 同一份实现） */
-    private ?ScrollBarFade $barFade = null;
-
-    /** 滚轮的动画节律（懒建；与 `ScrollViewState` / `TableState` 同一份实现） */
-    private ?ScrollMotion $motion = null;
+    /**
+     * 这根轴的滚动状态机（偏移 + 动画 + 淡出）。
+     *
+     * ★ 懒建只为"从没滚过的列表"不多造两个对象；`ScrollLane` / `ScrollBarFade`
+     *   内部都是懒的 ⇒ 建了也不改行为。**"有没有滚过"不是额外状态**。
+     */
+    private ?ScrollLane $lane = null;
 
     /**
      * 锚点（`04` §7.3）：视口起点那一格在**完整内容**里的位置 —— 序号 + 格内
@@ -85,14 +85,14 @@ final class LazyListState extends State implements Scrollable
             return;
         }
 
-        $this->offset = $px;
+        $this->lane()->set($px);
         $this->rememberAnchor();
     }
 
     /** 当前偏移（逻辑像素，≥ 0，已按上一帧的内容长度夹过上界） */
     public function offset(): float
     {
-        return $this->offset;
+        return $this->lane()->offset();
     }
 
     /**
@@ -108,19 +108,17 @@ final class LazyListState extends State implements Scrollable
      */
     public function scrollBy(float $delta): void
     {
-        $next = max(0.0, $this->offset + $delta);
-
-        if ($next === $this->offset) {
-            return;   // 已在边界：不推、不重排（省一帧）
-        }
-
-        $this->bar()->noteScroll();
-
         /** @var RenderScrollView|null $box */
         $box = $this->element()?->effectiveBoxOf(RenderScrollView::class);
+
+        // ★ 盒还没挂（首帧之前 / 盒被换掉）⇒ 只改字段 + 标脏：没有盒就没有
+        //   "就地推给盒"这回事，只能等下一次 build 把值递下去。
         if ($box === null) {
-            $this->setState(function () use ($next): void {
-                $this->offset = $next;
+            if (!$this->lane()->move($delta, static fn(float $value): float => $value)) {
+                return;
+            }
+
+            $this->setState(function (): void {
                 $this->rememberAnchor();
             });
 
@@ -128,7 +126,16 @@ final class LazyListState extends State implements Scrollable
         }
 
         $vertical = $this->view()->isVertical();
-        $this->offset = $box->setScrollOffset($vertical ? Axis::Vertical : Axis::Horizontal, $next);
+        $moved = $this->lane()->move(
+            $delta,
+            static function (float $value) use ($box, $vertical): float {
+                return $box->setScrollOffset($vertical ? Axis::Vertical : Axis::Horizontal, $value);
+            },
+        );
+        if (!$moved) {
+            return;
+        }
+
         $this->rememberAnchor();
 
         // 窗口盖不住视口 ⇒ 必须重建（否则下方/上方是空白）
@@ -147,7 +154,9 @@ final class LazyListState extends State implements Scrollable
      */
     private function windowCovers(float $viewport): bool
     {
-        return $this->offset >= $this->windowStart && $this->offset + $viewport <= $this->windowEnd;
+        $offset = $this->lane()->offset();
+
+        return $offset >= $this->windowStart && $offset + $viewport <= $this->windowEnd;
     }
 
     /**
@@ -168,8 +177,8 @@ final class LazyListState extends State implements Scrollable
     /**
      * 按轴滚动，**带动画**（滚轮专用；细节见 `Scrollable::glideByAxis()`）。
      *
-     * ★ 与 `ScrollViewState` 逐字同构 —— 三份实现共用 `ScrollMotion`，
-     *   只有"轴怎么判"不同（这里是 `isVertical()`，那边是 `vertical()`）。
+     * ★ 本方法只剩"轴对不对"这一层判据 —— 起飞前对齐、目标累加、点亮条都在
+     *   `ScrollLane::glide()`（三个实现共用一份）。
      */
     public function glideByAxis(Axis $axis, float $delta): void
     {
@@ -177,37 +186,19 @@ final class LazyListState extends State implements Scrollable
             return;
         }
 
-        $motion = $this->motion();
-        if (!$motion->isAnimating()) {
-            $motion->snapTo($this->offset);
-        }
-        $motion->glideBy($delta);
-
-        $this->bar()->noteScroll();
+        $this->lane()->glide($delta);
     }
 
-    /** 滚动的动画节律（懒建：没被滚轮滚过的列表不建） */
-    private function motion(): ScrollMotion
+    /** 这根轴的滚动状态机（懒建：从没滚过的列表不建） */
+    private function lane(): ScrollLane
     {
-        $motion = $this->motion;
-        if ($motion === null) {
-            $motion = new ScrollMotion($this->offset);
-            $this->motion = $motion;
+        $lane = $this->lane;
+        if ($lane === null) {
+            $lane = new ScrollLane();
+            $this->lane = $lane;
         }
 
-        return $motion;
-    }
-
-    /** 滚动条的显隐节律（懒建：没滚过的列表不建，滚动条恒亮） */
-    private function bar(): ScrollBarFade
-    {
-        $bar = $this->barFade;
-        if ($bar === null) {
-            $bar = new ScrollBarFade();
-            $this->barFade = $bar;
-        }
-
-        return $bar;
+        return $lane;
     }
 
     /**
@@ -220,26 +211,13 @@ final class LazyListState extends State implements Scrollable
     #[\Override]
     public function tickFrame(float $timestampMs): bool
     {
-        $busy = false;
+        $lane = $this->lane();
 
-        $motion = $this->motion;
-        if ($motion !== null) {
-            $next = $motion->tick($timestampMs);
-            if ($next !== null) {
-                $before = $this->offset;
-                $this->scrollBy($next - $before);
+        $busy = $lane->tick($timestampMs, function (float $delta): void {
+            $this->scrollBy($delta);
+        });
 
-                // 推不动了（到边界 / 内容变短被夹）⇒ 就地收口；理由与实测帧数见
-                // `ScrollViewState::tickFrame()`（三份实现同一契约，此处不重复展开）。
-                if ($this->offset === $before) {
-                    $motion->snapTo($before);
-                }
-                $busy = true;
-            }
-        }
-
-        $bar = $this->barFade;
-        if ($bar !== null && $bar->tickFor($this, $timestampMs)) {
+        if ($lane->fade()->tickFor($this, $timestampMs)) {
             $busy = true;
         }
 
@@ -282,7 +260,7 @@ final class LazyListState extends State implements Scrollable
         // ★ 从没滚过（或正好在起点）⇒ 锚点就是"起点"，没有什么要还原。
         //   这条早退还顺手挡掉了"主轴起始内边距"：没滚时 offset 是 0，而还原会把
         //   offset 算成 insetStart ⇒ 一帧白跳。
-        if ($this->offset <= 0.0) {
+        if ($this->lane()->offset() <= 0.0) {
             return;
         }
 
@@ -296,7 +274,7 @@ final class LazyListState extends State implements Scrollable
             // 无 keyOf ⇒ 按序号夹（行为可预测，允许跳）
             $index = min($this->anchorIndex, max(0, $count - 1));
             $this->anchorIndex = $index;
-            $this->offset = $insetStart + ($index + $this->anchorFrac) * $extent;
+            $this->lane()->set($insetStart + ($index + $this->anchorFrac) * $extent);
 
             return;
         }
@@ -320,7 +298,7 @@ final class LazyListState extends State implements Scrollable
 
         if ($found < 0) {
             // 锚点项被筛掉了 ⇒ 回起点（不夹到末尾：那比回起点更糟）
-            $this->offset = 0.0;
+            $this->lane()->set(0.0);
             $this->anchorIndex = 0;
             $this->anchorFrac = 0.0;
             $this->anchorKey = null;
@@ -329,7 +307,7 @@ final class LazyListState extends State implements Scrollable
         }
 
         $this->anchorIndex = $found;
-        $this->offset = $insetStart + ($found + $this->anchorFrac) * $extent;
+        $this->lane()->set($insetStart + ($found + $this->anchorFrac) * $extent);
     }
 
     /**
@@ -352,7 +330,7 @@ final class LazyListState extends State implements Scrollable
         $insets = $view->insets();
         $vertical = $view->isVertical();
         $start = $vertical ? $insets->top : $insets->left;
-        $main = max(0.0, $this->offset - $start);
+        $main = max(0.0, $this->lane()->offset() - $start);
         $index = (int) floor($main / $extent);
 
         $this->anchorIndex = $index;
@@ -389,7 +367,7 @@ final class LazyListState extends State implements Scrollable
 
         // ★ 基准传**自己待生效的偏移**（同 `ScrollViewState`，见 `revealDelta()`
         //   的 `$base` 说明）。
-        $delta = $box->revealDelta($target, $margin, $this->offset);
+        $delta = $box->revealDelta($target, $margin, $this->lane()->offset());
         if ($delta !== 0.0) {
             $this->scrollBy($delta);
         }
@@ -412,7 +390,7 @@ final class LazyListState extends State implements Scrollable
         $total = $start + $count * $extent + $end;
 
         $viewport = $this->viewportEstimate($ctx, $vertical);
-        $offset = min(max(0.0, $this->offset), max(0.0, $total - $viewport));
+        $offset = min(max(0.0, $this->lane()->offset()), max(0.0, $total - $viewport));
 
         // 窗口：完整内容坐标 [offset, offset+viewport) 换算成序号区间
         $overscan = $view->overscanPx();
@@ -450,11 +428,7 @@ final class LazyListState extends State implements Scrollable
         }
 
         // 窗的起点 = 完整内容里"第 first 格"的主轴坐标
-        $bar = $this->barFade;
-        $opacity = 1.0;
-        if ($bar !== null) {
-            $opacity = $bar->opacity();
-        }
+        $opacity = $this->lane()->fade()->opacity();
 
         return ScrollViewBox::make($offset, $vertical, $kid, $total, $start + $first * $extent, $opacity);
     }

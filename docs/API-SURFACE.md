@@ -23,10 +23,10 @@
 | State | 18 | 11 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
-| Widget | 171 | 218 |
-| **合计** | **467** | **361** |
+| Widget | 171 | 219 |
+| **合计** | **467** | **362** |
 
-覆盖 369 个文件 · 描述性提及 30 处（grep 口径的污染源，不计入）
+覆盖 370 个文件 · 描述性提及 30 处（grep 口径的污染源，不计入）
 
 ## App 层
 
@@ -777,35 +777,35 @@
 | `WidgetInteraction::overlayPanel()` | method | src/Widget/Traits/WidgetInteraction.php:318 |
 | `WidgetInteraction::overlaySignature()` | method | src/Widget/Traits/WidgetInteraction.php:386 |
 | `WidgetModifiers::padding()` | method | src/Widget/Traits/WidgetModifiers.php:36 |
-| `WidgetModifiers::boxSize()` | method | src/Widget/Traits/WidgetModifiers.php:114 |
-| `WidgetModifiers::background()` | method | src/Widget/Traits/WidgetModifiers.php:187 |
-| `WidgetModifiers::gradient()` | method | src/Widget/Traits/WidgetModifiers.php:204 |
-| `WidgetModifiers::shadow()` | method | src/Widget/Traits/WidgetModifiers.php:246 |
-| `WidgetModifiers::opacity()` | method | src/Widget/Traits/WidgetModifiers.php:264 |
-| `WidgetModifiers::translate()` | method | src/Widget/Traits/WidgetModifiers.php:286 |
-| `WidgetModifiers::disabled()` | method | src/Widget/Traits/WidgetModifiers.php:299 |
-| `WidgetModifiers::clip()` | method | src/Widget/Traits/WidgetModifiers.php:342 |
-| `WidgetModifiers::repaintBoundary()` | method | src/Widget/Traits/WidgetModifiers.php:360 |
-| `WidgetModifiers::alignContent()` | method | src/Widget/Traits/WidgetModifiers.php:377 |
-| `WidgetModifiers::centerContent()` | method | src/Widget/Traits/WidgetModifiers.php:401 |
-| `WidgetModifiers::grow()` | method | src/Widget/Traits/WidgetModifiers.php:419 |
-| `WidgetModifiers::positioned()` | method | src/Widget/Traits/WidgetModifiers.php:472 |
-| `WidgetModifiers::transform()` | method | src/Widget/Traits/WidgetModifiers.php:536 |
-| `WidgetModifiers::rotate()` | method | src/Widget/Traits/WidgetModifiers.php:562 |
-| `WidgetModifiers::scale()` | method | src/Widget/Traits/WidgetModifiers.php:575 |
+| `WidgetModifiers::boxSize()` | method | src/Widget/Traits/WidgetModifiers.php:117 |
+| `WidgetModifiers::background()` | method | src/Widget/Traits/WidgetModifiers.php:190 |
+| `WidgetModifiers::gradient()` | method | src/Widget/Traits/WidgetModifiers.php:207 |
+| `WidgetModifiers::shadow()` | method | src/Widget/Traits/WidgetModifiers.php:249 |
+| `WidgetModifiers::opacity()` | method | src/Widget/Traits/WidgetModifiers.php:267 |
+| `WidgetModifiers::translate()` | method | src/Widget/Traits/WidgetModifiers.php:289 |
+| `WidgetModifiers::disabled()` | method | src/Widget/Traits/WidgetModifiers.php:302 |
+| `WidgetModifiers::clip()` | method | src/Widget/Traits/WidgetModifiers.php:345 |
+| `WidgetModifiers::repaintBoundary()` | method | src/Widget/Traits/WidgetModifiers.php:363 |
+| `WidgetModifiers::alignContent()` | method | src/Widget/Traits/WidgetModifiers.php:380 |
+| `WidgetModifiers::centerContent()` | method | src/Widget/Traits/WidgetModifiers.php:404 |
+| `WidgetModifiers::grow()` | method | src/Widget/Traits/WidgetModifiers.php:422 |
+| `WidgetModifiers::positioned()` | method | src/Widget/Traits/WidgetModifiers.php:475 |
+| `WidgetModifiers::transform()` | method | src/Widget/Traits/WidgetModifiers.php:539 |
+| `WidgetModifiers::rotate()` | method | src/Widget/Traits/WidgetModifiers.php:565 |
+| `WidgetModifiers::scale()` | method | src/Widget/Traits/WidgetModifiers.php:578 |
 | `WidgetSemantics::semantics()` | method | src/Widget/Traits/WidgetSemantics.php:21 |
 | `WidgetSemantics::semanticsRange()` | method | src/Widget/Traits/WidgetSemantics.php:62 |
 | `TreeNode` | class | src/Widget/TreeNode.php:8 |
 | `TreeView` | class | src/Widget/TreeView.php:9 |
 | `Widget` | class | src/Widget/Widget.php:21 |
 | `Widget::__construct()` | method | src/Widget/Widget.php:207 |
-| `Widget::key()` | method | src/Widget/Widget.php:234 |
-| `Widget::mutate()` | method | src/Widget/Widget.php:311 |
+| `Widget::key()` | method | src/Widget/Widget.php:239 |
+| `Widget::mutate()` | method | src/Widget/Widget.php:316 |
 | `Wrap` | class | src/Widget/Wrap.php:12 |
 | `WrapElement` | class | src/Widget/WrapElement.php:8 |
 | `YearMonth` | class | src/Widget/YearMonth.php:8 |
 
-### @internal（框架内部） · 218
+### @internal（框架内部） · 219
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -909,6 +909,7 @@
 | `RenderBoxWidget::paintsDisabledLook()` | method | src/Widget/RenderBoxWidget.php:56 |
 | `RenderBoxWidget::defaultBoxStyle()` | method | src/Widget/RenderBoxWidget.php:79 |
 | `ScrollBarFade` | class | src/Widget/ScrollBarFade.php:9 |
+| `ScrollLane` | class | src/Widget/ScrollLane.php:6 |
 | `ScrollMotion` | class | src/Widget/ScrollMotion.php:6 |
 | `ScrollViewBox` | class | src/Widget/ScrollViewBox.php:10 |
 | `ScrollViewBox::make()` | method | src/Widget/ScrollViewBox.php:39 |
@@ -1020,12 +1021,12 @@
 | `Widget::$semEnabled` | property | src/Widget/Widget.php:191 |
 | `Widget::$semRangeMin` | property | src/Widget/Widget.php:194 |
 | `Widget::__clone()` | method | src/Widget/Widget.php:217 |
-| `Widget::childContext()` | method | src/Widget/Widget.php:250 |
-| `Widget::createElement()` | method | src/Widget/Widget.php:265 |
-| `Widget::identity()` | method | src/Widget/Widget.php:281 |
-| `Widget::seal()` | method | src/Widget/Widget.php:291 |
-| `Widget::isSealed()` | method | src/Widget/Widget.php:305 |
-| `Widget::mods()` | method | src/Widget/Widget.php:361 |
-| `Widget::expandChildren()` | method | src/Widget/Widget.php:367 |
+| `Widget::childContext()` | method | src/Widget/Widget.php:255 |
+| `Widget::createElement()` | method | src/Widget/Widget.php:270 |
+| `Widget::identity()` | method | src/Widget/Widget.php:286 |
+| `Widget::seal()` | method | src/Widget/Widget.php:296 |
+| `Widget::isSealed()` | method | src/Widget/Widget.php:310 |
+| `Widget::mods()` | method | src/Widget/Widget.php:374 |
+| `Widget::expandChildren()` | method | src/Widget/Widget.php:380 |
 
 

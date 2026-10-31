@@ -67,16 +67,19 @@ use Drift\Text\TextStyle;
  */
 final class TableState extends State implements Scrollable, EditableText
 {
-    private float $offsetY = 0.0;
-
     /**
-     * 横向偏移（阶段 5）。
+     * **两根轴各一个**滚动状态机（偏移 + 动画 + 淡出）。
      *
-     * ★ 与 `$offsetY` **分开存**而不是合成一个 `Point`：两者的夹取上限来自不同的
-     *   量（`contentW − 视口宽` vs `行数 × 行高 − 行区高`），且纵向的坐标系是
-     *   **行区**（不含表头）。合成一个结构体只会让"哪一轴用哪套夹取"藏起来。
+     * ★ 两根而不是一个：横竖互不干扰（各自的 `ScrollMotion`、各自的偏移）。
+     * ★ 但 `ScrollBarFade` **共用同一份**（`lane()` 里把 `bar()` 传进去）——
+     *   横条与竖条同时淡出是对的：它们提示的是同一件事"这块区域还能滚"，
+     *   分两套节律只会出现"一根亮一根暗"。
+     * ★ 懒建只为不多造对象；`ScrollLane` / `ScrollBarFade` 内部都是懒的
+     *   ⇒ 建了也不改行为（`opacity()` 恒 1.0、`tick()` 恒 `false`）。
      */
-    private float $offsetX = 0.0;
+    private ?ScrollLane $laneY = null;
+
+    private ?ScrollLane $laneX = null;
 
     /**
      * 光标格（阶段 2b）：行 / 列 **下标**，不是 key。
@@ -129,13 +132,8 @@ final class TableState extends State implements Scrollable, EditableText
 
     private ?TextStyle $editorStyle = null;
 
-    /** 滚动条淡出节律（懒建；与 `ScrollViewState` / `LazyListState` 同一份实现） */
+    /** 滚动条淡出节律（懒建；**两根轴共用一份**，见 `$laneY` 的注释） */
     private ?ScrollBarFade $barFade = null;
-
-    /** 滚轮的动画节律 —— **两根轴各一个**（表的横竖互不干扰） */
-    private ?ScrollMotion $motionY = null;
-
-    private ?ScrollMotion $motionX = null;
 
     /**
      * 上一帧造了几行 —— **验收判据**（§6 阶段 1 闸门 ①：10000 行只造约一屏）。
@@ -285,13 +283,13 @@ final class TableState extends State implements Scrollable, EditableText
     /** 当前偏移（逻辑像素，≥ 0，已按上一帧内容长度夹过上界） */
     public function offsetY(): float
     {
-        return $this->offsetY;
+        return $this->laneY?->offset() ?? 0.0;
     }
 
     /** 当前横向偏移（逻辑像素，≥ 0；上界 = 内容宽 − 视口宽，布局期夹取） */
     public function offsetX(): float
     {
-        return $this->offsetX;
+        return $this->laneX?->offset() ?? 0.0;
     }
 
     /** 上一帧实际造出的行数（虚拟化的验收判据，不参与逻辑） */
@@ -316,22 +314,16 @@ final class TableState extends State implements Scrollable, EditableText
      *   其中 `settle`（重建）6.74 → 0.83ms（−88%）；`layout`/`paint` 略涨
      *   （2.83→3.65 / 2.19→2.70），那是缓冲带把窗从 395 节点撑到 475 的代价。
      *
-     * ★ 回写**盒夹过的值**（不是 `$next`）：内容变短时 State 里那个"增量累加值"
-     *   会长期大于上限，之后每笔增量都先消耗死区 —— 真机表现是"拖着条，画面不动"。
+     * ★ 夹取与"回写盒夹过的值"的契约收在 `ScrollLane::move()`；本方法只剩
+     *   "先提交编辑 → 交轴 → 盖不住就标脏"这层策略。
      */
     public function scrollBy(float $delta): void
     {
         $this->commitIfUserScrolled();
 
-        $next = max(0.0, $this->offsetY + $delta);
-
-        if ($next === $this->offsetY) {
+        if (!$this->lane(Axis::Vertical)->move($delta, $this->pusher(Axis::Vertical))) {
             return;   // 已在边界：不推、不重排（省一帧）
         }
-
-        $this->bar()->noteScroll();
-
-        $this->offsetY = $this->pushOffset(Axis::Vertical, $next);
 
         // 窗口盖不住视口 ⇒ 必须重建（否则上/下会露出没建的空行）
         if (!$this->windowCovers(Axis::Vertical)) {
@@ -340,20 +332,20 @@ final class TableState extends State implements Scrollable, EditableText
     }
 
     /**
-     * 把偏移推给盒并拿回**实际生效值**（`ScrollBarHost::setScrollOffset()`）。
+     * 该轴的"推给盒"回调：**目标值 → 实际生效值**（`ScrollBarHost::setScrollOffset()`）。
      *
      * ★ 盒不在（首帧之前 / 盒被换掉）⇒ 原样返回：`build()` 会把字段递下去。
-     * ★ 两个轴共用这一处 —— 夹取与"标重排"只写一遍。
+     * ★ 两个轴共用这一处 —— 找盒与转交只写一遍（回调是**单一签名**
+     *   `float → float`，不做混签名的回调表：AOT 严格校验实参个数）。
      */
-    private function pushOffset(Axis $axis, float $value): float
+    private function pusher(Axis $axis): \Closure
     {
         /** @var RenderTable|null $box */
         $box = $this->element()?->effectiveBoxOf(RenderTable::class);
-        if ($box === null) {
-            return $value;
-        }
 
-        return $box->setScrollOffset($axis, $value);
+        return static function (float $value) use ($box, $axis): float {
+            return $box === null ? $value : $box->setScrollOffset($axis, $value);
+        };
     }
 
     /**
@@ -387,7 +379,7 @@ final class TableState extends State implements Scrollable, EditableText
                 return false;
             }
 
-            return $g->coversRows($this->offsetY, $bodyH);
+            return $g->coversRows($this->offsetY(), $bodyH);
         }
 
         $w = $box->size()?->width ?? 0.0;
@@ -395,14 +387,15 @@ final class TableState extends State implements Scrollable, EditableText
             return false;
         }
 
-        return $g->coversColumns($this->offsetX, $w);
+        return $g->coversColumns($this->offsetX(), $w);
     }
 
     /**
      * 按轴滚动（横条拖动、横向滚轮走这里；纵向仍走 `scrollBy()`）。
      *
-     * ★ 两个轴共用同一份 `ScrollBarFade`：横条与竖条同时淡出是对的 —— 它们提示
-     *   的是同一件事"这块区域还能滚"，分两套节律只会出现"一根亮一根暗"。
+     * ★ 两个轴共用同一份 `ScrollBarFade`（在 `lane()` 里注入）：横条与竖条同时淡出
+     *   是对的 —— 它们提示的是同一件事"这块区域还能滚"，分两套节律只会出现
+     *   "一根亮一根暗"。
      * ★ 上界不在这里夹（`scrollBy()` 同一裁决）：横向内容宽要等 `resolveWidths()`
      *   算完才知道，那是 build 期的事。
      * ★ 但**无横向溢出时这里直接早退**：不早退的话，每一格滚轮都会改一次
@@ -424,18 +417,12 @@ final class TableState extends State implements Scrollable, EditableText
             return;   // 横向没得滚：滚轮来了也不标脏
         }
 
-        $next = max(0.0, $this->offsetX + $delta);
-
-        if ($next === $this->offsetX) {
-            return;
-        }
-
-        $this->bar()->noteScroll();
-
         // ★★ 横向**不改行窗口**（行是定高的，横滚只平移），但**会改列窗口**
         //   （阶段 6）：滚过缓冲带之后必须换一批列，否则视口边缘露出一截没造的空白。
         //   所以这里与竖向同一条纪律 —— 盖得住才只推偏移（0 重建），盖不住就标脏。
-        $this->offsetX = $this->pushOffset(Axis::Horizontal, $next);
+        if (!$this->lane(Axis::Horizontal)->move($delta, $this->pusher(Axis::Horizontal))) {
+            return;
+        }
 
         if (!$this->windowCovers(Axis::Horizontal)) {
             $this->markDirty();
@@ -470,66 +457,47 @@ final class TableState extends State implements Scrollable, EditableText
             return;
         }
 
-        $motion = $this->motionFor($axis);
-        if (!$motion->isAnimating()) {
-            $motion->snapTo($axis === Axis::Vertical ? $this->offsetY : $this->offsetX);
-        }
-        $motion->glideBy($delta);
-
-        $this->bar()->noteScroll();
+        $this->lane($axis)->glide($delta);
     }
 
-    /** 该轴的动画节律（懒建：没被滚轮滚过的轴不建） */
-    private function motionFor(Axis $axis): ScrollMotion
+    /**
+     * 该轴的滚动状态机（懒建；**两根轴注入同一份 `ScrollBarFade`**）。
+     *
+     * ★ 淡出为什么共用：横条与竖条提示的是同一件事"这块区域还能滚" ——
+     *   分两套节律只会出现"一根亮一根暗"，而它们本来该同时淡下去。
+     */
+    private function lane(Axis $axis): ScrollLane
     {
         if ($axis === Axis::Vertical) {
-            $motion = $this->motionY;
-            if ($motion === null) {
-                $motion = new ScrollMotion($this->offsetY);
-                $this->motionY = $motion;
+            $lane = $this->laneY;
+            if ($lane === null) {
+                $lane = new ScrollLane(0.0, $this->bar());
+                $this->laneY = $lane;
             }
 
-            return $motion;
+            return $lane;
         }
 
-        $motion = $this->motionX;
-        if ($motion === null) {
-            $motion = new ScrollMotion($this->offsetX);
-            $this->motionX = $motion;
+        $lane = $this->laneX;
+        if ($lane === null) {
+            $lane = new ScrollLane(0.0, $this->bar());
+            $this->laneX = $lane;
         }
 
-        return $motion;
+        return $lane;
     }
 
     /**
      * 推进一根轴的动画；返回"这一帧动了吗"。
      *
      * ★ 位移仍然交给 `scrollByAxis()` —— 夹取、列窗口换批、提交编辑全在那一条路上，
-     *   动画不重写任何一条。
+     *   动画不重写任何一条。收口（推不动就 `snapTo`）收在 `ScrollLane::tick()`。
      */
     private function stepMotion(Axis $axis, float $timestampMs): bool
     {
-        $motion = $axis === Axis::Vertical ? $this->motionY : $this->motionX;
-        if ($motion === null) {
-            return false;
-        }
-
-        $next = $motion->tick($timestampMs);
-        if ($next === null) {
-            return false;
-        }
-
-        $before = $axis === Axis::Vertical ? $this->offsetY : $this->offsetX;
-        $this->scrollByAxis($axis, $next - $before);
-        $after = $axis === Axis::Vertical ? $this->offsetY : $this->offsetX;
-
-        // 推不动了（到边界 / 内容变短被夹）⇒ 就地收口；理由与实测帧数见
-        // `ScrollViewState::tickFrame()`（三份实现同一契约，此处不重复展开）。
-        if ($after === $before) {
-            $motion->snapTo($before);
-        }
-
-        return true;
+        return $this->lane($axis)->tick($timestampMs, function (float $delta) use ($axis): void {
+            $this->scrollByAxis($axis, $delta);
+        });
     }
 
     /**
@@ -555,12 +523,12 @@ final class TableState extends State implements Scrollable, EditableText
         $this->revealScrollInFlight = true;
 
         try {
-            $dy = $box->revealDelta($target, $margin, $this->offsetY);
+            $dy = $box->revealDelta($target, $margin, $this->offsetY());
             if ($dy !== 0.0) {
                 $this->scrollBy($dy);
             }
 
-            $dx = $box->revealDeltaX($target, $margin, $this->offsetX);
+            $dx = $box->revealDeltaX($target, $margin, $this->offsetX());
             if ($dx !== 0.0) {
                 $this->scrollByAxis(Axis::Horizontal, $dx);
             }
@@ -1433,7 +1401,7 @@ final class TableState extends State implements Scrollable, EditableText
 
         [$tableX] = RenderBox::absoluteOrigin($tableBox);
 
-        return $clientX - $tableX - $tableBox->contentOriginX() + $this->offsetX;
+        return $clientX - $tableX - $tableBox->contentOriginX() + $this->offsetX();
     }
 
     /**
@@ -1849,7 +1817,7 @@ final class TableState extends State implements Scrollable, EditableText
             - $tableY
             - $tableBox->contentOriginY()
             - $tableBox->headerHeight()
-            + $this->offsetY;
+            + $this->offsetY();
     }
 
     /**
@@ -2140,8 +2108,8 @@ final class TableState extends State implements Scrollable, EditableText
             $spacing,
             $viewportW,
             $viewportH,
-            $this->offsetX,
-            $this->offsetY,
+            $this->offsetX(),
+            $this->offsetY(),
             $view->cacheExtentPx(),
         );
         $this->geometry = $g;
@@ -2151,8 +2119,10 @@ final class TableState extends State implements Scrollable, EditableText
         //   （过滤 / 列宽被拖窄 / 窗口变宽）。旧值一旦长期大于新上限，之后每一笔
         //   增量都先拿去消耗这段**死区** —— 真机表现是"拖着条，画面不动"，
         //   而条本身贴在末端，看起来像"拖不动"。写回之后增量立刻生效。
-        $this->offsetY = $g->offsetY;
-        $this->offsetX = $g->offsetX;
+        //   ★ 走 `set()` 而不是 `move()`：这是"布局算出来的真值"，不是用户增量，
+        //     在 `move()` 里再夹一次下界 0 就是第二个真相（见 `ScrollLane::set()`）。
+        $this->lane(Axis::Vertical)->set($g->offsetY);
+        $this->lane(Axis::Horizontal)->set($g->offsetX);
 
         $this->createdRows = $g->createdRows();
         $this->createdColumns = $g->createdColumns();
