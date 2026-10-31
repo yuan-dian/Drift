@@ -254,7 +254,8 @@ final class TableSelection          // 不可变值对象，只装"哪些行被�
 - 应用持有，每次 build 用 `->selection($this->selection)` 递进来；
   点击勾选只回调 `onSelectionChange(TableSelection $s)`（与 `Select::value()` /
   `Checkbox` 同一哲学：**控件不自持"选中了谁"**）。
-- **纯 UI 态仍住 `TableState`**：`hoverKey`（悬停行）、`anchorKey`（Shift 连选的锚）、
+- **纯 UI 态仍住 `TableState`**：`hoverKey`（悬停行）、`anchor`（Shift 连选的锚，
+  存 `{row, col}` 下标而不是 key —— 它只在一次手势内有效，2026-10-31 改）、
   `focusedCell`（键盘焦点格）。判据是"应用要不要读它、要不要从外部改它"——
   批量删除/导出要读选择集，没人要读"鼠标现在悬停在第几行"。
 - **行态由外层注入**：`RenderTable` 给每行套一层行壳（背景 / 悬停 / 选中 / 聚焦描边），
@@ -1837,7 +1838,7 @@ docref **70 ok**；selftest exit 0。
 
 | 不做 | 前置 / 为什么 |
 |---|---|
-| ~~拖动框选（按下—移动—抬起）~~ | **已做（阶段 8，行级）**：见 §21。格级矩形选区仍未做（要新载荷 + 按格绘制，与"选中集 = 行 key 集"的语义分叉） |
+| ~~拖动框选（按下—移动—抬起）~~ | **已做**：行级见 §21，格级见 §23（阶段 10）。当初记的"要新载荷"是误判 —— 病根不是缺载荷，是存储形状只有"行 key 集"一种 |
 | `Tab` 在格间走 | `Tab` 现在归焦点系统（"离开表格"），要改先得裁决"表内 Tab 环 vs 跨控件 Tab"的优先级 |
 | 三击选一段 / 双击选一个词 | **已做（阶段 9）**：见 §22。边界算法下沉到 `Text\TextBoundary`（纯函数），表格只做手势分流 |
 | 长按（press-and-hold） | 前置**已就位**（帧时钟 `after()` 存在），缺的是"按住 N 毫秒仍未抬起"的状态机，与指针捕获一起做 |
@@ -1986,8 +1987,9 @@ docref **70 ok**；selftest exit 0。
 
 ### 21.7 边界
 
-- **只做行级**。格级矩形选区是另一个产品特性：要新载荷（`TableSelection` 是
-  行 key 集）、按格绘制、`onSelectionChange` 的语义也要重新裁决。
+- ~~**只做行级**~~。**已被 §23（阶段 10）推翻**：当时以为格级选区要"新载荷 +
+  按格绘制 + 重裁 `onSelectionChange`"，实际只要把唯一存储从"行 key 集"换成
+  `list<TableRange>` —— 行集降为投影，行级 API 与回调一字不改。
 - **拖出视口外的行要滚到才选得到**：区间是按行下标算的，`pointerRowAt()` 会夹到
   首/末行，所以"拖到边缘滚 → 继续拖"是正确的；但没有"一键选到末尾"。
 - **表头不参与拖动**：拖进表头区会夹到第 0 行（不会滚，见 `dragScrollAt()` 的上边界）。
@@ -2081,3 +2083,108 @@ docref **70 ok**；selftest exit 0。
   所以"双击选词"对输入框还不存在。补的时候只接指针 → `offsetAt()` → `selectWordAt()`。
 - **选区不能拖动扩展**：`TextDraft::extendSelectionTo()` 已就位，缺的是"拖出格子在
   行容器上继续收 move"的收口（与行级拖动框选共用捕获，但要区分是谁的拖动）。
+
+---
+
+## 23. 阶段 10：**格级矩形选区** —— 一次把"两套语义"合成一套（2026-10-31）
+
+### 23.1 结论先行：缺的不是功能，是**存储形状**
+
+§19.9 把格级选区记成"要新载荷 + 按格绘制，与『选中集 = 行 key 集』的语义分叉"。
+那句话是对的诊断，但开的药方是"再加一套载荷" —— 那正是本仓最忌讳的
+「同一件事两条路」。真正要改的是**存储**：
+
+| | 改前 | 改后 |
+|---|---|---|
+| 唯一存储 | `array<归一化 key, 原 key>`（行集） | `list<TableRange>`（选区列表） |
+| 整行选区 | 就是那个 map | 一个 `cols === null` 的 `TableRange` |
+| 格矩形 | **表达不出来** | 一个带列端点的 `TableRange` |
+| 行级 API | `has` / `keys` / `count` / `toggle` … | **一字不改**，改成 range 上的投影 |
+| 回调 | `onSelectionChange(TableSelection)` | **同一个**（没有第二个回调） |
+
+行集不再是"存储"，而是"投影"：`keys()` = 各 range 的行 key 摊平去重。
+所以"点一行"和"框一片格"是同一个模型的两种取值，不存在两套状态需要同步。
+
+★ 形状参考 Qt 的 `QItemSelection`（range 列表）与 WPF 的
+`SelectionUnit × SelectionMode`（两个正交轴）：**单位**（Rows / Cells）与**数量**
+（Single / Multiple）分开，而不是合成一个四值枚举 —— 以后加"选列"只是多一个
+`TableSelectionBehavior` case，不必把现有四种组合再翻一倍。
+
+### 23.2 点法语义只有一份实现
+
+`TableRowPicker`（行级）与新的格级逻辑合并成 **`TableGridPicker`**，一个
+`pick()` 按 `behavior` 分支：
+
+| 修饰键 | `Rows`（默认） | `Cells` |
+|---|---|---|
+| 无 | 替换为**该行** | 替换为**该格** |
+| `Ctrl` | **反选**该行（复选框语义） | **累加**该格（Excel 语义） |
+| `Shift` | 锚点行 → 目标行，**替换**为区间 | 锚点格 → 目标格，**替换**为矩形 |
+| 单选 | 忽略修饰键 | 忽略修饰键 |
+
+★ `Ctrl` 两种行为不同是**有意的**：整行是"勾选"（可反选），格是"加一块"。
+让格矩形能反选就得支持"矩形挖洞"，挖出来的非矩形选区比这个功能本身贵得多 ——
+Excel 里 `Ctrl+点` 也是加，不是反选。
+
+★ 四条输入（点击 / `Shift+点击` / 拖动 / `Shift+方向键`）**全部**过这一个
+`pick()`；`Ctrl+A` 走同文件的 `selectAll()`（一条 range，不是逐行累加）。
+
+### 23.3 渲染：加在**格**这一层，`cellBuilder` 仍然不知道
+
+`paddedCell()` 多收一个 `?Color $tint`，有值才 `->background()`。于是：
+
+- `cell()` 闭包**签名不变**（§4 裁决 4 的"加选择不用改每列 cell"仍然成立）；
+- 底色铺满"这一格"（内边距与对齐都在它里面），不会溢到列间缝隙；
+- `Rows` 行为下 `cellTint()` 恒 `null` ⇒ **Widget 树与改前逐位相同**
+  （这是 golden 零变化的依据）。
+
+### 23.4 复制：控件只算文本，往哪写由应用决定
+
+```php
+Table::make($cols, $rows)
+    ->selection($this->selection)
+    ->selectionBehavior(TableSelectionBehavior::Cells)
+    ->onSelectionChange(fn(TableSelection $n) => $this->setState(fn() => $this->selection = $n))
+    ->onCopy(fn(string $tsv) => $this->app->clipboard()?->writeText($tsv));
+```
+
+文本来源：`TableColumn::copyText()` 优先 → 其次 `field()` 的字段值 → 都没有
+（纯 `cell()` 闭包列）⇒ 空串。**框架不猜"怎么把一个 Widget 变成文本"**。
+
+★ 为什么不自己写剪贴板：`Clipboard` 在 `Platform` 层，控件拿不到宿主
+（`State` 上没有 `application()`）。与选择 / 排序 / 列宽同一条哲学。
+★ 没声明 `onCopy()` ⇒ `Ctrl+C` **不吃**这个键（让给应用自己的快捷键），
+不是静默吞掉。
+
+### 23.5 键盘：`Shift+方向键` 扩选，`Ctrl+A` 全选
+
+★ 坑：`KeyChord::is()` 是**全字段**比较 ⇒ 带 `Shift` 的方向键**不会**命中
+`KeyChord::right()`。修法是先摘 `Shift` 位再比（只摘 `Shift`：`Ctrl/Alt+方向键`
+今天没有语义，摘掉会让它们从"不认"变成"当普通方向键"）。
+
+★ 无修饰的移动**不动选区**：选区是受控的，键盘挪光标顺手清空会让
+"选中一批 → 按键找位置"变成"每次都得重新选"。`Shift+方向键` 第一次按下时
+把锚点落成**移动之前**那一格 —— 否则"从这一格往下拉"会差一格。
+
+### 23.6 验收
+
+| 项 | 结果 |
+|---|---|
+| `TableGridPickerTest` | 21 例（Rows 那 9 条从 `TableRowPickerTest` 原样搬来 + 格矩形 / Ctrl 累加 / Ctrl+A 12 例） |
+| `CellSelectTest`（feature，8 例） | 点一格 / **像素按格染** / Shift 成矩形 / 拖动一次上报 / Shift+箭头 / Ctrl+A / Ctrl+C TSV / Rows 回归 |
+| `phpunit` | unit 412 / feature 598 全绿 |
+| `smoke` | 459 ok / 0 FAIL（零变化） |
+| `lint` | 867 文件 0 error 0 warn |
+
+★ 像素判据：`rasterOf()` 采样"选中格中心"与"同行未选中格中心"，断言前者变了、
+后者仍是 `#FFFFFFFF` —— 只断"有底色"的话，"整行都染"也会绿。
+
+### 23.7 边界
+
+| 不做 | 为什么 |
+|---|---|
+| 格矩形 `Ctrl+点` 反选 | 要在矩形里挖洞（非矩形选区），收益不抵复杂度；Excel 也是加 |
+| 选列（`TableSelectionBehavior::Columns`） | 枚举留了位，但没有业务消费者 |
+| `Ctrl+方向键` 跳到边缘 | Excel 语义，与"扩选"是两件事，单独一轮 |
+| 剪贴板多格式（HTML / CSV 变体） | 只有 `writeText`；要做先定"多格式"在 `Clipboard` 上长什么样 |
+| 示例台页 | 本阶段只到"能力 + 判据"；页 24 的 Rows 行为与文案未动（golden 零变化） |

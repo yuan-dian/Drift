@@ -2,6 +2,10 @@
 
 > 触发：`tools/smoke.php` 已 19407 行 / 1727 条断言，单文件、无分组、无过滤。
 > 参照对象是同机上的 `D:\TypePHP\typephp`（PHP→C++ 编译器，同一个 AOT 目标）。
+>
+> **2026-10-31 补**：本册凡出现 `TableRowPicker` / `TableRowPickerTest` 处，均指
+> **并入前**的形态 —— 那个类已整体并进 `TableGridPicker`（格级矩形选区，
+> 见 `DESIGN-TABLE` §23）。行级 9 条用例**原样搬过去**，语义未变。
 
 ## 1. TypePHP 怎么分的（实测，不是印象）
 
@@ -286,7 +290,7 @@ tests/Unit/                      纯值对象：无 Element、无 Application
 ├── Layout/ExtentWindowTest.php  列窗口累加 + extentOf
 ├── Text/TextDraftTest.php       字节数学：退格按码位 / 插入符吸附
 ├── Widget/TableSelectionTest.php 不可变 + int/string 分离
-├── Widget/TableRowPickerTest.php 点击 / Ctrl / Shift / 反向 / 无锚点 / 单选 / 孔洞
+├── Widget/TableGridPickerTest.php 点击 / Ctrl / Shift / 反向 / 无锚点 / 单选 / 孔洞 / 格矩形
 └── Widget/TableSortTest.php     空态 / thenBy 移列到末尾
 
 tests/Feature/
