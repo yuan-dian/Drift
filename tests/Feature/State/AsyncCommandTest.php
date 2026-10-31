@@ -184,7 +184,7 @@ final class AsyncCommandTest extends SmokeTestCase
         $this->flushChecks();
     }
 
-    public function testAlreadySettledTaskSkipsLoadingFlash(): void
+    public function testAlreadySettledFutureSkipsLoadingFlash(): void
     {
         [$app, $constraints] = self::boot(static function (mixed $arg): Future {
             return Future::resolved('v');
@@ -194,9 +194,53 @@ final class AsyncCommandTest extends SmokeTestCase
         $app->frame(32.0, $constraints);
 
         check(
-            'AsyncCommand · 同步后端（已结算 Future）首帧直接 data，不白闪 loading',
+            'AsyncCommand · `$task` 返回已结算 Future ⇒ 首帧直接 data，不白闪 loading',
             self::states($app->snapshots) === 'idle,data',
             'state=' . self::states($app->snapshots),
+        );
+
+        $this->flushChecks();
+    }
+
+    /**
+     * `$task` **同步抛出** ⇒ `error` 态，且异常不许冒到调用栈外。
+     *
+     * ★ 真实形状：同步数据源的 `fetchPage()` 抛 PDO / 网络异常，或 `run()` 传错参数
+     *   类型的 `TypeError`。修复前它会穿过 `AsyncCommand::run()` → 命令 handler →
+     *   事件循环（`Application::dispatch()` 那条链上没有 try/catch）⇒ 点一次按钮
+     *   就走中止序列；而同一次失败走异步后端只会变成 `error` 态。
+     * ★ 判据分三层：① 状态是 `error`（不是停在 idle）；② `isRunning()` 为假
+     *   （按钮能再点，否则一次失败就把界面锁死）；③ **画出来的字是 error**
+     *   （`fold()` 真的选了那一支，而不只是值对了）。
+     * ★ 还要断言"没冒出去"：这条用例能跑到断言处本身即证明——异常若冒泡，
+     *   BC 层的 frame 会把它变成中止序列，进程直接没了。
+     */
+    public function testSynchronousThrowBecomesErrorState(): void
+    {
+        [$app, $constraints] = self::boot(static function (mixed $arg): Future {
+            throw new \RuntimeException('同步取数炸了');
+        });
+
+        $command = $app->pageState()->command();
+        $command->run(1);
+        $app->frame(32.0, $constraints);
+
+        $last = self::last($app);
+        check(
+            'AsyncCommand · `$task` 同步抛出 ⇒ error 态（与"任务跑失败"同一个出口）',
+            $last !== null && $last->hasError() && $last->message() === '同步取数炸了',
+            $last === null ? 'build 一次都没跑' : 'state=' . $last->stateName() . ' message=' . $last->message(),
+        );
+
+        check(
+            'AsyncCommand · 同步抛出后 isRunning() 为假（按钮能再点，不是永远转圈）',
+            !$command->isRunning(),
+        );
+
+        check(
+            'AsyncCommand · 同步抛出的那一帧画的就是 error 支',
+            self::painted($app) === 'error',
+            '实际画的是 ' . self::painted($app),
         );
 
         $this->flushChecks();

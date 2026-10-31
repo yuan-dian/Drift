@@ -119,6 +119,12 @@ final class AsyncCommand extends Subject
     private bool $disposed = false;
 
     /**
+     * ★★ **`$task` 每次都必须返回一条新的、归本命令独有的 `Future`**（2026-10-31
+     *   补契约）：本类换参数时会 `cancel()` 上一次那条 —— 若它返回的是共享 / 缓存的
+     *   实例（"同页在途就复用上一条"这种优化很自然），取消会**误伤另一个持有者**，
+     *   而症状是"别的地方莫名其妙不再更新"，极难归因。要复用就在 `$task` 里复用
+     *   **结果**（自己缓存值），不要复用 `Future`。
+     *
      * @param \Closure(mixed): Future $task
      *
      * @api
@@ -166,8 +172,18 @@ final class AsyncCommand extends Subject
      *   —— **不做 `==` 或序列化比较**：那两种在 AOT 下没验证过，而"多跑一次"
      *   的代价比"少跑一次"小得多。
      * ★ **换参数 ⇒ 作废旧请求并真的 `cancel()`**（见类注释的所有权论证）。
-     * ★ 同步后端（`SyncTaskHost`）下 `$task()` 返回的 Future 已经结算 ⇒
-     *   `then()` 当场同步跑 ⇒ 首帧就是 `data`，**不会白闪一帧 loading**。
+     * ★★ **同步后端也会先过队列**（`SyncTaskHost` 的 `submit()` 只入队，结算发生在
+     *   下一帧 `drain()`，见 §17.4.2 的统一语义）⇒ `run()` 之后那一帧仍是
+     *   `loading`，**下一帧**才 `data`。真正"首帧就是 data"的只有 `$task` 直接返回
+     *   **已结算** Future 的场合（基准 / 整页快照里的 `Future::resolved([...])`）。
+     *   ★ 这条以前写成"`SyncTaskHost` 下首帧就是 data"—— 那是把同步后端与
+     *     `Future::resolved` 混成一回事，实测不成立（首帧会白闪一格转圈）。
+     *
+     * ★★ **`$task` 允许同步抛出**（2026-10-31）：同步数据源的 `fetchPage()` 抛
+     *   PDO / 网络异常、或 `run()` 传错参数类型的 `TypeError`，都会在**发起阶段**
+     *   就炸。不接住的话异常会穿过 `run()` → 命令 handler → 事件循环
+     *   （`Application::dispatch()` 那条链上没有 try/catch）⇒ 点一次按钮就走中止
+     *   序列；而**同一次失败在异步后端下只会变成 `error` 态**。两条路必须同一出口。
      *
      * @param mixed $arg 传给 `$task` 的参数（页码 / id / 查询条件…）
      *
@@ -274,7 +290,21 @@ final class AsyncCommand extends Subject
         $this->ran = true;
 
         $task = $this->task;
-        $future = $task($arg);
+
+        // ★★ 发起阶段的同步抛出 = "这次请求一开始就失败了"，必须与"任务跑失败"
+        //   走**同一个出口**（`error` 态）。否则两条路分叉：异步后端显示"加载失败"，
+        //   同步后端把异常扔进事件循环（`Application::dispatch()` 无 try/catch）——
+        //   一次点按钮就能让进程走中止序列，且界面停在上一次的样子。
+        //   ★ `abandon()` 已把 `pending` 置空 ⇒ `isRunning()` 是 false，用户能再点。
+        //   ★ 不额外 `Errors::report()`：异步路径的 `Job::run()` 抛出也只变成
+        //     `Completion` 的错误，不喊 Fatal。两条路要一致。
+        try {
+            $future = $task($arg);
+        } catch (\Throwable $error) {
+            $this->emit(AsyncValue::error($error->getMessage())->carriedFrom($this->value));
+
+            return;
+        }
 
         $this->pending = $future;
 

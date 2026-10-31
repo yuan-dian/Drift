@@ -67,7 +67,10 @@ final class ProcessTaskHost implements TaskHost
     /**
      * 还没发出去的任务（没有空闲 worker / worker 没起好）。
      *
-     * @var list<array{id: int, line: string, future: Future}>
+     * ★ `name` 不是为了发送（`line` 里已经有了），是为了**超时 / 诊断**：排队中的
+     *   任务将来要做"排太久"告警时，只有 `line`（一整行 JSON）就得再解一次。
+     *
+     * @var list<array{id: int, name: string, line: string, future: Future}>
      */
     private array $queue = [];
 
