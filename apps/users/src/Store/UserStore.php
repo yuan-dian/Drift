@@ -194,6 +194,9 @@ final class UserStore extends Subject
      *
      * ★ 只有 `data` 态改写 `$rows`：失败时保留上一次的行（界面画 error，但列表
      *   不该被清空 —— 以前 `applyPage()` 也是这个语义）。
+     * ★ 2026-10-31：`error` 现在也**带着**上一次的值（`AsyncValue::carriedFrom()`），
+     *   但本方法仍以 `hasData()` 为门 —— 值没变，不必再赋值一遍（那会多推一次版本
+     *   ⇒ 多一次派生值重算）。"旧内容还在"由命令保证，不是由这里兜底。
      * ★ 回调在**帧内**执行（`Application::frame()` 的 drain 段，在 settle 之前）
      *   ⇒ 这里的 `notifyChanged()` 会让同帧重建，看不到"空一帧"。
      */

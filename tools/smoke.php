@@ -4881,6 +4881,25 @@ check(
     $staleStore->page()->value()->stateName(),
 );
 
+// ── ㊸ 刷新时保留上一次的行（2026-10-31，`AsyncValue` 两维模型）────────────────
+//
+// ★ 判据落在**两件事同时成立**上：`isLoading()`（请求在途）且行还在。
+//   上一版这两件事不可能同时为真 —— `loading` 把载荷扔了 ⇒ 列表只能闪空。
+//   ★ 也不能只测 `rows()`：`UserStore` 在失败路径上本来就保留行（那是另一条语义）。
+//     这里必须证明"值真的跨状态活下来了"，所以读 `isRefreshing()` + `value()`。
+$staleStore->load(3);
+$refreshing = $staleStore->page()->value();
+check(
+    'N6 · 刷新中旧行还在（loading 带上一次的载荷 ⇒ 列表不闪空）',
+    $refreshing->isRefreshing()
+        && $refreshing->dataOr(null) !== null
+        && \count($staleStore->rows()) === 1
+        && ($staleStore->rows()[0]->name ?? '') === '第二页',
+    'state=' . $refreshing->stateName()
+        . ' refreshing=' . ($refreshing->isRefreshing() ? '1' : '0')
+        . ' rows=' . \count($staleStore->rows()),
+);
+
 // ── ㊷ N5 · 「能不能真睡着」的唯一开关（`needsPolling()`）─────────────────────
 //
 // ★★ 判据的形状是"**同一夹具、只翻一个布尔**"：三台应用除了 `needsPolling()` 的

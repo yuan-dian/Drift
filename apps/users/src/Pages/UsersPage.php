@@ -32,6 +32,12 @@ use App\Users\Widgets\UserRow;
  * ★ 四态用 **`AsyncValue::fold()`**（漏一支当场抛）—— 以前是 `match` 无 default
  *   守的 `LoadStatus` 封闭域（§12.1 第 2 条）；那个枚举已被 `AsyncValue` 取代，
  *   "穷尽"由 `fold()` 在运行期入口保证。
+ * ★★ **2026-10-31：一个"读了会变的值却没在订阅里读"的真机 bug** —— 本页是
+ *   `StatelessWidget`（`build()` 只在页面被造出来时跑一次），原先那句
+ *   `Button::primary('刷新')->enabled(!$this->store->page()->isRunning())` 取的是
+ *   **浇筑那一刻**的值；首屏正在加载 ⇒ 按钮**永久灰掉**（数据到了也不恢复）。
+ *   现在那段包在 `SubjectBuilder` 里，切片就是 `isRunning()` 这一个布尔。
+ *   ⇒ 页面里**任何**读 Store 的地方都必须在某个 `select` 之内，否则它就是快照。
  *
  * ★ **头部固定、列表可滚**：页面是 `Dock`（top = 标题 + 搜索行，center =
  *   可滚动列表）—— §12.1 第 3 条的"外壳 + 内容槽"形态（外壳持久、只换槽）。
@@ -70,12 +76,33 @@ final class UsersPage extends StatelessWidget
                                 ->placeholder('输入姓名')
                                 ->onChanged(fn(string $x) => $this->store->setQuery($x))),
 
-                        // ★ 转圈时禁用「刷新」：判据直接读命令的 `isRunning()`。
-                        //   Store 里的命令与页面里的命令是**同一个类** ⇒ "现在能不能点"
-                        //   在两处是同一句话，不需要 Store 再暴露一个 `isLoading()`。
-                        Button::primary('刷新')
-                            ->enabled(!$this->store->page()->isRunning())
-                            ->command('users.refresh'),
+                        // ★★ 「刷新」的可用态必须**在订阅里读**（2026-10-31 真机抓到的 bug）：
+                        //   本页是 `StatelessWidget`，`build()` 只在这棵子树被**造出来**时跑一次
+                        //   ⇒ `enabled(!$isRunning())` 取的是**浇筑那一刻**的值。首屏正是
+                        //   "进页面就 load"，那一次 `isRunning()` 是 true ⇒ 按钮**永远灰**，
+                        //   数据到了也不会恢复（真机复现：结算后 `isRunning=false`、
+                        //   `enabled=false`）。界面读的每一个会变的值都必须来自订阅 ——
+                        //   这正是 `SubjectBuilder` 存在的理由，本页却漏了这一个。
+                        //   ★ 切片只要一个布尔：命令的 `isRunning()` 每次变化都伴随一次
+                        //   值变化（`AsyncCommand` 类注释里那条不变式）⇒ 不会漏一帧，
+                        //   也不需要第二条订阅通道。
+                        SubjectBuilder::make($this->store)
+                            ->select(static fn(UserStore $s): bool => $s->page()->isRunning())
+                            ->builder(function (bool $running): Widget {
+                                $items = [
+                                    Button::primary('刷新')->enabled(!$running)->command('users.refresh'),
+                                ];
+
+                                // ★ 刷新时**列表不消失**（旧值还在，见 `AsyncValue` 的
+                                //   两维模型）⇒ "正在刷新"必须有人说一句，否则看起来
+                                //   像"点了没反应"。
+                                if ($running) {
+                                    $items[] = Spinner::make()->diameter(12.0);
+                                    $items[] = Text::make('刷新中…')->caption();
+                                }
+
+                                return Row::make()->spacing(8)->children($items);
+                            }),
 
                         Spacer::make(),
 
