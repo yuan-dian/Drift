@@ -31,6 +31,7 @@ use Drift\Widget\Widget;
 
 use App\Showcase\Pages\AlignPage;
 use App\Showcase\Pages\AsyncTablePage;
+use App\Showcase\Pages\LoadMorePage;
 use App\Showcase\Pages\AspectPage;
 use App\Showcase\Pages\BigListPage;
 use App\Showcase\Pages\TablePage;
@@ -218,6 +219,9 @@ final class ShowcaseState extends State
             // ★ N6：异步表格页追加在最末（前 31 项 y 不变）。它要 `$fetchRows`
             //   ⇒ 工厂不是 static（闭包捕获 `$this`）。
             new NavEntry(IconName::ListBullets, '异步表格 Async', fn(): Widget => new AsyncTablePage($this->caps->fetchRows)),
+            // ★ 2026-10-31：加载更多页追加在最末（前 32 项 y 不变）。
+            //   与「异步表格」同一个取数闭包，差别只在 `append()` vs `run()`。
+            new NavEntry(IconName::ListBullets, '加载更多 More', fn(): Widget => new LoadMorePage($this->caps->fetchRows)),
         ];
     }
 

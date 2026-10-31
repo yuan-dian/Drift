@@ -303,12 +303,14 @@ abstract class State
      *   `apps/users` 的 `UserStore` 住 Store，因为多个页面看同一份数据）。
      *
      * @param \Closure(mixed): \Drift\Async\Future $task 组合根接线："怎么发起一次请求"
+     * @param null|\Closure(mixed, mixed): mixed $combine 追加（`append()`）时的合并规则；
+     *        不给 ⇒ 这个命令只能 `run()`（替代语义）。见 {@see AsyncCommand::append()}
      *
      * @api
      */
-    public function asyncCommand(\Closure $task): AsyncCommand
+    public function asyncCommand(\Closure $task, ?\Closure $combine = null): AsyncCommand
     {
-        $command = AsyncCommand::make($task);
+        $command = AsyncCommand::make($task, $combine);
 
         $this->watch($command, function (): void {
             $this->markDirty();

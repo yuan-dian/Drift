@@ -1453,6 +1453,13 @@ final class SignupCommands implements CommandHandler
 >    「刷新」按钮原先直接在 `build()` 里读 `$store->page()->isRunning()`，而页面是
 >    `StatelessWidget`（`build()` 只跑一次）⇒ 首屏正在取数那一刻的 `true` 被永久
 >    浇筑进控件，按钮**再也不亮**。见 `tests/Feature/Widget/UsersRefreshButtonTest.php`。
+>
+> ★ **2026-10-31 追加**（见 `docs/ASYNC-DX-2026-10-30.md` §13）：一条命令**两个动作** ——
+> `run($arg)` 是**替代**（翻页 / 刷新，一次只看一份数据），`append($arg)` 是**追加**
+> （加载更多 / 无限滚动，结果接在后面）。追加需要造命令时给一条合并规则
+> （`asyncCommand($task, $combine)`），没给就 `append()` 会当场抛 —— 静默退化会让
+> "加载更多"吃掉前面的行且**不报错**。两个动作共享同一套去重 / 作废 / 取消 / 重试 /
+> 卸载兜底，所以**不另开类**（论证见 `docs/ASYNC-ARCH-2026-10-31.md` §10.2）。
 
 ```php
 enum LoadStatus: int { case Idle = 0; case Loading = 1; case Ready = 2; case Error = 3; }

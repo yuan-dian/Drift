@@ -82,6 +82,16 @@ final class Bootstrap
             ? null
             : new ProcessTaskHost([$exe, '--drift-worker'], JobRegistry::make());
 
+        // ★★ 预热 worker（2026-10-31）：子进程的第一个任务要付 275ms 启动
+        //   （`probes/RESULTS.md` §12 ⑧），而"进页面就取数"会把这段空等摆在
+        //   用户第一眼 —— 转圈出现了、任务却还没开始跑。
+        //   `prewarm()` 只把进程**发起**（`proc_open` 异步、立即返回），启动那
+        //   275ms 于是落在"建窗 / 首帧"这段时间里（另一颗核上跑，不占 UI 线程）。
+        //   ★ 必须在 `open()` 之前：第一个窗口的 `attach()` 会取走端口并缓存。
+        if ($taskHost !== null) {
+            $taskHost->prewarm();
+        }
+
         // ★ 第三个参数是**卸载**：两处静态钩子捕获的闭包持有整条应用对象图，
         //   不卸 ⇒ 活到 PHP shutdown ⇒ AOT 关窗必崩（实测 8/8）。
         $set = new WindowSet($platform, Paths::userConfig($platform->configDir(), 'users.window'), static function (): void {

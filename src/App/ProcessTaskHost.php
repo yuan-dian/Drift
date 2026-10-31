@@ -27,6 +27,8 @@ use Drift\Errors;
  * ★ **不是"每任务一进程"**：实测 `spawn` 单价 **275ms**（`probes/RESULTS.md` §12 ⑧），
  *   按任务起进程根本不可用。所以是**懒启动 + 常驻**：需要时才起，之后所有任务复用它；
  *   `drain()` 每帧非阻塞看一眼有没有回复。
+ *   ★ 但那 275ms 会落在**第一条任务**头上（"点了没反应"）⇒ 组合根可以调
+ *     {@see self::prewarm()} 把它挪到应用启动期（2026-10-31）。
  *
  * ★★ **并发 = 多个 worker 进程，不是 worker 内多线程**（`maxWorkers`）：
  *   单个 worker 是**串行**的（`fgets` 一行、跑完、回一行 —— 它没有线程，见上）；
@@ -170,6 +172,62 @@ final class ProcessTaskHost implements TaskHost
 
     /** @var array<string, \Closure> */
     private array $registry = [];
+
+    /**
+     * **预热**：先把 worker 起好，让第一条任务不用等进程启动（2026-10-31）。
+     *
+     * ```php
+     * $host = new ProcessTaskHost([$exe, '--drift-worker'], JobRegistry::make());
+     * $host->prewarm();          // 组合根：建窗之前/之后都行，越早越好
+     * $scope->setTaskHost($host);
+     * ```
+     *
+     * ## 它修的是哪一段等待
+     *
+     * 本类注释写着"懒启动 + 常驻：需要时才起，之后所有任务复用它"—— 但**第一次**
+     * 总要付那 275ms（`proc_open` + 一整套 AOT 运行时启动）。于是"进页面就取数"
+     * 的路径上，用户看到的是：转圈出现 → **275ms 什么都没有** → 任务才开始跑。
+     * 那 275ms 不是任务慢，是**执行体还没出生**。
+     *
+     * 预热把这 275ms 挪到应用启动期 —— 那一小段本来就没人看（窗口还在建、
+     * 首帧还没画），而它是**另一个进程**在启动，不占 UI 线程。
+     *
+     * ## 为什么不在端口（`TaskHost`）上
+     *
+     * `TaskHost` 说的是"怎么提交一个任务"；预热说的是"**这个池**的启动成本"。
+     * 三个后端里只有本类有 275ms 的启动账（`SyncTaskHost` 零启动、
+     * `ThreadTaskHost` 的线程在 C++ 侧按需起且是微秒级）。把它放进接口，
+     * 另外两个就只能实现成空方法 —— 那是"未被消费的分支"（本仓纪律）。
+     * ⇒ 留在具体类上，组合根本来就握着具体类型（它刚 `new` 完）。
+     *
+     * ## 它**不**等 worker 就绪
+     *
+     * 等就绪 = 在 UI 线程上阻塞 275ms，正好是这整个机制在躲的事。
+     * 所以这里只把进程**发起**（`proc_open` 是异步的，立即返回），真正"它能干活"
+     * 由第一次 `flush()` 派发时自然衔接：那时它多半已经起来了；万一还没完全就绪，
+     * 任务就多等一会儿（与没有预热时的起点相同，不会更差）。
+     * ★ 诚实边界：所以预热**不保证**首条任务 0 等待，只把期望值从 275ms 压到接近 0。
+     *
+     * ## 一次起几个
+     *
+     * `$n` 会被 `maxWorkers` 夹住 —— 一个 worker 是一整套 AOT 运行时（几十 MB），
+     * 预热不能成为"无界起进程"的入口（同 `flush()` 的理由）。
+     * 幂等：已经够数就直接返回。
+     *
+     * @param int $n 想准备几个 worker（`≤ 0` ⇒ 什么都不做）
+     *
+     * @api
+     */
+    public function prewarm(int $n = 1): void
+    {
+        $target = \min($n, $this->maxWorkers);
+
+        while (\count($this->workers) < $target) {
+            if ($this->spawnWorker() === null) {
+                return; // 起不来：Errors 已报过；剩下的留给 `flush()` 按需重试
+            }
+        }
+    }
 
     public function submit(Job $job): Future
     {

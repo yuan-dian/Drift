@@ -100,7 +100,13 @@ final class Bootstrap
         //     取走并缓存（中途换掉会让"入队 / drain"分属两个队列）。
         $exe = (string) ($argv[0] ?? '');
         if ($exe !== '') {
-            $scope->setTaskHost(new ProcessTaskHost([$exe, '--drift-worker'], JobRegistry::make()));
+            $host = new ProcessTaskHost([$exe, '--drift-worker'], JobRegistry::make());
+
+            // ★ 预热（2026-10-31）：把首条任务的 275ms 进程启动挪到建窗之前。
+            //   见 `ProcessTaskHost::prewarm()` —— 它只发起进程，不等就绪。
+            $host->prewarm();
+
+            $scope->setTaskHost($host);
         }
 
         // ★ 数据源模式：默认本地慢任务（开箱即用，零依赖）；

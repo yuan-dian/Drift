@@ -33,8 +33,10 @@ final class AsyncCommandApplication extends Application
 
     /**
      * @param \Closure(mixed): Future $task 组合根接线："怎么发起一次请求"
+     * @param null|\Closure(mixed, mixed): mixed $combine 追加时的合并规则
+     *        （`append()` 用；`null` ⇒ 这个命令只能 `run()`）
      */
-    public function __construct(private \Closure $task)
+    public function __construct(private \Closure $task, private ?\Closure $combine = null)
     {
         // ★ 必须调父构造器：基类在构造器里建七个拆分片（闸门
         //   `AppSubclassCtorParent` 守着；漏了 AOT 真机 exit=255）。
@@ -48,6 +50,7 @@ final class AsyncCommandApplication extends Application
             function (AsyncValue $value): void {
                 $this->snapshots[] = $value;
             },
+            $this->combine,
         );
     }
 
@@ -74,10 +77,12 @@ final class AsyncCommandRoot extends StatefulWidget
     /**
      * @param \Closure(mixed): Future $task
      * @param \Closure(AsyncValue): void $observe
+     * @param null|\Closure(mixed, mixed): mixed $combine 追加时的合并规则
      */
     public function __construct(
         private \Closure $task,
         private \Closure $observe,
+        private ?\Closure $combine = null,
     ) {
         parent::__construct();
     }
@@ -85,15 +90,16 @@ final class AsyncCommandRoot extends StatefulWidget
     /**
      * @param \Closure(mixed): Future $task
      * @param \Closure(AsyncValue): void $observe
+     * @param null|\Closure(mixed, mixed): mixed $combine
      */
-    public static function make(\Closure $task, \Closure $observe): self
+    public static function make(\Closure $task, \Closure $observe, ?\Closure $combine = null): self
     {
-        return new self($task, $observe);
+        return new self($task, $observe, $combine);
     }
 
     public function createState(): State
     {
-        return new AsyncCommandRootState($this->task, $this->observe);
+        return new AsyncCommandRootState($this->task, $this->observe, $this->combine);
     }
 }
 
@@ -105,17 +111,19 @@ final class AsyncCommandRootState extends State
     /**
      * @param \Closure(mixed): Future $task
      * @param \Closure(AsyncValue): void $observe
+     * @param null|\Closure(mixed, mixed): mixed $combine
      */
     public function __construct(
         private \Closure $task,
         private \Closure $observe,
+        private ?\Closure $combine = null,
     ) {
     }
 
     public function initState(): void
     {
         // ★ 走 `State::asyncCommand()`（页面侧唯一入口）：订阅 + 卸载时自动停。
-        $this->command = $this->asyncCommand($this->task);
+        $this->command = $this->asyncCommand($this->task, $this->combine);
     }
 
     public function command(): AsyncCommand
