@@ -18,15 +18,15 @@
 | Layout | 41 | 44 |
 | Logging | 9 | 3 |
 | Platform | 21 | 14 |
-| Rendering | 31 | 1 |
+| Rendering | 32 | 1 |
 | Routing | 8 | 6 |
 | State | 18 | 11 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
-| Widget | 169 | 217 |
-| **合计** | **464** | **360** |
+| Widget | 171 | 218 |
+| **合计** | **467** | **361** |
 
-覆盖 366 个文件 · 描述性提及 30 处（grep 口径的污染源，不计入）
+覆盖 369 个文件 · 描述性提及 30 处（grep 口径的污染源，不计入）
 
 ## App 层
 
@@ -460,7 +460,7 @@
 
 ## Rendering 层
 
-### @api（应用可读面） · 31
+### @api（应用可读面） · 32
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -480,6 +480,7 @@
 | `ImageLoader` | class | src/Rendering/ImageLoader.php:8 |
 | `MetricToken` | enum | src/Rendering/MetricToken.php:6 |
 | `Modifier` | class | src/Rendering/Modifier.php:14 |
+| `Modifier::withBoxStyleIfBlank()` | method | src/Rendering/Modifier.php:499 |
 | `Paint` | class | src/Rendering/Paint.php:8 |
 | `PaintStyle` | enum | src/Rendering/PaintStyle.php:6 |
 | `Path` | class | src/Rendering/Path.php:8 |
@@ -628,7 +629,7 @@
 
 ## Widget 层
 
-### @api（应用可读面） · 169
+### @api（应用可读面） · 171
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -647,7 +648,7 @@
 | `Button::enabled()` | method | src/Widget/Button.php:146 |
 | `ButtonVariant` | enum | src/Widget/ButtonVariant.php:6 |
 | `CalendarView` | class | src/Widget/CalendarView.php:9 |
-| `Card` | class | src/Widget/Card.php:12 |
+| `Card` | class | src/Widget/Card.php:11 |
 | `Center` | class | src/Widget/Center.php:8 |
 | `Checkbox` | class | src/Widget/Checkbox.php:9 |
 | `Column` | class | src/Widget/Column.php:6 |
@@ -705,7 +706,7 @@
 | `Progress` | class | src/Widget/Progress.php:12 |
 | `ProxyElement` | class | src/Widget/ProxyElement.php:8 |
 | `Radio` | class | src/Widget/Radio.php:9 |
-| `RenderBoxWidget` | class | src/Widget/RenderBoxWidget.php:8 |
+| `RenderBoxWidget` | class | src/Widget/RenderBoxWidget.php:9 |
 | `RichText` | class | src/Widget/RichText.php:14 |
 | `Row` | class | src/Widget/Row.php:6 |
 | `Scrollable` | interface | src/Widget/Scrollable.php:9 |
@@ -743,10 +744,10 @@
 | `States` | class | src/Widget/States.php:6 |
 | `Table` | class | src/Widget/Table.php:10 |
 | `TableColumn` | class | src/Widget/TableColumn.php:10 |
-| `TableColumn::copyText()` | method | src/Widget/TableColumn.php:146 |
-| `TableColumn::copyTextOf()` | method | src/Widget/TableColumn.php:159 |
 | `TableColumnWidth` | class | src/Widget/TableColumnWidth.php:8 |
+| `TableRange` | class | src/Widget/TableRange.php:6 |
 | `TableSelection` | class | src/Widget/TableSelection.php:6 |
+| `TableSelectionBehavior` | enum | src/Widget/TableSelectionBehavior.php:6 |
 | `TableSelectionMode` | enum | src/Widget/TableSelectionMode.php:6 |
 | `TableSort` | class | src/Widget/TableSort.php:8 |
 | `TableSortDirection` | enum | src/Widget/TableSortDirection.php:6 |
@@ -804,7 +805,7 @@
 | `WrapElement` | class | src/Widget/WrapElement.php:8 |
 | `YearMonth` | class | src/Widget/YearMonth.php:8 |
 
-### @internal（框架内部） · 217
+### @internal（框架内部） · 218
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -822,8 +823,6 @@
 | `CalendarView::selectedValue()` | method | src/Widget/CalendarView.php:137 |
 | `CalendarView::onSelectedHandler()` | method | src/Widget/CalendarView.php:143 |
 | `CalendarView::onMonthChangeHandler()` | method | src/Widget/CalendarView.php:149 |
-| `Card::$box` | property | src/Widget/Card.php:79 |
-| `Card::box()` | method | src/Widget/Card.php:178 |
 | `ComboBox::optionsValue()` | method | src/Widget/ComboBox.php:285 |
 | `ComboBox::valueText()` | method | src/Widget/ComboBox.php:291 |
 | `ComboBox::placeholderText()` | method | src/Widget/ComboBox.php:297 |
@@ -874,15 +873,15 @@
 | `Element::pairChecks()` | method | src/Widget/Element.php:109 |
 | `Element::onMount()` | method | src/Widget/Element.php:132 |
 | `Element::syncBox()` | method | src/Widget/Element.php:151 |
-| `Element::effectiveBox()` | method | src/Widget/Element.php:215 |
-| `Element::markNeedsBuild()` | method | src/Widget/Element.php:242 |
-| `Element::findBox()` | method | src/Widget/Element.php:261 |
-| `Element::findBoxOf()` | method | src/Widget/Element.php:291 |
-| `Element::effectiveBoxOf()` | method | src/Widget/Element.php:309 |
-| `Element::adoptBoxes()` | method | src/Widget/Element.php:327 |
-| `Element::didUpdateWidget()` | method | src/Widget/Element.php:353 |
-| `Element::applyContext()` | method | src/Widget/Element.php:369 |
-| `Element::settle()` | method | src/Widget/Element.php:411 |
+| `Element::effectiveBox()` | method | src/Widget/Element.php:229 |
+| `Element::markNeedsBuild()` | method | src/Widget/Element.php:256 |
+| `Element::findBox()` | method | src/Widget/Element.php:275 |
+| `Element::findBoxOf()` | method | src/Widget/Element.php:305 |
+| `Element::effectiveBoxOf()` | method | src/Widget/Element.php:323 |
+| `Element::adoptBoxes()` | method | src/Widget/Element.php:341 |
+| `Element::didUpdateWidget()` | method | src/Widget/Element.php:367 |
+| `Element::applyContext()` | method | src/Widget/Element.php:383 |
+| `Element::settle()` | method | src/Widget/Element.php:425 |
 | `Grid::rowOf()` | method | src/Widget/Grid.php:151 |
 | `Grid::chunk()` | method | src/Widget/Grid.php:181 |
 | `InlineEditorBox` | class | src/Widget/InlineEditorBox.php:17 |
@@ -906,8 +905,9 @@
 | `OptionPanelState` | class | src/Widget/OptionPanel.php:119 |
 | `PickerPanelSignal` | class | src/Widget/PickerPanelSignal.php:8 |
 | `PopupPanel::paintsBoxChrome()` | method | src/Widget/PopupPanel.php:131 |
-| `RenderBoxWidget::paintsBoxChrome()` | method | src/Widget/RenderBoxWidget.php:34 |
-| `RenderBoxWidget::paintsDisabledLook()` | method | src/Widget/RenderBoxWidget.php:55 |
+| `RenderBoxWidget::paintsBoxChrome()` | method | src/Widget/RenderBoxWidget.php:35 |
+| `RenderBoxWidget::paintsDisabledLook()` | method | src/Widget/RenderBoxWidget.php:56 |
+| `RenderBoxWidget::defaultBoxStyle()` | method | src/Widget/RenderBoxWidget.php:79 |
 | `ScrollBarFade` | class | src/Widget/ScrollBarFade.php:9 |
 | `ScrollMotion` | class | src/Widget/ScrollMotion.php:6 |
 | `ScrollViewBox` | class | src/Widget/ScrollViewBox.php:10 |
@@ -954,24 +954,17 @@
 | `State::adoptWidget()` | method | src/Widget/State.php:558 |
 | `StatefulElement::$boxFromState` | property | src/Widget/StatefulElement.php:18 |
 | `StatefulElement::syncBox()` | method | src/Widget/StatefulElement.php:45 |
-| `Table::keyMapper()` | method | src/Widget/Table.php:500 |
-| `Table::selectionChangeHandler()` | method | src/Widget/Table.php:527 |
-| `Table::selectionBehavior()` | method | src/Widget/Table.php:373 |
-| `Table::onCopy()` | method | src/Widget/Table.php:392 |
-| `Table::selectionBehaviorValue()` | method | src/Widget/Table.php:586 |
-| `Table::copyHandler()` | method | src/Widget/Table.php:592 |
-| `Table::rowTapHandler()` | method | src/Widget/Table.php:533 |
-| `Table::columnWidthOverrides()` | method | src/Widget/Table.php:545 |
+| `Table::keyMapper()` | method | src/Widget/Table.php:559 |
+| `Table::copyHandler()` | method | src/Widget/Table.php:591 |
+| `Table::selectionChangeHandler()` | method | src/Widget/Table.php:597 |
+| `Table::rowTapHandler()` | method | src/Widget/Table.php:603 |
+| `Table::columnWidthOverrides()` | method | src/Widget/Table.php:615 |
 | `TableBox` | class | src/Widget/TableBox.php:11 |
 | `TableBox::make()` | method | src/Widget/TableBox.php:45 |
 | `TableElement` | class | src/Widget/TableElement.php:8 |
-| `TableRange` | class | src/Widget/TableRange.php:29 |
-| `TableRange::covers()` | method | src/Widget/TableRange.php:77 |
-| `TableSelection::ofCells()` | method | src/Widget/TableSelection.php:95 |
-| `TableSelection::withRange()` | method | src/Widget/TableSelection.php:110 |
-| `TableSelection::ranges()` | method | src/Widget/TableSelection.php:127 |
-| `TableSelectionBehavior` | enum | src/Widget/TableSelectionBehavior.php:24 |
-| `TableState` | class | src/Widget/TableState.php:30 |
+| `TableGeometry` | class | src/Widget/TableGeometry.php:9 |
+| `TableGridPicker` | class | src/Widget/TableGridPicker.php:6 |
+| `TableState` | class | src/Widget/TableState.php:29 |
 | `TextFieldBox` | class | src/Widget/TextFieldBox.php:17 |
 | `TextFieldBox::make()` | method | src/Widget/TextFieldBox.php:54 |
 | `TextFieldState::$editing` | property | src/Widget/TextFieldState.php:49 |
