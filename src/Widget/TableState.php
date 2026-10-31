@@ -14,7 +14,6 @@ use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
 use Drift\Layout\ColumnWidths;
-use Drift\Layout\ExtentWindow;
 use Drift\Layout\FlexAlign;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderTable;
@@ -100,20 +99,28 @@ final class TableState extends State implements Scrollable, EditableText
     private bool $hasFocus = false;
 
     /**
-     * 上一帧的列宽 —— `focusRect()` 要在 build **之外**算光标格位置（键盘移动后
-     * 立刻 `ensureVisible()`），而列宽只有 build 里才算得出来。
+     * 上一帧的**几何快照**（`null` = 还没 build 过）。
      *
-     * ★ 空数组 = 还没布局过 ⇒ 没有可信位置，`ensureVisible` 让开（同
-     *   `RenderTable::revealDelta()` 对"没尺寸"的裁决）。
+     * ★★ 2026-10-31 起，这一个字段**取代**了七个散字段（`$widthsInBuild` /
+     *   `$widthUsedInBuild` / `$contentWInBuild` / `$windowStart` / `$windowEnd` /
+     *   `$colWindowStart` / `$colWindowEnd`）。那七个把"还没布局过"分别表达成
+     *   `[]` / `null` / `0.0` 三种，而指针映射 / 键盘 reveal / 窗口判定 / 表头构建
+     *   又各自重算一遍同一批数 —— 现在只有一份，`null` 就是"没算过"。
+     *
+     * ★ 为什么几何能住 State：本 State 挂在表格自己身上（滚动容器不随滚动消失），
+     *   被回收的是**行**（§12.3 的判据）。★ 它同时是"列宽只在 build 里算得出来"
+     *   的解法 —— 键盘 / 指针必须在 build **之外**当场响应，只能读上一帧那份。
+     * ★ **只由 `build()` 写**，别处只读。夹取后的偏移由 `build()` 写回
+     *   `$offsetX/$offsetY`：那两个是**活值**（用户随时在滚），不是快照。
      */
-    private array $widthsInBuild = [];
+    private ?TableGeometry $geometry = null;
 
     /**
      * 上一帧的文本度量与编辑样式（阶段 7b）。
      *
      * ★ 为什么留一份：**双击落插入符**要在 `beginEdit()` 那一刻把"指针 x"翻成
      *   "第几个字符之间"，而那一刻编辑盒还不存在（它下一帧才建出来）。能用的
-     *   度量只有上一帧 build 里拿到的那份 —— 与 `$widthsInBuild` 同一个理由
+     *   度量只有上一帧 build 里拿到的那份 —— 与 `$geometry` 同一个理由
      *   （几何只在 build 里可得，而键盘/指针动作必须**当场**响应）。
      * ★ 样式取 `InlineEditorBox::editorStyle()`（唯一来源）：量宽与实际排版必须是
      *   同一个样式，否则插入符会落在相邻字符上。
@@ -139,62 +146,12 @@ final class TableState extends State implements Scrollable, EditableText
     private int $createdRows = 0;
 
     /**
-     * 上一帧造的行窗口在**行区内容坐标**里的范围 `[start, end)`（= `first*rowH` 到 `last*rowH`）。
-     *
-     * ★ 存在的理由（2026-10-27，A 批第 1 项）：滚动不再 `setState()`，于是
-     *   "窗还盖不盖得住视口"必须**在 build 之外**能判 —— 盖得住就只推偏移
-     *   （0 重建），盖不住才标脏。没有这两个数，滚出缓冲带之后行区下方就是
-     *   一片空白（且不报错：盒照样画，只是没行）。
-     */
-    private float $windowStart = 0.0;
-
-    private float $windowEnd = 0.0;
-
-    /**
      * 上一帧造了几列（与 `$createdRows` 同一职责：虚拟化唯一的可观测量）。
      *
      * ★ 不与 `$createdRows` 合成"造了几个格"：行和列的窗口是**两个独立判据**
      *   （定高 vs 变宽），合成一个数就分不清是哪一侧失效。
      */
     private int $createdColumns = 0;
-
-    /**
-     * 上一帧的列窗口在**内容坐标 x** 里的范围 `[start, end)`。
-     *
-     * ★ 与 `$windowStart/$windowEnd`（行）成对，但**不共用**：横滚会改列窗口而
-     *   不影响行窗口，两轴的"盖不盖得住"必须各判一次（见 `windowCovers()`）。
-     */
-    private float $colWindowStart = 0.0;
-
-    private float $colWindowEnd = 0.0;
-
-    /**
-     * 上一次 `build()` 用的视口宽 —— 与盒实测宽比对，不一致就再来一帧。
-     *
-     * ★★ 为什么必须比对：`BuildContext::$width` 是**窗口**宽（根 context 由
-     *   `Application::attach()` 按窗口约束造，整棵树共用），而表格的实际可用宽
-     *   还要减掉导航栏 / 卡片 padding / 兄弟节点。首帧没有盒 ⇒ `viewportEstimate()`
-     *   只能拿窗口宽当上界 —— 对**高度**是无害的（多造几行），对**宽度**是**有害**
-     *   的：flex 列按偏大的宽分完，行宽超出表盒 ⇒ 右边的列被裁掉（真机现象：
-     *   5 列只看见前 3 列，滚动一下才对 —— 因为滚动触发的重建赶上了盒已存在）。
-     *
-     * ★ 为什么靠 `tickFrame()` 而不是布局回写：`wantsFrame()` 没有"有脏 State"
-     *   这一条（脏标记本该被**同帧** settle 消费，落在 layout 之后的脏没人管）
-     *   ⇒ 标脏之后必须让帧时钟重新上膛。`tickFrame()` 的返回值正好是那根线
-     *   （§17.4.9 的第 ④ 判据），且它跑在 `Frame::run()` **之后**（迟到挂载补 tick）
-     *   ⇒ 读得到本帧刚排出的盒尺寸。
-     */
-    private ?float $widthUsedInBuild = null;
-
-    /**
-     * 上一次 `build()` 算出的**内容宽**（`null` = 还没 build 过）。
-     *
-     * ★ 唯一的消费者是 `scrollByAxis(Horizontal)` 的"要不要标脏"早退：横向偏移
-     *   累加却永远被夹回 0 的表，每来一格滚轮就白重建一次（触控板每秒几十格）。
-     * ★ 它**不参与任何坐标计算**（列宽真相仍只有 `resolveWidths()` 一处）——
-     *   这里存的只是 build 手边本来就有、顺手留下的那个数。
-     */
-    private ?float $contentWInBuild = null;
 
     /**
      * 列宽拖拽的临时量（`null` = 当前没在拖）。
@@ -405,7 +362,8 @@ final class TableState extends State implements Scrollable, EditableText
      * ★ 视口取**盒的**实测值而不是 build 里的估算：滚动期没有 `BuildContext`，
      *   而盒是唯一可靠口径 ⇒ 判据与布局同源。
      * ★ 还没排过（盒无 size）⇒ 判"盖不住"（宁可多重建一次，也不要露空行/空列）。
-     * ★★ 两轴**不共用**一个判据：行窗口与列窗口的范围是两对字段，横滚只动列窗口。
+     * ★★ 两轴**不共用**一个判据：行窗口与列窗口是 `TableGeometry` 里各一对端点，
+     *   横滚只动列窗口。
      *   竖向的视口是行区（减表头），横向的视口是全宽（表头与行区共享 x）——
      *   这两个定义不同，不是同一个式子的两个实例。
      */
@@ -417,13 +375,19 @@ final class TableState extends State implements Scrollable, EditableText
             return false;
         }
 
+        // ★ 还没 build 过 ⇒ 没有窗口可言 ⇒ 判"盖不住"（宁可多重建一次，不露空行）
+        $g = $this->geometry;
+        if ($g === null) {
+            return false;
+        }
+
         if ($axis === Axis::Vertical) {
             $bodyH = $box->bodyHeight();
             if ($bodyH <= 0.0) {
                 return false;
             }
 
-            return $this->offsetY >= $this->windowStart && $this->offsetY + $bodyH <= $this->windowEnd;
+            return $g->coversRows($this->offsetY, $bodyH);
         }
 
         $w = $box->size()?->width ?? 0.0;
@@ -431,7 +395,7 @@ final class TableState extends State implements Scrollable, EditableText
             return false;
         }
 
-        return $this->offsetX >= $this->colWindowStart && $this->offsetX + $w <= $this->colWindowEnd;
+        return $g->coversColumns($this->offsetX, $w);
     }
 
     /**
@@ -443,7 +407,7 @@ final class TableState extends State implements Scrollable, EditableText
      *   算完才知道，那是 build 期的事。
      * ★ 但**无横向溢出时这里直接早退**：不早退的话，每一格滚轮都会改一次
      *   `offsetX`、标一次脏，然后 build 里被夹回 0 —— 触控板每秒几十格就是
-     *   几十次白重建。`contentWInBuild` 是上一帧 build 留下的（`null` = 还没
+     *   几十次白重建。`horizontalOverflows()` 读的是上一帧快照（`null` = 还没
      *   排过 ⇒ 放行，别拿"不知道"当"没有"）。
      */
     public function scrollByAxis(Axis $axis, float $delta): void
@@ -483,13 +447,14 @@ final class TableState extends State implements Scrollable, EditableText
      *
      * ★ 抽出来是因为它有两个消费者：`scrollByAxis()`（立即滚）与
      *   `glideByAxis()`（动画滚）。两处各写一遍就是"两个真相"，迟早一处改一处漏。
+     * ★ 快照缺席时**放行**（= 返回 `true`）：宁可多标一次脏，也别把"不知道"
+     *   当成"装得下"而把真该滚的表卡住。
      */
     private function horizontalOverflows(): bool
     {
-        $contentW = $this->contentWInBuild;
-        $viewportW = $this->widthUsedInBuild;
+        $g = $this->geometry;
 
-        return $contentW === null || $viewportW === null || $contentW > $viewportW;
+        return $g === null || $g->horizontalOverflows();
     }
 
     /**
@@ -1423,40 +1388,19 @@ final class TableState extends State implements Scrollable, EditableText
     /**
      * 光标格在**行区内容坐标**里的矩形（`null` = 还没布局过 / 空格子表）。
      *
-     * ★ 用上一帧的列宽（`$widthsInBuild`）：列宽只在 build 里算得出来，而键盘
-     *   移动必须**当场**把格子滚进视口（等帧末 build 再滚会先闪一帧空白）。
-     *   列宽刚被拖动时也一样 —— 拖动与键盘不同时发生。
+     * ★ 用上一帧的几何（`$geometry`）：列宽只在 build 里算得出来，而键盘移动必须
+     *   **当场**把格子滚进视口（等帧末 build 再滚会先闪一帧空白）。列宽刚被拖动时
+     *   也一样 —— 拖动与键盘不同时发生。
+     * ★ 这里只是"取快照 + 问它"，算术全在 `TableGeometry::cellRect()`。
      */
     private function currentFocusRect(): ?Rect
     {
-        $widths = $this->widthsInBuild;
-        if ($widths === []) {
+        $g = $this->geometry;
+        if ($g === null) {
             return null;
         }
 
-        $rowH = $this->view()->rowHeightPx();
-        $spacing = $this->view()->columnSpacingPx();
-
-        return $this->cellRect($this->focusedRow, $this->focusedCol, $widths, $rowH, $spacing);
-    }
-
-    /**
-     * 某一格的内容坐标（列宽前缀和 + 间距；`y` 是**行区**坐标，不含表头）。
-     *
-     * @param array<int, float> $widths
-     */
-    private function cellRect(int $row, int $col, array $widths, float $rowH, float $spacing): ?Rect
-    {
-        if (!isset($widths[$col])) {
-            return null;
-        }
-
-        $x = 0.0;
-        for ($j = 0; $j < $col; $j++) {
-            $x += $widths[$j] + $spacing;
-        }
-
-        return new Rect($x, $row * $rowH, $widths[$col], $rowH);
+        return $g->cellRect($this->focusedRow, $this->focusedCol);
     }
 
     /** 有没有哪一列声明了 `editable()`（决定行要不要挂 pointer —— 见 `$interactive`） */
@@ -1495,28 +1439,13 @@ final class TableState extends State implements Scrollable, EditableText
     /**
      * 内容坐标 x ⇒ 列下标（`null` = 落在最后一列右侧的空白里 / 还没布局过）。
      *
-     * ★ 列间缝隙归**左**格：视觉上它是那一格的右内边距，点到那里仍算点那一格。
-     * ★ 列宽取上一帧的（`$widthsInBuild`）—— 与 `currentFocusRect()` 同一个理由。
+     * ★ 语义（缝隙归左格）在 `TableGeometry::colAt()`；这里只是"取快照 + 问它"。
      */
     private function columnAtX(float $contentX): ?int
     {
-        $widths = $this->widthsInBuild;
-        if ($widths === []) {
-            return null;
-        }
+        $g = $this->geometry;
 
-        $spacing = $this->view()->columnSpacingPx();
-        $x = 0.0;
-
-        foreach ($widths as $index => $width) {
-            if ($contentX < $x + $width + $spacing) {
-                return $index;
-            }
-
-            $x += $width + $spacing;
-        }
-
-        return null;
+        return $g === null ? null : $g->colAt($contentX);
     }
 
     /**
@@ -1540,7 +1469,12 @@ final class TableState extends State implements Scrollable, EditableText
         }
 
         // 行号/行高只影响 y，这里只取 x 与宽
-        $rect = $this->cellRect(0, $col, $this->widthsInBuild, 0.0, $this->view()->columnSpacingPx());
+        $g = $this->geometry;
+        if ($g === null) {
+            return \strlen($seed);
+        }
+
+        $rect = $g->cellRect(0, $col);
         if ($rect === null) {
             return \strlen($seed);
         }
@@ -1592,7 +1526,20 @@ final class TableState extends State implements Scrollable, EditableText
     }
 
     /**
-     * 盒实测宽 ≠ 上次 build 用的宽 ⇒ 标脏并要一帧（见 `$widthUsedInBuild`）。
+     * 盒实测宽 ≠ 上次 build 用的宽 ⇒ 标脏并要一帧。
+     *
+     * ★★ 为什么必须比对：`BuildContext::$width` 是**窗口**宽（根 context 由
+     *   `Application::attach()` 按窗口约束造，整棵树共用），而表格的实际可用宽
+     *   还要减掉导航栏 / 卡片 padding / 兄弟节点。首帧没有盒 ⇒ `viewportEstimate()`
+     *   只能拿窗口宽当上界 —— 对**高度**是无害的（多造几行），对**宽度**是**有害**
+     *   的：flex 列按偏大的宽分完，行宽超出表盒 ⇒ 右边的列被裁掉（真机现象：
+     *   5 列只看见前 3 列，滚动一下才对 —— 因为滚动触发的重建赶上了盒已存在）。
+     *
+     * ★ 为什么靠 `tickFrame()` 而不是布局回写：`wantsFrame()` 没有"有脏 State"
+     *   这一条（脏标记本该被**同帧** settle 消费，落在 layout 之后的脏没人管）
+     *   ⇒ 标脏之后必须让帧时钟重新上膛。`tickFrame()` 的返回值正好是那根线
+     *   （§17.4.9 的第 ④ 判据），且它跑在 `Frame::run()` **之后**（迟到挂载补 tick）
+     *   ⇒ 读得到本帧刚排出的盒尺寸。
      *
      * ★ 只在这一帧的 `Frame::run()` 之后调才有意义：那时盒已按**真实约束**排过。
      *   本帧 layout 之前的 tick（⓸）读到的还是上一帧的尺寸 —— 差值判断因此可能
@@ -1601,10 +1548,12 @@ final class TableState extends State implements Scrollable, EditableText
      */
     private function reflowIfWidthDrifted(): bool
     {
-        $used = $this->widthUsedInBuild;
-        if ($used === null) {
+        $g = $this->geometry;
+        if ($g === null) {
             return false;
         }
+
+        $used = $g->viewportW;
 
         $size = $this->element()?->effectiveBoxOf(RenderTable::class)?->size();
         if ($size === null || \abs($size->width - $used) <= 0.5) {
@@ -1908,6 +1857,7 @@ final class TableState extends State implements Scrollable, EditableText
      *
      * ★ 用 `RenderTable::headerHeight()` 而不是 build 期的 `headerHeightPx()`：
      *   表头可能被约束压过，量出来的才是真布局。
+     * ★ 夹到首/末行的语义在 `TableGeometry::rowAt()`（拖动要靠它才能选到看不见的行）。
      */
     private function pointerRowAt(float $clientY): ?int
     {
@@ -1916,13 +1866,12 @@ final class TableState extends State implements Scrollable, EditableText
             return null;
         }
 
-        $rowH = $this->view()->rowHeightPx();
-        $count = \count($this->view()->rowList());
-        if ($rowH <= 0.0 || $count === 0) {
+        $g = $this->geometry;
+        if ($g === null) {
             return null;
         }
 
-        return \max(0, \min($count - 1, (int) \floor($contentY / $rowH)));
+        return $g->rowAt($contentY);
     }
 
     /**
@@ -1947,7 +1896,7 @@ final class TableState extends State implements Scrollable, EditableText
         }
 
         // ★ 光标格跟着指针走（**行 + 列**，阶段 7b）：列要靠"根坐标减行区原点再累加
-        //   列宽"算出来，而这套几何在 build 之外也可得（`$widthsInBuild`）。
+        //   列宽"算出来，而这套几何在 build 之外也可得（`$geometry`）。
         //   以前只落行（"资源管理器同款"）：那时没有消费者要列 —— 双击进编辑有了。
         $contentX = $this->pointerContentX($event->x);
         $col = $contentX === null
@@ -2175,44 +2124,38 @@ final class TableState extends State implements Scrollable, EditableText
             $this->draftOrigin = '';
         }
 
-        // 完整内容高（含表头）—— 滚动条与可滚上限都按它算
-        $contentH = $headerH + $count * $rowH;
-
         $viewportH = $this->viewportEstimate($ctx, true);
-        // ★★ 偏移的坐标系是**行区**，不是整表：表头是固定 chrome，不参与滚动。
-        //   把表头算进内容坐标会让"内容 0 点"和"盒 0 点"差一个 headerH，
-        //   于是 `body.offsetY = headerH − (offsetY − sliceOrigin)` 里两个量
-        //   各带一次 headerH —— 未滚动时行区会画到表头下方 headerH 处（错位一整条）。
-        //   ⇒ 行区可见高 = 视口高 − 表头高，可滚上限 = 总行高 − 行区可见高。
-        $bodyH = max(0.0, $viewportH - $headerH);
-        $totalRows = $count * $rowH;
-        $offsetY = min(max(0.0, $this->offsetY), max(0.0, $totalRows - $bodyH));
-
         $viewportW = $this->viewportEstimate($ctx, false);
         $widths = $this->resolveWidths($columns, $viewportW);
-        $this->widthUsedInBuild = $viewportW;
-        // `focusRect()` 在 build 之外算光标位置要用它（见字段注释）
-        $this->widthsInBuild = $widths;
 
-        $sum = 0.0;
-        foreach ($widths as $w) {
-            $sum += $w;
-        }
-        // ★ 内容宽至少铺满视口：固定列加起来不满时，右侧不能露出一条"没有底色"的缝
-        $contentW = max($viewportW, $sum + $spacing * max(0, \count($columns) - 1));
-        $this->contentWInBuild = $contentW;
+        // ★★ 一帧的几何**一次算完**（`TableGeometry`）：列宽和、内容宽高、行区高、
+        //   两轴夹取、行/列两个窗口 —— 全在里面。**这里不再有第二处算术**：
+        //   指针映射 / 键盘 reveal / 窗口判定 / 表头构建全部问这个快照。
+        //   `MEMORY.md` 的"坐标两族别抄错"就是从"各处各算一遍"长出来的。
+        $g = TableGeometry::compute(
+            $widths,
+            $rowH,
+            $count,
+            $headerH,
+            $spacing,
+            $viewportW,
+            $viewportH,
+            $this->offsetX,
+            $this->offsetY,
+            $view->cacheExtentPx(),
+        );
+        $this->geometry = $g;
 
-        // ★ 横向夹取与纵向同一条纪律：State 只夹下界，上界按**本帧**算出的内容宽
-        //   夹一次。列宽被拖窄 / 窗口变宽之后，这里当场回弹，不必等用户再滚一下。
-        $offsetX = min(max(0.0, $this->offsetX), max(0.0, $contentW - $viewportW));
-
-        // ★ 夹取结果**写回字段**（不经 `setState` ⇒ 不标脏、不多一帧）。
+        // ★ 夹取结果**写回活字段**（不经 `setState` ⇒ 不标脏、不多一帧）。
         //   理由不是洁癖：State 里存的是"用户增量累加值"，而内容会变短
         //   （过滤 / 列宽被拖窄 / 窗口变宽）。旧值一旦长期大于新上限，之后每一笔
         //   增量都先拿去消耗这段**死区** —— 真机表现是"拖着条，画面不动"，
         //   而条本身贴在末端，看起来像"拖不动"。写回之后增量立刻生效。
-        $this->offsetY = $offsetY;
-        $this->offsetX = $offsetX;
+        $this->offsetY = $g->offsetY;
+        $this->offsetX = $g->offsetX;
+
+        $this->createdRows = $g->createdRows();
+        $this->createdColumns = $g->createdColumns();
 
         // 光标格跟着行列数夹（行被删 / 列被删之后不能停在不存在的位置）。
         // 与偏移写回同一条纪律：build 期直接写字段，不经 `setState`（不标脏）。
@@ -2221,40 +2164,18 @@ final class TableState extends State implements Scrollable, EditableText
 
         // ★ 只在**有焦点**时给框：失焦却画焦点框就是撒谎（见字段注释）。
         //   没焦点 ⇒ `null`，盒那一侧不需要知道焦点概念。
-        $focusRect = $this->hasFocus
-            ? $this->cellRect($this->focusedRow, $this->focusedCol, $widths, $rowH, $spacing)
-            : null;
+        $focusRect = $this->hasFocus ? $g->cellRect($this->focusedRow, $this->focusedCol) : null;
 
-        // ★★ 列窗口（阶段 6）：只造看得见的列。窗口的**内容坐标**端点要留给外面判
-        //   "横滚之后还盖不盖得住"（`scrollByAxis(Horizontal)`），否则滚过缓冲带
-        //   之后视口边缘就是一截没造的空白。
-        //   ★ 与行窗口共用同一个 `cacheExtent`：语义相同（"滚这么多以内不重建"），
-        //     多开一个旋钮只让调用方多一个要猜的数。
-        $cache = $view->cacheExtentPx();
-        [$colFirst, $colEnd, $colLeading] = ExtentWindow::visible(
-            $widths,
-            $spacing,
-            $offsetX,
-            $viewportW,
-            $cache,
-        );
-        $this->createdColumns = $colEnd - $colFirst;
-        $this->colWindowStart = $colLeading;
-        $this->colWindowEnd = $colLeading + ExtentWindow::extentOf($widths, $colFirst, $colEnd, $spacing);
-
-        // ★★ 窗口 = 可视行 ± **缓冲带**（`cacheExtent`，2026-10-27 起）。
-        //   没有缓冲带时 `first = floor(offsetY/rowH)`：偏移一动 `first` 就动
-        //   ⇒ 窗口每滚一行就变 ⇒ 又退回"每帧重建"（本项优化当场归零）。
-        //   缓冲带让"滚一小段不重建"成立，代价是窗口变大、每次 layout 更贵
-        //   （行区 layout 是全树 O(n)）⇒ 取值是权衡，见 `Table::$cacheExtentPx`。
-        $first = (int) \floor(max(0.0, $offsetY - $cache) / $rowH);
-        $last = (int) \ceil(($offsetY + $bodyH + $cache) / $rowH);
-        $first = max(0, min($first, $count));
-        $last = max($first, min($last, $count));
-
-        // ★ 记下窗口的**内容坐标**范围 —— 滚动期靠它判"要不要重建"（见 `$windowStart`）
-        $this->windowStart = $first * $rowH;
-        $this->windowEnd = $last * $rowH;
+        // 下面这一段全是**给快照取名字**（不是再算一遍）：后文照旧用这些名字。
+        $contentW = $g->contentW;
+        $contentH = $g->contentH;
+        $offsetX = $g->offsetX;
+        $offsetY = $g->offsetY;
+        $first = $g->rowFirst;
+        $last = $g->rowLast;
+        $colFirst = $g->colFirst;
+        $colEnd = $g->colLast;
+        $colLeading = $g->colLeading;
 
         $headerKid = $this->headerRow($ctx, $columns, $widths, $contentW, $headerH, $spacing, $colFirst, $colEnd, $colLeading);
         $striped = $view->isStriped();
@@ -2353,8 +2274,6 @@ final class TableState extends State implements Scrollable, EditableText
             $lines[] = $line;
         }
 
-        $this->createdRows = $last - $first;
-
         $opacity = 1.0;
         $bar = $this->barFade;
         if ($bar !== null) {
@@ -2362,7 +2281,7 @@ final class TableState extends State implements Scrollable, EditableText
         }
 
         // 窗的起点 = 行区内容坐标里"第 first 行"的 y —— 与 `RenderScrollView` 的
-        // `sliceOrigin` 同一含义（**行区**坐标，不含表头高；见上面 $bodyH 的注释）。
+        // `sliceOrigin` 同一含义（**行区**坐标，不含表头高；见 `TableGeometry::$bodyH`）。
         return TableBox::make(
             $offsetX,
             $offsetY,
