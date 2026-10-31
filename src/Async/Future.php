@@ -194,8 +194,9 @@ final class Future
      * ★ 语义边界必须说清：`cancel()` 只做两件事 —— ① 调后端的取消钩子（能停就停）；
      *   ② 把本 Future 标成"结果不要了"，此后迟到的 `resolve()` 被忽略。
      *   它**不会**让 Future 变成失败（"取消"不是错误，不该逼调用方写 `catch`）。
-     * ★ 生产者（**只有三处**，前两处真停、第三处只能不交付）：
-     *   - `Future::all()` / `race()` —— 取消落选者；
+     * ★ 生产者（**只有这几处**，前两处真停、其余只能不交付）：
+     *   - `Future::all()` / `race()` —— 取消落选者；**聚合体自己被取消时，同样把
+     *     取消转给全部入参**（2026-10-31：否则"取消一个组合请求"等于没取消）；
      *   - `PumpHost::submitSliced()` —— 摘出队列，此后**不再 `step()`**（真停）；
      *   - `ProcessTaskHost` —— 摘出**还没发出去**的排队项。已发给 worker 的停不了
      *     （杀进程要重拉、还会丢在途状态），只做"不交付"；
@@ -240,6 +241,14 @@ final class Future
      *
      * ★ 任一条失败 ⇒ 整条失败，且**其余被 `cancel()`**（不留无人认领的后台活）。
      * ★ 空数组 ⇒ 立刻成功（`[]`）—— 与 `Future.wait([])` / `Task.WhenAll([])` 一致。
+     * ★★ **取消会传播给入参**（2026-10-31）：聚合体是调用方唯一持有的句柄，
+     *   取消它却不取消子任务 ⇒ 子任务继续跑、结果回来没人接（占着 worker / 烧预算，
+     *   且不报错）。`AsyncCommand` 换参数时取消的正是它上一次拿到的那个 Future ——
+     *   若那个 Future 是聚合体，"真的停"只在传播之后才成立。
+     * ★★ **聚合体是不是"任务"，取决于入参**（见 `$task` 字段的注释）：入参里
+     *   只要有一条是真任务，聚合体失败且没人接就必须走 Fatal（G2 不能只保护
+     *   "单条 `submit()`"，否则"组合"这一层就成了吞掉失败的暗渠）。
+     *   纯值入参（`Future::resolved` / `rejected`）仍然不喊 —— 那是"值"，不是任务。
      *
      * @param array<array-key, self> $futures
      *
@@ -247,16 +256,24 @@ final class Future
      */
     public static function all(array $futures): self
     {
-        $all = new self();
-
         $list = [];
+        $anyTask = false;
+
         foreach ($futures as $key => $future) {
             if (!$future instanceof self) {
                 throw new \InvalidArgumentException('Future::all() 只接受 Future —— 下标 ' . (string) $key);
             }
 
             $list[$key] = $future;
+            $anyTask = $anyTask || $future->task;
         }
+
+        // ★ 引用捕获：钩子可能在 `$list` 建好之后才被调（`cancel()` 永远是之后的事）
+        $all = new self(static function () use (&$list): void {
+            foreach ($list as $other) {
+                $other->cancel();
+            }
+        });
 
         if ($list === []) {
             $all->resolve([]);
@@ -294,6 +311,13 @@ final class Future
             });
         }
 
+        // ★★ 标记放在**接线之后**：入参若在 `all()` 之前就已失败，聚合体会在
+        //   接线时当场结算 —— 那一刻调用方还**不可能**挂过 `catch()`（`all()` 都
+        //   还没返回）⇒ 当场喊 Fatal 是误报。先接线、后立标记，"构造期结算"与
+        //   "之后才失败"因此被分开；而"挂了 `then` 却没人接失败"仍然会喊
+        //   （`chain()` 让下游继承标记，由链末端决定）。
+        $all->task = $anyTask;
+
         return $all;
     }
 
@@ -303,6 +327,9 @@ final class Future
      * ★ 空数组 ⇒ **永不结算**（没有候选可赢）—— 与 `Promise.race([])` 一致。
      *   这比"立刻失败"好：调用方本来就该保证非空，静默永不结算会被帧时钟暴露
      *   （`pending()` 一直 > 0），而立刻失败会假装"跑过了"。
+     * ★★ 取消聚合体会传播给**全部**入参（同 `all()`）：赢家还没产生时取消，
+     *   光标记聚合体等于让每一路都白跑。
+     * ★★ 任务标记同 `all()`：入参里有真任务 ⇒ 聚合体也是任务（失败没人接要喊）。
      *
      * @param array<array-key, self> $futures
      *
@@ -310,16 +337,23 @@ final class Future
      */
     public static function race(array $futures): self
     {
-        $winner = new self();
-
         $list = [];
+        $anyTask = false;
+
         foreach ($futures as $key => $future) {
             if (!$future instanceof self) {
                 throw new \InvalidArgumentException('Future::race() 只接受 Future —— 下标 ' . (string) $key);
             }
 
             $list[$key] = $future;
+            $anyTask = $anyTask || $future->task;
         }
+
+        $winner = new self(static function () use (&$list): void {
+            foreach ($list as $other) {
+                $other->cancel();
+            }
+        });
 
         foreach ($list as $future) {
             $future->then(static function (mixed $value) use ($winner, $list): void {
@@ -344,6 +378,9 @@ final class Future
                 $winner->reject($error);
             });
         }
+
+        // ★ 同 `all()`：标记在接线之后（构造期结算不喊，之后没人接才喊）
+        $winner->task = $anyTask;
 
         return $winner;
     }

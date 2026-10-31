@@ -209,6 +209,44 @@ final class FutureTest extends SmokeTestCase
     }
 
     /**
+     * 取消**聚合体**要传播给入参 —— 否则"取消一个组合请求"等于没取消。
+     *
+     * ★ 为什么这条重要：`AsyncCommand` 换参数时取消的正是它上一次拿到的那个 Future。
+     *   若那个 Future 是 `all()`，只标记聚合体 ⇒ 每一路子任务都继续跑、结果回来没人
+     *   接（占着 worker / 烧预算，且**不报错**）。这与 `cancel()` 的文档承诺
+     *   （"能停就停"）相反 —— 契约说谎比没有这个能力更糟。
+     * ★ 两条都要断：`all` 与 `race` 是两份实现（各自建聚合体），只测一个会让另一个
+     *   静默退化。
+     */
+    public function testCancelPropagatesIntoComposites(): void
+    {
+        $a = Future::pending();
+        $b = Future::pending();
+
+        $all = Future::all([$a, $b]);
+        $all->cancel();
+
+        check(
+            'Future::all · 取消聚合体 ⇒ 入参全部被 cancel()',
+            $a->isCancelled() && $b->isCancelled(),
+            'a=' . var_export($a->isCancelled(), true) . ' b=' . var_export($b->isCancelled(), true),
+        );
+        check('Future::all · 聚合体自己也标记为已取消', $all->isCancelled());
+
+        $c = Future::pending();
+        $d = Future::pending();
+
+        $race = Future::race([$c, $d]);
+        $race->cancel();
+
+        check(
+            'Future::race · 取消聚合体 ⇒ 全部候选被 cancel()',
+            $c->isCancelled() && $d->isCancelled(),
+            'c=' . var_export($c->isCancelled(), true) . ' d=' . var_export($d->isCancelled(), true),
+        );
+    }
+
+    /**
      * 在**已结算**的 Future 上挂回调 ⇒ 立刻跑。
      *
      * ★ `all` / `race` 的组合器会反复挂到"可能已经好了"的 Future 上；不支持这条，

@@ -238,6 +238,17 @@ if (str_starts_with($caseArg, '--case=')) {
         $app->frame(16.0, BoxConstraints::loose(new Size(320.0, 240.0)));
     }
 
+    if ($case === 'allerr') {
+        // `Future::all()` 里的入参是**真任务** ⇒ 聚合体也是任务：失败且没人
+        // `catch()` 必须走 Fatal 序列。修复前聚合体恒被当作"值"（构造即结算的
+        // 那一类），于是"组合这一层"成了吞掉失败的暗渠 —— 上层永远转圈、不报错。
+        // ★ 这里用 `then` 而不是裸 `all()`：那正是"忘了写 catch"的真实形状。
+        $task = Future::pending();
+        Future::all([$task])->then(function (array $values): void {
+        });
+        $task->reject(new RuntimeException('组里的任务失败了，没人接'));
+    }
+
     if ($case === 'constraints') {
         new BoxConstraints(20.0, 10.0); // min > max ⇒ 必须响亮失败（§13.1 C6）
     }
@@ -4226,6 +4237,16 @@ check(
     '实际 ' . $code . ' / ' . $taskErrOut,
 );
 check('P0 · 没挂 catch() 时写了 Errors.log', str_contains(logText($log), '没有 catch()'));
+fresh($log);
+
+// ★ 聚合体同样是"任务"：G2 不能只保护单条 `submit()`。
+[$allCode, $allErrOut] = runCase(__FILE__, 'allerr', null);
+check(
+    'P0 · `Future::all()` 链上漏 catch() 同样 Fatal（聚合体继承了"任务"）',
+    $allCode === 3,
+    '实际 ' . $allCode . ' / ' . $allErrOut,
+);
+check('P0 · 聚合体失败也写了 Errors.log', str_contains(logText($log), '没有 catch()'));
 fresh($log);
 if (is_file($log)) {
     unlink($log);
