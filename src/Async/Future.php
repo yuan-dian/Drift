@@ -44,7 +44,7 @@ use Drift\Errors;
  * ## 一条不可破的时序纪律
  *
  * **`resolve()` / `reject()` 只在 UI 线程的帧内被调用**（`PumpHost::pumpTasks()` /
- * `pumpSliced()`），所以 `then()` 的回调与改造前的 `$onDone` **完全同级**：
+ * `pumpTasks()`），所以 `then()` 的回调与改造前的 `$onDone` **完全同级**：
  * 都在 `settle()` 之前 ⇒ 回调里 `setState()` 同帧生效。
  * ⇒ 后端（`TaskHost`）**不许**在自己的线程上结算；它只能把结果入队。
  *
@@ -113,7 +113,7 @@ final class Future
      * 造一个**还没结算的任务** —— 等后端（或组合器、或测试）来结算。
      *
      * ★ 应用侧不该调它：拿 Future 的唯一入口是 `TaskHost::submit()` /
-     *   `submitSliced()`。测试与后端用它造"我手动结算"的替身。
+     *   `submit()`。测试与后端用它造"我手动结算"的替身。
      * ★ 只有这里造出来的 Future（以及它链下去的下游）在"没人接"时才走 Fatal。
      *
      * @param null|\Closure(): void $onCancel 取消钩子（可空：不是所有后端都能停）
@@ -213,7 +213,8 @@ final class Future
      * ★ 生产者（**只有这几处**，前两处真停、其余只能不交付）：
      *   - `Future::all()` / `race()` —— 取消落选者；**聚合体自己被取消时，同样把
      *     取消转给全部入参**（2026-10-31：否则"取消一个组合请求"等于没取消）；
-     *   - `PumpHost::submitSliced()` —— 摘出队列，此后**不再 `step()`**（真停）；
+     *   - `SyncTaskHost` / `PumpHost::pumpTasks()` 这一路：任务本来就在 UI 线程
+     *     上按帧跑，"不交付"就等于真停；
      *   - `ProcessTaskHost` —— 摘出**还没发出去**的排队项。已发给 worker 的停不了
      *     （杀进程要重拉、还会丢在途状态），只做"不交付"；
      *   - `ThreadTaskHost` —— **只能"不交付"**：任务已经交给 C++ worker 了，

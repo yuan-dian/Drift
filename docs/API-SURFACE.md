@@ -8,57 +8,58 @@
 
 | 层 | @api | @internal |
 |---|---|---|
-| App | 60 | 49 |
+| App | 63 | 50 |
+| Async | 13 | 3 |
 | Commands | 7 | 0 |
 | Core | 2 | 0 |
 | Errors.php | 2 | 3 |
 | Geometry | 9 | 0 |
 | Input | 18 | 5 |
-| Layout | 41 | 43 |
+| Layout | 41 | 44 |
 | Logging | 9 | 3 |
 | Platform | 21 | 14 |
 | Rendering | 31 | 1 |
 | Routing | 8 | 6 |
-| State | 9 | 11 |
+| State | 18 | 11 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
-| Widget | 167 | 215 |
-| **合计** | **419** | **353** |
+| Widget | 169 | 217 |
+| **合计** | **446** | **360** |
 
-覆盖 357 个文件 · 描述性提及 29 处（grep 口径的污染源，不计入）
+覆盖 363 个文件 · 描述性提及 30 处（grep 口径的污染源，不计入）
 
 ## App 层
 
-### @api（应用可读面） · 60
+### @api（应用可读面） · 63
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
-| `Application` | class | src/App/Application.php:47 |
+| `Application` | class | src/App/Application.php:48 |
 | `Application::commands()` | method | src/App/Application.php:399 |
 | `Application::scope()` | method | src/App/Application.php:419 |
 | `Application::taskHost()` | method | src/App/Application.php:448 |
-| `Application::accelerators()` | method | src/App/Application.php:503 |
-| `Application::clipboard()` | method | src/App/Application.php:526 |
-| `Application::metrics()` | method | src/App/Application.php:548 |
-| `Application::attach()` | method | src/App/Application.php:569 |
-| `Application::onSystemThemeChanged()` | method | src/App/Application.php:689 |
-| `Application::onCloseRequested()` | method | src/App/Application.php:705 |
-| `Application::frame()` | method | src/App/Application.php:773 |
-| `Application::repaintForResize()` | method | src/App/Application.php:1015 |
-| `Application::after()` | method | src/App/Application.php:1076 |
-| `Application::wantsFrame()` | method | src/App/Application.php:1110 |
-| `Application::nextDeadlineMs()` | method | src/App/Application.php:1187 |
-| `Application::submitSliced()` | method | src/App/Application.php:1534 |
-| `Application::io()` | method | src/App/Application.php:1568 |
-| `Application::capturePointer()` | method | src/App/Application.php:1584 |
-| `Application::releasePointer()` | method | src/App/Application.php:1606 |
-| `Application::dispatchInput()` | method | src/App/Application.php:1625 |
-| `Application::dispatch()` | method | src/App/Application.php:1792 |
-| `Application::showMenu()` | method | src/App/Application.php:1918 |
-| `Application::showSnackbar()` | method | src/App/Application.php:1934 |
-| `Application::overlays()` | method | src/App/Application.php:1968 |
-| `Application::showModal()` | method | src/App/Application.php:1988 |
-| `Application::closeModal()` | method | src/App/Application.php:1998 |
+| `Application::submit()` | method | src/App/Application.php:474 |
+| `Application::accelerators()` | method | src/App/Application.php:551 |
+| `Application::clipboard()` | method | src/App/Application.php:574 |
+| `Application::metrics()` | method | src/App/Application.php:596 |
+| `Application::attach()` | method | src/App/Application.php:617 |
+| `Application::onSystemThemeChanged()` | method | src/App/Application.php:737 |
+| `Application::onCloseRequested()` | method | src/App/Application.php:753 |
+| `Application::frame()` | method | src/App/Application.php:821 |
+| `Application::repaintForResize()` | method | src/App/Application.php:1059 |
+| `Application::after()` | method | src/App/Application.php:1115 |
+| `Application::wantsFrame()` | method | src/App/Application.php:1149 |
+| `Application::nextDeadlineMs()` | method | src/App/Application.php:1232 |
+| `Application::io()` | method | src/App/Application.php:1579 |
+| `Application::capturePointer()` | method | src/App/Application.php:1595 |
+| `Application::releasePointer()` | method | src/App/Application.php:1617 |
+| `Application::dispatchInput()` | method | src/App/Application.php:1636 |
+| `Application::dispatch()` | method | src/App/Application.php:1803 |
+| `Application::showMenu()` | method | src/App/Application.php:1929 |
+| `Application::showSnackbar()` | method | src/App/Application.php:1945 |
+| `Application::overlays()` | method | src/App/Application.php:1979 |
+| `Application::showModal()` | method | src/App/Application.php:1999 |
+| `Application::closeModal()` | method | src/App/Application.php:2009 |
 | `AppScope` | class | src/App/AppScope.php:18 |
 | `EventLoop` | class | src/App/EventLoop.php:10 |
 | `Frame` | class | src/App/Frame.php:18 |
@@ -73,52 +74,55 @@
 | `NamedJob` | interface | src/App/NamedJob.php:6 |
 | `Paths` | class | src/App/Paths.php:9 |
 | `Paths::userConfig()` | method | src/App/Paths.php:32 |
-| `ProcessTaskHost` | class | src/App/ProcessTaskHost.php:8 |
-| `ProcessTaskHost::__construct()` | method | src/App/ProcessTaskHost.php:87 |
-| `ProcessTaskHost::shutdown()` | method | src/App/ProcessTaskHost.php:202 |
+| `ProcessTaskHost` | class | src/App/ProcessTaskHost.php:9 |
+| `ProcessTaskHost::$requestTerminateMs` | property | src/App/ProcessTaskHost.php:105 |
+| `ProcessTaskHost::__construct()` | method | src/App/ProcessTaskHost.php:137 |
+| `ProcessTaskHost::prewarm()` | method | src/App/ProcessTaskHost.php:176 |
+| `ProcessTaskHost::shutdown()` | method | src/App/ProcessTaskHost.php:461 |
 | `ProcessWorker` | class | src/App/ProcessWorker.php:8 |
 | `ProcessWorker::serve()` | method | src/App/ProcessWorker.php:32 |
-| `PumpHost::after()` | method | src/App/PumpHost.php:116 |
-| `PumpHost::io()` | method | src/App/PumpHost.php:284 |
-| `PumpHost::submitSliced()` | method | src/App/PumpHost.php:300 |
-| `SlicedJob` | interface | src/App/SlicedJob.php:6 |
-| `SlicedJob::step()` | method | src/App/SlicedJob.php:30 |
-| `SlicedJob::result()` | method | src/App/SlicedJob.php:47 |
-| `SyncTaskHost` | class | src/App/SyncTaskHost.php:6 |
-| `TaskHost` | interface | src/App/TaskHost.php:6 |
-| `TaskHost::submit()` | method | src/App/TaskHost.php:50 |
-| `TaskHost::pending()` | method | src/App/TaskHost.php:70 |
-| `TaskHost::drain()` | method | src/App/TaskHost.php:83 |
+| `PumpHost::after()` | method | src/App/PumpHost.php:115 |
+| `PumpHost::io()` | method | src/App/PumpHost.php:258 |
+| `SyncTaskHost` | class | src/App/SyncTaskHost.php:9 |
+| `TaskHost` | interface | src/App/TaskHost.php:8 |
+| `TaskHost::submit()` | method | src/App/TaskHost.php:52 |
+| `TaskHost::pending()` | method | src/App/TaskHost.php:90 |
+| `TaskHost::drain()` | method | src/App/TaskHost.php:118 |
+| `ThreadTaskHost` | class | src/App/ThreadTaskHost.php:15 |
+| `ThreadTaskHost::__construct()` | method | src/App/ThreadTaskHost.php:98 |
+| `ThreadTaskHost::shutdown()` | method | src/App/ThreadTaskHost.php:295 |
+| `Window` | class | src/App/Window.php:10 |
+| `WindowSet` | class | src/App/WindowSet.php:9 |
 | `WindowStateStore` | class | src/App/WindowStateStore.php:32 |
 | `WindowStateStore::__construct()` | method | src/App/WindowStateStore.php:124 |
 | `WindowStateStore::restore()` | method | src/App/WindowStateStore.php:147 |
 | `WindowStateStore::persist()` | method | src/App/WindowStateStore.php:219 |
 
-### @internal（框架内部） · 49
+### @internal（框架内部） · 50
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
 | `Application::$zeroViewportFrames` | property | src/App/Application.php:289 |
 | `Application::focus()` | method | src/App/Application.php:375 |
-| `Application::tasks()` | method | src/App/Application.php:474 |
-| `Application::lastTimestampMs()` | method | src/App/Application.php:484 |
-| `Application::lastInputMs()` | method | src/App/Application.php:494 |
-| `Application::uiThreadId()` | method | src/App/Application.php:641 |
-| `Application::assertUiThread()` | method | src/App/Application.php:651 |
-| `Application::closeRequested()` | method | src/App/Application.php:737 |
-| `Application::zeroViewportFrames()` | method | src/App/Application.php:1274 |
-| `Application::semanticsMode()` | method | src/App/Application.php:1469 |
-| `Application::slicedCount()` | method | src/App/Application.php:1562 |
-| `Application::captureNode()` | method | src/App/Application.php:1618 |
-| `Application::register()` | method | src/App/Application.php:1845 |
-| `Application::beginDrag()` | method | src/App/Application.php:1868 |
-| `Application::updateDrag()` | method | src/App/Application.php:1876 |
-| `Application::dropDrag()` | method | src/App/Application.php:1884 |
-| `Application::cancelDrag()` | method | src/App/Application.php:1894 |
-| `Application::rootBox()` | method | src/App/Application.php:1901 |
-| `Application::dismissOverlay()` | method | src/App/Application.php:2008 |
-| `Application::toggleWidgetPanel()` | method | src/App/Application.php:2030 |
-| `Completion` | class | src/App/Completion.php:6 |
+| `Application::tasks()` | method | src/App/Application.php:522 |
+| `Application::lastTimestampMs()` | method | src/App/Application.php:532 |
+| `Application::lastInputMs()` | method | src/App/Application.php:542 |
+| `Application::uiThreadId()` | method | src/App/Application.php:689 |
+| `Application::assertUiThread()` | method | src/App/Application.php:699 |
+| `Application::closeRequested()` | method | src/App/Application.php:785 |
+| `Application::zeroViewportFrames()` | method | src/App/Application.php:1319 |
+| `Application::semanticsMode()` | method | src/App/Application.php:1514 |
+| `Application::captureNode()` | method | src/App/Application.php:1629 |
+| `Application::register()` | method | src/App/Application.php:1856 |
+| `Application::beginDrag()` | method | src/App/Application.php:1879 |
+| `Application::updateDrag()` | method | src/App/Application.php:1887 |
+| `Application::dropDrag()` | method | src/App/Application.php:1895 |
+| `Application::cancelDrag()` | method | src/App/Application.php:1905 |
+| `Application::rootBox()` | method | src/App/Application.php:1912 |
+| `Application::dismissOverlay()` | method | src/App/Application.php:2019 |
+| `Application::toggleWidgetPanel()` | method | src/App/Application.php:2041 |
+| `Completion` | class | src/App/Completion.php:8 |
+| `CompletionQueue` | class | src/App/CompletionQueue.php:6 |
 | `DragController` | class | src/App/DragController.php:10 |
 | `FocusManager` | class | src/App/FocusManager.php:18 |
 | `Frame::$settleRunCount` | property | src/App/Frame.php:60 |
@@ -129,8 +133,8 @@
 | `Frame::settleSkipCount()` | method | src/App/Frame.php:156 |
 | `Frame::paintRunCount()` | method | src/App/Frame.php:162 |
 | `Frame::paintSkipCount()` | method | src/App/Frame.php:168 |
-| `FrameClock::stallCount()` | method | src/App/FrameClock.php:184 |
-| `FrameClock::worstGapMs()` | method | src/App/FrameClock.php:190 |
+| `FrameClock::stallCount()` | method | src/App/FrameClock.php:186 |
+| `FrameClock::worstGapMs()` | method | src/App/FrameClock.php:192 |
 | `InputHost` | interface | src/App/InputHost.php:10 |
 | `InputRouter` | class | src/App/InputRouter.php:24 |
 | `OverlayHost` | interface | src/App/OverlayHost.php:10 |
@@ -141,12 +145,41 @@
 | `OverlayManager::dismissOverlay()` | method | src/App/OverlayManager.php:558 |
 | `OverlayManager::focusTrapRoots()` | method | src/App/OverlayManager.php:571 |
 | `OverlayManager::toggleWidgetPanel()` | method | src/App/OverlayManager.php:642 |
-| `PumpHost` | class | src/App/PumpHost.php:9 |
-| `PumpHost::slicedCount()` | method | src/App/PumpHost.php:278 |
+| `PumpHost` | class | src/App/PumpHost.php:10 |
 | `PumpHostHost` | interface | src/App/PumpHostHost.php:6 |
 | `ScrollInputRouter` | class | src/App/ScrollInputRouter.php:17 |
 | `TextEditingBridge` | class | src/App/TextEditingBridge.php:14 |
 | `TextEditingHost` | interface | src/App/TextEditingHost.php:8 |
+| `Window::__construct()` | method | src/App/Window.php:36 |
+| `Window::mount()` | method | src/App/Window.php:110 |
+
+## Async 层
+
+### @api（应用可读面） · 13
+
+| 符号 | 种类 | 位置 |
+|---|---|---|
+| `AsyncValue` | class | src/Async/AsyncValue.php:6 |
+| `AsyncValue::carriedFrom()` | method | src/Async/AsyncValue.php:145 |
+| `AsyncValue::fold()` | method | src/Async/AsyncValue.php:241 |
+| `AsyncValue::stateName()` | method | src/Async/AsyncValue.php:348 |
+| `Future` | class | src/Async/Future.php:8 |
+| `Future::pending()` | method | src/Async/Future.php:112 |
+| `Future::resolved()` | method | src/Async/Future.php:131 |
+| `Future::rejected()` | method | src/Async/Future.php:144 |
+| `Future::then()` | method | src/Async/Future.php:160 |
+| `Future::catch()` | method | src/Async/Future.php:177 |
+| `Future::cancel()` | method | src/Async/Future.php:191 |
+| `Future::all()` | method | src/Async/Future.php:256 |
+| `Future::race()` | method | src/Async/Future.php:341 |
+
+### @internal（框架内部） · 3
+
+| 符号 | 种类 | 位置 |
+|---|---|---|
+| `Future::__construct()` | method | src/Async/Future.php:102 |
+| `Future::resolve()` | method | src/Async/Future.php:405 |
+| `Future::reject()` | method | src/Async/Future.php:430 |
 
 ## Commands 层
 
@@ -254,10 +287,10 @@
 | `RenderAppBar` | class | src/Layout/RenderAppBar.php:13 |
 | `RenderBackdropFilter` | class | src/Layout/RenderBackdropFilter.php:11 |
 | `RenderBox` | class | src/Layout/RenderBox.php:15 |
-| `RenderBox::overflow()` | method | src/Layout/RenderBox.php:712 |
-| `RenderBox::setCompose()` | method | src/Layout/RenderBox.php:875 |
-| `RenderBox::paintComposed()` | method | src/Layout/RenderBox.php:1058 |
-| `RenderBox::hitTest()` | method | src/Layout/RenderBox.php:1167 |
+| `RenderBox::overflow()` | method | src/Layout/RenderBox.php:727 |
+| `RenderBox::setCompose()` | method | src/Layout/RenderBox.php:890 |
+| `RenderBox::paintComposed()` | method | src/Layout/RenderBox.php:1073 |
+| `RenderBox::hitTest()` | method | src/Layout/RenderBox.php:1182 |
 | `RenderButton` | class | src/Layout/RenderButton.php:19 |
 | `RenderDivider` | class | src/Layout/RenderDivider.php:13 |
 | `RenderDock` | class | src/Layout/RenderDock.php:12 |
@@ -287,18 +320,19 @@
 | `RenderWrap` | class | src/Layout/RenderWrap.php:11 |
 | `StackFit` | enum | src/Layout/StackFit.php:6 |
 
-### @internal（框架内部） · 43
+### @internal（框架内部） · 44
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
-| `LayoutTolerance` | class | src/Layout/LayoutTolerance.php:6 |
+| `LayoutTolerance` | class | src/Layout/LayoutTolerance.php:8 |
+| `LayoutTolerance::reset()` | method | src/Layout/LayoutTolerance.php:116 |
 | `RenderBox::layoutEpoch()` | method | src/Layout/RenderBox.php:213 |
 | `RenderBox::layoutCount()` | method | src/Layout/RenderBox.php:219 |
 | `RenderBox::paintCount()` | method | src/Layout/RenderBox.php:236 |
 | `RenderBox::replayCount()` | method | src/Layout/RenderBox.php:242 |
 | `RenderBox::markNeedsLayout()` | method | src/Layout/RenderBox.php:248 |
-| `RenderBox::clipsOverflow()` | method | src/Layout/RenderBox.php:723 |
-| `RenderBox::invalidateLayerCache()` | method | src/Layout/RenderBox.php:1035 |
+| `RenderBox::clipsOverflow()` | method | src/Layout/RenderBox.php:738 |
+| `RenderBox::invalidateLayerCache()` | method | src/Layout/RenderBox.php:1050 |
 | `RenderCustomPaint` | class | src/Layout/RenderCustomPaint.php:12 |
 | `RenderDock::slot()` | method | src/Layout/RenderDock.php:44 |
 | `RenderFlex::clearChildren()` | method | src/Layout/RenderFlex.php:98 |
@@ -478,10 +512,19 @@
 
 ## State 层
 
-### @api（应用可读面） · 9
+### @api（应用可读面） · 18
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
+| `AsyncCommand` | class | src/State/AsyncCommand.php:9 |
+| `AsyncCommand::make()` | method | src/State/AsyncCommand.php:197 |
+| `AsyncCommand::value()` | method | src/State/AsyncCommand.php:231 |
+| `AsyncCommand::isRunning()` | method | src/State/AsyncCommand.php:241 |
+| `AsyncCommand::run()` | method | src/State/AsyncCommand.php:251 |
+| `AsyncCommand::append()` | method | src/State/AsyncCommand.php:294 |
+| `AsyncCommand::retry()` | method | src/State/AsyncCommand.php:343 |
+| `AsyncCommand::cancel()` | method | src/State/AsyncCommand.php:363 |
+| `AsyncCommand::dispose()` | method | src/State/AsyncCommand.php:385 |
 | `Cell` | class | src/State/Cell.php:9 |
 | `Cell::setIfChanged()` | method | src/State/Cell.php:76 |
 | `Subject` | class | src/State/Subject.php:9 |
@@ -500,8 +543,8 @@
 | `Cell::$owner` | property | src/State/Cell.php:30 |
 | `Cell::$bound` | property | src/State/Cell.php:40 |
 | `Cell::makeFor()` | method | src/State/Cell.php:59 |
-| `Subject::$version` | property | src/State/Subject.php:34 |
-| `Subject::unsubscribeId()` | method | src/State/Subject.php:90 |
+| `Subject::$version` | property | src/State/Subject.php:38 |
+| `Subject::unsubscribeId()` | method | src/State/Subject.php:94 |
 | `SubjectBuilder::source()` | method | src/State/SubjectBuilder.php:96 |
 | `SubjectBuilder::selectFn()` | method | src/State/SubjectBuilder.php:102 |
 | `SubjectBuilder::builderFn()` | method | src/State/SubjectBuilder.php:108 |
@@ -567,7 +610,7 @@
 
 ## Widget 层
 
-### @api（应用可读面） · 167
+### @api（应用可读面） · 169
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -583,6 +626,7 @@
 | `BackdropFilter::sigma()` | method | src/Widget/BackdropFilter.php:67 |
 | `BuildContext` | class | src/Widget/BuildContext.php:13 |
 | `Button` | class | src/Widget/Button.php:19 |
+| `Button::enabled()` | method | src/Widget/Button.php:146 |
 | `ButtonVariant` | enum | src/Widget/ButtonVariant.php:6 |
 | `CalendarView` | class | src/Widget/CalendarView.php:9 |
 | `Card` | class | src/Widget/Card.php:12 |
@@ -664,14 +708,15 @@
 | `Spinner` | class | src/Widget/Spinner.php:11 |
 | `Stack` | class | src/Widget/Stack.php:11 |
 | `StackElement` | class | src/Widget/StackElement.php:8 |
-| `State` | class | src/Widget/State.php:13 |
-| `State::markDirty()` | method | src/Widget/State.php:138 |
-| `State::tickFrame()` | method | src/Widget/State.php:178 |
-| `State::initState()` | method | src/Widget/State.php:218 |
-| `State::didChangeFocus()` | method | src/Widget/State.php:231 |
-| `State::cell()` | method | src/Widget/State.php:247 |
-| `State::watch()` | method | src/Widget/State.php:265 |
-| `State::handleCommand()` | method | src/Widget/State.php:471 |
+| `State` | class | src/Widget/State.php:14 |
+| `State::markDirty()` | method | src/Widget/State.php:142 |
+| `State::tickFrame()` | method | src/Widget/State.php:182 |
+| `State::initState()` | method | src/Widget/State.php:222 |
+| `State::didChangeFocus()` | method | src/Widget/State.php:235 |
+| `State::cell()` | method | src/Widget/State.php:251 |
+| `State::asyncCommand()` | method | src/Widget/State.php:269 |
+| `State::watch()` | method | src/Widget/State.php:324 |
+| `State::handleCommand()` | method | src/Widget/State.php:573 |
 | `StatefulElement` | class | src/Widget/StatefulElement.php:6 |
 | `StatefulWidget` | class | src/Widget/StatefulWidget.php:8 |
 | `StatefulWidget::createRenderObjectFromState()` | method | src/Widget/StatefulWidget.php:27 |
@@ -739,7 +784,7 @@
 | `WrapElement` | class | src/Widget/WrapElement.php:8 |
 | `YearMonth` | class | src/Widget/YearMonth.php:8 |
 
-### @internal（框架内部） · 215
+### @internal（框架内部） · 217
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -753,7 +798,7 @@
 | `AppBar::paintsBoxChrome()` | method | src/Widget/AppBar.php:224 |
 | `AppBarElement` | class | src/Widget/AppBarElement.php:8 |
 | `BuildContext::withTheme()` | method | src/Widget/BuildContext.php:48 |
-| `Button::paintsBoxChrome()` | method | src/Widget/Button.php:319 |
+| `Button::paintsBoxChrome()` | method | src/Widget/Button.php:356 |
 | `CalendarView::selectedValue()` | method | src/Widget/CalendarView.php:137 |
 | `CalendarView::onSelectedHandler()` | method | src/Widget/CalendarView.php:143 |
 | `CalendarView::onMonthChangeHandler()` | method | src/Widget/CalendarView.php:149 |
@@ -862,29 +907,31 @@
 | `SelectPanelSignal` | class | src/Widget/Select.php:606 |
 | `SemanticsBuilder::__construct()` | method | src/Widget/SemanticsBuilder.php:34 |
 | `SpinnerState` | class | src/Widget/SpinnerState.php:6 |
-| `State::$pendingDirty` | property | src/Widget/State.php:24 |
-| `State::$buildingState` | property | src/Widget/State.php:39 |
-| `State::$rebuiltCount` | property | src/Widget/State.php:51 |
-| `State::$initializing` | property | src/Widget/State.php:95 |
-| `State::$initialized` | property | src/Widget/State.php:98 |
-| `State::$lastTickedFrame` | property | src/Widget/State.php:101 |
-| `State::attach()` | method | src/Widget/State.php:104 |
-| `State::element()` | method | src/Widget/State.php:116 |
-| `State::dropSubscriptions()` | method | src/Widget/State.php:284 |
-| `State::callInit()` | method | src/Widget/State.php:301 |
-| `State::consumeDirty()` | method | src/Widget/State.php:323 |
-| `State::pendingDirty()` | method | src/Widget/State.php:335 |
-| `State::markedCount()` | method | src/Widget/State.php:341 |
-| `State::rebuiltCount()` | method | src/Widget/State.php:353 |
-| `State::boxEpoch()` | method | src/Widget/State.php:359 |
-| `State::noteBoxReplaced()` | method | src/Widget/State.php:370 |
-| `State::takeMountedThisFrame()` | method | src/Widget/State.php:383 |
-| `State::mountedCount()` | method | src/Widget/State.php:397 |
-| `State::frameWantedCount()` | method | src/Widget/State.php:422 |
-| `State::noteRebuilt()` | method | src/Widget/State.php:432 |
-| `State::enterBuild()` | method | src/Widget/State.php:444 |
-| `State::leaveBuild()` | method | src/Widget/State.php:455 |
-| `State::didUpdateWidget()` | method | src/Widget/State.php:461 |
+| `State::$pendingDirty` | property | src/Widget/State.php:25 |
+| `State::$buildingState` | property | src/Widget/State.php:40 |
+| `State::$rebuiltCount` | property | src/Widget/State.php:52 |
+| `State::$initializing` | property | src/Widget/State.php:99 |
+| `State::$initialized` | property | src/Widget/State.php:102 |
+| `State::$lastTickedFrame` | property | src/Widget/State.php:105 |
+| `State::attach()` | method | src/Widget/State.php:108 |
+| `State::element()` | method | src/Widget/State.php:120 |
+| `State::dropSubscriptions()` | method | src/Widget/State.php:343 |
+| `State::dropCommands()` | method | src/Widget/State.php:360 |
+| `State::callInit()` | method | src/Widget/State.php:377 |
+| `State::consumeDirty()` | method | src/Widget/State.php:399 |
+| `State::pendingDirty()` | method | src/Widget/State.php:411 |
+| `State::markedCount()` | method | src/Widget/State.php:417 |
+| `State::rebuiltCount()` | method | src/Widget/State.php:429 |
+| `State::boxEpoch()` | method | src/Widget/State.php:435 |
+| `State::noteBoxReplaced()` | method | src/Widget/State.php:446 |
+| `State::takeMountedThisFrame()` | method | src/Widget/State.php:459 |
+| `State::mountedCount()` | method | src/Widget/State.php:473 |
+| `State::frameWantedCount()` | method | src/Widget/State.php:498 |
+| `State::noteRebuilt()` | method | src/Widget/State.php:508 |
+| `State::enterBuild()` | method | src/Widget/State.php:520 |
+| `State::leaveBuild()` | method | src/Widget/State.php:531 |
+| `State::didUpdateWidget()` | method | src/Widget/State.php:537 |
+| `State::adoptWidget()` | method | src/Widget/State.php:558 |
 | `StatefulElement::$boxFromState` | property | src/Widget/StatefulElement.php:18 |
 | `StatefulElement::syncBox()` | method | src/Widget/StatefulElement.php:45 |
 | `Table::keyMapper()` | method | src/Widget/Table.php:500 |

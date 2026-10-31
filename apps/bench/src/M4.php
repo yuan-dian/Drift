@@ -127,7 +127,9 @@ final class M4
         $paintOwn = \max(0, (int) ($per['paint'] ?? 0) - $surfaceSum);
         $layout = (int) ($per['layout'] ?? 0);
         $settle = (int) ($per['settle'] ?? 0);
-        $pumpKeys = ['pumpIo', 'pumpTasks', 'pumpSliced', 'anim', 'placeMenu', 'focus', 'semantics'];
+        // ★ 2026-10-31：`pumpSliced` 随分片一起删了，换成 `pumpTimers`（它一直在计时，
+        //   只是原先漏在这个列表外 ⇒ 那段耗被算进"未归因"）。
+        $pumpKeys = ['pumpIo', 'pumpTasks', 'pumpTimers', 'anim', 'placeMenu', 'focus', 'semantics'];
         $pumpSum = 0;
         foreach ($pumpKeys as $k) {
             $pumpSum += (int) ($per[$k] ?? 0);

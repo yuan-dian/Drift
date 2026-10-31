@@ -161,10 +161,9 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     private OverlayLayout $overlayLayout;
 
     /**
-     * 异步泵片（S1 第 9 步）：`frame()` 里 settle 之前的四个泵 + 定时器 +
-     * 分片提交。构造期建（host = 本类）—— 泵只依赖自持的 tasks/io/sliced/
-     * timers 四个状态 + 宿主的 UI 线程断言与时间基准，不读 root / focus /
-     * overlays（真正零耦合）。
+     * 异步泵片（S1 第 9 步）：`frame()` 里 settle 之前的三个泵 + 定时器。
+     * 构造期建（host = 本类）—— 泵只依赖自持的 tasks/io/timers 三个状态 +
+     * 宿主的 UI 线程断言与时间基准，不读 root / focus / overlays（真正零耦合）。
      */
     private PumpHost $pumps;
 
@@ -875,17 +874,6 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
             SurfaceProfile::add('pumpTasks', \hrtime(true) - $t);
         }
 
-        // ★ ③ 最后推进分片任务（P1）：完成的那一个也在此刻回调 ⇒ 同样落在 settle 之前。
-        //   顺序（结果 → 分片 → settle）不重要，**都在 settle 之前**才重要。
-        $t = $prof ? \hrtime(true) : 0;
-        if ($trace !== null) {
-            $trace[] = 'pumpSliced';
-        }
-        $this->pumps->pumpSliced();
-        if ($prof) {
-            SurfaceProfile::add('pumpSliced', \hrtime(true) - $t);
-        }
-
         // ★ ③ 推进到期的延时回调（W8-2）：同样**必须在 settle 之前** ——
         //   `after()` 的回调里 `setState()` 由紧随的 `Frame::run()` 的 settle 段
         //   消费，同一帧生效（Tooltip 到点那一帧就画出来，不多闪一帧空）。
@@ -1072,7 +1060,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      * 拖动 resize 专用的**轻量重绘**（§5.2 模态尺寸循环）。
      *
      * ★★ 与 `frame()` 的唯一区别：**不碰帧外的东西** —— 不 pumpIo / pumpTasks /
-     *   pumpSliced、不推进画、不重建焦点链、不推语义树。它会被平台壳在
+     *   pumpTimers、不推进画、不重建焦点链、不推语义树。它会被平台壳在
      *   **WM_SIZE（模态循环内）同步调回**（C → PHP 重入），能碰的状态越少越安全；
      *   顺带也更快（拖动预算 48ms 留出余量）。
      *
@@ -1586,36 +1574,6 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         });
 
         return $busy;
-    }
-
-    /**
-     * 提交一个**可分片**的长任务（§17.4.3，P1）：每帧推一次 `step()`，不占一帧。
-     *
-     * ```php
-     * $app->submitSliced(new FilterJob($rows, $query))
-     *     ->then(fn (array $hits) => $this->store->replace($hits))
-     *     ->catch(fn (\Throwable $e) => $this->store->fail($e));
-     * ```
-     *
-     * ★ 与 `TaskHost::submit()` 的差别只在**怎么跑**：分片在 UI 线程的帧间跑，
-     *   回调同样**在帧内**、同样在 `settle()` 之前（所以改 Store 同帧生效）。
-     *   ★★ **形状已经统一**（2026-10-30，N3）：两个入口都返回 `Future` ——
-     *   改造前一个收两个回调、一个收两个回调 + 预算，调用方要记两套。
-     * ★ 预算默认 4ms（见 `PumpHost`）；任务自己决定一次干多少。
-     *
-     * @return Future 完成时结算（`step()` 最终结果 / 抛出的异常）
-     *
-     * @api
-     */
-    public function submitSliced(SlicedJob $job, int $budgetMs = 4): Future
-    {
-        return $this->pumps->submitSliced($job, $budgetMs);
-    }
-
-    /** @internal 测试与 devtools：还有几个分片任务在排队 */
-    public function slicedCount(): int
-    {
-        return $this->pumps->slicedCount();
     }
 
     /**

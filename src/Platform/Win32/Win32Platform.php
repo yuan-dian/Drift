@@ -320,7 +320,7 @@ final class Win32Platform implements Platform
      *   （中间那些不关心的消息它自己在壳里吃掉了）。要一次取多条得给桥加
      *   `timeout = 0` 的非阻塞取法 —— 那和 `MsgWait` 是同一批改动，归 N4。
      * ★ 先摘快照再翻译：翻译里会 `input()->push()`，而 `push` 的实现不该被
-     *   "正在遍历 pending"影响（与 `PumpHost::pumpSliced()` 的 swap 同一手法）。
+     *   "正在遍历 pending"影响（与 `TaskHost::drain()` 的 swap 同一手法）。
      */
     public function pumpEvents(): int
     {

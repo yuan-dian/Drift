@@ -7,7 +7,7 @@ namespace Drift\App;
  * **异步泵片的宿主要口**（S1 第 9 步）：`PumpHost` 经这 3 个口子摸应用。
  *
  * ```text
- * assertUiThread()     —— 四泵 / submitSliced 都断言 UI 线程（响亮失败，非静默）
+ * assertUiThread()     —— 三个泵 + 定时器都断言 UI 线程（响亮失败，非静默）
  * lastTimestampMs()    —— after() 的计时基准之一（上一帧时间戳）
  * lastInputMs()        —— after() 的计时基准之二（最近一次输入时刻）
  * ```

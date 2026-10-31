@@ -619,3 +619,147 @@ DLL 形式**被所有进程共享物理页**；静态进 exe 后变成每个实�
 
 ★ 零行为改动：没有动 `src/` 一行。`busy` 口径的 25.5µs 与 `probes/io_pool` 的
 "pool 单次 < 10µs" 相容（后者量的是空转，前者含管道往返 + worker 执行）。
+
+---
+
+## 12. 第十轮（2026-10-31）：分片链整体删除 —— 一次"结构上不可达"的清算
+
+> 前九轮都在**补**（两维化 / 取消传播 / 追加 / 预热），这一轮在**删**。
+> 删的是 §17.4.3 的 `SlicedJob` 全套：`step()` 契约、`submitSliced()`、
+> `pumpSliced()`、预算常量、冒烟用例、两个夹具。**-372 / +72 行，13 个文件 + 3 个删除**。
+> 判据不是"写得不好"，是**写它的页面根本调不到它**。
+
+### 12.1 根因：分片的唯一入口在页面够不着的地方
+
+| 事实 | 证据 |
+|---|---|
+| `submitSliced()` 只挂在 `Application` 上 | `Application::submitSliced()` → `PumpHost::submitSliced()` |
+| 页面拿不到 `Application` | 页面的依赖注入是 `AppScope`（`$scope->...`），`Application` 在 `AppScope` **之上**；`State` 只有 `BuildContext` / `setState` / `requestFrame` |
+| 组合根也不必用它 | 组合根握着 `$app`，但它没有长计算；两个 app 的 Bootstrap 里 `submitSliced` 出现 **0 次** |
+| 真实调用者 | `tools/smoke.php` 的 ㊳ 段 + `apps/bench` 的相位键 —— **全是判据，没有业务** |
+
+⇒ 一个能力，**业务写不出来，判据却在给它打分**。这正是"未消费的分支 = 未实现"的镜像形态：
+它不是没实现，是**实现了但不可达** —— 而不可达的代码比没写的代码更贵，因为它还要被
+lint、被 docref、被每一轮复审重新读一遍并重新论证。
+
+### 12.2 第二层：它和 `TaskHost` 是同一件事的两套实现
+
+| 事 | `TaskHost` | `SlicedJob` |
+|---|---|---|
+| 提交 | `submit(Job)` → `Future` | `submitSliced(SlicedJob)` → `Future` |
+| 队列 | 后端自持 + `drain()` | `PumpHost::$sliced` + `pumpSliced()` |
+| 每帧预算 | `drain($onEach, $budgetMs)`（`TASK_BUDGET_MS = 4`） | `step($budgetMs)`（`SLICE_BUDGET_MS = 4`） |
+| 取消 | 后端 `onCancel` → 不交付 | `Future` 钩子 → 摘队列（"真停"） |
+| 错误 | `Completion` 带异常 → `catch` | `step()` 抛 → `reject()` |
+| 差别 | **只有一处**：活儿在哪跑（别的线程/进程 vs UI 线程帧间） |
+
+★ "在哪跑"是**执行体**的属性，不是**作业契约**的属性。把执行体差异写进作业类型
+（`Job` vs `SlicedJob`），代价是**七件事各抄一遍** —— 与第七轮收掉三份交付循环
+（`CompletionQueue`）时的形态**完全同源**。
+
+### 12.3 成熟 GUI 怎么处理"帧间切片"
+
+| 框架 | 形态 | 关键点 |
+|---|---|---|
+| Flutter | `SchedulerBinding.scheduleTask(priority: idlePriority)` | **任务类型只有一种**（`Task`），"切不切片"是**调度器的优先级档** |
+| Chromium | `TaskRunner` + `TaskPriority::BEST_EFFORT` | 同上：一条队列，优先级是任务属性，不是任务种类 |
+| WPF | `Dispatcher.BeginInvoke(DispatcherPriority.Background)` | 同上 |
+| Qt | `QConcurrent::run` / `processEvents` | 没有"分片作业"类型 |
+| Godot | `MessageQueue` 每帧 flush | 同上 |
+
+**没有一家把"帧间切片"做成第二种作业类型。** 它们的共同形态是：
+**作业一种，预算与优先级属于调度器**。我们反过来做（作业两种，预算挂在 `step()` 上）
+⇒ 重复是设计里长出来的，不是实现疏忽。
+
+★★ 这条对**将来**同样成立：真出现"必须在本线程算、且可切分"的需求时，
+正解是给帧调度器一个**优先级/空闲预算**（Flutter 的 `idlePriority` 那一档），
+**不是**把 `SlicedJob` 加回来。§12.6 记了这条。
+
+### 12.4 删除清单
+
+| 位置 | 删了什么 |
+|---|---|
+| `src/App/SlicedJob.php` | 整个文件（53 行） |
+| `tools/Smoke/App/CountJob.php` · `FailSliceJob.php` | 两个夹具（54 + 20 行） |
+| `src/App/PumpHost.php` | `$sliced` / `$nextSliceId` / `pumpSliced()` / `slicedCount()` / `submitSliced()` / `SLICE_BUDGET_MS`；`hasAsync()` / `hasPolledAsync()` 里的两处判据（净 -161 行） |
+| `src/App/Application.php` | `submitSliced()` / `slicedCount()` / `frame()` 里的 `pumpSliced` 调用与计时（-50 行） |
+| `src/App/FramePhase.php` | `BEFORE_SETTLE` / `ALL` / 后果表里的 `pumpSliced` |
+| `tools/smoke.php` | ㊳ 整段（约 90 行）；N5 第三条改判（见 §12.5） |
+| `apps/bench/src/M4.php` | `$pumpKeys` 里的 `pumpSliced` |
+| 六处注释 | `TaskHost` / `Future` / `CompletionQueue` / `IoPoller` / `PumpHostHost` / `Win32Platform` 里"与 `pumpSliced()` 同一手法"的类比引用 |
+
+★ 净效果：`PumpHost` 从"四个泵"回到**三个泵**（`pumpIo` / `pumpTasks` / `pumpTimers`），
+帧相位的语义分组重新变成"三路外部输入 + 定时器"。
+
+### 12.5 N5 的判据换了承载物，不变量一个字没改
+
+原 N5 第三条用分片验"能叫醒的后端也压不住只能轮询的活"。分片删掉后改用 `IoPoller` 的 watcher：
+
+```php
+$ioApp->scope()->setTaskHost($inFlightHost(false));   // 后端仍然"能叫醒"
+$ioApp->io()?->watch($ioRead, true, function (): void {});
+// ⇒ nextWaitMs() 仍必须是 FRAME_MS（不能 -1 睡到 worker 叫醒）
+```
+
+★ 守的是同一条不变量：**`hasPolledAsync()` 是"任一路在轮询"的或，不是"后端轮询"的或**。
+换成 watcher 反而更贴真实用法（`IoPoller` 有业务消费者，分片没有）。
+
+### 12.6 诚实边界：删掉了什么能力
+
+| 项 | 情况 |
+|---|---|
+| `Future::cancel()` 的"**真停**" | **删掉了**。全仓现在一律是"不交付"，没有"停止计算"。`ProcessTaskHost` / `ThreadTaskHost` 从来如此 ⇒ 语义**反而统一了**（原先只有分片这一路是特例，而它没有消费者） |
+| "在本线程算、且可切分"的需求 | **现在没有实现**。要做的正解是帧调度器的**优先级/空闲预算**（§12.3），不是复活 `SlicedJob` |
+| 4ms 预算范式 | **保留**，且现在只有一套：`PumpHost::TASK_BUDGET_MS`。`TaskHost::drain()` 的注释改成了自述（原本拿 `SlicedJob::step()` 当先例） |
+| `SyncTaskHost::drain()` 的 swap 语义 | **保留**（`CompletionQueue` 已收成一份） |
+
+★ 一句话：**删掉的是"特例的实现"，不是"特例的需求"** —— 那个需求至今没有消费者，
+而它一旦出现，形状应该是调度器的一个档位。
+
+### 12.7 顺带对了一次账：`UI-THREAD-MODEL` 的五条铁律
+
+删分片时把 `docs/UI-THREAD-MODEL-2026-10-30.md` 的五条铁律逐行核了一遍，**四行都腐坏了**：
+
+| 铁律 | 腐坏 | 订正后 |
+|---|---|---|
+| ① UI 单线程 + 亲和 | 还列着 `pumpSliced` / `submitSliced`；行号漂 | `PumpHost.php:289,324`、`Application.php:837,1083` |
+| ③ 业务不在 UI 线程 | `Application.php:470` 只是转发 | 默认值真正落在 `AppScope.php:243` |
+| ④ 空闲阻塞不轮询 | 两处行号漂 | `EventLoop.php:105-116`、`ThreadTaskHost.php:180-183` |
+| ⑤ 唤醒合并 | 结论写着 **❌ "每条事件都 `PostMessageW`"** | **✅** —— `g_wakePosted`（`drift_win32.cc:417`）就是闹钟闸，取走 `kMsgWake` 时复位（`3222`）⇒ 多次入队只压一次 |
+
+★★ **这一类腐坏 docref 查不出来**：它只判"越界"与"文件不存在"，判不出"这一行已经不是那句话了"。
+⑤ 的结论被后续修复**推翻**了，却一直挂着 ❌。⇒ 动完帧循环就顺手对一次账，
+把"指向哪一行 / 结论是否还成立"当成断言看待。
+
+### 12.8 验证
+
+| 项 | 结果 |
+|---|---|
+| `php tools/lint.php` | **854** 文件 · 0 error · 0 warn（-3：三个文件没了） |
+| `vendor/bin/phpunit` | **971** tests / **3214** assertions OK（断言数不变 —— 分片从来没有 phpunit 判据，只有冒烟） |
+| `php tools/gate.php` | 见 §12.9 |
+| `php tools/docref.php` | 见 §12.9 |
+
+★ 971 条测试**一条没红**就能删掉 372 行，本身就是"零消费者"的第二个证明：
+真有业务依赖它，删掉一定会有测试或冒烟挂。
+
+### 12.9 闸门与文档
+
+| 项 | 结果 |
+|---|---|
+| `php tools/gate.php` | 8 项全通过 · **448 ok / 0 FAIL** · **108.5s**（上轮 463 ok ⇒ **-15**：冒烟 ㊳ 整段删除） |
+| `php tools/lint.php` | **854** 文件 · 0 error · 0 warn |
+| `vendor/bin/phpunit` | **971** tests / **3214** assertions OK（分组跑：384 + 587） |
+| `php tools/docref.php` | **0 FAIL**（§12 补齐后；删掉 `SlicedJob.php:28` 那条 file-line 引用后 ok 数从 81 → 77） |
+| `docs/API-SURFACE.md` | **重新生成**（顺手发现它整体过期：合计 419→446 条，`State` 9→18 —— 不全是本轮造成，是几轮新增的 `@api` 没重跑生成器） |
+
+★ 顺手改掉的四处**现行**文档（历史评审/快照文档按纪律不动）：
+`DESIGN.md`（§17.4.3 墓碑化 + 六处对照表 + 一节 2026-10-31 对账）、
+`docs/ASYNC-DX-2026-10-30.md`（§11.3 的括号 + 新增 §14）、
+`docs/architecture/02-帧管线与异步.md`（作业清单）、
+`docs/arch-v2/06-帧管线.md`（预算那一行的对比）。
+
+★★ `docs/API-SURFACE.md` 过期这件事本身值得记一笔：它是**生成物**，但没人对它的
+"数字对不对"下判据（lint 只判 `@api` 标注是否合规，不判清单是否最新）
+⇒ 它会一直漂。今天只是把这次生成的落盘了；要不要给它加一道"`--api` 输出与文件
+一致"的闸门，留到下次复审（加闸门的代价是每次改 `@api` 都要重跑，容易变成噪音）。

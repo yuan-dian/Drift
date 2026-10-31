@@ -91,7 +91,7 @@ final class IoPoller
      *   `Event::dispatch()` 的根本差别（后者阻塞到下一个事件，§17.2.6 实测 57ms/帧）。
      *
      * ★ 回调抛异常**不在这里吞**：让它冒到 `Application::pumpIo()` 的 try/catch
-     *   （与 `pumpTasks()` / `pumpSliced()` 同一策略：S3 无边界 ⇒ Fatal 序列）。
+     *   （与 `pumpTasks()` 同一策略：S3 无边界 ⇒ Fatal 序列）。
      */
     public function poll(): void
     {

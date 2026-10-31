@@ -8,20 +8,24 @@ use Drift\Async\Future;
 use Drift\Errors;
 
 /**
- * **异步泵片**（S1 第 9 步）：`frame()` 里 settle **之前**的四个泵 + 定时器 +
- * 分片提交。把「异步结果何时被消费」这个时序契约收进一个类。
+ * **异步泵片**（S1 第 9 步）：`frame()` 里 settle **之前**的三个泵 + 定时器。
+ * 把「异步结果何时被消费」这个时序契约收进一个类。
  *
  * ```text
- * frame() 的 A 组（四个泵，必须都在 settle 之前）：
+ * frame() 的 A 组（三个泵，必须都在 settle 之前）：
  *   pumpIo      → 问一轮非阻塞 IO（外部数据先到）
  *   pumpTasks   → 取后台结果（TaskHost::drain）
- *   pumpSliced  → 推分片任务一次（UI 线程帧间跑）
  *   pumpTimers  → 触发到期的延时回调（after() 排的）
  * 它们共同满足同一条不变量：**回调里的 setState() 由紧随的 settle 同帧消费**。
  * ```
  *
- * ★ **为什么单独拆这四个泵**（不是整个 frame 九段）：它们只依赖自持的
- *   `tasks` / `io` / `sliced` / `timers` 四个状态 + 宿主的 UI 线程断言与
+ * ★ **原来是四个**（2026-10-31 删掉 `pumpSliced`）：`SlicedJob` 那条链的入口只在
+ *   `Application::submitSliced()` 上，而页面（`State`）在架构上**拿不到
+ *   `Application`**（本仓没有 `InheritedWidget`，依赖一律构造注入）⇒ 除了冒烟
+ *   没有任何消费者。裁决与替代方案见 `docs/ASYNC-ARCH-2026-10-31.md` §12。
+ *
+ * ★ **为什么单独拆这三个泵**（不是整个 frame 九段）：它们只依赖自持的
+ *   `tasks` / `io` / `timers` 三个状态 + 宿主的 UI 线程断言与
  *   时间基准，**不读 root / focus / overlays**（真正零耦合）。而帧末的
  *   语义 / 动画 / 焦点要读宿主六个状态 ⇒ 耦合面大，留壳里
  *   （见 arch-v2 `12` §4i 的三簇拆法与「为什么不是九段表驱动」）。
@@ -34,20 +38,10 @@ use Drift\Errors;
 final class PumpHost
 {
     /**
-     * 分片任务每帧的时间预算（毫秒，§17.4.3）。
-     *
-     * ★ 4 的来历：一帧 16.7ms，留 12ms 给布局 / 绘制 / 输入（§13.3 全树重排）
-     *   ⇒ 分片最多吃掉四分之一帧。`SlicedJob::step()` 自己决定一次干多少，
-     *   这只是**建议值**（"干到超预算就返回"）。
-     */
-    private const SLICE_BUDGET_MS = 4;
-
-    /**
      * 后台结果交付每帧的时间预算（毫秒，2026-10-30 P1）。
      *
-     * ★ 为什么和 `SLICE_BUDGET_MS` 同量级：它们吃的是**同一帧**的 16.7ms，
-     *   而这一帧还要留 12ms 给布局 / 绘制 / 输入（§13.3 全树重排）。
-     *   两个泵各占 4ms 近似"异步最多吃半帧"，剩下的够画面走完。
+     * ★ 4 的来历：一帧 16.7ms，留 12ms 给布局 / 绘制 / 输入（§13.3 全树重排）
+     *   ⇒ 异步最多吃掉四分之一帧。
      *
      * ★ 为什么由**这里**给而不是让后端用自己的默认值：预算是帧的属性，不是
      *   后端的属性 —— 后端只回答"给我多少我就干多少"。把数字留在帧循环里，
@@ -71,28 +65,6 @@ final class PumpHost
      *   drain 整个跳过，零开销。
      */
     private ?TaskHost $tasks = null;
-
-    /**
-     * 排队中的分片任务（§17.4.3，P1）—— 每帧推一次 `step()`。
-     *
-     * ★ **不走 `TaskHost`**：分片永远在 UI 线程跑（它解决的是"别把一帧卡死"，
-     *   不是"别占 UI 线程"）。所以它和端口正交：换后端不影响分片。
-     *
-     * ★ 元素是数组而不是对象：只有几个字段、生命周期一帧内、不需要身份 ——
-     *   为它造一个类只会多一层没有信息的壳（对比 `Completion`：那个要跨边界传，
-     *   有语义）。
-     *
-     * ★★ **键是任务号**（2026-10-30）：`Future::cancel()` 的钩子要能把它从队列里
-     *   摘掉，而"按 `SlicedJob` 对象反查"做不到（同一个 job 可以提交两次）。
-     *   列表形态只能标记"结果不要了"，**任务照样每帧烧 4ms 预算** —— 那是
-     *   "取消"这个词在真实任务上完全落空（改造前没有任何后端提供过钩子）。
-     *
-     * @var array<int, array{job: SlicedJob, future: Future, budgetMs: int}>
-     */
-    private array $sliced = [];
-
-    /** 分片任务号（只增不减；`cancel()` 的钩子靠它定位队列项） */
-    private int $nextSliceId = 1;
 
     /**
      * 待触发的延时回调（W8-2，2026-10-23）—— `after()` 排进来，`pumpTimers()` 消费。
@@ -227,8 +199,7 @@ final class PumpHost
     /** 后台任务是否在途 / 监听是否开着（`wantsFrame()` 的两条判据） */
     public function hasAsync(): bool
     {
-        return $this->sliced !== []
-            || ($this->io !== null && $this->io->watchCount() > 0)
+        return ($this->io !== null && $this->io->watchCount() > 0)
             || ($this->tasks !== null && $this->tasks->pending() > 0);
     }
 
@@ -236,7 +207,6 @@ final class PumpHost
      * 其中**只能靠轮询**的那部分（⇒ 帧节奏必须跳，不能无限等）。
      *
      * ★★ 与 `hasAsync()` 的差别就是"后端能不能叫醒我"（2026-10-30，N5）：
-     *   - 分片任务：**永远只能轮询**（`step()` 是拉模型，没有"干完了"这一说）；
      *   - `IoPoller` 的 watcher：本仓拿不到 SOCKET 去等 fd ⇒ 只能每帧问；
      *   - 后台任务：看后端自己声明的 {@see TaskHost::needsPolling()} ——
      *     `ProcessTaskHost` 读管道（只能拉），`ThreadTaskHost` 会 `PostMessageW`
@@ -248,10 +218,6 @@ final class PumpHost
      */
     public function hasPolledAsync(): bool
     {
-        if ($this->sliced !== []) {
-            return true;
-        }
-
         if ($this->io !== null && $this->io->watchCount() > 0) {
             return true;
         }
@@ -266,7 +232,7 @@ final class PumpHost
      *
      * ★ **先摘再调**：回调里可以安全地 `after()` 新定时器 / `cancelAfter()` 别的
      *   —— 否则遍历中改 `$this->timers` 会漏掉或重复触发。
-     * ★ 回调抛异常**不吞**（与 `pumpTasks()` / `pumpSliced()` 同策略：S3 无边界
+     * ★ 回调抛异常**不吞**（与 `pumpTasks()` 同策略：S3 无边界
      *   ⇒ Fatal 序列）。
      */
     public function pumpTimers(float $timestampMs): void
@@ -290,69 +256,6 @@ final class PumpHost
     }
 
     /**
-     * 推进所有分片任务（§17.4.3）—— 每帧一次，在 `settle()` 之前。
-     *
-     * ★ **swap 语义**：先取快照再清空，未完成的回填 ⇒ 回调里 `submitSliced()`
-     *   的新任务不会丢（也不会让本帧无限长）。与 `SyncTaskHost::drain()` 同一手法。
-     * ★ `step()` 抛异常 ⇒ 该任务终止、走 `$onError`（不再回填）——
-     *   与 `Job::run()` 同一条错误通道，不新增第四态。
-     */
-    public function pumpSliced(): void
-    {
-        if ($this->sliced === []) {
-            return;
-        }
-
-        $this->host->assertUiThread('slice');
-
-        $queue = $this->sliced;
-        $this->sliced = [];
-
-        try {
-            foreach ($queue as $id => $item) {
-                // ★★ 先查取消位：`cancel()` 可能就发生在**本次 drain 内部**（一个
-                //   分片的回调里取消了另一个）—— 那一项已经不在 `$this->sliced`
-                //   里了，但它在**本帧的快照** `$queue` 里，光靠钩子摘不掉。
-                //   ⇒ 钩子管"跨帧"，这里管"帧内"，两处都要有。
-                if ($item['future']->isCancelled()) {
-                    continue;
-                }
-
-                try {
-                    $more = $item['job']->step($item['budgetMs']);
-                } catch (\Throwable $e) {
-                    $item['future']->reject($e);
-
-                    continue;
-                }
-
-                if ($more) {
-                    // ★ 回填时**带着原任务号**：不然它下一帧就再也取消不掉了。
-                    $this->sliced[$id] = $item;
-
-                    continue;
-                }
-
-                $item['future']->resolve($item['job']->result());
-            }
-        } catch (\Throwable $e) {
-            // 回调抛异常：与 `pumpTasks()` 同策略（S3：无边界 ⇒ Fatal 序列，不吞）
-            Errors::report(sprintf(
-                '帧循环：分片任务回调未捕获异常 —— %s（%s:%d）',
-                $e->getMessage(),
-                basename($e->getFile()),
-                $e->getLine(),
-            ));
-        }
-    }
-
-    /** @internal 测试与 devtools：还有几个分片任务在排队 */
-    public function slicedCount(): int
-    {
-        return count($this->sliced);
-    }
-
-    /**
      * 非阻塞 I/O 轮询器（`null` = 未挂载）。
      *
      * ```php
@@ -366,40 +269,6 @@ final class PumpHost
     public function io(): ?IoPoller
     {
         return $this->io;
-    }
-
-    /**
-     * 提交一个**可分片**的长任务（§17.4.3，P1）：每帧推一次 `step()`，不占一帧。
-     *
-     * ★ 与 `TaskHost::submit()` 的差别只在**怎么跑**：分片在 UI 线程的帧间跑，
-     *   回调同样**在帧内**、同样在 `settle()` 之前（所以改 Store 同帧生效）。
-     * ★ 预算默认 {@see self::SLICE_BUDGET_MS}；任务自己决定一次干多少。
-     *
-     * @return Future 完成时结算（`step()` 的最终结果 / 抛出的异常）
-     *
-     * @api
-     */
-    public function submitSliced(SlicedJob $job, int $budgetMs = self::SLICE_BUDGET_MS): Future
-    {
-        $this->host->assertUiThread('submitSliced');
-
-        $id = $this->nextSliceId++;
-
-        // ★ 取消钩子**真的停**（不是只把结果丢掉）：摘出队列之后 `pumpSliced()`
-        //   再也看不到它 ⇒ 每帧不再白烧那 4ms 预算。
-        //   ★ 与 `ProcessTaskHost` 的差别必须说清：分片在**本进程本线程**，摘掉就
-        //     是真停；跨进程的任务杀了要重拉、还会丢在途状态 ⇒ 那边只能"不交付"。
-        $future = Future::pending(function () use ($id): void {
-            unset($this->sliced[$id]);
-        });
-
-        $this->sliced[$id] = [
-            'job' => $job,
-            'future' => $future,
-            'budgetMs' => $budgetMs,
-        ];
-
-        return $future;
     }
 
     /**
@@ -442,7 +311,7 @@ final class PumpHost
     /**
      * 问一轮非阻塞 I/O（§17.4.4）—— 每帧一次，在 `settle()` 之前。
      *
-     * ★ 与 `pumpTasks()` / `pumpSliced()` 同策略：回调异常不吞（S3 ⇒ Fatal 序列），
+     * ★ 与 `pumpTasks()` 同策略：回调异常不吞（S3 ⇒ Fatal 序列），
      *   但要用 try/catch 把它变成"指明来源的错误"，而不是裸栈冒到组合根。
      */
     public function pumpIo(): void

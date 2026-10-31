@@ -26,7 +26,6 @@ use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Smoke\Frame\RecordingSurface;
 use Drift\Dev\Smoke\Rendering\ProbePainter;
 use Drift\Dev\Preview\SvgSurface;
-use Drift\Dev\Smoke\App\CountJob;
 use Drift\Dev\Smoke\App\FakeDialog;
 use Drift\Dev\Smoke\App\LazyApplication;
 use Drift\Dev\Smoke\App\NamedBoomJob;
@@ -52,7 +51,6 @@ use App\Users\UsersRoot;
 use App\Users\Jobs\JobRegistry;
 use App\Users\Store\MemoryUserSource;
 use App\Users\Store\UserStore;
-use Drift\Dev\Smoke\App\FailSliceJob;
 use Drift\Dev\Smoke\App\SemValueApplication;
 use Drift\Dev\Smoke\App\TfApplication;
 use Drift\Dev\Smoke\App\NavApplication;
@@ -4252,153 +4250,6 @@ if (is_file($log)) {
     unlink($log);
 }
 
-// ── ㊳ P1：`SlicedJob` 单线程分片（§17.4.3）──────────────────────────────
-//
-// ★ 它解决的是"能算完、只是算得慢"（过滤一万行 / 排序 / 解析）：不需要并行，
-//   只需要别把一帧卡死（WPF 的原话：`await` 不加 `Task.Run` 就是单线程分段计算）。
-//   ★ 分片**不走 `TaskHost`** —— 它永远在 UI 线程跑，与"换后端"正交。
-//   判据：① 进队列不执行 ② 一帧只推一步 ③ N 帧后完成 ④ 结果与一次性算相同
-//   ⑤ 完成后出队且不再步进 ⑥ 每步耗时有界 ⑦ 完成回调改 Store ⇒ 同帧重建
-//   ⑧ step 抛异常 ⇒ catch() 且出队
-
-$sliceApp = new TaskApplication();
-$sliceApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(320.0, 240.0)));
-
-$sliceJob = new CountJob(100000, 10000); // 10 万次累加、每帧 1 万 ⇒ 10 帧
-$sliceDone = null;
-$sliceApp->submitSliced($sliceJob)->then(function (int $sum) use (&$sliceDone): void {
-    $sliceDone = $sum;
-});
-check(
-    'P1 · submitSliced 之后进队列（还没执行）',
-    $sliceApp->slicedCount() === 1 && $sliceDone === null,
-    'queued=' . $sliceApp->slicedCount() . ' done=' . var_export($sliceDone, true),
-);
-
-$sliceApp->frame(16.0, BoxConstraints::loose(new Size(320.0, 240.0)));
-check(
-    'P1 · 一帧只推一步（不一口气跑完）',
-    $sliceJob->steps() === 1 && $sliceDone === null,
-    'steps=' . $sliceJob->steps(),
-);
-
-for ($i = 0; $i < 9; $i++) {
-    $sliceApp->frame(32.0 + $i * 16.0, BoxConstraints::loose(new Size(320.0, 240.0)));
-}
-check(
-    'P1 · 10 帧后完成（10 万 / 每帧 1 万）',
-    $sliceJob->steps() === 10 && $sliceDone !== null,
-    'steps=' . $sliceJob->steps() . ' done=' . var_export($sliceDone, true),
-);
-check(
-    'P1 · 结果与一次性求和相同（1+…+100000）',
-    $sliceDone === (new SumJob(100000))->run(),
-    (string) ($sliceDone ?? -1),
-);
-check('P1 · 完成后出队（不再占用帧预算）', $sliceApp->slicedCount() === 0, (string) $sliceApp->slicedCount());
-
-$stepsAfterDone = $sliceJob->steps();
-$sliceApp->frame(256.0, BoxConstraints::loose(new Size(320.0, 240.0)));
-check('P1 · 完成后不再步进（下一帧 steps 不变）', $sliceJob->steps() === $stepsAfterDone, (string) $sliceJob->steps());
-
-$maxStepMs = $sliceJob->stepMs === [] ? 999.0 : max($sliceJob->stepMs);
-check(
-    'P1 · 每步耗时有界（10 万次累加切成 10 份，单步 < 5ms）',
-    $maxStepMs < 5.0,
-    sprintf('max=%.2fms', $maxStepMs),
-);
-
-// ⑦ 完成回调改 Store ⇒ 同帧重建（与 ㊲ 同一条：pumpSliced 也在 settle 之前）
-$buildsBeforeSlice = $taskState?->builds ?? -1;
-$taskApp->submitSliced(new CountJob(2000, 1000))->then(function (int $sum) use ($taskApp): void {
-    $taskApp->store->setStatus(7);
-});
-$taskApp->frame(80.0, BoxConstraints::loose(new Size(320.0, 240.0)));
-check(
-    'P1 · 分片未完时不回调（第 1 帧只推进）',
-    $taskState !== null && $taskState->builds === $buildsBeforeSlice && $taskApp->slicedCount() === 1,
-    'builds=' . ($taskState?->builds ?? -1),
-);
-$taskApp->frame(96.0, BoxConstraints::loose(new Size(320.0, 240.0)));
-check(
-    'P1 · 分片完成回调改 Store ⇒ **同帧**重建',
-    $taskState !== null && $taskState->builds === $buildsBeforeSlice + 1 && $taskState->seen === 7,
-    sprintf('builds %d→%d seen=%d', $buildsBeforeSlice, $taskState?->builds ?? -1, $taskState?->seen ?? -1),
-);
-
-// ⑧ 错误通道：step 抛 ⇒ onError 且出队（不静默、不重试）
-$sliceErr = null;
-$taskApp->submitSliced(new FailSliceJob())
-    ->then(function (mixed $v): void {
-    })
-    ->catch(function (\Throwable $e) use (&$sliceErr): void {
-        $sliceErr = $e;
-    });
-$taskApp->frame(112.0, BoxConstraints::loose(new Size(320.0, 240.0)));
-check(
-    'P1 · step 抛异常 ⇒ catch() 且出队（任务终止，不重试）',
-    $sliceErr instanceof \RuntimeException && $sliceErr->getMessage() === '分片中途失败' && $taskApp->slicedCount() === 0,
-    ($sliceErr instanceof \Throwable ? $sliceErr->getMessage() : 'null') . ' queued=' . $taskApp->slicedCount(),
-);
-
-// ⑨ 取消通道：`Future::cancel()` 让分片**真的停下来**（不是只丢结果）
-//
-// ★ 判据必须落在"**不再 step**"上，不能落在"future 没结算"：后者在旧实现里也成立
-//   （`resolve()` 本来就被取消位挡着），测不出"任务还在队列里、每帧照烧 4ms 预算"。
-//   —— 这正是"契约说了取消、实现是空操作"能被闸门放过去的原因。
-$cancelJob = new CountJob(10000000, 1000); // 1 万步都跑不完 ⇒ 不取消就永远在队列里
-$cancelFuture = $taskApp->submitSliced($cancelJob);
-$taskApp->frame(128.0, BoxConstraints::loose(new Size(320.0, 240.0)));
-$taskApp->frame(144.0, BoxConstraints::loose(new Size(320.0, 240.0)));
-$stepsBeforeCancel = $cancelJob->steps();
-check(
-    'N3 · 取消前：2 帧推进 2 步、仍在队列（正对照，证明下面的"不再涨"有意义）',
-    $stepsBeforeCancel === 2 && $taskApp->slicedCount() === 1,
-    'steps=' . $stepsBeforeCancel . ' queued=' . $taskApp->slicedCount(),
-);
-
-$cancelFuture->cancel();
-check(
-    'N3 · cancel() 当场摘出队列（不再占帧预算）',
-    $taskApp->slicedCount() === 0,
-    'queued=' . $taskApp->slicedCount(),
-);
-
-$taskApp->frame(160.0, BoxConstraints::loose(new Size(320.0, 240.0)));
-$taskApp->frame(176.0, BoxConstraints::loose(new Size(320.0, 240.0)));
-check(
-    'N3 · 取消后不再 step（旧实现：队列还在，每帧照烧预算）',
-    $cancelJob->steps() === $stepsBeforeCancel,
-    'steps=' . $cancelJob->steps() . '（取消前 ' . $stepsBeforeCancel . '）',
-);
-check(
-    'N3 · 被取消的 Future 永不结算（既不是成功也不是失败）',
-    $cancelFuture->isDone() === false && $cancelFuture->isCancelled() === true,
-    'done=' . var_export($cancelFuture->isDone(), true) . ' cancelled=' . var_export($cancelFuture->isCancelled(), true),
-);
-
-// ⑩ 帧内取消：一个分片完成时的回调，取消**同一帧里还没轮到的**另一个
-//
-// ★ 这一条守的是"钩子管跨帧、泵里的复查管帧内"那对分工：`pumpSliced()` 先取快照
-//   再清空队列 ⇒ 被取消的那一项**已经不在 `$this->sliced` 里**，钩子的 `unset`
-//   找不到它，只能靠泵里的 `isCancelled()` 拦住。
-// ★ 顺序是判据的一部分：触发者在**前**、受害者在**后**（反过来受害者先被 step，
-//   测的就不是帧内那条路了）。
-$victimFuture = null;
-$taskApp->submitSliced(new CountJob(10, 10))->then(function () use (&$victimFuture): void {
-    if ($victimFuture !== null) {
-        $victimFuture->cancel();
-    }
-});
-$victimJob = new CountJob(10000000, 1000);
-$victimFuture = $taskApp->submitSliced($victimJob);
-$taskApp->frame(192.0, BoxConstraints::loose(new Size(320.0, 240.0)));
-check(
-    'N3 · 帧内取消：同帧里排在后面的分片被拦住（一步都没跑）',
-    $victimJob->steps() === 0 && $taskApp->slicedCount() === 0,
-    'steps=' . $victimJob->steps() . ' queued=' . $taskApp->slicedCount(),
-);
-
 // ── ㊴ P2：`IoPoller` 非阻塞 IO（§17.4.4）────────────────────────────────
 //
 // ★ 前提已实测（probes §12.3 [J3]）：`stream_socket_pair` + `stream_set_blocking(false)`
@@ -5017,18 +4868,27 @@ check(
     'wait=' . $pollWait . '（期望 ' . FrameClock::FRAME_MS . '）',
 );
 
-// ③ 分片任务**恒为轮询** —— 与后端能不能叫醒无关（`step()` 是拉模型）
-$sliceApp2 = new TaskApplication();
-$sliceApp2->scope()->setTaskHost($inFlightHost(false));   // 后端仍然"能叫醒"
-$sliceApp2->attach(new SurfaceProbe(), $rhythmConstraints);
-$sliceApp2->frame(16.0, $rhythmConstraints);
-$sliceApp2->submitSliced(new CountJob(100000, 100));       // 每帧推一小段
-$sliceWait = (new FrameClock())->nextWaitMs($sliceApp2, 16.0);
+// ③ 有一路**只能轮询**的活（`IoPoller` watcher）⇒ 即使后端能叫醒，也回到帧节奏
+//
+// ★ 2026-10-31 换过承载物：这条原先用分片任务（`submitSliced`）验，分片删掉后
+//   改用 `IoPoller` 的 watcher —— **守的不变量一模一样**："能推的后端也压不住
+//   另一路拉模型的活"（`hasPolledAsync()` 是"任一路在轮询"的或，不是"后端轮询"
+//   的或）。换成 watcher 反而更贴近真实用法：分片那一路本来就没有消费者。
+$ioApp = new TaskApplication();
+$ioApp->scope()->setTaskHost($inFlightHost(false));   // 后端仍然"能叫醒"
+$ioApp->attach(new SurfaceProbe(), $rhythmConstraints);
+$ioApp->frame(16.0, $rhythmConstraints);
+[$ioRead] = stream_socket_pair(2, 1, 0);
+stream_set_blocking($ioRead, false);
+$ioApp->io()?->watch($ioRead, true, function (): void {
+    // 判据只看"有没有一路在轮询"，回调体不参与
+});
+$ioWait = (new FrameClock())->nextWaitMs($ioApp, 16.0);
 
 check(
-    'N5 · 分片在推 ⇒ 仍按帧节奏（分片只能轮询，不受后端能否叫醒影响）',
-    $sliceWait === (float) FrameClock::FRAME_MS,
-    'wait=' . $sliceWait . ' sliced=' . $sliceApp2->slicedCount(),
+    'N5 · 有轮询源在 ⇒ 仍按帧节奏（与后端能否叫醒无关）',
+    $ioWait === (float) FrameClock::FRAME_MS,
+    'wait=' . $ioWait . ' watches=' . $ioApp->io()?->watchCount(),
 );
 
 // ── 可滚动容器 / 滚动条绘制 / 滚轮全链 / 拖条 / UI 线程身份 已迁出 ─────────────

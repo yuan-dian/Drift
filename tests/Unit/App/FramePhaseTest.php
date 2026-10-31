@@ -43,8 +43,8 @@ final class FramePhaseTest extends SmokeTestCase
         //   a) A 组（settle 前）成员跑到 settle **之后** —— pumpTasks 与 settle 对调
         //   b) C 组（settle 后）成员跑到 settle **之前** —— focusCollect 与 pumpIo 对调
         //   c) 整帧**没有 settle 标记** —— `Frame::run()` 没被调用
-        $aTrace = ['pumpIo', 'settle', 'pumpTasks', 'pumpSliced', 'tickAnimations', 'placeOverlays', 'tickLateMount', 'focusCollect', 'pumpSemantics'];
-        $bTrace = ['focusCollect', 'pumpTasks', 'pumpSliced', 'tickAnimations', 'placeOverlays', 'settle', 'tickLateMount', 'pumpIo', 'pumpSemantics'];
+        $aTrace = ['pumpIo', 'settle', 'pumpTasks', 'tickAnimations', 'placeOverlays', 'tickLateMount', 'focusCollect', 'pumpSemantics'];
+        $bTrace = ['focusCollect', 'pumpTasks', 'tickAnimations', 'placeOverlays', 'settle', 'tickLateMount', 'pumpIo', 'pumpSemantics'];
         $cTrace = FramePhase::ALL;
         unset($cTrace[(int) array_search('settle', FramePhase::ALL, true)]);
         $cTrace = array_values($cTrace);

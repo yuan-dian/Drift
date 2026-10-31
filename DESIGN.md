@@ -327,7 +327,7 @@ private function pageFor(string $name): ?Widget
 
 | 目录 | 命名空间 | 文件 | 状态（2026-10-15 按 `src/` 核验） |
 |------|---------|------|------|
-| `src/App/` | `Drift\App` | ✅ `Application.php` · `Frame.php`（+ 1 个 `@internal` 实现文件 `FocusManager.php` —— 输入路由最小集，M3；§9.1 的完整链在 M4 的 `EventLoop`）；★ **2026-10-16 新落地三件**（任务 #8）：**`Job.php`** · **`TaskHost.php`** · **`SyncTaskHost.php`**（§17.2 的端口 + **后端 B**；§24.1 #35 点名的 `Job` 0 文件已清零）；★ **2026-10-18 P0**：**`Completion.php`**（`@internal` —— 队列里流动的完成事件，§17.4.2）+ **`DragController.php`**（`@internal`，拖动状态机，§9.1）；★ **P1**：**`SlicedJob.php`**（单线程分片的任务契约，§17.4.3）；★ **P2**：**`Io/IoPoller.php`**（非阻塞 IO 每帧轮询，§17.4.4 —— `src/App/` 的第一个子目录）；★ **P3**：**`NamedJob.php`**（可跨进程描述的任务）· **`ProcessWorker.php`**（worker 侧 JSON Lines 服务端）· **`ProcessTaskHost.php`**（常驻子进程后端，§17.4.5）；★ **2026-10-18 P0 补丁**：**`FrameClock.php`**（自适应帧时钟 —— `TimerHost` 的第一个生产调用者，§17.4.9）；★ **2026-10-18 M5**：**`Paths.php`**（@api —— **只做字符串组装**：配置目录由 `Platform::configDir()` 给，`Drift\App` 因此不碰平台，§5.1）+ **`WindowStateStore.php`**（@api —— §5.4：启动读回 / 退出写回**各一次同步 IO**、kv 文件、恢复失败**静默降级 + 一条 Diagnostic**；`position()` 返 `null` = 最小化不写；显示器夹取归壳）；⏳ `EventLoop.php` · `ThreadPoolTaskHost.php`（**⛔ 被 tpc 能力卡住** —— 探针 K，§17.2.2） | **缺 2**（M4） |
+| `src/App/` | `Drift\App` | ✅ `Application.php` · `Frame.php`（+ 1 个 `@internal` 实现文件 `FocusManager.php` —— 输入路由最小集，M3；§9.1 的完整链在 M4 的 `EventLoop`）；★ **2026-10-16 新落地三件**（任务 #8）：**`Job.php`** · **`TaskHost.php`** · **`SyncTaskHost.php`**（§17.2 的端口 + **后端 B**；§24.1 #35 点名的 `Job` 0 文件已清零）；★ **2026-10-18 P0**：**`Completion.php`**（`@internal` —— 队列里流动的完成事件，§17.4.2）+ **`DragController.php`**（`@internal`，拖动状态机，§9.1）；★ **P2**：**`Io/IoPoller.php`**（非阻塞 IO 每帧轮询，§17.4.4 —— `src/App/` 的第一个子目录）；★ **P3**：**`NamedJob.php`**（可跨进程描述的任务）· **`ProcessWorker.php`**（worker 侧 JSON Lines 服务端）· **`ProcessTaskHost.php`**（常驻子进程后端，§17.4.5）；★ **2026-10-18 P0 补丁**：**`FrameClock.php`**（自适应帧时钟 —— `TimerHost` 的第一个生产调用者，§17.4.9）；★ **2026-10-18 M5**：**`Paths.php`**（@api —— **只做字符串组装**：配置目录由 `Platform::configDir()` 给，`Drift\App` 因此不碰平台，§5.1）+ **`WindowStateStore.php`**（@api —— §5.4：启动读回 / 退出写回**各一次同步 IO**、kv 文件、恢复失败**静默降级 + 一条 Diagnostic**；`position()` 返 `null` = 最小化不写；显示器夹取归壳）；⏳ `EventLoop.php` · `ThreadPoolTaskHost.php`（**⛔ 被 tpc 能力卡住** —— 探针 K，§17.2.2） | **缺 2**（M4） |
 | `src/Platform/` | `Drift\Platform` | ✅ 9/9：`Platform` · `WindowHost` · `SurfaceProvider` · `InputSource` · `TimerHost` · `Screen` · `Clipboard` · `Dialog` · `Tray`（★ 2026-10-15 **端口层落地**；**同日 Win32 实现跟进**，见下行 —— `Dialog`/`Tray` 两个壳服务在 Win32 上返回 `null`（§24.3）；`Clipboard` **2026-10-21 已落地** `Win32Clipboard`（C 侧三桥 + 重试打开剪贴板），§24.2 #32；★ 2026-10-18 M5 **两个既有端口各加方法**：`WindowHost` +`position(): ?Point` / `place(Rect, bool)`（§5.4 的读写两侧）、`Platform` +`configDir(): string`（用户配置目录 —— 每个平台必然有，「没有」用**空字符串**表达，不用 `null`）） | ✅（M1） |
 | `src/Platform/Win32/` | `Drift\Platform\Win32` | ✅ 8/8：`Win32Platform` · `Win32WindowHost` · `Win32Screen` · `Win32SurfaceProvider` · `Win32InputSource` · `Win32TimerHost` · `Win32RasterSurface` · **`Win32SkiaSurface`**（★ 2026-10-15 **首个平台实现落地**，配套 `cpp-src/drift_win32.{stub.php,cc}` 窗口桥 ⇒ §19 M1 出口判据兑现。★ `Win32RasterSurface` 是 `RenderSurface` 的**第 4 个**实现，走 `RasterCanvas` + `SetDIBitsToDevice` 位块传送（§7.3 的 M1 分期原文就是"CPU 光栅 + 位块传送"））。★ **2026-10-16 第二个渲染后端落地**（M1 遗留 ②）：`Win32SkiaSurface` = `SkiaCanvas` + **同一个** `drift_win_present()`，与 `Win32RasterSurface` **只差"造哪种画布"一行** ⇒ §7.2 裁决 1「后端可换、应用侧一行不改」兑现。后端由组合根 `new Win32Platform('skia' | 'soft')` 选（★ **2026-10-17 默认从 `soft` 翻成 `skia`**—— 软光栅的字来自位图字体，14px 上屏必然点阵锯齿，且 `Title=18px` 走放大路径；详见 §24.2 #19。`'soft'` 仍是显式可选的确定性测试后端）。真机已验：`hello.exe` 经 Skia 后端画出「Hello Drift」） | ✅（M1） |
 | `src/Geometry/` | `Drift\Geometry` | `Point` · `Size` · `Rect` · `EdgeInsets` · `Scale` · `BoxConstraints` | ✅ 6/6 |
@@ -2721,15 +2721,17 @@ $app = new UsersApplication(new Win32Platform(), new ThreadPoolTaskHost());
 | 后端 | 线程里跑 | 业务代码形态 | 单价 | 隔离 | 依赖 | 现在能做？ |
 |---|---|---|---|---|---|---|
 | **A. 同步**（现状）`SyncTaskHost` | UI 线程 | AOT | 0 | 无 | 无 | ✅ 已用 |
-| **B. 分帧/时间片** `SlicedJob` | UI 线程（帧间切片） | AOT | 切片粒度 | 无 | 无 | ✅ 纯框架 |
+| ~~**B. 分帧/时间片** `SlicedJob`~~ | UI 线程（帧间切片） | AOT | 切片粒度 | 无 | 无 | ❌ **已删**（§17.4.3：结构上不可达，且与 `TaskHost` 重复） |
 | **C. C++ 线程池 + C++ 原语**（用户方案） | **纯 C++（无 PHP 对象）** | 每条任务写 C++ stub | µs 级投递 | 同进程 | 无（`cpp-src` 机制已有） | ✅ **不受探针 K 限制** |
 | **D. Swoole 线程池** | **解释执行业务 PHP 源码** | 源码分发 + 双份实现 | 30ms 首建 + 55–95× 解释 | 同进程 | swoole+curl DLL | ✅ 实测可跑，但代价高 |
 | **E. 常驻子进程池** | **同一 AOT exe**（`--job` 分支） | AOT（快） | spawn 275ms 一次 + IPC ~0.1ms | **进程级**（崩了不拖死 UI） | 无 | ✅ 前提全验（⑦） |
 | **F. tpc 补钩子 + 原生线程池** | AOT | AOT | µs | 同进程 | 需改 tpc | ⏳ **入口已有、上下文仍缺**（2026-10-18 追测：lib 已导出 `typephp_<name>_library_request_startup`（直调 RINIT、可重入计数），但裸 `std::thread` 与 Swoole 线程 + FFI 两枪都 SIGSEGV —— 缺的是 **ts_resource + EG 初始化**，不是 RINIT）|
 
 **推荐（分层，不是二选一）**：
-- **B + A 打底**：可分片的长计算（过滤/排序/布局预计算）走 `SlicedJob` —— 零依赖、零风险，
-  且**不新增线程语义**（"loading 三态"终于有真实消费者）。
+- ~~**B + A 打底**：可分片的长计算走 `SlicedJob`~~ —— **2026-10-31 撤回**：
+  分片在结构上不可达（页面拿不到 `Application`），且与 `TaskHost` 重复七件事。
+  今天的口径是 **A + E**（同步调用方线程 / 常驻子进程池）；真要"本线程切片"，
+  做的是帧调度器的**优先级档**，不是第二种作业类型（§17.4.3）。
 - **E 做通用后端**：真·后台任务（HTTP/文件/慢查询）用**常驻子进程池**跑同一 AOT exe ——
   业务代码零改动、崩溃隔离、零扩展依赖。★ 关键：**不是每任务 spawn**（275ms 不可接受），
   而是进程池 + JSON-line 管道（`proc_open` + 每帧 `stream_select` 0 超时非阻塞读）。
@@ -2757,9 +2759,9 @@ $app = new UsersApplication(new Win32Platform(), new ThreadPoolTaskHost());
 耗时 ≤ 一帧预算（~4ms）────────────────────── SyncTaskHost（现状）
 只是"稍后做"（重试/动画/超时）─────────────── TimerHost（已有：SetTimer→WM_TIMER→每轮 frame）
 在等 I/O（网络/文件/DB）──────────────────── 非阻塞 I/O + 每帧 poll（★ 零线程、天然多路）
-CPU 可切分（过滤/排序/解析/布局预计算）─────── SlicedJob 分帧（★ 零线程）
+CPU 可切分（过滤/排序/解析/布局预计算）─────── ⏳ 无实现（★ 原 `SlicedJob` 已删，§17.4.3）
 CPU 不可切分（解压/解码/加密）
-   ├─ 慢一点可接受 ─────────────────────────── 仍然分帧（总时长↑，UI 流畅）
+   ├─ 慢一点可接受 ─────────────────────────── 常驻子进程池（总时长↑，UI 流畅）
    ├─ 必须真快 + 数据是纯 C++ ───────────────── C++ 线程池（NativeJob，µs 投递）
    ├─ 必须真快 + 要跑业务 PHP ───────────────── 常驻子进程池（E，跑 AOT 代码）
    └─ 不可信代码 / 会崩 ─────────────────────── 子进程池（进程隔离，崩了不拖死 UI）
@@ -2770,7 +2772,7 @@ CPU 不可切分（解压/解码/加密）
 
 | 方案 | 适用 | 代价 | Drift 现状 |
 |---|---|---|---|
-| **分帧切片**（`SlicedJob.step()`） | 可分片计算 | 总时长变长 | 无（`Job` 只需加一步） |
+| ~~**分帧切片**（`SlicedJob.step()`）~~ | 可分片计算 | 总时长变长 | ❌ 已删（§17.4.3）；需求由帧调度器优先级档承接，不是作业类型 |
 | **非阻塞 I/O + 每帧 poll** | HTTP/文件/DB | 需要非阻塞封装（`stream_set_blocking(false)` + `stream_select` 0 超时，或 C++ 侧 IOCP） | 未验（下一步第一枪） |
 | **TimerHost** | 动画/重试/超时 | 无 | ✅ 已有（`Win32TimerHost`） |
 | **Fiber（PHP 用户态协程）** | 顺序逻辑 + 等待 | 不解决 CPU 阻塞（只在显式让出点切换）；**IO 必须已非阻塞** | ✅ 2026-10-18 实测：AOT 产物里 `start/suspend/resume/isTerminated` 全正常，**零阻塞** |
@@ -2785,12 +2787,21 @@ CPU 不可切分（解压/解码/加密）
 3. **崩溃半径**：线程崩 = 整个进程崩；进程池崩 = 只丢一个任务。
 4. **调试**：竞态不可复现，且 AOT 下没有动态调试器。
 
-**推荐（Drift 的路线）**：
-1. **`SlicedJob` + 非阻塞 I/O 打底**（覆盖 ~80%：HTTP、文件、列表过滤/排序）。
+**推荐（Drift 的路线，2026-10-31 修订）**：
+1. **非阻塞 I/O 打底**（`IoPoller`，HTTP/文件；高频 HTTP 的正解是 `curl_multi` 接帧循环 ——
+   见 `ASYNC-ARCH-2026-10-31.md` §11）。
 2. **`TimerHost` 承担"稍后执行"**（已有，只缺一个 `Application` 侧的 id→回调登记）。
-3. **进程池**承担"重活 + 隔离"。
+3. **进程池**承担"重活 + 隔离"（当前唯一有真实业务的后端）。
 4. **C++ 原语**承担"解码/压缩"。
 5. **线程（F）是最后手段**，只在"必须真快 + 必须共享内存 + 不能进程化"同时成立时才考虑。
+6. ~~`SlicedJob` 分帧~~ —— **已删除**（§17.4.3）：结构上不可达 + 与 `TaskHost` 重复。
+   "本线程切片"若真有需求，做的应是帧调度器的优先级档。
+
+★★ **本节 2026-10-31 对账**（原文写于 2026-10-18，两处结论已被后续实测/裁决推翻）：
+① **`SlicedJob` 整条路线删了**；② **`Fiber` 不能用于 UI 侧** —— AOT 的 lint（`NanoHygiene`）
+明文禁 `Fiber` / `Generator`（"C++17 无栈切换"），下面那段"协程的正确用法"里的
+实测结论对**解释执行**成立，对**AOT 产物**不成立。今天是"协程只做 `Job::run()` 的实现细节"
+（见 `ASYNC-ARCH-2026-10-31.md` 第八轮裁决）。
 
 **协程的正确用法（2026-10-18 实测）**：**用 PHP `Fiber`，不要用 Swoole 协程**。
 - Swoole 协程依赖**它自己的 reactor**：`Swoole\Event::dispatch()` 实测**阻塞到下一个事件**（50ms 定时器 ⇒ 单帧 57ms），UI 帧被卡住；且协程耗尽后再 dispatch 在 AOT 下会崩（tpc 的扩展调用路径）。Swoole 没有"0 超时 pump reactor"的 API。
@@ -2829,8 +2840,11 @@ CPU 不可切分（解压/解码/加密）
 - **拷贝/消息（Actor）**：Flutter isolate（可变对象**拷贝**）、Godot（复制数据给子线程）⇒ 对应 Drift 的**进程池 / C++ 原语**。
   ★ 所以"进程池 + 序列化"不是妥协——Flutter 的 isolate 是同一取舍（业务代码是 AOT 编译的，本来也无法共享 PHP 对象图）。
 - **共享内存 + 锁 + 亲和性**：Qt worker thread、WPF 线程池 ⇒ Drift 的**线程后端（F）**如果要上，必须同时有 `VerifyAccess` 式的断言。
-- **单线程分片**：WPF 文档明说"`await` 不加 `Task.Run` 就是单线程分段计算"；Dart 的 microtask 同理 ⇒ 对应 Drift 的 **`SlicedJob`**。
-  这是最被低估的一档，也是"能单线程就别多线程"（WPF 原文）的直接体现。
+- **单线程分片**：WPF 文档明说"`await` 不加 `Task.Run` 就是单线程分段计算"；Dart 的 microtask 同理。
+  ★ **这一档我们做错过一次**（`SlicedJob`，2026-10-31 删除）：WPF/Dart 的分段**不是一种作业类型**，
+  而是**调度器的一个优先级档**（`Dispatcher.BeginInvoke(Background)` / microtask 队列）——
+  "能单线程就别多线程"这句话讲的是**调度**，不是**契约**。抄形式不抄层次，就会得到
+  一套和 `TaskHost` 重复的实现，且页面还调不到它（§17.4.3）。
 
 **Drift 的差距清单（按落地顺序）**：
 
@@ -2838,7 +2852,7 @@ CPU 不可切分（解压/解码/加密）
 |---|---|---|---|
 | ① | **`TaskHost` 缺"结果队列 + 每帧 drain"** | Qt queued / WPF Dispatcher / Godot MessageQueue | 任何异步后端的前提；现在 `SyncTaskHost` 的同步直调把它掩盖了 |
 | ② | **`notifyChanged` 缺线程断言** | WPF `VerifyAccess()` | 等 ① 落地后一起加（否则是死代码） |
-| ③ | **`SlicedJob`（单线程分片）** | WPF 单线程分段 / Dart microtask | 零依赖，覆盖"可切分计算" |
+| ③ | ~~**`SlicedJob`（单线程分片）**~~ | WPF 单线程分段 / Dart microtask | ❌ 2026-10-31 删除：抄了形式没抄层次（那是调度器档位，不是作业类型），且零可达消费者 |
 | ④ | **非阻塞 I/O + Fiber 调度器** | Godot MessageQueue + `select(0)` | 覆盖 HTTP/文件，与 §17.2.6 的结论一致 |
 | ⑤ | **进程池 / C++ 原语** | Flutter isolate（拷贝语义） | 覆盖"不可切分计算"与隔离 |
 
@@ -2970,7 +2984,33 @@ public function assertUiThread(string $where): void
 验证：smoke **688/0**（+16：端口八条 + 应用层六条）、lint 305 文件 0/0、codegen 205/0skip、
 `drift-build users` 7.4MB + 真机窗口 OK；三连反例自检全中（drain 挪到 settle 之后 ⇒ 同帧重建红，
 诊断值 `builds 1→1 seen=0`；drain 不清空 ⇒ 重复交付红；改回同步直调 ⇒ "当帧不回调"红）。
-#### 17.4.3 `SlicedJob`（单线程分片，P1）
+#### 17.4.3 ~~`SlicedJob`（单线程分片）~~ —— **2026-10-31 删除**
+
+```text
+结论：整个分片链（SlicedJob / submitSliced / pumpSliced / SLICE_BUDGET_MS /
+      smoke ㊳ 段 / 两个夹具）已删除，-372 / +72 行。
+```
+
+两条判据，按分量排（完整论证见 [`docs/ASYNC-ARCH-2026-10-31.md`](docs/ASYNC-ARCH-2026-10-31.md) §12）：
+
+| # | 判据 | 事实 |
+|---|---|---|
+| 1 | **结构上不可达** | `submitSliced()` 只挂在 `Application` 上；页面的依赖注入是 `AppScope`，`Application` 在它**之上** ⇒ 业务页面**写不出来**。真实调用者只有冒烟用例与 bench 相位键 —— 判据在给一个业务碰不到的能力打分 |
+| 2 | **与 `TaskHost` 是同一件事的两套实现** | 提交 / 队列 / 每帧预算 / 取消 / 错误五件事各一套，差别只有"活儿在哪跑"。"在哪跑"是**执行体**的属性，不该写进**作业契约** |
+
+★ 成熟 GUI 的形态（Flutter `scheduleTask(idlePriority)`、Chromium `TaskPriority::BEST_EFFORT`、
+WPF `DispatcherPriority.Background`、Qt、Godot）**没有一家把"帧间切片"做成第二种作业类型** ——
+作业一种，**预算与优先级属于调度器**。我们反过来做，重复是设计里长出来的。
+
+★ **删掉的是特例的实现，不是特例的需求**：`Future::cancel()` 从此全仓一律是"不交付"
+（原先只有分片这一路"真停"），语义反而统一了。真出现"必须在本线程算、且可切分"的需求，
+正解是给帧调度器一个**优先级/空闲预算**档，**不是**复活本接口。
+
+★ **保留的范式**：4ms 帧预算仍在，且现在只有一套 —— `PumpHost::TASK_BUDGET_MS`
+（`TaskHost::drain()` 的注释已改为自述，不再拿 `SlicedJob::step()` 当先例）。
+
+<details>
+<summary>历史原文（2026-10-18 P1 落地时的契约，仅作记录）</summary>
 
 ```php
 interface SlicedJob
@@ -2983,27 +3023,12 @@ interface SlicedJob
 }
 ```
 
-`TaskHost` 加一个方法（默认实现可拒绝，`SyncTaskHost` 支持）：
+`Application::submitSliced($job, $budgetMs = 4)` + `frame()` 里的 `pumpSliced()`
+（在 settle 之前；swap 语义；`step()` 抛 ⇒ 走错误通道且出队）。取消由
+`Future` 的钩子把分片**真的摘出队列**（此后不再 `step()`）。
 
-```php
-public function submitSliced(SlicedJob $job, callable $onDone, ?callable $onError = null, int $budgetMs = 4): void;
-```
+</details>
 
-★ 预算 4ms 的来历：一帧 16.7ms，留 12ms 给布局/绘制/输入（§13.3 全树重排）。
-`step()` 自己决定一次干多少（按条目数或按时间），框架只给预算、不切片。
-
-★ **2026-10-18 已落地**（P1）：`SlicedJob`（`step(int $budgetMs): bool` + `result()`）；
-`Application::submitSliced(job, onDone, ?onError, budgetMs = 4)` + `frame()` 里的 `pumpSliced()`
-（**同样在 settle 之前**；swap 语义 —— 回调里再 `submitSliced()` 留到下一帧；`step()` 抛 ⇒ 走 `onError` 且出队）。
-★ **分片不走 `TaskHost`**：它永远在 UI 线程跑，"换后端"与它正交。
-验证：smoke **698/0**（+10：进队列不执行 / 一帧只推一步 / 10 帧完成 / 结果与一次性算相同 /
-完成后出队且不再步进 / 单步 < 5ms / 未完不回调 / 完成回调改 Store 同帧重建 / step 抛 ⇒ onError 且出队）；
-两连反例自检全中（分片挪到 settle 之后 ⇒ 同帧重建红，`builds 2→2 seen=60`；未完成任务不回填 ⇒ `steps=1 done=NULL`）。
-★ **未做**：取消（`cancel()`）—— 没有"页面销毁"事件把它接上，先登记为缺口。
-（**2026-10-31 更新**：缺口已闭 —— `submitSliced()` 现在返回 `Future`，取消会**真的
-把分片摘出队列**（此后不再 `step()`），页面侧由 `State::asyncCommand()` /
-`dropCommands()` 在 `unmount()` 时统一兜底。判据在 smoke 的「N3 · cancel() 当场摘出
-队列」与「N3 · 帧内取消」两条。上面的原文保留作历史记录。）
 #### 17.4.4 `IoPoller`（非阻塞 I/O，P2）
 
 ```php
@@ -3139,7 +3164,7 @@ UI 侧收到的是一个新的 `RuntimeException`（跨进程没有"同一个异
 | 决策 | 取值 | 理由 |
 |---|---|---|
 | 帧间隔 | **15ms**（不是 16） | `SetTimer` 量化到 ~15.6ms 系统 tick；请求 16 落到**第二**个 tick（31ms ⇒ 32fps）。探针 M 实测同源（`sleep(0.016)`→31.6ms、`sleep(0.008)`→16.5ms） |
-| 何时跳 | `Application::wantsFrame()` | = 分片队列非空 ∨ `IoPoller::watchCount()>0` ∨ `TaskHost::pending()>0` ∨ **有动画在跑**（§17.4.10）。四件事都做完 ⇒ 停表 ⇒ **空闲 CPU 归零** |
+| 何时跳 | `Application::wantsFrame()` | = `IoPoller::watchCount()>0` ∨ `TaskHost::pending()>0` ∨ **有动画在跑**（§17.4.10）。三件事都做完 ⇒ 停表 ⇒ **空闲 CPU 归零** |
 | 谁来判 | **框架** | `TaskHost` 新增 `pending()`（在途 + 排队）：平台不知道"还有没有活"，只有框架知道 |
 | 循环在哪 | **仍在组合根** | `FrameClock` 只做"起/停定时器 + 跑一帧"，`while ($platform->pump())` 一个字没动（§5.2 裁决 1） |
 
@@ -3172,7 +3197,7 @@ UI 侧收到的是一个新的 `RuntimeException`（跨进程没有"同一个异
 
 **缺陷（同样不是优化）**：`SpinnerState::tick()` 从写下来那天起**零调用者** —— 相位永远停在 0，
 "转圈图"是一张静止的弧。这不是"动画没做"，是**框架没有"每帧推进"的入口**：`frame()` 依次做
-IO / 任务 / 分片 / settle / layout / paint，**没有任何一处问过"有没有东西要动"**。
+IO / 任务 / settle / layout / paint，**没有任何一处问过"有没有东西要动"**。
 
 | 决策 | 取值 | 理由 |
 |---|---|---|

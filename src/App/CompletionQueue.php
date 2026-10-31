@@ -73,7 +73,7 @@ final class CompletionQueue
 
         // ★ swap：取快照再清空 —— `$onEach` 里再 `push()` 的留在队列里（下一帧交），
         //   否则"回调里提交新任务"会让 drain 永不返回，帧预算失效。
-        //   与 `SyncTaskHost::drain()` / `PumpHost::pumpSliced()` 同一手法。
+        //   与 `SyncTaskHost::drain()` 同一手法。
         $ready = $this->items;
         $this->items = [];
 
