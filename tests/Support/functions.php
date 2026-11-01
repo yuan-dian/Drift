@@ -250,22 +250,28 @@ if (!\function_exists('inkBounds')) {
      *
      * ★ 只数墨点数（`inkCount`）测不出"画在了哪儿" —— `Center` 算对偏移而绘制丢掉它，
      *   墨点数一样多，画面却贴在左上角。
-     * ★ 扫描范围固定 320×240（与全部用例的画布规格一致），保持与 smoke 同实现。
+     * ★ 扫描范围默认 320×240（与全部历史用例的画布规格一致），保持与 smoke 同实现。
+     * ★ 2026-11-01 加 `$background`：传了就按"**非背景即墨**"数。老行为（`null`）
+     *   是"暗墨"判据（`r < 200`），它看不见中灰/彩底 —— 双后端几何判据要用浅底上的
+     *   彩块，故新增这一档。**仍是唯一实现**：第三处要用时下沉到这里，别在测试里
+     *   再写一份（两份会各自漂，见 `inkCount` 的注释）。
      *
      * @return array{0: int, 1: int, 2: int, 3: int}|null
      */
-    function inkBounds(RasterCanvas $canvas): ?array
+    function inkBounds(RasterCanvas $canvas, ?Color $background = null, int $width = 320, int $height = 240): ?array
     {
         $minX = PHP_INT_MAX;
         $maxX = -1;
         $minY = PHP_INT_MAX;
         $maxY = -1;
-        $w = 320;
-        $h = 240;
+        $w = $width;
+        $h = $height;
 
         for ($y = 0; $y < $h; $y++) {
             for ($x = 0; $x < $w; $x++) {
-                if ($canvas->pixelAt($x, $y)->r < 200) {
+                $pixel = $canvas->pixelAt($x, $y);
+                $isInk = $background === null ? $pixel->r < 200 : !$pixel->equals($background);
+                if ($isInk) {
                     $minX = min($minX, $x);
                     $maxX = max($maxX, $x);
                     $minY = min($minY, $y);

@@ -246,21 +246,27 @@ final class RasterCanvas implements Canvas
     }
 
     /** 局部逻辑点 → 设备**浮点**坐标（未取整；取整仍然只在 `Scale` 那一处） */
-    private function deviceX(float $x, float $y): float
+    /**
+     * 逻辑点 → 设备坐标（**不取整**，调用方自己 `round()`）。
+     *
+     * ★ 无矩阵时走 `Scale::deviceX()` —— 那条"加偏移再乘 dpr"的公式全仓只有
+     *   一份（此前这里与 `SkiaCanvas` 各写一遍，见 `Scale::deviceRect()` 的注释）。
+     */
+    private function transformedX(float $x, float $y): float
     {
         $t = $this->transform;
         if ($t === null) {
-            return ($x + $this->offsetX) * $this->scale->dpr;
+            return $this->scale->deviceX($x, $this->offsetX);
         }
 
         return $t->applyX($x, $y) * $this->scale->dpr;
     }
 
-    private function deviceY(float $x, float $y): float
+    private function transformedY(float $x, float $y): float
     {
         $t = $this->transform;
         if ($t === null) {
-            return ($y + $this->offsetY) * $this->scale->dpr;
+            return $this->scale->deviceY($y, $this->offsetY);
         }
 
         return $t->applyY($x, $y) * $this->scale->dpr;
@@ -464,10 +470,10 @@ final class RasterCanvas implements Canvas
 
         $half = $paint->strokeWidth / 2.0;
         $dpr = $this->scale->dpr;
-        $ax = round($this->deviceX($x1, $y1));
-        $ay = round($this->deviceY($x1, $y1));
-        $bx = round($this->deviceX($x2, $y2));
-        $by = round($this->deviceY($x2, $y2));
+        $ax = round($this->transformedX($x1, $y1));
+        $ay = round($this->transformedY($x1, $y1));
+        $bx = round($this->transformedX($x2, $y2));
+        $by = round($this->transformedY($x2, $y2));
 
         $xa = max((int) ceil(min($ax, $bx) - $half - 0.5), (int) ceil($this->clip->left - 0.5), 0);
         $xb = min((int) floor(max($ax, $bx) + $half - 0.5) + 1, (int) ceil($this->clip->right() - 0.5), $this->width);
@@ -679,7 +685,7 @@ final class RasterCanvas implements Canvas
                 if ($current !== []) {
                     $subpaths[] = [$current, false];
                 }
-                $current = [[round($this->deviceX($c[1], $c[2])), round($this->deviceY($c[1], $c[2]))]];
+                $current = [[round($this->transformedX($c[1], $c[2])), round($this->transformedY($c[1], $c[2]))]];
                 $start = $current[0];
                 continue;
             }
@@ -688,7 +694,7 @@ final class RasterCanvas implements Canvas
                 if ($current === []) {
                     continue; // 没有 MOVE 就打点：忽略（路径未开始）
                 }
-                $current[] = [round($this->deviceX($c[1], $c[2])), round($this->deviceY($c[1], $c[2]))];
+                $current[] = [round($this->transformedX($c[1], $c[2])), round($this->transformedY($c[1], $c[2]))];
                 continue;
             }
 
@@ -697,10 +703,10 @@ final class RasterCanvas implements Canvas
                     continue;
                 }
                 $p0 = $current[count($current) - 1];
-                $cx = round($this->deviceX($c[1], $c[2]));
-                $cy = round($this->deviceY($c[1], $c[2]));
-                $px = round($this->deviceX($c[3], $c[4]));
-                $py = round($this->deviceY($c[3], $c[4]));
+                $cx = round($this->transformedX($c[1], $c[2]));
+                $cy = round($this->transformedY($c[1], $c[2]));
+                $px = round($this->transformedX($c[3], $c[4]));
+                $py = round($this->transformedY($c[3], $c[4]));
                 for ($i = 1; $i <= self::QUAD_SEGMENTS; $i++) {
                     $t = (float) $i / (float) self::QUAD_SEGMENTS;
                     $u = 1.0 - $t;
@@ -1565,9 +1571,7 @@ final class RasterCanvas implements Canvas
             return $this->scale->quantizeRect($t->applyRect($rect));
         }
 
-        return $this->scale->quantizeRect(
-            new Rect($rect->left + $this->offsetX, $rect->top + $this->offsetY, $rect->width, $rect->height)
-        );
+        return $this->scale->deviceRect($rect, $this->offsetX, $this->offsetY);
     }
 
     /** 覆盖位图按 source-over 混合（覆盖率即 alpha） */
@@ -1758,17 +1762,17 @@ final class RasterCanvas implements Canvas
         $dpr = $this->scale->dpr;
 
         if ($g->isRadial()) {
-            $cx = $this->deviceX($g->x1, $g->y1);
-            $cy = $this->deviceY($g->x1, $g->y1);
+            $cx = $this->transformedX($g->x1, $g->y1);
+            $cy = $this->transformedY($g->x1, $g->y1);
             $radius = max($g->x2 * $dpr, 1e-6);
             $dx = $px - $cx;
             $dy = $py - $cy;
             $t = sqrt($dx * $dx + $dy * $dy) / $radius;
         } else {
-            $x1 = $this->deviceX($g->x1, $g->y1);
-            $y1 = $this->deviceY($g->x1, $g->y1);
-            $x2 = $this->deviceX($g->x2, $g->y2);
-            $y2 = $this->deviceY($g->x2, $g->y2);
+            $x1 = $this->transformedX($g->x1, $g->y1);
+            $y1 = $this->transformedY($g->x1, $g->y1);
+            $x2 = $this->transformedX($g->x2, $g->y2);
+            $y2 = $this->transformedY($g->x2, $g->y2);
             $ex = $x2 - $x1;
             $ey = $y2 - $y1;
             $len2 = $ex * $ex + $ey * $ey;

@@ -447,15 +447,13 @@ final class SkiaCanvas implements Canvas
         }
         CanvasCapabilities::assertStrokePaint($paint, 'drawLine');
 
-        $dpr = $this->scale->dpr;
-
         $this->applyPaintSource($paint);
         drift_skia_draw_line(
             $this->handle,
-            round(($x1 + $this->offsetX) * $dpr),
-            round(($y1 + $this->offsetY) * $dpr),
-            round(($x2 + $this->offsetX) * $dpr),
-            round(($y2 + $this->offsetY) * $dpr),
+            round($this->scale->deviceX($x1, $this->offsetX)),
+            round($this->scale->deviceY($y1, $this->offsetY)),
+            round($this->scale->deviceX($x2, $this->offsetX)),
+            round($this->scale->deviceY($y2, $this->offsetY)),
             $paint->color->toArgb(),
             $paint->strokeWidth,
         );
@@ -632,7 +630,6 @@ final class SkiaCanvas implements Canvas
     private function packPath(Path $path): array
     {
         $cmds = $path->commands();
-        $dpr = $this->scale->dpr;
         $ox = $this->offsetX;
         $oy = $this->offsetY;
         $verbParts = [];
@@ -640,19 +637,21 @@ final class SkiaCanvas implements Canvas
         foreach ($cmds as $c) {
             $verb = (int) $c[0];
             $verbParts[] = \chr($verb);
+            // ★ 坐标一律走 `Scale::deviceX/Y()`（唯一的"加偏移再乘 dpr"）；
+            //   `(float)` 是 AOT 纪律：数组元素是 `Var`，直接喂标量形参会 C2664。
             if ($verb === Path::CMD_QUAD) {
                 $coordParts[] = \pack(
                     'f4',
-                    round(($c[1] + $ox) * $dpr),
-                    round(($c[2] + $oy) * $dpr),
-                    round(($c[3] + $ox) * $dpr),
-                    round(($c[4] + $oy) * $dpr),
+                    round($this->scale->deviceX((float) $c[1], $ox)),
+                    round($this->scale->deviceY((float) $c[2], $oy)),
+                    round($this->scale->deviceX((float) $c[3], $ox)),
+                    round($this->scale->deviceY((float) $c[4], $oy)),
                 );
             } elseif ($verb === Path::CMD_MOVE || $verb === Path::CMD_LINE) {
                 $coordParts[] = \pack(
                     'f4',
-                    round(($c[1] + $ox) * $dpr),
-                    round(($c[2] + $oy) * $dpr),
+                    round($this->scale->deviceX((float) $c[1], $ox)),
+                    round($this->scale->deviceY((float) $c[2], $oy)),
                     0.0,
                     0.0,
                 );
@@ -675,16 +674,18 @@ final class SkiaCanvas implements Canvas
         $dpr = $this->scale->dpr;
         $g = $paint->gradient;
         if ($g !== null) {
+            // ★ 端点/圆心是**逻辑坐标** ⇒ 走 `Scale::deviceX/Y()`（与 `toDevice()` 同一变换，
+            //   不取整：渐变要连续）。径向半径 x2 是长度量 ⇒ 只缩放不平移。
             if ($g->isRadial()) {
-                $gx1 = ($g->x1 + $this->offsetX) * $dpr;
-                $gy1 = ($g->y1 + $this->offsetY) * $dpr;
+                $gx1 = $this->scale->deviceX((float) $g->x1, $this->offsetX);
+                $gy1 = $this->scale->deviceY((float) $g->y1, $this->offsetY);
                 $gx2 = $g->x2 * $dpr; // 半径：长度量，只缩放
                 $gy2 = 0.0;
             } else {
-                $gx1 = ($g->x1 + $this->offsetX) * $dpr;
-                $gy1 = ($g->y1 + $this->offsetY) * $dpr;
-                $gx2 = ($g->x2 + $this->offsetX) * $dpr;
-                $gy2 = ($g->y2 + $this->offsetY) * $dpr;
+                $gx1 = $this->scale->deviceX((float) $g->x1, $this->offsetX);
+                $gy1 = $this->scale->deviceY((float) $g->y1, $this->offsetY);
+                $gx2 = $this->scale->deviceX((float) $g->x2, $this->offsetX);
+                $gy2 = $this->scale->deviceY((float) $g->y2, $this->offsetY);
             }
             [$n, $colors, $stops] = $this->packGradient($g);
             drift_skia_set_gradient(
@@ -762,13 +763,6 @@ final class SkiaCanvas implements Canvas
             return $this->scale->quantizeRect($rect);
         }
 
-        return $this->scale->quantizeRect(
-            new Rect(
-                $rect->left + $this->offsetX,
-                $rect->top + $this->offsetY,
-                $rect->width,
-                $rect->height,
-            ),
-        );
+        return $this->scale->deviceRect($rect, $this->offsetX, $this->offsetY);
     }
 }
