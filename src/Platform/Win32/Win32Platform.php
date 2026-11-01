@@ -5,7 +5,6 @@ namespace Drift\Platform\Win32;
 
 use Drift\Errors;
 use Drift\Geometry\Axis;
-use Drift\Geometry\Scale;
 use Drift\Input\CloseRequestedEvent;
 use Drift\Input\FilesDroppedEvent;
 use Drift\Input\KeyChord;
@@ -429,10 +428,7 @@ final class Win32Platform implements Platform
 
         if ($type === 'files-dropped') {
             // A5-②：桥给 '\n' 分隔的多路径原始串 + 客户区物理坐标（除 dpr 转逻辑）。
-            $dpr = $this->dprOf($handle);
-            if ($dpr <= 0.0) {
-                $dpr = 1.0;
-            }
+            $dpr = Dpr::of($handle);
             $this->inputOf($handle)->push(new FilesDroppedEvent(
                 (string) ($event['paths'] ?? ''),
                 (float) ((int) ($event['x'] ?? 0)) / $dpr,
@@ -476,10 +472,7 @@ final class Win32Platform implements Platform
             // ★ 四相位（2026-10-17 move/up/leave 通路）：桥给 `phase`
             //   （0=down 1=move 2=up 3=leave，与 `PointerPhase` 同值），坐标除 dpr 转
             //   逻辑单位 —— 与 down 同口径（§6.1 量化只在平台侧）。
-            $dpr = $this->dprOf($handle);
-            if ($dpr <= 0.0) {
-                $dpr = 1.0;
-            }
+            $dpr = Dpr::of($handle);
             $input->push(PointerEvent::fromBridge(
                 (float) ((int) ($event['x'] ?? 0)) / $dpr,
                 (float) ((int) ($event['y'] ?? 0)) / $dpr,
@@ -500,10 +493,7 @@ final class Win32Platform implements Platform
             // ★ 与指针同口径：坐标除 dpr 转逻辑单位；delta 是桥给的原始 WHEEL_DELTA
             //   倍数（一格 = 120），这里收成"格"。★ `axis` 缺省 = 纵向（老壳不带该
             //   字段；壳只在横向时才发它）。壳已经把 Shift+竖轮翻成横轴了。
-            $dpr = $this->dprOf($handle);
-            if ($dpr <= 0.0) {
-                $dpr = 1.0;
-            }
+            $dpr = Dpr::of($handle);
             $input->push(ScrollEvent::make(
                 (float) ((int) ($event['x'] ?? 0)) / $dpr,
                 (float) ((int) ($event['y'] ?? 0)) / $dpr,
@@ -573,7 +563,7 @@ final class Win32Platform implements Platform
         [$x, $y, $h] = $rect;
         // ★ 用**该窗口**的 DPI（不是 `screen()->scale()` —— 那个是"最后建的窗"）：
         //   多窗口跨不同 DPI 屏时，用错的那个会把候选框按错误比例放。
-        $scale = $this->dprOf($windowHandle);
+        $scale = Dpr::of($windowHandle);
         drift_win_ime_caret(
             $windowHandle,
             (float)$x * $scale,
@@ -598,20 +588,6 @@ final class Win32Platform implements Platform
             return;   // 表面还没被 `attach()` 要过 ⇒ 等它来时 `resize()` 会带上尺寸
         }
 
-        $provider->surface()->resize($width, $height, $this->dprOf($windowHandle));
-    }
-
-    /**
-     * 某个窗口的 dpr（96 dpi ⇒ 1.0）。
-     *
-     * ★ **必须按窗口算**：`Screen::scale()` 读的是"最后建的窗"的 DPI —— 多窗口
-     *   跨不同 DPI 屏时，用错的那个会让表面按错误比例缩放（画面糊 / 错位，
-     *   且不报错）。`Screen` 自己的窗口化归 M1-b（`forWindow()`）。
-     */
-    private function dprOf(int $windowHandle): float
-    {
-        $dpr = Scale::fromDpi((float) drift_win_dpi($windowHandle))->dpr;
-
-        return $dpr > 0.0 ? $dpr : 1.0;
+        $provider->surface()->resize($width, $height, Dpr::of($windowHandle));
     }
 }

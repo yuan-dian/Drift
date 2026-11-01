@@ -6,7 +6,6 @@ namespace Drift\Platform\Win32;
 use Drift\Errors;
 use Drift\Geometry\Point;
 use Drift\Geometry\Rect;
-use Drift\Geometry\Scale;
 use Drift\Geometry\Size;
 use Drift\Input\CursorShape;
 use Drift\Platform\WindowHost;
@@ -19,7 +18,6 @@ use function drift_win_client_size;
 use function drift_win_close;
 use function drift_win_create;
 use function drift_win_destroy;
-use function drift_win_dpi;
 use function drift_win_is_alive;
 use function drift_win_is_maximized;
 use function drift_win_live_window;
@@ -151,10 +149,7 @@ final class Win32WindowHost implements WindowHost
     {
         // ★ 用**传进来的**句柄（2026-10-30，M1-a）：改动前靠 `$this->handle`
         //   （"最后建的窗"）⇒ 第二个窗口设最小尺寸会设到第一个上。
-        $dpr = Scale::fromDpi((float) drift_win_dpi($windowHandle))->dpr;
-        if ($dpr <= 0.0) {
-            $dpr = 1.0;
-        }
+        $dpr = Dpr::of($windowHandle);
 
         drift_win_set_min_size(
             $windowHandle,
@@ -206,8 +201,8 @@ final class Win32WindowHost implements WindowHost
     /**
      * 无边框模式（P1-Stage 1b）。`$dragHeight` 是**逻辑**像素，这里折成物理。
      *
-     * ★ 换算口径与 `setMinSize()` 完全一致（`Scale::fromDpi()`，§6.1 的量化点
-     *   只有一个）—— 直接把手感尺寸交给壳会让 125% 缩放下拖动带窄 20%。
+     * ★ 换算口径与 `setMinSize()` 完全一致（`Dpr::of()`，全仓唯一入口）——
+     *   直接把手感尺寸交给壳会让 125% 缩放下拖动带窄 20%。
      * ★ 壳侧走 `WM_NCCALCSIZE`（样式不变、客户区=整窗），所以**调用后客户区会
      *   变大**（多出原标题栏高度）。组合根必须在 `setFrameless()` **之后**再读
      *   `clientSize()`，否则第一帧按旧尺寸排版（然后被 `WM_SIZE` 纠正，闪一下）。
@@ -216,10 +211,7 @@ final class Win32WindowHost implements WindowHost
     {
         $this->frameless = true;
 
-        $dpr = Scale::fromDpi((float) drift_win_dpi($windowHandle))->dpr;
-        if ($dpr <= 0.0) {
-            $dpr = 1.0;
-        }
+        $dpr = Dpr::of($windowHandle);
 
         drift_win_set_frameless($windowHandle, (int) round($dragHeight * $dpr));
     }
@@ -243,17 +235,14 @@ final class Win32WindowHost implements WindowHost
      * 客户区尺寸（**逻辑**像素）。
      *
      * ★ 桥给的是**物理**像素，这里除以 DPI 缩放 —— 逻辑↔物理的换算点只有一个
-     *   （§6.1 的 `Scale`），所以换算必须走 `Scale::fromDpi()` 而不是自己写
+     *   （§6.1 的 `Scale`），所以换算必须走 `Dpr::of()` 而不是自己写
      *   `/ 1.25` 这种字面量：分数缩放下两者会算出不同的值。
      */
     public function clientSize(int $windowHandle): Size
     {
         $raw = drift_win_client_size($windowHandle);
 
-        $dpr = Scale::fromDpi((float) drift_win_dpi($windowHandle))->dpr;
-        if ($dpr <= 0.0) {
-            $dpr = 1.0;   // 防御：桥理论上不会给 0，但除零会让整个布局变 NaN
-        }
+        $dpr = Dpr::of($windowHandle);
 
         return Size::of(
             (float) ((int) ($raw['w'] ?? 0)) / $dpr,
@@ -271,7 +260,7 @@ final class Win32WindowHost implements WindowHost
      *
      * ★ 桥给的是**物理**像素（`ClientToScreen` 的结果恒为物理 —— 屏幕坐标没有
      *   DPI 感知一说），这里按当前窗口 DPI 折算成逻辑：与 `clientSize()`
-     *   同一条换算路径（`Scale::fromDpi()`，§6.1 的量化点只有一个）。
+     *   同一条换算路径（`Dpr::of()`，全仓唯一入口）。
      * ★ **最小化 ⇒ `null`**：桥用空数组表达（`IsIconic` 或 `GetClientRect`
      *   失败）。这不是错误路径，是"别记"的信号（见 `WindowStateStore` 类注释）。
      */
@@ -284,10 +273,7 @@ final class Win32WindowHost implements WindowHost
             return null;   // 最小化 / 查询失败
         }
 
-        $dpr = Scale::fromDpi((float) drift_win_dpi($windowHandle))->dpr;
-        if ($dpr <= 0.0) {
-            $dpr = 1.0;   // 防御：桥理论上不会给 0，但除零会让坐标变 INF
-        }
+        $dpr = Dpr::of($windowHandle);
 
         return Point::of((float) $x / $dpr, (float) $y / $dpr);
     }

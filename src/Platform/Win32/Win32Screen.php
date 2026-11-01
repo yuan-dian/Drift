@@ -4,12 +4,10 @@ declare(strict_types=1);
 namespace Drift\Platform\Win32;
 
 use Drift\Geometry\BoxConstraints;
-use Drift\Geometry\Scale;
 use Drift\Geometry\Size;
 use Drift\Platform\Screen;
 use Drift\Theme\SystemTheme;
 
-use function drift_win_dpi;
 use function drift_win_system_dark;
 
 /**
@@ -42,11 +40,9 @@ final class Win32Screen implements Screen
 
     public function scale(): float
     {
-        if ($this->handle <= 0) {
-            return 1.0;   // 还没建窗 ⇒ 96dpi 是唯一安全的默认
-        }
-
-        return Scale::fromDpi((float) drift_win_dpi($this->handle))->dpr;
+        // ★ 句柄无效 / 桥读不到 DPI 的兜底都在 `Dpr::of()` 里（唯一入口）。
+        //   改动前这里自己写了一遍且**漏了 `<= 0` 那一半** ⇒ 桥给 0 时返回 `0.0`。
+        return Dpr::of($this->handle);
     }
 
     public function viewport(): BoxConstraints
