@@ -118,11 +118,18 @@ def element_from_handle(uia, hwnd):
 
 
 def element_from_point(uia, x, y):
-    """**屏幕**坐标 → 该点下的元素（走 provider 的 `ElementProviderFromPoint`）"""
+    """**屏幕**坐标 → 该点下的元素（走 provider 的 `ElementProviderFromPoint`）
+
+    ★ 参数是 **`POINT` 结构体**，不是两个 double（2026-11-01 修正）：
+      `IUIAutomation::ElementFromPoint(POINT pt, ...)`（UIAutomationClient.h:18869）。
+      此前按两个 double 传，x64 下浮点走 xmm、整数寄存器 rdx 是垃圾 ⇒ provider 拿
+      垃圾坐标做命中测试 → access violation。不是"STA 需要消息泵"的环境限制，
+      是**调用签名写错**（vtable 索引 7 一直是对的）。
+    """
     out = ctypes.c_void_p()
-    fn = _call(uia, IUIA_ElementFromPoint, ctypes.HRESULT, ctypes.c_double,
-               ctypes.c_double, ctypes.POINTER(ctypes.c_void_p))
-    hr = fn(uia, ctypes.c_double(x), ctypes.c_double(y), ctypes.byref(out))
+    fn = _call(uia, IUIA_ElementFromPoint, ctypes.HRESULT, wintypes.POINT,
+               ctypes.POINTER(ctypes.c_void_p))
+    hr = fn(uia, wintypes.POINT(int(x), int(y)), ctypes.byref(out))
     if hr != 0 or not out.value:
         return None
 
@@ -371,12 +378,9 @@ def verify_hit_test(uia, root, w, hwnd, samples=5):
     ★ 只取**叶子**节点当锚：取容器的话，返回它的某个后代也是对的，
       名字不等就成了假红。
 
-    ★★ **本机调不通**（2026-10-30 实测）：`ElementFromPoint` 在 Python 里一调就
-       access violation。已排除的：索引错（`[10]` 是 `ElementFromHandleBuildCache`，
-       会正常返回 `UIA_E_ELEMENTNOTAVAILABLE`，说明 vtable 基底对）、ctypes 传 double
-       有 bug（`msvcrt.sin` 正常）。剩下的成因是 UIA 的 hit test 需要在**有消息泵**的
-       STA 线程上跑，而探针主线程没有。⇒ 这里捕获异常、打印原因、**不算失败**，
-       provider 侧那条改动因此记为"实现但未真机验证"。
+    ★ 2026-11-01 已真机打通：此前一调就 access violation，一度误判成"hit test 需要
+      有消息泵的 STA 线程"。根因是 ctypes 把参数传成两个 double，而签名是 `POINT`
+      （见 `element_from_point`）。修参数后实测 5/5 命中正确。
     """
     cx, cy, cw, ch = client_rect(hwnd)
     nodes = collect(root, w)
@@ -394,10 +398,9 @@ def verify_hit_test(uia, root, w, hwnd, samples=5):
         try:
             hit = element_from_point(uia, px, py)
         except OSError as exc:
-            print(f"⚠ ElementFromPoint 不可用（{exc}）")
-            print("  已知成因：UIA hit test 需要在有消息泵的 STA 线程上跑；"
-                  "探针主线程没有 ⇒ 本项跳过，**不算通过也不算失败**")
-            return 0
+            # 签名已修正，仍崩说明是回归（别退化成"跳过=通过"的假绿）
+            print(f"✗ ElementFromPoint 崩了（{exc}）——签名/索引回归？")
+            return 1
         if not hit:
             bad.append(f"{n}: 返回 null")
             continue
