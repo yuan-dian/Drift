@@ -6,6 +6,7 @@ namespace Drift\Widget;
 use Drift\Geometry\EdgeInsets;
 use Drift\Input\SemanticsRole;
 use Drift\Layout\ScrollBarGeometry;
+use Drift\Widget\ScrollView;
 
 /**
  * 时分秒列选择器（A3 第三件的后半，2026-10-29）。
@@ -156,10 +157,16 @@ final class TimeView extends StatelessWidget
             $columns[] = $this->column(self::KIND_SECOND, '秒');
         }
 
-        return Column::make()->spacing(2.0)->children([
+        $body = Column::make()->spacing(2.0)->children([
             $this->headerRow(),
             Row::make()->spacing(self::COLUMN_GAP)->children($columns),
         ]);
+
+        // ★ 横向响应式：TimeView 是定宽整体（时/分/秒列 + 滚动条留白），可用宽
+        //   小于固有宽时**横向滚**而非溢出/裁字（成熟 GUI 的常规做法：Flutter 的
+        //   time picker 等固定宽多列控件在窄容器里都让内容滚）。
+        //   弹层面板宽恰等于 widthOf() ⇒ maxScroll=0 不滚；窄页面里则横向滚。
+        return ScrollView::make($body, false);
     }
 
     /** 表头：`时 分 秒` —— 三列纯数字没有表头分不清哪列是哪列 */

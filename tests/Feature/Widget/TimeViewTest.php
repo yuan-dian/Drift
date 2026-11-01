@@ -216,6 +216,28 @@ final class TimeViewTest extends SmokeTestCase
         check('TimeView · 条落在色块右侧（不压数字）', $bad === [], \implode(' | ', $bad));
     }
 
+    // ── ⑦b 响应式：窄容器横向滚，不溢出 ───────────────────────────────
+
+    /**
+     * 可用宽 < 固有宽（212）时，TimeView 应**横向滚**而不是把内容裁掉或溢出。
+     *
+     * ★ 这是「参考成熟 GUI」的判决落点：固定宽多列控件在窄容器里让内容滚，
+     *   而不是压窄列宽（压窄会裁两位数字）。208 是 420px 极限窗 - 200 侧栏后的
+     *   内容区宽，差 4px 正好逼出横向滚动。
+     */
+    public function testScrollsHorizontallyWhenNarrowerThanIntrinsic(): void
+    {
+        $root = $this->mount(TimeView::make(LocalTime::make(9, 5))->withSeconds());
+        $this->frameAt($root, 208.0);
+        $narrow = $this->horizontalMaxScroll($root);
+        check('TimeView · 208 宽容器下出现横向滚动（不溢出）', $narrow > 0.0, 'maxScrollX=' . $narrow);
+
+        $root2 = $this->mount(TimeView::make(LocalTime::make(9, 5))->withSeconds());
+        $this->frameAt($root2, 240.0);
+        $wide = $this->horizontalMaxScroll($root2);
+        check('TimeView · 240 宽容器下不横向滚动（弹层尺寸不变）', $wide === 0.0, 'maxScrollX=' . $wide);
+    }
+
     // ── 夹具 ───────────────────────────────────────────────────────────
 
     private function mount(TimeView $view): Element
@@ -228,9 +250,31 @@ final class TimeViewTest extends SmokeTestCase
 
     private function frame(Element $root): void
     {
+        $this->frameAt($root, 240.0);
+    }
+
+    /** 用指定宽度的容器约束跑一帧（默认 240，窄回归用 208） */
+    private function frameAt(Element $root, float $w): void
+    {
         $surface = new SurfaceProbe();
-        $surface->resize(240, 280, 1.0);
-        (new Frame($surface))->run($root, BoxConstraints::loose(new Size(240.0, 280.0)), 64.0);
+        $surface->resize((int) $w, 280, 1.0);
+        (new Frame($surface))->run($root, BoxConstraints::loose(new Size($w, 280.0)), 64.0);
+    }
+
+    /** 横向滚动视口的可滚上限（无则 0） */
+    private function horizontalMaxScroll(Element $root): float
+    {
+        $out = 0.0;
+        $walk = function (Element $el) use (&$walk, &$out): void {
+            $box = $el->effectiveBox();
+            if ($box instanceof RenderScrollView) {
+                $out = \max($out, $box->maxScroll(Axis::Horizontal));
+            }
+            $el->visitChildren($walk);
+        };
+        $walk($root);
+
+        return $out;
     }
 
     /** @return list<Button> 所有文字按钮（表头是 Text，收不到） */
