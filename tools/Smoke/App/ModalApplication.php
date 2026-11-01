@@ -32,10 +32,12 @@ final class ModalApplication extends Application
 
     public function buildRoot(): Widget
     {
-        $this->backgroundButton = Button::make('背景按钮')->command('bg.hit');
+        // ★ 两个按钮都带 `key`：`TestApp::tap('#open')` 靠它定位（类名 `Button`
+        //   在这棵树里有 3 个，多义选择器会被 R2 判失败）。
+        $this->backgroundButton = Button::make('背景按钮')->command('bg.hit')->key('bg');
 
         return Column::make()->children([
-            Button::make('打开模态')->command('modal.open'),
+            Button::make('打开模态')->command('modal.open')->key('open'),
             $this->backgroundButton,
         ]);
     }
@@ -47,7 +49,12 @@ final class ModalApplication extends Application
         });
 
         return [
-            'modal.open' => $handler,
+            // ★ 「打开模态」**真的开**：按钮叫这个名字却不打开，`tap()` 只能验到
+            //   "命令到了"，验不到"点按钮 ⇒ 模态出现"这条真实链路。
+            'modal.open' => new RecordingHandler(function (string $name, CommandArg $arg): void {
+                $this->seen[] = $name;
+                $this->openConfirm();
+            }),
             'modal.confirm' => $handler,
             'bg.hit' => $handler,
             'esc.pressed' => $handler,

@@ -5186,6 +5186,44 @@ $testAppScenarios = [
         ->scroll(3.0)
         ->settle()
         ->expectBox('LazyColumn', 0.0, 0.0, 400.0, 200.0),
+
+    // ★ 走通 `tap()` / `tapAt()` 的场景（TestApp 的纪律：动词没被场景走通过
+    //   就不算实现）。这件事以前只能靠 `probe-modal.py` 去真机抓像素猜
+    //   （"中央有没有近白面板""右上角有没有墨迹"）—— 现在几步断言离线跑完。
+    //   两条筛选器口径也在这里钉住：`#key` 与**浮层里的**类名（模态在浮层，
+    //   不在 `root()` 子树里 —— 走漏了会报"一个都没匹配到"，像极了"模态没开"）。
+    TestApp::scenario('模态：点按钮开 → 点 X 关 → 再开 → 点遮罩关')
+        ->app(new ModalApplication())
+        ->constraints(480.0, 360.0)
+        ->pump(1)
+        ->expect(
+            '起点没开（槽位空）',
+            static fn(Application $a): bool => $a instanceof ModalApplication && !$a->isModalOpen()
+        )
+        ->tap('#open')
+        ->pump(1)
+        ->expect(
+            '点「打开模态」⇒ 命令派发 + 模态开',
+            static fn(Application $a): bool => $a instanceof ModalApplication
+                && $a->seen === ['modal.open'] && $a->isModalOpen()
+        )
+        ->expectBox('ModalHost', 0.0, 0.0, 480.0, 360.0)
+        ->tap('IconButton')
+        ->pump(1)
+        ->expect(
+            '点右上角 X ⇒ 模态真关 + 槽位清空',
+            static fn(Application $a): bool => $a instanceof ModalApplication
+                && !$a->isModalOpen() && $a->modal() === null
+        )
+        ->tap('#open')
+        ->pump(1)
+        ->tapAt(5.0, 5.0)
+        ->pump(1)
+        ->expect(
+            '点遮罩 ⇒ 关且吞掉这次按下（没穿透到背景按钮）',
+            static fn(Application $a): bool => $a instanceof ModalApplication
+                && !$a->isModalOpen() && $a->seen === ['modal.open', 'modal.open']
+        ),
 ];
 
 foreach ($testAppScenarios as $scenario) {

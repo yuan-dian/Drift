@@ -182,6 +182,55 @@ final class TestApp
     }
 
     /**
+     * 点一下选择器命中的盒（中心点），一次完整按下 + 抬起。
+     *
+     * ★ **不自动 `pump()`**：R4 的纪律是"帧是测试的时钟，测试必须控制它"。
+     *   点击本身在 `dispatchInput()` 里同步生效（状态、命令都当场变），但布局/
+     *   绘制要等下一帧 ⇒ 要断言几何就得紧接着 `->pump(1)`。与 `scroll()` 同规矩。
+     * ★ 中心点而不是原点：控件有边框/内边距时原点可能落在边框上，命中不稳定
+     *   （`ModalTest` 自己也是按 `panelRect` 中心算的）。
+     * ★ `down` + `up` 都发：真实一次点击就是两相。只发 `down` 在多数控件上也能
+     *   触发（`ModalTest` 就只发 down），但那是"按下即激活"的实现细节，
+     *   依赖它会让场景在换成"抬起才激活"的控件上假绿。
+     */
+    public function tap(string $selector): self
+    {
+        $what = 'tap ' . $selector;
+        $this->steps[] = [$what, function () use ($selector, $what): void {
+            $box = $this->boxOf($selector, $what);
+            if ($box === null) {
+                return;
+            }
+            $size = $box->size();
+            if ($size === null) {
+                $this->fail($what, '盒 size() 为 null（layout 没跑）');
+
+                return;
+            }
+            [$x, $y] = RenderBox::absoluteOrigin($box);
+            $this->pointerClick($x + $size->width / 2.0, $y + $size->height / 2.0, $what);
+        }];
+
+        return $this;
+    }
+
+    /**
+     * 在客户区坐标 `($x, $y)` 点一下。
+     *
+     * 选择器表达不了时才用它（遮罩、空白区、某个像素位置）。能用 `tap()` 就用
+     * `tap()` —— 写死坐标的断言会在布局一改时红得莫名其妙。
+     */
+    public function tapAt(float $x, float $y): self
+    {
+        $what = sprintf('tapAt (%g, %g)', $x, $y);
+        $this->steps[] = [$what, function () use ($x, $y, $what): void {
+            $this->pointerClick($x, $y, $what);
+        }];
+
+        return $this;
+    }
+
+    /**
      * 在视口中心发一次滚轮事件。
      *
      * ★★ 单位是**格**（不是像素）：`ScrollEvent::$delta` 是平台量化出的格数，
@@ -263,6 +312,17 @@ final class TestApp
 
     // ── 内部 ────────────────────────────────────────────────────────────
 
+    /** 一次指针点击（down → up）。坐标是**逻辑客户区**坐标（`PointerEvent` 的口径）。 */
+    private function pointerClick(float $x, float $y, string $what): void
+    {
+        $app = $this->requireApp($what);
+        if ($app === null) {
+            return;
+        }
+        $app->dispatchInput(PointerEvent::down($x, $y));
+        $app->dispatchInput(PointerEvent::up($x, $y));
+    }
+
     private function nextFrame(): void
     {
         $app = $this->requireApp('pump');
@@ -306,7 +366,16 @@ final class TestApp
         return $box;
     }
 
-    /** 按选择器找**唯一**的 Element（R2：0 个或 ≥2 个都算失败） */
+    /**
+     * 按选择器找**唯一**的 Element（R2：0 个或 ≥2 个都算失败）。
+     *
+     * ★★ 遍历面 = **主树 + 全部浮层**。浮层（模态 / 菜单 / Snackbar / Tooltip）
+     *   挂在自己的 Element 上，**不在 `root()` 的子树里** ⇒ 只看主树的话，
+     *   `tap('IconButton')` 点模态右上角那个 X 会报"一个都没匹配到"，
+     *   而现象看起来像"模态根本没开"（假失败比漏测更贵）。
+     *   同一份选择器口径必须同时服务 `tap()` 与 `expectBox()`，所以修在这里
+     *   而不是在 `tap()` 里另开一条查找。
+     */
     private function elementOf(string $selector, string $what): ?Element
     {
         $app = $this->requireApp($what);
@@ -328,6 +397,11 @@ final class TestApp
             $element->visitChildren($walk);
         };
         $walk($root);
+        foreach ($app->overlays()->all() as $entry) {
+            if ($entry->element !== null) {
+                $walk($entry->element);
+            }
+        }
 
         if (count($matches) === 1) {
             return $matches[0];
