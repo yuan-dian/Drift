@@ -14,6 +14,7 @@ declare(strict_types=1);
  *   `php tools/drift-build.php <app>`（构建）+ 真机探针。分层纪律见 `09` §8。
  *
  * 检查项（顺序即执行顺序，廉价优先；★ 标 slow 的在 `--fast` 下跳过）：
+ *   doctor    php tools/doctor.php --quiet     环境前置（最廉价，缺件先停）  ~0.1s
  *   ★ 耗时是 2026-10-28 本机实测（同一台机器逐项跑，合计 63.4s）。**别凭印象改**，
  *     改规模（迁用例 / 加 app 级断言）后要重测：文档里原来写的是 smoke 1727 条 /
  *     feature ~0.1s，那是 phpunit 还没有 660 个用例时的数。
@@ -59,6 +60,7 @@ $root = dirname(__DIR__);
  *      值 = [显示名, 命令, 是否慢项]
  */
 $checks = [
+    'doctor'   => ['环境（doctor）', [PHP_BINARY, $root . '/tools/doctor.php', '--quiet'], false],
     'lint'     => ['lint', [PHP_BINARY, $root . '/tools/lint.php'], false],
     'selftest' => ['lint 自检', [PHP_BINARY, $root . '/tools/lint.php', '--selftest'], false],
     'docref'   => ['docref', [PHP_BINARY, $root . '/tools/docref.php'], false],

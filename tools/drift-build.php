@@ -32,14 +32,14 @@ namespace Drift\Dev;
  *   而共享的抽象会把两边的差异藏进参数里。第三个消费者出现时再抽。
  */
 
+use Drift\Dev\Doctor\Environment;
+use Drift\Dev\Doctor\EnvironmentException;
+
 require_once __DIR__ . '/autoload.php';
 
 const ROOT = __DIR__ . '/..';
 
-/** MSVC / SDK 的默认位置（本机实测；换机器用环境变量覆盖，见 `--help`） */
-const DEFAULT_MSVC_VERSION = '14.51.36231';
-const DEFAULT_VS_YEAR = '18';
-const DEFAULT_SDK_VERSION = '10.0.26100.0';
+// MSVC / SDK 的版本默认值住 `Doctor\Environment`（单一真相源），这里不再各存一份。
 
 function fail(string $message): never
 {
@@ -51,13 +51,6 @@ function fail(string $message): never
 function win(string $path): string
 {
     return str_replace('/', '\\', $path);
-}
-
-function envOr(string $name, string $fallback): string
-{
-    $value = getenv($name);
-
-    return is_string($value) && $value !== '' ? $value : $fallback;
 }
 
 /**
@@ -241,102 +234,30 @@ if ($looksLikePath) {
     }
 }
 
-// ─────────────────────────────────────────────────── tpc 入口 / PHP ──
-
-$entry = envOr('DRIFT_TPC_ENTRY', '');
-if ($entry === '') {
-    foreach ([dirname($root) . '/typephp/bin/tpc.php', 'D:/TypePHP/typephp/bin/tpc.php'] as $candidate) {
-        if (is_file($candidate)) {
-            $entry = $candidate;
-            break;
-        }
-    }
-}
-if ($entry === '' || !is_file($entry)) {
-    fail('找不到 tpc 入口 —— 设 DRIFT_TPC_ENTRY=D:/…/typephp/bin/tpc.php');
-}
+// ─────────────────────── 环境前置（单一真相源：`Doctor\Environment`）──
+//
+// ★ 定位逻辑（tpc 入口 / 私有 ini / PHPX / MSVC / SDK / env 拼装）全在 Environment 里：
+//   `doctor` 体检与这次构建走**同一套**推导 —— 此前这里自己写一份，`drift-codegen`
+//   再写一份，两处一漂就出现"体检说没事、构建却失败"。第三个消费者到了，按本文件
+//   原注释的约定抽出来（`drift-codegen` 也改成消费它）。
+// ★ 这里只负责把"不满足"翻译成 drift-build 自己的 `fail()` 口径（消息文本不变）。
 
 $phpBinary = PHP_BINARY;
-if ($phpBinary === '') {
-    fail('PHP_BINARY 为空 —— 无法定位 PHP 发行版根');
+
+try {
+    $prepared = Environment::prepare($root);
+} catch (EnvironmentException $e) {
+    fail($e->getMessage());
 }
-$distRoot = win(dirname(win($phpBinary)));
 
-// ─────────────────────────────────────────────── 私有 ini（坑 ②） ──
-
+$entry = $prepared->tpcEntry;
+$distRoot = $prepared->distRoot;
+$env = $prepared->env;
+$msvcVersion = $prepared->msvcVersion;
+$sdkVersion = $prepared->sdkVersion;
 $work = "{$root}/_build";
-$iniDir = "{$work}/ini";
-if (!is_dir($iniDir) && !mkdir($iniDir, 0777, true) && !is_dir($iniDir)) {
-    fail("建不了 {$iniDir}");
-}
 
-$iniSource = "{$distRoot}/php.ini";
-if (!is_file($iniSource)) {
-    fail("找不到发行版 php.ini：{$iniSource}（PHPRC 无从派生）");
-}
-$iniText = (string) file_get_contents($iniSource);
-$patched = preg_replace(
-    '/^\s*;?\s*extension_dir\s*=\s*.*$/mi',
-    'extension_dir = "' . $distRoot . '/ext/"',
-    $iniText
-);
-if ($patched === null || $patched === $iniText) {
-    fail("patch extension_dir 失败（{$iniSource}）—— 宁可构建失败，也别悄悄用错的 ini");
-}
-file_put_contents("{$iniDir}/php.ini", $patched);
-
-// ───────────────────────────────────────────────────── PHPX（坑 ③） ──
-
-$phpxHome = envOr('DRIFT_PHPX_HOME', $distRoot . '/phpx');
-if (!is_dir($phpxHome)) {
-    fail("PHPX_HOME 不存在：{$phpxHome}");
-}
-
-// ───────────────────────────────────── MSVC / SDK 三件套（坑 ④） ──
-
-$msvcVersion = DEFAULT_MSVC_VERSION;
-$msvc = envOr('DRIFT_MSVC', '');
-if ($msvc === '') {
-    $msvc = "D:/Microsoft Visual Studio/" . DEFAULT_VS_YEAR . '/Community/VC/Tools/MSVC/' . $msvcVersion;
-}
-if (!is_file("{$msvc}/bin/Hostx64/x64/cl.exe")) {
-    fail("找不到 cl.exe：{$msvc}/bin/Hostx64/x64/cl.exe（设 DRIFT_MSVC 覆盖）");
-}
-
-$kits = envOr('DRIFT_KITS', 'D:/Windows Kits/10');
-$sdkVersion = envOr('DRIFT_SDK_VERSION', DEFAULT_SDK_VERSION);
-$sdk = "{$kits}/Include/{$sdkVersion}";
-$sdkLib = "{$kits}/Lib/{$sdkVersion}";
-if (!is_dir("{$sdk}/um") || !is_dir("{$sdkLib}/um/x64")) {
-    fail("Windows SDK {$sdkVersion} 不完整：{$sdk}（设 DRIFT_KITS / DRIFT_SDK_VERSION 覆盖）");
-}
-
-$env = getenv();
-if (!is_array($env)) {
-    $env = [];
-}
-$env['PHP_HOME'] = $distRoot;
-$env['PHPX_HOME'] = $phpxHome;
-$env['PHPRC'] = win($iniDir);
-$env['INCLUDE'] = implode(';', [
-    win("{$msvc}/include"),
-    win("{$sdk}/ucrt"),
-    win("{$sdk}/shared"),
-    win("{$sdk}/um"),
-]);
-$env['LIB'] = implode(';', [
-    win("{$msvc}/lib/x64"),
-    win("{$sdkLib}/ucrt/x64"),
-    win("{$sdkLib}/um/x64"),
-]);
-// ★ PATH 里必须同时有 cl.exe（MSVC bin）与 rc.exe（SDK bin）—— 后者只有声明了
-//   `resource:` / `manifest:` 时才用得上，但少了它 tpc 报的是"找不到 rc.exe"，
-//   看不出是 PATH 的问题。
-$env['PATH'] = implode(';', [
-    win("{$msvc}/bin/Hostx64/x64"),
-    win("{$kits}/bin/{$sdkVersion}/x64"),
-    (string) ($env['PATH'] ?? ''),
-]);
+// PHPX / MSVC / SDK / env 拼装已移入 `Environment::prepare()`（见上）。
 
 // ─────────────────────── 输入清单 + 缓存策略（M2）───────────────────────
 //

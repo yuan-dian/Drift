@@ -1,6 +1,11 @@
 <?php
 declare(strict_types=1);
 
+use Drift\Dev\Doctor\Environment;
+use Drift\Dev\Doctor\EnvironmentException;
+
+require_once __DIR__ . '/autoload.php';
+
 /**
  * drift-codegen —— tpc codegen 常驻门（T1 档，~3s）。
  *
@@ -75,81 +80,8 @@ function gateFail(string $message): void
     exit(EXIT_GATE_FAILED);
 }
 
-/**
- * tpc 入口解析：**源码树优先**，发行版 `tpc.exe` 只作兜底（缺修复 ⇒ 不推荐）。
- *
- * @return array{0: string, 1: bool} [入口路径, 是否是 .php（要由 php 带着跑）]
- */
-function resolveTpcEntry(string $root): array
-{
-    $override = getenv('DRIFT_TPC_ENTRY');
-    $candidates = [];
-    if (is_string($override) && $override !== '') {
-        $candidates[] = win($override);
-    }
-    // 仓库同级目录：D:\TypePHP\typephp（本项目的工作布局）
-    $candidates[] = win(dirname($root) . '/typephp/bin/tpc.php');
-    $candidates[] = 'D:/TypePHP/typephp/bin/tpc.php';
-
-    foreach ($candidates as $candidate) {
-        if (is_file($candidate)) {
-            return [$candidate, str_ends_with(strtolower($candidate), '.php')];
-        }
-    }
-
-    toolchainFail(sprintf(
-        "找不到 tpc 入口（试过：%s）。修复只在源码树 ⇒ 请设 DRIFT_TPC_ENTRY=D:/…/typephp/bin/tpc.php",
-        implode(' , ', $candidates)
-    ));
-}
-
-/** PHP 发行版根（= 当前 php.exe 所在目录），ini 与 ext/ 都从它派生 */
-function distributionRoot(): string
-{
-    $binary = PHP_BINARY;
-    if ($binary === '') {
-        toolchainFail('PHP_BINARY 为空 —— 无法定位发行版根（ini / ext/ 都从它派生）');
-    }
-
-    return win(dirname(win($binary)));
-}
-
-/**
- * 私有 php.ini：把发行版 ini 抄一份，`extension_dir` 改成绝对路径。
- *
- * ★ 为什么不直接用发行版目录里的那份：它写的是相对 `./ext/`，跟着 **cwd** 漂 ⇒
- *   从仓库根跑 tpc 时 `Drift2/ext/` 不存在 ⇒ 缺 mbstring 直接 Fatal。
- *   抄一份改成绝对路径后，门的结果就与 cwd 无关。
- *
- * @return string 私有 ini 目录（PHPRC 指向它）；发行版 ini 不存在时返回 ''（不设 PHPRC）
- */
-function preparePrivateIni(string $work, string $distRoot): string
-{
-    $source = $distRoot . '/php.ini';
-    if (!is_file($source)) {
-        return '';
-    }
-
-    $iniDir = $work . '/ini';
-    if (!is_dir($iniDir) && !mkdir($iniDir, 0777, true) && !is_dir($iniDir)) {
-        toolchainFail("建不了 {$iniDir}");
-    }
-
-    $target = $iniDir . '/php.ini';
-    $text = (string) file_get_contents($source);
-    // 三处 `extension_dir` 都可能是相对路径（含 `;extension_dir = "ext"` 注释形态）⇒ 全改成绝对
-    $patched = preg_replace(
-        '/^\s*;?\s*extension_dir\s*=\s*.*$/mi',
-        'extension_dir = "' . $distRoot . '/ext/"',
-        $text
-    );
-    if ($patched === null || $patched === $text) {
-        toolchainFail("patch extension_dir 失败（{$source}）—— 宁可门没跑，也别悄悄用错的 ini");
-    }
-    file_put_contents($target, $patched);
-
-    return $iniDir;
-}
+// tpc 入口 / 发行版根 / 私有 ini 的定位统一由 `Drift\Dev\Doctor\Environment` 提供：
+// 三个消费者（本门 / drift-build / doctor）共用一套推导，不各写一份。
 
 /** 假工具链：`cmd.exe` 垫成 `cl.exe` / `link.exe`（`--dry` 也校验工具链，免不了） */
 function prepareFakeToolchain(string $work): string
@@ -320,19 +252,22 @@ if (!is_dir($work) && !mkdir($work, 0777, true) && !is_dir($work)) {
 }
 removeTree($buildDir, $work);
 
-[$entry, $entryIsPhp] = resolveTpcEntry($root);
-$distRoot = distributionRoot();
-
-$phpxHome = getenv('DRIFT_PHPX_HOME');
-if (!is_string($phpxHome) || $phpxHome === '') {
-    $phpxHome = $distRoot . '/phpx';
+// 定位走 `Environment`（与 drift-build / doctor 同一套推导）。本门用宽松原语而非
+// `prepare()`：`--dry` 只走翻译层、用假 cl.exe ⇒ 真 MSVC/SDK 不是它的前置。
+try {
+    $entry = Environment::tpcEntry($root);
+    $distRoot = Environment::distributionRoot();
+    $phpxHome = Environment::resolvePhpxHome();
+    $iniDir = Environment::writePrivateIni($root) ?? '';
+} catch (EnvironmentException $e) {
+    toolchainFail($e->getMessage());
 }
 if (!is_dir($phpxHome)) {
     toolchainFail("PHPX_HOME 不存在：{$phpxHome}（设 DRIFT_PHPX_HOME 覆盖；发行版根下的 phpx/ 才对）");
 }
+$entryIsPhp = str_ends_with(strtolower($entry), '.php');
 
 $cl = prepareFakeToolchain($work);
-$iniDir = preparePrivateIni($work, $distRoot);
 $sources = collectSources($root);
 $yml = writeProjectYml($work, $sources['ymlSources']);
 $logPath = $work . '/last-run.log';
