@@ -1,7 +1,21 @@
-"""滚动条淡出诊断：滚动到底有没有发生、那一列到底变没变、变多少。
+"""滚动条淡出诊断 —— **先定位条，再判"淡出跑没跑"**。
 
-`probe-motion.py` 的两条滚动条断言都报 `col=None`（两张图之间没有任何列变化），
-先要分清是「滚轮没生效」还是「淡出没跑」。本脚本把每一步的像素都打出来。
+★★ 上一版的坑（2026-11-01，白追一轮）：「滚动条一条都没画」这个结论是假的。
+   它取 `x = w-40 .. w`（窗口**右缘**）当采样带 —— 那里是**页面底色**，整列恒
+   238.9，于是"滚动前后完全一样"必然成立。而条其实在**列表视口**的右缘
+   （真机 x=1370..1375），画着、也在淡（119 → 209）。
+   教训只有一条：**像素判据必须先在目标内部落点**。采不到目标时说"没测到"，
+   不许把它写成"没变"—— 后者会被读成"产品坏了"。
+
+判据三条，依次收紧（前一条不成立，后一条没有意义）：
+  ① **内容真的滚了**：两张图的内容区（左侧 3/4）有点差；
+  ② **定位到条**：最右一串 5~7 宽、低饱和、中亮度、≥16 行连续的竖列
+     （定位逻辑在 `tools/probe_pixels.py`，与 `probe-motion.py` 共用一份）；
+  ③ **淡出跑过**：那一列滚后 ≈119（全亮）→ 静止 3s ≈208（IDLE 0.35），差 ≥ 40，
+     且静止值 < 240（`ScrollBarFade` 明写"淡出不给 0"）。
+
+退出码：`0` 判完了（结论在输出里）· `2` **没测到**（找不到条 / 内容没滚）。
+"没测到"与"没通过"分开，是这个脚本存在的主要理由。
 """
 
 import ctypes
@@ -11,6 +25,8 @@ import sys
 import tempfile
 import time
 from ctypes import wintypes
+
+from probe_pixels import column_luma, diff_count, find_scrollbar
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 if os.path.basename(ROOT) == "tools":
@@ -53,24 +69,10 @@ def grab(hwnd):
     return w, h, bytearray(buf)
 
 
-def px(d, w, x, y):
-    i = (y * w + x) * 4
-    return d[i], d[i + 1], d[i + 2]
-
-
 def to_screen(hwnd, x, y):
     pt = wintypes.POINT(x, y)
     user32.ClientToScreen(hwnd, ctypes.byref(pt))
     user32.SetCursorPos(pt.x, pt.y)
-
-
-def diff_count(a, b, w, h, x0, y0, x1, y1):
-    n = 0
-    for y in range(y0, y1, 2):
-        for x in range(x0, x1, 2):
-            if px(a, w, x, y) != px(b, w, x, y):
-                n += 1
-    return n
 
 
 def save_png_crop(data, w, h, x0, x1, y0, y1, path):
@@ -83,8 +85,8 @@ def save_png_crop(data, w, h, x0, x1, y0, y1, path):
     for y in range(y0, y1):
         raw.append(0)   # filter type 0
         for x in range(x0, x1):
-            r, g, b = px(data, w, x, y)
-            raw += bytes((r, g, b))
+            i = (y * w + x) * 4
+            raw += bytes((data[i], data[i + 1], data[i + 2]))
 
     def chunk(tag, payload):
         c = struct.pack(">I", len(payload)) + tag + payload
@@ -112,85 +114,70 @@ def main():
         time.sleep(3.0)
         hwnd = user32.FindWindowW(None, "Drift 示例台")
         if not hwnd:
-            print("找不到窗口")
+            print("SKIP: 找不到窗口")
             return 2
         user32.SetForegroundWindow(hwnd)
         time.sleep(0.3)
 
-        # 「长列表 Big」= 第 6 项
+        # 「长列表 Big」= 导航第 6 项
         to_screen(hwnd, 25, 90 + 5 * 36)
         time.sleep(0.1)
         user32.mouse_event(0x0002, 0, 0, 0, 0)
         time.sleep(0.05)
         user32.mouse_event(0x0004, 0, 0, 0, 0)
-        time.sleep(1.0)
+        time.sleep(1.2)
 
         w, h, base = grab(hwnd)
-        print(f"客户区 {w}x{h}  （切到长列表页）")
+        print(f"客户区 {w}x{h}（已切到长列表页）")
 
-        # 右带 40px 里找"非纯白且低饱和"的列（滚动条）
-        def bar_cols(data):
-            cols = []
-            for x in range(w - 40, w):
-                n = 0
-                for y in range(60, h - 10, 2):
-                    c = px(data, w, x, y)
-                    if max(c) < 250 and max(c) - min(c) < 24:
-                        n += 1
-                if n >= 40:
-                    cols.append((x, n))
-            return cols
-
-        print("滚动前右带候选列:", bar_cols(base)[:6])
-
-        # 真实滚轮
+        # 真滚轮 —— 必须真挪光标 + mouse_event（PostMessage 那套 TME_LEAVE 不认）
         to_screen(hwnd, w // 2, h // 2)
         time.sleep(0.15)
-        user32.mouse_event(0x0800, 0, 0, -120, 0)
-        time.sleep(0.3)
-        w, h, scrolled = grab(hwnd)
-        save_png_crop(scrolled, w, h, 0, w, 0, h, os.path.join(ROOT, "_build", "_bar-scrolled.png"))
+        for _ in range(3):
+            user32.mouse_event(0x0800, 0, 0, -120, 0)
+            time.sleep(0.08)
+        user32.SetCursorPos(5, 5)   # 指针移出窗口，别让 hover 掺进来
 
-        moved_content = diff_count(base, scrolled, w, h, 200, 100, w - 60, h - 40)
-        print(f"滚轮后内容区变化（步长2）={moved_content} 点  ⇒ {'滚动了' if moved_content > 50 else '没滚动'}")
-        print("滚动后右带候选列:", bar_cols(scrolled)[:6])
-
-        # 该列在滚动后的 luma
-        cols = bar_cols(scrolled)
-        if cols:
-            x = cols[0][0]
-            sample = [sum(px(scrolled, w, x, y)) / 3.0 for y in range(60, h - 10, 4)]
-            print(f"滚动条列 x={x} luma 均值={sum(sample) / len(sample):.1f} 最小={min(sample):.1f}")
-
-        # 等 1.8s 无输入
-        user32.SetCursorPos(10, 10)   # 指针移出窗口，避免 hover 干扰
-        time.sleep(1.8)
+        time.sleep(0.85)
+        w, h, during = grab(hwnd)
+        time.sleep(2.2)
         w, h, idle = grab(hwnd)
-        save_png_crop(idle, w, h, w - 80, w, 0, h, os.path.join(ROOT, "_build", "_bar-idle.png"))
-        print(f"空闲后内容区变化={diff_count(scrolled, idle, w, h, 200, 100, w - 60, h - 40)} 点")
-        print("空闲后右带候选列:", bar_cols(idle)[:6])
-        if cols:
-            x = cols[0][0]
-            sample = [sum(px(idle, w, x, y)) / 3.0 for y in range(60, h - 10, 4)]
-            print(f"空闲后同列 luma 均值={sum(sample) / len(sample):.1f} 最小={min(sample):.1f}")
 
-        # 逐列找"变了多少"
-        best = []
-        for x in range(w - 30, w):
-            bs, as_ = [], []
-            for y in range(60, h - 10, 2):
-                ca, cb = px(scrolled, w, x, y), px(idle, w, x, y)
-                if ca != cb:
-                    bs.append(sum(ca) / 3.0)
-                    as_.append(sum(cb) / 3.0)
-            if bs:
-                best.append((x, len(bs), sum(as_) / len(as_) - sum(bs) / len(bs)))
-        best.sort(key=lambda t: -t[1])
-        print("变化最多的右带列（x, 变化行数, Δluma）:", best[:5] if best else "无")
+        # ① 内容真的滚了吗
+        moved = diff_count(base, during, w, 0, 60, int(w * 0.75), h - 40)
+        print(f"① 内容区变化（步长 2）= {moved} 点")
+        if moved <= 50:
+            print("SKIP: 滚轮没生效（内容区没变）—— 后面的判据在这里没有意义")
+            return 2
 
+        # ② 定位条（共享件；定位不到就是"没测到"，不是"没通过"）
+        found = find_scrollbar(during, w, h)
+        if found is None:
+            print("SKIP: 没定位到滚动条（5~7 宽 / 低饱和 / 中亮度 / ≥16 行）")
+            save_png_crop(during, w, h, w - 200, w, 0, h, os.path.join(ROOT, "_build", "_bar-locate.png"))
+            return 2
+        x0, x1 = found
+        x = (x0 + x1) // 2
+        print(f"② 条定位: x={x0}..{x1}（宽 {x1 - x0 + 1}），取中心列 x={x}")
+
+        # ③ 淡出跑了吗
+        min_a, avg_a = column_luma(during, w, h, x)
+        min_b, avg_b = column_luma(idle, w, h, x)
+        print(f"③ 滚后: 最暗 {min_a:.1f} / 均值 {avg_a:.1f}   ← 期望 ≈119（全亮）")
+        print(f"   静止: 最暗 {min_b:.1f} / 均值 {avg_b:.1f}   ← 期望 ≈208（IDLE 0.35）")
+        print(f"   Δ最暗 = {min_b - min_a:.1f}（判据 ≥ 40，且静止值必须 < 240 ⇒ 淡出不给 0）")
+
+        save_png_crop(during, w, h, max(0, x0 - 12), min(w, x1 + 12), 0, h,
+                      os.path.join(ROOT, "_build", "_bar-during.png"))
+        save_png_crop(idle, w, h, max(0, x0 - 12), min(w, x1 + 12), 0, h,
+                      os.path.join(ROOT, "_build", "_bar-idle2.png"))
+
+        ok = (min_b - min_a) >= 40.0 and min_b < 240.0
+        print("PASS" if ok else "FAIL: 条在，但淡出没发生 / 淡成了 0")
         return 0
     finally:
         proc.terminate()
+        time.sleep(0.3)
 
 
 if __name__ == "__main__":

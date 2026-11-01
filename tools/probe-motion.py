@@ -17,6 +17,8 @@ import tempfile
 import time
 from ctypes import wintypes
 
+from probe_pixels import column_luma, find_scrollbar
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
@@ -329,52 +331,36 @@ def main():
         #   （实测 luma≈239），照旧阈值找永远是"0 命中"，看起来像"滚动条没画"
         #   （2026-11-01 就是这样假红了一轮）。软滚动条只要"比背景深一点"就够 ——
         #   数右带里**非纯白**的像素即可。
-        bar_col, bar_count = None, 0
-        for x in range(w - 40, w):
-            n = 0
-            for y in range(60, h - 10, 2):
-                c = px(scrolled, w, x, y)
-                if max(c) < 250 and max(c) - min(c) < 24:
-                    n += 1
-            if n > bar_count:
-                bar_col, bar_count = x, n
+        # ★★ 定位逻辑在 `tools/probe_pixels.py`（与 `probe-scroll-diag.py` 共用一份）。
+        #   上一版取"右带里非白像素最多的列" ⇒ 恒定选中**页面底色**（整列 358 行），
+        #   而真条在 x=1370..1375（离窗口右缘 39px）⇒ 两条断言假红了整整一轮。
+        located = find_scrollbar(scrolled, w, h)
+        bar_col = None if located is None else (located[0] + located[1]) // 2
         check(
-            "滚动条 · 滚动后右带里找得到那一列（浅灰，不用\"暗列\"判据）",
-            bar_col is not None and bar_count >= 40,
-            f"x={bar_col} 非白像素={bar_count}",
+            "滚动条 · 滚动后在**列表视口右缘**定位到那一列（不是窗口右缘）",
+            located is not None,
+            "x=" + (f"{located[0]}..{located[1]}" if located is not None else "没定位到"),
         )
 
-        # ★ 判据不能用"右带最暗的那一列"：视口左侧还有一条恒定的深灰线（实测
-        #   x=1896, luma≈131），它永远比 thumb 暗 ⇒ "最暗列"从头到尾不变（第一版
-        #   就这么假红了一次）。正确做法：**先找出两张图之间真的变了的列**，
-        #   再看那一列变浅了多少 —— 变化本身就是"哪一列是滚动条"的证据。
-        def changed_col(data_a, data_b):
-            best = None
-            for x in range(w - 30, w, 1):
-                before, after = [], []
-                for y in range(60, h - 10, 2):
-                    ca, cb = px(data_a, w, x, y), px(data_b, w, x, y)
-                    if ca != cb:
-                        before.append(sum(ca) / 3.0)
-                        after.append(sum(cb) / 3.0)
-                if len(before) < 6:
-                    continue
-                ma = sum(before) / len(before)
-                mb = sum(after) / len(after)
-                if best is None or (mb - ma) > best[1]:
-                    best = (x, mb - ma, ma, mb)
-            return best
+        # ★ 判据直接落在**定位到的那一列**上（不再"猜哪列变了"）：条已经由
+        #   `find_scrollbar` 定位，剩下的问题只是"它变浅了没有"。
+        live_luma = None
+        if bar_col is not None:
+            live_luma, _ = column_luma(scrolled, w, h, bar_col)
 
         time.sleep(1.8)   # 无任何输入：这里同时在验"帧时钟会自己上膛"
         w, h, idle = grab(hwnd)
-        moved = changed_col(scrolled, idle)
+        idle_luma = None
+        if bar_col is not None:
+            idle_luma, _ = column_luma(idle, w, h, bar_col)
+        faded = None if live_luma is None or idle_luma is None else idle_luma - live_luma
         check(
             "滚动条 · 停手 1.8s 后那一列明显变浅（帧时钟在无输入时把动画推完了）",
-            moved is not None and moved[1] > 40.0,
-            f"col={None if moved is None else (moved[0], round(moved[2], 1), round(moved[3], 1))}",
+            faded is not None and faded > 40.0,
+            f"col={bar_col} 滚后={None if live_luma is None else round(live_luma, 1)}"
+            f" 静止={None if idle_luma is None else round(idle_luma, 1)}",
         )
-        bar_x = moved[0] if moved is not None else None
-        live_luma = moved[2] if moved is not None else None
+        bar_x = bar_col
 
         # ── ⑤ 再滚一下 ⇒ 回到全亮（淡出不是单程票）──
         wheel(hwnd, w // 2, h // 2, -120)
