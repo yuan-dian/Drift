@@ -165,8 +165,14 @@ final class TimeView extends StatelessWidget
         // ★ 横向响应式：TimeView 是定宽整体（时/分/秒列 + 滚动条留白），可用宽
         //   小于固有宽时**横向滚**而非溢出/裁字（成熟 GUI 的常规做法：Flutter 的
         //   time picker 等固定宽多列控件在窄容器里都让内容滚）。
-        //   弹层面板宽恰等于 widthOf() ⇒ maxScroll=0 不滚；窄页面里则横向滚。
-        return ScrollView::make($body, false);
+        //
+        // ★★ 外层 `SizedBox(widthOf())` **不可省**：横向 `ScrollView` 的宽 = 视口宽
+        //   = 父给的上界 ⇒ 在 `Row` 里它会撑满剩余宽（实测 452），把 TimeView 从定宽
+        //   212 变成"吃掉整行"，`DateTimePicker` 的面板随即溢出（756 > 452）。
+        //   钉死到固有宽后：宽容器里取 212（不撑满），窄容器里被
+        //   `Modifier::tighten()` 夹到父上界（208）⇒ 内层横滚 4px。两个需求同解。
+        return SizedBox::make(ScrollView::make($body, false))
+            ->width(self::widthOf($this->seconds));
     }
 
     /** 表头：`时 分 秒` —— 三列纯数字没有表头分不清哪列是哪列 */
