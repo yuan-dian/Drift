@@ -96,13 +96,17 @@ final class Frame
     private int $lastPaintEpoch = -1;
 
     /**
-     * 上一帧画过的浮层集合签名（`spl_object_id` 序列）。
+     * 上一帧画过的浮层集合签名（`OverlayEntry::$id` 序列）。
      *
      * ★ 浮层增删**不进主树**：它在 `OverlayHost` 的栈里，`structureVersion` /
      *   `boxEpoch` / `paintEpoch` 三条信号一条都不动。少了这一条，"关掉模态后
      *   主树没有别的变化"这一帧会被整段跳过 ⇒ **屏幕上永远残留遮罩**（静默：
      *   不报错，只是画面对不上，而且一移动鼠标就被 hover 重绘掩盖掉，最难查）。
      *   smoke 的"关模态后同一点回到白底"就是这条的守门人。
+     *
+     * ★ 用 `$id` 而不是 `spl_object_id()`：后者在对象释放后会被**复用** ⇒
+     *   "同一帧里关一个再开一个"可能拿到同一个 id ⇒ 判成没变 ⇒ 永久漏画一帧。
+     *   `$id` 是 `OverlayEntry` 的单调序号，不复用。
      */
     private ?array $lastOverlayIds = null;
 
@@ -323,7 +327,7 @@ final class Frame
         //   推它；在之前读就等于把本帧自己的变化算成"下一帧的"）。
         $overlayIds = [];
         foreach ($overlays as $overlay) {
-            $overlayIds[] = \spl_object_id($overlay);
+            $overlayIds[] = $overlay->id;
         }
         $paintEpoch = RenderObject::paintEpoch();
         if (
