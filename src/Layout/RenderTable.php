@@ -259,7 +259,7 @@ final class RenderTable extends RenderBox implements ScrollBarHost
         }
 
         $this->barOpacity = $value;
-        self::markNeedsPaint();   // 同 `RenderScrollView::setBarOpacity()`（N1）
+        $this->markPaintChanged();   // 同 `RenderScrollView::setBarOpacity()`（N1）
     }
 
     /**

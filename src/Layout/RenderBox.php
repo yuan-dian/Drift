@@ -1064,6 +1064,30 @@ abstract class RenderBox extends RenderObject
         }
     }
 
+    /**
+     * 让**最近的重绘边界**（含自己）丢掉缓存，再标"下一帧必须画"。
+     *
+     * ★★ 从 `$this` 开始找，与 `setCompose()` 的 `invalidateEnclosingLayer()`
+     *   （从父开始）**故意不同**：合成槽在 `paintComposed()` 里现算、不进自己的
+     *   缓存；而 hover 叠色 / 滚动条 thumb 的 alpha 是**录进命令流**的（在
+     *   `paintOwnChrome()` / `paint()` 内）⇒ 自己若正好是边界，自己的缓存也脏。
+     *
+     * ★ 找不到边界 ⇒ 每帧都真画 ⇒ 本方法退化成一次向上遍历（绝大多数盒走这里）。
+     */
+    #[\Override]
+    protected function markPaintChanged(): void
+    {
+        for ($p = $this; $p !== null; $p = $p->parent()) {
+            if ($p instanceof self && $p->isRepaintBoundary()) {
+                $p->invalidateLayerCache();
+
+                break;
+            }
+        }
+
+        self::markNeedsPaint();
+    }
+
     /** @return array{0: float, 1: float} `[dx, dy]` */
     public function composeOffset(): array
     {

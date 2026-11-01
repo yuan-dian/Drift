@@ -198,9 +198,22 @@ abstract class Element
         //   详见 `State::$boxEpoch`。
         State::noteBoxReplaced();
 
+        $previous = $this->box;
         $this->box = $this->widget instanceof RenderBoxWidget
             ? $this->widget->createRenderObject($this->context)
             : null;
+
+        // ★★ **瞬态跨代移交**（2026-11-01）：盒每次重建都被换新，而悬停态住盒上
+        //   ⇒ 任何一次 `setState()` 都会把它清零（真机症状："鼠标移上去不变色"）。
+        //   移交的是**不属于描述**的那部分（`RenderRuntime`），描述仍由构造函数给。
+        // ★ 只认同类型：换了盒类，那些字段的语义未必还成立。
+        // ★ 用 `get_class()` 而不是 `$previous::class`：后者是**对象上的 `::class`**
+        //   （PHP 8.0+ 语法），AOT 翻译出来的代码会让 exe 启动即 0xC0000005
+        //   （2026-11-01 实测，见 `PITFALLS.md`）。
+        if ($previous !== null && $this->box !== null
+            && \get_class($previous) === \get_class($this->box)) {
+            $this->box->inheritRuntimeState($previous);
+        }
 
         // §9.1：光标形状是 Widget 的**声明**，落一份到盒上供命中链解析。
         // ★ 落在这里而不是每个 `createRenderObject()` 里各传一次：那是 12+ 处

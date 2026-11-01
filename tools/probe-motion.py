@@ -82,21 +82,82 @@ def post(hwnd, msg, wparam, lparam):
     user32.PostMessageW(hwnd, msg, wparam, lparam)
 
 
+def focus_window(hwnd):
+    """把窗口顶到前台，**并确认真的到了**。
+
+    ★★ 真实点击只送到前台窗口。`SetForegroundWindow` 对"非前台进程"可能被系统
+    拒绝（返回 0 也不报错）⇒ 后续 `mouse_event` 落在**别的窗口**上 ⇒ 导航没切页，
+    而探针照旧去截当前页面 ⇒ 报"一个像素都不变"（2026-11-01 第二次假红：
+    `blocks` 从上一次的 3 个变成 2 个，目标 bbox 整个换了地方）。
+    """
+    user32.ShowWindow(hwnd, 9)   # SW_RESTORE
+
+    # ★ `SetForegroundWindow` 对"非前台进程"会被系统拒绝且**不报错**。解锁办法是
+    #   把自己的输入队列临时挂到前台窗口的线程上（`AttachThreadInput`），切完再摘。
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    fg = user32.GetForegroundWindow()
+    if fg == hwnd:
+        return True
+
+    cur = kernel32.GetCurrentThreadId()
+    target = user32.GetWindowThreadProcessId(fg, None) if fg else 0
+    attached = False
+    if target and target != cur:
+        attached = bool(user32.AttachThreadInput(cur, target, True))
+
+    try:
+        for _ in range(40):
+            user32.BringWindowToTop(hwnd)
+            user32.SetForegroundWindow(hwnd)
+            if user32.GetForegroundWindow() == hwnd:
+                return True
+            time.sleep(0.05)
+    finally:
+        if attached:
+            user32.AttachThreadInput(cur, target, False)
+
+    return False
+
+
+def to_screen(hwnd, x, y):
+    """客户区坐标 ⇒ 真实光标位置。"""
+    pt = wintypes.POINT(x, y)
+    user32.ClientToScreen(hwnd, ctypes.byref(pt))
+    user32.SetCursorPos(pt.x, pt.y)
+
+
 def click(hwnd, x, y):
-    post(hwnd, WM_LBUTTONDOWN, 1, (y << 16) | (x & 0xFFFF))
-    time.sleep(0.04)
-    post(hwnd, WM_LBUTTONUP, 0, (y << 16) | (x & 0xFFFF))
+    """真实点击（理由同 `move()`）。"""
+    to_screen(hwnd, x, y)
+    time.sleep(0.05)
+    user32.mouse_event(0x0002, 0, 0, 0, 0)   # LEFTDOWN
+    time.sleep(0.05)
+    user32.mouse_event(0x0004, 0, 0, 0, 0)   # LEFTUP
 
 
 def move(hwnd, x, y):
-    post(hwnd, WM_MOUSEMOVE, 0, (y << 16) | (x & 0xFFFF))
+    """**真实**移动系统光标（不是伪造 `WM_MOUSEMOVE`）。
+
+    ★★ 为什么必须是真的（2026-11-01 定位）：`PostMessage(WM_MOUSEMOVE)` 只让应用
+    **知道**指针在哪，而 `TrackMouseEvent(TME_LEAVE)` 依据的是**真实光标位置**。
+    两条信息不一致时，应用照常把悬停态推到盒上、`tickAnimations()` 也把进度从
+    0 推到 1（trace 里数到 43 帧），但 `paint` 记录里从来没有那个盒 —— 于是本
+    探针连报"一个像素都不变"，而**真实鼠标移上去是正常的**（`tools/probe-hover-
+    screen.py` 用真实光标 + 屏幕级截图实测：盒内 1813 px、环带 2859 px 变化）。
+    换言之，之前那份"悬停不出画面"的红，有一半是探针自己的输入通道造成的。
+    """
+    to_screen(hwnd, x, y)
 
 
 def wheel(hwnd, x, y, delta):
-    """★ lParam 必须是**屏幕**坐标（WndProc 内部才 ScreenToClient）。"""
-    pt = wintypes.POINT(x, y)
-    user32.ClientToScreen(hwnd, ctypes.byref(pt))
-    post(hwnd, WM_MOUSEWHEEL, (delta << 16) & 0xFFFFFFFF, (pt.y << 16) | (pt.x & 0xFFFF))
+    """真实滚轮（理由同 `move()`）。
+
+    ★ 伪造的 `WM_MOUSEWHEEL` 走不到 `ScrollBarFade::noteScroll()` ⇒ 滚动条**从来
+    没开始计算空闲**，而画面看起来"滚过了"（`x=1398` 那一列本来就画着）。
+    """
+    to_screen(hwnd, x, y)
+    time.sleep(0.05)
+    user32.mouse_event(0x0800, 0, 0, delta, 0)   # MOUSEEVENTF_WHEEL
 
 
 def primary_blocks(data, w, h, x_min, tol=26):
@@ -185,6 +246,11 @@ def main():
         hwnd = user32.FindWindowW(None, "Drift 示例台")
         if not hwnd:
             print("找不到窗口「Drift 示例台」")
+            return 2
+
+        # ★ 真实输入（`SetCursorPos` / `mouse_event`）只送到**前台**窗口
+        if not focus_window(hwnd):
+            print("窗口抢不到前台 —— 真实点击会落到别的窗口上，先别测")
             return 2
 
         w, h, data = grab(hwnd)

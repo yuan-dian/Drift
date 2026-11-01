@@ -34,18 +34,41 @@ abstract class RenderObject
     protected ?CursorShape $cursor = null;
 
     /**
-     * 是否处于**悬停态**（交互状态层，`08` §4.1）。
+     * 标"**像素变了**"的唯一入口（本层与子层的就地写点都调它）。
+     *
+     * ★★ 为什么不直接调 `markNeedsPaint()`（2026-11-01，真机 trace 抓到）：
+     *   那是"让帧跑"，而**这一层要不要重录**是另一件事。`RenderBox` 覆写本方法
+     *   去失效**最近的重绘边界**（`LayerCache` 按 `layoutEpoch` + 尺寸命中）；
+     *   只标帧不失效边界时，命中缓存的边界**原样重放旧命令** ⇒ 帧跑了、
+     *   `tickAnimations()` 也把进度从 0 推到 1（43 帧）、`paintOwnChrome()`
+     *   一次都没被调到。现象就是"鼠标移上去颜色一丝不变"，而所有状态都是对的。
+     *
+     * ★ 判据是"**录进命令流里的东西**变了吗"：hover 叠色、滚动条 thumb 的 alpha
+     *   都属于这一类；合成槽（alpha / 平移）不在缓存里，走 `setCompose()` 自己
+     *   的 `invalidateEnclosingLayer()`。
+     */
+    protected function markPaintChanged(): void
+    {
+        self::markNeedsPaint();
+    }
+
+    /**
+     * 悬停态与它的过渡进度 —— **不属于描述**的那部分状态（`08` §4.1）。
      *
      * ★ 状态由 `FocusManager::hoverTo()` 推（`App` 层只认 `acceptsHover()` 能力方法，
      *   不认具体盒类 —— I2 闸门）；怎么用是盒自己的事（`RenderButton` 叠一层状态色）。
      * ★ **两处都要标脏**（2026-11-01 修正 10-30 的判断）：这里标的是"目标变了、
      *   下一帧必须画"，`tickAnimations()` 标的是"斜坡推进了"。只标后者不够 ——
      *   那一刻帧时钟还没上膛（脏信号正是它上膛的依据）⇒ 谁也不会去 tick。
+     * ★★ **换盒时要移交**（2026-11-01）：盒在每次重建时被换新（§13.2）⇒ 住盒字段
+     *   上的状态会被任何一次 `setState()` 清零。那个坑的真机症状是"鼠标移上去
+     *   不变色"，复现见 `tests/Feature/App/HoverPixelTest::testHoverSurvivesRebuild`。
+     *   移交在 `inheritRuntimeState()`，**新增瞬态必须在那里补一行**（注释里已标）。
      */
-    protected bool $hovered = false;
+    private bool $hovered = false;
 
     /**
-     * 悬停态的**过渡进度**（`0..1`）；`null` = 这个盒没有声明要用过渡。
+     * 悬停态的**过渡进度**；`null` = 这个盒没有声明要用过渡。
      *
      * ★ 懒创建（第一次 `setHovered()` 才建）：本仓 95% 的盒对悬停无感，给每个
      *   节点常驻一个驱动器等于给全树加一份无用的分配。
@@ -53,6 +76,26 @@ abstract class RenderObject
      *   "头一次直接跳到 1、第二次才有过渡"（那是最容易漏的一处不对称）。
      */
     private ?AnimatedValue $hoverAnim = null;
+
+    /**
+     * 接收旧盒的瞬态（盒换代时由 `Element::syncBox()` 调）。
+     *
+     * ★ 只允许**同类型**盒之间移交（调用方保证）：换了盒类，字段语义未必还成立
+     *   （`RenderButton` 的悬停进度搬到 `RenderScrollView` 上无意义）。
+     * ★★ **新增瞬态字段必须在这里补一行**。没补的后果是静默的（重建后状态归零，
+     *   画面不更新、不报错）。`RenderScrollView::$scrollOffset` / `$barOpacity`
+     *   不在此列 —— 它们由 State 当权威、重建时经构造参数递进来（"盒只是投影"）。
+     *   悬停没有 State 持有者（`FocusManager` 握的是盒对象本身）⇒ 只能跨代保存。
+     * ★ 不另建一个"瞬态槽"对象：2026-11-01 试过（`RenderRuntime`），那个新类在
+     *   AOT 里没被翻译出 `.cc` ⇒ exe 启动即 `0xC0000005`（见 `PITFALLS.md`）。
+     *
+     * @internal
+     */
+    public function inheritRuntimeState(RenderObject $old): void
+    {
+        $this->hovered = $old->hovered;
+        $this->hoverAnim = $old->hoverAnim;
+    }
 
     /**
      * 渲染树**需要重绘**的绝对序号（跨整棵树，含浮层那棵第二根树）。
@@ -223,7 +266,12 @@ abstract class RenderObject
         //   而帧时钟此刻还没上膛 ⇒ 死锁：没有脏 ⇒ 不跑帧 ⇒ 不 tick ⇒ 永不脏。
         //   真机后果：悬停过渡**一次都推进不了**（`tick` 从未被调用），滚动条
         //   淡出同理（`tools/probe-motion.py` 连读 5 条红才抓到）。
-        self::markNeedsPaint();
+        // ★★ 走 `markPaintChanged()` 而不是 `markNeedsPaint()`（同日第二次修正）：
+        //   前者还负责让**重绘边界丢掉缓存**。只标帧时，`LayerCache` 按
+        //   `layoutEpoch` 命中 ⇒ 边界重放旧命令 ⇒ 帧跑了、进度推到 1、
+        //   `paintOwnChrome()` 一次都没被调到（真机 trace：43 个 tick 帧里
+        //   paint 记录中从来没有这个盒的 id）。
+        $this->markPaintChanged();
     }
 
     /**
@@ -276,7 +324,7 @@ abstract class RenderObject
         //   `false`，而那一帧的值恰恰是最后一步、必须画出来。拿返回值当判据会把
         //   终点值丢掉（画面停在 0.93 而不是 1.0）。
         if ($anim->value() !== $before) {
-            self::markNeedsPaint();
+            $this->markPaintChanged();
         }
 
         return $more;

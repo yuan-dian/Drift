@@ -160,7 +160,9 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
 
         // ★ 2026-10-30（N1）：淡出是"不重建不重排"的通道 ⇒ settle / layout 两条
         //   判据都拦不住 ⇒ 不标就是"滚动条该消失却一直挂着"（静默）。
-        self::markNeedsPaint();
+        // ★ 2026-11-01：还得让**重绘边界重录** —— thumb 的 alpha 录在命令流里，
+        //   只标帧会被缓存重放旧值（真机：停手 1.8s 后那条滚动条纹丝不动）。
+        $this->markPaintChanged();
     }
 
     /** 本视口的唯一轴（单轴视口 ⇒ `scrollAxes()` 只有一个元素） */
