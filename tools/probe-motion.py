@@ -100,33 +100,56 @@ def wheel(hwnd, x, y, delta):
 
 
 def primary_blocks(data, w, h, x_min, tol=26):
-    """把 Accent 像素按"连续行"聚成块，返回 [(x0, y0, x1, y1), ...]。
+    """把 Accent 像素聚成块，返回 [(x0, y0, x1, y1), ...]。
 
     ★ 不能用全图 bbox：左侧导航的选中带是同一个 Accent，且一个页面里往往有
       好几个墨绿物件（按钮 / 标题 / 徽标）⇒ bbox 会把它们连成一大片，中心落空。
+    ★★ 也不能只按"行"取 min/max（第一版就这么写，2026-11-01 修）：同一行里
+      **两个并排的按钮**会被合成一个块，块中心正好落在两者的**空隙**上 ⇒ 悬停
+      测试点到了一个什么都没有的位置，判据永远红（而它看起来像"悬停坏了"）。
+      正确做法：先把每行的 Accent 像素切成**连续段**（间距 > 6px 就断开），
+      再按 x 有重叠把相邻行的段接成块。断段阈值取 45px：按钮**内部**的
+      标签文字会把连续段打断（十来像素），而两个并排按钮之间是几十像素的空白
+      —— 阈值必须落在两者中间，否则要么把按钮切碎、要么把两个按钮粘成一个。
     """
-    rows = {}
+    blocks = []        # 每个块是可变 list，随扫描继续扩
+    open_blocks = []   # 上一行还活着的块（本行有重叠段就续上）
+
     for y in range(0, h, 2):
         xs = [x for x in range(x_min, w, 2) if near(px(data, w, x, y), PRIMARY, tol)]
-        if len(xs) >= 16:
-            rows[y] = (min(xs), max(xs))
-    if not rows:
-        return []
+        if not xs:
+            open_blocks = []
+            continue
 
-    blocks = []
-    cur = []
-    for y in sorted(rows):
-        if cur and y - cur[-1] > 6:
-            blocks.append(cur)
-            cur = []
-        cur.append(y)
-    if cur:
-        blocks.append(cur)
+        runs = []
+        start = prev = xs[0]
+        for x in xs[1:]:
+            if x - prev > 45:
+                runs.append((start, prev))
+                start = x
+            prev = x
+        runs.append((start, prev))
+        runs = [r for r in runs if r[1] - r[0] >= 20]
 
-    return [
-        (min(rows[y][0] for y in b), b[0], max(rows[y][1] for y in b), b[-1])
-        for b in blocks
-    ]
+        next_open = []
+        for r in runs:
+            hit = None
+            for b in open_blocks:
+                if not (r[0] > b[2] + 4 or r[1] < b[0] - 4):
+                    hit = b
+                    break
+            if hit is not None:
+                open_blocks.remove(hit)
+                hit[0] = min(hit[0], r[0])
+                hit[2] = max(hit[2], r[1])
+                hit[3] = y
+            else:
+                hit = [r[0], y, r[1], y]
+                blocks.append(hit)
+            next_open.append(hit)
+        open_blocks = next_open
+
+    return [tuple(b) for b in blocks]
 
 
 def ring_diff(data_a, data_b, w, box, pad_from, pad_to):
@@ -236,15 +259,24 @@ def main():
         time.sleep(0.25)
         w, h, scrolled = grab(hwnd)
 
-        bar_col, bar_color = None, None
-        # 从右往左找"一整列都是同一种灰（Muted 系）且非背景"的列
-        for x in range(w - 4, w - 40, -1):
-            col = [px(scrolled, w, x, y) for y in range(80, h - 20, 4)]
-            greys = [c for c in col if abs(c[0] - c[1]) < 24 and abs(c[1] - c[2]) < 24 and c[0] < 200]
-            if len(greys) >= 20:
-                bar_col, bar_color = x, greys[len(greys) // 2]
-                break
-        check("滚动条 · 滚动后找得到滚动条列", bar_col is not None, f"x={bar_col} color={bar_color}")
+        # ★★ 判据**不能**要求"暗列"（`c[0] < 200`）：本主题的滚动条是**浅灰**
+        #   （实测 luma≈239），照旧阈值找永远是"0 命中"，看起来像"滚动条没画"
+        #   （2026-11-01 就是这样假红了一轮）。软滚动条只要"比背景深一点"就够 ——
+        #   数右带里**非纯白**的像素即可。
+        bar_col, bar_count = None, 0
+        for x in range(w - 40, w):
+            n = 0
+            for y in range(60, h - 10, 2):
+                c = px(scrolled, w, x, y)
+                if max(c) < 250 and max(c) - min(c) < 24:
+                    n += 1
+            if n > bar_count:
+                bar_col, bar_count = x, n
+        check(
+            "滚动条 · 滚动后右带里找得到那一列（浅灰，不用\"暗列\"判据）",
+            bar_col is not None and bar_count >= 40,
+            f"x={bar_col} 非白像素={bar_count}",
+        )
 
         # ★ 判据不能用"右带最暗的那一列"：视口左侧还有一条恒定的深灰线（实测
         #   x=1896, luma≈131），它永远比 thumb 暗 ⇒ "最暗列"从头到尾不变（第一版

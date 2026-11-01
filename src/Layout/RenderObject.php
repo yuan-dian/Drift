@@ -38,9 +38,9 @@ abstract class RenderObject
      *
      * ★ 状态由 `FocusManager::hoverTo()` 推（`App` 层只认 `acceptsHover()` 能力方法，
      *   不认具体盒类 —— I2 闸门）；怎么用是盒自己的事（`RenderButton` 叠一层状态色）。
-     * ★ **不需要在这里标脏**（2026-10-30 更新）：`setHovered()` 只改"目标是几"，
-     *   真正逐帧变的 `hoverProgress()` 由 `tickAnimations()` 推进，**那里**标脏。
-     *   在这里标只能覆盖"按下/松开"那一刻，过渡中间帧仍会丢。
+     * ★ **两处都要标脏**（2026-11-01 修正 10-30 的判断）：这里标的是"目标变了、
+     *   下一帧必须画"，`tickAnimations()` 标的是"斜坡推进了"。只标后者不够 ——
+     *   那一刻帧时钟还没上膛（脏信号正是它上膛的依据）⇒ 谁也不会去 tick。
      */
     protected bool $hovered = false;
 
@@ -216,6 +216,14 @@ abstract class RenderObject
 
         $this->hovered = $hovered;
         $anim->toward($hovered ? 1.0 : 0.0);
+
+        // ★★ **必须标脏**（2026-11-01）：`paintEpoch` 是**唯一**能让帧时钟看见
+        //   "像素变了"的信号（`Application::needsFrameNow()` 读它）。此前这里
+        //   靠"`tickAnimations()` 会标"—— 但 `tickAnimations()` **只在帧里跑**，
+        //   而帧时钟此刻还没上膛 ⇒ 死锁：没有脏 ⇒ 不跑帧 ⇒ 不 tick ⇒ 永不脏。
+        //   真机后果：悬停过渡**一次都推进不了**（`tick` 从未被调用），滚动条
+        //   淡出同理（`tools/probe-motion.py` 连读 5 条红才抓到）。
+        self::markNeedsPaint();
     }
 
     /**

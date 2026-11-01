@@ -395,4 +395,25 @@ final class Frame
 
         return $painted;
     }
+
+    /**
+     * **像素脏了但还没上屏** —— 帧时钟"该不该醒"的判据之一。
+     *
+     * ★★ 存在理由（2026-11-01）：`needsSettle()` / `$boxEpoch` 让**结构**变了会
+     *   叫醒帧时钟，但**只有像素变**的通道（`setHovered()` / `setBarOpacity()` /
+     *   `applyCompose()`）在这之前**没有任何判据**。于是：
+     *
+     *   - 悬停：鼠标移上去 ⇒ `setHovered()` ⇒ 脏了，但 `wantsFrame()` 为假 ⇒
+     *     主循环无限等 ⇒ `tickAnimations()` 一次都不跑（过渡永远停在 0）；
+     *   - 滚动条淡出：1.6s 无输入后本来就没有任何事件，帧时钟早已落闸 ⇒ 那条
+     *     淡出动画**从来没跑过**（真机实测：修好后同一次滚动能数到 7180 个像素变化）。
+     *
+     *   两条都是"状态对了但画面没更新"，与 `07` §6.2 记录的那一族同一个形状。
+     * ★ 与 `Frame::run()` 里那条 paint 门控是**同一个序号、两处消费者**（门控决定
+     *   "这帧跳不跳"，本方法决定"要不要叫醒跑这帧"）—— 不是两个真相源。
+     */
+    public function hasPendingPaint(): bool
+    {
+        return RenderObject::paintEpoch() !== $this->lastPaintEpoch;
+    }
 }

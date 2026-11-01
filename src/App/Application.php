@@ -1219,10 +1219,21 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      *   换焦点后环要等**下一次鼠标移动**才出现（真机现象）。
      *   ★ 比的是 `focusRingTarget()` 而不是 `focused()`：指针模态下目标恒 `null`
      *     ⇒ 点击隐藏环也能立刻触发一帧（否则点击后环要等下次输入才消失）。
+     * ★★ 第八判据（2026-11-01）：**像素脏了还没画**（`Frame::hasPendingPaint()`）。
+     *   见方法内注释 —— 缺它是"悬停零反馈 / 滚动条淡出从不发生"的根因。
      */
     public function needsFrameNow(): bool
     {
         if ($this->focusRingTarget() !== $this->paintedFocus) {
+            return true;
+        }
+
+        // ★★ 第八判据（2026-11-01）：**像素脏了还没画**。少了它，凡是"只改像素、
+        //   不动结构"的通道都变成了死锁 —— 脏信号引不出帧、帧不跑就没人推进动画、
+        //   于是永远不脏（`Frame::hasPendingPaint()` 的注写了两个真机症状：
+        //   悬停零反馈、滚动条淡出从没跑过）。
+        //   与上面的焦点环判据是同一性质：**一次性欠账，画一帧就清**（有界）。
+        if ($this->frame !== null && $this->frame->hasPendingPaint()) {
             return true;
         }
 

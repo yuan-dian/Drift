@@ -159,6 +159,11 @@ final class FrameTest extends SmokeTestCase
      * ★ 首帧 tick 只记起点、不推进值（`AnimatedValue::tick` 的 `lastTs === null`
      *   那条路）⇒ **值没变就不该标脏**。所以这里连推两次：第一次不画、第二次画。
      *   若判据写成"`tick()` 返回 true 就标"，第一次就会误画（每次 hover 多一帧）。
+     *
+     * ★★ 2026-11-01：`setHovered()` 自己也标脏了（"目标变了"是第二类信号，
+     *   见 `RenderObject::setHovered()` 的注），所以**起点帧会画一次**。这里先把
+     *   那一帧跑掉当基线 —— 本条要验的是 `tickAnimations()` 的判据，不能把它
+     *   和"悬停目标变了"混成一个。
      */
     public function testPaintRunsWhenHoverTransitionAdvances(): void
     {
@@ -172,6 +177,9 @@ final class FrameTest extends SmokeTestCase
 
         $box = $el->effectiveBox();
         $box?->setHovered(true);
+
+        // 起点帧：`setHovered()` 标脏 ⇒ 画一次（消费掉这个信号）
+        $frame->run($el, $tight, 8.0);
 
         // 第一次 tick：只记起点（值不变）⇒ 不该画
         $runsBefore = Frame::paintRunCount();
