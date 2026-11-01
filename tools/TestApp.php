@@ -10,6 +10,7 @@ use Drift\Geometry\Size;
 use Drift\Input\PointerEvent;
 use Drift\Input\ScrollEvent;
 use Drift\Layout\RenderBox;
+use Drift\Rendering\Color;
 use Drift\Widget\Element;
 
 /**
@@ -36,9 +37,16 @@ use Drift\Widget\Element;
  *   多义选择器是测试脆弱的第一来源。
  * ★ **R4 必须显式 `pump()`**：不自动跑帧 —— 帧是测试的时钟，测试必须控制它。
  *
- * ★★ **只实现"被场景走通过"的动词**。`tap()` / `type()` 暂不提供：三个场景
- *   都没用到它们，先写就是"写了但没被走通过"的分支（§24.2 #25）。要加它们，
- *   先加一个走通过它们的场景。
+ * ★ **像素可观察**（2026-11-01）：`pixelAt()` / `expectPixel()` 让"画出来对不对"
+ *   也能离线断言。此前 `attach(new SurfaceProbe(), …)` 把表面当场丢掉、且从未
+ *   `resize()`（像素恒 0×0）⇒ 任何"这里是不是被遮罩盖住了"的问题只能去真机
+ *   开窗抓像素（`tools/probe-modal.py` 391 行大半在做这件事）。
+ *   ★ 能问树/命令的**仍然问树**：`expectPixel` 只服务于像素独有的事
+ *   （透明度 / 叠色 / AA 边缘 / 被裁掉的痕迹）。
+ *
+ * ★★ **只实现"被场景走通过"的动词**。`type()` 暂不提供：没有场景用到它，
+ *   先写就是"写了但没被走通过"的分支（§24.2 #25）。要加它，先加一个走通过
+ *   它的场景。
  *
  * @internal 测试宿主
  */
@@ -50,6 +58,14 @@ final class TestApp
     private ?Application $app = null;
     private float $width = 320.0;
     private float $height = 240.0;
+
+    /**
+     * 帧表面（**必须留着**：`pixelAt()` 从它读像素）。
+     *
+     * ★ 别像旧版那样 `attach(new SurfaceProbe(), …)` 当场丢掉 —— 丢掉之后
+     *   "这一帧画成什么样"就没有任何观察面了，只剩真机一条路。
+     */
+    private ?SurfaceProbe $surface = null;
 
     /** 帧时钟（毫秒）。每帧 +`$frameMs`，由测试控制 —— 不读系统钟（G3） */
     private float $clock = 0.0;
@@ -175,6 +191,64 @@ final class TestApp
             $this->fail($what, sprintf(
                 '实际 (%.4g, %.4g) %.4g×%.4g',
                 $ax, $ay, $size->width, $size->height
+            ));
+        }];
+
+        return $this;
+    }
+
+    /**
+     * 取客户区 `($x, $y)` 处的**像素色**（`null` = 还没跑过帧 / 坐标越界）。
+     *
+     * ★ 返回的是**合成后**的颜色（已过背景、遮罩、叠加），不是某个控件的源色。
+     *   想知道"遮罩盖上去这里多暗"就用它；想断言"按钮背景是蓝的"得先确认
+     *   没有别的东西压在上面。
+     * ★ 一次 `raster()` 回放整帧命令（480×360 ≈ 17 万像素），同一帧内多次调用
+     *   共用 `SurfaceProbe` 的缓存，连着取几个点不亏。
+     */
+    public function pixelAt(float $x, float $y): ?Color
+    {
+        return $this->pixelOf($x, $y);
+    }
+
+    /**
+     * 像素断言：`($x, $y)` 处颜色逐通道差 ≤ `$tolerance`。
+     *
+     * ★★ `$expected` 必须是**合成后的最终色**，不是源色。例：`Color(0,0,0,90)`
+     *   的半透明遮罩压在白底上，像素是 `(165,165,165)` —— 写 `(0,0,0)` 会红，
+     *   而且红得让人以为"遮罩根本没画"。第一次用就会踩（smoke 那条场景的注释
+     *   记了算式）。
+     * ★ 默认容差 0：纯色区（遮罩、面板底、边框内缩处）都是确定的。**压在字上
+     *   或 AA 边缘时才需要容差** —— 而那种位置本来就不该用单点断言。
+     */
+    public function expectPixel(float $x, float $y, Color $expected, int $tolerance = 0): self
+    {
+        $what = sprintf('像素 (%g, %g) = %s', $x, $y, self::colorText($expected));
+        $this->steps[] = ['expectPixel', function () use ($x, $y, $expected, $tolerance, $what): void {
+            $actual = $this->pixelOf($x, $y);
+            if ($actual === null) {
+                $this->fail($what, $this->surface === null || $this->surface->frames === 0
+                    ? '一帧都没跑过（先 pump()）'
+                    : sprintf('坐标 (%g, %g) 越出 %g×%g 客户区', $x, $y, $this->width, $this->height));
+
+                return;
+            }
+            $delta = max(
+                abs($actual->r - $expected->r),
+                abs($actual->g - $expected->g),
+                abs($actual->b - $expected->b),
+                abs($actual->a - $expected->a),
+            );
+            if ($delta <= $tolerance) {
+                $this->pass($what);
+
+                return;
+            }
+            $this->fail($what, sprintf(
+                '实际 %s（最大通道差 %d > 容差 %d）',
+                self::colorText($actual),
+                $delta,
+                $tolerance
             ));
         }];
 
@@ -312,6 +386,30 @@ final class TestApp
 
     // ── 内部 ────────────────────────────────────────────────────────────
 
+    /** 读最后一帧的像素（`null` = 没跑过帧 / 越界） */
+    private function pixelOf(float $x, float $y): ?Color
+    {
+        $canvas = $this->surface?->raster();
+        if ($canvas === null) {
+            return null;
+        }
+        // TestApp 的 dpr 恒 1 ⇒ 逻辑坐标就是物理坐标，上界直接用逻辑尺寸比
+        $px = (int) floor($x);
+        $py = (int) floor($y);
+        if ($px < 0 || $py < 0 || $px >= (int) round($this->width) || $py >= (int) round($this->height)) {
+            return null;
+        }
+
+        return $canvas->pixelAt($px, $py);
+    }
+
+    private static function colorText(Color $color): string
+    {
+        return $color->a === 255
+            ? sprintf('#%02X%02X%02X', $color->r, $color->g, $color->b)
+            : sprintf('#%02X%02X%02X/%d', $color->r, $color->g, $color->b, $color->a);
+    }
+
     /** 一次指针点击（down → up）。坐标是**逻辑客户区**坐标（`PointerEvent` 的口径）。 */
     private function pointerClick(float $x, float $y, string $what): void
     {
@@ -331,7 +429,11 @@ final class TestApp
         }
         $constraints = BoxConstraints::tight(new Size($this->width, $this->height));
         if (!$this->attached) {
-            $app->attach(new SurfaceProbe(), $constraints);
+            // ★ resize 必须在 attach 之前：attach 内部会直接跑首帧，
+            //   表面尺寸没设就画了 ⇒ 像素恒 0×0，`raster()` 一读就越界。
+            $this->surface = new SurfaceProbe();
+            $this->surface->resize((int) round($this->width), (int) round($this->height), 1.0);
+            $app->attach($this->surface, $constraints);
             $this->attached = true;
 
             return;

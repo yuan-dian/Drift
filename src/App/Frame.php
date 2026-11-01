@@ -95,6 +95,17 @@ final class Frame
      */
     private int $lastPaintEpoch = -1;
 
+    /**
+     * 上一帧画过的浮层集合签名（`spl_object_id` 序列）。
+     *
+     * ★ 浮层增删**不进主树**：它在 `OverlayHost` 的栈里，`structureVersion` /
+     *   `boxEpoch` / `paintEpoch` 三条信号一条都不动。少了这一条，"关掉模态后
+     *   主树没有别的变化"这一帧会被整段跳过 ⇒ **屏幕上永远残留遮罩**（静默：
+     *   不报错，只是画面对不上，而且一移动鼠标就被 hover 重绘掩盖掉，最难查）。
+     *   smoke 的"关模态后同一点回到白底"就是这条的守门人。
+     */
+    private ?array $lastOverlayIds = null;
+
     /** @internal 量具：paint 段**真跑**的帧数（对 `$paintSkipCount`） */
     private static int $paintRunCount = 0;
 
@@ -305,10 +316,22 @@ final class Frame
         //      回调，不经过任何树，`Application` 用 `focusRingTarget()` 比对得出；
         //      浮层"锚点换了但还没同步"（`panelsLagBehind()`）也走这一条。
         //   ④ 序号**初值 `-1`** 兜首帧（见 `$lastPaintEpoch` 的注）。
+        //   ⑤ **浮层集合变了** —— 浮层栈不属主树，①②③ 都看不见它的增删
+        //      （关模态 / 关菜单 / 关 Snackbar）。漏掉这条的后果是屏幕永久
+        //      残留上一层的画面，而一旦有 hover 或窗口重排就被掩盖 ⇒ 极难复现。
         // ★ 顺序要紧：`paintEpoch` 必须在 layout **之后**读（布局期 `setOffset()` 会
         //   推它；在之前读就等于把本帧自己的变化算成"下一帧的"）。
+        $overlayIds = [];
+        foreach ($overlays as $overlay) {
+            $overlayIds[] = \spl_object_id($overlay);
+        }
         $paintEpoch = RenderObject::paintEpoch();
-        if (!$layoutRan && $paintEpoch === $this->lastPaintEpoch && !$paintRequested) {
+        if (
+            !$layoutRan
+            && $paintEpoch === $this->lastPaintEpoch
+            && !$paintRequested
+            && $overlayIds === $this->lastOverlayIds
+        ) {
             self::$paintSkipCount++;
 
             return false;
@@ -359,6 +382,7 @@ final class Frame
         if ($painted) {
             self::$paintRunCount++;
             $this->lastPaintEpoch = $paintEpoch;
+            $this->lastOverlayIds = $overlayIds;
         }
 
         if ($prof) {

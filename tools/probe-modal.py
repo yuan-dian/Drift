@@ -17,6 +17,14 @@
   （§A.3.7：关不关归应用）⇒ 验证完只能 terminate。
 ★ PHPRC 必须指向 opcache.enable=0 的 ini（ASLR 下 opcache 拒绝启动），
   与 tools/probe-window.py 同规矩。
+
+★★ 与 smoke 的分工（2026-11-01 重新划线）：
+  ①③④ 已在 `tools/smoke.php` 的「模态：点按钮开 → 点 X 关 → …」场景有
+  **离线等价断言**（`TestApp::tap()` 找 X、`expectPixel()` 读遮罩合成色
+  `#A5A5A5`＝255−90、关后回 `#FFFFFF`）⇒ 这三条不必再开窗。
+  ②⑤ 仍只有本探针覆盖（面板尺寸 / `dismissible(false)` 时没有 X）。
+  ⇒ 保留本文件作**真机交叉验证**：它跑的是 AOT 后的 exe，验的是"解释器与
+    AOT 逐帧一致"，这是 smoke 在结构上做不到的那一半。日常回归不要去跑它。
 """
 
 import ctypes

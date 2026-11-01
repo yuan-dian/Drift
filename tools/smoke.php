@@ -5208,6 +5208,11 @@ $testAppScenarios = [
                 && $a->seen === ['modal.open'] && $a->isModalOpen()
         )
         ->expectBox('ModalHost', 0.0, 0.0, 480.0, 360.0)
+        // 像素独有判据（树/命令都答不了"遮罩真的画了吗"）：右下角在面板外、
+        // 也不在任何按钮上 ⇒ 开模态时必是遮罩色。`Color(0,0,0,90)` 压白底
+        // 的合成结果是 `255 - 90 = 165` 灰（alpha 直接等于"减掉多少亮度"，
+        // 所以这里正好是整数，没有取整误差）。
+        ->expectPixel(470.0, 350.0, new Color(165, 165, 165))
         ->tap('IconButton')
         ->pump(1)
         ->expect(
@@ -5215,6 +5220,9 @@ $testAppScenarios = [
             static fn(Application $a): bool => $a instanceof ModalApplication
                 && !$a->isModalOpen() && $a->modal() === null
         )
+        // 同一点回到白底 —— 这条才是 probe-modal 判据 ④「遮罩区亮度恢复」
+        // 的离线等价物：只断言"模态状态变了"查不出"遮罩层没跟着撤"。
+        ->expectPixel(470.0, 350.0, new Color(255, 255, 255))
         ->tap('#open')
         ->pump(1)
         ->tapAt(5.0, 5.0)
