@@ -87,3 +87,30 @@ def diff_count(a, b, width, x0, y0, x1, y1, step=2):
                 n += 1
 
     return n
+
+
+def near(color, ref, tol=26):
+    """两个 RGB 是否在容差内（抗锯齿边 / 主题微调不算变）。
+
+    ★ 原来 `probe-motion.py` 与 `probe-modal.py` 各写一份，默认容差一个 26 一个 14。
+      同一件事两个默认值，读的人无从判断哪个是"对"的 —— 这里统一成 26，需要更紧的
+      调用方显式传 `tol=`。
+    """
+    return all(abs(color[i] - ref[i]) <= tol for i in range(3))
+
+
+def nonwhite_ratio(data, width, height):
+    """非纯白像素占比（`0.0` = 一张白纸）。
+
+    ★ 判据用它时阈值要按**被验的应用**定：`hello` 是白底几行字（实测 0.2%），
+      `users` 那种带列表/顶条的 8.9% —— 拿 5% 当通用门槛会把正常的最小应用判成空白窗。
+    """
+    total = width * height
+    if total <= 0:
+        return 0.0
+    nonwhite = 0
+    for i in range(0, total * 4, 4):
+        if (data[i + 2], data[i + 1], data[i]) != (255, 255, 255):
+            nonwhite += 1
+
+    return nonwhite / float(total)
