@@ -39,6 +39,27 @@ abstract class Element
      */
     private static int $structureVersion = 0;
 
+    /**
+     * **内容版本号**：结构变了，或任一节点的 Widget 换过（= 声明可能变了）。
+     *
+     * ★ 与 `$structureVersion` 的分工（2026-11-01 拆出来的理由）：
+     *   · `$structureVersion` = **只有**增删/重排 —— 它是 `Frame::needsSettle()`
+     *     的判据，把它做成超集会让"每帧都变"（`update()` 在 settle 内部发生），
+     *     即自激。
+     *   · 本版本号 = 结构 ∪ 声明，供**"从树里收一张全表"**的消费者用：
+     *     焦点链（`FocusManager::collect()`）与语义树（`pumpSemantics()`）。
+     *     这两件事都只在"树的内容可能变了"时才需要重做，而"`disabled()` 变了"
+     *     同样要重做 —— 但它不增删节点 ⇒ `$structureVersion` 看不见。
+     *
+     * ★ **已知未收口**：`pumpSemantics()` 目前仍读 `$structureVersion`（它的
+     *   "增量 / 合并 / 预算"是一整套机制，换判据要连带重排那些档位，单独一轮做）。
+     *   后果是**标签变了但结构没变**时读屏仍读旧值。焦点链已换成本版本号。
+     *
+     * ★ 唯一写点两处（都是"Widget 声明落地"的地方）：`update()` 与
+     *   `bumpStructure()`。不散落在各处，所以不可能漏。
+     */
+    private static int $contentVersion = 0;
+
     protected ?Element $parent = null;
     protected BuildContext $context;
     protected Widget $widget;
@@ -85,12 +106,22 @@ abstract class Element
     public static function bumpStructure(): void
     {
         ++self::$structureVersion;
+        ++self::$contentVersion;
     }
 
     /** @internal 语义推送用它判"结构变没变"（`07` §6.2） */
     public static function structureVersion(): int
     {
         return self::$structureVersion;
+    }
+
+    /**
+     * @internal 内容版本号：结构 ∪ 声明。供"收全表"的消费者做门控
+     * （焦点链 / 语义树），见 `$contentVersion` 的注。
+     */
+    public static function contentVersion(): int
+    {
+        return self::$contentVersion;
     }
 
     /**
@@ -359,6 +390,7 @@ abstract class Element
     {
         $this->widget = $newWidget;
         $this->widget->seal();
+        ++self::$contentVersion; // ★ 声明可能变了（`focusOrder` / `disabled` / 标签）
         $this->syncBox(); // §13.2：新描述 ⇒ 新盒
         $this->didUpdateWidget($newWidget);
         $this->rebuild();

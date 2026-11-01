@@ -49,6 +49,16 @@ final class FocusManager
     private ?Element $focused = null;
 
     /**
+     * 上次 `collect()` 时的 `Element::contentVersion()`（`null` = 还没收过）。
+     *
+     * ★ 与 `$collectedRoots` 一起构成"要不要重收"的签名，见 `collect()` 的注。
+     */
+    private ?int $collectedVersion = null;
+
+    /** @var list<int> 上次收的根签名（陷阱开关 + `spl_object_id` 序） */
+    private array $collectedRoots = [];
+
+    /**
      * 本次 `collect()` 是否处于**焦点陷阱**（arch-v2 `01` §6.4）。
      *
      * ★ 陷阱只改一件事：Tab 到边界时**在链内循环**（不环绕 = 用户在对话框里
@@ -135,11 +145,36 @@ final class FocusManager
      */
     public function collect(array $roots, array $scope = []): void
     {
+        // ★★ **门控：树的内容没变就不用重收**（2026-11-01）。
+        //   此前每帧无条件全树扫一遍，而 `Frame` 的 layout / paint 都有门控 ⇒
+        //   稳态帧里唯一的大头就是这里（实测 2000 节点 1.6ms/帧，
+        //   `tools/_tax-probe.php`；一帧的固定税里它是最大单项）。
+        //
+        //   ★ 判据用 `Element::contentVersion()` 而不是 `structureVersion()`：
+        //     后者看不见"`disabled()` 改了但节点没增删"，而那张表必须跟着变。
+        //   ★ 根集合也要比：浮层开合不进主树，`contentVersion` 看不见它
+        //     （与 `Frame` 的 paint 门控第 ⑤ 条同一个坑，已踩过一次）。
+        //   ★ 用 `spl_object_id` 比根是安全的：根被卸载必走 `unmount()` ⇒
+        //     `bumpStructure()` ⇒ 版本变 ⇒ 根本轮不到 id 复用这件事。
+        $effective = $scope !== [] ? $scope : $roots;
+        // 签名 = 陷阱开关 + 根集合（陷阱开关必须进签名：`roots` 相同而
+        // `scope` 从空变非空时，收的面完全不同）
+        $rootIds = [$scope !== [] ? 1 : 0];
+        foreach ($effective as $root) {
+            $rootIds[] = \spl_object_id($root);
+        }
+        $version = Element::contentVersion();
+        if ($version === $this->collectedVersion && $rootIds === $this->collectedRoots) {
+            return;
+        }
+        $this->collectedVersion = $version;
+        $this->collectedRoots = $rootIds;
+
         $this->order = [];
         $this->byId = [];
         $this->trapped = $scope !== [];
 
-        foreach ($this->trapped ? $scope : $roots as $root) {
+        foreach ($effective as $root) {
             $this->walk($root);
         }
 
@@ -472,7 +507,8 @@ final class FocusManager
      */
     private function walk(Element $element, bool $skipped = false, bool $disabled = false): void
     {
-        $node = $element->widget()->focusNode();
+        $widget = $element->widget();
+        $node = $widget->focusNode();
 
         // `skipFocus()` 是**子树级**（§A.3.4：AppBar 工具组整体不进 Tab 序）
         $skip = $skipped || ($node !== null && $node->skip);
@@ -481,9 +517,9 @@ final class FocusManager
         //   `skipFocus()` 只挡 Tab 序、保留"点了能拿焦点"；禁用连后者一起取消。
         //   所以这里不并入 `$skip`，而是单独一个开关（并入的话"禁用但可点"就成了
         //   `skipFocus()` 的隐式副作用，两者再也分不开）。
-        $off = $disabled || $element->widget()->mods()->disabled();
+        $off = $disabled || $widget->mods()->disabled();
 
-        if (!$off && $element->widget()->isFocusable()) {
+        if (!$off && $widget->isFocusable()) {
             // ★★ `byId` 与 `order` 是**两件事**（2026-10-29 拆分）：
             //   · `byId` = "**可聚焦**元素表" —— `focusHit()` 拿它回答"点到的这个东西
             //     能不能拿焦点"，答案只能是"它自己声明了可聚焦"；
@@ -503,6 +539,29 @@ final class FocusManager
             }
         }
 
+
+        // ★★ **只在真的有人声明 `focusOrder` 时才排序**（2026-11-01）。
+        //   此前每个容器都收集一遍子元素再 `usort`，而比较器里是两次
+        //   `widget()->focusNode()` 链式调用 ⇒ 全树每帧一次。实测（`tools/_tax-probe.php`，
+        //   2000 节点）`focus->collect()` 独占稳态帧 2.46ms 的**绝大多数**，而
+        //   稳态帧里 layout / paint 全被门控跳过 ⇒ 这笔税每帧都付。
+        //   ★ 没有 `order` 时比较器恒返回 0、顺序不变 ⇒ **跳过是等价变换**，
+        //     不是"改语义换性能"。有 order 的容器仍然走原路径。
+        $anyOrder = false;
+        $element->visitChildren(static function (Element $child) use (&$anyOrder): void {
+            if ($child->widget()->focusNode()?->order !== null) {
+                $anyOrder = true;
+            }
+        });
+
+        if (!$anyOrder) {
+            // 无需排序 ⇒ 直接按文档序递归（省掉 `$children` 数组与一次 usort）
+            $element->visitChildren(function (Element $child) use ($skip, $off): void {
+                $this->walk($child, $skip, $off);
+            });
+
+            return;
+        }
 
         /** @var list<Element> $children */
         $children = [];
