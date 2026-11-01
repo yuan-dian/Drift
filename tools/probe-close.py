@@ -16,29 +16,19 @@
   ③ 同意之后进程**自己退出**（`WM_DESTROY` → 活窗口表空 → `PostQuitMessage`）。
   任何一段断了，现象都是"点了 X 没反应"或"关了但进程吊着"，**都不报错**。
 
-★ 与 `probe-window.py` 的分工：那个验"建起来 / 画对 / DPI"，这个只验"关"。
-  两者的启动环境（`PHPRC` 指向 `opcache.enable=0` 的临时 ini）必须一致 ——
-  否则 exe 在 `main()` 之前就挂（`Opcode handlers are unusable due to ASLR`）。
+★ `WM_CLOSE` 是本仓**唯一允许**用 `PostMessageW` 的"输入"：关窗本来就是消息语义，
+  不依赖真实光标（对比鼠标/滚轮 —— 那两种必须走 `probe_win` 的真实输入）。
+  所以本探针 `interactive=False`，在桌面锁定时也能跑。
 
 ★ 判据是**四态全对**才 OK：`hwnd != 0`、`IsWindow` 在等待前后如预期、`proc.poll()`
   如预期。只报"发了消息"没有意义 —— 发一条没人处理的消息也是"发了"。
 """
 
-import ctypes
-import os
-import subprocess
 import sys
-import tempfile
 import time
-from ctypes import wintypes
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-user32 = ctypes.WinDLL("user32", use_last_error=True)
-user32.IsWindow.argtypes = [wintypes.HWND]
-user32.IsWindow.restype = wintypes.BOOL
-
-WM_CLOSE = 0x0010
+from probe_check import check, need, run
+from probe_win import WM_CLOSE, is_window, launch, user32, wait_window
 
 # 关窗到窗口消失的观察窗（**拒绝关闭**分支用固定值：那时"还活着"是期望结果，
 # 等久一点没有信息量）。同意关闭分支改用**轮询 + 上限**（`EXIT_DEADLINE_S`）：
@@ -60,63 +50,47 @@ def main() -> int:
         print(f"✗ 第三个参数只能是 exit / stay（给的是 {expect!r}）")
         return 2
 
-    exe = os.path.join(ROOT, f"{app}.exe")
-    if not os.path.isfile(exe):
-        print(f"✗ 找不到 {exe} —— 先跑 `php tools/drift-build.php {app}`")
-        return 2
+    proc = launch(f"{app}.exe")
+    try:
+        hwnd = need(wait_window(title, proc), f"没等到窗口「{title}」")
+        print(f"hwnd = {hwnd}")
 
-    ini_dir = tempfile.mkdtemp(prefix="drift-close-")
-    ini = os.path.join(ini_dir, "php.ini")
-    with open(ini, "w", encoding="ascii") as fh:
-        fh.write("opcache.enable=0\n")
+        check("关之前：窗口在 + 进程在", is_window(hwnd) and proc.poll() is None,
+              f"window={is_window(hwnd)} process={proc.poll() is None}")
 
-    env = dict(os.environ)
-    env["PHPRC"] = ini
+        posted = user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
+        check("WM_CLOSE 真投进去了（0 = 窗口线程没有消息队列）", bool(posted), f"ret={posted}")
 
-    proc = subprocess.Popen([exe], cwd=ROOT, env=env)
-    time.sleep(2.5)
+        started = time.time()
+        if expect == "exit":
+            # 轮询而不是定长 sleep：慢一帧不算失败，真挂住也能在 3s 内报出来
+            while time.time() - started < EXIT_DEADLINE_S:
+                if not is_window(hwnd) and proc.poll() is not None:
+                    break
+                time.sleep(0.05)
+        else:
+            time.sleep(SETTLE_S)
+        waited = time.time() - started
 
-    hwnd = user32.FindWindowW(None, title)
-    print(f"hwnd = {hwnd}  (0 = 没找到窗口；标题应为 {title!r})")
-    if hwnd == 0:
-        proc.terminate()
-        print("FAIL")
-        return 1
+        window_alive = is_window(hwnd)
+        process_alive = proc.poll() is None
+        print(f"关之后（{waited:.2f}s）：window_alive={window_alive} process_alive={process_alive}")
 
-    print(f"关之前：window_alive={bool(user32.IsWindow(hwnd))} process_alive={proc.poll() is None}")
+        if expect == "exit":
+            check("同意关闭 ⇒ 窗口消失 + 进程自己退出", not window_alive and not process_alive,
+                  f"window={window_alive} process={process_alive}")
+        else:
+            check("拒绝关闭 ⇒ 窗口还在 + 进程还在", window_alive and process_alive,
+                  f"window={window_alive} process={process_alive}")
 
-    posted = user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
-    print(f"PostMessageW(WM_CLOSE) = {posted}  (0 = 投递失败，通常是窗口线程没有消息队列)")
+        if process_alive:
+            proc.terminate()
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
 
-    started = time.time()
-    if expect == "exit":
-        # 轮询而不是定长 sleep：慢一帧不算失败，真挂住也能在 3s 内报出来
-        while time.time() - started < EXIT_DEADLINE_S:
-            if not user32.IsWindow(hwnd) and proc.poll() is not None:
-                break
-            time.sleep(0.05)
-    else:
-        time.sleep(SETTLE_S)
-    waited = time.time() - started
-
-    window_alive = bool(user32.IsWindow(hwnd))
-    process_alive = proc.poll() is None
-    print(f"关之后（{waited:.2f}s）：window_alive={window_alive} process_alive={process_alive}")
-
-    if expect == "exit":
-        ok = bool(posted) and not window_alive and not process_alive
-        why = "期望：窗口消失 + 进程自己退出"
-    else:
-        ok = bool(posted) and window_alive and process_alive
-        why = "期望：窗口还在 + 进程还在（应用拒绝了关闭）"
-
-    if process_alive:
-        proc.terminate()
-
-    print(why)
-    print("OK" if ok else "FAIL")
-    return 0 if ok else 1
+    return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(run(main))

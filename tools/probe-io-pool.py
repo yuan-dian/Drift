@@ -28,11 +28,13 @@ import ctypes
 import os
 import subprocess
 import sys
-import tempfile
 import time
 from ctypes import wintypes
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+import probe_win as win
+from probe_check import check, run
+
+ROOT = win.ROOT
 PROBE = os.path.join(ROOT, "probes", "io_pool")
 # ★ exe 落在 **仓库根**（tpc 的输出目录是 cwd，`drift-build` 用仓库根当 cwd；
 #   `name:` 只决定文件名）—— 与四个 app 同一条规则，不是探针特例。
@@ -106,9 +108,16 @@ def kv(lines: list[str]) -> dict[str, str]:
 
 
 def build() -> bool:
+    """`--build`：调用 `tools/drift-build.php` 重建产物。
+
+    ★ 原来这里用 `sys.executable`（= python.exe）去跑一个 `.php` —— 必然失败，
+      只是 `--build` 平时没人用所以没暴露。改成走 PATH 上的 `php`
+      （或 `DRIFT_PHP` 覆盖，方便换 PHP 版本）。
+    """
     print("[probe] 构建 probes/io_pool ……")
+    php = os.environ.get("DRIFT_PHP", "php")
     result = subprocess.run(
-        [sys.executable, os.path.join(ROOT, "tools", "drift-build.php"), "probes/io_pool"],
+        [php, os.path.join(ROOT, "tools", "drift-build.php"), "probes/io_pool"],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -132,21 +141,11 @@ def main() -> int:
     if os.path.isfile(LOG):
         os.remove(LOG)
 
-    # ★ PHPRC 指向一个 `opcache.enable=0` 的 ini：TypePHP 产物会拉起 opcache，
-    #   而它要按当前 ASLR 布局校验 opcode handlers，校验不过就拒绝启动
-    #   （"Opcode handlers are unusable due to ASLR"，每次开机重新随机 ⇒ 间歇性）。
-    #   与 `tools/probe-window.py` 同一手法。
-    ini_dir = tempfile.mkdtemp(prefix="drift-io-pool-")
-    ini = os.path.join(ini_dir, "php.ini")
-    with open(ini, "w", encoding="ascii") as fh:
-        fh.write("opcache.enable=0\n")
-
-    env = dict(os.environ)
-    env["PHPRC"] = ini
-
-    proc = subprocess.Popen([EXE], cwd=PROBE, env=env)
-
-    checks: list[tuple[str, bool, str]] = []
+    # ★ 启动环境（`PHPRC` ⇒ `opcache.enable=0`）由 `probe_win.launch` 统一给：
+    #   TypePHP 产物会拉起 opcache，而它要按当前 ASLR 布局校验 opcode handlers，
+    #   校验不过就拒绝启动（"Opcode handlers are unusable due to ASLR"，
+    #   每次开机重新随机 ⇒ 间歇性）。这段原来 9 个探针各写一份。
+    proc = win.launch(EXE, cwd=PROBE)
 
     # ── 等 idle-begin（或提前结束）────────────────────────────────────────
     started = time.time()
@@ -188,9 +187,6 @@ def main() -> int:
         print("  | " + line)
     print()
 
-    def check(name: str, ok: bool, detail: str) -> None:
-        checks.append((name, ok, detail))
-        print(("  ok    " if ok else "  FAIL  ") + name + ("  —— " + detail if detail else ""))
 
     # ① 唤醒延迟
     not_woken = int(data.get("wake.not_woken", "-1"))
@@ -255,15 +251,13 @@ def main() -> int:
     verdict = data.get("VERDICT", "MISSING")
     check("探针自判（VERDICT=PASS）", verdict == "PASS", f"VERDICT={verdict}")
 
-    failed = [name for name, ok, _ in checks if not ok]
-    print()
-    if failed or hung:
-        print(f"FAIL  {len(failed)} 条判据未过" + ("；进程挂死被外部超时杀掉" if hung else ""))
-        return 1
+    # 挂死是**单独一类**结论（进程根本没跑完，判据读到的数是残缺的）⇒ 记一条 FAIL，
+    # 让 `run()` 的"失败优先"把它带到退出码 1。
+    check("进程自己跑完（没被超时看门狗杀掉）", not hung,
+          f"exit={exit_code} 空闲 CPU {idle_cpu:.3f}%" if idle_cpu is not None else f"exit={exit_code}")
 
-    print(f"OK    全部通过（{len(checks)} 条，空闲 CPU {idle_cpu:.3f}%）")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run(main))

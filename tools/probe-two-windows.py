@@ -28,18 +28,15 @@
   与 WScript COM 都被安全策略拦，`FindWindowW` / `BitBlt` 只能靠 ctypes 直调。
 """
 
-import ctypes
 import os
-import subprocess
 import sys
-import tempfile
 import time
-from ctypes import wintypes
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+import probe_win as win
+from probe_check import check, run
+from probe_pixels import nonwhite_ratio
 
-user32 = ctypes.WinDLL("user32", use_last_error=True)
-gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+ROOT = win.ROOT
 
 # ── 被验的应用（第二个参数选，默认 hello）─────────────────────────────────
 # ★ 一份探针验两个应用，而不是抄一份：七条判据与被验应用无关，只有
@@ -84,63 +81,7 @@ LOGICAL = {TITLE_MAIN: (PROFILE["main"][1], PROFILE["main"][2]),
 #   （小于最小尺寸会被 `WM_GETMINMAXINFO` 顶回去，那样判据会红在一次正确行为的副作用上）
 RESTORE_MAIN, RESTORE_SECOND = PROFILE["restore"]
 
-WM_CLOSE = 0x0010
-
-
-class BITMAPINFOHEADER(ctypes.Structure):
-    _fields_ = [
-        ("biSize", wintypes.DWORD), ("biWidth", wintypes.LONG),
-        ("biHeight", wintypes.LONG), ("biPlanes", wintypes.WORD),
-        ("biBitCount", wintypes.WORD), ("biCompression", wintypes.DWORD),
-        ("biSizeImage", wintypes.DWORD), ("biXPelsPerMeter", wintypes.LONG),
-        ("biYPelsPerMeter", wintypes.LONG), ("biClrUsed", wintypes.DWORD),
-        ("biClrImportant", wintypes.DWORD),
-    ]
-
-
-def client_rect(hwnd) -> tuple[int, int]:
-    rect = wintypes.RECT()
-    user32.GetClientRect(hwnd, ctypes.byref(rect))
-    return rect.right - rect.left, rect.bottom - rect.top
-
-
-def nonwhite_ratio(hwnd, w: int, h: int) -> float:
-    """客户区非白像素占比（0.0 = 全白 / 没画东西）。"""
-    hdc = user32.GetDC(hwnd)
-    mem = gdi32.CreateCompatibleDC(hdc)
-    bmp = gdi32.CreateCompatibleBitmap(hdc, w, h)
-    gdi32.SelectObject(mem, bmp)
-    gdi32.BitBlt(mem, 0, 0, w, h, hdc, 0, 0, 0x00CC0020)
-
-    bi = BITMAPINFOHEADER()
-    bi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-    bi.biWidth = w
-    bi.biHeight = -h            # 自顶向下
-    bi.biPlanes = 1
-    bi.biBitCount = 32
-    buf = ctypes.create_string_buffer(w * h * 4)
-    gdi32.GetDIBits(mem, bmp, 0, h, buf, ctypes.byref(bi), 0)
-
-    data = buf.raw
-    nonwhite = 0
-    for i in range(0, w * h * 4, 4):
-        if (data[i + 2], data[i + 1], data[i]) != (255, 255, 255):
-            nonwhite += 1
-
-    gdi32.DeleteObject(bmp)
-    gdi32.DeleteDC(mem)
-    user32.ReleaseDC(hwnd, hdc)
-
-    return nonwhite / float(w * h)
-
-
-def dpr_of(hwnd) -> float:
-    try:
-        user32.GetDpiForWindow.restype = wintypes.UINT
-        user32.GetDpiForWindow.argtypes = [wintypes.HWND]
-        return user32.GetDpiForWindow(hwnd) / 96.0
-    except Exception:  # noqa: BLE001 —— 查不到按 1.0 算，② 的容差会兜住
-        return 1.0
+WM_CLOSE = win.WM_CLOSE
 
 
 def read_state(path: str) -> dict[str, str]:
@@ -161,46 +102,31 @@ def read_state(path: str) -> dict[str, str]:
 
 
 def main() -> int:
-    exe = os.path.join(ROOT, PROFILE["exe"])
-    if not os.path.isfile(exe):
-        print(f"✗ 找不到 {exe} —— 先跑 `php tools/drift-build.php {PROFILE['exe'][:-4]}`")
+    app = PROFILE["exe"][:-4]
+    if not os.path.isfile(os.path.join(ROOT, PROFILE["exe"])):
+        print(f"✗ 找不到 {PROFILE['exe']} —— 先跑 `php tools/drift-build.php {app}`")
         return 2
-
-    ini_dir = tempfile.mkdtemp(prefix="drift-run-")
-    ini = os.path.join(ini_dir, "php.ini")
-    with open(ini, "w", encoding="ascii") as fh:
-        fh.write("opcache.enable=0\n")   # ASLR 下 opcache 会让 exe 在 main() 前就挂
-
-    env = dict(os.environ)
-    env["PHPRC"] = ini
-    env[PROFILE["env"]] = "1"
 
     # ★ 状态文件是**用户的真实配置**（`%APPDATA%\Drift`）：探针要反复改它，
     #   必须先备份、结束时原样还回去。不还回去等于"跑一次测试就改掉用户的窗口位置"。
-    state_path = os.path.join(
-        os.environ.get("APPDATA", ""), "Drift", PROFILE["exe"][:-4] + ".window"
-    )
-    backup: bytes | None = None
-    if os.path.isfile(state_path):
-        with open(state_path, "rb") as fh:
-            backup = fh.read()
-        os.remove(state_path)
-
-    fails: list[str] = []
-
-    def check(label: str, ok: bool, detail: str) -> None:
-        print(f"  {'ok  ' if ok else 'FAIL'}  {label}  —— {detail}")
-        if not ok:
-            fails.append(label)
+    stash = win.StateStash(app)
+    stash.take()
+    state_path = stash.path
 
     def launch(settle: float | None = None):
-        proc = subprocess.Popen([exe], cwd=ROOT, env=env)
-        time.sleep(PROFILE["settle"] if settle is None else settle)
-        return (
-            proc,
-            user32.FindWindowW(None, TITLE_MAIN),
-            user32.FindWindowW(None, TITLE_SECOND),
-        )
+        """起一轮：等**两个**窗口都出来。`wait_window` 各自带超时与死因。"""
+        proc = win.launch(PROFILE["exe"], env_extra={PROFILE["env"]: "1"})
+        try:
+            main_hwnd = win.wait_window(TITLE_MAIN, proc, PROFILE["settle"])
+            second_hwnd = win.wait_window(TITLE_SECOND, proc, PROFILE["settle"])
+        except win.NotMeasured as exc:
+            proc.terminate()
+            print(f"✗ {exc}")
+            return proc, 0, 0
+        if settle is not None:
+            time.sleep(settle)
+
+        return proc, main_hwnd, second_hwnd
 
     try:
         # ── 第一轮：多窗口基本盘 + 关窗语义 + 状态分组 ──────────────────────
@@ -212,8 +138,8 @@ def main() -> int:
 
         if main_hwnd and second_hwnd:
             for hwnd, title in ((main_hwnd, TITLE_MAIN), (second_hwnd, TITLE_SECOND)):
-                w, h = client_rect(hwnd)
-                dpr = dpr_of(hwnd)
+                w, h = win.client_size(hwnd)
+                dpr = win.dpr_of(hwnd)
                 want_w, want_h = LOGICAL[title]
                 # 允许 2px 误差：客户区尺寸由系统按 dpr 取整，不是我们算的
                 ok_size = abs(w - want_w * dpr) <= 2 and abs(h - want_h * dpr) <= 2
@@ -223,19 +149,19 @@ def main() -> int:
                 # ★ 阈值只区分"画了"与"全白"，不是"内容够多"：hello 是白底几行字
                 #   （实测 ~0.2%），`users` 那种带列表/顶条的才 40%。用法错了就会把
                 #   一个正常的最小应用判成空白窗 —— 判据要按**被验的是哪个应用**定。
-                ratio = nonwhite_ratio(hwnd, w, h)
+                ratio = nonwhite_ratio(win.grab(hwnd)[2], w, h)
                 check(f"③ {title} 有内容（不是空白窗口）", ratio > 0.0005, f"非白 {ratio * 100:.2f}%")
 
             # ④ 关第二个窗 ⇒ 它消失、第一个窗与进程都还在
-            user32.PostMessageW(second_hwnd, WM_CLOSE, 0, 0)
+            win.user32.PostMessageW(second_hwnd, WM_CLOSE, 0, 0)
             time.sleep(1.5)
-            check("④ 关掉第二窗 ⇒ 它消失了", not user32.IsWindow(second_hwnd), "IsWindow(second) = 0")
-            check("④ 关掉第二窗 ⇒ 第一个窗还在", bool(user32.IsWindow(main_hwnd)), "IsWindow(main) = 1")
+            check("④ 关掉第二窗 ⇒ 它消失了", not win.is_window(second_hwnd), "IsWindow(second) = 0")
+            check("④ 关掉第二窗 ⇒ 第一个窗还在", bool(win.is_window(main_hwnd)), "IsWindow(main) = 1")
             check("④ 关掉第二窗 ⇒ 进程还在（没有被 quit 带走）", proc.poll() is None,
                   f"poll={proc.poll()}")
 
             # ⑤ 再关第一个窗 ⇒ 进程退出
-            user32.PostMessageW(main_hwnd, WM_CLOSE, 0, 0)
+            win.user32.PostMessageW(main_hwnd, WM_CLOSE, 0, 0)
             time.sleep(1.5)
             code = proc.poll()
             # ★ 判据是**退出码 0**，不是"进程没了"（2026-10-30 修好后收紧）。
@@ -290,15 +216,15 @@ def main() -> int:
                 (main2, TITLE_MAIN, RESTORE_MAIN),
                 (second2, TITLE_SECOND, RESTORE_SECOND),
             ):
-                w, h = client_rect(hwnd)
-                dpr = dpr_of(hwnd)
+                w, h = win.client_size(hwnd)
+                dpr = win.dpr_of(hwnd)
                 ok = abs(w - want[0] * dpr) <= 2 and abs(h - want[1] * dpr) <= 2
                 check(f"⑦ {title} 按状态文件还原到 {want[0]}×{want[1]}", ok,
                       f"{w}x{h}（期望 {want[0]}x{want[1]} × {dpr}）")
 
-            user32.PostMessageW(second2, WM_CLOSE, 0, 0)
+            win.user32.PostMessageW(second2, WM_CLOSE, 0, 0)
             time.sleep(0.8)
-            user32.PostMessageW(main2, WM_CLOSE, 0, 0)
+            win.user32.PostMessageW(main2, WM_CLOSE, 0, 0)
             time.sleep(1.5)
         else:
             check("⑦ 轮 2 两个窗口都在", False, f"main={main2} second={second2}")
@@ -307,22 +233,10 @@ def main() -> int:
             proc2.terminate()
     finally:
         # 还原用户的真实配置（探针改的是 `%APPDATA%\Drift\hello.window`）
-        if backup is None:
-            if os.path.isfile(state_path):
-                os.remove(state_path)
-        else:
-            os.makedirs(os.path.dirname(state_path), exist_ok=True)
-            with open(state_path, "wb") as fh:
-                fh.write(backup)
+        stash.restore()
 
-    print()
-    if fails:
-        print(f"✗ {len(fails)} 条失败：{' / '.join(fails)}")
-        return 1
-
-    print("✓ 全部通过（两窗各画各的、关一个不影响另一个、状态各存各的、能各自还原）")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run(main))

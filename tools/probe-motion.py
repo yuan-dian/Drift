@@ -7,159 +7,22 @@
 判据设计的两条纪律（沿用 `probe-modal.py`）：
 - 只判"**某个位置的内容变了**"，不判"这类像素没有了"；
 - 阴影必须在**盒外**数像素：盒内数到的是状态色，两者在盒内无法区分。
+
+★ 输入必须是真的：`PostMessage(WM_MOUSEMOVE)` 只让应用"知道"指针在哪，而
+  `TrackMouseEvent(TME_LEAVE)` 依据的是**真实光标位置** ⇒ 应用照常把悬停态推完、
+  动画也跑满，但画面不变，探针报"一像素不动"而产品是好的（2026-11-01 两次假红）。
+  现在这条通道由 `tools/probe_win.py` 独占，本文件拿不到假的那条。
 """
 
-import ctypes
-import os
-import subprocess
 import sys
-import tempfile
 import time
-from ctypes import wintypes
 
-from probe_pixels import column_luma, find_scrollbar
-
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-user32 = ctypes.WinDLL("user32", use_last_error=True)
-gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
-
-WM_MOUSEMOVE = 0x0200
-WM_LBUTTONDOWN = 0x0201
-WM_LBUTTONUP = 0x0202
-WM_MOUSEWHEEL = 0x020A
+from probe_check import check, run
+from probe_pixels import column_luma, find_scrollbar, near, px
+from probe_win import App
 
 # showcase 的 ThemeScope 把 Accent 覆盖成墨绿（LayUI 风）—— Primary 实心按钮就是这个色
 PRIMARY = (0x00, 0x96, 0x88)
-
-FAILS = []
-
-
-def check(name, ok, detail=""):
-    print(f"  {'ok  ' if ok else 'FAIL'}  {name}" + (f"  —— {detail}" if detail else ""))
-    if not ok:
-        FAILS.append(name)
-
-
-class BITMAPINFOHEADER(ctypes.Structure):
-    _fields_ = [
-        ("biSize", wintypes.DWORD), ("biWidth", wintypes.LONG), ("biHeight", wintypes.LONG),
-        ("biPlanes", wintypes.WORD), ("biBitCount", wintypes.WORD), ("biCompression", wintypes.DWORD),
-        ("biSizeImage", wintypes.DWORD), ("biXPelsPerMeter", wintypes.LONG), ("biYPelsPerMeter", wintypes.LONG),
-        ("biClrUsed", wintypes.DWORD), ("biClrImportant", wintypes.DWORD),
-    ]
-
-
-def grab(hwnd):
-    """客户区截图（top-down DIB，32bpp）。"""
-    rect = wintypes.RECT()
-    user32.GetClientRect(hwnd, ctypes.byref(rect))
-    w, h = rect.right - rect.left, rect.bottom - rect.top
-    hdc = user32.GetDC(hwnd)
-    mem = gdi32.CreateCompatibleDC(hdc)
-    bmp = gdi32.CreateCompatibleBitmap(hdc, w, h)
-    gdi32.SelectObject(mem, bmp)
-    gdi32.BitBlt(mem, 0, 0, w, h, hdc, 0, 0, 0x00CC0020)
-    bi = BITMAPINFOHEADER()
-    bi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-    bi.biWidth, bi.biHeight = w, -h
-    bi.biPlanes, bi.biBitCount = 1, 32
-    buf = ctypes.create_string_buffer(w * h * 4)
-    gdi32.GetDIBits(mem, bmp, 0, h, buf, ctypes.byref(bi), 0)
-    gdi32.DeleteObject(bmp)
-    gdi32.DeleteDC(mem)
-    user32.ReleaseDC(hwnd, hdc)
-    return w, h, buf.raw
-
-
-def px(data, w, x, y):
-    i = (y * w + x) * 4
-    return data[i + 2], data[i + 1], data[i]
-
-
-def near(c, ref, tol):
-    return all(abs(c[i] - ref[i]) <= tol for i in range(3))
-
-
-def post(hwnd, msg, wparam, lparam):
-    user32.PostMessageW(hwnd, msg, wparam, lparam)
-
-
-def focus_window(hwnd):
-    """把窗口顶到前台，**并确认真的到了**。
-
-    ★★ 真实点击只送到前台窗口。`SetForegroundWindow` 对"非前台进程"可能被系统
-    拒绝（返回 0 也不报错）⇒ 后续 `mouse_event` 落在**别的窗口**上 ⇒ 导航没切页，
-    而探针照旧去截当前页面 ⇒ 报"一个像素都不变"（2026-11-01 第二次假红：
-    `blocks` 从上一次的 3 个变成 2 个，目标 bbox 整个换了地方）。
-    """
-    user32.ShowWindow(hwnd, 9)   # SW_RESTORE
-
-    # ★ `SetForegroundWindow` 对"非前台进程"会被系统拒绝且**不报错**。解锁办法是
-    #   把自己的输入队列临时挂到前台窗口的线程上（`AttachThreadInput`），切完再摘。
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    fg = user32.GetForegroundWindow()
-    if fg == hwnd:
-        return True
-
-    cur = kernel32.GetCurrentThreadId()
-    target = user32.GetWindowThreadProcessId(fg, None) if fg else 0
-    attached = False
-    if target and target != cur:
-        attached = bool(user32.AttachThreadInput(cur, target, True))
-
-    try:
-        for _ in range(40):
-            user32.BringWindowToTop(hwnd)
-            user32.SetForegroundWindow(hwnd)
-            if user32.GetForegroundWindow() == hwnd:
-                return True
-            time.sleep(0.05)
-    finally:
-        if attached:
-            user32.AttachThreadInput(cur, target, False)
-
-    return False
-
-
-def to_screen(hwnd, x, y):
-    """客户区坐标 ⇒ 真实光标位置。"""
-    pt = wintypes.POINT(x, y)
-    user32.ClientToScreen(hwnd, ctypes.byref(pt))
-    user32.SetCursorPos(pt.x, pt.y)
-
-
-def click(hwnd, x, y):
-    """真实点击（理由同 `move()`）。"""
-    to_screen(hwnd, x, y)
-    time.sleep(0.05)
-    user32.mouse_event(0x0002, 0, 0, 0, 0)   # LEFTDOWN
-    time.sleep(0.05)
-    user32.mouse_event(0x0004, 0, 0, 0, 0)   # LEFTUP
-
-
-def move(hwnd, x, y):
-    """**真实**移动系统光标（不是伪造 `WM_MOUSEMOVE`）。
-
-    ★★ 为什么必须是真的（2026-11-01 定位）：`PostMessage(WM_MOUSEMOVE)` 只让应用
-    **知道**指针在哪，而 `TrackMouseEvent(TME_LEAVE)` 依据的是**真实光标位置**。
-    两条信息不一致时，应用照常把悬停态推到盒上、`tickAnimations()` 也把进度从
-    0 推到 1（trace 里数到 43 帧），但 `paint` 记录里从来没有那个盒 —— 于是本
-    探针连报"一个像素都不变"，而**真实鼠标移上去是正常的**（`tools/probe-hover-
-    screen.py` 用真实光标 + 屏幕级截图实测：盒内 1813 px、环带 2859 px 变化）。
-    换言之，之前那份"悬停不出画面"的红，有一半是探针自己的输入通道造成的。
-    """
-    to_screen(hwnd, x, y)
-
-
-def wheel(hwnd, x, y, delta):
-    """真实滚轮（理由同 `move()`）。
-
-    ★ 伪造的 `WM_MOUSEWHEEL` 走不到 `ScrollBarFade::noteScroll()` ⇒ 滚动条**从来
-    没开始计算空闲**，而画面看起来"滚过了"（`x=1398` 那一列本来就画着）。
-    """
-    to_screen(hwnd, x, y)
-    time.sleep(0.05)
-    user32.mouse_event(0x0800, 0, 0, delta, 0)   # MOUSEEVENTF_WHEEL
 
 
 def primary_blocks(data, w, h, x_min, tol=26):
@@ -226,55 +89,27 @@ def ring_diff(data_a, data_b, w, box, pad_from, pad_to):
                 continue
             if px(data_a, w, x, y) != px(data_b, w, x, y):
                 n += 1
+
     return n
 
 
 def main():
-    ini_dir = tempfile.mkdtemp(prefix="drift-run-")
-    ini = os.path.join(ini_dir, "php.ini")
-    with open(ini, "w", encoding="utf-8") as f:
-        f.write("opcache.enable=0\n")
-    env = dict(os.environ)
-    env["PHPRC"] = ini
-
-    exe = os.path.join(ROOT, "showcase.exe")
-    if not os.path.exists(exe):
-        print("showcase.exe 不存在：先跑 php tools/drift-build.php showcase")
-        return 2
-
-    proc = subprocess.Popen([exe], cwd=ROOT, env=env)
-    try:
-        time.sleep(2.5)
-        hwnd = user32.FindWindowW(None, "Drift 示例台")
-        if not hwnd:
-            print("找不到窗口「Drift 示例台」")
-            return 2
-
-        # ★ 真实输入（`SetCursorPos` / `mouse_event`）只送到**前台**窗口
-        if not focus_window(hwnd):
-            print("窗口抢不到前台 —— 真实点击会落到别的窗口上，先别测")
-            return 2
-
-        w, h, data = grab(hwnd)
+    with App("showcase.exe", "Drift 示例台") as app:
+        w, h = app.size()
         print(f"客户区 {w}x{h}")
 
         # ── ① 导航到「按钮 Button」（第 3 项：首项中心 90、pitch 36 —— probe-modal 实测）──
         nav_y = 90 + 2 * 36
-        click(hwnd, 25, nav_y)
-        time.sleep(0.8)
-        move(hwnd, w - 40, h - 40)   # 指针先挪到空白，免得开局就悬在按钮上
-        time.sleep(0.3)
-        w, h, before = grab(hwnd)
+        app.click(25, nav_y, settle=0.8)
+        app.move(w - 40, h - 40, settle=0.3)   # 指针先挪到空白，免得开局就悬在按钮上
+        w, h, before = app.grab()
 
         blocks = primary_blocks(before, w, h, 250)
         # 按钮形态：宽 60..300、高 20..60（两个像素步长）
         btn_blocks = [b for b in blocks if 60 <= b[2] - b[0] <= 300 and 16 <= b[3] - b[1] <= 60]
         blob = btn_blocks[0] if btn_blocks else None
-        check(
-            "按钮页 · 找得到一个 Primary（墨绿实心）按钮块",
-            blob is not None,
-            f"blocks={blocks[:4]}",
-        )
+        check("按钮页 · 找得到一个 Primary（墨绿实心）按钮块", blob is not None,
+              f"blocks={blocks[:4]}")
         if blob is None:
             return 1
 
@@ -283,15 +118,11 @@ def main():
         print(f"  目标按钮 bbox={blob} 中心=({cx},{cy})")
 
         # ── ② 悬停 ⇒ 过渡跑完后盒外那一圈出现影子 ──
-        move(hwnd, cx, cy)
-        time.sleep(0.6)   # 过渡 ~370ms 收口，多等一轮
-        w, h, hovered = grab(hwnd)
+        app.move(cx, cy, settle=0.6)   # 过渡 ~370ms 收口，多等一轮
+        w, h, hovered = app.grab()
         ring = ring_diff(before, hovered, w, blob, 2, 10)
-        check(
-            "悬停浮起 · 收口后盒外 2..10px 那一圈变了（影子落在盒外）",
-            ring > 40,
-            f"ring diff = {ring} px",
-        )
+        check("悬停浮起 · 收口后盒外 2..10px 那一圈变了（影子落在盒外）", ring > 40,
+              f"ring diff = {ring} px")
 
         # ★ 反例：盒**内**的变化不能替代它 —— 状态色也在盒内，两者必须分开数
         inner = 0
@@ -299,48 +130,35 @@ def main():
             for x in range(blob[0] + 2, blob[2] - 1):
                 if px(before, w, x, y) != px(hovered, w, x, y):
                     inner += 1
-        check(
-            "悬停浮起 · 盒内同时变了（状态色也参与了，别把两者混成一个判据）",
-            inner > 100,
-            f"inner diff = {inner} px",
-        )
+        check("悬停浮起 · 盒内同时变了（状态色也参与了，别把两者混成一个判据）", inner > 100,
+              f"inner diff = {inner} px")
 
         # ── ③ 移开 ⇒ 回到基线（收口后不该留下半个影子）──
-        move(hwnd, w - 40, h - 40)
-        time.sleep(0.8)
-        w, h, after = grab(hwnd)
+        app.move(w - 40, h - 40, settle=0.8)
+        w, h, after = app.grab()
         ring_back = ring_diff(before, after, w, blob, 2, 10)
-        check(
-            "悬停浮起 · 移开后影子收回去（静止态与基线一致，差 < 40px）",
-            ring_back < 40,
-            f"ring diff = {ring_back} px",
-        )
+        check("悬停浮起 · 移开后影子收回去（静止态与基线一致，差 < 40px）", ring_back < 40,
+              f"ring diff = {ring_back} px")
 
-        # ── ④ 滚动条空闲淡出：滚一下全亮，停手 1.6s 后变淡 ──
+        # ── ④ 滚动条空闲淡出：滚一下全亮，停手 1.8s 后变淡 ──
         #    ★ 必须换到**真的会溢出**的页（按钮页一屏放得下 ⇒ `maxScroll = 0`
         #      ⇒ 滚动条根本不画，第一版就是在按钮页上找它，0 命中）。
         #      「长列表 Big」是第 6 项：90 + 5 × 36 = 270。
-        click(hwnd, 25, 90 + 5 * 36)
-        time.sleep(0.9)
-        move(hwnd, w // 2, h // 2)
-        wheel(hwnd, w // 2, h // 2, -120)
-        time.sleep(0.25)
-        w, h, scrolled = grab(hwnd)
+        app.click(25, 90 + 5 * 36, settle=0.9)
+        app.wheel(w // 2, h // 2, 1, settle=0.25)
+        w, h, scrolled = app.grab()
 
         # ★★ 判据**不能**要求"暗列"（`c[0] < 200`）：本主题的滚动条是**浅灰**
         #   （实测 luma≈239），照旧阈值找永远是"0 命中"，看起来像"滚动条没画"
-        #   （2026-11-01 就是这样假红了一轮）。软滚动条只要"比背景深一点"就够 ——
-        #   数右带里**非纯白**的像素即可。
+        #   （2026-11-01 就是这样假红了一轮）。软滚动条只要"比背景深一点"就够。
         # ★★ 定位逻辑在 `tools/probe_pixels.py`（与 `probe-scroll-diag.py` 共用一份）。
         #   上一版取"右带里非白像素最多的列" ⇒ 恒定选中**页面底色**（整列 358 行），
         #   而真条在 x=1370..1375（离窗口右缘 39px）⇒ 两条断言假红了整整一轮。
         located = find_scrollbar(scrolled, w, h)
         bar_col = None if located is None else (located[0] + located[1]) // 2
-        check(
-            "滚动条 · 滚动后在**列表视口右缘**定位到那一列（不是窗口右缘）",
-            located is not None,
-            "x=" + (f"{located[0]}..{located[1]}" if located is not None else "没定位到"),
-        )
+        check("滚动条 · 滚动后在**列表视口右缘**定位到那一列（不是窗口右缘）",
+              located is not None,
+              "x=" + (f"{located[0]}..{located[1]}" if located is not None else "没定位到"))
 
         # ★ 判据直接落在**定位到的那一列**上（不再"猜哪列变了"）：条已经由
         #   `find_scrollbar` 定位，剩下的问题只是"它变浅了没有"。
@@ -349,51 +167,34 @@ def main():
             live_luma, _ = column_luma(scrolled, w, h, bar_col)
 
         time.sleep(1.8)   # 无任何输入：这里同时在验"帧时钟会自己上膛"
-        w, h, idle = grab(hwnd)
+        w, h, idle = app.grab()
         idle_luma = None
         if bar_col is not None:
             idle_luma, _ = column_luma(idle, w, h, bar_col)
         faded = None if live_luma is None or idle_luma is None else idle_luma - live_luma
-        check(
-            "滚动条 · 停手 1.8s 后那一列明显变浅（帧时钟在无输入时把动画推完了）",
-            faded is not None and faded > 40.0,
-            f"col={bar_col} 滚后={None if live_luma is None else round(live_luma, 1)}"
-            f" 静止={None if idle_luma is None else round(idle_luma, 1)}",
-        )
-        bar_x = bar_col
+        check("滚动条 · 停手 1.8s 后那一列明显变浅（帧时钟在无输入时把动画推完了）",
+              faded is not None and faded > 40.0,
+              f"col={bar_col} 滚后={None if live_luma is None else round(live_luma, 1)}"
+              f" 静止={None if idle_luma is None else round(idle_luma, 1)}")
 
         # ── ⑤ 再滚一下 ⇒ 回到全亮（淡出不是单程票）──
-        wheel(hwnd, w // 2, h // 2, -120)
-        time.sleep(0.5)
-        w, h, again = grab(hwnd)
-        if bar_x is not None and live_luma is not None:
+        app.wheel(w // 2, h // 2, 1, settle=0.5)
+        w, h, again = app.grab()
+        if bar_col is not None and live_luma is not None:
             vals = [
-                sum(px(again, w, bar_x, y)) / 3.0
+                sum(px(again, w, bar_col, y)) / 3.0
                 for y in range(60, h - 10, 2)
-                if sum(px(again, w, bar_x, y)) / 3.0 < 225
+                if sum(px(again, w, bar_col, y)) / 3.0 < 225
             ]
             back = sum(vals) / len(vals) if vals else None
-            check(
-                "滚动条 · 再滚一下又亮回来（淡出不是单程票）",
-                back is not None and abs(back - live_luma) < 25.0,
-                f"luma={None if back is None else round(back, 1)}（全亮时 {round(live_luma, 1)}）",
-            )
+            check("滚动条 · 再滚一下又亮回来（淡出不是单程票）",
+                  back is not None and abs(back - live_luma) < 25.0,
+                  f"luma={None if back is None else round(back, 1)}（全亮时 {round(live_luma, 1)}）")
         else:
-            check("滚动条 · 再滚一下又亮回来（淡出不是单程票）", False, '上文没定位到滚动条列')
-    finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except Exception:
-            pass
+            check("滚动条 · 再滚一下又亮回来（淡出不是单程票）", False, "上文没定位到滚动条列")
 
-    print()
-    if FAILS:
-        print(f"--- {len(FAILS)} FAIL ---")
-        return 1
-    print("--- 0 FAIL ---")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run(main))

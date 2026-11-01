@@ -23,11 +23,11 @@
 import argparse
 import ctypes
 import os
-import subprocess
 import sys
-import tempfile
 import time
 from ctypes import wintypes
+
+import probe_win as win
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -418,88 +418,18 @@ def verify_hit_test(uia, root, w, hwnd, samples=5):
     return 0
 
 
-def wheel_at(hwnd, sx, sy, notches):
-    """在**屏幕**坐标 (sx,sy) 处滚动 notches 格（正 = 向下）
-    ★ 坐标语义与 `click_at` 一致：**入口收屏幕坐标**（= UIA 给的），内部换算成
-      客户区喂消息。两种坐标只在这两个函数里换一次，别在调用方散着算。
-
-    ★ **必须先发一条 `WM_MOUSEMOVE`**（2026-10-30 实测）：drift 的滚轮命中读的是
-      **缓存的指针位置**，不是 `WM_MOUSEWHEEL` 自带的坐标。不发 move 的话滚轮消息
-      全部石沉大海 —— 现象是"滚了 12 次，元素坐标纹丝不动"，很容易误判成
-      "UIA 的坐标是死的 / 应用不支持滚动"。
-    ★ 光标也要**真的移过去**（`SetCursorPos`）：只发消息不会让 Windows 产生
-      悬停/焦点那套副作用，应用看起来"收到滚轮但没反应"。
-    """
-    user32.SetCursorPos(int(sx), int(sy))
-    time.sleep(0.08)
-
-    cx, cy = to_client(hwnd, sx, sy)
-    user32.PostMessageW(hwnd, 0x0200, 0, ((cy & 0xFFFF) << 16) | (cx & 0xFFFF))
-    time.sleep(0.05)
-
-    delta = -120 if notches > 0 else 120
-    for _ in range(abs(notches)):
-        user32.PostMessageW(hwnd, 0x020A, (delta << 16) & 0xFFFFFFFF,
-                           ((int(sy) & 0xFFFF) << 16) | (int(sx) & 0xFFFF))
-        time.sleep(0.03)
-
-
-def to_screen(hwnd, x, y):
-    pt = wintypes.POINT(int(x), int(y))
-    user32.ClientToScreen(hwnd, ctypes.byref(pt))
-
-    return pt.x, pt.y
-
-
-def click_at(hwnd, sx, sy):
-    """点**屏幕**坐标 (sx,sy)：先真的把光标移过去，再按鼠标消息。
-
-    ★ 三步顺序就是真实鼠标的顺序（2026-10-30）：Windows 的悬停链由**真实指针位置**
-      驱动，只发 `WM_LBUTTONDOWN` 过去，应用看到的是"凭空按下"—— 不激活、也不触发
-      那几轮 hover 重绘。而后者正是"帧时钟判据上膛"的前提（见 PITFALLS：
-      `advance()` 只在上一轮按帧节奏等的时候才量两帧间隔）。
-    """
-    user32.SetCursorPos(int(sx), int(sy))
-    time.sleep(0.12)      # 让悬停那一轮跑完
-
-    cx, cy = to_client(hwnd, sx, sy)
-    lp = ((cy & 0xFFFF) << 16) | (cx & 0xFFFF)
-    user32.PostMessageW(hwnd, 0x0200, 0, lp)
-    time.sleep(0.05)
-    user32.PostMessageW(hwnd, 0x0201, 1, lp)
-    time.sleep(0.03)
-    user32.PostMessageW(hwnd, 0x0202, 0, lp)
-
-
-def client_size(hwnd):
-    r = wintypes.RECT()
-    user32.GetClientRect(hwnd, ctypes.byref(r))
-
-    return r.right, r.bottom
-
-
-def to_client(hwnd, sx, sy):
-    pt = wintypes.POINT(int(sx), int(sy))
-    user32.ScreenToClient(hwnd, ctypes.byref(pt))
-
-    return pt.x, pt.y
-
-
 def launch(app, title, wait=4.0, env_extra=None):
-    exe = os.path.join(ROOT, f"{app}.exe")
-    ini = os.path.join(tempfile.mkdtemp(prefix="drift-uia-"), "php.ini")
-    with open(ini, "w", encoding="ascii") as fh:
-        fh.write("opcache.enable=0\n")
-    env = dict(os.environ)
-    env["PHPRC"] = ini
-    env.update(env_extra or {})
+    """起产物 + 等窗。**只做转发** —— 真实实现（含 `PHPRC`、进程早退的死因、
+    用户窗口状态隔离）在 `tools/probe_win.py`，9 个探针共用那一份。
 
-    proc = subprocess.Popen([exe], cwd=ROOT, env=env)
-    time.sleep(wait)
-    hwnd = user32.FindWindowW(None, title)
-    if not hwnd:
+    这里保留 `(proc, hwnd)` 的形状，是因为本文件有 `--no-launch` 分支（`proc=None`）。
+    """
+    proc = win.launch(f"{app}.exe", env_extra=env_extra)
+    try:
+        hwnd = win.wait_window(title, proc, wait)
+    except win.NotMeasured as exc:
         proc.terminate()
-        raise SystemExit(f"✗ 没找到窗口 {title!r}（进程活={proc.poll() is None}）")
+        raise SystemExit(f"✗ {exc}")
 
     return proc, hwnd
 
@@ -557,9 +487,9 @@ def main():
                     print(f"✗ 树里没有名字为 {target!r} 的元素（先 --dump 看真名）")
                     return 1
                 elem, r, _t = found[0]
-                cw, ch = client_size(hwnd)
+                cw, ch = win.client_size(hwnd)
                 # UIA 给的是**屏幕**坐标，可见性要按客户区判断（换算一次）
-                cx_c, cy_c = to_client(hwnd, (r.left + r.right) // 2, (r.top + r.bottom) // 2)
+                cx_c, cy_c = win.screen_to_client(hwnd, (r.left + r.right) // 2, (r.top + r.bottom) // 2)
                 if 0 <= cy_c <= ch:
                     break
                 step = 3 if cy_c > ch else -3
@@ -567,9 +497,8 @@ def main():
                 # 打到内容区再滚，导航纹丝不动 —— 现象与"滚轮完全失效"一模一样。
                 # ★ y 取**视口中线**而不是边缘：边缘可能落在列表外（标题栏 / 面板留白），
                 #   滚轮就滚到了别人身上。手感上"手指放在列表中间往上推"也是这个位置。
-                wx, wy = to_screen(hwnd, max(4, min(cx_c, cw - 4)), ch // 2)
                 print(f"  {target!r} 在客户区外（y={cy_c}，视口 {ch}）⇒ 滚 {step:+d} 格")
-                wheel_at(hwnd, wx, wy, step)
+                win.wheel(hwnd, max(4, min(cx_c, cw - 4)), ch // 2, step)
                 time.sleep(0.35)
             else:
                 print(f"✗ 滚了 12 次仍没让 {target!r} 进入视口")
@@ -581,14 +510,15 @@ def main():
             # ★ 优先走**真实鼠标**（move → down → up 分三条消息）：它与用户的手
             #   完全同一条路（包括 hover 那一轮），Invoke 走的是"读屏激活"分支。
             #   provider 给的矩形是**屏幕**坐标（2026-10-30 起修正，此前是客户区
-            #   局部坐标）⇒ 直接喂 `click_at`（它负责换算回客户区）。
-            #   ★ 这两端必须是同一个语义：矩形若是客户区坐标、这里又 `to_client`
-            #     一次，就会双重偏移 108,131，点全落到窗口左上方的空白处。
+            #   局部坐标）⇒ 换回客户区再喂 `probe_win.click`。
+            #   ★ 这两端必须是同一个语义：矩形若是客户区坐标、这里又换一次，就会
+            #     双重偏移 108,131，点全落到窗口左上方的空白处。
             if w_px > 0 and h_px > 0:
                 cx_s = (r.left + r.right) // 2
                 cy_s = (r.top + r.bottom) // 2
-                print(f"→ 点 {target!r} @ 屏幕 ({cx_s},{cy_s})  {w_px}x{h_px}")
-                click_at(hwnd, cx_s, cy_s)
+                cx, cy = win.screen_to_client(hwnd, cx_s, cy_s)
+                print(f"→ 点 {target!r} @ 客户区 ({cx},{cy})  {w_px}x{h_px}")
+                win.click(hwnd, cx, cy)
             else:
                 pat = ctypes.c_void_p()
                 fn = _call(elem, ELEM_GetCurrentPattern, ctypes.HRESULT,
