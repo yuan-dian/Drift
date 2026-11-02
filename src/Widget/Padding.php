@@ -26,11 +26,11 @@ use Drift\Layout\RenderProxy;
  *
  * @api
  */
-final class Padding extends RenderBoxWidget
+final class Padding extends SingleChildRenderObjectWidget
 {
-    public function __construct(private readonly Widget $kid)
+    public function __construct(Widget $kid)
     {
-        parent::__construct();
+        parent::__construct($kid);
     }
 
     public static function make(Widget $kid): self
@@ -53,25 +53,8 @@ final class Padding extends RenderBoxWidget
         return $this->padding(EdgeInsets::only($left, $top, $right, $bottom));
     }
 
-    public function child(): Widget
-    {
-        return $this->kid;
-    }
-
-    #[\Override]
-    public function expandChildren(): array
-    {
-        return [$this->kid];
-    }
-
     public function createRenderObject(BuildContext $context): RenderBox
     {
         return new RenderProxy();
-    }
-
-    #[\Override]
-    public function createElement(): Element
-    {
-        return new ProxyElement($this);
     }
 }
