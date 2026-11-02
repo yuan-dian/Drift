@@ -7,6 +7,7 @@ use Drift\Errors;
 use Drift\Geometry\Rect;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
+use Drift\Input\TextKeymap;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderTextField;
 use Drift\Text\TextChange;
@@ -222,106 +223,28 @@ final class TextFieldState extends State implements EditableText
     /**
      * 处理一次按键（§9.1 路由链第 ③ 环落到这里）。
      *
-     * ★ **映射规则**（把 `KeyEvent` 翻译成编辑动作）：
-     *   · `Backspace` / `Delete` ⇒ 有选区删**整段**，否则按码位删前 / 删后
-     *   · `Left` / `Right` ⇒ 移到前 / 后一个**码位边界**（折叠选区）
-     *   · `Shift` + `Left` / `Right` / `Home` / `End` ⇒ **扩展**选区（只挪活动端）
-     *   · `Home` / `End` ⇒ 行首 / 行尾
-     *   · `Ctrl+A` ⇒ 全选；`Esc` ⇒ 有选区时吃掉它
-     *   · 带文本的按键 ⇒ 在插入符处插入（有选区则整段替换）
-     *   · 其余（含加速键）⇒ **返回 false**，让上层继续找别的消费者
+     * ★ 编辑键（退格 / Delete / 方向 / Home / End / Shift+方向 / Ctrl+A / 文本）
+     *   走 `TextKeymap` —— 与表格单元格是**同一张表**，这里不再抄一遍。
+     *
+     * ★ 本方法只剩输入框自己的收口：`Esc` 有选区时吃掉它（各平台"取消选择"的
+     *   默认键），并**消费这次按键** —— 放行会让 `Application` 的
+     *   activateFocused 顺手把按钮触发掉。
      *
      * ★ 返回 `bool` 而不是 `void`：§9.1 的路由链要能问"这一环吃掉了没有"。
      *   返回 `false` 时**不改任何状态**（不偷偷吞键）。
      */
     public function handleKey(KeyEvent $event): bool
     {
-        $chord = $event->chord;
+        $change = TextKeymap::apply($this->draft, $event);
 
-        if ($chord->is(KeyChord::backspace())) {
-            $this->deleteBackward();
-
-            return true;
-        }
-
-        if ($chord->is(KeyChord::delete())) {
-            $this->deleteForward();
+        if ($change !== null) {
+            $this->settle($change);
 
             return true;
         }
 
-        if ($chord->is(KeyChord::left())) {
-            $this->moveCaret($this->draft->previousBoundary());
-
-            return true;
-        }
-
-        if ($chord->is(KeyChord::right())) {
-            $this->moveCaret($this->draft->nextBoundary());
-
-            return true;
-        }
-
-        if ($chord->is(KeyChord::home())) {
-            $this->moveCaret(0);
-
-            return true;
-        }
-
-        if ($chord->is(KeyChord::end())) {
-            $this->moveCaretToEnd();
-
-            return true;
-        }
-
-        if ($chord->is(KeyChord::ctrl('A'))) {
-            $this->selectAll();
-
-            return true;
-        }
-
-        if ($chord->is(KeyChord::shift('Left'))) {
-            // ★ Shift+方向键 = 扩展选区（只挪活动端）。与不带 Shift 的两个分支
-            //   走**同一对边界助手**，区别只在"折叠还是扩展"
-            //   （见 moveCaret / extendSelectionTo 的分工）。
-            $this->extendSelectionTo($this->draft->previousBoundary());
-
-            return true;
-        }
-
-        if ($chord->is(KeyChord::shift('Right'))) {
-            $this->extendSelectionTo($this->draft->nextBoundary());
-
-            return true;
-        }
-
-        if ($chord->is(KeyChord::shift('Home'))) {
-            $this->extendSelectionTo(0);
-
-            return true;
-        }
-
-        if ($chord->is(KeyChord::shift('End'))) {
-            $this->extendSelectionTo(\strlen($this->draft->text()));
-
-            return true;
-        }
-
-        if ($chord->is(KeyChord::escape())) {
-            // 有选区 ⇒ Esc 吃掉它（各平台"取消选择"的默认键），并**消费这次按键**
-            // —— 放行会让 Application 的 activateFocused 顺手把按钮触发掉。
-            if ($this->draft->hasSelection()) {
-                $this->clearSelection();
-
-                return true;
-            }
-
-            return false;
-        }
-
-        if ($event->isText()) {
-            // 有选区时 insert() 内部走整段替换（见 `TextDraft::insert()`）
-            $this->insert($event->text);
+        if ($event->chord->is(KeyChord::escape()) && $this->draft->hasSelection()) {
+            $this->settle($this->draft->clearSelection());
 
             return true;
         }

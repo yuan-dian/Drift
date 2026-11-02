@@ -439,14 +439,18 @@ final class HttpTest extends SmokeTestCase
         $out = $method->invoke(null, ['k' => 'v'], ['file' => $tmp]);
         [$stream] = $out;
 
-        $base = \memory_get_usage(true);
+        $base = \memory_get_usage();
         $peak = 0;
         $sent = 0;
         while (($chunk = $stream->read(65536)) !== '') {
             $sent += \strlen($chunk);
             // ★ 不累加、不留引用：curl 的真实行为也是这样（发完就丢）。
             //   如果这里攒起来，测的就成了"测试自己占多少内存"。
-            $peak = \max($peak, \memory_get_usage(true) - $base);
+            // ★ 用 `memory_get_usage()`（实际使用量）而不是 `(true)`（页对齐后的
+            //   分配量）：后者按 2 MB chunk 向上取整，读文件时一跨页增量就正好
+            //   是 2 MB，于是"增量 < 2 MB"这条**必然**在别人占过的池子上失败
+            //   （2026-11-02 全量跑实测：单跑绿、全量红，峰值恒为 2 MB）。
+            $peak = \max($peak, \memory_get_usage() - $base);
         }
         $stream->close();
 

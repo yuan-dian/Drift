@@ -26,7 +26,7 @@
 | Widget | 171 | 201 |
 | **合计** | **474** | **381** |
 
-覆盖 375 个文件 · 描述性提及 30 处（grep 口径的污染源，不计入）
+覆盖 376 个文件 · 描述性提及 30 处（grep 口径的污染源，不计入）
 
 ## App 层
 
@@ -235,47 +235,47 @@
 |---|---|---|
 | `Pipeline` | class | src/Core/Pipeline.php:6 |
 | `Pipeline::bumpStructure()` | method | src/Core/Pipeline.php:96 |
-| `Pipeline::bumpContent()` | method | src/Core/Pipeline.php:103 |
-| `Pipeline::structureVersion()` | method | src/Core/Pipeline.php:109 |
-| `Pipeline::contentVersion()` | method | src/Core/Pipeline.php:115 |
-| `Pipeline::markDirty()` | method | src/Core/Pipeline.php:134 |
-| `Pipeline::consumeDirty()` | method | src/Core/Pipeline.php:152 |
-| `Pipeline::pendingDirty()` | method | src/Core/Pipeline.php:158 |
-| `Pipeline::markedCount()` | method | src/Core/Pipeline.php:164 |
-| `Pipeline::rebuiltCount()` | method | src/Core/Pipeline.php:170 |
-| `Pipeline::noteRebuilt()` | method | src/Core/Pipeline.php:176 |
-| `Pipeline::beginFrame()` | method | src/Core/Pipeline.php:246 |
-| `Pipeline::endFrame()` | method | src/Core/Pipeline.php:254 |
-| `Pipeline::inFrame()` | method | src/Core/Pipeline.php:260 |
-| `Pipeline::frameConsumed()` | method | src/Core/Pipeline.php:266 |
-| `Pipeline::wantsFrame()` | method | src/Core/Pipeline.php:272 |
-| `Pipeline::wantsFrameImmediately()` | method | src/Core/Pipeline.php:278 |
-| `Pipeline::frameRequestCount()` | method | src/Core/Pipeline.php:289 |
-| `Pipeline::idleSpinFrames()` | method | src/Core/Pipeline.php:295 |
-| `Pipeline::noteIdleSpin()` | method | src/Core/Pipeline.php:301 |
-| `Pipeline::queueMounted()` | method | src/Core/Pipeline.php:314 |
-| `Pipeline::takeMounted()` | method | src/Core/Pipeline.php:320 |
-| `Pipeline::mountedCount()` | method | src/Core/Pipeline.php:334 |
-| `Pipeline::bumpLayoutEpoch()` | method | src/Core/Pipeline.php:348 |
-| `Pipeline::layoutEpoch()` | method | src/Core/Pipeline.php:354 |
-| `Pipeline::bumpPaintEpoch()` | method | src/Core/Pipeline.php:360 |
-| `Pipeline::paintEpoch()` | method | src/Core/Pipeline.php:379 |
-| `Pipeline::bumpLayout()` | method | src/Core/Pipeline.php:409 |
-| `Pipeline::layoutCount()` | method | src/Core/Pipeline.php:415 |
-| `Pipeline::bumpPaint()` | method | src/Core/Pipeline.php:421 |
-| `Pipeline::paintCount()` | method | src/Core/Pipeline.php:427 |
-| `Pipeline::bumpReplay()` | method | src/Core/Pipeline.php:433 |
-| `Pipeline::replayCount()` | method | src/Core/Pipeline.php:439 |
-| `Pipeline::bumpPairCheck()` | method | src/Core/Pipeline.php:445 |
-| `Pipeline::pairChecks()` | method | src/Core/Pipeline.php:451 |
-| `Pipeline::bumpSettleRun()` | method | src/Core/Pipeline.php:457 |
-| `Pipeline::settleRunCount()` | method | src/Core/Pipeline.php:463 |
-| `Pipeline::bumpSettleSkip()` | method | src/Core/Pipeline.php:469 |
-| `Pipeline::settleSkipCount()` | method | src/Core/Pipeline.php:475 |
-| `Pipeline::bumpPaintRun()` | method | src/Core/Pipeline.php:481 |
-| `Pipeline::paintRunCount()` | method | src/Core/Pipeline.php:487 |
-| `Pipeline::bumpPaintSkip()` | method | src/Core/Pipeline.php:493 |
-| `Pipeline::paintSkipCount()` | method | src/Core/Pipeline.php:499 |
+| `Pipeline::bumpContent()` | method | src/Core/Pipeline.php:111 |
+| `Pipeline::structureVersion()` | method | src/Core/Pipeline.php:117 |
+| `Pipeline::contentVersion()` | method | src/Core/Pipeline.php:123 |
+| `Pipeline::markDirty()` | method | src/Core/Pipeline.php:142 |
+| `Pipeline::consumeDirty()` | method | src/Core/Pipeline.php:160 |
+| `Pipeline::pendingDirty()` | method | src/Core/Pipeline.php:166 |
+| `Pipeline::markedCount()` | method | src/Core/Pipeline.php:172 |
+| `Pipeline::rebuiltCount()` | method | src/Core/Pipeline.php:178 |
+| `Pipeline::noteRebuilt()` | method | src/Core/Pipeline.php:184 |
+| `Pipeline::beginFrame()` | method | src/Core/Pipeline.php:254 |
+| `Pipeline::endFrame()` | method | src/Core/Pipeline.php:262 |
+| `Pipeline::inFrame()` | method | src/Core/Pipeline.php:268 |
+| `Pipeline::frameConsumed()` | method | src/Core/Pipeline.php:274 |
+| `Pipeline::wantsFrame()` | method | src/Core/Pipeline.php:280 |
+| `Pipeline::wantsFrameImmediately()` | method | src/Core/Pipeline.php:286 |
+| `Pipeline::frameRequestCount()` | method | src/Core/Pipeline.php:297 |
+| `Pipeline::idleSpinFrames()` | method | src/Core/Pipeline.php:303 |
+| `Pipeline::noteIdleSpin()` | method | src/Core/Pipeline.php:309 |
+| `Pipeline::queueMounted()` | method | src/Core/Pipeline.php:322 |
+| `Pipeline::takeMounted()` | method | src/Core/Pipeline.php:328 |
+| `Pipeline::mountedCount()` | method | src/Core/Pipeline.php:342 |
+| `Pipeline::bumpLayoutEpoch()` | method | src/Core/Pipeline.php:356 |
+| `Pipeline::layoutEpoch()` | method | src/Core/Pipeline.php:375 |
+| `Pipeline::bumpPaintEpoch()` | method | src/Core/Pipeline.php:381 |
+| `Pipeline::paintEpoch()` | method | src/Core/Pipeline.php:400 |
+| `Pipeline::bumpLayout()` | method | src/Core/Pipeline.php:440 |
+| `Pipeline::layoutCount()` | method | src/Core/Pipeline.php:446 |
+| `Pipeline::bumpPaint()` | method | src/Core/Pipeline.php:452 |
+| `Pipeline::paintCount()` | method | src/Core/Pipeline.php:458 |
+| `Pipeline::bumpReplay()` | method | src/Core/Pipeline.php:464 |
+| `Pipeline::replayCount()` | method | src/Core/Pipeline.php:470 |
+| `Pipeline::bumpPairCheck()` | method | src/Core/Pipeline.php:476 |
+| `Pipeline::pairChecks()` | method | src/Core/Pipeline.php:482 |
+| `Pipeline::bumpSettleRun()` | method | src/Core/Pipeline.php:488 |
+| `Pipeline::settleRunCount()` | method | src/Core/Pipeline.php:494 |
+| `Pipeline::bumpSettleSkip()` | method | src/Core/Pipeline.php:500 |
+| `Pipeline::settleSkipCount()` | method | src/Core/Pipeline.php:506 |
+| `Pipeline::bumpPaintRun()` | method | src/Core/Pipeline.php:512 |
+| `Pipeline::paintRunCount()` | method | src/Core/Pipeline.php:518 |
+| `Pipeline::bumpPaintSkip()` | method | src/Core/Pipeline.php:524 |
+| `Pipeline::paintSkipCount()` | method | src/Core/Pipeline.php:530 |
 | `PipelineAccess` | trait | src/Core/PipelineAccess.php:6 |
 | `PipelineAccess::pipeline()` | method | src/Core/PipelineAccess.php:29 |
 
@@ -804,7 +804,7 @@
 | `TabView::make()` | method | src/Widget/TabView.php:91 |
 | `Text` | class | src/Widget/Text.php:10 |
 | `TextField` | class | src/Widget/TextField.php:9 |
-| `TextFieldState` | class | src/Widget/TextFieldState.php:15 |
+| `TextFieldState` | class | src/Widget/TextFieldState.php:16 |
 | `ThemeScopeElement` | class | src/Widget/ThemeScopeElement.php:6 |
 | `TimeView` | class | src/Widget/TimeView.php:11 |
 | `Toggle` | class | src/Widget/Toggle.php:9 |
@@ -996,10 +996,10 @@
 | `TableElement` | class | src/Widget/TableElement.php:8 |
 | `TableGeometry` | class | src/Widget/TableGeometry.php:9 |
 | `TableGridPicker` | class | src/Widget/TableGridPicker.php:6 |
-| `TableState` | class | src/Widget/TableState.php:29 |
+| `TableState` | class | src/Widget/TableState.php:30 |
 | `TextFieldBox` | class | src/Widget/TextFieldBox.php:17 |
 | `TextFieldBox::make()` | method | src/Widget/TextFieldBox.php:54 |
-| `TextFieldState::$editing` | property | src/Widget/TextFieldState.php:49 |
+| `TextFieldState::$editing` | property | src/Widget/TextFieldState.php:50 |
 | `WidgetFocus` | trait | src/Widget/Traits/WidgetFocus.php:10 |
 | `WidgetFocus::focusNode()` | method | src/Widget/Traits/WidgetFocus.php:101 |
 | `WidgetFocus::cursorShape()` | method | src/Widget/Traits/WidgetFocus.php:107 |

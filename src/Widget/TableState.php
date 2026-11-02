@@ -13,6 +13,7 @@ use Drift\Input\CursorShape;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
+use Drift\Input\TextKeymap;
 use Drift\Layout\ColumnWidths;
 use Drift\Layout\FlexAlign;
 use Drift\Layout\RenderBox;
@@ -1071,10 +1072,11 @@ final class TableState extends State implements Scrollable, EditableText
     /**
      * 编辑中的键位（**只在这一格可编辑时才有机会跑到**）。
      *
-     * 与 `TextField` 的差别只有"收口键"：编辑键（字符 / 退格 / 方向 / Home / End /
-     * Shift+方向 / Ctrl+A）逐字同义，而 `Enter` / `↑` / `↓` / `F2` **提交**、
-     * `Esc` **取消** —— 单元格编辑必须有"改完走人"和"算了"两条出路，
-     * 输入框里这两件事由应用自己安排。
+     * ★ 编辑键（字符 / 退格 / 方向 / Home / End / Shift+方向 / Ctrl+A）走
+     *   `TextKeymap` —— 与 `TextField` 是**同一张表**，这里不再抄第二遍。
+     *   本方法只剩表格特有的收口：`Enter` / `↑` / `↓` / `F2` **提交**、
+     *   `Esc` **取消** —— 单元格编辑必须有"改完走人"和"算了"两条出路，
+     *   输入框里这两件事由应用自己安排。
      */
     private function editKey(KeyEvent $event): bool
     {
@@ -1120,74 +1122,10 @@ final class TableState extends State implements Scrollable, EditableText
             return true;
         }
 
-        if ($chord->is(KeyChord::backspace())) {
-            $this->settleDraft($draft->deleteBackward());
+        $change = TextKeymap::apply($draft, $event);
 
-            return true;
-        }
-
-        if ($chord->is(KeyChord::delete())) {
-            $this->settleDraft($draft->deleteForward());
-
-            return true;
-        }
-
-        if ($chord->is(KeyChord::left())) {
-            $this->settleDraft($draft->moveCaret($draft->previousBoundary()));
-
-            return true;
-        }
-
-        if ($chord->is(KeyChord::right())) {
-            $this->settleDraft($draft->moveCaret($draft->nextBoundary()));
-
-            return true;
-        }
-
-        if ($chord->is(KeyChord::home())) {
-            $this->settleDraft($draft->moveCaret(0));
-
-            return true;
-        }
-
-        if ($chord->is(KeyChord::end())) {
-            $this->settleDraft($draft->moveCaretToEnd());
-
-            return true;
-        }
-
-        if ($chord->is(KeyChord::ctrl('A'))) {
-            $this->settleDraft($draft->selectAll());
-
-            return true;
-        }
-
-        if ($chord->is(KeyChord::shift('Left'))) {
-            $this->settleDraft($draft->extendSelectionTo($draft->previousBoundary()));
-
-            return true;
-        }
-
-        if ($chord->is(KeyChord::shift('Right'))) {
-            $this->settleDraft($draft->extendSelectionTo($draft->nextBoundary()));
-
-            return true;
-        }
-
-        if ($chord->is(KeyChord::shift('Home'))) {
-            $this->settleDraft($draft->extendSelectionTo(0));
-
-            return true;
-        }
-
-        if ($chord->is(KeyChord::shift('End'))) {
-            $this->settleDraft($draft->extendSelectionTo(\strlen($draft->text())));
-
-            return true;
-        }
-
-        if ($event->isText()) {
-            $this->settleDraft($draft->insert($event->text));
+        if ($change !== null) {
+            $this->settleDraft($change);
 
             return true;
         }
