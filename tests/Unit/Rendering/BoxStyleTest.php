@@ -7,6 +7,7 @@ use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Geometry\Size;
 use Drift\Rendering\BoxStyle;
 use Drift\Rendering\Color;
+use Drift\Rendering\DashPattern;
 use Drift\Rendering\DisplayList;
 use Drift\Rendering\Gradient;
 use Drift\Rendering\Modifier;
@@ -53,6 +54,9 @@ final class BoxStyleTest extends SmokeTestCase
             'radius only' => [new BoxStyle(radius: 4.0), true, false],
             // ★ 只设边框色、宽度 0：同上（`hasBorder()` 要求宽度 > 0）
             'border color, width 0' => [new BoxStyle(borderColor: Color::fromRgb(1, 2, 3), borderWidth: 0.0), true, false],
+            // ★ 只设虚线（无边框）：同上 —— 虚线是描边的属性，没有描边就画不出东西，
+            //   但"设过"这件事必须被记住（否则 `->borderDash(...)` 被静默丢掉）
+            'dash only' => [new BoxStyle(borderDash: new DashPattern(6.0, 4.0)), true, false],
             // 以下"确实画得出东西" —— 两者都假
             'fill' => [new BoxStyle(background: Color::fromRgb(1, 2, 3)), false, false],
             'gradient' => [
@@ -191,6 +195,86 @@ final class BoxStyleTest extends SmokeTestCase
         check(
             'BoxStyle · 没有渐变时 withoutBackgroundGradient() 返回自身（零成本）',
             BoxStyle::none()->withoutBackgroundGradient()->isBlank(),
+        );
+    }
+
+    /**
+     * 虚线（2026-11-02）：`borderDash` → `Paint::$dash` 那一跳必须真的通。
+     *
+     * ★ 为什么这条判据落在**录下来的 paint** 上：`BoxStyle::$borderDash` 的唯一
+     *   消费者是 `Modifier::paintBehind()` 的边框分支。漏了那一跳 ⇒ 字段声明了、
+     *   `isBlank()` 认了、**画出来是实线**，全程不报错。
+     * ★ 反过来，软光栅（`RasterCanvas::drawRect`）会把虚线降级成实线 ⇒ **像素判据
+     *   抓不到这条**，只能看 paint。
+     */
+    public function testBorderDashReachesThePaint(): void
+    {
+        $dash = new DashPattern(6.0, 4.0, 1.5);
+        $mods = (new Modifier())
+            ->withStroke(Color::fromRgb(1, 2, 3), 2.0)
+            ->withBorderDash($dash);
+
+        $list = new DisplayList();
+        $mods->paintBehind(new RecordingCanvas($list), new Size(40.0, 20.0));
+
+        // 只设了边框 ⇒ 一条 drawRect（底不画）
+        $paint = $list->count() === 1 ? $list->argAt(0, 1) : null;
+
+        check(
+            'BoxStyle · 边框 + 虚线 ⇒ 录到一条 drawRect 且它的 paint 带 dash',
+            $paint instanceof \Drift\Rendering\Paint && $paint->dash !== null,
+            $paint instanceof \Drift\Rendering\Paint
+                ? 'dash=' . ($paint->dash === null ? 'null' : 'set')
+                : '没有录到 paint（count=' . $list->count() . '）',
+        );
+        check(
+            'BoxStyle · 虚线三个字段原样传下去（on / off / phase 一个都不能丢）',
+            $paint instanceof \Drift\Rendering\Paint
+            && $paint->dash !== null
+            && $paint->dash->on === 6.0
+            && $paint->dash->off === 4.0
+            && $paint->dash->phase === 1.5,
+            $paint instanceof \Drift\Rendering\Paint && $paint->dash !== null
+                ? sprintf('on=%s off=%s phase=%s', (string) $paint->dash->on, (string) $paint->dash->off, (string) $paint->dash->phase)
+                : '没有 dash',
+        );
+        check(
+            'BoxStyle · 无边框时虚线什么也不做（不发 drawRect）',
+            (static function (): bool {
+                $m = (new Modifier())->withBorderDash(new DashPattern(6.0, 4.0));
+                $l = new DisplayList();
+                $m->paintBehind(new RecordingCanvas($l), new Size(40.0, 20.0));
+
+                return $l->count() === 0;
+            })(),
+        );
+    }
+
+    /**
+     * `withBorderDash()` 只改图案，**不动颜色与宽度**（两个方法各管一维，顺序无关）。
+     */
+    public function testWithBorderDashKeepsColorAndWidth(): void
+    {
+        $color = Color::fromRgb(9, 8, 7);
+        $dash = new DashPattern(6.0, 4.0);
+
+        // 两种声明顺序都要得到同一份样式
+        $a = (new BoxStyle())->withBorder($color, 2.0)->withBorderDash($dash);
+        $b = (new BoxStyle())->withBorderDash($dash)->withBorder($color, 2.0);
+
+        check(
+            'BoxStyle · withBorderDash 不动颜色/宽度（与 withBorder 顺序无关）',
+            $a->borderColor !== null
+            && $a->borderColor->equals($color)
+            && $a->borderWidth === 2.0
+            && $a->borderDash === $dash
+            && $a->equals($b),
+            'a(border=' . ($a->borderColor === null ? 'null' : self::rgba($a->borderColor))
+                . ' w=' . (string) $a->borderWidth . ' dash=' . ($a->borderDash === null ? 'null' : 'set') . ')',
+        );
+        check(
+            'BoxStyle · withBorderDash(null) 回到实线，且 equals() 认得出差别',
+            !$a->withBorderDash(null)->equals($a),
         );
     }
 

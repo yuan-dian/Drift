@@ -28,6 +28,21 @@ final readonly class BoxStyle
          *   语义由 `hasBackground()` 统一表达，不构成两份状态。
          */
         public ?Gradient $backgroundGradient = null,
+        /**
+         * 边框**虚线**图案（`null` = 实线）。
+         *
+         * ★ 只影响 `borderColor` + `borderWidth` 那一次描边；没有边框时它**什么也
+         *   不做**（虚线是描边的属性，不是独立的一层）。
+         * ★ 与 `borderWidth` 同口径（逻辑像素，不乘 dpr）—— `DashPattern` 的类头
+         *   已经把这条写死了，这里不重复开一个口径。
+         * ★ 为什么是 `?DashPattern` 而不是 `float $dashOn/Off`：图案本身有 `phase`
+         *   （接缝错开半周期），三个字段散在这儿会重新制造"同一维度的两份状态"。
+         * ★★ **后端差异（2026-11-02 实测）**：真机（Skia）画**真虚线**；软光栅
+         *   （`RasterCanvas`，单测 / golden 走它）**降级为实线**（R2 的既有取舍，
+         *   见 `RasterCanvas::drawRect()`）。⇒ 虚线的效果**只能靠真机看图验**，
+         *   golden 抓不到它。
+         */
+        public ?DashPattern $borderDash = null,
     ) {
     }
 
@@ -44,13 +59,13 @@ final readonly class BoxStyle
      */
     public function withBackground(Color $color): self
     {
-        return new self($color, $this->borderColor, $this->borderWidth, $this->radius, $this->backgroundGradient);
+        return new self($color, $this->borderColor, $this->borderWidth, $this->radius, $this->backgroundGradient, $this->borderDash);
     }
 
     /** 底色换成渐变（`Gradient::vertical()` 这类盒内比例的形态） */
     public function withBackgroundGradient(Gradient $gradient): self
     {
-        return new self($this->background, $this->borderColor, $this->borderWidth, $this->radius, $gradient);
+        return new self($this->background, $this->borderColor, $this->borderWidth, $this->radius, $gradient, $this->borderDash);
     }
 
     /** 清掉渐变（若有实色底，它重新生效） */
@@ -60,17 +75,29 @@ final readonly class BoxStyle
             return $this;
         }
 
-        return new self($this->background, $this->borderColor, $this->borderWidth, $this->radius);
+        return new self($this->background, $this->borderColor, $this->borderWidth, $this->radius, null, $this->borderDash);
     }
 
     public function withBorder(Color $color, float $width): self
     {
-        return new self($this->background, $color, $width, $this->radius, $this->backgroundGradient);
+        return new self($this->background, $color, $width, $this->radius, $this->backgroundGradient, $this->borderDash);
     }
 
     public function withRadius(float $radius): self
     {
-        return new self($this->background, $this->borderColor, $this->borderWidth, $radius, $this->backgroundGradient);
+        return new self($this->background, $this->borderColor, $this->borderWidth, $radius, $this->backgroundGradient, $this->borderDash);
+    }
+
+    /**
+     * 边框改虚线（`null` = 回到实线）。
+     *
+     * ★ 只改图案、**不动颜色与宽度** —— 调用方通常写成
+     *   `->border(色, 2)->borderDash(DashPattern::dashed(6, 4))`，
+     *   两个方法各自只负责一维。
+     */
+    public function withBorderDash(?DashPattern $dash): self
+    {
+        return new self($this->background, $this->borderColor, $this->borderWidth, $this->radius, $this->backgroundGradient, $dash);
     }
 
     /** 有底（实色或渐变）—— 判据统一在这里，画的地方不用各写一遍 */
@@ -104,7 +131,10 @@ final readonly class BoxStyle
         return $this->background === null
             && $this->backgroundGradient === null
             && $this->borderColor === null
-            && $this->radius === 0.0;
+            && $this->radius === 0.0
+            // ★ 只设了虚线也算"设过"：它确实会改变画面（一旦有边框），
+            //   漏这一项 ⇒ `->borderDash(...)` 被当成"没声明"、静默丢掉。
+            && $this->borderDash === null;
     }
 
     /**
@@ -144,7 +174,9 @@ final readonly class BoxStyle
             && $this->borderWidth === $other->borderWidth
             && $this->radius === $other->radius
             // 渐变是值对象 ⇒ `==`（同构不同实例仍是"同一样式"）
-            && $this->backgroundGradient == $other->backgroundGradient;
+            && $this->backgroundGradient == $other->backgroundGradient
+            // 虚线同理（`DashPattern` 没有 `equals()`，三个 float 字段用 `==` 足够）
+            && $this->borderDash == $other->borderDash;
     }
 
     private function sameColor(?Color $a, ?Color $b): bool

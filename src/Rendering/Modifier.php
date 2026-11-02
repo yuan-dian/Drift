@@ -603,11 +603,18 @@ final class Modifier
         // ③ 边框
         $borderColor = $this->style->borderColor;
         if ($borderColor !== null && $this->style->borderWidth > 0.0) {
-            $canvas->drawRect(
-                $rect,
-                Paint::stroke($borderColor, $this->style->borderWidth),
-                $radius,
-            );
+            $stroke = Paint::stroke($borderColor, $this->style->borderWidth);
+
+            // ★ 虚线只在这一处落到画笔上：`BoxStyle::$borderDash` 的**唯一消费者**。
+            //   `Paint::withDash()` 已经把图案带给两个后端（`SkiaCanvas::drawRect`
+            //   走 `SkPathEffect`，`RasterCanvas::drawRect` 按弧长自己切），这里
+            //   不需要知道后端是谁。
+            $dash = $this->style->borderDash;
+            if ($dash !== null) {
+                $stroke = $stroke->withDash($dash);
+            }
+
+            $canvas->drawRect($rect, $stroke, $radius);
         }
     }
 
@@ -813,6 +820,19 @@ final class Modifier
     {
         $c = clone $this;
         $c->style = $c->style->withBorder($color, $width);
+
+        return $c;
+    }
+
+    /**
+     * 边框改虚线（`null` = 回到实线）。
+     *
+     * ★ **不动颜色与宽度** —— 两个方法各管一维，调用顺序无关。
+     */
+    public function withBorderDash(?DashPattern $dash): self
+    {
+        $c = clone $this;
+        $c->style = $c->style->withBorderDash($dash);
 
         return $c;
     }

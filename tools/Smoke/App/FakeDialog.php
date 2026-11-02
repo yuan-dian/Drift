@@ -50,6 +50,27 @@ final class FakeDialog implements Dialog
         return $this->nextPath === '' ? null : $this->nextPath;
     }
 
+    /**
+     * 下次 `openFiles` 的返回值（**空数组 = 用户取消**）。
+     *
+     * ★ 与 `$nextPath` 分开：单选与多选是两个方法、两套输入语言。让它们共用一个
+     *   字段会掩盖"某个调用方用错了方法"这类错（单选拿到数组 / 多选拿到字符串）。
+     *
+     * @var list<string>
+     */
+    public array $nextPaths = [];
+
+    public int $openFilesCalls = 0;
+
+    public function openFiles(string $title, array $filters = []): array
+    {
+        $this->openFilesCalls++;
+        $this->lastTitle = $title;
+        $this->lastFilters = $filters;
+
+        return $this->nextPaths;
+    }
+
     public function saveFile(string $title, string $defaultName = '', array $filters = []): ?string
     {
         $this->saveCalls++;

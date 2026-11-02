@@ -8,6 +8,7 @@ use Drift\Geometry\Alignment;
 use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Matrix2D;
 use Drift\Rendering\Color;
+use Drift\Rendering\DashPattern;
 use Drift\Rendering\Gradient;
 use Drift\Rendering\Modifier;
 
@@ -234,6 +235,30 @@ trait WidgetModifiers
     {
         $this->mutate();
         $this->mods = $this->mods->withStroke($color, $width);
+
+        return $this;
+    }
+
+    /**
+     * 边框改**虚线**（`null` = 回到实线）。
+     *
+     * ```php
+     * Container::make($body)
+     *     ->border(Color::hex('#CCCCCC'), 2.0)
+     *     ->borderDash(new DashPattern(6.0, 4.0))     // 6 实 / 4 空
+     *     ->radius(12.0);
+     * ```
+     *
+     * ★ **只改图案**：颜色与宽度归 `border()`。没声明 `border()` 时它什么也不做
+     *   （虚线是描边的属性，不是独立的一层）。
+     * ★ 长度单位是**逻辑像素**，与 `border()` 的宽度同口径（不乘 dpr）。
+     *
+     * @api
+     */
+    public function borderDash(?DashPattern $dash): static
+    {
+        $this->mutate();
+        $this->mods = $this->mods->withBorderDash($dash);
 
         return $this;
     }

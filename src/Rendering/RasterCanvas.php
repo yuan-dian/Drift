@@ -305,7 +305,17 @@ final class RasterCanvas implements Canvas
             $device->height - 2.0 * $w
         );
         // ★ R2 降级：矩形/椭圆描边的虚线退化为实线（虚线只在 drawLine 上做真虚线），
-        //   故这里无视 $paint->dash，只透传渐变（描边渐变仍是实色渐变，不是虚线）。
+        //   故这里无视 $paint->dash，只透传渐变。
+        //
+        // ★★ **2026-11-02 补**：Skia 后端**已经**支持虚线矩形（`drawRect` 里
+        //   `applyPaintSource()` 把 `SkDashPathEffect` 挂到描边上，C 侧
+        //   `php_drift_skia_draw_rect` 又调了一次 `applyPaintSource`）⇒ 同一份
+        //   `BoxStyle::borderDash` 在**真机上是虚线、在软光栅上是实线**。
+        //   这是**已知且有意的**跨后端差异（与"文字跟着变换"同一类：软光栅没有
+        //   沿圆角矩形弧长切分的几何能力），不是 bug。
+        //   ⇒ 判据：虚线的效果**只能靠真机看图**，golden（走本类）看不见它。
+        //   要把这里补齐，需要按弧长走一圈圆角矩形的周长 —— 与 `drawLine` 那套
+        //   线性取模不是一回事，工作量远大于收益（虚线目前只有装饰用途）。
         $this->rasterize($device, $radius, $paint->color, $hole, max(0.0, $radius - $w), $paint->gradient);
     }
 

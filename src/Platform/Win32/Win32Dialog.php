@@ -8,6 +8,7 @@ use Drift\Platform\Dialog;
 use function drift_win_alert;
 use function drift_win_confirm;
 use function drift_win_open_file;
+use function drift_win_open_files;
 use function drift_win_save_file;
 
 /**
@@ -84,6 +85,55 @@ final class Win32Dialog implements Dialog
         );
 
         return $path === '' ? null : $path;
+    }
+
+    /**
+     * 多选。空串 = 取消（与 `openFile()` 同一条"两态"契约）。
+     *
+     * ★ 壳侧返回的是 `\n` 连接的一串（见 `drift_win_open_files` 的 stub 文档）——
+     *   这里只做"拆行 + 丢掉空行"。**不在这里 `array_filter` 去重**：用户真的
+     *   可能两次选到同一个文件（第二次选时对话框会保留上次的选择），去重是
+     *   **业务**决定，不是端口的。
+     */
+    public function openFiles(string $title, array $filters = []): array
+    {
+        $joined = $this->modal(
+            fn (): string => drift_win_open_files($this->owner(), $title, self::filterText($filters)),
+        );
+
+        return self::splitPathList($joined);
+    }
+
+    /**
+     * 壳返回的 `\n` 连接串 → 路径表。**空串 ⇒ 空表（取消）**。
+     *
+     * ★ 纯函数（不碰桥、不碰 Win32）—— 与 `filterText()` 同一个理由：这是本类
+     *   唯一有分支的解析逻辑，必须能被单测。壳侧的拼接（`php_drift_win_open_files`）
+     *   与本方法是一对，改一边就得改另一边。
+     *
+     * ★ 只丢空行与行尾 `\r`，**不去重、不排序、不规范化分隔符**：
+     *   - 去重会让"用户两次选到同一个文件"变成一次（那是业务决定）；
+     *   - 排序会打乱"对话框里的顺序"（用户看到什么顺序就该收到什么顺序）；
+     *   - 分隔符规范化（`/` → `\`）是 `Paths` 的事，不是端口的。
+     */
+    public static function splitPathList(string $joined): array
+    {
+        if ($joined === '') {
+            return [];
+        }
+
+        $paths = [];
+        foreach (\explode("\n", $joined) as $line) {
+            // ★ `\r` 也剥掉 —— 壳不会产生它（`toUtf8` 出来的宽字符路径里没有 CR），
+            //   但多一道不花钱的容错，与 `buildFilterWide` 容忍 CRLF 同一个理由。
+            $path = \rtrim($line, "\r");
+            if ($path === '') {
+                continue;
+            }
+            $paths[] = $path;
+        }
+
+        return $paths;
     }
 
     public function saveFile(string $title, string $defaultName = '', array $filters = []): ?string

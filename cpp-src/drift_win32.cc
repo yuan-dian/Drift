@@ -3698,12 +3698,28 @@ static std::vector<wchar_t> buildFilterWide(const String &filters) {
     return out;
 }
 
-/** 打开 / 保存 的公共部分：取消与真失败在这里分开处理，成功返回 UTF-8 路径 */
-static std::string runFileDialog(Int owner, const String &title, const String &filters,
-                                 const String &defaultName, bool save) {
+/**
+ * 打开 / 保存 的公共部分：取消与真失败在这里分开处理。
+ *
+ * 成功返回**选中的路径表**（空表 = 取消）。`multi` 只对"打开"有意义 ——
+ * 保存对话框没有多选（Win32 会忽略 `OFN_ALLOWMULTISELECT`）。
+ *
+ * ★★ **多选时 `lpstrFile` 里的形状不是"路径列表"**（2026-11-02）：
+ *   - 单选：`C:\a\b.png\0\0` —— 整串就是一个完整路径。
+ *   - 多选：`C:\a\0b.png\0c.png\0\0` —— **第一段是目录**，后面才是文件名。
+ *   把两种形状都当"路径列表"读 ⇒ 多选时拿到一个目录 + 若干裸文件名
+ *   （后续 `fopen` 全部失败，而对话框本身"成功"了）。判别依据是
+ *   **第一段之后还有没有内容**：有 ⇒ 多选形状。
+ */
+static std::vector<std::wstring> runFileDialog(Int owner, const String &title, const String &filters,
+                                               const String &defaultName, bool save, bool multi) {
     std::vector<wchar_t> filterWide = buildFilterWide(filters);
 
     // ★ `nMaxFile` 是**字符数**不是字节数；32K 宽字符 ≈ 14K 个汉字路径，够。
+    //   ★ 多选时这**一整块**要装下"目录 + 所有文件名"，所以它必须比单选更宽裕：
+    //     32K 字符约等于 1000 个 30 字符的文件名，超出部分 Win32 直接**不返回**
+    //     （返回值仍是成功，用户会以为漏选了）—— 这是 API 的固有限制，不是我们的
+    //     取舍；真要更大就得上 `IFileOpenDialog`（COM），不值得为这一点引进来。
     std::vector<wchar_t> fileBuf(32768, 0);
     std::wstring seed = toWide(defaultName);
     if (!seed.empty() && seed.size() < fileBuf.size()) {
@@ -3725,6 +3741,9 @@ static std::string runFileDialog(Int owner, const String &title, const String &f
     //   （`getcwd()` 那条纪律），读文件之后 cwd 变了会让后面每次读写都错位。
     ofn.Flags = OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
     ofn.Flags |= save ? OFN_OVERWRITEPROMPT : OFN_FILEMUSTEXIST;
+    if (multi && !save) {
+        ofn.Flags |= OFN_ALLOWMULTISELECT;
+    }
 
     BOOL ok = save ? GetSaveFileNameW(&ofn) : GetOpenFileNameW(&ofn);
     if (!ok) {
@@ -3737,20 +3756,75 @@ static std::string runFileDialog(Int owner, const String &title, const String &f
             MessageBoxW((HWND)(INT_PTR)owner, message, L"Drift",
                         MB_OK | MB_ICONERROR | MB_TASKMODAL | MB_SETFOREGROUND);
         }
-        return std::string();
+        return std::vector<std::wstring>();
     }
 
-    return toUtf8(fileBuf.data(), (int)wcslen(fileBuf.data()));
+    std::vector<std::wstring> paths;
+
+    // ★ 形状判别：第一段之后还有内容 ⇒ 多选形状（第一段是目录）。
+    //   单选时 `wcslen` 直接到结尾，`rest` 指向结尾 NUL ⇒ 走上面的单元素分支。
+    const wchar_t *dir = fileBuf.data();
+    size_t dirLen = wcslen(dir);
+    const wchar_t *rest = dir + dirLen + 1;
+
+    if (*rest == L'\0') {
+        paths.push_back(std::wstring(dir));
+        return paths;
+    }
+
+    // 多选：`dir` 是目录，`rest` 起是若干以 NUL 分隔的文件名。
+    // ★ 目录**可能已带尾分隔符**（根目录 `C:\`）：拼之前先判，否则出 `C:\\a.png`。
+    std::wstring base(dir);
+    if (!base.empty() && base[base.size() - 1] != L'\\' && base[base.size() - 1] != L'/') {
+        base.push_back(L'\\');
+    }
+
+    while (*rest != L'\0') {
+        paths.push_back(base + rest);
+        rest += wcslen(rest) + 1;
+    }
+
+    return paths;
 }
 
 String php_drift_win_open_file(Int owner, String title, String filters, String defaultName) {
-    std::string path = runFileDialog(owner, title, filters, defaultName, false);
-    return String(path.c_str());
+    std::vector<std::wstring> paths = runFileDialog(owner, title, filters, defaultName, false, false);
+    if (paths.empty()) {
+        return String();
+    }
+
+    return String(toUtf8(paths[0].c_str(), (int) paths[0].size()));
+}
+
+/**
+ * 多选：返回**每行一个 UTF-8 路径**（`\n` 连接）；取消 ⇒ 空串。
+ *
+ * ★ 用 `\n` 而不是把数组穿过 ABI：桥只认 `int / string / bool` 这些原语
+ *   （`Array` 得自己造 `zend_array`，那是另一套出错面）。Windows 路径**不允许**
+ *   换行符 ⇒ `\n` 是无歧义分隔符，不需要转义。
+ * ★ 空串 = 取消。**单选一个文件时也是一个元素**，不会退化成"带 `\n` 的怪形状"。
+ */
+String php_drift_win_open_files(Int owner, String title, String filters) {
+    std::vector<std::wstring> paths = runFileDialog(owner, title, filters, String(), false, true);
+
+    std::string joined;
+    for (size_t i = 0; i < paths.size(); ++i) {
+        if (i > 0) {
+            joined.push_back('\n');
+        }
+        joined += toUtf8(paths[i].c_str(), (int) paths[i].size());
+    }
+
+    return String(joined.c_str());
 }
 
 String php_drift_win_save_file(Int owner, String title, String filters, String defaultName) {
-    std::string path = runFileDialog(owner, title, filters, defaultName, true);
-    return String(path.c_str());
+    std::vector<std::wstring> paths = runFileDialog(owner, title, filters, defaultName, true, false);
+    if (paths.empty()) {
+        return String();
+    }
+
+    return String(toUtf8(paths[0].c_str(), (int) paths[0].size()));
 }
 
 void php_drift_win_alert(Int owner, String title, String body) {

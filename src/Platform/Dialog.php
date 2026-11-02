@@ -37,6 +37,23 @@ interface Dialog
      */
     public function openFile(string $title, array $filters = []): ?string;
 
+    /**
+     * 选**一个或多个**已有文件。
+     *
+     * ★ 与 `openFile()` 是**两个方法**而不是"给它加个 `$multiple` 参数"：返回类型
+     *   不同（`?string` vs `list<string>`），而"取消"在两种形状里长得完全不一样
+     *   （`null` vs `[]`）。合成一个方法就得让返回值变成 `?string|list<string>`
+     *   —— 那是本仓明令避免的联合类型（tpc 下退化成 `php::Var`）。
+     *
+     * ★ **取消 ⇒ `[]`**，不是 `['']`、也不是 `null`。选一个文件时返回单元素数组
+     *   （不是退化成一个裸字符串）—— 调用方永远只有一种形状要处理。
+     *
+     * @param list<array{string, string}> $filters 同 `openFile()`
+     *
+     * @return list<string> 用户选中的路径（顺序 = 对话框里的顺序）
+     */
+    public function openFiles(string $title, array $filters = []): array;
+
     /** 选一个保存位置；取消 ⇒ `null`。`$defaultName` 只填文件名，不带目录 */
     public function saveFile(string $title, string $defaultName = '', array $filters = []): ?string;
 

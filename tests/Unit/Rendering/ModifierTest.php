@@ -9,6 +9,7 @@ use Drift\Geometry\Matrix2D;
 use Drift\Layout\RenderBox;
 use Drift\Rendering\BoxStyle;
 use Drift\Rendering\Color;
+use Drift\Rendering\DashPattern;
 use Drift\Rendering\Gradient;
 use Drift\Rendering\Modifier;
 
@@ -68,6 +69,10 @@ final class ModifierTest extends SmokeTestCase
                 false,
             ],
             'withStroke' => [static fn(): Modifier => (new Modifier())->withStroke(Color::fromRgb(1, 2, 3), 1.0), false],
+            'withBorderDash' => [
+                static fn(): Modifier => (new Modifier())->withBorderDash(new DashPattern(6.0, 4.0)),
+                false,
+            ],
             'withRadius' => [static fn(): Modifier => (new Modifier())->withRadius(4.0), false],
             'withShadow' => [static fn(): Modifier => (new Modifier())->withShadow(0.5), false],
             'withCompose' => [static fn(): Modifier => (new Modifier())->withCompose(0.5, 1.0, 1.0), false],

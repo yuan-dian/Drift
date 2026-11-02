@@ -458,6 +458,21 @@ function drift_win_clipboard_has_text(): bool {}
  */
 function drift_win_open_file(int $owner, string $title, string $filters, string $defaultName): string {}
 
+/**
+ * 选**一个或多个**已有文件（多选）；取消 ⇒ 空串。
+ *
+ * 返回**每行一个 UTF-8 路径**，行间 `\n`。★ 选一个时也走这条（一个元素、没有
+ * `\n`），所以调用方永远只需要 `explode("\n", ...)` 一种解析方式。
+ *
+ * ★ 为什么是 `\n` 而不是"穿过 ABI 的数组"：桥只认 `int / string / bool` 这些
+ *   原语，造 `zend_array` 是另一整套出错面；而 Windows 路径**不允许**换行符
+ *   ⇒ `\n` 无歧义、不需要转义。
+ * ★ 空串 = **取消**（与 `drift_win_open_file` 同一条：真失败由壳弹框喊）。
+ * ★ 多选时缓冲区要装下"目录 + 所有文件名"：超过约 1000 个 30 字符文件名之后
+ *   Win32 会**静默少返回**（对话框仍报成功）—— API 的固有限制，不是取舍。
+ */
+function drift_win_open_files(int $owner, string $title, string $filters): string {}
+
 /** 选一个**保存**位置；取消 ⇒ 空串。`$defaultName` 只填文件名，不带目录 */
 function drift_win_save_file(int $owner, string $title, string $filters, string $defaultName): string {}
 

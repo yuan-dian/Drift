@@ -83,4 +83,64 @@ final class Win32DialogTest extends TestCase
         $this->assertStringEndsNotWith("\n", $text);
         $this->assertStringStartsNotWith("\n", $text);
     }
+
+    // ══════════ 多选：`\n` 连接串 → 路径表（2026-11-02，A5-① 续） ══════════
+    //
+    // 判据都在"形状"上，因为壳侧的拼接（`php_drift_win_open_files`）与这里的
+    // 拆分是一对 —— 改一边不改另一边，症状是**多选拿到一个目录 + 若干裸文件名**，
+    // 而对话框本身"成功"了。
+
+    #[Test]
+    public function testEmptyStringMeansCancelled(): void
+    {
+        // ★ 空串 ⇒ **空表**，不是 `['']`。后者会让调用方以为"用户选了一个叫空的
+        //   文件"，接着 `fopen('')` 失败，归因跑到文件系统上。
+        $this->assertSame([], Win32Dialog::splitPathList(''));
+    }
+
+    #[Test]
+    public function testSinglePathIsStillAList(): void
+    {
+        // ★ 选一个文件时**不退化成裸字符串**（端口签名是 `array`，形状恒定）
+        $this->assertSame(['C:\\pics\\a.png'], Win32Dialog::splitPathList('C:\\pics\\a.png'));
+    }
+
+    #[Test]
+    public function testKeepsDialogOrder(): void
+    {
+        $paths = Win32Dialog::splitPathList("C:\\a.png\nD:\\b.jpg\nE:\\c.webp");
+
+        $this->assertSame(['C:\\a.png', 'D:\\b.jpg', 'E:\\c.webp'], $paths);
+    }
+
+    #[Test]
+    public function testDropsEmptyLinesButKeepsDuplicates(): void
+    {
+        // ① 空行丢弃（拼接边界会多出一个 `\n`）
+        // ② **不去重** —— 用户两次选到同一个文件是合法的，去重是业务决定
+        $paths = Win32Dialog::splitPathList("C:\\a.png\n\nC:\\a.png\n");
+
+        $this->assertSame(['C:\\a.png', 'C:\\a.png'], $paths);
+    }
+
+    #[Test]
+    public function testStripsCarriageReturnOnly(): void
+    {
+        // ① CRLF 的两行都要正确拆开
+        // ② ★ **不 trim 整行** —— 路径尾部的空格是路径的一部分（Windows 上确实
+        //    存在这种文件名，命令行工具能创建）。变异成 `trim($line)` ⇒ 第二条
+        //    会丢掉尾空格，判据红。
+        $paths = Win32Dialog::splitPathList("C:\\a.png\r\nC:\\b.png ");
+
+        $this->assertSame(['C:\\a.png', 'C:\\b.png '], $paths);
+    }
+
+    #[Test]
+    public function testKeepsNonAsciiAndSpacesIntact(): void
+    {
+        // 壳侧 `toUtf8()` 之后原样传过来 ⇒ 这里一个字节都不许动
+        $one = 'C:\\用户\\我的 图片\\截图 2024.png';
+
+        $this->assertSame([$one], Win32Dialog::splitPathList($one));
+    }
 }

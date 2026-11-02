@@ -21,6 +21,12 @@ final class NullDialog implements Dialog
         return null;
     }
 
+    /** @return list<string> 空数组 = 用户取消（同 `openFile()` 返回 null 的那一支） */
+    public function openFiles(string $title, array $filters = []): array
+    {
+        return [];
+    }
+
     public function saveFile(string $title, string $defaultName = '', array $filters = []): ?string
     {
         return null;
