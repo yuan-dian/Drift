@@ -123,11 +123,15 @@ final class SurfaceProfile
         self::add('probe', 2000);
         self::add('probe', 2000);
         $per = self::perCall();
-        $got = (int) ($per['probe'] ?? -1);
-        if ($got !== 2000) {
+        // ★ 变量名必须与上面那个 `$got` 分开（2026-11-02）：AOT 的类型推断是
+        //   **方法内单一定型**的，同一个 `$got` 先被赋 `string`（`formatNs` 的返回）
+        //   再被赋 `int` ⇒ `Cannot re-assign $got from php::Int to php::Str`。
+        //   与 `MEMORY` 里"`foreach` key 复用已定型变量"是同一条坑的另一种形态。
+        $gotInt = (int) ($per['probe'] ?? -1);
+        if ($gotInt !== 2000) {
             $fail[] = \sprintf(
                 '聚合：两次 2000ns 的 perCall 应是 2000（平均），实得 %d —— 累计冒充了"每次"',
-                $got,
+                $gotInt,
             );
         }
         self::$ns = $ns0;

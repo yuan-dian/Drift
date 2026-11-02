@@ -137,9 +137,32 @@ final class ImageLoader
             return self::$cache[$resolved];
         }
 
-        $image = PngDecoder::decodeFile($resolved);
+        // ── 两条解码路径（2026-11-02）────────────────────────────────────────
+        //
+        // | 输入 | 走谁 | 为什么 |
+        // |---|---|---|
+        // | PNG | `PngDecoder`（纯 PHP） | 输出**逐字节确定** ⇒ golden / 单测可复现 |
+        // | 其它 | 壳里的 WIC | 纯 PHP 解 JPEG 要 100~300ms，且不支持渐进式 |
+        // | PNG 但解不出（隔行 / 罕见位深） | **回退 WIC** | 宁可慢一点也别显示占位图 |
+        //
+        // ★ 分派依据是**文件签名**不是扩展名：`a.png` 实际是 jpg 太常见。
+        // ★ `ImageDecoder::available()` 在 `php.exe` 里是 false（扩展没加载）⇒
+        //   单测里非 PNG 一律解不出，那是**预期**的（WIC 的判据只能在 AOT 里跑）。
+        $image = null;
+        if (PngDecoder::isPng($resolved)) {
+            $image = PngDecoder::decodeFile($resolved);
+        }
+        if ($image === null) {
+            $image = ImageDecoder::decode($resolved);
+        }
+
         if ($image !== null) {
             self::$cache[$resolved] = $image;
+        } else {
+            Errors::report(sprintf(
+                'ImageLoader：解不出图片 %s（PNG 解码器与壳的 WIC 都没成功）',
+                $resolved,
+            ), Errors::DIAGNOSTIC);
         }
 
         return $image;

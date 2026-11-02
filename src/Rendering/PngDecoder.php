@@ -52,6 +52,29 @@ final class PngDecoder
     private const SIGNATURE = "\x89PNG\r\n\x1a\n";
 
     /**
+     * 这个文件的**前 8 字节**是 PNG 签名吗（2026-11-02）。
+     *
+     * 存在的理由：`ImageLoader` 要在两条解码路径之间分派（PNG 走本类以保**逐字节
+     * 确定**，其它走壳里的 WIC）。分派依据必须是**签名**而不是扩展名 ——
+     * "`a.png` 实际是 jpg"在真实用户目录里太常见（重命名、下载器改后缀）。
+     *
+     * ★ 只读 8 字节，不整份读进来：分派发生在**解码之前**，它不能比解码本身还贵。
+     * ★ 读不出（不存在 / 无权限）⇒ `false`：那种情况让 `decodeFile()` 去报诊断，
+     *   这里再报一次就是两条重复的 DIAGNOSTIC。
+     */
+    public static function isPng(string $path): bool
+    {
+        $handle = @\fopen($path, 'rb');
+        if ($handle === false) {
+            return false;
+        }
+        $head = @\fread($handle, 8);
+        @\fclose($handle);
+
+        return \is_string($head) && $head === self::SIGNATURE;
+    }
+
+    /**
      * 从文件解码。文件不存在 / 读不出 / 内容不是 PNG ⇒ `null`（附诊断）。
      */
     public static function decodeFile(string $path): ?ImageHandle

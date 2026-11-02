@@ -518,3 +518,25 @@ function drift_io_handled(): int {}
  *   丢活只会让调用方看到一个永不结算的 `Future`。
  */
 function drift_io_stop(): int {}
+
+// ---- 图片解码（WIC，2026-11-02；`Drift\Rendering\ImageDecoder` 的 Win32 实现）----
+
+/**
+ * 用 **WIC** 把一张图片解码成 RGBA。
+ *
+ * 返回 `['w' => int, 'h' => int, 'rgba' => string]`：
+ *   - `rgba` 是**逐像素 RGBA、自上而下、无行填充**（`w * h * 4` 字节），
+ *     与 `drift_win_present()` 收的格式、`ImageHandle::fromRgba()` 要的格式**同一个**；
+ *   - 解不出 ⇒ **空数组**（不是抛）。"用户选了个 .psd" 是预期内的结果，
+ *     不是异常 —— PHP 侧的降级是"1×1 透明占位 + 一条 DIAGNOSTIC"。
+ *
+ * ★ 为什么在壳里而不是 PHP 里：`PngDecoder` 是纯 PHP 且只认 PNG，而
+ *   `apps/watermark` 要显示服务端返回的 JPEG。四条路的取舍见
+ *   `cpp-src/win32/image_decode.h` 的表格。
+ *
+ * ★ 支持格式取决于系统装了哪些 WIC 解码器（Win10+ 至少 jpg/png/gif/bmp/tiff，
+ *   通常还有 webp/heif）。**不要**在调用方硬编码格式列表 —— 解不出就是空数组。
+ *
+ * @param string $path UTF-8 路径（壳内部转 UTF-16）
+ */
+function drift_image_decode(string $path): array {}

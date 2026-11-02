@@ -100,6 +100,7 @@ typedef BOOL (WINAPI *DriftSetWindowCompositionAttribute)(HWND, DriftWindowCompo
 //     MSVC 对引号形式先查**包含者所在目录** ⇒ `core/` / `win32/` 都能落到。
 #include "core/io_pool.h"
 #include "win32/io_wake.h"
+#include "win32/image_decode.h"
 
 using namespace php;
 
@@ -3768,4 +3769,35 @@ Bool php_drift_win_confirm(Int owner, String title, String body) {
                              MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2
                                  | MB_TASKMODAL | MB_SETFOREGROUND);
     return Bool(result == IDYES);
+}
+// ─────────────────────── 图片解码（WIC，2026-11-02）───────────────────────
+//
+// 为什么解码要落在**壳**上，而不是 PHP 侧：
+//   本仓已有的 `PngDecoder` 是纯 PHP、只认 PNG（`W8-1` 的产物）。而 `apps/watermark`
+//   要显示的是服务端返回的 **JPEG**（AI 出图几乎不可能是 PNG），并且用户上传的
+//   原图也是 jpg。四条路的取舍见 `win32/image_decode.h` 的表格 —— 结论是 WIC：
+//   零体积增量（`windowscodecs.lib` 是系统组件）、格式全覆盖、系统级速度。
+//
+// ★ 返回**空数组**表示失败（不是抛异常）：PHP 侧 `ImageLoader` 的降级是"1×1 透明
+//   占位 + 一条 DIAGNOSTIC"，与"文件找不到"走同一条路。跨边界抛 C++ 异常需要
+//   phpx 的翻译层，而"解不出图"是**预期内**的结果（用户可能选了个 .psd），
+//   不是异常。
+Array php_drift_image_decode(String path) {
+    Array out;
+
+    unsigned int width = 0;
+    unsigned int height = 0;
+    std::string rgba;
+
+    if (!drift::win32::decodeImageToRgba(toWide(path), width, height, rgba)) {
+        return out;
+    }
+
+    out.set("w", (Int)width);
+    out.set("h", (Int)height);
+    // ★ 二进制原样过边界：`String(std::string)` 保留全部字节（含 `\0`），
+    //   与 `php_drift_win_present()` 收 RGBA 是同一个手法（那边是反方向）。
+    out.set("rgba", String(rgba));
+
+    return out;
 }
