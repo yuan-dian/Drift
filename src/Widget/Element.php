@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Widget;
 
+use Drift\Core\Pipeline;
 use Drift\Errors;
 use Drift\Layout\RenderBox;
 
@@ -36,8 +37,10 @@ abstract class Element
      *
      * ★ **只在真的变了时 +1**：`updateChildren()` 每次 rebuild 都会被调，
      *   无条件 +1 会让版本号每帧都变 ⇒ "结构没变"永远判不出来（等于没做）。
+     *
+     * ★★ 值住 `Pipeline`（2026-11-02，技术债 D3①）：原先是 `private static` ⇒
+     *   两个应用共用一条号。这里只留说明，写点见 `Pipeline::bumpStructure()`。
      */
-    private static int $structureVersion = 0;
 
     /**
      * **内容版本号**：结构变了，或任一节点的 Widget 换过（= 声明可能变了）。
@@ -59,8 +62,9 @@ abstract class Element
      *
      * ★ 唯一写点两处（都是"Widget 声明落地"的地方）：`update()` 与
      *   `bumpStructure()`。不散落在各处，所以不可能漏。
+     *
+     * ★★ 值住 `Pipeline`（同 `$structureVersion`）。
      */
-    private static int $contentVersion = 0;
 
     protected ?Element $parent = null;
     protected BuildContext $context;
@@ -107,14 +111,13 @@ abstract class Element
     /** @internal 结构变了（节点增删 / 重排）—— 见 `$structureVersion` */
     public static function bumpStructure(): void
     {
-        ++self::$structureVersion;
-        ++self::$contentVersion;
+        Pipeline::current()->bumpStructure();
     }
 
     /** @internal 语义推送用它判"结构变没变"（`07` §6.2） */
     public static function structureVersion(): int
     {
-        return self::$structureVersion;
+        return Pipeline::current()->structureVersion();
     }
 
     /**
@@ -123,7 +126,7 @@ abstract class Element
      */
     public static function contentVersion(): int
     {
-        return self::$contentVersion;
+        return Pipeline::current()->contentVersion();
     }
 
     /**
@@ -135,14 +138,11 @@ abstract class Element
      *   `O(n)` 改回 `O(n²)` 会**全绿通过**。
      * ★ 成本是一次自增（AOT 下就是一条 `add`），留在热路径上是划算的。
      *
-     * @internal 量具；消费者是 smoke（`Element::pairChecks()`）
+     * @internal 量具；消费者是 smoke（`Element::pairChecks()`）。值住 `Pipeline`。
      */
-    private static int $pairChecks = 0;
-
-    /** @internal 见 `$pairChecks` */
     public static function pairChecks(): int
     {
-        return self::$pairChecks;
+        return Pipeline::current()->pairChecks();
     }
 
     /**
@@ -405,7 +405,7 @@ abstract class Element
     {
         $this->widget = $newWidget;
         $this->widget->seal();
-        ++self::$contentVersion; // ★ 声明可能变了（`focusOrder` / `disabled` / 标签）
+        Pipeline::current()->bumpContent(); // ★ 声明可能变了（`focusOrder` / `disabled` / 标签）
         $this->syncBox(); // §13.2：新描述 ⇒ 新盒
         $this->didUpdateWidget($newWidget);
         $this->rebuild();
@@ -643,7 +643,7 @@ abstract class Element
         for (; $index < $limit; $index++) {
             $candidate = $old[$index];
             $newWidget = $newWidgets[$index];
-            ++self::$pairChecks;
+            Pipeline::current()->bumpPairCheck();
 
             if (get_class($candidate->widget()) !== get_class($newWidget)
                 || !Key::same($candidate->widget()->identity(), $newWidget->identity())
@@ -673,7 +673,7 @@ abstract class Element
                 $at = $cursor[$slotKey] ?? 0;
 
                 if ($bucket !== null && isset($bucket[$at])) {
-                    ++self::$pairChecks;
+                    Pipeline::current()->bumpPairCheck();
 
                     $slot = $bucket[$at];
                     $cursor[$slotKey] = $at + 1;

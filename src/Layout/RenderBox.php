@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Layout;
 
+use Drift\Core\Pipeline;
 use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Matrix2D;
@@ -198,8 +199,11 @@ abstract class RenderBox extends RenderObject
      *   Widget 层（依赖方向 Widget → Layout）。`State::boxEpoch()` 现在**转发**
      *   到这里 ⇒ 全仓仍然只有**一个**序号、一个含义："渲染树有东西变了，必须重排"。
      *   两个序号迟早会漂（一处记得加、另一处忘了）。
+     *
+     * ★★ 值住 `Pipeline`（2026-11-02，技术债 D3①）：原先 `private static` ⇒ 两个
+     *   应用的盒换代互相触发对方重排。`markNeedsLayout()` 的签名保持不变 ——
+     *   它的语义是"**渲染树**变了"，不是"这个盒变了"。
      */
-    private static int $layoutEpoch = 0;
 
     /**
      * `layout()` 被调用的累计次数 —— **量具**（`smoke` 用它断言"滚动不重排"）。
@@ -207,19 +211,20 @@ abstract class RenderBox extends RenderObject
      * ★★ 为什么必须有它：滚动期"重排了"与"没重排"在**画面上完全一样**
      *   （偏移的应用已抽成 `applyScrollOffsets()`，两条路得到同样的子盒
      *   offset）⇒ 复杂度没有行为差异 ⇒ 只能靠计数器证伪。同 `Element::$pairChecks`。
+     *
+     * ★★ 值住 `Pipeline`（同 `$layoutEpoch`）。
      */
-    private static int $layoutCount = 0;
 
     /** @internal `Frame` 的"跳过 layout"判据之一（`05` §5.4 第三步） */
     public static function layoutEpoch(): int
     {
-        return self::$layoutEpoch;
+        return Pipeline::current()->layoutEpoch();
     }
 
     /** @internal 量具：`layout()` 累计次数（见 `$layoutCount`） */
     public static function layoutCount(): int
     {
-        return self::$layoutCount;
+        return Pipeline::current()->layoutCount();
     }
 
     /**
@@ -227,22 +232,19 @@ abstract class RenderBox extends RenderObject
      *
      * ★ 为什么又是计数器：缓存命中与否在**画面上完全相同**（判据就是"等价替换"），
      *   与 `$layoutCount` 同一类困境 ⇒ 只能计数证伪（见 `$layoutCount` 的注）。
-     *   命中率 = replay / (paint + replay)。
+     *   命中率 = replay / (paint + replay)。值住 `Pipeline`。
      */
-    private static int $paintCount = 0;
 
-    private static int $replayCount = 0;
-
-    /** @internal 量具：真画累计次数（见 `$paintCount`） */
+    /** @internal 量具：真画累计次数（见上） */
     public static function paintCount(): int
     {
-        return self::$paintCount;
+        return Pipeline::current()->paintCount();
     }
 
-    /** @internal 量具：层缓存重放累计次数（见 `$replayCount`） */
+    /** @internal 量具：层缓存重放累计次数（见上） */
     public static function replayCount(): int
     {
-        return self::$replayCount;
+        return Pipeline::current()->replayCount();
     }
 
     /**
@@ -261,7 +263,7 @@ abstract class RenderBox extends RenderObject
      */
     public static function markNeedsLayout(): void
     {
-        self::$layoutEpoch++;
+        Pipeline::current()->bumpLayoutEpoch();
     }
 
     /** 父定位子（C1）：子不自定位，所以这两个只有父会写 */
@@ -408,7 +410,7 @@ abstract class RenderBox extends RenderObject
      */
     final public function layout(BoxConstraints $constraints): Size
     {
-        self::$layoutCount++;
+        Pipeline::current()->bumpLayout();
 
         $m = $this->mods;
 
@@ -1163,15 +1165,16 @@ abstract class RenderBox extends RenderObject
             $w = $s === null ? -1.0 : $s->width;
             $h = $s === null ? -1.0 : $s->height;
 
-            $rec = $layer->beginRecord($canvas, self::$layoutEpoch, $w, $h);
+            $epoch = Pipeline::current()->layoutEpoch();
+            $rec = $layer->beginRecord($canvas, $epoch, $w, $h);
             if ($rec === null) {   // 命中：整棵子树一次 paint() 都不跑
-                self::$replayCount++;
+                Pipeline::current()->bumpReplay();
 
                 return;
             }
-            self::$paintCount++;
+            Pipeline::current()->bumpPaint();
             $this->paint($rec);
-            $layer->endRecord($canvas, self::$layoutEpoch, $w, $h);
+            $layer->endRecord($canvas, $epoch, $w, $h);
 
             return;
         }

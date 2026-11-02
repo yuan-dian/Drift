@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\App;
 
+use Drift\Core\Pipeline;
 use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
 use Drift\Layout\LayoutSelfCheck;
@@ -57,11 +58,14 @@ final class Frame
 
     private bool $laidOut = false;
 
-    /** @internal 量具：settle 段**真跑**的帧数（对 `$settleSkipCount`） */
-    private static int $settleRunCount = 0;
+    /** 本帧所属的管线（构造参数，见构造器注）；量具与"像素脏了没"都读它 */
+    private readonly Pipeline $pipeline;
 
-    /** @internal 量具：settle 段**整段跳过**的帧数 */
-    private static int $settleSkipCount = 0;
+    /*
+     * 四件量具（settle 真跑 / settle 跳过 / paint 真跑 / paint 跳过）住 `Pipeline`
+     * （2026-11-02，技术债 D3①）：原先是本类的 `private static` ⇒ 两个应用的
+     * 帧数混在一起，"跳过率"这种比值会变成两个窗口的平均值，失去意义。
+     */
 
     private float $lastMinWidth = 0.0;
 
@@ -110,15 +114,19 @@ final class Frame
      */
     private ?array $lastOverlayIds = null;
 
-    /** @internal 量具：paint 段**真跑**的帧数（对 `$paintSkipCount`） */
-    private static int $paintRunCount = 0;
-
-    /** @internal 量具：paint 段**整段跳过**的帧数 */
-    private static int $paintSkipCount = 0;
+    /** @internal 量具：paint 段真跑 / 整段跳过 —— 值住 `Pipeline`（见上） */
 
     public function __construct(
         private readonly RenderSurface $surface,
+        ?Pipeline $pipeline = null,
     ) {
+        // ★ 一帧属于**一条管线**（2026-11-02，技术债 D3①）：本类不是树节点，
+        //   它由 `Application` 直接持有 ⇒ 显式拿引用比每处 `Pipeline::current()`
+        //   更正确 —— `hasPendingPaint()` **在帧外**被 `needsFrameNow()` 调，那时
+        //   "当前管线"可能是另一个应用的。树里的节点没有这个便利（见 `Pipeline` 的注）。
+        // ★ 可选参数：测试里 `new Frame($surface)` 各自独立跑帧，落到当前管线
+        //   （与搬迁前的全局静态行为一致），不必改 471 条 smoke。
+        $this->pipeline = $pipeline ?? Pipeline::current();
     }
 
     /** 约束与上一帧是否不同（没排过 ⇒ 一定不同 ⇒ 必须排） */
@@ -165,25 +173,25 @@ final class Frame
     /** @internal 量具：settle 段真跑的累计帧数 */
     public static function settleRunCount(): int
     {
-        return self::$settleRunCount;
+        return Pipeline::current()->settleRunCount();
     }
 
     /** @internal 量具：settle 段整段跳过的累计帧数 */
     public static function settleSkipCount(): int
     {
-        return self::$settleSkipCount;
+        return Pipeline::current()->settleSkipCount();
     }
 
     /** @internal 量具：paint 段真跑的累计帧数 */
     public static function paintRunCount(): int
     {
-        return self::$paintRunCount;
+        return Pipeline::current()->paintRunCount();
     }
 
     /** @internal 量具：paint 段整段跳过的累计帧数 */
     public static function paintSkipCount(): int
     {
-        return self::$paintSkipCount;
+        return Pipeline::current()->paintSkipCount();
     }
 
     /**
@@ -224,7 +232,7 @@ final class Frame
         $didRebuild = false;
         try {
             if ($this->needsSettle()) {
-                self::$settleRunCount++;
+                $this->pipeline->bumpSettleRun();
                 $didRebuild = $root->settle();
                 foreach ($overlays as $e) {
                     // 浮层各自的帧末重建（W3）；任一浮层重建 ⇒ 本帧不能跳过 layout
@@ -232,7 +240,7 @@ final class Frame
                 }
             } else {
                 // 树与上一帧逐位相同 ⇒ 既不重建也不挂接（判据见 `needsSettle()`）
-                self::$settleSkipCount++;
+                $this->pipeline->bumpSettleSkip();
             }
         } catch (Throwable $e) {
             Errors::report(sprintf(
@@ -329,14 +337,14 @@ final class Frame
         foreach ($overlays as $overlay) {
             $overlayIds[] = $overlay->id;
         }
-        $paintEpoch = RenderObject::paintEpoch();
+        $paintEpoch = $this->pipeline->paintEpoch();
         if (
             !$layoutRan
             && $paintEpoch === $this->lastPaintEpoch
             && !$paintRequested
             && $overlayIds === $this->lastOverlayIds
         ) {
-            self::$paintSkipCount++;
+            $this->pipeline->bumpPaintSkip();
 
             return false;
         }
@@ -384,7 +392,7 @@ final class Frame
         //   仍然会画。失败后把序号记成"已画"= 从此静默停在残缺画面上，正是 G2
         //   明令禁止的半静默。
         if ($painted) {
-            self::$paintRunCount++;
+            $this->pipeline->bumpPaintRun();
             $this->lastPaintEpoch = $paintEpoch;
             $this->lastOverlayIds = $overlayIds;
         }
@@ -414,6 +422,6 @@ final class Frame
      */
     public function hasPendingPaint(): bool
     {
-        return RenderObject::paintEpoch() !== $this->lastPaintEpoch;
+        return $this->pipeline->paintEpoch() !== $this->lastPaintEpoch;
     }
 }

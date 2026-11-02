@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Layout;
 
+use Drift\Core\Pipeline;
 use Drift\Geometry\Rect;
 use Drift\Input\CursorShape;
 use Drift\Rendering\AnimatedValue;
@@ -125,36 +126,33 @@ abstract class RenderObject
      *   两个序号、两个含义、互不代偿。偏移只标 paint（不需要重排），换盒只标
      *   layout（重排完自然会画）—— 混用一个会让"只滚动"退化成"整树重排"。
      *
-     * ★★ **多窗口下的已知代价**（诚实记账）：序号是**进程级**的，两个窗口共享
-     *   一个计数器 ⇒ A 窗滚动会让空闲的 B 窗也重画一帧。这是**保守的正确**
-     *   （多画，不少画），与现有的 `markedCount` / `boxEpoch` / `structureVersion`
-     *   完全同构 —— 那三个也都在全局。要让"脏"按窗口分片，得先有窗口身份
-     *   （`MULTI-WINDOW-2026-10-30.md` 的 M0/M1）⇒ 那是 M2 的债，不是这里的。
+     * ★★ 序号**住管线不住类**（2026-11-02，技术债 D3）：原先是 `private static`，
+     *   于是"两个窗口共享一个计数器 ⇒ A 窗滚动会让空闲的 B 窗也重画一帧"。
+     *   现在每个 `Application` 一份 `Pipeline`，帧入口切换 ⇒ 那个代价没有了。
+     *   **本类的签名不变**（仍是 `static`）：它对外的语义本来就是"**树**变了"，
+     *   不是"**这个盒**变了" —— 写成实例方法会让"谁改了像素"这件事看起来住在盒上，
+     *   而实际判据是整棵树的序号（`Frame` 只比一个数）。
      */
-    private static int $paintEpoch = 0;
-
     /**
      * 声明"**画面变了**，下一帧必须真的画"。
      *
      * ★ 只给本层的**就地写点**调：`setOffset()` / `setBase()` / `applyCompose()` /
      *   `setBarOpacity()` / `tickAnimations()`。业务代码不该碰它 —— 业务改状态走
      *   `setState()`，那条路有自己的信号（`State::markedCount()`）。
-     * ★ 值没变**不要**调：静态自增很便宜，但一次多余的自增就是一次多余的整帧
-     *   重绘。所有调用点都先做相等比较（`setCompose` 的 `applyCompose` 本来就有）。
-     * ★ 用 `self::` 不用 `static::`：静态字段不参与继承分片，晚静态绑定会解析到
-     *   子类（子类没有这个字段）⇒ AOT 下取到 `null` 再自增就是 1，序号从此失效。
+     * ★ 值没变**不要**调：自增很便宜，但一次多余的自增就是一次多余的整帧重绘。
+     *   所有调用点都先做相等比较（`setCompose` 的 `applyCompose` 本来就有）。
      *
      * @internal
      */
     public static function markNeedsPaint(): void
     {
-        self::$paintEpoch++;
+        Pipeline::current()->bumpPaintEpoch();
     }
 
     /** @internal `Frame` 的"跳过 paint"判据 */
     public static function paintEpoch(): int
     {
-        return self::$paintEpoch;
+        return Pipeline::current()->paintEpoch();
     }
 
     public function parent(): ?RenderObject

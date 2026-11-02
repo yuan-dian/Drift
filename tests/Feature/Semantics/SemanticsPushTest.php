@@ -36,15 +36,19 @@ final class SemanticsPushTest extends SmokeTestCase
     // ㉑ 结构版本号随挂载增长（`mount()` 里 +1）
     public function testStructureVersionGrowsOnMount(): void
     {
-        $sv0 = Element::structureVersion();
+        // ★ D3（2026-11-02）：结构版本号**一应用一份**了，不再是进程里一条只涨的号
+        //   ⇒ 判据从"比之前大"改成"本应用建成之后 > 0 且静态读指向本应用"。
+        //   （旧写法 `$sv0 < $sv1` 在新实现下会读到两个不同应用的两条号。）
         $app = new EchoApplication();
         $app->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(120.0, 120.0)));
-        $sv1 = Element::structureVersion();
+        $sv = Element::structureVersion();
         check(
             '语义两档 · 结构版本号随挂载增长（mount() 里 +1）',
-            $sv1 > $sv0,
-            $sv0 . ' -> ' . $sv1,
+            $sv > 0 && $sv === $app->pipeline()->structureVersion(),
+            'sv=' . $sv . ' pipeline=' . $app->pipeline()->structureVersion(),
         );
+
+        $this->flushChecks();
     }
 
     // ㉒㉓㉔ 首帧推 full；随后动画 8 帧只推 2 次（每 4 帧一次），且结构版本号不动

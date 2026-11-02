@@ -26,9 +26,13 @@ final class MountRegistryTest extends SmokeTestCase
 {
     public function testMountRegistryConsumesOutOfTreeState(): void
     {
+        // ★ D3（2026-11-02）：登记表**一应用一份**了，所以顺序必须先建应用再挂树外
+        //   节点 —— 反过来的话登记落到"上一个用例的管线"上，本应用的帧永远看不到它
+        //   （这正是 D3 要的行为：树外节点不该被随便哪个应用的帧推进）。
+        $mountApp = Frame::open(new RevealApplication(), 320.0, 200.0);
+        State::takeMountedThisFrame();   // 清掉建树期登记的（已经被首帧消费过）
+
         // ⑳ mount() 之后 ⇒ 登记表里有 1 条（消费方还没跑）
-        //    ★ 先清掉前面夹具留下的（那些 mount() 没有帧来消费）—— 登记表是进程级静态的。
-        State::takeMountedThisFrame();
         $mountSpin = Spinner::make()->createElement();
         $mountSpin->mount(null, smokeContext());
         $mountSpin->effectiveBox()?->layout(BoxConstraints::loose(new Size(64.0, 64.0)));
@@ -43,7 +47,7 @@ final class MountRegistryTest extends SmokeTestCase
         );
 
         // ㉑ 一帧之后 ⇒ 登记表清空，且那个不在应用树里的 State 真的被 tick 了
-        $mountApp = Frame::open(new RevealApplication(), 320.0, 200.0);
+        $mountApp->tick();
         check(
             '挂载登记 · 一帧之后被消费干净（不会无限累积）',
             State::mountedCount() === 0,
@@ -57,6 +61,7 @@ final class MountRegistryTest extends SmokeTestCase
         );
 
         // ㉒ 已卸载的登记项被跳过
+        $deadApp = Frame::open(new RevealApplication(), 320.0, 200.0);
         State::takeMountedThisFrame();
         $deadSpin = Spinner::make()->createElement();
         $deadSpin->mount(null, smokeContext());
@@ -65,7 +70,7 @@ final class MountRegistryTest extends SmokeTestCase
             static fn(Element $e): bool => $e instanceof StatefulElement && $e->state() instanceof SpinnerState,
         )?->state();
         $deadSpin->unmount();
-        $deadApp = Frame::open(new RevealApplication(), 320.0, 200.0);
+        $deadApp->tick();
         check(
             '挂载登记 · 已卸载的登记项被跳过（不 tick 死节点）',
             $deadState instanceof SpinnerState && $deadState->step() === 0 && State::mountedCount() === 0,

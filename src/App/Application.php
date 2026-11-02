@@ -8,6 +8,7 @@ use Drift\Async\Future;
 use Drift\Commands\CommandArg;
 use Drift\Commands\CommandHandler;
 use Drift\Commands\CommandRouter;
+use Drift\Core\Pipeline;
 use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
 use Drift\Input\AcceleratorTable;
@@ -320,9 +321,24 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      */
     private TapTracker $taps;
 
+    /**
+     * 本应用**唯一**的一条帧管线（2026-11-02，技术债 D3①）。
+     *
+     * ★ 原先 38 个 `private static` 把"一个进程只有一个应用"写死进了代码：
+     *   两个应用会共用脏计数、盒换代序号、帧量具 ⇒ 多窗口/M1 一步都走不动。
+     *   现在每应用一份，`frame()` 入口把它切成"当前管线"，树里的节点经
+     *   `Pipeline::current()` 找到它（见 `Pipeline` 类注释的三选一裁决）。
+     *
+     * @internal 应用代码不该碰它；测试/探针用 {@see self::pipeline()}
+     */
+    private readonly Pipeline $pipeline;
+
     /** @param iterable<string, CommandHandler> $handlers `commands()` 的返回值 */
     public function __construct(iterable $handlers = [], ?AppScope $scope = null)
     {
+        // ★ 最先建：下面每个片（router / textEditing / input …）在构造期就可能
+        //   经 `Element`/`State` 的版本号问这条管线。
+        $this->pipeline = new Pipeline();
         // ★ 作用域先定（M2）：本类对应用级状态的每一处读都经它。
         $this->scope = $scope ?? AppScope::make();
 
@@ -630,6 +646,11 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         // ★ UI 线程身份在**挂载之前**记：之后的任何回调都以此为准（§17.4.2.1）。
         $this->uiThreadId = \drift_thread_id();
 
+        // ★ 挂载期就开始写这条管线（2026-11-02）：`buildRoot()->createElement()` /
+        //   `mount()` 会推结构版本号与配对计数，而那时还没有跑过一帧。不切的话
+        //   这些写入会落到"上一个跑帧的应用"的管线上（跨应用污染）。
+        Pipeline::enter($this->pipeline);
+
         // ★ 作用域登记（M2）：第一个窗口把主题灌进 scope，后续窗口必须一致 ——
         //   不一致在这里报 DIAGNOSTIC（多窗口"一半深色一半浅色"的唯一入口是
         //   "某个窗口覆写了 theme()"）。只在挂载时查一次，避免进热路径。
@@ -664,7 +685,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         $root->mount(null, $context);
         $this->root = $root;
 
-        $this->frame = new Frame($surface);
+        $this->frame = new Frame($surface, $this->pipeline);
 
         // ★ 首帧走**同一个入口**（§17.4.10）：直接调 `Frame::run()` 会绕过
         //   `tickAnimations()` ⇒ 纯动画应用（根就是一个 `Spinner`、没有异步任务）
@@ -835,6 +856,13 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
 
         // ★ 帧必须在 UI 线程跑（§17.4.2.1）。成本 = 读一次 TEB + 一次整数比较。
         $this->assertUiThread('frame');
+
+        // ★★ 帧入口切管线（2026-11-02，技术债 D3①）：树里的节点没有指向应用的
+        //   引用（分层纪律），它们经 `Pipeline::current()` 找"本帧的记账本"。
+        //   多应用时正是这一行保证"谁的帧记谁的账"。
+        //   切了**不恢复** —— 帧跑完之后测试/探针要读的正是刚跑完这一帧的计数
+        //   （见 `Pipeline::enter()` 的注）。
+        Pipeline::enter($this->pipeline);
 
         $this->lastTimestampMs = $timestampMs;
 
@@ -1267,6 +1295,19 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         return $this->frameSerial;
     }
 
+    /**
+     * 本应用的帧管线（结构/内容版本、脏记账、两个换代序号、全部量具）。
+     *
+     * @internal 给测试 / 探针 / devtools 精确读**某一应用**的数字。业务代码不该读它。
+     * ★ 为什么不读静态门面：`Element::structureVersion()` 这些读的是"**当前**管线"
+     *   （最近一帧跑的那个应用）。两个应用交错跑帧时，只有本方法能问对对象 ——
+     *   这正是 D3 验收②的判据形态。
+     */
+    public function pipeline(): Pipeline
+    {
+        return $this->pipeline;
+    }
+
     /** 记一次帧耗时（诊断 / 语义推送节流的输入） */
     public function noteFrameCost(float $milliseconds): void
     {
@@ -1673,6 +1714,12 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      */
     public function dispatchInput(InputEvent $event, ?float $timestampMs = null): ?CursorShape
     {
+        // ★★ 输入入口也切管线（2026-11-02，技术债 D3①）：回调里的 `setState()`
+        //   是**帧外**写 —— 不切的话它会记到"上一次跑帧的那个应用"的账上，于是
+        //   本应用的 `markedCount` 不涨 ⇒ `Frame::needsSettle()` 判"没变" ⇒
+        //   **点了没反应**（且不报错）。多应用下这是最贵的一个静默 bug。
+        Pipeline::enter($this->pipeline);
+
         // ★ 记下"用户动了一下"的时刻 —— `after()` 的基准要取它（见 `$lastInputMs`）。
         //   放在最前面：失活事件也要记（它同样是"用户动了一下"）。
         if ($timestampMs !== null) {
@@ -1825,6 +1872,9 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      */
     public function dispatch(string $name, ?CommandArg $arg = null): bool
     {
+        // ★ 同 `dispatchInput()`：命令 handler 里的 `setState()` 也是帧外写。
+        Pipeline::enter($this->pipeline);
+
         $root = $this->root;
         $handled = false;
 

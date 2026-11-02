@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Widget;
 
 use Drift\Commands\CommandArg;
+use Drift\Core\Pipeline;
 use Drift\Errors;
 use Drift\Layout\RenderBox;
 use Drift\State\AsyncCommand;
@@ -22,21 +23,17 @@ use Drift\State\Subscription;
  */
 abstract class State
 {
-    /**
-     * @internal 未消费的脏 State 数 —— `Element::settle()` 收敛循环的 O(1) 提前退出条件
+    /*
+     * 五件"跨节点记账"的数字**不住本类**：`pendingDirty` / `markedCount` /
+     * `rebuiltCount` / `mountedThisFrame` / `frameWantedCount` 都住 `Pipeline`
+     * （2026-11-02，技术债 D3①）。原先它们是 `private static`，前提是"单应用 +
+     * 单窗口 + 串行测试"；前提一变就是硬阻塞 —— 两个 `Application` 会互相消费
+     * 对方的脏、共用一条标脏号。搬进管线之后**一个应用一份**，而"主树与浮层共用
+     * 一份"的语义没变（它们是同一次帧、同一条管线）。
      *
-     * ★ **静态**：`Frame::run()` 里主树与浮层两棵树共用一份计数。这是**对的** ——
-     *   若浮层的 build 标脏了主树的 State，主树的 `settle()` 会看到非零计数并
-     *   多跑一遍（`03` §5.4）。
-     * ★ 漏减只会让每帧多扫一遍（性能退化，**不报错**）⇒ smoke 有"跑 100 帧后
-     *   `pendingDirty() === 0`"的夹具守着（`03` §10）。`settle()` 里另有
-     *   "这一遍什么都没重建就 break"的兜底，防止漂移被误判成 E-FLUSH-CYCLE。
+     * ★ 各字段"为什么长这样"的理由留在它对应的方法上（计数而非登记表 /
+     *   只增不减 / 登记表必须被消费干净）—— 那几条与"住哪"无关，别跟着搬走。
      */
-    private static int $pendingDirty = 0;
-
-    /** 标脏累计次数（只增不减）—— 见 `markedCount()` */
-    private static int $markedCount = 0;
-
     /**
      * @internal 正在 `build()` 的 State —— `markDirty()` 用它识别"build 期写自己"
      *
@@ -46,45 +43,17 @@ abstract class State
      *   自身的必要传播，**不是 bug**。`applyContext` 发生在 `build()` 之外
      *   （`rebuild()` 调完 `build()` 之后才走 `updateChildren` → `applyContext`），
      *   所以只在 `build()` 调用栈内标脏自己才判 E-FLUSH-CYCLE —— 精准、零误杀。
+     *
+     * ★ 它是五件里唯一**故意留静态**的（同 `Pipeline` 类注释里那张清单）：build 是
+     *   同步的，两个应用不可能交错进入 ⇒ 它标记的是调用栈，不是状态。
      */
     private static ?State $buildingState = null;
 
-    /** @internal 本帧累计 rebuild 次数 —— `settle()` 的"有没有重建"判据（前后差） */
-    private static int $rebuiltCount = 0;
-
-    /**
-     * 本帧挂载的 State（`callInit()` 登记，`Application::frame()` 第 ⑦ 段消费）。
-     *
-     * ★ 存在理由（`06` §4.2）：`tickFrame()` **必须**在 settle 之前跑，而挂载**必然**
-     *   发生在 settle 期间 ⇒ "这一帧刚挂上的 State"在第一次 tick 时还不在树里。
-     *   改动前是靠**再遍历一遍全树**补上（`tickFrameStamped` 的帧戳防重复推进），
-     *   代价是每帧多 O(树) 次虚调用，只为照顾通常 0–5 个新挂载。
-     *
-     * ★ **登记点是 `callInit()`**（已在 `StatefulElement::onMount()` 里被调）
-     *   ⇒ 不新增调用点，只加一行。
-     *
-     * ★ **必须被帧消费**：不消费就会一直累积（挂着已卸载的 State）。所以
-     *   `Application::frame()` 每次都 `takeMountedThisFrame()`，且循环里**跳过
-     *   已卸载的**（`mount()` 了但一直没有帧到来的场景：测试、纯头侧夹具）。
-     *
-     * @var list<State>
+    /*
+     * `$mountedThisFrame`（本帧挂载的 State）与 `$frameWantedCount`（"我要下一帧"
+     * 的累计请求数）也住 `Pipeline`。两者的理由分别写在 `takeMountedThisFrame()`
+     * 与 `requestFrame()` 上。
      */
-    private static array $mountedThisFrame = [];
-
-    /**
-     * 累计的"我要下一帧"请求数（**只增不减**，与 `markedCount` 同一条纪律）。
-     *
-     * ★★ 存在理由（2026-10-29，真机抓到）：`tickAnimations()` 跑在 settle
-     *   **之前** ⇒ 在那之后才开始的动画（`didUpdateWidget()` 里 `toward()`）
-     *   当帧**看不见** ⇒ `$animating` 为 false ⇒ 帧时钟不上膛 ⇒ 动画要等
-     *   **下一次输入**才动。真机现象：点「淡入」画面一动不动，再点一次才动。
-     *
-     * ★ **为什么是计数而不是登记表**（第一版写的就是 `list<State>`，真机不生效）：
-     *   登记表要在 `Application` 侧再问一遍 `element()` / `isMounted()` 才敢用，
-     *   而那两跳在 AOT 下任何一个失手都会静默退化成"什么都没发生"。计数只有
-     *   一次 `!==` 比较，没有可以失手的中间环节 —— 与 `markedCount` 同一个理由。
-     */
-    private static int $frameWantedCount = 0;
 
     private Widget $widget;
     private ?StatefulElement $element = null;
@@ -175,8 +144,7 @@ abstract class State
             return;                  // ★ 已经脏 ⇒ 不重复计数
         }
         $this->dirty = true;
-        self::$pendingDirty++;
-        self::$markedCount++;
+        Pipeline::current()->markDirty();
     }
 
     /**
@@ -382,7 +350,7 @@ abstract class State
         }
 
         $this->initialized = true;
-        self::$mountedThisFrame[] = $this;   // ★ 挂载登记（`06` §4.2）
+        Pipeline::current()->queueMounted($this);   // ★ 挂载登记（`06` §4.2）
         $this->initializing = true;
         try {
             $this->initState();
@@ -402,7 +370,7 @@ abstract class State
         $dirty = $this->dirty;
         if ($dirty) {
             $this->dirty = false;
-            self::$pendingDirty--;
+            Pipeline::current()->consumeDirty();
         }
 
         return $dirty;
@@ -411,7 +379,7 @@ abstract class State
     /** @internal 收敛循环的提前退出条件（`Element::settle()` 用） */
     public static function pendingDirty(): int
     {
-        return self::$pendingDirty;
+        return Pipeline::current()->pendingDirty();
     }
 
     /**
@@ -423,13 +391,13 @@ abstract class State
      */
     public static function markedCount(): int
     {
-        return self::$markedCount;
+        return Pipeline::current()->markedCount();
     }
 
     /** @internal 本帧累计 rebuild 次数（`settle()` 用前后差判断"有没有重建"） */
     public static function rebuiltCount(): int
     {
-        return self::$rebuiltCount;
+        return Pipeline::current()->rebuiltCount();
     }
 
     /**
@@ -457,23 +425,30 @@ abstract class State
     }
 
     /**
-     * 取走本帧挂载的 State 并**清空**登记表（`06` §4.2）。
+     * 取走本帧挂载的 State 并**清空**登记表（`06` §4.2）。登记表住 `Pipeline`。
+     *
+     * ★ 存在理由：`tickFrame()` **必须**在 settle 之前跑，而挂载**必然**发生在
+     *   settle 期间 ⇒ "这一帧刚挂上的 State"在第一次 tick 时还不在树里。改动前
+     *   靠**再遍历一遍全树**补上（`tickFrameStamped` 的帧戳防重复推进），代价是
+     *   每帧多 O(树) 次虚调用，只为照顾通常 0–5 个新挂载。
+     * ★ **登记点是 `callInit()`**（已在 `StatefulElement::onMount()` 里被调）
+     *   ⇒ 不新增调用点，只加一行。
+     * ★ **必须被帧消费**：不消费就会一直累积（挂着已卸载的 State）。所以
+     *   `Application::frame()` 每次都调本方法，且循环里**跳过已卸载的**
+     *   （`mount()` 了但一直没有帧到来的场景：测试、纯头侧夹具）。
      *
      * @return list<State>
      * @internal 由 `Application::frame()` 第 ⑦ 段调（每帧一次，必须调）
      */
     public static function takeMountedThisFrame(): array
     {
-        $list = self::$mountedThisFrame;
-        self::$mountedThisFrame = [];
-
-        return $list;
+        return Pipeline::current()->takeMounted();
     }
 
     /** @internal 夹具用：登记表必须被消费干净（不消费会无限累积） */
     public static function mountedCount(): int
     {
-        return count(self::$mountedThisFrame);
+        return Pipeline::current()->mountedCount();
     }
 
     /**
@@ -489,10 +464,16 @@ abstract class State
      *
      * ★ 语义是"**上膛**"，不是"推进一帧"：本帧不会再 `tickFrame()` 一次
      *   （那会让同一帧被推进两回）。下一帧照常由 ⓸ 推进。
+     *
+     * ★ **为什么是计数而不是登记表**（第一版写的就是 `list<State>`，真机不生效）：
+     *   登记表要在 `Application` 侧再问一遍 `element()` / `isMounted()` 才敢用，
+     *   而那两跳在 AOT 下任何一个失手都会静默退化成"什么都没发生"。计数只有
+     *   一次 `!==` 比较，没有可以失手的中间环节 —— 与 `markedCount` 同一个理由。
+     *   计数本身住 `Pipeline`（`wantFrame()` / `frameWantedCount()`）。
      */
     public function requestFrame(): void
     {
-        self::$frameWantedCount++;
+        Pipeline::current()->wantFrame();
     }
 
     /**
@@ -502,7 +483,7 @@ abstract class State
      */
     public static function frameWantedCount(): int
     {
-        return self::$frameWantedCount;
+        return Pipeline::current()->frameWantedCount();
     }
 
     /**
@@ -514,7 +495,7 @@ abstract class State
      */
     public function noteRebuilt(): void
     {
-        self::$rebuiltCount++;
+        Pipeline::current()->noteRebuilt();
     }
 
     /**
