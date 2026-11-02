@@ -43,9 +43,13 @@ final class SurfaceProfile
     }
 
     /**
-     * 段名 → 每次调用中位纳秒（累计 / 次数）。
+     * 段名 → 每次调用**平均**纳秒（累计 / 次数）。
      *
-     * @return array<string, int>
+     * ★ 是**平均**不是中位：算式就是 `$total / $calls`。这行注释 2026-11-02 之前
+     *   写着"中位"，与代码不符 —— 量具的**说明**也是判据的一部分，它错了会让读者
+     *   用错口径（中位对长尾更稳，平均会被单次尖峰拉高；两种都合理，但只能有一个）。
+     *
+     * @return array<string, int> 纳秒（**不是** µs —— 换算见 {@see self::formatNs()}）
      */
     public static function perCall(): array
     {
@@ -56,5 +60,79 @@ final class SurfaceProfile
         }
 
         return $out;
+    }
+
+    /**
+     * 纳秒 → 人读单位。**全仓唯一的 ns→文本换算**。
+     *
+     * ★★ 为什么必须有它（2026-11-02）：`frame-tax-probe` 自己写过
+     *   `round($v / 1000.0, 2) . 'ms'`，而 `$v` 是**纳秒** ⇒ 每个分段被印成真值的
+     *   **1000 倍**：`anim=972.92ms` 其实是 `972.92µs`。于是同一段输出里
+     *   "稳态帧 985.7µs / anim 段 972.92ms" 自相矛盾，**却没人发现** —— 而
+     *   "该不该做 M5"正是拿这张表判的（差三个数量级）。
+     *   ⇒ 换算收成一处，与 `Scale::deviceX()` 同一条纪律（同一件事写两遍必然漂移）；
+     *     并配 {@see self::selfTest()} 让契约自己证一次（`probe_pixels.px()` 的教训：
+     *     共享件迁移后必须自带契约自检）。
+     */
+    public static function formatNs(int $ns): string
+    {
+        if ($ns < 1000) {
+            return $ns . 'ns';
+        }
+        if ($ns < 1000000) {
+            return \round($ns / 1000.0, 2) . 'µs';
+        }
+
+        return \round($ns / 1000000.0, 2) . 'ms';
+    }
+
+    /**
+     * **量具契约自检**：本类只有两条语义，两条都要能被证伪。
+     *
+     * ① 单位：三档边界逐位对上（把除数写错 1000 倍，这里立刻红）；
+     * ② 聚合：`perCall()` 是**平均**（同一段两次 2µs 与一次 4µs 不可区分，
+     *    但"两次 2µs"必须给 2µs 而不是 4µs —— 后者是"累计"冒充"每次"）。
+     *
+     * ★ 不污染现场：跑前快照、跑后还原（调用方可能正拿着自己的采样）。
+     *
+     * @return list<string> 失败项（空数组 = 通过）
+     */
+    public static function selfTest(): array
+    {
+        $fail = [];
+
+        $units = [
+            [0, '0ns'],
+            [999, '999ns'],
+            [1000, '1µs'],
+            [1500, '1.5µs'],
+            [972920, '972.92µs'],
+            [1000000, '1ms'],
+            [1500000, '1.5ms'],
+        ];
+        foreach ($units as [$ns, $want]) {
+            $got = self::formatNs($ns);
+            if ($got !== $want) {
+                $fail[] = \sprintf('单位：formatNs(%d) = "%s"，期望 "%s"', $ns, $got, $want);
+            }
+        }
+
+        $ns0 = self::$ns;
+        $calls0 = self::$calls;
+        self::reset();
+        self::add('probe', 2000);
+        self::add('probe', 2000);
+        $per = self::perCall();
+        $got = (int) ($per['probe'] ?? -1);
+        if ($got !== 2000) {
+            $fail[] = \sprintf(
+                '聚合：两次 2000ns 的 perCall 应是 2000（平均），实得 %d —— 累计冒充了"每次"',
+                $got,
+            );
+        }
+        self::$ns = $ns0;
+        self::$calls = $calls0;
+
+        return $fail;
     }
 }

@@ -14,34 +14,39 @@ declare(strict_types=1);
  *   `php tools/drift-build.php <app>`（构建）+ 真机探针。分层纪律见 `09` §8。
  *
  * 检查项（顺序即执行顺序，廉价优先；★ 标 slow 的在 `--fast` 下跳过）：
- *   doctor    php tools/doctor.php --quiet     环境前置（最廉价，缺件先停）  ~0.1s
- *   ★ 耗时是 2026-10-28 本机实测（同一台机器逐项跑，合计 63.4s）。**别凭印象改**，
- *     改规模（迁用例 / 加 app 级断言）后要重测：文档里原来写的是 smoke 1727 条 /
- *     feature ~0.1s，那是 phpunit 还没有 660 个用例时的数。
- *   lint      php tools/lint.php               738 文件 · 0 error     ~4.6s
- *   selftest  php tools/lint.php --selftest    规则双向自检            ~0.6s
- *   docref    php tools/docref.php             十册 file:line / § 引用 ~1.5s
- *   unit      phpunit-run unit                 纯单元                 ~5.2s
- *   feature★  phpunit-run feature              场景测试（真挂载+推帧） ~21.6s
- *   golden    golden-raster --check --canvas   9 个原语场景像素基线    ~1.4s
- *   pages★    golden-raster --check --pages    20 个整页像素基线       ~5.2s
- *   smoke★    php tools/smoke.php              448 条断言             ~22.8s
+ *   doctor    环境（PHPRC / tpc / cl.exe / DPI…）
+ *   lint      代码规则 · 0 error
+ *   selftest  lint 规则双向自检
+ *   docref    文档 file:line / § 引用
+ *   probe     探针骨架（probe-audit --selftest）
+ *   pixels    像素契约（probe_pixels --selftest，依赖本机 python ⇒ 允许"没测到"）
+ *   tick      每帧固定税（frame-tax --check，6 条自洽判据）  ← 2026-11-02 新增
+ *   unit      纯单元
+ *   feature★  场景测试（真挂载 + 推帧）
+ *   golden    原语像素基线
+ *   pages★    整页像素基线
+ *   smoke★    端到端 smoke
  *
- * ★ 为什么这么慢（2026-10-28 定位后的真实结构）：
- *   ① **feature 21.6s**：每例都真的建树+layout+paint（内存峰值 692MB）。这是"真挂载"
+ * ★ 耗时**不写在这里**了（2026-11-02）：这份清单曾逐项标着"~4.6s / ~22.8s、合计 63.4s"，
+ *   而实际早已是 120s 量级 —— 数字一旦没有判据就会烂，且烂了没人发现。
+ *   要耗时就跑一遍看最后一行（`✓ 全部通过（12 项，Xs）`），别把会漂的数抄进注释。
+ *   历史参考：2026-11-02 两次跑 `12 项 135.3s` / `120.8s`（lint 886 文件 · unit 449 /
+ *   feature 618 · smoke 460 ok · docref 79 篇）。★ 同一台机器两次差 11% —— 这本身
+ *   就是「别把耗时抄进注释」的理由。
+ *
+ * ★ 为什么这么慢（2026-10-28 定位后的真实结构，仍未变）：
+ *   ① **feature**：每例都真的建树+layout+paint（内存峰值 692MB）。这是"真挂载"
  *      的价钱，别去砍它的断言密度。
- *   ② **smoke 22.8s**：主体是"必须真像素/真进程"的段落 —— ⑩+4 桥结构 golden 2.6s、
- *      降采样灰度 2.5s、P3 常驻子进程 2.2s、users 真异步（真 HTTP）2.0s，另有
- *      **38 处子进程调用点**（33 `runCase` + 5 `runFatalCase`，单次装载 0.24s）≈ 9s
- *      开机税（"期望响亮失败"只能子进程：`Errors::report` 走 `abort()`，接不住）。
- *      原 32.4s 里有一半是 `㊷b` 一个段 —— 它在大视口上**真画像素**只为断"有墨"，
- *      2026-10-28 已改成数绘制命令（12.2s → <0.6s，判据还变强了）。
- *   ③ 想再快只剩两件事：子进程并发（省 5–9s）、八项并行（wall → ~28s，需先确认
- *      golden/pages 只读、smoke 临时目录不撞）。
+ *   ② **smoke**：主体是"必须真像素/真进程"的段落 —— 桥结构 golden、降采样灰度、
+ *      常驻子进程、users 真异步（真 HTTP），另有 **38 处子进程调用点**（33 `runCase`
+ *      + 5 `runFatalCase`，单次装载 0.24s）≈ 9s 开机税（"期望响亮失败"只能子进程：
+ *      `Errors::report` 走 `abort()`，接不住）。
+ *   ③ 想再快只剩两件事：子进程并发（省 5–9s）、各项并行（需先确认 golden/pages
+ *      只读、smoke 临时目录不撞）。
  *
  * 用法：
- *   php tools/gate.php              # 全部（含整页 + smoke，实测约 63s）
- *   php tools/gate.php --fast       # 只跑廉价项（实测约 13s，日常迭代）
+ *   php tools/gate.php              # 全部（含整页 + smoke）
+ *   php tools/gate.php --fast       # 只跑廉价项（跳过标 ★ 的慢项，日常迭代）
  *   php tools/gate.php --full       # 同默认（显式写法）
  *   php tools/gate.php --only=golden,pages,smoke
  *   php tools/gate.php --list
@@ -104,6 +109,7 @@ $checks = [
         $python === null ? [] : [...$python, $root . '/tools/probe_pixels.py', '--selftest'],
         false,
     ],
+    'tick'     => ['每帧固定税（frame-tax）', [PHP_BINARY, $root . '/tools/frame-tax-probe.php', '--check'], false],
     'unit'     => ['unit（纯单元）', [PHP_BINARY, $root . '/tools/phpunit-run.php', 'unit'], false],
     'feature'  => ['feature（场景）', [PHP_BINARY, $root . '/tools/phpunit-run.php', 'feature'], true],
     'golden'   => ['golden 原语', [PHP_BINARY, $root . '/tools/golden-raster.php', '--check', '--canvas'], false],

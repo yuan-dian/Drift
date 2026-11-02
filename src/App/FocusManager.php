@@ -19,9 +19,18 @@ use Drift\Widget\States;
  * **焦点链 + 输入路由的最小实现**（§9.1 路由链的 ②③ 环与命中测试）。
  *
  * ```text
- * KeyEvent ──▶ ①加速键（未做）──▶ ②IME（未做）──▶ ③焦点链 ← 本类
+ * KeyEvent ──▶ ①加速键（InputRouter，`AcceleratorTable::resolve`）
+ *          ──▶ ②IME（Win32 壳的 WM_IME_* + `TextEditingHost`）
+ *          ──▶ ③焦点链 ← 本类
  * PointerEvent ──▶ 命中测试（RenderBox 树）──▶ 焦点 ← 本类
  * ```
+ *
+ * ★ 上面 ①② 原来写着"（未做）"，2026-11-02 核实为**假话**：加速键在 `InputRouter`
+ *   的 ①环（`accelerators()->resolve()`，还带"焦点控件独占该组合 ⇒ 让位"），
+ *   IME 在 `cpp-src/drift_win32.cc` 的 `WM_IME_STARTCOMPOSITION / _COMPOSITION /
+ *   _ENDCOMPOSITION` 三段 + `TextEditingHost`。本类只负责 ③ —— **"本类不做"不等于
+ *   "框架没做"**：那张图画的是**路由链**，不是本类的职责边界，写混了就变成在
+ *   源码里散播过期结论。
  *
  * ★ **为什么住 `Drift\App` 而不是 `Drift\Input`**：`Input` 按 §4.3 **不许依赖
  *   `Widget` / `Rendering`**，而本类必须引用 `Element` 与 `EditableText`。
