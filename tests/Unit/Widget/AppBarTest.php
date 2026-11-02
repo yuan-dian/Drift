@@ -131,7 +131,7 @@ final class AppBarTest extends SmokeTestCase
      */
     public function testWindowButtonsContract(): void
     {
-        $kids = AppBar::make()->title('条')->windowButtons()->barKids();
+        $kids = AppBar::make()->title('条')->windowButtons()->kidList();
 
         $names = [];
         foreach ($kids as $kid) {
@@ -156,7 +156,7 @@ final class AppBarTest extends SmokeTestCase
         check(
             'AppBar · 不声明 windowButtons ⇒ 一个窗口按钮都不画（有原生标题栏的窗口不该有两排）',
             \array_filter(
-                AppBar::make()->title('条')->barKids(),
+                AppBar::make()->title('条')->kidList(),
                 static fn($k): bool => $k instanceof Button && \str_starts_with((string) $k->commandName(), 'window.'),
             ) === [],
             '意外画了窗口按钮'

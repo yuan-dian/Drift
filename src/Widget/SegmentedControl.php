@@ -55,7 +55,7 @@ use Drift\Text\TextRole;
  *
  * @api
  */
-final class SegmentedControl extends RenderBoxWidget
+final class SegmentedControl extends MultiChildRenderObjectWidget
 {
     /** @var list<string> */
     private readonly array $labels;
@@ -182,11 +182,5 @@ final class SegmentedControl extends RenderBoxWidget
         );
 
         return new RenderSegmentedControl($style);
-    }
-
-    #[\Override]
-    public function createElement(): Element
-    {
-        return new SegmentedControlElement($this);
     }
 }

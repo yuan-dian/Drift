@@ -18,8 +18,8 @@ use Drift\Rendering\ColorToken;
  *
  * ★ **两个孩子**由 `TableElement::adoptBoxes()` 挂：`RenderTable` 不是
  *   `RenderProxyBox`（单子），`ProxyElement` 的 `setChild()` 挂不上第二个 ——
- *   所以本控件有自己的 Element。这是"多子盒"的既有形态（`Flex` 也走自己的
- *   `FlexElement`）。
+ *   所以本控件有自己的 Element。这是"子有名字"的那个形态（无名的多子走
+ *   `MultiChildElement`）。
  *
  * ★ 字段全 readonly：Widget 不可变 ⇒ 参数只会整体换新，不存在半同步。
  *

@@ -26,7 +26,7 @@ use Drift\Rendering\ColorToken;
  *
  * @api
  */
-final class PopupPanel extends RenderBoxWidget
+final class PopupPanel extends SingleChildRenderObjectWidget
 {
     private EdgeInsets $padding;
 
@@ -37,26 +37,15 @@ final class PopupPanel extends RenderBoxWidget
     /** 内容高度上限（`0` = 不限）；语义见 `maxHeight()` */
     private float $maxHeight = 0.0;
 
-    public function __construct(private readonly Widget $content)
+    public function __construct(Widget $content)
     {
-        parent::__construct();
+        parent::__construct($content);
         $this->padding = EdgeInsets::all(4.0);
     }
 
     public static function make(Widget $content): self
     {
         return new self($content);
-    }
-
-    public function child(): Widget
-    {
-        return $this->content;
-    }
-
-    #[\Override]
-    public function expandChildren(): array
-    {
-        return [$this->content];
     }
 
     public function padding(EdgeInsets $value): static
@@ -132,11 +121,5 @@ final class PopupPanel extends RenderBoxWidget
     public function paintsBoxChrome(): bool
     {
         return true;
-    }
-
-    #[\Override]
-    public function createElement(): Element
-    {
-        return new ProxyElement($this);
     }
 }

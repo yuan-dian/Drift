@@ -40,7 +40,7 @@ use Drift\Layout\StackFit;
  *
  * @api
  */
-final class Stack extends RenderBoxWidget
+final class Stack extends MultiChildRenderObjectWidget
 {
     /** @var list<Widget> */
     private array $kids = [];
@@ -86,11 +86,5 @@ final class Stack extends RenderBoxWidget
     public function kidList(): array
     {
         return $this->kids;
-    }
-
-    #[\Override]
-    public function createElement(): Element
-    {
-        return new StackElement($this);
     }
 }

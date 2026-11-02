@@ -21,7 +21,7 @@ use Drift\Layout\RenderFlex;
  *
  * @api
  */
-abstract class Flex extends RenderBoxWidget
+abstract class Flex extends MultiChildRenderObjectWidget
 {
     /** @var list<Widget> */
     protected array $kids = [];
@@ -108,11 +108,5 @@ abstract class Flex extends RenderBoxWidget
     public function kidList(): array
     {
         return $this->kids;
-    }
-
-    #[\Override]
-    public function createElement(): Element
-    {
-        return new FlexElement($this);
     }
 }

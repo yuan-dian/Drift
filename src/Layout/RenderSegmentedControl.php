@@ -47,7 +47,7 @@ use Drift\Rendering\SegmentedStyle;
  *
  * @api
  */
-final class RenderSegmentedControl extends RenderBox
+final class RenderSegmentedControl extends RenderBox implements ChildContainer
 {
     /** @var list<RenderBox> */
     private array $kids = [];

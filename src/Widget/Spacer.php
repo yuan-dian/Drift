@@ -14,7 +14,7 @@ use Drift\Layout\RenderProxy;
  *
  * @api
  */
-final class Spacer extends RenderBoxWidget
+final class Spacer extends NullableChildRenderObjectWidget
 {
     public function __construct()
     {
@@ -40,11 +40,5 @@ final class Spacer extends RenderBoxWidget
     public function createRenderObject(BuildContext $context): RenderBox
     {
         return new RenderProxy();
-    }
-
-    #[\Override]
-    public function createElement(): Element
-    {
-        return new ProxyElement($this);
     }
 }

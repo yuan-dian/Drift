@@ -27,10 +27,8 @@ use Drift\Layout\RenderProxy;
  *
  * @api
  */
-final class AspectRatio extends RenderBoxWidget
+final class AspectRatio extends NullableChildRenderObjectWidget
 {
-    private ?Widget $kid = null;
-
     public function __construct()
     {
         parent::__construct();
@@ -47,33 +45,13 @@ final class AspectRatio extends RenderBoxWidget
         return $self;
     }
 
-    public function child(Widget $kid): static
-    {
-        $this->mutate();
-        $this->kid = $kid;
-
-        return $this;
-    }
-
     public function kid(): ?Widget
     {
         return $this->kid;
     }
 
-    #[\Override]
-    public function expandChildren(): array
-    {
-        return $this->kid === null ? [] : [$this->kid];
-    }
-
     public function createRenderObject(BuildContext $context): RenderBox
     {
         return new RenderProxy();
-    }
-
-    #[\Override]
-    public function createElement(): Element
-    {
-        return new ProxyElement($this);
     }
 }

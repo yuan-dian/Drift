@@ -38,15 +38,13 @@ use Drift\Layout\RenderBox;
  *
  * @api
  */
-final class BackdropFilter extends RenderBoxWidget
+final class BackdropFilter extends SingleChildRenderObjectWidget
 {
-    private Widget $kid;
-
     private float $sigma;
 
-    private function __construct()
+    private function __construct(Widget $kid)
     {
-        parent::__construct();
+        parent::__construct($kid);
     }
 
     /**
@@ -57,8 +55,7 @@ final class BackdropFilter extends RenderBoxWidget
      */
     public static function make(Widget $kid, float $sigma = 12.0): self
     {
-        $filter = new self();
-        $filter->kid = $kid;
+        $filter = new self($kid);
         $filter->sigma = $sigma;
 
         return $filter;
@@ -86,25 +83,8 @@ final class BackdropFilter extends RenderBoxWidget
         return $this;
     }
 
-    public function child(): Widget
-    {
-        return $this->kid;
-    }
-
-    #[\Override]
-    public function expandChildren(): array
-    {
-        return [$this->kid];
-    }
-
     public function createRenderObject(BuildContext $context): RenderBox
     {
         return new RenderBackdropFilter($this->sigma);
-    }
-
-    #[\Override]
-    public function createElement(): Element
-    {
-        return new ProxyElement($this);
     }
 }

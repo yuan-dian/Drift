@@ -65,18 +65,12 @@ use Drift\Rendering\ColorToken;
  *
  * @api
  */
-final class Card extends RenderBoxWidget
+final class Card extends NullableChildRenderObjectWidget
 {
-    private ?Widget $kid = null;
-
     public function __construct(?Widget $kid = null)
     {
-        parent::__construct();
+        parent::__construct($kid);
         $this->paddingAll(16.0);
-
-        if ($kid !== null) {
-            $this->kid = $kid;
-        }
     }
 
     public static function make(?Widget $kid = null): self
@@ -84,36 +78,15 @@ final class Card extends RenderBoxWidget
         return new self($kid);
     }
 
-    public function child(Widget $kid): static
-    {
-        $this->mutate();
-        $this->kid = $kid;
-
-        return $this;
-    }
-
     public function kid(): ?Widget
     {
         return $this->kid;
-    }
-
-    /** 卡片的内容就是**一个**孩子（`null` = 空卡片，尺寸只剩内距） */
-    #[\Override]
-    public function expandChildren(): array
-    {
-        return $this->kid === null ? [] : [$this->kid];
     }
 
     /** 纯转发盒：尺寸与内容原点全由 `RenderBox::layout()` 的 ②⑤ 步按 `mods.padding` 施加 */
     public function createRenderObject(BuildContext $context): RenderBox
     {
         return new RenderProxy();
-    }
-
-    #[\Override]
-    public function createElement(): Element
-    {
-        return new ProxyElement($this);
     }
 
     /**

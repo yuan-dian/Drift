@@ -37,7 +37,7 @@ use Drift\Rendering\MetricToken;
  *
  * @api
  */
-final class AppBar extends RenderBoxWidget
+final class AppBar extends MultiChildRenderObjectWidget
 {
     private string $title = '';
 
@@ -122,26 +122,9 @@ final class AppBar extends RenderBoxWidget
         return $this;
     }
 
-    /** @internal `AppBarElement` 读它 */
-    public function titleText(): string
-    {
-        return $this->title;
-    }
-
-    /** @internal */
-    public function kidList(): array
-    {
-        return $this->kids;
-    }
-
-    /** @internal */
-    public function actionList(): array
-    {
-        return $this->actions;
-    }
-
     /**
-     * 展开后的完整子序列：标题 + 导航 + （有动作时）弹性占位 + 动作。
+     * 子层（`MultiChildRenderObjectWidget::kidList()` 的实现）：标题 + 导航 +
+     * （有动作时）弹性占位 + 动作。
      *
      * ★ 标题 Text 在这里现造 —— 与 `StatelessWidget::build()` 同一条纪律
      *   （重建即换新描述，diff 按位置复用 Element），不引入缓存字段。
@@ -149,7 +132,7 @@ final class AppBar extends RenderBoxWidget
      *
      * @internal
      */
-    public function barKids(): array
+    public function kidList(): array
     {
         $out = [];
 
@@ -225,11 +208,5 @@ final class AppBar extends RenderBoxWidget
     public function paintsBoxChrome(): bool
     {
         return true;
-    }
-
-    #[\Override]
-    public function createElement(): Element
-    {
-        return new AppBarElement($this);
     }
 }

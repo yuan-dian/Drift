@@ -20,29 +20,18 @@ use Drift\Rendering\Color;
  *
  * @internal `Modal` 的中间层；应用写 `Modal`，不写这个
  */
-final class ModalHost extends RenderBoxWidget
+final class ModalHost extends SingleChildRenderObjectWidget
 {
     private ?Color $barrier = null;
 
-    public function __construct(private readonly Widget $kid)
+    public function __construct(Widget $kid)
     {
-        parent::__construct();
+        parent::__construct($kid);
     }
 
     public static function make(Widget $kid): self
     {
         return new self($kid);
-    }
-
-    public function child(): Widget
-    {
-        return $this->kid;
-    }
-
-    #[\Override]
-    public function expandChildren(): array
-    {
-        return [$this->kid];
     }
 
     /**
@@ -62,11 +51,5 @@ final class ModalHost extends RenderBoxWidget
     public function createRenderObject(BuildContext $context): RenderBox
     {
         return new RenderModalHost($this->barrier ?? new Color(0, 0, 0, 90));
-    }
-
-    #[\Override]
-    public function createElement(): Element
-    {
-        return new ProxyElement($this);
     }
 }

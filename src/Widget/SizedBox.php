@@ -36,10 +36,8 @@ use Drift\Layout\RenderProxy;
  *
  * @api
  */
-final class SizedBox extends RenderBoxWidget
+final class SizedBox extends NullableChildRenderObjectWidget
 {
-    private ?Widget $kid = null;
-
     public static function make(?Widget $kid = null): self
     {
         $self = new self();
@@ -50,23 +48,9 @@ final class SizedBox extends RenderBoxWidget
         return $self;
     }
 
-    public function child(Widget $kid): static
-    {
-        $this->mutate();
-        $this->kid = $kid;
-
-        return $this;
-    }
-
     public function kid(): ?Widget
     {
         return $this->kid;
-    }
-
-    #[\Override]
-    public function expandChildren(): array
-    {
-        return $this->kid === null ? [] : [$this->kid];
     }
 
     /** 两轴一起定（等价于 `->width($w)->height($h)`，只是少一次 mutate） */
@@ -78,11 +62,5 @@ final class SizedBox extends RenderBoxWidget
     public function createRenderObject(BuildContext $context): RenderBox
     {
         return new RenderProxy();
-    }
-
-    #[\Override]
-    public function createElement(): Element
-    {
-        return new ProxyElement($this);
     }
 }

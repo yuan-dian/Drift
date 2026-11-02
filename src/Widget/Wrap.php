@@ -42,7 +42,7 @@ use Drift\Layout\RenderWrap;
  *
  * @api
  */
-final class Wrap extends RenderBoxWidget
+final class Wrap extends MultiChildRenderObjectWidget
 {
     /** @var list<Widget> */
     private array $kids = [];
@@ -130,12 +130,6 @@ final class Wrap extends RenderBoxWidget
     public function kidList(): array
     {
         return $this->kids;
-    }
-
-    #[\Override]
-    public function createElement(): Element
-    {
-        return new WrapElement($this);
     }
 
     /**

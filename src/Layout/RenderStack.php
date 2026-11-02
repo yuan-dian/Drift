@@ -53,7 +53,7 @@ use Drift\Rendering\Canvas;
  *
  * @api
  */
-final class RenderStack extends RenderBox
+final class RenderStack extends RenderBox implements ChildContainer
 {
     /** @var list<RenderBox> */
     private array $kids = [];

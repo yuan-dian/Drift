@@ -38,11 +38,11 @@ use Drift\Layout\RenderProxy;
  *
  * @api
  */
-final class Opacity extends RenderBoxWidget
+final class Opacity extends SingleChildRenderObjectWidget
 {
-    private function __construct(private readonly Widget $kid)
+    private function __construct(Widget $kid)
     {
-        parent::__construct();
+        parent::__construct($kid);
     }
 
     public static function make(float $alpha, Widget $kid): self
@@ -61,20 +61,8 @@ final class Opacity extends RenderBoxWidget
         return $this->kid;
     }
 
-    #[\Override]
-    public function expandChildren(): array
-    {
-        return [$this->kid];
-    }
-
     public function createRenderObject(BuildContext $context): RenderBox
     {
         return new RenderProxy();
-    }
-
-    #[\Override]
-    public function createElement(): Element
-    {
-        return new ProxyElement($this);
     }
 }

@@ -38,10 +38,8 @@ use Drift\Layout\RenderProxy;
  *
  * @api
  */
-class Align extends RenderBoxWidget
+class Align extends NullableChildRenderObjectWidget
 {
-    private ?Widget $kid = null;
-
     private Alignment $alignment;
 
     public function __construct(?Alignment $alignment = null)
@@ -78,33 +76,13 @@ class Align extends RenderBoxWidget
         return $this;
     }
 
-    public function child(Widget $kid): static
-    {
-        $this->mutate();
-        $this->kid = $kid;
-
-        return $this;
-    }
-
     public function kid(): ?Widget
     {
         return $this->kid;
     }
 
-    #[\Override]
-    public function expandChildren(): array
-    {
-        return $this->kid === null ? [] : [$this->kid];
-    }
-
     public function createRenderObject(BuildContext $context): RenderBox
     {
         return new RenderProxy();
-    }
-
-    #[\Override]
-    public function createElement(): Element
-    {
-        return new ProxyElement($this);
     }
 }

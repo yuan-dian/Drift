@@ -15,11 +15,11 @@ use Drift\Layout\RenderProxy;
  *
  * @api
  */
-final class Expanded extends RenderBoxWidget
+final class Expanded extends SingleChildRenderObjectWidget
 {
-    public function __construct(private readonly Widget $kid)
+    public function __construct(Widget $kid)
     {
-        parent::__construct();
+        parent::__construct($kid);
         $this->grow(1);
     }
 
@@ -44,26 +44,9 @@ final class Expanded extends RenderBoxWidget
         return $this->grow($share);
     }
 
-    public function child(): Widget
-    {
-        return $this->kid;
-    }
-
-    #[\Override]
-    public function expandChildren(): array
-    {
-        return [$this->kid];
-    }
-
     public function createRenderObject(BuildContext $context): RenderBox
     {
         // 份额住 `mods`（`__construct()` 里 `grow(1)`）⇒ 纯转发盒就够
         return new RenderProxy();
-    }
-
-    #[\Override]
-    public function createElement(): Element
-    {
-        return new ProxyElement($this);
     }
 }

@@ -23,17 +23,17 @@ use Drift\Rendering\ColorToken;
  *
  * @internal 应用只认 `ScrollView`
  */
-final class ScrollViewBox extends RenderBoxWidget
+final class ScrollViewBox extends SingleChildRenderObjectWidget
 {
     private function __construct(
         private readonly float $offset,
         private readonly bool $vertical,
-        private readonly Widget $kid,
+        Widget $kid,
         private readonly ?float $virtualExtent = null,
         private readonly float $sliceOrigin = 0.0,
         private readonly float $barOpacity = 1.0,
     ) {
-        parent::__construct();
+        parent::__construct($kid);
     }
 
     /**
@@ -54,18 +54,6 @@ final class ScrollViewBox extends RenderBoxWidget
         return new self($offset, $vertical, $kid, $virtualExtent, $sliceOrigin, $barOpacity);
     }
 
-    /** 被滚动的内容 */
-    public function child(): Widget
-    {
-        return $this->kid;
-    }
-
-    #[\Override]
-    public function expandChildren(): array
-    {
-        return [$this->kid];
-    }
-
     public function createRenderObject(BuildContext $context): RenderBox
     {
         // ★ 滚动条色走主题（`Muted`：两主题都清晰、语义"次要信息"）——
@@ -78,11 +66,5 @@ final class ScrollViewBox extends RenderBoxWidget
             $this->sliceOrigin,
             $this->barOpacity,
         );
-    }
-
-    #[\Override]
-    public function createElement(): Element
-    {
-        return new ProxyElement($this);
     }
 }

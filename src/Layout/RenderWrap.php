@@ -65,7 +65,7 @@ use Drift\Rendering\Canvas;
  *
  * @api
  */
-final class RenderWrap extends RenderBox
+final class RenderWrap extends RenderBox implements ChildContainer
 {
     /**
      * 断行判据的容差（0.0001 px）。
