@@ -153,34 +153,60 @@ final class TextDraft
      */
     public function deleteBackward(): TextChange
     {
+        return $this->deleteBackwardTo($this->previousBoundary());
+    }
+
+    /**
+     * 向后删到 `$start`（`Ctrl+Backspace` 把 `previousWordStart()` 传进来）。
+     *
+     * ★ 存在这一层的理由是**不为"按词"再抄一遍删除逻辑**。字符级与词级的差别
+     *   只有落点算法（`previousBoundary()` vs `previousWordStart()`），其余
+     *   （有选区就删选区、钳位、改 buffer、定插入符）逐字相同 —— 抄一份的
+     *   代价是下次改删除行为要改两处，漏一处就是"按词删和按字符删手感不一致"。
+     *
+     * @param int $start 删除区间的左端（字节偏移）
+     */
+    public function deleteBackwardTo(int $start): TextChange
+    {
         if ($this->hasSelection()) {
             return $this->deleteSelection();
         }
 
-        $previous = $this->previousBoundary();
-        if ($previous === $this->caret) {
-            return TextChange::None;   // 已在最前 ⇒ 无字符可删
+        $start = $this->snap($start);
+        if ($start >= $this->caret) {
+            return TextChange::None;   // 已在最前 / 落点就在插入符处 ⇒ 无字符可删
         }
 
         return $this->applyText(
-            \substr($this->buffer, 0, $previous) . \substr($this->buffer, $this->caret),
-            $previous,
+            \substr($this->buffer, 0, $start) . \substr($this->buffer, $this->caret),
+            $start,
         );
     }
 
     /** Delete：**有选区 ⇒ 删掉整段**；否则删掉插入符后一个字符 */
     public function deleteForward(): TextChange
     {
+        return $this->deleteForwardTo($this->nextBoundary());
+    }
+
+    /**
+     * 向前删到 `$end`（`Ctrl+Delete` 把 `nextWordEnd()` 传进来）。
+     *
+     * @param int $end 删除区间的右端（字节偏移，不含）
+     */
+    public function deleteForwardTo(int $end): TextChange
+    {
         if ($this->hasSelection()) {
             return $this->deleteSelection();
         }
 
-        if ($this->caret >= \strlen($this->buffer)) {
-            return TextChange::None;   // 已在最后 ⇒ 无字符可删
+        $end = $this->snap($end);
+        if ($end <= $this->caret) {
+            return TextChange::None;   // 已在最后 / 落点就在插入符处 ⇒ 无字符可删
         }
 
         return $this->applyText(
-            \substr($this->buffer, 0, $this->caret) . \substr($this->buffer, $this->nextBoundary()),
+            \substr($this->buffer, 0, $this->caret) . \substr($this->buffer, $end),
             $this->caret,
         );
     }
@@ -416,6 +442,16 @@ final class TextDraft
     public function nextWordStart(): int
     {
         return TextBoundary::nextWordStart($this->buffer, $this->caret);
+    }
+
+    /**
+     * 插入符右侧最近的**词尾**（`Ctrl+Delete` 的落点）；已在末尾 ⇒ 文本长度。
+     *
+     * ★ 与 `nextWordStart()` 是两个落点，不能互相替代（见 `TextBoundary::nextWordEnd()`）。
+     */
+    public function nextWordEnd(): int
+    {
+        return TextBoundary::nextWordEnd($this->buffer, $this->caret);
     }
 
     // ── 内部 ────────────────────────────────────────────────────────────

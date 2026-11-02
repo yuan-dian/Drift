@@ -126,20 +126,20 @@ final class TextKeymapTest extends TestCase
     {
         $draft = self::atEnd('hello world');
 
-        self::assertSame(TextChange::Caret, TextKeymap::apply($draft, KeyEvent::down(KeyChord::make('Left', true))));
+        self::assertSame(TextChange::Caret, TextKeymap::apply($draft, KeyEvent::down(KeyChord::ctrl('Left'))));
         self::assertSame(6, $draft->caretOffset(), 'Ctrl+← 应跨过整个 world');
 
-        TextKeymap::apply($draft, KeyEvent::down(KeyChord::make('Left', true)));
+        TextKeymap::apply($draft, KeyEvent::down(KeyChord::ctrl('Left')));
         self::assertSame(0, $draft->caretOffset());
 
-        TextKeymap::apply($draft, KeyEvent::down(KeyChord::make('Right', true)));
+        TextKeymap::apply($draft, KeyEvent::down(KeyChord::ctrl('Right')));
         self::assertSame(6, $draft->caretOffset(), 'Ctrl+→ 应停在下一个词首');
 
         // 已在末尾 ⇒ 管了但没动（None，不是 null）
         $draft->moveCaretToEnd();
         self::assertSame(
             TextChange::None,
-            TextKeymap::apply($draft, KeyEvent::down(KeyChord::make('Right', true))),
+            TextKeymap::apply($draft, KeyEvent::down(KeyChord::ctrl('Right'))),
             '末尾的 Ctrl+→ 要消费掉按键（否则会漏给加速键）',
         );
     }
@@ -154,17 +154,61 @@ final class TextKeymapTest extends TestCase
     {
         $draft = self::atEnd('hello world');
 
-        TextKeymap::apply($draft, KeyEvent::down(KeyChord::make('Left', true, false, true)));
+        TextKeymap::apply($draft, KeyEvent::down(KeyChord::make('Left', ctrl: true, shift: true)));
         self::assertSame(6, $draft->selectionStart());
         self::assertSame(11, $draft->selectionEnd());
 
-        TextKeymap::apply($draft, KeyEvent::down(KeyChord::make('Left', true, false, true)));
+        TextKeymap::apply($draft, KeyEvent::down(KeyChord::make('Left', ctrl: true, shift: true)));
         self::assertSame(0, $draft->selectionStart());
         self::assertSame(11, $draft->selectionEnd());
 
-        TextKeymap::apply($draft, KeyEvent::down(KeyChord::make('Right', true, false, true)));
+        TextKeymap::apply($draft, KeyEvent::down(KeyChord::make('Right', ctrl: true, shift: true)));
         self::assertSame(6, $draft->selectionStart(), '往右扩要缩回 6（活动端在 0 那侧）');
         self::assertSame(11, $draft->selectionEnd());
+    }
+
+    /**
+     * `Ctrl+Backspace` / `Ctrl+Delete` 按**词**删。
+     *
+     * ★ 两端落点不同，是这一族里唯一"看起来像写错"的地方，所以逐字节断言：
+     *   `hello world` 末尾按 Ctrl+Backspace ⇒ 停在 6（词首，空格留着）；
+     *   0 处按 Ctrl+Delete ⇒ 停在 5（词尾，**不是** 6）。
+     *   若把 Ctrl+Delete 接成 `nextWordStart()`，0 ⇒ 6 只会删掉 `hello` 加一个
+     *   空格，`world` 还在 —— 而这恰恰是"看起来也没错"的那种实现。
+     */
+    public function testCtrlBackspaceAndDeleteRemoveWords(): void
+    {
+        $draft = self::atEnd('hello world');
+
+        self::assertSame(
+            TextChange::Text,
+            TextKeymap::apply($draft, KeyEvent::down(KeyChord::ctrl('Backspace'))),
+        );
+        self::assertSame('hello ', $draft->text(), 'Ctrl+Backspace 删到词首，不吞前面的空格');
+        self::assertSame(6, $draft->caretOffset());
+
+        // 再按一次 ⇒ 删掉 `hello `（本次含前面的词，落在 0）
+        TextKeymap::apply($draft, KeyEvent::down(KeyChord::ctrl('Backspace')));
+        self::assertSame('', $draft->text());
+
+        // 向前的镜像：从 0 开始，一次删掉整个 hello
+        $draft = self::atEnd('hello world');
+        $draft->moveCaret(0);
+
+        self::assertSame(
+            TextChange::Text,
+            TextKeymap::apply($draft, KeyEvent::down(KeyChord::ctrl('Delete'))),
+        );
+        self::assertSame(' world', $draft->text(), 'Ctrl+Delete 删到词尾（5），不是词首（6）');
+        self::assertSame(0, $draft->caretOffset());
+
+        // 末尾的 Ctrl+Delete ⇒ 管了但没动
+        $draft->moveCaretToEnd();
+        self::assertSame(
+            TextChange::None,
+            TextKeymap::apply($draft, KeyEvent::down(KeyChord::ctrl('Delete'))),
+            '末尾的 Ctrl+Delete 也要消费掉按键（否则会漏给加速键）',
+        );
     }
 
     public function testTextIsInsertedAtCaret(): void

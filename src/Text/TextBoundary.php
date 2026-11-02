@@ -194,14 +194,7 @@ final class TextBoundary
 
         $offset = self::clamp($offset, \strlen($text));
 
-        // 插入符左侧那个字符的下标
-        $i = -1;
-        for ($k = 0; $k < $count; $k++) {
-            if ($chars[$k][1] + $chars[$k][2] > $offset) {
-                break;
-            }
-            $i = $k;
-        }
+        $i = self::indexAtOrBefore($chars, $offset);
         if ($i < 0) {
             return 0;
         }
@@ -243,15 +236,7 @@ final class TextBoundary
 
         $offset = self::clamp($offset, $length);
 
-        // 插入符右侧那个字符的下标
-        $i = $count;
-        for ($k = 0; $k < $count; $k++) {
-            if ($chars[$k][1] >= $offset) {
-                $i = $k;
-
-                break;
-            }
-        }
+        $i = self::indexAtOrAfter($chars, $offset);
         if ($i >= $count) {
             return $length;
         }
@@ -266,6 +251,89 @@ final class TextBoundary
         }
 
         return $i >= $count ? $length : $chars[$i][1];
+    }
+
+    /**
+     * `$offset` 右侧最近的**词尾**（`Ctrl+Delete` 的落点；末尾则返回文本长度）。
+     *
+     * ★ 落点**故意**与 {@see self::nextWordStart()} 不同，不是笔误：
+     *   `hello |world` 处 `Ctrl+→` 停在 6（`w`），而 `Ctrl+Delete` 要删到 11
+     *   （`d` 之后）。"移到词首、删到词尾"是 Win32 Edit 的 Ctrl+Delete、
+     *   GTK 的 `WORD_ENDS`、浏览器的 `deleteWordForward` 三者一致的行为。
+     *   若这里图省事复用 `nextWordStart()`，`hello |world` 上按 Ctrl+Delete
+     *   只会删掉一个空格 —— 用户看到的是"按了，但词还在"。
+     *
+     * 两条分支：
+     * 1. `$offset` 处是词字符 ⇒ 前进到**当前**词尾（`ab|c def` 删 `c`）
+     * 2. 否则 ⇒ 跳过非词，再前进到那个词的词尾（`abc| def` 删 ` def`）
+     *
+     * ★ 分支 1 **不**继续跳后面的非词：跳了就会把 `ab|c def` 连空格带 `def`
+     *   一起删掉 —— "删一个词"变成"删一段"，而用户只看到"多删了"。
+     */
+    public static function nextWordEnd(string $text, int $offset): int
+    {
+        $chars = Utf8::decode($text);
+        $count = \count($chars);
+        $length = \strlen($text);
+        if ($count === 0) {
+            return 0;
+        }
+
+        $offset = self::clamp($offset, $length);
+
+        $i = self::indexAtOrAfter($chars, $offset);
+
+        // 在非词上 ⇒ 先跳过这一段（在词上则不跳：跳了就是"连删后一个词"）
+        while ($i < $count && !self::isWord($chars[$i][0])) {
+            $i++;
+        }
+
+        if ($i >= $count) {
+            return $length;
+        }
+
+        $class = self::classOf($chars[$i][0]);
+        while ($i < $count && self::classOf($chars[$i][0]) === $class) {
+            $i++;
+        }
+
+        return $i >= $count ? $length : $chars[$i][1];
+    }
+
+    /**
+     * 右侧第一个字符的下标（`$offset` 落在字符内部或字符缝上都算右侧）。
+     *
+     * @param list<array{0: int, 1: int, 2: int}> $chars
+     * @return int 无 ⇒ `count($chars)`
+     */
+    private static function indexAtOrAfter(array $chars, int $offset): int
+    {
+        foreach ($chars as $k => $glyph) {
+            if ($glyph[1] >= $offset) {
+                return $k;
+            }
+        }
+
+        return \count($chars);
+    }
+
+    /**
+     * 左侧第一个字符的下标（其**结尾** ≤ `$offset`）。
+     *
+     * @param list<array{0: int, 1: int, 2: int}> $chars
+     * @return int 无 ⇒ `-1`
+     */
+    private static function indexAtOrBefore(array $chars, int $offset): int
+    {
+        $pick = -1;
+        foreach ($chars as $k => $glyph) {
+            if ($glyph[1] + $glyph[2] > $offset) {
+                break;
+            }
+            $pick = $k;
+        }
+
+        return $pick;
     }
 
     /**

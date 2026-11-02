@@ -166,6 +166,78 @@ final class TextBoundaryTest extends TestCase
     }
 
     /**
+     * `Ctrl+Delete` 的落点：**停在词尾**，与 `Ctrl+→` 的词首**刻意不同**。
+     *
+     * ★ 这张表里最关键的两行是「词首 ⇒ 本词词尾」（`hello world` 0 ⇒ 5，而
+     *   `nextWordStart` 是 6）与「词尾（空格前）⇒ 跳过空格到下一个词尾」
+     *   （5 ⇒ 11）。少了前者，"删一个词"退化成"删到词首"；少了后者，
+     *   `hello |world` 上按 Ctrl+Delete 只删掉一个空格，词还在。
+     *
+     * ★ 「词中间 ⇒ 本词词尾」这一行钉的是"不连删后一个词"：若实现跳完非词
+     *   不 break，`ab|c def` 会连 ` def` 一起删掉 —— 用户只看到"多删了"。
+     *
+     * @return array<string, array{0: string, 1: int, 2: int}>
+     */
+    public static function nextWordEndCases(): array
+    {
+        return [
+            '词首 ⇒ 本词词尾（不是下一个词首）' => ['hello world', 0, 5],
+            '词中间 ⇒ 本词词尾' => ['hello world', 2, 5],
+            '词尾（空格前）⇒ 跳过空格到下一个词尾' => ['hello world', 5, 11],
+            '已在空白里 ⇒ 下一个词尾' => ['hello world', 6, 11],
+            '末尾 ⇒ 文本长度（不是 0）' => ['hello world', 11, 11],
+            '连续空白一次跳完' => ['a    b', 1, 6],
+            '标点后紧跟空格 ⇒ 到后一个词词尾' => ['abc, def', 3, 8],
+            '中文没有分词 ⇒ 整段汉字是一个单位' => ['用户 1', 0, 6],
+            'CJK 与拉丁不同类 ⇒ `用户1` 是两个单位' => ['用户1', 0, 6],
+            '多字节字符不切半' => ['张三丰x', 0, 9],
+            '空文本 ⇒ 0' => ['', 0, 0],
+            '全空白 ⇒ 末尾' => ['   ', 0, 3],
+            '越界偏移 ⇒ 夹到末尾再算' => ['hello world', 99, 11],
+        ];
+    }
+
+    #[DataProvider('nextWordEndCases')]
+    public function testNextWordEnd(string $text, int $offset, int $expected): void
+    {
+        self::assertSame($expected, TextBoundary::nextWordEnd($text, $offset));
+    }
+
+    /**
+     * ★ 「一直按 Ctrl+Delete」必须**每次都有进展**且停在字符边界上。
+     *
+     * 这两条性质单看每一行用例都看不出来：表里每行都是独立偏移，而用户的
+     * 真实操作是**连按**。实现若在某个位置一步没推进（比如抵达末尾时返回
+     * 同一偏移而不是长度），按键会变成"按了没反应"；切在半个汉字上则剩下的
+     * 文本是坏 UTF-8，后续每次渲染都在替换字符里挣扎。
+     */
+    public function testRepeatedWordDeleteAdvancedAndNeverCutsAGlyph(): void
+    {
+        foreach (['hello world', 'abc, def', '用户 1', '用户1', '  x  y  ', '张三丰x 世界'] as $text) {
+            $length = \strlen($text);
+            $offset = 0;
+            $guard = 0;
+
+            while ($offset < $length) {
+                $next = TextBoundary::nextWordEnd($text, $offset);
+
+                self::assertGreaterThan(
+                    $offset,
+                    $next,
+                    \sprintf('%s：从 %d 按住 Ctrl+Delete 没有推进', \json_encode($text), $offset),
+                );
+                self::assertTrue(
+                    \mb_check_encoding(\substr($text, $offset, $next - $offset), 'UTF-8'),
+                    \sprintf('%s：删掉的那段切出了半个字符', \json_encode($text)),
+                );
+
+                $offset = $next;
+                self::assertLessThan(64, ++$guard, '推进次数异常 —— 落点可能在原地打转');
+            }
+        }
+    }
+
+    /**
      * ★ 两条跳词的落点必须**互相可达**：从 a 按 `Ctrl+→` 到 b，从 b 按 `Ctrl+←`
      *   应回到 a。这一条不写在用例表里，是因为"表里的每一行都恰好配到"这种事
      *   写不全 —— 而它对用户是**唯一可感知**的性质（"按过去再按回来"）。

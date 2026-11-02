@@ -240,4 +240,47 @@ final class EditTest extends SmokeTestCase
 
         $this->flushChecks();
     }
+
+    /**
+     * ⑫ `Ctrl+Backspace` / `Ctrl+Delete` 在表格**编辑中**也要通到草稿。
+     *
+     * ★ 键位表是共用的（`TextKeymap`），但表格有一条输入框没有的路：`editKey()` 的
+     *   **收口键**（Esc / Enter / F2 / ↑ / ↓）判在 `TextKeymap` **之前**。谁哪天照
+     *   Excel 补一条"空草稿时 Backspace 退出编辑"，`Ctrl+Backspace` 就会连带被吞 ——
+     *   而 `TextKeymapTest` 直接调 `apply()`，看不见这一层。
+     */
+    public function testWordDeleteWorksInsideCellEditing(): void
+    {
+        $s = EditSession::open([['id' => 1, 'name' => 'hello world']]);
+
+        $s->chord(KeyChord::right());
+        $s->chord(KeyChord::enter());
+
+        $entered = $s->editWidget();
+        check(
+            'Table · 编辑中：草稿是整串',
+            $s->isEditing() && $entered !== null && $entered->text() === 'hello world',
+            $entered === null ? 'null' : $entered->text(),
+        );
+
+        $ate = $s->chord(KeyChord::ctrl('Backspace'));
+        $back = $s->editWidget();
+        check(
+            'Table · 编辑中：Ctrl+Backspace 删到词首（空格留着、插入符在 6）',
+            $ate && $back !== null && $back->text() === 'hello ' && $back->caretOffset() === 6,
+            ($ate ? 'ate' : 'passed') . ' '
+                . ($back === null ? 'null' : $back->text() . ' @' . $back->caretOffset()),
+        );
+
+        $s->chord(KeyChord::home());
+        $s->chord(KeyChord::ctrl('Delete'));
+        $forward = $s->editWidget();
+        check(
+            'Table · 编辑中：Ctrl+Delete 删到词尾（剩一个空格，且没跳出编辑）',
+            $forward !== null && $forward->text() === ' ' && $s->isEditing(),
+            $forward === null ? 'null' : \json_encode($forward->text()),
+        );
+
+        $this->flushChecks();
+    }
 }

@@ -116,23 +116,79 @@ final class TextFieldKeyTest extends SmokeTestCase
 
         check(
             '输入框 · Ctrl+← 跨过一个词',
-            $state->handleKey(KeyEvent::down(KeyChord::make('Left', true))) && $state->caretOffset() === 6,
+            $state->handleKey(KeyEvent::down(KeyChord::ctrl('Left'))) && $state->caretOffset() === 6,
             '插入符在 ' . $state->caretOffset(),
         );
 
         check(
             '输入框 · Ctrl+Shift+← 按词扩选',
-            $state->handleKey(KeyEvent::down(KeyChord::make('Left', true, false, true)))
+            $state->handleKey(KeyEvent::down(KeyChord::make('Left', ctrl: true, shift: true)))
                 && $state->selectionStart() === 0
                 && $state->selectionEnd() === 6,
             \sprintf('[%d,%d)', $state->selectionStart(), $state->selectionEnd()),
         );
 
-        $state->handleKey(KeyEvent::down(KeyChord::make('Right', true, false, true)));
+        $state->handleKey(KeyEvent::down(KeyChord::make('Right', ctrl: true, shift: true)));
         check(
             '输入框 · Ctrl+Shift+→ 把活动端收回来',
             $state->selectionStart() === 6 && $state->selectionEnd() === 6,
             \sprintf('[%d,%d)', $state->selectionStart(), $state->selectionEnd()),
+        );
+
+        $this->flushChecks();
+    }
+
+    /**
+     * `Ctrl+Backspace` / `Ctrl+Delete` 在**真实控件**上落到草稿。
+     *
+     * ★ 除了文本，还钉 `$seen`：删除必须走一次 `TextChange::Text` ⇒ `onChanged`
+     *   只报**一次**最终值。若哪天有人把它改成"逐字符调 `deleteBackward()`"，
+     *   文本最终一样，而应用会收到一串中间值 —— 外部看到的是"值一直在变"。
+     */
+    public function testWordDeleteKeysReachTheDraft(): void
+    {
+        $seen = [];
+        $state = $this->field('hello world', $seen);
+
+        check(
+            '输入框 · Ctrl+Backspace 删到词首（空格留着）',
+            $state->handleKey(KeyEvent::down(KeyChord::ctrl('Backspace')))
+                && $state->text() === 'hello '
+                && $state->caretOffset() === 6,
+            \sprintf('%s @ %d', \json_encode($state->text()), $state->caretOffset()),
+        );
+        check('输入框 · 一次按键只通知一次外部', $seen === ['hello '], \json_encode($seen));
+
+        // ★ 选区**故意与词边界不重合**（`[0,10)`）：若选区是"全选"，走选区与
+        //   "按词删到 0"的结果一样，这条断言就抓不到"删除不看选区"这个错。
+        //   这里走选区得 `d`，走词边界（`previousWordStart(10)` = 6）得 `hello d`。
+        $state = $this->field('hello world', $seen);
+        $state->handleKey(KeyEvent::down(KeyChord::ctrl('A')));
+        $state->handleKey(KeyEvent::down(KeyChord::shift('Left')));
+        check(
+            '输入框 · 有选区时 Ctrl+Backspace 只删选区（不按词边界）',
+            $state->handleKey(KeyEvent::down(KeyChord::ctrl('Backspace')))
+                && $state->text() === 'd',
+            \json_encode($state->text()),
+        );
+
+        $seen = [];
+        $state = $this->field('hello world', $seen);
+        $state->handleKey(KeyEvent::down(KeyChord::home()));
+
+        check(
+            '输入框 · Ctrl+Delete 删到词尾（不是词首）',
+            $state->handleKey(KeyEvent::down(KeyChord::ctrl('Delete'))) && $state->text() === ' world',
+            \json_encode($state->text()),
+        );
+
+        $state->handleKey(KeyEvent::down(KeyChord::end()));
+        check(
+            '输入框 · 末尾的 Ctrl+Delete 被消费但不报变化',
+            $state->handleKey(KeyEvent::down(KeyChord::ctrl('Delete'))) === true
+                && $state->text() === ' world'
+                && $seen === [' world'],
+            \json_encode($seen),
         );
 
         $this->flushChecks();

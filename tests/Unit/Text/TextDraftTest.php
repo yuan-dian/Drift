@@ -26,6 +26,60 @@ final class TextDraftTest extends TestCase
         self::assertSame(\strlen('中文a'), $draft->caretOffset());
     }
 
+    /**
+     * `Ctrl+Backspace` 的落点由调用方算（`previousWordStart()`），本层只管删。
+     *
+     * ★ 三条一起看才有意义：正常删、落点就在插入符处（`None`，不重画）、
+     *   落点越过插入符（`None`，**不能**反向删 —— 那是"反向区间"被当成负数长度）。
+     */
+    public function testDeleteBackwardToBoundary(): void
+    {
+        $draft = new TextDraft('hello world');
+        $draft->moveCaretToEnd();
+
+        self::assertSame(TextChange::Text, $draft->deleteBackwardTo(6));
+        self::assertSame('hello ', $draft->text());
+        self::assertSame(6, $draft->caretOffset());
+
+        self::assertSame(TextChange::None, $draft->deleteBackwardTo(6));
+        self::assertSame(TextChange::None, $draft->deleteBackwardTo(9), '落点在插入符右侧 ⇒ 不是"向前删到 9"，是什么都不做');
+        self::assertSame('hello ', $draft->text());
+    }
+
+    /** 同上，向前的镜像（构造后插入符在末尾，先挪回 0） */
+    public function testDeleteForwardToBoundary(): void
+    {
+        $draft = new TextDraft('hello world');
+        $draft->moveCaret(0);
+
+        self::assertSame(TextChange::Text, $draft->deleteForwardTo(6));
+        self::assertSame('world', $draft->text());
+        self::assertSame(0, $draft->caretOffset());
+
+        self::assertSame(TextChange::None, $draft->deleteForwardTo(0));
+        self::assertSame('world', $draft->text());
+    }
+
+    /**
+     * 有选区 ⇒ **只删选区**，落点参数不参与。
+     *
+     * ★ 这是三个平台一致的行为（Win32 Edit / GTK / 浏览器）：选区是更明确的意图。
+     *   若改成"删到词边界"，用户按住 Shift 选了一段再按 Ctrl+Backspace，
+     *   会看到一部分选区被删、剩下的还亮着 —— 分不清是键坏了还是自己选错了。
+     */
+    public function testDeleteByWordWithSelectionIgnoresBoundary(): void
+    {
+        $draft = new TextDraft('hello world');
+        $draft->selectRange(6, 11);
+
+        self::assertSame(TextChange::Text, $draft->deleteBackwardTo(0));
+        self::assertSame('hello ', $draft->text());
+
+        $draft->selectRange(0, 5);
+        self::assertSame(TextChange::Text, $draft->deleteForwardTo(11));
+        self::assertSame(' ', $draft->text(), '只剩那个空格 —— 落点参数根本没参与');
+    }
+
     /** 偏移 1 落在"中"的字节中间 ⇒ 吸附回 0，并报 `Caret`（要重画插入符） */
     public function testCaretSnapsToCharacterBoundary(): void
     {

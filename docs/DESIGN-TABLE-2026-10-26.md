@@ -1654,6 +1654,17 @@ return new Rect(
 | `Esc` | — | 取消（丢弃草稿，不回调） |
 | `←` / `→` / `Home` / `End` / `Backspace` / `Delete` / `Ctrl+A` | 移格 / 首末行 | 归草稿（**与 `TextField` 同一张表**） |
 | `Ctrl+←` / `Ctrl+→` / `Ctrl+Shift+←` / `Ctrl+Shift+→` | 无（放行） | 归草稿：按**词**跳 / 按**词**扩选 |
+| `Ctrl+Backspace` / `Ctrl+Delete` | 无（放行） | 归草稿：按**词**删（两端落点**不同**，见下） |
+
+> ★ **2026-11-02 补**：`Ctrl+Backspace` 删到上一个词**首**，`Ctrl+Delete` 删到
+> 下一个词**尾**。这个不对称是 Win32 Edit / GTK `WORD_ENDS` / 浏览器
+> `deleteWordForward` 三者一致的形态，**不是**笔误：`hello |world` 上
+> Ctrl+Backspace 得 `|world`、Ctrl+Delete 得 `hello |`。
+> 若图对称让 `Ctrl+Delete` 也用 `nextWordStart()`，它只会删掉那一个空格 ——
+> 用户看到的是"按了，但词还在"。
+> 两个落点分别是 `TextBoundary::previousWordStart()` 与 `nextWordEnd()`；
+> 删除逻辑只有一份（`TextDraft::deleteBackwardTo()` / `deleteForwardTo()`，
+> 字符级的两个方法委托给它），所以"按词"与"按字符"不可能手感不一致。
 
 > ★ **2026-11-02 更正**：上一版这里写的是"与 `TextField` **逐字同义**"。逐字同义
 > 意味着同一张表有两个副本 —— 加一个键位要改两处，漏一处就是"输入框支持、
