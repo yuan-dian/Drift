@@ -4820,6 +4820,75 @@ if ($mockReady) {
         $redirected->status() === 200 && str_ends_with($redirected->url(), '/healthz'),
         'status=' . $redirected->status() . ' url=' . $redirected->url(),
     );
+
+    // ── ㊶d multipart 的真往返（2026-11-02，第一个消费者 `apps/watermark`）────────
+    //
+    // ★ 为什么单测不够：单测直测 `buildMultipart()` 的字节（结构对不对），但那**证明
+    //   不了**这些字节被 curl 原样发出去、也没被 `Content-Type` 覆盖掉。中间隔着一层
+    //   libcurl，"我们拼对了"与"服务端收到了"是两件事。
+    // ★ 判据：① 服务端按 multipart 解析出了字段（含中文键值）② 文件的**字节**一致
+    //   （md5）③ 客户端给的 boundary 与解析用的一致 ④ 总长度对得上。
+    // ★ 故意带 `.jpg` 扩展名：`buildMultipart()` 的 MIME 是**按扩展名查表**得到的
+    //   （不用 `mime_content_type()`，那是 fileinfo 扩展，AOT 运行时没启）。
+    //   扩展名不认识时退回 `application/octet-stream` —— 那条路在单测里判。
+    $mpFile = tempnam(sys_get_temp_dir(), 'drift-mp-') . '.jpg';
+    $mpBytes = random_bytes(200 * 1024);
+    file_put_contents($mpFile, $mpBytes);
+
+    $mp = Http::request('POST', $httpBase . '/multipart', [
+        'fields' => [
+            'key' => '***REMOVED***/2026/11/2/abc/1234.jpg',
+            'policy' => 'eyJleHBpcmF0aW9uIjoiMjAyNi0xMS0wMlQwMzowMToxNC4wMDhaIn0=',
+            'OSSAccessKeyId' => 'LTAI5t9NGBH5zAdeTBhxcQvR',
+            'success_action_status' => '200',
+            '中文键' => '中文值',
+        ],
+        'files' => ['file' => $mpFile],
+        // ★ 带一个中文头：`shuiyin.html` 用 XHR 而不用 fetch 的唯一原因就是这个
+        //   （fetch 的 Header 不允许非 ISO-8859-1）。本仓走 curl，没有那条限制。
+        'headers' => ['uc-userName' => '11'],
+    ])->json();
+
+    check(
+        'Http · multipart：服务端解析出了 5 个字段 + 1 个文件',
+        ($mp['partCount'] ?? 0) === 6,
+        'partCount=' . ($mp['partCount'] ?? '(空)'),
+    );
+    check(
+        'Http · multipart：中文键值原样到达（UTF-8 未损坏）',
+        ($mp['fields']['中文键'] ?? '') === '中文值',
+        var_export($mp['fields']['中文键'] ?? null, true),
+    );
+    check(
+        'Http · multipart：OSS 签名那几个字段名与值都对（直接照抄 shuiyin.html 的形状）',
+        ($mp['fields']['key'] ?? '') === '***REMOVED***/2026/11/2/abc/1234.jpg'
+            && ($mp['fields']['OSSAccessKeyId'] ?? '') === 'LTAI5t9NGBH5zAdeTBhxcQvR'
+            && ($mp['fields']['success_action_status'] ?? '') === '200',
+        'key=' . ($mp['fields']['key'] ?? '(空)'),
+    );
+    check(
+        'Http · multipart：文件字节**逐字节**一致（md5，200KB 二进制）',
+        ($mp['files']['file']['md5'] ?? '') === md5($mpBytes),
+        ($mp['files']['file']['md5'] ?? '(空)') . ' vs ' . md5($mpBytes),
+    );
+    check(
+        'Http · multipart：文件大小对 + MIME 按扩展名映射（.jpg ⇒ image/jpeg，不靠 fileinfo）',
+        (int) ($mp['files']['file']['size'] ?? -1) === strlen($mpBytes)
+            && ($mp['files']['file']['mime'] ?? '') === 'image/jpeg',
+        'size=' . ($mp['files']['file']['size'] ?? '(空)') . ' mime=' . ($mp['files']['file']['mime'] ?? '(空)'),
+    );
+    check(
+        'Http · multipart：客户端给的 boundary 就是服务端解析用的那个',
+        ($mp['boundary'] ?? '') !== '' && str_contains((string) ($mp['type'] ?? ''), (string) $mp['boundary']),
+        'boundary=' . ($mp['boundary'] ?? '(空)'),
+    );
+    check(
+        'Http · multipart：总长度 = 文件字节 + 表单头尾（说明没有多发也没有少发 part）',
+        (int) ($mp['length'] ?? 0) > strlen($mpBytes) && (int) ($mp['length'] ?? 0) < strlen($mpBytes) + 4096,
+        'length=' . ($mp['length'] ?? 0) . ' 文件=' . strlen($mpBytes),
+    );
+
+    @unlink($mpFile);
 }
 
 if (is_resource($mockProc)) {

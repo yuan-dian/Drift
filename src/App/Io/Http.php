@@ -60,6 +60,13 @@ namespace Drift\App\Io;
  *   重试 / 代理开关。它们每一个都是真实的策略选择，而今天唯一的用法是"取一页 JSON"。
  *   真需要时，形状是**在 worker 里**加的（`curl_share_*` 或 `IoPoller`），不是在这里。
  *
+ * ★ **上传（2026-11-02 起）**：`fields` / `files` 走 multipart，形状对齐 OSS PostObject
+ *   （`apps/watermark` 是第一个消费者）。它是**手拼 + 流式**而不是 `CURLFile`：
+ *   `CURLOPT_READFUNCTION` 按块喂，内存 O(64 KB)，**不是**整个文件。理由与边界
+ *   见 {@see self::buildMultipart()} 与 {@see MultipartBody}。
+ *   ★ 严格意义的零拷贝（`sendfile` / `TransmitFile`）对表单上传**用不了** ——
+ *   它只能原样发一个 fd，而表单必须在文件前后拼 HTTP 头。流式是这里能做到的上限。
+ *
  * @api
  */
 final class Http
@@ -74,7 +81,34 @@ final class Http
     private const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'];
 
     /** 合法的 `$opts` 键 —— 拼错的键**当场抛**，不静默忽略 */
-    private const OPT_KEYS = ['body', 'headers', 'connectTimeout', 'timeout', 'followRedirects', 'expectOk'];
+    private const OPT_KEYS = ['body', 'headers', 'connectTimeout', 'timeout', 'followRedirects', 'expectOk', 'fields', 'files'];
+
+    /**
+     * 上传体积上限（字节）。超过 ⇒ **抛**，不静默截断、不静默换路。
+     *
+     * ★ 流式上传**不占内存**（O(一个块)，见 {@see MultipartBody}），所以这个数
+     *   不是内存保护，是**防手滑**：1 GB 差不多是"误拖一个视频进来"的量级。
+     *   它也不是 `CURLOPT_POSTFIELDSIZE` 的上限（那个在 64 位 PHP 上是 long）。
+     */
+    public const MAX_UPLOAD_BYTES = 1024 * 1024 * 1024;
+
+    /**
+     * 扩展名 → MIME 的最小映射（multipart 每个 part 都要 `Content-Type`）。
+     *
+     * ★ **为什么不用 `mime_content_type()`**：那是 `fileinfo` 扩展，而 `drift-build`
+     *   的运行时扩展清单只有 `mbstring / openssl / curl`（`tools/drift-build.php`
+     *   里写死）。解释器里跑得通、AOT 产物里 Fatal —— 这类"只在真机炸"的坑
+     *   本仓已经付过一次学费。映射表不认识就退回 `application/octet-stream`，
+     *   OSS 对 `file` 字段不看 MIME，看不出来也不影响功能。
+     */
+    private const MIME_BY_EXT = [
+        'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'png' => 'image/png',
+        'gif' => 'image/gif', 'webp' => 'image/webp', 'bmp' => 'image/bmp',
+        'heic' => 'image/heic', 'svg' => 'image/svg+xml', 'tif' => 'image/tiff',
+        'tiff' => 'image/tiff', 'pdf' => 'application/pdf',
+        'txt' => 'text/plain', 'json' => 'application/json', 'csv' => 'text/csv',
+        'zip' => 'application/zip', 'mp4' => 'video/mp4', 'mov' => 'video/quicktime',
+    ];
 
     /**
      * GET（最常用的一档）。
@@ -129,6 +163,12 @@ final class Http
      *        · `timeout` (float) 秒，默认 {@see self::DEFAULT_TIMEOUT_S}
      *        · `followRedirects` (int) 最多跟几跳，默认 0 = 不跟
      *        · `expectOk` (bool) 非 2xx 是否抛，默认 `true`
+     *        · `fields` (array<string, scalar>) multipart 普通字段（给了就走 multipart）
+     *        · `files` (array<string, string|array{path:string,filename?:string,mime?:string}>)
+     *          multipart 文件字段，值是本地路径
+     *
+     * ★ `fields` / `files` 与 `body` **互斥**，且此时**不许**在 `headers` 里手设
+     *   `Content-Type`（boundary 由本类生成，手设会把它顶掉）。见 {@see self::buildMultipart()}。
      *
      * @throws \InvalidArgumentException 动词非法 / 选项名拼错 / URL 为空（**程序员错**，不是运行期失败）
      * @throws HttpException 传输失败，或非 2xx 且 `expectOk` 为真
@@ -167,6 +207,42 @@ final class Http
             throw new \InvalidArgumentException('Http：' . $method . ' 不带请求体（curl 会静默丢掉它）');
         }
 
+        // ── multipart 表单（`fields` / `files`，2026-11-02）────────────────────
+        //
+        // 形状对齐 OSS PostObject：`key` / `policy` / `OSSAccessKeyId` / `signature` /
+        // `success_action_status` 走 `fields`，图片本身走 `files`。
+        $payload = $body;
+        $multipart = null;
+        $multipartType = '';
+        if (isset($opts['fields']) || isset($opts['files'])) {
+            if ($body !== '') {
+                throw new \InvalidArgumentException('Http：multipart 用 fields / files 描述请求体，不要再给 body（两者拼在一起没有语义）');
+            }
+            if ($method !== 'POST') {
+                // ★ 只支持 POST：OSS PostObject 是 POST，而 PUT/PATCH 的流式上传要走
+                //   `CURLOPT_UPLOAD`（另一套语义，动词也会被改）。今天没有消费者，
+                //   与其留一条没走过的分支，不如说清楚。
+                throw new \InvalidArgumentException('Http：multipart 只支持 POST（' . $method . ' 要走另一条流式语义，本类没实现）');
+            }
+            foreach ($headers as $name => $_) {
+                // ★ **不许手设 Content-Type**：multipart 的 Content-Type 必须带
+                //   `boundary=`，而 boundary 是本类自己生成的。手设一个
+                //   `multipart/form-data` 会把 curl 自动补的 boundary 顶掉 ⇒
+                //   服务端收到一个**无法解析**的表单，报的还是"缺少字段"。
+                if (\strtolower((string) $name) === 'content-type') {
+                    throw new \InvalidArgumentException('Http：multipart 的 Content-Type 由本类生成（要带 boundary），不要在 headers 里手设');
+                }
+            }
+
+            $fields = $opts['fields'] ?? [];
+            $files = $opts['files'] ?? [];
+            if (!\is_array($fields) || !\is_array($files)) {
+                throw new \InvalidArgumentException('Http：fields / files 必须是 array');
+            }
+
+            [$multipart, $multipartType] = self::buildMultipart($fields, $files);
+        }
+
         $connectS = (float) ($opts['connectTimeout'] ?? self::DEFAULT_CONNECT_TIMEOUT_S);
         $timeoutS = (float) ($opts['timeout'] ?? self::DEFAULT_TIMEOUT_S);
         if ($connectS <= 0.0 || $timeoutS <= 0.0) {
@@ -196,10 +272,18 @@ final class Http
                 $lines[] = $name . ': ' . $one;
             }
         }
-        if ($body !== '' && $method !== 'GET' && $method !== 'HEAD') {
+        if ($multipartType !== '') {
+            // ★ 必须在这里补：`CURLOPT_POSTFIELDS` 收到**字符串**时 curl 不会自己加
+            //   Content-Type（收到数组才会）。而 multipart 的 Content-Type 少了
+            //   `boundary=` 服务端就解不开 —— 所以 boundary 由 `buildMultipart()`
+            //   生成，这里原样带上，两者必须是**同一次调用**的产物。
+            $lines[] = 'Content-Type: ' . $multipartType;
+        }
+        if ($payload !== '' || $multipart !== null) {
             // ★ 必须显式禁掉 `Expect: 100-continue`：curl 对 >1KB 的 body 会先发这个头
             //   并**等 1 秒**看服务端怎么说。对端是 PHP 内置服务器时不回 100 ⇒
             //   每次 POST 白等 1s。这是 curl 的经典坑，不是本仓的选择。
+            //   ★ 上传几百 KB 以上的图必然 > 1KB ⇒ 这一行对 multipart 尤其重要。
             $lines[] = 'Expect:';
         }
 
@@ -235,19 +319,55 @@ final class Http
             },
         ]);
 
-        if ($method === 'HEAD') {
+        if ($multipart !== null) {
+            // ★ **流式上传**：不设 `CURLOPT_POSTFIELDS`（设了会顶掉 READFUNCTION），
+            //   改成 UPLOAD + 显式长度 + 读回调。内存只占一个块（curl 默认 64 KB），
+            //   不是整个文件。
+            //
+            // ★★ **PHP 没有 `CURLOPT_POSTFIELDSIZE`**（2026-11-02 实测：8.4.15 与
+            //   8.5.11 都 `defined()` 为 false）。PHP 的 curl 扩展只导出
+            //   `CURLOPT_POSTFIELDS`（= 10015，是 PHP 自己的伪常量，对应 libcurl 的
+            //   `COPYPOSTFIELDS`），而 libcurl 的 `CURLOPT_POSTFIELDSIZE` 从来没被
+            //   导出过。所以"POST + 流式 body"只能走这条路：
+            //     `CURLOPT_UPLOAD`（用 READFUNCTION 读 body）+ `CURLOPT_INFILESIZE`
+            //     （给长度，否则退化成 chunked）+ `CURLOPT_CUSTOMREQUEST('POST')`
+            //     （把动词从默认的 PUT 改回 POST，**只改动词不改语义**）。
+            //   两个 PHP 版本这三个常量都在，已实测。
+            \curl_setopt($ch, CURLOPT_UPLOAD, true);
+            \curl_setopt($ch, CURLOPT_INFILESIZE, $multipart->length());
+            \curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'POST');
+            // ★ 回调**必须声明 3 个参数**：curl 就是传 3 个。AOT 严格校验实参个数，
+            //   少声明一个在解释器里没事、在真机上是 `Fatal: expects exactly N`。
+            \curl_setopt($ch, CURLOPT_READFUNCTION, static function ($_handle, $_fd, int $want) use ($multipart): string {
+                return $multipart->read($want);
+            });
+        } elseif ($method === 'HEAD') {
             \curl_setopt($ch, CURLOPT_NOBODY, true);
         } elseif ($method !== 'GET') {
             if ($method !== 'POST') {
                 // PUT / PATCH / DELETE：curl 只有 POST 是一等公民，别的要自己说
                 \curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
             }
-            \curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
+            \curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
         }
 
-        $raw = \curl_exec($ch);
-        $errno = \curl_errno($ch);
-        $error = \curl_error($ch);
+        try {
+            $raw = \curl_exec($ch);
+            $errno = \curl_errno($ch);
+            $error = \curl_error($ch);
+        } catch (\RuntimeException $e) {
+            // `MultipartBody::read()` 抛的（文件读到一半读不出）⇒ 归到"传输层失败"那一档。
+            // ★ 不能让它以 `\RuntimeException` 原样冒出去：`Http` 的对外契约只有
+            //   `HttpException` 一种失败，多一种异常类型就是让每个调用方都要多 catch 一个。
+            throw new HttpException($method . ' ' . $url . ' → ' . $e->getMessage(), $url);
+        } finally {
+            // ★ 文件句柄必须在这里关：curl 提前失败（超时 / 被中断）时
+            //   `read()` 不会吐完，句柄就挂在那里。
+            if ($multipart !== null) {
+                $multipart->close();
+            }
+        }
+
         $status = (int) \curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
         $effective = (string) \curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
         $elapsedMs = ((float) \curl_getinfo($ch, CURLINFO_TOTAL_TIME)) * 1000.0;
@@ -278,5 +398,153 @@ final class Http
         }
 
         return $response;
+    }
+
+    /**
+     * 造一个**流式**的 `multipart/form-data` 请求体，返回 `[body, content-type]`。
+     *
+     * ## 为什么手拼，而不用 `CURLFile` 或 `CURLOPT_POSTFIELDS => array`
+     *
+     * 1. **AOT 风险**：`CURLFile` 是 PHP 内置类，`typephp` 认不认识它没有先例。
+     *    而"解释器全绿、AOT 产物启动即 Fatal"本仓已经付过一次学费
+     *    （见 `MEMORY.md`「AOT 缺 `use` 只在真机炸」）。手拼只用字符串 + 文件句柄。
+     * 2. **可控性**：part 的头部顺序、文件名转义、字段注入防护都在一处，
+     *    而不是散给 libcurl 的默认行为。
+     *
+     * ## 为什么是流式（2026-11-02 第二版）
+     *
+     * 第一版把整个表单拼进一个 `string`。三个问题，第一个就足以否掉它：
+     *
+     * | 问题 | 后果 |
+     * |---|---|
+     * | `file_get_contents()` + `.=` 扩容 | 内存峰值 = 文件 × 2~3；64 MB 的图吃 150 MB |
+     * | 循环里 `.=` 累加 | lint `str-concat-loop`（§2.4 纪律 2），多字节下堆损坏 |
+     * | 严格零拷贝用不了 | `sendfile()` 只能原样发一个 fd，表单要在文件前后拼头 ⇒ **不适用** |
+     *
+     * 所以上限不是零拷贝，是**流式**：内存 O(一个块)。具体形状见
+     * {@see MultipartBody}。
+     *
+     * ★ **总长度先算不读**（各 part 头长度 + `filesize()` + 尾部）⇒
+     *   `CURLOPT_POSTFIELDSIZE` 拿得到精确值，进度分母不用猜（第 2 棒直接用
+     *   `length()`），请求也不会退化成 chunked。
+     *
+     * @param array<string, mixed> $fields 普通字段：名 → 标量值
+     * @param array<string, mixed> $files  文件字段：名 → 路径字符串，或
+     *                                     `['path' => …, 'filename' => …, 'mime' => …]`
+     *
+     * @return array{MultipartBody, string}
+     *
+     * @throws \InvalidArgumentException 字段名/值含 CRLF、文件不存在、体积超限
+     */
+    private static function buildMultipart(array $fields, array $files): array
+    {
+        // ★ boundary 用随机值：固定 boundary 会让"字段值里恰好含 `--boundary`"
+        //   从"不可能"变成"可能"。16 字节十六进制足够。
+        $boundary = '----DriftFormBoundary' . \bin2hex(\random_bytes(16));
+
+        /** @var list<array{head: string, path: string, size: int}> $parts */
+        $parts = [];
+        $total = 0;
+
+        foreach ($fields as $name => $value) {
+            $name = self::assertNoCrlf((string) $name, 'fields 的名字');
+            if (\is_array($value) || \is_object($value)) {
+                throw new \InvalidArgumentException('Http：fields 的值必须是标量（\'' . $name . '\' 是 ' . \get_debug_type($value) . '）');
+            }
+            // ★ 值里的 CRLF 能让攻击者**伪造额外的 part**（`\r\n--boundary\r\nContent-Disposition: …`）。
+            //   调用方是自己人也不能放过：一次拼接失误就是一个静默的注入面。
+            $value = self::assertNoCrlf((string) $value, 'fields[\'' . $name . '\'] 的值');
+
+            // 纯字段的整个 part（含结尾 CRLF）都很小，一次性拼好塞进 head。
+            $head = '--' . $boundary . "\r\n"
+                . 'Content-Disposition: form-data; name="' . self::quoteDisposition($name) . "\"\r\n\r\n"
+                . $value . "\r\n";
+            $parts[] = ['head' => $head, 'path' => '', 'size' => 0];
+            $total += \strlen($head);
+        }
+
+        foreach ($files as $name => $spec) {
+            $name = self::assertNoCrlf((string) $name, 'files 的名字');
+
+            $path = '';
+            $filename = '';
+            $mime = '';
+            if (\is_array($spec)) {
+                $path = (string) ($spec['path'] ?? '');
+                $filename = (string) ($spec['filename'] ?? '');
+                $mime = (string) ($spec['mime'] ?? '');
+            } else {
+                $path = (string) $spec;
+            }
+            if ($path === '' || !\is_file($path) || !\is_readable($path)) {
+                // ★ 不能静默发一个空 part：OSS 会返回 200 但 key 下是个 0 字节对象，
+                //   之后任务报"图片格式错误"—— 错误点离原因隔着两个系统。
+                throw new \InvalidArgumentException('Http：files[\'' . $name . '\'] 指向的不是可读文件：' . $path);
+            }
+            if ($filename === '') {
+                $filename = \basename($path);
+            }
+            if ($mime === '') {
+                $ext = \strtolower((string) \pathinfo($path, PATHINFO_EXTENSION));
+                $mime = self::MIME_BY_EXT[$ext] ?? 'application/octet-stream';
+            }
+
+            // ★ 只用 `filesize()`，**不读内容**。`clearstatcache()` 是必须的：
+            //   PHP 按路径缓存 stat 结果，同一路径刚被写过（比如刚解码出的缩略图）
+            //   会拿到**旧的大小** ⇒ 请求体比声明短，服务端报"连接被重置"。
+            \clearstatcache(true, $path);
+            $size = @\filesize($path);
+            if (!\is_int($size) || $size < 0) {
+                throw new \InvalidArgumentException('Http：取不到 files[\'' . $name . '\'] 的大小：' . $path);
+            }
+
+            $parts[] = [
+                'head' => '--' . $boundary . "\r\n"
+                    . 'Content-Disposition: form-data; name="' . self::quoteDisposition($name)
+                    . '"; filename="' . self::quoteDisposition($filename) . "\"\r\n"
+                    . 'Content-Type: ' . $mime . "\r\n\r\n",
+                'path' => $path,
+                'size' => $size,
+            ];
+            $total += $size;
+            if ($total > self::MAX_UPLOAD_BYTES) {
+                throw new \InvalidArgumentException(
+                    'Http：上传体超过 ' . (self::MAX_UPLOAD_BYTES >> 20) . ' MB'
+                    . '（这是**业务上限**，不是内存上限 —— 流式上传只占一个块）'
+                );
+            }
+        }
+
+        $body = new MultipartBody($parts, '--' . $boundary . "--\r\n");
+
+        return [$body, 'multipart/form-data; boundary=' . $boundary];
+    }
+
+    /**
+     * CRLF 检查（multipart 的注入面就这一处）。
+     *
+     * @throws \InvalidArgumentException 含 `\r` 或 `\n`
+     */
+    private static function assertNoCrlf(string $value, string $what): string
+    {
+        if (\str_contains($value, "\r") || \str_contains($value, "\n")) {
+            throw new \InvalidArgumentException(
+                'Http：' . $what . ' 里不能有换行（能伪造出额外的 multipart part）：' . \str_replace(["\r", "\n"], ['\r', '\n'], $value)
+            );
+        }
+
+        return $value;
+    }
+
+    /**
+     * `Content-Disposition` 里的名字/文件名转义（RFC 7578 §5.1 的保守做法）。
+     *
+     * ★ 中文文件名**不能**直接放进去再指望服务端按 UTF-8 解 —— 各家实现不一致。
+     *   本仓的选择是：`"` / `\` 转成 percent-encoding，其余字节原样（OSS 不看
+     *   `filename`，真正决定对象名的是 `key` 字段）。
+     */
+    private static function quoteDisposition(string $value): string
+    {
+        return \str_replace(['\\', '"', "\r", "\n"], ['%5C', '%22', '%0D', '%0A'], $value);
     }
 }

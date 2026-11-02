@@ -71,5 +71,50 @@ if ($path === '/redirect') {
     return;
 }
 
+// ── multipart 回显（`Http` 的 `fields` / `files`）─────────────────────────────
+//
+// ★ 为什么不是"回显原始 body"：那样只能证明"字节到了"，证明不了"**结构对**"。
+//   服务端（这里用 PHP 自己的 multipart 解析器当裁判）解出来的 `$_POST` / `$_FILES`
+//   才是真实消费方看到的东西 —— 而 boundary 错、文件名没转义、part 少一个头，
+//   全都表现为"字段缺失"而不是"解析失败"。
+//
+// ★ `boundary` 从 CONTENT_TYPE 里抠出来一起回显：判据要能证明"客户端给的
+//   boundary"和"服务端用的 boundary"是同一个，否则"能解析"可能只是巧合。
+if ($path === '/multipart' && $method === 'POST') {
+    $type = (string) ($_SERVER['CONTENT_TYPE'] ?? '');
+    $boundary = '';
+    if (preg_match('/boundary=(.+)$/', $type, $m) === 1) {
+        $boundary = trim($m[1], " \t\"");
+    }
+
+    $filesOut = [];
+    foreach ($_FILES as $field => $info) {
+        $tmp = (string) ($info['tmp_name'] ?? '');
+        $filesOut[$field] = [
+            'name' => (string) ($info['name'] ?? ''),
+            'size' => (int) ($info['size'] ?? 0),
+            'md5' => is_file($tmp) ? md5_file($tmp) : '',
+            'mime' => (string) ($info['type'] ?? ''),
+            'error' => (int) ($info['error'] ?? -1),
+        ];
+    }
+
+    echo json_encode([
+        'ok' => true,
+        'method' => $method,
+        'type' => $type,
+        'boundary' => $boundary,
+        'fields' => $_POST,
+        'files' => $filesOut,
+        // ★ **不能**用 `php://input` 数 part：PHP 解析 multipart 时会消费掉整个流，
+        //   此刻 `php://input` 是**空串**（不是报错，就是空）。用解析结果计数 + 用
+        //   `CONTENT_LENGTH` 对总字节，两条加起来才等价于"结构对且长度对"。
+        'partCount' => count($_POST) + count($_FILES),
+        'length' => (int) ($_SERVER['CONTENT_LENGTH'] ?? 0),
+    ], JSON_UNESCAPED_UNICODE);
+
+    return;
+}
+
 http_response_code(404);
 echo json_encode(['ok' => false, 'error' => 'not found: ' . $path], JSON_UNESCAPED_UNICODE);
