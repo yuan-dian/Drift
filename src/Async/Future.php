@@ -100,6 +100,37 @@ final class Future
     private bool $task = false;
 
     /**
+     * 进度（`0.0`~`1.0`）+ 有没有过进度（2026-11-02）。
+     *
+     * ★ 与 `AsyncValue` 的载荷同一个手法：**"有没有"必须单独一个 `bool`**。
+     *   拿 `$progress !== null` 判会把"进度正好是 0.0"和"从来没报过"混成一种，
+     *   而这两件事对界面是不同的（前者该画 0% 的条，后者该画不定长转圈）。
+     *
+     * ★ 进度**不是**状态：它不参与 `PENDING/FULFILLED/REJECTED`，`isDone()` 不看它。
+     *   一个 Future 可以"已完成且最后进度是 0.4"（任务没报满就返回了）—— 那是
+     *   任务的自由，不是 Future 的异常。
+     */
+    private float $progress = 0.0;
+
+    private bool $hasProgress = false;
+
+    /**
+     * 进度订阅者。
+     *
+     * ★ 为什么这里可以有"第二个回调通道"（而 `Completion` 的注释明确反对两套）：
+     *   `Completion` 反对的是 **`onDone` 与 `then`** —— 两个通道表达**同一个事件**
+     *   （结算），于是"谁先跑"要靠读实现才能回答。进度与结算**不是同一个事件**，
+     *   它们的顺序是天然的（进度必在结算之前），不存在竞争。
+     *
+     * ★ 进度**不沿 `chain()` 传递**：派生 Future 关心的是"结果变成什么"，不是
+     *   "上游跑了多少"。给它灌上游的进度只会让"50% 了"这句话指代不明
+     *   （是上游的 50% 还是整条链的 50%？）。要进度就订阅**根任务**那一条。
+     *
+     * @var list<\Closure>
+     */
+    private array $progressSinks = [];
+
+    /**
      * @internal 只有后端与 `all`/`race` 造 Future；应用侧从 `submit()` 拿
      *
      * @param null|\Closure(): void $onCancel 取消钩子（可空：不是所有后端都能停）
@@ -186,6 +217,103 @@ final class Future
     public function catch(callable $onRejected): self
     {
         return $this->chain(null, \Closure::fromCallable($onRejected));
+    }
+
+    /**
+     * 订阅**进度**（`0.0`~`1.0`）—— 与 `then()` / `catch()` 并列，但**不派生**新的
+     * Future：进度不改变结果，它只是"过程"（2026-11-02）。
+     *
+     * ```php
+     * $future->onProgress(function (float $f): void {
+     *     $this->emit($this->value->withProgress($f));
+     * });
+     * ```
+     *
+     * ★ 已经有过进度时**立刻补发一次**（与 `then()` 在已结算的 Future 上立刻跑同形）：
+     *   订阅晚于第一个进度包是常态（`submit()` 返回之后才挂），补发让调用方不必
+     *   自己判"我是不是错过了"。
+     *
+     * ★ 返回 `$this` 而不是新的 Future —— 它不是派生，链式写法照样成立。
+     *
+     * ★ **只有 `ProcessTaskHost` 会喂进度**。`SyncTaskHost` 在 UI 线程上同步跑完，
+     *   进度对它没有意义；`ThreadTaskHost` 目前也不转发。⇒ 拿不到进度不是错误，
+     *   是那个后端没有这个能力（`hasProgress()` 一直是 false）。
+     *
+     * @param callable(float): void $onProgress
+     *
+     * @api
+     */
+    public function onProgress(callable $onProgress): self
+    {
+        $sink = \Closure::fromCallable($onProgress);
+        $this->progressSinks[] = $sink;
+
+        if ($this->hasProgress) {
+            $sink($this->progress);
+        }
+
+        return $this;
+    }
+
+    /**
+     * 喂一个进度值。**只有后端该调它**（`ProcessTaskHost::deliver()`）。
+     *
+     * 三条丢弃规则（都是"不报错、只是不生效"那一类，所以各有理由）：
+     *
+     * | 情形 | 为什么丢 |
+     * |---|---|
+     * | 已结算 | 结果都到了，再说"40%"没有意义；而且订阅者可能已经换了下一轮 |
+     * | 已取消 | 用户不要了，进度只会让界面闪一下 |
+     * | **比当前小或相等** | 进度条不能往回跳。乱序 / 重发的进度包在 IPC 上完全可能 |
+     *
+     * @param float $fraction `0.0`~`1.0`（越界会被夹住，不抛 —— 这是**数据**不是参数）
+     *
+     * @internal
+     */
+    public function reportProgress(float $fraction): void
+    {
+        if ($this->state !== self::PENDING || $this->cancelled) {
+            return;
+        }
+
+        $f = $fraction;
+        if ($f < 0.0) {
+            $f = 0.0;
+        } elseif ($f > 1.0) {
+            $f = 1.0;
+        }
+
+        if ($this->hasProgress && $f <= $this->progress) {
+            return;
+        }
+
+        $this->progress = $f;
+        $this->hasProgress = true;
+
+        // ★ 先取到局部变量再迭代（回调里可能再 `onProgress()` ⇒ 改数组；
+        //   直接 `foreach ($this->progressSinks …)` 在 PHP 里是安全的拷贝，
+        //   但这里显式取一份，与 `resolve()` 里"整体取走再跑"同一手法）。
+        $sinks = $this->progressSinks;
+        foreach ($sinks as $sink) {
+            $sink($f);
+        }
+    }
+
+    /** 有没有收到过进度（`false` ⇒ 这个后端/这个任务不报进度） */
+    public function hasProgress(): bool
+    {
+        return $this->hasProgress;
+    }
+
+    /**
+     * 当前进度（没报过 ⇒ `$fallback`）。
+     *
+     * ★ 与 `AsyncValue::dataOr()` 同一手法：不返回 `?float` —— AOT 对"可空标量"
+     *   的处理没有先例，而调用点真正需要的是"给我一个能画的数"。
+     */
+    public function progressOr(float $fallback = 0.0): float
+    {
+        return $this->hasProgress ? $this->progress : $fallback;
     }
 
     /**

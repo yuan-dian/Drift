@@ -481,6 +481,16 @@ final class AsyncCommand extends Subject
         //   ★ 追加时同理 —— 那 20 行正在被看，不该因为"又取了 20 行"而消失一帧。
         $this->emit(AsyncValue::loading()->carriedFrom($this->value));
 
+        // ★ 进度（2026-11-02）：订阅**根任务**那一条 —— `Future::onProgress()`
+        //   不沿 `chain()` 传递，所以这里必须挂在 `$future` 本身（`then()` 之前/之后
+        //   都行，进度不改变结果）。
+        //   ★ 只有 `ProcessTaskHost` 会喂它。同步后端 / 线程后端不报 ⇒ 这条回调
+        //     永不触发 ⇒ `hasProgress()` 一直是 false ⇒ 界面画不定长转圈。
+        //     拿不到进度不是错误，是那个后端没有这个能力。
+        $future->onProgress(function (float $fraction): void {
+            $this->emit($this->value->withProgress($fraction));
+        });
+
         // ★ 先取到变量再调用（AOT 已验证的形态；`($this->task)($arg)` 没验过）
         $future
             ->then(function (mixed $value): void {

@@ -59,7 +59,19 @@ final class ProcessWorker
                 continue;
             }
 
-            $reply = self::handle($line, $registry);
+            $reply = self::handle($line, $registry, static function (int $id, float $fraction) use ($out): void {
+                // ★ 进度行**没有** `ok` 键 —— 这是与完成行唯一的区别，UI 侧靠它分流。
+                //   不加 `"ok":null`：`!empty()` 会把 null 当 false ⇒ 老 host 会把它
+                //   当成"失败且没有错误信息"，那是本仓最不想制造的形状。
+                $encoded = json_encode(['id' => $id, 'progress' => $fraction]);
+                if ($encoded === false) {
+                    return; // 进度丢一帧不影响正确性；不要为了它把任务打死
+                }
+                fwrite($out, $encoded . "\n");
+                // ★ 立刻 flush：不刷的话进度会攒在管道缓冲里，界面上就是
+                //   "卡在 0% 然后突然跳到 100%" —— 与没有进度几乎一样。
+                fflush($out);
+            });
             fwrite($out, $reply . "\n");
             fflush($out);
         }
@@ -71,9 +83,16 @@ final class ProcessWorker
      * ★ 任何异常都变成 `{ok:false,error:...}` —— **不许把 worker 打死**：
      *   一个任务的失败不能影响后续任务（进程隔离的价值就在这里）。
      *
+     * ★ **进度是"额外的行"，不是回复的一部分**（2026-11-02）：本方法仍然只返回
+     *   一行（完成行）。任务在跑的过程中通过 `$onProgress` 往外写**若干行**
+     *   `{"id":N,"progress":0.42}`。这样"一次请求一行回复"的协议形状不变 ——
+     *   变的只是"任务跑的过程中也允许说话"。
+     *
      * @param array<string, callable(array<string, mixed>): Job> $registry
+     * @param null|callable(int, float): void $onProgress 进度出口（`null` ⇒ 不转发；
+     *        单测直接调本方法时通常给 `null`）
      */
-    public static function handle(string $line, array $registry): string
+    public static function handle(string $line, array $registry, ?callable $onProgress = null): string
     {
         $msg = json_decode($line, true);
         if (!is_array($msg)) {
@@ -95,7 +114,23 @@ final class ProcessWorker
                 return self::error($id, '注册表 ' . $name . ' 的工厂没返回 Job');
             }
 
-            $value = $job->run();
+            // ★★ 进度口**只在这一个任务的生命周期内有效**：`finally` 里必须卸掉。
+            //   漏了它，任务 A 的 sink 会留给任务 B —— B 的进度会带着 **A 的 id**
+            //   发出去，UI 侧把 B 的进度画到 A 的进度条上（而两者可能在不同的页面）。
+            if ($onProgress !== null) {
+                // ★ 先落到非空局部变量：AOT 对"可空 callable 直接调用"没有先例，
+                //   而闭包捕获一个具体 callable 是已经验过的形态。
+                $emit = $onProgress;
+                JobProgress::bind(static function (float $fraction) use ($emit, $id): void {
+                    $emit($id, $fraction);
+                });
+            }
+
+            try {
+                $value = $job->run();
+            } finally {
+                JobProgress::bind(null);
+            }
 
             $encoded = json_encode(['id' => $id, 'ok' => true, 'value' => $value]);
             if ($encoded === false) {

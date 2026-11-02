@@ -104,12 +104,39 @@ final class AsyncValue
      *  本来就是一句能画出来的话。需要堆栈的场合去 `Errors.log` 看。 */
     private string $message;
 
-    private function __construct(int $state, mixed $value, bool $hasValue, string $message)
-    {
+    /**
+     * 进度（`0.0`~`1.0`）+ 有没有进度（2026-11-02）。
+     *
+     * ★ 与 `$value`/`$hasValue` **完全同一个手法**：`0.0` 是合法进度，
+     *   拿它当"没有"会让"刚开始上传"和"这个任务不报进度"混成一种。
+     *
+     * ★ 进度是**第五个维度**，不是第五态：`fold()` 仍然四个键，`stateName()` 不变。
+     *   多一个状态就多一个 `fold()` 的键，"漏写一支"的失败模式会跟着翻倍
+     *   （见 `fold()` 的注释）—— 而进度不改变"该画什么大类"，只改变"loading 时
+     *   画不画得出百分比"。
+     *
+     * ★ 谁喂它：`AsyncCommand` 在 `start()` 里订阅 `Future::onProgress()`，
+     *   收到就 `emit($this->value->withProgress($f))`。完成/失败落地时
+     *   `data()` / `error()` 造的新值**不带进度** —— 那时百分比已经没有意义。
+     */
+    private float $progress = 0.0;
+
+    private bool $hasProgress = false;
+
+    private function __construct(
+        int $state,
+        mixed $value,
+        bool $hasValue,
+        string $message,
+        float $progress = 0.0,
+        bool $hasProgress = false,
+    ) {
         $this->state = $state;
         $this->value = $value;
         $this->hasValue = $hasValue;
         $this->message = $message;
+        $this->progress = $progress;
+        $this->hasProgress = $hasProgress;
     }
 
     /** 还没开始（页面初始、或"点一下才加载"的按钮态） */
@@ -167,7 +194,58 @@ final class AsyncValue
             return $this;
         }
 
-        return new self($this->state, $previous->value, true, $this->message);
+        // ★ 进度**跟着走**：`carriedFrom()` 的语义是"新状态继承上一次的东西"，
+        //   而进度本来就是"这一次"的过程量（不是上一次的载荷）⇒ 继承的是
+        //   **本值自己的**进度（`$this->progress`），不是 `$previous` 的。
+        //   写成 `$previous->progress` 会让"刷新到 50% 突然跳回上次的 100%"。
+        return new self($this->state, $previous->value, true, $this->message, $this->progress, $this->hasProgress);
+    }
+
+    /**
+     * 带上进度，返回**新实例**（2026-11-02）。
+     *
+     * ```php
+     * // AsyncCommand::start() 里订阅 Future 的进度
+     * $future->onProgress(function (float $f): void {
+     *     $this->emit($this->value->withProgress($f));
+     * });
+     * ```
+     *
+     * ★ 只改进度，**状态 / 载荷 / 消息全部保留** —— 进度是"第五个维度"，不是新状态。
+     * ★ 越界夹住而不抛：这是**数据**（来自 IPC），不是调用方的参数。
+     *
+     * @api
+     */
+    public function withProgress(float $fraction): self
+    {
+        $f = $fraction;
+        if ($f < 0.0) {
+            $f = 0.0;
+        } elseif ($f > 1.0) {
+            $f = 1.0;
+        }
+
+        return new self($this->state, $this->value, $this->hasValue, $this->message, $f, true);
+    }
+
+    /**
+     * 有没有进度可画（`false` ⇒ 画不定长转圈，而不是 0% 的条）。
+     *
+     * @api
+     */
+    public function hasProgress(): bool
+    {
+        return $this->hasProgress;
+    }
+
+    /**
+     * 当前进度（没报过 ⇒ `$fallback`）。与 `dataOr()` 同一手法：不返回 `?float`。
+     *
+     * @api
+     */
+    public function progressOr(float $fallback = 0.0): float
+    {
+        return $this->hasProgress ? $this->progress : $fallback;
     }
 
     public function isIdle(): bool

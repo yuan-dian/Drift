@@ -695,6 +695,24 @@ final class ProcessTaskHost implements TaskHost
         }
 
         $id = (int) $msg['id'];
+
+        // ★★ 进度行**必须先判**（2026-11-02）：进度行只有 `{"id":N,"progress":f}`，
+        //   没有 `ok` 键。落到下面 `!empty($msg['ok'])` 那一支就会被当成
+        //   **"失败且没有错误信息"** —— 一次上传在上传途中就变成"任务失败"，
+        //   而错误消息是框架自己编的，归因会跑到完全无关的地方。
+        if (isset($msg['progress']) && !isset($msg['ok'])) {
+            $item = $this->inflight[$id] ?? null;
+            // 迟到 / 已超时 / 已取消的进度：**静默丢弃**，不报 `Errors`。
+            // 那不是"在途表与管道不同步" —— 进度本来就允许在结果之后到
+            // （worker 写进度和写完成行之间隔着一次 `fflush`，顺序不保证）。
+            // 报出来只会让"每次上传都有一条诊断"变成常态，把真诊断淹掉。
+            if ($item !== null) {
+                $item['future']->reportProgress((float) $msg['progress']);
+            }
+
+            return;
+        }
+
         $item = $this->inflight[$id] ?? null;
         if ($item === null) {
             Errors::report('ProcessTaskHost：收到未知 id=' . (string) $id . ' 的回复（在途表与管道不同步）');
