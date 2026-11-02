@@ -88,7 +88,11 @@ private:
 
 }  // namespace
 
-bool decodeImageToRgba(const std::wstring &path, unsigned int &outWidth, unsigned int &outHeight, std::string &outRgba)
+bool decodeImageToRgba(const std::wstring &path,
+                       unsigned int maxWidth,
+                       unsigned int &outWidth,
+                       unsigned int &outHeight,
+                       std::string &outRgba)
 {
     if (path.empty()) {
         return false;
@@ -149,6 +153,35 @@ bool decodeImageToRgba(const std::wstring &path, unsigned int &outWidth, unsigne
         return false;
     }
 
+    // ── 按目标宽度缩放（**在解码期**，不是解完再缩）─────────────────────────
+    //
+    // 为什么必须在这里做：`CopyPixels` 是唯一一次"把像素铺进内存"的时刻。
+    // 原尺寸解出来之后再缩，等于先付 17MB 再丢掉 90%。WIC 的 scaler 是一条
+    // 惰性管线 —— 缩放在像素流出的过程中完成，缓冲区按目标尺寸分配。
+    //
+    // ★ 缩放**失败不报错、退回原尺寸**：宁可多占内存也别让"图显示不出来"。
+    //   能走到这里的图都已经解码成功了，此时的失败只剩 OOM 一类。
+    // ★ 等比：高度按宽度比四舍五入，至少 1 像素（极端长条图不能算出 0）。
+    // ★ `Fant` 是微软为缩略图推荐的插值（在质量与一次性成本之间）。
+    IWICBitmapSource *source = converter.get();
+    ComPtr<IWICBitmapScaler> scaler;
+    if (maxWidth > 0 && width > maxWidth) {
+        unsigned long long target =
+            (static_cast<unsigned long long>(height) * maxWidth + width / 2ULL) / width;
+        if (target == 0) {
+            target = 1;
+        }
+        if (target <= 0xFFFFULL
+            && SUCCEEDED(factory.get()->CreateBitmapScaler(scaler.put()))
+            && SUCCEEDED(scaler.get()->Initialize(converter.get(), maxWidth,
+                                                  static_cast<UINT>(target),
+                                                  WICBitmapInterpolationModeFant))) {
+            source = scaler.get();
+            width = maxWidth;
+            height = static_cast<UINT>(target);
+        }
+    }
+
     // ★ 上限保护：一张 20000×20000 的图是 1.6 GB。这里不是"猜一个业务上限"，
     //   而是**乘法的溢出边界**：`width * 4 * height` 在 32 位 UINT 上会绕回来，
     //   绕回来的结果是"分配一个很小的缓冲，然后越界写"。判在乘法之前。
@@ -159,7 +192,7 @@ bool decodeImageToRgba(const std::wstring &path, unsigned int &outWidth, unsigne
     }
 
     outRgba.resize(static_cast<size_t>(total));
-    if (FAILED(converter.get()->CopyPixels(NULL, static_cast<UINT>(stride), static_cast<UINT>(total),
+    if (FAILED(source->CopyPixels(NULL, static_cast<UINT>(stride), static_cast<UINT>(total),
             reinterpret_cast<BYTE *>(&outRgba[0])))) {
         outRgba.clear();
         return false;

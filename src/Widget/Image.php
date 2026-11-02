@@ -37,6 +37,12 @@ use Drift\Rendering\ImageLoader;
  */
 final class Image extends RenderBoxWidget
 {
+    /**
+     * 解码宽度相对逻辑宽度的倍数（覆盖到 200% DPI 缩放）。
+     * 取值理由见 `decodeWidth()`。
+     */
+    private const SUPERSAMPLE = 2.0;
+
     /** 资源路径（空 = 用内存句柄） */
     private string $path = '';
 
@@ -115,12 +121,35 @@ final class Image extends RenderBoxWidget
     {
         $image = $this->handle;
         if ($this->path !== '') {
-            $loaded = ImageLoader::load($this->path);
+            $loaded = ImageLoader::load($this->path, self::decodeWidth($this->width));
             if ($loaded !== null) {
                 $image = $loaded;
             }
         }
 
         return new RenderImage($image, $this->fit, $this->width, $this->height);
+    }
+
+    /**
+     * 解码目标宽度（`0` = 原尺寸）。
+     *
+     * ★★ **这是内存纪律，不是性能优化**（2026-11-02）：`ImageLoader` 缓存的
+     *   `ImageHandle` 持有**整张 RGBA**，一张 1792×2390 就是 17MB —— 而本控件
+     *   往往只显示 560 宽。按原尺寸解 = 为永远不会被画到的像素付九成内存，
+     *   多几张就顶穿 PHP 的 128M 上限（真机崩过一次，见 `ImageLoader::load()`
+     *   的分派表）。在**解码期**缩小是唯一不亏的做法。
+     *
+     * ★ 为什么乘 `SUPERSAMPLE`：`width()` 是**逻辑**像素，实际栅格化按 DPI
+     *   scale 放大（1x / 1.5x / 2x）。按逻辑宽度解，在高 DPI 下会看到放大后的
+     *   模糊。×2 覆盖到 200% 缩放 —— 再多就是拿内存换看不出来的锐度。
+     * ★ 只给宽时才算：`width <= 0` ⇒ 尺寸由原图决定 ⇒ 不能在解码期缩。
+     */
+    private static function decodeWidth(float $width): int
+    {
+        if ($width <= 0.0) {
+            return 0;
+        }
+
+        return (int) \ceil($width * self::SUPERSAMPLE);
     }
 }

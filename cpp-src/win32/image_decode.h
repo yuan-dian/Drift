@@ -26,13 +26,24 @@ namespace win32 {
  * （`drift_win32.cc` 的 `toWide()`）。
  *
  * @param path     UTF-16 路径（Windows 原生路径）
+ * @param maxWidth 目标宽度上限（像素）；`0` = 原尺寸。`> 0` 且原图更宽时，
+ *                 在**解码期**用 WIC 缩放到这个宽度（等比）。
+ *                 ★ 这不是"优化"，是**内存纪律**：一张 1792×2390 的图解成 RGBA
+ *                 是 17MB，而结果预览只显示 560 宽 —— 按原尺寸解等于把 90% 的
+ *                 字节分配给永远不会被画到的像素，多张就顶穿 PHP 的 128M 上限。
+ *                 成熟框架（Flutter 的 `cacheWidth` / Android 的 `inSampleSize`）
+ *                 都在解码期做这件事，而不是解完再缩。
  * @param outWidth 解出的宽（像素）
  * @param outHeight 解出的高（像素）
  * @param outRgba  解出的像素（`w * h * 4` 字节）
  *
  * @return 成功 `true`；失败 `false`（文件不存在 / 格式不支持 / 内存不足 / COM 失败）
  */
-bool decodeImageToRgba(const std::wstring &path, unsigned int &outWidth, unsigned int &outHeight, std::string &outRgba);
+bool decodeImageToRgba(const std::wstring &path,
+                       unsigned int maxWidth,
+                       unsigned int &outWidth,
+                       unsigned int &outHeight,
+                       std::string &outRgba);
 
 }  // namespace win32
 }  // namespace drift

@@ -15,13 +15,25 @@ use Drift\Errors;
  * 四条路的取舍见 `cpp-src/win32/image_decode.h` 的表格 —— 结论是 WIC：
  * 零体积增量（`windowscodecs.lib` 是系统组件）、格式全覆盖、系统级速度。
  *
- * ## 两条路怎么分工（**不是"新的取代旧的"**）
+ * ## 两条路怎么分工（**2026-11-02 定序：WIC 优先**）
  *
  * | 输入 | 走谁 | 为什么 |
  * |---|---|---|
- * | PNG | `PngDecoder`（纯 PHP） | 输出**逐字节确定** ⇒ golden / 单测可复现，不依赖系统组件 |
- * | 其它 | WIC | 纯 PHP 解 JPEG 要 100~300ms 且不支持渐进式 |
- * | PNG 但 `PngDecoder` 解不出（隔行 / 罕见位深） | **回退到 WIC** | 宁可慢一点也别显示占位图 |
+ * | **有 WIC 时（AOT 生产）** | **本类（WIC）** | 原生解码，百毫秒级；几乎不动 PHP 堆 |
+ * | 没有 WIC（`php.exe` 里跑单测 / golden） | `PngDecoder`（纯 PHP） | 输出**逐字节确定** ⇒ golden 可复现 |
+ * | PNG 但 WIC 解不出 | `PngDecoder` 兜底 | 宁可慢一点也别显示占位图 |
+ *
+ * ★★ **为什么不是"PNG 一律先走 PngDecoder"**：那个顺序在真机上崩过一次。
+ *   一张 16 位色深 1792×2390 的服务端结果图，纯 PHP 解码实测 **6.6 秒 / 峰值
+ *   92MB**，而它跑在 UI 线程的 `createRenderObject()` 里；再叠上 `ImageLoader`
+ *   缓存里每张 17MB 的 RGBA，多张就顶穿 128M 默认上限 ⇒ OOM ⇒ `zend_bailout`
+ *   打断消息循环 ⇒ `main` 返回 ⇒ 崩在 `php_request_shutdown`。
+ *   表现是"任务完成后程序自己消失、图没显示"，栈却指向 shutdown，
+ *   **看起来与图片毫无关系**。完整推理见 `ImageLoader::load()` 的分派表注释。
+ *
+ * ★ "逐字节确定"服务的是 **golden 测试**，不是生产：golden 跑在 `php.exe`
+ *   （没有 WIC）⇒ 恒定走 `PngDecoder`，确定性一点没丢。生产里没有任何判据
+ *   比较过解码后的字节，却一直在付纯 PHP 的代价。
  *
  * ★ 分派依据是**文件签名**不是扩展名：`a.png` 实际是 jpg 的情况在真实用户目录里
  *   太常见了（重命名、下载器改后缀）。签名判错只会多走一次 WIC，代价可忽略。
@@ -58,9 +70,15 @@ final class ImageDecoder
      *   超大图）。调用方（`ImageLoader`）的降级是"1×1 透明占位"，与"文件找不到"
      *   走同一条路 —— 两种失败对界面是同一种结果，不该有两种处理。
      *
+     * ★ `$maxWidth`（2026-11-02）：目标宽度上限，`0` = 原尺寸。原图更宽时
+     *   **在解码期**等比缩小。传显示宽度而不是 0，是 `ImageLoader` 的默认行为 ——
+     *   一张 1792×2390 的图按原尺寸解是 17MB，而预览区只有 560 宽。
+     *   返回的 `ImageHandle` 尺寸就是**缩小后**的，布局按它的比例走，不受影响。
+     *
      * @param string $path **已经解析过的绝对路径**（`ImageLoader::resolve()` 的产物）
+     * @param int $maxWidth 目标宽度上限（像素）；`0` = 原尺寸
      */
-    public static function decode(string $path): ?ImageHandle
+    public static function decode(string $path, int $maxWidth = 0): ?ImageHandle
     {
         if (!self::available()) {
             return null;
@@ -69,7 +87,7 @@ final class ImageDecoder
         // ★ 先落到局部变量再调：AOT 对"字符串函数名的动态调用"没有先例，
         //   而 `\drift_image_decode(...)` 直接写会被静态编译（stub 里有声明，
         //   所以能编过）—— 那正是我们要的：编译期就有签名检查。
-        $raw = \drift_image_decode($path);
+        $raw = \drift_image_decode($path, $maxWidth > 0 ? $maxWidth : 0);
         if (!\is_array($raw)) {
             return null;
         }

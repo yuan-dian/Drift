@@ -140,6 +140,50 @@ final class PngDecoderTest extends SmokeTestCase
         );
     }
 
+    public function testOversizedIsRefusedBeforeInflate(): void
+    {
+        // ⑨ 预算（2026-11-02 真机崩因的回归哨）：像素数超过 `selfDecodeLimit()`
+        //    必须在 `zlib_decode` **之前**被拒，而不是先 inflate 几十 MB 再拒绝。
+        //
+        // ★ 为什么判据要"两条只差一像素"：如果只断言"超大图 ⇒ null"，把预算
+        //   整段删掉也照样全绿（那条 IDAT 本来就是垃圾，inflate 也会失败）——
+        //   **空转的判据**。两条分别是"预算分支"与"inflate 分支"，看诊断落在
+        //   哪一边才算真的把哨兵测到。
+        // ★ 造图成本：只声明 IHDR 尺寸、IDAT 给一个字节。预算在 inflate 之前，
+        //   所以这两条都不需要真的铺 1M 像素的数据。
+        $limit = PngDecoder::selfDecodeLimit();
+
+        $sig = "\x89PNG\r\n\x1a\n";
+        // ★ 给一个**合法的空 zlib 流**而不是垃圾字节：垃圾会让 `zlib_decode()`
+        //   抛 PHP warning（测试要的是"走到哪条分支"，不是"顺手测 zlib"）。
+        //   空流的长度 0 ≠ 期望行数 ⇒ "未超限"那条仍然干净地失败在长度判据上。
+        $idat = $this->chunk('IDAT', (string) \gzcompress('', 6));
+        $iend = $this->chunk('IEND', '');
+
+        $over = PngDecoder::decode(
+            $sig . $this->chunk('IHDR', \pack('N', $limit + 1) . \pack('N', 1) . "\x08\x00\x00\x00\x00") . $idat . $iend,
+            'over-limit',
+        );
+        $ring = Errors::recentDiagnostics();
+        $overMsg = $ring === [] ? '' : (string) $ring[\count($ring) - 1];
+
+        $at = PngDecoder::decode(
+            $sig . $this->chunk('IHDR', \pack('N', $limit) . \pack('N', 1) . "\x08\x00\x00\x00\x00") . $idat . $iend,
+            'at-limit',
+        );
+        $ring = Errors::recentDiagnostics();
+        $atMsg = $ring === [] ? '' : (string) $ring[\count($ring) - 1];
+
+        check(
+            'PNG · 像素超 selfDecodeLimit() ⇒ 在 inflate 之前拒绝（未超则走 inflate，故诊断不同）',
+            $over === null
+                && \str_contains($overMsg, '太大')
+                && $at === null
+                && !\str_contains($atMsg, '太大'),
+            \sprintf('limit=%d  over="%s"  at="%s"', $limit, $overMsg, $atMsg),
+        );
+    }
+
     private function chunk(string $type, string $data): string
     {
         return pack('N', strlen($data)) . $type . $data . pack('N', crc32($type . $data));

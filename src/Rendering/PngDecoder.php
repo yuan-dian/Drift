@@ -52,6 +52,24 @@ final class PngDecoder
     private const SIGNATURE = "\x89PNG\r\n\x1a\n";
 
     /**
+     * 本类**愿意**自己解的像素上限（2026-11-02）。
+     *
+     * ★★ 这不是"业务上限"，是**成本上限**：本类是逐字节的纯 PHP 实现，实测约
+     *   **66 万像素/秒**、峰值内存 ≈ 输出的 5 倍（一张 1792×2390 的 16 位 PNG =
+     *   **6.6 秒 / 92MB**）。上限存在的唯一理由：**别在兜底路径上再演一次 OOM**。
+     *
+     * ★ 为什么是 1M：覆盖图标 / 缩略图这一档（`Drift-app-icon.png` 640×640 =
+     *   41 万像素，约 0.6 秒 —— 已是本类能接受的最贵一档），而服务端结果图
+     *   （428 万）与设计稿（610 万）都落在外面 ⇒ 它们只会走 WIC。
+     *
+     * ★ 超限**不是错误**：返回 `null` + 一条 `DIAGNOSTIC`，`ImageLoader` 会接着
+     *   试 WIC（见那边的分派表）。所以这条上限**不会**让大图变成占位图 ——
+     *   它只是把"本类不该干的活"退回去。
+     */
+    private const MAX_SELF_DECODE_PIXELS = 1 << 20;
+
+
+    /**
      * 这个文件的**前 8 字节**是 PNG 签名吗（2026-11-02）。
      *
      * 存在的理由：`ImageLoader` 要在两条解码路径之间分派（PNG 走本类以保**逐字节
@@ -72,6 +90,18 @@ final class PngDecoder
         @\fclose($handle);
 
         return \is_string($head) && $head === self::SIGNATURE;
+    }
+
+    /**
+     * 本类愿意自己解的像素上限（诊断 / 测试读数；语义见常量）。
+     *
+     * ★ 公开的理由不是"给调用方调参"，是**让判据能自证**：测试要断言"超限被拒、
+     *   未超不被拒"，就必须能读到那条线，否则只能写死一个数字 —— 那条线一改，
+     *   判据就悄悄变成空转。
+     */
+    public static function selfDecodeLimit(): int
+    {
+        return self::MAX_SELF_DECODE_PIXELS;
     }
 
     /**
@@ -165,6 +195,20 @@ final class PngDecoder
         }
 
         $channels = self::channelsFor($colorType);
+
+        // ★ 预算判在 `zlib_decode` **之前**：inflate 一张 2400 万像素的图要
+        //   几十 MB，判在后面等于先付了内存再拒绝。
+        $pixels = $width * $height;
+        if ($pixels > self::MAX_SELF_DECODE_PIXELS) {
+            return self::fail($origin, sprintf(
+                '图太大（%d×%d = %d 像素，上限 %d），本类只解小图，交给 WIC',
+                $width,
+                $height,
+                $pixels,
+                self::MAX_SELF_DECODE_PIXELS,
+            ));
+        }
+
         $stride = intdiv($width * $channels * $depth + 7, 8);
 
         $raw = zlib_decode(implode('', $idatParts));

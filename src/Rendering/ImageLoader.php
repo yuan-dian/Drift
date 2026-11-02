@@ -119,8 +119,14 @@ final class ImageLoader
 
     /**
      * 加载并解码（带缓存）。找不到 / 解不出 ⇒ `null`（附诊断）。
+     *
+     * ★ `$maxWidth`（2026-11-02）：目标宽度上限，`0` = 原尺寸。**它进缓存键** ——
+     *   同一个文件按不同宽度解出的 `ImageHandle` 尺寸不同，共用一个键会拿到错的
+     *   那一份。默认 `0` 时键就是路径本身，与加这个参数之前完全一致。
+     * ★ 纯 PHP 那条路不做缩放（`PngDecoder` 只解原尺寸）：它已经有了"只解小图"
+     *   的像素上限，走到它的图本来就不大，为此再加一套缩放不划算。
      */
-    public static function load(string $path): ?ImageHandle
+    public static function load(string $path, int $maxWidth = 0): ?ImageHandle
     {
         $resolved = self::resolve($path);
         if ($resolved === null) {
@@ -133,31 +139,44 @@ final class ImageLoader
             return null;
         }
 
-        if (isset(self::$cache[$resolved])) {
-            return self::$cache[$resolved];
+        $key = $maxWidth > 0 ? $resolved . '@' . (string) $maxWidth : $resolved;
+
+        if (isset(self::$cache[$key])) {
+            return self::$cache[$key];
         }
 
-        // ── 两条解码路径（2026-11-02）────────────────────────────────────────
+        // ── 两条解码路径（2026-11-02 定序，2026-11-02 倒序）────────────────────
         //
         // | 输入 | 走谁 | 为什么 |
         // |---|---|---|
-        // | PNG | `PngDecoder`（纯 PHP） | 输出**逐字节确定** ⇒ golden / 单测可复现 |
-        // | 其它 | 壳里的 WIC | 纯 PHP 解 JPEG 要 100~300ms，且不支持渐进式 |
-        // | PNG 但解不出（隔行 / 罕见位深） | **回退 WIC** | 宁可慢一点也别显示占位图 |
+        // | **有 WIC 时（AOT 生产）** | **壳里的 WIC 优先** | 原生解码，百毫秒级且几乎不动 PHP 堆 |
+        // | WIC 不可用 / WIC 失败 | `PngDecoder`（纯 PHP） | 输出**逐字节确定** ⇒ golden / 单测可复现 |
+        //
+        // ★★ **为什么要倒序**（2026-11-02 真机崩因）：原来的顺序是"PNG 一律先走
+        //   纯 PHP"。一张 **16 位色深 1792×2390** 的服务端结果图实测
+        //   **6.6 秒 / 峰值 92MB**（`php -d memory_limit=-1` 量的，同机同文件）——
+        //   而它跑在 **UI 线程**的 `createRenderObject()` 里，再叠上 `$cache` 里
+        //   每张 17MB 的 RGBA，多张就顶穿 128M 默认上限 ⇒ OOM ⇒ `zend_bailout`
+        //   打断消息循环 ⇒ `main` 返回 ⇒ 崩在 `php_request_shutdown`。
+        //   表现是"任务完成后程序自己消失、图片没显示"，栈却指向 shutdown，
+        //   **看起来与图片无关** —— 这条注释就是为了让下一个人不再绕那一圈。
+        //
+        // ★ "逐字节确定"是 **golden 测试**的需求，不是生产的需求：golden 跑在
+        //   `php.exe` 里（没有 WIC）⇒ 恒定走 `PngDecoder`，确定性原样保留。
+        //   生产里没有任何判据比较过解码后的字节，却一直在付纯 PHP 的代价。
         //
         // ★ 分派依据是**文件签名**不是扩展名：`a.png` 实际是 jpg 太常见。
-        // ★ `ImageDecoder::available()` 在 `php.exe` 里是 false（扩展没加载）⇒
-        //   单测里非 PNG 一律解不出，那是**预期**的（WIC 的判据只能在 AOT 里跑）。
+        //   `isPng()` 只读 8 字节，放在 WIC 之后调也不亏。
         $image = null;
-        if (PngDecoder::isPng($resolved)) {
-            $image = PngDecoder::decodeFile($resolved);
+        if (ImageDecoder::available()) {
+            $image = ImageDecoder::decode($resolved, $maxWidth);
         }
-        if ($image === null) {
-            $image = ImageDecoder::decode($resolved);
+        if ($image === null && PngDecoder::isPng($resolved)) {
+            $image = PngDecoder::decodeFile($resolved);
         }
 
         if ($image !== null) {
-            self::$cache[$resolved] = $image;
+            self::$cache[$key] = $image;
         } else {
             Errors::report(sprintf(
                 'ImageLoader：解不出图片 %s（PNG 解码器与壳的 WIC 都没成功）',

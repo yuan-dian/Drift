@@ -552,6 +552,11 @@ function drift_io_stop(): int {}
  * ★ 支持格式取决于系统装了哪些 WIC 解码器（Win10+ 至少 jpg/png/gif/bmp/tiff，
  *   通常还有 webp/heif）。**不要**在调用方硬编码格式列表 —— 解不出就是空数组。
  *
+ * ★ `$maxWidth`：目标宽度上限（`0` = 原尺寸）。原图更宽时在**解码期**等比缩小
+ *   （WIC scaler），返回的 `w`/`h` 是**缩小后**的尺寸。缩放在解码期做而不是
+ *   解完再缩，见 `image_decode.h` 的同名参数说明 —— 内存差一个数量级。
+ *
  * @param string $path UTF-8 路径（壳内部转 UTF-16）
+ * @param int $maxWidth 目标宽度上限（像素），`0` = 原尺寸
  */
-function drift_image_decode(string $path): array {}
+function drift_image_decode(string $path, int $maxWidth = 0): array {}

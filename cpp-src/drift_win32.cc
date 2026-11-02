@@ -3864,14 +3864,21 @@ Bool php_drift_win_confirm(Int owner, String title, String body) {
 //   占位 + 一条 DIAGNOSTIC"，与"文件找不到"走同一条路。跨边界抛 C++ 异常需要
 //   phpx 的翻译层，而"解不出图"是**预期内**的结果（用户可能选了个 .psd），
 //   不是异常。
-Array php_drift_image_decode(String path) {
+// ★ `maxWidth`：目标宽度上限（0 = 原尺寸）。缩放**在解码期**做（WIC scaler），
+//   不是解完再缩 —— 一张 1792×2390 的原尺寸 RGBA 是 17MB，而预览只显示 560 宽，
+//   按原尺寸解等于把九成字节分配给永远画不到的像素。多张叠起来就会顶穿 PHP 的
+//   128M 上限，而且是在 UI 线程里。
+Array php_drift_image_decode(String path, Int maxWidth) {
     Array out;
 
     unsigned int width = 0;
     unsigned int height = 0;
     std::string rgba;
 
-    if (!drift::win32::decodeImageToRgba(toWide(path), width, height, rgba)) {
+    // 负数 / 极大值都收敛到安全区间：转换函数内部按 `> 0` 判启用。
+    unsigned int limit = maxWidth > 0 ? static_cast<unsigned int>(maxWidth) : 0U;
+
+    if (!drift::win32::decodeImageToRgba(toWide(path), limit, width, height, rgba)) {
         return out;
     }
 
