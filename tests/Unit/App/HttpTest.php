@@ -221,6 +221,21 @@ final class HttpTest extends SmokeTestCase
                 static fn (): HttpResponse => Http::get('http://example.test/x', ['fields' => ['a' => '1']]),
                 'multipart 只支持 POST',
             ],
+            // ★ 2026-11-02：进度回调只在 multipart 时才有观察点。收下却不生效
+            //   ⇒ 调用方的进度条永远停在 0（`body` 是一次性发出去的）。
+            'onProgress 但没 multipart' => [
+                static fn (): HttpResponse => Http::post('http://example.test/x', 'raw', [
+                    'onProgress' => static function (float $f): void {
+                    },
+                ]),
+                '只在 multipart',
+            ],
+            'onProgress 不是 callable' => [
+                static fn (): HttpResponse => Http::request('POST', 'http://example.test/x', [
+                    'fields' => ['a' => '1'], 'onProgress' => 'not-a-function',
+                ]),
+                '必须是 callable',
+            ],
         ];
 
         foreach ($cases as $label => [$call, $needle]) {
@@ -320,6 +335,73 @@ final class HttpTest extends SmokeTestCase
             . '（不一致 ⇒ POSTFIELDSIZE 与实体长度不符 ⇒ 服务端挂住或报连接重置）',
             \strlen($body) === $stream->length(),
             '吐出=' . \strlen($body) . ' length()=' . $stream->length(),
+        );
+        // ★ `bytesSent()` 是上传进度的分子 ⇒ 吐完之后必须**正好**等于 `length()`。
+        //   少 2 字节（漏了文件后的分隔 CRLF）在这里是"进度停在 99.9%"，而
+        //   `strlen($body)` 那条判据抓不到"记账"和"实际"分开走样的情形。
+        check(
+            'Http · multipart：吐完后 `bytesSent()` === `length()`（进度分子与分母同口径）',
+            $stream->bytesSent() === $stream->length(),
+            'bytesSent=' . (string) $stream->bytesSent() . ' length()=' . (string) $stream->length(),
+        );
+
+        @\unlink($tmp);
+
+        $this->flushChecks();
+    }
+
+    /**
+     * 上传进度：`bytesSent()` 单调递增、最后到 1.0（2026-11-02）。
+     *
+     * ★ 判据落在**逐块观察**上：只看最后的值，一个"每块都报 0.99"的实现照样绿。
+     * ★ 也钉住"第一块就已经 > 0"：`read()` 第一次就把 part 头吐出去了，
+     *   所以进度条在第一个块之后就该动 —— 否则用户会看到"点了上传没反应"。
+     */
+    public function testMultipartReportsMonotonicProgress(): void
+    {
+        $tmp = (string) \tempnam(\sys_get_temp_dir(), 'drift-mp-prog-');
+        \file_put_contents($tmp, \str_repeat('P', 300 * 1024));
+
+        $method = new \ReflectionMethod(Http::class, 'buildMultipart');
+        /** @var array{MultipartBody, string} $out */
+        $out = $method->invoke(null, ['a' => '1'], ['file' => $tmp]);
+        [$stream] = $out;
+
+        $total = $stream->length();
+        $fractions = [];
+        $lastSent = 0;
+        $monotonic = true;
+
+        // 小块读 ⇒ 多次回调（模拟 curl 的 64 KB 块）
+        while (($chunk = $stream->read(64 * 1024)) !== '') {
+            $sent = $stream->bytesSent();
+            if ($sent < $lastSent) {
+                $monotonic = false;
+            }
+            $lastSent = $sent;
+            $fractions[] = $total > 0 ? $sent / $total : 0.0;
+        }
+        $stream->close();
+
+        check(
+            'Http · 进度：bytesSent() 单调不减（倒退 ⇒ 进度条会往回跳）',
+            $monotonic,
+            'sent=' . (string) $lastSent,
+        );
+        check(
+            'Http · 进度：至少回调 2 次（一次读完的实现看不出进度）',
+            \count($fractions) >= 2,
+            '次数=' . (string) \count($fractions),
+        );
+        check(
+            'Http · 进度：最后一块到 1.0（停在 0.99 ⇒ 用户以为没传完）',
+            $fractions !== [] && \abs($fractions[\count($fractions) - 1] - 1.0) < 1e-9,
+            $fractions === [] ? '(没有回调)' : \sprintf('%.6f', $fractions[\count($fractions) - 1]),
+        );
+        check(
+            'Http · 进度：第一块就 > 0（part 头在第一次 read 里就吐出去了）',
+            $fractions !== [] && $fractions[0] > 0.0,
+            $fractions === [] ? '(没有回调)' : \sprintf('%.6f', $fractions[0]),
         );
 
         @\unlink($tmp);

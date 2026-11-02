@@ -60,6 +60,16 @@ final class MultipartBody
     /** 当前文件 part 还剩多少字节没吐 */
     private int $left = 0;
 
+    /**
+     * 已经吐出的总字节数（**上传进度的分子**）。
+     *
+     * ★ 记在这里而不是让调用方自己累加 `strlen(read())`：`CURLOPT_READFUNCTION`
+     *   是 curl 从 C 里回调进来的，调用方那侧要累加就得在闭包里改外部变量
+     *   （`use (&$x)`）—— tpc 对引用捕获的支持没验过，而这里是现成的、不可能
+     *   数错的记账点（同一个类里 `left` 已经在做减法了）。
+     */
+    private int $sent = 0;
+
     private bool $closed = false;
 
     /**
@@ -87,6 +97,18 @@ final class MultipartBody
     public function length(): int
     {
         return $this->total;
+    }
+
+    /**
+     * 已经吐出的字节数 —— 上传进度的**分子**。
+     *
+     * ★ 与 `length()` 配对：`bytesSent() / length()` 就是进度。两者都是**请求体**
+     *   口径（含 part 头与分隔符），不是"文件字节"口径 —— 混用会让进度条在最后
+     *   一个文件传完时停在 99%。
+     */
+    public function bytesSent(): int
+    {
+        return $this->sent;
     }
 
     /**
@@ -137,7 +159,10 @@ final class MultipartBody
             }
         }
 
-        return \implode('', $chunks);
+        $out = \implode('', $chunks);
+        $this->sent += \strlen($out);
+
+        return $out;
     }
 
     /** 关掉文件句柄（幂等）。curl 提前失败时也要调到。 */

@@ -81,7 +81,7 @@ final class Http
     private const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'];
 
     /** 合法的 `$opts` 键 —— 拼错的键**当场抛**，不静默忽略 */
-    private const OPT_KEYS = ['body', 'headers', 'connectTimeout', 'timeout', 'followRedirects', 'expectOk', 'fields', 'files'];
+    private const OPT_KEYS = ['body', 'headers', 'connectTimeout', 'timeout', 'followRedirects', 'expectOk', 'fields', 'files', 'onProgress'];
 
     /**
      * 上传体积上限（字节）。超过 ⇒ **抛**，不静默截断、不静默换路。
@@ -166,6 +166,9 @@ final class Http
      *        · `fields` (array<string, scalar>) multipart 普通字段（给了就走 multipart）
      *        · `files` (array<string, string|array{path:string,filename?:string,mime?:string}>)
      *          multipart 文件字段，值是本地路径
+     *        · `onProgress` (callable(float $fraction): void) 上传进度（**只在
+     *          multipart 时可用**；`$fraction` 是请求体口径的 `0..1`，可能重复报
+     *          同一个值 —— 节流是调用方的事）
      *
      * ★ `fields` / `files` 与 `body` **互斥**，且此时**不许**在 `headers` 里手设
      *   `Content-Type`（boundary 由本类生成，手设会把它顶掉）。见 {@see self::buildMultipart()}。
@@ -241,6 +244,21 @@ final class Http
             }
 
             [$multipart, $multipartType] = self::buildMultipart($fields, $files);
+        }
+
+        // ── 上传进度回调（2026-11-02）────────────────────────────────────────
+        //
+        // ★ **只对 multipart 有效**，且给了回调但没走 multipart ⇒ **当场抛**：
+        //   `body` 是整块发出去的（`CURLOPT_POSTFIELDS`），中途没有"读到第几字节"
+        //   这个观察点 —— 收下这个选项却不生效，调用方会以为进度条该动。
+        $onProgress = $opts['onProgress'] ?? null;
+        if ($onProgress !== null) {
+            if ($multipart === null) {
+                throw new \InvalidArgumentException('Http：onProgress 只在 multipart（fields / files）时可用 —— 普通 body 是一次性发出去的，没有中途进度');
+            }
+            if (!\is_callable($onProgress)) {
+                throw new \InvalidArgumentException('Http：onProgress 必须是 callable(float $fraction): void');
+            }
         }
 
         $connectS = (float) ($opts['connectTimeout'] ?? self::DEFAULT_CONNECT_TIMEOUT_S);
@@ -338,8 +356,21 @@ final class Http
             \curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'POST');
             // ★ 回调**必须声明 3 个参数**：curl 就是传 3 个。AOT 严格校验实参个数，
             //   少声明一个在解释器里没事、在真机上是 `Fatal: expects exactly N`。
-            \curl_setopt($ch, CURLOPT_READFUNCTION, static function ($_handle, $_fd, int $want) use ($multipart): string {
-                return $multipart->read($want);
+            //
+            // ★ 进度在这里顺手报（`$multipart->bytesSent()` 是它自己的记账）：
+            //   不用闭包改外部变量，也就不依赖 tpc 对 `use (&$x)` 的支持。
+            //   ★ 报的是**请求体**进度（含 part 头），与 `length()` 同口径 ——
+            //   两者混用会让进度停在 99%（最后一段是 `--boundary--`）。
+            \curl_setopt($ch, CURLOPT_READFUNCTION, static function ($_handle, $_fd, int $want) use ($multipart, $onProgress): string {
+                $chunk = $multipart->read($want);
+                if ($onProgress !== null) {
+                    $total = $multipart->length();
+                    if ($total > 0) {
+                        $onProgress(\min(1.0, $multipart->bytesSent() / $total));
+                    }
+                }
+
+                return $chunk;
             });
         } elseif ($method === 'HEAD') {
             \curl_setopt($ch, CURLOPT_NOBODY, true);

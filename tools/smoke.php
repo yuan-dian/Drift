@@ -4835,6 +4835,11 @@ if ($mockReady) {
     $mpBytes = random_bytes(200 * 1024);
     file_put_contents($mpFile, $mpBytes);
 
+    // ★ 上传进度（2026-11-02）：`onProgress` 的**唯一**判据在这里。
+    //   单测直测 `MultipartBody::bytesSent()`，但"Http 真的把回调调起来"那一跳
+    //   只有真往返能证明 —— 变异「进度回调从不被调用」在单测里是绿的。
+    $progressSeen = [];
+
     $mp = Http::request('POST', $httpBase . '/multipart', [
         'fields' => [
             'key' => '***REMOVED***/2026/11/2/abc/1234.jpg',
@@ -4847,6 +4852,9 @@ if ($mockReady) {
         // ★ 带一个中文头：`shuiyin.html` 用 XHR 而不用 fetch 的唯一原因就是这个
         //   （fetch 的 Header 不允许非 ISO-8859-1）。本仓走 curl，没有那条限制。
         'headers' => ['uc-userName' => '11'],
+        'onProgress' => static function (float $fraction) use (&$progressSeen): void {
+            $progressSeen[] = $fraction;
+        },
     ])->json();
 
     check(
@@ -4886,6 +4894,41 @@ if ($mockReady) {
         'Http · multipart：总长度 = 文件字节 + 表单头尾（说明没有多发也没有少发 part）',
         (int) ($mp['length'] ?? 0) > strlen($mpBytes) && (int) ($mp['length'] ?? 0) < strlen($mpBytes) + 4096,
         'length=' . ($mp['length'] ?? 0) . ' 文件=' . strlen($mpBytes),
+    );
+
+    // ── 上传进度：回调**真的被调起来了** ────────────────────────────────
+    // ★ 这一条只能在这里判：单测能证明 `bytesSent()` 单调到 1.0，但证明不了
+    //   `Http` 那个 `CURLOPT_READFUNCTION` 闭包里有调 `$onProgress` 那两行
+    //   （变异「回调从不被调用」在单测里全绿）。真往返才看得见。
+    check(
+        'Http · 进度：真往返里回调至少被调了 1 次（0 次 ⇒ 进度条永远停在 0%）',
+        count($progressSeen) >= 1,
+        '次数=' . count($progressSeen),
+    );
+    check(
+        'Http · 进度：回调值全在 0..1（越界 ⇒ 进度条画出格）',
+        $progressSeen !== [] && min($progressSeen) >= 0.0 && max($progressSeen) <= 1.0,
+        $progressSeen === [] ? '(没有回调)' : sprintf('min=%.4f max=%.4f', min($progressSeen), max($progressSeen)),
+    );
+    check(
+        'Http · 进度：回调单调不减（倒退 ⇒ 进度条往回跳）',
+        (static function (array $xs): bool {
+            $prev = -1.0;
+            foreach ($xs as $x) {
+                if ($x < $prev) {
+                    return false;
+                }
+                $prev = $x;
+            }
+
+            return true;
+        })($progressSeen),
+        'count=' . count($progressSeen),
+    );
+    check(
+        'Http · 进度：最后一次是 1.0（停在 0.99 ⇒ 用户以为没传完）',
+        $progressSeen !== [] && abs((float) $progressSeen[count($progressSeen) - 1] - 1.0) < 1e-9,
+        $progressSeen === [] ? '(没有回调)' : sprintf('%.6f', $progressSeen[count($progressSeen) - 1]),
     );
 
     @unlink($mpFile);
