@@ -209,8 +209,13 @@ def main():
               f"亮度 {luma_before:.0f} → {luma_after:.0f}（−{drop:.1f}%）")
 
         panel = find_panel(data, w, h)
+        # ★ detail 是**无条件打印**的（成功也打）⇒ 它只能写"量到了什么"，不能写
+        #   "为什么可能没量到"。第一版这里写的是失败文案，于是通过时屏幕上是
+        #   `ok  模态 · …  —— 中央区域近白像素不足（面板没出来或底色不对）`
+        #   —— 一条绿判据自带报警文字，下一棒只能重新查一遍。
         check("模态 · 屏幕中央出现近白大面板（Surface）", panel is not None,
-              "中央区域近白像素不足（面板没出来或底色不对）")
+              "bbox=({},{})-({},{}) 近白 {} px".format(*panel) if panel is not None
+              else "中央近白像素不足 ⇒ 面板没出来，或底色不是 Surface")
         if panel is None:
             skip("面板没出来 —— 后面「右上角有没有 X」无从谈起")
 

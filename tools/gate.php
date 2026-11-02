@@ -56,6 +56,40 @@ declare(strict_types=1);
 $root = dirname(__DIR__);
 
 /**
+ * 找 python（只有"像素契约"那项需要）。
+ *
+ * ★ 为什么自己找而不直接写 `'python'`：闸门用**数组式** `proc_open` +
+ *   `bypass_shell`，可执行文件不存在时 `proc_open` 直接失败 ⇒ 报成
+ *   "启动失败(exit 127)"，那是**环境的错**却长得像**判据的错**。
+ *   这里先找，找不到就按"没测到"记（见 `$may_skip`）。
+ * ★ `DRIFT_PYTHON` 可覆盖（多解释器 / venv 的机器）。
+ */
+function find_python(): ?array
+{
+    $env = getenv('DRIFT_PYTHON');
+    if (is_string($env) && $env !== '') {
+        return [$env];
+    }
+
+    foreach (explode(PATH_SEPARATOR, (string) getenv('PATH')) as $dir) {
+        $dir = rtrim(trim($dir, '"'), '\\/');
+        if ($dir === '') {
+            continue;
+        }
+        foreach (['python.exe', 'python3.exe', 'python', 'python3'] as $name) {
+            $path = $dir . DIRECTORY_SEPARATOR . $name;
+            if (is_file($path)) {
+                return [$path];
+            }
+        }
+    }
+
+    return null;
+}
+
+$python = find_python();
+
+/**
  * @var array<string, array{0: string, 1: list<string>, 2: bool}> 键 = 短名，
  *      值 = [显示名, 命令, 是否慢项]
  */
@@ -65,12 +99,26 @@ $checks = [
     'selftest' => ['lint 自检', [PHP_BINARY, $root . '/tools/lint.php', '--selftest'], false],
     'docref'   => ['docref', [PHP_BINARY, $root . '/tools/docref.php'], false],
     'probe'    => ['探针骨架（probe-audit）', [PHP_BINARY, $root . '/tools/probe-audit.php', '--selftest'], false],
+    'pixels'   => [
+        '像素契约（probe_pixels）',
+        $python === null ? [] : [...$python, $root . '/tools/probe_pixels.py', '--selftest'],
+        false,
+    ],
     'unit'     => ['unit（纯单元）', [PHP_BINARY, $root . '/tools/phpunit-run.php', 'unit'], false],
     'feature'  => ['feature（场景）', [PHP_BINARY, $root . '/tools/phpunit-run.php', 'feature'], true],
     'golden'   => ['golden 原语', [PHP_BINARY, $root . '/tools/golden-raster.php', '--check', '--canvas'], false],
     'pages'    => ['golden 整页', [PHP_BINARY, $root . '/tools/golden-raster.php', '--check', '--pages'], true],
     'smoke'    => ['smoke', [PHP_BINARY, $root . '/tools/smoke.php'], true],
 ];
+
+/**
+ * **机器能力项**：允许"没测到"（命令缺失 / 退出码 2）而不计失败。
+ *
+ * ★ 只许列**依赖本机装了什么**的检查（现在只有 python）。别把普通检查写进来 ——
+ *   那会把真正的失败变成一句轻描淡写的"跳过"，正是本仓反复踩的"绿壳"。
+ * ★ 跳过**不是通过**：总结里必须单独列出跳了几项、为什么。
+ */
+$may_skip = ['pixels'];
 
 // ── 参数 ──
 $args = array_slice($argv, 1);
@@ -115,14 +163,22 @@ if ($selected === []) {
     exit(2);
 }
 
-// ── 逐项跑（fail-fast）──
+// ── 逐项跑（fail-fast；`$may_skip` 里的项允许"没测到"）──
 $started = microtime(true);
 $index = 0;
 $total = count($selected);
+$skipped = [];
 
 foreach ($selected as $key => [$label, $cmd, $_slow]) {
     $index++;
     fwrite(STDOUT, sprintf("\n▶ [%d/%d] %s\n", $index, $total, $label));
+
+    if ($cmd === []) {
+        // 只有 $may_skip 里会出现空命令（依赖的东西没装）
+        $skipped[] = $label . '（本机没找到 python，设 DRIFT_PYTHON 可指定）';
+        fwrite(STDOUT, "  · 跳过：本机没有 python —— 这是**没测到**，不是通过\n");
+        continue;
+    }
 
     $proc = proc_open(
         $cmd,
@@ -170,6 +226,12 @@ foreach ($selected as $key => [$label, $cmd, $_slow]) {
     proc_close($proc);
 
     if ($exitCode !== 0) {
+        if ($exitCode === 2 && in_array($key, $may_skip, true)) {
+            $skipped[] = $label . '（退出码 2）';
+            fwrite(STDOUT, "  · 跳过：这一项自己说\"没测到\"（退出码 2）—— 不算通过\n");
+            continue;
+        }
+
         $elapsed = microtime(true) - $started;
         fwrite(STDERR, sprintf("\n✗ 停在 %s（exit %d，累计 %.1fs）\n", $label, $exitCode, $elapsed));
         exit($exitCode === 0 ? 1 : $exitCode);
@@ -178,4 +240,10 @@ foreach ($selected as $key => [$label, $cmd, $_slow]) {
 
 $elapsed = microtime(true) - $started;
 fwrite(STDOUT, sprintf("\n✓ 全部通过（%d 项，%.1fs）\n", $total, $elapsed));
+if ($skipped !== []) {
+    fwrite(STDOUT, sprintf("· 另有 %d 项**没测到**（不是通过）：\n", count($skipped)));
+    foreach ($skipped as $why) {
+        fwrite(STDOUT, '    - ' . $why . "\n");
+    }
+}
 exit(0);
