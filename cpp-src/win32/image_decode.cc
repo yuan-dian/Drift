@@ -182,6 +182,33 @@ bool decodeImageToRgba(const std::wstring &path,
         }
     }
 
+    // ── 收尾：**确认**像素格式还是 RGBA，不是就再转一次 ──────────────────────
+    //
+    // ★ 这不是防御性代码，是踩过的坑：`IWICBitmapScaler` 不接受
+    //   `GUID_WICPixelFormat32bppRGBA`（它认的是 BGRA 那一族），遇到 RGBA 源
+    //   会**自己**转成 32bppBGRA 再缩 —— 于是"缩过一下"这条路上通道顺序静默
+    //   反了，红变蓝。它不报错、长度也对、均值也自洽，只在有冷暖色的照片上
+    //   肉眼可见（`fixtures/rgb-bands.png` 就是为此而生）。
+    //
+    // ★ 判在**取像素之前**、判的是**事实**（`GetPixelFormat`）而不是"我有没有
+    //   缩放"：将来 WIC 改了这块、或者换了另一族格式，这里都自适应。
+    // ★ 转不出来就 `return false`：宁可让调用方显示占位图，也不把反色的图
+    //   送上去 —— 错色比没图更难发现（这次就是被当成"下载失败"报上来的）。
+    ComPtr<IWICFormatConverter> fixup;
+    {
+        WICPixelFormatGUID actual = GUID_WICPixelFormatUndefined;
+        if (FAILED(source->GetPixelFormat(&actual))
+            || !::IsEqualGUID(actual, GUID_WICPixelFormat32bppRGBA)) {
+            if (FAILED(factory.get()->CreateFormatConverter(fixup.put()))
+                || FAILED(fixup.get()->Initialize(source, GUID_WICPixelFormat32bppRGBA,
+                                                  WICBitmapDitherTypeNone, NULL, 0.0,
+                                                  WICBitmapPaletteTypeCustom))) {
+                return false;
+            }
+            source = fixup.get();
+        }
+    }
+
     // ★ 上限保护：一张 20000×20000 的图是 1.6 GB。这里不是"猜一个业务上限"，
     //   而是**乘法的溢出边界**：`width * 4 * height` 在 32 位 UINT 上会绕回来，
     //   绕回来的结果是"分配一个很小的缓冲，然后越界写"。判在乘法之前。

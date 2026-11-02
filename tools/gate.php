@@ -22,6 +22,7 @@ declare(strict_types=1);
  *   pixels    像素契约（probe_pixels --selftest，依赖本机 python ⇒ 允许"没测到"）
  *   tick      每帧固定税（frame-tax --check，6 条自洽判据）
  *   sym       崩溃符号翻译（rva2sym --selftest，6 条；合成 map，无构建前置）
+ *   decode    图片解码通道序（decode-selftest；要 MSVC + WIC ⇒ 允许"没测到"）
  *   unit      纯单元
  *   feature★  场景测试（真挂载 + 推帧）
  *   golden    原语像素基线
@@ -114,6 +115,11 @@ $checks = [
     // ★ 崩溃日志里的 `模块+RVA` 能不能翻成函数名 —— 这是"崩溃可观测"闭环的最后一环。
     //   自检用**合成 map**，不依赖有没有构建过 exe（所以廉价、无前置）。
     'sym'      => ['崩溃符号翻译（rva2sym）', [PHP_BINARY, $root . '/tools/rva2sym.php', '--selftest'], false],
+    // ★ WIC 解码只在**有 WIC 的进程**里跑得到（`php.exe` 没这个扩展），单测覆盖不到。
+    //   这条自检拿一张期望值手写的色带图，钉"红带必须是红" —— 缩放的通道序曾经静默
+    //   反了（IWICBitmapScaler 不认 32bppRGBA），六条"两个尺寸互相比"的判据全绿。
+    //   要 MSVC 才能编译 ⇒ 没工具链的机器记"没测到"，不许记成通过。
+    'decode'   => ['图片通道序（decode-selftest）', [PHP_BINARY, $root . '/tools/decode-selftest/run.php'], false],
     'unit'     => ['unit（纯单元）', [PHP_BINARY, $root . '/tools/phpunit-run.php', 'unit'], false],
     'feature'  => ['feature（场景）', [PHP_BINARY, $root . '/tools/phpunit-run.php', 'feature'], true],
     'golden'   => ['golden 原语', [PHP_BINARY, $root . '/tools/golden-raster.php', '--check', '--canvas'], false],
@@ -124,11 +130,13 @@ $checks = [
 /**
  * **机器能力项**：允许"没测到"（命令缺失 / 退出码 2）而不计失败。
  *
- * ★ 只许列**依赖本机装了什么**的检查（现在只有 python）。别把普通检查写进来 ——
+ * ★ 只许列**依赖本机装了什么**的检查（python / MSVC）。别把普通检查写进来 ——
  *   那会把真正的失败变成一句轻描淡写的"跳过"，正是本仓反复踩的"绿壳"。
  * ★ 跳过**不是通过**：总结里必须单独列出跳了几项、为什么。
+ * ★ 这两项的"跳过"都只能由**入口自己的退出码 2** 触发（找不到解释器 / 找不到
+ *   cl.exe），不能由"跑起来了但结果不对"触发 —— 后者是 1。
  */
-$may_skip = ['pixels'];
+$may_skip = ['pixels', 'decode'];
 
 // ── 参数 ──
 $args = array_slice($argv, 1);

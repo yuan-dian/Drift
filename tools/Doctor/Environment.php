@@ -309,7 +309,16 @@ final class Environment
         return self::envOr('DRIFT_PHPX_HOME', $distRoot . '/phpx');
     }
 
-    private static function msvcRoot(): string
+    /**
+     * MSVC 的安装根（`.../VC/Tools/MSVC/<版本>`）。
+     *
+     * ★ 公开的理由：调用 `cl.exe` 的**第三方**（如 `tools/decode-selftest/run.php`）
+     *   必须拿到绝对路径才能启动它 —— Windows 上 `proc_open` 按**父进程**的 PATH
+     *   找可执行文件，`prepare()` 塞进子进程 env 的 PATH 对它不起作用，
+     *   于是 `cl.exe` 会报"系统找不到指定的文件"。让它们从 `INCLUDE` 里反推路径，
+     *   等于把"MSVC 装在哪"这件事复制出去第二份 —— 这里只留一份。
+     */
+    public static function msvcRoot(): string
     {
         $msvc = self::envOr('DRIFT_MSVC', '');
         if ($msvc !== '') {
