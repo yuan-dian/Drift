@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace Drift\App\Io;
 
+use Drift\Core\Pipeline;
+
 /**
  * 非阻塞 I/O 的**每帧轮询器**（§17.4.4，P2）—— 把"等待"从线程里拿出来。
  *
@@ -61,6 +63,14 @@ final class IoPoller
             'forRead' => $forRead,
             'callback' => \Closure::fromCallable($callback),
         ];
+
+        // ★★ **注册即要帧**（2026-11-02，技术债 D1）：`poll()` 只在帧里跑，于是
+        //   "刚注册了一个 watcher、然后应用就空闲了"是一个**死锁** —— 没有人要帧
+        //   ⇒ 主循环无限等 ⇒ 这个流永远不会被问。以前它靠 `wantsFrame()` 里
+        //   永远存在的 `hasPolledAsync()` 判据兜住（因为判据是每轮重问的）；
+        //   换成"现场举手"之后，注册这个动作必须自己举手。
+        //   档位是**按帧节奏**（不是立刻）：轮询本来就是 15ms 一次。
+        Pipeline::current()->scheduleNextFrame();
 
         return $token;
     }

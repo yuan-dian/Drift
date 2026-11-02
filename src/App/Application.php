@@ -272,17 +272,15 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     /** 上次推送的档位（`full` / `coalesce` / `none`）—— 夹具与 devtools 读它 */
     private string $semanticsMode = 'none';
 
-    /** 上一帧有没有动画在跑（§17.4.9 的第四个判据，由 `tickAnimations()` 写） */
-    private bool $animating = false;
-
     /**
-     * 上一帧看到的 `State::frameWantedCount()`（"settle 期间起飞"的动画）。
+     * 上一帧有没有动画在跑（由 `tickAnimations()` 写）。
      *
-     * ★ 与 `$animating` 分开存：`$animating` 每帧被 `tickAnimations()` **整体
-     *   覆盖**，而这一份要跨帧记住"上次数到哪儿"——否则每帧都会判成"又有人
-     *   要帧"，空闲时永远上膛。
+     * ★ 两个消费者，都只读：`continueFrame()` 决定要不要按帧节奏续跑，
+     *   `pumpSemantics()` 决定语义树走 `coalesce` 还是 `full` 档。
+     * ★ 它**不再是**"要不要跑帧"的判据（2026-11-02，D1）—— 那是 `Pipeline` 的
+     *   计数器的事。这里的值只影响"续跑时用哪一档节奏"。
      */
-    private int $lastFrameWanted = 0;
+    private bool $animating = false;
 
     /** 每帧自增的序列号 —— `State::tickFrameStamped` 用它做同帧幂等（迟到挂载补 tick 用） */
     private int $frameSerial = 0;
@@ -864,6 +862,17 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         //   （见 `Pipeline::enter()` 的注）。
         Pipeline::enter($this->pipeline);
 
+        // ★★ 帧开始清账（2026-11-02，技术债 D1）：把"帧开始时已有的请求"记为已服务，
+        //   帧**内**新增的请求自然留给下一帧。这是推模型的自终止机制 —— 一笔请求
+        //   恰好被一帧消费一次，不会累积、也不会被本帧吞掉（Flutter 的
+        //   `_hasScheduledFrame` 在 `handleBeginFrame()` 里清，同一个理由）。
+        // ★ 置 `inFrame` 标志：泵与 settle 里的 `setState()` / 标脏由**本帧**消费，
+        //   不该再要一帧（否则每帧都自我续命 ⇒ 空转）。
+        // ★ 必须在四个泵**之前**：泵里的回调 `setState()` 就是"帧内"的。
+        $this->pipeline->beginFrame();
+        $settleSkipBefore = $this->pipeline->settleSkipCount();
+        $paintSkipBefore = $this->pipeline->paintSkipCount();
+
         $this->lastTimestampMs = $timestampMs;
 
         // ★ 帧序列号自增（迟到挂载补 tick 的幂等判据）：每帧一个唯一值，
@@ -938,6 +947,11 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         //   `viewport()` 撒谎。还原时系统必发新的 `WM_SIZE`（带真实尺寸）⇒ 重新布局。
         if ($constraints->maxWidth <= 0.0 || $constraints->maxHeight <= 0.0) {
             $this->zeroViewportFrames++;
+
+            // ★ 零视口只跳过布局与绘制 —— 动画与 `after()` 照常推进（见上），
+            //   所以续跑判据照样要跑，否则最小化期间动画会停在半路。
+            $this->continueFrame($settleSkipBefore, $paintSkipBefore);
+            $this->pipeline->endFrame();
 
             return;
         }
@@ -1018,22 +1032,14 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
             }
         }
 
-        // ★ ⓹b 同类的另一半（2026-10-29，真机抓到）：**settle 期间才起飞的动画**。
-        //   `State::didUpdateWidget()` 里 `toward()` 起的隐式动画，在 ⓸ 时目标还是
-        //   旧的 ⇒ `tickAnimations()` 看不到它 ⇒ `$animating` 为 false ⇒ 帧时钟
-        //   落闸 ⇒ **动画停在起点**。真机现象：点「淡入」画面一动不动，再点一次
-        //   才动（第二次点击时 ⓸ 才看到"还在跑"）。
-        //   ★ 这里**只上膛不推进**：推进留给下一帧的 ⓸（同帧再 tick 一次就是
-        //     "一帧走两步"，动画快进）。
-        //   ★★ 判据是**计数器前后差**而不是登记表：登记表要再问 `element()` /
-        //     `isMounted()`，那两跳在 AOT 下任何一个失手都静默退化成"什么都没
-        //     发生"（第一版就是这么失败的）。与 `needsSettle()` 读 `markedCount`
-        //     同一个理由。
-        $frameWanted = State::frameWantedCount();
-        if ($frameWanted !== $this->lastFrameWanted) {
-            $this->lastFrameWanted = $frameWanted;
-            $this->animating = true;
-        }
+        // ★★ ⓹b（2026-10-29 补，2026-11-02 随 D1 **整段删除**）：这里原先比对
+        //   `State::frameWantedCount()` 的前后差，用来捞"settle 期间才起飞的动画"
+        //   （`didUpdateWidget()` 里 `toward()`）—— 它们在 ⓸ 时目标还是旧的，
+        //   `tickAnimations()` 看不到 ⇒ `$animating` 为 false ⇒ 帧时钟落闸 ⇒
+        //   动画停在起点（真机：点「淡入」一动不动，再点一次才动）。
+        //   ⇒ 现在不需要了：`State::requestFrame()` 自己就是 `scheduleNextFrame()`，
+        //     起飞的当场就把帧时钟叫醒了。**判据从"事后比对"变成"现场举手"**，
+        //     这正是 D1 想要的形状（也多删了一个跨帧字段 `$lastFrameWanted`）。
 
         // ★ 每帧重建焦点链：`settle()` 可能重建了子树 ⇒ 旧链里可能握着**已被移除**
         //   的 Element（按键会静默丢给死节点）。`collect()` 幂等，且会保留仍然存在
@@ -1079,8 +1085,81 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
             SurfaceProfile::add('semantics', \hrtime(true) - $t);
         }
 
+        // ★★ 帧末**续跑 + 收口**（2026-11-02，技术债 D1）：放在 `pumpSemantics()`
+        //   **之后**，因为语义推送里若改状态，本帧已经不会再 settle 了 ⇒ 它必须
+        //   算"帧外"、由自己 schedule 下一帧。`endFrame()` 之后 `inFrame` 为假，
+        //   `markDirty()` / `bumpPaintEpoch()` 就会自动叫醒帧时钟。
+        $this->continueFrame($settleSkipBefore, $paintSkipBefore);
+        $this->pipeline->endFrame();
+
         if ($trace !== null) {
             FramePhase::end($trace);
+        }
+    }
+
+    /**
+     * **帧末续跑**：把"这一帧跑完之后才知道"的事变成调度请求（2026-11-02，D1）。
+     *
+     * ## 为什么留在帧末，而不是搬到变更现场
+     *
+     * 这四条和 `markDirty()` / `markPaintChanged()` 那类**不一样**：那类有明确的
+     * 事件（"有人改了状态"），能在现场举手。这四条没有事件 —— 它们是**趋势**：
+     *
+     * | 判据 | 为什么只能在帧末问 |
+     * |---|---|
+     * | `$animating` | 它的值就是 `tickAnimations()` 的返回值，本帧才有 |
+     * | `hasPolledAsync()` | "还有没有活"，本帧的 `drain()` 跑完才准 |
+     * | 焦点环目标 ≠ 已画 | `paintedFocus` 在 paint **之后**才回写 |
+     * | `panelsLagBehind()` | `syncPanelSignatures()` 在 `placeOverlays()` 里跑，而主树在它**之后**才 settle ⇒ 帧**前**问到的永远是旧锚点 |
+     *
+     * 最后一条正是"拉模型"一直别扭的根因：**它在帧之前问一个只有帧之后才准确的问题**。
+     * 挪到这里之后，判据天然准确，而且收敛到**一处**（原先散在 `needsFrameNow()` /
+     * `wantsFrameRhythm()` 两个方法里，各自被等待层间接消费）。
+     *
+     * ## 两条硬约束
+     *
+     * ★ **前两条必须用 `scheduleNextFrame()`（15ms 档）**：动画与轮询是"按帧节奏
+     *   反复醒"，给 `0` 就是"能跑多快跑多快" ⇒ 300fps 空转（见 `FrameClock`）。
+     * ★ **后两条用 `scheduleFrame()`（`0` 档）**：一次性欠账，多等一个帧间隔就是
+     *   肉眼可见的延迟（焦点环晚 15ms 出现）。
+     *
+     * ## 空转诊断（推模型的新失败形态）
+     *
+     * 推模型把"漏调 `scheduleFrame()`"变成了"那个功能自己不动"（好定位），但换来
+     * 一个新风险：某处**无条件** schedule ⇒ 每帧都被要 ⇒ 空转 + 输入饥饿。
+     * 判据：**要了帧（`consumed > 0`），但 settle 与 paint 都整段跳过** —— 那说明
+     * 有人空喊。连续 3 帧才报，避开"刚改完状态那一帧恰好跳过"的正常情形。
+     *
+     * @param int $settleSkipBefore 本帧开始时的 settle 跳过计数（判据见上）
+     * @param int $paintSkipBefore 本帧开始时的 paint 跳过计数
+     */
+    private function continueFrame(int $settleSkipBefore, int $paintSkipBefore): void
+    {
+        if ($this->animating || $this->pumps->hasPolledAsync()) {
+            $this->pipeline->scheduleNextFrame();
+        }
+
+        if ($this->focusRingTarget() !== $this->paintedFocus
+            || $this->overlayLayout->panelsLagBehind()
+        ) {
+            $this->pipeline->scheduleFrame();
+        }
+
+        $consumed = $this->pipeline->frameConsumed();
+        $this->pipeline->noteIdleSpin(
+            $consumed > 0
+            && $this->pipeline->settleSkipCount() > $settleSkipBefore
+            && $this->pipeline->paintSkipCount() > $paintSkipBefore,
+        );
+
+        if ($this->pipeline->idleSpinFrames() === 3) {
+            Errors::report(
+                '帧调度：连续 3 帧有人要求重画，但 settle 与 paint 都整段跳过 —— '
+                    . '某个变更点在"什么都没变"时也无条件调了 scheduleFrame()'
+                    . '（这会让帧时钟永不上闸、CPU 空转且收不到输入）。'
+                    . "\n" . '修法：在标记之前先做同值早退（参考 RenderObject::setHovered()）。',
+                Errors::DIAGNOSTIC,
+            );
         }
     }
 
@@ -1178,94 +1257,39 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      * 本应用**还需要下一帧吗**（§17.4.9）—— 自适应帧时钟的唯一判据。
      *
      * ★ 平台的消息泵是**阻塞**的（`GetMessageW`）：没有输入事件时它一直睡。所以
-     *   "后台任务还在跑""分片没跑完""有流在监听"这三件事必须由框架主动说出口，
-     *   平台才知道该起一个定时器把循环叫醒。**这不是优化，是修缺陷**：在此之前
-     *   异步结果只能等下一条用户消息捎带。
-     * ★ 三件事都**有界**：任务回贴完、分片跑完、监听解除 ⇒ 立刻返回 `false`，
+     *   "还有活要干"这件事必须由框架主动说出口，平台才知道该起一个定时器把循环
+     *   叫醒。**这不是优化，是修缺陷**：在此之前，异步结果只能等下一条用户消息捎带。
+     * ★ 所有来源都**有界**：任务回贴完、动画跑完、监听解除 ⇒ 立刻返回 `false`，
      *   帧时钟停摆、CPU 归零。**空闲不空转**是这条判据存在的一半理由。
      *
-     * ★★ **2026-10-30（N2）拆成三个命名谓词**：这句 `bool` 原先混着三种**不同的
-     *   需求**，而"等多久"要按需求分别算 —— 混在一起的后果是
-     *   `after(400)` 也算"要帧" ⇒ 按 15ms 帧节奏反复醒 ⇒ **26 次唤醒等一个 400ms
-     *   的定时器**（改之前真的这样）。现在：
-     *   - {@see self::wantsFrameRhythm()} 连续帧（动画 / 异步在途）⇒ 按帧节奏叫醒
-     *   - {@see self::needsFrameNow()} 一次性欠账（环没画 / 面板落后）⇒ 立刻
-     *   - `nextDeadlineMs()` 定时器 ⇒ 到点才醒
-     *   `wantsFrame()` 仍是三者的"或"，**语义逐字节不变**（老读者零影响）。
+     * ★★ **2026-11-02（技术债 D1）这条判据被彻底改写**。此前它是三处**互不知晓**
+     *   的谓词拼起来的（`wantsFrameRhythm()` 2 条 + `needsFrameNow()` 3 条 +
+     *   `hasTimers()`），每多一种"只有系统自己知道的变更源"就要回来加一条 ——
+     *   `Frame::hasPendingPaint()` 就是 2026-11-01 才补上的，补之前悬停零反馈。
+     *   现在只有一个计数器：**谁想要下一帧，就在自己的变更点 +1**
+     *   （`Pipeline::scheduleFrame()` / `scheduleNextFrame()`）。
+     *
+     * ★ 于是本方法只剩一句转发。**别在这里加判据** —— 想加，就去那个"变化发生的
+     *   现场"调 `scheduleFrame()`。加在这里等于把拉模型又装回来一遍。
      *
      * @api 组合根每帧调一次（`FrameClock` 就是这么用的）
      */
     public function wantsFrame(): bool
     {
-        if ($this->wantsFrameRhythm()) {
-            return true;
-        }
-
-        // ★ 定时器（W8-2）：有延时回调在等 ⇒ 必须被叫醒，否则永远不响。
-        //   `nextDeadlineMs()` 会给出"什么时候"。
-        if ($this->pumps->hasTimers()) {
-            return true;
-        }
-
-        return $this->needsFrameNow();
+        return $this->pipeline->wantsFrame();
     }
 
     /**
-     * **连续帧**：动画在跑 / 分片在推 / 流在监听 / **只能轮询的**后台在途。
+     * 欠的账是"**立刻**跑"那一档吗（像素脏 / 焦点环没画 / 面板落后）。
      *
-     * ★ 这几种需求的性质是"**按帧节奏反复醒**"（15ms 一帧），而不是"到某个时刻醒一次"。
-     *   它们是**轮询**的来源：分片任务、socket 可读、读管道的进程后端都没有唤醒通道
-     *   （只能每帧问一次）—— 这也是为什么 {@see \Drift\App\FrameClock::nextWaitMs()}
-     *   对它们给的是帧间隔，而不是 `-1`（无限等会让 socket 永远不被问）。
+     * ★ 与"按帧节奏"（动画 / 轮询）的区别只影响**等多久**：本方法为真 ⇒ 等待层给
+     *   `0`（马上去跑）；为假但 {@see self::wantsFrame()} 为真 ⇒ 给 15ms。
      *
-     * ★★ **能叫醒的后端不算在内**（2026-10-30，N5）：`ThreadTaskHost` 的
-     *   `needsPolling()` 是 `false` ⇒ 它在途时**不进**本判据 ⇒ 帧时钟给 `-1`，
-     *   一觉睡到 worker 的 `PostMessageW` 把泵叫醒（`WakeReason::Woken`）。
-     *   ⇒ 判据用的是 `hasPolledAsync()` 而不是 `hasAsync()`：前者回答"要不要空转着等"，
-     *     后者回答"有没有活"。混成一个 = 能叫醒的后端也被按 15ms 空转。
+     * @api `FrameClock::nextWaitMs()` 每轮问一次
      */
-    public function wantsFrameRhythm(): bool
+    public function needsFrameImmediately(): bool
     {
-        // ★ 排最前 —— Loading 期间它恒为真。
-        if ($this->animating) {
-            return true;
-        }
-
-        return $this->pumps->hasPolledAsync();
-    }
-
-    /**
-     * **立刻欠一帧**：焦点环目标变过还没画 / 面板内容落后一帧（§17.4.9 后两条判据）。
-     *
-     * ★ 与上面那组的区别：这两条**画一帧就没了**（有界、一次性）。所以等待层给
-     *   它们的是 `0`（马上去跑），而不是帧间隔。
-     * ★★ 第六判据（W8-2 远程搜索，2026-10-24）：`panelsLagBehind()` —— 少了它，
-     *   远程搜索的结果到了、数据也对，面板却**永远**停在旧内容（真机现象，smoke
-     *   因为显式跑两帧看不见）。
-     * ★★ 第七判据（W8-5 焦点视觉，2026-10-24）：**环目标变过但还没画**。焦点环是
-     *   应用级叠加（`paintFocusRing`），不经过任何 `setState` ⇒ 没有这条，键盘 Tab
-     *   换焦点后环要等**下一次鼠标移动**才出现（真机现象）。
-     *   ★ 比的是 `focusRingTarget()` 而不是 `focused()`：指针模态下目标恒 `null`
-     *     ⇒ 点击隐藏环也能立刻触发一帧（否则点击后环要等下次输入才消失）。
-     * ★★ 第八判据（2026-11-01）：**像素脏了还没画**（`Frame::hasPendingPaint()`）。
-     *   见方法内注释 —— 缺它是"悬停零反馈 / 滚动条淡出从不发生"的根因。
-     */
-    public function needsFrameNow(): bool
-    {
-        if ($this->focusRingTarget() !== $this->paintedFocus) {
-            return true;
-        }
-
-        // ★★ 第八判据（2026-11-01）：**像素脏了还没画**。少了它，凡是"只改像素、
-        //   不动结构"的通道都变成了死锁 —— 脏信号引不出帧、帧不跑就没人推进动画、
-        //   于是永远不脏（`Frame::hasPendingPaint()` 的注写了两个真机症状：
-        //   悬停零反馈、滚动条淡出从没跑过）。
-        //   与上面的焦点环判据是同一性质：**一次性欠账，画一帧就清**（有界）。
-        if ($this->frame !== null && $this->frame->hasPendingPaint()) {
-            return true;
-        }
-
-        return $this->overlayLayout->panelsLagBehind();
+        return $this->pipeline->wantsFrameImmediately();
     }
 
     /**
@@ -1274,7 +1298,9 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      * ★ 它回答的是事实（"最早什么时候有活"），不是策略（"等多久"）—— 后者是
      *   {@see \Drift\App\FrameClock::nextWaitMs()} 的事，因为那里才知道帧间隔。
      * ★ 只算 `after()` 的延时回调：后台任务 / socket 可读**没有**到点时刻，
-     *   它们是轮询（见 {@see self::wantsFrameRhythm()}）。
+     *   它们是轮询（`PumpHost::drain()` 之后自己 `scheduleNextFrame()`）。
+     * ★ **定时器不是"要帧"**（2026-11-02，D1）：它是"到点才要"。所以它不再进
+     *   `wantsFrame()`，而是与它并列，由等待层取较早者。
      *
      * @api 等待层（`FrameClock::nextWaitMs()`）每轮问一次
      */
@@ -1738,10 +1764,21 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         //   键盘 ⇒ 显示焦点环；指针（点击 / 移动 / 滚轮）⇒ 隐藏。
         //   ★ 放在最前面：失活事件不改模态（它不是"用户操作控件"），但它下面会
         //     提前 return，别让模态逻辑被它跳过。
+        //   ★★ **只在真的翻转时举手**（2026-11-02，D1）：模态是焦点环目标的另一半
+        //     （`focusRingTarget()` = `keyboardFocusVisible ? focused() : null`），
+        //     而环不经过 `setState` ⇒ 没有脏信号。以前靠 `wantsFrame()` 每轮重问
+        //     兜住；现在变化点自己 `scheduleFrame()`。无脑每次都调就是空喊 ——
+        //     鼠标移动是最高频的事件，那会让帧时钟永不上闸。
         if ($event instanceof KeyEvent) {
-            $this->keyboardFocusVisible = true;
+            if (!$this->keyboardFocusVisible) {
+                $this->keyboardFocusVisible = true;
+                $this->pipeline->scheduleFrame();
+            }
         } elseif ($event instanceof PointerEvent || $event instanceof ScrollEvent) {
-            $this->keyboardFocusVisible = false;
+            if ($this->keyboardFocusVisible) {
+                $this->keyboardFocusVisible = false;
+                $this->pipeline->scheduleFrame();
+            }
         }
 
         // ★ 失活**先于**"未挂载"守卫：窗口可能在拆卸途中失去前台（Alt+Tab 关窗），

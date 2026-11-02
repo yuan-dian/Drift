@@ -159,16 +159,29 @@ final class FrameClock
      */
     public function nextWaitMs(Application $app, float $nowMs): float
     {
-        // ④ 真的没事 —— `wantsFrame()` 是三个谓词的"或"，所以它是唯一的空转判据
-        if (!$app->wantsFrame()) {
+        // ★★ **2026-11-02（技术债 D1）三态判据简化成两句**：以前要先问
+        //   `wantsFrame()`（它内部又拼了 `wantsFrameRhythm()` / `hasTimers()` /
+        //   `needsFrameNow()` 三处），再回头问 `wantsFrameRhythm()` 才知道给哪一档。
+        //   现在"要不要"与"急不急"是同一个计数器上的两个问题，直接问：
+        $pending = $app->wantsFrame();
+        $due = $app->nextDeadlineMs();
+
+        // 真的没事 —— 既没有欠账、也没有定时器在等
+        if (!$pending && $due === null) {
             return $this->lastWaitMs = -1.0;
         }
 
-        // ① 连续帧：按帧节奏醒（`0` 在这里是错的，见上）
-        $wait = $app->wantsFrameRhythm() ? (float) self::FRAME_MS : \PHP_FLOAT_MAX;
+        // ① 欠账：**一次性**的给 `0`（马上去跑），**按节奏**的给帧间隔
+        //   ★ 这个分界不是"有没有活"，而是"**这笔活是不是只欠一次**"——
+        //     `0` 意味着"能跑多快跑多快"，只对"画一帧就清"的欠账成立。
+        $wait = \PHP_FLOAT_MAX;
+        if ($pending) {
+            $wait = $app->needsFrameImmediately() ? 0.0 : (float) self::FRAME_MS;
+        }
 
         // ② 定时器：到点才醒（可能比帧节奏近得多，也可能远得多 —— 后者正是收益）
-        $due = $app->nextDeadlineMs();
+        //   ★ 定时器**不是**"要帧"（D1）：它回答"什么时候才要"，所以与 ① 取较早者，
+        //     而不是并进 `wantsFrame()`（那样 `after(400)` 会按 15ms 醒 26 次）。
         if ($due !== null) {
             $until = $due - $nowMs;
             if ($until < 0.0) {
@@ -179,8 +192,7 @@ final class FrameClock
             }
         }
 
-        // ③ 走到这里还没定 ⇒ 只剩"一次性欠账"（环 / 面板落后），画一帧就清
-        return $this->lastWaitMs = ($wait === \PHP_FLOAT_MAX ? 0.0 : $wait);
+        return $this->lastWaitMs = $wait;
     }
 
     /** @internal devtools / 自检：间隔超阈值的次数 */

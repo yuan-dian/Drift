@@ -452,38 +452,29 @@ abstract class State
     }
 
     /**
-     * 声明"**我还要下一帧**"（隐式动画在 `didUpdateWidget()` 里起飞时用）。
+     * 声明"**我还要下一帧**"（隐式动画在 `didUpdateWidget()` / `build()` 里起飞时用）。
      *
-     * ★★ 什么时候必须调：动画**在 settle 期间**才开始（`didUpdateWidget()` /
-     *   `build()`）。`tickAnimations()` 在 settle 之前跑，那时目标还是旧的 ⇒
-     *   它看不到"刚起飞" ⇒ 帧时钟落闸 ⇒ 动画停在起点，**且不报错**。
-     *   真机现象：点「淡入」画面一动不动，再点一次才动。
+     * ★★ 什么时候必须调：动画**在 settle 期间**才开始。`tickAnimations()` 在 settle
+     *   之前跑，那时目标还是旧的 ⇒ 它看不到"刚起飞" ⇒ 帧时钟落闸 ⇒ 动画停在起点，
+     *   **且不报错**。真机现象：点「淡入」画面一动不动，再点一次才动。
      *
      * ★ 什么时候**不用**调：动画在**输入回调**里起飞（`Button::onPressed()` 里
      *   `forward()`）。那种路径本来就会跑一帧，⓸ 在 settle 之前已经看到它了。
      *
-     * ★ 语义是"**上膛**"，不是"推进一帧"：本帧不会再 `tickFrame()` 一次
-     *   （那会让同一帧被推进两回）。下一帧照常由 ⓸ 推进。
+     * ★★ **语义在 2026-11-02 变强了**（技术债 D1）：以前它只 `++` 一个计数器，
+     *   帧时钟**根本不知道** —— 只在这时候"恰好还有别的东西欠帧"才生效，是
+     *   **巧合正确**（注释原先写的就是"上膛"）。现在它直接 `scheduleNextFrame()`：
+     *   真的把帧时钟叫醒，且档位是"按帧节奏"而不是"立刻"（同帧再跑一次等于
+     *   一帧走两步，动画快进）。
      *
-     * ★ **为什么是计数而不是登记表**（第一版写的就是 `list<State>`，真机不生效）：
+     * ★ **为什么不用返回值 / 登记表**（第一版写的就是 `list<State>`，真机不生效）：
      *   登记表要在 `Application` 侧再问一遍 `element()` / `isMounted()` 才敢用，
-     *   而那两跳在 AOT 下任何一个失手都会静默退化成"什么都没发生"。计数只有
-     *   一次 `!==` 比较，没有可以失手的中间环节 —— 与 `markedCount` 同一个理由。
-     *   计数本身住 `Pipeline`（`wantFrame()` / `frameWantedCount()`）。
+     *   而那两跳在 AOT 下任何一个失手都会静默退化成"什么都没发生"。现在只有
+     *   一次自增，没有可以失手的中间环节 —— 与 `markedCount` 同一个理由。
      */
     public function requestFrame(): void
     {
-        Pipeline::current()->wantFrame();
-    }
-
-    /**
-     * 累计"我要下一帧"的请求数（`Application::frame()` 拿它与上一帧的值比对）。
-     *
-     * @internal 只给 `Application::frame()` 用（与 `markedCount()` 同形）
-     */
-    public static function frameWantedCount(): int
-    {
-        return Pipeline::current()->frameWantedCount();
+        Pipeline::current()->scheduleNextFrame();
     }
 
     /**

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\App;
 
+use Drift\Core\Pipeline;
 use Drift\Input\CursorShape;
 use Drift\Input\FocusNode;
 use Drift\Input\KeyChord;
@@ -190,6 +191,12 @@ final class FocusManager
         if ($this->focused !== null && !isset($this->byId[spl_object_id($this->focused)])) {
             $this->leave($this->focused);
             $this->focused = null;
+
+            // ★ 焦点因**元素卸载**而丢失（`collect()` 在帧内跑）⇒ 焦点环还留在
+            //   旧位置，必须再画一帧把它擦掉（见 `focus()` 的注）。
+            //   ★ 用**立刻**档：这一帧的 `paintRequested` 已经在 `Frame::run()`
+            //   之前算好了，来不及回头 ⇒ 只能要下一帧。
+            Pipeline::current()->scheduleFrame();
         }
 
         if ($this->lastHit !== null && !$this->lastHit->isMounted()) {
@@ -264,6 +271,15 @@ final class FocusManager
         $this->leave($this->focused);
         $this->focused = $element;
         $this->enter($element);
+
+        // ★★ **焦点变了 ⇒ 立刻要一帧**（2026-11-02，技术债 D1）：焦点环是应用级
+        //   叠加（`Application::paintFocusRing()`），不经过任何 `setState` ⇒
+        //   没有任何脏信号。以前这条靠 `wantsFrame()` 里每轮重问
+        //   `focusRingTarget() !== paintedFocus` 兜住；换成"现场举手"之后，
+        //   变化点必须自己举手，否则键盘 Tab 换焦点后环要等**下一次鼠标移动**
+        //   才出现（真机现象，`tests/Feature/App/FocusRingTest` 守着）。
+        //   ★ 档位是**立刻**：环晚 15ms 出现就是肉眼可见的迟滞。
+        Pipeline::current()->scheduleFrame();
     }
 
     /** Tab：前进一格。到末尾**就停**（不环绕 —— 与 Windows / Flutter 一致） */

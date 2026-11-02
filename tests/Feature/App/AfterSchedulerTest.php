@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\App;
 
+use Drift\App\FrameClock;
 use Drift\Dev\Smoke\App\EchoApplication;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Tests\Support\SmokeTestCase;
@@ -48,10 +49,22 @@ final class AfterSchedulerTest extends SmokeTestCase
         $app->after(500, function () use (&$ticks): void {
             $ticks[] = 't500';
         });
+
+        // ★★ 判据在 2026-11-02（技术债 D1）**换了形态**，守的不变式一个字没变：
+        //   "排上定时器之后帧时钟必须为它醒来，否则永远不响"。
+        //   旧形态问 `wantsFrame()`（那时定时器被当成"要帧" ⇒ 按 15ms 醒 33 次
+        //   等一个 500ms 的定时器）。现在定时器回答的是"**什么时候**才要"，
+        //   与"要不要"并列 ⇒ 判据必须问等待层给出的时长。
+        $wait = (new FrameClock())->nextWaitMs($app, 0.0);
         check(
-            '延时 · 排期后 wantsFrame() 为真（否则帧时钟不叫醒 ⇒ 定时器永远不响）',
-            $app->wantsFrame(),
-            'wantsFrame=false（帧时钟不会上膛）',
+            '延时 · 排期后帧时钟会等到点（不是"要帧"，而是"到点才要"）',
+            $wait !== -1.0 && $wait <= 500.0,
+            'wait=' . var_export($wait, true) . '（-1 = 无限等 ⇒ 定时器永远不响）',
+        );
+        check(
+            '延时 · 等的是 500ms 而不是一个帧间隔（否则 33 次唤醒等一个定时器）',
+            $wait > (float) FrameClock::FRAME_MS,
+            'wait=' . var_export($wait, true),
         );
 
         $app->frame(400.0, $c);

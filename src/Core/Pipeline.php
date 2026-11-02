@@ -128,16 +128,25 @@ final class Pipeline
 
     private int $rebuiltCount = 0;
 
-    private int $frameWantedCount = 0;
-
     /** @var list<object> 本帧挂载的 State（`callInit()` 登记，帧 ⑦ 段消费） */
     private array $mounted = [];
 
-    /** @internal 标脏一次（`State::markDirty()` 里"已脏就早退"之后调） */
+    /**
+     * @internal 标脏一次（`State::markDirty()` 里"已脏就早退"之后调）
+     *
+     * ★★ **帧外必须自己叫醒帧时钟**（2026-11-02，D1）：帧内的脏由本帧 settle 消费，
+     *   帧外（输入回调 / 定时器 / 异步完成之后）的脏**没有任何泵会顺带消费它** ——
+     *   不 schedule 就是"改了状态、画面不动、不报错"。这正是 `EventLoop` 里
+     *   `dispatchInput()` 之后 `$app->wantsFrame()` 必须为真的原因。
+     */
     public function markDirty(): void
     {
         ++$this->pendingDirty;
         ++$this->markedCount;
+
+        if (!$this->inFrame) {
+            $this->scheduleFrame();
+        }
     }
 
     /** @internal 脏标记被帧消费（`State::consumeDirty()` 调） */
@@ -170,16 +179,136 @@ final class Pipeline
         ++$this->rebuiltCount;
     }
 
-    /** @internal 累计"我要下一帧"请求数（`Application::frame()` 比前后差） */
-    public function frameWantedCount(): int
+    // ─────────────────────────────────────────────────────────────────
+    // ②b 帧调度：**"下一帧要不要跑"的唯一真相源**
+    //
+    //   ★★ 2026-11-02（技术债 D1）。此前这件事散在 `Application::wantsFrame()` /
+    //     `wantsFrameRhythm()` / `needsFrameNow()` 三处、共 6 个异质判据 —— 每次
+    //     多出一种"只有系统自己知道的变更源"，都要回去教调度器问一个新问题。
+    //     `Frame::hasPendingPaint()` 就是 2026-11-01 才补的（补之前悬停零反馈、
+    //     滚动条淡出从没跑过）。现在只有一个计数器：**谁想要下一帧，就在自己的
+    //     变更点 +1**，调度器不需要认识那个变更源。
+    //
+    //   ★ 为什么是三个数字而不是一个 bool（Flutter 的 `_hasScheduledFrame`）：
+    //     必须区分"**立刻**跑"（一次性欠账：像素脏 / 面板落后）与"**按节奏**跑"
+    //     （动画 / 只能轮询的后端）—— 两者在等待层的回答分别是 `0` 与 `15ms`。
+    //     混成一个 bool，动画期间就退化成 300fps 空转（见 `FrameClock::nextWaitMs()`
+    //     对 §3.5 初稿的推翻）。
+    //   ★ 为什么是单调计数 + 帧开始快照，而不是"置位 / 清位"：帧**内**新增的请求
+    //     要留给下一帧，快照天然做到；顺带还能观测"这一帧消费了几笔"（空转诊断）。
+    //     Flutter 的 `_hasScheduledFrame` 也在 `handleBeginFrame()` 里清，同一个理由。
+    // ─────────────────────────────────────────────────────────────────
+
+    /** 累计"要一帧"（两种档位都算） */
+    private int $frameRequests = 0;
+
+    /** 其中"要**立刻**一帧"的（子集；`urgent` 与 `requests` 的差 = 只要节奏的） */
+    private int $frameUrgent = 0;
+
+    /** **帧开始时**快照的 `$frameRequests` —— 差值就是"还欠几笔" */
+    private int $frameServed = 0;
+
+    /** 本帧消费了几笔请求（`beginFrame()` 算出；空转诊断读它） */
+    private int $frameConsumed = 0;
+
+    /** 是不是正在跑帧（帧外的 `setState()` 必须自己叫醒帧时钟，帧内的由本帧消费） */
+    private bool $inFrame = false;
+
+    /** 连续"要了帧却什么都没干"的帧数 —— 见 `noteIdleSpin()` */
+    private int $idleSpinFrames = 0;
+
+    /**
+     * **要下一帧**：一次性欠账，画一帧就清（像素脏 / 焦点环没画 / 面板落后）。
+     *
+     * ★ 等待层对它的回答是 `0`（马上去跑）—— 多等一个帧间隔就是肉眼可见的延迟。
+     * ★ 幂等成本是一次自增；同一帧内调 100 次与 1 次对调度**完全等价**。
+     */
+    public function scheduleFrame(): void
     {
-        return $this->frameWantedCount;
+        ++$this->frameRequests;
+        ++$this->frameUrgent;
     }
 
-    /** @internal `State::requestFrame()` 调（语义是"上膛"，不是"推进一帧"） */
-    public function wantFrame(): void
+    /**
+     * **要下一帧，但按帧节奏**（15ms）：动画还在跑 / 只能轮询的后端在途。
+     *
+     * ★ 与 `scheduleFrame()` 的差别只在"等多久"，不在"要不要"。
+     * ★★ **帧内调它是合法的，且是必需的**：`State::requestFrame()` 的全部意义就是
+     *   "这一帧跑完了，下一帧还要"（settle 期间起飞的动画）。所以它**不看**
+     *   `$inFrame` —— 只有 `markDirty()` / `bumpPaintEpoch()` 这些"本帧就消费掉"
+     *   的写点才看。
+     */
+    public function scheduleNextFrame(): void
     {
-        ++$this->frameWantedCount;
+        ++$this->frameRequests;
+    }
+
+    /** @internal 帧开始：清账（帧内新增的请求自动留给下一帧）+ 落"帧内"标志 */
+    public function beginFrame(): void
+    {
+        $this->frameConsumed = $this->frameRequests - $this->frameServed;
+        $this->frameServed = $this->frameRequests;
+        $this->inFrame = true;
+    }
+
+    /** @internal 帧末：落"帧内"标志 —— 之后发生的变更算帧外，必须自己 schedule */
+    public function endFrame(): void
+    {
+        $this->inFrame = false;
+    }
+
+    /** @internal 是不是正在跑帧 */
+    public function inFrame(): bool
+    {
+        return $this->inFrame;
+    }
+
+    /** @internal 本帧消费了几笔请求（`>0` 却没干活 ⇒ 有人空喊） */
+    public function frameConsumed(): int
+    {
+        return $this->frameConsumed;
+    }
+
+    /** @internal 还欠帧吗 —— `wantsFrame()` 的唯一判据 */
+    public function wantsFrame(): bool
+    {
+        return $this->frameRequests > $this->frameServed;
+    }
+
+    /**
+     * @internal 欠的是**急账**吗（等待层给 `0`；否则按帧节奏给 15ms）
+     *
+     * ★ 判据写全了：`urgent > served` 表示"有一笔急账还没被任何一帧消费"。
+     *   帧内新增的急账也算 —— 那一帧已经画过了，所以确实该再来一帧。
+     */
+    public function wantsFrameImmediately(): bool
+    {
+        return $this->frameUrgent > $this->frameServed;
+    }
+
+    /** @internal 量具：累计请求数（含已消费的） */
+    public function frameRequestCount(): int
+    {
+        return $this->frameRequests;
+    }
+
+    /** @internal 空转诊断：连续"要了帧却什么也没干"的帧数 */
+    public function idleSpinFrames(): int
+    {
+        return $this->idleSpinFrames;
+    }
+
+    /**
+     * @internal 空转记账（`Application::frame()` 每帧调一次）
+     *
+     * ★ 为什么要有它：推模型把"漏调 `scheduleFrame()`"从静默缺陷变成了功能不刷新
+     *   （好定位），但换来了一个**新**的失败形态 —— 某个变更点**无条件**调
+     *   `scheduleFrame()`（比如在 `paint()` 里标脏）⇒ 每帧都被要 ⇒ 空转 + 输入饥饿。
+     *   这条诊断抓的正是它：要了帧，却连 settle 与 paint 都整段跳过。
+     */
+    public function noteIdleSpin(bool $idle): void
+    {
+        $this->idleSpinFrames = $idle ? $this->idleSpinFrames + 1 : 0;
     }
 
     /** @internal "这一帧刚挂上的 State"登记（`State::callInit()` 调） */
@@ -228,10 +357,23 @@ final class Pipeline
         return $this->layoutEpoch;
     }
 
-    /** @internal 画面变过（`RenderObject::markNeedsPaint()` 的唯一写点） */
+    /**
+     * @internal 画面变过（`RenderObject::markNeedsPaint()` 的唯一写点）
+     *
+     * ★★ **帧外自动叫醒帧时钟**（2026-11-02，D1）：这条以前是
+     *   `Application::needsFrameNow()` 的第八条判据（2026-11-01 补的第八条 ——
+     *   补之前悬停零反馈、滚动条淡出从没跑过）。现在变成写点的副作用，
+     *   新增"只改像素"的通道再也不必回去教调度器问一个新问题。
+     * ★ 帧内不 schedule：那一帧的 paint 门控比的就是这个序号（`paintEpoch` 变了
+     *   就一定重画），再要一帧就是纯粹的空喊。
+     */
     public function bumpPaintEpoch(): void
     {
         ++$this->paintEpoch;
+
+        if (!$this->inFrame) {
+            $this->scheduleFrame();
+        }
     }
 
     /** @internal "画面变了、下一帧必须真的画"的绝对序号 */

@@ -168,12 +168,6 @@ final class PumpHost
         return $this->tasks;
     }
 
-    /** 定时器是否还在等（`wantsFrame()` 的一条判据） */
-    public function hasTimers(): bool
-    {
-        return $this->timers !== [];
-    }
-
     /**
      * 最早的那个**到点时刻**（绝对毫秒，与帧时间戳同一时基）；`null` = 没有定时器。
      *
@@ -182,7 +176,10 @@ final class PumpHost
      *   一个 400ms 的 Tooltip 停留 = **26 次空唤醒**。有了这个数字，等待层可以直接
      *   `waitEvents(400)`：一觉睡到点。
      * ★ 只算 `after()`：后台任务与 socket 可读**没有到点时刻**（它们是轮询，
-     *   见 `hasAsync()` 的注释与 `EVENT-LOOP-DESIGN` §3.5 的诚实边界）。
+     *   见 `hasPolledAsync()` 的注释与 `EVENT-LOOP-DESIGN` §3.5 的诚实边界）。
+     * ★★ `hasTimers()` 已删（2026-11-02，技术债 D1）：它的注释写着"`wantsFrame()`
+     *   的一条判据"，而 D1 之后定时器**不再是"要帧"**（是"到点才要"）⇒ 等待层
+     *   直接与本方法取较早者，那个 bool 没有任何消费者了。
      */
     public function nextDeadlineMs(): ?float
     {
@@ -196,25 +193,20 @@ final class PumpHost
         return $earliest;
     }
 
-    /** 后台任务是否在途 / 监听是否开着（`wantsFrame()` 的两条判据） */
-    public function hasAsync(): bool
-    {
-        return ($this->io !== null && $this->io->watchCount() > 0)
-            || ($this->tasks !== null && $this->tasks->pending() > 0);
-    }
-
     /**
-     * 其中**只能靠轮询**的那部分（⇒ 帧节奏必须跳，不能无限等）。
+     * 在途的活里，**只能靠轮询**的那部分（⇒ 帧节奏必须跳，不能无限等）。
      *
-     * ★★ 与 `hasAsync()` 的差别就是"后端能不能叫醒我"（2026-10-30，N5）：
+     * ★★ 分界就是"后端能不能叫醒我"（2026-10-30，N5）：
      *   - `IoPoller` 的 watcher：本仓拿不到 SOCKET 去等 fd ⇒ 只能每帧问；
      *   - 后台任务：看后端自己声明的 {@see TaskHost::needsPolling()} ——
      *     `ProcessTaskHost` 读管道（只能拉），`ThreadTaskHost` 会 `PostMessageW`
      *     （能推）⇒ 后者在途时帧时钟给 `-1`，一觉睡到 worker 叫醒为止。
      *
-     * ★ 为什么要有这个"第二谓词"而不是改 `hasAsync()`：`hasAsync()` 回答的是
-     *   "**有没有活**"（`wantsFrame()` 用它），这里回答的是"**要不要空转着等**"。
-     *   混成一个就是"能叫醒的后端也被按 15ms 空转"—— 那正是 N5 要消掉的东西。
+     * ★ 它回答的是"**要不要空转着等**"，而"**有没有活**"是另一件事。混成一个
+     *   就是"能叫醒的后端也被按 15ms 空转"—— 那正是 N5 要消掉的东西。
+     *   ★ 2026-11-02（D1）之后"有没有活"连查询都不需要了：能推的后端会自己
+     *     `scheduleNextFrame()`（`IoPoller::watch()` 就是这么做的），所以本仓
+     *     只剩下"要不要空转"这一个问题 —— `hasAsync()` 因此删除。
      */
     public function hasPolledAsync(): bool
     {

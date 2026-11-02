@@ -258,12 +258,13 @@ abstract class RenderObject
         $this->hovered = $hovered;
         $anim->toward($hovered ? 1.0 : 0.0);
 
-        // ★★ **必须标脏**（2026-11-01）：`paintEpoch` 是**唯一**能让帧时钟看见
-        //   "像素变了"的信号（`Application::needsFrameNow()` 读它）。此前这里
-        //   靠"`tickAnimations()` 会标"—— 但 `tickAnimations()` **只在帧里跑**，
-        //   而帧时钟此刻还没上膛 ⇒ 死锁：没有脏 ⇒ 不跑帧 ⇒ 不 tick ⇒ 永不脏。
-        //   真机后果：悬停过渡**一次都推进不了**（`tick` 从未被调用），滚动条
-        //   淡出同理（`tools/probe-motion.py` 连读 5 条红才抓到）。
+        // ★★ **必须标脏**（2026-11-01）：`paintEpoch` 是"像素变了"的唯一信号。
+        //   此前这里靠"`tickAnimations()` 会标"—— 但 `tickAnimations()` **只在帧里
+        //   跑**，而帧时钟此刻还没上膛 ⇒ 死锁：没有脏 ⇒ 不跑帧 ⇒ 不 tick ⇒ 永不脏。
+        //   真机后果：悬停过渡**一次都推进不了**（`tick` 从未被调用），滚动条淡出
+        //   同理（`tools/probe-motion.py` 连读 5 条红才抓到）。
+        //   ★ 2026-11-02（D1）起这条链路更短：`bumpPaintEpoch()` 帧外**自己**
+        //     `scheduleFrame()`，不再需要一个"每轮重问"的调度器判据来发现它。
         // ★★ 走 `markPaintChanged()` 而不是 `markNeedsPaint()`（同日第二次修正）：
         //   前者还负责让**重绘边界丢掉缓存**。只标帧时，`LayerCache` 按
         //   `layoutEpoch` 命中 ⇒ 边界重放旧命令 ⇒ 帧跑了、进度推到 1、
