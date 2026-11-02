@@ -102,6 +102,43 @@ final class TextFieldKeyTest extends SmokeTestCase
     }
 
     /**
+     * `Ctrl+←/→` 与 `Ctrl+Shift+←/→` 在**真实控件**上也要通到草稿。
+     *
+     * ★ 表的映射由 `TextKeymapTest` 守，这里守的是"控件没在进表之前把它拦掉"
+     *   —— `TextFieldState::handleKey()` 在调 `TextKeymap::apply()` 之前有一小段
+     *   自己的判断（`Esc` 那一处），任何"提前 return false"都会让这一族键
+     *   静默失效，而单元测试看不见。
+     */
+    public function testWordKeysReachTheDraft(): void
+    {
+        $seen = [];
+        $state = $this->field('hello world', $seen);
+
+        check(
+            '输入框 · Ctrl+← 跨过一个词',
+            $state->handleKey(KeyEvent::down(KeyChord::make('Left', true))) && $state->caretOffset() === 6,
+            '插入符在 ' . $state->caretOffset(),
+        );
+
+        check(
+            '输入框 · Ctrl+Shift+← 按词扩选',
+            $state->handleKey(KeyEvent::down(KeyChord::make('Left', true, false, true)))
+                && $state->selectionStart() === 0
+                && $state->selectionEnd() === 6,
+            \sprintf('[%d,%d)', $state->selectionStart(), $state->selectionEnd()),
+        );
+
+        $state->handleKey(KeyEvent::down(KeyChord::make('Right', true, false, true)));
+        check(
+            '输入框 · Ctrl+Shift+→ 把活动端收回来',
+            $state->selectionStart() === 6 && $state->selectionEnd() === 6,
+            \sprintf('[%d,%d)', $state->selectionStart(), $state->selectionEnd()),
+        );
+
+        $this->flushChecks();
+    }
+
+    /**
      * 不归编辑管的键必须**原样放行**。
      *
      * ★ `Ctrl+S` 在编辑中也要能存盘 —— 吞掉它等于"打字时保存失效"，且不报错。

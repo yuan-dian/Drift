@@ -114,6 +114,59 @@ final class TextKeymapTest extends TestCase
         self::assertSame(4, $draft->selectionEnd());
     }
 
+    /**
+     * `Ctrl+←/→` 按**词**跳（不是按字符）。
+     *
+     * ★ 这条与 `testLeftAndRightWalkCodePointBoundaries` 的区别只有粒度，
+     *   但两者必须分开断言：把 `Ctrl+←` 接成 `previousBoundary()`（字符级）
+     *   时，"按一下跨过一个词"的全绿测试看不出任何异常 —— 只是手感变成
+     *   "按五次才跨过 `hello`"。
+     */
+    public function testCtrlLeftAndRightSkipWords(): void
+    {
+        $draft = self::atEnd('hello world');
+
+        self::assertSame(TextChange::Caret, TextKeymap::apply($draft, KeyEvent::down(KeyChord::make('Left', true))));
+        self::assertSame(6, $draft->caretOffset(), 'Ctrl+← 应跨过整个 world');
+
+        TextKeymap::apply($draft, KeyEvent::down(KeyChord::make('Left', true)));
+        self::assertSame(0, $draft->caretOffset());
+
+        TextKeymap::apply($draft, KeyEvent::down(KeyChord::make('Right', true)));
+        self::assertSame(6, $draft->caretOffset(), 'Ctrl+→ 应停在下一个词首');
+
+        // 已在末尾 ⇒ 管了但没动（None，不是 null）
+        $draft->moveCaretToEnd();
+        self::assertSame(
+            TextChange::None,
+            TextKeymap::apply($draft, KeyEvent::down(KeyChord::make('Right', true))),
+            '末尾的 Ctrl+→ 要消费掉按键（否则会漏给加速键）',
+        );
+    }
+
+    /**
+     * `Ctrl+Shift+←/→` 按词**扩选**（活动端跳词，锚点不动）。
+     *
+     * ★ 断言落在 `[selectionStart, selectionEnd)` 上而不是"有没有选区"：
+     *   接成字符级扩选时选区照样存在，只有端点会差几个字节。
+     */
+    public function testCtrlShiftLeftAndRightExtendByWord(): void
+    {
+        $draft = self::atEnd('hello world');
+
+        TextKeymap::apply($draft, KeyEvent::down(KeyChord::make('Left', true, false, true)));
+        self::assertSame(6, $draft->selectionStart());
+        self::assertSame(11, $draft->selectionEnd());
+
+        TextKeymap::apply($draft, KeyEvent::down(KeyChord::make('Left', true, false, true)));
+        self::assertSame(0, $draft->selectionStart());
+        self::assertSame(11, $draft->selectionEnd());
+
+        TextKeymap::apply($draft, KeyEvent::down(KeyChord::make('Right', true, false, true)));
+        self::assertSame(6, $draft->selectionStart(), '往右扩要缩回 6（活动端在 0 那侧）');
+        self::assertSame(11, $draft->selectionEnd());
+    }
+
     public function testTextIsInsertedAtCaret(): void
     {
         $draft = self::atEnd('ab');

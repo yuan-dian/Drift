@@ -43,25 +43,32 @@ final readonly class KeyChord
      *   修饰键是 `GetKeyState` 读出来的**三个独立布尔**，`Ctrl+Shift+A` 这种组合
      *   在三个单修饰工厂里**表达不出来** ⇒ 没有它，平台层只能丢掉组合信息，
      *   而丢掉的后果是"加速键表里 `Ctrl+Shift+A` 永远不命中"且**不报错**。
+     *
+     * ★★ **单字母键名归一成大写**（2026-11-02）。壳的 `keyNameFromVk()` 对
+     *   `VK_A`–`VK_Z` 给的就是**大写** `"A"`，而大小写信息在 `$shift` 里、
+     *   不在键名里。不归一的话 `Ctrl+A` 有 `'a'` / `'A'` 两种写法：
+     *   `TableState` 写过小写、`TextKeymap` 写过大写 —— 前者的 Ctrl+A/C 在
+     *   真机上**从来没生效过**，而它的单元测试拿小写 chord 直接喂 ⇒ 实现与测试
+     *   同源，一起绿。这类错误没有独立判据能发现，只能让"两种写法"不存在。
      */
     public static function make(string $key, bool $ctrl = false, bool $alt = false, bool $shift = false): self
     {
-        return new self($key, $ctrl, $alt, $shift);
+        return new self(\strlen($key) === 1 ? \strtoupper($key) : $key, $ctrl, $alt, $shift);
     }
 
     public static function ctrl(string $key): self
     {
-        return new self($key, true, false, false);
+        return self::make($key, ctrl: true);
     }
 
     public static function alt(string $key): self
     {
-        return new self($key, false, true, false);
+        return self::make($key, alt: true);
     }
 
     public static function shift(string $key): self
     {
-        return new self($key, false, false, true);
+        return self::make($key, shift: true);
     }
 
     /** 功能键：`f(5)` ⇒ `F5` */

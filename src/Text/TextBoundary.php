@@ -171,6 +171,104 @@ final class TextBoundary
     }
 
     /**
+     * `$offset` 左侧最近的**词首**（`Ctrl+←` 的落点）。
+     *
+     * 两步、顺序不可换：① 跳过紧邻的空白/标点 → ② 跳过同类词段到首。
+     * 反过来（先跳词再看非词）会让 `用户 1|` 的 `Ctrl+←` 停在空格前，
+     * 而用户预期是停在 `1` 前 —— 差一个字符，且看起来像"少跳了一下"。
+     *
+     * ★ 与 {@see self::wordAt()} 共用 `classOf()`：双击选中的词与 `Ctrl+←/→`
+     *   跳过的一定是**同一个区间**。两套独立分类器是"双击选中 `用户`、
+     *   `Ctrl+→` 却跳进 `1`"这类不一致的来源。
+     *
+     * ★ 只跳**同类**词段，所以 `用户1` 是两个可跳单位（与双击的手感一致）。
+     *   若要"中文不分词、汉字连读到底"，那是 `classOf()` 的事，这里一行不动。
+     */
+    public static function previousWordStart(string $text, int $offset): int
+    {
+        $chars = Utf8::decode($text);
+        $count = \count($chars);
+        if ($count === 0) {
+            return 0;
+        }
+
+        $offset = self::clamp($offset, \strlen($text));
+
+        // 插入符左侧那个字符的下标
+        $i = -1;
+        for ($k = 0; $k < $count; $k++) {
+            if ($chars[$k][1] + $chars[$k][2] > $offset) {
+                break;
+            }
+            $i = $k;
+        }
+        if ($i < 0) {
+            return 0;
+        }
+
+        while ($i >= 0 && !self::isWord($chars[$i][0])) {
+            $i--;
+        }
+
+        if ($i < 0) {
+            return 0;
+        }
+
+        $class = self::classOf($chars[$i][0]);
+        while ($i >= 0 && self::classOf($chars[$i][0]) === $class) {
+            $i--;
+        }
+
+        return $chars[$i + 1][1];
+    }
+
+    /**
+     * `$offset` 右侧最近的**词首**（`Ctrl+→` 的落点；末尾则返回文本长度）。
+     *
+     * 三步：① 跳过 `$offset` 所在的那一段 → ② 跳过空白/标点 → ③ 停在词首。
+     * ②③ 不能合并：合并成"跳到一个词字符上"的话，词后面紧跟标点
+     * （`abc, def`）会停在 `,` 上。
+     *
+     * ★ 从词**中间**按 `Ctrl+→` 会直接到**下一个词**的首（不是当前词尾）：
+     *   Windows 原生 Edit / 浏览器 / GTK 一致，用户对"按两下跨过两个词"有预期。
+     */
+    public static function nextWordStart(string $text, int $offset): int
+    {
+        $chars = Utf8::decode($text);
+        $count = \count($chars);
+        $length = \strlen($text);
+        if ($count === 0) {
+            return 0;
+        }
+
+        $offset = self::clamp($offset, $length);
+
+        // 插入符右侧那个字符的下标
+        $i = $count;
+        for ($k = 0; $k < $count; $k++) {
+            if ($chars[$k][1] >= $offset) {
+                $i = $k;
+
+                break;
+            }
+        }
+        if ($i >= $count) {
+            return $length;
+        }
+
+        $class = self::classOf($chars[$i][0]);
+        while ($i < $count && self::classOf($chars[$i][0]) === $class) {
+            $i++;
+        }
+
+        while ($i < $count && !self::isWord($chars[$i][0])) {
+            $i++;
+        }
+
+        return $i >= $count ? $length : $chars[$i][1];
+    }
+
+    /**
      * 两条取侧规则（见 {@see self::wordAt()}）。
      *
      * ★ 抽成独立方法是为了让"取侧"可被单独读一遍：它比"扩到同类边界"更容易写错，

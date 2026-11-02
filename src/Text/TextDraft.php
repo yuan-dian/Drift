@@ -396,6 +396,28 @@ final class TextDraft
         return $bounds;
     }
 
+    /**
+     * 插入符左侧最近的**词首**（`Ctrl+←` 的落点）；已在开头 ⇒ 0。
+     *
+     * ★ 为什么在这里包一层而不是让 `TextKeymap` 直接调 `TextBoundary`：
+     *   调用方拿着草稿却要自己取 `text()` 再算偏移，等于把"插入符口径"漏出去 ——
+     *   与 {@see self::previousBoundary()} 同一形状（那两个也不要求调用方贴偏移）。
+     *
+     * ★ 与 {@see self::previousBoundary()} 的区别只有粒度：那个按**字符**，
+     *   这个按**同类段**（空白/标点整段跳过）。两个都留着是因为 Home/End、
+     *   点击定位要的是字符级，而 `Ctrl+←` 要的是词级。
+     */
+    public function previousWordStart(): int
+    {
+        return TextBoundary::previousWordStart($this->buffer, $this->caret);
+    }
+
+    /** 插入符右侧最近的**词首**（`Ctrl+→` 的落点）；已在末尾 ⇒ 文本长度 */
+    public function nextWordStart(): int
+    {
+        return TextBoundary::nextWordStart($this->buffer, $this->caret);
+    }
+
     // ── 内部 ────────────────────────────────────────────────────────────
 
     /** 把任意字节偏移夹进 `[0, len]` 并吸附到不大于它的最近字符边界 */

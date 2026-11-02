@@ -626,13 +626,17 @@ final class TableState extends State implements Scrollable, EditableText
         // ★ 全表快捷键先于方向键（`Ctrl+A` / `Ctrl+C`）：它们与"光标在哪一格"无关，
         //   而下面那段是纯导航。放在前面也让"空表 Ctrl+A"能吃掉键（什么都不选，
         //   但不要漏给上层去滚动页面）。
-        if ($chord->is(KeyChord::make('a', ctrl: true))) {
+        // ★ 键名**大写**：壳的 `keyNameFromVk()` 对 `A`–`Z` 给的就是大写
+        //   （`VK_A` ⇒ `"A"`，不看 Shift）。这里原先写的是小写 `'a'`，
+        //   于是表格的 `Ctrl+A` / `Ctrl+C` 在**真机上一直不生效** ——
+        //   而单元测试拿小写 chord 直接喂，全绿。见 `DESIGN-TABLE` §12.10。
+        if ($chord->is(KeyChord::ctrl('A'))) {
             $this->selectAll();
 
             return true;
         }
 
-        if ($chord->is(KeyChord::make('c', ctrl: true))) {
+        if ($chord->is(KeyChord::ctrl('C'))) {
             return $this->copySelection();
         }
 

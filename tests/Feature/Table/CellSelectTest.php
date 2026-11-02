@@ -204,7 +204,7 @@ final class CellSelectTest extends SmokeTestCase
         $app->focus()?->focusNext();
         $this->tick($app);
 
-        $app->focus()?->dispatchKey(KeyEvent::down(KeyChord::make('a', ctrl: true)));
+        $app->focus()?->dispatchKey(KeyEvent::down(KeyChord::ctrl('A')));
         $this->tick($app);
 
         $sel = $host->selection;
@@ -227,9 +227,9 @@ final class CellSelectTest extends SmokeTestCase
         $this->tick($app);
 
         // 行 0..1 × 两列
-        $app->focus()?->dispatchKey(KeyEvent::down(KeyChord::make('a', ctrl: true)));
+        $app->focus()?->dispatchKey(KeyEvent::down(KeyChord::ctrl('A')));
         $this->tick($app);
-        $app->focus()?->dispatchKey(KeyEvent::down(KeyChord::make('c', ctrl: true)));
+        $app->focus()?->dispatchKey(KeyEvent::down(KeyChord::ctrl('C')));
         $this->tick($app);
 
         $expected = "1\t用户 1\n2\t用户 2\n3\t用户 3\n4\t用户 4\n5\t用户 5\n6\t用户 6";

@@ -806,6 +806,28 @@ for ($node = $element; $node !== null; $node = $node->parent()) {
   路径的 `try/catch` 接住 ⇒ 现象是**整页变成错误占位**，不是崩溃。
   ⇒ 每次给 `pointer()` / `hover()` / `keyboard()` 写回调，都按**完整签名**写。
 
+### 12.10 `Ctrl+A` / `Ctrl+C` 在真机上从来没生效过（2026-11-02）
+
+壳的 `keyNameFromVk()` 对 `VK_A`–`VK_Z` 给的是**大写** `"A"`（不看 Shift ——
+大小写信息在 `$shift` 位里）。而 `TableState` 里写的是
+`KeyChord::make('a', ctrl: true)` —— **小写**。`KeyChord::is()` 是全字段比较
+⇒ 这两个分支在真机上永远不命中。
+
+**为什么测试一直绿**：`CellSelectTest` 里构造事件也用小写。
+实现与测试同源 ⇒ 双方谁也没有独立判据，这是"假绿"最贵的一种。
+
+**修法两条，都做了**：
+
+1. `KeyChord::make()` 把**单字母**键名归一成大写（`ctrl()` / `alt()` / `shift()`
+   改走 `make()`）。大小写信息本来就只在 `$shift` 里，键名留两种写法没有任何
+   表达力，只会制造"其中一种永不命中"。
+2. `TableState` 两处改成 `KeyChord::ctrl('A')` / `ctrl('C')`，与 `TextKeymap` /
+   `TextEditingBridge` / `TextField::claimKeys()` 一致。
+
+★ 这类错误**没有外部判据**能发现（不能靠真机按一遍 Ctrl+A 来守 CI），只能靠
+"让两种写法不存在"。同 `M4::$pumpKeys` 的 `placeMenu`：一个名字几种拼法，
+其中一种是死的。
+
 ---
 
 ## 13. 阶段 3 落地：排序（受控三态 + 表头箭头，2026-10-26）
@@ -1631,6 +1653,7 @@ return new Rect(
 | `↑` / `↓` | 移格 | 提交 + 移格 |
 | `Esc` | — | 取消（丢弃草稿，不回调） |
 | `←` / `→` / `Home` / `End` / `Backspace` / `Delete` / `Ctrl+A` | 移格 / 首末行 | 归草稿（**与 `TextField` 同一张表**） |
+| `Ctrl+←` / `Ctrl+→` / `Ctrl+Shift+←` / `Ctrl+Shift+→` | 无（放行） | 归草稿：按**词**跳 / 按**词**扩选 |
 
 > ★ **2026-11-02 更正**：上一版这里写的是"与 `TextField` **逐字同义**"。逐字同义
 > 意味着同一张表有两个副本 —— 加一个键位要改两处，漏一处就是"输入框支持、

@@ -100,6 +100,100 @@ final class TextBoundaryTest extends TestCase
     }
 
     /**
+     * `Ctrl+→` 的落点：**跳过当前段 + 中间分隔符，停在下一个词首**。
+     *
+     * ★ 期望值全是"下一个词的首字节偏移"，不是"当前词尾" —— 两者在 `hello world`
+     *   差 1（5 vs 6）。写反了的表现是"按一下 `Ctrl+→` 光标停在空格前"，
+     *   用户会觉得"少跳了一下"，而代码看着完全正常。
+     *
+     * @return array<string, array{0: string, 1: int, 2: int}>
+     */
+    public static function nextWordStartCases(): array
+    {
+        return [
+            '词首 ⇒ 下一个词首（跳过空格）' => ['hello world', 0, 6],
+            '词中间 ⇒ 仍是下一个词首（不在当前词尾停）' => ['hello world', 2, 6],
+            '词尾 ⇒ 下一个词首' => ['hello world', 5, 6],
+            '已在空白里 ⇒ 下一个词首' => ['hello world', 6, 11],
+            '末尾 ⇒ 文本长度（不是 0）' => ['hello world', 11, 11],
+            '连续空白一次跳完' => ['a    b', 1, 5],
+            '标点后紧跟空格 ⇒ 停在字母上，不停在标点' => ['abc, def', 0, 5],
+            '词后直接接标点 ⇒ 标点被跳过，停在后一个词首' => ['abc,def', 0, 4],
+            '中文没有分词 ⇒ 整段汉字是一个单位' => ['用户 1', 0, 7],
+            'CJK 与拉丁不同类 ⇒ `用户1` 是两个单位' => ['用户1', 0, 6],
+            '多字节字符不切半' => ['张三丰x', 0, 9],
+            '空文本 ⇒ 0' => ['', 0, 0],
+        ];
+    }
+
+    #[DataProvider('nextWordStartCases')]
+    public function testNextWordStart(string $text, int $offset, int $expected): void
+    {
+        self::assertSame($expected, TextBoundary::nextWordStart($text, $offset));
+    }
+
+    /**
+     * `Ctrl+←` 的落点：先跳分隔符、再跳同类段到**词首**。
+     *
+     * ★ 关键用例是「词中间 ⇒ 本词词首」与「词尾 ⇒ 本词词首」：这两条定义了
+     *   "`Ctrl+←` 不会跨过当前词"。若实现先跳同类段再跳分隔符，`用户 1|`
+     *   会停在空格前（6）而不是 `1` 前（7） —— 只差一个字节，肉眼看不出。
+     *
+     * @return array<string, array{0: string, 1: int, 2: int}>
+     */
+    public static function previousWordStartCases(): array
+    {
+        return [
+            '末尾 ⇒ 本词词首' => ['hello world', 11, 6],
+            '词中间 ⇒ 本词词首' => ['hello world', 8, 6],
+            '词首 ⇒ 上一个词词首（跳过空格）' => ['hello world', 6, 0],
+            '第二个词首 ⇒ 0' => ['a b', 2, 0],
+            '已在空白里 ⇒ 左边那个词的词首' => ['hello world', 6, 0],
+            '开头 ⇒ 0（不是负数）' => ['hello world', 0, 0],
+            '连续空白一次跳完' => ['a    b', 5, 0],
+            '标点隔开 ⇒ 停在标点左侧那个词的首' => ['abc, def', 8, 5],
+            '在词首 ⇒ 跳过分隔符到上一个词首' => ['用户 1', 7, 0],
+            'CJK 与拉丁不同类 ⇒ 只跳到本段首' => ['用户1', 7, 6],
+            '空文本 ⇒ 0' => ['', 0, 0],
+            '越界偏移 ⇒ 夹到末尾再算' => ['hello world', 99, 6],
+        ];
+    }
+
+    #[DataProvider('previousWordStartCases')]
+    public function testPreviousWordStart(string $text, int $offset, int $expected): void
+    {
+        self::assertSame($expected, TextBoundary::previousWordStart($text, $offset));
+    }
+
+    /**
+     * ★ 两条跳词的落点必须**互相可达**：从 a 按 `Ctrl+→` 到 b，从 b 按 `Ctrl+←`
+     *   应回到 a。这一条不写在用例表里，是因为"表里的每一行都恰好配到"这种事
+     *   写不全 —— 而它对用户是**唯一可感知**的性质（"按过去再按回来"）。
+     */
+    public function testForwardAndBackwardWordStartsAreSymmetric(): void
+    {
+        foreach (['hello world', 'abc, def', '用户 1', '用户1', '  x  y  ', 'a_b c'] as $text) {
+            $length = \strlen($text);
+            $offset = 0;
+
+            while (true) {
+                $next = TextBoundary::nextWordStart($text, $offset);
+                if ($next === $offset || $next >= $length) {
+                    break;
+                }
+
+                self::assertSame(
+                    $offset,
+                    TextBoundary::previousWordStart($text, $next),
+                    \sprintf('%s：从 %d 跳到 %d，回跳没回到原处', \json_encode($text), $offset, $next),
+                );
+
+                $offset = $next;
+            }
+        }
+    }
+
+    /**
      * ★ 这一条守的是"区间端点落在字符边界上"—— 字节偏移少一位就是半个汉字。
      *   上面每条用例都在隐式依赖它，但只有逐字比对能把"`[0,5)` 其实切出 `hell`"
      *   这类错误暴露成**可读的**失败。

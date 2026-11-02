@@ -72,12 +72,32 @@ final class TextKeymap
             return $draft->selectAll();
         }
 
+        // ★ 按词移动（`Ctrl+←/→`）与按词扩选（`Ctrl+Shift+←/→`）。
+        //   缺了它们的现象不是"按了没反应"，而是按键**静默穿过**编辑器：
+        //   `TextKeymap` 返回 null ⇒ 调用方继续找别的消费者 ⇒ 在某些应用里
+        //   还会被当成加速键吃掉（例如 `Ctrl+←` 被当成"上一条"）。
+        if ($chord->is(KeyChord::make('Left', true))) {
+            return $draft->moveCaret($draft->previousWordStart());
+        }
+
+        if ($chord->is(KeyChord::make('Right', true))) {
+            return $draft->moveCaret($draft->nextWordStart());
+        }
+
         if ($chord->is(KeyChord::shift('Left'))) {
             return $draft->extendSelectionTo($draft->previousBoundary());
         }
 
         if ($chord->is(KeyChord::shift('Right'))) {
             return $draft->extendSelectionTo($draft->nextBoundary());
+        }
+
+        if ($chord->is(KeyChord::make('Left', true, false, true))) {
+            return $draft->extendSelectionTo($draft->previousWordStart());
+        }
+
+        if ($chord->is(KeyChord::make('Right', true, false, true))) {
+            return $draft->extendSelectionTo($draft->nextWordStart());
         }
 
         if ($chord->is(KeyChord::shift('Home'))) {

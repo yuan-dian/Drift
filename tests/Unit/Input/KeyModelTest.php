@@ -32,6 +32,20 @@ final class KeyModelTest extends SmokeTestCase
         );
         check('输入层 · KeyChord::f(5) ⇒ F5', KeyChord::f(5)->key === 'F5' && KeyChord::f(5)->label() === 'F5');
 
+        // ★ 单字母归一：壳的 keyNameFromVk 对 VK_A–VK_Z 给大写，大小写在 $shift 里。
+        //   不归一 ⇒ "Ctrl+A" 有 'a'/'A' 两种写法，其中一种在真机上永远不命中，
+        //   而单元测试与实现同源（都写小写）⇒ 一起绿。TableState 就这样失效过。
+        check(
+            '输入层 · 单字母键名归一成大写（`a` 与 `A` 是同一个 chord）',
+            KeyChord::make('a', ctrl: true)->is(KeyChord::ctrl('A'))
+                && KeyChord::ctrl('a')->key === 'A',
+            'make("a")->key=' . KeyChord::make('a', ctrl: true)->key,
+        );
+        check(
+            '输入层 · 归一不碰多字符键名（`Left` 不会变 `LEFT`）',
+            KeyChord::left()->key === 'Left' && KeyChord::tab()->key === 'Tab',
+        );
+
         $this->flushChecks();
     }
 
