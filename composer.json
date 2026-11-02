@@ -33,6 +33,11 @@
         "apps/tutorial/src/",
         "apps/tutorial/bin/win32/",
         "apps/tutorial/bin/macos/"
+      ],
+      "App\\Watermark\\": [
+        "apps/watermark/src/",
+        "apps/watermark/bin/win32/",
+        "apps/watermark/bin/macos/"
       ]
     }
   }
