@@ -9,8 +9,9 @@ declare(strict_types=1);
  *   php tools/docref.php --list     打印检查清单
  *   php tools/docref.php --selftest 量具双向自检（§20 纪律 1：该响会响 + 不该响不误响）
  *
- * ★ 与 lint 的关系：**互补不重叠**。lint 查代码（19 条规则），docref 查文档
- *   （3 条检查）。`Diagnostic` 复用 lint 的 —— 字段形状通用（file=文档路径）。
+ * ★ 与 lint 的关系：**互补不重叠**。lint 查代码（规则清单以 `php tools/lint.php --list`
+ *   为准 —— 数字不抄进注释，写即过期），docref 查文档（3 条检查）。`Diagnostic`
+ *   复用 lint 的 —— 字段形状通用（file=文档路径）。
  * ★ 与 `tools/docref.php` 建议的关系：ARCH-REVIEW 原文建议"写一个 docref.php"，
  *   这里按 lint 的同构结构落成"主脚本 + Checks 目录"，为将来自动化更多文档
  *   检查（死链已含、册间重复、行数断言漂移）留出插槽，每条自带反例自检。

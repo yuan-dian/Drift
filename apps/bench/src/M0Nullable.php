@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace Drift\Bench;
 
+use Drift\Errors;
+
 /**
  * M0-2：`?Obj` 字段是否退化成 `php::Var`（`08` §3.4）。
  *

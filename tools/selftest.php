@@ -84,6 +84,15 @@ function drift_lint_selftest(string $root, Linter $linter): bool
         'instanceof-missing-use' => [
             'apps/InstanceofBad.php:' . Diagnostic::ERROR,
         ],
+        // 漏 use 的另外三处语境（2026-11-02 真事故：watermark 下载结果图）
+        // ★ Bad 三条：new / `::` / catch 各一条；`ClassMissingUseGood.php` 一条都不该有 ——
+        //   它验的五件"看着像但不是"：use 过的新建与静态访问、全限定名、内建类 catch、
+        //   `self::` 与变量左侧、匿名类。
+        'class-missing-use' => [
+            'apps/ClassMissingUseBad.php:' . Diagnostic::ERROR,
+            'apps/ClassMissingUseBad.php:' . Diagnostic::ERROR,
+            'apps/ClassMissingUseBad.php:' . Diagnostic::ERROR,
+        ],
         // 内建编译期注解漏 \（2026-10-21 W0/A0）
         'attribute-unqualified' => [
             'apps/AttributeBad.php:' . Diagnostic::ERROR,

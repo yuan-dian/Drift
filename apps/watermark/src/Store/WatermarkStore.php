@@ -8,6 +8,7 @@ use App\Watermark\Api\Config;
 use App\Watermark\Api\SignInfo;
 use App\Watermark\Api\TaskResult;
 use App\Watermark\Jobs\AddTaskJob;
+use App\Watermark\Jobs\DownloadResultsJob;
 use App\Watermark\Jobs\FetchSignJob;
 use App\Watermark\Jobs\PollResultJob;
 use App\Watermark\Jobs\UploadBatchJob;
@@ -679,9 +680,20 @@ final class WatermarkStore extends Subject
             }
         }
 
+        // ★★ 接力标志只在**终结态**（到手 / 失败）消费 —— 2026-11-02 修：
+        //   `AsyncCommand::start()` 会先 `emit(loading)` 再落地，而这个订阅对
+        //   **每一次**通知都跑。原来的写法无条件 `$this->uploadAfterSign = false`，
+        //   于是那一趟 loading 就把标志吃掉了；等真拿到签名时 `$relay` 已是 false
+        //   ⇒ **签名取回来了，却永远不接力上传**（不报错，界面停在"正在获取上传凭证…"）。
+        //   ★ 真机上这条路径被"启动预热"掩盖：预热先拿到签名 ⇒ 点上传走的是
+        //     `upload()` 里"签名还有效"那条直路，接力分支从没被走到过。
         $sign = $this->sign;
-        $relay = $this->uploadAfterSign;
-        $this->uploadAfterSign = false;
+        $relay = false;
+        if ($value->hasData() || $value->hasError()) {
+            $relay = $this->uploadAfterSign;
+            $this->uploadAfterSign = false;
+        }
+
         $this->notifyChanged();
 
         // ★ 接力：签名到手 ⇒ 立刻开始上传（用户点的是"上传"，不是"取签名"）。

@@ -10,6 +10,7 @@ use Drift\Dev\Lint\Rules\AppSubclassCtorParent;
 use Drift\Dev\Lint\Rules\AttributeUnqualified;
 use Drift\Dev\Lint\Rules\BackendBranch;
 use Drift\Dev\Lint\Rules\CachedSubscriber;
+use Drift\Dev\Lint\Rules\ClassMissingUse;
 use Drift\Dev\Lint\Rules\DeadCommand;
 use Drift\Dev\Lint\Rules\DeadSubscription;
 use Drift\Dev\Lint\Rules\DependencyDirection;
@@ -59,6 +60,12 @@ final class Linter
             new NestedSubscribe(),
             // instanceof 漏 use（2026-10-19：静默恒 false 缺陷模式，本仓咬过 ≥3 次）
             new InstanceofMissingUse(),
+            // 同类病，另外三处语境（2026-11-02 真事故）：`new` / `::` / `catch (X $e)`
+            //   ★ 事故：`WatermarkStore` 漏 `use DownloadResultsJob` ⇒ 真机点下载报
+            //     `class 'App\Watermark\Store\DownloadResultsJob' is undefined`。
+            //     四道闸门全绿的原因：该分支只在 `$host !== null`（真机）可达，
+            //     smoke / phpunit 全走 `$host === null` 的同步降级路径。
+            new ClassMissingUse(),
             // I2 闸门（2026-10-25 S1 第 10 步）：App 层不得认下层实现的具体类
             //   ★ 判据是"不许认具体类"，不是"只许接口" —— 见规则类头的两条反例
             new AppInstanceofConcrete(),

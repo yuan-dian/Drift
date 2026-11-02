@@ -69,6 +69,125 @@ final class SourceQuery
     }
 
     /**
+     * "这里必须是类"的三处语境里的类名 + 行号：`new X` / `X::` / `catch (X $e)`。
+     *
+     * 为什么只收这三处：它们是 **PHP 不在加载时报错**的位置 ——
+     * - `new X` 与 `X::` 在运行期抛 `class not found`（`X::class` 更糟：静默返回字符串）；
+     * - `catch (X $e)` 连错都不抛，**这一条 catch 永远不命中**（与 `instanceof` 同一种静默）。
+     * `extends` / `implements` 不在此列：漏 use 在类加载时就 fatal，任何一次挂载/测试
+     * 都会红，静态规则只是重复已有的保险。
+     *
+     * 边界（与 `instanceofNames()` 同一套口径）：
+     * - 右侧/左侧是变量（`new $cls` / `$cls::m()`）⇒ 不判
+     * - `self` / `static` / `parent` ⇒ 不判（语言结构关键字）
+     * - `new class {…}`（匿名类）⇒ 不判
+     *
+     * @param list<mixed> $tokens
+     * @return list<array{name: string, line: int, among: string}> among ∈ new|static|catch
+     */
+    public static function classNames(array $tokens): array
+    {
+        $out = [];
+
+        foreach ($tokens as $i => $tok) {
+            if (!is_array($tok)) {
+                continue;
+            }
+
+            if ($tok[0] === T_NEW) {
+                $at = self::nextIndex($tokens, $i + 1);
+                $name = $at === null ? null : self::classNameAt($tokens, $at);
+                if ($name !== null) {
+                    $out[] = ['name' => $name[0], 'line' => $name[1], 'among' => 'new'];
+                }
+                continue;
+            }
+
+            if ($tok[0] === T_CATCH) {
+                foreach (self::catchNames($tokens, $i) as [$name, $line]) {
+                    $out[] = ['name' => $name, 'line' => $line, 'among' => 'catch'];
+                }
+                continue;
+            }
+
+            // `X::`（静态调用 / 常量 / `::class`）—— 只有名字后面紧跟 `::` 才算
+            $at = self::nextIndex($tokens, $i + 1);
+            if ($at === null) {
+                continue;
+            }
+            $next = $tokens[$at];
+            if (!is_array($next) || $next[0] !== T_DOUBLE_COLON) {
+                continue;
+            }
+            $name = self::classNameAt($tokens, $i, false);
+            if ($name !== null) {
+                $out[] = ['name' => $name[0], 'line' => $name[1], 'among' => 'static'];
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * 下标 `$i` 处若是类名，返回 [名字, 行号]；否则 null。
+     *
+     * @param list<mixed> $tokens
+     * @return null|array{0: string, 1: int}
+     */
+    private static function classNameAt(array $tokens, int $i, bool $qualified = true): ?array
+    {
+        $tok = $tokens[$i] ?? null;
+        if (!is_array($tok)) {
+            return null;
+        }
+        $ok = $qualified
+            ? in_array($tok[0], [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true)
+            : in_array($tok[0], [T_STRING, T_NAME_QUALIFIED], true);
+        if (!$ok) {
+            return null;
+        }
+        if (in_array(strtolower($tok[1]), ['self', 'static', 'parent'], true)) {
+            return null;
+        }
+
+        return [$tok[1], $tok[2]];
+    }
+
+    /**
+     * `catch (A | B $e)` 里 `$e` 之前的全部类名。
+     *
+     * @param list<mixed> $tokens
+     * @return list<array{0: string, 1: int}>
+     */
+    private static function catchNames(array $tokens, int $catch): array
+    {
+        $open = self::nextIndex($tokens, $catch + 1);
+        if ($open === null || $tokens[$open] !== '(') {
+            return [];
+        }
+
+        $out = [];
+        for ($i = self::nextIndex($tokens, $open + 1); $i !== null; $i = self::nextIndex($tokens, $i + 1)) {
+            $tok = $tokens[$i];
+            if ($tok === ')' || $tok === '|') {
+                if ($tok === ')') {
+                    break;
+                }
+                continue;
+            }
+            if (is_array($tok) && $tok[0] === T_VARIABLE) {
+                break;
+            }
+            $name = self::classNameAt($tokens, $i);
+            if ($name !== null) {
+                $out[] = $name;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
      * 全部 `instanceof` 右侧的候选类名（短名 / 相对限定名）+ 行号。
      *
      * ★ 抽在这里的理由：两条规则都要它 —— `instanceof-missing-use`（短名看不看得见）

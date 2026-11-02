@@ -41,6 +41,12 @@ final class Project
     ) {
     }
 
+    /** @var null|array<string, string> 小写 FQN => 声明 FQN（懒建，见 `symbolFqcn()`） */
+    private ?array $lowerSymbols = null;
+
+    /** @var null|array<string, list<string>> 小写短名 => FQN 列表（懒建，见 `symbolsByShortName()`） */
+    private ?array $shortSymbols = null;
+
     /** @param list<string> $ignore 相对路径前缀，命中即跳过 */
     public static function scan(string $root, array $ignore = [], array $dirs = self::DEFAULT_DIRS): self
     {
@@ -92,6 +98,50 @@ final class Project
     public function symbols(): array
     {
         return $this->symbols;
+    }
+
+    /**
+     * 按名字查本仓符号，**大小写不敏感**（PHP 类名大小写不敏感 ⇒ `use` 的大小写
+     * 不必与声明一致，写错大小写的代码是能跑的）。命中返回声明的真实 FQN。
+     *
+     * ★ 抽在这里而不是各规则自己建索引：`instanceof-missing-use` 与
+     *   `class-missing-use` 判的是同一件事（"这个名字在本文件看不看得见"），
+     *   分成两份索引就是两份口径。
+     */
+    public function symbolFqcn(string $fqn): ?string
+    {
+        if ($this->lowerSymbols === null) {
+            $map = [];
+            foreach ($this->symbols as $declared => $_) {
+                $map[strtolower($declared)] = $declared;
+            }
+            $this->lowerSymbols = $map;
+        }
+
+        return $this->lowerSymbols[strtolower($fqn)] ?? null;
+    }
+
+    /**
+     * 短名（小写）=> 本仓所有同名类的 FQN。
+     *
+     * `instanceof` / `new` / `::` / `catch` 的判据都靠它回答同一个问题：
+     * **"这个短名在仓里确实是个类吗？"** —— 是 ⇒ 解析落空就是漏 `use`；
+     * 不是（PHP 内建 / 第三方）⇒ 静态无从区分，不报（宁漏勿误）。
+     *
+     * @return array<string, list<string>>
+     */
+    public function symbolsByShortName(): array
+    {
+        if ($this->shortSymbols === null) {
+            $map = [];
+            foreach ($this->symbols as $fqn => $_) {
+                $short = strtolower(substr($fqn, (int) strrpos($fqn, '\\') + 1));
+                $map[$short][] = $fqn;
+            }
+            $this->shortSymbols = $map;
+        }
+
+        return $this->shortSymbols;
     }
 
     /** @return array<string, string> */

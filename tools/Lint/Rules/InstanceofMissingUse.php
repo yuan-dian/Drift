@@ -48,23 +48,13 @@ final class InstanceofMissingUse implements Rule
 
     public function check(Project $project): array
     {
-        // 小写短名 => FQN 列表（同名类在多个命名空间下都存在时全部列出）
-        $byShort = [];
-        foreach ($project->symbols() as $fqn => $_) {
-            $short = strtolower(substr($fqn, (int) strrpos($fqn, '\\') + 1));
-            $byShort[$short][] = $fqn;
-        }
-        $byLowerFqn = [];
-        foreach ($project->symbols() as $fqn => $_) {
-            $byLowerFqn[strtolower($fqn)] = $fqn;
-        }
-
+        $byShort = $project->symbolsByShortName();
         $found = [];
 
         foreach ($project->files() as $file) {
             foreach (SourceQuery::instanceofNames($file->tokens()) as [$name, $line]) {
                 $resolved = $file->resolveName($name);
-                if ($this->visible($project, $byLowerFqn, $resolved)) {
+                if ($project->symbolFqcn($resolved) !== null) {
                     continue; // use 过 / 同命名空间 / 全局项目类 ⇒ 看得见
                 }
                 $cands = $byShort[strtolower($name)] ?? [];
@@ -87,14 +77,5 @@ final class InstanceofMissingUse implements Rule
         }
 
         return $found;
-    }
-
-    /**
-     * 解析后的 FQN 是否"看得见"：精确命中，或大小写不敏感命中
-     * （PHP 类名大小写不敏感，`use` 的大小写不必与声明一致）。
-     */
-    private function visible(Project $project, array $byLowerFqn, string $resolved): bool
-    {
-        return $project->symbol($resolved) !== null || isset($byLowerFqn[strtolower($resolved)]);
     }
 }

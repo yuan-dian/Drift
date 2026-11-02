@@ -37,6 +37,8 @@ LOGICAL = {
     "showcase": (960, 640),
     "tutorial": (720, 560),
     "users": (900, 640),
+    # `apps/watermark/bin/win32/Bootstrap.php` 的 WINDOW_WIDTH/HEIGHT
+    "watermark": (960, 780),
 }
 
 # ★ 标题的唯一来源是 **`Application::title()`**（2026-10-30 裁决）：组合根给
@@ -49,6 +51,7 @@ TITLES = {
     "showcase": "Drift 示例台",
     "tutorial": "Drift 教程",
     "users": "用户管理",
+    "watermark": "AI 图片处理工具",
 }
 
 
