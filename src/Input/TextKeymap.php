@@ -23,6 +23,12 @@ use Drift\Text\TextDraft;
  * ★ 本表此前在 `TextFieldState::handleKey()` 与 `TableState::editKey()` 各写了一遍，
  *   且后者注释自认"编辑键**逐字同义**"。两处并存时，加一个键位要改两处，
  *   漏一处的表现是"输入框支持、表格不支持"且不报错。
+ *
+ * ★ 标 `@api` 不是为了"看起来完整"：第三方要写第三个可编辑控件（`TextArea` /
+ *   树的重命名框），这里就是它该复用的入口。标 `@internal` 的实际后果是
+ *   **下一个人再抄一遍** —— 那正是这条债的形成方式。
+ *
+ * @api
  */
 final class TextKeymap
 {

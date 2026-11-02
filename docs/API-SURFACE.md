@@ -14,7 +14,7 @@
 | Core | 2 | 45 |
 | Errors.php | 2 | 3 |
 | Geometry | 9 | 0 |
-| Input | 18 | 5 |
+| Input | 19 | 5 |
 | Layout | 42 | 38 |
 | Logging | 9 | 3 |
 | Platform | 21 | 16 |
@@ -24,9 +24,9 @@
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
 | Widget | 171 | 201 |
-| **合计** | **474** | **381** |
+| **合计** | **475** | **381** |
 
-覆盖 376 个文件 · 描述性提及 30 处（grep 口径的污染源，不计入）
+覆盖 376 个文件 · 描述性提及 32 处（grep 口径的污染源，不计入）
 
 ## App 层
 
@@ -314,7 +314,7 @@
 
 ## Input 层
 
-### @api（应用可读面） · 18
+### @api（应用可读面） · 19
 
 | 符号 | 种类 | 位置 |
 |---|---|---|
@@ -334,6 +334,7 @@
 | `SemanticsRole` | enum | src/Input/SemanticsRole.php:6 |
 | `SemanticsSetValueEvent` | class | src/Input/SemanticsSetValueEvent.php:6 |
 | `SemanticsTree` | class | src/Input/SemanticsTree.php:6 |
+| `TextKeymap` | class | src/Input/TextKeymap.php:9 |
 | `ThemeChangedEvent` | class | src/Input/ThemeChangedEvent.php:6 |
 | `WindowDeactivatedEvent` | class | src/Input/WindowDeactivatedEvent.php:6 |
 
