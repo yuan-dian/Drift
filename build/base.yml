@@ -93,6 +93,12 @@ ld-flags:
   # AOT 转译后 PHP 函数栈帧远大于 Zend VM 虚拟栈 ⇒ 默认 1MB 链接栈会在深调用链
   # 上溢出崩溃。8MB 与 GUI 仓 / markdown-editor 一致。
   - /STACK:8388608
+  # ★ `/MAP`（2026-11-02）：真机崩溃只能拿到"模块+RVA"（见 `cpp-src/win32/crash_report.h`），
+  #   没有符号表就无从知道那个 RVA 是哪个函数。map 是**纯文本、链接期顺手生成**，
+  #   比 pdb（要 /DEBUG + /Zi，会拖慢构建并让 exe 变大）划算得多。
+  #   ★ 落盘位置是**链接器 cwd**（= 仓库根，与 exe 同目录），名字 = 输出名 + `.map`。
+  #   它和 exe 一样是构建产物 ⇒ `*.map` 已在 `.gitignore`。
+  - /MAP
   # ── Skia（**按依赖顺序，依赖者在前** —— 顺序错了就是一堆 LNK2019）──
   # ★ 不含 skottie（头不完整、不可用）/ skshaper / skparagraph / skunicode_* / icu：
   #   M1 的 SkiaCanvas 不做文本塑形 ⇒ 不链 ICU、也就不需要 icudtl.dat。

@@ -101,6 +101,7 @@ typedef BOOL (WINAPI *DriftSetWindowCompositionAttribute)(HWND, DriftWindowCompo
 #include "core/io_pool.h"
 #include "win32/io_wake.h"
 #include "win32/image_decode.h"
+#include "win32/crash_report.h"
 
 using namespace php;
 
@@ -2474,6 +2475,13 @@ static HICON loadModuleIcon(HINSTANCE instance, int cx, int cy)
 // ══════════════════════════════════════════════════════ 窗口生命周期 ══
 
 Int php_drift_win_create(String title, Int width, Int height) {
+    // ★ **进程级崩溃捕获**（2026-11-02）：真机 `watermark.exe` 在任务完成后静默消失，
+    //   Windows 只留一条 `php8ts.dll+0x24b30 / 0xc0000005`——没有栈就只能猜。
+    //   ★ 挂在这里而不是 `main()`：那是 tpc 生成的，改不了；而**任何** GUI 进程
+    //     都必然先建窗 ⇒ 覆盖面与本仓应用形态一致（无窗口的 CLI 不走这条路）。
+    //   ★ 幂等（`SetUnhandledExceptionFilter` 可重复调），多窗口不会叠加。
+    drift::win32::installCrashHandler();
+
     // ★ **必须在建窗 / 取 DC 之前**：Windows 在第一次建窗或取 DC 时就锁定 DPI 感知
     //   级别（§6 的分数缩放模型要求我们自己按物理像素画，而只有 per-monitor 感知才
     //   拿得到"每显示器 DPI + WM_DPICHANGED"）。详见 enablePerMonitorDpi() 的注释。

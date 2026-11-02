@@ -7,6 +7,8 @@
 !/build/app.manifest
 apps/*/build/
 *.exe
+# 链接期 /MAP 产物（崩溃 RVA 对照表，见 build/base.yml）
+*.map
 *.obj
 *.o
 *.dll

@@ -20,7 +20,8 @@ declare(strict_types=1);
  *   docref    文档 file:line / § 引用
  *   probe     探针骨架（probe-audit --selftest）
  *   pixels    像素契约（probe_pixels --selftest，依赖本机 python ⇒ 允许"没测到"）
- *   tick      每帧固定税（frame-tax --check，6 条自洽判据）  ← 2026-11-02 新增
+ *   tick      每帧固定税（frame-tax --check，6 条自洽判据）
+ *   sym       崩溃符号翻译（rva2sym --selftest，6 条；合成 map，无构建前置）
  *   unit      纯单元
  *   feature★  场景测试（真挂载 + 推帧）
  *   golden    原语像素基线
@@ -29,10 +30,10 @@ declare(strict_types=1);
  *
  * ★ 耗时**不写在这里**了（2026-11-02）：这份清单曾逐项标着"~4.6s / ~22.8s、合计 63.4s"，
  *   而实际早已是 120s 量级 —— 数字一旦没有判据就会烂，且烂了没人发现。
- *   要耗时就跑一遍看最后一行（`✓ 全部通过（12 项，Xs）`），别把会漂的数抄进注释。
- *   历史参考：2026-11-02 两次跑 `12 项 135.3s` / `120.8s`（lint 886 文件 · unit 449 /
- *   feature 618 · smoke 460 ok · docref 79 篇）。★ 同一台机器两次差 11% —— 这本身
- *   就是「别把耗时抄进注释」的理由。
+ *   要耗时就跑一遍看最后一行（`✓ 全部通过（N 项，Xs）`）；**项数也以那一行为准**，
+ *   别把会漂的数抄进注释（加一项检查就过期一次）。
+ *   历史快照（**不是当前值**，仅供"同一台机器波动有多大"的参考）：2026-11-02 12 项
+ *   两次跑 135.3s / 120.8s。★ 两次差 11% —— 这本身就是「别把耗时抄进注释」的理由。
  *
  * ★ 为什么这么慢（2026-10-28 定位后的真实结构，仍未变）：
  *   ① **feature**：每例都真的建树+layout+paint（内存峰值 692MB）。这是"真挂载"
@@ -110,6 +111,9 @@ $checks = [
         false,
     ],
     'tick'     => ['每帧固定税（frame-tax）', [PHP_BINARY, $root . '/tools/frame-tax-probe.php', '--check'], false],
+    // ★ 崩溃日志里的 `模块+RVA` 能不能翻成函数名 —— 这是"崩溃可观测"闭环的最后一环。
+    //   自检用**合成 map**，不依赖有没有构建过 exe（所以廉价、无前置）。
+    'sym'      => ['崩溃符号翻译（rva2sym）', [PHP_BINARY, $root . '/tools/rva2sym.php', '--selftest'], false],
     'unit'     => ['unit（纯单元）', [PHP_BINARY, $root . '/tools/phpunit-run.php', 'unit'], false],
     'feature'  => ['feature（场景）', [PHP_BINARY, $root . '/tools/phpunit-run.php', 'feature'], true],
     'golden'   => ['golden 原语', [PHP_BINARY, $root . '/tools/golden-raster.php', '--check', '--canvas'], false],
