@@ -3,7 +3,6 @@ declare(strict_types=1);
 
 namespace Drift\Layout;
 
-use Drift\Core\Pipeline;
 use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Matrix2D;
@@ -187,84 +186,15 @@ abstract class RenderBox extends RenderObject
         return $this->size !== null;
     }
 
-    /**
-     * 渲染树**需要重排**的绝对序号（跨整棵树，含浮层那棵第二根树）。
-     *
-     * ★ 存在的理由（2026-10-27，A 批第 1 项）：`Frame` 跳过 layout 的判据是
-     *   "没重建 + 约束没变 + 盒没换代"。前两条覆盖不了**盒就地更新** ——
-     *   滚动偏移改成推给盒之后，本帧既没有 `rebuild()`、也没有换盒，
-     *   而盒里那两个数变了 ⇒ 不重排就是**画面停在旧位置**（且不报错）。
-     *
-     * ★ 为什么序号住 `Layout` 而不是 `Widget\State`：`RenderBox` 不能依赖
-     *   Widget 层（依赖方向 Widget → Layout）。`State::boxEpoch()` 现在**转发**
-     *   到这里 ⇒ 全仓仍然只有**一个**序号、一个含义："渲染树有东西变了，必须重排"。
-     *   两个序号迟早会漂（一处记得加、另一处忘了）。
-     *
-     * ★★ 值住 `Pipeline`（2026-11-02，技术债 D3①）：原先 `private static` ⇒ 两个
-     *   应用的盒换代互相触发对方重排。`markNeedsLayout()` 的签名保持不变 ——
-     *   它的语义是"**渲染树**变了"，不是"这个盒变了"。
-     */
-
-    /**
-     * `layout()` 被调用的累计次数 —— **量具**（`smoke` 用它断言"滚动不重排"）。
-     *
-     * ★★ 为什么必须有它：滚动期"重排了"与"没重排"在**画面上完全一样**
-     *   （偏移的应用已抽成 `applyScrollOffsets()`，两条路得到同样的子盒
-     *   offset）⇒ 复杂度没有行为差异 ⇒ 只能靠计数器证伪。同 `Element::$pairChecks`。
-     *
-     * ★★ 值住 `Pipeline`（同 `$layoutEpoch`）。
-     */
-
-    /** @internal `Frame` 的"跳过 layout"判据之一（`05` §5.4 第三步） */
-    public static function layoutEpoch(): int
-    {
-        return Pipeline::current()->layoutEpoch();
-    }
-
-    /** @internal 量具：`layout()` 累计次数（见 `$layoutCount`） */
-    public static function layoutCount(): int
-    {
-        return Pipeline::current()->layoutCount();
-    }
-
-    /**
-     * 层缓存的量具：真画（`paint()`）与重放（`DisplayList::replay()`）的累计次数。
-     *
-     * ★ 为什么又是计数器：缓存命中与否在**画面上完全相同**（判据就是"等价替换"），
-     *   与 `$layoutCount` 同一类困境 ⇒ 只能计数证伪（见 `$layoutCount` 的注）。
-     *   命中率 = replay / (paint + replay)。值住 `Pipeline`。
-     */
-
-    /** @internal 量具：真画累计次数（见上） */
-    public static function paintCount(): int
-    {
-        return Pipeline::current()->paintCount();
-    }
-
-    /** @internal 量具：层缓存重放累计次数（见上） */
-    public static function replayCount(): int
-    {
-        return Pipeline::current()->replayCount();
-    }
-
-    /**
-     * 声明"**整棵树**需要重排"（盒换代 ⇒ 新盒还没有 `size`）。
-     *
-     * ★ 只给换盒那条路调（`State::noteBoxReplaced()` ← `Element::syncBox()`）。
-     *   **滚动偏移不走这里**（2026-10-27 第二版）：偏移只改子盒的 `offset`，
-     *   不改任何盒的 `size` ⇒ 由 `applyScrollOffsets()` 就地应用即可；
-     *   借这条通道去"让偏移生效"会让 `Frame` 重排整棵树（实测滚动帧
-     *   `layout` 3.65ms，占掉一半）。
-     * ★ 它**不触发绘制**：重排过 ⇒ `Frame` 本帧的 `layout` 段跑过 ⇒ 必然要画
-     *   （`Frame::run` 的 paint 判据含"本帧排过"）。**不要**顺手加
-     *   `markNeedsPaint()`：那会让"换盒"同时推进两个序号，将来要按序号定位
-     *   "到底什么变了"时永远分不清。
-     * @internal
-     */
-    public static function markNeedsLayout(): void
-    {
-        Pipeline::current()->bumpLayoutEpoch();
-    }
+    // ★★ 这里原先住 5 个静态门面（`layoutEpoch` / `layoutCount` / `paintCount` /
+    //   `replayCount` / `markNeedsLayout`），全部一行转发到 `Pipeline`。2026-11-02
+    //   删掉（D3 收口）。带来的两个变化：
+    //     · 写点：`$this->pipeline()->bumpLayoutEpoch()` —— 只有一个名字，且如实
+    //       表达"往本帧的账本上记一笔"，不再伪装成"标记这个盒"。
+    //     · 读点：树外观察者（`Frame` / 测试 / 探针）写 `Pipeline::current()->…`。
+    //   ★ 各计数的存在理由（"滚动重排与不重排在画面上完全一样 ⇒ 只能计数证伪"，
+    //     以及 `layoutEpoch` 与 `paintEpoch` 为什么是两个号）已随字段搬到
+    //     `Pipeline` 的对应方法上 —— 那里是唯一需要读它的人会看到的地方。
 
     /** 父定位子（C1）：子不自定位，所以这两个只有父会写 */
     public function offsetX(): float
@@ -297,7 +227,7 @@ abstract class RenderBox extends RenderObject
         $this->offsetX = $x;
         $this->offsetY = $y;
 
-        self::markNeedsPaint();
+        $this->pipeline()->bumpPaintEpoch();
     }
 
     /**
@@ -317,7 +247,7 @@ abstract class RenderBox extends RenderObject
         $this->baseY = $y;
         $this->hasBase = true;
 
-        self::markNeedsPaint();
+        $this->pipeline()->bumpPaintEpoch();
     }
 
     public function hasBase(): bool
@@ -410,7 +340,7 @@ abstract class RenderBox extends RenderObject
      */
     final public function layout(BoxConstraints $constraints): Size
     {
-        Pipeline::current()->bumpLayout();
+        $this->pipeline()->bumpLayout();
 
         $m = $this->mods;
 
@@ -950,7 +880,7 @@ abstract class RenderBox extends RenderObject
         //   靠的是"paint 无条件跑"，门控之后必须显式说一声 —— 否则现象与 2026-10-29
         //   那个"值在滑、屏上是死的"**一模一样**，只是换了个成因（那次是缓存命中，
         //   这次是整帧被跳过），排查起来会更难（因为缓存那层已经是对的）。
-        self::markNeedsPaint();
+        $this->pipeline()->bumpPaintEpoch();
     }
 
     /**
@@ -1087,7 +1017,7 @@ abstract class RenderBox extends RenderObject
             }
         }
 
-        self::markNeedsPaint();
+        $this->pipeline()->bumpPaintEpoch();
     }
 
     /** @return array{0: float, 1: float} `[dx, dy]` */
@@ -1165,14 +1095,14 @@ abstract class RenderBox extends RenderObject
             $w = $s === null ? -1.0 : $s->width;
             $h = $s === null ? -1.0 : $s->height;
 
-            $epoch = Pipeline::current()->layoutEpoch();
+            $epoch = $this->pipeline()->layoutEpoch();
             $rec = $layer->beginRecord($canvas, $epoch, $w, $h);
             if ($rec === null) {   // 命中：整棵子树一次 paint() 都不跑
-                Pipeline::current()->bumpReplay();
+                $this->pipeline()->bumpReplay();
 
                 return;
             }
-            Pipeline::current()->bumpPaint();
+            $this->pipeline()->bumpPaint();
             $this->paint($rec);
             $layer->endRecord($canvas, $epoch, $w, $h);
 

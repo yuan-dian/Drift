@@ -609,7 +609,7 @@ final class SelectState extends State
  * ★ 只服务**控件私有态**（方向键高亮）：受控值那条路归框架
  *   （`Widget::overlaySignature()`），别往这里塞 —— 一个信号两种职责，
  *   下一个人就分不清"这条为什么没生效"该查哪边。
- * ★ 为什么不是 `Cell`：`Cell::setIfChanged()` 只标脏**它自己的属主** `State`
+ * ★ 为什么不是 State 里的一个普通字段：`setState()` 只标脏**它自己的属主** `State`
  *   （住同一个 State 里 ⇒ 只能影响那一棵子树）。面板在另一棵树，要的是"广播"。
  * ★ 它不承载业务数据（不是 `Store`）：只表达"面板该重读了"，且**不出现在公共
  *   API 上**（`SelectState::$signal` 是私有的）。

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\State;
 
+use Drift\Core\Pipeline;
 use Drift\Dev\Smoke\State\HoverWidget;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Widget\State;
@@ -21,7 +22,7 @@ final class SettleDriftTest extends SmokeTestCase
     {
         $ctx = smokeContext();
 
-        $pendingBase = State::pendingDirty();
+        $pendingBase = Pipeline::current()->pendingDirty();
 
         $driftElement = (new HoverWidget())->createElement();
         $driftElement->mount(null, $ctx);
@@ -32,8 +33,8 @@ final class SettleDriftTest extends SmokeTestCase
         }
         check(
             'settle · 计数不漂移（100 帧后 pendingDirty 与开局一致）',
-            State::pendingDirty() === $pendingBase,
-            'pending=' . State::pendingDirty() . ' base=' . $pendingBase
+            Pipeline::current()->pendingDirty() === $pendingBase,
+            'pending=' . Pipeline::current()->pendingDirty() . ' base=' . $pendingBase
         );
         $driftElement->unmount();
 

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Frame;
 
+use Drift\Core\Pipeline;
 use Drift\Dev\Smoke\App\RevealApplication;
 use Drift\Dev\Tests\Support\Frame;
 use Drift\Dev\Tests\Support\SmokeTestCase;
@@ -30,7 +31,7 @@ final class MountRegistryTest extends SmokeTestCase
         //   节点 —— 反过来的话登记落到"上一个用例的管线"上，本应用的帧永远看不到它
         //   （这正是 D3 要的行为：树外节点不该被随便哪个应用的帧推进）。
         $mountApp = Frame::open(new RevealApplication(), 320.0, 200.0);
-        State::takeMountedThisFrame();   // 清掉建树期登记的（已经被首帧消费过）
+        Pipeline::current()->takeMounted();   // 清掉建树期登记的（已经被首帧消费过）
 
         // ⑳ mount() 之后 ⇒ 登记表里有 1 条（消费方还没跑）
         $mountSpin = Spinner::make()->createElement();
@@ -42,16 +43,16 @@ final class MountRegistryTest extends SmokeTestCase
         )?->state();
         check(
             '挂载登记 · mount() 之后登记表里有 1 条（等帧来消费）',
-            State::mountedCount() === 1 && $mountSpinState instanceof SpinnerState,
-            'mounted=' . State::mountedCount(),
+            Pipeline::current()->mountedCount() === 1 && $mountSpinState instanceof SpinnerState,
+            'mounted=' . Pipeline::current()->mountedCount(),
         );
 
         // ㉑ 一帧之后 ⇒ 登记表清空，且那个不在应用树里的 State 真的被 tick 了
         $mountApp->tick();
         check(
             '挂载登记 · 一帧之后被消费干净（不会无限累积）',
-            State::mountedCount() === 0,
-            'mounted=' . State::mountedCount(),
+            Pipeline::current()->mountedCount() === 0,
+            'mounted=' . Pipeline::current()->mountedCount(),
         );
         $mountStep = $mountSpinState instanceof SpinnerState ? $mountSpinState->step() : -1;
         check(
@@ -62,7 +63,7 @@ final class MountRegistryTest extends SmokeTestCase
 
         // ㉒ 已卸载的登记项被跳过
         $deadApp = Frame::open(new RevealApplication(), 320.0, 200.0);
-        State::takeMountedThisFrame();
+        Pipeline::current()->takeMounted();
         $deadSpin = Spinner::make()->createElement();
         $deadSpin->mount(null, smokeContext());
         $deadState = findElement(
@@ -73,9 +74,9 @@ final class MountRegistryTest extends SmokeTestCase
         $deadApp->tick();
         check(
             '挂载登记 · 已卸载的登记项被跳过（不 tick 死节点）',
-            $deadState instanceof SpinnerState && $deadState->step() === 0 && State::mountedCount() === 0,
+            $deadState instanceof SpinnerState && $deadState->step() === 0 && Pipeline::current()->mountedCount() === 0,
             'step=' . ($deadState instanceof SpinnerState ? $deadState->step() : -1)
-                . ' mounted=' . State::mountedCount(),
+                . ' mounted=' . Pipeline::current()->mountedCount(),
         );
 
         $this->flushChecks();

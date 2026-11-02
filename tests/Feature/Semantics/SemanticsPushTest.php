@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Semantics;
 
+use Drift\Core\Pipeline;
 use Drift\Dev\Smoke\App\EchoApplication;
 use Drift\Dev\Smoke\App\FocusTwoApplication;
 use Drift\Dev\Smoke\App\GestureApplication;
@@ -41,7 +42,7 @@ final class SemanticsPushTest extends SmokeTestCase
         //   （旧写法 `$sv0 < $sv1` 在新实现下会读到两个不同应用的两条号。）
         $app = new EchoApplication();
         $app->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(120.0, 120.0)));
-        $sv = Element::structureVersion();
+        $sv = Pipeline::current()->structureVersion();
         check(
             '语义两档 · 结构版本号随挂载增长（mount() 里 +1）',
             $sv > 0 && $sv === $app->pipeline()->structureVersion(),
@@ -67,13 +68,13 @@ final class SemanticsPushTest extends SmokeTestCase
         );
 
         $pushes = 0;
-        $svBefore = Element::structureVersion();
+        $svBefore = Pipeline::current()->structureVersion();
         $ts = 0.0;
         for ($i = 0; $i < 8; $i++) {
             $ts += 16.0;
             $app->frame($ts, BoxConstraints::tight(new Size(120.0, 120.0)));
         }
-        $svAfter = Element::structureVersion();
+        $svAfter = Pipeline::current()->structureVersion();
         check(
             '语义两档 · coalesce：动画中 8 帧 ⇒ 推 2 次（每 4 帧一次）',
             $pushes === 2 && $app->semanticsMode() === 'coalesce',
@@ -116,7 +117,7 @@ final class SemanticsPushTest extends SmokeTestCase
         });
         $app->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(400.0, 200.0)));
         $pushes = 0;
-        $verBefore = Element::structureVersion();
+        $verBefore = Pipeline::current()->structureVersion();
         $app->dispatchInput(ScrollEvent::make(200.0, 100.0, 3.0)); // 3 格 = 144px ⇒ 窗口换行
 
         // ★ 滚轮是**带动画**的（`glideByAxis` 摊成若干帧）⇒ 结构变发生在**换行那一帧**，
@@ -132,7 +133,7 @@ final class SemanticsPushTest extends SmokeTestCase
             $prev = $pushes;
             $ts += 16.0;
             $app->frame($ts, $c);
-            if (Element::structureVersion() > $verBefore) {
+            if (Pipeline::current()->structureVersion() > $verBefore) {
                 $deltaAtChange = $pushes - $prev;
                 $modeAtChange = $app->semanticsMode();
             }
@@ -141,7 +142,7 @@ final class SemanticsPushTest extends SmokeTestCase
         check(
             '语义两档 · 虚拟列表滚动换了行 ⇒ 结构变 ⇒ 立即 full（不攒）',
             $deltaAtChange === 1 && $modeAtChange === 'full',
-            'ver=' . $verBefore . '->' . Element::structureVersion()
+            'ver=' . $verBefore . '->' . Pipeline::current()->structureVersion()
                 . ' delta=' . ($deltaAtChange ?? -1) . ' mode=' . $modeAtChange,
         );
     }
@@ -167,7 +168,7 @@ final class SemanticsPushTest extends SmokeTestCase
         $app->frame(16.0, BoxConstraints::tight(new Size(320.0, 200.0)));
         $pushes = 0;
         $labelBefore = $app->focusedLabel();
-        $verBefore = Element::structureVersion();
+        $verBefore = Pipeline::current()->structureVersion();
         $app->dispatchInput(KeyEvent::down(KeyChord::tab()));
         $labelAfter = $app->focusedLabel();
         $app->frame(16.0, BoxConstraints::tight(new Size(320.0, 200.0)));
@@ -177,10 +178,10 @@ final class SemanticsPushTest extends SmokeTestCase
                 && $app->semanticsMode() === 'full'
                 && $labelBefore === '甲'
                 && $labelAfter === '乙'
-                && Element::structureVersion() === $verBefore,
+                && Pipeline::current()->structureVersion() === $verBefore,
             'pushes=' . $pushes . ' mode=' . $app->semanticsMode()
                 . ' focus=' . $labelBefore . '->' . $labelAfter
-                . ' ver=' . $verBefore . '->' . Element::structureVersion(),
+                . ' ver=' . $verBefore . '->' . Pipeline::current()->structureVersion(),
         );
     }
 

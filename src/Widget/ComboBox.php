@@ -55,7 +55,7 @@ use Drift\State\Subject;
  * 本控件是**第一个把 `StatefulWidget` 放进浮层树**的消费者，这条链路因此
  * 在 smoke 里有一条专门的断言（只靠读代码看不出来它通不通）。
  *
- * ★ 为什么用 `Subject` 而不是 `Cell`：`Cell` 只标脏**它自己的属主**（一个
+ * ★ 为什么用 `Subject` 而不是 State 里的字段：字段只标脏**它自己的属主**（一个
  *   `State`），跨不了树。为什么不用"面板登记回调"的手写注册表：那要在
  *   `dispose()` 里配对注销，漏一次就是永久泄漏 —— 而 `watch()` 的订阅袋
  *   （`State::dropSubscriptions()`）已经把这件事故结构性地做掉了。
@@ -800,7 +800,7 @@ final class ComboBoxState extends State
 /**
  * 查询词的广播端 —— **专门为了跨树**（主树输入、浮层树重建）。
  *
- * ★ 为什么不是一个普通的 `Cell`：`Cell::setIfChanged()` 只标脏它自己的属主
+ * ★ 为什么不是 State 里的一个普通字段：字段的 `setState()` 只标脏它自己的属主
  *   `State`（住同一个 `State` 里，因此也只能影响那一棵子树）。面板在**另一棵树**，
  *   需要的是"广播"而不是"标脏自己" ⇒ 用 `Subject` 这一族。
  * ★ 它不承载业务数据（不是 `Store`）：只装一个 UI 态字符串，且**不出现在

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\App;
 
+use Drift\Core\Pipeline;
 use Drift\App\Frame;
 use Drift\Dev\Preview\SvgSurface;
 use Drift\Dev\Tests\Support\SmokeTestCase;
@@ -32,10 +33,10 @@ final class FrameTest extends SmokeTestCase
         $tight = BoxConstraints::tight(new Size(200.0, 100.0));
         $frame->run($el, $tight, 0.0);
 
-        $runsBefore = Frame::settleRunCount();
+        $runsBefore = Pipeline::current()->settleRunCount();
         $el->update(Text::make('b'));
         $frame->run($el, $tight, 16.0);
-        $runs = Frame::settleRunCount() - $runsBefore;
+        $runs = Pipeline::current()->settleRunCount() - $runsBefore;
 
         check(
             '帧外直调 update() 换盒 ⇒ settle 必须跑（无 setState，只靠盒换代拦）',
@@ -57,11 +58,11 @@ final class FrameTest extends SmokeTestCase
         $tight = BoxConstraints::tight(new Size(200.0, 100.0));
         $frame->run($el, $tight, 0.0);
 
-        $runsBefore = Frame::settleRunCount();
-        $skipsBefore = Frame::settleSkipCount();
+        $runsBefore = Pipeline::current()->settleRunCount();
+        $skipsBefore = Pipeline::current()->settleSkipCount();
         $frame->run($el, $tight, 16.0);
-        $runs = Frame::settleRunCount() - $runsBefore;
-        $skips = Frame::settleSkipCount() - $skipsBefore;
+        $runs = Pipeline::current()->settleRunCount() - $runsBefore;
+        $skips = Pipeline::current()->settleSkipCount() - $skipsBefore;
 
         check(
             '无任何变化的一帧 ⇒ settle 整段跳过（跑 0 / 跳 1）',
@@ -94,18 +95,18 @@ final class FrameTest extends SmokeTestCase
         $frame->run($el, $tight, 0.0);
         $drawn = $surface->frameCount();
 
-        $runsBefore = Frame::paintRunCount();
-        $skipsBefore = Frame::paintSkipCount();
+        $runsBefore = Pipeline::current()->paintRunCount();
+        $skipsBefore = Pipeline::current()->paintSkipCount();
         $frame->run($el, $tight, 16.0);
         $frame->run($el, $tight, 32.0);
 
         check(
             '无任何变化的两帧 ⇒ paint 整段跳过（跑 0 / 跳 2，表面一帧都没起）',
-            Frame::paintRunCount() - $runsBefore === 0
-                && Frame::paintSkipCount() - $skipsBefore === 2
+            Pipeline::current()->paintRunCount() - $runsBefore === 0
+                && Pipeline::current()->paintSkipCount() - $skipsBefore === 2
                 && $surface->frameCount() === $drawn,
-            'run=' . (Frame::paintRunCount() - $runsBefore)
-                . ' skip=' . (Frame::paintSkipCount() - $skipsBefore)
+            'run=' . (Pipeline::current()->paintRunCount() - $runsBefore)
+                . ' skip=' . (Pipeline::current()->paintSkipCount() - $skipsBefore)
                 . ' drawn=' . ($surface->frameCount() - $drawn),
         );
 
@@ -133,16 +134,16 @@ final class FrameTest extends SmokeTestCase
         check('夹具前提：根盒拿得到', $box !== null);
 
         // 对照组：同值写一次 ⇒ 不该画（`applyCompose` 的早退，静止画面不许重录）
-        $runsBefore = Frame::paintRunCount();
+        $runsBefore = Pipeline::current()->paintRunCount();
         $box?->setCompose(1.0);
         $frame->run($el, $tight, 16.0);
-        $sameValueRuns = Frame::paintRunCount() - $runsBefore;
+        $sameValueRuns = Pipeline::current()->paintRunCount() - $runsBefore;
 
         // 真变了 ⇒ 必须画
-        $runsBefore = Frame::paintRunCount();
+        $runsBefore = Pipeline::current()->paintRunCount();
         $box?->setCompose(0.5);
         $painted = $frame->run($el, $tight, 32.0);
-        $changedRuns = Frame::paintRunCount() - $runsBefore;
+        $changedRuns = Pipeline::current()->paintRunCount() - $runsBefore;
 
         check(
             'setCompose 写同值 ⇒ 不画；真改 alpha ⇒ 必须画（且返回 true）',
@@ -182,16 +183,16 @@ final class FrameTest extends SmokeTestCase
         $frame->run($el, $tight, 8.0);
 
         // 第一次 tick：只记起点（值不变）⇒ 不该画
-        $runsBefore = Frame::paintRunCount();
+        $runsBefore = Pipeline::current()->paintRunCount();
         $box?->tickAnimations(16.0);
         $frame->run($el, $tight, 16.0);
-        $firstTickRuns = Frame::paintRunCount() - $runsBefore;
+        $firstTickRuns = Pipeline::current()->paintRunCount() - $runsBefore;
 
         // 第二次 tick：dt > 0 ⇒ 值真的动了 ⇒ 必须画
-        $runsBefore = Frame::paintRunCount();
+        $runsBefore = Pipeline::current()->paintRunCount();
         $box?->tickAnimations(32.0);
         $frame->run($el, $tight, 32.0);
-        $secondTickRuns = Frame::paintRunCount() - $runsBefore;
+        $secondTickRuns = Pipeline::current()->paintRunCount() - $runsBefore;
 
         check(
             'hover 过渡：起点帧不画、推进帧必须画',

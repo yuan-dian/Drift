@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\State;
 
+use Drift\Core\Pipeline;
 use Drift\Async\AsyncValue;
 use Drift\Async\Future;
 use Drift\Dev\Smoke\App\AsyncCommandApplication;
@@ -578,7 +579,7 @@ final class AsyncCommandTest extends SmokeTestCase
         $command->run(1);
         $app->frame(32.0, $constraints);
 
-        $baseline = State::pendingDirty();   // 此刻应当已经归零（脏被 settle 消费了）
+        $baseline = Pipeline::current()->pendingDirty();   // 此刻应当已经归零（脏被 settle 消费了）
 
         $command->dispose();
         check('AsyncCommand · dispose 取消了在途任务', $made[0]->isCancelled());
@@ -589,8 +590,8 @@ final class AsyncCommandTest extends SmokeTestCase
 
         check(
             'AsyncCommand · dispose 后的结算不标脏（pendingDirty 不漂移）',
-            State::pendingDirty() === $baseline,
-            'pendingDirty=' . State::pendingDirty() . ' baseline=' . $baseline,
+            Pipeline::current()->pendingDirty() === $baseline,
+            'pendingDirty=' . Pipeline::current()->pendingDirty() . ' baseline=' . $baseline,
         );
 
         check(
@@ -626,7 +627,7 @@ final class AsyncCommandTest extends SmokeTestCase
         $command->run(1);
         $app->frame(32.0, $constraints);
 
-        $baseline = State::pendingDirty();
+        $baseline = Pipeline::current()->pendingDirty();
 
         // ★ 只卸载宿主，**不** `dispose()` 命令 —— 夹具页面根本没有 `dispose()`，
         //   这正是"页面什么都不写"的真实形态：停任务的事由框架做。
@@ -635,8 +636,8 @@ final class AsyncCommandTest extends SmokeTestCase
 
         check(
             'AsyncCommand · 忘了 dispose 也不让迟到的结算标脏（pendingDirty 不漂移）',
-            State::pendingDirty() === $baseline,
-            'pendingDirty=' . State::pendingDirty() . ' baseline=' . $baseline,
+            Pipeline::current()->pendingDirty() === $baseline,
+            'pendingDirty=' . Pipeline::current()->pendingDirty() . ' baseline=' . $baseline,
         );
 
         $this->flushChecks();

@@ -93,7 +93,15 @@ final class Pipeline
 
     private int $contentVersion = 0;
 
-    /** @internal 节点**增删或重排**了（`Element::bumpStructure()` 的唯一写点） */
+    /**
+     * @internal 节点**增删或重排**了（`Element` 的三处 `$this->pipeline()->bumpStructure()`）
+     *
+     * ★ **只在真的变了时 +1**：`updateChildren()` 每次 rebuild 都会被调，
+     *   无条件 +1 会让版本号每帧都变 ⇒ "结构没变"永远判不出来（等于没做）。
+     * ★ 唯一消费者是语义推送的档位选择：结构变了 ⇒ 必须推 `full`（增量表达
+     *   不了"多了一个节点"）。没有它就只能靠"有 State 脏"猜 —— 而脏不等于
+     *   结构变（改个 label 是脏，不是结构变）。
+     */
     public function bumpStructure(): void
     {
         ++$this->structureVersion;
@@ -345,7 +353,20 @@ final class Pipeline
 
     private int $paintEpoch = 0;
 
-    /** @internal 换过盒（`RenderBox::markNeedsLayout()` 的唯一写点） */
+    /**
+     * @internal 换过盒（`Element::syncBox()` 经 `$this->pipeline()->bumpLayoutEpoch()`）
+     *
+     * ★ 存在的理由（2026-10-27，A 批第 1 项）：`Frame` 跳过 layout 的判据是
+     *   "没重建 + 约束没变 + 盒没换代"。前两条覆盖不了**盒就地更新** ——
+     *   滚动偏移改成推给盒之后，本帧既没有 `rebuild()`、也没有换盒，
+     *   而盒里那两个数变了 ⇒ 不重排就是**画面停在旧位置**（且不报错）。
+     * ★ **它不触发绘制**：重排过 ⇒ `Frame` 本帧的 `layout` 段跑过 ⇒ 必然要画
+     *   （`Frame::run` 的 paint 判据含"本帧排过"）。**不要**顺手 bump paint：
+     *   那会让"换盒"同时推进两个序号，将来要按序号定位"到底什么变了"时分不清。
+     * ★ **滚动偏移不走这里**（2026-10-27 第二版）：偏移只改子盒的 `offset`，
+     *   不改任何盒的 `size` ⇒ 由 `applyScrollOffsets()` 就地应用即可；借这条通道
+     *   去"让偏移生效"会让 `Frame` 重排整棵树（实测滚动帧 `layout` 3.65ms）。
+     */
     public function bumpLayoutEpoch(): void
     {
         ++$this->layoutEpoch;
@@ -358,7 +379,7 @@ final class Pipeline
     }
 
     /**
-     * @internal 画面变过（`RenderObject::markNeedsPaint()` 的唯一写点）
+     * @internal 画面变过（`RenderObject::markPaintChanged()` 是这一笔的唯一入口）
      *
      * ★★ **帧外自动叫醒帧时钟**（2026-11-02，D1）：这条以前是
      *   `Application::needsFrameNow()` 的第八条判据（2026-11-01 补的第八条 ——
@@ -388,6 +409,16 @@ final class Pipeline
     //   ★ 这些数字**不是**业务状态：删掉它们处处都不变，只是"优化有没有生效"
     //     变成不可断言（滚动帧"重排了"与"没重排"画面上完全一样 ⇒ 只能计数证伪）。
     //   ★ 成本是一次自增（AOT 下就是一条 add），留在热路径上是划算的。
+    //
+    //   各计数的**独有理由**（都不重复，别合并）：
+    //   · `layoutCount`   —— "滚动不重排"的唯一可断言形式（行为上看不出来）
+    //   · `paintCount` / `replayCount` —— 层缓存命中率 = replay / (paint + replay)。
+    //     缓存命中与否在**画面上完全相同**（判据就是"等价替换"），同一个困境。
+    //   · `pairChecks`    —— **防 `O(n²)` 回潮**。复用行为对不对，smoke 用"元素实例
+    //     还是不是同一个"断言；但"是不是又退回平方扫描"没有任何行为差异，只在树大
+    //     了以后表现为慢 ⇒ 一次重构把 `O(n)` 改回 `O(n²)` 会**全绿通过**。
+    //   · `settle*` / `paint*` 四件 —— 帧的"整段跳过"有没有真的生效（D1 的空转
+    //     诊断也读它们：要了帧却连 settle 与 paint 都跳过 ⇒ 有人无条件空喊）。
     // ─────────────────────────────────────────────────────────────────
 
     private int $layoutCount = 0;

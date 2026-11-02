@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Table;
 
+use Drift\Core\Pipeline;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Geometry\Axis;
 use Drift\Widget\State;
@@ -69,10 +70,10 @@ final class ColumnWindowTest extends SmokeTestCase
 
         // ★ 横滚 100px：窗口 [100,420) 仍在 [0,450) 内 ⇒ 不该重建（否则"滚一点就重排全表"）
         $x0 = $textXOf($el, 'v0-0');
-        $before = State::rebuiltCount();
+        $before = Pipeline::current()->rebuiltCount();
         $state?->scrollByAxis(Axis::Horizontal, 100.0);
         $tableFrame($el);
-        $inBand = State::rebuiltCount() - $before;
+        $inBand = Pipeline::current()->rebuiltCount() - $before;
         check(
             '阶段 6 · 横滚 100px 未跨列 ⇒ 重建 0 次（窗口盖得住就不换列）',
             $inBand === 0,
@@ -80,10 +81,10 @@ final class ColumnWindowTest extends SmokeTestCase
         );
 
         // ★ 再滚 200（累计 300）：跨出 [0,450) ⇒ 必须换一批列
-        $before = State::rebuiltCount();
+        $before = Pipeline::current()->rebuiltCount();
         $state?->scrollByAxis(Axis::Horizontal, 200.0);
         $tableFrame($el);
-        $cross = State::rebuiltCount() - $before;
+        $cross = Pipeline::current()->rebuiltCount() - $before;
         check(
             '阶段 6 · 横滚跨出缓冲带 ⇒ 恰好重建 1 次（换列不是缺陷）',
             $cross === 1,

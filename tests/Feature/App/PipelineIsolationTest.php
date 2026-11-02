@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\App;
 
+use Drift\Core\Pipeline;
 use Drift\App\Application;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Tests\Support\SmokeTestCase;
@@ -89,9 +90,9 @@ final class PipelineIsolationTest extends SmokeTestCase
             'A 前=' . $before . ' 后=' . $a->pipeline()->structureVersion(),
         );
         check(
-            'D3 · 静态读（Element::structureVersion()）指向刚建的那个应用',
-            \Drift\Widget\Element::structureVersion() === $b->pipeline()->structureVersion(),
-            '静态=' . \Drift\Widget\Element::structureVersion()
+            'D3 · 静态读（`Pipeline::current()`）指向刚进入帧的那个应用',
+            Pipeline::current()->structureVersion() === $b->pipeline()->structureVersion(),
+            '静态=' . Pipeline::current()->structureVersion()
                 . ' B=' . $b->pipeline()->structureVersion(),
         );
 
@@ -152,7 +153,7 @@ final class PipelineIsolationTest extends SmokeTestCase
         $bEpoch = $b->pipeline()->layoutEpoch();
 
         $a->dispatchInput(\Drift\Input\PointerEvent::move(5.0, 5.0));
-        \Drift\Layout\RenderBox::markNeedsLayout();
+        Pipeline::current()->bumpLayoutEpoch();
 
         check(
             'D3 · 派发过输入之后，静态写点落到**本应用**的管线（B 不动）',
@@ -188,7 +189,7 @@ final class PipelineIsolationTest extends SmokeTestCase
             'A=' . $aEpoch . ' B=' . $bEpoch,
         );
 
-        \Drift\Layout\RenderBox::markNeedsLayout();
+        Pipeline::current()->bumpLayoutEpoch();
 
         check(
             'D3 · 静态写点落在**当前**管线上（A 涨 1，B 不动）',

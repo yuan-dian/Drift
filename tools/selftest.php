@@ -144,6 +144,14 @@ function drift_lint_selftest(string $root, Linter $linter): bool
         'app-subclass-ctor-parent' => [
             'apps/WidgetCtorWithoutParent.php:' . Diagnostic::ERROR,
         ],
+        // 静态门面回流守卫（2026-11-02 D3 收口）。
+        // ★ 两个"该响"覆盖读/写两种形态；`PipelineFacadeGood.php` 一条都不该有 ——
+        //   它验的是三件"看着像但不是"：`$this->pipeline()` / 实例方法直调 / 工厂转发。
+        //   第 ③ 件很重要：判据若写成"所有单行静态转发"，本仓 5 处工厂会一起误伤。
+        'static-pipeline-facade' => [
+            'src/Core/PipelineFacadeBad.php:' . Diagnostic::ERROR,
+            'src/Core/PipelineFacadeBad.php:' . Diagnostic::ERROR,
+        ],
     ];
 
     $ok = true;

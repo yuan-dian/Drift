@@ -59,7 +59,7 @@ final class FocusManager
     private ?Element $focused = null;
 
     /**
-     * 上次 `collect()` 时的 `Element::contentVersion()`（`null` = 还没收过）。
+     * 上次 `collect()` 时的内容版本号（`Pipeline::contentVersion()`；`null` = 还没收过）。
      *
      * ★ 与 `$collectedRoots` 一起构成"要不要重收"的签名，见 `collect()` 的注。
      */
@@ -160,7 +160,7 @@ final class FocusManager
         //   稳态帧里唯一的大头就是这里（实测 2000 节点 1.6ms/帧，
         //   `tools/_tax-probe.php`；一帧的固定税里它是最大单项）。
         //
-        //   ★ 判据用 `Element::contentVersion()` 而不是 `structureVersion()`：
+        //   ★ 判据用 `contentVersion()` 而不是 `structureVersion()`：
         //     后者看不见"`disabled()` 改了但节点没增删"，而那张表必须跟着变。
         //   ★ 根集合也要比：浮层开合不进主树，`contentVersion` 看不见它
         //     （与 `Frame` 的 paint 门控第 ⑤ 条同一个坑，已踩过一次）。
@@ -173,7 +173,7 @@ final class FocusManager
         foreach ($effective as $root) {
             $rootIds[] = \spl_object_id($root);
         }
-        $version = Element::contentVersion();
+        $version = Pipeline::current()->contentVersion();
         if ($version === $this->collectedVersion && $rootIds === $this->collectedRoots) {
             return;
         }

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Table;
 
+use Drift\Core\Pipeline;
 use Drift\App\Frame;
 use Drift\Dev\Preview\SvgSurface;
 use Drift\Dev\Tests\Support\SmokeTestCase;
@@ -36,12 +37,12 @@ final class LayerCacheTest extends SmokeTestCase
         $state = Fixtures::stateOf($el);
 
         // ① 滚动帧：内容没变，只是位置变了 ⇒ 边界全部命中
-        $paintsBefore = RenderBox::paintCount();
-        $replaysBefore = RenderBox::replayCount();
+        $paintsBefore = Pipeline::current()->paintCount();
+        $replaysBefore = Pipeline::current()->replayCount();
         $state?->scrollBy(40.0);
         $frame->run($el, $tight, 16.0);
-        $paints = RenderBox::paintCount() - $paintsBefore;
-        $replays = RenderBox::replayCount() - $replaysBefore;
+        $paints = Pipeline::current()->paintCount() - $paintsBefore;
+        $replays = Pipeline::current()->replayCount() - $replaysBefore;
 
         check(
             'Table · 滚动帧 ⇒ 边界全部命中层缓存（真画 0 次，且确实重放了）',
@@ -52,12 +53,12 @@ final class LayerCacheTest extends SmokeTestCase
         );
 
         // ② 换窗帧：内容真的变了 ⇒ 必须重排 + 必须重录
-        $layoutsBefore = RenderBox::layoutCount();
-        $paintsBefore = RenderBox::paintCount();
+        $layoutsBefore = Pipeline::current()->layoutCount();
+        $paintsBefore = Pipeline::current()->paintCount();
         $state?->scrollBy(400.0);   // 滚出缓冲带 ⇒ 换窗 ⇒ 重建 + 换盒
         $frame->run($el, $tight, 32.0);
-        $layouts = RenderBox::layoutCount() - $layoutsBefore;
-        $paints = RenderBox::paintCount() - $paintsBefore;
+        $layouts = Pipeline::current()->layoutCount() - $layoutsBefore;
+        $paints = Pipeline::current()->paintCount() - $paintsBefore;
 
         check(
             'Table · 滚出缓冲带换窗 ⇒ 重排 > 0（新行必须有 size，不许借"不重排"省掉）',

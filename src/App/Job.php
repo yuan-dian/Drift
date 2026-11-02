@@ -26,7 +26,7 @@ interface Job
      *
      * ★ 返回类型故意是 `mixed`：任务五花八门（取一页 / 删一行 / 算一个和），
      *   统一成一种 DTO 只会逼每个任务都套一层没有信息量的壳。类型由**调用点的
-     *   闭包签名**收窄（`function (Page $p): void { … }`）—— 与 `Cell::value()`、
+     *   闭包签名**收窄（`function (Page $p): void { … }`）—— 与
      *   `Draggable::payload()` 是同一手法。
      *
      * ★ **`run()` 里不许碰 Widget / Element / State**（§11.2 的分工）：后台只碰业务

@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Layout;
 
-use Drift\Core\Pipeline;
+use Drift\Core\PipelineAccess;
 use Drift\Geometry\Rect;
 use Drift\Input\CursorShape;
 use Drift\Rendering\AnimatedValue;
@@ -29,6 +29,8 @@ use Drift\Rendering\Canvas;
  */
 abstract class RenderObject
 {
+    use PipelineAccess;
+
     protected ?RenderObject $parent = null;
 
     /** @internal null = 本节点未声明光标形状（命中链会向上找更近的声明者，§9.1） */
@@ -50,7 +52,7 @@ abstract class RenderObject
      */
     protected function markPaintChanged(): void
     {
-        self::markNeedsPaint();
+        $this->pipeline()->bumpPaintEpoch();
     }
 
     /**
@@ -129,32 +131,11 @@ abstract class RenderObject
      * ★★ 序号**住管线不住类**（2026-11-02，技术债 D3）：原先是 `private static`，
      *   于是"两个窗口共享一个计数器 ⇒ A 窗滚动会让空闲的 B 窗也重画一帧"。
      *   现在每个 `Application` 一份 `Pipeline`，帧入口切换 ⇒ 那个代价没有了。
-     *   **本类的签名不变**（仍是 `static`）：它对外的语义本来就是"**树**变了"，
-     *   不是"**这个盒**变了" —— 写成实例方法会让"谁改了像素"这件事看起来住在盒上，
-     *   而实际判据是整棵树的序号（`Frame` 只比一个数）。
+     * ★ 写点统一走 `$this->pipeline()->bumpPaintEpoch()`（`markPaintChanged()` 是
+     *   本层唯一入口）。原先还有一个 `RenderObject::markNeedsPaint()` 静态门面，
+     *   2026-11-02 随 D3 收口一起删 —— 它只有这一个名字的第二个写法，读起来像
+     *   "标记这个盒"，实际记的是整棵树的账。
      */
-    /**
-     * 声明"**画面变了**，下一帧必须真的画"。
-     *
-     * ★ 只给本层的**就地写点**调：`setOffset()` / `setBase()` / `applyCompose()` /
-     *   `setBarOpacity()` / `tickAnimations()`。业务代码不该碰它 —— 业务改状态走
-     *   `setState()`，那条路有自己的信号（`State::markedCount()`）。
-     * ★ 值没变**不要**调：自增很便宜，但一次多余的自增就是一次多余的整帧重绘。
-     *   所有调用点都先做相等比较（`setCompose` 的 `applyCompose` 本来就有）。
-     *
-     * @internal
-     */
-    public static function markNeedsPaint(): void
-    {
-        Pipeline::current()->bumpPaintEpoch();
-    }
-
-    /** @internal `Frame` 的"跳过 paint"判据 */
-    public static function paintEpoch(): int
-    {
-        return Pipeline::current()->paintEpoch();
-    }
-
     public function parent(): ?RenderObject
     {
         return $this->parent;

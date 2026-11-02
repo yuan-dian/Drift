@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Table;
 
+use Drift\Core\Pipeline;
 use Drift\App\Frame;
 use Drift\Dev\Preview\SvgSurface;
 use Drift\Dev\Tests\Support\SmokeTestCase;
@@ -40,10 +41,10 @@ final class ScrollTest extends SmokeTestCase
         $tableScrollState = $tableStateOf($tableScroll);
         $tableFrame($tableScroll);   // 首帧排定：此刻窗 = [0, 12×40 = 480)
 
-        $tableRebuildsBefore = State::rebuiltCount();
+        $tableRebuildsBefore = Pipeline::current()->rebuiltCount();
         $tableScrollState?->scrollBy(40.0);   // 滚一行：窗仍盖得住 [40, 248)
         $tableFrame($tableScroll);
-        $tableScrollDelta = State::rebuiltCount() - $tableRebuildsBefore;
+        $tableScrollDelta = Pipeline::current()->rebuiltCount() - $tableRebuildsBefore;
         check(
             'Table · 滚动一行（缓冲带内）⇒ 重建 0 次',
             $tableScrollDelta === 0,
@@ -55,10 +56,10 @@ final class ScrollTest extends SmokeTestCase
             (string) ($tableBoxOf($tableScroll)?->appliedOffset(Axis::Vertical) ?? -1.0),
         );
 
-        $tableRebuildsBefore = State::rebuiltCount();
+        $tableRebuildsBefore = Pipeline::current()->rebuiltCount();
         $tableScrollState?->scrollBy(400.0);   // 滚出缓冲带：[440, 648) 超出 [0, 480)
         $tableFrame($tableScroll);
-        $tableScrollDelta = State::rebuiltCount() - $tableRebuildsBefore;
+        $tableScrollDelta = Pipeline::current()->rebuiltCount() - $tableRebuildsBefore;
         check(
             'Table · 滚出缓冲带 ⇒ 恰好重建 1 次（窗口必须换，这不是缺陷）',
             $tableScrollDelta === 1,
@@ -93,24 +94,24 @@ final class ScrollTest extends SmokeTestCase
             // ★ 不调 `setAccessible(true)`：PHP 8.1 起私有属性可直接读，8.5 已把它标废弃。
             $read = static fn(string $name): int => (int) new \ReflectionProperty(Frame::class, $name)->getValue($f);
 
-            return 'marked=' . State::markedCount() . '/' . $read('lastMarkedCount')
-                . ' box=' . State::boxEpoch() . '/' . $read('lastBoxEpoch')
-                . ' struct=' . Element::structureVersion() . '/' . $read('lastSettleStructure');
+            return 'marked=' . Pipeline::current()->markedCount() . '/' . $read('lastMarkedCount')
+                . ' box=' . Pipeline::current()->layoutEpoch() . '/' . $read('lastBoxEpoch')
+                . ' struct=' . Pipeline::current()->structureVersion() . '/' . $read('lastSettleStructure');
         };
 
         // 同一帧取全部计数：layouts / settle 都是"这一个滚动帧"的属性。
         // ★ 不要拆成两帧各测一条 —— 第二帧的 settle 判据会被第一帧"已经跳过"
         //   的残留状态影响，红的时候分不清是哪一帧的错。
-        $layoutsBefore = RenderBox::layoutCount();
-        $runsBefore = Frame::settleRunCount();
-        $skipsBefore = Frame::settleSkipCount();
-        $paintsBefore = Frame::paintRunCount();
+        $layoutsBefore = Pipeline::current()->layoutCount();
+        $runsBefore = Pipeline::current()->settleRunCount();
+        $skipsBefore = Pipeline::current()->settleSkipCount();
+        $paintsBefore = Pipeline::current()->paintRunCount();
         $state?->scrollBy(40.0);
         $frame->run($el, $tight, 16.0);
-        $layouts = RenderBox::layoutCount() - $layoutsBefore;
-        $deltaRuns = Frame::settleRunCount() - $runsBefore;
-        $deltaSkips = Frame::settleSkipCount() - $skipsBefore;
-        $deltaPaints = Frame::paintRunCount() - $paintsBefore;
+        $layouts = Pipeline::current()->layoutCount() - $layoutsBefore;
+        $deltaRuns = Pipeline::current()->settleRunCount() - $runsBefore;
+        $deltaSkips = Pipeline::current()->settleSkipCount() - $skipsBefore;
+        $deltaPaints = Pipeline::current()->paintRunCount() - $paintsBefore;
 
         check(
             'Table · 滚动一帧 ⇒ 重排 0 次（Frame 跳过 layout，paint 读到新 offset）',

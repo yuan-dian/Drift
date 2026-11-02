@@ -12,7 +12,6 @@ use Drift\Layout\RenderObject;
 use Drift\Rendering\RenderSurface;
 use Drift\Rendering\SurfaceProfile;
 use Drift\Widget\Element;
-use Drift\Widget\State;
 use Drift\Widget\StatefulElement;
 use Throwable;
 
@@ -39,14 +38,14 @@ final class Frame
      *   不确定。这里只做相等判断，摊平存储没有代价。
      */
     /**
-     * 上一帧 settle 时看到的**结构版本号**（`Element::structureVersion()`）。
+     * 上一帧 settle 时看到的**结构版本号**（管线 `structureVersion`）。
      *
      * ★ 为什么 settle 要单独记结构（而盒换代复用 `$lastBoxEpoch`）：节点的
      *   增删/重排会让**父的 `adoptBoxes()`** 变成必需，这件事不被盒换代覆盖
      *   （重排复用子、`mount()`/`unmount()` 之外不换盒）。
      */
     /**
-     * 上一帧 settle 时看到的**标脏序号**（`State::markedCount()`）。
+     * 上一帧 settle 时看到的**标脏序号**（管线 `markedCount`）。
      *
      * ★ 用只增不减的序号而不是 `pendingDirty()`：后者是全局的且**会漂移**
      *   （已卸载 / 不在本树的 State 脏着不被消费 ⇒ 永远 >0），拿它判"要不要
@@ -76,7 +75,7 @@ final class Frame
     private float $lastMaxHeight = 0.0;
 
     /**
-     * 上一帧排版时看到的**盒换代序号**（`State::boxEpoch()`）。
+     * 上一帧排版时看到的**盒换代序号**（管线 `layoutEpoch`）。
      *
      * ★★ 存在的理由是一条真实缺陷（2026-10-24 定位）：`$didRebuild` 来自
      *   `settle()` 的**帧内**重建差，而 `Element::update()` / `applyContext()`
@@ -91,7 +90,7 @@ final class Frame
     private int $lastBoxEpoch = -1;
 
     /**
-     * 上一帧 paint 时看到的**重绘序号**（`RenderObject::paintEpoch()`）。
+     * 上一帧 paint 时看到的**重绘序号**（管线 `paintEpoch`）。
      *
      * ★★ 初值 `-1` 同时充当"还没画过"的标记：首帧 `paintEpoch()` 至少是 0 ⇒
      *   `0 !== -1` ⇒ 一定画。**不另设 `hasPainted` 字段** —— 那份状态与 layout
@@ -166,34 +165,15 @@ final class Frame
      */
     private function needsSettle(): bool
     {
-        return State::markedCount() !== $this->lastMarkedCount
-            || State::boxEpoch() !== $this->lastBoxEpoch
-            || Element::structureVersion() !== $this->lastSettleStructure;
+        return $this->pipeline->markedCount() !== $this->lastMarkedCount
+            || $this->pipeline->layoutEpoch() !== $this->lastBoxEpoch
+            || $this->pipeline->structureVersion() !== $this->lastSettleStructure;
     }
 
-    /** @internal 量具：settle 段真跑的累计帧数 */
-    public static function settleRunCount(): int
-    {
-        return Pipeline::current()->settleRunCount();
-    }
-
-    /** @internal 量具：settle 段整段跳过的累计帧数 */
-    public static function settleSkipCount(): int
-    {
-        return Pipeline::current()->settleSkipCount();
-    }
-
-    /** @internal 量具：paint 段真跑的累计帧数 */
-    public static function paintRunCount(): int
-    {
-        return Pipeline::current()->paintRunCount();
-    }
-
-    /** @internal 量具：paint 段整段跳过的累计帧数 */
-    public static function paintSkipCount(): int
-    {
-        return Pipeline::current()->paintSkipCount();
-    }
+    // ★★ 这里原先有 4 个静态门面（`settleRunCount` / `settleSkipCount` /
+    //   `paintRunCount` / `paintSkipCount`），一行转发到 `Pipeline`。2026-11-02
+    //   删掉（D3 收口）：`Frame` 自己持 `$this->pipeline`，测试与探针读
+    //   `Pipeline::current()->…`。一份数一个名字。
 
     /**
      * 跑一帧。
@@ -252,8 +232,8 @@ final class Frame
             ));
         }
         // ★ 结构快照必须在 settle **之后**取：本帧的增删/重排要进下一帧的判据
-        $this->lastSettleStructure = Element::structureVersion();
-        $this->lastMarkedCount = State::markedCount();
+        $this->lastSettleStructure = $this->pipeline->structureVersion();
+        $this->lastMarkedCount = $this->pipeline->markedCount();
         if ($prof) {
             SurfaceProfile::add('settle', \hrtime(true) - $t);
         }
@@ -284,7 +264,7 @@ final class Frame
         //     `size` ⇒ 命中测试全落空（静默）。序号来自唯一盒创建点
         //     `Element::syncBox()`，所以这条判据**不可能漏**。
         //   ★ 读序号的位置必须在 settle **之后**（这样本帧重建造成的换盒也算进来）。
-        $boxEpoch = State::boxEpoch();
+        $boxEpoch = $this->pipeline->layoutEpoch();
         $layoutRan = false;
         if ($didRebuild || $boxEpoch !== $this->lastBoxEpoch || $this->constraintsChanged($constraints)) {
             $layoutRan = true;

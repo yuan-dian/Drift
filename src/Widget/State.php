@@ -5,10 +5,9 @@ namespace Drift\Widget;
 
 use Drift\Commands\CommandArg;
 use Drift\Core\Pipeline;
+use Drift\Core\PipelineAccess;
 use Drift\Errors;
-use Drift\Layout\RenderBox;
 use Drift\State\AsyncCommand;
-use Drift\State\Cell;
 use Drift\State\Subject;
 use Drift\State\Subscription;
 
@@ -23,6 +22,8 @@ use Drift\State\Subscription;
  */
 abstract class State
 {
+    use PipelineAccess;
+
     /*
      * 五件"跨节点记账"的数字**不住本类**：`pendingDirty` / `markedCount` /
      * `rebuiltCount` / `mountedThisFrame` / `frameWantedCount` 都住 `Pipeline`
@@ -99,8 +100,20 @@ abstract class State
      *   发生在帧末 flush。所以回调里连点十次只重建一次，"build 期 setState
      *   触发重入"这类问题**结构上不存在**。
      *
-     * ★ **不比较值**：想"设同值不重建"就把那个值用 `Cell` 装（§11.3.1），
-     *   别裸放在 `State` 里。
+     * ★ **不比较值**：`setState()` 收的是一个"改哪些字段"的闭包，框架无从知道
+     *   里面动了什么，所以它**必须**假定变了。
+     *   "设同值不重建"的标准写法是**比较放在闭包外面**：
+     *
+     *   ```php
+     *   if ($this->query !== $next) {
+     *       $this->setState(function () use ($next): void { $this->query = $next; });
+     *   }
+     *   ```
+     *
+     *   ★ 为什么不给一个 `Cell` 之类的单值包装（2026-11-02 删掉了）：它只省掉
+     *   上面这两行，却要多一个类型、一个创建方法、一套"绑定属主"的概念，还要
+     *   在文档里解释三次"什么时候用它、什么时候不用"。**样板量小于概念成本**，
+     *   而且 `if` 是显式的 —— 读代码的人一眼看到门控在哪，不用去查包装类做了什么。
      */
     public function setState(callable $change): void
     {
@@ -111,14 +124,13 @@ abstract class State
     /**
      * 只标脏、不改值（§11.3.1）。
      *
-     * ★ `Cell::setIfChanged()` 与 `SubjectBuilder` 的回调走这条 —— 它们已经在
-     *   自己的上下文里改完值了，不需要再裹一层空闭包。
+     * ★ `SubjectBuilder` 的回调、动画 tick、输入落地走这条 —— 它们已经在自己的
+     *   上下文里改完值了，不需要再裹一层空闭包。
      *
-     * ★ **什么时候用它而不是 `setState()`**：值已经改完了（`Cell` 刚 set 过、
-     *   动画刚 tick 过、输入刚落过），只差"告诉框架该重建了"。包一层空闭包
-     *   也能跑，但读者会以为"这里要改点什么"—— 而这里没有。
+     * ★ **什么时候用它而不是 `setState()`**：值已经改完了，只差"告诉框架该重建了"。
+     *   包一层空闭包也能跑，但读者会以为"这里要改点什么"—— 而这里没有。
      *
-     * ★ **它不比较值**：同 `setState()`，想"设同值不重建"就把值装进 `Cell`。
+     * ★ **它不比较值**：同 `setState()`，门控写在调用点（见 `setState()` 的示例）。
      *
      * ★ 与 `setState()` 同一条时间线：只置脏标记，重建发生在**帧末**的 settle
      *   段 ⇒ 连标十次只重建一次。
@@ -217,25 +229,7 @@ abstract class State
     }
 
     /**
-     * 唯一的 `Cell` 创建入口（§11.3.1）。
-     *
-     * ★ 为什么不能 `new Cell(-1)` 直接放属性初始化器：PHP 的属性初始化器
-     *   **拿不到 `$this`**，`Cell` 便无从知道该标脏哪个 `State` —— 于是"
-     *   设了值但没人重建"。绑定必须显式发生，`cell()` 就是那一个显式点。
-     *
-     * ★ `Cell::__construct` 是 `private` ⇒ "绕过 `cell()` 直接 new"这个写法
-     *   **编译期就写不出来**（运行期抛 `Error`），不再靠"未绑定 ⇒ Fatal"
-     *   兜底（`03` §3.5：把运行期 Fatal 换成更早、更近出错点的 Error）。
-     *
-     * @api
-     */
-    public function cell(mixed $initial): Cell
-    {
-        return Cell::makeFor($this, $initial);
-    }
-
-    /**
-     * 命令创建 + 绑定（与 `cell()` 同一条路，是**页面侧唯一**的造命令入口）。
+     * 命令创建 + 绑定（页面侧**唯一**的造命令入口，与 `asyncCommand` 同名同路）。
      *
      * ```php
      * public function initState(): void
@@ -376,80 +370,14 @@ abstract class State
         return $dirty;
     }
 
-    /** @internal 收敛循环的提前退出条件（`Element::settle()` 用） */
-    public static function pendingDirty(): int
-    {
-        return Pipeline::current()->pendingDirty();
-    }
-
-    /**
-     * @internal **只增不减**的标脏序号（`Frame` 判"本帧有没有新标脏"）。
-     *
-     * ★ 为什么不用 `pendingDirty()`：它是全局的、且**会漂移**（已卸载或不在本树
-     *   的 State 脏着不消费 ⇒ 永远 >0 —— 实测 smoke 跑到一半时是 38）。
-     *   只看"有没有**新**标脏"就不受漂移影响：漂移是历史存量，不产生新标记。
-     */
-    public static function markedCount(): int
-    {
-        return Pipeline::current()->markedCount();
-    }
-
-    /** @internal 本帧累计 rebuild 次数（`settle()` 用前后差判断"有没有重建"） */
-    public static function rebuiltCount(): int
-    {
-        return Pipeline::current()->rebuiltCount();
-    }
-
-    /**
-     * @internal 渲染树"需要重排"的绝对序号 —— `Frame` 与它**上一帧记下的值**比对。
-     *
-     * ★ 转发到 `RenderBox::layoutEpoch()`：盒换代与盒内输入变化（滚动偏移）
-     *   必须**共用**一个序号，否则 `Frame` 要判两次、而且两处迟早漂。
-     */
-    public static function boxEpoch(): int
-    {
-        return RenderBox::layoutEpoch();
-    }
-
-    /**
-     * @internal `Element::syncBox()` 每调一次就加一（那里是唯一的盒创建点）。
-     *
-     * ★ 故意做成**静态**而不是 `Element` 的字段：判据要跨**整棵树**（含浮层那棵
-     *   第二根树），逐个 Element 记账需要遍历；一个全局序号就能表达"有没有换过"。
-     * ★ 转发到 `RenderBox::markNeedsLayout()` —— 同一个计数器的另一个入口
-     *   （`setScrollOffset()` 那条路也加它）。
-     */
-    public static function noteBoxReplaced(): void
-    {
-        RenderBox::markNeedsLayout();
-    }
-
-    /**
-     * 取走本帧挂载的 State 并**清空**登记表（`06` §4.2）。登记表住 `Pipeline`。
-     *
-     * ★ 存在理由：`tickFrame()` **必须**在 settle 之前跑，而挂载**必然**发生在
-     *   settle 期间 ⇒ "这一帧刚挂上的 State"在第一次 tick 时还不在树里。改动前
-     *   靠**再遍历一遍全树**补上（`tickFrameStamped` 的帧戳防重复推进），代价是
-     *   每帧多 O(树) 次虚调用，只为照顾通常 0–5 个新挂载。
-     * ★ **登记点是 `callInit()`**（已在 `StatefulElement::onMount()` 里被调）
-     *   ⇒ 不新增调用点，只加一行。
-     * ★ **必须被帧消费**：不消费就会一直累积（挂着已卸载的 State）。所以
-     *   `Application::frame()` 每次都调本方法，且循环里**跳过已卸载的**
-     *   （`mount()` 了但一直没有帧到来的场景：测试、纯头侧夹具）。
-     *
-     * @return list<State>
-     * @internal 由 `Application::frame()` 第 ⑦ 段调（每帧一次，必须调）
-     */
-    public static function takeMountedThisFrame(): array
-    {
-        return Pipeline::current()->takeMounted();
-    }
-
-    /** @internal 夹具用：登记表必须被消费干净（不消费会无限累积） */
-    public static function mountedCount(): int
-    {
-        return Pipeline::current()->mountedCount();
-    }
+    // ★★ 这里原先有 7 个静态门面（`pendingDirty` / `markedCount` / `rebuiltCount` /
+    //   `boxEpoch` / `noteBoxReplaced` / `takeMountedThisFrame` / `mountedCount`），
+    //   全部是 `Pipeline::current()->…` 的一行转发。2026-11-02 删掉（D3 收口）：
+    //   同一份数两个名字，新代码就会用旧名字，而旧名字还在骗人 —— `boxEpoch()`
+    //   读的是渲染树的全局序号，与"某个 State"毫无关系。
+    //   现在只有两个入口，语义各自清楚：
+    //     · 树内对象（本类 / `Element` / `RenderObject`）→ `$this->pipeline()`（`PipelineAccess`）
+    //     · 树外观察者（`Application` / `FocusManager` / 测试 / 探针）→ `Pipeline::current()`
 
     /**
      * 声明"**我还要下一帧**"（隐式动画在 `didUpdateWidget()` / `build()` 里起飞时用）。

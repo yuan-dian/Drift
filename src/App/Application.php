@@ -1021,7 +1021,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         //     （`placeOverlays()` 期间），它已经被 ⓸ 推进过 ⇒ 帧戳保证不重复推进。
         //   ★ **跳过已卸载的**：`mount()` 了但一直没有帧到来的场景（纯头侧夹具）
         //     会让登记表挂着死节点 —— 不跳过就是 tick 一个已经离开树的状态。
-        foreach (State::takeMountedThisFrame() as $mountedState) {
+        foreach ($this->pipeline->takeMounted() as $mountedState) {
             $mountedElement = $mountedState->element();
             if ($mountedElement === null || !$mountedElement->isMounted()) {
                 continue;
@@ -1325,9 +1325,9 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      * 本应用的帧管线（结构/内容版本、脏记账、两个换代序号、全部量具）。
      *
      * @internal 给测试 / 探针 / devtools 精确读**某一应用**的数字。业务代码不该读它。
-     * ★ 为什么不读静态门面：`Element::structureVersion()` 这些读的是"**当前**管线"
-     *   （最近一帧跑的那个应用）。两个应用交错跑帧时，只有本方法能问对对象 ——
-     *   这正是 D3 验收②的判据形态。
+     * ★ 为什么读它而不是 `Pipeline::current()`：那读的是"**当前**管线"（最近一帧
+     *   跑的那个应用）。两个应用交错跑帧时，只有本方法能问对对象 —— 这正是
+     *   D3 验收②的判据形态。框架内部**没有任何地方**再写静态门面了。
      */
     public function pipeline(): Pipeline
     {
@@ -1463,7 +1463,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
 
         $focused = $this->focus?->focused();
         $focusChanged = $focused !== $this->semanticsFocused;
-        $version = Element::structureVersion();
+        $version = $this->pipeline->structureVersion();
         $structureChanged = $version !== $this->lastStructureVersion;
 
         // ① 结构 / 焦点变了 ⇒ full，**立即**（不看 coalesce，也不看 D1）

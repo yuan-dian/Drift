@@ -75,6 +75,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/autoload.php';
 
+use Drift\Core\Pipeline;
 use Drift\App\Application;use Drift\App\Frame;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Geometry\BoxConstraints;
@@ -181,11 +182,11 @@ $measure = static function (string $label, \Closure $root, float $w, float $h, i
     }
 
     SurfaceProfile::reset();
-    $paint0 = Frame::paintRunCount();
-    $skip0 = Frame::paintSkipCount();
-    $sv0 = Element::structureVersion();
-    $be0 = State::boxEpoch();
-    $mk0 = State::markedCount();
+    $paint0 = Pipeline::current()->paintRunCount();
+    $skip0 = Pipeline::current()->paintSkipCount();
+    $sv0 = Pipeline::current()->structureVersion();
+    $be0 = Pipeline::current()->layoutEpoch();
+    $mk0 = Pipeline::current()->markedCount();
 
     $t0 = \hrtime(true);
     for ($i = 11; $i <= 10 + $frames; $i++) {
@@ -193,14 +194,14 @@ $measure = static function (string $label, \Closure $root, float $w, float $h, i
     }
     $elapsed = \hrtime(true) - $t0;
 
-    $sv = Element::structureVersion() - $sv0;
-    $be = State::boxEpoch() - $be0;
-    $mk = State::markedCount() - $mk0;
+    $sv = Pipeline::current()->structureVersion() - $sv0;
+    $be = Pipeline::current()->layoutEpoch() - $be0;
+    $mk = Pipeline::current()->markedCount() - $mk0;
     $seg = SurfaceProfile::perCall();
     // ★ 这两笔必须**现在**取：后面还要跑重建帧（每帧必画 10 次），
     //   放到 return 处取会把它们算进"稳态"（实测 10/30，看起来像门控退化）。
-    $paintRuns = Frame::paintRunCount() - $paint0;
-    $skips = Frame::paintSkipCount() - $skip0;
+    $paintRuns = Pipeline::current()->paintRunCount() - $paint0;
+    $skips = Pipeline::current()->paintSkipCount() - $skip0;
 
     // ② 同一棵树单次全量重排（暖缓存）—— M5 的分母。
     //   ★ 必须排在重建帧**之前**：重建帧每帧造一整棵新树（几百个对象），

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Input;
 
+use Drift\Core\Pipeline;
 use Drift\App\FocusManager;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Geometry\BoxConstraints;
@@ -22,7 +23,7 @@ use Drift\Widget\Button;
  * 或跳不到新加的控件。而这类错误**不报错**，只是"有点怪"。
  *
  * 所以每条判据各钉一条用例，判据的三种来源正好对应三种失效：
- *   ① `Element::contentVersion()` —— 结构增删 / 任一 Widget 换过（声明可能变）；
+ *   ① `Pipeline::current()->contentVersion()` —— 结构增删 / 任一 Widget 换过（声明可能变）；
  *   ② 根集合签名 —— 浮层开合（浮层不进主树，`contentVersion` 看不见）；
  *   ③ 陷阱开关 —— `roots` 相同而 `scope` 从空变非空。
  *

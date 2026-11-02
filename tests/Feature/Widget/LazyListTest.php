@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Widget;
 
+use Drift\Core\Pipeline;
 use Drift\Dev\Preview\Renderer;
 use Drift\Dev\Preview\SvgSurface;
 use Drift\Dev\Smoke\App\LazyApplication;
@@ -324,13 +325,13 @@ final class LazyListTest extends SmokeTestCase
         $root->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
 
         $state = LazyFixtures::stateOf($root);
-        $before = \Drift\Widget\State::rebuiltCount();
+        $before = Pipeline::current()->rebuiltCount();
         $state?->scrollBy($delta);
         $root->settle();
         $root->effectiveBox()?->layout(BoxConstraints::tight(new Size(320.0, 240.0)));
 
         return [
-            \Drift\Widget\State::rebuiltCount() - $before,
+            Pipeline::current()->rebuiltCount() - $before,
             $root->effectiveBoxOf(\Drift\Layout\RenderScrollView::class)?->appliedOffset(Axis::Vertical) ?? -1.0,
         ];
     }

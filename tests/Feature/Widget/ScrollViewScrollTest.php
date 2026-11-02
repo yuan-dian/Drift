@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Widget;
 
+use Drift\Core\Pipeline;
 use Drift\App\Frame;
 use Drift\Dev\Preview\SvgSurface;
 use Drift\Dev\Tests\Support\ScrollFixtures;
@@ -54,10 +55,10 @@ final class ScrollViewScrollTest extends SmokeTestCase
         self::frame($root);
         $state = self::stateOf($root);
 
-        $before = State::rebuiltCount();
+        $before = Pipeline::current()->rebuiltCount();
         $state?->scrollBy(120.0);
         self::frame($root);
-        $delta = State::rebuiltCount() - $before;
+        $delta = Pipeline::current()->rebuiltCount() - $before;
 
         check(
             'ScrollView · 滚动 ⇒ 重建 0 次（内容不是 build 的输入，本来就不该重建）',

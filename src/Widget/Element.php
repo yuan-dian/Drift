@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Widget;
 
 use Drift\Core\Pipeline;
+use Drift\Core\PipelineAccess;
 use Drift\Errors;
 use Drift\Layout\RenderBox;
 
@@ -20,6 +21,8 @@ use Drift\Layout\RenderBox;
  */
 abstract class Element
 {
+    use PipelineAccess;
+
     /**
      * 收敛循环的最大轮数（`03` §5.1）：**防御上限，正常 ≤ 2**。
      *
@@ -108,42 +111,12 @@ abstract class Element
         return $this->mounted;
     }
 
-    /** @internal 结构变了（节点增删 / 重排）—— 见 `$structureVersion` */
-    public static function bumpStructure(): void
-    {
-        Pipeline::current()->bumpStructure();
-    }
-
-    /** @internal 语义推送用它判"结构变没变"（`07` §6.2） */
-    public static function structureVersion(): int
-    {
-        return Pipeline::current()->structureVersion();
-    }
-
-    /**
-     * @internal 内容版本号：结构 ∪ 声明。供"收全表"的消费者做门控
-     * （焦点链 / 语义树），见 `$contentVersion` 的注。
-     */
-    public static function contentVersion(): int
-    {
-        return Pipeline::current()->contentVersion();
-    }
-
-    /**
-     * 配对尝试的累计次数（`updateChildren()` 每为一个新子"问一次旧子"就 +1）。
-     *
-     * ★ **存在的理由只有一个：让"复杂度"成为可断言的东西**。复用行为对不对，
-     *   smoke 用"元素实例是否还是同一个"断言；但"是不是又退回平方扫描了"没有任何
-     *   行为差异 —— 它只在树大了以后表现为慢。没有这个计数器，一次重构把
-     *   `O(n)` 改回 `O(n²)` 会**全绿通过**。
-     * ★ 成本是一次自增（AOT 下就是一条 `add`），留在热路径上是划算的。
-     *
-     * @internal 量具；消费者是 smoke（`Element::pairChecks()`）。值住 `Pipeline`。
-     */
-    public static function pairChecks(): int
-    {
-        return Pipeline::current()->pairChecks();
-    }
+    // ★★ 这里原先有 4 个静态门面（`bumpStructure` / `structureVersion` /
+    //   `contentVersion` / `pairChecks`），一行转发到 `Pipeline`。2026-11-02 删掉
+    //   （D3 收口）：树内对象走 `$this->pipeline()`（见 `PipelineAccess`），
+    //   树外观察者走 `Pipeline::current()`，不再有第三个名字。
+    //   ★ 各计数的"为什么长这样"（结构号只在真变了时 +1、`pairChecks` 让复杂度
+    //     可断言）已随字段搬到 `Pipeline` 的对应方法上。
 
     /**
      * 挂载到父链下，并建整棵子树。
@@ -156,7 +129,7 @@ abstract class Element
         $this->context = $context;
         $this->widget->seal(); // §15.2 Seal-on-Mount
         $this->mounted = true;
-        self::bumpStructure(); // ★ 结构变了（`07` §6.2）
+        $this->pipeline()->bumpStructure(); // ★ 结构变了（`07` §6.2）
         $this->onMount();
         $this->syncBox();
         $this->rebuild();
@@ -195,8 +168,8 @@ abstract class Element
         //   不记的后果是静默的：`Frame` 用 `settle()` 的**帧内**重建差判"本帧有没有
         //   变"，而 `update()` / `applyContext()` 这些**帧外**路径换盒不经过 settle
         //   ⇒ 判成"没变" ⇒ 跳过 layout ⇒ 新盒 `size()` 恒 `null` ⇒ 命中测试全落空。
-        //   详见 `State::$boxEpoch`。
-        State::noteBoxReplaced();
+        //   详见 `Pipeline::bumpLayoutEpoch()`。
+        $this->pipeline()->bumpLayoutEpoch();
 
         $previous = $this->box;
         $this->box = $this->widget instanceof RenderBoxWidget
@@ -405,7 +378,7 @@ abstract class Element
     {
         $this->widget = $newWidget;
         $this->widget->seal();
-        Pipeline::current()->bumpContent(); // ★ 声明可能变了（`focusOrder` / `disabled` / 标签）
+        $this->pipeline()->bumpContent(); // ★ 声明可能变了（`focusOrder` / `disabled` / 标签）
         $this->syncBox(); // §13.2：新描述 ⇒ 新盒
         $this->didUpdateWidget($newWidget);
         $this->rebuild();
@@ -504,7 +477,7 @@ abstract class Element
      */
     final public function settle(): bool
     {
-        $before = State::rebuiltCount();
+        $before = $this->pipeline()->rebuiltCount();
 
             // ★★ 第一遍**无条件**跑，不能因 `pendingDirty() === 0` 整遍跳过：
             //   这一遍不只重建脏节点，还做 `adoptBoxes()`（把子盒挂进父盒）——
@@ -515,14 +488,14 @@ abstract class Element
             //   `03` §5.1 原稿的"O(1) 提前退出"假设 settle 只重建脏节点，
             //   对本框架不成立 —— 已按实况改正。
             for ($round = 1; $round <= self::SETTLE_ROUNDS; $round++) {
-                $passBefore = State::rebuiltCount();
+                $passBefore = $this->pipeline()->rebuiltCount();
                 $this->settlePass();
 
-                if (State::pendingDirty() === 0) {
+                if ($this->pipeline()->pendingDirty() === 0) {
                     break;                        // 干净了：绝大多数帧到这里就退
                 }
 
-                if (State::rebuiltCount() === $passBefore) {
+                if ($this->pipeline()->rebuiltCount() === $passBefore) {
                     // ★ 有脏计数但这一遍**什么都没重建** ⇒ 计数漂移（脏 State 不在这棵树里 /
                     //   已卸载），不是真循环。再跑下去只是空转，且会误报 E-FLUSH-CYCLE
                     //   （§10 预告的症状是"每帧多扫一遍、性能退化、不报错"—— 按那个来）。
@@ -537,7 +510,7 @@ abstract class Element
                 ));
             }
 
-            return State::rebuiltCount() > $before;
+            return $this->pipeline()->rebuiltCount() > $before;
     }
 
     /**
@@ -599,7 +572,7 @@ abstract class Element
         }
         $this->children = [];
         $this->mounted = false;
-        self::bumpStructure(); // ★ 结构变了（`07` §6.2）
+        $this->pipeline()->bumpStructure(); // ★ 结构变了（`07` §6.2）
     }
 
     /**
@@ -643,7 +616,7 @@ abstract class Element
         for (; $index < $limit; $index++) {
             $candidate = $old[$index];
             $newWidget = $newWidgets[$index];
-            Pipeline::current()->bumpPairCheck();
+            $this->pipeline()->bumpPairCheck();
 
             if (get_class($candidate->widget()) !== get_class($newWidget)
                 || !Key::same($candidate->widget()->identity(), $newWidget->identity())
@@ -673,7 +646,7 @@ abstract class Element
                 $at = $cursor[$slotKey] ?? 0;
 
                 if ($bucket !== null && isset($bucket[$at])) {
-                    Pipeline::current()->bumpPairCheck();
+                    $this->pipeline()->bumpPairCheck();
 
                     $slot = $bucket[$at];
                     $cursor[$slotKey] = $at + 1;
@@ -703,7 +676,7 @@ abstract class Element
         // ★ 判据是**逐个位置比**（O(n) 指针比较）：`updateChildren()` 每次
         //   rebuild 都会被调，无条件 +1 会让版本号每帧都变 ⇒ 结构判据失效。
         if (self::compositionChanged($old, $next)) {
-            self::bumpStructure();
+            $this->pipeline()->bumpStructure();
         }
 
         $this->children = $next;

@@ -105,7 +105,7 @@ final class TextField extends StatefulWidget implements SemanticsValueEditable
      * 文本改动回调：`fn(string $newText) => void`。
      *
      * ★ 纯 UI 回调，零框架依赖（与 `Button::onPressed()` 同一个形状）——
-     *   往哪写（Store / `Cell` / 局部变量）是调用方的事。
+     *   往哪写（Store / State 字段 / 局部变量）是调用方的事。
      */
     public function onChanged(callable $handler): static
     {

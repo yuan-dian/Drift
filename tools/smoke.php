@@ -13,6 +13,7 @@ declare(strict_types=1);
  *   测试钩子（那会给生产 API 添一个只为测试存在的开关，正是 A15）。
  */
 
+use Drift\Core\Pipeline;
 use Drift\Dev\Smoke\BoxProbe;
 use Drift\Dev\Smoke\BuildProbe;
 use Drift\Dev\Smoke\Layout\BleedBox;
@@ -2748,7 +2749,7 @@ check('Key · 一方有一方没有 ⇒ 不复用', !Key::same(new Key(1), null)
 check('Key · key() 走 mutate()（返回同一实例）', $keyProbe->key(7) === $keyProbe);
 
 // ⑪-b 子表配对的**复用语义**与**复杂度**（2026-10-27）
-//   ★ 复用语义用"元素实例是不是同一个"断言；复杂度用 `Element::pairChecks()`
+//   ★ 复用语义用"元素实例是不是同一个"断言；复杂度用 `Pipeline::current()->pairChecks()`
 //     —— 后者是"退回平方扫描"的**唯一可观察症状**（行为全对、只是慢）。
 $mountColumn = static function (Column $column): Element {
     $element = $column->createElement();
@@ -2767,9 +2768,9 @@ for ($i = 0; $i < 200; $i++) {
 $pairRoot = $mountColumn(Column::make()->children($kidsOld));
 $kidFirst = $pairRoot->childAt(0);
 $kidLast = $pairRoot->childAt(199);
-$checksBefore = Element::pairChecks();
+$checksBefore = Pipeline::current()->pairChecks();
 $pairRoot->update(Column::make()->children($kidsNew));
-$checksDelta = Element::pairChecks() - $checksBefore;
+$checksDelta = Pipeline::current()->pairChecks() - $checksBefore;
 check(
     'Element · 顺序不变的 200 子 ⇒ 配对次数 = 子数（不是平方）',
     $checksDelta === 200,

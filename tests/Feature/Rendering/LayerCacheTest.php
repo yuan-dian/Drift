@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Rendering;
 
+use Drift\Core\Pipeline;
 use Drift\Dev\Preview\SvgSurface;
 use Drift\Dev\Smoke\Layout\SolidBox;
 use Drift\Dev\Tests\Support\SmokeTestCase;
@@ -35,18 +36,18 @@ final class LayerCacheTest extends SmokeTestCase
         $box->setRepaintBoundary(true);
         $box->layout(BoxConstraints::tight(new Size(50.0, 50.0)));
 
-        $before = RenderBox::paintCount();
+        $before = Pipeline::current()->paintCount();
         $box->paintComposed($canvas);
-        $painted1 = RenderBox::paintCount() - $before;
+        $painted1 = Pipeline::current()->paintCount() - $before;
 
-        $before = RenderBox::replayCount();
+        $before = Pipeline::current()->replayCount();
         $box->paintComposed($canvas);   // 尺寸没变 ⇒ 应当命中
-        $replayed = RenderBox::replayCount() - $before;
+        $replayed = Pipeline::current()->replayCount() - $before;
 
         $box->layout(BoxConstraints::tight(new Size(80.0, 50.0)));   // 同一棵盒，只有 size 变
-        $before = RenderBox::paintCount();
+        $before = Pipeline::current()->paintCount();
         $box->paintComposed($canvas);
-        $painted2 = RenderBox::paintCount() - $before;
+        $painted2 = Pipeline::current()->paintCount() - $before;
 
         check('层缓存 · 首帧录制（paint 1 / replay 0）', $painted1 === 1, "paint={$painted1}");
         check('层缓存 · 尺寸没变 ⇒ 命中（replay 1，同一棵盒不重画）', $replayed === 1, "replay={$replayed}");

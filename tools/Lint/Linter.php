@@ -25,6 +25,7 @@ use Drift\Dev\Lint\Rules\OrphanTrait;
 use Drift\Dev\Lint\Rules\SelectPurity;
 use Drift\Dev\Lint\Rules\StaleCapabilityClaim;
 use Drift\Dev\Lint\Rules\StaleDerived;
+use Drift\Dev\Lint\Rules\StaticPipelineFacade;
 use Drift\Dev\Lint\Rules\StrConcatLoop;
 use Drift\Dev\Lint\Rules\SubscriberMark;
 
@@ -91,6 +92,11 @@ final class Linter
             // 能力缺口「诚实边界」声明过期守卫（2026-10-30 B2）：显式标记 + 类型化 probe，
             //   符号已补即报错；不扫自由中文，避免误伤主动取舍文案。
             new StaleCapabilityClaim(),
+            // D3 收口守卫（2026-11-02）：静态门面删掉之后不许再长回来
+            //   ★ 真事：22 个 `X::foo() { return Pipeline::current()->foo(); }`
+            //     是 D3① 的"半个搬家" —— 字段走了、名字没走，新代码继续用旧名字。
+            //     最坏的一处是 `State::boxEpoch()`：名字说 State，读的是渲染树全局序号。
+            new StaticPipelineFacade(),
         ]);
     }
 
