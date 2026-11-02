@@ -32,6 +32,9 @@ apps/*/build/
 /Errors.log
 /errors.log
 /tools/api-surface.json
+# `drift-build` 把 `assets/cacert.pem` 拷到 exe 旁边（运行期 TLS 信任根）。
+# ★ 只是副本：唯一真相在 `assets/cacert.pem`，这份不入库（190KB 的重复）。
+/cacert.pem
 # 失败现场（actual/ 与 diff/ 与 inspect/）不入库；`**` 是为了 golden/page/<Page>/ 这层嵌套
 # inspect/ 是 S2 失败时落盘的快照 JSON（actual.json），给 S3 HTML 报告消费，非判据
 /golden/**/actual/

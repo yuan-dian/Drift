@@ -337,6 +337,27 @@ final class Http
             },
         ]);
 
+        // ── TLS 信任根（2026-11-02，`apps/watermark` 的第一次真 HTTPS 打出来的）──
+        //
+        // ★ 症状：`POST https://…oss…` → `SSL certificate problem: unable to get
+        //   local issuer certificate (20)`。而同一个应用的网关是 `http://` ⇒
+        //   **签名 / 建任务全过、只有上传挂**，看起来像"OSS 拒绝我们"。
+        // ★ 根因不在代码，在**随 exe 分发的 `php.ini`**：它只写了 `extension=…`
+        //   （`tools/drift-build.php`），没有任何 `curl.cainfo` / `openssl.cafile`
+        //   ⇒ curl 的信任库是**空的** ⇒ 任何 HTTPS 都过不去（错误码 60 / OpenSSL 20）。
+        //   解释器里看不出来：开发机的 php.ini 有 `curl.cainfo`（虽然那个路径在本机
+        //   根本不存在 —— 于是解释器里是**另一个**错：errno 77 "adding trust anchors"）。
+        // ★ 修法：三档兜底（细节见 `tlsTrustOptions()` 的表）——
+        //   ① ini 里配了**且文件真存在**就用它；② 否则用**随包的 `cacert.pem`**
+        //   （`assets/cacert.pem`，构建时拷到 exe 旁边 ⇒ 部署里唯一可靠的来源）；
+        //   ③ 再没有就退到 Windows 系统证书库（`CURLSSLOPT_NATIVE_CA`）。
+        \curl_setopt_array($ch, self::tlsTrustOptions(
+            (string) \ini_get('curl.cainfo'),
+            (string) \ini_get('openssl.cafile'),
+            self::trustBundlePath(),
+            \DIRECTORY_SEPARATOR === '\\',
+        ));
+
         if ($multipart !== null) {
             // ★ **流式上传**：不设 `CURLOPT_POSTFIELDS`（设了会顶掉 READFUNCTION），
             //   改成 UPLOAD + 显式长度 + 读回调。内存只占一个块（curl 默认 64 KB），
@@ -430,6 +451,96 @@ final class Http
 
         return $response;
     }
+
+    /**
+     * TLS 信任根：决定给 curl 补哪几项。
+     *
+     * ★ **纯函数**（四个输入都是"外部世界"：两个 ini 值 + 一个可能存在的证书包
+     *   路径 + 是不是 Windows）—— 判据才能落在它身上，见
+     *   `tests/Unit/App/HttpTest.php`。
+     *
+     * ## 四档（顺序即优先级）
+     *
+     * | 条件 | 给什么 | 为什么 |
+     * |---|---|---|
+     * | `curl.cainfo` / `openssl.cafile` 指向**真实存在的文件** | `CURLOPT_CAINFO` | 显式写出来，行为与 ini 默认一致，但"用了哪个"变成可断言的 |
+     * | 随包的 `cacert.pem` 存在（{@see self::trustBundlePath()}） | `CURLOPT_CAINFO` | **部署里唯一可靠的来源**：不依赖 ini、不依赖系统库版本 |
+     * | 都没有 + **Windows** | `CURLOPT_SSL_OPTIONS = NATIVE_CA` | Windows 的 OpenSSL 构建**没有**默认信任根 ⇒ 退到系统证书库 |
+     * | 都没有 + **非 Windows** | 什么都不给 | Linux / macOS 的 curl 自带编译期默认信任根（`/etc/ssl/certs/…`），动了反而可能弄坏 |
+     *
+     * ★ **`is_file()` 是必须的**，不是防御性编程：开发机的 php.ini 把
+     *   `curl.cainfo` 指向 `C:\tools\php\ssl\cacert.pem`，而**那个文件不存在** ⇒
+     *   交给 curl 用会得到 `errno 77: error adding trust anchors from file`。
+     *   实测三种组合（2026-11-02）：ini 原值 → 77；清空 → 77；清空 + NATIVE_CA → ok。
+     *
+     * @return array<int, int|string> curl 选项（键是 `CURLOPT_*`）
+     *
+     * @internal
+     */
+    public static function tlsTrustOptions(string $cainfo, string $cafile, string $bundled, bool $windows): array
+    {
+        foreach ([$cainfo, $cafile, $bundled] as $candidate) {
+            if ($candidate !== '' && \is_file($candidate)) {
+                return [CURLOPT_CAINFO => $candidate];
+            }
+        }
+
+        if (!$windows) {
+            return [];
+        }
+
+        return [CURLOPT_SSL_OPTIONS => self::NATIVE_CA];
+    }
+
+    /**
+     * 随包的信任根在哪（`assets/cacert.pem`，构建时被拷到 exe 旁边）。
+     *
+     * 候选顺序 = **部署优先**：
+     *   ① `dirname($_SERVER['argv'][0]) . '/cacert.pem'` —— AOT 产物：exe 同目录。
+     *      `argv[0]` 是唯一可靠的"exe 在哪"来源（`__DIR__` 是**编译期**常量，AOT 下
+     *      指向构建机，见 `MEMORY`）。
+     *   ② `getcwd() . '/cacert.pem'` —— 构建产物落在仓库根，而开发机也从仓库根跑。
+     *   ③ `getcwd() . '/assets/cacert.pem'` —— **没构建过也能跑**（解释器 / 单测）。
+     *
+     * ★ 找不到就返回 `''`，由 {@see self::tlsTrustOptions()} 退到系统证书库 ——
+     *   不是错误。真到了连系统库都没有的机器，curl 会自己报出来。
+     *
+     * @internal
+     */
+    public static function trustBundlePath(): string
+    {
+        $candidates = [];
+
+        $argv = $_SERVER['argv'] ?? [];
+        $exe = \is_array($argv) ? ($argv[0] ?? '') : '';
+        if (\is_string($exe) && $exe !== '') {
+            $candidates[] = \dirname($exe) . \DIRECTORY_SEPARATOR . 'cacert.pem';
+        }
+
+        $cwd = (string) \getcwd();
+        $candidates[] = $cwd . \DIRECTORY_SEPARATOR . 'cacert.pem';
+        $candidates[] = $cwd . \DIRECTORY_SEPARATOR . 'assets' . \DIRECTORY_SEPARATOR . 'cacert.pem';
+
+        foreach ($candidates as $path) {
+            if (\is_file($path)) {
+                return $path;
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * `CURLSSLOPT_NATIVE_CA` 的值（curl 8.x = 16）。
+     *
+     * ★ 为什么不直接写常量名 / 不用 `\constant()`：AOT 对 `\defined()` 与
+     *   `\constant('字符串')` 的编译支持**没有先例**，而 `\defined()` 为假时
+     *   裸写常量名是 `Error: Undefined constant` —— 那会让"老 curl 上退化成本来的
+     *   行为"变成"老 curl 上直接崩"。
+     * ★ 代价是一个字面量 ⇒ 由单测钉住：`HttpTest` 里与 PHP 导出的
+     *   `CURLSSLOPT_NATIVE_CA` 比对，curl 换值就红。
+     */
+    private const NATIVE_CA = 16;
 
     /**
      * 造一个**流式**的 `multipart/form-data` 请求体，返回 `[body, content-type]`。

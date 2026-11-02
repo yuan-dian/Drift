@@ -465,4 +465,170 @@ final class HttpTest extends SmokeTestCase
 
         $this->flushChecks();
     }
+
+    /**
+     * TLS 信任根的决策表（2026-11-02，`apps/watermark` 的第一次真 HTTPS 打出来的）。
+     *
+     * ## 这条判据挡的是什么
+     *
+     * AOT 产物随包的 `php.ini` **只有** `extension=…`，没有 `curl.cainfo` ⇒ curl
+     * 的信任库是空的 ⇒ 任何 HTTPS 都失败：
+     *
+     * ```
+     * POST https://…oss… → SSL certificate problem: unable to get local issuer certificate (20)
+     * ```
+     *
+     * 而**同一个应用的网关是 `http://`** ⇒ 签名 / 建任务全过、只有上传挂，看起来
+     * 像"OSS 拒绝我们"。所以这条判据必须钉在**决策**上（发不发得出去是网络的事，
+     * 而"该不该改信任根"是纯逻辑）。
+     *
+     * ## 为什么 `is_file()` 那一条不是防御性编程
+     *
+     * 开发机的 php.ini 把 `curl.cainfo` 指向 `C:\tools\php\ssl\cacert.pem`，而
+     * **那个文件不存在** ⇒ 交给 curl 用会得到 `errno 77: error adding trust anchors`。
+     * 实测三种组合（本机）：ini 原值 → 77；清空 → 77；清空 + NATIVE_CA → ok。
+     * 所以"有值"不等于"可用"，必须验文件。
+     */
+    public function testTlsTrustDecisions(): void
+    {
+        $ca = \sys_get_temp_dir() . \DIRECTORY_SEPARATOR . 'drift-ca-test-' . \bin2hex(\random_bytes(4)) . '.pem';
+        $bundle = \sys_get_temp_dir() . \DIRECTORY_SEPARATOR . 'drift-bundle-test-' . \bin2hex(\random_bytes(4)) . '.pem';
+        \file_put_contents($ca, "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n");
+        \file_put_contents($bundle, "-----BEGIN CERTIFICATE-----\nMIIC\n-----END CERTIFICATE-----\n");
+
+        // ① 有可用的 cainfo ⇒ 显式用它，且**不要**掺 native（两者同时给，谁赢没定义）
+        $opts = Http::tlsTrustOptions($ca, '', $bundle, true);
+        check(
+            'Http · TLS：ini 给了可用 CA 文件 ⇒ 用 CURLOPT_CAINFO，不掺 native',
+            $opts === [CURLOPT_CAINFO => $ca],
+            \json_encode($opts, \JSON_UNESCAPED_SLASHES) . '（期望 CAINFO=' . $ca . '）',
+        );
+
+        // ② cainfo 指向不存在的文件 ⇒ 跳过它，退到 cafile（**开发机的真实状态**）
+        $opts = Http::tlsTrustOptions('/no/such/ca.pem', $ca, $bundle, true);
+        check(
+            'Http · TLS：cainfo 指向不存在的文件 ⇒ 跳过它，用 openssl.cafile',
+            $opts === [CURLOPT_CAINFO => $ca],
+            \json_encode($opts, \JSON_UNESCAPED_SLASHES),
+        );
+
+        // ③ 随包证书包**优先于系统库**：Windows 的 NATIVE_CA 只认「机器/用户装过的根」，
+        //    碰到企业代理签发的中间 CA 或系统库缺根时会失败；随包 cacert.pem 是可复现的。
+        $opts = Http::tlsTrustOptions('', '', $bundle, true);
+        check(
+            'Http · TLS：ini 全空但随包证书包可用 ⇒ 用随包（**不**退系统库）',
+            $opts === [CURLOPT_CAINFO => $bundle],
+            \json_encode($opts, \JSON_UNESCAPED_SLASHES) . '（期望 CAINFO=' . $bundle . '）',
+        );
+
+        // ④ 三个都没有 + Windows ⇒ 改用系统证书库
+        $opts = Http::tlsTrustOptions('', '', '', true);
+        $native = \defined('CURLSSLOPT_NATIVE_CA') ? \CURLSSLOPT_NATIVE_CA : -1;
+        check(
+            'Http · TLS：没有可用 CA 文件 + Windows ⇒ 改用系统证书库（NATIVE_CA）',
+            $opts === [CURLOPT_SSL_OPTIONS => $native] && $native !== -1,
+            \json_encode($opts, \JSON_UNESCAPED_SLASHES) . '（期望 SSL_OPTIONS=' . $native . '）',
+        );
+
+        // ⑤ 三个都没有 + 非 Windows ⇒ **什么都不动**（Linux 的 curl 自带默认信任根）
+        $opts = Http::tlsTrustOptions('', '', '', false);
+        check(
+            'Http · TLS：非 Windows 且没有 ini 配置 ⇒ 一项都不加（别动发行版的默认信任根）',
+            $opts === [],
+            \json_encode($opts, \JSON_UNESCAPED_SLASHES),
+        );
+
+        // ⑥ 随包文件存在但**指向不存在**的路径 ⇒ 必须当作没有（"有值" ≠ "可用"）
+        $opts = Http::tlsTrustOptions('', '', '/no/such/bundle.pem', true);
+        check(
+            'Http · TLS：随包路径不可用 ⇒ 跳过它，退系统库',
+            $opts === [CURLOPT_SSL_OPTIONS => $native] && $native !== -1,
+            \json_encode($opts, \JSON_UNESCAPED_SLASHES),
+        );
+
+        // ⑦ 字面量钉住：`Http::NATIVE_CA = 16` 是**手写**的（理由见该常量注释），
+        //    所以必须有东西在 curl 换值时报出来。
+        check(
+            'Http · TLS：手写的 NATIVE_CA 字面量与 PHP 导出的常量一致',
+            $native === 16,
+            'CURLSSLOPT_NATIVE_CA=' . $native . '（写成 16；不一致就要改 Http::NATIVE_CA）',
+        );
+
+        @\unlink($ca);
+        @\unlink($bundle);
+
+        $this->flushChecks();
+    }
+
+    /**
+     * 随包信任根**真的能用**（2026-11-02，用户指定的 `D:\PHP\bin\cacert\cacert.pem`）。
+     *
+     * ## 为什么这条不能只查"文件在不在"
+     *
+     * 一个 0 字节 / 被截断 / 全是注释的 `cacert.pem` 也能通过 `is_file()` 和
+     * `substr_count('BEGIN CERTIFICATE')`（截断到只剩头）。唯一能证伪的是**拿它
+     * 真握手一次**。所以这里发一个真请求到 OSS 桶根。
+     *
+     * ## 判据为什么不是「200」
+     *
+     * 桶根未授权时 OSS 返回 **403** —— 那是应用层拒绝，恰恰证明 TCP + TLS 握手 +
+     * 证书链校验**全都过了**（校验失败根本走不到 HTTP 状态码）。判 `status > 0`
+     * 让这条判据不依赖"OSS 今天是否允许匿名访问"。
+     */
+    public function testBundledTrustStoreIsPresent(): void
+    {
+        $bundle = Http::trustBundlePath();
+        check(
+            'Http · TLS：随包 cacert.pem 能被定位到',
+            $bundle !== '' && \is_file($bundle),
+            'trustBundlePath()=' . $bundle . '（getcwd=' . \getcwd() . '）',
+        );
+
+        if ($bundle === '' || !\is_file($bundle)) {
+            $this->flushChecks();
+            return;
+        }
+
+        $pem = (string) \file_get_contents($bundle);
+        $count = \substr_count($pem, 'BEGIN CERTIFICATE');
+        check(
+            'Http · TLS：随包证书包含 ≥100 张根证书（不是空壳 / 不是截断）',
+            $count >= 100,
+            '证书数=' . $count . '，字节=' . \strlen($pem),
+        );
+
+        $ok = $this->handshakeWith($bundle);
+        check(
+            'Http · TLS：用随包证书包对 OSS 真握手成功（拿到 HTTP 状态码即算过）',
+            $ok,
+            '握手结果=' . ($ok ? 'ok' : '失败') . '（errno 见下）',
+        );
+
+        $this->flushChecks();
+    }
+
+    /**
+     * 用指定 CA 包发一次真实 HTTPS 请求，判据 = `errno === 0 && status > 0`。
+     *
+     * 不用 `Http::get()`（它自己会挑信任根，测不出"这个包能不能用"）。
+     */
+    private function handshakeWith(string $caFile): bool
+    {
+        $ch = \curl_init('https://kuque-ai-beta.oss-cn-hangzhou.aliyuncs.com/');
+        if ($ch === false) {
+            return false;
+        }
+        \curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_NOBODY => true,
+            CURLOPT_TIMEOUT => 15,
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_CAINFO => $caFile,
+        ]);
+        \curl_exec($ch);
+        $errno = \curl_errno($ch);
+        $status = (int) \curl_getinfo($ch, \CURLINFO_RESPONSE_CODE);
+        // 不调 `curl_close()`：PHP 8.5 起已废弃（8.0 起就是空操作）⇒ 会带一条 deprecation
+        return $errno === 0 && $status > 0;
+    }
 }

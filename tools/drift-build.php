@@ -413,3 +413,28 @@ foreach ($runtimeExtensions as $ext) {
 }
 file_put_contents($runtimeIni, $runtimeText);
 fwrite(STDOUT, "[drift-build] ✓ 运行时 ini → {$runtimeIni}（启用 " . implode(' / ', $runtimeExtensions) . "）\n");
+
+// ── 随 exe 分发 TLS 信任根（2026-11-02）───────────────────────────────────
+// ★ 症状（`apps/watermark` 第一次真 HTTPS）：`POST https://…oss…` →
+//   `SSL certificate problem: unable to get local issuer certificate (20)`。
+//   根因不在代码：上面的运行时 ini **只有** `extension=…`，没有 `curl.cainfo`
+//   ⇒ curl 的信任库是空的。而同一个应用的网关是 `http://` ⇒ 签名/建任务全过、
+//   只有上传挂，看起来像"OSS 拒绝我们"。
+// ★ 修法（两道，互为兜底）：
+//   ① 把 `assets/cacert.pem` 拷到 exe 旁边 —— `Http::trustBundlePath()` 按
+//      "exe 同目录 → cwd → cwd/assets" 找它，找到就用 `CURLOPT_CAINFO`；
+//   ② 找不到时 `Http` 退到**系统证书库**（`CURLSSLOPT_NATIVE_CA`）。
+//   ★ 不把路径写进 ini：ini 只能写绝对路径，而绝对路径在别人的机器上不存在
+//     （`__DIR__` 是编译期常量那条坑的近亲）。判据：拷完 `is_file()` 为真。
+$trustBundle = "{$root}/assets/cacert.pem";
+if (is_file($trustBundle)) {
+    $runtimeBundle = "{$root}/cacert.pem";
+    if (!copy($trustBundle, $runtimeBundle)) {
+        fwrite(STDERR, "[drift-build] ✗ 证书包拷贝失败：{$trustBundle} → {$runtimeBundle}\n");
+        exit(1);
+    }
+    fwrite(STDOUT, "[drift-build] ✓ TLS 信任根 → {$runtimeBundle}（" . number_format((int) filesize($runtimeBundle)) . " 字节）\n");
+} else {
+    // ★ 不静默：少了它，所有 HTTPS 会退到系统证书库；系统库在个别老机器上也会缺根。
+    fwrite(STDOUT, "[drift-build] ! 没有 assets/cacert.pem ⇒ 运行期只能靠系统证书库（HTTPS 可能失败）\n");
+}
