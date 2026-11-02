@@ -9,6 +9,7 @@ use Drift\Geometry\BoxConstraints;
 use Drift\Layout\LayoutSelfCheck;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderObject;
+use Drift\Rendering\FrameStage;
 use Drift\Rendering\RenderSurface;
 use Drift\Rendering\SurfaceProfile;
 use Drift\Widget\Element;
@@ -235,7 +236,7 @@ final class Frame
         $this->lastSettleStructure = $this->pipeline->structureVersion();
         $this->lastMarkedCount = $this->pipeline->markedCount();
         if ($prof) {
-            SurfaceProfile::add('settle', \hrtime(true) - $t);
+            SurfaceProfile::add(FrameStage::SETTLE, \hrtime(true) - $t);
         }
 
         // ② layout
@@ -287,7 +288,7 @@ final class Frame
             }
         }
         if ($prof) {
-            SurfaceProfile::add('layout', \hrtime(true) - $t);
+            SurfaceProfile::add(FrameStage::LAYOUT, \hrtime(true) - $t);
         }
 
         // ②b 布局自校验（`04` §5；默认关，`build/layout.check` 存在时开）
@@ -379,7 +380,7 @@ final class Frame
         }
 
         if ($prof) {
-            SurfaceProfile::add('paint', \hrtime(true) - $t);
+            SurfaceProfile::add(FrameStage::PAINT, \hrtime(true) - $t);
         }
 
         return $painted;

@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\App;
 
 use Drift\Errors;
+use Drift\Rendering\FrameStage;
 
 /**
  * 帧的阶段声明（§5.2 / `06` §2）。
@@ -19,6 +20,10 @@ use Drift\Errors;
  * - `focusCollect` 跑到 settle 之前 ⇒ 焦点链可能握着已被移除的 Element
  *   ⇒ 按键静默丢给死节点
  * - `pumpSemantics` 没跑 ⇒ 读屏停在上一帧
+ *
+ * ★ **段的名单与后果不在本类**，在 `FrameStage`（2026-11-02）：那份表同时是
+ *   `SurfaceProfile` 的计时键与 `apps/bench` 的归因名单，而它自己先前有三个
+ *   段两个名字、`M4` 里还写错过一个名字。名字只留一份，本类只做顺序判定。
  *
  * ## 它**不是**调度器（`06` §2.3）
  *
@@ -48,40 +53,6 @@ use Drift\Errors;
  */
 final class FramePhase
 {
-    /** 必须在 settle 之前（会产脏；组内顺序任意 —— 三个泵写的是不同的 State） */
-    public const BEFORE_SETTLE = ['pumpIo', 'pumpTasks', 'pumpTimers', 'tickAnimations'];
-
-    /** 必须在 settle 之后（观察新树；组内顺序任意，但 ⑧ 要在 ⑨ 前 —— 语义树要带焦点） */
-    public const AFTER_SETTLE = ['tickLateMount', 'focusCollect', 'pumpSemantics'];
-
-    /**
-     * 组 B 的固定段（顺序由直写代码保证，这里只要求"出现过"）。
-     *
-     * ★ `settle` 是**标记**不是真段：它记在 `$frame->run()` 之前，
-     *   而 `Frame::run()` 内部才是 settle → layout → paint → present。
-     */
-    public const CORE = ['placeOverlays', 'settle'];
-
-    /** 全部要出现的名字（`06` §2.1 的三组九段 + settle 标记 + W8-2 的 `pumpTimers`） */
-    public const ALL = ['pumpIo', 'pumpTasks', 'pumpTimers', 'tickAnimations', 'placeOverlays', 'settle', 'tickLateMount', 'focusCollect', 'pumpSemantics'];
-
-    /**
-     * 每个名字越界/缺失的后果 —— 断言消息要能直接回答"所以呢"。
-     *
-     * @var array<string, string>
-     */
-    private const CONSEQUENCE = [
-        'pumpIo' => '外部数据晚一帧到，回调里的 setState 要等下一帧',
-        'pumpTasks' => '后台结果晚一帧生效 —— "loading → ready" 会闪一帧空',
-        'pumpTimers' => '延时回调晚一帧；跑到 settle 之后则回调里的 setState 要等下一帧（tooltip 晚出、snackbar 晚走）',
-        'tickAnimations' => '动画晚一帧起手，第一帧不动',
-        'placeOverlays' => '浮层布局晚一帧，菜单/模态会抖一下',
-        'settle' => '帧末重建没跑 —— 这一帧的 setState 全部作废',
-        'tickLateMount' => '迟到挂载的 State 不被 tick ⇒ 帧时钟不上膛 ⇒ 之后没事件就永远静止',
-        'focusCollect' => '焦点链可能握着已被移除的 Element ⇒ 按键静默丢给死节点',
-        'pumpSemantics' => '读屏停在上一帧',
-    ];
-
     /** 打开后每帧记 trace，帧末断言 */
     public static bool $on = false;
 
@@ -146,7 +117,7 @@ final class FramePhase
      */
     public static function assertOrder(array $trace): void
     {
-        $settleIndex = array_search('settle', $trace, true);
+        $settleIndex = array_search(FrameStage::SETTLE, $trace, true);
         if ($settleIndex === false) {
             self::flag(
                 '帧阶段：本帧没有 settle 标记 —— Frame::run() 没被调用，'
@@ -163,7 +134,7 @@ final class FramePhase
             $index[$name] = $i;
         }
 
-        foreach (self::BEFORE_SETTLE as $name) {
+        foreach (FrameStage::beforeSettle() as $name) {
             if (!isset($index[$name])) {
                 continue; // 缺失由下面的"必须出现"检查报
             }
@@ -172,12 +143,12 @@ final class FramePhase
                     "帧阶段：%s 在 settle 之后跑了 —— %s。\n"
                     . '修法：把它挪到 $frame->run(...) 之前（组 A 只做"调回调"，回调里只 setState/markDirty）。',
                     $name,
-                    self::CONSEQUENCE[$name] ?? '会慢一帧',
+                    self::why($name),
                 ), $name . ' 在 settle 之后');
             }
         }
 
-        foreach (self::AFTER_SETTLE as $name) {
+        foreach (FrameStage::afterSettle() as $name) {
             if (!isset($index[$name])) {
                 continue;
             }
@@ -186,21 +157,31 @@ final class FramePhase
                     "帧阶段：%s 在 settle 之前跑了 —— %s。\n"
                     . '修法：把它挪到 $frame->run(...) 之后（组 C 观察的是**新**树）。',
                     $name,
-                    self::CONSEQUENCE[$name] ?? '会读到旧树',
+                    self::why($name),
                 ), $name . ' 在 settle 之前');
             }
         }
 
-        foreach (self::ALL as $name) {
+        foreach (FrameStage::all() as $name) {
             if (!isset($index[$name])) {
                 self::flag(\sprintf(
                     "帧阶段：本帧没跑 %s —— %s。\n"
-                    . '修法：确认 frame() 里那段没被条件跳过；若确实要跳过，把名字从 FramePhase::ALL 里删掉并写理由。',
+                    . '修法：确认 frame() 里那段没被条件跳过；若确实要跳过，把名字从 FrameStage::ORDERED 里删掉并写理由。',
                     $name,
-                    self::CONSEQUENCE[$name] ?? '这一帧少做一件事',
+                    self::why($name),
                 ), '缺 ' . $name);
             }
         }
+    }
+
+    /**
+     * 后果文案。`null` 说明 `FrameStage` 的表漏了这一项 —— 说出来，
+     * 不要兜底成一句"会慢一帧"（那会让表漏项看起来和正常一样）。
+     */
+    private static function why(string $stage): string
+    {
+        return FrameStage::consequence($stage)
+            ?? '（FrameStage 的表里没登记这一段的后果 ⇒ 去补表）';
     }
 
     /**

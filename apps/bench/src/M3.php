@@ -6,6 +6,7 @@ namespace Drift\Bench;
 use Drift\App\Frame;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Size;
+use Drift\Rendering\FrameStage;
 use Drift\Rendering\SurfaceProfile;
 use Drift\Text\DeterministicFontManager;
 use Drift\Text\DeterministicMetricsProvider;
@@ -136,11 +137,11 @@ final class M3
                 $t4 = \hrtime(true);
 
                 if ($i >= self::WARMUP) {
-                    $settle[] = (int) (SurfaceProfile::$ns['settle'] ?? 0);
-                    $layout[] = (int) (SurfaceProfile::$ns['layout'] ?? 0);
+                    $settle[] = (int) (SurfaceProfile::$ns[FrameStage::SETTLE] ?? 0);
+                    $layout[] = (int) (SurfaceProfile::$ns[FrameStage::LAYOUT] ?? 0);
                     // `Frame` 的 paint 段**含** begin/endFrame ⇒ 对应旧口径的
                     // paint + present，所以 present 单列 0（不是漏了）。
-                    $paint[] = (int) (SurfaceProfile::$ns['paint'] ?? 0);
+                    $paint[] = (int) (SurfaceProfile::$ns[FrameStage::PAINT] ?? 0);
                     $present[] = 0;
                     $total[] = $t4 - $t0;
                 }

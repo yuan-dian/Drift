@@ -6,6 +6,7 @@ namespace Drift\Dev\Tests\Unit\App;
 use Drift\App\FramePhase;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Errors;
+use Drift\Rendering\FrameStage;
 
 /**
  * 帧阶段顺序（系统级不变量）：FramePhase 约束一帧内各子步骤的相对顺序。
@@ -26,7 +27,7 @@ final class FramePhaseTest extends SmokeTestCase
     public function testCorrectOrderReportsNothing(): void
     {
         $nBefore = count(Errors::recentDiagnostics());
-        FramePhase::assertOrder(FramePhase::ALL);
+        FramePhase::assertOrder(FrameStage::all());
         $nAfter = count(Errors::recentDiagnostics());
         check(
             '帧阶段 · 顺序正确（ALL 本身就是按约束排的）⇒ 一条都不报',
@@ -45,8 +46,8 @@ final class FramePhaseTest extends SmokeTestCase
         //   c) 整帧**没有 settle 标记** —— `Frame::run()` 没被调用
         $aTrace = ['pumpIo', 'settle', 'pumpTasks', 'tickAnimations', 'placeOverlays', 'tickLateMount', 'focusCollect', 'pumpSemantics'];
         $bTrace = ['focusCollect', 'pumpTasks', 'tickAnimations', 'placeOverlays', 'settle', 'tickLateMount', 'pumpIo', 'pumpSemantics'];
-        $cTrace = FramePhase::ALL;
-        unset($cTrace[(int) array_search('settle', FramePhase::ALL, true)]);
+        $cTrace = FrameStage::all();
+        unset($cTrace[(int) array_search(FrameStage::SETTLE, $cTrace, true)]);
         $cTrace = array_values($cTrace);
 
         $base = count(Errors::recentDiagnostics());

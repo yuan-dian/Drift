@@ -6,6 +6,7 @@ namespace Drift\Platform\Win32;
 use Drift\Geometry\Scale;
 use Drift\Rendering\Canvas;
 use Drift\Rendering\Color;
+use Drift\Rendering\FrameStage;
 use Drift\Rendering\RenderSurface;
 use Drift\Rendering\SkiaCanvas;
 use Drift\Rendering\SurfaceProfile;
@@ -87,7 +88,7 @@ final class Win32SkiaSurface implements RenderSurface
         );
 
         if ($prof) {
-            SurfaceProfile::add('beginFrame', \hrtime(true) - $t0);
+            SurfaceProfile::add(FrameStage::BEGIN_FRAME, \hrtime(true) - $t0);
         }
 
         return $this->canvas;
@@ -117,7 +118,7 @@ final class Win32SkiaSurface implements RenderSurface
             $canvas->dispose();
 
             if ($prof) {
-                SurfaceProfile::add('present', \hrtime(true) - $t0);
+                SurfaceProfile::add(FrameStage::PRESENT, \hrtime(true) - $t0);
             }
 
             return;

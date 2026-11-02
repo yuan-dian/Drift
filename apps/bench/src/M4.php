@@ -5,6 +5,7 @@ namespace Drift\Bench;
 
 use Drift\App\Application;
 use Drift\Platform\Win32\Win32Platform;
+use Drift\Rendering\FrameStage;
 use Drift\Rendering\SurfaceProfile;
 use Drift\Widget\Widget;
 
@@ -118,18 +119,19 @@ final class M4
         $total = Stats::median($samples);
         $per = SurfaceProfile::perCall();
 
-        $begin = (int) ($per['beginFrame'] ?? 0);
-        $present = (int) ($per['present'] ?? 0);
+        $begin = (int) ($per[FrameStage::BEGIN_FRAME] ?? 0);
+        $present = (int) ($per[FrameStage::PRESENT] ?? 0);
         $surfaceSum = $begin + $present;
 
         // ★ 全分解（`26` §8）：paint 段**含** beginFrame/present ⇒ 扣掉才是"画"自己的。
         //   段键由 Frame.php / Application.php 的 guarded 计时喂（SurfaceProfile 默认关）。
-        $paintOwn = \max(0, (int) ($per['paint'] ?? 0) - $surfaceSum);
-        $layout = (int) ($per['layout'] ?? 0);
-        $settle = (int) ($per['settle'] ?? 0);
-        // ★ 2026-10-31：`pumpSliced` 随分片一起删了，换成 `pumpTimers`（它一直在计时，
-        //   只是原先漏在这个列表外 ⇒ 那段耗被算进"未归因"）。
-        $pumpKeys = ['pumpIo', 'pumpTasks', 'pumpTimers', 'anim', 'placeMenu', 'focus', 'semantics'];
+        $paintOwn = \max(0, (int) ($per[FrameStage::PAINT] ?? 0) - $surfaceSum);
+        $layout = (int) ($per[FrameStage::LAYOUT] ?? 0);
+        $settle = (int) ($per[FrameStage::SETTLE] ?? 0);
+        // ★ 泵段名单从 `FrameStage` 派生（2026-11-02）：先前手写的这份里
+        //   `placeMenu` 是个**不存在的名字**（真名 `placeOverlays`）⇒ 浮层耗
+        //   一直被算进"未归属"。名单由表算，拼错不可能。
+        $pumpKeys = FrameStage::pumpStages();
         $pumpSum = 0;
         foreach ($pumpKeys as $k) {
             $pumpSum += (int) ($per[$k] ?? 0);

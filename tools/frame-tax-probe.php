@@ -33,7 +33,7 @@ declare(strict_types=1);
  * |---|---|---|
  * | ① | `SurfaceProfile::selfTest()` 通过 | 单位换算写错（曾把 ns 印成 ms，**1000×**） |
  * | ② | 每个分段 ≤ 帧时间 × 1.25 | 量具自相矛盾：单位错 / 同一段重复计时 |
- * | ③ | 分段里必须出现 `anim` | "没扫到"冒充"没有"（否定结论要自证扫到了东西） |
+ * | ③ | 分段里必须出现 `tickAnimations` | "没扫到"冒充"没有"（否定结论要自证扫到了东西） |
  * | ④ | 稳态帧 paint 全跳过（run=0 && skip=帧数） | paint 门控退化 ⇒ 每帧整棵重画 |
  * | ⑤ | `layout` 段 ≤ 全量重排的 5% | layout 门控退化 ⇒ 稳态帧变成全树重排 |
  * | ⑥ | `structureVersion/boxEpoch/markedCount` 全 `+0` | "稳态"前提不成立（帧在自激），
@@ -80,6 +80,7 @@ use Drift\App\Application;use Drift\App\Frame;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Size;
+use Drift\Rendering\FrameStage;
 use Drift\Rendering\SurfaceProfile;
 use Drift\Widget\Column;
 use Drift\Widget\Element;
@@ -496,9 +497,9 @@ $items[] = ["②", $segOk, \sprintf(
     $perFrameNs > 0 ? 100.0 * $worst["ns"] / $perFrameNs : 0.0,
 )];
 
-$items[] = ["③", isset($seg["anim"]), isset($seg["anim"])
-    ? "扫到了 anim（" . SurfaceProfile::formatNs((int) $seg["anim"]) . "）"
-    : "分段里没有 anim —— 没扫到 tickAnimations，\"它不贵\"这个结论不成立"];
+$items[] = ["③", isset($seg[FrameStage::TICK_ANIMATIONS]), isset($seg[FrameStage::TICK_ANIMATIONS])
+    ? "扫到了 tickAnimations（" . SurfaceProfile::formatNs((int) $seg[FrameStage::TICK_ANIMATIONS]) . "）"
+    : "分段里没有 tickAnimations —— 没扫到这一段，\"它不贵\"这个结论不成立"];
 
 $paintOk = $last["paint"] === 0 && $last["skip"] === $frames;
 $items[] = ["④", $paintOk, \sprintf(
@@ -509,7 +510,7 @@ $items[] = ["④", $paintOk, \sprintf(
     $frames,
 )];
 
-$layoutSeg = (int) ($seg["layout"] ?? 0);
+$layoutSeg = (int) ($seg[FrameStage::LAYOUT] ?? 0);
 $fullNs = (int) \round($last["layoutUs"] * 1000.0);
 $ratio = $fullNs > 0 ? $layoutSeg / $fullNs : 0.0;
 $layoutOk = $fullNs > 0 && $ratio <= 0.05;

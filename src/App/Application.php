@@ -28,6 +28,7 @@ use Drift\Layout\LayoutTolerance;
 use Drift\Layout\RenderScrollView;
 use Drift\Rendering\Canvas;
 use Drift\Rendering\ColorToken;
+use Drift\Rendering\FrameStage;
 use Drift\Rendering\Paint;
 use Drift\Rendering\RenderSurface;
 use Drift\Rendering\SurfaceProfile;
@@ -891,11 +892,11 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         //   由本次 settle 消费（这一句必须在 `Frame::run()` 之前）。
         $t = $prof ? \hrtime(true) : 0;
         if ($trace !== null) {
-            $trace[] = 'pumpIo';
+            $trace[] = FrameStage::PUMP_IO;
         }
         $this->pumps->pumpIo();
         if ($prof) {
-            SurfaceProfile::add('pumpIo', \hrtime(true) - $t);
+            SurfaceProfile::add(FrameStage::PUMP_IO, \hrtime(true) - $t);
         }
 
         // ★★ ② 再把后台结果取出来（§17.4.2）—— **必须在 settle 之前**：
@@ -904,11 +905,11 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         //   "loading → ready" 会闪一帧空（多一帧延迟，且用户看得见）。
         $t = $prof ? \hrtime(true) : 0;
         if ($trace !== null) {
-            $trace[] = 'pumpTasks';
+            $trace[] = FrameStage::PUMP_TASKS;
         }
         $this->pumps->pumpTasks();
         if ($prof) {
-            SurfaceProfile::add('pumpTasks', \hrtime(true) - $t);
+            SurfaceProfile::add(FrameStage::PUMP_TASKS, \hrtime(true) - $t);
         }
 
         // ★ ③ 推进到期的延时回调（W8-2）：同样**必须在 settle 之前** ——
@@ -916,11 +917,11 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         //   消费，同一帧生效（Tooltip 到点那一帧就画出来，不多闪一帧空）。
         $t = $prof ? \hrtime(true) : 0;
         if ($trace !== null) {
-            $trace[] = 'pumpTimers';
+            $trace[] = FrameStage::PUMP_TIMERS;
         }
         $this->pumps->pumpTimers($timestampMs);
         if ($prof) {
-            SurfaceProfile::add('pumpTimers', \hrtime(true) - $t);
+            SurfaceProfile::add(FrameStage::PUMP_TIMERS, \hrtime(true) - $t);
         }
 
         // ★ ⓸ 推进动画（§17.4.9）：同样**必须在 settle 之前** —— `tickFrame()` 里的
@@ -928,11 +929,11 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         //   返回值是"还有动画在跑吗"，喂给 `wantsFrame()` 决定下一次要不要被叫醒。
         $t = $prof ? \hrtime(true) : 0;
         if ($trace !== null) {
-            $trace[] = 'tickAnimations';
+            $trace[] = FrameStage::TICK_ANIMATIONS;
         }
         $this->animating = $this->tickAnimations($timestampMs);
         if ($prof) {
-            SurfaceProfile::add('anim', \hrtime(true) - $t);
+            SurfaceProfile::add(FrameStage::TICK_ANIMATIONS, \hrtime(true) - $t);
         }
 
         // ★★ **零视口不是"内容放不下"，是"没有像素可画"**（2026-10-25 用户实测最小化即崩）。
@@ -959,18 +960,18 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         // 浮层布局段（逐层自尺寸 + 钉锚点 + 夹进客户区）—— 见 placeOverlays()
         $t = $prof ? \hrtime(true) : 0;
         if ($trace !== null) {
-            $trace[] = 'placeOverlays';
+            $trace[] = FrameStage::PLACE_OVERLAYS;
         }
         $this->overlayLayout->placeOverlays($constraints);
         if ($prof) {
-            SurfaceProfile::add('placeOverlays', \hrtime(true) - $t);
+            SurfaceProfile::add(FrameStage::PLACE_OVERLAYS, \hrtime(true) - $t);
         }
 
-        // ★ `settle` 是**标记**不是真段（`FramePhase::CORE`）：Frame::run() 内部
+        // ★ `settle` 是**标记**不是真段（`FrameStage` 的 CORE 组）：Frame::run() 内部
         //   才是 settle → layout → paint → present。标记打在它前面，
         //   "跨过 settle"的越界就拿它当下标。
         if ($trace !== null) {
-            $trace[] = 'settle';
+            $trace[] = FrameStage::SETTLE;
         }
 
         // ★★ **本帧要不要画**（2026-10-30，N1）：`Frame` 只看树（settle / layout /
@@ -1011,7 +1012,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         //   真机探针抓到）。任一新挂载的 State 还想下一帧 ⇒ `$animating` 置真 ⇒
         //   时钟重新上膛，动画得以续跑。
         if ($trace !== null) {
-            $trace[] = 'tickLateMount';
+            $trace[] = FrameStage::TICK_LATE_MOUNT;
         }
         //   ★ **2026-10-22 改成"只 tick 登记表"**（`06` §4.2）：第二次全树遍历的
         //     目的**只有一个** —— 让"这一帧刚挂上的 State"有机会声明"我还要下一帧"。
@@ -1049,7 +1050,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         //   永远 Tab 不到。
         $t = $prof ? \hrtime(true) : 0;
         if ($trace !== null) {
-            $trace[] = 'focusCollect';
+            $trace[] = FrameStage::FOCUS_COLLECT;
         }
         // ★ 捕获者卸载 ⇒ 必须在这里释放（`06` §5.2 释放路径 ②）：settle 可能把
         //   捕获者所在的子树换掉 ⇒ 之后的指针事件全发给一个死节点（静默冻住）。
@@ -1072,17 +1073,17 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         }
         $this->focus?->collect([$root, ...$popupRoots], $this->overlayHost->focusTrapRoots());
         if ($prof) {
-            SurfaceProfile::add('focus', \hrtime(true) - $t);
+            SurfaceProfile::add(FrameStage::FOCUS_COLLECT, \hrtime(true) - $t);
         }
 
         // 语义树推给 UIA（§9 / M5）：每帧末经 sink 交出（无 sink ⇒ 不建，零开销）。
         $t = $prof ? \hrtime(true) : 0;
         if ($trace !== null) {
-            $trace[] = 'pumpSemantics';
+            $trace[] = FrameStage::PUMP_SEMANTICS;
         }
         $this->pumpSemantics();
         if ($prof) {
-            SurfaceProfile::add('semantics', \hrtime(true) - $t);
+            SurfaceProfile::add(FrameStage::PUMP_SEMANTICS, \hrtime(true) - $t);
         }
 
         // ★★ 帧末**续跑 + 收口**（2026-11-02，技术债 D1）：放在 `pumpSemantics()`
