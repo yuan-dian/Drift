@@ -56,7 +56,7 @@
 | 滚动条 | 已有 | `RenderScrollView::paint()` 自绘胶囊 thumb（贴右/底，滚动时不随内容偏移） |
 | 悬停 | 已有 | `FocusManager::hoverTo` + `Widget::hover` 链路 |
 | 剪贴板 | **半成品** | `Win32Clipboard` 只有 `readText`/`writeText`/`hasText` ⇒ 无图像/文件/富文本格式 |
-| 文本编辑 | 部分（**2026-11-03 补齐多行**） | `EditableText::selectedText()` 有选区；`RichText` **无选区**（`grep selection` 0 处）⇒ 无跨控件选中复制。★ 多行输入 **2026-11-03 已落地**：`TextArea` + `RenderTextArea` + `TextAreaState`（`Enter` 换行 / `Ctrl+Enter` 提交 / 上下移按目标列 / 行首尾 / 垂直滚动与插入符跟随），编辑行为与单行共用 `EditableTextState` 基类 ⇒ 撤销 / 选区 / 按词跳零额外接线（见 `DEBT` §21）。**仍缺**：多行框的滚动条、双击选词 / 三击选段 |
+| 文本编辑 | 部分（**2026-11-03 补齐多行**） | `EditableText::selectedText()` 有选区；`RichText` **无选区**（`grep selection` 0 处）⇒ 无跨控件选中复制。★ 多行输入 **2026-11-03 已落地**：`TextArea` + `RenderTextArea` + `TextAreaState`（`Enter` 换行 / `Ctrl+Enter` 提交 / 上下移按目标列 / 行首尾 / 垂直滚动与插入符跟随），编辑行为与单行共用 `EditableTextState` 基类 ⇒ 撤销 / 选区 / 按词跳零额外接线（见 `DEBT` §21）。**仍缺**：双击选词 / 三击选段。★ 多行框滚动条 **2026-11-03 已落地**（`DEBT` §22）：`RenderTextArea` 是第三个 `ScrollBarHost` 实现（绘制收进 `ScrollBarGeometry::paint()` 共用一份），`TextArea::lines()` 固定框高 —— 没有它 `Column` 里 `maxScroll` 恒 0、条永远不出现 |
 | 系统集成 | **半成品**（2026-10-30 起） | ✅ 文件对话框 / 提示 / 确认：`Win32Dialog` + 四个桥函数（A5-①，§26）。✅ 拖文件进窗：`WM_DROPFILES` + `DragAcceptFiles` → `FilesDroppedEvent` → 命中/父链冒泡 → `onFilesDropped`（A5-②，§27）。仍缺：托盘图标 `Shell_NotifyIcon` **0**（`Tray` 端口零消费者）；原生菜单 `CreateMenu` **0** |
 
 **Top3 短板**：① 滚动惯性（手感最容易被用户察觉）② 手势识别器家族 ③ 剪贴板多格式。

@@ -18,7 +18,7 @@
 | Errors.php | 2 | 3 |
 | Geometry | 9 | 0 |
 | Input | 19 | 5 |
-| Layout | 44 | 39 |
+| Layout | 44 | 43 |
 | Logging | 9 | 3 |
 | Platform | 21 | 16 |
 | Rendering | 34 | 1 |
@@ -27,7 +27,7 @@
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
 | Widget | 173 | 206 |
-| **合计** | **480** | **394** |
+| **合计** | **480** | **398** |
 
 覆盖 384 个文件 · 描述性提及 32 处（grep 口径的污染源，不计入）
 
@@ -409,7 +409,7 @@
 | `StackFit` | enum | src/Layout/StackFit.php |
 | `TextInputBox` | interface | src/Layout/TextInputBox.php |
 
-### @internal（框架内部） · 39
+### @internal（框架内部） · 43
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -444,7 +444,11 @@
 | `RenderTable::thumbRectInRoot()` | method | src/Layout/RenderTable.php |
 | `RenderText::styleSize()` | method | src/Layout/RenderText.php |
 | `RenderText::lineCount()` | method | src/Layout/RenderText.php |
+| `RenderTextArea::setBarOpacity()` | method | src/Layout/RenderTextArea.php |
+| `RenderTextArea::scrollAxes()` | method | src/Layout/RenderTextArea.php |
+| `RenderTextArea::thumbRectInRoot()` | method | src/Layout/RenderTextArea.php |
 | `RenderTextArea::boxStyle()` | method | src/Layout/RenderTextArea.php |
+| `RenderTextArea::barOpacity()` | method | src/Layout/RenderTextArea.php |
 | `RenderTextField::styleSize()` | method | src/Layout/RenderTextField.php |
 | `RenderTextField::isShowingPlaceholder()` | method | src/Layout/RenderTextField.php |
 | `RenderWrap::clearChildren()` | method | src/Layout/RenderWrap.php |
