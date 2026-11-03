@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Dev\Tests\Feature\Table;
 
 use Drift\Dev\Tests\Support\SmokeTestCase;
+use Drift\Widget\TableContract;
 
 /**
  * `Table` 的**配置面响亮失败** —— 11 个"界面看着正常、某条交互永不发生"的入口。
@@ -70,6 +71,25 @@ final class ConfigFailureTest extends SmokeTestCase
             $label,
             $missing === [],
             '日志缺 ' . \implode(' / ', $missing) . '（实际 ' . \strlen($text) . ' 字节）'
+        );
+    }
+
+    /**
+     * 契约表里的每种受控能力都必须有一个 fatal case。
+     *
+     * ★ 这条是上一条的**反向锁**：`TableContract::capabilities()` 加一种能力而这里
+     *   没加 case ⇒ 红。两边少一个都藏不住 —— 而漏 case 的后果是"新能力的静默失败
+     *   永远测不到"，比漏实现更难发现。
+     */
+    public function testEveryCapabilityHasAFatalCase(): void
+    {
+        $covered = \array_column(self::controlledCases(), 0);
+        $missing = \array_values(\array_diff(TableContract::capabilities(), $covered));
+
+        check(
+            'Table · 契约表的每种受控能力都有 fatal case'
+                . ($missing === [] ? '' : '（缺：' . \implode(', ', $missing) . '）'),
+            $missing === [],
         );
     }
 

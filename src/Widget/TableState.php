@@ -1988,81 +1988,103 @@ final class TableState extends State implements Scrollable, EditableText
         return null;
     }
 
+    /**
+     * 一帧的总装：**校验 → 编辑前置 → 几何 → 表头 ＋ 行区 → 装盒**。
+     *
+     * ★ 这里只写流程。原先 229 行把校验、几何、装配混在一段里，改任何一段都要
+     *   跨屏读；四段各自成为方法之后，"加一个阶段"有明确的落点。
+     */
     public function build(BuildContext $ctx): Widget
     {
         $view = $this->view();
         $columns = $view->columnList();
-        $rows = $view->rowList();
-        $count = \count($rows);
-        $rowH = $view->rowHeightPx();
-        $headerH = $view->headerHeightPx();
-        $spacing = $view->columnSpacingPx();
 
-        if ($view->keyMapper() === null) {
-            Errors::report(
-                'Table 没有 keyOf —— 必须调 keyOf(fn(mixed $row): string|int => ...)。'
-                    . "\n" . '理由：它是列宽覆盖、选择集、Shift 锚点的唯一身份（阶段 2~4 全靠它）。'
-            );
-        }
+        TableContract::assert($view, $columns);
+        $this->prepareEditor($ctx);
 
-        // ★ 声明了选择却没接上报 = "点行改了选中但没人收到"（选中色停在旧值，
-        //   而点一次就把差异放大一层）。这与 `Table` 的 docblock 承诺一致：响亮失败。
-        if ($view->selectionSet() !== null && $view->selectionChangeHandler() === null) {
-            Errors::report(
-                'Table 声明了 selection() 却没有 onSelectionChange() —— 选择是受控的，'
-                    . "\n" . '控件只算"点完之后该是什么"并交出去，应用不接就等于点了没反应。'
-                    . "\n" . '修法：加上 ->onSelectionChange(fn(TableSelection $next) => ...)，'
-                    . '或去掉 ->selection()（纯展示表不启用选择）。'
-            );
-        }
+        $viewportW = $this->viewportEstimate($ctx, false);
+        $g = $this->settleGeometry($ctx, $view, $columns, $viewportW);
 
-        $this->assertInteractivityDeclared($view, $columns);
+        return TableBox::make(
+            $g->offsetX,
+            $g->offsetY,
+            $g->contentW,
+            $g->headerHeight,
+            $g->contentH,
+            // 窗的起点 = 行区内容坐标里"第 rowFirst 行"的 y —— 与 `RenderScrollView`
+            // 的 `sliceOrigin` 同一含义（**行区**坐标，不含表头高；见 `TableGeometry::$bodyH`）。
+            $g->rowFirst * $g->rowHeight,
+            $this->headerRow($ctx, $columns, $g),
+            $this->buildBody($ctx, $view, $columns, $g),
+            $this->barOpacity(),
+            // ★ 只在**有焦点**时给框：失焦却画焦点框就是撒谎（见字段注释）。
+            //   没焦点 ⇒ `null`，盒那一侧不需要知道焦点概念。
+            $this->hasFocus ? $g->cellRect($this->focusedRow, $this->focusedCol) : null,
+        );
+    }
 
+    /**
+     * 建盒之前的编辑前置：量宽（指针落插入符要用）＋ 会话存活检查。
+     *
+     * ★ 存活检查（阶段 7a）：行被删 / 列被删 / 换了数据源之后，`editingRef` 会指向
+     *   不存在的 key —— "编辑一个不存在的格子"必须当场结束，否则用户继续打字就是
+     *   对着空气改（提交时也找不到行）。
+     * ★ 这里是 build 期直接改字段（同偏移夹取）：不标脏、不多一帧。
+     */
+    private function prepareEditor(BuildContext $ctx): void
+    {
         // 指针落插入符要"建盒之前"量宽（见 `$editorMetrics` 的注释）
         $this->editorMetrics = $ctx->metrics();
         $this->editorStyle = InlineEditorBox::editorStyle($ctx);
 
-        // ★ 编辑会话的**存活检查**（阶段 7a）：行被删 / 列被删 / 换了数据源之后，
-        //   `editingRef` 会指向不存在的 key —— 那种"编辑一个不存在的格子"必须
-        //   当场结束，否则用户继续打字就是对着空气改（提交时也找不到行）。
-        //   ★ 这里是 build 期直接改字段（同偏移夹取）：不标脏、不多一帧。
-        if ($this->editingRef !== null
-            && ($this->keyIndex($this->editingRef['row']) === null
-                || $this->columnIndexOf($this->editingRef['col']) === null)) {
-            $this->editingRef = null;
-            $this->draft = null;
-            $this->draftOrigin = '';
+        $ref = $this->editingRef;
+        if ($ref === null) {
+            return;
         }
 
-        $viewportH = $this->viewportEstimate($ctx, true);
-        $viewportW = $this->viewportEstimate($ctx, false);
-        $widths = $this->resolveWidths($columns, $viewportW);
+        if ($this->keyIndex($ref['row']) !== null && $this->columnIndexOf($ref['col']) !== null) {
+            return;
+        }
 
-        // ★★ 一帧的几何**一次算完**（`TableGeometry`）：列宽和、内容宽高、行区高、
-        //   两轴夹取、行/列两个窗口 —— 全在里面。**这里不再有第二处算术**：
-        //   指针映射 / 键盘 reveal / 窗口判定 / 表头构建全部问这个快照。
-        //   `MEMORY.md` 的"坐标两族别抄错"就是从"各处各算一遍"长出来的。
+        $this->editingRef = null;
+        $this->draft = null;
+        $this->draftOrigin = '';
+    }
+
+    /**
+     * 这一帧的几何快照，并把夹取结果写回活字段。
+     *
+     * ★★ 一帧的几何**一次算完**（`TableGeometry`）：列宽和、内容宽高、行区高、
+     *   两轴夹取、行/列两个窗口 —— 全在里面。**这里不再有第二处算术**：
+     *   指针映射 / 键盘 reveal / 窗口判定 / 表头构建全部问这个快照。
+     *   `MEMORY.md` 的"坐标两族别抄错"就是从"各处各算一遍"长出来的。
+     *
+     * ★ 夹取结果**写回活字段**（不经 `setState` ⇒ 不标脏、不多一帧）。
+     *   理由不是洁癖：State 里存的是"用户增量累加值"，而内容会变短
+     *   （过滤 / 列宽被拖窄 / 窗口变宽）。旧值一旦长期大于新上限，之后每一笔
+     *   增量都先拿去消耗这段**死区** —— 真机表现是"拖着条，画面不动"，
+     *   而条本身贴在末端，看起来像"拖不动"。写回之后增量立刻生效。
+     *   ★ 走 `set()` 而不是 `move()`：这是"布局算出来的真值"，不是用户增量，
+     *     在 `move()` 里再夹一次下界 0 就是第二个真相（见 `ScrollLane::set()`）。
+     *
+     * @param list<TableColumn> $columns
+     */
+    private function settleGeometry(BuildContext $ctx, Table $view, array $columns, float $viewportW): TableGeometry
+    {
         $g = TableGeometry::compute(
-            $widths,
-            $rowH,
-            $count,
-            $headerH,
-            $spacing,
+            $this->resolveWidths($columns, $viewportW),
+            $view->rowHeightPx(),
+            \count($view->rowList()),
+            $view->headerHeightPx(),
+            $view->columnSpacingPx(),
             $viewportW,
-            $viewportH,
+            $this->viewportEstimate($ctx, true),
             $this->offsetX(),
             $this->offsetY(),
             $view->cacheExtentPx(),
         );
         $this->geometry = $g;
 
-        // ★ 夹取结果**写回活字段**（不经 `setState` ⇒ 不标脏、不多一帧）。
-        //   理由不是洁癖：State 里存的是"用户增量累加值"，而内容会变短
-        //   （过滤 / 列宽被拖窄 / 窗口变宽）。旧值一旦长期大于新上限，之后每一笔
-        //   增量都先拿去消耗这段**死区** —— 真机表现是"拖着条，画面不动"，
-        //   而条本身贴在末端，看起来像"拖不动"。写回之后增量立刻生效。
-        //   ★ 走 `set()` 而不是 `move()`：这是"布局算出来的真值"，不是用户增量，
-        //     在 `move()` 里再夹一次下界 0 就是第二个真相（见 `ScrollLane::set()`）。
         $this->lane(Axis::Vertical)->set($g->offsetY);
         $this->lane(Axis::Horizontal)->set($g->offsetX);
 
@@ -2071,25 +2093,21 @@ final class TableState extends State implements Scrollable, EditableText
 
         // 光标格跟着行列数夹（行被删 / 列被删之后不能停在不存在的位置）。
         // 与偏移写回同一条纪律：build 期直接写字段，不经 `setState`（不标脏）。
-        $this->focusedRow = $count === 0 ? 0 : min($this->focusedRow, $count - 1);
-        $this->focusedCol = $columns === [] ? 0 : min($this->focusedCol, \count($columns) - 1);
+        $this->focusedRow = $g->rowCount === 0 ? 0 : \min($this->focusedRow, $g->rowCount - 1);
+        $this->focusedCol = $columns === [] ? 0 : \min($this->focusedCol, \count($columns) - 1);
 
-        // ★ 只在**有焦点**时给框：失焦却画焦点框就是撒谎（见字段注释）。
-        //   没焦点 ⇒ `null`，盒那一侧不需要知道焦点概念。
-        $focusRect = $this->hasFocus ? $g->cellRect($this->focusedRow, $this->focusedCol) : null;
+        return $g;
+    }
 
-        // 下面这一段全是**给快照取名字**（不是再算一遍）：后文照旧用这些名字。
-        $contentW = $g->contentW;
-        $contentH = $g->contentH;
-        $offsetX = $g->offsetX;
-        $offsetY = $g->offsetY;
-        $first = $g->rowFirst;
-        $last = $g->rowLast;
-        $colFirst = $g->colFirst;
-        $colEnd = $g->colLast;
-        $colLeading = $g->colLeading;
-
-        $headerKid = $this->headerRow($ctx, $columns, $widths, $contentW, $headerH, $spacing, $colFirst, $colEnd, $colLeading);
+    /**
+     * 行区：只造窗口内的行，每行 = 格子 ＋ 行容器装饰。
+     *
+     * @param list<TableColumn> $columns
+     */
+    private function buildBody(BuildContext $ctx, Table $view, array $columns, TableGeometry $g): Widget
+    {
+        $rows = $view->rowList();
+        $spacing = $g->spacing;
         $striped = $view->isStriped();
         $keyOf = $view->keyMapper();
         $selectable = $view->selectionSet() !== null;
@@ -2103,7 +2121,7 @@ final class TableState extends State implements Scrollable, EditableText
             || $this->hasEditableColumn($columns);
 
         $lines = [];
-        for ($i = $first; $i < $last; $i++) {
+        for ($i = $g->rowFirst; $i < $g->rowLast; $i++) {
             $row = $rows[$i];
             $rowKey = null;
 
@@ -2116,10 +2134,10 @@ final class TableState extends State implements Scrollable, EditableText
             }
 
             $cells = [];
-            for ($j = $colFirst; $j < $colEnd; $j++) {
+            for ($j = $g->colFirst; $j < $g->colLast; $j++) {
                 $cells[] = $this->cellShell(
                     $this->cellContent($row, $i, $columns[$j], $rowKey),
-                    $widths[$j],
+                    $g->widths[$j],
                     $columns[$j],
                     // ★ 格级选中的底色**按格**加在这一层：`cellBuilder` 完全不知道
                     //   自己被选中（"加选择不用改每列 cell"这条裁决仍然成立）。
@@ -2137,13 +2155,13 @@ final class TableState extends State implements Scrollable, EditableText
             //   ★ 用内边距而不是插一个 `SizedBox` 占位：`Row` 的 `spacing` 会给
             //     "占位 ↔ 第一个格"之间**再**加一个 gap ⇒ 每个窗口都多偏 `spacing`。
             //   ★ 恰好 0 时不加（绝大多数表全部列可见）⇒ 结构与本阶段之前逐位相同。
-            if ($colLeading > 0.0) {
-                $rowWidget = $rowWidget->padding(EdgeInsets::only(left: $colLeading));
+            if ($g->colLeading > 0.0) {
+                $rowWidget = $rowWidget->padding(EdgeInsets::only(left: $g->colLeading));
             }
 
             $line = SizedBox::make($rowWidget)
-                ->width($contentW)
-                ->height($rowH)
+                ->width($g->contentW)
+                ->height($g->rowHeight)
                 ->key($i);
 
             $bg = $this->rowBackground($i, $rowKey, $ctx, $striped);
@@ -2186,26 +2204,13 @@ final class TableState extends State implements Scrollable, EditableText
             $lines[] = $line;
         }
 
-        $opacity = 1.0;
-        $bar = $this->barFade;
-        if ($bar !== null) {
-            $opacity = $bar->opacity();
-        }
+        return Column::make()->children($lines);
+    }
 
-        // 窗的起点 = 行区内容坐标里"第 first 行"的 y —— 与 `RenderScrollView` 的
-        // `sliceOrigin` 同一含义（**行区**坐标，不含表头高；见 `TableGeometry::$bodyH`）。
-        return TableBox::make(
-            $offsetX,
-            $offsetY,
-            $contentW,
-            $headerH,
-            $contentH,
-            $first * $rowH,
-            $headerKid,
-            Column::make()->children($lines),
-            $opacity,
-            $focusRect,
-        );
+    /** 滚动条的淡出透明度（`barFade` 懒建 ⇒ 没有就是 1.0）。 */
+    private function barOpacity(): float
+    {
+        return $this->barFade?->opacity() ?? 1.0;
     }
 
     /**
@@ -2215,38 +2220,28 @@ final class TableState extends State implements Scrollable, EditableText
      *   裁剪区（不随竖向滚动）。
      *
      * @param list<TableColumn> $columns
-     * @param array<int, float> $widths
      */
-    private function headerRow(
-        BuildContext $ctx,
-        array $columns,
-        array $widths,
-        float $contentW,
-        float $headerH,
-        float $spacing,
-        int $colFirst,
-        int $colEnd,
-        float $colLeading,
-    ): Widget {
+    private function headerRow(BuildContext $ctx, array $columns, TableGeometry $g): Widget
+    {
         $sort = $this->view()->sortState();
 
         $cells = [];
-        for ($j = $colFirst; $j < $colEnd; $j++) {
-            $cells[] = $this->headerCell($ctx, $columns[$j], $widths[$j], $sort, $j);
+        for ($j = $g->colFirst; $j < $g->colLast; $j++) {
+            $cells[] = $this->headerCell($ctx, $columns[$j], $g->widths[$j], $sort, $j);
         }
 
-        $row = Row::make()->children($cells)->spacing($spacing)->cross(FlexAlign::Center);
+        $row = Row::make()->children($cells)->spacing($g->spacing)->cross(FlexAlign::Center);
 
-        // ★ 与数据行**同一个** `$colLeading`、同一处写法（阶段 1 闸门的第 3 条：
-        //   表头与行区各算一次必然漂）。这里是唯一允许出现第二遍的地方，
-        //   所以刻意把 `$cells` 的构造也写成同形 —— 两边结构一样才不会各自漂。
-        if ($colLeading > 0.0) {
-            $row = $row->padding(EdgeInsets::only(left: $colLeading));
+        // ★ 与数据行**同一个** `colLeading`、同一处写法（阶段 1 闸门的第 3 条：
+        //   表头与行区各算一次必然漂）。这里刻意与 `buildBody()` 写成同形 ——
+        //   两边结构一样才不会各自漂。
+        if ($g->colLeading > 0.0) {
+            $row = $row->padding(EdgeInsets::only(left: $g->colLeading));
         }
 
         return SizedBox::make($row)
-            ->width($contentW)
-            ->height($headerH);
+            ->width($g->contentW)
+            ->height($g->headerHeight);
     }
 
     /**
@@ -2528,89 +2523,6 @@ final class TableState extends State implements Scrollable, EditableText
         return TableSort::none();
     }
 
-    /**
-     * 交互声明的响亮失败（排序 + 列宽）。
-     *
-     * 1. 有列 `sortable()` 但没接 `onSortChange()` ⇒ 表头可点、点了没反应，箭头停在旧值。
-     * 2. `sort()` 指向的列不存在 ⇒ 箭头永远画不出来（列 key 拼错时**完全静默**）。
-     * 3. 有列 `resizable()` 但没接 `onColumnResize()` ⇒ 手柄在、光标也变，拖半天
-     *    列宽不动，**且不报错**。
-     *
-     * ★ 第 3 条不检查 `columnWidths()` 里的多余 key：那是**历史偏好**（列删了、
-     *   存盘的旧值还在），静默忽略才是对的。第 2 条不同 —— 排序是当前状态，
-     *   拼错就是拼错。两者的差别在"这是历史还是现在"。
-     *
-     * @param list<TableColumn> $columns
-     */
-    private function assertInteractivityDeclared(Table $view, array $columns): void
-    {
-        $keys = [];
-        $sortable = null;
-        $resizable = null;
-        $editable = null;
-        foreach ($columns as $column) {
-            $keys[$column->keyName()] = true;
-            if ($sortable === null && $column->isSortable()) {
-                $sortable = $column->keyName();
-            }
-            if ($resizable === null && $column->isResizable()) {
-                $resizable = $column->keyName();
-            }
-            if ($editable === null && $column->isEditable()) {
-                $editable = $column->keyName();
-            }
-
-            // ★ `cell()` 列不能编辑，**在挂载期就说**：等到用户按 Enter 才报，
-            //   那时候他已经在等结果了（"能不能编辑"是结构问题，不是运行期问题）。
-            if ($column->isEditable() && $column->fieldName() === null) {
-                Errors::report(sprintf(
-                    'Table 的列 "%s" 声明了 editable()，但它没有 field() —— 单元格编辑要'
-                        . "\n" . '"起始文本 + 提交到哪个字段"，而 cell() 只给一个任意 Widget。'
-                        . "\n" . '修法：该列改用 field("字段名")，或去掉 ->editable()。',
-                    $column->keyName(),
-                ));
-            }
-        }
-
-        if ($editable !== null && $view->cellEditHandler() === null) {
-            Errors::report(sprintf(
-                'Table 的列 "%s" 声明了 editable() 却没有 onCellEdit() —— 编辑是受控的，'
-                    . "\n" . '控件只算"改成了什么"并交出去，应用不接就等于改完没人收（回车后什么都没发生）。'
-                    . "\n" . '修法：加上 ->onCellEdit(fn($rowKey, string $col, string $value) => ...)，'
-                    . "\n" . '或去掉 ->editable()。',
-                $editable,
-            ));
-        }
-
-        if ($resizable !== null && $view->columnResizeHandler() === null) {
-            Errors::report(sprintf(
-                'Table 的列 "%s" 声明了 resizable() 却没有 onColumnResize() —— 列宽是受控的，'
-                    . "\n" . '控件只算"拖到了多宽"并交出去，应用不接就等于拖了没反应。'
-                    . "\n" . '修法：加上 ->onColumnResize(fn(string $key, float $w, bool $done) => ...)，'
-                    . "\n" . '或去掉 ->resizable()。',
-                $resizable,
-            ));
-        }
-
-        if ($sortable !== null && $view->sortChangeHandler() === null) {
-            Errors::report(sprintf(
-                'Table 的列 "%s" 声明了 sortable() 却没有 onSortChange() —— 排序是受控的，'
-                    . "\n" . '控件只算"点完之后该是什么排序"并交出去，应用不接就等于点了没反应。'
-                    . "\n" . '修法：加上 ->onSortChange(fn(TableSort $next) => ...)，或去掉 ->sortable()。',
-                $sortable,
-            ));
-        }
-
-        foreach ($view->sortState()->keys() as [$key, $_direction]) {
-            if (!isset($keys[$key])) {
-                Errors::report(sprintf(
-                    'Table 的排序指向了不存在的列 "%s"。现有列：%s',
-                    $key,
-                    \implode(', ', \array_keys($keys)),
-                ));
-            }
-        }
-    }
 
     /**
      * 一格的内容：**正在编辑的那一格换成原地编辑器**，其余照列定义造。
@@ -2681,16 +2593,14 @@ final class TableState extends State implements Scrollable, EditableText
     }
 
     /**
-     * 三层列宽的 ①②③（第 ④ 层 = 阶段 4 的 `widthOverrides`，最优先但仍夹 ③）。
-     *
-     * @param list<TableColumn> $columns
-     * @return array<int, float>
-     */
-    /**
-     * 把列声明摊平成 `Layout\ColumnWidths` 的入参。
+     * 把列声明摊平成 `Layout\ColumnWidths` 的入参 —— 三层列宽的 ①②③，
+     * 第 ④ 层（阶段 4 的 `widthOverrides`）最优先但仍夹 ③。
      *
      * ★ 只是搬字段，不含决策 —— 四层分配规则（override 最优先 / flex 吃剩余 /
      *   逐列夹）全在纯函数里，那里能单测。
+     *
+     * @param list<TableColumn> $columns
+     * @return array<int, float>
      */
     private function resolveWidths(array $columns, float $viewportW): array
     {

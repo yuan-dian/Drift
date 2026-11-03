@@ -26,10 +26,10 @@
 | State | 16 | 7 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
-| Widget | 171 | 201 |
-| **合计** | **476** | **381** |
+| Widget | 171 | 202 |
+| **合计** | **476** | **382** |
 
-覆盖 377 个文件 · 描述性提及 32 处（grep 口径的污染源，不计入）
+覆盖 378 个文件 · 描述性提及 32 处（grep 口径的污染源，不计入）
 
 ## App 层
 
@@ -859,7 +859,7 @@
 | `Wrap` | class | src/Widget/Wrap.php |
 | `YearMonth` | class | src/Widget/YearMonth.php |
 
-### @internal（框架内部） · 201
+### @internal（框架内部） · 202
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -998,6 +998,7 @@
 | `Table::columnWidthOverrides()` | method | src/Widget/Table.php |
 | `TableBox` | class | src/Widget/TableBox.php |
 | `TableBox::make()` | method | src/Widget/TableBox.php |
+| `TableContract` | class | src/Widget/TableContract.php |
 | `TableElement` | class | src/Widget/TableElement.php |
 | `TableGeometry` | class | src/Widget/TableGeometry.php |
 | `TableGridPicker` | class | src/Widget/TableGridPicker.php |
