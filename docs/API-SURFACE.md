@@ -18,7 +18,7 @@
 | Errors.php | 2 | 3 |
 | Geometry | 9 | 0 |
 | Input | 19 | 5 |
-| Layout | 42 | 38 |
+| Layout | 44 | 39 |
 | Logging | 9 | 3 |
 | Platform | 21 | 16 |
 | Rendering | 34 | 1 |
@@ -26,10 +26,10 @@
 | State | 16 | 7 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
-| Widget | 170 | 204 |
-| **合计** | **475** | **391** |
+| Widget | 173 | 206 |
+| **合计** | **480** | **394** |
 
-覆盖 378 个文件 · 描述性提及 32 处（grep 口径的污染源，不计入）
+覆盖 384 个文件 · 描述性提及 32 处（grep 口径的污染源，不计入）
 
 ## App 层
 
@@ -360,7 +360,7 @@
 
 ## Layout 层
 
-### @api（应用可读面） · 42
+### @api（应用可读面） · 44
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -402,12 +402,14 @@
 | `RenderSpinner` | class | src/Layout/RenderSpinner.php |
 | `RenderStack` | class | src/Layout/RenderStack.php |
 | `RenderText` | class | src/Layout/RenderText.php |
+| `RenderTextArea` | class | src/Layout/RenderTextArea.php |
 | `RenderTextField` | class | src/Layout/RenderTextField.php |
 | `RenderToggle` | class | src/Layout/RenderToggle.php |
 | `RenderWrap` | class | src/Layout/RenderWrap.php |
 | `StackFit` | enum | src/Layout/StackFit.php |
+| `TextInputBox` | interface | src/Layout/TextInputBox.php |
 
-### @internal（框架内部） · 38
+### @internal（框架内部） · 39
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -442,6 +444,7 @@
 | `RenderTable::thumbRectInRoot()` | method | src/Layout/RenderTable.php |
 | `RenderText::styleSize()` | method | src/Layout/RenderText.php |
 | `RenderText::lineCount()` | method | src/Layout/RenderText.php |
+| `RenderTextArea::boxStyle()` | method | src/Layout/RenderTextArea.php |
 | `RenderTextField::styleSize()` | method | src/Layout/RenderTextField.php |
 | `RenderTextField::isShowingPlaceholder()` | method | src/Layout/RenderTextField.php |
 | `RenderWrap::clearChildren()` | method | src/Layout/RenderWrap.php |
@@ -690,7 +693,7 @@
 
 ## Widget 层
 
-### @api（应用可读面） · 170
+### @api（应用可读面） · 173
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -726,6 +729,7 @@
 | `DragTarget` | class | src/Widget/Drag/DragTarget.php |
 | `Each` | class | src/Widget/Each.php |
 | `EditableText` | interface | src/Widget/EditableText.php |
+| `EditableTextState` | class | src/Widget/EditableTextState.php |
 | `Element` | class | src/Widget/Element.php |
 | `ErrorBoundary` | class | src/Widget/ErrorBoundary.php |
 | `ErrorBoundaryElement` | class | src/Widget/ErrorBoundaryElement.php |
@@ -815,6 +819,8 @@
 | `TabView` | class | src/Widget/TabView.php |
 | `TabView::make()` | method | src/Widget/TabView.php |
 | `Text` | class | src/Widget/Text.php |
+| `TextArea` | class | src/Widget/TextArea.php |
+| `TextAreaState` | class | src/Widget/TextAreaState.php |
 | `TextField` | class | src/Widget/TextField.php |
 | `TextFieldState` | class | src/Widget/TextFieldState.php |
 | `ThemeScopeElement` | class | src/Widget/ThemeScopeElement.php |
@@ -865,7 +871,7 @@
 | `Wrap` | class | src/Widget/Wrap.php |
 | `YearMonth` | class | src/Widget/YearMonth.php |
 
-### @internal（框架内部） · 204
+### @internal（框架内部） · 206
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -922,6 +928,7 @@
 | `Dock::slotKid()` | method | src/Widget/Dock.php |
 | `Dock::overflowValue()` | method | src/Widget/Dock.php |
 | `DockElement` | class | src/Widget/DockElement.php |
+| `EditableTextState::$editing` | property | src/Widget/EditableTextState.php |
 | `Element::$box` | property | src/Widget/Element.php |
 | `Element::isAnimationActive()` | method | src/Widget/Element.php |
 | `Element::markAnimationActive()` | method | src/Widget/Element.php |
@@ -1011,9 +1018,10 @@
 | `TableGeometry` | class | src/Widget/TableGeometry.php |
 | `TableGridPicker` | class | src/Widget/TableGridPicker.php |
 | `TableState` | class | src/Widget/TableState.php |
+| `TextAreaBox` | class | src/Widget/TextAreaBox.php |
+| `TextAreaBox::make()` | method | src/Widget/TextAreaBox.php |
 | `TextFieldBox` | class | src/Widget/TextFieldBox.php |
 | `TextFieldBox::make()` | method | src/Widget/TextFieldBox.php |
-| `TextFieldState::$editing` | property | src/Widget/TextFieldState.php |
 | `WidgetFocus` | trait | src/Widget/Traits/WidgetFocus.php |
 | `WidgetFocus::focusNode()` | method | src/Widget/Traits/WidgetFocus.php |
 | `WidgetFocus::cursorShape()` | method | src/Widget/Traits/WidgetFocus.php |
