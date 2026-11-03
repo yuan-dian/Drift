@@ -26,8 +26,8 @@
 | State | 16 | 7 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
-| Widget | 171 | 204 |
-| **合计** | **476** | **391** |
+| Widget | 170 | 204 |
+| **合计** | **475** | **391** |
 
 覆盖 378 个文件 · 描述性提及 32 处（grep 口径的污染源，不计入）
 
@@ -690,7 +690,7 @@
 
 ## Widget 层
 
-### @api（应用可读面） · 171
+### @api（应用可读面） · 170
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -824,7 +824,6 @@
 | `TooltipPanel` | class | src/Widget/TooltipPanel.php |
 | `WidgetFocus::focusOrder()` | method | src/Widget/Traits/WidgetFocus.php |
 | `WidgetFocus::skipFocus()` | method | src/Widget/Traits/WidgetFocus.php |
-| `WidgetFocus::claimKeys()` | method | src/Widget/Traits/WidgetFocus.php |
 | `WidgetFocus::cursor()` | method | src/Widget/Traits/WidgetFocus.php |
 | `WidgetInteraction::draggable()` | method | src/Widget/Traits/WidgetInteraction.php |
 | `WidgetInteraction::dragTarget()` | method | src/Widget/Traits/WidgetInteraction.php |
