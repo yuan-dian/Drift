@@ -36,6 +36,37 @@ final class SurfaceProfile
         self::$calls[$key] = (self::$calls[$key] ?? 0) + 1;
     }
 
+    /**
+     * 把一段代码**包起来计时并记账** —— 本仓唯一的"计一段"入口（2026-11-03）。
+     *
+     * ★★ 为什么要有它：一帧的九段要往**两个**出口记账 —— `FramePhase` 的 trace
+     *   （顺序校验 + 真机报告）与这里的分段计时（成本归因）。两处都是手写调用，
+     *   于是漂了：`tickLateMount` 有 trace、没有计时 ⇒ 顺序校验全过，而它那一秒
+     *   的成本被算进「未归属」，**没有任何一条检查会红**（实测见
+     *   `build/trace-vs-profile.php`：八段有、这一段 0 次）。
+     *   ⇒ "取时钟 / 减时钟 / 写账"三件事收成一处，名字也就只写一遍。
+     *
+     * ★ 关着时的开销 = 一次静态 bool 读 + 一次闭包调用，不取时钟、不写数组。
+     *   `try/finally` 而不是"正常路径才记"：**抛异常的那一段也花了时间**，漏记它
+     *   会让"帧末还剩多少"这个差值对不上（同 `CompletionQueue` 的 `finally` 理由）。
+     *
+     * @param string $stage `FrameStage` 的常量之一
+     * @return mixed `$body` 的返回值（帧循环里有用：`tickAnimations()` 的"还有动画吗"）
+     */
+    public static function time(string $stage, \Closure $body): mixed
+    {
+        if (!self::$on) {
+            return $body();
+        }
+
+        $t = \hrtime(true);
+        try {
+            return $body();
+        } finally {
+            self::add($stage, \hrtime(true) - $t);
+        }
+    }
+
     public static function reset(): void
     {
         self::$ns = [];

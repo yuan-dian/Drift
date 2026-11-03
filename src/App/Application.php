@@ -287,6 +287,17 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     private int $frameSerial = 0;
 
     /**
+     * 本帧执行过的段名（`FramePhase` 关时为 `null`）。
+     *
+     * ★ 是属性而不是 `frame()` 的局部变量（2026-11-03）：段名由 `stage()` 统一推进去，
+     *   而 `stage()` 是另一个方法。原先的局部 `$trace` 让"推段名"只能散在 `frame()`
+     *   里手写，与 `SurfaceProfile` 的计时分成了两份清单（见 {@see self::stage()}）。
+     *
+     * @var list<string>|null
+     */
+    private ?array $frameTrace = null;
+
+    /**
      * 被跳过的零视口帧数（最小化 / 桌面临时切走）。
      *
      * ★ 只用于夹具观测"这一帧确实被跳过了"，不参与任何决策。
@@ -880,61 +891,41 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         //   `State::tickFrameStamped` 用它识别"本帧已推进过的状态"。
         $this->frameSerial++;
 
-        // ★ 分段计时（SurfaceProfile，默认关）：frame() 里各泵与收尾的占比，
-        //   M4 拆「其余(PHP)」黑箱用（`26` §7）。段键与 Frame.php 的同治一套表。
-        $prof = SurfaceProfile::$on;
-
         // ★ 帧阶段 trace（`06` §2.4，默认关）：九段各记一个名字，帧末比对名单。
-        //   关时 $trace 为 null，每段只多一次 `if ($trace !== null)`。
-        $trace = FramePhase::begin();
+        //   ★★ 段名与分段计时**同源**（2026-11-03）：两者都只经 `stage()` 推一次。
+        //      手写两份清单必漂 —— `tickLateMount` 就曾只进了 trace、没进计时，
+        //      于是顺序校验全过而它的成本被算进「未归属」，没有任何检查会红。
+        $this->frameTrace = FramePhase::begin();
 
         // ★ ① 先问一轮非阻塞 IO（§17.4.4）：外部数据先到，回调里 setState 的脏标记
         //   由本次 settle 消费（这一句必须在 `Frame::run()` 之前）。
-        $t = $prof ? \hrtime(true) : 0;
-        if ($trace !== null) {
-            $trace[] = FrameStage::PUMP_IO;
-        }
-        $this->pumps->pumpIo();
-        if ($prof) {
-            SurfaceProfile::add(FrameStage::PUMP_IO, \hrtime(true) - $t);
-        }
+        $this->stage(FrameStage::PUMP_IO, function (): void {
+            $this->pumps->pumpIo();
+        });
 
         // ★★ ② 再把后台结果取出来（§17.4.2）—— **必须在 settle 之前**：
         //   回调里 `setState()` 只标脏，紧随的 `Frame::run()` 第 ① 步就是 settle
         //   ⇒ 同帧生效。放到 settle 之后，那次 setState 要等下一帧，
         //   "loading → ready" 会闪一帧空（多一帧延迟，且用户看得见）。
-        $t = $prof ? \hrtime(true) : 0;
-        if ($trace !== null) {
-            $trace[] = FrameStage::PUMP_TASKS;
-        }
-        $this->pumps->pumpTasks();
-        if ($prof) {
-            SurfaceProfile::add(FrameStage::PUMP_TASKS, \hrtime(true) - $t);
-        }
+        $this->stage(FrameStage::PUMP_TASKS, function (): void {
+            $this->pumps->pumpTasks();
+        });
 
         // ★ ③ 推进到期的延时回调（W8-2）：同样**必须在 settle 之前** ——
         //   `after()` 的回调里 `setState()` 由紧随的 `Frame::run()` 的 settle 段
         //   消费，同一帧生效（Tooltip 到点那一帧就画出来，不多闪一帧空）。
-        $t = $prof ? \hrtime(true) : 0;
-        if ($trace !== null) {
-            $trace[] = FrameStage::PUMP_TIMERS;
-        }
-        $this->pumps->pumpTimers($timestampMs);
-        if ($prof) {
-            SurfaceProfile::add(FrameStage::PUMP_TIMERS, \hrtime(true) - $t);
-        }
+        $this->stage(FrameStage::PUMP_TIMERS, function () use ($timestampMs): void {
+            $this->pumps->pumpTimers($timestampMs);
+        });
 
         // ★ ⓸ 推进动画（§17.4.9）：同样**必须在 settle 之前** —— `tickFrame()` 里的
         //   `setState()` 由紧随的 `Frame::run()` 的 settle 段消费，同一帧生效。
         //   返回值是"还有动画在跑吗"，喂给 `wantsFrame()` 决定下一次要不要被叫醒。
-        $t = $prof ? \hrtime(true) : 0;
-        if ($trace !== null) {
-            $trace[] = FrameStage::TICK_ANIMATIONS;
-        }
-        $this->animating = $this->tickAnimations($timestampMs);
-        if ($prof) {
-            SurfaceProfile::add(FrameStage::TICK_ANIMATIONS, \hrtime(true) - $t);
-        }
+        //   ★ `(bool)` 是因为 `stage()` 的返回类型是 `mixed`（九段里只有这一段有返回值）；
+        //     闭包自己声明了 `: bool`，这里只是把类型收敛回来，不是"猜"。
+        $this->animating = (bool) $this->stage(FrameStage::TICK_ANIMATIONS, function () use ($timestampMs): bool {
+            return $this->tickAnimations($timestampMs);
+        });
 
         // ★★ **零视口不是"内容放不下"，是"没有像素可画"**（2026-10-25 用户实测最小化即崩）。
         //   最小化时平台报客户区 0×0（`Win32Screen::viewport()` 翻成 `tight(0,0)`；
@@ -958,20 +949,17 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         }
 
         // 浮层布局段（逐层自尺寸 + 钉锚点 + 夹进客户区）—— 见 placeOverlays()
-        $t = $prof ? \hrtime(true) : 0;
-        if ($trace !== null) {
-            $trace[] = FrameStage::PLACE_OVERLAYS;
-        }
-        $this->overlayLayout->placeOverlays($constraints);
-        if ($prof) {
-            SurfaceProfile::add(FrameStage::PLACE_OVERLAYS, \hrtime(true) - $t);
-        }
+        $this->stage(FrameStage::PLACE_OVERLAYS, function () use ($constraints): void {
+            $this->overlayLayout->placeOverlays($constraints);
+        });
 
         // ★ `settle` 是**标记**不是真段（`FrameStage` 的 CORE 组）：Frame::run() 内部
         //   才是 settle → layout → paint → present。标记打在它前面，
         //   "跨过 settle"的越界就拿它当下标。
-        if ($trace !== null) {
-            $trace[] = FrameStage::SETTLE;
+        //   ⇒ 它是**唯一**不经 `stage()` 的段名：计时在 `Frame::run()` 里（跨越整段
+        //     settle，夹着 try/catch 与早退，包不进闭包），这里只补一个位置标记。
+        if ($this->frameTrace !== null) {
+            $this->frameTrace[] = FrameStage::SETTLE;
         }
 
         // ★★ **本帧要不要画**（2026-10-30，N1）：`Frame` 只看树（settle / layout /
@@ -1011,9 +999,6 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         //   帧时钟不重新上膛 ⇒ **之后没鼠标事件就永远静止**（Spinner / 自绘页同病，
         //   真机探针抓到）。任一新挂载的 State 还想下一帧 ⇒ `$animating` 置真 ⇒
         //   时钟重新上膛，动画得以续跑。
-        if ($trace !== null) {
-            $trace[] = FrameStage::TICK_LATE_MOUNT;
-        }
         //   ★ **2026-10-22 改成"只 tick 登记表"**（`06` §4.2）：第二次全树遍历的
         //     目的**只有一个** —— 让"这一帧刚挂上的 State"有机会声明"我还要下一帧"。
         //     全树里其他 State 已经在 ⓸ 被访问过（`tickFrameStamped` 会跳过重复）⇒
@@ -1022,16 +1007,20 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         //     （`placeOverlays()` 期间），它已经被 ⓸ 推进过 ⇒ 帧戳保证不重复推进。
         //   ★ **跳过已卸载的**：`mount()` 了但一直没有帧到来的场景（纯头侧夹具）
         //     会让登记表挂着死节点 —— 不跳过就是 tick 一个已经离开树的状态。
-        foreach ($this->pipeline->takeMounted() as $mountedState) {
-            $mountedElement = $mountedState->element();
-            if ($mountedElement === null || !$mountedElement->isMounted()) {
-                continue;
-            }
+        //   ★ 这一段原先**只有 trace、没有计时**（2026-11-03 核出）：八段有账、它 0 次，
+        //     成本被算进「未归属」而没有任何检查会红。现在同样经 `stage()`，一对。
+        $this->stage(FrameStage::TICK_LATE_MOUNT, function () use ($timestampMs): void {
+            foreach ($this->pipeline->takeMounted() as $mountedState) {
+                $mountedElement = $mountedState->element();
+                if ($mountedElement === null || !$mountedElement->isMounted()) {
+                    continue;
+                }
 
-            if ($mountedState->tickFrameStamped($timestampMs, $this->frameSerial)) {
-                $this->animating = true;
+                if ($mountedState->tickFrameStamped($timestampMs, $this->frameSerial)) {
+                    $this->animating = true;
+                }
             }
-        }
+        });
 
         // ★★ ⓹b（2026-10-29 补，2026-11-02 随 D1 **整段删除**）：这里原先比对
         //   `State::frameWantedCount()` 的前后差，用来捞"settle 期间才起飞的动画"
@@ -1048,43 +1037,33 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         //   O(树) 与同帧的 `layout()` 同阶 —— §13.3：Render 层本就全树重排。
         // ★ **浮层是第二棵树，也要进焦点链**（O-20 差异表 #2）—— 否则菜单项
         //   永远 Tab 不到。
-        $t = $prof ? \hrtime(true) : 0;
-        if ($trace !== null) {
-            $trace[] = FrameStage::FOCUS_COLLECT;
-        }
-        // ★ 捕获者卸载 ⇒ 必须在这里释放（`06` §5.2 释放路径 ②）：settle 可能把
-        //   捕获者所在的子树换掉 ⇒ 之后的指针事件全发给一个死节点（静默冻住）。
-        //   报 DIAGNOSTIC 而不是静默清空：这是**控件写错了**（该在卸载前自己放），
-        //   不报的话现象是"拖到一半不响应了"，没人查得出来。
-        $captureNode = $this->input->captureNode();
-        if ($captureNode !== null && !$captureNode->isMounted()) {
-            Errors::report(sprintf(
-                '指针捕获：捕获者已卸载但仍握着指针 —— 自动释放。'
-                    . "\n" . '修法：在控件自己的卸载路径里先调 releasePointer()，'
-                    . '或把捕获挂在会被卸载的子树外面。',
-            ), Errors::DIAGNOSTIC);
-            $this->input->releasePointer();
-        }
-        $popupRoots = [];
-        foreach ($this->overlayHost->overlays()->all() as $e) {
-            if ($e->element !== null) {
-                $popupRoots[] = $e->element;
+        $this->stage(FrameStage::FOCUS_COLLECT, function () use ($root): void {
+            // ★ 捕获者卸载 ⇒ 必须在这里释放（`06` §5.2 释放路径 ②）：settle 可能把
+            //   捕获者所在的子树换掉 ⇒ 之后的指针事件全发给一个死节点（静默冻住）。
+            //   报 DIAGNOSTIC 而不是静默清空：这是**控件写错了**（该在卸载前自己放），
+            //   不报的话现象是"拖到一半不响应了"，没人查得出来。
+            $captureNode = $this->input->captureNode();
+            if ($captureNode !== null && !$captureNode->isMounted()) {
+                Errors::report(sprintf(
+                    '指针捕获：捕获者已卸载但仍握着指针 —— 自动释放。'
+                        . "\n" . '修法：在控件自己的卸载路径里先调 releasePointer()，'
+                        . '或把捕获挂在会被卸载的子树外面。',
+                ), Errors::DIAGNOSTIC);
+                $this->input->releasePointer();
             }
-        }
-        $this->focus?->collect([$root, ...$popupRoots], $this->overlayHost->focusTrapRoots());
-        if ($prof) {
-            SurfaceProfile::add(FrameStage::FOCUS_COLLECT, \hrtime(true) - $t);
-        }
+            $popupRoots = [];
+            foreach ($this->overlayHost->overlays()->all() as $e) {
+                if ($e->element !== null) {
+                    $popupRoots[] = $e->element;
+                }
+            }
+            $this->focus?->collect([$root, ...$popupRoots], $this->overlayHost->focusTrapRoots());
+        });
 
         // 语义树推给 UIA（§9 / M5）：每帧末经 sink 交出（无 sink ⇒ 不建，零开销）。
-        $t = $prof ? \hrtime(true) : 0;
-        if ($trace !== null) {
-            $trace[] = FrameStage::PUMP_SEMANTICS;
-        }
-        $this->pumpSemantics();
-        if ($prof) {
-            SurfaceProfile::add(FrameStage::PUMP_SEMANTICS, \hrtime(true) - $t);
-        }
+        $this->stage(FrameStage::PUMP_SEMANTICS, function (): void {
+            $this->pumpSemantics();
+        });
 
         // ★★ 帧末**续跑 + 收口**（2026-11-02，技术债 D1）：放在 `pumpSemantics()`
         //   **之后**，因为语义推送里若改状态，本帧已经不会再 settle 了 ⇒ 它必须
@@ -1093,9 +1072,45 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         $this->continueFrame($settleSkipBefore, $paintSkipBefore);
         $this->pipeline->endFrame();
 
-        if ($trace !== null) {
-            FramePhase::end($trace);
+        if ($this->frameTrace !== null) {
+            FramePhase::end($this->frameTrace);
         }
+    }
+
+    /**
+     * **跑一段帧阶段**：段名推进 trace + 交给 `SurfaceProfile` 计时，一处出。
+     *
+     * ## 为什么要有它（2026-11-03）
+     *
+     * 一帧的九段要往**两个**出口记账：`FramePhase` 的 trace（顺序校验 + 真机报告）
+     * 与 `SurfaceProfile` 的分段计时（成本归因）。这两份清单原先都是手写的
+     * 四行样板 —— 取时钟 / 推段名 / 跑本体 / 减时钟 —— 在 `frame()` 里抄了 7 遍，
+     * 而且**已经漂了**：`tickLateMount` 只进了 trace、没进计时（实测八段有账、
+     * 这一段 0 次），于是顺序校验全过，它的成本被算进「未归属」，没有任何检查会红。
+     *
+     * ⇒ 收成一处之后，"有没有漏一半"这个问题**不存在了**：段名只写一次。
+     *
+     * ## 闭包的开销
+     *
+     * 每帧 8 次闭包调用（实测见 `frame-tax-probe --check` 的稳态帧：改动前后同一
+     * 台机器、同一棵树，差异在噪声内）。关着 profile 时 `SurfaceProfile::time()`
+     * 只做一次静态 bool 读就直调本体，不取时钟。
+     *
+     * ## 为什么 `settle` 不走这里
+     *
+     * 它是**标记**不是真段：计时在 `Frame::run()` 内部，跨越整段 settle 且夹着
+     * try/catch 与早退，包不进闭包。那一段的 trace 由 `frame()` 直接推。
+     *
+     * @param string $stage `FrameStage` 的常量之一
+     * @return mixed `$body` 的返回值
+     */
+    private function stage(string $stage, \Closure $body): mixed
+    {
+        if ($this->frameTrace !== null) {
+            $this->frameTrace[] = $stage;
+        }
+
+        return SurfaceProfile::time($stage, $body);
     }
 
     /**
