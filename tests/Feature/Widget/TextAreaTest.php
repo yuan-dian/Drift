@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Dev\Tests\Feature\Widget;
 
 use Drift\Dev\Tests\Support\SmokeTestCase;
+use Drift\Geometry\Axis;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Size;
 use Drift\Input\KeyChord;
@@ -243,8 +244,8 @@ final class TextAreaTest extends SmokeTestCase
         $text = implode("\n", array_map(static fn(int $i): string => "line {$i}", range(1, 30)));
         [$state, $box] = $this->mount($text, 120.0);
 
-        check('TextArea · 内容超视口 ⇒ 有可滚距离', ($box?->maxScroll() ?? 0.0) > 0.0, 'maxScroll=' . ($box?->maxScroll() ?? -1));
-        check('TextArea · 初始偏移为 0（不在底部）', ($box?->appliedOffset() ?? -1) === 0.0);
+        check('TextArea · 内容超视口 ⇒ 有可滚距离', ($box?->maxScroll(Axis::Vertical) ?? 0.0) > 0.0, 'maxScroll=' . ($box?->maxScroll(Axis::Vertical) ?? -1));
+        check('TextArea · 初始偏移为 0（不在底部）', ($box?->appliedOffset(Axis::Vertical) ?? -1) === 0.0);
 
         $state->beginEditing();
         $state->moveCaret(strlen($text));
@@ -254,7 +255,7 @@ final class TextAreaTest extends SmokeTestCase
         $top = $after?->contentTop() ?? 0.0;
         $viewport = $after?->viewportHeight() ?? 0.0;
 
-        check('TextArea · 插入符到末尾后自动滚动', ($after?->appliedOffset() ?? 0.0) > 0.0, 'offset=' . ($after?->appliedOffset() ?? -1));
+        check('TextArea · 插入符到末尾后自动滚动', ($after?->appliedOffset(Axis::Vertical) ?? 0.0) > 0.0, 'offset=' . ($after?->appliedOffset(Axis::Vertical) ?? -1));
         check(
             'TextArea · 插入符落在可视区内（不是滚出了视野）',
             $caret !== null && $caret->top >= $top && $caret->top + $caret->height <= $top + $viewport + 0.01,

@@ -40,7 +40,11 @@ final class TextAreaBox extends RenderBoxWidget
         private readonly int $selectionStart,
         private readonly int $selectionEnd,
         private readonly int $minLines,
+        /** 固定框高（行数；`0` = 按内容长）—— `TextArea::lines()` */
+        private readonly int $lines,
         private readonly float $scrollOffset,
+        /** 滚动条淡出透明度（`ScrollBarFade` 的值，`build()` 每帧递） */
+        private readonly float $barOpacity = 1.0,
     ) {
         parent::__construct();
         // §9.1 命中三方消费：文本编辑的通用 I 形光标
@@ -55,9 +59,21 @@ final class TextAreaBox extends RenderBoxWidget
         int $selectionStart,
         int $selectionEnd,
         int $minLines,
+        int $lines,
         float $scrollOffset,
+        float $barOpacity = 1.0,
     ): self {
-        return new self($text, $placeholder, $caretOffset, $selectionStart, $selectionEnd, $minLines, $scrollOffset);
+        return new self(
+            $text,
+            $placeholder,
+            $caretOffset,
+            $selectionStart,
+            $selectionEnd,
+            $minLines,
+            $lines,
+            $scrollOffset,
+            $barOpacity,
+        );
     }
 
     public function text(): string
@@ -114,6 +130,10 @@ final class TextAreaBox extends RenderBoxWidget
 
         $insets = EdgeInsets::symmetric($context->metric(MetricToken::Padding), $gap * 0.5);
         $lineHeight = $style->size * $style->lineHeight;
+        // 固定框高含内边距（`RenderTextArea` 的 size 是整盒）
+        $fixedHeight = $this->lines > 0
+            ? $this->lines * $lineHeight + $insets->vertical()
+            : 0.0;
 
         return new RenderTextArea(
             $this->text,
@@ -137,7 +157,12 @@ final class TextAreaBox extends RenderBoxWidget
             $this->selectionEnd,
             $context->metrics(),
             $this->minLines * $lineHeight,
+            $fixedHeight,
             $this->scrollOffset,
+            // 滚动条色走主题（`Muted`，与 `ScrollView` 同一个 token：两主题都清晰、
+            // 语义"次要信息"）—— 条是纯视觉层，颜色不该由控件自己拍。
+            $context->color(ColorToken::Muted),
+            $this->barOpacity,
         );
     }
 }

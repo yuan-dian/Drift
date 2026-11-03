@@ -194,7 +194,9 @@ final class TextAreaState extends EditableTextState implements Scrollable
 
         $this->lane()->move(
             $delta,
-            static fn(float $value): float => $box === null ? $value : $box->setScrollOffset($value),
+            static fn(float $value): float => $box === null
+                ? $value
+                : $box->setScrollOffset(Axis::Vertical, $value),
         );
     }
 
@@ -227,7 +229,7 @@ final class TextAreaState extends EditableTextState implements Scrollable
         }
 
         $viewport = $box->viewportHeight();
-        $offset = $box->appliedOffset();
+        $offset = $box->appliedOffset(Axis::Vertical);
         // `$target` 是**内容坐标**（与滚动偏移无关）⇒ 直接和偏移比，不掺内边距
         if ($target->top - $margin < $offset) {
             $this->scrollBy($target->top - $margin - $offset);
@@ -236,13 +238,26 @@ final class TextAreaState extends EditableTextState implements Scrollable
         }
     }
 
-    /** 推进这一帧的滚动动画；返回值进 `Application` 的 `animating` 聚合 */
+    /**
+     * 推进这一帧的**滚动动画**与**滚动条淡出**。
+     *
+     * ★ 顺序：先滚动、后淡出（同 `ScrollViewState`）—— `scrollBy()` 里会
+     *   `noteScroll()` 把条打回全亮，反过来会"先淡一点再被打回"，抖动。
+     */
     #[\Override]
     public function tickFrame(float $timestampMs): bool
     {
-        return $this->lane()->tick($timestampMs, function (float $delta): void {
+        $lane = $this->lane();
+
+        $busy = $lane->tick($timestampMs, function (float $delta): void {
             $this->scrollBy($delta);
         });
+
+        if ($lane->fade()->tickFor($this, $timestampMs)) {
+            $busy = true;
+        }
+
+        return $busy;
     }
 
     // ── 渲染 ────────────────────────────────────────────────────────────
@@ -279,7 +294,9 @@ final class TextAreaState extends EditableTextState implements Scrollable
             $this->selectionStart(),
             $this->selectionEnd(),
             $area->minLinesValue(),
+            $area->linesValue(),
             $this->lane()->offset(),
+            $this->lane()->fade()->opacity(),
         );
 
         $label = $area->labelText();
@@ -313,9 +330,9 @@ final class TextAreaState extends EditableTextState implements Scrollable
         $viewport = $box->viewportHeight();
 
         if ($caret->top < $top) {
-            $this->lane()->set(max(0.0, $box->appliedOffset() + $caret->top - $top));
+            $this->lane()->set(max(0.0, $box->appliedOffset(Axis::Vertical) + $caret->top - $top));
         } elseif ($caret->top + $caret->height > $top + $viewport) {
-            $this->lane()->set($box->appliedOffset() + $caret->top + $caret->height - $top - $viewport);
+            $this->lane()->set($box->appliedOffset(Axis::Vertical) + $caret->top + $caret->height - $top - $viewport);
         }
     }
 

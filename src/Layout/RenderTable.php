@@ -670,7 +670,7 @@ final class RenderTable extends RenderBox implements ScrollBarHost
         return $this;
     }
 
-    /** 滚动条（纯视觉；几何在 `ScrollBarGeometry`，与 `RenderScrollView` 同一份） */
+    /** 滚动条（纯视觉；几何与绘制都在 `ScrollBarGeometry`，三个滚动盒同一份） */
     private function paintScrollbar(Canvas $canvas, Axis $axis): void
     {
         $bar = $this->thumbRect($axis);
@@ -678,16 +678,7 @@ final class RenderTable extends RenderBox implements ScrollBarHost
             return;
         }
 
-        $alpha = (int) \round($this->thumb->a * $this->barOpacity);
-        if ($alpha <= 0) {
-            return;
-        }
-
-        $canvas->drawRect(
-            $bar,
-            Paint::fill($this->thumb->withAlpha($alpha)),
-            ScrollBarGeometry::THICKNESS * 0.5,
-        );
+        ScrollBarGeometry::paint($canvas, $bar, $this->thumb, $this->barOpacity);
     }
 
     protected function contentIntrinsicWidth(float $height): float

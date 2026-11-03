@@ -12,7 +12,6 @@ use Drift\Geometry\Size;
 use Drift\Rendering\AnimatedValue;
 use Drift\Rendering\Canvas;
 use Drift\Rendering\Color;
-use Drift\Rendering\Paint;
 
 /**
  * 滚动视口（§13.1 的新盒）—— **内容比视口长时，按偏移平移内容并裁剪**。
@@ -370,12 +369,7 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
         }
 
         // 透明度由 `ScrollBarFade` 推（滚动时 1、停手 ~900ms 后 0.35）
-        $alpha = (int) \round($this->thumb->a * $this->barOpacity);
-        if ($alpha <= 0) {
-            return;
-        }
-
-        $canvas->drawRect($bar, Paint::fill($this->thumb->withAlpha($alpha)), ScrollBarGeometry::THICKNESS * 0.5);
+        ScrollBarGeometry::paint($canvas, $bar, $this->thumb, $this->barOpacity);
     }
 
     /**

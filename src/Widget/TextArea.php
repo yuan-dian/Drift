@@ -29,9 +29,13 @@ use Drift\Input\SemanticsRole;
  *   评论框、WinUI `TextBox` 的 `AcceptsReturn`），也是唯一不打架的分法 ——
  *   让 `Enter` 既换行又提交，用户没法在段落里换行。
  *
- * ★ **高度**：`minLines()` 只保证空文本时不塌成一行。真正的可见高度由外层给
- *   （`SizedBox` / `Expanded`）—— 不做 `maxLines` 截断：那个语义在本仓已经属于
- *   `TextStyle::maxLines`（画省略号），两个同名不同义的东西迟早被混用。
+ * ★ **高度**：`minLines()` 是空文本时的托底。**框高要固定**（表单里的常态 ——
+ *   否则一段长文本会把整页撑开、框内永远滚不起来）用 `lines()`：给定几行就是
+ *   几行高，内容超出由内部滚动消化，右缘出现滚动条。
+ *   ★ 名字刻意不叫 `maxLines`：那个名字在本仓已经属于 `TextStyle::maxLines`
+ *   （折行时画省略号），而这里的语义是**布局高度**不是"截断文本"。
+ *   （`QPlainTextEdit` 用 `setMaximumHeight` + 行高、Web 用 `<textarea rows>`
+ *   与 CSS 高度分开表达，同一个道理。）
  *
  * @api
  */
@@ -43,6 +47,7 @@ final class TextArea extends StatefulWidget implements SemanticsValueEditable
     private ?\Closure $onChanged = null;
     private ?\Closure $onSubmitted = null;
     private int $minLines = 3;
+    private int $lines = 0;
 
     public function __construct()
     {
@@ -97,6 +102,22 @@ final class TextArea extends StatefulWidget implements SemanticsValueEditable
     }
 
     /**
+     * **固定框高**：恰好这么多行（`0` = 按内容长，默认）。
+     *
+     * ★ 它同时是上限与下限 —— 内容比它短也不缩（`<textarea rows>` 的语义）。
+     * ★ 不加它的后果不是"少个选项"而是"滚动永远不发生"：在 `Column` 里
+     *   `TextArea` 会被内容撑到自然高 ⇒ `maxScroll` 恒 0 ⇒ 右缘那条滚动条
+     *   永远不出现。
+     */
+    public function lines(int $lines): static
+    {
+        $this->mutate();
+        $this->lines = max(0, $lines);
+
+        return $this;
+    }
+
+    /**
      * 文本改动回调：`fn(string $newText) => void`。
      *
      * ★ 与 `TextField::onChanged()` 同形 —— 换行也算文本改动（多行框里换行就是
@@ -142,6 +163,11 @@ final class TextArea extends StatefulWidget implements SemanticsValueEditable
     public function minLinesValue(): int
     {
         return $this->minLines;
+    }
+
+    public function linesValue(): int
+    {
+        return $this->lines;
     }
 
     public function changedHandler(): ?\Closure

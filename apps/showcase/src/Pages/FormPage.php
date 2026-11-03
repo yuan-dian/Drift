@@ -80,7 +80,7 @@ final class FormState extends State
     private bool $agree = true;
 
     /** 多行输入的受控值（2026-11-03 新增，`TextArea` 的消费者） */
-    private string $note = "第一行\n第二行";
+    private string $note = "第一行\n第二行\n第三行\n第四行\n第五行\n第六行\n第七行 —— 超过框高，右缘有滚动条";
 
     /** `Ctrl+Enter` 提交后回显的文本（提交与换行是两件事，本页演示这条分界） */
     private string $submittedNote = '';
@@ -138,15 +138,17 @@ final class FormState extends State
             // ── H3「多行输入」：TextArea（2026-11-03 新增）──
             //   与 TextField 是**两个控件**（不是 maxLines 开关）：单行盒的插入符
             //   几何靠 `advance(前缀)` 一次量得，多行必须逐字形累加 + 行号 + 垂直偏移。
-            //   演示三件事：Enter 换行 / Ctrl+Enter 提交 / 上下键跨行保持列。
+            //   演示四件事：Enter 换行 / Ctrl+Enter 提交 / 上下键跨行保持列 /
+            //   右缘滚动条（固定高度才看得见 —— 不限高时它会按内容长）。
             $this->sectionBar('多行输入（TextArea）'),
-            Text::make('Enter 换行、Ctrl+Enter 提交；上下方向键跨行时保持列（在第一行长、第二行短的地方按 ↓ 最明显）。')
+            Text::make('Enter 换行、Ctrl+Enter 提交；上下方向键跨行时保持列。内容超过框高 ⇒ 右缘出现滚动条（可拖、可滚轮，停手后淡下去）。')
                 ->caption(),
             TextArea::make()
                 ->label('备注')
                 ->placeholder('多行文本')
                 ->value($this->note)
                 ->minLines(4)
+                ->lines(5)
                 ->onChanged(fn(string $v) => $this->note = $v)
                 ->onSubmitted(function (string $v): void {
                     $this->setState(function () use ($v): void {

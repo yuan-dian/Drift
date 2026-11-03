@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Layout;
 
+use Drift\Geometry\Axis;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Rect;
@@ -29,13 +30,17 @@ use Drift\Text\TextStyle;
  *   同形）；夹取在 `appliedOffset()` 一处，上界 `maxScroll` 由本次布局算
  *   （内容多长只有布局后才知道）。State 只夹下界 0。
  *
- * ★ **不画滚动条**：多行输入框的滚动条在本仓尚无设计（`ScrollBarHost` 是
- *   `ScrollView` 的东西）。插入符跟随（`revealCaret` 在 State 侧）已经保证
- *   "打字时看得见"，滚动条是锦上添花 —— 不假装有。
+ * ★ **滚动条**（2026-11-03 补）：本盒实现了 `ScrollBarHost`，与 `RenderScrollView` /
+ *   `RenderTable` **同一个接口**（所以 `ScrollInputRouter` 的 thumb 拖动、
+ *   `ScrollBarFade` 的淡出都不必认识"多行输入"）。
+ *   ★ 条栏宽**恒定预留**（`ScrollBarGeometry::THICKNESS + MARGIN`，从文本可用宽度
+ *   里扣）：条是"溢出才画"的，而折行宽度在布局期就要定 —— 按"这一帧溢出了吗"
+ *   决定扣不扣是**循环依赖**，会在临界点抖一帧。浏览器 `<textarea>` / Win32
+ *   `EDIT` / Qt `QPlainTextEdit` 都是常驻占位，同一裁决。
  *
  * @api
  */
-final class RenderTextArea extends RenderBox implements TextInputBox
+final class RenderTextArea extends RenderBox implements TextInputBox, ScrollBarHost
 {
     private ?Paragraph $paragraph = null;
 
@@ -59,22 +64,40 @@ final class RenderTextArea extends RenderBox implements TextInputBox
         private readonly TextMetricsProvider $metrics,
         /** 至少这么高（`minLines` 折算成像素）—— 空文本的框不该塌成一行以下 */
         private readonly float $minHeight = 0.0,
+        /**
+         * **固定框高**（`TextArea::lines()` 折算成像素，含内边距）；`0` = 按内容长。
+         *
+         * ★ 它同时是上限与下限：给定 5 行就是 5 行高，内容更短也不缩 ——
+         *   那是 `<textarea rows="5">` / `QPlainTextEdit` 的语义（框高是布局决定，
+         *   不是内容决定）。没有它，多行框在任何表单里都只能被内容撑开，
+         *   也就永远滚不起来（滚动条等于没有消费者）。
+         */
+        private readonly float $fixedHeight = 0.0,
         /** 已夹下界、**未夹上界**的滚动偏移（上界见 `appliedOffset()`） */
         private float $scrollOffset = 0.0,
+        /** 滚动条色（主题 `Muted`，与 `ScrollView` 同一个 token） */
+        private readonly Color $thumb = new Color(0, 0, 0, 0),
+        /** 滚动条透明度（`ScrollBarFade` 每帧推；**不是** readonly） */
+        private float $barOpacity = 1.0,
         private readonly Scale $scale = new Scale(1.0),
     ) {
     }
 
     /**
-     * 就地改滚动偏移，返回**夹取后**的值（与 `RenderScrollView::setScrollOffset()`
-     * 同形）。
+     * 就地改滚动偏移，返回**夹取后**的值（`ScrollBarHost` 的接口方法）。
      *
      * ★ 为什么不在 Widget 层改：偏移一变就重建 Widget 树的话，滚动帧要跑一遍
      *   调和（`ScrollViewState` 2026-10 实测 11.68ms → 7.21ms 就是这条）。
-     *   这里只改一个字段 + 标重排，树一动不动。
+     *   这里只改一个字段 + 标重绘，树一动不动。
+     * ★ 认不得的轴返回 `0.0`（接口纪律，同 `RenderScrollView`）：调用方按
+     *   `scrollAxes()` 循环，不该先 `if` 再问。
      */
-    public function setScrollOffset(float $value): float
+    public function setScrollOffset(Axis $axis, float $value): float
     {
+        if ($axis !== Axis::Vertical) {
+            return 0.0;
+        }
+
         $this->scrollOffset = $value;
 
         if (!$this->hasSize()) {
@@ -83,7 +106,63 @@ final class RenderTextArea extends RenderBox implements TextInputBox
 
         $this->markPaintChanged();
 
-        return $this->appliedOffset();
+        return $this->applied();
+    }
+
+    /** @internal `ScrollBarFade` 每帧把值推过来（不重建、不重排；**但必须标重绘**） */
+    public function setBarOpacity(float $value): void
+    {
+        if ($this->barOpacity === $value) {
+            return;
+        }
+
+        $this->barOpacity = $value;
+        $this->markPaintChanged();
+    }
+
+    /** @internal 见 `ScrollBarHost` —— 多行输入只有竖向 */
+    public function scrollAxes(): array
+    {
+        return [Axis::Vertical];
+    }
+
+    /**
+     * thumb 矩形（**盒内**坐标）；`null` = 内容不溢出 / 还没布局。
+     *
+     * ★ 几何只算一处（`ScrollBarGeometry`）：绘制与拖动命中都从这里出发。
+     */
+    public function thumbRect(Axis $axis): ?Rect
+    {
+        $size = $this->size;
+        if ($size === null || $axis !== Axis::Vertical) {
+            return null;
+        }
+
+        return ScrollBarGeometry::thumbRect($size, $this->maxScroll, $this->applied(), $axis);
+    }
+
+    /** @internal 事件命中用：thumb 在渲染树根坐标里的矩形（见 `ScrollBarHost`） */
+    public function thumbRectInRoot(Axis $axis): ?Rect
+    {
+        $bar = $this->thumbRect($axis);
+        if ($bar === null) {
+            return null;
+        }
+
+        [$originX, $originY] = RenderBox::absoluteOrigin($this);
+
+        return new Rect($originX + $bar->left, $originY + $bar->top, $bar->width, $bar->height);
+    }
+
+    /** thumb 在轨道里可走的距离（拖动映射的分母） */
+    public function thumbTravel(Axis $axis): float
+    {
+        $size = $this->size;
+        if ($size === null || $axis !== Axis::Vertical) {
+            return 0.0;
+        }
+
+        return ScrollBarGeometry::travel(ScrollBarGeometry::extent($size, $axis), $this->maxScroll);
     }
 
     /** 文本框恒裁：内容比视口高是常态（否则会画到相邻控件上） */
@@ -99,8 +178,14 @@ final class RenderTextArea extends RenderBox implements TextInputBox
         return true;
     }
 
-    /** 实际生效的垂直偏移（已按 `maxScroll` 夹取） */
-    public function appliedOffset(): float
+    /** 该轴实际生效的偏移（已按 `maxScroll` 夹取） */
+    public function appliedOffset(Axis $axis): float
+    {
+        return $axis === Axis::Vertical ? $this->applied() : 0.0;
+    }
+
+    /** 本轴的实际偏移（内部用：绘制 / 命中不必为一个轴去走接口） */
+    private function applied(): float
     {
         return min(max(0.0, $this->scrollOffset), $this->maxScroll);
     }
@@ -113,10 +198,10 @@ final class RenderTextArea extends RenderBox implements TextInputBox
         return $this->insets->vertical() + max($paragraph, $this->minHeight);
     }
 
-    /** 需要多滚才能看到底（`0` = 装得下） */
-    public function maxScroll(): float
+    /** 该轴的可滚动上限（布局后才有意义；`0` = 不滚） */
+    public function maxScroll(Axis $axis): float
     {
-        return $this->maxScroll;
+        return $axis === Axis::Vertical ? $this->maxScroll : 0.0;
     }
 
     /**
@@ -140,6 +225,12 @@ final class RenderTextArea extends RenderBox implements TextInputBox
         return $this->insets->top;
     }
 
+    /** 内容区左边缘（= 左内边距）—— "文本右缘有没有越过条栏"要拿它换算 */
+    public function contentLeft(): float
+    {
+        return $this->insets->left;
+    }
+
     /** 单行行高：由样式推出，与文本内容无关 */
     private function lineHeight(): float
     {
@@ -160,7 +251,11 @@ final class RenderTextArea extends RenderBox implements TextInputBox
     protected function performLayout(BoxConstraints $constraints): Size
     {
         $inner = $constraints->deflate($this->insets);
-        $maxWidth = $inner->hasBoundedWidth() ? $inner->maxWidth : INF;
+        // ★ 条栏宽**常驻预留**（见类注释）：折行宽度在布局期就要定，不能等
+        //   "这一帧溢出了"再决定扣不扣 —— 那是循环依赖，临界点上会抖一帧。
+        $maxWidth = $inner->hasBoundedWidth()
+            ? max(0.0, $inner->maxWidth - ScrollBarGeometry::THICKNESS - ScrollBarGeometry::MARGIN)
+            : INF;
 
         $this->paragraph = $this->metrics->layout($this->shownText(), $this->style, $maxWidth, $this->scale);
 
@@ -172,7 +267,10 @@ final class RenderTextArea extends RenderBox implements TextInputBox
         //   `minHeight` 只是"空文本时的下限"，两者取大 —— 写反了的现象是
         //   "多行框永远只有 minLines 高，多出来的部分被裁掉且滚不动"。
         $natural = $this->insets->vertical() + max($this->paragraph->height, $this->minHeight);
-        $height = $constraints->constrain(new Size($width, $natural))->height;
+
+        // ★ 固定框高（`lines()`）优先：它是布局决定，不随内容变（见构造参数注释）
+        $target = $this->fixedHeight > 0.0 ? $this->fixedHeight : $natural;
+        $height = $constraints->constrain(new Size($width, $target))->height;
 
         // 内容装不下 ⇒ 可滚；视口高扣掉内边距
         $viewport = max(0.0, $height - $this->insets->vertical());
@@ -188,6 +286,10 @@ final class RenderTextArea extends RenderBox implements TextInputBox
 
     protected function contentIntrinsicHeight(float $width): float
     {
+        if ($this->fixedHeight > 0.0) {
+            return $this->fixedHeight;
+        }
+
         return $this->insets->vertical() + max($this->lineHeight(), $this->minHeight);
     }
 
@@ -209,7 +311,7 @@ final class RenderTextArea extends RenderBox implements TextInputBox
 
         return new Rect(
             $this->insets->left + $x,
-            $this->insets->top + $lineRect->top - $this->appliedOffset(),
+            $this->insets->top + $lineRect->top - $this->applied(),
             $this->caretWidth,
             $lineRect->height > 0.0 ? $lineRect->height : $this->lineHeight(),
         );
@@ -233,7 +335,7 @@ final class RenderTextArea extends RenderBox implements TextInputBox
         foreach ($this->paragraph->selectionRects($this->selectionStart, $this->selectionEnd) as $rect) {
             $rects[] = new Rect(
                 $this->insets->left + $rect->left,
-                $this->insets->top + $rect->top - $this->appliedOffset(),
+                $this->insets->top + $rect->top - $this->applied(),
                 max($rect->width, $this->caretWidth),
                 $rect->height > 0.0 ? $rect->height : $this->lineHeight(),
             );
@@ -256,7 +358,7 @@ final class RenderTextArea extends RenderBox implements TextInputBox
 
         return $this->paragraph->indexAt(
             max(0.0, $x - $this->insets->left),
-            $y - $this->insets->top + $this->appliedOffset(),
+            $y - $this->insets->top + $this->applied(),
         );
     }
 
@@ -271,6 +373,12 @@ final class RenderTextArea extends RenderBox implements TextInputBox
     public function boxStyle(): BoxStyle
     {
         return $this->box;
+    }
+
+    /** @internal 断言用：当前滚动条透明度 */
+    public function barOpacity(): float
+    {
+        return $this->barOpacity;
     }
 
     /** chrome 画在裁剪**之外**：本盒恒裁，描边的外半边不能被自己切掉 */
@@ -294,7 +402,7 @@ final class RenderTextArea extends RenderBox implements TextInputBox
         // 只挪滚动偏移：`caretRect()` / `selectionRects()` 已经是盒内坐标，
         // 这样三处（几何 / 命中 / 绘制）用同一套坐标，不必来回换。
         $canvas->save();
-        $canvas->translate(0.0, -$this->appliedOffset());
+        $canvas->translate(0.0, -$this->applied());
 
         // ★ **选区在文本之前**：高亮是背景，不是前景。反过来的现象是"选中了
         //   一块、看不出选了什么"（选区的混色不透明，会盖住字形）。
@@ -317,5 +425,21 @@ final class RenderTextArea extends RenderBox implements TextInputBox
         }
 
         $canvas->restore();
+
+        // ★ 条画在 `restore()` **之后**：它是视口坐标系的东西，跟着内容平移就会
+        //   在 offset=max 时整条飞出盒外被裁干净（`RenderScrollView` 2026-10-17
+        //   踩过同一条）。
+        $this->paintScrollbar($canvas);
+    }
+
+    /** 滚动条（几何与绘制都在 `ScrollBarGeometry`，三个滚动盒同一份） */
+    private function paintScrollbar(Canvas $canvas): void
+    {
+        $bar = $this->thumbRect(Axis::Vertical);
+        if ($bar === null) {
+            return;
+        }
+
+        ScrollBarGeometry::paint($canvas, $bar, $this->thumb, $this->barOpacity);
     }
 }

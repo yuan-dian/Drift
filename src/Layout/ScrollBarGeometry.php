@@ -6,6 +6,9 @@ namespace Drift\Layout;
 use Drift\Geometry\Axis;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Size;
+use Drift\Rendering\Canvas;
+use Drift\Rendering\Color;
+use Drift\Rendering\Paint;
 
 /**
  * 滚动条的几何（`RenderScrollView` / `RenderTable` 共用）。
@@ -81,6 +84,26 @@ final class ScrollBarGeometry
         return $vertical
             ? new Rect($cross - self::THICKNESS - self::MARGIN, $pos, self::THICKNESS, $len)
             : new Rect($pos, $cross - self::THICKNESS - self::MARGIN, $len, self::THICKNESS);
+    }
+
+    /**
+     * 画一根轴上的条（`$bar` 来自 `thumbRect()`；调用方负责"有没有条"）。
+     *
+     * ★ 抽到这里而不是各盒各写一份：条**长什么样**（胶囊圆角、alpha 折算）
+     *   与**它在哪**（`thumbRect()`）是同一件事的两半。`RenderScrollView` 与
+     *   `RenderTable` 各抄过一遍，`RenderTextArea` 是第三个 —— 再抄一遍就成了
+     *   "三处公式同源、圆角半径各写一次"的典型漂移面。
+     * ★ `$opacity` 是 `ScrollBarFade` 的淡出值；alpha 归零 ⇒ **不画**（而不是
+     *   画一层全透明）—— 两者画面相同，但后者每帧多一条空命令进重放流。
+     */
+    public static function paint(Canvas $canvas, Rect $bar, Color $ink, float $opacity): void
+    {
+        $alpha = (int) \round($ink->a * $opacity);
+        if ($alpha <= 0) {
+            return;
+        }
+
+        $canvas->drawRect($bar, Paint::fill($ink->withAlpha($alpha)), self::THICKNESS * 0.5);
     }
 
     /** 该轴上的长度（纵向 ⇒ 高、横向 ⇒ 宽） */
