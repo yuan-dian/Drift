@@ -271,7 +271,7 @@ PHP 递归，`paint` 反而有层缓存兜底）。这条不对称是 §3.2 那�
 | **P0** | 动效 active set（替换全树 `tickSubtree`） | `tickAnimations` 1.04ms → <0.05ms；全树/登记表对账测试；终值帧不丢 | ✅ **已完成 2026-11-03**：934.95µs → 333ns，见 `DEBT` §16 |
 | **P1** | 12k 节点 benchmark 档 | 出三数（首布局 / 稳态帧 / 全量重排），按 §13.5 判定增量布局立项与否 | `frame-tax-probe` 加档 |
 | **P1** | `--json`：先 gate + golden | 两条命令输出可被 `json_decode` 直接消费 | ✅ **已完成 2026-11-03（换了形态）**：不是"加 15 个 `json_encode` 分支"，而是先把 6 份判据模板收成 `CheckReport` 一份账本，`--json` 是它的第二个渲染。覆盖 `frame-tax` / `rva2sym` / `gate` / `golden` 四个，见 `DEBT` §17 |
-| **P1** | `M2Conformance` 进 `gate`（§17.8 第 1 条） | 先判 3 条既有红是真死字段还是规则误报 | 秒级，`--fast` 档 |
+| **P1** | `M2Conformance` 进 `gate`（§17.8 第 1 条） | 先判 3 条既有红是真死字段还是规则误报 | ✅ **已完成 2026-11-03**：3 条**全是规则误报**（读点只认本类体、漏了 `use` 进来的特征与子类、只认一条造盒路径）。真问题不是那 3 条，是 W3 保护的 22 个字段（交互/无障碍能力的全部声明面）对尺子是瞎的。修准后进 `gate`，见 `DEBT` §18 |
 | **P2** | TestApp `--script` 交互截图 | `--script "click:X;scroll:down"` 出 PNG，进 golden 流程 | `TestApp` + 脚本解析 |
 | **P2** | 撤销栈（文本编辑最后一件） | 撤销/重做/合并连续输入；与 IME 组合期正确交互 | `TextEditingBridge` |
 | **P2** | 字形图集 | 先量"文本密集页 paint 里字形光栅占比"，占比高才做 | 量具先行 |
