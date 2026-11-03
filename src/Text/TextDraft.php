@@ -82,8 +82,12 @@ final class TextDraft
      *
      * 100 而不是无限：一页有几十个输入框，每个字段一份无限栈是**隐蔽的内存增长**，
      * 而 100 步已经远超"发现写错了往回退"的实际需要。
+     *
+     * ★ 不写类型（`const int`）：全仓没有第二个 typed class constant 的先例，
+     *   而"phpunit 绿、AOT 转译过不去"已经咬过一次（`bool &$busy` 出参）。
+     *   等 tpc 侧验过再收紧。
      */
-    private const int UNDO_LIMIT = 100;
+    private const UNDO_LIMIT = 100;
 
     /**
      * @param string $text 初值；插入符落在末尾（与"外部推来一个值"同一条约定）
@@ -623,7 +627,12 @@ final class TextDraft
     /** @param array{0: string, 1: int, 2: int, 3: int} $snapshot */
     private function restore(array $snapshot): TextChange
     {
-        [$text, $this->caret, $this->anchor, $this->extent] = $snapshot;
+        // ★ 逐字段赋值，不用 `[$text, $this->caret, …] = $snapshot` 的解构写法：
+        //   后者在全仓没有第二个先例，而"phpunit 绿、AOT 转译过不去"咬过一次。
+        $text = $snapshot[0];
+        $this->caret = $snapshot[1];
+        $this->anchor = $snapshot[2];
+        $this->extent = $snapshot[3];
 
         $changed = $this->buffer !== $text;
         $this->buffer = $text;
