@@ -105,6 +105,10 @@ $checks = [
     'lint'     => ['lint', [PHP_BINARY, $root . '/tools/lint.php'], false],
     'selftest' => ['lint 自检', [PHP_BINARY, $root . '/tools/lint.php', '--selftest'], false],
     'docref'   => ['docref', [PHP_BINARY, $root . '/tools/docref.php'], false],
+    // ★ `docs/API-SURFACE.md` 的抬头写着"自动生成、勿手改"，但**没人检查它是新的**
+    //   ⇒ 它漂了：`FrameStage` 没进文档，行号整体偏几十行。docref 查的是"引用的符号
+    //   存在吗"，这一项查的是"这份清单是最新的吗" —— 两件事，都要有闸门。
+    'apidoc'   => ['API 面清单（apidoc）', [PHP_BINARY, $root . '/tools/api-doc-check.php'], false],
     'probe'    => ['探针骨架（probe-audit）', [PHP_BINARY, $root . '/tools/probe-audit.php', '--selftest'], false],
     'pixels'   => [
         '像素契约（probe_pixels）',

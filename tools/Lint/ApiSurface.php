@@ -138,9 +138,12 @@ final class ApiSurface
     public static function render(array $r): string
     {
         $out = "# Drift2 API 面清单（@api / @internal）\n\n";
-        $out .= "> 由 `php tools/lint.php --api` 自动生成，勿手改。\n";
+        $out .= "> 由 `php tools/lint.php --api` 自动生成，勿手改（`gate` 的 `apidoc` 项会核对）。\n";
         $out .= "> 口径：docblock **独立标注行**（` * @api` 或单行 `/** @api … */`）；\n";
-        $out .= "> 行内描述性提及（如「它本身是 @internal 的实现细节」这类文字）不计入。\n\n";
+        $out .= "> 行内描述性提及（如「它本身是 @internal 的实现细节」这类文字）不计入。\n";
+        $out .= "> ★ **不含行号**（2026-11-03）：行号每加一行代码就漂 —— 留着它等于给一个\n";
+        $out .= "> 100% 会过期的跳转目标；更要命的是它会让 `apidoc` 闸门**每次改代码都红**，\n";
+        $out .= "> 噪声淹没真信号（「新增了一个 @api」这种才该让人看见）。找行号用编辑器搜符号名。\n\n";
 
         // 总览：按层
         $layers = [];
@@ -176,9 +179,9 @@ final class ApiSurface
                     continue;
                 }
                 $out .= "### {$title} · " . \count($rows) . "\n\n";
-                $out .= "| 符号 | 种类 | 位置 |\n|---|---|---|\n";
+                $out .= "| 符号 | 种类 | 文件 |\n|---|---|---|\n";
                 foreach ($rows as $e) {
-                    $out .= "| `{$e['symbol']}` | {$e['kind']} | {$e['file']}:{$e['line']} |\n";
+                    $out .= "| `{$e['symbol']}` | {$e['kind']} | {$e['file']} |\n";
                 }
                 $out .= "\n";
             }
