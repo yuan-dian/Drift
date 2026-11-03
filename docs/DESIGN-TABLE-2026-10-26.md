@@ -1583,8 +1583,9 @@ enum TextChange { case None; case Caret; case Text; }
 ### 18.3 表格自己实现 `EditableText`，不塞 `TextField`
 
 `TableState` 直接实现 `EditableText`（`caretRect()` / `handleKey()` /
-`moveCaret()` / `extendSelectionTo()` / `hasSelection()` / `selectedText()` /
-`replaceSelection()` / `deleteSelection()`）。焦点节点仍**只有表一个**：
+`moveCaret()` / `extendSelectionTo()` / `selectWordAt()` / `selectParagraphAt()` /
+`hasSelection()` / `selectedText()` / `replaceSelection()` / `deleteSelection()`；
+后加的两个是双击选词 / 三击选段，见 `DEBT` §24）。焦点节点仍**只有表一个**：
 
 - 不用给行里塞可聚焦控件 ⇒ 行被回收时不会把焦点带走（阶段 2b 的同款裁决）；
 - IME 定位、剪贴板环（Ctrl+C/X/V）、`--chars` 的字符路由**一行不改**就能用
@@ -1962,7 +1963,7 @@ docref **70 ok**；selftest exit 0。
 
 | 想拆的块 | 行数 | 为什么否决 |
 |---|---|---|
-| 编辑会话 | ~380 | 抽出去就得把 `EditableText` 的 12 个方法变成转发；`draft` 的生命周期仍由 State 驱动（`didChangeFocus` / 滚动提交 / build 期存活检查）。转发层是纯负担 |
+| 编辑会话 | ~380 | 抽出去就得把 `EditableText` 的 14 个方法变成转发（10 个是 2026-10-26 当时的样子，2026-11-03 加了双击选词 / 三击选段）；`draft` 的生命周期仍由 State 驱动（`didChangeFocus` / 滚动提交 / build 期存活检查）。转发层是纯负担 |
 | 列宽拖拽 + 表头 | ~330 | 拆它只是"文件短"，下一步用不到。等真要做"列拖拽排序"时再拆才不白拆 |
 | build + cell 装配 | ~550 | 必须留（它就是编排） |
 
