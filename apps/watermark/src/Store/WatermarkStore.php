@@ -3,7 +3,6 @@ declare(strict_types=1);
 
 namespace App\Watermark\Store;
 
-use App\Watermark\Api\ApiClient;
 use App\Watermark\Api\Config;
 use App\Watermark\Api\SignInfo;
 use App\Watermark\Api\TaskResult;
@@ -12,6 +11,8 @@ use App\Watermark\Jobs\DownloadResultsJob;
 use App\Watermark\Jobs\FetchSignJob;
 use App\Watermark\Jobs\PollResultJob;
 use App\Watermark\Jobs\UploadBatchJob;
+use Drift\App\Job;
+use Drift\App\JobRunner;
 use Drift\App\TaskHost;
 use Drift\Async\AsyncValue;
 use Drift\Async\Future;
@@ -515,16 +516,10 @@ final class WatermarkStore extends Subject
 
     private function runSign(): Future
     {
-        $host = $this->host;
-        if ($host === null) {
-            try {
-                return Future::resolved((new ApiClient($this->apiBase))->sign()->toArray());
-            } catch (\Throwable $e) {
-                return Future::rejected($e);
-            }
-        }
-
-        return $host->submit(new FetchSignJob($this->apiBase));
+        // ★ 同步/后台只差"谁来跑 `Job::run()`"，选路由 `exec()` 一处决定
+        //   （2026-11-03，P0）。原先这里手写了一份 `ApiClient->sign()` 的同步副本
+        //   —— 与 `FetchSignJob::run()` 逐字节相同，改一处要记得改两处。
+        return $this->exec(new FetchSignJob($this->apiBase));
     }
 
     private function runUpload(mixed $payload): Future
@@ -540,63 +535,19 @@ final class WatermarkStore extends Subject
             $items = \is_array($rawItems) ? $rawItems : [];
         }
 
-        $host = $this->host;
-        if ($host === null) {
-            try {
-                $api = new ApiClient($this->apiBase);
-                $parsed = SignInfo::fromArray($sign);
-                if ($parsed === null) {
-                    throw new \RuntimeException('上传：签名参数不完整');
-                }
-
-                $keys = [];
-                foreach ($items as $item) {
-                    $api->upload(
-                        $parsed,
-                        (string) ($item['path'] ?? ''),
-                        (string) ($item['key'] ?? ''),
-                    );
-                    $keys[] = (string) ($item['key'] ?? '');
-                }
-
-                return Future::resolved(['keys' => $keys]);
-            } catch (\Throwable $e) {
-                return Future::rejected($e);
-            }
-        }
-
-        return $host->submit(new UploadBatchJob($sign, $items, $this->apiBase));
+        // ★ 同步路径与后台路径**同一个入参** —— 两条路只有"谁来跑"不同，
+        //   参数形状必须一致（`exec()` 保证这一点：它把同一个 Job 交给两边的其中一个）。
+        return $this->exec(new UploadBatchJob($sign, $items, $this->apiBase));
     }
 
     private function runAddTask(): Future
     {
-        $host = $this->host;
-        if ($host === null) {
-            try {
-                $taskId = (new ApiClient($this->apiBase))
-                    ->addTask($this->uploadedKeys, $this->time, $this->address, $this->imageSize);
-
-                return Future::resolved(['taskId' => $taskId]);
-            } catch (\Throwable $e) {
-                return Future::rejected($e);
-            }
-        }
-
-        return $host->submit(new AddTaskJob($this->uploadedKeys, $this->time, $this->address, $this->imageSize, $this->apiBase));
+        return $this->exec(new AddTaskJob($this->uploadedKeys, $this->time, $this->address, $this->imageSize, $this->apiBase));
     }
 
     private function runPoll(string $taskId): Future
     {
-        $host = $this->host;
-        if ($host === null) {
-            try {
-                return Future::resolved((new ApiClient($this->apiBase))->getResult($taskId)->toArray());
-            } catch (\Throwable $e) {
-                return Future::rejected($e);
-            }
-        }
-
-        return $host->submit(new PollResultJob($taskId, $this->apiBase));
+        return $this->exec(new PollResultJob($taskId, $this->apiBase));
     }
 
     /**
@@ -609,56 +560,21 @@ final class WatermarkStore extends Subject
      */
     private function runDownload(array $urls): Future
     {
-        $host = $this->host;
-        if ($host === null) {
-            try {
-                $paths = [];
-                $failed = [];
-                foreach ($urls as $url) {
-                    $local = self::fetchToTemp($url);
-                    if ($local === null) {
-                        $failed[$url] = '下载或写盘失败';
-                    } else {
-                        $paths[$url] = $local;
-                    }
-                }
-
-                return Future::resolved(['paths' => $paths, 'failed' => $failed]);
-            } catch (\Throwable $e) {
-                return Future::rejected($e);
-            }
-        }
-
-        return $host->submit(new DownloadResultsJob($urls));
+        // ★ 复用 `DownloadResultsJob` 那一份（含 `fetchOne` + 部分失败聚合）。
+        //   同步路径原先手写了一份 `fetchToTemp`，与 `fetchOne` 是同一件事的两份实现。
+        return $this->exec(new DownloadResultsJob($urls));
     }
 
     /**
-     * 同步下载一张（**只在 `$host === null` 的降级路径上用**）。
+     * 唯一的选路点（2026-11-03，P0）—— 五个动作都走这里，不再各写一遍
+     * `if ($host === null) { …同步副本… } else { submit }`。
      *
-     * ★ 与 `DownloadResultsJob::fetchOne()` 是同一件事的两份实现 —— 这是本仓
-     *   最不想要的那种重复。之所以还是写了：同步路径跑在**解释器**里（单测 /
-     *   没有后台端口的宿主），而 `DownloadResultsJob` 在 worker 里跑。
-     *   两份的判据由 `apps/watermark` 的真机路径（走后台那份）与单测（走这份）
-     *   共同覆盖；哪天要收成一份，就得把 `fetchOne` 提到一个两边都能用的类里
-     *   —— 但那个类不能依赖 `NamedJob`（同步路径不该为了复用而背一个跨进程形状）。
+     * ★ `null` 永远表示"在当前栈上同步跑"（解释器 / 单测），**不表示"拒绝"** ——
+     *   后者是 `Application::submit()` 的语义，两者混在一起会让症状变模糊。
      */
-    private static function fetchToTemp(string $url): ?string
+    private function exec(Job $job): Future
     {
-        try {
-            $response = \Drift\App\Io\Http::get($url, ['connectTimeout' => 10.0, 'timeout' => 120.0]);
-        } catch (\Throwable $e) {
-            return null;
-        }
-
-        $bytes = $response->body();
-        if ($bytes === '') {
-            return null;
-        }
-
-        $path = \sys_get_temp_dir() . \DIRECTORY_SEPARATOR . 'drift-watermark-' . \md5($url) . '.jpg';
-        $written = @\file_put_contents($path, $bytes);
-
-        return ($written === false || $written !== \strlen($bytes)) ? null : $path;
+        return JobRunner::exec($this->host, $job);
     }
 
     // ══════════════════ 内部：落地 ══════════════════
