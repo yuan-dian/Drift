@@ -339,14 +339,11 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
         //   命中侧不需要它 —— 视口 size 判定已经把视口外的点拦在子树之外。
         $canvas->save();
         $canvas->pushClip(new Rect(0.0, 0.0, $size->width, $size->height));
-        // ★★ 平移只包住内容：滚动条画在**视口坐标系**（restore 掉平移再画）。
-        //   否则 thumb 跟着内容一起被偏移带走 —— offset=max 时整条飞出视口
-        //   被裁干净（"该贴底时什么都没有"，2026-10-17 被 smoke 的 sv2 抓到：
+        // ★★ 平移只包住内容：滚动条画在**视口坐标系**（平移已收在 `paintChildAt`
+        //   内部并已还原）。否则 thumb 跟着内容一起被偏移带走 —— offset=max 时整条
+        //   飞出视口被裁干净（"该贴底时什么都没有"，2026-10-17 被 smoke 的 sv2 抓到：
         //   offset 小的用例有墨、offset=max 的没有 ⇒ 单看一条会以为是位置公式错）。
-        $canvas->save();
-        $canvas->translate($child->offsetX(), $child->offsetY());
-        $child->paintComposed($canvas);
-        $canvas->restore();
+        $this->paintChildAt($canvas, $child);
         // ★ 滚动条画在**内容之上**（后画即在上）、裁剪区之内 ⇒ 内容滚到
         //   边角时被它盖住一角，与浏览器/Flutter 的 Scrollbar 同行为。
         $this->paintScrollbar($canvas);

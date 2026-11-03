@@ -276,16 +276,9 @@ class RenderFlex extends RenderBox implements ChildContainer
 
     protected function paintContent(Canvas $canvas): void
     {
-        $canvas->save();
-
         foreach ($this->kids as $kid) {
-            $canvas->save();
-            $canvas->translate($kid->offsetX(), $kid->offsetY());
-            $kid->paintComposed($canvas);
-            $canvas->restore();
+            $this->paintChildAt($canvas, $kid);
         }
-
-        $canvas->restore();
     }
 
     // ── 内部 ────────────────────────────────────────────────────────

@@ -178,9 +178,6 @@ final class RenderPopupPanel extends RenderProxyBox
             return;
         }
 
-        $canvas->save();
-        $canvas->translate($child->offsetX(), $child->offsetY());
-        $child->paintComposed($canvas);
-        $canvas->restore();
+        $this->paintChildAt($canvas, $child);
     }
 }

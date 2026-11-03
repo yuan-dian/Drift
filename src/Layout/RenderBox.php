@@ -757,6 +757,40 @@ abstract class RenderBox extends RenderObject
     abstract protected function paintContent(Canvas $canvas): void;
 
     /**
+     * 把子盒平移到**它自己的位置**画出去 —— 父容器画子的唯一入口。
+     *
+     * ★ 这四行（`save` → `translate` → `paintComposed` → `restore`）原先在
+     *   **10 处**逐字重复（`RenderFlex` / `RenderStack` / `RenderWrap` /
+     *   `RenderDock` / `RenderSegmentedControl` / `RenderProxyBox` /
+     *   `RenderScrollView` / `RenderPopupPanel` / `RenderTable` ×2）。
+     *
+     *   不是"文件长"的问题，是**失败形态太贵**：
+     *   - 漏 `restore()` ⇒ 栈不配平，`DisplayList::assertBalanced()` 抓得到，
+     *     但抓到时帧已经画完，你只知道"某处漏了"。
+     *   - 把 `translate` 写在 `save` 之前、或漏 `translate` ⇒ **栈是配平的、
+     *     整帧不报错**，错的是**后面所有兄弟**的位置。画面上"这一块偏了"，
+     *     而偏的那块代码完全正确 —— 这类 bug 的定位成本是"逐盒二分"。
+     *   - 少一个 `save` 而平移保留 ⇒ 平移**累积**下去，越往后越偏（缩放比例
+     *     看起来像"越往下间距越大"，会被误诊成布局问题）。
+     *
+     * ★ 它同时是**脏矩形（M5）的唯一插入点**：将来"子盒与脏矩形不相交就跳过"
+     *   只在这里加一次；散在 10 处就得改 10 次，漏一处 = 那类容器在脏矩形
+     *   模式下画错且不报错。
+     *
+     * ★ 只收"平移后画"这一步，**不收 kids 容器**：遍历序每个容器都不同
+     *   （`Flex` 按行、`Wrap` 按 run、`Dock` 按槽名、`Table` 按 header/body），
+     *   `$kids` 的访问方式也不同（`Flex`/`Wrap` 按行区间、`Dock` 是命名槽）。
+     *   共有的只有这四行 —— 多抽一层就是给不同的东西造同一个壳。
+     */
+    final protected function paintChildAt(Canvas $canvas, RenderBox $child): void
+    {
+        $canvas->save();
+        $canvas->translate($child->offsetX(), $child->offsetY());
+        $child->paintComposed($canvas);
+        $canvas->restore();
+    }
+
+    /**
      * 画**自己的 chrome**（背景 / 边框 / 圆角）—— 在裁剪**之外**、`paintContent()` 之前。
      *
      * ★ 为什么需要这个钩子：`Modifier` 的视觉走 `paintBehind()`（本来就在裁剪之外），

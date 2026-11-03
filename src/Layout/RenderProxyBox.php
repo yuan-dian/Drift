@@ -46,9 +46,6 @@ abstract class RenderProxyBox extends RenderBox
             return;
         }
 
-        $canvas->save();
-        $canvas->translate($this->child->offsetX(), $this->child->offsetY());
-        $this->child->paintComposed($canvas);
-        $canvas->restore();
+        $this->paintChildAt($canvas, $this->child);
     }
 }

@@ -207,10 +207,7 @@ final class RenderSegmentedControl extends RenderBox implements ChildContainer
     {
         // 绘制序 = children 顺序（左 → 右，无层叠）
         foreach ($this->kids as $kid) {
-            $canvas->save();
-            $canvas->translate($kid->offsetX(), $kid->offsetY());
-            $kid->paintComposed($canvas);
-            $canvas->restore();
+            $this->paintChildAt($canvas, $kid);
         }
     }
 }

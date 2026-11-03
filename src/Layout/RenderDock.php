@@ -194,10 +194,7 @@ final class RenderDock extends RenderBox
             if ($box === null) {
                 continue;
             }
-            $canvas->save();
-            $canvas->translate($box->offsetX(), $box->offsetY());
-            $box->paintComposed($canvas);
-            $canvas->restore();
+            $this->paintChildAt($canvas, $box);
         }
     }
 

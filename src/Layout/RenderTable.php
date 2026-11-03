@@ -548,10 +548,7 @@ final class RenderTable extends RenderBox implements ScrollBarHost
         if ($header !== null && $hh > 0.0) {
             $canvas->save();
             $canvas->pushClip(new Rect(0.0, 0.0, $size->width, $hh));
-            $canvas->save();
-            $canvas->translate($header->offsetX(), $header->offsetY());
-            $header->paintComposed($canvas);
-            $canvas->restore();
+            $this->paintChildAt($canvas, $header);
             $canvas->popClip();
             $canvas->restore();
         }
@@ -560,10 +557,7 @@ final class RenderTable extends RenderBox implements ScrollBarHost
         if ($body !== null && $size->height > $hh) {
             $canvas->save();
             $canvas->pushClip(new Rect(0.0, $hh, $size->width, $size->height - $hh));
-            $canvas->save();
-            $canvas->translate($body->offsetX(), $body->offsetY());
-            $body->paintComposed($canvas);
-            $canvas->restore();
+            $this->paintChildAt($canvas, $body);
 
             // ★ 光标框画在**行区内容之上**，且回到视口坐标（`translate` 之外）：
             //   内容坐标 → 屏幕 = 减偏移、加表头高。若跟着 translate 画，还得再补

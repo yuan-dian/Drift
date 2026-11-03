@@ -12,6 +12,9 @@ use Drift\Geometry\Size;
 use Drift\Layout\LayoutSelfCheck;
 use Drift\Layout\Overflow;
 use Drift\Layout\RenderBox;
+use Drift\Layout\RenderFlex;
+use Drift\Rendering\DisplayList;
+use Drift\Rendering\RecordingCanvas;
 
 /**
  * `RenderBox` 的**基类契约**（`04` §5 / §12.2 #14，§13.1 的 C1 / C3 / C5）。
@@ -339,6 +342,61 @@ final class RenderBoxContractTest extends SmokeTestCase
             'C1 绘制 · 原点没墨（偏移真的施加了，不是画在左上角）',
             $atOrigin->r >= 250,
             \sprintf('(0,0) r=%d', $atOrigin->r),
+        );
+    }
+
+    /**
+     * `paintChildAt()`：子盒按**自己的** `offset` 落点，且画完把偏移还原。
+     *
+     * ★ 为什么用**三个**子而不是一个：单子只能证"平移施加了"，证不了"画完还原了"。
+     *   漏 `restore()` 时第一个子照样落在正确位置，错的是**后面的兄弟**（平移累积）
+     *   —— 一个子的用例永远绿。这是本条判据存在的全部理由。
+     *
+     * ★ 两侧判据：块中心有墨 + 缝没墨。只断"有墨"的话，三个块全叠在左上角
+     *   也"有墨"（本仓第 10 种假绿形态：断言方向单边）。
+     *
+     * ★ 这一条同时守着"10 处逐字重复收成一处"这个改动的**语义**：那 10 处原先
+     *   各写一遍 `save/translate/paintComposed/restore`，只要有一处写反顺序
+     *   （`translate` 在 `save` 之前）或漏 `restore`，栈是配平的、整帧不报错，
+     *   错的是别人的位置。
+     */
+    public function testPaintChildAtLandsOnEachChildsOwnOffset(): void
+    {
+        $flex = new RenderFlex(vertical: false, spacing: 4.0);
+        for ($i = 0; $i < 3; ++$i) {
+            $flex->addChild(new SolidBox(new Size(8.0, 5.0), 8.0, 5.0));
+        }
+        $flex->layout(BoxConstraints::loose(new Size(100.0, 20.0)));
+
+        // 先钉住布局给的偏移 —— 下面的像素落点由它推出来（8 宽 + 4 间距）
+        $offsets = [];
+        foreach ($flex->children() as $kid) {
+            $offsets[] = $kid->offsetX();
+        }
+        check(
+            '绘制 · 三子横排的偏移是 0 / 12 / 24',
+            $offsets === [0.0, 12.0, 24.0],
+            \json_encode($offsets),
+        );
+
+        $canvas = spinCanvas($flex, 40, 12);
+
+        foreach ([2 => '第 1 个', 14 => '第 2 个', 26 => '第 3 个'] as $x => $label) {
+            $px = $canvas->pixelAt($x, 2);
+            check("绘制 · {$label}子落在自己的偏移上（x={$x} 有墨）", $px->r < 128, 'r=' . $px->r);
+        }
+
+        foreach ([10 => '第 1/2 之间', 22 => '第 2/3 之间'] as $x => $label) {
+            $px = $canvas->pixelAt($x, 2);
+            check("绘制 · {$label}的缝没墨（偏移画完被还原了）", $px->r >= 250, 'r=' . $px->r);
+        }
+
+        $list = new DisplayList();
+        $flex->paint(new RecordingCanvas($list));
+        check(
+            '绘制 · 整树录制后 save 栈归零（每个 paintChildAt 都配平）',
+            $list->saveDepth() === 0,
+            'saveDepth=' . $list->saveDepth(),
         );
     }
 

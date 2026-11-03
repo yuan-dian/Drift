@@ -22,6 +22,7 @@ use Drift\Dev\Lint\Rules\NanoHygiene;
 use Drift\Dev\Lint\Rules\NonBoxDecoration;
 use Drift\Dev\Lint\Rules\OptionalOpGuard;
 use Drift\Dev\Lint\Rules\OrphanTrait;
+use Drift\Dev\Lint\Rules\PaintShift;
 use Drift\Dev\Lint\Rules\SelectPurity;
 use Drift\Dev\Lint\Rules\StaleCapabilityClaim;
 use Drift\Dev\Lint\Rules\StaleDerived;
@@ -97,6 +98,11 @@ final class Linter
             //     是 D3① 的"半个搬家" —— 字段走了、名字没走，新代码继续用旧名字。
             //     最坏的一处是 `State::boxEpoch()`：名字说 State，读的是渲染树全局序号。
             new StaticPipelineFacade(),
+            // 绘制收口守卫（2026-11-03）：四行"平移后画子盒"从 10 处收成
+            //   `RenderBox::paintChildAt()`，不许再手写第 11 份
+            //   ★ 真事：收口前 10 份，`translate` 写反顺序或漏 `restore` 时
+            //     栈配平、整帧不报错，偏的是**兄弟**的位置。
+            new PaintShift(),
         ]);
     }
 

@@ -152,6 +152,15 @@ function drift_lint_selftest(string $root, Linter $linter): bool
             'src/Core/PipelineFacadeBad.php:' . Diagnostic::ERROR,
             'src/Core/PipelineFacadeBad.php:' . Diagnostic::ERROR,
         ],
+        // 绘制收口守卫（2026-11-03）：四行从 10 处收成 `RenderBox::paintChildAt()`。
+        // ★ `PaintShiftGood.php` 一条都不该有 —— 它验的四件"看着像但不是"：
+        //   走 paintChildAt / 平移量是普通数值 / 两个参数不同源（`\1` 反向引用）/
+        //   offset 恒 0 时直接 paintComposed。
+        //   第 ③ 件最关键：判据若只写"translate 里出现 offsetX"，`RenderButton`
+        //   那种"`$this->dx`"以外的写法会一起误伤。
+        'paint-shift' => [
+            'src/Layout/PaintShiftBad.php:' . Diagnostic::ERROR,
+        ],
     ];
 
     $ok = true;
