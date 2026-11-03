@@ -23,6 +23,7 @@ declare(strict_types=1);
  *   tick      每帧固定税（frame-tax --check，6 条自洽判据）
  *   sym       崩溃符号翻译（rva2sym --selftest，6 条；合成 map，无构建前置）
  *   decode    图片解码通道序（decode-selftest；要 MSVC + WIC ⇒ 允许"没测到"）
+ *   m2        M2 conformance（W1–W8 静态 + 夹具 + 量具反例自检）
  *   unit      纯单元
  *   feature★  场景测试（真挂载 + 推帧）
  *   golden    原语像素基线
@@ -136,6 +137,13 @@ $checks = [
     //   反了（IWICBitmapScaler 不认 32bppRGBA），六条"两个尺寸互相比"的判据全绿。
     //   要 MSVC 才能编译 ⇒ 没工具链的机器记"没测到"，不许记成通过。
     'decode'   => ['图片通道序（decode-selftest）', [PHP_BINARY, $root . '/tools/decode-selftest/run.php'], false],
+    // ★ M2 conformance：W1–W3 静态扫 `src/Widget`（死字段 / 字段进盒 / 单一造盒路径）
+    //   + W4–W8 夹具运行时判据 + 8 条量具反例自检。
+    //   ★ 它此前**不在 gate 里**，于是 3 条假红挂了一个多月没人看 ——
+    //   "闸门不在 gate 里 = 红了没人知道"。假红成因是尺子只认本类体（读点漏了
+    //   `use` 进来的特征与子类）与只认一条造盒路径，2026-11-03 修准后进 gate。
+    //   先判定再接线：红着的闸门加进来只会被人 --only 绕过去。
+    'm2'       => ['M2 conformance（W1–W8）', [PHP_BINARY, $root . '/tools/M2Conformance.php'], false],
     'unit'     => ['unit（纯单元）', [PHP_BINARY, $root . '/tools/phpunit-run.php', 'unit'], false],
     'feature'  => ['feature（场景）', [PHP_BINARY, $root . '/tools/phpunit-run.php', 'feature'], true],
     'golden'   => ['golden 原语', [PHP_BINARY, $root . '/tools/golden-raster.php', '--check', '--canvas'], false],
