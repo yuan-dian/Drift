@@ -75,6 +75,17 @@ abstract class State
     /** @internal 帧时钟幂等：本帧已 `tickFrame()` 过的状态，重跑一遍时不再被推进第二次 */
     private int $lastTickedFrame = -1;
 
+    /**
+     * 本帧 `tickFrame()` 的回答 —— 同帧重入时返回它，而不是 `false`。
+     *
+     * ★★ 少了它就是一个静默的动画冻结（2026-11-03，随动效活跃表一起加）：
+     *   活跃表按"tick 返回 false ⇒ 出表"维护，而**同帧第二次调用必然返回 false**
+     *   （上面那条幂等早退）⇒ 一个正在跑的动画会在第一次重复调用时被踢出表，
+     *   下一帧没人 tick 它，画面停在中途。两种返回值的语义必须区分：
+     *   "这一帧不需要下一帧" vs "这一帧已经问过了"。
+     */
+    private bool $lastTickedMore = false;
+
     /** @internal StatefulElement 建状态时调用一次 */
     public function attach(StatefulElement $element, Widget $widget): void
     {
@@ -156,7 +167,19 @@ abstract class State
             return;                  // ★ 已经脏 ⇒ 不重复计数
         }
         $this->dirty = true;
-        Pipeline::current()->markDirty();
+
+        $pipeline = Pipeline::current();
+        $pipeline->markDirty();
+
+        // ★★ 登记到**动效活跃表**（2026-11-03）：帧时钟不再每帧问全树，只 tick
+        //   在动的那些。"开始动"最常见的现场就是这里（`setState` 之后启动动画 /
+        //   改动画参数），所以顺手报一声。不报的后果是静默的：动画不动、不报错。
+        // ★ 只入队、**不置 `animationActive`**：那个位由收表的人写。在这里置了，
+        //   收表时"已在表里就跳过"的判据会把自己刚报上来的这条跳过（第一版就这么错的）。
+        $element = $this->element;
+        if ($element !== null && !$element->isAnimationActive()) {
+            $pipeline->noteActiveAnimation($element);
+        }
     }
 
     /**
@@ -192,11 +215,11 @@ abstract class State
     public function tickFrameStamped(float $timestampMs, int $serial): bool
     {
         if ($this->lastTickedFrame === $serial) {
-            return false;
+            return $this->lastTickedMore;
         }
         $this->lastTickedFrame = $serial;
 
-        return $this->tickFrame($timestampMs);
+        return $this->lastTickedMore = $this->tickFrame($timestampMs);
     }
 
     /**
@@ -402,7 +425,17 @@ abstract class State
      */
     public function requestFrame(): void
     {
-        Pipeline::current()->scheduleNextFrame();
+        $pipeline = Pipeline::current();
+        $pipeline->scheduleNextFrame();
+
+        // ★★ "我要下一帧"现在有**两个**半边（2026-11-03）：帧时钟只 tick 活跃表里的
+        //   节点 ⇒ 光叫醒它不够，还得让我自己在表里，否则下一帧根本不会来问我。
+        //   并进 `markDirty()` 那条通道：两者都是"我可能要动"的举手点。
+        //   ★ 只入队、不置 `animationActive`（理由同 `markDirty()`）。
+        $element = $this->element;
+        if ($element !== null && !$element->isAnimationActive()) {
+            $pipeline->noteActiveAnimation($element);
+        }
     }
 
     /**

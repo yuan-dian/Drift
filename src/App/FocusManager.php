@@ -479,6 +479,11 @@ final class FocusManager
         $this->hoverBox?->setHovered(false);
         $this->hoverBox = $next;
         $this->hoverBox?->setHovered(true);
+
+        // ★ 这里**不需要**请求"全树发现"：`setHovered()` 内部会
+        //   `hoverAnim->toward()`，而 `AnimatedValue::toward()` 已经报了
+        //   "帧时钟该发现我"（2026-11-03 的动效活跃表）。在这一层再报一次
+        //   只是把同一次全扫多跑一遍。
     }
 
     /**

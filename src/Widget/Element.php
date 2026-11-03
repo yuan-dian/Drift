@@ -86,6 +86,16 @@ abstract class Element
     /** @internal §13.2：本节点的渲染盒；结构节点为 null */
     protected ?RenderBox $box = null;
 
+    /**
+     * 本节点是否已在**动效活跃表**里（`Application` 的帧时钟账）。
+     *
+     * ★ 住在 `Element` 而不是表里做查重：表是"待处理队列 + 每帧重建的 list"，
+     *   拿它查重要么 O(n) 扫、要么用 `spl_object_id` 当键（AOT 未验证）。一个
+     *   标记位是 O(1) 且不引入任何内置容器 —— 与 `RenderObject::$hovered` 同理由。
+     * ★ **只为去重存在**：语义永远是"表里现在有没有我"，由收表 / 出表两处写。
+     */
+    protected bool $animationActive = false;
+
     public function __construct(Widget $widget)
     {
         $this->widget = $widget;
@@ -109,6 +119,26 @@ abstract class Element
     public function isMounted(): bool
     {
         return $this->mounted;
+    }
+
+    /**
+     * 本节点在不在**动效活跃表**里（见 `$animationActive`）。
+     *
+     * @internal `Application` 收表 / 出表时读
+     */
+    public function isAnimationActive(): bool
+    {
+        return $this->animationActive;
+    }
+
+    /**
+     * 记 / 清"在活跃表里"。
+     *
+     * @internal 只有 `Application::collectActiveAnimations()` 与 `updateActiveAnimations()` 写
+     */
+    public function markAnimationActive(bool $active): void
+    {
+        $this->animationActive = $active;
     }
 
     // ★★ 这里原先有 4 个静态门面（`bumpStructure` / `structureVersion` /

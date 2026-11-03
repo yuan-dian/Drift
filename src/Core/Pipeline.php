@@ -106,6 +106,11 @@ final class Pipeline
     {
         ++$this->structureVersion;
         ++$this->contentVersion;
+
+        // ★ 新挂上的节点可能一出生就在动（`Spinner` / 入场动画）。`tickFrame()` 的
+        //   "返回值"模型下，它只有被 tick 过才说得出口 ⇒ 结构变化后做一次全树发现。
+        //   置的是幂等 bool，首帧整棵树 mount 也只扫一次。
+        $this->animationScan = true;
     }
 
     /** @internal 结构 ∪ 声明（`Element::update()` 的唯一写点）—— 只动内容号，不动结构号 */
@@ -343,6 +348,79 @@ final class Pipeline
     public function mountedCount(): int
     {
         return \count($this->mounted);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // ②b 动效活跃表（"谁在动"）—— 帧时钟的发现通道
+    // ─────────────────────────────────────────────────────────────────
+
+    /**
+     * 待入"活跃表"的节点（`State::markDirty()` / 挂载补 tick 登记）。
+     *
+     * ★★ **为什么需要这张表**（2026-11-03）：此前 `Application::tickAnimations()`
+     *   每帧递归**整棵树**只为问一句"有没有人在动"。实测 2000 节点 **935µs**、
+     *   12k 节点外推 ~6ms —— 这是每一帧的固定税，换来的信息量只是"有几个人在动"。
+     *   nanoui（active set）、Raven（active 集合 + 静止即 sleep）、Flutter（Ticker
+     *   自己 `scheduleFrameCallback`）三个独立实现都收敛到"只访问在动的那几个"。
+     *
+     * ★ 登记单元是**对象**而不是 `Element`：`Core` 不能依赖 `Widget`（依赖方向
+     *   lint）。与 `$mounted` 同一个理由、同一个形状。
+     */
+    private array $activeAnimations = [];
+
+    /**
+     * 下一帧做一次**全树发现**（重建活跃表）。
+     *
+     * ★ 全树只在"**可能有新动画起步**"时走，三个现场：构造（首帧）、悬停目标切换
+     *   （盒上的 `hoverAnim` 不经过 `setState`）、结构变化（新挂载的节点）。
+     *   其余帧只走活跃表。
+     */
+    private bool $animationScan = false;
+
+    /**
+     * @internal 登记"这个节点可能要动"（`State::markDirty()` 调，O(1) 追加）
+     *
+     * ★ 由 `Element` 自己的标记位去重（`markAnimationActive`），这里不查重 ——
+     *   队列是"待合并"，真正的去重在 `Application` 收表时做。
+     */
+    public function noteActiveAnimation(object $node): void
+    {
+        $this->activeAnimations[] = $node;
+    }
+
+    /**
+     * 取走待入表的节点并清空。
+     *
+     * @return list<object>
+     * @internal `Application::tickAnimations()` 每帧调（全扫路径也要取走，否则累积）
+     */
+    public function takeActiveAnimations(): array
+    {
+        $list = $this->activeAnimations;
+        $this->activeAnimations = [];
+
+        return $list;
+    }
+
+    /** @internal 请求下一帧做一次全树发现 */
+    public function requestAnimationScan(): void
+    {
+        $this->animationScan = true;
+    }
+
+    /** @internal 取走并清掉"要全扫"标志 */
+    public function takeAnimationScan(): bool
+    {
+        $scan = $this->animationScan;
+        $this->animationScan = false;
+
+        return $scan;
+    }
+
+    /** @internal 夹具用：待入表的节点必须被消费干净 */
+    public function activeAnimationCount(): int
+    {
+        return \count($this->activeAnimations);
     }
 
     // ─────────────────────────────────────────────────────────────────

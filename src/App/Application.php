@@ -283,6 +283,31 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      */
     private bool $animating = false;
 
+    /**
+     * **动效活跃表**：本帧需要被 tick 的节点（`Element`），顺序无关。
+     *
+     * ★★ 存在理由（2026-11-03）：`tickAnimations()` 此前每帧递归**整棵树**只为问
+     *   一句"有没有人在动"。实测 2000 节点 **935µs**（占稳态帧 98%），12k 节点
+     *   外推 ~6ms —— 60FPS 预算的 36%，换来的信息量只是"有几个人在动"。
+     *   nanoui（active set）/ Raven（active 集合 + 静止即 sleep）/ Flutter（Ticker
+     *   自己登记帧回调）三个独立实现都只访问在动的那几个。
+     *
+     * ★ 表项是 `Element` 而不是 `RenderBox`：盒每次重建被换新（§13.2），
+     *   **Element 才是跨重建稳定的那个**，而 `element->renderObject()` 永远指向
+     *   当前盒 ⇒ 表项不会变成"tick 一个死盒"。
+     *
+     * @var list<Element>
+     */
+    private array $activeTicks = [];
+
+    /**
+     * 累计访问过的节点数（只增，测试用来断言"这一帧只碰了一个节点"）。
+     *
+     * ★ 断言**次数**而不是时间：时间是噪声，次数是判据。同 `FrameStageAccountingTest`
+     *   第 ③ 条用次数的理由。
+     */
+    private int $animationVisits = 0;
+
     /** 每帧自增的序列号 —— `State::tickFrameStamped` 用它做同帧幂等（迟到挂载补 tick 用） */
     private int $frameSerial = 0;
 
@@ -1018,6 +1043,15 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
 
                 if ($mountedState->tickFrameStamped($timestampMs, $this->frameSerial)) {
                     $this->animating = true;
+
+                    // ★ 它已经"在动"了 ⇒ 必须进活跃表，否则下一帧只走表、没人再
+                    //   tick 它，动画停在第一帧（静默）。`bumpStructure()` 也会请求
+                    //   全扫，但那是**下一帧**的事；本帧剩余的路由（`wantsFrame()`
+                    //   续跑）已经要用到这张表。
+                    if (!$mountedElement->isAnimationActive()) {
+                        $mountedElement->markAnimationActive(true);
+                        $this->activeTicks[] = $mountedElement;
+                    }
                 }
             }
         });
@@ -1612,23 +1646,57 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     }
 
     /**
-     * 遍历树推进所有动画，并回答"**还有动画在跑吗**"（§17.4.9）。
+     * 推进本帧的动画，回答"**还有动画在跑吗**"（§17.4.9）。
      *
      * ★ **浮层是第二棵树**（与 `focus->collect()` / `placeOverlays()` 同一个坑）：只走
      *   `$root` 的话，菜单里放一个 `Spinner` 就永远不转，而且**没有任何报错**。
-     * ★ 成本 O(树)，与同帧的 `layout()` 同阶（§13.3：Render 层本就全树重排）。
+     *
+     * ★★ **两条路径，一帧只走一条**（2026-11-03）：
+     *
+     *   | 路径 | 何时 | 成本 |
+     *   |---|---|---|
+     *   | 全树发现（`collectActiveAnimations`） | 首帧 / 结构变化 / 悬停目标切换 | O(树)，一次性 |
+     *   | 只走活跃表（`updateActiveAnimations`） | 其余每一帧 | O(在动的节点)，通常 0–5 |
+     *
+     *   此前只有全树一条路径：2000 节点的空转帧要 **935µs**（占整帧 98%），
+     *   而它换来的信息量只是"有几个人在动"。
+     *   ★ **绝不能两条都走**：盒的 `tickAnimations()` 没有帧戳（`State` 有），
+     *   同一帧推两次就是动画快进一帧。所以这里是 `if / return` 而不是两个 if。
      */
     private function tickAnimations(float $timestampMs): bool
     {
+        // ★ 队列必须**每帧消费**：走全扫时它被全扫覆盖（取走丢弃），走表时并入。
+        //   漏消费 ⇒ 下一帧重复入表 ⇒ 同一个盒被推进两次。
+        if ($this->pipeline->takeAnimationScan()) {
+            $this->pipeline->takeActiveAnimations();
+
+            return $this->collectActiveAnimations($timestampMs);
+        }
+
+        return $this->updateActiveAnimations($timestampMs);
+    }
+
+    /**
+     * 全树发现：重建活跃表，并回答"还有人在动吗"。
+     *
+     * ★ 三棵树都要走（根 + 每个浮层）—— 见 `tickAnimations()` 的第一条。
+     */
+    private function collectActiveAnimations(float $timestampMs): bool
+    {
+        // ★ 不是"并入"而是**重写**：全扫看得到整棵树，它给出的表才是完整答案。
+        //   并入会让已停止的旧表项永远留着（出表只发生在 tick 返回 false 的那一帧，
+        //   而全扫帧里它们未必被问到 —— 它们可能已不在树里）。
+        $this->activeTicks = [];
+
         $busy = false;
 
         $root = $this->root;
-        if ($root !== null && $this->tickSubtree($root, $timestampMs)) {
+        if ($root !== null && $this->scanSubtree($root, $timestampMs)) {
             $busy = true;
         }
 
         foreach ($this->overlayHost->overlays()->all() as $e) {
-            if ($e->element !== null && $this->tickSubtree($e->element, $timestampMs)) {
+            if ($e->element !== null && $this->scanSubtree($e->element, $timestampMs)) {
                 $busy = true;
             }
         }
@@ -1637,37 +1705,130 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     }
 
     /**
-     * `tickAnimations()` 的递归体。
+     * `collectActiveAnimations()` 的递归体。
      *
      * ★ **不许短路**：即使已经知道 `$busy` 为真，兄弟子树里的动画也必须收到这一帧，
      *   否则"整棵树里只推进第一个动画"——现象是多个 Spinner 只有一个在转。
      *
-     * ★ **State 与盒的动画在同一次遍历里推进**（`RenderObject::tickAnimations`）：
-     *   悬停过渡这类"盒态"动画住在 Render 层、不进 State，再走一遍树找它们就是
-     *   白白多一次 O(树)。同一次访问顺手问一句，`wantsFrame()` 的"有动画在跑"
-     *   判据自动覆盖 —— **不需要加第八条判据**。
+     * ★ **标记位与表必须同一个真理**：全扫是唯一"重写全表"的地方，所以它也是唯一
+     *   把标记位写成 `false` 的地方 —— 队列被丢弃的那些节点靠这里对齐（它们的标记
+     *   位已在 `State::markDirty()` 里置 true，但没进表；不在这里清回来，它们以后
+     *   再 `setState` 就不会重新入队了）。
+     *
+     * ★ 返回值而不是 `bool &$busy` 出参：**tpc 不支持"按引用传固定类型的标量参数"**
+     *   （`Cannot create a reference to variable ... of fixed type php::Bool`）。
+     *   闭包里的 `use (&$busy)` 它支持 —— 原 `tickSubtree()` 一直是这个形状。
      */
-    private function tickSubtree(Element $element, float $timestampMs): bool
+    private function scanSubtree(Element $element, float $timestampMs): bool
     {
         $busy = false;
 
-        $state = States::of($element);
-        if ($state !== null && $state->tickFrameStamped($timestampMs, $this->frameSerial)) {
-            $busy = true;
-        }
+        $more = $this->tickElement($element, $timestampMs);
+        $element->markAnimationActive($more);
 
-        $box = $element->renderObject();
-        if ($box !== null && $box->tickAnimations($timestampMs)) {
+        if ($more) {
+            $this->activeTicks[] = $element;
             $busy = true;
         }
 
         $element->visitChildren(function (Element $child) use ($timestampMs, &$busy): void {
-            if ($this->tickSubtree($child, $timestampMs)) {
+            if ($this->scanSubtree($child, $timestampMs)) {
                 $busy = true;
             }
         });
 
         return $busy;
+    }
+
+    /**
+     * 只走活跃表：合并新登记的，tick 表内的，停下的出表。
+     */
+    private function updateActiveAnimations(float $timestampMs): bool
+    {
+        // ① 把 `State::markDirty()` 报上来的并进来 —— O(新增)，不扫树。
+        //   ★ 不 `instanceof Element` 验证：App 层不得认 Widget 的具体类（I2 闸门），
+        //     而队列只有一个写者（`State`，它塞的是自己的 `element()`）⇒ 类型由
+        //     构造保证。放错的后果是当场 `Call to undefined method`，不是静默。
+        foreach ($this->pipeline->takeActiveAnimations() as $node) {
+            /** @var Element $node */
+            if ($node->isAnimationActive()) {
+                continue;
+            }
+            $node->markAnimationActive(true);
+            $this->activeTicks[] = $node;
+        }
+
+        // ② 只 tick 表里的人
+        $busy = false;
+        $next = [];
+
+        foreach ($this->activeTicks as $element) {
+            // ★ 卸载即出表（同 `takeMounted()` 的 `isMounted()` 过滤）：不跳过就是
+            //   给一个已经离开树的节点发帧 —— 僵尸 tick，且它永远返回 false 也占着表。
+            if (!$element->isMounted()) {
+                $element->markAnimationActive(false);
+                continue;
+            }
+
+            if ($this->tickElement($element, $timestampMs)) {
+                $next[] = $element;
+                $busy = true;
+                continue;
+            }
+
+            $element->markAnimationActive(false);
+        }
+
+        $this->activeTicks = $next;
+
+        return $busy;
+    }
+
+    /**
+     * 推进**一个**节点上的两处动画，回答"它还要下一帧吗"。
+     *
+     * ★ **State 与盒在同一次访问里推进**（`RenderObject::tickAnimations`）：
+     *   悬停过渡这类"盒态"动画住在 Render 层、不进 State，分开走两遍就是两次
+     *   O(树)。同一次访问顺手问一句，`wantsFrame()` 的"有动画在跑"判据自动
+     *   覆盖两处 —— **不需要加第八条判据**。
+     */
+    private function tickElement(Element $element, float $timestampMs): bool
+    {
+        ++$this->animationVisits;
+
+        $more = false;
+
+        $state = States::of($element);
+        if ($state !== null && $state->tickFrameStamped($timestampMs, $this->frameSerial)) {
+            $more = true;
+        }
+
+        $box = $element->renderObject();
+        if ($box !== null && $box->tickAnimations($timestampMs)) {
+            $more = true;
+        }
+
+        return $more;
+    }
+
+    /**
+     * 累计访问过的节点数（测试断言"这一帧只碰了几个节点"）。
+     *
+     * @internal
+     */
+    public function animationVisits(): int
+    {
+        return $this->animationVisits;
+    }
+
+    /**
+     * 当前活跃表里有几个节点。
+     *
+     * @internal 夹具 / devtools
+     */
+    public function activeAnimationCount(): int
+    {
+        return \count($this->activeTicks);
     }
 
     /**

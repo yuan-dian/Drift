@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace Drift\Widget;
 
+use Drift\Core\Pipeline;
+
 /**
  * 动画控制器 —— `0..1` 的**单值驱动器**（§17.4.11）。
  *
@@ -274,6 +276,14 @@ final class AnimationController
         $this->animating = true;
         $this->startPending = true;
         $this->pendingFinish = false;
+
+        // ★★ **起飞点必须让帧时钟发现我**（2026-11-03，动效活跃表）：帧时钟不再
+        //   每帧问全树，只在"可能有新动画起步"的帧做一次发现。本类不持 `State`
+        //   （它是纯驱动器，没有 `element()`）⇒ 只能请求一次**全树发现**，由那一帧
+        //   把持有它的 `State` 收进表。
+        // ★ 放在 `$span <= 0` 的早退之后 ⇒ 只有**真的起飞**才请求；`forward()` 是
+        //   用户动作级别的低频事件，一次 O(树) 可接受。
+        Pipeline::current()->requestAnimationScan();
     }
 
     /** @internal 收口 + 放一次性回调 */
