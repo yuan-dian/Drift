@@ -371,7 +371,7 @@ final class TextAreaState extends EditableTextState implements Scrollable
     {
         $lane = $this->lane;
         if ($lane === null) {
-            $lane = new ScrollLane();
+            $lane = new ScrollLane(0.0, null, $this);
             $this->lane = $lane;
         }
 

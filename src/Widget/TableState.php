@@ -472,7 +472,7 @@ final class TableState extends State implements Scrollable, EditableText
         if ($axis === Axis::Vertical) {
             $lane = $this->laneY;
             if ($lane === null) {
-                $lane = new ScrollLane(0.0, $this->bar());
+                $lane = new ScrollLane(0.0, $this->bar(), $this);
                 $this->laneY = $lane;
             }
 
@@ -481,7 +481,7 @@ final class TableState extends State implements Scrollable, EditableText
 
         $lane = $this->laneX;
         if ($lane === null) {
-            $lane = new ScrollLane(0.0, $this->bar());
+            $lane = new ScrollLane(0.0, $this->bar(), $this);
             $this->laneX = $lane;
         }
 

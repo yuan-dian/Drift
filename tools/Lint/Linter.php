@@ -23,6 +23,7 @@ use Drift\Dev\Lint\Rules\NonBoxDecoration;
 use Drift\Dev\Lint\Rules\OptionalOpGuard;
 use Drift\Dev\Lint\Rules\OrphanTrait;
 use Drift\Dev\Lint\Rules\PaintShift;
+use Drift\Dev\Lint\Rules\LaneOwner;
 use Drift\Dev\Lint\Rules\SelectPurity;
 use Drift\Dev\Lint\Rules\StaleCapabilityClaim;
 use Drift\Dev\Lint\Rules\StaleDerived;
@@ -103,6 +104,10 @@ final class Linter
             //   ★ 真事：收口前 10 份，`translate` 写反顺序或漏 `restore` 时
             //     栈配平、整帧不报错，偏的是**兄弟**的位置。
             new PaintShift(),
+            // 滚动轴的宿主守卫（2026-11-03）：`new ScrollLane(...)` 少传宿主是**合法 PHP**，
+            //   症状只是"滚动条不淡出"—— 界面稍微不对，没有任何东西会红。
+            //   写入点四个（全量 / 懒列表 / 表格 ×2 轴 / 多行输入），第五个实现会复制邻近那个。
+            new LaneOwner(),
         ]);
     }
 

@@ -59,8 +59,16 @@ final class ScrollLane
      */
     private ScrollBarFade $fade;
 
-    public function __construct(float $start = 0.0, ?ScrollBarFade $fade = null)
-    {
+    /**
+     * @param float $start 初始偏移
+     * @param ScrollBarFade|null $fade 共享的淡出节律（`TableState` 两根轴传同一个）
+     * @param State|null $owner 宿主 —— **只为一件事**：滚过之后叫醒帧时钟（见 `wake()`）
+     */
+    public function __construct(
+        float $start = 0.0,
+        ?ScrollBarFade $fade = null,
+        private readonly ?State $owner = null,
+    ) {
         $this->offset = $start;
         $this->fade = $fade ?? new ScrollBarFade();
     }
@@ -111,6 +119,7 @@ final class ScrollLane
 
         $this->fade->noteScroll();
         $this->offset = $push($next);
+        $this->wake();
 
         return true;
     }
@@ -134,6 +143,7 @@ final class ScrollLane
         $motion->glideBy($delta);
 
         $this->fade->noteScroll();
+        $this->wake();
     }
 
     /**
@@ -169,6 +179,31 @@ final class ScrollLane
         }
 
         return true;
+    }
+
+    /**
+     * 告诉宿主"我要帧" —— `move()` / `glide()` 真的动了之后调。
+     *
+     * ★★ **为什么必须有这一步**（2026-11-03，真机症状：拖着条滚完，条一直全亮不淡）：
+     *   滚过之后 `ScrollBarFade` 要在 900ms 后把条淡到 0.35，那 900ms **本身要帧**
+     *   （见 `ScrollBarFade::tick()` 的 ★★）。而帧时钟只 tick **动效活跃表**里的节点，
+     *   入表只有两条路：`State::markDirty()`（要重建）与 `State::requestFrame()`（不重建）。
+     *   · 滚轮那条路是**碰巧**活的：`ScrollMotion::glideBy()` → `AnimatedValue::toward()`
+     *     目标真的变了 ⇒ `requestAnimationScan()` ⇒ 下一帧全扫发现我在动。
+     *   · `move()`（拖条 / 键盘翻页 / `ensureVisible`）只 `noteScroll()`，而
+     *     `fade->toward(1.0)` 在"本来就全亮"时**同值早退** ⇒ 没有人报告"我在动"。
+     *   ⇒ 于是拖条之后 `tickFrame()` 一次都不来，`idleMs` 永远停在 0，
+     *     **条永远全亮**。滚轮会淡、拖条不会淡 —— 用户能看见的不一致。
+     *
+     * ★ 用 `requestFrame()` 而不是 `markDirty()`：滚动**不该重建**（`b7257bf` 的裁决
+     *   仍然成立）。`requestFrame()` 正是"要帧但不要重建"那个原语（`scheduleNextFrame()`
+     *   + 入活跃表），与 `AnimatedOpacityState` 同一条通道。
+     * ★ 放在这里而不是四个 `scrollBy()` 各写一句：`ScrollLane` 存在的全部理由就是
+     *   "这条契约只写一遍"（见类注释里的 `b7257bf` / `58305af` 两次漏改）。
+     */
+    private function wake(): void
+    {
+        $this->owner?->requestFrame();
     }
 
     /** 滚动的动画节律（懒建：没被滚轮滚过的轴不建） */
