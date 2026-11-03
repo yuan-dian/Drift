@@ -36,6 +36,14 @@ final class TextAreaState extends EditableTextState implements Scrollable
 
     private ?ScrollLane $lane = null;
 
+    /**
+     * 上次对准过的**编辑位置**指纹：`[插入符, 选区起, 选区终]`。
+     *
+     * ★ `null` = 还没有对准过（首帧 / 刚退出编辑）。用它做 `caretRevealOffset()` 的门控，
+     *   理由见那个方法 —— 这是"用户滚动"与"插入符跟随"能共存的那个开关。
+     */
+    private ?array $revealedAt = null;
+
     #[\Override]
     protected function controlledValue(): string
     {
@@ -243,6 +251,9 @@ final class TextAreaState extends EditableTextState implements Scrollable
      *
      * ★ 顺序：先滚动、后淡出（同 `ScrollViewState`）—— `scrollBy()` 里会
      *   `noteScroll()` 把条打回全亮，反过来会"先淡一点再被打回"，抖动。
+     * ★ **插入符跟随不在这里**（2026-11-03）：它要的是"本帧文本排出来的段落"，
+     *   而 `tickFrame()` 跑在 settle **之前**（盒还是上一帧的）。搬到盒的
+     *   `performLayout()` 里做 —— 见 `TextAreaState::caretRevealOffset()`。
      */
     #[\Override]
     public function tickFrame(float $timestampMs): bool
@@ -283,8 +294,6 @@ final class TextAreaState extends EditableTextState implements Scrollable
 
     public function build(BuildContext $ctx): Widget
     {
-        $this->revealCaret();
-
         $area = $this->area();
 
         $box = TextAreaBox::make(
@@ -297,6 +306,7 @@ final class TextAreaState extends EditableTextState implements Scrollable
             $area->linesValue(),
             $this->lane()->offset(),
             $this->lane()->fade()->opacity(),
+            $this->caretRevealOffset(),
         );
 
         $label = $area->labelText();
@@ -311,29 +321,48 @@ final class TextAreaState extends EditableTextState implements Scrollable
     }
 
     /**
-     * 保证插入符在可视区内。
+     * 这一帧要不要把插入符滚进视口；要的话，跟到哪个偏移。
      *
-     * ★ 在 `build()` 里做，用**上一帧**的盒：那个插入符位置正是用户**看见**的
-     *   位置，所以"它越界了吗"这个判断是准的。文本刚变、插入符跟着移动的情形
-     *   会在下一帧被重新判断 —— 每帧都查，所以不会漏；一帧延迟在 60fps 下无感。
-     * ★ 不在这里 `markDirty()`：改的只是"这一帧的偏移"，不是树的形状。
+     * 返回 `null` = 不跟随（用户在滚 / 不在编辑态）。
+     *
+     * ★★ 三个角色的分工（2026-11-03 定稿）：
+     *   · **State（本方法）决定"要不要"** —— 它知道插入符变没变，盒不知道；
+     *   · **盒的 `performLayout()` 执行"跟到哪"** —— 段落与视口高在那里才是本帧的值；
+     *   · **`ScrollLane` 存偏移** —— 它是跨帧的真相。
+     *   早先版本把三件事都塞在 State 的 `build()` 里，于是必然读到**上一帧的盒**：
+     *   点进输入框那一帧盒还是"未编辑"的（`caretOffset === null`）⇒ `caretRect()`
+     *   的兜底给出**文本末尾** ⇒ 视口跳到底（真机：点一下看见文档末尾，看不到光标）。
+     *   改到 `tickFrame()` 又要多一帧才同源，连续打字时永远追不上。
+     *
+     * ★ 指纹（插入符 + 选区两端）是"用户滚动"与"插入符跟随"能共存的开关：
+     *   没有它 ⇒ 任何一次 rebuild 都把视口拽回插入符，用户"滚一半弹回去"。
+     *   成熟框架同形：Qt `QTextEdit::ensureCursorVisible()` 由光标移动调用、
+     *   Flutter `EditableText._scheduleCaretVisibilityUpdate` 挂在 selection 变化上、
+     *   浏览器 textarea 滚动从不把光标拉回来。
+     * ★ 选区两端也进指纹：`Ctrl+A` / Shift+方向键可能**只动选区不动插入符**，
+     *   而活动端跑出视口同样要跟随。
+     * ★ 未编辑 ⇒ 指纹清空：没有插入符可看；且下次进编辑必然重新对准
+     *   （留着旧指纹的话，"滚走 → 点回同一位置"会因指纹没变而不对准）。
+     * ★ 这里只改字段、**不标脏**（build 里标脏自己会被 E-FLUSH-CYCLE 拦）；
+     *   要的偏移随着本次 build 产出的新盒一起下去，layout 当帧就生效。
      */
-    private function revealCaret(): void
+    private function caretRevealOffset(): ?int
     {
-        $box = $this->box();
-        if ($box === null || !$box->hasSize()) {
-            return;
+        if (!$this->isEditing()) {
+            $this->revealedAt = null;
+
+            return null;
         }
 
-        $caret = $box->caretRect();
-        $top = $box->contentTop();
-        $viewport = $box->viewportHeight();
-
-        if ($caret->top < $top) {
-            $this->lane()->set(max(0.0, $box->appliedOffset(Axis::Vertical) + $caret->top - $top));
-        } elseif ($caret->top + $caret->height > $top + $viewport) {
-            $this->lane()->set($box->appliedOffset(Axis::Vertical) + $caret->top + $caret->height - $top - $viewport);
+        /** @var array{0: int, 1: int, 2: int} $now 插入符 / 选区起 / 选区终 */
+        $now = [$this->caretOffset(), $this->selectionStart(), $this->selectionEnd()];
+        if ($now === $this->revealedAt) {
+            return null;   // 编辑位置没动 ⇒ 这一帧的 rebuild 与"跟随"无关（是用户在滚）
         }
+
+        $this->revealedAt = $now;
+
+        return $now[0];
     }
 
     // ── 内部 ────────────────────────────────────────────────────────────

@@ -79,6 +79,19 @@ final class RenderTextArea extends RenderBox implements TextInputBox, ScrollBarH
         private readonly Color $thumb = new Color(0, 0, 0, 0),
         /** 滚动条透明度（`ScrollBarFade` 每帧推；**不是** readonly） */
         private float $barOpacity = 1.0,
+        /**
+         * 这一帧要把哪个偏移处的插入符滚进视口；`null` = 不跟随。
+         *
+         * ★★ 为什么是**构造参数**而不是让 State 在 build 里改偏移（2026-11-03）：
+         *   偏移的真相在 `ScrollLane`（State），但**段落与视口高是盒在 layout 里
+         *   才有的**。State 在 build 期拿到的盒是上一帧的 —— 它的段落是按**上一帧
+         *   文本**排的，拿新插入符去问行位置会差一行（实测 16.8px：光标正好贴在
+         *   视口上沿之外）。让盒在自己 layout 完、段落与 `maxScroll` 都是本帧值的
+         *   时候对准，就没有"哪一帧的几何"这个问题了。
+         * ★ 传 `null` 是"用户在滚，别拉回来"—— 这个决定只能由 State 做（它知道
+         *   插入符变没变），所以**决定权在 build、执行权在 layout**。
+         */
+        private readonly ?int $revealCaret = null,
         private readonly Scale $scale = new Scale(1.0),
     ) {
     }
@@ -276,6 +289,24 @@ final class RenderTextArea extends RenderBox implements TextInputBox, ScrollBarH
         $viewport = max(0.0, $height - $this->insets->vertical());
         $this->maxScroll = max(0.0, $this->paragraph->height - $viewport);
 
+        // ★★ 插入符跟随**就在这一帧完成**（2026-11-03）：此时段落与 `maxScroll`
+        //   都是本帧的值，`applied()` 也已按新上限夹取 ⇒ 算出来的偏移本帧 paint
+        //   就用得上。State 那边只需在 build 时回答"要不要跟随、跟到哪个偏移"。
+        //   ★ 用局部 `$viewport` 而不是 `viewportHeight()`：后者读 `$this->size`，
+        //     而 size 要等本次 `performLayout()` 返回后由 `RenderBox::layout()` 写入
+        //     —— 在这里它是**上一帧**的值（首帧还是 `null`）。
+        if ($this->revealCaret !== null) {
+            $caret = $this->caretRectAt($this->revealCaret);
+            $top = $this->insets->top;
+            $bottom = $top + $viewport;
+
+            if ($caret->top < $top) {
+                $this->scrollOffset = max(0.0, $this->applied() + $caret->top - $top);
+            } elseif ($caret->top + $caret->height > $bottom) {
+                $this->scrollOffset = $this->applied() + $caret->top + $caret->height - $bottom;
+            }
+        }
+
         return $constraints->constrain(new Size($width, $height));
     }
 
@@ -301,10 +332,31 @@ final class RenderTextArea extends RenderBox implements TextInputBox, ScrollBarH
      * 插入符矩形（**盒内坐标**，已含内边距与滚动偏移）。
      *
      * ★ 高度取**整行高**（不是字号）：空行、行首行尾都要有可见的插入符。
+     * ★ 未编辑（`caretOffset === null`）⇒ 落在**文本末**：这是"这里有个编辑位置"
+     *   的占位（IME 候选窗要一个几何），不是"插入符在末尾"。要问"当前插入符在
+     *   哪儿"请用 `caretRectAt()` —— 两个语义混用会出真 bug，见那个方法的注。
      */
     public function caretRect(): Rect
     {
-        $offset = $this->caretOffset ?? strlen($this->text);
+        return $this->caretRectAt($this->caretOffset ?? strlen($this->text));
+    }
+
+    /**
+     * **指定偏移**处的插入符矩形（盒内坐标，已含内边距与滚动偏移）。
+     *
+     * ★★ 为什么必须与 `caretRect()` 分开（2026-11-03，真机症状：点进多行框
+     *   视口跳到底部、要等下一次 rebuild 才跳回）：
+     *   盒是**上一帧布局的产物**，它的 `caretOffset` 是本帧 build 之前的值。
+     *   点进输入框的那一帧，盒还是"未编辑"的那个（`caretOffset === null`），
+     *   于是 `caretRect()` 的兜底给出**文本末尾** ⇒ `revealCaret()` 把视口滚到
+     *   底，而真实的插入符在用户点的地方（第 3 行）。下一帧盒换了才纠正。
+     *   ⇒ 「画/报候选窗」要的是"有没有编辑位置"，「滚动跟随」要的是"插入符在哪"，
+     *     两条语义，两个入口。
+     * ★ 传 `$offset` 而不是读字段，也让调用方**不必**等盒更新 —— 它自己就有
+     *   当前插入符（State 侧）。
+     */
+    public function caretRectAt(int $offset): Rect
+    {
         $x = $this->paragraph?->caretX($offset) ?? 0.0;
         $line = $this->paragraph?->lineIndexAt($offset) ?? 0;
         $lineRect = $this->paragraph?->lineRect($line) ?? new Rect(0.0, 0.0, 0.0, $this->lineHeight());

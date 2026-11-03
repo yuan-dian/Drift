@@ -45,6 +45,13 @@ final class TextAreaBox extends RenderBoxWidget
         private readonly float $scrollOffset,
         /** 滚动条淡出透明度（`ScrollBarFade` 的值，`build()` 每帧递） */
         private readonly float $barOpacity = 1.0,
+        /**
+         * 这一帧要把哪个偏移处的插入符滚进视口（`null` = 不跟随）。
+         *
+         * ★ 语义与"要不要跟随"的决定都属于 State；盒只负责在 layout 执行。
+         *   见 `RenderTextArea` 构造参数的同名注。
+         */
+        private readonly ?int $revealCaret = null,
     ) {
         parent::__construct();
         // §9.1 命中三方消费：文本编辑的通用 I 形光标
@@ -62,6 +69,7 @@ final class TextAreaBox extends RenderBoxWidget
         int $lines,
         float $scrollOffset,
         float $barOpacity = 1.0,
+        ?int $revealCaret = null,
     ): self {
         return new self(
             $text,
@@ -73,6 +81,7 @@ final class TextAreaBox extends RenderBoxWidget
             $lines,
             $scrollOffset,
             $barOpacity,
+            $revealCaret,
         );
     }
 
@@ -163,6 +172,7 @@ final class TextAreaBox extends RenderBoxWidget
             // 语义"次要信息"）—— 条是纯视觉层，颜色不该由控件自己拍。
             $context->color(ColorToken::Muted),
             $this->barOpacity,
+            $this->revealCaret,
         );
     }
 }
