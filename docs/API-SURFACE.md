@@ -11,10 +11,10 @@
 
 | 层 | @api | @internal |
 |---|---|---|
-| App | 83 | 49 |
+| App | 83 | 51 |
 | Async | 18 | 4 |
 | Commands | 7 | 0 |
-| Core | 2 | 45 |
+| Core | 2 | 50 |
 | Errors.php | 2 | 3 |
 | Geometry | 9 | 0 |
 | Input | 19 | 5 |
@@ -26,8 +26,8 @@
 | State | 16 | 7 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
-| Widget | 171 | 202 |
-| **合计** | **476** | **382** |
+| Widget | 171 | 204 |
+| **合计** | **476** | **391** |
 
 覆盖 378 个文件 · 描述性提及 32 处（grep 口径的污染源，不计入）
 
@@ -121,7 +121,7 @@
 | `WindowStateStore::restore()` | method | src/App/WindowStateStore.php |
 | `WindowStateStore::persist()` | method | src/App/WindowStateStore.php |
 
-### @internal（框架内部） · 49
+### @internal（框架内部） · 51
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -137,6 +137,8 @@
 | `Application::pipeline()` | method | src/App/Application.php |
 | `Application::zeroViewportFrames()` | method | src/App/Application.php |
 | `Application::semanticsMode()` | method | src/App/Application.php |
+| `Application::animationVisits()` | method | src/App/Application.php |
+| `Application::activeAnimationCount()` | method | src/App/Application.php |
 | `Application::captureNode()` | method | src/App/Application.php |
 | `Application::register()` | method | src/App/Application.php |
 | `Application::beginDrag()` | method | src/App/Application.php |
@@ -232,7 +234,7 @@
 | `Computed` | class | src/Core/Computed.php |
 | `Versioned` | interface | src/Core/Versioned.php |
 
-### @internal（框架内部） · 45
+### @internal（框架内部） · 50
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -259,6 +261,11 @@
 | `Pipeline::queueMounted()` | method | src/Core/Pipeline.php |
 | `Pipeline::takeMounted()` | method | src/Core/Pipeline.php |
 | `Pipeline::mountedCount()` | method | src/Core/Pipeline.php |
+| `Pipeline::noteActiveAnimation()` | method | src/Core/Pipeline.php |
+| `Pipeline::takeActiveAnimations()` | method | src/Core/Pipeline.php |
+| `Pipeline::requestAnimationScan()` | method | src/Core/Pipeline.php |
+| `Pipeline::takeAnimationScan()` | method | src/Core/Pipeline.php |
+| `Pipeline::activeAnimationCount()` | method | src/Core/Pipeline.php |
 | `Pipeline::bumpLayoutEpoch()` | method | src/Core/Pipeline.php |
 | `Pipeline::layoutEpoch()` | method | src/Core/Pipeline.php |
 | `Pipeline::bumpPaintEpoch()` | method | src/Core/Pipeline.php |
@@ -859,7 +866,7 @@
 | `Wrap` | class | src/Widget/Wrap.php |
 | `YearMonth` | class | src/Widget/YearMonth.php |
 
-### @internal（框架内部） · 202
+### @internal（框架内部） · 204
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -917,6 +924,8 @@
 | `Dock::overflowValue()` | method | src/Widget/Dock.php |
 | `DockElement` | class | src/Widget/DockElement.php |
 | `Element::$box` | property | src/Widget/Element.php |
+| `Element::isAnimationActive()` | method | src/Widget/Element.php |
+| `Element::markAnimationActive()` | method | src/Widget/Element.php |
 | `Element::onMount()` | method | src/Widget/Element.php |
 | `Element::syncBox()` | method | src/Widget/Element.php |
 | `Element::effectiveBox()` | method | src/Widget/Element.php |

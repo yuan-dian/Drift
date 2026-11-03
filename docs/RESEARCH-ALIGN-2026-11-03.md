@@ -50,7 +50,7 @@
 
 ---
 
-## 2. P0：稳态帧 98% 花在"问全树有没有动画"
+## 2. P0：稳态帧 98% 花在"问全树有没有动画"（✅ 已落地 2026-11-03，见 `DEBT` §16）
 
 ### 2.1 证据
 
@@ -112,6 +112,11 @@ $element->visitChildren(...)               // 闭包 + 递归
 - 有一个 `AnimatedValue` 在跑时，只访问 1 个节点（用计数器断言，不看时间）；
 - 动画结束那一帧的**终值被画出来**（接 ②）；
 - 全树 vs 登记表对账测试（接 ④）。
+
+**实测（2026-11-03）**：四条全中 —— `tickAnimations 934.95µs → 333ns`；一个 Spinner 时
+一帧只访问 1 个节点；收口帧终值 `=== 1.0`；对账测试（表路径 vs 全扫路径逐帧一致）
+落在 `tests/Feature/App/AnimationActiveSetTest.php`。设计 / 三个静默坑 / 变异表见
+`DEBT` §16 —— ★ 尤其 §16.3 那张表：**起飞点不全的三种形态都不会报错**。
 
 ---
 
@@ -263,7 +268,7 @@ PHP 递归，`paint` 反而有层缓存兜底）。这条不对称是 §3.2 那�
 
 | 优先级 | 事项 | 出口判据 | 预估面 |
 |---|---|---|---|
-| **P0** | 动效 active set（替换全树 `tickSubtree`） | `tickAnimations` 1.04ms → <0.05ms；全树/登记表对账测试；终值帧不丢 | `Application` + `State` + 1 个测试文件 |
+| **P0** | 动效 active set（替换全树 `tickSubtree`） | `tickAnimations` 1.04ms → <0.05ms；全树/登记表对账测试；终值帧不丢 | ✅ **已完成 2026-11-03**：934.95µs → 333ns，见 `DEBT` §16 |
 | **P1** | 12k 节点 benchmark 档 | 出三数（首布局 / 稳态帧 / 全量重排），按 §13.5 判定增量布局立项与否 | `frame-tax-probe` 加档 |
 | **P1** | `--json`：先 gate + golden | 两条命令输出可被 `json_decode` 直接消费 | 2 个工具 |
 | **P2** | TestApp `--script` 交互截图 | `--script "click:X;scroll:down"` 出 PNG，进 golden 流程 | `TestApp` + 脚本解析 |
