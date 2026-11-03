@@ -42,6 +42,29 @@ interface EditableText
     /** 扩展选区活动端到 `$offset`（吸附到字符边界）；锚点不动 */
     public function extendSelectionTo(int $offset): void;
 
+    /**
+     * 选中 `$offset` 所在的**词**（双击的手感来源）。
+     *
+     * ★★ **为什么在接口上，而不是让调用方自己算边界**：分词要**全文**，而本接口
+     *   明确不承诺"文本存在哪"（见类注释：缓冲区可以在 State、也可以在 Store）。
+     *   把算法放调用方就等于让它去要全文 —— 那正是这条抽象要挡住的东西。
+     *   ⇒ 与 `moveCaret()` / `extendSelectionTo()` 同一族：**"编辑动作怎么落"**。
+     * ★ `$offset` 必须是**指针位置换算出来的偏移**，不是当前插入符：双击发生在
+     *   词的中间，而插入符还停在上一次点击处 —— 用后者会"选到另一个词"，且离得
+     *   近时（同一个词里）完全看不出错。
+     * ★ 落在空白 / 标点上时取**左侧那段**（`TextBoundary::wordAt()` 的两条取侧
+     *   规则）；空文本 ⇒ 无事发生。
+     */
+    public function selectWordAt(int $offset): void;
+
+    /**
+     * 选中 `$offset` 所在的**段**（三击的手感来源；单行框里就是整串）。
+     *
+     * ★ "段"= `\n` 之间那一段（`\r\n` 归前一段），**不是**软换行折出来的视觉行：
+     *   三击要的是"这一段话"，而软换行是排版的结果、随宽度变。
+     */
+    public function selectParagraphAt(int $offset): void;
+
     /** 有选区（锚点 ≠ 活动端） */
     public function hasSelection(): bool;
 

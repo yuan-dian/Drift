@@ -1260,6 +1260,31 @@ final class TableState extends State implements Scrollable, EditableText
         }
     }
 
+    /**
+     * 选中 `$offset` 所在的词（接口要求）。
+     *
+     * ★ 表格的**指针**多击走 `selectInEditingDraft()`（偏移要从格子几何换算），
+     *   不走这里 —— 那条路算完偏移之后调的正是本方法（同一个落点，一份实现）。
+     *   本方法留在公开面上，是因为 `TableState` 也是 `EditableText`，而 IME /
+     *   将来任何"按偏移选一个单位"的调用方都不该再学一份格子几何。
+     */
+    public function selectWordAt(int $offset): void
+    {
+        $draft = $this->draft;
+        if ($draft !== null) {
+            $this->settleDraft($draft->selectWordAt($offset));
+        }
+    }
+
+    /** 选中 `$offset` 所在的段（接口要求；表格里的"段"是单元格文本按 `\n` 切的一段） */
+    public function selectParagraphAt(int $offset): void
+    {
+        $draft = $this->draft;
+        if ($draft !== null) {
+            $this->settleDraft($draft->selectParagraphAt($offset));
+        }
+    }
+
     public function hasSelection(): bool
     {
         return $this->draft?->hasSelection() ?? false;
@@ -1946,6 +1971,8 @@ final class TableState extends State implements Scrollable, EditableText
      *   且离得近时看不出错。
      * ★ 换算走 `pointerCaretOffset()`（与双击进编辑同一个函数）：两份换算的表现是
      *   "选中的词比指针所在的那个偏一个字符"。
+     * ★ 换算完就交给 `selectWordAt()` / `selectParagraphAt()`（接口上的同一族动作）
+     *   —— **"几击 ⇒ 哪个单位"这条映射在这里，落点只有一份**。
      */
     private function selectInEditingDraft(int $col, float $contentX, int $count): void
     {
@@ -1958,12 +1985,12 @@ final class TableState extends State implements Scrollable, EditableText
         $offset = $this->pointerCaretOffset($columns[$col], $draft->text(), $col, $contentX);
 
         if ($count >= 3) {
-            $this->settleDraft($draft->selectParagraphAt($offset));
+            $this->selectParagraphAt($offset);
 
             return;
         }
 
-        $this->settleDraft($draft->selectWordAt($offset));
+        $this->selectWordAt($offset);
     }
 
     /**

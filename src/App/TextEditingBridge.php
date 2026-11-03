@@ -24,7 +24,8 @@ use Drift\Widget\States;
  * ★ **为什么从 Application 拆出来**：这三侧在 Application 3900 行里散成
  *   6 个方法 + 1 个字段，彼此只共享"焦点里在编辑的输入框"这一个判据
  *   （`editingText()`）。收成一片后，Application 只剩"持片 + 转交"，
- *   文本认知的演进（IME 合成、选区矩形、双击选词）都落在这一个文件里。
+ *   文本认知的演进（IME 合成、选区矩形、双击选词 / 三击选段 —— 后两条
+ *   2026-11-03 已落地，见 `beginTextSelection()`）都落在这一个文件里。
  *
  * ★ **它只经 `TextEditingHost` 摸宿主**（焦点链 + 剪贴板）：不碰帧循环、
  *   不碰浮层、不碰根 Element。焦点是渲染态且全局只能有一份（§9.1）⇒
@@ -128,15 +129,34 @@ final class TextEditingBridge
     }
 
     /**
-     * down 落在输入框上（`focusHit()` 已成功 ⇒ 焦点就是它）⇒ 插入符落到
-     * 指针处 + 记下框选手势（`move` 延伸、`up` / `leave` 收口）。
+     * down 落在输入框上（`focusHit()` 已成功 ⇒ 焦点就是它）⇒ 按**这一下是第几次
+     * 点击 / 有没有按住 Shift** 落选区，并记下框选手势（`move` 延伸、`up`/`leave` 收口）。
      *
+     * ## 四种落点（与 Win32 Edit / Qt / 浏览器一致）
+     *
+     * | 手势 | 落点 | 走哪 |
+     * |---|---|---|
+     * | 点一下 | 插入符到指针处，**折叠**既有选区 | `moveCaret()` |
+     * | Shift + 点 | 活动端到指针处，**锚点不动**（连续 Shift+点能来回伸缩）| `extendSelectionTo()` |
+     * | 双击 | 选中指针处的**词**（中文按连续汉字算一个词）| `selectWordAt()` |
+     * | 三击及以上 | 选中指针处的**段**（单行框 = 整串）| `selectParagraphAt()` |
+     *
+     * ★ **`$clickCount >= 3` 而不是 `=== 3`**：`TapTracker` 会把第 4、5 下继续往上
+     *   数（链没断），而"第四下"在各平台都不是"回到单击"—— 一律按段处理。
+     * ★ **Shift 只对单击生效**：Shift+双击在各平台是"按词扩展"，需要"锚点到词尾"
+     *   这条第三语义；本仓没有消费者（表格的多选是另一套几何），不预先发明。
+     *   Shift+双击此刻落到"选词"（锚点被词区间覆盖）—— 与 Windows 的差别只在
+     *   "从哪儿起算"，不会变成静默无操作。
+     * ★ 三种落点**共用同一次偏移换算**（`offsetAtPoint()`，指针 → 内容盒坐标），
+     *   所以"点在哪、选到哪"不会因为手势不同而差一个内边距。
+     * ★ 双击之后继续拖动 ⇒ 按**字符**延伸（锚点 = 词首）：各平台是"按词延伸"，
+     *   本条是**已知边界**（要多一份"延伸单位"的状态，等真有需求再说）。
      * ★ `moveCaret()` 折叠既有选区 —— "点一下 = 重新定位"（与各平台一致），
      *   选区靠随后的拖动重建，不继承上一轮。
      * ★ 收**盒内**坐标（盒自己再减内边距与滚动偏移）⇒ 先扣掉盒的绝对原点。
      * ★ `$y` 是必须的：多行框要知道落在哪一行（单行盒忽略它）。
      */
-    public function beginTextSelection(float $x, float $y): void
+    public function beginTextSelection(float $x, float $y, int $clickCount = 1, bool $extend = false): void
     {
         $state = $this->editingText();
         if ($state === null) {
@@ -153,8 +173,22 @@ final class TextEditingBridge
         // ★ `offsetAtPoint()` 要的是**内容盒**坐标（它自己再减一次 `insets`）⇒
         //   先扣边框盒原点，再扣 padding（`02` §4.1.1）。漏了 ⇒ 插入符落点偏右
         //   一个 padding，点到的是后面几个字。
-        $state->moveCaret($box->offsetAtPoint($x - $originX - $padLeft, $y - $originY));
+        $offset = $box->offsetAtPoint($x - $originX - $padLeft, $y - $originY);
 
+        // ★ 顺序：先判"第几次点击"，再判 Shift。反过来的话"Shift+双击"会走进
+        //   `extendSelectionTo()` ⇒ 只挪一个字符，而用户期待的是按词选。
+        if ($clickCount >= 3) {
+            $state->selectParagraphAt($offset);
+        } elseif ($clickCount === 2) {
+            $state->selectWordAt($offset);
+        } elseif ($extend) {
+            $state->extendSelectionTo($offset);
+        } else {
+            $state->moveCaret($offset);
+        }
+
+        // ★ 三种手势都记下框选手势：双击 / Shift+点 之后继续拖，活动端要能接着走
+        //   （`extendSelectionTo()` 不动锚点 ⇒ 从词首 / 原锚点延伸，正是要的手感）。
         $this->textSelect = $state;
     }
 

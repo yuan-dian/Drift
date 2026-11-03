@@ -533,9 +533,16 @@ final class InputRouter
             if ($focus->focusHit($hit, $root)) {
                 $this->activateFocusedWidget();
 
-                // 点进**编辑中**的输入框 ⇒ 插入符落到指针处 + 起框选手势
-                // （§A.2.9 的指针侧：与 Shift+方向键同一个选区模型）
-                $this->textEditing->beginTextSelection($event->x, $event->y);
+                // 点进**编辑中**的输入框 ⇒ 按"第几次点击 / 有没有 Shift"落选区
+                // （§A.2.9 的指针侧：与 Shift+方向键同一个选区模型）。
+                // ★ `clickCount` 由 `TapTracker` 标在事件上（`Application::dispatchInput()`
+                //   那一步）⇒ 这里只做交付，不重算间隔与距离。
+                $this->textEditing->beginTextSelection(
+                    $event->x,
+                    $event->y,
+                    $event->clickCount,
+                    $event->shift,
+                );
             }
 
             return $this->cursorFor($hit, $event->x, $event->y);

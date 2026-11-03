@@ -214,6 +214,18 @@ abstract class EditableTextState extends State implements EditableText
         $this->settle($this->draft()->extendSelectionTo($offset));
     }
 
+    /** 选中 `$offset` 所在的词（双击）—— 边界算法在 `TextBoundary`，这里只做通知 + 重画 */
+    public function selectWordAt(int $offset): void
+    {
+        $this->settle($this->draft()->selectWordAt($offset));
+    }
+
+    /** 选中 `$offset` 所在的段（三击；单行框里就是整串） */
+    public function selectParagraphAt(int $offset): void
+    {
+        $this->settle($this->draft()->selectParagraphAt($offset));
+    }
+
     /** 用 `$text` 整段替换选区；无选区 ⇒ 退化成在插入符处插入 */
     public function replaceSelection(string $text): void
     {
