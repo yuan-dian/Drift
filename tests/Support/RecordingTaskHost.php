@@ -35,7 +35,13 @@ final class RecordingTaskHost implements TaskHost
     /** @var list<Job> 按提交顺序 */
     public array $submitted = [];
 
-    /** @param array<class-string, mixed> $answers 任务类名 => 要结算的载荷 */
+    /**
+     * @param array<class-string, mixed> $answers 任务类名 => 要结算的载荷
+     *
+     * ★ 载荷也可以是一个 `\Closure`：**每次提交调一次**，返回值就是那一次的答案。
+     *   轮询这种"同一个任务第 N 次才终结"的链路只能这么造 —— 固定答案只能表达
+     *   "一次就完"，于是"继续轮询"那条分支永远走不到（`PollRhythmTest`）。
+     */
     public function __construct(private readonly array $answers = [])
     {
     }
@@ -49,7 +55,12 @@ final class RecordingTaskHost implements TaskHost
             return Future::rejected(new \RuntimeException('RecordingTaskHost 没有为 ' . $class . ' 配答案'));
         }
 
-        return Future::resolved($this->answers[$class]);
+        $answer = $this->answers[$class];
+        if ($answer instanceof \Closure) {
+            $answer = $answer();
+        }
+
+        return Future::resolved($answer);
     }
 
     public function pending(): int

@@ -1,0 +1,247 @@
+<?php
+declare(strict_types=1);
+
+namespace Drift\Dev\Tests\Feature\Watermark;
+
+use App\Watermark\Api\Config;
+use App\Watermark\Jobs\AddTaskJob;
+use App\Watermark\Jobs\DownloadResultsJob;
+use App\Watermark\Jobs\FetchSignJob;
+use App\Watermark\Jobs\PollResultJob;
+use App\Watermark\Jobs\UploadBatchJob;
+use App\Watermark\Store\WatermarkStore;
+use Drift\Dev\Tests\Support\RecordingTaskHost;
+use PHPUnit\Framework\Attributes\Test;
+use PHPUnit\Framework\TestCase;
+
+/**
+ * 轮询的**节奏**：排期、间隔、终止、取消（2026-11-03）。
+ *
+ * ## 为什么这条判据必须存在
+ *
+ * 轮询是 `bool $polling` + 一个注入的 `$scheduler` + 三个守着它的人（`absorbPoll`
+ * 的排期、定时器回调的 `if (!$this->polling)`、`stopPolling()` 的取消）。
+ * 这套东西在 2026-11-02 咬过一次同类事故 —— `absorbSign` 的接力标志被
+ * `loading` 那一趟通知吃掉，于是"签名取回来了却永远不接力上传"，
+ * **不报错、界面停在"正在获取上传凭证…"**。
+ * 而 `scheduleNextPoll()` 在此之前**零判据**：`StoreHostChainTest` 的假后端一次
+ * 就把结果答成终态（`status = 3`）⇒ `$polling` 立刻落回 false ⇒
+ * "继续排下一次"那条分支从没被执行过（本仓的老话：未被消费的分支 = 未实现）。
+ *
+ * ## 判据四类
+ *
+ * | 用例 | 钉住的不变式 | 坏了的现象 |
+ * |---|---|---|
+ * | ① 未完 ⇒ 按固定间隔排下一拍 | 间隔就是 `Config::POLL_INTERVAL_MS` | 改一处常量、另一处写死 ⇒ 快慢两套节奏 |
+ * | ② 终结 ⇒ **不再排** + 只下载一次 | 轮询会自己停 | 停不下来：每 10s 查一次到天荒地老 |
+ * | ③ 手动停 ⇒ 已排的那一拍作废 | 取消是幂等的 | 点了"停止"之后还在查（且不报错） |
+ * | ④ 没有 scheduler ⇒ 不自己转 | 测试/解释器里没有"自己转起来的定时器" | 单测里凭空起一个定时器，时序全乱 |
+ *
+ * ★ 定时器是**替身**（`$ticks` 数组）：本类不睡、不等，`$tick()` 手动触发 ——
+ *   与 `TapTracker` 用显式时间戳同一个理由（"时间"必须能被判据驱动）。
+ * ★ 链路的前半段（取签名 → 上传 → 建任务）沿用 `StoreHostChainTest` 的夹具形态，
+ *   不重复造。
+ */
+final class PollRhythmTest extends TestCase
+{
+    /** @var list<string> 临时文件，测完清掉 */
+    private array $tmp = [];
+
+    protected function tearDown(): void
+    {
+        foreach ($this->tmp as $path) {
+            @\unlink($path);
+        }
+        $this->tmp = [];
+    }
+
+    #[Test]
+    public function 未完的查询会按固定间隔排下一拍(): void
+    {
+        [$store, $host, $timers] = $this->running(pending: 2);
+
+        self::assertSame(1, $timers->count(), '第一次查完（还没终结）就该排下一拍（且只排一拍 —— 每轮排两次会让定时器按 2ⁿ 增长）');
+        self::assertSame(Config::POLL_INTERVAL_MS, $timers->ticks[0][0], '间隔必须来自 Config，不能在别处写死一个数');
+        self::assertTrue($store->isPolling(), '还没终结就自己停了 ⇒ 结果永远等不到');
+
+        // 跑掉这一拍 ⇒ 再查一次（仍未终结）⇒ 再排一拍
+        $timers->run(0);
+
+        self::assertCount(2, $host->ofClass(PollResultJob::class), '排了的那一拍没有真的去查');
+        self::assertSame(2, $timers->count(), '第二次仍未终结 ⇒ 应该再排一拍');
+        self::assertTrue($store->isPolling());
+        self::assertTrue($store->lastResult()?->isPending() ?? false, '查到"处理中"要落到 `lastResult()`，否则界面没有进展可画');
+    }
+
+    #[Test]
+    public function 终结的查询不再排期且只触发一次下载(): void
+    {
+        [$store, $host, $timers] = $this->running(pending: 1);
+
+        // 第 1 次（建任务后立刻查）仍是 pending ⇒ 排了 1 拍；跑它 ⇒ 第 2 次是终态
+        self::assertSame(1, $timers->count());
+        $timers->run(0);
+
+        self::assertFalse($store->isPolling(), '终态之后还在轮询 ⇒ 每 10 秒空转一次，永远停不下来');
+        self::assertSame(1, $timers->count(), '终态之后**不许**再排下一拍');
+        self::assertTrue($store->lastResult()?->isSuccess() ?? false);
+
+        // 结果图下载：一次，且是那批 URL
+        $downloads = $host->ofClass(DownloadResultsJob::class);
+        self::assertCount(1, $downloads, '一次任务只该触发一次下载');
+        self::assertSame(
+            ['https://oss.example.com/r/1.png'],
+            $downloads[0]->args()['urls'],
+            '下载的必须是这次结果里那批 URL（不是空数组、不是上一批）'
+        );
+        self::assertSame(
+            ['https://oss.example.com/r/1.png' => '/tmp/drift-r1.png'],
+            $store->localPaths()
+        );
+    }
+
+    #[Test]
+    public function 手动停止后已排的那一拍作废(): void
+    {
+        [$store, $host, $timers] = $this->running(pending: 5);
+
+        self::assertSame(1, $timers->count(), '夹具前提：此时正有一拍排着');
+        $store->stopPolling();
+
+        self::assertFalse($store->isPolling());
+
+        // 定时器还是会把回调交付（真实世界：`after()` 已被排上，撤不掉）
+        $timers->run(0);
+
+        self::assertCount(1, $host->ofClass(PollResultJob::class), '用户点了"停止"，却还发了一次查询 —— 而且不报错');
+        self::assertSame(1, $timers->count(), '停止之后不许再排新的一拍');
+    }
+
+    #[Test]
+    public function 没有scheduler时不自己转(): void
+    {
+        [$store, $host] = $this->running(pending: 3, withScheduler: false);
+
+        self::assertTrue($store->isPolling(), '没有 scheduler 不等于"不轮询"，只是"这一拍没人排"');
+        self::assertCount(1, $host->ofClass(PollResultJob::class), '手动那一次照常发');
+
+        // 手动入口仍然可用（页面上的"重试"）
+        $store->pollOnce();
+        self::assertCount(2, $host->ofClass(PollResultJob::class));
+    }
+
+    // ══════════════════ 夹具 ══════════════════
+
+    /**
+     * 起一个走到"正在轮询"的 store。
+     *
+     * @param int $pending 前几次查询答"处理中"（第 `$pending + 1` 次答终态）
+     *
+     * @return array{0: WatermarkStore, 1: RecordingTaskHost, 2: FakeTimers}
+     */
+    private function running(int $pending, bool $withScheduler = true): array
+    {
+        $timers = new FakeTimers();
+        $polls = 0;
+
+        $host = new RecordingTaskHost([
+            FetchSignJob::class => [
+                'account' => 'acc',
+                'policy' => 'pol',
+                'signature' => 'sig',
+                'directoryPath' => '***REMOVED***/2026/11/3/',
+                'accessAddress' => 'https://oss.example.com',
+                'expireTime' => (string) ((\time() + 600) * 1000),
+            ],
+            UploadBatchJob::class => ['keys' => ['k1']],
+            AddTaskJob::class => ['taskId' => 'T-1'],
+            // ★ 每次提交调一次：同一个任务"第 N 次才终结"只能这么造
+            PollResultJob::class => static function () use (&$polls, $pending): array {
+                $polls++;
+                if ($polls <= $pending) {
+                    return [
+                        'taskId' => 'T-1',
+                        'status' => 2,     // 处理中
+                        'downloadUrls' => [],
+                    ];
+                }
+
+                return [
+                    'taskId' => 'T-1',
+                    'status' => 3,         // 完成
+                    'templateName' => '修改水印',
+                    'imageSize' => '2K',
+                    'processingTime' => '34s',
+                    'createTime' => '2026-11-03 12:00:00',
+                    'updateTime' => '2026-11-03 12:00:34',
+                    'errorMsg' => '',
+                    'downloadUrls' => ['https://oss.example.com/r/1.png'],
+                ];
+            },
+            DownloadResultsJob::class => [
+                'paths' => ['https://oss.example.com/r/1.png' => '/tmp/drift-r1.png'],
+                'failed' => [],
+            ],
+        ]);
+
+        $file = (string) \tempnam(\sys_get_temp_dir(), 'drift-wm-');
+        $path = $file . '.jpg';
+        \rename($file, $path);
+        $this->tmp[] = $path;
+
+        $scheduler = $withScheduler
+            ? static function (int $ms, \Closure $callback) use ($timers): int {
+                return $timers->after($ms, $callback);
+            }
+            : null;
+
+        $store = new WatermarkStore($host, 'http://gw.invalid', $scheduler);
+        self::assertSame(1, $store->addFiles([$path]), '夹具没被选上 ⇒ 后面全靠巧合');
+        $store->setTime('2026-11-03 12:00:00');
+        $store->setAddress('上海市浦东新区');
+
+        // 取签名 + 上传（签名有效 ⇒ 直接上传）
+        $store->upload();
+        // 建任务 ⇒ 落地时 `polling = true` 并**立刻**查一次（不等一个间隔）
+        $store->submitTask();
+
+        return [$store, $host, $timers];
+    }
+}
+
+/**
+ * 假的定时器队列（`WatermarkStore` 的 `$scheduler` 替身）。
+ *
+ * ★ 必须是**对象**而不是数组：store 的调度是"排上去、之后才交付"，
+ *   数组按值返回会让测试拿着**排期前的副本**（`count()` 永远是旧值，
+ *   于是"排了几拍"这条判据静默恒真/恒假）。这个坑 2026-11-03 第一版就踩了。
+ *
+ * @internal 测试夹具
+ */
+final class FakeTimers
+{
+    /** @var list<array{0: int, 1: \Closure}> 按排期顺序 */
+    public array $ticks = [];
+
+    public function after(int $ms, \Closure $callback): int
+    {
+        $this->ticks[] = [$ms, $callback];
+
+        return \count($this->ticks);
+    }
+
+    public function count(): int
+    {
+        return \count($this->ticks);
+    }
+
+    /** 交付第 `$index` 拍（真实世界由 `Application::after()` 在到点时交付） */
+    public function run(int $index): void
+    {
+        if (!isset($this->ticks[$index])) {
+            TestCase::fail('没有第 ' . (string) $index . ' 拍可跑 —— 排期本身就没发生');
+        }
+
+        ($this->ticks[$index][1])();
+    }
+}

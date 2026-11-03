@@ -684,6 +684,18 @@ final class WatermarkStore extends Subject
     {
         $value = $this->pollCommand->value();
 
+        /**
+         * ★★ 只在**终结态**（到手 / 失败）做决定（2026-11-03，判据抓到的真 bug）。
+         *
+         * `AsyncCommand::run()` 会**先发一趟 `loading` 再落地**，而这个订阅对
+         * **每一次**通知都跑 ⇒ 原来的写法在 loading 那一趟也 `scheduleNextPoll()`，
+         * 落地那一趟又排一次 ⇒ **每轮排两个定时器**，而两个都会各自发起下一轮
+         * ⇒ 定时器数量按 2ⁿ 增长。界面上完全看不出异常（结果照样到），只是
+         * 后台一直在多发查询、待触发的回调越堆越多。
+         * ★ 与 `absorbSign()` 的接力标志是**同一条纪律**：门控只在终结态消费。
+         */
+        $settled = $value->hasData() || $value->hasError();
+
         /** @var null|TaskResult $finished 刚终结的那一次（要触发下载） */
         $finished = null;
 
@@ -712,7 +724,10 @@ final class WatermarkStore extends Subject
         $this->notifyChanged();
 
         if ($this->polling) {
-            $this->scheduleNextPoll();
+            // ★ `loading` 那一趟不排期：这一轮还没结束，排了就是重复
+            if ($settled) {
+                $this->scheduleNextPoll();
+            }
 
             return;
         }
