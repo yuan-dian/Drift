@@ -31,7 +31,7 @@ declare(strict_types=1);
  *
  * ★ 耗时**不写在这里**了（2026-11-02）：这份清单曾逐项标着"~4.6s / ~22.8s、合计 63.4s"，
  *   而实际早已是 120s 量级 —— 数字一旦没有判据就会烂，且烂了没人发现。
- *   要耗时就跑一遍看最后一行（`✓ 全部通过（N 项，Xs）`）；**项数也以那一行为准**，
+ *   要耗时就跑一遍看最后一行（`--- N 项全过（Xs） ---`）；**项数也以那一行为准**，
  *   别把会漂的数抄进注释（加一项检查就过期一次）。
  *   历史快照（**不是当前值**，仅供"同一台机器波动有多大"的参考）：2026-11-02 12 项
  *   两次跑 135.3s / 120.8s。★ 两次差 11% —— 这本身就是「别把耗时抄进注释」的理由。
@@ -52,13 +52,25 @@ declare(strict_types=1);
  *   php tools/gate.php --full       # 同默认（显式写法）
  *   php tools/gate.php --only=golden,pages,smoke
  *   php tools/gate.php --list
+ *   php tools/gate.php --json       # 机器可读（stdout 上**只有** JSON）
  *
- * 退出码：0 = 全过；否则 = **第一个失败项**的退出码（fail-fast，不再往下跑）。
+ * 退出码：**0 = 全过 · 1 = 有项失败 · 2 = 用法错**（fail-fast：失败后不再往下跑）。
+ *
+ * ★ 退出码口径在 2026-11-03 收窄过一次（兼容性破坏，故意的）：
+ *   原来写"= 第一个失败项的退出码"，于是子工具崩成 127（可执行文件没找到）
+ *   与判据红（1）从 gate 这一层**长得一模一样**——正是 `find_python()` 注释里
+ *   骂的那种"环境的错扮成判据的错"。现在 gate 只回答"过没过"，
+ *   子项的真实退出码进 `--json` 的 `data.exitCode`，要分辨去那里看。
  *
  * ★ 为什么用 proc_open 而不是 passthru：php.exe 的 shell 调用在 Windows 上走
  *   cmd.exe（路径带空格 / 引号会被二次解释）。数组式命令 + `bypass_shell` 直接
  *   CreateProcess，与 `drift-build.php` 同法（MEMORY 硬坑）。
  */
+
+require __DIR__ . '/autoload.php';
+
+use Drift\Dev\Support\CheckItem;
+use Drift\Dev\Support\CheckReport;
 
 $root = dirname(__DIR__);
 
@@ -146,6 +158,14 @@ $may_skip = ['pixels', 'decode'];
 $args = array_slice($argv, 1);
 $fast = in_array('--fast', $args, true);
 $list = in_array('--list', $args, true);
+/**
+ * `--json`：stdout 上**只有**一份 JSON（见 `CheckReport`）。
+ *
+ * ★ 与"边跑边转发"互斥：转发会把子进程输出混进 stdout，agent 就得先猜"从哪一行
+ *   开始才是 JSON"。所以 `--json` 下**不流式转发**，一律收进 `items[].data`。
+ *   代价是 110 秒里看不到进度条 —— agent 本来也不看进度条，人不用 `--json`。
+ */
+$json = in_array('--json', $args, true);
 
 $only = null;
 foreach ($args as $a) {
@@ -185,20 +205,43 @@ if ($selected === []) {
     exit(2);
 }
 
+/**
+ * 一条耗时的人读写法。★ 只有这一份（此前它在两处各写了一遍 `sprintf('%.1fs')`）。
+ */
+$fmtMs = static fn(int $ms): string => $ms >= 1000
+    ? sprintf('%.1fs', $ms / 1000.0)
+    : sprintf('%dms', $ms);
+
 // ── 逐项跑（fail-fast；`$may_skip` 里的项允许"没测到"）──
+//
+// ★ 结果一律进 `$items`，**不再边跑边 exit**：判据、计数、退出码都从这一份
+//   `CheckReport` 出（`CheckReport::exitCode()`）。此前"第一个失败项的退出码"
+//   把环境崩（127）与判据红（1）混成同一个信号。
 $started = microtime(true);
 $index = 0;
 $total = count($selected);
-$skipped = [];
+/** @var list<CheckItem> $items */
+$items = [];
 
 foreach ($selected as $key => [$label, $cmd, $_slow]) {
     $index++;
-    fwrite(STDOUT, sprintf("\n▶ [%d/%d] %s\n", $index, $total, $label));
+    if (!$json) {
+        fwrite(STDOUT, sprintf("\n▶ [%d/%d] %s\n", $index, $total, $label));
+    }
+    $t0 = hrtime(true);
 
     if ($cmd === []) {
         // 只有 $may_skip 里会出现空命令（依赖的东西没装）
-        $skipped[] = $label . '（本机没找到 python，设 DRIFT_PYTHON 可指定）';
-        fwrite(STDOUT, "  · 跳过：本机没有 python —— 这是**没测到**，不是通过\n");
+        $items[] = new CheckItem(
+            $key,
+            true,
+            $label . '：本机没有 python（设 DRIFT_PYTHON 可指定）',
+            ['exitCode' => null],
+            true,
+        );
+        if (!$json) {
+            fwrite(STDOUT, "  · 跳过：本机没有 python —— 这是**没测到**，不是通过\n");
+        }
         continue;
     }
 
@@ -211,23 +254,36 @@ foreach ($selected as $key => [$label, $cmd, $_slow]) {
         ['bypass_shell' => true],
     );
     if (!is_resource($proc)) {
-        fwrite(STDERR, "✗ 启动失败：{$label}\n");
-        exit(127);
+        $items[] = new CheckItem(
+            $key,
+            false,
+            $label . '：启动失败（命令 ' . implode(' ', $cmd) . '）',
+            ['exitCode' => 127],
+        );
+        break;
     }
     stream_set_blocking($pipes[1], false);
     stream_set_blocking($pipes[2], false);
 
-    // 流式转发输出；退出码从 proc_get_status 取（proc_close 在已 reap 时可能返回 -1）
+    // 边收边转（非 json）；退出码从 proc_get_status 取（proc_close 在已 reap 时可能返回 -1）
+    $outBuf = '';
+    $errBuf = '';
     $exitCode = -1;
     while (true) {
         $status = proc_get_status($proc);
         $out = (string) stream_get_contents($pipes[1]);
         $err = (string) stream_get_contents($pipes[2]);
         if ($out !== '') {
-            fwrite(STDOUT, $out);
+            $outBuf .= $out;
+            if (!$json) {
+                fwrite(STDOUT, $out);
+            }
         }
         if ($err !== '') {
-            fwrite(STDERR, $err);
+            $errBuf .= $err;
+            if (!$json) {
+                fwrite(STDERR, $err);
+            }
         }
         if (!$status['running']) {
             $exitCode = (int) $status['exitcode'];
@@ -238,34 +294,61 @@ foreach ($selected as $key => [$label, $cmd, $_slow]) {
     $out = (string) stream_get_contents($pipes[1]);
     $err = (string) stream_get_contents($pipes[2]);
     if ($out !== '') {
-        fwrite(STDOUT, $out);
+        $outBuf .= $out;
+        if (!$json) {
+            fwrite(STDOUT, $out);
+        }
     }
     if ($err !== '') {
-        fwrite(STDERR, $err);
+        $errBuf .= $err;
+        if (!$json) {
+            fwrite(STDERR, $err);
+        }
     }
     fclose($pipes[1]);
     fclose($pipes[2]);
     proc_close($proc);
 
-    if ($exitCode !== 0) {
-        if ($exitCode === 2 && in_array($key, $may_skip, true)) {
-            $skipped[] = $label . '（退出码 2）';
+    $ms = (int) round((hrtime(true) - $t0) / 1e6);
+
+    if ($exitCode === 0) {
+        // ★ 通过项不带输出：471 条 smoke 的全文塞进 JSON 只会把 agent 的上下文吃掉，
+        //   而"通过"没有现场可看。要现场就单独跑那一条。
+        $items[] = new CheckItem($key, true, sprintf('%s（%s）', $label, $fmtMs($ms)), ['exitCode' => 0, 'durationMs' => $ms]);
+        continue;
+    }
+
+    if ($exitCode === 2 && in_array($key, $may_skip, true)) {
+        $items[] = new CheckItem(
+            $key,
+            true,
+            sprintf('%s：这一项自己说"没测到"（退出码 2）', $label),
+            ['exitCode' => 2, 'durationMs' => $ms, 'stdout' => $outBuf, 'stderr' => $errBuf],
+            true,
+        );
+        if (!$json) {
             fwrite(STDOUT, "  · 跳过：这一项自己说\"没测到\"（退出码 2）—— 不算通过\n");
-            continue;
         }
-
-        $elapsed = microtime(true) - $started;
-        fwrite(STDERR, sprintf("\n✗ 停在 %s（exit %d，累计 %.1fs）\n", $label, $exitCode, $elapsed));
-        exit($exitCode === 0 ? 1 : $exitCode);
+        continue;
     }
+
+    $items[] = new CheckItem(
+        $key,
+        false,
+        sprintf('%s（exit %d，%s）', $label, $exitCode, $fmtMs($ms)),
+        ['exitCode' => $exitCode, 'durationMs' => $ms, 'stdout' => $outBuf, 'stderr' => $errBuf],
+    );
+    break;
 }
 
-$elapsed = microtime(true) - $started;
-fwrite(STDOUT, sprintf("\n✓ 全部通过（%d 项，%.1fs）\n", $total, $elapsed));
-if ($skipped !== []) {
-    fwrite(STDOUT, sprintf("· 另有 %d 项**没测到**（不是通过）：\n", count($skipped)));
-    foreach ($skipped as $why) {
-        fwrite(STDOUT, '    - ' . $why . "\n");
-    }
-}
-exit(0);
+$elapsedMs = (int) round((microtime(true) - $started) * 1000);
+$passed = count(array_filter($items, static fn(CheckItem $i): bool => $i->ok && !$i->skipped));
+$skipped = count($items) - $passed;
+
+// ★ 跳过信息**本身就是条目**（`  skip  pixels …` 那一行），所以收尾只需要一句数字；
+//   此前它是"正文里没有、末尾补一段列表"，同一件事两个地方说。
+$summary = $skipped === 0
+    ? sprintf('%d 项全过（%s）', $passed, $fmtMs($elapsedMs))
+    : sprintf('%d 项全过，%d 项没测到（%s）', $passed, $skipped, $fmtMs($elapsedMs));
+
+(new CheckReport('gate', $items, $summary))->emit($json);

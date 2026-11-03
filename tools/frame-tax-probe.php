@@ -78,6 +78,8 @@ require __DIR__ . '/autoload.php';
 use Drift\Core\Pipeline;
 use Drift\App\Application;use Drift\App\Frame;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
+use Drift\Dev\Support\CheckItem;
+use Drift\Dev\Support\CheckReport;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Size;
 use Drift\Rendering\FrameStage;
@@ -92,7 +94,10 @@ use Drift\Widget\Widget;
 
 // ── 参数 ──
 $args = \array_slice($argv, 1);
-$check = \in_array('--check', $args, true);
+/** `--json`：判据结果吐成机器可读文档（stdout 上只有它），见 `CheckReport` */
+$json = \in_array('--json', $args, true);
+/** ★ `--json` 隐含 `--check`：只有判据结果才有结构化输出，报告模式本来就只有表 */
+$check = $json || \in_array('--check', $args, true);
 /** `--pages`：把工作负载换成**真实 showcase 页面**（M5 的真分母，见文件头 §页面档） */
 $pages = \in_array('--pages', $args, true);
 /** `--check` 只跑一档（进闸门要快）；报告模式四档看趋势 */
@@ -309,12 +314,12 @@ if ($pages) {
 
     \usort($out, static fn(array $a, array $b): int => $b['layoutUs'] <=> $a['layoutUs']);
 
-    \printf(
+    $json || \printf(
         "%-18s %5s %11s %22s %11s %11s\n",
         'page', '节点', '打开(us)', '重建帧 settle/layout/paint', '稳态(us)', '全量重排(us)',
     );
     foreach ($out as $r) {
-        \printf(
+        $json || \printf(
             "%-18s %5d %11.1f %22s %11.1f %11.1f\n",
             $r['label'],
             $r['nodes'],
@@ -326,16 +331,18 @@ if ($pages) {
     }
 
     $worst = $out[0] ?? null;
-    echo "\n";
+    if (!$json) {
+        echo "\n";
+    }
     if ($worst !== null) {
         $share = 100.0 * $worst['layoutUs'] / $budgetUs;
-        \printf(
+        $json || \printf(
             "最重页（按全量重排）：%s —— %.1fus，占 16.7ms 预算的 %.1f%%\n",
             $worst['label'],
             $worst['layoutUs'],
             $share,
         );
-        \printf(
+        $json || \printf(
             "  它的重建帧：settle %dus / layout %dus / paint %dus ⇒ 即使 layout 全省，也只省掉 %.0f%%\n",
             $worst['rebuild']['settle'],
             $worst['rebuild']['layout'],
@@ -343,11 +350,13 @@ if ($pages) {
             $worst['rebuildUs'] > 0 ? 100.0 * $worst['rebuild']['layout'] / $worst['rebuildUs'] : 0.0,
         );
     }
-    \printf("页数 %d", \count($out));
-    if ($skipped !== []) {
+    $json || \printf("页数 %d", \count($out));
+    if ($skipped !== [] && !$json) {
         \printf("；跳过 %d：%s", \count($skipped), \implode('、', $skipped));
     }
-    echo "\n";
+    if (!$json) {
+        echo "\n";
+    }
 
     if (!$check) {
         exit(0);
@@ -360,10 +369,10 @@ if ($pages) {
     //   与"门控退化"从这几个数上**长得一模一样**，判据分不开 ⇒ 硬判只会误伤，误伤的
     //   判据下一棒只会被关掉。门控完整性交给合成档的 ④⑤（那里树是静止的，前提成立）。
     $items = [];
-    $items[] = ["①", \count($out) >= 20, \sprintf('扫到 %d 页（≥20 才算真扫到了）', \count($out))];
+    $items[] = new CheckItem('①', \count($out) >= 20, \sprintf('扫到 %d 页（≥20 才算真扫到了）', \count($out)));
 
     $budgetOk = $worst !== null && $worst['layoutUs'] <= $budgetUs;
-    $items[] = ["②", $budgetOk, $worst === null
+    $items[] = new CheckItem('②', $budgetOk, $worst === null
         ? '没有可判的页'
         : \sprintf(
             '最重页全量重排 %.1fus %s %.1fms 预算（余量 %.1f×）',
@@ -371,7 +380,7 @@ if ($pages) {
             $budgetOk ? '≤' : '超过',
             $budgetUs / 1000.0,
             $worst['layoutUs'] > 0 ? $budgetUs / $worst['layoutUs'] : 0.0,
-        )];
+        ));
 
     // ③ 暖 ≤ 冷：全量重排用的是**暖缓存**，不可能比"页面打开那一帧"还贵。
     //    反了说明缓存没生效，或者两次量的根本不是同一棵树。
@@ -381,9 +390,9 @@ if ($pages) {
             $warmBad[] = \sprintf('%s(暖%.1f > 冷%.1f)', $r['label'], $r['layoutUs'], $r['coldUs']);
         }
     }
-    $items[] = ["③", $warmBad === [], $warmBad === []
+    $items[] = new CheckItem('③', $warmBad === [], $warmBad === []
         ? '每页全量重排 ≤ 页面打开（暖缓存生效）'
-        : '暖比冷还贵：' . \implode(' ', $warmBad)];
+        : '暖比冷还贵：' . \implode(' ', $warmBad));
 
     // ④ **M5 结论的前提**：整页重建确实走"全量重排"。
     //   ★ 方向别搞反：要防的是"layout 哪天变成**增量**了" —— 那时重建帧的 layout
@@ -396,9 +405,9 @@ if ($pages) {
             $premiseBad[] = \sprintf('%s(%d < %d)', $r['label'], $r['rebuild']['layout'], $floor);
         }
     }
-    $items[] = ["④", $premiseBad === [], $premiseBad === []
+    $items[] = new CheckItem('④', $premiseBad === [], $premiseBad === []
         ? '整页重建的 layout 与全量重排同量级（M5 结论的前提成立）'
-        : '重建帧的 layout 远小于全量重排（layout 可能已变增量）：' . \implode(' ', $premiseBad)];
+        : '重建帧的 layout 远小于全量重排（layout 可能已变增量）：' . \implode(' ', $premiseBad));
 
     // 信息行（**不判**）：谁在每帧画、谁的版本在变 —— 动画与自激分不开，交给人看
     $busy = [];
@@ -407,33 +416,23 @@ if ($pages) {
             $busy[] = $r['label'] . '(' . $r['paint'] . ' 画/' . $r['delta'] . ')';
         }
     }
-    echo "\n  信息：每帧仍在画的页（动画或自激，需人看）——"
-        . ($busy === [] ? '（无）' : \implode('、', $busy)) . "\n";
-
-    $fail = [];
-    foreach ($items as [$no, $ok, $text]) {
-        if ($ok) {
-            \printf("  ok    %s %s\n", $no, $text);
-            continue;
-        }
-        $fail[] = $no . ' ' . $text;
-        \printf("  FAIL  %s %s\n", $no, $text);
+    if (!$json) {
+        echo "\n  信息：每帧仍在画的页（动画或自激，需人看）——"
+            . ($busy === [] ? '（无）' : \implode('、', $busy)) . "\n";
     }
 
-    if ($fail !== []) {
-        \fwrite(STDERR, \sprintf("\n--- FAIL（%d 条）---\n", \count($fail)));
-        exit(1);
-    }
-
-    \printf("\n--- 4 项页面判据全过（%d 页 / %d 帧）---\n", \count($out), $frames);
-    exit(0);
+    (new CheckReport(
+        'frame-tax --pages',
+        $items,
+        \sprintf('4 项页面判据全过（%d 页 / %d 帧）', \count($out), $frames),
+    ))->emit($json);
 }
 
-\printf("%6s %14s %12s %7s %6s\n", 'rows', 'perFrame(us)', 'layout(us)', 'paint', 'skip');
+$json || \printf("%6s %14s %12s %7s %6s\n", 'rows', 'perFrame(us)', 'layout(us)', 'paint', 'skip');
 $prev = null;
 foreach ($sizes as $rows) {
     $r = $measure((string) $rows, $syntheticRoot($rows), W, H, $frames);
-    \printf(
+    $json || \printf(
         "%6d %14.1f %12.1f %7d %6d\n",
         (int) $r['label'],
         $r['perFrameUs'],
@@ -450,12 +449,12 @@ foreach ($sizes as $rows) {
             $parts[] = $k . '=' . SurfaceProfile::formatNs((int) $v);
         }
     }
-    \printf("       分段: %s\n", $parts === [] ? '（全部 <0.5us）' : \implode('  ', $parts));
-    \printf("       版本: %s\n", $r['delta']);
+    $json || \printf("       分段: %s\n", $parts === [] ? '（全部 <0.5us）' : \implode('  ', $parts));
+    $json || \printf("       版本: %s\n", $r['delta']);
 
     if ($prev !== null) {
         $dr = (int) $r['label'] - (int) $prev['label'];
-        \printf(
+        $json || \printf(
             "       ↗ 每行: 帧 %+.2f us/行, layout %+.2f us/行\n",
             ($r['perFrameUs'] - $prev['perFrameUs']) / $dr,
             ($r['layoutUs'] - $prev['layoutUs']) / $dr,
@@ -475,11 +474,11 @@ if (!$check) {
 //   `ok ②`、再在末尾补一行 ✗ —— 同一份输出里两种说法并存，正是本仓最恨的绿壳。
 $perFrameNs = (int) \round($last["perFrameUs"] * 1000.0);
 $seg = $last["seg"];
-/** @var list<array{0: string, 1: bool, 2: string}> [编号, 通过?, 说明] */
+/** @var list<CheckItem> */
 $items = [];
 
 $why = SurfaceProfile::selfTest();
-$items[] = ["①", $why === [], $why === [] ? "量具契约（formatNs 三档 + perCall 平均语义）" : \implode("；", $why)];
+$items[] = new CheckItem("①", $why === [], $why === [] ? "量具契约（formatNs 三档 + perCall 平均语义）" : \implode("；", $why));
 
 $worst = ["k" => "", "ns" => 0];
 foreach ($seg as $k => $ns) {
@@ -488,58 +487,46 @@ foreach ($seg as $k => $ns) {
     }
 }
 $segOk = $perFrameNs > 0 && $worst["ns"] <= $perFrameNs * 1.25;
-$items[] = ["②", $segOk, \sprintf(
+$items[] = new CheckItem("②", $segOk, \sprintf(
     "分段自洽：最大段 %s=%s %s 整帧 %s（%.0f%%）",
     $worst["k"],
     SurfaceProfile::formatNs($worst["ns"]),
     $segOk ? "≤" : "超过",
     SurfaceProfile::formatNs($perFrameNs),
     $perFrameNs > 0 ? 100.0 * $worst["ns"] / $perFrameNs : 0.0,
-)];
+));
 
-$items[] = ["③", isset($seg[FrameStage::TICK_ANIMATIONS]), isset($seg[FrameStage::TICK_ANIMATIONS])
+$items[] = new CheckItem("③", isset($seg[FrameStage::TICK_ANIMATIONS]), isset($seg[FrameStage::TICK_ANIMATIONS])
     ? "扫到了 tickAnimations（" . SurfaceProfile::formatNs((int) $seg[FrameStage::TICK_ANIMATIONS]) . "）"
-    : "分段里没有 tickAnimations —— 没扫到这一段，\"它不贵\"这个结论不成立"];
+    : "分段里没有 tickAnimations —— 没扫到这一段，\"它不贵\"这个结论不成立");
 
 $paintOk = $last["paint"] === 0 && $last["skip"] === $frames;
-$items[] = ["④", $paintOk, \sprintf(
+$items[] = new CheckItem("④", $paintOk, \sprintf(
     "稳态帧 paint %s（run=%d skip=%d，期望 0/%d）",
     $paintOk ? "全跳过" : "没被门控跳过",
     $last["paint"],
     $last["skip"],
     $frames,
-)];
+));
 
 $layoutSeg = (int) ($seg[FrameStage::LAYOUT] ?? 0);
 $fullNs = (int) \round($last["layoutUs"] * 1000.0);
 $ratio = $fullNs > 0 ? $layoutSeg / $fullNs : 0.0;
 $layoutOk = $fullNs > 0 && $ratio <= 0.05;
-$items[] = ["⑤", $layoutOk, \sprintf(
+$items[] = new CheckItem("⑤", $layoutOk, \sprintf(
     "稳态帧 %s重排：layout 段 %s / 全量 %s（%.2f%%，上限 5%%）",
     $layoutOk ? "不" : "在",
     SurfaceProfile::formatNs($layoutSeg),
     SurfaceProfile::formatNs($fullNs),
     $ratio * 100.0,
-)];
+));
 
-$items[] = ["⑥", $last["delta"] === "sv+0 box+0 marked+0", $last["delta"] === "sv+0 box+0 marked+0"
+$items[] = new CheckItem("⑥", $last["delta"] === "sv+0 box+0 marked+0", $last["delta"] === "sv+0 box+0 marked+0"
     ? "稳态前提成立（" . $last["delta"] . "）"
-    : "\"稳态\"前提不成立：" . $last["delta"] . "（帧在自激，上面的数字不可信）"];
+    : "\"稳态\"前提不成立：" . $last["delta"] . "（帧在自激，上面的数字不可信）");
 
-$fail = [];
-foreach ($items as [$no, $ok, $text]) {
-    if ($ok) {
-        \printf("  ok    %s %s\n", $no, $text);
-        continue;
-    }
-    $fail[] = $no . " " . $text;
-    \printf("  FAIL  %s %s\n", $no, $text);
-}
-
-if ($fail !== []) {
-    \fwrite(STDERR, \sprintf("\n--- FAIL（%d 条）---\n", \count($fail)));
-    exit(1);
-}
-
-\printf("\n--- 6 项判据全过（%s 行 / %d 帧）---\n", $last["label"], $frames);
-exit(0);
+(new CheckReport(
+    'frame-tax',
+    $items,
+    \sprintf('6 项判据全过（%s 行 / %d 帧）', $last['label'], $frames),
+))->emit($json);

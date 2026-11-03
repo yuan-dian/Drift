@@ -13,6 +13,8 @@ declare(strict_types=1);
 require __DIR__ . '/../tools/autoload.php';
 
 use Drift\App\Frame;
+use Drift\Dev\Support\CheckItem;
+use Drift\Dev\Support\CheckReport;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Scale;
@@ -653,6 +655,8 @@ foreach (array_slice($argv, 1) as $a) {
         $mode = 'png';
     }
 }
+/** `--json`：`--check` 的判据结果吐成机器可读文档（stdout 上只有它） */
+$json = \in_array('--json', $argv, true);
 
 // 场景选择：默认两层都跑（canvas 原语 + 整页）；`--canvas` / `--pages` 只跑一层。
 // ★ 两层分开的理由是**代价差一个量级**（canvas 1.6s / 整页 ~4s）：改注释时
@@ -710,10 +714,14 @@ if ($mode === 'update') {
 }
 
 if ($mode === 'check') {
-    $fail = 0;
-    // ★ S3 manifest：测量层与呈现层之间的契约（新增，不破坏 --check 的文本输出）。
+    // ★ S3 manifest：测量层与呈现层之间的契约。
     //   呈现层 `golden-report.php` 读它 + 现场产物生成自包含 HTML；S4 也可复用。
-    $manifest = [];
+    //
+    // ★ 2026-11-03：`$items` 是**唯一账本**，manifest 从它派生（原来是"echo 一遍 +
+    //   另行 push 一个数组"，两处各说一次"这条过没过"）。manifest 的字段形状不变
+    //   （`name/kind/pass` + 失败详情），因为呈现层按它消费。
+    /** @var list<CheckItem> $items */
+    $items = [];
     $buildDir = dirname(__DIR__) . '/_build';
     foreach ($scenes as $name => $make) {
         $kind = str_starts_with($name, 'page/') ? 'page' : 'canvas';
@@ -721,20 +729,18 @@ if ($mode === 'check') {
         $sceneDir = $dir . '/' . $name;
         $expFile = $sceneDir . '/expected.rgba.gz';
         if (!is_file($expFile)) {
-            echo "FAIL {$name}：无基线（先跑 php tools/golden-raster.php --update）\n";
-            $fail++;
-            $manifest[] = ['name' => $name, 'kind' => $kind, 'pass' => false, 'reason' => 'no-baseline'];
+            $items[] = $item = new CheckItem($name, false, '无基线（先跑 php tools/golden-raster.php --update）', ['kind' => $kind, 'reason' => 'no-baseline']);
+            CheckReport::emitLine($item, $json);
             continue;
         }
 
         $expected = gzdecode((string) file_get_contents($expFile));
         if ($expected === $rgba) {
-            echo "ok   {$name}\n";
-            $manifest[] = ['name' => $name, 'kind' => $kind, 'pass' => true];
+            $items[] = $item = new CheckItem($name, true, '', ['kind' => $kind]);
+            CheckReport::emitLine($item, $json);
             continue;
         }
 
-        $fail++;
         $diffPixels = 0;
         $maxDelta = 0;
         // ★ 变化区域的包围盒 + 逐行命中数：FAIL 行直接说"哪一块变了"。
@@ -781,8 +787,13 @@ if ($mode === 'check') {
 
         if ($maxX < 0) {
             // 逐像素全同但整体不等 ⇒ 只可能是长度不同（尺寸变了）
-            echo "FAIL {$name}：长度不同（基线 " . strlen($expected) . ' / 实际 ' . strlen($rgba) . "）\n";
-            $manifest[] = ['name' => $name, 'kind' => $kind, 'pass' => false, 'reason' => 'size'];
+            $items[] = $item = new CheckItem(
+                $name,
+                false,
+                '长度不同（基线 ' . strlen($expected) . ' / 实际 ' . strlen($rgba) . '）',
+                ['kind' => $kind, 'reason' => 'size'],
+            );
+            CheckReport::emitLine($item, $json);
             continue;
         }
 
@@ -845,8 +856,6 @@ if ($mode === 'check') {
             $msg .= "\n" . regionNodes($pageClasses[$name], $W, $H, [$minX, $minY, $maxX, $maxY], $sceneDir);
         }
 
-        echo $msg . "\n";
-
         // ★ 记录 S3 现场产物路径（相对 golden 根），呈现层据此拼 HTML。
         $artifacts = [
             'expectedGz' => $name . '/expected.rgba.gz',
@@ -856,20 +865,26 @@ if ($mode === 'check') {
         if (str_starts_with($name, 'page/') && isset($pageClasses[$name])) {
             $artifacts['inspectJson'] = $name . '/inspect/actual.json';
         }
-        $manifest[] = [
-            'name' => $name,
+
+        $items[] = $item = new CheckItem($name, false, $msg, [
             'kind' => $kind,
-            'pass' => false,
             'diffPixels' => $diffPixels,
             'maxDelta' => $maxDelta,
             'pct' => $pct,
             'bbox' => [$minX, $minY, $maxX, $maxY],
             'bands' => array_slice($bands, 0, 3),
             'artifacts' => $artifacts,
-        ];
+        ]);
+        CheckReport::emitLine($item, $json);
     }
 
     // 落 manifest（测量层 → 呈现层的契约）。失败与否都写，便于"全绿时也有状态表"。
+    // ★ 从 `$items` 派生：`name`/`pass` 由 CheckItem 供，其余全是 `data` 里的字段。
+    $manifest = [];
+    foreach ($items as $item) {
+        $manifest[] = ['name' => $item->id, 'kind' => $item->data['kind'] ?? null, 'pass' => $item->ok] + $item->data;
+    }
+
     if (!is_dir($buildDir) && !mkdir($buildDir, 0777, true) && !is_dir($buildDir)) {
         fwrite(STDERR, "建不了 {$buildDir}\n");
     } else {
@@ -882,8 +897,11 @@ if ($mode === 'check') {
         ];
         file_put_contents($buildDir . '/golden-manifest.json', json_encode($manifestMeta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT) . "\n");
     }
-    echo $fail === 0 ? "GOLDEN OK\n" : "{$fail} FAIL\n";
-    exit($fail === 0 ? 0 : 1);
+
+    // ★ `$echoText = false`：上面每判一条已经即时印过了（60 场景跑 6s，等跑完才印
+    //   等于 6 秒无输出）。这里只补收尾那一行，格式仍出自 `CheckReport`。
+    $tool = $onlyPages ? 'golden --pages' : ($onlyCanvas ? 'golden --canvas' : 'golden');
+    (new CheckReport($tool, $items, sprintf('GOLDEN OK（%d 场景）', count($items))))->emit($json, false);
 }
 
 // 默认：旧行为（md5 文本，人手动前后 diff）

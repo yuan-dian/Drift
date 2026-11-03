@@ -56,19 +56,18 @@ use Drift\Widget\Widget;
 
 require __DIR__ . '/autoload.php';
 
-$ok = 0;
-$failures = 0;
+use Drift\Dev\Support\CheckItem;
+use Drift\Dev\Support\CheckReport;
+
+/** @var list<CheckItem> $items 判据的唯一账本（见 `CheckReport`） */
+$items = [];
 
 function check(string $name, bool $pass, string $detail = ''): void
 {
-    global $ok, $failures;
-    if ($pass) {
-        $ok++;
-        printf("  ok    %s\n", $name);
-        return;
-    }
-    $failures++;
-    printf("  FAIL  %s%s\n", $name, $detail === '' ? '' : '  —— ' . $detail);
+    global $items;
+    $item = new CheckItem($name, $pass, $detail === '' ? '' : '—— ' . $detail);
+    $items[] = $item;
+    CheckReport::emitLine($item);
 }
 
 // ── token 助手（PHP 8：`->` 是 T_OBJECT_OPERATOR 数组令牌，不是原始字符串；
@@ -624,5 +623,4 @@ check(
 array_map('unlink', $selftestFiles);
 @rmdir($selftestDir);
 
-printf("\n── %d ok · %d FAIL ──\n", $ok, $failures);
-exit($failures > 0 ? 1 : 0);
+(new CheckReport('m2-conformance', $items, sprintf('%d 项全过', count($items))))->emit(false, false);

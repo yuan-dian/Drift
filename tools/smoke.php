@@ -170,6 +170,9 @@ use Drift\Dev\TestApp;
 
 require __DIR__ . '/autoload.php';
 
+use Drift\Dev\Support\CheckItem;
+use Drift\Dev\Support\CheckReport;
+
 // ★ 量具自己把上限抬到 2G（2026-10-23，W8-2 Tooltip）。
 //   **不是泄漏**：全量 1217 条用例会串起几十个 Application 实例，每个都持有
 //   字模 + 渲染树，默认 128M 早在几百条就炸；1024M 也已经贴着边（加 Tooltip 块
@@ -373,19 +376,23 @@ if (str_starts_with($caseArg, '--case=')) {
 
 // ── 断言与工具 ──
 
-$failures = 0;
-$checks = 0;
+/**
+ * 判据的唯一账本（2026-11-03）。`check()` 只往里 push，不再自己数 `$checks`/`$failures`。
+ *
+ * ★ 这里**还没有** `--json`：本文件另有 30 处裸 `printf` 是阶段标题/现场详情，
+ *   `--json` 要求"stdout 上只有 JSON"，得先把那 30 处收进一个 `info()` 门面。
+ *   但账本已经统一 ⇒ 那一天只差一个 `emit(true)`，不用再动 471 个调用点。
+ *
+ * @var list<CheckItem> $items
+ */
+$items = [];
 
 function check(string $name, bool $ok, string $detail = ''): void
 {
-    global $failures, $checks;
-    ++$checks;
-    if ($ok) {
-        printf("  ok    %s\n", $name);
-        return;
-    }
-    $failures++;
-    printf("  FAIL  %s%s\n", $name, $detail === '' ? '' : '  —— ' . $detail);
+    global $items;
+    $item = new CheckItem($name, $ok, $detail === '' ? '' : '—— ' . $detail);
+    $items[] = $item;
+    CheckReport::emitLine($item);
 }
 
 /** 清掉日志与状态，让每个用例互不污染 */
@@ -5494,5 +5501,4 @@ check(
 //   任何自动化调用（脚本 / CI / `&&` 链）都会把它读成"过了"。与 G2（不许静默
 //   失败）直接冲突，故收口在这里。反例自检：故意让一条 check() 失败 ⇒ 末行
 //   `N FAIL` 且退出码 1。
-printf("\n--- %d ok / %d FAIL ---\n", $checks - $failures, $failures);
-exit($failures === 0 ? 0 : 1);
+(new CheckReport('smoke', $items, sprintf('smoke 全过（%d 条）', count($items))))->emit(false, false);

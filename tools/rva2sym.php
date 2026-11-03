@@ -40,6 +40,13 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tools;
 
+use Drift\Dev\Support\CheckItem;
+use Drift\Dev\Support\CheckReport;
+
+// ★ 本文件是"函数库 + argv 脚本"的混合体，此前没有引入装载器（只用内建函数）。
+//   判据报告要走 `CheckReport`，所以这里补一次；`require_once` 防止被 include 时重入。
+require_once __DIR__ . '/autoload.php';
+
 /**
  * 解析 `.map` 文件，返回 [preferredLoadAddress, rva → list<symbol>]。
  *
@@ -180,8 +187,13 @@ function describe(int $rva, array $names): string
     return \sprintf('0x%x  %s%s', $rva, \implode('  ', $shown), $more);
 }
 
-// ── `--selftest`：五条自洽判据（合成 map，绝不碰真实构建产物）──
-if (isset($argv[1]) && $argv[1] === '--selftest') {
+// ── `--selftest`：六条自洽判据（合成 map，绝不碰真实构建产物）──
+//
+// ★ `--selftest --json` 时 stdout 上只有 JSON（`CheckReport`），其余一行不印。
+$selftest = \in_array('--selftest', $argv, true);
+$json = $selftest && \in_array('--json', $argv, true);
+if ($selftest) {
+    /** @var list<CheckItem> $items */
     $items = [];
 
     $tmp = \tempnam(\sys_get_temp_dir(), 'rva2sym');
@@ -208,54 +220,38 @@ if (isset($argv[1]) && $argv[1] === '--selftest') {
     $ok1 = $base === 0x140000000
         && $a !== null && $a['offset'] === 0 && $a['names'][0] === 'main'
         && $b !== null && $b['offset'] === 0x10 && $b['names'][0] === 'main';
-    $items[] = ['①', $ok1, $ok1
+    $items[] = new CheckItem('①', $ok1, $ok1
         ? '精确命中 0x1000→main(+0x0)，函数中间 0x1010→main(+0x10)'
-        : '命中/偏移不对：' . \json_encode([$a, $b])];
+        : '命中/偏移不对：' . \json_encode([$a, $b]));
 
     // ② 第一个符号之前 ⇒ null（不能编一个）
     $n = lookup($syms, 0x0FFF);
     $ok2 = $n === null;
-    $items[] = ['②', $ok2, $ok2 ? '0xfff 在首个符号之前 ⇒ 返回 null（没编）' : '首个符号之前返回了 ' . \json_encode($n)];
+    $items[] = new CheckItem('②', $ok2, $ok2 ? '0xfff 在首个符号之前 ⇒ 返回 null（没编）' : '首个符号之前返回了 ' . \json_encode($n));
 
     // ③ 段表行不进索引（否则 0x331f70 会被当成符号起点）
     $ok3 = !isset($syms[0x331f70 - 0x0]);
-    $items[] = ['③', $ok3, $ok3 ? '段表行（.text CODE）没被当成符号' : '段表行混进符号索引'];
+    $items[] = new CheckItem('③', $ok3, $ok3 ? '段表行（.text CODE）没被当成符号' : '段表行混进符号索引');
 
     // ④ MSVC 修饰名反修饰
     $p1 = pretty('?seek@Foo@@UEAA_N_K@Z');
     $ok4 = $p1 === 'Foo::seek';
-    $items[] = ['④', $ok4, $ok4 ? '?seek@Foo@@ ⇒ Foo::seek' : '反修饰给了：' . $p1];
+    $items[] = new CheckItem('④', $ok4, $ok4 ? '?seek@Foo@@ ⇒ Foo::seek' : '反修饰给了：' . $p1);
 
     // ⑤ AOT 的 PHP 名（普通方法）
     $p2 = pretty('php_drift__app__bar__run');
     $ok5 = $p2 === 'drift\\app\\bar::run';
-    $items[] = ['⑤', $ok5, $ok5 ? 'php_drift__app__bar__run ⇒ drift\\app\\bar::run' : 'AOT 名给了：' . $p2];
+    $items[] = new CheckItem('⑤', $ok5, $ok5 ? 'php_drift__app__bar__run ⇒ drift\\app\\bar::run' : 'AOT 名给了：' . $p2);
 
     // ⑥ AOT 的**魔术方法**：`____` = 分隔符 `__` + 名字自己的 `__`。
     //    第一版用 `array_filter` 把空段当噪声滤掉 ⇒ `__construct` 变成 `construct`。
     $p3 = pretty('php_drift__app__store____construct_arg_1_default_value');
     $ok6 = $p3 === 'drift\\app\\store::__construct';
-    $items[] = ['⑥', $ok6, $ok6
+    $items[] = new CheckItem('⑥', $ok6, $ok6
         ? 'php_drift__app__store____construct… ⇒ drift\\app\\store::__construct'
-        : '魔术方法给了：' . $p3 . '（`__` 被吃掉了）'];
+        : '魔术方法给了：' . $p3 . '（`__` 被吃掉了）');
 
-    $fail = 0;
-    foreach ($items as [$no, $ok, $text]) {
-        if ($ok) {
-            \printf("  ok    %s %s\n", $no, $text);
-            continue;
-        }
-        ++$fail;
-        \printf("  FAIL  %s %s\n", $no, $text);
-    }
-
-    if ($fail > 0) {
-        \fwrite(STDERR, \sprintf("\n--- FAIL（%d 条）---\n", $fail));
-        exit(1);
-    }
-
-    \printf("\n--- %d 项判据全过 ---\n", \count($items));
-    exit(0);
+    (new CheckReport('rva2sym', $items, \sprintf('%d 项判据全过', \count($items))))->emit($json);
 }
 
 if ($argc < 3) {
