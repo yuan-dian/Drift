@@ -20,18 +20,25 @@ use Drift\Widget\States;
  * **焦点链 + 输入路由的最小实现**（§9.1 路由链的 ②③ 环与命中测试）。
  *
  * ```text
- * KeyEvent ──▶ ①加速键（InputRouter，`AcceleratorTable::resolve`）
- *          ──▶ ②IME（Win32 壳的 WM_IME_* + `TextEditingHost`）
- *          ──▶ ③焦点链 ← 本类
+ * KeyEvent ──▶ ⓪编辑命令（剪贴板，`TextEditingBridge::dispatchEditCommand`）
+ *          ──▶ ①焦点链 ← 本类（`dispatchKey`）
+ *          ──▶ ②加速键（InputRouter，`AcceleratorTable::resolve`）
+ *          ──▶ ③动作激活（Enter/Space）
  * PointerEvent ──▶ 命中测试（RenderBox 树）──▶ 焦点 ← 本类
  * ```
  *
+ * ★★★ **2026-11-03 顺序裁决（破坏性）**：①与②**换了位**。此前是加速键先、
+ *   靠 `FocusNode::claimKeys()` 白名单给个别控件开口子 —— 白名单是逐键列举的，
+ *   `Table` 非编辑态的 `Ctrl+A`/`Ctrl+C` 就一直收不到（应用一绑那两个键就是死码），
+ *   编辑态的 `Ctrl+Z` 更需要"进编辑补声明、退出撤掉"这种静态声明做不到的动态让位。
+ *   现在"谁处理谁赢"：焦点控件认得就吃、认不得返回 `false` 自然落给加速键。
+ *   ★ 判据见 `tests/Feature/Input/KeyRoutingPriorityTest`（三条必须成对验）。
+ *
  * ★ 上面 ①② 原来写着"（未做）"，2026-11-02 核实为**假话**：加速键在 `InputRouter`
- *   的 ①环（`accelerators()->resolve()`，还带"焦点控件独占该组合 ⇒ 让位"），
- *   IME 在 `cpp-src/drift_win32.cc` 的 `WM_IME_STARTCOMPOSITION / _COMPOSITION /
- *   _ENDCOMPOSITION` 三段 + `TextEditingHost`。本类只负责 ③ —— **"本类不做"不等于
- *   "框架没做"**：那张图画的是**路由链**，不是本类的职责边界，写混了就变成在
- *   源码里散播过期结论。
+ *   的 ② 环（`accelerators()->resolve()`），IME 在 `cpp-src/drift_win32.cc` 的
+ *   `WM_IME_STARTCOMPOSITION / _COMPOSITION / _ENDCOMPOSITION` 三段 + `TextEditingHost`。
+ *   本类只负责 ① —— **"本类不做"不等于"框架没做"**：那张图画的是**路由链**，
+ *   不是本类的职责边界，写混了就变成在源码里散播过期结论。
  *
  * ★ **为什么住 `Drift\App` 而不是 `Drift\Input`**：`Input` 按 §4.3 **不许依赖
  *   `Widget` / `Rendering`**，而本类必须引用 `Element` 与 `EditableText`。
@@ -519,14 +526,6 @@ final class FocusManager
         $this->focus($element);
 
         return true;
-    }
-
-    /** 当前焦点是否**独占**这个组合（§9.1 让位规则 ②：编辑命令优先于加速键） */
-    public function claims(KeyChord $chord): bool
-    {
-        $node = $this->focused?->widget()->focusNode();
-
-        return $node !== null && $node->claims($chord);
     }
 
     // ── 内部 ────────────────────────────────────────────────────────────

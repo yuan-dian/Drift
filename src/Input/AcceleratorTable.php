@@ -6,7 +6,7 @@ namespace Drift\Input;
 use Drift\Errors;
 
 /**
- * 应用级**加速键表**（§9.1 路由链第 ① 环：焦点之前）。
+ * 应用级**加速键表**（§9.1 路由链第 ② 环：**焦点链之后**）。
  *
  * ```php
  * final class UsersApplication extends Application
@@ -22,14 +22,22 @@ use Drift\Errors;
  * ```
  *
  * ★ **应用级数据，不是平台能力**（§9.1）⇒ 零新端口：`EventLoop` 派发 `KeyEvent`
- *   **之前**查一次表，命中就 `dispatch()` 命令走全链，不再往下走焦点。
+ *   **之后**（焦点链没吃时）查一次表，命中就 `dispatch()` 命令走全链。
  *
- * ★ **两条让位规则**（§9.1）：
+ * ★★ **它排在焦点链之后**（2026-11-03 顺序裁决，破坏性）：焦点控件认得的键归它，
+ *   认不得才轮到全局快捷键。此前是反的，靠 `FocusNode::claimKeys()` 白名单让位 ——
+ *   白名单逐键列举，`Table` 非编辑态的 `Ctrl+A`/`Ctrl+C` 因此一直是死码，编辑态的
+ *   `Ctrl+Z` 更是需要"进编辑补声明、退出撤掉"的动态让位，静态声明做不到。
+ *   ★ 参照：WPF/WinForms（`PreviewKeyDown` ⇒ 窗体 `InputBindings`）、Flutter
+ *   （`Shortcuts` 在树里，内层赢）都是焦点优先；Qt 的 `QShortcutMap` 加速键优先，
+ *   但要用 `Qt::WidgetShortcut` 上下文才能解决同一个问题 —— 本仓不引那张上下文表。
+ *
+ * ★ **两条让位规则（已消解，留档）**：
  *   ① **IME 组合期不吃快捷键** —— 当前输入层还没有 `ImeEvent`，组合期按键根本不
  *      以 `KeyEvent` 到达 ⇒ 规则天然成立；等 M4 补 IME 接线时在同一点加判据。
- *   ② **编辑命令优先** —— 焦点控件（`TextInputClient`）可 `claimKeys()` 声明独占
- *      键集（`Ctrl+A/C/V/X/Z`），命中时让位给输入框。接线见
- *      `Application::dispatchInput()`：`resolve()` 命中**且**焦点不独占才派发。
+ *   ② **编辑命令优先** —— 原来靠 `claimKeys()`，现在由**顺序**表达（见上），
+ *      机制本身已删。剪贴板族（`Ctrl+C/X/V`）仍在更前面的 ⓪ 环，理由不同：
+ *      它要平台剪贴板，`State` 拿不到平台。
  *
  * ★ **冲突即 Fatal**：同一个组合绑两次 ⇒ 响亮失败，不是后绑覆盖前绑
  *   （G2：静默丢一条快捷键 = 用户按了没反应且不报错）。

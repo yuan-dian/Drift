@@ -16,17 +16,16 @@ use Drift\Widget\TextField;
 use Drift\Widget\Widget;
 
 /**
- * @internal 冒烟夹具：带加速键表的应用（§9.1 第 ① 环）。
+ * @internal 冒烟夹具：带加速键表的应用（§9.1 第 ② 环）。
  *
- * `Ctrl+R` 与 `Ctrl+A` 两条加速键；`$withClaimer` 打开时给 TextField 声明
- * 独占 `Ctrl+A`（§9.1 让位规则 ②：编辑命令优先）。
+ * `Ctrl+R` 与 `Ctrl+A` 两条加速键，焦点里有一个内容为 `abc` 的 `TextField`。
+ * ★ `Ctrl+A` 两条路径都认领（输入框全选 / 应用 `accel.selectAll`）⇒ 这个夹具
+ *   专门用来钉"焦点在哪就归谁"（2026-11-03 顺序裁决）。
  */
 final class AccelApplication extends Application
 {
     /** @var list<string> 收到过的命令名（顺序即派发顺序） */
     public array $seen = [];
-
-    public bool $withClaimer = false;
 
     /** 夹具用：断言要读字段的选区状态（同 `TfApplication` 形态） */
     public function rootElement(): ?Element
@@ -36,14 +35,9 @@ final class AccelApplication extends Application
 
     public function buildRoot(): Widget
     {
-        $field = TextField::make()->value('abc');
-        if ($this->withClaimer) {
-            $field->claimKeys([KeyChord::ctrl('A')]);
-        }
-
         return Column::make()->children([
             Center::make(Text::make('加速键夹具')),
-            $field,
+            TextField::make()->value('abc'),
         ]);
     }
 
@@ -51,7 +45,9 @@ final class AccelApplication extends Application
     {
         return AcceleratorTable::make()
             ->bind(KeyChord::ctrl('R'), 'accel.fire')
-            ->bind(KeyChord::ctrl('A'), 'accel.selectAll');
+            ->bind(KeyChord::ctrl('A'), 'accel.selectAll')
+            // ★ 故意与编辑键撞车：焦点在输入框时它必须收不到（见 `TextFieldUndoKeyTest`）
+            ->bind(KeyChord::ctrl('Z'), 'accel.undo');
     }
 
     public function commands(): iterable
@@ -59,6 +55,7 @@ final class AccelApplication extends Application
         return [
             'accel.fire' => new AccelHandler($this),
             'accel.selectAll' => new AccelHandler($this),
+            'accel.undo' => new AccelHandler($this),
         ];
     }
 }

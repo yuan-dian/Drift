@@ -4,9 +4,15 @@ declare(strict_types=1);
 namespace Drift\Dev\Tests\Feature\Widget;
 
 use Drift\App\FocusManager;
+use Drift\Dev\Smoke\App\AccelApplication;
+use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Tests\Support\SmokeTestCase;
+use Drift\Geometry\BoxConstraints;
+use Drift\Geometry\Size;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
+use Drift\Widget\Element;
+use Drift\Widget\StatefulElement;
 use Drift\Widget\TextField;
 use Drift\Widget\TextFieldState;
 
@@ -18,9 +24,9 @@ use Drift\Widget\TextFieldState;
  *   映射对了而接线断了的现象是"文本在内存里回退了，但界面不动" ——
  *   在没有这层判据时不会红。
  *
- * ★ 另守一条**路由**判据：`Ctrl+Z` 必须被输入框声明独占。否则加速键在焦点之前
- *   就先把它吃掉了，`handleKey` 永远收不到 —— 而这时所有单元测试照样全绿
- *   （它们直接造 `KeyEvent` 喂 `handleKey`，绕过了加速键那一环）。
+ * ★ 另守一条**路由**判据：撤销键必须到得了输入框。2026-11-03 之前靠
+ *   `claimKeys()` 声明独占，现在靠**顺序**（焦点链先于加速键）—— 判据也从
+ *   "声明表里有它"换成"加速键表里明明绑了它也收不到"。
  */
 final class TextFieldUndoKeyTest extends SmokeTestCase
 {
@@ -73,30 +79,54 @@ final class TextFieldUndoKeyTest extends SmokeTestCase
     }
 
     /**
-     * `Ctrl+Z` / `Ctrl+Y` / `Ctrl+Shift+Z` 必须被输入框**声明独占**。
+     * 撤销键必须**到得了输入框** —— 即使应用把同一个组合绑成了加速键。
      *
      * ★ 这条不测"能撤销"，测的是"撤销的键能到达输入框"。少了它，加速键会先吃掉
      *   这些键，而上面的用例（直接喂 `handleKey`）**全部仍然绿**。
+     *
+     * ★ 2026-11-03 改法：此前测 `FocusManager::claims()`（声明式白名单）。白名单删了
+     *   （它列不全、也表达不了"只在编辑时抢"）⇒ 判据换成**行为**：加速键表里明明
+     *   绑了 `Ctrl+Z`，焦点在输入框时它必须收不到。这比"声明表里有它"强 ——
+     *   后者在键被别处吃掉时照样为真。
      */
-    public function testUndoKeysAreClaimedExclusively(): void
+    public function testUndoKeysReachTheFieldBeforeAccelerators(): void
     {
-        $root = TextField::make()->value('')->createElement();
-        $root->mount(null, smokeContext());
+        $app = new AccelApplication();
+        $app->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
 
-        $fm = new FocusManager();
-        $fm->collect([$root]);
-        $fm->focusNext();
+        // 焦点进输入框（字段初值 abc），再敲一个字符让撤销有东西可撤
+        $app->dispatchInput(KeyEvent::down(KeyChord::tab()));
+        $app->dispatchInput(KeyEvent::character('x'));
 
-        check('撤销 · 输入框独占 Ctrl+Z', $fm->claims(KeyChord::ctrl('Z')));
-        check('撤销 · 输入框独占 Ctrl+Y', $fm->claims(KeyChord::ctrl('Y')));
+        $state = null;
+        $el = findElement($app->rootElement(), static fn(Element $e): bool => $e->widget() instanceof TextField);
+        $state = $el instanceof StatefulElement ? $el->state() : null;
+        check('撤销路由 · 前置：焦点进输入框且打进了 x', $state instanceof TextFieldState && $state->text() === 'abcx',
+            $state instanceof TextFieldState ? $state->text() : 'n/a');
+
+        // 加速键表里有 Ctrl+Z，但它必须**让位**给输入框
+        $app->dispatchInput(KeyEvent::down(KeyChord::ctrl('Z')));
         check(
-            '撤销 · 输入框独占 Ctrl+Shift+Z',
-            $fm->claims(KeyChord::make('Z', ctrl: true, shift: true)),
+            '撤销路由 · Ctrl+Z 归输入框（文本回退、accel.undo 没触发）',
+            $state instanceof TextFieldState && $state->text() === 'abc' && $app->seen === [],
+            ($state instanceof TextFieldState ? $state->text() : 'n/a') . ' seen=[' . implode(',', $app->seen) . ']',
         );
-        // 反例：不相干的组合不许一起吞掉（否则加速键表会被意外挡掉一片）
+
+        // 栈空时也不能穿透：键仍归编辑环（`TextChange::None` 而非 `null`）
+        $app->dispatchInput(KeyEvent::down(KeyChord::ctrl('Z')));
+        $app->dispatchInput(KeyEvent::down(KeyChord::ctrl('Z')));
         check(
-            '撤销 · 没顺手吞掉 Ctrl+Shift+A 之类',
-            !$fm->claims(KeyChord::make('A', ctrl: true, shift: true)) && !$fm->claims(KeyChord::ctrl('R')),
+            '撤销路由 · 栈空时 Ctrl+Z 仍不穿透给加速键',
+            $state instanceof TextFieldState && $state->text() === 'abc' && $app->seen === [],
+            ($state instanceof TextFieldState ? $state->text() : 'n/a') . ' seen=[' . implode(',', $app->seen) . ']',
+        );
+
+        // 反例：输入框认不得的组合照常落给加速键（焦点优先 ≠ 焦点通吃）
+        $app->dispatchInput(KeyEvent::down(KeyChord::ctrl('R')));
+        check(
+            '撤销路由 · 输入框认不得的 Ctrl+R 仍走加速键',
+            $app->seen === ['accel.fire'],
+            'seen=[' . implode(',', $app->seen) . ']',
         );
 
         $this->flushChecks();

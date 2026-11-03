@@ -218,19 +218,33 @@ final class FocusRoutingTest extends SmokeTestCase
         $this->flushChecks();
     }
 
-    public function testClaimKeysMakesChordExclusive(): void
+    /**
+     * 焦点在输入框上 ⇒ `Ctrl+A` 落到 `TextFieldState::handleKey()`（全选）。
+     *
+     * ★ 这里曾经叫 `testClaimKeysMakesChordExclusive`，测的是 `FocusManager::claims()`
+     *   这个**声明式白名单**。2026-11-03 白名单删了（它列不全、也表达不了"只在编辑
+     *   时抢"），改由**路由顺序**回答：焦点链先于加速键。所以判据从"claims 为真"
+     *   换成"键真的到达了输入框" —— 前者可以在键被别处吃掉时照样为真。
+     */
+    public function testFocusedFieldReceivesSelectAll(): void
     {
         $inContext = smokeContext();
 
-        // claims：焦点独占键（§9.1 让位规则 ②）
-        $claimRoot = TextField::make()->claimKeys([KeyChord::ctrl('A')])->createElement();
-        $claimRoot->mount(null, $inContext);
-        $fmClaim = new FocusManager();
-        $fmClaim->collect([$claimRoot]);
-        $fmClaim->focusNext();
+        $fieldRoot = TextField::make()->value('abc')->createElement();
+        $fieldRoot->mount(null, $inContext);
+        $fm = new FocusManager();
+        $fm->collect([$fieldRoot]);
+        $fm->focusNext();
+
+        $ate = $fm->dispatchKey(KeyEvent::down(KeyChord::ctrl('A')));
+        $state = $fieldRoot instanceof StatefulElement ? $fieldRoot->state() : null;
         check(
-            '输入层 · claimKeys ⇒ 焦点独占 Ctrl+A、不独占 Ctrl+C',
-            $fmClaim->claims(KeyChord::ctrl('A')) && !$fmClaim->claims(KeyChord::ctrl('C')),
+            '输入层 · 焦点在输入框 ⇒ Ctrl+A 真被它吃掉（全选 0..3）',
+            $ate && $state instanceof TextFieldState
+                && $state->selectionStart() === 0 && $state->selectionEnd() === 3,
+            'ate=' . var_export($ate, true) . ' sel=' . ($state instanceof TextFieldState
+                ? $state->selectionStart() . '..' . $state->selectionEnd()
+                : 'n/a'),
         );
 
         $this->flushChecks();

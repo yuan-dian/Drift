@@ -3,7 +3,6 @@ declare(strict_types=1);
 
 namespace Drift\Widget;
 
-use Drift\Input\KeyChord;
 use Drift\Input\SemanticsRole;
 
 /**
@@ -59,16 +58,9 @@ final class TextField extends StatefulWidget implements SemanticsValueEditable
         $this->markFocusable();
         // §9 无障碍：文本框进语义树（name 由 `label()` 给，value 由 `value()` 跟）
         $this->semantics(SemanticsRole::TextField);
-        // §9.1 让位规则 ②：`Ctrl+A`（全选）归编辑命令 —— 声明独占后加速键
-        // 不给它抢（焦点在输入框时 `claims()` 为真，第 ① 环让位）。
-        // `Ctrl+Z` / `Ctrl+Y` / `Ctrl+Shift+Z` 同理：焦点在输入框里，撤销归**这个
-        // 输入框**，应用不能把同一个键同时绑成"撤销表格里那一行"。
-        $this->claimKeys([
-            KeyChord::ctrl('A'),
-            KeyChord::ctrl('Z'),
-            KeyChord::ctrl('Y'),
-            KeyChord::make('Z', ctrl: true, shift: true),
-        ]);
+        // ★ 不必声明"`Ctrl+A/Z/Y` 归我"：焦点链在加速键**之前**（2026-11-03），
+        //   `TextKeymap` 认得这些键就吃、认不得就返回 `null` 落给加速键。
+        //   声明式的 `claimKeys()` 已删（它列不全，也表达不了"只在编辑时抢"）。
     }
 
     /** 唯一入口 —— 必填项由链式给（`value()` 才是必填，`make()` 不吃参数，§A.2.9） */

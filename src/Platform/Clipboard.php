@@ -15,7 +15,7 @@ namespace Drift\Platform;
  *   （`CF_UNICODETEXT`）。富文本 / 图片**不进本端口**：那要格式协商，是另一层的事。
  *
  * ⏳ **M1 不实现**：`Win32Platform::clipboard()` 返回 `null`。第一个消费者是
- *   `TextInputClient` 的 `Ctrl+C/V/X`（§9.1 让位规则 ②，M3）。
+ *   `TextInputClient` 的 `Ctrl+C/V/X`（§9.1 第 ⓪ 环，M3）。
  *
  * @api platform
  */

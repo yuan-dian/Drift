@@ -27,8 +27,8 @@ use Drift\Input\KeyEvent;
  * ★ 这条链是 `Dock → AppBar → NavButton/Button` 的端到端，任何一层把键吞掉
  *   都会红 —— 单元层的 `AppBarTest` 只验结构，验不到这里。
  *
- * ★ 与 `Feature/Input/KeyRoutingPriorityTest` 分工：那边判**加速键优先于焦点链**
- *   （注册表命中就不往下走），这边判焦点链末端"激活"的两条出口。
+ * ★ 与 `Feature/Input/KeyRoutingPriorityTest` 分工：那边判**焦点链先于加速键**
+ *   （控件认得的键应用收不到），这边判焦点链末端"激活"的两条出口。
  */
 final class ShellCommandTest extends SmokeTestCase
 {

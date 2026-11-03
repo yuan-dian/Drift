@@ -18,7 +18,7 @@ use Drift\Widget\States;
  * ```text
  * IME    组合根 ──imeCaretRect()──▶ 焦点里在编辑的输入框 ──▶ 平台 imeCaret()
  * 指针   down ──▶ beginTextSelection() ──move──▶ extendTextSelection() ──up/leave──▶ finishSelection()
- * 键盘   Ctrl+C/X/V ──▶ dispatchEditCommand()（在加速键之前，§9.1 让位规则 ②）
+ * 键盘   Ctrl+C/X/V ──▶ dispatchEditCommand()（第 ⓪ 环，在焦点链与加速键之前）
  * ```
  *
  * ★ **为什么从 Application 拆出来**：这三侧在 Application 3900 行里散成
@@ -193,9 +193,10 @@ final class TextEditingBridge
     /**
      * 编辑命令环（§9.1）：`Ctrl+C` 复制 / `Ctrl+X` 剪切 / `Ctrl+V` 粘贴。
      *
-     * 位置在加速键**之前**（§9.1 让位规则 ② 的"编辑命令优先"）：焦点里有个
-     * 在编辑的输入框时，这三个组合归它。返回 `false` = 这一环没吃，事件
-     * **原样**继续往加速键走 —— 四条门控任一不满足都放行（不吞键）：
+     * 位置在**最前面**（第 ⓪ 环，比焦点链和加速键都早）—— 不是特权，是因为它
+     * 要平台剪贴板，而 `State` 拿不到平台（§5.1）⇒ 只能住 `App` 层。
+     * 焦点里有个在编辑的输入框时，这三个组合归它。返回 `false` = 这一环没吃，
+     * 事件**原样**继续往焦点链走 —— 四条门控任一不满足都放行（不吞键）：
      *
      *   ① 不是 C / X / V
      *   ② 焦点里没有在编辑的输入框（§5.1：`State` 拿不到平台 ⇒ 环住 `App`）
@@ -204,9 +205,9 @@ final class TextEditingBridge
      *
      * ★ ④ 的设计：**没有剪贴板时 `Ctrl+C` 不是死键** —— 回落给加速键，应用
      *   照样能把它绑成"复制选中行"之类的命令（"声明独占却没人接"让键失效，
-     *   正是 §9.1 让位规则想避免的）。
-     * ★ `V` 不经 `claimKeys` 声明独占：声明了就得有人接，没人接就是死键；
-     *   这里的"环在加速键之前"已经达到同一优先级，且门控不满足时自动让位。
+     *   正是这条规则想避免的）。
+     * ★ 2026-11-03 起这里**不需要任何声明**：焦点链已排在加速键之前，"谁处理
+     *   谁赢"；本环留在 ⓪ 的唯一理由是它要平台的剪贴板对象（见上）。
      */
     public function dispatchEditCommand(KeyEvent $event): bool
     {

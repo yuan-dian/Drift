@@ -33,7 +33,7 @@ use Drift\Widget\Toggle;
  * |---|---|
  * | `Feature/App/ShellCommandTest` | 键从 `Dock → AppBar → 按钮` 走到底（App 层端到端） |
  * | 本文件 | 激活**本身**：鼠标按下能不能激活、谁能被激活、覆写与兜底的次序 |
- * | `Feature/Input/KeyRoutingPriorityTest` | 加速键优先于焦点链（注册表命中就不往下走） |
+ * | `Feature/Input/KeyRoutingPriorityTest` | 焦点链先于加速键（控件认得的键应用收不到） |
  * | `Feature/Input/PressClaimTest` | 谁能"认领"一次按下（让位规则） |
  *
  * ## 为什么能力声明要用**反射扫源码**

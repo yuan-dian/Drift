@@ -145,21 +145,32 @@ final class InputRouter
                 $this->textEditing->finishSelection();
             }
 
-            // §9.1 第 ① 环**之前**：编辑命令（Ctrl+C / X / V，§9.1 让位规则 ②
-            // 的"编辑命令优先"）。返回 false = 这一环没吃 ⇒ 原样落给加速键。
+            // 第 ⓪ 环：编辑命令（`Ctrl+C` / `X` / `V`）。
+            // ★ 它在**最前面**不是特权，是因为它要平台剪贴板，而 `State` 拿不到平台
+            //   （§5.1）⇒ 只能住 `App` 层。四条门控任一不满足就整族回落（不吞键）。
             if ($this->textEditing->dispatchEditCommand($event)) {
                 return null;
             }
 
-            // §9.1 第 ① 环：加速键（在焦点之前）。
-            // 让位规则 ②：焦点控件声明了独占该组合 ⇒ 不吃快捷键，往下走焦点链。
-            $accel = $this->host->accelerators()->resolve($event->chord);
-            if ($accel !== null && !$focus->claims($event->chord)) {
-                $this->host->dispatch($accel);
-
-                return null;
-            }
-
+            // 第 ① 环：**焦点链**（`keyboard()` 声明者 → `EditableText`）。
+            //
+            // ★★★ 2026-11-03 顺序裁决（破坏性）：焦点链**先于**加速键。
+            //   此前是加速键先、靠 `claimKeys()` 白名单给个别控件开口子，而白名单
+            //   是**逐键列举**的 ⇒ 必然漏：`Table` 非编辑态的 `Ctrl+A`/`Ctrl+C`
+            //   因为没声明就一直是死码（应用一绑这两个键，表里按了没反应）；
+            //   编辑态的 `Ctrl+Z` 同理，还额外需要"进编辑补声明、退出撤掉"这种
+            //   静态声明做不到的动态让位。
+            //   ⇒ 改成"谁处理谁赢"：控件认得就吃，认不得返回 `false` 自然落给加速键。
+            //   与 WPF/WinForms（`PreviewKeyDown` ⇒ 窗体 `InputBindings`）、Flutter
+            //   （`Shortcuts` 在树里，内层赢）同向；Qt 的 `QShortcutMap` 是加速键先，
+            //   但它要靠 `Qt::WidgetShortcut` 上下文才能解决同一个问题 —— 本仓选择
+            //   不要那张上下文表。
+            //   ★ 代价与边界：控件若把某个键"认得却不该认"就会吞掉全局快捷键。
+            //     本仓控件的键表都是显式白名单（`TextKeymap` / 各 `keyboard()`），
+            //     没有"吞所有键"的实现 ⇒ 风险收敛在"这些键本来就该归控件"。
+            //   ★ 先问 `dispatchKey` 再问加速键还有个副产物：`Ctrl+A` 这类同时被
+            //     控件与应用认领的键，语义变成"焦点在哪就归谁"，而不是"应用永远赢"。
+            //
             // ★ 焦点链自己的键（Tab / Shift+Tab）会**换焦点**：换完要把新焦点滚进
             //   它所在的视口，否则焦点环画在视口外、用户看不到焦点在哪（`04` §6.3）。
             //   判据是"焦点 Element 变了"而不是"按的是 Tab" —— 焦点控件也可能吃掉
@@ -173,7 +184,16 @@ final class InputRouter
                 return null;
             }
 
-            // §9.1：焦点按钮"回车/空格能触发"—— 动作缝的键盘侧激活
+            // 第 ② 环：加速键。焦点控件没吃 ⇒ 才算全局快捷键。
+            $accel = $this->host->accelerators()->resolve($event->chord);
+            if ($accel !== null) {
+                $this->host->dispatch($accel);
+
+                return null;
+            }
+
+            // 第 ③ 环：焦点按钮"回车/空格能触发"—— 动作缝的键盘侧激活。
+            // ★ 排在加速键之后：应用把 `Enter` 绑成"提交"时要能覆盖按钮的默认激活。
             $this->activateFocused($event);
 
             return null;

@@ -5,15 +5,16 @@ namespace Drift\Widget\Traits;
 
 use Drift\Input\CursorShape;
 use Drift\Input\FocusNode;
-use Drift\Input\KeyChord;
 
 /**
- * `Widget` 的**焦点面**：光标形状、Tab 序、按键独占、可聚焦性。
+ * `Widget` 的**焦点面**：光标形状、Tab 序、可聚焦性。
  *
  * ★ 这些是**声明**不是状态 —— "现在谁聚焦"住在 `Drift\App\FocusManager`；
  *   Widget 挂载后封存（`seal()`），把可变焦点塞进来会立刻撞纪律。
  * ★ `focusNode()` 的 `FocusNode` 是**不可变值对象**（`withOrder()` / `skipped()`
- *   / `claiming()` 都返回新实例），与 `Modifier` 同一套"换新不就地改"。
+ *   都返回新实例），与 `Modifier` 同一套"换新不就地改"。
+ * ★ 这里**没有**"声明独占某个键"的入口（`claimKeys()` 2026-11-03 已删）：
+ *   键归谁由路由顺序回答（焦点链先、加速键后），见 `App\InputRouter::dispatch()`。
  *
  * @internal 与 `Widget` 同生共死
  */
@@ -53,23 +54,6 @@ trait WidgetFocus
     {
         $this->mutate();
         $this->focus = ($this->focus ?? FocusNode::make())->skipped();
-
-        return $this;
-    }
-
-    /**
-     * 声明本控件**独占**的键集：命中时不让加速键抢（§9.1 让位规则 ②）。
-     *
-     * `TextField` 的编辑命令（`Ctrl+A/C/V/X/Z`）就是这么声明的。
-     *
-     * @param list<KeyChord> $chords
-     *
-     * @api
-     */
-    public function claimKeys(array $chords): static
-    {
-        $this->mutate();
-        $this->focus = ($this->focus ?? FocusNode::make())->claiming($chords);
 
         return $this;
     }

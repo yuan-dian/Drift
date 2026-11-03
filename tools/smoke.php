@@ -3768,8 +3768,8 @@ check(
 // ── ㉝ 错误边界容器 + AcceleratorTable：主体已迁出，余子进程判据 ────────────
 //   · `tests/Unit/Input/AcceleratorTableTest.php` —— 绑定后可查 / 未绑定 ⇒ null /
 //     修饰键不同即不同组合 / count 与 isEmpty
-//   · `tests/Feature/Input/KeyRoutingPriorityTest.php` —— 加速键第 ① 环在焦点之前 /
-//     未绑定的键落到焦点链 / 让位规则 ② / TextField 自带 Ctrl+A 独占且全选真的发生
+//   · `tests/Feature/Input/KeyRoutingPriorityTest.php` —— 焦点链在加速键**之前** /
+//     焦点控件认不得的键落到加速键 / Table 非编辑态收得到 Ctrl+A（此前是死码）
 //   · `tests/Feature/Input/EditingCommandLoopTest.php` —— 编辑命令环四道门控的回落语义
 //     （无焦点 / 无剪贴板端口 / 剪贴板空 / 无选区），每条都成对验"该吞的吞、该放的放"
 //   · `tests/Feature/Input/PointerSelectionTest.php` —— 指针框选 down/move/up/leave
@@ -3939,10 +3939,12 @@ check(
 $usersApp->userStore()->setQuery('');
 
 // ④ 加速键（§19 M3 出口判据：Ctrl+S 等加速键可用）
+//   ★ 2026-11-03：焦点链排到了加速键**之前**。这条判据因此更值钱 ——
+//     它现在真的在验"输入框吃不到的键（S 不在 `TextKeymap` 里）仍然落给加速键"。
 $usersApp->signupForm()->name = '';
 $usersApp->dispatchInput(KeyEvent::down(KeyChord::ctrl('S')));
 check(
-    'apps/users · 加速键 Ctrl+S ⇒ form.submit 被派发（第 ① 环，焦点之前）',
+    'apps/users · 加速键 Ctrl+S ⇒ form.submit 被派发（焦点链没吃的键落给加速键）',
     str_contains($usersApp->signupForm()->submitError, '姓名不能为空'),
 );
 

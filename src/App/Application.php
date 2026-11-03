@@ -600,7 +600,10 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         return $this->lastInputMs;
     }
     /**
-     * 加速键表（§9.1 路由链第 ① 环，焦点之前）—— **应用级**：默认取 `AppScope`。
+     * 加速键表（§9.1 路由链第 ② 环，**焦点链之后**）—— **应用级**：默认取 `AppScope`。
+     *
+     * ★ 2026-11-03 顺序裁决：焦点控件认得的键归它，认不得才轮到全局快捷键。
+     *   要"某个控件里按这个键不触发命令"，**不需要任何声明** —— 让控件处理它即可。
      *
      * ```php
      * // 单窗口：照旧覆写（行为与 M2 之前逐条相同）

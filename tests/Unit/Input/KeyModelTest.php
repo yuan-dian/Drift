@@ -62,13 +62,15 @@ final class KeyModelTest extends SmokeTestCase
 
     public function testFocusNodeDeclaration(): void
     {
-        $fn = FocusNode::make()->withOrder(3)->claiming([KeyChord::ctrl('A')]);
+        $fn = FocusNode::make()->withOrder(3);
         check('输入层 · FocusNode 链式声明 + hasOrder', $fn->order === 3 && $fn->hasOrder() && !$fn->skip);
-        check(
-            '输入层 · FocusNode::claims 只认声明过的组合',
-            $fn->claims(KeyChord::ctrl('A')) && !$fn->claims(KeyChord::ctrl('B')),
-        );
         check('输入层 · FocusNode::skipped 是子树级标记', FocusNode::make()->skipped()->skip);
+        // 两个字段互不覆盖：`skipped()` 保住 order，`withOrder()` 保住 skip
+        check(
+            '输入层 · order 与 skip 互不覆盖',
+            FocusNode::make()->withOrder(5)->skipped()->order === 5
+                && FocusNode::make()->skipped()->withOrder(5)->skip,
+        );
 
         $this->flushChecks();
     }
@@ -76,11 +78,8 @@ final class KeyModelTest extends SmokeTestCase
     public function testWidgetSideFocusDeclaration(): void
     {
         // Widget 侧声明 ⇒ focusNode()
-        $declared = TextField::make()->focusOrder(2)->claimKeys([KeyChord::ctrl('A')]);
-        check(
-            'Widget · focusOrder/claimKeys 落到 focusNode()',
-            $declared->focusNode()?->order === 2 && ($declared->focusNode()?->claims(KeyChord::ctrl('A')) ?? false),
-        );
+        $declared = TextField::make()->focusOrder(2);
+        check('Widget · focusOrder 落到 focusNode()', $declared->focusNode()?->order === 2);
         check('Widget · 没声明任何焦点属性 ⇒ focusNode() 为 null', Text::make('x')->focusNode() === null);
         check('Widget · Text 不可聚焦（默认 false）', !Text::make('x')->isFocusable());
         check('Widget · TextField 天然可聚焦', TextField::make()->isFocusable());
