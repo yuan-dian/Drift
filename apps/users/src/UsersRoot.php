@@ -124,10 +124,8 @@ final class UsersRoot extends StatelessWidget
 
         return ThemeScope::make($theme, Dock::make()
             ->top($bar)
-            // ★ 传 store + 切片函数，由 StatusBar 内部 select 订阅
-            ->bottom(StatusBar::make()
-                ->source($this->app)
-                ->select(static fn(AppStore $s): string => $s->statusLine()))
+            // ★ 订阅在 StatusBar 内部（`SubjectBuilder`）：这里只给 store
+            ->bottom(StatusBar::make($this->app))
             // ★ 传 store + 切片；PageHost 内部 select 订阅当前页，换页 = 旧页 Offstage 化
             ->center(PageHost::make()
                 ->source($this->app)

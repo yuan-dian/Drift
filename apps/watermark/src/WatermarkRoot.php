@@ -3,7 +3,6 @@ declare(strict_types=1);
 
 namespace App\Watermark;
 
-use App\Watermark\Store\StatusMessage;
 use App\Watermark\Store\WatermarkStore;
 use App\Watermark\Widgets\Palette;
 use App\Watermark\Widgets\ResultCard;
@@ -58,10 +57,8 @@ final class WatermarkRoot extends StatelessWidget
     {
         return ThemeScope::make(ThemeData::light(), Dock::make()
             ->top(AppBar::make()->title('AI 图片处理工具'))
-            // ★ 传 store + 切片函数，由 StatusBar 内部 select 订阅
-            ->bottom(StatusBar::make()
-                ->source($this->store)
-                ->select(static fn(WatermarkStore $s): StatusMessage => $s->statusLine()))
+            // ★ 订阅在 StatusBar 内部（`SubjectBuilder`）：这里只给 store
+            ->bottom(StatusBar::make($this->store))
             // ★ 滚动归**页根**（一张 `ScrollView` 包住三张卡片）：
             //   卡片里再套滚动就是嵌套滚动 —— 内层永远"量到全部内容"、外层滚不动。
             // ★ 底色靠 `Card`（`RenderProxy`：约束原样下传 ⇒ `ScrollView` 拿到紧约束

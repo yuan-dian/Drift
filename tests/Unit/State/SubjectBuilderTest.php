@@ -6,6 +6,7 @@ namespace Drift\Dev\Tests\Unit\State;
 use Drift\Dev\Smoke\LeafProbe;
 use Drift\Dev\Smoke\State\FakeStore;
 use Drift\Dev\Tests\Support\SmokeTestCase;
+use Drift\State\Subject;
 use Drift\State\SubjectBuilder;
 use Drift\Widget\Widget;
 
@@ -83,8 +84,87 @@ final class SubjectBuilderTest extends SmokeTestCase
         $this->flushChecks();
     }
 
-    public function testWithoutSelectBuilderTakesNoArguments(): void
+    /**
+     * 值对象的门控（2026-11-03）：默认 `===` 挡不住"每次新建的值对象"，
+     * 要值语义就得显式给 `equals()`。
+     *
+     * ## 为什么这条判据值钱
+     *
+     * `apps/*` 两个 `StatusBar` 各自手写了 100 行订阅器，**唯一**原因是
+     * `SubjectBuilder` 的默认门控对值对象恒 false（`statusLine()` 每次 `new`
+     * 一个 `StatusMessage`）。而手写的那 100 行里，订阅 / 退订 / 首帧 / 门控
+     * 四件事与库里这份完全重复。
+     *
+     * ⇒ 缺的不是"订阅原语"，是**判等策略的注入口**。补齐之后应用侧才有理由删掉
+     *   自己那份 —— 本用例同时钉住"默认行为没被改动"（否则是更贵的错：
+     *   现有订阅者会静默少重建）。
+     */
+    public function testEqualsGatesValueObjects(): void
     {
+        $ctx = smokeContext();
+        $store = new ValueSubject();
+
+        // ① 不给 equals ⇒ 默认 `===`，新实例永不相等 ⇒ 每次都重建（行为不变）
+        $plainRuns = 0;
+        $plain = SubjectBuilder::make($store)
+            ->select(static fn (ValueSubject $s): Value => new Value($s->text()))
+            ->builder(static function (mixed $v) use (&$plainRuns): Widget {
+                $plainRuns++;
+
+                return new LeafProbe(1.0);
+            });
+        $plainElement = $plain->createElement();
+        $plainElement->mount(null, $ctx);
+
+        $store->setText('同');
+        check(
+            'State · 未给 equals ⇒ 值对象虽内容相同也标脏（默认仍是 ===，行为未变）',
+            $plainElement->state()->needsBuild(),
+            '默认门控被改动了 ⇒ 现有订阅者会静默少重建'
+        );
+        $plainElement->unmount();
+
+        // ② 给了 equals ⇒ 内容相同不重建，内容变了才重建
+        $gatedRuns = 0;
+        $gatedArgs = [];
+        $gated = SubjectBuilder::make($store)
+            ->select(static fn (ValueSubject $s): Value => new Value($s->text()))
+            ->equals(static fn (Value $a, Value $b): bool => $a->equals($b))
+            ->builder(static function (mixed $v) use (&$gatedRuns, &$gatedArgs): Widget {
+                $gatedRuns++;
+                $gatedArgs[] = $v->text;
+
+                return new LeafProbe(1.0);
+            });
+        $gatedElement = $gated->createElement();
+        $gatedElement->mount(null, $ctx);
+        check(
+            'State · 给了 equals ⇒ 首帧仍拿到值（门控不挡首帧）',
+            $gatedRuns === 1 && $gatedArgs === ['同'],
+            'runs=' . $gatedRuns . ' args=' . json_encode($gatedArgs)
+        );
+
+        $store->setText('同');   // 内容不变，但 select 会 new 一个新对象
+        check(
+            'State · 内容相同的新实例被 equals 挡住（不重建）',
+            !$gatedElement->state()->needsBuild(),
+            '值对象门控没生效 ⇒ 应用侧没理由删掉自己那份 100 行'
+        );
+
+        $store->setText('不同');
+        check('State · 内容变了 ⇒ 标脏', $gatedElement->state()->needsBuild(), '没标脏');
+        $gatedElement->rebuild();
+        check(
+            'State · 重建后拿到新值',
+            $gatedRuns === 2 && $gatedArgs === ['同', '不同'],
+            'runs=' . $gatedRuns . ' args=' . json_encode($gatedArgs)
+        );
+        $gatedElement->unmount();
+
+        $this->flushChecks();
+    }
+
+    public function testWithoutSelectBuilderTakesNoArguments(): void    {
         $ctx = smokeContext();
 
         $store = new FakeStore();
@@ -116,5 +196,38 @@ final class SubjectBuilderTest extends SmokeTestCase
         $plainElement->unmount();
 
         $this->flushChecks();
+    }
+}
+
+/**
+ * 值对象（只为"每次 select 都新建一个"这件事服务 —— 应用里的 `StatusMessage`
+ * 就是这个形状）。
+ */
+final class Value
+{
+    public function __construct(public readonly string $text)
+    {
+    }
+
+    public function equals(self $other): bool
+    {
+        return $this->text === $other->text;
+    }
+}
+
+/** 能发任意文本的 `Subject`（`FakeStore` 只有 int 字段，够不着"值对象"这一面） */
+final class ValueSubject extends Subject
+{
+    private string $text = '同';
+
+    public function text(): string
+    {
+        return $this->text;
+    }
+
+    public function setText(string $text): void
+    {
+        $this->text = $text;
+        $this->notifyChanged();
     }
 }

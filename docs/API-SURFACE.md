@@ -11,7 +11,7 @@
 
 | 层 | @api | @internal |
 |---|---|---|
-| App | 83 | 51 |
+| App | 85 | 51 |
 | Async | 18 | 4 |
 | Commands | 7 | 0 |
 | Core | 2 | 50 |
@@ -23,17 +23,17 @@
 | Platform | 21 | 16 |
 | Rendering | 34 | 1 |
 | Routing | 8 | 6 |
-| State | 16 | 7 |
+| State | 17 | 8 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
 | Widget | 173 | 206 |
-| **合计** | **480** | **398** |
+| **合计** | **483** | **399** |
 
-覆盖 384 个文件 · 描述性提及 32 处（grep 口径的污染源，不计入）
+覆盖 385 个文件 · 描述性提及 32 处（grep 口径的污染源，不计入）
 
 ## App 层
 
-### @api（应用可读面） · 83
+### @api（应用可读面） · 85
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -94,6 +94,8 @@
 | `Job::run()` | method | src/App/Job.php |
 | `JobProgress` | class | src/App/JobProgress.php |
 | `JobProgress::report()` | method | src/App/JobProgress.php |
+| `JobRunner` | class | src/App/JobRunner.php |
+| `JobRunner::exec()` | method | src/App/JobRunner.php |
 | `NamedJob` | interface | src/App/NamedJob.php |
 | `Paths` | class | src/App/Paths.php |
 | `Paths::userConfig()` | method | src/App/Paths.php |
@@ -605,7 +607,7 @@
 
 ## State 层
 
-### @api（应用可读面） · 16
+### @api（应用可读面） · 17
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -622,11 +624,12 @@
 | `SubjectBuilder` | class | src/State/SubjectBuilder.php |
 | `SubjectBuilder::make()` | method | src/State/SubjectBuilder.php |
 | `SubjectBuilder::select()` | method | src/State/SubjectBuilder.php |
+| `SubjectBuilder::equals()` | method | src/State/SubjectBuilder.php |
 | `SubjectBuilder::builder()` | method | src/State/SubjectBuilder.php |
 | `SubscribingWidget` | interface | src/State/SubscribingWidget.php |
 | `Subscription` | class | src/State/Subscription.php |
 
-### @internal（框架内部） · 7
+### @internal（框架内部） · 8
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -635,6 +638,7 @@
 | `SubjectBuilder::source()` | method | src/State/SubjectBuilder.php |
 | `SubjectBuilder::selectFn()` | method | src/State/SubjectBuilder.php |
 | `SubjectBuilder::builderFn()` | method | src/State/SubjectBuilder.php |
+| `SubjectBuilder::equalsFn()` | method | src/State/SubjectBuilder.php |
 | `SubjectBuilderState` | class | src/State/SubjectBuilder.php |
 | `Subscription::of()` | method | src/State/Subscription.php |
 
