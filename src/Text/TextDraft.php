@@ -50,6 +50,42 @@ final class TextDraft
     private int $extent;
 
     /**
+     * 撤销栈：每项 = 一次可撤销动作**之前**的完整状态 `[文本, 插入符, 锚点, 活动端]`。
+     *
+     * ★ **快照而不是逆操作**。`TextDraft` 的每个动作已经是原子操作，但它的逆不是
+     *   —— `deleteBackward()` 删掉的可能是一个字素簇（多个码位），"插回去"要知道
+     *   当时删了几个码位、每个几字节；IME 组合期的一次 `insert` 更是增量拼接，
+     *   逆操作得知道整条组合串。快照把这些全部绕过：一个字段 200 字符 × 100 步
+     *   ≈ 20 KB，而逆操作写错的表现是"撤销之后文本坏了"，比多占内存坏得多。
+     *
+     * @var list<array{0: string, 1: int, 2: int, 3: int}>
+     */
+    private array $undo = [];
+
+    /** @var list<array{0: string, 1: int, 2: int, 3: int}> 重做栈（结构同 `$undo`） */
+    private array $redo = [];
+
+    /**
+     * 上一次入栈的动作类别，**只用于合并连续同类动作**：`'type'` / `'delete'` / `null`。
+     *
+     * `null` = 下一个动作一定独立入栈（光标移动、选区变化、撤销/重做之后都是）。
+     *
+     * ★ 合并**不按时间窗**：§14 要求"不读环境时钟"，而按时间判断还得让每次按键
+     *   都问一次时钟。按"同类且连续"合并的规则是纯逻辑的、可测的，且顺手解决了
+     *   IME 组合期：组合串每更新一次都是一次 `insert`，全都是 `'type'` 且连续
+     *   ⇒ 自动并成一步，不会出现"撤销一次只退掉一个拼音字母"。
+     */
+    private ?string $lastKind = null;
+
+    /**
+     * 撤销栈上限，超过就丢最旧的。
+     *
+     * 100 而不是无限：一页有几十个输入框，每个字段一份无限栈是**隐蔽的内存增长**，
+     * 而 100 步已经远超"发现写错了往回退"的实际需要。
+     */
+    private const int UNDO_LIMIT = 100;
+
+    /**
      * @param string $text 初值；插入符落在末尾（与"外部推来一个值"同一条约定）
      */
     public function __construct(string $text = '')
@@ -110,6 +146,12 @@ final class TextDraft
      *
      * ★ **同值不动**：否则调用方每帧重传同一个值都会把插入符打回末尾，
      *   "用户正在中间插入时跟手不丢"这条承诺直接失效。
+     *
+     * ★ **不进撤销栈，而且把栈清空**。这是外部赋值而不是用户编辑：受控组件每次
+     *   重建都会把 `value()` 灌进来，若这些进了栈，历史会被"同一个值的重复赋值"
+     *   淹没；若只是不进栈而留着旧历史，撤销就会退到一个**已经被外部数据取代**的
+     *   文本上（栈里的快照与实际文本不再连续）—— 那是"撤销把新数据撤没了"。
+     *   浏览器对 `input.value = x` 也是这个行为（重置 undo 栈）。
      */
     public function setText(string $text): TextChange
     {
@@ -120,6 +162,7 @@ final class TextDraft
         $this->buffer = $text;
         $this->caret = \strlen($text);
         $this->collapse();
+        $this->forgetHistory();
 
         return TextChange::Text;
     }
@@ -145,6 +188,7 @@ final class TextDraft
         return $this->applyText(
             \substr($this->buffer, 0, $this->caret) . $text . \substr($this->buffer, $this->caret),
             $this->caret + \strlen($text),
+            'type',
         );
     }
 
@@ -180,6 +224,7 @@ final class TextDraft
         return $this->applyText(
             \substr($this->buffer, 0, $start) . \substr($this->buffer, $this->caret),
             $start,
+            'delete',
         );
     }
 
@@ -208,6 +253,7 @@ final class TextDraft
         return $this->applyText(
             \substr($this->buffer, 0, $this->caret) . \substr($this->buffer, $end),
             $this->caret,
+            'delete',
         );
     }
 
@@ -229,6 +275,7 @@ final class TextDraft
 
         $this->caret = $snapped;
         $this->collapse();   // 不带 Shift 的移动 = 折叠选区
+        $this->breakMerge();
 
         return TextChange::Caret;
     }
@@ -253,6 +300,7 @@ final class TextDraft
         $this->anchor = 0;
         $this->extent = $end;
         $this->caret = $end;
+        $this->breakMerge();
 
         return TextChange::Caret;
     }
@@ -265,6 +313,7 @@ final class TextDraft
         }
 
         $this->collapse();
+        $this->breakMerge();
 
         return TextChange::Caret;
     }
@@ -286,6 +335,7 @@ final class TextDraft
 
         $this->caret = $snapped;
         $this->extent = $snapped;
+        $this->breakMerge();
 
         return TextChange::Caret;
     }
@@ -316,6 +366,7 @@ final class TextDraft
         $this->anchor = $from;
         $this->extent = $to;
         $this->caret = $to;
+        $this->breakMerge();
 
         return TextChange::Caret;
     }
@@ -360,11 +411,16 @@ final class TextDraft
             // 替换成同一段文本 ⇒ 缓冲没变，但选区必须收口（用户确实按了删除）
             $this->caret = $start + \strlen($text);
             $this->collapse();
+            $this->breakMerge();
 
             return TextChange::Caret;
         }
 
-        return $this->applyText($next, $start + \strlen($text));
+        // ★ `$text === ''` 归成 `'delete'`：语义上"替换成空串"就是删除。
+        //   当前布局下它产生不了合并效果（删选区之前必然先有一次选区操作，
+        //   那次已经 `breakMerge()` 了），但 `applyText()` 的 kind **不给默认值**
+        //   —— 每个调用点都必须表态，而"这是删除"就是它的表态。
+        return $this->applyText($next, $start + \strlen($text), $text === '' ? 'delete' : 'type');
     }
 
     /** 删掉选区（无选区 ⇒ 无事发生） */
@@ -375,6 +431,56 @@ final class TextDraft
         }
 
         return $this->replaceSelection('');
+    }
+
+    // ── 撤销 / 重做 ──────────────────────────────────────────────────────
+
+    /**
+     * 撤销一步（`Ctrl+Z`）。没有可撤的 ⇒ `null`。
+     *
+     * ★ 返回 `null` 而不是 `TextChange::None`：两者对调用方是**不同的问题** ——
+     *   `null` 是"这一步根本不存在"（栈空），`None` 是"撤了，但文本没变"（不可能
+     *   发生，快照不变量保证每次撤销都改文本）。`TextKeymap` 靠这个区分"吞掉按键"
+     *   与"键不归编辑管"。
+     *
+     * ★ 撤销恢复**选区**，不只是文本。撤销一次"选中后覆盖"再撤销，高亮应该回到
+     *   覆盖前那一段 —— 只回文本不回选区，用户看到的是"文本对了但高亮没了"。
+     */
+    public function undo(): ?TextChange
+    {
+        $snapshot = \array_pop($this->undo);
+        if ($snapshot === null) {
+            return null;
+        }
+
+        $this->redo[] = $this->capture();
+        $this->lastKind = null;   // 撤销之后的新编辑不许和前一段合并
+
+        return $this->restore($snapshot);
+    }
+
+    /** 重做一步（`Ctrl+Y` / `Ctrl+Shift+Z`）。没有可重做的 ⇒ `null`。 */
+    public function redo(): ?TextChange
+    {
+        $snapshot = \array_pop($this->redo);
+        if ($snapshot === null) {
+            return null;
+        }
+
+        $this->undo[] = $this->capture();
+        $this->lastKind = null;
+
+        return $this->restore($snapshot);
+    }
+
+    public function canUndo(): bool
+    {
+        return $this->undo !== [];
+    }
+
+    public function canRedo(): bool
+    {
+        return $this->redo !== [];
     }
 
     // ── 边界换算 ────────────────────────────────────────────────────────
@@ -485,16 +591,82 @@ final class TextDraft
         $this->extent = $this->caret;
     }
 
+    // ── 撤销栈（`applyText()` 是唯一入栈点，见那里的注释）──────────────────
+
+    /**
+     * 入栈"这次动作之前"的状态；**同类且连续**的动作不重复入栈（合并成一步）。
+     *
+     * 合并的条件只有"上一次也是同一类" —— 中间只要有过光标移动 / 选区变化 /
+     * 撤销 / 外部推值（它们都会 `breakMerge()` 或清栈），就重开一步。
+     * 于是"打 10 个字"是一步、"打 5 个字 → 换个位置 → 再打 5 个"是两步。
+     */
+    private function snapshot(string $kind): void
+    {
+        if ($this->lastKind === $kind && $this->undo !== []) {
+            return;   // 栈顶已经是这一串连续动作开始前的状态
+        }
+
+        $this->undo[] = $this->capture();
+        if (\count($this->undo) > self::UNDO_LIMIT) {
+            \array_shift($this->undo);
+        }
+
+        $this->lastKind = $kind;
+    }
+
+    /** @return array{0: string, 1: int, 2: int, 3: int} */
+    private function capture(): array
+    {
+        return [$this->buffer, $this->caret, $this->anchor, $this->extent];
+    }
+
+    /** @param array{0: string, 1: int, 2: int, 3: int} $snapshot */
+    private function restore(array $snapshot): TextChange
+    {
+        [$text, $this->caret, $this->anchor, $this->extent] = $snapshot;
+
+        $changed = $this->buffer !== $text;
+        $this->buffer = $text;
+
+        // ★ 比较而不是直接报 `Text`：快照不变量保证文本一定变，但"保证"和
+        //   "断言"不是一回事 —— 直接报会在不变量被将来的改动破坏时**撒谎**，
+        //   而这条谎不会报错，只会让调用方少通知一次 `onChanged`（静默）。
+        return $changed ? TextChange::Text : TextChange::Caret;
+    }
+
+    /** 丢弃全部历史 —— 外部推值之后栈里的快照与当前文本不再连续 */
+    private function forgetHistory(): void
+    {
+        $this->undo = [];
+        $this->redo = [];
+        $this->lastKind = null;
+    }
+
+    /** 打断合并：发生了非文本改动（光标 / 选区），下一次文本改动要独立成一步 */
+    private function breakMerge(): void
+    {
+        $this->lastKind = null;
+    }
     /**
      * 落一次**文本改动**：改缓冲、移插入符、折叠选区。
      *
-     * ★ 所有改文本的路径都收口到这里 ⇒ "文本一变就折叠选区"只有一处实现。
+     * ★ 所有改文本的路径都收口到这里 ⇒ "文本一变就折叠选区"只有一处实现，
+     *   撤销的**入栈点也只有一处**（否则每加一个编辑动作就要记得补一次入栈，
+     *   漏掉的那个动作的表现是"打字能撤、粘贴不能撤"，不报错）。
+     *
+     * @param string $kind 动作类别（`'type'` / `'delete'`）—— **不给默认值**：
+     *        加新的编辑动作时由编译器逼着表态"它该和谁合并"
      */
-    private function applyText(string $next, int $caret): TextChange
+    private function applyText(string $next, int $caret, string $kind): TextChange
     {
+        $this->snapshot($kind);
+
         $this->buffer = $next;
         $this->caret = $caret;
         $this->collapse();
+
+        // 新编辑让"重做"失去意义（撤销树分叉只有"从当前点重开一支"这一种解）
+        $this->redo = [];
 
         return TextChange::Text;
     }

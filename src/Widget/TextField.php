@@ -61,7 +61,14 @@ final class TextField extends StatefulWidget implements SemanticsValueEditable
         $this->semantics(SemanticsRole::TextField);
         // §9.1 让位规则 ②：`Ctrl+A`（全选）归编辑命令 —— 声明独占后加速键
         // 不给它抢（焦点在输入框时 `claims()` 为真，第 ① 环让位）。
-        $this->claimKeys([KeyChord::ctrl('A')]);
+        // `Ctrl+Z` / `Ctrl+Y` / `Ctrl+Shift+Z` 同理：焦点在输入框里，撤销归**这个
+        // 输入框**，应用不能把同一个键同时绑成"撤销表格里那一行"。
+        $this->claimKeys([
+            KeyChord::ctrl('A'),
+            KeyChord::ctrl('Z'),
+            KeyChord::ctrl('Y'),
+            KeyChord::make('Z', ctrl: true, shift: true),
+        ]);
     }
 
     /** 唯一入口 —— 必填项由链式给（`value()` 才是必填，`make()` 不吃参数，§A.2.9） */

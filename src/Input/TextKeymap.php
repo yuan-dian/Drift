@@ -44,6 +44,24 @@ final class TextKeymap
     {
         $chord = $event->chord;
 
+        // ── 撤销 / 重做 ──────────────────────────────────────────────────
+
+        // ★ 栈空时返回 `TextChange::None` 而**不是** `null`。这个键归编辑管
+        //   （焦点在输入框里按 `Ctrl+Z` 就是撤销输入），栈空只是"没得撤"。
+        //   返回 `null` 会让它静默穿过编辑器落到应用的加速键上 —— 现象是
+        //   "在输入框里按 `Ctrl+Z`，撤销的是表格里别的东西"，比"没反应"难查得多。
+        if ($chord->is(KeyChord::ctrl('Z'))) {
+            return $draft->undo() ?? TextChange::None;
+        }
+
+        // ★ 两种重做都要：Windows 上 `Ctrl+Y` 与 `Ctrl+Shift+Z` 都通行，
+        //   GTK/macOS 主要用后者。`KeyChord::is()` 是**全字段比较** ⇒ 这两个
+        //   与上面的 `Ctrl+Z` 不会互相误吞（`Ctrl+Shift+Z` 在 `Ctrl+Z` 不匹配）。
+        if ($chord->is(KeyChord::ctrl('Y'))
+            || $chord->is(KeyChord::make('Z', ctrl: true, shift: true))) {
+            return $draft->redo() ?? TextChange::None;
+        }
+
         // ── 删除 ────────────────────────────────────────────────────────
 
         if ($chord->is(KeyChord::backspace())) {

@@ -258,6 +258,58 @@ final class TextKeymapTest extends TestCase
     }
 
     /**
+     * `Ctrl+Z` / `Ctrl+Y` 映射到撤销 / 重做；且**撤销之后重做栈才有东西**。
+     *
+     * ★ 两个方向都要断言：只测 `Ctrl+Z` 的话，把 `Ctrl+Y` 也接到 `undo()`
+     *   同样能过（现象是"按重做又撤了一步"，且不报错）。
+     */
+    public function testCtrlZAndCtrlYMapToUndoRedo(): void
+    {
+        $draft = new TextDraft('');
+        $draft->insert('ab');
+
+        self::assertSame(TextChange::Text, TextKeymap::apply($draft, KeyEvent::down(KeyChord::ctrl('Z'))));
+        self::assertSame('', $draft->text());
+
+        self::assertSame(TextChange::Text, TextKeymap::apply($draft, KeyEvent::down(KeyChord::ctrl('Y'))));
+        self::assertSame('ab', $draft->text(), 'Ctrl+Y 必须是重做，不是再撤一步');
+    }
+
+    /**
+     * `Ctrl+Shift+Z` 也是重做（Windows 与 GTK/macOS 都通行）。
+     *
+     * ★ 这条钉的是 `KeyChord::is()` 的**全字段比较**：若它是"至少包含 ctrl"的
+     *   宽松匹配，`Ctrl+Shift+Z` 会先被 `Ctrl+Z` 那条命中 ⇒ 按重做反而又撤一步。
+     */
+    public function testCtrlShiftZAlsoRedoes(): void
+    {
+        $draft = new TextDraft('');
+        $draft->insert('ab');
+        TextKeymap::apply($draft, KeyEvent::down(KeyChord::ctrl('Z')));
+        self::assertSame('', $draft->text());
+
+        $chord = KeyChord::make('Z', ctrl: true, shift: true);
+        self::assertSame(TextChange::Text, TextKeymap::apply($draft, KeyEvent::down($chord)));
+        self::assertSame('ab', $draft->text());
+    }
+
+    /**
+     * 栈空时按 `Ctrl+Z` ⇒ `TextChange::None`，**不是** `null`。
+     *
+     * ★ 这是本组最重要的一条反例。返回 `null` 意味着"这个键不归编辑管"⇒ 它会
+     *   静默穿过编辑器落到应用的加速键上，现象是"在输入框里按 Ctrl+Z，撤销的是
+     *   表格里别的东西"。栈空只是"没得撤"，键仍然归编辑管。
+     */
+    public function testEmptyUndoStackStillConsumesTheKey(): void
+    {
+        $draft = new TextDraft('abc');
+
+        self::assertSame(TextChange::None, TextKeymap::apply($draft, KeyEvent::down(KeyChord::ctrl('Z'))));
+        self::assertSame(TextChange::None, TextKeymap::apply($draft, KeyEvent::down(KeyChord::ctrl('Y'))));
+        self::assertSame('abc', $draft->text());
+    }
+
+    /**
      * 管了但没动 ⇒ `TextChange::None`（**不是** `null`）。
      *
      * ★ 空文本按退格、插入符已在行首再按 Home 都是这种情形：按键必须被消费
