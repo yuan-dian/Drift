@@ -7,7 +7,7 @@ use Drift\Geometry\Rect;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
 use Drift\Layout\RenderBox;
-use Drift\Layout\RenderTextField;
+use Drift\Layout\TextInputBox;
 use Drift\Widget\EditableText;
 use Drift\Widget\States;
 
@@ -108,17 +108,22 @@ final class TextEditingBridge
      * ★ 有 `label()` 的字段 build() 出来是 `Column[Text, 字段]` ⇒ 焦点元素的
      *   `effectiveBox()` 是 Column 的盒；拿它算 x 偏移会整体错一个标签宽
      *   （2026-10-19 IME 候选框贴角的同一个坑）。
+     *
+     * ★★ 按 **`TextInputBox` 接口**找，不按具体类（2026-11-03）：原先写死
+     *   `RenderTextField::class` ⇒ 多行框（`RenderTextArea`）**拖选静默失效**
+     *   —— 点下去不动、拖不动、不报错。这正是 `EditableText` 接口存在的同一条理由：
+     *   框架核心不认识具体控件。
      */
-    private function textSelectBox(EditableText $state): ?RenderTextField
+    private function textSelectBox(EditableText $state): (RenderBox&TextInputBox)|null
     {
         $focused = $this->host->focus()?->focused();
         if (States::of($focused) !== $state) {
             return null;
         }
 
-        /** @var RenderTextField|null $box */
-        $box = $focused->findBoxOf(RenderTextField::class);
+        $box = $focused->findBox(static fn(RenderBox $b): bool => $b instanceof TextInputBox);
 
+        /** @var (RenderBox&TextInputBox)|null $box */
         return $box;
     }
 
@@ -128,9 +133,10 @@ final class TextEditingBridge
      *
      * ★ `moveCaret()` 折叠既有选区 —— "点一下 = 重新定位"（与各平台一致），
      *   选区靠随后的拖动重建，不继承上一轮。
-     * ★ `offsetAt()` 收**盒内** x（它自己减左内边距）⇒ 先扣掉盒的绝对原点。
+     * ★ 收**盒内**坐标（盒自己再减内边距与滚动偏移）⇒ 先扣掉盒的绝对原点。
+     * ★ `$y` 是必须的：多行框要知道落在哪一行（单行盒忽略它）。
      */
-    public function beginTextSelection(float $x): void
+    public function beginTextSelection(float $x, float $y): void
     {
         $state = $this->editingText();
         if ($state === null) {
@@ -142,12 +148,12 @@ final class TextEditingBridge
             return;
         }
 
-        [$originX] = RenderBox::absoluteOrigin($box);
+        [$originX, $originY] = RenderBox::absoluteOrigin($box);
         $padLeft = $box->contentOriginX();
-        // ★ `offsetAt()` 要的是**内容盒** x（它自己再减一次 `insets->left`）⇒
+        // ★ `offsetAtPoint()` 要的是**内容盒**坐标（它自己再减一次 `insets`）⇒
         //   先扣边框盒原点，再扣 padding（`02` §4.1.1）。漏了 ⇒ 插入符落点偏右
         //   一个 padding，点到的是后面几个字。
-        $state->moveCaret($box->offsetAt($x - $originX - $padLeft));
+        $state->moveCaret($box->offsetAtPoint($x - $originX - $padLeft, $y - $originY));
 
         $this->textSelect = $state;
     }
@@ -159,7 +165,7 @@ final class TextEditingBridge
      * ★ 无进行中的手势（`down` 不在输入框上）⇒ 直接返回（调用方不需要
      *   先问"有没有手势"）。
      */
-    public function extendTextSelection(float $x): void
+    public function extendTextSelection(float $x, float $y): void
     {
         $state = $this->textSelect;
         if ($state === null) {
@@ -173,10 +179,10 @@ final class TextEditingBridge
             return;
         }
 
-        [$originX] = RenderBox::absoluteOrigin($box);
+        [$originX, $originY] = RenderBox::absoluteOrigin($box);
         $padLeft = $box->contentOriginX();
-        // ★ 同 `beginTextSelection()`：`offsetAt()` 收内容盒 x。
-        $state->extendSelectionTo($box->offsetAt($x - $originX - $padLeft));
+        // ★ 同 `beginTextSelection()`：`offsetAtPoint()` 收内容盒坐标。
+        $state->extendSelectionTo($box->offsetAtPoint($x - $originX - $padLeft, $y - $originY));
     }
 
     /**

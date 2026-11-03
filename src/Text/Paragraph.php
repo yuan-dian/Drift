@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Text;
 
+use Drift\Geometry\Rect;
 use Drift\Geometry\Scale;
 
 /**
@@ -120,15 +121,113 @@ final readonly class Paragraph
         return $line->textStart + $line->textLength;
     }
 
-    /** 某个字节偏移落在第几行 */
+    /**
+     * 某个字节偏移落在第几行。
+     *
+     * ★ 判据是「**最后一个行首 ≤ offset 的行**」，不是「offset 落在本行区间内」。
+     *   后者对**空行**永远为假（`textLength` 为 0 ⇒ `offset < 行首` 恒不成立），
+     *   于是空行上的插入点会翻到下一行 —— 多行输入框里表现为"空行上按右键，
+     *   插入符跳到下一行行首"。换行符本身也因此归**上一行**（插入符画在该行行末），
+     *   与所有编辑器的观感一致。
+     */
     public function lineIndexAt(int $byteOffset): int
     {
+        $found = 0;
         foreach ($this->lines as $index => $line) {
-            if ($byteOffset < $line->textStart + $line->textLength) {
-                return $index;
+            if ($line->textStart > $byteOffset) {
+                break;
+            }
+            $found = $index;
+        }
+
+        return $found;
+    }
+
+    /**
+     * 字节偏移 ⇒ 插入点 x（**段落局部**，已含对齐后的行起点 `offsetX`）。
+     *
+     * ★ `indexAt()` 的反向，必须与它同住一处：多行输入框的插入符、选区端点、
+     *   IME 候选窗位置全要这条换算。在外面重写一遍就是第二个答案。
+     *
+     * ★ 行内位置**只能靠累加字形 advance 得到**：单行输入框那种
+     *   `advance(前缀)` 在这里不成立 —— 前缀跨行时量出来的是整段宽度。
+     */
+    public function caretX(int $offset): float
+    {
+        if ($this->lines === []) {
+            return 0.0;
+        }
+
+        return $this->caretXInLine($this->lineIndexAt($offset), $offset);
+    }
+
+    /** 第 `$index` 行的行框（段落局部坐标） */
+    public function lineRect(int $index): Rect
+    {
+        if (!isset($this->lines[$index])) {
+            return new Rect(0.0, 0.0, 0.0, 0.0);
+        }
+
+        $line = $this->lines[$index];
+
+        return new Rect($line->offsetX, $line->top, $line->width, $line->height);
+    }
+
+    /**
+     * 选区覆盖的矩形，**每行一段**。
+     *
+     * ★ 多行选区不是单个矩形 —— 用一整个盒子框住会把行尾之外的空白也涂上，
+     *   与所有主流实现（Win32 `EDIT`、Qt、浏览器）的观感都不同。
+     * ★ 空行段宽度为 0：宽度由调用方补（它才知道插入符多粗），段落层不猜。
+     *
+     * @return list<Rect>
+     */
+    public function selectionRects(int $start, int $end): array
+    {
+        if ($end <= $start || $this->lines === []) {
+            return [];
+        }
+
+        $first = $this->lineIndexAt($start);
+        $last = $this->lineIndexAt($end);
+
+        $rects = [];
+        for ($index = $first; $index <= $last; $index++) {
+            $line = $this->lines[$index];
+            $lineEnd = $line->textStart + $line->textLength;
+
+            // ★ 端点归属本行：末行取到 `$end`，其余行取到行尾。`caretX()` 不能
+            //   直接用于行尾 —— 它按 `lineIndexAt()` 定位，行尾会翻到下一行行首。
+            $from = max($start, $line->textStart);
+            $to = min($end, $lineEnd);
+            if ($to < $from) {
+                continue;
+            }
+
+            $left = $this->caretXInLine($index, $from);
+            $rects[] = new Rect($left, $line->top, $this->caretXInLine($index, $to) - $left, $line->height);
+        }
+
+        return $rects;
+    }
+
+    /** 行内 `$offset` 的 x —— `caretX()` 与 `selectionRects()` 的唯一换算 */
+    private function caretXInLine(int $index, int $offset): float
+    {
+        $line = $this->lines[$index];
+        $pen = $line->offsetX;
+
+        foreach ($line->runs as $run) {
+            foreach ($run->glyphs as $glyph) {
+                // cluster 是字形在源文本里的起始字节；落在这个字形之前 ⇒ 就是它左边
+                if ($glyph->cluster >= $offset) {
+                    return $pen;
+                }
+                $pen += $glyph->advance;
             }
         }
-        return max(0, count($this->lines) - 1);
+
+        return $pen;
     }
 
     /**

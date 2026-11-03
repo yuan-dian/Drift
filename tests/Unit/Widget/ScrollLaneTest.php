@@ -221,19 +221,21 @@ final class ScrollLaneTest extends SmokeTestCase
     }
 
     /**
-     * 量具自证：扫描真的找到了三个 `Scrollable` 实现。
+     * 量具自证：扫描真的找到了四个 `Scrollable` 实现。
      *
      * ★ 没有这条，`testScrollableStatesDoNotOwnTheMachinery` 在"路径写错 / 正则
      *   写坏 / 目录改名"时**恒绿**（0 个文件当然没有违规）。
+     * ★ 实现增加时**这个数字要跟着改**（`TextAreaState` 是 2026-11-03 加的第四个）——
+     *   量具自证本身就要求"数字是人对过的"，自动跟随就失去了自证的意义。
      */
     public function testTheGaugeSeesAllScrollableStates(): void
     {
         $found = \array_keys(self::scrollableStates());
 
         check(
-            'ScrollLane · 量具自证：src 里确实有 3 个 `implements Scrollable` 的 State'
+            'ScrollLane · 量具自证：src 里确实有 4 个 `implements Scrollable` 的 State'
             . '（扫描没写坏）',
-            \count($found) === 3,
+            \count($found) === 4,
             '实际 ' . \count($found) . ' 个：' . \implode(', ', \array_map('\basename', $found)),
         );
 

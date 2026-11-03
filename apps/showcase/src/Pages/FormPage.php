@@ -21,6 +21,7 @@ use Drift\Widget\Spacer;
 use Drift\Widget\State;
 use Drift\Widget\StatefulWidget;
 use Drift\Widget\Text;
+use Drift\Widget\TextArea;
 use Drift\Widget\TextField;
 use Drift\Widget\Toggle;
 use Drift\Widget\Widget;
@@ -78,6 +79,12 @@ final class FormState extends State
     /** 选择类控件的受控值（2026-10-21 新增，Checkbox / Radio / Toggle 的真实消费者） */
     private bool $agree = true;
 
+    /** 多行输入的受控值（2026-11-03 新增，`TextArea` 的消费者） */
+    private string $note = "第一行\n第二行";
+
+    /** `Ctrl+Enter` 提交后回显的文本（提交与换行是两件事，本页演示这条分界） */
+    private string $submittedNote = '';
+
     private string $size = 'm';
 
     private bool $notify = false;
@@ -127,6 +134,27 @@ final class FormState extends State
                 TextField::make()->label('目标')->value($this->editDst)
                     ->onChanged(fn(string $v) => $this->editDst = $v),
             ]),
+
+            // ── H3「多行输入」：TextArea（2026-11-03 新增）──
+            //   与 TextField 是**两个控件**（不是 maxLines 开关）：单行盒的插入符
+            //   几何靠 `advance(前缀)` 一次量得，多行必须逐字形累加 + 行号 + 垂直偏移。
+            //   演示三件事：Enter 换行 / Ctrl+Enter 提交 / 上下键跨行保持列。
+            $this->sectionBar('多行输入（TextArea）'),
+            Text::make('Enter 换行、Ctrl+Enter 提交；上下方向键跨行时保持列（在第一行长、第二行短的地方按 ↓ 最明显）。')
+                ->caption(),
+            TextArea::make()
+                ->label('备注')
+                ->placeholder('多行文本')
+                ->value($this->note)
+                ->minLines(4)
+                ->onChanged(fn(string $v) => $this->note = $v)
+                ->onSubmitted(function (string $v): void {
+                    $this->setState(function () use ($v): void {
+                        $this->submittedNote = $v;
+                    });
+                }),
+            Text::make($this->submittedNote === '' ? 'Ctrl+Enter 之后这里显示提交的文本' : '已提交：' . str_replace("\n", ' / ', $this->submittedNote))
+                ->caption(),
 
             // ── H3「选择类控件」：Checkbox / Radio / Toggle（2026-10-21 新增）──
             //   三个控件都是**受控**的：值住 State，点击只回调新值（与 TextField 同纪律）。

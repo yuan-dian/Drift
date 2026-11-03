@@ -44,7 +44,7 @@ use Drift\Text\TextStyle;
  *
  * @api
  */
-final class RenderTextField extends RenderBox
+final class RenderTextField extends RenderBox implements TextInputBox
 {
     private ?Paragraph $paragraph = null;
 
@@ -200,6 +200,19 @@ final class RenderTextField extends RenderBox
             $this->metrics,
             $this->scale,
         );
+    }
+
+    /**
+     * `TextInputBox`：盒内 `(x, y)` ⇒ 插入点。
+     *
+     * ★ `y` **被忽略**：单行框只有一个字符间隙序列，点在上边还是下边都是同一个
+     *   落点。这不是偷懒 —— 单行输入框里"点空了"没有语义（用户可以点框内任何
+     *   高度来定位）。
+     */
+    #[\Override]
+    public function offsetAtPoint(float $x, float $y): int
+    {
+        return $this->offsetAt($x);
     }
 
     /**

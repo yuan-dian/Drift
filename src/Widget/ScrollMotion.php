@@ -34,7 +34,7 @@ namespace Drift\Widget;
  *   将来真接触摸时，fling 只是"给同一个 `AnimatedValue` 一个非零初速 + 换衰减曲线"，
  *   本类不用改形状。
  *
- * @internal 只给 `Scrollable` 的三个实现用
+ * @internal 只给 `Scrollable` 的实现用（当前四个：全量 / 虚拟化 / 表格 / 多行输入）
  */
 final class ScrollMotion
 {

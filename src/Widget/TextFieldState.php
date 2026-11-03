@@ -5,13 +5,8 @@ namespace Drift\Widget;
 
 use Drift\Errors;
 use Drift\Geometry\Rect;
-use Drift\Input\KeyChord;
-use Drift\Input\KeyEvent;
-use Drift\Input\TextKeymap;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderTextField;
-use Drift\Text\TextChange;
-use Drift\Text\TextDraft;
 
 /**
  * `TextField` 的纯 UI 态（§11.5 / §12.3）。
@@ -21,15 +16,10 @@ use Drift\Text\TextDraft;
  *   "选中 / 焦点 / **编辑中** / 滚动"）。落库是 `onChanged` 之后调用方的事。
  *
  * ★ **文本状态机不在本类**：缓冲 / 插入符 / 选区的字节数学（含"按码位删除、
- *   永不切半个汉字"）在 `Drift\Text\TextDraft`，与表格的单元格编辑**共用同一份**。
- *   本类只负责三件它独有的事：
- *   1. **焦点**（`beginEditing()` / `endEditing()` 是渲染态开关 —— §9.1"焦点是
- *      渲染态，不放业务值"，它决定插入符画不画）；
- *   2. **通知**（文本真变了才调 `onChanged`，只挪插入符不通知）；
- *   3. **渲染**（`build()` 出 `TextFieldBox`，盒里有插入符与选区几何）。
- *
- *   合成一个类会让"再来一个文本面"（表格单元格 / 将来的 `TextArea`）要么复制
- *   那套字节数学、要么继承一个带着焦点与渲染的类 —— 两条都是错的方向。
+ *   永不切半个汉字"）在 `Drift\Text\TextDraft`，与表格的单元格编辑**共用同一份**；
+ *   "焦点 / 通知 / 重画"这套与行数无关的行为在 `EditableTextState`，与
+ *   `TextAreaState` **共用同一份**。本类只剩**单行**特有的两件事：
+ *   `build()` 出哪个盒、`caretRect()` 从哪个盒上取。
  *
  * ★ **编辑态与焦点**：`FocusManager`（`Drift\App`）在焦点落到本字段时调
  *   `beginEditing()`、走开时调 `endEditing()`；按键经 `handleKey()` 翻译成编辑
@@ -37,219 +27,33 @@ use Drift\Text\TextDraft;
  *
  * @api
  */
-final class TextFieldState extends State implements EditableText
+final class TextFieldState extends EditableTextState
 {
-    /**
-     * 文本状态机（`initState()` 里按 `value()` 建；`didUpdateWidget()` 采纳新值）。
-     *
-     * ★ 声明成不可空 + 在 `initState()` 里赋值（而不是字段初始化器）：初值来自
-     *   Widget，`State` 构造时还拿不到 `widget()`。
-     */
-    private TextDraft $draft;
-
-    /** @internal 渲染态：在编辑中 ⇒ 画插入符 */
-    private bool $editing = false;
-
     #[\Override]
-    public function initState(): void
+    protected function controlledValue(): string
     {
-        // 初值来自 widget 的 value()（§A.2.9 的受控形态：值由外部给）
-        $this->draft = new TextDraft($this->field()->valueText());
+        return $this->field()->valueText();
     }
 
-    /**
-     * 外部推了新值 ⇒ 采纳它，并把插入符移到末尾。
-     *
-     * ★ **同值不动**由 `TextDraft::setText()` 保证：否则调用方每帧重传同一个值
-     *   都会把插入符打回末尾，用户正在中间插入时就"跟手输入不丢"这条承诺直接失效。
-     */
     #[\Override]
-    public function didUpdateWidget(Widget $widget): void
+    protected function adoptValue(Widget $widget): void
     {
-        parent::didUpdateWidget($widget);
-
         if (!$widget instanceof TextField) {
             return;
         }
 
-        $this->draft->setText($widget->valueText());
+        // ★ **同值不动**由 `TextDraft::setText()` 保证：否则调用方每帧重传同一个值
+        //   都会把插入符打回末尾，用户正在中间插入时就"跟手输入不丢"这条承诺直接失效。
+        $this->draft()->setText($widget->valueText());
     }
 
-    /** 当前文本（**已包含未提交的编辑**，与 `TextField::valueText()` 可能不同） */
-    public function text(): string
+    #[\Override]
+    protected function notifyChanged(string $text): void
     {
-        return $this->draft->text();
-    }
-
-    public function caretOffset(): int
-    {
-        return $this->draft->caretOffset();
-    }
-
-    public function isEditing(): bool
-    {
-        return $this->editing;
-    }
-
-    /**
-     * 焦点进出 ⇒ 编辑态。
-     *
-     * ★ 这条本来是 `FocusManager` 里的 `instanceof TextFieldState` 特例；2026-10-24
-     *   迁到 `State::didChangeFocus()`，框架不再认识具体控件。
-     */
-    public function didChangeFocus(bool $focused): void
-    {
-        if ($focused) {
-            $this->beginEditing();
-
-            return;
+        $handler = $this->field()->changedHandler();
+        if ($handler !== null) {
+            $handler($text);
         }
-
-        $this->endEditing();
-    }
-
-    /** 进入编辑态 ⇒ 插入符出现（M3 由 `FocusNode` 驱动） */
-    public function beginEditing(): void
-    {
-        if ($this->editing) {
-            return;
-        }
-        $this->editing = true;
-        $this->markDirty();
-    }
-
-    /** 退出编辑态 ⇒ 插入符消失；文本保留（不回滚 —— 回滚是调用方的事） */
-    public function endEditing(): void
-    {
-        // ★ 选区是编辑态的一部分 ⇒ **不管当前在不在编辑都收口**。早先的实现在
-        //   `!editing` 时早退，于是「不在编辑却有选区」这个状态能活下来
-        //   （屏幕上留一片来路不明的蓝，且下次进入编辑时它还在）。
-        //   smoke 的「endEditing() 清掉选区」就是那时候的红。
-        $hadSelection = $this->draft->hasSelection();
-        $this->draft->clearSelection();
-
-        if (!$this->editing && !$hadSelection) {
-            return;   // 两样都没有 ⇒ 真的无事发生（不标脏）
-        }
-
-        $this->editing = false;
-        $this->markDirty();
-    }
-
-    // ── 编辑动作：全部转给 `TextDraft`，本类只做"通知 + 重画" ──────────────
-
-    /** 在插入符处插入文本（有选区 ⇒ 整段替换，见 `TextDraft::insert()`） */
-    public function insert(string $text): void
-    {
-        $this->settle($this->draft->insert($text));
-    }
-
-    /** 退格：有选区删整段，否则按码位删前一个字符 */
-    public function deleteBackward(): void
-    {
-        $this->settle($this->draft->deleteBackward());
-    }
-
-    /** Delete：有选区删整段，否则按码位删后一个字符 */
-    public function deleteForward(): void
-    {
-        $this->settle($this->draft->deleteForward());
-    }
-
-    /** 移动插入符（字节偏移，吸附到字符边界）；折叠选区 */
-    public function moveCaret(int $offset): void
-    {
-        $this->settle($this->draft->moveCaret($offset));
-    }
-
-    public function moveCaretToEnd(): void
-    {
-        $this->settle($this->draft->moveCaretToEnd());
-    }
-
-    public function hasSelection(): bool
-    {
-        return $this->draft->hasSelection();
-    }
-
-    /** 选区起点（两个端里小的那个） */
-    public function selectionStart(): int
-    {
-        return $this->draft->selectionStart();
-    }
-
-    /** 选区终点（两个端里大的那个） */
-    public function selectionEnd(): int
-    {
-        return $this->draft->selectionEnd();
-    }
-
-    /** 选中的文本（无选区 ⇒ 空串） */
-    public function selectedText(): string
-    {
-        return $this->draft->selectedText();
-    }
-
-    /** 全选（`Ctrl+A`）；空文本没有"全选"这回事 */
-    public function selectAll(): void
-    {
-        $this->settle($this->draft->selectAll());
-    }
-
-    /** 折叠选区（两端都归位到插入符）；无选区 ⇒ 无事发生 */
-    public function clearSelection(): void
-    {
-        $this->settle($this->draft->clearSelection());
-    }
-
-    /** 扩展选区到 `$offset`（只挪活动端，锚点不动） */
-    public function extendSelectionTo(int $offset): void
-    {
-        $this->settle($this->draft->extendSelectionTo($offset));
-    }
-
-    /** 用 `$text` 整段替换选区；无选区 ⇒ 退化成在插入符处插入 */
-    public function replaceSelection(string $text): void
-    {
-        $this->settle($this->draft->replaceSelection($text));
-    }
-
-    /** 删掉选区（无选区 ⇒ 无事发生） */
-    public function deleteSelection(): void
-    {
-        $this->settle($this->draft->deleteSelection());
-    }
-
-    /**
-     * 处理一次按键（§9.1 路由链第 ③ 环落到这里）。
-     *
-     * ★ 编辑键（退格 / Delete / 方向 / Home / End / Shift+方向 / Ctrl+A / 文本）
-     *   走 `TextKeymap` —— 与表格单元格是**同一张表**，这里不再抄一遍。
-     *
-     * ★ 本方法只剩输入框自己的收口：`Esc` 有选区时吃掉它（各平台"取消选择"的
-     *   默认键），并**消费这次按键** —— 放行会让 `Application` 的
-     *   activateFocused 顺手把按钮触发掉。
-     *
-     * ★ 返回 `bool` 而不是 `void`：§9.1 的路由链要能问"这一环吃掉了没有"。
-     *   返回 `false` 时**不改任何状态**（不偷偷吞键）。
-     */
-    public function handleKey(KeyEvent $event): bool
-    {
-        $change = TextKeymap::apply($this->draft, $event);
-
-        if ($change !== null) {
-            $this->settle($change);
-
-            return true;
-        }
-
-        if ($event->chord->is(KeyChord::escape()) && $this->draft->hasSelection()) {
-            $this->settle($this->draft->clearSelection());
-
-            return true;
-        }
-
-        return false;
     }
 
     /**
@@ -265,6 +69,7 @@ final class TextFieldState extends State implements EditableText
      *
      * @return Rect|null `null` = 还没挂载出盒，或本字段没有渲染盒
      */
+    #[\Override]
     public function caretRect(): ?Rect
     {
         // ★ 必须**穿过包装层**找 `RenderTextField`：有 label 时 `build()` 返回
@@ -283,12 +88,12 @@ final class TextFieldState extends State implements EditableText
         $field = $this->field();
 
         $box = TextFieldBox::make(
-            $this->draft->text(),
+            $this->text(),
             $field->placeholderText(),
-            $this->editing ? $this->draft->caretOffset() : null,
+            $this->isEditing() ? $this->caretOffset() : null,
             // 选区恒给（相等即"无选区"）；焦点走开时 endEditing() 已清掉
-            $this->draft->selectionStart(),
-            $this->draft->selectionEnd(),
+            $this->selectionStart(),
+            $this->selectionEnd(),
         );
 
         $label = $field->labelText();
@@ -302,30 +107,6 @@ final class TextFieldState extends State implements EditableText
             Text::make($label)->caption(),
             $box,
         ]);
-    }
-
-    /**
-     * 收口一次编辑动作：**文本真变了才通知**，任何可见变化都重画。
-     *
-     * ★ 通知顺序与 2026-10-24 的实现一致（先 `onChanged` 再标脏）：调用方在
-     *   回调里读 `text()` 拿到的是**新值**，而不是"改之前"。
-     * ★ `TextChange::None` 直接早退 —— 发假通知会让调用方以为用户改了东西
-     *   （G2：宁可少报，不可错报）。
-     */
-    private function settle(TextChange $change): void
-    {
-        if ($change === TextChange::None) {
-            return;
-        }
-
-        if ($change === TextChange::Text) {
-            $handler = $this->field()->changedHandler();
-            if ($handler !== null) {
-                $handler($this->draft->text());
-            }
-        }
-
-        $this->markDirty();
     }
 
     private function field(): TextField

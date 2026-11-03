@@ -535,7 +535,7 @@ final class InputRouter
 
                 // 点进**编辑中**的输入框 ⇒ 插入符落到指针处 + 起框选手势
                 // （§A.2.9 的指针侧：与 Shift+方向键同一个选区模型）
-                $this->textEditing->beginTextSelection($event->x);
+                $this->textEditing->beginTextSelection($event->x, $event->y);
             }
 
             return $this->cursorFor($hit, $event->x, $event->y);
@@ -544,7 +544,7 @@ final class InputRouter
         if ($event->isMove()) {
             // 框选推进：down 在输入框上起的手势 ⇒ 延伸选区活动端
             // （无手势时片内直接返回，调用方不必先问）
-            $this->textEditing->extendTextSelection($event->x);
+            $this->textEditing->extendTextSelection($event->x, $event->y);
 
             // 手势竞技场推进：过阈值 ⇒ Drag claim（begin + 刷新悬停目标）
             $arena = $this->gestureArena;

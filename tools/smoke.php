@@ -3171,13 +3171,24 @@ check(
 //     触发）/ 插入符几何与墨（caretRect 需先 settle · 编辑态真多出墨 · 受控回推）/
 //     表单示例页无头出图（§20 纪律 4）—— 共 26 条
 //   ★ 落 Feature 层：判据含光栅取墨与无头 SVG 出图。
+// ── ㉓b TextArea（多行输入）已迁出 ──────────────────────────────────────────
+//   · `tests/Feature/Widget/TextAreaTest.php`（10 用例 / 39 条）—— 多行真占多行 ·
+//     minLines 是下限不是上限 · Enter 换行且通知 · Ctrl+Enter 提交且不改文本 ·
+//     无 onSubmitted 时 Ctrl+Enter 放行 · **连续下移保持目标列**（含"两策略落点
+//     不同"的反例前提）· Home/End 两段 · 超视口可滚 + 插入符跟随 · 跨行选区每行一段 ·
+//     多行框里 Ctrl+Z 撤销
+//   · `tests/Unit/Text/ParagraphGeometryTest.php`（9 用例 / 38 条）—— 正查几何：
+//     硬换行落点 / 软换行末行 / 行内单调 / 每行一段 / 空选区无矩形 / 空行有高度 /
+//     lineIndexAt 边界 / 空文本安全
+//   ★ 真机消费者在 `apps/showcase/src/Pages/FormPage.php`（表单页「多行输入」小节）——
+//     §20 纪律 4：没进示例 = 没交付。
 // ── ㉔ 输入层最小集 / 坐标链 / IME 定位 已迁出 ──────────────────────────────
 //   · `tests/Unit/Input/KeyModelTest.php`（11）—— KeyChord 值语义 · F5 · character vs
-//     down · FocusNode 链式与 claims · Widget 侧 focusOrder/claimKeys → focusNode()
+//     down · FocusNode 链式（order 与 skip 互不覆盖）· Widget 侧 focusOrder → focusNode()
 //   · `tests/Feature/Input/FocusRoutingTest.php`（21）—— 文档序收集 · 没焦点不吃键 ·
 //     Tab 前进 / Shift+Tab 后退 / 末尾停（不环绕）· 焦点落下即编辑态 · 离开即退出 ·
 //     打字 / 退格 / 方向键 / Home / End · 命中测试最深优先 → 焦点 · 帧末重建换新盒 ·
-//     skipFocus / focusOrder / claimKeys
+//     skipFocus / focusOrder
 //   · `tests/Feature/Input/CoordinateChainTest.php`（6）—— hitTest 命中起点 == 墨迹起点
 //     （padding 移到布局期施加的判据）· 墨迹起点 == 24px padding · imeCaretRect 含容器
 //     padding 且沿父链累积 · 无焦点 ⇒ null · 带 label 穿 Column 找真实字段盒
@@ -3211,10 +3222,10 @@ check(
 //     `LayoutTolerance::$windowDriven` 期间极小尺寸降级为裁剪
 //   · `tests/Feature/Theme/ThemeSwitchTest.php`（4）—— 派发前是浅色（对照）/
 //     onSystemThemeChanged 换源 / 根 context 换深色 / **子层也换**（递归下发才叫换表）
-// 帧末重建（adoptBoxes）/ skipFocus / focusOrder / claimKeys 已迁出
+// 帧末重建（adoptBoxes）/ skipFocus / focusOrder 已迁出
 //   · `tests/Feature/Input/FocusRoutingTest.php` —— 父容器换上重建后的新盒（量具
 //     双向自检：`Element::settle()` 去掉 `adoptBoxes()` 这条必须变红）/
-//     skipFocus 整棵子树不进 Tab 序 / focusOrder 稳定排序 / claimKeys 独占 Ctrl+A
+//     skipFocus 整棵子树不进 Tab 序 / focusOrder 稳定排序
 // ── ⑳ 控件与结构节点混用：**已删，不迁** ───────────────────────────────────
 //   原判据是 `width > 0 && height > 0`（"Column 包 Text + Row(Text/Spacer/Text)
 //   能一路排到底"）—— 把 spacing / padding 全写成 0 它也绿，**证伪不了任何语义**。

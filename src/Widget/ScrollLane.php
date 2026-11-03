@@ -40,7 +40,7 @@ namespace Drift\Widget;
  *   盒夹过的值）。在这里再夹一次是**第二个真相** —— 而 `move()` 才是"用户增量"
  *   的入口，下界 0 只在那儿夹。
  *
- * @internal 只给 `Scrollable` 的三个实现用
+ * @internal 只给 `Scrollable` 的实现用（当前四个：全量 / 虚拟化 / 表格 / 多行输入）
  */
 final class ScrollLane
 {
