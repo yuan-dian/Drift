@@ -4,7 +4,7 @@
 > （`docs/00-README.md` §6 纪律：新文档不写行号）。
 > 事实来源：本仓只读核对 + `api.flutter.dev` 官方文档 + `D:\TypePHP\Drift3\docs\research`
 > 15 份平台调研（含 `12-横向思路提炼.md`、`14-Raven研读.md`）。
-> 状态：**待拍板**。拍板后按 §7 清单实施，单独一轮提交。
+> 状态：**已实施**（2026-11-04，见 §9 实施记录）。
 
 ## 1. 问题
 
@@ -235,3 +235,42 @@ Frame::run()
 - **回退**：若真机暴露不可控回归，保留 `LayoutBuilder` 外形与 `RenderBox::constraints()`，
   仅把 ②c 的收敛降级为「标脏 + `requestFrame()` 下一帧」= 方案 C，
   判据 1 / 2 相应改为「一帧内收敛」的诚实版。
+
+## 9. 实施记录（2026-11-04）
+
+按 §7 清单落地，与设计的偏差只有两处，都写在这里：
+
+| 项 | 实际做法 |
+|---|---|
+| 新增类 | 3 个：`ConstraintObserver`（接口）、`LayoutBuilder`、`LayoutBuilderState`。**没有**新 `RenderObject` |
+| 约束快照 | `RenderBox::lastConstraints` 在 `performLayout()` 调用**之前**落，记的就是"本盒传给子盒的那一份"（裁决 1）；`null` = 不知道 |
+| 壳 | `LayoutBuilder::build()` 返回 `SizedBox::make($built)` —— 让 `effectiveBox()->constraints()` 的落点与 builder 返回什么无关（**偏差 1**：设计里没写这层壳，但不加就会读到子树内部某层盒的约束） |
+| 观察者表 | 住 `Pipeline`（`object` 列表 + 身份去重），`Frame` 侧 `instanceof ConstraintObserver` 过滤 |
+| 收敛循环 | `Frame::run()` 的 ①+② 抽成 `for` 循环，上限 `MAX_CONSTRAINT_ROUNDS = 4`，`LayoutSelfCheck` 移到循环**之后** |
+| 震荡检测 | 同一句漂移描述在本帧内重复出现即判震荡（比"轮数用光"更早刹住），诊断里写明"检测到震荡" |
+| `LazyListState` / `TableState` | 视口改读 `constraints()`（与两个 `Render*` 自己算视口用的是同一份数）；`reflowIfWidthDrifted()` 与 `tickFrame()` 自查删除，改由 `pollConstraintDrift()` 当帧收敛（**偏差 2**：`WidthDriftTest` 的驱动从 `tickFrame()` 换成 `pollConstraintDrift()`，三条断言的语义不变） |
+| 判据 | §6 的 12 条落在 `tests/Feature/Widget/LayoutBuilderTest.php`（13 条）+ `WidthDriftTest`（3 条）；6 组变异全部变红 |
+
+**顺带修掉的既有 bug**：`golden/page/TablePage` 的旧基线是**按 bug 烤的** ——
+表格按窗口宽 900 分列，而它实际只有 860，右侧"状态"列被裁掉一截。约束反馈落地后
+首帧就按 860 分，`actual.png` 里 5 列完整可见 ⇒ 刷基线（只动了这一个场景）。
+
+### 9.1 真机（T2）
+
+`drift-build --full` 后 `hello.exe` 13.1 MB / `showcase.exe` 14.8 MB，真机判据
+"窄窗 → 宽窗各一次"（`_build/lb-probe2.php`，客户端 684×601）：
+
+```text
+LayoutBuilder：按本盒真实约束换版式（拖窄窗口看它换）
+  684 宽 ⇒ 橙色 60px 块 + 「窄：本盒可用不足 520 ⇒ 小色块」
+ 1409 宽 ⇒ 青色 160px 块 + 「宽：本盒可用 520 以上 ⇒ 大色块」
+close rc=0 · exit=0
+```
+
+★ 顺带暴露并修掉的**另一处既有 bug**（与本设计无关，但挡在 T2 路上）：
+AOT 版启动即 `0xC0000005`，栈落在 `BuildContext::__construct → WindowSize::fromWidth`。
+根因是 tpc 把 **enum 内任何 `self::X`** 一律编成 `php::getEnumCase()`
+（`typephp/src/Parser/ClassConstantFetchTrait.php`），而 `WindowSize` 的三个断点是
+`public const`（非 case）⇒ `getEnumCase` 抛"不是 enum case"⇒ 崩。
+`php -l` / lint / smoke / phpunit **全绿**，只有真 exe 能抓到。修法：断点写成字面量，
+enum 里不声明非 case 常量（细则见 `PITFALLS.md`）。

@@ -54,6 +54,7 @@
 | [`AOT-CONSTRAINTS.md`](AOT-CONSTRAINTS.md) | **AOT 编译约束与实测**（TypePHP `tpc.php` 的边界） | ★★★★★ |
 | [`tutorial.md`](tutorial.md) | **从零写一个应用**（五个文件 / 四段代码 / 四个静默坑）；配套 `apps/tutorial/` | ★★★★★ |
 | [`ARCH-REVIEW-2026-10-24.md`](ARCH-REVIEW-2026-10-24.md) | **W8 收盘后的全维度体检**（架构/实现/扩展性/易用性/长期维护） | ★★★★☆ |
+| [`DESIGN-LAYOUTBUILDER-2026-11-04.md`](DESIGN-LAYOUTBUILDER-2026-11-04.md) | **布局期约束反馈的裁决与实施记录**（方案 D · 帧内收敛；含四个候选的否决理由与 12 条判据） | ★★★★☆ |
 | [`ARCH-REVIEW-2026-10-21.md`](ARCH-REVIEW-2026-10-21.md) | W8 之前的诊断（A1/A3 已落地，A2 未做） | ★★★☆☆ |
 | [`ARCH-V2-REVIEW-2026-10-21.md`](ARCH-V2-REVIEW-2026-10-21.md) | v2 文档体系评审（§5.1"文档即规格但没防漂移"是 M2 的来源） | ★★★☆☆ |
 | [`EVAL-design-v7-2026-10-21.md`](EVAL-design-v7-2026-10-21.md) | design-v7 复评（逐条裁"该搬 / 该扔"） | ★★★★☆ |

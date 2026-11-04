@@ -14,11 +14,11 @@
 | App | 84 | 52 |
 | Async | 18 | 4 |
 | Commands | 7 | 0 |
-| Core | 2 | 30 |
+| Core | 2 | 36 |
 | Errors.php | 2 | 3 |
 | Geometry | 9 | 0 |
 | Input | 19 | 5 |
-| Layout | 44 | 43 |
+| Layout | 45 | 43 |
 | Logging | 9 | 3 |
 | Platform | 17 | 16 |
 | Rendering | 34 | 1 |
@@ -26,10 +26,10 @@
 | State | 17 | 8 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
-| Widget | 180 | 215 |
-| **合计** | **485** | **389** |
+| Widget | 183 | 216 |
+| **合计** | **489** | **396** |
 
-覆盖 388 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
+覆盖 391 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
 
 ## App 层
 
@@ -236,7 +236,7 @@
 | `Computed` | class | src/Core/Computed.php |
 | `Versioned` | interface | src/Core/Versioned.php |
 
-### @internal（框架内部） · 30
+### @internal（框架内部） · 36
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -258,6 +258,10 @@
 | `Pipeline::noteActiveAnimation()` | method | src/Core/Pipeline.php |
 | `Pipeline::takeActiveAnimations()` | method | src/Core/Pipeline.php |
 | `Pipeline::activeAnimationCount()` | method | src/Core/Pipeline.php |
+| `Pipeline::addConstraintObserver()` | method | src/Core/Pipeline.php |
+| `Pipeline::removeConstraintObserver()` | method | src/Core/Pipeline.php |
+| `Pipeline::constraintObservers()` | method | src/Core/Pipeline.php |
+| `Pipeline::constraintObserverCount()` | method | src/Core/Pipeline.php |
 | `Pipeline::bumpLayoutEpoch()` | method | src/Core/Pipeline.php |
 | `Pipeline::bumpPaintEpoch()` | method | src/Core/Pipeline.php |
 | `Pipeline::bumpLayout()` | method | src/Core/Pipeline.php |
@@ -268,6 +272,8 @@
 | `Pipeline::bumpSettleSkip()` | method | src/Core/Pipeline.php |
 | `Pipeline::bumpPaintRun()` | method | src/Core/Pipeline.php |
 | `Pipeline::bumpPaintSkip()` | method | src/Core/Pipeline.php |
+| `Pipeline::noteConstraintRounds()` | method | src/Core/Pipeline.php |
+| `Pipeline::noteConstraintDrift()` | method | src/Core/Pipeline.php |
 | `PipelineAccess` | trait | src/Core/PipelineAccess.php |
 | `PipelineAccess::pipeline()` | method | src/Core/PipelineAccess.php |
 
@@ -342,7 +348,7 @@
 
 ## Layout 层
 
-### @api（应用可读面） · 44
+### @api（应用可读面） · 45
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -356,6 +362,7 @@
 | `RenderAppBar` | class | src/Layout/RenderAppBar.php |
 | `RenderBackdropFilter` | class | src/Layout/RenderBackdropFilter.php |
 | `RenderBox` | class | src/Layout/RenderBox.php |
+| `RenderBox::constraints()` | method | src/Layout/RenderBox.php |
 | `RenderBox::overflow()` | method | src/Layout/RenderBox.php |
 | `RenderBox::setCompose()` | method | src/Layout/RenderBox.php |
 | `RenderBox::paintComposed()` | method | src/Layout/RenderBox.php |
@@ -677,7 +684,7 @@
 
 ## Widget 层
 
-### @api（应用可读面） · 180
+### @api（应用可读面） · 183
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -703,6 +710,7 @@
 | `Column` | class | src/Widget/Column.php |
 | `ComboBox` | class | src/Widget/ComboBox.php |
 | `ComboBoxState` | class | src/Widget/ComboBox.php |
+| `ConstraintObserver` | interface | src/Widget/ConstraintObserver.php |
 | `Curve` | class | src/Widget/Curve.php |
 | `CustomPaint` | class | src/Widget/CustomPaint.php |
 | `CustomPainter` | class | src/Widget/CustomPainter.php |
@@ -728,6 +736,8 @@
 | `IconSet` | class | src/Widget/IconSet.php |
 | `Image` | class | src/Widget/Image.php |
 | `Key` | class | src/Widget/Key.php |
+| `LayoutBuilder` | class | src/Widget/LayoutBuilder.php |
+| `LayoutBuilderState` | class | src/Widget/LayoutBuilderState.php |
 | `LazyColumn` | class | src/Widget/LazyColumn.php |
 | `LazyGrid` | class | src/Widget/LazyGrid.php |
 | `LazyList` | class | src/Widget/LazyList.php |
@@ -862,7 +872,7 @@
 | `Wrap` | class | src/Widget/Wrap.php |
 | `YearMonth` | class | src/Widget/YearMonth.php |
 
-### @internal（框架内部） · 215
+### @internal（框架内部） · 216
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -941,6 +951,7 @@
 | `InlineEditorBox` | class | src/Widget/InlineEditorBox.php |
 | `InlineEditorBox::make()` | method | src/Widget/InlineEditorBox.php |
 | `InlineEditorBox::editorStyle()` | method | src/Widget/InlineEditorBox.php |
+| `LayoutBuilder::builderClosure()` | method | src/Widget/LayoutBuilder.php |
 | `LazyList::keyMapper()` | method | src/Widget/LazyList.php |
 | `LazyList::viewportExtentPx()` | method | src/Widget/LazyList.php |
 | `LazyList::initialOffsetPx()` | method | src/Widget/LazyList.php |

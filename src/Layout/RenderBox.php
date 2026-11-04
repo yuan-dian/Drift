@@ -26,6 +26,10 @@ abstract class RenderBox extends RenderObject
     protected float $offsetX = 0.0;
     protected float $offsetY = 0.0;
 
+    // 上一次 layout 收到的**内容盒**约束（`performLayout()` 的入参）。纯数据快照：
+    // 只被读（`constraints()` / 约束反馈），从不参与任何判定 ⇒ 布局仍是纯函数。
+    private ?BoxConstraints $lastConstraints = null;
+
     // 浮层树的根：`absoluteOrigin()` 累加到它为止再加落点。没有它，嵌套浮层里的锚点
     // 只算到浮层根 (0,0)。★ 用独立 bool 而非 "baseX !== 0"：浮层原点可能就是 (0,0)。
     protected float $baseX = 0.0;
@@ -131,6 +135,21 @@ abstract class RenderBox extends RenderObject
     public function size(): ?Size
     {
         return $this->size;
+    }
+
+    /**
+     * 上一次 layout 收到的**内容盒**约束（= `performLayout()` 的入参，已过 mods 收紧 /
+     * padding 内缩 / align 松下界）；还没排过 ⇒ `null`。
+     *
+     * ★ **`null` 是"不知道"，不是"无界"**：拿它当 `unbounded()` 用，会把"没排过"和
+     *   "父给了无界"混成一件事。
+     * ★ 消费者按需判 `hasBoundedWidth()` / `hasBoundedHeight()`，别把 `INF` 当大数字比。
+     *
+     * @api
+     */
+    public function constraints(): ?BoxConstraints
+    {
+        return $this->lastConstraints;
     }
 
     public function hasSize(): bool
@@ -274,6 +293,8 @@ abstract class RenderBox extends RenderObject
         }
 
         // ④ 子类量内容 —— **契约**：返回**内容**尺寸，不是盒尺寸
+        // ★ 快照在调用之前落：`performLayout()` 抛异常时"收到的约束"仍是真的。
+        $this->lastConstraints = $inner;
         $measured = $this->performLayout($inner);
         $content = $measured;   // ★ 内容尺寸：⑦ 的居中要它（⑤ 会把 `$measured` 换成盒尺寸）
 

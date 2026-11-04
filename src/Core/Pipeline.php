@@ -324,6 +324,61 @@ final class Pipeline
     }
 
     // ─────────────────────────────────────────────────────────────────
+    // ②c 约束反馈登记表（"布局后还要再问一句"的节点）
+    // ─────────────────────────────────────────────────────────────────
+
+    /**
+     * 登记单元是 `object`（`Core` 不能依赖 `Widget`，依赖方向 lint）；真正的
+     * 语义在 `Drift\Widget\ConstraintObserver`，`Frame` 侧做 `instanceof` 过滤。
+     * 表通常为空（只有 `LayoutBuilder` / 按尺寸分支的容器在里）。
+     *
+     * @var list<object>
+     */
+    private array $constraintObservers = [];
+
+    /**
+     * @internal 登记（`LayoutBuilderState::initState()` 调）
+     * ★ 重复登记会让同一节点被问两次、标两次脏 ⇒ 身份去重。
+     */
+    public function addConstraintObserver(object $observer): void
+    {
+        if (\in_array($observer, $this->constraintObservers, true)) {
+            return;
+        }
+
+        $this->constraintObservers[] = $observer;
+    }
+
+    /**
+     * @internal 注销（`dispose()` 调）。**必须调**：漏了就是"卸载的 State 还被问"，
+     * 它一标脏就重建一棵已经不在树里的子树（或直接读空 element）。
+     */
+    public function removeConstraintObserver(object $observer): void
+    {
+        $at = \array_search($observer, $this->constraintObservers, true);
+        if ($at === false) {
+            return;
+        }
+
+        \array_splice($this->constraintObservers, $at, 1);
+    }
+
+    /**
+     * @return list<object>
+     * @internal `Frame` 每帧 layout 之后遍历
+     */
+    public function constraintObservers(): array
+    {
+        return $this->constraintObservers;
+    }
+
+    /** @internal 夹具用：登记表必须被注销干净（不泄漏） */
+    public function constraintObserverCount(): int
+    {
+        return \count($this->constraintObservers);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
     // ③ 两个换代序号（`Frame` 的"整段跳过"判据）
     // ─────────────────────────────────────────────────────────────────
 
@@ -473,5 +528,41 @@ final class Pipeline
     public function paintSkipCount(): int
     {
         return $this->paintSkipCount;
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // ⑤ 约束收敛量具（"帧内跑了几轮"与"谁在漂"）
+    // ─────────────────────────────────────────────────────────────────
+
+    private int $constraintRounds = 0;
+
+    private string $lastConstraintDrift = '';
+
+    /**
+     * @internal 本帧 `settle → layout` 跑了几轮（稳态 1，约束真变 2）。
+     * ★ 自动机制必须可 inspect：只收敛不记账 ⇒ 没人看得出"这帧排了两遍"。
+     */
+    public function noteConstraintRounds(int $rounds): void
+    {
+        $this->constraintRounds = $rounds;
+    }
+
+    public function constraintRounds(): int
+    {
+        return $this->constraintRounds;
+    }
+
+    /**
+     * @internal 最近一次约束反馈的漂移描述（`谁: 旧 → 新`；没漂 ⇒ 空串）。
+     * ★ 诊断必须带"谁在漂"：只说"没收敛"，等于把定位工作全丢给读代码的人。
+     */
+    public function noteConstraintDrift(string $drift): void
+    {
+        $this->lastConstraintDrift = $drift;
+    }
+
+    public function lastConstraintDrift(): string
+    {
+        return $this->lastConstraintDrift;
     }
 }

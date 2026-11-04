@@ -17,7 +17,7 @@ use Drift\Layout\RenderScrollView;
  *   会把窗算到列表之外，造出一片空白（不报错）。
  * @internal 应用只认 `LazyColumn` / `LazyRow`
  */
-final class LazyListState extends State implements Scrollable, ScrollMetrics
+final class LazyListState extends State implements Scrollable, ScrollMetrics, ConstraintObserver
 {
     /** 这根轴的滚动状态机（偏移 + 动画 + 淡出）；懒建：从没滚过的列表不额外造对象。 */
     private ?ScrollLane $lane = null;
@@ -44,6 +44,9 @@ final class LazyListState extends State implements Scrollable, ScrollMetrics
 
     private float $windowEnd = 0.0;
 
+    /** 本帧 build 用的视口主轴长度（`-1` = 还没 build 过）；约束反馈拿它比 */
+    private float $builtViewport = -1.0;
+
     /**
      * 播种初始偏移（`LazyList::initialOffset()`）。
      * 必须同时播种锚点：`didUpdateWidget()` 用"锚点那一格的 key 还在原位"判内容有没有动，
@@ -53,6 +56,8 @@ final class LazyListState extends State implements Scrollable, ScrollMetrics
     #[\Override]
     public function initState(): void
     {
+        $this->pipeline()->addConstraintObserver($this);
+
         $this->view()->controllerValue()?->attach($this);
 
         $px = $this->view()->initialOffsetPx();
@@ -98,7 +103,45 @@ final class LazyListState extends State implements Scrollable, ScrollMetrics
     #[\Override]
     public function dispose(): void
     {
+        $this->pipeline()->removeConstraintObserver($this);
         $this->view()->controllerValue()?->detach($this);
+    }
+
+    /**
+     * 布局后自检：视口与 build 时用的不一样 ⇒ 本帧重造窗口。
+     *
+     * 首帧必然触发一次（build 时还没有盒 ⇒ 用了窗口尺寸兜底），这正是要根治的
+     * 「先按窗口造一版、下一帧才纠正」。稳态返回 `null`，不多跑一轮 layout。
+     */
+    public function pollConstraintDrift(): ?string
+    {
+        /** @var RenderScrollView|null $box */
+        $box = $this->element()?->effectiveBoxOf(RenderScrollView::class);
+        $constraints = $box === null ? null : $box->constraints();
+        if ($constraints === null) {
+            return null;
+        }
+
+        $vertical = $this->view()->isVertical();
+        $limit = $vertical ? $constraints->maxHeight : $constraints->maxWidth;
+        if (\is_infinite($limit)) {
+            return null;   // 无界：视口跟随内容 / 声明值，没有可比的数
+        }
+
+        $now = max(0.0, $limit);
+        $used = $this->builtViewport;
+        if ($used >= 0.0 && \abs($now - $used) <= 0.5) {
+            return null;
+        }
+
+        $this->markDirty();
+
+        return \sprintf(
+            '%s: 视口 %s → %.1f',
+            $this->view()->kindName(),
+            $used < 0.0 ? '未定' : \sprintf('%.1f', $used),
+            $now,
+        );
     }
 
     /**
@@ -378,6 +421,7 @@ final class LazyListState extends State implements Scrollable, ScrollMetrics
         $total = $start + $count * $extent + $end;
 
         $viewport = $this->viewportEstimate($ctx, $vertical);
+        $this->builtViewport = $viewport;
         $offset = min(max(0.0, $this->lane()->offset()), max(0.0, $total - $viewport));
 
         // 窗口：完整内容坐标 [offset, offset+viewport) 换算成序号区间
@@ -448,9 +492,13 @@ final class LazyListState extends State implements Scrollable, ScrollMetrics
     }
 
     /**
-     * 视口主轴长度的估计。
-     * 优先取上一帧盒的实测主轴长度（精确）；首帧无盒 ⇒ 退回窗口对应尺寸
-     * （上界：任何嵌套视口都不比窗口更大）。不读环境时钟、不问平台。
+     * 视口主轴长度：取**本帧布局要拿到的约束**（`RenderBox::constraints()`）。
+     *
+     * ★ 以前读"上一帧盒的 size"：首帧没有盒 ⇒ 只能拿窗口尺寸当上界 ⇒ 窗口宽 ≠
+     *   视口宽时首帧多造/少造内容，下一帧才纠正（一帧可见的错版式）。
+     *   约束是布局的**入参**，与 `RenderScrollView` 自己算视口用的是同一份数。
+     * ★ 无界 ⇒ 退回"自己声明的视口"再退回 `ctx`：浮层里主轴是无界的，退到
+     *   `ctx` 会把 60 格全部造出来（虚拟化静默失效）。
      */
     private function viewportEstimate(BuildContext $ctx, bool $vertical): float
     {
@@ -459,31 +507,16 @@ final class LazyListState extends State implements Scrollable, ScrollMetrics
         /** @var RenderScrollView|null $box */
         $box = $this->element()?->effectiveBoxOf(RenderScrollView::class);
         if ($box !== null) {
-            $size = $box->size();
-            if ($size !== null) {
-                $viewport = $vertical ? $size->height : $size->width;
-                if ($viewport > 0.0) {
-                    // 这里是帧间状态依赖（读上一帧的盒尺寸，不在 performLayout 里
-                    //   ⇒ 不违反布局纯函数，但同类隐患）。超过 2 倍窗口主轴 ⇒
-                    //   上一帧的盒尺寸可疑（如窗口刚从小变大）。
-                    if ($window > 0.0 && $viewport > $window * 2.0) {
-                        Errors::report(sprintf(
-                            '%s 的视口估计 %s 超过窗口主轴 %s 的 2 倍 —— 上一帧的盒尺寸可疑。'
-                                . "\n" . '修法：确认窗口尺寸变化后盒已重排；必要时首帧用 ctx 尺寸兜底。',
-                            $this->view()->kindName(),
-                            (string) $viewport,
-                            (string) $window,
-                        ), Errors::DIAGNOSTIC);
-                    }
-
-                    return $viewport;
+            $constraints = $box->constraints();
+            if ($constraints !== null) {
+                $limit = $vertical ? $constraints->maxHeight : $constraints->maxWidth;
+                if (!\is_infinite($limit) && $limit > 0.0) {
+                    return $limit;
                 }
             }
         }
 
-        // ★ 自己声明了视口 ⇒ 用它。必须排在 `$ctx` 之前：
-        //   `BuildContext` 的主轴在浮层里是无界（`RenderPopupPanel` 按内容自尺寸）
-        //   ⇒ 退到它会把 60 格全部造出来（虚拟化静默失效）。
+        // ★ 自己声明了视口 ⇒ 用它。必须排在 `$ctx` 之前（理由见上）。
         $declared = $this->view()->viewportExtentPx();
         if ($declared > 0.0) {
             return $declared;

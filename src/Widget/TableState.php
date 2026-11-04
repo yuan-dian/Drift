@@ -30,15 +30,16 @@ use Drift\Text\TextStyle;
 /**
  * `Table` 的 State：持滚动偏移 + 算这一帧造哪些行/列 + 分配列宽。
  *
- * 视口高度只有**上一帧**盒的实测值（build 期布局还没发生，首帧用 `ctx` 当上界）
- * ⇒ 窗口是可见范围的超集，不会白；列宽同理，必须在造行之前算出来。
+ * 视口宽高取**本帧布局要拿到的约束**（`RenderBox::constraints()`）：build 期布局还没
+ * 发生，首帧读到 `null` ⇒ 退回 `ctx` 当上界，再由 `ConstraintObserver` 在同一帧内
+ * 拿到真值重造（不会"先画错一帧再跳"）。列宽必须在造行之前算出来。
  * 编辑态住这里而不是行里：行会被虚拟化回收，本类不随滚动消失。单元格编辑由本类
  * 实现 `EditableText`（不往格里塞 `TextField`）：焦点只一个节点，IME 与剪贴板环
  * 认 `focusedState() instanceof EditableText`。
  *
  * @internal 应用只认 `Table`
  */
-final class TableState extends State implements Scrollable, EditableText
+final class TableState extends State implements Scrollable, EditableText, ConstraintObserver
 {
     /** 纵向滚动状态机（偏移 + 动画 + 淡出）；横向是 `$laneX`。两者各一份偏移，但共用同一份淡出节律 */
     private ?ScrollLane $laneY = null;
@@ -52,6 +53,9 @@ final class TableState extends State implements Scrollable, EditableText
 
     /** 焦点在本表吗。失焦不画描边（画了就是撒谎），但保留光标格（Tab 出去再回来停在原处） */
     private bool $hasFocus = false;
+
+    /** 本帧 build 用的视口宽（`-1` = 还没 build 过）；约束反馈拿它比 */
+    private float $builtViewportW = -1.0;
 
     /**
      * 上一帧的几何快照（`null` = 还没 build 过）。只由 `build()` 写，别处只读。
@@ -1208,9 +1212,21 @@ final class TableState extends State implements Scrollable, EditableText
     }
 
     #[\Override]
+    public function initState(): void
+    {
+        $this->pipeline()->addConstraintObserver($this);
+    }
+
+    #[\Override]
+    public function dispose(): void
+    {
+        $this->pipeline()->removeConstraintObserver($this);
+    }
+
+    #[\Override]
     public function tickFrame(float $timestampMs): bool
     {
-        $busy = $this->reflowIfWidthDrifted();
+        $busy = false;
 
         // ★ 两轴各推一次：横竖互不干扰（各自的 `ScrollMotion`）。
         if ($this->stepMotion(Axis::Vertical, $timestampMs)) {
@@ -1229,43 +1245,40 @@ final class TableState extends State implements Scrollable, EditableText
     }
 
     /**
-     * 盒实测宽 ≠ 上次 build 用的宽 ⇒ 标脏并要一帧。
+     * 布局后自检：视口宽与 build 时用的不一样 ⇒ 本帧重算列宽并重造。
      *
      * ★★ 为什么必须比对：`BuildContext::$width` 是**窗口**宽（根 context 由
      *   `Application::attach()` 按窗口约束造，整棵树共用），而表格的实际可用宽
      *   还要减掉导航栏 / 卡片 padding / 兄弟节点。首帧没有盒 ⇒ `viewportEstimate()`
-     *   只能拿窗口宽当上界 —— 对**高度**是无害的（多造几行），对**宽度**是**有害**
-     *   的：flex 列按偏大的宽分完，行宽超出表盒 ⇒ 右边的列被裁掉（真机现象：
-     *   5 列只看见前 3 列，滚动一下才对 —— 因为滚动触发的重建赶上了盒已存在）。
-     *
-     * ★ 为什么靠 `tickFrame()` 而不是布局回写：`wantsFrame()` 没有"有脏 State"
-     *   这一条（脏标记本该被**同帧** settle 消费，落在 layout 之后的脏没人管）
-     *   ⇒ 标脏之后必须让帧时钟重新上膛。`tickFrame()` 的返回值正好是那根线
-     *   （§17.4.9 的第 ④ 判据），且它跑在 `Frame::run()` **之后**（迟到挂载补 tick）
-     *   ⇒ 读得到本帧刚排出的盒尺寸。
-     *
-     * ★ 只在这一帧的 `Frame::run()` 之后调才有意义：那时盒已按**真实约束**排过。
-     *   本帧 layout 之前的 tick（⓸）读到的还是上一帧的尺寸 —— 差值判断因此可能
-     *   多要一帧，但**不会少**（差值仍然成立，下一帧再纠正一次就收敛）。
+     *   只能拿窗口宽当上界，而 flex 列按偏大的宽分完，行宽超出表盒 ⇒ 右边的列被
+     *   裁掉（真机现象：5 列只看见前 3 列）。本帧收敛之后这件事**当帧**就修正了，
+     *   不再有"滚动一下才对"。
      * ★ 阈值 0.5：亚像素抖动（DPR 换算）不该引来重建。
      */
-    private function reflowIfWidthDrifted(): bool
+    public function pollConstraintDrift(): ?string
     {
-        $g = $this->geometry;
-        if ($g === null) {
-            return false;
+        $constraints = $this->element()?->effectiveBoxOf(RenderTable::class)?->constraints();
+        if ($constraints === null) {
+            return null;
         }
 
-        $used = $g->viewportW;
+        if (\is_infinite($constraints->maxWidth)) {
+            return null;   // 无界：视口跟随内容，没有可比的数
+        }
 
-        $size = $this->element()?->effectiveBoxOf(RenderTable::class)?->size();
-        if ($size === null || \abs($size->width - $used) <= 0.5) {
-            return false;
+        $now = max(0.0, $constraints->maxWidth);
+        $used = $this->builtViewportW;
+        if ($used >= 0.0 && \abs($now - $used) <= 0.5) {
+            return null;
         }
 
         $this->markDirty();
 
-        return true;
+        return \sprintf(
+            'Table: 视口宽 %s → %.1f',
+            $used < 0.0 ? '未定' : \sprintf('%.1f', $used),
+            $now,
+        );
     }
 
     /**
@@ -1798,6 +1811,7 @@ final class TableState extends State implements Scrollable, EditableText
         $this->prepareEditor($ctx);
 
         $viewportW = $this->viewportEstimate($ctx, false);
+        $this->builtViewportW = $viewportW;
         $g = $this->settleGeometry($ctx, $view, $columns, $viewportW);
 
         return TableBox::make(
@@ -2430,29 +2444,22 @@ final class TableState extends State implements Scrollable, EditableText
      * ★ 超过 2 倍窗口 ⇒ 上一帧的盒尺寸可疑（如窗口刚从小变大），打一条
      *   Diagnostic 而不改逻辑 —— 与 `LazyListState::viewportEstimate()` 同一条。
      */
+    /**
+     * 视口主轴长度：取**本帧布局要拿到的约束**（`RenderBox::constraints()`）。
+     *
+     * ★ 以前读"上一帧盒的 size"：首帧没有盒 ⇒ 只能拿窗口尺寸当上界。约束是布局的
+     *   **入参**，与 `RenderTable` 自己算视口用的是同一份数（`max*` 有界时即视口）。
+     * ★ 无界 ⇒ 退回 `ctx`（浮层里主轴无界，`RenderTable` 那时跟随内容）。
+     */
     private function viewportEstimate(BuildContext $ctx, bool $vertical): float
     {
         $window = $vertical ? $ctx->height : $ctx->width;
 
-        /** @var RenderTable|null $box */
-        $box = $this->element()?->effectiveBoxOf(RenderTable::class);
-        if ($box !== null) {
-            $size = $box->size();
-            if ($size !== null) {
-                $viewport = $vertical ? $size->height : $size->width;
-                if ($viewport > 0.0) {
-                    if ($window > 0.0 && $viewport > $window * 2.0) {
-                        Errors::report(sprintf(
-                            'Table 的视口估计 %s 超过窗口%s %s 的 2 倍 —— 上一帧的盒尺寸可疑。'
-                                . "\n" . '修法：确认窗口尺寸变化后盒已重排；必要时首帧用 ctx 尺寸兜底。',
-                            (string) $viewport,
-                            $vertical ? '高' : '宽',
-                            (string) $window,
-                        ), Errors::DIAGNOSTIC);
-                    }
-
-                    return $viewport;
-                }
+        $constraints = $this->element()?->effectiveBoxOf(RenderTable::class)?->constraints();
+        if ($constraints !== null) {
+            $limit = $vertical ? $constraints->maxHeight : $constraints->maxWidth;
+            if (!\is_infinite($limit) && $limit > 0.0) {
+                return $limit;
             }
         }
 

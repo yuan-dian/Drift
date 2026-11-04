@@ -21,6 +21,16 @@ use Drift\Theme\ThemeData;
  *   ③ **无向上查找** —— 无 `of()` / `find()` / `maybeOf()`（§18 已否决
  *      Flutter 的 provider soup）。
  *
+ * ## 响应式的两条判据（别混用）
+ *
+ * | 要问的事 | 用谁 |
+ * |---|---|
+ * | 「窗口在哪个档位」（手机 / 平板 / 桌面） | `windowSize()` |
+ * | 「**我这层**实际能用多大」 | `LayoutBuilder` 给的 `BoxConstraints` |
+ *
+ * `$width` / `$height` 是**应用根**收到的那份窗口约束，整棵树共用、档内不更新
+ * ⇒ 它既不是本容器的可用空间，也不该拿来做断点比较。
+ *
  * @api
  */
 final readonly class BuildContext
@@ -33,9 +43,9 @@ final readonly class BuildContext
     private WindowSize $windowSize;
 
     /**
-     * @param float $width  本容器收到的约束宽（逻辑单位，§6.1）。★ 档内不更新 ——
-     *        响应式判断用 `windowSize()`，别拿它比大小
-     * @param float $height 本容器收到的约束高（同上）
+     * @param float $width  应用根收到的**窗口**约束宽（逻辑单位，§6.1）—— 整棵树共用，
+     *        档内不更新。要"我这层能用多大"用 `LayoutBuilder`；要断点用 `windowSize()`
+     * @param float $height 应用根收到的窗口约束高（同上）
      * @param ThemeData $theme 沿 Element 父链**解析后**的结果（不是查找入口）
      * @param TextMetricsProvider $metrics **布局确定性的注入点**（§14.2）——
      *        Widget 层问度量、不问平台，所以测试能喂固定度量、golden 能复现。

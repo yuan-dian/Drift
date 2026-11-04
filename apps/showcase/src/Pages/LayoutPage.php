@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Showcase\Pages;
 
 use Drift\Geometry\Alignment;
+use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\EdgeInsets;
 use Drift\Rendering\Color;
 use Drift\Widget\BuildContext;
@@ -15,6 +16,7 @@ use Drift\Widget\Column;
 use Drift\Widget\Dock;
 use Drift\Layout\FlexAlign;
 use Drift\Layout\StackFit;
+use Drift\Widget\LayoutBuilder;
 use Drift\Widget\Padding;
 use Drift\Widget\Row;
 use Drift\Widget\ScrollView;
@@ -68,6 +70,29 @@ final class LayoutPage extends StatelessWidget
                         Text::make('End')->caption(),
                     ])->alignment(FlexAlign::End),
                 ])),
+
+                // ── LayoutBuilder：按**本盒**真实约束换子树（零帧）──
+                // 判据不是 `ctx->width`（那是窗口宽、整树共用），而是这一层实际拿到多大。
+                $this->demo('LayoutBuilder：按本盒真实约束换版式（拖窄窗口看它换）', LayoutBuilder::make(
+                    static function (BuildContext $ctx, BoxConstraints $c): Widget {
+                        $narrow = $c->hasBoundedWidth() && $c->maxWidth < 520.0;
+
+                        $width = 160.0;
+                        $label = '宽：本盒可用 520 以上 ⇒ 大色块';
+                        $color = Color::fromRgb(0x00, 0x96, 0x88);
+
+                        if ($narrow) {
+                            $width = 60.0;
+                            $label = '窄：本盒可用不足 520 ⇒ 小色块';
+                            $color = Color::fromRgb(0xFF, 0x57, 0x22);
+                        }
+
+                        return Row::make()->spacing(8.0)->children([
+                            SizedBox::make()->size($width, 24.0)->background($color)->radius(4.0),
+                            Text::make($label)->caption(),
+                        ]);
+                    }
+                )),
 
                 // ── Spacer + Expanded：把剩余空间吃掉 / 占住 ──
                 $this->demo('Spacer / Expanded：剩余空间的两种用法', Column::make()->spacing(10.0)->children([

@@ -12,6 +12,7 @@ use Drift\Layout\RenderObject;
 use Drift\Rendering\FrameStage;
 use Drift\Rendering\RenderSurface;
 use Drift\Rendering\SurfaceProfile;
+use Drift\Widget\ConstraintObserver;
 use Drift\Widget\Element;
 use Drift\Widget\StatefulElement;
 use Throwable;
@@ -24,6 +25,12 @@ use Throwable;
  */
 final class Frame
 {
+    /**
+     * 帧内约束反馈的轮数上限。正常 2 轮（首轮不知道约束 / 约束刚变），
+     * 4 轮是防御上限：超了就是 builder 在"按约束返回又改变约束"地打转。
+     */
+    private const MAX_CONSTRAINT_ROUNDS = 4;
+
     /**
      * 上一帧的约束，摊平存四个 float（不包成 ?BoxConstraints）：AOT 下可选对象字段
      * 退化成 Variant，相等判断变慢且类型不确定，这里只做相等判断无需对象。
@@ -139,81 +146,131 @@ final class Frame
         ?\Closure $afterPaint = null,
         bool $paintRequested = false,
     ): bool {
-        // ① 帧末统一重建：派发中途的 setState 只标脏。
-        // 异常从子树一路冒到帧末（沿途无 ErrorBoundary 捕获）⇒ 不吞：吞掉就是窗口冻结在上一帧且不报错。
-        // 分段计时（SurfaceProfile，默认关）。
-        $prof = SurfaceProfile::$on;
-        $t = $prof ? \hrtime(true) : 0;
+        // ① settle → ② layout → ②c 约束反馈：约束**真变了**就同帧再来一轮。
+        // 稳态 1 轮；只有 LayoutBuilder / 按真实尺寸分窗口的容器会多一轮（上限见常量）。
+        // 收敛完才 paint ⇒ 不存在"先画错的版式、下一帧再跳一下"的中间态（commit 原子）。
         $didRebuild = false;
-        try {
-            if ($this->needsSettle()) {
-                $this->pipeline->bumpSettleRun();
-                $didRebuild = $root->settle();
-                foreach ($overlays as $e) {
-                    // 浮层各自的帧末重建；任一浮层重建 ⇒ 本帧不能跳过 layout
-                    $didRebuild = ($e->element?->settle() ?? false) || $didRebuild;
-                }
-            } else {
-                // 树与上一帧逐位相同 ⇒ 既不重建也不挂接（判据见 needsSettle()）
-                $this->pipeline->bumpSettleSkip();
-            }
-        } catch (Throwable $e) {
-            Errors::report(sprintf(
-                '帧循环：未捕获异常冒到帧末（沿途无错误边界）—— %s（%s:%d）',
-                $e->getMessage(),
-                basename($e->getFile()),
-                $e->getLine(),
-            ));
-        }
-        // 结构快照必须在 settle 之后取：本帧的增删/重排要进下一帧的判据
-        $this->lastSettleStructure = $this->pipeline->structureVersion();
-        $this->lastMarkedCount = $this->pipeline->markedCount();
-        if ($prof) {
-            SurfaceProfile::add(FrameStage::SETTLE, \hrtime(true) - $t);
-        }
-
-        // ② layout
-        // 必须用 effectiveBox() 而不是 renderObject()：应用根常是 StatelessWidget，
-        // 自己没有盒、只有底下的 Column 有；用 renderObject() 拿 null ⇒ 直接返回
-        // ⇒ 整屏空白且不报错（不画任何东西也不算违反）。
-        $box = $root->effectiveBox();
-        if ($box === null) {
-            return false; // 整棵子树没有任何可绘制内容（例如空页）⇒ 这一帧无事可做
-        }
-
-        $t = $prof ? \hrtime(true) : 0;
-        // 纯动画帧跳过 layout：前提是 layout() 是纯函数，由 LayoutSelfCheck 守。
-        // 第三条判据 $boxEpoch（见字段注）：帧外换盒路径不进 settle 计数，
-        // 只靠前两条会判成没变而跳过 layout ⇒ 命中测试全落空。
-        // 读序号必须在 settle 之后（本帧重建造成的换盒也算进来）。
-        $boxEpoch = $this->pipeline->layoutEpoch();
         $layoutRan = false;
-        if ($didRebuild || $boxEpoch !== $this->lastBoxEpoch || $this->constraintsChanged($constraints)) {
-            $layoutRan = true;
-            $this->laidOut = true;
-            $this->lastBoxEpoch = $boxEpoch;
-            $this->lastMinWidth = $constraints->minWidth;
-            $this->lastMaxWidth = $constraints->maxWidth;
-            $this->lastMinHeight = $constraints->minHeight;
-            $this->lastMaxHeight = $constraints->maxHeight;
+        $drift = '';
+        /** @var list<string> $seenDrifts 本帧见过的漂移描述（A→B→A 的重复即震荡） */
+        $seenDrifts = [];
+        $round = 0;
 
+        for ($round = 1; ; $round++) {
+            // ① 帧末统一重建：派发中途的 setState 只标脏。
+            // 异常从子树一路冒到帧末（沿途无 ErrorBoundary 捕获）⇒ 不吞：吞掉就是窗口冻结在上一帧且不报错。
+            // 分段计时（SurfaceProfile，默认关）。
+            $prof = SurfaceProfile::$on;
+            $t = $prof ? \hrtime(true) : 0;
             try {
-                $box->layout($constraints);
+                // 第 1 轮按序号跳过；收敛轮必然刚标过脏，settle 是这一轮的全部意义。
+                if ($round > 1 || $this->needsSettle()) {
+                    $this->pipeline->bumpSettleRun();
+                    $didRebuild = $root->settle() || $didRebuild;
+                    foreach ($overlays as $e) {
+                        // 浮层各自的帧末重建；任一浮层重建 ⇒ 本帧不能跳过 layout
+                        $didRebuild = ($e->element?->settle() ?? false) || $didRebuild;
+                    }
+                } else {
+                    // 树与上一帧逐位相同 ⇒ 既不重建也不挂接（判据见 needsSettle()）
+                    $this->pipeline->bumpSettleSkip();
+                }
             } catch (Throwable $e) {
                 Errors::report(sprintf(
-                    '帧循环：layout 阶段未捕获异常（沿途无错误边界）—— %s（%s:%d）',
+                    '帧循环：未捕获异常冒到帧末（沿途无错误边界）—— %s（%s:%d）',
                     $e->getMessage(),
                     basename($e->getFile()),
                     $e->getLine(),
                 ));
             }
-        }
-        if ($prof) {
-            SurfaceProfile::add(FrameStage::LAYOUT, \hrtime(true) - $t);
+            // 结构快照必须在 settle 之后取：本帧的增删/重排要进下一帧的判据
+            $this->lastSettleStructure = $this->pipeline->structureVersion();
+            $this->lastMarkedCount = $this->pipeline->markedCount();
+            if ($prof) {
+                SurfaceProfile::add(FrameStage::SETTLE, \hrtime(true) - $t);
+            }
+
+            // ② layout
+            // 必须用 effectiveBox() 而不是 renderObject()：应用根常是 StatelessWidget，
+            // 自己没有盒、只有底下的 Column 有；用 renderObject() 拿 null ⇒ 直接返回
+            // ⇒ 整屏空白且不报错（不画任何东西也不算违反）。
+            // ★ 每轮都重取：settle 可能换了盒（新盒 size 恒 null ⇒ 命中测试全落空）。
+            $box = $root->effectiveBox();
+            if ($box === null) {
+                return false; // 整棵子树没有任何可绘制内容（例如空页）⇒ 这一帧无事可做
+            }
+
+            $t = $prof ? \hrtime(true) : 0;
+            // 纯动画帧跳过 layout：前提是 layout() 是纯函数，由 LayoutSelfCheck 守。
+            // 第三条判据 $boxEpoch（见字段注）：帧外换盒路径不进 settle 计数，
+            // 只靠前两条会判成没变而跳过 layout ⇒ 命中测试全落空。
+            // 读序号必须在 settle 之后（本帧重建造成的换盒也算进来）。
+            $boxEpoch = $this->pipeline->layoutEpoch();
+            if ($round > 1 || $didRebuild || $boxEpoch !== $this->lastBoxEpoch || $this->constraintsChanged($constraints)) {
+                $layoutRan = true;
+                $this->laidOut = true;
+                $this->lastBoxEpoch = $boxEpoch;
+                $this->lastMinWidth = $constraints->minWidth;
+                $this->lastMaxWidth = $constraints->maxWidth;
+                $this->lastMinHeight = $constraints->minHeight;
+                $this->lastMaxHeight = $constraints->maxHeight;
+
+                try {
+                    $box->layout($constraints);
+                } catch (Throwable $e) {
+                    Errors::report(sprintf(
+                        '帧循环：layout 阶段未捕获异常（沿途无错误边界）—— %s（%s:%d）',
+                        $e->getMessage(),
+                        basename($e->getFile()),
+                        $e->getLine(),
+                    ));
+                }
+            }
+            if ($prof) {
+                SurfaceProfile::add(FrameStage::LAYOUT, \hrtime(true) - $t);
+            }
+
+            // ②c 约束反馈：布局之后才知道"这层实际拿到多大"。变了 ⇒ 同帧重建。
+            // ★ 表通常为空（只有登记过的节点），不遍历树、不 instanceof 具体控件。
+            $drift = '';
+            foreach ($this->pipeline->constraintObservers() as $observer) {
+                if (!$observer instanceof ConstraintObserver) {
+                    continue;
+                }
+
+                $reported = $observer->pollConstraintDrift();
+                if ($reported !== null && $reported !== '') {
+                    $drift = $reported;
+                    $this->pipeline->noteConstraintDrift($reported);
+                }
+            }
+
+            if ($drift === '') {
+                break;
+            }
+
+            // 有界 + 震荡检测：A→B→A 会让同一句描述重复出现，那比"轮数用光"更能说明问题。
+            $repeated = \in_array($drift, $seenDrifts, true);
+            if ($round >= self::MAX_CONSTRAINT_ROUNDS || $repeated) {
+                Errors::report(sprintf(
+                    '一帧内布局约束反馈跑了 %d 轮仍未收敛%s：%s。'
+                        . "\n" . '修法：检查 LayoutBuilder 的 builder 是否返回了"尺寸又反过来依赖约束"的子树'
+                        . '（A→B→A 震荡），或把分支条件改成只依赖约束本身的稳定判据。',
+                    $round,
+                    $repeated ? '（检测到震荡：同一句漂移重复出现）' : '（轮数上限）',
+                    $drift,
+                ), Errors::DIAGNOSTIC);
+
+                break;
+            }
+
+            $seenDrifts[] = $drift;
         }
 
+        $this->pipeline->noteConstraintRounds($round);
+
         // ②b 布局自校验（默认关，build/layout.check 存在时开）
-        // 必须放在 layout 之后：它用同一约束再排一次，排在前面等于替真实帧排两遍。
+        // 必须放在**最后一轮** layout 之后：它用同一约束再排一次，排在前面等于替真实帧排两遍。
         // 只覆盖主树：浮层 layout 在 Application::placeOverlays()（要锚点与客户区尺寸），自校验看不见。
         LayoutSelfCheck::maybeCheck($box, $constraints);
 
