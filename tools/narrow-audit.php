@@ -23,21 +23,24 @@ declare(strict_types=1);
  *
  * ## 宽度不硬编码
  *
- * `420 − 200 = 220` 这个算式有两个来源：`Bootstrap::MIN_WINDOW_WIDTH` 与
- * `ShowcaseState::NAV_WIDTH`。两者都读出来算 —— 任何一处改了宽度，审计跟着变。
- * 写死 220 的话，改完侧栏宽度审计还按老宽度跑，**全绿是假的**。
+ * `420 − 56 = 364` 这个算式有三个来源：`Bootstrap::MIN_WINDOW_WIDTH`、窗口档位
+ * （最小宽落在 Compact ⇒ 侧栏走图标栏那一版）、以及 `ShowcaseState::NAV_WIDTH_COMPACT`。
+ * 全都读出来算 —— 任何一处改了宽度，审计跟着变。写死 364 的话，改完侧栏宽度审计
+ * 还按老宽度跑，**全绿是假的**。
  */
 require __DIR__ . '/autoload.php';
 
 use App\Showcase\Bootstrap;
 use App\Showcase\ShowcaseRoot;
 use App\Showcase\ShowcaseState;
+use Drift\Async\Future;
 use Drift\Dev\Inspect\Snapshot;
 use Drift\Dev\Smoke\App\FakeDialog;
 use Drift\Errors;
 use Drift\Layout\LayoutTolerance;
 use Drift\Platform\Dialog;
 use Drift\Widget\BuildContext;
+use Drift\Widget\WindowSize;
 use Drift\Widget\Widget;
 use Drift\Text\DeterministicFontManager;
 use Drift\Text\DeterministicMetricsProvider;
@@ -71,7 +74,10 @@ function constOf(string $class, string $name): int
 }
 
 $minWidth = constOf(Bootstrap::class, 'MIN_WINDOW_WIDTH');
-$navWidth = constOf(ShowcaseState::class, 'NAV_WIDTH');
+// 侧栏走哪一版由最小宽自己的档位决定：改了 `MIN_WINDOW_WIDTH` 越过断点，算式自动换。
+$navWidth = WindowSize::fromWidth((float) $minWidth)->isCompact()
+    ? constOf(ShowcaseState::class, 'NAV_WIDTH_COMPACT')
+    : constOf(ShowcaseState::class, 'NAV_WIDTH');
 $contentWidth = $width ?? ($minWidth - $navWidth);
 
 // 高度只影响"纵向装不装得下"，而有 ScrollView 兜着 ⇒ 宽度才是判据。
@@ -100,7 +106,9 @@ function instantiate(string $class): object
         $name = $type instanceof ReflectionNamedType ? $type->getName() : '';
 
         if ($name === Closure::class || $name === 'Closure') {
-            $args[] = static function (): void {};
+            // 取数闭包会被页面立刻 `->onProgress()`（异步页）⇒ 必须返回 `Future`。
+            // 给一个**永不完成**的：审计只量布局，不需要数据真落地。
+            $args[] = static fn(): Future => Future::pending();
             continue;
         }
         if ($name === Dialog::class || \is_subclass_of($name, Dialog::class)) {

@@ -44,6 +44,7 @@ use Drift\Widget\Modal;
 use Drift\Widget\State;
 use Drift\Widget\States;
 use Drift\Widget\Widget;
+use Drift\Widget\WindowSize;
 use Drift\Widget\SemanticsBuilder;
 use Drift\Widget\Snackbar;
 
@@ -560,6 +561,36 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     }
 
     /**
+     * 窗口**跨档**了就把新尺寸下发（档内不动）。
+     *
+     * ★ 档内不重建是有意的：拖动 resize 是高频路径（平台在模态尺寸循环里同步调回），
+     *   逐像素重建全树会卡；而"档位不变 ⇒ 布局结论不变"，重排就够了。
+     * ★ 只下发给根与浮层两棵树 —— 与 `applyNewContext()` 同一族，别处没有第三棵。
+     */
+    private function adoptWindowSize(BoxConstraints $constraints): void
+    {
+        $root = $this->root;
+        if ($root === null || $constraints->maxWidth <= 0.0) {
+            return;
+        }
+
+        $next = WindowSize::fromWidth($constraints->maxWidth);
+        if ($next === $root->context()->windowSize()) {
+            return;
+        }
+
+        // `rebuild()` 会推结构版本号 ⇒ 先切到本应用的管线，否则记到别的窗口账上。
+        Pipeline::enter($this->pipeline);
+
+        $context = $root->context()->withWindow($constraints->maxWidth, $constraints->maxHeight, $next);
+        $root->applyContext($context);
+
+        foreach ($this->overlayHost->overlays()->all() as $e) {
+            $e->element?->applyContext($context);
+        }
+    }
+
+    /**
      * 跑一帧：平台每帧调一次。
      *
      * @param float $timestampMs 注入的时间戳（不读环境时钟）
@@ -583,6 +614,10 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
 
         // 帧开始的请求记为已服务，帧内新增的留给下一帧；必须在四个泵之前。
         $this->pipeline->beginFrame();
+
+        // 跨档 ⇒ 本帧的 settle 就会重建（档内只重排，不在此处动手）。
+        $this->adoptWindowSize($constraints);
+
         $settleSkipBefore = $this->pipeline->settleSkipCount();
         $paintSkipBefore = $this->pipeline->paintSkipCount();
 
@@ -795,6 +830,9 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         }
 
         // 拖动中的重排同样是窗口帧：裁剪 + 留痕，不弹 Fatal 打断拖动。
+        // 档位若变了得先重建树 —— 放在跑帧之前，同帧生效（否则会闪一帧旧布局）。
+        $this->adoptWindowSize($constraints);
+
         LayoutTolerance::withinWindow(function () use ($constraints, $frame, $root): void {
             $this->overlayLayout->placeOverlays($constraints);
             $frame->run(

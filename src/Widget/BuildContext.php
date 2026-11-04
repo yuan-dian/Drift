@@ -26,23 +26,54 @@ use Drift\Theme\ThemeData;
 final readonly class BuildContext
 {
     /**
-     * @param float $width  本容器收到的约束宽（逻辑单位，§6.1）
-     * @param float $height 本容器收到的约束高
+     * 窗口档位：跨档才重建，档内不重建 —— 所以它**永不过期**，而 `$width` 会。
+     *
+     * @see WindowSize
+     */
+    private WindowSize $windowSize;
+
+    /**
+     * @param float $width  本容器收到的约束宽（逻辑单位，§6.1）。★ 档内不更新 ——
+     *        响应式判断用 `windowSize()`，别拿它比大小
+     * @param float $height 本容器收到的约束高（同上）
      * @param ThemeData $theme 沿 Element 父链**解析后**的结果（不是查找入口）
      * @param TextMetricsProvider $metrics **布局确定性的注入点**（§14.2）——
      *        Widget 层问度量、不问平台，所以测试能喂固定度量、golden 能复现。
+     * @param WindowSize|null $windowSize 不给就按 `$width` 推（测试与审计只传宽即可）
      */
     public function __construct(
         public float $width,
         public float $height,
         private ThemeData $theme,
         private TextMetricsProvider $metrics,
+        ?WindowSize $windowSize = null,
     ) {
+        $this->windowSize = $windowSize ?? WindowSize::fromWidth($width);
     }
 
     public function theme(): ThemeData
     {
         return $this->theme;
+    }
+
+    /**
+     * 窗口档位。响应式布局的**唯一**判据（`$width` 在档内是陈旧的，别拿它做判断）。
+     *
+     * @api
+     */
+    public function windowSize(): WindowSize
+    {
+        return $this->windowSize;
+    }
+
+    /**
+     * 换窗口尺寸与档位，其余不变。
+     *
+     * @internal 只有 `Drift\App\Application` 调它 —— 窗口尺寸不是控件能声明的东西。
+     */
+    public function withWindow(float $width, float $height, WindowSize $windowSize): self
+    {
+        return new self($width, $height, $this->theme, $this->metrics, $windowSize);
     }
 
     /**
@@ -54,7 +85,7 @@ final readonly class BuildContext
      */
     public function withTheme(ThemeData $theme): self
     {
-        return new self($this->width, $this->height, $theme, $this->metrics);
+        return new self($this->width, $this->height, $theme, $this->metrics, $this->windowSize);
     }
 
     public function metrics(): TextMetricsProvider

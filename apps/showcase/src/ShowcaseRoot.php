@@ -160,6 +160,14 @@ final class ShowcaseState extends State
      */
     public const NAV_WIDTH = 200;
 
+    /**
+     * 窄窗档的侧栏宽（图标栏）。
+     *
+     * ★ 窗口拖到最小时侧栏若仍是 200，内容区只剩 220 —— 页面里的 `Row` 一律被裁，
+     *   而页根是竖向滚动，右边**拿不回来**。收成图标栏把宽度还给内容。
+     */
+    public const NAV_WIDTH_COMPACT = 56;
+
     /** @var list<NavEntry> */
     private array $entries = [];
 
@@ -239,13 +247,14 @@ final class ShowcaseState extends State
         //   Chrome #F3F3F3)就和背景板糊成一片 —— 覆盖值恰好约等于 Chrome，
         //   层次差被自己的覆盖吃掉了。
         $canvas = $ctx->theme()->color(ColorToken::Pane);
+        $compact = $ctx->windowSize()->isCompact();
 
         return ThemeScope::make(
             ThemeData::light()
                 ->withColor(ColorToken::Accent, Color::fromRgb(0x00, 0x96, 0x88)),
             Dock::make()
                 ->top($this->buildTopBar())
-                ->center($this->buildBody($canvas))
+                ->center($this->buildBody($canvas, $compact))
         );
     }
 
@@ -284,16 +293,18 @@ final class ShowcaseState extends State
      *   #F2F3F5：硬编码值既不跟随明暗表，也会和 `Chrome` 撞成一片（2026-10-25）。
      * ★ `cross(Stretch)` 让导航面板拉满高：LayUI 的左侧导航就是全高白底，
      *   少了它导航只有内容那么高，下面露出灰底 —— 一眼就"没做完"。
+     * ★ `$compact` 是**结构**差异而非样式差异：窄窗档侧栏收成图标栏，把宽度
+     *   还给内容（页根是竖向滚动，横向被裁掉的右边拿不回来）。
      */
-    private function buildBody(Color $canvas): Widget
+    private function buildBody(Color $canvas, bool $compact): Widget
     {
         return Card::make(
             Row::make()->cross(FlexAlign::Stretch)->children([
                 // ★ 侧栏**定宽**（`self::NAV_WIDTH`，LayUI 侧栏的形态）：没有 `SizedBox`
                 //   时宽度只能由"最长那个按钮文字"撑出来，改文案/换语言就变。外层
                 //   `Row::cross(Stretch)` 负责把它拉满高，`SizedBox` 只定宽 —— 两轴各自管一件事。
-                SizedBox::make(Card::make(ScrollView::make($this->buildNav()))->paddingAll(10.0))
-                    ->width((float) self::NAV_WIDTH),
+                SizedBox::make(Card::make(ScrollView::make($this->buildNav($compact)))->paddingAll(10.0))
+                    ->width((float) ($compact ? self::NAV_WIDTH_COMPACT : self::NAV_WIDTH)),
                 // ★ 滚动归**页根**（每页自己 `Card(ScrollView(...))`）：外壳再套一层
                 //   就是嵌套滚动 —— 内层永远"量到全部内容"，外层滚不动，两层都白搭。
                 Expanded::make($this->pageFor($this->selected)()),
@@ -304,25 +315,29 @@ final class ShowcaseState extends State
     }
 
     /** @return list<Widget> */
-    private function navButtons(): array
+    private function navButtons(bool $compact): array
     {
         $out = [];
         foreach ($this->entries as $index => $entry) {
-            $out[] = $this->navButton($entry, $index);
+            $out[] = $this->navButton($entry, $index, $compact);
         }
         return $out;
     }
 
-    private function navButton(NavEntry $entry, int $index): Widget
+    private function navButton(NavEntry $entry, int $index, bool $compact): Widget
     {
         $isHere = $index === $this->selected;
 
         // ★ 未选中用 `Flat`（无底无边框 ⇒ 看起来像菜单项，不像一排按钮）；
         //   选中用 `Primary` + 显式主色（主题的 Accent 是蓝的，示例台要 LayUI 的墨绿）。
-        // ★ 用 `NavButton` 而不是裸 `Button`：壳控件词汇要可静态识别，且它把内容
-        //   设成左对齐（图标列必须齐，居中会按标签长度各自漂移）。
-        $button = NavButton::make($entry->label)
-            ->icon($entry->icon)
+        // ★ 宽档用 `NavButton`：壳控件词汇要可静态识别，且它把内容设成左对齐
+        //   （图标列必须齐，居中会按标签长度各自漂移）。窄档没地方放文字，换
+        //   `IconButton` —— 标签仍进无障碍名，不丢信息。
+        $button = $compact
+            ? IconButton::of($entry->icon, $entry->label)
+            : NavButton::make($entry->label)->icon($entry->icon);
+
+        $button
             ->variant($isHere ? ButtonVariant::Primary : ButtonVariant::Flat)
             ->onPressed(function () use ($index): void {
                 // ★ `$this` 在闭包里（**不能** static fn —— 要调 setState）
@@ -336,12 +351,12 @@ final class ShowcaseState extends State
         return $button;
     }
 
-    private function buildNav(): Widget
+    private function buildNav(bool $compact): Widget
     {
-        // ★ `cross(Stretch)` 在这里**安全**：宽度已被外层 `SizedBox(200)` 定死，
-        //   `Stretch` 拉的是"可用宽"= 180（扣掉卡片 padding），不再是整行 940。
+        // ★ `cross(Stretch)` 在这里**安全**：宽度已被外层 `SizedBox` 定死，
+        //   `Stretch` 拉的是"可用宽"（扣掉卡片 padding），不再是整行 ——
         //   ⇒ 导航项整行可点（LayUI 侧栏就是这个形态），右边缘也齐。
-        return Column::make()->cross(FlexAlign::Stretch)->spacing(2.0)->children($this->navButtons());
+        return Column::make()->cross(FlexAlign::Stretch)->spacing(2.0)->children($this->navButtons($compact));
     }
 
     /** @return \Closure(): Widget */

@@ -26,10 +26,10 @@
 | State | 17 | 8 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
-| Widget | 178 | 214 |
-| **合计** | **483** | **388** |
+| Widget | 180 | 215 |
+| **合计** | **485** | **389** |
 
-覆盖 387 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
+覆盖 388 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
 
 ## App 层
 
@@ -677,7 +677,7 @@
 
 ## Widget 层
 
-### @api（应用可读面） · 178
+### @api（应用可读面） · 180
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -692,6 +692,7 @@
 | `BackdropFilter::make()` | method | src/Widget/BackdropFilter.php |
 | `BackdropFilter::sigma()` | method | src/Widget/BackdropFilter.php |
 | `BuildContext` | class | src/Widget/BuildContext.php |
+| `BuildContext::windowSize()` | method | src/Widget/BuildContext.php |
 | `Button` | class | src/Widget/Button.php |
 | `Button::enabled()` | method | src/Widget/Button.php |
 | `ButtonVariant` | enum | src/Widget/ButtonVariant.php |
@@ -857,10 +858,11 @@
 | `Widget::__construct()` | method | src/Widget/Widget.php |
 | `Widget::key()` | method | src/Widget/Widget.php |
 | `Widget::mutate()` | method | src/Widget/Widget.php |
+| `WindowSize` | enum | src/Widget/WindowSize.php |
 | `Wrap` | class | src/Widget/Wrap.php |
 | `YearMonth` | class | src/Widget/YearMonth.php |
 
-### @internal（框架内部） · 214
+### @internal（框架内部） · 215
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -870,6 +872,7 @@
 | `AnimationController::finish()` | method | src/Widget/AnimationController.php |
 | `AppBar::kidList()` | method | src/Widget/AppBar.php |
 | `AppBar::paintsBoxChrome()` | method | src/Widget/AppBar.php |
+| `BuildContext::withWindow()` | method | src/Widget/BuildContext.php |
 | `BuildContext::withTheme()` | method | src/Widget/BuildContext.php |
 | `Button::paintsBoxChrome()` | method | src/Widget/Button.php |
 | `CalendarView::selectedValue()` | method | src/Widget/CalendarView.php |
