@@ -43,7 +43,17 @@ function drift_lint_selftest(string $root, Linter $linter): bool
             'apps/MethodBad.php:' . Diagnostic::WARN,
         ],
         'namespace-mismatch' => [],
-        'nano-hygiene' => [],
+        // 2026-11-04 补夹具（此前一直是空数组 ⇒ 只验过"能报"，没验过"不误报"）。
+        // 5 条 = `\Generator` 返回类型 1 + `yield` 2 + `eval` 1 + `getenv()` 1。
+        // ★ `apps/NanoGood.php` 一条都不该有：它钉的是 `Fiber` 已解禁
+        //   （属性类型 / `new` / 静态调用三处）+ `getenv` 作方法名不误报。
+        'nano-hygiene' => [
+            'apps/NanoBad.php:' . Diagnostic::ERROR,
+            'apps/NanoBad.php:' . Diagnostic::ERROR,
+            'apps/NanoBad.php:' . Diagnostic::ERROR,
+            'apps/NanoBad.php:' . Diagnostic::ERROR,
+            'apps/NanoBad.php:' . Diagnostic::ERROR,
+        ],
         'orphan-trait' => [],
         // §16.6.3 第二批（2026-10-15 按优先级补）
         'dead-command' => [

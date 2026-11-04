@@ -12,7 +12,7 @@
 | 层 | @api | @internal |
 |---|---|---|
 | App | 84 | 52 |
-| Async | 18 | 4 |
+| Async | 24 | 4 |
 | Commands | 7 | 0 |
 | Core | 2 | 36 |
 | Errors.php | 2 | 3 |
@@ -27,9 +27,9 @@
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
 | Widget | 183 | 216 |
-| **合计** | **490** | **397** |
+| **合计** | **496** | **397** |
 
-覆盖 391 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
+覆盖 393 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
 
 ## App 层
 
@@ -181,10 +181,16 @@
 
 ## Async 层
 
-### @api（应用可读面） · 18
+### @api（应用可读面） · 24
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
+| `AsyncCancelled` | class | src/Async/AsyncCancelled.php |
+| `AsyncScope` | class | src/Async/AsyncScope.php |
+| `AsyncScope::task()` | method | src/Async/AsyncScope.php |
+| `AsyncScope::await()` | method | src/Async/AsyncScope.php |
+| `AsyncScope::sleep()` | method | src/Async/AsyncScope.php |
+| `AsyncScope::isCancelled()` | method | src/Async/AsyncScope.php |
 | `AsyncValue` | class | src/Async/AsyncValue.php |
 | `AsyncValue::carriedFrom()` | method | src/Async/AsyncValue.php |
 | `AsyncValue::withProgress()` | method | src/Async/AsyncValue.php |

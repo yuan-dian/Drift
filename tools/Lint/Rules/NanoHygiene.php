@@ -15,6 +15,20 @@ use Drift\Dev\Lint\Tokens;
  * ★ 诚实边界（§16.6.3）：这条规则只保证**源码纪律**，查不到 tpc 自己注入的
  *   include 或链接期问题。加了它 ≠ 能切 nano —— 最终判据只能是真机 `--nano` 构建。
  *   它的定位是"零成本保留将来可切的可选性"，不是"nano 就绪"的证明。
+ *
+ * ★★ **`Fiber` 于 2026-11-04 解禁**（不在清单里了），三条理由：
+ *   ① **nano 已明确不做**（`DESIGN.md` §16.7.5，2026-10-14 裁决，重估时机"不设"）
+ *      ⇒ 这条禁令守的是一条不打算走的路；
+ *   ② 它**不再零成本** —— 挡住 `AsyncScope`（线性异步）这条唯一能治
+ *      `apps/watermark` 那种"N 步流水线拆成三份"的路，代价远大于可选性收益；
+ *   ③ **实测通行**：`probes/fiber_scope` 在 AOT `-m bin` 产物里十一条边界全绿
+ *      （跨帧 / 操作 tpc 编译类 / throw+finally / 回调栈恢复 / 多 Fiber / 嵌套 /
+ *      深栈 / 传对象 / 局部消化 / getCurrent），且变异自检证明判据有牙。
+ *      `docs/design-v7/11-编译器约束映射.md` §5.4 早就写着"`--nano` 不支持 Fiber
+ *      ⇒ 走 `-m bin`" —— 二者本就互斥，本仓走的是 `-m bin`。
+ *
+ * ★ `Generator` / `yield` **仍然禁**：nano 之外没有第二条论据支持生成器，
+ *   而"懒序列改用显式分页/窗口结构"已经落地。**没有消费者来推翻，就不动它。**
  */
 final class NanoHygiene implements Rule
 {
@@ -24,8 +38,12 @@ final class NanoHygiene implements Rule
         'putenv' => 'putenv',
     ];
 
-    /** 禁用类型（C++17 无栈切换，无法承载） */
-    private const BANNED_TYPES = ['Generator', 'Fiber'];
+    /**
+     * 禁用类型。
+     *
+     * ★ `Fiber` 曾在此（"C++17 无栈切换，无法承载"）—— 2026-11-04 移除，见类注释。
+     */
+    private const BANNED_TYPES = ['Generator'];
 
     public function name(): string
     {
@@ -39,7 +57,7 @@ final class NanoHygiene implements Rule
 
     public function summary(): string
     {
-        return '禁用匿名类 / yield / Generator / Fiber / getenv / putenv / eval / include·require';
+        return '禁用匿名类 / yield / Generator / getenv / putenv / eval / include·require';
     }
 
     public function check(Project $project): array

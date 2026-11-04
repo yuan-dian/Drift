@@ -1,0 +1,34 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# probes/fiber_scope/project.yml —— 门 1 探针：Fiber 在 AOT(-m bin) 里的边界
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# ★ **不 include `build/base.yml`**：那个文件链 Skia（141MB 的 .lib），
+#   而本探针一行 GUI 都不用。自己写最小配置 ⇒ 构建 20s 以内、产物 3MB 级。
+#   ★ 不加 `no-console`：本探针**要 stdout**（结论直接看命令行）。
+#
+# ★★ 调用约定同其它 project.yml：**从仓库根调用**，被 tpc 解析的路径
+#   （`sources`）以**本文件所在目录**为基准 ⇒ 写 `.` 即可（源码就在同目录 app/）。
+
+name: fiber_scope_probe
+version: 0.1.0
+
+info:
+  Author: Drift
+  Description: 门 1 探针 —— Fiber 在 tpc AOT 产物里的八条边界（AsyncScope 前置）
+
+cxx-std: c++20
+
+cxx-flags:
+  # 源码注释是 UTF-8；不加这条 MSVC 按系统代码页解析 ⇒ C4819 或静默乱码
+  - /utf-8
+  # 并行编译共享 PDB 写句柄（与全仓一致）
+  - /FS
+
+job: 16
+
+sources:
+  - app
+  # ★ 真实框架代码：本探针后半段直接跑 `Drift\Async\AsyncScope`，
+  #   验的是"要上线的那份实现"在 AOT 里成立，不是另写一份样例。
+  #   tpc 只编译可达代码，这里可达的只有 Future / Errors / AsyncScope / AsyncCancelled。
+  - ../../src

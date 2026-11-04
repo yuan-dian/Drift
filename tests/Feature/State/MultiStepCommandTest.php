@@ -19,12 +19,21 @@ use Drift\Geometry\Size;
  *
  * `ASYNC-ARCH-2026-10-31.md` §3.4 / §4.3 记着一条缺口：多步依赖（"先取用户，
  * 再用用户的 id 取订单"）**能写但仓库里没有一个例子**，于是"这样写对不对"只能靠猜。
- * 本仓没有 `await`（AOT 禁 `Fiber`/`Generator`，见该册 §3.1），能用的形状只有两种：
+ *
+ * ## 三种写法（2026-11-04 更新：多了一条 `AsyncScope`）
+ *
+ * 本文件钉的是**第一种**。★ 原文此处写着"本仓没有 `await`（AOT 禁 `Fiber`/`Generator`）"
+ * —— **那个前提已于 2026-11-04 作废**：`Fiber` 在 AOT `-m bin` 产物里十一条边界实测全绿
+ * （`probes/fiber_scope`），`Drift\Async\AsyncScope` 因此落地。
  *
  * | 写法 | 形状 | 什么时候用 |
  * |---|---|---|
- * | **`$task` 内部组合**（本文） | `submit(A)->then(fn($a) => submit(B($a)))` | 多步但界面要**一次加载** |
+ * | **`$task` 内部组合**（本文） | `submit(A)->then(fn($a) => submit(B($a)))` | 2–3 步、**无循环**、中间值不用上界面 |
  * | 两次 `run()` | 第一个命令 `data` 后手动 `$second->run($id)` | 两步**各自可独立展示** |
+ * | **`AsyncScope`**（`AsyncScopeCommandTest`） | `$co->await($host->submit(A))` 顺序写 | **有循环（轮询）/ 有重试 / 每步都要更新界面** |
+ *
+ * ★ 第一种不会因为第三条的出现而过时：它**不需要协程**，两条 Future 就够。
+ *   有循环或有中间态时才值得开作用域 —— 别为了"统一写法"给两步的事套一层协程。
  *
  * ```php
  * // ★ 范文本体：整段只有一句，页面与 `AsyncCommand` 都不知道有几"步"

@@ -163,7 +163,7 @@ Errors::installFatalBox(fn(string $t, string $b) => $platform->fatalBox($t, $b))
 | 3 | **`cpp-src/*.h` 绝不写 `using namespace php;`** | lib 模式无条件 `/FI` 聚合头 ⇒ `php::operator*` 提到 Skia 头前 ⇒ 位运算重载歧义（D1 根因**未修**） | lint（`no-using-php`，M1 起） |
 | 4 | **从命名空间内调 stub 函数必须写前导 `\`** | 否则 decl 头不注入 ⇒ `C3861` 指向**生成的 `.cc`**，极难定位 | lint（`stub-prefix`，M1 起） |
 | 5 | **`tools/build.sh` 从第一天设 `PHPRC`** | `tpc.exe` 不加载同目录 `php.ini`；缺 `mbstring` 直接 `Fatal: Failed to startup module`。0.9.0 不要求、**0.9.4 起强制** | 脚本 + 文档（§16.5 陷阱 4） |
-| 6 | **`nano-hygiene`**：禁匿名类 / `yield`+`Generator`+`Fiber` / `getenv`·`putenv` / `eval`·`include`·`require` | 零成本保留"将来可切 `--nano`"的可选性（§16.7） | lint（M1 起） |
+| 6 | **`nano-hygiene`**：禁匿名类 / `yield`+`Generator` / `getenv`·`putenv` / `eval`·`include`·`require`（★ **`Fiber` 2026-11-04 解禁**，见 §16.7.7） | 保留"将来可切 `--nano`"的可选性（§16.7）。Fiber 例外：它是线性异步（`AsyncScope`）的唯一实现基础，而 nano 已明确不做 ⇒ 守它等于守一条不打算走的路 | lint（M1 起） |
 | 7 | **一个类一个文件，文件名 = 类名**；**trait 不单独成文件** | 只有 trait 的文件不产出翻译单元（`cl` 收到空文件名） | lint（`namespace-mismatch` / `orphan-trait`） |
 | 8 | **业务层（`apps/*/store/`）零 GUI 依赖** | 隔离的物质前提；`Subject` 只依赖 `Drift\State` 内部的 `ThreadAffinity::assertUi()`，不依赖 `Platform` | lint（§4.3 依赖规则） |
 | 9 | **订阅控件必须在 `build()` 内构造**，不得跨帧缓存 | 缓存复用会让它捕获旧快照 ⇒ 看着订了、订的是上一帧的 store（§11.3.2） | lint（`cached-subscriber`） |
@@ -2566,7 +2566,8 @@ Fatal error: Unsupported statement: Stmt_Return in apps/users/.../memory_source.
 |------------|-----------|------|
 | `eval` / `include` / `require` | 0 处 | ✅ 已满足 |
 | **匿名类** | 0 处 | ✅ 已满足 |
-| **Fiber / Generator / `yield`** | 明写"**零 Fiber、零协程是刻意选择**"；`yield` **不进核心** | ✅ 已满足 |
+| **`Generator` / `yield`** | `yield` **不进核心**（懒序列走显式分页/窗口结构） | ✅ 已满足 |
+| ~~**Fiber**~~ | **2026-11-04 解禁**：`AsyncScope` 要用它 | ⚠️ **放弃此项**（§16.7.7） |
 | `getenv` / `putenv` | 0 处 | ✅ 已满足 |
 | 网络 / HTTP | **有** | ⚠️ **保留**（nano 兼容性让位于功能） |
 
@@ -2577,6 +2578,32 @@ Fatal error: Unsupported statement: Stmt_Return in apps/users/.../memory_source.
 
 `SourcePipelineTrait.php:602-606` 的注释写着 "**Windows Nano deliberately leaves `nanoMode=false`**"，但 `NanoBuildBackend::composesRuntimeSources()` **无条件 `return true`**（不看平台名）。
 ⇒ **注释已过期，代码才是真的**：Windows 上 `--nano` **会**开 `nanoMode`。（与 §16.5 陷阱 6 的"过时注释"是同一类风险。）
+
+#### 16.7.7 `Fiber` 解禁（2026-11-04 裁决）
+
+★ **`Fiber` 从 `nano-hygiene` 的禁用清单里移除，`Generator` / `yield` 保留。**
+
+三条理由，缺一条都不够：
+
+1. **它守的那条路已经放弃。** §16.7.5 明写 nano 在 M0–M5 不做、**重估时机"不设"**。
+   禁令的定位（§16.6.3）是"**零成本**保留将来可切的可选性"——前提是零成本。
+2. **它不再零成本。** `Fiber` 是 `AsyncScope`（线性异步，§17.2.5）的唯一实现基础，
+   而后者是 `apps/watermark` 那种"N 步流水线被拆成状态机 + 回调 + 序列化三份"的唯一解法。
+   **一条禁令挡住一个真问题，就不再是纪律而是障碍。**
+3. **实测通行。** `probes/fiber_scope` 在 AOT `-m bin` 产物里 14 条边界全绿
+   （跨帧 suspend / 操作 tpc 编译类 / `throw`+`finally` / 回调栈恢复 / 多 Fiber /
+   嵌套 / 深栈 / 传对象 / 局部消化 / `getCurrent` / **真实 `AsyncScope` 三步流水线** /
+   取消 / 异常穿越），三组变异精准报红。
+   ★ 早有一条被忽略的对应记录：`docs/design-v7/11-编译器约束映射.md` §5.4
+   写着"`--nano` 不支持 Fiber ⇒ 走 `-m bin`"——**两者本就互斥**，本仓走的一直是 `-m bin`。
+
+**代价（诚实记账）**：放弃"将来切 nano 消除多文件部署"这一条可选性。
+它本来就是 §10.2 代价 2 里被**明确接受**的那笔账（"形态 B 必须接受多文件部署，不再指望 nano 消除它"），
+所以这不是新增损失，只是把已接受的事实在源码纪律上对齐。
+
+**判据**：`tools/Lint/fixtures/apps/NanoBad.php`（5 条 error，钉规则仍然有效）+
+`NanoGood.php`（`Fiber` 三种形态不报）。`php tools/lint.php --selftest` 的
+`nano-hygiene 该响 5 / 不该响 0` 是这件事唯一可执行的证明。
 
 ---
 

@@ -64,7 +64,7 @@ v6 `13` 册记 12 条但口径是"从零设计"。
 | 父类 `private` **不进子类属性表** ⇒ 子类实例上访问报 `Undefined property` | 基类用 `private` 给子类共享字段 | `protected`（`Element` 的 `$box`/`$mounted` 注释写明"语义不变，仅可见性放宽"） |
 | 被继承的类，字段不能是 `private`（tpc 按运行时类型查属性表） | `RenderFlex` 的字段用 `private` | `protected readonly`（`RenderFlex.php:46-51` 注释：2026-10-16 真机跑 `users.exe` 当场暴露） |
 | `readonly` 属性**不能**在构造之外赋值 | 可变值对象 | 可变字段用 `private`（`RenderBox::$composeOpacity`，`05` §5.4） |
-| `#[\Native]` 类**不能**进 PHP 数组 / 不能持容器 / 不能作 Fiber 参数 | `#[\Native]` 做树节点 | 纯 PHP 类做节点；`#[\Native]` 只做叶子值对象 |
+| `#[\Native]` 类**不能**进 PHP 数组 / 不能持容器 / 不能作 Fiber 参数 | `#[\Native]` 做树节点 | 纯 PHP 类做节点；`#[\Native]` 只做叶子值对象。★ 本仓 `#[\Native]` **零使用** ⇒ 这条目前无消费者（2026-11-04 核） |
 | `readonly` **慢 10×+**（v6 断言） | 热路径字段用 `readonly` | ~~`private` + getter~~ **M0-1 已推翻此条，见 §2.1** |
 | `#[\Immutable]` 只作用于**实例方法**与**参数**，不能放类/属性/普通函数 | "零成本替代 `readonly`" | 不存在这种替代（`readonly` 是属性级、`#[\Immutable]` 是方法级） |
 

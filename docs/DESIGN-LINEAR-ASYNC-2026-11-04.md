@@ -24,6 +24,10 @@
 | 6 | **裁决：不引入 Swoole / Swow。走 PHP 内置 Fiber + 现有非阻塞 IO 层，补一个 `await()`**。仓库自己预留了钩子（`IoPoller` 注释、`probes/RESULTS.md` §12.2 结论「用 Fiber，不用 Swoole 协程」），watermark 就是那个「真有消费者」 | 本轮裁决 |
 | 7 | 立项三道门：lint 禁 Fiber 的理由与 AOT 实测**矛盾**（探针 `[I] terminated=yes`）、取消语义、`#[\Native]` 类不能作 Fiber 参数 | 待验，不先动代码 |
 
+> ★ **本棒（第二棒）已把三道门处理完**：门 1 全绿（AOT 真机 14/14）⇒ `Fiber` 解禁、
+> `AsyncScope` 落地；门 2 由 `AsyncScope::abort()` + 三组变异钉住；门 3 **不适用**
+> （`#[\Native]` 本仓零使用）。详见 §8；PHP 8.6 的 `Io\Poll` RFC 定位见 §9。
+
 「可破坏兼容」是授权不是义务；这一棒连 `src/` 都不碰，因为**方向本身要先被裁决**。
 
 ---
@@ -364,3 +368,156 @@ public function run(array $files): void
 4. 判据：挂起/恢复各一次、跨帧、取消注入异常、异常穿透不被吞、
    scope 销毁后不留孤儿 Fiber；变异至少 3 组（含「取消只标记不真停」）。
 5. 全链：`lint` / `phpunit` / `smoke` / `docref` / `apidoc` / `gate` / AOT 真机 T2。
+
+---
+
+## 8. 第二棒：三道门的结果与 `AsyncScope` 落地（2026-11-04）
+
+### 8.1 门 1：`Fiber` 在 AOT `-m bin` 里的十四条边界
+
+探针工程 `probes/fiber_scope/`（`tpc --project … -O2 -m bin`，334 个翻译单元，
+链接 `php8ts.lib` / `php8embed.lib` —— 与全仓应用同一种模式）。
+
+| # | 边界 | 结果 |
+|---|---|---|
+| F1 | 跨帧多轮 `suspend/resume`（5 轮，值往返） | ✅ |
+| F2 | Fiber 里操作 **tpc 编译出来的类** | ✅ |
+| F3 | `throw()` 注入 ⇒ `finally` 执行、异常反弹、协程终结 | ✅ |
+| F4 | 从**回调栈**（包三层函数）里 `resume()` | ✅ |
+| F4b | 同一 Fiber 跨 4 趟回调持续让出 | ✅ |
+| F5 | 两条 Fiber 交替推进 | ✅ |
+| F6 | Fiber 内嵌套 Fiber | ✅ |
+| F7 | 递归 60 层后 `suspend` | ✅ |
+| F8 | `suspend/resume` 双向传**对象** | ✅ |
+| F9 | 协程内 catch 注入的异常后**继续**让出 | ✅ |
+| F10 | `Fiber::getCurrent()`（协程内返回自身、主栈 `null`） | ✅ |
+| **F11** | **真实 `Drift\Async\AsyncScope` 三步流水线跨栈推进** | ✅ |
+| **F12** | **取消打到在途 `Future` + `finally` + 协程终结** | ✅ |
+| **F13** | **异常原样穿过协程边界（类型与消息不变）** | ✅ |
+
+真机 `exit=0`，`PASS 14 / FAIL 0`。
+
+**变异自检**（判据必须有牙）：改错 F1 期望值 ⇒ 精准 `[FAIL] F1` + `exit=1`，
+其余 13 条仍 PASS。⇒ 这份探针不是恒绿壳。
+
+★ F10 顺带否掉了一个隐患：`await()` 的"只能在协程内调"护栏若依赖
+`Fiber::getCurrent()` 而它返回 `null`，护栏就是空壳 —— 实测可用，护栏成立。
+
+★ F11–F13 是**跑要上线的实现**，不是另写一份样例：探针 `sources` 直接含 `../../src`。
+
+### 8.2 门 3 不适用：`#[\Native]` 零使用
+
+`grep -rn '#\[\\\\Native\]' src/` **零命中**。这条约束没有消费者 ⇒ 按
+「没有消费者的规则只是审自己」的纪律，不验、不立项，只在
+`docs/AOT-CONSTRAINTS.md` 那一行补一句"目前无消费者"。
+
+★ 这条量账本身的结论比门本身值钱：**三道门里有一道是空的**，
+如果不开工前核一遍，会为一个不存在的问题设计规避方案。
+
+### 8.3 lint 裁决：`Fiber` 解禁，`Generator` / `yield` 保留
+
+| 事实 | 出处 |
+|---|---|
+| nano 在 M0–M5 **明确不做**，重估时机"不设" | `DESIGN.md` §16.7.5（2026-10-14） |
+| 禁令定位是「**零成本**保留将来可切的可选性」 | `DESIGN.md` §16.6.3 |
+| 但 `Fiber` 这一条**不再零成本** —— 它挡住 `AsyncScope` | 本册 §3 |
+| `--nano` 不支持 Fiber ⇒ 本仓一直走 `-m bin` | `docs/design-v7/11-编译器约束映射.md` §5.4 **早就写着** |
+
+⇒ `BANNED_TYPES` 从 `['Generator','Fiber']` 改为 `['Generator']`。
+**代价如实记账**：放弃"将来切 nano 消除多文件部署"这条可选性 —— 而它在
+`DESIGN.md` §10.2 代价 2 里**本来就是被接受的那笔账**。
+
+★ 同一棒把这条规则从"**没有夹具**（`selftest` 里是空数组）"升级成双向判据：
+`apps/NanoBad.php`（5 条 error：`\Generator` / `yield`×2 / `eval` / `getenv`）+
+`apps/NanoGood.php`（`Fiber` 三种形态不报、`getenv` 作方法名不报）。
+`lint --selftest` 现在是 `nano-hygiene 该响 5 / 不该响 0`。
+
+### 8.4 `AsyncScope` 的 API 与三条不变量
+
+```php
+AsyncScope::task(callable $body, ?callable $delay = null): Future
+AsyncScope::await(Future $future): mixed      // 成功取值，失败原样抛
+AsyncScope::sleep(int $milliseconds): void    // 需要 $delay
+AsyncScope::isCancelled(): bool
+```
+
+| 不变量 | 为什么 |
+|---|---|
+| **返回的就是一条普通 `Future`** | 去重 / 重试 / 取消 / 结算订阅 / `isRunning()` 全部照旧 ⇒ `MultiStepCommandTest` 的四条契约原样保住 |
+| **`await()` 用 `then()->catch()` 一条链** | 分两次挂会派生出一条没人接的 Future，它一失败就走 Fatal 序列（`Future::rejectCore()` 的"链末端没人接"判据） |
+| **取消必须 `Fiber::throw()`** | 只 `cancel()` 不投异常 ⇒ 协程永久挂在 `suspend()`，连同捕获的闭包一起泄漏，**界面上完全看不出来** |
+
+`$delay` 走闭包注入而不是直接拿 `TimerHost`：`src/Async` **不许依赖 `Drift\Platform`**（§4.3）。
+
+### 8.5 门 2：取消语义的判据
+
+`tests/Unit/Async/AsyncScopeTest.php`（6 用例 / 25 断言）+
+`tests/Feature/State/AsyncScopeCommandTest.php`（3 用例 / 15 断言，挂真实帧循环）。
+
+三组变异（`build/_mutate_asyncscope.php`，不进 git）：
+
+| 变异 | 表现 |
+|---|---|
+| A 取消不传播（不 cancel 在途那条） | ✅ 精准报红「打到**在途的那条**」 |
+| B 取消不投异常（协程不终结） | ✅ 精准报红「finally 执行了」 |
+| C `wake()` 不查 `isSuspended()` | ✅ **进程崩**（`FiberError` 搅乱 Fiber 状态，PHPUnit 连汇总都打不出） |
+
+★ C 的失败形态值得记：它不是"某条断言红"，是**进程级崩溃**。
+`isSuspended()` 那个判断看着像防御性冗余，去掉就直接崩 —— 这类"删了才知道"的行必须留注释。
+
+### 8.6 与既有范式的分工（不是替代）
+
+| 写法 | 何时用 | 判据文件 |
+|---|---|---|
+| `$task` 内部 `then()` 组合 | 2–3 步、无循环、中间值不上界面 | `MultiStepCommandTest` |
+| 两次 `run()` | 两步各自独立展示 | 同上（表里） |
+| **`AsyncScope`** | **有循环（轮询）/ 有重试 / 每步都要更新界面** | `AsyncScopeCommandTest` |
+
+★ 三者都满足「一条 `Future` 交给一个 `AsyncCommand`」。
+★ `subscribeSettledFor()` 与 `AsyncCommand` **不删除** —— 它们仍是"给 UI 看的加载态"的原语。
+
+### 8.7 下一棒（尚未做）
+
+`apps/watermark` 迁移。**本棒只交付原语与判据，没有动 watermark 一行** ——
+迁移要改 5 个 `AsyncCommand` + `WatermarkStore` 的编排段 + `Widgets` 的 15 处
+`SubjectBuilder`，是一次独立重构，硬塞进本棒会让两件事都做不透。
+
+---
+
+## 9. 外部输入定位：PHP 8.6 的 `Io\Poll` RFC（用户提供）
+
+> `https://wiki.php.net/rfc/poll_api` —— 已实现（Implemented），目标 **PHP 8.6**，
+> 作者 Jakub Zelenka，投票 Yes 33 / No 1 / Abstain 4（2026-06 通过）。
+
+### 9.1 RFC 给了什么
+
+| 项 | 内容 |
+|---|---|
+| 命名空间 | `Io\` / `Io\Poll\` |
+| 主类 | `Context::add(Handle, Event[], mixed $data)` / `wait(?int $s, int $us, ?int $max)` / `getBackend()` |
+| **0 超时非阻塞** | ✅ `wait(0, 0)` 立即返回 —— 与本仓 `stream_select(…, 0)` 语义一致 |
+| Windows | **`WSAPoll`**（不是 IOCP） |
+| 句柄 | 初始只有 `StreamPollHandle`；`SocketPollHandle` / `CurlPollHandle` / `TimerHandle` 都是 future scope |
+| 定位 | **只是轮询 API，不是事件循环** —— 无定时器 / 信号 / 子进程，需配 AMPHP / ReactPHP |
+
+### 9.2 对本仓：**不能替代 `AsyncScope`，而且短期用不了**
+
+1. **它不解控制流。** `Io\Poll` 回答"谁就绪了"，不回答"下一步是哪一行"。
+   `await()` / `AsyncScope` 解决的是后者 —— 两者正交，正是 §1.6 的三层分工：
+   **TaskHost 管"在别处跑" / IoPoller 管"就绪没" / AsyncScope 管"下一步"**。
+2. **短期不可用。** AOT 产物链的是 `php8ts.lib` / `php8embed.lib`（本机 **8.5.11**），
+   换 8.6 要等 tpc 升级；`Io\Poll` 是新的 Zend 内建类，届时也要确认 tpc 能把它编进产物。
+3. **当前没有性能痛点。** `IoPoller` 的 fd 数是"worker 数 + 少数 socket"（个位数），
+   `select` 的 1024 上限与 O(n) 都够用；`probes/RESULTS.md` §12.4 实测
+   socket 上 `stream_select(0)` 只要 **0.008ms**。
+
+### 9.3 但它印证了一件事，值得记账
+
+**PHP 官方的选择与本仓一致**：不搞"协程 + hook 全进程接管"（那是 Swoole / Swow 的路线），
+而是提供**一个可在任意帧边界调用的非阻塞轮询原语**，把控制权留给宿主循环。
+RFC 的作者动机段甚至点名了 ZTS / FrankenPHP 这类"宿主自己掌握主线程"的场景 ——
+**桌面 GUI 的 `GetMessageW()` 循环正是同一类宿主**。
+
+⇒ 等 tpc 上 8.6 时，**只换中间那层**：`IoPoller` 内部用 `Io\Poll\Context` 替代
+`stream_select`，收益是"无 1024 上限 + 持久注册 + `HangUp` 自动检测"。
+`AsyncScope` / `TaskHost` / 应用代码**一行不用改** —— 这正是把三者拆开的价值。

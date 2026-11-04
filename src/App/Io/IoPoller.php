@@ -21,7 +21,11 @@ use Drift\Core\Pipeline;
  *   回调里 `setState()` / `notifyChanged()` 与 `TaskHost` 的回调完全同级。
  *
  * ★ **第一版刻意不做的事**（避免"没有消费者就发明机制"）：
- *   - **不做通用 Fiber 调度器**：`Awaitable::read()` 那种"顺序代码"包装等真有消费者再加；
+ *   - ~~不做通用 Fiber 调度器~~ —— ★ **消费者来了（2026-11-04）**：
+ *     `Drift\Async\AsyncScope` 已落地，负责"多步顺序代码"的控制流。
+ *     ★ 但它**不改本类**：`AsyncScope` 的 `await()` 等的是 `Future`（后端在别处跑），
+ *     不碰这个轮询器。三者分工见 `docs/ASYNC-2026-10-30.md` §1.6
+ *     （TaskHost 管"在别处跑"、本类管"就绪没"、AsyncScope 管"下一步"）。
  *   - **不做写缓冲 / 粘包处理**：那是协议层（谁定义消息边界谁负责），轮询器只管"可读了"。
  *
  * @api

@@ -24,11 +24,19 @@ apps/*/build/
 # ★★ 规则（2026-10-30 定）：**探针默认不入库**（一次性的，跑完就废）；
 #   **只有被 `tools/probe-*.py` 依赖的**才开白名单 —— 判据必须可复现：
 #   驱动器在库里而工程不在，等于"这个判据对任何 clone 都是坏的"。
-#   今天唯一的白名单是 `probes/io_pool/`（A2/N5 的常驻真机判据）。
+#
+# ★★ 白名单（2026-11-04 加第二个）：
+#   · `probes/io_pool/`  —— A2/N5 的常驻真机判据（有 `tools/probe-*.py` 驱动器）
+#   · `probes/fiber_scope/` —— **长期 API 的 AOT 判据**，不是一次性探针：
+#     它 `sources` 直接引 `../../src`，跑的是要上线的 `Drift\Async\AsyncScope`
+#     （F11–F13）；`AsyncScope` 一改就要重跑，否则"Fiber 在 AOT 里可用"
+#     这条结论会悄悄过期。★ 不进 `gate`（一次构建约 2.5 分钟），按需手动跑：
+#     `bash probes/fiber_scope/build.sh && ./fiber_scope_probe.exe`
 /probes/*
 !/probes/io_pool/
 /probes/io_pool/build/
 /probes/io_pool/out.log
+!/probes/fiber_scope/
 
 # ── 工具输出 ──
 /Errors.log
