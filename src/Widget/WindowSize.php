@@ -12,6 +12,10 @@ namespace Drift\Widget;
  *
  * 断点按桌面窗口调过：Compact < 600 / Medium < 1000 / Expanded < 1440 / Large ≥ 1440。
  *
+ * ★ 断点写成字面量，**不在 enum 里声明 `const`**：tpc 把 enum 内任何 `self::X` 一律编译成
+ *   `php::getEnumCase()`（`typephp/src/Parser/ClassConstantFetchTrait.php`），非 case 的常量
+ *   会让 AOT 版启动即 `0xC0000005`（解释器下全绿，`php -l` / smoke / phpunit 都抓不到）。
+ *
  * @api
  */
 enum WindowSize
@@ -21,21 +25,12 @@ enum WindowSize
     case Expanded;
     case Large;
 
-    /** Compact 上界（不含）——窄窗，单栏 / 侧栏折叠 */
-    public const COMPACT_MAX = 600.0;
-
-    /** Medium 上界（不含）——侧栏可留但内容区吃紧 */
-    public const MEDIUM_MAX = 1000.0;
-
-    /** Expanded 上界（不含）——标准桌面窗 */
-    public const EXPANDED_MAX = 1440.0;
-
     public static function fromWidth(float $width): self
     {
         return match (true) {
-            $width < self::COMPACT_MAX => self::Compact,
-            $width < self::MEDIUM_MAX => self::Medium,
-            $width < self::EXPANDED_MAX => self::Expanded,
+            $width < 600.0 => self::Compact,
+            $width < 1000.0 => self::Medium,
+            $width < 1440.0 => self::Expanded,
             default => self::Large,
         };
     }
