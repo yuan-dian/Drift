@@ -85,6 +85,10 @@ final class FormState extends State
     /** `Ctrl+Enter` 提交后回显的文本（提交与换行是两件事，本页演示这条分界） */
     private string $submittedNote = '';
 
+    /** 单行框 `Enter` 提交（`onSubmitted()`）的受控值 / 回显 */
+    private string $query = '';
+    private string $submittedQuery = '';
+
     /** 字段校验演示：错误文案是**受控**的，应用给什么就显示什么 */
     private string $checkedName = '';
     private string $checkedEmail = '';
@@ -163,6 +167,25 @@ final class FormState extends State
                     });
                 }),
             Text::make($this->submittedNote === '' ? 'Ctrl+Enter 之后这里显示提交的文本' : '已提交：' . str_replace("\n", ' / ', $this->submittedNote))
+                ->caption(),
+
+            // ── H3「单行输入」：Enter 提交 ──
+            //   单行框里 Enter 没有本职 ⇒ 声明 onSubmitted() 即可提交；
+            //   多行框的 Enter 是换行，提交才退到 Ctrl+Enter（上一节）。
+            $this->sectionBar('单行输入：Enter 提交'),
+            Text::make('单行框里 Enter 没有本职 ⇒ 声明 onSubmitted() 即可提交；不声明则不吞键（浮层开合、加速键还看得见它）。')
+                ->caption(),
+            TextField::make()
+                ->label('搜索')
+                ->placeholder('输入关键词后按 Enter')
+                ->value($this->query)
+                ->onChanged(fn(string $v) => $this->query = $v)
+                ->onSubmitted(function (string $v): void {
+                    $this->setState(function () use ($v): void {
+                        $this->submittedQuery = $v;
+                    });
+                }),
+            Text::make($this->submittedQuery === '' ? '回车之后这里显示提交的词' : '已提交：' . $this->submittedQuery)
                 ->caption(),
 
             // ── H3「字段校验 + 长度约束」──

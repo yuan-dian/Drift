@@ -5,6 +5,8 @@ namespace Drift\Widget;
 
 use Drift\Errors;
 use Drift\Geometry\Rect;
+use Drift\Input\KeyChord;
+use Drift\Input\KeyEvent;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderTextField;
 use Drift\Text\Utf8;
@@ -19,8 +21,8 @@ use Drift\Text\Utf8;
  * ★ **文本状态机不在本类**：缓冲 / 插入符 / 选区的字节数学（含"按码位删除、
  *   永不切半个汉字"）在 `Drift\Text\TextDraft`，与表格的单元格编辑**共用同一份**；
  *   "焦点 / 通知 / 重画"这套与行数无关的行为在 `EditableTextState`，与
- *   `TextAreaState` **共用同一份**。本类只剩**单行**特有的两件事：
- *   `build()` 出哪个盒、`caretRect()` 从哪个盒上取。
+ *   `TextAreaState` **共用同一份**。本类只剩**单行**特有的三件事：
+ *   `build()` 出哪个盒、`caretRect()` 从哪个盒上取、`Enter` 算提交。
  *
  * ★ **编辑态与焦点**：`FocusManager`（`Drift\App`）在焦点落到本字段时调
  *   `beginEditing()`、走开时调 `endEditing()`；按键经 `handleKey()` 翻译成编辑
@@ -55,6 +57,24 @@ final class TextFieldState extends EditableTextState
         if ($handler !== null) {
             $handler($text);
         }
+    }
+
+    /** ★ 没接 `onSubmitted()` ⇒ 不吞 `Enter`：`activateFocused()` 的浮层开关还等着它。 */
+    #[\Override]
+    protected function interceptKey(KeyEvent $event): bool
+    {
+        if (!$event->chord->is(KeyChord::enter())) {
+            return false;
+        }
+
+        $handler = $this->field()->submittedHandler();
+        if ($handler === null) {
+            return false;
+        }
+
+        $handler($this->text());
+
+        return true;
     }
 
     /**

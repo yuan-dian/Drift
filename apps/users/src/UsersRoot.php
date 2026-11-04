@@ -42,6 +42,9 @@ final class UsersRoot extends StatelessWidget
     /** @var null|callable(Menu, ?\Drift\Widget\Element): void */
     private $menuOpener = null;
 
+    /** @var null|callable(): void `Enter` 提交（见 `submitHandler()`） */
+    private ?\Closure $submitForm = null;
+
     /**
      * 窗口拖动闭包（P1-Stage 1b 无边框窗）；`null` = 有原生标题栏，顶条不是标题栏。
      *
@@ -81,6 +84,15 @@ final class UsersRoot extends StatelessWidget
     public function menuOpenerHandler(): ?\Closure
     {
         return $this->menuOpener;
+    }
+
+    /** @param callable(): void $submit 组合根递的 `fn () => $this->dispatch('form.submit')` */
+    public function submitHandler(callable $submit): static
+    {
+        $this->mutate();
+        $this->submitForm = $submit(...);
+
+        return $this;
     }
 
     /**
@@ -138,7 +150,7 @@ final class UsersRoot extends StatelessWidget
     {
         return RouteTable::make()
             ->route('users', fn(): Widget => UsersPage::make($this->users))
-            ->route('signup', fn(): Widget => SignupPage::make($this->form))
+            ->route('signup', fn(): Widget => SignupPage::make($this->form, $this->submitForm))
             ->route('settings', fn(): Widget => SettingsPage::make($this->app));
     }
 }

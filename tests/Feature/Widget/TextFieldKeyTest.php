@@ -195,6 +195,54 @@ final class TextFieldKeyTest extends SmokeTestCase
     }
 
     /**
+     * `Enter` 提交：**有消费者才认领**。
+     *
+     * ★ 三条成对验：接了 handler 必须吃掉（否则上层还可能开浮层）；没接必须放行
+     *   （`ComboBox` 的"Enter 开面板"走的就是放行那条路）；组合键一律归应用。
+     */
+    public function testEnterSubmitsOnlyWhenHandlerIsAttached(): void
+    {
+        $submitted = [];
+        $root = TextField::make()
+            ->value('ab')
+            ->onSubmitted(function (string $v) use (&$submitted): void {
+                $submitted[] = $v;
+            })
+            ->createElement();
+        $root->mount(null, smokeContext());
+
+        $state = $root->state();
+        self::assertInstanceOf(TextFieldState::class, $state);
+
+        // 先敲一个字：提交拿到的是**草稿**（受控值还没回写也一样）
+        $state->handleKey(KeyEvent::character('X'));
+        check('输入框 · Enter 提交当前文本（含未回写的那笔）', $state->handleKey(KeyEvent::down(KeyChord::enter())) && $submitted === ['abX'], \json_encode($submitted));
+        check('输入框 · Enter 不插换行（单行框没有这个本职）', $state->text() === 'abX', \json_encode($state->text()));
+
+        $submitted = [];
+        $modifiers = [
+            'Ctrl+Enter' => KeyChord::ctrl('Enter'),
+            'Alt+Enter' => KeyChord::alt('Enter'),
+            'Shift+Enter' => KeyChord::shift('Enter'),
+        ];
+        foreach ($modifiers as $label => $chord) {
+            check(
+                '输入框 · ' . $label . ' 归应用（不提交、不消费）',
+                $state->handleKey(KeyEvent::down($chord)) === false && $submitted === [],
+                \json_encode($submitted),
+            );
+        }
+
+        $plain = TextField::make()->value('ab')->createElement();
+        $plain->mount(null, smokeContext());
+        $plainState = $plain->state();
+        self::assertInstanceOf(TextFieldState::class, $plainState);
+        check('输入框 · 没接 onSubmitted ⇒ Enter 放行给上层', $plainState->handleKey(KeyEvent::down(KeyChord::enter())) === false);
+
+        $this->flushChecks();
+    }
+
+    /**
      * 不归编辑管的键必须**原样放行**。
      *
      * ★ `Ctrl+S` 在编辑中也要能存盘 —— 吞掉它等于"打字时保存失效"，且不报错。
@@ -204,7 +252,7 @@ final class TextFieldKeyTest extends SmokeTestCase
         $seen = [];
         $state = $this->field('abc', $seen);
 
-        $keys = [KeyChord::enter(), KeyChord::tab(), KeyChord::f(5), KeyChord::ctrl('S'), KeyChord::up(), KeyChord::down()];
+        $keys = [KeyChord::tab(), KeyChord::f(5), KeyChord::ctrl('S'), KeyChord::up(), KeyChord::down()];
         foreach ($keys as $chord) {
             check(
                 '输入框 · ' . $chord->label() . ' 放行给上层',

@@ -53,6 +53,7 @@ final class TextField extends StatefulWidget implements SemanticsValueEditable
     private string $helper = '';
     private ?int $maxLength = null;
     private ?\Closure $onChanged = null;
+    private ?\Closure $onSubmitted = null;
 
     public function __construct()
     {
@@ -148,6 +149,19 @@ final class TextField extends StatefulWidget implements SemanticsValueEditable
         return $this;
     }
 
+    /**
+     * `Enter` 提交回调：`fn(string $text) => void`。裸 `Enter` 才认领，组合键归应用。
+     *
+     * ★ 不接 ⇒ **不吞** `Enter`：浮层开关（`overlayPanel()`）与加速键还看得见它。
+     */
+    public function onSubmitted(callable $handler): static
+    {
+        $this->mutate();
+        $this->onSubmitted = \Closure::fromCallable($handler);
+
+        return $this;
+    }
+
     public function valueText(): string
     {
         return $this->value;
@@ -181,6 +195,11 @@ final class TextField extends StatefulWidget implements SemanticsValueEditable
     public function changedHandler(): ?\Closure
     {
         return $this->onChanged;
+    }
+
+    public function submittedHandler(): ?\Closure
+    {
+        return $this->onSubmitted;
     }
 
     /**

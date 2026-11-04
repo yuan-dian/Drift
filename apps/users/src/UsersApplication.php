@@ -116,7 +116,9 @@ final class UsersApplication extends Application
         $root = UsersRoot::make($this->app, $this->users, $this->form)
             ->menuOpener(function (Menu $menu, ?\Drift\Widget\Element $anchor): void {
                 $this->showMenu($menu->panel(), $anchor);
-            });
+            })
+            // Enter 提交与按钮共用 form.submit（校验/序列化/回跳只写一份）
+            ->submitHandler(fn() => $this->dispatch('form.submit'));
 
         // ★ 无边框窗（P1-Stage 1b）：顶条当标题栏。`null` ⇒ 不动（有原生标题栏）。
         if ($this->windowDrag !== null) {

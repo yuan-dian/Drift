@@ -25,14 +25,27 @@ use App\Users\Store\SignupForm;
  */
 final class SignupPage extends StatelessWidget
 {
-    public function __construct(private readonly SignupForm $form)
+    /** @var null|callable(): void `Enter` 提交的出口（组合根递的 `dispatch('form.submit')`） */
+    private $submit = null;
+
+    public function __construct(private readonly SignupForm $form, ?callable $submit = null)
     {
         parent::__construct();
+        $this->submit = $submit;
     }
 
-    public static function make(SignupForm $form): self
+    public static function make(SignupForm $form, ?callable $submit = null): self
     {
-        return new self($form);
+        return new self($form, $submit);
+    }
+
+    /** 两个字段共用一条提交路（不复制校验/序列化） */
+    private function submitted(): void
+    {
+        $submit = $this->submit;
+        if ($submit !== null) {
+            $submit();
+        }
     }
 
     public function build(BuildContext $ctx): Widget
@@ -49,6 +62,7 @@ final class SignupPage extends StatelessWidget
                     ->error($s[1])
                     ->maxLength(32)
                     ->autoFocus()
+                    ->onSubmitted(fn(string $_) => $this->submitted())
                     ->onChanged(fn(string $x) => $this->form->name = $x)),
 
             SubjectBuilder::make($this->form)
@@ -58,6 +72,7 @@ final class SignupPage extends StatelessWidget
                     ->label('邮箱')
                     ->error($s[1])
                     ->maxLength(128)
+                    ->onSubmitted(fn(string $_) => $this->submitted())
                     ->onChanged(fn(string $x) => $this->form->email = $x)),
 
             // 提交错误也是业务状态 ⇒ 订阅回 UI（§11.4.3）

@@ -3924,6 +3924,17 @@ check(
     'focused=' . ($signupFocus === null ? 'null' : get_class($signupEditing ?? $signupFocus)),
 );
 
+// ★ Enter 提交的**真应用**判据：焦点在姓名框 ⇒ 按键 → 字段消费 → 应用闭包 → `form.submit`。
+//   断言"回车与按钮同路"：校验/序列化/回跳只有一份。
+$usersApp->signupForm()->name = '张三';
+$usersApp->signupForm()->email = 'zhang@example.com';
+$usersApp->dispatchInput(KeyEvent::down(KeyChord::enter()));
+check(
+    'apps/users · Enter 提交：合法表单 ⇒ 校验通过并回跳列表页（与按钮同一条 form.submit）',
+    $usersApp->appStore()->currentPage() === 'users' && $usersApp->appStore()->statusLine() === '注册成功',
+    'page=' . $usersApp->appStore()->currentPage() . ' status=' . $usersApp->appStore()->statusLine(),
+);
+
 // ② 值缝 · **局部态**（SignupForm：property hooks + 派生缓存）
 $usersApp->signupForm()->name = '张三';
 $usersApp->signupForm()->email = 'zhang@example.com';
