@@ -165,6 +165,18 @@ final class WatermarkStore extends Subject
         $this->downloadCommand->subscribeFor($this, function (): void {
             $this->absorbDownload();
         });
+
+        // ★ 副作用只挂**结算**缝：值订阅对每一次通知都跑（run() 会先发一趟 loading，
+        //   进度还会再发几趟），接力 / 排期 / 触发下载只能在 land()·fail() 之后做。
+        $this->signCommand->subscribeSettledFor($this, function (): void {
+            $this->relayAfterSign();
+        });
+        $this->taskCommand->subscribeSettledFor($this, function (): void {
+            $this->pollAfterSubmit();
+        });
+        $this->pollCommand->subscribeSettledFor($this, function (AsyncValue $value): void {
+            $this->scheduleAfterPoll($value);
+        });
     }
 
     // ══════════════════ 读（界面订阅这些切片） ══════════════════
@@ -596,25 +608,17 @@ final class WatermarkStore extends Subject
             }
         }
 
-        // ★★ 接力标志只在**终结态**（到手 / 失败）消费 —— 2026-11-02 修：
-        //   `AsyncCommand::start()` 会先 `emit(loading)` 再落地，而这个订阅对
-        //   **每一次**通知都跑。原来的写法无条件 `$this->uploadAfterSign = false`，
-        //   于是那一趟 loading 就把标志吃掉了；等真拿到签名时 `$relay` 已是 false
-        //   ⇒ **签名取回来了，却永远不接力上传**（不报错，界面停在"正在获取上传凭证…"）。
-        //   ★ 真机上这条路径被"启动预热"掩盖：预热先拿到签名 ⇒ 点上传走的是
-        //     `upload()` 里"签名还有效"那条直路，接力分支从没被走到过。
-        $sign = $this->sign;
-        $relay = false;
-        if ($value->hasData() || $value->hasError()) {
-            $relay = $this->uploadAfterSign;
-            $this->uploadAfterSign = false;
-        }
-
         $this->notifyChanged();
+    }
 
-        // ★ 接力：签名到手 ⇒ 立刻开始上传（用户点的是"上传"，不是"取签名"）。
-        if ($relay && $sign !== null && !$this->uploadCommand->isRunning()) {
-            $this->startUpload($sign);
+    /** 结算缝：签名到手 ⇒ 立刻开始上传（用户点的是"上传"，不是"取签名"）。 */
+    private function relayAfterSign(): void
+    {
+        $relay = $this->uploadAfterSign;
+        $this->uploadAfterSign = false;
+
+        if ($relay && $this->sign !== null && !$this->uploadCommand->isRunning()) {
+            $this->startUpload($this->sign);
         }
     }
 
@@ -672,9 +676,11 @@ final class WatermarkStore extends Subject
         }
 
         $this->notifyChanged();
+    }
 
-        // ★ 提交成功 ⇒ 立刻查一次（不等 10 秒）：服务端可能已经处理完了，
-        //   让用户白等一个间隔没有意义。原文也是 `pollOnce()` + `setInterval`。
+    /** 结算缝：提交成功 ⇒ 立刻查一次（不等 10 秒）。 */
+    private function pollAfterSubmit(): void
+    {
         if ($this->polling) {
             $this->pollOnce();
         }
@@ -683,21 +689,6 @@ final class WatermarkStore extends Subject
     private function absorbPoll(): void
     {
         $value = $this->pollCommand->value();
-
-        /**
-         * ★★ 只在**终结态**（到手 / 失败）做决定（2026-11-03，判据抓到的真 bug）。
-         *
-         * `AsyncCommand::run()` 会**先发一趟 `loading` 再落地**，而这个订阅对
-         * **每一次**通知都跑 ⇒ 原来的写法在 loading 那一趟也 `scheduleNextPoll()`，
-         * 落地那一趟又排一次 ⇒ **每轮排两个定时器**，而两个都会各自发起下一轮
-         * ⇒ 定时器数量按 2ⁿ 增长。界面上完全看不出异常（结果照样到），只是
-         * 后台一直在多发查询、待触发的回调越堆越多。
-         * ★ 与 `absorbSign()` 的接力标志是**同一条纪律**：门控只在终结态消费。
-         */
-        $settled = $value->hasData() || $value->hasError();
-
-        /** @var null|TaskResult $finished 刚终结的那一次（要触发下载） */
-        $finished = null;
 
         if ($value->hasData()) {
             $raw = $value->value();
@@ -709,9 +700,6 @@ final class WatermarkStore extends Subject
                     $this->statusLine = $result->isSuccess()
                         ? StatusMessage::success('处理完成')
                         : StatusMessage::error($result->failureReason());
-                    if ($result->isSuccess()) {
-                        $finished = $result;
-                    }
                 }
             }
         } elseif ($value->hasError()) {
@@ -722,21 +710,26 @@ final class WatermarkStore extends Subject
         }
 
         $this->notifyChanged();
+    }
 
+    /** 结算缝：排下一轮 / 触发下载（手写门控已由 AsyncCommand 承担）。 */
+    private function scheduleAfterPoll(AsyncValue $value): void
+    {
         if ($this->polling) {
-            // ★ `loading` 那一趟不排期：这一轮还没结束，排了就是重复
-            if ($settled) {
-                $this->scheduleNextPoll();
-            }
+            $this->scheduleNextPoll();
 
             return;
         }
 
-        // ★ 拿到结果图 ⇒ 立刻开始下载（用户要**看见**水印效果，而 `Image` 只认
-        //   本地路径）。放在 `notifyChanged()` 之后：先让界面切到"处理完成"，
-        //   再在下面几帧里逐张出现 —— 顺序反了会先空白一会儿再跳成"完成"。
-        if ($finished !== null && !$this->downloadCommand->isRunning()) {
-            $this->startDownload($finished->downloadUrls);
+        if (!$value->hasData()) {
+            return;
+        }
+
+        // 用本次结算的原始值复现"刚终结且成功"，不依赖 lastResult 的残留
+        $result = TaskResult::fromArray($value->value(), $this->taskId);
+        if ($result !== null && $result->isTerminal() && $result->isSuccess()
+            && !$this->downloadCommand->isRunning()) {
+            $this->startDownload($result->downloadUrls);
         }
     }
 

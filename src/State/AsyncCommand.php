@@ -14,6 +14,8 @@ use Drift\Async\Future;
  *  - land()/fail() 必须终结在途 Future（cancel 后永不结算，见 abandon()）。
  *  - cancel() 两档：有旧值回 data，无则 idle（"不等了"≠"扔掉已看的"）。
  *  - pending 记账：duplicated() 靠 ran + 严格 === 判定，数组/对象参数不去重。
+ *  - land()/fail() 额外广播一次「结算」；cancel() 回 data 不广播 —— 两者形状相同，
+ *    别从 `AsyncValue` 上反推（见 subscribeSettledFor()）。
  *
  * @api
  */
@@ -57,6 +59,9 @@ final class AsyncCommand extends Subject
 
     private bool $disposed = false;
 
+    /** 结算事件通道：复用 `Subject` 的订阅袋 / 异常隔离 / 退订，不自己记第二份 */
+    private SettledSignal $settledSignal;
+
     /**
      * `$task` 每次都必须返回一条新的 `Future`，且它的根归本命令独有。
      *
@@ -85,6 +90,7 @@ final class AsyncCommand extends Subject
         $this->task = $task;
         $this->combine = $combine;
         $this->value = AsyncValue::idle();
+        $this->settledSignal = new SettledSignal();
     }
 
     /**
@@ -95,6 +101,28 @@ final class AsyncCommand extends Subject
     public function value(): AsyncValue
     {
         return $this->value;
+    }
+
+    /**
+     * 订阅**结算**：只在 `land()` / `fail()` 之后收到一次，参数是结算后的 `AsyncValue`。
+     *
+     * ★ `run()` 先广播一趟 `loading`，`onProgress` 还会再广播几趟；更要命的是
+     *   `cancel()` 有旧值时广播的 `data` 与 `land()` 的 `data` **形状相同** ⇒ 从值上
+     *   判不出「这一趟是不是结算」。只有本类知道 `land()/fail()` 被调过，所以这条缝
+     *   由它独占，订阅者不必再猜 `hasData() || hasError()`。
+     *
+     * ★ 顺序：先值订阅者（`subscribeFor()` 更新界面），再本缝（副作用）。
+     *   owner 退订 / 异常隔离与 `Subject::subscribeFor()` 完全一致。
+     *
+     * @param callable(AsyncValue): void $handler
+     *
+     * @api
+     */
+    public function subscribeSettledFor(object $owner, callable $handler): Subscription
+    {
+        return $this->settledSignal->subscribeFor($owner, function () use ($handler): void {
+            $handler($this->value);
+        });
     }
 
     /**
@@ -320,12 +348,12 @@ final class AsyncCommand extends Subject
         $combine = $this->combine;
 
         if ($this->appending && $combine !== null && $previous->hasValue()) {
-            $this->emit(AsyncValue::data($combine($previous->value(), $value)));
+            $this->emit(AsyncValue::data($combine($previous->value(), $value)), true);
 
             return;
         }
 
-        $this->emit(AsyncValue::data($value));
+        $this->emit(AsyncValue::data($value), true);
     }
 
     /**
@@ -338,17 +366,33 @@ final class AsyncCommand extends Subject
     private function fail(\Throwable $error): void
     {
         $this->pending = null;
-        $this->emit(AsyncValue::error($error->getMessage())->carriedFrom($this->value));
+        $this->emit(AsyncValue::error($error->getMessage())->carriedFrom($this->value), true);
     }
 
     /**
      * 换值 + 广播（`Subject::notifyChanged()`）。
      *
      * 宿主是谁、收到后干什么（标脏/转发/重算）一概不在这里决定 —— 那是订阅者的事。
+     *
+     * @param bool $settled 这次是 `land()`/`fail()` 的结算吗 —— 只有那三处传 `true`
      */
-    private function emit(AsyncValue $next): void
+    private function emit(AsyncValue $next, bool $settled = false): void
     {
         $this->value = $next;
         $this->notifyChanged();
+
+        // ★ 排在值广播之后：先让界面按新值重建，再跑"结果到了做什么"的副作用。
+        if ($settled) {
+            $this->settledSignal->notifyChanged();
+        }
     }
+}
+
+/**
+ * @internal `AsyncCommand` 的结算事件通道 —— 同文件，不进公共面。
+ *
+ * 空子类只为拿到 `Subject` 的订阅袋 / 异常隔离 / 退订三件事，不另造一套机制。
+ */
+final class SettledSignal extends Subject
+{
 }
