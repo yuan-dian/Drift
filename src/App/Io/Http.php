@@ -4,102 +4,35 @@ declare(strict_types=1);
 namespace Drift\App\Io;
 
 /**
- * **阻塞**的 HTTP 客户端（2026-10-31）—— 框架里唯一一条 HTTP 路径。
+ * 阻塞的 HTTP 客户端 —— 框架里唯一一条 HTTP 路径。
  *
- * ```php
- * // 只许写在 Job::run() 里（那一段跑在 worker 进程，UI 线程闲着）
- * $data = Http::get('http://127.0.0.1:8099/api/rows?page=2')->json();
- * $res  = Http::post($url, \json_encode($body), ['headers' => ['Content-Type' => 'application/json']]);
- * ```
- *
- * ## 为什么是阻塞的（以及为什么这是**唯一**能成立的做法）
- *
- * GUI 框架里做 HTTP 有三条路，2026-10-31 逐条量过，只剩这一条：
- *
- * | 方案 | 结论 |
- * |---|---|
- * | A2 池加 `http.request` op（C++ + 静态 libcurl） | exe **+6~8 MB**（`libcrypto` 6.94 MB 是大头），且是第二套 TLS / 第二套证书来源 |
- * | `curl_multi` 接帧循环（本仓文档原来推荐的"正解"） | **实测段错误**：`curl_multi_init()` 一次，进程退出 `exit 139`。与 swoole 无关，两次入口（`php`、`typephp/php.exe`）都复现；最小复现见 `docs/ASYNC-ARCH-2026-10-31.md` §14.1 |
- * | **阻塞 curl + 常驻 worker** | **本类**。零体积增量（`php_curl.dll` 早在部署包里）、一套 TLS、一套证书来源 |
- *
- * ⇒ 一句话：**HTTP 永远不要出现在 UI 线程上**。要取数就让 `Job::run()` 去取 ——
- *   `ProcessTaskHost` 已经把"在别的进程里等"这件事做完了（预热后每条 25.5µs 的回程）。
- *
- * ## 与 `IoPoller` 的分工（同一层，两件事）
- *
- * | | `IoPoller` | `Http` |
- * |---|---|---|
- * | 阻塞吗 | 不阻塞（`select(0)` 每帧问一次） | **阻塞**（等到响应或超时） |
- * | 谁调 | 帧循环（`PumpHost::pumpIo`） | `Job::run()`（worker 进程） |
- * | 管什么 | fd 可读/可写 | 一次完整的请求-响应 |
- * | 典型用途 | 长连接、自定义协议、流式 | 取一页 JSON |
- *
- * ★ **两者的关系不是"新旧"**：`IoPoller` 在 UI 线程上永远不能阻塞，`Http` 在 worker
- *   里永远不需要非阻塞。把它们并排放在 `Drift\App\Io\` 下，就是为了让这个对比
- *   每次打开目录都能看见 —— 而不是靠谁记得。
- *
- * ## 为什么不是第二套"取数机制"
- *
- * 本类**不碰 `TaskHost` / `Future` / `AsyncValue`**：它只把"一次阻塞往返"做成一个
- * 返回值。异步语义仍然只有一套（`Future` + `AsyncCommand`），本类只是被包在
- * `Job::run()` 里的一行。2026-10-31 之前，`apps/users` 与 `apps/showcase` **各写了
- * 一份 30 行的 curl**（同样的超时、同样的状态码判断、同样的 body 截断），
- * 两处必然漂 —— 现在它们都只剩一行 `Http::get(...)->json()`。
- *
- * ## 几条刻意的默认值
- *
- * | 项 | 默认 | 理由 |
- * |---|---|---|
- * | 连接超时 | 5 s | "连不上"要早断；与两处既有实现一致 |
- * | 总超时 | 10 s | "响应慢"可以等；同上 |
- * | 跟随重定向 | **0（不跟）** | 取数接口不该有 302。悄悄跟随会把"登录页 302 到首页"变成"解析首页 HTML 失败" |
- * | 非 2xx | **抛** | 与两处既有实现一致；要自己处理 404 就 `expectOk => false` 再看 `ok()` |
- * | 头名 | 统一小写 | 见 `HttpResponse` 的类注释 |
- *
- * ★ **不做的**（没有消费者的分支 = 未实现）：连接复用 / 并发 / 流式下载 / cookie 罐 /
- *   重试 / 代理开关。它们每一个都是真实的策略选择，而今天唯一的用法是"取一页 JSON"。
- *   真需要时，形状是**在 worker 里**加的（`curl_share_*` 或 `IoPoller`），不是在这里。
- *
- * ★ **上传（2026-11-02 起）**：`fields` / `files` 走 multipart，形状对齐 OSS PostObject
- *   （`apps/watermark` 是第一个消费者）。它是**手拼 + 流式**而不是 `CURLFile`：
- *   `CURLOPT_READFUNCTION` 按块喂，内存 O(64 KB)，**不是**整个文件。理由与边界
- *   见 {@see self::buildMultipart()} 与 {@see MultipartBody}。
- *   ★ 严格意义的零拷贝（`sendfile` / `TransmitFile`）对表单上传**用不了** ——
- *   它只能原样发一个 fd，而表单必须在文件前后拼 HTTP 头。流式是这里能做到的上限。
+ * 只许写在 Job::run() 里（worker 进程跑，UI 线程闲着）；
+ * 与 IoPoller 分工不同：它永不阻塞，本类在 worker 里永不需非阻塞。
  *
  * @api
  */
 final class Http
 {
-    /** 连接超时默认值（秒）—— "连不上"5 秒就该断 */
+    /** 连接超时默认值（秒） */
     public const DEFAULT_CONNECT_TIMEOUT_S = 5.0;
 
-    /** 总超时默认值（秒）—— "响应慢"可以等到 10 秒 */
+    /** 总超时默认值（秒） */
     public const DEFAULT_TIMEOUT_S = 10.0;
 
-    /** 允许的动词（别的动词在这里没有意义，早抛比让 curl 猜好） */
+    /** 允许的动词（别的在此无意义，早抛比让 curl 猜好） */
     private const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'];
 
-    /** 合法的 `$opts` 键 —— 拼错的键**当场抛**，不静默忽略 */
+    /** 合法的 `$opts` 键 —— 拼错的键当场抛，不静默忽略 */
     private const OPT_KEYS = ['body', 'headers', 'connectTimeout', 'timeout', 'followRedirects', 'expectOk', 'fields', 'files', 'onProgress'];
 
     /**
-     * 上传体积上限（字节）。超过 ⇒ **抛**，不静默截断、不静默换路。
-     *
-     * ★ 流式上传**不占内存**（O(一个块)，见 {@see MultipartBody}），所以这个数
-     *   不是内存保护，是**防手滑**：1 GB 差不多是"误拖一个视频进来"的量级。
-     *   它也不是 `CURLOPT_POSTFIELDSIZE` 的上限（那个在 64 位 PHP 上是 long）。
+     * 上传体积上限（字节）。超过 ⇒ 抛，不静默截断、不静默换路。
      */
     public const MAX_UPLOAD_BYTES = 1024 * 1024 * 1024;
 
     /**
-     * 扩展名 → MIME 的最小映射（multipart 每个 part 都要 `Content-Type`）。
-     *
-     * ★ **为什么不用 `mime_content_type()`**：那是 `fileinfo` 扩展，而 `drift-build`
-     *   的运行时扩展清单只有 `mbstring / openssl / curl`（`tools/drift-build.php`
-     *   里写死）。解释器里跑得通、AOT 产物里 Fatal —— 这类"只在真机炸"的坑
-     *   本仓已经付过一次学费。映射表不认识就退回 `application/octet-stream`，
-     *   OSS 对 `file` 字段不看 MIME，看不出来也不影响功能。
+     * 扩展名 → MIME 的最小映射（multipart 每个 part 都要 Content-Type）。
+     * 不认得的扩展退回 application/octet-stream。
      */
     private const MIME_BY_EXT = [
         'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'png' => 'image/png',
@@ -111,12 +44,10 @@ final class Http
     ];
 
     /**
-     * GET（最常用的一档）。
+     * GET（最常用）。
      *
      * @param array<string, mixed> $opts 见 {@see self::request()}
-     *
-     * @throws HttpException 传输失败，或非 2xx 且 `expectOk` 为真
-     *
+     * @throws HttpException 传输失败，或非 2xx 且 expectOk 为真
      * @api
      */
     public static function get(string $url, array $opts = []): HttpResponse
@@ -125,12 +56,10 @@ final class Http
     }
 
     /**
-     * POST（body 走第二个参数，不塞进 `$opts` —— 这是唯一会被天天用到的那一格）。
+     * POST（body 走第二个参数，不塞进 $opts）。
      *
-     * @param array<string, mixed> $opts 见 {@see self::request()}；**不许**再带 `body`
-     *
-     * @throws HttpException 传输失败，或非 2xx 且 `expectOk` 为真
-     *
+     * @param array<string, mixed> $opts 见 {@see self::request()}；不许再带 body
+     * @throws HttpException 传输失败，或非 2xx 且 expectOk 为真
      * @api
      */
     public static function post(string $url, string $body = '', array $opts = []): HttpResponse
@@ -145,37 +74,20 @@ final class Http
     /**
      * 通用入口。
      *
-     * ```php
-     * $res = Http::request('PUT', $url, [
-     *     'body'            => $json,
-     *     'headers'         => ['Content-Type' => 'application/json'],
-     *     'connectTimeout'  => 2.0,
-     *     'timeout'         => 30.0,
-     *     'followRedirects' => 3,
-     *     'expectOk'        => false,   // 4xx/5xx 也当数据返回（自己看 ok()）
-     * ]);
-     * ```
-     *
      * @param array<string, mixed> $opts
-     *        · `body` (string) 请求体，默认 `''`
-     *        · `headers` (array<string, string>) 请求头
-     *        · `connectTimeout` (float) 秒，默认 {@see self::DEFAULT_CONNECT_TIMEOUT_S}
-     *        · `timeout` (float) 秒，默认 {@see self::DEFAULT_TIMEOUT_S}
-     *        · `followRedirects` (int) 最多跟几跳，默认 0 = 不跟
-     *        · `expectOk` (bool) 非 2xx 是否抛，默认 `true`
-     *        · `fields` (array<string, scalar>) multipart 普通字段（给了就走 multipart）
-     *        · `files` (array<string, string|array{path:string,filename?:string,mime?:string}>)
-     *          multipart 文件字段，值是本地路径
-     *        · `onProgress` (callable(float $fraction): void) 上传进度（**只在
-     *          multipart 时可用**；`$fraction` 是请求体口径的 `0..1`，可能重复报
-     *          同一个值 —— 节流是调用方的事）
+     *        · body 请求体，默认 ''
+     *        · headers 请求头
+     *        · connectTimeout 秒，默认 5；timeout 秒，默认 10
+     *        · followRedirects 最多跟几跳，默认 0 = 不跟
+     *        · expectOk 非 2xx 是否抛，默认 true
+     *        · fields / files multipart 普通字段 / 文件字段
+     *        · onProgress 上传进度回调（仅 multipart）
      *
-     * ★ `fields` / `files` 与 `body` **互斥**，且此时**不许**在 `headers` 里手设
-     *   `Content-Type`（boundary 由本类生成，手设会把它顶掉）。见 {@see self::buildMultipart()}。
+     * fields / files 与 body 互斥，且此时不许在 headers 里手设 Content-Type
+     * （boundary 由本类生成，手设会顶掉）。
      *
-     * @throws \InvalidArgumentException 动词非法 / 选项名拼错 / URL 为空（**程序员错**，不是运行期失败）
-     * @throws HttpException 传输失败，或非 2xx 且 `expectOk` 为真
-     *
+     * @throws \InvalidArgumentException 动词非法 / 选项名拼错 / URL 为空
+     * @throws HttpException 传输失败，或非 2xx 且 expectOk 为真
      * @api
      */
     public static function request(string $method, string $url, array $opts = []): HttpResponse
@@ -204,16 +116,11 @@ final class Http
             throw new \InvalidArgumentException('Http：body 必须是 string（要发 JSON 就自己 json_encode）');
         }
         if ($body !== '' && ($method === 'GET' || $method === 'HEAD')) {
-            // ★ curl 对 GET/HEAD 会**静默丢掉** POSTFIELDS —— 与其让调用方以为发出去了，
-            //   不如当场抛。真要用 GET 带 body（少见但合法）就自己 `request('GET', …)`
-            //   之外的路走不通，本类不支持。
+            // GET/HEAD 带 body 会被 curl 静默丢掉 ⇒ 当场抛。
             throw new \InvalidArgumentException('Http：' . $method . ' 不带请求体（curl 会静默丢掉它）');
         }
 
-        // ── multipart 表单（`fields` / `files`，2026-11-02）────────────────────
-        //
-        // 形状对齐 OSS PostObject：`key` / `policy` / `OSSAccessKeyId` / `signature` /
-        // `success_action_status` 走 `fields`，图片本身走 `files`。
+        // ── multipart 表单（fields / files）────────────────────────────
         $payload = $body;
         $multipart = null;
         $multipartType = '';
@@ -222,16 +129,13 @@ final class Http
                 throw new \InvalidArgumentException('Http：multipart 用 fields / files 描述请求体，不要再给 body（两者拼在一起没有语义）');
             }
             if ($method !== 'POST') {
-                // ★ 只支持 POST：OSS PostObject 是 POST，而 PUT/PATCH 的流式上传要走
-                //   `CURLOPT_UPLOAD`（另一套语义，动词也会被改）。今天没有消费者，
-                //   与其留一条没走过的分支，不如说清楚。
+                // multipart 只支持 POST：OSS PostObject 是 POST，PUT/PATCH 走另一条流式语义，本类没实现。
                 throw new \InvalidArgumentException('Http：multipart 只支持 POST（' . $method . ' 要走另一条流式语义，本类没实现）');
             }
             foreach ($headers as $name => $_) {
-                // ★ **不许手设 Content-Type**：multipart 的 Content-Type 必须带
-                //   `boundary=`，而 boundary 是本类自己生成的。手设一个
-                //   `multipart/form-data` 会把 curl 自动补的 boundary 顶掉 ⇒
-                //   服务端收到一个**无法解析**的表单，报的还是"缺少字段"。
+                // ★ 不许手设 Content-Type：multipart 的 Content-Type 必须带 boundary=，
+                //   boundary 由本类生成。手设会顶掉 curl 自动补的 boundary ⇒
+                //   服务端收到无法解析的表单。
                 if (\strtolower((string) $name) === 'content-type') {
                     throw new \InvalidArgumentException('Http：multipart 的 Content-Type 由本类生成（要带 boundary），不要在 headers 里手设');
                 }
@@ -246,11 +150,9 @@ final class Http
             [$multipart, $multipartType] = self::buildMultipart($fields, $files);
         }
 
-        // ── 上传进度回调（2026-11-02）────────────────────────────────────────
-        //
-        // ★ **只对 multipart 有效**，且给了回调但没走 multipart ⇒ **当场抛**：
-        //   `body` 是整块发出去的（`CURLOPT_POSTFIELDS`），中途没有"读到第几字节"
-        //   这个观察点 —— 收下这个选项却不生效，调用方会以为进度条该动。
+        // ── 上传进度回调 ────────────────────────────────────────────────
+        // 只对 multipart 有效；给了回调但没走 multipart ⇒ 当场抛
+        //   （普通 body 一次性发出，没有中途进度观察点）。
         $onProgress = $opts['onProgress'] ?? null;
         if ($onProgress !== null) {
             if ($multipart === null) {
@@ -264,8 +166,7 @@ final class Http
         $connectS = (float) ($opts['connectTimeout'] ?? self::DEFAULT_CONNECT_TIMEOUT_S);
         $timeoutS = (float) ($opts['timeout'] ?? self::DEFAULT_TIMEOUT_S);
         if ($connectS <= 0.0 || $timeoutS <= 0.0) {
-            // ★ `CURLOPT_TIMEOUT_MS => 0` 在 curl 里是"**无限**等待"，恰好与"给 0 表示不等"
-            //   的直觉相反 ⇒ 这里挡掉，别让 0 变成一个永不超时的请求。
+            // CURLOPT_TIMEOUT_MS => 0 在 curl 里是"无限等待"，与直觉相反 ⇒ 挡掉。
             throw new \InvalidArgumentException('Http：connectTimeout / timeout 必须 > 0（0 在 curl 里表示"无限等"）');
         }
 
@@ -274,8 +175,7 @@ final class Http
 
         $ch = \curl_init($url);
         if ($ch === false) {
-            // AOT 产物里 curl 由运行时 ini 的 `extension=curl` 提供（`drift-build` 写死）；
-            // 真到这里说明部署包缺扩展 —— 这是安装问题，不是网络问题，所以要说得明白。
+            // curl 初始化失败通常是部署包缺 extension=curl（安装问题，不是网络问题）。
             throw new HttpException('Http：curl 初始化失败（运行时 ini 没启 extension=curl？）：' . $url, $url);
         }
 
@@ -284,37 +184,33 @@ final class Http
 
         $lines = [];
         foreach ($headers as $name => $value) {
-            // ★ 值可以是数组（同名头多次出现是合法的：`Accept` / `X-Tag` 都是这样）。
-            //   直接拼会让 PHP 把数组转成字符串 "Array" 发出去 —— 不报错，只是头是假的。
+            // ★ 值可以是数组（同名头多次出现合法）。直接拼会让 PHP 把数组转成
+            //   "Array" 字符串发出去 —— 不报错，只是头是假的。
             foreach (\is_array($value) ? $value : [$value] as $one) {
                 $lines[] = $name . ': ' . $one;
             }
         }
         if ($multipartType !== '') {
-            // ★ 必须在这里补：`CURLOPT_POSTFIELDS` 收到**字符串**时 curl 不会自己加
-            //   Content-Type（收到数组才会）。而 multipart 的 Content-Type 少了
-            //   `boundary=` 服务端就解不开 —— 所以 boundary 由 `buildMultipart()`
-            //   生成，这里原样带上，两者必须是**同一次调用**的产物。
+            // 必须在这里补 Content-Type：CURLOPT_POSTFIELDS 收到字符串时 curl 不
+            //   自己加；少了 boundary= 服务端解不开。
             $lines[] = 'Content-Type: ' . $multipartType;
         }
         if ($payload !== '' || $multipart !== null) {
-            // ★ 必须显式禁掉 `Expect: 100-continue`：curl 对 >1KB 的 body 会先发这个头
-            //   并**等 1 秒**看服务端怎么说。对端是 PHP 内置服务器时不回 100 ⇒
-            //   每次 POST 白等 1s。这是 curl 的经典坑，不是本仓的选择。
-            //   ★ 上传几百 KB 以上的图必然 > 1KB ⇒ 这一行对 multipart 尤其重要。
+            // 显式禁掉 Expect: 100-continue：curl 对 >1KB body 会先等 1 秒看服务端。
+            //   对端是 PHP 内置服务器时不回 100 ⇒ 每次 POST 白等 1s。
             $lines[] = 'Expect:';
         }
 
         \curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
-            // ★ 用毫秒版：秒版只能表达整数，2.5s 这种值会被截成 2s。
+            // 用毫秒版：秒版只表达整数，2.5s 会被截成 2s。
             CURLOPT_CONNECTTIMEOUT_MS => (int) \round($connectS * 1000.0),
             CURLOPT_TIMEOUT_MS => (int) \round($timeoutS * 1000.0),
             CURLOPT_FOLLOWLOCATION => $redirects > 0,
             CURLOPT_MAXREDIRS => $redirects,
             CURLOPT_HTTPHEADER => $lines,
-            // ★ 头用回调收（`CURLOPT_HEADER => true` 会把头混进 body，还得自己切）；
-            //   回调里"见到新的状态行就清空"⇒ 重定向 / 100-continue 之后留下的是**最后**一段。
+            // 头用回调收：CURLOPT_HEADER => true 会把头混进 body。
+            //   回调里"见到新状态行就清空"⇒ 留下的是最后一段。
             CURLOPT_HEADERFUNCTION => static function ($_handle, string $raw) use (&$seen): int {
                 $line = \rtrim($raw, "\r\n");
                 if ($line === '') {
@@ -337,20 +233,12 @@ final class Http
             },
         ]);
 
-        // ── TLS 信任根（2026-11-02，`apps/watermark` 的第一次真 HTTPS 打出来的）──
-        //
-        // ★ 症状：`POST https://…oss…` → `SSL certificate problem: unable to get
-        //   local issuer certificate (20)`。而同一个应用的网关是 `http://` ⇒
-        //   **签名 / 建任务全过、只有上传挂**，看起来像"OSS 拒绝我们"。
-        // ★ 根因不在代码，在**随 exe 分发的 `php.ini`**：它只写了 `extension=…`
-        //   （`tools/drift-build.php`），没有任何 `curl.cainfo` / `openssl.cafile`
-        //   ⇒ curl 的信任库是**空的** ⇒ 任何 HTTPS 都过不去（错误码 60 / OpenSSL 20）。
-        //   解释器里看不出来：开发机的 php.ini 有 `curl.cainfo`（虽然那个路径在本机
-        //   根本不存在 —— 于是解释器里是**另一个**错：errno 77 "adding trust anchors"）。
-        // ★ 修法：三档兜底（细节见 `tlsTrustOptions()` 的表）——
-        //   ① ini 里配了**且文件真存在**就用它；② 否则用**随包的 `cacert.pem`**
-        //   （`assets/cacert.pem`，构建时拷到 exe 旁边 ⇒ 部署里唯一可靠的来源）；
-        //   ③ 再没有就退到 Windows 系统证书库（`CURLSSLOPT_NATIVE_CA`）。
+        // ── TLS 信任根 ──────────────────────────────────────────────────
+        // ★ 随 exe 分发的 php.ini 只写了 extension=…，没有 curl.cainfo /
+        //   openssl.cafile ⇒ curl 信任库为空，任何 HTTPS 都过不去（错误码 60）。
+        //   三档兜底（详见 tlsTrustOptions()）：① ini 配了且文件存在就用；
+        //   ② 否则用随包 cacert.pem（构建时拷到 exe 旁，部署里唯一可靠来源）；
+        //   ③ 再没有退到 Windows 系统证书库（NATIVE_CA）。
         \curl_setopt_array($ch, self::tlsTrustOptions(
             (string) \ini_get('curl.cainfo'),
             (string) \ini_get('openssl.cafile'),
@@ -359,29 +247,16 @@ final class Http
         ));
 
         if ($multipart !== null) {
-            // ★ **流式上传**：不设 `CURLOPT_POSTFIELDS`（设了会顶掉 READFUNCTION），
-            //   改成 UPLOAD + 显式长度 + 读回调。内存只占一个块（curl 默认 64 KB），
-            //   不是整个文件。
+            // 流式上传：不设 CURLOPT_POSTFIELDS（会顶掉 READFUNCTION），改 UPLOAD +
+            //   显式长度 + 读回调。内存只占一个块（curl 默认 64 KB）。
             //
-            // ★★ **PHP 没有 `CURLOPT_POSTFIELDSIZE`**（2026-11-02 实测：8.4.15 与
-            //   8.5.11 都 `defined()` 为 false）。PHP 的 curl 扩展只导出
-            //   `CURLOPT_POSTFIELDS`（= 10015，是 PHP 自己的伪常量，对应 libcurl 的
-            //   `COPYPOSTFIELDS`），而 libcurl 的 `CURLOPT_POSTFIELDSIZE` 从来没被
-            //   导出过。所以"POST + 流式 body"只能走这条路：
-            //     `CURLOPT_UPLOAD`（用 READFUNCTION 读 body）+ `CURLOPT_INFILESIZE`
-            //     （给长度，否则退化成 chunked）+ `CURLOPT_CUSTOMREQUEST('POST')`
-            //     （把动词从默认的 PUT 改回 POST，**只改动词不改语义**）。
-            //   两个 PHP 版本这三个常量都在，已实测。
+            // PHP 没有 CURLOPT_POSTFIELDSIZE 常量；"POST + 流式 body"只能走
+            //   UPLOAD + INFILESIZE + CUSTOMREQUEST('POST')。
             \curl_setopt($ch, CURLOPT_UPLOAD, true);
             \curl_setopt($ch, CURLOPT_INFILESIZE, $multipart->length());
             \curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'POST');
-            // ★ 回调**必须声明 3 个参数**：curl 就是传 3 个。AOT 严格校验实参个数，
-            //   少声明一个在解释器里没事、在真机上是 `Fatal: expects exactly N`。
-            //
-            // ★ 进度在这里顺手报（`$multipart->bytesSent()` 是它自己的记账）：
-            //   不用闭包改外部变量，也就不依赖 tpc 对 `use (&$x)` 的支持。
-            //   ★ 报的是**请求体**进度（含 part 头），与 `length()` 同口径 ——
-            //   两者混用会让进度停在 99%（最后一段是 `--boundary--`）。
+            // 读回调必须声明 3 个参数：curl 传 3 个，AOT 严格校验实参个数。
+            //   进度在这里报（bytesSent() 自记账），与 length() 同口径。
             \curl_setopt($ch, CURLOPT_READFUNCTION, static function ($_handle, $_fd, int $want) use ($multipart, $onProgress): string {
                 $chunk = $multipart->read($want);
                 if ($onProgress !== null) {
@@ -408,13 +283,11 @@ final class Http
             $errno = \curl_errno($ch);
             $error = \curl_error($ch);
         } catch (\RuntimeException $e) {
-            // `MultipartBody::read()` 抛的（文件读到一半读不出）⇒ 归到"传输层失败"那一档。
-            // ★ 不能让它以 `\RuntimeException` 原样冒出去：`Http` 的对外契约只有
-            //   `HttpException` 一种失败，多一种异常类型就是让每个调用方都要多 catch 一个。
+            // 归一到 HttpException：Http 对外契约只有这一种失败，
+            //   多一种异常类型就逼每个调用方多 catch 一个。
             throw new HttpException($method . ' ' . $url . ' → ' . $e->getMessage(), $url);
         } finally {
-            // ★ 文件句柄必须在这里关：curl 提前失败（超时 / 被中断）时
-            //   `read()` 不会吐完，句柄就挂在那里。
+            // 文件句柄必须在这里关：curl 提前失败时 read() 不会吐完。
             if ($multipart !== null) {
                 $multipart->close();
             }
@@ -425,8 +298,7 @@ final class Http
         $elapsedMs = ((float) \curl_getinfo($ch, CURLINFO_TOTAL_TIME)) * 1000.0;
 
         if ($errno !== 0 || !\is_string($raw)) {
-            // ★ 传输层失败**没有**状态码（`status` 留 null）—— 那是与"服务端说 500"
-            //   完全不同的两件事，见 `HttpException` 的类注释。
+            // 传输层失败没有状态码（与"服务端说 500"是两回事，见 HttpException）。
             throw new HttpException(
                 \sprintf('%s %s → %s', $method, $url, $error !== '' ? $error : '传输失败（curl 没给出原因）'),
                 $url,
@@ -453,28 +325,15 @@ final class Http
     }
 
     /**
-     * TLS 信任根：决定给 curl 补哪几项。
+     * TLS 信任根：决定给 curl 补哪几项（纯函数，输入都是外部世界）。
      *
-     * ★ **纯函数**（四个输入都是"外部世界"：两个 ini 值 + 一个可能存在的证书包
-     *   路径 + 是不是 Windows）—— 判据才能落在它身上，见
-     *   `tests/Unit/App/HttpTest.php`。
+     * ① ini 的 cainfo/cafile 指向真实存在的文件 ⇒ 用它；
+     * ② 随包 cacert.pem 存在 ⇒ 用它（部署里唯一可靠来源）；
+     * ③ 都没 + Windows ⇒ NATIVE_CA；④ 都没 + 非 Windows ⇒ 什么都不给
+     *   （Linux/macOS 的 curl 自带编译期默认信任根）。
+     * is_file 是必须的：ini 指向不存在的文件交给 curl 会 errno 77。
      *
-     * ## 四档（顺序即优先级）
-     *
-     * | 条件 | 给什么 | 为什么 |
-     * |---|---|---|
-     * | `curl.cainfo` / `openssl.cafile` 指向**真实存在的文件** | `CURLOPT_CAINFO` | 显式写出来，行为与 ini 默认一致，但"用了哪个"变成可断言的 |
-     * | 随包的 `cacert.pem` 存在（{@see self::trustBundlePath()}） | `CURLOPT_CAINFO` | **部署里唯一可靠的来源**：不依赖 ini、不依赖系统库版本 |
-     * | 都没有 + **Windows** | `CURLOPT_SSL_OPTIONS = NATIVE_CA` | Windows 的 OpenSSL 构建**没有**默认信任根 ⇒ 退到系统证书库 |
-     * | 都没有 + **非 Windows** | 什么都不给 | Linux / macOS 的 curl 自带编译期默认信任根（`/etc/ssl/certs/…`），动了反而可能弄坏 |
-     *
-     * ★ **`is_file()` 是必须的**，不是防御性编程：开发机的 php.ini 把
-     *   `curl.cainfo` 指向 `C:\tools\php\ssl\cacert.pem`，而**那个文件不存在** ⇒
-     *   交给 curl 用会得到 `errno 77: error adding trust anchors from file`。
-     *   实测三种组合（2026-11-02）：ini 原值 → 77；清空 → 77；清空 + NATIVE_CA → ok。
-     *
-     * @return array<int, int|string> curl 选项（键是 `CURLOPT_*`）
-     *
+     * @return array<int, int|string> curl 选项（键是 CURLOPT_*）
      * @internal
      */
     public static function tlsTrustOptions(string $cainfo, string $cafile, string $bundled, bool $windows): array
@@ -493,17 +352,10 @@ final class Http
     }
 
     /**
-     * 随包的信任根在哪（`assets/cacert.pem`，构建时被拷到 exe 旁边）。
+     * 随包信任根在哪（assets/cacert.pem，构建时拷到 exe 旁）。
      *
-     * 候选顺序 = **部署优先**：
-     *   ① `dirname($_SERVER['argv'][0]) . '/cacert.pem'` —— AOT 产物：exe 同目录。
-     *      `argv[0]` 是唯一可靠的"exe 在哪"来源（`__DIR__` 是**编译期**常量，AOT 下
-     *      指向构建机，见 `MEMORY`）。
-     *   ② `getcwd() . '/cacert.pem'` —— 构建产物落在仓库根，而开发机也从仓库根跑。
-     *   ③ `getcwd() . '/assets/cacert.pem'` —— **没构建过也能跑**（解释器 / 单测）。
-     *
-     * ★ 找不到就返回 `''`，由 {@see self::tlsTrustOptions()} 退到系统证书库 ——
-     *   不是错误。真到了连系统库都没有的机器，curl 会自己报出来。
+     * 候选顺序：① exe 同目录（AOT）；② 仓库根；③ 仓库根/assets（解释器/单测）。
+     * 找不到返回 ''，由 tlsTrustOptions() 退到系统证书库 —— 不是错误。
      *
      * @internal
      */
@@ -531,57 +383,27 @@ final class Http
     }
 
     /**
-     * `CURLSSLOPT_NATIVE_CA` 的值（curl 8.x = 16）。
+     * CURLSSLOPT_NATIVE_CA 的值（curl 8.x = 16）。
      *
-     * ★ 为什么不直接写常量名 / 不用 `\constant()`：AOT 对 `\defined()` 与
-     *   `\constant('字符串')` 的编译支持**没有先例**，而 `\defined()` 为假时
-     *   裸写常量名是 `Error: Undefined constant` —— 那会让"老 curl 上退化成本来的
-     *   行为"变成"老 curl 上直接崩"。
-     * ★ 代价是一个字面量 ⇒ 由单测钉住：`HttpTest` 里与 PHP 导出的
-     *   `CURLSSLOPT_NATIVE_CA` 比对，curl 换值就红。
+     * 不用常量名：老 curl 上 \defined() 为假时裸写常量名是 Undefined constant，
+     *   会让退化行为变成直接崩。值由单测钉住。
      */
     private const NATIVE_CA = 16;
 
     /**
-     * 造一个**流式**的 `multipart/form-data` 请求体，返回 `[body, content-type]`。
+     * 造一个流式的 multipart/form-data 请求体，返回 [body, content-type]。
      *
-     * ## 为什么手拼，而不用 `CURLFile` 或 `CURLOPT_POSTFIELDS => array`
-     *
-     * 1. **AOT 风险**：`CURLFile` 是 PHP 内置类，`typephp` 认不认识它没有先例。
-     *    而"解释器全绿、AOT 产物启动即 Fatal"本仓已经付过一次学费
-     *    （见 `MEMORY.md`「AOT 缺 `use` 只在真机炸」）。手拼只用字符串 + 文件句柄。
-     * 2. **可控性**：part 的头部顺序、文件名转义、字段注入防护都在一处，
-     *    而不是散给 libcurl 的默认行为。
-     *
-     * ## 为什么是流式（2026-11-02 第二版）
-     *
-     * 第一版把整个表单拼进一个 `string`。三个问题，第一个就足以否掉它：
-     *
-     * | 问题 | 后果 |
-     * |---|---|
-     * | `file_get_contents()` + `.=` 扩容 | 内存峰值 = 文件 × 2~3；64 MB 的图吃 150 MB |
-     * | 循环里 `.=` 累加 | lint `str-concat-loop`（§2.4 纪律 2），多字节下堆损坏 |
-     * | 严格零拷贝用不了 | `sendfile()` 只能原样发一个 fd，表单要在文件前后拼头 ⇒ **不适用** |
-     *
-     * 所以上限不是零拷贝，是**流式**：内存 O(一个块)。具体形状见
-     * {@see MultipartBody}。
-     *
-     * ★ **总长度先算不读**（各 part 头长度 + `filesize()` + 尾部）⇒
-     *   `CURLOPT_POSTFIELDSIZE` 拿得到精确值，进度分母不用猜（第 2 棒直接用
-     *   `length()`），请求也不会退化成 chunked。
+     * 手拼而不用 CURLFile：避免 AOT 对未知内置类的风险，只用字符串 + 文件句柄。
+     * 流式而非整块拼：内存 O(一个块)，不读全文件。
      *
      * @param array<string, mixed> $fields 普通字段：名 → 标量值
-     * @param array<string, mixed> $files  文件字段：名 → 路径字符串，或
-     *                                     `['path' => …, 'filename' => …, 'mime' => …]`
-     *
+     * @param array<string, mixed> $files  文件字段：名 → 路径，或 [path, filename?, mime?]
      * @return array{MultipartBody, string}
-     *
      * @throws \InvalidArgumentException 字段名/值含 CRLF、文件不存在、体积超限
      */
     private static function buildMultipart(array $fields, array $files): array
     {
-        // ★ boundary 用随机值：固定 boundary 会让"字段值里恰好含 `--boundary`"
-        //   从"不可能"变成"可能"。16 字节十六进制足够。
+        // boundary 用随机值：固定 boundary 会让"字段值里含 --boundary"从不可能变可能。
         $boundary = '----DriftFormBoundary' . \bin2hex(\random_bytes(16));
 
         /** @var list<array{head: string, path: string, size: int}> $parts */
@@ -593,11 +415,9 @@ final class Http
             if (\is_array($value) || \is_object($value)) {
                 throw new \InvalidArgumentException('Http：fields 的值必须是标量（\'' . $name . '\' 是 ' . \get_debug_type($value) . '）');
             }
-            // ★ 值里的 CRLF 能让攻击者**伪造额外的 part**（`\r\n--boundary\r\nContent-Disposition: …`）。
-            //   调用方是自己人也不能放过：一次拼接失误就是一个静默的注入面。
+            // 值里的 CRLF 能伪造额外的 part ⇒ 无论调用方是谁都拦下。
             $value = self::assertNoCrlf((string) $value, 'fields[\'' . $name . '\'] 的值');
 
-            // 纯字段的整个 part（含结尾 CRLF）都很小，一次性拼好塞进 head。
             $head = '--' . $boundary . "\r\n"
                 . 'Content-Disposition: form-data; name="' . self::quoteDisposition($name) . "\"\r\n\r\n"
                 . $value . "\r\n";
@@ -619,8 +439,7 @@ final class Http
                 $path = (string) $spec;
             }
             if ($path === '' || !\is_file($path) || !\is_readable($path)) {
-                // ★ 不能静默发一个空 part：OSS 会返回 200 但 key 下是个 0 字节对象，
-                //   之后任务报"图片格式错误"—— 错误点离原因隔着两个系统。
+                // 不能静默发空 part：OSS 返回 200 但 key 下是 0 字节，之后任务报"图片格式错误"。
                 throw new \InvalidArgumentException('Http：files[\'' . $name . '\'] 指向的不是可读文件：' . $path);
             }
             if ($filename === '') {
@@ -631,9 +450,8 @@ final class Http
                 $mime = self::MIME_BY_EXT[$ext] ?? 'application/octet-stream';
             }
 
-            // ★ 只用 `filesize()`，**不读内容**。`clearstatcache()` 是必须的：
-            //   PHP 按路径缓存 stat 结果，同一路径刚被写过（比如刚解码出的缩略图）
-            //   会拿到**旧的大小** ⇒ 请求体比声明短，服务端报"连接被重置"。
+            // 只用 filesize()，不读内容。clearstatcache 是必须的：
+            //   PHP 按路径缓存 stat，刚写过的文件会拿到旧大小 ⇒ 请求体比声明短。
             \clearstatcache(true, $path);
             $size = @\filesize($path);
             if (!\is_int($size) || $size < 0) {
@@ -665,7 +483,7 @@ final class Http
     /**
      * CRLF 检查（multipart 的注入面就这一处）。
      *
-     * @throws \InvalidArgumentException 含 `\r` 或 `\n`
+     * @throws \InvalidArgumentException 含 \r 或 \n
      */
     private static function assertNoCrlf(string $value, string $what): string
     {
@@ -679,11 +497,9 @@ final class Http
     }
 
     /**
-     * `Content-Disposition` 里的名字/文件名转义（RFC 7578 §5.1 的保守做法）。
-     *
-     * ★ 中文文件名**不能**直接放进去再指望服务端按 UTF-8 解 —— 各家实现不一致。
-     *   本仓的选择是：`"` / `\` 转成 percent-encoding，其余字节原样（OSS 不看
-     *   `filename`，真正决定对象名的是 `key` 字段）。
+     * Content-Disposition 名字/文件名转义（RFC 7578 保守做法）。
+     * 中文文件名不直接放：各家 UTF-8 解释不一致；" / \ 转 percent-encoding，
+     *   其余字节原样（OSS 不看 filename，对象名由 key 决定）。
      */
     private static function quoteDisposition(string $value): string
     {

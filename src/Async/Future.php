@@ -6,53 +6,11 @@ namespace Drift\Async;
 use Drift\Errors;
 
 /**
- * **异步结果的唯一形状**（N3）—— 一个可以被组合的"将来会有值"。
+ * 异步结果 —— 可以被组合的"将来会有值"。
  *
- * ## 为什么要有它（不是"多一层糖"）
- *
- * 回调模型的问题**不是啰嗦，是「组合」这个操作不存在**：
- *
- * ```php
- * // 回调（改造前）：同时取三个接口 —— 手工计数，嵌套两层就写不动
- * $pending = 3;
- * foreach ($urls as $i => $url) {
- *     $host->submit(new FetchJob($url), function ($r) use (&$all, &$pending, $i, $done): void {
- *         $all[$i] = $r;
- *         if (--$pending === 0) { $done($all); }
- *     });
- * }
- *
- * // Future：组合是类型自带的
- * Future::all([$api->get('/u'), $api->get('/o'), $api->get('/s')])
- *     ->then(fn (array $all) => $this->store->setData($all))
- *     ->catch(fn (\Throwable $e) => $this->store->fail($e));
- * ```
- *
- * `all` / `race` 在回调世界里都要手工计数，而手工计数就是 bug 温床（漏一个分支
- * 就是"永远转圈"）。这不是风格问题 —— 它是**能力缺口**。
- *
- * ## 与成熟框架对齐（语义逐条可对照）
- *
- * | 本仓 | Dart / Flutter | .NET / WPF | Rust |
- * |---|---|---|---|
- * | `then` | `Future.then` | `Task.ContinueWith` | `Future::map` |
- * | `catch` | `catchError` | `await` 的 `catch` | `Future::or_else` |
- * | `Future::all` | `Future.wait` | `Task.WhenAll` | `join!` |
- * | `Future::race` | `Future.any` | `Task.WhenAny` | `select!` |
- * | `cancel` | （无内建，靠 `CancelableOperation`） | `CancellationToken` | `drop` |
- *
- * ## 一条不可破的时序纪律
- *
- * **`resolve()` / `reject()` 只在 UI 线程的帧内被调用**（`PumpHost::pumpTasks()` /
- * `pumpTasks()`），所以 `then()` 的回调与改造前的 `$onDone` **完全同级**：
- * 都在 `settle()` 之前 ⇒ 回调里 `setState()` 同帧生效。
- * ⇒ 后端（`TaskHost`）**不许**在自己的线程上结算；它只能把结果入队。
- *
- * ## 失败不许静默（G2）
- *
- * 结算为失败时若**没有任何** `catch()`，本类直接走 `Errors::report()` 的 Fatal
- * 序列 —— 与改造前「`$onError === null` ⇒ Fatal」是同一条规矩。任务失败被吞掉
- * 就是"界面永远转圈"，而转圈**不报错**。
+ * ★ `resolve()` / `reject()` 只在 UI 线程的帧内调，后端不许在自己线程上结算、
+ *   只能入队：否则 `then()` 回调不再与结算同级，`setState()` 晚一帧。
+ * 失败时没有任何 `catch()` ⇒ 走 Fatal 序列：失败被吞掉 = 界面永远转圈且不报错。
  *
  * @api
  */
@@ -69,10 +27,7 @@ final class Future
     private ?\Throwable $error = null;
 
     /**
-     * 挂在后面的链（`then()` / `catch()` 各一条，`forwardTo()` 是空链）。
-     *
-     * ★ 结算时**整体取走再跑**（swap 语义）：回调里再 `then()` 同一个 Future
-     *   不会让本帧无限循环 —— 与 `SyncTaskHost::drain()` 同一手法。
+     * ★ 结算时整体取走再跑：回调里再 `then()` 同一个 Future 不会本帧无限循环。
      *
      * @var list<array{ok: ?\Closure, err: ?\Closure, next: self}>
      */
@@ -84,47 +39,27 @@ final class Future
     private bool $cancelled = false;
 
     /**
-     * 是不是**任务**（`Future::pending()` 造的，或从它链出来的）。
+     * 是不是**任务**（`pending()` 造的，或从它链出来的）。
      *
-     * ★★ 这是"失败没人接 ⇒ Fatal"那条判据的**唯一开关**，也是踩过坑才加的：
-     *   判据只能在"结算的那一刻"成立 —— 因为对任务而言，挂回调必然早于结算
-     *   （`submit()` 返回后调用方立刻 `then()/catch()`，而结算发生在之后的
-     *   `pumpTasks()` 帧内）。可对 `Future::rejected()` 造出来的**值**，结算
-     *   发生在构造那一瞬，`$links` 必然是空的 —— 那不是"没人接"，是"还没轮到
-     *   接"。实测：`Future::rejected($e)->catch(...)` 会被判成事故，直接把
-     *   PHPUnit 进程 `exit(3)`（`Errors.log` 里那条 `异步任务失败且没有
-     *   catch()` 就是它）。
-     *   ⇒ 一句话：**任务没人接要喊，值不喊**。链下游继承这个标记（`chain()`），
-     *     所以 `submit()->then()` 漏写 `catch()` 仍然在链末端喊 Fatal（G2 不变）。
+     * ★★ "失败没人接 ⇒ Fatal" 的唯一开关。判据只在结算那一刻看 `$links`，而
+     *   `rejected()` 造的**值**在构造时 `$links` 必然为空 —— 那是"还没轮到接"，
+     *   不是"没人接"。任务没人接要喊，值不喊；下游经 `chain()` 继承标记。
      */
     private bool $task = false;
 
     /**
-     * 进度（`0.0`~`1.0`）+ 有没有过进度（2026-11-02）。
-     *
-     * ★ 与 `AsyncValue` 的载荷同一个手法：**"有没有"必须单独一个 `bool`**。
-     *   拿 `$progress !== null` 判会把"进度正好是 0.0"和"从来没报过"混成一种，
-     *   而这两件事对界面是不同的（前者该画 0% 的条，后者该画不定长转圈）。
-     *
-     * ★ 进度**不是**状态：它不参与 `PENDING/FULFILLED/REJECTED`，`isDone()` 不看它。
-     *   一个 Future 可以"已完成且最后进度是 0.4"（任务没报满就返回了）—— 那是
-     *   任务的自由，不是 Future 的异常。
+     * 进度（`0.0`~`1.0`）与"有没有报过"。
+     * ★ 必须单独一个 `bool`：拿 `$progress !== null` 判会把"进度正好 0.0"与"从没
+     *   报过"混成一种（前者画 0% 的条，后者画不定长转圈）。进度不是状态，`isDone()`
+     *   不看它。
      */
     private float $progress = 0.0;
 
     private bool $hasProgress = false;
 
     /**
-     * 进度订阅者。
-     *
-     * ★ 为什么这里可以有"第二个回调通道"（而 `Completion` 的注释明确反对两套）：
-     *   `Completion` 反对的是 **`onDone` 与 `then`** —— 两个通道表达**同一个事件**
-     *   （结算），于是"谁先跑"要靠读实现才能回答。进度与结算**不是同一个事件**，
-     *   它们的顺序是天然的（进度必在结算之前），不存在竞争。
-     *
-     * ★ 进度**不沿 `chain()` 传递**：派生 Future 关心的是"结果变成什么"，不是
-     *   "上游跑了多少"。给它灌上游的进度只会让"50% 了"这句话指代不明
-     *   （是上游的 50% 还是整条链的 50%？）。要进度就订阅**根任务**那一条。
+     * 进度订阅者。进度与结算不是同一事件（进度必在结算之前），两套回调不冲突。
+     * ★ 进度**不沿 `chain()` 传递**；要进度就订阅根任务那一条。
      *
      * @var list<\Closure>
      */
@@ -141,10 +76,8 @@ final class Future
     }
 
     /**
-     * 造一个**还没结算的任务** —— 等后端（或组合器、或测试）来结算。
+     * 造一个**还没结算的任务**，等后端 / 组合器 / 测试来结算。
      *
-     * ★ 应用侧不该调它：拿 Future 的唯一入口是 `TaskHost::submit()` /
-     *   `submit()`。测试与后端用它造"我手动结算"的替身。
      * ★ 只有这里造出来的 Future（以及它链下去的下游）在"没人接"时才走 Fatal。
      *
      * @param null|\Closure(): void $onCancel 取消钩子（可空：不是所有后端都能停）
@@ -175,8 +108,7 @@ final class Future
     /**
      * 已经失败的 Future —— 这是个**值**，不是任务。
      *
-     * ★ 构造时还没人来挂 `catch()`，所以**不**判"没人接"（见 `$task` 的注释）；
-     *   典型写法就是 `Future::rejected($e)->catch(...)` 或塞进 `Future::all()`。
+     * ★ 构造时没人挂 `catch()`，不要拿"没人接"去判它。
      *
      * @api
      */
@@ -189,11 +121,9 @@ final class Future
     }
 
     /**
-     * 成功时跑 `$onFulfilled`，返回**新**的 Future（收它的返回值）。
+     * 成功时跑 `$onFulfilled`，返回**新**的 Future。
      *
-     * ★ 回调里返回另一个 `Future` ⇒ 自动摊平（`then()` 的返回值会等它）——
-     *   这就是"取 A 再用 A 的结果取 B"不用嵌套的原因。
-     * ★ 回调里抛异常 ⇒ 下游 Future 变成失败（`catch()` 能接住）。
+     * ★ 回调返回另一个 `Future` ⇒ 自动摊平；抛异常 ⇒ 下游变失败。
      * ★ 在**已结算**的 Future 上挂 ⇒ 立刻在当前栈上执行。
      *
      * @param callable(mixed): mixed $onFulfilled
@@ -206,9 +136,8 @@ final class Future
     }
 
     /**
-     * 失败时跑 `$onRejected`，返回**新**的 Future。
-     *
-     * ★ 挂了它就算"这条链处理了失败"⇒ 不再走 Fatal 序列。
+     * 失败时跑 `$onRejected`，返回**新**的 Future；挂了它就算"这条链处理了失败"，
+     * 不再走 Fatal 序列。
      *
      * @param callable(\Throwable): mixed $onRejected
      *
@@ -220,24 +149,10 @@ final class Future
     }
 
     /**
-     * 订阅**进度**（`0.0`~`1.0`）—— 与 `then()` / `catch()` 并列，但**不派生**新的
-     * Future：进度不改变结果，它只是"过程"（2026-11-02）。
+     * 订阅**进度**（`0.0`~`1.0`）。不派生新 Future（进度不改变结果），返回 `$this`。
      *
-     * ```php
-     * $future->onProgress(function (float $f): void {
-     *     $this->emit($this->value->withProgress($f));
-     * });
-     * ```
-     *
-     * ★ 已经有过进度时**立刻补发一次**（与 `then()` 在已结算的 Future 上立刻跑同形）：
-     *   订阅晚于第一个进度包是常态（`submit()` 返回之后才挂），补发让调用方不必
-     *   自己判"我是不是错过了"。
-     *
-     * ★ 返回 `$this` 而不是新的 Future —— 它不是派生，链式写法照样成立。
-     *
-     * ★ **只有 `ProcessTaskHost` 会喂进度**。`SyncTaskHost` 在 UI 线程上同步跑完，
-     *   进度对它没有意义；`ThreadTaskHost` 目前也不转发。⇒ 拿不到进度不是错误，
-     *   是那个后端没有这个能力（`hasProgress()` 一直是 false）。
+     * ★ 已经有过进度时立刻补发一次：订阅晚于第一个进度包是常态。
+     * ★ 只有 `ProcessTaskHost` 会喂进度；拿不到不是错误，是那个后端没这个能力。
      *
      * @param callable(float): void $onProgress
      *
@@ -258,13 +173,8 @@ final class Future
     /**
      * 喂一个进度值。**只有后端该调它**（`ProcessTaskHost::deliver()`）。
      *
-     * 三条丢弃规则（都是"不报错、只是不生效"那一类，所以各有理由）：
-     *
-     * | 情形 | 为什么丢 |
-     * |---|---|
-     * | 已结算 | 结果都到了，再说"40%"没有意义；而且订阅者可能已经换了下一轮 |
-     * | 已取消 | 用户不要了，进度只会让界面闪一下 |
-     * | **比当前小或相等** | 进度条不能往回跳。乱序 / 重发的进度包在 IPC 上完全可能 |
+     * 丢弃：已结算 / 已取消 / 比当前小或相等。★ 最后一条要留 —— 乱序或重发的
+     * 进度包在 IPC 上完全可能，进度条不能往回跳。
      *
      * @param float $fraction `0.0`~`1.0`（越界会被夹住，不抛 —— 这是**数据**不是参数）
      *
@@ -290,9 +200,7 @@ final class Future
         $this->progress = $f;
         $this->hasProgress = true;
 
-        // ★ 先取到局部变量再迭代（回调里可能再 `onProgress()` ⇒ 改数组；
-        //   直接 `foreach ($this->progressSinks …)` 在 PHP 里是安全的拷贝，
-        //   但这里显式取一份，与 `resolve()` 里"整体取走再跑"同一手法）。
+        // ★ 先取一份局部副本再迭代：回调里可能再 `onProgress()` ⇒ 改数组
         $sinks = $this->progressSinks;
         foreach ($sinks as $sink) {
             $sink($f);
@@ -305,58 +213,20 @@ final class Future
         return $this->hasProgress;
     }
 
-    /**
-     * 当前进度（没报过 ⇒ `$fallback`）。
-     *
-     * ★ 与 `AsyncValue::dataOr()` 同一手法：不返回 `?float` —— AOT 对"可空标量"
-     *   的处理没有先例，而调用点真正需要的是"给我一个能画的数"。
-     */
+    /** 当前进度（没报过 ⇒ `$fallback`）。不返回 `?float`：调用点要的是一个能画的数 */
     public function progressOr(float $fallback = 0.0): float
     {
         return $this->hasProgress ? $this->progress : $fallback;
     }
 
     /**
-     * 请求取消（**尽力而为**）。
+     * 请求取消（**尽力而为**）：调后端钩子 + 标记"结果不要了"，此后迟到的
+     * `resolve()` 被忽略。它**不会**让 Future 变成失败 —— "取消"不是错误。
      *
-     * ★ 语义边界必须说清：`cancel()` 只做两件事 —— ① 调后端的取消钩子（能停就停）；
-     *   ② 把本 Future 标成"结果不要了"，此后迟到的 `resolve()` 被忽略。
-     *   它**不会**让 Future 变成失败（"取消"不是错误，不该逼调用方写 `catch`）。
-     *
-     * ★★ **取消沿派生链上溯到根任务**（2026-10-31）：`then()` / `catch()` 造出来的
-     *   那条，取消钩子指向**它的上游**（见 `chain()`）⇒ `$submit(...)->then($decode)`
-     *   被取消时，被取消的不只是"派生的那条"，**根任务的钩子也会被调到**
-     *   （排队项被摘、分片被摘）。这是上一版缺的那一半 —— 当时只有 `all`/`race`
-     *   聚合体传播，`then` 这条**最常用的派生**反而是断的，于是应用只能绕：
-     *   `UserStore::fetch()` 曾经刻意返回"根 Future"、把 hydrate 挪到
-     *   `absorb()`，注释写着"取消链下游不回溯上游"。这不是风格问题，是**契约
-     *   在派生上失效**：调用方写的是同义的两种表达，一种能停、一种静默不停。
-     *
-     * ★ 由此带来的一条**边界**（也是唯一被牺牲的东西）：`Future` 的取消是
-     *   **树的剪枝**，不是"我这一枝独立"。若同一个根被两处 `then` 扇出、其中一处
-     *   取消了它，另一处也不会再收到结果 —— 但那在**没有**本机制时就已经坏了
-     *   （根被取消 ⇒ 永不结算 ⇒ 另一处的 `then` 同样不跑），本机制只是顺手把
-     *   "活"也停掉。⇒ 真正的规矩仍然是那条**独有**契约（`AsyncCommand::make()`）：
-     *   一条根 Future 只有一个主人，要复用就复用**结果**，不要复用 Future。
-     * ★ 生产者（**只有这几处** —— 分档按"能停到哪一步"，不按"谁的钩子更多"）：
-     *   - `ProcessTaskHost` —— **唯一能做到"少干活"的**：摘掉**还没发出去**的排队项
-     *     （那条任务永远不会开始）。已发给 worker 的停不了（杀进程要重拉、还会丢
-     *     在途状态），只做"不交付"；
-     *   - `ThreadTaskHost` —— **只能"不交付"**：任务已经交给 C++ worker 了，
-     *     摘不出来（`core/io_pool.cc` 的队列不在 PHP 侧）。
-     *     ★ 但它**不减记账**：`pending()` 仍算这条，直到结果行真的回来 ——
-     *       掉到 0 帧时钟就睡死，那条结果会一直躺在完成队列里；
-     *   - `SyncTaskHost` —— **没有钩子**。它的 `submit()` 里 `Job::run()` 已经跑完
-     *     （同步后端），取消能做的只有"别把那条已经算好的结果交出去"。
-     *     ★ 2026-10-31 这里曾写着"同步那一路按帧跑，不交付就等于真停"——**假的**：
-     *       活已经干完了，停的是交付，不是计算。这句话是删分片时顺手改坏的，
-     *       本轮订正（`ASYNC-ARCH-2026-10-31.md` §13.2）；
-     *   - `Future::all()` / `race()` / `allSettled()` —— 自己不干活，只把取消**转给全部入参**
-     *     （2026-10-31：否则"取消一个组合请求"等于没取消）。⇒ 它属于"剪枝"，
-     *     最终落到上面三档之一。
-     *   ★ 2026-10-30 之前这里写着"`ProcessTaskHost` 用它杀在途 worker 任务"——
-     *     **没有任何后端传过钩子**，`cancel()` 在真实任务上是纯空操作。契约说谎
-     *     比没有这个能力更糟：调用方以为停了，实际每帧还在烧预算。
+     * ★ 取消沿派生链上溯到根任务，代价是**树的剪枝**：同一个根被两处扇出，取消
+     *   一处另一处也收不到结果 —— 要复用就复用**结果**，不要复用 Future。
+     * ★ `ThreadTaskHost` 只能"不交付"且**不减 `pending()` 记账**：结果行没回来就
+     *   掉不到 0，早了会让帧时钟睡死。
      *
      * @api
      */
@@ -387,16 +257,9 @@ final class Future
     }
 
     /**
-     * `all()` / `race()` 的共同前置：**校验 + 收集 + "有没有真任务"**。
+     * `all()` / `race()` 的共同前置：校验 + 收集 + 有没有真任务。
      *
-     * ★ 为什么要抽（2026-10-31）：这两个方法的前 12 行原先是**逐字相同**的两份
-     *   （校验消息里只差方法名）。而这几行里藏着两条容易改歪的规则：
-     *   ① 键必须原样保留（`all()` 的结果按入参键序返回，`list` 更要紧）；
-     *   ② `$anyTask` 只看**入参本身**有没有真任务，不看外面包了什么。
-     *   同一个判据抄两遍，改错一遍不报错 —— 只会让"失败没人接"漏喊或误喊。
-     *
-     * @param array<array-key, self> $futures
-     * @param string $method 只用于报错消息（`all` / `race`）
+     * ★ 键必须原样保留（`all()` 按入参键序返回）；`$anyTask` 只看入参本身。
      *
      * @return array{0: array<array-key, self>, 1: bool}
      */
@@ -419,11 +282,7 @@ final class Future
         return [$list, $anyTask];
     }
 
-    /**
-     * 把取消转给每一条入参（`all()` / `race()` / `allSettled()` 唯一需要的"批量操作"）。
-     *
-     * @param array<array-key, self> $list
-     */
+    /** 把取消转给每一条入参 */
     private static function cancelAll(array $list): void
     {
         foreach ($list as $other) {
@@ -432,15 +291,8 @@ final class Future
     }
 
     /**
-     * 按**入参键序**重排结果 —— `all()` / `allSettled()` 共用（2026-10-31）。
-     *
-     * ★ 键序是**契约**不是巧合：`['a' => …, 'b' => …]` 回来后若按完成序排列，
-     *   调用方拿 `$result[0]` 以为是对应用户 A，实际是用户 C —— 不报错，数据张冠李戴。
-     * ★ 这条规则原先在 `all()` 里内联（4 行），`allSettled()` 要用同一句 ⇒
-     *   抄第二份就是"两处各写一遍必然漂"的老账，收在这里。
-     *
-     * @param array<array-key, self> $list 入参（只为取键序）
-     * @param array<array-key, mixed> $got 按完成序攒下的结果
+     * 按**入参键序**重排结果。
+     * ★ 键序是**契约**：按完成序排列会让 `$result[0]` 张冠李戴，且不报错。
      *
      * @return array<array-key, mixed>
      */
@@ -459,18 +311,10 @@ final class Future
     /**
      * 全部成功才算成功，结果是**与入参同键同序**的数组；总耗时 ≈ 最慢的那条。
      *
-     * ★ 任一条失败 ⇒ 整条失败，且**其余被 `cancel()`**（不留无人认领的后台活）。
-     * ★ 空数组 ⇒ 立刻成功（`[]`）—— 与 `Future.wait([])` / `Task.WhenAll([])` 一致。
-     * ★★ **取消会传播给入参**（2026-10-31）：聚合体是调用方唯一持有的句柄，
-     *   取消它却不取消子任务 ⇒ 子任务继续跑、结果回来没人接（占着 worker / 烧预算，
-     *   且不报错）。`AsyncCommand` 换参数时取消的正是它上一次拿到的那个 Future ——
-     *   若那个 Future 是聚合体，"真的停"只在传播之后才成立。
-     * ★★ **聚合体是不是"任务"，取决于入参**（见 `$task` 字段的注释）：入参里
-     *   只要有一条是真任务，聚合体失败且没人接就必须走 Fatal（G2 不能只保护
-     *   "单条 `submit()`"，否则"组合"这一层就成了吞掉失败的暗渠）。
-     *   纯值入参（`Future::resolved` / `rejected`）仍然不喊 —— 那是"值"，不是任务。
-     *
-     * @param array<array-key, self> $futures
+     * ★ 任一条失败 ⇒ 整条失败，其余被 `cancel()`；空数组 ⇒ 立刻成功（`[]`）。
+     * ★ 取消传播给入参，否则子任务继续跑、结果没人接，且不报错。
+     * ★ 有一条真任务就是任务（见 `$task`），失败没人接要喊 Fatal，否则"组合"成了
+     *   吞掉失败的暗渠。
      *
      * @api
      */
@@ -511,49 +355,22 @@ final class Future
             });
         }
 
-        // ★★ 标记放在**接线之后**：入参若在 `all()` 之前就已失败，聚合体会在
-        //   接线时当场结算 —— 那一刻调用方还**不可能**挂过 `catch()`（`all()` 都
-        //   还没返回）⇒ 当场喊 Fatal 是误报。先接线、后立标记，"构造期结算"与
-        //   "之后才失败"因此被分开；而"挂了 `then` 却没人接失败"仍然会喊
-        //   （`chain()` 让下游继承标记，由链末端决定）。
+        // ★★ 标记放在**接线之后**：入参若在 `all()` 之前就已失败，聚合体在接线时
+        //   当场结算 —— 那一刻调用方还不可能挂过 `catch()`，当场喊 Fatal 是误报。
+        //   "挂了 `then` 却没人接失败"仍然会喊（标记由链末端继承）。
         $all->task = $anyTask;
 
         return $all;
     }
 
     /**
-     * 每一条**各自**成败，结果与入参同键同序；**永不失败**。
+     * 每一条**各自**成败，结果与入参同键同序，元素为
+     * `['ok' => bool, 'value' => mixed, 'error' => ?string]`；**永不失败**。
      *
-     * ```
-     * [1 => ['ok' => true,  'value' => [...], 'error' => null],
-     *  2 => ['ok' => false, 'value' => null,   'error' => 'HTTP 500：…']]
-     * ```
-     *
-     * ## 与 `all()` 的差别只有一处，但它决定用途
-     *
-     * | | `all()` | `allSettled()` |
-     * |---|---|---|
-     * | 一条失败 | **整条失败** + 其余被 `cancel()` | 那条记 `ok=false`，**其余照跑照交** |
-     * | 拿到什么 | 全成功时的值数组 | 每条的"成没成" |
-     * | 什么时候用 | 缺一条结论就不成立（多步依赖里的前一步） | 拼看板 / 拼详情页：一个接口挂了不该让整页变成错误页 |
-     *
-     * ★ 位置对应 `Promise.allSettled()` 与 Dart 的 `Future.wait(eagerError: false)`。
-     *   本仓在 2026-10-31 之前只有前者 ⇒ 想拼一个"三块数据"的页面，只能给每条
-     *   手写 `->then()` / `->catch()` 把失败折成值 —— 那段样板每个页面都要抄一遍，
-     *   且抄错的方向（漏 `catch` ⇒ 一个 500 让整页错误 + 另外两条被取消）**看起来
-     *   像正常失败**，没人会去查。
-     *
-     * ## 三条契约
-     *
-     * ★★ **永不失败**：因此没有 `task` 标记（"失败没人接"这件事在聚合体这一层
-     *   不存在）。子任务那层的 `catch()` 是这里接的 ⇒ 连子任务也不会喊 Fatal。
-     * ★ **`error` 是消息字符串，不是 `\Throwable`**：载荷会进 `AsyncValue`、
-     *   会被日志 / 诊断 / 基准快照 `json_encode` —— 异常对象进去只会变成 `{}`
-     *   或让编码失败。要类型化地把异常带出来，请在 `$task` 里自己接。
-     * ★ **取消仍传播给全部入参**（同 `all()`）：聚合体没人要了，子任务也不该继续跑。
-     *   取消后聚合体**永不结算**（与 `all()` / 被取消的普通 Future 一致）。
-     *
-     * @param array<array-key, self> $futures
+     * ★ 没有 `task` 标记，子任务的 `catch()` 在这里接，所以连子任务也不会喊 Fatal。
+     * ★ **`error` 是消息字符串**，不是 `\Throwable`：载荷会被 `json_encode`，异常
+     *   对象进去只会变成 `{}`。
+     * ★ 取消仍传播给全部入参，取消后聚合体永不结算。
      *
      * @api
      */
@@ -575,9 +392,8 @@ final class Future
         $got = [];
 
         foreach ($list as $key => $future) {
-            // ★ 成功 / 失败两个分支的收尾**逐字相同**（只差那条记录），抽成局部
-            //   闭包 —— 抄两遍的话"少减一次 `$left`"会让聚合体永不结算，
-            //   而症状是"页面一直转圈"（与 `all()` 里那个计数坑同源）。
+            // ★ 两个分支的收尾逐字相同，抽成闭包：抄两遍时"少减一次 `$left`"会让
+            //   聚合体永不结算，症状只是页面一直转圈。
             $take = static function (array $entry) use (&$got, &$left, $key, $settled, $list): void {
                 $got[$key] = $entry;
                 $left = $left - 1;
@@ -603,14 +419,9 @@ final class Future
     /**
      * 第一个结算的赢，其余被 `cancel()`。
      *
-     * ★ 空数组 ⇒ **永不结算**（没有候选可赢）—— 与 `Promise.race([])` 一致。
-     *   这比"立刻失败"好：调用方本来就该保证非空，静默永不结算会被帧时钟暴露
-     *   （`pending()` 一直 > 0），而立刻失败会假装"跑过了"。
-     * ★★ 取消聚合体会传播给**全部**入参（同 `all()`）：赢家还没产生时取消，
-     *   光标记聚合体等于让每一路都白跑。
-     * ★★ 任务标记同 `all()`：入参里有真任务 ⇒ 聚合体也是任务（失败没人接要喊）。
-     *
-     * @param array<array-key, self> $futures
+     * ★ 空数组 ⇒ **永不结算**：静默不结算会被帧时钟暴露（`pending()` 一直 > 0），
+     *   而立刻失败会假装"跑过了"。
+     * ★ 取消传播给全部入参；任务标记同 `all()`。
      *
      * @api
      */
@@ -651,8 +462,7 @@ final class Future
     /**
      * 结算为成功（**后端与 `all`/`race` 专用**）。
      *
-     * ★ 只在 UI 线程的帧内调 —— 见类注释的时序纪律。
-     * ★ 被 `cancel()` 过 ⇒ 忽略（"结果不要了"包含"别再来吵我"）。
+     * ★ 只在 UI 线程的帧内调；被 `cancel()` 过 ⇒ 忽略（"结果不要了"）。
      *
      * @internal
      */
@@ -686,13 +496,8 @@ final class Future
     /**
      * 内部结算为失败（`reject()` 与链上传播的唯一落点）。
      *
-     * ★★ **这里曾经有一个 `bool $report` 参数**，注释写着"链式传播时传 `false`，
-     *   喊一次就够，否则一个失败会刷 N 条 Fatal"。但**没有任何一处传过 `false`**
-     *   （两个调用点都是 `true`）⇒ 判据 `&& $report` 恒真，那句话描述的是一个
-     *   不存在的机制。2026-10-31 删掉参数，判据只剩两个真的：
-     *   **① `$links === []`（没人挂过任何回调）；② `$this->task`（只有任务才喊，
-     *   纯值不喊）**。链式传播不会重复喊，原因不是那个参数，而是"只有链末端
-     *   才满足 ①"—— 中间节点都有 `$links`。
+     * ★ 喊 Fatal 的判据只有两个：**`$links === []`（没人挂过任何回调）** 且
+     *   **`$this->task`**。链式传播不会重复喊，因为中间节点必然有 `$links`。
      */
     private function rejectCore(\Throwable $error): void
     {
@@ -706,17 +511,10 @@ final class Future
         $links = $this->links;
         $this->links = [];
 
-        // ★★ 判"有没有人接"要**看整条链**，不能只看本 Future 的直连处理器。
-        //   反例（第一版就这么错）：`$f->then($ok)->catch($err)` —— `$f` 自己没有
-        //   err 处理器，可错误会**传到** `$n1`，而 `$n1` 有 `catch`。只看直连就会
-        //   在 `$f` 上喊 Fatal，把一条正常处理的链判成事故。
-        //   ⇒ 判据是"**链的末端**没人接"：没有链（没人挂过任何回调）⇒ 现在就喊；
-        //     有链 ⇒ 让错误继续往下走，由末端的 `rejectCore()` 决定 —— 而末端
-        //     的 `$links` 同样为空，于是走的还是同一句判断。**"只喊一次"是结构
-        //     保证的**（中间节点必有 `$links`），不需要额外的去重标志。
-        // ★★ 再加一条闸：**只有任务才喊**（`$task`）。值（`Future::rejected()`
-        //   造的那个、`all`/`race` 的聚合体）在构造那一瞬 `$links` 必然为空，
-        //   拿"没人接"去判它就是把正常写法判成事故。
+        // ★★ 判"有没有人接"要看**整条链**：`$f->then($ok)->catch($err)` 里 `$f` 没有
+        //   err 处理器，但错误会传到下游由 `catch` 接住 —— 只看直连会把正常链判成
+        //   事故。⇒ 判据是"链的末端没人接"，由末端自己判，天然只喊一次。
+        // ★★ 只有任务才喊：值在构造那一瞬 `$links` 必然为空。
         if ($links === [] && $this->task) {
             Errors::report(\sprintf(
                 '异步任务失败且没有 catch() —— %s: %s',
@@ -733,14 +531,7 @@ final class Future
     /** 挂一条链（`then` / `catch` 的唯一落点） */
     private function chain(?\Closure $ok, ?\Closure $err): self
     {
-        // ★★ 派生出来的这条，**取消要回到上游**（2026-10-31）：链上的每一个节点
-        //   都不是任务的持有者，真正的活在上游的根上。不这么接，`cancel()` 在
-        //   "派生"这条路上就只是把本节点标一下 —— 而 `AsyncCommand` 换参数时
-        //   取消的正是 `$task` 返回的那条（应用很自然写成 `submit()->then($f)`）。
-        //   ⇒ 取消因此沿着钩子一路走到根（根上的钩子才是后端那把"真停"）。
-        // ★ 闭包捕获 `$parent`（本方法的 `$this`）而不是用 `$this` 的隐式绑定：
-        //   写在 `new self(...)` 的实参里时两者碰巧都指向父，但那是**求值时机**
-        //   的巧合；显式捕获读起来没有第二种解释。
+        // ★ 取消要回到上游：链上每个节点都不是任务的持有者，真正的活在上游的根上。
         $parent = $this;
         $next = new self(static function () use ($parent): void {
             $parent->cancel();
@@ -805,9 +596,8 @@ final class Future
         try {
             $result = $fn($arg);
         } catch (\Throwable $e) {
-            // ★ **回调自己抛异常 = 调用方的 bug**，不是"任务失败" ⇒ 与任务失败
-            //   走同一条：下游有 `catch()` 就交给它，没有就走 Fatal 序列（与改造前
-            //   `PumpHost::pumpTasks()` 的 try/catch 同一条规矩：不许静默吞）。
+            // ★ 回调自己抛异常 = 调用方的 bug，与任务失败走同一条：下游有 `catch()`
+            //   就交给它，没有就走 Fatal 序列 —— 不许静默吞。
             $next->rejectCore($e);
 
             return;
@@ -826,12 +616,9 @@ final class Future
     /** 把本 Future 的结算原样转给 `$next`（摊平用；已结算则立刻转） */
     private function forwardTo(self $next): void
     {
-        // ★★ 摊平 ⇒ 取消的**目标要改指内层**（2026-10-31）：`then` 的回调返回另一条
-        //   Future 时，真正在跑的是它。`$next` 原来的钩子指向外层，而外层此刻
-        //   **已经结算**（`apply()` 只有在父成功时才走到这里）⇒ 那个钩子是空转，
-        //   必须换成内层，否则"取 A 再用 A 的 id 取 B"取消后 B 照跑。
-        // ★ 覆盖是安全的：此刻 `$next` 还没交回给调用方（`chain()` 里
-        //   `settleLink()` 跑完才 `return $next`），不存在"别人已经拿着它"的窗口。
+        // ★★ 摊平 ⇒ 取消的**目标要改指内层**：`then` 的回调返回另一条 Future 时，
+        //   真正在跑的是它，而外层此刻已结算（钩子空转）。此刻 `$next` 还没交回给
+        //   调用方，覆盖是安全的。
         $inner = $this;
         $next->onCancel = static function () use ($inner): void {
             $inner->cancel();

@@ -6,67 +6,14 @@ namespace Drift\Widget;
 use Drift\Core\Pipeline;
 
 /**
- * 动画控制器 —— `0..1` 的**单值驱动器**（§17.4.11）。
+ * 动画控制器：0..1 的单值驱动器。把缓动后的值喂给已有控件的数值入口
+ * （Progress::value()、SizedBox::width()…）就能驱动动画，不需要新控件。
  *
- * ```php
- * final class BannerState extends State
- * {
- *     private AnimationController $fade;
+ * 不持时钟、不持平台：推进发生在 tick($timestampMs)，时间戳由
+ * State::tickFrame() 注入 ⇒ 解释器与 AOT 真机推进完全一致。
  *
- *     public function initState(): void
- *     {
- *         $this->fade = AnimationController::make(240.0)->curve(Curve::easeOut());
- *     }
- *
- *     public function tickFrame(float $timestampMs): bool
- *     {
- *         // ★ tick() 返回"我还要下一帧吗"，直接喂 `wantsFrame()`：
- *         //   跑完没人返回 true ⇒ 帧时钟停摆 ⇒ 空闲 CPU 归零（§17.4.9）。
- *         $busy = $this->fade->tick($timestampMs);
- *         if ($busy) {
- *             $this->markDirty();
- *         }
- *
- *         return $busy;
- *     }
- *
- *     public function build(BuildContext $ctx): Widget
- *     {
- *         // 缓动后的值直接喂任何"按数值画"的控件：进度条、宽度、偏移量…
- *         return Progress::make($this->fade->value());
- *     }
- * }
- * ```
- *
- * ★ **`Opacity` / `Transform` 这类"整棵子树一起动"的包装**：`Opacity` 已经有了
- *   （2026-10-29，`AnimatedOpacity` 是它的驱动方）—— 层合成语义
- *   （`Canvas::pushLayer()` / `RenderBox::setCompose()`）早就具备，当年这条
- *   "前置未满足"的注记是过时的。`Transform` 仍缺（前置是仿射光栅器）。
- *   本控制器给的是**值** —— 把它喂给已有控件的数值入口
- *   （`Progress::value()`、`SizedBox::width()`…）就能动，不需要新控件。
- *
- * ★ **它不持时钟、不持平台**：推进发生在 `tick($timestampMs)`，时间戳由
- *   `State::tickFrame()` 注入（§14.1 G3：不读环境时钟）⇒ 同一棵动画树在
- *   "解释器 smoke"与"AOT 真机"里推进完全一致。
- *
- * ★ **时间基准是"注入的帧时间戳"，不是墙钟**：`forward()` 不记起点（此刻没有
- *   时间戳可用），而是置 `startPending` —— 第一次 `tick()` 才把起点钉在那一帧
- *   的时间戳上。⇒ "起手那一帧"不吃掉一个间隔（用墙钟记起点会让第一帧就跳掉
- *   一个 15ms，短动画整体偏快一档）。
- *
- * ★ **反向按剩余距离缩时长**（`reverse()` 从 `0.6` 回 `0` 只跑 `0.6 × duration`）：
- *   速度恒定，从中间被打断再回退时不会突然变慢一截。代价是"反向总比正向短"
- *   —— 这正是想要的手感（回退是取消，不是重播）。
- *
- * ★ **终点帧仍然返回 `true`，再下一帧才收口返回 `false`** —— 这是"最后一帧也要
- *   画得到"的唯一实现：调用方只写 `if ($busy) { markDirty(); }`，若终点帧返回
- *   false，终点值就没人标脏 ⇒ 画面永远停在 99%（**且不报错**，最难查的那类）。
- *   代价是每轮动画多一帧（15ms），换来的是"调用方不可能写错"。
- *   `isAnimating()` 在终点帧已经是 false —— "还在推进吗"的语义不含收口帧。
- *
- * ★ `onCompleted()` 是**一次性**的（触发即清空）。它与 §17.4.10 拒掉的"帧回调
- *   注册表"不是一回事：那个要**配对注销**（漏一次 ⇒ 永久空转 + 泄漏）；这个是
- *   控制器自己持有的一个槽，控制器随 State 一起死，不存在注销问题。
+ * ★ 终点帧仍返回 true、再下一帧才收口返回 false：否则终点值没人标脏，
+ *   画面永远停在 99% 且不报错（最难查的那类）。
  *
  * @api
  */
@@ -75,17 +22,17 @@ final class AnimationController
     /** 单程时长（毫秒，`0` = 立即完成） */
     private float $durationMs = 200.0;
 
-    /** 线性进度（**不是**缓动后的值；曲线是纯输出映射，不参与推进） */
+    /** 线性进度（不是缓动后的值；曲线是纯输出映射，不参与推进） */
     private float $t = 0.0;
 
     private Curve $curve;
 
     private bool $animating = false;
 
-    /** 已请求起点但还没拿到第一帧的时间戳（见类注释"时间基准"） */
+    /** 已请求起点但还没拿到第一帧的时间戳 */
     private bool $startPending = false;
 
-    /** 已到终点，**等最后一帧渲染完**再收口（见类注释"终点帧"） */
+    /** 已到终点，等最后一帧渲染完再收口 */
     private bool $pendingFinish = false;
 
     private float $startedAt = 0.0;
@@ -108,7 +55,7 @@ final class AnimationController
         return new self($durationMs);
     }
 
-    /** 单程时长（毫秒）。★ 只影响**之后**开始的段，不重算正在跑的段 */
+    /** 单程时长（毫秒）。只影响之后开始的段，不重算正在跑的段。 */
     public function duration(float $durationMs): static
     {
         $this->durationMs = $durationMs > 0.0 ? $durationMs : 0.0;
@@ -137,11 +84,10 @@ final class AnimationController
     }
 
     /**
-     * 跳到某个值并**停住**（打断正在跑的段）。
+     * 跳到某个值并停住（打断正在跑的段）。
      *
-     * ★ **不触发** `onCompleted()`：那是"跑到了终点"，这是"被挪到某处"。把跳转
-     *   当完成会让"打断"顺手把副作用放一遍（回弹 / 上报 / 换页），而打断的语义
-     *   恰恰是"取消"。
+     * 不触发 onCompleted()：跳转是"被挪到某处"，不是"跑到了终点"，
+     * 把它当完成会把打断顺手触发回弹 / 上报等副作用。
      */
     public function jumpTo(float $value): void
     {
@@ -167,7 +113,7 @@ final class AnimationController
         $this->pendingFinish = false;
     }
 
-    /** 还在**推进**吗（不含"等最后一帧渲染"的收口帧） */
+    /** 还在推进吗（不含"等最后一帧渲染"的收口帧） */
     public function isAnimating(): bool
     {
         return $this->animating && !$this->pendingFinish;
@@ -179,7 +125,7 @@ final class AnimationController
         return $this->t;
     }
 
-    /** 缓动后的值 `0..1`（**画东西用它**） */
+    /** 缓动后的值 `0..1`（画东西用它） */
     public function value(): float
     {
         return $this->curve->map($this->t);
@@ -194,9 +140,9 @@ final class AnimationController
     }
 
     /**
-     * 推进一帧（`@internal` 由 `State::tickFrame()` 调）。
+     * @internal 由 State::tickFrame() 调。
      *
-     * @return bool **还要下一帧吗**（直接喂 `wantsFrame()`）
+     * @return bool 还要下一帧吗（直接喂 wantsFrame()）
      */
     public function tick(float $timestampMs): bool
     {
@@ -204,7 +150,7 @@ final class AnimationController
             return false;
         }
 
-        // 起手帧：钉起点，值仍是 `from`（本帧就把区间定下来，不吃掉一个间隔）
+        // 起手帧：钉起点，值仍是 from（本帧就把区间定下来，不吃掉一个间隔）
         if ($this->startPending) {
             $this->startedAt = $timestampMs;
             $this->startPending = false;
@@ -224,7 +170,7 @@ final class AnimationController
             $span = -$span;
         }
 
-        // 时长按剩余距离缩（`reverse()` 从 0.6 只跑 0.6×duration）
+        // 时长按剩余距离缩（reverse() 从 0.6 只跑 0.6×duration）
         $total = $this->durationMs * $span;
 
         if ($total <= 0.0) {
@@ -244,7 +190,7 @@ final class AnimationController
         if ($ratio >= 1.0) {
             $this->t = $this->to;
 
-            // ★ 不在这里 finish()：这一帧还得把终点值画出去（见类注释）
+            // 不在这里 finish()：这一帧还得把终点值画出去
             $this->pendingFinish = true;
 
             return true;
@@ -277,12 +223,9 @@ final class AnimationController
         $this->startPending = true;
         $this->pendingFinish = false;
 
-        // ★★ **起飞点必须让帧时钟发现我**（2026-11-03，动效活跃表）：帧时钟不再
-        //   每帧问全树，只在"可能有新动画起步"的帧做一次发现。本类不持 `State`
-        //   （它是纯驱动器，没有 `element()`）⇒ 只能请求一次**全树发现**，由那一帧
-        //   把持有它的 `State` 收进表。
-        // ★ 放在 `$span <= 0` 的早退之后 ⇒ 只有**真的起飞**才请求；`forward()` 是
-        //   用户动作级别的低频事件，一次 O(树) 可接受。
+        // ★ 起飞必须请求一次全树发现：本类不持 State（纯驱动器，无 element()），
+        //   只能靠帧时钟那一帧把持有它的 State 收进活跃表，否则动画不会被推进。
+        //   放在 $span <= 0 的早退之后 ⇒ 只有真的起飞才请求。
         Pipeline::current()->requestAnimationScan();
     }
 

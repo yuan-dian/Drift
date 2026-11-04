@@ -28,138 +28,57 @@ use Drift\Text\TextMetricsProvider;
 use Drift\Text\TextStyle;
 
 /**
- * `Table` 的 State：**持纵向偏移 + 算这一帧造哪几行 + 分配列宽**。
+ * `Table` 的 State：持滚动偏移 + 算这一帧造哪些行/列 + 分配列宽。
  *
- * ## 为什么偏移能住 State
- *
- * §12.3 的判据是"承载它的 Element 会不会被回收"。被回收的是**行**，本 State
- * 挂在表格自己身上（滚动容器不随滚动消失）⇒ 成立。反过来，**行内**的 UI 态
- * （正在编辑的草稿）会被回收，必须外置 —— 阶段 7a 的草稿正是外置到**本类**
- * （`$draft`），而不是放进行里。
- *
- * ## 单元格编辑（阶段 7a）：本类**就是**那个文本面
- *
- * 编辑中的表格实现 `EditableText`（不是往单元格里塞一个 `TextField`）：
- * 焦点仍然只有表这一个节点（一格一个 Tab 位会被虚拟化打碎），而 IME 候选窗与
- * 剪贴板环靠 `focusedState() instanceof EditableText` 门控 —— 表格自己实现它，
- * 那两个环一行不改就能用在单元格上。文本状态机与 `TextField` 共用 `TextDraft`。
- *
- * ## 为什么窗口在 build 期算
- *
- * 框架的 `build → settle → layout` 顺序决定了布局期拿不到"还没造的 Widget"。
- * 于是视口高度取**上一帧**盒的实测值（首帧用 `ctx->height`，它是任何嵌套视口的
- * 上界 ⇒ 首帧一定造多不少）。⇒ 窗口永远是可见范围的**超集**，不会白。
- *
- * 同一个理由让**列宽**也在 build 期算：行 Widget 是 `Row[SizedBox(宽)…]`，
- * 列宽得在造行之前就有。窗口 resize 时 flex 列宽会滞后一帧 —— 与 `LazyColumn`
- * 的窗口同一性质，真机验收过没有可见抖动。**不为此引入两遍布局**
- * （`docs/ARCH-REVIEW-2026-10-21.md:106` 已判 no-op）。
- *
- * ## 列宽三层（第 ③ 层留给阶段 4）
- *
- * ```
- * ① 策略初值   fixed → px；flex → 0（占位）
- * ② 分剩余     flex 列按权重吃 (视口宽 − 固定列和 − 间距和)
- * ③ 每列夹      minWidth / maxWidth
- * ④ 用户拖拽   widthOverrides[key]   ← 阶段 4，最优先但仍夹 ③
- * ```
+ * 视口高度只有**上一帧**盒的实测值（build 期布局还没发生，首帧用 `ctx` 当上界）
+ * ⇒ 窗口是可见范围的超集，不会白；列宽同理，必须在造行之前算出来。
+ * 编辑态住这里而不是行里：行会被虚拟化回收，本类不随滚动消失。单元格编辑由本类
+ * 实现 `EditableText`（不往格里塞 `TextField`）：焦点只一个节点，IME 与剪贴板环
+ * 认 `focusedState() instanceof EditableText`。
  *
  * @internal 应用只认 `Table`
  */
 final class TableState extends State implements Scrollable, EditableText
 {
-    /**
-     * **两根轴各一个**滚动状态机（偏移 + 动画 + 淡出）。
-     *
-     * ★ 两根而不是一个：横竖互不干扰（各自的 `ScrollMotion`、各自的偏移）。
-     * ★ 但 `ScrollBarFade` **共用同一份**（`lane()` 里把 `bar()` 传进去）——
-     *   横条与竖条同时淡出是对的：它们提示的是同一件事"这块区域还能滚"，
-     *   分两套节律只会出现"一根亮一根暗"。
-     * ★ 懒建只为不多造对象；`ScrollLane` / `ScrollBarFade` 内部都是懒的
-     *   ⇒ 建了也不改行为（`opacity()` 恒 1.0、`tick()` 恒 `false`）。
-     */
+    /** 纵向滚动状态机（偏移 + 动画 + 淡出）；横向是 `$laneX`。两者各一份偏移，但共用同一份淡出节律 */
     private ?ScrollLane $laneY = null;
 
     private ?ScrollLane $laneX = null;
 
-    /**
-     * 光标格（阶段 2b）：行 / 列 **下标**，不是 key。
-     *
-     * ★★ 与选择集故意用两种身份：选择回答"哪些数据被选中"，要跟着数据走
-     *   （排序后选中的还是那几条）；光标回答"眼睛在哪"，要留在原位置
-     *   （排序后那一行内容变了，光标还停在那儿 —— 与 Excel / 资源管理器一致）。
-     *   混成一个状态会让**移动光标**触发 `onSelectionChange`，语义就脏了。
-     */
+    /** 光标格：行 / 列**下标**，不是 key（光标答"眼睛在哪"要留在原位，选择集才是身份） */
     private int $focusedRow = 0;
 
     private int $focusedCol = 0;
 
-    /**
-     * 焦点是否在本表 —— 失焦**不画**描边，但光标格保留。
-     *
-     * ★ 保留光标是为了"Tab 出去再 Tab 回来停在原处"；不画描边是因为"焦点在
-     *   别处却有焦点框"就是撒谎（`ScrollBarGeometry::thumbRect()` 同一条纪律）。
-     */
+    /** 焦点在本表吗。失焦不画描边（画了就是撒谎），但保留光标格（Tab 出去再回来停在原处） */
     private bool $hasFocus = false;
 
     /**
-     * 上一帧的**几何快照**（`null` = 还没 build 过）。
+     * 上一帧的几何快照（`null` = 还没 build 过）。只由 `build()` 写，别处只读。
      *
-     * ★★ 2026-10-31 起，这一个字段**取代**了七个散字段（`$widthsInBuild` /
-     *   `$widthUsedInBuild` / `$contentWInBuild` / `$windowStart` / `$windowEnd` /
-     *   `$colWindowStart` / `$colWindowEnd`）。那七个把"还没布局过"分别表达成
-     *   `[]` / `null` / `0.0` 三种，而指针映射 / 键盘 reveal / 窗口判定 / 表头构建
-     *   又各自重算一遍同一批数 —— 现在只有一份，`null` 就是"没算过"。
-     *
-     * ★ 为什么几何能住 State：本 State 挂在表格自己身上（滚动容器不随滚动消失），
-     *   被回收的是**行**（§12.3 的判据）。★ 它同时是"列宽只在 build 里算得出来"
-     *   的解法 —— 键盘 / 指针必须在 build **之外**当场响应，只能读上一帧那份。
-     * ★ **只由 `build()` 写**，别处只读。夹取后的偏移由 `build()` 写回
-     *   `$offsetX/$offsetY`：那两个是**活值**（用户随时在滚），不是快照。
+     * 键盘 / 指针必须在 build 之外当场响应，而列宽只有 build 里算得出来 ⇒ 只能读这份。
      */
     private ?TableGeometry $geometry = null;
 
     /**
-     * 上一帧的文本度量与编辑样式（阶段 7b）。
+     * 上一帧的文本度量与编辑样式。双击落插入符时编辑盒还没建出来，只能用量上一帧的。
      *
-     * ★ 为什么留一份：**双击落插入符**要在 `beginEdit()` 那一刻把"指针 x"翻成
-     *   "第几个字符之间"，而那一刻编辑盒还不存在（它下一帧才建出来）。能用的
-     *   度量只有上一帧 build 里拿到的那份 —— 与 `$geometry` 同一个理由
-     *   （几何只在 build 里可得，而键盘/指针动作必须**当场**响应）。
-     * ★ 样式取 `InlineEditorBox::editorStyle()`（唯一来源）：量宽与实际排版必须是
-     *   同一个样式，否则插入符会落在相邻字符上。
+     * 样式须与 `InlineEditorBox::editorStyle()` 同源，否则插入符会落在相邻字符上。
      */
     private ?TextMetricsProvider $editorMetrics = null;
 
     private ?TextStyle $editorStyle = null;
 
-    /** 滚动条淡出节律（懒建；**两根轴共用一份**，见 `$laneY` 的注释） */
+    /** 滚动条淡出节律（懒建；两根轴共用一份，见 `$laneY`） */
     private ?ScrollBarFade $barFade = null;
 
-    /**
-     * 上一帧造了几行 —— **验收判据**（§6 阶段 1 闸门 ①：10000 行只造约一屏）。
-     *
-     * ★ 它不参与任何逻辑，只暴露给断言。写成"可由外部读到的计数"是因为
-     *   "虚拟化有没有生效"无法从画面或性能观察（画面一样、快慢取决于机器）。
-     */
+    /** 上一帧造了几行 —— 虚拟化唯一的可观测量（画面与快慢都看不出虚拟化是否生效），不参与逻辑 */
     private int $createdRows = 0;
 
-    /**
-     * 上一帧造了几列（与 `$createdRows` 同一职责：虚拟化唯一的可观测量）。
-     *
-     * ★ 不与 `$createdRows` 合成"造了几个格"：行和列的窗口是**两个独立判据**
-     *   （定高 vs 变宽），合成一个数就分不清是哪一侧失效。
-     */
+    /** 上一帧造了几列（与 `$createdRows` 分开：行窗口与列窗口是两个独立判据） */
     private int $createdColumns = 0;
 
-    /**
-     * 列宽拖拽的临时量（`null` = 当前没在拖）。
-     *
-     * ★ 是**手势进行中**的量，不是数据所有权 —— 拖出来的最终宽度照样交回应用
-     *   （`onColumnResize`）。放在 `State` 里因为只有它能在 down 与 move 之间记住起点。
-     * ★ 记"起始宽度 + 增量"而不是"列宽 = 指针位置"：指针按下的位置在手柄上（列的
-     *   右缘），直接按位置算会让列宽瞬间缩掉一个手柄宽，视觉上"跳一下"。
-     */
+    /** 拖拽列宽的起点 x（`null` = 没在拖）。记"起点 + 增量"而不是指针位置：后者会让列宽在按下瞬间缩掉一个手柄宽 */
     private ?float $resizeStartX = null;
 
     private float $resizeStartWidth = 0.0;
@@ -171,25 +90,15 @@ final class TableState extends State implements Scrollable, EditableText
     private bool $resizeMoved = false;
 
     /**
-     * 鼠标停在哪一列的分割线上 / 正在拖哪一列（`null` = 都没有）。
+     * 悬停 / 正在拖的列分割线 key（`null` = 都没有）。只影响那条线的颜色，不影响布局。
      *
-     * ★ 只影响那条线的**颜色**，不影响布局 —— 所以不需要 key、不需要 Element 身份，
-     *   重建时靠父链上的 `hover()` / `pointer()` 声明继续生效。
-     * ★ 两个字段而不是一个：拖动时指针可能已经离开手柄（拖出表头），此时 hover
-     *   已经 false，但线还该保持高亮 —— 合成一个字段会让拖动中的高亮闪断。
+     * 拆两个字段：拖出表头后 hover 已为 false，但线仍该保持高亮。
      */
     private ?string $dividerHoverKey = null;
 
     private ?string $dividerDragKey = null;
 
-    /**
-     * 选中行的染色透明度（0–255，约 14%）。
-     *
-     * ★ 为什么是**半透明的 `Accent`** 而不是新加一个 `AccentContainer` 主题 token：
-     *   压在表格底 `Surface` 上要得到"淡蓝"只需要 alpha，多一个 token 就得同时
-     *   维护三套主题（light / dark / high-contrast）的三个值，而它们全都等于
-     *   "把 Accent 按同一比例淡下去" —— 那是公式，不是设计决策。
-     */
+    /** 选中行底色的透明度（0–255，约 14%）—— 半透明 `Accent`，不新增 `AccentContainer` token */
     private const SELECTED_ALPHA = 36;
 
     /** 列宽手柄的命中区宽（逻辑像素）—— 与 Excel 同量级 */
@@ -198,20 +107,13 @@ final class TableState extends State implements Scrollable, EditableText
     /** 表头列分割线宽（逻辑像素）—— 发丝线，1px 是 DPI 下的最小可辨宽度 */
     private const DIVIDER_W = 1.0;
 
-    /**
-     * 鼠标悬停在哪一行（**纯 UI 态**，住 State 而不是受控）。
-     *
-     * ★ 判据是"应用要不要读它、要不要从外部改它"：批量删除要读**选中集**，
-     *   没人要读"鼠标现在悬停在第几行"（§11.4）。
-     */
+    /** 鼠标悬停的行 key（纯 UI 态：没人从外部读写它） */
     private string|int|null $hoverKey = null;
 
     /**
-     * Shift 连选的锚点（**纯 UI 态**）：行 key + 列 key（整行行为下列恒 `null`）。
+     * Shift 连选的锚点（纯 UI 态）：行 key + 列 key（整行行为下 `col` 恒 `null`）。
      *
-     * ★ 存 key 而不是下标：排序/过滤后行号会漂，key 不会（这也是 `keyOf()` 必填的
-     *   原因之一）。列同理 —— `TableColumn::keyName()` 才是稳定身份。代价是 Shift
-     *   点击时要线性扫一次找下标 —— 点击是低频操作，而 10000 行线性扫 ≈ 亚毫秒。
+     * 存 key 不存下标：排序 / 过滤后行号会漂。
      *
      * @var array{row: string|int, col: ?string}|null
      */
@@ -220,9 +122,7 @@ final class TableState extends State implements Scrollable, EditableText
     /**
      * 拖动框选的起点格（按下那一刻的**下标**；`null` = 没按住）。
      *
-     * ★ 与 `$anchor` 分开存：锚点是**点击语义**的（Shift 连选用 key，跟着数据走），
-     *   拖动是**手势**（按下那一刻的下标）。两者绝大多数时候指向同一格，但
-     *   "按下后没拖"必须只是普通点击 —— 用同一个字段会让松手时的收口分不清。
+     * 与 `$anchor` 分开：锚点是点击语义（跟数据走），拖动是手势（按下那一刻）。
      *
      * @var array{row: int, col: int}|null
      */
@@ -230,9 +130,6 @@ final class TableState extends State implements Scrollable, EditableText
 
     /**
      * 正在拖到的格（`null` = 按住了但还没过阈值 ⇒ 仍是普通点击）。
-     *
-     * ★ 三个状态用一个 `null` 表达（没按 / 按下未拖 / 在拖），比再开一个 bool 少
-     *   一处"两个字段互相矛盾"的可能。
      *
      * @var array{row: int, col: int}|null
      */
@@ -245,26 +142,18 @@ final class TableState extends State implements Scrollable, EditableText
     private const DRAG_SLOP = 4.0;
 
     /**
-     * 正在编辑的格：**行 key + 列 key**（`null` = 没在编辑）。阶段 7a。
+     * 正在编辑的格：**行 key + 列 key**（`null` = 没在编辑）。
      *
-     * ★★ 不用下标（光标格用下标）：编辑是一个**跨多帧的会话**，而排序 / 过滤会在
-     *   会话中途换行序 —— 下标会指向另一条数据（把 A 的修改写进 B）。key 不会。
-     *   这与"光标是位置、选择是身份"是同一个分工的第三种用法：
-     *   **编辑是身份**（我改的是哪条数据、哪个字段）。
-     * ★ 列也用 key：插列 / 换序之后仍落在原来那一列上。
+     * 不用下标：排序 / 过滤会在会话中途换行序，下标会把 A 的修改写进 B。
      *
      * @var array{row: string|int, col: string}|null
      */
     private ?array $editingRef = null;
 
     /**
-     * 编辑中的草稿（`null` = 没在编辑）。
+     * 编辑中的草稿（`null` = 没在编辑）。必须住表上：行被虚拟化回收时草稿跟着蒸发。
      *
-     * ★★ 草稿**必须住在表上**，不能住在行里：虚拟化会在行滚出窗口时回收它的
-     *   Element（`Table` 类注释已裁决），草稿跟着蒸发。表自己不随滚动消失
-     *   ⇒ 草稿在这里跨帧存活，甚至"滚出去再滚回来"也不丢。
-     * ★ 它同时是插入符与选区的家（`TextDraft` 三者同源）—— 分开存会让
-     *   "插入符与高亮不在同一处"这种画面上看不出病因的 bug 成为可能。
+     * 文本 / 插入符 / 选区同源（`TextDraft`），分开存会出现"插入符与高亮不在同一处"。
      */
     private ?TextDraft $draft = null;
 
@@ -274,10 +163,7 @@ final class TableState extends State implements Scrollable, EditableText
     /**
      * 正在执行 `ensureVisible()` 自己的滚动（`true` = 不算"用户滚动了表格"）。
      *
-     * ★ 存在的理由：用户滚动要**提交**编辑（否则编辑中的行可能滚出窗口，
-     *   用户继续打字就是对着看不见的格子打），而 `ensureVisible()` 内部也走
-     *   `scrollBy()` —— 不区分的话"进入编辑 → 把格子滚进视口 → 立刻提交"，
-     *   编辑根本进不去。
+     * 不区分的话"进入编辑 → 把格子滚进视口 → 立刻提交"，编辑根本进不去。
      */
     private bool $revealScrollInFlight = false;
 
@@ -308,15 +194,8 @@ final class TableState extends State implements Scrollable, EditableText
     /**
      * 滚动 Δ（**逻辑像素**；正 = 行区内容上移，即"往下看"）。
      *
-     * ★★ **能不重建就不重建**（2026-10-27，A 批第 1 项）：偏移只改两个数，
-     *   不改"有哪些行"。窗口仍盖得住视口 ⇒ 推给盒（就地改 + 标重排）即可；
-     *   只有滚出缓冲带（`Table::cacheExtent()`）才标脏重建。
-     *   实测（AOT，`bench` 滚动帧档）：滚动帧 11.68ms → **7.21ms**，
-     *   其中 `settle`（重建）6.74 → 0.83ms（−88%）；`layout`/`paint` 略涨
-     *   （2.83→3.65 / 2.19→2.70），那是缓冲带把窗从 395 节点撑到 475 的代价。
-     *
-     * ★ 夹取与"回写盒夹过的值"的契约收在 `ScrollLane::move()`；本方法只剩
-     *   "先提交编辑 → 交轴 → 盖不住就标脏"这层策略。
+     * 能不重建就不重建：窗口仍盖得住视口就只推给盒，滚出缓冲带才标脏重建。
+     * 夹取与"回写盒夹过的值"收在 `ScrollLane::move()`，本方法只剩这层策略。
      */
     public function scrollBy(float $delta): void
     {
@@ -332,13 +211,7 @@ final class TableState extends State implements Scrollable, EditableText
         }
     }
 
-    /**
-     * 该轴的"推给盒"回调：**目标值 → 实际生效值**（`ScrollBarHost::setScrollOffset()`）。
-     *
-     * ★ 盒不在（首帧之前 / 盒被换掉）⇒ 原样返回：`build()` 会把字段递下去。
-     * ★ 两个轴共用这一处 —— 找盒与转交只写一遍（回调是**单一签名**
-     *   `float → float`，不做混签名的回调表：AOT 严格校验实参个数）。
-     */
+    /** 该轴的"推给盒"回调：目标值 → 实际生效值。盒不在 ⇒ 原样返回（`build()` 会把字段递下去） */
     private function pusher(Axis $axis): \Closure
     {
         /** @var RenderTable|null $box */
@@ -350,15 +223,10 @@ final class TableState extends State implements Scrollable, EditableText
     }
 
     /**
-     * 上一帧造的窗口是否**完整盖住**当前视口（按轴各判一次）。
+     * 上一帧造的窗口是否**完整盖住**当前视口。
      *
-     * ★ 视口取**盒的**实测值而不是 build 里的估算：滚动期没有 `BuildContext`，
-     *   而盒是唯一可靠口径 ⇒ 判据与布局同源。
-     * ★ 还没排过（盒无 size）⇒ 判"盖不住"（宁可多重建一次，也不要露空行/空列）。
-     * ★★ 两轴**不共用**一个判据：行窗口与列窗口是 `TableGeometry` 里各一对端点，
-     *   横滚只动列窗口。
-     *   竖向的视口是行区（减表头），横向的视口是全宽（表头与行区共享 x）——
-     *   这两个定义不同，不是同一个式子的两个实例。
+     * 视口取盒的实测值（滚动期没有 `BuildContext`）；还没排过 ⇒ 判"盖不住"。
+     * 两轴判据不同：竖向视口是行区（减表头），横向是全宽（表头与行区共享 x）。
      */
     private function windowCovers(Axis $axis): bool
     {
@@ -368,7 +236,6 @@ final class TableState extends State implements Scrollable, EditableText
             return false;
         }
 
-        // ★ 还没 build 过 ⇒ 没有窗口可言 ⇒ 判"盖不住"（宁可多重建一次，不露空行）
         $g = $this->geometry;
         if ($g === null) {
             return false;
@@ -394,15 +261,8 @@ final class TableState extends State implements Scrollable, EditableText
     /**
      * 按轴滚动（横条拖动、横向滚轮走这里；纵向仍走 `scrollBy()`）。
      *
-     * ★ 两个轴共用同一份 `ScrollBarFade`（在 `lane()` 里注入）：横条与竖条同时淡出
-     *   是对的 —— 它们提示的是同一件事"这块区域还能滚"，分两套节律只会出现
-     *   "一根亮一根暗"。
-     * ★ 上界不在这里夹（`scrollBy()` 同一裁决）：横向内容宽要等 `resolveWidths()`
-     *   算完才知道，那是 build 期的事。
-     * ★ 但**无横向溢出时这里直接早退**：不早退的话，每一格滚轮都会改一次
-     *   `offsetX`、标一次脏，然后 build 里被夹回 0 —— 触控板每秒几十格就是
-     *   几十次白重建。`horizontalOverflows()` 读的是上一帧快照（`null` = 还没
-     *   排过 ⇒ 放行，别拿"不知道"当"没有"）。
+     * 横向装得下就直接早退：否则每格滚轮都改一次 `offsetX` 并标脏，build 里又被夹回 0。
+     * 横向不改行窗口但**会改列窗口**，所以与竖向同一条"盖得住才只推偏移"。
      */
     public function scrollByAxis(Axis $axis, float $delta): void
     {
@@ -418,9 +278,7 @@ final class TableState extends State implements Scrollable, EditableText
             return;   // 横向没得滚：滚轮来了也不标脏
         }
 
-        // ★★ 横向**不改行窗口**（行是定高的，横滚只平移），但**会改列窗口**
-        //   （阶段 6）：滚过缓冲带之后必须换一批列，否则视口边缘露出一截没造的空白。
-        //   所以这里与竖向同一条纪律 —— 盖得住才只推偏移（0 重建），盖不住就标脏。
+        // 与竖向同一条纪律：盖得住只推偏移（0 重建），盖不住就标脏。
         if (!$this->lane(Axis::Horizontal)->move($delta, $this->pusher(Axis::Horizontal))) {
             return;
         }
@@ -430,14 +288,7 @@ final class TableState extends State implements Scrollable, EditableText
         }
     }
 
-    /**
-     * 横向**装得下**吗（`null` = 还没排过 ⇒ 放行，别拿"不知道"当"没有"）。
-     *
-     * ★ 抽出来是因为它有两个消费者：`scrollByAxis()`（立即滚）与
-     *   `glideByAxis()`（动画滚）。两处各写一遍就是"两个真相"，迟早一处改一处漏。
-     * ★ 快照缺席时**放行**（= 返回 `true`）：宁可多标一次脏，也别把"不知道"
-     *   当成"装得下"而把真该滚的表卡住。
-     */
+    /** 横向**装得下**吗（`null` = 还没排过 ⇒ 放行：别把"不知道"当"装得下"而把该滚的表卡住） */
     private function horizontalOverflows(): bool
     {
         $g = $this->geometry;
@@ -445,13 +296,7 @@ final class TableState extends State implements Scrollable, EditableText
         return $g === null || $g->horizontalOverflows();
     }
 
-    /**
-     * 按轴滚动，**带动画**（滚轮专用；细节见 `Scrollable::glideByAxis()`）。
-     *
-     * ★ 横向的"装得下就早退"必须在**起飞前**判：否则 motion 会朝一个到不了的目标
-     *   跑，每帧 `scrollByAxis()` 都早退 ⇒ 得等 `stepMotion()` 发现"推不动"才收口，
-     *   白转一帧。
-     */
+    /** 按轴滚动，**带动画**（滚轮专用）。横向"装得下"必须在起飞前判，否则 motion 会朝到不了的目标白转一帧 */
     public function glideByAxis(Axis $axis, float $delta): void
     {
         if ($axis === Axis::Horizontal && !$this->horizontalOverflows()) {
@@ -461,12 +306,7 @@ final class TableState extends State implements Scrollable, EditableText
         $this->lane($axis)->glide($delta);
     }
 
-    /**
-     * 该轴的滚动状态机（懒建；**两根轴注入同一份 `ScrollBarFade`**）。
-     *
-     * ★ 淡出为什么共用：横条与竖条提示的是同一件事"这块区域还能滚" ——
-     *   分两套节律只会出现"一根亮一根暗"，而它们本来该同时淡下去。
-     */
+    /** 该轴的滚动状态机（懒建；两根轴注入同一份 `ScrollBarFade` ⇒ 横竖同时淡出） */
     private function lane(Axis $axis): ScrollLane
     {
         if ($axis === Axis::Vertical) {
@@ -488,12 +328,7 @@ final class TableState extends State implements Scrollable, EditableText
         return $lane;
     }
 
-    /**
-     * 推进一根轴的动画；返回"这一帧动了吗"。
-     *
-     * ★ 位移仍然交给 `scrollByAxis()` —— 夹取、列窗口换批、提交编辑全在那一条路上，
-     *   动画不重写任何一条。收口（推不动就 `snapTo`）收在 `ScrollLane::tick()`。
-     */
+    /** 推进一根轴的动画；返回"这一帧动了吗"。位移仍走 `scrollByAxis()`，动画不重写夹取与换批 */
     private function stepMotion(Axis $axis, float $timestampMs): bool
     {
         return $this->lane($axis)->tick($timestampMs, function (float $delta) use ($axis): void {
@@ -502,13 +337,10 @@ final class TableState extends State implements Scrollable, EditableText
     }
 
     /**
-     * 把**内容坐标**里的矩形滚进可见区（`04` §6.3 的键盘可达性要求）。
+     * 把**内容坐标**里的矩形滚进可见区（键盘可达性要求）。
      *
-     * ★ 形状与 `LazyListState::ensureVisible()` 逐字同构：算术都在
-     *   `RenderTable::revealDelta()`（那边知道表头占掉多少），本方法只"找盒 + 转交"。
-     * ★ **两个轴各算一次**（阶段 2b 起有消费者）：纵向的视口是行区（减表头），
-     *   横向的视口是全宽（表头与行区共享 x）。两轴的视口定义不同 ⇒ 不能用同一个
-     *   函数，`revealDeltaX()` 是镜像而不是特例。
+     * 算术在 `RenderTable::revealDelta()`（那里知道表头占掉多少），本方法只找盒 + 转交。
+     * 两轴视口定义不同，`revealDeltaX()` 是镜像而不是同一个函数的特例。
      */
     public function ensureVisible(Rect $target, float $margin = 8.0): void
     {
@@ -518,9 +350,8 @@ final class TableState extends State implements Scrollable, EditableText
             return;
         }
 
-        // ★ 这里面的滚动是**框架自己**在把格子带进视口，不是用户滚 ⇒ 不能提交编辑
-        //   （见 `$revealScrollInFlight` 的注释）。`finally` 是必须的：`revealDelta()`
-        //   理论上不会抛，但标记一旦漏复位，"用户滚动提交编辑"就永久失效且无声。
+        // 这是框架自己把格子带进视口，不是用户滚 ⇒ 不提交编辑。标记必须复位，
+        // 否则"用户滚动提交编辑"永久失效且无声。
         $this->revealScrollInFlight = true;
 
         try {
@@ -553,11 +384,7 @@ final class TableState extends State implements Scrollable, EditableText
     }
 
     /**
-     * 焦点进出（`FocusManager` 驱动）。
-     *
-     * ★ 这是 `State` 钩子而不是 Widget 字段：Widget 每次重建都是新实例，
-     *   `TextFieldState` 的同一条理由（2026-10-24 实测：盒里的 `$focused`
-     *   一重建就丢）。
+     * 焦点进出（`FocusManager` 驱动）。挂钩子而不是 Widget 字段：Widget 每次重建都是新实例。
      */
     #[\Override]
     public function didChangeFocus(bool $focused): void
@@ -566,15 +393,13 @@ final class TableState extends State implements Scrollable, EditableText
             return;
         }
 
-        // ★ 焦点走了 ⇒ 编辑会话**提交**（各平台的"点到别处就落库"）。
-        //   顺序在改 `$hasFocus` 之前：提交回调里若应用重建了表，`$hasFocus`
-        //   还没被写脏，不会出现"半提交"的中间态。
+        // 焦点走了 ⇒ 提交会话。顺序在改 `$hasFocus` 之前：回调里若应用重建了表，
+        // 不会看到"半提交"的中间态。
         if (!$focused && $this->editingRef !== null) {
             $this->commitEditing();
         }
 
-        // ★ 失焦 ⇒ 拖动多半已经断在半路（捕获在"失焦"这条收口路径上被释放，
-        //   收不到 up）。不在这里清，拖动高亮会一直挂到下一次点击。
+        // 失焦 ⇒ 拖动收不到 up，不清的话高亮一直挂到下一次点击。
         if (!$focused && $this->dragAnchor !== null) {
             $this->dragAnchor = null;
             $this->dragTo = null;
@@ -593,23 +418,19 @@ final class TableState extends State implements Scrollable, EditableText
     /**
      * 键盘：方向键移格、Home/End 到首末行。返回 `true` = 吃掉这个键。
      *
-     * ★ 只吃这四个方向 + 首末键。**Enter/Space 不吃**：表格没有"激活格"语义，
-     *   编辑（阶段 7）才需要，届时由 `TableColumn::editable()` 决定 —— 现在吃
-     *   掉就等于提前占位，把"空格翻转选中"这类应用自定义语义堵死。
-     * ★ 已在边界时**吃掉键但不重建**：否则每按一次边界键就白画一帧。
+     * Enter / Space 与不可编辑列都不吃：吃了就把应用的"空格翻转选中"类语义堵死。
+     * 已在边界时吃键但不重建。
      */
     public function handleFocusKey(KeyEvent $event): bool
     {
-        // ★ 焦点不一定在表上：`keyboard()` 沿父链找**最近声明者**（2026-10-24 为
-        //   ComboBox 开的缝），于是表内子控件（单元格里的输入框 / 滑块）的按键
-        //   会先飘到这儿来。焦点不在表上时，方向键属于那个控件自己
-        //   （输入框里 → 是移光标，不是移格子）。
+        // 焦点不一定在表上：`keyboard()` 沿父链找最近声明者，表内子控件（输入框 / 滑块）
+        // 的按键会先飘到这儿来。焦点不在表上时方向键属于那个控件自己。
         if (!$this->hasFocus) {
             return false;
         }
 
-        // ★★ 编辑中：键盘**整个**归草稿（方向键移插入符、Enter 提交、Esc 取消）。
-        //   放在行列数检查之前 —— 有编辑格就一定有行列。
+        // 编辑中：键盘**整个**归草稿（方向键移插入符、Enter 提交、Esc 取消）。
+        // 放在行列数检查之前 —— 有编辑格就一定有行列。
         if ($this->editingRef !== null) {
             return $this->editKey($event);
         }
@@ -623,13 +444,9 @@ final class TableState extends State implements Scrollable, EditableText
 
         $chord = $event->chord;
 
-        // ★ 全表快捷键先于方向键（`Ctrl+A` / `Ctrl+C`）：它们与"光标在哪一格"无关，
-        //   而下面那段是纯导航。放在前面也让"空表 Ctrl+A"能吃掉键（什么都不选，
-        //   但不要漏给上层去滚动页面）。
-        // ★ 键名**大写**：壳的 `keyNameFromVk()` 对 `A`–`Z` 给的就是大写
-        //   （`VK_A` ⇒ `"A"`，不看 Shift）。这里原先写的是小写 `'a'`，
-        //   于是表格的 `Ctrl+A` / `Ctrl+C` 在**真机上一直不生效** ——
-        //   而单元测试拿小写 chord 直接喂，全绿。见 `DESIGN-TABLE` §12.10。
+        // 全表快捷键先于方向键（与光标在哪一格无关）；空表也要吃掉，别漏给上层滚页面。
+        // ★ 键名必须**大写**：壳对 `A`–`Z` 给的就是大写。写成小写则真机上
+        //   Ctrl+A / Ctrl+C 一直不生效，而单测喂小写 chord 全绿。
         if ($chord->is(KeyChord::ctrl('A'))) {
             $this->selectAll();
 
@@ -640,11 +457,8 @@ final class TableState extends State implements Scrollable, EditableText
             return $this->copySelection();
         }
 
-        // ★ 进入编辑：`Enter` / `F2`（Excel 与资源管理器都吃这两个）。
-        //   **只在当前列可编辑时才吃** —— 不可编辑的列上把 Enter 吞掉，等于
-        //   堵死应用自定义语义（"空格翻转选中"同一条纪律，见方法注释）。
-        //   ★ 双击进入编辑属手势族，前置是**时钟**（`PointerEvent` 没有时间戳，
-        //     判断不了两次点击的间隔）⇒ 不在本阶段，见 `DESIGN-TABLE` §18。
+        // 进入编辑：`Enter` / `F2`，**只在当前列可编辑时才吃**（否则堵死应用语义）。
+        // 双击进编辑属手势族，前置是时钟（`PointerEvent` 没有时间戳）。
         if ($chord->is(KeyChord::enter()) || $chord->is(KeyChord::f(2))) {
             return $this->beginEdit($this->focusedRow, $this->focusedCol);
         }
@@ -652,12 +466,8 @@ final class TableState extends State implements Scrollable, EditableText
         $row = $this->focusedRow;
         $col = $this->focusedCol;
 
-        // ★★ `KeyChord::is()` 是**全字段**比较（值对象语义），所以带 `Shift` 的方向键
-        //   **不会**命中 `KeyChord::right()` —— 直接比就是"Shift+方向键什么都不发生"。
-        //   这里先把 `Shift` 位摘掉再比：导航键的语义由"按了哪个方向"决定，
-        //   是否扩选由下面 `$chord->shift` 决定。
-        //   ★ 只摘 `Shift`：`Ctrl`/`Alt`+方向键今天没有语义（Excel 的"跳到边缘"没做），
-        //     摘掉会让它们从"不认"变成"当普通方向键"，那是另一条行为。
+        // `KeyChord::is()` 是**全字段**比较 ⇒ 带 Shift 的方向键不会命中 `KeyChord::right()`。
+        // 先摘掉 Shift 再比；只摘 Shift（Ctrl / Alt+方向键今天没有语义，摘了就是另一条行为）。
         $nav = $chord->shift ? KeyChord::make($chord->key) : $chord;
 
         if ($nav->is(KeyChord::up())) {
@@ -679,12 +489,8 @@ final class TableState extends State implements Scrollable, EditableText
         $row = max(0, min($row, $rows - 1));
         $col = max(0, min($col, $cols - 1));
 
-        // ★ `Shift+方向键` = **扩选**（Excel / 资源管理器 / WPF DataGrid 一致）。
-        //   锚点在"第一次按住 Shift 之前"那一格 —— 所以这里先把锚点落成**旧光标格**，
-        //   再让 picker 用"锚点到目标"算区间。不这么做的话第一次 Shift+Down 只会
-        //   选一行（锚点被落成目标格），与用户的"从这一格往下拉"预期差一格。
-        // ★ 无修饰的移动**不动选区**：选区是受控的（应用持有），键盘挪光标顺手
-        //   清空选中会让"选中一批 → 按键找位置"变成"每次都得重新选"。
+        // Shift+方向键 = **扩选**。锚点须是"移动之前"那一格，否则第一次 Shift+Down 只选一行。
+        // 无修饰的移动不动选区（选区受控，应用持有）。
         if ($chord->shift) {
             $this->extendSelectionByKeyboard($row, $col);
         }
@@ -703,18 +509,11 @@ final class TableState extends State implements Scrollable, EditableText
         return true;
     }
 
-    // ── 选区：Shift+方向键 / Ctrl+A / Ctrl+C（2026-10-31，格级矩形）─────────
+    // ── 选区：Shift+方向键 / Ctrl+A / Ctrl+C（格级矩形）────────────────────
     //
-    // 三条入口（鼠标点击 / 拖动 / 键盘）**都过 `TableGridPicker`**：点法语义只有
-    // 一份实现。这里只负责"把当前行序列 / 列序列递进去，把结果交出去"。
+    // 三条入口（点击 / 拖动 / 键盘）都过 `TableGridPicker`，这里只递行序列并交出结果。
 
-    /**
-     * `Shift+方向键`：从锚点扩到目标格并上报。
-     *
-     * ★ 锚点在**第一次按住 Shift 之前**那一格（不是目标格）—— 否则"从这一格
-     *   往下拉"会差一格。所以第一次进来时先把锚点落成**移动之前**的光标格。
-     * ★ 无修饰的移动**不动选区**（见 `handleFocusKey()` 的注释）。
-     */
+    /** `Shift+方向键`：从锚点扩到目标格并上报。首次进来先把锚点落成**移动之前**的光标格 */
     private function extendSelectionByKeyboard(int $row, int $col): void
     {
         $view = $this->view();
@@ -749,12 +548,7 @@ final class TableState extends State implements Scrollable, EditableText
         $view->selectionChangeHandler()?->__invoke($picked[0]);
     }
 
-    /**
-     * `Ctrl+A`：整表全选。
-     *
-     * ★ 结果已经是空（空格子表 / 行全无身份）且当前也是空 ⇒ **不通知**：
-     *   `Ctrl+A` 在空表上连按十次不该产生十次 `setState`。
-     */
+    /** `Ctrl+A`：整表全选。结果与当前都是空 ⇒ 不通知（空表连按十次不该产生十次 `setState`） */
     private function selectAll(): void
     {
         $view = $this->view();
@@ -780,12 +574,9 @@ final class TableState extends State implements Scrollable, EditableText
     }
 
     /**
-     * `Ctrl+C`：把选区拼成 **TSV** 交给应用。返回 `true` = 吃掉了这个键。
+     * `Ctrl+C`：把选区拼成 TSV 交给应用。返回 `true` = 吃掉了这个键。
      *
-     * ★ 没声明 `onCopy()` ⇒ 返回 `false`（键让给应用自己的快捷键）。这与
-     *   "声明了 `selection()` 却没接上报就响亮失败"不冲突：那边是**声明了但没人收**，
-     *   这边是**根本没声明**，属于合法的"我不要这个快捷键"。
-     * ★ 选区为空 ⇒ 也返回 `false`：复制一片空是噪音，而"没反应"正是用户预期的。
+     * 没声明 `onCopy()` 或选区为空 ⇒ `false`（键放行给应用；"没反应"正是用户预期）。
      */
     private function copySelection(): bool
     {
@@ -806,12 +597,8 @@ final class TableState extends State implements Scrollable, EditableText
     }
 
     /**
-     * 选区 ⇒ TSV（行 `\n`、格 `\t`）。
-     *
-     * ★ 只输出**选区覆盖到的格**：整行选区 = 每一列；格矩形 = 矩形内的列。
-     *   这与 Excel / ag-Grid 的复制一致（复制矩形就是矩形）。
-     * ★ 空行（整行都不在选区里）跳过，不产生空行 —— 否则复制一块 2×2 会带出
-     *   一堆空行，粘到 Excel 里就是一片空白行。
+     * 选区 ⇒ TSV（行 `\n`、格 `\t`）。只输出选区覆盖到的格，整行都不在选区的行跳过 ——
+     * 否则复制一块 2×2 会带出一堆空行，粘到 Excel 里就是一片空白。
      */
     private function selectionAsTsv(TableSelection $selection): string
     {
@@ -848,11 +635,8 @@ final class TableState extends State implements Scrollable, EditableText
     }
 
     /**
-     * 当前行序的 key 序列（`null` = 该行没有身份，**不压缩**）。
-     *
-     * ★ 每次现算而不是缓存：行序会因排序 / 过滤 / 数据刷新而变，缓存它就要
-     *   在每一处变更点失效 —— 那是"两个字段互相矛盾"的经典温床。行数是可见
-     *   窗口外的全量（`keyOf` 是 O(1) 回调），一万行 ≈ 亚毫秒。
+     * 当前行序的 key 序列（`null` = 该行没有身份，不压缩）。不缓存：行序会随排序 /
+     * 过滤变，缓存就要在每处变更点失效，那是"两个字段互相矛盾"的温床。
      *
      * @return list<string|int|null>
      */
@@ -906,18 +690,13 @@ final class TableState extends State implements Scrollable, EditableText
         return ['row' => $rowKey, 'col' => $colKey];
     }
 
-    // ── 单元格编辑（阶段 7a）────────────────────────────────────────────
+    // ── 单元格编辑 ────────────────────────────────────────────────────
     //
-    // 形状与选择 / 排序 / 列宽一致：**控件只算"改成了什么"并交出去**，写库由应用做。
-    // 不同的是"会话"这一段（正在编辑哪一格、草稿、插入符）住在 State 里 ——
-    // 它没有外部读者，也没有外部写者（程序化进入编辑要 `TableController`，
-    // 与"聚焦某格"是同一条预留通道，见 `DESIGN-TABLE` §5）。
+    // 控件只算"改成了什么"并交出去，写库由应用做。会话（编辑哪一格 / 草稿 / 插入符）
+    // 住 State：它没有外部读者，也没有外部写者。
 
     /**
-     * 当前正在编辑的格（**下标**；没在编辑 ⇒ `null`）。
-     *
-     * ★ 对外报下标、对内存 key：调用方（断言 / 将来的无障碍桥）关心的是"屏幕上
-     *   哪一格"，而会话本身关心"哪条数据的哪个字段"。
+     * 正在编辑的格（**下标**；没在编辑 / 那一格已不存在 ⇒ `null`）。对外报下标、内部存 key。
      *
      * @return array{row: int, col: int}|null
      */
@@ -945,18 +724,12 @@ final class TableState extends State implements Scrollable, EditableText
     /**
      * 进入编辑（键盘：`Enter` / `F2`；指针：双击）。返回 `false` = 这一格不能编辑 ⇒ **键不吃**。
      *
-     * ★ 返回 `bool` 而不是 `void`：调用方（`handleFocusKey`）必须据此决定
-     *   "吃掉这个键还是放行给应用" —— 不可编辑的列上吞掉 Enter，就把
-     *   "回车触发某个命令"这类自定义语义堵死了。
-     *
-     * @param float|null $caretX **指针的内容坐标 x**（`null` = 键盘进入 ⇒ 插入符落末尾）。
-     *                          指针进编辑必须"点在哪个字之间就落哪儿"，否则用户还得
-     *                          再按一次方向键 —— 那是双击进编辑唯一比 F2 强的地方。
+     * @param float|null $caretX 指针的内容坐标 x（`null` = 键盘进入 ⇒ 插入符落末尾）。
+     *                           指针进编辑必须"点在哪字之间就落哪儿"。
      */
     private function beginEdit(int $row, int $col, ?float $caretX = null): bool
     {
-        // ★ 已有会话 ⇒ **先收口**：双击同一行的另一格时，旧草稿不能悄悄丢掉
-        //   （`noteRowTap` 只对"点到别的行"提交，同一行是留到这里的）。
+        // 已有会话 ⇒ 先收口：同一行的另一格被双击时，旧草稿不能悄悄丢掉。
         if ($this->editingRef !== null) {
             $this->commitEditing();
         }
@@ -980,8 +753,7 @@ final class TableState extends State implements Scrollable, EditableText
             return false;
         }
 
-        // ★ 起始文本与静态渲染同源（`TableColumn::editableText()` 走同一个
-        //   `textOf()`）⇒ 进入编辑的瞬间文字不跳。
+        // 起始文本与静态渲染同源（同一个 `textOf()`）⇒ 进入编辑的瞬间文字不跳。
         $seed = $column->editableText($rows[$row], $row);
         $rowKey = $keyOf($rows[$row]);
         $columnKey = $column->keyName();
@@ -1007,9 +779,7 @@ final class TableState extends State implements Scrollable, EditableText
     /**
      * 提交：**值真的变了才回调**，然后无条件结束会话。
      *
-     * ★ 先清会话再回调：应用在回调里重建表时看到的是"没在编辑"的干净状态，
-     *   不会出现"回调里又读到草稿"的半个状态。
-     * ★ 不夹取 / 不校验：类型转换与合法性是应用侧知识（与"控件不排序"同源）。
+     * 先清会话再回调（应用在回调里重建表看到的是干净状态）；不夹取不校验（应用侧知识）。
      */
     private function commitEditing(): void
     {
@@ -1076,11 +846,8 @@ final class TableState extends State implements Scrollable, EditableText
     /**
      * 编辑中的键位（**只在这一格可编辑时才有机会跑到**）。
      *
-     * ★ 编辑键（字符 / 退格 / 方向 / Home / End / Shift+方向 / Ctrl+A）走
-     *   `TextKeymap` —— 与 `TextField` 是**同一张表**，这里不再抄第二遍。
-     *   本方法只剩表格特有的收口：`Enter` / `↑` / `↓` / `F2` **提交**、
-     *   `Esc` **取消** —— 单元格编辑必须有"改完走人"和"算了"两条出路，
-     *   输入框里这两件事由应用自己安排。
+     * 字符 / 退格 / 方向 / Home / End / Shift+方向 / Ctrl+A 走 `TextKeymap`（与 `TextField`
+     * 同一张表）；表格特有的收口只剩：Enter / ↑ / ↓ / F2 **提交**，Esc **取消**。
      */
     private function editKey(KeyEvent $event): bool
     {

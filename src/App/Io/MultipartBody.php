@@ -4,32 +4,14 @@ declare(strict_types=1);
 namespace Drift\App\Io;
 
 /**
- * `multipart/form-data` 请求体的**流式**生产者（2026-11-02）。
+ * `multipart/form-data` 请求体的流式生产者。
  *
- * ## 为什么是流式，而不是"拼成一个字符串"
- *
- * 第一版把整个表单拼进一个 `string`，三个问题：
- *
- * 1. **内存峰值 = 文件大小 × 2~3**：`file_get_contents()` 一份，`.=` 扩容再一份。
- *    64 MB 的图能吃到 150 MB 以上 —— 桌面应用里这不可接受。
- * 2. **`.=` 在循环里累加**本身是 lint 挡的写法（§2.4 纪律 2，`str-concat-loop`）。
- * 3. **严格意义的零拷贝**（`sendfile()` / `TransmitFile()`）**用不了**：它只能原样
- *    发一个 fd，而表单上传必须在文件前后拼 HTTP 头和 boundary ⇒ 拼接动作本身
- *    就要求数据经过用户态。所以能做到的上限是**流式**，不是零拷贝。
- *
- * ## 形状
- *
- * `read()` 是一个**状态机**：吐小片段（part 头）→ 吐文件内容（按块读）→ 推进到
- * 下一个 part → 最后吐尾部。curl 通过 `CURLOPT_READFUNCTION` 按需调它，
- * 每次最多要 `CURL_MAX_READ_SIZE`（默认 64 KB）字节。
- *
- * ★ **总长度先算不读**（各 part 头长度 + `filesize()` + 尾部）⇒ `CURLOPT_POSTFIELDSIZE`
- *   拿得到精确值。这有两个好处：进度分母不用猜；请求不会退化成 `Transfer-Encoding:
- *   chunked`（有些老服务端 / 网关不认 chunked 上传）。
- *
- * ★ **读失败要抛，不能返回 `''`**：`''` 在 `CURLOPT_READFUNCTION` 的语义里是
- *   "发完了"。一个被截断的表单，服务端往往报"缺少字段"，而真正的原因（磁盘读不出）
- *   离现场隔着两个系统。
+ * `read()` 是状态机：吐 part 头 → 按块读文件内容 → 推进到下一 part → 吐尾部；
+ * curl 通过 `CURLOPT_READFUNCTION` 按需调它，每次最多 `CURL_MAX_READ_SIZE` 字节。
+ * ★ 总长度先算不读（各 part 头 + `filesize()` + 尾部）⇒ `CURLOPT_POSTFIELDSIZE`
+ *   拿精确值，避免请求退化成 `Transfer-Encoding: chunked`（老服务端不认）。
+ * ★ 读失败要抛，不能返回 `''`：`''` 在 `CURLOPT_READFUNCTION` 里是"发完了"，
+ *   截断的表单会让服务端报"缺字段"，真因隔着两个系统。
  *
  * @internal 只被 {@see Http::request()} 用；不进 `@api` 面。
  */
@@ -61,12 +43,8 @@ final class MultipartBody
     private int $left = 0;
 
     /**
-     * 已经吐出的总字节数（**上传进度的分子**）。
-     *
-     * ★ 记在这里而不是让调用方自己累加 `strlen(read())`：`CURLOPT_READFUNCTION`
-     *   是 curl 从 C 里回调进来的，调用方那侧要累加就得在闭包里改外部变量
-     *   （`use (&$x)`）—— tpc 对引用捕获的支持没验过，而这里是现成的、不可能
-     *   数错的记账点（同一个类里 `left` 已经在做减法了）。
+     * 已吐出总字节数（上传进度的分子）。记在类内而非让调用方累加：
+     * `CURLOPT_READFUNCTION` 从 C 回调，调用方累加需引用捕获（未验证支持）。
      */
     private int $sent = 0;
 
@@ -84,8 +62,8 @@ final class MultipartBody
         $total = 0;
         foreach ($parts as $part) {
             $total += \strlen($part['head']) + $part['size'];
-            // 文件 part 的头部以 `\r\n\r\n` 结尾，**文件内容之后**还要补一个 `\r\n`；
-            // 纯字段 part 的 `\r\n` 已经算在 `head` 里了。
+            // 文件 part 的头部以 `\r\n\r\n` 结尾，文件内容之后还要补一个 `\r\n`；
+            // 纯字段 part 的 `\r\n` 已算在 `head` 里。
             if ($part['path'] !== '') {
                 $total += 2;
             }
@@ -100,11 +78,10 @@ final class MultipartBody
     }
 
     /**
-     * 已经吐出的字节数 —— 上传进度的**分子**。
+     * 已吐出字节数（上传进度的分子）。
      *
-     * ★ 与 `length()` 配对：`bytesSent() / length()` 就是进度。两者都是**请求体**
-     *   口径（含 part 头与分隔符），不是"文件字节"口径 —— 混用会让进度条在最后
-     *   一个文件传完时停在 99%。
+     * 与 `length()` 同口径（含 part 头与分隔符，非"文件字节"）；混用会让
+     * 进度条在最后一个文件传完时停在 99%。
      */
     public function bytesSent(): int
     {
@@ -126,7 +103,6 @@ final class MultipartBody
         $need = $max;
 
         while ($need > 0) {
-            // ① 先把当前 part 的头部吐完
             if ($this->pending !== '') {
                 $take = \substr($this->pending, 0, $need);
                 $this->pending = \substr($this->pending, \strlen($take));
@@ -136,7 +112,6 @@ final class MultipartBody
                 continue;
             }
 
-            // ② 再吐当前文件的内容（按需读，不预读整份）
             if ($this->left > 0) {
                 $want = \min($need, $this->left);
                 $chunk = \is_resource($this->handle) ? \fread($this->handle, $want) : false;
@@ -153,7 +128,6 @@ final class MultipartBody
                 continue;
             }
 
-            // ③ 推进到下一个 part；推进不动 ⇒ 全部吐完
             if (!$this->advance()) {
                 break;
             }
@@ -190,12 +164,10 @@ final class MultipartBody
      */
     private function advance(): bool
     {
-        // ① 上一个 part 是**文件** part ⇒ 先补分隔用的 CRLF，下次调用再推进。
+        // 上一个 part 是文件 part ⇒ 先补分隔用的 CRLF，下次调用再真正推进。
         //
-        // ★ 这 2 个字节不属于文件内容，但属于请求体：`length()` 把它算进了总长，
-        //   `read()` 就**必须**吐它。少吐的后果不是"少 2 字节"，而是
-        //   "声明长度 > 实际长度" —— curl 会一直等剩下的字节，直到超时；
-        //   服务端则挂在那里等一个永远不来的 part 分隔符。
+        // ★ 这 2 字节属于请求体，必须吐：`length()` 已算进总长，少吐会让
+        //   "声明长度 > 实际长度" ⇒ curl 一直等剩余字节直到超时，服务端也卡住。
         if (\is_resource($this->handle)) {
             \fclose($this->handle);
             $this->handle = null;
@@ -207,17 +179,12 @@ final class MultipartBody
 
         $this->left = 0;
 
-        // ② 推进到下一个 part
         if ($this->index < \count($this->parts)) {
             $part = $this->parts[$this->index];
             $this->index++;
             $this->pending = $part['head'];
 
             if ($part['path'] !== '') {
-                // ★ 用 `rb` 而不是 `r`：**在 PHP 里两者等价**（自 4.3 起 Windows 上也
-                //   默认二进制模式，实测 `fopen('r')` 不会把 `\r\n` 翻成 `\n`），
-                //   这里写 `b` 是为了把"这是二进制、别做任何翻译"写在代码上 ——
-                //   同一个仓库里还有人会拿 C / Python 的直觉读这段。
                 $fh = @\fopen($part['path'], 'rb');
                 if ($fh === false) {
                     throw new \RuntimeException('multipart：打不开文件 ' . $part['path']);
@@ -229,7 +196,6 @@ final class MultipartBody
             return true;
         }
 
-        // ③ 收尾
         if ($this->tail !== '') {
             $this->pending = $this->tail;
             $this->tail = '';

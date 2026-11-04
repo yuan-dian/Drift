@@ -38,26 +38,9 @@ use function drift_skia_set_gradient;
 use function drift_skia_translate;
 
 /**
- * Skia 光栅画布（§7.2 裁决 1 的第三个实现；§7.3 的 M1 后端之二）。
- *
- * ★ **它与 `RasterCanvas` 是同一个东西的两个光栅器**：命令流、变换、量化、
- *   字形步进与基线**逐条对齐**，差别只在"谁把像素写出来"。所以：
- *   ① 两个后端可以互相做 conformance（§8.2 坑 6 的"一套测量实现，两个后端"）；
- *   ② `DisplayList` 重放两边都成立（G3 的 golden 才有可比性）。
- *
- * ★ **变换与量化留在 PHP**（§6.1：逻辑→物理只走 `Scale::quantizeRect()`）。
- *   桥收到的永远是设备坐标 —— 若让 Skia 也持一份变换，"先加偏移再取整"与
- *   "先取整再加偏移"会差半个像素，而那种账最难查。
- *
- * ★ **与 `RasterCanvas` 的两处已知差异**（有意，不是欠账）：
- *   ① 抗锯齿：软光栅只对圆角/字形做覆盖度，Skia 对所有边做 —— 边缘像素会有差异；
- *   ② 描边：软光栅是"外圈减内圈"的实心法（`RasterCanvas::drawRect`），
- *      Skia 用原生 `kStroke_Style`。宽度一致、圆角一致，但抗锯齿边缘不同。
- *   ⇒ **像素级 golden 不能跨后端比**，只能各自与自己的基线比。
- *
- * ★ 没有可用的 Skia 句柄时（创建失败）**所有绘制静默跳过**：这一帧没画，
- *   不是"应用该崩"（与光标形状同一档）。但 `isValid()` 会如实回答，供上层记 Diagnostic。
- *
+ * Skia 光栅画布（与 `RasterCanvas` 同命令流 / 变换 / 量化，差别只在谁写出像素）。
+ * 没有可用的 Skia 句柄时（创建失败）所有绘制静默跳过：这一帧没画，不是应用该崩；
+ * `isValid()` 会如实回答，供上层记 Diagnostic。
  * @api
  */
 final class SkiaCanvas implements Canvas
@@ -69,11 +52,9 @@ final class SkiaCanvas implements Canvas
     private float $offsetY = 0.0;
 
     /**
-     * `true` ⇒ 已累加的偏移**下推**给了 Skia 的 CTM，`toDevice()` 不再加偏移。
-     *
-     * ★ 只有一个切换点（`enterDeviceMode()`），且只由 `transform()` 触发。
-     *   两段之间不混用：混用就是"先取整再变换"与"先变换再取整"的半个像素账
-     *   —— 那条对平移的担心（见 `drift_skia.stub.php`）仍然有效。
+     * `true` ⇒ 已累加的偏移下推给了 Skia 的 CTM，`toDevice()` 不再加偏移。
+     * 只有一个切换点（`enterDeviceMode()`），且只由 `transform()` 触发；
+     * 两段之间不混用，否则"先变换再取整"与"先取整再变换"会差半个像素。
      */
     private bool $devMode = false;
 
@@ -85,7 +66,7 @@ final class SkiaCanvas implements Canvas
 
     private readonly Scale $scale;
 
-    /** P3：当前是否真挂着渐变/虚线源（只有挂了才发 clear_source，免得每次 draw 多一次桥调用） */
+    /** 当前是否真挂着渐变/虚线源（只有挂了才发 clear_source，免得每次 draw 多一次桥调用） */
     private bool $sourceActive = false;
 
     /** 字体未就绪只报一次 —— 每帧报会把日志刷掉 */
@@ -99,8 +80,7 @@ final class SkiaCanvas implements Canvas
     ) {
         $this->scale = $scale ?? Scale::identity();
 
-        // ★ 先落局部标量再传（AOT 纪律 2：三元分支里的属性读取会被推成 Variant，
-        //   与 Int 形参不匹配 ⇒ C2440）。
+        // 先落局部标量再传：三元分支里的属性读取会被推成 Variant，与 Int 形参不匹配。
         $bg = $background ?? Color::white();
         $argb = $bg->toArgb();
 
@@ -123,15 +103,9 @@ final class SkiaCanvas implements Canvas
     }
 
     /**
-     * 画布句柄 —— 只给**壳侧的直贴路径**用（`drift_win_present_skia()`）。
-     *
-     * ★ 为什么需要它：贴屏本来要把像素 `toRgba()` 取回 PHP 再交回壳里，那条路每帧
-     *   做两次方向相反的 swizzle + 一次 4MB 跨界，实测占端到端 50%+（`26` §5）。
-     *   有了句柄，壳可以直接读 Skia 表面贴屏，像素不进 PHP。
-     *
-     * ★ 0 = 创建失败 ⇒ 调用方（`Win32SkiaSurface`）会回落到"这一帧不贴"，
-     *   与"画布无效时所有绘制静默跳过"同一档，不是错误。
-     *
+     * 画布句柄 —— 只给壳侧直贴路径用（`drift_win_present_skia()`）：让壳直接读
+     * Skia 表面贴屏，像素不进 PHP（否则每帧两次 swizzle + 4MB 跨界）。
+     * 0 = 创建失败 ⇒ 调用方（`Win32SkiaSurface`）回落到"这一帧不贴"，不是错误。
      * @api platform 只有 `src/Platform/Win32/Win32SkiaSurface` 会读它
      */
     public function handle(): int
@@ -149,11 +123,10 @@ final class SkiaCanvas implements Canvas
     }
 
     /**
-     * 释放底层 Skia 画布。**幂等** —— 由 surface 在 `endFrame()` 里显式调用。
-     *
-     * ★ 不靠 `__destruct`：AOT 下对象析构时机不由框架决定，而 Skia 画布是
-     *   `new` 出来的原生资源，漏掉一次就是一张 w×h×4 的常驻内存（每帧一张）。
-     *   显式释放是唯一能说清"什么时候还回去"的写法。
+     * 释放底层 Skia 画布。幂等 —— 由 surface 在 `endFrame()` 里显式调用。
+     * 不靠 `__destruct`：AOT 下对象析构时机不由框架决定，而 Skia 画布是
+     * `new` 出来的原生资源，漏掉一次就是一张 w×h×4 的常驻内存（每帧一张）。
+     * 显式释放是唯一能说清"什么时候还回去"的写法。
      */
     public function dispose(): void
     {
@@ -175,8 +148,8 @@ final class SkiaCanvas implements Canvas
             return;   // 未配对的 restore 由 W8 在录制侧拦截，光栅侧静默忽略即可
         }
 
-        // ★ 先弹 Skia 的保存层再恢复 PHP 状态：`devMode` 是"CTM 里有没有东西"的
-        //   镜像，顺序反了就会出现"PHP 说没变换、Skia 还带着旋转"。
+        // 先弹 Skia 的保存层再恢复 PHP 状态：`devMode` 是"CTM 里有没有东西"的
+        //   镜像，顺序反了会出现"PHP 说没变换、Skia 还带着旋转"。
         if ($this->handle !== 0) {
             while ($this->skiaDepth > $frame[3]) {
                 drift_skia_restore($this->handle);
@@ -191,10 +164,10 @@ final class SkiaCanvas implements Canvas
 
     public function translate(float $dx, float $dy): void
     {
-        // ★ 设备模式下**不能再累加 offset**：offset 是"在 CTM 之后"的平移，
+        // ★ 设备模式下不能再累加 offset：offset 是"在 CTM 之后"的平移，
         //   而这里语义是 `CTM · T`（后调用的更内层）。累加 offset 会让
         //   `rotate(90); translate(10,0)` 变成 `R(p) + (10,0)`，正确答案是
-        //   `R(p + (10,0))` —— 差一个旋转矩阵，画出来是"位置偏了一大截"。
+        //   `R(p + (10,0))` —— 差一个旋转矩阵，画出来位置偏一大截。
         if ($this->devMode && $this->handle !== 0) {
             $dpr = $this->scale->dpr;
             drift_skia_translate($this->handle, $dx * $dpr, $dy * $dpr);
@@ -207,17 +180,14 @@ final class SkiaCanvas implements Canvas
     }
 
     /**
-     * 追加仿射变换 —— **下推给 Skia 的 CTM**（`CTM' = CTM · m`）。
-     *
-     * ★ 纯平移且尚未进设备模式 ⇒ 并进 `$offsetX/Y`：那是老路，golden 逐字节不变。
-     * ★ 其它变换必须由 Skia 承担 —— 文字的字形位图在 C++ 侧，PHP 变不了。
+     * 追加仿射变换 —— 下推给 Skia 的 CTM（`CTM' = CTM · m`）。
+     * 纯平移且尚未进设备模式 ⇒ 并进 `$offsetX/Y`：那是老路，golden 逐字节不变。
+     * 其它变换必须由 Skia 承担 —— 文字的字形位图在 C++ 侧，PHP 变不了。
      */
     public function transform(Matrix2D $matrix): void
     {
-        // ★★ **AOT 纪律**：读**另一个对象**的属性拿到的是 `php::Var`（tpc 不把
-        //   "类类型形参的属性"推成标量）⇒ `Float += Var` 编译期就报 C2679
-        //   「二进制 += 不接受该右操作数」。一律显式 `(float)` 落到局部再算。
-        //   解释器与 phpunit 完全看不出这件事 —— 只有 AOT 构建会红。
+        // 读另一个对象的属性拿到的是 `php::Var` ⇒ `Float += Var` 编译期报 C2679；
+        //   一律显式 `(float)` 落到局部再算（解释器与 phpunit 看不出，只有 AOT 会红）。
         $tx = (float) $matrix->tx;
         $ty = (float) $matrix->ty;
 
@@ -248,10 +218,8 @@ final class SkiaCanvas implements Canvas
 
     /**
      * 进入"设备坐标模式"：把已累加的逻辑偏移换成设备偏移下推，然后归零。
-     *
-     * ★ 压一层 Skia save 作为**撤销锚点**：`restore()` 按 `skiaDepth` 退回。
-     *   不压的话"这个盒的旋转"会漏给后面所有兄弟 —— 且 W8 查不出来
-     *   （`transform()` 不改变 save 深度）。
+     * 压一层 Skia save 作为撤销锚点：`restore()` 按 `skiaDepth` 退回。
+     * 不压的话"这个盒的旋转"会漏给后面所有兄弟，且录制侧查不出来。
      */
     private function enterDeviceMode(): void
     {
@@ -306,9 +274,8 @@ final class SkiaCanvas implements Canvas
             return;
         }
 
-        // ★ 描边宽度**不乘 dpr**：`RasterCanvas::drawRect()` 在设备矩形上直接减
-        //   `strokeWidth`，两个后端要能互相做 conformance ⇒ 口径必须一致。
-        //   （这条口径本身是否该改是另一件事，改了要两个后端一起改。）
+        // 描边宽度不乘 dpr：`RasterCanvas::drawRect()` 在设备矩形上直接减
+        //   `strokeWidth`，两个后端要能互做 conformance ⇒ 口径必须一致。
         $stroke = $paint->isStroke();
         $width = $paint->strokeWidth;
         $argb = $paint->color->toArgb();
@@ -330,9 +297,8 @@ final class SkiaCanvas implements Canvas
 
     /**
      * 段落绘制：把已排好的字形逐个交给 Skia（位置由 `Paragraph` 给，本类不重算）。
-     *
-     * ★ 与 `RasterCanvas::drawParagraph()` 逐行对齐：同样的偏移叠加、同样的
-     *   设备像素取整、同样的"笔位 += advance"。
+     * 与 `RasterCanvas::drawParagraph()` 逐行对齐：同样的偏移叠加、同样的
+     * 设备像素取整、同样的"笔位 += advance"。
      */
     public function drawParagraph(Paragraph $paragraph, Paint $paint, float $x = 0.0, float $y = 0.0): void
     {
@@ -342,8 +308,8 @@ final class SkiaCanvas implements Canvas
 
         $this->warnIfFontMissing();
 
-        // ★ 文本必须吃画布变换：父盒给的位置是靠 translate() 递下来的
-        //   （与 RasterCanvas 同一条注释，同一处坑）。
+        // 文本必须吃画布变换：父盒给的位置是靠 translate() 递下来的
+        //   （与 RasterCanvas 同一条坑）。
         $originX = $x + $this->offsetX;
         $originY = $y + $this->offsetY;
 
@@ -357,21 +323,15 @@ final class SkiaCanvas implements Canvas
             foreach ($line->runs as $run) {
                 $family = $run->face->familyName();
                 $bold = $run->face->weight()->isBold();
-                // ★ 每个 run 自己的颜色与字号（W8-5 富文本）；`-1` = 用整段 Paint。
+                // 每个 run 自己的颜色与字号（富文本）；`-1` = 用整段 Paint。
                 //   单段路径恒 `-1` 且 style === 段落 style ⇒ 逐字节不变。
                 $pixelSize = $run->style->size * $dpr;
                 $argb = $run->argb >= 0 ? $run->argb : $paintArgb;
 
                 foreach ($run->glyphs as $glyph) {
-                    // 与 `RasterCanvas::blendBitmap()` 同口径：字形原点量化到设备像素
-                    // （§8.2 坑 4 的显式策略，不是权宜之计）
-                    // ★ 字形的 offsetX/offsetY 在**逻辑空间**叠加后**一次**量化
-                    //   （与 Raster 逐行对齐：Raster 的 blendBitmap 入参已是
-                    //   `pen + offsetX`，round 在函数内做）。
-                    //   ★ 踩过：第一版只发 `round($pen * $dpr)` —— offset 被丢。
-                    //     今天所有生产者 offset 恒 0.0（grep 实证）⇒ 潜伏；
-                    //     M4 真塑形（HarfBuzz 标记附加/字距调整）会活。
-                    //     2026-10-17 修复，smoke ⑨+1 P4 钉住。
+                    // 与 `RasterCanvas::blendBitmap()` 同口径：字形原点量化到设备像素。
+                    // 字形的 offsetX/offsetY 在逻辑空间叠加后一次量化
+                    //   （Raster 的 blendBitmap 入参已是 `pen + offsetX`，round 在函数内做）。
                     $penDevice = round(($pen + $glyph->offsetX) * $dpr);
                     $baselineDevice = round(($baselineLogical + $glyph->offsetY) * $dpr);
 
@@ -464,11 +424,9 @@ final class SkiaCanvas implements Canvas
      * 矢量路径填充 / 描边（P4 · Optional）。几何在 `packPath()` 里叠加当前偏移并
      * 乘 dpr（与 `drawLine` / `toDevice()` 同一变换口径）；渐变 / 虚线走画布级
      * source（与 `draw_rect` 同纪律）。
-     *
-     * ★★ 这里**没有**画布级 translate：`translate()` 只改 PHP 侧 `offsetX/offsetY`，
-     *   每个 draw 自己把偏移加进坐标（见 `drawLine` / `toDevice`）。第一版照
-     *   "几何走画布的 translate()" 的注释写，路径就落在画布原点 ⇒ 被自绘盒裁掉
-     *   ⇒ 真机完全无墨（阴影/层/图像都正常，因为它们各自加了偏移）。
+     * 这里没有画布级 translate：`translate()` 只改 PHP 侧 `offsetX/offsetY`，
+     * "几何走画布的 translate()" 的注释写，路径就落在画布原点 ⇒ 被自绘盒裁掉
+     * ⇒ 真机完全无墨（阴影/层/图像都正常，因为它们各自加了偏移）。
      */
     public function drawPath(Path $path, Paint $paint): void
     {
@@ -573,11 +531,10 @@ final class SkiaCanvas implements Canvas
 
     /**
      * 模糊背景（毛玻璃底，Extended）。
-     *
-     * ★ `sigma` 按 dpr 放大：模糊半径是**视觉量**（逻辑像素），设备像素要跟着
-     *   dpr 走，否则 200% 缩放下玻璃会比设计稿"更硬"。
-     * ★ 坐标走 `toDevice()` —— 与 `pushClip()` 同一条换算（偏移 + dpr + 量化），
-     *   否则"先裁剪再模糊"两者的边界会差一个亚像素。
+     * `sigma` 按 dpr 放大：模糊半径是视觉量（逻辑像素），设备像素要跟着
+     * dpr 走，否则 200% 缩放下玻璃会比设计稿"更硬"。
+     * 坐标走 `toDevice()` —— 与 `pushClip()` 同一条换算（偏移 + dpr + 量化），
+     * 否则"先裁剪再模糊"两者的边界会差一个亚像素。
      */
     public function blurBackdrop(float $sigma, Rect $rect): void
     {
@@ -620,12 +577,11 @@ final class SkiaCanvas implements Canvas
      * P4 · 把 Path 的扁平命令表打包成过桥字节流（与 `drift_skia.stub.php` 约定一致）：
      * `verbs` 每命令 1 字节（MOVE/LINE/QUAD/CLOSE），`coords` 每命令 4 个
      * little-endian IEEE754 float（x1,y1,x2,y2）。桥 ABI 只认标量 + string，不引数组。
-     *
-     * ★★ 坐标在这里**一次**施加 `(逻辑 + 偏移) × dpr` 再量化 —— 与 `drawLine` 同口径。
-     *   漏了这一步路径会落在画布原点（被盒裁掉 ⇒ 无墨），而不是"位置偏一点"。
-     * ★★ 必须"数组攒 + implode"，不能 `$verbs .= …`：这两个串是**二进制**（含 \0 与
-     *   高位字节），AOT 下循环内累加拼接会写坏多字节串 ⇒ C++ 侧读到乱码 verb ⇒
-     *   路径为空 ⇒ 真机**完全无墨**而解释器（smoke）全过（§2.4 纪律 2 的实证案例）。
+     * ★ 坐标在这里一次施加 `(逻辑 + 偏移) × dpr` 再量化 —— 与 `drawLine` 同口径。
+     *   漏了这一步路径会落在画布原点（被盒裁掉 ⇒ 无墨），不是"位置偏一点"。
+     * ★ 必须"数组攒 + implode"，不能 `$verbs .= …`：这两串是二进制（含 \0 与
+     *   高位字节），AOT 下循环内累加拼接会写坏多字节串 ⇒ C++ 读到乱码 verb ⇒
+     *   路径为空 ⇒ 真机完全无墨而解释器（smoke）全过。
      */
     private function packPath(Path $path): array
     {
@@ -637,7 +593,7 @@ final class SkiaCanvas implements Canvas
         foreach ($cmds as $c) {
             $verb = (int) $c[0];
             $verbParts[] = \chr($verb);
-            // ★ 坐标一律走 `Scale::deviceX/Y()`（唯一的"加偏移再乘 dpr"）；
+            // 坐标一律走 `Scale::deviceX/Y()`（唯一的"加偏移再乘 dpr"）；
             //   `(float)` 是 AOT 纪律：数组元素是 `Var`，直接喂标量形参会 C2664。
             if ($verb === Path::CMD_QUAD) {
                 $coordParts[] = \pack(
@@ -665,16 +621,15 @@ final class SkiaCanvas implements Canvas
 
     /**
      * P3 · 把当前 Paint 的渐变/虚线源写到 Skia 画布（设备坐标），供紧接着的 draw 调用消费。
-     *
-     * ★ 渐变端点/圆心是**逻辑坐标**（与形状同空间），转设备空间 = (logical + offset) × dpr
-     *   （与 `toDevice()` 同一变换）；径向半径 x2 是长度量 ⇒ 只缩放不平移。
+     * 渐变端点/圆心是逻辑坐标（与形状同空间），转设备空间 = (logical + offset) × dpr
+     * （与 `toDevice()` 同一变换）；径向半径 x2 是长度量 ⇒ 只缩放不平移。
      */
     private function applyPaintSource(Paint $paint): void
     {
         $dpr = $this->scale->dpr;
         $g = $paint->gradient;
         if ($g !== null) {
-            // ★ 端点/圆心是**逻辑坐标** ⇒ 走 `Scale::deviceX/Y()`（与 `toDevice()` 同一变换，
+            // 端点/圆心是逻辑坐标 ⇒ 走 `Scale::deviceX/Y()`（与 `toDevice()` 同一变换，
             //   不取整：渐变要连续）。径向半径 x2 是长度量 ⇒ 只缩放不平移。
             if ($g->isRadial()) {
                 $gx1 = $this->scale->deviceX((float) $g->x1, $this->offsetX);
@@ -699,7 +654,7 @@ final class SkiaCanvas implements Canvas
         }
         $dash = $paint->dash;
         if ($dash !== null) {
-            // ★ DashPattern 的 on/off/phase 是**逻辑像素**（与 RasterCanvas::drawLine 同口径：
+            // DashPattern 的 on/off/phase 是逻辑像素（与 RasterCanvas::drawLine 同口径：
             //   Raster 用 `sqrt(len2) / dpr` 把弧长换算回逻辑单位再取模）。这里喂的是设备
             //   空间 ⇒ 必须乘 dpr，否则 dpr=2 时虚线视觉上只剩一半长，两个后端对不上。
             drift_skia_set_dash($this->handle, $dash->on * $dpr, $dash->off * $dpr, $dash->phase * $dpr);
@@ -716,9 +671,8 @@ final class SkiaCanvas implements Canvas
         $colors = [0, 0, 0, 0];
         $stops = [0.0, 0.0, 0.0, 0.0];
         for ($i = 0; $i < 4; $i++) {
-            // ★ 补位槽一律 clamp 到最后一个真实色标：直接按 i/(n-1) 算会在 n<4 时
-            //   补出 2.0、3.0 这种越界位置（Skia 色标位置必须落在 0..1，越界的表现
-            //   是**静默错色**而不是报错 —— 只能靠"补位不许越界"这条判据守住）。
+            // 补位槽一律 clamp 到最后一个真实色标：直接按 i/(n-1) 算会在 n<4 时
+            //   补出 2.0、3.0 越界位置（Skia 色标位置必须落在 0..1，越界会静默错色）。
             $k = min($i, $n - 1);
             $colors[$i] = $src[$k]->toArgb();
             $stops[$i] = $srcStops === [] ? ($n > 1 ? (float) ($k / ($n - 1)) : 0.0) : $srcStops[$k];
@@ -736,8 +690,7 @@ final class SkiaCanvas implements Canvas
     }
     /**
      * 字体未就绪时记一条 Diagnostic（只记一次）。
-     *
-     * ★ 必须可观测：字体加载失败的现象是"矩形全对、字全没了"，看起来像排版 bug。
+     * 必须可观测：字体加载失败的现象是"矩形全对、字全没了"，看起来像排版 bug。
      */
     private function warnIfFontMissing(): void
     {
@@ -755,7 +708,7 @@ final class SkiaCanvas implements Canvas
         }
     }
 
-    /** 逻辑 → 设备（§6.1 的唯一量化点） */
+    /** 逻辑 → 设备（唯一的量化点） */
     private function toDevice(Rect $rect): Rect
     {
         if ($this->devMode) {

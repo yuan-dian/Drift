@@ -7,43 +7,9 @@ use Drift\Geometry\EdgeInsets;
 use Drift\Input\SemanticsRole;
 
 /**
- * 模态对话框（§A.3.7 / §12.1 第 6 条）。
- *
- * ```php
- * // 组合根接线（§4.3：Widget 层够不到 Application）—— 页面拿到的是一个闭包
- * ($this->showModal)(Modal::make()->title('确认删除')->child(
- *     Column::make()->spacing(16)->children([
- *         Text::make('删除后不可恢复，确定吗？')->body(),
- *         Row::make()->spacing(8)->children([...]),
- *     ])
- * ));
- * ```
- *
- * ★ **`$this->application()` 不存在**：`State` 上没有这个访问器（§4.3 禁
- *   `Widget → App`）。本文档 2026-10-17 起就写着它，2026-10-23 在示例台上
- *   才被真机咬出来（点一下进程直接崩、smoke 全绿）。
- *
- * ★ **它只描述形体，不管打开**：打开 / 关闭归 `Application::showModal()` /
- *   `closeModal()`（§5.1 裁决 1 的原话："Application 管生命周期与落位，控件只管
- *   形体"）。所以本类**没有** `open()` —— 一个控件没法知道自己在哪棵树里。
- *
- * ★ **它绝不自己关自己**（§A.3.7 裁决）：按钮的 `->command()` 派发后由应用决定
- *   关不关；框架不替应用判断"这个命令意味着关闭"。
- *   ★ **右上角关闭按钮是唯一的例外，且它也不是"自己关"**（2026-10-25）：那个
- *     `IconButton` 的处理器由 `OverlayManager::showModal()` **注入**（`bindDismiss()`），
- *     与 `SnackbarPanel::make($s, $onDismiss)` 是同一条模式 —— 控件只声明"我这儿
- *     有个关的口子"，关的动作永远来自框架。所以 `Modal` 依然拿不到 `Application`。
- *
- * ★ **`dismissible=false` 的语义是"拒绝"，不是"放行"**：ESC 与遮罩点击被**吞掉**
- *   且模态不关 —— 不能穿透到全局快捷键（否则"必须处理的对话框"会被 Ctrl+W
- *   之类的加速键绕过）。见 `Application::dispatchInput()`。
- *   ★ 同一条语义管关闭按钮：`dismissible=false` ⇒ **不画关闭按钮**。画一个点了
- *     没反应的 X 比没有 X 更糟（用户会以为程序卡了）。
- *
- * ★ **有焦点陷阱**（W3 落地，`OverlayEntry::$focusTrap`）：模态打开时 Tab 只在
- *   "最上面那个 `focusTrap` 条目 + 压在它上面的层"里循环（`Application::focusTrapRoots()`），
- *   主树上的控件 Tab 不到。★ 本文档 2026-10-17 写的"没有焦点陷阱"是**当时的实况**，
- *   W3 之后已不成立 —— 以代码为准。
+ * 模态对话框：只描述形体，不管打开 / 关闭（生命周期在 `Application`）。
+ * 它绝不自己关自己；唯一例外是右上角关闭按钮，其处理器由框架注入。
+ * 打开时有焦点陷阱：Tab 只在最上层 `focusTrap` 条目及其上层循环，主树控件 Tab 不到。
  *
  * @api
  */
@@ -58,37 +24,32 @@ final class Modal extends StatelessWidget
     /**
      * 面板最小宽（逻辑像素）。
      *
-     * ★ 默认 320：模态的**内容**通常是两三行字，自然宽会窄到不像对话框；
-     *   最小宽是"对话框形态"的一部分，所以给默认值而不是逼每个调用点写。
-     *   要更窄（提示气泡式）就显式 `->minWidth(200)`。
+     * 默认 320：模态内容通常两三行字，自然宽会窄到不像对话框；提示气泡式
+     * 可显式 `->minWidth(200)`。
      */
     private float $minWidth = 320.0;
 
     /**
      * 标题行右侧是否画关闭按钮（`X`）。
      *
-     * ★ 默认 **true**（2026-10-25）：一个只能靠 ESC / 点遮罩关掉的对话框，
-     *   对不看键盘的用户等于**没有关闭手段** —— 这是可见性缺陷，不是审美偏好。
-     *   要纯"确认框"形态（两个按钮、没有 X）就显式 `->closeIcon(false)`。
-     * ★ 它服从 `dismissible`：见类注释。两个都为真才画。
+     * 默认 true：只能靠 ESC / 点遮罩关掉的对话框，对不看键盘的用户等于没有
+     * 关闭手段。要纯"确认框"形态（两个按钮、没有 X）就显式 `->closeIcon(false)`。
+     * 它服从 `dismissible`：两者都为真才画。
      */
     private bool $closeIcon = true;
 
     /**
      * 关闭按钮的处理器（框架注入；`null` = 没有 ⇒ 不画按钮）。
      *
-     * ★ 为什么是"注入"而不是"Modal 自己调 closeModal"：`Widget` 层不认识
-     *   `Drift\App`（§4.3）。与 `SnackbarPanel::make()` 的第二个参数同源。
-     * ★ 为什么**不走 `mutate()`**：同一个 `Modal` 实例可以被 `showModal()`
-     *   开两次，第二次时它已 seal ⇒ 走 `mutate()` 会当场抛。注入是框架的
-     *   内部动作（"这次显示接哪根线"），不是用户改样式。
+     * 同一 `Modal` 实例可被 `showModal()` 开两次，第二次已 seal，故不走
+     * `mutate()`（会当场抛）。与 `SnackbarPanel::make()` 的第二个参数同源。
      */
     private ?\Closure $onClose = null;
 
     public function __construct()
     {
         parent::__construct();
-        // §9 无障碍：模态 = 对话框角色（可访问名 = `title()` 给的标题）
+        // 无障碍：模态 = 对话框角色（可访问名 = `title()` 给的标题）
         $this->semantics(SemanticsRole::Dialog);
     }
 
@@ -118,7 +79,9 @@ final class Modal extends StatelessWidget
     /**
      * 能否被"用户动作"关掉（ESC / 点遮罩）。
      *
-     * ★ **只管这两条**：`closeModal()` 永远有效（应用自己关不受此限）。
+     * ★ `dismissible=false` 是"拒绝"：ESC 与遮罩点击被吞掉且模态不关，不能
+     *   穿透到全局快捷键（否则"必须处理的对话框"会被加速键绕过）。`closeModal()`
+     *   永远有效，不受此限。
      */
     public function dismissible(bool $value = true): static
     {
@@ -208,11 +171,6 @@ final class Modal extends StatelessWidget
 
     /**
      * 标题行：左标题 + 右关闭按钮（有按钮时）。
-     *
-     * ★ 为什么是 `Row` 而不是把 `IconButton` 并进 Column：Column 的交叉轴是
-     *   `Stretch` 语义之外靠内容宽 —— 按钮会掉到标题**下面**去。Row 里
-     *   `Spacer` 把按钮推到行尾，标题仍是行首，一行搞定。
-     * ★ 按钮用 `Flat` 变体：标题区不该再出现第二个实心块。
      */
     private function buildTitleRow(): Widget
     {

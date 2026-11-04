@@ -13,22 +13,10 @@ use Drift\Rendering\Gradient;
 use Drift\Rendering\Modifier;
 
 /**
- * `Widget` 的**修饰面**：27 个 fluent setter，全部写同一个 `$this->mods`。
+ * `Widget` 的修饰面：27 个 fluent setter，全部写同一个 `$this->mods`。
  *
- * | 组 | 方法 |
- * |---|---|
- * | 内边距 / 尺寸 | `padding` `paddingAll` `paddingOnly` `boxSize` `width` `height` `aspect` |
- * | 绘制 | `background` `border` `radius` `shadow` `gradient` |
- * | 合成 / 裁剪 / 变换 | `opacity` `translate` `clip` `repaintBoundary` `transform` `rotate` `scale` `disabled` |
- * | 对齐 | `alignContent` `centerContent`（后者是 `Alignment::center()` 的糖） |
- * | 主轴意图 | `grow` `shrink` `basis` `alignSelf` |
- * | 层叠意图 | `positioned`（`Stack` 定位） |
- *
- * ★ **这些方法子类通常不该覆写**（它们是"给任意控件贴一层"的统一入口）。
- *   例外是自带样式体系的 `BoxWidget` 子类：它们覆写同名方法写自己的 `BoxStyle`
- *   —— 那条边界（`Modifier` vs `BoxStyle`）是已知的双轨制，见
- *   `docs/REVIEW-2026-10-28.md` §1.2 L2。
- * ★ 字段 `$mods` 与读侧 `mods()` 留在 `Widget`：`Element::syncBox()` 只认那一个引用。
+ * 子类通常不该覆写这些方法（它们是"给任意控件贴一层"的统一入口）；
+ * 字段 `$mods` 与读侧 `mods()` 留在 `Widget`（`Element::syncBox()` 只认那一个引用）。
  *
  * @internal 与 `Widget` 同生共死；应用只看 `Widget` 的方法列表
  */
@@ -37,27 +25,9 @@ trait WidgetModifiers
     /**
      * 四边等距内边距。
      *
-     * ```php
-     * Text::make('hi')->paddingAll(8.0)          // 简写
-     * $x->padding(EdgeInsets::symmetric(12.0, 8.0));
-     * ```
-     *
-     * ★ 收 `EdgeInsets` 而不是 `float`：`padding(EdgeInsets)` 在 `Flex` /
-     *   `LazyColumn` / `PopupPanel` / `Padding` 上**已经存在**且被
-     *   `apps/` 里十几处调用。基类收 `float` 会让那些子类变成"不兼容覆写"
-     *   ⇒ 整个 `src/` 装载不起来。等距用法由 `paddingAll()` 覆盖。
-     *   ★ `Card` **不再**在这张名单里（2026-10-31）：它以前覆写 `padding()` 写自己
-     *     的字段，现在走这一份 `$mods` —— 覆写 `padding()` 的只剩"要拿它参与排布
-     *     数学"的容器（见下条）。
-     *
-     * ★★ **`padding` 是唯一一个"不该统一"的修饰**（S1 的边界，2026-10-28）。
-     *   这一份写 `$mods`，由 `RenderBox::layout()` 的 ②⑤ 统一施加。
-     *   但容器类（`Flex` / `LazyList` / `LazyGrid` / `PopupPanel`）**刻意覆写它**
-     *   写自己的字段 —— 因为它们要拿 padding **参与排布数学**（`RenderFlex` 在
-     *   `deflate()` 之后直接用 `padding->left` 算 pen，`LazyGrid` 把它转给内部
-     *   `Column`）。塞回 `$mods` 会让 ②⑤ 也做一次 ⇒ **双份内距**，且不报错。
-     *   ⇒ 判据：**"盒怎么让位"→ `$mods`；"布局算法怎么用这个数"→ 自己字段**。
-     *   背景/边框/圆角没有这个二义性（渲染层只画一次），所以它们统一到了 `$mods`。
+     * ★ `padding` 是唯一"不该统一"的修饰：容器类刻意覆写它写自己的字段来拿
+     *   padding 参与排布数学；塞回 `$mods` 会让布局再施加一次 ⇒ 双份内距且不报错。
+     *   判据："盒怎么让位"→ `$mods`；"布局算法怎么用这个数"→ 自己字段。
      *
      * @api
      */
@@ -116,11 +86,7 @@ trait WidgetModifiers
     }
 
     /**
-     * 定尺寸（`SizedBox` 的字段形态）：给了的那一轴**钉死**，`null` = 该轴透传。
-     *
-     * ★ 叫 `boxSize` 而不是 `size`：`Text::size()` 是字号、`SizedBox::size()` 是
-     *   两个必选参数 —— 两个都不兼容，基类叫 `size()` 会让它们变成非法覆写。
-     *
+     * 定尺寸（`SizedBox` 的字段形态）：给了的那一轴钉死，`null` = 该轴透传。
      * @api
      */
     public function boxSize(?float $width = null, ?float $height = null): static
@@ -161,16 +127,9 @@ trait WidgetModifiers
 
     /**
      * 宽高比（宽 ÷ 高）—— `AspectRatio` 的字段形态，任意控件可用。
-     *
-     * ```php
-     * Image::make('cover.png')->aspect(16 / 9);   // 宽随父容器，高按比例
-     * ```
-     *
-     * ★ **显式尺寸优先**：`->width(320)->aspect(16 / 9)` ⇒ 高 = 320 ÷ (16/9)。
-     *   两轴都显式给了 ⇒ 比例没有自由度（`tighten()` 只把两轴变紧，不再解比例）。
-     * ★ 至少一轴有界才生效；两轴都无界时比例给不出绝对尺寸（保持原约束）。
-     * ★★ **AOT 下写 `16.0 / 9.0`，不要写 `16 / 9`**：后者在 tpc 生成的 C++ 里是
-     *   **整数除法**（= 1），而解释器里是 1.7778 ⇒ 真机悄悄变成 1:1（2026-10-24 实测）。
+     * ★ AOT 下写 `16.0 / 9.0` 不要写 `16 / 9`：后者在 tpc 生成的 C++ 里是
+     *   整数除法（= 1），解释器里是 1.7778 ⇒ 真机悄悄变成 1:1。
+     * @api
      */
     public function aspect(float $ratio): static
     {
@@ -190,11 +149,6 @@ trait WidgetModifiers
 
     /**
      * 底色。
-     *
-     * ★ `BoxWidget` 的子类（`Button` / `PopupPanel` / …）覆写了本方法、写进
-     *   `BoxStyle` —— 那是控件自带的整套样式，与 `mods` 的"贴一层装饰"是两件事，
-     *   刻意不合并。
-     *
      * @api
      */
     public function background(Color $color): static
@@ -206,19 +160,8 @@ trait WidgetModifiers
     }
 
     /**
-     * 底色换成一个**渐变**（盒内比例的形态，不需要知道盒多大）。
-     *
-     * ```php
-     * Card::make($body)->gradient(Gradient::vertical([Color::white(), $shade]))
-     * Button::primary('保存')->gradient(Gradient::horizontal([$a, $b]))
-     * ```
-     *
-     * ★ **渐变赢**：与 `->background($c)` 同时声明时画的是渐变；`->gradient(null)`
-     *   清掉它，实色才算数（`withGradient(null)` 在 `Modifier` 侧叫 `withoutGradient`）。
-     * ★ 坐标是 `0..1` 的比例 —— `Gradient::linear(20,20,180,20,...)` 那种**绝对坐标**
-     *   的渐变照样能传（`resolvedTo()` 会原样放行），但那样就要求你知道盒尺寸，
-     *   一般只有在自定义 `CustomPainter` 里才这么写。
-     *
+     * 底色换成一个渐变（盒内比例的形态，不需要知道盒多大）。
+     * 与 `->background($c)` 同时声明时画渐变；`->gradient(null)` 清掉它，实色才算数。
      * @api
      */
     public function gradient(?Gradient $gradient): static
@@ -240,19 +183,8 @@ trait WidgetModifiers
     }
 
     /**
-     * 边框改**虚线**（`null` = 回到实线）。
-     *
-     * ```php
-     * Container::make($body)
-     *     ->border(Color::hex('#CCCCCC'), 2.0)
-     *     ->borderDash(new DashPattern(6.0, 4.0))     // 6 实 / 4 空
-     *     ->radius(12.0);
-     * ```
-     *
-     * ★ **只改图案**：颜色与宽度归 `border()`。没声明 `border()` 时它什么也不做
-     *   （虚线是描边的属性，不是独立的一层）。
-     * ★ 长度单位是**逻辑像素**，与 `border()` 的宽度同口径（不乘 dpr）。
-     *
+     * 边框改虚线（`null` = 回到实线）。
+     * 只改图案：颜色与宽度归 `border()`；没声明 `border()` 时它什么也不做。
      * @api
      */
     public function borderDash(?DashPattern $dash): static
@@ -273,12 +205,8 @@ trait WidgetModifiers
 
     /**
      * 柔和投影（`$alpha` = 黑色浓度，`0.0` = 不画；档位见 `Elevation`）。
-     *
-     * ★ 参数是**浓度**不是像素高度：模糊与下移由渲染层按浓度等比推出
-     *   （`Modifier::paintBehind()`）—— 一个数控制"浮起多少"。
-     * ★ 阴影画在**盒外** ⇒ 父布局不会为它留白，块之间要留 ≥ 4px 间距，
-     *   否则邻块底色会盖掉它。
-     *
+     * 参数是浓度不是像素高度，模糊与下移由渲染层按浓度等比推出。
+     * 阴影画在盒外 ⇒ 父布局不留白，块间留 ≥ 4px 否则邻块底色盖掉它。
      * @api
      */
     public function shadow(float $alpha): static
@@ -291,11 +219,8 @@ trait WidgetModifiers
 
     /**
      * 不透明度（`1.0` = 不透明）。
-     *
-     * ★ 这是**声明值**：`RenderBox::setMods()` 读一次去初始化盒上的合成参数，
-     *   此后动画走 `RenderBox::setCompose()` 直接写盒、不重建不重排。
-     *   rebuild 之后回到这里声明的值（结构变了，动画中间态就不该继续顶着）。
-     *
+     * 声明值：`RenderBox::setMods()` 读一次初始化合成参数，动画走 `RenderBox::setCompose()`
+     * 直接写盒；rebuild 后回到这里声明的值。
      * @api
      */
     public function opacity(float $value): static
@@ -313,7 +238,6 @@ trait WidgetModifiers
 
     /**
      * 绘制期平移（不开层、不重排）—— 合成维，与 `opacity()` 同一组。
-     *
      * @api
      */
     public function translate(float $dx, float $dy): static
@@ -325,38 +249,9 @@ trait WidgetModifiers
     }
 
     /**
-     * 禁用：**不接指针、不进 Tab 序、不进可聚焦表、语义 `enabled=false`、置灰**。
-     *
-     * ```php
-     * Button::make('提交')->onPressed($this->submit)->disabled($this->busy);
-     * ```
-     *
-     * ## 一个声明、四处消费（这是它住修饰符而不是控件字段的理由）
-     *
-     * | 消费方 | 位置 | 表现 |
-     * |---|---|---|
-     * | 命中测试 | `RenderBox::hitTest()` | 早退 `null` ⇒ 由**父容器**接住（`hitTest()` 的第 ③ 条规则）⇒ 事件被吞、不穿透到后面的兄弟 |
-     * | 焦点 | `FocusManager::walk()` | 子树既不进 `order`（Tab 序）也不进 `byId`（可聚焦表）；正在聚焦的元素被禁用 ⇒ 下一次 `collect()` 自动失焦 |
-     * | 无障碍 | `SemanticsBuilder` | `enabled = semanticsEnabled() && !disabled` ⇒ UIA `IsEnabled=false`（读屏会念"不可用"，客户端 `Invoke` 前自己就拦） |
-     * | 绘制 | `RenderBox::setMods()` | 合成 alpha 乘 `DISABLED_ALPHA`（`pushLayer`，整棵子树一起变淡） |
-     *
-     * ## 与 `skipFocus()` 的分工（两者都会动 Tab 序，**不能互相替代**）
-     *
-     * - `skipFocus()`：**只**把子树移出 Tab 序，**仍然点得动**。给"工具组整体不该被 Tab 遍历到"
-     *   这种**导航意图**用（`TreeView` 的行箭头、`AppBar` 的按钮组）。
-     * - `disabled()`：连"点得动"一起取消，并改变语义与外观。给**业务状态**用
-     *   （表单校验没过、无权限、提交中、`DatePicker` 的 `min/max` 之外的日期）。
-     *
-     * ## 有意边界
-     *
-     * - **不禁用"已经开始的交互"**：一条正在拖的 `Slider` 中途被禁用，拖动会继续到松手
-     *   （框架没有"中断进行中的手势"的原语）。要更严格得等手势里引入取消路径。
-     * - **置灰是统一 alpha，不是逐控件换色**：`ColorToken` 至今没有 `disabled` 槽，
-     *   给 20 个控件各画一套灰底灰字会把这个契约拖成"每加控件改一遍"。真要精细外观，
-     *   先加 token 槽，再由各控件的 `paintContent()` 自己取 —— 那是 v2。
-     * - **不做 `readOnly`**：只读（能选中、能复制、不接受编辑）与禁用是两种状态，
-     *   `TextField` 需要前者时应该单开一个修饰，而不是把 `disabled` 掰成两半。
-     *
+     * 禁用：不接指针、不进 Tab 序、不进可聚焦表、语义 `enabled=false`、置灰。
+     * 一个声明、四处消费：命中测试早退、焦点跳过、语义 `IsEnabled=false`、绘制乘 `DISABLED_ALPHA`。
+     * 与 `skipFocus()` 分工：后者只移出 Tab 序仍点得动，本方法连"点得动"一起取消。
      * @api
      */
     public function disabled(bool $on = true): static
@@ -368,13 +263,9 @@ trait WidgetModifiers
     }
 
     /**
-     * 把**内容**裁到盒矩形（含内边距）。`clip(false)` 可显式关掉。
-     *
-     * ★ 与容器声明 `->overflow(Overflow::Clip)` 的分工：`Overflow` 管**布局期**
-     *   "放不下时报错还是夹住"，`clip()` 管**绘制期**"画的时候裁掉"。会超的容器
-     *   两者都要 —— 只声明 `Overflow::Clip` 只是"不报错"，内容仍然画到盒外。
-     * ★ 装饰（背景 / 边框 / 圆角 / 阴影）**不**被裁：阴影本来就在盒外。
-     *
+     * 把内容裁到盒矩形（含内边距）。`clip(false)` 可显式关掉。
+     * 与容器 `->overflow(Overflow::Clip)` 分工：前者管布局期"放不下报错还是夹住"，
+     * `clip()` 管绘制期"画时裁掉"；会超的容器两者都要。装饰（背景 / 边框 / 圆角 / 阴影）不被裁。
      * @api
      */
     public function clip(bool $on = true): static
@@ -386,12 +277,8 @@ trait WidgetModifiers
     }
 
     /**
-     * 声明本盒为**重绘边界**：内容没变时只重放上次录下的绘制命令，跳过整棵子树的 `paint()`。
-     *
-     * ★ 只给**粗粒度**子树开：滚动容器内容区、`LazyColumn` 的行、`Table` 的行区。
-     *   给小盒（每个文本一层）开是负收益 —— 每帧录一条命令比直接画还慢。
-     * ★ 开了不等于一定更快：内容常变的盒会每次录 + 每次放，比不缓存多一份命令数组。
-     *
+     * 声明本盒为重绘边界：内容没变时只重放上次录下的绘制命令，跳过整棵子树的 `paint()`。
+     * 只给粗粒度子树开（滚动内容区、LazyColumn 行、Table 行区）；给小盒开是负收益。
      * @api
      */
     public function repaintBoundary(bool $on = true): static
@@ -403,19 +290,8 @@ trait WidgetModifiers
     }
 
     /**
-     * 把**内容**在本盒内按锚点摆放（`Align` / `Stack` 的字段形态）。
-     *
-     * ```php
-     * SizedBox::make(200.0, 120.0)->alignContent(Alignment::bottomRight())
-     * ```
-     *
-     * ★ 与 `alignSelf()` 不是一件事：`alignSelf` 只在 `RenderFlex` 里被消费
-     *   （没有 Flex 父就是死字段），而本修饰**任何盒**都消费（基类 `layout()` 的 ③⑦ 步）。
-     * ★ 与 `Stack::alignment()` 是**同一个类型**（`Alignment`）：`Stack` 用它排非定位子，
-     *   本修饰用它排**直接子盒**。`StackAlign` 那个九宫格枚举已退役（2026-10-29）。
-     * ★ 叫 `alignContent` 而不是 `align`：`TableColumn::align(TextAlign)` 已占该名，
-     *   且与 `alignSelf`（单轴、仅 Flex）在语义上必须能一眼分开。
-     *
+     * 把内容在本盒内按锚点摆放（`Align` / `Stack` 的字段形态）。
+     * 与 `alignSelf()` 不同：`alignSelf` 只在 `RenderFlex` 消费（无 Flex 父是死字段），本修饰任何盒都消费。
      * @api
      */
     public function alignContent(Alignment $alignment): static
@@ -427,18 +303,14 @@ trait WidgetModifiers
     }
 
     /**
-     * 把**内容**在本盒内居中（`Alignment::center()` 的糖，保留是为了既有代码不破）。
-     *
-     * ★ 叫 `centerContent` 而不是 `center`：`Dock::center(Widget)` 是五区槽位。
-     *
+     * 把内容在本盒内居中（`Alignment::center()` 的糖）。
      * @api
      */
     public function centerContent(bool $on = true): static
     {
         $this->mutate();
-        // ★ `false` 是**撤掉声明**（`null`），不是"钉到起点" —— 要钉起点用
-        //   `alignContent(Alignment::topLeft())`。两者在布局上不等价：未声明时
-        //   基类不碰子盒偏移，钉起点时也只是加 0，但语义上"要不要对齐"是两回事。
+        // `false` 是撤掉声明（`null`），不是"钉到起点" —— 要钉起点用
+        //   `alignContent(Alignment::topLeft())`。
         $this->mods = $this->mods->withContentAlign($on ? Alignment::center() : null);
 
         return $this;
@@ -446,10 +318,6 @@ trait WidgetModifiers
 
     /**
      * 主轴放大份额（`Expanded` 的字段形态）。
-     *
-     * ★ `RenderFlex` 读的是盒上的 `grow()`，`Element::syncBox()` 把这里声明的值
-     *   递过去 —— 所以 `Expanded::make($x)->child()` 只是 `$x->grow(1)`。
-     *
      * @api
      */
     public function grow(int $weight): static
@@ -467,13 +335,9 @@ trait WidgetModifiers
 
     /**
      * 主轴压缩份额（`Flexible` 的字段形态）。
-     *
-     * 空间不够时按 `shrink × 起始尺寸` 加权压缩（`04` §3.2，≤3 轮冻结迭代）。
-     *
-     * ★ **下限是 0，没有保底**（`04` §3.4）：被压到 0 的控件内容不可见，但
-     *   **不报错**。今天也没有"设 `width` 就压不动"这回事 —— `Modifier::tighten()`
-     *   是把 `width` 夹进父给的区间，紧约束 `(0, 0)` 会把 `width` 一起夹成 0。
-     *   要真正的下限得等 `min-content`，而它需要文本的最小宽度（今天没有）。
+     * 空间不够按 `shrink × 起始尺寸` 加权压缩。下限是 0 无保底：被压到 0 不报错；
+     * `width` 也压不动（`tighten()` 把 `width` 夹进父区间，紧约束一起夹成 0）。
+     * @api
      */
     public function shrink(int $weight): static
     {
@@ -498,27 +362,10 @@ trait WidgetModifiers
     }
 
     /**
-     * 声明本控件在**层叠父容器**（`Stack`）里的位置（A4，2026-10-28）。
-     *
-     * ```php
-     * Stack::make()->children([
-     *     $photo,
-     *     Text::make('NEW')->positioned(right: 8.0, top: 8.0),   // 右上角标
-     * ]);
-     * ```
-     *
-     * ★ `null` = 该边不声明（不是 0）：
-     *   · 声明**一条** ⇒ 贴那边（`right: 8` = 距右 8，尺寸仍由内容定）；
-     *   · 声明**两条对边** ⇒ 那一轴被**拉伸**（`left: 0, right: 0` = 铺满整层）；
-     *   · 没声明的轴按 `Stack::alignment()`。
-     *
-     * ★ **只有 `Stack` 读它**（与 `alignSelf()` 只有 `Row`/`Column` 读同款）。
-     *   父不是 `Stack` ⇒ 这四条边是死字段、**不报错** —— 这条账记在
-     *   `RenderBox` 的 `$insetLeft` 上，由 `ParentIntentTest` 盯着别再扩族。
-     *
-     * ★ 定位子**不撑大 `Stack`**（`RenderStack::layoutPositioned()` 的注）：全是
-     *   定位子的 `Stack` 尺寸是 0 ⇒ 那种写法要自己套 `SizedBox`。
-     *
+     * 声明本控件在层叠父容器（`Stack`）里的位置。
+     * ★ 只有 `Stack` 读它：父不是 `Stack` ⇒ 四条边是死字段、不报错。
+     * `null` = 该边不声明（不是 0）：声明一条 ⇒ 贴那边；两条对边 ⇒ 该轴拉伸；
+     * 没声明的轴按 `Stack::alignment()`。定位子不撑大 `Stack`（全定位子的 `Stack` 尺寸 0，要自己套 `SizedBox`）。
      * @api
      */
     public function positioned(
@@ -549,7 +396,6 @@ trait WidgetModifiers
 
     /**
      * 交叉轴自对齐（覆盖父容器的 `crossAlign`）。
-     *
      * @param int $align `RenderBox::ALIGN_INHERIT` / `ALIGN_START` / `ALIGN_CENTER`
      *                   / `ALIGN_END` / `ALIGN_STRETCH`
      */
@@ -562,21 +408,9 @@ trait WidgetModifiers
     }
 
     /**
-     * 绘制期**仿射变换**（A1c）：不参与布局，只改画出来的样子。
-     *
-     * ```php
-     * Card::make($content)->rotate(3.0);                 // 轻微倾斜（绕中心）
-     * Image::make(...)->scale(1.08);                     // hover 放大（绕中心）
-     * Banner::make(...)->transform(Matrix2D::rotation(90.0));
-     * ```
-     *
-     * ★ **不影响布局**：子照原约束布局，盒尺寸不变 ⇒ 放大后视觉会溢出到邻居身上
-     *   （标准语义，与 Flutter 的 `Transform` 一致）。要"占位也跟着变"，就改尺寸
-     *   而不是改变换。
-     * ★ **命中测试跟着变换**（`RenderBox::hitTest()` 反变换）：点在变换后的可见
-     *   位置才命中，点在原位不命中。这一条由 `TransformHitTestTest` 双向钉住。
-     * ★ `$aroundCenter` 为真 ⇒ 以**盒中心**为原点（`rotate()` / `scale()` 走这条）。
-     *
+     * 绘制期仿射变换：不参与布局，只改画出来的样子。
+     * 不影响布局 ⇒ 放大后视觉溢出到邻居；命中测试跟着变换（`RenderBox::hitTest()` 反变换）：
+     * 点在变换后可见位置才命中。`$aroundCenter` 为真 ⇒ 以盒中心为原点。
      * @api
      */
     public function transform(Matrix2D $matrix, bool $aroundCenter = false): static
@@ -588,11 +422,7 @@ trait WidgetModifiers
     }
 
     /**
-     * 绕**盒中心**旋转 `$degrees` 度（顺时针为正，与 Skia / CSS 同向）。
-     *
-     * ★ 绕中心是 UI 里 99% 的用法（"图标歪一点"、"卡片掀一下"）。绕左上角那种
-     *   需要自己拼矩阵：`->transform(Matrix2D::rotation(3.0))`。
-     *
+     * 绕盒中心旋转 `$degrees` 度（顺时针为正，与 Skia / CSS 同向）。
      * @api
      */
     public function rotate(float $degrees): static
@@ -601,12 +431,7 @@ trait WidgetModifiers
     }
 
     /**
-     * 绕**盒中心**等比缩放（1.0 = 不变；`-1` 之类负值会镜像，不拦）。
-     *
-     * ★ 非等比缩放走 `->transform(Matrix2D::scaling(sx, sy), true)`：两个参数
-     *   版本会让 `WidgetModifiers` 多一个"第二参默认等于第一参"的可空分支，
-     *   而 AOT 下可空 float 形参会退化成 Variant（`MEMORY.md` 的 AOT 纪律）。
-     *
+     * 绕盒中心等比缩放（1.0 = 不变；负值会镜像，不拦）。
      * @api
      */
     public function scale(float $factor): static

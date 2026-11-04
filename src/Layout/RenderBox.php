@@ -13,16 +13,10 @@ use Drift\Rendering\LayerCache;
 use Drift\Rendering\Modifier;
 
 /**
- * 参与盒布局的渲染对象（§13.1）。
+ * 参与盒布局的渲染对象：`layout()` 约束 → 尺寸 + 子节点相对位置，`paint()` 以本盒原点绘制。
  *
- * ```
- * layout(BoxConstraints): Size   // 纯函数：约束 → 尺寸 + 子节点相对位置
- * paint(Canvas): void            // 父级已 translate 到本盒原点
- * ```
- *
- * ★ **`layout()` 是 `final`**：约束检查（C6）只该有一处。子类实现
- *   `performLayout()`，返回约束内的尺寸 —— 违反的话 `layout()` 立刻响亮失败，
- *   不会安静地画到盒外去。
+ * ★ **`layout()` 是 `final`**：约束检查（C6）只该有一处。子类实现 `performLayout()`，
+ *   返回约束内的尺寸 —— 违反的话 `layout()` 立刻响亮失败，不会安静地画到盒外去。
  *
  * @api
  */
@@ -32,45 +26,26 @@ abstract class RenderBox extends RenderObject
     protected float $offsetX = 0.0;
     protected float $offsetY = 0.0;
 
-    // ── 浮层基准偏移（arch-v2 `01` §4.4，W3）──────────────────────────
-    // ★ `hasBase=true` ⇒ 本盒是某棵**浮层树的根**：`absoluteOrigin()` 累加到它为止，
-    //   加上自己的落点就停。没有它，嵌套浮层里的锚点只算到浮层根 (0,0)，
-    //   子菜单会弹到左上角。
-    // ★ `hasBase` 用独立 bool 而不是 "baseX !== 0"：浮层原点可能就是 (0,0)（模态）。
+    // 浮层树的根：`absoluteOrigin()` 累加到它为止再加落点。没有它，嵌套浮层里的锚点
+    // 只算到浮层根 (0,0)。★ 用独立 bool 而非 "baseX !== 0"：浮层原点可能就是 (0,0)。
     protected float $baseX = 0.0;
     protected float $baseY = 0.0;
     protected bool $hasBase = false;
 
-    // ── 修饰字段（arch-v2 `02` §11，W5）────────────────────────────
-    // ★ **可空**，与 `?Size $size` 同形：smoke 里有十几个夹具直接
-    //   `new SolidBox(...)` 造盒、不经 `Element::syncBox()` ⇒ 非空初始化会让它们
-    //   全 Fatal。`?Obj` 的 `Var` 代价 = 每盒每帧一次读，与已判"不做"的
-    //   `toObject`（0.5–1%）同阶。
-    // ★ 这是**派生**字段（由 Widget 的声明递下来），不是盒自己的状态 ⇒ 与
-    //   `composeOpacity` 那组"每帧都在变的动画量"是两件事。
+    // 修饰声明（由 Widget 递下来），**可空**：测试夹具直接 new 盒、不经 `syncBox()`。
+    // ★ 派生字段，与 `composeOpacity` 那组每帧在变的动画量是两件事。
     private ?Modifier $mods = null;
 
     /**
      * 收下 Widget 的修饰声明（`Element::syncBox()` 唯一调用点）。
-     *
-     * 三件事，都是"把声明落到盒的字段上"：
-     * ① 存引用（布局 / 绘制期读它）
-     * ② 合成维**初值** —— 此后动画走 `setCompose()` 直接写盒，rebuild 后回到
-     *    这里声明的值（`05` §10 #9）
-     * ③ **弹性意图**（M2-4 起）—— `RenderFlexible` 已删，`mods.grow` 是份额的
-     *    唯一来源。★ M2-1 时这一步必须缺席（那时份额还住在 `RenderFlexible` 的
-     *    构造器里，按 mods 默认值再写一次会清零、`Expanded` 全失效且不报错）；
-     *    `RenderFlexible` 删掉之后才轮到它。
+     * 合成维**初值**在这里落定；此后动画走 `setCompose()` 直接写盒，rebuild 后回到声明值。
      */
     public function setMods(Modifier $mods): void
     {
         $this->mods = $mods;
 
-        // ★ 禁用把置灰**折进**合成 alpha，而不是各控件自己调色：`paintComposed()`
-        //   在 `opacity < 1` 时已经开层（`pushLayer`）⇒ 整棵子树一起变淡，零新增绘制代码。
-        //   与显式 `->opacity()` 是**乘算**：`opacity(0.5)->disabled()` = 0.19，符合直觉。
-        // ★ `dim = false` = 控件自己画禁用外观（`paintsDisabledLook()`）⇒ 不再乘，
-        //   否则"换灰"再叠 alpha 会二次衰减。
+        // ★ 禁用把置灰**折进**合成 alpha：`paintComposed()` 在 `opacity < 1` 时已开层，
+        //   整棵子树一起变淡。`dim = false` 的控件自绘禁用外观，不再乘以免二次衰减。
         $this->disabled = $mods->disabled();
         $dim = $this->disabled && $mods->dimsWhenDisabled();
         $this->applyCompose(
@@ -93,11 +68,8 @@ abstract class RenderBox extends RenderObject
     }
 
     /**
-     * 本盒（及其子树）是否被禁用。
-     *
-     * ★ 读的是 `setMods()` 折下来的字段，不是 `mods()->disabled()`（理由见字段注）。
-     * ★ 没有修饰的盒（`mods === null`）⇒ `false`：**"没声明" 与 "声明了可用"
-     *   行为相同**，这是所有修饰符的既有口径（`padding` 缺省 0、`opacity` 缺省 1）。
+     * ★ 读的是 `setMods()` 折下来的字段，不是 `mods()->disabled()`：`hitTest()` 逐盒调用。
+     * ★ `mods === null` ⇒ `false`："没声明" 与 "声明了可用" 行为相同。
      */
     public function isDisabled(): bool
     {
@@ -105,17 +77,11 @@ abstract class RenderBox extends RenderObject
     }
 
     /**
-     * 内容盒原点在**本盒坐标系**里的偏移（arch-v2 `02` §4.1.1，W5）。
+     * 内容盒原点在**本盒坐标系**里的偏移。
      *
-     * ★ 子盒的 `offsetX/Y` 住**内容盒坐标**，所以"内容盒坐标 → 边框盒坐标"这一步
-     *   必须有人补。补的地方只有两处，且都不是热路径：
-     *   · 绘制 —— `paint()` 的 `translate(padLeft, padTop)`（画布自己带着走）
-     *   · 几何 —— `hitTest()` 与 `absoluteOrigin()` 调本方法
-     *   ⇒ `performLayout()` / `paintContent()` 因此**一行都不用改**：它们本来就
-     *   以内容盒原点起算（19 个容器的 `setOffset` 已逐点核对）。
-     *
-     * ★ 返回 `float` 而不是 `?EdgeInsets`：AOT 下 `?Obj` 会被推成 `php::Var`，
-     *   而这两个值每帧被 `hitTest` 读 ⇒ 退化代价直接落在命中测试上。
+     * ★ 子盒 offset 住**内容盒坐标** ⇒ 换算必须在绘制（`paint()` 的 `translate`）与几何
+     *   （`hitTest()` / `absoluteOrigin()`）各补一次、绝不重叠：都补 = 重复平移（画得对、点得偏）。
+     * ★ 返回 `float` 而非 `?EdgeInsets`：AOT 下 `?Obj` 推成 `php::Var`，代价落在每帧命中测试上。
      */
     public function contentOriginX(): float
     {
@@ -140,24 +106,14 @@ abstract class RenderBox extends RenderObject
         return $m->padTop();
     }
 
-    // ── 主轴弹性意图（§13.1 C4 扩展；`04` §2）──────────────────────
-    // ★ 住 `RenderBox` 而不是"一个代理盒"：`RenderFlex` 本来就读 `$kid->flex()`，
-    //   四个意图放同一层 ⇒ `Expanded` / `Spacer` 的份额改由 `mods.grow` 声明之后，
-    //   代理盒（`RenderFlexible`，M2-4 已删）就没有存在理由了。
-    // ★ **NAN = 未设**：`basis` 的"未设"（用自然尺寸）与"设为 0"必须是两件事，
-    //   同 `02` §3.2 的 `width` 判据。
+    // 主轴弹性意图（`RenderFlex` 读）。**NAN = 未设**：`basis` 的"未设"与"设为 0"是两件事。
     private int $grow = 0;        // 0 = 不参与放大
     private int $shrink = 0;      // 0 = 不参与压缩
     private float $basis = \NAN;  // NAN = 用自然尺寸
     private int $alignSelf = self::ALIGN_INHERIT;
 
-    // ── 层叠定位意图（A4，2026-10-28；`RenderStack` 读）─────────────
-    // ★ 与上面四个**同族**：都是"子给父容器的布局意图"，只有对应的那个父
-    //   （`RenderFlex` / `RenderStack`）会读 ⇒ 没有那个父就是死字段、不报错。
-    //   ★ 这份"认账"由 `ParentIntentTest` 盯着：本族字段数超过上限就红，
-    //     逼出独立的 `ParentData` 值对象，而不是无限加第 N 族。
-    // ★ 四条边独立、**NAN = 未声明**（不是 0）：`left(0)` 与"没说左边在哪"是两件事。
-    // ★ `setMods()` 是唯一写入点，与 `setFlexIntent()` 同形。
+    // 层叠定位意图（`RenderStack` 读）。**NAN = 未声明**（不是 0）：`left(0)` 与"没说
+    // 左边在哪"是两件事；没有对应的父容器就是死字段、不报错。
     private float $insetLeft = \NAN;
 
     private float $insetTop = \NAN;
@@ -166,12 +122,8 @@ abstract class RenderBox extends RenderObject
 
     private float $insetBottom = \NAN;
 
-    // ── 合成变换（A1c，2026-10-29）──────────────────────────────────
-    // ★ **绘制期**语义，与上面两族（父意图）无关：不进布局、不改约束、不改子盒尺寸。
-    //   布局照旧，只是画的时候整个子树被仿射一次 ⇒ 视觉会溢出（放大 2 倍盖到邻居），
-    //   这是标准语义（Flutter 的 `Transform` 亦然），不是缺陷。
-    // ★ 矩阵是**声明**，`layout` 之后才知道盒尺寸 ⇒ 绕中心的那份在
-    //   `effectiveTransform()` 里现算，不在字段里存算好的结果（尺寸变了要跟着变）。
+    // 合成变换：**绘制期**语义，不进布局、不改约束、不改子盒尺寸 ⇒ 视觉会溢出（放大 2 倍
+    // 盖到邻居），这是标准语义。★ 绕中心的那份在 `effectiveTransform()` 里现算。
     private ?Matrix2D $composeTransform = null;
 
     private bool $composeTransformCentered = false;
@@ -186,16 +138,6 @@ abstract class RenderBox extends RenderObject
         return $this->size !== null;
     }
 
-    // ★★ 这里原先住 5 个静态门面（`layoutEpoch` / `layoutCount` / `paintCount` /
-    //   `replayCount` / `markNeedsLayout`），全部一行转发到 `Pipeline`。2026-11-02
-    //   删掉（D3 收口）。带来的两个变化：
-    //     · 写点：`$this->pipeline()->bumpLayoutEpoch()` —— 只有一个名字，且如实
-    //       表达"往本帧的账本上记一笔"，不再伪装成"标记这个盒"。
-    //     · 读点：树外观察者（`Frame` / 测试 / 探针）写 `Pipeline::current()->…`。
-    //   ★ 各计数的存在理由（"滚动重排与不重排在画面上完全一样 ⇒ 只能计数证伪"，
-    //     以及 `layoutEpoch` 与 `paintEpoch` 为什么是两个号）已随字段搬到
-    //     `Pipeline` 的对应方法上 —— 那里是唯一需要读它的人会看到的地方。
-
     /** 父定位子（C1）：子不自定位，所以这两个只有父会写 */
     public function offsetX(): float
     {
@@ -208,15 +150,9 @@ abstract class RenderBox extends RenderObject
     }
 
     /**
-     * 改位置 ⇒ **必须标重绘**（2026-10-30，N1）。
-     *
-     * ★★ 为什么在这里而不是在调用方：位置是**本盒的字段**，而写它的地方有十几处
-     *   （19 个容器的 `setOffset`、滚动偏移的 `applyScrollOffsets`、`Flex` 的对齐
-     *   补差……）。让每个调用方记得标脏 = 将来新增一个容器就得记得一次，漏了
-     *   就是"位置变了但画面不动"（静默）。收口在这里，纪律变成结构。
-     * ★ 布局期被大量调用（每次容器布局、每个子盒一次）：两次 float 比较 + 一次
-     *   静态自增，相比 `layout()` 本身可以忽略。而布局期标脏**无害** —— `Frame`
-     *   在同一帧内消费掉它（layout 跑过 ⇒ 本来就要画）。
+     * 改位置 ⇒ **必须标重绘**。
+     * ★ 收口在本字段的写入点：调用方有十几处，让每个调用方记得标脏 ⇒ 漏一处就是
+     *   "位置变了但画面不动"（静默）。
      */
     protected function setOffset(float $x, float $y): void
     {
@@ -232,10 +168,7 @@ abstract class RenderBox extends RenderObject
 
     /**
      * 标记本盒是浮层树的根，并给它客户区落点（`Application::placeEntry()` 每帧写）。
-     *
-     * ★ 落点变了要**标重绘**（2026-10-30，N1）：浮层的位置是**在 `Frame::run` 之外**
-     *   算出来的（`OverlayLayout::placeOverlays()` 要锚点与客户区尺寸）⇒ 主树
-     *   既没重建也没换盒 ⇒ 不标就是"面板该跟着锚点挪、却停在原地"（静默）。
+     * ★ 落点是在 `Frame::run` 之外算出来的 ⇒ 不标重绘就是"面板该跟着锚点挪、却停在原地"。
      */
     public function setBase(float $x, float $y): void
     {
@@ -268,13 +201,9 @@ abstract class RenderBox extends RenderObject
     /**
      * 盒在客户区的**绝对原点**（沿父链累加相对偏移）—— 逻辑像素。
      *
-     * ★ 单一出处：命中测试 / IME 候选框 / 菜单锚点 / 语义几何全部走这里
-     *   （`Application::absoluteOrigin()` 已改为委派到本方法）。自己沿 Element 链
-     *   累加 `offset` 会**重复累加**（Element 不持有 offset，盒才持）。
-     * ★ **遇到浮层根（`hasBase`）就加上它的落点并停止**：嵌套浮层里的锚点若一路
-     *   累加到主树根，浮层根那一层会被算成 (0,0)（`01` §4.4 的真坑）。
-     * ★ 未参与本轮布局（`size() === null`）的盒照常累加 —— 调用方自己判
-     *   `hasSize()`；这里不做"部分布局"的特殊处理。
+     * ★ 单一出处：命中测试 / IME 候选框 / 菜单锚点 / 语义几何全部走这里；自己沿 Element
+     *   链累加 `offset` 会**重复累加**（Element 不持有 offset，盒才持）。
+     * ★ **遇到浮层根（`hasBase`）就加上落点并停止**；`size() === null` 的盒照常累加。
      *
      * @return array{0: float, 1: float} `[x, y]`
      */
@@ -294,7 +223,7 @@ abstract class RenderBox extends RenderObject
             }
 
             // ★ 子盒的 offset 是**内容盒**坐标 ⇒ 换成父的边框盒坐标要补父的内容原点。
-            //   浮层根（`hasBase`）已经 `break`，不补 —— 它的落点就是它的边框盒原点。
+            //   浮层根已 `break`，不补 —— 它的落点就是它的边框盒原点。
             $up = $node->parent();
             if ($up instanceof RenderBox) {
                 $x += $up->contentOriginX();
@@ -306,37 +235,14 @@ abstract class RenderBox extends RenderObject
     }
 
     /**
-     * 两阶段之一（§13.1）：约束 → 尺寸，**同时定位子节点**。
+     * 约束 → 尺寸，**同时定位子节点**；纯函数，不参与脏判定。
      *
-     * 纯函数（§14.1）：同样输入 ⇒ 同样输出。所以它**不参与**脏判定 —— 由调用方
-     * 决定何时重排（§13.3：Render 层全树重排）。
+     * 基类接管：`width`/`height` 修饰收紧约束 → padding 内缩（给子类**内容盒**约束）→
+     * `align` 松掉下界 → padding 加回并夹进父区间 → `align` 后置平移子盒。
      *
-     * ## 本方法接管了四件事（arch-v2 `02` §4.1，W5）
-     *
-     * | 步 | 做什么 | 为什么在基类 |
-     * |---|---|---|
-     * | ① | `width`/`height` 修饰 ⇒ 收紧约束 | "设了就变紧轴"只有一份语义 |
-     * | ② | padding 内缩 ⇒ 给子类的是**内容盒**约束 | 内缩只有一份实现 |
-     * | ③ | `align` ⇒ 松掉下界 | 对齐要子能缩 |
-     * | ⑤ | padding 加回 ⇒ 盒尺寸 | 与 ② 成对 |
-     * | ⑦ | `align` ⇒ 后置平移直接子盒 | 见下 |
-     *
-     * ★★ **子盒的 offset 住内容盒坐标**：`performLayout()` 收到的是内容盒约束，
-     *   容器把子摆在"内容盒原点"坐标系里 —— 这与它们原本的写法**完全一致**
-     *   （容器本来就从 `(0,0)` 起算）。⇒ **19 个 `performLayout` 一行都不用改，
-     *   它们的 `paintContent()` 也不用改。**
-     *
-     * ★★ 于是 `(padLeft, padTop)` 这一步由**两个不同的地方**各自补一次，绝不重叠：
-     *   · **绘制**：`paint()` 里 `save/translate(padLeft, padTop)/paintContent/restore`
-     *   · **几何**：`hitTest()` 与 `absoluteOrigin()` 走 `contentOriginX/Y()`
-     *   两边都补 = 重复平移（画得对、点得偏）；两边都不补 = padding 白设。
-     *   2026-10-22 曾把 padding 也写进第 ⑦ 步（子盒改住边框盒坐标），与 `paint()`
-     *   的 translate 撞成双重平移 —— 因为当时没有任何生产控件把 padding 写进
-     *   `mods`，四档验证全绿也发现不了。
-     *
-     * ★ **`setOffset()` 是 `protected`**：基类调子类的 protected 方法在 PHP 与 tpc
-     *   下都合法（同继承层级）。**不要**改成 `public` —— 那会破坏 C1「父定位子，
-     *   子不自定位」的可见性约束。
+     * ★★ `(padLeft, padTop)` 必须在绘制与几何两处**各补一次、绝不重叠**：都补 = 重复
+     *   平移（画得对、点得偏），都不补 = padding 白设。
+     * ★ `setOffset()` 保持 `protected`：改 `public` 会破坏「父定位子，子不自定位」。
      */
     final public function layout(BoxConstraints $constraints): Size
     {
@@ -356,10 +262,8 @@ abstract class RenderBox extends RenderObject
             $inner = $m->deflate($constraints);
         }
 
-        // ③ 对齐 ⇒ 松掉下界。不松的话 `Stretch` 的 Flex 里子会被拉满、对齐失效
-        //    （`RenderCenter` 原本就是给子 `loosen()`，这里复刻）。
-        // ★ 不用 `?->`：AOT 下 `?->` 会走跨实例查表、对本类字段也失效
-        //   （`MEMORY.md` 的 AOT 坑 ②）。拆成显式 null 判断。
+        // ③ 对齐 ⇒ 松掉下界，否则 `Stretch` 的 Flex 里子会被拉满、对齐失效。
+        // ★ 不用 `?->`：AOT 下 `?->` 会走跨实例查表、对本类字段也失效 ⇒ 拆成显式 null 判断。
         $align = null;
         if ($m !== null) {
             $align = $m->alignment();
@@ -373,26 +277,18 @@ abstract class RenderBox extends RenderObject
         $measured = $this->performLayout($inner);
         $content = $measured;   // ★ 内容尺寸：⑦ 的居中要它（⑤ 会把 `$measured` 换成盒尺寸）
 
-        // ⑤ padding 加回，**并且先夹进父给的区间**再交给 ⑥
-        // ★ 夹这一步不能省：内距比可用空间大时（`Padding::all(250)` 塞进 200 高的
-        //   槽）口径是"按可用空间算、静默裁剪"—— W5 之前 `RenderPadding` 返回的就是
-        //   `constrain(inflate(child))`。不夹 ⇒ 同一段代码从裁剪变成 C6 FATAL。
-        //   内容自己超出约束（`SolidBox(500)` 塞进 100 宽）仍然由 ⑥ 响亮报 ——
-        //   那才是 C6 要抓的东西。
+        // ⑤ padding 加回，**先夹进父给的区间**：内距比可用空间大时的口径是"静默裁剪"，
+        //   不夹就从裁剪变成 C6 FATAL（内容自己超约束仍由 ⑥ 报）。
         if ($padded) {
             $measured = $constraints->constrain($m->inflate($measured));
         }
 
         // ⑥ C6：**只有超出上界才算违反**——那意味着"我要画到盒外面去"。
-        // 下界提升不是违反：`tight()` 的语义就是父把尺寸定死了，`constrain()`
-        // 提下界是它的本职工作（Drift 的 Column 在紧约束下报"最宽子"而不是
-        // 硬宽，是正确的——父只是给了上限）。
+        // 下界提升不是违反：`constrain()` 提下界是它的本职工作。
         if ($measured->width > $constraints->maxWidth + LayoutTolerance::EPSILON
             || $measured->height > $constraints->maxHeight + LayoutTolerance::EPSILON) {
             if (LayoutTolerance::$windowDriven) {
-                // ★★ 窗口帧（用户把窗口拖小了）：内容自己"比窗口还大"多半是控件写死了
-                //   尺寸，但在窗口帧里仍然只裁剪 + 留痕 —— 用户不该为此看到 Fatal 框。
-                //   纯布局（测试 / 快照）走下面的 `Errors::report`，仍然中止。
+                // ★ 窗口帧里只裁剪 + 留痕，不让用户看到 Fatal 框；纯布局仍中止。
                 LayoutTolerance::clipped(static::class . ':C6', sprintf(
                     '%s 画出的尺寸超出了可用空间：实际 %.1f × %.1f，最多只能用 %.1f × %.1f —— 超出部分已裁掉。'
                         . "\n" . '这不是崩溃：把窗口调大即可恢复完整显示。'
@@ -420,30 +316,11 @@ abstract class RenderBox extends RenderObject
         $boxSize = $constraints->constrain($measured);
         $this->size = $boxSize;
 
-        // ★ 为什么**不**"有界轴撑满"（Flutter `Align` 的语义）：Drift 的
-        //   `RenderFlex::childConstraints()` 给非弹性子**有界主轴**（`0..$mainMax`），
-        //   而 Flutter 给的是 `0..INF` ⇒ 撑满会在 `Row` 里占满整行、把兄弟挤出去
-        //   （2026-10-23 实测：`AccelApplication` 264.8 > 240 当场 C6 Fatal）。
-        //   而"松约束下不居中"**不是 bug**：盒就是内容那么大，没有空间可居中
-        //   （Flutter 在同样前提下也收缩）。要撑满请让父给 tight（`Dock` 的
-        //   `center` 槽 / `Stack(Expand)` / 应用根都是这么做的）。
+        // ★ 有界轴**不撑满**：`RenderFlex` 给非弹性子的是有界主轴 ⇒ 撑满会占满整行、
+        //   把兄弟挤出去（C6 Fatal）。松约束下不居中不是 bug，要撑满请让父给 tight。
 
-        // ⑦ 后置平移直接子盒：**按对齐锚点**（`center` 是它的一个点）
-        // ★ padding **不**进子盒偏移 —— 子盒坐标就住内容盒，换算交给 `paint()` 的
-        //   `translate()` 与 `hitTest()`/`absoluteOrigin()` 的 `contentOriginX/Y()`
-        //   （`02` §4.1.1）。进一次就与绘制重复平移，且不报错。
-        //
-        // ★★ **偏移按「盒的内容区 − 内容尺寸」算**。旧写法是
-        //   `$inner->maxWidth - $measured->width`，两个都错：`$inner->maxWidth` 是
-        //   **父给的可用宽**（松约束下比盒大 ⇒ 推出盒外），而 `$measured` 在 ⑤ 步
-        //   已加回 padding（是**盒**尺寸）⇒ 有 padding 时偏移少算 `(padL+padR)/2`。
-        //   现在用 `$boxSize - padding` 与 `$content`。
-        //
-        // ★★ **自由空间先夹到 ≥ 0**：内容比可用区大时不产生负偏移（贴起点）。
-        //   与 `RenderStack::alignX/Y` 同一口径 —— 负偏移会把内容推到盒外左上，
-        //   而"内容超盒"本身是布局错（⑥ / C6 该报的），不该由对齐去掩盖。
-        //   这条同时保证了 `Alignment::center()` 与旧 `bool $center` **逐字节等价**
-        //   （`max(0, free/2)` 就是 `max(0, free) * (0+1)/2`）。
+        // ⑦ 后置平移直接子盒（按对齐锚点）。★ padding **不**进子盒偏移 —— 进一次就与
+        //   绘制重复平移，且不报错。自由空间先夹到 ≥ 0：超盒该由 ⑥ 报，不该由对齐掩盖。
         if ($align !== null) {
             $contentW = $boxSize->width;
             $contentH = $boxSize->height;
@@ -475,22 +352,16 @@ abstract class RenderBox extends RenderObject
     }
 
     /**
-     * 子类只实现这一层。**必须返回内容尺寸**（不含 padding / 不被 `width` 修饰撑大），
-     * 否则 C6 立刻报。
-     *
-     * 若是容器：在这里给子节点 `layout()` 并 `setOffset()`（C1 单向数据流）。
-     * **坐标系是内容盒原点** —— 基类的 ⑦ 步会整体平移 padding，子类不要自己加。
+     * 子类只实现这一层。**必须返回内容尺寸**（不含 padding / 不被 `width` 撑大），否则 C6 报。
+     * 容器在这里给子 `layout()` 并 `setOffset()`；**坐标系是内容盒原点**，不要自己加 padding。
      */
     abstract protected function performLayout(BoxConstraints $constraints): Size;
 
     /**
      * C3 内禀测量：本盒在**给定另一轴**时的自然尺寸（**盒**尺寸，含 padding）。
      *
-     * `$height = INF` 表示那一轴不限。为什么必须带另一轴：比例盒（图、
-     * 视频）要靠本轴约束定另一轴尺寸，单轴内禀值给不出答案。
-     *
-     * ★ **`final`**：与 `layout()` 同一个理由 —— "显式尺寸问它、否则问内容 + padding"
-     *   这件事只该有一份实现。子类实现 `contentIntrinsicWidth()`。
+     * `$height = INF` 表示该轴不限；比例盒要靠另一轴的约束定尺寸。★ `final`，与
+     * `layout()` 同理：只该有一份实现。子类实现 `contentIntrinsicWidth()`。
      */
     final public function intrinsicWidth(float $height): float
     {
@@ -550,10 +421,8 @@ abstract class RenderBox extends RenderObject
     /** 内容的内禀高（**不含** padding、**不看** `height` 修饰） */
     abstract protected function contentIntrinsicHeight(float $width): float;
 
-    // ── `alignSelf` 的取值（`04` §2.4）────────────────────────────
-    // ★ **int 哨兵而不是 enum**：`alignSelf` 要表达"未设"（INHERIT），而
-    //   `FlexAlign` 没有这个 case；加一个会让 `placeChildren()` 的 match
-    //   多一条"不该走到"的分支。int 0 是唯一不可能与真值混淆的写法。
+    // `alignSelf` 的取值。★ **int 哨兵而不是 enum**：要表达"未设"（INHERIT），
+    // 而 `FlexAlign` 没有这个 case；加一个会让 `placeChildren()` 的 match 多一条死分支。
     public const ALIGN_INHERIT = 0;   // 跟父容器的 crossAlign
     public const ALIGN_START   = 1;
     public const ALIGN_CENTER  = 2;
@@ -561,10 +430,8 @@ abstract class RenderBox extends RenderObject
     public const ALIGN_STRETCH = 4;
 
     /**
-     * 一次性写四个弹性意图（`Modifier` 的落点；`Element::syncBox()` 唯一调用点）。
-     *
-     * ★ 为什么是一个 setter 而不是四个：调用点（`Element::syncBox()`）只有一处，
-     *   四个 setter = 四次方法调用 + 四次"漏调一个"的机会。
+     * 一次性写四个弹性意图（`Element::syncBox()` 唯一调用点）：四个 setter 就是四次
+     * "漏调一个"的机会，而漏调不报错。
      */
     public function setFlexIntent(int $grow, int $shrink, float $basis, int $alignSelf): void
     {
@@ -580,7 +447,7 @@ abstract class RenderBox extends RenderObject
         return $this->grow;
     }
 
-    /** 主轴压缩份额（0 = 不参与；`04` §3 的 shrink 分支读它） */
+    /** 主轴压缩份额（0 = 不参与） */
     public function shrink(): int
     {
         return $this->shrink;
@@ -599,10 +466,7 @@ abstract class RenderBox extends RenderObject
     }
 
     /**
-     * 一次性写四条边的层叠定位（`Modifier` 的落点；`Element::syncBox()` 唯一调用点）。
-     *
-     * ★ 与 `setFlexIntent()` 同形（一个 setter 而不是四个）：调用点只有一处，
-     *   四个 setter = 四次"漏调一个"的机会，而漏调的表现是"某条边静默不生效"。
+     * 一次性写四条边的层叠定位（`Element::syncBox()` 唯一调用点）；漏调一条 = 某条边静默不生效。
      */
     public function setStackIntent(float $left, float $top, float $right, float $bottom): void
     {
@@ -643,11 +507,7 @@ abstract class RenderBox extends RenderObject
     }
 
     /**
-     * 主轴弹性份额（`RenderFlex` 读它；§13.1 C4）。
-     *
-     * ★ **`flex()` 是 `grow()` 的别名**（`04` §2.1）：语义没变，只是
-     *   "住进字段"之后 `grow` 是正式名字。保留一个提交周期，
-     *   等 `apps/showcase` 全量改名之后删。
+     * ★ `flex()` 是 `grow()` 的别名，保留一个提交周期供旧调用点改名。
      *
      * @deprecated 用 `grow()`
      */
@@ -657,8 +517,8 @@ abstract class RenderBox extends RenderObject
     }
 
     /**
-     * C5 溢出策略。**默认 `Clip` 只给不会超的容器**（尺寸由内容或子决定的容器）；
-     * 会超的容器（`Row` / `AppBar` / `Dock` 槽 / 自绘容器）**必须覆写**。
+     * C5 溢出策略。**默认 `Clip` 只给不会超的容器**；会超的容器（`Row` / `AppBar` /
+     * `Dock` 槽 / 自绘容器）**必须覆写**。
      *
      * @api
      */
@@ -670,15 +530,9 @@ abstract class RenderBox extends RenderObject
     /**
      * 绘制时是否把内容裁到盒矩形。
      *
-     * ★ **默认 `false`，与 `overflow()` 的默认 `Clip` 故意不一致**：`overflow()`
-     *   是"放不下时怎么办"的**契约查询**（默认值只是"不会超的容器"这个乐观假设），
-     *   而裁剪要付出每帧 `save/pushClip/popClip/restore` 的代价 ⇒ 必须由真正会超的
-     *   容器**显式覆写**。默认 `false` 还保证"新容器不覆写 ⇒ 行为与加此钩子之前
-     *   完全一致"，不会因为忘记覆写而静默改变像素。
-     *
-     * ★ 覆写者：`RenderFlex` / `RenderDock`（`overflow === Clip` 时）、
-     *   `RenderTextField`（恒真）。`RenderScrollView` **不**覆写 —— 它自己的
-     *   `paintContent()` 已按视口矩形手写裁剪，再覆写就是双重压栈。
+     * ★ **默认 `false`，与 `overflow()` 的默认 `Clip` 故意不一致**：裁剪要付每帧
+     *   `save/pushClip/popClip/restore` 的代价 ⇒ 必须由真正会超的容器显式覆写。
+     * ★ `RenderScrollView` **不**覆写 —— 它的 `paintContent()` 已手写视口裁剪。
      *
      * @internal 量具 / `RenderBox::paint()` 读；应用侧用 `Widget::clip()`
      */
@@ -688,17 +542,8 @@ abstract class RenderBox extends RenderObject
     }
 
     /**
-     * 画自己：**装饰 → 平移 → 内容**（arch-v2 `02` §4.2，W5）。
-     *
-     * ★ **`final`**：与 `layout()` 同一个理由 —— 装饰只该画一处。子类实现
-     *   `paintContent()`；漏改名 = "抽象方法未实现" = 编译期 Fatal，不静默。
-     *
-     * ★ 为什么不让父容器调 `paintDecorated()`：那是 12+ 处抄同一句、漏抄不报错
-     *   —— 正是 `Element::syncBox()` 注释里点明的那类问题。
-     *
-     * ★ **`translate()` 只改 PHP 侧偏移、从不调后端**（MEMORY 记载）⇒ `save()`
-     *   必须真的保存/恢复它。三后端的 `saveDepth` 与偏移栈一致性由 smoke 的
-     *   「W8 栈平衡」与 golden 守着。
+     * 画自己：**装饰 → 平移 → 内容**。`final`：装饰只该画一处，子类实现 `paintContent()`。
+     * ★ **`translate()` 只改 PHP 侧偏移、从不调后端** ⇒ `save()` 必须真的保存/恢复它。
      */
     final public function paint(Canvas $canvas): void
     {
@@ -706,7 +551,7 @@ abstract class RenderBox extends RenderObject
         $size = $this->size;
 
         // ① 背景 / 边框 / 圆角 / 阴影 —— 画在自己身上，在内容**之下**
-        //    ★ 必须在裁剪**之外**：阴影按 `-grow` 起画、本来就在盒外（`02` §11.11）。
+        //    ★ 必须在裁剪**之外**：阴影按 `-grow` 起画、本来就在盒外。
         if ($m !== null && $size !== null && $m->hasVisual()) {
             $m->paintBehind($canvas, $size);
         }
@@ -715,8 +560,7 @@ abstract class RenderBox extends RenderObject
         $this->paintOwnChrome($canvas);
 
         // ② 裁剪：矩形是**盒矩形**（含内边距），压栈在 `translate(padLeft, padTop)`
-        //    之前 ⇒ `pushClip` 按当前偏移解释（`RasterCanvas::toDevice`），压的正是
-        //    盒边界。两条来源：控件显式 `clip()`，或容器声明 `Overflow::Clip`。
+        //    之前 ⇒ 压的正是盒边界。两条来源：控件显式 `clip()`，或容器声明 `Overflow::Clip`。
         $clip = false;
         if ($size !== null) {
             $wantsClip = ($m !== null && $m->hasClip()) || $this->clipsOverflow();
@@ -739,9 +583,8 @@ abstract class RenderBox extends RenderObject
             $this->paintContent($canvas);
         }
 
-        // ④ 与 ② 配对。★ 走**统一出口**而不是每个分支各自 `popClip()`：早退分支
-        //    漏 pop ⇒ `DisplayList::assertBalanced()` 会抓（`clipDepth` 归不了零），
-        //    但真机上表现为"后面整棵子树全被裁"且不报错 —— 最坏的那一类。
+        // ④ 与 ② 配对。★ 走**统一出口**：早退分支漏 pop 会让后面整棵子树全被裁，
+        //    且不报错（`DisplayList::assertBalanced()` 只抓得到栈不配平）。
         if ($clip) {
             $canvas->popClip();
             $canvas->restore();
@@ -749,38 +592,15 @@ abstract class RenderBox extends RenderObject
     }
 
     /**
-     * 子类只实现这一层（原 `paint()`，W5 全局改名）。
-     *
-     * **坐标系是内容盒原点**：有 padding 时基类已经 `translate(padLeft, padTop)`；
-     * 需要"盒尺寸"就自己加回 padding（见 `02` §4.1.1 的两坐标系表）。
+     * 子类只实现这一层。**坐标系是内容盒原点**：有 padding 时基类已经
+     * `translate(padLeft, padTop)`，需要"盒尺寸"就自己加回 padding。
      */
     abstract protected function paintContent(Canvas $canvas): void;
 
     /**
      * 把子盒平移到**它自己的位置**画出去 —— 父容器画子的唯一入口。
-     *
-     * ★ 这四行（`save` → `translate` → `paintComposed` → `restore`）原先在
-     *   **10 处**逐字重复（`RenderFlex` / `RenderStack` / `RenderWrap` /
-     *   `RenderDock` / `RenderSegmentedControl` / `RenderProxyBox` /
-     *   `RenderScrollView` / `RenderPopupPanel` / `RenderTable` ×2）。
-     *
-     *   不是"文件长"的问题，是**失败形态太贵**：
-     *   - 漏 `restore()` ⇒ 栈不配平，`DisplayList::assertBalanced()` 抓得到，
-     *     但抓到时帧已经画完，你只知道"某处漏了"。
-     *   - 把 `translate` 写在 `save` 之前、或漏 `translate` ⇒ **栈是配平的、
-     *     整帧不报错**，错的是**后面所有兄弟**的位置。画面上"这一块偏了"，
-     *     而偏的那块代码完全正确 —— 这类 bug 的定位成本是"逐盒二分"。
-     *   - 少一个 `save` 而平移保留 ⇒ 平移**累积**下去，越往后越偏（缩放比例
-     *     看起来像"越往下间距越大"，会被误诊成布局问题）。
-     *
-     * ★ 它同时是**脏矩形（M5）的唯一插入点**：将来"子盒与脏矩形不相交就跳过"
-     *   只在这里加一次；散在 10 处就得改 10 次，漏一处 = 那类容器在脏矩形
-     *   模式下画错且不报错。
-     *
-     * ★ 只收"平移后画"这一步，**不收 kids 容器**：遍历序每个容器都不同
-     *   （`Flex` 按行、`Wrap` 按 run、`Dock` 按槽名、`Table` 按 header/body），
-     *   `$kids` 的访问方式也不同（`Flex`/`Wrap` 按行区间、`Dock` 是命名槽）。
-     *   共有的只有这四行 —— 多抽一层就是给不同的东西造同一个壳。
+     * ★ 四行必须按序：写反或漏 `translate` 时**栈仍配平、整帧不报错**，错的是后面所有
+     *   兄弟的位置；少一个 `save` 则平移**累积**，越往后越偏。
      */
     final protected function paintChildAt(Canvas $canvas, RenderBox $child): void
     {
@@ -792,29 +612,17 @@ abstract class RenderBox extends RenderObject
 
     /**
      * 画**自己的 chrome**（背景 / 边框 / 圆角）—— 在裁剪**之外**、`paintContent()` 之前。
-     *
-     * ★ 为什么需要这个钩子：`Modifier` 的视觉走 `paintBehind()`（本来就在裁剪之外），
-     *   但自持 `BoxStyle` 的容器（`AppBar` / `TextField` / `Button` / `PopupPanel`）
-     *   一直是在 `paintContent()` 里画 chrome 的。它们一旦 `clipsOverflow()`，描边跨在
-     *   盒边界上的那一半就会被裁掉 —— 2026-10-23 真机实测：`users` 顶条底部那条
-     *   1px 灰线（`#ebeef1`）整行消失，diff 983 个像素。
-     *
-     * ★ 默认空实现、只被真正画 chrome 的容器覆写 ⇒ 其余盒每帧多一次空虚调用。
+     * ★ 自持 `BoxStyle` 的容器若不在这里画，一旦 `clipsOverflow()`，描边跨在盒边界上的
+     *   那一半就会被裁掉。
      */
     protected function paintOwnChrome(Canvas $canvas): void
     {
     }
 
     /**
-     * 动画期的合成参数（arch-v2 `05` §5.4，W4-L3-4）—— **就地改，不重建盒、不重排**。
-     *
-     * ★ 为什么允许可变字段破坏「Render 层也是值对象」的纪律：值对象管的是
-     *   **描述**（Widget 层，不可变），这里管的是**每帧都在变的动画量**。
-     *   两者失效频率差三个数量级 —— 让动画量走值对象等于每帧造一个新盒，
-     *   而造盒正是 `D_LAYOUT` 那条最贵的路（§5.2）。
-     * ★ **rebuild 会把这些值丢掉**（新盒的字段是默认值）—— 这是**正确行为**：
-     *   结构变了，动画的中间态就不该继续顶着（`05` §10 边界 #9）。
-     *   所以它只在"纯动画帧"里有效，与 `Frame::run` 跳过 layout 的判据是同一个前提。
+     * 动画期的合成参数 —— **就地改，不重建盒、不重排**。
+     * ★ **rebuild 会把这些值丢掉**（新盒是默认值），这是正确的：结构变了，动画中间态
+     *   就不该继续顶着。
      */
     private float $composeOpacity = 1.0;
 
@@ -822,62 +630,32 @@ abstract class RenderBox extends RenderObject
 
     private float $composeDy = 0.0;
 
-    // ── 交互维（`Widget::disabled()` 的下游，2026-10-29）──────────────
-    //
-    // ★ 与上面三个的差别：那三个**每帧都在变**（动画），这个只在 `setMods()` 时
-    //   变（状态）。所以不需要 `setDisabled()` 那种"直接写盒"的旁路 —— 禁用是
-    //   应用 `setState` 的结果，rebuild 本来就该重算。
-    //
-    // ★ 存成 bool 而不是每次 `$this->mods->disabled()`：`hitTest()` 在指针事件
-    //   里被逐盒调用，而 `mods` 是 `?Obj`（AOT 下退化成 `Var`）—— 见
-    //   `contentOriginX()` 的第二段注：那类读法的代价直接落在命中测试上。
+    // 交互维（`Widget::disabled()` 的下游）：只在 `setMods()` 时变，不需要"直接写盒"的旁路。
+    // ★ 存成 bool 而不是每次读 `mods->disabled()`：`hitTest()` 逐盒调用，而 `mods` 是
+    //   `?Obj`（AOT 下退化成 `Var`），代价直接落在命中测试上。
     private bool $disabled = false;
 
     /**
-     * 禁用时整棵子树的不透明度（`Widget::disabled()` 的默认外观）。
-     *
-     * ★ 取 0.38 而不是 0.5：0.5 在大色块上仍然"像个可点的主按钮"，0.38 才落进
-     *   Windows 原生禁用控件的观感区间。这个数只该有一处 —— 想调就调这里。
+     * 禁用时整棵子树的不透明度。0.38 才落进 Windows 原生禁用控件的观感区间（0.5 仍像可点）。
      */
     public const DISABLED_ALPHA = 0.38;
 
-    // ── 层缓存（A 批② `RepaintBoundary`）──────────────────────────────
-    // 缓存的是 `paint()` 的**命令序列**。它画的是自身局部坐标：位置的两种来源
-    // （父的 `translate`、本盒的 compose）都在 `paint()` **之外**施加 ⇒ 缓存天生
-    // 与位置无关 ⇒ 滚动（只改偏移、不改内容）命中，这正是收益的全部来源。
-    //
-    // ★ 反直觉点：失效判据**不含** composeDx/Dy/Opacity，也不含滚动偏移。
-    //   含了就等于"一动就失效"，缓存退化成每帧录一遍（比不缓存还慢）。
+    // 层缓存：缓存 `paint()` 的**命令序列**，画自身局部坐标 ⇒ 与位置无关 ⇒ 滚动命中。
+    // ★ 失效判据**不含** compose 偏移 / 不透明度 / 滚动偏移：含了就等于"一动就失效"，
+    //   比不缓存还慢。
 
     protected bool $repaintBoundary = false;
 
     protected ?LayerCache $layer = null;
 
     /**
-     * 就地改合成参数（不重建、不重排、不置**布局**脏位）。
+     * 就地改合成参数（不重建、不重排、**不置布局脏**）。
      *
-     * ```php
-     * // 应用代码（淡入）：State::tickFrame 里直接写盒
-     * public function tickFrame(float $timestampMs): bool
-     * {
-     *     $busy = $this->fade->tick($timestampMs);
-     *     if (!$busy) { return false; }
-     *     $this->element()?->renderObject()?->setCompose($this->fade->value(), 0.0, 0.0);
-     *     return true;
-     * }
-     * ```
-     *
-     * ★ **不置布局脏**是整条路的重点：置了就等于每帧全树重排，这条路白修。
-     * ★ `opacity >= 1` 且 `dx == dy == 0` ⇒ `paintComposed()` 走**零开销快路**
-     *   （不 save / 不开层）⇒ 不用它就没有代价。
-     *
-     * ★★★ **但必须让外层重绘边界重录**（2026-10-29，真机抓到）：`pushLayer(alpha)`
-     *   是**录进 `DisplayList` 的一条命令**，而 `LayerCache` 的命中判据是
-     *   `layoutEpoch + 尺寸` —— 只改合成槽时两者都不变 ⇒ 边界**命中缓存**，
-     *   重放的是上一次录的旧 alpha ⇒ **画面一动不动**（值在滑、屏上是死的，
-     *   再点一次触发 rebuild 才"突然"到位）。现象与"要点两次"完全一样。
-     *   ⇒ 值真变了就 `invalidateEnclosingLayer()`（只失效**外层**那一层：
-     *   本盒自己是边界时，alpha 是 `paintComposed()` 现算的，自己的缓存没脏）。
+     * ★ 不置布局脏是整条路的重点：置了就等于每帧全树重排。
+     * ★ `opacity >= 1` 且 `dx == dy == 0` ⇒ `paintComposed()` 走**零开销快路**。
+     * ★★ 值真变了必须让**外层**重绘边界重录：`pushLayer(alpha)` 是录进 `DisplayList`
+     *   的一条命令，而缓存判据是 `layoutEpoch + 尺寸` —— 两者都不变 ⇒ 命中缓存、重放
+     *   旧 alpha ⇒ **画面一动不动**（值在滑、屏上是死的）。
      *
      * @api
      */
@@ -893,9 +671,7 @@ abstract class RenderBox extends RenderObject
 
     /**
      * 合成槽的**唯一落点**（`setMods()` 与 `setCompose()` 都走这里）。
-     *
-     * ★ 值没变就**什么都不做**：动画收口后每帧仍会写一次同值，若无条件失效
-     *   外层缓存，静止画面也会一直重录（空闲烧 CPU）。
+     * ★ 值没变就**什么都不做**：否则动画收口后静止画面每帧也重录外层缓存（空闲烧 CPU）。
      */
     private function applyCompose(float $opacity, float $dx, float $dy): void
     {
@@ -909,30 +685,18 @@ abstract class RenderBox extends RenderObject
 
         $this->invalidateEnclosingLayer();
 
-        // ★★ 同步标"下一帧必须画"（2026-10-30，N1）：`invalidateEnclosingLayer()`
-        //   只让**重绘边界重录**命令流，它不负责把新命令流**上屏**。此前上屏
-        //   靠的是"paint 无条件跑"，门控之后必须显式说一声 —— 否则现象与 2026-10-29
-        //   那个"值在滑、屏上是死的"**一模一样**，只是换了个成因（那次是缓存命中，
-        //   这次是整帧被跳过），排查起来会更难（因为缓存那层已经是对的）。
+        // ★★ 还要标"下一帧必须画"：`invalidateEnclosingLayer()` 只让边界重录命令流，
+        //   不负责把新命令流**上屏**。漏了 ⇒ 现象同样是"值在滑、屏上是死的"。
         $this->pipeline()->bumpPaintEpoch();
     }
 
     /**
      * 让**最近的外层**重绘边界丢掉缓存（`setCompose()` 的正确性前提）。
      *
-     * ★ 为什么必须是外层而不是自己：本盒若是边界，`paintComposed()` 会在
-     *   `paintOrReplay()` **之外**现算 `pushLayer(alpha)` ⇒ 自己的缓存只装子树
-     *   命令、不含 alpha，没脏。而外层边界录的是**整段**命令流（含这条
-     *   `pushLayer`）⇒ 只有外层需要重录。
-     * ★ 没有外层边界 ⇒ 每帧都真画 ⇒ 无事可做（绝大多数盒走这里）。
-     *
-     * ★★★ **只能走公开方法，不能直接读 `$p->repaintBoundary` / `$p->layer`**
-     *   （2026-10-29 真机抓到）：那两个是**本类的 private**，解释器里跨实例读
-     *   子类实例（`RenderFlex` / `RenderScrollView` …）是合法的，**AOT 下不是**
-     *   —— 父类的 `private` 不进子类属性表，于是每帧刷一行
-     *   `Undefined property: RenderFlex::$repaintBoundary`，失效逻辑**静默变成
-     *   空操作**（正是它要修的那个"值在滑、屏是死的"）。与 `BoxConstraints::INFINITY`
-     *   那条同族：**AOT 只信公开成员**。
+     * ★ 必须是外层：本盒若是边界，`pushLayer(alpha)` 在 `paintOrReplay()` **之外**现算，
+     *   自己的缓存不含它。★ 没有外层边界 ⇒ 每帧都真画 ⇒ 无事可做。
+     * ★★ **只能走公开方法**：跨实例读 `$p->repaintBoundary` / `$p->layer` 在 AOT 下
+     *   读不到父类 private ⇒ 失效逻辑**静默变成空操作**。
      */
     private function invalidateEnclosingLayer(): void
     {
@@ -947,10 +711,8 @@ abstract class RenderBox extends RenderObject
 
     /**
      * 丢本盒的变换声明（`setMods()` 的落点）。
-     *
-     * ★ 只在**声明真变了**时失效外层缓存：`setMods()` 每次 rebuild 都会调，
-     *   而矩阵对象每次是新实例 —— 用"引用不同就失效"会让动画期间每帧重录
-     *   整棵子树（§23.8 的代价放大一百倍）。判据是结构相等。
+     * ★ 只在**声明真变了**时失效外层缓存，判据是**结构相等**：矩阵每次是新实例，按引用
+     *   比会让动画期间每帧重录整棵子树。
      */
     private function applyTransform(?Matrix2D $matrix, bool $centered): void
     {
@@ -974,9 +736,7 @@ abstract class RenderBox extends RenderObject
     /**
      * 当前生效的矩阵（绕中心的那份在这里现算）。
      *
-     * ★ `T(c) · M · T(-c)`：先平移到盒中心、施加矩阵、再平移回去 ——
-     *   等价于"以盒中心为原点做变换"。尺寸在布局前是 `null` ⇒ 退化为原点变换
-     *   （此时还没画，取到的值不会被消费）。
+     * ★ `T(c) · M · T(-c)`：以盒中心为原点做变换；尺寸为 `null`（布局前）⇒ 退化为原点变换。
      * ★ 命中测试必须用**同一份**结果（否则"画在 A、点得中 B"）。
      */
     public function effectiveTransform(): ?Matrix2D
@@ -998,10 +758,8 @@ abstract class RenderBox extends RenderObject
         $cx = $size->width / 2.0;
         $cy = $size->height / 2.0;
 
-        // ★ 读法：`a->then(b)` = 先 a 再 b。所以这一行是
-        //   "移到原点 → 施加 M → 移回中心"，即 `T(c) · M · T(-c)`。
-        //   ★ 顺序写反（`T(c)` 先）的后果不是崩溃：中心会**跟着跑** ——
-        //     `scale(2)` 的盒整体偏出去半个自身宽高，看起来像"对齐算错了"。
+        // ★ 读法：`a->then(b)` = 先 a 再 b，即"移到原点 → 施加 M → 移回中心"。
+        //   顺序写反的后果不是崩溃：中心会**跟着跑**，看起来像"对齐算错了"。
         return Matrix2D::translation(-$cx, -$cy)
             ->then($m)
             ->then(Matrix2D::translation($cx, $cy));
@@ -1016,14 +774,13 @@ abstract class RenderBox extends RenderObject
     /**
      * 丢掉本盒的层缓存（下一次绘制必然重录）。
      *
-     * @internal 只给 `invalidateEnclosingLayer()` 用；公开是因为调用方拿到的是
-     *   **另一个实例**（可能是子类），而 `private` 在 AOT 下跨实例不可见。
+     * @internal 只给 `invalidateEnclosingLayer()` 用；公开是因为调用方拿到的是**另一个
+     *   实例**，而 `private` 在 AOT 下跨实例不可见。
      */
     public function invalidateLayerCache(): void
     {
         // ★ 不用 `?->`：AOT 下"可空链"读**本类字段**会退化成按运行时类名查表
-        //   （`Undefined property: RenderFlex::$layer`，实测刷满 stdout 且失效）
-        //   ⇒ 一律拆成 `if`。与 `?:` 两支类型不同必须拆 if 是同一条纪律。
+        //   （`Undefined property`，实测刷满 stdout 且失效）⇒ 一律拆成 `if`。
         $layer = $this->layer;
         if ($layer !== null) {
             $layer->invalidate();
@@ -1033,12 +790,8 @@ abstract class RenderBox extends RenderObject
     /**
      * 让**最近的重绘边界**（含自己）丢掉缓存，再标"下一帧必须画"。
      *
-     * ★★ 从 `$this` 开始找，与 `setCompose()` 的 `invalidateEnclosingLayer()`
-     *   （从父开始）**故意不同**：合成槽在 `paintComposed()` 里现算、不进自己的
-     *   缓存；而 hover 叠色 / 滚动条 thumb 的 alpha 是**录进命令流**的（在
-     *   `paintOwnChrome()` / `paint()` 内）⇒ 自己若正好是边界，自己的缓存也脏。
-     *
-     * ★ 找不到边界 ⇒ 每帧都真画 ⇒ 本方法退化成一次向上遍历（绝大多数盒走这里）。
+     * ★★ 从 `$this` 开始，与 `invalidateEnclosingLayer()`（从父开始）**故意不同**：
+     *   hover 叠色 / 滚动条 thumb 的 alpha 是**录进命令流**的 ⇒ 自己若是边界也脏。
      */
     #[\Override]
     protected function markPaintChanged(): void
@@ -1063,10 +816,8 @@ abstract class RenderBox extends RenderObject
     /**
      * 画自己（**含合成参数**）—— 父容器与 `Frame` 一律走这个入口，不走 `paint()`。
      *
-     * ★ 平移用坐标加法（不开层），`opacity < 1` 才开层（`05` §5.5）：
-     *   开层是"分配一整块像素"，为一次加法付这个代价不划算；而不透明度是
-     *   **逐像素乘法**，必须在子树画完之后才能乘（否则子与子重叠处被乘两次）。
-     * ★ 默认参数下（`1.0 / 0 / 0`）**一条命令都不多**：没有 save、没有层。
+     * ★ 平移用坐标加法，`opacity < 1` 才开层：不透明度是逐像素乘法，必须在子树画完
+     *   之后才能乘。★ 默认参数下（`1.0 / 0 / 0`）**一条命令都不多**。
      *
      * @api
      */
@@ -1086,8 +837,7 @@ abstract class RenderBox extends RenderObject
         $canvas->save();
 
         // ★ 顺序：先变换、再平移。`Canvas::transform()` 是 `CTM · M`（后调用的更内层）
-        //   ⇒ 这两行的语义是"盒内偏移先加、再整体变换"，与 `hitTest()` 的反变换
-        //   （先反变换、再减盒内偏移）严格互逆。写反了"画在 A、点得中 B"。
+        //   ⇒ 与 `hitTest()` 的反变换严格互逆。写反了"画在 A、点得中 B"。
         if ($matrix !== null) {
             $canvas->transform($matrix);
         }
@@ -1111,9 +861,7 @@ abstract class RenderBox extends RenderObject
 
     /**
      * 画这一个盒，或从层缓存重放（**缓存的唯一出口**）。
-     *
-     * 命中 ⇒ 整棵子树一次 `paint()` 都不跑；未命中 ⇒ 录一遍 + 立刻重放出画，
-     * 所以开启边界**不会**让首帧变黑（录与放是同一次调用里完成的）。
+     * 未命中 ⇒ 录一遍 + 立刻重放出画 ⇒ 开边界**不会**让首帧变黑。
      */
     private function paintOrReplay(Canvas $canvas): void
     {
@@ -1149,12 +897,8 @@ abstract class RenderBox extends RenderObject
     /**
      * 声明本盒是重绘边界（`Modifier::repaintBoundary()` → `setMods()` → 这里）。
      *
-     * ★★ `on` 没变就**什么都不做**：`setMods()` 每次 rebuild 都调，这里若无条件
-     *   丢掉缓存，命中率恒为 0 —— 边界开了等于没开，且不报错。
-     *
-     * ★ 只给**粗粒度**子树开：滚动容器内容区、`LazyColumn` 的行、`Table` 的行区。
-     *   细粒度开（每个文本盒一层）是纯亏 —— `RenderText` 早先缓存过一层
-     *   `DisplayList`，每帧 reset 录一条命令，比直接画还慢（见该类注释）。
+     * ★★ `on` 没变就**什么都不做**：无条件丢缓存会让命中率恒为 0 —— 边界开了等于没开，
+     *   且不报错。★ 只给**粗粒度**子树开（每个文本盒一层比直接画还慢）。
      */
     public function setRepaintBoundary(bool $on): void
     {
@@ -1171,31 +915,13 @@ abstract class RenderBox extends RenderObject
     }
 
     /**
-     * 命中测试（§9.1）：**从本盒出发**深度优先，返回最深的命中盒。
+     * 命中测试：**从本盒出发**深度优先，返回最深的命中盒。
+     * `$x` / `$y` 是本盒的**局部**坐标（左上角为原点，逻辑单位）。
      *
-     * `$x` / `$y` 是本盒的**局部**坐标（左上角为原点，逻辑单位，§6.1）。
-     *
-     * ★ 三条规则（§9.1）：
-     *   ① 越界 ⇒ `null`；
-     *   ② 子节点**逆序**问（后画的在上面，与 `paint()` 顺序相反）；
-     *   ③ 子节点都不中 ⇒ **返回自己** —— 容器吞掉事件（"禁用 ≠ 穿透"的基础）。
+     * ★ 三条规则：越界 ⇒ `null`；子节点**逆序**问（后画的在上面）；都不中 ⇒ **返回自己**。
+     * ★ **禁用返回自己，不是 `null`**：返回 `null` 会让父容器继续问下一个兄弟 ⇒ 事件落到
+     *   被盖住的那层 = **穿透**；返回自己则 `InputRouter` 见 `isDisabled()` 直接吞掉。
      * ★ **`Offstage` 无需特判**：它跳过 layout ⇒ `size` 为 null ⇒ 这里直接 `null`。
-     * ★ **一次命中、三方消费**（事件路由 / 语义 / 光标形状）⇒ 调用方只走一次树。
-     *
-     * ## 禁用（2026-10-29）
-     *
-     * 禁用的盒**照旧返回自己**，只是"命中之后什么也不会发生"：
-     *
-     * | 走法 | 结果 |
-     * |---|---|
-     * | 返回 `null`（最初写的） | 父容器继续问**下一个兄弟** ⇒ 事件落到被盖住的那层 ⇒ **就是穿透** |
-     * | 返回 `$this`（现在） | 父容器立刻收工；`InputRouter` 见 `isDisabled()` 直接吞掉 |
-     *
-     * ★ 这条差别是夹具逼出来的：`Stack[under, over(禁用)]` 里点 `over`，第一版
-     *   `pressed = ["under"]` —— 注释里"禁用 ≠ 穿透"说的是**容器兜底**（第 ③ 条），
-     *   不是"某一层子被禁用"这一格。
-     * ★ **整个子树一起挡**：禁用容器的 `hitTest` 返回它自己，里面的控件根本轮不到
-     *   被问 —— 与"容器吞事件"是同一条递归的两种用法，不需要额外传继承参数。
      *
      * @api
      */
@@ -1207,10 +933,8 @@ abstract class RenderBox extends RenderObject
             return null;
         }
 
-        // ★★ **反变换必须在边界检查之前**：变换后的盒在视觉上已经不在
-        //   `[0,w]×[0,h]` 里了（旋转 45° 的角落伸到外面）。先判边界会把
-        //   "点在旋转后的可见角上"当成盒外 ⇒ 按钮画得出来、点不动。
-        //   判据：`TransformHitTestTest` 的"变换后位置命中 / 原位不命中"双向断言。
+        // ★★ **反变换必须在边界检查之前**：旋转后的可见角落已伸出 `[0,w]×[0,h]`，
+        //   先判边界会把"点在可见角上"当成盒外 ⇒ 画得出来、点不动。
         $matrix = $this->effectiveTransform();
         if ($matrix !== null) {
             $inv = $matrix->inverted();
@@ -1218,8 +942,7 @@ abstract class RenderBox extends RenderObject
                 return null;   // 退化：压成线/点 ⇒ 点不中（不是"点得中但位置错"）
             }
 
-            // ★ 两个分量都用**原值**算：先写 `$x = $inv->applyX(...)` 再拿新 `$x`
-            //   算 `$y` 是错的（会把 x 的变换混进 y），而且画面对、只有点击偏。
+            // ★ 两个分量都用**原值**算：先写 `$x` 再拿新 `$x` 算 `$y` 会把 x 的变换混进 y。
             $px = $inv->applyX($x, $y);
             $py = $inv->applyY($x, $y);
             $x = $px;
@@ -1230,8 +953,7 @@ abstract class RenderBox extends RenderObject
             return null;
         }
 
-        // ★ 排在 size 检查之后：越界本该先判，否则"盒子还没布局"与"被禁用"会混成
-        //   同一个结果，夹具里 setMods 之前调 hitTest 就分不清是哪一种。
+        // ★ 排在 size 检查之后：否则"盒子还没布局"与"被禁用"会混成同一个结果。
         if ($this->disabled) {
             return $this;
         }
@@ -1242,9 +964,8 @@ abstract class RenderBox extends RenderObject
             $children[] = $child;
         });
 
-        // ★ 子盒 offset 住内容盒坐标 ⇒ 先把自己的内容原点减掉（`02` §4.1.1）。
-        //   漏了 ⇒ 有 padding 的控件整体偏一个 padding 命中，而画面是对的 ——
-        //   只有"点了没反应 / 点到隔壁"这种真机现象能暴露。
+        // ★ 子盒 offset 住内容盒坐标 ⇒ 先减掉自己的内容原点，漏了 ⇒ 有 padding 的控件
+        //   整体偏一个 padding 命中，而画面是对的。
         $padX = $this->contentOriginX();
         $padY = $this->contentOriginY();
 

@@ -10,44 +10,22 @@ use Drift\Geometry\Rect;
 use Drift\Layout\RenderScrollView;
 
 /**
- * `LazyList` 的 State：**持滚动偏移 + 决定这一帧造哪几格**（两个轴共用一份）。
- *
- * ★ **轴只有一个局部变量**：每处随轴而变的量都写成
- *   `$vertical ? <纵向量> : <横向量>`（主轴起点 / 主轴尺寸 / 视口主轴 / 子层容器）。
- *   于是"横向少改一处"这类缺陷在结构上很难发生 —— 全部 8 个随轴点都在本文件里，
- *   而它们各自的对照组（纵向）就在隔壁那半行。
- *
- * ★ 偏移放 `State` 而不是 Store：§12.3 的判据是"承载它的 Element 会不会被回收"。
- *   被回收的是**格子**，本 State 挂在列表自己身上（滚动容器不随滚动消失）⇒ 放
- *   `State` 成立。反过来，**格子内**的 UI 态会被回收，必须外置（`LazyList` 类注释）。
- *
- * ★★ **窗口在 build 期算，不在布局期算**：框架的 `build → settle → layout`
- *   顺序决定了布局期拿不到"还没造的 Widget"。于是视口主轴长度取**上一帧**盒的
- *   实测值（首帧还没有盒 ⇒ 用 `ctx->height` / `ctx->width`，即窗口尺寸，它是任何
- *   嵌套视口的上界 ⇒ 首帧一定造多不少）。⇒ 窗口永远是可见范围的**超集**，不会白。
- *
- * ★ **不夹上界就不对**：`scrollBy()` 只夹下界（见 `Scrollable`），上界得在这里
- *   按"完整内容长度 − 视口"夹一次 —— 否则内容变短（过滤后）时窗口会算到列表
- *   之外，造出一片空白。
- *
+ * `LazyList` 的 State：持滚动偏移 + 决定这一帧造哪几格（两个轴共用一份）。
+ * 窗口在 build 期算，不在布局期算：布局期拿不到"还没造的 Widget"，
+ * 视口主轴长度取上一帧盒的实测值（首帧无盒 ⇒ 退回窗口尺寸，是嵌套视口上界）。
+ * ★ 偏移上界必须在此夹：只夹下界的 `scrollBy()` 在内容变短时
+ *   会把窗算到列表之外，造出一片空白（不报错）。
  * @internal 应用只认 `LazyColumn` / `LazyRow`
  */
 final class LazyListState extends State implements Scrollable
 {
-    /**
-     * 这根轴的滚动状态机（偏移 + 动画 + 淡出）。
-     *
-     * ★ 懒建只为"从没滚过的列表"不多造两个对象；`ScrollLane` / `ScrollBarFade`
-     *   内部都是懒的 ⇒ 建了也不改行为。**"有没有滚过"不是额外状态**。
-     */
+    /** 这根轴的滚动状态机（偏移 + 动画 + 淡出）；懒建：从没滚过的列表不额外造对象。 */
     private ?ScrollLane $lane = null;
 
     /**
-     * 锚点（`04` §7.3）：视口起点那一格在**完整内容**里的位置 —— 序号 + 格内
-     * 滚过的比例（`0..1`，保留"没对齐到格"的那点偏移）。
-     *
-     * ★ `anchorKey` 是这一格的**身份**（`LazyList::keyOf()` 给的）；没配
-     *   `keyOf` 时恒 `null` ⇒ 内容变短只能按序号夹。
+     * 锚点：视口起点那一格在**完整内容**里的位置 —— 序号 + 格内滚过的比例（`0..1`，
+     * 保留"没对齐到格"的那点偏移）。`anchorKey` 是这一格的身份（`keyOf()` 给的）；
+     * 没配 `keyOf` 时恒 `null` ⇒ 内容变短只能按序号夹。
      */
     private int $anchorIndex = 0;
     private float $anchorFrac = 0.0;
@@ -58,11 +36,9 @@ final class LazyListState extends State implements Scrollable
 
     /**
      * 上一次 `build()` 造出来的窗口在**完整内容坐标**里的范围 `[start, end)`。
-     *
-     * ★ 存在的理由（2026-10-27，A 批第 1 项）：滚动不再 `setState()`，于是"窗还
-     *   盖不盖得住视口"必须**在 build 之外**能判 —— 盖得住就只推偏移（0 重建），
-     *   盖不住才标脏（重建窗口）。没有这两个数，滚出缓冲带之后下方就是一片空白
-     *   （且不报错：盒照样画，只是没内容）。
+     * 滚动不再 `setState()`，故"窗还盖不盖得住视口"须在 build 之外判：
+     * 盖得住只推偏移（0 重建），盖不住才标脏重建窗口。没有这两个数，
+     * 滚出缓冲带后下方就是一片空白（且不报错：盒照样画，只是没内容）。
      */
     private float $windowStart = 0.0;
 
@@ -70,11 +46,9 @@ final class LazyListState extends State implements Scrollable
 
     /**
      * 播种初始偏移（`LazyList::initialOffset()`）。
-     *
-     * ★ **必须同时播种锚点**：`didUpdateWidget()` 用"锚点那一格的 key 还在原位"判
-     *   内容有没有动，锚点停留在初始值（序号 0、key `null`）时，只要 offset > 0
-     *   就会被判成"锚点丢了" ⇒ 第二次重建直接跳回顶部。播种走的是与滚动同一条
-     *   `rememberAnchor()`，两处口径不会分叉。
+     * 必须同时播种锚点：`didUpdateWidget()` 用"锚点那一格的 key 还在原位"判内容有没有动，
+     * 锚点停在初始值（序号 0、key `null`）时，只要 offset > 0 就会被判成"锚点丢了"
+     * ⇒ 第二次重建直接跳回顶部。播种走与滚动同一条 `rememberAnchor()`，口径不会分叉。
      */
     #[\Override]
     public function initState(): void
@@ -96,22 +70,18 @@ final class LazyListState extends State implements Scrollable
     }
 
     /**
-     * 滚动 Δ（**逻辑像素**；正 = 内容上移，即"往下看"）。
-     *
-     * ★★ **能不重建就不重建**（2026-10-27，A 批第 1 项）：偏移只改两个数，
-     *   不改"有哪些子"。窗口仍盖得住视口 ⇒ 推给盒（就地改 + 标重排）即可；
-     *   只有滚出缓冲带（`overscanPx()` 决定的余量）才标脏重建。
-     *   实测依据见 `ScrollViewState::scrollBy()` 的注释。
-     *
+     * 滚动 Δ（逻辑像素；正 = 内容上移，即"往下看"）。
+     * 能不重建就不重建：偏移只改两个数，不改"有哪些子"；窗口仍盖得住视口
+     * ⇒ 推给盒（就地改 + 标重排）即可；只有滚出缓冲带才标脏重建。
      * ★ 回写**盒夹过的值**（不是 `$next`）：内容变短时 State 里那个"增量累加值"
-     *   会长期大于上限，之后每笔增量都先消耗死区 —— 真机表现是"滚轮转了画面不动"。
+     *   会长期大于上限，之后每笔增量都先消耗死区 —— 真机表现"滚轮转了画面不动"。
      */
     public function scrollBy(float $delta): void
     {
         /** @var RenderScrollView|null $box */
         $box = $this->element()?->effectiveBoxOf(RenderScrollView::class);
 
-        // ★ 盒还没挂（首帧之前 / 盒被换掉）⇒ 只改字段 + 标脏：没有盒就没有
+        // 盒还没挂（首帧之前 / 盒被换掉）⇒ 只改字段 + 标脏：没有盒就没有
         //   "就地推给盒"这回事，只能等下一次 build 把值递下去。
         if ($box === null) {
             if (!$this->lane()->move($delta, static fn(float $value): float => $value)) {
@@ -147,10 +117,9 @@ final class LazyListState extends State implements Scrollable
     }
 
     /**
-     * 上一帧造的窗口是否**完整盖住**当前视口 `[offset, offset+viewport)`。
-     *
-     * ★ 用 `offset`（盒已夹过）而不是调用方传的 `$next`：滚到边界时盒会把值夹回来，
-     *   按未夹的值判会以为"还没滚到" ⇒ 多标一次脏。
+     * 上一帧造的窗口是否完整盖住当前视口 `[offset, offset+viewport)`。
+     * 用 `offset`（盒已夹过）而不是调用方传的 `$next`：滚到边界时盒会把值夹回，
+     * 按未夹的值判会以为"还没滚到" ⇒ 多标一次脏。
      */
     private function windowCovers(float $viewport): bool
     {
@@ -160,10 +129,8 @@ final class LazyListState extends State implements Scrollable
     }
 
     /**
-     * 按轴滚动：**只有主轴接受**（`LazyRow` 的主轴是 x）。
-     *
-     * ★ 主轴来自 Widget（`LazyList::isVertical()`），不由调用方猜 —— 与
-     *   `ScrollViewState` 同一个形态。
+     * 按轴滚动：只有主轴接受（`LazyRow` 的主轴是 x）。
+     * 主轴来自 Widget（`LazyList::isVertical()`），不由调用方猜。
      */
     public function scrollByAxis(Axis $axis, float $delta): void
     {
@@ -175,9 +142,8 @@ final class LazyListState extends State implements Scrollable
     }
 
     /**
-     * 按轴滚动，**带动画**（滚轮专用；细节见 `Scrollable::glideByAxis()`）。
-     *
-     * ★ 本方法只剩"轴对不对"这一层判据 —— 起飞前对齐、目标累加、点亮条都在
+     * 按轴滚动，带动画（滚轮专用；细节见 `Scrollable::glideByAxis()`）。
+     * 本方法只剩"轴对不对"这一层判据 —— 起飞前对齐、目标累加、点亮条都在
      *   `ScrollLane::glide()`（三个实现共用一份）。
      */
     public function glideByAxis(Axis $axis, float $delta): void
@@ -202,11 +168,10 @@ final class LazyListState extends State implements Scrollable
     }
 
     /**
-     * 推进这一帧的**滚动动画**与**滚动条淡出**（先滚动、后淡出，见 `ScrollViewState`）。
-     *
-     * ★ 这里的 `scrollBy()` 会顺带做 `rememberAnchor()` 与"窗口盖不住就标脏"，
-     *   所以动画期间每帧都走一次换窗判断 —— 那是**必要**的：一步 5px 也可能
-     *   跨过缓冲带边界，跳过它就会出现"滑过去时下方露白"。
+     * 推进这一帧的滚动动画与滚动条淡出（先滚动、后淡出）。
+     * 这里的 `scrollBy()` 会顺带做 `rememberAnchor()` 与"窗口盖不住就标脏"，
+     * 故动画期间每帧都走一次换窗判断 —— 那是必要的：一步 5px 也可能跨过缓冲带边界，
+     * 跳过它就会出现"滑过去时下方露白"。
      */
     #[\Override]
     public function tickFrame(float $timestampMs): bool
@@ -225,18 +190,11 @@ final class LazyListState extends State implements Scrollable
     }
 
     /**
-     * 内容变了 ⇒ 按锚点还原偏移（`04` §7.3）。
-     *
-     * ★ **每次父重建都会走到这里**（应用 `setState()` 一次就重建一次），所以第一
-     *   件事是判断"内容到底变没变"：配了 `keyOf` 就看**锚点那一格的 key 还在不在
-     *   原位**（O(1)），没配就看项数。判不出来就什么都不做 —— 否则每帧把偏移重算
-     *   一遍，浮点误差会慢慢把滚动位置磨掉。
-     *
-     * ★ **按 key 不按序号**：搜索把 10000 项筛成 30 项时，锚点项 500 不存在了 ——
-     *   按序号夹会跳到列表末尾（比跳回顶部更糟）。找不到 key ⇒ 回顶部。
-     *
-     * ★ 这里的 `O(n)` 只跑一次、且**只在内容变时**：10000 项线性扫描 ≈ 0.1ms，
-     *   而内容变本身已经是一次全量数据替换。
+     * 内容变了 ⇒ 按锚点还原偏移。
+     * 每次父重建都走到这里，故先判"内容变没变"：配 `keyOf` 看锚点 key 是否仍在原位
+     * （O(1)），没配看项数；判不出就不动，否则浮点误差会磨掉滚动位置。
+     * 按 key 不按序号：筛选后锚点项不存在时，按序号夹会跳到末尾（比回顶部更糟）；
+     * 找不到 key ⇒ 回顶部。O(n) 只在内容变时跑一次。
      */
     #[\Override]
     public function didUpdateWidget(Widget $widget): void
@@ -252,14 +210,14 @@ final class LazyListState extends State implements Scrollable
         $extent = $widget->itemExtent();
         $insets = $widget->insets();
         $vertical = $widget->isVertical();
-        // ★ 主轴起始内边距：纵向是上、横向是左（内容从哪儿开始）
+        // 主轴起始内边距：纵向是上、横向是左（内容从哪儿开始）
         $insetStart = $vertical ? $insets->top : $insets->left;
         $changed = $count !== $this->lastCount;
         $this->lastCount = $count;
 
-        // ★ 从没滚过（或正好在起点）⇒ 锚点就是"起点"，没有什么要还原。
-        //   这条早退还顺手挡掉了"主轴起始内边距"：没滚时 offset 是 0，而还原会把
-        //   offset 算成 insetStart ⇒ 一帧白跳。
+        // 从没滚过（或正好在起点）⇒ 锚点就是"起点"，没什么要还原；
+        //   这条早退还挡掉"主轴起始内边距"：没滚时 offset 是 0，还原会把它
+        //   算成 insetStart ⇒ 一帧白跳。
         if ($this->lane()->offset() <= 0.0) {
             return;
         }
@@ -279,7 +237,7 @@ final class LazyListState extends State implements Scrollable
             return;
         }
 
-        // ★ O(1) 判据：锚点那一格的 key 还在原位 ⇒ 内容没动到锚点
+        // O(1) 判据：锚点那一格的 key 还在原位 ⇒ 内容没动到锚点
         $here = $this->anchorIndex < $count ? (string) $keyOf($items[$this->anchorIndex]) : null;
         if ($here !== null && $here === $this->anchorKey) {
             return;
@@ -311,13 +269,11 @@ final class LazyListState extends State implements Scrollable
     }
 
     /**
-     * 记下"视口起点是哪一格的哪个位置"（`04` §7.3）。
-     *
-     * ★ 只在**偏移真的变了**时调（`scrollBy()` 里）—— 内容变时的还原走
+     * 记下"视口起点是哪一格的哪个位置"。
+     * 只在偏移真的变了时调（`scrollBy()` 里）—— 内容变时的还原走
      *   `didUpdateWidget()`，两者方向相反，混在一起会互相覆盖。
-     *
-     * ★ 主轴起始内边距要从偏移里扣掉：格子从 `insets` 的起始边开始，
-     *   `offset = 0` 时视口起点是**内边距**而不是第 0 格。
+     * 主轴起始内边距要从偏移里扣掉：格子从 `insets` 的起始边开始，
+     *   `offset = 0` 时视口起点是内边距而非第 0 格。
      */
     private function rememberAnchor(): void
     {
@@ -348,13 +304,10 @@ final class LazyListState extends State implements Scrollable
     }
 
     /**
-     * 把内容坐标里的矩形滚进视口（`04` §6.3）。
-     *
-     * ★ 这里的"内容坐标"是**完整内容**的坐标（含 `insets`、含所有没造出来的
-     *   格子）—— 与 `$offset` 同一套坐标，所以换算不需要再补 `sliceOrigin`
-     *   （窗的起点只是绘制期的平移量，不进内容坐标）。
-     *
-     * ★ 形状与 `ScrollViewState::ensureVisible()` 逐字同构：算术都在
+     * 把内容坐标里的矩形滚进视口。
+     * 这里的"内容坐标"是完整内容的坐标（含 `insets`、含所有没造出来的格子）
+     * —— 与 `$offset` 同一套坐标，故换算不需再补 `sliceOrigin`。
+     * 形状与 `ScrollViewState::ensureVisible()` 同构：算术都在
      *   `RenderScrollView::revealDelta()`，本方法只"找盒 + 转交"。
      */
     public function ensureVisible(Rect $target, float $margin = 8.0): void
@@ -365,8 +318,7 @@ final class LazyListState extends State implements Scrollable
             return;
         }
 
-        // ★ 基准传**自己待生效的偏移**（同 `ScrollViewState`，见 `revealDelta()`
-        //   的 `$base` 说明）。
+        // 基准传自己待生效的偏移（同 `ScrollViewState`，见 `revealDelta()` 的 `$base` 说明）。
         $delta = $box->revealDelta($target, $margin, $this->lane()->offset());
         if ($delta !== 0.0) {
             $this->scrollBy($delta);
@@ -382,7 +334,7 @@ final class LazyListState extends State implements Scrollable
         $extent = $view->itemExtent();
         $insets = $view->insets();
 
-        // 主轴两端的内边距属于**内容**（纵向是上下、横向是左右）
+        // 主轴两端的内边距属于内容（纵向是上下、横向是左右）
         $start = $vertical ? $insets->top : $insets->left;
         $end = $vertical ? $insets->bottom : $insets->right;
 
@@ -399,18 +351,16 @@ final class LazyListState extends State implements Scrollable
         $first = max(0, min($first, $count));
         $last = max($first, min($last, $count));
 
-        // ★ 记下这扇窗的**内容坐标**范围 —— 滚动期靠它判"要不要重建窗口"
-        //   （见 `$windowStart` 的注释）。写成 `$start + 序号×格长` 而不是
-        //   "sliceOrigin + 窗长"：两者等价，但这个形式与下面的 `sliceOrigin`
-        //   同源，改一处不会漂。
+        // 记下这扇窗的内容坐标范围（滚动期靠它判"要不要重建窗口"，见 `$windowStart`）。
+        // 写成 `$start + 序号×格长`：与下面的 `sliceOrigin` 同源，改一处不会漂。
         $this->windowStart = $start + $first * $extent;
         $this->windowEnd = $start + $last * $extent;
 
         $cells = [];
         for ($i = $first; $i < $last; $i++) {
-            // ★ key = **绝对序号**（不是窗内序号）：窗口滑动一格时，第 k 格仍是
-            //   第 k 格 ⇒ diff 只增删两端各一个 Element，中间全部复用；用窗内
-            //   序号做 key 则整窗 key 一起变 ⇒ 每滚一格重建全部格子（State 全丢）。
+            // key = 绝对序号（不是窗内序号）：窗口滑动一格时第 k 格仍是第 k 格
+            //   ⇒ diff 只增删两端各一个 Element；用窗内序号做 key 则每滚一格
+            //   重建全部格子（State 全丢）。
             $cells[] = $this->sizedCell($view->buildItem($items[$i]), $extent, $vertical, $i);
         }
 
@@ -434,12 +384,10 @@ final class LazyListState extends State implements Scrollable
     }
 
     /**
-     * 一格：**主轴定长** + 绝对序号做 key。
-     *
-     * ★ 拆成两个 `return` 而不是 `$vertical ? ->height() : ->width()`：tpc 对
-     *   "三元两支类型不同"会推成联合类型（`AOT-CONSTRAINTS` 的 `?:` 那条），
-     *   而 `height()` / `width()` 在静态类型下各自返回 `static`。声明返回
-     *   `Widget` 后两支都只是子类型 ⇒ 编译器只需要一次向上转换。
+     * 一格：主轴定长 + 绝对序号做 key。
+     * 拆成两个 `return` 而不是 `$vertical ? ->height() : ->width()`：tpc 对
+     *   "三元两支类型不同"会推成联合类型，而 `height()` / `width()` 各自返回 `static`。
+     *   声明返回 `Widget` 后两支都只是子类型 ⇒ 只需一次向上转换。
      */
     private function sizedCell(Widget $kid, float $extent, bool $vertical, int $index): Widget
     {
@@ -452,8 +400,7 @@ final class LazyListState extends State implements Scrollable
 
     /**
      * 子层容器：纵向 `Column`、横向 `Row`。
-     *
-     * ★ 同样拆两个 `return`（`Column` / `Row` 是两个具体类，三元会推联合）。
+     * 同样拆两个 `return`（`Column` / `Row` 是两个具体类，三元会推联合）。
      */
     private function stack(array $cells, bool $vertical): Widget
     {
@@ -466,10 +413,8 @@ final class LazyListState extends State implements Scrollable
 
     /**
      * 视口主轴长度的估计。
-     *
-     * ★ 优先取**上一帧**盒的实测主轴长度（精确）；首帧没有盒 ⇒ 退回窗口的对应
-     *   尺寸（上界：任何嵌套视口都不会比窗口更大）。**不读环境时钟、不问平台**
-     *   （G3：帧的输入只有约束与树）。
+     * 优先取上一帧盒的实测主轴长度（精确）；首帧无盒 ⇒ 退回窗口对应尺寸
+     * （上界：任何嵌套视口都不比窗口更大）。不读环境时钟、不问平台。
      */
     private function viewportEstimate(BuildContext $ctx, bool $vertical): float
     {
@@ -482,10 +427,9 @@ final class LazyListState extends State implements Scrollable
             if ($size !== null) {
                 $viewport = $vertical ? $size->height : $size->width;
                 if ($viewport > 0.0) {
-                    // ★ `04` §5.5 的断言：这里是**帧间状态依赖**（读上一帧的盒
-                    //   尺寸，不在 performLayout 里 ⇒ 不违反布局纯函数，但同类隐患）。
-                    //   超过 2 倍窗口主轴 ⇒ 上一帧的盒尺寸是错的（如窗口刚从小变大）。
-                    //   逻辑不动（三条理由见 `04` §5.5），只加这条上界。
+                    // 这里是帧间状态依赖（读上一帧的盒尺寸，不在 performLayout 里
+                    //   ⇒ 不违反布局纯函数，但同类隐患）。超过 2 倍窗口主轴 ⇒
+                    //   上一帧的盒尺寸可疑（如窗口刚从小变大）。
                     if ($window > 0.0 && $viewport > $window * 2.0) {
                         Errors::report(sprintf(
                             '%s 的视口估计 %s 超过窗口主轴 %s 的 2 倍 —— 上一帧的盒尺寸可疑。'
@@ -501,8 +445,8 @@ final class LazyListState extends State implements Scrollable
             }
         }
 
-        // ★ ② 自己声明了视口 ⇒ 用它。**必须排在 `$ctx` 之前**（2026-10-29）：
-        //   `BuildContext` 的主轴在浮层里是**无界**（`RenderPopupPanel` 按内容自尺寸）
+        // ★ 自己声明了视口 ⇒ 用它。必须排在 `$ctx` 之前：
+        //   `BuildContext` 的主轴在浮层里是无界（`RenderPopupPanel` 按内容自尺寸）
         //   ⇒ 退到它会把 60 格全部造出来（虚拟化静默失效）。
         $declared = $this->view()->viewportExtentPx();
         if ($declared > 0.0) {

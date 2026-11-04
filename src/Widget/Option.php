@@ -6,34 +6,12 @@ namespace Drift\Widget;
 use Drift\Errors;
 
 /**
- * 一个可选项：**显示名 + 值**（W8-2 Select，2026-10-23）。
+ * 一个可选项：**显示名（`label`） + 值（`value`）**。
  *
- * ```php
- * Select::make([
- *     Option::make('北京市', '110000'),
- *     Option::make('上海市', '310000'),
- *     Option::of('未知'),            // 显示名就是值
- * ])->value($this->city)->onChanged(fn(string $v) => ...);
- * ```
+ * `value` 是稳定的身份，`onChanged()` 回调收到的就是它；`label` 只是给人看的字。
+ * 列表一旦会被重排 / 过滤 / 分页，下标就不是身份了，所以两者必须分开。
  *
- * ## 为什么不是 `list<string>`（下标当值）
- *
- * ★★ **`label` 与 `value` 必须分开**：列表一旦会被重排 / 过滤 / 分页（选城市、
- *   选用户、选分类 —— Select 的**全部**真实场景），**下标就不是身份**了。
- *   按下标传值的话，"筛掉两个城市之后选中项跳到了隔壁"这种 bug 只能靠应用自己
- *   补映射。`value` 是**稳定的身份**，`label` 是**给人看的字**。
- *
- * ★ **但 `array<string, string>`（键 = 值、值 = 显示名）不违反这条**，恰恰相反：
- *   键就是身份。2026-10-24 起 `normalize()` 收这种短形式，省掉 `Option::make`
- *   的壳；类的存在意义不变，`Option` 仍是**唯一**的选项类型。
- *   （此前本段把"反对下标当值"写成了"反对数组形态"，那是把两件事混了。）
- *
- * ★ 与 `SegmentedControl`（`list<string>` + 下标）**刻意不同**：分段控件的段是
- *   "几个平级的视图"，位置本身就是语义（第 1 段就是第 1 段），没有"重排后还是
- *   同一个东西"的需求。两条纪律各自的理由都写在这两处，别为了统一而统一。
- *
- * ★ **纯值对象，`public readonly` 即终态**（同 `CustomPaint` 的字段纪律）：
- *   没有 `mutate()` / 没有链式设值 —— 它不是 Widget，不需要封存位。
+ * 纯值对象，`public readonly` 即终态：没有 `mutate()`，也没有链式设值。
  *
  * @api
  */
@@ -59,32 +37,26 @@ final class Option
     }
 
     /**
-     * 把"选项表的两种书写形态"统一成 `list<Option>`（2026-10-24）。
+     * 把"选项表的两种书写形态"统一成 `list<Option>`。
      *
      * ```php
      * Option::normalize([Option::make('北京市', '110000')]);  // 形态 1：显式对象
      * Option::normalize(['110000' => '北京市']);              // 形态 2：映射（键 = 值）
      * ```
      *
-     * ★ `Select::make()` / `ComboBox::make()` 的入参都先过这里 ⇒ 应用不必为"从
-     *   DB / HTTP 拿来就是 `id => name`"这种最常见的数据形状再手写一遍 `array_map`。
+     * `Select::make()` / `ComboBox::make()` 的入参都先过这里，应用拿到
+     * `id => name` 这种形状不必再手写 `array_map`。
      *
-     * ## 两条必须知道的坑（都是 PHP 的，不是本方法的）
+     * 两条必须知道的坑（都是 PHP 的，不是本方法的）：
      *
-     * 1. ★★ **数字键会被 PHP 转成 int**：`['110000' => '北京市']` 的键实际是
-     *    `int 110000`（而 `'01'` 仍是 string）⇒ 这里必须 `(string)` 收口。
-     *    不收口这一条**根本装不进去**（`Option::$value` 是 `string`，严格类型下
-     *    传 int 是 TypeError）—— 也就是说 `['110000' => ...]` 这种最常见的城市码
-     *    写法会直接崩，而错误信息指向 `Option::make()`，与应用写的东西对不上。
-     *    ★ 不靠调用方的严格类型兜底：AOT 的类型退化表不保证与解释器同形。
-     * 2. ★★ **`[0 => 'x']` 与 `['x']` 在 PHP 里是同一个数组** ⇒ "值 0"与"标签
-     *    列表"在语言层面**无法区分**。所以 list 形态**只收 `Option`**，裸值一律
-     *    **Fatal**（`Errors::report()` 的默认级别）。不猜的理由：猜错的后果是
-     *    "选中了错的人"且全程无报错，比启动即崩贵得多。
-     *    要"值 = 显示名"写 `Option::of('北京')`，要"键 = 值"写映射 `['北京' => '北京']`。
+     * 1. **数字键会被 PHP 转成 int**：`['110000' => '北京市']` 的键实际是
+     *    `int 110000`，这里必须 `(string)` 收口，否则 `Option::$value` 严格类型下
+     *    传 int 是 TypeError（报错指向 `Option::make()`，对不上应用写的）。
+     * 2. **`[0 => 'x']` 与 `['x']` 在 PHP 里是同一个数组** ⇒ 值 0 与标签列表
+     *    在语言层面无法区分。所以 list 形态**只收 `Option`**，裸值一律 Fatal。
+     *    ★ 不猜的理由：猜错 ⇒ "选中了错的人"且全程无报错，比启动即崩贵得多。
      *
-     * ★ 顺带一条 PHP 语义（不改、只说明）：映射形态下**重复键后者覆盖前者**，
-     *   这是 PHP 数组本身的规则，本方法看不到"被覆盖过"这件事。
+     * 映射形态下重复键后者覆盖前者，这是 PHP 数组本身的规则。
      *
      * @param list<Option>|array<array-key, string> $raw
      * @return list<Option>
@@ -96,8 +68,7 @@ final class Option
             return [];
         }
 
-        // 判"连续整数键"（PHP 的 list）。**不用 `array_is_list()`**：本仓没有它的
-        // AOT 先例，而这段五行就够 —— 不值得为省一行去赌 tpc 的函数映射表。
+        // 判断是否为 PHP 的 list（连续整数键）。
         $isList = true;
         $expect = 0;
         foreach ($raw as $key => $unused) {
@@ -117,9 +88,8 @@ final class Option
                     continue;
                 }
 
-                // R4 同款纪律（`Each.php`）：绝不给裸值猜一个身份。
-                // ★ `Errors::report()` 默认级别是 **FATAL** ⇒ 下面这句不会返回；
-                //   `continue` 只是"万一有人把级别调低"时的安全落点（不猜，就不产出）。
+                // `Errors::report()` 默认级别是 FATAL ⇒ 下面这句不会返回；
+                // `continue` 只是级别被调低时的安全落点（不猜，就不产出）。
                 Errors::report(sprintf(
                     'Option::normalize() 的 list 形态只收 Option，第 %d 个元素是裸值。'
                         . "\n" . '要"值 = 显示名"写 `Option::of(\'北京\')`；'
@@ -157,24 +127,18 @@ final class Option
     }
 
     /**
-     * 从"行数组"组装选项表 —— DB / HTTP 最常见的那一种形状（2026-10-24）。
+     * 从"行数组"组装选项表（DB / HTTP 最常见的形状）。
      *
      * ```php
      * // $rows = [['id' => 1, 'name' => '北京市'], ['id' => 2, 'name' => '上海市']]
      * Select::make(Option::fromRows($rows, 'name', 'id'))->value($this->city);
      * ```
      *
-     * ★ 对应 WPF 的 `DisplayMemberPath` / `SelectedValuePath` 与 antd 的
-     *   `fieldNames`。**区别在失败形态**：那两家字段名拼错是**静默**的（整列空白，
-     *   要自己盯着看），这里缺字段直接 Fatal 并报出「哪一行、缺哪个字段、现有哪几列」。
-     *
-     * ★ 为什么是 `Option::fromRows()` 而不是 `Select::fromRows()`：它产出的是
-     *   `list<Option>`，`Select` / `ComboBox` 乃至以后任何吃选项表的控件都能用；
-     *   挂到某个控件上，第二个控件就得再抄一遍。
+     * 字段名拼错直接 Fatal，并报告哪一行、缺哪个字段、现有哪几列。
      *
      * @param array<array-key, array<array-key, mixed>> $rows 行数组（每行是关联数组）
      * @param string $labelField 显示名取哪一列
-     * @param string $valueField 身份取哪一列（数字会被转成 string，见 `normalize()` 的坑 1）
+     * @param string $valueField 身份取哪一列（数字会被转成 string，见 `normalize()`）
      * @return list<Option>
      * @api
      */

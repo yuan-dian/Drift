@@ -17,43 +17,19 @@ use Drift\Rendering\Elevation;
 use Drift\Rendering\MetricToken;
 
 /**
- * 按钮（§A.1 / §A.3.7）。
- *
- * ```php
- * Button::primary('刷新')->command('users.refresh');
- * Button::make('取消')->onPressed(fn() => $this->closeModal());
- * ```
- *
- * ★ **继承 `RenderBoxWidget`**（不是结构节点）—— 它产渲染盒，几何由 `RenderButton`
- *   算。盒样式（底 / 边 / 圆角）**不另存**：`->background()` 走 `Widget` 的通用修饰
- *   写进 `$mods`，本类的 `resolveBoxStyle()` 再从那里**派生**出 `BoxStyle` 交给
- *   `RenderButton`（S1，2026-10-28 —— 此前是 `BoxWidget` 里的第二份存储，见
- *   `Modifier::boxStyle()` 的注）。
- *
- * ★ **两条输入路径，语义不同**：
- *   - `->onPressed(闭包)` = 纯 UI 回调，零框架依赖（§A.3.7 就是这么用的）
- *   - `->command('名')->arg(...)` = 走命令系统（`CommandRouter` + 冒泡链，M3 已通）
- *   ★ **激活时机**（2026-10-16 P0 修复）：**按下即激活**（`down` 相位 ——
- *     `Application::dispatchInput()` 的 focusHit + activateFocusedWidget）。
- *     `up` 相位（2026-10-17 落地）服务于**拖放放下**，按钮激活仍住 down
- *     （不迁移到 up：press/release 视觉态无消费者，A15）。
- *   ★ **悬停**：`->hover(fn(bool $entered) => ...)`（`Widget` 基类）—— 指针
- *     `move` 相位派发，**目标变化才通知**（§9.1 语义 #5）。菜单项高亮即此用法。
- *
- * ★ **不是 `final`**：`NavButton`（§12.2 外壳词汇）继承它 —— 导航按钮就是一种
- *   按钮，共享同一条链与同一个渲染盒，不为一个新名字复制一套机制。
- *
+ * 按钮。
+ * 继承 `RenderBoxWidget`（产渲染盒，几何由 `RenderButton` 算）；盒样式不另存，
+ * 经通用修饰写进 `$mods`，本类 `resolveBoxStyle()` 再从 `$mods` 派生 `BoxStyle`。
+ * 两条输入路径语义不同：`onPressed(闭包)` 是纯 UI 回调；`command('名')->arg(...)`
+ * 走命令系统（冒泡链）。按下即激活（`down` 相位）。`NavButton` 继承它，共享同
+ * 一条链与同一个渲染盒。
  * @api
  */
 class Button extends RenderBoxWidget implements Activatable
 {
-    // ★ **AOT：会被继承的类，字段不能是 private** —— tpc 按**运行时类型**查属性表，
-    //   而父类的 `private` 不进子类属性表 ⇒ 子类实例（`NavButton` / `Menu` / `MenuItem`）
-    //   上访问它们会**动态创建属性**（`Deprecated`，且值是 NULL ⇒ 紧接着
-    //   `ArgumentCountError: RenderButton::__construct(): Argument #1 ($label) not passed`）。
-    //   与 `Element::$box` / `RenderBox::$size` 同一条纪律（那两处早就是 protected）。
-    //   2026-10-16 真机跑 `users.exe` 时当场崩出来 —— 解释器面 496 断言 / lint / codegen 全绿，
-    //   只有真机能看见。
+    // ★ 字段不能是 private：tpc 按**运行时类型**查属性表，父类的 `private` 不进子类
+    //   属性表 ⇒ 子类实例（`NavButton` / `Menu` / `MenuItem`）访问它们会**动态创建
+    //   属性**（值为 NULL ⇒ `RenderButton::__construct()` 第 1 参数 `$label` 未传）。
     protected ButtonVariant $variant = ButtonVariant::Default;
 
     protected ?\Closure $onPressed = null;
@@ -64,49 +40,38 @@ class Button extends RenderBoxWidget implements Activatable
 
     /**
      * 前置图标（`null` = 无图标）。
-     *
      * ★ 图标与标签在**同一个渲染盒**里排（不是 `Row`）—— `Flex::createRenderObject()`
      *   只建 `RenderFlex` 空壳、子盒由 Element 挂，手工拼 `Row(图标, 文字)` 会得到
-     *   一个没有孩子的 `RenderFlex`（详见 `RenderButton` 类注释）。
+     *   一个没有孩子的 `RenderFlex`。
      */
     protected ?IconName $icon = null;
 
     /**
      * 标签是否**画出来**（`false` = 纯图标按钮，标签只作可访问名）。
-     *
-     * ★ 用字段而不是让 `IconButton` 覆写虚方法：tpc 全程序去虚化会让"基类默认 +
-     *   子类覆写"静默失效（见 `Widget::semantics()` 同款注释）。
+     * 用字段而不是让 `IconButton` 覆写虚方法：tpc 全程序去虚化会让"基类默认 +
+     * 子类覆写"静默失效。
      */
     protected bool $labelVisible = true;
 
     /**
      * 内容是否在盒内居中（`false` = 左对齐）。
-     *
-     * ★ `NavButton` 构造时置 `false`：菜单 / 导航项左对齐，否则"图标 + 文字"这个
-     *   整体会按标签长度各自漂移（短标签的图标比长标签靠右 20+ px，看着没对齐）。
-     * ★ 单个按钮要左对齐用 `alignLeft()`（`TreeView` 的行就是这个场景）——
-     *   借 `NavButton` 会把"树行"和"导航项"焊在一起，改侧栏对齐会波及树。
-     * ★ 与 `labelVisible` 同一条纪律：字段而不是覆写虚方法（tpc 去虚化）。
+     * `NavButton` 构造时置 `false`：菜单 / 导航项左对齐，否则图标会随标签长度漂移。
+     * 单个按钮要左对齐用 `alignLeft()`。
      */
     protected bool $centerLabel = true;
 
     /**
      * 紧凑内边距（`false` = 常规：横向 `2×gap`、纵向 `1×gap`）。
-     *
-     * ★ 为什么需要它：日历格子这类"内容本身就是一格"的用法必须被父容器**等分**
-     *   （7 列），而常规横向内边距会让按钮的最小宽超过格宽 ⇒ 布局超界 Fatal。
-     *   把内边距压到 `1×gap` 之后，"15px 的字 + 16px 边"能塞进 40px 的格子。
-     * ★ 与 `alignLeft()` 同一条纪律：字段而不是覆写虚方法（tpc 去虚化）。
+     * 日历格子等被父容器等分的场景必须压到 `1×gap`，否则按钮最小宽超过格宽 ⇒ 布局超界。
      */
     protected bool $compactPadding = false;
 
     public function __construct(protected readonly string $label)
     {
         parent::__construct();
-        // §9.1：按钮天然可聚焦（Tab 能到、回车/空格能触发）
+        // 按钮天然可聚焦（Tab 能到、回车/空格能触发）
         $this->markFocusable();
-        // §9 无障碍：按钮的可访问名 = label。**字段赋值**（不是虚方法覆写 ——
-        // tpc 全程序去虚化会让"基类默认+子类覆写"静默失效，见 Widget::semantics()）
+        // 按钮的可访问名 = label；字段赋值而非虚方法覆写（tpc 去虚化会让覆写静默失效）
         $this->semantics(SemanticsRole::Button, $label);
     }
 
@@ -115,7 +80,7 @@ class Button extends RenderBoxWidget implements Activatable
         return new self($label);
     }
 
-    /** §15.4：变体工厂 = `make()` 的薄壳别名，糖只转发 */
+    /** 变体工厂，糖只转发 */
     public static function primary(string $label): self
     {
         return self::make($label)->variant(ButtonVariant::Primary);
@@ -145,22 +110,8 @@ class Button extends RenderBoxWidget implements Activatable
 
     /**
      * 禁用 / 恢复（`enabled(false)` ≡ `disabled()`）。
-     *
-     * ★ 与 `ToggleBase::enabled()` **同名同义**（那里是别名，这里是第一个接上
-     *   这套的按钮类）：状态只有一份（§2026-10-29：`Modifier::$disabled`），
-     *   没有第二个 `enabled` 字段。
-     *
-     * ★★ **为什么值得补这一个方法** —— 它是"能不能点"的唯一正确表达：
-     *   转圈时禁止翻页、第 1 页禁止「上一页」，在别的 GUI 里都是**禁用态**
-     *   （Flutter `onPressed: null` / WPF `IsEnabled` / Qt `setEnabled(false)`）。
-     *   没有它，页面只能在回调里写 `if ($loading) return;` —— 那是**静默拒绝**：
-     *   用户点了、什么都没发生、也不知道为什么。禁用态则把"现在不能点"画出来。
-     *
-     * ★ 三件事都由框架现成的路完成，**本类只负责开门**：
-     *   ① 不激活（见 `activate()`）；② 外观变淡（`RenderBox` 按
-     *   `Modifier::$disabled` 叠一层 alpha）；③ 不进 Tab 序、语义上报 disabled
-     *   （`FocusManager` / `SemanticsBuilder` 已经读 `mods()->disabled()`）。
-     *
+     * 状态只有一份（`Modifier::$disabled`），没有第二个 `enabled` 字段。
+     * 禁用态做三件事：不激活、外观变淡、不进 Tab 序且语义上报 disabled。
      * @api
      */
     public function enabled(bool $enabled): static
@@ -174,7 +125,7 @@ class Button extends RenderBoxWidget implements Activatable
         return !$this->mods()->disabled();
     }
 
-    /** 走命令系统（键盘 Enter/Space 与指针按下两路径同激活，§24.2 #16） */
+    /** 走命令系统（键盘 Enter/Space 与指针按下两路径同激活） */
     public function command(string $name): static
     {
         $this->mutate();
@@ -183,7 +134,7 @@ class Button extends RenderBoxWidget implements Activatable
         return $this;
     }
 
-    /** 命令参数（§11.4.3：`none/id/key` 三形态，不裸传 int/string） */
+    /** 命令参数（`none/id/key` 三形态，不裸传 int/string） */
     public function arg(CommandArg $arg): static
     {
         $this->mutate();
@@ -194,11 +145,7 @@ class Button extends RenderBoxWidget implements Activatable
 
     /**
      * 前置图标（工具条 / 导航项用）。
-     *
-     * ```php
      * Button::make('刷新')->icon(IconName::Refresh);
-     * NavButton::make('列表 List')->icon(IconName::ListBullets);
-     * ```
      */
     public function icon(IconName $icon): static
     {
@@ -215,11 +162,9 @@ class Button extends RenderBoxWidget implements Activatable
 
     /**
      * 内容左对齐（图标 + 标签靠左）。
-     *
-     * ★ 与 `NavButton` 的分工：那个是"这类按钮**天生**左对齐"（构造期置死），
-     *   本方法是"**这一个**按钮要左对齐"。`TreeView` 的行必须用这个 —— 行里的
-     *   标签被 `Expanded` 撑满剩余宽度（点空白也算点这一行），居中会让整棵树
-     *   看着像一段居中的文字，缩进层级完全读不出来。
+     * 与 `NavButton` 的分工：那个是"这类按钮天生左对齐"（构造期置死），
+     * 本方法是"这一个按钮要左对齐"。`TreeView` 的行必须用它（标签被 `Expanded`
+     * 撑满，居中会让整棵树看着像居中的文字，缩进层级读不出来）。
      */
     public function alignLeft(): static
     {
@@ -231,13 +176,8 @@ class Button extends RenderBoxWidget implements Activatable
 
     /**
      * 紧凑内边距（横向 `1×gap`、纵向 `1×gap`）。
-     *
-     * ```php
-     * // 日历格子：7 列等分，常规内边距会让按钮最小宽超过格宽
+     * 只解决"塞得进"，不解决"看起来紧凑" —— 间距仍由父容器的 gap 决定。
      * Button::make('29')->compact()->variant(ButtonVariant::Flat);
-     * ```
-     *
-     * ★ 只解决"塞得进"，不解决"看起来紧凑" —— 间距仍由父容器的 gap 决定。
      */
     public function compact(): static
     {
@@ -274,19 +214,12 @@ class Button extends RenderBoxWidget implements Activatable
 
     /**
      * 激活（`Activatable`）—— 命令优先，`onPressed` 兜底。
-     *
-     * ★ 这段逻辑原先住 `InputRouter::activateFocusedWidget()` 的末段，且前面要挡
-     *   三个 `instanceof`（`Menu` / `ToggleBase` / `Segment`）。搬到控件自己身上之后
-     *   框架不再需要知道"按钮长什么样"，而 `Menu` 只需覆写本方法就能改变激活语义
-     *   （见 `Menu::activate()`）。
-     *
-     * ★ **命令优先**：`->command('x')` 声明了就走全链（冒泡 → 注册表），
-     *   `onPressed` 是纯 UI 回调，作为没声明命令时的兜底 —— 与搬迁前逐字相同。
+     * 命令优先：`command('x')` 声明了就走全链（冒泡 → 注册表）；
+     * `onPressed` 是纯 UI 回调，作为没声明命令时的兜底。
      */
     public function activate(ActivationContext $context): void
     {
-        // ★ 禁用 ⇒ 什么都不做。命中链与焦点链已经各自挡过一次（见 `enabled()`），
-        //   这里是同一条规矩的最后一处：激活是"行为"，不该靠上游记得拦。
+        // 禁用 ⇒ 什么都不做（激活是"行为"，不该靠上游记得拦）。
         if ($this->mods()->disabled()) {
             return;
         }
@@ -306,24 +239,23 @@ class Button extends RenderBoxWidget implements Activatable
 
     public function createRenderObject(BuildContext $context): RenderBox
     {
-        // §15.7 纪律 3：变体 → token → 值，**只在这里合并一次**。
-        // 经 BuildContext 取（Widget 层唯一被允许碰主题的入口），Render 层只收值。
+        // 变体 → token → 值，只在这里合并一次（经 BuildContext 取，Render 层只收值）。
         $gap = $context->metric(MetricToken::Gap);
         $fontSize = $context->textSize(TextRole::Body);
 
-        // ★ 纯图标按钮要**正方形**：文字按钮的横向内边距原本是纵向的两倍（给字宽
-        //   留呼吸），图标没有字宽，两倍横向会把 40 高撑成 56 宽的胶囊。
-        // ★ 不用三元：两支类型不同 ⇒ tpc 的 `operator?:` 编译成 C2678（AOT 约束 A2）。
+        // 纯图标按钮要正方形：文字按钮横向内边距是纵向两倍（给字宽留呼吸），
+        // 图标没字宽，两倍横向会撑成胶囊。
+        // 不用三元：两支类型不同 ⇒ tpc 的 operator?: 会编译失败（AOT 约束）。
         $insets = EdgeInsets::symmetric($gap * 2.0, $gap);
         if (!$this->labelVisible) {
             $insets = EdgeInsets::all($gap * 1.5);
         }
-        // 紧凑档最后覆盖：日历格子这类被父容器等分的按钮，最小宽必须让得出来
+        // 紧凑档最后覆盖：被父容器等分的按钮，最小宽必须让得出来
         if ($this->compactPadding) {
             $insets = EdgeInsets::all($gap);
         }
 
-        // 图标与文字同高（+4 让笔画不显局促）；线宽按 §RenderIcon 的同一口径推
+        // 图标与文字同高（+4 让笔画不显局促），线宽按图标渲染的同一口径推
         $iconSize = $fontSize + 4.0;
 
         $label = $this->label;
@@ -356,7 +288,7 @@ class Button extends RenderBoxWidget implements Activatable
     /**
      * @internal 见 `RenderBoxWidget::paintsBoxChrome()`：`RenderButton::paintOwnChrome()`
      *   自己画底 / 边 / 悬停层 / 浮起影子 ⇒ 交给盒的 `$mods` 要剥掉视觉三字段，
-     *   否则描边会画两遍（**不幂等**，golden 实测差 32 像素）。
+     *   ★ 否则描边会画两遍（不幂等，golden 实测差 32 像素）。
      */
     public function paintsBoxChrome(): bool
     {
@@ -365,10 +297,8 @@ class Button extends RenderBoxWidget implements Activatable
 
     /**
      * 悬停浮起档位（`Elevation` 口径）。
-     *
-     * ★ `Flat` 不浮：它是"没有容器的文字/图标"（顶条动作、行内操作），浮起来
-     *   会凭空长出一个不存在的盒子 —— 状态色已经足够表达悬停。
-     * ★ 不放 `BuildContext`：与变体绑定，不随主题变。
+     * `Flat` 不浮：它是"没有容器的文字/图标"，浮起来会凭空长出盒子。
+     * 不放 `BuildContext`：与变体绑定，不随主题变。
      */
     protected function resolveHoverElevation(): float
     {
@@ -379,14 +309,11 @@ class Button extends RenderBoxWidget implements Activatable
     }
 
     /**
-     * 变体 → 盒样式（**用户经 `background()/border()/radius()` 设的优先**）。
-     *
-     * ★ §15.7 修正：用户设的盒样式此前被忽略 ⇒ 修饰符是死代码（其 docblock 写"渲染层读它"）。
-     *   字段级合并：用户设了（非 null/非零）就用用户的，否则回退主题默认盒。
-     *   ★ 边缘：radius 取 `> 0` 才用用户的（BoxStyle 以 0 表示"未设/直角"），故无法用修饰符把圆角显式设回 0。
-     * ★ 用户设的那一份**从 `$mods` 派生**（S1）：三个修饰方法不再由 `BoxWidget` 覆写，
-     *   所以"用户设过没有"这个三态由 `Modifier` 的 `$hasBackground` / `$hasBorder`
-     *   / `radius !== 0` 表达 —— 与 `boxStyle()` 的判据是同一处，不会漂。
+     * 变体 → 盒样式（用户经 `background()/border()/radius()` 设的优先）。
+     * 字段级合并：用户设了（非 null/非零）就用用户的，否则回退主题默认盒。
+     * radius 取 `> 0` 才用用户的（BoxStyle 以 0 表示"未设/直角"）。
+     * 用户设的那一份从 `$mods` 派生（三个修饰方法不再由 `BoxWidget` 覆写），
+     * "用户设过没有"由 `Modifier` 的 `$hasBackground` / `$hasBorder` / `radius !== 0` 表达。
      */
     protected function resolveBoxStyle(BuildContext $context): BoxStyle
     {
@@ -402,8 +329,7 @@ class Button extends RenderBoxWidget implements Activatable
             ),
             ButtonVariant::Primary => new BoxStyle($context->color(ColorToken::Accent), null, 0.0, $radius),
             ButtonVariant::Danger => new BoxStyle($context->color(ColorToken::Danger), null, 0.0, $radius),
-            // ★ 扁平：什么都不画（`BoxStyle::none()`），字色走正文色。
-            //   渲染盒照常占位、照常命中 ⇒ 视觉上"没有盒子"但行为仍是按钮。
+            // 扁平：什么都不画（`BoxStyle::none()`）；渲染盒照常占位、命中 ⇒ 视觉无盒但行为仍是按钮。
             ButtonVariant::Flat => BoxStyle::none(),
         };
 
@@ -412,10 +338,8 @@ class Button extends RenderBoxWidget implements Activatable
             return $themeBox;
         }
 
-        // ★ 用户设了渐变 ⇒ 渐变就是底（`BoxStyle::hasBackground()` 已把它算作"有底"）。
-        //   实色那一格用 `??` 而不是 `hasBackground() ?`：只设渐变时
-        //   `$userBox->background` 是 null，取主题色当 base（alpha 更贴近真实观感），
-        //   而渐变本身在 `backgroundPaint()` 里优先生效。
+        // 用户设了渐变 ⇒ 渐变就是底（`hasBackground()` 已算作"有底"）。实色用 `??`
+        // 而非 `hasBackground() ?`：只设渐变时 `$userBox->background` 是 null，取主题色当 base。
         return new BoxStyle(
             $userBox->background ?? $themeBox->background,
             $userBox->hasBorder() ? $userBox->borderColor : $themeBox->borderColor,
@@ -435,10 +359,9 @@ class Button extends RenderBoxWidget implements Activatable
     }
 
     /**
-     * 悬停状态色（`08` §4.1）：Default/Flat 用主题 Hover 底；Primary/Danger 是
-     * 实心强调底，叠 Hover 会被染成灰 ⇒ 改用白色半透明（提亮）。
-     *
-     * ★ 解析在这里（Widget 层能碰主题），RenderButton 只收值。
+     * 悬停状态色：Default/Flat 用主题 Hover 底；Primary/Danger 是实心强调底，
+     * 叠 Hover 会被染灰 ⇒ 改用白色半透明提亮。
+     * 解析在这里（Widget 层能碰主题），RenderButton 只收值。
      */
     protected function resolveHoverOverlay(BuildContext $context): ?Color
     {

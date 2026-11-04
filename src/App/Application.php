@@ -48,26 +48,10 @@ use Drift\Widget\SemanticsBuilder;
 use Drift\Widget\Snackbar;
 
 /**
- * **组合根**（§4.5）：应用只写 `buildRoot()` / `title()` / `commands()`。
+ * 组合根：应用只写 `buildRoot()` / `title()` / `commands()`。
  *
- * 它做四件事，别的都不做：① 持有根 Element 与一帧的 orchestrator；② 把
- * `commands()` 注册进 `CommandRouter`；③ **拼完 §11.4.3 的命令派发链** ——
- * 第 ①② 环（树内冒泡）在这里，第 ③ 环是 `CommandRouter`，第 ④ 环是"谁都没接"；
- * ④ 提供 `frame()` 让平台驱动一帧。
- *
- * ★ **它不拥有事件循环**（§5.2 裁决 1）：循环住平台，本类只提供"被告知该跑
- *   一帧时"的入口。所以测试能喂任意帧序列，动画相位 = f(帧时间戳) 才是确定的。
- *
- * ★ **表面是注入的，不是它造的**（§7.2 裁决 4：表面与树互认识）。⇒ 没有
- *   Win32 / Skia 桥也能在 `php.exe` 里跑完整应用（§14 的物质基础）。
- *
- * ```php
- * final class UsersApplication extends Application
- * {
- *     public function buildRoot(): Widget { return UsersRoot::make($this->store); }
- *     public function title(): string { return '用户管理'; }
- * }
- * ```
+ * 持有根 Element 与一帧的编排器，注册命令，`frame()` 供平台驱动一帧。
+ * 事件循环与渲染表面都由平台注入，故无 Win32 / Skia 也能跑完整应用。
  *
  * @api
  */
@@ -77,127 +61,55 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
 
     protected ?Frame $frame = null;
 
-    /**
-     * 输入路由宿主（§9.1 的 ②③ 环 + 命中测试）。
-     *
-     * ★ 它本身是 `@internal` 的实现细节，但**由 `Application` 持有**：路由需要根
-     *   Element，而根 Element 住在这里 ⇒ 让调用方自己拿一个 `FocusManager`
-     *   会变成"两份焦点状态"（§9.1 的焦点是渲染态，只能有一份）。
-     */
+    /** 焦点链宿主。焦点是渲染态、只能有一份，故由本类持有而不外部注入。 */
     protected ?FocusManager $focus = null;
 
-    /**
-     * 输入模态：最近一次是键盘（`true`）还是指针（`false`）—— `:focus-visible` 的依据。
-     *
-     * ★ 指针（点击 / 移动 / 滚轮）之后**隐藏**焦点环，键盘之后**显示** —— Windows
-     *   惯例。否则每次点按钮都闪一圈蓝框。
-     * ★ 初值 `false`：启动时没人按过键盘 ⇒ 第一次点击不该看到环。
-     */
+    /** 输入模态：`true` = 最近一次是键盘（`:focus-visible` 的依据，初值 false）。 */
     private bool $keyboardFocusVisible = false;
 
-    /** 上一次**画过**的环目标（`wantsFrame()` 第七判据；`null` = 上次没画环） */
+    /** 上一次真的画上屏的环目标（`null` = 上次没画） */
     private ?Element $paintedFocus = null;
 
-    /**
-     * UI 线程身份（`GetCurrentThreadId`，attach 时记下）。
-     *
-     * ★ 为什么不是 `getmypid()`：同进程所有线程的 pid 相同 ⇒ 区分不了 UI 线程与 worker。
-     *   见 DESIGN §17.4.2.1（WPF `VerifyAccess()` 的等价物）。
-     */
+    /** UI 线程 id（`GetCurrentThreadId`，`attach()` 时记；`getmypid()` 区分不了线程）。 */
     protected int $uiThreadId = 0;
 
     protected CommandRouter $router;
 
-    /**
-     * **应用作用域**（M2）：一个进程一份的东西（主题 / 度量 / 命令父表 / 加速键 /
-     * 后台端口 / IO 轮询器）住在这里；本类只持"每窗一份"的那些。
-     *
-     * ★ 构造参数可注入 ⇒ 多窗口时 N 个 `Application` 共享同一个实例；
-     *   不注入 ⇒ 自建一个 ⇒ **所有既有应用零改动**。
-     */
+    /** 应用作用域：进程一份的东西（主题 / 度量 / 命令父表 / 加速键 / 端口 / IO）。 */
     private readonly AppScope $scope;
 
     /** 已向 `$scope` 登记过本窗口（`attach()` 可重入 ⇒ 只登记一次） */
     private bool $scopeEntered = false;
 
-    /**
-     * 滚动输入路由（S1 第 5 步拆出的片）：滚轮 / 滚动条 thumb 拖动 /
-     * 焦点滚进视口。构造期建（host = 本类，只经 `focus()` 摸焦点链）。
-     */
+    /** 滚动输入路由：滚轮 / thumb 拖动 / 焦点滚进视口。只经 `focus()` 摸焦点链。 */
     private ScrollInputRouter $scrollInput;
 
-    /**
-     * 浮层栈 Owner（S1 第 8 步）—— 栈所有权 + 开合策略 + 时序件住那片，
-     * 本类只经它转调（15 个 public 委托壳）与直调（帧循环 / hover 回调）。
-     */
+    /** 浮层栈 Owner：栈所有权 + 开合策略 + Tooltip / Snackbar 时序件。 */
     private OverlayManager $overlayHost;
 
-    /**
-     * 文本编辑三侧的桥（S1 第 4 步拆出的最小片）：IME 光标 / 指针框选 /
-     * 编辑命令。构造期建（host = 本类），Application 只"持片 + 转交"。
-     *
-     * ★ 为什么整个搬走而不留代理方法：这三侧在 Application 里散成 6 个
-     *   方法 + 1 个字段，只共享"焦点里在编辑的输入框"一个判据；收成一片
-     *   后，IME 合成 / 选区矩形 / 双击选词的演进都落在一个文件里。
-     */
+    /** 文本编辑桥：IME 光标 / 指针框选 / 编辑命令。 */
     private TextEditingBridge $textEditing;
 
-    /**
-     * 输入路由主体（S1 第 6 步拆出的片）：§9.1 路由链的键 / 指针 / 滚轮三侧
-     * + 手势状态（竞技场 / 拖放 / 指针捕获）。构造期建（host = 本类，另收
-     * scrollInput + textEditing 两片做片间组合）。
-     *
-     * ★ 为什么最后建：它收另两片做片间组合（不经 host，同第 5 步口径）。
-     * ★ Application 只"持片 + 转交"：`dispatchInput()` / 拖放四入口 / 捕获三
-     *   方法留壳（外部直调不能断），壳内只做记账与转发。
-     */
+    /** 输入路由主体：键 / 指针 / 滚轮三侧 + 手势状态（竞技场 / 拖放 / 捕获）。 */
     private InputRouter $input;
 
-    /**
-     * 浮层几何布局策略（S1 第 7 步拆出的片）：每帧一次的 settle→清扫→定位。
-     * 构造期建（host = 本类，只经 `overlays()` 读栈 + `dismissOverlay()` 收窄）。
-     *
-     * ★ 为什么先于 OverlayHost 主体拆：它只读栈、读盒、写盒，与输入 / 命令 /
-     *   snackbar / tooltip 零耦合（`12-Application拆分.md` §4g 的版图 D 类）。
-     */
+    /** 浮层几何：每帧一次的 settle→清扫→定位。只读栈、读盒、写盒。 */
     private OverlayLayout $overlayLayout;
 
-    /**
-     * 异步泵片（S1 第 9 步）：`frame()` 里 settle 之前的三个泵 + 定时器。
-     * 构造期建（host = 本类）—— 泵只依赖自持的 tasks/io/timers 三个状态 +
-     * 宿主的 UI 线程断言与时间基准，不读 root / focus / overlays（真正零耦合）。
-     */
+    /** 异步泵：IO / 任务 / 定时器 / 分片。不读 root / focus / overlays。 */
     private PumpHost $pumps;
 
-    /**
-     * 语义树消费闭包（§9 / M5 UIA，per-app opt-in，同 taskHost() 形态）。
-     *
-     * ★ **默认 null ⇒ 不建语义树**（SemanticsBuilder"没人调就不建"，零开销）；
-     *   应用覆写返回闭包即接入 UIA（组合根把闭包接到 WindowHost::pushSemantics）。
-     */
+    /** 语义树消费闭包。`null` ⇒ 不建语义树（零开销）。 */
     protected ?\Closure $semanticsSink = null;
-    /**
-     * 一帧的预算（毫秒）—— 60fps 的 16.7ms（`06` §3.2）。
-     *
-     * ★ 实测端到端 3.1ms（M4）⇒ 余量 5.3×。这个常量的用途**不是"按它分配 CPU"**，
-     *   而是回答"超了先砍谁"（见 {@see self::STAGE_BUDGET_MS} 与 `06` §3.3）。
-     */
+    /** 一帧预算（毫秒，60fps）。用途是回答"超了先砍谁"，不是 CPU 分配表。 */
     public const BUDGET_MS = 16.7;
 
-    /**
-     * 连续多少帧超预算才算"真超"（`06` §3.4）。
-     *
-     * ★ **不用单帧判定**：单帧超预算通常是垃圾回收或系统抢占，连续 10 帧才是真问题。
-     *   与 `00` §5 的"单帧 > 8ms 连续 10 帧"同一口径。
-     */
+    /** 连续多少帧超预算才算"真超"（单帧超常是 GC 或系统抢占）。 */
     public const OVER_BUDGET_FRAMES = 10;
 
     /**
-     * 六阶段预算（毫秒，`06` §3.2）。
-     *
-     * ★ 它是**降级顺序的依据**，不是 CPU 分配表：超了先砍语义推送（D1），
-     *   `layout` / `paint` / `present` **永不砍** —— 砍了等于画面不更新，
-     *   比掉帧严重一个数量级（`06` §3.3 的 D5 边界）。
+     * 六阶段预算（毫秒）。是降级顺序的依据：超了先砍语义推送，
+     * `layout` / `paint` / `present` 永不砍（砍了等于画面不更新）。
      */
     public const STAGE_BUDGET_MS = [
         'A 组（四个泵）' => 1.0,
@@ -208,16 +120,6 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         '余量' => 3.7,
     ];
 
-    /**
-     * 浮层面板（O-20 第二棵根渲染树）：菜单 / 上下文菜单 / 模态共用同一槽位。
-     *
-     * ★ 与 `$root` **同构**（一个 Widget + 一个 Element）—— 树 / diff / 布局零配合，
-     *   `Frame` 只在主树之后多画一棵，"绘制顺序即层叠"故**不引入 z-index**。
-     *
-     * ★ **锚点是应用级几何**：面板钉在锚点矩形的左下角，再夹进客户区。锚点由
-     *   `showMenu()` 的 `$anchor` 给，`null` ⇒ 用最近一次命中的 Element
-     *   （§5.1 裁决 1 的锚点来源 —— 命令是"意图"不带位置，§11.4.3）。
-     */
     /** 连续超预算的帧数（0 = 本帧在预算内） */
     private int $overBudgetStreak = 0;
 
@@ -230,102 +132,59 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     /** 观测到的最差一帧（毫秒） */
     private float $worstFrameMs = 0.0;
 
-    /** D1：语义推送还剩几帧不推（0 = 这帧要推） */
+    /** 语义推送还剩几帧不推（0 = 这帧要推） */
     private int $semanticsFrameSkip = 0;
 
-    /** D1：上次推语义时焦点是谁（焦点一变必须立即推，**焦点永不节流**） */
+    /** 上次推语义时的焦点（焦点一变必须立即推，永不节流） */
     private ?Element $semanticsFocused = null;
 
-    /** `07` §6.2：上次推语义时的结构版本（`-1` = 还没推过 ⇒ 首帧必然 full） */
+    /** 上次推语义时的结构版本（`-1` = 还没推过 ⇒ 首帧必然 full） */
     private int $lastStructureVersion = -1;
 
-    /** `07` §6.2 coalesce：攒了几帧没推（0 = 没在攒） */
+    /** 攒了几帧没推（0 = 没在攒） */
     private int $semanticsCoalesced = 0;
 
-    /**
-     * coalesce 的帧数上限：攒满就必须推一次（`07` §9 #10）。
-     *
-     * ★ 没有上限 = "滚动/动画期间一直不推" ⇒ 读屏用户**完全失去反馈**。
-     *   与 `06` §3.4 的 D1 同值（4 帧 ≈ 64ms）。
-     */
+    /** coalesce 的帧数上限：没有上限 ⇒ 动画期间一直不推，读屏用户完全失去反馈。 */
     private const SEMANTICS_COALESCE_MAX = 4;
 
-    /**
-     * 悬停多久才弹出 Tooltip（毫秒，W8-2）。
-     *
-     * ★ 500ms 是桌面惯例（Windows / macOS 都在 400–700ms 这一档）。太短 ⇒ 指针
-     *   扫过一排图标时提示乱闪；太长 ⇒ 用户以为没有提示。
-     * ★ **相邻切换不等**：已经显示着的时候移到另一个带提示的控件，**立即**换内容
-     *   （Windows 手感）—— 见 `onHoverHit()`。
-     */
+    /** 悬停多久才弹出 Tooltip（毫秒，桌面惯例档）。已在显示时切到另一控件立即换内容。 */
     public const TOOLTIP_DELAY_MS = 500;
 
     /**
-     * 控件声明的浮层面板（`Widget::overlayPanel()`）的宽度上限（W8-2 Select）。
-     *
-     * ★ 与 `TooltipPanel::MAX_WIDTH` 分开：那是"一行提示"，这是"一列选项"。
-     * ★ 宽度上限是**必须**的（不是审美）：`placeEntry()` 给非居中层的是无界约束，
-     *   `RenderPopupPanel` 只在有界时才夹宽，而 ⑤ 的夹紧**只挪 x 不改宽** ⇒
-     *   不限宽就是"长选项右边溢出到客户区外"。
+     * 控件浮层面板（`Widget::overlayPanel()`）的宽度上限。
+     * 必须限定：非居中面板拿到无界约束，夹紧只挪 x 不改宽 ⇒ 长选项会溢出客户区。
      */
     public const PANEL_MAX_WIDTH = 320.0;
 
     /** 上次推送的档位（`full` / `coalesce` / `none`）—— 夹具与 devtools 读它 */
     private string $semanticsMode = 'none';
 
-    /**
-     * 上一帧有没有动画在跑（由 `tickAnimations()` 写）。
-     *
-     * ★ 两个消费者，都只读：`continueFrame()` 决定要不要按帧节奏续跑，
-     *   `pumpSemantics()` 决定语义树走 `coalesce` 还是 `full` 档。
-     * ★ 它**不再是**"要不要跑帧"的判据（2026-11-02，D1）—— 那是 `Pipeline` 的
-     *   计数器的事。这里的值只影响"续跑时用哪一档节奏"。
-     */
+    /** 上一帧有没有动画在跑。只读消费者：`continueFrame()` 的续跑节奏、`pumpSemantics()` 的档位。 */
     private bool $animating = false;
 
     /**
-     * **动效活跃表**：本帧需要被 tick 的节点（`Element`），顺序无关。
-     *
-     * ★★ 存在理由（2026-11-03）：`tickAnimations()` 此前每帧递归**整棵树**只为问
-     *   一句"有没有人在动"。实测 2000 节点 **935µs**（占稳态帧 98%），12k 节点
-     *   外推 ~6ms —— 60FPS 预算的 36%，换来的信息量只是"有几个人在动"。
-     *   nanoui（active set）/ Raven（active 集合 + 静止即 sleep）/ Flutter（Ticker
-     *   自己登记帧回调）三个独立实现都只访问在动的那几个。
-     *
-     * ★ 表项是 `Element` 而不是 `RenderBox`：盒每次重建被换新（§13.2），
-     *   **Element 才是跨重建稳定的那个**，而 `element->renderObject()` 永远指向
-     *   当前盒 ⇒ 表项不会变成"tick 一个死盒"。
+     * 动效活跃表：本帧需要被 tick 的节点，顺序无关。
+     * 存 `Element` 而非 `RenderBox`：盒每次重建被换新，`renderObject()` 才指向当前盒。
      *
      * @var list<Element>
      */
     private array $activeTicks = [];
 
-    /**
-     * 累计访问过的节点数（只增，测试用来断言"这一帧只碰了一个节点"）。
-     *
-     * ★ 断言**次数**而不是时间：时间是噪声，次数是判据。同 `FrameStageAccountingTest`
-     *   第 ③ 条用次数的理由。
-     */
+    /** 累计访问过的节点数（只增；测试按次数断言，时间是噪声）。 */
     private int $animationVisits = 0;
 
     /** 每帧自增的序列号 —— `State::tickFrameStamped` 用它做同帧幂等（迟到挂载补 tick 用） */
     private int $frameSerial = 0;
 
     /**
-     * 本帧执行过的段名（`FramePhase` 关时为 `null`）。
-     *
-     * ★ 是属性而不是 `frame()` 的局部变量（2026-11-03）：段名由 `stage()` 统一推进去，
-     *   而 `stage()` 是另一个方法。原先的局部 `$trace` 让"推段名"只能散在 `frame()`
-     *   里手写，与 `SurfaceProfile` 的计时分成了两份清单（见 {@see self::stage()}）。
+     * 本帧执行过的段名（`FramePhase` 关时为 `null`）。段名由 `stage()` 推进。
      *
      * @var list<string>|null
      */
     private ?array $frameTrace = null;
 
     /**
-     * 被跳过的零视口帧数（最小化 / 桌面临时切走）。
-     *
-     * ★ 只用于夹具观测"这一帧确实被跳过了"，不参与任何决策。
+     * 被跳过的零视口帧数。只用于观测，不参与决策。
      *
      * @internal
      */
@@ -335,34 +194,18 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     private float $lastTimestampMs = 0.0;
 
     /**
-     * **最近一次输入派发**的时间戳（`dispatchInput()` 的第 2 参，由壳注入）。
+     * 最近一次输入派发的时间戳（`dispatchInput()` 的第 2 参）。`0.0` = 未提供。
      *
-     * ★ 为什么要它：框架不自己读钟（G3），唯一的时间来源是壳每帧递进来的
-     *   `$timestampMs`。但"用户点了某个东西"这件事发生在**两帧之间**，此时
-     *   `lastTimestampMs` 是**上一帧**的 —— 应用空闲时可能是几百毫秒前。
-     *   而"点了之后延时 400ms"必须以**点击那一刻**为基准，不能以上一帧为基准。
-     * ★ 默认 `0.0`：测试与解释器不传时间戳 ⇒ 行为与之前**逐字节相同**
-     *   （`max(上一帧, 0)` = 上一帧）。
+     * 框架不自己读钟，唯一时间来源是壳注入。"点了之后延时 400ms"必须以点击那一刻为
+     * 基准，而 `$lastTimestampMs` 是上一帧的，空闲时可能差几百毫秒。
      */
     private float $lastInputMs = 0.0;
 
-    /**
-     * 点击链（"这一下是第几次点击"）。
-     *
-     * ★ 住在**应用**而不是 `InputRouter`：路由层是"无时钟"的策略层，而时间只有
-     *   壳递进来的这一条（`dispatchInput()` 的第 2 参）。放在这里 ⇒ 时间与"用时间
-     *   算出来的东西"在同一处，路由层不用为它改签名。
-     * ★ 规则见 `TapTracker`（间隔 / 距离 / 按键 / 修饰键四条）。
-     */
+    /** 点击链（"这一下是第几次点击"）。住在应用层：路由层不持钟。规则见 `TapTracker`。 */
     private TapTracker $taps;
 
     /**
-     * 本应用**唯一**的一条帧管线（2026-11-02，技术债 D3①）。
-     *
-     * ★ 原先 38 个 `private static` 把"一个进程只有一个应用"写死进了代码：
-     *   两个应用会共用脏计数、盒换代序号、帧量具 ⇒ 多窗口/M1 一步都走不动。
-     *   现在每应用一份，`frame()` 入口把它切成"当前管线"，树里的节点经
-     *   `Pipeline::current()` 找到它（见 `Pipeline` 类注释的三选一裁决）。
+     * 本应用唯一的帧管线（结构/内容版本、脏记账、换代序号、量具）。
      *
      * @internal 应用代码不该碰它；测试/探针用 {@see self::pipeline()}
      */
@@ -371,35 +214,26 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     /** @param iterable<string, CommandHandler> $handlers `commands()` 的返回值 */
     public function __construct(iterable $handlers = [], ?AppScope $scope = null)
     {
-        // ★ 最先建：下面每个片（router / textEditing / input …）在构造期就可能
-        //   经 `Element`/`State` 的版本号问这条管线。
+        // 先建：下面每个片在构造期就可能经版本号问这条管线。
         $this->pipeline = new Pipeline();
-        // ★ 作用域先定（M2）：本类对应用级状态的每一处读都经它。
+        // 本类对应用级状态的每一处读都经它。
         $this->scope = $scope ?? AppScope::make();
 
-        // ★ 本窗 router 以**应用级命令表为父**（父链，就近优先）：
-        //   全局命令注册一次、每个窗口可派发；本窗 `commands()` 仍各注册各的
-        //   （handler 持本窗的 Store ⇒ 绝不能被别的窗口派发到）。
+        // 以应用级命令表为父（就近优先）：全局命令各窗都能派发；本窗 handler 持本窗 Store，
+        // 绝不能串到别的窗口去。
         $this->router = CommandRouter::make($this->scope->commands());
 
         $this->taps = new TapTracker();
 
-        // S1 第 4 步：文本编辑三侧（IME / 指针框选 / 编辑命令）收成最小片。
-        // host = $this（片只经 TextEditingHost 摸焦点与剪贴板）—— 构造期
-        // 建无时序问题：两个 getter 都是运行期就绪的依赖，片内每次现读。
+        // host = $this，片只经 TextEditingHost 摸焦点与剪贴板。
         $this->textEditing = new TextEditingBridge($this);
 
-        // S1 第 5 步：滚动输入路由（滚轮 / thumb 拖动 / 焦点滚进视口）。
         $this->scrollInput = new ScrollInputRouter($this);
 
-        // S1 第 8 步：浮层栈 Owner（栈所有权 + 开合策略 + Tooltip/Snackbar 时序件）。
-        // ★ 建在 input 之前（InputRouter 收它做片间组合）、建在 overlayLayout
-        //   之前（布局片经它读栈）。自持栈，不依赖宿主任何运行期状态。
+        // 建在 input 之前（它收本片做片间组合），也建在 overlayLayout 之前（布局片经它读栈）。
         $this->overlayHost = new OverlayManager($this);
 
-        // S1 第 6 步：输入路由主体（键 / 指针四相位 / 滚轮 / 手势消歧 / 拖放 /
-        // 指针捕获）。后建：收另两片 + OverlayManager 做片间组合（不经 host，
-        // 同第 5 步口径；浮层四口子从 InputHost 移除，改走构造参数）。
+        // 后建：收 scrollInput / textEditing / overlayHost 做片间组合。
         $this->input = new InputRouter(
             $this,
             $this->scrollInput,
@@ -407,29 +241,20 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
             $this->overlayHost,
         );
 
-        // S1 第 7 步：浮层几何布局策略（帧循环每帧一次的纯几何段）。
-        // ★ 建在 overlayHost 之后（经它读栈）、建在帧循环之前（frame() 第一处消费）。
         $this->overlayLayout = new OverlayLayout($this->overlayHost);
 
-        // S1 第 9 步：异步泵片（四个泵 + 定时器 + 分片）。host = 本类（片只经
-        // PumpHostHost 摸时间基准与 taskHost()），构造期建无时序问题。
+        // host = $this，片只经 PumpHostHost 摸时间基准与 taskHost()。
         $this->pumps = new PumpHost($this);
 
-        // 只注册**显式传进来**的那些。`commands()` **不在构造器里调** ——
-        // PHP 的构造链是"父先子后"，此刻子类构造器里的字段（`$this->store` 之类）
-        // 还都是 null ⇒ 照 §A.2 的样例会直接炸。注册推迟到 `attach()`（见那儿）。
+        // `commands()` 不在这里调：PHP 构造链父先子后，此刻子类字段还是 null。
+        // 注册推迟到 `attach()`。
         foreach ($handlers as $name => $handler) {
             $this->router->on((string) $name, $handler);
         }
     }
 
     /**
-     * 焦点链（S1 第 4 步：`TextEditingHost` 契约的强制产物）。
-     *
-     * ★ 不是应用扩展点（对比 `clipboard()` 的 @api）—— 目前唯一消费者是
-     *   `TextEditingBridge`（片只经 host 摸焦点）。标 `@internal`：若将来
-     *   组合根真要读焦点（如 UIA 推送），那是显式升级 @api 的时刻，
-     *   不是默认放它进应用面。
+     * 焦点链。不是应用扩展点，唯一消费者是 `TextEditingBridge`。
      *
      * @internal
      */
@@ -438,7 +263,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         return $this->focus;
     }
 
-    /** 应用子树（§4.5：只写这一个方法就能跑起来） */
+    /** 应用子树（只写这一个方法就能跑起来） */
     abstract public function buildRoot(): Widget;
 
     /** 窗口标题 */
@@ -448,15 +273,8 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     }
 
     /**
-     * 命令处理器（§11.4.3）：**应用级依赖清单，集中一处**。
-     *
-     * 形态是 `命令名 => handler`，不是 `list<handler>` —— handler 不知道自己的
-     * 命令名（`handle()` 只收名字，返回"我处理了吗"）。而 §11.4.3 的"多命令共用
-     * 一个 handler"要求**一个实例能挂多个名字** ⇒ 名字必须在注册侧给出。
-     *
-     * ```php
-     * return ['users.refresh' => $this->cmds, 'users.delete' => $this->cmds];
-     * ```
+     * 命令处理器：`命令名 => handler`，不是 `list<handler>`。
+     * handler 不知道自己的命令名，且一个实例可挂多个名字 ⇒ 名字只能在注册侧给。
      *
      * @return iterable<string, CommandHandler>
      *
@@ -467,15 +285,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         return [];
     }
 
-    /**
-     * 应用作用域（M2）—— **组合根在多窗口时把同一个实例递给每个 `Application`**。
-     *
-     * ```php
-     * $scope = AppScope::make()->setTaskHost(new ProcessTaskHost(4));
-     * $a = new ShowcaseApplication($dialog, $clipboard, $scope);   // 窗 1
-     * $b = new ShowcaseApplication($dialog, $clipboard, $scope);   // 窗 2
-     * // 两个窗口共用：字体解析一次、一个线程池、一个 IO 轮询器、一份主题
-     * ```
+    /** 应用作用域 —— 多窗口时把同一个实例递给每个 `Application`（共享字体 / 线程池 / IO / 主题）。
      *
      * @api
      */
@@ -484,36 +294,17 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         return $this->scope;
     }
 
-    /**
-     * 主题（**应用级**）：默认取 `AppScope` 的值。
-     *
-     * ★ 仍然可以覆写（本窗特化），但多窗口下**不要**覆写 —— 共享 scope 里
-     *   只有一个主题值，覆写的那个窗口会与别的窗口不一致（`AppScope::enter()`
-     *   在 `attach()` 时会把这件事报成 `DIAGNOSTIC`，不会静默）。
-     */
+    /** 主题：默认取 `AppScope`。多窗口下覆写会让本窗与别的窗口不一致（`attach()` 报 DIAGNOSTIC）。 */
     public function theme(): ThemeData
     {
         return $this->scope->theme();
     }
 
     /**
-     * 后台执行端口（§17.2）—— **应用级，一个进程一个池**（M2 从"扩展点"降为只读口）。
+     * 后台执行端口（应用级，一个进程一个池）。`null` ⇒ 本应用不用后台任务。
      *
-     * ★★ **`final` 是有意的**（2026-10-30）：在 M2 之前它是应用覆写点
-     *   （`protected function taskHost()`），于是"`UserStore` 拿注入的
-     *   `ProcessTaskHost`、`frame()` 用默认 `SyncTaskHost` drain"这种**两套队列**
-     *   的 bug 只能靠注释防。现在覆写它是**加载期致命错误**
-     *   （`Cannot override final method`）—— 响亮失败，与 G2 一致。
-     *
-     * 换后端的写法搬到装配处（一行、显式、与窗口数无关）：
-     *
-     * ```php
-     * $scope = AppScope::make()->setTaskHost(new ProcessTaskHost(4));
-     * $app = new UsersApplication(new UserSource(), $scope);
-     * ```
-     *
-     * ★ 默认 `SyncTaskHost`（永远可用 ⇒ 回调在帧内）；`null` ⇒ 本应用不用后台
-     *   任务（`frame()` 跳过 drain）。
+     * `final`：子类覆写是加载期致命错误。换后端在装配处 `AppScope::setTaskHost()`，
+     * 否则会出现"注入一个池、`frame()` 却 drain 另一个"的两套队列。
      *
      * @api
      */
@@ -523,37 +314,12 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     }
 
     /**
-     * 提交一个后台任务（§17.2）—— **应用侧唯一的提交入口**。
+     * 提交一个后台任务 —— 应用侧唯一提交入口。
      *
-     * ```php
-     * // 页面 / State 里：提交，拿到一个可组合的 Future
-     * $future = $app->submit(new FetchRowsJob($page));
-     * // 渲染交给 AsyncCommand —— loading / error / data 三态它自己管
-     * $this->rows->run($page);                        // 发起
-     * $this->view($this->rows->value());              // build 里读四态
-     * ```
-     *
-     * ★ **为什么必须绕这一道**：`tasks()` 是 pumps 的内部口子（`@internal`），
-     *   应用直接伸手拿 `TaskHost` 再 `submit()` 是**看着能用**的错解 ——
-     *   它既逼应用读内部面，又让"提交的端口"与"每帧被 drain 的端口"之间
-     *   多了一层需要人肉保证的不变式。本方法把这件事收敛成一处：
-     *   提交的那个端口，就是 {@see self::attach()} 挂到四个泵上的那个。
-     *
-     * ★ **没有后台端口时返回 `Future::rejected()`，不抛异常**：
-     *   提交点通常就在 `build()` 里（`AsyncTablePage::initState()` 那条链），
-     *   抛异常等于把渲染管线打断（用户看到的是整个页面没了）；返回 rejected
-     *   则让命令落到 error 态，界面显示"没有后台任务后端"并给重试按钮。
-     *   这与 §11.4 的"UI 不因业务失败而消失"是同一条纪律。
-     *   （`Future::rejected()` 造的是**值**，没人接也不会走 Fatal —— 与
-     *   `Future::pending()` 的闸门行为不同。）
-     *
-     * ★★ **默认的 `SyncTaskHost` 会同步跑完**：`submit()` 返回时任务已经结束，
-     *   `Future` 是已结算的。这不是缺陷，是"零装配也能用"的代价 ——
-     *   但真慢的任务（网络 / 磁盘 / 大计算）必须换掉后端，否则 UI 照样卡在
-     *   `submit()` 这一行，而症状（"异步了还是卡"）会把人引向完全错误的方向。
-     *   换法见 {@see self::taskHost()}：一行 `AppScope::setTaskHost()`。
-     *
-     * ★ `final`：与 `taskHost()` 同理 —— 提交路径不允许被覆写成两套。
+     * 没有端口时返回 `Future::rejected()` 而不抛：提交点常在 `build()` 里，抛异常会
+     * 打断渲染管线（整页消失），rejected 只让命令落到 error 态。
+     * 默认 `SyncTaskHost` 会在 `submit()` 内同步跑完；网络 / 磁盘 / 大计算必须换后端，
+     * 否则 UI 照样卡在这一行。
      *
      * @api
      */
@@ -581,9 +347,9 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     }
 
     /**
-     * 时间基准（`PumpHostHost` 的口子）：上一帧的时间戳。
+     * 上一帧的时间戳（`PumpHost` 经它算 `after()` 的基准）。
      *
-     * @internal 片间契约口子（`PumpHost` 经它算 `after()` 的基准），不是应用扩展点
+     * @internal 片间契约口子，不是应用扩展点
      */
     public function lastTimestampMs(): float
     {
@@ -591,7 +357,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     }
 
     /**
-     * 时间基准（`PumpHostHost` 的口子）：最近一次输入派发的时刻。
+     * 最近一次输入派发的时刻。
      *
      * @internal 片间契约口子，同上
      */
@@ -600,23 +366,10 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         return $this->lastInputMs;
     }
     /**
-     * 加速键表（§9.1 路由链第 ② 环，**焦点链之后**）—— **应用级**：默认取 `AppScope`。
+     * 加速键表（应用级，默认取 `AppScope`）。解析成**命令名**后再走 `dispatch()`，
+     * 故共享一张表也不会让 `Ctrl+S` 串到别的窗口。
      *
-     * ★ 2026-11-03 顺序裁决：焦点控件认得的键归它，认不得才轮到全局快捷键。
-     *   要"某个控件里按这个键不触发命令"，**不需要任何声明** —— 让控件处理它即可。
-     *
-     * ```php
-     * // 单窗口：照旧覆写（行为与 M2 之前逐条相同）
-     * public function accelerators(): AcceleratorTable { ... }
-     *
-     * // 多窗口：放进 scope，注册一次全窗生效
-     * $scope->setAccelerators(AcceleratorTable::make()->bind(KeyChord::ctrl('R'), 'users.refresh'));
-     * ```
-     *
-     * ★ 共享**不会串窗**：加速键只把组合键解析成**命令名**，命令派发走
-     *   `Application::dispatch()`（本窗树 → 本窗 router → 父链）⇒ 同一个 `Ctrl+S`
-     *   在两个窗口里各自落到自己的 handler。
-     * ★ 默认空表 ⇒ 不覆写的应用零加速键、也零开销（`isEmpty()` 短路）。
+     * 焦点控件认得的键归控件，认不得才轮到全局快捷键（不需任何声明）。
      *
      * @api
      */
@@ -626,19 +379,9 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     }
 
     /**
-     * 剪贴板壳服务（§5.1 纪律 2）—— **组合根覆写它接真平台**。
+     * 剪贴板壳服务 —— 组合根覆写它接真平台（框架不持平台）。
      *
-     * ```php
-     * public function clipboard(): ?Clipboard
-     * {
-     *     return $this->platform()->clipboard();   // 平台名只出现在组合根
-     * }
-     * ```
-     *
-     * ★ 框架不持平台（§5.1 纪律 1）⇒ 端口只能由外层递进来，与 `theme()` /
-     *   `taskHost()` 同一形态。默认 `null` = 本应用没有剪贴板 ⇒ `Ctrl+C / X / V`
-     *   整族回落给加速键（见 `dispatchEditCommand()` 的门控 ③）。
-     * ★ 消费者：编辑命令环（复制 / 剪切 / 粘贴，§9.1 让位规则 ②）。
+     * 默认 `null` = 本应用没有剪贴板 ⇒ `Ctrl+C / X / V` 整族回落给加速键。
      *
      * @api
      */
@@ -647,14 +390,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         return null;
     }
 
-    /**
-     * **布局确定性的注入点**（§14.2）：度量由宿主给，不由平台探测 —— **应用级**。
-     *
-     * ★ M2 起实现搬到 `AppScope::metrics()`（**整个进程一份**）：它要读一次
-     *   11MB 字体（`TtfFace::fromFile()`）并注册三套字形面，每窗口一份就是
-     *   解析 N 次 + N 份字形缓存。原来住 `$this->metricsCache`，多窗口下那段
-     *   缓存只对本窗有效。
-     * ★ 仍然可以覆写（本窗特化），但多窗口下**别** —— 与 `theme()` 同一条理由。
+    /** 字体度量（应用级，整个进程一份）。多窗口下覆写等于每窗解析一遍字体、各持一份缓存。
      *
      * @api
      */
@@ -671,36 +407,26 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     /**
      * 挂载：建根 Element、整棵树挂上。
      *
-     * ★ 根**不包 `ThemeScope`** —— 应用想要全局主题就自己包（`buildRoot()` 里
-     *   一层 `ThemeScope::make($this->theme(), $root)`），框架不替它决定。
-     *   少了这一层 indirection，"换肤"就少一个可测试的落点。
-     *
      * @param BoxConstraints $constraints 根收到的约束（通常 = 窗口逻辑尺寸）
      *
      * @api
      */
     public function attach(RenderSurface $surface, BoxConstraints $constraints, ?BuildContext $context = null): void
     {
-        // ★ UI 线程身份在**挂载之前**记：之后的任何回调都以此为准（§17.4.2.1）。
+        // 之后的任何线程断言都以此为准。
         $this->uiThreadId = \drift_thread_id();
 
-        // ★ 挂载期就开始写这条管线（2026-11-02）：`buildRoot()->createElement()` /
-        //   `mount()` 会推结构版本号与配对计数，而那时还没有跑过一帧。不切的话
-        //   这些写入会落到"上一个跑帧的应用"的管线上（跨应用污染）。
+        // 挂载期就写这条管线：`createElement()` / `mount()` 会推结构版本号，不切会记到别的应用账上。
         Pipeline::enter($this->pipeline);
 
-        // ★ 作用域登记（M2）：第一个窗口把主题灌进 scope，后续窗口必须一致 ——
-        //   不一致在这里报 DIAGNOSTIC（多窗口"一半深色一半浅色"的唯一入口是
-        //   "某个窗口覆写了 theme()"）。只在挂载时查一次，避免进热路径。
-        // ★ `attach()` 可重入（测试会重复挂载）⇒ 同一实例只登记一次，否则
-        //   "第 2 个窗口"的判据会在同一个窗口的第二次 attach 上误报。
+        // 第一个窗口把主题灌进 scope，后续窗口必须一致（不一致 ⇒ DIAGNOSTIC）。
+        // `attach()` 可重入 ⇒ 同一实例只登记一次，否则第二次 attach 会误报"第 2 个窗口"。
         if (!$this->scopeEntered) {
             $this->scopeEntered = true;
             $this->scope->enter($this->theme());
         }
 
-        // ★ 端口 / 轮询器**从作用域取**（M2）：一个进程一个池、一个监听表。
-        //   `attach()` 只缓存引用，不负责"建"—— 建的时机归装配处。
+        // 端口 / 轮询器从作用域取；`attach()` 只缓存引用，不负责建。
         $this->pumps->attach($this->scope->taskHost(), $this->scope->io());
 
         $context ??= new BuildContext(
@@ -710,9 +436,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
             $this->metrics(),
         );
 
-        // 注册期（§11.4.3）：此刻子类字段已就位，`commands()` 才是可信的。
-        // 每条命令重复注册 ⇒ Fatal（`CommandRouter::on()` 的那条 G2 检查），
-        // 所以这里**必须可重入**：`attach()` 调两次会第二次命中同名注册。
+        // 此刻子类字段已就位，`commands()` 才可信。重复注册会 Fatal ⇒ 必须可重入。
         foreach ($this->commands() as $name => $handler) {
             if (!$this->router->has((string) $name)) {
                 $this->router->on((string) $name, $handler);
@@ -725,13 +449,11 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
 
         $this->frame = new Frame($surface, $this->pipeline);
 
-        // ★ 首帧走**同一个入口**（§17.4.10）：直接调 `Frame::run()` 会绕过
-        //   `tickAnimations()` ⇒ 纯动画应用（根就是一个 `Spinner`、没有异步任务）
-        //   在 `attach()` 之后 `wantsFrame()` 仍是 false ⇒ 循环再也不按帧节奏醒 ⇒
-        //   **转圈图一辈子不动**。这条是给 §17.4.10 写冒烟时抓到的，不是设计时想到的。
+        // 首帧必须走 `frame()` 而非 `Frame::run()`：后者绕过 `tickAnimations()`，纯动画应用
+        // 挂载后 `wantsFrame()` 仍为 false ⇒ 帧时钟不再上膛 ⇒ 转圈图一辈子不动。
         $this->frame(0.0, $constraints);
 
-        // 焦点链要在**挂载之后**建（此刻才有树可走）。
+        // 焦点链要在挂载之后建（此刻才有树可走）。
         $this->focus = new FocusManager();
         $this->focus->onHoverChanged(function (?Element $hit): void {
             $this->overlayHost->onHoverHit($hit);
@@ -746,9 +468,9 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     }
 
     /**
-     * UI 线程 id（`0` = 未挂载）。测试与 devtools 读它。
+     * UI 线程 id（`0` = 未挂载）。
      *
-     * @internal 应用不该读线程身份 —— 它只用于断言（§17.4.2.1）。
+     * @internal 应用不该读线程身份 —— 它只用于断言。
      */
     public function uiThreadId(): int
     {
@@ -756,13 +478,9 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     }
 
     /**
-     * UI 线程断言（§17.4.2.1，WPF `VerifyAccess()` 的等价物）。
+     * UI 线程断言：`uiThreadId == 0`（未挂载）不算失败，只在真的跨线程时失败。
      *
-     * ★ 只在"当前线程不是 UI 线程"时失败；`uiThreadId == 0`（未挂载）不算失败 ——
-     *   挂载前本来就没有 UI 线程可谈。
-     *
-     * ★ 这是**响亮失败**（Fatal 序列），不是静默忽略：静默就等于给数据竞争留缝，
-     *   而那类 bug 只在压力下偶发（§17.2 第 ① 处）。
+     * 必须响亮失败：静默就等于给数据竞争留缝，那类 bug 只在压力下偶发。
      *
      * @internal 框架内部用；应用不应调用。
      */
@@ -780,13 +498,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         ));
     }
 
-    /**
-     * IME 定位用的光标矩形（§8.4）—— 转交 `TextEditingBridge`（S1 第 4 步）。
-     *
-     * ★ 几何与门控都住在片里（IME / 框选 / 编辑命令是同一族认知）；这里留
-     *   public 壳是因为组合根（`Bootstrap.php` 的 `imeCaret()` 喂值）按
-     *   `Application::imeCaretRect()` 调 —— **API 位置不动，实现搬走**。
-     */
+    /** IME 定位用的光标矩形。组合根按 `Application::imeCaretRect()` 调，实现住 `TextEditingBridge`。 */
     public function imeCaretRect(): ?array
     {
         return $this->textEditing->imeCaretRect();
@@ -794,14 +506,10 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
 
 
     /**
-     * 系统主题变了（§9.2 / §A.2.5 的应用钩子）—— **应用扩展点**。
+     * 系统主题变了。不带参数：框架拿不到 `Screen::systemTheme()`，应用自己持 screen 时
+     * 在这里重读并更新 `theme()` 的来源。默认空实现。
      *
-     * ★ 框架不持平台（§5.1）⇒ 拿不到 `Screen::systemTheme()`，这个钩子**不带
-     *   参数**：应用自己持有 screen（组合根注入）时在这里重读，并更新自己
-     *   `theme()` 的来源字段。默认**空实现** —— 不跟随系统主题的应用零开销。
-     *
-     * ★ 调用时机在 `applyNewContext()` **之前**（见 `dispatchInput` 的
-     *   ThemeChangedEvent 分支）：钩子跑完 `theme()` 才是新值。
+     * 调用时机在 `applyNewContext()` 之前 —— 钩子跑完 `theme()` 才是新值。
      *
      * @api
      */
@@ -810,29 +518,10 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     }
 
     /**
-     * 这个窗口被要求关闭 —— **回答"同意吗"**（2026-10-30）。
+     * 窗口被要求关闭 —— 回答"同意吗"。默认 `true`。
      *
-     * ```php
-     * protected function onCloseRequested(): bool
-     * {
-     *     if (!$this->form->isDirty()) {
-     *         return true;                     // 没什么要问的 ⇒ 关
-     *     }
-     *     return $this->dialog->confirm('未保存', '放弃这次修改？');
-     * }
-     * ```
-     *
-     * ★ **只在组合根声明了守卫的窗口上会被问**（`WindowHost::setCloseGuard($h, true)`）。
-     *   没声明的窗口，`WM_CLOSE` 由壳直接销毁，本方法**永远不会被调** ——
-     *   这是"没声明要问 = 关就是了"，不是遗漏。
-     * ★ 返回 `true` ⇒ 框架调 `WindowHost::destroy()`（同步销毁）；`false` ⇒
-     *   什么都不发生，窗口原样留着（连位置都不动）。**不要**在这里自己调
-     *   `close()`：那会再发一条 `WM_CLOSE`，等于自己问自己。
-     * ★ 调用点在**帧边界**（`EventLoop` 抽完事件之后、跑帧之前），不是在 WndProc 里
-     *   ⇒ 这里可以安全地弹模态框（`Dialog::confirm()`）。壳侧为什么不能同步问，
-     *   见 `cpp-src/drift_win32.cc` 的 `enqueueCloseRequest`。
-     * ★ 默认 `true`：声明了守卫却忘了覆写，行为退回"点了就关" ——
-     *   比"点了没反应、又没有提示"好（那才是真正的死窗口）。
+     * 只在组合根声明了守卫的窗口上会被问；返回 `true` ⇒ 框架销毁窗口，`false` ⇒ 原样留着。
+     * 不要自己调 `close()`（那会再发一条 `WM_CLOSE`）。调用点在帧边界，故可安全弹模态框。
      *
      * @api
      */
@@ -851,16 +540,9 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         return $this->onCloseRequested();
     }
 
-    /**
-     * 把新的渲染环境下发到**根与浮层**两棵树（O-20 差异表 #2：浮层是第二棵树）。
+    /** 把新的渲染环境下发到根与浮层两棵树（浮层是第二棵树）。
      *
-     * ★ **不是新机制**：`Element::applyContext()` 就是"换一份渲染环境（主题切换
-     *   的唯一入口）"，且已实现两种兑现时机（无状态立即重建 / 有状态只标脏、
-     *   等帧末 flush）+ 递归只走一遍 —— 本方法只是**第一个生产调用者**。
-     *
-     * ★ 主题值来自 `$this->theme()`（应用注入点）。若应用没覆写 `theme()`、
-     *   也没在钩子里换源 ⇒ 新 context 与旧值 `===` ⇒ `applyContext()` 幂等
-     *   短路（零重建）。这是**设计**：不跟随系统主题的应用不该付重建成本。
+     * 主题值与旧值 `===` 时 `applyContext()` 幂等短路 ⇒ 不跟随系统主题的应用零重建成本。
      */
     private function applyNewContext(): void
     {
@@ -878,9 +560,9 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     }
 
     /**
-     * 跑一帧（§5.2）：平台每帧调一次。
+     * 跑一帧：平台每帧调一次。
      *
-     * @param float $timestampMs **注入的**时间戳（不读环境时钟）
+     * @param float $timestampMs 注入的时间戳（不读环境时钟）
      *
      * @api
      */
@@ -892,84 +574,53 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
             return; // 未挂载：没有树就没有帧
         }
 
-        // ★ 帧必须在 UI 线程跑（§17.4.2.1）。成本 = 读一次 TEB + 一次整数比较。
+        // 成本 = 读一次 TEB + 一次整数比较。
         $this->assertUiThread('frame');
 
-        // ★★ 帧入口切管线（2026-11-02，技术债 D3①）：树里的节点没有指向应用的
-        //   引用（分层纪律），它们经 `Pipeline::current()` 找"本帧的记账本"。
-        //   多应用时正是这一行保证"谁的帧记谁的账"。
-        //   切了**不恢复** —— 帧跑完之后测试/探针要读的正是刚跑完这一帧的计数
-        //   （见 `Pipeline::enter()` 的注）。
+        // 树里的节点没有指向应用的引用，经 `Pipeline::current()` 找本帧的记账本；
+        // 切了不恢复 —— 帧后测试/探针读的正是刚跑完这一帧的计数。
         Pipeline::enter($this->pipeline);
 
-        // ★★ 帧开始清账（2026-11-02，技术债 D1）：把"帧开始时已有的请求"记为已服务，
-        //   帧**内**新增的请求自然留给下一帧。这是推模型的自终止机制 —— 一笔请求
-        //   恰好被一帧消费一次，不会累积、也不会被本帧吞掉（Flutter 的
-        //   `_hasScheduledFrame` 在 `handleBeginFrame()` 里清，同一个理由）。
-        // ★ 置 `inFrame` 标志：泵与 settle 里的 `setState()` / 标脏由**本帧**消费，
-        //   不该再要一帧（否则每帧都自我续命 ⇒ 空转）。
-        // ★ 必须在四个泵**之前**：泵里的回调 `setState()` 就是"帧内"的。
+        // 帧开始的请求记为已服务，帧内新增的留给下一帧；必须在四个泵之前。
         $this->pipeline->beginFrame();
         $settleSkipBefore = $this->pipeline->settleSkipCount();
         $paintSkipBefore = $this->pipeline->paintSkipCount();
 
         $this->lastTimestampMs = $timestampMs;
 
-        // ★ 帧序列号自增（迟到挂载补 tick 的幂等判据）：每帧一个唯一值，
-        //   `State::tickFrameStamped` 用它识别"本帧已推进过的状态"。
+        // `State::tickFrameStamped` 用它识别"本帧已推进过的状态"。
         $this->frameSerial++;
 
-        // ★ 帧阶段 trace（`06` §2.4，默认关）：九段各记一个名字，帧末比对名单。
-        //   ★★ 段名与分段计时**同源**（2026-11-03）：两者都只经 `stage()` 推一次。
-        //      手写两份清单必漂 —— `tickLateMount` 就曾只进了 trace、没进计时，
-        //      于是顺序校验全过而它的成本被算进「未归属」，没有任何检查会红。
+        // 段名与分段计时同源：两者都只经 `stage()` 推一次，手写两份必漂。
         $this->frameTrace = FramePhase::begin();
 
-        // ★ ① 先问一轮非阻塞 IO（§17.4.4）：外部数据先到，回调里 setState 的脏标记
-        //   由本次 settle 消费（这一句必须在 `Frame::run()` 之前）。
+        // ① 外部数据先到，回调里 setState 的脏标记由紧随的 settle 消费。
         $this->stage(FrameStage::PUMP_IO, function (): void {
             $this->pumps->pumpIo();
         });
 
-        // ★★ ② 再把后台结果取出来（§17.4.2）—— **必须在 settle 之前**：
-        //   回调里 `setState()` 只标脏，紧随的 `Frame::run()` 第 ① 步就是 settle
-        //   ⇒ 同帧生效。放到 settle 之后，那次 setState 要等下一帧，
-        //   "loading → ready" 会闪一帧空（多一帧延迟，且用户看得见）。
+        // ② 必须在 settle 之前：回调只标脏，放到 settle 之后会让"loading → ready"多闪一帧空。
         $this->stage(FrameStage::PUMP_TASKS, function (): void {
             $this->pumps->pumpTasks();
         });
 
-        // ★ ③ 推进到期的延时回调（W8-2）：同样**必须在 settle 之前** ——
-        //   `after()` 的回调里 `setState()` 由紧随的 `Frame::run()` 的 settle 段
-        //   消费，同一帧生效（Tooltip 到点那一帧就画出来，不多闪一帧空）。
+        // ③ 同理，`after()` 回调里的 `setState()` 同帧生效。
         $this->stage(FrameStage::PUMP_TIMERS, function () use ($timestampMs): void {
             $this->pumps->pumpTimers($timestampMs);
         });
 
-        // ★ ⓸ 推进动画（§17.4.9）：同样**必须在 settle 之前** —— `tickFrame()` 里的
-        //   `setState()` 由紧随的 `Frame::run()` 的 settle 段消费，同一帧生效。
-        //   返回值是"还有动画在跑吗"，喂给 `wantsFrame()` 决定下一次要不要被叫醒。
-        //   ★ `(bool)` 是因为 `stage()` 的返回类型是 `mixed`（九段里只有这一段有返回值）；
-        //     闭包自己声明了 `: bool`，这里只是把类型收敛回来，不是"猜"。
+        // ④ 同理。返回值喂给 `wantsFrame()` 决定下次要不要被叫醒；`stage()` 返回 `mixed`，
+        // 这里把类型收敛回 `bool`。
         $this->animating = (bool) $this->stage(FrameStage::TICK_ANIMATIONS, function () use ($timestampMs): bool {
             return $this->tickAnimations($timestampMs);
         });
 
-        // ★★ **零视口不是"内容放不下"，是"没有像素可画"**（2026-10-25 用户实测最小化即崩）。
-        //   最小化时平台报客户区 0×0（`Win32Screen::viewport()` 翻成 `tight(0,0)`；
-        //   **口径由壳保证** —— `IsIconic` 直接报 0，别指望 `GetClientRect` 自己给 0，
-        //   无边框窗的客户区就是那个 160×28 小方块）。拿它布局时 `Text` 只能每字一行
-        //   （宽 0 ⇒ 换行），高度约束又是 0 ⇒ `RenderText 实际 0.0 × 86.4，最多只能用
-        //   0.0 × 0.0` 当场 C6 Fatal。
-        //   ★ **泵已经全部跑完**（IO / 任务 / 分片 / 延时 / 动画都在上面），这里只跳过
-        //   布局与绘制 —— 动画与 `after()` 在最小化期间照常推进，还原时不跳变。
-        //   ★ 不做"缓存上次视口继续画"：画进不可见 surface 纯属浪费，且会让
-        //   `viewport()` 撒谎。还原时系统必发新的 `WM_SIZE`（带真实尺寸）⇒ 重新布局。
+        // 零视口 = 没有像素可画，不是内容放不下：拿 `tight(0,0)` 布局会让 Text 每字一行，
+        // 高度约束 0 ⇒ C6 Fatal。泵已全部跑完，这里只跳过布局与绘制。
         if ($constraints->maxWidth <= 0.0 || $constraints->maxHeight <= 0.0) {
             $this->zeroViewportFrames++;
 
-            // ★ 零视口只跳过布局与绘制 —— 动画与 `after()` 照常推进（见上），
-            //   所以续跑判据照样要跑，否则最小化期间动画会停在半路。
+            // 动画与 `after()` 照常推进，故续跑判据照样要跑，否则最小化期间动画停在半路。
             $this->continueFrame($settleSkipBefore, $paintSkipBefore);
             $this->pipeline->endFrame();
 
@@ -981,62 +632,32 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
             $this->overlayLayout->placeOverlays($constraints);
         });
 
-        // ★ `settle` 是**标记**不是真段（`FrameStage` 的 CORE 组）：Frame::run() 内部
-        //   才是 settle → layout → paint → present。标记打在它前面，
-        //   "跨过 settle"的越界就拿它当下标。
-        //   ⇒ 它是**唯一**不经 `stage()` 的段名：计时在 `Frame::run()` 里（跨越整段
-        //     settle，夹着 try/catch 与早退，包不进闭包），这里只补一个位置标记。
+        // `settle` 是标记不是真段：计时在 `Frame::run()` 里跨越整段、夹着早退，包不进闭包，
+        // 这里只补位置。它是唯一不经 `stage()` 的段名。
         if ($this->frameTrace !== null) {
             $this->frameTrace[] = FrameStage::SETTLE;
         }
 
-        // ★★ **本帧要不要画**（2026-10-30，N1）：`Frame` 只看树（settle / layout /
-        //   paintEpoch），**看不见应用级叠加**。这里补上它看不见的两样：
-        //   ① 焦点环目标变了还没画（第七判据的反面）；
-        //   ② 浮层锚点换了但面板内容还落后（第六判据的反面）。
-        //   ★ 取**跑帧前**的目标：paint 只可能把"跑帧前那个环"画进去；跑帧期间
-        //     焦点若又变了，那新目标此刻 **还没画** ⇒ `paintedFocus` 必须停在旧值
-        //     ⇒ 下一帧自然还请求。此前无条件写 `focusRingTarget()` 正是在这里丢帧
-        //     （settle 里 `setState` 挪了焦点 ⇒ 新目标被记成"已画"⇒ 环消失）。
+        // 本帧要不要画：`Frame` 只看树，看不见应用级叠加 —— 焦点环目标变了没画、
+        // 浮层锚点换了但面板还落后。取跑帧前的目标：paint 只会画跑帧前那个环。
         $ringBefore = $this->focusRingTarget();
         $paintRequested = $ringBefore !== $this->paintedFocus
             || $this->overlayLayout->panelsLagBehind();
 
-        // ★★ **窗口帧**（`LayoutTolerance::withinWindow`）：这一帧的约束来自窗口客户区，
-        //   而客户区是用户的东西 —— "内容比窗口大"是合法状态 ⇒ C5/C6 降级为裁剪 + 一条
-        //   diagnostic，不中止进程（Flutter release / Qt / WPF / CSS 都是裁剪）。
-        //   `attach()` 的首帧也走这里（它调的就是 `frame()`）⇒ 还原成小尺寸启动时
-        //   不会卡在 Fatal 框里进退不得。
-        //   ★ 严格那一侧没丢：直接调 `Frame::run()` 的测试 / 快照 / golden 仍然是
-        //     `$windowDriven = false` ⇒ 写错布局照样红。
+        // 窗口帧：约束来自客户区，"内容比窗口大"是合法状态 ⇒ C5/C6 降级为裁剪 + diagnostic，
+        // 不中止进程。直接调 `Frame::run()` 的测试仍按严格口径，写错布局照样红。
         $painted = LayoutTolerance::withinWindow(fn(): bool => $frame->run($root, $constraints, $timestampMs, $this->overlayHost->overlays()->all(), function (Canvas $canvas): void {
             $this->paintFocusRing($canvas);
         }, $paintRequested));
 
-        // 环**真的**上屏才记账 ⇒ `wantsFrame()` 的第七判据从这里回落 false（有界）。
-        // ★ 跳过 / paint 抛异常 ⇒ **不记账** ⇒ 判据仍为真 ⇒ 下一帧还会请求 —— 直到
-        //   真画出来为止。这是"有界"的唯一正确方向：不能靠"请求过一次就算数"。
+        // 环真的上屏才记账；跳过或 paint 抛异常 ⇒ 不记账 ⇒ 下一帧继续请求。
         if ($painted) {
             $this->paintedFocus = $ringBefore;
         }
 
-        // ★ ⓹ 迟到挂载补 tick（2026-10-20 修的框架洞，2026-10-22 换成登记表）：
-        //   ⓸ 在 settle **之前**跑，而页面挂载发生在 `Frame::run()` 的 settle 段 ——
-        //   于是"这一帧刚挂上的页"的 State 在 ⓸ 时还不在树里、从未被 `tickFrame()`
-        //   访问 ⇒ `$animating` 当帧永远是 false ⇒ `wantsFrame()` 返回 false ⇒
-        //   帧时钟不重新上膛 ⇒ **之后没鼠标事件就永远静止**（Spinner / 自绘页同病，
-        //   真机探针抓到）。任一新挂载的 State 还想下一帧 ⇒ `$animating` 置真 ⇒
-        //   时钟重新上膛，动画得以续跑。
-        //   ★ **2026-10-22 改成"只 tick 登记表"**（`06` §4.2）：第二次全树遍历的
-        //     目的**只有一个** —— 让"这一帧刚挂上的 State"有机会声明"我还要下一帧"。
-        //     全树里其他 State 已经在 ⓸ 被访问过（`tickFrameStamped` 会跳过重复）⇒
-        //     遍历它们纯属浪费（树 800 节点 ≈ 800 次虚调用，通常只有 0–5 个新挂载）。
-        //   ★ 帧戳仍然要传：登记表里可能有"在 settle **之前**就挂上"的 State
-        //     （`placeOverlays()` 期间），它已经被 ⓸ 推进过 ⇒ 帧戳保证不重复推进。
-        //   ★ **跳过已卸载的**：`mount()` 了但一直没有帧到来的场景（纯头侧夹具）
-        //     会让登记表挂着死节点 —— 不跳过就是 tick 一个已经离开树的状态。
-        //   ★ 这一段原先**只有 trace、没有计时**（2026-11-03 核出）：八段有账、它 0 次，
-        //     成本被算进「未归属」而没有任何检查会红。现在同样经 `stage()`，一对。
+        // ⑤ 迟到挂载补 tick：④ 在 settle 之前跑，而页面挂在 settle 段 ⇒ 新挂上的 State 当帧
+        // 从未被 tick ⇒ `$animating` 为假 ⇒ 帧时钟不上膛 ⇒ 之后没输入就永远静止。
+        // 只 tick 登记表（其他 State 已在 ④ 访问过），并跳过已卸载的。
         $this->stage(FrameStage::TICK_LATE_MOUNT, function () use ($timestampMs): void {
             foreach ($this->pipeline->takeMounted() as $mountedState) {
                 $mountedElement = $mountedState->element();
@@ -1047,10 +668,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
                 if ($mountedState->tickFrameStamped($timestampMs, $this->frameSerial)) {
                     $this->animating = true;
 
-                    // ★ 它已经"在动"了 ⇒ 必须进活跃表，否则下一帧只走表、没人再
-                    //   tick 它，动画停在第一帧（静默）。`bumpStructure()` 也会请求
-                    //   全扫，但那是**下一帧**的事；本帧剩余的路由（`wantsFrame()`
-                    //   续跑）已经要用到这张表。
+                    // 已在动就必须进活跃表，否则下一帧只走表、没人再 tick 它，动画停在第一帧。
                     if (!$mountedElement->isAnimationActive()) {
                         $mountedElement->markAnimationActive(true);
                         $this->activeTicks[] = $mountedElement;
@@ -1059,26 +677,10 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
             }
         });
 
-        // ★★ ⓹b（2026-10-29 补，2026-11-02 随 D1 **整段删除**）：这里原先比对
-        //   `State::frameWantedCount()` 的前后差，用来捞"settle 期间才起飞的动画"
-        //   （`didUpdateWidget()` 里 `toward()`）—— 它们在 ⓸ 时目标还是旧的，
-        //   `tickAnimations()` 看不到 ⇒ `$animating` 为 false ⇒ 帧时钟落闸 ⇒
-        //   动画停在起点（真机：点「淡入」一动不动，再点一次才动）。
-        //   ⇒ 现在不需要了：`State::requestFrame()` 自己就是 `scheduleNextFrame()`，
-        //     起飞的当场就把帧时钟叫醒了。**判据从"事后比对"变成"现场举手"**，
-        //     这正是 D1 想要的形状（也多删了一个跨帧字段 `$lastFrameWanted`）。
-
-        // ★ 每帧重建焦点链：`settle()` 可能重建了子树 ⇒ 旧链里可能握着**已被移除**
-        //   的 Element（按键会静默丢给死节点）。`collect()` 幂等，且会保留仍然存在
-        //   的焦点（见 `FocusManager::collect()`）。
-        //   O(树) 与同帧的 `layout()` 同阶 —— §13.3：Render 层本就全树重排。
-        // ★ **浮层是第二棵树，也要进焦点链**（O-20 差异表 #2）—— 否则菜单项
-        //   永远 Tab 不到。
+        // 每帧重建焦点链：settle 可能换掉子树，旧链会握着已移除的 Element（按键静默丢给死节点）。
+        // 浮层是第二棵树，也要进链，否则菜单项永远 Tab 不到。
         $this->stage(FrameStage::FOCUS_COLLECT, function () use ($root): void {
-            // ★ 捕获者卸载 ⇒ 必须在这里释放（`06` §5.2 释放路径 ②）：settle 可能把
-            //   捕获者所在的子树换掉 ⇒ 之后的指针事件全发给一个死节点（静默冻住）。
-            //   报 DIAGNOSTIC 而不是静默清空：这是**控件写错了**（该在卸载前自己放），
-            //   不报的话现象是"拖到一半不响应了"，没人查得出来。
+            // ★ 捕获者卸载 ⇒ 必须释放：settle 换掉子树后，指针事件全发给死节点（静默冻住）。
             $captureNode = $this->input->captureNode();
             if ($captureNode !== null && !$captureNode->isMounted()) {
                 Errors::report(sprintf(
@@ -1097,15 +699,12 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
             $this->focus?->collect([$root, ...$popupRoots], $this->overlayHost->focusTrapRoots());
         });
 
-        // 语义树推给 UIA（§9 / M5）：每帧末经 sink 交出（无 sink ⇒ 不建，零开销）。
+        // 每帧末经 sink 交出语义树（无 sink ⇒ 不建，零开销）。
         $this->stage(FrameStage::PUMP_SEMANTICS, function (): void {
             $this->pumpSemantics();
         });
 
-        // ★★ 帧末**续跑 + 收口**（2026-11-02，技术债 D1）：放在 `pumpSemantics()`
-        //   **之后**，因为语义推送里若改状态，本帧已经不会再 settle 了 ⇒ 它必须
-        //   算"帧外"、由自己 schedule 下一帧。`endFrame()` 之后 `inFrame` 为假，
-        //   `markDirty()` / `bumpPaintEpoch()` 就会自动叫醒帧时钟。
+        // 放在 `pumpSemantics()` 之后：语义推送里若改状态，本帧不会再 settle，须算帧外。
         $this->continueFrame($settleSkipBefore, $paintSkipBefore);
         $this->pipeline->endFrame();
 
@@ -1115,28 +714,9 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     }
 
     /**
-     * **跑一段帧阶段**：段名推进 trace + 交给 `SurfaceProfile` 计时，一处出。
+     * 跑一段帧阶段：段名推进 trace + 交给 `SurfaceProfile` 计时。
      *
-     * ## 为什么要有它（2026-11-03）
-     *
-     * 一帧的九段要往**两个**出口记账：`FramePhase` 的 trace（顺序校验 + 真机报告）
-     * 与 `SurfaceProfile` 的分段计时（成本归因）。这两份清单原先都是手写的
-     * 四行样板 —— 取时钟 / 推段名 / 跑本体 / 减时钟 —— 在 `frame()` 里抄了 7 遍，
-     * 而且**已经漂了**：`tickLateMount` 只进了 trace、没进计时（实测八段有账、
-     * 这一段 0 次），于是顺序校验全过，它的成本被算进「未归属」，没有任何检查会红。
-     *
-     * ⇒ 收成一处之后，"有没有漏一半"这个问题**不存在了**：段名只写一次。
-     *
-     * ## 闭包的开销
-     *
-     * 每帧 8 次闭包调用（实测见 `frame-tax-probe --check` 的稳态帧：改动前后同一
-     * 台机器、同一棵树，差异在噪声内）。关着 profile 时 `SurfaceProfile::time()`
-     * 只做一次静态 bool 读就直调本体，不取时钟。
-     *
-     * ## 为什么 `settle` 不走这里
-     *
-     * 它是**标记**不是真段：计时在 `Frame::run()` 内部，跨越整段 settle 且夹着
-     * try/catch 与早退，包不进闭包。那一段的 trace 由 `frame()` 直接推。
+     * 两个出口只能在同一处写，否则清单会漂（trace 有、计时没有，成本落到「未归属」而无人报错）。
      *
      * @param string $stage `FrameStage` 的常量之一
      * @return mixed `$body` 的返回值
@@ -1151,39 +731,14 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     }
 
     /**
-     * **帧末续跑**：把"这一帧跑完之后才知道"的事变成调度请求（2026-11-02，D1）。
+     * 帧末续跑：把四条"跑完这一帧才知道"的判据变成调度请求。
      *
-     * ## 为什么留在帧末，而不是搬到变更现场
+     * 前两条（动画、轮询）用 `scheduleNextFrame()` 按帧节奏反复醒，给 `0` 就是能跑多快跑多快；
+     * 后两条（焦点环、面板落后）用 `scheduleFrame()`，多等一个帧间隔就是肉眼可见的延迟。
      *
-     * 这四条和 `markDirty()` / `markPaintChanged()` 那类**不一样**：那类有明确的
-     * 事件（"有人改了状态"），能在现场举手。这四条没有事件 —— 它们是**趋势**：
+     * 另报空转：要了帧（`consumed > 0`）但 settle 与 paint 都整段跳过，说明有人无条件 schedule。
      *
-     * | 判据 | 为什么只能在帧末问 |
-     * |---|---|
-     * | `$animating` | 它的值就是 `tickAnimations()` 的返回值，本帧才有 |
-     * | `hasPolledAsync()` | "还有没有活"，本帧的 `drain()` 跑完才准 |
-     * | 焦点环目标 ≠ 已画 | `paintedFocus` 在 paint **之后**才回写 |
-     * | `panelsLagBehind()` | `syncPanelSignatures()` 在 `placeOverlays()` 里跑，而主树在它**之后**才 settle ⇒ 帧**前**问到的永远是旧锚点 |
-     *
-     * 最后一条正是"拉模型"一直别扭的根因：**它在帧之前问一个只有帧之后才准确的问题**。
-     * 挪到这里之后，判据天然准确，而且收敛到**一处**（原先散在 `needsFrameNow()` /
-     * `wantsFrameRhythm()` 两个方法里，各自被等待层间接消费）。
-     *
-     * ## 两条硬约束
-     *
-     * ★ **前两条必须用 `scheduleNextFrame()`（15ms 档）**：动画与轮询是"按帧节奏
-     *   反复醒"，给 `0` 就是"能跑多快跑多快" ⇒ 300fps 空转（见 `FrameClock`）。
-     * ★ **后两条用 `scheduleFrame()`（`0` 档）**：一次性欠账，多等一个帧间隔就是
-     *   肉眼可见的延迟（焦点环晚 15ms 出现）。
-     *
-     * ## 空转诊断（推模型的新失败形态）
-     *
-     * 推模型把"漏调 `scheduleFrame()`"变成了"那个功能自己不动"（好定位），但换来
-     * 一个新风险：某处**无条件** schedule ⇒ 每帧都被要 ⇒ 空转 + 输入饥饿。
-     * 判据：**要了帧（`consumed > 0`），但 settle 与 paint 都整段跳过** —— 那说明
-     * 有人空喊。连续 3 帧才报，避开"刚改完状态那一帧恰好跳过"的正常情形。
-     *
-     * @param int $settleSkipBefore 本帧开始时的 settle 跳过计数（判据见上）
+     * @param int $settleSkipBefore 本帧开始时的 settle 跳过计数
      * @param int $paintSkipBefore 本帧开始时的 paint 跳过计数
      */
     private function continueFrame(int $settleSkipBefore, int $paintSkipBefore): void
@@ -1217,18 +772,10 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     }
 
     /**
-     * 拖动 resize 专用的**轻量重绘**（§5.2 模态尺寸循环）。
+     * 拖动 resize 专用的轻量重绘：不跑泵、不推进画、不重建焦点链、不推语义树。
      *
-     * ★★ 与 `frame()` 的唯一区别：**不碰帧外的东西** —— 不 pumpIo / pumpTasks /
-     *   pumpTimers、不推进画、不重建焦点链、不推语义树。它会被平台壳在
-     *   **WM_SIZE（模态循环内）同步调回**（C → PHP 重入），能碰的状态越少越安全；
-     *   顺带也更快（拖动预算 48ms 留出余量）。
-     *
-     * ★ 时间戳复用上一帧的：这不是一帧「新时间」，只是「同一时刻换个尺寸再画一次」。
-     *   自己读环境时钟会破坏 `frame()` 的单一时钟来源。
-     *
-     * ★ 界面要跟手的语义仍由主循环兜底：松手后 `waitEvents()` 恢复等待，积压的 resize 已
-     *   被合并成一条 ⇒ 主循环跑一帧完整 `frame()` 收尾（任务/动画/语义都补上）。
+     * 它会被壳在 WM_SIZE（模态循环内）同步调回，能碰的状态越少越安全。时间戳复用上一帧的 ——
+     * 这是"同一时刻换个尺寸再画一次"，自己读钟会破坏 `frame()` 的单一时钟来源。
      *
      * @api 由平台壳的拖动重排入口调（`src/Platform/Win32/ResizeHook.php`）
      */
@@ -1242,16 +789,12 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
 
         $this->assertUiThread('repaintForResize');
 
-        // 零视口（最小化时 `WM_SIZE` 的 lp 就是 0×0）⇒ 没有可画的东西，也没有
-        // 可用于布局的约束（`tight(0,0)` 会让 Text 每字一行 ⇒ C6 Fatal，`02` §2.1）。
-        // ★ 与 `frame()` 同一条判据，但这里**不跑泵** —— 拖动重排本来就不碰
-        //   任务/动画/语义，跳过整段是对的。
+        // 零视口：`tight(0,0)` 会让 Text 每字一行 ⇒ C6 Fatal。这里不跑泵，跳过整段是对的。
         if ($constraints->maxWidth <= 0.0 || $constraints->maxHeight <= 0.0) {
             return;
         }
 
-        // ★ 拖动中的重排也是**窗口帧**（约束照样来自客户区）—— 与正式帧同一条语义：
-        //   裁剪 + 留痕，不弹 Fatal 打断拖动。两处用同一个入口，不留两套开关。
+        // 拖动中的重排同样是窗口帧：裁剪 + 留痕，不弹 Fatal 打断拖动。
         LayoutTolerance::withinWindow(function () use ($constraints, $frame, $root): void {
             $this->overlayLayout->placeOverlays($constraints);
             $frame->run(
@@ -1273,22 +816,11 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     // ------------------------------------------------------------------
 
     /**
-     * 排一个**一次性延时回调**（W8-2，2026-10-23）。
+     * 排一个一次性延时回调。
      *
-     * ```php
-     * $id = $this->application()->after(500, function (): void { $this->setState(...); });
-     * // 想撤销就 cancelAfter($id)（已触发过 ⇒ 幂等无事发生）
-     * ```
-     *
-     * ★ **时间基准是"上一帧的时间戳"**，不是环境时钟（G3：框架不自己读钟）。
-     *   在 `frame()` **之外**调用（例如指针回调里）时，基准会早一个帧间隔
-     *   （≤ `FrameClock::FRAME_MS` = 15ms）—— 对 Tooltip / Snackbar 这种"人的
-     *   反应时间"尺度无感，但**不要拿它做动画计时**（那是 `AnimationController`
-     *   的活，它收的是精确帧时间戳）。
-     * ★ **回调在 `frame()` 内、`settle()` 之前跑**（`pumpTimers()` 的位置与
-     *   `pumpTasks()` 同级）⇒ 回调里 `setState()` 同帧生效。
-     * ★ **有定时器在等 ⇒ `wantsFrame()` 为真** ⇒ 帧时钟保持上膛。这是"定时器
-     *   能不能响"的**结构前提**：消息泵是阻塞的，没人叫醒就永远不响。
+     * 时间基准是上一帧的时间戳，不是环境时钟；在 `frame()` 之外调用会早一个帧间隔（≤15ms）。
+     * 回调在 `frame()` 内、settle 之前跑 ⇒ 里面的 `setState()` 同帧生效。
+     * 有定时器在等 ⇒ `wantsFrame()` 为真，否则阻塞的消息泵永远不会被叫醒。
      *
      * @param int $milliseconds 延时（毫秒；负数按 0 处理 ⇒ 下一帧就触发）
      * @return int 定时器 id（`cancelAfter()` 用）
@@ -1307,23 +839,10 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     }
 
     /**
-     * 本应用**还需要下一帧吗**（§17.4.9）—— 自适应帧时钟的唯一判据。
+     * 本应用还需要下一帧吗 —— 自适应帧时钟的唯一判据。
      *
-     * ★ 平台的消息泵是**阻塞**的（`GetMessageW`）：没有输入事件时它一直睡。所以
-     *   "还有活要干"这件事必须由框架主动说出口，平台才知道该起一个定时器把循环
-     *   叫醒。**这不是优化，是修缺陷**：在此之前，异步结果只能等下一条用户消息捎带。
-     * ★ 所有来源都**有界**：任务回贴完、动画跑完、监听解除 ⇒ 立刻返回 `false`，
-     *   帧时钟停摆、CPU 归零。**空闲不空转**是这条判据存在的一半理由。
-     *
-     * ★★ **2026-11-02（技术债 D1）这条判据被彻底改写**。此前它是三处**互不知晓**
-     *   的谓词拼起来的（`wantsFrameRhythm()` 2 条 + `needsFrameNow()` 3 条 +
-     *   `hasTimers()`），每多一种"只有系统自己知道的变更源"就要回来加一条 ——
-     *   `Frame::hasPendingPaint()` 就是 2026-11-01 才补上的，补之前悬停零反馈。
-     *   现在只有一个计数器：**谁想要下一帧，就在自己的变更点 +1**
-     *   （`Pipeline::scheduleFrame()` / `scheduleNextFrame()`）。
-     *
-     * ★ 于是本方法只剩一句转发。**别在这里加判据** —— 想加，就去那个"变化发生的
-     *   现场"调 `scheduleFrame()`。加在这里等于把拉模型又装回来一遍。
+     * 消息泵是阻塞的，没人说"还有活"，平台就不起定时器。所有来源都有界（任务回贴完、
+     * 动画跑完 ⇒ false），故空闲不空转。别在这里加判据 —— 想加就去变更现场调 `scheduleFrame()`。
      *
      * @api 组合根每帧调一次（`FrameClock` 就是这么用的）
      */
@@ -1333,10 +852,9 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     }
 
     /**
-     * 欠的账是"**立刻**跑"那一档吗（像素脏 / 焦点环没画 / 面板落后）。
+     * 欠的账是"立刻跑"那一档吗（像素脏 / 焦点环没画 / 面板落后）。
      *
-     * ★ 与"按帧节奏"（动画 / 轮询）的区别只影响**等多久**：本方法为真 ⇒ 等待层给
-     *   `0`（马上去跑）；为假但 {@see self::wantsFrame()} 为真 ⇒ 给 15ms。
+     * 为真 ⇒ 等待层给 `0`；为假但 {@see self::wantsFrame()} 为真 ⇒ 给 15ms。
      *
      * @api `FrameClock::nextWaitMs()` 每轮问一次
      */
@@ -1346,14 +864,10 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     }
 
     /**
-     * 下一个**到点的定时器**（绝对毫秒，与 `Platform::now()` 同一时基）；`null` = 没有。
+     * 下一个到点的定时器（绝对毫秒，与 `Platform::now()` 同一时基）；`null` = 没有。
      *
-     * ★ 它回答的是事实（"最早什么时候有活"），不是策略（"等多久"）—— 后者是
-     *   {@see \Drift\App\FrameClock::nextWaitMs()} 的事，因为那里才知道帧间隔。
-     * ★ 只算 `after()` 的延时回调：后台任务 / socket 可读**没有**到点时刻，
-     *   它们是轮询（`PumpHost::drain()` 之后自己 `scheduleNextFrame()`）。
-     * ★ **定时器不是"要帧"**（2026-11-02，D1）：它是"到点才要"。所以它不再进
-     *   `wantsFrame()`，而是与它并列，由等待层取较早者。
+     * 只算 `after()` 的延时回调：任务 / socket 可读没有到点时刻（那是轮询）。
+     * 定时器不算"要帧"，由等待层与 `wantsFrame()` 取较早者。
      *
      * @api 等待层（`FrameClock::nextWaitMs()`）每轮问一次
      */
@@ -1365,9 +879,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     /**
      * 本应用一共跑过多少帧（含 `attach()` 的那一帧）。
      *
-     * ★ **@internal 量具**，不是应用契约：`EventLoop` 验"一轮到底跑没跑帧"时，
-     *   `SurfaceProbe::frames` 已经不够用了（N1 之后"跑帧"≠"画帧"，
-     *   静态树下 paint 整段跳过）⇒ 需要数**帧本身**。
+     * @internal 量具：静态树下 paint 整段跳过，"跑帧"≠"画帧"，故需数帧本身。
      */
     public function frameCount(): int
     {
@@ -1375,12 +887,9 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     }
 
     /**
-     * 本应用的帧管线（结构/内容版本、脏记账、两个换代序号、全部量具）。
+     * 本应用的帧管线。
      *
-     * @internal 给测试 / 探针 / devtools 精确读**某一应用**的数字。业务代码不该读它。
-     * ★ 为什么读它而不是 `Pipeline::current()`：那读的是"**当前**管线"（最近一帧
-     *   跑的那个应用）。两个应用交错跑帧时，只有本方法能问对对象 —— 这正是
-     *   D3 验收②的判据形态。框架内部**没有任何地方**再写静态门面了。
+     * @internal 给测试 / 探针 / devtools 精确读某一应用的数字。业务代码不该读它。
      */
     public function pipeline(): Pipeline
     {
@@ -1390,8 +899,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     /** 记一次帧耗时（诊断 / 语义推送节流的输入） */
     public function noteFrameCost(float $milliseconds): void
     {
-        // ★ 量坏了（NaN / 负值）⇒ **不立超预算**：一次坏样本把降级打开，
-        //   接下来几帧的语义推送就被白白节流了。
+        // 量坏了（NaN / 负值）⇒ 不立超预算：一次坏样本会把语义推送白白节流几帧。
         if (!\is_finite($milliseconds) || $milliseconds < 0.0) {
             return;
         }
@@ -1411,8 +919,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         $this->overBudgetStreak++;
         $this->overBudget = $this->overBudgetStreak >= self::OVER_BUDGET_FRAMES;
 
-        // ★ 只在**刚立起来的那一帧**报：每帧报一次会把环形缓冲刷满，
-        //   反而看不到别的（环形缓冲只有 100 条）。
+        // 只在刚立起来的那一帧报：每帧报一次会把只有 100 条的环形缓冲刷满。
         if ($this->overBudgetStreak === self::OVER_BUDGET_FRAMES) {
             Errors::report(sprintf(
                 '连续 %d 帧超过 %.1fms 预算（本帧 %.1fms，最差 %.1fms）'
@@ -1429,7 +936,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         }
     }
 
-    /** 是否处于超预算状态（D1 的判据；devtools / 夹具也读它） */
+    /** 是否处于超预算状态（devtools / 夹具也读它） */
     public function overBudget(): bool
     {
         return $this->overBudget;
@@ -1448,11 +955,9 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     }
 
     /**
-     * 被跳过的零视口帧数（最小化 / 桌面临时切走时 `frame()` 早退的次数）。
+     * 被跳过的零视口帧数。
      *
-     * ★ 夹具用它证明"那一帧确实被跳过了"，而不是"恰好没崩"。
-     *
-     * @internal
+     * @internal 夹具用它证明"那一帧确实被跳过了"，而不是"恰好没崩"。
      */
     public function zeroViewportFrames(): int
     {
@@ -1470,42 +975,18 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         return implode(' / ', $parts);
     }
 
-    /**
-     * 注入语义树消费者（§9 / M5 UIA）—— 组合根把它接到 `WindowHost::pushSemantics()`。
-     *
-     * ★ 框架只存闭包、**不碰平台**（§5.1：平台引用止于组合根）；默认不注入 ⇒ 不建语义树。
-     */
+    /** 注入语义树消费者（组合根接到 `WindowHost::pushSemantics()`）。不注入 ⇒ 不建语义树。 */
     public function setSemanticsSink(callable $sink): void
     {
         $this->semanticsSink = \Closure::fromCallable($sink);
     }
 
     /**
-     * 每帧末把语义树推给消费者（§9 / M5 UIA）。
+     * 语义推送两档：`full`（结构或焦点变了）与 `coalesce`（动画中，每 4 帧合并一次）。
      *
-     * ★ 无 sink ⇒ 直接返回（**不建语义树** —— SemanticsBuilder 的"没人调就不建"）。
-     * ★ 走 SemanticsBuilder::build()（Element 树）+ toArrays()['nodes']（扁平标量，
-     *   正是 WindowHost::pushSemantics 收的形状）。放在 settle/重建之后 ⇒ 反映最新树。
-     */
-    /**
-     * 语义推送：**两档**（`07` §6.2 / §6.4）。
-     *
-     * | 档 | 什么时候 | 推什么 |
-     * |---|---|---|
-     * | `full` | 结构变了（节点增删 / 重排）或焦点变了 | 整棵语义树 |
-     * | `coalesce` | 动画中（结构没变） | 攒起来，**每 4 帧**合并成一次 |
-     *
-     * ★★ **`delta` 档诚实降级、没做**（`07` §6.4）：精确 diff 要"每个节点记住
-     *   上次推的值"，那是 O(树) 的额外内存；没有字段表就只能推"整棵树的当前值"，
-     *   省的是序列化与 IPC、不是遍历 ⇒ 是个"每帧仍遍历全树、只少一次序列化"的
-     *   半成品。本册只落两档，delta 记为"结构版本号落地后再评估"。
-     *
-     * ★★ **结构变 / 焦点变 ⇒ 立即 `full`，两条节流都不看**：
-     *   - 增量表达不了"多了一个节点"，攒着推会让读屏的树与真实树错位；
-     *   - 焦点一变必须马上说（延迟 50ms 就让人怀疑键盘失灵，`07` §6.3）。
-     *
-     * ★ D1（`06` §3.3 / §3.4）仍在：超预算时降到**每 4 帧一次**，但只约束
-     *   "没有结构/焦点变化"的常态帧。
+     * ★ 结构 / 焦点变化 ⇒ 立即 full，两条节流都不看：增量表达不了"多了一个节点"，
+     * 攒着推会让读屏的树与真实树错位；焦点延迟 50ms 就让人怀疑键盘失灵。
+     * 超预算时降到每 4 帧一次，但只约束没有结构 / 焦点变化的常态帧。
      */
     private function pumpSemantics(): void
     {
@@ -1519,7 +1000,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         $version = $this->pipeline->structureVersion();
         $structureChanged = $version !== $this->lastStructureVersion;
 
-        // ① 结构 / 焦点变了 ⇒ full，**立即**（不看 coalesce，也不看 D1）
+        // ① 结构 / 焦点变了 ⇒ full，立即（不看 coalesce，也不看超预算）
         if ($structureChanged || $focusChanged) {
             $this->lastStructureVersion = $version;
             $this->semanticsFocused = $focused;
@@ -1538,7 +1019,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
             }
         }
 
-        // ③ D1：超预算时降到每 4 帧一次
+        // ③ 超预算时降到每 4 帧一次
         if ($this->overBudget && $this->semanticsFrameSkip > 0) {
             $this->semanticsFrameSkip--;
 

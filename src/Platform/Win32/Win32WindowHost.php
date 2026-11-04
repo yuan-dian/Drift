@@ -35,16 +35,10 @@ use function drift_win_uia_push;
 use function drift_win_window_position;
 
 /**
- * Win32 窗口端口（§5.1）。
- *
- * ★ 它是 `Drift\Platform\Win32` 里**唯一持有 HWND 的地方**，而且持的是 `int`
- *   —— §5.1 纪律 1：句柄跨接口后是**不透明 int**，解引用只允许发生在
- *   `Drift\Platform\<Os>\` 内部，且这里也只把它当数字传给桥。
- *
- * ★ `createWindow()` 失败**必须报 Fatal**（G2）：返回 0 却继续跑，后面每一次
- *   `drift_win_*` 都会静默变成空操作，用户看到的是一块什么都不显示的窗口 ——
- *   正是 §1.2 要消灭的形态。
- *
+ * Win32 窗口端口。`WindowHost` 接口的平台实现，对应用只暴露 `WindowHost`。
+ * 句柄跨接口后是不透明 int，这里只当数字传给桥、不在 PHP 侧解引用。
+ * ★ `createWindow()` 失败**必须报 Fatal**：返回 0 却继续跑，后面每一次
+ *   `drift_win_*` 都会静默变成空操作，用户看到一块什么都不显示的窗口。
  * @internal 平台实现；应用只认 `Drift\Platform\WindowHost`
  */
 final class Win32WindowHost implements WindowHost
@@ -53,10 +47,8 @@ final class Win32WindowHost implements WindowHost
 
     /**
      * 是否已请求无边框（`setFrameless()` 记一次）。
-     *
-     * ★ 供 `applyMaterial()` 校验"逐像素 alpha 要无边框"这条耦合 —— 壳看不见
-     *   PHP 侧的调用历史，而这条校验恰恰需要跨两次调用的知识，所以记在实现
-     *   对象上（单窗假设与 `$handle` 同源；多窗口化时改 map，见 GAP §8 待做）。
+     * 供 `applyMaterial()` 校验"逐像素 alpha 要无边框"—— 壳看不见 PHP 侧调用历史，
+     * 这条校验需要跨两次调用的知识，故记在实现对象上。
      */
     private bool $frameless = false;
 
@@ -81,12 +73,8 @@ final class Win32WindowHost implements WindowHost
 
     /**
      * 任意一个**还活着**的句柄；一个都没有 ⇒ 最近建过的那个（可能已死）。
-     *
-     * ★ 谁需要它（2026-10-30，M1-b）：`SetTimer` 必须挂在活窗口上，而"等消息的
-     *   闹钟"服务的是**整个进程**（一次 `GetMessageW` 收所有窗口的消息）。
-     *   ★ 不能用 `handle()`：那是"最后建的窗"—— 主窗关掉、第二窗还在时就是死句柄
-     *   ⇒ `start()` 失败 ⇒ `waitEvents()` 退化成无限阻塞 ⇒ 剩下的窗口**动画停摆**
-     *   （不报错，看起来像"那个窗口卡住了"）。
+     * 不能用 `handle()` 取它：那是"最后建的窗"，主窗关、次窗在时就是死句柄，
+     * 挂 `SetTimer` 会失败、`waitEvents()` 退化成无限阻塞，余下窗口动画停摆（不报错）。
      */
     public function liveHandle(): ?int
     {
@@ -102,10 +90,8 @@ final class Win32WindowHost implements WindowHost
 
     /**
      * **请求**关闭：桥发 `WM_CLOSE`（与用户点标题栏 X 同一条路）。
-     *
-     * ★ 一次 `PostMessageW` 就返回 —— **不是同步销毁**。没声明守卫的窗口在同一轮
-     *   消息处理里被销毁（体验上与改动前无差别）；声明了守卫的窗口会先变成一条
-     *   `CloseRequestedEvent`。
+     * 一次 `PostMessageW` 就返回，不是同步销毁；声明了关闭守卫的窗口先变成一条
+     * `CloseRequestedEvent`，由应用决定后再 `destroy()`。
      */
     public function close(int $windowHandle): void
     {
@@ -114,9 +100,7 @@ final class Win32WindowHost implements WindowHost
 
     /**
      * **执行**关闭：桥直接 `DestroyWindow`，不看守卫（框架在应用同意之后调）。
-     *
-     * ★ 与 `close()` 的两分不是洁癖：它们对应"请求"与"执行"两个语义，
-     *   合成一个方法就等于"能不能被拦"取决于谁在调（2026-10-30 之前的状态）。
+     * 与 `close()` 分工在"请求"与"执行"两个语义：本方法只在应用同意关闭后调用。
      */
     public function destroy(int $windowHandle): void
     {
@@ -130,10 +114,8 @@ final class Win32WindowHost implements WindowHost
 
     /**
      * 声明该窗口的关闭要不要先问应用（壳侧按 HWND 记一个集合）。
-     *
-     * ★ 壳**不认识** `Application`：它只知道"这个 HWND 声明了要问"，
-     *   于是把 `WM_CLOSE` 转成一条事件。决定权在 PHP 的帧边界
-     *   （见 `CloseRequestedEvent` 的类注释：为什么不能在 WndProc 里同步问）。
+     * 壳不认识 `Application`，只知道"这个 HWND 声明了要问"，于是把 `WM_CLOSE`
+     * 转成一条 `CloseRequestedEvent`，由 PHP 的帧边界决定。
      */
     public function setCloseGuard(int $windowHandle, bool $armed): void
     {
@@ -147,8 +129,8 @@ final class Win32WindowHost implements WindowHost
 
     public function setMinSize(int $windowHandle, int $width, int $height): void
     {
-        // ★ 用**传进来的**句柄（2026-10-30，M1-a）：改动前靠 `$this->handle`
-        //   （"最后建的窗"）⇒ 第二个窗口设最小尺寸会设到第一个上。
+        // ★ 用**传进来的**句柄：靠 `$this->handle`（"最后建的窗"）会把第二个窗口的
+        //   最小尺寸设到第一个上。
         $dpr = Dpr::of($windowHandle);
 
         drift_win_set_min_size(
@@ -159,14 +141,10 @@ final class Win32WindowHost implements WindowHost
     }
 
     /**
-     * 一次应用窗口外观材质（P1 收敛裁决）。见 `WindowHost::applyMaterial()`。
-     *
-     * ★★ **在这里硬校验"逐像素 alpha 要无边框"**：这条耦合收敛前只活在组合根
-     *   的注释里（"带 alpha 时必须同时 DRIFT_WINDOW_FRAMELESS=1"），漏设的表现
-     *   是壳静默回落 GDI —— "透明没生效"且无任何报错。配置矛盾属于编程错误，
-     *   与"环境变量写错是 Fatal"同口径：当场报，不留静默态。
-     * ★ 传给桥的只有**模式与数值**：`pixelAlpha` 由材质的底色 alpha 推出，
-     *   `Color` 本身不过桥（§5.1 只传原语；颜色是像素的事，归表面）。
+     * 一次应用窗口外观材质。见 `WindowHost::applyMaterial()`。
+     * ★ 在这里硬校验"逐像素 alpha 要无边框"：漏设的表现是壳静默回落 GDI，
+     *   "透明没生效"且没有任何报错。配置矛盾属编程错误，当场报、不留静默态。
+     * 传给桥的只有模式与数值：`pixelAlpha` 由材质底色 alpha 推出，`Color` 本身不过桥。
      */
     public function applyMaterial(int $windowHandle, WindowMaterial $material): void
     {
@@ -189,9 +167,7 @@ final class Win32WindowHost implements WindowHost
 
     /**
      * 平台能力查询（位掩码从壳一次探来）。见 `WindowMaterialCapabilities`。
-     *
-     * ★ 桥侧结果进程内缓存（答案不变），这里不做二次缓存 —— 多一层缓存就多一个
-     *   "测试替身要不要跟着假"的问题。
+     * 桥侧结果进程内已缓存（答案不变），这里不二次缓存。
      */
     public function materialCapabilities(int $windowHandle): WindowMaterialCapabilities
     {
@@ -199,13 +175,11 @@ final class Win32WindowHost implements WindowHost
     }
 
     /**
-     * 无边框模式（P1-Stage 1b）。`$dragHeight` 是**逻辑**像素，这里折成物理。
-     *
-     * ★ 换算口径与 `setMinSize()` 完全一致（`Dpr::of()`，全仓唯一入口）——
-     *   直接把手感尺寸交给壳会让 125% 缩放下拖动带窄 20%。
-     * ★ 壳侧走 `WM_NCCALCSIZE`（样式不变、客户区=整窗），所以**调用后客户区会
-     *   变大**（多出原标题栏高度）。组合根必须在 `setFrameless()` **之后**再读
-     *   `clientSize()`，否则第一帧按旧尺寸排版（然后被 `WM_SIZE` 纠正，闪一下）。
+     * 无边框模式。`$dragHeight` 是**逻辑**像素，这里按 `Dpr::of()` 折成物理
+     * （全仓唯一换算入口，直接交壳会让 125% 缩放下拖动带窄 20%）。
+     * 壳侧走 `WM_NCCALCSIZE`（客户区=整窗），调用后客户区会变大（多出标题栏高度），
+     * 组合根必须在 `setFrameless()` **之后**再读 `clientSize()`，否则首帧按旧尺寸排版、
+     * 被 `WM_SIZE` 纠正时闪一下。
      */
     public function setFrameless(int $windowHandle, int $dragHeight): void
     {
@@ -233,10 +207,8 @@ final class Win32WindowHost implements WindowHost
 
     /**
      * 客户区尺寸（**逻辑**像素）。
-     *
-     * ★ 桥给的是**物理**像素，这里除以 DPI 缩放 —— 逻辑↔物理的换算点只有一个
-     *   （§6.1 的 `Scale`），所以换算必须走 `Dpr::of()` 而不是自己写
-     *   `/ 1.25` 这种字面量：分数缩放下两者会算出不同的值。
+     * 桥给的是**物理**像素，这里按 `Dpr::of()` 折成逻辑 —— 逻辑↔物理换算点全仓唯一，
+     * 不能自己写 `/ 1.25` 这种字面量：分数缩放下两者会算出不同的值。
      */
     public function clientSize(int $windowHandle): Size
     {
@@ -256,13 +228,11 @@ final class Win32WindowHost implements WindowHost
     }
 
     /**
-     * 客户区左上角的屏幕坐标（**逻辑**像素，§5.4 持久化的读向侧）。
-     *
-     * ★ 桥给的是**物理**像素（`ClientToScreen` 的结果恒为物理 —— 屏幕坐标没有
-     *   DPI 感知一说），这里按当前窗口 DPI 折算成逻辑：与 `clientSize()`
-     *   同一条换算路径（`Dpr::of()`，全仓唯一入口）。
-     * ★ **最小化 ⇒ `null`**：桥用空数组表达（`IsIconic` 或 `GetClientRect`
-     *   失败）。这不是错误路径，是"别记"的信号（见 `WindowStateStore` 类注释）。
+     * 客户区左上角的屏幕坐标（**逻辑**像素）。
+     * 桥给的是**物理**像素（`ClientToScreen` 结果恒为物理，屏幕坐标无 DPI 感知），
+     * 这里按当前窗口 DPI 折成逻辑，与 `clientSize()` 同一条 `Dpr::of()` 路径。
+     * **最小化 ⇒ `null`**：桥用空数组表达（窗口图标化或取矩形失败），是"别记"的信号，
+     * 不是错误路径。
      */
     public function position(int $windowHandle): ?Point
     {
@@ -279,14 +249,11 @@ final class Win32WindowHost implements WindowHost
     }
 
     /**
-     * 一次原子还原窗口几何（§5.4）。
-     *
-     * ★ **换算全在壳里做**：PHP 给逻辑像素，壳负责"客户区原点 + 客户区尺寸 →
-     *   外框矩形 + 显示器夹取 + 最大化状态"这一整套（§6.1 量化只在平台侧）。
-     *   PHP 侧连 `AdjustWindowRectExForDpi` 的名字都不该看见。
-     * ★ **不做成功 / 失败两态**：与 `setTitle()` / `show()` 同族 —— 端口方法
-     *   的失败都表现为"什么都没发生"，而这里调用方（组合根）接下来会读
-     *   `clientSize()` 拿实际几何，错不错当下就知道。
+     * 一次原子还原窗口几何。
+     * 换算全在壳里做：PHP 给逻辑像素，壳负责"客户区原点 + 客户区尺寸 → 外框矩形 +
+     * 显示器夹取 + 最大化状态"整套，PHP 侧不该看见 `AdjustWindowRectExForDpi`。
+     * 不做成功/失败两态：与 `setTitle()` / `show()` 同族，调用方接下来读 `clientSize()`
+     * 拿实际几何，错不错当下就知道。
      */
     public function place(int $windowHandle, Rect $rect, bool $maximized): void
     {
@@ -301,14 +268,11 @@ final class Win32WindowHost implements WindowHost
     }
 
     /**
-     * 设置指针形状（§9.1）。
-     *
-     * ★ 传的是 `$shape->value` —— **枚举的 `value` 就是桥的 ABI 编号**
-     *   （`drift_win_set_cursor(int $hwnd, int $shape)`）。这条约定写在
-     *   `CursorShape` 的 docblock 里，**两处必须同步改**。
-     * ★ 桥**缓存**这个形状并在 `WM_SETCURSOR` 时重贴 —— 不缓存的话 Windows
-     *   每次鼠标移动都会把光标重置回窗口类光标，形状只显示到下一次移动
-     *   （且**不报错**）。原因见 `cpp-src/drift_win32.cc` 的同名函数。
+     * 设置指针形状。
+     * 传的是 `$shape->value`：枚举的 `value` 即桥的 ABI 编号，约定写在
+     * `CursorShape` 的 docblock 里，两处必须同步改。
+     * 桥缓存这个形状并在 `WM_SETCURSOR` 时重贴：不缓存的话 Windows 每次鼠标移动
+     * 都会把光标重置回窗口类光标，形状只显示到下一次移动（且不报错）。
      */
     public function setCursor(int $windowHandle, CursorShape $shape): void
     {
@@ -316,9 +280,8 @@ final class Win32WindowHost implements WindowHost
     }
 
     /**
-     * 推送语义树扁平节点（§9 / M5）：原样交给桥（只传标量，§5.1 纪律 1）。
-     *
-     * ★ 桥侧 provider 从这份数组应答 UIA 客户端；空数组 ⇒ 清空（无障碍关闭）。
+     * 推送语义树扁平节点：原样交给桥（只传标量）。
+     * 桥侧 provider 从这份数组应答 UIA 客户端；空数组 ⇒ 清空（无障碍关闭）。
      */
     public function pushSemantics(int $windowHandle, array $flatNodes): void
     {

@@ -8,66 +8,11 @@ use Drift\Input\KeyEvent;
 use Drift\Input\SemanticsRole;
 
 /**
- * 表格（P2 阶段 1：表头 + 虚拟行 + 定宽/弹性列 + 斑马行）。
+ * 表格布局核心：列宽计算 + 单元格定位 + 虚拟行窗口。
+ * 业务数据以数组进入，变更靠"重建 + 按绝对序号 diff"，与总行数无关。
  *
- * ```php
- * Table::make(
- *     [
- *         TableColumn::make('name', '姓名')->field('name')->width(TableColumnWidth::flex(2.0)),
- *         TableColumn::make('email', '邮箱')->field('email'),
- *         TableColumn::make('status', '状态')->cell(fn(User $u): Widget => Badge::make($u->status)),
- *     ],
- *     $users,                       // ★ 原始行，不做转换（见 §11.2）
- * )
- *     ->keyOf(fn(User $u): int => $u->id)   // ★ 必填
- *     ->rowHeight(44.0);
- * ```
- *
- * ## 数据怎么进来（三层，各管一段）
- *
- * ```
- * Subject（业务数据）→ SubjectBuilder::select(fn($s) => $s->visible()) 给出数组
- *                    → Table（只认数组 + 列定义 + keyOf）
- * ```
- *
- * `Table` **不认识 Store** —— 这是"业务层零 GUI 依赖"的镜像。变更传播靠
- * "重建 + 按绝对序号 diff"，三步成本都与总行数无关（数组 COW O(1) / 只造窗口内
- * 行 / 窗口内序号复用）⇒ 不需要 `ObservableList`、不需要 `dataChanged` 通知。
- *
- * ## 它自己就是滚动容器
- *
- * 不是 `ScrollView` 的子节点（`LazyColumn` 的那条纪律同源）：窗口取决于滚动偏移、
- * 偏移取决于视口，两者都在它这里。塞进外层滚动视口会拿到无界主轴 ⇒
- * `RenderTable` 会按"内容高"铺开、窗口变成全部行（虚拟化失效）。
- *
- * ## 诚实边界（阶段 2，`docs/DESIGN-TABLE-2026-10-26.md` §7）
- *
- * | 不做 | 理由 |
- * |---|---|
- * | 变长行高 | 虚拟化要 `first = floor(offset / extent)` 的 O(1) 换算 |
- * | 列合并 / 分组 / 树形 | 破坏"每行同构"，窗口不再是矩形 |
- * | 横向滚动的**滚轮** | 已通（阶段 5b）：壳把 `WM_MOUSEHWHEEL` 与 Shift+竖轮都翻成 `Axis::Horizontal` ⇒ 横条、横轮、Shift+竖轮三条入口一致 |
- * | **控件内**排序 | 数据所有权不分裂：控件画箭头 + 上报意图，重排由应用做（§13） |
- * | 多列排序的 **UI** | `TableSort::thenBy()` 与"每列各画箭头"结构上已成立，只是点表头只上报单键（Shift+点留给后续） |
- * | 列宽拖拽 / 单元格编辑 | 列宽已做（阶段 4）；单元格编辑已做（阶段 7a，`TableColumn::editable()` + `onCellEdit()`）|
- * | 键盘光标格的**扩展选择** | 方向键移格已做（阶段 2b）；Ctrl/Shift + 方向键扩选要先把选择与光标的关系定死 |
- * | 表头列高亮 | 光标格有框，表头**不**跟着高亮 —— 那是"当前列"的第二种表达，等编辑（阶段 7）有消费者再加 |
- * | 内置勾选列 / 全选 | `cell()` 已能表达（闭包捕获 selection）；内置列会同时牵连列宽、表头全选框、排序箭头与拖拽手柄 ⇒ 等阶段 4 一起裁决 |
- *
- * ★ **子项内不能有"随滚动保留的 UI 态"**：行 Element 在滚出窗口时被回收
- *   （虚拟化的定义）⇒ 单元格里正在编辑的**草稿住在 `TableState`**（不随行回收），
- *   插入符与选区跟着草稿一起（`TextDraft`，与 `TextField` 共用同一份状态机）。
- *
- * ## 单元格编辑（阶段 7a）
- *
- * `TableColumn::editable()` 声明可编辑的列（**只对 `field()` 列**），`Enter` / `F2`
- * 进入编辑；`Enter` / `↑` / `↓` 提交并移动、`Esc` 取消、失焦或滚动提交。
- * 提交经 `onCellEdit(fn($rowKey, $columnKey, string $value))` 交给应用。
- *
- * ★ **编辑会话认 key 不认下标**：排序 / 过滤换了行序之后，编辑器跟着**数据**走
- *   （光标格仍用下标 —— 它是"眼睛在哪"，编辑是"我改的是哪条数据"）。
- * ★ **双击进入编辑不在本阶段**：它要判断两次点击的间隔，而 `PointerEvent` 没有
- *   时间戳（手势族缺时钟，见 `GAP-ANALYSIS` P2-13）。
+ * ★ 子项内不能有"随滚动保留的 UI 态"：行 Element 滚出窗口即被回收，
+ *   编辑草稿必须住在 `TableState`（不随行回收）。
  *
  * @api
  */
@@ -76,19 +21,7 @@ final class Table extends StatefulWidget
     private const DEFAULT_ROW_HEIGHT = 44.0;
     private const DEFAULT_HEADER_HEIGHT = 40.0;
 
-    /**
-     * 窗口缓冲带（逻辑像素）—— 行区**可视范围之外**多建一段。
-     *
-     * ★★ 存在的理由（2026-10-27，A 批第 1 项）：滚动不再重建整棵行区之后，
-     *   重建只发生在"窗口盖不住视口"时。缓冲带 = 那个余量：滚过 `cacheExtent`
-     *   才付一次重建。没有它，窗口必须**每滚一行**就变 ⇒ 又退回每帧重建
-     *   （`first = floor(offset/rowH)`，offset 一动 first 就动）。
-     *
-     * ★ 取值是**权衡**，不是越大越好：重建频率 ∝ 1/cache，而**每次 layout 都
-     *   要排完整个窗口**（行区 layout 是全树 O(n)）⇒ 缓冲越大，每帧的 layout
-     *   越贵。默认 200px ≈ 4–5 行，与 RecyclerView 的 `cacheExtent` 同量级。
-     *   数据行特别高（`rowHeight(88)`）时它自然只有 2 行 —— 那时也不该更多。
-     */
+    /** 窗口缓冲带（逻辑像素）—— 滚出余量才重建窗口 */
     private float $cacheExtentPx = 200.0;
 
     /** @var list<TableColumn> */
@@ -101,73 +34,43 @@ final class Table extends StatefulWidget
 
     private float $headerHeightPx = self::DEFAULT_HEADER_HEIGHT;
 
-    /** 行身份（`fn(mixed $row): string|int`）—— 必填，见 `keyOf()` */
+    /** 行身份（`fn(mixed $row): string|int`）—— 必填 */
     private ?\Closure $keyMapper = null;
 
     private float $columnSpacingPx = 0.0;
 
-    /**
-     * 斑马行（奇数行加一层浅底）。
-     *
-     * ★ **默认开**：行多时没有斑马行的表格读起来是"一片字墙"，而设计上
-     *   "不写也要能看"是本仓的既有判据（同 `TableColumn` 的默认 `flex(1)`）。
-     *   要纯色调 `striped(false)`。
-     */
+    /** 斑马行（默认开） */
     private int $stripedOn = 1;
 
-    /**
-     * 当前选中集（`null` = **没启用选择**，此时点行不进选择逻辑）。
-     *
-     * ★ 受控：应用每次 build 递进来，控件只读、只回调新值（§11.4）。
-     *   `null` 与 `TableSelection::none()` 不同 —— 前者连"选中"这个概念都不存在
-     *   （纯展示表），后者是"启用了但当前没选"。这个区别决定行点击要不要改选择。
-     */
+    /** 当前选中集（`null` = 没启用选择） */
     private ?TableSelection $selection = null;
 
     private TableSelectionMode $selectionMode = TableSelectionMode::Multiple;
 
-    /**
-     * 选择的**单位**：整行（默认）还是单个格子。
-     *
-     * ★ 与 `selectionMode` 是两个正交的轴（Qt `SelectionBehavior` × `SelectionMode`、
-     *   WPF `SelectionUnit` × `SelectionMode` 同款），不是一个枚举的四个 case ——
-     *   以后加"选列"只需多一个 case，不必把现有四种组合再翻一倍。
-     */
+    /** 选择单位：整行（默认）还是单格 */
     private TableSelectionBehavior $selectionBehavior = TableSelectionBehavior::Rows;
 
     /** 选择变化上报（`fn(TableSelection $next): void`） */
     private ?\Closure $onSelectionChange = null;
 
-    /**
-     * 复制上报（`fn(string $text): void`）—— `Ctrl+C` 时把选区的 **TSV** 交出来。
-     *
-     * ★ 为什么不自己写剪贴板：`Clipboard` 在 `Platform` 层，控件拿不到宿主
-     *   （`State` 上没有 `application()`，这是既有的分层）。与选择 / 排序 / 列宽
-     *   同一条哲学：**控件只算"该复制什么"，往哪写由应用决定**。
-     * ★ 不声明 ⇒ `Ctrl+C` 不吃这个键（让给应用自己的快捷键），而不是静默吞掉。
-     */
+    /** 复制上报（`fn(string $text): void`）—— `Ctrl+C` 交 TSV */
     private ?\Closure $onCopy = null;
 
-    /** 行点击上报（`fn(mixed $row, int $index): void`）—— 与选择**互不替代**，见 `onRowTap()` */
+    /** 行点击上报（`fn(mixed $row, int $index): void`）—— 与选择互不替代 */
     private ?\Closure $onRowTap = null;
 
-    /** 当前排序状态（**受控**，默认 `TableSort::none()`） */
+    /** 当前排序状态（受控，默认 `TableSort::none()`） */
     private TableSort $sortState;
 
     /** 排序变化上报（`fn(TableSort $next): void`） */
     private ?\Closure $onSortChange = null;
 
-    /**
-     * 用户拖出来的列宽（`列key ⇒ 逻辑像素`）—— **受控**，第 ④ 层宽度。
-     *
-     * ★ 按 **key** 存而不是列序号：插列/换序之后拖出来的宽度仍落在原来那一列上。
-     * ★ 空数组 = 全部按 `TableColumn::width()` 的声明算（第 ①②③ 层）。
-     */
+    /** 用户拖出的列宽（`列key ⇒ 像素`）—— 受控，按 key 存 */
     private array $columnWidths = [];
 
     private ?\Closure $onColumnResize = null;
 
-    /** 单元格编辑提交（`fn(string|int $rowKey, string $columnKey, string $value): void`） */
+    /** 单元格编辑提交（`fn(rowKey, columnKey, string $value)`） */
     private ?\Closure $onCellEdit = null;
 
     /**
@@ -180,20 +83,14 @@ final class Table extends StatefulWidget
         $this->columns = $columns;
         $this->rows = $rows;
         $this->sortState = TableSort::none();
-        // §9 无障碍：表格是集合角色（滚轮路由走 Scrollable 接口，与语义无关）
+
         $this->semantics(SemanticsRole::Table);
 
-        // ★ 整张表**一个** Tab 位，不是每格一个（阶段 2b 的核心裁决）：
-        //   1000 行 × 5 列 = 5000 个焦点节点，Tab 键就废了；而虚拟化会把不可见行
-        //   回收 ⇒ 焦点节点跟着消失（焦点丢在虚空里）。所以"光标格"是表内状态，
-        //   焦点本身仍落在表上。
+        // 整张表一个 Tab 位：焦点落在表上，光标格是表内状态（虚拟化会回收不可见行）。
         $this->markFocusable();
 
-        // ★ 声明两参：`FocusManager::dispatchKey()` 给的是 `(KeyEvent, Element)`。
-        //   只写一参在 AOT 下当场 Fatal（"expects exactly 1 argument"），且被捕获期
-        //   的 try/catch 接住 ⇒ 现象是整页变错误占位（阶段 2 的同一坑）。
-        // ★ 经 Element 找 State 而不是让闭包捕 `$this`：光标格必须跨重建存活，
-        //   而 Widget 每次 setState 都是新实例（`State::didChangeFocus` 同一理由）。
+        // 键盘回调走 `(KeyEvent, Element)` 两参；经 Element 找 State（光标格要跨重建存活，
+        // 而 Widget 每次 setState 都是新实例）。
         $this->keyboard(function (KeyEvent $event, Element $node): bool {
             $state = States::of($node);
 
@@ -202,15 +99,10 @@ final class Table extends StatefulWidget
     }
 
     /**
-     * 唯一入口：列定义 + 行数据。
+     * 唯一入口：列定义 + 行数据（其余走链式）。
      *
-     * ★ 只有这两个是必需的，其余走链式（本仓全部控件同形：`make()` 收必需、
-     *   链式收可选）。命名参数风格在 tpc 里语法支持但 `src/`+`apps/` 零调用
-     *   先例 ⇒ 不用未验证的语法写新控件的构造签名。
-     *
-     * ★★ **列对象会被 clone**：`TableColumn` 是可链式配置的（没有 Widget 那种
-     *   `seal()`），调用方可能在 `make()` 之后继续改它、或把同一份列定义用于
-     *   第二张表。不快照的话"挂载后的表跟着列对象变"，而这**不报错**。
+     * ★ 列对象会被 clone：调用方可能在 `make()` 之后继续改它或复用于第二张表，
+     *   不快照的话挂载后的表会跟着列对象变，且不报错。
      */
     public static function make(array $columns, array $rows): self
     {
@@ -249,7 +141,7 @@ final class Table extends StatefulWidget
         return new self($snapshot, \array_values($rows));
     }
 
-    /** 每行高度（逻辑像素）—— ★ **定高是虚拟化的前提**（同 `LazyColumn::itemExtent`） */
+    /** 每行高度（逻辑像素）—— 定高是虚拟化的前提 */
     public function rowHeight(float $px): static
     {
         if ($px <= 0.0) {
@@ -276,11 +168,8 @@ final class Table extends StatefulWidget
     }
 
     /**
-     * 窗口缓冲带（逻辑像素；默认 200）。
-     *
-     * ★ 语义：行区**可视范围之外**多建一段。滚动时不重建，只有滚出这段余量
-     *   才重建窗口 ⇒ 缓冲越大、重建越少，但每帧 layout 越贵（全窗口都要排）。
-     *   `0` 合法（等价于"滚一行重建一次"，即旧行为），但那就白改了。
+     * 窗口缓冲带（逻辑像素；默认 200）—— 可视范围外多建一段，
+     * 滚出这段余量才重建窗口；`0` 合法（等价旧行为）。
      */
     public function cacheExtent(float $px): static
     {
@@ -295,13 +184,9 @@ final class Table extends StatefulWidget
     }
 
     /**
-     * 行身份（`fn(mixed $row): string|int`）—— **必填**。
+     * 行身份（`fn(mixed $row): string|int`）—— 必填。
      *
-     * ★ 三个消费者现在就存在：列宽覆盖的键、未来的选择集与 Shift 锚点；
-     *   阶段 5/6 的列虚拟化与阶段 7 的"正在编辑哪一格"还要它。
-     * ★ 比 `LazyList::keyOf()` 严（那边不配也能跑，只是锚点退化）：表格的 key
-     *   是**状态的身份**，退化不是"跳一下"而是"选择错行"。
-     * ★ 同一份数据内必须唯一；不校验是因为校验要 O(n)（同 `LazyList` 的裁决）。
+     * ★ 表格的 key 是**状态的身份**：退化不是"跳一下"而是"选择错行"。
      */
     public function keyOf(callable $keyOf): static
     {
@@ -311,7 +196,7 @@ final class Table extends StatefulWidget
         return $this;
     }
 
-    /** 列与列之间的横向间距（默认 0：单元格自带左右内边距） */
+    /** 列间横向间距（默认 0：单元格自带左右内边距） */
     public function columnSpacing(float $px): static
     {
         if ($px < 0.0) {
@@ -324,7 +209,7 @@ final class Table extends StatefulWidget
         return $this;
     }
 
-    /** 斑马行开关（默认开；见 `$stripedOn`） */
+    /** 斑马行开关（默认开） */
     public function striped(bool $on = true): static
     {
         $this->mutate();
@@ -334,11 +219,8 @@ final class Table extends StatefulWidget
     }
 
     /**
-     * 选中集（**受控**）—— 声明它才启用选择。
-     *
-     * ★ 不声明 ⇒ 行不可选（纯展示表）：点行只走 `onRowTap()`。这与"声明了但为空"
-     *   是两件事 —— 后者是可选的表，只是现在一个都没选。
-     * ★ 单选模式下调它只需一个 key：`TableSelection::of([$id])`。
+     * 选中集（受控）—— 声明它才启用选择。
+     * 不声明 = 纯展示表（点行只走 `onRowTap()`）；声明了为空 = 可选的表。
      */
     public function selection(TableSelection $selection): static
     {
@@ -358,17 +240,8 @@ final class Table extends StatefulWidget
     }
 
     /**
-     * 选择的**单位**（默认 `Rows`）—— 只在声明了 `selection()` 后有意义。
-     *
-     * ```php
-     * ->selection($this->selection)
-     * ->selectionBehavior(TableSelectionBehavior::Cells)   // 点选单格、Shift/拖动扩成矩形
-     * ->onSelectionChange(...)
-     * ```
-     *
-     * ★ 换行为**不改**存储：`TableSelection` 里整行选区与格矩形是同一种值
-     *   （`TableRange`，列端点为 `null` 即整行）。应用侧 `keys()` / `has()`
-     *   照旧可用 —— 格矩形下它们回答"这一行有没有被碰到"。
+     * 选择的单位（默认 `Rows`）—— 只在声明了 `selection()` 后有意义。
+     * 整行选区与格矩形是同一种值（`TableRange`，列端点为 `null` 即整行）。
      */
     public function selectionBehavior(TableSelectionBehavior $behavior): static
     {
@@ -379,15 +252,9 @@ final class Table extends StatefulWidget
     }
 
     /**
-     * 复制上报（`fn(string $text): void`）—— `Ctrl+C` 把选区交成 **TSV**。
-     *
-     * ```php
-     * ->onCopy(fn(string $tsv) => $app->clipboard()?->writeText($tsv))
-     * ```
-     *
-     * ★ 文本来源：`TableColumn::copyText()` 优先，其次 `field()` 的字段值，
-     *   都没有（纯 `cell()` 闭包列）⇒ 空串 —— 框架不猜怎么把 Widget 变成文本。
-     * ★ 选区为空 / 没声明本回调 ⇒ 不吃 `Ctrl+C`。
+     * 复制上报（`fn(string $text): void`）—— `Ctrl+C` 交选区为 **TSV**。
+     * 文本来源：`copyText()` 优先，其次 `field()` 字段值，都没有 ⇒ 空串。
+     * 不声明 ⇒ 不吃 `Ctrl+C`（让给应用自己的快捷键）。
      */
     public function onCopy(callable $handler): static
     {
@@ -399,10 +266,8 @@ final class Table extends StatefulWidget
 
     /**
      * 选择变化上报（`fn(TableSelection $next): void`）。
-     *
-     * ★ 控件**不自己改**选择：它算出"点完之后应该是什么"并交出去，应用决定采纳。
-     *   不提供上报就等于"点了没反应"（而选中色是控件画的 ⇒ 会一直停在旧值）。
-     *   ⇒ 声明了 `selection()` 却没声明它，`TableState` 挂载期响亮失败。
+     * 控件不自己改选择：算出下一态交出去，应用决定采纳。
+     * 声明了 `selection()` 却没声明它 ⇒ `TableState` 挂载期响亮失败。
      */
     public function onSelectionChange(callable $handler): static
     {
@@ -414,10 +279,8 @@ final class Table extends StatefulWidget
 
     /**
      * 行点击上报（`fn(mixed $row, int $index): void`）。
-     *
-     * ★ **与选择互不替代**：启用选择时，点行仍然会先按模式算选择变化并上报
-     *   （这是表格该有的默认行为）；`onRowTap()` 是"还想干点别的"（打开详情 /
-     *   导航）。只想处理点击、不要选择 ⇒ 不声明 `selection()`。
+     * 与选择互不替代：启用选择时仍先按模式算选择并上报；
+     * 只想处理点击、不要选择 ⇒ 不声明 `selection()`。
      */
     public function onRowTap(callable $handler): static
     {
@@ -428,13 +291,8 @@ final class Table extends StatefulWidget
     }
 
     /**
-     * 当前排序状态（**受控**）—— 只用来画表头箭头与决定点击后的下一态。
-     *
-     * ★ 控件**不重排 `$rows`**：`$row` 是任意值，"数字按数值 / 日期按时间戳 /
-     *   中文按拼音 / 空值排前还是排后"全是应用侧知识。控件画箭头 + 上报意图，
-     *   应用重排后把新数组传回来（`docs/DESIGN-TABLE-2026-10-26.md` §13）。
-     * ★ 多键（`thenBy()`）在结构上已成立：`directionOf()` 对每个参与键都返回方向
-     *   ⇒ 每列各画自己的箭头。阶段 3 的 UI 只上报单键（Shift+点表头留给后续）。
+     * 当前排序状态（受控）—— 只画表头箭头与决定点击后的下一态。
+     * 控件不重排 `$rows`：数值/日期/拼音/空值排序全是应用知识。
      */
     public function sort(TableSort $sort): static
     {
@@ -446,9 +304,7 @@ final class Table extends StatefulWidget
 
     /**
      * 排序变化上报（`fn(TableSort $next): void`）—— 与 `selection()` 同为受控。
-     *
-     * ★ 任一列声明了 `sortable()` 却没接它 ⇒ `TableState` 挂载期响亮失败：
-     *   表头可点却不接上报 = 点了没反应，箭头还停在旧值（差异每点一次放大一层）。
+     * 任一列声明了 `sortable()` 却没接它 ⇒ `TableState` 挂载期响亮失败。
      */
     public function onSortChange(callable $handler): static
     {
@@ -459,19 +315,8 @@ final class Table extends StatefulWidget
     }
 
     /**
-     * 用户拖出来的列宽（**受控**，第 ④ 层，最优先但仍夹 `minWidth`/`maxWidth`）。
-     *
-     * ```php
-     * ->columnWidths(['name' => 220.0])
-     * ```
-     *
-     * ★ 与 `selection()` / `sort()` 同一条哲学：控件不持有这份数据。列宽是**用户
-     *   偏好**，应用要能存盘（下次开窗恢复）、要能"重置列宽"——住在控件 `State`
-     *   里就再也读不出来了（本仓没有 `GlobalKey`）。
-     * ★ 值不在这里夹：`resolveWidths()` 统一走 `TableColumn::clampWidth()`。
-     *   在这里夹会让"存盘的宽度"与"应用看到的宽度"不一致。
-     *
-     * @param array<string, float> $overrides 列 key ⇒ 逻辑像素
+     * 用户拖出的列宽（受控，第 ④ 层，最优先但仍夹 `min/maxWidth`）。
+     * 按 key 存：插列/换序后宽度仍落在原来那一列上；空数组 = 全按声明算。
      */
     public function columnWidths(array $overrides): static
     {
@@ -483,13 +328,8 @@ final class Table extends StatefulWidget
 
     /**
      * 列宽变化上报（`fn(string $key, float $width, bool $finished): void`）。
-     *
-     * ★ `$finished` = 这一次拖动**结束了**（抬起 / 拖出窗口）。拖动中每次指针移动
-     *   都会回调，`$finished` 为 `false` ⇒ 应用可以"拖动中只 `setState`，
-     *   结束时才写盘"，不必自己猜抬起时机。
-     * ★ 单回调三参数，不是 `onColumnResize` + `onColumnResizeEnd` 两个：两个回调
-     *   会造出"必须先接前者才能接后者"的隐式依赖，而应用通常只想要其中一个。
-     * ★ 任一列声明了 `resizable()` 却没接它 ⇒ 挂载期响亮失败（同 `sortable()`）。
+     * `$finished` = 本次拖动结束（抬起/拖出窗口），应用可"拖中只 setState、结束才写盘"。
+     * 任一列声明 `resizable()` 却没接它 ⇒ 挂载期响亮失败。
      */
     public function onColumnResize(callable $handler): static
     {
@@ -501,20 +341,8 @@ final class Table extends StatefulWidget
 
     /**
      * 单元格编辑提交（`fn(string|int $rowKey, string $columnKey, string $value): void`）。
-     *
-     * ★ **提交的是"一行身份 + 列身份 + 新文本"**，不是行下标：
-     *   - 行 key（`keyOf()` 的返回值）⇒ 编辑期间排序/过滤换了行序也不会写错行；
-     *   - 列 key ⇒ 插列/换序之后仍落在原来那一列上。
-     * ★ 值是**字符串**：表格不知道列的数据类型（int / float / 日期 / 枚举），
-     *   类型转换与校验是应用侧知识。这与"控件不排序"同源：数据所有权不分裂。
-     * ★ 只在**值真的变了**时回调（同 G2：宁可少报，不可错报）。`Esc` 取消不回调。
-     * ★ 任一列声明了 `editable()` 却没接它 ⇒ 挂载期响亮失败（同 `sortable()`）。
-     *
-     * ```php
-     * ->onCellEdit(function (int $id, string $col, string $value) use ($store): void {
-     *     $store->rename($id, $col, $value);   // 写库由应用决定
-     * })
-     * ```
+     * 提交的是"行身份 + 列身份 + 新文本"而非下标：排序/过滤换序后也不会写错行。
+     * 值是字符串（类型转换归应用）；只在值真变了时回调；声明 `editable()` 却没接 ⇒ 挂载期失败。
      */
     public function onCellEdit(callable $handler): static
     {

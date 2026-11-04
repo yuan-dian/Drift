@@ -8,41 +8,12 @@ use Drift\Platform\Platform;
 
 /**
  * **组合根的窗口表**：建窗 → 还原几何 → 定表面 → `attach` → 登记，最后交给 `EventLoop`。
- *
- * ## 为什么有它（不是"把 30 行搬进一个类"）
- *
- * 四个组合根里的那段代码是**逐行相同**的（`tutorial` 的注释甚至写着"抄的时候整段抄"）。
- * 而它里面有三条"漏掉即静默"的契约：
- *
- * | 契约 | 漏掉的后果（都不报错） |
- * |---|---|
- * | 还原几何必须在 `surface->resize()` **之前** | 先看到一帧默认尺寸再被拽过去 |
- * | `resize()` 必须用**读回的**客户区，不能用常量 | 还原了窗口、画面仍按旧尺寸排 ⇒ 四周拉伸/裁切 |
- * | `attach()` 之前表面尺寸必须非 0 | 首帧被丢弃 —— 画面到第二次 resize 才出现 |
- *
- * 再加一条**致命的**：`ResizeHookState::$pump` 与 `Errors::installFatalBox()` 是
- * 两个静态钩子，捕获的闭包持有整条应用对象图。**不卸 = 对象活到 PHP shutdown
- * = AOT 解引用已销毁的类元数据 = 关窗必崩**（实测 8/8）。这条纪律写在四个文件里
- * 各一遍，漏一处就复发 —— 所以它进 `run()` 的 `finally`（见 `$release`）。
- *
- * ## 次序不可换
- *
- * ```text
- * ① createWindow + show
- * ② makeApp + $beforeRestore      ← frameless 会改客户区，必须在还原之前
- * ③ 状态还原 restore
- * ④ surface + screen
- * ⑤ $beforeAttach                 ← 材质 / 底色要在首帧之前
- * ⑥ resize(实际客户区)
- * ⑦ attach                        ← 内含首帧
- * ```
- *
- * ## 这一阶**只做启动期登记**
- *
- * 运行中开窗（点按钮弹出新窗口）需要"在帧边界执行"，否则 `attach()` 会在
- * 某条事件回调的中间跑一整帧（重入）。那归 `Inbox`（事件循环册 N4），
- * 本类不预先发明 —— 未消费的分支 = 未实现。
- *
+ * 三条"漏掉即静默"的契约：还原几何必须在 `resize()` 之前；`resize()` 用读回的客户区
+ * 而非常量；`attach()` 前表面尺寸必须非 0（否则首帧被丢弃）。
+ * `ResizeHookState::$pump` 与 `Errors::installFatalBox()` 是进程级静态钩子，捕获的闭包
+ * 持有整条应用图，**不卸 = 关窗必崩**，故卸载进 `run()` 的 `finally`。
+ * 次序固定：createWindow+show → makeApp+beforeRestore → restore → surface →
+ * beforeAttach → resize(实际客户区) → attach(内含首帧)。
  * @api 组合根一行：`(new WindowSet($platform, 'app.window'))->open(...)->run()`
  */
 final class WindowSet
@@ -52,13 +23,9 @@ final class WindowSet
 
     /**
      * @param Platform $platform 任意平台实现（本类不认识 Win32）
-     * @param string $statePath 窗口状态文件的**完整路径**（`Paths::userConfig()` 的结果）；
-     *   `''` = 不持久化。为什么不收文件名：路径由平台给，而本类不做平台查询 ——
-     *   "文件放哪"是组合根的决定，且收完整路径让测试能指向临时目录。
-     * @param null|\Closure():void $release 循环与持久化之后调一次：**卸载组合根装过的
-     *   进程级静态钩子**。为什么不放进 `open()`：装可以分散（要尽早），卸必须集中在
-     *   最末尾，且只有一处 —— 忘一处就是 AOT 关窗必崩。放构造参数而不是让组合根
-     *   在 `run()` 之后自己写，是为了让它**不可能**被异常路径跳过（`finally`）。
+     * @param string $statePath 窗口状态文件的**完整路径**（`Paths::userConfig()` 的结果）；`''` = 不持久化
+     * @param null|\Closure():void $release 循环与持久化之后调一次：**卸载组合根装过的进程级静态钩子**。
+     *   放构造参数而非让组合根在 `run()` 后自写，是为了让它**不可能**被异常路径跳过（`finally`）。
      */
     public function __construct(
         private readonly Platform $platform,
@@ -69,28 +36,13 @@ final class WindowSet
 
     /**
      * 建一个窗口、还原它的几何、装一个应用，登记进表。
-     *
-     * @param string $slot 窗口槽位名 —— **跨运行稳定**（写进状态文件），与句柄无关。
-     *   两个窗口用同一个槽位 ⇒ 后写的覆盖先写的（下次启动只有一个还原，**不报错**）。
-     * @param null|string $title 窗口标题；**`null` / 空串 ⇒ 用 `$app->title()`**。
-     *   ★★ 2026-10-30 裁决：标题的**唯一来源**是 `Application::title()`，这里的实参
-     *   只是**窗口级覆盖**。理由有两条，缺一条都不足以定这个形：
-     *   ① 改动之前 4 个组合根各自手写一个与 `title()` **逐字相同**的字面量
-     *      （`'Hello Drift'` / `'Drift 示例台'` …）⇒ 同一个事实存在两处，改一处
-     *      另一处静默过期，而 `Application::title()` 成了**没有任何运行期消费者**
-     *      的分支（"未被消费的分支 = 未实现"）。真机探针当时还得靠一张**标题表**
-     *      去 `FindWindowW`，注释里写着"标题不是 `Application::title()`"。
-     *   ② 但**不能**干脆删掉这个参数：同一个应用类开两个窗口时要不同标题
-     *      （`hello` 的第二窗是 `'Hello Drift · 第二窗'`），而 `title()` 是类级的、
-     *      分不出窗口 ⇒ 覆盖必须留在**窗口**这一层。
-     *   ⇒ 默认值来自应用、覆盖权在窗口。这与成熟 GUI 同形（Flutter `MaterialApp.title`
-     *   作默认、路由可覆盖；WPF `Window.Title` 覆盖类型的默认名）。
-     * @param \Closure(): Application $makeApp 造这个窗口的应用。**不传句柄**：
-     *   `Application` 构造不该知道窗口（它拿不到，也不需要）。
-     * @param null|\Closure(Window):void $beforeRestore 建窗之后、还原几何之前
-     *   （无边框会改变客户区，必须在还原之前；此时 `surface()` 还是 null）
-     * @param null|\Closure(Window):void $beforeAttach 表面就绪之后、首帧之前
-     *   （材质 / 底色 —— 否则先闪一下默认外观）
+     * @param string $slot 窗口槽位名 —— **跨运行稳定**（写进状态文件），与句柄无关；
+     *   两个窗口用同一槽位 ⇒ 后写覆盖先写（下次启动只有一个还原，**不报错**）。
+     * @param null|string $title 窗口标题；**`null` / 空串 ⇒ 用 `$app->title()`**，
+     *   这里的实参只是窗口级覆盖（同应用开两窗要不同标题时才有用）。
+     * @param \Closure(): Application $makeApp 造这个窗口的应用。**不传句柄**：`Application` 构造不该知道窗口。
+     * @param null|\Closure(Window):void $beforeRestore 建窗之后、还原几何之前（无边框改客户区，须在还原前；此时 `surface()` 为 null）
+     * @param null|\Closure(Window):void $beforeAttach 表面就绪之后、首帧之前（材质/底色 —— 否则先闪默认外观）
      */
     public function open(
         string $slot,
@@ -103,20 +55,15 @@ final class WindowSet
     ): Window {
         $host = $this->platform->window();
 
-        // ★★ 先造应用、再建窗（2026-10-30）：标题要在 `createWindow()` 那一刻就
-        //   定下来 —— 建完再 `setTitle()` 会让窗口先闪一下默认标题。而应用**不依赖
-        //   句柄**（见上面 `$makeApp` 的注释）⇒ 提前造没有副作用。
-        //   ★ 顺带修掉一处"崩在更晚的地方"：`makeApp` 返回错类型时，现在是
-        //     **还没有窗口**就报 Fatal（原先窗口已经建出来、还 show 了）。
+        // 先造应用、再建窗：标题要在 createWindow() 那一刻定下，建完再 setTitle() 会先闪默认标题；
+        // 应用不依赖句柄，提前造无副作用。
         $app = $makeApp();
         if (!$app instanceof Application) {
-            // 闭包返回错类型 ⇒ 后面每一次 `attach()` 都是"读未初始化字段"式的
-            // 半崩溃。当场报 Fatal 比让它晚 300 行崩在别处划算。
+            // 闭包返回错类型时，现在还没建窗口就报 Fatal（原先窗口已建出、还 show 了）。
             Errors::report('WindowSet：makeApp 没有返回 Application 实例');
         }
 
-        // ★ 空串也当"没给"：组合根最容易误传 `''`（AOT 下字符串常量没问题，但
-        //   `title()` 忘记实现时默认返回 `'Drift'`，而 `''` 会让窗口没有标题栏文字）。
+        // 空串也当"没给"：组合根易误传 ''，而 title() 忘实现时默认返回 'Drift'，'' 会让窗口无标题栏文字。
         if ($title === null || $title === '') {
             $title = $app->title();
         }
@@ -148,8 +95,8 @@ final class WindowSet
             $beforeAttach($window);
         }
 
-        // ★ 读回的**实际**客户区，不是 `$width/$height` 常量：还原之后尺寸多半
-        //   已经变了。照常量排 ⇒ 还原了窗口、画面还按旧尺寸排（四周拉伸，不报错）。
+        // ★ 读回的**实际**客户区，不是 `$width/$height` 常量：还原之后尺寸多半已变。
+        //   照常量排 ⇒ 还原了窗口、画面还按旧尺寸排（四周拉伸，不报错）。
         $actual = $host->clientSize($handle);
         $dpr = $screen->scale();
         $surface->resize(
@@ -167,13 +114,9 @@ final class WindowSet
 
     /**
      * 跑主循环，然后**必然**做两件收尾：逐窗写回几何、卸静态钩子。
-     *
-     * ★ 用 `finally`：`EventLoop::run()` 抛异常时几何仍要写回（用户调过的窗口大小
-     *   不该因为一个崩溃就丢），钩子更必须卸 —— 否则崩溃变成"崩两次"。
-     *
-     * ★ persist 遍历 `$windows` 而不是循环里剩下的表：**已关的窗口也要存**
-     *   （`WindowHost::position()` 对死句柄回填"最后已知几何"）。用户点 X 关窗
-     *   是常态，不为它写就等于什么都不记。
+     * 用 `finally`：`EventLoop::run()` 抛异常时几何仍要写回，钩子更必须卸 —— 否则崩溃变"崩两次"。
+     * ★ persist 遍历 `$windows` 而非循环里剩下的表：**已关的窗口也要存**
+     *   （`WindowHost::position()` 对死句柄回填"最后已知几何"）；不为它写就等于什么都不记。
      */
     public function run(): void
     {
@@ -190,16 +133,8 @@ final class WindowSet
                 $window->state()?->persist($host, $handle);
             }
 
-            // ★★ **清表 + 回收环**（2026-10-30）：组合根的树不是引用计数的树 ——
-            //   它是**环**。`ShowcaseApplication` 把 `notify()` / `after()` / `showModal()`
-            //   三个闭包 `use ($this)` 递给根部件 ⇒ 应用 → 根 Element → Widget →
-            //   闭包 → 应用。环只能靠 GC，回收时机不确定。
-            //   AOT 产物在 PHP shutdown 段释放 Zend 堆时，若图还活着就会解引用
-            //   已销毁的类元数据 ⇒ `php8ts.dll+0x24b30` 访问冲突（窗口早关完、
-            //   状态也写完，最后一步崩）。
-            //   ⇒ 在这里主动放手：清表（去掉 `WindowSet` 这一条根）+ 强制回收。
-            //   单窗口也做 —— 它便宜（一次 GC），而"有时崩有时不崩"取决于 GC 阈值
-            //   恰好有没有到，那种复现条件不可接受。
+            // 清表 + 强制回收：组合根的树是环（应用→Element→Widget→闭包→应用），只能靠 GC；
+            // 不主动放手，AOT 在 PHP shutdown 解引用已销毁类元数据会崩。单窗口也做（一次 GC 便宜）。
             $this->windows = [];
             \gc_collect_cycles();
 
@@ -211,16 +146,12 @@ final class WindowSet
 
     /**
      * 拖动边缘时的轻量重绘（**按句柄分发**）—— 壳的 `drift_resize_hook_pump()` 入口。
-     *
      * ```php
      * ResizeHookState::$pump = static function (int $h) use ($set): void { $set->repaintForResize($h); };
-     * ```
-     *
-     * ★ 组合根必须自己接这一行（`ResizeHookState` 是 Win32 的静态槽，`src/App`
-     *   不许引用平台实现）。逻辑在这里，接线在组合根 —— 与本类不收 `Win32Platform`
-     *   是同一条边界。
-     * ★ 句柄不在表里 ⇒ 静默跳过：该窗口不是本组合根建的（或已销毁）。
-     *   ★ **不能**用"客户区 0×0"判活 —— 最小化也是 0×0，那是合法状态。
+     * 组合根必须自己接这一行（`ResizeHookState` 是 Win32 静态槽，`src/App` 不引用平台实现）；
+     * 逻辑在这里，接线在组合根 —— 与本类不收 `Win32Platform` 同一条边界。
+     * 句柄不在表里 ⇒ 静默跳过：该窗口不是本组合根建的（或已销毁）。
+     * ★ **不能**用"客户区 0×0"判活 —— 最小化也是 0×0，那是合法状态。
      */
     public function repaintForResize(int $windowHandle): void
     {

@@ -19,35 +19,15 @@ use Drift\Widget\Traits\WidgetModifiers;
 use Drift\Widget\Traits\WidgetSemantics;
 
 /**
- * 所有控件的根基类（§15.2）。
- *
- * fluent-first：唯一表面，全部 API 活在同一个类上 —— 不搞"构造器 vs 链式"
- * 双表面（那正是 GUI 仓"糖自造状态路径"的根源，A12）。
- *
- * 链式方法统一以 `mutate()` 开头、`return $this` 收尾；挂载时 Element 调
- * `seal()` 封存，封存后再写 ⇒ Fatal（A11 的守卫）。
- *
+ * 所有控件的根基类。
+ * fluent-first：全部 API 活在同一个类上，链式方法以 `mutate()` 开头、`return $this` 收尾。
+ * 挂载时 Element 调 `seal()` 封存，封存后再写 ⇒ Fatal。
  * @api
  */
 abstract class Widget
 {
-    // ── 四个能力面（2026-10-28，S2）────────────────────────────────────
-    //
-    // 本类曾经 1265 行 / 66 个 public 方法，其中 **58 个是样板**
-    // （实测：21 个写 `$mods`、15 个写字段、22 个纯 getter，真逻辑只有 10 个）。
-    // "身份 + 生命周期 + 修饰 + 焦点 + 交互槽 + 语义"六件事挤在一起 ⇒
-    // 加控件的人不知道哪些该覆写、哪些只是转发（`REVIEW-2026-10-28` §1.2 L1/L2）。
-    //
-    // ★★ **"唯一表面"没有被破坏**：那句说的是"调用方看到的 API 只有一个类"
-    //   （不搞"构造器 vs 链式"两套表面），不是"所有方法必须写在同一段文字里"。
-    //   trait 合入后这些方法仍是 `Widget` 的实例方法，`$w->paddingAll(8)` 一个字母都不变
-    //   —— 拆分前后用反射快照逐签名比对过。
-    // ★ 按**能力面**拆而不是按机制拆（"写 mods 的一堆 / 读字段的一堆"）：
-    //   后者会把 `semanticsName()` 与 `semantics()` 分到两个文件里，更难读。
-    // ★ tpc（AOT）约束：traits must be visible at compile time（官方
-    //   `CLASS_INHERITANCE.md`）。本仓是自建 PSR-4 装载器 ⇒ 落地时用
-    //   `tools/drift-build.php showcase` 实测过真机产物（trait + `static` 返回 +
-    //   私有成员访问三者一起过编译）。
+    // ── 四个能力面（修饰 / 焦点 / 交互 / 语义，由 trait 合入，仍是 `Widget` 的实例方法）──
+
     use WidgetModifiers;
 
     use WidgetFocus;
@@ -61,108 +41,84 @@ abstract class Widget
 
     /**
      * 修饰字段的集合（padding / 尺寸 / 背景 / 边框 / 圆角 / 阴影 / 合成 / 弹性意图）。
-     *
-     * ★ **永远非空**（构造器里 `new Modifier()`）：`Element::syncBox()` 无条件把
-     *   它递给盒，不要"有没有修饰"这条分支。代价是每个 Widget 多一次对象分配，
-     *   换来 `->padding(8)` 之类完全不必判空。
-     * ★ 修饰是**声明**，与 `cursor()` / `focusOrder()` 同一层；挂载后照样封存。
+     * **永远非空**（构造器里 `new Modifier()`）：`Element::syncBox()` 无条件把它递给盒，
+     *   调用方不必判空。修饰是**声明**，与 `cursor()` / `focusOrder()` 同一层。
      */
     private Modifier $mods;
 
-    /** @internal null = 无 Key ⇒ diff 身份由位置决定（§12.3） */
+    /** @internal null = 无 Key ⇒ diff 身份由位置决定 */
     private ?Key $key = null;
 
-    /** @internal null = 未声明焦点（不可聚焦 / 用文档序，§9.1） */
+    /** @internal null = 未声明焦点（不可聚焦 / 用文档序） */
     private ?FocusNode $focus = null;
 
-    /** @internal null = 未声明光标形状（继承命中链上更近的祖先，§9.1） */
+    /** @internal null = 未声明光标形状（继承命中链上更近的祖先） */
     private ?CursorShape $cursor = null;
 
-    /** @internal 本控件是否**天然可聚焦**（输入控件在构造器里声明，§9.1） */
+    /** @internal 本控件是否**天然可聚焦**（输入控件在构造器里声明） */
     private bool $focusable = false;
 
-    /** @internal null = 本控件不可拖动（§A.3.5） */
+    /** @internal null = 本控件不可拖动 */
     private ?Draggable $draggable = null;
 
-    /** @internal null = 本控件不接受放置（§A.3.5） */
+    /** @internal null = 本控件不接受放置 */
     private ?DragTarget $dragTarget = null;
 
-    /** @internal null = 本控件没有右键菜单（§A.3.1） */
+    /** @internal null = 本控件没有右键菜单 */
     private ?ContextMenu $contextMenu = null;
 
-    /** @internal null = 本控件不参与悬停派发（§9.1 语义 #5） */
+    /** @internal null = 本控件不参与悬停派发 */
     private ?\Closure $hoverHandler = null;
 
     /**
-     * @internal null = 本控件不接受**捕获期**的指针事件（`06` §5）
-     *
-     * ★ 与 `hoverHandler` 的分工：hover 是"指针路过我"（每帧谁在最上面就是谁），
-     *   捕获是"指针被钉在我身上"（按下后一直到抬起，**不再命中测试**）。
-     *   两者都是 `\Closure(PointerEvent): ?CursorShape`，但语义互不覆盖。
+     * @internal null = 本控件不接受**捕获期**的指针事件
+     * 与 `hoverHandler` 的分工：hover 是"指针路过我"（每帧谁最上面就是谁），
+     *   捕获是"指针被钉在我身上"（按下后到抬起不再命中测试），语义互不覆盖。
      */
     private ?\Closure $pointerHandler = null;
 
     /**
-     * @internal 按下是否**归本控件**（W8-2，Slider 立的口子）。
-     *
-     * `true` ⇒ 命中链上最近的 `pointer()` 声明者接管本次按下：框架捕获它、先把
-     * `down` 相位交过去，**跳过** `activateFocusedWidget()`。焦点仍然落上去
-     * （键盘可达），只是"激活"的含义由控件自己定义（Slider：按下的 x 换算成值）。
-     *
-     * ★ 为什么是开关而不是默认行为：`pointer()` 今天还有一个消费者
-     *   （`OverlayLab` 的锚点按钮）只想要"捕获期收事件"、按下仍该走命令派发
-     *   ⇒ 默认 `false` 保持逐字节不变，需要接管的控件显式声明。
+     * @internal 按下是否**归本控件**（Slider 立的口子）。
+     * `down` 相位交过去，**跳过** `activateFocusedWidget()`；焦点仍落上去
+     *   （键盘可达），只是"激活"的含义由控件自己定义（Slider：按下的 x 换算成值）。
+     * 默认 `false`；需要接管的控件显式声明。
      */
     private bool $pointerOwnsPress = false;
 
     /**
-     * @internal null = 本控件不声明"窗口拖动"（P1-Stage 1b 无边框窗）
-     *
+     * @internal null = 本控件不声明"窗口拖动"
      * `\Closure(): void` —— 按在本控件**自身**（不是它的子控件）上时调一次。
-     * ★ 为什么是闭包而不是让框架直接调 `WindowHost`：拖窗是**平台动作**，而
-     *   `Drift\App` 的输入路由不该认识 `WindowHost`（§5.1 纪律 1：句柄不跨层）。
-     *   组合根（持有 `WindowHost`）递一个闭包进来 —— 与 `semanticsSink` 同一条
-     *   "组合根接线"的路，框架核心零平台认知。
+     * 拖窗是平台动作：框架核心不认识 `WindowHost`，由组合根递闭包进来。
      */
     private ?\Closure $windowDragHandler = null;
 
     /**
-     * @internal null = 本控件不接收系统拖放进来的文件（A5-②，§27）
-     *
+     * @internal null = 本控件不接收系统拖放进来的文件
      * `\Closure(FilesDroppedEvent): void` —— 命中点沿父链冒泡找到本控件时调一次。
-     * ★ 与 `windowDragHandler` 同族：都是"控件自己处理某类输入"的声明，框架只做
-     *   路由；闭包由页面 State 在构建期递入（State 在 build 里捕获自己即可
-     *   `setState()`）。异常由路由层兜住、不吞消息泵。
+     * 与 `windowDragHandler` 同族：控件自己处理某类输入的声明，框架只做路由；
+     *   闭包由页面 State 在构建期递入，异常由路由层兜住。
      */
     private ?\Closure $filesDropHandler = null;
 
     /**
      * @internal null = 本控件不处理键盘（按键落给焦点链的默认路径）
-     *
      * `\Closure(KeyEvent): bool`，返回 `true` = 吃掉这个键。
-     * ★ 与 `pointer()` 同族：都是"控件自己处理某类输入"的声明，框架只做路由。
+     * 与 `pointer()` 同族：控件自己处理某类输入的声明，框架只做路由。
      */
     private ?\Closure $keyHandler = null;
 
     /**
-     * @internal 空串 = 本控件无悬停提示（W8-2 Tooltip）
-     *
-     * ★ 存**文本**不存 Widget：Tooltip 的形体归框架（`TooltipPanel` 工厂），
-     *   应用只声明"说什么"。要富内容提示时再开 `tooltipWidget()` 另一个声明。
-     * ★★ **用空串当哨兵，不用 `?string`**：可选标量在 AOT 侧退化 `php::Var`
-     *   （与 `?float` 用 `NAN` 是同一条纪律）。2026-10-23 真机就是这么坏的：
-     *   smoke（解释器）22 条全绿，`showcase.exe` 上提示**永远不出现** ——
-     *   悬停高亮正常（那条链只碰 `?Element`），唯独 `tooltipTextValue()` 恒 null。
+     * @internal 空串 = 本控件无悬停提示
+     * 存**文本**不存 Widget：Tooltip 形体归框架（`TooltipPanel` 工厂），应用只声明"说什么"。
+     * ★ **用空串当哨兵，不用 `?string`**：可选标量在 AOT 侧退化 `php::Var`
+     *   （与 `?float` 用 `NAN` 是同一条纪律）。
      */
     private string $tooltipText = '';
 
     /**
-     * @internal 激活时浮出的面板工厂（W8-2 Select）；`null` = 激活时不浮面板
-     *
-     * ★ 存**工厂**不存 Widget：面板里的"点了选项就收掉这层"要靠 `Application`
-     *   注入的 dismiss 闭包，而面板**必须在开的那一刻**才建得出来。
-     * ★ `?\Closure` 是本仓已跑通的形态（`hoverHandler` / `pointerHandler` /
-     *   `keyHandler` / `draggable` 都是），与 `?string` 退化 `php::Var` 那条不同。
+     * @internal 激活时浮出的面板工厂；`null` = 激活时不浮面板
+     * 存**工厂**不存 Widget：面板"点了选项就收掉这层"靠 `Application` 注入的
+     *   dismiss 闭包，而面板**必须在开的那一刻**才建得出来。
      */
     private ?\Closure $overlayPanelFactory = null;
 
@@ -171,15 +127,12 @@ abstract class Widget
 
     /**
      * 面板内容的**签名**（`\Closure(): string`；`null` = 不声明）。
-     *
-     * ★ 与 `overlayPanelFactory` 一样是"声明式字段、不是虚方法"（见 `semantics()`
-     *   那条 §9 P3 的说明）。
-     *
+     * 与 `overlayPanelFactory` 一样是"声明式字段、不是虚方法"。
      * @internal 只有 `Application` 读它（`overlaySignatureValue()`）
      */
     private ?\Closure $overlaySignature = null;
 
-    /** @internal null = 本控件不在语义树里（无角色 = 不建节点，§9 / M5 无障碍） */
+    /** @internal null = 本控件不在语义树里（无角色 = 不建节点） */
     private ?SemanticsRole $semRole = null;
 
     /** @internal 人读的名字（按钮 label / 对话框标题）；无角色时无意义 */
@@ -188,16 +141,13 @@ abstract class Widget
     /** @internal 扁平的取值 / 状态（如文本框当前文本）；无角色时无意义 */
     private string $semValue = '';
 
-    /** @internal 可用性声明（§9）；默认 true。只是**数据**，没有消费者时不起任何作用 */
+    /** @internal 可用性声明；默认 true。只是**数据**，没有消费者时不起任何作用 */
     private bool $semEnabled = true;
 
     /**
      * @internal 取值区间的下界/上界（只对 `range` 族角色有意义：`Slider` / `Progress`）。
-     *
-     * ★ 与 `semValue` **正交**：`semValue` 是"人读的当前值"，这里是"这个值能在哪个
-     *   区间里"。分成两个字段而不是塞进 `semantics()` 的签名，是因为只有少数控件
-     *   需要区间，且 `semantics()` 的 4 参签名已被多处调用（不膨胀它）。
-     * ★ `UIA IRangeValueProvider` 必须有 `Minimum`/`Maximum` ⇒ 没有这两个值，
+     * 与 `semValue` **正交**：前者是"这个值能在哪个区间里"，后者是"人读的当前值"。
+     * `UIA IRangeValueProvider` 必须有 `Minimum`/`Maximum` ⇒ 没有这两个值，
      *   滑块的 `RangeValuePattern` 给不出合法应答。
      */
     private float $semRangeMin = 0.0;
@@ -206,7 +156,6 @@ abstract class Widget
 
     /**
      * ★ 子类必须调 `parent::__construct()`。
-     *
      * @api
      */
     public function __construct()
@@ -216,19 +165,9 @@ abstract class Widget
 
     /**
      * ★ 克隆 = 复制一份**可再配置的描述** ⇒ 封存位必须归零。
-     *
-     * `$sealed` 是 `private int`，`clone` 会连它一起复制 ⇒ 克隆一个已挂载（已封存）
-     * 的 Widget，得到的也是封存的，紧接着 `->padding(...)` 里的 `mutate()` 直接 Fatal。
-     *
-     * 需要的场景：任何"**包一层**而不是给这个控件加样式"的包装器，都要
-     * `clone $kid` 再贴自己的东西 —— 否则会漏给另一处共享引用
-     * （`children([$a, $a])` 合法）。
-     *
-     * ★ **`Card` 已经不需要它了**（2026-10-31）：它不再克隆孩子、也不再往孩子身上
-     *   写样式，而是自己就是那一层盒（见 `Card` 类注释）。这条保留是因为它是
-     *   `clone` 的**语义修正**而不是某个类的补丁：不归零 ⇒ 克隆出来的描述一改就
-     *   Fatal，而"克隆一份描述"本身是合法的用法。
-     *
+     * `$sealed` 是 `private int`，`clone` 会连它一起复制 ⇒ 克隆已挂载（已封存）的
+     *   Widget，`->padding(...)` 里的 `mutate()` 会直接 Fatal。任何"**包一层**"的
+     *   包装器都要 `clone $kid` 再贴自己的东西，否则共享引用漏给另一处。
      * @internal
      */
     public function __clone()
@@ -237,11 +176,9 @@ abstract class Widget
     }
 
     /**
-     * 给本控件一个跨位置稳定的身份（§12.3）。
-     *
+     * 给本控件一个跨位置稳定的身份。
      * 不给 ⇒ 身份由在 `children([...])` 里的位置决定；给了 ⇒ 重排也能保住 `State`。
-     * `ForEach` 的 key 是**必填**的（§16.6.1 R4），因为列表重排最需要它。
-     *
+     * `ForEach` 的 key 是**必填**的，因为列表重排最需要它。
      * @api
      */
     public function key(string|int $value): static
@@ -253,13 +190,9 @@ abstract class Widget
     }
 
     /**
-     * 子层拿到的渲染环境（§2446：主题 scope 链的扩展点）。
-     *
-     * 默认原样递下去。**只有"面覆盖"型节点才覆写**（目前 `Drift\Theme\ThemeScope`
-     * 换主题；将来方向 / 本地化同形）。返回类型是 `BuildContext` 而不是更具体的
-     * 类型 —— 所以 `Drift\Widget` 不需要认识 `Drift\Theme`（§4.3 的协议例外
-     * 仍然只有 `BuildContext.php` 一个文件）。
-     *
+     * 子层拿到的渲染环境。
+     * 默认原样递下去。**只有"面覆盖"型节点才覆写**（如 `Drift\Theme\ThemeScope` 换主题）。
+     * 返回 `BuildContext` 而非更具体的类型，所以 `Drift\Widget` 不需要认识 `Drift\Theme`。
      * @internal Element 挂载 / 更新时调它，用户不需要。
      */
     public function childContext(BuildContext $context): BuildContext
@@ -268,12 +201,9 @@ abstract class Widget
     }
 
     /**
-     * 造 Element —— **唯一入口**（W1 同源：单一造盒路径）。
-     *
-     * ★ 收口成一处 `instanceof`，而不是让每个控件子类各写一遍 `return new
-     *   XxxElement($this)`：45 个控件抄同一句话，漏抄的不会报错，只会静默走错
-     *   元素类型。要特殊元素的（容器）可以覆写本方法。
-     *
+     * 造 Element —— **唯一入口**。
+     * 收口成一处 `instanceof`，而不是让每个控件子类各写一遍 `return new
+     *   XxxElement($this)`（漏抄不会报错，只会静默走错元素类型）。要特殊元素的（容器）可覆写。
      * @internal 用户不该自己 new Element。
      */
     public function createElement(): Element
@@ -284,8 +214,7 @@ abstract class Widget
     }
 
     /**
-     * diff 用的身份（§12.3）：`null` = 由位置决定。
-     *
+     * diff 用的身份：`null` = 由位置决定。
      * @internal Element 调和时读它，用户不需要（给了 Key 就已经生效）。
      */
     public function identity(): ?Key
@@ -295,12 +224,9 @@ abstract class Widget
 
     /**
      * 挂载时由 Element 调用：把描述封存为不可变。
-     *
-     * 幂等 —— 同一实例被复用到多处是**合法**的（Widget 是纯描述，各处各有
-     * 自己的 Element），所以这里不做任何 owner 校验。`Column::make()->children([$t, $t])`
-     * 常见且合法，做 owner 校验是误杀。
-     *
-     * @internal 不进公共面：用户不需要它，"挂载时自动封存"已覆盖全部合法场景（§15.6.1）。
+     * 幂等 —— 同一实例复用到多处是**合法**的（Widget 是纯描述，各处各有自己的
+     *   Element），所以这里不做 owner 校验。`Column::make()->children([$t, $t])` 合法。
+     * @internal 不进公共面：用户不需要它，"挂载时自动封存"已覆盖全部合法场景。
      */
     final public function seal(): void
     {
@@ -315,16 +241,8 @@ abstract class Widget
 
     /**
      * 链式修饰的统一入口 —— 一个口径一个落点，不是每方法各写一遍守卫。
-     *
-     * 封存后写入 ⇒ 响亮失败（Fatal 级，release 也中止，§1.2）。
-     *
-     * ★ **`@api` 而不是 `@internal`**（2026-10-22，W7 第 40 步）：它是 `final
-     *   protected` 的**封存守卫**，应用自定义 Widget 写自己的链式方法时**必须**
-     *   调它 —— 否则那些方法能绕过封存、在挂载后改字段（`§10.1` 的不可变纪律
-     *   从这一处漏光）。原来的 `@internal` 把"唯一的正确做法"标成了内部面，
-     *   于是 `apps/users` 3 处正确用法被方法级 `internal-leak` 报成泄漏。
-     *   这正是 `07` §2.2 说的"标记与用法打架"：改标记，不改用法。
-     *
+     * 封存后写入 ⇒ 响亮失败（Fatal 级，release 也中止）。
+     * 应用自定义 Widget 写自己的链式方法时**必须**调它，否则能绕过封存、在挂载后改字段。
      * @api
      */
     final protected function mutate(): void
@@ -334,42 +252,20 @@ abstract class Widget
         }
     }
 
-    // ── 焦点声明（§9.1 / §A.3.4）──────────────────────────────────────
-    // ★ 这三个是**声明**，不是状态："现在谁聚焦"住在 Drift\App\FocusManager。
-    //   Widget 挂载后不可变（§10.1 seal），把可变焦点塞进来会立刻撞纪律。
+    // ── 焦点声明 ──────────────────────────────────────────────────────
+    // 这三个是**声明**，不是状态："现在谁聚焦"住在 Drift\App\FocusManager。
+    //   Widget 挂载后不可变，把可变焦点塞进来会撞纪律。
 
 
 
 
-
-
-
-    // ── 修饰：字段，不是节点（arch-v2 `02` §11）────────────────────────
-    //
-    // ★ 全部走同一个 `$this->mods`（值对象，**换新不就地改**）⇒ `Element::syncBox()`
-    //   只需把**一个**引用递给盒，不必为每个修饰加一条传递路径 —— 十二处抄同一句、
-    //   漏抄不报错，那是 `syncBox()` 注释里已经写明的问题。
-    //
-    // ★ 名字上有**三处刻意避让**（实测撞名，撞了是类声明期 Fatal，不是运行时）：
-    //   · `size()` 被 `Text::size(float $pt)`（字号）与 `SizedBox::size(w,h)` 占了
-    //     ⇒ 尺寸修饰叫 `boxSize()`；
-    //   · `center()` 被 `Dock::center(Widget $kid)`（五区槽位）占了
-    //     ⇒ 居中修饰叫 `centerContent()`。
-    //
-    // ★ 视觉四维（`background` / `gradient` / `border` / `radius` / `shadow`）现在
-    //   **没有任何控件覆写**：一律走这一份 `$mods`，由 `RenderBox::paint()` 的 ① 画
-    //   （S1，2026-10-28/31）。自绘 chrome 的控件（`Button` / `AppBar` / `PopupPanel`）
-    //   只是从 `$mods->boxStyle()` **取**用户样式再合并主题默认，取完由
-    //   `Element::syncBox()` 剥掉，不会画两遍。想给控件一套主题默认样式、又不自绘的
-    //   （`Card`），覆写 `RenderBoxWidget::defaultBoxStyle()`。
-    //
-    // ★ 仍**必须**覆写的只有两类，各有硬理由：
-    //   · `padding` —— 容器要拿它**参与排布数学**（`RenderFlex` 用 `padding->left`
-    //     算 pen）。塞回 `$mods` 会让 `RenderBox::layout()` ②⑤ 再做一次 ⇒ 双份内距。
-    //     名单：`Flex` / `LazyList` / `LazyGrid` / `PopupPanel`。
-    //   · `width` / `height` —— 控件自己的尺寸**就是它的语义**（`Divider` 的粗细、
-    //     `Progress` 的条高、`Image` 的自然尺寸），不是"给控件贴一层"。
-    //     名单：`Divider` / `Progress` / `Image` / `Slider` / `DatePicker` / `DateTimePicker`。
+    // ── 修饰：字段，不是节点 ──────────────────────────────────────────
+    // 全部走同一个 `$this->mods`（值对象，**换新不就地改**）⇒ `Element::syncBox()`
+    //   只递一个引用给盒，不必为每个修饰加一条传递路径。
+    // 命名上两处刻意避让（撞名是类声明期 Fatal）：`size()` 被字号/尺寸占用 ⇒ 尺寸修饰
+    //   叫 `boxSize()`；`center()` 被 `Dock` 槽位占用 ⇒ 居中修饰叫 `centerContent()`。
+    // 仍必须覆写的只有两类：`padding`（容器要拿它参与排布数学，塞回 `$mods` 会双份内距）、
+    //   `width`/`height`（控件尺寸就是它的语义，如 `Divider` 粗细、`Image` 自然尺寸）。
 
     /** @internal `Element::syncBox()` 递它；永远非空 */
     public function mods(): Modifier
@@ -379,12 +275,8 @@ abstract class Widget
 
     /**
      * 本控件展开出的子控件（`ProxyElement` 的唯一输入）。
-     *
-     * ★ 从 `ProxyElement::expand()` 的 7 个 `instanceof` 分支搬过来：那种写法要求
-     *   **每新增一个单子控件都回来改 `ProxyElement`**（漏了就是"子不挂载、静默空白"，
-     *   §24.2 #25）。搬到 `Widget` 上之后是开放-封闭：新控件覆写自己的方法即可。
-     * ★ 默认 `[]`：容器控件（`Column` / `Row` / `Dock`）走各自的 Element，不经过这里。
-     *
+     * 新控件覆写自己的方法即可（不必回头改 `ProxyElement`）。
+     * 默认 `[]`：容器控件（`Column` / `Row` / `Dock`）走各自的 Element，不经过这里。
      * @internal `ProxyElement` 调；应用侧不该用
      * @return list<Widget>
      */

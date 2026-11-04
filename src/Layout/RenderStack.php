@@ -9,47 +9,11 @@ use Drift\Geometry\Size;
 use Drift\Rendering\Canvas;
 
 /**
- * 层叠盒（arch-v2 `04` §4，W6 L4-4）。
+ * 层叠盒：子按 `Alignment`（非定位）或 `inset`（定位）摆放，非定位子撑出本盒尺寸。
  *
- * ```php
- * Stack::make()
- *     ->alignment(Alignment::topRight())
- *     ->fit(StackFit::Loose)
- *     ->children([$background, $badge->positioned(right: 8.0, top: 8.0)]);
- * ```
- *
- * ## 五件事
- *
- * | # | 做什么 | 口径 |
- * |---|---|---|
- * | ① | 给子约束 | 按 `StackFit`（见 `StackFit` 的注释） |
- * | ② | 量每个子 | **每个子只 layout 一次**（没有第二遍） |
- * | ③ | 本盒尺寸 | `Loose`/`PassThrough` = `constrain(max(非定位子))`；`Expand` 的有界轴 = 父给的 `max` |
- * | ④ | 定位 | 非定位子按 `Alignment`；**定位子按 `inset`**（`layoutPositioned()`） |
- * | ⑤ | 定位子的约束 | 声明两条对边 ⇒ 那一轴**紧**（拉伸）；单边 ⇒ 只收上限 |
- *
- * ★ **`Stack` 不是两遍布局**：量完非定位子 → 求 max → 排定位子，是**同一遍里的
- *   三个阶段**。上一版方案册写"`Expand` 才需要第二遍 layout"，那是在给循环依赖打补丁
- *   （本盒尺寸来自子、子尺寸又来自本盒）—— 已改为"`Expand` 取父给的尺寸"。
- *
- * ★★ **定位子不撑大本盒**（`layoutPositioned()` 的注）：这是"套尺寸"与"按 inset
- *   摆位置"互为前提时的唯一解，也是本盒能单遍跑完的前提。代价是**只有定位子的
- *   `Stack` 尺寸是 0** ⇒ 那种写法要自己套 `SizedBox`。
- *
- * ★ **命中测试不在这里写**：`RenderBox::hitTest()` 已经是 `array_reverse($children)`
- *   ⇒ 最后画的先命中，所有容器都这样。`Stack` 什么都不用做（方案册上一版把这条
- *   当成 `Stack` 的特权，是错的）。
- *
- * ★ **不做 `Overflow` 参数**（`04` §4.2 的裁决）：本盒的 `mainSize = max(子)` ⇒
- *   子永远不会越过盒边界 ⇒ `Report` 永不触发、`Clip` 也无事可裁。加一个必填参数
- *   会得到"两个值都不生效"的假保障。
- *   ★ 2026-10-23 修正理由（结论不变）：`Modifier::clip` 现在已经**真的会裁**
- *   （`02` §11.11），所以"没有裁剪 API"不再是理由；真正的理由只剩上面那条几何
- *   事实。要给 `Stack` 的内容加裁剪，用 `Stack::make()->clip()`。
- *
- * ★ **子盒 offset 住内容盒坐标**（`02` §4.1.1）：本盒的 `performLayout()` 拿到的是
- *   内容盒约束，偏移从 `(0,0)` 起算；`(padLeft, padTop)` 由 `paint()` 的 `translate()`
- *   与 `contentOriginX/Y()` 各补一次 —— 这里**不许**自己加 padding。
+ * 单遍布局：先量非定位子求 max，再排定位子，不是两遍。
+ * ★ **定位子不撑大本盒**：只有定位子的 `Stack` 尺寸是 0，那种写法要自己套 `SizedBox`。
+ * ★ **子盒 offset 用内容盒坐标**：从 (0,0) 起算，padding 由 `paint()` 的 `translate()` 补，这里不许自己加 padding。
  *
  * @api
  */
@@ -64,11 +28,8 @@ final class RenderStack extends RenderBox implements ChildContainer
         ?Alignment $align = null,
         private readonly StackFit $fit = StackFit::Loose,
     ) {
-        // ★ 默认 **TopLeft**（保持 2026-10-26 起的既有行为）。注意这与 `Align` 的默认
-        //   `center` **刻意不同**：`Stack` 的语义是"叠上去、默认贴左上"，改成 center
-        //   会让所有既有 `Stack` 的静态内容整体偏移（golden 会集体漂移）。
-        //   参数写成 `?Alignment = null` 而不是方法调用作默认值：默认参数里不能调用
-        //   静态方法（PHP 层就不允许，与 AOT 无关）。
+        // 默认 TopLeft：Stack 语义是"叠上去、默认贴左上"（与 `Align` 的 center 不同）。
+        // 参数写成 `?Alignment = null` 而非方法调用作默认值：默认参数里不能调用静态方法（PHP 限制）。
         $this->align = $align ?? Alignment::topLeft();
     }
 
@@ -107,10 +68,7 @@ final class RenderStack extends RenderBox implements ChildContainer
         // ① 子约束（同一条约束给所有子 —— `Stack` 不区分"主内容/角标"）
         $kidBox = $this->childConstraints($constraints, $tightW, $tightH);
 
-        // ② 量 + ③ 求 max。`Expand` 的有界轴直接取父给的尺寸（**不来自子**）
-        // ★★ **定位子（有 `inset`）不参与本盒尺寸** —— 见 `layoutPositioned()` 的注。
-        //   这是"套尺寸"与"按 inset 摆位置"之间循环依赖的唯一解：本盒尺寸先由
-        //   非定位子定下来，定位子才拿得到"距右 8"里的"右"是谁。
+        // ② 量 + ③ 求 max。`Expand` 的有界轴直接取父给的尺寸（不来自子）。
         $maxW = $constraints->maxWidth;
         $maxH = $constraints->maxHeight;
         $w = $tightW ? $maxW : 0.0;
@@ -135,11 +93,10 @@ final class RenderStack extends RenderBox implements ChildContainer
 
         $own = $constraints->constrain(new Size($w, $h));
 
-        // ④ 只定位、不重排。偏移相对**本盒尺寸**（不是约束上限）—— 与
-        //   `RenderFlex` 的交叉轴居中同一条纪律：拿上限算会在松约束下把子推出盒外。
+        // ④ 只定位、不重排。偏移相对**本盒尺寸**（不是约束上限），否则松约束下子被推出盒外。
         foreach ($this->kids as $kid) {
             if ($kid->hasInset()) {
-                // ★ 定位子在**本盒尺寸已知之后**才第一次（也是唯一一次）layout
+                // 定位子在本盒尺寸已知后才 layout（每个子只 layout 一次）。
                 $this->layoutPositioned($kid, $own);
 
                 continue;
@@ -190,9 +147,7 @@ final class RenderStack extends RenderBox implements ChildContainer
     /**
      * 三个 `StackFit` 给子的约束。
      *
-     * ★ **属性先落局部标量**：AOT 下在分支里直接读 `$c->maxWidth` 会被推成
-     *   `php::Variant`，而 `BoxConstraints` 的形参是 `float` ⇒ `C2440`
-     *   （`RenderFlex::tightMain` 同型坑，2026-10-16 真机暴露过）。
+     * 属性先落局部标量：AOT 下直接读 `$c->maxWidth` 会被推成 `php::Variant`，与 `BoxConstraints` 的 `float` 形参不匹配 ⇒ `C2440`（编译期报错）。
      */
     private function childConstraints(BoxConstraints $c, bool $tightW, bool $tightH): BoxConstraints
     {
@@ -227,35 +182,7 @@ final class RenderStack extends RenderBox implements ChildContainer
 
     /**
      * 排一个**定位子**（`inset` 声明了至少一条边）：约束按边收紧，偏移按边算。
-     *
-     * ## 为什么定位子不参与本盒尺寸
-     *
-     * "定位子有多大"取决于"距左 / 距右各多少"，而这两个数要减的是**本盒宽度**；
-     * 本盒宽度又来自 `max(子)`。两边互为前提 ⇒ 要么两遍 layout（本盒明令不是，
-     * `StackTest::testEachChildLaidOutOnce` 盯着），要么**断开这条依赖**。
-     *
-     * 断法与上游一致：**定位子不撑大 `Stack`**。于是顺序是
-     * `量非定位子 → 定本盒尺寸 → 排定位子`，依赖消失，且每个子仍只 layout 一次
-     * （定位子只是在**稍后**那一趟里被量，不是被量两次）。
-     *
-     * ★ 这条的代价要写清楚：**只有定位子的 `Stack` 尺寸是 0**（没有非定位子撑它，
-     *   而松约束下 `constrain(0,0)` 就是 0）⇒ 那种写法必须自己套 `SizedBox`。
-     *   这是上游的同款行为，不是本仓的缺陷 —— 但它是"写了没反应"的一类，
-     *   所以钉在 `StackPositionedTest` 里当**契约**（不是缺陷）。
-     *
-     * ## 每条边的三种形态
-     *
-     * | 声明 | 那一轴的约束 | 偏移 |
-     * |---|---|---|
-     * | 两边都给 | **紧** `盒宽 − 左 − 右`（拉伸，CSS 的 `left:0;right:0`） | 左 |
-     * | 只给一边 | 上限收掉那一边的距离 | 给了的那边 |
-     * | 两边都不给 | 上限 = 盒宽 | 退回 `Alignment` |
-     *
-     * ★ **两边都给时子被拉伸**是这三条里唯一"用户没写尺寸却得到尺寸"的形态，
-     *   也是 `Positioned` 相对"只能贴九个方位"多出来的真正价值。
-     *
-     * ★ `Modifier::tighten()` 在 `layout()` 的 ① 步还会再夹一次 ⇒ 用户显式
-     *   `->width()` 时**显式尺寸赢**（与 `basis` 优先于自然尺寸同口径）。
+     * 声明两条对边 ⇒ 那一轴紧（拉伸）；只给一边 ⇒ 只收上限；都不给 ⇒ 退回 `Alignment`。
      */
     private function layoutPositioned(RenderBox $kid, Size $own): void
     {
@@ -269,9 +196,7 @@ final class RenderStack extends RenderBox implements ChildContainer
         $hasT = !\is_nan($t);
         $hasB = !\is_nan($b);
 
-        // ★ 全部先落**局部标量**：AOT 下在分支里直接读属性会被推成 `php::Variant`，
-        //   与 `BoxConstraints` 的 `float` 形参不匹配 ⇒ `C2440`（`RenderFlex::tightMain`
-        //   与 `RenderStack::childConstraints` 同型坑）。
+        // 属性先落局部标量：避免 AOT 下被推成 `php::Variant` 与 `float` 形参冲突。
         $ownW = $own->width;
         $ownH = $own->height;
 
@@ -322,8 +247,7 @@ final class RenderStack extends RenderBox implements ChildContainer
         if ($hasL) {
             $x = $l;
         } elseif ($hasR) {
-            // ★ 夹到 0：与 `alignX()` 同口径（本仓不产生负偏移）。子比可用宽还大时
-            //   贴左边，代价是右边那条距离被牺牲 —— 那是"放不下"，不是"算错"。
+            // 夹到 0：本仓不产生负偏移；子比可用宽还大时贴左边（放不下，非算错）。
             $rest = $ownW - $r - $kidSize->width;
             $x = $rest < 0.0 ? 0.0 : $rest;
         }
@@ -341,11 +265,6 @@ final class RenderStack extends RenderBox implements ChildContainer
 
     /**
      * 非定位子的水平落点。
-     *
-     * ★ 2026-10-29 由"两个 `match` 枚举九宫格"塌成一次乘法：`Alignment` 的
-     *   `x ∈ -1..1` 直接就是"自由空间的哪一段"（`-1 ⇒ 0`、`0 ⇒ 半`、`+1 ⇒ 全`），
-     *   枚举的 9 个分支原本只是这 3 个系数的查表。**顺带能表达中间值**
-     *   （`Alignment(0.5, 0)` = 起点与中心之间），枚举做不到。
      */
     private function alignX(RenderBox $kid, Size $own): float
     {

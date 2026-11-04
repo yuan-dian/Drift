@@ -13,20 +13,16 @@ use Drift\Layout\RenderTextArea;
 use Drift\Text\Paragraph;
 
 /**
- * `TextArea` 的纯 UI 态。
- *
- * ★ 「焦点 / 通知 / 重画 / 编辑键」全在 `EditableTextState`（与 `TextFieldState`
- *   共用一份）；本类只加**多行特有**的四件事，它们各自都有"单行不存在"的理由：
- *   ① `Enter` 换行、`Ctrl+Enter` 提交（单行里 `Enter` 没有本职）；
- *   ② 上下移行**按目标列**（单行只有一行，没有"列"这回事）；
- *   ③ `Home` / `End` = 行首行尾（单行里就是文本首尾）；
- *   ④ 垂直滚动 + 插入符跟随（单行的高度恒等于一行，没有滚动）。
- *
- * ★ **目标列（goal column）**：连续上下移动时列要**保持**，不是"从当前行尾重新
- *   出发"。没有它的现象：光标在长行右端按 ↓ 落到短行行尾，再按 ↓ 就停在短行
- *   那个短列上 —— 用户的感受是"光标斜着往左跑"。Win32 `EDIT`、Qt、浏览器都记
- *   这个列；任何其他编辑动作都把它清掉。
- *
+ * `TextArea` 的纯 UI 态（多行特有）。
+ * 「焦点 / 通知 / 重画 / 编辑键」在 `EditableTextState`（与 `TextFieldState` 共用），
+ * 本类只加**多行特有**的四件事：
+ * ① `Enter` 换行、`Ctrl+Enter` 提交（单行里 `Enter` 无本职）；
+ * ② 上下移行**按目标列**（单行只有一行，无"列"）；
+ * ③ `Home` / `End` = 行首行尾（单行里即文本首尾）；
+ * ④ 垂直滚动 + 插入符跟随（单行高度恒为一行，无滚动）。
+ * ★ **目标列（goal column）**：连续上下移动时列要**保持**，不是从当前行尾重新出发。
+ *   没有它：光标在长行右端按 ↓ 落短行行尾，再按 ↓ 停短列上，用户感觉"光标斜着跑"。
+ *   任何其他编辑动作都把它清掉。
  * @api
  */
 final class TextAreaState extends EditableTextState implements Scrollable
@@ -38,9 +34,8 @@ final class TextAreaState extends EditableTextState implements Scrollable
 
     /**
      * 上次对准过的**编辑位置**指纹：`[插入符, 选区起, 选区终]`。
-     *
-     * ★ `null` = 还没有对准过（首帧 / 刚退出编辑）。用它做 `caretRevealOffset()` 的门控，
-     *   理由见那个方法 —— 这是"用户滚动"与"插入符跟随"能共存的那个开关。
+     * ★ `null` = 还没对准过（首帧 / 刚退出编辑）。它是 `caretRevealOffset()` 的门控，
+     *   也是"用户滚动"与"插入符跟随"能共存的开关。
      */
     private ?array $revealedAt = null;
 
@@ -84,8 +79,8 @@ final class TextAreaState extends EditableTextState implements Scrollable
 
         if ($chord->key === 'Enter') {
             // ★ `Ctrl+Enter` = 提交，其余（含 `Shift+Enter`）= 换行。
-            //   没有接 `onSubmitted()` ⇒ **不吞** `Ctrl+Enter`（交给加速键），
-            //   否则应用绑的"提交"命令会被一个没有消费者的控件挡掉。
+            //   没接 `onSubmitted()` ⇒ **不吞** `Ctrl+Enter`（交给加速键），
+            //   否则应用绑的"提交"命令会被没有消费者的控件挡掉。
             if ($chord->ctrl) {
                 $handler = $this->area()->submittedHandler();
                 if ($handler === null) {
@@ -122,10 +117,8 @@ final class TextAreaState extends EditableTextState implements Scrollable
 
     /**
      * 上下移一行，**落到同一列**。
-     *
-     * ★ 到顶 / 到底 ⇒ 去文本首 / 文本末（与主流编辑器一致：再往上就是开头）。
-     * ★ 段落来自**上一次布局**的盒：上下移不改文本 ⇒ 那份几何仍然正确。
-     *   首帧之前没有盒 ⇒ 不动作（没有"行"可言）。
+     * 到顶 / 到底 ⇒ 去文本首 / 文本末（与主流编辑器一致）。
+     * 段落取自**上一次布局**的盒：上下移不改文本 ⇒ 那份几何仍正确；首帧前无盒则不动作。
      */
     private function moveVertical(int $delta, bool $extend): void
     {
@@ -151,7 +144,7 @@ final class TextAreaState extends EditableTextState implements Scrollable
             return;
         }
 
-        // ★ 目标列在**第一次**上下移时定下来，序列内不再变 —— 这就是 goal column
+        // 目标列在**第一次**上下移时定下来，序列内不再变 —— 这就是 goal column
         $x = $this->goalX ?? $paragraph->caretX($offset);
         $this->goalX = $x;
 
@@ -162,10 +155,9 @@ final class TextAreaState extends EditableTextState implements Scrollable
     }
 
     /**
-     * `Home` / `End`：**行首 / 行尾**；已经在边界 ⇒ 跳到文本首 / 末。
-     *
-     * ★ 那个"再按一次去全文两端"不是锦上添花：用户在多行框里按 `Home` 的意图
-     *   常常是"回到开头"，第一次落在行首会让人以为键坏了。
+     * `Home` / `End`：**行首 / 行尾**；已在边界 ⇒ 跳到文本首 / 末。
+     * 再按一次去全文两端：用户在多行框按 `Home` 常是"回到开头"的意图，只落行首会
+     * 让人以为键坏了。
      */
     private function moveToLineEdge(bool $toEnd, bool $extend): void
     {
@@ -248,12 +240,9 @@ final class TextAreaState extends EditableTextState implements Scrollable
 
     /**
      * 推进这一帧的**滚动动画**与**滚动条淡出**。
-     *
-     * ★ 顺序：先滚动、后淡出（同 `ScrollViewState`）—— `scrollBy()` 里会
-     *   `noteScroll()` 把条打回全亮，反过来会"先淡一点再被打回"，抖动。
-     * ★ **插入符跟随不在这里**（2026-11-03）：它要的是"本帧文本排出来的段落"，
-     *   而 `tickFrame()` 跑在 settle **之前**（盒还是上一帧的）。搬到盒的
-     *   `performLayout()` 里做 —— 见 `TextAreaState::caretRevealOffset()`。
+     * 顺序：先滚动、后淡出（`scrollBy()` 里 `noteScroll()` 把条打回全亮，反过来会抖动）。
+     * 插入符跟随不在这里：本方法跑在 settle **之前**，盒还是上一帧的，故在盒的
+     * `performLayout()` 里做。
      */
     #[\Override]
     public function tickFrame(float $timestampMs): bool
@@ -275,11 +264,9 @@ final class TextAreaState extends EditableTextState implements Scrollable
 
     /**
      * 插入符矩形（**盒内坐标，已扣滚动偏移**）—— IME 候选窗的几何来源。
-     *
-     * ★ 与 `TextFieldState::caretRect()` 同一个契约：只给几何，不假装知道自己在
-     *   屏幕上的位置（沿父链累积平移属平台层，§8.4）。
-     * ★ 未挂盒 / 未布局 ⇒ `null`（壳收到"无插入符"会把候选框贴左上角，
-     *   但那是"还没有盒"的正确表达 —— 编造一个 `(0,0)` 更坏）。
+     * 与 `TextFieldState::caretRect()` 同契约：只给几何，不假装知道屏幕位置
+     * （沿父链累积平移属平台层）。
+     * 未挂盒 / 未布局 ⇒ `null`：壳收到"无插入符"会把候选框贴左上角，编造 `(0,0)` 更坏。
      */
     #[\Override]
     public function caretRect(): ?Rect
@@ -322,29 +309,12 @@ final class TextAreaState extends EditableTextState implements Scrollable
 
     /**
      * 这一帧要不要把插入符滚进视口；要的话，跟到哪个偏移。
-     *
      * 返回 `null` = 不跟随（用户在滚 / 不在编辑态）。
-     *
-     * ★★ 三个角色的分工（2026-11-03 定稿）：
-     *   · **State（本方法）决定"要不要"** —— 它知道插入符变没变，盒不知道；
-     *   · **盒的 `performLayout()` 执行"跟到哪"** —— 段落与视口高在那里才是本帧的值；
-     *   · **`ScrollLane` 存偏移** —— 它是跨帧的真相。
-     *   早先版本把三件事都塞在 State 的 `build()` 里，于是必然读到**上一帧的盒**：
-     *   点进输入框那一帧盒还是"未编辑"的（`caretOffset === null`）⇒ `caretRect()`
-     *   的兜底给出**文本末尾** ⇒ 视口跳到底（真机：点一下看见文档末尾，看不到光标）。
-     *   改到 `tickFrame()` 又要多一帧才同源，连续打字时永远追不上。
-     *
-     * ★ 指纹（插入符 + 选区两端）是"用户滚动"与"插入符跟随"能共存的开关：
-     *   没有它 ⇒ 任何一次 rebuild 都把视口拽回插入符，用户"滚一半弹回去"。
-     *   成熟框架同形：Qt `QTextEdit::ensureCursorVisible()` 由光标移动调用、
-     *   Flutter `EditableText._scheduleCaretVisibilityUpdate` 挂在 selection 变化上、
-     *   浏览器 textarea 滚动从不把光标拉回来。
-     * ★ 选区两端也进指纹：`Ctrl+A` / Shift+方向键可能**只动选区不动插入符**，
-     *   而活动端跑出视口同样要跟随。
-     * ★ 未编辑 ⇒ 指纹清空：没有插入符可看；且下次进编辑必然重新对准
-     *   （留着旧指纹的话，"滚走 → 点回同一位置"会因指纹没变而不对准）。
-     * ★ 这里只改字段、**不标脏**（build 里标脏自己会被 E-FLUSH-CYCLE 拦）；
-     *   要的偏移随着本次 build 产出的新盒一起下去，layout 当帧就生效。
+     * 指纹（插入符 + 选区两端）是"用户滚动"与"插入符跟随"能共存的开关：
+     * 没有它，任何一次 rebuild 都会把视口拽回插入符，用户"滚一半弹回去"。
+     * 选区两端也进指纹：`Ctrl+A` / Shift+方向键可能只动选区不动插入符，
+     * 活动端跑出视口同样要跟随。未编辑 ⇒ 指纹清空（下次进编辑必然重新对准）。
+     * 这里只改字段、**不标脏**（build 里标脏会被 E-FLUSH-CYCLE 拦）。
      */
     private function caretRevealOffset(): ?int
     {

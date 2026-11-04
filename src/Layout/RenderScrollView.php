@@ -14,38 +14,21 @@ use Drift\Rendering\Canvas;
 use Drift\Rendering\Color;
 
 /**
- * 滚动视口（§13.1 的新盒）—— **内容比视口长时，按偏移平移内容并裁剪**。
- *
- * ★★ **坐标链纪律（2026-10-17 padding 缺陷的同族）**：滚动偏移**进子盒的
- *   `offsetX/offsetY()`**，不是 paint 期的额外 `translate()`。否则
- *   `hitTest()` 与 `Application::absoluteOrigin()` 拿到的坐标会比画出来的
- *   位置差一个滚动量 —— 表现为"滚动后点击错位"（滚动越远偏得越多，且只在
- *   滚过之后才出现，是最难查的一类）。
- *   ⇒ 命中测试：本盒先按**视口** size 判 (x,y) ⇒ 视口外的点根本进不了子树，
- *     于是"裁掉的部分点不到"是结构保证，不需要 hitTest 认识裁剪。
- *
- * ★ 布局策略（M2 级，够用即止）：
- *   - 内容按**主轴无界**布局 ⇒ 才量得出"到底有多长"；
- *   - 视口主轴 = 约束上限（INF ⇒ 取内容长度，即"不滚、撑满"）；
- *   - `maxScroll = max(0, 内容主轴 − 视口主轴)`，偏移夹进 `[0, maxScroll]`
- *     ⇒ 滚不到头、也滚不出界（越界是"内容飞走"的静默形态）。
- *
- * ★ 偏移量**不是**构造参数里那个只读值：构造时给初值，之后由
- *   `setScrollOffset()` **就地**改（`ScrollBarHost` 的接口方法）。理由见那个方法 ——
- *   一句话：滚一格不该重建整棵内容（实测占滚动帧的 55%）。
- *   ★ 盒仍会在重建时**换新**（`Element::syncBox()` 的纪律不变）⇒ State 才是
- *   权威值，盒只是它的投影；换盒时新偏移由构造参数递进来。
- *
- * ★ **滚动条**（2026-10-17）：`paint()` 在内容之上画一条胶囊形 thumb
- *   （`maxScroll == 0` 不画）。纯视觉层 —— 不新增状态、不改夹取、不碰命中。
- *
+ * 滚动视口：内容比视口长时，按偏移平移内容并裁剪。
+ * ★ 坐标链纪律：滚动偏移进子盒的 offset，不是 paint 期额外 translate()——
+ *   否则 hitTest()/absoluteOrigin() 坐标比画出的差一个滚动量 ⇒ 滚动后点击错位。
+ *   本盒先按视口 size 判 (x,y)，视口外的点进不了子树，"裁掉的点不到"是结构保证。
+ * 布局：内容按主轴无界才量得出长度；视口主轴取约束上限；
+ *   maxScroll = max(0, 内容−视口)，偏移夹进 [0,maxScroll]（越界=内容飞走）。
+ * 偏移构造时给初值、之后 setScrollOffset() 就地改（滚一格不重建整棵内容）；
+ * 盒重建仍换新，State 是权威值；滚动条是纯视觉层（maxScroll==0 不画）。
  * @api
  */
 final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
 {
-    /** 滚动偏移（逻辑像素，≥ 0）—— `setScrollOffset()` 就地改 */
+    /** 滚动偏移（逻辑像素，≥ 0）—— setScrollOffset() 就地改 */
     private float $scrollOffset;
-    /** 滚动条透明度（`0..1`）—— `ScrollBarFade` 每帧把当前值推过来 */
+    /** 滚动条透明度（0..1）—— ScrollBarFade 每帧把当前值推过来 */
     private float $barOpacity;
 
     /** 本次布局算出的可滚动上限（供夹具与未来滚动条读） */
@@ -53,19 +36,15 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
 
     /**
      * @param float $scrollOffset 已夹取的滚动偏移（逻辑像素，≥ 0）
-     * @param Color $thumb        滚动条色（主题 Muted：两主题都够清晰、语义"次要"）
+     * @param Color $thumb        滚动条色（主题 Muted：两主题都清晰、语义"次要"）
      * @param bool  $vertical     true = 纵向滚动（内容沿 y 平移）
-     * @param float|null $virtualExtent 完整内容的**主轴长度**（虚拟列表用）。
-     *        `null` ⇒ 内容长度就取子盒实测值（普通 `ScrollView`，逐字节同旧行为）。
-     *        ★ 虚拟列表的子盒只是**一扇窗**（只含可见行），它的实测长度远小于
-     *        完整内容 ⇒ 不传这个参数，滚动条长度和可滚上限都会算成"只有一屏"。
-     * @param float $sliceOrigin 这扇窗的起点在**完整内容**中的主轴坐标。
-     *        ★ 它同时是两个东西：`maxScroll` 的锚（`scrollOffset` 是完整内容的
-     *        偏移，不是窗内偏移）和"窗该往哪挪"的量。
-     *
-     * ★ 参数序：**必选在前、可选在后** —— 反了 PHP 解释器只发 Deprecated，
-     *   tpc 预处理器直接 Fatal（"optional parameter cannot be declared before
-     *   required parameter"）⇒ 解释器三门全绿也过不了 codegen（2026-10-17 踩过）。
+     * @param float|null $virtualExtent 完整内容的主轴长度（虚拟列表用）；
+     *        null ⇒ 内容长度取子盒实测值（普通 ScrollView）。虚拟列表子盒只是一扇窗
+     *        （只含可见行），实测长度远小于完整内容 ⇒ 不传则滚动条与上限算成"只有一屏"。
+     * @param float $sliceOrigin 这扇窗起点在完整内容中的主轴坐标；
+     *        同时是 maxScroll 的锚（scrollOffset 是完整内容偏移，非窗内偏移）
+     *        和"窗该往哪挪"的量。
+     * 参数序：必选在前、可选在后，否则 tpc 预处理器 Fatal（optional 不能在 required 前）。
      */
     public function __construct(
         float $scrollOffset,
@@ -74,11 +53,8 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
         private readonly ?float $virtualExtent = null,
         private readonly float $sliceOrigin = 0.0,
         /**
-         * 滚动条透明度（`0..1`）。
-         *
-         * ★ 由 `ScrollBarFade`（住 State 层）推 —— **不是** readonly：盒每帧重造，
-         *   淡出动画在两次重建之间靠 `setBarOpacity()` 就地改，免得为了动画
-         *   每帧重建整棵滚动内容。
+         * 滚动条透明度（0..1）；由 ScrollBarFade（State 层）推，不是 readonly：
+         * 盒每帧重造，淡出动画靠 setBarOpacity() 就地改，免得为动画每帧重建整棵内容。
          */
         float $barOpacity = 1.0,
     ) {
@@ -87,24 +63,17 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
     }
 
     /**
-     * 就地改偏移（见 `ScrollBarHost::setScrollOffset()`）。
-     *
-     * ★ 夹取用**上一次布局**的 `maxScroll`：滚动期间内容长度不变 ⇒ 那个值仍然有效。
-     *   内容真的变短时下一帧会重建（build 里有夹取写回），不会留下越界值。
-     * ★★ **还没排过（`size()` 为 null）⇒ 不夹、不应用、原样返回**：那时
-     *   `maxScroll` 恒 0，夹一下会把"首帧之前设的偏移"整个吞掉 —— 现象是
-     *   预览 / 测试里 `render()` 的 prepare 阶段滚了 400，画出来还在顶部，
-     *   **不报错**。（也不应用：没有 size 就没有布局期算出的 `sliceOrigin`。）
-     * ★★ **不标重排**（2026-10-27 第二版）：偏移只改子盒 `offset`，不改任何盒的
-     *   `size` ⇒ 由 `applyScrollOffsets()` 就地应用即可。早先借
-     *   `markNeedsLayout()` 让偏移生效，代价是 `Frame` 每滚一格重排**整棵树**
-     *   （实测滚动帧 `layout` 3.65ms，占一半）。paint 读的就是子盒 offset ⇒
-     *   不重排也不会"画面停在旧位置"。
-     * ★★ **但要标重绘**（2026-10-30，N1）：上半句原先还依赖"paint 无条件跑"，
-     *   而 paint 现在有门控（`RenderObject::paintEpoch`）⇒ 只靠"paint 会读它"
-     *   不够，得有人告诉 `Frame` 去画。落点在 `setOffset()` 里（偏移真变了才标），
-     *   所以**这条路径不需要额外的标脏调用** —— 加断言的地方在
-     *   `tests/Feature/Table/ScrollTest.php`（滚动帧必须真画）。
+     * 就地改偏移（见 ScrollBarHost::setScrollOffset()）。
+     * 夹取用上一次布局的 maxScroll：滚动期间内容长度不变 ⇒ 仍有效；
+     * 内容变短时下一帧会重建（build 里夹取写回），不留越界值。
+     * ★ 还没排过（size() 为 null）⇒ 不夹、不应用、原样返回：那时 maxScroll 恒 0，
+     *   夹一下会把首帧前设的偏移整个吞掉 —— 预览/测试里滚了 400 画出来还在顶部，不报错。
+     *   （也不应用：没 size 就没有布局期算出的 sliceOrigin。）
+     * 不标重排：偏移只改子盒 offset，不改任何盒 size ⇒ 由 applyScrollOffsets() 就地应用；
+     * 早先借 markNeedsLayout() 让偏移生效，代价是每滚一格重排整棵树。paint 读子盒 offset，
+     * 不重排也不会画面停在旧位置。
+     * 但要标重绘：paint 现在有门控（paintEpoch），只靠"paint 会读它"不够，
+     * 得有人告诉 Frame 去画（落点在 setOffset()：偏移真变了才标）。
      */
     public function setScrollOffset(Axis $axis, float $value): float
     {
@@ -124,14 +93,11 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
     }
 
     /**
-     * 把当前偏移应用到子盒的 `offset`（**布局末尾与滚动期共用**）。
-     *
-     * ★★ 抽出来的理由（2026-10-27）：这段原先只住 `performLayout()` 里 ⇒
-     *   "让偏移生效"与"重排整棵树"被绑成一件事。而它只依赖**上一次布局**
-     *   留下的三个数（`maxScroll` / `sliceOrigin` / 子盒本身），与本次约束
-     *   无关 ⇒ 可以在布局之外单独调。
-     * ★ 内容长度变化必然伴随 `rebuild()`（State 标脏）⇒ 走完整 layout ⇒
-     *   `maxScroll` 与 `sliceOrigin` 重算。滚动期沿用旧值是安全的。
+     * 把当前偏移应用到子盒的 offset（布局末尾与滚动期共用）。
+     * 抽出来的理由：原先只住 performLayout()，"让偏移生效"与"重排整棵树"被绑成一件事；
+     * 它只依赖上一次布局的结果 ⇒ 可在布局之外单独调。
+     * 内容长度变化必然伴随 rebuild()（State 标脏）⇒ 走完整 layout ⇒ maxScroll/sliceOrigin 重算，
+     * 滚动期沿用旧值安全。
      */
     private function applyScrollOffsets(): void
     {
@@ -148,7 +114,7 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
         }
     }
 
-    /** @internal `ScrollBarFade` 每帧把值推过来（不重建、不重排；**但必须标重绘**） */
+    /** @internal ScrollBarFade 每帧把值推过来（不重建、不重排；但必须标重绘） */
     public function setBarOpacity(float $value): void
     {
         if ($this->barOpacity === $value) {
@@ -157,68 +123,54 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
 
         $this->barOpacity = $value;
 
-        // ★ 2026-10-30（N1）：淡出是"不重建不重排"的通道 ⇒ settle / layout 两条
-        //   判据都拦不住 ⇒ 不标就是"滚动条该消失却一直挂着"（静默）。
-        // ★ 2026-11-01：还得让**重绘边界重录** —— thumb 的 alpha 录在命令流里，
-        //   只标帧会被缓存重放旧值（真机：停手 1.8s 后那条滚动条纹丝不动）。
+        // 淡出是"不重建不重排"通道 ⇒ settle/layout 两条判据都拦不住 ⇒ 不标就滚动条该消失却一直挂着（静默）。
+        // 还得让重绘边界重录：thumb 的 alpha 录在命令流里，只标帧会被缓存重放旧值。
         $this->markPaintChanged();
     }
 
-    /** 本视口的唯一轴（单轴视口 ⇒ `scrollAxes()` 只有一个元素） */
+    /** 本视口的唯一轴（单轴视口 ⇒ scrollAxes() 只有一个元素） */
     private function axis(): Axis
     {
         return $this->vertical ? Axis::Vertical : Axis::Horizontal;
     }
 
-    /** @internal 见 `ScrollBarHost` —— 单轴视口只报一根轴 */
+    /** @internal 见 ScrollBarHost —— 单轴视口只报一根轴 */
     public function scrollAxes(): array
     {
         return [$this->axis()];
     }
 
     /**
-     * 可滚动上限（布局后才有意义）。
-     *
-     * ★ 轴不匹配 ⇒ `0.0`（而不是报错）：调用方按 `scrollAxes()` 循环，不该先
-     *   `if` 再问；报错会让"随便问一下"变成噪声。
+     * 可滚动上限（布局后才有意义）。轴不匹配 ⇒ 0.0（而非报错）：
+     * 调用方按 scrollAxes() 循环，不该先 if 再问。
      */
     public function maxScroll(Axis $axis): float
     {
         return $axis === $this->axis() ? $this->maxScroll : 0.0;
     }
 
-    /** 实际生效的偏移（已按 `maxScroll` 夹取） */
+    /** 实际生效的偏移（已按 maxScroll 夹取） */
     public function appliedOffset(Axis $axis): float
     {
         return $axis === $this->axis() ? $this->applied() : 0.0;
     }
 
-    /** 本轴的实际偏移（内部用：`performLayout` 不该为了一个轴去走接口） */
+    /** 本轴的实际偏移（内部用：performLayout 不该为了一个轴去走接口） */
     private function applied(): float
     {
         return min(max(0.0, $this->scrollOffset), $this->maxScroll);
     }
 
     /**
-     * 把**内容坐标**里的矩形滚进视口所需的偏移**增量**（`0.0` = 已经可见）。
-     *
-     * ★ 几何只算这一处：两个 `Scrollable` 实现（`ScrollViewState` /
-     *   `LazyListState`）都只是"找到自己的盒 → 把增量交给 `scrollBy()`"，
-     *   不各算一遍 —— 各算一遍迟早会漂（一个按视口高、一个按窗口高之类）。
-     *
-     * ★ 返回**增量**不是绝对偏移：`scrollBy()` 是唯一的写入口，夹取在它
-     *   （下界）与布局期（上界）各做一次。返回绝对值就等于绕过写入口。
-     *
-     * ★ `$base` 是**基准偏移**（"现在按哪个偏移算可见"），**必填**：State 侧传
-     *   自己**待生效**的值 —— 同一帧里连按两次 Tab 时盒还没重排，用盒里的
-     *   `appliedOffset()` 会把上一段增量再算一遍（8 之后再要 48 会滚到 56）。
-     *   目标矩形是内容坐标 ⇒ 与基准解耦，换基准不改变正确性。
-     *   ★ 不给默认值是为了避开 tpc 的"可选参数排在必选参数前"Fatal
-     *   （2026-10-17 踩过）；`margin` 的默认值只留在 `ensureVisible()` 一处。
-     *
-     * ★ **目标比视口还大**（`extent + 2×margin > viewport`）⇒ 上下两个条件
-     *   不可能同时满足，取"上沿对齐 `margin`"。这条是**幂等**的：连着调两次
-     *   第二次返回 0 —— 否则大目标会在两端来回跳（每次调用都翻一次方向）。
+     * 把内容坐标里的矩形滚进视口所需的偏移增量（0.0 = 已经可见）。
+     * 几何只算这一处：两个 Scrollable 实现都只是找到自己的盒 → 把增量交给 scrollBy()，
+     * 不各算一遍（各算一遍迟早会漂）。
+     * 返回增量而非绝对偏移：scrollBy() 是唯一写入口，夹取在它（下界）与布局期（上界）各做一次。
+     * $base 是基准偏移（"现在按哪个偏移算可见"），必填：State 侧传自己待生效的值 ——
+     * 同一帧连按两次 Tab 时盒还没重排，用盒里的 appliedOffset() 会把上一段增量再算一遍。
+     * 不给默认值是为了避开 tpc 的"optional 在 required 前"Fatal；margin 默认值只留 ensureVisible()。
+     * 目标比视口还大 ⇒ 上下两条件不可能同时满足，取"上沿对齐 margin"。这条幂等：连调两次
+     * 第二次返回 0 —— 否则大目标会在两端来回跳。
      */
     public function revealDelta(Rect $target, float $margin, float $base): float
     {
@@ -227,7 +179,7 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
             return 0.0;   // 还没布局：没有视口，"可见"无从谈起
         }
 
-        // ★ 属性先落局部标量：分支里直接读属性在 AOT 侧会被推成 `Variant`。
+        // 属性先落局部标量：分支里直接读属性在 AOT 侧会被推成 Variant。
         $vertical = $this->vertical;
         $viewport = $vertical ? $size->height : $size->width;
         if ($viewport <= 0.0) {
@@ -264,13 +216,12 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
             return $constraints->constrain(new Size(0.0, 0.0));
         }
 
-        // 内容区是天然的重绘边界：偏移进的是**子盒 offset**（见类注释），
-        // 不在内容自己的 `paint()` 里 ⇒ 缓存与偏移无关 ⇒ 滚动只重放。
-        // ★ `setRepaintBoundary()` 自己有"值不变则不动"的守卫，放这里不会
-        //   每帧清缓存（清了命中率就是 0）。
+        // 内容区是天然的重绘边界：偏移进的是子盒 offset（见类注释），
+        // 不在内容自己的 paint() 里 ⇒ 缓存与偏移无关 ⇒ 滚动只重放。
+        // setRepaintBoundary() 自己有"值不变则不动"的守卫，放这里不会每帧清缓存。
         $child->setRepaintBoundary(true);
 
-        // ① 内容：主轴**无界** —— 有界的话内容会被压进视口，永远量不出溢出
+        // ① 内容：主轴无界 —— 有界的话内容会被压进视口，永远量不出溢出
         $content = $child->layout($this->vertical
             ? new BoxConstraints($constraints->minWidth, $constraints->maxWidth, 0.0, BoxConstraints::INFINITY)
             : new BoxConstraints(0.0, BoxConstraints::INFINITY, $constraints->minHeight, $constraints->maxHeight));
@@ -282,16 +233,12 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
         $mainMax = $this->vertical ? $constraints->maxHeight : $constraints->maxWidth;
         $crossMax = $this->vertical ? $constraints->maxWidth : $constraints->maxHeight;
 
-        // ★★ 虚拟列表遇上无界主轴：**先分清是哪种无界**。
-        //   · `RenderFlex` 量自然尺寸的**第一遍**也会递无界主轴（`RenderFlexible`
-        //     的注释原话：量自然高那遍拿无界主轴）。那是**合法的中间态** ——
-        //     LazyColumn 的自然高就是"当前窗口"，松手让它跟着窗口走即可，
-        //     第二遍（`tightMain`）才拿得到真视口。⇒ 不报错。
-        //   · **外层还有一个滚动视口**才是真的用错：内容被外层的无界约束吞掉，
-        //     窗口永远只有一屏，而滚动归外层管 ⇒ 看起来能跑、实际永远看不到第
-        //     21 行以后。这是 G2 要消灭的静默形态 ⇒ 响亮失败。
-        //   ★ 判别法：沿父链找 `RenderScrollView`（`Expanded` / `Column` / `Card`
-        //     都不算）。测过的反例：把 LazyColumn 塞进外层 ScrollView ⇒ 命中这条。
+        // 虚拟列表遇上无界主轴：先分清是哪种无界。
+        // · RenderFlex 量自然尺寸的第一遍也递无界主轴，那是合法中间态 ——
+        //   LazyColumn 的自然高就是当前窗口，松手让它跟窗口走，第二遍才拿真视口 ⇒ 不报错。
+        // ★ 外层还有一个滚动视口才是真的用错：内容被外层无界约束吞掉，窗口永远只有一屏，
+        //   滚动归外层管 ⇒ 看起来能跑、实际永远看不到第 21 行以后 ⇒ 响亮失败。
+        // 判别法：沿父链找 RenderScrollView（Expanded/Column/Card 都不算）。
         if ($this->virtualExtent !== null && is_infinite($mainMax)) {
             for ($ancestor = $this->parent(); $ancestor !== null; $ancestor = $ancestor->parent()) {
                 if ($ancestor instanceof self) {
@@ -309,14 +256,13 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
         $viewportCross = is_infinite($crossMax) ? $contentCross : $crossMax;
 
         // ③ 夹取（越界 = 内容飞走的静默形态 ⇒ 结构上不可能）
-        // ★ 虚拟列表：可滚上限按**完整内容**算，不是按这扇窗的实测长度。
+        // 虚拟列表：可滚上限按完整内容算，不是按这扇窗的实测长度。
         $virtualMain = $this->virtualExtent ?? $contentMain;
         $this->maxScroll = max(0.0, $virtualMain - $viewportMain);
 
-        // ④ ★ 偏移进子盒 offset（不是 paint 期 translate）—— 见类注释
-        // ★★ 抽成 `applyScrollOffsets()`（2026-10-27）：滚动期也要用同一段，
-        //   而那时**不该重排**（见 `setScrollOffset()`）。这段只依赖
-        //   `maxScroll` / `sliceOrigin` / 子盒，都是上一次布局留下的 ⇒ 可以单独调。
+        // ④ 偏移进子盒 offset（不是 paint 期 translate）—— 见类注释。
+        // 抽成 applyScrollOffsets()：滚动期也要用同一段，而那时不该重排（见 setScrollOffset()）；
+        // 这段只依赖 maxScroll/sliceOrigin/子盒，都是上一次布局留下的 ⇒ 可单独调。
         $this->applyScrollOffsets();
 
         return $this->vertical
@@ -334,32 +280,26 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
             return;
         }
 
-        // ★ 裁剪是**视口矩形**：内容平移到视口外的部分不该画出来。
-        //   命中侧不需要它 —— 视口 size 判定已经把视口外的点拦在子树之外。
+        // 裁剪是视口矩形：内容平移到视口外的部分不该画出来；命中侧不需要它 ——
+        // 视口 size 判定已把视口外的点拦在子树之外。
+        // 平移只包住内容：滚动条画在视口坐标系（平移已收在 paintChildAt 内部并还原）。
+        // 否则 thumb 跟着内容一起被偏移带走 —— offset=max 时整条飞出视口被裁干净。
+        // 滚动条画在内容之上（后画即在上）、裁剪区之内 ⇒ 内容滚到边角时被盖住一角，
+        // 与浏览器/Flutter 的 Scrollbar 同行为。
         $canvas->save();
         $canvas->pushClip(new Rect(0.0, 0.0, $size->width, $size->height));
-        // ★★ 平移只包住内容：滚动条画在**视口坐标系**（平移已收在 `paintChildAt`
-        //   内部并已还原）。否则 thumb 跟着内容一起被偏移带走 —— offset=max 时整条
-        //   飞出视口被裁干净（"该贴底时什么都没有"，2026-10-17 被 smoke 的 sv2 抓到：
-        //   offset 小的用例有墨、offset=max 的没有 ⇒ 单看一条会以为是位置公式错）。
         $this->paintChildAt($canvas, $child);
-        // ★ 滚动条画在**内容之上**（后画即在上）、裁剪区之内 ⇒ 内容滚到
-        //   边角时被它盖住一角，与浏览器/Flutter 的 Scrollbar 同行为。
         $this->paintScrollbar($canvas);
         $canvas->popClip();
         $canvas->restore();
     }
 
     /**
-     * 滚动条（2026-10-17 补齐的第一个滚动缺口：**纯视觉层**，不碰滚动机制）。
-     *
-     * 形体：胶囊形 thumb，贴视口右侧（纵向）/ 底侧（横向）。
-     * - 长度 = 视口占比 × 轨道（最短 24，超长夹进轨道）⇒ 内容越长条越短；
-     * - 位置 = 偏移 / maxScroll × 可走距离 ⇒ 条即"当前位置"的可视化；
-     * - `maxScroll == 0`（内容不溢出）⇒ **不画**（浏览器同行为；画一条
-     *   满轨 thumb 是撒谎——它暗示"可以滚"）。★ 这个早退还是**结构必需**：
-     *   `appliedOffset() / max` 在 max=0 时是 0/0 ⇒ PHP 8 抛
-     *   `DivisionByZeroError`（删掉它 smoke 当场 Fatal，见反例自检 ③）。
+     * 滚动条：纯视觉层，不碰滚动机制。形体：胶囊形 thumb，贴视口右侧（纵向）/ 底侧（横向）。
+     * 长度 = 视口占比 × 轨道（最短 24，超长夹进轨道）⇒ 内容越长条越短；
+     * 位置 = 偏移 / maxScroll × 可走距离 ⇒ 条即"当前位置"的可视化；
+     * maxScroll == 0（内容不溢出）⇒ 不画（浏览器同行为；画满轨 thumb 是撒谎——暗示"可以滚"）。
+     * 这个早退还是结构必需：appliedOffset()/max 在 max=0 时是 0/0 ⇒ PHP 8 抛 DivisionByZeroError。
      */
     private function paintScrollbar(Canvas $canvas): void
     {
@@ -368,16 +308,14 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
             return;
         }
 
-        // 透明度由 `ScrollBarFade` 推（滚动时 1、停手 ~900ms 后 0.35）
+        // 透明度由 ScrollBarFade 推（滚动时 1、停手 ~900ms 后 0.35）
         ScrollBarGeometry::paint($canvas, $bar, $this->thumb, $this->barOpacity);
     }
 
     /**
-     * 滚动条 thumb 的矩形（**盒内**坐标；`null` = 内容不溢出 / 还没布局）。
-     *
-     * ★ 几何只算一处（`ScrollBarGeometry`）：`paintScrollbar()` 用它画，
-     *   `Application` 的滚动条拖动用它命中 —— 两处各算一遍迟早会漂
-     *   （条画在这里、抓在别处）。`RenderTable` 用的是同一份。
+     * 滚动条 thumb 的矩形（盒内坐标；null = 内容不溢出 / 还没布局）。
+     * 几何只算一处（ScrollBarGeometry）：paintScrollbar() 用它画，Application 的拖动命中也用它 ——
+     * 两处各算一遍迟早会漂。RenderTable 用同一份。
      */
     public function thumbRect(Axis $axis): ?Rect
     {
@@ -389,7 +327,7 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
         return ScrollBarGeometry::thumbRect($size, $this->maxScroll, $this->applied(), $axis);
     }
 
-    /** @internal 事件命中用：thumb 在渲染树根坐标里的矩形（见 `ScrollBarHost`） */
+    /** @internal 事件命中用：thumb 在渲染树根坐标里的矩形（见 ScrollBarHost） */
     public function thumbRectInRoot(Axis $axis): ?Rect
     {
         $bar = $this->thumbRect($axis);
@@ -403,10 +341,9 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
     }
 
     /**
-     * thumb 在轨道里**可走**的距离（拖动映射用：位移 × maxScroll / travel）。
-     *
-     * ★ 与 `thumbRect()` 分开是因为拖动只要这一个标量，拿整条矩形回来还得
-     *   再抠一遍长度；两处口子都从同一组常量推，不引入第二个"条长"定义。
+     * thumb 在轨道里可走的距离（拖动映射用：位移 × maxScroll / travel）。
+     * 与 thumbRect() 分开是因为拖动只要这一个标量，拿整条矩形回来还得再抠一遍长度；
+     * 两处口子都从同一组常量推，不引入第二个"条长"定义。
      */
     public function thumbTravel(Axis $axis): float
     {
@@ -419,9 +356,8 @@ final class RenderScrollView extends RenderProxyBox implements ScrollBarHost
     }
 
     /**
-     * ★ 溢出策略是 **Scroll**（不是默认的 Clip）：本盒会超出视口，超出部分按
-     *   滚动偏移平移 + 视口裁剪 —— 这是 `Overflow::Scroll` 的第一次真实实现
-     *   （此前只有声明，行为靠 `RenderDock` 的 `Errors::report` 兜）。
+     * 溢出策略是 Scroll（不是默认的 Clip）：本盒会超出视口，超出部分按滚动偏移平移 + 视口裁剪 ——
+     * 这是 Overflow::Scroll 的第一次真实实现（此前只有声明，行为靠 RenderDock 的 Errors::report 兜）。
      */
     #[\Override]
     public function overflow(): Overflow

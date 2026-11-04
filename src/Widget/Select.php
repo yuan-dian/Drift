@@ -9,96 +9,9 @@ use Drift\Layout\FlexAlign;
 use Drift\State\Subject;
 
 /**
- * 下拉选择（W8-2 第五件，2026-10-23；2026-10-24 改为有态 + 三态 + 方向键）。
- *
- * ```php
- * Select::make([
- *     Option::make('北京市', '110000'),
- *     Option::make('上海市', '310000'),
- * ])->value($this->city)                       // 受控：值住应用的 State
- *   ->onChanged(fn(string $v) => $this->setState(fn() => $this->city = $v));
- *
- * // 短形式：键 = 值、值 = 显示名（`Option::normalize()`）
- * Select::make(['110000' => '北京市'])->value($this->city);
- *
- * // 行数组：DB fetchAll / HTTP JSON 原样喂（`Option::fromRows()`）
- * Select::make(Option::fromRows($rows, 'name', 'id'))->value($this->city);
- *
- * // 远程数据三态 + 打开才取
- * Select::make($this->cities)
- *     ->status($this->status)                   // OptionStatus::loading() / error() / empty() / ready()
- *     ->onOpen(fn() => $this->loadCities());    // 面板打开那一刻触发取数
- * ```
- *
- * ## 形状从哪来（为什么是组合，不是新渲染盒）
- *
- * `Select` 交出一个 **`Button`（`Default` 变体）+ 三条声明**：
- *
- * | 声明 | 谁消费 | 管什么 |
- * |---|---|---|
- * | `overlayPanel($factory)` | `Application::activateFocusedWidget()` | 激活时浮出选项面板 |
- * | `keyboard($handler)` | `FocusManager::dispatchKey()` | 面板开着时接管上下键 / Enter |
- * | `variant(Default)` + `width()` | `RenderButton` | 外观：有底有边的"选择框" |
- *
- * ★★ **刻意不写 `RenderSelect`**：新渲染盒是本仓最贵的改动面（每一条都出过真机
- *   bug：内禀失真、offset 双重平移、AOT 常量折叠）。而"一个有边框的、点了浮面板
- *   的按钮"用现成的 `Button` **完全表达得出来** —— 焦点、激活、光标、语义、命中
- *   全白送。代价只有一条（写进能力边界）：没有下拉箭头。
- *
- * ## 为什么是 `StatefulWidget`（2026-10-24 从 `StatelessWidget` 改过来）
- *
- * 三件事逼的，都是**结构性的**，不是"想加个状态"：
- *
- * 1. **浮层是第二棵根渲染树**（`OverlayEntry::$panel` 的字段注释就是这条设计）：
- *    主树重建**不带动**面板。`loading` / 选项表 / `emptyText` 这些受控值住在
- *    Widget 上 ⇒ 必须有人把"Widget 换了"这件事送过树去。**现在由框架负责**
- *    （`Widget::overlaySignature()`，2026-10-24 收口）。
- * 2. **方向键换高亮**是控件私有态（应用不该为"光标停在第几行"再存一个字段），
- *    它变化时主树根本不用重建 ⇒ 走 `SelectPanelSignal`（`Subject` 广播）。
- * 3. **`onOpen()` 需要"开面板那一刻"这个时机**，而工厂只在开面板时被调一次。
- *
- * 于是面板的构建时机从"打开那一刻一次"变成"每次内容变化都重来"，选中高亮也就
- * 不会再停在旧值上 —— 这正是 2026-10-23 版本"方向键换值"做不了的根因。
- *
- * ★★ **受控值与私有态走两条不同的路**（这是本类最该记住的一条）：
- *   | 面板内容取决于 | 谁负责传播 |
- *   |---|---|
- *   | 三态 / 选项表 / 受控值（Widget 上） | 框架：`overlaySignature()` 签名变了就标脏 |
- *   | 高亮（State 上） | 本类：`$this->signal->notifyChanged()` |
- *   两条都必须有 —— 只有前者，方向键按下去面板不动；只有后者，应用换了选项表
- *   面板不重读。2026-10-24 之前两条都压在本类的 `didUpdateWidget()` 里，而那一版
- *   漏了 `parent::` 就**全静默**（面板永不更新、不报错），所以前者收进了框架。
- *
- * ## 浮层归谁
- *
- * 打开 / 落位 / 关闭 / 归属全在 `Application`（`§5.1` 裁决 1）。本类只**声明**
- * 面板内容，并让面板里的每一行在点完后调 `Application` 注入进来的 `dismiss`。
- *
- * ★ 面板 `owner` = 控件自身 ⇒ 页面走了没关下拉，`placeOverlays()` 的 owner 清扫
- *   会收尸（`01` §7 的那条防线，2026-10-23 才真正被消费）。
- * ★ 面板 `barrier = true`（与菜单同）：点面板外 ⇒ 关且**吞掉该次按下**，这是
- *   下拉的标准手感，也是 `dismissOnTapOutside` 唯一生效的路径（`barrier=false`
- *   的条目在 `dispatchPointer()` 里直接穿透，永远轮不到"点在层外"那一支）。
- *
- * ## 受控
- *
- * `value()` 由应用给，点击只回调 `onChanged(新值)`（与 `Checkbox` / `Radio` /
- * `SegmentedControl` 同纪律）。控件**不自持**"选了谁" —— 自持会让"提交时读到的值"
- * 与"屏幕上显示的值"分成两份真相。
- *
- * ## 能力边界（v1 刻意不做，别当缺陷报）
- *
- * - **下拉箭头**：没有。内置字模缺 164 个字符（含 `▾`）⇒ 要画得用 `CustomPaint`，
- *   而 `Button` 的标签位只收字符串 ⇒ 得再包一层 `Row`，那会多出一个焦点目标。
- *   v1 用"有底有边的框 + 占位文字"表达可点。
- * - **可编辑（输入过滤）**：不在本类 —— 那是 `ComboBox`（`TextField` + 过滤浮层，
- *   与 `Select` 同一条"不写新渲染盒"的裁决）。
- * - **远程搜索**：没有 —— `Select` 不能打字。远程**过滤**是 `ComboBox` 的事。
- * - **多选**：没有 —— 多选是 `list<string>` 的受控值，形状不同。
- * - **方向键 = 焦点移动**：没走那条路。它要新开一条"复合控件内方向键"的框架缝
- *   （控件闭包拿不到 `FocusManager`），而焦点/手势是本仓出过最多 bug 的地方 ——
- *   为一个 nice-to-have 动它不划算。本类的做法是"高亮 + Enter"，与鼠标点选等价。
- *
+ * 下拉选择。交出一个「Button（Default 变体）+ 三条声明」：overlayPanel 浮出选项面板、
+ * keyboard 接管方向键 / Enter、variant(Default)+width 决定外观。
+ * 值受控（应用持有，点击只回调 onChanged），支持三态远程数据（loading/error/empty/ready）。
  * @api
  */
 final class Select extends StatefulWidget
@@ -107,10 +20,7 @@ final class Select extends StatefulWidget
     public const PANEL_MIN_WIDTH = 180.0;
 
     /**
-     * 面板内容高度上限（逻辑像素）。
-     *
-     * ★ 8 行 × 约 33px ≈ 264，取 260 ⇒ 常见"一次看得完"的列表**贴着内容**不滚动，
-     *   更长的才滚（`RenderPopupPanel` 按实测自然高决定，不猜条目数）。
+     * 面板内容高度上限（逻辑像素）。更长的列表才滚（`RenderPopupPanel` 按实测自然高决定）。
      */
     public const PANEL_MAX_HEIGHT = 260.0;
 
@@ -121,8 +31,8 @@ final class Select extends StatefulWidget
     private readonly array $options;
 
     /**
-     * 当前值（受控）。**不匹配任何 `Option::$value` ⇒ 显示 `placeholder`**
-     * （不用空串当哨兵：值域是应用给的，任何字符串都可能合法）。
+     * 当前值（受控）。不匹配任何 `Option::$value` ⇒ 显示 `placeholder`
+     * （空串可能是合法值，不能当哨兵）。
      */
     private string $value = '';
 
@@ -133,11 +43,7 @@ final class Select extends StatefulWidget
     private ?\Closure $onChanged = null;
 
     /**
-     * 选项表的就绪度（三态）—— `ready` / `loading` / `empty` / `error`，**互斥**。
-     *
-     * ★ 2026-10-24 之前是三个独立字段（`loading` / `emptyText` / `errorText`）+ 一条
-     *   "loading 优先"的优先级规则。收成 `OptionStatus` 之后那条规则**不存在了**：
-     *   设了 `loading()` 就没有错误态可言。见 `OptionStatus` 的类头。
+     * 选项表的就绪度（三态）—— ready / loading / empty / error，互斥。
      */
     private OptionStatus $status;
 
@@ -146,8 +52,8 @@ final class Select extends StatefulWidget
 
     /**
      * @param list<Option>|array<array-key, string> $options 选项表。两种形态都过
-     *        `Option::normalize()`（映射形态 = 键是值、值是显示名），空表 ⇒ 面板
-     *        画一行内置的"没有可选项"（要用别的文案就 `status(OptionStatus::empty('…'))`）。
+     *        `Option::normalize()`（映射形态：键是值、值是显示名）；空表 ⇒ 面板
+     *         画一行内置"没有可选项"（要换文案用 `OptionStatus::empty('…')`）。
      */
     public function __construct(array $options)
     {
@@ -198,18 +104,8 @@ final class Select extends StatefulWidget
     }
 
     /**
-     * 选项表的就绪度（受控）—— 取数中 / 失败 / 空表 / 正常，**四者互斥**。
-     *
-     * ```php
-     * ->status($this->loading ? OptionStatus::loading() : OptionStatus::ready())
-     * ->status(OptionStatus::error('连接超时'))
-     * ->status(OptionStatus::empty('没有匹配的城市'))
-     * ```
-     *
-     * ★ 这是**受控属性**，不是控件自己管的状态：什么时候开始、什么时候算结束，
-     *   只有应用知道（`Job` + `TaskHost` 的 `onDone`）。控件只负责"显示成什么样"。
-     * ★★ 为什么是一个值而不是三个 setter：见 `OptionStatus` 类头 —— 三个独立字段
-     *   必须回答"同时成立时显示谁"，而那个场景本身不该存在。
+     * 选项表的就绪度（受控）—— 取数中 / 失败 / 空表 / 正常，四者互斥。
+     * 这是受控属性，不是控件自己管的状态：何时开始、何时结束只有应用知道。
      */
     public function status(OptionStatus $status): static
     {
@@ -221,9 +117,8 @@ final class Select extends StatefulWidget
 
     /**
      * 面板**打开那一刻**触发一次（应用在这里发起取数）。
-     *
-     * ★ 触发点是 `overlayPanel` 工厂 —— 框架在"要开面板"时调它一次。不要在
-     *   `build()` 里取数：那会在每次应用重建时都发一次请求。
+     * ★ 触发点是 overlayPanel 工厂 —— 不要在 build() 里取数：那会在每次应用
+     *   重建时都发一次请求。
      */
     public function onOpen(callable $handler): static
     {
@@ -238,7 +133,7 @@ final class Select extends StatefulWidget
         return new SelectState();
     }
 
-    // ── State 侧读的口径（`@internal`：只给同文件的 `SelectState` 调）──
+    // ── State 侧读的口径（只给同文件的 `SelectState` 调）──
 
     /** @internal @return list<Option> */
     public function optionsValue(): array
@@ -296,12 +191,10 @@ final class Select extends StatefulWidget
 
     /**
      * 下标 → 显示名（越界返回空串）。
-     *
-     * ★ 单独一个**带返回类型**的方法：`$this->options[$i]->label` 这种"数组下标再取
-     *   属性"在 AOT 侧会被推成 `php::Var`（同 `Application::shiftSnackQueue()` 的理由）。
-     * ★ `public` 只是为了让同文件的 `SelectState` 能调（PHP 的 `private` 类内可见性
-     *   不跨类）；**不属于公共 API**，应用侧别用。
-     *
+     * ★ 单独的带返回类型方法：`$this->options[$i]->label` 这种"数组下标再取属性"
+     *   在 AOT 侧会被推成 php::Var。
+     * `public` 只为同文件的 `SelectState` 能调（PHP 的 private 类内可见性不跨类）；
+     *   不属于公共 API，应用侧别用。
      * @internal
      */
     public function labelAt(int $index): string
@@ -315,11 +208,8 @@ final class Select extends StatefulWidget
 }
 
 /**
- * `Select` 的私有 State（2026-10-24）。
- *
- * 它持三样东西，都是"跨 build 活且只影响这一棵子树"的（§11.5 的判据）：
- * `highlight`（方向键光标）、`signal`（跨树广播端）、`dismiss`（面板开着 ⇔ 非 null）。
- *
+ * `Select` 的私有 State。持三样跨 build 活且只影响这一棵子树的东西：
+ * highlight（方向键光标）、signal（跨树广播端）、dismiss（面板开着 ⇔ 非 null）。
  * @internal
  */
 final class SelectState extends State
@@ -349,15 +239,10 @@ final class SelectState extends State
             ->variant(ButtonVariant::Default)
             ->width($this->select()->triggerWidthValue())
             ->overlayPanel($this->panelFactory())
-            // ★★ **受控值 ⇒ 面板重读由框架负责**（`Widget::overlaySignature()`，
-            //   2026-10-24）：三态 / 选项表 / 受控值都住在 Widget 上，框架在"锚点
-            //   Widget 换了"之后比对签名，变了就标脏面板。
-            //   ★ 这里**不需要**再覆写 `didUpdateWidget()` —— 2026-10-24 之前那版
-            //     就是靠它 + `parent::`，而漏掉 parent 是全静默的（面板永不更新）。
-            //     现在那个坑结构上不存在了。
+            // 受控值 ⇒ 面板重读由框架负责（`Widget::overlaySignature()`：三态 / 选项表 /
+            //   受控值都住在 Widget 上，框架比对签名变了就标脏面板）。
+            // `keyboard()` 声明在外层：焦点落在这个 `Button` 上，靠父链解析命中。
             ->overlaySignature(fn (): string => $this->contentSignature())
-            // ★ `keyboard()` 声明在外层：焦点落在这个 `Button` 上，靠父链解析命中
-            //   （与 `ComboBox` 同构，见 `FocusManager::dispatchKey()`）。
             ->keyboard($this->keyHandler());
     }
 
@@ -371,16 +256,13 @@ final class SelectState extends State
 
     /**
      * 面板工厂 —— `Application` 开面板时调用，形参是它注入的 dismiss 闭包。
-     *
-     * ★ 这里是 `onOpen` 的**唯一**触发点：工厂在"要开面板"时被调一次，不在
-     *   `build()` 里（那会在每次应用重建时都发一次请求）。
+     * 这里是 `onOpen` 的唯一触发点：工厂在"要开面板"时被调一次，不在 build() 里。
      */
     private function panelFactory(): \Closure
     {
         return function (\Closure $dismiss): Widget {
             $this->dismiss = $dismiss;
 
-            // 打开时高亮 = 当前值的下标（没匹配 ⇒ 第一项）
             $this->highlight = $this->select()->selectedIndex();
             if ($this->highlight < 0) {
                 $this->highlight = 0;
@@ -403,9 +285,8 @@ final class SelectState extends State
 
     /**
      * 面板内容 —— `OptionPanel` **每次重建都会调**它，所以读的全是当前值。
-     *
-     * ★ 三态与选项行**互斥**（`OptionStatus::showsOptions()`），所以这里没有优先级
-     *   判断链：状态不 ready ⇒ 画那一行；ready ⇒ 画选项（空表时画内置兜底文案）。
+     * 三态与选项行互斥（`OptionStatus::showsOptions()`），没有优先级判断链：
+     *   状态不 ready ⇒ 画那一行；ready ⇒ 画选项（空表时画内置兜底文案）。
      */
     private function panelContent(): Widget
     {
@@ -420,14 +301,12 @@ final class SelectState extends State
             $options = $select->optionsValue();
 
             if ($options === []) {
-                // ★ "选项表恰好是空的、但应用没说这是空态" ⇒ 内置兜底。与
-                //   `OptionStatus::empty('…')` 的区别见那个方法的注释。
+                // 选项表空但应用没声明空态 ⇒ 画内置兜底文案（与 `OptionStatus::empty()` 区分）。
                 $rows[] = Text::make('没有可选项')->caption();
             } else {
                 foreach ($options as $index => $option) {
-                    // ★ 选中项用 Primary 底（强调色），方向键光标也用它 —— 两者同形
-                    //   是刻意的：键盘用户看到的"我要选这个"与鼠标用户的"已选"一致。
-                    //   不用 "✓" 前缀：内置字模子集里没有 U+2713。
+                    // 选中项用 Primary 底，方向键光标也用它 —— 键盘与鼠标用户看到的高亮一致。
+                    // 不用 "✓" 前缀：内置字模子集里没有 U+2713。
                     $rows[] = Button::make($option->label)
                         ->variant($index === $this->highlight ? ButtonVariant::Primary : ButtonVariant::Flat)
                         ->onPressed(function () use ($option): void {
@@ -437,12 +316,11 @@ final class SelectState extends State
             }
         }
 
-        // ★ `cross(Stretch)`：面板给内容的是**有界宽**（`RenderPopupPanel` 先量
-        //   统一宽再 tight 布局）⇒ 整行可点、高亮横贯。
+        // `cross(Stretch)`：面板给内容有界宽，整行可点、高亮横贯。
         return Column::make()
             ->cross(FlexAlign::Stretch)
             ->children($rows)
-            // ★ 焦点在行上（Tab 进来）时按键转发到同一套导航
+            // 焦点在行上（Tab 进来）时按键转发到同一套导航
             ->keyboard(function (KeyEvent $event): bool {
                 return $this->handleNav($event);
             });
@@ -450,12 +328,11 @@ final class SelectState extends State
 
     /**
      * 键盘缝（焦点在**触发框**上时）。
-     *
-     * ★ 面板关着 ⇒ **一律返回 `false`**（让位给框架）：`dispatchKey()` 跑在
-     *   `activateFocused()` 之前，返回 `true` 就把"Enter/Space 开面板"那条路
-     *   堵死了（现象：鼠标点得开、键盘打不开）。
-     * ★ 面板开着 ⇒ 上下键移高亮、Enter 提交；**ESC 仍返回 `false`**，让浮层的
-     *   `dismissOnEsc` 去关（自己关会与框架的关闭路径重复）。
+     * ★ 面板关着 ⇒ 一律返回 `false`（让位给框架）：`dispatchKey()` 跑在
+     *   `activateFocused()` 之前，返回 `true` 会把"Enter/Space 开面板"那条路堵死
+     *   （现象：鼠标点得开、键盘打不开）。
+     * 面板开着 ⇒ 上下键移高亮、Enter 提交；ESC 仍返回 `false`，让浮层的
+     *   `dismissOnEsc` 去关（自己关会与框架关闭路径重复）。
      */
     private function keyHandler(): \Closure
     {
@@ -496,9 +373,7 @@ final class SelectState extends State
 
     /**
      * 移光标（**环绕**：末项往下 ⇒ 第一项，与 `FocusManager` 的 Tab 环同手感）。
-     *
-     * ★ 这里**故意不调 `setState()`**：高亮只影响面板那棵树，主树（触发框上的字）
-     *   一个字都不会变。标脏主树等于每按一次方向键重排整个页面。
+     * 不调 `setState()`：高亮只影响面板那棵树，标脏主树会每按一次方向键重排整个页面。
      */
     private function moveHighlight(int $delta): void
     {
@@ -535,11 +410,7 @@ final class SelectState extends State
 
     /**
      * 选中一项：**先收面板，再回调应用**。
-     *
-     * ★ 顺序是刻意的（2026-10-24 改）：反过来的话，应用的 `setState` 会先让面板
-     *   带着新值重建一帧、随后才被收掉 —— 表现是"点一项，列表闪一下"。先收面板
-     *   则 `$this->dismiss = null` 已经落地，`notifyChanged()` 即使被触发也没人听
-     *   （`OptionPanelState::dispose()` 已退订）。
+     * 反过来 ⇒ 应用 `setState` 让面板带新值重建一帧才被收掉，"点一项列表闪一下"。
      */
     private function commit(Option $option): void
     {
@@ -558,8 +429,7 @@ final class SelectState extends State
 
     /**
      * 面板被回收 —— **三条关闭路径的唯一汇合点**（点面板外 / owner 清扫 / Esc）。
-     *
-     * ★ 高亮不用复位：下次打开时 `panelFactory()` 会按当前值重算。
+     * 高亮不用复位：下次打开时 `panelFactory()` 会按当前值重算。
      */
     private function onPanelClosed(): void
     {
@@ -568,18 +438,12 @@ final class SelectState extends State
 
     /**
      * 面板**真正**在意的东西的签名 —— 交给框架（`build()` 里的 `overlaySignature()`）。
-     *
-     * ★ 为什么是"语义"而不是对象身份：应用每次重建都造新的 `Option` 实例，
-     *   用身份比必然"天天在变" ⇒ 面板每帧重建 ⇒ 滚动位置回顶部。
-     *   这里只看 `(value,label)` 序列，重排 / 换文案才算变。
-     * ★ 用 `list<string>` + `implode` 而不是循环里 `.=`：后者会被 lint 的
-     *   `str-concat-loop` 判错（循环体内 `.=` 是 error）。
+     * 只比对 `(value,label)` 序列：重排 / 换文案才算变，重建造新实例不触发。
      */
     private function contentSignature(): string
     {
         $select = $this->select();
         $parts = [
-            // ★ 三态那一段由 `OptionStatus` 自己给 —— 与 `ComboBox` 共用一处实现
             $select->statusValue()->signature(),
             $select->valueValue(),
         ];
@@ -595,7 +459,6 @@ final class SelectState extends State
     {
         $widget = $this->widget();
         if (!$widget instanceof Select) {
-            // 框架不变量：StatefulElement 按 get_class 配对，配错不可能发生
             \Drift\Errors::report('SelectState 只能配 Select（框架内部不变量被破坏）');
         }
 
@@ -605,15 +468,8 @@ final class SelectState extends State
 
 /**
  * `Select` 面板的广播端 —— **专门为了跨树**（主树是触发框、浮层是另一棵树）。
- *
- * ★ 只服务**控件私有态**（方向键高亮）：受控值那条路归框架
- *   （`Widget::overlaySignature()`），别往这里塞 —— 一个信号两种职责，
- *   下一个人就分不清"这条为什么没生效"该查哪边。
- * ★ 为什么不是 State 里的一个普通字段：`setState()` 只标脏**它自己的属主** `State`
- *   （住同一个 State 里 ⇒ 只能影响那一棵子树）。面板在另一棵树，要的是"广播"。
- * ★ 它不承载业务数据（不是 `Store`）：只表达"面板该重读了"，且**不出现在公共
- *   API 上**（`SelectState::$signal` 是私有的）。
- *
+ * 只服务**控件私有态**（方向键高亮）：受控值那条路归框架（`Widget::overlaySignature()`）。
+ * 不承载业务数据：只表达"面板该重读了"，且不在公共 API 上。
  * @internal
  */
 final class SelectPanelSignal extends Subject
