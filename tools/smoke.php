@@ -3912,6 +3912,18 @@ check(
     $usersApp->appStore()->statusLine() === '正在刷新…',
 );
 
+// ★ 自动聚焦的**真应用**判据：注册页首个字段声明了 `autoFocus()` ⇒ 进页面就能打字。
+//   切页把上一页卸载 ⇒ 焦点链清空 ⇒ 自动聚焦接手（不是"按钮还留着焦点"）。
+//   ★ 必须真的跑一帧：`collect()` 只活在帧里（FOCUS_COLLECT 段）。
+$usersApp->frame(8.0, $usersTight);
+$signupFocus = $usersApp->focus()?->focused();
+$signupEditing = $signupFocus instanceof StatefulElement ? $signupFocus->state() : null;
+check(
+    'apps/users · 自动聚焦：进注册页焦点就在姓名框（无需先按 Tab）',
+    $signupEditing instanceof TextFieldState && $signupEditing->isEditing(),
+    'focused=' . ($signupFocus === null ? 'null' : get_class($signupEditing ?? $signupFocus)),
+);
+
 // ② 值缝 · **局部态**（SignupForm：property hooks + 派生缓存）
 $usersApp->signupForm()->name = '张三';
 $usersApp->signupForm()->email = 'zhang@example.com';
@@ -3925,6 +3937,8 @@ check(
     $usersApp->appStore()->currentPage() === 'users'
         && $usersApp->appStore()->statusLine() === '注册成功',
 );
+// ★ 回跳后再跑一帧：焦点链要跟上主树（否则 ⑥ 的 Tab 序还停在注册页上）
+$usersApp->frame(12.0, $usersTight);
 $usersApp->signupForm()->name = '';
 $usersApp->dispatch('form.submit');
 check(

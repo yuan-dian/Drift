@@ -16,6 +16,8 @@ use Drift\Layout\RenderPopupPanel;
 use Drift\Widget\Button;
 use Drift\Widget\Element;
 use Drift\Widget\PopupPanel;
+use Drift\Widget\StatefulElement;
+use Drift\Widget\TextFieldState;
 
 /**
  * 浮层**栈**：多层同屏、栈序即绘制序、锚点消失自愈、翻转、嵌套基准、焦点回锚、焦点陷阱。
@@ -240,6 +242,38 @@ final class OverlayStackTest extends SmokeTestCase
             '浮层栈 · 模态开着 ⇒ Tab 序只剩浮层（focusTrap：主树按钮进不来）',
             $order !== [] && $inMainTree === 0,
             '链长=' . count($order) . ' 主树按钮=' . $inMainTree,
+        );
+    }
+
+    /**
+     * 打开模态 ⇒ 焦点自动落进第一个声明 `autoFocus()` 的输入框。
+     *
+     * 走的是完整链路：`showModal()` 压栈 → 下一帧 `collect()` 只收陷阱 ⇒
+     * 陷阱外的旧焦点被清成 null ⇒ 自动聚焦接手。
+     */
+    public function testAutoFocusLandsInModalField(): void
+    {
+        [$app, , $tight] = self::boot();
+        $anchor = self::button($app, 'lab.anchor');
+        $app->focusForTest($anchor);
+
+        $app->openModalWithField();
+        $app->frame(16.0, $tight);
+
+        $focused = $app->focusedForTest();
+        $state = $focused instanceof StatefulElement ? $focused->state() : null;
+        check(
+            '浮层栈 · 模态里的输入框 autoFocus ⇒ 打开就聚焦并进编辑态（不落到锚点）',
+            $state instanceof TextFieldState && $state->isEditing() && $focused !== $anchor,
+            'focused=' . ($focused === null ? 'null' : ($state instanceof TextFieldState ? 'field' : 'other')),
+        );
+
+        $app->closeModal();
+        $app->frame(32.0, $tight);
+        check(
+            '浮层栈 · 关掉带输入的模态 ⇒ 焦点回到锚点（恢复优先于自动聚焦）',
+            $app->focusedForTest() === $anchor,
+            $app->focusedForTest() === null ? '焦点被清空' : '焦点在别处',
         );
     }
 }

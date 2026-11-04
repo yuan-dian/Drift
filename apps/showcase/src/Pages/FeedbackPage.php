@@ -23,6 +23,7 @@ use Drift\Widget\Spacer;
 use Drift\Widget\State;
 use Drift\Widget\StatefulWidget;
 use Drift\Widget\Text;
+use Drift\Widget\TextField;
 use Drift\Widget\Widget;
 use Drift\Widget\Wrap;
 
@@ -168,6 +169,8 @@ final class FeedbackState extends State
                     ->onPressed(fn() => $this->openConfirm()),
                 Button::make('打开不可关闭的对话框')
                     ->onPressed(fn() => $this->openStubborn()),
+                Button::make('打开带输入的对话框')
+                    ->onPressed(fn() => $this->openRename()),
             ]),
             Text::make('面板内按钮只派发命令 / 回调，**不自动关模态** —— 关不关归应用（§A.3.7）。')
                 ->caption(),
@@ -201,6 +204,25 @@ final class FeedbackState extends State
                     Text::make('这个对话框没有关闭按钮：ESC 被吞、点遮罩也被吞，'
                         . '只能点下面的按钮（那条路永远有效）。')->body(),
                     Button::make('知道了')->variant(ButtonVariant::Primary),
+                ]))
+        );
+    }
+
+    /** 打开就能打字：焦点陷阱把旧焦点清空，`autoFocus()` 接住 */
+    private function openRename(): void
+    {
+        ($this->showModal)(
+            Modal::make()
+                ->title('重命名')
+                ->child(Column::make()->spacing(12.0)->children([
+                    TextField::make()
+                        ->label('新名称')
+                        ->placeholder('输入一个名字')
+                        ->autoFocus(),
+                    Row::make()->spacing(8.0)->children([
+                        Button::make('取消'),
+                        Button::make('确定')->variant(ButtonVariant::Primary),
+                    ]),
                 ]))
         );
     }

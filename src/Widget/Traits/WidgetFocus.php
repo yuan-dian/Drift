@@ -7,12 +7,12 @@ use Drift\Input\CursorShape;
 use Drift\Input\FocusNode;
 
 /**
- * `Widget` 的**焦点面**：光标形状、Tab 序、可聚焦性。
+ * `Widget` 的**焦点面**：光标形状、Tab 序、自动聚焦、可聚焦性。
  *
  * ★ 这些是**声明**不是状态 —— "现在谁聚焦"住在 `Drift\App\FocusManager`；
  *   Widget 挂载后封存（`seal()`），把可变焦点塞进来会立刻撞纪律。
- * ★ `focusNode()` 的 `FocusNode` 是**不可变值对象**（`withOrder()` / `skipped()`
- *   都返回新实例），与 `Modifier` 同一套"换新不就地改"。
+ * ★ `focusNode()` 的 `FocusNode` 是**不可变值对象**（`withOrder()` / `skipped()` /
+ *   `withAutoFocus()` 都返回新实例），与 `Modifier` 同一套"换新不就地改"。
  * ★ 这里**没有**"声明独占某个键"的入口（`claimKeys()` 2026-11-03 已删）：
  *   键归谁由路由顺序回答（焦点链先、加速键后），见 `App\InputRouter::dispatch()`。
  *
@@ -54,6 +54,22 @@ trait WidgetFocus
     {
         $this->mutate();
         $this->focus = ($this->focus ?? FocusNode::make())->skipped();
+
+        return $this;
+    }
+
+    /**
+     * 焦点**空着**时自动落到本控件（进页面 / 弹出模态之后就能直接打字）。
+     *
+     * 只认 Tab 序里**第一个**声明者，且只在没人聚焦时接管 —— 与 Flutter 的
+     * `autofocus` 同语义。`skipFocus()` / `disabled()` 的子树不进 Tab 序，不参与。
+     *
+     * @api
+     */
+    public function autoFocus(): static
+    {
+        $this->mutate();
+        $this->focus = ($this->focus ?? FocusNode::make())->withAutoFocus();
 
         return $this;
     }

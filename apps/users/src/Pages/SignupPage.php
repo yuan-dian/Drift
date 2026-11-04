@@ -48,6 +48,7 @@ final class SignupPage extends StatelessWidget
                     ->label('姓名')
                     ->error($s[1])
                     ->maxLength(32)
+                    ->autoFocus()
                     ->onChanged(fn(string $x) => $this->form->name = $x)),
 
             SubjectBuilder::make($this->form)

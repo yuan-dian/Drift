@@ -12,6 +12,7 @@ use Drift\Widget\Button;
 use Drift\Widget\Column;
 use Drift\Widget\Element;
 use Drift\Widget\Modal;
+use Drift\Widget\TextField;
 use Drift\Widget\Widget;
 use Drift\Dev\Smoke\Overlay\FlatBox;
 
@@ -125,8 +126,21 @@ final class OverlayLabApplication extends Application
         $this->showModal($modal);
     }
 
-    // ── 焦点探针（`$focus` 是 protected，外部读不到 ⇒ 夹具代劳）──────────
+    /** 开一个内容里带自动聚焦输入框的模态（验"打开就能打字"） */
+    public function openModalWithField(string $title = '重命名'): void
+    {
+        $modal = Modal::make()
+            ->title($title)
+            ->child(Column::make()->spacing(4.0)->children([
+                TextField::make()->label('新名称')->autoFocus(),
+                Button::make('确定')->command('modal.inside'),
+            ]));
 
+        $this->modals[] = $modal;
+        $this->showModal($modal);
+    }
+
+    // ── 焦点探针（`$focus` 是 protected，外部读不到 ⇒ 夹具代劳）──────────
     public function focusForTest(?\Drift\Widget\Element $element): void
     {
         if ($element !== null) {

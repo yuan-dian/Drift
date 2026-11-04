@@ -126,6 +126,20 @@ final class FocusManager
             Pipeline::current()->scheduleFrame();
         }
 
+        // 自动聚焦：焦点空着就交给 Tab 序里第一个声明 `autoFocus()` 的节点。
+        // ★ 只在"没人聚焦"时动手（与 Flutter 同语义）：抢焦点会把用户正在操作的
+        //   控件弹走。模态那一支不需要额外条件 —— 陷阱生效时上面刚把陷阱外的旧
+        //   焦点清成 null，于是自然落到对话框里。
+        if ($this->focused === null) {
+            foreach ($this->order as $candidate) {
+                if ($candidate->widget()->focusNode()?->autoFocus === true) {
+                    $this->focus($candidate);
+
+                    break;
+                }
+            }
+        }
+
         if ($this->lastHit !== null && !$this->lastHit->isMounted()) {
             $this->lastHit = null;
         }

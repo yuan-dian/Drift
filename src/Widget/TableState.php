@@ -946,7 +946,8 @@ final class TableState extends State implements Scrollable, EditableText
     // ★ 为什么实现这个接口而不是在单元格里放一个 `TextField`：
     //   1. **焦点节点**：`TextField` 自带 `markFocusable()`，放进虚拟化的行里
     //      会随行回收一起消失（焦点丢在虚空的同一个坑，见阶段 2b 的裁决）；
-    //      而且没有任何"程序化聚焦后代"的通道（本仓无 `GlobalKey`、无 autoFocus）。
+    //      而且没有"程序化聚焦某个后代"的通道（`autoFocus()` 只在焦点空着时
+    //      按文档序接管，指定不了具体哪一个）。
     //   2. **IME / 剪贴板**：`Application` 的环靠 `focusedState() instanceof
     //      EditableText && isEditing()` 门控 —— 表格自己实现它，两个环一行不改
     //      就能用在单元格上（`caretRect()` 给候选窗定位、`Ctrl+C/V` 走选区）。
