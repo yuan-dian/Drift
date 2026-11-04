@@ -1800,6 +1800,13 @@ relayout 脏边界**成对**做（单独做一个只是把瓶颈搬到对面）�
 settle 319 / layout 1,653 / paint 1,851µs ⇒ **即使 layout 全省也只省掉 43%**。
 复核命令固定为 `php tools/frame-tax-probe.php --pages --check`，别再靠记忆判断"该不该做"。
 
+★ **复核记录（2026-11-04，12k 合成档）**：`frame-tax-probe --scale` 量 12,003 节点 ——
+首布局 1,026.4ms / 稳态帧 8.7µs / 全量重排 49.8ms（**4.15µs/节点**）。
+8,000µs 那条线在**这个规模**上触线 6.2×，但稳态帧仍只有 8.7µs，且上一段 27 个真实页的
+三条生产触发均未成立 ⇒ **结论不变**：脏矩形与 relayout 边界继续驻留、成对才做。
+合成档触线**不算立项**；三道门（真实消费者 / AOT 口径 / 成对）与五维评估见
+[`DESIGN-INCREMENTAL-LAYOUT-VERDICT-2026-11-04.md`](docs/DESIGN-INCREMENTAL-LAYOUT-VERDICT-2026-11-04.md)。
+
 **软光栅为什么慢、修了什么**（逐图元定位，见 `_build/bench-canvas-prims.php`）：
 
 - 瓶颈**不在字形**。曾假设在 `BitmapFontFace::rasterize()`（每帧每字形重算缩放）并加了

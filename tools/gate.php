@@ -21,6 +21,7 @@ declare(strict_types=1);
  *   probe     探针骨架（probe-audit --selftest）
  *   pixels    像素契约（probe_pixels --selftest，依赖本机 python ⇒ 允许"没测到"）
  *   tick      每帧固定税（frame-tax --check，6 条自洽判据）
+ *   scale     12k 节点尺子（frame-tax --scale，5 条自洽判据）
  *   sym       崩溃符号翻译（rva2sym --selftest，6 条；合成 map，无构建前置）
  *   decode    图片解码通道序（decode-selftest；要 MSVC + WIC ⇒ 允许"没测到"）
  *   m2        M2 conformance（W1–W8 静态 + 夹具 + 量具反例自检）
@@ -129,6 +130,8 @@ $checks = [
         false,
     ],
     'tick'     => ['每帧固定税（frame-tax）', [PHP_BINARY, $root . '/tools/frame-tax-probe.php', '--check'], false],
+    // 判据只认自证 / 比值 / 结构事实；绝对耗时当红线会随机器抖动误报。
+    'scale'    => ['12k 节点尺子（frame-tax --scale）', [PHP_BINARY, $root . '/tools/frame-tax-probe.php', '--scale'], false],
     // ★ 崩溃日志里的 `模块+RVA` 能不能翻成函数名 —— 这是"崩溃可观测"闭环的最后一环。
     //   自检用**合成 map**，不依赖有没有构建过 exe（所以廉价、无前置）。
     'sym'      => ['崩溃符号翻译（rva2sym）', [PHP_BINARY, $root . '/tools/rva2sym.php', '--selftest'], false],

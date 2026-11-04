@@ -44,6 +44,12 @@ declare(strict_types=1);
  * ★ `--check` 只跑 500 行一个规模（30 帧），约 1s；不带参数是五档报告（10/50/200/500
  *   行 + 12k 节点档），末档 ~12k 节点是 Raven「增量布局值不值得立项」的真分母。
  *
+ * ## `--scale`：12k 节点档的尺子
+ *
+ * 跑 500 + 3000 两档，500 作同量纲基线；报告增印 `us/节点` 与重建帧三段。
+ * 五条判据只认自证 / 比值 / 结构事实，判定线只印在信息行 —— 绝对耗时当红线
+ * 会随机器抖动误报。三数与归一化值进 `--json` 判据 ② 的 data。
+ *
  * ## `--pages`：把工作负载换成**真实页面**（2026-11-02）
  *
  * M5（脏矩形 / 脏边界）的触发条件一直写作"**重建帧**掉帧"，但分母从来是**合成的
@@ -97,17 +103,20 @@ use Drift\Widget\Widget;
 $args = \array_slice($argv, 1);
 /** `--json`：判据结果吐成机器可读文档（stdout 上只有它），见 `CheckReport` */
 $json = \in_array('--json', $args, true);
+/** `--scale`：12k 节点档 + 5 条自洽判据（独立入口，不改变 `--check` 的形状） */
+$scale = \in_array('--scale', $args, true);
 /** ★ `--json` 隐含 `--check`：只有判据结果才有结构化输出，报告模式本来就只有表 */
-$check = $json || \in_array('--check', $args, true);
+$check = !$scale && ($json || \in_array('--check', $args, true));
 /** `--pages`：把工作负载换成**真实 showcase 页面**（M5 的真分母，见文件头 §页面档） */
 $pages = \in_array('--pages', $args, true);
-/** `--check` 只跑一档（进闸门要快）；报告模式四档看趋势 */
-// 12k 节点档（≈3000 行）是 Raven「增量布局值不值得立项」的真分母；只进报告档，
-// `--check` 仍 500 行（闸门要快，且判据只认静态树自洽）。
-$sizes = $check ? [500] : [10, 50, 200, 500, 3000];
-$frames = $check ? 30 : 50;
+/** `--check` 只跑一档（进闸门要快）；`--scale` 跑 500 + 3000 两档，500 是同量纲基线 */
+// `--check` 必须保持 500 行：那 6 条判据的前提是「静止的合成树」，换分母会一起失效。
+$sizes = $scale ? [500, 3000] : ($check ? [500] : [10, 50, 200, 500, 3000]);
+$frames = ($check || $scale) ? 30 : 50;
 /** @var array<string, mixed> 最后一档的结果（`--check` 判据读它） */
 $last = [];
+/** @var array<int, array<string, mixed>> 按行数索引的全部结果（`--scale` 判据读它） */
+$all = [];
 
 const W = 400.0;
 const H = 300.0;
@@ -267,6 +276,7 @@ $measure = static function (string $label, \Closure $root, float $w, float $h, i
         'nodes' => $nodes,
         'perFrameUs' => \round($elapsed / $frames / 1000.0, 1),
         'layoutUs' => \round($layoutNs / 1000.0, 1),
+        'perNodeUs' => $nodes > 0 ? \round($layoutNs / 1000.0 / $nodes, 3) : 0.0,
         'coldUs' => \round(\array_sum($cold) / 1000.0, 1),
         'rebuildUs' => \round(\array_sum($rebuild), 1),   // 已经是 us（上面那次 foreach 换算过）
         'rebuild' => $rebuild,
@@ -431,19 +441,28 @@ if ($pages) {
     ))->emit($json);
 }
 
-$json || \printf("%6s %8s %10s %14s %12s %7s %6s\n", 'rows', 'nodes', 'cold(us)', 'perFrame(us)', 'layout(us)', 'paint', 'skip');
+$json || \printf("%6s %8s %10s %14s %12s %10s %7s %6s\n", 'rows', 'nodes', 'cold(us)', 'perFrame(us)', 'layout(us)', 'us/node', 'paint', 'skip');
 $prev = null;
 foreach ($sizes as $rows) {
     $r = $measure((string) $rows, $syntheticRoot($rows), W, H, $frames);
+    $all[(int) $r['label']] = $r;
     $json || \printf(
-        "%6d %8d %10.1f %14.1f %12.1f %7d %6d\n",
+        "%6d %8d %10.1f %14.1f %12.1f %10.3f %7d %6d\n",
         (int) $r['label'],
         $r['nodes'],
         $r['coldUs'],
         $r['perFrameUs'],
         $r['layoutUs'],
+        $r['perNodeUs'],
         $r['paint'],
         $r['skip'],
+    );
+    $json || \printf(
+        "       重建帧: settle %d / layout %d / paint %d us（合计 %.1f us）\n",
+        $r['rebuild']['settle'],
+        $r['rebuild']['layout'],
+        $r['rebuild']['paint'],
+        $r['rebuildUs'],
     );
 
     $parts = [];
@@ -457,7 +476,7 @@ foreach ($sizes as $rows) {
     $json || \printf("       分段: %s\n", $parts === [] ? '（全部 <0.5us）' : \implode('  ', $parts));
     $json || \printf("       版本: %s\n", $r['delta']);
 
-    if ($prev !== null) {
+    if ($prev !== null && (int) $r['label'] > (int) $prev['label']) {
         $dr = (int) $r['label'] - (int) $prev['label'];
         $json || \printf(
             "       ↗ 每行: 帧 %+.2f us/行, layout %+.2f us/行\n",
@@ -467,6 +486,78 @@ foreach ($sizes as $rows) {
     }
     $prev = $r;
     $last = $r;
+}
+
+// ── `--scale`：12k 档的五条自洽判据 ──
+// 必须排在 `!$check` 的 exit 之前：`--scale` 不置 `$check`，晚了就永远跑不到。
+if ($scale) {
+    $big = $all[3000] ?? null;
+    $base = $all[500] ?? null;
+    $nodes = $big['nodes'] ?? 0;
+    $cold = $big['coldUs'] ?? 0.0;
+    $steady = $big['perFrameUs'] ?? 0.0;
+    $full = $big['layoutUs'] ?? 0.0;
+    $rebuildLayout = $big['rebuild']['layout'] ?? 0;
+    $perNode = $big['perNodeUs'] ?? 0.0;
+    $basePerNode = $base['perNodeUs'] ?? 0.0;
+
+    if (!$json) {
+        \printf("\n判定线（信息，不作判据）：全量重排 8000us / 稳态帧 8000us / 帧预算 16700us\n");
+        \printf("口径：PHP 解释器 + 软光栅；AOT 未复量\n");
+    }
+
+    $scaleItems = [];
+    $scaleItems[] = new CheckItem('①', $nodes >= 10000, \sprintf(
+        '12k 档真建起来了：%d 节点（≥10000）',
+        $nodes,
+    ));
+
+    $fourOk = $cold > 0 && $steady > 0 && $full > 0 && $rebuildLayout > 0;
+    $scaleItems[] = new CheckItem('②', $fourOk, \sprintf(
+        '四数齐全且非零：冷 %.1f / 稳态 %.1f / 全量 %.1f / 重建 layout %d us',
+        $cold,
+        $steady,
+        $full,
+        $rebuildLayout,
+    ), [
+        'nodes' => $nodes,
+        'coldUs' => $cold,
+        'perFrameUs' => $steady,
+        'layoutUs' => $full,
+        'rebuildLayoutUs' => $rebuildLayout,
+        'usPerNode' => $perNode,
+        'baseUsPerNode' => $basePerNode,
+    ]);
+
+    $ratio = $basePerNode > 0 ? $perNode / $basePerNode : 0.0;
+    $linearOk = $ratio >= 0.5 && $ratio <= 2.0;
+    $scaleItems[] = new CheckItem('③', $linearOk, \sprintf(
+        '归一化自洽：%.3f / %.3f us每节点 = %.2f×（容许 0.5–2.0）',
+        $perNode,
+        $basePerNode,
+        $ratio,
+    ));
+
+    $steadyOk = $steady > 0 && $steady <= 8000.0;
+    $scaleItems[] = new CheckItem('④', $steadyOk, \sprintf(
+        '稳态帧 %.1fus %s 8000us（8ms 产品要求）',
+        $steady,
+        $steadyOk ? '≤' : '超过',
+    ));
+
+    $premiseOk = $full > 0 && $rebuildLayout >= $full / 2.0;
+    $scaleItems[] = new CheckItem('⑤', $premiseOk, \sprintf(
+        'layout 仍是全量：重建帧 %dus %s 全量重排 %.1fus 的一半',
+        $rebuildLayout,
+        $premiseOk ? '≥' : '<',
+        $full,
+    ));
+
+    (new CheckReport(
+        'frame-tax --scale',
+        $scaleItems,
+        \sprintf('5 项判据全过（%d 节点 / %d 帧 / %.3f us每节点）', $nodes, $frames, $perNode),
+    ))->emit($json);
 }
 
 if (!$check) {
