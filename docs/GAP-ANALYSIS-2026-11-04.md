@@ -138,3 +138,60 @@ TextField::make()
 - **`inputFormatters`**：先用 `onChanged` 里过滤即可；框架层过滤器要处理
   "过滤后与受控值不同步"，收益不足。
 - **i18n / RTL / BlendMode / 真 TabBar / 装饰控件**：零消费者，继续延后。
+
+---
+
+## 8. 第二轮复核：滚动可控性
+
+### 8.1 换了扫法
+
+上一轮按「控件有没有某项属性」扫（`TextField` 的 `error/helper/maxLength`），
+本轮反过来：**扫仓库自己记着的"做不到"** —— 注释里承认的限制、靠脚本兜的审计、
+用常量写死的尺寸。这类"绕路"比任何框架清单都可信，因为它已经付过代价。
+
+### 8.2 三条实证（都是仓库原文）
+
+| 位置 | 原文 | 含义 |
+|---|---|---|
+| `LoadMorePage` 类头 | 「「加载更多」是**按钮**，不是"滚到底自动加载"：`LazyColumn` 今天没有 `onEndReached`」 | **读不带**滚动位置 ⇒ 无限滚动只能靠按钮 |
+| `ScrollView` 公开面 | 只有 `child()` / `vertical()` / `createState()` | **写不进**滚动位置 ⇒ 滚到底 / 回到顶部无入口 |
+| `ScrollInputRouter::revealFocused()` | 唯一的滚动触发是**焦点** | 应用拿不到 State ⇒ 命令只能由框架代发 |
+
+同类第二处：`TableState` 注释把「本仓无 `GlobalKey`、无 autoFocus」列为
+"不把 `TextField` 放进虚拟化行"的理由之一 —— 同一个根因（**应用无法对某个
+具体控件下达命令**）在两张不同的痛点上各出现过一次。
+
+### 8.3 判定：不是缺控件，是缺一句柄
+
+| 框架 | 读位置 | 写位置 |
+|---|---|---|
+| Flutter | `ScrollController.offset` + `ScrollNotification` | `jumpTo` / `animateTo` |
+| Qt | `verticalScrollBar()->valueChanged` | `setValue()` |
+| WPF | `ScrollViewer.ScrollChanged` | `ScrollToEnd()` |
+| Web | `scrollTop` + `IntersectionObserver` | `scrollTo()` |
+| **本仓** | 无 | 无 |
+
+`Scrollable` 接口刻意只承诺「收到 Δ 怎么办」（`scrollBy`），不承诺「偏移存在哪」
+—— 这条设计是对的（`ScrollView` 的偏移住 State、`Table` 的外置到 Store），
+**不改它**。缺的是接口之外的一个**绑定句柄**：应用造一个 `ScrollController`，
+交给 `ScrollView` / `LazyColumn`，之后既能读偏移也能命令它滚。
+
+### 8.4 裁决与落点
+
+| 决策 | 理由 |
+|---|---|
+| 新增 `ScrollController`（句柄）+ `ScrollMetrics`（State 侧契约） | 句柄是**声明层对象**，由 State 挂载/卸载时 `attach`/`detach`；不做 `GlobalKey`，符合 `BuildContext` 无向上查找的既有裁决 |
+| `jumpTo()` 用 `scrollBy(Δ)` 表达，不新增绝对定位原语 | 夹取（下界 0、上界 `maxScroll`）已收口在 `ScrollLane::move()`；再加一条绝对路径等于把夹取写第二遍 |
+| 偏移通知在 State 侧**去重**后再回调 | 滚动入口有五个（`scrollBy` / `scrollByAxis` / `glideByAxis` / `ensureVisible` / `tickFrame`），逐个判"有没有真动"容易漏；按值去重是幂等的，宁可多调 |
+| 回调签名 `(float $offset, float $maxOffset)` | 「滚到底」的判据要两者相减，只给 offset 应用还得自己再摸一次盒 |
+
+### 8.5 判据
+
+| 用例 | 钉什么 |
+|---|---|
+| 绑定 | `controller->offset()` 在 mount 后跟随真实偏移 |
+| 命令 | `jumpToBottom()` 后 `offset() === maxOffset()`，且界面真的滚了 |
+| 回调 | 滚动 ⇒ `onChanged` 收到 `(offset, max)`；**同值不重复回调** |
+| 上限 | `jumpTo(1e9)` 被盒夹到 `maxScroll`，不飞走 |
+| 解绑 | State 卸载后 `offset()` 返回 0（不乱读死盒） |
+| 无 controller | 不传 ⇒ 一切照旧（既有路径零改动） |
