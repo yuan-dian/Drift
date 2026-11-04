@@ -259,3 +259,75 @@ Tab，而 `Modal` 正是为此存在的。
 | 失效边界 | `skipFocus()` / `disabled()` 子树里的声明不生效 |
 | 端到端 | 真 `Application`：开带输入的模态 ⇒ 聚焦并进编辑态；关掉 ⇒ 回到锚点（恢复优先于自动聚焦） |
 
+## 10. 第四轮复核：窗口尺寸与响应式
+
+### 10.1 上一轮的判断是错的
+
+第三轮把"响应式"列为缺口时，依据是"`BuildContext` 读不到窗口尺寸"。复核后修正：
+**字段一直有**（`$width` / `$height`，`attach()` 时用根约束填），缺的是**它不会更新**。
+
+`repaintForResize()` 只跑布局 + 绘制，不 `settle()` 也不下发新 ctx ⇒ 无论怎样 resize，
+`build()` 里读到的宽高永远是 `attach()` 那一刻的。**是"有但死了"，不是"没有"。**
+
+### 10.2 代价（仓库自己的记录）
+
+| 证据 | 原文 |
+|---|---|
+| `ShowcaseState::NAV_WIDTH` | 侧栏定宽 200 |
+| `Bootstrap::MIN_WINDOW_WIDTH` | 420 ⇒ 内容区只剩 220 |
+| `tools/narrow-audit.php` | 专门逐页审计"220 宽装不装得下" |
+| 同文件 | 「被裁掉的右边**没有横向滚动条可以拿回来**」 |
+
+实测（本轮）：内容区 220 宽时 **34 页里有 5 页装不下**。这不是理论缺口，是每次
+把窗口拖到最小都会发生的事。
+
+### 10.3 裁决：暴露**档位**，不暴露连续尺寸
+
+三条理由，任一条都足够：
+
+1. **频率**：拖动 resize 是高频路径（平台在模态尺寸循环里同步调回 PHP）。
+   逐像素重建全树会卡 —— 而"档位不变 ⇒ 布局结论不变"，重排就够了。
+2. **正确性**：在"档内不重建"的前提下，`build()` 看到的宽度必然滞后。
+   把它暴露成响应式判据就是埋坑（今天已经埋过：`LazyListState` 拿它算虚拟化窗口）。
+3. **对标**：Material 3 `WindowSizeClass`、CSS media query、Tailwind/Bootstrap 断点 ——
+   主流都是**离散档做结构响应**；连续值交给布局层（`Expanded` / 比例），那本来就不需要 rebuild。
+
+所以 `BuildContext` 只新增一个**永不过期**的值（`windowSize()`），宽度语义保持原样并注明时限。
+
+### 10.4 落点
+
+- `WindowSize` 枚举：`Compact < 600 / Medium < 1000 / Expanded < 1440 / Large`。
+- `BuildContext::windowSize()`：构造参数可选，不给就按 `$width` 推 ⇒ 测试与审计只传宽即可。
+- `Application::adoptWindowSize()`：**跨档才下发**（走现成的 `applyContext()` 链，
+  根 + 浮层两棵树），档内直接返回。`frame()` 与 `repaintForResize()` 各调一次。
+- 消费者：showcase 侧栏 Compact 档从 200 收成 56（`IconButton` 图标栏，标签仍进无障碍名）。
+
+### 10.5 判据
+
+| 用例 | 钉什么 |
+|---|---|
+| 断点 | 599/600/999/1000/1439/1440 六个边界，以及 `atLeast()` 是包含比较 |
+| 推导 | 不给参数时按宽推；`withTheme()` 不动档位也不动宽高 |
+| 跨档 | `repaintForResize` 跨越断点 ⇒ `build()` 重跑且拿到新档 + 新宽 |
+| 档内 | 同档 resize ⇒ `build()` **不重跑**（宽度停在跨档那次） |
+| 零视口 | 最小化（0×0）不改档 —— 不许被当成 Compact |
+| 外壳 | 420 宽下侧栏不再有 `NavButton`、整棵外壳不裁剪；940 宽下 `NavButton` 还在 |
+| 审计 | `narrow-audit.php`：内容区 364 宽 · **34 页 0 页装不下**（改造前 220 宽是 5 页） |
+
+牙检：去掉"档内不下发"的门控 ⇒ `builds` 从 3 涨到 7，档内判据当场红；
+强制不折叠 ⇒ 外壳判据当场红。
+
+### 10.6 顺手修的
+
+`narrow-audit.php` 的夹具给 `\Closure` 参数一律塞 `static function (): void {}`。
+异步页会立刻 `$fetch()->onProgress(...)` ⇒ `Call to a member function onProgress() on null`。
+这个缺陷一直被"220 宽下早早溢出"掩盖着，侧栏收窄后页面能排进去了才暴露。
+改为返回 `Future::pending()`（审计只量布局，不需要数据落地）。
+
+### 10.7 遗留
+
+`$ctx->width/$height` 在**档内**仍是陈旧的（`TableState` / `LazyListState` 拿它算虚拟化窗口，
+靠 `windowCovers()` 自愈，代价是一帧）。真正的"读布局期真实约束"是 `LayoutBuilder`
+那一类能力，与"档位"正交，另议。
+
+
