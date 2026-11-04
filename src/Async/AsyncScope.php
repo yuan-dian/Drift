@@ -102,12 +102,29 @@ final class AsyncScope
      * ★ 已结算的 Future 不会让出（`Future::resolved()` / 同步后端都是这条路），
      *   所以整段代码在同步场景下就是普通顺序代码。
      *
+     * ★ `$onProgress` 收进来是**纪律**，不是语法糖：`Future::onProgress()` 不沿
+     *   `then()` 派生链传递，且结算后再挂最多补发一次终值 —— 于是"挂晚了 / 挂错了
+     *   那条"这两种错法都**不报错**，只表现为进度条不动。把它放进 `await()` 的入参，
+     *   正确顺序由本方法保证，调用方不必再记住这条。
+     *   ★ 但它只能挂到**传进来那条**。要让进度真的动起来，传的必须是
+     *   `$host->submit($job)` 的返回值（或任何没派生过的 Future）—— 传
+     *   `$f->then(...)` 的结果照样收不到，那是 `Future` 的既有契约，本方法改不了。
+     *
+     * @param null|callable(float): void $onProgress 进度回调（`0.0`–`1.0`）；
+     *        本来就有进度的话会**立刻**收到一次当前值（`Future::onProgress()` 的行为）
+     *
      * @api
      */
-    public function await(Future $future): mixed
+    public function await(Future $future, ?callable $onProgress = null): mixed
     {
         $this->assertInside();
         $this->guardCancelled();
+
+        // ★ 排在 then/catch 之前：两条是独立通道，顺序不影响正确性，但先订进度
+        //   才符合"看着它一点点走完"的直觉；也保证补发的那次进度不被结算回调抢先。
+        if ($onProgress !== null) {
+            $future->onProgress($onProgress);
+        }
 
         $settled = false;
         $value = null;

@@ -27,6 +27,7 @@ use Drift\Dev\Tests\Support\SmokeTestCase;
  * | 10 | 嵌套 `AsyncScope` | 子流水线跑不起来，或取消打不到内层 |
  * | 11 | `sleep()` 没有延时函数 ⇒ 返回 `false` | `while` 里退化成零延时重试（请求风暴） |
  * | 12 | 被 body 吞掉的取消在**下一个让出点**原样重来 | 点了"停止"还在查（`fetchResult` 的现场） |
+ * | 13 | `await()` 透传进度，且结算/取消后不再来 | 进度条不动（挂晚 / 挂错那条，**不报错**） |
  *
  * ★ 5 是最值钱的一条：取消若只是"不再交付"而不终结协程，Fiber 连同它捕获的
  *   闭包一起挂在 `suspend()` 上永不释放 —— 这种泄漏界面上完全看不出来。
@@ -34,6 +35,9 @@ use Drift\Dev\Tests\Support\SmokeTestCase;
  *   不停轮询"写了 `catch (\Throwable)`，它把取消哨兵一起接住 ⇒ 循环继续 ⇒ 又排
  *   一个定时器。`sleep(): bool`（11）是同一轮里补的 —— 顺序代码需要知道
  *   "到底睡没睡"。两条都是应用的形状反过来改了原语。
+ * ★ 13 是同一类：`uploadFiles()` 里那段「进度必须挂在根 Future 上，且在
+ *   `await()` 之前」的警告注释，就是"原语没接住这条纪律"的证据。收进 `await()`
+ *   之后，调用方不必再记住它。
  */
 final class AsyncScopeTest extends SmokeTestCase
 {
@@ -419,6 +423,81 @@ final class AsyncScopeTest extends SmokeTestCase
             '被吞的取消 · 外层仍是"已取消"而不是"已完成/失败"',
             $outer->isCancelled() && !$outer->isDone(),
             'cancelled=' . ($outer->isCancelled() ? 'yes' : 'no') . ' done=' . ($outer->isDone() ? 'yes' : 'no'),
+        );
+
+        $this->flushChecks();
+    }
+
+    /**
+     * 13：`await()` 的进度回调 —— 只在**让出期间**透传，结算/取消之后都不再来。
+     *
+     * ★ 为什么这条判据必须存在：`Future::onProgress()` 不沿 `then()` 派生链传递，
+     *   且结算后再挂最多补发一次终值 —— 于是"挂晚了 / 挂错那条"这两种错法**都不报错**，
+     *   只表现为进度条不动。把回调收进 `await()` 的入参就是为了让正确顺序由原语保证，
+     *   而不是由每个调用方记住。
+     * ★ 还有一条容易被当成 bug 的既有行为：挂的时候若**已经有**进度，
+     *   `Future::onProgress()` 会**立刻补发一次**（第 ③ 段）。它不是重复投递，
+     *   是"迟到的订阅者也该知道现在到哪了"。
+     */
+    public function testAwaitForwardsProgressOnlyWhilePending(): void
+    {
+        $box = ['f' => null];
+        $seen = [];
+
+        $outer = AsyncScope::task(function (AsyncScope $co) use (&$box, &$seen): void {
+            $f = Future::pending();
+            $box['f'] = $f;
+
+            // ① 先报一次进度，再 await —— 挂的瞬间应当补发
+            $f->reportProgress(0.1);
+            $co->await($f, function (float $p) use (&$seen): void {
+                $seen[] = $p;
+            });
+        });
+
+        $f = $box['f'];
+        check(
+            '进度 · 挂的时候已有进度 ⇒ 立刻补发一次',
+            $seen === [0.1],
+            'seen=' . \json_encode($seen),
+        );
+
+        $f->reportProgress(0.5);
+        $f->reportProgress(0.75);
+        check(
+            '进度 · 让出期间每一次 reportProgress 都到达回调',
+            $seen === [0.1, 0.5, 0.75],
+            'seen=' . \json_encode($seen),
+        );
+
+        $f->resolve('done');
+        $f->reportProgress(1.0);
+        check(
+            '进度 · 结算之后不再有进度（Future 已终结）',
+            $seen === [0.1, 0.5, 0.75] && $outer->isDone(),
+            'seen=' . \json_encode($seen) . ' done=' . ($outer->isDone() ? 'yes' : 'no'),
+        );
+
+        // ② 取消之后同样不该再有进度
+        $box2 = ['f' => null];
+        $seen2 = [];
+
+        $cancelled = AsyncScope::task(function (AsyncScope $co) use (&$box2, &$seen2): void {
+            $f = Future::pending();
+            $box2['f'] = $f;
+            $co->await($f, function (float $p) use (&$seen2): void {
+                $seen2[] = $p;
+            });
+        });
+
+        $box2['f']->reportProgress(0.3);
+        $cancelled->cancel();
+        $box2['f']->reportProgress(0.9);
+
+        check(
+            '进度 · 取消之后不再有进度',
+            $seen2 === [0.3] && $cancelled->isCancelled(),
+            'seen=' . \json_encode($seen2) . ' cancelled=' . ($cancelled->isCancelled() ? 'yes' : 'no'),
         );
 
         $this->flushChecks();

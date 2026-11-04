@@ -535,19 +535,16 @@ final class WatermarkStore extends Subject
 
         $future = $this->exec(new UploadBatchJob($sign->toArray(), $items, $this->apiBase));
 
-        // ★ 进度必须挂在**根** Future 上，且在 `await()` **之前**：
-        //   `onProgress()` 不沿 chain 传递；而 await 之后挂可能已经结算了。
-        $future->onProgress(function (float $fraction): void {
-            $this->uploadFraction = $fraction;
-            // ★ 进度条与文案一起动：只动进度条的话，用户在 0% 时看不出"在干什么"
-            $this->uploadMessage = StatusMessage::loading(
-                '正在上传… ' . (string) (int) \round($fraction * 100.0) . '%'
-            );
-            $this->notifyChanged();
-        });
-
         try {
-            $raw = $co->await($future);
+            // ★ 进度交给 `await()` 挂（它保证排在结算回调之前），这里不再手工接线。
+            $raw = $co->await($future, function (float $fraction): void {
+                $this->uploadFraction = $fraction;
+                // ★ 进度条与文案一起动：只动进度条的话，用户在 0% 时看不出"在干什么"
+                $this->uploadMessage = StatusMessage::loading(
+                    '正在上传… ' . (string) (int) \round($fraction * 100.0) . '%'
+                );
+                $this->notifyChanged();
+            });
         } catch (\Throwable $e) {
             $this->uploadedKeys = [];
             $this->uploadMessage = StatusMessage::error($e->getMessage());

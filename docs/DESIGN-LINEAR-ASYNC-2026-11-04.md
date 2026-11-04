@@ -356,9 +356,12 @@ public function run(array $files): void
   codegen、`Image::url()`、增量布局。
 - 不把「宣称」当证据：文章第七节的桌面 GUI 说法、官方矩阵的「Supported」
   都只算输入；本仓结论只认本机实测与 AOT 探针。
-- `AsyncCommand` / `subscribeSettledFor()` **不删除**：即使 `await()` 落地，
+- ~~`AsyncCommand` / `subscribeSettledFor()` **不删除**：即使 `await()` 落地，
   它仍是「给 UI 看的加载态」的合适原语，且 `src/Widget/State::asyncCommand()`
-  与 `apps/users` 都在用。
+  与 `apps/users` 都在用。~~
+  > ★ **2026-11-04 晚修正（§11）**：`AsyncCommand` 保留；`subscribeSettledFor()` 删了。
+  > 上面那句的证据是错的 —— `State::asyncCommand()` 只造命令、`apps/users` 用
+  > `subscribeFor()`，**两者都没调过结算缝**。
 - 「Fiber 不让出阻塞 IO」这条**仍然成立**，只是本仓 IO 已非阻塞 ⇒ 前提不成立。
   文档里必须两句一起写，否则下次又会被单独引用成否决理由。
 
@@ -479,7 +482,8 @@ AsyncScope::isCancelled(): bool
 | **`AsyncScope`** | **有循环（轮询）/ 有重试 / 每步都要更新界面** | `AsyncScopeCommandTest` |
 
 ★ 三者都满足「一条 `Future` 交给一个 `AsyncCommand`」。
-★ `subscribeSettledFor()` 与 `AsyncCommand` **不删除** —— 它们仍是"给 UI 看的加载态"的原语。
+★ ~~`subscribeSettledFor()` 与 `AsyncCommand` **不删除**~~ —— `AsyncCommand` 确实留下来了，
+`subscribeSettledFor()` 则在同日晚随 watermark 迁移完成而删除（零消费者，见 §11）。
 
 ### 8.7 下一棒（尚未做）
 
@@ -665,3 +669,65 @@ public function sleep(int $milliseconds): bool   // false = 本环境没有定�
 `finally` 不跑、Fiber 栈连同捕获的闭包一起泄漏 —— 界面上完全看不出来。
 
 完整量账见 `docs/DEBT-2026-11-02.md` §32。
+
+## 11. 第四棒：收面（2026-11-04 晚）
+
+原地语落地、应用迁移之后，这一棒是**减法**。两件事，一个主题：
+**把调用方必须记住的纪律收进原语，把没人用的缝删掉。**
+
+### 11.1 删掉 `subscribeSettledFor()` —— 它随旧形状一起消失
+
+`§10` 把 watermark 的 5 个命令收成 1 个之后，`subscribeSettledFor()` 在
+`src/` 与 `apps/` **零命中**，只剩自己的 256 行判据。
+
+它解决的是「用**订阅**写多步流程时，这一趟通知是不是结算判不出来」——
+`cancel()` 造的 `AsyncValue::data($old)` 与 `land()` 造的 `data($new)` 形状完全相同。
+而 `AsyncScope` 里**没有订阅**：`await()` 返回就是结算。
+
+⇒ **病和症状一起消失了。** 这条缝连同 `SettledSignal`、`emit()` 的那个 `bool`
+形参、256 行判据一起删除。
+
+★ 前次「不删」的裁决理由是「`State::asyncCommand()` 与 `apps/users` 都在用」——
+那句话把「用 `AsyncCommand`」当成了「用结算缝」，而两者都没调过它。
+**一个错误的事实撑住了一个 API 整整一天。**
+
+★ 判据没有减少覆盖：`cancel()` 的值语义由 `AsyncCommandTest` 的
+`testCancelRestoresLastData` / `testDisposeSilencesLateSettlement` 守着。
+
+### 11.2 `await()` 接住进度
+
+`apps/watermark` 的 `uploadFiles()` 里原来有一段**教程式注释**：
+
+```php
+// ★ 进度必须挂在**根** Future 上，且在 `await()` **之前**：
+//   `onProgress()` 不沿 chain 传递；而 await 之后挂可能已经结算了。
+```
+
+**一段注释在教调用方怎么用原语，就是原语缺东西的信号。** 两个错法（挂晚了、
+挂到派生链上）都**不报错**，只表现为进度条不动。
+
+```php
+public function await(Future $future, ?callable $onProgress = null): mixed
+```
+
+顺序由原语保证，调用方只写"进度到了做什么"。watermark 那边 -8 行。
+
+它**不能**解决"挂派生链收不到"—— 那是 `Future` 的契约（进度不沿 `then()` 播），
+文档里写明了要传 `JobRunner::exec()` / `host->submit()` 那条没派生过的。
+
+### 11.3 一条边界，写在这里免得下次又想错
+
+**`AsyncScope` 的适用范围是「有第二行要写」。**
+
+§10 之后曾列过一个候选：把 `apps/users` 的 `UserStore` 也迁过去。量账否掉了 ——
+它**只有 1 个命令**（取一页 + 四态），迁过去会变成
+`AsyncCommand::make(fn => AsyncScope::task(fn ($co) => $co->await(...)))`：
+多一层 `Fiber`、多一次 `suspend`/`resume`，**能力一点没多**。
+
+| 场景 | 用哪个 |
+|---|---|
+| 一次请求 + 四态给界面画 | `AsyncCommand` —— **终点，不是半成品** |
+| 两步以上 `then()` 串联，中间值不上界面 | `AsyncCommand` + `then()` |
+| 有循环 / 有重试 / 每步都要更新界面 | `AsyncScope` |
+
+完整的账在 `docs/DEBT-2026-11-02.md` §33。

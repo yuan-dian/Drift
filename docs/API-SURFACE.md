@@ -23,11 +23,11 @@
 | Platform | 17 | 16 |
 | Rendering | 34 | 1 |
 | Routing | 8 | 6 |
-| State | 18 | 9 |
+| State | 17 | 8 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
 | Widget | 183 | 216 |
-| **合计** | **496** | **397** |
+| **合计** | **495** | **396** |
 
 覆盖 393 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
 
@@ -596,14 +596,13 @@
 
 ## State 层
 
-### @api（应用可读面） · 18
+### @api（应用可读面） · 17
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
 | `AsyncCommand` | class | src/State/AsyncCommand.php |
 | `AsyncCommand::make()` | method | src/State/AsyncCommand.php |
 | `AsyncCommand::value()` | method | src/State/AsyncCommand.php |
-| `AsyncCommand::subscribeSettledFor()` | method | src/State/AsyncCommand.php |
 | `AsyncCommand::isRunning()` | method | src/State/AsyncCommand.php |
 | `AsyncCommand::run()` | method | src/State/AsyncCommand.php |
 | `AsyncCommand::append()` | method | src/State/AsyncCommand.php |
@@ -619,11 +618,10 @@
 | `SubscribingWidget` | interface | src/State/SubscribingWidget.php |
 | `Subscription` | class | src/State/Subscription.php |
 
-### @internal（框架内部） · 9
+### @internal（框架内部） · 8
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
-| `SettledSignal` | class | src/State/AsyncCommand.php |
 | `Subject::$version` | property | src/State/Subject.php |
 | `Subject::unsubscribeId()` | method | src/State/Subject.php |
 | `SubjectBuilder::source()` | method | src/State/SubjectBuilder.php |
