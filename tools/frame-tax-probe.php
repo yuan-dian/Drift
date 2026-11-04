@@ -84,6 +84,8 @@ require __DIR__ . '/autoload.php';
 
 use Drift\Core\Pipeline;
 use Drift\App\Application;use Drift\App\Frame;
+use Drift\Dev\Bench\FrameTaxApp;
+use Drift\Dev\Bench\FrameTaxMeasure;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Support\CheckItem;
 use Drift\Dev\Support\CheckReport;
@@ -91,12 +93,6 @@ use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Size;
 use Drift\Rendering\FrameStage;
 use Drift\Rendering\SurfaceProfile;
-use Drift\Widget\Column;
-use Drift\Widget\Element;
-use Drift\Widget\Row;
-use Drift\Widget\ScrollView;
-use Drift\Widget\State;
-use Drift\Widget\Text;
 use Drift\Widget\Widget;
 
 // ── 参数 ──
@@ -127,44 +123,21 @@ const PH = 800.0;
 /**
  * 一个"根就是这个 Widget"的应用 —— 合成树与真实页面走**同一条挂载路径**。
  *
- * ★ 收成闭包而不是两个 Application 子类：两档的差别只在"根是谁"，其余
- *   （attach / frame / 计时）必须逐字相同，否则两档的数字不可比。
+ * ★ 两档的差别只在"根是谁"，其余（attach / frame / 计时）必须逐字相同，
+ *   否则两档的数字不可比。
+ * ★ 2026-11-04：原来是**匿名类**，搬进 `Drift\Dev\Bench\FrameTaxApp` 了。
+ *   原因不是洁癖 —— `probes/frame_tax_aot` 要在 tpc 下编译同一段编排，
+ *   而匿名类在 AOT 里没有先例（`docs/AOT-CONSTRAINTS.md` 零记录）。
  */
-$makeAppFor = static fn(\Closure $root): Application => new class($root) extends Application {
-    public function __construct(private readonly \Closure $rootFactory)
-    {
-        parent::__construct();
-    }
-
-    public function buildRoot(): Widget
-    {
-        return ($this->rootFactory)();
-    }
-
-    public function title(): string
-    {
-        return 'tax';
-    }
-};
+$makeAppFor = static fn(\Closure $root): Application => new FrameTaxApp($root);
 
 /**
- * 合成档的根：每行 = 一个 `Row` 带 3 个 `Text`，外层 `ScrollView` 给无界主轴（不会溢出）。
+ * 合成档的根 —— 形状定义搬进 `FrameTaxMeasure::syntheticRoot()`。
  *
- * ★ 用全量 `Column` 而不是 `LazyColumn`：后者只建可见项，节点数不随数据量变
- *   ⇒ 量不出"树大了每帧固定税怎么长"（那正是它的价值，不是缺陷）。
+ * ★ 搬家的理由同 `$measure`：树形状是**历史数字的一部分**（§13.5 那张表、
+ *   `--scale` 的归一化比值、AOT 探针的复量都建在它上面），必须只有一份。
  */
-$syntheticRoot = static fn(int $rows): \Closure => static function () use ($rows): Widget {
-    $list = [];
-    for ($r = 0; $r < $rows; $r++) {
-        $list[] = Row::make()->children([
-            Text::make('R' . (string) $r . 'A'),
-            Text::make('R' . (string) $r . 'B'),
-            Text::make('R' . (string) $r . 'C'),
-        ]);
-    }
-
-    return ScrollView::make(Column::make()->children($list));
-};
+$syntheticRoot = static fn(int $rows): \Closure => FrameTaxMeasure::syntheticRoot($rows);
 
 /**
  * 量一档：冷帧 / 稳态帧固定税 / 重建帧三段 / 全量重排 / 节点数。
@@ -180,112 +153,8 @@ $syntheticRoot = static fn(int $rows): \Closure => static function () use ($rows
  * @param \Closure(): Widget $root
  * @return array<string, mixed>
  */
-$measure = static function (string $label, \Closure $root, float $w, float $h, int $frames) use ($makeAppFor): array {
-    $tight = BoxConstraints::tight(new Size($w, $h));
-    $app = $makeAppFor($root);
-    $surface = new SurfaceProbe();
-    $surface->resize((int) $w, (int) $h, 1.0);
-
-    // ① 冷帧 = **页面打开**：
-    //   ★ `attach()` 自己就跑一帧（mount + settle + layout + paint），不需要再补
-    //     `frame(0)` —— 补了就是**双计**（实测 TablePage 从 35ms 变 37.9ms，
-    //     而且两帧的缓存状态不同，加起来没有意义）。
-    SurfaceProfile::$on = true;
-    SurfaceProfile::reset();
-    $app->attach($surface, $tight);
-    $cold = SurfaceProfile::$ns;
-
-    for ($i = 1; $i <= 10; $i++) { // 再跑十帧预热，之后才是稳态
-        $app->frame($i * 16.0, $tight);
-    }
-
-    SurfaceProfile::reset();
-    $paint0 = Pipeline::current()->paintRunCount();
-    $skip0 = Pipeline::current()->paintSkipCount();
-    $sv0 = Pipeline::current()->structureVersion();
-    $be0 = Pipeline::current()->layoutEpoch();
-    $mk0 = Pipeline::current()->markedCount();
-
-    $t0 = \hrtime(true);
-    for ($i = 11; $i <= 10 + $frames; $i++) {
-        $app->frame($i * 16.0, $tight);
-    }
-    $elapsed = \hrtime(true) - $t0;
-
-    $sv = Pipeline::current()->structureVersion() - $sv0;
-    $be = Pipeline::current()->layoutEpoch() - $be0;
-    $mk = Pipeline::current()->markedCount() - $mk0;
-    $seg = SurfaceProfile::perCall();
-    // ★ 这两笔必须**现在**取：后面还要跑重建帧（每帧必画 10 次），
-    //   放到 return 处取会把它们算进"稳态"（实测 10/30，看起来像门控退化）。
-    $paintRuns = Pipeline::current()->paintRunCount() - $paint0;
-    $skips = Pipeline::current()->paintSkipCount() - $skip0;
-
-    // ② 同一棵树单次全量重排（暖缓存）—— M5 的分母。
-    //   ★ 必须排在重建帧**之前**：重建帧每帧造一整棵新树（几百个对象），
-    //     留下的垃圾会把 GC 压力带进后面每一次分配 —— 实测把 500 行的
-    //     `layout(us)` 从 8.0ms 抬到 11.6ms（+45%），量具自己污染了自己的读数。
-    $rootEl = $app->root();
-    $box = $rootEl?->effectiveBox();
-    $layoutNs = 0;
-    if ($box !== null) {
-        $reps = 5;
-        $lt = \hrtime(true);
-        for ($k = 0; $k < $reps; $k++) {
-            $box->layout($tight);
-        }
-        $layoutNs = (int) \round((\hrtime(true) - $lt) / $reps);
-    }
-
-    // ③ 重建帧：每帧换一份等价新树（整页 setState 的形状）
-    $rebuild = ['settle' => 0, 'layout' => 0, 'paint' => 0];
-    if ($rootEl !== null) {
-        $reps = 10;
-        for ($i = 0; $i < $reps; $i++) {
-            SurfaceProfile::reset();
-            $rootEl->update($root());
-            $app->frame((11 + $frames + $i) * 16.0, $tight);
-            foreach (['settle', 'layout', 'paint'] as $k) {
-                $rebuild[$k] += (int) (SurfaceProfile::$ns[$k] ?? 0);
-            }
-        }
-        foreach ($rebuild as $k => $v) {
-            // ★ 换成 µs：`SurfaceProfile::$ns` 是纳秒，而表头印的是 us。
-            //   （这类"单位没换"在本仓出过 1000× 的事故，见 `formatNs()` 的注。）
-            $rebuild[$k] = (int) \round($v / $reps / 1000.0);
-        }
-    }
-
-    SurfaceProfile::$on = false;
-
-    // ④ 节点数（页面档要它解释排名：是"页大"还是"页慢"）
-    $nodes = 0;
-    if ($rootEl !== null) {
-        $stack = [$rootEl];
-        while ($stack !== []) {
-            $e = \array_pop($stack);
-            $nodes++;
-            $e->visitChildren(static function (Element $c) use (&$stack): void {
-                $stack[] = $c;
-            });
-        }
-    }
-
-    return [
-        'label' => $label,
-        'nodes' => $nodes,
-        'perFrameUs' => \round($elapsed / $frames / 1000.0, 1),
-        'layoutUs' => \round($layoutNs / 1000.0, 1),
-        'perNodeUs' => $nodes > 0 ? \round($layoutNs / 1000.0 / $nodes, 3) : 0.0,
-        'coldUs' => \round(\array_sum($cold) / 1000.0, 1),
-        'rebuildUs' => \round(\array_sum($rebuild), 1),   // 已经是 us（上面那次 foreach 换算过）
-        'rebuild' => $rebuild,
-        'paint' => $paintRuns,
-        'skip' => $skips,
-        'seg' => $seg,
-        'delta' => 'sv+' . $sv . ' box+' . $be . ' marked+' . $mk,
-    ];
-};
+$measure = static fn(string $label, \Closure $root, float $w, float $h, int $frames): array
+    => FrameTaxMeasure::run($label, $root, $w, $h, $frames);
 
 // ────────────── 页面档：真实 showcase 页面 ──────────────
 //

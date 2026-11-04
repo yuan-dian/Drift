@@ -25,18 +25,24 @@ apps/*/build/
 #   **只有被 `tools/probe-*.py` 依赖的**才开白名单 —— 判据必须可复现：
 #   驱动器在库里而工程不在，等于"这个判据对任何 clone 都是坏的"。
 #
-# ★★ 白名单（2026-11-04 加第二个）：
+# ★★ 白名单（2026-11-04 加第二、第三个）：
 #   · `probes/io_pool/`  —— A2/N5 的常驻真机判据（有 `tools/probe-*.py` 驱动器）
 #   · `probes/fiber_scope/` —— **长期 API 的 AOT 判据**，不是一次性探针：
 #     它 `sources` 直接引 `../../src`，跑的是要上线的 `Drift\Async\AsyncScope`
 #     （F11–F13）；`AsyncScope` 一改就要重跑，否则"Fiber 在 AOT 里可用"
 #     这条结论会悄悄过期。★ 不进 `gate`（一次构建约 2.5 分钟），按需手动跑：
 #     `bash probes/fiber_scope/build.sh && ./fiber_scope_probe.exe`
+#   · `probes/frame_tax_aot/` —— **性能裁决的 AOT 口径**：`DEBT` §28 的「12k 全量
+#     重排 51ms / 6.2×」是解释器数字，而增量布局要不要立项全压在它上面。
+#     布局引擎一改三数就变 ⇒ 必须可复现地重跑，否则又变成"用错尺子判事"。
+#     ★ 同样不进 `gate`（sources 含 `src` + `tools`，构建约 3 分钟）：
+#     `bash probes/frame_tax_aot/build.sh && ./frame_tax_aot_probe.exe`
 /probes/*
 !/probes/io_pool/
 /probes/io_pool/build/
 /probes/io_pool/out.log
 !/probes/fiber_scope/
+!/probes/frame_tax_aot/
 
 # ── 工具输出 ──
 /Errors.log

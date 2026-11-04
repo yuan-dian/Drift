@@ -1,0 +1,54 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# probes/frame_tax_aot/project.yml —— 第 2 道门：帧税三数的 AOT 口径
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# ★ 这个探针存在的一句话理由：`DESIGN.md` §13.5 与 `DEBT` §28 里那些
+#   「12k 全量重排 51ms / 6.2× 触线」的数字，全是 **PHP 解释器 + 软光栅** 跑出来的，
+#   却被当成生产结论在用（工具自己都印着「口径：PHP 解释器；AOT 未复量」）。
+#   增量布局要不要立项，靠的正是这把尺子 —— 尺子不对，结论就没有分量。
+#
+# ★ **不 include `build/base.yml`**：那个文件链 Skia（141MB 的 .lib），
+#   而本探针用 `SurfaceProbe`（纯 PHP 软光栅），一行 Skia 都用不到。
+#   ★ 不加 `no-console`：结论要直接看 stdout。
+#
+# ★★ 调用约定同其它 project.yml：**从仓库根调用**，`sources` 以本文件所在目录为基准。
+
+name: frame_tax_aot_probe
+version: 0.1.0
+
+info:
+  Author: Drift
+  Description: 第 2 道门 —— 帧税三数在 tpc AOT 产物里的复量（增量布局裁决的 AOT 口径）
+
+cxx-std: c++20
+
+cxx-flags:
+  - /utf-8
+  - /FS
+
+job: 16
+
+sources:
+  - app
+  # ★ 真实框架代码：跑的是要上线的那份布局/渲染栈，不是另写一份样例。
+  - ../../src
+  # ★ `Drift\Dev\` 映射到 tools/（composer.json §4.1）：本探针要编译
+  #   `FrameTaxMeasure` / `FrameTaxApp` / `SurfaceProbe` —— 也就是**解释器那把尺子的
+  #   同一份代码**。这是本探针最要紧的一条：测的不是"另一份实现"，
+  #   两份数字才对得上表。
+  #
+  # ★★ **必须逐文件列，不能写 `../../tools`**（2026-11-04 实测）：
+  #   tpc 的 `sources` 是「**翻译单元白名单**」，不是「类解析路径」——
+  #   目录里**所有** .php 都会被当程序的一部分去预处理。而 `tools/Lint/fixtures/`
+  #   里全是**故意写坏的**夹具，其中
+  #   `fixtures/apps/Loop/bin/win32/Bootstrap.php:15` 有裸执行语句，
+  #   于是整条构建死在 `All execution code must be within a function`。
+  #   ⇒ 只列真正需要的那三个文件。
+  - ../../tools/Bench/FrameTaxApp.php
+  - ../../tools/Bench/FrameTaxMeasure.php
+  - ../../tools/Smoke/Frame/SurfaceProbe.php
+  # ★ `SurfaceProbe` 构造时 `new RecordingSurface()` —— **同命名空间**，所以它里面
+  #   没有 `use` 语句，用\"grep use 找依赖\"的方法会漏掉（第一次构建编过了、
+  #   跑到 `main()` 才炸 `class ... is undefined`）。AOT 是静态链接，
+  #   缺的类不会像解释器那样按 PSR-4 现找。
+  - ../../tools/Smoke/Frame/RecordingSurface.php
