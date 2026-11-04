@@ -330,4 +330,98 @@ Tab，而 `Modal` 正是为此存在的。
 靠 `windowCovers()` 自愈，代价是一帧）。真正的"读布局期真实约束"是 `LayoutBuilder`
 那一类能力，与"档位"正交，另议。
 
+---
+
+## 11. 第五轮复核：单行输入框的 `Enter` 是死键
+
+### 11.1 实证：三环路由都没人接
+
+推荐顺序第③项是 `TextField::onSubmitted`（`TextArea` 有而它没有）。复核先钉死
+"今天到底发生了什么"，而不是照抄"少了个回调"：
+
+| 证据 | 原文 / 实测 |
+|---|---|
+| `TextAreaState::interceptKey()` | `Ctrl+Enter` ⇒ `submittedHandler()`；裸 `Enter` ⇒ 插 `\n` |
+| `TextFieldState::handleKey()` | 走 `EditableTextState` ⇒ `TextKeymap` 对 `Enter` 返回 `null`，`Esc` 分支也不匹配 ⇒ **返回 `false`** |
+| `TextKeymap` 类注释 | 「收口键（`Enter`/`Tab`/`Esc`）故意不在这里：它们问的是"这次编辑怎么收场"」 |
+| `InputRouter::dispatch()` | ① 焦点链 → ② 加速键 → ③ `activateFocused()`（`Enter`/`Space` 激活**焦点按钮**） |
+| `activateFocusedWidget()` | 焦点是 `TextField`，不是 `Activatable` ⇒ 直接 `return` |
+
+⇒ 焦点在单行输入框里按 `Enter`：三环全部放行，什么也不发生。仓库里的绕路是
+`UsersApplication::accelerators()` 把 `Ctrl+S` 绑到 `form.submit` —— 注册页要提交，
+只能点按钮或按一个与"表单"无关的组合键。
+
+### 11.2 对照成熟框架：两种流派
+
+| 框架 | 做法 | 归属 |
+|---|---|---|
+| HTML | `<input>` 里 `Enter` 隐式提交 `<form>` | **容器**（隐含默认按钮） |
+| WPF / WinForms | `Button.IsDefault` / `Form.AcceptButton` | **容器** |
+| Qt | `QLineEdit::returnPressed` | **字段** |
+| Flutter | `TextField.onSubmitted` + `textInputAction` | **字段** |
+| GTK | `GtkEntry::activate` | **字段** |
+
+容器派的前提是"表单/默认按钮"这个作用域对象。本仓 §3 已结构性否决 `Form.of()`
+（`BuildContext` 无向上查找、校验规则属业务状态、避免双真相源）⇒ 只剩**字段派**。
+这与 `ScrollController` / `autoFocus` 前两轮的结论同形：**没有向上查找，能力只能靠
+显式注入或声明 + 裁决**。
+
+### 11.3 裁决
+
+| 决策 | 理由 |
+|---|---|
+| `onSubmitted(callable)`，签名 `fn(string $text) => void` | 与 `TextArea::onSubmitted()` 同形；收**当前草稿**（不是受控值），与多行一致 |
+| 只认**裸** `Enter` | 带修饰键的 `Enter` 归应用加速键 / 组合命令。`TextArea` 用 `Ctrl+Enter` 是因为它的裸 `Enter` 已被换行占了，语义不同，不强行对齐 |
+| **没接 handler ⇒ 不吞键** | 硬兼容约束：`ComboBox` 内嵌的 `TextField` 没有提交回调，`activateFocused()` 靠这个放行去开面板（见 `ComboBoxState::keyHandler()` 的类注释）；应用也可能把 `Enter` 绑成加速键。吞了不报错，只是"键盘打不开下拉框" |
+| 提交不写回、不改文本 | 回写只有 `onChanged` 一条路（受控）；提交是"这段编辑怎么收场"，不是一次编辑 |
+| 命令派发**不进控件** | `Widget` 层够不到 `CommandRouter`（§4.3）。应用把 `dispatch('form.submit')` 包成闭包，从组合根经 `UsersRoot::submitHandler()` 注入 —— 与 `menuOpener()` / `windowDrag()` 同一条路。否则"回车提交"会复制一份校验/序列化/回跳 |
+
+★ 最后一条是本轮的**结构收益**：`SignupPage` 两个字段共用同一个 `$submit` 闭包，
+点击「提交」按钮与在任一字段按 `Enter` 走的是**同一个** `form.submit` 命令，
+业务只有一份。若当初把"提交"做成控件自己的行为，这里必然出现第二条提交路径。
+
+### 11.4 落点与判据
+
+- 框架：`TextField::onSubmitted()` / `submittedHandler()`；`TextFieldState::interceptKey()`
+  在 `TextKeymap` 之前认领裸 `Enter`（沿用 `EditableTextState` 已有的三段顺序，
+  不新增路由环）。
+- 消费者：`apps/users` 注册页两字段（真实业务、走命令链）；`apps/showcase` FormPage
+  新演示节（搜索框回车回显）；`ComboBox` 保持零改动，由既有判据守放行语义。
+
+| 用例 | 钉什么 |
+|---|---|
+| 提交 | 接了 handler ⇒ 吃掉 `Enter`，回调收到**含未回写那笔**的草稿文本 |
+| 单行纪律 | `Enter` 不插换行、文本不变 |
+| 无消费者 | 没接 handler ⇒ `Enter` 放行（`ComboBox` 开面板、`activateFocused()` 还活着） |
+| 组合键 | `Ctrl/Alt/Shift+Enter` 三种都不提交、不消费 ⇒ 落给应用 |
+| 端到端 | 真 `UsersApplication`：焦点在姓名框按 `Enter` ⇒ 校验通过 + 回跳列表页 + 播报，与按钮同链 |
+| 回归 | `ComboBoxTest` 既有的「Enter 取第一项 / 开面板」全绿；`page/FormPage` 像素基线（内容变高 ⇒ 页面滚动条拇指短 32px） |
+
+**牙检**（去掉声明或门控，判据必须红）：
+
+1. `submittedHandler()` 恒返回 `null` ⇒ 单测提交判据红 + 真应用 smoke 红（`page=signup`）；
+2. 去掉 `is(KeyChord::enter())` 门控 ⇒ 5 条判据齐红（文本键也触发提交，重复回调）；
+3. 没接 handler 也 `return true` ⇒ 「放行给上层」判据红。
+
+### 11.5 本轮量具
+
+| 项 | 结果 |
+|---|---|
+| PHPUnit | **1322** 用例 / **4529** 断言（上轮 1321 / 4521） |
+| lint | 978 文件 · 0 error · 0 warn |
+| smoke | **473** 条（新增 1 条真应用判据） |
+| golden | 整页 27 / 原语 9，全 OK；`page/FormPage` 基线更新 1 个文件 |
+| narrow-audit | 34 页 · 0 页装不下 |
+| docref | 85 ok / **17 FAIL** —— 全是历史文档的 `文件:行号` 越界，与本轮无关（见 §11.6） |
+
+### 11.6 遗留
+
+- **docref 17 条**：已连续四轮上报。建议照 `API-SURFACE.md` 的先例**去掉行号只留
+  文件名**（行号每改一次代码就漂，闸门会被噪声淹没）；需用户裁决后单独一轮清理。
+- **推荐顺序下一项 `LayoutBuilder`**：读布局期真实约束，与档位正交，能根治
+  `LazyListState` / `TableState` 用陈旧 `$ctx->height` 的一帧代价。改动面在**外层
+  布局协议**（build 先行、layout 后量的时序），值得单独一轮，别塞进控件小改里。
+- 仍未做且零消费者：`obscureText` / `inputFormatters` / i18n / RTL / 真 TabBar
+  （§7 的理由未变）。
+
 
