@@ -443,6 +443,13 @@ foreach ($sizes as $rows) {
         "       重排: %s\n",
         (string) ($r['layoutText'] ?? ''),
     );
+    // ★ 稳态帧也要棒：12k 档的分布是**双峰**的 —— 三次跑出 7.7 / 20.4 / 7.4µs。
+    //   慢的那次是 GC 批量发生（一次 GC 之后连着好几帧都慢），中位就被顶到右峰。
+    //   ⇒ 只印中位会让读者以为"这棵树每帧 20µs"，印上 min 才看得出是双峰。
+    $json || \printf(
+        "       稳态: %s\n",
+        (string) ($r['perFrameText'] ?? ''),
+    );
     $json || \printf(
         "       重建帧: settle %d / layout %d / paint %d us（合计 %.1f us）\n",
         $r['rebuild']['settle'],

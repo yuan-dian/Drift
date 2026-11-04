@@ -287,6 +287,9 @@ function syntheticSection(): void
             (int) $r['skip'],
         );
         \printf("       重排: %s\n", (string) ($r['layoutText'] ?? ''));
+        // ★ 稳态帧的分布是**双峰**的（GC 批量发生 ⇒ 连着好几帧都慢），
+        //   只印中位会让人以为"每帧就是 20µs"。见 `FrameTaxMeasure` ② 的注。
+        \printf("       稳态: %s\n", (string) ($r['perFrameText'] ?? ''));
         \printf(
             "       重建帧: settle %d / layout %d / paint %d us（合计 %s us）\n",
             (int) $r['rebuild']['settle'],
