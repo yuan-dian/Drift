@@ -161,6 +161,9 @@ function pagesSection(): void
             (float) $worst['layoutUs'],
             100.0 * (float) $worst['layoutUs'] / $budgetUs,
         );
+        // ★ 误差棒：AOT 与解释器两边都印同一格式（`Samples::text()`），
+        //   否则"两边数字对不上"里有一半是格式差（§37.5 ② 的老账）。
+        \printf("  它的重排: %s\n", (string) ($worst['layoutText'] ?? ''));
     }
     say('');
 
@@ -283,6 +286,7 @@ function syntheticSection(): void
             (int) $r['paint'],
             (int) $r['skip'],
         );
+        \printf("       重排: %s\n", (string) ($r['layoutText'] ?? ''));
         \printf(
             "       重建帧: settle %d / layout %d / paint %d us（合计 %s us）\n",
             (int) $r['rebuild']['settle'],

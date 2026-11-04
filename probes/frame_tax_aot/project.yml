@@ -46,6 +46,9 @@ sources:
   #   ⇒ 只列真正需要的那三个文件。
   - ../../tools/Bench/FrameTaxApp.php
   - ../../tools/Bench/FrameTaxMeasure.php
+  # ★ 采样摘要（2026-11-04 夜）：`FrameTaxMeasure` 的主数从中位来，这个类算它。
+  #   编进来是因为**两边必须用同一份分位口径** —— 自己再算一遍就会漂。
+  - ../../tools/Bench/Samples.php
   - ../../tools/Bench/ShowcasePages.php
   # ★ 几何指纹（2026-11-04 晚）：证明 AOT 算出的尺寸/位置与解释器逐值相同。
   #   存在的理由是一个真 bug —— tpc 把 `int / int` 编成整数除法，
