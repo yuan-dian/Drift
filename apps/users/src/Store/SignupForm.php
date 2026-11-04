@@ -17,6 +17,7 @@ final class SignupForm extends Subject
     public string $name = '' {
         set (string $v) {
             $this->name = $v;
+            unset($this->errors['name']);
             $this->submitError = '';
             $this->notifyChanged();
         }
@@ -25,25 +26,38 @@ final class SignupForm extends Subject
     public string $email = '' {
         set (string $v) {
             $this->email = $v;
+            unset($this->errors['email']);
             $this->submitError = '';
             $this->notifyChanged();
         }
     }
 
+    /** @var array<string, string> 字段 → 错误文案；缺键 = 该字段没毛病 */
+    private array $errors = [];
+
+    /** 提交级错误（不属于任何字段） */
     public string $submitError = '';
 
-    /** @return list<string> */
-    public function validate(): array
+    /** 某个字段当前的错误；空串 = 没有 */
+    public function errorOf(string $field): string
     {
-        $e = [];
+        return $this->errors[$field] ?? '';
+    }
+
+    /** 校验并落到字段错误表（供 `TextField::error()` 直接读）；true = 全过 */
+    public function validate(): bool
+    {
+        $this->errors = [];
         if ($this->name === '') {
-            $e[] = '姓名不能为空';
+            $this->errors['name'] = '姓名不能为空';
         }
         if (!str_contains($this->email, '@')) {
-            $e[] = '邮箱格式不正确';
+            $this->errors['email'] = '邮箱格式不正确';
         }
 
-        return $e;
+        $this->notifyChanged();
+
+        return $this->errors === [];
     }
 
     /** ★ 唯一序列化出口（§11.4.3：序列化只在边界发生一次） */
@@ -62,6 +76,7 @@ final class SignupForm extends Subject
     {
         $this->name = '';
         $this->email = '';
+        $this->errors = [];
         $this->submitError = '';
         $this->notifyChanged();
     }

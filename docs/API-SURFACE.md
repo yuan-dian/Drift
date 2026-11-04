@@ -11,29 +11,29 @@
 
 | 层 | @api | @internal |
 |---|---|---|
-| App | 85 | 51 |
+| App | 84 | 52 |
 | Async | 18 | 4 |
 | Commands | 7 | 0 |
-| Core | 2 | 50 |
+| Core | 2 | 30 |
 | Errors.php | 2 | 3 |
 | Geometry | 9 | 0 |
 | Input | 19 | 5 |
 | Layout | 44 | 43 |
 | Logging | 9 | 3 |
-| Platform | 21 | 16 |
+| Platform | 17 | 16 |
 | Rendering | 34 | 1 |
 | Routing | 8 | 6 |
 | State | 17 | 8 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
-| Widget | 173 | 206 |
-| **合计** | **483** | **399** |
+| Widget | 175 | 207 |
+| **合计** | **480** | **381** |
 
-覆盖 385 个文件 · 描述性提及 32 处（grep 口径的污染源，不计入）
+覆盖 385 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
 
 ## App 层
 
-### @api（应用可读面） · 85
+### @api（应用可读面） · 84
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -70,6 +70,8 @@
 | `Frame::run()` | method | src/App/Frame.php |
 | `FrameClock` | class | src/App/FrameClock.php |
 | `FramePhase` | class | src/App/FramePhase.php |
+| `InputRouter::capturePointer()` | method | src/App/InputRouter.php |
+| `InputRouter::releasePointer()` | method | src/App/InputRouter.php |
 | `Http` | class | src/App/Io/Http.php |
 | `Http::get()` | method | src/App/Io/Http.php |
 | `Http::post()` | method | src/App/Io/Http.php |
@@ -110,9 +112,6 @@
 | `PumpHost::io()` | method | src/App/PumpHost.php |
 | `SyncTaskHost` | class | src/App/SyncTaskHost.php |
 | `TaskHost` | interface | src/App/TaskHost.php |
-| `TaskHost::submit()` | method | src/App/TaskHost.php |
-| `TaskHost::pending()` | method | src/App/TaskHost.php |
-| `TaskHost::drain()` | method | src/App/TaskHost.php |
 | `ThreadTaskHost` | class | src/App/ThreadTaskHost.php |
 | `ThreadTaskHost::__construct()` | method | src/App/ThreadTaskHost.php |
 | `ThreadTaskHost::shutdown()` | method | src/App/ThreadTaskHost.php |
@@ -123,7 +122,7 @@
 | `WindowStateStore::restore()` | method | src/App/WindowStateStore.php |
 | `WindowStateStore::persist()` | method | src/App/WindowStateStore.php |
 
-### @internal（框架内部） · 51
+### @internal（框架内部） · 52
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -136,6 +135,7 @@
 | `Application::uiThreadId()` | method | src/App/Application.php |
 | `Application::assertUiThread()` | method | src/App/Application.php |
 | `Application::closeRequested()` | method | src/App/Application.php |
+| `Application::frameCount()` | method | src/App/Application.php |
 | `Application::pipeline()` | method | src/App/Application.php |
 | `Application::zeroViewportFrames()` | method | src/App/Application.php |
 | `Application::semanticsMode()` | method | src/App/Application.php |
@@ -236,7 +236,7 @@
 | `Computed` | class | src/Core/Computed.php |
 | `Versioned` | interface | src/Core/Versioned.php |
 
-### @internal（框架内部） · 50
+### @internal（框架内部） · 30
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -246,48 +246,28 @@
 | `Pipeline::structureVersion()` | method | src/Core/Pipeline.php |
 | `Pipeline::contentVersion()` | method | src/Core/Pipeline.php |
 | `Pipeline::markDirty()` | method | src/Core/Pipeline.php |
-| `Pipeline::consumeDirty()` | method | src/Core/Pipeline.php |
 | `Pipeline::pendingDirty()` | method | src/Core/Pipeline.php |
 | `Pipeline::markedCount()` | method | src/Core/Pipeline.php |
 | `Pipeline::rebuiltCount()` | method | src/Core/Pipeline.php |
-| `Pipeline::noteRebuilt()` | method | src/Core/Pipeline.php |
-| `Pipeline::beginFrame()` | method | src/Core/Pipeline.php |
-| `Pipeline::endFrame()` | method | src/Core/Pipeline.php |
-| `Pipeline::inFrame()` | method | src/Core/Pipeline.php |
 | `Pipeline::frameConsumed()` | method | src/Core/Pipeline.php |
 | `Pipeline::wantsFrame()` | method | src/Core/Pipeline.php |
 | `Pipeline::wantsFrameImmediately()` | method | src/Core/Pipeline.php |
-| `Pipeline::frameRequestCount()` | method | src/Core/Pipeline.php |
-| `Pipeline::idleSpinFrames()` | method | src/Core/Pipeline.php |
 | `Pipeline::noteIdleSpin()` | method | src/Core/Pipeline.php |
-| `Pipeline::queueMounted()` | method | src/Core/Pipeline.php |
 | `Pipeline::takeMounted()` | method | src/Core/Pipeline.php |
 | `Pipeline::mountedCount()` | method | src/Core/Pipeline.php |
 | `Pipeline::noteActiveAnimation()` | method | src/Core/Pipeline.php |
 | `Pipeline::takeActiveAnimations()` | method | src/Core/Pipeline.php |
-| `Pipeline::requestAnimationScan()` | method | src/Core/Pipeline.php |
-| `Pipeline::takeAnimationScan()` | method | src/Core/Pipeline.php |
 | `Pipeline::activeAnimationCount()` | method | src/Core/Pipeline.php |
 | `Pipeline::bumpLayoutEpoch()` | method | src/Core/Pipeline.php |
-| `Pipeline::layoutEpoch()` | method | src/Core/Pipeline.php |
 | `Pipeline::bumpPaintEpoch()` | method | src/Core/Pipeline.php |
-| `Pipeline::paintEpoch()` | method | src/Core/Pipeline.php |
 | `Pipeline::bumpLayout()` | method | src/Core/Pipeline.php |
-| `Pipeline::layoutCount()` | method | src/Core/Pipeline.php |
 | `Pipeline::bumpPaint()` | method | src/Core/Pipeline.php |
-| `Pipeline::paintCount()` | method | src/Core/Pipeline.php |
 | `Pipeline::bumpReplay()` | method | src/Core/Pipeline.php |
-| `Pipeline::replayCount()` | method | src/Core/Pipeline.php |
 | `Pipeline::bumpPairCheck()` | method | src/Core/Pipeline.php |
-| `Pipeline::pairChecks()` | method | src/Core/Pipeline.php |
 | `Pipeline::bumpSettleRun()` | method | src/Core/Pipeline.php |
-| `Pipeline::settleRunCount()` | method | src/Core/Pipeline.php |
 | `Pipeline::bumpSettleSkip()` | method | src/Core/Pipeline.php |
-| `Pipeline::settleSkipCount()` | method | src/Core/Pipeline.php |
 | `Pipeline::bumpPaintRun()` | method | src/Core/Pipeline.php |
-| `Pipeline::paintRunCount()` | method | src/Core/Pipeline.php |
 | `Pipeline::bumpPaintSkip()` | method | src/Core/Pipeline.php |
-| `Pipeline::paintSkipCount()` | method | src/Core/Pipeline.php |
 | `PipelineAccess` | trait | src/Core/PipelineAccess.php |
 | `PipelineAccess::pipeline()` | method | src/Core/PipelineAccess.php |
 
@@ -485,7 +465,7 @@
 
 ## Platform 层
 
-### @api（应用可读面） · 21
+### @api（应用可读面） · 17
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -494,7 +474,6 @@
 | `Dialog` | interface | src/Platform/Dialog.php |
 | `InputSource` | interface | src/Platform/InputSource.php |
 | `Platform` | interface | src/Platform/Platform.php |
-| `Platform::consumeModalBlockedMs()` | method | src/Platform/Platform.php |
 | `Screen` | interface | src/Platform/Screen.php |
 | `SurfaceProvider` | interface | src/Platform/SurfaceProvider.php |
 | `TimerHost` | interface | src/Platform/TimerHost.php |
@@ -502,10 +481,7 @@
 | `WakeReason` | enum | src/Platform/WakeReason.php |
 | `Win32Platform` | class | src/Platform/Win32/Win32Platform.php |
 | `WindowHost` | interface | src/Platform/WindowHost.php |
-| `WindowHost::close()` | method | src/Platform/WindowHost.php |
-| `WindowHost::isAlive()` | method | src/Platform/WindowHost.php |
 | `WindowHost::setCloseGuard()` | method | src/Platform/WindowHost.php |
-| `WindowHost::setMinSize()` | method | src/Platform/WindowHost.php |
 | `WindowHost::setCursor()` | method | src/Platform/WindowHost.php |
 | `WindowHost::pushSemantics()` | method | src/Platform/WindowHost.php |
 | `WindowMaterial` | class | src/Platform/WindowMaterial.php |
@@ -701,7 +677,7 @@
 
 ## Widget 层
 
-### @api（应用可读面） · 173
+### @api（应用可读面） · 175
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -852,6 +828,7 @@
 | `WidgetInteraction::overlaySignature()` | method | src/Widget/Traits/WidgetInteraction.php |
 | `WidgetModifiers::padding()` | method | src/Widget/Traits/WidgetModifiers.php |
 | `WidgetModifiers::boxSize()` | method | src/Widget/Traits/WidgetModifiers.php |
+| `WidgetModifiers::aspect()` | method | src/Widget/Traits/WidgetModifiers.php |
 | `WidgetModifiers::background()` | method | src/Widget/Traits/WidgetModifiers.php |
 | `WidgetModifiers::gradient()` | method | src/Widget/Traits/WidgetModifiers.php |
 | `WidgetModifiers::borderDash()` | method | src/Widget/Traits/WidgetModifiers.php |
@@ -864,6 +841,7 @@
 | `WidgetModifiers::alignContent()` | method | src/Widget/Traits/WidgetModifiers.php |
 | `WidgetModifiers::centerContent()` | method | src/Widget/Traits/WidgetModifiers.php |
 | `WidgetModifiers::grow()` | method | src/Widget/Traits/WidgetModifiers.php |
+| `WidgetModifiers::shrink()` | method | src/Widget/Traits/WidgetModifiers.php |
 | `WidgetModifiers::positioned()` | method | src/Widget/Traits/WidgetModifiers.php |
 | `WidgetModifiers::transform()` | method | src/Widget/Traits/WidgetModifiers.php |
 | `WidgetModifiers::rotate()` | method | src/Widget/Traits/WidgetModifiers.php |
@@ -879,11 +857,12 @@
 | `Wrap` | class | src/Widget/Wrap.php |
 | `YearMonth` | class | src/Widget/YearMonth.php |
 
-### @internal（框架内部） · 206
+### @internal（框架内部） · 207
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
 | `AnimatedScalar` | class | src/Widget/AnimatedScalar.php |
+| `AnimationController::tick()` | method | src/Widget/AnimationController.php |
 | `AnimationController::start()` | method | src/Widget/AnimationController.php |
 | `AnimationController::finish()` | method | src/Widget/AnimationController.php |
 | `AppBar::kidList()` | method | src/Widget/AppBar.php |

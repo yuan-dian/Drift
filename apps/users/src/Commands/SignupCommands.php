@@ -32,10 +32,8 @@ final class SignupCommands implements CommandHandler
             return false;
         }
 
-        $errs = $this->form->validate();
-        if ($errs !== []) {
-            $this->form->fail(implode('；', $errs)); // ★ 反馈走 Store，不走 State
-
+        // 字段级错误已落到表单，各输入框自己显示 ⇒ 不必再拼一条全局错误。
+        if (!$this->form->validate()) {
             return true;
         }
 

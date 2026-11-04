@@ -7,6 +7,7 @@ use Drift\Errors;
 use Drift\Geometry\Rect;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderTextField;
+use Drift\Text\Utf8;
 
 /**
  * `TextField` 的纯 UI 态（§11.5 / §12.3）。
@@ -87,6 +88,9 @@ final class TextFieldState extends EditableTextState
     {
         $field = $this->field();
 
+        $error = $field->errorText();
+        $invalid = $error !== '';
+
         $box = TextFieldBox::make(
             $this->text(),
             $field->placeholderText(),
@@ -94,19 +98,44 @@ final class TextFieldState extends EditableTextState
             // 选区恒给（相等即"无选区"）；焦点走开时 endEditing() 已清掉
             $this->selectionStart(),
             $this->selectionEnd(),
+            $invalid,
         );
 
+        $kids = [];
         $label = $field->labelText();
-        if ($label === null) {
-            return $box;
+        if ($label !== null) {
+            // 标签在字段上方：`Column` 负责间距，`Text` 负责排版 —— 字段盒不必
+            // 知道"标签"这件事（它只管"一个输入井"）。
+            $kids[] = Text::make($label)->caption();
+        }
+        $kids[] = $box;
+
+        // 提示行：错误抢占辅助文本的位置（同一块地只放一句话）；计数恒在右端。
+        $note = $invalid ? $error : $field->helperText();
+        $max = $field->maxLengthValue();
+        $counter = $max === null ? null : Utf8::length($this->text()) . '/' . $max;
+
+        if ($note !== '' || $counter !== null) {
+            $line = [];
+            if ($note !== '') {
+                $text = Text::make($note)->maxLines(1)->ellipsize();
+                $line[] = Expanded::make($invalid ? $text->error() : $text->caption());
+            } else {
+                $line[] = Spacer::make();
+            }
+            if ($counter !== null) {
+                $line[] = Text::make($counter)->caption();
+            }
+            $kids[] = Row::make()->spacing(8.0)->children($line);
         }
 
-        // 标签在字段上方：`Column` 负责间距，`Text` 负责排版 —— 字段盒不必
-        // 知道"标签"这件事（它只管"一个输入井"）。
-        return Column::make()->spacing(4.0)->children([
-            Text::make($label)->caption(),
-            $box,
-        ]);
+        return \count($kids) === 1 ? $box : Column::make()->spacing(4.0)->children($kids);
+    }
+
+    #[\Override]
+    protected function maxLength(): ?int
+    {
+        return $this->field()->maxLengthValue();
     }
 
     private function field(): TextField

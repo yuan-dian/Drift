@@ -42,6 +42,7 @@ final class TextFieldBox extends RenderBoxWidget
         private readonly ?int $caretOffset,
         private readonly int $selectionStart,
         private readonly int $selectionEnd,
+        private readonly bool $invalid,
     ) {
         parent::__construct();
         // §9.1 命中三方消费：指针停在字段上给 I 形光标（文本编辑的通用约定）。
@@ -58,8 +59,9 @@ final class TextFieldBox extends RenderBoxWidget
         ?int $caretOffset,
         int $selectionStart,
         int $selectionEnd,
+        bool $invalid = false,
     ): self {
-        return new self($text, $placeholder, $caretOffset, $selectionStart, $selectionEnd);
+        return new self($text, $placeholder, $caretOffset, $selectionStart, $selectionEnd, $invalid);
     }
 
     public function text(): string
@@ -98,10 +100,10 @@ final class TextFieldBox extends RenderBoxWidget
         $border = $context->metric(MetricToken::BorderWidth);
 
         // 输入"井"：底色用画布色、描边用边框色（与 Button::Default 的 Chrome 底区分开
-        // —— 输入区应当是"凹"的观感，按钮是"凸"的）
+        // —— 输入区应当是"凹"的观感，按钮是"凸"的）。出错只换描边色，底与几何不动。
         $box = new BoxStyle(
             $context->color(ColorToken::Pane),
-            $context->color(ColorToken::Border),
+            $this->invalid ? $context->color(ColorToken::Danger) : $context->color(ColorToken::Border),
             $border,
             $radius,
         );

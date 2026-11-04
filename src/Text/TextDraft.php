@@ -50,6 +50,13 @@ final class TextDraft
     private ?string $lastKind = null;
 
     /**
+     * 输入长度上限（码位）；`null` = 不限。
+     *
+     * ★ 只截用户输入，不截 `setText()`：后者是外部受控值，应用是真相源。
+     */
+    private ?int $maxLength = null;
+
+    /**
      * 撤销栈上限，超过丢最旧的。100 而非无限：每页几十个输入框，无限栈是隐蔽内存增长。
      */
     private const UNDO_LIMIT = 100;
@@ -63,6 +70,12 @@ final class TextDraft
         $this->caret = \strlen($text);
         $this->anchor = $this->caret;
         $this->extent = $this->caret;
+    }
+
+    /** 设输入长度上限（码位）；`null` 解除，负数按 0。不回头删已有文本（那是应用的裁决） */
+    public function limit(?int $max): void
+    {
+        $this->maxLength = $max === null ? null : \max(0, $max);
     }
 
     // ── 读 ──────────────────────────────────────────────────────────────
@@ -142,6 +155,11 @@ final class TextDraft
 
         if ($this->hasSelection()) {
             return $this->replaceSelection($text);
+        }
+
+        $text = $this->clampInput($text);
+        if ($text === '') {
+            return TextChange::None;
         }
 
         return $this->applyText(
@@ -344,6 +362,7 @@ final class TextDraft
         }
 
         $start = $this->selectionStart();
+        $text = $this->clampInput($text, $start, $this->selectionEnd());
         $next = \substr($this->buffer, 0, $start) . $text . \substr($this->buffer, $this->selectionEnd());
 
         if ($next === $this->buffer) {
@@ -483,6 +502,38 @@ final class TextDraft
     }
 
     // ── 内部 ────────────────────────────────────────────────────────────
+
+    /**
+     * 把一次用户输入截到"还能放几个码位"。
+     *
+     * @param int $selectedStart 将被替换掉的选区的字节起止（无选区传相等值）
+     * @param int $selectedEnd
+     *
+     * ★ 按码位截：按字节截会切出半个汉字（与 snap() 同一条红线）。
+     */
+    private function clampInput(string $text, int $selectedStart = 0, int $selectedEnd = 0): string
+    {
+        if ($this->maxLength === null) {
+            return $text;
+        }
+
+        $selected = $selectedEnd > $selectedStart
+            ? Utf8::length(\substr($this->buffer, $selectedStart, $selectedEnd - $selectedStart))
+            : 0;
+        $available = $this->maxLength - (Utf8::length($this->buffer) - $selected);
+
+        if ($available <= 0) {
+            return '';
+        }
+
+        $codepoints = Utf8::decode($text);
+        if (\count($codepoints) <= $available) {
+            return $text;
+        }
+
+        // 取第 $available 个码位的起始字节：比逐码位重编码更忠实（非法字节原样保留）
+        return \substr($text, 0, $codepoints[$available][1]);
+    }
 
     /** 把任意字节偏移夹进 [0, len] 并吸附到不大于它的最近字符边界 */
     private function snap(int $offset): int

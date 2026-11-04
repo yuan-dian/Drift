@@ -49,6 +49,9 @@ final class TextField extends StatefulWidget implements SemanticsValueEditable
     private string $value = '';
     private ?string $label = null;
     private string $placeholder = '';
+    private string $error = '';
+    private string $helper = '';
+    private ?int $maxLength = null;
     private ?\Closure $onChanged = null;
 
     public function __construct()
@@ -101,6 +104,37 @@ final class TextField extends StatefulWidget implements SemanticsValueEditable
     }
 
     /**
+     * 错误消息（空串 = 无错误）。非空 ⇒ 描边转 `Danger` + 下方红字，并抢占 `helper()` 的位置。
+     *
+     * ★ 受控：只显示应用给的那句，不自己跑校验（规则属业务状态）。
+     */
+    public function error(string $message): static
+    {
+        $this->mutate();
+        $this->error = $message;
+
+        return $this;
+    }
+
+    /** 辅助说明（空串 = 不显示）；有 `error()` 时让位 */
+    public function helper(string $text): static
+    {
+        $this->mutate();
+        $this->helper = $text;
+
+        return $this;
+    }
+
+    /** 输入长度上限（码位）；`null` = 不限。只截键盘 / IME / 粘贴，不改外部 `value()` */
+    public function maxLength(?int $max): static
+    {
+        $this->mutate();
+        $this->maxLength = $max;
+
+        return $this;
+    }
+
+    /**
      * 文本改动回调：`fn(string $newText) => void`。
      *
      * ★ 纯 UI 回调，零框架依赖（与 `Button::onPressed()` 同一个形状）——
@@ -127,6 +161,21 @@ final class TextField extends StatefulWidget implements SemanticsValueEditable
     public function placeholderText(): string
     {
         return $this->placeholder;
+    }
+
+    public function errorText(): string
+    {
+        return $this->error;
+    }
+
+    public function helperText(): string
+    {
+        return $this->helper;
+    }
+
+    public function maxLengthValue(): ?int
+    {
+        return $this->maxLength;
     }
 
     public function changedHandler(): ?\Closure

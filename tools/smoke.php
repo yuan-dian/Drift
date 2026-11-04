@@ -3917,7 +3917,7 @@ $usersApp->signupForm()->name = '张三';
 $usersApp->signupForm()->email = 'zhang@example.com';
 check(
     'apps/users · 局部态：表单字段写入（property hooks ⇒ 字段名只写一次）',
-    $usersApp->signupForm()->name === '张三' && $usersApp->signupForm()->validate() === [],
+    $usersApp->signupForm()->name === '张三' && $usersApp->signupForm()->validate() === true,
 );
 $usersApp->dispatch('form.submit');
 check(
@@ -3928,8 +3928,8 @@ check(
 $usersApp->signupForm()->name = '';
 $usersApp->dispatch('form.submit');
 check(
-    'apps/users · 局部态：空姓名 ⇒ 校验失败回显（走 Store 的 submitError，不走 State）',
-    str_contains($usersApp->signupForm()->submitError, '姓名不能为空'),
+    'apps/users · 局部态：空姓名 ⇒ 校验失败回显到**该字段**（不走 State）',
+    $usersApp->signupForm()->errorOf('name') === '姓名不能为空',
 );
 
 // ③ 动作缝 · 第三页 + 删除 + 派生缓存失效
@@ -3956,7 +3956,7 @@ $usersApp->signupForm()->name = '';
 $usersApp->dispatchInput(KeyEvent::down(KeyChord::ctrl('S')));
 check(
     'apps/users · 加速键 Ctrl+S ⇒ form.submit 被派发（焦点链没吃的键落给加速键）',
-    str_contains($usersApp->signupForm()->submitError, '姓名不能为空'),
+    $usersApp->signupForm()->errorOf('name') === '姓名不能为空',
 );
 
 // ⑤ 菜单打开接线（Widget 不许依赖 App ⇒ 应用把 showMenu 包成闭包传进来）

@@ -46,12 +46,23 @@ abstract class EditableTextState extends State implements EditableText
     /** 文本**真变了**才调（只挪插入符不算） */
     abstract protected function notifyChanged(string $text): void;
 
+    /**
+     * 输入长度上限（码位）；`null` = 不限。控件按自己的配置覆写。
+     *
+     * ★ 约束落在 `TextDraft`：逐字键入走 `TextKeymap` 直接落 draft，在 State 拦会漏。
+     */
+    protected function maxLength(): ?int
+    {
+        return null;
+    }
+
     // ── 生命周期 ────────────────────────────────────────────────────────
 
     #[\Override]
     public function initState(): void
     {
         $this->draft = new TextDraft($this->controlledValue());
+        $this->draft->limit($this->maxLength());
     }
 
     #[\Override]
@@ -59,6 +70,7 @@ abstract class EditableTextState extends State implements EditableText
     {
         parent::didUpdateWidget($widget);
         $this->adoptValue($widget);
+        $this->draft()->limit($this->maxLength());
     }
 
     /** 状态机本体（子类要读插入符 / 做行级移动时用；**不要**在外面另存一份文本） */
@@ -67,6 +79,7 @@ abstract class EditableTextState extends State implements EditableText
         if ($this->draft === null) {
             // 框架不变量：initState() 先于任何公开方法被调
             $this->draft = new TextDraft($this->controlledValue());
+            $this->draft->limit($this->maxLength());
         }
 
         return $this->draft;

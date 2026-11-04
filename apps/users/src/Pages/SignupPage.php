@@ -20,9 +20,8 @@ use App\Users\Store\SignupForm;
 /**
  * 注册页（§A.2.9）：表单（每字段一个订阅切片 + 提交错误回显）。
  *
- * ★ **每个字段 4 行、且必须记得包 `SubjectBuilder`**（漏了 ⇒ 值变了不刷新 ⇒
- *   lint `dead-subscription` 守）—— 这是 PHP 语言层封死"1 次出现"之后的必然
- *   代价（§11.4.2 的四层论据）。
+ * ★ **每个字段一个 `SubjectBuilder`**（漏了 ⇒ 值变了不刷新 ⇒ lint `dead-subscription`
+ *   守）。值与该字段的错误合成一个切片，错误不多占一条订阅。
  */
 final class SignupPage extends StatelessWidget
 {
@@ -41,18 +40,23 @@ final class SignupPage extends StatelessWidget
         return Column::make()->spacing(12)->padding(EdgeInsets::all(24.0))->children([
             Text::make('注册新用户')->title(),
 
+            // 值 + 该字段错误一起切（数组按值 `===` 门控，不再多挂一条订阅）
             SubjectBuilder::make($this->form)
-                ->select(static fn(SignupForm $f): string => $f->name)
-                ->builder(fn(string $v): Widget => TextField::make()
-                    ->value($v)
+                ->select(static fn(SignupForm $f): array => [$f->name, $f->errorOf('name')])
+                ->builder(fn(array $s): Widget => TextField::make()
+                    ->value($s[0])
                     ->label('姓名')
+                    ->error($s[1])
+                    ->maxLength(32)
                     ->onChanged(fn(string $x) => $this->form->name = $x)),
 
             SubjectBuilder::make($this->form)
-                ->select(static fn(SignupForm $f): string => $f->email)
-                ->builder(fn(string $v): Widget => TextField::make()
-                    ->value($v)
+                ->select(static fn(SignupForm $f): array => [$f->email, $f->errorOf('email')])
+                ->builder(fn(array $s): Widget => TextField::make()
+                    ->value($s[0])
                     ->label('邮箱')
+                    ->error($s[1])
+                    ->maxLength(128)
                     ->onChanged(fn(string $x) => $this->form->email = $x)),
 
             // 提交错误也是业务状态 ⇒ 订阅回 UI（§11.4.3）

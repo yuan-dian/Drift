@@ -85,6 +85,13 @@ final class FormState extends State
     /** `Ctrl+Enter` 提交后回显的文本（提交与换行是两件事，本页演示这条分界） */
     private string $submittedNote = '';
 
+    /** 字段校验演示：错误文案是**受控**的，应用给什么就显示什么 */
+    private string $checkedName = '';
+    private string $checkedEmail = '';
+    private string $checkedNick = '';
+    private string $checkedNameError = '';
+    private string $checkedEmailError = '';
+
     private string $size = 'm';
 
     private bool $notify = false;
@@ -157,6 +164,34 @@ final class FormState extends State
                 }),
             Text::make($this->submittedNote === '' ? 'Ctrl+Enter 之后这里显示提交的文本' : '已提交：' . str_replace("\n", ' / ', $this->submittedNote))
                 ->caption(),
+
+            // ── H3「字段校验 + 长度约束」──
+            //   错误态是表现（红边 + 红字）；校验规则仍住应用（下面那个「校验」按钮）。
+            $this->sectionBar('字段校验与长度约束'),
+            Text::make('错误文案由应用给（受控）：点「校验」⇒ 空字段红边 + 下方出字；第三个字段上限 8 个码位，右下角实时计数。')
+                ->caption(),
+            Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
+                TextField::make()->label('姓名（必填）')
+                    ->value($this->checkedName)
+                    ->error($this->checkedNameError)
+                    ->helper('登录后显示')
+                    ->onChanged(fn(string $v) => $this->checkedName = $v),
+                TextField::make()->label('邮箱（必填）')
+                    ->value($this->checkedEmail)
+                    ->error($this->checkedEmailError)
+                    ->onChanged(fn(string $v) => $this->checkedEmail = $v),
+                TextField::make()->label('昵称（最多 8 字）')
+                    ->value($this->checkedNick)
+                    ->maxLength(8)
+                    ->onChanged(fn(string $v) => $this->checkedNick = $v),
+            ]),
+            Button::make('校验')->variant(ButtonVariant::Primary)
+                ->onPressed(function (): void {
+                    $this->setState(function (): void {
+                        $this->checkedNameError = $this->checkedName === '' ? '姓名不能为空' : '';
+                        $this->checkedEmailError = str_contains($this->checkedEmail, '@') ? '' : '邮箱格式不正确';
+                    });
+                }),
 
             // ── H3「选择类控件」：Checkbox / Radio / Toggle（2026-10-21 新增）──
             //   三个控件都是**受控**的：值住 State，点击只回调新值（与 TextField 同纪律）。
