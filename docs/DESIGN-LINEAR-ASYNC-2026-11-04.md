@@ -181,6 +181,11 @@ Swow 基于 `libcat`（libuv 衍生）自建事件驱动，Windows 支持早于 
 它要换掉的是 5 个 `AsyncCommand` 与 5 套 `absorb`，而协程只是让 IO 不卡，
 **不提供状态机、去重、取消、跨进程序列化**这些框架义务。
 
+> ★ **§10 做了这件事**，用的是 `Fiber`（`AsyncScope`）而不是 Swoole 协程 ——
+> 换掉的正是那 5 个命令与 5 套 `absorb`，而状态机/去重/取消仍由 `AsyncCommand`
+> 承担（`AsyncScope` 只是把 5 步写成一段顺序代码，返回的还是普通 `Future`）。
+> 上一句的"协程不提供框架义务"依然成立：它提供的是**控制流**，其余一样没少。
+
 ---
 
 ## 3. DX 根因：一条线性流水线被拆成三份
@@ -521,3 +526,142 @@ RFC 的作者动机段甚至点名了 ZTS / FrankenPHP 这类"宿主自己掌握
 ⇒ 等 tpc 上 8.6 时，**只换中间那层**：`IoPoller` 内部用 `Io\Poll\Context` 替代
 `stream_select`，收益是"无 1024 上限 + 持久注册 + `HangUp` 自动检测"。
 `AsyncScope` / `TaskHost` / 应用代码**一行不用改** —— 这正是把三者拆开的价值。
+
+## 10. 第三棒：`apps/watermark` 迁移裁决（2026-11-04）
+
+上一棒交付了原语（`AsyncScope` + 判据），**没动应用一行**。这一棒把唯一真实消费者
+迁过去 —— 迁移本身就是原语的验收：如果应用里还剩两套簿记，说明原语的形状不对。
+
+### 10.1 现状量账（迁移前）
+
+`WatermarkStore.php` **830 行**，其中「异步簿记」这一块约 190 行：
+
+| 形状 | 数量 |
+|---|---|
+| `AsyncCommand` 字段 | 5（sign / upload / task / poll / download） |
+| 值订阅（`subscribeFor`） | 5 |
+| 结算订阅（`subscribeSettledFor`） | 3（接力上传 / 立刻查询 / 排下一拍） |
+| `absorb*` 落地方法 | 5 |
+| 纯接力/排期方法 | 3（`relayAfterSign` / `pollAfterSubmit` / `scheduleAfterPoll`） |
+| 跨命令标志 | 2（`uploadAfterSign` / `polling`） |
+| 定时器手工记账 | 1（`scheduleNextPoll` + 回调里的二次守卫） |
+
+### 10.2 三个发现（都指向同一件事：形状在制造税）
+
+**发现 1：`uploadValue()` / `pollValue()` 是死接口。**
+
+全仓 `grep` 零消费者（含测试）。它们的注释写着「页面用 `fold()` 画四态」——
+那句话从来没有对应的代码。按本仓纪律「未被消费的分支 = 未实现」，迁移时直接删，
+不是破坏兼容性，是清理。
+
+**发现 2：五个命令互不排斥，界面却假设它们互斥。**
+
+`canSubmit()` 判的是 `!$taskCommand->isRunning()`，而轮询中 `taskCommand` 并不在跑
+⇒ **轮询期间「提交任务」按钮是活的**。手点一下就会起第二条轮询，两条 `absorbPoll`
+互相覆盖 `lastResult`。同理 `canUpload()` 只看 `uploadCommand`，取签名期间按钮也活着。
+
+五个 `isRunning()` 拼不出一个「现在在忙」—— 因为「在忙」本来就是**一个**状态。
+
+**发现 3：`uploadAfterSign` 是命令分离的化石。**
+
+「签名过期 ⇒ 先取签名 ⇒ 取完再上传」这一段在原文里是 `await` 的两行；
+到了订阅形状里必须拆成「设标志 → 在别的命令的结算回调里读标志 → 调下一个命令」。
+它不是业务复杂度，是**命令边界**逼出来的。
+
+### 10.3 目标形状
+
+```php
+// 唯一一条命令，参数是"跑哪个入口"
+$this->flow = AsyncCommand::make(fn (mixed $entry): Future => AsyncScope::task(
+    function (AsyncScope $co) use ($entry): void { $this->runFlow($entry, $co); },
+    $this->scheduler,   // Application::after() 注入的延时函数
+));
+```
+
+| 入口 | 用户动作 | 顺序代码 |
+|---|---|---|
+| `Flow::Prewarm` | 首屏预热 | 取签名，失败不说话 |
+| `Flow::Upload` | 点「上传」 | 签名过期才取 → 上传（进度上界面） |
+| `Flow::Submit` | 点「提交任务」 | 建任务 → `pollLoop()` |
+| ~~`Flow::Poll`~~ | ~~重试查询~~ | 无消费者，不实现 |
+
+```php
+private function pollLoop(AsyncScope $co, string $taskId): void
+{
+    while (true) {
+        try { … $co->await(new PollResultJob(...)) … }
+        catch (\Throwable $e) { /* 查询失败继续重试，不停轮询 */ }
+
+        if ($result->isTerminal()) { …下载…; return; }
+        if (!$co->sleep(Config::POLL_INTERVAL_MS)) { return; }
+    }
+}
+```
+
+★ **「每轮只排一个定时器」在这段形状里结构上不可能违反** —— 定时器从
+`AsyncScope::sleep()` 内部生成，应用手里没有能"再排一个"的地方。这条曾经咬过两次的
+纪律，从此不需要判据守着（判据保留，改成"守 `sleep` 返回 false 时不死循环"）。
+
+### 10.4 对原语的唯一改动：`sleep()` 返回 `bool`
+
+`sleep()` 无延时函数时**不睡**（现状：`Errors::report` + `return`）。对顺序代码来说
+这是「零延时重试」—— `while` 会立刻转成请求风暴。旧形状里这个语义由
+`scheduleNextPoll()` 的 `if ($scheduler === null) return;` 承担，循环自己就停住了。
+
+裁决：**返回「到底睡了没有」**，调用方决定零延时意味着什么。
+
+```php
+public function sleep(int $milliseconds): bool   // false = 本环境没有定时器，没睡
+```
+
+不改成抛异常：`sleep()` 拿不到定时器是**能力缺失**，不是代码写错；抛出去会让
+「单测/解释器」这种合法场景变成 error 态（界面报「查询失败」，而其实什么都没失败）。
+
+### 10.5 行为改变（如实记账）
+
+| # | 改变 | 理由 |
+|---|---|---|
+| ① | 取签名期间「上传」按钮变灰（原来可点，靠 `uploadAfterSign` 接力） | 预热只在构造器跑一次、窗口还没出现 ⇒ 实际影响接近零；换来 `uploadAfterSign` 整个消失 |
+| ② | 轮询中「提交任务」按钮变灰（原来可点，会起第二条轮询） | 修的是真 bug（发现 2） |
+| ③ | 没有定时器的环境下 `isPolling()` 变 `false`（只查一次） | 旧形状报告"正在轮询"是假的 —— 那一拍根本没人排 |
+| ④ | 删除 `uploadValue()` / `pollValue()` / `pollOnce()` | 零消费者（发现 1） |
+
+### 10.6 判据
+
+| 文件 | 迁移后 |
+|---|---|
+| `StoreHostChainTest` | **零改动**必须绿 —— 五连顺序是迁移不变量，改了就说明行为漂了 |
+| `StoreSyncPathTest` | **零改动**必须绿 —— 失败必须落成 `uploadMessage`（`catch` 里写，不是靠订阅） |
+| `PollRhythmTest` | 前 3 条零改动；第 4 条改判「不假装在轮询」 |
+| `StoreSettledEffectsTest` | 改造：从「结算趟数」改为「进度通知不推进流水线」 |
+
+★ 前两个文件零改动是最强的证据：它们钉的是**行为**，不是实现。
+
+
+### 10.7 迁移反过来改了原语（两条，都是写原语时看不见的）
+
+§10.4 记的 `sleep(): bool` 是第一条。第二条更重：
+
+**取消哨兵会被业务 `catch (\Throwable)` 吞掉。**
+
+`pollLoop()` 里为了「查一次失败不该停轮询」必须 `catch (\Throwable)` —— 而用户点
+「停止」投进来的 `AsyncCancelled` 被它一起接住 ⇒ 循环继续 ⇒ **又排一个定时器**。
+这条是判据抓出来的（`停止轮询后迟到的查询结果不落地也不再下载` 报「停止之后又排了一拍」）。
+
+修法两层：
+
+| 层 | 做法 |
+|---|---|
+| 原语 | `guardCancelled()`：`await()` / `sleep()` 入口检查 `cancelled` ⇒ 每个**让出点**都重新检查 |
+| 应用 | `catch (AsyncCancelled $e) { throw $e; }` 放在 `catch (\Throwable)` **之前** |
+
+★ 并且借此把 `abort()` 的「最多三次注入」删成**单次**。原因是变异自检暴露的：
+有了 `guardCancelled`，三次注入是**冗余**的 —— 「去掉 guard」和「去掉应用侧 catch」
+两组单点变异**都测不出来**，因为另一层兜住了。
+两条互相掩盖的防线不是纵深，是**判据失效**。一次注入 + 让出点闸门是**确定**的；
+三次注入是**猜**（"试着投三次，投不进就算了"）。
+
+★ 这条修正的判据是协程**是否真的终结**：被吞掉的取消若就此挂在一个新 `await` 上，
+`finally` 不跑、Fiber 栈连同捕获的闭包一起泄漏 —— 界面上完全看不出来。
+
+完整量账见 `docs/DEBT-2026-11-02.md` §32。

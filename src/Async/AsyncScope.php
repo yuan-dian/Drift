@@ -3,8 +3,6 @@ declare(strict_types=1);
 
 namespace Drift\Async;
 
-use Drift\Errors;
-
 /**
  * 把一条**多步异步流水线**写成一段顺序代码。
  *
@@ -14,13 +12,18 @@ use Drift\Errors;
  *   本类让这 5 步退回成一段 `await`，`AsyncCommand` 只留**一个**。
  *
  * ★ 底层是 PHP `Fiber`（用户态协程，**不是** Swoole 协程）。AOT `-m bin` 下已验：
- *   `probes/fiber_scope` 十一条边界（跨帧 / 操作 tpc 编译类 / throw+finally /
+ *   `probes/fiber_scope` 十四条边界（跨帧 / 操作 tpc 编译类 / throw+finally /
  *   回调栈恢复 / 多 Fiber / 嵌套 / 深栈 / 传对象 / 局部消化 / getCurrent）。
  *   ★ `--nano` 模式不支持 Fiber，但本仓**已明确不做 nano**（`DESIGN.md` §16.7.5）。
  *
  * ★ 它**不改变** `Future` / `AsyncCommand` 的任何语义：`task()` 返回的就是一条
  *   普通 `Future` ⇒ 去重 / 重试 / 取消 / 结算订阅 / `isRunning()` 全部照旧。
  *   所以「一条 Future 交给一个 AsyncCommand」这条契约仍然成立（`MultiStepCommandTest`）。
+ *
+ * ★ 取消是**异常**（`AsyncCancelled`），所以 body 里的 `catch (\Throwable)` 会连它
+ *   一起接住。业务侧该写 `catch (AsyncCancelled $e) { throw $e; }` 放在前面；
+ *   即使忘了，`await()` / `sleep()` 入口也会把取消重新抛出来（`guardCancelled()`），
+ *   代价只是多跑几条同步语句。
  *
  * 用法：
  * ```php
@@ -75,7 +78,7 @@ final class AsyncScope
      *   整段会在这里一口气跑完，**不产生额外帧** —— 与原来的同步路径时序一致。
      *
      * @param callable(self): mixed $body 顺序代码本体
-     * @param null|callable(int, \Closure): void $delay 延时函数；不给 ⇒ `sleep()` 报错
+     * @param null|callable(int, \Closure): void $delay 延时函数；不给 ⇒ `sleep()` 恒返回 `false`
      *
      * @api
      */
@@ -104,6 +107,7 @@ final class AsyncScope
     public function await(Future $future): mixed
     {
         $this->assertInside();
+        $this->guardCancelled();
 
         $settled = false;
         $value = null;
@@ -142,19 +146,26 @@ final class AsyncScope
      * ★ 轮询类流水线靠它写 `while` 循环，而不是靠外面排定时器 ——
      *   「每轮只排一个」这类记账就从应用里彻底消失（`apps/watermark` 曾被它咬过两次）。
      *
+     * ★ **必须判返回值**：`false` = 本作用域没有定时器（`task()` 没给第二个参数），
+     *   这一次**没有睡**。在 `while` 里忽略它，循环会退化成零延时重试 ——
+     *   一轮一轮地发请求，而且不报错。
+     *
      * @param int $milliseconds 毫秒（负数按 0 处理）
+     *
+     * @return bool 真的排上定时器并等完了吗（`false` ⇒ 什么都没发生，立刻返回）
      *
      * @api
      */
-    public function sleep(int $milliseconds): void
+    public function sleep(int $milliseconds): bool
     {
         $this->assertInside();
+        $this->guardCancelled();
 
         $delay = $this->delay;
         if ($delay === null) {
-            Errors::report('AsyncScope::sleep() 需要延时函数 —— 用 task() 的第二个参数传入');
-
-            return;
+            // ★ 不报错：能力缺失用返回值表达，交给调用方决定零延时意味着什么
+            //   （`apps/watermark` 的选择是"只查这一次"）。
+            return false;
         }
 
         $timer = Future::pending();
@@ -163,6 +174,8 @@ final class AsyncScope
         });
 
         $this->await($timer);
+
+        return true;
     }
 
     /**
@@ -225,6 +238,11 @@ final class AsyncScope
      *   每次取消漏一份。
      * ★ 投 `AsyncCancelled` 而不是悄悄 return：只有走异常才能让 `finally` 执行，
      *   资源清理（临时文件、订阅）才不会漏。
+     * ★ **只投一次**（2026-11-04 从"最多三次"简化）：`await()` / `sleep()` 入口有
+     *   `guardCancelled()` —— 被 body 吞掉的取消会在**下一个让出点**原样重来。
+     *   三次注入是没这道闸时的近似兜底，有了它就是重复：判据上两条互相掩盖，
+     *   谁也测不出来（`build/_mutate_asyncscope.php` 的 D/F 两组就是这么暴露的）。
+     *   一次注入 + 让出点闸门是**确定**的；三次是**猜**。
      */
     private function abort(): void
     {
@@ -235,26 +253,38 @@ final class AsyncScope
             $waiting->cancel();
         }
 
-        // ★ 最多三次：body 若 `catch (\Throwable)` 之后又 `await`，第二次注入仍能收口；
-        //   三次还停不下来说明它自己在死循环，别再纠缠。
-        for ($i = 0; $i < 3; $i++) {
-            if ($this->fiber->isTerminated()) {
-                return;
-            }
-
-            if (!$this->fiber->isSuspended()) {
-                return;   // 正在跑：它自己会看到 cancelled（同步结算的瞬间）
-            }
-
-            try {
-                $this->fiber->throw(new AsyncCancelled('流水线已取消'));
-            } catch (\Throwable $e) {
-                // body 里的 catch 已经把 outer->reject 调过了（被 cancelled 挡住）；
-                // 这里只兜住"它又把异常抛出来"这一种。
-            }
+        if ($this->fiber->isTerminated()) {
+            return;
         }
 
-        Errors::report('AsyncScope：取消注入三次仍未终结（body 里 catch(\Throwable) 后又 await？）');
+        if (!$this->fiber->isSuspended()) {
+            return;   // 正在跑：它自己会看到 cancelled（同步结算的瞬间）
+        }
+
+        try {
+            $this->fiber->throw(new AsyncCancelled('流水线已取消'));
+        } catch (\Throwable $e) {
+            // body 里的 catch 已经把 outer->reject 调过了（被 cancelled 挡住）；
+            // 这里只兜住"它又把异常抛出来"这一种。
+        }
+    }
+
+    /**
+     * 已取消 ⇒ 立刻抛，**不排任何东西**。
+     *
+     * ★ 为什么需要：取消靠往协程里投一次 `AsyncCancelled`，而业务代码为了"这一步
+     *   失败不该中断整条流水线"会写 `catch (\Throwable)` —— 那会**把取消一起接住**。
+     *   没这道闸，接住之后的 `await()` 又是一个新的让出点 ⇒ 协程永远挂在上面
+     *   （栈泄漏），或者循环继续、又排一个定时器（`apps/watermark` 的现场）。
+     * ★ 有了它，取消在**每个让出点**都会被重新检查 —— 这是确定的，不靠试三次。
+     *   业务侧仍建议写 `catch (AsyncCancelled $e) { throw $e; }`：那样连"吞掉之后
+     *   的几条同步语句"都不跑，也不会把取消误写成一条错误消息。
+     */
+    private function guardCancelled(): void
+    {
+        if ($this->cancelled) {
+            throw new AsyncCancelled('流水线已取消');
+        }
     }
 
     /**

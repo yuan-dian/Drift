@@ -115,6 +115,10 @@ if ($this->polling && $settled) { $this->scheduleNextPoll(); }
 `apps/watermark/WatermarkStore`（5 个命令）、`src/Widget/State::asyncCommand()`。
 它补的是通用机制的一个观察口，形状不由 watermark 单方面决定。
 
+> ★ **2026-11-04 追记**：watermark 已迁到 `AsyncScope`，那 5 个命令收成 1 个，
+> 3 条 `subscribeSettledFor` **归零**（顺序代码里 `await` 返回就是结算，不存在
+> "值订阅对每一次通知都跑"的坑）。本缝是否还有足够消费者，见 `DEBT-2026-11-02.md` §32.8。
+
 ---
 
 ## 4. 五维评估：三个候选为什么选 D

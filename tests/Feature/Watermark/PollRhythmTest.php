@@ -15,18 +15,21 @@ use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
 /**
- * 轮询的**节奏**：排期、间隔、终止、取消（2026-11-03）。
+ * 轮询的**节奏**：排期、间隔、终止、取消（2026-11-03，2026-11-04 迁移后仍适用）。
  *
- * ## 为什么这条判据必须存在
+ * ## 这个文件为什么还在
  *
- * 轮询是 `bool $polling` + 一个注入的 `$scheduler` + 三个守着它的人（`absorbPoll`
- * 的排期、定时器回调的 `if (!$this->polling)`、`stopPolling()` 的取消）。
- * 这套东西在 2026-11-02 咬过一次同类事故 —— `absorbSign` 的接力标志被
- * `loading` 那一趟通知吃掉，于是"签名取回来了却永远不接力上传"，
- * **不报错、界面停在"正在获取上传凭证…"**。
- * 而 `scheduleNextPoll()` 在此之前**零判据**：`StoreHostChainTest` 的假后端一次
- * 就把结果答成终态（`status = 3`）⇒ `$polling` 立刻落回 false ⇒
- * "继续排下一次"那条分支从没被执行过（本仓的老话：未被消费的分支 = 未实现）。
+ * 迁移前轮询是 `bool $polling` + 一个注入的 `$scheduler` + **三个守着它的人**
+ * （`absorbPoll` 的排期、定时器回调里的 `if (!$this->polling)`、`stopPolling()` 的取消）。
+ * 现在它是一段 `while` + `$co->sleep()`，**排期只有一个来源** —— 所以本文件钉的
+ * 三件事从"守纪律"变成了"守行为"：间隔来自 `Config` / 终结不再排 / 手动停能作废
+ * 已排的那一拍。行为没变，这正是判据不改就该绿的道理。
+ *
+ * ★ 那两次事故是本文件的由来，值得留着：2026-11-02，`absorbSign` 的接力标志被
+ *   `loading` 那一趟通知吃掉 ⇒ "签名取回来了却永远不接力上传"，**不报错、界面停在
+ *   「正在获取上传凭证…」**；而 `scheduleNextPoll()` 在此之前**零判据**（假后端一次
+ *   就把结果答成终态 ⇒ "继续排下一次"那条分支从没被执行过）。本仓的老话：
+ *   **未被消费的分支 = 未实现**。
  *
  * ## 判据四类
  *
@@ -35,10 +38,12 @@ use PHPUnit\Framework\TestCase;
  * | ① 未完 ⇒ 按固定间隔排下一拍 | 间隔就是 `Config::POLL_INTERVAL_MS` | 改一处常量、另一处写死 ⇒ 快慢两套节奏 |
  * | ② 终结 ⇒ **不再排** + 只下载一次 | 轮询会自己停 | 停不下来：每 10s 查一次到天荒地老 |
  * | ③ 手动停 ⇒ 已排的那一拍作废 | 取消是幂等的 | 点了"停止"之后还在查（且不报错） |
- * | ④ 没有 scheduler ⇒ 不自己转 | 测试/解释器里没有"自己转起来的定时器" | 单测里凭空起一个定时器，时序全乱 |
+ * | ④ 没有 scheduler ⇒ 只查一次 | 测试/解释器里没有"自己转起来的定时器" | 单测里凭空起一个定时器，时序全乱 |
  *
- * ★ 定时器是**替身**（`$ticks` 数组）：本类不睡、不等，`$tick()` 手动触发 ——
+ * ★ 定时器是**替身**（`FakeTimers`）：本类不睡、不等，`run()` 手动触发 ——
  *   与 `TapTracker` 用显式时间戳同一个理由（"时间"必须能被判据驱动）。
+ *   迁移后它同时是 `AsyncScope::sleep()` 的延时函数，所以"排了几拍"直接就是
+ *   "`sleep()` 被调了几次"。
  * ★ 链路的前半段（取签名 → 上传 → 建任务）沿用 `StoreHostChainTest` 的夹具形态，
  *   不重复造。
  */
@@ -117,17 +122,30 @@ final class PollRhythmTest extends TestCase
         self::assertSame(1, $timers->count(), '停止之后不许再排新的一拍');
     }
 
+    /**
+     * ★ 2026-11-04 迁移后这条判据的结论变了，值得说明。
+     *
+     * 旧形状里 `scheduleNextPoll()` 遇到 `$scheduler === null` 就 return —— 那一拍没人排，
+     * 但 `$polling` 仍是 true，于是 `isPolling()` 报"正在轮询"。旧断言把它解释成
+     * 「不轮询 ≠ 这一拍没人排」。
+     *
+     * 新形状里轮询是 `while` + `$co->sleep()`：`sleep()` 拿不到定时器 ⇒ 返回 `false`
+     * ⇒ 循环退出。**"没人排这一拍"和"不在轮询"从此是同一件事** —— 旧断言钉的那个
+     * 区分是形状的产物，不是业务需要。所以这条改成：没有定时器就只查一次，
+     * 且界面必须回到可操作态（不能永远显示"正在查询结果…"）。
+     */
     #[Test]
-    public function 没有scheduler时不自己转(): void
+    public function 没有scheduler时只查一次而不假装在轮询(): void
     {
         [$store, $host] = $this->running(pending: 3, withScheduler: false);
 
-        self::assertTrue($store->isPolling(), '没有 scheduler 不等于"不轮询"，只是"这一拍没人排"');
-        self::assertCount(1, $host->ofClass(PollResultJob::class), '手动那一次照常发');
-
-        // 手动入口仍然可用（页面上的"重试"）
-        $store->pollOnce();
-        self::assertCount(2, $host->ofClass(PollResultJob::class));
+        self::assertCount(1, $host->ofClass(PollResultJob::class), '建任务后那一次查询照常发');
+        self::assertFalse($store->isPolling(), '没有定时器却报告"正在轮询"是假的 —— 那一拍根本没人排');
+        self::assertTrue(
+            $store->lastResult()?->isPending() ?? false,
+            '查到"处理中"要落到 `lastResult()`，否则界面没有进展可画'
+        );
+        self::assertTrue($store->canSubmit(), '流水线结束后界面要回到可操作态，否则按钮永久灰');
     }
 
     // ══════════════════ 夹具 ══════════════════

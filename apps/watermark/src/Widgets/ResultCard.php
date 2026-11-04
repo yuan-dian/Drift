@@ -65,14 +65,22 @@ final class ResultCard extends StatelessWidget
     /** 轮询状态（5 态：已创建 / 排队中 / 处理中 / 完成 / 失败） */
     private function statusSection(): Widget
     {
-        $store = $this->store;
+        return SubjectBuilder::make($this->store)
+            // ★ `isPolling()` 必须进 select，不能在 builder 里现读：
+            //   select 只盯 `lastResult()`，而"刚开始轮询"时它是 `null → null`（没变化）
+            //   ⇒ builder 不重建 ⇒ 状态区停在"等待任务提交后自动查询结果…"，
+            //   而下面 `pollControl()` 已经冒出"停止轮询"按钮 —— 两句话自相矛盾。
+            ->select(static fn(WatermarkStore $s): array => [
+                'result' => $s->lastResult(),
+                'polling' => $s->isPolling(),
+            ])
+            ->builder(static function (array $slice): Widget {
+                $result = $slice['result'];
+                $polling = $slice['polling'] === true;
 
-        return SubjectBuilder::make($store)
-            ->select(static fn(WatermarkStore $s): mixed => $s->lastResult())
-            ->builder(static function (mixed $result) use ($store): Widget {
                 if (!$result instanceof TaskResult) {
                     // 还没提交 / 还没查到：给一句"在等什么"，而不是空白
-                    if ($store->isPolling()) {
+                    if ($polling) {
                         return Row::make()->spacing(10)->children([
                             Spinner::make()->diameter(14.0),
                             Text::make('正在查询结果…')->caption(),

@@ -25,9 +25,15 @@ use Drift\Dev\Tests\Support\SmokeTestCase;
  * | 8 | 循环 + `await` 能跑多轮（轮询形态） | 这条是本类存在的全部理由 |
  * | 9 | 协程外调 `await()` ⇒ 当场抛 | 永久挂住，"界面不动了"查一天 |
  * | 10 | 嵌套 `AsyncScope` | 子流水线跑不起来，或取消打不到内层 |
+ * | 11 | `sleep()` 没有延时函数 ⇒ 返回 `false` | `while` 里退化成零延时重试（请求风暴） |
+ * | 12 | 被 body 吞掉的取消在**下一个让出点**原样重来 | 点了"停止"还在查（`fetchResult` 的现场） |
  *
  * ★ 5 是最值钱的一条：取消若只是"不再交付"而不终结协程，Fiber 连同它捕获的
  *   闭包一起挂在 `suspend()` 上永不释放 —— 这种泄漏界面上完全看不出来。
+ * ★ 12 是迁移 `apps/watermark` 时**测出来的**：`pollLoop()` 里为了"查一次失败
+ *   不停轮询"写了 `catch (\Throwable)`，它把取消哨兵一起接住 ⇒ 循环继续 ⇒ 又排
+ *   一个定时器。`sleep(): bool`（11）是同一轮里补的 —— 顺序代码需要知道
+ *   "到底睡没睡"。两条都是应用的形状反过来改了原语。
  */
 final class AsyncScopeTest extends SmokeTestCase
 {
@@ -333,6 +339,86 @@ final class AsyncScopeTest extends SmokeTestCase
             '嵌套 · 取消外层会沿 await 的 Future 打到内层（内层的取消钩子被调到）',
             ($box2['stopped'] ?? false) === true,
             'stopped=' . (($box2['stopped'] ?? false) ? 'yes' : 'no'),
+        );
+
+        $this->flushChecks();
+    }
+
+    /** 11：没有延时函数时 sleep 返回 false，不抛不崩 */
+    public function testSleepWithoutDelayReturnsFalse(): void
+    {
+        $got = 'not-called';
+        $outer = AsyncScope::task(function (AsyncScope $co) use (&$got): string {
+            $got = $co->sleep(5);
+
+            return 'after';
+        });
+
+        check(
+            'sleep · 没有延时函数时返回 false（不抛、不静默挂住）',
+            $got === false && $outer->isDone(),
+            'got=' . \var_export($got, true) . ' done=' . ($outer->isDone() ? 'yes' : 'no'),
+        );
+        check(
+            'sleep · 返回 false 之后流水线照常往下走（由调用方决定怎么退）',
+            self::valueOf($outer) === 'after',
+            'value=' . \var_export(self::valueOf($outer), true),
+        );
+
+        $this->flushChecks();
+    }
+
+    /**
+     * 12：body 用 `catch (\Throwable)` 吞掉取消 ⇒ 下一个让出点原样重来，协程照样终结。
+     *
+     * ★ 这是 `apps/watermark` 迁移时抓到的真事故形态：轮询循环里为了"查一次失败
+     *   不停轮询"必须 `catch (\Throwable)`，而用户点「停止」投的 `AsyncCancelled`
+     *   会被它一起接住 —— 循环继续，又排一个定时器。
+     * ★ `$terminated` 是本条最值钱的断言：被吞掉的取消若就此挂在一个新的 `await`
+     *   上，协程**永远不终结**（`finally` 不跑，Fiber 栈连同捕获的闭包一起泄漏）。
+     *   这个泄漏在界面上完全看不出来 —— 所以它必须有一条判据。
+     */
+    public function testSwallowedCancelComesBackAtNextAwait(): void
+    {
+        $swallowed = 0;
+        $afterAwait = 0;
+        $terminated = 0;
+        $box = ['f' => null];
+
+        $outer = AsyncScope::task(function (AsyncScope $co) use (&$swallowed, &$afterAwait, &$terminated, &$box): void {
+            try {
+                $f = Future::pending();
+                $box['f'] = $f;
+
+                try {
+                    $co->await($f);
+                } catch (\Throwable $e) {
+                    $swallowed++;   // ★ 故意吞（含取消）
+                }
+
+                $co->await(Future::pending());
+                $afterAwait++;      // 到不了这里
+            } finally {
+                $terminated++;
+            }
+        });
+
+        $outer->cancel();
+
+        check(
+            '被吞的取消 · 下一个 await 立刻再抛（后续语句一句没跑）',
+            $swallowed === 1 && $afterAwait === 0,
+            'swallowed=' . (string) $swallowed . ' after=' . (string) $afterAwait,
+        );
+        check(
+            '被吞的取消 · 协程真的终结了（finally 执行，Fiber 栈不泄漏）',
+            $terminated === 1,
+            'terminated=' . (string) $terminated,
+        );
+        check(
+            '被吞的取消 · 外层仍是"已取消"而不是"已完成/失败"',
+            $outer->isCancelled() && !$outer->isDone(),
+            'cancelled=' . ($outer->isCancelled() ? 'yes' : 'no') . ' done=' . ($outer->isDone() ? 'yes' : 'no'),
         );
 
         $this->flushChecks();

@@ -93,6 +93,10 @@ SubjectBuilder::make($store)
 
 ### 2.3 异步：五个命令 + 四次落地 + 一次接力
 
+> ★ **本节是 2026-11-02 的现状快照，已过期**：2026-11-04 迁移成
+> 「1 个 `AsyncCommand` + 1 个 `Phase` + 一段顺序代码」，见 `DEBT-2026-11-02.md` §32。
+> 保留原文是为了留住"当时为什么会痛"的现场。
+
 `WatermarkStore` 里是 5 个 `AsyncCommand`（sign / upload / task / poll / download），
 每个都是"发起 → 落地（absorb）→ notify"三步：
 

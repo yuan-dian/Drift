@@ -52,6 +52,8 @@ final class WatermarkApplication extends Application
         // ★ 轮询节奏：把 `Application::after()` 包成闭包往下递 —— Store **不持有**
         //   Application（纯状态，与 §4.3"Widget 不许依赖 App"是同一条纪律往上延一层）。
         //   与 `UsersRoot::menuOpener()` 是同一个模式。
+        //   ★ 它同时是 `AsyncScope::task()` 的延时函数 ⇒ `sleep()` 用的就是它：
+        //   定时器从此只有这一个来源，应用手里没有第二个能排定时器的地方。
         $this->store = new WatermarkStore(
             $host,
             $apiBase,
