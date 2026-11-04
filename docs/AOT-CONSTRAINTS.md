@@ -415,14 +415,24 @@ php tools/aot-micro-compare.php --interp=i1,i2,i3,i4 --aot=a1,a2,a3,a4
 不崩、不报错、只是数值偏。而"性能慢 2×"是可接受的，"算错尺寸"是不可用的。
 ⇒ AOT 的第一条判据不是速度，是**数值等价**。
 
-**怎么量**：`tools/Bench/GeomFingerprint.php`。27 页每个 `RenderBox` 的
-`宽/高@x,y`（三位小数）按 DFS 顺序拼接取 md5。
+**怎么量**：`tools/Bench/GeomFingerprint.php` —— 27 页每个 `RenderBox` 的
+`宽/高@x,y`（三位小数）按正序 DFS 拼接取 md5。
 
 ```text
-php tools/geom-fingerprint.php --tsv > build/geom-interp.tsv
-PROBE_SECTION=geom ./frame_tax_aot_probe.exe | grep -P '\t' > build/geom-aot.tsv
-diff build/geom-interp.tsv build/geom-aot.tsv     ⇒ 空
+php tools/aot-equivalence.php          # 一条命令，看退出码
 ```
+
+| 退出码 | 含义 |
+|---|---|
+| `0` | 等价（27 页 / 2278 个 `RenderBox` 逐值相同） |
+| `1` | 不等价 —— 会自动**归因**（AOT 自己飘？）并**定位**（哪页、哪个节点、哪一轴） |
+| `2` | 无法判定 —— AOT 产物不存在（构建要 50s，不默认要求） |
+
+★ 三态不是洁癖：`2` 不冒充 `0`，因为「没验」与「验过没问题」是两件事。
+
+★ **构建后自动跑**：`bash probes/frame_tax_aot/build.sh` 末尾已经接上 ——
+性能数字建立在"算对了"之上，没理由让一个没验过的产物存在超过 3 秒
+（`SKIP_EQUIV=1` 可跳过）。
 
 **结果**：27 页 / **2278 个 `RenderBox` 逐值相同**。
 
@@ -434,7 +444,9 @@ diff build/geom-interp.tsv build/geom-aot.tsv     ⇒ 空
 
 ★ **单页破案用明细**：`php tools/geom-fingerprint.php --detail=AspectPage` /
 `GEOM_PAGE=AspectPage PROBE_SECTION=geom ./frame_tax_aot_probe.exe` —— 指纹说
-"这页不一样"，明细才说"从哪一层的哪一轴开始不一样"。
+"这页不一样"，明细（按深度缩进）才说"从哪一层的哪一轴开始不一样"。
+`aot-equivalence` 红了会自动调这两个并报**最浅 + 最深**两处：最浅给影响范围，
+最深给发生位置（报"第一个不同的节点"等于报根，而根是子树综合，报了没方向）。
 
 
 ---

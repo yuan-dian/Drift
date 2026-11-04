@@ -186,7 +186,7 @@
   > 名字是键、构造闭包是值），解释器与 AOT 共用；「加页忘填清单」由判据 ⑤ 兜住，
   > 另补 ⑥「页面真建起来了」。**这一档的口径欠账清零**，见 `DEBT` §35。
   > ★ **正确性口径也补上了**（`DEBT` §36.8）：27 页 / 2278 个 `RenderBox` 的几何
-  > 两侧**逐值相同**（`tools/geom-fingerprint.php` 对 `PROBE_SECTION=geom` 做 diff）。
+  > 两侧**逐值相同**（`php tools/aot-equivalence.php`，一条命令、三态退出码，见 `DEBT` §37）。
   > 这道检查顺带抓到了 tpc 的 `int / int` 整数除法（`AOT-CONSTRAINTS.md` §1.2）——
   > 框架没踩，但那是**静默**错误，以后动 AOT 先跑它再谈性能。
 - `rebuild.layout` 是「整页换一棵等价新树」的成本，比「改一个 label」更重；它是上界，

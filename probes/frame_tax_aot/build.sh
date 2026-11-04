@@ -26,4 +26,15 @@ export LIB="$MSVC\\lib\\x64;$KITS\\Lib\\$SDK\\ucrt\\x64;$KITS\\Lib\\$SDK\\um\\x6
 export PATH="$(cygpath -u "$MSVC")/bin/Hostx64/x64:$(cygpath -u "$KITS")/bin/$SDK/x64:$PATH"
 
 cd "$ROOT" || exit 1
-exec "$PHP" "$TPC" --project "$HERE_W/project.yml" -O2 -m bin
+"$PHP" "$TPC" --project "$HERE_W/project.yml" -O2 -m bin || exit $?
+
+# ★ 构建成功**立刻**验几何等价性 —— 性能数字建立在"算对了"之上。
+#   `DEBT` §36.8 的话：慢 2× 可接受，算错尺寸不可用。既然顺序如此，
+#   就没有理由让一个"没验过算得对不对"的产物存在超过 3 秒。
+#   ★ 它只跑 2.5s，而构建是 50s —— 占比 5%，没有省的理由。
+#   ★ `SKIP_EQUIV=1` 可跳过（只想要二进制、或机器上没装 PHP 的场合）。
+if [ "${SKIP_EQUIV:-0}" != "1" ]; then
+    echo ""
+    echo "── 几何等价性（AOT vs 解释器）──"
+    "$PHP" "$ROOT_W/tools/aot-equivalence.php" --exe="$ROOT_W/frame_tax_aot_probe.exe" || exit $?
+fi

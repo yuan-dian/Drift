@@ -77,10 +77,19 @@ final class GeomFingerprint
     }
 
     /**
-     * 逐节点明细（**定位差异用，不是判据**）：每行 `类名 宽x高@x,y`，DFS 顺序。
+     * 逐节点明细（**定位差异用，不是判据**）：DFS 序，每行 `类名 宽x高@x,y`。
      *
      * ★ 指纹只能告诉你"这一页不一样"，明细才能告诉你"哪一层的哪一轴开始不一样"。
      *   两者都要有：指纹适合当判据（一行一个值），明细适合破案。
+     *
+     * ★ **按深度缩进**（2026-11-04 晚补）：没有缩进时，`AotEquivalence` 只能报
+     *   "第一个不同的节点"，而那几乎总是**根** —— 根是整棵子树尺寸的综合，
+     *   下面任何一个变它都变。真正有用的是**最深的那层**：差异在那里发生，
+     *   往上都是被"综合"上去的。深度就是那条线索。
+     *
+     * ★ **正序 DFS**（同一晚修的）：栈是 LIFO，子节点直接 `push` 会得到**逆序**
+     *   （第一行是最后一个分支）—— 指纹当判据时无所谓，明细给人读时别扭。
+     *   "第一个不同的节点"在逆序下指的是"最后一个分支"，跟直觉相反。
      *
      * @return list<string>
      */
@@ -92,12 +101,17 @@ final class GeomFingerprint
         }
 
         $out = [];
-        $stack = [$box];
+        // 栈元素是 `[RenderBox, depth]`。★ 用索引取而不是 `[$b, $d] = $pair`：
+        //   数组解构在 tpc 下没有先例，而这份代码要进 AOT 编译。
+        $stack = [[$box, 0]];
         while ($stack !== []) {
-            /** @var RenderBox $b */
-            $b = \array_pop($stack);
+            /** @var array{0: RenderBox, 1: int} $pair */
+            $pair = \array_pop($stack);
+            $b = $pair[0];
+            $depth = $pair[1];
+
             $s = $b->size();
-            $out[] = ($s === null)
+            $out[] = \str_repeat('  ', $depth) . (($s === null)
                 ? \substr(\strrchr('\\' . $b::class, '\\') ?: '?', 1) . ' -'
                 : \sprintf(
                     '%-22s %9.3f x %9.3f @ %.3f,%.3f',
@@ -106,13 +120,19 @@ final class GeomFingerprint
                     $s->height,
                     $b->offsetX(),
                     $b->offsetY()
-                );
+                ));
 
-            $b->visitChildren(static function (RenderObject $c) use (&$stack): void {
+            // 收集后**反序入栈** ⇒ 出栈顺序 = 子节点的插入顺序（正序 DFS）
+            $kids = [];
+            $b->visitChildren(static function (RenderObject $c) use (&$kids): void {
                 if ($c instanceof RenderBox) {
-                    $stack[] = $c;
+                    $kids[] = $c;
                 }
             });
+            $d = $depth + 1;
+            for ($i = \count($kids) - 1; $i >= 0; $i--) {
+                $stack[] = [$kids[$i], $d];
+            }
         }
 
         return $out;
@@ -139,6 +159,23 @@ final class GeomFingerprint
         }
 
         return $out;
+    }
+
+    /**
+     * 一行 TSV —— **两侧共用**，`aot-equivalence` 逐行比的就是它。
+     *
+     * ★ `sumW` / `sumH` 用 `%.3f` 而不是 `(string)`：后者走 `precision` ini
+     *   （默认 14），而 AOT 产物的 ini 来自 `PHPRC=_build/ini`，与解释器**不是同一份**。
+     *   一个 `15105.0` 在两侧可能写成 `15105` 和 `15106`（末位进位），
+     *   那会变成"格式不同冒充数值不同"——量具误报比漏报更难查。
+     *
+     * @param array{page: string, hash: string, nodes: int, sumW: float, sumH: float} $row
+     */
+    public static function tsvLine(array $row): string
+    {
+        return $row['page'] . "\t" . $row['hash'] . "\t" . (string) $row['nodes']
+            . "\t" . \sprintf('%.3f', $row['sumW'])
+            . "\t" . \sprintf('%.3f', $row['sumH']);
     }
 
     /** 单独挂一页（明细模式用）。 */

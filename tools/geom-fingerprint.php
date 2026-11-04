@@ -6,7 +6,12 @@ declare(strict_types=1);
  * 27 个真实页的**几何指纹** —— 解释器这一侧。
  *
  * ★ 另一半在 `probes/frame_tax_aot`（`PROBE_SECTION=geom`），跑的是同一个
- *   `Drift\Dev\Bench\GeomFingerprint`。两份输出**逐行 diff 应当为空**。
+ *   `Drift\Dev\Bench\GeomFingerprint`。
+ *
+ * ★★ **判据不在这里，在 `tools/aot-equivalence.php`**：它跑两侧、逐页比、
+ *   不一致时自己归因 + 定位，退出码说话。本文件只是"解释器侧的原始产出"——
+ *   给人看表格、给脚本要 TSV、给单页破案要明细。
+ *   手工 `diff` 两份输出是 2026-11-04 之前的老流程，别再用（见 `DEBT` §37.1）。
  *
  * ★ 它证明的是「AOT 算出来的尺寸/位置与解释器一致」，不是性能。
  *   存在的理由是一个真实 bug：tpc 把 `int / int` 编译成整数除法
@@ -14,7 +19,8 @@ declare(strict_types=1);
  *
  * 用法：
  *   php tools/geom-fingerprint.php            # 打印表格
- *   php tools/geom-fingerprint.php --tsv      # 只有 "页名<TAB>hash<TAB>nodes<TAB>sumW<TAB>sumH"，供 diff
+ *   php tools/geom-fingerprint.php --tsv      # "页名<TAB>hash<TAB>nodes<TAB>sumW<TAB>sumH"
+ *   php tools/geom-fingerprint.php --detail=AspectPage   # 单页逐节点（按深度缩进）
  *
  * @internal 量具专用
  */
@@ -49,7 +55,7 @@ $rows = GeomFingerprint::allPages();
 
 if ($tsv) {
     foreach ($rows as $r) {
-        echo $r['page'] . "\t" . $r['hash'] . "\t" . $r['nodes'] . "\t" . $r['sumW'] . "\t" . $r['sumH'] . "\n";
+        echo GeomFingerprint::tsvLine($r) . "\n";
     }
     exit(0);
 }

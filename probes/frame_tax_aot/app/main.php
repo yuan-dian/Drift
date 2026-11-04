@@ -365,15 +365,14 @@ function syntheticSection(): void
  *   不崩、不报错，只是几何值偏一点。性能慢 2× 是"可接受"，算错尺寸是"不可用"。
  *   ⇒ AOT 能不能上线的第一条件是**数值等价**，不是快。
  *
- * ★ 输出带 tab，直接：
- *   `PROBE_SECTION=geom ./frame_tax_aot_probe.exe | grep -P '\t' > build/geom-aot.tsv`
- *   `php tools/geom-fingerprint.php --tsv > build/geom-interp.tsv`
- *   `diff build/geom-interp.tsv build/geom-aot.tsv`   ⇒ 空 = 逐值相同
+ * ★ 输出带 tab，但**别手工 diff** —— 判据在 `tools/aot-equivalence.php`：
+ *   它跑两侧、逐页比、红了自动归因 + 定位，退出码说话（`DEBT` §37）。
+ *   `bash build.sh` 末尾已经自动接上。这里的原始输出只给人和脚本取数用。
  */
 function geomSection(): void
 {
     // ★ 单页明细（定位用）：`GEOM_PAGE=AspectPage PROBE_SECTION=geom ...`
-    //   指纹说"这页不一样"，明细才说"从哪一层的哪一轴开始不一样"。
+    //   指纹说"这页不一样"，明细才说"从哪一层的哪一轴开始不一样"（按深度缩进）。
     $page = \getenv('GEOM_PAGE');
     if ($page !== false && $page !== '') {
         $root = GeomFingerprint::mountPage($page);
@@ -394,10 +393,7 @@ function geomSection(): void
     say('=== 几何指纹：27 页逐值（与 tools/geom-fingerprint.php --tsv 应逐行相同）===');
     $total = 0;
     foreach ($rows as $r) {
-        say(
-            $r['page'] . "\t" . $r['hash'] . "\t" . (string) $r['nodes']
-            . "\t" . (string) $r['sumW'] . "\t" . (string) $r['sumH']
-        );
+        say(GeomFingerprint::tsvLine($r));
         $total += (int) $r['nodes'];
     }
     say('--- ' . (string) \count($rows) . ' 页 / ' . (string) $total . ' 节点 ---');
