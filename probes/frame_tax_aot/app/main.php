@@ -3,8 +3,8 @@ declare(strict_types=1);
 
 namespace Probe\FrameTaxAot {
 
+use Drift\Dev\Bench\Fingerprint;
 use Drift\Dev\Bench\FrameTaxMeasure;
-use Drift\Dev\Bench\GeomFingerprint;
 use Drift\Dev\Bench\ShowcasePages;
 use Drift\Widget\Widget;
 
@@ -358,55 +358,93 @@ function syntheticSection(): void
 }
 
 /**
- * 几何指纹段：27 页每个盒的 `宽/高@x,y` 逐值取 md5，**与解释器侧逐行 diff**。
+ * 指纹段：27 页 × **两个通道**（几何 / 绘制），与解释器侧逐行相同。
  *
  * ★ 为什么这一段比性能段更重要：2026-11-04 的微基准顺带撞到 tpc 的语义 bug ——
  *   **`int / int` 被编译成整数除法**（`7 / 2 === 3`）。截断是**静默**的：
- *   不崩、不报错，只是几何值偏一点。性能慢 2× 是"可接受"，算错尺寸是"不可用"。
+ *   不崩、不报错，只是数值偏一点。性能慢 2× 是"可接受"，算错数值是"不可用"。
  *   ⇒ AOT 能不能上线的第一条件是**数值等价**，不是快。
  *
+ * ★ 两个通道补的是不同的盲区（2026-11-05）：
+ *   - `geom`：`RenderBox` 的宽/高/位置 —— 布局算对了吗
+ *   - `paint`：命令流的 op 与每个操作数 —— 画对了吗（颜色 / 画笔 / 裁剪 / 文字排版内部）
+ *   几何看不见颜色与文字内部，而 `int/int` 落在那里时几何树一个字节都不会变。
+ *
  * ★ 输出带 tab，但**别手工 diff** —— 判据在 `tools/aot-equivalence.php`：
- *   它跑两侧、逐页比、红了自动归因 + 定位，退出码说话（`DEBT` §37）。
+ *   它跑两侧、逐页比、红了自动归因 + 定位，退出码说话（`DEBT` §37/§38）。
  *   `bash build.sh` 末尾已经自动接上。这里的原始输出只给人和脚本取数用。
  */
-function geomSection(): void
+function fingerprintSection(): void
 {
-    // ★ 单页明细（定位用）：`GEOM_PAGE=AspectPage PROBE_SECTION=geom ...`
-    //   指纹说"这页不一样"，明细才说"从哪一层的哪一轴开始不一样"（按深度缩进）。
-    $page = \getenv('GEOM_PAGE');
+    // ★ 单页明细（定位用）：`FP_PAGE=AspectPage FP_CHANNEL=paint PROBE_SECTION=fingerprint ...`
+    //   指纹说"这页不一样"，明细才说"从哪一条/哪一层开始不一样"。
+    //   `GEOM_PAGE` 是旧名，留着不删：文档里到处是它，改名的收益抵不过一次误读。
+    $page = \getenv('FP_PAGE');
+    if ($page === false || $page === '') {
+        $page = \getenv('GEOM_PAGE');
+    }
     if ($page !== false && $page !== '') {
-        $root = GeomFingerprint::mountPage($page);
-        if ($root === null) {
-            bad('G②', '这一页没建出根元素：' . $page);
+        $ch = \getenv('FP_CHANNEL');
+        $ch = $ch === Fingerprint::PAINT ? Fingerprint::PAINT : Fingerprint::GEOM;
 
-            return;
+        $lines = Fingerprint::detail($ch, $page);
+        if ($lines === []) {
+            say('这一页没建出内容：' . $page . '（通道 ' . $ch . '，或页面名拼错）');
+            \exit(2);
         }
-        foreach (GeomFingerprint::detail($root) as $line) {
+        foreach ($lines as $line) {
             say($line);
         }
 
         return;
     }
 
-    $rows = GeomFingerprint::allPages(1200.0, 800.0);
+    $snap = Fingerprint::snapshot();
+    $geom = $snap[Fingerprint::GEOM];
+    $paint = $snap[Fingerprint::PAINT];
 
-    say('=== 几何指纹：27 页逐值（与 tools/geom-fingerprint.php --tsv 应逐行相同）===');
-    $total = 0;
-    foreach ($rows as $r) {
-        say(GeomFingerprint::tsvLine($r));
-        $total += (int) $r['nodes'];
+    say('=== 指纹：27 页 × 2 通道（与 tools/fingerprint.php 应逐行相同）===');
+    foreach ($geom as $r) {
+        say(Fingerprint::row(Fingerprint::GEOM, $r));
     }
-    say('--- ' . (string) \count($rows) . ' 页 / ' . (string) $total . ' 节点 ---');
+    foreach ($paint as $r) {
+        say(Fingerprint::row(Fingerprint::PAINT, $r));
+    }
+    say('--- geom ' . (string) \count($geom) . ' 页 / paint ' . (string) \count($paint) . ' 页 ---');
     say('');
 
-    // ★ 只判**下界**，不判精确值：节点数会随页面内容正常变动，硬编码 2208 那样
-    //   每改一页就红，红久了就没人看。要抓的是"页面渲染成空"（下界）。
-    //   ★ 注意这里数的是 **RenderBox** 树，而 `frame-tax-probe --pages` 的 2208 是
-    //     **Element** 树 —— 两个数天然不同（Element 有非绘制节点），别拿来互相比。
-    if ($total >= 2000) {
-        ok('G①', 'RenderBox 节点合计 ' . (string) $total . '（≥2000，页面真建起来了）');
+    // ★ 三条都是**下界/覆盖**判据，不是精确值：硬编码精确数会让"正常改一页"
+    //   天天红，红久了就没人看（§36.8 的教训）。
+    //   ★ 不用 `[$a,$b,$c] = ...` 解构：数组解构在 tpc 下没有先例，而这段要进 AOT。
+    $b = Fingerprint::bound(Fingerprint::GEOM);
+    $geomTotal = 0;
+    foreach ($geom as $r) {
+        $geomTotal += (int) $r[$b[0]];
+    }
+    if ($geomTotal >= $b[1]) {
+        ok('G①', 'RenderBox ' . $b[2] . '合计 ' . (string) $geomTotal . '（≥' . (string) $b[1] . '，页面真建起来了）');
     } else {
-        bad('G①', 'RenderBox 节点合计 ' . (string) $total . ' < 2000（页面渲染成空或清单缩水）');
+        bad('G①', 'RenderBox ' . $b[2] . '合计 ' . (string) $geomTotal . ' < ' . (string) $b[1] . '（页面渲染成空或清单缩水）');
+    }
+
+    $b = Fingerprint::bound(Fingerprint::PAINT);
+    $paintTotal = 0;
+    foreach ($paint as $r) {
+        $paintTotal += (int) $r[$b[0]];
+    }
+    if ($paintTotal >= $b[1]) {
+        ok('G②', $b[2] . '合计 ' . (string) $paintTotal . '（≥' . (string) $b[1] . '，真画了东西）');
+    } else {
+        bad('G②', $b[2] . '合计 ' . (string) $paintTotal . ' < ' . (string) $b[1] . '（命令流是空的或有命令没落笔）');
+    }
+
+    // ★ 覆盖自证：未知槽类型时两侧都会序列化成 `?类名`，指纹**仍然相等**——
+    //   判据静默地少覆盖一类命令，而报告全绿。这是"绿了其实没验"，比红更难发现。
+    $unknown = Fingerprint::unknownTypes();
+    if ($unknown === []) {
+        ok('G③', '槽类型全部已知（7 类值对象 + 标量，无静默降级）');
+    } else {
+        bad('G③', '有槽类型没序列化：' . \implode('、', $unknown) . ' —— 指纹对它们是瞎的，去补 PaintFingerprint::arg()');
     }
 }
 
@@ -418,7 +456,7 @@ function main(): void
     //   这个数不是"框架要 1GB"，是"12k 节点 + 软光栅要 >128MB"，本身就是个数据点。
     @\ini_set('memory_limit', '1024M');
 
-    // ★★ 段选择（`PROBE_SECTION=pages|synthetic|geom`，或第一个命令行参数）。
+    // ★★ 段选择（`PROBE_SECTION=pages|synthetic|fingerprint`，或第一个命令行参数）。
     //   **不带 = 两段都跑，页面段在前** —— 那是"自洽判据"模式。
     //   要拿**能与历史对表的绝对值**，必须**一段一进程**：
     //   实测同一进程里先跑页面档，合成档 layout 从 88.4ms 涨到 104.1ms（**+18%**），
@@ -426,8 +464,9 @@ function main(): void
     //   ⇒ 量具版的 fork：解释器那边本来就是两条命令、两个进程，这边也必须是。
     $mode = 'all';
     $env = \getenv('PROBE_SECTION');
-    if ($env === 'pages' || $env === 'synthetic' || $env === 'geom') {
-        $mode = $env;
+    if ($env === 'pages' || $env === 'synthetic' || $env === 'fingerprint' || $env === 'geom') {
+        // `geom` 是旧名（那时指纹只有几何一个通道）—— 映射到同一段，不让旧命令失效
+        $mode = $env === 'geom' ? 'fingerprint' : $env;
     }
 
     say('=== 第 2 道门：帧税三数 on tpc AOT (-m bin) ===');
@@ -438,9 +477,9 @@ function main(): void
 
     // ★ 两段都跑时顺序不能反：页面档要"进程干净"，12k 档的内存峰值会污染它。
     //   （要绝对值的场合用 `PROBE_SECTION` 分开跑，别依赖这个顺序。）
-    // ★ `geom` 段不进 `all`：它不出性能数字，只出一份可 diff 的指纹表。
-    if ($mode === 'geom') {
-        geomSection();
+    // ★ `fingerprint` 段不进 `all`：它不出性能数字，只出一份可 diff 的指纹表。
+    if ($mode === 'fingerprint') {
+        fingerprintSection();
         \exit(Fit::$fail > 0 ? 1 : 0);
     }
     if ($mode === 'all' || $mode === 'pages') {

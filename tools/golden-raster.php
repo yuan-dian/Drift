@@ -910,5 +910,11 @@ foreach ($scenes as $name => $make) {
     $rgba = $make();
     $out[] = sprintf('%s: len=%d md5=%s', $name, strlen($rgba), md5($rgba));
 }
-file_put_contents($argv[1] ?? 'php://stdout', implode("\n", $out) . "\n");
+// ★ 只把**不以 `-` 开头**的参数当输出路径：否则打错的选项（`--help`、`--chek`）
+//   会静默生成一个同名垃圾文件 —— 命令不报错、目录里多个 `--help`，
+//   而"看起来成功"比报错更难查。（2026-11-04 实测踩到）
+$outPath = (isset($argv[1]) && $argv[1] !== '' && \strncmp($argv[1], '-', 1) !== 0)
+    ? $argv[1]
+    : 'php://stdout';
+file_put_contents($outPath, implode("\n", $out) . "\n");
 echo implode("\n", $out), "\n";

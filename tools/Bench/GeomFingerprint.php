@@ -3,13 +3,9 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Bench;
 
-use Drift\Dev\Smoke\Frame\SurfaceProbe;
-use Drift\Geometry\BoxConstraints;
-use Drift\Geometry\Size;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderObject;
 use Drift\Widget\Element;
-use Drift\Widget\Widget;
 
 /**
  * 已布局树的**几何指纹** —— 用来证明「AOT 产物算出的尺寸/位置与解释器逐值相同」。
@@ -25,6 +21,12 @@ use Drift\Widget\Widget;
  *   记到亚像素第三位足以暴露"整数截断"这种量级（≥0.5px）的差，又不会被
  *   浮点末位噪声误报。
  *
+ * ★ 只管"取"，不管"比"：挂载在 `PageFrame`，行格式与判据在 `Fingerprint` /
+ *   `AotEquivalence`。三处各干一件事，谁都不复制谁的格式化（`DEBT` §37.5 ②）。
+ *
+ * ★ 它只看**几何**。颜色 / 画笔 / op 顺序 / 文字排版内部一律看不见 ——
+ *   那是 `PaintFingerprint` 的地盘，两个通道是同一帧的两个投影。
+ *
  * @internal 量具专用，不进公共 API
  */
 final class GeomFingerprint
@@ -32,9 +34,9 @@ final class GeomFingerprint
     /**
      * @return array{hash: string, nodes: int, sumW: float, sumH: float}
      */
-    public static function of(Element $root): array
+    public static function of(?Element $root): array
     {
-        $box = $root->effectiveBox();
+        $box = $root === null ? null : $root->effectiveBox();
         if ($box === null) {
             return ['hash' => '-', 'nodes' => 0, 'sumW' => 0.0, 'sumH' => 0.0];
         }
@@ -93,9 +95,9 @@ final class GeomFingerprint
      *
      * @return list<string>
      */
-    public static function detail(Element $root): array
+    public static function detail(?Element $root): array
     {
-        $box = $root->effectiveBox();
+        $box = $root === null ? null : $root->effectiveBox();
         if ($box === null) {
             return [];
         }
@@ -136,62 +138,5 @@ final class GeomFingerprint
         }
 
         return $out;
-    }
-
-    /**
-     * 27 个真实页逐个取指纹 —— **两侧跑同一份**，输出逐行可比。
-     *
-     * @return list<array{page: string, hash: string, nodes: int, sumW: float, sumH: float}>
-     */
-    public static function allPages(float $w = 1200.0, float $h = 800.0): array
-    {
-        $tight = BoxConstraints::tight(new Size($w, $h));
-
-        $out = [];
-        foreach (ShowcasePages::names() as $name) {
-            $app = self::mount($name, $tight, $w, $h);
-            $root = $app->root();
-            $fp = $root === null
-                ? ['hash' => '-', 'nodes' => 0, 'sumW' => 0.0, 'sumH' => 0.0]
-                : self::of($root);
-
-            $out[] = $fp + ['page' => $name];
-        }
-
-        return $out;
-    }
-
-    /**
-     * 一行 TSV —— **两侧共用**，`aot-equivalence` 逐行比的就是它。
-     *
-     * ★ `sumW` / `sumH` 用 `%.3f` 而不是 `(string)`：后者走 `precision` ini
-     *   （默认 14），而 AOT 产物的 ini 来自 `PHPRC=_build/ini`，与解释器**不是同一份**。
-     *   一个 `15105.0` 在两侧可能写成 `15105` 和 `15106`（末位进位），
-     *   那会变成"格式不同冒充数值不同"——量具误报比漏报更难查。
-     *
-     * @param array{page: string, hash: string, nodes: int, sumW: float, sumH: float} $row
-     */
-    public static function tsvLine(array $row): string
-    {
-        return $row['page'] . "\t" . $row['hash'] . "\t" . (string) $row['nodes']
-            . "\t" . \sprintf('%.3f', $row['sumW'])
-            . "\t" . \sprintf('%.3f', $row['sumH']);
-    }
-
-    /** 单独挂一页（明细模式用）。 */
-    public static function mountPage(string $name, float $w = 1200.0, float $h = 800.0): ?Element
-    {
-        return self::mount($name, BoxConstraints::tight(new Size($w, $h)), $w, $h)->root();
-    }
-
-    private static function mount(string $name, BoxConstraints $tight, float $w, float $h): FrameTaxApp
-    {
-        $app = new FrameTaxApp(static fn (): Widget => ShowcasePages::make($name));
-        $surface = new SurfaceProbe();
-        $surface->resize((int) $w, (int) $h, 1.0);
-        // `attach()` 自己跑一帧（mount + settle + layout + paint）—— 尺寸就在这一帧定下。
-        $app->attach($surface, $tight);
-
-        return $app;
     }
 }
