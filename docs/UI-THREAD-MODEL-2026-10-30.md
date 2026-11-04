@@ -83,16 +83,16 @@
 
 | 铁律 | Drift | 代码位置 |
 |---|---|---|
-| ① UI 单线程 + 亲和 | ✅ `assertUiThread()` 守在 `frame` / `repaintForResize` / `pumpTasks` / `pumpIo` | `PumpHost.php:289,324`、`Application.php:837,1083` |
-| ② 消息队列唯一入口 | ✅ 后端**只准**把 `Completion` 入队，`drain()` 只在 UI 线程帧内调 | `PumpHost.php:282-310` |
-| ③ 业务不在 UI 线程 | ⚠️ 机制齐（进程/线程池），但**默认后端是 `SyncTaskHost`**（在调用者线程跑完） | `AppScope.php:243` |
+| ① UI 单线程 + 亲和 | ✅ `assertUiThread()` 守在 `frame` / `repaintForResize` / `pumpTasks` / `pumpIo` | `PumpHost.php`、`Application.php` |
+| ② 消息队列唯一入口 | ✅ 后端**只准**把 `Completion` 入队，`drain()` 只在 UI 线程帧内调 | `PumpHost.php` |
+| ③ 业务不在 UI 线程 | ⚠️ 机制齐（进程/线程池），但**默认后端是 `SyncTaskHost`**（在调用者线程跑完） | `AppScope.php` |
 | ④ 空闲阻塞不轮询 | ✅ `waitEvents(-1)` 无限等；`needsPolling()===false` 的后端靠 `PostMessageW` 叫醒 | `EventLoop.php:105-116`、`ThreadTaskHost.php:180-183` |
 | ⑤ 唤醒合并 | ✅ `wakePump()` 用 `g_wakePosted` 做闸，取走 `kMsgWake` 时才复位 ⇒ 多次入队只压一次闹钟 | `drift_win32.cc:1219-1227`、复位点 `3222` |
 
 ★ **2026-10-31 对账**（这张表的行号与结论一起核过一遍）：① 原先还列着
 `pumpSliced` / `submitSliced` —— 分片链当天删了（`ASYNC-ARCH-2026-10-31.md` §12），
 两处名字与行号一并不成立；③ 的 `Application.php:470` 只是转发，**默认值真正落在
-`AppScope.php:243`**；④ 的两处行号已漂；⑤ 的结论**从 ❌ 翻成 ✅** —— `g_wakePosted`
+`AppScope.php`**；④ 的两处行号已漂；⑤ 的结论**从 ❌ 翻成 ✅** —— `g_wakePosted`
 （`drift_win32.cc:417`）本来就是"闹钟闸"，取走消息时才复位（`3222`），
 "每条事件都 `PostMessageW`"这句话在加闸之后就不成立了。
 

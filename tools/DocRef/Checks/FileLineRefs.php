@@ -142,5 +142,27 @@ final class FileLineRefs implements Check
         if (1 > $total) {
             throw new \RuntimeException('selftest: 正例不成立');
         }
+
+        // run() 双向自检：越界报 error、合法行号不报（临时仓，跑完即删）
+        $tmp = sys_get_temp_dir() . '/drift-docref-' . bin2hex(random_bytes(4));
+        mkdir($tmp . '/src/Widget', 0777, true);
+        mkdir($tmp . '/docs', 0777, true);
+        file_put_contents($tmp . '/DESIGN.md', "# t\n");
+        file_put_contents($tmp . '/src/Widget/Text.php', "<?php\n");
+        file_put_contents($tmp . '/docs/x.md', "`src/Widget/Text.php:1` 与 `src/Widget/Text.php:99999`\n");
+        try {
+            $errors = array_filter(
+                $this->run(new DocSet($tmp)),
+                static fn(Diagnostic $d): bool => $d->isError()
+            );
+            if (count($errors) !== 1) {
+                throw new \RuntimeException('selftest: 越界引用没被抓到，或多抓了合法引用');
+            }
+        } finally {
+            foreach (['/DESIGN.md', '/src/Widget/Text.php', '/docs/x.md', '/src/Widget', '/src', '/docs', ''] as $p) {
+                $f = $tmp . $p;
+                if (is_file($f)) { @unlink($f); } elseif (is_dir($f)) { @rmdir($f); }
+            }
+        }
     }
 }

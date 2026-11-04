@@ -155,7 +155,7 @@ public frame() 一个方法 285 行（1838-2123），九个泵 + 浮层 + 焦点
 | **I1** | **巨型方法**：`Application::frame()` 285 行、`dispatchInput()` 184 行、`RasterCanvas` 1 816 行 | `wc -l` | `frame()` 拆成 `FrameEngine`（九段表驱动）；`dispatchInput()` 拆成 `InputRouter`；`RasterCanvas` 的扫描线/描边/裁剪已分私有方法（好），**不用动** |
 | **I2** | **`instanceof` 分支表没有守卫**：39 处散在 `Application`，`Element::syncBox()` 与 `StatefulElement` 各有特判 | `grep -c instanceof` | 拆 `S1` 时一并收成接口（`EditableText` / `Scrollable`），并加一条 lint：`instanceof` 于 `src/App/` 里只许出现在接口上 |
 | **I3** | **两套错误通道**：`ErrorBoundary`（拦异常、画占位）与 `Errors`（报契约、Fatal/Recoverable/Diagnostic）职责分得清但**入口没类型**：应用不知道什么时候 `throw` 什么时候 `Errors::report` | `src/Widget/ErrorBoundary.php` + `src/Errors.php` | 加一张 3 行的判定表进 `docs/architecture/17`：**契约破坏 → `Errors`；用户输入导致的渲染失败 → `ErrorBoundary`；外部 IO → `Job` + `after()`** |
-| **I4** | **死分支仍在**：`RenderFlex`/`RenderDock` 的 `Scroll`/`Wrap` 溢出策略仍是"未实现"分支（`RenderFlex.php:572`、`RenderDock.php:234`） | `grep 尚未实现 src/Layout` = 5 处 | 与 §0 的"否决清单"一致：**把 `Scroll`/`Wrap` 从 `Overflow` 枚举里删掉**（`MEMORY.md` 已判 `Overflow::Wrap` 是类别错误）—— 删比留好，留着就是"未被消费的分支 = 未实现"的反面 |
+| **I4** | **死分支仍在**：`RenderFlex`/`RenderDock` 的 `Scroll`/`Wrap` 溢出策略仍是"未实现"分支（`RenderFlex.php` / `RenderDock.php`） | `grep 尚未实现 src/Layout` = 5 处 | 与 §0 的"否决清单"一致：**把 `Scroll`/`Wrap` 从 `Overflow` 枚举里删掉**（`MEMORY.md` 已判 `Overflow::Wrap` 是类别错误）—— 删比留好，留着就是"未被消费的分支 = 未实现"的反面 |
 
 ---
 

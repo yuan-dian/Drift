@@ -728,8 +728,8 @@ $ioApp->io()?->watch($ioRead, true, function (): void {});
 
 | 铁律 | 腐坏 | 订正后 |
 |---|---|---|
-| ① UI 单线程 + 亲和 | 还列着 `pumpSliced` / `submitSliced`；行号漂 | `PumpHost.php:289,324`、`Application.php:837,1083` |
-| ③ 业务不在 UI 线程 | `Application.php:470` 只是转发 | 默认值真正落在 `AppScope.php:243` |
+| ① UI 单线程 + 亲和 | 还列着 `pumpSliced` / `submitSliced`；行号漂 | `PumpHost.php`、`Application.php` |
+| ③ 业务不在 UI 线程 | `Application.php:470` 只是转发 | 默认值真正落在 `AppScope.php` |
 | ④ 空闲阻塞不轮询 | 两处行号漂 | `EventLoop.php:105-116`、`ThreadTaskHost.php:180-183` |
 | ⑤ 唤醒合并 | 结论写着 **❌ "每条事件都 `PostMessageW`"** | **✅** —— `g_wakePosted`（`drift_win32.cc:417`）就是闹钟闸，取走 `kMsgWake` 时复位（`3222`）⇒ 多次入队只压一次 |
 
