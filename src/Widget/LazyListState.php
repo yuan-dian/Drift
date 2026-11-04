@@ -17,7 +17,7 @@ use Drift\Layout\RenderScrollView;
  *   会把窗算到列表之外，造出一片空白（不报错）。
  * @internal 应用只认 `LazyColumn` / `LazyRow`
  */
-final class LazyListState extends State implements Scrollable
+final class LazyListState extends State implements Scrollable, ScrollMetrics
 {
     /** 这根轴的滚动状态机（偏移 + 动画 + 淡出）；懒建：从没滚过的列表不额外造对象。 */
     private ?ScrollLane $lane = null;
@@ -53,6 +53,8 @@ final class LazyListState extends State implements Scrollable
     #[\Override]
     public function initState(): void
     {
+        $this->view()->controllerValue()?->attach($this);
+
         $px = $this->view()->initialOffsetPx();
 
         if ($px <= 0.0) {
@@ -67,6 +69,36 @@ final class LazyListState extends State implements Scrollable
     public function offset(): float
     {
         return $this->lane()->offset();
+    }
+
+    /**
+     * 内容能滚到的最大偏移（盒没挂 ⇒ 0）。
+     *
+     * 读盒而不是自己按 `项数 × 格长` 算：完整长度已由 `build()` 以 `virtualExtent`
+     * 交给盒，自己再算一遍迟早与滚动条漂。
+     */
+    public function maxOffset(): float
+    {
+        /** @var RenderScrollView|null $box */
+        $box = $this->element()?->effectiveBoxOf(RenderScrollView::class);
+        if ($box === null) {
+            return 0.0;
+        }
+
+        return $box->maxScroll($this->view()->isVertical() ? Axis::Vertical : Axis::Horizontal);
+    }
+
+    /** 滚到绝对偏移（用 Δ 表达 ⇒ 夹取仍只有 `ScrollLane::move()` 一条路径） */
+    public function scrollTo(float $offset): void
+    {
+        $this->scrollBy($offset - $this->offset());
+    }
+
+    /** @internal 卸载即解绑：句柄留着死 State 会滚到虚空的盒上 */
+    #[\Override]
+    public function dispose(): void
+    {
+        $this->view()->controllerValue()?->detach($this);
     }
 
     /**
@@ -92,6 +124,8 @@ final class LazyListState extends State implements Scrollable
                 $this->rememberAnchor();
             });
 
+            $this->view()->controllerValue()?->sync();
+
             return;
         }
 
@@ -114,6 +148,8 @@ final class LazyListState extends State implements Scrollable
         if ($viewport <= 0.0 || !$this->windowCovers($viewport)) {
             $this->markDirty();
         }
+
+        $this->view()->controllerValue()?->sync();
     }
 
     /**

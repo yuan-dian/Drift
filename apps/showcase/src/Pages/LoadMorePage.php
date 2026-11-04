@@ -17,6 +17,7 @@ use Drift\Widget\Expanded;
 use Drift\Widget\LazyColumn;
 use Drift\Widget\Padding;
 use Drift\Widget\Row;
+use Drift\Widget\ScrollController;
 use Drift\Widget\Spinner;
 use Drift\Widget\State;
 use Drift\Widget\StatefulWidget;
@@ -43,12 +44,11 @@ use Drift\Widget\Widget;
  * `$value` 里有什么，证明不了"界面还在画旧行"。
  * ⇒ 这一页同时是文档里的范文和冒烟/特性测试的被测对象。
  *
- * ## 界面形态（以及一个诚实的边界）
+ * ## 界面形态
  *
- * 「加载更多」是**按钮**，不是"滚到底自动加载"：`LazyColumn` 今天没有
- * `onEndReached`，自动加载要另接一层滚动监听 —— 而本页要证明的是**状态语义**
- * （追加 / 旧行保留 / 失败可重试），不是滚动事件。滚到底自动加载换个触发点即可，
- * 命令那一侧一行都不用改（这正是"语义在命令、触发在页面"的分工）。
+ * 「加载更多」是按钮**也**是滚动触底：滚到底自动取下一页（`ScrollController`
+ * 回调里按 `offset >= max - 8` 判），按钮留着给键盘与无障碍——两条路都落到
+ * 同一个 `loadMore()`，命令那一侧一行都不用改（"语义在命令、触发在页面"）。
  *
  * ★ 页脚那句"正在加载第 N 页…"来自 `isRefreshing()`：追加中 `fold()` 走的是
  *   **`data` 支**（旧行还在，该画内容），所以"正在忙"必须由页面自己说出来。
@@ -96,6 +96,9 @@ final class LoadMorePageState extends State
      */
     private AsyncCommand $rows;
 
+    /** 列表的滚动句柄：触底自动翻页（按钮那条路同时留着） */
+    private ScrollController $scroll;
+
     /**
      * @param \Closure(int): Future $fetchRows
      */
@@ -111,6 +114,21 @@ final class LoadMorePageState extends State
                 return self::mergePages($old, $new);
             },
         );
+
+        // ★ 触底判据要"两个数"，而且只在**真的还有下一页**时才发：
+        //   否则到底后每次微滚都发一条，服务端收到一串空请求。
+        $this->scroll = ScrollController::make()->onChanged(function (float $offset, float $max): void {
+            if ($max <= 0.0 || $offset < $max - 8.0 || $this->rows->isRunning()) {
+                return;
+            }
+
+            $value = $this->rows->value();
+            if (!$value->hasValue() || \count(self::itemsOf($value)) >= self::totalOf($value)) {
+                return;
+            }
+
+            $this->loadMore($value);
+        });
 
         $this->rows->run(1);
     }
@@ -293,6 +311,7 @@ final class LoadMorePageState extends State
             Expanded::make(
                 LazyColumn::make(self::ROW_EXTENT)
                     ->items($items, static fn(array $row): Widget => self::row($row))
+                    ->controller($this->scroll)
             ),
             Text::make($note)->caption(),
         ]);

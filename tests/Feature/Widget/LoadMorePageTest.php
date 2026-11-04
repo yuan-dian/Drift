@@ -14,6 +14,8 @@ use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Size;
 use Drift\Widget\Button;
 use Drift\Widget\Element;
+use Drift\Widget\LazyListState;
+use Drift\Widget\StatefulElement;
 
 /**
  * `LoadMorePage`（示例台「加载更多」页）—— **追加语义的端到端消费者**（2026-10-31）。
@@ -142,6 +144,53 @@ final class LoadMorePageTest extends SmokeTestCase
         check('LoadMorePage · 全程无诊断（建树 / 布局 / 追加都干净）',
             Errors::recentDiagnostics() === [],
             \json_encode(Errors::recentDiagnostics(), \JSON_UNESCAPED_UNICODE));
+
+        $this->flushChecks();
+    }
+
+    /**
+     * 触底自动翻页：滚到列表底部 ⇒ 页面自己取第 2 页（按钮那条路仍然在）。
+     *
+     * ★ 这条是 `ScrollController` 的**消费者判据**：框架侧只保证"偏移变了会回调"，
+     *   "到底了就取下一页"是页面的决定 —— 所以判据必须落在页面上（请求真的发出去了）。
+     */
+    public function testScrollToBottomLoadsNextPage(): void
+    {
+        Errors::reset();
+
+        $made = [];
+        $app = new LoadMoreApplication(static function (int $page) use (&$made): Future {
+            $made[] = Future::pending();
+
+            return $made[\count($made) - 1];
+        });
+
+        self::attach($app);
+        self::frames($app, 0, 2);
+        // 20 行 × 40 = 800 高，撑出视口才有"底"可触
+        $made[0]->resolve(self::page(\range(1, 20), 40));
+        self::frames($app, 2, 2);
+
+        check('LoadMorePage · 首屏 20 行', \count(self::idsOf($app->pageState()->command()->value())) === 20);
+        check('LoadMorePage · 还没滚 ⇒ 只请求过第 1 页', $app->requested === [1], 'requested=' . \json_encode($app->requested));
+
+        $list = null;
+        $root = $app->root();
+        if ($root !== null) {
+            $hit = findElement(
+                $root,
+                static fn(Element $e): bool => $e instanceof StatefulElement && $e->state() instanceof LazyListState,
+            );
+            $list = $hit instanceof StatefulElement ? $hit->state() : null;
+        }
+        check('LoadMorePage · 找得到列表 State', $list instanceof LazyListState);
+
+        if ($list instanceof LazyListState) {
+            $list->scrollTo($list->maxOffset());
+        }
+        self::frames($app, 4, 1);
+
+        check('LoadMorePage · 滚到底 ⇒ 自动请求第 2 页', $app->requested === [1, 2], 'requested=' . \json_encode($app->requested));
 
         $this->flushChecks();
     }

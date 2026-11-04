@@ -26,10 +26,10 @@
 | State | 17 | 8 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
-| Widget | 175 | 207 |
-| **合计** | **480** | **381** |
+| Widget | 177 | 214 |
+| **合计** | **482** | **388** |
 
-覆盖 385 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
+覆盖 387 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
 
 ## App 层
 
@@ -677,7 +677,7 @@
 
 ## Widget 层
 
-### @api（应用可读面） · 175
+### @api（应用可读面） · 177
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -761,6 +761,8 @@
 | `RichText` | class | src/Widget/RichText.php |
 | `Row` | class | src/Widget/Row.php |
 | `Scrollable` | interface | src/Widget/Scrollable.php |
+| `ScrollController` | class | src/Widget/ScrollController.php |
+| `ScrollMetrics` | interface | src/Widget/ScrollMetrics.php |
 | `ScrollView` | class | src/Widget/ScrollView.php |
 | `ScrollViewState` | class | src/Widget/ScrollViewState.php |
 | `Segment` | class | src/Widget/Segment.php |
@@ -857,7 +859,7 @@
 | `Wrap` | class | src/Widget/Wrap.php |
 | `YearMonth` | class | src/Widget/YearMonth.php |
 
-### @internal（框架内部） · 207
+### @internal（框架内部） · 214
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -938,8 +940,10 @@
 | `LazyList::keyMapper()` | method | src/Widget/LazyList.php |
 | `LazyList::viewportExtentPx()` | method | src/Widget/LazyList.php |
 | `LazyList::initialOffsetPx()` | method | src/Widget/LazyList.php |
+| `LazyList::controllerValue()` | method | src/Widget/LazyList.php |
 | `LazyList::buildItem()` | method | src/Widget/LazyList.php |
 | `LazyListState` | class | src/Widget/LazyListState.php |
+| `LazyListState::dispose()` | method | src/Widget/LazyListState.php |
 | `Modal::bindDismiss()` | method | src/Widget/Modal.php |
 | `ModalHost` | class | src/Widget/ModalHost.php |
 | `OffstageElement::$parked` | property | src/Widget/OffstageElement.php |
@@ -957,10 +961,15 @@
 | `RenderBoxWidget::paintsDisabledLook()` | method | src/Widget/RenderBoxWidget.php |
 | `RenderBoxWidget::defaultBoxStyle()` | method | src/Widget/RenderBoxWidget.php |
 | `ScrollBarFade` | class | src/Widget/ScrollBarFade.php |
+| `ScrollController::attach()` | method | src/Widget/ScrollController.php |
+| `ScrollController::detach()` | method | src/Widget/ScrollController.php |
+| `ScrollController::sync()` | method | src/Widget/ScrollController.php |
 | `ScrollLane` | class | src/Widget/ScrollLane.php |
 | `ScrollMotion` | class | src/Widget/ScrollMotion.php |
 | `ScrollViewBox` | class | src/Widget/ScrollViewBox.php |
 | `ScrollViewBox::make()` | method | src/Widget/ScrollViewBox.php |
+| `ScrollViewState::initState()` | method | src/Widget/ScrollViewState.php |
+| `ScrollViewState::dispose()` | method | src/Widget/ScrollViewState.php |
 | `Select::optionsValue()` | method | src/Widget/Select.php |
 | `Select::valueValue()` | method | src/Widget/Select.php |
 | `Select::placeholderText()` | method | src/Widget/Select.php |

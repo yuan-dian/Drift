@@ -40,6 +40,8 @@ abstract class LazyList extends StatefulWidget
 
     private float $viewportPx = 0.0;
 
+    private ?ScrollController $controller = null;
+
     private EdgeInsets $insets;
 
     /**
@@ -155,6 +157,21 @@ abstract class LazyList extends StatefulWidget
     public function initialOffsetPx(): float
     {
         return $this->initialOffsetPx;
+    }
+
+    /** 外部句柄：读偏移 / 滚到底（不传 ⇒ 只由滚轮驱动） */
+    public function controller(ScrollController $value): static
+    {
+        $this->mutate();
+        $this->controller = $value;
+
+        return $this;
+    }
+
+    /** @internal */
+    public function controllerValue(): ?ScrollController
+    {
+        return $this->controller;
     }
 
     /**

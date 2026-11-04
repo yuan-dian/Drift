@@ -22,7 +22,7 @@ use Drift\Layout\RenderScrollView;
  *
  * @api
  */
-final class ScrollViewState extends State implements Scrollable
+final class ScrollViewState extends State implements Scrollable, ScrollMetrics
 {
     /**
      * 这根轴的滚动状态机（偏移 + 动画 + 淡出）。
@@ -37,6 +37,38 @@ final class ScrollViewState extends State implements Scrollable
     public function offset(): float
     {
         return $this->lane()->offset();
+    }
+
+    /** 内容能滚到的最大偏移（盒没挂 ⇒ 0）。每次问盒：内容长度随布局变，缓存就是"用上一帧回答这一帧" */
+    public function maxOffset(): float
+    {
+        /** @var RenderScrollView|null $box */
+        $box = $this->element()?->effectiveBoxOf(RenderScrollView::class);
+        if ($box === null) {
+            return 0.0;
+        }
+
+        return $box->maxScroll($this->view()->vertical() ? Axis::Vertical : Axis::Horizontal);
+    }
+
+    /** 滚到绝对偏移（用 Δ 表达 ⇒ 夹取仍只有 `ScrollLane::move()` 一条路径） */
+    public function scrollTo(float $offset): void
+    {
+        $this->scrollBy($offset - $this->offset());
+    }
+
+    /** @internal 外部句柄进来时登记（挂载后调一次） */
+    #[\Override]
+    public function initState(): void
+    {
+        $this->view()->controllerValue()?->attach($this);
+    }
+
+    /** @internal 卸载即解绑：句柄留着死 State 会滚到虚空的盒上 */
+    #[\Override]
+    public function dispose(): void
+    {
+        $this->view()->controllerValue()?->detach($this);
     }
 
     /**
@@ -71,6 +103,9 @@ final class ScrollViewState extends State implements Scrollable
                 return $box === null ? $value : $box->setScrollOffset($axis, $value);
             },
         );
+
+        // 唯一的写入口 ⇒ 句柄通知只挂这里（滑行动画帧也经此处落地）。
+        $this->view()->controllerValue()?->sync();
     }
 
     /**

@@ -33,6 +33,8 @@ use Drift\Input\SemanticsRole;
  */
 final class ScrollView extends StatefulWidget
 {
+    private ?ScrollController $controller = null;
+
     private function __construct(
         private readonly Widget $child,
         private readonly bool $vertical = true,
@@ -46,6 +48,20 @@ final class ScrollView extends StatefulWidget
     public static function make(Widget $child, bool $vertical = true): self
     {
         return new self($child, $vertical);
+    }
+
+    /** 外部句柄：读偏移 / 滚到底（不传 ⇒ 只由滚轮与焦点驱动） */
+    public function controller(ScrollController $value): static
+    {
+        $this->mutate();
+        $this->controller = $value;
+
+        return $this;
+    }
+
+    public function controllerValue(): ?ScrollController
+    {
+        return $this->controller;
     }
 
     /** 被滚动的内容（原样挂进 `ScrollViewBox`，不进包装） */
