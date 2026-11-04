@@ -41,7 +41,8 @@ declare(strict_types=1);
  *
  * ★ ⑤ 是**比值**不是毫秒：分子分母是同一棵树上的**同一种操作**，机器慢了两边一起
  *   慢 ⇒ 比值稳。这也是它能进闸门的唯一理由（`Scale` 那条纪律的同类：只比同量纲）。
- * ★ `--check` 只跑 500 行一个规模（30 帧），约 1s；不带参数仍是四档报告。
+ * ★ `--check` 只跑 500 行一个规模（30 帧），约 1s；不带参数是五档报告（10/50/200/500
+ *   行 + 12k 节点档），末档 ~12k 节点是 Raven「增量布局值不值得立项」的真分母。
  *
  * ## `--pages`：把工作负载换成**真实页面**（2026-11-02）
  *
@@ -101,7 +102,9 @@ $check = $json || \in_array('--check', $args, true);
 /** `--pages`：把工作负载换成**真实 showcase 页面**（M5 的真分母，见文件头 §页面档） */
 $pages = \in_array('--pages', $args, true);
 /** `--check` 只跑一档（进闸门要快）；报告模式四档看趋势 */
-$sizes = $check ? [500] : [10, 50, 200, 500];
+// 12k 节点档（≈3000 行）是 Raven「增量布局值不值得立项」的真分母；只进报告档，
+// `--check` 仍 500 行（闸门要快，且判据只认静态树自洽）。
+$sizes = $check ? [500] : [10, 50, 200, 500, 3000];
 $frames = $check ? 30 : 50;
 /** @var array<string, mixed> 最后一档的结果（`--check` 判据读它） */
 $last = [];
@@ -428,13 +431,15 @@ if ($pages) {
     ))->emit($json);
 }
 
-$json || \printf("%6s %14s %12s %7s %6s\n", 'rows', 'perFrame(us)', 'layout(us)', 'paint', 'skip');
+$json || \printf("%6s %8s %10s %14s %12s %7s %6s\n", 'rows', 'nodes', 'cold(us)', 'perFrame(us)', 'layout(us)', 'paint', 'skip');
 $prev = null;
 foreach ($sizes as $rows) {
     $r = $measure((string) $rows, $syntheticRoot($rows), W, H, $frames);
     $json || \printf(
-        "%6d %14.1f %12.1f %7d %6d\n",
+        "%6d %8d %10.1f %14.1f %12.1f %7d %6d\n",
         (int) $r['label'],
+        $r['nodes'],
+        $r['coldUs'],
         $r['perFrameUs'],
         $r['layoutUs'],
         $r['paint'],
