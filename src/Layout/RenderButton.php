@@ -65,6 +65,18 @@ final class RenderButton extends RenderProxyBox
          * `Flat` 变体只变色不浮起 —— 顶条上的图标按钮浮起来会动得太吵。
          */
         private readonly float $hoverElevation = 0.0,
+        /**
+         * 按下态叠加色（`null` = 本按钮不做按下反馈）。
+         *
+         * ★ 与 `hoverOverlay` **分成两个参数而不是一个"状态色表"**：两者的
+         *   过渡是**两条独立的斜坡**（按下时 hover 仍在 1.0，抬起后 hover 还要
+         *   留着），合成一个值就没法表达"按下比悬停深一档、松开回到悬停档"。
+         *
+         * ★ 排在末尾而不是紧跟 `hoverOverlay`：位置参数一旦插在中间，所有既有
+         *   调用点会**静默错位**（`$iconPath` 收到一个 `Color`）—— AOT 下这是
+         *   编译错，解释器下可能一路跑到 `drawPath` 才炸。
+         */
+        private readonly ?Color $pressedOverlay = null,
     ) {
         if ($label === '') {
             return;   // 纯图标：不建 `RenderText`（空串仍占一行行高）
@@ -103,6 +115,13 @@ final class RenderButton extends RenderProxyBox
     public function acceptsHover(): bool
     {
         return $this->hoverOverlay !== null || $this->hoverElevation > 0.0;
+    }
+
+    /** 声明了按下色才接受按下态（同 `acceptsHover()` 的理由：不声明就别白推） */
+    #[\Override]
+    public function acceptsPress(): bool
+    {
+        return $this->pressedOverlay !== null;
     }
 
     /**
@@ -241,6 +260,18 @@ final class RenderButton extends RenderProxyBox
             $alpha = (int) \round($overlay->a * $progress);
             if ($alpha > 0) {
                 $canvas->drawRect($rect, Paint::fill($overlay->withAlpha($alpha)), $radius);
+            }
+        }
+
+        // 状态层（按下）：叠在悬停层**之上** —— 按下时悬停态仍是满的（指针就在盒上），
+        // 所以这一层要能盖住它，否则按下与悬停看起来一样。
+        // ★ 禁用态收不到按下态（`InputRouter` 不激活禁用控件，也就不会推），
+        //   这里不必再判一次 —— 判了反而会造出"两处判据不一致"的新洞。
+        $down = $this->pressedOverlay;
+        if ($down !== null) {
+            $alphaDown = (int) \round($down->a * $this->pressProgress());
+            if ($alphaDown > 0) {
+                $canvas->drawRect($rect, Paint::fill($down->withAlpha($alphaDown)), $radius);
             }
         }
     }

@@ -285,16 +285,23 @@ final class InputRouter
                     // 浮层接管这次按下 ⇒ 捕获让位（用户主动点浮层，不该被拖拽者吃掉）。
                     $this->releasePointer();
 
+                    // 菜单项也是按钮（`MenuItem extends Button`）⇒ 一样要有按下反馈
+                    $focus->pressTo($focus->elementAt($e->element, $hit));
+
                     // 菜单项（MenuItem extends Button）与根树按钮同规则：焦点落在本次点击上 ⇒
                     // 立即激活；命令经 dispatch() 分发 ⇒ 与键盘 Enter 完全同路。
                     if ($focus->focusHit($hit, $e->element)) {
                         $this->activateFocusedWidget();
                     }
+                } elseif ($event->isUp()) {
+                    // 浮层里没有拖拽裁决 ⇒ 按下态的寿命就是 down..up
+                    $focus->pressTo(null);
                 } elseif ($event->isMove()) {
                     // 浮层内悬停：菜单项高亮
                     $focus->hoverTo($focus->elementAt($e->element, $hit));
                 } elseif ($event->isLeave()) {
                     $focus->hoverTo(null);
+                    $focus->pressTo(null);
                 }
 
                 return $event->isDown() || $event->isMove() ? $this->cursorFor($hit, $event->x, $event->y) : null;
@@ -331,6 +338,7 @@ final class InputRouter
 
             if ($event->isUp() || $event->isLeave()) {
                 $this->releasePointer();   // 释放路径 ①：指针抬起 / 离开窗口
+                $this->host->focus()?->pressTo(null);
             }
 
             return $cursor;
@@ -383,6 +391,11 @@ final class InputRouter
 
                 return null;
             }
+
+            // 按下态视觉：**先于**"谁接管这次按下"的所有分支 —— 用户按下就要有反馈，
+            // 而激活可能被手势竞技场推迟到 up（拖拽裁决），那时才画就晚了。
+            // 只对 `acceptsPress()` 的盒生效（目前是按钮族），其余盒收到也当没收到。
+            $focus->pressTo($element);
 
             // `pointer(ownsPress: true)` 声明者 ⇒ 它接管本次按下（框架捕获它、把 down 交过去）。
             //   down 归属：`ownsPress` > `Draggable`（arena 裁决）> 框架激活。
@@ -442,6 +455,10 @@ final class InputRouter
         }
 
         if ($event->isUp()) {
+            // 抬起即清按下态 —— 排在激活/结算之前：反馈的寿命是"按下期间"，
+            // 与命令是否真的执行无关（命令失败也不该让按钮一直按着）。
+            $focus->pressTo(null);
+
             // arena 未裁决 ⇒ 无人 claim ⇒ 第一个成员（Tap）胜 ⇒ 激活
             $arena = $this->gestureArena;
             if ($arena !== null && !$arena->isClosed()) {
@@ -487,6 +504,9 @@ final class InputRouter
 
         // 悬停也是手势的一部分（指针已经不在这扇窗上）—— 树没了就不用清
         $this->host->focus()?->hoverTo(null);
+
+        // 按下态同理：拖出窗外 / 窗口失活之后再回来，按钮不该还"按着"
+        $this->host->focus()?->pressTo(null);
     }
 
     /**

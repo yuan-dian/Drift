@@ -54,6 +54,18 @@ abstract class RenderObject
     private ?AnimatedValue $hoverAnim = null;
 
     /**
+     * 按下态（指针在盒上按下且未抬起）。
+     *
+     * ★ 与 `hovered` **不合并成一个"指针状态位"**：两者生命周期不同 ——
+     *   hover 跟随移动（每次 `move` 都可能换目标），press 由 `down` 锁定、
+     *   到 `up`/`leave` 才清。合并后"按住拖动"会在换目标时把按下态带走。
+     */
+    private bool $pressed = false;
+
+    /** 按下态过渡进度（同 `hoverAnim` 的理由：第一帧也从 0 淡上去） */
+    private ?AnimatedValue $pressAnim = null;
+
+    /**
      * 接收旧盒的瞬态（盒换代时由 `Element::syncBox()` 调）。
      *
      * ★ 新增瞬态字段必须在这里补一行，否则重建后状态静默归零、画面不更新。
@@ -65,6 +77,8 @@ abstract class RenderObject
     {
         $this->hovered = $old->hovered;
         $this->hoverAnim = $old->hoverAnim;
+        $this->pressed = $old->pressed;
+        $this->pressAnim = $old->pressAnim;
     }
 
     /**
@@ -183,13 +197,81 @@ abstract class RenderObject
     }
 
     /**
+     * 这个盒接不接受"按下态"（默认 `false`）。
+     *
+     * ★ **与 `acceptsHover()` 分开，不合并**：能画悬停反馈 ≠ 能画按下反馈。
+     *   合并会让"只实现了 hover 的盒"被推一个它根本不画的按下态 —— 那正是
+     *   本仓最恨的形状：状态在传、画面不动、还没有任何报错。
+     *
+     * @api
+     */
+    public function acceptsPress(): bool
+    {
+        return false;
+    }
+
+    /** @internal `FocusManager::pressTo()` 推状态（唯一写点） */
+    public function setPressed(bool $pressed): void
+    {
+        if ($this->pressed === $pressed) {
+            return;
+        }
+
+        $anim = $this->pressAnim;
+        if ($anim === null) {
+            $anim = new AnimatedValue($this->pressed ? 1.0 : 0.0);
+            $this->pressAnim = $anim;
+        }
+
+        $this->pressed = $pressed;
+        $anim->toward($pressed ? 1.0 : 0.0);
+
+        $this->markPaintChanged();
+    }
+
+    /** 本盒当前是否被按下（给覆写 `paintOwnChrome()` 的盒读） */
+    public function pressed(): bool
+    {
+        return $this->pressed;
+    }
+
+    /** 按下**过渡进度**（`0..1`）；没起过过渡 ⇒ 直接给 0 或 1 */
+    public function pressProgress(): float
+    {
+        $anim = $this->pressAnim;
+        if ($anim === null) {
+            return $this->pressed ? 1.0 : 0.0;
+        }
+
+        return $anim->value();
+    }
+
+    /**
      * 推进本节点自己的动画，回答"**还要下一帧吗**"（`Application::tickSubtree` 调）。
      *
      * 没有槽 ⇒ `false`，一次判空就返回。
      */
     public function tickAnimations(float $timestampMs): bool
     {
-        $anim = $this->hoverAnim;
+        // ★ 两条独立推进、结果取并：任一还在跑就得继续给帧。
+        //   写成 `||` 短路会漏掉"hover 收口了但 press 还在跑"的那一帧。
+        $hoverMore = $this->tickState($this->hoverAnim, $timestampMs);
+        $pressMore = $this->tickState($this->pressAnim, $timestampMs);
+
+        return $hoverMore || $pressMore;
+    }
+
+    /**
+     * 推一段过渡，回答"这一条还要下一帧吗"。
+     *
+     * ★ 判"**值变了**"而非"`tick()` 返回 true"：收口那帧 `tick()` 返回 `false`，
+     *   但那一帧的值恰是最后一步、必须画出来，否则画面停在 0.93。
+     *
+     * ★ 抽成一处而不是 hover/press 各写一遍：这两段的**判据必须同源**，
+     *   否则修好一条的收口帧、另一条永远停在 0.93。
+     */
+    private function tickState(?AnimatedValue $anim, float $timestampMs): bool
+    {
         if ($anim === null) {
             return false;
         }
@@ -197,9 +279,6 @@ abstract class RenderObject
         $before = $anim->value();
         $more = $anim->tick($timestampMs);
 
-        // 推进也必须标脏：hover 过渡住盒上、无 State，不标就是"鼠标移上去颜色不动"。
-        // ★ 判"**值变了**"而非"`tick()` 返回 true"：收口那帧 `tick()` 返回 `false`，
-        //   但那一帧的值恰是最后一步、必须画出来，否则画面停在 0.93。
         if ($anim->value() !== $before) {
             $this->markPaintChanged();
         }

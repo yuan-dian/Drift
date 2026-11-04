@@ -4,8 +4,17 @@ declare(strict_types=1);
 namespace Probe\FrameTaxAot {
 
 use Drift\Dev\Bench\Fingerprint;
+use Drift\Dev\Bench\FrameTaxApp;
 use Drift\Dev\Bench\FrameTaxMeasure;
 use Drift\Dev\Bench\ShowcasePages;
+use Drift\Dev\Smoke\Frame\SurfaceProbe;
+use Drift\Geometry\BoxConstraints;
+use Drift\Geometry\Size;
+use Drift\Input\PointerEvent;
+use Drift\Layout\RenderButton;
+use Drift\Widget\Button;
+use Drift\Widget\ButtonVariant;
+use Drift\Widget\Column;
 use Drift\Widget\Widget;
 
 /**
@@ -78,6 +87,79 @@ function bad(string $tag, string $msg): void
 {
     Fit::$fail++;
     say('[FAIL] ' . $tag . ' ' . $msg);
+}
+
+/**
+ * 按下态段：**同一段指针序列在 AOT 与解释器下各跑一遍，逐帧对状态位与像素**。
+ *
+ * ★ 为什么需要它：`tools/probe-press.py` 在真机上抓到的现象是「第一次按下正常，
+ *   第二次按下之后按钮永久不再响应」—— 而同一段序列在解释器里（单测）完全正常。
+ *   ⇒ 要么是 AOT 的语义差异，要么是探针的操作序列问题。两边必须能**逐帧对表**，
+ *   才能说清是哪一种。
+ *
+ * ★ 判据只有一条：**状态下标**（`pressed/hover` + 画布像素亮度）在两侧逐行相同。
+ *   峰值/布局数字一概不判 —— 这一段不量性能。
+ */
+function pressSection(): void
+{
+    $tight = BoxConstraints::tight(new Size(240.0, 120.0));
+    $app = new FrameTaxApp(static function (): Widget {
+        return Column::make()->paddingAll(20.0)->children([
+            Button::make('按下我')->variant(ButtonVariant::Default),
+        ]);
+    });
+    $probe = new SurfaceProbe();
+    $probe->resize(240, 120, 1.0);
+    $app->attach($probe, $tight);
+    $app->frame(0.0, $tight);
+
+    $box = $app->root()?->findBoxOf(RenderButton::class);
+    if (!$box instanceof RenderButton) {
+        bad('R①', '按钮盒没找到');
+
+        return;
+    }
+
+    // 采样点在按钮内部靠上（避开中间文字）：padding 20 + 按钮高 ~36 ⇒ (60, 30) 附近
+    $clock = 1000.0;
+    $row = static function (string $label) use ($app, $probe, $box, $tight, &$clock): void {
+        // 收口：40 帧 × 16ms，任何斜坡都走完
+        for ($i = 1; $i <= 40; $i++) {
+            $app->frame($clock + $i * 16.0, $tight);
+        }
+        $clock += 640.0;
+
+        $raster = $probe->raster();
+        $c = $raster?->pixelAt(60, 30);
+        $rgb = $c === null ? 'null' : ((string) $c->r) . ',' . ((string) $c->g) . ',' . ((string) $c->b);
+
+        say(\sprintf(
+            '%-10s pressed=%d hover=%d press=%.3f hoverP=%.3f rgb=%s',
+            $label,
+            $box->pressed() ? 1 : 0,
+            $box->hovered() ? 1 : 0,
+            $box->pressProgress(),
+            $box->hoverProgress(),
+            $rgb,
+        ));
+    };
+
+    say('=== 按下态序列（与 `php tools/press-sequence.php` 应逐行相同）===');
+    $row('init');
+    $app->dispatchInput(PointerEvent::move(40.0, 30.0));
+    $row('move');
+    $app->dispatchInput(PointerEvent::down(40.0, 30.0));
+    $row('down1');
+    $app->dispatchInput(PointerEvent::up(40.0, 30.0));
+    $row('up1');
+    $app->dispatchInput(PointerEvent::down(40.0, 30.0));
+    $row('down2');
+    $app->dispatchInput(PointerEvent::up(40.0, 30.0));
+    $row('up2');
+    $app->dispatchInput(PointerEvent::move(200.0, 100.0));
+    $row('away');
+    $app->dispatchInput(PointerEvent::move(40.0, 30.0));
+    $row('back');
 }
 
 /**
@@ -471,7 +553,7 @@ function main(): void
     //   ⇒ 量具版的 fork：解释器那边本来就是两条命令、两个进程，这边也必须是。
     $mode = 'all';
     $env = \getenv('PROBE_SECTION');
-    if ($env === 'pages' || $env === 'synthetic' || $env === 'fingerprint' || $env === 'geom') {
+    if ($env === 'pages' || $env === 'synthetic' || $env === 'fingerprint' || $env === 'geom' || $env === 'press') {
         // `geom` 是旧名（那时指纹只有几何一个通道）—— 映射到同一段，不让旧命令失效
         $mode = $env === 'geom' ? 'fingerprint' : $env;
     }
@@ -487,6 +569,10 @@ function main(): void
     // ★ `fingerprint` 段不进 `all`：它不出性能数字，只出一份可 diff 的指纹表。
     if ($mode === 'fingerprint') {
         fingerprintSection();
+        \exit(Fit::$fail > 0 ? 1 : 0);
+    }
+    if ($mode === 'press') {
+        pressSection();
         \exit(Fit::$fail > 0 ? 1 : 0);
     }
     if ($mode === 'all' || $mode === 'pages') {

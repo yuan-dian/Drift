@@ -18,7 +18,7 @@
 | Errors.php | 2 | 3 |
 | Geometry | 9 | 0 |
 | Input | 19 | 5 |
-| Layout | 45 | 43 |
+| Layout | 46 | 44 |
 | Logging | 9 | 3 |
 | Platform | 17 | 16 |
 | Rendering | 34 | 1 |
@@ -26,8 +26,8 @@
 | State | 17 | 8 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
-| Widget | 183 | 216 |
-| **合计** | **495** | **396** |
+| Widget | 184 | 216 |
+| **合计** | **497** | **397** |
 
 覆盖 393 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
 
@@ -354,7 +354,7 @@
 
 ## Layout 层
 
-### @api（应用可读面） · 45
+### @api（应用可读面） · 46
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -385,6 +385,7 @@
 | `RenderObject::cursorAt()` | method | src/Layout/RenderObject.php |
 | `RenderObject::panelRect()` | method | src/Layout/RenderObject.php |
 | `RenderObject::acceptsHover()` | method | src/Layout/RenderObject.php |
+| `RenderObject::acceptsPress()` | method | src/Layout/RenderObject.php |
 | `RenderPopupPanel` | class | src/Layout/RenderPopupPanel.php |
 | `RenderProgress` | class | src/Layout/RenderProgress.php |
 | `RenderProxy` | class | src/Layout/RenderProxy.php |
@@ -404,7 +405,7 @@
 | `StackFit` | enum | src/Layout/StackFit.php |
 | `TextInputBox` | interface | src/Layout/TextInputBox.php |
 
-### @internal（框架内部） · 43
+### @internal（框架内部） · 44
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -420,6 +421,7 @@
 | `RenderObject::inheritRuntimeState()` | method | src/Layout/RenderObject.php |
 | `RenderObject::setCursor()` | method | src/Layout/RenderObject.php |
 | `RenderObject::setHovered()` | method | src/Layout/RenderObject.php |
+| `RenderObject::setPressed()` | method | src/Layout/RenderObject.php |
 | `RenderObject::adoptChild()` | method | src/Layout/RenderObject.php |
 | `RenderRichText::styleSize()` | method | src/Layout/RenderRichText.php |
 | `RenderRichText::lineCount()` | method | src/Layout/RenderRichText.php |
@@ -690,7 +692,7 @@
 
 ## Widget 层
 
-### @api（应用可读面） · 183
+### @api（应用可读面） · 184
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -708,6 +710,7 @@
 | `BuildContext::windowSize()` | method | src/Widget/BuildContext.php |
 | `Button` | class | src/Widget/Button.php |
 | `Button::enabled()` | method | src/Widget/Button.php |
+| `Button::resolvePressedOverlay()` | method | src/Widget/Button.php |
 | `ButtonVariant` | enum | src/Widget/ButtonVariant.php |
 | `CalendarView` | class | src/Widget/CalendarView.php |
 | `Card` | class | src/Widget/Card.php |

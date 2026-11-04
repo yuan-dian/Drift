@@ -282,6 +282,7 @@ class Button extends RenderBoxWidget implements Activatable
             max(1.0, $iconSize * 0.09),
             $this->centerLabel,
             $this->resolveHoverElevation(),
+            $this->resolvePressedOverlay($context),
         );
     }
 
@@ -368,6 +369,23 @@ class Button extends RenderBoxWidget implements Activatable
         return match ($this->variant) {
             ButtonVariant::Default, ButtonVariant::Flat => $context->color(ColorToken::Hover),
             ButtonVariant::Primary, ButtonVariant::Danger => new Color(255, 255, 255, 40),
+        };
+    }
+
+    /**
+     * 按下态叠加色（`ColorToken::Pressed` —— 2026-11-04 之前**零消费者**）。
+     *
+     * ★ 两档色**必须递进**：按下比悬停深，否则"按下去"和"指着"看起来一样，
+     *   用户会重复点。底色为深色的变体（Primary / Danger）没有更深的主题档可退，
+     *   用**同一白但更高 alpha**（40 → 70）表达"又压深一档"。
+     *
+     * @api
+     */
+    protected function resolvePressedOverlay(BuildContext $context): ?Color
+    {
+        return match ($this->variant) {
+            ButtonVariant::Default, ButtonVariant::Flat => $context->color(ColorToken::Pressed),
+            ButtonVariant::Primary, ButtonVariant::Danger => new Color(255, 255, 255, 70),
         };
     }
 }

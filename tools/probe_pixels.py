@@ -102,6 +102,60 @@ def diff_count(a, b, width, x0, y0, x1, y1, step=2):
     return n
 
 
+def color_blocks(data, width, height, ref, x_min=0, tol=26, row_step=2, col_step=2,
+                 break_gap=45, min_run=20):
+    """把**同色像素**聚成矩形块，返回 `[(x0, y0, x1, y1), ...]`（按出现顺序）。
+
+    ★ 不能用全图 bbox：左侧导航的选中带与页面里的按钮是同一个主题色，
+      bbox 会把它们连成一大片，中心落空。
+    ★★ 也不能只按"行"取 min/max（2026-11-01 假红）：同一行里**两个并排的按钮**
+      会被合成一个块，块中心正好落在两者的**空隙**上 ⇒ 悬停测试点到空处，
+      判据永远红，而它看起来像"悬停坏了"。
+      正确做法：先把每行的同色像素切成**连续段**（间距 > `break_gap` 就断开），
+      再按 x 有重叠把相邻行的段接成块。
+    ★ 断段阈值取 45px：按钮**内部**的标签文字会把段打断（十来像素），
+      而两个并排按钮之间是几十像素的空白 —— 阈值必须落在两者中间。
+    """
+    blocks = []        # 每个块是可变 list，随扫描继续扩
+    open_blocks = []   # 上一行还活着的块（本行有重叠段就续上）
+
+    for y in range(0, height, row_step):
+        xs = [x for x in range(x_min, width, col_step) if near(px(data, width, x, y), ref, tol)]
+        if not xs:
+            open_blocks = []
+            continue
+
+        runs = []
+        start = prev = xs[0]
+        for x in xs[1:]:
+            if x - prev > break_gap:
+                runs.append((start, prev))
+                start = x
+            prev = x
+        runs.append((start, prev))
+        runs = [r for r in runs if r[1] - r[0] >= min_run]
+
+        next_open = []
+        for r in runs:
+            hit = None
+            for b in open_blocks:
+                if not (r[0] > b[2] + 4 or r[1] < b[0] - 4):
+                    hit = b
+                    break
+            if hit is not None:
+                open_blocks.remove(hit)
+                hit[0] = min(hit[0], r[0])
+                hit[2] = max(hit[2], r[1])
+                hit[3] = y
+            else:
+                hit = [r[0], y, r[1], y]
+                blocks.append(hit)
+            next_open.append(hit)
+        open_blocks = next_open
+
+    return [tuple(b) for b in blocks]
+
+
 def near(color, ref, tol=26):
     """两个 RGB 是否在容差内（抗锯齿边 / 主题微调不算变）。
 

@@ -76,6 +76,14 @@ final class FocusManager
      */
     private ?RenderObject $hoverBox = null;
 
+    /**
+     * 当前处于按下态的渲染盒（沿盒父链第一个 `acceptsPress()` 的盒）。
+     *
+     * ★ 与 `$hoverBox` 分开存：按下时指针一定也在盒上（两个都非 null），
+     *   但松开后 `hoverBox` 还在、`pressBox` 必须已经清了。
+     */
+    private ?RenderObject $pressBox = null;
+
     /** 注入悬停命中监听（`null` 回调不注册即默认行为） */
     public function onHoverChanged(\Closure $listener): void
     {
@@ -350,6 +358,43 @@ final class FocusManager
         $this->hoverBox?->setHovered(true);
 
         // 不需要再报"全树发现"：`setHovered()` 内部已报帧时钟。
+    }
+
+    /**
+     * 指针按下 / 抬起 ⇒ 推按下态视觉。`null` = 抬起、离开或取消。
+     *
+     * ★ **只认按下瞬间的目标，不跟随移动**：桌面惯例是"按住拖出去"= 取消这次按下
+     *   （Windows 原生按钮就是这样）。跟随移动会让按下态在按钮之间跳，
+     *   用户会以为同时按了好几个。
+     *
+     * ★ 与 `applyHoverState()` 分开写而不是合成一个 `applyPointerState()`：
+     *   两者的**生命周期规则不同**（hover 跟随、press 锁定），合起来就要在里面
+     *   判"这次是 move 还是 down"，而那正是调用方已经知道的事。
+     */
+    public function pressTo(?Element $element): void
+    {
+        $next = null;
+        for ($box = $element?->effectiveBox(); $box !== null; $box = $box->parent()) {
+            if ($box->acceptsPress()) {
+                $next = $box;
+
+                break;
+            }
+        }
+
+        if ($next === $this->pressBox) {
+            return;
+        }
+
+        $this->pressBox?->setPressed(false);
+        $this->pressBox = $next;
+        $this->pressBox?->setPressed(true);
+    }
+
+    /** 当前按下态的盒（`null` = 没有）；测试 / 预览读 */
+    public function pressedRenderBox(): ?RenderObject
+    {
+        return $this->pressBox;
     }
 
     /**

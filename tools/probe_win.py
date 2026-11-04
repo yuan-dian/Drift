@@ -307,6 +307,28 @@ def click(hwnd, x, y, settle=0.0):
         time.sleep(settle)
 
 
+def press(hwnd, x, y, settle=0.0):
+    """按下左键并**保持**（不抬起）—— 用来拍"按下态"。
+
+    ★ 与 `click()` 分开：`click` 是 down+up 一口气，中间的按下帧
+      （`pressProgress` 从 0 爬到 1 的那两百来毫秒）根本拍不到。
+    """
+    require_foreground(hwnd)
+    sx, sy = to_screen(hwnd, x, y)
+    user32.SetCursorPos(sx, sy)
+    time.sleep(0.05)
+    user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+    if settle > 0:
+        time.sleep(settle)
+
+
+def release(settle=0.0):
+    """抬起左键（与 `press()` 配对）"""
+    user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+    if settle > 0:
+        time.sleep(settle)
+
+
 def wheel(hwnd, x, y, notches, settle=0.0):
     """真滚轮：`notches > 0` = **向下**滚（与"往后翻"同向）。
 
@@ -439,6 +461,12 @@ class App:
 
     def click(self, x, y, settle=0.0):
         click(self.hwnd, x, y, settle)
+
+    def press(self, x, y, settle=0.0):
+        press(self.hwnd, x, y, settle)
+
+    def release(self, settle=0.0):
+        release(settle)
 
     def wheel(self, x, y, notches, settle=0.0):
         wheel(self.hwnd, x, y, notches, settle)

@@ -18,64 +18,11 @@ import sys
 import time
 
 from probe_check import check, run
-from probe_pixels import column_luma, find_scrollbar, near, px
+from probe_pixels import color_blocks, column_luma, find_scrollbar, px
 from probe_win import App
 
 # showcase 的 ThemeScope 把 Accent 覆盖成墨绿（LayUI 风）—— Primary 实心按钮就是这个色
 PRIMARY = (0x00, 0x96, 0x88)
-
-
-def primary_blocks(data, w, h, x_min, tol=26):
-    """把 Accent 像素聚成块，返回 [(x0, y0, x1, y1), ...]。
-
-    ★ 不能用全图 bbox：左侧导航的选中带是同一个 Accent，且一个页面里往往有
-      好几个墨绿物件（按钮 / 标题 / 徽标）⇒ bbox 会把它们连成一大片，中心落空。
-    ★★ 也不能只按"行"取 min/max（第一版就这么写，2026-11-01 修）：同一行里
-      **两个并排的按钮**会被合成一个块，块中心正好落在两者的**空隙**上 ⇒ 悬停
-      测试点到了一个什么都没有的位置，判据永远红（而它看起来像"悬停坏了"）。
-      正确做法：先把每行的 Accent 像素切成**连续段**（间距 > 6px 就断开），
-      再按 x 有重叠把相邻行的段接成块。断段阈值取 45px：按钮**内部**的
-      标签文字会把连续段打断（十来像素），而两个并排按钮之间是几十像素的空白
-      —— 阈值必须落在两者中间，否则要么把按钮切碎、要么把两个按钮粘成一个。
-    """
-    blocks = []        # 每个块是可变 list，随扫描继续扩
-    open_blocks = []   # 上一行还活着的块（本行有重叠段就续上）
-
-    for y in range(0, h, 2):
-        xs = [x for x in range(x_min, w, 2) if near(px(data, w, x, y), PRIMARY, tol)]
-        if not xs:
-            open_blocks = []
-            continue
-
-        runs = []
-        start = prev = xs[0]
-        for x in xs[1:]:
-            if x - prev > 45:
-                runs.append((start, prev))
-                start = x
-            prev = x
-        runs.append((start, prev))
-        runs = [r for r in runs if r[1] - r[0] >= 20]
-
-        next_open = []
-        for r in runs:
-            hit = None
-            for b in open_blocks:
-                if not (r[0] > b[2] + 4 or r[1] < b[0] - 4):
-                    hit = b
-                    break
-            if hit is not None:
-                open_blocks.remove(hit)
-                hit[0] = min(hit[0], r[0])
-                hit[2] = max(hit[2], r[1])
-                hit[3] = y
-            else:
-                hit = [r[0], y, r[1], y]
-                blocks.append(hit)
-            next_open.append(hit)
-        open_blocks = next_open
-
-    return [tuple(b) for b in blocks]
 
 
 def ring_diff(data_a, data_b, w, box, pad_from, pad_to):
@@ -104,7 +51,7 @@ def main():
         app.move(w - 40, h - 40, settle=0.3)   # 指针先挪到空白，免得开局就悬在按钮上
         w, h, before = app.grab()
 
-        blocks = primary_blocks(before, w, h, 250)
+        blocks = color_blocks(before, w, h, PRIMARY, 250)
         # 按钮形态：宽 60..300、高 20..60（两个像素步长）
         btn_blocks = [b for b in blocks if 60 <= b[2] - b[0] <= 300 and 16 <= b[3] - b[1] <= 60]
         blob = btn_blocks[0] if btn_blocks else None
