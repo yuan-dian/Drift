@@ -416,11 +416,13 @@ Tab，而 `Modal` 正是为此存在的。
 
 ### 11.6 遗留
 
-- **docref 17 条**：已连续四轮上报。建议照 `API-SURFACE.md` 的先例**去掉行号只留
-  文件名**（行号每改一次代码就漂，闸门会被噪声淹没）；需用户裁决后单独一轮清理。
-- **推荐顺序下一项 `LayoutBuilder`**：读布局期真实约束，与档位正交，能根治
-  `LazyListState` / `TableState` 用陈旧 `$ctx->height` 的一帧代价。改动面在**外层
-  布局协议**（build 先行、layout 后量的时序），值得单独一轮，别塞进控件小改里。
+> **2026-11-04 收尾核对**：本节前两条**都已消费**，不再是"下一棒"——
+> docref 17 条已摘（`49db763`，gate 恢复 16 项全绿）；`LayoutBuilder` 已落地
+> （`540b55e`，裁决与实施记录见 [`DESIGN-LAYOUTBUILDER-2026-11-04.md`](DESIGN-LAYOUTBUILDER-2026-11-04.md)）。
+> 下一棒候选见 [`DEBT-2026-11-02.md`](DEBT-2026-11-02.md) §27（2026-11-04 重核）。
+
+- ~~**docref 17 条**~~：已按 `API-SURFACE.md` 先例去掉行号只留文件名（`49db763`）。
+- ~~**推荐顺序下一项 `LayoutBuilder`**~~：已落地（`540b55e`）。
 - 仍未做且零消费者：`obscureText` / `inputFormatters` / i18n / RTL / 真 TabBar
   （§7 的理由未变）。
 
