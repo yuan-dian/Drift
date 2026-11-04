@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Probe\FrameTaxAot {
 
 use Drift\Dev\Bench\FrameTaxMeasure;
+use Drift\Dev\Bench\GeomFingerprint;
 use Drift\Dev\Bench\ShowcasePages;
 use Drift\Widget\Widget;
 
@@ -356,6 +357,63 @@ function syntheticSection(): void
     say('');
 }
 
+/**
+ * 几何指纹段：27 页每个盒的 `宽/高@x,y` 逐值取 md5，**与解释器侧逐行 diff**。
+ *
+ * ★ 为什么这一段比性能段更重要：2026-11-04 的微基准顺带撞到 tpc 的语义 bug ——
+ *   **`int / int` 被编译成整数除法**（`7 / 2 === 3`）。截断是**静默**的：
+ *   不崩、不报错，只是几何值偏一点。性能慢 2× 是"可接受"，算错尺寸是"不可用"。
+ *   ⇒ AOT 能不能上线的第一条件是**数值等价**，不是快。
+ *
+ * ★ 输出带 tab，直接：
+ *   `PROBE_SECTION=geom ./frame_tax_aot_probe.exe | grep -P '\t' > build/geom-aot.tsv`
+ *   `php tools/geom-fingerprint.php --tsv > build/geom-interp.tsv`
+ *   `diff build/geom-interp.tsv build/geom-aot.tsv`   ⇒ 空 = 逐值相同
+ */
+function geomSection(): void
+{
+    // ★ 单页明细（定位用）：`GEOM_PAGE=AspectPage PROBE_SECTION=geom ...`
+    //   指纹说"这页不一样"，明细才说"从哪一层的哪一轴开始不一样"。
+    $page = \getenv('GEOM_PAGE');
+    if ($page !== false && $page !== '') {
+        $root = GeomFingerprint::mountPage($page);
+        if ($root === null) {
+            bad('G②', '这一页没建出根元素：' . $page);
+
+            return;
+        }
+        foreach (GeomFingerprint::detail($root) as $line) {
+            say($line);
+        }
+
+        return;
+    }
+
+    $rows = GeomFingerprint::allPages(1200.0, 800.0);
+
+    say('=== 几何指纹：27 页逐值（与 tools/geom-fingerprint.php --tsv 应逐行相同）===');
+    $total = 0;
+    foreach ($rows as $r) {
+        say(
+            $r['page'] . "\t" . $r['hash'] . "\t" . (string) $r['nodes']
+            . "\t" . (string) $r['sumW'] . "\t" . (string) $r['sumH']
+        );
+        $total += (int) $r['nodes'];
+    }
+    say('--- ' . (string) \count($rows) . ' 页 / ' . (string) $total . ' 节点 ---');
+    say('');
+
+    // ★ 只判**下界**，不判精确值：节点数会随页面内容正常变动，硬编码 2208 那样
+    //   每改一页就红，红久了就没人看。要抓的是"页面渲染成空"（下界）。
+    //   ★ 注意这里数的是 **RenderBox** 树，而 `frame-tax-probe --pages` 的 2208 是
+    //     **Element** 树 —— 两个数天然不同（Element 有非绘制节点），别拿来互相比。
+    if ($total >= 2000) {
+        ok('G①', 'RenderBox 节点合计 ' . (string) $total . '（≥2000，页面真建起来了）');
+    } else {
+        bad('G①', 'RenderBox 节点合计 ' . (string) $total . ' < 2000（页面渲染成空或清单缩水）');
+    }
+}
+
 function main(): void
 {
     // ★ AOT 产物的默认 `memory_limit` 是 128MB，而解释器那边跑 `--scale` 时是 `-1`
@@ -364,7 +422,7 @@ function main(): void
     //   这个数不是"框架要 1GB"，是"12k 节点 + 软光栅要 >128MB"，本身就是个数据点。
     @\ini_set('memory_limit', '1024M');
 
-    // ★★ 段选择（`PROBE_SECTION=pages|synthetic`，或第一个命令行参数）。
+    // ★★ 段选择（`PROBE_SECTION=pages|synthetic|geom`，或第一个命令行参数）。
     //   **不带 = 两段都跑，页面段在前** —— 那是"自洽判据"模式。
     //   要拿**能与历史对表的绝对值**，必须**一段一进程**：
     //   实测同一进程里先跑页面档，合成档 layout 从 88.4ms 涨到 104.1ms（**+18%**），
@@ -372,7 +430,7 @@ function main(): void
     //   ⇒ 量具版的 fork：解释器那边本来就是两条命令、两个进程，这边也必须是。
     $mode = 'all';
     $env = \getenv('PROBE_SECTION');
-    if ($env === 'pages' || $env === 'synthetic') {
+    if ($env === 'pages' || $env === 'synthetic' || $env === 'geom') {
         $mode = $env;
     }
 
@@ -384,6 +442,11 @@ function main(): void
 
     // ★ 两段都跑时顺序不能反：页面档要"进程干净"，12k 档的内存峰值会污染它。
     //   （要绝对值的场合用 `PROBE_SECTION` 分开跑，别依赖这个顺序。）
+    // ★ `geom` 段不进 `all`：它不出性能数字，只出一份可 diff 的指纹表。
+    if ($mode === 'geom') {
+        geomSection();
+        \exit(Fit::$fail > 0 ? 1 : 0);
+    }
     if ($mode === 'all' || $mode === 'pages') {
         pagesSection();
     }

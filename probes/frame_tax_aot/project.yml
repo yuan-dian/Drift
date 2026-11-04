@@ -47,6 +47,10 @@ sources:
   - ../../tools/Bench/FrameTaxApp.php
   - ../../tools/Bench/FrameTaxMeasure.php
   - ../../tools/Bench/ShowcasePages.php
+  # ★ 几何指纹（2026-11-04 晚）：证明 AOT 算出的尺寸/位置与解释器逐值相同。
+  #   存在的理由是一个真 bug —— tpc 把 `int / int` 编成整数除法，
+  #   而截断是静默的（不崩不报，只偏值）。`PROBE_SECTION=geom` 出可 diff 的 TSV。
+  - ../../tools/Bench/GeomFingerprint.php
   # ★ 页面档的 27 个真实页（2026-11-04）。这里**可以用目录**，与 `../../tools` 不同：
   #   页面目录里全是正常的 Widget 类，没有"故意写坏"的夹具，也没有裸执行语句。
   #   34 个文件里 7 个是有必填构造参数的异步/弹层页，编进来但不进清单

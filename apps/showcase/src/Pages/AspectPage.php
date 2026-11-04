@@ -41,10 +41,15 @@ final class AspectPage extends StatelessWidget
                     '比例是 `mods.aspect` 字段（与 width / height 同族）—— 布局管线第 ① 步解出，'
                     . '**没有新的渲染盒**。'
                 )->caption(),
-                // ★ AOT 诊断：`16 / 9` 若在 C++ 侧被当整数除法，会显示 1（解释器是 1.7778）
-                Text::make(
-                    '比例求值：16 / 9 = ' . (string) (16 / 9) . '；16.0 / 9.0 = ' . (string) (16.0 / 9.0)
-                )->caption(),
+                // ★ 2026-11-04 结案：这条原本是 10-24 写下的**活体诊断**——
+                //   "`16 / 9` 若在 C++ 侧被当整数除法，会显示 1"。实测：**AOT 下真的是 1**，
+                //   而 `16.0 / 9.0` 是 1.7778 ⇒ 怀疑成立，见 `docs/AOT-CONSTRAINTS.md` §1.2。
+                // ★★ 但它**不再在运行期求值**：那会让本页几何在 AOT 与解释器下必然不同
+                //   （这一行文字宽度差 94px），`tools/geom-fingerprint.php` 的逐值比对
+                //   就永远有脏行、当不了回归判据。这条事实改由 `probes/aot_micro` 每次
+                //   打印的「前提：int/int=3.0000」一行守着 —— 那份是**机器可读**的。
+                Text::make('比例求值：16 / 9 = 1.7778（注意：AOT 下 `int / int` 会截断成 1）')
+                    ->caption(),
 
                 self::sectionBar('① 16 : 9 封面（定宽 640 ⇒ 高 360）'),
                 AspectRatio::make(16.0 / 9.0, self::block('16 : 9'))->width(640.0),
