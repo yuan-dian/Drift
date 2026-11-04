@@ -54,8 +54,9 @@ declare(strict_types=1);
  *
  * M5（脏矩形 / 脏边界）的触发条件一直写作"**重建帧**掉帧"，但分母从来是**合成的
  * 2000 节点树**（全量 `Column`，真实页面根本不会那么搭）。用合成树判"真实页面要不要
- * M5"，等于拿错分母。`--pages` 把根换成 `apps/showcase` 的 27 个真实页（发现规则与
- * `golden-raster --pages` 逐条相同），并**把三段分开报** —— 因为 M5 只能省 `layout`：
+ * M5"，等于拿错分母。`--pages` 把根换成 `apps/showcase` 的 27 个真实页（**跳过规则** ——
+ * 构造器无必填参数 —— 与 `golden-raster --pages` 逐条相同；**发现方式**已改为显式清单，
+ * 理由见下），并**把三段分开报** —— 因为 M5 只能省 `layout`：
  * 它省不掉 `settle`（build + diff），也省不掉 `paint`。
  *
  * | 列 | 是什么 | 谁用它 |
@@ -71,9 +72,17 @@ declare(strict_types=1);
  *      ⇒ 全量重排必须排在重建帧**之前**；
  *   ③ `SurfaceProfile::$ns` 是**纳秒**，表头印的是 us ⇒ 分段必须换算（`formatNs()` 的教训）。
  *
- * 判据（`--pages --check`，4 条）：① 扫到 ≥20 页（自证）· ② 最重页全量重排 ≤ 16.7ms
+ * 判据（`--pages --check`，6 条）：① 扫到 ≥20 页（自证）· ② 最重页全量重排 ≤ 16.7ms
  * 预算 · ③ 每页暖态全量重排 ≤ 页面打开（缓存必须生效）· ④ 整页重建的 layout 与全量重排
  * **同量级**（钉住"M5 的上限 = 全量重排"这个前提；哪天 layout 变增量，这条会红）。
+ * ⑤ **清单与磁盘一致** · ⑥ **页面真建起来了**（节点数自证）。
+ *
+ * ★ ⑤⑥ 是 2026-11-04 补的，补的原因是两条**已经存在的洞**，不是给新功能配的：
+ *   · ⑤ 页面清单改成显式（`ShowcasePages`，AOT 不能用反射）之后，"加页忘填清单"会让
+ *     这一页**静默地从分母里消失**；②③④ 全是比值或上界，**一个都不会红**。
+ *   · ⑥ 原 4 条里**没有一条管"这页渲染成空"**：页面变空 ⇒ 节点少 ⇒ ② 更绿、③④ 是比值
+ *     照绿。合成档有 ①（12k 真建起来了）兜这个，页面档当时只有"页数 ≥20"，不对称。
+ *   ⇒ 两条都是「分母对不对」，与合成档 ① 是同一类自证。
  *
  * ★ **故意没有**"稳态帧 paint 必须全跳过"这条判据：页面档里有每帧都在推进动画的页
  *   （`CustomPaintPage`），它的稳态帧本来就该画；而"动画在跑"与"门控退化"从这几个数上
@@ -86,6 +95,7 @@ use Drift\Core\Pipeline;
 use Drift\App\Application;use Drift\App\Frame;
 use Drift\Dev\Bench\FrameTaxApp;
 use Drift\Dev\Bench\FrameTaxMeasure;
+use Drift\Dev\Bench\ShowcasePages;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Support\CheckItem;
 use Drift\Dev\Support\CheckReport;
@@ -166,6 +176,11 @@ $measure = static fn(string $label, \Closure $root, float $w, float $h, int $fra
 //
 // ★ 页面的发现规则与 `golden-raster --pages` **逐条相同**（构造器无必填参数），
 //   跳过的页**点名**——"少一张网"与"这张网本来就是空的"必须能分辨。
+//
+// ★ 2026-11-04：遍历的**不再是磁盘，是 `ShowcasePages` 的显式清单**。
+//   原因是 `probes/frame_tax_aot` 要复量这一档，而 AOT 是静态编译 ——
+//   `new $class()` 造任意类这条路走不通。磁盘扫描只留下一个用处：
+//   **判据 ⑤ 拿它跟清单对差集**（"加页忘填清单"会静默少一页，必须红）。
 if ($pages) {
     /**
      * 帧预算（60fps）。页面档判据 ② 的唯一阈值 —— 它不是"机器速度"，是**产品要求**。
@@ -173,25 +188,40 @@ if ($pages) {
      */
     $budgetUs = 16700.0;
 
-    $pageFiles = \glob(\dirname(__DIR__) . '/apps/showcase/src/Pages/*.php') ?: [];
-    \sort($pageFiles);
+    /**
+     * 磁盘上「能用」的页 —— **只有解释器算得出来**（要 `class_exists` + 反射构造器）。
+     *
+     * @return array{usable: list<string>, skipped: list<string>}
+     */
+    $scanDisk = static function (): array {
+        $usable = [];
+        $skipped = [];
+        $files = \glob(\dirname(__DIR__) . '/apps/showcase/src/Pages/*.php') ?: [];
+        \sort($files);
+        foreach ($files as $file) {
+            $name = \basename($file, '.php');
+            $class = 'App\\Showcase\\Pages\\' . $name;
+            if (!\class_exists($class)) {
+                $skipped[] = $name . '（无类）';
+                continue;
+            }
+            $ctor = (new \ReflectionClass($class))->getConstructor();
+            if ($ctor !== null && $ctor->getNumberOfRequiredParameters() > 0) {
+                $skipped[] = $name . '（构造器要参数）';
+                continue;
+            }
+            $usable[] = $name;
+        }
+
+        return ['usable' => $usable, 'skipped' => $skipped];
+    };
+
+    $disk = $scanDisk();
+    $skipped = $disk['skipped'];
 
     $out = [];
-    $skipped = [];
-    foreach ($pageFiles as $file) {
-        $name = \basename($file, '.php');
-        $class = 'App\\Showcase\\Pages\\' . $name;
-        if (!\class_exists($class)) {
-            $skipped[] = $name . '（无类）';
-            continue;
-        }
-        $ctor = (new \ReflectionClass($class))->getConstructor();
-        if ($ctor !== null && $ctor->getNumberOfRequiredParameters() > 0) {
-            $skipped[] = $name . '（构造器要参数）';
-            continue;
-        }
-
-        $out[] = $measure($name, static fn(): Widget => new $class(), PW, PH, $frames);
+    foreach (ShowcasePages::names() as $name) {
+        $out[] = $measure($name, static fn(): Widget => ShowcasePages::make($name), PW, PH, $frames);
     }
 
     \usort($out, static fn(array $a, array $b): int => $b['layoutUs'] <=> $a['layoutUs']);
@@ -232,7 +262,7 @@ if ($pages) {
             $worst['rebuildUs'] > 0 ? 100.0 * $worst['rebuild']['layout'] / $worst['rebuildUs'] : 0.0,
         );
     }
-    $json || \printf("页数 %d", \count($out));
+    $json || \printf("清单 %d 页（磁盘可用 %d）", \count($out), \count($disk['usable']));
     if ($skipped !== [] && !$json) {
         \printf("；跳过 %d：%s", \count($skipped), \implode('、', $skipped));
     }
@@ -291,6 +321,40 @@ if ($pages) {
         ? '整页重建的 layout 与全量重排同量级（M5 结论的前提成立）'
         : '重建帧的 layout 远小于全量重排（layout 可能已变增量）：' . \implode(' ', $premiseBad));
 
+    // ⑤ 清单 == 磁盘。★ 显式清单（`ShowcasePages`）的唯一代价就是漂移：
+    //   加一页忘了填，它从分母里静默消失，而 ②（上界）③④（比值）**全都照绿**。
+    //   ⇒ 这条判据是那份代价的对价，不是锦上添花。
+    $listed = ShowcasePages::names();
+    $missing = \array_values(\array_diff($disk['usable'], $listed));  // 磁盘有、清单无
+    $extra = \array_values(\array_diff($listed, $disk['usable']));    // 清单有、磁盘无
+    $items[] = new CheckItem('⑤', $missing === [] && $extra === [], $missing === [] && $extra === []
+        ? \sprintf('清单与磁盘一致（%d 页）', \count($listed))
+        : \sprintf(
+            '清单漂移：磁盘有清单无 [%s]；清单有磁盘无 [%s]',
+            \implode(' ', $missing),
+            \implode(' ', $extra),
+        ));
+
+    // ⑥ 页面真的建起来了。★ 原 4 条里**没有一条**管这件事：页面渲染成空 ⇒ 节点少 ⇒
+    //   ② 更绿（上界）、③④ 是比值照绿。合成档有 ①（12k 真建起来了）兜这个，这边当时没有。
+    //   下界取「总 1000 节点」：当前 2208，留 55% 余量 —— 抓得住"大面积变空"，容得下单页改版。
+    $sumNodes = 0;
+    $empty = [];
+    foreach ($out as $r) {
+        $sumNodes += (int) $r['nodes'];
+        if ((int) $r['nodes'] < 3) {
+            $empty[] = \sprintf('%s(%d)', $r['label'], (int) $r['nodes']);
+        }
+    }
+    $built = $empty === [] && $sumNodes >= 1000;
+    $items[] = new CheckItem('⑥', $built, $built
+        ? \sprintf('每页 ≥3 节点、合计 %d 节点（≥1000）—— 页面真的建起来了', $sumNodes)
+        : \sprintf(
+            '页面没建起来：合计 %d 节点（<1000）%s',
+            $sumNodes,
+            $empty === [] ? '' : '；空页 ' . \implode(' ', $empty),
+        ));
+
     // 信息行（**不判**）：谁在每帧画、谁的版本在变 —— 动画与自激分不开，交给人看
     $busy = [];
     foreach ($out as $r) {
@@ -306,7 +370,7 @@ if ($pages) {
     (new CheckReport(
         'frame-tax --pages',
         $items,
-        \sprintf('4 项页面判据全过（%d 页 / %d 帧）', \count($out), $frames),
+        \sprintf('6 项页面判据全过（%d 页 / %d 帧）', \count($out), $frames),
     ))->emit($json);
 }
 

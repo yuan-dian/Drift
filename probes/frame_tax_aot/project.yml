@@ -46,6 +46,12 @@ sources:
   #   ⇒ 只列真正需要的那三个文件。
   - ../../tools/Bench/FrameTaxApp.php
   - ../../tools/Bench/FrameTaxMeasure.php
+  - ../../tools/Bench/ShowcasePages.php
+  # ★ 页面档的 27 个真实页（2026-11-04）。这里**可以用目录**，与 `../../tools` 不同：
+  #   页面目录里全是正常的 Widget 类，没有"故意写坏"的夹具，也没有裸执行语句。
+  #   34 个文件里 7 个是有必填构造参数的异步/弹层页，编进来但不进清单
+  #   （清单只收"构造器无必填参数"的 27 页，规则见 `ShowcasePages` 头部）。
+  - ../../apps/showcase/src/Pages
   - ../../tools/Smoke/Frame/SurfaceProbe.php
   # ★ `SurfaceProbe` 构造时 `new RecordingSurface()` —— **同命名空间**，所以它里面
   #   没有 `use` 语句，用\"grep use 找依赖\"的方法会漏掉（第一次构建编过了、
