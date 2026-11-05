@@ -89,6 +89,8 @@ final class MenuItem extends Button
             EdgeInsets::symmetric(10.0, 5.0),
             $theme->textSize(TextRole::Body),
             $context->metrics(),
+            $this->resolveHoverOverlay($context),
+            $this->resolvePressedOverlay($context),
         );
     }
 }

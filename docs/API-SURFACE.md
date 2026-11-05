@@ -18,7 +18,7 @@
 | Errors.php | 2 | 3 |
 | Geometry | 9 | 0 |
 | Input | 19 | 5 |
-| Layout | 46 | 44 |
+| Layout | 47 | 44 |
 | Logging | 9 | 3 |
 | Platform | 17 | 16 |
 | Rendering | 34 | 1 |
@@ -27,7 +27,7 @@
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
 | Widget | 184 | 216 |
-| **合计** | **497** | **398** |
+| **合计** | **498** | **398** |
 
 覆盖 393 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
 
@@ -355,7 +355,7 @@
 
 ## Layout 层
 
-### @api（应用可读面） · 46
+### @api（应用可读面） · 47
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -382,6 +382,7 @@
 | `RenderImage` | class | src/Layout/RenderImage.php |
 | `RenderMenuItem` | class | src/Layout/RenderMenuItem.php |
 | `RenderObject` | class | src/Layout/RenderObject.php |
+| `RenderObject::setInteraction()` | method | src/Layout/RenderObject.php |
 | `RenderObject::cursor()` | method | src/Layout/RenderObject.php |
 | `RenderObject::cursorAt()` | method | src/Layout/RenderObject.php |
 | `RenderObject::panelRect()` | method | src/Layout/RenderObject.php |

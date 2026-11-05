@@ -288,7 +288,8 @@ class Button extends RenderBoxWidget implements Activatable
 
     /**
      * @internal 见 `RenderBoxWidget::paintsBoxChrome()`：`RenderButton::paintOwnChrome()`
-     *   自己画底 / 边 / 悬停层 / 浮起影子 ⇒ 交给盒的 `$mods` 要剥掉视觉三字段，
+     *   自己画底 / 边 / 浮起影子（两相位叠色由 `RenderBox::paint()` 统一画）
+     *   ⇒ 交给盒的 `$mods` 要剥掉视觉三字段，
      *   ★ 否则描边会画两遍（不幂等，golden 实测差 32 像素）。
      */
     public function paintsBoxChrome(): bool

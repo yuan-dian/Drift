@@ -11,6 +11,7 @@ use Drift\Geometry\Size;
 use Drift\Rendering\Canvas;
 use Drift\Rendering\LayerCache;
 use Drift\Rendering\Modifier;
+use Drift\Rendering\Paint;
 
 /**
  * 参与盒布局的渲染对象：`layout()` 约束 → 尺寸 + 子节点相对位置，`paint()` 以本盒原点绘制。
@@ -580,6 +581,9 @@ abstract class RenderBox extends RenderObject
         // ①.5 自己的 chrome（自持 `BoxStyle` 的容器在这里画背景/边框，**不**被裁）
         $this->paintOwnChrome($canvas);
 
+        // ①.6 两相位状态层：hover 在下、press 在上，盖住底色但不盖内容
+        $this->paintInteraction($canvas, $size);
+
         // ② 裁剪：矩形是**盒矩形**（含内边距），压栈在 `translate(padLeft, padTop)`
         //    之前 ⇒ 压的正是盒边界。两条来源：控件显式 `clip()`，或容器声明 `Overflow::Clip`。
         $clip = false;
@@ -638,6 +642,49 @@ abstract class RenderBox extends RenderObject
      */
     protected function paintOwnChrome(Canvas $canvas): void
     {
+    }
+
+    /** 两相位叠色：未声明走零成本早退；静止时进度为 0，一条命令都不发。 */
+    private function paintInteraction(Canvas $canvas, ?Size $size): void
+    {
+        $hover = $this->interactionHover;
+        $down = $this->interactionPress;
+        if (($hover === null && $down === null) || $size === null) {
+            return;
+        }
+
+        $rect = new Rect(0.0, 0.0, $size->width, $size->height);
+        $radius = $this->interactionRadius();
+
+        if ($hover !== null) {
+            $a = (int) \round($hover->a * $this->hoverProgress());
+            if ($a > 0) {
+                $canvas->drawRect($rect, Paint::fill($hover->withAlpha($a)), $radius);
+            }
+        }
+
+        if ($down !== null) {
+            $a = (int) \round($down->a * $this->pressProgress());
+            if ($a > 0) {
+                $canvas->drawRect($rect, Paint::fill($down->withAlpha($a)), $radius);
+            }
+        }
+    }
+
+    /** 状态层圆角；自持 `BoxStyle` 的盒覆写。 */
+    protected function interactionRadius(): float
+    {
+        $m = $this->mods;
+        if ($m === null) {
+            return 0.0;
+        }
+
+        $style = $m->boxStyle();
+        if ($style === null) {
+            return 0.0;
+        }
+
+        return $style->radius;
     }
 
     /**

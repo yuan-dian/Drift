@@ -44,9 +44,9 @@ final class RenderButton extends RenderProxyBox
         /**
          * 悬停态叠加色（`null` = 本按钮不做悬停反馈）。
          * 由 `Button::createRenderObject()` 按变体从主题解析后传入 —— Layout 层只吃值，不依赖 Theme。
-         * 叠在底色之上、标签之下（`paintContent()` 的顺序）。
+         * 叠色本身由 `RenderBox::paint()` 统一画（①.6），这里只负责把值落给基类。
          */
-        private readonly ?Color $hoverOverlay = null,
+        ?Color $hoverOverlay = null,
         /** 已按 `$iconSize` 缩放的图标路径；`null` = 本按钮没有图标 */
         private readonly ?Path $iconPath = null,
         private readonly float $iconSize = 0.0,
@@ -76,8 +76,11 @@ final class RenderButton extends RenderProxyBox
          *   调用点会**静默错位**（`$iconPath` 收到一个 `Color`）—— AOT 下这是
          *   编译错，解释器下可能一路跑到 `drawPath` 才炸。
          */
-        private readonly ?Color $pressedOverlay = null,
+        ?Color $pressedOverlay = null,
     ) {
+        // 在纯图标的早退之前：状态色与有没有孩子无关
+        $this->setInteraction($hoverOverlay, $pressedOverlay);
+
         if ($label === '') {
             return;   // 纯图标：不建 `RenderText`（空串仍占一行行高）
         }
@@ -107,21 +110,10 @@ final class RenderButton extends RenderProxyBox
         return $this->centerContent;
     }
 
-    /**
-     * 声明了状态色或浮起档位才接受悬停 —— 都不声明时连一次 `setHovered()` 都不收，
-     * 免得父链询问"这一层要不要变色"时白跑。
-     */
     #[\Override]
-    public function acceptsHover(): bool
+    protected function interactionRadius(): float
     {
-        return $this->hoverOverlay !== null || $this->hoverElevation > 0.0;
-    }
-
-    /** 声明了按下色才接受按下态（同 `acceptsHover()` 的理由：不声明就别白推） */
-    #[\Override]
-    public function acceptsPress(): bool
-    {
-        return $this->pressedOverlay !== null;
+        return $this->box->radius;
     }
 
     /**
@@ -252,28 +244,7 @@ final class RenderButton extends RenderProxyBox
             $canvas->drawRect($rect, Paint::stroke($this->box->borderColor, $this->box->borderWidth), $radius);
         }
 
-        // 状态层（悬停）：叠在底色/边框之上、内容之下 —— "压暗还是提亮"由状态色
-        // 自己表达（Primary/Danger 给白色半透明，Default/Flat 给主题 Hover 色）。
-        // 颜色自带的 alpha 再乘过渡进度 ⇒ 淡入而不是硬切。
-        $overlay = $this->hoverOverlay;
-        if ($overlay !== null) {
-            $alpha = (int) \round($overlay->a * $progress);
-            if ($alpha > 0) {
-                $canvas->drawRect($rect, Paint::fill($overlay->withAlpha($alpha)), $radius);
-            }
-        }
-
-        // 状态层（按下）：叠在悬停层**之上** —— 按下时悬停态仍是满的（指针就在盒上），
-        // 所以这一层要能盖住它，否则按下与悬停看起来一样。
-        // ★ 禁用态收不到按下态（`InputRouter` 不激活禁用控件，也就不会推），
-        //   这里不必再判一次 —— 判了反而会造出"两处判据不一致"的新洞。
-        $down = $this->pressedOverlay;
-        if ($down !== null) {
-            $alphaDown = (int) \round($down->a * $this->pressProgress());
-            if ($alphaDown > 0) {
-                $canvas->drawRect($rect, Paint::fill($down->withAlpha($alphaDown)), $radius);
-            }
-        }
+        // 两相位叠色由 `RenderBox::paint()` 统一画（①.6），这里只留浮起影子
     }
 
     #[\Override]

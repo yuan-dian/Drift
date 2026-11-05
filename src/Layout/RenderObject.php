@@ -8,6 +8,7 @@ use Drift\Geometry\Rect;
 use Drift\Input\CursorShape;
 use Drift\Rendering\AnimatedValue;
 use Drift\Rendering\Canvas;
+use Drift\Rendering\Color;
 
 /**
  * 渲染树的节点（基类）。
@@ -64,6 +65,19 @@ abstract class RenderObject
 
     /** 按下态过渡进度（同 `hoverAnim` 的理由：第一帧也从 0 淡上去） */
     private ?AnimatedValue $pressAnim = null;
+
+    /** 两相位反馈色（Widget 解析好后落上来）；`null` = 本盒不接收该状态。
+     *  描述态，不进 `inheritRuntimeState()` —— 每次 `syncBox()` 重新落。 */
+    protected ?Color $interactionHover = null;
+
+    protected ?Color $interactionPress = null;
+
+    /** @api 声明两相位反馈色；唯一写点。Layout 层只收值，不碰主题。 */
+    public function setInteraction(?Color $hover, ?Color $pressed): void
+    {
+        $this->interactionHover = $hover;
+        $this->interactionPress = $pressed;
+    }
 
     /**
      * 接收旧盒的瞬态（盒换代时由 `Element::syncBox()` 调）。
@@ -135,16 +149,13 @@ abstract class RenderObject
     }
 
     /**
-     * 这个盒接不接受"悬停态"（默认 `false`）。
-     *
-     * `FocusManager` 沿盒父链问本方法，第一个回答 `true` 的即"该变色的盒"。
-     * 覆写者通常写成"声明了状态色才接"，否则收不到 `setHovered`。
+     * 声明了悬停色才接收悬停态。`FocusManager` 沿盒父链取第一个答 true 的盒。
      *
      * @api
      */
     public function acceptsHover(): bool
     {
-        return false;
+        return $this->interactionHover !== null;
     }
 
     /** @internal `FocusManager::hoverTo()` 推状态（唯一写点） */
@@ -197,17 +208,14 @@ abstract class RenderObject
     }
 
     /**
-     * 这个盒接不接受"按下态"（默认 `false`）。
-     *
-     * ★ **与 `acceptsHover()` 分开，不合并**：能画悬停反馈 ≠ 能画按下反馈。
-     *   合并会让"只实现了 hover 的盒"被推一个它根本不画的按下态 —— 那正是
-     *   本仓最恨的形状：状态在传、画面不动、还没有任何报错。
+     * 声明了按下色才接收按下态。
+     * ★ 不与 `acceptsHover()` 合并：只画悬停的盒不该收到一个不画的按下态。
      *
      * @api
      */
     public function acceptsPress(): bool
     {
-        return false;
+        return $this->interactionPress !== null;
     }
 
     /** @internal `FocusManager::pressTo()` 推状态（唯一写点） */

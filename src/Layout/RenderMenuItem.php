@@ -44,10 +44,14 @@ final class RenderMenuItem extends RenderProxyBox
         private readonly EdgeInsets $insets,
         private readonly float $fontSize,
         TextMetricsProvider $metrics,
+        ?Color $hoverOverlay = null,
+        ?Color $pressedOverlay = null,
     ) {
         if ($separator) {
-            return; // 分隔线没有孩子 —— paint 自己画
+            return; // 分隔线没有孩子、不可点 —— 不声明两相位反馈
         }
+
+        $this->setInteraction($hoverOverlay, $pressedOverlay);
 
         // 行：label · Spacer(flex 1) · chord（无 chord 时省略后两段）
         $row = new RenderFlex(false, 12.0, EdgeInsets::zero(), FlexAlign::Center, Overflow::Report);
