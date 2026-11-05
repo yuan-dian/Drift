@@ -231,12 +231,23 @@ abstract class ToggleBase extends RenderBoxWidget implements Activatable
             $context->textSize(TextRole::Body),
         );
 
+        // 反馈色与按钮族同源：悬停浅一档、按下深一档（`ColorToken` 的唯一出处）。
+        // 禁用态给 null ⇒ `acceptsHover()` 为假 ⇒ 连状态都不推，零成本。
+        $hoverOverlay = null;
+        $pressedOverlay = null;
+        if (!$this->mods()->disabled()) {
+            $hoverOverlay = $context->color(ColorToken::Hover);
+            $pressedOverlay = $context->color(ColorToken::Pressed);
+        }
+
         return new RenderToggle(
             $this->kind,
             $this->on,
             $this->label,
             $style,
             $context->metrics(),
+            $hoverOverlay,
+            $pressedOverlay,
         );
     }
 }

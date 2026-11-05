@@ -333,6 +333,14 @@ final class Slider extends RenderBoxWidget implements SemanticsValueEditable
             $context->metric(MetricToken::BorderWidth),
         );
 
+        // 禁用态给 null ⇒ `acceptsHover()` 为假 ⇒ 连状态都不推（与 `ToggleBase` 同判据）
+        $hoverOverlay = null;
+        $pressedOverlay = null;
+        if (!$this->mods()->disabled()) {
+            $hoverOverlay = $context->color(ColorToken::Hover);
+            $pressedOverlay = $context->color(ColorToken::Pressed);
+        }
+
         $box = new RenderSlider(
             $this->value,
             $this->min,
@@ -340,6 +348,8 @@ final class Slider extends RenderBoxWidget implements SemanticsValueEditable
             $this->step,
             $this->width,
             $style,
+            $hoverOverlay,
+            $pressedOverlay,
         );
 
         return $box;

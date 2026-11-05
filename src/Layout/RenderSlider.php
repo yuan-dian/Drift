@@ -7,6 +7,7 @@ use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Size;
 use Drift\Rendering\Canvas;
+use Drift\Rendering\Color;
 use Drift\Rendering\Paint;
 use Drift\Rendering\SliderStyle;
 
@@ -48,7 +49,11 @@ final class RenderSlider extends RenderBox
         private readonly float $step,
         private readonly float $width,
         private readonly SliderStyle $style,
+        // 不 promote：基类同名字段会在 AOT 下撞 "Cannot redeclare non-readonly property"
+        ?Color $hoverOverlay = null,
+        ?Color $pressedOverlay = null,
     ) {
+        $this->setInteraction($hoverOverlay, $pressedOverlay);
     }
 
     /** 盒高：拇指直径 + 上下留白（与 `contentIntrinsicHeight` 同式） */
@@ -151,7 +156,12 @@ final class RenderSlider extends RenderBox
         return $this->min + \round(($value - $this->min) / $this->step) * $this->step;
     }
 
-    protected function paintContent(Canvas $canvas): void
+    /**
+     * 轨道与已选段是**背景**（chrome）：按 `final paint()` 的层序必须排在状态层
+     * 之下，否则光晕会被轨道盖掉一半。
+     */
+    #[\Override]
+    protected function paintOwnChrome(Canvas $canvas): void
     {
         $size = $this->size;
         if ($size === null || $size->width <= 0.0 || $size->height <= 0.0) {
@@ -187,9 +197,39 @@ final class RenderSlider extends RenderBox
                 $trackRadius,
             );
         }
+    }
+
+    /** 状态层 = 拇指外面一圈光晕（`grow` 取半径的 0.6：比盒高出一圈，但不吞掉邻居） */
+    #[\Override]
+    protected function paintInteraction(Canvas $canvas, ?Size $size): void
+    {
+        if ($size === null) {
+            return;
+        }
+
+        $r = $this->style->thumbRadius;
+        $grow = $r * 0.6;
+        $outer = $r + $grow;
+        $cy = $size->height / 2.0;
+
+        $this->paintStateLayer(
+            $canvas,
+            new Rect($this->thumbX() - $outer, $cy - $outer, 2.0 * $outer, 2.0 * $outer),
+            $outer,
+        );
+    }
+
+    protected function paintContent(Canvas $canvas): void
+    {
+        $size = $this->size;
+        if ($size === null || $size->width <= 0.0 || $size->height <= 0.0) {
+            return;
+        }
 
         // ③ 拇指：正方形 Rect + `drawEllipse` = 圆（Core 层，双端都支持）
         $r = $this->style->thumbRadius;
+        $cy = $size->height / 2.0;
+        $thumbX = $this->thumbX();
         $thumbRect = new Rect($thumbX - $r, $cy - $r, 2.0 * $r, 2.0 * $r);
         $canvas->drawEllipse($thumbRect, Paint::fill($this->style->accent));
 

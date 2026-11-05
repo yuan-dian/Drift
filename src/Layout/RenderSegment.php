@@ -7,6 +7,7 @@ use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Size;
 use Drift\Rendering\Canvas;
+use Drift\Rendering\Color;
 use Drift\Rendering\Paint;
 use Drift\Rendering\SegmentedStyle;
 use Drift\Text\TextMetricsProvider;
@@ -42,7 +43,12 @@ final class RenderSegment extends RenderProxyBox
         private readonly SegmentedStyle $style,
         string $label,
         TextMetricsProvider $metrics,
+        // 不 promote：基类同名字段会在 AOT 下撞 "Cannot redeclare non-readonly property"
+        ?Color $hoverOverlay = null,
+        ?Color $pressedOverlay = null,
     ) {
+        $this->setInteraction($hoverOverlay, $pressedOverlay);
+
         $color = $this->style->labelIdle;
         if ($this->selected) {
             $color = $this->style->labelOnFill;
@@ -115,30 +121,63 @@ final class RenderSegment extends RenderProxyBox
         return $child + 2.0 * $this->style->inset;
     }
 
+    /**
+     * 选中块是**背景**（chrome），按 `final paint()` 的层序它必须排在状态层**之下** ——
+     * 否则悬停叠色被药丸盖住（段选中时指针正好悬在它上面，反馈看不见）。
+     *
+     * 圆角夹到 `min(w,h)/2`：段窄时（标签短 ⇒ 等宽仍可能小于段高），`h/2` 会超过
+     * 半宽 ⇒ 退化为自交圆角。软光栅的 insideRoundRect 内部会夹，Skia 桥不夹 ⇒
+     * 两边必须**自己**夹，否则双端不一致（conformance 判据直接红）。
+     */
+    #[\Override]
+    protected function paintOwnChrome(Canvas $canvas): void
+    {
+        $size = $this->size;
+        if (!$this->selected || $size === null) {
+            return;
+        }
+
+        $inset = $this->style->inset;
+        $w = $size->width - 2.0 * $inset;
+        $h = $size->height - 2.0 * $inset;
+        if ($w <= 0.0 || $h <= 0.0) {
+            return;
+        }
+
+        $canvas->drawRect(
+            new Rect($inset, $inset, $w, $h),
+            Paint::fill($this->style->fillSelected),
+            $w < $h ? $w / 2.0 : $h / 2.0,
+        );
+    }
+
+    /** 状态层 = 药丸本身（四边内缩 `inset`），不铺满整个段盒。 */
+    #[\Override]
+    protected function paintInteraction(Canvas $canvas, ?Size $size): void
+    {
+        if ($size === null) {
+            return;
+        }
+
+        $inset = $this->style->inset;
+        $w = $size->width - 2.0 * $inset;
+        $h = $size->height - 2.0 * $inset;
+        if ($w <= 0.0 || $h <= 0.0) {
+            return;
+        }
+
+        $this->paintStateLayer(
+            $canvas,
+            new Rect($inset, $inset, $w, $h),
+            $w < $h ? $w / 2.0 : $h / 2.0,
+        );
+    }
+
     protected function paintContent(Canvas $canvas): void
     {
         $size = $this->size ?? new Size(0.0, 0.0);
         if ($size->width <= 0.0 || $size->height <= 0.0) {
             return; // 没排过 ⇒ 无墨（与 RenderToggle 同判据）
-        }
-
-        if ($this->selected) {
-            $inset = $this->style->inset;
-            $w = $size->width - 2.0 * $inset;
-            $h = $size->height - 2.0 * $inset;
-            if ($w > 0.0 && $h > 0.0) {
-                // 选中块 = 胶囊，四边内缩 inset ⇒ 与轨道描边永远不贴。
-                // ★ 圆角夹到 min(w,h)/2：段窄时（标签短 ⇒ 等宽仍可能小于段高），
-                //   h/2 会超过半宽 ⇒ 退化为自交圆角。软光栅的 insideRoundRect
-                //   内部会夹，Skia 桥不夹 ⇒ 两边必须**自己**夹，否则双端不一致
-                //   （conformance 判据直接红）。
-                $radius = $w < $h ? $w / 2.0 : $h / 2.0;
-                $canvas->drawRect(
-                    new Rect($inset, $inset, $w, $h),
-                    Paint::fill($this->style->fillSelected),
-                    $radius,
-                );
-            }
         }
 
         // 标签（偏移已在 performLayout 里定好；RenderProxyBox 负责 translate）

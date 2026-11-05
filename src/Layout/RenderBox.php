@@ -644,29 +644,49 @@ abstract class RenderBox extends RenderObject
     {
     }
 
-    /** 两相位叠色：未声明走零成本早退；静止时进度为 0，一条命令都不发。 */
-    private function paintInteraction(Canvas $canvas, ?Size $size): void
+    /**
+     * 两相位状态层，**默认形状 = 整盒矩形**。
+     *
+     * ★ 自绘控件覆写它换几何（开关只给本体一圈光晕、分段只给药丸、滑块只给拇指）。
+     *   层序由 `final paint()` 钉死：`装饰 → 状态层 → 内容`，覆写只能换形状、换不了
+     *   层次 —— 需要层压在别的图元之上时，把那块图元挪进 `paintOwnChrome()`。
+     */
+    protected function paintInteraction(Canvas $canvas, ?Size $size): void
     {
-        $hover = $this->interactionHover;
-        $down = $this->interactionPress;
-        if (($hover === null && $down === null) || $size === null) {
+        if ($size === null) {
             return;
         }
 
-        $rect = new Rect(0.0, 0.0, $size->width, $size->height);
-        $radius = $this->interactionRadius();
+        $this->paintStateLayer(
+            $canvas,
+            new Rect(0.0, 0.0, $size->width, $size->height),
+            $this->interactionRadius(),
+        );
+    }
+
+    /**
+     * 状态层原语：未声明走零成本早退；静止时进度为 0，一条命令都不发。
+     * `final` —— 层次（hover 在下、press 在上）只该有一份实现。
+     */
+    final protected function paintStateLayer(Canvas $canvas, Rect $shape, float $radius): void
+    {
+        $hover = $this->interactionHover;
+        $down = $this->interactionPress;
+        if ($hover === null && $down === null) {
+            return;
+        }
 
         if ($hover !== null) {
             $a = (int) \round($hover->a * $this->hoverProgress());
             if ($a > 0) {
-                $canvas->drawRect($rect, Paint::fill($hover->withAlpha($a)), $radius);
+                $canvas->drawRect($shape, Paint::fill($hover->withAlpha($a)), $radius);
             }
         }
 
         if ($down !== null) {
             $a = (int) \round($down->a * $this->pressProgress());
             if ($a > 0) {
-                $canvas->drawRect($rect, Paint::fill($down->withAlpha($a)), $radius);
+                $canvas->drawRect($shape, Paint::fill($down->withAlpha($a)), $radius);
             }
         }
     }

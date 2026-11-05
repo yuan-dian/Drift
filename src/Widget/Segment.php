@@ -6,6 +6,7 @@ namespace Drift\Widget;
 use Drift\Input\SemanticsRole;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderSegment;
+use Drift\Rendering\Color;
 use Drift\Rendering\ColorToken;
 use Drift\Rendering\MetricToken;
 use Drift\Rendering\SegmentedStyle;
@@ -180,6 +181,26 @@ final class Segment extends RenderBoxWidget implements Activatable
             $context->textSize(TextRole::Body),
         );
 
-        return new RenderSegment($this->selected, $style, $this->label, $context->metrics());
+        // 反馈色跟着**底色**走（与 `Button` 的变体同判据）：未选中段压在轨道上，
+        // 用主题档；选中段是 Accent 实底，灰档上去发浑 ⇒ 换白，只提亮不提灰。
+        $hoverOverlay = null;
+        $pressedOverlay = null;
+        if (!$this->mods()->disabled()) {
+            $hoverOverlay = $context->color(ColorToken::Hover);
+            $pressedOverlay = $context->color(ColorToken::Pressed);
+            if ($this->selected) {
+                $hoverOverlay = new Color(255, 255, 255, 40);
+                $pressedOverlay = new Color(255, 255, 255, 70);
+            }
+        }
+
+        return new RenderSegment(
+            $this->selected,
+            $style,
+            $this->label,
+            $context->metrics(),
+            $hoverOverlay,
+            $pressedOverlay,
+        );
     }
 }

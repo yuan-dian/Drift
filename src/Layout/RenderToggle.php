@@ -47,7 +47,12 @@ final class RenderToggle extends RenderProxyBox
         string $label,
         private readonly ToggleStyle $style,
         TextMetricsProvider $metrics,
+        // 不 promote：基类同名字段会在 AOT 下撞 "Cannot redeclare non-readonly property"
+        ?Color $hoverOverlay = null,
+        ?Color $pressedOverlay = null,
     ) {
+        $this->setInteraction($hoverOverlay, $pressedOverlay);
+
         $this->setChild(new RenderText(
             $label,
             TextStyle::of($style->fontSize),
@@ -104,6 +109,31 @@ final class RenderToggle extends RenderProxyBox
         $labelWidth = max(0.0, $width - $this->controlWidth() - $this->style->gap);
 
         return max($this->style->boxSize, $this->child?->intrinsicHeight($labelWidth) ?? 0.0);
+    }
+
+    /**
+     * 光晕只罩**控件本体**，标签区不铺色 —— 整行铺色会像一条列表高亮，
+     *   而这里点标签和点方框是同一件事，视觉上不该有两种"选中感"。
+     *
+     * 形状跟本体走：方框 ⇒ 圆、开关 ⇒ 两端圆弧的胶囊（`radius` 取半高 + 外扩）。
+     * `grow` 必须小于 `gap`，否则光晕会压到标签第一个字上。
+     */
+    #[\Override]
+    protected function paintInteraction(Canvas $canvas, ?Size $size): void
+    {
+        if ($size === null) {
+            return;
+        }
+
+        $h = $this->style->boxSize;
+        $grow = $h * 0.4;
+        $top = max(0.0, ($size->height - $h) / 2.0);
+
+        $this->paintStateLayer(
+            $canvas,
+            new Rect(-$grow, $top - $grow, $this->controlWidth() + 2.0 * $grow, $h + 2.0 * $grow),
+            $h / 2.0 + $grow,
+        );
     }
 
     #[\Override]
