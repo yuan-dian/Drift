@@ -404,6 +404,22 @@ final class RenderTextArea extends RenderBox implements TextInputBox, ScrollBarH
         }
     }
 
+    /** 输入井的底与 `Hover` token 太近 ⇒ 反馈落在边框上（描边，不填满整个盒）。 */
+    #[\Override]
+    protected function paintInteraction(Canvas $canvas, ?Size $size): void
+    {
+        if ($size === null) {
+            return;
+        }
+
+        $this->paintStateLayer(
+            $canvas,
+            new Rect(0.0, 0.0, $size->width, $size->height),
+            $this->box->radius,
+            $this->box->borderWidth,
+        );
+    }
+
     protected function paintContent(Canvas $canvas): void
     {
         // 只挪滚动偏移：`caretRect()` / `selectionRects()` 已经是盒内坐标，

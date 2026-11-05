@@ -9,6 +9,7 @@ use Drift\Geometry\Matrix2D;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Size;
 use Drift\Rendering\Canvas;
+use Drift\Rendering\Color;
 use Drift\Rendering\LayerCache;
 use Drift\Rendering\Modifier;
 use Drift\Rendering\Paint;
@@ -647,9 +648,11 @@ abstract class RenderBox extends RenderObject
     /**
      * 两相位状态层，**默认形状 = 整盒矩形**。
      *
-     * ★ 自绘控件覆写它换几何（开关只给本体一圈光晕、分段只给药丸、滑块只给拇指）。
-     *   层序由 `final paint()` 钉死：`装饰 → 状态层 → 内容`，覆写只能换形状、换不了
-     *   层次 —— 需要层压在别的图元之上时，把那块图元挪进 `paintOwnChrome()`。
+     * ★ 自绘控件覆写它换几何（开关只给本体一圈光晕、分段只给药丸、滑块只给拇指），
+     *   输入框则换成**描边**（同一种状态的另一种形状，见 `paintStateLayer()`）。
+     *   层序由 `final paint()` 钉死：`装饰 → 自己的 chrome → 状态层 → 内容`，
+     *   覆写只能换形状、换不了层次 —— 需要层压在别的图元之上时，把那块图元挪进
+     *   `paintOwnChrome()`。
      */
     protected function paintInteraction(Canvas $canvas, ?Size $size): void
     {
@@ -667,8 +670,12 @@ abstract class RenderBox extends RenderObject
     /**
      * 状态层原语：未声明走零成本早退；静止时进度为 0，一条命令都不发。
      * `final` —— 层次（hover 在下、press 在上）只该有一份实现。
+     *
+     * @param float $strokeWidth `0` = 填充形状（按钮 / 开关 / 段 / 滑块）；
+     *                           `> 0` = 沿形状描边（输入框：底与 `Hover` token 太近，
+     *                           填充叠色在亮主题下几乎不可见，反馈该落在边框上）。
      */
-    final protected function paintStateLayer(Canvas $canvas, Rect $shape, float $radius): void
+    final protected function paintStateLayer(Canvas $canvas, Rect $shape, float $radius, float $strokeWidth = 0.0): void
     {
         $hover = $this->interactionHover;
         $down = $this->interactionPress;
@@ -679,16 +686,22 @@ abstract class RenderBox extends RenderObject
         if ($hover !== null) {
             $a = (int) \round($hover->a * $this->hoverProgress());
             if ($a > 0) {
-                $canvas->drawRect($shape, Paint::fill($hover->withAlpha($a)), $radius);
+                $canvas->drawRect($shape, $this->stateBrush($hover->withAlpha($a), $strokeWidth), $radius);
             }
         }
 
         if ($down !== null) {
             $a = (int) \round($down->a * $this->pressProgress());
             if ($a > 0) {
-                $canvas->drawRect($shape, Paint::fill($down->withAlpha($a)), $radius);
+                $canvas->drawRect($shape, $this->stateBrush($down->withAlpha($a), $strokeWidth), $radius);
             }
         }
+    }
+
+    /** 状态层的笔：两相位共用一支，避免淡入逻辑被抄两遍。 */
+    private function stateBrush(Color $color, float $strokeWidth): Paint
+    {
+        return $strokeWidth > 0.0 ? Paint::stroke($color, $strokeWidth) : Paint::fill($color);
     }
 
     /** 状态层圆角；自持 `BoxStyle` 的盒覆写。 */

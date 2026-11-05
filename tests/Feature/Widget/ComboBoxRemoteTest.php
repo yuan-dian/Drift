@@ -222,6 +222,14 @@ final class ComboBoxRemoteTest extends SmokeTestCase
         //    ★ 这一条不能用"再跑一帧面板就对了"来测 —— 那正是本缺陷**恰好**能通过的写法。
         $this->tap($app, $app->fieldCenter());
         $this->settle($app);
+
+        // 输入域接了悬停反馈 ⇒ 上面那次 tap 会起一段 hover 淡入（半衰期 55ms）。
+        // 「同步完不自旋」必须在"没有别的动画"的前提下量，先把这段跑到收口；
+        // 下面的判据一个字不改（仍刻意只 tick 一次看面板是否落后）。
+        for ($i = 0; $i < 60 && $app->wantsFrame(); $i++) {
+            $this->tick($app);
+        }
+
         $app->host()?->setOptions([Option::make('成都市', '510100')]);
         $this->tick($app);   // 只跑**一帧**：主树换了，面板还没跟上
         check(

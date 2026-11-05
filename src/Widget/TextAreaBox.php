@@ -130,9 +130,10 @@ final class TextAreaBox extends RenderBoxWidget
         $radius = $context->metric(MetricToken::Radius);
         $border = $context->metric(MetricToken::BorderWidth);
 
+        $borderColor = $context->color(ColorToken::Border);
         $box = new BoxStyle(
             $context->color(ColorToken::Pane),
-            $context->color(ColorToken::Border),
+            $borderColor,
             $border,
             $radius,
         );
@@ -144,7 +145,8 @@ final class TextAreaBox extends RenderBoxWidget
             ? $this->lines * $lineHeight + $insets->vertical()
             : 0.0;
 
-        return new RenderTextArea(
+        $textColor = $context->color(ColorToken::Text);
+        $render = new RenderTextArea(
             $this->text,
             $style,
             $context->textColor(TextRole::Body),
@@ -153,7 +155,7 @@ final class TextAreaBox extends RenderBoxWidget
             $box,
             $insets,
             $this->caretOffset,
-            $context->color(ColorToken::Text),
+            $textColor,
             $border,
             // 选区高亮：与单行同一份混色（不透明混色，不用 alpha —— 软/硬两个
             // 后端对半透明的处理不一致，§14.1 的后端等价性不能挂在运气上）
@@ -174,5 +176,13 @@ final class TextAreaBox extends RenderBoxWidget
             $this->barOpacity,
             $this->revealCaret,
         );
+
+        // 与 `TextFieldBox` 同一份两档反馈（边框朝文字色递进）。
+        $render->setInteraction(
+            Color::lerp($borderColor, $textColor, 0.28),
+            Color::lerp($borderColor, $textColor, 0.50),
+        );
+
+        return $render;
     }
 }

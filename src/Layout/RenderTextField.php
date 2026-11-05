@@ -298,6 +298,23 @@ final class RenderTextField extends RenderBox implements TextInputBox
         }
     }
 
+    /** 输入井的底与 `Hover` token 太近 ⇒ 反馈落在边框上（描边，不填满整个盒）。 */
+    #[\Override]
+    protected function paintInteraction(Canvas $canvas, ?Size $size): void
+    {
+        if ($size === null) {
+            return;
+        }
+
+        // 圆角与描边宽度都取自自持的 BoxStyle —— `mods` 那份是 0。
+        $this->paintStateLayer(
+            $canvas,
+            new Rect(0.0, 0.0, $size->width, $size->height),
+            $this->box->radius,
+            $this->box->borderWidth,
+        );
+    }
+
     protected function paintContent(Canvas $canvas): void
     {
         // ★ 裁剪由基类 `RenderBox::paint()` 统一兑现（`clipsOverflow()` 恒真）；

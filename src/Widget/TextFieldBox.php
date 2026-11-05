@@ -101,14 +101,18 @@ final class TextFieldBox extends RenderBoxWidget
 
         // 输入"井"：底色用画布色、描边用边框色（与 Button::Default 的 Chrome 底区分开
         // —— 输入区应当是"凹"的观感，按钮是"凸"的）。出错只换描边色，底与几何不动。
+        $borderColor = $this->invalid
+            ? $context->color(ColorToken::Danger)
+            : $context->color(ColorToken::Border);
         $box = new BoxStyle(
             $context->color(ColorToken::Pane),
-            $this->invalid ? $context->color(ColorToken::Danger) : $context->color(ColorToken::Border),
+            $borderColor,
             $border,
             $radius,
         );
 
-        return new RenderTextField(
+        $textColor = $context->color(ColorToken::Text);
+        $render = new RenderTextField(
             $this->text,
             $style,
             $context->textColor(TextRole::Body),
@@ -117,7 +121,7 @@ final class TextFieldBox extends RenderBoxWidget
             $box,
             EdgeInsets::symmetric($context->metric(MetricToken::Padding), $gap * 0.5),
             $this->caretOffset,
-            $context->color(ColorToken::Text),
+            $textColor,
             $border,
             // 选区高亮：强调色向画布色混 72%（不透明混色，不用 alpha —— 软/硬两个
             // 后端对半透明的处理不一致，§14.1 的后端等价性就不能挂在运气上）。
@@ -131,5 +135,15 @@ final class TextFieldBox extends RenderBoxWidget
             $this->selectionEnd,
             $context->metrics(),
         );
+
+        // 反馈 = 边框朝文字色递进两档（亮主题变深、暗主题变亮，方向由主题自己给）。
+        // 不叠主题 Hover/Pressed：输入井底就是 Pane，那两个 token 与它只差几级，
+        // 填充叠色在亮主题下看不见，且 hover 变亮 / press 变暗与按钮的递进相反。
+        $render->setInteraction(
+            Color::lerp($borderColor, $textColor, 0.28),
+            Color::lerp($borderColor, $textColor, 0.50),
+        );
+
+        return $render;
     }
 }
