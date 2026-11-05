@@ -10,13 +10,15 @@ declare(strict_types=1);
  *   "一串要人记住的脚本"——漏跑、跑错顺序是常态。golden 自动基线（P0）落地后
  *   更需要它，否则那个基线没人跑、等于没有。
  *
- * ★ 本脚本只覆盖 **T0（无头、解释器）**。AOT（T1）与真机（T2）仍是显式动作：
- *   `php tools/drift-build.php <app>`（构建）+ 真机探针。分层纪律见 `09` §8。
+ * ★ 本脚本只覆盖 **T0（无头、解释器）**。T1 dev 真机 / T2 AOT 真机仍是显式动作，
+ *   两者共用 `probe-window.py` 的五条判据。分层与「dev 绿 ≠ AOT 绿」清单见
+ *   `docs/architecture/12-工程与工具.md` §3 —— 日常不碰 AOT 之后那份清单更要紧。
  *
  * 检查项（顺序即执行顺序，廉价优先；★ 标 slow 的在 `--fast` 下跳过）：
  *   doctor    环境（PHPRC / tpc / cl.exe / DPI…）
  *   lint      代码规则 · 0 error
  *   selftest  lint 规则双向自检
+ *   devshell  开发态壳红线（sources 白名单 / 变量路径 require / 桥接回调）
  *   docref    文档 file:line / § 引用
  *   probe     探针骨架（probe-audit --selftest）
  *   pixels    像素契约（probe_pixels --selftest，依赖本机 python ⇒ 允许"没测到"）
@@ -118,6 +120,9 @@ $checks = [
     'doctor'   => ['环境（doctor）', [PHP_BINARY, $root . '/tools/doctor.php', '--quiet'], false],
     'lint'     => ['lint', [PHP_BINARY, $root . '/tools/lint.php'], false],
     'selftest' => ['lint 自检', [PHP_BINARY, $root . '/tools/lint.php', '--selftest'], false],
+    // ★ 日常改 PHP 不再编 AOT ⇒ dev 壳成了主入口，它的红线必须进闸门（无窗口、廉价）。
+    //   只靠 project.yml 头注释挡不住「顺手把 src/ 加进 sources」那一下。
+    'devshell' => ['开发态壳红线（drift-dev --selftest）', [PHP_BINARY, $root . '/tools/drift-dev.php', '--selftest'], false],
     'docref'   => ['docref', [PHP_BINARY, $root . '/tools/docref.php'], false],
     // ★ `docs/API-SURFACE.md` 的抬头写着"自动生成、勿手改"，但**没人检查它是新的**
     //   ⇒ 它漂了：`FrameStage` 没进文档，行号整体偏几十行。docref 查的是"引用的符号

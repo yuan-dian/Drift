@@ -2,6 +2,12 @@
 
     python tools/probe-window.py users        # 默认 users；也可 hello
     python tools/probe-window.py users 用户管理
+    python tools/probe-window.py showcase --dev         # dev 壳（改 PHP 不用重编译）
+    python tools/probe-window.py showcase --dev-runner  # 完整 drift-dev.php 运行器
+
+三种形态共用这里的五条判据与 `App.close()` 的自动关窗：`--dev` / `--dev-runner`
+是日常入口，`DRIFT_PROBE_EXE` / `DRIFT_PROBE_ARGS_JSON` / `DRIFT_PROBE_ENV_JSON`
+留给自定义形态（显式 flag 覆盖环境变量）。
 
 判据（五者缺一不可）：
   ① 找到窗口，标题 == Application::title()；
@@ -26,11 +32,22 @@
 import ctypes
 import json
 import os
+import shutil
 import sys
 from ctypes import wintypes
 
 from probe_check import check, run
-from probe_win import App, grab
+from probe_win import ROOT, App, grab
+
+DEV_ENTRY = os.path.join(ROOT, "apps", "dev", "dev-entry.php").replace("\\", "/")
+
+
+def dev_profile(app: str, runner: bool):
+    """dev 形态的启动参数；不另起进程管理，一律交给 probe_win.App。"""
+    if runner:
+        # drift-dev.php 自己设 DRIFT_DEV_ENTRY / PHPRC / PATH，这里只给应用名。
+        return shutil.which("php") or "php", ["tools/drift-dev.php", "--no-watch", app], None
+    return "dev.exe", [], {"DRIFT_DEV_ENTRY": DEV_ENTRY, "DRIFT_DEV_APP": app}
 
 # Bootstrap 声明的客户区**逻辑**尺寸（判据 ② 的期望值）
 LOGICAL = {
@@ -93,15 +110,20 @@ def dpi_awareness(hwnd):
 
 
 def main() -> int:
-    app = sys.argv[1] if len(sys.argv) > 1 else "users"
-    title = sys.argv[2] if len(sys.argv) > 2 else TITLES.get(app, "Hello Drift")
+    flags = {a for a in sys.argv[1:] if a.startswith("--")}
+    positional = [a for a in sys.argv[1:] if not a.startswith("--")]
+    app = positional[0] if positional else "users"
+    title = positional[1] if len(positional) > 1 else TITLES.get(app, "Hello Drift")
+    if "--dev" in flags and "--dev-runner" in flags:
+        print("--dev 与 --dev-runner 只能选一个")
+        return 2
 
-    # 默认仍是 `<应用>.exe`。三个环境变量只为「同一个应用换一种运行形态」而留：
-    # dev 壳（dev.exe + DRIFT_DEV_*）与 dev 运行器（php.exe + drift-dev.php）
-    # 复用这里的五条判据与 App.close() 的自动关窗，不另起一套进程管理。
+    # 默认仍是 `<应用>.exe`；三种形态复用五条判据与自动关窗，不另起进程管理。
     exe = os.environ.get("DRIFT_PROBE_EXE", f"{app}.exe")
     args = json.loads(os.environ.get("DRIFT_PROBE_ARGS_JSON", "[]"))
     env_extra = json.loads(os.environ.get("DRIFT_PROBE_ENV_JSON", "null"))
+    if flags & {"--dev", "--dev-runner"}:
+        exe, args, env_extra = dev_profile(app, "--dev-runner" in flags)
 
     with App(exe, title, args=args, env_extra=env_extra, interactive=False,
              state_name=app) as win:

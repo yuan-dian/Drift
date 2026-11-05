@@ -34,7 +34,7 @@ function usage(): never
       应用名    默认 hello；须在 composer.json 有 App\<名字>\ PSR-4 前缀
       --rebuild 强制重编 dev 壳（改了 cpp-src / 壳配置时其实会自动检测）
       --no-watch  只跑一次，不监听文件变化
-      --selftest  指纹判据自检（含反例），不启动进程
+      --selftest  指纹 + 壳红线自检（含反例），不启动进程；gate 也跑它
 
     ★ 热更是「跨进程重启」：内嵌 ZendVM 对同一路径的 require 会缓存 opcode，
       同进程重刷读不到新代码；且本框架无 Store/Cell，状态不应跨热更保留。
@@ -227,6 +227,51 @@ function stop($process, array $pipes): void
     proc_close($process);
 }
 
+/** project.yml 的 sources 段；只认 `- xxx` 行，不引 yaml 依赖。 */
+function shellSources(string $yml): array
+{
+    if (preg_match('/^sources:[^\n]*\n((?:[ \t]+-[ \t]+[^\n]*\n)+)/m', $yml, $m) !== 1) {
+        return [];
+    }
+    preg_match_all('/^[ \t]+-[ \t]+(\S+)/m', $m[1], $mm);
+
+    return $mm[1] ?? [];
+}
+
+/**
+ * 壳的红线：sources 必须**精确等于**白名单。多一个目录（尤其 `../../src`）就会
+ * 把业务 PHP 编进 AOT，动态 require 同名类直接 Fatal「already in use」；少一个
+ * 回调则 C++ 侧 extern 链接不上（LNK2019）。新增条目必须是一次显式裁决。
+ */
+function shellSourcesOk(array $sources): bool
+{
+    $allowed = [
+        'dev-shell.php',
+        '../../cpp-src',
+        '../../src/Platform/Win32/ResizeHook.php',
+        '../../src/Platform/Win32/ResizeHookState.php',
+    ];
+
+    return $sources !== []
+        && array_diff($sources, $allowed) === []
+        && array_diff($allowed, $sources) === [];
+}
+
+/** 三条静态红线：无窗口、无编译，专供 gate 在「日常不碰 AOT」时守着壳。 */
+function shellContract(string $root): array
+{
+    $sources = shellSources((string) @file_get_contents("{$root}/apps/dev/project.yml"));
+    $shell = (string) @file_get_contents("{$root}/apps/dev/dev-shell.php");
+
+    return [
+        '壳 sources 精确等于白名单' => shellSourcesOk($sources),
+        '壳用变量路径 require' => preg_match('/require\s+\$\w+/', $shell) === 1
+            && preg_match('/require\s*\(?\s*[\'"]/', $shell) !== 1,
+        '两个桥接回调文件存在' => is_file("{$root}/src/Platform/Win32/ResizeHook.php")
+            && is_file("{$root}/src/Platform/Win32/ResizeHookState.php"),
+    ];
+}
+
 /** 判据自检：正反例都要有，否则「跳过编译」可能是一句永远不会兑现的承诺。 */
 function selftest(): int
 {
@@ -263,6 +308,17 @@ function selftest(): int
     touch("{$root}/src/build/cache.php", time() + 20);
     clearstatcache();
     $checks['构建缓存变化 ⇒ 不重启'] = businessSnapshot($root, 'hello') === $business;
+
+    // 壳的红线读真实仓库（指纹那几条用的是上面的临时树）。
+    $realRoot = dirname(__DIR__);
+    foreach (shellContract($realRoot) as $name => $ok) {
+        $checks[$name] = $ok;
+    }
+    $live = shellSources((string) file_get_contents("{$realRoot}/apps/dev/project.yml"));
+    $checks['反例：多编一个 src 目录 ⇒ 红线响'] = !shellSourcesOk([...$live, '../../src']);
+    $checks['反例：少一个桥接回调 ⇒ 红线响'] = !shellSourcesOk(array_values(
+        array_filter($live, static fn(string $s): bool => $s !== '../../src/Platform/Win32/ResizeHookState.php')
+    ));
 
     // 清理临时树（只删本次自建目录，不碰任何用户文件）
     $items = new \RecursiveIteratorIterator(
