@@ -431,6 +431,40 @@ final class FocusManager
     }
 
     /**
+     * 子树里**第一个**进 Tab 序的节点（`null` = 这块没有站）。
+     *
+     * ★ 存在的理由只有一个：浮层刚 `mount()`、`collect()` 还没跑，`$byId` 里一个都
+     *   没有 —— 想"打开菜单就把焦点放进首项"只能现走一遍树。语义与 `walk()` 对齐
+     *   （`skipFocus()` 与 `disabled()` 都是子树级），但**不排 `focusOrder`**：
+     *   菜单面板是一列有序行，没有跨容器调序的需求。
+     */
+    public function firstFocusable(Element $root): ?Element
+    {
+        return $this->findFirst($root, false, false);
+    }
+
+    private function findFirst(Element $element, bool $skipped, bool $disabled): ?Element
+    {
+        $widget = $element->widget();
+        $node = $widget->focusNode();
+        $skip = $skipped || ($node !== null && $node->skip);
+        $off = $disabled || $widget->mods()->disabled();
+
+        if (!$off && !$skip && $widget->isFocusable()) {
+            return $element;
+        }
+
+        $found = null;
+        $element->visitChildren(function (Element $child) use ($skip, $off, &$found): void {
+            if ($found === null) {
+                $found = $this->findFirst($child, $skip, $off);
+            }
+        });
+
+        return $found;
+    }
+
+    /**
      * 方向键移焦点：交给**该方向上几何最近**的可聚焦节点。
      *
      * ★ 候选取 `$byId`（可聚焦表）而不是 `$order`（Tab 序）—— `skipFocus()` 的含义是

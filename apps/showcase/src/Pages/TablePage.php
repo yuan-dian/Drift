@@ -5,11 +5,14 @@ namespace App\Showcase\Pages;
 
 use Drift\Geometry\EdgeInsets;
 use Drift\Text\TextAlign;
+use Drift\Input\KeyChord;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
 use Drift\Widget\Card;
 use Drift\Widget\Column;
 use Drift\Widget\Expanded;
+use Drift\Widget\Menu\ContextMenu;
+use Drift\Widget\Menu\MenuItem;
 use Drift\Widget\Row;
 use Drift\Widget\Spacer;
 use Drift\Widget\State;
@@ -191,6 +194,18 @@ final class TablePageState extends State
                             }
                         ))
                         ->columnWidths($this->widthOverrides)
+                        // 上下文菜单的真消费者（§59）：焦点在表上时，右键与 `Shift+F10` / `Apps`
+                        // 都开到这一份声明。命令复用 `showcase.refresh`（本应用只注册了它）
+                        // ⇒ 真机上选完一项能看见 Snackbar。
+                        ->contextMenu(ContextMenu::make()->items([
+                            MenuItem::make('刷新数据')->chord(KeyChord::ctrl('R'))->command('showcase.refresh'),
+                            MenuItem::separator(),
+                            MenuItem::make('清空选择')->onPressed(fn() => $this->setState(
+                                function (): void {
+                                    $this->selection = TableSelection::none();
+                                }
+                            )),
+                        ]))
                         ->onColumnResize(fn(string $key, float $width, bool $done) => $this->setState(
                             function () use ($key, $width): void {
                                 $this->widthOverrides[$key] = $width;

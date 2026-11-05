@@ -63,11 +63,11 @@ final class MenuPage extends StatelessWidget
                 Text::make('右键任意一行 ⇒ ContextMenu（右键最小集，不依赖 GestureArena）')
                     ->caption(),
             )->all(12.0),
-        ]);
+        ])->contextMenu(menuPageDemoContextMenu());
     }
 }
 
-/** @internal 让 `ContextMenu` 的声明也出现在示例里（本页不渲染它，只是声明位） */
+/** @internal 上下文菜单的声明位（挂在整页上 —— 文案说的"任意一行"必须真的成立） */
 function menuPageDemoContextMenu(): ContextMenu
 {
     return ContextMenu::make()->items([

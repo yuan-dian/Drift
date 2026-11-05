@@ -129,6 +129,17 @@ final class InputRouter
             // 第 ③ 环：焦点按钮的 Enter/Space 激活。排在加速键之后 ⇒ 应用绑 Enter 可覆盖。
             $this->activateFocused($event);
 
+            // 第 ④ 环：上下文菜单键（`Shift+F10` / 菜单键 `Apps`）。**排最后** ⇒ 控件
+            //   `keyboard()` 与应用加速键都能先认领；它不是"激活"（`activateFocused`
+            //   只认 Enter/Space），所以单独一支，不并进去。
+            // ★ 与右键走同一个入口 `openContextMenu()`：指针与键盘在这里合流，
+            //   "沿父链找最近 `contextMenu()` 声明者"只有一份实现。
+            if ($event->chord->is(KeyChord::shift('F10')) || $event->chord->is(KeyChord::make('Apps'))) {
+                $this->openContextMenu($focus->focused());
+
+                return null;
+            }
+
             return null;
         }
 
@@ -628,8 +639,9 @@ final class InputRouter
     }
 
     /**
-     * 右键入口：沿命中 Element 的父链找最近的声明者。
-     * 找不到 ⇒ 什么也不做（右键不是"选中"，不报错也不落给焦点）。
+     * 上下文菜单入口：沿起点 Element 的父链找最近的声明者。
+     * 两个触发源共用它 —— 指针右键（起点 = 最深命中）与键盘（起点 = 焦点元素，
+     * `Shift+F10` / `Apps`）。找不到 ⇒ 什么也不做（右键不是"选中"，不报错也不落给焦点）。
      */
     private function openContextMenu(?Element $hit): void
     {

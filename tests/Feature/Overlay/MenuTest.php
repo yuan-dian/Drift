@@ -10,6 +10,7 @@ use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Size;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
+use Drift\Input\KeyResult;
 use Drift\Input\PointerEvent;
 use Drift\Layout\RenderFlex;
 use Drift\Layout\RenderMenuItem;
@@ -95,6 +96,46 @@ final class MenuTest extends SmokeTestCase
             $panelBox !== null
                 && ($top?->x ?? 0.0) + $panelBox->size()->width <= 320.5
                 && $my + $panelBox->size()->height <= 240.5,
+        );
+    }
+
+    public function testDownOnTitleOpensAndFocusesFirstItem(): void
+    {
+        [$app, , $tight] = self::boot();
+        $app->dispatchInput(KeyEvent::down(KeyChord::tab()));
+        $title = $app->focus()?->focused();
+
+        // ↓ 而不是 Enter：菜单栏规范（ARIA menubar / WPF / Qt）里 ↓ 就是"打开并进首项"，
+        // 而框架的方向键几何导航会把 ↓ 送去下面那一行 —— 所以这一条必须由 `Menu` 自己吃。
+        $app->dispatchInput(KeyEvent::down(KeyChord::down()));
+        $app->frame(16.0, $tight);
+        check(
+            '菜单栏 · 标题上按 ↓ ⇒ 打开本菜单（而不是把焦点送去下一行）',
+            $app->isMenuOpen() && $app->anchor === $title,
+            'open=' . ($app->isMenuOpen() ? 'y' : 'n'),
+        );
+
+        $first = $app->focus()?->focused();
+        check(
+            '菜单栏 · ↓ 打开后焦点已进首项',
+            $first !== null && $first->widget() instanceof MenuItem,
+            'focused=' . self::describe($first),
+        );
+    }
+
+    /** 没有 `onOpen` 的 `Menu` 不吞 ↓：占站 ⇔ 真按得动（吞掉就是"按了没反应"） */
+    public function testDownIsDeclinedWhenNothingWouldOpen(): void
+    {
+        [$app] = self::boot();
+        $menu = Menu::make('无动作');
+        $handler = $menu->keyHandlerValue();
+        check('菜单栏 · 无 onOpen 的 Menu 也声明了 keyboard（要能明确拒绝）', $handler !== null);
+
+        $result = $handler === null ? null : $handler(KeyEvent::down(KeyChord::down()), $app->root());
+        check(
+            '菜单栏 · 无 onOpen ⇒ ↓ 返回 Declined（交给框架导航，不吞键）',
+            $result instanceof KeyResult && $result === KeyResult::Declined,
+            'result=' . (is_object($result) ? $result::class : var_export($result, true)),
         );
     }
 
@@ -195,15 +236,19 @@ final class MenuTest extends SmokeTestCase
     {
         [$app, , $tight] = self::boot();
 
-        // ESC 路径：焦点必须**先进面板**（只停在标题上时关闭不丢焦点，测不出东西）
+        // ★ 回锚的"锚"必须是**打开前**的焦点：打开会把焦点放进面板首项（§59），
+        //   所以这个快照只能取在 Enter 之前。
         $app->dispatchInput(KeyEvent::down(KeyChord::tab()));
+        $invoker = $app->focus()?->focused();
         $app->dispatchInput(KeyEvent::down(KeyChord::enter()));
         $app->frame(16.0, $tight);
-        $invoker = $app->focus()?->focused();
-        check('焦点回锚 · 键盘开菜单后焦点在标题上（前置）', $app->isMenuOpen() && $invoker !== null);
-
-        $inPanel = $this->tabIntoPanel($app, $tight);
-        check('焦点回锚 · Tab 能把焦点送进面板项（前置）', $inPanel !== null, 'focused=' . self::describe($inPanel));
+        $first = $app->focus()?->focused();
+        check(
+            '焦点回锚 · 键盘开菜单后焦点已在首项（前置：不用再 Tab 一次）',
+            $app->isMenuOpen() && $first !== null && $first->widget() instanceof MenuItem
+                && $first !== $invoker,
+            'focused=' . self::describe($first),
+        );
 
         $app->dispatchInput(KeyEvent::down(KeyChord::escape()));
         check(
@@ -214,7 +259,11 @@ final class MenuTest extends SmokeTestCase
         // 命令分发路径（`closeMenu()` 全清）
         $app->dispatchInput(KeyEvent::down(KeyChord::enter()));
         $app->frame(32.0, $tight);
-        check('焦点回锚 · 重开（命令路径的前置）', $app->isMenuOpen() && $this->tabIntoPanel($app, $tight) !== null);
+        check(
+            '焦点回锚 · 重开（命令路径的前置）',
+            $app->isMenuOpen() && $app->focus()?->focused() instanceof Element
+                && $app->focus()?->focused()?->widget() instanceof MenuItem,
+        );
 
         $dispatched = $app->dispatch('menu.refresh');
         check(
@@ -222,23 +271,6 @@ final class MenuTest extends SmokeTestCase
             $dispatched && !$app->isMenuOpen() && $app->focus()?->focused() === $invoker,
             'seen=' . implode(',', $app->seen) . ' same=' . ($app->focus()?->focused() === $invoker ? 'y' : 'n'),
         );
-    }
-
-    /** 连按 Tab 直到焦点落进浮层面板（今日 Tab 序是"主树在前、浮层在后"） */
-    private function tabIntoPanel(MenuApplication $app, BoxConstraints $tight): ?Element
-    {
-        for ($i = 0; $i < 12; $i++) {
-            $focused = $app->focus()?->focused();
-            if ($focused !== null && $focused->widget() instanceof MenuItem) {
-                return $focused;
-            }
-            $app->dispatchInput(KeyEvent::down(KeyChord::tab()));
-            $app->frame(48.0 + $i, $tight);
-        }
-
-        $focused = $app->focus()?->focused();
-
-        return $focused !== null && $focused->widget() instanceof MenuItem ? $focused : null;
     }
 
     private static function describe(?Element $element): string

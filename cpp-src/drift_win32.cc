@@ -1186,6 +1186,9 @@ std::string keyNameFromVk(WPARAM vk) {
         case VK_PRIOR:   return "PageUp";
         case VK_NEXT:    return "PageDown";
         case VK_SPACE:   return "Space";
+        // 菜单键（`Shift+F10` 的另一个物理形态）：PHP 侧认它开上下文菜单。
+        // ★ 不映射 ⇒ 这条路径**永远不命中且不报错**（`KeyChord::make('Apps')` 静默失效）。
+        case VK_APPS:    return "Apps";
         default:         return std::string();
     }
 }

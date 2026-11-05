@@ -82,6 +82,16 @@ final class OverlayManager
         $e->focusTrap = false;
 
         $this->pushOverlay($e);
+
+        // 打开即聚焦首项：菜单是"焦点进面板"的模型（`MenuItem` 是 `Button`，↑↓/Enter
+        // 都靠焦点），不像 `Select` 那样把高亮留在触发框里。少了这一步，键盘用户点开
+        // 菜单后还得先按一次 Tab —— ARIA menubar / WPF / Qt 都是打开即进首项。
+        // ★ 顺序不能反：`pushOverlay()` 里快照的 `restoreFocus` 必须是**打开前**的焦点。
+        $focus = $this->host->focus();
+        $first = $e->element === null ? null : $focus?->firstFocusable($e->element);
+        if ($first !== null) {
+            $focus?->focus($first);
+        }
     }
 
     /** 关掉浮层（已关 ⇒ 无事发生；幂等） */

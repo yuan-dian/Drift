@@ -3797,10 +3797,14 @@ check(
 
 
 // ── ㉞ 菜单 / 面板 / 模态 / 浮层栈 / 拖放 已迁出（110 条）──────────────────
-//   · `tests/Feature/Overlay/MenuTest.php`（26）—— 键盘开 + 锚点钉左下 + 夹进
+//   · `tests/Feature/Overlay/MenuTest.php`（30）—— 键盘开 + 锚点钉左下 + 夹进
 //     客户区 / 关闭四来源（点外吞按下 · 分发后才关 · ESC 先拦 · 点内不关）/
-//     右键最小集 / 指针点项 / Menu·MenuItem·MenuBar·ContextMenu 四件形体 /
+//     右键最小集 / 指针点项 / 菜单栏标题 `↓` 打开 / 打开即聚焦首项（无 `onOpen`
+//     时 `↓` 返回 `Declined`）/ Menu·MenuItem·MenuBar·ContextMenu 四件形体 /
 //     菜单项盒两端分布 + 分隔线有墨
+//   · `tests/Feature/Overlay/ContextMenuKeyTest.php`（5）—— `Shift+F10` / `Apps`
+//     对焦点元素开菜单、打开即进首项、Enter 执行 + 回锚、无声明静默、控件
+//     `keyboard()` 优先于框架、首项禁用/跳过时焦点落到下一项
 //   · `tests/Feature/Overlay/ModalTest.php`（27）—— 盖满客户区 / 面板居中 /
 //     遮罩半透明且四角一致 / 面板在遮罩之上 / dismissible 两向（关 vs 吞）/
 //     点面板内按钮 ⇒ 分发但不自关 / 关闭 X 由框架注入 / 模态叠在菜单之上 /

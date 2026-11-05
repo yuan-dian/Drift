@@ -3,10 +3,14 @@ declare(strict_types=1);
 
 namespace Drift\Widget\Menu;
 
+use Drift\Input\KeyChord;
+use Drift\Input\KeyEvent;
+use Drift\Input\KeyResult;
 use Drift\Widget\ActivationContext;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
 use Drift\Widget\Column;
+use Drift\Widget\Element;
 use Drift\Widget\PopupPanel;
 use Drift\Widget\ScrollView;
 use Drift\Widget\Widget;
@@ -59,6 +63,20 @@ final class Menu extends Button
     public function __construct(string $title)
     {
         parent::__construct($title);
+
+        // 菜单栏规范（ARIA menubar / WPF / Qt 同款）：标题上按 ↓ = 打开并聚焦首项。
+        // ★ `←→` 不要抢 —— 同一排相邻标题天然在左右，几何导航已经能走；
+        //   `↑`（打开并聚焦末项）今天没有第二个消费者，等有再加。
+        // ★ 没有 `onOpen` 时返回 `Declined`：占站 ⇔ 真按得动，吞掉就是"按了没反应"。
+        $this->keyboard(function (KeyEvent $event, Element $self): KeyResult {
+            if ($this->openHandler() !== null && $event->chord->is(KeyChord::down())) {
+                $this->activate(new ActivationContext($self));
+
+                return KeyResult::Handled;
+            }
+
+            return KeyResult::Declined;
+        });
     }
 
     public static function make(string $title): self
