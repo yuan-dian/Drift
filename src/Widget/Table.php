@@ -18,9 +18,6 @@ use Drift\Input\SemanticsRole;
  */
 final class Table extends StatefulWidget
 {
-    private const DEFAULT_ROW_HEIGHT = 44.0;
-    private const DEFAULT_HEADER_HEIGHT = 40.0;
-
     /** 窗口缓冲带（逻辑像素）—— 滚出余量才重建窗口 */
     private float $cacheExtentPx = 200.0;
 
@@ -30,9 +27,15 @@ final class Table extends StatefulWidget
     /** @var list<mixed> */
     private array $rows;
 
-    private float $rowHeightPx = self::DEFAULT_ROW_HEIGHT;
+    /**
+     * `null` = 没显式设置 ⇒ 回落主题（§43）。
+     *
+     * ★ 用可空而不是"设个默认数再比大小"：后者必须记住"这个数是不是用户设的"，
+     *   一旦主题与默认数恰好相等就分不清 —— 而两者相等恰恰是常态。
+     */
+    private ?float $rowHeightPx = null;
 
-    private float $headerHeightPx = self::DEFAULT_HEADER_HEIGHT;
+    private ?float $headerHeightPx = null;
 
     /** 行身份（`fn(mixed $row): string|int`）—— 必填 */
     private ?\Closure $keyMapper = null;
@@ -141,7 +144,12 @@ final class Table extends StatefulWidget
         return new self($snapshot, \array_values($rows));
     }
 
-    /** 每行高度（逻辑像素）—— 定高是虚拟化的前提 */
+    /**
+     * 每行高度（逻辑像素）—— 定高是虚拟化的前提。
+     *
+     * ★ 不调这个方法 ⇒ 跟随主题 `MetricToken::RowHeight`（§43）。
+     *   显式值是**单表覆盖**：同一份主题下某些表要紧凑，不该去改全局表。
+     */
     public function rowHeight(float $px): static
     {
         if ($px <= 0.0) {
@@ -154,7 +162,7 @@ final class Table extends StatefulWidget
         return $this;
     }
 
-    /** 表头高度（逻辑像素） */
+    /** 表头高度（逻辑像素）；未设置 ⇒ 跟随主题 `MetricToken::HeaderHeight` */
     public function headerHeight(float $px): static
     {
         if ($px <= 0.0) {
@@ -369,12 +377,13 @@ final class Table extends StatefulWidget
         return $this->rows;
     }
 
-    public function rowHeightPx(): float
+    /** `null` = 跟随主题（解析在 `TableState` 的 build 期做，那里才有 ctx） */
+    public function rowHeightPx(): ?float
     {
         return $this->rowHeightPx;
     }
 
-    public function headerHeightPx(): float
+    public function headerHeightPx(): ?float
     {
         return $this->headerHeightPx;
     }

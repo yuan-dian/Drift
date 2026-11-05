@@ -21,6 +21,7 @@ use Drift\Layout\RenderTable;
 use Drift\Layout\RenderTextField;
 use Drift\Rendering\Color;
 use Drift\Rendering\ColorToken;
+use Drift\Rendering\MetricToken;
 use Drift\Text\TextAlign;
 use Drift\Text\TextChange;
 use Drift\Text\TextDraft;
@@ -1538,7 +1539,14 @@ final class TableState extends State implements Scrollable, EditableText, Constr
         $top = $originY + $box->headerHeight();
         $bottom = $originY + $size->height;
 
-        $step = $this->view()->rowHeightPx() * 0.5;
+        // ★ 读上一帧解析好的行高（`$geometry`）：Widget 侧现在可能是 `null`（跟随主题），
+        //   而指针回调在 build 之外、没有 ctx 可回落（§43）。
+        $rowHeight = $this->geometry?->rowHeight ?? 0.0;
+        if ($rowHeight <= 0.0) {
+            return;
+        }
+
+        $step = $rowHeight * 0.5;
         if ($clientY < $top) {
             $this->scrollBy(-$step);
         } elseif ($clientY > $bottom) {
@@ -1880,11 +1888,14 @@ final class TableState extends State implements Scrollable, EditableText, Constr
      */
     private function settleGeometry(BuildContext $ctx, Table $view, array $columns, float $viewportW): TableGeometry
     {
+        // ★ 行高/表头高的**唯一解析点**（§43）：显式值 > 主题 > 表里的 baseline。
+        //   解析放在 build 期是因为只有这里才有 ctx —— `Table` 是 Widget，
+        //   它拿不到自己所在子树的环境，也不该拿（否则同一份 Widget 不能被两处复用）。
         $g = TableGeometry::compute(
             $this->resolveWidths($columns, $viewportW),
-            $view->rowHeightPx(),
+            $view->rowHeightPx() ?? $ctx->metric(MetricToken::RowHeight),
             \count($view->rowList()),
-            $view->headerHeightPx(),
+            $view->headerHeightPx() ?? $ctx->metric(MetricToken::HeaderHeight),
             $view->columnSpacingPx(),
             $viewportW,
             $this->viewportEstimate($ctx, true),
@@ -2036,7 +2047,7 @@ final class TableState extends State implements Scrollable, EditableText, Constr
 
         $cells = [];
         for ($j = $g->colFirst; $j < $g->colLast; $j++) {
-            $cells[] = $this->headerCell($ctx, $columns[$j], $g->widths[$j], $sort, $j);
+            $cells[] = $this->headerCell($ctx, $columns[$j], $g->widths[$j], $sort, $j, $g->headerHeight);
         }
 
         $row = Row::make()->children($cells)->spacing($g->spacing)->cross(FlexAlign::Center);
@@ -2067,6 +2078,7 @@ final class TableState extends State implements Scrollable, EditableText, Constr
         float $width,
         TableSort $sort,
         int $columnIndex,
+        float $headerHeight,
     ): Widget
     {
         $title = Text::make($column->titleText())->bold();
@@ -2091,10 +2103,10 @@ final class TableState extends State implements Scrollable, EditableText, Constr
         //   ★ 手柄包在 `Stack` 里（子 vs 自己）：`InputRouter::pointerOwner()` 从命中点
         //     往上遇到**第一个**声明 ownsPress 的节点就返回 ⇒ 命中手柄时是手柄赢，
         //     命中格内其它地方是整格赢。**不需要改路由**。
-        $overlay = [$cell, $this->headerDivider($ctx, $column)];
+        $overlay = [$cell, $this->headerDivider($ctx, $column, $headerHeight)];
 
         if ($column->isResizable()) {
-            $overlay[] = $this->resizeHandle($column, $width);
+            $overlay[] = $this->resizeHandle($column, $width, $headerHeight);
         }
 
         $cell = Stack::make()->alignment(Alignment::topRight())->children($overlay);
@@ -2130,11 +2142,11 @@ final class TableState extends State implements Scrollable, EditableText, Constr
      * ★ 高度取表头高而不是 `Stack` 的整体高：`Stack` 的尺寸取 `max(子)`，若内容
      *   比表头矮，线会跟着变矮，上下留下缺口。
      */
-    private function headerDivider(BuildContext $ctx, TableColumn $column): Widget
+    private function headerDivider(BuildContext $ctx, TableColumn $column, float $headerHeight): Widget
     {
         return SizedBox::make()
             ->width(self::DIVIDER_W)
-            ->height($this->view()->headerHeightPx())
+            ->height($headerHeight)
             ->background($this->dividerColor($ctx, $column));
     }
 
@@ -2194,11 +2206,11 @@ final class TableState extends State implements Scrollable, EditableText, Constr
      *   后者会被列宽分配算进去（内容宽被手柄吃掉 5px，而且越拖越窄）。
      * ★ 高度取表头高 ⇒ Stack 被撑满整条表头，命中区覆盖上下的完整高度。
      */
-    private function resizeHandle(TableColumn $column, float $width): Widget
+    private function resizeHandle(TableColumn $column, float $width, float $headerHeight): Widget
     {
         return SizedBox::make()
             ->width(self::RESIZE_HANDLE_W)
-            ->height($this->view()->headerHeightPx())
+            ->height($headerHeight)
             ->cursor(CursorShape::SizeWE)
             ->hover(function (bool $entered) use ($column): void {
                 $this->noteDividerHover($column->keyName(), $entered);

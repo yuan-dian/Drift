@@ -26,6 +26,7 @@ enum MetricToken
     case FontSizeTitle;
     case FontSizeHeading;
     case RowHeight;
+    case HeaderHeight;
 
     public function baselineValue(): float
     {
@@ -38,7 +39,10 @@ enum MetricToken
             self::FontSizeSmall   => 12.0,
             self::FontSizeTitle   => 18.0,
             self::FontSizeHeading => 15.0,
-            self::RowHeight       => 28.0,
+            // ★ 44 / 40 是 `Table` 接线前的写死值（§43）：默认外观因此零变化，
+            //   变的是"换肤能改它了"。28 是建表时拍的紧凑档，比主流默认（40–56）小太多。
+            self::RowHeight       => 44.0,
+            self::HeaderHeight    => 40.0,
         };
     }
 }
