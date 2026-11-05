@@ -4,6 +4,9 @@ declare(strict_types=1);
 namespace Drift\Widget;
 
 use Drift\Errors;
+use Drift\Input\KeyChord;
+use Drift\Input\KeyEvent;
+use Drift\Input\KeyResult;
 use Drift\Layout\FlexAlign;
 
 /**
@@ -17,6 +20,7 @@ use Drift\Layout\FlexAlign;
  * Tab 序里只留**少数几个站**，而不是 31 个格子：`‹` / `›` / 标题（能切视图时）/ **活动日**
  * （选中日；本月没选就 1 号）。其余格子 `skipFocus()` 但**方向键够得着** —— 几何导航读的是
  * 可聚焦表，不是 Tab 序。**占站 ⇔ 真按得动**：没回调的格子/箭头连入口都不占。
+ * `PageUp` / `PageDown` 翻一页（当前档位），其余键交给框架（`KeyResult::Declined`，§58）。
  *
  * @api
  */
@@ -167,7 +171,41 @@ final class CalendarViewState extends State
             ->paddingAll(self::PAD)
             ->children($kids)
             // 只给宽、不给高：高度由内容（行数）决定，SizedBox 高度小于子内容会触发 C6 Fatal，"5 行还是 6 行"本来就是内容说了算。
-            ->boxSize(width: CalendarView::CELL_WIDTH * CalendarView::COLUMNS + self::PAD * 2.0);
+            ->boxSize(width: CalendarView::CELL_WIDTH * CalendarView::COLUMNS + self::PAD * 2.0)
+            ->keyboard(function (KeyEvent $event): KeyResult {
+                return $this->pageKey($event);
+            });
+    }
+
+    /**
+     * `PageUp` / `PageDown` = 翻一页（当前档位：日视图一个月、月视图一年、年视图 12 年）。
+     *
+     * ★ 其余键必须 `Declined`：方向键在格间走是**几何导航**的活（`§57`），
+     *   在这里 `false` 就等于"焦点出不了日历"。
+     * ★ 键盘在日历里时翻页键不该去滚外面的长页 —— 日历自己就是那一屏的内容。
+     */
+    private function pageKey(KeyEvent $event): KeyResult
+    {
+        $on = $this->view()->onMonthChangeHandler();
+
+        if ($on === null) {
+            return KeyResult::Declined;
+        }
+
+        $chord = $event->chord;
+
+        if (!$chord->is(KeyChord::pageDown()) && !$chord->is(KeyChord::pageUp())) {
+            return KeyResult::Declined;
+        }
+
+        $target = $this->shift($chord->is(KeyChord::pageDown()) ? 1 : -1);
+
+        if ($target !== null) {
+            $on($target);
+        }
+
+        // 到头了也吃掉：让位给外面滚页就变成"同样是 PageUp，有时换月有时滚页"。
+        return KeyResult::Handled;
     }
 
     // ── 标题行 ─────────────────────────────────────────────────────────

@@ -17,7 +17,7 @@
 | Core | 2 | 36 |
 | Errors.php | 2 | 3 |
 | Geometry | 9 | 0 |
-| Input | 19 | 5 |
+| Input | 20 | 5 |
 | Layout | 47 | 44 |
 | Logging | 9 | 3 |
 | Platform | 16 | 15 |
@@ -27,9 +27,9 @@
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
 | Widget | 184 | 217 |
-| **合计** | **497** | **398** |
+| **合计** | **498** | **398** |
 
-覆盖 391 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
+覆盖 392 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
 
 ## App 层
 
@@ -319,7 +319,7 @@
 
 ## Input 层
 
-### @api（应用可读面） · 19
+### @api（应用可读面） · 20
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -331,6 +331,7 @@
 | `InputEvent` | interface | src/Input/InputEvent.php |
 | `KeyChord` | class | src/Input/KeyChord.php |
 | `KeyEvent` | class | src/Input/KeyEvent.php |
+| `KeyResult` | enum | src/Input/KeyResult.php |
 | `PointerEvent` | class | src/Input/PointerEvent.php |
 | `PointerPhase` | enum | src/Input/PointerPhase.php |
 | `ScrollEvent` | class | src/Input/ScrollEvent.php |

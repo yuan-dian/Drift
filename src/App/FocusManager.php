@@ -9,6 +9,7 @@ use Drift\Input\CursorShape;
 use Drift\Input\FocusNode;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
+use Drift\Input\KeyResult;
 use Drift\Input\PointerEvent;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderObject;
@@ -255,6 +256,9 @@ final class FocusManager
      *
      * `keyboard()` **沿父链找最近的声明者**：只读焦点控件自己的 widget 会让包裹式控件
      * （`ComboBox` 包 `TextField`）的声明永远收不到键。最近声明者没吃掉即停，不再往上找。
+     *
+     * `keyboard()` 的回调返回 `bool` 或 `KeyResult`（`Handled` / `Owned` / `Declined`）；
+     * 只有 `Declined` 才会把键让给下面的默认动作（方向键几何导航 / 翻页键滚容器）。
      */
     public function dispatchKey(KeyEvent $event): bool
     {
@@ -267,7 +271,7 @@ final class FocusManager
         }
 
         // 焦点控件或最近祖先的 `keyboard()` 声明者；找不到 ⇒ 这一环让开。
-        // `$declared` 同时回答"这条链上到底有没有人认领键盘"——方向键的归属靠它判。
+        // `$declared` 同时回答"这条链上到底有没有人认领这个键"——方向键 / 翻页键的归属靠它判。
         $declared = false;
         for ($node = $this->focused; $node !== null; $node = $node->parent()) {
             $handler = $node->widget()->keyHandlerValue();
@@ -275,12 +279,16 @@ final class FocusManager
                 continue;
             }
 
-            $declared = true;
-
             // 签名 `(KeyEvent, Element)`；老的单参 handler 在 PHP 里会忽略多余参数。
-            if ($handler($event, $node) === true) {
+            $result = $handler($event, $node);
+
+            if ($result === true || $result === KeyResult::Handled) {
                 return true;
             }
+
+            // `Declined` ⇒ 键不归我，下面照常走框架默认语义；`false` / `Owned` ⇒
+            //   归我但这次不吃（`Select` 面板关着要让位给激活，不能让焦点跑掉）。
+            $declared = $result !== KeyResult::Declined;
 
             break;   // 最近的声明者没吃掉 ⇒ 不再往上找（更远的祖先更不具体）
         }
@@ -291,8 +299,10 @@ final class FocusManager
             return true;
         }
 
-        // 方向键：**没人认领键盘**时才归框架。声明了 `keyboard()` 的控件（表 / 下拉 /
+        // 方向键：**没人认领这个键**时才归框架。声明了 `keyboard()` 的控件（表 / 下拉 /
         // 滑块 / 富文本）方向键是它的语义，框架不抢 —— 抢了就是"表里按 ↓ 焦点跑了"。
+        // 只认一半的控件（树只认 ←→、日历只认 PageUp/PageDown）在回调里返回
+        // `KeyResult::Declined` 把其余的还给这里（§58）。
         if ($declared) {
             return false;
         }
@@ -491,15 +501,15 @@ final class FocusManager
                 continue;
             }
 
-            // 主轴用**边到边**的间隙、副轴用**投影间隙**（重叠即 0）。
+            // 主轴用**边到边**的间隙、副轴用"投影有多远"（见 `crossScore()`）。
             // ★ 不能用中心点算副轴：宽控件（下拉的输入框 200 宽、表格整行）中心离得远，
             //   会把"正下方"判成"斜下方"，于是按 ↓ 跳过它就走了 —— 真机上就是这么撞出来的。
             if ($dx !== 0) {
                 $primary = $dx > 0 ? $c0x - $x1 : $x0 - $c1x;
-                $cross = self::axisGap($y0, $y1, $c0y, $c1y);
+                $cross = self::crossScore($y0, $y1, $c0y, $c1y);
             } else {
                 $primary = $dy > 0 ? $c0y - $y1 : $y0 - $c1y;
-                $cross = self::axisGap($x0, $x1, $c0x, $c1x);
+                $cross = self::crossScore($x0, $x1, $c0x, $c1x);
             }
 
             if ($primary < 0.0) {
@@ -507,9 +517,9 @@ final class FocusManager
             }
 
             // ★★ 并列时按**副轴中心距**分胜负（2026-11-05 实测补的）：盒子相邻（边**贴边**）
-            //   时 `axisGap()` 也是 0 ⇒ "正下方"与"斜下方"同分，先遍历到的（树序靠前）胜。
-            //   于是网格里每按一次 ↓ 就往左偏一列并一路累积（日历实测 4→10→16→22→28，
-            //   而正确答案是 11→18→25）。中心距是唯一能分开"对齐"与"贴着"的读数。
+            //   时"正下方"与"斜下方"可能是同分，先遍历到的（树序靠前）胜。于是网格里每按
+            //   一次 ↓ 就往左偏一列并一路累积（日历实测 4→10→16→22→28，而正确答案是
+            //   11→18→25）。中心距是唯一能分开"对齐"与"贴着"的读数。
             $align = $dx !== 0 ? \abs(($c0y + $c1y) / 2.0 - $cy) : \abs(($c0x + $c1x) / 2.0 - $cx);
             $score = $primary + 2.0 * $cross;
 
@@ -540,6 +550,33 @@ final class FocusManager
 
         if ($a0 > $b1) {
             return $a0 - $b1;
+        }
+
+        return 0.0;
+    }
+
+    /**
+     * 副轴上"离得有多远"：**投影重叠 ⇒ 0；只是贴边 ⇒ 两个中心距；真隔开 ⇒ 间隙**。
+     *
+     * ★★ 贴边必须与重叠分开（2026-11-05 实测，§58）：树的一行是
+     *   `[折叠箭头 42 宽][标签]`，两者在横轴上恰好**贴边** ⇒ 按 ↓ 时"下一行的标签"
+     *   与"本行的箭头"判成同分，树序靠前者（箭头）胜 ⇒ **每个分支行都下不去**；
+     *   `↓` 走到自己这一行的箭头上，看上去像"按了没反应"。按 ↑ 时反过来又落到
+     *   下一行那个箭头。中心距才是"换了一条泳道"的诚实读数。
+     * ★ 重叠仍是 0：宽控件（下拉的输入框、表格整行）中心离得远，用它当读数会把
+     *   "正下方"判成"斜下方"（`axisGap()` 的注释）。
+     */
+    private static function crossScore(float $a0, float $a1, float $b0, float $b1): float
+    {
+        $gap = self::axisGap($a0, $a1, $b0, $b1);
+
+        if ($gap > 0.0) {
+            return $gap;
+        }
+
+        // 走到这里 ⇒ 重叠或贴边。贴边（`$b0 >= $a1` / `$a0 >= $b1`）才取中心距。
+        if ($b0 >= $a1 || $a0 >= $b1) {
+            return \abs((($a0 + $a1) - ($b0 + $b1)) / 2.0);
         }
 
         return 0.0;

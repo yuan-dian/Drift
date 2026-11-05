@@ -4,10 +4,19 @@ declare(strict_types=1);
 namespace Drift\Widget;
 
 use Drift\Errors;
+use Drift\Input\KeyChord;
+use Drift\Input\KeyEvent;
+use Drift\Input\KeyResult;
 use Drift\Input\SemanticsRole;
 
 /**
  * 层级数据树：把递归树按"展开集合"压成线性 `TreeRow`，交给 `LazyColumn` 虚拟化绘制。
+ *
+ * 键盘（§58，与 WPF `TreeView` / ARIA `tree` / Qt `QTreeView` 同形）：整棵**只占一个
+ * Tab 站**（选中行，没有就首个可见行），`↑↓` 在行间走（框架几何导航），`←→` 展开折叠，
+ * Enter 选中。`←→` 归树自己（`keyboard()` + `KeyResult`），`↑↓` 用
+ * `KeyResult::Declined` 还给框架。
+ *
  * ★ 自己没有渲染盒（靠 `effectiveBox()` 向下穿透到 `LazyColumn`）：别给它套
  *   `padding()` / `background()`，不产盒的控件声明修饰会响亮失败；留白改在
  *   `LazyColumn` 那层用 `->padding()`，或外面套 `Card`。
@@ -200,13 +209,14 @@ final class TreeView extends StatelessWidget
         //   就会把整棵树（含 children）一起留住，而 Widget 不可变 ⇒ 留住的
         //   是一份不再更新的快照。与 `LazyGrid::build()` 同一条纪律。
         $selected = $this->selected;
+        $activeId = $this->activeRowId($rows);
         $onToggle = $this->onToggle;
         $onSelected = $this->onSelected;
         $indent = $this->indent;
 
         return LazyColumn::make($this->rowHeight)
-            ->items($rows, static function (TreeRow $row) use ($selected, $onToggle, $onSelected, $indent): Widget {
-                return self::rowWidget($row, $selected, $onToggle, $onSelected, $indent);
+            ->items($rows, static function (TreeRow $row) use ($selected, $activeId, $onToggle, $onSelected, $indent): Widget {
+                return self::rowWidget($row, $selected, $activeId, $onToggle, $onSelected, $indent);
             })
             // 锚点按节点身份，不按序号：展开一行会让它后面所有行的序号 +N，
             //   按序号恢复会把视口甩到别的节点上（"展开一下，列表跳走了"）。
@@ -223,6 +233,7 @@ final class TreeView extends StatelessWidget
     private static function rowWidget(
         TreeRow $row,
         ?string $selected,
+        ?string $activeId,
         ?\Closure $onToggle,
         ?\Closure $onSelected,
         float $indent,
@@ -260,16 +271,22 @@ final class TreeView extends StatelessWidget
             ->alignLeft()
             ->variant($row->id === $selected ? ButtonVariant::Primary : ButtonVariant::Flat);
 
-        if ($onSelected === null) {
-            // 没人接手选中 ⇒ 这一行不该占 Tab 站（每个可见行都占的话，键盘用户
-            // 要按 Tab 穿过整棵树才能出去）。
+        // roving tabindex（§57 的纪律，§58 落到树上）：整棵只留**一行**进 Tab 序，
+        //   其余靠方向键走。全留 ⇒ 200 行的树要按 200 次 Tab 才出得去；
+        //   全不留 ⇒ 键盘根本进不来。`skipFocus()` 只挡 Tab 序，方向键照样够得着。
+        if ($row->id !== $activeId) {
             $label->skipFocus();
-        } else {
+        }
+
+        if ($onSelected !== null) {
             $labelId = $row->id;
             $label->onPressed(static function () use ($labelId, $onSelected): void {
                 $onSelected($labelId);
             });
         }
+
+        // ★ 每一行都挂：焦点可以靠方向键落到任意一行，不只活动行。
+        $label->keyboard(self::rowKeyHandler($row, $onToggle));
 
         $kids[] = Expanded::make($label);
 
@@ -277,6 +294,66 @@ final class TreeView extends StatelessWidget
         //   各自按自然高居中；强加 `Stretch` 会把标签按钮拉成 42 高，
         //   `Primary` 底的选中条会高过文字。
         return Row::make()->children($kids);
+    }
+
+    /**
+     * 一行的键盘：`←→` 展开折叠，其余键 `Declined` 交回框架。
+     *
+     * ★ `←→` 必须 `Handled` 而不是让位：行标签满宽、右边空无一物，左边就是折叠箭头
+     *   ⇒ 让位之后按 ← 会落到那个**看不见的站**上（实测：分支行落到自己那一行的箭头，
+     *   叶子行落到下一行的箭头）。层级语义在树里，箭头只是给鼠标看的。
+     * ★ `↑↓` 必须 `Declined`：那是几何导航的活（`FocusManager::focusDirectional`），
+     *   树自己算"下一行是谁"等于再造一套焦点模型。
+     */
+    private static function rowKeyHandler(TreeRow $row, ?\Closure $onToggle): \Closure
+    {
+        $id = $row->id;
+        $hasKids = $row->hasChildren;
+        $open = $row->expanded;
+
+        return static function (KeyEvent $event) use ($id, $hasKids, $open, $onToggle): KeyResult {
+            $chord = $event->chord;
+            $right = $chord->is(KeyChord::right());
+            $left = $chord->is(KeyChord::left());
+
+            if (!$left && !$right) {
+                return KeyResult::Declined;
+            }
+
+            if ($hasKids && $onToggle !== null) {
+                if ($right && !$open) {
+                    $onToggle($id, true);
+                } elseif ($left && $open) {
+                    $onToggle($id, false);
+                }
+            }
+
+            return KeyResult::Handled;
+        };
+    }
+
+    /**
+     * 唯一进 Tab 序的那一行：选中的（若可见）⇒ 否则首个可见行。
+     *
+     * 没有任何回调 ⇒ `null`（整棵不占站：进去了也没事可做）。
+     * ★ 不猜"第一个选中的分支"之类：树是受控的，活动行只能由应用给的值决定，
+     *   塞时间 / 树形推断进来判据就变成"跑一次一个样"。
+     *
+     * @param list<TreeRow> $rows
+     */
+    private function activeRowId(array $rows): ?string
+    {
+        if ($this->onSelected === null && $this->onToggle === null) {
+            return null;
+        }
+
+        foreach ($rows as $row) {
+            if ($row->id === $this->selected) {
+                return $row->id;
+            }
+        }
+
+        return $rows === [] ? null : $rows[0]->id;
     }
 
     /**

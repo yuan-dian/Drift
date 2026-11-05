@@ -246,7 +246,50 @@ final class CompositeEntryTest extends SmokeTestCase
         $this->flushChecks();
     }
 
+    /**
+     * `PageUp` / `PageDown` 翻一页，且**方向键不受影响**（§58 的第二个消费者）。
+     *
+     * ★ 成对：同一个声明者既要吞翻页键，又要把方向键还给几何导航（`KeyResult::Declined`）。
+     *   只钉前半 ⇒ 焦点出不去的实现也绿；只钉后半 ⇒ 翻页什么都没发生的实现也绿。
+     */
+    public function testPageKeysChangeTheMonthWithoutStealingArrows(): void
+    {
+        $months = [];
+        $app = $this->app(CalendarView::make(YearMonth::make(2026, 10))
+            ->selected(LocalDate::make(2026, 10, 15))
+            ->onSelected(static function (LocalDate $date): void {})
+            ->onMonthChange(static function (YearMonth $month) use (&$months): void {
+                $months[] = $month->year . '-' . $month->month;
+            }));
+
+        $app->focus()?->focus($this->label($app, '15'));
+
+        $app->focus()?->dispatchKey(KeyEvent::down(KeyChord::pageDown()));
+        check(
+            '翻页键 · PageDown ⇒ 上报下个月（日视图 = 一个月）',
+            $months === ['2026-11'],
+            'months=' . \json_encode($months),
+        );
+
+        $app->focus()?->dispatchKey(KeyEvent::down(KeyChord::pageUp()));
+        check(
+            '翻页键 · PageUp ⇒ 上报上个月',
+            $months === ['2026-11', '2026-9'],
+            'months=' . \json_encode($months),
+        );
+
+        $app->focus()?->dispatchKey(KeyEvent::down(KeyChord::right()));
+        check(
+            '翻页键 · 方向键仍走几何导航（15 → 16），没被日历吞掉',
+            $this->where($app) === '16',
+            $this->where($app),
+        );
+
+        $this->flushChecks();
+    }
+
     // ── 时刻表 ─────────────────────────────────────────────────────────
+
     public function testTimeViewEntersAtTheCurrentValue(): void
     {
         $app = $this->app(TimeView::make(LocalTime::make(9, 5))

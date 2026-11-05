@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Widget\Traits;
 
+use Drift\Input\KeyResult;
 use Drift\Widget\Drag\Draggable;
 use Drift\Widget\Drag\DragTarget;
 use Drift\Widget\Menu\ContextMenu;
@@ -168,14 +169,16 @@ trait WidgetInteraction
      * ★ 沿焦点控件的父链找"最近的声明者"（`FocusManager::dispatchKey`）——
      *   所以包裹式控件也能挂：`ComboBox` 包 `TextField` 时焦点在 `TextField`，
      *   而 `ComboBox` 自己声明的 `keyboard()` 照样收得到。
-     * 回调 `\Closure(KeyEvent, Element): bool`，返回 `true` = 吃掉这个键。
+     * 回调 `\Closure(KeyEvent, Element): (bool|KeyResult)`：
+     * - `true` / `KeyResult::Handled` ⇒ 吃掉这个键；
+     * - `false` / `KeyResult::Owned` ⇒ 不吃，但**这个键仍归我**（下游各环照跑，
+     *   框架的方向键导航不跑）。默认口径，`Select` 面板关着靠它让位给激活；
+     * - `KeyResult::Declined` ⇒ 不要这个键，交回框架默认语义（方向键几何导航 /
+     *   翻页键滚容器）。**只认一两个键的控件必须用它**，否则就等于整组按键归我
+     *   （树只认 ←→、日历只认 PageUp/PageDown 都是这么写的）。
      * 第二个参数是**声明者自己**的 `Element`（拿 `effectiveBox()` 用）—— 不是焦点控件；
      * 焦点控件可能在这条链的更深处（`ComboBox` 包 `TextField` 时就是这个形状）。
      * 只对焦点控件那一支调（Tab / Shift+Tab 之后）。
-     *
-     * ★ 声明即"整组按键归我"：连框架的**方向键**几何导航也一起让开（见
-     *   `FocusManager::dispatchKey()` 的 `$declared`）。只想认领几个键、方向键
-     *   仍归框架的写法**做不到** —— 所以 `CalendarView` 至今没有 `PageUp/PageDown` 换月。
      * @api
      */
     public function keyboard(\Closure $handler): static

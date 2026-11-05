@@ -11,12 +11,16 @@ use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Size;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
+use Drift\Input\KeyResult;
 use Drift\Widget\Button;
 use Drift\Widget\Column;
 use Drift\Widget\ComboBox;
 use Drift\Widget\Element;
 use Drift\Widget\Expanded;
+use Drift\Widget\IconButton;
+use Drift\Widget\IconName;
 use Drift\Widget\Row;
+use Drift\Widget\SizedBox;
 use Drift\Widget\Slider;
 use Drift\Widget\Widget;
 
@@ -310,13 +314,104 @@ final class DirectionalFocusTest extends SmokeTestCase
     }
 
     /**
+     * 同一行里**稍高的兄弟**不许截走方向键（§58）。
+     *
+     * ★ 实测的形状（树的每一行）：`[折叠箭头 42 宽/42 高] [标签 32.8 高]`，都垂直居中
+     *   ⇒ 箭头与标签在横轴上**贴边**、在纵轴上**重叠** ⇒ 按 ↓ 时"下一行的标签"与
+     *   "本行的箭头"同分，树序靠前者（箭头）胜 ⇒ **每个分支行都下不去**，按 ↑ 反过来
+     *   又落到下一行的箭头。修法：副轴**贴边**按中心距计（`crossScore()`），重叠仍是 0。
+     * ★ 判据必须用 `IconButton` + `Expanded`：`Button` 之间高度相同、又不会分泳道，
+     *   测的是一个不存在的布局。
+     */
+    public function testTallerSiblingDoesNotStealArrowDirection(): void
+    {
+        $app = $this->app(Column::make()->children([
+            Row::make()->children([
+                IconButton::of(IconName::ArrowRight, '展开'),
+                Expanded::make(Button::make('A')),
+            ]),
+            Row::make()->children([
+                SizedBox::make()->width(42.0),
+                Expanded::make(Button::make('B')),
+            ]),
+        ]));
+        $focus = $app->focus();
+        $focus?->focus($this->labelOf($app, 'A'));
+
+        check('贴边分层 · 起手是 A', $this->where($focus) === 'A', $this->where($focus));
+
+        $focus?->dispatchKey(KeyEvent::down(KeyChord::down()));
+        check(
+            '贴边分层 · ↓ 到下一行的 B（不是左侧贴边的箭头）',
+            $this->where($focus) === 'B',
+            $this->where($focus),
+        );
+
+        $focus?->dispatchKey(KeyEvent::down(KeyChord::up()));
+        check(
+            '贴边分层 · ↑ 回上一行的 A（不是同一泳道的箭头）',
+            $this->where($focus) === 'A',
+            $this->where($focus),
+        );
+
+        $this->flushChecks();
+    }
+
+    /**
+     * `keyboard()` 的三态回答（§58）：`Declined` 交回框架导航，`false` 仍归自己。
+     *
+     * ★ 两条必须成对：只钉 `Declined` 会漏"`false` 变成了 `Declined`"（`Select` 面板
+     *   关着按 ↓ 焦点就跑了），只钉 `false` 会漏"`Declined` 没生效"（树按 ↓ 不动）。
+     */
+    public function testDeclinedHandsTheKeyBackToTheFramework(): void
+    {
+        $declined = $this->app(Column::make()
+            ->keyboard(static fn(KeyEvent $e): KeyResult => KeyResult::Declined)
+            ->children([Button::make('A'), Button::make('B')]));
+        $f1 = $declined->focus();
+        $f1?->focus($this->labelOf($declined, 'A'));
+        $f1?->dispatchKey(KeyEvent::down(KeyChord::down()));
+        check(
+            '三态 · `Declined` ⇒ 交回几何导航（A 按 ↓ 到 B）',
+            $this->where($f1) === 'B',
+            $this->where($f1),
+        );
+
+        $owned = $this->app(Column::make()
+            ->keyboard(static fn(KeyEvent $e): KeyResult => KeyResult::Owned)
+            ->children([Button::make('A'), Button::make('B')]));
+        $f2 = $owned->focus();
+        $f2?->focus($this->labelOf($owned, 'A'));
+        $f2?->dispatchKey(KeyEvent::down(KeyChord::down()));
+        check(
+            '三态 · `Owned` ⇒ 键仍归自己（A 按 ↓ 不动）',
+            $this->where($f2) === 'A',
+            $this->where($f2),
+        );
+
+        // 老的 `bool` 声明一条都不用改：`false` ≡ `Owned`
+        $legacy = $this->app(Column::make()
+            ->keyboard(static fn(KeyEvent $e): bool => false)
+            ->children([Button::make('A'), Button::make('B')]));
+        $f3 = $legacy->focus();
+        $f3?->focus($this->labelOf($legacy, 'A'));
+        $f3?->dispatchKey(KeyEvent::down(KeyChord::down()));
+        check(
+            '三态 · `false` 仍是 `Owned`（存量声明语义不变）',
+            $this->where($f3) === 'A',
+            $this->where($f3),
+        );
+
+        $this->flushChecks();
+    }
+
+    /**
      * 焦点空着时：**陷阱内**（浮层）方向键落到链首，主树不猜。
      *
      * ★ 浮层既然声明了焦点陷阱，焦点空着就只能靠 Tab 进；给方向键第二个入口是
      *   划算的（菜单一开就能上下走）。主树里"按一下键焦点凭空出现"是意外，不做。
      */
-    public function testEmptyFocusEntryOnlyInsideTrap(): void
-    {
+    public function testEmptyFocusEntryOnlyInsideTrap(): void    {
         $root = Column::make()->children([Button::make('A'), Button::make('B')])->createElement();
         $root->mount(null, smokeContext());
 
