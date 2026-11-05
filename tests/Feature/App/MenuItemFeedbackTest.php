@@ -10,6 +10,7 @@ use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Size;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderMenuItem;
+use Drift\Rendering\Color;
 use Drift\Widget\Column;
 use Drift\Widget\Menu\MenuItem;
 use Drift\Widget\Widget;
@@ -157,6 +158,49 @@ final class MenuItemFeedbackTest extends SmokeTestCase
             '菜单项反馈 · Pressed 比 Hover 深一档',
             $sampled > 0 && $darker === $sampled,
             '变暗 ' . $darker . '/' . $sampled,
+        );
+
+        $this->flushChecks();
+    }
+
+    /**
+     * 用户声明的盒样式必须真的画出来。
+     *
+     * ★ `MenuItem` 继承 `Button::paintsBoxChrome() === true`，但 `RenderMenuItem` 并不
+     *   自绘 chrome ⇒ `Element::syncBox()` 把 `background` 剥掉，用户的 `->background()`
+     *   **静默失效**。这条判据钉的是像素，不是"声明对不对"。
+     * ★ 成对：同一个采样点上，不带 `background()` 的菜单项必须**不是**这个色 ——
+     *   否则"整块画布本来就是绿的"也能绿。
+     */
+    public function testUserBackgroundReachesPixels(): void
+    {
+        $mark = new Color(10, 200, 30);
+
+        [$plain, $plainProbe] = $this->open(MenuItem::make('菜单项'));
+        $box = $this->menuBox($plain);
+        $size = $box->size();
+        if ($size === null) {
+            throw new \LogicException('菜单项没排过版');
+        }
+
+        [$ox, $oy] = boxOrigin($box);
+        $x = (int) ($ox + $size->width - 3.0);
+        $y = (int) ($oy + $size->height / 2.0);
+
+        $before = $plainProbe->raster()?->pixelAt($x, $y);
+
+        [$painted, $paintedProbe] = $this->open(MenuItem::make('菜单项')->background($mark));
+        $after = $paintedProbe->raster()?->pixelAt($x, $y);
+
+        check(
+            '菜单项样式 · 不带 background ⇒ 采样点不是那个色（成对前提）',
+            $before !== null && !($before->r === 10 && $before->g === 200 && $before->b === 30),
+            describeColor($before),
+        );
+        check(
+            '菜单项样式 · ->background() 真的画到像素上（修复前被 syncBox 剥掉）',
+            $after !== null && $after->r === 10 && $after->g === 200 && $after->b === 30,
+            describeColor($after),
         );
 
         $this->flushChecks();

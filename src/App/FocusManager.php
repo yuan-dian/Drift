@@ -27,6 +27,10 @@ use Drift\Widget\States;
  * ① 先于 ②：控件认得就吃、认不得返回 `false` 自然落给加速键；反过来靠逐键白名单必然漏键。
  * 焦点链是渲染态：只存 `?Element`，切焦点经 `State::didChangeFocus()` 同步编辑态。
  *
+ * ① 的末尾还有一条**默认动作**：链上没人认领键盘时，方向键按几何最近者移焦点
+ * （`focusDirectional()`）。声明了 `keyboard()` 的控件（表 / 下拉 / 滑块 / 富文本）
+ * 方向键归它，框架不抢。
+ *
  * @internal
  */
 final class FocusManager
@@ -244,11 +248,15 @@ final class FocusManager
         }
 
         // 焦点控件或最近祖先的 `keyboard()` 声明者；找不到 ⇒ 这一环让开。
+        // `$declared` 同时回答"这条链上到底有没有人认领键盘"——方向键的归属靠它判。
+        $declared = false;
         for ($node = $this->focused; $node !== null; $node = $node->parent()) {
             $handler = $node->widget()->keyHandlerValue();
             if ($handler === null) {
                 continue;
             }
+
+            $declared = true;
 
             // 签名 `(KeyEvent, Element)`；老的单参 handler 在 PHP 里会忽略多余参数。
             if ($handler($event, $node) === true) {
@@ -260,16 +268,151 @@ final class FocusManager
 
         $state = $this->focusedState();
 
-        if ($state instanceof EditableText) {
-            return $state->handleKey($event);
+        if ($state instanceof EditableText && $state->handleKey($event)) {
+            return true;
+        }
+
+        // 方向键：**没人认领键盘**时才归框架。声明了 `keyboard()` 的控件（表 / 下拉 /
+        // 滑块 / 富文本）方向键是它的语义，框架不抢 —— 抢了就是"表里按 ↓ 焦点跑了"。
+        if ($declared) {
+            return false;
+        }
+
+        if ($event->chord->is(KeyChord::left())) {
+            return $this->focusDirectional(-1, 0);
+        }
+
+        if ($event->chord->is(KeyChord::right())) {
+            return $this->focusDirectional(1, 0);
+        }
+
+        if ($event->chord->is(KeyChord::up())) {
+            return $this->focusDirectional(0, -1);
+        }
+
+        if ($event->chord->is(KeyChord::down())) {
+            return $this->focusDirectional(0, 1);
         }
 
         return false;
     }
 
     /**
-     * 命中测试 ⇒ 焦点。保留给"只关心焦点"的调用方；真机输入走 `InputRouter::dispatch()`。
+     * 方向键移焦点：交给**该方向上几何最近**的可聚焦节点。
+     *
+     * ★ 候选取 `$byId`（可聚焦表）而不是 `$order`（Tab 序）—— `skipFocus()` 的含义是
+     *   "别进 Tab 序"，不是"别能被聚焦"。日历 31 格 / 时刻表 144 格正是靠这条区分才
+     *   走得到（`08` §3 记了很久的已知缺口）；用 `$order` 它们永远够不着。
+     * ★ 判分 `主轴边距 + 2×副轴投影间隙`（重叠即 0）：正下方优先于斜下方，斜下方
+     *   仍可达 —— 网格（日历 / 时刻表）靠这一条才走得通。
+     * ★ 中心点必须严格落在该方向的半平面里；中心重合不算候选（否则左右键会原地打转）。
+     * ★ 焦点空着时：**陷阱内**（浮层）落到链首 / 链尾，非陷阱不猜（返回 `false`）。
+     *   浮层既然声明了焦点陷阱，焦点空着就只能靠 Tab 进 —— 方向键给它第二个入口，
+     *   而主树里"按一下键焦点凭空出现"是意外，不做。
      */
+    private function focusDirectional(int $dx, int $dy): bool
+    {
+        if ($this->focused === null) {
+            $count = \count($this->order);
+            if (!$this->trapped || $count === 0) {
+                return false;
+            }
+
+            $this->focus($this->order[$dx > 0 || $dy > 0 ? 0 : $count - 1]);
+
+            return true;
+        }
+
+        $from = $this->focused;
+        $box = $from->effectiveBox();
+        if ($box === null || $box->size() === null) {
+            return false;
+        }
+
+        $size = $box->size();
+        $origin = RenderBox::absoluteOrigin($box);
+        $x0 = $origin[0];
+        $y0 = $origin[1];
+        $x1 = $x0 + $size->width;
+        $y1 = $y0 + $size->height;
+        $cx = ($x0 + $x1) / 2.0;
+        $cy = ($y0 + $y1) / 2.0;
+
+        $best = null;
+        $bestScore = 0.0;
+
+        foreach ($this->byId as $candidate) {
+            if ($candidate === $from) {
+                continue;
+            }
+
+            $other = $candidate->effectiveBox();
+            if ($other === null) {
+                continue;
+            }
+
+            $csize = $other->size();
+            if ($csize === null || $csize->width <= 0.0 || $csize->height <= 0.0) {
+                continue;
+            }
+
+            $co = RenderBox::absoluteOrigin($other);
+            $c0x = $co[0];
+            $c0y = $co[1];
+            $c1x = $c0x + $csize->width;
+            $c1y = $c0y + $csize->height;
+
+            // 中心点必须严格落在该方向的半平面里：中心重合不算候选（否则会原地打转）
+            if ((($c0x + $c1x) / 2.0 - $cx) * $dx + (($c0y + $c1y) / 2.0 - $cy) * $dy <= 0.0) {
+                continue;
+            }
+
+            // 主轴用**边到边**的间隙、副轴用**投影间隙**（重叠即 0）。
+            // ★ 不能用中心点算副轴：宽控件（下拉的输入框 200 宽、表格整行）中心离得远，
+            //   会把"正下方"判成"斜下方"，于是按 ↓ 跳过它就走了 —— 真机上就是这么撞出来的。
+            if ($dx !== 0) {
+                $primary = $dx > 0 ? $c0x - $x1 : $x0 - $c1x;
+                $cross = self::axisGap($y0, $y1, $c0y, $c1y);
+            } else {
+                $primary = $dy > 0 ? $c0y - $y1 : $y0 - $c1y;
+                $cross = self::axisGap($x0, $x1, $c0x, $c1x);
+            }
+
+            if ($primary < 0.0) {
+                $primary = 0.0;
+            }
+
+            $score = $primary + 2.0 * $cross;
+            if ($best === null || $score < $bestScore) {
+                $best = $candidate;
+                $bestScore = $score;
+            }
+        }
+
+        if ($best === null) {
+            return false;
+        }
+
+        $this->focus($best);
+
+        return true;
+    }
+
+    /** 两条线段在同一轴上的间隙（重叠 ⇒ 0） */
+    private static function axisGap(float $a0, float $a1, float $b0, float $b1): float
+    {
+        if ($b0 > $a1) {
+            return $b0 - $a1;
+        }
+
+        if ($a0 > $b1) {
+            return $a0 - $b1;
+        }
+
+        return 0.0;
+    }
+
+    /** 命中测试 ⇒ 焦点。保留给"只关心焦点"的调用方；真机输入走 `InputRouter::dispatch()`。 */
     public function dispatchPointer(PointerEvent $event, Element $root): bool
     {
         return $this->focusHit($this->hitTest($event->x, $event->y, $root), $root);

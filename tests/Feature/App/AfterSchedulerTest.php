@@ -79,6 +79,28 @@ final class AfterSchedulerTest extends SmokeTestCase
         );
     }
 
+    /**
+     * 短延时**不向帧边界对齐** —— `after()` 的交付时刻是"到点"，不是"下一帧"。
+     *
+     * ★ 这条钉的是 2026-11-05 记在 `DEBT` §46.6 的一句话："`after()` 的交付粒度是帧边界
+     *   （N < 16.667 仍等下一帧）"。那句话与 §46.1 自己的实测（1ms 请求 err_max 2.22ms）
+     *   矛盾，也与本文件既有的「等的是 500ms 而不是一个帧间隔」矛盾 —— 是**记错了**。
+     *   真正会那样的是"把短定时器拉齐到 `FRAME_MS`"的变异体（§46 牙检 A）。
+     */
+    public function testShortDelayIsNotRoundedToFrame(): void
+    {
+        $app = $this->app();
+        $app->after(3, static function (): void {
+        });
+
+        $wait = (new FrameClock())->nextWaitMs($app, 0.0);
+        check(
+            '延时 · 3ms 的定时器等 3ms，不等一个帧间隔（交付按"到点"，不按帧边界）',
+            $wait > 0.0 && $wait < (float) FrameClock::FRAME_MS,
+            'wait=' . var_export($wait, true),
+        );
+    }
+
     public function testCancelAfterIsIdempotent(): void
     {
         $app = $this->app();

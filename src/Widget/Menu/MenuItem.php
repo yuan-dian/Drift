@@ -93,4 +93,17 @@ final class MenuItem extends Button
             $this->resolvePressedOverlay($context),
         );
     }
+
+    /**
+     * @internal 本项**不自绘** chrome（`RenderMenuItem` 只画标签 / 快捷键 / 分隔线），
+     *   底 / 边 / 圆角交给 `RenderBox::paint()` 的 ①。
+     *
+     * ★ 从 `Button` 继承来的 `true` 是错的：那是"声明了自绘却不画"的形状，
+     *   `Element::syncBox()` 会把视觉三字段剥掉 ⇒ 用户写的 `->background()`
+     *   **静默消失**（菜单项看着正常，属性没了）。
+     */
+    public function paintsBoxChrome(): bool
+    {
+        return false;
+    }
 }

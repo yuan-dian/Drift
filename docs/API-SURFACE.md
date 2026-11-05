@@ -26,8 +26,8 @@
 | State | 17 | 8 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
-| Widget | 184 | 216 |
-| **合计** | **497** | **397** |
+| Widget | 184 | 217 |
+| **合计** | **497** | **398** |
 
 覆盖 391 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
 
@@ -881,7 +881,7 @@
 | `Wrap` | class | src/Widget/Wrap.php |
 | `YearMonth` | class | src/Widget/YearMonth.php |
 
-### @internal（框架内部） · 216
+### @internal（框架内部） · 217
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -968,6 +968,7 @@
 | `LazyList::buildItem()` | method | src/Widget/LazyList.php |
 | `LazyListState` | class | src/Widget/LazyListState.php |
 | `LazyListState::dispose()` | method | src/Widget/LazyListState.php |
+| `MenuItem::paintsBoxChrome()` | method | src/Widget/Menu/MenuItem.php |
 | `Modal::bindDismiss()` | method | src/Widget/Modal.php |
 | `ModalHost` | class | src/Widget/ModalHost.php |
 | `OffstageElement::$parked` | property | src/Widget/OffstageElement.php |
