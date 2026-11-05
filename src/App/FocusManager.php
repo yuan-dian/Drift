@@ -38,6 +38,13 @@ use Drift\Widget\States;
  */
 final class FocusManager
 {
+    /**
+     * 几何导航里"两个候选同分"的判据（逻辑像素）。
+     *
+     * 不取 0：布局算出来的间距是浮点数，`12.0` 与 `12.000000001` 该算同分。
+     */
+    private const SCORE_TIE = 0.5;
+
     /** @var list<Element> 文档序（深度优先），同容器内按 `focusOrder` 稳定排序 */
     private array $order = [];
 
@@ -456,6 +463,7 @@ final class FocusManager
 
         $best = null;
         $bestScore = 0.0;
+        $bestAlign = 0.0;
 
         foreach ($this->byId as $candidate) {
             if ($candidate === $from) {
@@ -498,10 +506,19 @@ final class FocusManager
                 $primary = 0.0;
             }
 
+            // ★★ 并列时按**副轴中心距**分胜负（2026-11-05 实测补的）：盒子相邻（边**贴边**）
+            //   时 `axisGap()` 也是 0 ⇒ "正下方"与"斜下方"同分，先遍历到的（树序靠前）胜。
+            //   于是网格里每按一次 ↓ 就往左偏一列并一路累积（日历实测 4→10→16→22→28，
+            //   而正确答案是 11→18→25）。中心距是唯一能分开"对齐"与"贴着"的读数。
+            $align = $dx !== 0 ? \abs(($c0y + $c1y) / 2.0 - $cy) : \abs(($c0x + $c1x) / 2.0 - $cx);
             $score = $primary + 2.0 * $cross;
-            if ($best === null || $score < $bestScore) {
+
+            if ($best === null
+                || $score < $bestScore - self::SCORE_TIE
+                || (\abs($score - $bestScore) <= self::SCORE_TIE && $align < $bestAlign)) {
                 $best = $candidate;
                 $bestScore = $score;
+                $bestAlign = $align;
             }
         }
 

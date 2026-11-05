@@ -36,8 +36,8 @@ use Drift\Widget\ScrollView;
  *
  * ## 有意边界
  *
- * - **格子不进 Tab 序**（`skipFocus()`）：144 个格子挤进 Tab 序是灾难。方向键在
- *   列内移动由 `FocusManager` 的几何导航提供（`skipFocus()` 只挡 Tab 序）。
+ * - **Tab 序只留"当前值那一格"**（roving tabindex，§57）：144 格挤进 Tab 序是灾难，
+ *   一格都不留则键盘根本进不来。其余格子靠方向键（几何导航读可聚焦表，不读 Tab 序）。
  * - **秒默认不显示**：企业表单绝大多数到分。`withSeconds()` 才出第三列 ——
  *   值层（`LocalTime::$second`）始终在，切回来不丢。
  * - **不做"步进箭头" / "确定按钮"**：点即选 + 受控，没有中间态。要"确定"的
@@ -248,8 +248,14 @@ final class TimeView extends StatelessWidget
         $cell = Button::make(\str_pad((string) $n, 2, '0', STR_PAD_LEFT))
             ->compact()
             ->width(TimeView::COLUMN_WIDTH)
-            ->skipFocus()
             ->variant($n === $current ? ButtonVariant::Primary : ButtonVariant::Flat);
+
+        // ★ **roving tabindex**（§57）：每列只有"当前值那一格"进 Tab 序。
+        //   144 格全进是灾难（按 144 次 Tab 才出得去）；一格不进则整块时刻表
+        //   对键盘是一块空白 —— 实测 `focusNext()` 直接落空，焦点压根进不来。
+        if ($on === null || $n !== $current) {
+            $cell->skipFocus();
+        }
 
         // ★ 无障碍：同样的 "05"，在时列和在分列是完全不同的东西
         $cell->semantics(SemanticsRole::Button, $title . ' ' . $n);

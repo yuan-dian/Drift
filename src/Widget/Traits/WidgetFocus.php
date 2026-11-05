@@ -48,6 +48,12 @@ trait WidgetFocus
      *   `skipFocus()` 的按钮**完全点不动**，而画面上看不出任何异常（`TreeView`
      *   的行箭头就是这么静默失效的）。要"点不动"请用 `disabled()`，那是另一件事。
      *
+     * ★★★ **复合控件别把整块都跳过**（2026-11-05，§57）：`skipFocus()` 只挡 Tab 序，
+     *   挡不住方向键 ⇒ 把 31 个日期格全跳过后，方向键明明够得着，**Tab 却一步也
+     *   进不来**（`CalendarView` / `TimeView` 就这么哑了一周多）。正确做法是
+     *   **roving tabindex**：只让"活动格"（值所在那格）不跳，其余照跳。
+     *   配套规则：**占站 ⇔ 真按得动** —— 没有回调的格子连入口都不该占。
+     *
      * @api
      */
     public function skipFocus(): static

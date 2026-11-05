@@ -169,8 +169,13 @@ trait WidgetInteraction
      *   所以包裹式控件也能挂：`ComboBox` 包 `TextField` 时焦点在 `TextField`，
      *   而 `ComboBox` 自己声明的 `keyboard()` 照样收得到。
      * 回调 `\Closure(KeyEvent, Element): bool`，返回 `true` = 吃掉这个键。
-     * 第二个参数是焦点所在的 `Element`，靠它拿 `effectiveBox()`。
+     * 第二个参数是**声明者自己**的 `Element`（拿 `effectiveBox()` 用）—— 不是焦点控件；
+     * 焦点控件可能在这条链的更深处（`ComboBox` 包 `TextField` 时就是这个形状）。
      * 只对焦点控件那一支调（Tab / Shift+Tab 之后）。
+     *
+     * ★ 声明即"整组按键归我"：连框架的**方向键**几何导航也一起让开（见
+     *   `FocusManager::dispatchKey()` 的 `$declared`）。只想认领几个键、方向键
+     *   仍归框架的写法**做不到** —— 所以 `CalendarView` 至今没有 `PageUp/PageDown` 换月。
      * @api
      */
     public function keyboard(\Closure $handler): static

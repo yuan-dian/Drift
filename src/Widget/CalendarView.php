@@ -12,6 +12,12 @@ use Drift\Layout\FlexAlign;
  * 受控：当前月与选中日均由应用经 `month()` / `selected()` 持有，视图只上报变更（`onMonthChange()` / `onSelected()`）。
  * ★ **标题可点 ⇔ 有 `onMonthChange`**：没有回调时切到月视图去点格子只会点出一片死寂 —— 比"不能切"更差的手感。
  *
+ * ## 键盘（roving tabindex，§57）
+ *
+ * Tab 序里只留**少数几个站**，而不是 31 个格子：`‹` / `›` / 标题（能切视图时）/ **活动日**
+ * （选中日；本月没选就 1 号）。其余格子 `skipFocus()` 但**方向键够得着** —— 几何导航读的是
+ * 可聚焦表，不是 Tab 序。**占站 ⇔ 真按得动**：没回调的格子/箭头连入口都不占。
+ *
  * @api
  */
 final class CalendarView extends StatefulWidget
@@ -171,28 +177,30 @@ final class CalendarViewState extends State
     {
         $on = $this->view()->onMonthChangeHandler();
 
+        // ★ 占 Tab 站 ⇔ **真按得动**（§57）：按不动的按钮进 Tab 序，只会让键盘用户
+        //   卡在一个没有任何反馈的死站上。越界（到头了）也算按不动。
+        $prev = $on === null ? null : $this->shift(-1);
+        $next = $on === null ? null : $this->shift(1);
+
         $left = IconButton::of(IconName::ArrowLeft, $this->stepLabel(-1))
-            ->variant(ButtonVariant::Flat)
-            ->skipFocus();
+            ->variant(ButtonVariant::Flat);
         $right = IconButton::of(IconName::ArrowRight, $this->stepLabel(1))
-            ->variant(ButtonVariant::Flat)
-            ->skipFocus();
+            ->variant(ButtonVariant::Flat);
 
-        if ($on !== null) {
-            $prev = $this->shift(-1);
-            $next = $this->shift(1);
+        if ($prev === null) {
+            $left->skipFocus();
+        } else {
+            $left->onPressed(static function () use ($on, $prev): void {
+                $on($prev);
+            });
+        }
 
-            if ($prev !== null) {
-                $left->onPressed(static function () use ($on, $prev): void {
-                    $on($prev);
-                });
-            }
-
-            if ($next !== null) {
-                $right->onPressed(static function () use ($on, $next): void {
-                    $on($next);
-                });
-            }
+        if ($next === null) {
+            $right->skipFocus();
+        } else {
+            $right->onPressed(static function () use ($on, $next): void {
+                $on($next);
+            });
         }
 
         return Row::make()->cross(FlexAlign::Center)->children([
@@ -217,10 +225,10 @@ final class CalendarViewState extends State
             ]);
         }
 
+        // ★ 不 `skipFocus()`：它是键盘进月/年视图的**唯一**入口（§57 的"占站 ⇔ 真按得动"）。
         return Button::make($text)
             ->variant(ButtonVariant::Flat)
             ->compact()
-            ->skipFocus()
             ->onPressed(function (): void {
                 $this->cycleMode();
             });
@@ -324,19 +332,28 @@ final class CalendarViewState extends State
     }
 
     /**
-     * 月 / 年视图的一个格子（`$value` 是月号或年份）。`skipFocus()` 同日期格：整张日历只该有一个"入口"。
+     * 月 / 年视图的一个格子（`$value` 是月号或年份）。
+     *
+     * ★ **roving tabindex**（§57）：只有"当前值那一格"进 Tab 序。12 格全进是灾难，
+     *   一格不进则键盘用户根本进不来。按不动的格子（没回调）连入口都不该占。
      */
     private function pickCell(string $label, bool $active, int $value): Widget
     {
+        $on = $this->view()->onMonthChangeHandler();
+
         $cell = Button::make($label)
             ->compact()
-            ->skipFocus()
             ->variant($active ? ButtonVariant::Primary : ButtonVariant::Flat);
 
-        if ($this->view()->onMonthChangeHandler() !== null) {
+        if ($on !== null) {
             $cell->onPressed(function () use ($value): void {
                 $this->pick($value);
             });
+        }
+
+        // ★ 同日期格：只挑 Tab 站，不改能不能按。
+        if ($on === null || !$active) {
+            $cell->skipFocus();
         }
 
         return Expanded::make($cell);
@@ -454,7 +471,13 @@ final class CalendarViewState extends State
     }
 
     /**
-     * 一个日期格。`skipFocus()`：整张月历只该有一个"入口"，31 个格子不该挤进 Tab 序（只挡 Tab 序，指针点击不受影响）。
+     * 一个日期格。
+     *
+     * ★ **roving tabindex**（§57）：31 个格子不挤 Tab 序 —— 但必须**留一个入口**，
+     *   否则整张日历对键盘是一块"按 Tab 直接跳过"的空白（实测：焦点停在外部按钮
+     *   上不动）。留的是"活动日"（选中日；本月没选中就 1 号）。
+     * ★ 其余格子照样 Tab 不到，但**方向键够得着** —— `focusDirectional()` 读的是
+     *   可聚焦表（`$byId`）而不是 Tab 序（`$order`），`skipFocus()` 只动后者。
      */
     private function dayCell(LocalDate $date): Widget
     {
@@ -464,7 +487,6 @@ final class CalendarViewState extends State
 
         $cell = Button::make((string) $date->day)
             ->compact()
-            ->skipFocus()
             ->variant($isSelected ? ButtonVariant::Primary : ButtonVariant::Flat);
 
         $on = $view->onSelectedHandler();
@@ -474,7 +496,32 @@ final class CalendarViewState extends State
             });
         }
 
+        // ★ 只挑 Tab 站，**不动 onPressed**：非活动格照样点得动、照样能被方向键 +
+        //   Enter 激活（Tab 序是"怎么进来"，不是"能不能按"）。
+        if ($on === null || $date->day !== $this->activeDay()) {
+            $cell->skipFocus();
+        }
+
         return Expanded::make($cell);
+    }
+
+    /**
+     * 活动日 —— 键盘进日历的落脚点。
+     *
+     * 选中日就在本月 ⇒ 它；否则 1 号。
+     * ★ 不猜"今天"：视图是受控的，值只来自应用 —— 塞时间依赖进来会让判据变成
+     *   "哪天跑都不同"，而它的全部用途只是"给键盘一个入口"。
+     */
+    private function activeDay(): int
+    {
+        $m = $this->view()->monthValue();
+        $sel = $this->view()->selectedValue();
+
+        if ($sel !== null && $sel->year === $m->year && $sel->month === $m->month) {
+            return $sel->day;
+        }
+
+        return 1;
     }
 
     private function view(): CalendarView

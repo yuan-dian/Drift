@@ -25,7 +25,8 @@ use Drift\Widget\YearMonth;
  * ① **行数**（5 / 6 行，随月份形状变），② **只有本月是格子**（别月留白，不是灰色按钮），
  * ③ **首日列位**（前导格数 = 1 号的周几 —— 前导算错一位整月都错位），
  * ④ **列等宽**（40，靠 `Expanded` 等分 + `Button::compact()` 让得出宽度），
- * ⑤ **受控**（点格子/箭头只上报、画面不动），⑥ **选中态**，⑦ **不占 Tab 序**。
+ * ⑤ **受控**（点格子/箭头只上报、画面不动），⑥ **选中态**，
+ * ⑦ **只读时一个 Tab 站都不占**（可交互时的键盘入口见 `CompositeEntryTest`）。
  *
  * ★ ③ 是这一件最容易静默错的地方：前导格用 `SizedBox` 占位，错了不会报错，
  *   只会让"10 月 1 日"出现在错误的列上 —— 而这种图在肉眼上"看着像日历"。
@@ -177,7 +178,11 @@ final class CalendarViewTest extends SmokeTestCase
         $fm->collect([$root]);
         $order = $fm->order();
 
-        check('CalendarView · 整张月历不占 Tab 站（31 个日期格挤进去是灾难）', \count($order) === 0, 'n=' . \count($order));
+        check(
+            'CalendarView · 只读月历一个站都不占（占站 ⇔ 真按得动；可交互时的入口见 CompositeEntryTest）',
+            \count($order) === 0,
+            'n=' . \count($order),
+        );
     }
 
     // ── ⑥ 选中态 ───────────────────────────────────────────────────────

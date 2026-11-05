@@ -15,6 +15,7 @@ use Drift\Widget\Button;
 use Drift\Widget\Column;
 use Drift\Widget\ComboBox;
 use Drift\Widget\Element;
+use Drift\Widget\Expanded;
 use Drift\Widget\Row;
 use Drift\Widget\Slider;
 use Drift\Widget\Widget;
@@ -143,6 +144,57 @@ final class DirectionalFocusTest extends SmokeTestCase
         check(
             '方向键 · 从 B 按 Left ⇒ 左边空无一人 ⇒ 不吃键、焦点不动',
             $this->where($focus) === 'B',
+            $this->where($focus),
+        );
+
+        $this->flushChecks();
+    }
+
+    /**
+     * 网格里按 ↓ **不许横向漂移**：格子边贴边时，正下方与斜下方同分。
+     *
+     * ★ 这条是 2026-11-05 实测撞出来的：`axisGap()` 对"边贴边"返回 0（重叠即 0），
+     *   于是正下方与贴着它的斜下方**分数完全一样**，先遍历到的（树序靠前）胜 ⇒
+     *   每按一次 ↓ 往左偏一列并一路累积（日历实测 4→10→16→22→28，正确是 11→18→25）。
+     * ★ 夹具必须用 `Expanded` 撑满：`Button` 按自然宽排时格子之间有缝，
+     *   斜下方的 `axisGap()` 就不是 0 了 —— 那样测的是一个不存在的布局。
+     */
+    public function testGridDoesNotDriftSideways(): void
+    {
+        $rows = [];
+        for ($r = 0; $r < 3; $r++) {
+            $cells = [];
+            for ($c = 0; $c < 3; $c++) {
+                $cells[] = Expanded::make(Button::make((string) ($r * 3 + $c + 1)));
+            }
+            $rows[] = Row::make()->children($cells);
+        }
+
+        $app = $this->app(Column::make()->children($rows));
+        $focus = $app->focus();
+        $focus?->focus($this->labelOf($app, '3'));
+
+        check('网格 · 起点是右上角的 3', $this->where($focus) === '3', $this->where($focus));
+
+        $focus?->dispatchKey(KeyEvent::down(KeyChord::down()));
+        check(
+            '网格 · 从 3 按 ↓ ⇒ 正下方的 6（不是贴着的 5）',
+            $this->where($focus) === '6',
+            $this->where($focus),
+        );
+
+        $focus?->dispatchKey(KeyEvent::down(KeyChord::down()));
+        check(
+            '网格 · 再 ↓ ⇒ 9（两次都不偏列）',
+            $this->where($focus) === '9',
+            $this->where($focus),
+        );
+
+        $focus?->dispatchKey(KeyEvent::down(KeyChord::up()));
+        $focus?->dispatchKey(KeyEvent::down(KeyChord::left()));
+        check(
+            '网格 · 从 6 按 ← ⇒ 同行的 5（横向也不偏行）',
+            $this->where($focus) === '5',
             $this->where($focus),
         );
 

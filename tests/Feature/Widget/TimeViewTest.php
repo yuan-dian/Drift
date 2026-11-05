@@ -25,7 +25,7 @@ use Drift\Widget\TimeView;
  * ① **列数与列内取值**（24 / 60 / 60），② **打开就落在当前值附近**（不给初始偏移
  * 就得从 00 滚 9 格），③ **点一列只改那一段**（三列共用一个受控值，最容易写错
  * 的地方是"点分列把时也改了"），④ **受控**（点完画面不动），⑤ **选中态**，
- * ⑥ **不占 Tab 序**（144 格挤进 Tab 序是灾难），⑦ **几何**（列宽 56 / 行高 34）。
+ * ⑥ **只读时不占 Tab 站**（可交互时每列留一个入口，见 `CompositeEntryTest`），⑦ **几何**（列宽 56 / 行高 34）。
  *
  * ★ ② 是这一件唯一"不报错但很难用"的地方：偏移算错时画面照样画得出来，
  *   只是打开时看到的是 00 点那一屏。
@@ -147,7 +147,11 @@ final class TimeViewTest extends SmokeTestCase
         // ★ 判据走 `FocusManager`：`focusNode()` 为 null 不等于"不进 Tab 序"
         $fm = new FocusManager();
         $fm->collect([$root]);
-        check('TimeView · 整块时刻表不占 Tab 站', \count($fm->order()) === 0, 'n=' . \count($fm->order()));
+        check(
+            'TimeView · 只读时刻表一个站都不占（占站 ⇔ 真按得动；可交互时的入口见 CompositeEntryTest）',
+            \count($fm->order()) === 0,
+            'n=' . \count($fm->order()),
+        );
     }
 
     // ── ⑦ 几何 ─────────────────────────────────────────────────────────
