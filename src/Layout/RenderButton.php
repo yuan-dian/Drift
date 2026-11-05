@@ -111,7 +111,7 @@ final class RenderButton extends RenderProxyBox
     }
 
     #[\Override]
-    protected function interactionRadius(): float
+    public function outlineRadius(): float
     {
         return $this->box->radius;
     }

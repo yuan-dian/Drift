@@ -32,7 +32,6 @@ use Drift\Rendering\FrameStage;
 use Drift\Rendering\Paint;
 use Drift\Rendering\RenderSurface;
 use Drift\Rendering\SurfaceProfile;
-use Drift\Geometry\Rect;
 use Drift\Text\TextMetricsProvider;
 use Drift\Widget\Scrollable;
 use Drift\Widget\SemanticsValueEditable;
@@ -1567,8 +1566,8 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      * ★ 为什么不做成 `Modifier` 或各控件自绘：那要么每个盒都得知道"我在焦点上"
      *   （盒状态跨重建会丢，见 `State::didChangeFocus()` 的注释），要么给
      *   `RenderObject` 注入焦点查询 —— 都比这一处多。
-     * ★ 样式：**2px 外扩**描边（`drawRect` 只有填充 ⇒ 四条边拼），主题 `Accent` 色。
-     *   直角、不跟随控件圆角（MVP，见文档能力边界）。
+     * ★ 形状由盒回答（`outlineRadius()`），这里只决定画不画与颜色：主题 `Accent`
+     *   2px 外扩描边，圆角跟随控件（§50）。
      */
     /**
      * 焦点环的**目标**（`null` = 本帧不画）。
@@ -1595,24 +1594,10 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
             return;
         }
 
-        $size = $box->size();
-
-        if ($size === null) {
-            return;
-        }
-
-        [$ox, $oy] = RenderBox::absoluteOrigin($box);
-        $paint = Paint::fill($this->theme()->color(ColorToken::Accent));
-
-        $x = $ox - 1.0;
-        $y = $oy - 1.0;
-        $w = $size->width + 2.0;
-        $h = $size->height + 2.0;
-
-        $canvas->drawRect(new Rect($x, $y, $w, 2.0), $paint);
-        $canvas->drawRect(new Rect($x, $y + $h - 2.0, $w, 2.0), $paint);
-        $canvas->drawRect(new Rect($x, $y, 2.0, $h), $paint);
-        $canvas->drawRect(new Rect($x + $w - 2.0, $y, 2.0, $h), $paint);
+        $box->paintFocusOutline(
+            $canvas,
+            Paint::stroke($this->theme()->color(ColorToken::Accent), 2.0),
+        );
     }
 
     /**

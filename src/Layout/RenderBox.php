@@ -663,7 +663,7 @@ abstract class RenderBox extends RenderObject
         $this->paintStateLayer(
             $canvas,
             new Rect(0.0, 0.0, $size->width, $size->height),
-            $this->interactionRadius(),
+            $this->outlineRadius(),
         );
     }
 
@@ -704,8 +704,8 @@ abstract class RenderBox extends RenderObject
         return $strokeWidth > 0.0 ? Paint::stroke($color, $strokeWidth) : Paint::fill($color);
     }
 
-    /** 状态层圆角；自持 `BoxStyle` 的盒覆写。 */
-    protected function interactionRadius(): float
+    /** 盒轮廓圆角。状态层与焦点环共用一份；自持 `BoxStyle` 的盒覆写。 */
+    public function outlineRadius(): float
     {
         $m = $this->mods;
         if ($m === null) {
@@ -718,6 +718,27 @@ abstract class RenderBox extends RenderObject
         }
 
         return $style->radius;
+    }
+
+    /**
+     * 焦点轮廓：外扩 1px 的 2px 描边，圆角跟随盒（`+1` 才是同心外扩）。
+     * 由应用级叠加调用 —— 环必须压在所有内容之上，不能下沉进 `paint()`。
+     */
+    public function paintFocusOutline(Canvas $canvas, Paint $paint): void
+    {
+        $size = $this->size();
+        if ($size === null) {
+            return;
+        }
+
+        [$ox, $oy] = self::absoluteOrigin($this);
+        $r = $this->outlineRadius();
+
+        $canvas->drawRect(
+            new Rect($ox - 1.0, $oy - 1.0, $size->width + 2.0, $size->height + 2.0),
+            $paint,
+            $r > 0.0 ? $r + 1.0 : 0.0,
+        );
     }
 
     /**

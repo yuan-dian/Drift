@@ -34,10 +34,16 @@ use Drift\Rendering\Color;
  * ★ 比的是 `focusRingTarget()` 而不是 `focused()`：指针模态下目标恒 `null`
  *   ⇒ 点击隐藏环也能立刻触发一帧（否则点击后环要等下次输入才消失，即 `⑥`）。
  *
- * ## 夹具的坐标为什么是 (19,19)
+ * ## 采样点为什么不是盒的左上角
  *
- * `FocusRingApplication` = `Column(padding 20)` + `Button` ⇒ Button 盒原点 (20,20)；
- * 焦点环是**外扩 1px** 的 2px 描边 ⇒ `(19,19)` 必定落在描边上。不依赖字体度量。
+ * `FocusRingApplication` = `Column(padding 20)` + `Button` ⇒ 盒原点 (20,20)，焦点环是
+ * 外扩 1px 的 2px 描边 ⇒ 上边覆盖 y=19,20。但 Button 圆角是主题 `Radius`（6）：
+ * 圆角环在**直角顶点 (19,19) 不吃色**、弧线 (23,19) 才吃色（与 §49 牙 C 同形）。
+ * 所以「环画出来了吗」用上边中点 (60,19) 量；「是不是圆角」由 (19,19)/(23,19)
+ * 成对钉住 —— 只写"顶点不变"会把"整个角都空着"的实现判绿。不依赖字体度量。
+ *
+ * ★ 另两个采样点各钉一条会静默假绿的变异：`(21,20)` 在同心外扩（圆角 +1）下
+ *   不吃色、去掉 +1 就吃色；`(60,30)` 是盒心，描边笔换成填充笔会把它染成 Accent。
  *
  * ## 与 smoke 的一处实质改进
  *
@@ -52,10 +58,28 @@ final class FocusRingTest extends SmokeTestCase
 
     private const H = 200.0;
 
-    /** 描边落点：Button 盒原点 (20,20) 外扩 1px */
-    private const PROBE_X = 19;
+    /** 上边中点：圆角环下仍必定吃色 */
+    private const PROBE_X = 60;
 
     private const PROBE_Y = 19;
+
+    /** 直角顶点 / 弧线：成对判据 */
+    private const CORNER_X = 19;
+
+    private const CORNER_Y = 19;
+
+    private const ARC_X = 23;
+
+    private const ARC_Y = 19;
+
+    /** 弧线内侧 / 盒心：同心外扩与"描边不是填充"的哨兵 */
+    private const ARC_INNER_X = 21;
+
+    private const ARC_INNER_Y = 20;
+
+    private const CENTER_X = 60;
+
+    private const CENTER_Y = 30;
 
     private static function constraints(): BoxConstraints
     {
@@ -80,9 +104,9 @@ final class FocusRingTest extends SmokeTestCase
         return Color::fromRgb(0x09, 0x69, 0xDA);
     }
 
-    private static function pixel(?SurfaceProbe $probe): ?Color
+    private static function pixel(?SurfaceProbe $probe, int $x = self::PROBE_X, int $y = self::PROBE_Y): ?Color
     {
-        return $probe->raster()?->pixelAt(self::PROBE_X, self::PROBE_Y);
+        return $probe->raster()?->pixelAt($x, $y);
     }
 
     /**
@@ -111,6 +135,10 @@ final class FocusRingTest extends SmokeTestCase
 
         $app->frame(1.0, self::constraints());
         $after = self::pixel($probe);
+        $afterCorner = self::pixel($probe, self::CORNER_X, self::CORNER_Y);
+        $afterArc = self::pixel($probe, self::ARC_X, self::ARC_Y);
+        $arcInner = self::pixel($probe, self::ARC_INNER_X, self::ARC_INNER_Y);
+        $center = self::pixel($probe, self::CENTER_X, self::CENTER_Y);
 
         check(
             '焦点环 · 焦点变了但还没画 ⇒ wantsFrame 为真（第七判据；否则环要等下次输入）',
@@ -123,9 +151,29 @@ final class FocusRingTest extends SmokeTestCase
             'rgb=' . describeColor($before)
         );
         check(
-            '焦点环 · Tab 聚焦后控件左上外扩 1px 是 Accent 描边',
+            '焦点环 · Tab 聚焦后上边中点是 Accent 描边',
             $after !== null && $after->equals(self::accent()),
             'rgb=' . describeColor($after)
+        );
+        check(
+            '焦点环 · 直角顶点 (19,19) 不吃色（环跟随控件圆角，不是方环）',
+            $afterCorner !== null && !$afterCorner->equals(self::accent()),
+            'rgb=' . describeColor($afterCorner)
+        );
+        check(
+            '焦点环 · 弧线 (23,19) 吃色（圆角处真有描边，不是整个角都空着）',
+            $afterArc !== null && $afterArc->equals(self::accent()),
+            'rgb=' . describeColor($afterArc)
+        );
+        check(
+            '焦点环 · 弧线内侧 (21,20) 不吃色（圆角做了 +1 同心外扩）',
+            $arcInner !== null && !$arcInner->equals(self::accent()),
+            'rgb=' . describeColor($arcInner)
+        );
+        check(
+            '焦点环 · 盒心 (60,30) 不是 Accent（只描边，没有把盒填掉）',
+            $center !== null && !$center->equals(self::accent()),
+            'rgb=' . describeColor($center)
         );
         check(
             '焦点环 · 画完后悔回落（wantsFrame 的第七判据有界）',
