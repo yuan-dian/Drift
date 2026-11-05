@@ -130,7 +130,7 @@ final class SyncTaskHost implements TaskHost
      *
      * ★ 但它并不因此空转：`submit()` 是同步跑完的 ⇒ `pending()` 只在"结果已就绪、
      *   还没回贴"的那一两帧里大于 0（见上），其余时间帧时钟照样无限期睡。
-     *   ⇒ `true` 在这里的代价是**有界的一次**，不是每帧 15ms 的常态。
+     *   ⇒ `true` 在这里的代价是**有界的一次**，不是每帧空转的常态。
      */
     public function needsPolling(): bool
     {

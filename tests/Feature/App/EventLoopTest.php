@@ -64,10 +64,12 @@ final class EventLoopTest extends SmokeTestCase
             $app->frameCount() === $frames,
             'frames=' . $app->frameCount() . '（之前 ' . $frames . '）',
         );
+        // `-1`（无限等）走 `drift_win_pump()`，不落 `drift_win_wait()` ⇒ "零次限时等待"
+        // 就是"无限等"在外面看得见的形态。旧实现是每 15ms 一次 `SetTimer` 心跳。
         check(
-            '主循环 · 空闲应用**一次 `SetTimer` 都不发**（旧心跳是每 15ms 一次）',
-            winTimerCalls() === [],
-            \sprintf('%d 次：%s', \count(winTimerCalls()), \json_encode(winTimerCalls())),
+            '主循环 · 空闲应用 ⇒ **零次限时等待**（无限等，空闲 CPU 归零）',
+            winWaitCalls() === [],
+            \sprintf('%d 次限时等待：%s', \count(winWaitCalls()), \json_encode(winWaitCalls())),
         );
 
         $this->flushChecks();

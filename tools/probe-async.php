@@ -11,7 +11,7 @@
  * php tools/probe-async.php users
  * ```
  *
- * 被验证的缺陷：`drift_win_pump()` 阻塞在 `GetMessageW`，而 `TimerHost` 一个调用者都没有
+ * 被验证的缺陷：`drift_win_pump()` 阻塞在 `GetMessageW`，而等待层一个定时器都不起
  * ⇒ `drain()` 只在"用户动了鼠标"时跑 ⇒ 后台取数的结果只能等下一条消息捎带，**且不报错**。
  * 装上 `FrameClock` 之后，窗口应当**在零输入下**自己从 Loading 切到 Ready。
  *

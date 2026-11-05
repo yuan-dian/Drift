@@ -73,7 +73,7 @@ final class IoPoller
         //   ⇒ 主循环无限等 ⇒ 这个流永远不会被问。以前它靠 `wantsFrame()` 里
         //   永远存在的 `hasPolledAsync()` 判据兜住（因为判据是每轮重问的）；
         //   换成"现场举手"之后，注册这个动作必须自己举手。
-        //   档位是**按帧节奏**（不是立刻）：轮询本来就是 15ms 一次。
+        //   档位是**按帧节奏**（不是立刻）：轮询本来就是一帧一次。
         Pipeline::current()->scheduleNextFrame();
 
         return $token;

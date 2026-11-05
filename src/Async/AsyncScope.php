@@ -63,7 +63,7 @@ final class AsyncScope
     /**
      * 延时函数 `(毫秒, 回调) => void`。
      *
-     * ★ 靠注入而不是直接拿 `TimerHost`：`src/Async` **不许依赖 `Drift\Platform`**
+     * ★ 靠注入而不是直接调平台：`src/Async` **不许依赖 `Drift\Platform`**
      *   （§4.3 依赖方向）。应用侧把 `Application::after()` 或自己的 scheduler 传进来。
      */
     private ?\Closure $delay;

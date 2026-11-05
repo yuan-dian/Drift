@@ -76,16 +76,6 @@ function drift_win_destroy(int $hwnd): void {}
 function drift_win_is_alive(int $hwnd): bool {}
 
 /**
- * 任意一个**还活着的**窗口句柄；一个都没有 ⇒ `0`。
- *
- * ★ 用途只有一个：给"等消息的闹钟定时器"找个能挂的窗口（`SetTimer` 需要 hwnd，
- *   而"等消息"是进程级动作）。改动前它挂"最后建的窗"，主窗一关就成死句柄 ⇒
- *   `waitEvents()` 退化成无限阻塞 ⇒ 剩下的窗口动画停摆（**不报错**）。
- * ★ 不要拿它当"主窗"做别的事：集合顺序任意。
- */
-function drift_win_live_window(): int {}
-
-/**
  * 声明该窗口的关闭要不要**先问应用**（2026-10-30，可拦截关闭）。
  *
  * `true` ⇒ `WM_CLOSE` 不再销毁，改为入队一条 `close-requested`（帧边界由
@@ -280,7 +270,6 @@ function drift_win_ime_caret(int $hwnd, float $x, float $y, float $h): void {}
  * | `quit` | — | `WM_QUIT` / 窗口销毁 ⇒ 调用方跳出循环 |
  * | `resize` | `w` `h`（**物理**像素） | `WM_SIZE` |
  * | `dpi` | `dpi` | `WM_DPICHANGED` |
- * | `timer` | `id` | `WM_TIMER`（id 由 PHP 给，见 `drift_win_set_timer`） |
  * | `pointer` | `x` `y`（**物理**像素，客户区原点） `button` `phase`（0=down 1=move 2=up 3=leave，与 `Drift\Input\PointerPhase` 同值） | `WM_{L,M,R}BUTTONDOWN` / `WM_MOUSEMOVE` / `WM_{L,M,R}BUTTONUP` / `WM_MOUSELEAVE`（`leave` 的坐标是**最后已知位置** —— 系统不再带坐标；`move` 的 `button` 恒 0，按住态由应用自己的拖动状态跟踪） |
  * | `key` | `key`（**键名**字符串） `ctrl` `alt` `shift` | `WM_KEYDOWN` |
  * | `char` | `text`（UTF-8） | `WM_CHAR`（`TranslateMessage` 合成） |
@@ -329,19 +318,6 @@ function drift_win_now_ms(): float {}
  *   是最小的一条桥（§17.4.2.1）。
  */
 function drift_thread_id(): int {}
-
-// ---- 定时器（帧时钟的物质载体，§5.2 裁决 1） ----
-
-/**
- * 启动周期定时器。`$id` 由 **PHP** 指定（到点时 `timer` 事件带的就是它）——
- * 壳不分配 id：分配权在框架，否则"哪个定时器响了"要查表。
- *
- * @return bool 失败（`SetTimer` 返回 0）⇒ false
- */
-function drift_win_set_timer(int $hwnd, int $id, int $ms): bool {}
-
-/** 停表；**未起过的 id 不是错误**（幂等） */
-function drift_win_kill_timer(int $hwnd, int $id): void {}
 
 // ---- 失败路径（§1.2 标准中止序列第 ② 步） ----
 

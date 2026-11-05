@@ -20,16 +20,16 @@
 | Input | 19 | 5 |
 | Layout | 47 | 44 |
 | Logging | 9 | 3 |
-| Platform | 17 | 16 |
+| Platform | 16 | 15 |
 | Rendering | 34 | 1 |
 | Routing | 8 | 6 |
 | State | 17 | 8 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
 | Widget | 184 | 216 |
-| **合计** | **498** | **398** |
+| **合计** | **497** | **397** |
 
-覆盖 393 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
+覆盖 391 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
 
 ## App 层
 
@@ -482,7 +482,7 @@
 
 ## Platform 层
 
-### @api（应用可读面） · 17
+### @api（应用可读面） · 16
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -493,7 +493,6 @@
 | `Platform` | interface | src/Platform/Platform.php |
 | `Screen` | interface | src/Platform/Screen.php |
 | `SurfaceProvider` | interface | src/Platform/SurfaceProvider.php |
-| `TimerHost` | interface | src/Platform/TimerHost.php |
 | `Tray` | interface | src/Platform/Tray.php |
 | `WakeReason` | enum | src/Platform/WakeReason.php |
 | `Win32Platform` | class | src/Platform/Win32/Win32Platform.php |
@@ -504,7 +503,7 @@
 | `WindowMaterial` | class | src/Platform/WindowMaterial.php |
 | `WindowMaterialCapabilities` | class | src/Platform/WindowMaterialCapabilities.php |
 
-### @internal（框架内部） · 16
+### @internal（框架内部） · 15
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -521,7 +520,6 @@
 | `Win32SkiaSurface` | class | src/Platform/Win32/Win32SkiaSurface.php |
 | `Win32SurfaceProvider` | class | src/Platform/Win32/Win32SurfaceProvider.php |
 | `Win32SurfaceProvider::resolveBackend()` | method | src/Platform/Win32/Win32SurfaceProvider.php |
-| `Win32TimerHost` | class | src/Platform/Win32/Win32TimerHost.php |
 | `Win32WindowHost` | class | src/Platform/Win32/Win32WindowHost.php |
 | `WindowHost::destroy()` | method | src/Platform/WindowHost.php |
 

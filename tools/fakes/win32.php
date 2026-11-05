@@ -293,29 +293,6 @@ if (!function_exists('drift_win_ime_caret')) {
     }
 }
 
-if (!function_exists('drift_win_set_timer')) {
-    function drift_win_set_timer(int $hwnd, int $id, int $ms): bool
-    {
-        $GLOBALS['DRIFT_SMOKE_TIMERS'][] = ['start', $id, $ms];
-        $GLOBALS['DRIFT_SMOKE_LAST_TIMER_ID'] = $id;
-
-        return true;
-    }
-}
-
-if (!function_exists('drift_win_kill_timer')) {
-    function drift_win_kill_timer(int $hwnd, int $id): void
-    {
-        $GLOBALS['DRIFT_SMOKE_TIMERS'][] = ['stop', $id, 0];
-    }
-}
-
-/** @return list<array{0: string, 1: int, 2: int}> 定时器调用记录：['start'|'stop', id, ms] */
-function winTimerCalls(): array
-{
-    return $GLOBALS['DRIFT_SMOKE_TIMERS'] ?? [];
-}
-
 /** 等待调用记录（每轮 `waitEvents` 的毫秒数） */
 function winWaitCalls(): array
 {
@@ -395,21 +372,6 @@ if (!function_exists('drift_win_set_close_guard')) {
     function drift_win_set_close_guard(int $hwnd, bool $armed): void
     {
         $GLOBALS['DRIFT_SMOKE_CLOSE'][] = ['guard', $hwnd, $armed];
-    }
-}
-
-if (!function_exists('drift_win_live_window')) {
-    /**
-     * 假壳的"任一活窗口"= 那个假句柄。
-     *
-     * ★ 不模拟"活窗口表"：假壳里 `destroy()` 只记账、窗口不会真的消失，而本函数
-     *   唯一用途是给**等待定时器**找个能挂的窗口（`SetTimer` 需要 hwnd）。
-     *   真要验"关一个留一个"的行为，走 `apps/hello` 的双窗真机探针 —— 那才是
-     *   这条语义的验收位置（假壳里没有"活"这个概念）。
-     */
-    function drift_win_live_window(): int
-    {
-        return $GLOBALS['DRIFT_SMOKE_WIN_HANDLE'] ?? 1;
     }
 }
 
@@ -524,11 +486,10 @@ if (!function_exists('drift_win_save_file')) {
     }
 }
 
-/** 清空泵剧本 / 定时器 / 光标 / IME 记录（每个用例前必调） */
+/** 清空泵剧本 / 等待 / 光标 / IME 记录（每个用例前必调） */
 function winLoopReset(): void
 {
     $GLOBALS['DRIFT_SMOKE_PUMP'] = [];
-    $GLOBALS['DRIFT_SMOKE_TIMERS'] = [];
     $GLOBALS['DRIFT_SMOKE_WAITS'] = [];
     $GLOBALS['DRIFT_SMOKE_CURSOR'] = [];
     $GLOBALS['DRIFT_SMOKE_IME'] = [];
@@ -537,7 +498,7 @@ function winLoopReset(): void
     $GLOBALS['DRIFT_SMOKE_DIALOG'] = [];
     $GLOBALS['DRIFT_SMOKE_PRESENT'] = [];
     $GLOBALS['DRIFT_SMOKE_CREATE'] = [];
-    unset($GLOBALS['DRIFT_SMOKE_LAST_TIMER_ID'], $GLOBALS['DRIFT_SMOKE_WIN_HANDLE'], $GLOBALS['DRIFT_SMOKE_CLIENT']);
+    unset($GLOBALS['DRIFT_SMOKE_WIN_HANDLE'], $GLOBALS['DRIFT_SMOKE_CLIENT']);
     unset($GLOBALS['DRIFT_SMOKE_WIN_SEQ'], $GLOBALS['DRIFT_SMOKE_DEAD']);
 
     // ★ 时钟回到 0：每个用例都从同一个原点开始，`after(400)` 的到点时刻才可断言。

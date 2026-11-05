@@ -128,9 +128,9 @@ const wchar_t *const kWindowClass = L"DriftWindowClass";
 /**
  * "把同步消息转成队列消息"用的自定义消息。
  *
- * ★ 为什么必须有它：`WM_SIZE` / `WM_DPICHANGED` / `WM_TIMER` 里，前两个是
+ * ★ 为什么必须有它：`WM_SIZE` / `WM_DPICHANGED` 是
  *   `DefWindowProc` **同步**调进 WndProc 的，`PeekMessage` 根本取不到；
- *   而事件数组要带 `w`/`h`/`id` 这些**载荷**，光靠"WndProc 往队列里塞"还不够 ——
+ *   而事件数组要带 `w`/`h` 这些**载荷**，光靠"WndProc 往队列里塞"还不够 ——
  *   队列元素是自定义结构体，所以 WndProc 直接 push，再用这条消息把泵**叫醒**。
  */
 const UINT kMsgWake = WM_APP + 1;
@@ -164,7 +164,6 @@ const UINT kMsgUiaSetValue = WM_APP + 3;
 enum EventKind {
     kEvResize = 1,
     kEvDpi,
-    kEvTimer,
     kEvPointer,
     kEvKey,
     kEvChar,
@@ -1614,7 +1613,7 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             event.c = 0;
             event.d = 0;
             g_queue.push_back(event);
-            // 叫醒阻塞在 `GetMessageW` 的泵（同 WM_SIZE / WM_TIMER 的做法）
+            // 叫醒阻塞在 `GetMessageW` 的泵（同 WM_SIZE 的做法）
             wakePump(hwnd);
             return 0;
         }
@@ -1914,14 +1913,6 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             PendingEvent event = {};
             event.kind = kEvDpi;
             event.a = (int)win.dpi;
-            enqueue(hwnd, event);
-            return 0;
-        }
-
-        case WM_TIMER: {
-            PendingEvent event = {};
-            event.kind = kEvTimer;
-            event.a = (int)wp;   // id 是 PHP 给的，这里只是原样回传
             enqueue(hwnd, event);
             return 0;
         }
@@ -2237,11 +2228,6 @@ Array toArray(const PendingEvent &event) {
         case kEvDpi:
             out.set("type", "dpi");
             out.set("dpi", (Int)event.a);
-            break;
-
-        case kEvTimer:
-            out.set("type", "timer");
-            out.set("id", (Int)event.a);
             break;
 
         case kEvPointer:
@@ -2653,23 +2639,6 @@ Bool php_drift_win_is_alive(Int hwnd) {
     }
 
     return IsWindow(target) ? true : false;
-}
-
-/**
- * 进程里**任意一个还活着的**窗口句柄（没有 ⇒ 0）。
- *
- * ★ 谁需要它：`Win32TimerHost` —— `SetTimer` 必须挂在一个活窗口上，而"等消息的
- *   闹钟"是**进程级**资源（一次 `GetMessageW` 服务所有窗口）。改动前它挂在
- *   "最后建的窗"上：主窗关掉、第二窗还在时就成了死句柄 ⇒ `start()` 失败
- *   ⇒ `waitEvents()` 退化成无限阻塞 ⇒ 剩下的那个窗口**动画停摆**（不报错）。
- * ★ 返回值只用来**起定时器**，不要拿它当"主窗"做别的事 —— 集合顺序是任意的。
- */
-Int php_drift_win_live_window() {
-    if (g_liveWindows.empty()) {
-        return (Int)0;
-    }
-
-    return (Int)(INT_PTR)(*g_liveWindows.begin());
 }
 
 /**
@@ -3401,24 +3370,6 @@ Float php_drift_win_now_ms() {
 /** 当前线程 id —— 供 PHP 侧做 UI 线程身份/断言（§17.4.2.1）。 */
 Int php_drift_thread_id() {
     return (Int)GetCurrentThreadId();
-}
-
-// ══════════════════════════════════════════════════════════════ 定时器 ══
-
-Bool php_drift_win_set_timer(Int hwnd, Int id, Int ms) {
-    HWND target = (HWND)(INT_PTR)hwnd;
-    if (target == NULL || (int)ms <= 0) {
-        return (Bool)false;
-    }
-    UINT_PTR result = SetTimer(target, (UINT_PTR)(int)id, (UINT)(int)ms, NULL);
-    return (Bool)(result != 0);
-}
-
-void php_drift_win_kill_timer(Int hwnd, Int id) {
-    HWND target = (HWND)(INT_PTR)hwnd;
-    if (target != NULL) {
-        KillTimer(target, (UINT_PTR)(int)id);
-    }
 }
 
 // ══════════════════════════════════════════════ IO 线程池的 ABI 包装（A2 / N5） ══

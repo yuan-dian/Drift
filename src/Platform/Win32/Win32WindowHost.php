@@ -20,7 +20,6 @@ use function drift_win_create;
 use function drift_win_destroy;
 use function drift_win_is_alive;
 use function drift_win_is_maximized;
-use function drift_win_live_window;
 use function drift_win_material_caps;
 use function drift_win_maximize_toggle;
 use function drift_win_minimize;
@@ -69,18 +68,6 @@ final class Win32WindowHost implements WindowHost
     public function handle(): ?int
     {
         return $this->handle;
-    }
-
-    /**
-     * 任意一个**还活着**的句柄；一个都没有 ⇒ 最近建过的那个（可能已死）。
-     * 不能用 `handle()` 取它：那是"最后建的窗"，主窗关、次窗在时就是死句柄，
-     * 挂 `SetTimer` 会失败、`waitEvents()` 退化成无限阻塞，余下窗口动画停摆（不报错）。
-     */
-    public function liveHandle(): ?int
-    {
-        $live = drift_win_live_window();
-
-        return $live > 0 ? $live : $this->handle;
     }
 
     public function show(int $windowHandle): void

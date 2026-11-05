@@ -856,7 +856,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     /**
      * 排一个一次性延时回调。
      *
-     * 时间基准是上一帧的时间戳，不是环境时钟；在 `frame()` 之外调用会早一个帧间隔（≤15ms）。
+     * 时间基准是上一帧的时间戳，不是环境时钟；在 `frame()` 之外调用会早一个帧间隔（≤一帧）。
      * 回调在 `frame()` 内、settle 之前跑 ⇒ 里面的 `setState()` 同帧生效。
      * 有定时器在等 ⇒ `wantsFrame()` 为真，否则阻塞的消息泵永远不会被叫醒。
      *
@@ -892,7 +892,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     /**
      * 欠的账是"立刻跑"那一档吗（像素脏 / 焦点环没画 / 面板落后）。
      *
-     * 为真 ⇒ 等待层给 `0`；为假但 {@see self::wantsFrame()} 为真 ⇒ 给 15ms。
+     * 为真 ⇒ 等待层给 `0`；为假但 {@see self::wantsFrame()} 为真 ⇒ 给帧间隔。
      *
      * @api `FrameClock::nextWaitMs()` 每轮问一次
      */

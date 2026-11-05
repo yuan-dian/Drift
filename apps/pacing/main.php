@@ -56,6 +56,55 @@ namespace {
             }
         }
 
+        // ── 短等待：`after(N)` 的 deadline 路径最终就落在这里 ──
+        //   N 小到 1ms 也不该被量化。旧实现 `SetTimer` 的到期精度 = 系统 tick
+        //   （~15.6ms），请求 1ms 也睡 15.6ms —— 这一节就是那条断言的反证。
+        $shorts = [1.0, 2.0, 4.0, 8.0, 15.0, 50.0];
+        $shortPass = true;
+        $shortLines = [];
+
+        foreach ($shorts as $req) {
+            $errs = [];
+
+            for ($i = 0; $i < 30; $i++) {
+                $t0 = \hrtime(true) / 1e6;
+                $why = $platform->waitEvents($req);
+                $t1 = \hrtime(true) / 1e6;
+
+                if ($why !== \Drift\Platform\WakeReason::Timeout) {
+                    $platform->pumpEvents();      // 被消息打断：不是超时，不计
+                    continue;
+                }
+
+                $errs[] = $t1 - $t0 - $req;
+            }
+
+            $n = \count($errs);
+            for ($i = 1; $i < $n; $i++) {
+                $v = $errs[$i];
+                $j = $i - 1;
+                while ($j >= 0 && $errs[$j] > $v) {
+                    $errs[$j + 1] = $errs[$j];
+                    $j--;
+                }
+                $errs[$j + 1] = $v;
+            }
+
+            $med = $n > 0 ? $errs[(int) \floor($n / 2)] : 0.0;
+            $maxErr = $n > 0 ? $errs[$n - 1] : 0.0;
+
+            // 阈值 4ms：高精度定时器实测 <2ms；若有人把等待退回系统 tick，
+            //   1ms 会跑到 ~15.6ms（err≈14.6）⇒ 立刻红。
+            if ($maxErr > 4.0 || $n < 20) {
+                $shortPass = false;
+            }
+
+            $shortLines[] = 'wait=' . \round($req, 1)
+                . ' n=' . $n
+                . ' err_med=' . \round($med, 3)
+                . ' err_max=' . \round($maxErr, 3);
+        }
+
         $platform->window()->destroy($handle);
 
         // 插入排序（不依赖标准库排序在 AOT 下的形态）
@@ -104,7 +153,9 @@ namespace {
             . ' p99=' . \round($p99, 3)
             . ' max=' . \round($max, 3)
             . ' over25=' . $over25
-            . ' ' . ($pass ? 'PASS' : 'FAIL') . "\n";
+            . ' ' . ($pass ? 'PASS' : 'FAIL') . "\n"
+            . \implode("\n", $shortLines)
+            . "\nshort " . ($shortPass ? 'PASS' : 'FAIL') . "\n";
 
         \file_put_contents('build/pacing-out.txt', $report);
     }

@@ -6,7 +6,6 @@ namespace Drift\Dev\Tests\Feature\App;
 use Drift\App\FrameClock;
 use Drift\Dev\Smoke\App\FadeApplication;
 use Drift\Dev\Smoke\App\FadeFixtureState;
-use Drift\Dev\Smoke\Frame\FakeTimers;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Geometry\BoxConstraints;
@@ -38,11 +37,11 @@ use Drift\Widget\StatefulElement;
  * | 目标变了那一帧 `wantsFrame()` **为真** | 不叫醒时钟 ⇒ 动画停在起点（不报错） |
  * | 首帧后连续几帧值真的动了 | `requestFrame()` 写成了"多跑一帧就收工" |
  * | 目标没变 ⇒ `wantsFrame()` 为假 | 每帧都无条件 `requestFrame()` ⇒ 空闲 60fps 空转 |
- * | 经 `FrameClock` 后**定时器真的上膛 / 收口真的落闸** | `pace()` 是幂等的 ⇒ 判错一帧就再也上不了膛 |
+ * | 经 `FrameClock` 后**还会不会醒** | 答错一帧就再也醒不过来 |
  *
  * ★ 第三条是**反例方向**：只测前两条，把 `requestFrame()` 写成无条件调用也全绿。
- * ★ 第四条是**整条真机链路**（`FakeTimers` 把"上膛"变成可观测事实）：前三条都在问
- *   `Application`，中间还隔着 `FrameClock::pace()` 那道闸。
+ * ★ 第四条是**整条链路**（`nextWaitMs()` 把"还会不会醒"变成可观测事实）：前三条都在问
+ *   `Application`，中间还隔着等待层那道闸。
  */
 final class ImplicitAnimationClockTest extends SmokeTestCase
 {
@@ -153,12 +152,10 @@ final class ImplicitAnimationClockTest extends SmokeTestCase
      *
      * ```text
      * 点击那一帧：tickAnimations（看不到刚起飞的动画）→ settle（toward）
-     *            → ⓹b 计数差 ⇒ animating=true ⇒ nextWaitMs() 给出 15ms ⇒ 还会醒
+     *            → ⓹b 计数差 ⇒ animating=true ⇒ nextWaitMs() 给出帧间隔 ⇒ 还会醒
      * ```
      *
-     * ★★ **N2 之后的判据换了量具，但没有放松**：`pace()` / `isArmed()` 已删
-     *   （用户裁决：能一套就一套），"还会不会醒"现在等于
-     *   `FrameClock::nextWaitMs()` 落在 `[0, FRAME_MS]`；`-1` = 再也不醒（= 旧 `isArmed() === false`）。
+     * ★★ 判据是 `FrameClock::nextWaitMs()` 落在 `[0, FRAME_MS]`；`-1` = 再也不醒。
      *   这里驱动帧的方式与 `EventLoop` **逐字同构**：问时长 → 推进时钟 → `advance()`。
      */
     public function testFrameClockKeepsWakingUntilSettle(): void

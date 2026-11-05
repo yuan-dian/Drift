@@ -72,7 +72,7 @@ final class FrameWaitTest extends SmokeTestCase
         $clock = new FrameClock();
 
         check(
-            '等待层 · 动画在跑 ⇒ 帧节奏 15ms（不是 `0`：本仓无 vsync，`0` 就是 300fps 空转）',
+            '等待层 · 动画在跑 ⇒ 帧节奏 16.667ms（不是 `0`：本仓无 vsync，`0` 就是 300fps 空转）',
             $clock->nextWaitMs($app, 0.0) === (float) FrameClock::FRAME_MS,
             \sprintf('wait=%.1f', $clock->nextWaitMs($app, 0.0)),
         );
@@ -103,6 +103,19 @@ final class FrameWaitTest extends SmokeTestCase
             '等待层 · `after(400)` ⇒ 等 400ms（不是帧节奏；旧心跳要敲 26 次）',
             $clock->nextWaitMs($app, 0.0) === 400.0,
             \sprintf('wait=%.1f', $clock->nextWaitMs($app, 0.0)),
+        );
+
+        // ★ 短定时器**不与帧间隔对齐**：7ms 就是 7ms。挡的是"把等待取整到整毫秒 /
+        //   一帧"那类退化 —— 等待层是高精度定时器（真机 1ms 请求实测 ≈1.9ms），
+        //   没有任何量化理由；取整会让 `after(1)` 变成 16ms 而没人报错。
+        $short = self::mount(new EchoApplication());
+        $short->after(7, static function (): void {
+        });
+        $shortClock = new FrameClock();
+        check(
+            '等待层 · `after(7)` ⇒ 等 7ms（短定时器不与帧间隔对齐）',
+            $shortClock->nextWaitMs($short, 0.0) === 7.0,
+            \sprintf('wait=%.3f', $shortClock->nextWaitMs($short, 0.0)),
         );
 
         check(
