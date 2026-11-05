@@ -95,8 +95,21 @@ def launch(exe, args=(), cwd=None, env_extra=None):
 
     ini_dir = tempfile.mkdtemp(prefix="drift-run-")
     ini = os.path.join(ini_dir, "php.ini")
-    with open(ini, "w", encoding="ascii") as fh:
-        fh.write("opcache.enable=0\n")
+
+    # ★ 以**构建产物自己的运行时 ini** 为底，只覆盖 `opcache.enable`。
+    #   以前这里只写 `opcache.enable=0` 一行 ⇒ AOT 产物缺 `extension=mbstring`
+    #   ⇒ 启动即 Fatal，而且**退出码是 0**（`Errors::abort()` 的语义），
+    #   表现为"窗口根本不出 / 客户区 0x0"，跟产品坏了一模一样。
+    #   关 opcache 是必须的（ASLR 下它拒绝启动），但**不是为了裁掉扩展**。
+    base = os.path.join(ROOT, "php.ini")
+    lines = []
+    if os.path.isfile(base):
+        with open(base, encoding="utf-8") as fh:
+            lines = [ln.rstrip() for ln in fh if ln.strip()]
+    lines.append("opcache.enable=0")
+
+    with open(ini, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
 
     env = dict(os.environ)
     env["PHPRC"] = ini

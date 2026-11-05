@@ -48,12 +48,9 @@ def main():
 
         # ── 导航到「按钮 Button」（第 3 项：首项中心 90、pitch 36）──
         app.click(25, 90 + 2 * 36, settle=0.8)
-        # ★★ 点击之后的**第一条**指针输入会被吃掉（真机实测，2026-11-04）。
-        #   与本棒的改动无关：`probe-motion.py` 一直靠"点完先移到空白、再移进
-        #   按钮"的两步节奏绕开它，所以从没暴露 —— 它需要**两条** move 才恢复。
-        #   这里显式浪费一条，让后面的读数落在稳态上；那条异常单独记在 `DEBT` §41。
-        app.move(w - 40, h - 40, settle=0.4)
-        app.move(w - 41, h - 41, settle=0.4)
+        # 页面切换的动画收口。★ §42 之前这里要「浪费一条 move」绕开点击后
+        #   hover 不恢复；帧欠账补齐后第一条输入即生效，只剩一次等待。
+        app.move(w - 40, h - 40, settle=0.8)
         w, h, before = app.grab()
 
         blocks = color_blocks(before, w, h, PRIMARY, 250)

@@ -11,7 +11,7 @@
 
 | 层 | @api | @internal |
 |---|---|---|
-| App | 84 | 52 |
+| App | 84 | 53 |
 | Async | 24 | 4 |
 | Commands | 7 | 0 |
 | Core | 2 | 36 |
@@ -27,7 +27,7 @@
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
 | Widget | 184 | 216 |
-| **合计** | **497** | **397** |
+| **合计** | **497** | **398** |
 
 覆盖 393 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
 
@@ -122,7 +122,7 @@
 | `WindowStateStore::restore()` | method | src/App/WindowStateStore.php |
 | `WindowStateStore::persist()` | method | src/App/WindowStateStore.php |
 
-### @internal（框架内部） · 52
+### @internal（框架内部） · 53
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -142,6 +142,7 @@
 | `Application::animationVisits()` | method | src/App/Application.php |
 | `Application::activeAnimationCount()` | method | src/App/Application.php |
 | `Application::captureNode()` | method | src/App/Application.php |
+| `Application::dispatchInputInner()` | method | src/App/Application.php |
 | `Application::register()` | method | src/App/Application.php |
 | `Application::beginDrag()` | method | src/App/Application.php |
 | `Application::updateDrag()` | method | src/App/Application.php |

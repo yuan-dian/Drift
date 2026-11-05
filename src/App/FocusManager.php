@@ -353,6 +353,11 @@ final class FocusManager
             return;
         }
 
+        // ★ 盒每次重建都换新（`Element::syncBox()`），新盒经 `inheritRuntimeState()`
+        //   继承了旧盒的 `hovered=true`；而上一轮"移开"清的是旧盒 ⇒ 直接置位会被
+        //   `setHovered()` 的同值早退吞掉，画面停在暗帧，直到再切一次状态才恢复。
+        //   先归零，让本管理器的意图成为唯一权威（同值早退会让正常路径零成本）。
+        $next?->setHovered(false);
         $this->hoverBox?->setHovered(false);
         $this->hoverBox = $next;
         $this->hoverBox?->setHovered(true);
@@ -386,6 +391,8 @@ final class FocusManager
             return;
         }
 
+        // 同 `applyHoverState()`：重建换盒后标志与视觉会分叉，先归零再按意图置位。
+        $next?->setPressed(false);
         $this->pressBox?->setPressed(false);
         $this->pressBox = $next;
         $this->pressBox?->setPressed(true);

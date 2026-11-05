@@ -1434,10 +1434,31 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      *   ② 失活收口（必须**先于**"未挂载"守卫，见下）
      *   ③ 主题分发（`ThemeChangedEvent` ⇒ 钩子 + 新 context —— 帧循环职责，
      *      不是输入路由）。
+     * ④ 帧欠账兜底：帧内标脏不会自己上膛，派发后若确实脏了却没有下一帧，补一笔
+     *      （见 `dispatchInput()` 的 `finally`）。
      *
      * @api
      */
     public function dispatchInput(InputEvent $event, ?float $timestampMs = null): ?CursorShape
+    {
+        $epochBefore = $this->pipeline->paintEpoch();
+
+        try {
+            return $this->dispatchInputInner($event, $timestampMs);
+        } finally {
+            // ★ 输入引起的像素变更必须有一帧来画（`DEBT` §42）。标脏落在帧内时
+            //   `bumpPaintEpoch()` 不上膛（它假定本帧 paint 会消费），可输入完全可能
+            //   在 paint 之后到达 ⇒ 这笔脏永远画不出来，直到下一条输入把帧叫醒 ——
+            //   真机上就是"点击后第一条指针输入被吃掉、第二条才生效"。
+            //   只在"真标脏 + 欠账丢了"时补一刀：正常路径不动，也不引入空转。
+            if ($this->pipeline->paintEpoch() !== $epochBefore && !$this->pipeline->wantsFrame()) {
+                $this->pipeline->scheduleFrame();
+            }
+        }
+    }
+
+    /** @internal 真正的派发；帧欠账由 `dispatchInput()` 统一兜底。 */
+    private function dispatchInputInner(InputEvent $event, ?float $timestampMs = null): ?CursorShape
     {
         // ★★ 输入入口也切管线（2026-11-02，技术债 D3①）：回调里的 `setState()`
         //   是**帧外**写 —— 不切的话它会记到"上一次跑帧的那个应用"的账上，于是
