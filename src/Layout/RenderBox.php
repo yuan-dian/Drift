@@ -722,23 +722,46 @@ abstract class RenderBox extends RenderObject
 
     /**
      * 焦点轮廓：外扩 1px 的 2px 描边，圆角跟随盒（`+1` 才是同心外扩）。
+     * 画法只此一份；形状交给 `focusShape()` / `focusRadius()` 回答。
      * 由应用级叠加调用 —— 环必须压在所有内容之上，不能下沉进 `paint()`。
      */
-    public function paintFocusOutline(Canvas $canvas, Paint $paint): void
+    final public function paintFocusOutline(Canvas $canvas, Paint $paint): void
     {
-        $size = $this->size();
-        if ($size === null) {
+        $shape = $this->focusShape();
+        if ($shape === null) {
             return;
         }
 
         [$ox, $oy] = self::absoluteOrigin($this);
-        $r = $this->outlineRadius();
+        $r = $this->focusRadius();
 
         $canvas->drawRect(
-            new Rect($ox - 1.0, $oy - 1.0, $size->width + 2.0, $size->height + 2.0),
+            new Rect(
+                $ox + $shape->left - 1.0,
+                $oy + $shape->top - 1.0,
+                $shape->width + 2.0,
+                $shape->height + 2.0,
+            ),
             $paint,
             $r > 0.0 ? $r + 1.0 : 0.0,
         );
+    }
+
+    /** 焦点轮廓的形状（盒局部坐标）。默认整盒；自绘控件覆写成自己的本体。 */
+    protected function focusShape(): ?Rect
+    {
+        $size = $this->size();
+        if ($size === null) {
+            return null;
+        }
+
+        return new Rect(0.0, 0.0, $size->width, $size->height);
+    }
+
+    /** 焦点轮廓的圆角。默认跟 `outlineRadius()`；自绘控件覆写成本体圆角。 */
+    protected function focusRadius(): float
+    {
+        return $this->outlineRadius();
     }
 
     /**

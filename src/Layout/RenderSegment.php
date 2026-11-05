@@ -132,45 +132,62 @@ final class RenderSegment extends RenderProxyBox
     #[\Override]
     protected function paintOwnChrome(Canvas $canvas): void
     {
-        $size = $this->size;
-        if (!$this->selected || $size === null) {
+        $pill = $this->pill($this->size);
+        if (!$this->selected || $pill === null) {
             return;
         }
 
-        $inset = $this->style->inset;
-        $w = $size->width - 2.0 * $inset;
-        $h = $size->height - 2.0 * $inset;
-        if ($w <= 0.0 || $h <= 0.0) {
-            return;
-        }
-
-        $canvas->drawRect(
-            new Rect($inset, $inset, $w, $h),
-            Paint::fill($this->style->fillSelected),
-            $w < $h ? $w / 2.0 : $h / 2.0,
-        );
+        $canvas->drawRect($pill, Paint::fill($this->style->fillSelected), $this->pillRadius($pill));
     }
 
     /** 状态层 = 药丸本身（四边内缩 `inset`），不铺满整个段盒。 */
     #[\Override]
     protected function paintInteraction(Canvas $canvas, ?Size $size): void
     {
-        if ($size === null) {
+        $pill = $this->pill($size);
+        if ($pill === null) {
             return;
+        }
+
+        $this->paintStateLayer($canvas, $pill, $this->pillRadius($pill));
+    }
+
+    /** 焦点环沿药丸走，不套段盒。 */
+    #[\Override]
+    protected function focusShape(): ?Rect
+    {
+        return $this->pill($this->size());
+    }
+
+    #[\Override]
+    protected function focusRadius(): float
+    {
+        $pill = $this->pill($this->size());
+
+        return $pill === null ? 0.0 : $this->pillRadius($pill);
+    }
+
+    /** 药丸 = 段盒四边内缩 `inset`；退化尺寸返回 null。 */
+    private function pill(?Size $size): ?Rect
+    {
+        if ($size === null) {
+            return null;
         }
 
         $inset = $this->style->inset;
         $w = $size->width - 2.0 * $inset;
         $h = $size->height - 2.0 * $inset;
         if ($w <= 0.0 || $h <= 0.0) {
-            return;
+            return null;
         }
 
-        $this->paintStateLayer(
-            $canvas,
-            new Rect($inset, $inset, $w, $h),
-            $w < $h ? $w / 2.0 : $h / 2.0,
-        );
+        return new Rect($inset, $inset, $w, $h);
+    }
+
+    /** 圆角夹到半短边：软光栅会夹、Skia 桥不夹，不自己夹则双端不一致。 */
+    private function pillRadius(Rect $pill): float
+    {
+        return $pill->width < $pill->height ? $pill->width / 2.0 : $pill->height / 2.0;
     }
 
     protected function paintContent(Canvas $canvas): void

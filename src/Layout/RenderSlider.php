@@ -199,6 +199,13 @@ final class RenderSlider extends RenderBox
         }
     }
 
+    /** 焦点环绕整条滑杆（键盘焦点在控件上），圆角跟轨道走。 */
+    #[\Override]
+    protected function focusRadius(): float
+    {
+        return $this->style->trackHeight / 2.0;
+    }
+
     /** 状态层 = 拇指外面一圈光晕（`grow` 取半径的 0.6：比盒高出一圈，但不吞掉邻居） */
     #[\Override]
     protected function paintInteraction(Canvas $canvas, ?Size $size): void

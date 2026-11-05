@@ -111,6 +111,29 @@ final class RenderToggle extends RenderProxyBox
         return max($this->style->boxSize, $this->child?->intrinsicHeight($labelWidth) ?? 0.0);
     }
 
+    /** 焦点环只罩本体，与状态层光晕同一裁决：不框标签。 */
+    #[\Override]
+    protected function focusShape(): ?Rect
+    {
+        $size = $this->size();
+        if ($size === null) {
+            return null;
+        }
+
+        $h = $this->style->boxSize;
+
+        return new Rect(0.0, max(0.0, ($size->height - $h) / 2.0), $this->controlWidth(), $h);
+    }
+
+    /** 方框是 0.18 倍圆角；开关与圆点是半高全圆。 */
+    #[\Override]
+    protected function focusRadius(): float
+    {
+        return $this->kind === self::KIND_CHECKBOX
+            ? $this->style->boxSize * 0.18
+            : $this->style->boxSize / 2.0;
+    }
+
     /**
      * 光晕只罩**控件本体**，标签区不铺色 —— 整行铺色会像一条列表高亮，
      *   而这里点标签和点方框是同一件事，视觉上不该有两种"选中感"。

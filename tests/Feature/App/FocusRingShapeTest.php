@@ -12,9 +12,9 @@ use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
 use Drift\Rendering\Color;
 use Drift\Widget\Button;
+use Drift\Widget\ButtonVariant;
 use Drift\Widget\Column;
 use Drift\Widget\TextField;
-use Drift\Widget\Toggle;
 use Drift\Widget\Widget;
 
 /**
@@ -23,7 +23,9 @@ use Drift\Widget\Widget;
  * ★ 三组分头钉住三个会静默退化的地方：
  *   - 输入域：`BoxStyle` 自持在 `RenderTextField`，`mods` 那份是 0 —— 不覆写
  *     `outlineRadius()` 就退回方环（§49.1 探针量过的坑）；
- *   - 方角控件：直角不该被「外扩 +1」凭空削成 1px 倒角；
+ *   - 方角控件：用 **Flat 变体**（`BoxStyle::none()` ⇒ radius 真的是 0；§51 起
+ *     Toggle 自绘本体形状，且 `->radius(0)` 会被 `resolveBoxStyle()` 当成没声明
+ *     回落到主题 6.0，两者都不能当「碰巧方角」的代表）；直角不该被外扩削出倒角；
  *   - radius 声明：环得跟着控件的 radius 走，不是硬编码一档。
  * ★ 只写「直角顶点不变」会把「整个角都不画」判绿 ⇒ 每组都配一条正向吃色证据。
  */
@@ -112,10 +114,10 @@ final class FocusRingShapeTest extends SmokeTestCase
 
     public function testSquareControlKeepsSquareRing(): void
     {
-        [, $probe] = $this->open([Toggle::make('switch')]);
+        [, $probe] = $this->open([Button::make('a')->variant(ButtonVariant::Flat)]);
 
         check(
-            '方角控件 · 直角顶点 (19,19) 吃色（外扩不该凭空削出倒角）',
+            '方角控件 · Flat 变体（radius 真的是 0）直角顶点 (19,19) 吃色（外扩不该凭空削出倒角）',
             self::isAccent($probe, 19, 19),
             'corner=' . (self::isAccent($probe, 19, 19) ? 'accent' : 'background')
         );
