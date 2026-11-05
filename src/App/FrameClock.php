@@ -15,10 +15,12 @@ use Drift\Geometry\BoxConstraints;
 final class FrameClock
 {
     /**
-     * 帧间隔（毫秒）。
-     * ★ **不要改成 16** —— 定时器量化到 ~15.6ms 的系统 tick，请求 16 会变成 31ms/帧（32fps）。
+     * 帧间隔（毫秒）。60fps = 16.667ms。
+     * ★ 以前写死 15，是因为 `SetTimer` 的超时被系统 tick（~15.6ms）量化——
+     *   请求 16 会落到 31ms（32fps）。等待层换成高精度可等待定时器后不再有这一档，
+     *   可以按真实帧率要时间。
      */
-    public const FRAME_MS = 15;
+    public const FRAME_MS = 1000.0 / 60.0;
 
     /** 明显卡顿阈值：约 4 帧。低于它的间隔可能只是漏了一个 tick（量化噪声）。 */
     public const STALL_MS = 60.0;
@@ -38,6 +40,13 @@ final class FrameClock
      * 只服务一件事：判断**这一轮的间隔值不值得看**（见 `advance()`）。
      */
     private ?float $lastWaitMs = null;
+
+    /**
+     * 下一帧的目标时刻（单调毫秒；`null` = 没在按节奏跑）。
+     * ★ 按**绝对时刻**排程，不是每帧从"现在"再睡一帧：等待有 ~0.5–1ms 唤醒
+     *   延迟，相对排程会把它逐帧叠成固定偏差（实测 16.67ms 请求跑出 18ms）。
+     */
+    private ?float $nextFrameAt = null;
 
     /** 卡顿次数与最差间隔 —— devtools / 自检的观测面 */
     private int $stalls = 0;
@@ -68,6 +77,14 @@ final class FrameClock
 
         $this->lastTs = $timestampMs;
 
+        // 到期才推进目标；落后超过一帧就重新对齐（不回补一串帧）
+        if ($this->nextFrameAt !== null && $timestampMs >= $this->nextFrameAt) {
+            $this->nextFrameAt += self::FRAME_MS;
+            if ($timestampMs - $this->nextFrameAt >= self::FRAME_MS) {
+                $this->nextFrameAt = $timestampMs + self::FRAME_MS;
+            }
+        }
+
         // 帧耗时在这里量：应用只收一个数字（不自己读钟）。一对 `hrtime` 约 60ns，可忽略。
         $startedNs = \hrtime(true);
         $app->frame($timestampMs, $constraints);
@@ -88,14 +105,21 @@ final class FrameClock
 
         // 真的没事 —— 既没有欠账、也没有定时器在等
         if (!$pending && $due === null) {
+            $this->nextFrameAt = null;
+
             return $this->lastWaitMs = -1.0;
         }
 
-        // ① 欠账：**一次性**的给 `0`（马上去跑），**按节奏**的给帧间隔。
+        // ① 欠账：**一次性**的给 `0`（马上去跑），**按节奏**的等到下一帧目标时刻。
         //    分界不是"有没有活"，而是"这笔活是不是只欠一次"。
         $wait = \PHP_FLOAT_MAX;
         if ($pending) {
-            $wait = $app->needsFrameImmediately() ? 0.0 : (float) self::FRAME_MS;
+            if ($app->needsFrameImmediately()) {
+                $wait = 0.0;
+            } else {
+                $this->nextFrameAt ??= $nowMs + self::FRAME_MS;
+                $wait = \max(0.0, $this->nextFrameAt - $nowMs);
+            }
         }
 
         // ② 定时器：到点才醒（可能比帧节奏近得多，也可能远得多）。
@@ -108,6 +132,11 @@ final class FrameClock
             if ($until < $wait) {
                 $wait = $until;
             }
+        }
+
+        // 浮点归一：整帧的等待值精确等于常量（`目标 - 现在` 会引入 1 ulp 误差）
+        if ($wait > 0.0 && \abs($wait - self::FRAME_MS) < 1e-9) {
+            $wait = self::FRAME_MS;
         }
 
         return $this->lastWaitMs = $wait;

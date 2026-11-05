@@ -302,6 +302,12 @@ function drift_win_ime_caret(int $hwnd, float $x, float $y, float $h): void {}
 function drift_win_pump(): array {}
 
 /**
+ * 等一条事件，最多 `$timeout_ms`（**浮点毫秒**，高精度定时器不量化）；`< 0` = 无限等。
+ * 到点返回 `['type' => 'timeout']`；队列/IO 唤醒仍优先于等待。
+ */
+function drift_win_wait(float $timeout_ms): array {}
+
+/**
  * **单调**毫秒时钟（`QueryPerformanceCounter`）。只做减法用，绝对原点无意义（§5.2 裁决 2）。
  *
  * ★★ 2026-10-30 从 `GetTickCount64` 换成 QPC：前者的粒度是**系统时钟中断**

@@ -107,13 +107,20 @@ if (!function_exists('drift_win_pump')) {
             return ['type' => 'quit'];
         }
 
-        $event = \array_shift($script);
+        return \array_shift($script);
+    }
+}
 
-        if (($event['type'] ?? '') === 'timer' && ($event['id'] ?? null) === 'armed') {
-            $event['id'] = $GLOBALS['DRIFT_SMOKE_LAST_TIMER_ID'] ?? 0;
-        }
+if (!function_exists('drift_win_wait')) {
+    /**
+     * 带超时地等一条事件：剧本同 `drift_win_pump`，空了回 `quit`（防挂死）。
+     * 超时分支由剧本里显式的 `['type' => 'timeout']` 验。
+     */
+    function drift_win_wait(float $timeoutMs): array
+    {
+        $GLOBALS['DRIFT_SMOKE_WAITS'][] = $timeoutMs;
 
-        return $event;
+        return drift_win_pump();
     }
 }
 
@@ -307,6 +314,12 @@ if (!function_exists('drift_win_kill_timer')) {
 function winTimerCalls(): array
 {
     return $GLOBALS['DRIFT_SMOKE_TIMERS'] ?? [];
+}
+
+/** 等待调用记录（每轮 `waitEvents` 的毫秒数） */
+function winWaitCalls(): array
+{
+    return $GLOBALS['DRIFT_SMOKE_WAITS'] ?? [];
 }
 
 if (!function_exists('drift_win_now_ms')) {
@@ -516,6 +529,7 @@ function winLoopReset(): void
 {
     $GLOBALS['DRIFT_SMOKE_PUMP'] = [];
     $GLOBALS['DRIFT_SMOKE_TIMERS'] = [];
+    $GLOBALS['DRIFT_SMOKE_WAITS'] = [];
     $GLOBALS['DRIFT_SMOKE_CURSOR'] = [];
     $GLOBALS['DRIFT_SMOKE_IME'] = [];
     $GLOBALS['DRIFT_SMOKE_CLOSE'] = [];

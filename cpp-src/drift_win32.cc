@@ -3194,16 +3194,53 @@ Bool php_drift_win_system_dark() {
 
 // ══════════════════════════════════════════════════════════════ 消息泵 ══
 
+// 定义在本段之后；等待路径要用，先声明。
+Float php_drift_win_now_ms();
+
+/** 等待到点（`php_drift_win_wait` 的超时分支）。与 `timer` 分开：`timer` 是应用定时器，带 id。 */
+Array dsWaitTimeout() {
+    Array out;
+    out.set("type", "timeout");
+    return out;
+}
+
+/**
+ * 队列里有没有现成事件（不阻塞）。
+ * ★ **队列是真相，消息只是闹钟**（2026-10-30 P2）：有货立刻交付。
+ *   放在最前面还多一层好处：某个窗口的闹钟投失败不影响别的窗口取事件。
+ */
+static bool tryExtractQueued(PendingEvent &event) {
+    if (g_queue.empty()) {
+        return false;
+    }
+    event = g_queue.front();
+    g_queue.erase(g_queue.begin());
+    return true;
+}
+
+// 高精度等待定时器（懒建，进程级一个）。取不到就退普通精度 —— 仍是可等待句柄，
+// 只是回到 ~15.6ms 粒度，正确性不变。
+static HANDLE waitTimerHandle() {
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
+    static HANDLE timer = NULL;
+    static bool tried = false;
+    if (!tried) {
+        tried = true;
+        timer = CreateWaitableTimerExW(
+            NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+        if (timer == NULL) {
+            timer = CreateWaitableTimerW(NULL, FALSE, NULL);
+        }
+    }
+    return timer;
+}
+
 Array php_drift_win_pump() {
+    PendingEvent event;
     for (;;) {
-        // ★★ **队列是真相，消息只是闹钟**（2026-10-30 P2）：有货立刻交付。
-        //   改造前这里不查队列，靠"每条事件必配一条 `kMsgWake`"这个巧合保证泵会醒 ——
-        //   闹钟一旦合并（`wakePump`）或投失败（目标窗口已销毁），剩下的积压就再也
-        //   交不出去（现象：界面冻住，事件却明明还在 `g_queue` 里，且**不报错**）。
-        //   放在最前面还多一层好处：某个窗口的闹钟投失败不影响别的窗口取事件。
-        if (!g_queue.empty()) {
-            PendingEvent event = g_queue.front();
-            g_queue.erase(g_queue.begin());
+        if (tryExtractQueued(event)) {
             return toArray(event);
         }
 
@@ -3211,8 +3248,6 @@ Array php_drift_win_pump() {
         //   置上了（那一次有真事件排在前面、先返回了真事件）。只在取消息之后查的话，
         //   这条"被叫醒"就永远等不到下一条消息 —— 挂死在 `GetMessageW` 里。
         //   优先级：真事件 > 唤醒（真事件有载荷，唤醒只是个闹钟）。
-        //   ★ 标记的**读写都在 `win32/io_wake.cc`**（同一线程，不需 atomic）；
-        //     这里只消费。上面那条"队列非空先返回"保证了它不会跟真事件抢。
         if (drift::win32::consumeWake()) {
             return eventWake();
         }
@@ -3235,6 +3270,98 @@ Array php_drift_win_pump() {
         DispatchMessageW(&msg);   // WndProc 把关心的事件塞进 g_queue
         // 没有关心的事件 ⇒ 回到循环开头（先查队列，再继续等下一条）。
         // 壳不把"不关心的消息"回传给 PHP（否则泵会变成每帧几百次跨边界调用）。
+    }
+}
+
+/**
+ * 等一条事件，最多 `timeoutMs`；`< 0` = 无限等（与 `drift_win_pump` 同）。
+ *
+ * ★★ 为什么不用 `SetTimer` 兜超时：`SetTimer` 的到期精度是**系统定时器粒度**
+ *   （本机 15.6ms）。请求 16ms 会落到 31.2ms ⇒ 帧间隔只有 15.6/31.2 两档，
+ *   60fps 永远取不准。高精度可等待定时器 + `MsgWaitForMultipleObjectsEx`
+ *   把误差压到 1ms 内（探针实测 median 16.9ms / p99 18.0ms）。
+ * ★ 队列与唤醒标记仍**优先于**等待：有货立刻交付，不等定时器。
+ */
+Array php_drift_win_wait(Float timeoutMs) {
+    PendingEvent event;
+    if (tryExtractQueued(event)) {
+        return toArray(event);
+    }
+    if (drift::win32::consumeWake()) {
+        return eventWake();
+    }
+
+    if (timeoutMs < 0) {
+        return php_drift_win_pump();
+    }
+
+    double ms = (double) timeoutMs;
+    if (ms < 0.1) {
+        ms = 0.1;
+    }
+    const double deadline = (double) php_drift_win_now_ms() + ms;
+    HANDLE timer = waitTimerHandle();
+
+    for (;;) {
+        double remain = deadline - (double) php_drift_win_now_ms();
+        if (remain <= 0.0) {
+            return dsWaitTimeout();
+        }
+
+        DWORD result;
+        if (timer != NULL) {
+            LARGE_INTEGER due;
+            due.QuadPart = -(LONGLONG)(remain * 10000.0);   // 负值 = 相对，单位 100ns
+            SetWaitableTimer(timer, &due, 0, NULL, NULL, FALSE);
+            result = MsgWaitForMultipleObjectsEx(1, &timer, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        } else {
+            result = MsgWaitForMultipleObjectsEx(
+                0, NULL, (DWORD)(remain + 0.999), QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        }
+
+        // ★ 两套返回码：有句柄时 `+0` 是定时器、`+1` 是输入；
+        //   无句柄（退化为超时等待）时 `+0` 就是输入，超时是 `WAIT_TIMEOUT`。
+        Array extracted;
+        auto drainInput = [&]() -> bool {
+            MSG msg;
+            while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
+                if (msg.message == kMsgWake) {
+                    g_wakePosted = false;
+                }
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+                if (tryExtractQueued(event)) {
+                    extracted = toArray(event);
+                    return true;
+                }
+            }
+            if (drift::win32::consumeWake()) {
+                extracted = eventWake();
+                return true;
+            }
+            return false;
+        };
+
+        if (timer != NULL && result == WAIT_OBJECT_0 + 1) {
+            if (drainInput()) {
+                return extracted;
+            }
+            continue;
+        }
+        if (timer == NULL && result == WAIT_OBJECT_0) {
+            if (drainInput()) {
+                return extracted;
+            }
+            continue;
+        }
+        if ((timer != NULL && result == WAIT_OBJECT_0)
+            || (timer == NULL && result == WAIT_TIMEOUT)) {
+            return dsWaitTimeout();
+        }
+        if (result == WAIT_FAILED) {
+            return eventQuit();
+        }
+        return dsWaitTimeout();
     }
 }
 

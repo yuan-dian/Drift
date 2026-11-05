@@ -3,7 +3,6 @@ declare(strict_types=1);
 
 namespace Drift\Platform\Win32;
 
-use Drift\Errors;
 use Drift\Geometry\Axis;
 use Drift\Input\CloseRequestedEvent;
 use Drift\Input\FilesDroppedEvent;
@@ -30,6 +29,7 @@ use function drift_win_ime_caret;
 use function drift_win_message_box;
 use function drift_win_now_ms;
 use function drift_win_pump;
+use function drift_win_wait;
 
 /**
  * Win32 平台实现：只做两件别处做不了的事 —— 装配六个子端口（谁持有谁），
@@ -38,14 +38,6 @@ use function drift_win_pump;
  */
 final class Win32Platform implements Platform
 {
-    /**
-     * waitEvents() 的闹钟定时器 id（SetTimer 的 nIDEvent）。
-     * ★ 这个 id 在整个壳的 id 空间里共用（WM_TIMER 只带一个 wParam），
-     *   必须是 Win32Platform 私有常量，不许任何应用层定时器撞上。
-     * 0x4457 = "DW"（Drift Wait）。
-     */
-    private const WAIT_TIMER_ID = 0x4457;
-
     private ?Win32WindowHost $window = null;
 
     /**
@@ -53,8 +45,6 @@ final class Win32Platform implements Platform
      * @var array<int, Win32InputSource>
      */
     private array $inputs = [];
-
-    private ?Win32TimerHost $timers = null;
 
     private ?Win32Clipboard $clipboard = null;
 
@@ -68,9 +58,6 @@ final class Win32Platform implements Platform
      * @var list<array<string, mixed>>
      */
     private array $pending = [];
-
-    /** 等待定时器起不来只报一次（否则每帧一条，把环形缓冲刷满） */
-    private bool $waitTimerReported = false;
 
     /**
      * fatalBox() 记下的模态阻塞时间（毫秒）—— consumeModalBlockedMs() 取走。
@@ -130,15 +117,6 @@ final class Win32Platform implements Platform
         return $this->inputs[$windowHandle] ??= new Win32InputSource();
     }
 
-    /**
-     * 等消息的闹钟定时器（平台私有，不在 Platform 接口上）。
-     * 它挂任一活窗口（不是最后建的窗）。
-     */
-    private function timers(): Win32TimerHost
-    {
-        return $this->timers ??= new Win32TimerHost($this->displayHost());
-    }
-
     public function fatalBox(string $title, string $body): void
     {
         // ★ MessageBoxW 是原生模态（用户看多久它就开多久）；它走桥的 MessageBoxW
@@ -189,39 +167,15 @@ final class Win32Platform implements Platform
     }
 
     /**
-     * 等一条 OS 消息，最多 $timeoutMs，返回为什么醒。
-     * GetMessageW 没有超时参数，用系统定时器兜住：SetTimer 起闹钟，被它叫醒后立刻 KillTimer。
-     * 粒度 = 系统 tick（~15.6ms），所以 waitEvents(0.0) 也不是"立刻返回"。
+     * 等一条 OS 消息，最多 $timeoutMs；`< 0` = 无限等，返回为什么醒。
+     * 超时用高精度可等待定时器（~1ms），不再用 `SetTimer` 的系统 tick（~15.6ms）——
+     * 后者会把 16ms 请求落到 31ms，帧间隔只剩两档。
      */
     public function waitEvents(float $timeoutMs): WakeReason
     {
-        $armed = false;
-
-        if ($timeoutMs >= 0.0) {
-            $ms = (int) \ceil($timeoutMs);
-            if ($ms < 1) {
-                // SetTimer 的 0 是"尽快"，但落到系统 tick 上仍是 ~15.6ms ⇒ 1 更诚实
-                $ms = 1;
-            }
-
-            $armed = $this->timers()->start(self::WAIT_TIMER_ID, $ms);
-
-            if (!$armed && !$this->waitTimerReported) {
-                $this->waitTimerReported = true;
-                Errors::report(
-                    'Win32 消息泵：等待定时器起不来（未建窗 / id 冲突 / 资源不足）'
-                    . '—— 退化为无限阻塞，"等到点"落空（动画会卡在某个相位）',
-                    Errors::RECOVERABLE,
-                );
-            }
-        }
-
-        $event = drift_win_pump();
-
-        // 一定要停：SetTimer 是周期定时器，不 KillTimer 就是永久 ~15.6ms 心跳（空闲也 64 次/秒）。
-        if ($armed) {
-            $this->timers()->stop(self::WAIT_TIMER_ID);
-        }
+        $event = $timeoutMs >= 0.0
+            ? drift_win_wait($timeoutMs)
+            : drift_win_pump();
 
         $type = (string) ($event['type'] ?? 'quit');
 
@@ -229,8 +183,7 @@ final class Win32Platform implements Platform
             return WakeReason::Quit;
         }
 
-        // 只有我们那个 id 算超时。别的 timer 事件仍按"有消息"处理 —— 同样意味着"该跑一帧了"。
-        if ($type === 'timer' && (int) ($event['id'] ?? 0) === self::WAIT_TIMER_ID) {
+        if ($type === 'timeout') {
             return WakeReason::Timeout;
         }
 

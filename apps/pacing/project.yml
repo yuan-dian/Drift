@@ -1,0 +1,27 @@
+# apps/pacing —— 帧节奏量具（不是能力示例）。
+#
+# ★ 住在 apps/ 是因为 `drift-build` 只认 `apps/<name>/project.yml`；
+#   与 `apps/bench` 同一条理由：它是尺子，不是 demo。
+# ★ 从仓库根调用：`php tools/drift-build.php pacing`，产物 pacing.exe 落仓库根。
+
+name: pacing
+version: 0.1.0
+
+resource:
+  version-info:
+    internal-name: pacing
+    original-filename: pacing.exe
+    file-version: 0.1.0
+    product-version: 0.1.0
+    file-description: Drift frame pacing probe
+
+info:
+  Author: Drift
+  Description: 帧节奏量具 —— 真窗口上量 waitEvents() 的间隔分布
+
+include: ../../build/base.yml
+
+sources:
+  - .
+  - ../../src
+  - ../../cpp-src

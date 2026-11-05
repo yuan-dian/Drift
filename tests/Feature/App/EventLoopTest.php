@@ -115,22 +115,22 @@ final class EventLoopTest extends SmokeTestCase
         });
 
         winPumpScript([
-            ['type' => 'timer', 'id' => 'armed'],   // 我们的闹钟（到点）
+            ['type' => 'timeout'],
             ['type' => 'quit'],
         ]);
         EventLoop::run($platform, [$handle => $app]);
 
         // ★ 两轮 = 两次等待（第一轮等到点、第二轮被 `quit` 打断）—— 关键是**时长**：
         //   每一次都是 400，而不是 15。旧心跳下同一个 400ms 定时器要 27 次 15ms。
-        $starts = \array_values(\array_filter(winTimerCalls(), static fn (array $c): bool => $c[0] === 'start'));
-        $allFar = $starts !== [];
-        foreach ($starts as $c) {
-            $allFar = $allFar && $c[2] === 400;
+        $waits = \array_map(static fn (int $ms): int => $ms, winWaitCalls());
+        $allFar = $waits !== [];
+        foreach ($waits as $ms) {
+            $allFar = $allFar && $ms === 400;
         }
         check(
             '主循环 · `after(400)` ⇒ 每轮都是 400ms 的等待（旧心跳是 27 次 15ms）',
-            $allFar && \count($starts) === 2,
-            \json_encode($starts),
+            $allFar && \count($waits) === 2,
+            \json_encode($waits),
         );
         check(
             '主循环 · 等到点的那一轮照样跑帧（定时器要在帧里消费）',
@@ -156,7 +156,7 @@ final class EventLoopTest extends SmokeTestCase
         });
 
         winPumpScript([
-            ['type' => 'timer', 'id' => 'armed'],
+            ['type' => 'timeout'],
             ['type' => 'quit'],
         ]);
         EventLoop::run($platform, [$handle => $app]);
@@ -244,9 +244,9 @@ final class EventLoopTest extends SmokeTestCase
                 $app->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
 
                 winPumpScript([
-                    ['type' => 'timer', 'id' => 'armed'],   // 轮 1：先有一帧，帧时钟才有"上一帧"
+                    ['type' => 'timeout'],   // 轮 1：先有一帧，帧时钟才有"上一帧"
                     ['type' => 'pointer', 'x' => 160, 'y' => 120, 'button' => 0, 'phase' => 1],
-                    ['type' => 'timer', 'id' => 'armed'],
+                    ['type' => 'timeout'],
                     ['type' => 'quit'],
                 ]);
                 EventLoop::run($platform, [$handle => $app]);
@@ -466,16 +466,12 @@ final class EventLoopTest extends SmokeTestCase
         $busy->after(500, static function (): void {});
 
         winPumpScript([
-            ['type' => 'timer', 'id' => 'armed'],
+            ['type' => 'timeout'],
             ['type' => 'quit'],
         ]);
         EventLoop::run($platform, [$busyHandle => $busy, $idleHandle => $idle]);
 
-        $starts = \array_values(\array_filter(
-            winTimerCalls(),
-            static fn (array $c): bool => $c[0] === 'start',
-        ));
-        $waits = \array_map(static fn (array $c): int => (int) $c[2], $starts);
+        $waits = \array_map(static fn (int $ms): int => $ms, winWaitCalls());
         check(
             '双窗 · 等待时长取"最急"的那个窗口（500ms，不是无限等）',
             \in_array(500, $waits, true),
@@ -483,8 +479,8 @@ final class EventLoopTest extends SmokeTestCase
         );
         check(
             '双窗 · 空闲窗口不产生额外等待轮次（两轮：等到点 + quit）',
-            \count($starts) === 2,
-            \sprintf('%d 次：%s', \count($starts), \json_encode($waits)),
+            \count($waits) === 2,
+            \sprintf('%d 次：%s', \count($waits), \json_encode($waits)),
         );
 
         $this->flushChecks();
