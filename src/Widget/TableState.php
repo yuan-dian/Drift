@@ -475,6 +475,8 @@ final class TableState extends State implements Scrollable, EditableText, Constr
         // 先摘掉 Shift 再比；只摘 Shift（Ctrl / Alt+方向键今天没有语义，摘了就是另一条行为）。
         $nav = $chord->shift ? KeyChord::make($chord->key) : $chord;
 
+        // 首帧 geometry 未 settle ⇒ 步长退化成一行，别让按键静默失效。
+        // 翻页步长只认行区可见高，不是渲染窗口行数（后者含 cache）。
         if ($nav->is(KeyChord::up())) {
             $row--;
         } elseif ($nav->is(KeyChord::down())) {
@@ -487,6 +489,10 @@ final class TableState extends State implements Scrollable, EditableText, Constr
             $row = 0;
         } elseif ($nav->is(KeyChord::end())) {
             $row = $rows - 1;
+        } elseif ($nav->is(KeyChord::pageDown())) {
+            $row += $this->geometry?->pageRows() ?? 1;
+        } elseif ($nav->is(KeyChord::pageUp())) {
+            $row -= $this->geometry?->pageRows() ?? 1;
         } else {
             return false;
         }

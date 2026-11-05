@@ -132,6 +132,17 @@ final readonly class KeyChord
         return self::make('End');
     }
 
+    /** 键名与壳层 `keyNameFromVk()` 的 `VK_PRIOR` / `VK_NEXT` 逐字一致。 */
+    public static function pageUp(): self
+    {
+        return self::make('PageUp');
+    }
+
+    public static function pageDown(): self
+    {
+        return self::make('PageDown');
+    }
+
     /** 全字段比较（值对象语义） */
     public function is(self $other): bool
     {

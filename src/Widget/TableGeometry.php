@@ -186,6 +186,16 @@ final readonly class TableGeometry
         );
     }
 
+    /** 一屏能装几行（PageUp/PageDown 步长）；`createdRows()` 含 cache 行，不能当可见行数。 */
+    public function pageRows(): int
+    {
+        if ($this->rowHeight <= 0.0 || $this->bodyH <= 0.0) {
+            return 1;
+        }
+
+        return max(1, (int) floor($this->bodyH / $this->rowHeight));
+    }
+
     /** 这一帧造了几行（虚拟化的验收判据） */
     public function createdRows(): int
     {
