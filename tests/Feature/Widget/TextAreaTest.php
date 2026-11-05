@@ -313,4 +313,66 @@ final class TextAreaTest extends SmokeTestCase
 
         $this->flushChecks();
     }
+
+    /**
+     * `PageUp` / `PageDown`：一页一跳，列保持不变。
+     *
+     * ★ 期望值用**字符串算术**（每行 10 字符 + 换行 ⇒ 第 k 行第 3 列 = `k*11+3`），
+     *   不用 `indexAt(caretX(3), …)` 复算 —— 那与实现同源，`goalX` 丢了两边一起错。
+     * ★ 行数从**真实排版**读（视口高 ÷ 行高）：写死常量在换字号 / 换 DPI 时立刻错。
+     */
+    public function testPageKeysJumpOnePageAndKeepGoalColumn(): void
+    {
+        $rows = 30;
+        $lines = [];
+        for ($i = 0; $i < $rows; $i++) {
+            $lines[] = 'abcdefghij';
+        }
+
+        [$state, $box] = $this->mount(implode("\n", $lines), 200.0);
+        $state->beginEditing();
+        $state->moveCaret(3);
+
+        $paragraph = $box?->textParagraph();
+        check('TextArea · 翻页前提：盒已排版', $paragraph !== null && $paragraph->lineCount() === $rows);
+        if ($paragraph === null) {
+            $this->flushChecks();
+
+            return;
+        }
+
+        $lineHeight = $paragraph->lineRect(0)->height;
+        $page = max(1, (int) \floor(200.0 / $lineHeight));
+
+        $ate = $state->handleKey(KeyEvent::down(KeyChord::make('PageDown')));
+        check('TextArea · PageDown 被吃掉', $ate);
+        check(
+            "TextArea · PageDown 跳一页（{$page} 行），落点 = 目标行第 3 列",
+            $state->caretOffset() === $page * 11 + 3,
+            'offset=' . $state->caretOffset() . " 期望=" . ($page * 11 + 3) . " page={$page}",
+        );
+
+        $state->handleKey(KeyEvent::down(KeyChord::make('PageUp')));
+        check(
+            'TextArea · PageUp 回到原位（翻页可逆，不是跳一格）',
+            $state->caretOffset() === 3,
+            'offset=' . $state->caretOffset(),
+        );
+
+        // 顶部再 PageUp ⇒ 夹到 0（不出现负偏移 / 不崩）
+        $state->handleKey(KeyEvent::down(KeyChord::make('PageUp')));
+        check('TextArea · 文首按 PageUp ⇒ 夹在 0', $state->caretOffset() === 0, 'offset=' . $state->caretOffset());
+
+        // 底部：连按到超过末尾 ⇒ 落在文本末尾
+        for ($i = 0; $i < 5; $i++) {
+            $state->handleKey(KeyEvent::down(KeyChord::make('PageDown')));
+        }
+        check(
+            'TextArea · 文末按 PageDown ⇒ 落在文本末尾',
+            $state->caretOffset() === \strlen($state->text()),
+            'offset=' . $state->caretOffset() . ' len=' . \strlen($state->text()),
+        );
+
+        $this->flushChecks();
+    }
 }

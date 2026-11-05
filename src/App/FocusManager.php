@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\App;
 
+use Drift\Geometry\Axis;
 use Drift\Core\Pipeline;
 use Drift\Input\CursorShape;
 use Drift\Input\FocusNode;
@@ -12,6 +13,7 @@ use Drift\Input\PointerEvent;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderObject;
 use Drift\Widget\Element;
+use Drift\Widget\ScrollMetrics;
 use Drift\Widget\State;
 use Drift\Widget\EditableText;
 use Drift\Widget\States;
@@ -27,9 +29,10 @@ use Drift\Widget\States;
  * ① 先于 ②：控件认得就吃、认不得返回 `false` 自然落给加速键；反过来靠逐键白名单必然漏键。
  * 焦点链是渲染态：只存 `?Element`，切焦点经 `State::didChangeFocus()` 同步编辑态。
  *
- * ① 的末尾还有一条**默认动作**：链上没人认领键盘时，方向键按几何最近者移焦点
- * （`focusDirectional()`）。声明了 `keyboard()` 的控件（表 / 下拉 / 滑块 / 富文本）
- * 方向键归它，框架不抢。
+ * ① 的末尾还有两条**默认动作**（都只在链上没人认领键盘时生效，声明了 `keyboard()`
+ * 的控件 —— 表 / 下拉 / 滑块 / 富文本 —— 整组按键归它，框架不抢）：
+ * 方向键按几何最近者移焦点（`focusDirectional()`）；翻页键滚最近的滚动容器
+ * （`pageScroll()`，见那里的裁决）。
  *
  * @internal
  */
@@ -48,6 +51,14 @@ final class FocusManager
 
     /** @var list<int> 上次收的根签名（陷阱开关 + `spl_object_id` 序） */
     private array $collectedRoots = [];
+
+    /**
+     * 上次 `collect()` 实际收的根（陷阱生效时是 `$scope`，否则是全部根）。
+     * 只有一件事用它：焦点为空时翻页键要有个滚动目标 —— 见 `pageScroll()`。
+     *
+     * @var list<Element>
+     */
+    private array $pageRoots = [];
 
     /**
      * 本次 `collect()` 是否处于**焦点陷阱**：陷阱只改一件事 —— Tab 到边界时在链内循环
@@ -121,6 +132,7 @@ final class FocusManager
         }
         $this->collectedVersion = $version;
         $this->collectedRoots = $rootIds;
+        $this->pageRoots = $effective;
 
         $this->order = [];
         $this->byId = [];
@@ -294,7 +306,111 @@ final class FocusManager
             return $this->focusDirectional(0, 1);
         }
 
-        return false;
+        return $this->pageScroll($event->chord);
+    }
+
+    /**
+     * 翻页键 → **滚动容器**（`§47.8` 悬案「方向键归焦点还是归滚动」的裁决）。
+     *
+     * ★ 裁决：方向键归焦点（上面那段，现状不变 —— 改了就是"表里按 ↓ 焦点跑了"），
+     *   翻页键归滚动。翻页键在任何控件里都不是焦点导航语义，今天唯一认领它的是
+     *   `Table`（自己一屏一跳），它排在前面，抢不到这里的。
+     * ★ 与方向键同一口径：链上有 `keyboard()` 声明者 ⇒ 整组按键归它，框架不抢
+     *   （见 `dispatchKey()` 的 `$declared`）。
+     * ★ 焦点为空也要能翻（长文页没有任何可聚焦项）：取**主视口** —— 收集根里
+     *   视口**面积最大**的那个滚动容器。不能取"树序第一个"：`showcase` 的左侧
+     *   导航本身也是 `ScrollView`，而它在树序里排在内容区前面 ⇒ 翻的是侧栏。
+     *   面积是这里唯一能做主的读数（侧栏是窄条，主内容区总是大的那块），并列时
+     *   先序者胜 ⇒ 确定性仍由树序兜底。陷阱生效时只认陷阱内的根，否则模态背后
+     *   那一页会被 PageDown 滚走。
+     */
+    private function pageScroll(KeyChord $chord): bool
+    {
+        $down = $chord->is(KeyChord::pageDown());
+        $up = $chord->is(KeyChord::pageUp());
+        $home = $chord->is(KeyChord::home());
+        $end = $chord->is(KeyChord::end());
+        if (!$down && !$up && !$home && !$end) {
+            return false;
+        }
+
+        $target = $this->scrollTarget();
+        if ($target === null) {
+            return false;
+        }
+
+        $size = $target->viewportExtent();
+        $page = $target->scrollAxis() === Axis::Vertical ? $size->height : $size->width;
+        if ($page <= 0.0) {
+            return false;   // 装得下 / 盒没挂 ⇒ 没有可翻的内容，不吞键
+        }
+
+        if ($down) {
+            $target->scrollTo($target->offset() + $page);
+        } elseif ($up) {
+            $target->scrollTo($target->offset() - $page);
+        } elseif ($home) {
+            $target->scrollTo(0.0);
+        } else {
+            $target->scrollTo($target->maxOffset());
+        }
+
+        return true;
+    }
+
+    /** 翻页的接收者：焦点所在的最近滚动容器；焦点为空 ⇒ 收集根里视口面积最大的那个 */
+    private function scrollTarget(): ?ScrollMetrics
+    {
+        for ($node = $this->focused; $node !== null; $node = $node->parent()) {
+            $state = States::of($node);
+            if ($state instanceof ScrollMetrics) {
+                return $state;
+            }
+        }
+
+        if ($this->focused !== null) {
+            return null;   // 焦点在但不在滚动容器里 ⇒ 不去猜远处那个（猜到就是"按了别处动了"）
+        }
+
+        $best = null;
+        $bestArea = 0.0;
+        foreach ($this->pageRoots as $root) {
+            $candidate = $this->largestScrollable($root, $bestArea);
+            if ($candidate !== null) {
+                $best = $candidate;
+                $size = $candidate->viewportExtent();
+                $bestArea = $size->width * $size->height;
+            }
+        }
+
+        return $best;
+    }
+
+    /**
+     * 深度优先先序找**面积最大**的滚动容器（严格大于才替换 ⇒ 并列时先序者胜，确定性靠树序）。
+     */
+    private function largestScrollable(Element $element, float $floor): ?ScrollMetrics
+    {
+        $best = null;
+        $state = States::of($element);
+        if ($state instanceof ScrollMetrics) {
+            $size = $state->viewportExtent();
+            if ($size->width * $size->height > $floor) {
+                $best = $state;
+                $floor = $size->width * $size->height;
+            }
+        }
+
+        $element->visitChildren(function (Element $child) use (&$best, &$floor): void {
+            $found = $this->largestScrollable($child, $floor);
+            if ($found !== null) {
+                $best = $found;
+                $size = $found->viewportExtent();
+                $floor = $size->width * $size->height;
+            }
+        });
+
+        return $best;
     }
 
     /**

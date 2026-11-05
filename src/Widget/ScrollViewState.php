@@ -6,6 +6,7 @@ namespace Drift\Widget;
 use Drift\Errors;
 use Drift\Geometry\Axis;
 use Drift\Geometry\Rect;
+use Drift\Geometry\Size;
 use Drift\Layout\RenderScrollView;
 
 /**
@@ -55,6 +56,21 @@ final class ScrollViewState extends State implements Scrollable, ScrollMetrics
     public function scrollTo(float $offset): void
     {
         $this->scrollBy($offset - $this->offset());
+    }
+
+    /** 主轴：由 Widget 声明决定（同一个 State 既可能纵向也可能横向） */
+    public function scrollAxis(): Axis
+    {
+        return $this->view()->vertical() ? Axis::Vertical : Axis::Horizontal;
+    }
+
+    /** 视口尺寸；盒没挂 ⇒ 零尺寸（翻页键据此不吞键） */
+    public function viewportExtent(): Size
+    {
+        /** @var RenderScrollView|null $box */
+        $box = $this->element()?->effectiveBoxOf(RenderScrollView::class);
+
+        return $box?->size() ?? Size::zero();
     }
 
     /** @internal 外部句柄进来时登记（挂载后调一次） */

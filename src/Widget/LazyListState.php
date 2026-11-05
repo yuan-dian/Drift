@@ -7,6 +7,7 @@ use Drift\Errors;
 use Drift\Geometry\Axis;
 use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Rect;
+use Drift\Geometry\Size;
 use Drift\Layout\RenderScrollView;
 
 /**
@@ -97,6 +98,21 @@ final class LazyListState extends State implements Scrollable, ScrollMetrics, Co
     public function scrollTo(float $offset): void
     {
         $this->scrollBy($offset - $this->offset());
+    }
+
+    /** 主轴：`LazyRow` 是横向 */
+    public function scrollAxis(): Axis
+    {
+        return $this->view()->isVertical() ? Axis::Vertical : Axis::Horizontal;
+    }
+
+    /** 视口尺寸；盒没挂 ⇒ 零尺寸（翻页键据此不吞键） */
+    public function viewportExtent(): Size
+    {
+        /** @var RenderScrollView|null $box */
+        $box = $this->element()?->effectiveBoxOf(RenderScrollView::class);
+
+        return $box?->size() ?? Size::zero();
     }
 
     /** @internal 卸载即解绑：句柄留着死 State 会滚到虚空的盒上 */

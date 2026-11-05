@@ -87,7 +87,15 @@ final class OverlayManager
     /** 关掉浮层（已关 ⇒ 无事发生；幂等） */
     public function closeMenu(): void
     {
+        // ★ 焦点回锚与 `removeOverlay()` 同一条纪律：全清也要把焦点还回打开前那个节点。
+        //   否则「菜单项派完命令 ⇒ 全清」这条最常用的路径会把焦点丢在虚空里，
+        //   下一次 Tab 从页首重来（ESC / 点外部走 `removeOverlay()` 却会回锚 —— 两条路不一致）。
+        //   取**最后弹出**那条的 `restoreFocus`：它压在最底层，快照的正是菜单打开前的焦点。
+        $restore = null;
         while (($e = $this->overlays->pop()) !== null) {
+            if ($e->restoreFocus !== null) {
+                $restore = $e->restoreFocus;
+            }
             $e->element?->unmount();
         }
 
@@ -100,6 +108,10 @@ final class OverlayManager
         if ($this->snackTimer !== null) {
             $this->host->cancelAfter($this->snackTimer);
             $this->snackTimer = null;
+        }
+
+        if ($restore !== null && $restore->isMounted()) {
+            $this->host->focus()?->focus($restore);
         }
     }
 

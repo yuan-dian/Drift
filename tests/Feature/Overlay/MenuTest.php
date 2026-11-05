@@ -184,8 +184,69 @@ final class MenuTest extends SmokeTestCase
         );
     }
 
-    public function testFourPieceShapes(): void
+    /**
+     * 关闭浮层 ⇒ **焦点回锚**（两条关闭路径必须同一条纪律）。
+     *
+     * ★ ESC 走 `removeOverlay()`、命令分发走 `closeMenu()`（全清）—— 后者曾绕过回锚，
+     *   于是"点完菜单项"这个最常用的动作会把焦点丢在虚空里，下一次 Tab 从页首重来。
+     *   行为差异只在键盘用户身上可见，所以判据必须落在 `focused()` 上。
+     */
+    public function testClosingRestoresFocusToTheInvoker(): void
     {
+        [$app, , $tight] = self::boot();
+
+        // ESC 路径：焦点必须**先进面板**（只停在标题上时关闭不丢焦点，测不出东西）
+        $app->dispatchInput(KeyEvent::down(KeyChord::tab()));
+        $app->dispatchInput(KeyEvent::down(KeyChord::enter()));
+        $app->frame(16.0, $tight);
+        $invoker = $app->focus()?->focused();
+        check('焦点回锚 · 键盘开菜单后焦点在标题上（前置）', $app->isMenuOpen() && $invoker !== null);
+
+        $inPanel = $this->tabIntoPanel($app, $tight);
+        check('焦点回锚 · Tab 能把焦点送进面板项（前置）', $inPanel !== null, 'focused=' . self::describe($inPanel));
+
+        $app->dispatchInput(KeyEvent::down(KeyChord::escape()));
+        check(
+            '焦点回锚 · ESC 关闭 ⇒ 焦点回到打开菜单的标题',
+            !$app->isMenuOpen() && $app->focus()?->focused() === $invoker,
+        );
+
+        // 命令分发路径（`closeMenu()` 全清）
+        $app->dispatchInput(KeyEvent::down(KeyChord::enter()));
+        $app->frame(32.0, $tight);
+        check('焦点回锚 · 重开（命令路径的前置）', $app->isMenuOpen() && $this->tabIntoPanel($app, $tight) !== null);
+
+        $dispatched = $app->dispatch('menu.refresh');
+        check(
+            '焦点回锚 · 菜单项命令关闭 ⇒ 焦点同样回到标题（与 ESC 路径一致）',
+            $dispatched && !$app->isMenuOpen() && $app->focus()?->focused() === $invoker,
+            'seen=' . implode(',', $app->seen) . ' same=' . ($app->focus()?->focused() === $invoker ? 'y' : 'n'),
+        );
+    }
+
+    /** 连按 Tab 直到焦点落进浮层面板（今日 Tab 序是"主树在前、浮层在后"） */
+    private function tabIntoPanel(MenuApplication $app, BoxConstraints $tight): ?Element
+    {
+        for ($i = 0; $i < 12; $i++) {
+            $focused = $app->focus()?->focused();
+            if ($focused !== null && $focused->widget() instanceof MenuItem) {
+                return $focused;
+            }
+            $app->dispatchInput(KeyEvent::down(KeyChord::tab()));
+            $app->frame(48.0 + $i, $tight);
+        }
+
+        $focused = $app->focus()?->focused();
+
+        return $focused !== null && $focused->widget() instanceof MenuItem ? $focused : null;
+    }
+
+    private static function describe(?Element $element): string
+    {
+        return $element === null ? 'null' : $element->widget()::class;
+    }
+
+    public function testFourPieceShapes(): void    {
         $context = smokeContext();
         $menu = Menu::make('文件')->items([MenuItem::make('刷新')]);
         check('Menu · panel() 是 PopupPanel（浮层形体归 PopupPanel，落位归 App）', $menu->panel() instanceof PopupPanel);

@@ -71,8 +71,9 @@ final class TextAreaState extends EditableTextState implements Scrollable
     {
         $chord = $event->chord;
 
-        // 上下移是**唯一**保留目标列的键；其余任何键都把它清掉
-        $vertical = $chord->key === 'Up' || $chord->key === 'Down';
+        // 上下移是**唯一**保留目标列的键（翻页也是行移动，同样保留）；其余任何键都把它清掉
+        $vertical = $chord->key === 'Up' || $chord->key === 'Down'
+            || $chord->key === 'PageUp' || $chord->key === 'PageDown';
         if (!$vertical) {
             $this->goalX = null;
         }
@@ -101,7 +102,11 @@ final class TextAreaState extends EditableTextState implements Scrollable
         }
 
         if ($vertical) {
-            $this->moveVertical($chord->key === 'Down' ? 1 : -1, $chord->shift);
+            if ($chord->key === 'PageUp' || $chord->key === 'PageDown') {
+                $this->moveVerticalByPage($chord->key === 'PageDown' ? 1 : -1, $chord->shift);
+            } else {
+                $this->moveVertical($chord->key === 'Down' ? 1 : -1, $chord->shift);
+            }
 
             return true;
         }
@@ -113,6 +118,32 @@ final class TextAreaState extends EditableTextState implements Scrollable
         }
 
         return false;
+    }
+
+    /**
+     * 翻一页：行数 = 视口高 ÷ 行高（至少 1 行），落在同一列。
+     *
+     * ★ 行数**量**出来而不是写死：字号 / DPI / 行高主题一改，常量立刻错。
+     * ★ 盒没挂（首帧前）⇒ 退化成一行，与 `moveVertical()` 同口径：不崩、不猜。
+     */
+    private function moveVerticalByPage(int $direction, bool $extend): void
+    {
+        $paragraph = $this->paragraph();
+        if ($paragraph === null || $paragraph->lineCount() === 0) {
+            return;
+        }
+
+        $line = $paragraph->lineIndexAt($this->draft()->caretOffset());
+        $lineHeight = $paragraph->lineRect($line)->height;
+        $size = $this->box()?->size();
+        $viewHeight = $size === null ? 0.0 : $size->height;
+
+        $rows = 1;
+        if ($lineHeight > 0.0 && $viewHeight > 0.0) {
+            $rows = max(1, (int) \floor($viewHeight / $lineHeight));
+        }
+
+        $this->moveVertical($direction * $rows, $extend);
     }
 
     /**
