@@ -171,6 +171,13 @@ function drift_lint_selftest(string $root, Linter $linter): bool
         'paint-shift' => [
             'src/Layout/PaintShiftBad.php:' . Diagnostic::ERROR,
         ],
+        // await 作用域（2026-11-05）：三条「该响」覆盖属性链 / 函数内赋值两种越界；
+        // AwaitScopeGood.php 一条都不该有 —— 钉死「不能要求 await 直接写在 run 闭包体内」。
+        'await-scope' => [
+            'apps/AwaitScopeBad.php:' . Diagnostic::ERROR,
+            'apps/AwaitScopeBad.php:' . Diagnostic::ERROR,
+            'apps/AwaitScopeBad.php:' . Diagnostic::ERROR,
+        ],
     ];
 
     $ok = true;

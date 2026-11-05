@@ -8,6 +8,7 @@ use Drift\Dev\Lint\Rules\AppBootstrapLoop;
 use Drift\Dev\Lint\Rules\AppInstanceofConcrete;
 use Drift\Dev\Lint\Rules\AppSubclassCtorParent;
 use Drift\Dev\Lint\Rules\AttributeUnqualified;
+use Drift\Dev\Lint\Rules\AwaitScope;
 use Drift\Dev\Lint\Rules\BackendBranch;
 use Drift\Dev\Lint\Rules\CachedSubscriber;
 use Drift\Dev\Lint\Rules\ClassMissingUse;
@@ -108,6 +109,9 @@ final class Linter
             //   症状只是"滚动条不淡出"—— 界面稍微不对，没有任何东西会红。
             //   写入点四个（全量 / 懒列表 / 表格 ×2 轴 / 多行输入），第五个实现会复制邻近那个。
             new LaneOwner(),
+            // await 作用域（2026-11-05 借 Drift3 async-scope-lint）：运行时 assertInside()
+            //   在 AOT 嵌套函数里拦不住越界 ⇒ 作用域必须显式传参，静态可判。
+            new AwaitScope(),
         ]);
     }
 

@@ -49,6 +49,8 @@ final class NanoHygiene implements Rule
      * dev 壳与它的动态入口：`require` / `getenv` 正是它们存在的理由
      * （变量路径加载业务 PHP），且两者永不进 `--nano` 产物。按文件精确豁免，
      * 不按目录 —— 以后往 apps/dev/ 放业务代码仍受纪律约束。
+     * ★ 纯运行期量具入口放 tools/（toolchain 豁免），别放 apps/dev/：
+     *   那边是 drift-build.php 的输入指纹范围，放进去会触发壳重编。
      */
     private const DEV_SHELL_FILES = [
         'apps/dev/dev-shell.php',

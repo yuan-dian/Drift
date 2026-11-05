@@ -38,6 +38,8 @@
 | **想从零写一个应用** | [`tutorial.md`](tutorial.md) + `apps/tutorial/` | [`tutorial.md`](tutorial.md) |
 | **嫌每次改 PHP 都要重编译** | `docs/DEV-MODE-2026-11-05.md` + `tools/drift-dev.php` | [`DEV-MODE-2026-11-05.md`](DEV-MODE-2026-11-05.md) |
 | **想知道哪些验证能省、哪些绝不能省** | `docs/architecture/12-工程与工具.md` §3（T0/T1/T2 分层 + dev 绿 ≠ AOT 绿清单） | [`12-工程与工具.md`](architecture/12-工程与工具.md) |
+| **想验 dev 壳 / AOT 与解释器语义是否一致** | `docs/DEV-MODE-2026-11-05.md` §8 + 两条等价量具 | [`DEV-MODE-2026-11-05.md`](DEV-MODE-2026-11-05.md) |
+| **新增 AOT 坑要先看哪** | `docs/AOT-CONSTRAINTS.md`（§1 判据表 / §5 代码纪律 / §6 错误码） | [`AOT-CONSTRAINTS.md`](AOT-CONSTRAINTS.md) |
 | **想加一个新控件** | `docs/architecture/08-控件面.md` + 根 `DESIGN.md §15` | — |
 | **想懂设计裁决为什么这么定** | 根 `DESIGN.md` | [`../DESIGN.md`](../DESIGN.md) |
 | **想知道 v7 提案里哪些判断被采纳 / 让位** | `docs/architecture/13-与-v7-设计对照.md` | [`13-与-v7-设计对照.md`](architecture/13-与-v7-设计对照.md) |
