@@ -137,6 +137,41 @@ function wipeCache(string $buildDir): void
     }
 }
 
+/**
+ * 随 exe 分发运行时 ini 与 TLS 信任根。构建成功与「跳过编译」都走这一份，
+ * 保证 `drift-build` 的调用语义不因短路而缺半截。
+ */
+function distributeRuntime(string $root, string $distRoot): void
+{
+    // ★ AOT 运行时靠同目录 php.ini 加载扩展：不随附则 `\mb_substr` 等未定义。
+    //   mbstring 是编译产物必需；openssl + curl 是应用侧 HTTP 必需（FetchUsersJob）。
+    //   仍不启 zip / gd 等无消费者的重扩展。
+    $runtimeExtensions = ['mbstring', 'openssl', 'curl'];
+    $runtimeIni = "{$root}/php.ini";
+    $runtimeText = "extension_dir = \"" . win($distRoot) . "/ext/\"\n";
+    foreach ($runtimeExtensions as $ext) {
+        $runtimeText .= "extension={$ext}\n";
+    }
+    file_put_contents($runtimeIni, $runtimeText);
+    fwrite(STDOUT, "[drift-build] ✓ 运行时 ini → {$runtimeIni}（启用 " . implode(' / ', $runtimeExtensions) . "）\n");
+
+    // ★ 信任根（2026-11-02）：ini 只写 extension 时 curl 信任库为空 ⇒ 真 HTTPS 报
+    //   "unable to get local issuer certificate"。拷到 exe 旁边由 Http 自己找；
+    //   找不到时 Http 退到系统证书库。不把绝对路径写进 ini（换机器就失效）。
+    $trustBundle = "{$root}/assets/cacert.pem";
+    if (is_file($trustBundle)) {
+        $runtimeBundle = "{$root}/cacert.pem";
+        if (!copy($trustBundle, $runtimeBundle)) {
+            fwrite(STDERR, "[drift-build] ✗ 证书包拷贝失败：{$trustBundle} → {$runtimeBundle}\n");
+            exit(1);
+        }
+        fwrite(STDOUT, "[drift-build] ✓ TLS 信任根 → {$runtimeBundle}（" . number_format((int) filesize($runtimeBundle)) . " 字节）\n");
+    } else {
+        // 不静默：少了它 HTTPS 只能靠系统证书库。
+        fwrite(STDOUT, "[drift-build] ! 没有 assets/cacert.pem ⇒ 运行期只能靠系统证书库（HTTPS 可能失败）\n");
+    }
+}
+
 function usage(): never
 {
     fwrite(STDOUT, <<<TXT
@@ -152,6 +187,8 @@ function usage(): never
                build/app.manifest 这两个受控文件）。默认**不清** ⇒ 走增量
                （约 30–60s）。只在里程碑、或怀疑增量构建 stale 时才需要它。
       --dry    只算输入清单并打印「这次会增量还是全量」，**不构建**。
+      ★ 默认输入未变且产物比清单新时直接跳过编译（仍分发运行时 ini / 证书）；
+        --full 强制全量，不受短路影响。
 
     环境变量（换机器时覆盖，都有本机实测的默认值）：
       DRIFT_TPC_ENTRY    tpc 入口（默认 ../typephp/bin/tpc.php —— **源码树**，见下）
@@ -264,12 +301,14 @@ $work = "{$root}/_build";
 // 目的：把"要不要全量重建"从**人工直觉**变成**可核对的事实**。
 //   · 默认不清缓存 ⇒ tpc 走增量（约 30–60s）；
 //   · `--full` 才清 ⇒ 全量（约 3 分钟），只在里程碑 / 怀疑 stale 时用；
-//   · 输入清单（`_build/inputs.sha`）告诉你"自上次构建以来源文件变没变"，
+//   · 输入清单（`_build/inputs.<应用>.sha`）告诉你"自上次构建以来源文件变没变"，
 //     变了就提示增量会重编哪些 —— 不再靠"防御性全量清理"。
 //
 // ★ 清单落 `_build/`（drift-build 自己的 scratch，.gitignore 已忽略），不落
 //   `build/`：后者会被 `--full` 清空。
-$manifestFile = "{$work}/inputs.sha";
+// ★ 按应用分文件：dev / hello / showcase 交替构建也不会互相覆盖清单 ⇒
+//   「连续构建同一应用」的短路对每一个都成立。
+$manifestFile = "{$work}/inputs.{$app}.sha";
 
 $inputs = hash_init('sha256');
 hash_update($inputs, 'src:' . hashTree("{$root}/src") . "\n");
@@ -299,6 +338,28 @@ if ($full) {
 
 if ($dry) {
     fwrite(STDOUT, "[drift-build] --dry：只算清单，不构建（输入指纹 " . substr($inputsHash, 0, 12) . "）\n");
+    exit(0);
+}
+
+// ─────────────────────── 短路：输入未变且产物比清单新 ───────────────────────
+// ★ 实测「输入未变」仍会重链约 27.9s。清单只在「构建成功且产物存在」之后写，
+//   所以「指纹相同 + 产物还在」就足以证明它是上次成功构建的那一版；产物被删
+//   自然不短路。`--full` / 首次构建也不短路。
+// ★ 不能用 mtime 比产物与清单：清单写在产物之后，mtime 永远更晚 ⇒ 短路永不生效。
+// ★ 分发 ini 与 TLS 信任根照做 ⇒ 跳过编译不改变一次调用的语义。
+$exe = "{$root}/{$app}.exe";
+$upToDate = !$full
+    && $previous !== ''
+    && $previous === $inputsHash
+    && is_file($exe);
+
+if ($upToDate) {
+    fwrite(STDOUT, sprintf(
+        "[drift-build] 输入未变且产物仍在 ⇒ 跳过编译（%s，%.1f MB）\n",
+        basename($exe),
+        (float) filesize($exe) / 1048576.0
+    ));
+    distributeRuntime($root, $distRoot);
     exit(0);
 }
 
@@ -393,48 +454,4 @@ fwrite(STDOUT, sprintf(
 // 记下本次构建的输入清单：下次构建据此判断"变没变"
 file_put_contents($manifestFile, $inputsHash . "\n");
 
-// ─────────────────────── 随 exe 分发运行时 ini（坑 ⑤） ───────────────────────
-// ★ AOT 运行时靠 php.ini 加载扩展：exe 双击运行时 cwd = 自身目录，会读同目录
-//   `php.ini`；不随附则 `\mb_substr` / `\mb_strtoupper` 等内置函数**未定义**
-//   （namespace 内非限定调用本就会被 AOT 编译成 `Drift\Xxx\mb_substr` 而找不到，
-//   即便限定为全局，扩展没加载照样 Fatal）。
-// ★★ 扩展清单（2026-10-18 调整）：`mbstring` 是**编译产物必需**（tpc 的类型php_tpc
-//   模块缺它直接 Fatal）；`openssl` + `curl` 是**应用侧 HTTP 必需** —— `apps/users`
-//   的后台任务要请求真接口（`FetchUsersJob` 用 curl），没有它们运行时 `curl_init()`
-//   就是 undefined。
-//   ★ 实测（`probes/RESULTS.md` §12.4）：AOT 产物里 `curl_init/curl_exec/curl_setopt_array`
-//     全部可用、`code=200` —— 之前"不拖 curl"是保守选择，不是能力限制。
-//   ★ 仍**不启** zip / gd / 其它重扩展：它们没有消费者，多加载一个就多一份运行时面。
-$runtimeExtensions = ['mbstring', 'openssl', 'curl'];
-$runtimeIni = "{$root}/php.ini";
-$runtimeText = "extension_dir = \"" . win($distRoot) . "/ext/\"\n";
-foreach ($runtimeExtensions as $ext) {
-    $runtimeText .= "extension={$ext}\n";
-}
-file_put_contents($runtimeIni, $runtimeText);
-fwrite(STDOUT, "[drift-build] ✓ 运行时 ini → {$runtimeIni}（启用 " . implode(' / ', $runtimeExtensions) . "）\n");
-
-// ── 随 exe 分发 TLS 信任根（2026-11-02）───────────────────────────────────
-// ★ 症状（`apps/watermark` 第一次真 HTTPS）：`POST https://…oss…` →
-//   `SSL certificate problem: unable to get local issuer certificate (20)`。
-//   根因不在代码：上面的运行时 ini **只有** `extension=…`，没有 `curl.cainfo`
-//   ⇒ curl 的信任库是空的。而同一个应用的网关是 `http://` ⇒ 签名/建任务全过、
-//   只有上传挂，看起来像"OSS 拒绝我们"。
-// ★ 修法（两道，互为兜底）：
-//   ① 把 `assets/cacert.pem` 拷到 exe 旁边 —— `Http::trustBundlePath()` 按
-//      "exe 同目录 → cwd → cwd/assets" 找它，找到就用 `CURLOPT_CAINFO`；
-//   ② 找不到时 `Http` 退到**系统证书库**（`CURLSSLOPT_NATIVE_CA`）。
-//   ★ 不把路径写进 ini：ini 只能写绝对路径，而绝对路径在别人的机器上不存在
-//     （`__DIR__` 是编译期常量那条坑的近亲）。判据：拷完 `is_file()` 为真。
-$trustBundle = "{$root}/assets/cacert.pem";
-if (is_file($trustBundle)) {
-    $runtimeBundle = "{$root}/cacert.pem";
-    if (!copy($trustBundle, $runtimeBundle)) {
-        fwrite(STDERR, "[drift-build] ✗ 证书包拷贝失败：{$trustBundle} → {$runtimeBundle}\n");
-        exit(1);
-    }
-    fwrite(STDOUT, "[drift-build] ✓ TLS 信任根 → {$runtimeBundle}（" . number_format((int) filesize($runtimeBundle)) . " 字节）\n");
-} else {
-    // ★ 不静默：少了它，所有 HTTPS 会退到系统证书库；系统库在个别老机器上也会缺根。
-    fwrite(STDOUT, "[drift-build] ! 没有 assets/cacert.pem ⇒ 运行期只能靠系统证书库（HTTPS 可能失败）\n");
-}
+distributeRuntime($root, $distRoot);

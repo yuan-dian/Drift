@@ -45,6 +45,16 @@ final class NanoHygiene implements Rule
      */
     private const BANNED_TYPES = ['Generator'];
 
+    /**
+     * dev 壳与它的动态入口：`require` / `getenv` 正是它们存在的理由
+     * （变量路径加载业务 PHP），且两者永不进 `--nano` 产物。按文件精确豁免，
+     * 不按目录 —— 以后往 apps/dev/ 放业务代码仍受纪律约束。
+     */
+    private const DEV_SHELL_FILES = [
+        'apps/dev/dev-shell.php',
+        'apps/dev/dev-entry.php',
+    ];
+
     public function name(): string
     {
         return 'nano-hygiene';
@@ -64,8 +74,8 @@ final class NanoHygiene implements Rule
     {
         $found = [];
         foreach ($project->files() as $file) {
-            if ($project->isToolchain($file)) {
-                continue; // 工具跑在 php.exe 里，永不进 AOT 产物 ⇒ 不适用产物纪律
+            if ($project->isToolchain($file) || in_array($file->path(), self::DEV_SHELL_FILES, true)) {
+                continue; // 工具 / dev 壳：不适用产物纪律（后者见 DEV_SHELL_FILES 注释）
             }
             foreach ($this->scan($file) as $hit) {
                 $found[] = new Diagnostic(

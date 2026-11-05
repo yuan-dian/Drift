@@ -24,6 +24,7 @@
 """
 
 import ctypes
+import json
 import os
 import sys
 from ctypes import wintypes
@@ -95,7 +96,15 @@ def main() -> int:
     app = sys.argv[1] if len(sys.argv) > 1 else "users"
     title = sys.argv[2] if len(sys.argv) > 2 else TITLES.get(app, "Hello Drift")
 
-    with App(f"{app}.exe", title, interactive=False) as win:
+    # 默认仍是 `<应用>.exe`。三个环境变量只为「同一个应用换一种运行形态」而留：
+    # dev 壳（dev.exe + DRIFT_DEV_*）与 dev 运行器（php.exe + drift-dev.php）
+    # 复用这里的五条判据与 App.close() 的自动关窗，不另起一套进程管理。
+    exe = os.environ.get("DRIFT_PROBE_EXE", f"{app}.exe")
+    args = json.loads(os.environ.get("DRIFT_PROBE_ARGS_JSON", "[]"))
+    env_extra = json.loads(os.environ.get("DRIFT_PROBE_ENV_JSON", "null"))
+
+    with App(exe, title, args=args, env_extra=env_extra, interactive=False,
+             state_name=app) as win:
         hwnd = win.hwnd
         print(f"hwnd = {hwnd}  标题 = {title!r}")
 

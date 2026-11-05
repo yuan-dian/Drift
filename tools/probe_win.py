@@ -416,16 +416,21 @@ class App:
     """
 
     def __init__(self, exe, title, args=(), interactive=True, settle=0.6, timeout=20.0,
-                 isolate_state=True):
+                 isolate_state=True, env_extra=None, state_name=None):
         self.exe = exe if os.path.isabs(exe) else os.path.join(ROOT, exe)
         self.title = title
         self.args = tuple(args)
+        # dev 壳 / dev 运行器需要额外的运行期 env；不传时与原来逐字节一致。
+        self.env_extra = env_extra
         self.interactive = interactive
         self.settle = settle
         self.timeout = timeout
         self.proc = None
         self.hwnd = None
-        self._state = StateStash(os.path.splitext(os.path.basename(self.exe))[0]) \
+        # ★ 状态文件按**应用名**命名（showcase.window），不是 exe 名。换运行形态
+        #   （dev.exe / php.exe）时若按 exe 名隔离，隔离会落空 ⇒ 还原了上次的窗口
+        #   尺寸，判据 ② 报「1130x640」，看起来像渲染不一致，其实只是状态没隔离。
+        self._state = StateStash(state_name or os.path.splitext(os.path.basename(self.exe))[0]) \
             if isolate_state else None
 
     # ── 生命周期 ──
@@ -433,7 +438,7 @@ class App:
         if self._state is not None:
             self._state.take()
             atexit.register(self._state.restore)   # 崩了也要还回去
-        self.proc = launch(self.exe, self.args)
+        self.proc = launch(self.exe, self.args, env_extra=self.env_extra)
         self.hwnd = wait_window(self.title, self.proc, self.timeout)
         if self.interactive:
             require_foreground(self.hwnd)
