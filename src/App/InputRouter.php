@@ -134,6 +134,7 @@ final class InputRouter
             //   只认 Enter/Space），所以单独一支，不并进去。
             // ★ 与右键走同一个入口 `openContextMenu()`：指针与键盘在这里合流，
             //   "沿父链找最近 `contextMenu()` 声明者"只有一份实现。
+            // ★ 键盘没有指针位置 ⇒ 点锚为空、退化为元素盒（与 WPF 的 `Shift+F10` 同形）。
             if ($event->chord->is(KeyChord::shift('F10')) || $event->chord->is(KeyChord::make('Apps'))) {
                 $this->openContextMenu($focus->focused());
 
@@ -293,6 +294,13 @@ final class InputRouter
                 }
 
                 if ($event->isDown()) {
+                    // ★ 非主键（中键 / 右键）在面板里**什么都不做**：菜单项是 `Button`，
+                    //   下面的分支会把"按下"当激活 ⇒ 在菜单上右键会**执行那一项**。
+                    //   Windows / WPF / Qt 都不把右键当激活。
+                    if (!$event->isPrimary()) {
+                        return null;
+                    }
+
                     // 浮层接管这次按下 ⇒ 捕获让位（用户主动点浮层，不该被拖拽者吃掉）。
                     $this->releasePointer();
 
@@ -321,6 +329,17 @@ final class InputRouter
             // 点在条目盒外
             if ($e->barrier) {
                 if ($event->isDown()) {
+                    // ★ 右键点面板外：关掉这张、**继续往下派发** —— Windows 的行为是
+                    //   "右键换一处 = 关旧菜单 + 在新位置开菜单"，一次点击完成。
+                    //   主键仍然吞掉：左键点外是"取消"，不该顺手点到下面的控件。
+                    if (!$event->isPrimary()) {
+                        if ($e->dismissOnTapOutside) {
+                            $this->overlayHost->dismissOverlay($e);
+                        }
+
+                        continue;
+                    }
+
                     $this->releasePointer();   // 浮层优先于捕获（`06` §10）
 
                     // 点浮层外 ⇒ 关且**吞掉该次按下**（不穿透）
@@ -378,10 +397,17 @@ final class InputRouter
         $element = $hit === null ? null : $focus->elementAt($root, $hit);
 
         if ($event->isDown()) {
-            // 右键：非主键 ⇒ 找最近的 `ContextMenu` 声明者并打开。
-            if (!$event->isPrimary()) {
-                $this->openContextMenu($element);
+            // 右键：找最近的 `ContextMenu` 声明者并打开，**弹在指针处**（Windows / WPF / Qt
+            //   的默认 Placement=MousePoint）。中键(`1`)不是右键 ⇒ 不弹，走下面的正常路径。
+            if ($event->isSecondary()) {
+                $this->openContextMenu($element, $event->x, $event->y);
 
+                return null;
+            }
+
+            // 中键：不弹上下文菜单，但也不该被当成主键（没有中键语义 ⇒ 吞掉按下，
+            //   免得"点一下中键"顺手激活了下面的按钮）。
+            if (!$event->isPrimary()) {
                 return null;
             }
 
@@ -640,16 +666,17 @@ final class InputRouter
 
     /**
      * 上下文菜单入口：沿起点 Element 的父链找最近的声明者。
-     * 两个触发源共用它 —— 指针右键（起点 = 最深命中）与键盘（起点 = 焦点元素，
-     * `Shift+F10` / `Apps`）。找不到 ⇒ 什么也不做（右键不是"选中"，不报错也不落给焦点）。
+     * 两个触发源共用它 —— 指针右键（起点 = 最深命中，`$atX/$atY` = 指针位置）与
+     * 键盘（起点 = 焦点元素，无点 ⇒ 落位退化为元素盒）。
+     * 找不到 ⇒ 什么也不做（右键不是"选中"，不报错也不落给焦点）。
      */
-    private function openContextMenu(?Element $hit): void
+    private function openContextMenu(?Element $hit, ?float $atX = null, ?float $atY = null): void
     {
         for ($element = $hit; $element !== null; $element = $element->parent()) {
             $menu = $element->widget()->contextMenuValue();
 
             if ($menu !== null) {
-                $this->overlayHost->showMenu($menu->panel(), $element);
+                $this->overlayHost->showMenu($menu->panel(), $element, $atX, $atY);
 
                 return;
             }

@@ -162,6 +162,17 @@ final readonly class PointerEvent implements InputEvent
         return $this->button === 0;
     }
 
+    /**
+     * 右键（`button === 2`，与上面的编号表一致）。
+     *
+     * ★ 判**等于 2** 而不是"非主键"：中键（1）不是右键。以前 `InputRouter` 写的是
+     *   `!isPrimary()` ⇒ 中键也弹上下文菜单，而测试恰好也传 1 ⇒ 两边一起绿。
+     */
+    public function isSecondary(): bool
+    {
+        return $this->button === 2;
+    }
+
     public function isDown(): bool
     {
         return $this->phase === PointerPhase::Down;

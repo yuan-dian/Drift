@@ -180,12 +180,16 @@ final class OverlayLayout
 
     /**
      * 锚矩形（客户区坐标）：`[x, y, w, h]`。
+     * 点锚（右键菜单）优先 ⇒ `[x, y, 0, 0]`：菜单弹出点就是锚点，不再看元素盒。
      * 无锚（模态已提前返回）/ 锚点已卸载 ⇒ `[0,0,0,0]`（落左上角，夹取兜底）。
-     * `AT_POINTER` 退化为锚点：右键菜单用 `anchor`，不用指针坐标。
      * @return array{0: float, 1: float, 2: float, 3: float}
      */
     private function anchorRect(OverlayEntry $e): array
     {
+        if ($e->atX !== null && $e->atY !== null) {
+            return [$e->atX, $e->atY, 0.0, 0.0];
+        }
+
         $anchor = $e->anchor;
         if ($anchor === null || !$anchor->isMounted()) {
             return [0.0, 0.0, 0.0, 0.0];
@@ -282,7 +286,16 @@ final class OverlayLayout
             return [$cx, $ay - $h];
         }
 
-        // BELOW（默认）/ AT_POINTER
+        // 点锚（右键菜单）：左上角对准点；右/下放不下就**向另一侧展开**（Windows 的
+        //   贴边行为）—— 靠最后的夹取也能不出界，但右缘不贴光标，看着像"飘走了"。
+        if ($prefer === OverlayEntry::AT_POINTER) {
+            $px = $ax + $w <= $maxW ? $ax : $ax - $w;
+            $py = $ay + $h <= $maxH ? $ay : $ay - $h;
+
+            return [$px, $py];
+        }
+
+        // BELOW（默认）
         if ($ay + $ah + $h <= $maxH) {
             return [$ax, $ay + $ah];
         }

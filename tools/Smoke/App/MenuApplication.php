@@ -149,6 +149,13 @@ final class MenuApplication extends Application
                     ->onHover(function (bool $hot): void {
                         $this->hover[] = $hot;
                     })),
+            // 第 4 行：**另一个**带 `ContextMenu` 的行（内容不同）。用来验"菜单开着时
+            // 右键换一处 ⇒ 关旧 + 开新"，而不是"关掉就完事"。加在末尾 ⇒ 前三行的
+            // 坐标与既有判据（拖放 / 点外关闭）一概不动。
+            FlatBox::make(320.0, 40.0)
+                ->contextMenu(ContextMenu::make()->items([
+                    MenuItem::make('复制该行')->command('row.copy'),
+                ])),
         ]);
     }
 
@@ -162,6 +169,7 @@ final class MenuApplication extends Application
             'menu.refresh' => $handler,
             'app.quit' => $handler,
             'row.del' => $handler,
+            'row.copy' => $handler,
         ];
     }
 }

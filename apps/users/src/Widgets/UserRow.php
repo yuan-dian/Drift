@@ -8,6 +8,8 @@ use Drift\Input\CursorShape;
 use Drift\Widget\Button;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Drag\Draggable;
+use Drift\Widget\Menu\ContextMenu;
+use Drift\Widget\Menu\MenuItem;
 use Drift\Widget\Row;
 use Drift\Widget\Spacer;
 use Drift\Widget\StatelessWidget;
@@ -44,6 +46,13 @@ final class UserRow extends StatelessWidget
             Spacer::make(),
             Button::danger('删除')->command('user.del')->arg(CommandArg::id($u->id)),
         ])
+        // 应用内右键（§60）：弹在光标处。命令复用已有的两个 —— 行级"删除"与列表级"刷新"，
+        // 不为了菜单发明新命令。键盘入口（`Shift+F10` / `Apps`）落在同一个声明上。
+        ->contextMenu(ContextMenu::make()->items([
+            MenuItem::make('删除该用户')->command('user.del')->arg(CommandArg::id($u->id)),
+            MenuItem::separator(),
+            MenuItem::make('刷新列表')->command('users.refresh'),
+        ]))
         // 应用内拖放：把这一行拖到「回收站」上（§12.4，M3，零平台端口）
         ->draggable(Draggable::make($u->id));
     }

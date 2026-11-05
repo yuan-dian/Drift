@@ -83,6 +83,18 @@ final class OverlayEntry
     /** 锚节点；null ⇒ 无锚（模态 / Toast） */
     public ?Element $anchor = null;
 
+    /**
+     * 点锚（客户区坐标）：非 null ⇒ 落位以这个**点**为准，不看 `$anchor` 的盒。
+     *
+     * ★ 右键菜单要的是"弹在光标处"（Windows / WPF `Placement=MousePoint` / Qt
+     *   `exec(globalPos)`），不是"弹在那一行的盒下"。`AT_POINTER` 常量早就有，
+     *   但以前 `anchorRect()` 只认盒 ⇒ 它退化成 `BELOW`、对大控件会弹到边角。
+     * ★ `$anchor` 仍要留着：浮层的 owner 回收 / 锚点重建检测都靠它，点只影响几何。
+     */
+    public ?float $atX = null;
+
+    public ?float $atY = null;
+
     /** 首选方向，OverlayEntry::* 常量 */
     public int $prefer = self::BELOW;
 

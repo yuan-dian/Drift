@@ -63,9 +63,15 @@ final class OverlayManager
      *
      * @param Widget $panel 面板（通常 `PopupPanel`；菜单用 `Menu::panel()` / `ContextMenu::panel()`）
      * @param Element|null $anchor 锚点；`null` ⇒ 用最近一次命中（`FocusManager::lastHit()`）
+     * @param float|null $atX 指针位置（客户区坐标）；给了 ⇒ 菜单**弹在这一点**，`$anchor`
+     *   只用于 owner 回收。键盘入口不给（没有指针位置 ⇒ 退化为元素盒）。
      */
-    public function showMenu(Widget $panel, ?Element $anchor = null): void
-    {
+    public function showMenu(
+        Widget $panel,
+        ?Element $anchor = null,
+        ?float $atX = null,
+        ?float $atY = null,
+    ): void {
         if ($this->host->root() === null) {
             return; // 未挂载：没有客户区，浮层无处安放
         }
@@ -74,7 +80,9 @@ final class OverlayManager
 
         $e = new OverlayEntry($panel);
         $e->anchor = $anchor;
-        $e->prefer = OverlayEntry::BELOW;
+        $e->atX = $atX;
+        $e->atY = $atY;
+        $e->prefer = $atX === null ? OverlayEntry::BELOW : OverlayEntry::AT_POINTER;
         $e->barrier = true;
         $e->scrim = false;
         $e->dismissOnTapOutside = true;

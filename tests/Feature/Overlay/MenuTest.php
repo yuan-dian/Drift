@@ -150,23 +150,49 @@ final class MenuTest extends SmokeTestCase
         $rows = $colBox instanceof RenderFlex ? $colBox->children() : [];
         $rowBox = $rows[1] ?? null;
         $targetBox = $rows[2] ?? null;
+        $secondBox = $rows[3] ?? null;
         [$rx, $ry] = $rowBox === null ? [0.0, 0.0] : boxOrigin($rowBox);
         [$sx, $sy] = $targetBox === null ? [0.0, 0.0] : boxOrigin($targetBox);
+        [$tx, $ty] = $secondBox === null ? [0.0, 0.0] : boxOrigin($secondBox);
 
-        // ① 点面板外 ⇒ 关 + 吞掉该次按下
+        // ① 点面板外（**左键**）⇒ 关 + 吞掉该次按下
         //    ★ 坐标要同时满足：**在面板矩形之外**、**仍在带 ContextMenu 的那行上**。
         //      面板窄（≈140）而客户区宽 320 ⇒ 取该行右侧（x+200）。若穿透，
-        //      这次右键会顺手打开下面那个菜单（最容易被抓的形态）。
-        $app->dispatchInput(PointerEvent::down($rx + 200.0, $ry + 10.0, 1));
+        //      这次左键会顺手打开下面那个菜单（最容易被抓的形态）。
+        $app->dispatchInput(PointerEvent::down($rx + 200.0, $ry + 10.0));
         check(
-            '浮层 · 点面板外 ⇒ 关且**吞掉**按下（不穿透到下面的右键菜单）',
+            '浮层 · 左键点面板外 ⇒ 关且**吞掉**按下（不穿透到下面的右键菜单）',
             !$app->isMenuOpen(),
             $app->isMenuOpen() ? '穿透了：菜单被重开' : '',
         );
 
         // —— 右键最小集：再点一次（此刻无浮层）⇒ 打开命中的 ContextMenu
-        $app->dispatchInput(PointerEvent::down($rx + 10.0, $ry + 10.0, 1));
+        $app->dispatchInput(PointerEvent::down($rx + 10.0, $ry + 10.0, 2));
         check('右键 · 无浮层时右键 ⇒ 打开命中行的 ContextMenu', $app->isMenuOpen());
+
+        // —— 落位：弹在**指针处**（Windows / WPF `Placement=MousePoint`），不是"那一行的
+        //    盒下沿" —— 挂在整页 / 大表格上时，盒落位会把菜单甩到边角。
+        //    走一帧才落位（`placeEntry()` 在帧里跑）。此点四周都放得下 ⇒ 不翻转。
+        $app->frame(17.0, $tight);
+        $open = $app->overlays()->top();
+        $prect = $open?->element?->effectiveBox()?->panelRect();
+        $px = $prect === null ? -1.0 : ($open?->x ?? 0.0) + $prect->left;
+        $py = $prect === null ? -1.0 : ($open?->y ?? 0.0) + $prect->top;
+        check(
+            '右键 · 菜单左上角落在指针处（点锚，不是元素盒下沿）',
+            \abs($px - ($rx + 10.0)) < 0.5 && \abs($py - ($ry + 10.0)) < 0.5,
+            sprintf('panel=(%.1f,%.1f) point=(%.1f,%.1f)', $px, $py, $rx + 10.0, $ry + 10.0),
+        );
+
+        // —— 面板里右键 ≠ 左键：菜单项是 `Button`，按下就激活 ⇒ 浮层必须按主键分流，
+        //    否则"在菜单上右键"会**执行那一项**（Windows / WPF / Qt 都不这么做）。
+        $seenBefore = $app->seen;
+        $app->dispatchInput(PointerEvent::down($px + 20.0, $py + 12.0, 2));
+        check(
+            '右键 · 在菜单项上右键 ⇒ 不激活那一项、也不关菜单',
+            $app->isMenuOpen() && $app->seen === $seenBefore,
+            'open=' . ($app->isMenuOpen() ? 'y' : 'n') . ' seen=' . implode(',', $app->seen),
+        );
 
         // ② 命令分发**之后**才关
         $dispatched = $app->dispatch('row.del');
@@ -175,9 +201,42 @@ final class MenuTest extends SmokeTestCase
             $dispatched && !$app->isMenuOpen() && $app->seen === ['row.del'],
         );
 
+        // —— 中键不是右键：同一点、只有按键不同 ⇒ 不弹（判 `button === 2`，不是"非主键"）
+        $app->dispatchInput(PointerEvent::down($rx + 10.0, $ry + 10.0, 1));
+        check(
+            '右键 · 中键落在有声明的行 ⇒ **不**弹上下文菜单（也不激活它）',
+            !$app->isMenuOpen() && $app->seen === ['row.del'],
+            'open=' . ($app->isMenuOpen() ? 'y' : 'n'),
+        );
+
         // —— 右键落在无声明处 ⇒ 什么也不做（不报错、不落给焦点）
-        $app->dispatchInput(PointerEvent::down($sx + 10.0, $sy + 10.0, 1));
+        $app->dispatchInput(PointerEvent::down($sx + 10.0, $sy + 10.0, 2));
         check('右键 · 落在无 ContextMenu 声明的行 ⇒ 什么也不做', !$app->isMenuOpen());
+
+        // —— 右键换一处 ⇒ Windows 语义：**关旧 + 在新位置开新**（一次点击完成）。
+        //    主键点外是"取消且不穿透"，两条语义分得开。
+        $app->dispatchInput(PointerEvent::down($rx + 10.0, $ry + 10.0, 2));
+        $first = $app->overlays()->top();
+        check('右键 · 重开（换位置用例的前置）', $app->isMenuOpen() && $first !== null);
+
+        $app->dispatchInput(PointerEvent::down($tx + 20.0, $ty + 10.0, 2));
+        $second = $app->overlays()->top();
+        check(
+            '右键 · 菜单开着时右键**另一处也有声明**的地方 ⇒ 关旧 + 开新（不是关掉就完事）',
+            $app->isMenuOpen() && $second !== null && $first !== null && $second->id !== $first->id,
+            'open=' . ($app->isMenuOpen() ? 'y' : 'n'),
+        );
+        check(
+            '右键 · 新菜单的落位锚是**新的指针位置**（点锚，不是元素盒）',
+            $second !== null
+                && \abs(($second->atX ?? -1.0) - ($tx + 20.0)) < 0.01
+                && \abs(($second->atY ?? -1.0) - ($ty + 10.0)) < 0.01,
+            sprintf('at=(%.1f,%.1f)', $second?->atX ?? -1.0, $second?->atY ?? -1.0),
+        );
+
+        // —— 菜单开着时右键**无声明**处 ⇒ 旧菜单被关掉（不残留）
+        $app->dispatchInput(PointerEvent::down($sx + 10.0, $sy + 10.0, 2));
+        check('右键 · 菜单开着时右键无声明处 ⇒ 旧菜单被关掉（不残留）', !$app->isMenuOpen());
 
         // ③ ESC 在 dispatchKey 之前拦
         $app->showMenu($app->fileMenu()?->panel()); // 直接开（不依赖焦点当前在哪儿）

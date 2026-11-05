@@ -1732,11 +1732,17 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     /**
      * 打开浮层面板（O-20 方案 A：第二棵根渲染树）。
      *
+     * @param float|null $atX 指针位置（客户区坐标）；给了 ⇒ 弹在这一点（右键菜单）。
+     *                        不下传则按 `$anchor` 的盒落位（菜单栏下拉）。
      * @api
      */
-    public function showMenu(Widget $panel, ?Element $anchor = null): void
-    {
-        $this->overlayHost->showMenu($panel, $anchor);
+    public function showMenu(
+        Widget $panel,
+        ?Element $anchor = null,
+        ?float $atX = null,
+        ?float $atY = null,
+    ): void {
+        $this->overlayHost->showMenu($panel, $anchor, $atX, $atY);
     }
 
     /** 关掉浮层（已关 ⇒ 无事发生；幂等） */
