@@ -11,13 +11,13 @@
 
 | 层 | @api | @internal |
 |---|---|---|
-| App | 84 | 53 |
+| App | 84 | 54 |
 | Async | 24 | 4 |
 | Commands | 7 | 0 |
 | Core | 2 | 38 |
 | Errors.php | 2 | 3 |
 | Geometry | 9 | 0 |
-| Input | 20 | 5 |
+| Input | 21 | 5 |
 | Layout | 47 | 45 |
 | Logging | 9 | 3 |
 | Platform | 16 | 15 |
@@ -26,10 +26,10 @@
 | State | 17 | 8 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
-| Widget | 185 | 219 |
-| **合计** | **499** | **403** |
+| Widget | 187 | 225 |
+| **合计** | **502** | **410** |
 
-覆盖 393 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
+覆盖 395 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
 
 ## App 层
 
@@ -122,7 +122,7 @@
 | `WindowStateStore::restore()` | method | src/App/WindowStateStore.php |
 | `WindowStateStore::persist()` | method | src/App/WindowStateStore.php |
 
-### @internal（框架内部） · 53
+### @internal（框架内部） · 54
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -155,6 +155,7 @@
 | `CompletionQueue` | class | src/App/CompletionQueue.php |
 | `DragController` | class | src/App/DragController.php |
 | `FocusManager` | class | src/App/FocusManager.php |
+| `FocusManager::focusableIds()` | method | src/App/FocusManager.php |
 | `Frame::__construct()` | method | src/App/Frame.php |
 | `FrameClock::stallCount()` | method | src/App/FrameClock.php |
 | `FrameClock::worstGapMs()` | method | src/App/FrameClock.php |
@@ -321,7 +322,7 @@
 
 ## Input 层
 
-### @api（应用可读面） · 20
+### @api（应用可读面） · 21
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -337,6 +338,7 @@
 | `PointerEvent` | class | src/Input/PointerEvent.php |
 | `PointerPhase` | enum | src/Input/PointerPhase.php |
 | `ScrollEvent` | class | src/Input/ScrollEvent.php |
+| `SemanticsExpandEvent` | class | src/Input/SemanticsExpandEvent.php |
 | `SemanticsInvokeEvent` | class | src/Input/SemanticsInvokeEvent.php |
 | `SemanticsNode` | class | src/Input/SemanticsNode.php |
 | `SemanticsRole` | enum | src/Input/SemanticsRole.php |
@@ -696,7 +698,7 @@
 
 ## Widget 层
 
-### @api（应用可读面） · 185
+### @api（应用可读面） · 187
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -794,6 +796,7 @@
 | `SegmentedControl` | class | src/Widget/SegmentedControl.php |
 | `Select` | class | src/Widget/Select.php |
 | `SemanticsBuilder` | class | src/Widget/SemanticsBuilder.php |
+| `SemanticsExpandable` | interface | src/Widget/SemanticsExpandable.php |
 | `SemanticsValueEditable` | interface | src/Widget/SemanticsValueEditable.php |
 | `SingleChildRenderObjectWidget` | class | src/Widget/SingleChildRenderObjectWidget.php |
 | `SizedBox` | class | src/Widget/SizedBox.php |
@@ -876,6 +879,7 @@
 | `WidgetModifiers::scale()` | method | src/Widget/Traits/WidgetModifiers.php |
 | `WidgetSemantics::semantics()` | method | src/Widget/Traits/WidgetSemantics.php |
 | `WidgetSemantics::semanticsRange()` | method | src/Widget/Traits/WidgetSemantics.php |
+| `WidgetSemantics::semanticsState()` | method | src/Widget/Traits/WidgetSemantics.php |
 | `TreeNode` | class | src/Widget/TreeNode.php |
 | `TreeView` | class | src/Widget/TreeView.php |
 | `Widget` | class | src/Widget/Widget.php |
@@ -886,7 +890,7 @@
 | `Wrap` | class | src/Widget/Wrap.php |
 | `YearMonth` | class | src/Widget/YearMonth.php |
 
-### @internal（框架内部） · 219
+### @internal（框架内部） · 225
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -1072,6 +1076,9 @@
 | `WidgetModifiers` | trait | src/Widget/Traits/WidgetModifiers.php |
 | `WidgetSemantics` | trait | src/Widget/Traits/WidgetSemantics.php |
 | `WidgetSemantics::semanticsRole()` | method | src/Widget/Traits/WidgetSemantics.php |
+| `WidgetSemantics::semanticsSelectState()` | method | src/Widget/Traits/WidgetSemantics.php |
+| `WidgetSemantics::semanticsExpandState()` | method | src/Widget/Traits/WidgetSemantics.php |
+| `WidgetSemantics::semanticsLevel()` | method | src/Widget/Traits/WidgetSemantics.php |
 | `WidgetSemantics::semanticsName()` | method | src/Widget/Traits/WidgetSemantics.php |
 | `WidgetSemantics::semanticsValue()` | method | src/Widget/Traits/WidgetSemantics.php |
 | `WidgetSemantics::semanticsEnabled()` | method | src/Widget/Traits/WidgetSemantics.php |
@@ -1101,6 +1108,9 @@
 | `Widget::$semValue` | property | src/Widget/Widget.php |
 | `Widget::$semEnabled` | property | src/Widget/Widget.php |
 | `Widget::$semRangeMin` | property | src/Widget/Widget.php |
+| `Widget::$semSelect` | property | src/Widget/Widget.php |
+| `Widget::$semExpand` | property | src/Widget/Widget.php |
+| `Widget::$semLevel` | property | src/Widget/Widget.php |
 | `Widget::__clone()` | method | src/Widget/Widget.php |
 | `Widget::childContext()` | method | src/Widget/Widget.php |
 | `Widget::createElement()` | method | src/Widget/Widget.php |

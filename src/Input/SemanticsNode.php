@@ -58,6 +58,29 @@ final class SemanticsNode
     /** 是否持有焦点（FocusManager::focused() 命中本节点）；UIA focus changed 的判据 */
     public bool $focused = false;
 
+    /**
+     * 能否被 Tab 到（`FocusManager` 的可聚焦表里有它）。
+     *
+     * ★ 与 `focused` **正交**：这个回答"能不能进去"，那个回答"现在在不在里面"。
+     * ★ 由框架填，不由控件声明：控件自己说"我能聚焦"会和 `skipFocus()` /
+     *   `disabled()` 打架（`skipFocus()` 只挡 Tab 序、不挡方向键，见 §57.3）。
+     */
+    public bool $focusable = false;
+
+    /**
+     * 选中态三态：`0` = 这个角色没有选中概念 / `1` 未选 / `2` 已选。
+     *
+     * ★★ 三态是必需的：`0` 与 `1` 混成一个 `false`，每个按钮都会对客户端声称
+     *   "我未选中"，UIA 侧就得给所有节点挂 `IsSelected`。
+     */
+    public int $selectState = 0;
+
+    /** 展开态三态：`0` = 没有展开概念（叶子/非集合）/ `1` 折叠 / `2` 展开 */
+    public int $expandState = 0;
+
+    /** 层级（1-based，树行的业务深度）；`0` = 未声明 ⇒ 不给 `UIA_Level` */
+    public int $level = 0;
+
     /** 父节点索引，-1 = 树根 */
     public int $parent = -1;
 

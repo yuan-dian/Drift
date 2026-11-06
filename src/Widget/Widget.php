@@ -155,6 +155,19 @@ abstract class Widget
     private float $semRangeMax = 0.0;
 
     /**
+     * @internal 选中态三态（0 无此概念 / 1 未选 / 2 已选）。
+     * ★ 用 int 而不是 `?bool`：这条值要跨"数组 → C++ Variant"边界，`null` 的
+     *   处置归 AOT 编译器管、仓内没法取证；`int` 与 `parent`/`depth` 同一条路。
+     */
+    private int $semSelect = 0;
+
+    /** @internal 展开态三态（0 无此概念 / 1 折叠 / 2 展开） */
+    private int $semExpand = 0;
+
+    /** @internal 层级（1-based）；0 = 未声明 */
+    private int $semLevel = 0;
+
+    /**
      * ★ 子类必须调 `parent::__construct()`。
      * @api
      */

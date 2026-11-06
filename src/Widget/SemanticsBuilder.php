@@ -39,14 +39,16 @@ final class SemanticsBuilder
     /**
      * @param ?Element $root Element 树根（`Application::root()` 的那棵；null ⇒ 空树）
      * @param ?Element $focused 焦点元素（`FocusManager::focused()`；null ⇒ 无节点持焦点）
+     * @param ?array<int, int> $focusable 可聚焦表（`spl_object_id` ⇒ 1）；
+     *   null ⇒ 视为"框架没给这份事实" ⇒ 全部报不可聚焦（纯单测的默认降级）
      */
-    public static function build(?Element $root, ?Element $focused = null): SemanticsTree
+    public static function build(?Element $root, ?Element $focused = null, ?array $focusable = null): SemanticsTree
     {
         $tree = new SemanticsTree();
         if ($root === null) {
             return $tree;
         }
-        self::descend($root, $tree, -1, 0, $focused, false);
+        self::descend($root, $tree, -1, 0, $focused, false, $focusable);
 
         return $tree;
     }
@@ -57,8 +59,15 @@ final class SemanticsBuilder
      * ★ 用 `childCount()/childAt()` 而**不是闭包 visitChildren** —— 递归里递闭包
      *   在 AOT 下多一层不可见的调用，能用索引循环就别递函数。
      */
-    private static function descend(Element $el, SemanticsTree $tree, int $parentIdx, int $depth, ?Element $focused, bool $disabled): void
-    {
+    private static function descend(
+        Element $el,
+        SemanticsTree $tree,
+        int $parentIdx,
+        int $depth,
+        ?Element $focused,
+        bool $disabled,
+        ?array $focusable
+    ): void {
         $role = $el->widget()->semanticsRole();
 
         // ★ `disabled()` 是**子树级**（与 `hitTest()` / `FocusManager::walk()` 同一条）：
@@ -84,6 +93,11 @@ final class SemanticsBuilder
             //   里 `UIA_IsEnabledPropertyId` 那段注释说的正是这个坑）。
             $n->enabled = $w->semanticsEnabled() && !$off;
             $n->focused = $focused !== null && $el === $focused;
+            // 禁用的控件在 UIA 里也不可聚焦（否则读屏会让用户 Tab 到一个死控件上）。
+            $n->focusable = !$off && $focusable !== null && isset($focusable[spl_object_id($el)]);
+            $n->selectState = $w->semanticsSelectState();
+            $n->expandState = $w->semanticsExpandState();
+            $n->level = $w->semanticsLevel();
             $n->parent = $parentIdx;
             $n->depth = $depth;
 
@@ -112,7 +126,7 @@ final class SemanticsBuilder
         for ($i = 0; $i < $count; $i++) {
             $kid = $el->childAt($i);
             if ($kid !== null) {
-                self::descend($kid, $tree, $cur, $nextDepth, $focused, $off);
+                self::descend($kid, $tree, $cur, $nextDepth, $focused, $off, $focusable);
             }
         }
     }

@@ -65,6 +65,17 @@ enum SemanticsRole: string
      */
     case Tree = 'tree';
 
+    /**
+     * 树里的一行（`TreeView`，2026-11-06）—— name 取行标签。
+     *
+     * ★ 行原本是 `Button`（借用它的点击/焦点），语义上却**不是**按钮：读屏会把
+     *   整棵树念成"一堆按钮"，层级与展开态全丢。与 §64 的 `←` 折叠是一体两面 ——
+     *   按键能折叠，读屏不知道折叠了什么，能力只做了一半。
+     * ★ 换角色会连带把 `InvokePattern` 掐掉（`drift_win32.cc` 的 `simplePattern()`
+     *   按 ControlType 分派）⇒ "鼠标点得动、读屏点不动"，两处条件必须同时改。
+     */
+    case TreeItem = 'treeitem';
+
     /** 模态对话框（`Modal`）—— name 取标题 */
     case Dialog = 'dialog';
 

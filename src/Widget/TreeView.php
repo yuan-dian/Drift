@@ -24,7 +24,7 @@ use Drift\Input\SemanticsRole;
  *   放进无界高度会由 `RenderScrollView` 响亮报错。
  * @api
  */
-final class TreeView extends StatelessWidget
+final class TreeView extends StatelessWidget implements SemanticsExpandable
 {
     /**
      * 默认行高 —— 由箭头按钮的天然高决定（`IconButton` = 24 内边距 + 18 图标）。
@@ -136,6 +136,51 @@ final class TreeView extends StatelessWidget
         $this->onSelected = \Closure::fromCallable($handler);
 
         return $this;
+    }
+
+    /**
+     * 读屏/自动化要求展开或折叠一行（§65，UIA `ExpandCollapsePattern`）。
+     *
+     * 落地就是 `onToggle($id, $expand)` —— 与用户点箭头**同一条回调**：
+     * 展开态是受控的（应用存着），控件自己不持状态，所以这里没有第二条路可走。
+     *
+     * ★ 叶子返回 `false` 而不是"调了但没效果"：UIA 侧据此回
+     *   `UIA_E_ELEMENTNOTAVAILABLE`，客户端才不会以为命令生效了。
+     */
+    public function setSemanticsExpanded(string $key, bool $expand): bool
+    {
+        if ($this->onToggle === null) {
+            return false;
+        }
+
+        $prefix = self::ROW_KEY_PREFIX;
+        if (!\str_starts_with($key, $prefix)) {
+            return false;
+        }
+
+        $id = \substr($key, \strlen($prefix));
+        if ($id === '' || !$this->rowHasChildren($this->nodes, $id)) {
+            return false;
+        }
+
+        ($this->onToggle)($id, $expand);
+
+        return true;
+    }
+
+    /** @param list<TreeNode> $nodes 递归找"这一行有没有子"（叶子不参与展开） */
+    private function rowHasChildren(array $nodes, string $id): bool
+    {
+        foreach ($nodes as $node) {
+            if ($node->id === $id) {
+                return $node->hasChildren();
+            }
+            if ($node->hasChildren() && $this->rowHasChildren($node->children, $id)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -278,6 +323,18 @@ final class TreeView extends StatelessWidget
             ->key(self::ROW_KEY_PREFIX . $row->id)
             ->alignLeft()
             ->variant($row->id === $selected ? ButtonVariant::Primary : ButtonVariant::Flat);
+
+        // ★ 语义角色换成 `TreeItem`（`Button::make()` 设的是 `button`）：不改的话读屏把
+        //   整棵树念成"一堆按钮"，层级与展开态全丢 —— §64 让按键能折叠，
+        //   读屏却不知道折叠了什么，能力只做了一半。
+        // ★ 叶子不声明 `expanded`（传 null）⇒ 客户端据此知道"不可展开"，
+        //   而不是"能展开、现在收着"。
+        $label->semantics(SemanticsRole::TreeItem, $row->label);
+        $label->semanticsState(
+            selected: $row->id === $selected,
+            expanded: $row->hasChildren ? $row->expanded : null,
+            level: $row->depth + 1,
+        );
 
         // roving tabindex（§57 的纪律，§58 落到树上）：整棵只留**一行**进 Tab 序，
         //   其余靠方向键走。全留 ⇒ 200 行的树要按 200 次 Tab 才出得去；

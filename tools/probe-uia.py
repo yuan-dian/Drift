@@ -68,11 +68,23 @@ IUIA_get_ContentViewWalker = 15
 # IUIAutomationElement 的 vtable 索引
 # ★ 逐条数过（IUnknown 3 + 文档顺序）：漏一个 `GetCurrentPatternAs` 或
 #   `GetCachedPatternAs` 就会整体错位，症状是 BSTR 出参读到垃圾 ⇒ 访问冲突。
+ELEM_GetCurrentPropertyValue = 10
 ELEM_GetCurrentPattern = 16
 ELEM_get_CurrentControlType = 21
 ELEM_get_CurrentName = 23
+ELEM_get_CurrentHasKeyboardFocus = 26
+ELEM_get_CurrentIsKeyboardFocusable = 27
 ELEM_get_CurrentIsOffscreen = 38
 ELEM_get_CurrentBoundingRectangle = 43
+
+# UIA 属性 id（`GetCurrentPropertyValue` 用；与 provider 侧 `GetPropertyValue` 同一个 id）
+UIA_HasKeyboardFocusPropertyId = 30008
+UIA_IsKeyboardFocusablePropertyId = 30009
+UIA_ValueValuePropertyId = 30045
+UIA_ExpandCollapseExpandCollapseStatePropertyId = 30070
+UIA_SelectionItemIsSelectedPropertyId = 30079
+UIA_ToggleToggleStatePropertyId = 30086
+UIA_LevelPropertyId = 30154
 
 # IUIAutomationTreeWalker（`GetParentElement` 在最前，别从 FirstChild 开始数）
 WALKER_GetFirstChildElement = 4
@@ -201,6 +213,47 @@ def offscreen(elem):
     fn(elem, ctypes.byref(v))
 
     return bool(v.value)
+
+
+class VARIANT(ctypes.Structure):
+    """x64 VARIANT（24 字节）：8 字节头 + 16 字节 union。
+    ★ 别用 16 字节的版本 —— 那是 32 位口径，读出来会踩掉后面 8 字节。"""
+    _fields_ = [("vt", ctypes.c_ushort),
+                ("wReserved1", ctypes.c_ushort),
+                ("wReserved2", ctypes.c_ushort),
+                ("wReserved3", ctypes.c_ushort),
+                ("llVal", ctypes.c_longlong),
+                ("pad", ctypes.c_longlong)]
+
+
+VT_EMPTY = 0
+VT_I4 = 3
+VT_BOOL = 11
+
+
+def prop_of(elem, property_id):
+    """读一个 UIA 属性（`GetCurrentPropertyValue`）。
+
+    返回 `(vt, 值)`：
+      - `VT_I4`   ⇒ int
+      - `VT_BOOL` ⇒ bool
+      - `VT_EMPTY` ⇒ `None` —— **"该属性不支持"**，与 `False` 不是一回事
+        （provider 侧三态里的 0 就落在这条路上）。
+    ★ 探针判据必须能区分 None 与 False：把"没实现"读成"没有"，正是 §65
+      要修的那个坑。
+    """
+    v = VARIANT()
+    fn = _call(elem, ELEM_GetCurrentPropertyValue, ctypes.HRESULT,
+               ctypes.c_int, ctypes.POINTER(VARIANT))
+    fn(elem, ctypes.c_int(property_id), ctypes.byref(v))
+    if v.vt == VT_I4:
+        return v.vt, v.llVal & 0xFFFFFFFF
+    if v.vt == VT_BOOL:
+        return v.vt, bool(v.llVal & 0xFFFF)
+    if v.vt == VT_EMPTY:
+        return v.vt, None
+
+    return v.vt, None
 
 
 CONTROL_TYPES = {
@@ -490,9 +543,16 @@ def main():
                 cw, ch = win.client_size(hwnd)
                 # UIA 给的是**屏幕**坐标，可见性要按客户区判断（换算一次）
                 cx_c, cy_c = win.screen_to_client(hwnd, (r.left + r.right) // 2, (r.top + r.bottom) // 2)
-                if 0 <= cy_c <= ch:
+                # ★ 判据是**中部**（12%–78%）而不是"在客户区内"：
+                #   这条判据用的是**客户区**，而元素真正被裁它的是**自己那个滚动容器**。
+                #   实测（2026-11-06）：导航项 '树 Tree' 报 y=631 / 视口 640 ⇒ 判"可见"，
+                #   但导航 `List` 的底只到 618 ⇒ 点在列表外，页面不切。
+                #   现象与"点了没反应"一模一样，且判据本身看不出来。
+                #   中部判据是**经验规避**：根因（拿不到元素所在的滚动视口）还在，
+                #   要真修得让 UIA 侧报出容器的可见区。
+                if ch * 0.12 <= cy_c <= ch * 0.78:
                     break
-                step = 3 if cy_c > ch else -3
+                step = 3 if cy_c > ch * 0.5 else -3
                 # 滚轮必须落在**元素所在那一列**（导航列表 / 内容区是两个独立滚动容器）。
                 # 打到内容区再滚，导航纹丝不动 —— 现象与"滚轮完全失效"一模一样。
                 # ★ y 取**视口中线**而不是边缘：边缘可能落在列表外（标题栏 / 面板留白），

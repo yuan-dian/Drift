@@ -10,6 +10,7 @@ use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
 use Drift\Input\ScrollEvent;
+use Drift\Input\SemanticsExpandEvent;
 use Drift\Input\SemanticsInvokeEvent;
 use Drift\Input\SemanticsSetValueEvent;
 use Drift\Input\ThemeChangedEvent;
@@ -299,6 +300,18 @@ final class Win32Platform implements Platform
             $index = (int) ($event['idx'] ?? -1);
             if ($index >= 0) {
                 $input->push(new SemanticsInvokeEvent($index));
+
+                return 1;
+            }
+
+            return 0;
+        }
+
+        if ($type === 'uia-expand') {
+            // §65：`Expand()` / `Collapse()` 带方向（不是 toggle）。
+            $index = (int) ($event['idx'] ?? -1);
+            if ($index >= 0) {
+                $input->push(new SemanticsExpandEvent($index, (bool) ($event['expand'] ?? false)));
 
                 return 1;
             }

@@ -17,6 +17,7 @@ use Drift\Input\InputEvent;
 use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
 use Drift\Input\ScrollEvent;
+use Drift\Input\SemanticsExpandEvent;
 use Drift\Input\SemanticsInvokeEvent;
 use Drift\Input\SemanticsSetValueEvent;
 use Drift\Input\TapTracker;
@@ -34,6 +35,7 @@ use Drift\Rendering\RenderSurface;
 use Drift\Rendering\SurfaceProfile;
 use Drift\Text\TextMetricsProvider;
 use Drift\Widget\Scrollable;
+use Drift\Widget\SemanticsExpandable;
 use Drift\Widget\SemanticsValueEditable;
 use Drift\Theme\ThemeData;
 use Drift\Widget\BuildContext;
@@ -1087,7 +1089,10 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     private function pushSemantics(\Closure $sink, ?Element $focused, string $mode): void
     {
         $this->semanticsMode = $mode;
-        $tree = SemanticsBuilder::build($this->root, $focused);
+        // 可聚焦是**框架事实**（`FocusManager` 的两张表），控件自己声明会与
+        //   `skipFocus()` / `disabled()` 打架 ⇒ 从这里喂进去（§65）。
+        $focusable = $this->focus?->focusableIds();
+        $tree = SemanticsBuilder::build($this->root, $focused, $focusable);
         ($sink)($tree->toArrays()['nodes']);
     }
 
@@ -1170,6 +1175,46 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
             $widget = $e->widget();
             if ($widget instanceof SemanticsValueEditable) {
                 return $widget->setSemanticsValue($value);
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * 按**语义节点索引**展开/折叠一行（UIA `IExpandCollapseProvider`，§65）。
+     *
+     * ★ 寻址与 `invokeSemanticsNode()` / `setSemanticsValue()` 同源（节点几何
+     *   中心 → 命中 → Element），区别在最后一步：沿父链找
+     *   `SemanticsExpandable`，把动作交给它。
+     * ★ **不合成 tap**：行的 tap 是"选中"，展开是另一件事。而箭头那个 `IconButton`
+     *   虽然在语义树里，却只是一颗没有身份的按钮 —— 按索引找它比按 Key 找行更脆。
+     * ★ `expandState === 0` 直接拒（叶子 / 非集合）：客户端不该对它们发起这条命令，
+     *   但它真发来时不能假装成功。
+     *
+     * @return bool 真的处理了（越界 / 零面积 / 无可展开概念 / 无人接 ⇒ false）
+     */
+    public function setSemanticsExpanded(int $index, bool $expand): bool
+    {
+        $tree = SemanticsBuilder::build($this->root, null);
+        if ($index < 0 || $index >= $tree->count()) {
+            return false;
+        }
+        $node = $tree->node($index);
+        if ($node->w <= 0 || $node->h <= 0 || $node->expandState === 0) {
+            return false;
+        }
+        $root = $this->root;
+        $focus = $this->focus;
+        if ($root === null || $focus === null) {
+            return false;
+        }
+        $hit = $focus->hitTest($node->x + $node->w / 2.0, $node->y + $node->h / 2.0, $root);
+        $element = $hit === null ? null : $focus->elementAt($root, $hit);
+        for ($e = $element; $e !== null; $e = $e->parent()) {
+            $widget = $e->widget();
+            if ($widget instanceof SemanticsExpandable) {
+                return $widget->setSemanticsExpanded($node->key, $expand);
             }
         }
 
@@ -1554,6 +1599,14 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         //   （不派发点击 —— `SetValue` 不是"点一下"）。
         if ($event instanceof SemanticsSetValueEvent) {
             $this->setSemanticsValue($event->index, $event->value);
+
+            return null;
+        }
+
+        // ★ UIA 的"可展开"半边（§65）：读屏在树行上按 `→` / 自动化调
+        //   `ExpandCollapsePattern`。与 Invoke 同队列、同轮循环。
+        if ($event instanceof SemanticsExpandEvent) {
+            $this->setSemanticsExpanded($event->index, $event->expand);
 
             return null;
         }

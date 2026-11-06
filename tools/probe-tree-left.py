@@ -5,7 +5,10 @@
 
 ★ 判据为什么不看像素、也不看 `HasKeyboardFocus`：
   · 树页那段「当前选中：X」是 `Text`，**不进 UIA 树** ⇒ 读不到；
-  · `HasKeyboardFocus` 这个 UIA 属性 provider 没实现 ⇒ 恒 false，读了等于没读。
+  · 写这条探针时（§64）`HasKeyboardFocus` 还没实现 ⇒ 恒 false。§65 之后能读了
+    （`probe-uia-state.py` ⑥ 就在验它），但这条探针**故意仍用结构判据**：
+    它能跑 dev 壳，而 dev 壳的壳侧是冻结的（旧 C++ 读不到新字段）；结构判据
+    只依赖 PHP 推的语义树，两种壳都成立 ⇒ 反向变异（改 PHP）才做得成。
 
   所以判据用**结构**（UIA 语义树里行的存在性），它只随"折叠"变化：
 

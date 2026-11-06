@@ -87,10 +87,60 @@ trait WidgetSemantics
         return $this;
     }
 
+    /**
+     * 声明"这个控件现在是什么状态"（§65）—— 选中 / 展开 / 层级。
+     *
+     * ```php
+     * $row->semanticsState(selected: true, expanded: false, level: 2);
+     * $leaf->semanticsState(level: 3);            // 叶子：不给 expanded ⇒ 客户端知道"不能展开"
+     * ```
+     *
+     * ★★ `null` 与 `false` **不是一回事**：`null` = 这个控件没有该概念（UIA 侧
+     *   不提供对应 Pattern，客户端据此知道"不可展开/不可选"）；`false` = 有概念且
+     *   现在是关的。混用会让每个按钮都声称自己能展开。
+     * ★ 与 `semantics()` / `semanticsRange()` 一样是**字段赋值**，不是虚方法。
+     * ★ `level` 只在集合族里给（树行）；`0` = 不声明（UIA 不给 `Level` 属性）。
+     *
+     * @api
+     */
+    public function semanticsState(?bool $selected = null, ?bool $expanded = null, int $level = 0): static
+    {
+        $this->mutate();
+        if ($selected !== null) {
+            $this->semSelect = $selected ? 2 : 1;
+        }
+        if ($expanded !== null) {
+            $this->semExpand = $expanded ? 2 : 1;
+        }
+        if ($level > 0) {
+            $this->semLevel = $level;
+        }
+
+        return $this;
+    }
+
     /** @internal `SemanticsBuilder` 读它；`null` = 不在语义树里 */
     public function semanticsRole(): ?SemanticsRole
     {
         return $this->semRole;
+    }
+
+    /** @internal `SemanticsBuilder` 读它（三态，见 `semanticsState()`） */
+    public function semanticsSelectState(): int
+    {
+        return $this->semSelect;
+    }
+
+    /** @internal `SemanticsBuilder` 读它（三态，见 `semanticsState()`） */
+    public function semanticsExpandState(): int
+    {
+        return $this->semExpand;
+    }
+
+    /** @internal `SemanticsBuilder` 读它（1-based；0 = 未声明） */
+    public function semanticsLevel(): int
+    {
+        return $this->semLevel;
     }
 
     /** @internal `SemanticsBuilder` 读它 */

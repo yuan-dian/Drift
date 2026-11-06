@@ -164,6 +164,12 @@ final class SemanticsTree
                 'rangeMax' => $n->rangeMax,
                 'enabled' => $n->enabled,
                 'focused' => $n->focused,
+                'focusable' => $n->focusable,
+                // 三态各自独立成键（不要合成一个 bool）：0 = 无此概念，C++ 侧据此
+                // 决定给不给对应 Pattern —— 合成 bool 会让每个节点都声称自己可选/可展开。
+                'selectState' => $n->selectState,
+                'expandState' => $n->expandState,
+                'level' => $n->level,
                 'x' => $n->x,
                 'y' => $n->y,
                 'w' => $n->w,

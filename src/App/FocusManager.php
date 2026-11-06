@@ -215,6 +215,27 @@ final class FocusManager
         return $this->focused;
     }
 
+    /**
+     * 可聚焦表（`spl_object_id` ⇒ 1），给语义树回答 `IsKeyboardFocusable`。
+     *
+     * ★ 取 `$byId` 而不是 `$order`：`skipFocus()` 只把节点从 Tab 序里摘掉，
+     *   它**仍然可聚焦**（方向键够得着）。按 Tab 序答会告诉读屏"这行进不去"，
+     *   而实际进得去 —— §64.2 同一个坑的第二面。
+     * ★ 值是标量：跨 AOT 边界不传对象（数组装对象有退化风险）。
+     *
+     * @internal `Application::pumpSemantics()` 取它
+     * @return array<int, int>
+     */
+    public function focusableIds(): array
+    {
+        $ids = [];
+        foreach ($this->byId as $id => $_el) {
+            $ids[$id] = 1;
+        }
+
+        return $ids;
+    }
+
     /** 焦点节点的 `State`（IME 光标 / 编辑态门控的唯一出口）。 */
     public function focusedState(): ?State
     {

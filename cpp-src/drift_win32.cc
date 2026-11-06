@@ -160,6 +160,15 @@ const UINT kMsgUiaInvoke = WM_APP + 2;
  */
 const UINT kMsgUiaSetValue = WM_APP + 3;
 
+/**
+ * UIA `Expand()` / `Collapse()` 的**转投消息**（§65）。
+ *
+ * ★ 不复用 `kMsgUiaInvoke`：`Invoke` 落到"在节点中心合成一次 tap"，而树行的
+ *   tap 是**选中**，不是展开 —— 复用会让读屏按 `→` 变成"选中这一行"。
+ *   载荷 `wp` = 节点索引，`lp` = 1 展开 / 0 折叠（UIA 这两条是命令，不是 toggle）。
+ */
+const UINT kMsgUiaExpand = WM_APP + 4;
+
 /** 队列元素种类（壳内部用；跨边界的名字在 `toArray()` 里给） */
 enum EventKind {
     kEvResize = 1,
@@ -172,6 +181,7 @@ enum EventKind {
     kEvDeactivate,
     kEvUiaInvoke,
     kEvUiaSetValue,
+    kEvUiaExpand,
     kEvFilesDropped,
     kEvCloseRequested,
 };
@@ -232,6 +242,14 @@ struct UiaNode {
     long controlType = UIA_CustomControlTypeId;
     int parent = -1;   // 父节点索引（本槽的 uiaNodes），-1 = 顶层（父是窗口根）
     bool focused = false;
+    // 能否被 Tab 到（`FocusManager` 的可聚焦表；与 focused 正交）。
+    bool focusable = false;
+    // 状态三态（§65）：0 = 该角色没有这个概念 ⇒ **不提供**对应 Pattern/属性。
+    // ★ 三态是必需的：0 与"false"混成一个 bool，每个按钮都会对客户端声称
+    //   "我未选中/可展开"。
+    int selectState = 0;   // 1 未选 / 2 已选
+    int expandState = 0;   // 1 折叠 / 2 展开
+    int level = 0;         // 1-based；0 = 不提供 UIA_Level
     double x = 0.0;
     double y = 0.0;
     double w = 0.0;
@@ -452,7 +470,26 @@ static long uiaControlTypeFor(const std::string &role) {
     // 客户端认不出"这是表格"），`tree` 随 TreeView 一起接上。
     if (role == "table") return UIA_TableControlTypeId;
     if (role == "tree") return UIA_TreeControlTypeId;
+    // 树的行（§65）。★ 换控制类型会连带掐掉 InvokePattern —— 见 `simplePattern()`
+    //   里那条"Button **或** TreeItem"的注释。
+    if (role == "treeitem") return UIA_TreeItemControlTypeId;
     return UIA_CustomControlTypeId;
+}
+
+/**
+ * 勾选态（§65）：`TogglePattern` 的 `ToggleState` **属性**与 `get_ToggleState()`
+ * 共用这一份判据。
+ *
+ * ★ 抽出来的理由不是复用好看：两处各写一份，症状是"读屏念已选中、脚本调
+ *   Pattern 说未选中"，而没人会同时验两条。
+ * radio 的 value = 选中时自己的值 / 未选中空串；checkbox、switch 是
+ * checked / unchecked（见 `ToggleBase::refreshSemantics()`）。
+ */
+static ToggleState toggleStateOf(const UiaNode &node) {
+    if (node.controlType == UIA_RadioButtonControlTypeId) {
+        return node.value.empty() ? ToggleState_Off : ToggleState_On;
+    }
+    return (node.value == L"checked") ? ToggleState_On : ToggleState_Off;
 }
 
 // ── parent 关系走树 helper（uiaNodes 前序扁平，parent 指父索引，-1 = 窗口根）──
@@ -584,6 +621,97 @@ private:
     int m_index;
 };
 
+/**
+ * 选中（§65）：树行 / 列表项的 `ISelectionItemProvider`。
+ *
+ * ★ 必须有这个 Pattern，**光答 `IsSelected` 属性不够**：UIA 客户端侧
+ *   `get_CurrentIsSelected` 是从 Pattern 取的 —— provider 只答属性时，
+ *   2026-11-06 真机实测读到的是全 `false`（核心兜底），而属性值本身是对的。
+ *   这正是"看起来实现了、客户端拿不到"的静默形状。
+ *
+ * ★ `Select()` 复用 `kMsgUiaInvoke`（点行 = 选中）：行的 `onSelected` 就是选中。
+ *   `AddToSelection` 同样 —— 树是单选，客户端加选等于选。
+ *   `RemoveFromSelection` 回 `UIA_E_NOTSUPPORTED`：树行不能被"取消选中"到无。
+ */
+class SelectionItemAdapter : public ComTearOff<SelectionItemAdapter, ISelectionItemProvider> {
+public:
+    explicit SelectionItemAdapter(HWND hwnd, int index) : m_hwnd(hwnd), m_index(index) {}
+    STDMETHOD(Select)() override {
+        if (m_hwnd != NULL) {
+            PostMessageW(m_hwnd, kMsgUiaInvoke, (WPARAM)m_index, 0);
+        }
+        return S_OK;
+    }
+    STDMETHOD(AddToSelection)() override {
+        if (m_hwnd != NULL) {
+            PostMessageW(m_hwnd, kMsgUiaInvoke, (WPARAM)m_index, 0);
+        }
+        return S_OK;
+    }
+    STDMETHOD(RemoveFromSelection)() override { return UIA_E_NOTSUPPORTED; }
+    STDMETHOD(get_IsSelected)(BOOL *ret) override {
+        if (ret == nullptr) return E_INVALIDARG;
+        *ret = FALSE;
+        const std::vector<UiaNode> &nodes = slotOf(m_hwnd).uiaNodes;
+        if (m_index >= 0 && m_index < (int)nodes.size()) {
+            *ret = nodes[m_index].selectState == 2 ? TRUE : FALSE;
+        }
+        return S_OK;
+    }
+    STDMETHOD(get_SelectionContainer)(IRawElementProviderSimple **ret) override {
+        // 返回父容器（客户端用它问"我属于哪个列表"）。给 nullptr 是合法的
+        // —— 客户端会退到 Fragment 的 Parent 去找，不会崩。
+        if (ret != nullptr) *ret = nullptr;
+        return S_OK;
+    }
+
+private:
+    HWND m_hwnd;
+    int m_index;
+};
+
+/**
+ * 展开/折叠（§65）：树分支行的 `IExpandCollapseProvider`。
+ *
+ * ★ 与 `SelectionItemAdapter` 同一条理由：**只答属性不够**。不给这个 Pattern 时
+ *   UIA 核心把 `ExpandCollapseState` 兜底成 `LeafNode`（真机实测三行全是 3），
+ *   读屏据此认为"这棵树没有任何分支"。
+ * ★ `Expand()` / `Collapse()` 是**命令**，不是 toggle ⇒ 不能复用 Invoke。
+ */
+class ExpandCollapseAdapter : public ComTearOff<ExpandCollapseAdapter, IExpandCollapseProvider> {
+public:
+    explicit ExpandCollapseAdapter(HWND hwnd, int index) : m_hwnd(hwnd), m_index(index) {}
+    STDMETHOD(Expand)() override {
+        if (m_hwnd != NULL) {
+            PostMessageW(m_hwnd, kMsgUiaExpand, (WPARAM)m_index, (LPARAM)1);
+        }
+        return S_OK;
+    }
+    STDMETHOD(Collapse)() override {
+        if (m_hwnd != NULL) {
+            PostMessageW(m_hwnd, kMsgUiaExpand, (WPARAM)m_index, (LPARAM)0);
+        }
+        return S_OK;
+    }
+    STDMETHOD(get_ExpandCollapseState)(ExpandCollapseState *ret) override {
+        if (ret == nullptr) return E_INVALIDARG;
+        *ret = ExpandCollapseState_LeafNode;
+        const std::vector<UiaNode> &nodes = slotOf(m_hwnd).uiaNodes;
+        if (m_index >= 0 && m_index < (int)nodes.size()) {
+            // 三态：0 = 没有展开概念 ⇒ 叶子（UIA 里 LeafNode 就是"不可展开"）。
+            int st = nodes[m_index].expandState;
+            *ret = st == 2 ? ExpandCollapseState_Expanded
+                           : (st == 1 ? ExpandCollapseState_Collapsed
+                                      : ExpandCollapseState_LeafNode);
+        }
+        return S_OK;
+    }
+
+private:
+    HWND m_hwnd;
+    int m_index;
+};
+
 // ── 值型 Pattern 的只读半边（§4.4 提交 1）──────────────────────────
 // ★ 写方法（SetValue / Toggle）本提交明确回 `UIA_E_NOTSUPPORTED`，且
 //   `get_IsReadOnly` = TRUE —— 客户端据此**不会**去调写方法（不是静默空壳，是
@@ -644,14 +772,8 @@ public:
         *ret = ToggleState_Off;
         const std::vector<UiaNode> &nodes = slotOf(m_hwnd).uiaNodes;
         if (m_index >= 0 && m_index < (int)nodes.size()) {
-            const std::wstring &v = nodes[m_index].value;
-            // radio 的 value = 选中时自己的值 / 未选中空串；checkbox、switch 是
-            // checked / unchecked（见 `ToggleBase::refreshSemantics()`）。
-            if (nodes[m_index].controlType == UIA_RadioButtonControlTypeId) {
-                *ret = v.empty() ? ToggleState_Off : ToggleState_On;
-            } else {
-                *ret = (v == L"checked") ? ToggleState_On : ToggleState_Off;
-            }
+            // 与属性面共用同一份判据（`toggleStateOf()`）—— 两处各写一份会漂移。
+            *ret = toggleStateOf(nodes[m_index]);
         }
         return S_OK;
     }
@@ -856,7 +978,11 @@ public:
         // 按 ControlType 分派（§4.4）：控件"是什么"决定"能问什么 Pattern"。
         // ★ 不按 role 判 —— role→ControlType 已在 `uiaControlTypeFor` 收敛，
         //   多一层判据就是两处要同步。
-        if (id == UIA_InvokePatternId && ctrl == UIA_ButtonControlTypeId) {
+        // ★ `TreeItem` 必须一起给：树的行换了角色（§65），控制类型跟着从 Button
+        //   变 TreeItem ⇒ 只判 Button 的话"鼠标点得动、读屏点不动"。
+        //   TreeItem 在 UIA 里本来就该支持 Invoke。
+        if (id == UIA_InvokePatternId
+            && (ctrl == UIA_ButtonControlTypeId || ctrl == UIA_TreeItemControlTypeId)) {
             *ppv = new InvokeAdapter(m_hwnd, m_index);
         } else if (id == UIA_ValuePatternId && ctrl == UIA_EditControlTypeId) {
             *ppv = new ValueAdapter(m_hwnd, m_index);
@@ -866,6 +992,12 @@ public:
         } else if (id == UIA_RangeValuePatternId
                    && (ctrl == UIA_SliderControlTypeId || ctrl == UIA_ProgressBarControlTypeId)) {
             *ppv = new RangeAdapter(m_hwnd, m_index);
+        } else if (id == UIA_SelectionItemPatternId && nodes[m_index].selectState != 0) {
+            // §65：**按状态而不是按控制类型**分派。选中概念不属于某一种控件
+            //   （树行、列表项、标签页都有），而"有没有这个概念"恰好就是三态里的 0。
+            *ppv = new SelectionItemAdapter(m_hwnd, m_index);
+        } else if (id == UIA_ExpandCollapsePatternId && nodes[m_index].expandState != 0) {
+            *ppv = new ExpandCollapseAdapter(m_hwnd, m_index);
         }
         return S_OK;
     }
@@ -875,12 +1007,17 @@ public:
         long ctrl = UIA_CustomControlTypeId;
         bool enabled = true;
         const std::vector<UiaNode> &nodes = slotOf(m_hwnd).uiaNodes;
+        // 本节点（窗口根 -1 / 越界 ⇒ nullptr）：新状态属性一律"没有就不答"，
+        //   留 VT_EMPTY 让客户端按"该属性不支持"处理 —— 硬报 false 等于对每个
+        //   节点声称"未选中/不可展开"。
+        const UiaNode *self = nullptr;
         if (m_index == -1) {
             ctrl = UIA_WindowControlTypeId;
         } else if (m_index >= 0 && m_index < (int)nodes.size()) {
-            name = nodes[m_index].name;
-            ctrl = nodes[m_index].controlType;
-            enabled = nodes[m_index].enabled;
+            self = &nodes[m_index];
+            name = self->name;
+            ctrl = self->controlType;
+            enabled = self->enabled;
         }
         if (id == UIA_NamePropertyId) {
             out->vt = VT_BSTR;
@@ -920,6 +1057,44 @@ public:
             }
             out->vt = VT_BOOL;
             out->boolVal = off ? VARIANT_TRUE : VARIANT_FALSE;
+        } else if (id == UIA_HasKeyboardFocusPropertyId) {
+            // §65：数据一直在（`focused` 被 `GetFocus()` 用来做 Fragment 导航），
+            //   只是从来没在这里答过 ⇒ 客户端读到 VT_EMPTY 按 false 处理，
+            //   读屏不播报焦点、自动化写不出"焦点在我期望的地方"这种判据。
+            out->vt = VT_BOOL;
+            out->boolVal = (self != nullptr && self->focused) ? VARIANT_TRUE : VARIANT_FALSE;
+        } else if (id == UIA_IsKeyboardFocusablePropertyId) {
+            out->vt = VT_BOOL;
+            out->boolVal = (self != nullptr && self->focusable) ? VARIANT_TRUE : VARIANT_FALSE;
+        } else if (id == UIA_ToggleToggleStatePropertyId) {
+            // 只对勾选族答（与 `TogglePattern` 同一族）。其它控件留 VT_EMPTY。
+            if (self != nullptr
+                && (ctrl == UIA_CheckBoxControlTypeId || ctrl == UIA_RadioButtonControlTypeId)) {
+                out->vt = VT_I4;
+                out->lVal = (long)toggleStateOf(*self);
+            }
+        } else if (id == UIA_ValueValuePropertyId) {
+            if (self != nullptr && ctrl == UIA_EditControlTypeId) {
+                out->vt = VT_BSTR;
+                out->bstrVal = SysAllocString(self->value.c_str());
+            }
+        } else if (id == UIA_SelectionItemIsSelectedPropertyId) {
+            // 三态：0 = 这个角色没有选中概念 ⇒ 不答（否则每个按钮都说"未选中"）。
+            if (self != nullptr && self->selectState != 0) {
+                out->vt = VT_BOOL;
+                out->boolVal = self->selectState == 2 ? VARIANT_TRUE : VARIANT_FALSE;
+            }
+        } else if (id == UIA_ExpandCollapseExpandCollapseStatePropertyId) {
+            if (self != nullptr && self->expandState != 0) {
+                out->vt = VT_I4;
+                out->lVal = self->expandState == 2 ? ExpandCollapseState_Expanded
+                                                   : ExpandCollapseState_Collapsed;
+            }
+        } else if (id == UIA_LevelPropertyId) {
+            if (self != nullptr && self->level > 0) {
+                out->vt = VT_I4;
+                out->lVal = self->level;
+            }
         }
         return S_OK;
     }
@@ -1621,6 +1796,20 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
 
+        case kMsgUiaExpand: {
+            // UIA `Expand`/`Collapse` 的落地（§65）：同"入队 + 叫醒"，无指针载荷。
+            PendingEvent event;
+            event.hwnd = hwnd;
+            event.kind = kEvUiaExpand;
+            event.a = (int) (INT_PTR) wp;
+            event.b = (int) (INT_PTR) lp;
+            event.c = 0;
+            event.d = 0;
+            g_queue.push_back(event);
+            wakePump(hwnd);
+            return 0;
+        }
+
         case kMsgUiaSetValue: {
             // UIA `SetValue` 的落地（§4.4 提交 2）：与 Invoke 同一条"入队 + 叫醒"，
             // 唯一多出来的是字符串载荷（lParam 是 `new std::wstring`，这里接管所有权）。
@@ -2287,6 +2476,12 @@ Array toArray(const PendingEvent &event) {
             out.set("type", "uia-set-value");
             out.set("idx", (Int)event.a);
             out.set("value", String(event.text));
+            break;
+
+        case kEvUiaExpand:
+            out.set("type", "uia-expand");
+            out.set("idx", (Int)event.a);
+            out.set("expand", (bool)(event.b != 0));
             break;
 
         case kEvFilesDropped:
@@ -3597,6 +3792,11 @@ void php_drift_win_uia_push(Int hwnd, Array nodes) {
         node.h = a.get("h").toFloat();
         node.isControl = true;
         node.focused = a.get("focused").toBool();
+        // 缺键 ⇒ false / 0（老调用方不推也安全），与上面几行同一套降级。
+        node.focusable = a.get("focusable").toBool();
+        node.selectState = (int)a.get("selectState").toInt();
+        node.expandState = (int)a.get("expandState").toInt();
+        node.level = (int)a.get("level").toInt();
         win.uiaNodes.push_back(node);
     }
 
