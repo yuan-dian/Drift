@@ -36,8 +36,10 @@ use Drift\Widget\Card;
 use Drift\Widget\CustomPaint;
 use Drift\Widget\CustomPainter;
 use Drift\Dev\Inspect\Snapshot;
+use Drift\Dev\Smoke\App\FakeDialog;
 use Drift\Dev\Smoke\Golden\GoldenGaugePainter;
 use Drift\Dev\Smoke\Golden\GoldenSparkPainter;
+use Drift\Async\Future;
 use Drift\Widget\Column;
 use Drift\Widget\Row;
 use Drift\Widget\ScrollView;
@@ -87,16 +89,29 @@ function goldenPng(string $rgba, int $w, int $h): string
 // ★ 顺手把快照 JSON 落盘（`inspect.json`）——S3 的 HTML 报告直接读它做可折叠树。
 /**
  * @param array{0:int,1:int,2:int,3:int} $bbox [minX,minY,maxX,maxY]（像素差异包围盒）
+ * @param array<string, callable(): array> $pageWiring 构造器要参数的页的无头接线（见页面层）
  * @return string 多行文本：节点路径 + 控件类 + 盒类 + 绝对矩形（按相关度排序）
  */
-function regionNodes(string $pageClass, int $W, int $H, array $bbox, string $sceneDir): string
+function regionNodes(string $pageClass, int $W, int $H, array $bbox, string $sceneDir, array $pageWiring = []): string
 {
     if (!class_exists($pageClass)) {
         return "（找不到页面类 {$pageClass}，跳过节点反查）\n";
     }
 
+    // ★ 与主渲染**同一套接线**：要参数的页在这里同样要能构造，否则"红了"的时候
+    //   归因路径自己先 Fatal —— 把"红了能指方向"变成"红了直接崩"（2026-11-06 变异抓到的）。
+    $pos = strrpos($pageClass, '\\');
+    $shortName = $pos === false ? $pageClass : substr($pageClass, $pos + 1);
+    $wired = $pageWiring[$shortName] ?? null;
+    $pageCtor = (new ReflectionClass($pageClass))->getConstructor();
+    $required = $pageCtor === null ? 0 : $pageCtor->getNumberOfRequiredParameters();
+
+    if ($required > 0 && $wired === null) {
+        return "（{$shortName} 要构造参数且无接线，跳过节点反查）\n";
+    }
+
     /** @var \Drift\Widget\Widget $page */
-    $page = new $pageClass();
+    $page = $required > 0 ? new $pageClass(...$wired()) : new $pageClass();
     $snapshot = Snapshot::ofPage($page, $W, $H);
 
     // 落盘：给 S3 HTML 报告消费（可折叠树 + 点节点看属性）。
@@ -543,12 +558,54 @@ $scenes['opacity'] = static function () use ($W, $H): string {
 // ★ 噪声与改动面成正比：改了公共控件（Card 圆角之类）会一次破很多页基线。
 //   这是 golden 的正常形态，但 **`--update` 之前必须看 diff 图** —— 无脑更新
 //   等于把网撤了（这是 golden 唯一能失效的方式）。
-// ★ 只收**构造器无必填参数**的页：要参数的页（ComboBox / Feedback / Snackbar）
-//   依赖 app 接线（命令环 / 浮层宿主），不是页面自己画得出来 ⇒ 跳过并报出名字，
-//   不许静默丢（"少了一张网"和"这张网本来就是空的"必须能分辨）。
+// ★ 收录判据曾经是"构造器无必填参数" —— 那条判据等于"简单页收、复杂页不收"，
+//   已于 2026-11-06 换成接线表（见下）。
+// ── 金样接线表：构造器要参数的页 ──
+//
+// ★★ 为什么需要这张表（2026-11-06）：收录判据曾是"构造器无必填参数"，它实际筛出的
+//   是"能零接线渲染的页"= **简单页**。于是 27 页有网、7 页没网，而没网的恰恰是
+//   最复杂、最容易坏的（弹窗 / 下拉 / 提示条 / 异步加载 / 并发取数 / 错误边界）——
+//   **保护强度与风险成反比**。而 gate 只报"27 场景 OK"，看起来是全覆盖。
+//
+// ★ 这些闭包全都**只在用户点按钮时才被调用**，首帧画不出它们 —— 页面能构造就能渲染。
+//   所以"要 app 接线"不是不收录的理由，只是**没接线**：这里给无头假接线。
+//   ★ 异步三页一律 `Future::pending()`（首帧稳定画 loading）：喂已结算的数据要求
+//     "行数据的形状恰好对"，那是把页面的私有细节抄进量具 ⇒ 数据一改就假红。
+$pageWiring = [
+'AsyncTablePage'      => static fn(): array => [static fn(int $page): Future => Future::pending()],
+'ConcurrentFetchPage' => static fn(): array => [static fn(int $page): Future => Future::pending()],
+'LoadMorePage'        => static fn(): array => [static fn(int $page): Future => Future::pending()],
+// 下拉：`delay(ms, fn)` 只在"点了才跑 400ms 后关面板"，首帧不调用
+'ComboBoxPage'        => static function (): array {
+    return [static function (int $ms, \Closure $run): void {
+    }];
+},
+// 对话框：`Dialog` 端口用既有替身；`setCloseConfirm` 同上是点击后才回调
+'DialogPage'          => static function (): array {
+    return [new FakeDialog(), static function (bool $on): void {
+    }];
+},
+// 模态 / 提示条：组合根接线，闭包体在首帧不被调用 ⇒ 空实现即可
+'FeedbackPage'        => static function (): array {
+    return [static function ($modal): void {
+    }];
+},
+'SnackbarPage'        => static function (): array {
+    return [static function ($snackbar): void {
+    }];
+},
+];
+
+// ── 未接线的页必须在 $pageWiring 里，或在 $pageExempt 里**登记理由** ──
+// ★ 这就是"不许静默丢"的落实：新增一页要参数却两处都没有 ⇒ 报错退出，而不是
+//   一行 stderr 混在过去（"少了一张网"与"这张网本来就是空的"必须能分辨）。
+$pageExempt = [];
+
 $pageScenes = [];
 $pageClasses = [];
 $skippedPages = [];
+/** @var list<string> 要接线却没接、也没登记理由的页 —— 见文件末尾的硬失败 */
+$unwiredPages = [];
 $pageFiles = glob(dirname(__DIR__) . '/apps/showcase/src/Pages/*.php') ?: [];
 sort($pageFiles);
 
@@ -560,12 +617,23 @@ foreach ($pageFiles as $pageFile) {
     }
     $pageCtor = (new ReflectionClass($pageClass))->getConstructor();
     $pageRequired = $pageCtor === null ? 0 : $pageCtor->getNumberOfRequiredParameters();
+
+    $pageArgs = [];
     if ($pageRequired > 0) {
-        $skippedPages[] = $pageName;
-        continue;
+        $wired = $pageWiring[$pageName] ?? null;
+        if ($wired === null) {
+            // 要接线却没接、也没登记理由 ⇒ 收集起来最后报错退出（不静默丢）
+            if (!isset($pageExempt[$pageName])) {
+                $unwiredPages[] = $pageName;
+            } else {
+                $skippedPages[$pageName] = $pageExempt[$pageName];
+            }
+            continue;
+        }
+        $pageArgs = $wired();
     }
 
-    $pageScenes['page/' . $pageName] = static function () use ($pageClass, $W, $H): string {
+    $pageScenes['page/' . $pageName] = static function () use ($pageClass, $W, $H, $pageArgs): string {
         $context = new BuildContext(
             (float) $W,
             (float) $H,
@@ -609,7 +677,7 @@ foreach ($pageFiles as $pageFile) {
         };
 
         /** @var Widget $page */
-        $page = new $pageClass();
+        $page = new $pageClass(...$pageArgs);
         $element = $page->createElement();
         $element->mount(null, $context);
         (new Frame($surface))->run(
@@ -625,8 +693,21 @@ foreach ($pageFiles as $pageFile) {
 }
 
 if ($skippedPages !== []) {
-    fwrite(STDERR, '（跳过 ' . count($skippedPages) . ' 页：' . implode('/', $skippedPages)
-        . " —— 构造器要参数，需 app 接线）\n");
+    $lines = [];
+    foreach ($skippedPages as $name => $reason) {
+        $lines[] = $name . '（' . $reason . '）';
+    }
+    fwrite(STDERR, '（登记不收 ' . count($skippedPages) . ' 页：' . implode('、', $lines) . "）\n");
+}
+
+// ★★ 硬失败（2026-11-06）：要构造参数、没进接线表、也没登记理由 ⇒ 退出码 2。
+//   "少了一张网"与"这张网本来就是空的"必须能分辨 —— 一行 stderr 混在输出里不算
+//   分辨（它不进 gate 判定，等于静默）。新增一页带参数的页面就会撞上这一条。
+if ($unwiredPages !== []) {
+    fwrite(STDERR, '✗ 这些页要构造参数，但既没进 $pageWiring 也没进 $pageExempt：'
+        . implode('/', $unwiredPages) . "\n"
+        . "  ⇒ 它们**没有整页金样**。要么在接线表里给无头假接线，要么登记不收的理由。\n");
+    exit(2);
 }
 
 // ─────────────────── 模式：默认 md5 文本 / --update / --check / --png ───────────────────
@@ -853,7 +934,7 @@ if ($mode === 'check') {
 
         // S2：整页场景失败时，把"像素条带"翻译成"这一带是哪些节点"（像素说哪里、快照说谁）
         if (str_starts_with($name, 'page/') && isset($pageClasses[$name])) {
-            $msg .= "\n" . regionNodes($pageClasses[$name], $W, $H, [$minX, $minY, $maxX, $maxY], $sceneDir);
+            $msg .= "\n" . regionNodes($pageClasses[$name], $W, $H, [$minX, $minY, $maxX, $maxY], $sceneDir, $pageWiring);
         }
 
         // ★ 记录 S3 现场产物路径（相对 golden 根），呈现层据此拼 HTML。
@@ -916,5 +997,13 @@ foreach ($scenes as $name => $make) {
 $outPath = (isset($argv[1]) && $argv[1] !== '' && \strncmp($argv[1], '-', 1) !== 0)
     ? $argv[1]
     : 'php://stdout';
-file_put_contents($outPath, implode("\n", $out) . "\n");
-echo implode("\n", $out), "\n";
+
+// ★ 二选一，不再"写文件 + 同时 echo"：`php://stdout` 本身就会被 file_put_contents 写一遍，
+//   再 echo 一遍 ⇒ 每条场景在终端出现两次（2026-11-06 发现）。人肉眼 diff 时行数翻倍、
+//   看着像"两套场景"，而命令不报错 —— 又是"看起来成功"。
+if ($outPath === 'php://stdout') {
+    echo implode("\n", $out), "\n";
+} else {
+    file_put_contents($outPath, implode("\n", $out) . "\n");
+    echo '（' . count($out) . " 场景写入 {$outPath}）\n";
+}
