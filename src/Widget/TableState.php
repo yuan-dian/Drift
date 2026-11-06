@@ -52,6 +52,17 @@ final class TableState extends State implements Scrollable, EditableText, Constr
 
     private int $focusedCol = 0;
 
+    /**
+     * 光标停到表头时的列下标（`null` = 光标在数据行）。
+     *
+     * ★ 不把表头编码成 `focusedRow = -1`：那个字段被十几处按"行下标"消费
+     *   （`cellRect()` 负 y、`anchorAt()` 不存在的行 key、行数夹取），哨兵值渗下去
+     *   只会静默算错。两个字段互斥，判据就这一句：非 null ⇒ 光标在表头。
+     * ★ 进表头不动 `focusedRow`：出表头要按原路回到同一行（排序换过行序也一样，
+     *   位置连续比"跟住某条数据"要紧 —— 后者是另一个缺陷，见 DEBT §61.5）。
+     */
+    private ?int $headerCol = null;
+
     /** 焦点在本表吗。失焦不画描边（画了就是撒谎），但保留光标格（Tab 出去再回来停在原处） */
     private bool $hasFocus = false;
 
@@ -377,15 +388,25 @@ final class TableState extends State implements Scrollable, EditableText, Constr
     /**
      * 当前光标格（行 / 列**下标**；空格子表 ⇒ `null`）。
      *
+     * 光标停在表头时也返回 `null`：表头不是格子，硬给个 `row: -1` 会让每个消费者
+     * 各自去猜哨兵值。要知道"在不在表头"用 `headerFocusedColumn()`。
+     *
      * @return array{row: int, col: int}|null
      */
     public function focusedCell(): ?array
     {
-        if ($this->view()->rowList() === [] || $this->view()->columnList() === []) {
+        if ($this->view()->rowList() === [] || $this->view()->columnList() === []
+            || $this->headerCol !== null) {
             return null;
         }
 
         return ['row' => $this->focusedRow, 'col' => $this->focusedCol];
+    }
+
+    /** 光标停在表头时的列下标（`null` = 光标在数据行） */
+    public function headerFocusedColumn(): ?int
+    {
+        return $this->headerCol;
     }
 
     /**
@@ -438,6 +459,12 @@ final class TableState extends State implements Scrollable, EditableText, Constr
         // 放在行列数检查之前 —— 有编辑格就一定有行列。
         if ($this->editingRef !== null) {
             return $this->editKey($event);
+        }
+
+        // 光标停在表头：键盘整个归表头。放在行列数检查之前 —— 空表也能排序
+        // （应用可能借排序把"暂无数据"换成"按某列排的空表"），而表头是唯一入口。
+        if ($this->headerCol !== null) {
+            return $this->headerKey($event);
         }
 
         $rows = \count($this->view()->rowList());
@@ -500,6 +527,24 @@ final class TableState extends State implements Scrollable, EditableText, Constr
         $row = max(0, min($row, $rows - 1));
         $col = max(0, min($col, $cols - 1));
 
+        // `↑` 在**首行**再按一次 ⇒ 光标进表头（ag-Grid 同款，ARIA grid 也把表头
+        // 当作 grid 里的一行）。判 `focusedRow === 0` 而不是 `$row === 0`：从第 2 行
+        // 按上去停在首行是"移动"，不是"越过"。
+        // ★ `Shift+↑` 是扩选到边界，不进表头 —— 扩选与换行区是两件事。
+        // ★ 没有可排序列 ⇒ 进不去（表头里按不动就不给站，§57 规则 2）。
+        if ($nav->is(KeyChord::up()) && $this->focusedRow === 0 && !$chord->shift) {
+            $header = $this->headerEntryCol($col);
+            if ($header !== null) {
+                $this->setState(function () use ($header): void {
+                    // 列一起带过去：`↓` 出表头要回**同一列**（两处各存一份必然漂）
+                    $this->focusedCol = $header;
+                    $this->headerCol = $header;
+                });
+
+                return true;
+            }
+        }
+
         // Shift+方向键 = **扩选**。锚点须是"移动之前"那一格，否则第一次 Shift+Down 只选一行。
         // 无修饰的移动不动选区（选区受控，应用持有）。
         if ($chord->shift) {
@@ -518,6 +563,143 @@ final class TableState extends State implements Scrollable, EditableText, Constr
         $this->revealFocus();
 
         return true;
+    }
+
+    // ── 表头的键盘入口（§61）───────────────────────────────────────────
+    //
+    // 光标能停表头，才有"键盘排序"这条路。形状照 ag-Grid：↑ 从首行进表头、
+    // ←→ 在表头列间移动、Enter 三态循环、↓ 回行区。
+
+    /**
+     * 表头里的按键（光标在表头时整个键盘归这里）。
+     *
+     * ★ `←→` / `Enter` 必须**吃掉**（`true`）：让位给框架会去滚容器 / 派发激活，
+     *   而光标原地不动 —— 用户看到的是"按了没反应，画面却动了"（同 §58.3）。
+     * ★ `↑` / `PageUp` / `PageDown` 吃掉但不动：单行表头没有"上一行"、没有"翻页"，
+     *   这正是 ag-Grid 记的"表头里这些键不生效"。
+     */
+    private function headerKey(KeyEvent $event): bool
+    {
+        $cols = $this->sortableColumns();
+
+        // 列被删光 / 全部改成不可排 ⇒ 光标退回行区，别停在死区里
+        if ($cols === []) {
+            $this->setState(function (): void {
+                $this->headerCol = null;
+            });
+
+            return false;
+        }
+
+        $chord = $event->chord;
+        $current = $this->headerCol;
+
+        // 这一列不再可排（应用换了列定义）⇒ 夹到最近的可排列，下一次按键才不会算到虚空
+        if (!\in_array($current, $cols, true)) {
+            $current = $this->headerEntryCol($current) ?? $cols[0];
+            $this->setState(function () use ($current): void {
+                $this->focusedCol = $current;
+                $this->headerCol = $current;
+            });
+        }
+
+        if ($chord->is(KeyChord::enter()) || $chord->is(KeyChord::make('Space'))) {
+            $column = $this->view()->columnList()[$current] ?? null;
+            if ($column !== null) {
+                $this->noteHeaderTap($column, $current);
+            }
+
+            return true;
+        }
+
+        $next = $current;
+
+        if ($chord->is(KeyChord::left())) {
+            foreach ($cols as $c) {
+                if ($c < $current) {
+                    $next = $c;   // 一直走到最右的那个可排 < current
+                }
+            }
+        } elseif ($chord->is(KeyChord::right())) {
+            foreach ($cols as $c) {
+                if ($c > $current) {
+                    $next = $c;   // 第一个可排 > current
+                    break;
+                }
+            }
+        } elseif ($chord->is(KeyChord::home())) {
+            $next = $cols[0];
+        } elseif ($chord->is(KeyChord::end())) {
+            $next = $cols[\count($cols) - 1];
+        } elseif ($chord->is(KeyChord::down())) {
+            $this->setState(function (): void {
+                $this->headerCol = null;
+            });
+
+            return true;
+        } elseif ($chord->is(KeyChord::up())
+            || $chord->is(KeyChord::pageUp())
+            || $chord->is(KeyChord::pageDown())) {
+            return true;
+        } else {
+            return false;
+        }
+
+        // 边界（首/末可排列）：吃掉不动，与数据行同一条纪律
+        if ($next === $current) {
+            return true;
+        }
+
+        $this->setState(function () use ($next): void {
+            $this->focusedCol = $next;
+            $this->headerCol = $next;
+        });
+
+        $this->revealHeaderFocus();
+
+        return true;
+    }
+
+    /**
+     * 可排序的列下标 —— 表头焦点能到的格子。
+     *
+     * ★ 能停 = 按得动（§57 规则 2）。不可排的列在表头里一无所有，让光标停上去
+     *   就是"按了没反应"。ARIA APG 同一条：不提供功能的表头格不必可聚焦。
+     *
+     * @return list<int>
+     */
+    private function sortableColumns(): array
+    {
+        $out = [];
+
+        foreach ($this->view()->columnList() as $index => $column) {
+            if ($column->isSortable()) {
+                $out[] = $index;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * 进表头 / 列失效时落在哪一列：离 `$preferred` 最近的可排列（等距取靠前）。
+     * `null` = 一列都不可排，光标进不去表头。
+     */
+    private function headerEntryCol(int $preferred): ?int
+    {
+        $cols = $this->sortableColumns();
+        if ($cols === []) {
+            return null;
+        }
+
+        $best = null;
+        foreach ($cols as $c) {
+            if ($best === null || \abs($c - $preferred) < \abs($best - $preferred)) {
+                $best = $c;
+            }
+        }
+
+        return $best;
     }
 
     // ── 选区：Shift+方向键 / Ctrl+A / Ctrl+C（格级矩形）────────────────────
@@ -1093,6 +1275,12 @@ final class TableState extends State implements Scrollable, EditableText, Constr
     /** 把光标格滚进视口（用上一帧列宽算位置；还没布局过 ⇒ 什么也不做） */
     private function revealFocus(): void
     {
+        if ($this->headerCol !== null) {
+            $this->revealHeaderFocus();
+
+            return;
+        }
+
         $rect = $this->currentFocusRect();
         if ($rect !== null) {
             $this->ensureVisible($rect);
@@ -1100,18 +1288,53 @@ final class TableState extends State implements Scrollable, EditableText, Constr
     }
 
     /**
-     * 光标格在**行区内容坐标**里的矩形（`null` = 还没布局过 / 空格子表）。
+     * 表头格的**横向**进视口（表头钉住 ⇒ 没有纵向可滚）。
+     *
+     * ★ 不能复用 `ensureVisible()`：那会把 `top = 0` 喂给 `revealDelta()`，
+     *   纵向偏移被拉回 0 —— 用户滚到第 500 行，一进表头就跳回顶部。
+     */
+    private function revealHeaderFocus(): void
+    {
+        $rect = $this->currentFocusRect();
+
+        /** @var RenderTable|null $box */
+        $box = $this->element()?->effectiveBoxOf(RenderTable::class);
+        if ($rect === null || $box === null) {
+            return;
+        }
+
+        $this->revealScrollInFlight = true;
+
+        try {
+            $dx = $box->revealDeltaX($rect, 8.0, $this->offsetX());
+            if ($dx !== 0.0) {
+                $this->scrollByAxis(Axis::Horizontal, $dx);
+            }
+        } finally {
+            $this->revealScrollInFlight = false;
+        }
+    }
+
+    /**
+     * 光标所在格的矩形（`null` = 还没布局过 / 空格子表）。
+     *
+     * 表头与行区**两套坐标系**（表头 y 从 0、行区 y 从 0 但叠在表头高之下），
+     * 所以两条分支各问各的，不硬凑同一个矩形。
      *
      * ★ 用上一帧的几何（`$geometry`）：列宽只在 build 里算得出来，而键盘移动必须
      *   **当场**把格子滚进视口（等帧末 build 再滚会先闪一帧空白）。列宽刚被拖动时
      *   也一样 —— 拖动与键盘不同时发生。
-     * ★ 这里只是"取快照 + 问它"，算术全在 `TableGeometry::cellRect()`。
+     * ★ 这里只是"取快照 + 问它"，算术全在 `TableGeometry`。
      */
     private function currentFocusRect(): ?Rect
     {
         $g = $this->geometry;
         if ($g === null) {
             return null;
+        }
+
+        if ($this->headerCol !== null) {
+            return $g->headerRect($this->headerCol);
         }
 
         return $g->cellRect($this->focusedRow, $this->focusedCol);
@@ -1633,10 +1856,12 @@ final class TableState extends State implements Scrollable, EditableText, Constr
             ? $this->focusedCol
             : ($this->columnAtX($contentX) ?? $this->focusedCol);
 
-        if ($this->focusedRow !== $index || $this->focusedCol !== $col) {
+        // 指针落在数据行 ⇒ 光标回到行区（表头框必须随之消失，不然两个焦点同时亮）
+        if ($this->focusedRow !== $index || $this->focusedCol !== $col || $this->headerCol !== null) {
             $this->setState(function () use ($index, $col): void {
                 $this->focusedRow = $index;
                 $this->focusedCol = $col;
+                $this->headerCol = null;
             });
         }
 
@@ -1842,7 +2067,15 @@ final class TableState extends State implements Scrollable, EditableText, Constr
             $this->barOpacity(),
             // ★ 只在**有焦点**时给框：失焦却画焦点框就是撒谎（见字段注释）。
             //   没焦点 ⇒ `null`，盒那一侧不需要知道焦点概念。
-            $this->hasFocus ? $g->cellRect($this->focusedRow, $this->focusedCol) : null,
+            // ★ 两个框**互斥**：光标只会在一处，同时给两个就是画两个焦点。
+            $this->hasFocus && $this->headerCol === null
+                ? $g->cellRect($this->focusedRow, $this->focusedCol)
+                : null,
+            // 表头框走**表头区坐标**（y 从 0）：它在 `RenderTable` 另一个裁剪区里画，
+            // 拿行区坐标会差一个表头高。
+            $this->hasFocus && $this->headerCol !== null
+                ? $g->headerRect($this->headerCol)
+                : null,
         );
     }
 

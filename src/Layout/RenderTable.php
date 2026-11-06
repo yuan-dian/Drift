@@ -56,6 +56,14 @@ final class RenderTable extends RenderBox implements ScrollBarHost
      */
     private ?Rect $focusRect;
 
+    /**
+     * 表头光标格（**表头区坐标**；null = 不画）。
+     *
+     * 与 `$focusRect` 互斥，但**坐标系不同**：表头 y 从 0、不随 `scrollY` 动，
+     * 所以不能合成一个字段 —— 那会让绘制端去猜"这个 rect 属于哪个裁剪区"。
+     */
+    private ?Rect $headerFocusRect;
+
     private Color $focusInk;
 
     /**
@@ -73,6 +81,7 @@ final class RenderTable extends RenderBox implements ScrollBarHost
      * @param Color $thumb         滚动条色
      * @param Color $focusInk      光标格描边色
      * @param ?Rect $focusRect     光标格（行区内容坐标；null = 失焦）
+     * @param ?Rect $headerFocusRect 表头光标格（表头区坐标；null = 光标不在表头）
      */
     public function __construct(
         float $scrollX,
@@ -88,12 +97,14 @@ final class RenderTable extends RenderBox implements ScrollBarHost
         Color $focusInk,
         ?Rect $focusRect,
         float $barOpacity = 1.0,
+        ?Rect $headerFocusRect = null,
     ) {
         $this->scrollX = $scrollX;
         $this->scrollY = $scrollY;
         $this->barOpacity = $barOpacity;
         $this->focusInk = $focusInk;
         $this->focusRect = $focusRect;
+        $this->headerFocusRect = $headerFocusRect;
     }
 
     /**
@@ -201,6 +212,12 @@ final class RenderTable extends RenderBox implements ScrollBarHost
     public function focusRect(): ?Rect
     {
         return $this->focusRect;
+    }
+
+    /** @internal 表头光标格（表头区坐标；null = 光标不在表头） */
+    public function headerFocusRect(): ?Rect
+    {
+        return $this->headerFocusRect;
     }
 
     /** @internal 见 `ScrollBarHost` —— 表格是双轴盒，两根条都可能出现 */
@@ -449,6 +466,8 @@ final class RenderTable extends RenderBox implements ScrollBarHost
             $canvas->save();
             $canvas->pushClip(new Rect(0.0, 0.0, $size->width, $hh));
             $this->paintChildAt($canvas, $header);
+            // 表头光标框：同一裁剪区、同一段描边代码，只是基准 y 为 0、不随竖滚
+            $this->paintFocusRing($canvas, $this->headerFocusRect, 0.0, $this->appliedOffsetX(), 0.0);
             $canvas->popClip();
             $canvas->restore();
         }
@@ -460,7 +479,7 @@ final class RenderTable extends RenderBox implements ScrollBarHost
             $this->paintChildAt($canvas, $body);
 
             // 光标框画在行区内容之上、回到视口坐标：内容→屏幕 = 减偏移、加表头高。
-            $this->paintFocusRing($canvas, $hh, $this->appliedOffsetX(), $this->appliedOffsetY());
+            $this->paintFocusRing($canvas, $this->focusRect, $hh, $this->appliedOffsetX(), $this->appliedOffsetY());
 
             $canvas->popClip();
             $canvas->restore();
@@ -478,10 +497,12 @@ final class RenderTable extends RenderBox implements ScrollBarHost
 
     /**
      * 光标格的 2px 内描边：四条实心矩形，全落在格子矩形内部，像素位置可控。
+     *
+     * @param ?Rect $rect    要描的格子（坐标系由 `$bodyTop` 决定）
+     * @param float $bodyTop 该坐标系原点在**屏幕 y** 上的位置：行区 = 表头高，表头 = 0
      */
-    private function paintFocusRing(Canvas $canvas, float $bodyTop, float $offsetX, float $offsetY): void
+    private function paintFocusRing(Canvas $canvas, ?Rect $rect, float $bodyTop, float $offsetX, float $offsetY): void
     {
-        $rect = $this->focusRect;
         if ($rect === null) {
             return;
         }

@@ -38,6 +38,7 @@ final class TableBox extends RenderBoxWidget
         private readonly Widget $bodyKid,
         private readonly float $barOpacity,
         private readonly ?Rect $focusRect,
+        private readonly ?Rect $headerFocusRect,
     ) {
         parent::__construct();
     }
@@ -54,6 +55,7 @@ final class TableBox extends RenderBoxWidget
         Widget $bodyKid,
         float $barOpacity,
         ?Rect $focusRect = null,
+        ?Rect $headerFocusRect = null,
     ): self {
         return new self(
             $offsetX,
@@ -66,6 +68,7 @@ final class TableBox extends RenderBoxWidget
             $bodyKid,
             $barOpacity,
             $focusRect,
+            $headerFocusRect,
         );
     }
 
@@ -95,6 +98,7 @@ final class TableBox extends RenderBoxWidget
             $context->color(ColorToken::Accent),
             $this->focusRect,
             $this->barOpacity,
+            $this->headerFocusRect,
         );
     }
 

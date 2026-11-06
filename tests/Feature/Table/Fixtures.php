@@ -330,10 +330,19 @@ final class Fixtures
         $cellEl->widget()->pointerHandlerValue()?->__invoke(PointerEvent::down(30.0, 10.0), $cellEl);
     }
 
-    /** 三列，前两列 `sortable()`、第三列不可排（操作列 / 图片列就是这样） */
-    public static function sortable(TableSort $sort, SortSink $sink): Table
-    {
-        return Table::make(
+    /**
+     * 三列，前两列 `sortable()`、第三列不可排（操作列 / 图片列就是这样）。
+     *
+     * `$sel` 非空时顺带接上受控选中 —— 行容器只在"有选中 / 有可编辑列"时才挂
+     * pointer（`$interactive`），要验"指针落行区把光标从表头拽回来"就必须有它。
+     */
+    public static function sortable(
+        TableSort $sort,
+        SortSink $sink,
+        ?TableSelection $sel = null,
+        ?SelectionSink $selSink = null,
+    ): Table {
+        $table = Table::make(
             [
                 TableColumn::make('id', 'ID')->field('id')->width(TableColumnWidth::fixed(60.0))->sortable(),
                 TableColumn::make('name', '姓名')->field('name')->sortable(),
@@ -345,6 +354,12 @@ final class Fixtures
             ->headerHeight(self::HEADER_H)
             ->sort($sort)
             ->onSortChange($sink->receive(...));
+
+        if ($sel !== null && $selSink !== null) {
+            $table = $table->selection($sel)->onSelectionChange($selSink->receive(...));
+        }
+
+        return $table;
     }
 
     /**

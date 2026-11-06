@@ -277,12 +277,34 @@ final readonly class TableGeometry
             return null;
         }
 
+        return new Rect($this->colX($col), $row * $this->rowHeight, $width, $this->rowHeight);
+    }
+
+    /**
+     * 表头某格在**表头区坐标**里的矩形（`null` = 列不存在）。
+     *
+     * `y` 恒为 0：表头是钉住的 chrome，既不随 `offsetY` 动，也不共用行区坐标。
+     * 与 `cellRect()` 共用 `colX()` —— 两处各算一次列偏移必然漂（§1 闸门第 3 条）。
+     */
+    public function headerRect(int $col): ?Rect
+    {
+        $width = $this->colWidth($col);
+        if ($width === null) {
+            return null;
+        }
+
+        return new Rect($this->colX($col), 0.0, $width, $this->headerHeight);
+    }
+
+    /** 第 `$col` 列左缘（内容坐标，两套坐标系共用同一个 x 轴） */
+    private function colX(int $col): float
+    {
         $x = 0.0;
         for ($j = 0; $j < $col; $j++) {
             $x += $this->widths[$j] + $this->spacing;
         }
 
-        return new Rect($x, $row * $this->rowHeight, $width, $this->rowHeight);
+        return $x;
     }
 
     /** 第 `$col` 列的宽（`null` = 列不存在） */

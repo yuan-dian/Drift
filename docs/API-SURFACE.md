@@ -18,7 +18,7 @@
 | Errors.php | 2 | 3 |
 | Geometry | 9 | 0 |
 | Input | 20 | 5 |
-| Layout | 47 | 44 |
+| Layout | 47 | 45 |
 | Logging | 9 | 3 |
 | Platform | 16 | 15 |
 | Rendering | 34 | 1 |
@@ -27,7 +27,7 @@
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
 | Widget | 184 | 217 |
-| **合计** | **498** | **398** |
+| **合计** | **498** | **399** |
 
 覆盖 392 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
 
@@ -408,7 +408,7 @@
 | `StackFit` | enum | src/Layout/StackFit.php |
 | `TextInputBox` | interface | src/Layout/TextInputBox.php |
 
-### @internal（框架内部） · 44
+### @internal（框架内部） · 45
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -440,6 +440,7 @@
 | `RenderTable::setBody()` | method | src/Layout/RenderTable.php |
 | `RenderTable::setBarOpacity()` | method | src/Layout/RenderTable.php |
 | `RenderTable::focusRect()` | method | src/Layout/RenderTable.php |
+| `RenderTable::headerFocusRect()` | method | src/Layout/RenderTable.php |
 | `RenderTable::scrollAxes()` | method | src/Layout/RenderTable.php |
 | `RenderTable::thumbRectInRoot()` | method | src/Layout/RenderTable.php |
 | `RenderText::styleSize()` | method | src/Layout/RenderText.php |
