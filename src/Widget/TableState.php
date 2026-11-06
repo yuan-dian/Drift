@@ -592,6 +592,9 @@ final class TableState extends State implements Scrollable, EditableText, Constr
         }
 
         $chord = $event->chord;
+        // `KeyChord::is()` 是全字段比较（含 shift）⇒ 不剥掉就匹配不到 Shift+Enter。
+        // 只剥 shift、保留 ctrl/alt：Ctrl+Enter 仍不该触发排序。
+        $plain = $chord->shift ? KeyChord::make($chord->key, $chord->ctrl, $chord->alt) : $chord;
         $current = $this->headerCol;
 
         // 这一列不再可排（应用换了列定义）⇒ 夹到最近的可排列，下一次按键才不会算到虚空
@@ -603,10 +606,10 @@ final class TableState extends State implements Scrollable, EditableText, Constr
             });
         }
 
-        if ($chord->is(KeyChord::enter()) || $chord->is(KeyChord::make('Space'))) {
+        if ($plain->is(KeyChord::enter()) || $plain->is(KeyChord::make('Space'))) {
             $column = $this->view()->columnList()[$current] ?? null;
             if ($column !== null) {
-                $this->noteHeaderTap($column, $current);
+                $this->noteHeaderTap($column, $current, $chord->shift);
             }
 
             return true;
@@ -614,32 +617,32 @@ final class TableState extends State implements Scrollable, EditableText, Constr
 
         $next = $current;
 
-        if ($chord->is(KeyChord::left())) {
+        if ($plain->is(KeyChord::left())) {
             foreach ($cols as $c) {
                 if ($c < $current) {
                     $next = $c;   // 一直走到最右的那个可排 < current
                 }
             }
-        } elseif ($chord->is(KeyChord::right())) {
+        } elseif ($plain->is(KeyChord::right())) {
             foreach ($cols as $c) {
                 if ($c > $current) {
                     $next = $c;   // 第一个可排 > current
                     break;
                 }
             }
-        } elseif ($chord->is(KeyChord::home())) {
+        } elseif ($plain->is(KeyChord::home())) {
             $next = $cols[0];
-        } elseif ($chord->is(KeyChord::end())) {
+        } elseif ($plain->is(KeyChord::end())) {
             $next = $cols[\count($cols) - 1];
-        } elseif ($chord->is(KeyChord::down())) {
+        } elseif ($plain->is(KeyChord::down())) {
             $this->setState(function (): void {
                 $this->headerCol = null;
             });
 
             return true;
-        } elseif ($chord->is(KeyChord::up())
-            || $chord->is(KeyChord::pageUp())
-            || $chord->is(KeyChord::pageDown())) {
+        } elseif ($plain->is(KeyChord::up())
+            || $plain->is(KeyChord::pageUp())
+            || $plain->is(KeyChord::pageDown())) {
             return true;
         } else {
             return false;
@@ -2362,7 +2365,7 @@ final class TableState extends State implements Scrollable, EditableText, Constr
             ->pointer(
                 function (PointerEvent $event, Element $self) use ($column, $columnIndex): ?CursorShape {
                     if ($event->isDown() && $event->isPrimary()) {
-                        $this->noteHeaderTap($column, $columnIndex);
+                        $this->noteHeaderTap($column, $columnIndex, $event->shift);
                     }
 
                     return null;
@@ -2542,45 +2545,26 @@ final class TableState extends State implements Scrollable, EditableText, Constr
     }
 
     /**
-     * 表头被按下：算出"点完之后该是什么排序"并交出去（受控，不改自己的任何状态）。
+     * 表头被激活：算出"点完之后该是什么排序"并交出去（受控，不改自己的任何状态）。
      *
+     * ★ 指针与键盘**共用这一处**：`$multi` 来自 `PointerEvent::shift` / `KeyChord::shift`。
+     *   三态转移全在 `TableSort` 里，两条入口不会各写一份而分叉。
      * ★ 控件没有"当前排序"的私有副本 —— 箭头画的是 `$view->sortState()`，与
      *   选择一样：应用不采纳，画面就停在旧值（所以不接上报是挂载期 Fatal）。
      * ★ 上报带**列序号**（`int`）：应用若按"第几列"分派比较规则，直接拿它当数组
      *   下标即可，不必把 key 再翻译一遍。`TableSort` 里的列 key 仍然给出（那是跨插列
      *   稳定的身份）—— 两条通道用途不同，不是同一个东西的两种写法。
      */
-    private function noteHeaderTap(TableColumn $column, int $columnIndex): void
+    private function noteHeaderTap(TableColumn $column, int $columnIndex, bool $multi = false): void
     {
         $notify = $this->view()->sortChangeHandler();
         if ($notify === null) {
             return;
         }
 
-        $notify($this->nextSort($column->keyName()), $columnIndex);
-    }
-
-    /**
-     * 三态循环：无 → 升 → 降 → 无（`ag-Grid` / `WPF DataGrid` 同款）。
-     *
-     * ★ 点**非主键列**（含"它是次键"）⇒ 升格为主键升序，而不是在次键上循环：
-     *   阶段 3 的 UI 只有单键（多键要 Shift+点，见 `TableSort` 的 docblock）。
-     *   否则"点一下次键列，箭头出现在主键列上"会显得毫无反应。
-     */
-    private function nextSort(string $column): TableSort
-    {
         $current = $this->view()->sortState();
-        $dir = $current->directionOf($column);
-
-        if ($dir === null || $current->primaryColumn() !== $column) {
-            return TableSort::by($column, TableSortDirection::Ascending);
-        }
-
-        if ($dir === TableSortDirection::Ascending) {
-            return TableSort::by($column, TableSortDirection::Descending);
-        }
-
-        return TableSort::none();
+        $key = $column->keyName();
+        $notify($multi ? $current->cycleMulti($key) : $current->cycle($key), $columnIndex);
     }
 
 

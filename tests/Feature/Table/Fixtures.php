@@ -325,9 +325,12 @@ final class Fixtures
      * ⚠️ 这一层**验不出 `ownsPress`**：它绕过了按下路由（行点击那次就是这样漏的，
      *    只有真机点得出"没反应"）。捕获语义由 `DragSelectTest` 的真路由覆盖。
      */
-    public static function tapHeader(Element $cellEl): void
+    public static function tapHeader(Element $cellEl, bool $shift = false): void
     {
-        $cellEl->widget()->pointerHandlerValue()?->__invoke(PointerEvent::down(30.0, 10.0), $cellEl);
+        $cellEl->widget()->pointerHandlerValue()?->__invoke(
+            PointerEvent::down(30.0, 10.0, shift: $shift),
+            $cellEl,
+        );
     }
 
     /**

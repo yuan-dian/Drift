@@ -53,8 +53,8 @@ use Drift\Widget\Widget;
  * ★ **诚实边界**（页面底部也写了一句）：无 Ctrl+方向键扩选、无拖动框选 ——
  *   都是阶段 7 后半及其前置。单元格编辑已在（阶段 7a 键盘 / 7b 指针：单击落格、
  *   双击进编辑、插入符落在指针处）。横向滚轮已在（阶段 5b：触控板横滑 / Shift+竖轮）。
- *   表头的键盘排序已在（§61：首行 ↑ 进表头 / Enter 三态）；排序后光标**不跟数据**
- *   （`focusedRow` 是下标，§61.5）。
+ *   表头的键盘排序已在（§61：首行 ↑ 进表头 / Enter 三态；§62：Shift 多键追加次键）。
+ *   排序后光标**留在原位置**（`focusedRow` 是下标，"眼睛在哪"不跟数据身份，§61.5）。
  */
 final class TablePage extends StatefulWidget
 {
@@ -96,16 +96,6 @@ final class TablePageState extends State
 
     /** 当前排序（受控；`null` 只到 `sortNow()` 为止，见上一条） */
     private ?TableSort $sort = null;
-
-    /**
-     * 当前按第几列排序（`-1` = 没有排序）。
-     *
-     * ★ 存列序号是为了在 `comparators()` 里直接当下标 —— 本页的列定义顺序就是
-     *   比较器的顺序，不必再维护一份 key ⇒ 比较器 的映射表。
-     * ★ `TableSort` 里存的是列 key（跨插列稳定的身份，箭头按它画）。两者用途不同，
-     *   不是同一个东西的两种写法。
-     */
-    private int $sortColumnIndex = -1;
 
     /**
      * 原始行 —— **只造一次**。
@@ -167,13 +157,13 @@ final class TablePageState extends State
                     '10000 行 × 5 列 —— 表头固定不滚，行虚拟化（只造视口覆盖的那几行）。'
                     . '列宽三层：fixed / flex / min-max 夹；奇数行斑马。'
                     . '选择受控：点行选中、Ctrl 加选、Shift 连选。'
-                    . '排序受控：点表头三态循环（升 → 降 → 取消），重排由本页做。'
+                    . '排序受控：点表头三态循环（升 → 降 → 取消），Shift+点追加次键，重排由本页做。'
                     . '列宽可拖：拖表头右缘（光标变左右箭头），重置按钮回到声明值。'
                     . '横向可滚：把列拖宽到超出表格宽 ⇒ 底部出现横条，拖它看右边（与竖条同时在右下角交叠，角上归竖条）；'
                     . '不抓条也行 —— 触控板横滑，或按住 Shift 滚竖轮。'
                     . '键盘：Tab 进来出现光标框，方向键移格、Home/End 到首末行（移出视口会自动滚过去）；'
                     . '在首行再按 ↑ 光标进表头（只停在**可排**的列上），Enter 或空格三态排序、'
-                    . '←→ 换列、Home/End 到首末可排列、↓ 回行区同列。'
+                    . 'Shift+Enter 追加次键、←→ 换列、Home/End 到首末可排列、↓ 回行区同列。'
                     . '指针：单击落在哪一格光标框就跳到哪一格；**双击**「姓名」列直接进编辑，'
                     . '插入符落在你点的那个字之间。'
                     . '单元格编辑：也可以让光标停在「姓名」列按 Enter 或 F2 进入，直接打字；'
@@ -216,11 +206,12 @@ final class TablePageState extends State
                             }
                         ))
                         ->sort($this->sortNow())
+                        // 第二参是列序号：单键应用拿它当下标，多键应用按 `keys()` 遍历
+                        // —— 本页属后者，但回调签名照接（框架契约，不擅自少接参数）。
                         ->onSortChange(fn(TableSort $next, int $columnIndex) => $this->setState(
-                            function () use ($next, $columnIndex): void {
+                            function () use ($next): void {
                                 $this->sort = $next;
-                                $this->sortColumnIndex = $columnIndex;
-                                $this->viewRows = $this->sortRows($next, $columnIndex);
+                                $this->viewRows = $this->sortRows($next);
                             }
                         ))
                         // ★ 单元格编辑（阶段 7a）：提交的是**行 key + 列 key + 新文本**，
@@ -239,7 +230,7 @@ final class TablePageState extends State
                                     }
                                 }
 
-                                $this->viewRows = $this->sortRows($this->sortNow(), $this->sortColumnIndex);
+                                $this->viewRows = $this->sortRows($this->sortNow());
                             }
                         ))
                 ),
@@ -266,14 +257,20 @@ final class TablePageState extends State
     /** 当前排序 + 清除（受控排序才可能做出这个按钮） */
     private function sortBar(): Widget
     {
-        $sort = $this->sortNow();
-        $column = $sort->primaryColumn();
+        $keys = $this->sortNow()->keys();
 
-        if ($column === null) {
+        if ($keys === []) {
             $label = '未排序（原始顺序）—— 点表头开始排序';
         } else {
-            $dir = $sort->primaryDirection() === TableSortDirection::Ascending ? '升序 ↑' : '降序 ↓';
-            $label = '排序：按 ' . $this->sortedColumnTitle() . ' ' . $dir . '（再点切换方向，第三次取消）';
+            $parts = [];
+            foreach ($keys as [$key, $dir]) {
+                $parts[] = self::columnTitleOf($key) . ' ' . ($dir === TableSortDirection::Ascending ? '↑' : '↓');
+            }
+
+            // 箭头只说"这一列在排序"，优先级得靠这里的先后读出来（ag-Grid 显示序号，
+            // 本页用文字链，不改控件的通用表头外观）。
+            $label = '排序：' . \implode(' → ', $parts)
+                . '（再点切方向、第三次取消；Shift+点表头或 Shift+Enter 追加次键）';
         }
 
         return Row::make()->spacing(12.0)->children([
@@ -281,7 +278,6 @@ final class TablePageState extends State
             Button::make('清除排序')->onPressed(fn() => $this->setState(
                 function (): void {
                     $this->sort = TableSort::none();
-                    $this->sortColumnIndex = -1;
                     $this->viewRows = null;
                 }
             )),
@@ -293,12 +289,16 @@ final class TablePageState extends State
         ]);
     }
 
-    /** 当前排序列的标题（按序号取，不比字符串 —— 见 `$sortColumnIndex`） */
-    private function sortedColumnTitle(): string
+    /** 列 key ⇒ 表头标题（按 key 找，插列不漂） */
+    private static function columnTitleOf(string $key): string
     {
-        $columns = self::columns();
+        foreach (self::columns() as $column) {
+            if ($column->keyName() === $key) {
+                return $column->titleText();
+            }
+        }
 
-        return isset($columns[$this->sortColumnIndex]) ? $columns[$this->sortColumnIndex]->titleText() : '';
+        return $key;
     }
 
     /** 只印前 3 个 key —— 选中一万行时不该把文本撑爆 */
@@ -320,22 +320,25 @@ final class TablePageState extends State
      *
      * ★ 取消排序 ⇒ 返回 `null`：本页不需要"记住上一次的顺序"，原始数组一直在
      *   `$allRows` 里。应用的原始顺序可能来自数据库 `ORDER BY`，控件无从知道。
+     * ★ 多键按 `keys()` 顺序组比较器链（主键相等才轮到次键）。只读主键会让画面上
+     *   两列有箭头、数据却只按一列排 —— 那是撒谎。
      */
-    private function sortRows(TableSort $sort, int $columnIndex): ?array
+    private function sortRows(TableSort $sort): ?array
     {
-        $dir = $sort->primaryDirection();
-        if ($dir === null) {
-            return null;
-        }
-
         $comparators = self::comparators();
-        if (!isset($comparators[$columnIndex])) {
+        $chain = [];
+
+        foreach ($sort->keys() as [$key, $dir]) {
+            if (isset($comparators[$key])) {
+                $chain[] = [$comparators[$key], $dir === TableSortDirection::Ascending ? 1 : -1];
+            }
+        }
+
+        if ($chain === []) {
             return null;
         }
 
-        $sign = $dir === TableSortDirection::Ascending ? 1 : -1;
-
-        return self::mergeSort($this->allRows ?? self::generateRows(), $comparators[$columnIndex], $sign);
+        return self::mergeSort($this->allRows ?? self::generateRows(), $chain);
     }
 
     /**
@@ -343,23 +346,23 @@ final class TablePageState extends State
      *
      * ★ `status` 是 `cell()` 派生列（不是字段）：只有本页知道"停用 = id 能被 3 整除"，
      *   所以也只有本页能定义它的顺序。控件要是自己排，这种列就永远排不了。
-     * ★ 下标就是列序号（`onSortChange` 的第二参），"第几列 ⇒ 用哪个比较器"是一次
-     *   数组下标，不需要把列 key 再翻译一遍。
+     * ★ 按**列 key** 索引（不是列序号）：`TableSort::keys()` 给的就是 key，插一列
+     *   不会让整张比较器表错位。
      * ★ 闭包内部一律用**字面量键**取字段（`$a['id']` 而不是 `$a[$key]`）：动态键
      *   取出来是 `mixed`，比较就退化成混合类型比较。
      * ★ 中文按 UTF-8 字节序（`strcmp`），不是拼音序 —— 真要拼音序得应用自己带
      *   `collator`，同样是应用侧知识。
      *
-     * @return array<int, callable(array<string, mixed>, array<string, mixed>): int>
+     * @return array<string, callable(array<string, mixed>, array<string, mixed>): int>
      */
     private static function comparators(): array
     {
         return [
-            0 => static fn(array $a, array $b): int => (int) $a['id'] <=> (int) $b['id'],
-            1 => static fn(array $a, array $b): int => \strcmp((string) $a['name'], (string) $b['name']),
-            2 => static fn(array $a, array $b): int => \strcmp((string) $a['email'], (string) $b['email']),
-            3 => static fn(array $a, array $b): int => \strcmp((string) $a['city'], (string) $b['city']),
-            4 => static fn(array $a, array $b): int => self::disabledRank((int) $a['id'])
+            'id' => static fn(array $a, array $b): int => (int) $a['id'] <=> (int) $b['id'],
+            'name' => static fn(array $a, array $b): int => \strcmp((string) $a['name'], (string) $b['name']),
+            'email' => static fn(array $a, array $b): int => \strcmp((string) $a['email'], (string) $b['email']),
+            'city' => static fn(array $a, array $b): int => \strcmp((string) $a['city'], (string) $b['city']),
+            'status' => static fn(array $a, array $b): int => self::disabledRank((int) $a['id'])
                 <=> self::disabledRank((int) $b['id']),
         ];
     }
@@ -374,11 +377,11 @@ final class TablePageState extends State
      * ★ 一次排序 = 一次性操作（点击表头触发），所以 `array_slice` 的临时数组
      *   开销可以接受；**每帧**不做任何排序。
      *
-     * @param list<array<string, mixed>>                     $rows
-     * @param callable(array<string, mixed>, array<string, mixed>): int $cmp
+     * @param list<array<string, mixed>> $rows
+     * @param list<array{0: callable(array<string, mixed>, array<string, mixed>): int, 1: int}> $chain
      * @return list<array<string, mixed>>
      */
-    private static function mergeSort(array $rows, callable $cmp, int $sign): array
+    private static function mergeSort(array $rows, array $chain): array
     {
         $n = \count($rows);
         if ($n < 2) {
@@ -386,8 +389,8 @@ final class TablePageState extends State
         }
 
         $mid = \intdiv($n, 2);
-        $left = self::mergeSort(\array_slice($rows, 0, $mid), $cmp, $sign);
-        $right = self::mergeSort(\array_slice($rows, $mid), $cmp, $sign);
+        $left = self::mergeSort(\array_slice($rows, 0, $mid), $chain);
+        $right = self::mergeSort(\array_slice($rows, $mid), $chain);
 
         $lc = \count($left);
         $rc = \count($right);
@@ -396,7 +399,7 @@ final class TablePageState extends State
         $out = [];
 
         while ($i < $lc && $j < $rc) {
-            if ($sign * $cmp($left[$i], $right[$j]) <= 0) {
+            if (self::compareChain($left[$i], $right[$j], $chain) <= 0) {
                 $out[] = $left[$i];
                 $i++;
             } else {
@@ -416,6 +419,19 @@ final class TablePageState extends State
         }
 
         return $out;
+    }
+
+    /** 主键相等才轮到次键；全相等返回 0，归并的 `<= 0` 保住原始顺序（稳定） */
+    private static function compareChain(array $a, array $b, array $chain): int
+    {
+        foreach ($chain as [$cmp, $sign]) {
+            $r = $sign * $cmp($a, $b);
+            if ($r !== 0) {
+                return $r;
+            }
+        }
+
+        return 0;
     }
 
     private static function disabledRank(int $id): int

@@ -35,11 +35,17 @@ use Drift\Errors;
  *   而"行数组变了没"只能靠深比较判（10000 行每次 build 一次深比较 = 把虚拟化省的
  *   钱原样花掉）；② 应用手里的数据仍是原序，导出 / 批量操作会与眼前顺序不一致。
  *
- * ## 多键在**结构上**已经成立，只是阶段 3 的 UI 只上报单键
+ * ## 三态转移：点表头 vs Shift+点表头
  *
- * `thenBy()` 是次键，`directionOf()` 对任何参与键都返回方向 ⇒ 画箭头的代码对
- * 多键天然正确（每列画自己的箭头）。将来做 Shift+点表头，只改 UI 层的一行上报，
- * **不动本类的签名** —— 这就是"一次把 API 形状定死"的收益。
+ * `cycle()` 是单键（无 → 升 → 降 → 无），`cycleMulti()` 是 Shift 路径：其它键原样
+ * 保留，只循环被点的那一列（未参与 ⇒ 追加到最低优先级升序，升 → 降 → 移除）。
+ * 两条 UI 入口（指针 / 键盘）共用它们，不会各写一份三态而分叉。
+ *
+ * ★ `thenBy()` 不能拿来实现 Shift 路径：它把已存在的键**移到末尾**，用它循环主键
+ *   的方向会把主键降成次键。两者是"我要加个次键"与"我只改这一列的方向"两种意图。
+ * ★ `directionOf()` 对任何参与键都返回方向 ⇒ 画箭头的代码对多键天然正确。
+ * ★ 应用侧消费多键要按 `keys()` 的**顺序**组比较器链（主键优先、相等才比次键），
+ *   只读 `primaryDirection()` 会让画面上两列有箭头、数据却只按一列排。
  *
  * ★ 每次变更返回新实例（同 `TableSelection`）：就地改会让"同一份对象"在两次
  *   build 之间变了内容，那种 bug 只能靠肉眼发现。
@@ -92,6 +98,61 @@ final readonly class TableSort
         }
 
         $next[] = [$column, $dir];
+
+        return new self($next);
+    }
+
+    /**
+     * 点表头：无 → 升 → 降 → 无（ag-Grid / WPF DataGrid 同款）。
+     *
+     * ★ 点非主键列（含"它是次键"）⇒ 升格为主键升序，而不是在次键上循环：
+     *   否则"点一下次键列，箭头出现在主键列上"会显得毫无反应。
+     */
+    public function cycle(string $column): self
+    {
+        $dir = $this->directionOf($column);
+
+        if ($dir === null || $this->primaryColumn() !== $column) {
+            return self::by($column);
+        }
+
+        if ($dir === TableSortDirection::Ascending) {
+            return self::by($column, TableSortDirection::Descending);
+        }
+
+        return self::none();
+    }
+
+    /**
+     * Shift+点表头：其它键与优先级都不动，只循环这一列。
+     *
+     * ★ 已参与的列**留在原位**切方向（升 → 降 → 移除）：把它移走会让"只想改方向"
+     *   意外换掉主键。这一点正是 `thenBy()` 不能复用的原因。
+     */
+    public function cycleMulti(string $column): self
+    {
+        if ($column === '') {
+            Errors::report('TableSort::cycleMulti() 的列 key 不能为空 —— 它是列的 `TableColumn::keyName()`。');
+        }
+
+        $next = [];
+        $found = false;
+
+        foreach ($this->keys as [$key, $direction]) {
+            if ($key !== $column) {
+                $next[] = [$key, $direction];
+                continue;
+            }
+
+            $found = true;
+            if ($direction === TableSortDirection::Ascending) {
+                $next[] = [$key, TableSortDirection::Descending];
+            }
+        }
+
+        if (!$found) {
+            $next[] = [$column, TableSortDirection::Ascending];
+        }
 
         return new self($next);
     }
