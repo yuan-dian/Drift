@@ -80,7 +80,7 @@ final class TreePageState extends State
                 Text::make(
                     '递归数据在控件里展平成定长行、交给 `LazyColumn`（只造视口覆盖的行）；'
                         . '展开集合与选中值都在本页 State —— 所以上面两个按钮能直接改展开态。'
-                        . '每行只有一个 Tab 站（箭头用 skipFocus）。'
+                        . '每行只有一个 Tab 站（箭头用 skipFocus）；← 折叠自己、已折叠时跳到父行。'
                 )->caption(),
                 $this->toolbar(),
                 Expanded::make($this->treePanel()),

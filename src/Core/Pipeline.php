@@ -379,6 +379,33 @@ final class Pipeline
     }
 
     // ─────────────────────────────────────────────────────────────────
+    // ②d 焦点宿主（"能把焦点交给别人"的对象）
+    // ─────────────────────────────────────────────────────────────────
+
+    /**
+     * 登记单元是 `object`（`Core` 不能依赖 `Widget`，依赖方向 lint）；真语义在
+     * `Drift\Widget\FocusHost`，`Element` 侧做 `instanceof` —— 与
+     * `constraintObservers` 同一形状。
+     *
+     * ★ 为什么不放 `Element` 的字段：那要"根设一次、子树继承"的传播，而传播有
+     *   三个静默缺口（`attach()` 与 `mount()` 的先后、根被自己的 `mount()` 抹掉、
+     *   浮层是第二棵根）。记在管线上三个缺口都不存在。
+     */
+    private ?object $focusHost = null;
+
+    /** @internal `Application::attach()` 调一次 */
+    public function setFocusHost(object $host): void
+    {
+        $this->focusHost = $host;
+    }
+
+    /** @internal `Element::requestFocus()` 读 */
+    public function focusHost(): ?object
+    {
+        return $this->focusHost;
+    }
+
+    // ─────────────────────────────────────────────────────────────────
     // ③ 两个换代序号（`Frame` 的"整段跳过"判据）
     // ─────────────────────────────────────────────────────────────────
 

@@ -62,6 +62,39 @@ abstract class Element
         return $this->context;
     }
 
+    /**
+     * 把焦点交给 `$target` —— 是"交给目标"，不是"给自己拿焦点"（`FocusManager`
+     * 那边叫"请求"：目标不可聚焦 / 未挂载时静默不动）。
+     *
+     * 没有宿主（纯单测直接 `mount()`、帧外落在默认管线）⇒ 同样静默，不崩。
+     */
+    public function requestFocus(Element $target): void
+    {
+        $host = $this->pipeline()->focusHost();
+
+        if ($host instanceof FocusHost) {
+            $host->requestFocus($target);
+        }
+    }
+
+    /**
+     * 本节点所在树的根（沿父链到顶；自己就是根 ⇒ 自己）。
+     * @internal 框架内部查找
+     */
+    public function root(): Element
+    {
+        $node = $this;
+
+        while (true) {
+            $up = $node->parent();
+            if ($up === null) {
+                return $node;
+            }
+
+            $node = $up;
+        }
+    }
+
     public function isMounted(): bool
     {
         return $this->mounted;
@@ -210,6 +243,29 @@ abstract class Element
         if ($this instanceof StatefulElement) {
             $this->state()?->markDirty();
         }
+    }
+
+    /**
+     * 子树里第一个匹配的元素（先序，**含自己**；找不到 ⇒ null）。
+     * 与 `findBox()` 同形：`requestFocus()` 要"先找到目标"才能把焦点交出去。
+     *
+     * @param callable(Element):bool $match
+     * @internal 框架内部查找
+     */
+    public function findElement(callable $match): ?Element
+    {
+        if ($match($this)) {
+            return $this;
+        }
+
+        foreach ($this->children as $child) {
+            $found = $child->findElement($match);
+            if ($found !== null) {
+                return $found;
+            }
+        }
+
+        return null;
     }
 
     /**

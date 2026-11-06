@@ -37,6 +37,12 @@ final class TreeView extends StatelessWidget
     public const DEFAULT_INDENT = 18.0;
 
     /**
+     * 行标签的 Key 前缀 —— `←` 跳父行要"从树里找回父行那个 `Element`"，
+     * 而 `keyboard()` 回调只拿得到自己。按身份找得到才谈得上移焦。
+     */
+    private const ROW_KEY_PREFIX = 'tree-row:';
+
+    /**
      * 叶子行占的箭头位宽度（= `IconButton` 的天然边长）。
      * 与 `DEFAULT_ROW_HEIGHT` 同源但不同义：那个是行高（可调大），这个是
      * 对齐用的空位（不能跟着调）。两者数值相等是因为箭头按钮是正方形；
@@ -267,7 +273,9 @@ final class TreeView extends StatelessWidget
 
         // `alignLeft()` 不是可选的审美：标签按钮被 `Expanded` 撑满剩余宽度
         //   （点行的空白也算点这一行），默认居中会让整棵树看着像居中的段落。
+        // Key 按节点身份：`←` 跳父行靠它把"父行 id"换回一个可移焦的 Element。
         $label = Button::make($row->label)
+            ->key(self::ROW_KEY_PREFIX . $row->id)
             ->alignLeft()
             ->variant($row->id === $selected ? ButtonVariant::Primary : ButtonVariant::Flat);
 
@@ -286,7 +294,7 @@ final class TreeView extends StatelessWidget
         }
 
         // ★ 每一行都挂：焦点可以靠方向键落到任意一行，不只活动行。
-        $label->keyboard(self::rowKeyHandler($row, $onToggle));
+        $label->keyboard(self::rowKeyHandler($row, $onToggle, $onSelected));
 
         $kids[] = Expanded::make($label);
 
@@ -297,35 +305,70 @@ final class TreeView extends StatelessWidget
     }
 
     /**
-     * 一行的键盘：`←→` 展开折叠，其余键 `Declined` 交回框架。
+     * 一行的键盘：`←→` 展开折叠 / `←` 跳父行，其余键 `Declined` 交回框架。
+     *
+     * `←` 的语义与 ARIA APG `tree` / WPF `TreeViewItem` 同形，按序判三条：
+     * ① 展开的分支 ⇒ 折叠自己；② 折叠的分支或叶子 ⇒ 焦点移到父行（并上报选中，
+     * 否则焦点环和选中条分家，看着像两个高亮）；③ 根行 ⇒ 吃掉但不动。
      *
      * ★ `←→` 必须 `Handled` 而不是让位：行标签满宽、右边空无一物，左边就是折叠箭头
      *   ⇒ 让位之后按 ← 会落到那个**看不见的站**上（实测：分支行落到自己那一行的箭头，
      *   叶子行落到下一行的箭头）。层级语义在树里，箭头只是给鼠标看的。
      * ★ `↑↓` 必须 `Declined`：那是几何导航的活（`FocusManager::focusDirectional`），
      *   树自己算"下一行是谁"等于再造一套焦点模型。
+     * ★ 父行被虚拟化滚出视口时找不到它的 Element ⇒ 什么都不做（静默降级）。
+     *   要"先滚再焦"得有两段式挂起，那是另一轮的事，别在这里偷偷补。
      */
-    private static function rowKeyHandler(TreeRow $row, ?\Closure $onToggle): \Closure
+    private static function rowKeyHandler(TreeRow $row, ?\Closure $onToggle, ?\Closure $onSelected): \Closure
     {
         $id = $row->id;
         $hasKids = $row->hasChildren;
         $open = $row->expanded;
+        $parentId = $row->parentId;
+        $prefix = self::ROW_KEY_PREFIX;
 
-        return static function (KeyEvent $event) use ($id, $hasKids, $open, $onToggle): KeyResult {
+        return static function (KeyEvent $event, Element $self) use ($id, $hasKids, $open, $onToggle, $onSelected, $parentId, $prefix): KeyResult {
             $chord = $event->chord;
             $right = $chord->is(KeyChord::right());
             $left = $chord->is(KeyChord::left());
 
-            if (!$left && !$right) {
+            if (!$right && !$left) {
                 return KeyResult::Declined;
             }
 
-            if ($hasKids && $onToggle !== null) {
-                if ($right && !$open) {
+            // 折叠的分支上按 → 只是展开，焦点不动
+            if ($right) {
+                if ($hasKids && !$open && $onToggle !== null) {
                     $onToggle($id, true);
-                } elseif ($left && $open) {
+                }
+
+                return KeyResult::Handled;
+            }
+
+            if ($hasKids && $open) {
+                if ($onToggle !== null) {
                     $onToggle($id, false);
                 }
+
+                return KeyResult::Handled;
+            }
+
+            if ($parentId === null) {
+                return KeyResult::Handled;
+            }
+
+            $target = $self->root()->findElement(
+                static fn(Element $node): bool => $node->widget()->identity()?->value === $prefix . $parentId
+            );
+
+            if ($target === null) {
+                return KeyResult::Handled;
+            }
+
+            $self->requestFocus($target);
+
+            if ($onSelected !== null) {
+                $onSelected($parentId);
             }
 
             return KeyResult::Handled;
@@ -364,7 +407,7 @@ final class TreeView extends StatelessWidget
      * @param array<string,bool> $expanded
      * @return list<TreeRow>
      */
-    private function flatten(array $nodes, int $depth, array $expanded): array
+    private function flatten(array $nodes, int $depth, array $expanded, ?string $parentId = null): array
     {
         $out = [];
 
@@ -373,13 +416,13 @@ final class TreeView extends StatelessWidget
             //   东西，若沿用集合里的 true，行会画出"已展开"的箭头状态。
             $hasKids = $node->hasChildren();
             $open = $hasKids && isset($expanded[$node->id]);
-            $out[] = new TreeRow($node->id, $node->label, $depth, $hasKids, $open);
+            $out[] = new TreeRow($node->id, $node->label, $depth, $hasKids, $open, $parentId);
 
             if (!$open) {
                 continue;
             }
 
-            foreach ($this->flatten($node->children, $depth + 1, $expanded) as $row) {
+            foreach ($this->flatten($node->children, $depth + 1, $expanded, $node->id) as $row) {
                 $out[] = $row;
             }
         }

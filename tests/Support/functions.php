@@ -39,24 +39,13 @@ if (!\function_exists('check')) {
 }
 
 if (!\function_exists('findElement')) {
-    /** 深度优先找第一个满足谓词的 Element（找不到 ⇒ null） */
+    /**
+     * 深度优先找第一个满足谓词的 Element（找不到 ⇒ null）。
+     * 逻辑已提进框架（`Element::findElement()`）—— 这里只留一个旧名字，测试不用改。
+     */
     function findElement(Element $root, callable $pred): ?Element
     {
-        $found = null;
-        $walk = function (Element $el) use (&$walk, &$found, $pred): void {
-            if ($found !== null) {
-                return;
-            }
-            if ($pred($el)) {
-                $found = $el;
-
-                return;
-            }
-            $el->visitChildren($walk);
-        };
-        $walk($root);
-
-        return $found;
+        return $root->findElement($pred);
     }
 }
 

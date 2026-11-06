@@ -32,6 +32,12 @@ final class TreeRow
         public readonly bool $hasChildren,
         /** 当前是否展开（`false` 且 `hasChildren` ⇒ 箭头朝右） */
         public readonly bool $expanded,
+        /**
+         * 父节点 id（根层 `null`）。`←` 跳父行要用。
+         * 是"树的父子"而不是"可见行的上一行"：父节点折叠时子节点根本不可见，
+         * 所以可见行的父节点必然也可见。
+         */
+        public readonly ?string $parentId = null,
     ) {
     }
 }

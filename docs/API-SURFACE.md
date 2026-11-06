@@ -14,7 +14,7 @@
 | App | 84 | 53 |
 | Async | 24 | 4 |
 | Commands | 7 | 0 |
-| Core | 2 | 36 |
+| Core | 2 | 38 |
 | Errors.php | 2 | 3 |
 | Geometry | 9 | 0 |
 | Input | 20 | 5 |
@@ -26,10 +26,10 @@
 | State | 17 | 8 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
-| Widget | 184 | 217 |
-| **合计** | **498** | **399** |
+| Widget | 185 | 219 |
+| **合计** | **499** | **403** |
 
-覆盖 392 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
+覆盖 393 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
 
 ## App 层
 
@@ -243,7 +243,7 @@
 | `Computed` | class | src/Core/Computed.php |
 | `Versioned` | interface | src/Core/Versioned.php |
 
-### @internal（框架内部） · 36
+### @internal（框架内部） · 38
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -269,6 +269,8 @@
 | `Pipeline::removeConstraintObserver()` | method | src/Core/Pipeline.php |
 | `Pipeline::constraintObservers()` | method | src/Core/Pipeline.php |
 | `Pipeline::constraintObserverCount()` | method | src/Core/Pipeline.php |
+| `Pipeline::setFocusHost()` | method | src/Core/Pipeline.php |
+| `Pipeline::focusHost()` | method | src/Core/Pipeline.php |
 | `Pipeline::bumpLayoutEpoch()` | method | src/Core/Pipeline.php |
 | `Pipeline::bumpPaintEpoch()` | method | src/Core/Pipeline.php |
 | `Pipeline::bumpLayout()` | method | src/Core/Pipeline.php |
@@ -694,7 +696,7 @@
 
 ## Widget 层
 
-### @api（应用可读面） · 184
+### @api（应用可读面） · 185
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -740,6 +742,7 @@
 | `ErrorPlaceholder` | class | src/Widget/ErrorPlaceholder.php |
 | `Expanded` | class | src/Widget/Expanded.php |
 | `Flex` | class | src/Widget/Flex.php |
+| `FocusHost` | interface | src/Widget/FocusHost.php |
 | `Grid` | class | src/Widget/Grid.php |
 | `Icon` | class | src/Widget/Icon.php |
 | `IconButton` | class | src/Widget/IconButton.php |
@@ -883,7 +886,7 @@
 | `Wrap` | class | src/Widget/Wrap.php |
 | `YearMonth` | class | src/Widget/YearMonth.php |
 
-### @internal（框架内部） · 217
+### @internal（框架内部） · 219
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -944,12 +947,14 @@
 | `DockElement` | class | src/Widget/DockElement.php |
 | `EditableTextState::$editing` | property | src/Widget/EditableTextState.php |
 | `Element::$box` | property | src/Widget/Element.php |
+| `Element::root()` | method | src/Widget/Element.php |
 | `Element::isAnimationActive()` | method | src/Widget/Element.php |
 | `Element::markAnimationActive()` | method | src/Widget/Element.php |
 | `Element::onMount()` | method | src/Widget/Element.php |
 | `Element::syncBox()` | method | src/Widget/Element.php |
 | `Element::effectiveBox()` | method | src/Widget/Element.php |
 | `Element::markNeedsBuild()` | method | src/Widget/Element.php |
+| `Element::findElement()` | method | src/Widget/Element.php |
 | `Element::findBox()` | method | src/Widget/Element.php |
 | `Element::findBoxOf()` | method | src/Widget/Element.php |
 | `Element::effectiveBoxOf()` | method | src/Widget/Element.php |

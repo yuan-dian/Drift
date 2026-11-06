@@ -28,7 +28,7 @@ use Drift\Widget\Widget;
  *
  * 1. **只占一站**（选中行；没有就首行；只读树零站）；
  * 2. **`←→` 是层级语义**（折叠已展开的、展开折叠的，方向不对就一次都不上报）；
- * 3. **叶子吞掉 `←→`**（让位就是焦点漂到别人家的箭头）；
+ * 3. **叶子 `→` 吃掉**（让位就是焦点漂到别人家的箭头）；**叶子 `←` 跳父行**；
  * 4. **`↑↓` 仍归几何导航**（`KeyResult::Declined` 生效，树自己不造焦点模型）；
  * 5. **Enter 选中焦点所在行**。
  */
@@ -260,29 +260,48 @@ final class TreeKeyboardTest extends SmokeTestCase
         $this->flushChecks();
     }
 
-    // ── ③ 叶子吞掉 ←→ ────────────────────────────────────────────────
+    // ── ③ 叶子 → 吃掉；叶子 ← 跳父行 ────────────────────────────────
 
-    public function testLeafSwallowsHorizontalArrows(): void
+    public function testHorizontalArrowsOnLeaf(): void
     {
+        /** @var list<string> $picked */
+        $picked = [];
         $app = $this->app(Expanded::make($this->tree(
             ['project', 'src', 'widget'],
             'table',
-            static function (string $id): void {},
+            static function (string $id) use (&$picked): void {
+                $picked[] = $id;
+            },
             static function (string $id, bool $open): void {},
         )));
 
         $app->focus()?->focus($this->label($app, 'Table'));
         check(
-            '树 · 叶子行按 ← 吃掉键、焦点不动（否则会漂到相邻行的折叠箭头）',
-            $app->focus()?->dispatchKey(KeyEvent::down(KeyChord::left())) === true
+            '树 · 叶子行按 → 吃掉键、焦点不动（没有可展开的东西）',
+            $app->focus()?->dispatchKey(KeyEvent::down(KeyChord::right())) === true
                 && $this->where($app) === 'Table',
             $this->where($app),
         );
 
+        // ARIA `tree` / WPF `TreeViewItem`：折叠节点（含叶子）上按 ← 移到父节点
         check(
-            '树 · 叶子行按 → 同上',
-            $app->focus()?->dispatchKey(KeyEvent::down(KeyChord::right())) === true
-                && $this->where($app) === 'Table',
+            '树 · 叶子行按 ← 把焦点交给父行（不是消失、也不是漂到相邻箭头）',
+            $app->focus()?->dispatchKey(KeyEvent::down(KeyChord::left())) === true
+                && $this->where($app) === 'Widget',
+            $this->where($app),
+        );
+        check('树 · 跳父行同时上报选中（否则焦点环和选中条分家）', $picked === ['widget'], \json_encode($picked));
+
+        // 焦点已经在父行 ⇒ 再按 ← 是"折叠自己"，不是继续往上跳
+        $app->focus()?->dispatchKey(KeyEvent::down(KeyChord::left()));
+        check('树 · 到父行后再按 ← 折叠它自己（停在原地）', $this->where($app) === 'Widget', $this->where($app));
+
+        // 根行没有父 ⇒ 吃掉但不动（让位就漂到隔壁去了）
+        $app->focus()?->focus($this->label($app, 'drift'));
+        check(
+            '树 · 根行按 ← 吃掉键、焦点不动',
+            $app->focus()?->dispatchKey(KeyEvent::down(KeyChord::left())) === true
+                && $this->where($app) === 'drift',
             $this->where($app),
         );
 

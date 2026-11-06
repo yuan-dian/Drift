@@ -69,6 +69,8 @@ MOUSEEVENTF_LEFTUP = 0x0004
 MOUSEEVENTF_RIGHTDOWN = 0x0008
 MOUSEEVENTF_RIGHTUP = 0x0010
 MOUSEEVENTF_WHEEL = 0x0800
+# `keybd_event` 的 flag
+KEYEVENTF_KEYUP = 0x0002
 
 
 class BITMAPINFOHEADER(ctypes.Structure):
@@ -357,6 +359,21 @@ def wheel(hwnd, x, y, notches, settle=0.0):
     for _ in range(abs(int(notches))):
         user32.mouse_event(MOUSEEVENTF_WHEEL, 0, 0, delta, 0)
         time.sleep(0.05)
+    if settle > 0:
+        time.sleep(settle)
+
+
+def key(hwnd, vk, settle=0.0):
+    """按一次虚拟键（真实键盘事件）。
+
+    ★ 与鼠标同一条纪律：只走 `keybd_event`，不伪造 `WM_KEYDOWN` —— 后者不经过
+      `GetKeyboardState`，带修饰键的组合与 IME 全都对不上，而画面照样会动。
+    ★ `keybd_event` 是**进程级**的：窗口不在前台，键就落到别人身上 ⇒ 先验前台。
+    """
+    require_foreground(hwnd)
+    user32.keybd_event(vk, 0, 0, 0)
+    time.sleep(0.02)
+    user32.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
     if settle > 0:
         time.sleep(settle)
 

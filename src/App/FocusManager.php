@@ -237,6 +237,29 @@ final class FocusManager
         Pipeline::current()->scheduleFrame();
     }
 
+    /**
+     * 请求把焦点移到 `$target`（控件层 `Element::requestFocus()` 的落点）。
+     *
+     * ★ 校验取 `byId`（**可聚焦表**）而不是 `indexOf()`（Tab 序）：树只在活动行
+     *   以外声明 `skipFocus()`，而 `←` 跳父行的目标恰恰是那些行 —— 拿 Tab 序校验
+     *   会把"点得动、方向键够得着、只是不占 Tab 站"的正常目标全部静默拒掉。
+     * ★ 不并进 `focus()`：内部调用方（`focusHit` / `focusNext` / `step` /
+     *   `firstFocusable`）都已保证目标合法，给它们加一次 O(n) 查找是把调用方的
+     *   不变量降级成每次的运行时检查。只有外面进来的请求需要校验。
+     */
+    public function requestFocus(Element $target): void
+    {
+        if ($this->focused === $target) {
+            return;
+        }
+
+        if (!isset($this->byId[spl_object_id($target)])) {
+            return;   // 不在可聚焦表：禁用 / 不可聚焦 / 已卸载 ⇒ 静默不动
+        }
+
+        $this->focus($target);
+    }
+
     /** Tab：前进一格。到末尾**就停**（不环绕 —— 与 Windows / Flutter 一致） */
     public function focusNext(): bool
     {

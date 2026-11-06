@@ -39,6 +39,7 @@ use Drift\Theme\ThemeData;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Drag\Draggable;
 use Drift\Widget\Element;
+use Drift\Widget\FocusHost;
 use Drift\Widget\Modal;
 use Drift\Widget\State;
 use Drift\Widget\States;
@@ -55,7 +56,7 @@ use Drift\Widget\Snackbar;
  *
  * @api
  */
-abstract class Application implements TextEditingHost, InputHost, OverlayHost, PumpHostHost
+abstract class Application implements TextEditingHost, InputHost, OverlayHost, PumpHostHost, FocusHost
 {
     protected ?Element $root = null;
 
@@ -263,6 +264,17 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         return $this->focus;
     }
 
+    /**
+     * `FocusHost` 的实现：控件层 `Element::requestFocus()` 唯一落到的地方。
+     *
+     * 守卫是必需的：`attach()` 里 `FocusManager` 在 `mount()` **之后**才建，
+     * 而 `setFocusHost($this)` 在之前 ⇒ 首帧挂载期间真要是有请求，这里是 null。
+     */
+    public function requestFocus(Element $target): void
+    {
+        $this->focus?->requestFocus($target);
+    }
+
     /** 应用子树（只写这一个方法就能跑起来） */
     abstract public function buildRoot(): Widget;
 
@@ -418,6 +430,10 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
 
         // 挂载期就写这条管线：`createElement()` / `mount()` 会推结构版本号，不切会记到别的应用账上。
         Pipeline::enter($this->pipeline);
+
+        // 焦点宿主记在**管线**上（不是 `Element` 的字段）⇒ 顺序无关，且浮层那棵
+        //   独立的根自动共用同一份 ⇒ 不需要在 `OverlayManager` 里再设一次。
+        $this->pipeline->setFocusHost($this);
 
         // 第一个窗口把主题灌进 scope，后续窗口必须一致（不一致 ⇒ DIAGNOSTIC）。
         // `attach()` 可重入 ⇒ 同一实例只登记一次，否则第二次 attach 会误报"第 2 个窗口"。
