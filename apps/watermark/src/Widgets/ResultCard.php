@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Watermark\Widgets;
 
 use App\Watermark\Api\TaskResult;
+use App\Watermark\Store\StatusMessage;
 use App\Watermark\Store\WatermarkStore;
 use Drift\Geometry\EdgeInsets;
 use Drift\Layout\ImageFit;
@@ -16,6 +17,7 @@ use Drift\Widget\Column;
 use Drift\Widget\Each;
 use Drift\Layout\FlexAlign;
 use Drift\Widget\Image;
+use Drift\Widget\Progress;
 use Drift\Widget\Row;
 use Drift\Widget\SizedBox;
 use Drift\Widget\Spacer;
@@ -156,6 +158,8 @@ final class ResultCard extends StatelessWidget
                 'locals' => $s->localPaths(),
                 'failed' => $s->failedDownloads(),
                 'downloading' => $s->isDownloading(),
+                'fraction' => $s->downloadProgress(),
+                'message' => $s->downloadMessage(),
             ])
             ->builder(static function (array $slice): Widget {
                 /** @var list<string> $urls */
@@ -170,6 +174,16 @@ final class ResultCard extends StatelessWidget
                 }
 
                 $items = [];
+                // ★ 下载进度与上传同形：Job 每张图报一次，Store 订到 await 第二参，
+                //   这里才画得出来。只在下载中挂这条，默认态的子节点数不变。
+                if ($slice['downloading'] === true) {
+                    $message = $slice['message'];
+                    $items[] = Column::make()->spacing(6)->children([
+                        Progress::make((float) $slice['fraction'])->height(8.0),
+                        Text::make($message instanceof StatusMessage ? $message->text : '正在下载结果图…')->caption(),
+                    ]);
+                }
+
                 foreach ($urls as $url) {
                     $local = $locals[$url] ?? '';
                     if ($local !== '') {

@@ -109,6 +109,11 @@ final class WatermarkStore extends Subject
     /** @var array<string, string> 下载失败的 URL → 原因 */
     private array $failedDownloads = [];
 
+    /** 下载进度（`0..1`）与文案 —— 与上传同形，`DownloadResultsJob` 每张图报一次 */
+    private float $downloadFraction = 0.0;
+
+    private StatusMessage $downloadMessage;
+
     /** 底部状态栏的一句话（整个应用的"现在在干什么"） */
     private StatusMessage $statusLine;
 
@@ -122,6 +127,7 @@ final class WatermarkStore extends Subject
         private $scheduler = null,
     ) {
         $this->uploadMessage = StatusMessage::none();
+        $this->downloadMessage = StatusMessage::none();
         $this->taskMessage = StatusMessage::none();
         $this->statusLine = StatusMessage::info('准备就绪');
 
@@ -254,6 +260,17 @@ final class WatermarkStore extends Subject
     public function isDownloading(): bool
     {
         return $this->phase === Phase::Downloading;
+    }
+
+    /** 下载进度（`0..1`）—— 只在 `Phase::Downloading` 时有意义 */
+    public function downloadProgress(): float
+    {
+        return $this->downloadFraction;
+    }
+
+    public function downloadMessage(): StatusMessage
+    {
+        return $this->downloadMessage;
     }
 
     public function statusLine(): StatusMessage
@@ -464,6 +481,8 @@ final class WatermarkStore extends Subject
 
         try {
             $raw = $co->await($this->exec(new FetchSignJob($this->apiBase)));
+        } catch (AsyncCancelled $e) {
+            throw $e;
         } catch (\Throwable $e) {
             // ★ 预热失败**不打扰用户**：上传时会再取一次。只有"上传前那次"失败才要报。
             if ($report) {
@@ -545,6 +564,8 @@ final class WatermarkStore extends Subject
                 );
                 $this->notifyChanged();
             });
+        } catch (AsyncCancelled $e) {
+            throw $e;
         } catch (\Throwable $e) {
             $this->uploadedKeys = [];
             $this->uploadMessage = StatusMessage::error($e->getMessage());
@@ -576,6 +597,8 @@ final class WatermarkStore extends Subject
                 $this->imageSize,
                 $this->apiBase,
             )));
+        } catch (AsyncCancelled $e) {
+            throw $e;
         } catch (\Throwable $e) {
             $this->taskMessage = StatusMessage::error($e->getMessage());
             $this->statusLine = StatusMessage::error('提交任务失败');
@@ -615,10 +638,17 @@ final class WatermarkStore extends Subject
         $this->phase = Phase::Polling;
         $this->notifyChanged();
 
+        $rounds = 0;
+        $failures = 0;
+
         while (true) {
+            $rounds++;
             $result = $this->fetchResult($co, $taskId);
 
-            if ($result !== null) {
+            if ($result === null) {
+                $failures++;
+            } else {
+                $failures = 0;
                 $this->lastResult = $result;
                 $this->notifyChanged();
 
@@ -634,6 +664,20 @@ final class WatermarkStore extends Subject
 
                     return;
                 }
+            }
+
+            // ★ 两个退出上界收在同一处：`fetchResult()` 只负责「查一次失败不该停」，
+            //   不知道自己被轮了几遍；散开写就会出现「失败永远继续」的永动循环。
+            //   轮数按查过几次算，失败按连续几次算（成功一次即归零）。
+            if ($failures >= Config::POLL_MAX_FAILURES || $rounds >= Config::POLL_MAX_ROUNDS) {
+                $this->statusLine = StatusMessage::error(
+                    $failures >= Config::POLL_MAX_FAILURES
+                        ? '查询结果连续失败，已停止自动重试'
+                        : '查询超过最大轮数，已停止自动轮询'
+                );
+                $this->notifyChanged();
+
+                return;
             }
 
             if (!$co->sleep(Config::POLL_INTERVAL_MS)) {
@@ -678,11 +722,26 @@ final class WatermarkStore extends Subject
         $this->phase = Phase::Downloading;
         $this->localPaths = [];
         $this->failedDownloads = [];
+        $this->downloadFraction = 0.0;
+        $this->downloadMessage = StatusMessage::loading(
+            '正在下载 0 / ' . (string) \count($urls) . '…'
+        );
         $this->notifyChanged();
 
         try {
-            $raw = $co->await($this->exec(new DownloadResultsJob($urls)));
+            // ★ 第二参不能省：`DownloadResultsJob` 每张图都报进度，少了这里就是
+            //   "Job 发了、没人订" —— 界面只剩转圈，且不报错（上传侧 :540 是模板）。
+            $raw = $co->await($this->exec(new DownloadResultsJob($urls)), function (float $fraction): void {
+                $this->downloadFraction = $fraction;
+                $this->downloadMessage = StatusMessage::loading(
+                    '正在下载… ' . (string) (int) \round($fraction * 100.0) . '%'
+                );
+                $this->notifyChanged();
+            });
+        } catch (AsyncCancelled $e) {
+            throw $e;
         } catch (\Throwable $e) {
+            $this->downloadMessage = StatusMessage::error($e->getMessage());
             $this->statusLine = StatusMessage::error('下载结果图失败：' . $e->getMessage());
             $this->notifyChanged();
 
@@ -705,10 +764,14 @@ final class WatermarkStore extends Subject
             }
         }
 
+        $this->downloadFraction = 1.0;
         if ($this->failedDownloads !== []) {
+            $this->downloadMessage = StatusMessage::error('部分结果图没能下载');
             $this->statusLine = StatusMessage::error(
                 '有 ' . (string) \count($this->failedDownloads) . ' 张结果图没能下载'
             );
+        } else {
+            $this->downloadMessage = StatusMessage::success('结果图已下载');
         }
 
         $this->notifyChanged();

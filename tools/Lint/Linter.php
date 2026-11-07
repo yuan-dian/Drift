@@ -8,8 +8,10 @@ use Drift\Dev\Lint\Rules\AppBootstrapLoop;
 use Drift\Dev\Lint\Rules\AppInstanceofConcrete;
 use Drift\Dev\Lint\Rules\AppSubclassCtorParent;
 use Drift\Dev\Lint\Rules\AttributeUnqualified;
+use Drift\Dev\Lint\Rules\AwaitProgress;
 use Drift\Dev\Lint\Rules\AwaitScope;
 use Drift\Dev\Lint\Rules\BackendBranch;
+use Drift\Dev\Lint\Rules\CancelGuard;
 use Drift\Dev\Lint\Rules\CachedSubscriber;
 use Drift\Dev\Lint\Rules\ClassMissingUse;
 use Drift\Dev\Lint\Rules\DeadCommand;
@@ -112,6 +114,13 @@ final class Linter
             // await 作用域（2026-11-05 借 Drift3 async-scope-lint）：运行时 assertInside()
             //   在 AOT 嵌套函数里拦不住越界 ⇒ 作用域必须显式传参，静态可判。
             new AwaitScope(),
+            // 进度断链（§68）：Job 报了 JobProgress 却没人订，界面静默退化成转圈。
+            //   ★ 真事故：DownloadResultsJob 每张图报进度，await 漏第二参 ⇒ 无报错、
+            //     落地结果也对，只有「下载阶段没有进度条」这一个可见症状。
+            new AwaitProgress(),
+            // 取消守卫顺序（§68）：宽 catch 吞掉 AsyncCancelled 后循环会多跑一轮，
+            //   运行时 guardCancelled() 只在下个让出点补抛，错误文案已经写出去了。
+            new CancelGuard(),
         ]);
     }
 

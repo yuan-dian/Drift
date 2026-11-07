@@ -47,12 +47,34 @@ final class Config
     /** 轮询间隔（毫秒）—— 原文是 `setInterval(..., 10000)` */
     public const POLL_INTERVAL_MS = 10_000;
 
+    /**
+     * 轮询总轮数上限。
+     *
+     * @design-param 零证据常量：原文是**无限** `setInterval`，本仓给 `while(true)` 一个上界。
+     *   60 轮 × 10s ≈ 10 分钟是估的，没有真机处理耗时分布；改这个数前先量业务。
+     *   ★ 用轮数而不是墙钟：测试可驱动、无需注入时钟，也避开 AOT 下 `hrtime` 的口径。
+     */
+    public const POLL_MAX_ROUNDS = 60;
+
+    /**
+     * 连续查询失败上限。
+     *
+     * @design-param 零证据常量：5 次 × 10s ≈ 网关持续不可用 50s。
+     */
+    public const POLL_MAX_FAILURES = 5;
+
     /** 连接超时（秒）：网关在国内，5 秒连不上就该报错 */
     public const CONNECT_TIMEOUT_S = 5.0;
 
     /** 普通请求总超时（秒） */
     public const TIMEOUT_S = 15.0;
 
-    /** 上传总超时（秒）：大图 + 慢上行，比普通请求宽裕得多 */
+    /**
+     * 上传总超时（秒）：大图 + 慢上行，比普通请求宽裕得多。
+     *
+     * @design-param 口径待对齐（§68，当前零判据）：`ProcessTaskHost::requestTerminateMs`
+     *   是 30_000ms，而一个 `UploadBatchJob` 串行传 N 张图 —— 单文件允许 300s、
+     *   整个 Job 却在 30s 被 `sweepTimeouts()` 杀。两个数字谁说了算，真机没量过。
+     */
     public const UPLOAD_TIMEOUT_S = 300.0;
 }

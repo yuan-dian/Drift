@@ -178,6 +178,17 @@ function drift_lint_selftest(string $root, Linter $linter): bool
             'apps/AwaitScopeBad.php:' . Diagnostic::ERROR,
             'apps/AwaitScopeBad.php:' . Diagnostic::ERROR,
         ],
+        // §68（2026-11-07）：Job 报进度但 await 没订（内联 / 变量两种形状）；
+        // AwaitProgressGood.php 三条都不该响 —— 钉死「已订第二参 / 静默 Job」不误报。
+        'await-progress' => [
+            'apps/AwaitProgressBad.php:' . Diagnostic::ERROR,
+            'apps/AwaitProgressBad.php:' . Diagnostic::ERROR,
+        ],
+        // 可取消上下文的宽 catch（await / sleep 两种），Good 侧钉住「有守卫 / 无让出点」。
+        'cancel-guard' => [
+            'apps/CancelGuardBad.php:' . Diagnostic::ERROR,
+            'apps/CancelGuardBad.php:' . Diagnostic::ERROR,
+        ],
     ];
 
     $ok = true;
