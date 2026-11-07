@@ -1,9 +1,11 @@
-"""真机验证「语义状态」：读屏与自动化能不能问到焦点/展开/选中/层级（§65）。
+"""真机验证「语义状态」：读屏与自动化能不能问到焦点/展开/选中/层级（§65 + §66）。
 
     python tools/probe-uia-state.py           # AOT 产物 showcase.exe
 
-★ 这轮补的是 `GetPropertyValue` 的属性出口 + `SelectionItem` / `ExpandCollapse`
-  两个 Pattern。**判据必须是"客户端读得到"**，不是"PHP 侧填了"—— 属性没实现时
+①–⑧ 是 §65 的树行（TreeItem / 层级 / 三态展开 / 选中 / 可聚焦 / 焦点 /
+Expand / Collapse）；⑨–⑫ 是 §66 的表格行（DataItem / IsSelected / Select）。
+
+★ 两轮判据都必须是"**客户端读得到**"，不是"PHP 侧填了"—— 属性没实现时
   客户端读到 `VT_EMPTY`、Pattern 没实现时 UIA 核心自己兜底（真机实测：展开态全
   报 `LeafNode`、选中全报 `False`），两种都不报错、无日志，单元测试全绿。
 
@@ -38,7 +40,9 @@ U = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(U)
 
 TREE_ITEM_CTRL = 50024
+DATA_ITEM_CTRL = 50029          # §66 表格行（UIA_DataItemControlTypeId）
 UIA_EXPAND_COLLAPSE_PATTERN = 10005
+UIA_SELECTION_ITEM_PATTERN = 10010
 # `ExpandCollapseState` 枚举（UIAutomationCore.h）
 COLLAPSED = 0
 EXPANDED = 1
@@ -59,6 +63,28 @@ def find(uia, w, hwnd, target):
         return None
 
     return found[0][0], found[0][1]
+
+
+def find_visible(uia, w, hwnd, target):
+    """按名字找**有几何**的节点（§66）。
+
+    ★ showcase 有两个表格页（Table / AsyncTable）。Offstage 页保活时同名
+      「行 1」可能挂在零面积盒上，`find()` 取第一个就会命中它 ⇒ `Select()`
+      合成点击被 `invokeSemanticsNode()` 的 `w<=0` 静默拒掉，看起来像
+      "点不动"。`dump(found=...)` 本来就收全部命中，这里挑第一个有面积的。
+    """
+    import contextlib
+    import io
+
+    root = U.element_from_handle(uia, hwnd)
+    found = []
+    with contextlib.redirect_stdout(io.StringIO()):
+        U.dump(root, w, found=found, target=target)
+    for elem, r, _t in found:
+        if (r.right - r.left) > 0 and (r.bottom - r.top) > 0:
+            return elem, r
+
+    return None
 
 
 def click_name(uia, w, hwnd, target, wait=1.2):
@@ -96,7 +122,7 @@ def pattern(elem, pattern_id):
 
 
 def call_pattern(obj, slot):
-    """调 Pattern 的方法（`IExpandCollapseProvider`：3=Expand 4=Collapse）。"""
+    """调 Pattern 的方法（3 = ExpandCollapse::Expand / SelectionItem::Select；4 = Collapse）。"""
     fn = U._call(obj, slot, ctypes.HRESULT)
     fn(obj)
 
@@ -222,6 +248,55 @@ def main():
             time.sleep(0.1)
         PC.check("⑧ Collapse() 真的折叠了 docs（子行消失）",
                  st == COLLAPSED and gone, (st, f"README.md 消失={gone}"))
+
+        # ── §66 表格行：能查询、能选中、别的行不跟着假报 ──────────────────
+        # ★ 全部走 UIA **客户端侧**：PHP 侧值对、单测全绿，但客户端读不到的事
+        #   §65 已经踩过一次（不提供 Pattern ⇒ 核心自己兜底）。
+        def row_prop(target, pid):
+            hit = find_visible(uia, w, hwnd, target)
+            if hit is None:
+                return ("missing", None)
+
+            return U.prop_of(hit[0], pid)
+
+        if not PC.check("入口：点得到导航项 '表格 Table'", click_name(uia, w, hwnd, "表格 Table")):
+            PC.skip("表格页没切过去，行语义一个都量不到")
+
+        hit = find_visible(uia, w, hwnd, "行 1")
+        if not PC.check("入口：UIA 树里有有几何的 '行 1'", hit is not None):
+            PC.skip("表格行没渲染出来（或全挂在零面积盒上）")
+
+        ctrl = U.ctype_of(hit[0])
+        PC.check("⑨ 表格行是 DataItem（不是 Custom/Button）", ctrl == DATA_ITEM_CTRL, f"controlType={ctrl}")
+
+        # `IsSelected` 只有两态：0 与 1 都报 False。★ 判 `is False` 而不是
+        #   `not ...` —— VT_EMPTY 时 `prop_of` 返回 None，那种"根本没答"必须报红。
+        sel = row_prop("行 1", U.UIA_SelectionItemIsSelectedPropertyId)[1]
+        PC.check("⑩ 未选中行 IsSelected = False（不是 VT_EMPTY）", sel is False, sel)
+
+        obj = pattern(hit[0], UIA_SELECTION_ITEM_PATTERN) if hit else None
+        if not PC.check("入口：行拿得到 SelectionItemPattern", obj is not None):
+            PC.skip("没有 Pattern，⑪⑫ 量不到")
+
+        call_pattern(obj, 3)      # Select()（vtable slot 3）
+        # ★ 轮询而不是固定 sleep：合成点击 → 受控选中集 → setState → 重推语义树
+        #   要跨至少一帧；固定 sleep 在负载高时偶发红，且分不清"没实现"和"还没推上来"。
+        got = None
+        for _ in range(25):
+            got = row_prop("行 1", U.UIA_SelectionItemIsSelectedPropertyId)[1]
+            if got is True:
+                break
+            time.sleep(0.1)
+        PC.check("⑪ Select() 真的选中行 1（COM → PostMessage → 合成点击 → 受控选中集）",
+                 got is True, got)
+
+        other = row_prop("行 2", U.UIA_SelectionItemIsSelectedPropertyId)[1]
+        PC.check("⑫ 另一行仍是 False（不是全表都报选中）", other is False, other)
+
+        # ★ ⑬ 事件判据还没接（§66.5）：⑨–⑫ 只量属性与动作结果，把
+        #   `UiaRaiseAutomationEvent(..., UIA_SelectionItem_ElementSelectedEventId)`
+        #   注释掉照样全绿。要补得用 UIA 客户端侧 AddAutomationEventHandler
+        #   订阅 20012，且必须显式依赖 ⑪ 成功。T2 环境恢复后第一件事。
 
         return None
     finally:

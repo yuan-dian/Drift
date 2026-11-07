@@ -76,6 +76,21 @@ enum SemanticsRole: string
      */
     case TreeItem = 'treeitem';
 
+    /**
+     * 表格里的一行（`Table`，2026-11-07）—— name 取「行 N」（视口内绝对行序，1-based）。
+     *
+     * ★ 声明者是 `Table` 的**行容器**（`SizedBox`）。这里破例不是放宽
+     *   「纯布局一律不给角色」：行是集合族的节点，读屏必须逐行问 `IsSelected`，
+     *   而 `Table` 自己只有一个节点，装不下"哪几行被选中"。别把本角色用到通用布局盒。
+     * ★ 与 `TreeItem` **不同**：换成 `DataItem` 不会掐掉 Pattern ——
+     *   `SelectionItemPattern` 按 `selectState != 0` 分派（与 ControlType 无关），
+     *   且 `Select()` 内部 Post `kMsgUiaInvoke` 走 `invokeSemanticsNode()` 合成点击，
+     *   也不要求节点有 `InvokePattern`。§65 那条「两处条件同时改」别照抄。
+     * ★ 只在**可选中且整行选择**的表里声明；纯展示表 / 格级选择不声明
+     *   （`selected: false` 是 1 不是 0 ⇒ 会挂上 Pattern = "能选中却点不动"）。
+     */
+    case Row = 'row';
+
     /** 模态对话框（`Modal`）—— name 取标题 */
     case Dialog = 'dialog';
 

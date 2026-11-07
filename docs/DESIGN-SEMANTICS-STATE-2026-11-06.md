@@ -150,8 +150,22 @@ $label->semanticsState(
 
 ## 6. 边界（如实记）
 
-- **`Table` 的选中行仍看不见**：行是 `RenderTable` 自绘的，语义树里没有行
-  节点。要补得先裁决"语义树要不要收渲染层的行"，是新结构问题，不在本轮。
+- ~~**`Table` 的选中行仍看不见**：行是 `RenderTable` 自绘的，语义树里没有行
+  节点。要补得先裁决"语义树要不要收渲染层的行"，是新结构问题，不在本轮。~~
+  **2026-11-07 更正（§66 勘察）**：这条边界的前提是错的。
+  `TableState::buildBody()` 每行都造 `SizedBox->key($i)` 包 `Row` → `cellShell`；
+  `RenderTable::paint()` 只画 chrome / 焦点框 / 滚动条，行区由
+  `paintChildAt($canvas, $body)` 委托子盒绘制。行有 Element、有 RenderBox、
+  有几何，`SemanticsBuilder` 走 Element 树本来就收得到 ⇒ **不存在**
+  「语义树收不收渲染层的行」的结构裁决。§66 只是在行容器链末尾接了
+  `SemanticsRole::Row` + `semanticsState(selected: ...)`，并在 C++ 侧补了
+  `UIA_SelectionItem_ElementSelectedEventId`（选中不改节点数，原结构事件不报）。
 - **`level` 只对树行有意义**：别的角色给 `0`（不提供 `Level` 属性）。
 - **探针侧 `probe-uia.py --click` 的可见性判据错容器**（用客户区代替元素的
   滚动视口）：本轮顺手修，因为新探针要靠它点树行。
+- **§66 的 T2 真机未跑成**（2026-11-07）：`showcase.exe` 启动即
+  `0xC0000409`，AOT 启动期 Fatal `PageHostState must be registered before
+  PageHost`（外部工具链的类注册顺序；回退到 HEAD 全量重建同样复现，
+  详见 `DEBT` §66.4）。因此 `ElementSelected` 事件与表格行 ⑨–⑫ 四条 UIA
+  判据**都还没有真机证据**。上面「§66 补了事件」只代表代码已落地，
+  不代表验过；恢复 T2 后第一件事是补事件判据，见 `DEBT` §66.6。

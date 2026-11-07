@@ -13,6 +13,7 @@ use Drift\Input\CursorShape;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
+use Drift\Input\SemanticsRole;
 use Drift\Input\TextKeymap;
 use Drift\Layout\ColumnWidths;
 use Drift\Layout\FlexAlign;
@@ -2172,7 +2173,8 @@ final class TableState extends State implements Scrollable, EditableText, Constr
         $spacing = $g->spacing;
         $striped = $view->isStriped();
         $keyOf = $view->keyMapper();
-        $selectable = $view->selectionSet() !== null;
+        $selection = $view->selectionSet();
+        $selectable = $selection !== null;
         // ★ 交互行 = 可选中 或 有 tap 回调 或 **有可编辑列**。都没有 ⇒ 纯展示表：
         //   不挂 hover（悬停高亮是"这里能点"的暗示，会误导）、不算 key（零成本）。
         // ★ 可编辑列必须算进来（阶段 7b）：双击进编辑走的是**行容器**的 pointer
@@ -2260,6 +2262,21 @@ final class TableState extends State implements Scrollable, EditableText, Constr
                     $line = $line->hover(function (bool $entered) use ($rowKey): void {
                         $this->noteRowHover($rowKey, $entered);
                     });
+                }
+            }
+
+            // ★ 语义声明必须放在链的**末尾**：`background()` / `pointer()` / `hover()`
+            //   会换掉 `$line` 指向的对象，早声明会留在旧实例上 —— 不报错，只是读屏
+            //   永远看不到行（§66）。
+            // ★ 只有"可选中 + 整行选择"的表才声明。两层理由：
+            //   ① 纯展示表传 `selected: false` 得到的是 1 不是 0 ⇒ 挂上
+            //      `SelectionItemPattern` = "能选中却点不动"的假承诺；
+            //   ② 格级行为下整行不该报"已选"（`rowBackground()` 同样不染整行），
+            //      报了就是读屏念"整行选中"而画面只亮了两格。
+            if ($selection !== null && $rowKey !== null) {
+                $line->semantics(SemanticsRole::Row, '行 ' . ($i + 1));
+                if ($view->selectionBehaviorValue() === TableSelectionBehavior::Rows) {
+                    $line->semanticsState(selected: $selection->has($rowKey));
                 }
             }
 

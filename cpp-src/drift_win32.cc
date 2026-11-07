@@ -239,6 +239,9 @@ class CProvider;   // UIA provider（定义在下方；槽只持指针）
  */
 struct UiaNode {
     std::wstring name;
+    // §66 节点身份（PHP `Widget::identity()` 的 key 文本）。跨帧比对选中态要用 ——
+    //   只按索引比，窗口滑动 / 排序后"这一格换了个节点"会被误报成"选中变了"。
+    std::wstring key;
     long controlType = UIA_CustomControlTypeId;
     int parent = -1;   // 父节点索引（本槽的 uiaNodes），-1 = 顶层（父是窗口根）
     bool focused = false;
@@ -473,6 +476,9 @@ static long uiaControlTypeFor(const std::string &role) {
     // 树的行（§65）。★ 换控制类型会连带掐掉 InvokePattern —— 见 `simplePattern()`
     //   里那条"Button **或** TreeItem"的注释。
     if (role == "treeitem") return UIA_TreeItemControlTypeId;
+    // 表格行（§66）：DataItem 是 UIA 里"表里的一条记录"的标准 ControlType，
+    //   不映射就掉到 Custom ⇒ 客户端认不出这是行。
+    if (role == "row") return UIA_DataItemControlTypeId;
     return UIA_CustomControlTypeId;
 }
 
@@ -3766,6 +3772,17 @@ void php_drift_win_present_skia(Int hwnd, Int canvas) {
 //   UIA provider、坐标是各窗的客户区。推错的树 = 读屏器把 A 窗的控件当 B 窗的。
 void php_drift_win_uia_push(Int hwnd, Array nodes) {
     WindowSlot &win = slotOf((HWND)(INT_PTR)hwnd);
+    // ★ 选中变化事件（§66）：C++ 侧只有"快照"能跨帧保留。下面的结构事件只看节点数，
+    //   而选中**不改节点数** ⇒ 不比状态就永远不 raise：客户端查得到 IsSelected，
+    //   用户改选中时读屏却一声不吭。
+    std::vector<std::wstring> oldKeys;
+    std::vector<int> oldSelect;
+    oldKeys.reserve(win.uiaNodes.size());
+    oldSelect.reserve(win.uiaNodes.size());
+    for (const UiaNode &o : win.uiaNodes) {
+        oldKeys.push_back(o.key);
+        oldSelect.push_back(o.selectState);
+    }
     win.uiaNodes.clear();
     size_t n = nodes.count();
     for (size_t i = 0; i < n; i++) {
@@ -3778,7 +3795,9 @@ void php_drift_win_uia_push(Int hwnd, Array nodes) {
         std::string name(a.get("name").toCString());
         std::string role(a.get("role").toCString());
         std::string value(a.get("value").toCString());
+        std::string key(a.get("key").toCString());
         node.name = toWide(String(name));
+        node.key = toWide(String(key));   // §66 缺键 ⇒ 空串，老调用方不推也安全
         node.controlType = uiaControlTypeFor(role);
         // 值型 Pattern 的数据源（§4.4）。缺键 ⇒ 空串 / 0（老调用方不推也安全）。
         node.value = toWide(String(value));
@@ -3827,6 +3846,27 @@ void php_drift_win_uia_push(Int hwnd, Array nodes) {
             if (fsimple != nullptr) {
                 UiaRaiseAutomationEvent(fsimple, UIA_AutomationFocusChangedEventId);
                 fsimple->Release();
+            }
+        }
+    }
+
+    // 选中变化事件（§66）：只在**同一份节点**上、从未选变成已选时 raise。
+    // ★ 按 key 认节点而不是只按索引：滚窗 / 排序会让同一索引指向别的节点，
+    //   那种情况该报的是结构变化（上面已报），不是"这一行被选中了"。
+    // ★ 结构变了就不重复报：ChildrenInvalidated 会让客户端整棵重查。
+    if (win.uiaProvider != nullptr && oldKeys.size() == win.uiaNodes.size()) {
+        for (size_t k = 0; k < win.uiaNodes.size(); k++) {
+            // ★ 无 key 的节点一律跳过：`SemanticsBuilder::keyText()` 对没有 `Key` 的
+            //   Widget 返回空串（树行就没有 key），空串 == 空串会让"按 key 认节点"
+            //   悄悄退化成按 index 认 —— 同一索引换了节点也报"这行被选中了"。
+            //   §66 的 Table 行走 `->key($i)` 一定有 key；无身份的节点交给结构事件。
+            if (win.uiaNodes[k].key.empty()) continue;
+            if (oldKeys[k] != win.uiaNodes[k].key) continue;
+            if (oldSelect[k] == 2 || win.uiaNodes[k].selectState != 2) continue;
+            IRawElementProviderSimple *ssimple = win.uiaProvider->makeFragmentSimple((int)k);
+            if (ssimple != nullptr) {
+                UiaRaiseAutomationEvent(ssimple, UIA_SelectionItem_ElementSelectedEventId);
+                ssimple->Release();
             }
         }
     }
