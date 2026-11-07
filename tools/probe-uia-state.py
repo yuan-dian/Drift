@@ -3,9 +3,13 @@
     python tools/probe-uia-state.py           # AOT 产物 showcase.exe
 
 ①–⑧ 是 §65 的树行（TreeItem / 层级 / 三态展开 / 选中 / 可聚焦 / 焦点 /
-Expand / Collapse）；⑨–⑫ 是 §66 的表格行（DataItem / IsSelected / Select）。
+Expand / Collapse）；⑨–⑫ 是 §66 的表格行（DataItem / IsSelected / Select）；
+⑬a/⑬b 是 §70 补的事件判据（选中变化会不会主动通知读屏）。
 
-★ 两轮判据都必须是"**客户端读得到**"，不是"PHP 侧填了"—— 属性没实现时
+★ ⑨–⑫ 只量「客户端去问时答得对」，把 `UiaRaiseAutomationEvent` 注释掉照样全绿；
+  ⑬ 走 UIA 客户端订阅 → 核心分发 → 回调，是唯一独立于实现的路径。
+
+★ 三轮判据都必须是"**客户端读得到**"，不是"PHP 侧填了"—— 属性没实现时
   客户端读到 `VT_EMPTY`、Pattern 没实现时 UIA 核心自己兜底（真机实测：展开态全
   报 `LeafNode`、选中全报 `False`），两种都不报错、无日志，单元测试全绿。
 
@@ -276,27 +280,49 @@ def main():
 
         obj = pattern(hit[0], UIA_SELECTION_ITEM_PATTERN) if hit else None
         if not PC.check("入口：行拿得到 SelectionItemPattern", obj is not None):
-            PC.skip("没有 Pattern，⑪⑫ 量不到")
+            PC.skip("没有 Pattern，⑪⑫⑬ 量不到")
 
-        call_pattern(obj, 3)      # Select()（vtable slot 3）
-        # ★ 轮询而不是固定 sleep：合成点击 → 受控选中集 → setState → 重推语义树
-        #   要跨至少一帧；固定 sleep 在负载高时偶发红，且分不清"没实现"和"还没推上来"。
-        got = None
-        for _ in range(25):
-            got = row_prop("行 1", U.UIA_SelectionItemIsSelectedPropertyId)[1]
-            if got is True:
-                break
-            time.sleep(0.1)
-        PC.check("⑪ Select() 真的选中行 1（COM → PostMessage → 合成点击 → 受控选中集）",
-                 got is True, got)
+        # ⑬ 订阅必须在 Select() 之前：属性可查 ≠ 变化会通知，事件是第三种可观察量。
+        root = U.element_from_handle(uia, hwnd)
+        if not root or not root.value:
+            PC.skip("订阅 20012 拿不到窗口根元素")
+        event_id = U.UIA_SelectionItem_ElementSelectedEventId
+        try:
+            sub = U.AutomationEventSubscription(uia, root, event_id)
+        except OSError as exc:
+            PC.skip(f"AddAutomationEventHandler 失败：{exc}")
 
-        other = row_prop("行 2", U.UIA_SelectionItemIsSelectedPropertyId)[1]
-        PC.check("⑫ 另一行仍是 False（不是全表都报选中）", other is False, other)
+        with sub:
+            U.pump(0.3)
+            quiet = len(sub.events)
+            PC.check("⑬a 静默窗口没有 20012 噪声（防『一直有事件』的假绿）",
+                     quiet == 0, f"订阅后未操作时事件数={quiet}")
+            sub.events.clear()
 
-        # ★ ⑬ 事件判据还没接（§66.5）：⑨–⑫ 只量属性与动作结果，把
-        #   `UiaRaiseAutomationEvent(..., UIA_SelectionItem_ElementSelectedEventId)`
-        #   注释掉照样全绿。要补得用 UIA 客户端侧 AddAutomationEventHandler
-        #   订阅 20012，且必须显式依赖 ⑪ 成功。T2 环境恢复后第一件事。
+            call_pattern(obj, 3)      # Select()（vtable slot 3）
+            # ★ 轮询而不是固定 sleep：合成点击 → 受控选中集 → setState → 重推语义树
+            #   要跨至少一帧；固定 sleep 在负载高时偶发红，且分不清"没实现"和"还没推上来"。
+            #   泵消息而不是 sleep：UIA 事件回调经窗口消息投递，不泵收不到。
+            got = None
+            for _ in range(25):
+                got = row_prop("行 1", U.UIA_SelectionItemIsSelectedPropertyId)[1]
+                if got is True:
+                    break
+                U.pump(0.1)
+            select_ok = PC.check("⑪ Select() 真的选中行 1（COM → PostMessage → 合成点击 → 受控选中集）",
+                                 got is True, got)
+
+            other = row_prop("行 2", U.UIA_SelectionItemIsSelectedPropertyId)[1]
+            PC.check("⑫ 另一行仍是 False（不是全表都报选中）", other is False, other)
+
+            # ★ 显式依赖 ⑪：没选中时「没收到事件」与「根本没选中」分不开 ⇒ 只能 SKIP
+            if not select_ok:
+                PC.skip("⑪ 没选中，⑬ 的事件判据没意义")
+            arrived = sub.wait(2.0, lambda ev: any(e[0] == event_id for e in ev))
+            names = [e[1] for e in sub.events if e[0] == event_id]
+            PC.check("⑬b 选中变化真的 raise 了 ElementSelected（20012，经 UIA 核心分发）",
+                     arrived and len(names) > 0,
+                     f"事件数={len(names)} sender={names[:2]}")
 
         return None
     finally:

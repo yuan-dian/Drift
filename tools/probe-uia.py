@@ -93,6 +93,22 @@ WALKER_GetNextSiblingElement = 6
 # IUIAutomationInvokePattern
 INVOKE_Invoke = 3
 
+# IUIAutomation 事件订阅。槽位逐条数自 Wine include/uiautomationclient.idl：
+# 接口含 CreateAndConditionFromNativeArray / CreateOrConditionFromNativeArray，
+# 少算这两个会把 Add 误当成 30（本仓 IUIA_get_ControlViewWalker=14 已在真机跑通，
+# 与同一份 IDL 的编号一致）。
+IUIA_AddAutomationEventHandler = 32
+IUIA_RemoveAutomationEventHandler = 33
+UIA_SelectionItem_ElementSelectedEventId = 20012
+
+IID_IUnknown = GUID(0x00000000, 0x0000, 0x0000,
+                    (ctypes.c_ubyte * 8)(0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46))
+IID_IUIAutomationEventHandler = GUID(0x146C3C17, 0xF12E, 0x4E22,
+                                     (ctypes.c_ubyte * 8)(0x8C, 0x27, 0xF8, 0x94, 0xB9, 0xB7, 0x9C, 0x69))
+
+PM_REMOVE = 0x0001
+E_NOINTERFACE = 0x80004002
+
 
 def _vt(ptr, index):
     """取 COM 对象的第 index 个虚函数"""
@@ -469,6 +485,121 @@ def verify_hit_test(uia, root, w, hwnd, samples=5):
 
     print("结论：✓ 命中测试正确（点叶子中心返回该叶子）")
     return 0
+
+
+def pump(seconds):
+    """泵当前线程消息。UIA 事件回调经窗口消息投递，光 sleep 收不到。"""
+    user32.PeekMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND,
+                                    wintypes.UINT, wintypes.UINT, wintypes.UINT]
+    user32.PeekMessageW.restype = wintypes.BOOL
+    user32.TranslateMessage.argtypes = [ctypes.POINTER(wintypes.MSG)]
+    user32.DispatchMessageW.argtypes = [ctypes.POINTER(wintypes.MSG)]
+
+    msg = wintypes.MSG()
+    end = time.time() + seconds
+    while time.time() < end:
+        while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, PM_REMOVE):
+            user32.TranslateMessage(ctypes.byref(msg))
+            user32.DispatchMessageW(ctypes.byref(msg))
+        time.sleep(0.01)
+
+
+def _same_guid(a, b):
+    return (a.Data1 == b.Data1 and a.Data2 == b.Data2 and a.Data3 == b.Data3
+            and bytes(a.Data4) == bytes(b.Data4))
+
+
+class _EventHandlerObj(ctypes.Structure):
+    _fields_ = [("lpVtbl", ctypes.POINTER(ctypes.c_void_p))]
+
+
+_LIVE_HANDLERS = []  # 保活到进程退出：UIA 可能有在途回调
+
+
+class AutomationEventSubscription:
+    """订阅一个 UIA 事件；`events` 收集 `(eventId, senderName)`。
+
+    ★ 与「读属性」不同：这条路径经过 UIA 核心分发，能证 provider 真的 raise 过。
+    """
+
+    def __init__(self, uia, root, event_id, scope=TreeScope_Descendants):
+        self.events = []
+        self.event_id = event_id
+        self._ref = 1
+        self._uia, self._root = uia, root
+        self._added = False
+
+        cb = ctypes.WINFUNCTYPE
+        self._callbacks = (
+            cb(ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(GUID),
+               ctypes.POINTER(ctypes.c_void_p))(self._qi),
+            cb(ctypes.c_ulong, ctypes.c_void_p)(self._addref),
+            cb(ctypes.c_ulong, ctypes.c_void_p)(self._release),
+            cb(ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int)(self._handle),
+        )
+        self._vtbl = (ctypes.c_void_p * 4)(
+            *[ctypes.cast(f, ctypes.c_void_p) for f in self._callbacks])
+        self._obj = _EventHandlerObj(ctypes.cast(self._vtbl, ctypes.POINTER(ctypes.c_void_p)))
+        self._self = ctypes.cast(ctypes.byref(self._obj), ctypes.c_void_p)
+
+        fn = _call(uia, IUIA_AddAutomationEventHandler, ctypes.c_long,
+                   ctypes.c_int, ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p,
+                   ctypes.c_void_p)
+        hr = fn(uia, event_id, root, scope, None, self._self) & 0xFFFFFFFF
+        if hr != 0:
+            raise OSError(f"AddAutomationEventHandler(event={event_id}) hr=0x{hr:08X}")
+        self._added = True
+        _LIVE_HANDLERS.append(self)
+
+    def _qi(self, this, riid, ppv):
+        if riid and (_same_guid(riid.contents, IID_IUnknown)
+                     or _same_guid(riid.contents, IID_IUIAutomationEventHandler)):
+            ppv[0] = self._self.value
+            self._ref += 1
+            return 0
+        ppv[0] = None
+        return E_NOINTERFACE - (1 << 32)
+
+    def _addref(self, this):
+        self._ref += 1
+        return self._ref
+
+    def _release(self, this):
+        self._ref -= 1
+        return self._ref
+
+    def _handle(self, this, sender, event_id):
+        name = ""
+        if sender:
+            try:
+                name = name_of(ctypes.c_void_p(sender))
+            except Exception:
+                name = ""
+        self.events.append((event_id, name))
+        return 0
+
+    def wait(self, timeout, predicate):
+        end = time.time() + timeout
+        while time.time() < end:
+            if predicate(self.events):
+                return True
+            pump(0.05)
+        return predicate(self.events)
+
+    def close(self):
+        if not self._added:
+            return
+        self._added = False
+        fn = _call(self._uia, IUIA_RemoveAutomationEventHandler, ctypes.c_long,
+                   ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)
+        fn(self._uia, self.event_id, self._root, self._self)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+        return False
 
 
 def launch(app, title, wait=4.0, env_extra=None):
