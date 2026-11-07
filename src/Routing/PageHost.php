@@ -5,6 +5,7 @@ namespace Drift\Routing;
 
 use Drift\State\SubscribingWidget;
 use Drift\State\Subject;
+use Drift\Widget\State;
 use Drift\Widget\StatefulWidget;
 
 /**
@@ -50,7 +51,8 @@ final class PageHost extends StatefulWidget implements SubscribingWidget
         return new self();
     }
 
-    public function createState(): PageHostState
+    // 不窄到 PageHostState：AOT 注册期做覆盖签名检查时它还不是已注册类，Zend 会直接 Fatal
+    public function createState(): State
     {
         return new PageHostState();
     }
