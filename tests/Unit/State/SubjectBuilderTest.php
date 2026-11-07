@@ -6,6 +6,7 @@ namespace Drift\Dev\Tests\Unit\State;
 use Drift\Dev\Smoke\LeafProbe;
 use Drift\Dev\Smoke\State\FakeStore;
 use Drift\Dev\Tests\Support\SmokeTestCase;
+use Drift\State\Equatable;
 use Drift\State\Subject;
 use Drift\State\SubjectBuilder;
 use Drift\Widget\Widget;
@@ -197,6 +198,104 @@ final class SubjectBuilderTest extends SmokeTestCase
 
         $this->flushChecks();
     }
+
+    /**
+     * 2026-11-07：值对象 `implements Equatable` 后，不给 `equals()` 也按值门控。
+     *
+     * ★ 不能取代 `testEqualsGatesValueObjects()` ①：那边钉的是「未 opt-in 的普通
+     *   值对象仍走 `===`」。两条合起来才证明默认行为没有被整体改掉。
+     */
+    public function testEquatableGatesByValueWithoutExplicitEquals(): void
+    {
+        $ctx = smokeContext();
+        $store = new ValueSubject();
+        $runs = 0;
+        $args = [];
+        $widget = SubjectBuilder::make($store)
+            ->select(static fn(ValueSubject $s): EquatableValue => new EquatableValue($s->text()))
+            ->builder(static function (mixed $v) use (&$runs, &$args): Widget {
+                $runs++;
+                $args[] = $v->text;
+
+                return new LeafProbe(1.0);
+            });
+        $element = $widget->createElement();
+        $element->mount(null, $ctx);
+        check(
+            'State · Equatable 首帧照常拿到值（门控不挡首帧）',
+            $runs === 1 && $args === ['同'],
+            'runs=' . $runs . ' args=' . json_encode($args)
+        );
+
+        $store->setText('同');
+        check(
+            'State · Equatable 内容相同的新实例被默认门控挡住',
+            !$element->state()->needsBuild(),
+            '默认门控没认 Equatable ⇒ 每次通知都重建'
+        );
+
+        $store->setText('不同');
+        check('State · Equatable 内容变了 ⇒ 标脏', $element->state()->needsBuild(), '没标脏');
+        $element->rebuild();
+        check(
+            'State · 重建后拿到新值',
+            $runs === 2 && $args === ['同', '不同'],
+            'runs=' . $runs . ' args=' . json_encode($args)
+        );
+        $element->unmount();
+        $this->flushChecks();
+    }
+
+    /** 显式 `equals()` 仍是最高优先级的覆盖口。 */
+    public function testExplicitEqualsStillOverridesEquatable(): void
+    {
+        $ctx = smokeContext();
+        $store = new ValueSubject();
+        $widget = SubjectBuilder::make($store)
+            ->select(static fn(ValueSubject $s): EquatableValue => new EquatableValue($s->text()))
+            ->equals(static fn(EquatableValue $a, EquatableValue $b): bool => false)
+            ->builder(static fn(mixed $v): Widget => new LeafProbe(1.0));
+        $element = $widget->createElement();
+        $element->mount(null, $ctx);
+
+        $store->setText('同');
+        check(
+            'State · 显式 equals() 覆盖默认门控（同内容也标脏）',
+            $element->state()->needsBuild(),
+            '覆盖口被默认门控吃掉了'
+        );
+        $element->unmount();
+        $this->flushChecks();
+    }
+
+    /** `null → 值对象` 必须判为变化：只有两边都是 Equatable 才交给 `equals()`。 */
+    public function testNullToEquatableStillCountsAsChange(): void
+    {
+        $ctx = smokeContext();
+        $store = new MaybeSubject();
+        $widget = SubjectBuilder::make($store)
+            ->select(static fn(MaybeSubject $s): ?EquatableValue => $s->value())
+            ->builder(static fn(mixed $v): Widget => new LeafProbe(1.0));
+        $element = $widget->createElement();
+        $element->mount(null, $ctx);
+
+        $store->set(new EquatableValue('x'));
+        check(
+            'State · null → Equatable 判为变化（守卫没把 null 交给 equals）',
+            $element->state()->needsBuild(),
+            '守卫缺失会把 null 传给 equals() 或误判没变'
+        );
+        $element->rebuild();
+
+        $store->set(new EquatableValue('x'));
+        check(
+            'State · 两边都是 Equatable 后才按值比',
+            !$element->state()->needsBuild(),
+            '值门控在这条路径上没生效'
+        );
+        $element->unmount();
+        $this->flushChecks();
+    }
 }
 
 /**
@@ -228,6 +327,36 @@ final class ValueSubject extends Subject
     public function setText(string $text): void
     {
         $this->text = $text;
+        $this->notifyChanged();
+    }
+}
+
+/** 显式声明值相等契约的值对象（`StatusMessage` 在测试里的替身）。 */
+final class EquatableValue implements Equatable
+{
+    public function __construct(public readonly string $text)
+    {
+    }
+
+    public function equals(Equatable $other): bool
+    {
+        return $other instanceof self && $this->text === $other->text;
+    }
+}
+
+/** 首帧为 null 的 Subject：验证 `sameValue()` 的「两边都 Equatable」守卫。 */
+final class MaybeSubject extends Subject
+{
+    private ?EquatableValue $value = null;
+
+    public function value(): ?EquatableValue
+    {
+        return $this->value;
+    }
+
+    public function set(?EquatableValue $value): void
+    {
+        $this->value = $value;
         $this->notifyChanged();
     }
 }

@@ -13,25 +13,42 @@ use Drift\Dev\Lint\SourceQuery;
 /**
  * §16.6.3 #6：`select` 纯度（G2）。
  *
- * 判据：`select` 闭包的返回类型必须是**标量 / enum / `readonly class`**；
+ * 判据：`select` 闭包的返回类型在 `===` 门控下要有稳定相等语义 ——
+ * 标量 / enum / `array` / nullable / `readonly class` / `Equatable` 实现者；
  * 出现 `new` 非 readonly 对象 ⇒ 报错。
  *
- * 理由：`select` 的返回值用 `===` 门控"要不要重建"（§11.3.3 / §24.3 例外登记）。
- * 每次返回**新对象** ⇒ 永远不相等 ⇒ 每帧重建，缓存形同虚设。
+ * 理由：`select` 的返回值决定"要不要重建"（§11.3.3 / §24.3 例外登记）。
+ * 每次返回**新对象**且没有值相等契约 ⇒ `===` 永不相等 ⇒ 每帧重建。
  *
- * ★ 诚实边界：闭包**没声明返回类型**时静态无从判断 ⇒ 本规则不报（只治"声明了但类型不对"
- *   与"体内 new"两种可见形态）。目标类型在本仓库之外时同样不判 readonly。
+ * ★ 2026-11-07：`isClosure()` 原先只认 `fn` / `function`，全仓 24 处
+ *   `static fn` 形态的 `select` 从来没进过判据 —— 夹具全绿是假绿。
+ * ★ 诚实边界：闭包**没声明返回类型** / 声明 `mixed` 时静态无从判断 ⇒ 本规则不报
+ *   （只治"声明了但类型不对"与"体内 new"两种可见形态）。目标类型在本仓库之外时同样不判。
  */
 final class SelectPurity implements Rule
 {
     /** 允许的标量返回类型 */
     private const SCALARS = ['int', 'float', 'string', 'bool'];
 
+    /**
+     * `array` 的 `===` 是「同键序 + 同类型 + 同值」，稳定值语义 ⇒ 放行。
+     * ★ `mixed` / `null` / `true` / `false` 不在这里：它们本就查不到类表，
+     *   走下面「仓库外类型不判」的既有诚实边界，重复登记只会让判据失去牙。
+     * ★ 「array 不该响」由 `SelectFixture::staticShape()` 的 Good 形态钉住。
+     */
+    private const VALUE_SEMANTICS = ['array'];
+
     /** 一律不允许的返回类型关键词 */
     private const BANNED_KEYWORDS = [
-        'array', 'object', 'mixed', 'callable', 'iterable', 'void', 'never',
-        'null', 'true', 'false', 'self', 'static', 'parent',
+        'object', 'callable', 'iterable', 'void', 'never',
+        'self', 'static', 'parent',
     ];
+
+    /**
+     * §24.3 例外登记：框架保证「不可变 + 同一值复用同一实例」的值对象。
+     * 它们的 `===` 天然稳定，不该因为不是 `readonly class` 被误报。
+     */
+    private const IDENTITY_STABLE = ['Drift\Async\AsyncValue'];
 
     public function name(): string
     {
@@ -225,13 +242,10 @@ final class SelectPurity implements Rule
         if (str_contains($type, '|') || str_contains($type, '&')) {
             return '是联合/交叉类型，没有稳定的相等语义';
         }
-        if (str_starts_with($type, '?')) {
-            return '是 nullable，每次比较要额外判空';
-        }
-
-        $bare = ltrim($type, '\\');
+        // nullable 不改变 `===` 的值语义（null 与任何值都严格可比）⇒ 只判底层类型
+        $bare = ltrim(ltrim($type, '?'), '\\');
         $lower = strtolower($bare);
-        if (in_array($lower, self::SCALARS, true)) {
+        if (in_array($lower, self::SCALARS, true) || in_array($lower, self::VALUE_SEMANTICS, true)) {
             return null;
         }
         if (in_array($lower, self::BANNED_KEYWORDS, true)) {
@@ -246,11 +260,20 @@ final class SelectPurity implements Rule
         if (($info['kind'] ?? '') === 'enum') {
             return null;
         }
-        if (($info['kind'] ?? '') === 'class' && ($info['readonly'] ?? false)) {
-            return null;
+        if (($info['kind'] ?? '') === 'class') {
+            if (($info['readonly'] ?? false) || in_array($fqn, self::IDENTITY_STABLE, true)) {
+                return null;
+            }
+            // 值对象显式声明了值相等契约 ⇒ `SubjectBuilder` 会按值门控
+            foreach ($info['implements'] ?? [] as $impl) {
+                $short = ltrim((string) $impl, '\\');
+                if ($short === 'Equatable' || str_ends_with($short, '\\Equatable')) {
+                    return null;
+                }
+            }
         }
 
-        return sprintf('指向 %s，它不是 enum 也不是 readonly class', $fqn);
+        return sprintf('指向 %s，它不是 enum / readonly class / Equatable', $fqn);
     }
 
     /**
@@ -259,6 +282,15 @@ final class SelectPurity implements Rule
     private function isClosure(array $tokens, int $i): bool
     {
         $tok = $tokens[$i];
+        // `static fn` / `static function`：本仓 AOT 纪律鼓励 static，漏认会让规则假绿
+        if (is_array($tok) && $tok[0] === T_STATIC) {
+            $next = SourceQuery::nextIndex($tokens, $i + 1);
+            if ($next === null) {
+                return false;
+            }
+            $i = $next;
+            $tok = $tokens[$i];
+        }
         if (!is_array($tok)) {
             return false;
         }

@@ -63,7 +63,15 @@ function drift_lint_selftest(string $root, Linter $linter): bool
         'dead-subscription' => [
             'src/Widget/DeadSubscriptionFixture.php:' . Diagnostic::ERROR,
         ],
+        // 2026-11-07 补 `static fn` / `static function` 形态（+5）：
+        // 从前 isClosure() 漏认 T_STATIC ⇒ 这 5 条里一条都不会响，全仓 24 处
+        // 真实 select 从未进过判据。Good 侧另钉住 `array` 与 static function 标量不误报。
         'select-purity' => [
+            'apps/SelectFixture.php:' . Diagnostic::ERROR,
+            'apps/SelectFixture.php:' . Diagnostic::ERROR,
+            'apps/SelectFixture.php:' . Diagnostic::ERROR,
+            'apps/SelectFixture.php:' . Diagnostic::ERROR,
+            'apps/SelectFixture.php:' . Diagnostic::ERROR,
             'apps/SelectFixture.php:' . Diagnostic::ERROR,
             'apps/SelectFixture.php:' . Diagnostic::ERROR,
             'apps/SelectFixture.php:' . Diagnostic::ERROR,

@@ -27,7 +27,7 @@ use Drift\Widget\Text;
  * |---|---|
  * | ① 是框架控件在订阅 | 订阅责任落在 `SubjectBuilder`（它 `implements SubscribingWidget`），不是应用又写了一份 |
  * | ② 首帧就有值 | `store` 的初始值是 `info('准备就绪')` —— 用户第一眼该看到它（**不是空白**） |
- * | ③ 值变了才重建 | 值对象靠 `equals()` 门控：换了内容要更新；同内容的新实例不该重建 |
+ * | ③ 值变了才重建 | 值对象靠 `Equatable` 默认门控：换了内容要更新；同内容的新实例不该重建 |
  *
  * ★ ③ 用反射改 `statusLine`：它是私有字段且**只有异步链会改**（`startUpload` /
  *   轮询结算）。为了测一行 UI 去搭一整条假的后台链，会让这条判据依赖三个与本
@@ -78,10 +78,11 @@ final class WatermarkStatusBarTest extends SmokeTestCase
             '重建了但文案没换 ⇒ 切片或 builder 取错了值'
         );
 
-        // ④ 同内容（新实例）⇒ 不重建（`equals()` 门控；没有它这里会一直标脏）
+        // ④ 同内容（新实例）⇒ 不重建（StatusMessage implements Equatable 后的默认门控；
+        //    2026-11-03 那版是在这里手写 ->equals(...) 才拿到的）
         $this->forceStatus($store, StatusMessage::success('上传完成，可以提交任务了'));
         check(
-            '状态栏 · 内容相同的新实例被 equals 挡住（不重建）',
+            '状态栏 · 内容相同的新实例被默认门控挡住（不重建）',
             !$element->state()->needsBuild(),
             '值对象门控没生效 ⇒ 每次通知都重建这一行'
         );

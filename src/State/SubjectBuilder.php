@@ -21,8 +21,8 @@ use Drift\Widget\Widget;
  * ★ **相等门控比的是两次 `select` 输出**，不是 `Store` 的新旧值 —— 框架不存
  *   `Subject` 快照，旧值缓存在订阅者自己身上。三条推论决定用法：
  *   ① `select` 闭包**每帧都跑**，所以必须廉价（省的是子树重建，不省计算）；
- *   ② 返回值该是"代表变化的最小值"（摘要）。返回每次新建的值对象也行 ——
- *      但要配 {@see self::equals()} 给值语义，否则默认 `===` 永不相等；
+ *   ② 返回值该是"代表变化的最小值"（摘要）。每次新建的值对象实现
+ *      {@see Equatable} 即自动按值比；否则配 {@see self::equals()}，默认 `===`；
  *   ③ 闭包不许有副作用（它每帧都跑，且被 lint 用来推导依赖）。
  *
  * @api
@@ -84,9 +84,8 @@ final class SubjectBuilder extends StatefulWidget implements SubscribingWidget
      *     ->builder(fn(StatusMessage $m): Widget => …)
      * ```
      *
-     * ★ 默认 `===` 对**值对象**恒为 `false`：`statusLine()` 每次 `new` 一个
-     *   `StatusMessage` ⇒ 内容没变也是两个不同实例 ⇒ 退化成"每次通知都重建"。
-     *   要值语义就显式给 `equals()`。
+     * ★ 值对象实现 `Equatable` 后默认就按值比，本方法只是**覆盖口**：
+     *   比较规则不属于该值对象、或要比的不是它自己那套语义时才用。
      *
      * @param callable(mixed, mixed): bool $f 收到**新值、旧值**，返回"算同一个"
      *
@@ -184,11 +183,11 @@ final class SubjectBuilderState extends State
             }
 
             $value = $select($source);
-            // 判等策略由 `equals()` 给（默认 `===`）：值对象自己知道"算不算同一个"。
+            // 判等策略由 `equals()` 给（默认走 `sameValue()`：值对象按值，其余按身份）。
             // 旧值缓存在本 State 上，框架不留 `Subject` 快照。
             $same = $equals !== null
                 ? (bool) $equals($value, $this->selected)
-                : $value === $this->selected;
+                : self::sameValue($value, $this->selected);
             if ($same) {
                 return; // ★ 两次 select 输出相等 ⇒ 不重建（§11.3.3 门控）
             }
@@ -210,5 +209,20 @@ final class SubjectBuilderState extends State
         return $widget->selectFn() !== null
             ? $builder($this->selected)
             : $builder();
+    }
+
+    /**
+     * 没给 `equals()` 时的默认门控。
+     *
+     * ★ 两边都是 `Equatable` 才按值比：`null → 对象`、类型切换仍走 `===`，
+     *   否则「从没结果变成有结果」会被一个空值对象误判成没变。
+     */
+    private static function sameValue(mixed $a, mixed $b): bool
+    {
+        if ($a instanceof Equatable && $b instanceof Equatable) {
+            return $a->equals($b);
+        }
+
+        return $a === $b;
     }
 }

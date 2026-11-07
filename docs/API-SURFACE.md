@@ -23,13 +23,13 @@
 | Platform | 16 | 15 |
 | Rendering | 34 | 1 |
 | Routing | 8 | 6 |
-| State | 17 | 8 |
+| State | 18 | 8 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
 | Widget | 187 | 225 |
-| **合计** | **502** | **410** |
+| **合计** | **503** | **410** |
 
-覆盖 395 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
+覆盖 396 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
 
 ## App 层
 
@@ -604,7 +604,7 @@
 
 ## State 层
 
-### @api（应用可读面） · 17
+### @api（应用可读面） · 18
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -617,6 +617,7 @@
 | `AsyncCommand::retry()` | method | src/State/AsyncCommand.php |
 | `AsyncCommand::cancel()` | method | src/State/AsyncCommand.php |
 | `AsyncCommand::dispose()` | method | src/State/AsyncCommand.php |
+| `Equatable` | interface | src/State/Equatable.php |
 | `Subject` | class | src/State/Subject.php |
 | `SubjectBuilder` | class | src/State/SubjectBuilder.php |
 | `SubjectBuilder::make()` | method | src/State/SubjectBuilder.php |

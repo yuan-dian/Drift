@@ -26,9 +26,9 @@ use Drift\Widget\Widget;
  * 在做**，框架外再做一遍 = 两套订阅设施，谁改都得改两处。
  *
  * 之所以当初没直接用：`SubjectBuilder` 的默认门控是 `===`，而 `statusLine()`
- * 每次 `new` 一个 `StatusMessage` ⇒ 内容没变也判"变了" ⇒ 每次通知都重建。
- * 2026-11-03 给 `SubjectBuilder` 补了 `equals()`（门控策略归调用方，与
- * Flutter/Riverpod/Compose 的做法一致）⇒ 手写的那份没有存在理由了。
+ * 每次 `new` 一个 `StatusMessage` ⇒ 内容没变也判"变了"。2026-11-03 补了
+ * `equals()` 注入口；2026-11-07 `StatusMessage` 实现 `Equatable` 后门控默认按值，
+ * 连注入口都不用写（与 Flutter/Riverpod/Compose 的值相等默认一致）。
  *
  * ★ `slice()`（`mixed` → `StatusMessage` 的唯一收窄点）保留了：`select` 的
  *   静态返回类型是 `mixed`，类型不对时退回空消息而不是抛 —— 状态栏不该因为
@@ -43,7 +43,6 @@ final class StatusBar
     {
         return SubjectBuilder::make($store)
             ->select(static fn (Subject $s): StatusMessage => self::slice($s))
-            ->equals(static fn (StatusMessage $a, StatusMessage $b): bool => $a->equals($b))
             ->builder(static fn (StatusMessage $m): Widget => Row::make()
                 ->spacing(8)
                 ->padding(EdgeInsets::symmetric(16.0, 9.0))
