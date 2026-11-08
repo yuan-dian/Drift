@@ -24,6 +24,9 @@ final class SmokeJobRegistry
             'smoke.sleep' => static function (array $args): Job {
                 return new NamedSleepJob((int) ($args['ms'] ?? 0));
             },
+            'smoke.timed_sleep' => static function (array $args): Job {
+                return new NamedTimedSleepJob((int) ($args['ms'] ?? 0), (int) ($args['declaredMs'] ?? 0));
+            },
             'smoke.progress' => static function (array $args): Job {
                 return new NamedProgressJob((int) ($args['steps'] ?? 4), (int) ($args['stepMs'] ?? 30));
             },

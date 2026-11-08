@@ -70,11 +70,12 @@ final class Config
     public const TIMEOUT_S = 15.0;
 
     /**
-     * 上传总超时（秒）：大图 + 慢上行，比普通请求宽裕得多。
+     * 单文件上传的超时（秒）：大图 + 慢上行，比普通请求宽裕得多。
      *
-     * @design-param 口径待对齐（§68，当前零判据）：`ProcessTaskHost::requestTerminateMs`
-     *   是 30_000ms，而一个 `UploadBatchJob` 串行传 N 张图 —— 单文件允许 300s、
-     *   整个 Job 却在 30s 被 `sweepTimeouts()` 杀。两个数字谁说了算，真机没量过。
+     * @design-param 已裁决（2026-11-08）：这是**单文件**上限；整批的上限由
+     *   `UploadBatchJob::timeoutMs()` 按「文件数 × 本值 + 余量」声明，
+     *   `ProcessTaskHost` 按每条任务自己的上限判定（`TimedJob`）。
+     *   Host 的 `requestTerminateMs`（30s）只兜底**未声明**的任务。
      */
     public const UPLOAD_TIMEOUT_S = 300.0;
 }

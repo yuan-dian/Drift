@@ -9,6 +9,7 @@ use Drift\App\ProcessTaskHost;
 use Drift\Async\Future;
 use Drift\Dev\Smoke\App\NamedSleepJob;
 use Drift\Dev\Smoke\App\NamedSumJob;
+use Drift\Dev\Smoke\App\NamedTimedSleepJob;
 use Drift\Dev\Smoke\App\SmokeJobRegistry;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 
@@ -252,6 +253,76 @@ final class JobTimeoutTest extends SmokeTestCase
             'done=' . ($future->isDone() ? 'yes' : 'no') . ' errors=' . \json_encode($errors));
         check('worker 还活着（没被误杀）', $host->workerCount() === 1,
             'workers=' . $host->workerCount());
+
+        $this->flushChecks();
+        $host->shutdown();
+    }
+
+    /**
+     * 声明了上限的任务按**自己的**数走 —— 不被 Host 默认值误杀。
+     *
+     * ★ 与下一条成对：只有「本条绿 + 下条红」才证明绿来自声明，
+     *   而不是清扫被整体关掉（§68 踩过判据随常量放大仍全绿的坑）。
+     */
+    public function testDeclaredTimeoutOverridesHostDefault(): void
+    {
+        $host = self::host(100);   // Host 默认 100ms：不声明的任务活不过它
+
+        $errors = [];
+        $values = [];
+        $future = self::submit($host, new NamedTimedSleepJob(600, 5_000), $errors, $values);
+        $ok = self::pumpUntil($host, static fn(): bool => $future->isDone());
+
+        check(
+            '声明了上限的任务不被 Host 默认值误杀（跑 600ms，默认只有 100ms）',
+            $ok && $errors === [] && $values === [600],
+            'errors=' . \json_encode($errors, \JSON_UNESCAPED_UNICODE) . ' values=' . \json_encode($values)
+        );
+
+        $this->flushChecks();
+        $host->shutdown();
+    }
+
+    /** 没声明上限的任务仍按 Host 默认被杀 —— 兜底没被声明机制废掉。 */
+    public function testUndeclaredJobStillUsesHostDefault(): void
+    {
+        $host = self::host(100);
+
+        $errors = [];
+        $values = [];
+        $future = self::submit($host, new NamedSleepJob(1_500), $errors, $values);
+        $settled = self::pumpUntil($host, static fn(): bool => $future->isDone());
+
+        check(
+            '没声明上限的任务仍按 Host 默认被杀（兜底还在）',
+            $settled && $errors !== []
+            && \str_contains($errors[0], '超时') && \str_contains($errors[0], 'Host 默认上限'),
+            'errors=' . \json_encode($errors, \JSON_UNESCAPED_UNICODE)
+        );
+
+        $this->flushChecks();
+        $host->shutdown();
+    }
+
+    /**
+     * `timeoutMs() = 0` 等于"不声明" ⇒ 回落到 Host 默认，而不是"永不超时"。
+     *
+     * ★ 防的是把 `0` 解释成"不限"——那会让声明机制变成关掉保护的后门。
+     */
+    public function testZeroDeclarationFallsBackToHostDefault(): void
+    {
+        $host = self::host(100);
+
+        $errors = [];
+        $values = [];
+        $future = self::submit($host, new NamedTimedSleepJob(1_500, 0), $errors, $values);
+        $settled = self::pumpUntil($host, static fn(): bool => $future->isDone());
+
+        check(
+            'timeoutMs()=0 回落到 Host 默认（不是"不限"）',
+            $settled && $errors !== [] && \str_contains($errors[0], '超时'),
+            'errors=' . \json_encode($errors, \JSON_UNESCAPED_UNICODE)
+        );
 
         $this->flushChecks();
         $host->shutdown();

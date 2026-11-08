@@ -9,6 +9,7 @@ use App\Watermark\Api\Config;
 use App\Watermark\Api\SignInfo;
 use Drift\App\JobProgress;
 use Drift\App\NamedJob;
+use Drift\App\TimedJob;
 
 /**
  * 把**一批**文件逐个直传到 OSS（后台任务，**带进度**）。
@@ -35,9 +36,12 @@ use Drift\App\NamedJob;
  * 第一个失败就抛，消息里带**序号 + 文件名**：批量失败只知道"这一批挂了"的话，
  * 用户还得自己一个个试。
  */
-final class UploadBatchJob implements NamedJob
+final class UploadBatchJob implements NamedJob, TimedJob
 {
     public const NAME = 'watermark.upload';
+
+    /** 给 worker 启动与收尾的余量（毫秒）—— 上限只用来判卡死，不必卡到秒级。 */
+    private const TIMEOUT_MARGIN_MS = 10_000;
 
     /**
      * @param array<string, string> $sign {@see SignInfo::toArray()} 的产物
@@ -62,6 +66,17 @@ final class UploadBatchJob implements NamedJob
             'items' => \array_values($this->items),
             'base' => $this->base,
         ];
+    }
+
+    /**
+     * 整批的上限：单文件上限 × 文件数 + 余量。
+     *
+     * ★ 不能用 Host 的默认 30s：本任务是**串行**传 N 张，第一张慢一点就会被打死，
+     *   而 HTTP 侧允许单文件 300s（`Config::UPLOAD_TIMEOUT_S`）。
+     */
+    public function timeoutMs(): int
+    {
+        return \count($this->items) * (int) (Config::UPLOAD_TIMEOUT_S * 1000) + self::TIMEOUT_MARGIN_MS;
     }
 
     public function run(): mixed

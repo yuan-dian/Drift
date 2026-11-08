@@ -6,6 +6,7 @@ namespace App\Watermark\Jobs;
 use Drift\App\Io\Http;
 use Drift\App\JobProgress;
 use Drift\App\NamedJob;
+use Drift\App\TimedJob;
 
 /**
  * 把**一批**结果图下载到本地临时文件（后台任务）。
@@ -30,9 +31,15 @@ use Drift\App\NamedJob;
  * **一张失败不拖累别的**：返回 `['paths' => [...], 'failed' => [...]]`。
  * 用户至少要看到成功的那几张（原文是一张都不显示，因为一张失败就抛）。
  */
-final class DownloadResultsJob implements NamedJob
+final class DownloadResultsJob implements NamedJob, TimedJob
 {
     public const NAME = 'watermark.download';
+
+    /** 单张结果图的 HTTP 上限（秒）—— 4K 图可能几 MB。 */
+    private const FETCH_TIMEOUT_S = 120.0;
+
+    /** 给 worker 启动与写盘的余量（毫秒）。 */
+    private const TIMEOUT_MARGIN_MS = 10_000;
 
     /**
      * @param list<string> $urls
@@ -51,6 +58,16 @@ final class DownloadResultsJob implements NamedJob
     public function args(): array
     {
         return ['urls' => \array_values($this->urls), 'dir' => $this->cacheDir];
+    }
+
+    /**
+     * 整批的上限：单张上限 × 张数 + 余量。
+     *
+     * ★ 与 `UploadBatchJob::timeoutMs()` 同构：串行批量 + 单条上限远大于 Host 默认 30s。
+     */
+    public function timeoutMs(): int
+    {
+        return \count($this->urls) * (int) (self::FETCH_TIMEOUT_S * 1000) + self::TIMEOUT_MARGIN_MS;
     }
 
     public function run(): mixed
@@ -91,7 +108,7 @@ final class DownloadResultsJob implements NamedJob
         $response = Http::get($url, [
             'connectTimeout' => 10.0,
             // ★ 结果图可能几 MB（4K），比普通接口宽裕得多
-            'timeout' => 120.0,
+            'timeout' => self::FETCH_TIMEOUT_S,
         ]);
 
         $bytes = $response->body();

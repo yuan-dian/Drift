@@ -31,7 +31,9 @@ final class ProcessTaskHost implements TaskHost
     /**
      * 已发出、等回复的任务（`worker` = 记在哪个 worker 名下，用于挑空闲）。
      *
-     * @var array<int, array{future: Future, worker: int}>
+     * `limitMs` = 这条任务生效的墙钟上限（`0` ⇒ 用 Host 默认；见 {@see TimedJob}）。
+     *
+     * @var array<int, array{future: Future, worker: int, name: string, limitMs: int, startedAt: int}>
      */
     private array $inflight = [];
 
@@ -40,7 +42,7 @@ final class ProcessTaskHost implements TaskHost
      *
      * `name` 不是为了发送（`line` 里已有），是为了超时 / 诊断时少解一次 JSON。
      *
-     * @var list<array{id: int, name: string, line: string, future: Future}>
+     * @var list<array{id: int, name: string, line: string, future: Future, limitMs: int}>
      */
     private array $queue = [];
 
@@ -68,10 +70,11 @@ final class ProcessTaskHost implements TaskHost
     private readonly int $maxWorkers;
 
     /**
-     * 单条任务的墙钟上限（毫秒，`0` = 不设上限）。
+     * **未声明** `TimedJob` 的任务的墙钟上限（毫秒，`0` = 不设上限）。
      *
      * 从**派发给 worker** 那一刻起算（排队等空闲不是"卡住"）；默认开（30s）——
      * 否则一条卡死的任务会让 `Future` 永不结算、UI 永远转圈且没有任何报错。
+     * 声明了 `TimedJob::timeoutMs()` 的任务按自己的数走（批量上传 / 下载远超 30s）。
      *
      * @api
      */
@@ -82,7 +85,7 @@ final class ProcessTaskHost implements TaskHost
      * @param array<string, callable(array<string, mixed>): Job> $registry
      *        名字 → 重建工厂（须与 worker 侧 `ProcessWorker::serve()` 注册表一致）。
      * @param int $maxWorkers 池上限（默认 1 = 串行）。>1 才可能真并行，满载排队，不会无界起进程。
-     * @param int $requestTerminateMs 单条任务的墙钟上限（毫秒，`0` = 不设上限）。默认 30_000。
+     * @param int $requestTerminateMs **未声明** `TimedJob` 的任务的墙钟上限（毫秒，`0` = 不设上限）。默认 30_000。
      *
      * @api
      */
@@ -162,11 +165,15 @@ final class ProcessTaskHost implements TaskHost
             return $future;
         }
 
+        // 上限在提交时定：send() 只看得到 queue 项，拿不到 Job 对象。
+        $limitMs = $job instanceof TimedJob ? \max(0, $job->timeoutMs()) : 0;
+
         $this->queue[] = [
             'id' => $id,
             'name' => $name,
             'line' => $line,
             'future' => $future,
+            'limitMs' => $limitMs,
         ];
 
         $this->flush();
@@ -227,7 +234,9 @@ final class ProcessTaskHost implements TaskHost
     }
 
     /**
-     * 超时清扫：把跑过墙钟上限的在途任务判失败，并**杀掉**它那个 worker。
+     * 超时清扫：把跑过**各自上限**的在途任务判失败，并**杀掉**它那个 worker。
+     *
+     * 每条的上限 = `TimedJob::timeoutMs()`（声明优先），没声明才用 `requestTerminateMs` 兜底。
      *
      * 必须杀进程，不能只把 Future 判失败：否则 worker 永远占着坑，池容量悄悄掉一格
      * 且没有任何报错；杀掉后 `flush()` 下一帧自动补一个。
@@ -236,15 +245,16 @@ final class ProcessTaskHost implements TaskHost
      */
     private function sweepTimeouts(callable $onEach): void
     {
-        if ($this->requestTerminateMs === 0 || $this->inflight === []) {
+        if ($this->inflight === []) {
             return;
         }
 
         $now = \hrtime(true);
-        $limit = $this->requestTerminateMs * 1_000_000;
 
         foreach ($this->inflight as $id => $item) {
-            if ($now - $item['startedAt'] < $limit) {
+            // 声明优先于兜底：`requestTerminateMs = 0` 关的是"Host 兜底"，不是"任务自己的声明"。
+            $limitMs = $item['limitMs'] > 0 ? $item['limitMs'] : $this->requestTerminateMs;
+            if ($limitMs <= 0 || $now - $item['startedAt'] < $limitMs * 1_000_000) {
                 continue;
             }
 
@@ -253,8 +263,9 @@ final class ProcessTaskHost implements TaskHost
             $onEach(new Completion(
                 null,
                 new \RuntimeException(
-                    '后台任务超时：' . $item['name'] . ' 超过 ' . $this->requestTerminateMs
-                    . 'ms 没回来（worker 已终止，池会自动补一个）'
+                    '后台任务超时：' . $item['name'] . ' 超过 ' . $limitMs . 'ms 没回来（'
+                    . ($item['limitMs'] > 0 ? '任务声明上限' : 'Host 默认上限')
+                    . '；worker 已终止，池会自动补一个）'
                 ),
                 $item['future'],
             ));
@@ -286,7 +297,7 @@ final class ProcessTaskHost implements TaskHost
     }
 
     /**
-     * 单条任务的墙钟上限（毫秒，`0` = 不设上限）—— devtools / 测试读它。
+     * **未声明** `TimedJob` 的任务的墙钟上限（毫秒，`0` = 不设上限）—— devtools / 测试读它。
      *
      * 与 `workerCount()` / `inFlightCount()` / `queuedCount()` 同类：池的可观测状态之一。
      * 它也是"默认开"这条决定的唯一判据（`JobTimeoutTest` 钉着它 > 0）。
@@ -445,7 +456,7 @@ final class ProcessTaskHost implements TaskHost
     /**
      * 往指定 worker 写一行；成功则记进在途表。
      *
-     * @param array{id: int, name: string, line: string, future: Future} $item
+     * @param array{id: int, name: string, line: string, future: Future, limitMs: int} $item
      */
     private function send(int $index, array $item): bool
     {
@@ -464,6 +475,7 @@ final class ProcessTaskHost implements TaskHost
             'future' => $item['future'],
             'worker' => $index,
             'name' => $item['name'],
+            'limitMs' => $item['limitMs'],
             // 超时计时从这一刻（派发给 worker）开始：排队等空闲不是"卡住"。
             // 刚 spawn 的 worker 此刻早于它能干活，首条任务预算含启动时间；默认 30s 无感，故不加启动宽限。
             'startedAt' => \hrtime(true),
@@ -513,6 +525,8 @@ final class ProcessTaskHost implements TaskHost
 
             $chunk = fread($worker['out'], self::READ_CHUNK);
             if ($chunk === false || $chunk === '') {
+                // EOF 不在这里结算：进程退出由同一帧的 reap() 用 proc_get_status 看到
+                // （实测两者同一轮询内到达，见 docs/DESIGN-JOB-TIMEOUT-2026-11-08.md §8）。
                 continue;
             }
 
@@ -592,7 +606,9 @@ final class ProcessTaskHost implements TaskHost
     private function reap(callable $onEach): void
     {
         // 空闲才降频：有在途时立即查（崩溃尽快变 onError），空闲时每 500ms 查一次够（只回收僵尸，没人等结果）。
-        // 实时性没丢：有任务在跑时管道 EOF 已被 readReplies() 当场发现，这里只补"空闲期间崩"的回收。
+        // 实时性没丢：有任务在跑时进程退出由同一帧的 reap() 用 proc_get_status 看到
+        // （实测管道 EOF 与 running=false 同一轮询内到达 —— 所以没有单独的 EOF 分支，
+        // 见 docs/DESIGN-JOB-TIMEOUT-2026-11-08.md §8）；这里只补"空闲期间崩"的回收。
         $now = intdiv(\hrtime(true), 1000);
 
         if ($this->inflight === [] && $now - $this->lastReapUs < self::REAP_IDLE_INTERVAL_US) {

@@ -11,7 +11,7 @@
 
 | 层 | @api | @internal |
 |---|---|---|
-| App | 84 | 54 |
+| App | 85 | 54 |
 | Async | 24 | 4 |
 | Commands | 7 | 0 |
 | Core | 2 | 38 |
@@ -27,13 +27,13 @@
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
 | Widget | 187 | 225 |
-| **合计** | **503** | **410** |
+| **合计** | **504** | **410** |
 
-覆盖 396 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
+覆盖 397 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
 
 ## App 层
 
-### @api（应用可读面） · 84
+### @api（应用可读面） · 85
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -115,6 +115,7 @@
 | `ThreadTaskHost` | class | src/App/ThreadTaskHost.php |
 | `ThreadTaskHost::__construct()` | method | src/App/ThreadTaskHost.php |
 | `ThreadTaskHost::shutdown()` | method | src/App/ThreadTaskHost.php |
+| `TimedJob` | interface | src/App/TimedJob.php |
 | `Window` | class | src/App/Window.php |
 | `WindowSet` | class | src/App/WindowSet.php |
 | `WindowStateStore` | class | src/App/WindowStateStore.php |
