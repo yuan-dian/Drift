@@ -5,6 +5,7 @@ namespace Drift\Dev\Tests\Feature\Widget;
 
 use App\Watermark\Store\StatusMessage;
 use App\Watermark\Store\WatermarkStore;
+use Drift\Async\AsyncValue;
 use Drift\Dev\Smoke\LeafProbe;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\State\SubjectBuilder;
@@ -102,7 +103,15 @@ final class MessageValueGateTest extends SmokeTestCase
     /** 私有字段 + 反射：真正的写点在异步回调里，为一条 UI 判据搭假后台不值当。 */
     private function force(WatermarkStore $store, string $field, StatusMessage $message): void
     {
-        (new \ReflectionProperty(WatermarkStore::class, $field))->setValue($store, $message);
+        if ($field === 'downloadMessage') {
+            // 下载段收成 AsyncValue 后消息是投影，写点改到唯一真值。
+            $value = $message->kind === StatusMessage::ERROR
+                ? AsyncValue::error($message->text)
+                : AsyncValue::idle();
+            (new \ReflectionProperty(WatermarkStore::class, 'downloads'))->setValue($store, $value);
+        } else {
+            (new \ReflectionProperty(WatermarkStore::class, $field))->setValue($store, $message);
+        }
         $store->notifyChanged();
     }
 }

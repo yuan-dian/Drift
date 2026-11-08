@@ -16,6 +16,7 @@ use Drift\App\JobRunner;
 use Drift\App\TaskHost;
 use Drift\Async\AsyncCancelled;
 use Drift\Async\AsyncScope;
+use Drift\Async\AsyncValue;
 use Drift\Async\Future;
 use Drift\State\AsyncCommand;
 use Drift\State\Subject;
@@ -103,16 +104,13 @@ final class WatermarkStore extends Subject
     // ── 结果 ────────────────────────────────────────────────────────────
     private ?TaskResult $lastResult = null;
 
-    /** @var array<string, string> 远程 URL → 本地路径 */
-    private array $localPaths = [];
-
-    /** @var array<string, string> 下载失败的 URL → 原因 */
-    private array $failedDownloads = [];
-
-    /** 下载进度（`0..1`）与文案 —— 与上传同形，`DownloadResultsJob` 每张图报一次 */
-    private float $downloadFraction = 0.0;
-
-    private StatusMessage $downloadMessage;
+    /**
+     * 下载段的唯一真值：四态 + 进度 + 载荷 `['locals' => …, 'failed' => …]`。
+     *
+     * 稳定态复用同一实例（`AsyncValue` 走 `===` 门控，不实现 `Equatable`）；
+     * 只在状态真变化时赋一次值，不在 getter 里 new。
+     */
+    private AsyncValue $downloads;
 
     /** 底部状态栏的一句话（整个应用的"现在在干什么"） */
     private StatusMessage $statusLine;
@@ -127,7 +125,7 @@ final class WatermarkStore extends Subject
         private $scheduler = null,
     ) {
         $this->uploadMessage = StatusMessage::none();
-        $this->downloadMessage = StatusMessage::none();
+        $this->downloads = AsyncValue::idle();
         $this->taskMessage = StatusMessage::none();
         $this->statusLine = StatusMessage::info('准备就绪');
 
@@ -248,29 +246,72 @@ final class WatermarkStore extends Subject
      */
     public function localPaths(): array
     {
-        return $this->localPaths;
+        return $this->downloadPayload()['locals'];
     }
 
     /** @return array<string, string> 下载失败的 URL → 原因 */
     public function failedDownloads(): array
     {
-        return $this->failedDownloads;
+        return $this->downloadPayload()['failed'];
+    }
+
+    /** 下载段的唯一真值（界面走 `AsyncValue::fold()` 四态） */
+    public function downloads(): AsyncValue
+    {
+        return $this->downloads;
     }
 
     public function isDownloading(): bool
     {
-        return $this->phase === Phase::Downloading;
+        return $this->downloads->isLoading();
     }
 
-    /** 下载进度（`0..1`）—— 只在 `Phase::Downloading` 时有意义 */
     public function downloadProgress(): float
     {
-        return $this->downloadFraction;
+        return $this->downloads->progressOr(0.0);
     }
 
+    /** 文案是投影，不是第二份状态 */
     public function downloadMessage(): StatusMessage
     {
-        return $this->downloadMessage;
+        $v = $this->downloads;
+        if ($v->isIdle()) {
+            return StatusMessage::none();
+        }
+
+        if ($v->isLoading()) {
+            if (!$v->hasProgress()) {
+                $urls = $this->lastResult !== null ? $this->lastResult->downloadUrls : [];
+
+                return StatusMessage::loading('正在下载 0 / ' . (string) \count($urls) . '…');
+            }
+
+            return StatusMessage::loading(
+                '正在下载… ' . (string) (int) \round($v->progressOr(0.0) * 100.0) . '%'
+            );
+        }
+
+        if ($v->hasError()) {
+            return StatusMessage::error($v->message());
+        }
+
+        return $this->downloadPayload()['failed'] !== []
+            ? StatusMessage::error('部分结果图没能下载')
+            : StatusMessage::success('结果图已下载');
+    }
+
+    /** @return array{locals: array<string, string>, failed: array<string, string>} */
+    private function downloadPayload(): array
+    {
+        $raw = $this->downloads->dataOr([]);
+        if (!\is_array($raw)) {
+            return ['locals' => [], 'failed' => []];
+        }
+
+        return [
+            'locals' => \is_array($raw['locals'] ?? null) ? $raw['locals'] : [],
+            'failed' => \is_array($raw['failed'] ?? null) ? $raw['failed'] : [],
+        ];
     }
 
     public function statusLine(): StatusMessage
@@ -462,6 +503,10 @@ final class WatermarkStore extends Subject
         } finally {
             $this->phase = Phase::Idle;
             $this->uploadFraction = 0.0;
+            // 取消穿透时下载停在 loading ⇒ 界面会永远转圈，归回 idle。
+            if ($this->downloads->isLoading()) {
+                $this->downloads = AsyncValue::idle();
+            }
             $this->notifyChanged();
         }
     }
@@ -720,58 +765,50 @@ final class WatermarkStore extends Subject
         }
 
         $this->phase = Phase::Downloading;
-        $this->localPaths = [];
-        $this->failedDownloads = [];
-        $this->downloadFraction = 0.0;
-        $this->downloadMessage = StatusMessage::loading(
-            '正在下载 0 / ' . (string) \count($urls) . '…'
-        );
+        $this->downloads = AsyncValue::loading();
         $this->notifyChanged();
 
         try {
             // ★ 第二参不能省：`DownloadResultsJob` 每张图都报进度，少了这里就是
             //   "Job 发了、没人订" —— 界面只剩转圈，且不报错（上传侧 :540 是模板）。
             $raw = $co->await($this->exec(new DownloadResultsJob($urls)), function (float $fraction): void {
-                $this->downloadFraction = $fraction;
-                $this->downloadMessage = StatusMessage::loading(
-                    '正在下载… ' . (string) (int) \round($fraction * 100.0) . '%'
-                );
+                $this->downloads = $this->downloads->withProgress($fraction);
                 $this->notifyChanged();
             });
         } catch (AsyncCancelled $e) {
             throw $e;
         } catch (\Throwable $e) {
-            $this->downloadMessage = StatusMessage::error($e->getMessage());
+            // 整条失败也要有独立一态，否则结果图区会一直画"正在下载"转圈。
+            $this->downloads = AsyncValue::error($e->getMessage());
             $this->statusLine = StatusMessage::error('下载结果图失败：' . $e->getMessage());
             $this->notifyChanged();
 
             return;
         }
 
-        $this->localPaths = [];
+        $locals = [];
         $paths = \is_array($raw) ? ($raw['paths'] ?? []) : [];
         foreach (\is_array($paths) ? $paths : [] as $url => $path) {
             if (\is_string($url) && \is_string($path) && $path !== '') {
-                $this->localPaths[$url] = $path;
+                $locals[$url] = $path;
             }
         }
 
-        $this->failedDownloads = [];
-        $failed = \is_array($raw) ? ($raw['failed'] ?? []) : [];
-        foreach (\is_array($failed) ? $failed : [] as $url => $reason) {
+        $failed = [];
+        $rawFailed = \is_array($raw) ? ($raw['failed'] ?? []) : [];
+        foreach (\is_array($rawFailed) ? $rawFailed : [] as $url => $reason) {
             if (\is_string($url) && $reason !== '') {
-                $this->failedDownloads[$url] = \is_string($reason) ? $reason : '下载失败';
+                $failed[$url] = \is_string($reason) ? $reason : '下载失败';
             }
         }
 
-        $this->downloadFraction = 1.0;
-        if ($this->failedDownloads !== []) {
-            $this->downloadMessage = StatusMessage::error('部分结果图没能下载');
+        // 部分失败仍走 data：已下载成功的图要照旧可见（成熟 GUI 组件不汇总部分失败）。
+        $this->downloads = AsyncValue::data(['locals' => $locals, 'failed' => $failed])
+            ->withProgress(1.0);
+        if ($failed !== []) {
             $this->statusLine = StatusMessage::error(
-                '有 ' . (string) \count($this->failedDownloads) . ' 张结果图没能下载'
+                '有 ' . (string) \count($failed) . ' 张结果图没能下载'
             );
-        } else {
-            $this->downloadMessage = StatusMessage::success('结果图已下载');
         }
 
         $this->notifyChanged();

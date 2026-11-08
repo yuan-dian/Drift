@@ -4,8 +4,8 @@ declare(strict_types=1);
 namespace App\Watermark\Widgets;
 
 use App\Watermark\Api\TaskResult;
-use App\Watermark\Store\StatusMessage;
 use App\Watermark\Store\WatermarkStore;
+use Drift\Async\AsyncValue;
 use Drift\Geometry\EdgeInsets;
 use Drift\Layout\ImageFit;
 use Drift\State\SubjectBuilder;
@@ -29,15 +29,11 @@ use Drift\Widget\Widget;
 /**
  * 第 3 张卡片：轮询状态 + 结果信息 + 结果图（原文的"处理结果"）。
  *
- * ★ **两张切片分开订**：
- *   - 状态区跟 `lastResult`（5 态文案 + 状态点）
- *   - 图片区跟 `localPaths`（下载完成度）
- *   合成一个订阅的话，每下载完一张图就会把状态区也重建一遍（`Text` 重建没事，
- *   但整棵子树重建会让"结果图"闪一下 —— `Image` 重建会重新 `load()`，
- *   命中缓存所以不闪，但没必要）。
+ * ★ **两张切片分开订**：状态区跟 `lastResult`，图片区跟 `downloads()` 一个
+ *   `AsyncValue`；合成一个订阅会让每下载完一张图都把状态区重建一遍。
  *
- * ★ 结果图走**本地路径**（`localPaths`）：`Image` 不发 HTTP，URL 只是元信息。
- *   一张下载失败不影响别的（见 `DownloadResultsJob` 的"部分失败"）。
+ * ★ 结果图走**本地路径**：`Image` 不发 HTTP，URL 只是元信息。
+ *   一张下载失败不影响别的（部分失败走 `data` 态，失败信息在载荷里）。
  */
 final class ResultCard extends StatelessWidget
 {
@@ -155,76 +151,129 @@ final class ResultCard extends StatelessWidget
         return SubjectBuilder::make($store)
             ->select(static fn(WatermarkStore $s): array => [
                 'urls' => self::urlsOf($s->lastResult()),
-                'locals' => $s->localPaths(),
-                'failed' => $s->failedDownloads(),
-                'downloading' => $s->isDownloading(),
-                'fraction' => $s->downloadProgress(),
-                'message' => $s->downloadMessage(),
+                'downloads' => $s->downloads(),
             ])
-            ->builder(static function (array $slice): Widget {
-                /** @var list<string> $urls */
-                $urls = $slice['urls'];
-                /** @var array<string, string> $locals */
-                $locals = $slice['locals'];
-                /** @var array<string, string> $failed */
-                $failed = $slice['failed'];
+            ->builder(static fn(array $slice): Widget => self::imagesFor(
+                $slice['urls'],
+                $slice['downloads']
+            ));
+    }
 
-                if ($urls === []) {
-                    return SizedBox::make()->size(0.0, 0.0);
-                }
+    /**
+     * 四态画法。`@internal` 供判据直接调，不建 Element 树。
+     *
+     * @param list<string> $urls
+     */
+    public static function imagesFor(array $urls, AsyncValue $v): Widget
+    {
+        if ($urls === []) {
+            return SizedBox::make()->size(0.0, 0.0);
+        }
 
-                $items = [];
-                // ★ 下载进度与上传同形：Job 每张图报一次，Store 订到 await 第二参，
-                //   这里才画得出来。只在下载中挂这条，默认态的子节点数不变。
-                if ($slice['downloading'] === true) {
-                    $message = $slice['message'];
-                    $items[] = Column::make()->spacing(6)->children([
-                        Progress::make((float) $slice['fraction'])->height(8.0),
-                        Text::make($message instanceof StatusMessage ? $message->text : '正在下载结果图…')->caption(),
+        return $v->fold([
+            'idle' => static fn(AsyncValue $x): Widget => SizedBox::make()->size(0.0, 0.0),
+
+            'loading' => static fn(AsyncValue $x): Widget => Column::make()->spacing(16)->children(
+                self::loadingItems($urls, $x)
+            ),
+
+            'data' => static fn(AsyncValue $x): Widget => Column::make()->spacing(16)->children(
+                self::imageItems($urls, self::payloadOf($x))
+            ),
+
+            // 整条下载失败不许再画"正在下载"转圈。
+            'error' => static fn(AsyncValue $x): Widget => Column::make()->spacing(16)->children([
+                Row::make()
+                    ->spacing(8)
+                    ->padding(EdgeInsets::symmetric(14.0, 10.0))
+                    ->background(Palette::errorBg())
+                    ->radius(8.0)
+                    ->children([
+                        Text::make('结果图下载失败：' . $x->message())->size(13.0),
+                    ]),
+            ]),
+        ]);
+    }
+
+    /**
+     * @param list<string> $urls
+     * @return list<Widget>
+     */
+    private static function loadingItems(array $urls, AsyncValue $v): array
+    {
+        $text = $v->hasProgress()
+            ? '正在下载… ' . (string) (int) \round($v->progressOr(0.0) * 100.0) . '%'
+            : '正在下载 0 / ' . (string) \count($urls) . '…';
+
+        $progress = Column::make()->spacing(6)->children([
+            Progress::make($v->progressOr(0.0))->height(8.0),
+            Text::make($text)->caption(),
+        ]);
+
+        return \array_merge([$progress], self::imageItems($urls, ['locals' => [], 'failed' => []]));
+    }
+
+    /**
+     * 按服务端顺序逐 URL 画：已下载 / 失败 / 还在下。
+     *
+     * @param list<string> $urls
+     * @param array{locals: array<string, string>, failed: array<string, string>} $p
+     * @return list<Widget>
+     */
+    private static function imageItems(array $urls, array $p): array
+    {
+        $items = [];
+        foreach ($urls as $url) {
+            $local = $p['locals'][$url] ?? '';
+            if ($local !== '') {
+                $items[] = Column::make()->spacing(8)->children([
+                    Center::make(
+                        Image::make()
+                            ->asset($local)
+                            ->width(self::PREVIEW_WIDTH)
+                            ->fit(ImageFit::Contain)
+                    ),
+                    // 壳没有"用浏览器打开 URL"的端口，把 URL 显示出来至少能复制。
+                    Text::make($url)->caption(),
+                ]);
+
+                continue;
+            }
+
+            if (isset($p['failed'][$url])) {
+                $items[] = Row::make()
+                    ->spacing(8)
+                    ->padding(EdgeInsets::symmetric(14.0, 10.0))
+                    ->background(Palette::errorBg())
+                    ->radius(8.0)
+                    ->children([
+                        Text::make('这张图没能下载：' . $p['failed'][$url])->size(13.0),
                     ]);
-                }
 
-                foreach ($urls as $url) {
-                    $local = $locals[$url] ?? '';
-                    if ($local !== '') {
-                        $items[] = Column::make()->spacing(8)->children([
-                            Center::make(
-                                Image::make()
-                                    ->asset($local)
-                                    ->width(self::PREVIEW_WIDTH)
-                                    ->fit(ImageFit::Contain)
-                            ),
-                            // ★ 原文是"查看 / 下载"链接。这里给**原始 URL 文本**：
-                            //   壳没有"用浏览器打开 URL"的端口（`Dialog` 只有文件
-                            //   对话框），而把 URL 显示出来用户至少能复制。
-                            Text::make($url)->caption(),
-                        ]);
+                continue;
+            }
 
-                        continue;
-                    }
+            $items[] = Row::make()->spacing(8)->children([
+                Spinner::make()->diameter(12.0),
+                Text::make('正在下载结果图…')->caption(),
+            ]);
+        }
 
-                    if (isset($failed[$url])) {
-                        $items[] = Row::make()
-                            ->spacing(8)
-                            ->padding(EdgeInsets::symmetric(14.0, 10.0))
-                            ->background(Palette::errorBg())
-                            ->radius(8.0)
-                            ->children([
-                                Text::make('这张图没能下载：' . $failed[$url])->size(13.0),
-                            ]);
+        return $items;
+    }
 
-                        continue;
-                    }
+    /** @return array{locals: array<string, string>, failed: array<string, string>} */
+    private static function payloadOf(AsyncValue $v): array
+    {
+        $raw = $v->dataOr([]);
+        if (!\is_array($raw)) {
+            return ['locals' => [], 'failed' => []];
+        }
 
-                    // 还在下（或排队）
-                    $items[] = Row::make()->spacing(8)->children([
-                        Spinner::make()->diameter(12.0),
-                        Text::make('正在下载结果图…')->caption(),
-                    ]);
-                }
-
-                return Column::make()->spacing(16)->children($items);
-            });
+        return [
+            'locals' => \is_array($raw['locals'] ?? null) ? $raw['locals'] : [],
+            'failed' => \is_array($raw['failed'] ?? null) ? $raw['failed'] : [],
+        ];
     }
 
     /** "停止轮询"（只在真的在轮询时出现） */
