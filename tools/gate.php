@@ -23,7 +23,7 @@ declare(strict_types=1);
  *   probe     探针骨架（probe-audit --selftest）
  *   pixels    像素契约（probe_pixels --selftest，依赖本机 python ⇒ 允许"没测到"）
  *   tick      每帧固定税（frame-tax --check，6 条自洽判据）
- *   scale     12k 节点尺子（frame-tax --scale，5 条自洽判据）
+ *   scale     12k 节点尺子（frame-tax --scale，6 条自洽判据）
  *   sym       崩溃符号翻译（rva2sym --selftest，6 条；合成 map，无构建前置）
  *   decode    图片解码通道序（decode-selftest；要 MSVC + WIC ⇒ 允许"没测到"）
  *   m2        M2 conformance（W1–W8 静态 + 夹具 + 量具反例自检）

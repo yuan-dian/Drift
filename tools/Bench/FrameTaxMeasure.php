@@ -168,6 +168,8 @@ final class FrameTaxMeasure
         //     （settle 来自第 3 帧、layout 来自第 7 帧），而这张表的用途正是
         //     "谁占大头"，拼出来的比例没有意义。
         $rebuild = ['settle' => 0, 'layout' => 0, 'paint' => 0];
+        // 配对次数在本段之外读会混进 attach / 稳态帧；复杂度判据只要重建帧这一份。
+        $pairs0 = Pipeline::current()->pairChecks();
         if ($rootEl !== null) {
             $warm = 1;
             $takes = 9;
@@ -211,6 +213,8 @@ final class FrameTaxMeasure
             }
         }
 
+        $rebuildPairs = Pipeline::current()->pairChecks() - $pairs0;
+
         SurfaceProfile::$on = false;
 
         // ④ 节点数（页面档要它解释排名：是"页大"还是"页慢"）
@@ -244,6 +248,7 @@ final class FrameTaxMeasure
             'coldUs' => \round(\array_sum($cold) / 1000.0, 1),
             'rebuildUs' => \round(\array_sum($rebuild), 1),   // 已经是 us（上面那次 foreach 换算过）
             'rebuild' => $rebuild,
+            'rebuildPairs' => $rebuildPairs,
             'paint' => $paintRuns,
             'skip' => $skips,
             'seg' => $seg,

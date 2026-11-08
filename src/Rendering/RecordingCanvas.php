@@ -8,10 +8,10 @@ use Drift\Geometry\Rect;
 use Drift\Text\Paragraph;
 
 /**
- * 录制画布：**生产路径的入口**（§7.2 裁决 1）。
+ * 录制画布：把绘制命令写进 `DisplayList`，交给调用方的 surface 回放（§7.2 裁决 1）。
  *
- * 它不画任何东西，只把绘制命令写进 `DisplayList`。真正的执行由 surface 决定
- * （M1 回放到 Skia CPU 光栅；测试回放到 `RasterCanvas`）。
+ * 真机主树由 `Frame::paintComposed()` 直接画到 SkiaCanvas；开了重绘边界的盒
+ * 才经 `LayerCache` 录放。离屏消费者（测试 / 预览）回放到 `RasterCanvas`。
  *
  * @api
  */
@@ -35,11 +35,11 @@ final class RecordingCanvas implements Canvas
     {
         $this->list = $list;
         // ★ 默认 = **离屏回放端（Raster）的能力**，不是 `ALL_MASK`。
-        //   理由：`RecordingCanvas` 的真实消费者只有"录下来再离线回放"（测试夹具、
-        //   预览），回放端就是 `RasterCanvas`；真机 `Frame` 是 `paintComposed($canvas)`
-        //   **直接画**到 `SkiaCanvas`，根本不经过这里。默认 `ALL_MASK` 会让它录下
-        //   Optional op（`drawShadow`），回放时 `unsupportedOp` 响亮失败 ——
-        //   2026-10-25 给阴影接第一个消费者时，smoke 的 Card / 浮层段全崩。
+        //   理由：不传 capabilities 的消费者（`create()` / 测试夹具 / 预览）回放到
+        //   `RasterCanvas`；`LayerCache` 传调用方画布的能力，真机主树直接画 SkiaCanvas。
+        //   默认 `ALL_MASK` 会让它录下 Optional op（`drawShadow`），回放时
+        //   `unsupportedOp` 响亮失败 —— 2026-10-25 给阴影接第一个消费者时，
+        //   smoke 的 Card / 浮层段全崩。
         // ★ 默认值**不能**写成参数默认值 `RasterCanvas::supportedCapabilities()`：
         //   外部类静态调用做默认参数在 AOT 下不安全。用 -1 哨兵，在**方法体内**解析。
         $this->capabilities = $capabilities < 0 ? RasterCanvas::supportedCapabilities() : $capabilities;

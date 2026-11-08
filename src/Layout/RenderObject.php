@@ -14,7 +14,8 @@ use Drift\Rendering\Color;
  * 渲染树的节点（基类）。
  *
  * 布局是纯函数：不读 OS/时钟/随机源，且位置无关 —— 偏移是父定位子的结果，
- * 不是自身读来的。Render 层没有脏边界：`relayout()` 永远全树重排。
+ * 不是自身读来的。全树重排是 11-04 的主动裁决（不是"没有脏边界"）；
+ * paint 侧的脏边界见 `markPaintChanged()` 与 `Rendering\LayerCache`。
  *
  * @api
  */

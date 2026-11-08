@@ -47,8 +47,11 @@ declare(strict_types=1);
  * ## `--scale`：12k 节点档的尺子
  *
  * 跑 500 + 3000 两档，500 作同量纲基线；报告增印 `us/节点` 与重建帧三段。
- * 五条判据只认自证 / 比值 / 结构事实，判定线只印在信息行 —— 绝对耗时当红线
- * 会随机器抖动误报。三数与归一化值进 `--json` 判据 ② 的 data。
+ * 六条判据只认自证 / 比值 / 结构事实，判定线只印在信息行 —— 绝对耗时当红线
+ * 会随机器抖动误报。三数与归一化值进 `--json` 判据 ② 的 data，配对两档原始值进 ⑥。
+ * ★ ⑥ 量的是 `Pipeline::pairChecks()` 的**结构计数**，不是耗时：调和发生在
+ *   `frame()` 之外的 `$rootEl->update()`，③ 的 `layoutUs/nodes` 压根不把它计入分母
+ *   （实测 `updateChildren()` 退回平方扫描时 5/5 全绿、总耗时 +87%）。
  *
  * ### 两档同进程：**不是**污染，是预热（2026-11-04 夜实测，结掉 §35.6 的挂账）
  *
@@ -138,7 +141,7 @@ use Drift\Widget\Widget;
 $args = \array_slice($argv, 1);
 /** `--json`：判据结果吐成机器可读文档（stdout 上只有它），见 `CheckReport` */
 $json = \in_array('--json', $args, true);
-/** `--scale`：12k 节点档 + 5 条自洽判据（独立入口，不改变 `--check` 的形状） */
+/** `--scale`：12k 节点档 + 6 条自洽判据（独立入口，不改变 `--check` 的形状） */
 $scale = \in_array('--scale', $args, true);
 /** ★ `--json` 隐含 `--check`：只有判据结果才有结构化输出，报告模式本来就只有表 */
 $check = !$scale && ($json || \in_array('--check', $args, true));
@@ -451,11 +454,12 @@ foreach ($sizes as $rows) {
         (string) ($r['perFrameText'] ?? ''),
     );
     $json || \printf(
-        "       重建帧: settle %d / layout %d / paint %d us（合计 %.1f us）\n",
+        "       重建帧: settle %d / layout %d / paint %d us（合计 %.1f us）· 调和配对 %d 次\n",
         $r['rebuild']['settle'],
         $r['rebuild']['layout'],
         $r['rebuild']['paint'],
         $r['rebuildUs'],
+        (int) ($r['rebuildPairs'] ?? 0),
     );
 
     $parts = [];
@@ -493,6 +497,9 @@ if ($scale) {
     $rebuildLayout = $big['rebuild']['layout'] ?? 0;
     $perNode = $big['perNodeUs'] ?? 0.0;
     $basePerNode = $base['perNodeUs'] ?? 0.0;
+    $baseNodes = $base['nodes'] ?? 0;
+    $pairsBase = $base['rebuildPairs'] ?? 0;
+    $pairsBig = $big['rebuildPairs'] ?? 0;
 
     if (!$json) {
         \printf("\n判定线（信息，不作判据）：全量重排 8000us / 稳态帧 8000us / 帧预算 16700us\n");
@@ -551,10 +558,31 @@ if ($scale) {
         $full,
     ));
 
+    // ★ ⑥ 与 ③ 量的是两件事：③ 是 `layoutUs / nodes` 的耗时代理，⑥ 是调和的配对次数。
+    //   用节点比作分母是为了让"树形状变了"不误报；两档都归零时 `$pairsBase > 0` 直接红
+    //   —— 量具写点被删 / 合成树不再走调和，都不能伪装成通过。
+    $nodeRatio = $baseNodes > 0 ? $nodes / $baseNodes : 0.0;
+    $expectedPairs = $pairsBase * $nodeRatio;
+    $pairsRatio = $expectedPairs > 0 ? $pairsBig / $expectedPairs : 0.0;
+    $pairsOk = $pairsBase > 0 && $pairsBig > 0
+        && $pairsRatio >= 0.5 && $pairsRatio <= 2.0;
+    $scaleItems[] = new CheckItem('⑥', $pairsOk, \sprintf(
+        '调和复杂度线性：500 档 %d 次 / 3000 档 %d 次，按节点比 %.2f× 归一后 %.2f×（容许 0.5–2.0）',
+        $pairsBase,
+        $pairsBig,
+        $nodeRatio,
+        $pairsRatio,
+    ), [
+        'basePairs' => $pairsBase,
+        'bigPairs' => $pairsBig,
+        'nodeRatio' => $nodeRatio,
+        'pairsRatio' => $pairsRatio,
+    ]);
+
     (new CheckReport(
         'frame-tax --scale',
         $scaleItems,
-        \sprintf('5 项判据全过（%d 节点 / %d 帧 / %.3f us每节点）', $nodes, $frames, $perNode),
+        \sprintf('%d 项判据全过（%d 节点 / %d 帧 / %.3f us每节点）', \count($scaleItems), $nodes, $frames, $perNode),
     ))->emit($json);
 }
 
