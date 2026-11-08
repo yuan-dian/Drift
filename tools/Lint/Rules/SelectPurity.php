@@ -14,8 +14,8 @@ use Drift\Dev\Lint\SourceQuery;
  * §16.6.3 #6：`select` 纯度（G2）。
  *
  * 判据：`select` 闭包的返回类型在 `===` 门控下要有稳定相等语义 ——
- * 标量 / enum / `array` / nullable / `readonly class` / `Equatable` 实现者；
- * 出现 `new` 非 readonly 对象 ⇒ 报错。
+ * 标量 / enum / `array` / nullable / `Equatable` 实现者 / `IDENTITY_STABLE` 登记；
+ * 出现 `new` 没有值相等契约的对象 ⇒ 报错。
  *
  * 理由：`select` 的返回值决定"要不要重建"（§11.3.3 / §24.3 例外登记）。
  * 每次返回**新对象**且没有值相等契约 ⇒ `===` 永不相等 ⇒ 每帧重建。
@@ -45,8 +45,9 @@ final class SelectPurity implements Rule
     ];
 
     /**
-     * §24.3 例外登记：框架保证「不可变 + 同一值复用同一实例」的值对象。
-     * 它们的 `===` 天然稳定，不该因为不是 `readonly class` 被误报。
+     * 稳定值契约登记处：框架保证「不可变 + 同一值复用同一实例」的值对象。
+     * 它们的 `===` 天然稳定。这里登记的是**契约**，不是「绕过某条白名单的例外」——
+     * 与 `Equatable`、enum 一起构成 `isStableValue()` 的三条正门。
      */
     private const IDENTITY_STABLE = ['Drift\Async\AsyncValue'];
 
@@ -62,7 +63,7 @@ final class SelectPurity implements Rule
 
     public function summary(): string
     {
-        return 'select 闭包返回类型必须是标量 / enum / readonly class，不许 new 非 readonly 对象';
+        return 'select 闭包返回类型必须是标量 / enum / Equatable / 已登记的稳定值对象，不许 new 无值相等契约的对象';
     }
 
     public function check(Project $project): array
@@ -108,7 +109,7 @@ final class SelectPurity implements Rule
                             Diagnostic::ERROR,
                             $file->path(),
                             $tok[2],
-                            sprintf("select 返回类型 `%s` %s（§11.3.3：只许标量 / enum / readonly class）", $type, $problem)
+                            sprintf("select 返回类型 `%s` %s（§11.3.3：只许标量 / enum / Equatable / 已登记的稳定值对象）", $type, $problem)
                         );
                     }
                 }
@@ -119,16 +120,16 @@ final class SelectPurity implements Rule
                         $fqn = $file->resolveName(ltrim($hit['name'], '\\'));
                         $info = $all[$fqn] ?? null;
                         if ($info === null) {
-                            continue; // 仓库外类型：不判 readonly（诚实边界）
+                            continue; // 仓库外类型：不判稳定性（诚实边界）
                         }
-                        if (($info['kind'] ?? '') === 'class' && !($info['readonly'] ?? false)) {
+                        if (($info['kind'] ?? '') === 'class' && !self::isStableValue($fqn, $info)) {
                             $found[] = new Diagnostic(
                                 $this->name(),
                                 Diagnostic::ERROR,
                                 $file->path(),
                                 $hit['line'],
                                 sprintf(
-                                    'select 闭包里 new %s（%s 非 readonly）—— 每次返回新对象 ⇒ === 永不相等 ⇒ 每帧重建',
+                                    'select 闭包里 new %s（%s 没有值相等契约）—— 每次返回新对象 ⇒ === 永不相等 ⇒ 每帧重建；实现 Equatable 或登记 IDENTITY_STABLE',
                                     $hit['name'],
                                     $fqn
                                 )
@@ -249,7 +250,7 @@ final class SelectPurity implements Rule
             return null;
         }
         if (in_array($lower, self::BANNED_KEYWORDS, true)) {
-            return '不是标量 / enum / readonly class';
+            return '不是标量 / enum / Equatable / 已登记的稳定值对象';
         }
 
         $fqn = $file->resolveName($bare);
@@ -257,23 +258,42 @@ final class SelectPurity implements Rule
         if ($info === null) {
             return null; // 仓库外类型：不判（诚实边界）
         }
-        if (($info['kind'] ?? '') === 'enum') {
+        if (self::isStableValue($fqn, $info)) {
             return null;
         }
-        if (($info['kind'] ?? '') === 'class') {
-            if (($info['readonly'] ?? false) || in_array($fqn, self::IDENTITY_STABLE, true)) {
-                return null;
-            }
-            // 值对象显式声明了值相等契约 ⇒ `SubjectBuilder` 会按值门控
-            foreach ($info['implements'] ?? [] as $impl) {
-                $short = ltrim((string) $impl, '\\');
-                if ($short === 'Equatable' || str_ends_with($short, '\\Equatable')) {
-                    return null;
-                }
+
+        return sprintf('指向 %s，它不是 enum / Equatable / 已登记的稳定值对象', $fqn);
+    }
+
+    /**
+     * `===` 门控下能保证「同值 ⇒ 稳定相等」的类型契约。
+     *
+     * 与 `SubjectBuilderState::sameValue()` 的三条正门一一对应：
+     * enum（单例）/ `Equatable`（值相等）/ `IDENTITY_STABLE`（同值复用同一实例）。
+     * ★ `readonly` 不在其中：它只保证属性不可变，不保证同值复用同一实例，
+     *   也不提供值相等方法 —— 2026-11-08 从返回类型与体内 new 两条通道一并移除。
+     *
+     * @param array<string, mixed> $info
+     */
+    private static function isStableValue(string $fqn, array $info): bool
+    {
+        if (($info['kind'] ?? '') === 'enum') {
+            return true;
+        }
+        if (($info['kind'] ?? '') !== 'class') {
+            return false;
+        }
+        if (in_array($fqn, self::IDENTITY_STABLE, true)) {
+            return true;
+        }
+        foreach ($info['implements'] ?? [] as $impl) {
+            $short = ltrim((string) $impl, '\\');
+            if ($short === 'Equatable' || str_ends_with($short, '\\Equatable')) {
+                return true;
             }
         }
 
-        return sprintf('指向 %s，它不是 enum / readonly class / Equatable', $fqn);
+        return false;
     }
 
     /**

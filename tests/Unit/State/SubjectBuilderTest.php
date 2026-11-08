@@ -296,6 +296,33 @@ final class SubjectBuilderTest extends SmokeTestCase
         $element->unmount();
         $this->flushChecks();
     }
+
+    /**
+     * 2026-11-08：readonly 不是值相等契约 —— 同内容新实例仍走 `===` ⇒ 标脏。
+     *
+     * ★ 与 lint 判据不同源：这里量的是 `SubjectBuilderState` 实际标不标脏，
+     *   不读规则实现。`tests/` 整体不在 `lint.php` 扫描范围（`isToolchain()`），
+     *   所以这里可以写最自然的「声明类型 + 体内 new」形态。
+     */
+    public function testReadonlyWithoutEquatableStillRebuilds(): void
+    {
+        $ctx = smokeContext();
+        $store = new ValueSubject();
+        $widget = SubjectBuilder::make($store)
+            ->select(static fn(ValueSubject $s): ReadonlyValue => new ReadonlyValue($s->text()))
+            ->builder(static fn(mixed $v): Widget => new LeafProbe(1.0));
+        $element = $widget->createElement();
+        $element->mount(null, $ctx);
+
+        $store->setText('同');
+        check(
+            'State · 纯 readonly 值对象（无 Equatable）同内容新实例仍标脏',
+            $element->state()->needsBuild(),
+            'readonly 被当成值相等契约了 ⇒ lint 白名单与运行期门控不一致'
+        );
+        $element->unmount();
+        $this->flushChecks();
+    }
 }
 
 /**
@@ -358,5 +385,13 @@ final class MaybeSubject extends Subject
     {
         $this->value = $value;
         $this->notifyChanged();
+    }
+}
+
+/** 纯 readonly、不实现 Equatable：验证「不可变 ≠ 值相等」。 */
+final readonly class ReadonlyValue
+{
+    public function __construct(public string $text)
+    {
     }
 }

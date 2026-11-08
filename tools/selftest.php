@@ -64,9 +64,15 @@ function drift_lint_selftest(string $root, Linter $linter): bool
             'src/Widget/DeadSubscriptionFixture.php:' . Diagnostic::ERROR,
         ],
         // 2026-11-07 补 `static fn` / `static function` 形态（+5）：
-        // 从前 isClosure() 漏认 T_STATIC ⇒ 这 5 条里一条都不会响，全仓 24 处
-        // 真实 select 从未进过判据。Good 侧另钉住 `array` 与 static function 标量不误报。
+        // 从前 isClosure() 漏认 T_STATIC ⇒ 全仓 24 处真实 select 从未进过判据。
+        // 2026-11-08（+4）：readonly 白名单从「返回类型 / 体内 new」两条通道移除，
+        // 夹具各补一条 Bad 形态（fn + static fn 的 ReadonlyBox）⇒ 8 → 12。
+        // Good 侧钉住 `array` / static function 标量 / readonly + Equatable 不误报。
         'select-purity' => [
+            'apps/SelectFixture.php:' . Diagnostic::ERROR,
+            'apps/SelectFixture.php:' . Diagnostic::ERROR,
+            'apps/SelectFixture.php:' . Diagnostic::ERROR,
+            'apps/SelectFixture.php:' . Diagnostic::ERROR,
             'apps/SelectFixture.php:' . Diagnostic::ERROR,
             'apps/SelectFixture.php:' . Diagnostic::ERROR,
             'apps/SelectFixture.php:' . Diagnostic::ERROR,
