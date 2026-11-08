@@ -223,6 +223,20 @@ flush() 每帧调 sweepTimeouts()   ⇒  30s 到就 dropWorker(..., true)
 
 ⇒ **推荐 A 或 B，先做实现前分析**；若走 C，与 §77 合并成一棒（同文件、同 T2），不要分两次重建 AOT。
 
+> **2026-11-08 实施订正（保留原文，不静默改写）**：详见
+> `docs/DESIGN-JOB-TIMEOUT-2026-11-08.md` 与 `DEBT` §74。
+> ① §74 已落地，但采纳的是**第四条路**：`TimedJob` 任务自声明上限。
+>    三条原路都站不住 —— A 被反证（`WatermarkStore::$items` 无数量上界，算不出有界值）、
+>    B 削业务能力、「无进度看门狗」因 `JobProgress` 只有 1% **值**节流、而 worker 阻塞在
+>    `run()` 里发不出独立心跳 ⇒ 慢速大文件 30s 可能零包，会误杀它本来要救的任务。
+>    新方案零破坏（名字 / getter 不变）、已过 T2。
+> ② **§77 按 V2 判死**：`build/probe-eof-timing.php` 6 轮实测，管道 EOF 与
+>    `proc_get_status()['running']=false` 在同一轮询内到达（差 0.01–0.02ms），
+>    而 `readReplies()` 与 `reap()` 又同在一次 `drain()` 里 ⇒ 找不到能让「只判 `running`」
+>    变红的真实场景。只订正了两处「EOF 已被当场发现」的腐烂注释，不实现双判；
+>    §4 路线图里 §77 一行作废。
+> ③ 下一棒顺序不变：§75（单个 `AsyncValue`）→ §76（隐性规则 lint 化，逐条 V2 筛）。
+
 **判据（必须独立于实现）**：写死期望值 + 量具断言，不许从常量推导期望（§68 踩过「把 `POLL_MAX_ROUNDS` 改 99999 判据跟着放大仍全绿」的坑）。变异：把 `requestTerminateMs` 改回 30_000 必须红；把 `UPLOAD_TIMEOUT_S` 改小到与 Job 上限一致应绿。
 **验证分层**：只改 `apps/watermark` ⇒ T0 + T1；若动 `ProcessTaskHost` ⇒ **T2**（`drift-build watermark --full` + `probe-window.py watermark`）。
 **退出条件**：口径写进 `Config.php` 的 `@design-param`（把「待对齐」改成已裁决）、判据进 gate、DEBT §74。
