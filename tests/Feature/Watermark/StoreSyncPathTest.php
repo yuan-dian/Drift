@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Watermark;
 
+use App\Watermark\Api\Config;
 use App\Watermark\Store\StatusMessage;
 use App\Watermark\Store\WatermarkStore;
 use PHPUnit\Framework\Attributes\Test;
@@ -38,8 +39,16 @@ final class StoreSyncPathTest extends TestCase
     /** @var list<string> 临时文件，测完清掉 */
     private array $tmp = [];
 
+    protected function setUp(): void
+    {
+        // ★ 这条测的是"连不上时失败有去处"，必须走**真实**客户端（mock 永远成功）。
+        //   翻回 `true` 在 tearDown 里，避免影响同进程的其它用例。
+        Config::$mock = false;
+    }
+
     protected function tearDown(): void
     {
+        Config::$mock = true;
         foreach ($this->tmp as $path) {
             @\unlink($path);
         }

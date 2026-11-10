@@ -224,7 +224,7 @@ final class StoreSettledEffectsTest extends TestCase
             'account' => 'acc',
             'policy' => 'pol',
             'signature' => 'sig',
-            'directoryPath' => '***REMOVED***/2026/11/4/',
+            'directoryPath' => '10000000/2026/11/4/',
             'accessAddress' => 'https://oss.example.com',
             'expireTime' => (string) ((\time() + 600) * 1000),
         ];

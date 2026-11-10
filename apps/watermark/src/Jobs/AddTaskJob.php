@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace App\Watermark\Jobs;
 
-use App\Watermark\Api\ApiClient;
+use App\Watermark\Api\Api;
 use App\Watermark\Api\Config;
 use Drift\App\NamedJob;
 
@@ -47,7 +47,7 @@ final class AddTaskJob implements NamedJob
 
     public function run(): mixed
     {
-        $taskId = (new ApiClient($this->base))
+        $taskId = Api::client($this->base)
             ->addTask($this->objectKeys, $this->time, $this->address, $this->imageSize);
 
         return ['taskId' => $taskId];

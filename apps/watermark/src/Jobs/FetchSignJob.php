@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace App\Watermark\Jobs;
 
-use App\Watermark\Api\ApiClient;
+use App\Watermark\Api\Api;
 use App\Watermark\Api\Config;
 use Drift\App\NamedJob;
 
@@ -35,6 +35,6 @@ final class FetchSignJob implements NamedJob
 
     public function run(): mixed
     {
-        return (new ApiClient($this->base))->sign()->toArray();
+        return Api::client($this->base)->sign()->toArray();
     }
 }

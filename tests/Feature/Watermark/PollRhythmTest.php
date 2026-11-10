@@ -167,7 +167,7 @@ final class PollRhythmTest extends TestCase
                 'account' => 'acc',
                 'policy' => 'pol',
                 'signature' => 'sig',
-                'directoryPath' => '***REMOVED***/2026/11/3/',
+                'directoryPath' => '10000000/2026/11/3/',
                 'accessAddress' => 'https://oss.example.com',
                 'expireTime' => (string) ((\time() + 600) * 1000),
             ],

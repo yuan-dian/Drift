@@ -105,6 +105,12 @@ final class DownloadResultsJob implements NamedJob, TimedJob
             throw new \RuntimeException('URL 为空');
         }
 
+        // ★ 已是本地文件（mock 后端回的就是本地示例图路径，或上游已预下载）：
+        //   直接返回，不走网络。这也让"复用已下载文件"成为一等能力。
+        if (\is_file($url)) {
+            return $url;
+        }
+
         $response = Http::get($url, [
             'connectTimeout' => 10.0,
             // ★ 结果图可能几 MB（4K），比普通接口宽裕得多

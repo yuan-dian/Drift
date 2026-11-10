@@ -6,7 +6,7 @@ namespace App\Watermark\Widgets;
 use Drift\Rendering\Color;
 
 /**
- * 配色（**逐值照抄 `shuiyin.html`**）。
+ * 配色（**逐值照抄 `原参考实现`**）。
  *
  * ★ 为什么不用 `ColorToken`（主题角色）：原文是一套**固定的品牌色**（紫色渐变
  *   主色 + 四个状态色），没有深色模式。套主题角色的话，深色主题下"上传区浅灰底

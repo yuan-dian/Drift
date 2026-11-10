@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════════════════
-# apps/watermark/project.yml —— 第一个**真实业务闭环**（复刻 shuiyin.html）
+# apps/watermark/project.yml —— 第一个**真实业务闭环**（复刻 原参考实现）
 # ═══════════════════════════════════════════════════════════════════════════
 #
 # ★★ 调用约定与 `apps/users/project.yml` 逐条相同（**从仓库根调用**；被 tpc 解析的
@@ -22,7 +22,7 @@ resource:
 
 info:
   Author: Drift
-  Description: 真实业务闭环 —— OSS 直传 + 异步任务 + 结果轮询（复刻 shuiyin.html）
+  Description: 真实业务闭环 —— OSS 直传 + 异步任务 + 结果轮询（复刻 原参考实现）
 
 include: ../../build/base.yml
 

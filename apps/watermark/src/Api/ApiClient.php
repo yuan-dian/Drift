@@ -7,7 +7,7 @@ use Drift\App\Io\Http;
 use Drift\App\Io\HttpException;
 
 /**
- * 后端调用（`***REMOVED***` 网关）。
+ * 后端调用（真实网关；离线版见 {@see MockApiClient}）。
  *
  * ★ **本类是唯一知道 HTTP 形状的地方**：任务（`Jobs/`）只调这四个方法，不碰
  *   URL / 请求头 / JSON 键名。换后端只改这里 + {@see Config}。
@@ -17,7 +17,7 @@ use Drift\App\Io\HttpException;
  *   UI。**不返回 null 表示失败** —— 那样调用方每处都要判，"忘了判"就变成
  *   "静默无结果"。
  */
-final class ApiClient
+final class ApiClient implements WatermarkApi
 {
     /** 成功码（网关的约定，不是 HTTP 状态码） */
     private const OK_CODE = 'server.success';

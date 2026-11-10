@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace App\Watermark\Jobs;
 
-use App\Watermark\Api\ApiClient;
+use App\Watermark\Api\Api;
 use App\Watermark\Api\ApiException;
 use App\Watermark\Api\Config;
 use App\Watermark\Api\SignInfo;
@@ -94,7 +94,7 @@ final class UploadBatchJob implements NamedJob, TimedJob
             throw new ApiException('上传：没有要传的文件');
         }
 
-        $client = new ApiClient($this->base);
+        $client = Api::client($this->base);
         $keys = [];
 
         $index = 0;

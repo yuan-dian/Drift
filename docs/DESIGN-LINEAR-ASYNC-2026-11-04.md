@@ -282,7 +282,7 @@ public function run(array $files): void
 ```
 
 `5 AsyncCommand` / `5 absorb` / 15 处订阅接线 / 轮询与接力标志 / 两处 ★★ 注释
-整类消失。按 `shuiyin.html` 的比例，`Store` 有望从 980 行降到 200–300 行量级。
+整类消失。按 `原参考实现` 的比例，`Store` 有望从 980 行降到 200–300 行量级。
 
 **必须点破的两个实现细节（否则是画饼）**：
 
@@ -303,7 +303,7 @@ public function run(array $files): void
 | **结构** | 两个 loop 抢控制流，必须重写 C++ 消息泵；`IoPoller` 被架空 | 同 A，且引入第二套扩展 ABI | 状态机 / 回调 / 序列化三份仍在应用层 | 复用现有单 loop（帧循环）、`IoPoller` / `CompletionQueue` / `Future` 全部保值；`await()` 只是 `Fiber::suspend/resume` 的一层薄壳 |
 | **实现** | 改 C++ 壳 + 全套 `src/App/Io/` + 构建链多带 DLL；P5 退出期崩溃待解 | 同 A + 重走整套 AOT 探针 | 每个机制各补一个缝 | 新增 1 个 `AsyncScope` + `Future` 上一个结算钩子；**零扩展、零 C++ 改动、零新 loop** |
 | **扩展性** | 与 `curl_multi` 互斥、hook 全局污染、`#[\Native]` 约束 | 未知项更多 | 每加一类副作用要多一个缝 | `await()` 可覆盖任意 `Future`，将来叠 `awaitAll()` / `withTimeout()` 不改底层；`AsyncCommand` 可退化为「给 UI 看的加载态」而非业务骨架 |
-| **易用性（DX）** | 写法变线性，但要理解协程 + 消息泵 + hook 三套心智 | 同 A | 仍要理解 5 命令 4 态 + 终结态门控 | **业务就是顺序代码**；新人从 `shuiyin.html` 迁移几乎逐行对应；取消 / 去重 / 状态由 scope 一处承担 |
+| **易用性（DX）** | 写法变线性，但要理解协程 + 消息泵 + hook 三套心智 | 同 A | 仍要理解 5 命令 4 态 + 终结态门控 | **业务就是顺序代码**；新人从 `原参考实现` 迁移几乎逐行对应；取消 / 去重 / 状态由 scope 一处承担 |
 | **维护性** | C++ 消息泵改动落在 T2 真机验证盲区；探针 N 那 1 次 59ms 尖峰未定位 | 无本仓实测，长期不可维护 | 注释密度继续上升 | 判据可纯 PHP 单测（挂起/恢复/取消/异常/跨帧），变异路径清晰；`AsyncCommand` 的四态判据原样保留作护栏 |
 
 ★ D 不是「更轻的协程」，是**换了一层**：Swoole/Swow 卖的是「IO 让出」，

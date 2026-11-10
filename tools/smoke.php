@@ -4892,14 +4892,14 @@ if ($mockReady) {
 
     $mp = Http::request('POST', $httpBase . '/multipart', [
         'fields' => [
-            'key' => '***REMOVED***/2026/11/2/abc/1234.jpg',
+            'key' => '10000000/2026/11/2/abc/1234.jpg',
             'policy' => 'eyJleHBpcmF0aW9uIjoiMjAyNi0xMS0wMlQwMzowMToxNC4wMDhaIn0=',
             'OSSAccessKeyId' => 'LTAI5t9NGBH5zAdeTBhxcQvR',
             'success_action_status' => '200',
             '中文键' => '中文值',
         ],
         'files' => ['file' => $mpFile],
-        // ★ 带一个中文头：`shuiyin.html` 用 XHR 而不用 fetch 的唯一原因就是这个
+        // ★ 带一个中文头：`原参考实现` 用 XHR 而不用 fetch 的唯一原因就是这个
         //   （fetch 的 Header 不允许非 ISO-8859-1）。本仓走 curl，没有那条限制。
         'headers' => ['uc-userName' => '11'],
         'onProgress' => static function (float $fraction) use (&$progressSeen): void {
@@ -4918,8 +4918,8 @@ if ($mockReady) {
         var_export($mp['fields']['中文键'] ?? null, true),
     );
     check(
-        'Http · multipart：OSS 签名那几个字段名与值都对（直接照抄 shuiyin.html 的形状）',
-        ($mp['fields']['key'] ?? '') === '***REMOVED***/2026/11/2/abc/1234.jpg'
+        'Http · multipart：OSS 签名那几个字段名与值都对（直接照抄 原参考实现 的形状）',
+        ($mp['fields']['key'] ?? '') === '10000000/2026/11/2/abc/1234.jpg'
             && ($mp['fields']['OSSAccessKeyId'] ?? '') === 'LTAI5t9NGBH5zAdeTBhxcQvR'
             && ($mp['fields']['success_action_status'] ?? '') === '200',
         'key=' . ($mp['fields']['key'] ?? '(空)'),

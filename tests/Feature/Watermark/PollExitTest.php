@@ -108,7 +108,7 @@ final class PollExitTest extends TestCase
                 'account' => 'acc',
                 'policy' => 'pol',
                 'signature' => 'sig',
-                'directoryPath' => '***REMOVED***/2026/11/7/',
+                'directoryPath' => '10000000/2026/11/7/',
                 'accessAddress' => 'https://oss.example.com',
                 'expireTime' => (string) ((\time() + 600) * 1000),
             ],

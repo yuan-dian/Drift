@@ -4,23 +4,39 @@ declare(strict_types=1);
 namespace App\Watermark\Api;
 
 /**
- * 后端契约（**唯一一处**）—— 从 `shuiyin.html` 的 JS 里摸出来的，写死在这儿。
+ * 后端契约（**唯一一处**）—— 写死在这儿。
  *
  * ★ 为什么不是配置文件 / 环境变量：这三个值（地址 / 应用号 / 模板号）是**业务
  *   身份**，不是部署参数。`§16.7 nano-hygiene` 禁 `getenv()`（AOT 不保证环境变量），
  *   而"换一个后端"这件事今天没有第二个调用方 —— 真需要时加构造参数，不加环境变量。
  * ★ 测试要打别的地址时走 `ApiClient` 的构造参数（默认值取这里）。
+ *
+ * ★ **对外发布版默认 `MOCK = true`**：走 {@see MockApiClient}（不触网、回本地示例图），
+ *   任何人 clone 后无需任何后端即可跑通 UI 闭环。要接真实后端：把 `MOCK` 改 `false`
+ *   并把下面三个值换成你自己的网关 / 应用号 / 模板号。
+ *
+ * 以下是**占位**值（`example.invalid` 是 RFC 2606 保留的"不会解析"域名），
+ * 即便误开 `MOCK = false` 也不会指向任何真实服务。
  */
 final class Config
 {
-    /** 网关根（**不带尾斜杠**） */
-    public const API_BASE = 'http://***REMOVED***/***REMOVED***';
+    /**
+     * 是否走离线 mock 后端（见类注释）。
+     *
+     * ★ 用**可变静态属性**而不是常量：对外发布版默认 `true`（无需后端即可 demo）；
+     *   接真实后端时把它改成 `false` 并填好下方三件套。测试里 `StoreSyncPathTest`
+     *   会临时翻成 `false` 来验证"连不上时失败有去处"。
+     */
+    public static bool $mock = true;
 
-    /** 应用号：同时出现在 `?appId=` 与 `uc-appCode` 头里 */
-    public const APP_ID = '***REMOVED***';
+    /** 网关根（**不带尾斜杠**）—— 占位，需自行替换 */
+    public const API_BASE = 'https://api.example.invalid/mock-gateway';
 
-    /** 模板号（决定"水印"长什么样） */
-    public const TEMPLATE_ID = '***REMOVED***';
+    /** 应用号：同时出现在 `?appId=` 与 `uc-appCode` 头里（占位） */
+    public const APP_ID = '10000000';
+
+    /** 模板号（决定"水印"长什么样，占位） */
+    public const TEMPLATE_ID = '2000000000000000000';
 
     /**
      * 统一请求头 —— 三个都是网关的租户标识。
