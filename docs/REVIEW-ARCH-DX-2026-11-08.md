@@ -152,6 +152,18 @@
 > 「门不能信缓存」（对齐 T1 `drift-codegen` 已验证的裁决），`--incremental` 显式
 > opt-in，gate 增 `stalepolicy` / `staleself` 两道不同源判据。详见 `DESIGN.md`
 > §16.2.2。§1.4 描述的是 2026-11-08 基线，保留评审快照。
+>
+> ★ **2026-11-10 后订正（续三）**：§2.4「错误传播到 UI 一律压成 string」已落地，
+> 但**落地形态比本表建议更彻底**。实证发现丢码的起点不是 `AsyncCommand::fail()`，
+> 而是**跨进程边界**：`ProcessWorker` 把异常压成 `'类: 消息'`，`ProcessTaskHost` /
+> `ThreadTaskHost` 还原成 `new \RuntimeException($msg)`（code 恒 0）。只在
+> `AsyncValue` 加一个 `code` 字段，跨进程任务（本仓主要异步后端）永远拿不到分类
+> ⇒ 判据全绿而能力是假的。现由 `Drift\Async\Failure` 作载体 + `codeOf()` 单一
+> 提取点，贯通 worker 载荷 → 两个还原端 → `fail()` → `AsyncValue::code()` /
+> `Future::allSettled()` 五段；`AsyncCommand::mapError()` 是应用侧分类插槽（框架
+> 不硬编码 HTTP 语义，同 RTK Query `transformErrorResponse`）。gate 增
+> `errshape` / `errself`。详见 `DESIGN.md` §16.2.3。§2.4 描述的是 2026-11-08
+> 基线，保留评审快照。
 
 ## 6. 诚实边界
 

@@ -704,4 +704,76 @@ final class AsyncCommandTest extends SmokeTestCase
 
         $this->flushChecks();
     }
+
+    /**
+     * 错误分类要一路走到 UI：`Future` 的异常 → `AsyncCommand::fail()` →
+     * `AsyncValue::code()`。`mapError()` 是应用侧覆盖默认通道的插槽。
+     */
+    public function testErrorCodeReachesUiAndMapperOverridesIt(): void
+    {
+        Errors::reset();
+
+        $made = [];
+        [$app, $constraints] = self::boot(static function (mixed $arg) use (&$made): Future {
+            $made[] = Future::pending();
+
+            return $made[\count($made) - 1];
+        });
+
+        $command = $app->pageState()->command();
+        $command->mapError(static function (\Throwable $e): string {
+            return $e->getCode() === 404 ? 'NOT_FOUND' : 'UNKNOWN';
+        });
+
+        $command->run(1);
+        $app->frame(32.0, $constraints);
+        $made[0]->reject(new \RuntimeException('取数失败：HTTP 404', 404));
+        $app->frame(48.0, $constraints);
+
+        $last = self::last($app);
+        check(
+            'AsyncCommand · mapError() 的分类走到 UI（不是只留一句消息）',
+            $last !== null && $last->hasError() && $last->code() === 'NOT_FOUND',
+            $last === null ? 'build 一次都没跑' : 'code=' . $last->code() . ' state=' . $last->stateName()
+        );
+        check(
+            'AsyncCommand · 消息没被 mapper 改写（分类与文案是两个维度）',
+            $last !== null && $last->message() === '取数失败：HTTP 404',
+            $last === null ? '' : $last->message()
+        );
+
+        $command->mapError(null);
+        $command->run(2);
+        $app->frame(64.0, $constraints);
+        $made[1]->reject(new \RuntimeException('网关挂了', 502));
+        $app->frame(80.0, $constraints);
+
+        $last2 = self::last($app);
+        check(
+            'AsyncCommand · mapError(null) 恢复默认通道（getCode 归一）',
+            $last2 !== null && $last2->hasError() && $last2->code() === '502',
+            $last2 === null ? '' : 'code=' . $last2->code()
+        );
+
+        $this->flushChecks();
+    }
+
+    public function testSynchronousThrowKeepsDefaultCode(): void
+    {
+        [$app, $constraints] = self::boot(static function (mixed $arg): Future {
+            throw new \RuntimeException('同步取数炸了', 409);
+        });
+
+        $app->pageState()->command()->run(1);
+        $app->frame(32.0, $constraints);
+
+        $last = self::last($app);
+        check(
+            'AsyncCommand · 同步抛出也走同一个 fail() 出口，code 不丢',
+            $last !== null && $last->hasError() && $last->code() === '409',
+            $last === null ? 'build 一次都没跑' : 'code=' . $last->code()
+        );
+
+        $this->flushChecks();
+    }
 }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\State;
 
 use Drift\Async\AsyncValue;
+use Drift\Async\Failure;
 use Drift\Async\Future;
 
 /**
@@ -60,6 +61,9 @@ final class AsyncCommand extends Subject
      */
     private bool $appending = false;
 
+    /** 应用侧的 code 映射（`\Throwable => string`）；不给就走 `Failure::codeOf()` 的标准通道 */
+    private ?\Closure $errorMapper = null;
+
     private bool $disposed = false;
 
     /**
@@ -100,6 +104,24 @@ final class AsyncCommand extends Subject
     public function value(): AsyncValue
     {
         return $this->value;
+    }
+
+    /**
+     * 配一条**错误分类**策略：`\Throwable => string code`。
+     *
+     * 不配就走 `Failure::codeOf()`（普通异常取 `getCode()`，跨进程还原的取载荷里的
+     * code）。框架不认识 404 / 鉴权 / 超时这些业务语义 —— 该叫什么由应用决定
+     * （同 RTK Query 的 `transformErrorResponse`）。返回 `$this` 便于链式接线。
+     *
+     * @param null|callable(\Throwable): string $mapper `null` 恢复默认通道
+     *
+     * @api
+     */
+    public function mapError(?callable $mapper): self
+    {
+        $this->errorMapper = $mapper === null ? null : \Closure::fromCallable($mapper);
+
+        return $this;
     }
 
     /**
@@ -343,7 +365,11 @@ final class AsyncCommand extends Subject
     private function fail(\Throwable $error): void
     {
         $this->pending = null;
-        $this->emit(AsyncValue::error($error->getMessage())->carriedFrom($this->value));
+
+        $mapper = $this->errorMapper;
+        $code = $mapper !== null ? (string) $mapper($error) : Failure::codeOf($error);
+
+        $this->emit(AsyncValue::error($error->getMessage(), $code)->carriedFrom($this->value));
     }
 
     /**

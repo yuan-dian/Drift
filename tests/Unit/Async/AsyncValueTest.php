@@ -338,4 +338,73 @@ final class AsyncValueTest extends SmokeTestCase
 
         $this->flushChecks();
     }
+
+    /**
+     * `code` 是第五个维度（同进度）：任何换态操作都得带着它走，否则「带旧值的
+     * 错误态」「上传失败时又来了个进度包」会把分类悄悄抹成空串。
+     */
+    public function testErrorCodeSurvivesStateTransitions(): void
+    {
+        check(
+            'AsyncValue · error 第二参成为机器可判分类',
+            AsyncValue::error('取数失败', 'HTTP_404')->code() === 'HTTP_404'
+        );
+        check(
+            'AsyncValue · 其余三态 code 为空串（不串到正常渲染分支）',
+            AsyncValue::idle()->code() === ''
+            && AsyncValue::loading()->code() === ''
+            && AsyncValue::data('v')->code() === ''
+        );
+        check(
+            'AsyncValue · 不给 code ⇒ 空串（旧调用点零改动）',
+            AsyncValue::error('boom')->code() === ''
+        );
+
+        $carried = AsyncValue::error('刷新失败', 'TIMEOUT')->carriedFrom(AsyncValue::data(['n' => 7]));
+        check(
+            'AsyncValue · carriedFrom 不丢 code（带旧值的错误态仍能分类）',
+            $carried->code() === 'TIMEOUT' && $carried->hasValue() && $carried->message() === '刷新失败',
+            'code=' . $carried->code() . ' message=' . $carried->message()
+        );
+
+        $progressed = AsyncValue::error('上传失败', 'NETWORK')->withProgress(0.4);
+        check(
+            'AsyncValue · withProgress 不丢 code（进度包不改分类）',
+            $progressed->code() === 'NETWORK'
+            && $progressed->message() === '上传失败'
+            && $progressed->progressOr(-1.0) === 0.4,
+            'code=' . $progressed->code() . ' progress=' . (string) $progressed->progressOr(-1.0)
+        );
+
+        $this->flushChecks();
+    }
+
+    public function testFoldErrorArmCanBranchOnCode(): void
+    {
+        $seen = null;
+        $result = AsyncValue::error('服务暂时不可用', 'RETRYABLE')->fold([
+            'idle' => function (AsyncValue $v): string {
+                return 'I';
+            },
+            'loading' => function (AsyncValue $v): string {
+                return 'L';
+            },
+            'data' => function (AsyncValue $v): string {
+                return 'D';
+            },
+            'error' => function (AsyncValue $v) use (&$seen): string {
+                $seen = $v->code();
+
+                return $v->code() === 'RETRYABLE' ? '重试' : '报错';
+            },
+        ]);
+
+        check(
+            'AsyncValue · fold 的 error 支能按 code 分支（UI 重试策略的落点）',
+            $result === '重试' && $seen === 'RETRYABLE',
+            'result=' . $result . ' seen=' . (string) $seen
+        );
+
+        $this->flushChecks();
+    }
 }

@@ -608,4 +608,29 @@ final class FutureTest extends SmokeTestCase
 
         $this->flushChecks();
     }
+
+    public function testAllSettledCarriesErrorCode(): void
+    {
+        $a = Future::pending();
+        $b = Future::pending();
+        $got = null;
+
+        Future::allSettled([$a, $b])->then(function (array $v) use (&$got): void {
+            $got = $v;
+        });
+
+        $a->resolve('A');
+        $b->reject(new \RuntimeException('右挂了', 503));
+
+        check(
+            'Future::allSettled · 失败元素带 code、成功元素 code 为空串（组合链不丢分类）',
+            \is_array($got)
+                && ($got[0]['code'] ?? null) === ''
+                && ($got[1]['code'] ?? null) === '503'
+                && ($got[1]['error'] ?? null) === '右挂了',
+            \json_encode($got, \JSON_UNESCAPED_UNICODE) ?: ''
+        );
+
+        $this->flushChecks();
+    }
 }

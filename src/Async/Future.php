@@ -380,11 +380,12 @@ final class Future
 
     /**
      * 每一条**各自**成败，结果与入参同键同序，元素为
-     * `['ok' => bool, 'value' => mixed, 'error' => ?string]`；**永不失败**。
+     * `['ok' => bool, 'value' => mixed, 'error' => ?string, 'code' => string]`；**永不失败**。
      *
      * ★ 没有 `task` 标记，子任务的 `catch()` 在这里接，所以连子任务也不会喊 Fatal。
      * ★ **`error` 是消息字符串**，不是 `\Throwable`：载荷会被 `json_encode`，异常
-     *   对象进去只会变成 `{}`。
+     *   对象进去只会变成 `{}`。`code` 同理由 `Failure::codeOf()` 归一成字符串，
+     *   让"哪一条因为什么挂了"在组合链上也能机器判，不必回头匹配消息文字。
      * ★ 取消仍传播给全部入参，取消后聚合体永不结算。
      *
      * @api
@@ -421,10 +422,10 @@ final class Future
             };
 
             $future->then(static function (mixed $value) use ($take): void {
-                $take(['ok' => true, 'value' => $value, 'error' => null]);
+                $take(['ok' => true, 'value' => $value, 'error' => null, 'code' => '']);
             })->catch(static function (\Throwable $error) use ($take): void {
                 // ★ 不取消兄弟、不冒泡：这一条失败就是这一条的事
-                $take(['ok' => false, 'value' => null, 'error' => $error->getMessage()]);
+                $take(['ok' => false, 'value' => null, 'error' => $error->getMessage(), 'code' => Failure::codeOf($error)]);
             });
         }
 

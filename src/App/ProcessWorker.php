@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\App;
 
+use Drift\Async\Failure;
 use Drift\Errors;
 
 /**
@@ -88,6 +89,10 @@ final class ProcessWorker
      *   `{"id":N,"progress":0.42}`。这样"一次请求一行回复"的协议形状不变 ——
      *   变的只是"任务跑的过程中也允许说话"。
      *
+     * ★ **错误行带 `code`**（2026-11-10）：`{"id":N,"ok":false,"error":"…","code":"…"}`
+     *   —— 由 `Failure::codeOf()` 归一，UI 不必靠消息文字分辨 404 / 超时 / 断网。
+     *   协议层错误（坏 JSON / 任务未注册）没有源异常 ⇒ `code` 为 `''`。
+     *
      * @param array<string, callable(array<string, mixed>): Job> $registry
      * @param null|callable(int, float): void $onProgress 进度出口（`null` ⇒ 不转发；
      *        单测直接调本方法时通常给 `null`）
@@ -139,14 +144,14 @@ final class ProcessWorker
 
             return $encoded;
         } catch (\Throwable $e) {
-            return self::error($id, get_class($e) . ': ' . $e->getMessage());
+            return self::error($id, get_class($e) . ': ' . $e->getMessage(), Failure::codeOf($e));
         }
     }
 
-    private static function error(int $id, string $message): string
+    private static function error(int $id, string $message, string $code = ''): string
     {
-        $encoded = json_encode(['id' => $id, 'ok' => false, 'error' => $message]);
+        $encoded = json_encode(['id' => $id, 'ok' => false, 'error' => $message, 'code' => $code]);
 
-        return $encoded === false ? '{"id":0,"ok":false,"error":"encode failed"}' : $encoded;
+        return $encoded === false ? '{"id":0,"ok":false,"error":"encode failed","code":""}' : $encoded;
     }
 }

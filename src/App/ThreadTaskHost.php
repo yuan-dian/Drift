@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\App;
 
+use Drift\Async\Failure;
 use Drift\Async\Future;
 
 use function drift_io_handled;
@@ -188,7 +189,10 @@ final class ThreadTaskHost implements TaskHost
 
         return new Completion(
             null,
-            new \RuntimeException((string) ($row['error'] ?? 'IO 处理函数未给出错误信息')),
+            new Failure(
+                (string) ($row['error'] ?? 'IO 处理函数未给出错误信息'),
+                (string) ($row['code'] ?? ''),
+            ),
             $future,
         );
     }

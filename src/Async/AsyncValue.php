@@ -39,6 +39,9 @@ final class AsyncValue
      *  AOT 对"可空对象字段"会读成 `php::Var`，而界面要的就是一句能画的消息。 */
     private string $message;
 
+    /** `error` 态的机器可判分类（其余三态恒 `''`）；`''` = 源异常没给分类 */
+    private string $code;
+
     /**
      * 进度（`0.0`~`1.0`）—— 与 `$value`/`$hasValue` 同手法：`0.0` 是合法进度，
      *   单独一个 `bool` 区分"有没有进度"，否则"刚开始"和"不报进度"会混。
@@ -56,11 +59,13 @@ final class AsyncValue
         string $message,
         float $progress = 0.0,
         bool $hasProgress = false,
+        string $code = '',
     ) {
         $this->state = $state;
         $this->value = $value;
         $this->hasValue = $hasValue;
         $this->message = $message;
+        $this->code = $code;
         $this->progress = $progress;
         $this->hasProgress = $hasProgress;
     }
@@ -88,10 +93,10 @@ final class AsyncValue
         return new self(self::DATA, $value, true, '');
     }
 
-    /** 失败了（语义上等价于 `catch` 收到的异常，这里只留一句消息） */
-    public static function error(string $message): self
+    /** 失败了（语义上等价于 `catch` 收到的异常，这里只留一句消息 + 一个分类码） */
+    public static function error(string $message, string $code = ''): self
     {
-        return new self(self::ERROR, null, false, $message);
+        return new self(self::ERROR, null, false, $message, 0.0, false, $code);
     }
 
     /**
@@ -110,7 +115,7 @@ final class AsyncValue
 
         // 进度跟着走：继承的是本值自己的进度，不是 `$previous` 的。
         // 写成 `$previous->progress` 会让"刷新到 50% 突然跳回上次的 100%"。
-        return new self($this->state, $previous->value, true, $this->message, $this->progress, $this->hasProgress);
+        return new self($this->state, $previous->value, true, $this->message, $this->progress, $this->hasProgress, $this->code);
     }
 
     /**
@@ -130,7 +135,7 @@ final class AsyncValue
             $f = 1.0;
         }
 
-        return new self($this->state, $this->value, $this->hasValue, $this->message, $f, true);
+        return new self($this->state, $this->value, $this->hasValue, $this->message, $f, true, $this->code);
     }
 
     /**
@@ -295,5 +300,20 @@ final class AsyncValue
     public function message(): string
     {
         return $this->message;
+    }
+
+    /**
+     * `error` 态的**机器可判分类**（其余三态是 `''`）。
+     *
+     * ★ 别拿 `message()` 做分支：文案会改、同类错误可能不同措辞。重试 / 跳登录 /
+     *   显示空页这类策略一律看 `code()`。
+     * ★ `''` 是「这条异常没给分类」，不是一种错误类型；配
+     *   `AsyncCommand::mapError()` 让应用侧补上语义。
+     *
+     * @api
+     */
+    public function code(): string
+    {
+        return $this->code;
     }
 }

@@ -2266,10 +2266,11 @@ abstract class BoxWidget extends Widget
 | **`sources` 与 `composer autoload` 不一致** | 无 | **lint `scan-autoload-drift`**（SDK 模型独有） |
 | **DX 类静默退化**（`select` 每次 new 等价对象 / 进度挂在派生 Future 上） | 无 —— 只表现为「页面一直重建」「进度条不动」 | **`Diagnostics` 统一 `[DX]` 诊断（按 key 只报一次）+ gate `dxdiag` 对账**（§16.2.1） |
 | **增量构建 stale**（新增类 / 属性 id 变了，旧缓存把旧常量带进 exe） | 无 —— 只在出包时表现为行为不对，源码层面全绿 | **`StalePolicy` 默认「门不能信缓存」+ gate `stalepolicy` 对账**（§16.2.2） |
+| **错误码被异步链路逐段压平**（worker 只回字符串、两个 TaskHost 还原成无 code 的异常、`fail()` 只取消息） | 无 —— UI 只能字符串匹配分辨 404 / 鉴权 / 超时 / 断网 | **`Failure` 单一提取点 + 五段贯通 + 应用侧 `mapError()` + gate `errshape` 对账**（§16.2.3） |
 
 ### 16.2 工具集（全部 PHP 单语言、单一入口）
 
-> ★ 旧称"**六件套**"（§0 一页结论沿用至今）；**实际件数以本表为准 —— 今天 9 行**。名称与行数脱节是历史遗留，不改 §0 是因为那个词已经被全文多处引用（改名是纯机械劳动，等 `drift-doctor` 出清单时一并收口）。
+> ★ 旧称"**六件套**"（§0 一页结论沿用至今）；**实际件数以本表为准 —— 今天 10 行**。名称与行数脱节是历史遗留，不改 §0 是因为那个词已经被全文多处引用（改名是纯机械劳动，等 `drift-doctor` 出清单时一并收口）。
 
 | 工具 | 职责 | 关键性质 |
 |------|------|---------|
@@ -2283,6 +2284,7 @@ abstract class BoxWidget extends Widget
 | **`drift-build`** | **真机构建**：调 `cl.exe` / `link.exe` 出一个能双击运行的 exe（`php tools/drift-build.php [应用名]`，默认 `hello`） | **★ 2026-10-15 新增（P0-3）**：把"**Windows 上跑 tpc 的四个坑**"固化成工具 —— ① `PHPRC` 指向**私有 ini 副本**（`tpc.exe` **不加载**同目录的 `php.ini`，而 `php.exe` 会 ⇒ 缺 `mbstring` 直接 Fatal）；② 私有 ini 的 `extension_dir` 改**绝对路径**（发行版写的是相对 `./ext/`，跟着 **cwd** 漂）；③ `PHPX_HOME`（不设 ⇒ `phpx directory not found`）；④ `INCLUDE`/`LIB`/`PATH` 三件套（`vcvars64.bat` 干的事，而 bash 里 `call` 不了它 ⇒ 直接按 MSVC/SDK 目录拼）。**判据 = 退出码 0 且 exe 存在** ⇒ 所以**构建前先删旧 exe**（否则"tpc 失败 + 上一轮产物还在"会被读成成功）。**与 `drift-codegen` 的分工**：那个 `--dry` 只到翻译层、用假 `cl`、秒级；这个**真编译**、分钟级 ⇒ **不进内环**（§16.3），只在"要出那个 exe"或"验证 AOT 专属问题"时跑。★ 它同时是 §19 M1 出口判据的**执行入口** |
 | **`diagnostic-check`** | 扫 `src/` 里所有 `Diagnostics::degraded()` 的 key，要求每个都在 `tests/` 里被 `[DX] <key>` 断言过 | 与 PHPUnit 判据**不同源**：那边验「行为对不对」，这边验「有没有判据」；`--selftest` 用合成输入自证对账器本身 |
 | **`build-stale-check`** | 对账 `drift-build.php`：决策走 `StalePolicy::decide()`、`FULL` 清根 + app 级两处缓存、`--dry` 在清缓存前退出、旧「默认信增量」口径无残留 | 与 PHPUnit 判据**不同源**：那边验决策表行为，这边验接线还在不在；`--selftest` 用合成源码自证对账器本身（含「注释里提到 `decide()` 不算调用」的防误绿） |
+| **`error-shape-check`** | 对账错误码链路：`Failure::codeOf()` 单一提取点、worker 载荷带 `code`、两个 TaskHost 还原成 `Failure`、`fail()` / `AsyncValue` / `allSettled` 不丢 | 与 PHPUnit 判据**不同源**：那边验行为，这边验五段接线；`--selftest` 用合成源码自证（含「docblock 里提到 `codeOf()` 不算调用」的防误绿） |
 
 ### 16.2.1 DX 静默退化可观测（2026-11-10）
 
@@ -2351,6 +2353,57 @@ REVIEW §1.4 / §5 第 1 项。原口径是「只在里程碑、或**怀疑**增
 3 分钟构建），正因如此才把默认改成「一律不信」；`--incremental` 是明确标注风险的
 逃生口。`SKIP` 由单测覆盖、真实 `--dry` 覆盖 `FULL` / `INCREMENTAL`，未另造端到端
 `SKIP` 场景。
+
+### 16.2.3 错误码贯通契约（2026-11-10）
+
+REVIEW §2.4 只点名最末一段（`AsyncCommand::fail()` 取 `getMessage()`），建议
+「给 `code` 字段或 `errorMapper`」。逐段追下去，丢码的起点其实在**跨进程边界**：
+
+| 段 | 旧行为 | 后果 |
+|---|---|---|
+| `ProcessWorker::handle()` catch | `get_class($e) . ': ' . $e->getMessage()` → JSON `error` 字符串 | 异常类型与 `getCode()` 一起没了 |
+| `ProcessTaskHost` / `ThreadTaskHost` 还原 | `new \RuntimeException($msg['error'])` | code 恒 0 |
+| `AsyncCommand::fail()` | `AsyncValue::error($error->getMessage())` | UI 只剩一句消息 |
+| `AsyncValue` / `Future::allSettled()` | 只有 `message` / `error` | 重试策略只能字符串匹配 |
+
+只在最后一段加个 `code` 字段，跨进程任务（本仓主要异步后端）**永远拿不到分类**
+⇒ 判据全绿而能力是假的（C-58）。所以本棒做一条端到端通道，不是一个字段。
+
+**裁决依据**：框架里本就有 `HttpException`（`status()` / `url()`），docblock 原话
+「一个 `\RuntimeException` 就只能靠字符串匹配去分辨这三档 —— 那正是本类存在的
+理由」。AOT 不能留异常对象字段（可空对象读成 `php::Var`）、跨进程 `json_encode`
+会把对象变 `{}` ⇒ 正解是 **string code + message 双标量**。对照 RTK Query 的
+`SerializedError`（`code` 字段 + `transformErrorResponse` 应用侧映射）、Riverpod
+`AsyncError`（保留对象，AOT 做不到）、GraphQL `extensions.code`。
+
+`Drift\Async\Failure`（`@internal`）是边界载体 + `codeOf()` 单一提取点：
+
+- 普通 `\Throwable` ⇒ `getCode()` 归一成字符串；`0` 当作「没设」给 `''`；
+- `Failure` 自身 ⇒ 直接读带回的 `errorCode`（跨进程还原端造的就是它）；
+- 应用侧 `AsyncCommand::mapError(\Throwable => string)` 覆盖默认通道 —— 框架
+  **不硬编码** 404 / 鉴权 / 超时语义，分类归应用（同 RTK Query）。
+
+五段贯通：`ProcessWorker` 载荷带 `code` → 两个 TaskHost 还原成 `Failure` →
+`AsyncCommand::fail()` 取 code（`mapError` 优先）→ `AsyncValue::error($msg, $code)`
+的 `code()` → `Future::allSettled()` 元素带 `code`。`AsyncValue` 的
+`carriedFrom()` / `withProgress()` 都透传 code —— 换态抹掉分类同样是不报错的退化。
+
+门禁两道、不同源：PHPUnit 验行为（`Failure` 归一、换态不丢、`fold` 的 error 支
+按 code 分支、worker 载荷、UI 端到端 + mapper 覆盖/恢复），`tools/error-shape-check.php`
+（gate `errshape` / `errself`）验五段接线还在。对账器只认去掉注释后的源码 ——
+第五棒的 `build-stale-check` 曾把注释里的 `` `decide()` `` 当成调用，M1 变异没咬红。
+
+**诚实边界**：① 未跑 T2 真机，两个 TaskHost 的还原端由静态对账 + 变异咬红覆盖，
+行为判据集中在可直接调用的 `ProcessWorker::handle()` 与同进程路径。
+② `HttpException::status()` 这类框架已有的结构化字段**不会自动**变成 code
+（它用 `status()` 而非 `getCode()`）；应用侧一行 `mapError()` 补上语义 —— 框架
+不该替业务决定 404 该叫什么。③ `Future::allSettled()` 没有 mapper 插槽，只走
+默认通道。④ `Failure` 是 `@internal`，应用侧读 `AsyncValue::code()` 即可。
+⑤ **IO 池的错误行由 C++ 内置 handler 生成**（`cpp-src/core/io_pool.cc`，
+只有 `sleep` / `echo` 与「未注册 handler」一种错）⇒ 没有源异常，`code` 恒为
+`''` 是**语义正确**，不是漏接。将来若让 IO 池跑 PHP handler，`code` 必须由
+C++ 侧一并产出 —— 那时对账器仍会绿（它只查 PHP 侧读了 `$row['code']`），
+这是已知的判据盲区，别把它当成「已经覆盖」。
 
 ### 16.3 CI 门禁顺序与开发内环
 

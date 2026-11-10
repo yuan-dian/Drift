@@ -12,7 +12,7 @@
 | 层 | @api | @internal |
 |---|---|---|
 | App | 85 | 54 |
-| Async | 24 | 4 |
+| Async | 25 | 5 |
 | Commands | 7 | 0 |
 | Core | 2 | 38 |
 | Diagnostics.php | 0 | 2 |
@@ -24,13 +24,13 @@
 | Platform | 16 | 15 |
 | Rendering | 34 | 1 |
 | Routing | 8 | 6 |
-| State | 18 | 8 |
+| State | 19 | 8 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
 | Widget | 188 | 226 |
-| **合计** | **505** | **413** |
+| **合计** | **507** | **414** |
 
-覆盖 398 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
+覆盖 399 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
 
 ## App 层
 
@@ -185,7 +185,7 @@
 
 ## Async 层
 
-### @api（应用可读面） · 24
+### @api（应用可读面） · 25
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -202,6 +202,7 @@
 | `AsyncValue::progressOr()` | method | src/Async/AsyncValue.php |
 | `AsyncValue::fold()` | method | src/Async/AsyncValue.php |
 | `AsyncValue::stateName()` | method | src/Async/AsyncValue.php |
+| `AsyncValue::code()` | method | src/Async/AsyncValue.php |
 | `Future` | class | src/Async/Future.php |
 | `Future::pending()` | method | src/Async/Future.php |
 | `Future::resolved()` | method | src/Async/Future.php |
@@ -214,10 +215,11 @@
 | `Future::allSettled()` | method | src/Async/Future.php |
 | `Future::race()` | method | src/Async/Future.php |
 
-### @internal（框架内部） · 4
+### @internal（框架内部） · 5
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
+| `Failure` | class | src/Async/Failure.php |
 | `Future::__construct()` | method | src/Async/Future.php |
 | `Future::reportProgress()` | method | src/Async/Future.php |
 | `Future::resolve()` | method | src/Async/Future.php |
@@ -615,13 +617,14 @@
 
 ## State 层
 
-### @api（应用可读面） · 18
+### @api（应用可读面） · 19
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
 | `AsyncCommand` | class | src/State/AsyncCommand.php |
 | `AsyncCommand::make()` | method | src/State/AsyncCommand.php |
 | `AsyncCommand::value()` | method | src/State/AsyncCommand.php |
+| `AsyncCommand::mapError()` | method | src/State/AsyncCommand.php |
 | `AsyncCommand::isRunning()` | method | src/State/AsyncCommand.php |
 | `AsyncCommand::run()` | method | src/State/AsyncCommand.php |
 | `AsyncCommand::append()` | method | src/State/AsyncCommand.php |

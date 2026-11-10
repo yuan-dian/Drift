@@ -47,6 +47,10 @@ sources:
 # ★ **`ignore` 要写全** —— tpc 的 list 型项是**整体替换**（不是追加），
 #   只写 `[tests]` 会把 base 的 `build` 顶掉，而 `build/` 里是生成的 `.cc`，
 #   再被当源码翻译一遍 ⇒ `Duplicate function main`。
+# ★ `mock-server.php` 同理必须排除：它是 `php -S` 用的 mock 后端，里面有顶层
+#   `return` 与 `$_SERVER` 分支 ⇒ `Fatal error: Unsupported statement: Stmt_If`
+#   （2026-11-10 实测；2026-11-05 加它时漏了这条，`apps/users` 的 AOT 一直构建不了）。
 ignore:
   - build
   - tests
+  - mock-server.php

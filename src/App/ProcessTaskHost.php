@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\App;
 
+use Drift\Async\Failure;
 use Drift\Async\Future;
 use Drift\Errors;
 
@@ -591,7 +592,10 @@ final class ProcessTaskHost implements TaskHost
 
         $onEach(new Completion(
             null,
-            new \RuntimeException((string) ($msg['error'] ?? 'worker 未给出错误信息')),
+            new Failure(
+                (string) ($msg['error'] ?? 'worker 未给出错误信息'),
+                (string) ($msg['code'] ?? ''),
+            ),
             $item['future'],
         ));
     }
