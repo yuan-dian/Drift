@@ -33,6 +33,7 @@ namespace Drift\Dev;
  */
 
 use Drift\Dev\Abi\Contract;
+use Drift\Dev\Build\StalePolicy;
 use Drift\Dev\Doctor\Environment;
 use Drift\Dev\Doctor\EnvironmentException;
 
@@ -184,12 +185,14 @@ function usage(): never
       工程路径  ⇒ 目录或 `.yml` 文件（`probes/io_pool`）—— 真机探针用同一个入口，
                    ★ 约定：目录名 == `name:`（产物按目录名算）
 
-      --full   清空 tpc 缓存后全量重建（约 3 分钟；保留 build/base.yml 与
-               build/app.manifest 这两个受控文件）。默认**不清** ⇒ 走增量
-               （约 30–60s）。只在里程碑、或怀疑增量构建 stale 时才需要它。
-      --dry    只算输入清单并打印「这次会增量还是全量」，**不构建**。
-      ★ 默认输入未变且产物比清单新时直接跳过编译（仍分发运行时 ini / 证书）；
-        --full 强制全量，不受短路影响。
+      --incremental  显式放行 tpc 增量（约 30–60s）。**默认不走增量**：只要输入指纹
+                     变了 / 首次构建 / 产物不在，就自动清缓存全量（门不能信缓存，
+                     见 Drift\Dev\Build\StalePolicy）。仅在你明知改动可安全增量时用，
+                     代价可能是 stale 且源码层面全绿。
+      --full         强制全量（不受短路影响）。默认已会自动全量，保留为显式写法。
+      --dry          只算输入清单与**这次的决策**，打印 SKIP / FULL / INCREMENTAL，
+                     **不构建、不清缓存**。
+      ★ 输入未变且产物仍在 ⇒ 直接跳过编译（仍分发运行时 ini / 证书）。
 
     环境变量（换机器时覆盖，都有本机实测的默认值）：
       DRIFT_TPC_ENTRY    tpc 入口（默认 ../typephp/bin/tpc.php —— **源码树**，见下）
@@ -212,11 +215,14 @@ if (in_array('--help', $argvRest, true) || in_array('-h', $argvRest, true)) {
     usage();
 }
 
-// `--full`：显式全量重建（清 tpc 缓存，保留受控的 base.yml / app.manifest）。
-// 默认**不清** ⇒ 走 tpc 增量（约 30–60s）；只有里程碑、或怀疑增量 stale 时才传它。
+// `--full`：强制全量。默认已按 StalePolicy 自动全量，保留为显式写法 / 兼容。
 $full = in_array('--full', $argvRest, true);
 
-// `--dry`：只算输入清单并打印「这次会增量还是全量」，**不构建**（廉价诊断）。
+// `--incremental`：唯一能走增量的开关。默认「门不能信缓存」——输入一变就自动全量
+// （2026-11-10 对齐 T1 drift-codegen 的既有裁决），增量必须显式 opt-in。
+$incremental = in_array('--incremental', $argvRest, true);
+
+// `--dry`：只算输入清单与决策，**不构建、不清缓存**（廉价诊断）。
 $dry = in_array('--dry', $argvRest, true);
 
 // 位置参数：**应用名或工程路径**（2026-10-30）。
@@ -300,10 +306,12 @@ $work = "{$root}/_build";
 // ─────────────────────── 输入清单 + 缓存策略（M2）───────────────────────
 //
 // 目的：把"要不要全量重建"从**人工直觉**变成**可核对的事实**。
-//   · 默认不清缓存 ⇒ tpc 走增量（约 30–60s）；
-//   · `--full` 才清 ⇒ 全量（约 3 分钟），只在里程碑 / 怀疑 stale 时用；
-//   · 输入清单（`_build/inputs.<应用>.sha`）告诉你"自上次构建以来源文件变没变"，
-//     变了就提示增量会重编哪些 —— 不再靠"防御性全量清理"。
+//   · 输入清单（`_build/inputs.<应用>.sha`）记录上次成功构建的指纹；
+//   · 指纹相同且产物还在 ⇒ SKIP（跳过编译）；
+//   · 指纹变了 / 首次 / 产物不在 ⇒ FULL，自动清根 + app 级缓存；
+//   · 只有 `--incremental` 显式放行才走增量（门不能信缓存，详见 StalePolicy）。
+//   ★ 裁决与 IO 分离：`StalePolicy::decide()` 是纯函数，判据在 `tests/Unit/Build`
+//     与 `tools/build-stale-check.php`，两处都不读这段 IO 代码。
 //
 // ★ 清单落 `_build/`（drift-build 自己的 scratch，.gitignore 已忽略），不落
 //   `build/`：后者会被 `--full` 清空。
@@ -338,43 +346,54 @@ if (!$abi['ok']) {
 }
 
 $previous = is_file($manifestFile) ? trim((string) file_get_contents($manifestFile)) : '';
+$exe = "{$root}/{$app}.exe";
 
-if ($full) {
-    fwrite(STDOUT, "[drift-build] --full：清空 tpc 缓存（保留 base.yml / app.manifest）\n");
+// 决策只认事实：策略是纯函数（`StalePolicy`），IO 全在本文件。判据在
+// `tests/Unit/Build/StalePolicyTest.php` 验行为、`tools/build-stale-check.php` 验接线。
+$decision = StalePolicy::decide(
+    $previous,
+    $inputsHash,
+    is_file($exe),
+    $full,
+    $incremental,
+);
+
+fwrite(STDOUT, "[drift-build] {$decision}：" . StalePolicy::label($decision) . "\n");
+fwrite(STDOUT, sprintf(
+    "[drift-build] 输入指纹 上次=%s 本次=%s（%s）\n",
+    $previous === '' ? '无' : substr($previous, 0, 12),
+    substr($inputsHash, 0, 12),
+    $previous === $inputsHash ? '相同' : '已变',
+));
+
+// ★ --dry 必须在 wipeCache 之前退出：否则 `--dry --full` 会「只算决策」却真清了缓存。
+if ($dry) {
+    fwrite(STDOUT, "[drift-build] --dry：只算决策，不构建、不清缓存\n");
+    exit(0);
+}
+
+if ($decision === StalePolicy::FULL) {
+    fwrite(STDOUT, "[drift-build] 清空 tpc 缓存（保留 base.yml / app.manifest）\n");
     wipeCache("{$root}/build");
     // ★ app 级缓存不在根 build 里：只清根会让旧 .obj / 生成 .cc 把旧签名常量带进
     //   新 exe（2026-11-10 watermark 实证），而那一刻源码层面已经全绿。
     $appBuild = "{$projectDir}/build";
     if (is_dir($appBuild)) {
-        fwrite(STDOUT, "[drift-build] --full：清空 app 级缓存 {$projectDir}/build\n");
+        fwrite(STDOUT, "[drift-build] 清空 app 级缓存 {$projectDir}/build\n");
         wipeCache($appBuild);
     }
-} elseif ($previous === '') {
-    fwrite(STDOUT, "[drift-build] 首次构建（无清单）⇒ tpc 自行决定增量/全量\n");
-} elseif ($previous !== $inputsHash) {
-    fwrite(STDOUT, "[drift-build] 输入已变 ⇒ 增量会重编受影响文件（约 30–60s）\n");
-} else {
-    fwrite(STDOUT, "[drift-build] 输入未变 ⇒ 增量只重链（最快）\n");
 }
 
-if ($dry) {
-    fwrite(STDOUT, "[drift-build] --dry：只算清单，不构建（输入指纹 " . substr($inputsHash, 0, 12) . "）\n");
-    exit(0);
+if ($decision === StalePolicy::INCREMENTAL) {
+    fwrite(STDOUT, "[drift-build] 走 tpc 增量（未清缓存）—— 产物行为异常就去掉 --incremental 重跑\n");
 }
 
-// ─────────────────────── 短路：输入未变且产物比清单新 ───────────────────────
-// ★ 实测「输入未变」仍会重链约 27.9s。清单只在「构建成功且产物存在」之后写，
-//   所以「指纹相同 + 产物还在」就足以证明它是上次成功构建的那一版；产物被删
-//   自然不短路。`--full` / 首次构建也不短路。
+// ─────────────────────── 短路：输入未变且产物仍在 ───────────────────────
+// ★ 清单只在「构建成功且产物存在」之后写，所以「决策为 SKIP」就足以证明它是
+//   上次成功构建的那一版；产物被删自然不短路。
 // ★ 不能用 mtime 比产物与清单：清单写在产物之后，mtime 永远更晚 ⇒ 短路永不生效。
 // ★ 分发 ini 与 TLS 信任根照做 ⇒ 跳过编译不改变一次调用的语义。
-$exe = "{$root}/{$app}.exe";
-$upToDate = !$full
-    && $previous !== ''
-    && $previous === $inputsHash
-    && is_file($exe);
-
-if ($upToDate) {
+if ($decision === StalePolicy::SKIP) {
     fwrite(STDOUT, sprintf(
         "[drift-build] 输入未变且产物仍在 ⇒ 跳过编译（%s，%.1f MB）\n",
         basename($exe),
@@ -400,7 +419,6 @@ $started = microtime(true);
 
 // ★ 先删旧 exe：否则"tpc 失败 + 上一轮的 exe 还在"会被下面的判据读成成功
 //   （判据是 exit==0 **且** exe 存在，两个条件都必要）。
-$exe = "{$root}/{$app}.exe";
 if (is_file($exe) && !unlink($exe)) {
     fail("删不掉旧产物 {$exe} —— 可能还有上一次的进程没退（Windows 会锁住正在运行的 exe）");
 }
@@ -450,7 +468,6 @@ foreach ($lines as $line) {
     $interesting[] = $line;
 }
 
-$exe = "{$root}/{$app}.exe";
 $success = $exitCode === 0 && is_file($exe);
 
 if (!$success) {

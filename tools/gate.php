@@ -22,8 +22,11 @@ declare(strict_types=1);
  *   abiself   ABI 校验器的变异体自证
  *   dxdiag    DX 退化「接入点 ↔ 判据」对账
  *   dxself    对账器的变异体自证
+ *   stalepolicy 构建 stale 决策接线对账（门不能信缓存）
+ *   staleself 对账器的变异体自证
  *   devshell  开发态壳红线（sources 白名单 / 变量路径 require / 桥接回调）
  *   docref    文档 file:line / § 引用
+ *   apidoc    API 面清单（apidoc）
  *   probe     探针骨架（probe-audit --selftest）
  *   pixels    像素契约（probe_pixels --selftest，依赖本机 python ⇒ 允许"没测到"）
  *   tick      每帧固定税（frame-tax --check，6 条自洽判据）
@@ -133,6 +136,10 @@ $checks = [
     //   与 PHPUnit 那边「行为对不对」不同源，两道都要在 gate 里。
     'dxdiag'  => ['DX 退化判据对账（diagnostic-check）', [PHP_BINARY, $root . '/tools/diagnostic-check.php'], false],
     'dxself'  => ['DX 对账自证（变异体）', [PHP_BINARY, $root . '/tools/diagnostic-check.php', '--selftest'], false],
+    // ★ 构建 stale：`StalePolicy` 改对了不等于 `drift-build` 用了它。这边对账「决策走
+    //   纯函数 / FULL 清两处缓存 / --dry 不碰缓存 / 旧口径无残留」，与单测验决策表不同源。
+    'stalepolicy' => ['构建 stale 决策接线（build-stale-check）', [PHP_BINARY, $root . '/tools/build-stale-check.php'], false],
+    'staleself'   => ['构建 stale 对账自证（变异体）', [PHP_BINARY, $root . '/tools/build-stale-check.php', '--selftest'], false],
     // ★ 日常改 PHP 不再编 AOT ⇒ dev 壳成了主入口，它的红线必须进闸门（无窗口、廉价）。
     //   只靠 project.yml 头注释挡不住「顺手把 src/ 加进 sources」那一下。
     'devshell' => ['开发态壳红线（drift-dev --selftest）', [PHP_BINARY, $root . '/tools/drift-dev.php', '--selftest'], false],

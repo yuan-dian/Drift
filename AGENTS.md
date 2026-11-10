@@ -5,7 +5,7 @@
 
 ## Commands
 - 开发（改 PHP 不重编壳）：`php tools/drift-dev.php <app>`（`--rebuild` 强编壳，`--selftest` 红线自检，`--no-watch` 跑一次）
-- AOT 构建：`php tools/drift-build.php <app>`（`--full` 清增量 stale，增量漏属性 id）
+- AOT 构建：`php tools/drift-build.php <app>`（输入指纹变了 / 首次 / 产物不在 ⇒ **自动全量**，门不能信缓存；`--incremental` 显式放行增量，`--full` 强制全量，`--dry` 只打印决策且不碰缓存）
 - 全量闸门（lint+docref+phpunit+smoke+golden+devshell+探针骨架）：`php tools/gate.php`（`--fast` 跳 slow 项）
 - 真机探针（自动起窗/关窗/退出码 0）：`python tools/probe-window.py <app>` / `--dev` / `--dev-runner`
 - AOT 语义等价（T2 手动）：`php tools/aot-equivalence.php`、`php tools/dual-mode-equivalence.php`
