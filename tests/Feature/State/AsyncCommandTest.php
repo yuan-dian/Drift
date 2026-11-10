@@ -608,7 +608,7 @@ final class AsyncCommandTest extends SmokeTestCase
      * 迟到的结算同样不许标脏。
      *
      * ★ 上一版靠"命令在 `emit()` 里问宿主还在树上吗"兜底；这一版的兜底在
-     *   **`State::dropCommands()`**（`unmount()` 时统一 `dispose()`）—— 更早、也
+     *   **`State::dropDisposers()`**（`unmount()` 时统一全退）—— 更早、也
      *   更彻底：在途任务当场被 `cancel()`，不是"结算到了再丢掉"。
      * ★★ 这一条守的是**永远不红**的故障：卸了载的 State 若还被标脏，`pendingDirty`
      *   再也不归零 ⇒ `settle()` 每帧多扫一遍全树（性能退化，**不报错**，
@@ -647,12 +647,12 @@ final class AsyncCommandTest extends SmokeTestCase
      * ★★ **卸载时框架真的停掉在途任务** —— 页面不写 `dispose()`。
      *
      * 这是本轮（2026-10-31）新增能力的判据：命令改成 `Subject` 之后由
-     * `State::asyncCommand()` 绑定，`StatefulElement::unmount()` 统一 `dropCommands()`
+     * `State::asyncCommand()` 绑定，`StatefulElement::unmount()` 统一 `dropDisposers()`
      * ⇒ "转圈中离开页面 ⇒ worker 白跑满 1.2s（翻十页留十个空转进程）"
      *   **不需要谁记得防**。
      *
      * ★ 为什么必须由框架做：`State::dispose()` 是**可覆写**的，"忘了
-     *   `parent::dispose()`"正是 A4 点名的失败模式 —— 与订阅袋同一个理由
+     *   `parent::dispose()`"正是 A4 点名的失败模式 —— 与清理袋同一个理由
      *   （`Subscription` 的注释：把兜底放在用户侧就是"文档承诺了、机制守不住"）。
      */
     public function testUnmountStopsInFlightWithoutPageDispose(): void

@@ -35,11 +35,13 @@ abstract class State
     private ?StatefulElement $element = null;
     private bool $dirty = false;
 
-    /** @var list<Subscription> 订阅袋 */
-    private array $bag = [];
+    /** @var array<int, \Closure(): void> 卸载时必跑的清理，键 = 自增 id（可替换） */
+    private array $disposers = [];
 
-    /** @var list<AsyncCommand> 本 State 持有的命令，卸载时由 `dropCommands()` 统一停 */
-    private array $commands = [];
+    /** @var array<string, int> 命名订阅槽 → disposer id（同名再挂即替换） */
+    private array $watchSlots = [];
+
+    private int $nextDisposerId = 1;
 
     /** @internal 只有 `initState()` 期间允许 `watch()` */
     private bool $initializing = false;
@@ -184,7 +186,7 @@ abstract class State
      * （内部走 `watch()`，订阅只允许在那里）。
      *
      * 生命周期由框架收，不由页面收：`dispose()` 可覆写，命令在 `unmount()`
-     * 时由 {@see self::dropCommands()} 统一停掉。
+     * 时由 {@see self::dropDisposers()} 统一停掉。
      *
      * "住页面还是住 Store"判据：离开这个页面之后，这个请求还该跑完吗？该 ⇒
      * 住 `Store`（生命周期 = 应用）；不该 ⇒ 住页面（本方法）。选错不会报错。
@@ -203,13 +205,15 @@ abstract class State
             $this->markDirty();
         });
 
-        $this->commands[] = $command;
+        $this->onDispose(static function () use ($command): void {
+            $command->dispose();
+        });
 
         return $command;
     }
 
     /**
-     * 订阅一个 `Subject`，并记进订阅袋。
+     * 订阅一个 `Subject`，并登记进清理袋。
      *
      * @param callable(): void $handler 只在 `initState()` 期间允许
      *
@@ -222,38 +226,95 @@ abstract class State
         }
 
         $subscription = $subject->subscribeFor($this, $handler);
-        $this->bag[] = $subscription;
+        $this->onDispose(static function () use ($subscription): void {
+            $subscription->cancel();
+        });
 
         return $subscription;
     }
 
     /**
-     * 退掉订阅袋里的全部订阅。由 `StatefulElement::unmount()` 调，不依赖用户
-     * 记得在 `dispose()` 里退。
+     * 登记一条卸载时必跑的清理，返回 id（供 {@see self::replaceDisposer()} 替换）。
      *
-     * @internal
+     * ★ 兜底在框架侧 `unmount()`，不依赖用户覆写 `dispose()` 记得 `parent::`。
+     *
+     * @api
      */
-    public function dropSubscriptions(): void
+    public function onDispose(callable $cleanup): int
     {
-        foreach ($this->bag as $subscription) {
-            $subscription->cancel();
-        }
-        $this->bag = [];
+        $id = $this->nextDisposerId++;
+        $this->disposers[$id] = \Closure::fromCallable($cleanup);
+
+        return $id;
     }
 
     /**
-     * 停掉 {@see self::asyncCommand()} 造的命令（**框架侧兜底**）：命令持有在途
-     * 的 `Future`，"页面走了还在跑"会让 worker 空转；`dispose()` 可覆写，兜底
-     * 只能放框架侧，由 `StatefulElement::unmount()` 调。
+     * 替换一条清理：**先跑旧的，再登记新的**（React effect cleanup 的顺序）。
+     * `$cleanup === null` ⇒ 只移除。
      *
-     * @internal 由 `StatefulElement::unmount()` 调
+     * @internal
      */
-    public function dropCommands(): void
+    public function replaceDisposer(int $id, ?callable $cleanup): void
     {
-        foreach ($this->commands as $command) {
-            $command->dispose();
+        if (!\array_key_exists($id, $this->disposers)) {
+            Errors::report('replaceDisposer() 收到未登记的 id：' . $id);
         }
-        $this->commands = [];
+
+        $old = $this->disposers[$id];
+        $old();
+
+        if ($cleanup === null) {
+            unset($this->disposers[$id]);
+
+            return;
+        }
+
+        $this->disposers[$id] = \Closure::fromCallable($cleanup);
+    }
+
+    /**
+     * 命名订阅槽：同名再调 ⇒ 先退旧订阅，再挂新订阅。
+     *
+     * ★ `watch()` 只允许在 `initState()` 调（A4 防 build 期订阅）；update 阶段
+     *   要重绑就走这里，槽名保证「替换」而不是「追加」。
+     *
+     * @internal 框架内 State（如 `SubjectBuilderState`）用
+     */
+    public function watchSlot(string $slot, Subject $subject, callable $handler): Subscription
+    {
+        $subscription = $subject->subscribeFor($this, $handler);
+        $cleanup = static function () use ($subscription): void {
+            $subscription->cancel();
+        };
+
+        if (\array_key_exists($slot, $this->watchSlots)) {
+            $this->replaceDisposer($this->watchSlots[$slot], $cleanup);
+
+            return $subscription;
+        }
+
+        $this->watchSlots[$slot] = $this->onDispose($cleanup);
+
+        return $subscription;
+    }
+
+    /**
+     * 退掉本 State 登记的全部清理。由 `StatefulElement::unmount()` 调，不依赖
+     * 用户记得在 `dispose()` 里退。
+     *
+     * ★ 按登记序（FIFO）跑：先退订阅、再停命令，与旧两袋的回收顺序一致。
+     *
+     * @internal
+     */
+    public function dropDisposers(): void
+    {
+        $pending = $this->disposers;
+        $this->disposers = [];
+        $this->watchSlots = [];
+
+        foreach ($pending as $cleanup) {
+            $cleanup();
+        }
     }
 
     /** @internal `StatefulElement` 挂载时调；把"只准 initState 订阅"收在一处 */
@@ -379,8 +440,8 @@ abstract class State
     /**
      * 被回收：虚拟化滚出视口 / 条件分支不渲染 ⇒ 卸载前调。
      *
-     * 清理对外引用（控制器、订阅、定时器）在这里做。空实现不是占位，
-     * 没有东西要清理就是没有。
+     * ★ 清理外部资源优先用 {@see self::onDispose()}（框架侧兜底，不必记得
+     *   `parent::dispose()`）；本钩子留给"卸载时算点什么"的逻辑。
      */
     public function dispose(): void
     {

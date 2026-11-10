@@ -323,6 +323,119 @@ final class SubjectBuilderTest extends SmokeTestCase
         $element->unmount();
         $this->flushChecks();
     }
+
+    /**
+     * 2026-11-10：父重建换了 `select` 闭包 ⇒ 缓存值必须换语义重算，且后续
+     * notify 的门控也得用新 select（旧实现把闭包 `use` 固化在 initState 里）。
+     */
+    public function testDidUpdateWidgetReselectsAfterSelectChange(): void
+    {
+        $ctx = smokeContext();
+        $store = new FakeStore();
+        $args = [];
+        $builder = static function (mixed ...$a) use (&$args): Widget {
+            $args = $a;
+
+            return new LeafProbe(1.0);
+        };
+
+        $widget = SubjectBuilder::make($store)
+            ->select(static fn (FakeStore $s): int => $s->status())
+            ->builder($builder);
+        $element = $widget->createElement();
+        $element->mount(null, $ctx);
+        check(
+            'SubjectBuilder · 前置：首帧拿到旧 select 的值 0',
+            $args === [0],
+            'args=' . \json_encode($args)
+        );
+
+        // 静默改字段（不 notify）⇒ 新旧 select 输出必然不同，才测得出"重算"
+        $store->silentTouch(7);
+        $next = SubjectBuilder::make($store)
+            ->select(static fn (FakeStore $s): int => $s->status() * 10)
+            ->builder($builder);
+        $element->update($next);
+        check(
+            'SubjectBuilder · 换 select ⇒ build 拿到新语义重算的 70（不是旧缓存 0）',
+            $args === [70],
+            'args=' . \json_encode($args)
+        );
+
+        $store->setStatus(8);
+        check(
+            'SubjectBuilder · 换 select 后 notify 门控也用新语义',
+            $element->state()->needsBuild(),
+            '没标脏 ⇒ 回调仍固化着旧 select'
+        );
+        $element->rebuild();
+        check(
+            'SubjectBuilder · 重建后拿到 8*10=80（不是旧语义的 8）',
+            $args === [80],
+            'args=' . \json_encode($args)
+        );
+
+        $element->unmount();
+        $this->flushChecks();
+    }
+
+    /**
+     * 2026-11-10：父重建换了 `Subject` ⇒ 订阅跟着换绑；旧 source 退订、
+     * 新 source 接上，且 build 立刻拿到新 source 的当前值。
+     */
+    public function testDidUpdateWidgetRebindsAfterSourceChange(): void
+    {
+        $ctx = smokeContext();
+        $first = new FakeStore();
+        $second = new FakeStore();
+        $args = [];
+        $builder = static function (mixed ...$a) use (&$args): Widget {
+            $args = $a;
+
+            return new LeafProbe(1.0);
+        };
+        $select = static fn (FakeStore $s): int => $s->status();
+
+        $widget = SubjectBuilder::make($first)->select($select)->builder($builder);
+        $element = $widget->createElement();
+        $element->mount(null, $ctx);
+        check(
+            'SubjectBuilder · 前置：首帧拿到旧 source 的值 0',
+            $args === [0],
+            'args=' . \json_encode($args)
+        );
+
+        $first->setStatus(1);
+        $element->rebuild();   // 消费脏，保证 update 前 needsBuild=false
+
+        $second->silentTouch(42);
+        $next = SubjectBuilder::make($second)->select($select)->builder($builder);
+        $element->update($next);
+        check(
+            'SubjectBuilder · 换 source ⇒ build 立刻拿到新 source 当前值 42',
+            $args === [42],
+            'args=' . \json_encode($args)
+        );
+
+        // 旧 source 若还挂着，这一下会触发回调去读新 source（静默改成 99）⇒ 标脏
+        $second->silentTouch(99);
+        $first->setStatus(2);
+        check(
+            'SubjectBuilder · 旧 source 已退订（僵尸通知不再标脏）',
+            !$element->state()->needsBuild(),
+            'needsBuild=true ⇒ 旧订阅还在'
+        );
+
+        $second->setStatus(100);
+        check(
+            'SubjectBuilder · 新 source 的通知能到',
+            $element->state()->needsBuild(),
+            '没标脏 ⇒ 订阅没换绑到新 source'
+        );
+
+        $element->unmount();
+        $this->flushChecks();
+    }
 }
 
 /**

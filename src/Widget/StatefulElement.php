@@ -126,9 +126,8 @@ final class StatefulElement extends Element
         parent::unmount();
         $state = $this->state;
         if ($state !== null) {
-            $state->dispose();             // §12.3 回收纪律
-            $state->dropSubscriptions();   // §11.3 RT-1：框架侧兜底全退
-            $state->dropCommands();        // 同上：命令持有的在途任务一并停掉
+            $state->dispose();
+            $state->dropDisposers();   // §11.3 RT-1 / A4：订阅、命令、自定义清理框架侧兜底全退
         }
     }
 }

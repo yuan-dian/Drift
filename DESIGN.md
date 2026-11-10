@@ -1117,7 +1117,7 @@ sources:
 
 | GUI 仓现状 | Drift 设计 |
 |-----------|-----------|
-| RT-1 订阅生命周期无守卫（忘了退订 ⇒ 泄漏 + 僵尸更新，**静默**） | `State` 持**订阅袋**：`watch()` 记账；`dispose()` 基类统一全退；`mounted` 守卫；**build 期订阅 ⇒ 立刻上报** |
+| RT-1 订阅生命周期无守卫（忘了退订 ⇒ 泄漏 + 僵尸更新，**静默**） | `State` 持**清理袋**：`watch()` / `onDispose()` 记账；`StatefulElement::unmount()` 统一 `dropDisposers()` 全退；`mounted` 守卫；**build 期订阅 ⇒ 立刻上报** |
 | RT-3 一个订阅者抛异常 ⇒ 其余全收不到（GUI 仓全仓 0 个 try/catch） | `notifyChanged()` 每订阅者异常隔离 + 写 `Errors` 出口 |
 | RT-4 相等门控（设同值也广播） | `Cell` / `setIfChanged` 进原语；`===` 严格比较 |
 | RT-2 盒属性同步（两份手写字段赋值 ⇒ 静默分叉） | Widget 字段 → 盒字段**单一同步路径** + 字段对齐 lint |
@@ -1162,7 +1162,7 @@ final class HoverCardState extends State
 #### 11.3.2 两条纪律推论
 
 1. **订阅控件不得跨 `build()` 缓存复用。** `SubjectBuilder` 也是 Widget，受 §15 的 Seal-on-Mount 约束。若开发者把它建好存进字段、下帧再塞回树里，**它捕获的闭包是旧快照** ⇒ 看着是"订阅了"，实际订阅的是上一帧的 `$store`。⇒ **纪律：订阅控件必须在 `build()` 内构造**，与 §21 A4（build 期订阅）配成一对。
-2. **订阅粒度不得细到"每列表项一个订阅"。** 1000 行的列表若每行 `State` 各自 `watch($store)`，就有 1000 个订阅者，任一 `notify` 要跑 1000 次回调（还都要过 §11.3 RT-3 的 try/catch）。⇒ **纪律：订阅落在"列表容器"那一层，行内只吃值**。这也是 §12.3 虚拟化回收的前提 —— 项 `State` 被 dispose 时若还挂着订阅，回收成本会随视口滚动反复付。（订阅袋的 `dispose` 全退是**兜底**，不是**方案**。）
+2. **订阅粒度不得细到"每列表项一个订阅"。** 1000 行的列表若每行 `State` 各自 `watch($store)`，就有 1000 个订阅者，任一 `notify` 要跑 1000 次回调（还都要过 §11.3 RT-3 的 try/catch）。⇒ **纪律：订阅落在"列表容器"那一层，行内只吃值**。这也是 §12.3 虚拟化回收的前提 —— 项 `State` 被 dispose 时若还挂着订阅，回收成本会随视口滚动反复付。（清理袋的 `dropDisposers()` 全退是**兜底**，不是**方案**。）
 
 #### 11.3.3 订阅粒度：`SubjectBuilder::select()`
 
@@ -1231,7 +1231,7 @@ $this->setState(fn() => $this->text = (string) $v);
 2. **首次取值不过门控**：`initState()` 里直接调一次 `select` 把旧值槽填上 —— 否则第一帧的子树拿不到值。
 3. **门控比的是两次 `select` 输出**（不是 `Store` 新旧值）：相等 ⇒ `markDirty()` 不调、`builder` 不被调用。
 
-★ **与 §A.2.11 `StatusBar` 的分工**：`SubjectBuilder` 是**框架原语**（切片 + 门控 + 订阅袋 + dispose 全退都是现成的）；`StatusBar` 是**手写同等机制**的应用私有控件 —— 只在“订阅之外还要做点别的”时才自己写。★ 反过来也成立：需要订阅时**先问能不能用 `SubjectBuilder`**，别默认手写（§20 纪律 4：契约能力必须在示例里出现过）。
+★ **与 §A.2.11 `StatusBar` 的分工**：`SubjectBuilder` 是**框架原语**（切片 + 门控 + 清理袋 + `onDispose()` 全退都是现成的）；`StatusBar` 是**手写同等机制**的应用私有控件 —— 只在“订阅之外还要做点别的”时才自己写。★ 反过来也成立：需要订阅时**先问能不能用 `SubjectBuilder`**，别默认手写（§20 纪律 4：契约能力必须在示例里出现过）。
 
 ★ **类型系统强制不了这件事**（**2026-10-14 实测**，见 §23.2 O-05 复核发现 / `probes/RESULTS.md §7`）：PHP 的 `callable` 是**不透明类型**（语言层面无法表达"1 元闭包"），用户态泛型也不可用 ⇒ `SelectedBuilder<T>` 的 `<T>` 只能是文档；`tpc -m bin --dry` 对 docblock 里的 `callable(T): string` 与**故意元数不符**的实参**零诊断**。⇒ 想要机器守卫只能用 **lint**（§16.6.3 的"闭包签名"本就在"编译期可见"清单里）。
 
@@ -1639,7 +1639,7 @@ final class UsersRoot extends StatelessWidget
 ```php
 final class PageHost extends StatefulWidget implements SubscribingWidget   // ★ 接口标记
 {
-    // ... 内部 State::initState 里 watch(select 出来的切片)，dispose 里全退（§11.3 订阅袋）
+    // ... 内部 State::initState 里 watch(select 出来的切片)，onDispose() 登记（§11.3 清理袋）
     //     notify ⇒ setState ⇒ 只重建 content 槽；旧页走 Offstage 而非卸载
 }
 ```
@@ -3432,7 +3432,7 @@ IO / 任务 / settle / layout / paint，**没有任何一处问过"有没有东�
 |------|----|------|
 | **Flutter** | 三树 + 不可变 Widget + `(type,key)` diff + relayout boundary + GestureArena | `BuildContext.of()` 层层嵌套 ⇒ provider soup |
 | **SwiftUI** | modifier 链（**§15 的直接来源**）· 环境值（= ThemeScope）· 语义值（`Font.title` 式角色） | 自动失效追踪（失效粒度过粗）；属性包装器 |
-| **Qt** | 信号槽解耦 · `sizeHint()+setGeometry()` 两段式 · **QObject 销毁自动断连**（= State 订阅袋） | moc 样板 · QML 运行期绑定引擎 |
+| **Qt** | 信号槽解耦 · `sizeHint()+setGeometry()` 两段式 · **QObject 销毁自动断连**（= State 清理袋） | moc 样板 · QML 运行期绑定引擎 |
 | **React** | 单向数据流 · "视图是状态的纯函数" · keyed diff 心智 | 运行期 diff（编译期已知道何必 diff）· 陈旧闭包 |
 | **Compose** | slot API（组合优于继承）· 单一状态源 · modifier 链 | 重组范围靠运行期推断 |
 | **WPF** | MVVM 三层职责分离 · RoutedCommand（可路由 + 可置灰 + 可审计） | 绑定表达式 + 路径解析（需属性级 diff ⇒ 样板爆炸） |
@@ -3500,7 +3500,7 @@ IO / 任务 / settle / layout / paint，**没有任何一处问过"有没有东�
 | A1 | 声明了却从未被读的 API | 静默失效，比不提供更糟 | 死字段 lint（R11 / W3） | lint |
 | A2 | 拿合法取值当哨兵（0 当无界 / 未知） | 安静地错 | **哨兵三档定则**（§15.2 纪律 4）：enum case / 负值 / bool 三态；无界用 `INF` | lint + review |
 | A3 | 构建期魔法阈值（宽度 < N 折叠） | 改个标签就腐烂 | 布局期行为（Wrap/Scroll）；阈值问**本容器约束宽** | review |
-| A4 | build 期订阅 / 忘了退订 | 订阅暴涨 / 僵尸更新 | 只 initState 订；State 订阅袋 + dispose 全退 | 运行期断言 + lint |
+| A4 | build 期订阅 / 忘了退订 | 订阅暴涨 / 僵尸更新 | 只 initState 订；State 清理袋 + `dropDisposers()` 全退 | 运行期断言 + lint |
 | A5 | 设同值也广播 | 白重建 | `===` 门控（`setIfChanged` / `select` 返回值） | 原语 + lint |
 | A6 | 裸 `catch(...){}` 吞回调失败 | 缺陷永久静默 | 写进 `Errors` 出口 | review + `Errors` 出口 |
 | A7 | 状态语义只写进某个 else 分支 | 其余取值静默失效（主按钮禁用仍满色） | 状态语义覆盖全部取值；**封闭域禁 `default`** | `UnhandledMatchError` |

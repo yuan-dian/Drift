@@ -10,8 +10,8 @@ namespace Drift\State;
  * ① `Subscription::cancel()` —— 退这一条；
  * ② `Subject::unsubscribeAllOf($owner)` —— 退这个属主的全部。
  *
- * ★ `State` 走的是第三条、也是**框架侧**的那条：`State::watch()` 记账进订阅袋，
- *   `StatefulElement::unmount()` 统一 `dropSubscriptions()`。之所以不让用户
+ * ★ `State` 走的是第三条、也是**框架侧**的那条：`State::watch()` 登记进清理袋，
+ *   `StatefulElement::unmount()` 统一 `dropDisposers()`。之所以不让用户
  *   "在 `dispose()` 里自己退"，是因为 `dispose()` 是**可覆写**的 —— 忘了
  *   `parent::dispose()` 恰恰是 A4 列的失败模式，把兜底放在用户侧就是
  *   "文档承诺了、机制守不住"（A16）。

@@ -19,11 +19,12 @@ use Drift\Widget\Widget;
  * ```
  *
  * ★ **相等门控比的是两次 `select` 输出**，不是 `Store` 的新旧值 —— 框架不存
- *   `Subject` 快照，旧值缓存在订阅者自己身上。三条推论决定用法：
+ *   `Subject` 快照，旧值缓存在订阅者自己身上。四条推论决定用法：
  *   ① `select` 闭包**每帧都跑**，所以必须廉价（省的是子树重建，不省计算）；
  *   ② 返回值该是"代表变化的最小值"（摘要）。每次新建的值对象实现
  *      {@see Equatable} 即自动按值比；否则配 {@see self::equals()}，默认 `===`；
- *   ③ 闭包不许有副作用（它每帧都跑，且被 lint 用来推导依赖）。
+ *   ③ 闭包不许有副作用（它每帧都跑，且被 lint 用来推导依赖）；
+ *   ④ 父重建换 `select` / `equals` / `source` 会自动跟随：缓存值重算、必要时重绑订阅。
  *
  * @api
  */
@@ -148,13 +149,15 @@ final class SubjectBuilder extends StatefulWidget implements SubscribingWidget
 
 /**
  * @internal `SubjectBuilder` 的私有 State —— 和控件同文件，不进公共面。
- * 订阅只在 `initState()` 里做一次；`build()` 体内**不订阅**
- * —— 否则每重建一次就多订一份，订阅数随重建次数增长。
+ * 订阅绑在命名槽上：`initState()` 挂一次，换 source 时 `didUpdateWidget()`
+ * 重绑；`build()` 体内**不订阅**（否则订阅数随重建次数增长）。
  */
 final class SubjectBuilderState extends State
 {
-    private bool $hasSelected = false;
     private mixed $selected = null;
+
+    /** 订阅实际绑在哪一个 Subject 上；换描述时据此判断要不要重绑 */
+    private ?Subject $boundSource = null;
 
     public function initState(): void
     {
@@ -165,36 +168,79 @@ final class SubjectBuilderState extends State
             Errors::report('SubjectBuilder 没有 source：订阅一个"没东西"没有意义');
         }
 
-        $select = $widget->selectFn();
-        $equals = $widget->equalsFn();
+        $this->boundSource = $source;
+        $this->reselect($widget);
+        $this->bindSource($source);
+    }
 
-        if ($select !== null) {
-            // 首次直接取，不进门控 —— 否则第一帧的子树拿不到值
-            $this->selected = $select($source);
+    public function didUpdateWidget(Widget $widget): void
+    {
+        parent::didUpdateWidget($widget);
+
+        /** @var SubjectBuilder $newWidget */
+        $newWidget = $widget;
+        $source = $newWidget->source();
+        if ($source === null) {
+            Errors::report('SubjectBuilder 没有 source：订阅一个"没东西"没有意义');
         }
-        $this->hasSelected = true;
 
-        $this->watch($source, function () use ($source, $select, $equals): void {
-            if ($select === null) {
-                // 没给 select ⇒ 整个 Subject 都是依赖，任何 notify 都重建
-                $this->markDirty();
+        // ★ 只在 source 真换了才重绑：每次 update 都换会让订阅 id 漂移。
+        if ($source !== $this->boundSource) {
+            $this->boundSource = $source;
+            $this->bindSource($source);
+        }
 
-                return;
-            }
+        // ★ select 换了 ⇒ 缓存值必须换语义重算；紧接着 Element::update() 会
+        //   无条件 rebuild()，build() 才能把新值交给新 builder()。
+        $this->reselect($newWidget);
+    }
 
-            $value = $select($source);
-            // 判等策略由 `equals()` 给（默认走 `sameValue()`：值对象按值，其余按身份）。
-            // 旧值缓存在本 State 上，框架不留 `Subject` 快照。
-            $same = $equals !== null
-                ? (bool) $equals($value, $this->selected)
-                : self::sameValue($value, $this->selected);
-            if ($same) {
-                return; // ★ 两次 select 输出相等 ⇒ 不重建（§11.3.3 门控）
-            }
-
-            $this->markDirty();
-            $this->selected = $value;
+    /** 绑/重绑订阅：同名槽 ⇒ 先退旧再挂新，不随 update 累加 */
+    private function bindSource(Subject $source): void
+    {
+        $this->watchSlot('source', $source, function (): void {
+            $this->onSourceChanged();
         });
+    }
+
+    /** 通知回调：每帧从当前描述现读 select/equals，不用 initState 固化的闭包 */
+    private function onSourceChanged(): void
+    {
+        /** @var SubjectBuilder $widget */
+        $widget = $this->widget();
+        $select = $widget->selectFn();
+
+        if ($select === null) {
+            $this->markDirty();
+
+            return;
+        }
+
+        $value = $select($widget->source());
+        // 判等策略由 `equals()` 给（默认走 `sameValue()`：值对象按值，其余按身份）。
+        $equals = $widget->equalsFn();
+        $same = $equals !== null
+            ? (bool) $equals($value, $this->selected)
+            : self::sameValue($value, $this->selected);
+        if ($same) {
+            return; // ★ 两次 select 输出相等 ⇒ 不重建（§11.3.3 门控）
+        }
+
+        $this->markDirty();
+        $this->selected = $value;
+    }
+
+    /** 用当前描述的 select 重算缓存值（首帧与换描述时各一次） */
+    private function reselect(SubjectBuilder $widget): void
+    {
+        $select = $widget->selectFn();
+        if ($select === null) {
+            $this->selected = null;
+
+            return;
+        }
+
+        $this->selected = $select($widget->source());
     }
 
     public function build(BuildContext $ctx): Widget

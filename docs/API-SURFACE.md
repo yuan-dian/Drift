@@ -26,8 +26,8 @@
 | State | 18 | 8 |
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
-| Widget | 187 | 225 |
-| **合计** | **504** | **410** |
+| Widget | 188 | 226 |
+| **合计** | **505** | **411** |
 
 覆盖 397 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
 
@@ -700,7 +700,7 @@
 
 ## Widget 层
 
-### @api（应用可读面） · 187
+### @api（应用可读面） · 188
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -816,6 +816,7 @@
 | `State::didChangeFocus()` | method | src/Widget/State.php |
 | `State::asyncCommand()` | method | src/Widget/State.php |
 | `State::watch()` | method | src/Widget/State.php |
+| `State::onDispose()` | method | src/Widget/State.php |
 | `State::handleCommand()` | method | src/Widget/State.php |
 | `StatefulElement` | class | src/Widget/StatefulElement.php |
 | `StatefulWidget` | class | src/Widget/StatefulWidget.php |
@@ -892,7 +893,7 @@
 | `Wrap` | class | src/Widget/Wrap.php |
 | `YearMonth` | class | src/Widget/YearMonth.php |
 
-### @internal（框架内部） · 225
+### @internal（框架内部） · 226
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
@@ -1029,8 +1030,9 @@
 | `State::$lastTickedFrame` | property | src/Widget/State.php |
 | `State::attach()` | method | src/Widget/State.php |
 | `State::element()` | method | src/Widget/State.php |
-| `State::dropSubscriptions()` | method | src/Widget/State.php |
-| `State::dropCommands()` | method | src/Widget/State.php |
+| `State::replaceDisposer()` | method | src/Widget/State.php |
+| `State::watchSlot()` | method | src/Widget/State.php |
+| `State::dropDisposers()` | method | src/Widget/State.php |
 | `State::callInit()` | method | src/Widget/State.php |
 | `State::consumeDirty()` | method | src/Widget/State.php |
 | `State::noteRebuilt()` | method | src/Widget/State.php |
