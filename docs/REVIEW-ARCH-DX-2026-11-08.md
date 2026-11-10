@@ -136,6 +136,14 @@
 > ★ **2026-11-10 后订正**：§5 第 5 项三件套已全部落地 —— `Core` 入层表 + 分层 lint
 > fail-closed（第一棒）、`SubjectBuilderState::didUpdateWidget()` 与 `State` 统一
 > `disposers` 清理袋（第二棒）。§2.2 / §2.3 描述的是 2026-11-08 基线，保留评审快照。
+>
+> ★ **2026-11-10 后订正（续）**：§5 第 4 项「静默 → `DIAGNOSTIC` 可观测」已落地第一批
+> —— `Drift\Diagnostics` 统一 `[DX]` 前缀 + 按 key 只报一次，接入 `select/unstable`
+> 与 `progress/derived-chain` 两个高频点；`gate` 增 `dxdiag` / `dxself` 对账「每个
+> 接入点都有判据」。§1.2 的另两类（③ `select` 返回类型绕过守卫、④ 焦点/订阅无宿主）
+> **未接**，理由见 `DESIGN.md` §16.2.1 的诚实边界：③ 需在 AOT 无反射下先把两份判等
+> 收敛成同一份，④ 在纯单测 `mount()` 下无宿主是正常形态，加诊断会把 78 处「零诊断」
+> 断言一次搞红。§1.2 描述的是 2026-11-08 基线，保留评审快照。
 
 ## 6. 诚实边界
 

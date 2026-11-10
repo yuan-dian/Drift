@@ -2264,6 +2264,7 @@ abstract class BoxWidget extends Widget
 | **派生值忘了清缓存**（静默旧值） | 无 | **lint `stale-derived`** |
 | **业务引用 `@internal`** | 无（平铺 namespace 无从判定） | **lint `internal-leak`**（error + 可显式豁免） |
 | **`sources` 与 `composer autoload` 不一致** | 无 | **lint `scan-autoload-drift`**（SDK 模型独有） |
+| **DX 类静默退化**（`select` 每次 new 等价对象 / 进度挂在派生 Future 上） | 无 —— 只表现为「页面一直重建」「进度条不动」 | **`Diagnostics` 统一 `[DX]` 诊断（按 key 只报一次）+ gate `dxdiag` 对账**（§16.2.1） |
 
 ### 16.2 工具集（全部 PHP 单语言、单一入口）
 
@@ -2279,6 +2280,37 @@ abstract class BoxWidget extends Widget
 | **`drift-doctor`** | 环境自检：`PHPRC` 指向的 ini / `extension_dir` 是否绝对路径 / `mbstring` 可加载 / Skia include+lib 位置 / `icudtl.dat` 可定位 / `cl.exe` 在 PATH / `c++20` 支持 / 系统字体族可枚举。**输出"哪一项不满足 + 症状会是什么"** | §16.5 的六个陷阱**全都是"环境配置错 ⇒ 报错指向别处"**（缺 `mbstring` 报 `Failed to startup module`、CRT 不匹配报 `LNK2038`、缺 `icudtl.dat` 直接 abort、字体初始化失败报 `0xC0000005`）⇒ 值得一个自检入口。**★ 2026-10-14 裁决**（原 §23 O-10） |
 | **`drift-codegen`** | 把 `src/` + 各 `apps/<app>/src` 交给 **tpc 翻译**一遍（`--dry`，只生成 C++，不编译）⇒ `php -l` 与 lint 都放过的 AOT 专属缺陷在这一层现形 | **★ 2026-10-15 裁决（原 §23 O-14 方案 A）**：T1 档常驻门（实测数秒）。① **必须用源码树 `bin/tpc.php`** —— 修复只在源码树，发行版 `tpc.exe` 不含（拿它跑只会得到已修好的假警报）；② `--dry` **也仍校验工具链** ⇒ 用 `cmd.exe` 垫的假 `cl.exe`/`link.exe`（`--compiler` 直指它，比改 `PATH` 干净）；③ `PHPRC` 指向**私有 ini 副本**（`extension_dir` 改成绝对路径 —— 发行版 ini 里是相对 `./ext/`，跟着 cwd 漂）；④ 每次**先删 `build/`** 再跑 —— 留缓存的话第二遍全是 `[cached]`，"每个文件都翻译过"这条断言就成了空话，**门不能信缓存**；⑤ 七条断言：退出码 / `Dry run completed` / 无 `skip:`·`unsupported syntax` / `convert:` 集合 ↔ 自枚举的源文件集合（双向）/ `prepare completed` 计数相符 / `backend` 行里是我们传的编译器 / 产物清单行数相符。**退出码 0=通过 · 1=未通过 · 2=门没跑成**（"没跑"与"通过"绝不能同码，G2） |
 | **`drift-build`** | **真机构建**：调 `cl.exe` / `link.exe` 出一个能双击运行的 exe（`php tools/drift-build.php [应用名]`，默认 `hello`） | **★ 2026-10-15 新增（P0-3）**：把"**Windows 上跑 tpc 的四个坑**"固化成工具 —— ① `PHPRC` 指向**私有 ini 副本**（`tpc.exe` **不加载**同目录的 `php.ini`，而 `php.exe` 会 ⇒ 缺 `mbstring` 直接 Fatal）；② 私有 ini 的 `extension_dir` 改**绝对路径**（发行版写的是相对 `./ext/`，跟着 **cwd** 漂）；③ `PHPX_HOME`（不设 ⇒ `phpx directory not found`）；④ `INCLUDE`/`LIB`/`PATH` 三件套（`vcvars64.bat` 干的事，而 bash 里 `call` 不了它 ⇒ 直接按 MSVC/SDK 目录拼）。**判据 = 退出码 0 且 exe 存在** ⇒ 所以**构建前先删旧 exe**（否则"tpc 失败 + 上一轮产物还在"会被读成成功）。**与 `drift-codegen` 的分工**：那个 `--dry` 只到翻译层、用假 `cl`、秒级；这个**真编译**、分钟级 ⇒ **不进内环**（§16.3），只在"要出那个 exe"或"验证 AOT 专属问题"时跑。★ 它同时是 §19 M1 出口判据的**执行入口** |
+| **`diagnostic-check`** | 扫 `src/` 里所有 `Diagnostics::degraded()` 的 key，要求每个都在 `tests/` 里被 `[DX] <key>` 断言过 | 与 PHPUnit 判据**不同源**：那边验「行为对不对」，这边验「有没有判据」；`--selftest` 用合成输入自证对账器本身 |
+
+### 16.2.1 DX 静默退化可观测（2026-11-10）
+
+`Errors` 是**判决器**：Fatal / Recoverable / Diagnostic 三级都在表达「出了什么事」。
+但有一类问题不属于任何一级 —— **没报错，能力却悄悄没了**：`select` 每次返回新的
+等价对象 ⇒ `===` 恒不相等 ⇒ 子树每帧重建；`onProgress()` 挂在 `then()` 派生的
+Future 上 ⇒ 进度只喂根任务 ⇒ 进度条永远不动。共同点是**判据全绿、用户查一天**。
+
+`Drift\Diagnostics`（顶层设施，与 `Errors` 并列、`@internal`）是这类问题的唯一出口：
+
+- 统一前缀 `[DX] ` ⇒ 同一 ring 里能把「正常数据降级」与「纪律退化」分开过滤；
+- `degraded(key, message)` 按 key **只报一次** ⇒ 一帧内重复触发不会刷屏淹没
+  `Errors::$ring`（同 `LayoutTolerance::clipped()` / Chromium `LOG_ONCE`）；
+- 走 `Errors::DIAGNOSTIC` ⇒ 不中止、进 `recentDiagnostics()`、随中止一起落盘；
+- `reset()` / `reported()` 给测试与 devtools 查询出口，**不动 `recentDiagnostics()`**
+  （`12` §4.6：78 处断言依赖它只读 `Errors::$ring`）。
+
+首批两个接入点：`SubjectBuilderState` 连续 8 次「同值不同身份」⇒ `select/unstable`；
+`Future::onProgress()` 挂在派生链 ⇒ `progress/derived-chain`。判据只针对**真退化**
+收窄：数据真在变（标量换值）、显式 `Equatable`、数组键序变化都不报 —— 诊断一
+误报，很快就没人看了。门禁两道：PHPUnit 判据验行为，`tools/diagnostic-check.php`
+（gate `dxdiag` / `dxself`）对账「每个接入点都有判据」—— 加检测点忘补判据会当场红。
+
+**诚实边界**：REVIEW §1.2 点名的另两类本棒不接。③ `select` 返回类型绕过守卫需要
+读闭包声明返回类型，AOT 无反射；且 `AsyncValue` 一类 `IDENTITY_STABLE` 稳定态若按
+「对象且无 Equatable」判会误报 ⇒ 等 §1.3 把 `sameValue()` 与
+`SelectPurity::isStableValue()` 收敛成同一份判定。④ 焦点/订阅无宿主在纯单测
+`mount()` 下是正常形态，加诊断会把 78 处「零诊断」断言一次搞红 ⇒ 等 §2.1
+`Application` 边界形式化后再区分。进度 sink 沿派生链**继承**（§2.5）属契约改造，
+本棒先让它「有名字」，修法另起一棒。
 
 ### 16.3 CI 门禁顺序与开发内环
 

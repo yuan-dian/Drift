@@ -15,6 +15,7 @@
 | Async | 24 | 4 |
 | Commands | 7 | 0 |
 | Core | 2 | 38 |
+| Diagnostics.php | 0 | 2 |
 | Errors.php | 2 | 3 |
 | Geometry | 9 | 0 |
 | Input | 21 | 5 |
@@ -27,9 +28,9 @@
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
 | Widget | 188 | 226 |
-| **合计** | **505** | **411** |
+| **合计** | **505** | **413** |
 
-覆盖 397 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
+覆盖 398 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
 
 ## App 层
 
@@ -287,6 +288,15 @@
 | `Pipeline::noteConstraintDrift()` | method | src/Core/Pipeline.php |
 | `PipelineAccess` | trait | src/Core/PipelineAccess.php |
 | `PipelineAccess::pipeline()` | method | src/Core/PipelineAccess.php |
+
+## Diagnostics.php 层
+
+### @internal（框架内部） · 2
+
+| 符号 | 种类 | 文件 |
+|---|---|---|
+| `Diagnostics` | class | src/Diagnostics.php |
+| `Diagnostics::reset()` | method | src/Diagnostics.php |
 
 ## Errors.php 层
 

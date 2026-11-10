@@ -3,8 +3,11 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Unit\Async;
 
+use Drift\Async\AsyncScope;
 use Drift\Async\Future;
 use Drift\Dev\Tests\Support\SmokeTestCase;
+use Drift\Diagnostics;
+use Drift\Errors;
 
 /**
  * `Future` —— 异步结果的唯一形状（N3）。
@@ -520,5 +523,89 @@ final class FutureTest extends SmokeTestCase
         });
 
         check('Future::allSettled · 空数组 ⇒ 立刻成功且结果为空', $got === [], \var_export($got, true));
+    }
+
+    /**
+     * 2026-11-10：进度挂在派生链下游，过去只表现为"进度条不动"。
+     *
+     * ★ 判据只读 `Errors::recentDiagnostics()`，与实现不同源。
+     */
+    public function testProgressOnDerivedFutureIsReported(): void
+    {
+        Diagnostics::reset();
+        $root = Future::pending();
+        $derived = $root->then(static fn(mixed $v): mixed => $v);
+
+        $before = \count(Errors::recentDiagnostics());
+        $seen = [];
+        $derived->onProgress(static function (float $p) use (&$seen): void {
+            $seen[] = $p;
+        });
+        $root->reportProgress(0.4);
+
+        $ring = \array_slice(Errors::recentDiagnostics(), $before);
+        check(
+            'Future · 派生链上挂 onProgress ⇒ 留 [DX] progress/derived-chain',
+            \count($ring) === 1 && \str_contains($ring[0], '[DX] progress/derived-chain'),
+            'ring=' . \json_encode($ring, \JSON_UNESCAPED_UNICODE)
+        );
+        check(
+            'Future · 诊断说清"进度只喂根任务"与可操作改法',
+            \str_contains($ring[0] ?? '', '根任务') && \str_contains($ring[0] ?? '', 'AsyncScope'),
+            'ring=' . \json_encode($ring, \JSON_UNESCAPED_UNICODE)
+        );
+        check(
+            'Future · 诊断不改变既有契约（派生 sink 仍收不到）',
+            $seen === [],
+            'seen=' . \json_encode($seen)
+        );
+
+        $derived->onProgress(static function (float $p): void {
+        });
+        check(
+            'Future · 同一退化按 key 去重（不刷 ring）',
+            \count(Errors::recentDiagnostics()) === $before + 1
+        );
+
+        $this->flushChecks();
+    }
+
+    /** 正对照：根任务 / `await()` 正常路径 / 组合器聚合体都不误报。 */
+    public function testProgressOnRootAndAwaitAreNotReported(): void
+    {
+        Diagnostics::reset();
+        $before = \count(Errors::recentDiagnostics());
+
+        $seen = [];
+        $root = Future::pending();
+        $root->onProgress(static function (float $p) use (&$seen): void {
+            $seen[] = $p;
+        });
+        $root->reportProgress(0.4);
+        check('Future · 根任务挂进度能收到', $seen === [0.4], \json_encode($seen));
+
+        $box = ['f' => null];
+        $seen2 = [];
+        AsyncScope::task(function (AsyncScope $co) use (&$box, &$seen2): void {
+            $f = Future::pending();
+            $box['f'] = $f;
+            $co->await($f, static function (float $p) use (&$seen2): void {
+                $seen2[] = $p;
+            });
+        });
+        $box['f']->reportProgress(0.7);
+        $box['f']->resolve('ok');
+        check('Future · await() 传根任务 ⇒ 进度照常到达', $seen2 === [0.7], \json_encode($seen2));
+
+        Future::all([Future::resolved(1)])->onProgress(static function (float $p): void {
+        });
+
+        check(
+            'Future · 根 / await / 聚合体三条正常路径都不报 DX 退化',
+            \count(Errors::recentDiagnostics()) === $before,
+            'diag=' . \implode('|', \array_slice(Errors::recentDiagnostics(), $before))
+        );
+
+        $this->flushChecks();
     }
 }

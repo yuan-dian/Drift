@@ -221,7 +221,7 @@ AccessibilityNodeInfo / Linux AT-SPI）。这也解释了为什么「跨平台�
 | 类别 | 具体项 | 判据 |
 |---|---|---|
 | 结构 | `Core` 未入层表（2026-11-10 已修）；`Application` 上帝类；`didUpdateWidget()` 缺失（父重建换 `select` 闭包是静默错配）；订阅/任务生命周期兜底不对称（后两项 2026-11-10 已修：`SubjectBuilderState` 补 `didUpdateWidget()`，`State` 两袋收成统一 `disposers` 清理袋） | `docs/REVIEW-ARCH-DX-2026-11-08.md` §1.1 / §2.1–2.3 |
-| 可诊断 | 静默失败未进 `Errors`；错误到 UI 一律压成 string（分不清 404/鉴权/超时）；进度是 Future 旁路 | 同上 §1.2 / §2.4–2.5 |
+| 可诊断 | 静默失败未进 `Errors`（2026-11-10 部分已修：DX 类退化走 `Drift\Diagnostics` 的 `[DX]` 诊断 + gate `dxdiag` 对账，首批 2 个接入点）；错误到 UI 一律压成 string（分不清 404/鉴权/超时）；进度是 Future 旁路 | 同上 §1.2 / §2.4–2.5 |
 | API | 无 `Future::timeout`；`object` 槽位模式复制 4 处未抽象；`BuildContext` 扩展点锁死 | 同上 §2.6 / §3 |
 | DX | 无统一 CLI / 脚手架；无 DevTools（组件树检查器）；热更状态全丢 | 同上 §3 / §4 |
 | 国际化 | 无 i18n | 若目标用户非中文母语，**这项会升级为阻断** |

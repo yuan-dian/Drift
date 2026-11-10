@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\State;
 
+use Drift\Diagnostics;
 use Drift\Errors;
 use Drift\Widget\BuildContext;
 use Drift\Widget\State;
@@ -159,6 +160,11 @@ final class SubjectBuilderState extends State
     /** 订阅实际绑在哪一个 Subject 上；换描述时据此判断要不要重绑 */
     private ?Subject $boundSource = null;
 
+    /** 连续「同值不同身份」计数；一次可能是偶然，连续到阈值才说明每帧重建 */
+    private const JITTER_ALERT = 8;
+
+    private int $jitterStreak = 0;
+
     public function initState(): void
     {
         /** @var SubjectBuilder $widget */
@@ -193,6 +199,7 @@ final class SubjectBuilderState extends State
         // ★ select 换了 ⇒ 缓存值必须换语义重算；紧接着 Element::update() 会
         //   无条件 rebuild()，build() 才能把新值交给新 builder()。
         $this->reselect($newWidget);
+        $this->jitterStreak = 0;
     }
 
     /** 绑/重绑订阅：同名槽 ⇒ 先退旧再挂新，不随 update 累加 */
@@ -211,6 +218,7 @@ final class SubjectBuilderState extends State
         $select = $widget->selectFn();
 
         if ($select === null) {
+            $this->jitterStreak = 0;
             $this->markDirty();
 
             return;
@@ -223,11 +231,58 @@ final class SubjectBuilderState extends State
             ? (bool) $equals($value, $this->selected)
             : self::sameValue($value, $this->selected);
         if ($same) {
+            $this->jitterStreak = 0;
+
             return; // ★ 两次 select 输出相等 ⇒ 不重建（§11.3.3 门控）
+        }
+
+        // ★ 只把「同值不同身份」算抖动：select 返回 int 且数据真在变时 `===`
+        //   判不等是正确行为；两个同类对象 `==` 相等却 `===` 不等，才是数据没变
+        //   却每帧重建（每次 new 的等价值对象）。显式给了 equals() 也不判 ——
+        //   那时比较语义归调用方，判不等是有意的。
+        if ($equals === null && self::sameContent($value, $this->selected)) {
+            $this->jitterStreak++;
+            if ($this->jitterStreak === self::JITTER_ALERT) {
+                Diagnostics::degraded(
+                    'select/unstable',
+                    \sprintf(
+                        '连续 %d 次 notify 都是同值不同身份（%s）—— select 每次 new 等价对象，'
+                        . '`===` 门控恒不相等 ⇒ 子树每帧重建；实现 Equatable、配 equals()，或复用稳定实例',
+                        self::JITTER_ALERT,
+                        self::valueKind($value),
+                    )
+                );
+            }
+        } else {
+            $this->jitterStreak = 0;
         }
 
         $this->markDirty();
         $this->selected = $value;
+    }
+
+    /**
+     * 「同值不同身份」：两个**同类、无值相等契约**的对象 `==` 相等但 `===` 不等。
+     *
+     * ★ 收窄到对象：数组 `==` 相等而 `===` 不等可能只是键序变了；标量 `===`
+     *   不等就是真变了；跨类型（null → false）也是真变了。放宽会把正常数据
+     *   更新报成事故 —— 诊断一旦误报，很快就没人看了。
+     */
+    private static function sameContent(mixed $a, mixed $b): bool
+    {
+        if (!\is_object($a) || !\is_object($b)) {
+            return false;
+        }
+        if ($a instanceof Equatable || $b instanceof Equatable) {
+            return false;
+        }
+
+        return \get_class($a) === \get_class($b) && $a == $b;
+    }
+
+    private static function valueKind(mixed $v): string
+    {
+        return \is_object($v) ? \get_class($v) . '（无值相等契约）' : \gettype($v);
     }
 
     /** 用当前描述的 select 重算缓存值（首帧与换描述时各一次） */

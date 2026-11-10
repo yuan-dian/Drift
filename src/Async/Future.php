@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Async;
 
+use Drift\Diagnostics;
 use Drift\Errors;
 
 /**
@@ -47,6 +48,9 @@ final class Future
      */
     private bool $task = false;
 
+    /** 由 `chain()` 派生出来的节点 —— 进度只喂根任务，挂在这里的 sink 收不到 */
+    private bool $derived = false;
+
     /**
      * 进度（`0.0`~`1.0`）与"有没有报过"。
      * ★ 必须单独一个 `bool`：拿 `$progress !== null` 判会把"进度正好 0.0"与"从没
@@ -59,7 +63,8 @@ final class Future
 
     /**
      * 进度订阅者。进度与结算不是同一事件（进度必在结算之前），两套回调不冲突。
-     * ★ 进度**不沿 `chain()` 传递**；要进度就订阅根任务那一条。
+     * ★ 进度**不沿 `chain()` 传递**；要进度就订阅根任务那一条。挂错链的错法
+     *   由 `onProgress()` 留 `progress/derived-chain` 诊断，不再只是"进度条不动"。
      *
      * @var list<\Closure>
      */
@@ -153,6 +158,8 @@ final class Future
      *
      * ★ 已经有过进度时立刻补发一次：订阅晚于第一个进度包是常态。
      * ★ 只有 `ProcessTaskHost` 会喂进度；拿不到不是错误，是那个后端没这个能力。
+     * ★ 挂在派生链下游会留一条 `progress/derived-chain` 诊断 —— 那种错法以前
+     *   只表现为"进度条不动"，不报错也不留痕。
      *
      * @param callable(float): void $onProgress
      *
@@ -160,6 +167,14 @@ final class Future
      */
     public function onProgress(callable $onProgress): self
     {
+        if ($this->derived) {
+            Diagnostics::degraded(
+                'progress/derived-chain',
+                'onProgress() 挂在 then()/catch() 派生的 Future 上 —— 进度只喂根任务，'
+                . '这条订阅永远收不到；挂到 submit() 返回的那条，或用 AsyncScope::await() 的进度参数'
+            );
+        }
+
         $sink = \Closure::fromCallable($onProgress);
         $this->progressSinks[] = $sink;
 
@@ -539,6 +554,7 @@ final class Future
         // ★ 下游继承"是任务" —— 否则 `submit()->then()` 漏 `catch()` 的那条
         //   会在链末端静默（判据只看链末端有没有人接，见 `rejectCore()`）
         $next->task = $this->task;
+        $next->derived = true;   // 进度只喂根；派生节点挂 onProgress() 要留诊断
 
         if ($this->state === self::PENDING) {
             $this->links[] = ['ok' => $ok, 'err' => $err, 'next' => $next];

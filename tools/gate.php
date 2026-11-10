@@ -20,6 +20,8 @@ declare(strict_types=1);
  *   selftest  lint 规则双向自检
  *   abi       跨层 ABI 契约（stub / C++ 实现 / 解释器替身三向签名）
  *   abiself   ABI 校验器的变异体自证
+ *   dxdiag    DX 退化「接入点 ↔ 判据」对账
+ *   dxself    对账器的变异体自证
  *   devshell  开发态壳红线（sources 白名单 / 变量路径 require / 桥接回调）
  *   docref    文档 file:line / § 引用
  *   probe     探针骨架（probe-audit --selftest）
@@ -127,6 +129,10 @@ $checks = [
     //   而那种错在 tpc 下是链接期静默失败，真机行为错却全绿。判据必须进 gate。
     'abi'     => ['ABI 契约（abi-check）', [PHP_BINARY, $root . '/tools/abi-check.php'], false],
     'abiself' => ['ABI 校验自证（变异体）', [PHP_BINARY, $root . '/tools/abi-check.php', '--selftest'], false],
+    // ★ 静默退化：检测点一行就能加，判据却可能忘 —— 对账「每个 key 都有断言」，
+    //   与 PHPUnit 那边「行为对不对」不同源，两道都要在 gate 里。
+    'dxdiag'  => ['DX 退化判据对账（diagnostic-check）', [PHP_BINARY, $root . '/tools/diagnostic-check.php'], false],
+    'dxself'  => ['DX 对账自证（变异体）', [PHP_BINARY, $root . '/tools/diagnostic-check.php', '--selftest'], false],
     // ★ 日常改 PHP 不再编 AOT ⇒ dev 壳成了主入口，它的红线必须进闸门（无窗口、廉价）。
     //   只靠 project.yml 头注释挡不住「顺手把 src/ 加进 sources」那一下。
     'devshell' => ['开发态壳红线（drift-dev --selftest）', [PHP_BINARY, $root . '/tools/drift-dev.php', '--selftest'], false],

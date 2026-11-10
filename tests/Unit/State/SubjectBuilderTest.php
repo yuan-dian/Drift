@@ -6,6 +6,8 @@ namespace Drift\Dev\Tests\Unit\State;
 use Drift\Dev\Smoke\LeafProbe;
 use Drift\Dev\Smoke\State\FakeStore;
 use Drift\Dev\Tests\Support\SmokeTestCase;
+use Drift\Diagnostics;
+use Drift\Errors;
 use Drift\State\Equatable;
 use Drift\State\Subject;
 use Drift\State\SubjectBuilder;
@@ -431,6 +433,113 @@ final class SubjectBuilderTest extends SmokeTestCase
             'SubjectBuilder · 新 source 的通知能到',
             $element->state()->needsBuild(),
             '没标脏 ⇒ 订阅没换绑到新 source'
+        );
+
+        $element->unmount();
+        $this->flushChecks();
+    }
+
+    /**
+     * 2026-11-10：select 每次 new 等价对象 ⇒ `===` 恒不相等 ⇒ 每帧重建，过去全静默。
+     *
+     * ★ 判据只读 `Errors::recentDiagnostics()`，不读计数变量 —— 与实现不同源。
+     */
+    public function testUnstableSelectOutputIsReported(): void
+    {
+        Diagnostics::reset();
+        $ctx = smokeContext();
+        $store = new ValueSubject();
+        $widget = SubjectBuilder::make($store)
+            ->select(static fn(ValueSubject $s): ReadonlyValue => new ReadonlyValue($s->text()))
+            ->builder(static fn(mixed $v): Widget => new LeafProbe(1.0));
+        $element = $widget->createElement();
+        $element->mount(null, $ctx);
+
+        $before = \count(Errors::recentDiagnostics());
+        for ($i = 0; $i < 7; $i++) {
+            $store->setText('同');   // 内容不变，每次 notify 都换一个新对象
+        }
+        check(
+            'SubjectBuilder · 前置：7 次同值不同身份还没到阈值（不误报）',
+            \count(Errors::recentDiagnostics()) === $before,
+            'diag=' . \implode('|', \array_slice(Errors::recentDiagnostics(), $before))
+        );
+
+        $store->setText('同');
+        $ring = \array_slice(Errors::recentDiagnostics(), $before);
+        check(
+            'SubjectBuilder · 第 8 次 ⇒ 留一条 [DX] select/unstable',
+            \count($ring) === 1 && \str_contains($ring[0], '[DX] select/unstable'),
+            'ring=' . \json_encode($ring, \JSON_UNESCAPED_UNICODE)
+        );
+        check(
+            'SubjectBuilder · 诊断带值类型与可操作建议',
+            \str_contains($ring[0] ?? '', 'ReadonlyValue') && \str_contains($ring[0] ?? '', 'Equatable'),
+            'ring=' . \json_encode($ring, \JSON_UNESCAPED_UNICODE)
+        );
+
+        for ($i = 0; $i < 5; $i++) {
+            $store->setText('同');
+        }
+        check(
+            'SubjectBuilder · 达到阈值后按 key 去重（不刷 ring）',
+            \count(Errors::recentDiagnostics()) === $before + 1,
+            '多出的诊断=' . (\count(Errors::recentDiagnostics()) - $before)
+        );
+
+        $element->unmount();
+        $this->flushChecks();
+    }
+
+    /**
+     * 正对照：数据真在变时 `===` 判不等是正确行为，不许报成退化 ——
+     * 诊断一误报，很快就没人看了。
+     */
+    public function testRealValueChangeIsNotReported(): void
+    {
+        Diagnostics::reset();
+        $ctx = smokeContext();
+        $store = new FakeStore();
+        $widget = SubjectBuilder::make($store)
+            ->select(static fn(FakeStore $s): int => $s->status())
+            ->builder(static fn(mixed $v): Widget => new LeafProbe(1.0));
+        $element = $widget->createElement();
+        $element->mount(null, $ctx);
+
+        $before = \count(Errors::recentDiagnostics());
+        for ($i = 1; $i <= 12; $i++) {
+            $store->setStatus($i);
+        }
+        check(
+            'SubjectBuilder · 标量真在变 ⇒ 12 次都不报 [DX] select/unstable',
+            \count(Errors::recentDiagnostics()) === $before,
+            'diag=' . \implode('|', \array_slice(Errors::recentDiagnostics(), $before))
+        );
+
+        $element->unmount();
+        $this->flushChecks();
+    }
+
+    /** 正对照：显式 `Equatable` 的值对象按值判等，不进身份抖动那一条。 */
+    public function testEquatableValueObjectIsNotReported(): void
+    {
+        Diagnostics::reset();
+        $ctx = smokeContext();
+        $store = new ValueSubject();
+        $widget = SubjectBuilder::make($store)
+            ->select(static fn(ValueSubject $s): EquatableValue => new EquatableValue($s->text()))
+            ->builder(static fn(mixed $v): Widget => new LeafProbe(1.0));
+        $element = $widget->createElement();
+        $element->mount(null, $ctx);
+
+        $before = \count(Errors::recentDiagnostics());
+        for ($i = 0; $i < 12; $i++) {
+            $store->setText('同');
+        }
+        check(
+            'SubjectBuilder · Equatable 同值新实例 ⇒ 门控生效、不报退化',
+            \count(Errors::recentDiagnostics()) === $before,
+            'diag=' . \implode('|', \array_slice(Errors::recentDiagnostics(), $before))
         );
 
         $element->unmount();
