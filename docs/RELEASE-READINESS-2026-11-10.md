@@ -136,6 +136,8 @@
 扣分项是 `REVIEW-ARCH-DX` 已指出的两处**结构性盲区**，不是设计错误：
 `Core` 不在分层 lint 的 `LAYERS` 表里（于是 `Pipeline` 的进程级单例双向免检）、
 `Application` 仍是 5 个 Host 接口全实现 + 1928 行的组合根。
+（2026-11-10 后订正：第一项已修 —— `Core` 入层表且分层 lint 改为 fail-closed；
+此处保留评估当时的快照。）
 
 **对外发布影响**：中。第三方要扩展时会撞上「组合根太大、扩展点标了 `@internal`」。
 `BuildContext` 是 `final readonly` 五字段、无 `of()/find()`，`ThemeScope` 已实现父链解析却
@@ -218,7 +220,7 @@ AccessibilityNodeInfo / Linux AT-SPI）。这也解释了为什么「跨平台�
 
 | 类别 | 具体项 | 判据 |
 |---|---|---|
-| 结构 | `Core` 未入层表；`Application` 上帝类；`didUpdateWidget()` 缺失（父重建换 `select` 闭包是静默错配）；订阅/任务生命周期兜底不对称 | `docs/REVIEW-ARCH-DX-2026-11-08.md` §1.1 / §2.1–2.3 |
+| 结构 | `Core` 未入层表（2026-11-10 已修）；`Application` 上帝类；`didUpdateWidget()` 缺失（父重建换 `select` 闭包是静默错配）；订阅/任务生命周期兜底不对称 | `docs/REVIEW-ARCH-DX-2026-11-08.md` §1.1 / §2.1–2.3 |
 | 可诊断 | 静默失败未进 `Errors`；错误到 UI 一律压成 string（分不清 404/鉴权/超时）；进度是 Future 旁路 | 同上 §1.2 / §2.4–2.5 |
 | API | 无 `Future::timeout`；`object` 槽位模式复制 4 处未抽象；`BuildContext` 扩展点锁死 | 同上 §2.6 / §3 |
 | DX | 无统一 CLI / 脚手架；无 DevTools（组件树检查器）；热更状态全丢 | 同上 §3 / §4 |

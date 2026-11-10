@@ -27,10 +27,20 @@ function drift_lint_selftest(string $root, Linter $linter): bool
 
     // 每条规则的"已知错误"用例 —— 文件:严重度
     $expected = [
+        // 2026-11-10 补两条（fail-closed + `Core` 入层）：
+        //   ★ `src/Net/Rogue.php` 验「未登记段默认报红」—— 从前是静默跳过；
+        //   ★ `src/Core/UsesWidget.php` 验「Core 不得反向拽 Widget」；
+        //   ★ `src/Widget/UsesRogue.php` 验 to 侧同样 fail-closed —— 只守 from 侧的话，
+        //     引用新段的那条路径会重新变成盲区；
+        //   ★ `src/Widget/UsesCore.php` 一条都不该有 —— 它钉住「Widget 已放行 Core」，
+        //     撤掉 ALLOWED 里那条放行，这条夹具与全仓 lint 都该立刻变红。
         'dependency-direction' => [
             'src/Geometry/Bad.php:' . Diagnostic::ERROR,
             'src/Widget/UsesTheme.php:' . Diagnostic::ERROR,
             'src/Widget/UsesCommands.php:' . Diagnostic::ERROR,
+            'src/Core/UsesWidget.php:' . Diagnostic::ERROR,
+            'src/Net/Rogue.php:' . Diagnostic::ERROR,
+            'src/Widget/UsesRogue.php:' . Diagnostic::ERROR,
         ],
         'internal-leak' => [
             'apps/Bad.php:' . Diagnostic::ERROR,

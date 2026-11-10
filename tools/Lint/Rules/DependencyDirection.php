@@ -12,19 +12,31 @@ use Drift\Dev\Lint\Rule;
  *
  * GUI 仓用平铺 `namespace GUI;` + classmap，"分层"没有抓手；PSR-4 之后
  * "谁能依赖谁"第一次变得可静态检查 —— 这条规则就是那个抓手。
+ *
+ * ★ 2026-11-10：层集合改由 `ALLOWED` 的 key 派生，不再维护第二份 `LAYERS` 表
+ *   （两份表曾漂移出 `Core` 漏层）。未登记的命名空间段默认报红，只有写进
+ *   `UNLAYERED` 才豁免 —— 借 ArchUnit `failOnEmptyShould` 的默认拒绝语义。
+ *
+ * ★ `Errors` 等顶层 `namespace Drift;` 设施不是层：`Drift\<Type>` 只有两段，
+ *   没有层段，所有层天然可用，因此不进 `ALLOWED`。此前 14 行都写着 `'Errors'`
+ *   却恒被跳过（段不在层表里）—— 那是死条目，不是可收紧的边，故一并删除。
  */
 final class DependencyDirection implements Rule
 {
-    /** §4.2 的层名（= `Drift\` 之后的第一个命名空间段） */
-    private const LAYERS = [
-        'Geometry', 'Platform', 'Text', 'Rendering', 'Input',
-        'Widget', 'Layout', 'State', 'Commands', 'Theme', 'Routing',
-        'Async', 'App',
-        'Logging',
+    /**
+     * 明确不参与框架分层的命名空间段。
+     *
+     * 不写成"表里没有就跳过"：那样新层会静默进盲区（`Core` 就是这么漏的），
+     * 读代码的人也无从确认某个放行是有意的。每一条都得写出理由。
+     */
+    private const UNLAYERED = [
+        'Dev',                 // 工具链 / smoke / 探针 / 测试：跑在 php.exe，永不参与 AOT
+        'Bench',               // apps/bench 与 tools/Bench 的基准夹具
+        'ConformanceSelfTest', // M2 conformance 自检夹具
     ];
 
     /**
-     * §4.3 的允许集（含自身）。
+     * §4.3 的允许集（含自身）。**本表的 key 就是层集合**，不另设 `LAYERS`。
      *
      * ★ 两处对 §4.3 的补正（都是"写全已有裁决"，不是新设计）：
      *
@@ -53,40 +65,44 @@ final class DependencyDirection implements Rule
      *      检查（将来若要把某条边收紧，改这一行就有抓手）。
      */
     private const ALLOWED = [
-        'Geometry'  => ['Geometry', 'Errors', 'Logging'],
-        'Platform'  => ['Platform', 'Geometry', 'Errors', 'Rendering', 'Input', 'Theme', 'Logging'],
-        'Text'      => ['Text', 'Geometry', 'Errors', 'Logging'],
-        'Rendering' => ['Rendering', 'Geometry', 'Text', 'Errors', 'Logging'],
-        'Input'     => ['Input', 'Geometry', 'Errors', 'Text', 'Layout', 'Logging'],
+        // ★ `Core`（2026-11-10 补）：`src/Core/` 是帧管线基座（`Pipeline` /
+        //   `PipelineAccess` / `Versioned` / `Computed`），全 @internal，只认 `Logging`。
+        //   ★ 只给下面 5 个**实际引用**它的层放行 —— 其余层若要用 Core，
+        //     必须显式改那一行并说明理由，不允许"反正谁都能用"地兜底放开。
+        'Core'      => ['Core', 'Logging'],
+        'Geometry'  => ['Geometry', 'Logging'],
+        'Platform'  => ['Platform', 'Geometry', 'Rendering', 'Input', 'Theme', 'Logging'],
+        'Text'      => ['Text', 'Geometry', 'Logging'],
+        'Rendering' => ['Rendering', 'Geometry', 'Text', 'Core', 'Logging'],
+        'Input'     => ['Input', 'Geometry', 'Text', 'Layout', 'Logging'],
         // ★ `Widget` 行的 `Async`（2026-10-30 增删记录）：加它是为了 `FutureBuilder`
         //   同时认识 `Future` 与 `AsyncValue`；那个控件已被 `State\AsyncCommand`
         //   取代（它是 `FutureBuilder` 的超集，且复用既有 `Cell`/`Subject` 通知设施）
         //   ⇒ **放行随之移除**，否则就是一条"没人走也没人审"的边。
         //   ★ 现在唯一放行 `Async` 的非 `App` 层是 `State`（见下面那行的注释）。
-        'Widget'    => ['Widget', 'Layout', 'State', 'Rendering', 'Text', 'Geometry', 'Input', 'Platform', 'Errors', 'Logging'],
-        'Layout'    => ['Widget', 'Layout', 'State', 'Rendering', 'Text', 'Geometry', 'Input', 'Platform', 'Errors', 'Logging'],
+        'Widget'    => ['Widget', 'Layout', 'State', 'Rendering', 'Text', 'Geometry', 'Input', 'Platform', 'Core', 'Logging'],
+        'Layout'    => ['Widget', 'Layout', 'State', 'Rendering', 'Text', 'Geometry', 'Input', 'Platform', 'Core', 'Logging'],
         // ★ `Async`（2026-10-30，`AsyncCommand`）：`Drift\State\AsyncCommand` 是
         //   "异步版的 `Cell`" —— 住在 `State`（生命周期与页面对齐），值为
         //   `AsyncValue`、发起走 `Future`，两者都在 `Async` 层。
         //   ★ 为什么改这一行而不是把命令塞进 `Widget`：命令不是控件，而 `Widget`
         //     已经放行 `Async` ⇒ 方向仍是"上层用下层"，不产生新环
-        //     （`Async` 自己只认 `Errors`/`Logging`）。
-        'State'     => ['Widget', 'Layout', 'State', 'Rendering', 'Text', 'Geometry', 'Input', 'Platform', 'Async', 'Errors', 'Logging'],
-        'Commands'  => ['Commands', 'Geometry', 'Errors', 'State', 'Logging'],
-        'Theme'     => ['Theme', 'Widget', 'Layout', 'State', 'Text', 'Geometry', 'Rendering', 'Input', 'Errors', 'Logging'],
-        'Routing'   => ['Routing', 'Widget', 'Layout', 'State', 'Text', 'Geometry', 'Rendering', 'Input', 'Errors', 'Logging'],
-        // ★ `Async`（2026-10-30，N3）：`Future` 是**纯值类型**，只认 `Errors`
-        //   （失败没人接时要喊 Fatal）与 `Logging`。它比 `App` 低 —— 执行体后端
-        //   （`TaskHost`）住在 `App`，反过来不成立。
-        'Async'     => ['Async', 'Errors', 'Logging'],
-        'App'       => ['App', 'Async', 'Geometry', 'Platform', 'Text', 'Rendering', 'Input', 'Widget', 'Layout', 'State', 'Commands', 'Theme', 'Routing', 'Errors', 'Logging'],
+        //     （`Async` 自己只认 `Logging`）。
+        'State'     => ['Widget', 'Layout', 'State', 'Rendering', 'Text', 'Geometry', 'Input', 'Platform', 'Async', 'Core', 'Logging'],
+        'Commands'  => ['Commands', 'Geometry', 'State', 'Logging'],
+        'Theme'     => ['Theme', 'Widget', 'Layout', 'State', 'Text', 'Geometry', 'Rendering', 'Input', 'Logging'],
+        'Routing'   => ['Routing', 'Widget', 'Layout', 'State', 'Text', 'Geometry', 'Rendering', 'Input', 'Logging'],
+        // ★ `Async`（2026-10-30，N3）：`Future` 是**纯值类型**，只认 `Logging`
+        //   （失败没人接时要喊 Fatal，那是顶层 `Errors` 设施，不进层表）。
+        //   它比 `App` 低 —— 执行体后端（`TaskHost`）住在 `App`，反过来不成立。
+        'Async'     => ['Async', 'Logging'],
+        'App'       => ['App', 'Async', 'Geometry', 'Platform', 'Text', 'Rendering', 'Input', 'Widget', 'Layout', 'State', 'Commands', 'Theme', 'Routing', 'Core', 'Logging'],
 
-        // ★ `Logging` 是横切层（与 `Errors` 同性质），2026-10-24 随日志系统补登记。
-        //   **不登记 = 完全不受检查**：`layerOf()` 对不在 `LAYERS` 里的段返回 null，
-        //   `check()` 会把 from / to 两侧都跳过 —— 新层默默进了检查盲区。
-        //   允许集的形状是"各层可依赖 Logging、Logging 只依赖 Errors"：
+        // ★ `Logging` 是横切层，2026-10-24 随日志系统补登记。
+        //   **当时不登记 = 完全不受检查**：`layerOf()` 对不在层表里的段返回 null，
+        //   `check()` 两侧都跳过 —— `Core` 后来正是这么漏的（2026-11-10 改为默认报红）。
         //   日志是最低位的横切能力，任何层都该能记；而它自己不得反向拽住业务层。
-        'Logging'   => ['Logging', 'Errors'],
+        'Logging'   => ['Logging'],
     ];
 
     /**
@@ -145,9 +161,27 @@ final class DependencyDirection implements Rule
             if (!str_starts_with($from, Project::FRAMEWORK_PREFIX)) {
                 continue; // 业务代码不参与分层检查（它走 internal-leak）
             }
-            $fromLayer = $this->layerOf($from);
-            if ($fromLayer === null || !isset(self::ALLOWED[$fromLayer])) {
-                continue; // 工具链（Drift\Dev）与 Errors 本身不设限
+            $fromSegment = $this->namespaceSegment($from);
+            if (in_array($fromSegment, self::UNLAYERED, true)) {
+                continue;
+            }
+            if (!isset(self::ALLOWED[$fromSegment])) {
+                $key = $file->path() . ':unlayered-from:' . $fromSegment;
+                if (!isset($seen[$key])) {
+                    $seen[$key] = true;
+                    $found[] = new Diagnostic(
+                        $this->name(),
+                        Diagnostic::ERROR,
+                        $file->path(),
+                        $file->namespaceLine(),
+                        sprintf(
+                            '命名空间段 Drift\%s 未登记：既不在 ALLOWED 也不在 UNLAYERED —— '
+                            . '新层必须显式写进 ALLOWED（含允许依赖），或登记到 UNLAYERED 并说明理由',
+                            $fromSegment
+                        )
+                    );
+                }
+                continue;
             }
 
             foreach ($file->references() as $reference) {
@@ -155,14 +189,32 @@ final class DependencyDirection implements Rule
                 if (!str_starts_with($to, Project::FRAMEWORK_PREFIX)) {
                     continue;
                 }
-                $toLayer = $this->layerOf($to);
-                if ($toLayer === null || !in_array($toLayer, self::LAYERS, true)) {
-                    continue; // Drift\Dev 或 Drift\Errors 这类不在层表里的
+                $toSegment = $this->typeSegment($to);
+                if ($toSegment === null || in_array($toSegment, self::UNLAYERED, true)) {
+                    continue; // `Drift\<Type>` 顶层设施 / 工具链段：不参与分层
                 }
-                if (in_array($toLayer, self::ALLOWED[$fromLayer], true)) {
+                if (!isset(self::ALLOWED[$toSegment])) {
+                    $key = $file->path() . ':unlayered-to:' . $toSegment;
+                    if (!isset($seen[$key])) {
+                        $seen[$key] = true;
+                        $found[] = new Diagnostic(
+                            $this->name(),
+                            Diagnostic::ERROR,
+                            $file->path(),
+                            $reference['line'],
+                            sprintf(
+                                '%s 引用了未登记的命名空间段 Drift\%s —— 先把它登记进 ALLOWED 或 UNLAYERED',
+                                $fromSegment,
+                                $toSegment
+                            )
+                        );
+                    }
                     continue;
                 }
-                if (in_array($toLayer, self::FILE_EXCEPTIONS[$file->path()] ?? [], true)) {
+                if (in_array($toSegment, self::ALLOWED[$fromSegment], true)) {
+                    continue;
+                }
+                if (in_array($toSegment, self::FILE_EXCEPTIONS[$file->path()] ?? [], true)) {
                     continue; // 协议例外，且仅限登记过的那一个文件
                 }
 
@@ -178,7 +230,7 @@ final class DependencyDirection implements Rule
                     Diagnostic::ERROR,
                     $file->path(),
                     $reference['line'],
-                    sprintf('%s 不得依赖 %s（%s）', $fromLayer, $toLayer, $to)
+                    sprintf('%s 不得依赖 %s（%s）', $fromSegment, $toSegment, $to)
                 );
             }
         }
@@ -186,14 +238,19 @@ final class DependencyDirection implements Rule
         return $found;
     }
 
-    /** 取 `Drift\<Layer>\...` 的层名；不在层表里返回 null */
-    private function layerOf(string $fqn): ?string
+    /** namespace 的层段：`Drift\Core` → `Core`（顶层 `Drift;` 由调用方前置跳过） */
+    private function namespaceSegment(string $namespace): string
     {
-        $rest = substr($fqn, strlen(Project::FRAMEWORK_PREFIX));
-        if ($rest === false || $rest === '') {
-            return null;
-        }
-        $segment = explode('\\', $rest)[0];
-        return in_array($segment, self::LAYERS, true) ? $segment : null;
+        return explode('\\', substr($namespace, strlen(Project::FRAMEWORK_PREFIX)))[0];
+    }
+
+    /**
+     * 类型 FQN 的层段：只有 `Drift\<Seg>\<Type>` 才有段。
+     * `Drift\<Type>` 是顶层 `namespace Drift;` 设施（Errors / InternalThing …），不是层。
+     */
+    private function typeSegment(string $fqn): ?string
+    {
+        $parts = explode('\\', substr($fqn, strlen(Project::FRAMEWORK_PREFIX)));
+        return count($parts) >= 2 ? $parts[0] : null;
     }
 }

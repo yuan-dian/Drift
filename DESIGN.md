@@ -3385,7 +3385,7 @@ IO / 任务 / settle / layout / paint，**没有任何一处问过"有没有东�
 
 | 决策 | 取值 | 理由 |
 |---|---|---|
-| 放哪一层 | **`Drift\Widget`** | 它只被 `State` 持有，且 §4.2 的 Widget 行就是"声明式 UI 基座"。新开 `Drift\Animation` 要同时改 §4.2 表、§4.3 允许集、lint 的 `LAYERS` —— 三处改动换一层只有一个文件住的地方 |
+| 放哪一层 | **`Drift\Widget`** | 它只被 `State` 持有，且 §4.2 的 Widget 行就是"声明式 UI 基座"。新开 `Drift\Animation` 要同时改 §4.2 表与 §4.3 允许集 —— 两处改动换一层只有一个文件住的地方（lint 不再有独立 `LAYERS` 表，层集合由允许集的 key 派生，见 `tools/Lint/Rules/DependencyDirection.php`） |
 | 值的形状 | **单值 `0..1`** | 不是 `Vec4` / 不是"任意属性插值"。单值能喂所有已有控件的数值入口（`Progress::value()` / `SizedBox::width()` / `Text` 的内容），而通用插值要先有层语义（§17.4.11 下文） |
 | 时间基准 | **注入的帧时间戳** | `tick(float $timestampMs)` 由 `tickFrame()` 传入（G3：不读环境时钟）⇒ 同一棵动画树在"解释器 smoke"与"AOT 真机"里推进**完全一致**，夹具能预测到第几帧到终点 |
 | 起点在哪 | **第一帧才钉**（`startPending`） | `forward()` 手里没有时间戳。用墙钟记起点 = 起手那一帧就吃掉一个 15ms 间隔，短动画整体快一档，且解释器/AOT 两侧还各差一点 |
