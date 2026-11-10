@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '0 2 * * *'   # nightly：跑慢项
+  workflow_dispatch:
+
+jobs:
+  # ── T0：纯 PHP 校验，公开 Windows runner 即可，无需 MSVC / tpc ──
+  gate-fast:
+    name: Gate (T0 pure-PHP)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup PHP 8.4
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, gd
+      - name: Run gate (T0 subset)
+        shell: bash
+        run: |
+          php tools/gate.php \
+            --only=lint,selftest,devshell,docref,apidoc,probe,tick,scale,sym,m2,unit \
+            --json
+
+  # ── Nightly：T0 + 慢项（feature / golden），仍纯 PHP ──
+  gate-nightly:
+    name: Gate (nightly, slow items)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup PHP 8.4
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, gd
+      - name: Run gate (T0 + slow)
+        shell: bash
+        run: |
+          php tools/gate.php \
+            --only=lint,selftest,devshell,docref,apidoc,probe,tick,scale,sym,m2,unit,feature,golden \
+            --json
+
+  # ── T2：AOT 真机构建 + 真机探针 ──
+  # 需要自托管 Windows runner，预装：
+  #   MSVC 14.51.36231 / Win SDK 10.0.26100.0 / PHPX_HOME / tpc / php.ini 发行版
+  # 启用步骤：
+  #   1. 仓库 Settings → Actions → Runners 添加自托管 runner（labels: self-hosted, windows）
+  #   2. 把下面 job 的 `if: false` 改为 `true`
+  # 公开 runner 没有 MSVC / tpc，跑这一步必然失败，故默认关闭。
+  aot:
+    name: AOT build + probe (T2, self-hosted)
+    if: false
+    runs-on: [self-hosted, windows]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Doctor + build + probe
+        shell: bash
+        run: |
+          php tools/doctor.php
+          php tools/drift-build.php hello --full
+          python tools/probe-window.py hello

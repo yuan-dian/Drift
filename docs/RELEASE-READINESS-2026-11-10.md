@@ -275,3 +275,19 @@ AccessibilityNodeInfo / Linux AT-SPI）。这也解释了为什么「跨平台�
 - 本稿不推翻 `DEBT` 的任何判死项；「判死」在本仓是**有条件的裁决**，条件变化就该重裁，
   不是永远不做。
 - 未评估：C++ 壳的内存安全 / 线程模型、打包产物的杀软误报、许可证合规以外的法律面。
+
+---
+
+## 9. 实施跟进（本评估推动的补完）
+
+> 评估稿是只读的，但 §7-B 的结论已被采纳为动作。以下为 2026-11-10 的补完交付。
+
+| 缺口 | 交付物 | 状态 |
+|---|---|---|
+| **B1** 根 README / 构建指引 | [`README.md`](../README.md)（定位 + 30 秒示意 + 五分钟跑起来 + Windows-only / alpha / API 不保证兼容 标注） | ✅ |
+| **B2** CI | [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)（PR 跑 T0 纯 PHP 子集 `--json`；nightly 加慢项；T2 注释模板需自托管 runner） | ✅ |
+| **B3** 版本 / 变更日志 / 发布流程 | [`CHANGELOG.md`](../CHANGELOG.md)（v0.1.0-preview.1 + tag 规范）+ [`docs/CONTRIBUTING.md`](CONTRIBUTING.md)（工具链精确版本 / T0–T2 分层 / 改代码纪律） | ✅ |
+| **B 项第 5 条**（真值沉淀） | [`docs/CONTRIBUTING.md`](CONTRIBUTING.md) 固化第二开发者 / CI 真值（`.workbuddy-ai/memory/` 不进 git，真值走上 docs） | ✅ |
+
+**剩余到 1.0 的阻断项 B4–B7 未动**（ABI 握手 / 增量构建 stale / 第二平台 / 生态），属 L 级，见 §5。
+验收判据维持 §7-B：一台干净 Windows 机器按 README 从零到 `probe-window hello` 5/5 不超过 30 分钟。
