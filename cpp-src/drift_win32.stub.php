@@ -8,7 +8,9 @@
  *   （`drift_win_create` ⇄ `php_drift_win_create`）。
  *
  * ★ **改一边必须同步另一边**：签名不一致时 tpc 链接期会「静默失败」—— 不是编译错误，
- *   是运行期行为不对。这是本桥唯一的硬纪律。
+ *   是运行期行为不对。这条纪律现在由 `tools/abi-check.php` 机器校验（gate 的
+ *   `abi` 项 + `drift-build` 的 preflight）：本文件是唯一事实源，改了它却忘了
+ *   `.cc` / `tools/fakes/`，T0 就红并报出具体函数与期望 / 实际签名。
  *
  * ★ 与 GUI 仓 `gui_win32.stub.php` / markdown-editor `win32.stub.php` 同一条边界纪律：
  *   ① **只传原语**（`int` / `float` / `string` / `bool` / `array`）—— 跨接口后不得

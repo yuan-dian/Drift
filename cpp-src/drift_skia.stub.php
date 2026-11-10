@@ -6,6 +6,7 @@
  * ★ 与 `drift_win32.stub.php` 同一条纪律：每个函数都是**空体**，TypePHP 读它拿签名
  *   并生成 C++ 声明头，实现住在 `cpp-src/drift_skia.cc`，函数名加 `php_` 前缀。
  *   **改一边必须同步另一边** —— 签名不一致时是链接期「静默失败」，不是编译错误。
+ *   机器判据见 `tools/abi-check.php`：stub 是唯一事实源，cc 与 fakes 都是被校验方。
  *
  * ★ **本桥只画，不建窗、不泵消息、不贴屏**。窗口与贴屏仍归 `drift_win32.cc`：
  *   `SkiaCanvas` 画完之后由 `drift_skia_read_pixels()` 取回 RGBA 字节，

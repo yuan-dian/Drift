@@ -32,6 +32,7 @@ namespace Drift\Dev;
  *   而共享的抽象会把两边的差异藏进参数里。第三个消费者出现时再抽。
  */
 
+use Drift\Dev\Abi\Contract;
 use Drift\Dev\Doctor\Environment;
 use Drift\Dev\Doctor\EnvironmentException;
 
@@ -323,11 +324,31 @@ hash_update($inputs, 'manifest:' . (is_file("{$root}/build/app.manifest") ? (str
 hash_update($inputs, 'tpc:' . (string) hash_file('sha256', $entry) . "\n");
 $inputsHash = hash_final($inputs);
 
+// ─────────────────────── 跨层 ABI 契约 preflight ───────────────────────
+// ★ 任何构建路径（含 --dry / 短路）都先过这一关：stub 与 C++ 实现签名不一致时
+//   tpc 链接期静默失败 —— 产物能构建、能起窗，但行为不对。gate 是日常入口，
+//   这里是「直接跑 drift-build」那条路径的兜底。
+$abi = Contract::check($root);
+if (!$abi['ok']) {
+    fwrite(STDERR, "[drift-build] ABI 契约校验失败：\n");
+    foreach ($abi['problems'] as $p) {
+        fwrite(STDERR, '  - ' . $p . "\n");
+    }
+    exit(1);
+}
+
 $previous = is_file($manifestFile) ? trim((string) file_get_contents($manifestFile)) : '';
 
 if ($full) {
     fwrite(STDOUT, "[drift-build] --full：清空 tpc 缓存（保留 base.yml / app.manifest）\n");
     wipeCache("{$root}/build");
+    // ★ app 级缓存不在根 build 里：只清根会让旧 .obj / 生成 .cc 把旧签名常量带进
+    //   新 exe（2026-11-10 watermark 实证），而那一刻源码层面已经全绿。
+    $appBuild = "{$projectDir}/build";
+    if (is_dir($appBuild)) {
+        fwrite(STDOUT, "[drift-build] --full：清空 app 级缓存 {$projectDir}/build\n");
+        wipeCache($appBuild);
+    }
 } elseif ($previous === '') {
     fwrite(STDOUT, "[drift-build] 首次构建（无清单）⇒ tpc 自行决定增量/全量\n");
 } elseif ($previous !== $inputsHash) {
