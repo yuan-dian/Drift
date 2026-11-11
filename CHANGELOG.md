@@ -8,11 +8,13 @@
 - 格式：`v<major>.<minor>.<patch>-preview.<N>`
   - `0.1.0` 主线；`preview.N` 预览序号（每次发预览递增 N）。
 - **发布方式**：`git tag v0.1.0-preview.N` 并推送即发布（本仓当前无远程，本地 tag 亦可）。
+- **未打 tag = 未发布**：本文件里的 `preview.N` 只表示"下一个 tag 的内容"；
+  `git tag -l` 为空时，任何版本号都不构成对外承诺。
 - **破坏性变更**：preview 阶段允许；变更记入对应版本的「Breaking」小节，并在发版前于
   [`docs/DEBT-2026-11-02.md`](docs/DEBT-2026-11-02.md) 登记。
 - 发版前验收：`drift-build --full` 绿 + `probe-window` 5/5（T2 全过）。
 
-## v0.1.0-preview.1（2026-11-10）
+## v0.1.0-preview.1（2026-11-10 条目 · 尚未打 tag）
 
 初版技术预览。**能力面**对照 [`docs/RELEASE-READINESS-2026-11-10.md`](docs/RELEASE-READINESS-2026-11-10.md)。
 
@@ -27,7 +29,7 @@
 - 多窗口（`WindowHost` / `WindowSet`）
 - 深色主题（`ColorToken` + `SystemTheme` 跟随系统）
 - Windows 无障碍满配（UIA provider + 树导航 + 结构 / 焦点事件）
-- 控件面约 110 个类（覆盖日常 60–70%）
+- 控件面约 130 个类（含 8 个接口；精确清单以 `src/Widget/` 为准）
 - 8 个应用样例（hello / tutorial / users / showcase / watermark / bench / dev / pacing）
 - 工程质量：28 项闸门 + 变异四律 + 三态判据 + 金样确定性注入 + T0/T1/T2 分层 + 真机探针
 
@@ -46,6 +48,9 @@
 
 ### 已知限制
 
-- 布局为整树重排，无 `RelayoutBoundary`（12k 节点实测余量 4.8×，桌面工具类够用）。
-- 壳 ↔ PHP ABI 无版本握手（改 C++ 壳或 PHP 接口须同步重编译）。
-- AOT 增量构建缺 stale 判据（发版务必 `--full`，不要增量）。
+- 布局为整树重排，无 `RelayoutBoundary`；12k 节点实测仍有余量（读数见
+  [`docs/RELEASE-READINESS-2026-11-10.md`](docs/RELEASE-READINESS-2026-11-10.md)），桌面工具类够用。
+- 壳 ↔ PHP ABI **运行期无握手**：改 C++ 壳或 PHP 接口必须同步重编译。跨层契约不是没人守 ——
+  静态契约由 `php tools/abi-check.php` 管（stub 为唯一事实源，`--json` 出 schemaHash）。
+- AOT 增量构建**已有** stale 判据（`StalePolicy`，首次自动全量）。发版验收仍用 `--full`，
+  理由是排除增量缓存的影响，不再是因为判据缺失。

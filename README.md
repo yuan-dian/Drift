@@ -85,4 +85,4 @@ python tools/probe-window.py hello
 
 ## 许可证
 
-MIT（声明见 [`composer.json`](composer.json)）。
+MIT，全文见 [`LICENSE`](LICENSE)；机器可读声明在 [`composer.json`](composer.json)。

@@ -19,7 +19,7 @@ Drift 用 PHP 写声明式 UI，经 TypePHP AOT 编译成**独立 Windows `.exe`
 | **G2 绝不静默** | 机制要么生效、要么响亮失败；静默早返回 = 黑洞 |
 | **G3 确定性优先** | 布局/渲染是纯函数：可重放、可快照、可逐字节比对 |
 
-**当前定位**：`v0.1.0-preview.1`，仅 Windows 10/11 x64 的技术预览，API 不保证兼容。能力面够写真实业务应用（`apps/watermark`）；卡住 1.0 的是**第二平台与生态**，不是控件数量。档位判定见 [`docs/RELEASE-READINESS-2026-11-10.md`](docs/RELEASE-READINESS-2026-11-10.md)。
+**当前定位**：`v0.1.0-preview.1`（**尚未打 tag**，即未对外发布），仅 Windows 10/11 x64 的技术预览，API 不保证兼容。能力面够写真实业务应用（`apps/watermark`）；卡住 1.0 的是**第二平台与生态**，不是控件数量。档位判定见 [`docs/RELEASE-READINESS-2026-11-10.md`](docs/RELEASE-READINESS-2026-11-10.md)。
 
 **借鉴边界**：走 Flutter 路线（三树 + 显式 Key + 显式 `setState`），表达层学 SwiftUI 的 modifier 链；不借 Vue/WPF 的自动依赖追踪与双向绑定，不借 CSS 层叠与流式布局，不做原生控件包装。
 
