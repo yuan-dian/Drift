@@ -7,6 +7,20 @@
 > 结论先说：**骨架与成熟 GUI 同形，不需要重构**；但**"结果拓扑"这一维只有一个形状**，
 > 而执行体只有一条路真正端到端跑通 —— 这两处才是缺口，其余都是补丁级。
 
+> ★★ **2026-11-11 勘误（读 §1 与 §7 的硬约束表前先看这条）**：下面四条**论据**
+> 已与当前代码相反，**结论（不在 UI 进程引入 Swoole）不变**，只是它不再靠这四条成立 ——
+> 详见 [`REVIEW-ASYNC-SWOOLE-2026-11-11.md`](REVIEW-ASYNC-SWOOLE-2026-11-11.md) §4–§5.1。
+> ① **AOT 不再禁 `Fiber`**：`NanoHygiene::BANNED_TYPES` 只剩 `Generator`，
+>    `AsyncScope` 已跑在 AOT 产物里 ⇒ §1 / §7 的"UI 进程里写不出协程"作废；
+> ② **Windows 原生版已提供 `Swoole\Event`**（6.3.0RC1 矩阵列为 Supported）⇒ §1 的
+>    "没有 `Swoole\Event` 可手动 pump"作废；真障碍是 `dispatch()` **不肯 0 超时返回**
+>    （1s timer ⇒ 首次 1013ms），"pump 一次"的粒度仍然要不到；
+> ③ **`curl_multi_init()` 不是普适必崩**：本机 `swoole=no` 时 `EXIT=0`，崩的是
+>    **swoole 与它共现**的 shutdown 段 ⇒ §14.1 的"与 swoole 无关"归因需按此打折
+>    （11-04 那次 ini 确实加载了 swoole，不是记录造假）；
+> ④ 因此"UI 侧协程"的反对理由**只剩两条**：**控制权与 `GetMessageW` 互斥**、
+>    **卸载安全会被换回去**（§3.3）。
+
 ---
 
 ## 0. 一句话
