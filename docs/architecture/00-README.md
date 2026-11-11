@@ -36,7 +36,7 @@
 
 | # | 律 | 编译器事实 | 代码里的样子 |
 |---|---|---|---|
-| **L1** | **热路径零 `switch`、零 `mixed` 三元、零 `Native` 进容器** | tpc 给 `switch ($this->intProp)` 生成的属性读不加 `php::toInt()` ⇒ C2440（只有 T2 AOT 构建才炸）；`?:` 两支类型不同 ⇒ C2678 | `src/` 里**控制流 `switch` 零处**（唯一 `switch` 是 `SemanticsRole` 枚举的 `case Switch`，`src/Input/SemanticsRole.php:60`）；分派一律 `int $kind` + `===` 链（`ToggleBase`，`src/Widget/ToggleBase.php:141`、`163`） |
+| **L1** | **热路径零 `switch`、零 `mixed` 三元、零 `Native` 进容器** | tpc 给 `switch ($this->intProp)` 生成的属性读不加 `php::toInt()` ⇒ C2440（只有 T2 AOT 构建才炸）；`?:` 两支类型不同 ⇒ C2678。**2026-11-11 18:04 订正**：上游 typephp #186 已给 `readonly` 标量属性读取补 `php::toInt/toFloat`、并统一 string 三元的存储类型；本仓已解开 pin、换回含 #186 的默认入口并 T2 通过，但 **纪律仍保留**（#186 不覆盖 C2678 / 新增 `Error` 语义未验 / 撤它无消费者），详见 [AOT 约束总表 §8.4](../AOT-CONSTRAINTS.md) | `src/` 里**控制流 `switch` 零处**（唯一 `switch` 是 `SemanticsRole` 枚举的 `case Switch`，`src/Input/SemanticsRole.php:60`）；分派一律 `int $kind` + `===` 链（`ToggleBase`，`src/Widget/ToggleBase.php:141`、`163`） |
 | **L2** | **行为走 `int $kind` + 比较链，不靠虚方法分派** | 静态类型已知时虚方法被去虚化，子类覆写被静默忽略（C6） | `RenderToggle` 一个盒子吃 `KIND_*`（`src/Layout/RenderToggle.php`），`ToggleBase` 按 `kind` 分支；`SpinnerState` 用方向表而非 `cos/sin` |
 | **L3** | **被继承的类的字段必须 `protected` 不能 `private`** | tpc 按运行时类型查属性表，父类 `private` 不进子类属性表 ⇒ 子类实例访问动态建属性（值/语义全丢） | `RenderBox::$size`、`Element::$box`、`ToggleBase` 字段均为 `protected`（`src/Widget/ToggleBase.php:37` 注释明示） |
 | **L4** | **`#[Native]` 类不能做节点**：容器嵌不了原生类属性、PHP 数组存不了 Native Object | 复合数据过桥只能走打包字节串 | 节点全是普通 `class`；几何/路径/图像过桥走 `Path` / `ImageHandle` 的字节序列化（`src/Rendering/Path.php`、`src/Rendering/ImageHandle.php`） |

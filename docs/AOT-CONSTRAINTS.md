@@ -1,53 +1,47 @@
 # AOT 约束总表（Drift · tpc → C++17）
 
-> 状态：**已落地** · 2026-10-21 · W0 的 D-1 步
-> 来源：`docs/arch-v2/08-编译约束与实测.md` §2（判据表）+ W0 的 M0 三条实测结论
-> 回答两个问题：**哪条约束否掉了哪个 API？哪三条实测的结论是什么？**
+> 状态：**现行台账** · 结论复核 2026-11-11 · 编译器入口 `D:/TypePHP/typephp/bin/tpc.php`（`bff46481`）
+> 定位：AOT 约束的唯一完整落点。回答两个问题：**现在必须守什么？每条结论的证据在哪？**
+> 只列**当前有效**结论：已推翻 / 已解禁的旧约束不再列为条文，结案与边界见 §9。
+> 历史方案稿（`docs/arch-v2/08-编译约束与实测.md`、`docs/ARCH-REVIEW-2026-10-21.md`）不回改，冲突以本文件为准。
+> 上游修复的证据链见 §8（#186）/ §9（#183 / #184 / #185）。
 
 ---
 
 ## 0. 这个文件为什么存在
 
-`08` §0 的账：**18 条约束分散在四个地方，没有一处完整** ——
-源码注释只记 5 条、构建工具注释只覆盖工具链、MEMORY 记 15 条但不在仓库里、
-v6 `13` 册记 12 条但口径是"从零设计"。
+判据表原本分散在源码注释、构建工具注释、v6 方案册与本地记忆四处。本文件是唯一完整落点，
+也是 M0 三条实测结论的家（`08` §8 要求产出必须写进仓库，不是只在会话里）。
 
-★ 其中最贵的一条：**`C2653` / `C2660` / `C2129` 曾在 `cpp-src/` 里零线索**
-（`08` §1.2 当时的账；D-2 已把三条补进 `cpp-src/skia/drift_skia.cc` 的对应代码处）。
-★ 顺带纠一个**张冠李戴**：`08` §1.2 把 C2653 描述成"命名空间内非限定函数
-不回退全局 ⇒ 必须 `\`"—— **那条是 PHP 侧规则，报的是运行期
-`Call to undefined function`，不是 MSVC C2653**。本仓真正的 C2653 是
-**Skia API 改名**（`SkGradientShader` → `SkShaders::LinearGradient`）。
-两个都叫"C2653"纯属巧合，别混。
-
-本文件是那"一处完整"。它是 `08` §2 判据表的落点，也是 M0 三条实测结论的家
-（`08` §8：M0-a 的产出必须写进仓库，**不是只在会话里**）。
-
-**维护纪律**：新踩一条 AOT 坑，先加进这里，再写进源码注释（如果有具体位置）。
+**维护纪律**：新踩一条 AOT 坑，先加进 §1 判据表 + §6 错误码，再写进源码注释（若有具体位置）。
+完整维护规则见 §7。
 
 ---
 
 ## 1. 判据表：约束 → 被否掉的候选 → 采用的形态
 
-格式抄 v6 `13` §10。每条三列。
+每条三列：约束 → 被它否掉的候选 → 采用的形态。只列现行约束。
 
 ### 1.1 类型退化
 
 | 约束 | 否掉了 | 采用了 |
 |---|---|---|
-| `?Obj` / `A\|B` / `mixed` / `callable` 退化成 `php::Var`（**M0-2 已确认，见 §2.2**） | 用 `?RenderBox` 做**热路径**字段 | `RenderBox $child` + `bool $hasChild`（`RenderProxyBox` 的形态） |
-| 同上 | `?float $virtualExtent` 做**每帧读**的字段 | `float $virtualExtent = \NAN` 哨兵（`RenderScrollView` 的形态；`02` §3.2 的 `Modifier::$width` 同法） |
-| 同上 | `Cell::$owner` 用 `?State` | `State $owner` + `bool $bound`（`03` §3.2） |
-| `?int` / `?string` **推断**不退化（v6 V-1，未实测） | 依赖它做设计 | 一律不用（用 `NAN` / `-1` 哨兵） |
+| 真实混合联合 / `mixed` / `callable` / `?array` / 异型三元合流仍退化成 `php::Var` | 依赖它们做热路径设计 | 具体类型 + 哨兵 |
+| 可空对象字段两种形态**无量级差**（都走 PHP 属性表，§2.2） | 指望 `?Obj` 字段比「非空 + `bool`」更快 | `RenderBox $child` + `bool $hasChild`（`RenderProxyBox` 的形态） |
+| `$this->可空字段?->m()` 按运行时类名查表读属性 ⇒ 读成 `null` 只静默 | 跨实例读 `private`、可空字段上直接 `?->` | 拆成 `$x = $this->x; if ($x !== null)` |
+| `?float` 标量字段每帧读不划算 | `?float $virtualExtent` 做每帧读字段 | `float $virtualExtent = \NAN` 哨兵（`RenderScrollView`；`02` §3.2 的 `Modifier::$width` 同法） |
+| `?int` / `?string` 推断不退化（V-1，未实测） | 依赖它做设计 | 一律用 `NAN` / `-1` 哨兵 |
 
-★ 第三行是 `03` 的核心改动之一。**M0-2 之后这条的性能理由被撤掉了**
-（见 §2.2：字段层两种形态无量级差），**人因理由仍在**（读点不写 `?->`）。
+★ **已解禁、不再约束**：`?Obj` 形参 / 返回值、纯对象联合 / 交叉类型 / DNF 对象声明、
+链式接收者都保留 `php::Object`（§9）。**类型退化 ≠ 空安全调用可用** —— 上表第三行是
+属性查表机制，与静态类型无关，仍是现行约束；要避开的只是这一族写法（全仓 185 处 `?->`
+并非全禁）。`Cell::$owner` 用 `State` + `bool` 的决策也不变（人因收益，见 §3.2）。
 
 ### 1.2 语法
 
 | 约束 | 否掉了 | 采用了 |
 |---|---|---|
-| `switch ($this->intProp)` 生成 `php::Int tmp = this_.attr(...)` ⇒ **C2440** | `switch` 语句（**全仓零使用**，所以从未验过） | `int $kind` + `===` 比较链（`ToggleBase::activate()` / `Curve::map()`） |
+| `switch ($this->intProp)` 曾生成 `php::Int tmp = this_.attr(...)` ⇒ **C2440**；#186 已补 `php::toInt`，但全仓零 `switch`、本仓未在该形状上复测 ⇒ **仍按禁用处理**（§8.4） | `switch` 语句 | `int $kind` + `===` 比较链（`ToggleBase::activate()` / `Curve::map()`） |
 | `?:` 两支类型不同 ⇒ **C2678** | `$cond ? $a : $b` 里两支不同型 | 拆 `if/else`（`ToggleBase.php:189-210` 两个 `?:` 拆开） |
 | `match` 已用 **15 处**且 T2 通过 | —（`match` 可用） | 继续用（但**没测过它是否生成跳转表**，见 §4 V-4） |
 | 可选参数排必选前 ⇒ Fatal（比 PHP 严） | `function f($a = 1, $b)` | 必选在前（`RenderScrollView::__construct` 注释写明） |
@@ -69,7 +63,6 @@ v6 `13` 册记 12 条但口径是"从零设计"。
 | 被继承的类，字段不能是 `private`（tpc 按运行时类型查属性表） | `RenderFlex` 的字段用 `private` | `protected readonly`（`RenderFlex.php:46-51` 注释：2026-10-16 真机跑 `users.exe` 当场暴露） |
 | `readonly` 属性**不能**在构造之外赋值 | 可变值对象 | 可变字段用 `private`（`RenderBox::$composeOpacity`，`05` §5.4） |
 | `#[\Native]` 类**不能**进 PHP 数组 / 不能持容器 / 不能作 Fiber 参数 | `#[\Native]` 做树节点 | 纯 PHP 类做节点；`#[\Native]` 只做叶子值对象。★ 本仓 `#[\Native]` **零使用** ⇒ 这条目前无消费者（2026-11-04 核） |
-| `readonly` **慢 10×+**（v6 断言） | 热路径字段用 `readonly` | ~~`private` + getter~~ **M0-1 已推翻此条，见 §2.1** |
 | `#[\Immutable]` 只作用于**实例方法**与**参数**，不能放类/属性/普通函数 | "零成本替代 `readonly`" | 不存在这种替代（`readonly` 是属性级、`#[\Immutable]` 是方法级） |
 
 ★ 第三行是最值钱的一条：`RenderAppBar extends RenderFlex`，而 `RenderFlex` 的
@@ -95,43 +88,30 @@ v6 `13` 册记 12 条但口径是"从零设计"。
 
 | 约束 | 否掉了 | 采用了 |
 |---|---|---|
-| `readonly` 慢 10×+（**M0-1 已推翻**） | `final readonly class` 做热路径 | 只给几何值对象用（`Size`/`BoxConstraints`/`EdgeInsets`/`Rect`/`Point`/`Scale` 六个） |
-| 临时构造立即调用无法优化 | `(new Foo())->bar()` | 先落局部变量 |
 | `#[\Native]` 值对象省装箱（v6 V-2，未实测） | — | 现在用 `final readonly class`（32 个） |
 | **属性读直接当实参** ⇒ **C2440**（本仓 5 次，**无 lint**） | `$f($this->box->maxWidth)` | 先落局部标量再传 |
 | ★★ **AOT 不必然更快**（2026-11-04 实测，详见 §2.5） | 「AOT 产物一定比解释器快」这个默认假设 | 性能判断一律在 **AOT 口径**复量；解释器数字只作相对参考。实测 12k 节点布局栈 AOT 反而**慢 1.7–2.7×** |
 
-★ 最后一行是**本仓最高频的 AOT 坑**（5 次 C2440 同一形状），而它**没有 lint**
-—— "哪个形参是 `float`"要跨类类型推导，PHP 没有静态类型 ⇒ **只能靠纪律 + T2 兜**。
-这是编译约束里唯一一条不能自动守的。
+★ 属性读直接当实参是**本仓最高频的 AOT 坑**（5 次 C2440 同一形状），且**没有 lint** ——
+「哪个形参是 `float`」要跨类类型推导，PHP 没有静态类型 ⇒ 只能靠纪律 + T2 兜。
+上游 #186 已修根因、本仓 T2 验过（§8.4），但 workaround 仍保留：C2678 不在 #186 范围、
+未初始化 readonly 槽抛 `Error` 的新语义未专门验、撤它无消费者（三条理由见 §8.4）。
 
-### 1.5.1 链式调用：只在构造期，别搬进热路径（2026-11-05 登记）
+### 1.5.1 链式调用（已解禁）
 
-**证据来源**：`Drift3/docs/blueprint/01-探针证据与裁决.md` §2（`probe/dx-shape`，
-同一 tpc 编译器 `-O2`）：
+上游 `b7e94b39`（#183）让链式接收者带静态类。本仓 `bin` 口径夹具（§9.3）显示
+`Box::make()->add(1)->add(2)->value()` 与 `(new Box())->add(3)->value()` **全静态直调**、
+零 `typephp_call_method_cached`、中间量 `php::Object` ⇒ 原 §5 第 4 / 15 条已撤，
+热路径不必再拆语句。
 
-| 源码形态 | 静态直调 | 动态分派 | `php::Var` |
-|---|---:|---:|---:|
-| `chainMutating` 三跳链式 | 1 | 2 | 3 |
-| `chainSplit` 拆独立语句 | **3** | **0** | **0** |
-| `chainStaticReturn`（`: static`） | 1 | 2 | 1 |
-| `chainInherited` / `final` | — | 仍退化 | — |
+**边界**：
 
-问题不是「链式修饰」，而是**方法调用的返回值再当接收者**：第二跳起按名字符串
-`typephp_call_method_cached` 分派，中间结果降为 `php::Var`；`: static` / `final` /
-继承都改变不了（F1）。诊断口径与 §1.5 的「临时构造立即调用」是同一族。
-
-**本仓状态（诚实边界）**：
-- `Widget` 是 fluent-first，`Column::make()->spacing()->children()` 全部出现在
-  `build()` / dirty 重建（**冷路径**），不是每帧 `paint()` / `layout()`；
-  `RenderBox` 热路径是字段直读 ⇒ **不改代码**。
-- **本仓未独立复测**：`apps/*/build/extension-*.cc` 是扩展注册文件，
-  `typephp_call_method_cached` 计数 0，业务生成物不在这两份里。故此处只登记
-  「已知生成物形态 + 一条纪律」，**不冒充 §2 那种本仓实测的性能结论**。
-- 不做构建期链式展开（Drift3 `00` §5.3 的方案）：要 AST + sourcemap + dev/prod
-  双形态，成本远大于收益；本仓性能线已由 §2.5–§2.10 的帧税三数 / 27 页尺子关闭。
-- 真要复测：编 `bench` 后在**业务生成物**里 grep `typephp_call_method_cached`
-  与链式中间量 `php::Var`，与拆语句版逐项对照，再回填本节。
+- `lib` 口径（`tools/drift-codegen.php` / SDK 分发）类型保留生效但**去虚化不生效**，
+  链式第二跳起仍动态分派；说「解禁」必须带 `bin` 口径（§9.3）。
+- 上游回退条件：`eval` / `include` 接收者保留 Zend 帧、不可访问声明 / 子类覆盖 /
+  `__call` / interface contract 那一跳会回退动态分派（§9.4.1）。
+- 本仓 `Widget` fluent 全在 `build()` / dirty 重建（冷路径），`RenderBox` 热路径是字段直读；
+  解禁后不改代码 —— 本来就没有热点，改了只多一个回归面。也不做构建期链式展开。
 
 ### 1.6 编译期注解（`10` §2 的 9 条）
 
@@ -199,30 +179,18 @@ v6 `13` 册记 12 条但口径是"从零设计"。
 远小于 1ms/秒门槛 ⇒ 不构成"为它牺牲简洁"的理由
 ```
 
-### 2.2 M0-2 `?Obj` 是否退化 —— **形参层确认退化；字段层两种形态无量级差**
+### 2.2 M0-2 `?Obj` 是否退化 —— **字段层两种形态无量级差**（现行结论）
 
 ★ 这条**不计时**（`08` §3.4：答案在生成物里，是二值的；计时会被内联/缓存干扰）。
-夹具 `M0Nullable.php` 的两个类都**真的跑一遍并断言读回值** ——
-否则 AOT 只编译可达代码 ⇒ 类被优化掉，grep 到的是"不存在"而不是"退化了"。
+夹具 `M0Nullable.php` 的两个类都**真的跑一遍并断言读回值** —— 否则 AOT 只编译可达代码
+⇒ 类被优化掉，grep 到的是「不存在」而不是「退化了」。
 
-#### 证据一：形参层（铁证，同一函数签名内并列）
+#### 证据一：形参层（**已由上游解禁**，不再是约束）
 
-`src/App/Frame.php` 的 `run(Element $root, BoxConstraints $constraints, float $timestampMs, ?Element $popup, ...)`
-生成物（`apps/bench/build/src/App/Frame.cc:25`）：
-
-```cpp
-void php_drift__app__frame__run(
-    php::Object &this_,
-    php::Object root,          // Element $root      → php::Object
-    php::Object constraints,   // BoxConstraints     → php::Object
-    php::Float  timestampMs,   // float              → php::Float
-    php::Var    popup,         // ?Element $popup    → php::Var   ★ 退化
-    php::Float  popupX,
-    php::Float  popupY);
-```
-
-⇒ **可空对象在形参层确实退化成 `php::Var`**，非空对象是 `php::Object`。
-调用侧也随之变成 `php::takeValue(arg_popup)`（`arg_popup` 本身是 `php::Var`）。
+10-21 的旧产物里可空对象形参曾退化成 `php::Var`；上游 #184 之后同一形态是
+`php::Object` + nullable guard（§9.2 的 A/B 硬判据）。那段旧签名快照已作废，
+`Frame::run` 现在的形参是 `?\Closure $afterPaint`。
+⇒ 下面证据二/三/四讲**字段存储与读点**，走的是 PHP 属性表机制，不随形参层变化。
 
 #### 证据二：字段存储层（**推翻 `08` §3.4 的预期**）
 
@@ -269,15 +237,14 @@ tmp_var_0 = typephp_read_property_cached(this_.attr(...), get_str(189), ...);
 
 | 层 | `?Obj` | 非空 `Obj` |
 |---|---|---|
-| 形参 / 返回值 | **退化成 `php::Var`** | `php::Object` |
+| 形参 / 返回值 | `php::Object` + nullable guard（§9.2） | `php::Object` |
 | 字段存储 | PHP 属性表（同形态） | PHP 属性表（同形态） |
 | 字段读点 | 多一次空检查 | 多一次布尔检查（若用 `+bool` 哨兵） |
 | 属性访问分派 | 内联缓存读 | 内联缓存读（**非静态**） |
 
-⇒ **`03` 的 `Cell::$owner` 从 `?State` 改成 `State` + `bool` 没有性能收益**；
-   收益是**人因**的（读点不写 `?->`）。这与 `08` §2.1 第三行已写的一致
-   （"M0-2 只影响性能理由，不影响人因理由"）—— 现在**性能理由也被确认是"无收益"**。
-⇒ `02` §3.1 的 `?Color` → `Color` + `bool` 同理：收益是人因，不是性能。
+⇒ `03` 的 `Cell::$owner` 从 `?State` 改成 `State` + `bool` **没有性能收益**；收益是
+**人因**的（读点不写 `?->`）。`02` §3.1 的 `?Color` → `Color` + `bool` 同理。
+⇒ 「非空对象字段可静态分派」不成立（证据四）；§3.2 决策不变。
 
 ### 2.3 M0-3 `mixed` 装箱成本 —— **复用 M2，不重测**
 
@@ -296,7 +263,7 @@ tmp_var_0 = typephp_read_property_cached(this_.attr(...), get_str(189), ...);
 ★ 反例组 D（`mixed` 装 `string`）D/A ≈ 1.17–1.24 ⇒ 非 int 型 mixed 稍贵，
    但同样远不到 5×，**不改变结论**。
 
-### 2.4 顺带：本轮新抓到的两条（都不是 M0 计划的）
+### 2.4 顺带抓到的两条（都不在 M0 计划内）
 
 #### ① 双引号串里的 `$` ⇒ tpc 编译期 Fatal
 
@@ -345,11 +312,9 @@ Fatal error: The variable `$frame` is undefined in ...FramePhase.php:124
 ★ **AOT 更慢，而且慢得不小。** 12k 全量重排相对 8ms 产品线的倍数从 **6.4×**
 变成 **11.1×** —— 也就是说「拿解释器数字判『还没到该优化的程度』」是**偏乐观**的。
 
-**原因（2026-11-04 晚已定位，见 §2.7）**：**不是装箱**。是「虚调用 + 小对象分配 + 闭包创建」
-这三样在 AOT 下各慢 1.6–2.0×，而这个负载几乎不含能被 AOT 优化掉的算术（算术那部分在
-AOT 下快 15–20×，但布局里本来就少）。
-★ 原先这里写的是「最可能的原因：`php::Var` 装箱」（假说），已撤回 —— 阶梯实测 `mixed`
-拆箱在 AOT 下**快 2.3×**，与 §2.3 的 M2 一致。
+**原因（13 级阶梯实测，§2.7）**：不是装箱，是「虚调用 + 小对象分配 + 闭包创建」
+在 AOT 下各慢 1.6–2.0×；这个负载几乎不含能被 AOT 优化掉的算术（算术部分快 15–20×，
+但布局里本来就少）。`mixed` 拆箱在 AOT 下反而**快 2.3×**（与 §2.3 的 M2 一致）。
 
 **边界（诚实版）**：
 - 只在这个负载上成立：**小对象极多 + 软光栅录命令**。真实应用的文本塑形 / 图片解码
@@ -491,36 +456,31 @@ php tools/aot-equivalence.php          # 一条命令，看退出码
   绘制直接报 `R:0,0,600,337.5 / R:0,0,640,360`。
 
 
-### 2.9 第三把尺子的统计量：从「平均」改成「中位 + 误差棒」（2026-11-04 夜）
+### 2.9 统计量口径：中位 + 误差棒（2026-11-04 夜）
 
-上面 §2.5–§2.7 的**三把尺子**，主数原来都是「N 次取平均」/「总时间 ÷ 帧数」。
-这一棒发现那不是"噪声大"，是**系统偏差**：
+§2.5–§2.7 三把尺子的主数一律用**预热后取中位**，`min` / `max` 作误差棒
+（`tools/Bench/Samples.php`，AOT 与解释器侧同一份实现）。原先用「N 次平均 / 总时间 ÷ 帧数」
+是**系统偏差**而非噪声：
 
 ```text
 同一棵 12k 节点树连续 layout 20 次
-  第一发    63,263µs     ← attach 之后这是**首次强制重排**，缓存最冷（+42%）
+  第一发    63,263µs     ← 首次强制重排，缓存最冷（+42%）
   第 2..20  41,413 – 46,838µs（中位 43,056）
   前 5 次平均 48,533µs   ⇒ 比典型高 13%
 ```
 
-| 主数 | 原口径 | 偏差来源 |
+| 主数 | 旧口径 | 偏差来源 |
 |---|---|---|
 | `layoutUs` | 5 次平均 | 冷发占 1/5 |
 | `perFrameUs` | 30 帧总时间 ÷ 30 | **一帧撞上 GC 就抬走整段**，实测浮动 6× |
 | `rebuild` 三段 | 10 帧平均 | 新树首帧最冷 |
 
-⇒ 现在：每段先跑几发**丢弃**（预热），再采 7 发 / 9 帧 / 逐帧 30 帧，主数取**中位**；
-`min` / `max` 当**误差棒**印在下一行（`tools/Bench/Samples.php`）。
-
-★ **AOT 侧与解释器侧用同一份 `Samples`**，所以两边的"中位"是同一个定义 ——
-   这也是 `Samples.php` 必须编进 `probes/frame_tax_aot/project.yml` 的唯一理由。
-★ `sort()` 在 tpc AOT 下**可以编译**（§39.6 验证过），`AOT-CONSTRAINTS` 之前没有先例。
+★ `sort()` 在 tpc AOT 下可以编译（§39.6 验证过）。
 ★ **比值类结论不受影响**（分子分母同比例偏高）：§2.5 的 1.73×、§2.6 的 2.24×、
-   `us/节点` 都是比值 ⇒ 裁决不变。但**绝对值要重跑才能横向比**。
-★ **离散度不进判据**，只印：它是机器的属性（调度 / 频率 / GC），判它等于判机器。
-   但 `--scale` 判据 ③ 的文本里带两档离散度 —— 因为那个比值的单次精度只有 **±20%**
-   （实测两档各测一次时在 0.93–1.35 之间跳），不标出来就会被当成"超线性增长"。
-
+`us/节点` 都是比值 ⇒ 裁决不变；**绝对值要重跑才能横向比**。
+★ 离散度不进判据，只印：它是机器的属性（调度 / 频率 / GC），判它等于判机器。
+但 `--scale` 判据 ③ 的文本带两档离散度 —— 那个比值的单次精度只有 **±20%**，
+不标出来会被当成「超线性增长」。
 
 ### 2.10 第三类等价：**盒级动画的状态机**（2026-11-04 夜）
 
@@ -605,7 +565,6 @@ M0-1 证明 `readonly` 免费 ⇒ **原先唯一的迁移理由（"慢 10×+"）
 | **V-4** | `match` 生成跳转表 | 已用 15 处且 T2 通过 ⇒ 正确性没问题。若生成 if-else 链 ⇒ `RenderFlex::placeChildren` 每次布局最多 4 次比较 | 极低 |
 | **V-6** | `const` 数组零成本 | 本仓 `const` 数组很少（`RenderDock::SLOTS` 5 元素、`DeadCommand::EMITTERS` 2 元素）⇒ 有拷贝也无所谓 | 极低 |
 | **V-7** | 能否出 NTS 产物 | 与本次改造正交（打包/分发的事） | 无 |
-| **V-8** | 链式退化（§1.5.1）在本仓同样成立 | 链式只在 `build()` 冷路径、热路径字段直读 ⇒ 即便不成立也**无影响** | 低 |
 
 **已由"存在性"证明的四条**（不用再测）：
 
@@ -618,29 +577,29 @@ M0-1 证明 `readonly` 免费 ⇒ **原先唯一的迁移理由（"慢 10×+"）
 
 ---
 
-## 5. 代码纪律 15 条
+## 5. 代码纪律（现行 12 条）
+
+> 编号沿用历史 15 条清单；**3 / 4 / 15 已撤销**（`readonly` 零开销 / #183 链式解禁，
+> 见 §2.1 / §9.3），故跳号 —— 保留编号是为了让源码注释与本册其它章节的 §5-N 引用不漂移。
 
 | # | 纪律 | 依据 |
 |---|---|---|
-| 1 | 热路径禁 `switch`，用 `int` + `===` 链 | C2440（`Curve.php:92`） |
-| 2 | `?:` 两支类型不同 ⇒ 拆 `if/else` | C2678（`ToggleBase.php:159`） |
-| 3 | ~~热路径禁 `readonly`~~ | **M0-1 已撤销（readonly 零 Hook）** |
-| 4 | 禁 `(new Foo())->bar()` | 临时构造不能优化 |
+| 1 | 热路径禁 `switch`，用 `int` + `===` 链 | C2440（`Curve.php:92`）；零 `switch` ⇒ 撤纪律无消费者，仍生效（§8.4） |
+| 2 | `?:` 两支类型不同 ⇒ 拆 `if/else` | C2678（`ToggleBase.php:159`）；#186 不覆盖此形状 |
 | 5 | 父子类不声明同名 `private` | 父类 `private` 不进子类属性表 |
-| 6 | **属性读不当实参**：先落局部标量 | C2440 ×5（本仓最高频，**只能靠 T2 兜**） |
+| 6 | **属性读不当实参**：先落局部标量 | C2440 ×5（本仓最高频，**只能靠 T2 兜**）；仍生效，理由见 §8.4 |
 | 7 | 常量链平铺成一次 `\|` | C2065（`CanvasCapabilities`） |
 | 8 | 类常量不与同类方法同名 | C2872 |
 | 9 | 命名空间内调全局函数写 `\` | 运行期 `Call to undefined function`（**不是** C2653，见 §6） |
 | 10 | 循环内禁 `.=` 累加二进制串 | lint `str-concat-loop` |
-| 11 | 可空对象字段优先用"非空 + `bool` 哨兵"或 `NAN` | `?Obj` 退化（**人因为主，见 M0-2**） |
+| 11 | 可空对象字段优先用「非空 + `bool` 哨兵」或 `NAN` | 字段层无量级差（M0-2）+ `?->` 静默失效（§1.1、§2.2） |
 | 12 | 二进制复合数据过桥只走打包字节串 | 桥 ABI 只认标量 + string |
-| 13 | **内置编译期注解必须写 `#[\X]`** | lint `attribute-unqualified`（W0/A0 已落地） |
+| 13 | **内置编译期注解必须写 `#[\X]`** | lint `attribute-unqualified` |
 | 14 | **运行时路径禁 `__DIR__`/`__FILE__`**；用 `getcwd()` / 环境变量 / 显式参数 | 编译期常量 |
-| 15 | **链式只留 `build()` / dirty 重建**；每帧 `paint()` / `layout()` 里禁「返回值再当接收者」，先落局部变量 | §1.5.1 F1（外部证据，本仓未独立复测） |
 
-★ 第 13/14 两条的共同形状是**"不报错、只是没效果"**，与第 5 条（父类 `private`
-静默不生效）、`instanceof` 漏 `use` 同一族。**这一族纪律的价值不在"记住它"，
-而在"配一条 lint 或一条 grep 判据"** —— 第 13 条已有 lint，第 14 条的判据是
+★ 第 13/14 两条的共同形状是**「不报错、只是没效果」**，与第 5 条（父类 `private`
+静默不生效）、`instanceof` 漏 `use` 同一族。**这一族纪律的价值不在「记住它」，而在配一条
+lint 或一条 grep 判据** —— 第 13 条已有 lint，第 14 条的判据是
 `grep -rn "__DIR__\|__FILE__" src/ --include=*.php`（当前只应命中 `FontLocator` 3 行）。
 
 ---
@@ -649,7 +608,7 @@ M0-1 证明 `readonly` 免费 ⇒ **原先唯一的迁移理由（"慢 10×+"）
 
 | 错误码 | 约束 | 本仓痕迹 |
 |---|---|---|
-| **C2440** | 三元/属性读被推成 `php::Variant` 传给 `float`/`Int` 形参；`switch ($this->intProp)` 同型 | 源码 5 处注释 |
+| **C2440** | 三元/属性读被推成 `php::Variant` 传给 `float`/`Int` 形参；`switch ($this->intProp)` 同型。**上游 #186 已修根因、本仓 18:04 T2 已验；workaround 仍保留（理由见 §8.4）** | 源码 5 处注释（暂不删） |
 | **C2678** | `?:` 两支类型不同 ⇒ 无 `operator?:` 重载 | `ToggleBase.php:159` `:190` |
 | **C2065** | 常量链 `A = B \| C` 而 `B = X \| Y` | `CanvasCapabilities::ALL_MASK` 注释 |
 | **C2872** | 类常量与同类方法同名 | 改名（无残留） |
@@ -665,11 +624,315 @@ M0-1 证明 `readonly` 免费 ⇒ **原先唯一的迁移理由（"慢 10×+"）
 
 ## 7. 维护
 
-- **新踩一条 AOT 坑**：先加进本文件（§1 判据表 + §6 错误码），再写进源码注释（如果有具体位置）。
-- **外部证据**（Drift3 / 成熟框架探针等）：登记时写清来源、编译器版本与**本仓是否
-  独立复测**；没复测的只进「纪律」（如 §1.5.1），不得写成 §2 那种实测结论。
+- **只记当前有效结论**：已推翻 / 已解禁的旧约束从条文里删掉，结案与边界集中放 §9；
+  不在条文里堆「当时 / 现已 / 别串台」的订正层。
+- **新踩一条 AOT 坑**：先加进本文件（§1 判据表 + §6 错误码），再写进源码注释（若有具体位置）。
+- **外部证据**（Drift3 / 成熟框架探针等）：登记时写清来源、编译器版本与**本仓是否独立复测**；
+  没复测的只进「纪律」，不得写成 §2 那种实测结论。
+- **口径要写清 `bin` / `lib`**：`apps/*` 是 `bin`（出 exe），`tools/drift-codegen.php` 是 `lib`
+  （SDK 分发）。同一份源码在两种模式下分派形态**可以不同**（§9.3 的链式就是），
+  只写「编译器修了」会把 `lib` 口径的遗留当成已解禁。
+- **上游编译器修复**：登记时必须写清**提交哈希 + 实际构建入口含不含 + 本仓复测到哪一层
+  （翻译层 / T2 编译链接 / 真机）**。「上游已修」≠「本仓已生效」≠「可以删 workaround」——
+  三层结论要分别给证据（§8 / §9）。
 - **M0 重跑**：`php tools/drift-build.php bench` → `php tools/bench-run.php`。
   数字波动 > 20% 时跑 3 次取中位（`08` §9 边界情况 4）。
-- **本文件与 `08` 的关系**：`08` 是方案稿（含推演与备选与否决），本文件是**结论台账**。
-  两者冲突时以本文件为准，并回头修 `08`。
+- **本文件与 `08` 的关系**：`08` 是方案稿（含推演与备选），本文件是**结论台账**；
+  冲突时以本文件为准，历史方案稿不回改。
+
+---
+
+## 8. 上游 #186 与当前编译器状态（2026-11-11）
+
+> `swoole/typephp` `bff46481`（#186）是当前默认入口的 HEAD。本节只记**现行结论与证据层级**；
+> pin 事故与订正过程已结案，不复述。
+
+### 8.1 修了什么（生成不出可编译 C++，不是运行期静默 bug）
+
+| 形状 | 旧 codegen | #186 之后 |
+|---|---|---|
+| **`readonly` 标量属性读取**（喂给 `switch` 判别式 / 类型化返回 / 标量形参） | readonly 被排除在标量引用提升之外 ⇒ 通用读返回 `php::Variant`，拿来初始化 `php::Int`/`php::Float` 局部变量 ⇒ C2440 | 走 `typephp_read_property_scoped(...)` + `php::toInt` / `toFloat` / `toBool(...)`；覆盖 `$this`、形参、局部、表达式接收者；**未初始化槽仍抛 `Error`**，不会悄悄变 0 / false |
+| **string 三元两支「声明类型相同、存储类型不同」** | 属性读降到 `php::Variant`、字面量降到 `php::String` ⇒ 无公共 C++ 类型，编不过 | 两支统一 `php::toString(...)`；**其它标量本就有公共存储类型，无需改** |
+
+★ **不在修复范围**（别顺手撤纪律）：
+- `?:` 两支**声明类型不同** ⇒ C2678 / `php::Var` 合流（§1.2、§5-2、评审稿 §8 第 6 条）
+  **仍成立**；#186 统一的是「存储类型」，不是「静态类」。
+- 上游只验证 Linux PHP 8.4/8.5（51 测试 × 171 断言 + 103 个 PHPT），
+  **未覆盖 Windows/MSVC**。
+
+### 8.2 本仓独立复测（翻译层 + MSVC 产物）
+
+| 层级 | 证据 |
+|---|---|
+| 翻译层 `drift-codegen`（同一份 `src/`） | 源码树 `bff46481`：510 php / 450 cc / 0 skip，`php::to*(typephp_read_property_scoped` **1751** 处；对照旧 pin（`d4f8c3ca`）同形状 **0** 处 |
+| MSVC 产物 `apps/users/build`（355 个 `.cc`，18:04） | 同形状 **1729** 处、`typephp_call_closure` **4** 处（与评审稿 §4.1 预测的「只多 4 处排序回调」吻合） |
+| 可编译 / 链接 / 起窗 | §8.4 的 T2 |
+
+样本 `apps/bench/src/M0Nullable.cc`：`#186` 下是
+`tmp_var_0 = php::toFloat(typephp_read_property_scoped(...))`；旧 pin 下是
+`php::Var tmp_var_0` + `throwReturnTypeError` + `php::toFloat(tmp_var_0)`。
+
+**未独立复测**：string 三元那一半（本仓 `Segment` / `ToggleBase` 都拆成 `if/else`，
+刻意避开该形状），只有上游 codegen/PHPT 覆盖；「未初始化 readonly 槽抛 `Error`」也属
+#186 新增语义，未做专用真机探针。
+
+### 8.3 当前入口（pin 已解开）
+
+旧 Windows PHPX（`typephp-windows-x64-0.9.6`）缺 `typephp_call_closure` ⇒ 曾显式
+`DRIFT_TPC_ENTRY` 指向 `tpc-pin`（`d4f8c3ca`）；用户更新 phpx 并重编 tpc 后，新 `phpx.lib`
+补齐该符号（COFF 符号表 5716 → 5718，差异恰好是这一个），pin 的理由消失。
+
+⇒ **`DRIFT_TPC_ENTRY` 现为空**，实际构建入口 = 默认源码树 `D:/TypePHP/typephp/bin/tpc.php`
+（HEAD `bff46481`，含 #186）；`doctor --scope=gate` 已确认。旧包只是归档目录，不参与构建。
+
+### 8.4 T2 实证，以及为什么不顺手撤 workaround
+
+| 判据 | 结果 |
+|---|---|
+| `php tools/drift-build.php users --full`（默认入口 + 新 PHPX） | **EXIT=0** · `users.exe` 13.6 MB / 183.9s · 无 C3861 / LNK2019 / C2440 |
+| 产物形状（`apps/users/build`，355 个 `.cc`） | `php::to*(typephp_read_property_scoped` **1729** 处 · `typephp_call_closure` **4** 处 |
+| `probe-window users 用户管理`（真机） | **0 FAIL / 5 条**（含 DPI V2 与退出码 0 ⇒ 新 `phpx.dll` 运行期导出也接上） |
+
+⇒ **#186 在 Windows/MSVC 下可编译、可链接、可运行**（上游只验了 Linux PHP 8.4/8.5，
+这份是它缺的平台证据）。但 §1.2 / §1.5 / §5-1、§5-6 与源码 5 处 C2440 workaround
+**仍保留**，理由换成三条，不再靠「pin 未含」：
+
+1. #186 **不修** `?:` 两支声明类型不同（C2678），`ToggleBase` 的拆写仍必要；
+2. 「未初始化 readonly 槽抛 `Error`」是 #186 新增语义，**本轮未专门验**；
+3. 这些写法有真实消费者、零成本，全仓 `switch` 零使用 ⇒ 撤掉没有收益，只多一个回归面。
+
+**诚实边界**：本轮未跑帧税 / `aot-equivalence`（后者要另建 `frame_tax_aot_probe.exe`，
+~1m20s），也未做「未初始化 readonly 槽」的专用真机探针；要撤 workaround 得先补这三条。
+别把「T2 构建 + 真机起窗」写成「AOT↔解释器等价已复验」。
+
+---
+
+## 9. 上游 #183 / #184 / #185 已解禁的能力与边界（2026-11-11）
+
+> **结论先行**：链式调用、`?Obj` / 纯对象复合类型退化、typed property / 常量 / 容器 /
+> 接口场景的丢类**均已解禁**；本仓默认入口 `bff46481` 全部包含。
+> 本节是「解禁了什么 + 哪些边界仍在」的结论台账，也是 §1 / §5 里撤销条目的依据。
+> 官方 Issue 原文：[swoole/typephp#184](https://github.com/swoole/typephp/issues/184)。
+
+### 9.1 上游提交链（按时间）
+
+| 提交 | 时间 | 主题 |
+|---|---|---|
+| `963c0ae1` | 11-09 12:04 | `?Class` 声明保留 typed object 存储 |
+| `340a8589` | 11-09 12:26 | 消除已证明的多余可空对象检查 |
+| `186f8921` | 11-09 13:32 | 自举期处理 nullable typed objects |
+| **`b7e94b39`** | **11-09 15:49** | **#183 链式调用保留静态类型**（复合 PR） |
+| `95e4f3e6` | 11-10 | 保留标量常量存储与 lowered types（外部类常量求值成 0 的上游修复） |
+| `517d0df0` | 11-10 | typed property locals 保留对象类 |
+| `2665ac53` | 11-11 | 保留 `??` / `?->` 的结果类型 |
+| `c456b154` | 11-11 10:47 | object-only 复合类型用对象存储 |
+| `9df22dc8` | 11-11 15:18 | **#185** 可空 interface 返回仍保留运行期检查 |
+| `bff46481` | 11-11 17:01 | #186（见 §8.1） |
+
+★ 上表 11-10 ~ 11-11 的 6 个提交里，`95e4f3e6` / `517d0df0` / `2665ac53` /
+`c456b154` 属于 **`swoole/typephp#184`**（**Issue 不是 PR**，基线 `master 3d01d5ab`）；
+`9df22dc8` 是 #185、`bff46481` 是 #186，都不在这份清单里。官方完整修复清单共
+**11 个 commit**：`517d0df0`、`2665ac53`、`95e4f3e6`、`129b9af9`、`55222720`、
+`0e5568df`、`e59be996`、`d38265a8`、`c456b154`、`f6185155`、`49818941`
+（逐条修了什么见 §9.4.1）。`c3e52aee` / `3959b2ef`（Closure invoke 特化）不属这一批。
+
+硬判据：`git merge-base --is-ancestor <commit> HEAD` 对 `tpc-pin`（`d4f8c3ca`）与
+默认源码树（`bff46481`）都是 **11/11 为真**，`9df22dc8` / `bff46481` 对 pin 为假
+⇒ 评审稿 §3.1 的「修复后」就是含 #184 的口径。
+
+#183 不只改了链式：同一 PR 里还有 `eval` / `include` 保留 Zend 调用帧、
+「不可访问声明 / 子类覆盖 / `__call`」回退动态分派、`: static` 返回类型、
+深链编译从指数降为线性。上游 `ChainCallTypeInferenceTest` 的判据是
+`assertStringNotContainsString('typephp_call_method_cached', $body)` —— 断言的是
+**去虚化**，不是"类型不退化"这么弱。
+
+### 9.2 本仓硬证据一：`?Obj` 形参不再退化（同一源码、新旧产物 A/B）
+
+| 产物 | 编译器 | `Frame::run` 的 `?\Closure $afterPaint` | 调用侧 |
+|---|---|---|---|
+| `apps/bench/build/src/App/Frame.cc:168`（11-05） | #183 之前 | **`php::Var afterPaint`** | `php::Var arg_afterPaint = php::getCallArg(4, ...)` |
+| `apps/users/build/src/App/Frame.cc:161`（11-11 18:04） | `bff46481`（含 #183/#185/#186） | **`php::Object afterPaint`** | `php::Object arg_afterPaint = ([&](php::Var v) -> php::Object { ...isNull() ... php::toObject(v, PersistentClassId{31}) })(...)` |
+
+⇒ 同一个 `Frame::run` 签名、同一个形参 `?\Closure $afterPaint`，两次构建相隔 6 天、
+方法签名未变，只换编译器版本 ⇒ 退化消失；新产物经过 **T2**
+（`drift-build users --full` EXIT=0 + 真机 `probe-window` 5/5，见 §8.4）。
+`apps/users/build` 里 79 个 `.cc` 出现 `typephp_nullable_object_value` guard，不是孤例。
+§2.2 的形参层结论已按本节更新；字段层证据与 §3.2 决策不受影响。
+
+★ **不是孤证**：`docs/REVIEW-TPC-DEVIRT-2026-11-11.md` §8 第 1 条（同一天下午、
+独立做的产物统计）已登记 `?Klass` 声明处 属性 140 / 形参 97 / 返回 198「已不再降级」，
+归因同为 `963c0ae1` + `340a8589`，并给出 `$this->focus->collect()` ⇒
+`php_drift__app__focusmanager__collect(focus, …)` 的直调证据。
+那份是**声明处 + 产物统计**，本节的 A/B 是**同一形参跨编译器版本**，两条路径互不相同。
+
+### 9.3 本仓硬证据二：链式在 `bin` 下已去虚化（最小夹具）
+
+夹具 `_codegen/chain-probe/`（`ChainProbe.php` + `Main.php`，两个 yml 分别 `mode: lib` /
+`mode: bin`）—— **一次性诊断物，位于 gitignore 的 `_codegen/`，不入仓**；
+等价最小源码见 §9.5，clone 后按那份自建。同一份源码用**当前默认入口**
+`tpc --dry` 各跑一次：
+
+| 写法 | `bin`（真实应用口径） | `lib`（SDK / `drift-codegen` 口径） |
+|---|---|---|
+| `Box::make()->add(1)->add(2)->value()` | 4 跳**全静态直调**（`php_chainprobe__box__*`），`typephp_call_method_cached` **0** | 中间量已是 `php::Object`，但 3 跳仍 `typephp_call_method_cached` |
+| `split()`（落局部变量） | 全静态直调，与上者**同形** | 全静态直调 |
+| `(new Box())->add(3)->value()` | 全静态直调 | 2 跳仍 `typephp_call_method_cached` |
+
+⇒ `bin` 下链式是 **4 直调 / 0 动态 / 0 个 `php::Var`**（§1.5.1）。
+⇒ 但**口径差异是真的**：`lib` 模式下类型保留生效、去虚化不生效。
+`tools/drift-codegen.php` 走 `lib`，拿它的产物断言应用性能会看反。
+
+### 9.4 结论台账（现行）
+
+| 项 | 现行结论 |
+|---|---|
+| `?Obj` 形参 / 返回值退化 | **已解禁**（`php::Object` + guard，§9.2） |
+| 链式 / 临时对象接收者 | **已解禁**（`bin` 口径全静态直调，§9.3）；`lib` 口径仍有动态分派 |
+| `?Obj` **字段**用「非空 + bool」 | **不变**：字段层无量级差（§2.2），且 `?->` 静默坑仍在 |
+| `?->` 空安全调用 | **不变**：属性查表机制，与类型退化无关；只约束跨实例读 `private` / `$this->可空字段?->` 那一族 |
+| `?:` 两支声明类型不同 ⇒ C2678 | **不变**（#183 / #186 都不覆盖） |
+| `int / int` 整数除法 / `switch` / 反射静态链接 / `__DIR__` | **不变**（§1.2 / §1.4 / §8.4） |
+| typed property→局部 / 常量算术 / `??` / typed array / 单实现 interface / 闭包 / 纯对象联合 | **#184 已解禁**（§9.4.1）；真实混合联合 / 引用 / 可覆写调用仍保留运行时表示 |
+
+#### 9.4.1 #184 去虚化批次：官方 Issue 原文摘要与本仓复核
+
+**官方 Issue 事实**
+
+| 项 | 值 |
+|---|---|
+| 类型 | **Issue**（不是 PR）· `swoole/typephp#184` |
+| 标题 | `[AOT] 静态类型在属性赋值、常量、容器和接口场景丢失，导致去虚化失效并回退到动态派发` |
+| 基线 / 环境 | `master 3d01d5ab`，`build-mode: bin`；**Linux x86_64 + GCC，PHP 8.4.21** |
+| 判据 | 生成的 `.cc` 里目标函数是否出现 `typephp_call_method_cached` / `php::Var` |
+| 复现工程 | `issueprobe`（`shapes.php` / `models.php` / `main.php`），`--dry --job 1 --no-progress` |
+| 状态 | 评论确认「已在 `master` 完成六项主体修复及附加优化」，并补生成代码断言 + 运行时回归 |
+
+**五个主场景**（每个都附最小复现与实测生成代码）：
+
+| # | 写法 | 修复前现象 | 根因落点 |
+|---|---|---|---|
+| 1 | `$s = $this->style; $s->sum()`（typed property → 局部） | `php::Var` + 动态分派；**同类的直接链式 `$this->style->sum()` 反而已能静态直调** | `detectClassOfExpr()` 的 `PropertyFetch` 只认 native object；`AssignOpTrait::parseAssignFinally()` 拿不到类就不绑定 dispatch class；沿返回值 / `clone` / 形参属性级联 |
+| 2 | 命名空间常量 / 类常量参与算术位运算 | `php::Var(_const_var_…)`、`php::Var(1023L)` 装箱 | 四类独立退化：全局常量声明期 `Type::VAR`、fetch 返回 VAR 全局槽、类常量内联时 `valueExpr === null` 留空类型、预处理只推 Array/Str |
+| 3 | `$this->style ?? new WbStyle(0)` / `?->` | 两侧都装箱、后续全动态；一条 `$this->maybe?->sum() ?? 0` 生成 3 个 IIFE | `detectTypeOfExpr` 无 `Coalesce` 分支、`getOrderedOperandTmpType` 对非 native 降 VAR |
+| 4 | 单实现 interface 形参 `$c->countUp()` | `typephp_call_method_cached` | 无 `interface → implementors` 注册表；`findNativeMethod()` 失败即落动态派发 |
+| 5 | `#[\StdList(User::class)]` 属性的 `$list[0]->name()` / `foreach` | 循环变量 `php::Var`、属性读 `typephp_read_property_cached`、累加器被拖成 VAR | `getTypedArrayDefinition()` 只识别 `Variable` 根，不识别 `PropertyFetch`；SSA 显式不对 foreach 目标收窄 |
+
+其它已确认同类退化：`clone`、数组字面量、解构、闭包参数 / `use` 捕获 / 闭包返回、
+union / nullable / intersection 声明、`$o instanceof T` 之后调用。
+
+**官方修复清单（11 个 commit）**
+
+| commit | 修了什么 |
+|---|---|
+| `517d0df0` | typed property / 局部变量 / clone / 方法返回链 / `??` / nullsafe 保留可证明对象类型与固定存储 |
+| `2665ac53` | 属性读取、惰性求值、未初始化与 unset 语义回归覆盖 |
+| `95e4f3e6` | 常量从 AST 与结构化元数据恢复存储类型 |
+| `129b9af9` | 固定字符串、布尔表达式、内建函数真实联合返回类型 |
+| `55222720` | typed array 属性索引读取与 foreach 元素契约（保留元素校验 / 引用限制 / COW） |
+| `0e5568df` | 接口**同文件单实现者**生成精确类守卫 + 静态快路径 + 动态回退 |
+| `e59be996` | 闭包已声明参数、按值捕获、可证明局部返回类型 |
+| `d38265a8` | 未修改且无引用逃逸的数组字面量、已知键、嵌套解构元素类型 |
+| `c456b154` | 纯对象联合 / nullable 对象联合 / 交叉类型 / DNF 对象声明 → `php::Object` |
+| `f6185155` | 复合对象声明的安全动态局部存储；`instanceof` 真分支类型上界、final 直调 |
+| `49818941` | 回归：trait 等值常量合并时「推断存储类型 ≠ 显式声明类型」 |
+
+★ `c3e52aee` / `3959b2ef`（Closure invoke 特化）**不在 #184 清单**，属另一批。
+
+**官方验证（只覆盖 Linux/GCC）**：PHP 8.4 纯 PHP 回归 **3484 项 / 10160 断言**通过；
+PHP 8.5 **3484 项 / 10143 断言**通过（4 项依赖可选 `phpy` 跳过）。Linux PHP 8.4 定向回归
+`devirtualize` / `dynamic_call` / `optimizations` / `typed-array` + 新增闭包 / 数组 / 复合类型 /
+instanceof / varint 溢出 / trait，累计 **59 PHPT + 2 追加**通过。最小复现工程实跑输出 `u`、
+退出码 0，**10 个目标函数**生成代码检查通过。自举生成 **181 个 C++**，15 个受影响翻译单元
+过 GCC C++17 语法检查（trait 修复后 Translator 4 个翻译单元再查一遍），单任务、
+进程树内存上限 2 GiB、禁 swap、无 OOM。
+官方收口原话：**「动态值、真实混合联合、引用和可覆写调用保留其必要的运行时表示与校验」**。
+
+**本仓 A/B 与复核**（同一份 `src/`，只换编译器；评审稿 §3.1）：
+
+| 指标 | 修复前 | 修复后（12:45 pin） | 18:04 默认入口 |
+|---|---:|---:|---:|
+| `typephp_call_method_cached` | 1593 | **1128**（−29.2%） | **1131**（+3 ⇒ #186 不改去虚化） |
+| 静态直调 `php_drift__*__*()` | 12293 | 12663（+3.0%） | 未重数 |
+| `php::Var` 出现次数 | 27381 | 24336（−11.1%） | 未重数 |
+| exe 体积 | 13.6 MB | 13.3 MB | 13.6 MB（含 #186） |
+
+本轮夹具（`_codegen/chain-probe/`，`bin --dry`）：`Box|Probe`（纯对象联合）
+⇒ `php::Object x`（命中 `c456b154`）；`int|string`（真实混合联合）⇒ `php::Var x`
+（命中官方「真实混合联合保留运行时表示」）。两条都走了与官方不同的路径，不是抄判据。
+
+**结论台账与边界**
+
+- **§1.1 结论**：`?Obj` 与**纯对象联合 / 交叉类型 / DNF 对象声明**不再退化；仍退化的是
+  真实混合联合、`mixed`、`callable`、`?array`、异型三元合流。
+- **#183 与 #184 不是同一件事**：#183 修「方法返回值再当接收者」的链式接收者静态类；
+  #184 修「typed property / 常量 / 容器 / 接口」六类丢类。官方 Issue 里
+  `styleSumChain()`（直接链式）**在修复前就已静态直调**，正是二者边界的证据。
+- **仍有动态分派是设计**：非 final 基类方法可覆写 ⇒ 保留动态派发（Issue 场景 1 明写）；
+  interface 特化**只对同文件单实现者**、且必须带 `instanceof` 守卫（`eval` 可运行期新增实现类、
+  形参可收外部对象）；`instanceof` 收窄只在**真分支作用域内**，分支外恢复；
+  复合对象声明后续若有动态重赋值 / 引用操作，退回安全动态局部存储。
+  ⇒ 与评审稿 §8「别把多态当缺陷」及本仓 1131 处剩余分派一致。
+- **别顺手撤的**：§5-7 常量链 C2065 / §5-8 类常量与同名方法 C2872 是 **C++ 语法与命名冲突**，
+  与 #184「常量参与算术时类型退化」不是一回事；§5-1/2/6 的 C2440 / C2678 系列 #186 也不覆盖。
+  §2.2 字段层与 §3.2 决策仍按评审稿「不该改」不变。
+- **诚实边界**：官方只验 Linux x86_64 + GCC / PHP 8.4-8.5；本仓 Windows/MSVC 侧只有
+  18:04 的 T2（可编译 / 链接 / 起窗）与本节翻译层夹具，**没有**重跑帧税 / `php::Var` 计数 /
+  27 页尺子，也没有把官方 10 个目标函数的生成代码断言搬进本仓。
+
+**上游回退条件（别把"解禁"读成"无条件"）**：`eval` / `include` 接收者必须保留
+Zend 帧；声明不可访问、子类覆盖、`__call`、interface contract 那一跳会**回退动态分派**
+（上游 `testInterfaceContractKeepsTypeAndResumesDirectDispatch` 明确断言还有 1 次
+`typephp_call_method_cached`）。本仓 `Widget` fluent 是 `final` / `self` 链，落在已解禁那一半。
+
+### 9.5 诚实边界与复现
+
+- 夹具只走 **`tpc --dry` 翻译层**；`users.exe` 的 T2（§8.4）证明的是整棵 `src/` 在
+  Windows/MSVC 下可编译链接可运行，**不是**专门测链式热路径的性能。
+  没有重跑帧税 / `aot-equivalence`，也没有给链式做 AOT 计时。
+- 字段层（§2.2 证据二/三/四）、`A|B` / `mixed` / `callable`、`?int` / `?string`（V-1）
+  **本轮未复测**，只在有直接证据的两条上改写结论。
+- `lib` 口径差异是本轮新发现，未评估它对 SDK 分发形态的性能影响
+  （本仓目前不分发 SDK，`mode: lib` 只服务于 `drift-codegen` 这道门）。
+- 历史稿按 §7 不回改：`DEBT` §55.4、`docs/arch-v2/*`、`ARCH-REVIEW-2026-10-21.md`
+  里"链式只留冷路径"是当时的登记，冲突以本节为准。
+
+**前置**：先跑一次 `php tools/drift-codegen.php`，让它生成 `_codegen/fake-toolchain/cl.exe`
+与 `_codegen/ini/php.ini`（`--dry` 也要校验工具链，假 `cl.exe` 够用）。
+夹具（放 `_codegen/chain-probe/`）：
+
+```php
+// ChainProbe.php
+<?php
+declare(strict_types=1);
+namespace ChainProbe;
+
+final class Box {
+    private int $v = 0;
+    public static function make(): self { return new self(); }
+    public function add(int $x): self { $this->v = $this->v + $x; return $this; }
+    public function value(): int { return $this->v; }
+}
+final class Probe {
+    public function chained(): int { return Box::make()->add(1)->add(2)->value(); }
+    public function split(): int { $b = Box::make(); $b->add(1); $b->add(2); return $b->value(); }
+    public function fromNew(): int { return (new Box())->add(3)->value(); }
+    public function run(): int { return $this->chained() + $this->split() + $this->fromNew(); }
+}
+```
+
+两份 yml 只差 `mode` 与 `build-dir`：`mode: lib` → `build-dir: ./build`；
+`mode: bin` + `platform: win32` → `build-dir: ./build-bin`，`sources` 里再列一个
+`Main.php`（全局 `function main(): void` 调一次 `run()`，避免整段被优化掉）。
+
+```bash
+cd _codegen/chain-probe
+PHPRC='D:/TypePHP/Drift2/_codegen/ini' PHPX_HOME='D:/TypePHP/typephp-windows-x64/phpx' \
+  D:/TypePHP/typephp-windows-x64/php D:/TypePHP/typephp/bin/tpc.php \
+  --project project-bin.yml --dry --compiler ../fake-toolchain/cl.exe
+grep -n 'probe__chained\|probe__fromnew\|typephp_call_method_cached' build-bin/ChainProbe.cc
+```
+
+判据：`php_chainprobe__box__*` 出现、`typephp_call_method_cached` **不出现**于
+`chained()` / `fromNew()`；再把 `--project` 换成 `project.yml` 重跑一次，
+`lib` 产物里这两处应当**仍有** `typephp_call_method_cached`（口径差异才能被证伪）。
 

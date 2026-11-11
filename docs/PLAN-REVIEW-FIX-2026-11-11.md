@@ -72,7 +72,7 @@
 |---|---|---|
 | 只把 4 个控件改双参 | 4 行 | 否决。清单式修法，下次新控件照漏，且放过间接工厂 |
 | **lint 规则 + 全量违规点补齐**（本轮） | 1 规则 + 2 夹具 + 约 15 处签名 | **采纳**。判据与实现不同源（期望值写死在规则里），静态、亚秒级、零误报 |
-| 把 `(KeyEvent, Element)` 合成单值事件对象（WPF `RoutedEventArgs`） | 新类 + 改全部回调槽与派发点 + 20 处签名 + 需要 T2 全量 | **排到下一个破坏性窗口**。它从类型层面消灭整类差异，是更好的终局；但当前 tpc 仍 pin 在 `d4f8c3ca`（Windows 运行时尚未含 `typephp_call_closure`），破坏性改动应与「解开 pin」同批做，不与本轮修复混在一起。且 `pointer()` 仍是两参、`hover()` 一参，只改 `keyboard()` 也谈不上「统一单值入口」——真要做应三个槽一起 |
+| 把 `(KeyEvent, Element)` 合成单值事件对象（WPF `RoutedEventArgs`） | 新类 + 改全部回调槽与派发点 + 20 处签名 + 需要 T2 全量 | **排到下一个破坏性窗口**。它从类型层面消灭整类差异，是更好的终局；tpc pin 已于 18:04 解开（默认入口含 #186、Windows PHPX 已补符号、T2 通过）⇒ 破坏性改动不再与「解开 pin」绑定，另排窗口，不与本轮修复混在一起。且 `pointer()` 仍是两参、`hover()` 一参，只改 `keyboard()` 也谈不上「统一单值入口」——真要做应三个槽一起 |
 
 ### 2.2 「外部类常量求值成 0」已修复，是**文档债**不是代码缺陷
 
@@ -142,7 +142,7 @@
 | 7 | 全量验证 + 记忆日志 | — | `gate --fast` + 全量 28 项 + `docref` |
 
 **本轮明确不做**：`Application` 上帝类再拆（11-08 已判「再拆只是搬位置」）；
-单值事件对象根治（等解开 tpc pin 的破坏性窗口）；`Future.timeout` 下沉（先出 §82
+单值事件对象根治（独立排破坏性窗口；tpc pin 已于 18:04 解开）；`Future.timeout` 下沉（先出 §82
 裁决稿）；`fold()` 刷新开关 / `State::mounted` / disposers（改公开语义，单独裁决）；
 零消费者 `@api` 的口径（产品决策）；`curl_multi` 探针（无消费者，§80 仍推后）；
 T2 真机按键探针（见 §5 诚实边界）。
@@ -170,7 +170,7 @@ T2 真机按键探针（见 §5 诚实边界）。
   项目自定纪律之上，置信度高；按本仓纪律仍须一次「聚焦控件 → 发方向键 →
   断言 stdout 零 Fatal 且值真的变了」才算实证。本轮用 `drift-codegen` 产物对照
   作为更便宜的 AOT 侧证据，不冒充 T2。
-- 未跑 AOT 全量重建（`drift-build`）；tpc 仍 pin 在 `d4f8c3ca`。
+- 未跑 AOT 全量重建（`drift-build`）；tpc 当时 pin 在 `d4f8c3ca`（**18:04 已解开并补跑全量重建 + 真机 5/5**，见 `docs/AOT-CONSTRAINTS.md` §8.4）。
 - 多窗口 resize 只做代码层修复 + 既有探针，未新增两窗交替拖动专用探针。
 - 所有读数均为 2026-11-11 复核结果，开工前仍要重新 grep。
 
@@ -196,7 +196,7 @@ T2 真机按键探针（见 §5 诚实边界）。
 | `lint` | 1072 文件 · 0 error · 0 warn（规则 31→32 条） |
 | `lint --selftest` | `callback-arity` 该响 4 / 不该响 0 |
 | **arity 磁盘变异** | Slider 改回单参 ⇒ `lint` exit 1 且精确报 `src/Widget/Slider.php:243`；恢复后复绿 |
-| **arity AOT 证据** | `drift-codegen`（pin 编译器）后 `Slider.cc` / `Select.cc` / `ComboBox.cc` / `CalendarView.cc` 的 `keyboard` 闭包从 `{event}` 变 `{event, self}`；重新 `drift-build users` 后产物里仍是两参 |
+| **arity AOT 证据** | `drift-codegen`（当时 pin 编译器）后 `Slider.cc` / `Select.cc` / `ComboBox.cc` / `CalendarView.cc` 的 `keyboard` 闭包从 `{event}` 变 `{event, self}`；重新 `drift-build users` 后产物里仍是两参 |
 | `build-stale-check --selftest` | 11→14 条全过 |
 | **指纹敏感性** | 同输入 `--dry`⇒**skip**（`0f1f801f9b1a`==`0f1f801f9b1a`）；改 `apps/hello/project.yml` 一个字节 ⇒ 指纹变 `f879c3bb3703`（FULL）；还原 ⇒ 回到 `8054c57ff156`（确定性 + 敏感性双向成立） |
 | **doctor 分级变异** | `DRIFT_PHPX_HOME=D:/nope`：`--scope=gate` ⇒ 打 `✗ PHPX_HOME（不影响 gate）` 但 **exit 0**；不带 scope ⇒ exit 1 |
@@ -230,8 +230,10 @@ T2 真机按键探针（见 §5 诚实边界）。
   历史事故记录」，`probe-window` 只证明 exe 起窗/退出正常，**不证明按下方向键不
   Fatal**。要彻底关上这条，需要一次「聚焦 `Select` → 发 `Down` → 断言 stdout 零
   Fatal 且值变了」的真机探针（`probe-press.py` 是现成骨架）。
-- tpc 仍 pin 在 `D:/TypePHP/tpc-pin`（上游 Windows PHPX 未补 `typephp_call_closure`）；
-  本轮所有构建都用 `DRIFT_TPC_ENTRY` 指它。
+- tpc **曾** pin 在 `D:/TypePHP/tpc-pin`（上游 Windows PHPX 未补 `typephp_call_closure`）；
+  本轮所有构建都用 `DRIFT_TPC_ENTRY` 指它。**18:04 已解开**：新 PHPX 补了符号，
+  `DRIFT_TPC_ENTRY` 置空，默认源码树入口（`bff46481`，含 #186）全量重建 + 真机 5/5 通过。
+  ★ 17:01 的 #186 晚于该 pin，当时不在 pin 里；订正与 T2 实证见 `docs/AOT-CONSTRAINTS.md` §8.3 / §8.4。
 - `TimedJob` 跨后端语义（报告 §3.3）按裁决**未落地**，只把结论留在这里等 §82 裁决稿。
 - 未修：`fold()` 刷新开关、`State::mounted`、零消费者 `@api` 口径（都改公开语义）。
 - `docref --selftest` 的 `section-refs` 反例恒红（既有遗留，不进 gate）。

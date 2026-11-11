@@ -131,12 +131,22 @@ hash_update($inputs, 'tpc:' . (string) hash_file('sha256', $entry));
 **34117 → 34117**，只多出 **4 处** `typephp_call_closure`（`TableState` 的排序回调）。
 为 4 个调用点去重建运行时不合算。
 
-**当前做法**：本地构建用 `DRIFT_TPC_ENTRY` 固定到 `d4f8c3ca`（12:45 合并，`typephp_call_closure`
-之前）的 worktree `D:/TypePHP/tpc-pin`；等上游 Windows 运行时发布后再解开，届时按 T2 重跑。
+**历史做法（18:04 已解开，保留作事故记录）**：本地构建用 `DRIFT_TPC_ENTRY` 固定到
+`d4f8c3ca`（12:45 合并，`typephp_call_closure` 之前）的 worktree `D:/TypePHP/tpc-pin`。
 
 ```bash
+# 旧（仅当时有效）
 DRIFT_TPC_ENTRY="D:/TypePHP/tpc-pin/bin/tpc.php" php tools/drift-build.php users
 ```
+
+★ **18:04 结案（A/B 硬判据）**：旧包 `typephp-windows-x64-0.9.6/phpx` 的 `phpx.lib`
+5716 个符号、头文件零声明；用户更新后的 `typephp-windows-x64/phpx`
+（`tpc.exe v0.10.0`）5718 个，多出的恰好就是 `?typephp_call_closure@@…` 与其 `__imp_`
+导入符号，`typephp_helper.h` 补 5 处声明；其余 24 个 `typephp_*` 两边都在。
+`DRIFT_TPC_ENTRY` 置空 ⇒ 默认源码树入口（`bff46481`，含 #186），
+`drift-build users --full` **EXIT=0**（13.6 MB / 183.9s，无 C3861 / LNK2019），
+产物含 `typephp_call_closure` **4 处**（正是本稿预测的排序回调数），
+`probe-window users 用户管理` **5/5**。详见 `docs/AOT-CONSTRAINTS.md` §8.3 / §8.4。
 
 ★ 顺带一条踩过的坑：worktree 里的 `vendor/` 不能做成 junction —— PHP 会把 `__DIR__`
 解析成**真实路径**，于是加载回原树的 `src/`（表现为「固定了还是报新符号」）。要真拷贝。
@@ -149,7 +159,8 @@ DRIFT_TPC_ENTRY="D:/TypePHP/tpc-pin/bin/tpc.php" php tools/drift-build.php users
 - **不为拿收益改业务写法**（给属性加 `#[\StdList]`、把接口实现塞进同一文件）：这是被
   编译器牵着走，且会破坏分层。上游修好后自然覆盖。
 - **不长期锁 tpc 版本**：当前依赖的是 `fix/composite-abstract-interface-return` 特性分支，
-  不是 tag。§4.1 那次固定是**临时**的（等 Windows 运行时补齐），不是发布纪律意义上的锁定。
+  不是 tag。§4.1 那次固定是**临时**的（等 Windows 运行时补齐），不是发布纪律意义上的锁定；
+  **18:04 已解开**，`DRIFT_TPC_ENTRY` 现为空，构建走默认源码树入口。
 
 ## 6. 结论与顺序
 
@@ -162,8 +173,10 @@ DRIFT_TPC_ENTRY="D:/TypePHP/tpc-pin/bin/tpc.php" php tools/drift-build.php users
 ## 7. 复现命令
 
 ```
-# 当前唯一能编过的入口（§4.1：上游 Windows 运行时尚未含 typephp_call_closure）
-DRIFT_TPC_ENTRY="D:/TypePHP/tpc-pin/bin/tpc.php" php tools/drift-build.php users --full
+# 当前入口（18:04 解 pin 后）：默认源码树 bff46481（含 #186）+ 新 Windows PHPX
+php tools/drift-build.php users --full
+# 历史 pin（仅 11-06 运行时下有效，现已不需要）
+# DRIFT_TPC_ENTRY="D:/TypePHP/tpc-pin/bin/tpc.php" php tools/drift-build.php users --full
 python tools/probe-window.py users --title 用户管理          # 5 条判据
 bash probes/frame_tax_aot/build.sh && ./frame_tax_aot_probe.exe
 grep -rho 'typephp_call_method_cached' apps/users/build --include='*.cc' | wc -l
@@ -203,6 +216,9 @@ DRIFT_TPC_ENTRY="D:/TypePHP/typephp/bin/tpc.php" php tools/drift-codegen.php
 4. **未声明类型的闭包参数** —— 生成 `php::Var x = vars_.get(N)`，例 `TableState.cc:204`。
 5. **`mixed` / `?array` 返回** —— `stage(): mixed`、`anchorAt(): ?array`。
 6. **异型三元 / `?:` 合流** —— 两支类不同 ⇒ `php::Var`（`Coalesce` 已修，三元未全修）。
+   ★ 2026-11-11 17:01 的 #186（`bff46481`）只统一**声明类型相同、存储类型不同**的
+   string 三元两支（`php::toString`），解决的是「C++ 编不过」，**没有**把两支类不同的
+   合流变成静态类 ⇒ 本条结论不变。见 `AOT-CONSTRAINTS.md` §8.1。
 
 ### 能动 / 不能动
 
@@ -239,3 +255,33 @@ DRIFT_TPC_ENTRY="D:/TypePHP/typephp/bin/tpc.php" php tools/drift-codegen.php
 Tooltip/Select 面板非零尺寸断言继续留着，作为「INF 不为 0」的回归守卫 ——
 上游若回退，这些断言会先红。不新增依赖生成产物的 T2 定值判据（产物不进 git，
 只会多一个维护面）。订正清单见 `PLAN-REVIEW-FIX-2026-11-11.md` §2.2。
+
+---
+
+## 补记 · #186 与 pin 的关系（2026-11-11 17:20 记 · 18:04 结案）
+
+**17:20 的判断（当时成立）**：`bff46481`（#186，17:01）晚于本稿 §4.1 固定的
+`d4f8c3ca`（12:45）⇒ 当时 `tpc-pin` 不含 #186
+（`git -C D:/TypePHP/tpc-pin merge-base --is-ancestor bff46481 HEAD` 为假）。
+默认入口 `D:/TypePHP/typephp/bin/tpc.php` 的 HEAD 正是 #186，但当时构建仍显式
+`DRIFT_TPC_ENTRY` 指 pin ⇒「**上游已修**」≠「**本仓已生效**」。
+
+**18:04 反转**：Windows PHPX 补齐 `typephp_call_closure` 后 pin 已解开，默认入口生效，
+T2 全量构建 + 真机 5/5 通过 ⇒ 上一句的「≠」现在**已经相等**（详见
+`docs/AOT-CONSTRAINTS.md` §8.3 / §8.4）。但 C2440 workaround 仍保留，理由见 §8.4。
+
+独立复测（只走翻译层）：同一份 `src/` 换入口跑 `drift-codegen`，源码树
+`510 php / 450 cc / 0 skip / 28.9s`、新 codegen 形状 `1751` 处；pin
+`510 / 450 / 0 skip / 26.1s`、新形状 `0` 处。完整订正与行动顺序见
+`docs/AOT-CONSTRAINTS.md` §8。
+
+**19:10 补（官方原文锚点 + 默认入口复核）**：本稿 §1 的「六类修复、11 个 commit」是转述，
+原文见 [swoole/typephp#184](https://github.com/swoole/typephp/issues/184) —— **它是 Issue
+不是 PR**，基线 `master 3d01d5ab`，上游只验 Linux x86_64 + GCC / PHP 8.4-8.5。
+官方修复清单的 11 个 commit 与逐条对应关系已抄进
+`docs/AOT-CONSTRAINTS.md` §9.4.1；注意 `c3e52aee` / `3959b2ef` 不在其中。
+
+18:04 解开 pin、换含 #186 的默认入口全量重建后，`apps/users/build` 里
+`typephp_call_method_cached` = **1131**（本稿 §3.1「修复后」1128，+3）⇒ #184 的去虚化收益
+**仍成立**，#186 不改这类分派（与 §8-6 一致）。静态直调数 / `php::Var` 数 / 帧税未重跑
+⇒ 别把这一个计数当成整套 A/B 复验，也没补官方那 10 个目标函数的生成代码断言。
