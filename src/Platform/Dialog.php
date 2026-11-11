@@ -20,7 +20,7 @@ namespace Drift\Platform;
  *
  * ★ **本端口表达不了"失败了"**：`openFile` / `saveFile` 只有"取消 / 拿到路径"
  *   两态，而 `CommDlgExtendedError()` 非 0 是**真失败**（内存不足 / 参数非法）。
- *   取舍是把真失败交给壳自己弹框喊出来（`cpp-src/drift_win32.cc` 的
+ *   取舍是把真失败交给壳自己弹框喊出来（`cpp-src/win32/drift_win32.cc` 的
  *   `runFileDialog`），而不是新增第三种返回值 —— 今天没有调用方会为它写
  *   不同的分支，"多一态"只会变成"多一个永远不走的 if"。
  *

@@ -16,7 +16,7 @@ namespace Drift\Input;
  *
  * ★★ **`value` 就是桥的 ABI 编号** —— `drift_win_set_cursor(int $hwnd, int $shape)`
  *   收的就是它。名字→`IDC_*` 的映射只该有一处（壳里）。**改这里的 value 等于
- *   改 ABI**，必须与 `cpp-src/drift_win32.cc` 的 switch 同步。
+ *   改 ABI**，必须与 `cpp-src/win32/drift_win32.cc` 的 switch 同步。
  *
  * ★ **`Default` 不是"未声明"**：`null`（`RenderObject::cursor()`）才是"没声明"，
  *   解析结果是"沿链一路没人声明"时**返回** `Default`。两者的区别要紧：

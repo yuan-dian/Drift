@@ -700,7 +700,7 @@ final class UsersPage extends StatelessWidget
 
 | 层 | 改动 |
 |---|---|
-| `cpp-src/drift_win32.cc` | `PendingEvent` 加 `e` 槽；`pushPointer()` 内 `event.e = modifierMask()`；`toArray` 的 `kEvPointer` 多输出 `ctrl/alt/shift`（与 `kEvKey` 同一套位编码 1/2/4） |
+| `cpp-src/win32/drift_win32.cc` | `PendingEvent` 加 `e` 槽；`pushPointer()` 内 `event.e = modifierMask()`；`toArray` 的 `kEvPointer` 多输出 `ctrl/alt/shift`（与 `kEvKey` 同一套位编码 1/2/4） |
 | `src/Platform/Win32/Win32Platform.php` | 读三个字段传给 `fromBridge()` |
 | `src/Input/PointerEvent.php` | 三个 `readonly bool` + 工厂默认参数（既有调用点一字不改）+ `hasModifier()` |
 
@@ -1297,7 +1297,7 @@ smoke **1608 ok / 0 FAIL**；lint 564 文件 0 error / 0 warn。新增断言集�
 
 | 不做 | 为什么 |
 |---|---|
-| 横向滚轮（`WM_MOUSEHWHEEL` / Shift+滚轮）| `ScrollEvent` 只有一条 delta、壳的 wheel 也不带修饰位 ⇒ 要改 `cpp-src/drift_win32.cc` 并重编扩展。单独一步（5b）做，不与框架改造混在一起 |
+| 横向滚轮（`WM_MOUSEHWHEEL` / Shift+滚轮）| `ScrollEvent` 只有一条 delta、壳的 wheel 也不带修饰位 ⇒ 要改 `cpp-src/win32/drift_win32.cc` 并重编扩展。单独一步（5b）做，不与框架改造混在一起 |
 | 横向的 `ensureVisible` | 表内还没有可聚焦的格子（阶段 2b），当前没有消费者 |
 | 键盘横向滚（Shift+方向键等）| 同上，等焦点格落地后与方向键一起设计 |
 | 横条的角落挖角（在条上抠掉竖条宽）| 6×6 交叠靠绘制顺序压住即可，挖角要改 `ScrollBarGeometry` 的轨道定义（条长会跟着变），不值 |
@@ -1436,7 +1436,7 @@ smoke **1621 ok / 0 FAIL**；lint 564 文件 0 error / 0 warn。新增 12 条断
 | 表头高亮当前列 | "当前列"的第二种表达；等编辑态对表头有语义需求时一起做 |
 | 光标格的语义树节点 | `SemanticsRole::Table` 已是集合角色，格级 a11y 要先把 grid 角色的行列信息设计出来 |
 
-> 2026-11-05 订正：`cpp-src/drift_win32.cc` 早有 `VK_PRIOR` / `VK_NEXT` 映射，「要动平台层」是误判；`PageUp` / `PageDown` 已在 [DEBT-2026-11-02.md](DEBT-2026-11-02.md) 第 52 节落地。
+> 2026-11-05 订正：`cpp-src/win32/drift_win32.cc` 早有 `VK_PRIOR` / `VK_NEXT` 映射，「要动平台层」是误判；`PageUp` / `PageDown` 已在 [DEBT-2026-11-02.md](DEBT-2026-11-02.md) 第 52 节落地。
 
 ## 17. 阶段 5b 落地：横向滚轮（轴成为事件的一部分，2026-10-27）
 

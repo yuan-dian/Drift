@@ -8,7 +8,7 @@ declare(strict_types=1);
  *   而真桥只存在于 AOT 构建里 —— 解释器面调用会落到这里的假函数，参数进
  *   `$GLOBALS['DRIFT_SMOKE_SKIA_CALLS']`，"Skia 收到了什么"于是成为**可断言的纯数据**，
  *   不必每次构建 exe（构建一次 60s+，而这类断言一天要跑几百遍）。
- * ★ **签名与 `cpp-src/drift_skia.stub.php` 逐字一致** —— stub 注释原话：
+ * ★ **签名与 `cpp-src/skia/drift_skia.stub.php` 逐字一致** —— stub 注释原话：
  *   "签名不一致时是链接期静默失败"。改这里必须同步改 stub，否则测的就不是 ABI 本身；
  *   一致性由 `tools/abi-check.php` 机器判据保证（gate 的 `abi` 项）。
  * ★ **只留一份**：`tools/smoke.php` 与 `tests/Support/bootstrap.php` 都 require 本文件。
@@ -21,7 +21,7 @@ declare(strict_types=1);
  *   `DRIFT_SMOKE_SKIA_SABOTAGE`    ⇒ 把 draw_rect 的 x 篡改一格（量具反例自检）。
  */
 // ── Skia 桥的假实现（⑨+1 conformance 夹具用）──────────────────────
-// ★ 签名与 cpp-src/drift_skia.stub.php 逐字一致 —— 夹具测的必须就是 ABI 本身
+// ★ 签名与 cpp-src/skia/drift_skia.stub.php 逐字一致 —— 夹具测的必须就是 ABI 本身
 //   （stub 注释原话："签名不一致时是链接期静默失败"）。
 // ★ `use function` 是运行期解析：真桥只存在于 AOT 构建，解释器面从不加载
 //   ⇒ SkiaCanvas 的调用落到这些假函数，参数进 $GLOBALS 记录 ——

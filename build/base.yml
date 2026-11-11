@@ -73,7 +73,7 @@ job: 16
 cxx-std: c++20
 
 cxx-flags:
-  # 桥接源码（cpp-src/drift_win32.cc）的注释与字符串是 UTF-8。不加这条，
+  # 桥接源码（cpp-src/win32/drift_win32.cc）的注释与字符串是 UTF-8。不加这条，
   # MSVC 会按系统代码页解析 ⇒ 中文注释直接报 C4819 或静默乱码。
   - /utf-8
   # size_t → int 的窄化：Skia/系统头里大量存在，本工程自己的代码没有。

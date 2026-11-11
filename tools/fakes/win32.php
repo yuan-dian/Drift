@@ -5,7 +5,7 @@ declare(strict_types=1);
  * Win32 桥的**解释器替身**（smoke 与 PHPUnit 共用一份）。
  *
  * ★ smoke / phpunit 从不构造真窗口，只验"PHP 侧把意图翻成了哪个 ABI 编号 / 哪个 bool"。
- * ★ 签名与 `cpp-src/drift_win32.stub.php` 逐字一致（stub 原话：签名不一致是
+ * ★ 签名与 `cpp-src/win32/drift_win32.stub.php` 逐字一致（stub 原话：签名不一致是
  *   链接期静默失败）—— 现在由 `tools/abi-check.php` 逐项机器比对，不再靠人眼。
  *   收敛后三个散落入口（set_opacity / set_pixel_alpha /
  *   set_backdrop）合成一个 `apply_material`，外加能力查询 `material_caps`。
@@ -19,7 +19,7 @@ declare(strict_types=1);
  */
 // ── Win32 桥的假实现（窗口外观材质，P1 收敛 2026-10-26）────────────────
 // ★ smoke 从不构造真窗口，只验"PHP 侧把意图翻成了哪个 ABI 编号 / 哪个 bool"。
-// ★ 签名与 `cpp-src/drift_win32.stub.php` 逐字一致（stub 原话：签名不一致是
+// ★ 签名与 `cpp-src/win32/drift_win32.stub.php` 逐字一致（stub 原话：签名不一致是
 //   链接期静默失败）。收敛后三个散落入口（set_opacity / set_pixel_alpha /
 //   set_backdrop）合成一个 `apply_material`，外加能力查询 `material_caps`。
 // ★ `set_frameless` / `dpi` 也假：像素 alpha 要无边框，`applyMaterial()` 的

@@ -11,7 +11,7 @@
 - AOT 语义等价（T2 手动）：`php tools/aot-equivalence.php`、`php tools/dual-mode-equivalence.php`
 
 ## Project structure
-- `src/` PHP 框架核心；`apps/<app>/` 各应用（含 `project.yml`）；`cpp-src/` AOT 壳（Win32/C++ 桥，只编壳+桥）。
+- `src/` PHP 框架核心；`apps/<app>/` 各应用（含 `project.yml`）；`cpp-src/` AOT 壳（只编壳+桥）：`core/` 平台无关、`win32/` Win32 全部实现（含 `uia.*`）、`skia/` 渲染后端。接第二个平台 = 新增 `cpp-src/<platform>/`。
 - `docs/architecture/12-工程与工具.md` 权威验证分层；`docs/DEBT-2026-11-02.md` 债务与「下一棒」候选（开工前重核，会腐烂）。
 - 记忆（不进 git）：`.workbuddy-ai/memory/{MEMORY,YYYY-MM-DD,PITFALLS}.md`。
 

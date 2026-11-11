@@ -74,7 +74,7 @@ UI 线程的心智模型就只剩两件事 —— **等消息、跑任务**。Ch
 - PHP 用户态拿不到（`(int)$stream` 是资源 id，不是 fd）；
 - C 扩展层能拿（`php_stream_cast`），但**桥函数收不到 resource**
   —— `docs/design-v7/08-平台与能力矩阵.md` §9.6 纪律 1：「参数只有标量 + array」，
-  `cpp-src/drift_win32.stub.php` 里 40 个桥函数没有一个收 resource。
+  `cpp-src/win32/drift_win32.stub.php` 里 40 个桥函数没有一个收 resource。
 
 ⇒ **「等 fd 派」在 Drift2 里从根上做不了**。
 ⇒ 只能走「**不等 fd 派**」：UI 线程只等「窗口消息 + 唤醒通道」，IO 在别的执行体。
@@ -669,7 +669,7 @@ A2（C++ IO 线程）与 B4（唤醒）都要新桥函数。桥的类型系统�
 **结论：全部用 JSON 字符串过桥。**
 
 ```php
-// cpp-src/drift_win32.stub.php
+// cpp-src/win32/drift_win32.stub.php
 function drift_io_submit(string $taskJson): int {}   // 返回任务 id，-1 = 拒绝
 function drift_io_poll(): string {}                   // 返回 JSON 数组（已完成的结果）
 function drift_io_cancel(int $taskId): bool {}
@@ -1035,7 +1035,7 @@ C++ 线程。⇒ 与 N5 合并验收，不单独开工（理由见 §11 ②）�
 
 **问题不是"文件太长"，是"这条代码能不能跨平台"只能靠读代码回答。**
 
-`cpp-src/drift_win32.cc` 当时 **3927 行 / 180 KB**，一个文件里塞着窗口生命周期、
+`cpp-src/win32/drift_win32.cc` 当时 **3927 行 / 180 KB**，一个文件里塞着窗口生命周期、
 WndProc、键码归一化、逐像素上屏（ULW）、Skia 直贴、DPI、消息泵、定时器、UIA、
 剪贴板、原生对话框，以及刚写的 IO 线程池。前 7 个都是**壳**（Win32 本体），
 但线程池不是 —— 这是它必须分开的理由。

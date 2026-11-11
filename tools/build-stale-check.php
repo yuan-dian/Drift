@@ -53,6 +53,20 @@ function stale_missing(string $src): array
         $missing[] = '旧「输入变了仍走增量」提示残留（默认口径又退回去了）';
     }
 
+    // `cpp-src/` 必须按全部后缀入指纹：`hashTree()` 默认只收 `.php`，而那里只有
+    // stub 是 PHP ⇒ 只改 `.cc` / `.h` 时指纹不变、构建 SKIP，产物静默过期
+    // （2026-11-11 拆 UIA 时实证：重编却报"输入未变"）。
+    $cppLine = '';
+    foreach (\preg_split('~\R~', $src) ?: [] as $line) {
+        if (\str_contains($line, "'cpp:'")) {
+            $cppLine = $line;
+            break;
+        }
+    }
+    if ($cppLine === '' || !\str_contains($cppLine, 'hashTree(') || !\str_contains($cppLine, ", ''")) {
+        $missing[] = "C++ 源码没进输入指纹（`cpp-src` 那行要给 hashTree 传 ''，否则改 .cc 会 SKIP）";
+    }
+
     return $missing;
 }
 
@@ -64,6 +78,7 @@ function stale_good_source(): string
         "function wipeCache(string \$d): void {}",
         "\$incremental = in_array('--incremental', \$argvRest, true);",
         "\$decision = StalePolicy::decide(\$p, \$c, \$e, \$f, \$i);",
+        "hash_update(\$inputs, 'cpp:' . hashTree(\$root . '/cpp-src', '') . \"\\n\");",
         "fwrite(STDOUT, StalePolicy::label(\$decision));",
         "if (\$dry) { exit(0); }",
         "if (\$decision === StalePolicy::FULL) { wipeCache(\$a); wipeCache(\$b); }",
@@ -144,6 +159,14 @@ if ($selftest) {
             'got' => \array_values(\array_filter(
                 stale_missing($good . "\n// 输入已变 ⇒ 增量会重编受影响文件"),
                 static fn(string $m): bool => \str_contains($m, '口径又退回去了')
+            )),
+            'wantCount' => 1,
+        ],
+        [
+            'name' => 'C++ 指纹退回默认后缀（只收 .php）⇒ 报产物会静默过期',
+            'got' => \array_values(\array_filter(
+                stale_missing(\str_replace("hashTree(\$root . '/cpp-src', '')", "hashTree(\$root . '/cpp-src')", $good)),
+                static fn(string $m): bool => \str_contains($m, '没进输入指纹')
             )),
             'wantCount' => 1,
         ],

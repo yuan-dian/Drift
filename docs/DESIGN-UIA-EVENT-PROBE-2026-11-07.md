@@ -5,8 +5,9 @@
 
 ## 0. 结论先行
 
-§66 交付的 C++ 有约 40 行（`cpp-src/drift_win32.cc:3850-3872`）负责在「表格行被选中」时
-raise `UIA_SelectionItem_ElementSelectedEventId`，但 `tools/probe-uia-state.py` ⑨–⑫ 只量
+§66 交付的 C++ 在 `driftUiaApply()`（`cpp-src/win32/uia.cc:838-891`；2026-11-11 拆分前在
+`drift_win32.cc` 第 3850–3872 行）里做节点 diff，并在「表格行被选中」时
+raise `UIA_SelectionItem_ElementSelectedEventId`（raise 调用在 878-890 行），但 `tools/probe-uia-state.py` ⑨–⑫ 只量
 **属性**与**动作结果**：把 `UiaRaiseAutomationEvent` 注释掉，20 条判据照样 0 FAIL。
 这是本仓目前唯一「代码已交付、判据为零」的欠账，也是 §69「假绿修真」主线在
 C++ 侧没收的尾。

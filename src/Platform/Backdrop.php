@@ -18,7 +18,7 @@ namespace Drift\Platform;
  *
  * ★★ **`value` 就是桥的 ABI 编号** —— `drift_win_apply_material()` 的
  *   `$backdropKind` 收的就是它；`0` 保留给"关掉"（PHP 侧由 `null` 表达）。
- *   **改这里的 value 等于改 ABI**，必须与 `cpp-src/drift_win32.cc` 的 switch 同步。
+ *   **改这里的 value 等于改 ABI**，必须与 `cpp-src/win32/drift_win32.cc` 的 switch 同步。
  *
  * ★ **`null` 才是"不要背景"**（与 `CursorShape` 同一套约定：`null` = 不声明，
  *   枚举 case = 一个明确的决定）。所以这里**没有** `None` 这个 case ——

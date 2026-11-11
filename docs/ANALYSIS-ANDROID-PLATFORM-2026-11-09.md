@@ -73,7 +73,7 @@
   工程（§8），所以「理论」二字只对本仓成立。
 - 全仓 Grep `NDK|JNI|ANativeWindow|gradle|apk|arm64-v8a|交叉编译` ⇒
   **零命中**（唯一相关是 `docs/EVENT-LOOP-2026-10-30.md` 的 ALooper 草案文字）。
-- `cpp-src/drift_skia.cc:34,38,151` 有 `<phpx.h>`、`<windows.h>`、
+- `cpp-src/skia/drift_skia.cc:34,38,151` 有 `<phpx.h>`、`<windows.h>`、
   `GetModuleFileNameA`（找 exe 旁 `fonts/`）—— 归档稿 D4 建议的
   `Platform::assetDir()` 至今未落地。
 - **但「本仓零命中」不等于「上游零实现」**：`typephp/examples/android-native`
@@ -90,7 +90,7 @@
 
 ### L1 · 壳与生命周期（C++ / Java）
 
-`cpp-src/drift_win32.cc` 的 21 个桥函数要按 Android 重写，但**分块难度不均**：
+`cpp-src/win32/drift_win32.cc` 的 21 个桥函数要按 Android 重写，但**分块难度不均**：
 
 | 关注点 | Win32 现状 | Android 对应 | 难度 |
 |---|---|---|---|
@@ -151,7 +151,7 @@
 | Flutter | Drift2 落点 |
 |---|---|
 | 引擎编成 `.so` + Java 薄壳 | L0 的 `-m lib` + `Activity`，**不是**把 Java 塞进 C++ |
-| `FlutterJNI` 单一边界 | 对应 `cpp-src/drift_win32.stub.php` 的「只传原语、零回调、零闭包」纪律，Android 要守同样形状 |
+| `FlutterJNI` 单一边界 | 对应 `cpp-src/win32/drift_win32.stub.php` 的「只传原语、零回调、零闭包」纪律，Android 要守同样形状 |
 | `VsyncWaiter` 驱动帧 | 对应归档稿「`pump()` 变成等一帧 vsync」与 `Platform::pumpEvents()` docblock 的「移动端只能 poll」 |
 | `PlatformViewAndroid` / `AccessibilityBridge` | L1 的 `ANativeWindow` + L3 的 `AccessibilityNodeProvider` |
 

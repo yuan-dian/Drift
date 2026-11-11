@@ -27,7 +27,7 @@
 |---|---|---|
 | 多窗口需要先拆 `Application`（四个门面） | `src/` 全仓**零静态属性**（唯一例外 `ImageLoader::$cache` 是进程级图片缓存，共享反而更好）⇒ 多实例共存没有隐藏共享态 | **前提不成立** |
 | `Application` 是"单窗假设"的载体 | S1 九步拆完，`TextEditingBridge` / `ScrollInputRouter` / `InputRouter` / `OverlayManager` / `OverlayLayout` / `PumpHost` **每片都只经 host 读本实例状态** ⇒ 实例即隔离 | **前提不成立** |
-| 多窗口 = `Application` 的结构债 | 真债在 `cpp-src/drift_win32.cc` 的 45 个进程级全局 + `Platform` 的 7 处无窗口身份签名 | **债在别处** |
+| 多窗口 = `Application` 的结构债 | 真债在 `cpp-src/win32/drift_win32.cc` 的 45 个进程级全局 + `Platform` 的 7 处无窗口身份签名 | **债在别处** |
 
 ★ 这不是说 S4 没用（1911 行 / 67 个 public 仍然是维护负担），而是说：**S4 不是多窗口的
 前置条件**。按 §7 的顺序「先 S4 再 A5/MW」会把一个纯搬砖任务挡在多窗口前面，而它并不
@@ -41,15 +41,15 @@
 
 | # | 位置 | 动作 | 后果 |
 |---|---|---|---|
-| ① | `cpp-src/drift_win32.cc:2195` | `createWindow` 里 `g_main = hwnd` | 第一个窗口的"主窗"身份被**覆盖** |
+| ① | `cpp-src/win32/drift_win32.cc:2195` | `createWindow` 里 `g_main = hwnd` | 第一个窗口的"主窗"身份被**覆盖** |
 | ② | 同上（同函数） | `g_dpi = actualDpi` | 两窗跨不同 DPI 显示器时，`g_dpi` 只剩最后一个 |
 | ③ | 同上（同函数） | `g_clientW/H` 重算 | 第一个窗口的客户区尺寸被覆盖 |
 | ④ | 同上（同函数） | `CreateCaret(hwnd, …, 1, 1)` | **Win32 的插入符是线程级的**，第二次 `CreateCaret` 会销毁第一个 ⇒ 第一个窗口的 IME 候选框失去锚点 |
-| ⑤ | `cpp-src/drift_win32.cc:1710` 与 `cpp-src/drift_win32.cc:1736` | `ScreenToClient(g_main, &pt)` | 第二个窗口上的指针事件用**第一个窗口**的坐标系换算（或反之）⇒ 两个窗口的 hover / 命中全错 |
+| ⑤ | `cpp-src/win32/drift_win32.cc:1710` 与 `cpp-src/win32/drift_win32.cc:1736` | `ScreenToClient(g_main, &pt)` | 第二个窗口上的指针事件用**第一个窗口**的坐标系换算（或反之）⇒ 两个窗口的 hover / 命中全错 |
 | ⑥ | `src/Platform/Win32/Win32Platform.php:375` | `applyResize()` 里 `$handle = $this->window()?->handle()` | **无视事件来源**，永远取"最后建的窗"⇒ 窗口 A 的 `WM_SIZE` 会去 resize 窗口 B 的表面 |
-| ⑦ | `cpp-src/drift_win32.cc:1358` | `WM_DESTROY` → `PostQuitMessage(0)` | **关任意一个窗口 = 整个进程退出** |
+| ⑦ | `cpp-src/win32/drift_win32.cc:1358` | `WM_DESTROY` → `PostQuitMessage(0)` | **关任意一个窗口 = 整个进程退出** |
 | ⑧ | `src/Platform/Win32/Win32WindowHost.php:50` | `private ?int $handle = null` | 单值字段 + `setMinSize()` / `pushSemantics()` 根本没有句柄参数 |
-| ⑨ | `cpp-src/drift_win32.cc:265` | `g_frame` / `g_frameW/H` / `g_ulwBitmap` 进程级 | 两窗交替 present 会互相重分配位图 ⇒ 闪烁 + 偶发错帧 |
+| ⑨ | `cpp-src/win32/drift_win32.cc:265` | `g_frame` / `g_frameW/H` / `g_ulwBitmap` 进程级 | 两窗交替 present 会互相重分配位图 ⇒ 闪烁 + 偶发错帧 |
 
 ★ ①–⑤ 是**同一个根因的五个表现**：壳里"当前窗口"不是参数，是全局。
 ★ ⑥ 是这五条的必然结果，也是**最容易在真机上看见**的那一条。
@@ -200,7 +200,7 @@ AppScope（进程一份）          WindowScope（每窗一份）
 | **⑤** | 模态框的 owner 是哪个窗？ | (a) 调用方所在的窗 (b) 前台窗 | **(a)** —— `Win32Dialog` 已经每次现取 owner，只需让它取"当前窗"而非"最后建的窗" |
 | **⑥** | 窗口几何持久化怎么存？ | (a) 每窗一份文件 (b) 一份文件 N 个槽 | **(b)** ✅ **已落地**（2026-10-30 第八轮）：`new WindowStateStore($path, 'main')`，槽位名=构造参数，格式抬到 v2（`main.x=` / `second.x=`），v1 文件整体视为主窗组。**key 从应用来**——句柄每次运行都变、创建序号会漂移，框架给不出跨运行稳定的 id，只有应用知道"这个窗口是什么" |
 | **⑦** | 一个窗口崩了（Fatal）怎么办？ | (a) 全进程中止 (b) 只关这个窗 | **(a)** —— 保持现状。G2 的口径是"绝不静默"，不是"隔离故障"；部分存活会让状态不一致扩散 |
-| **⑧** | 关窗前能不能拦？ | 现在**不能**：`WM_CLOSE` 直接 `DestroyWindow`（`cpp-src/drift_win32.cc:1352`） | **必须补**，见下 |
+| **⑧** | 关窗前能不能拦？ | 现在**不能**：`WM_CLOSE` 直接 `DestroyWindow`（`cpp-src/win32/drift_win32.cc:1352`） | **必须补**，见下 |
 
 #### ⑥ 的落地形状（2026-10-30，第八轮）
 
@@ -301,7 +301,7 @@ M0 落地时直接删 `g_main`，不留"表 + 别名"两套。
 就不会有人回来删它；更要紧的是"读别名"与"读当前窗"在多窗口下**不报错、只画错窗口** ——
 最难定位的一类错误（与 §4.2b 同一条判断）。
 
-实际形状（`cpp-src/drift_win32.cc`：46 个全局 / 37 个函数 340 处引用 → 1 张表）：
+实际形状（`cpp-src/win32/drift_win32.cc`：46 个全局 / 37 个函数 340 处引用 → 1 张表）：
 
 ```cpp
 struct WindowSlot {

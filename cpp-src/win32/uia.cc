@@ -1,0 +1,891 @@
+#include "uia.h"
+#include "messages.h"
+
+#include <UIAutomationClient.h>
+#include <UIAutomationCore.h>
+#include <objbase.h>
+#include <uiautomationcoreapi.h>
+
+#include <string>
+#include <vector>
+
+#pragma comment(lib, "UIAutomationCore.lib")
+#pragma comment(lib, "oleaut32.lib")
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "uuid.lib")
+
+namespace drift::win32::uia {
+
+// ── UIA 无障碍（§9 / M5，P2 数据流）─────────────────────────────────
+// PHP 把扁平的 SemanticsTree 推进 `slot.uiaNodes`，provider 从这份数组应答
+// UIA 客户端。`UiaNode` / `WindowSlot` 定义在 `window_slot.h`（两个 TU 共用）。
+
+// Drift 语义角色（SemanticsRole::value，string backed）⇒ UIA ControlTypeId。
+// Windows 编号知识集中在这一处（§5.1 纪律 1：PHP 侧不持平台常量）。
+static long uiaControlTypeFor(const std::string &role) {
+    if (role == "button") return UIA_ButtonControlTypeId;
+    if (role == "textfield") return UIA_EditControlTypeId;
+    if (role == "scroll") return UIA_ListControlTypeId;
+    if (role == "dialog") return UIA_WindowControlTypeId;
+    // 值型角色（§4.4）：没有这层映射，客户端认不出"这是复选框/滑块" ⇒ 根本不会
+    // 来问 TogglePattern / RangeValuePattern（Pattern 给了也没人问）。
+    // ★ `switch` 没有独立的 UIA ControlType，用 CheckBox 承载开/关语义
+    //   （两者都需要 TogglePattern；客户端据此能读出 On/Off）。
+    if (role == "checkbox") return UIA_CheckBoxControlTypeId;
+    if (role == "radio") return UIA_RadioButtonControlTypeId;
+    if (role == "switch") return UIA_CheckBoxControlTypeId;
+    if (role == "progress") return UIA_ProgressBarControlTypeId;
+    if (role == "slider") return UIA_SliderControlTypeId;
+    // 集合族（2026-10-29 补齐）：`table` 一直漏在这里（掉到 Custom 控制类型，
+    // 客户端认不出"这是表格"），`tree` 随 TreeView 一起接上。
+    if (role == "table") return UIA_TableControlTypeId;
+    if (role == "tree") return UIA_TreeControlTypeId;
+    // 树的行（§65）。★ 换控制类型会连带掐掉 InvokePattern —— 见 `simplePattern()`
+    //   里那条"Button **或** TreeItem"的注释。
+    if (role == "treeitem") return UIA_TreeItemControlTypeId;
+    // 表格行（§66）：DataItem 是 UIA 里"表里的一条记录"的标准 ControlType，
+    //   不映射就掉到 Custom ⇒ 客户端认不出这是行。
+    if (role == "row") return UIA_DataItemControlTypeId;
+    return UIA_CustomControlTypeId;
+}
+
+/**
+ * 勾选态（§65）：`ToggleState` 属性与 `get_ToggleState()` 共用这一份判据。
+ * 两处各写一份，症状是「读屏念已选中、脚本调 Pattern 说未选中」，而没人会同时验。
+ * radio 的 value = 选中时自己的值 / 未选中空串；checkbox / switch 是 checked / unchecked。
+ */
+static ToggleState toggleStateOf(const UiaNode &node) {
+    if (node.controlType == UIA_RadioButtonControlTypeId) {
+        return node.value.empty() ? ToggleState_Off : ToggleState_On;
+    }
+    return (node.value == L"checked") ? ToggleState_On : ToggleState_Off;
+}
+
+// ── parent 关系走树 helper（uiaNodes 前序扁平，parent 指父索引，-1 = 窗口根）──
+// ★ 树 helper 收 `const std::vector<UiaNode> &` 而不是读全局：它们被 provider
+//   （持自己窗口的槽）与推送侧同时调用，参数化是唯一不会"拿错窗的树"的形状。
+static int uiaFirstChild(const std::vector<UiaNode> &nodes, int idx) {
+    for (size_t k = 0; k < nodes.size(); k++) {
+        if (nodes[k].parent == idx) return (int)k;
+    }
+    return -1;
+}
+static int uiaNextSibling(const std::vector<UiaNode> &nodes, int idx) {
+    if (idx < 0 || idx >= (int)nodes.size()) return -1;
+    int p = nodes[idx].parent;
+    for (size_t k = (size_t)idx + 1; k < nodes.size(); k++) {
+        if (nodes[k].parent == p) return (int)k;
+    }
+    return -1;
+}
+static int uiaPrevSibling(const std::vector<UiaNode> &nodes, int idx) {
+    if (idx < 0 || idx >= (int)nodes.size()) return -1;
+    int p = nodes[idx].parent;
+    for (int k = idx - 1; k >= 0; k--) {
+        if (nodes[k].parent == p) return k;
+    }
+    return -1;
+}
+static int uiaLastChild(const std::vector<UiaNode> &nodes, int idx) {
+    int last = -1;
+    for (size_t k = 0; k < nodes.size(); k++) {
+        if (nodes[k].parent == idx) last = (int)k;
+    }
+    return last;
+}
+
+// 本 SDK（10.0.26100）UIA 接口扁平化：Fragment / FragmentRoot 都直接继承 IUnknown，
+//   多接口继承会 IUnknown 歧义 ⇒ 主类只继承 FragmentRoot，Simple / Fragment 走内嵌
+//   adapter（QI 分派，IUnknown 委托主对象）。Navigate 按 parent 走树。
+// 每窗一个 provider（M1-a）：树读写走各自的 `m_slot`，否则最后一个建窗的会覆盖前一个
+//   （还会连带漏 COM 引用）。
+
+class SimpleAdapter : public IRawElementProviderSimple {
+public:
+    explicit SimpleAdapter(CProvider *host) : m_ref(1), m_host(host) {}
+    STDMETHOD(QueryInterface)(REFIID riid, void **ppv) override;
+    STDMETHOD_(ULONG, AddRef)() override;
+    STDMETHOD_(ULONG, Release)() override;
+    STDMETHOD(get_ProviderOptions)(ProviderOptions *p) override;
+    STDMETHOD(GetPatternProvider)(PATTERNID id, IUnknown **ppv) override;
+    STDMETHOD(GetPropertyValue)(PROPERTYID id, VARIANT *out) override;
+    STDMETHOD(get_HostRawElementProvider)(IRawElementProviderSimple **r) override;
+private:
+    ULONG m_ref;
+    CProvider *m_host;
+};
+
+class FragmentAdapter : public IRawElementProviderFragment {
+public:
+    explicit FragmentAdapter(CProvider *host) : m_ref(1), m_host(host) {}
+    STDMETHOD(QueryInterface)(REFIID riid, void **ppv) override;
+    STDMETHOD_(ULONG, AddRef)() override;
+    STDMETHOD_(ULONG, Release)() override;
+    STDMETHOD(Navigate)(NavigateDirection dir, IRawElementProviderFragment **ret) override;
+    STDMETHOD(SetFocus)() override;
+    STDMETHOD(GetRuntimeId)(SAFEARRAY **ret) override;
+    STDMETHOD(GetEmbeddedFragmentRoots)(SAFEARRAY **ret) override;
+    STDMETHOD(get_BoundingRectangle)(UiaRect *rect) override;
+    STDMETHOD(get_FragmentRoot)(IRawElementProviderFragmentRoot **ret) override;
+private:
+    ULONG m_ref;
+    CProvider *m_host;
+};
+
+// ── COM tear-off 的公共样板（§4.4）─────────────────────────────────
+// 每个 UIA Pattern 都是"新造一个实现该接口的小对象、调用方 Release"。四个
+// adapter 的 QI/AddRef/Release 逐字相同 ⇒ 收敛到这里，子类只写自己的 Pattern 方法。
+// ★ CRTP（`D` = 派生类）是为了 `delete` 走真实类型：基类里 `delete this` 只调基类
+//   析构，派生类若有成员就是泄漏；`static_cast<D*>(this)` 才对。
+template <class D, class I>
+class ComTearOff : public I {
+public:
+    STDMETHOD(QueryInterface)(REFIID riid, void **ppv) override {
+        if (ppv == nullptr) return E_INVALIDARG;
+        if (riid == __uuidof(IUnknown) || riid == __uuidof(I)) {
+            *ppv = static_cast<I *>(this);
+            AddRef();
+            return S_OK;
+        }
+        *ppv = nullptr;
+        return E_NOINTERFACE;
+    }
+    STDMETHOD_(ULONG, AddRef)() override { return ++m_ref; }
+    STDMETHOD_(ULONG, Release)() override {
+        ULONG r = --m_ref;
+        if (r == 0) delete static_cast<D *>(this);
+        return r;
+    }
+
+protected:
+    ULONG m_ref = 1;
+};
+
+// `IInvokeProvider` 的 tear-off（§9 / M5）：只把"第 m_index 个节点被 Invoke"转投成
+// 一条窗口消息。激活语义不在这里复制 —— PHP 侧落成"节点中心一次合成 tap"，
+// 复用输入路由的唯一路径；按角色写分支必然漏，"读屏点"与"鼠标点"不一致也很难测出来。
+class InvokeAdapter : public ComTearOff<InvokeAdapter, IInvokeProvider> {
+public:
+    explicit InvokeAdapter(WindowSlot &slot, HWND hwnd, int index) : m_slot(slot), m_hwnd(hwnd), m_index(index) {}
+    STDMETHOD(Invoke)() override {
+        // ★ 只投消息，**不**在这里进 PHP（理由见 `kMsgUiaInvoke` 的注释）：
+        //   这是跨进程 COM 回调，重入 PHP 会让进程静默消失。
+        // ★ 投给**自己窗口**（不是"主窗"）：多窗口时读屏激活必须落到被激活的那棵树。
+        if (m_hwnd != NULL) {
+            PostMessageW(m_hwnd, kMsgUiaInvoke, (WPARAM)m_index, 0);
+        }
+        return S_OK;
+    }
+
+private:
+    WindowSlot &m_slot;
+    HWND m_hwnd;
+    int m_index;
+};
+
+/**
+ * 选中（§65）：树行 / 列表项的 `ISelectionItemProvider`。
+ * 必须有这个 Pattern —— 客户端 `get_CurrentIsSelected` 从 Pattern 取，只答属性时
+ * 真机读到的全是 false（2026-11-06 实测）。`Select()` 复用 `kMsgUiaInvoke`（点行 = 选中）。
+ */
+class SelectionItemAdapter : public ComTearOff<SelectionItemAdapter, ISelectionItemProvider> {
+public:
+    explicit SelectionItemAdapter(WindowSlot &slot, HWND hwnd, int index) : m_slot(slot), m_hwnd(hwnd), m_index(index) {}
+    STDMETHOD(Select)() override {
+        if (m_hwnd != NULL) {
+            PostMessageW(m_hwnd, kMsgUiaInvoke, (WPARAM)m_index, 0);
+        }
+        return S_OK;
+    }
+    STDMETHOD(AddToSelection)() override {
+        if (m_hwnd != NULL) {
+            PostMessageW(m_hwnd, kMsgUiaInvoke, (WPARAM)m_index, 0);
+        }
+        return S_OK;
+    }
+    STDMETHOD(RemoveFromSelection)() override { return UIA_E_NOTSUPPORTED; }
+    STDMETHOD(get_IsSelected)(BOOL *ret) override {
+        if (ret == nullptr) return E_INVALIDARG;
+        *ret = FALSE;
+        const std::vector<UiaNode> &nodes = m_slot.uiaNodes;
+        if (m_index >= 0 && m_index < (int)nodes.size()) {
+            *ret = nodes[m_index].selectState == 2 ? TRUE : FALSE;
+        }
+        return S_OK;
+    }
+    STDMETHOD(get_SelectionContainer)(IRawElementProviderSimple **ret) override {
+        // 返回父容器（客户端用它问"我属于哪个列表"）。给 nullptr 是合法的
+        // —— 客户端会退到 Fragment 的 Parent 去找，不会崩。
+        if (ret != nullptr) *ret = nullptr;
+        return S_OK;
+    }
+
+private:
+    WindowSlot &m_slot;
+    HWND m_hwnd;
+    int m_index;
+};
+
+/**
+ * 展开/折叠（§65）：树分支行的 `IExpandCollapseProvider`。
+ * 与上面同一条理由：不给这个 Pattern 时 UIA 核心把 `ExpandCollapseState` 兜底成
+ * `LeafNode`（真机三行全是 3），读屏据此认为这棵树没有任何分支。
+ */
+class ExpandCollapseAdapter : public ComTearOff<ExpandCollapseAdapter, IExpandCollapseProvider> {
+public:
+    explicit ExpandCollapseAdapter(WindowSlot &slot, HWND hwnd, int index) : m_slot(slot), m_hwnd(hwnd), m_index(index) {}
+    STDMETHOD(Expand)() override {
+        if (m_hwnd != NULL) {
+            PostMessageW(m_hwnd, kMsgUiaExpand, (WPARAM)m_index, (LPARAM)1);
+        }
+        return S_OK;
+    }
+    STDMETHOD(Collapse)() override {
+        if (m_hwnd != NULL) {
+            PostMessageW(m_hwnd, kMsgUiaExpand, (WPARAM)m_index, (LPARAM)0);
+        }
+        return S_OK;
+    }
+    STDMETHOD(get_ExpandCollapseState)(ExpandCollapseState *ret) override {
+        if (ret == nullptr) return E_INVALIDARG;
+        *ret = ExpandCollapseState_LeafNode;
+        const std::vector<UiaNode> &nodes = m_slot.uiaNodes;
+        if (m_index >= 0 && m_index < (int)nodes.size()) {
+            // 三态：0 = 没有展开概念 ⇒ 叶子（UIA 里 LeafNode 就是"不可展开"）。
+            int st = nodes[m_index].expandState;
+            *ret = st == 2 ? ExpandCollapseState_Expanded
+                           : (st == 1 ? ExpandCollapseState_Collapsed
+                                      : ExpandCollapseState_LeafNode);
+        }
+        return S_OK;
+    }
+
+private:
+    WindowSlot &m_slot;
+    HWND m_hwnd;
+    int m_index;
+};
+
+// ── 值型 Pattern 的只读半边（§4.4 提交 1）──────────────────────────
+// ★ 写方法（SetValue / Toggle）本提交明确回 `UIA_E_NOTSUPPORTED`，且
+//   `get_IsReadOnly` = TRUE —— 客户端据此**不会**去调写方法（不是静默空壳，是
+//   UIA 契约里的"这只读"）。写回路径（新事件 + 能力接口）见 §4.4 提交 2。
+// ★ 数据全部来自 `m_slot.uiaNodes[m_index]`，与 Invoke 同源，不另存状态。
+class ValueAdapter : public ComTearOff<ValueAdapter, IValueProvider> {
+public:
+    explicit ValueAdapter(WindowSlot &slot, HWND hwnd, int index) : m_slot(slot), m_hwnd(hwnd), m_index(index) {}
+    STDMETHOD(SetValue)(LPCWSTR value) override {
+        // 转投窗口线程（与 Invoke 同一理由：COM RPC 线程里不能进 PHP）。
+        // 字符串载荷用 `new std::wstring` 过消息 —— lParam 只能传整数；
+        // WndProc 取走后 delete（所有权一次转移）。应用层是否接受由
+        // `SemanticsValueEditable::setSemanticsValue()` 回答。
+        if (m_hwnd != NULL) {
+            PostMessageW(m_hwnd, kMsgUiaSetValue, (WPARAM)m_index,
+                         (LPARAM)new std::wstring(value != nullptr ? value : L""));
+        }
+        return S_OK;
+    }
+    STDMETHOD(get_Value)(BSTR *ret) override {
+        if (ret == nullptr) return E_INVALIDARG;
+        std::wstring v;
+        const std::vector<UiaNode> &nodes = m_slot.uiaNodes;
+        if (m_index >= 0 && m_index < (int)nodes.size()) {
+            v = nodes[m_index].value;
+        }
+        *ret = SysAllocString(v.c_str());
+        return S_OK;
+    }
+    STDMETHOD(get_IsReadOnly)(BOOL *ret) override {
+        if (ret == nullptr) return E_INVALIDARG;
+        // 可写：应用侧若没接 `onChanged`，`setSemanticsValue()` 会回 false
+        // ⇒ 壳回 `UIA_E_ELEMENTNOTAVAILABLE`（不假装成功）。这里报"可写"是
+        // 因为 adapter 不知道控件接没接回调，那是应用层的事实。
+        *ret = FALSE;
+        return S_OK;
+    }
+
+private:
+    WindowSlot &m_slot;
+    HWND m_hwnd;
+    int m_index;
+};
+
+class ToggleAdapter : public ComTearOff<ToggleAdapter, IToggleProvider> {
+public:
+    explicit ToggleAdapter(WindowSlot &slot, HWND hwnd, int index) : m_slot(slot), m_hwnd(hwnd), m_index(index) {}
+    STDMETHOD(Toggle)() override {
+        // 复用 Invoke 的转投（§4.4 提交 2）：Checkbox 的 activate 语义就是"换值"，
+        // ⇒ "读屏 Toggle"与"鼠标点击"走同一条 `Activatable::activate()`。
+        // 零新消息、零新事件。
+        if (m_hwnd != NULL) {
+            PostMessageW(m_hwnd, kMsgUiaInvoke, (WPARAM)m_index, 0);
+        }
+        return S_OK;
+    }
+    STDMETHOD(get_ToggleState)(ToggleState *ret) override {
+        if (ret == nullptr) return E_INVALIDARG;
+        *ret = ToggleState_Off;
+        const std::vector<UiaNode> &nodes = m_slot.uiaNodes;
+        if (m_index >= 0 && m_index < (int)nodes.size()) {
+            // 与属性面共用同一份判据（`toggleStateOf()`）—— 两处各写一份会漂移。
+            *ret = toggleStateOf(nodes[m_index]);
+        }
+        return S_OK;
+    }
+
+private:
+    WindowSlot &m_slot;
+    HWND m_hwnd;
+    int m_index;
+};
+
+class RangeAdapter : public ComTearOff<RangeAdapter, IRangeValueProvider> {
+public:
+    explicit RangeAdapter(WindowSlot &slot, HWND hwnd, int index) : m_slot(slot), m_hwnd(hwnd), m_index(index) {}
+    STDMETHOD(SetValue)(double value) override {
+        // 与 ValueAdapter 同一条转投；double 先格式化成串（`%.17g` 能无损往返），
+        // 由 `Slider::setSemanticsValue()` 解析后走 `emit()`（夹区间 + 只在变化时回调）。
+        if (m_hwnd != NULL) {
+            wchar_t buf[64];
+            swprintf_s(buf, 64, L"%.17g", value);
+            PostMessageW(m_hwnd, kMsgUiaSetValue, (WPARAM)m_index,
+                         (LPARAM)new std::wstring(buf));
+        }
+        return S_OK;
+    }
+    STDMETHOD(get_Value)(double *ret) override {
+        if (ret == nullptr) return E_INVALIDARG;
+        *ret = wcstod(valueAt().c_str(), nullptr);
+        return S_OK;
+    }
+    STDMETHOD(get_Minimum)(double *ret) override {
+        if (ret == nullptr) return E_INVALIDARG;
+        *ret = nodeOrZero().rangeMin;
+        return S_OK;
+    }
+    STDMETHOD(get_Maximum)(double *ret) override {
+        if (ret == nullptr) return E_INVALIDARG;
+        *ret = nodeOrZero().rangeMax;
+        return S_OK;
+    }
+    STDMETHOD(get_SmallChange)(double *ret) override {
+        if (ret == nullptr) return E_INVALIDARG;
+        *ret = 1.0;
+        return S_OK;
+    }
+    STDMETHOD(get_LargeChange)(double *ret) override {
+        if (ret == nullptr) return E_INVALIDARG;
+        double mn = nodeOrZero().rangeMin;
+        double mx = nodeOrZero().rangeMax;
+        *ret = (mx > mn) ? (mx - mn) / 10.0 : 1.0;
+        return S_OK;
+    }
+    STDMETHOD(get_IsReadOnly)(BOOL *ret) override {
+        if (ret == nullptr) return E_INVALIDARG;
+        // Slider 可写（应用接 `onChanged` 即可）；ProgressBar 是纯读数 ⇒ 只读。
+        // adapter 分不出"这个控件实现没实现接口"，只能按 ControlType 判。
+        const std::vector<UiaNode> &nodes = m_slot.uiaNodes;
+        *ret = (m_index >= 0 && m_index < (int)nodes.size()
+                && nodes[m_index].controlType == UIA_ProgressBarControlTypeId) ? TRUE : FALSE;
+        return S_OK;
+    }
+
+private:
+    // value 是"人读串"（Slider 以 `%.0f` 格式化）；越界/空 ⇒ 空串（wcstod 得 0）。
+    std::wstring valueAt() const {
+        const std::vector<UiaNode> &nodes = m_slot.uiaNodes;
+        if (m_index < 0 || m_index >= (int)nodes.size()) return std::wstring();
+        return nodes[m_index].value;
+    }
+    // 取"有则用之、无则全 0"的节点（Min/Max/大变化共用）。
+    const UiaNode &nodeOrZero() const {
+        static const UiaNode zero;
+        const std::vector<UiaNode> &nodes = m_slot.uiaNodes;
+        if (m_index < 0 || m_index >= (int)nodes.size()) return zero;
+        return nodes[m_index];
+    }
+    WindowSlot &m_slot;
+    HWND m_hwnd;
+    int m_index;
+};
+
+class CProvider : public IRawElementProviderFragmentRoot {
+public:
+    /** @param hwnd 这棵树属于哪个窗口（多窗口时每窗一个 provider，各管各的树） */
+    explicit CProvider(WindowSlot &slot, HWND hwnd, DriftDpiFn dpiFn, int index)
+        : m_ref(1), m_slot(slot), m_hwnd(hwnd), m_dpiFn(dpiFn), m_index(index), m_simple(new SimpleAdapter(this)), m_frag(new FragmentAdapter(this)) {}
+    ~CProvider() {
+        delete m_simple;
+        delete m_frag;
+    }
+
+    // IUnknown（主对象）
+    STDMETHOD(QueryInterface)(REFIID riid, void **ppv) override {
+        if (ppv == nullptr) return E_INVALIDARG;
+        if (riid == __uuidof(IUnknown) || riid == __uuidof(IRawElementProviderFragmentRoot)) {
+            *ppv = static_cast<IRawElementProviderFragmentRoot *>(this);
+            AddRef();
+            return S_OK;
+        }
+        if (riid == __uuidof(IRawElementProviderSimple)) {
+            *ppv = m_simple;
+            m_simple->AddRef();
+            return S_OK;
+        }
+        if (riid == __uuidof(IRawElementProviderFragment)) {
+            *ppv = m_frag;
+            m_frag->AddRef();
+            return S_OK;
+        }
+        *ppv = nullptr;
+        return E_NOINTERFACE;
+    }
+    STDMETHOD_(ULONG, AddRef)() override { return ++m_ref; }
+    STDMETHOD_(ULONG, Release)() override {
+        ULONG r = --m_ref;
+        if (r == 0) delete this;
+        return r;
+    }
+
+    // 造一个"能当 IRawElementProviderFragment"的子 provider（QI 取其 Fragment adapter，
+    // 归还 new 的引用 ⇒ 返回指针持 host ref=1，客户端 Release 时 delete，引用平衡）。
+    // ★ 子 provider 必须继承**同一个窗口**（`m_hwnd`）：树是同窗的一棵树，
+    //   跨窗的 provider 读到的会是别的窗的节点数组。
+    IRawElementProviderFragment *makeFragment(int idx) {
+        CProvider *p = new CProvider(m_slot, m_hwnd, m_dpiFn, idx);
+        IRawElementProviderFragment *frag = nullptr;
+        p->QueryInterface(__uuidof(IRawElementProviderFragment), (void **)&frag);
+        p->Release();
+        return frag;
+    }
+
+    // 造一个"能当 IRawElementProviderSimple"的 provider（focus changed raise 用：
+    // 通知里带的是焦点元素本身）。引用契约同 makeFragment。
+    IRawElementProviderSimple *makeFragmentSimple(int idx) {
+        CProvider *p = new CProvider(m_slot, m_hwnd, m_dpiFn, idx);
+        IRawElementProviderSimple *simple = nullptr;
+        p->QueryInterface(__uuidof(IRawElementProviderSimple), (void **)&simple);
+        p->Release();
+        return simple;
+    }
+
+    // IRawElementProviderFragmentRoot（本 SDK 只剩这两个纯虚）
+    STDMETHOD(ElementProviderFromPoint)(double x, double y, IRawElementProviderFragment **ret) override {
+        *ret = nullptr;
+        // 入参是**屏幕**坐标（与 BoundingRectangle 同源）⇒ 必须复用 nodeScreenRect()。
+        // 恒返回窗口根会让读屏的鼠标追踪把整窗读成一个整体 —— spec 把这里定为命中
+        // 测试的唯一来源，客户端无法靠遍历补。取**最深**命中：前序扁平里"最后包含该点
+        // 的"不等于最深，按 parent 链算深度；同深度取后出现的（后画的在上面）。
+        const std::vector<UiaNode> &nodes = m_slot.uiaNodes;
+        int best = -1;
+        int bestDepth = -1;
+        for (size_t k = 0; k < nodes.size(); k++) {
+            RECT r;
+            if (!nodeScreenRect((int)k, &r)) {
+                continue;
+            }
+            if (x < (double)r.left || x >= (double)r.right
+                || y < (double)r.top || y >= (double)r.bottom) {
+                continue;
+            }
+            int depth = 0;
+            int p = nodes[k].parent;
+            // ★ 上溯**最多 nodes.size() 步**：`parent` 是 PHP 推来的裸整数
+            //   （`node.parent = a.get("parent").toInt()`，没有校验）。成环的话
+            //   这里就是死循环 —— 而且跑在读屏软件的消息回调里，等于整个窗口挂死。
+            //   本文件别处用 parent 都只走**一步**（`uiaParent`），不会绕圈；
+            //   这是唯一一处循环，界必须给。
+            while (p >= 0 && p < (int)nodes.size() && depth <= (int)nodes.size()) {
+                depth++;
+                p = nodes[p].parent;
+            }
+            if (depth >= bestDepth) {
+                bestDepth = depth;
+                best = (int)k;
+            }
+        }
+        *ret = makeFragment(best);
+        return S_OK;
+    }
+    STDMETHOD(GetFocus)(IRawElementProviderFragment **ret) override {
+        // 返回真实焦点节点（§9 / M5，B）；无焦点 ⇒ 窗口根（-1）。
+        const std::vector<UiaNode> &nodes = m_slot.uiaNodes;
+        for (size_t k = 0; k < nodes.size(); k++) {
+            if (nodes[k].focused) { *ret = makeFragment((int)k); return S_OK; }
+        }
+        *ret = makeFragment(-1);
+        return S_OK;
+    }
+
+    // ── Simple 逻辑（SimpleAdapter 转发；按 m_index 读 Name / ControlType）──
+    HRESULT simpleOptions(ProviderOptions *p) {
+        *p = ProviderOptions_ServerSideProvider;
+        return S_OK;
+    }
+    HRESULT simplePattern(PATTERNID id, IUnknown **ppv) {
+        *ppv = nullptr;
+        const std::vector<UiaNode> &nodes = m_slot.uiaNodes;
+        if (m_index < 0 || m_index >= (int)nodes.size()) return S_OK;
+        long ctrl = nodes[m_index].controlType;
+        // 按 ControlType 分派（§4.4）：控件"是什么"决定"能问什么 Pattern"。
+        // ★ 不按 role 判 —— role→ControlType 已在 `uiaControlTypeFor` 收敛，
+        //   多一层判据就是两处要同步。
+        // ★ `TreeItem` 必须一起给：树的行换了角色（§65），控制类型跟着从 Button
+        //   变 TreeItem ⇒ 只判 Button 的话"鼠标点得动、读屏点不动"。
+        //   TreeItem 在 UIA 里本来就该支持 Invoke。
+        if (id == UIA_InvokePatternId
+            && (ctrl == UIA_ButtonControlTypeId || ctrl == UIA_TreeItemControlTypeId)) {
+            *ppv = new InvokeAdapter(m_slot, m_hwnd, m_index);
+        } else if (id == UIA_ValuePatternId && ctrl == UIA_EditControlTypeId) {
+            *ppv = new ValueAdapter(m_slot, m_hwnd, m_index);
+        } else if (id == UIA_TogglePatternId
+                   && (ctrl == UIA_CheckBoxControlTypeId || ctrl == UIA_RadioButtonControlTypeId)) {
+            *ppv = new ToggleAdapter(m_slot, m_hwnd, m_index);
+        } else if (id == UIA_RangeValuePatternId
+                   && (ctrl == UIA_SliderControlTypeId || ctrl == UIA_ProgressBarControlTypeId)) {
+            *ppv = new RangeAdapter(m_slot, m_hwnd, m_index);
+        } else if (id == UIA_SelectionItemPatternId && nodes[m_index].selectState != 0) {
+            // §65：**按状态而不是按控制类型**分派。选中概念不属于某一种控件
+            //   （树行、列表项、标签页都有），而"有没有这个概念"恰好就是三态里的 0。
+            *ppv = new SelectionItemAdapter(m_slot, m_hwnd, m_index);
+        } else if (id == UIA_ExpandCollapsePatternId && nodes[m_index].expandState != 0) {
+            *ppv = new ExpandCollapseAdapter(m_slot, m_hwnd, m_index);
+        }
+        return S_OK;
+    }
+    HRESULT simpleProperty(PROPERTYID id, VARIANT *out) {
+        VariantInit(out);
+        std::wstring name = L"Drift";
+        long ctrl = UIA_CustomControlTypeId;
+        bool enabled = true;
+        const std::vector<UiaNode> &nodes = m_slot.uiaNodes;
+        // 本节点（窗口根 -1 / 越界 ⇒ nullptr）：新状态属性一律"没有就不答"，
+        //   留 VT_EMPTY 让客户端按"该属性不支持"处理 —— 硬报 false 等于对每个
+        //   节点声称"未选中/不可展开"。
+        const UiaNode *self = nullptr;
+        if (m_index == -1) {
+            ctrl = UIA_WindowControlTypeId;
+        } else if (m_index >= 0 && m_index < (int)nodes.size()) {
+            self = &nodes[m_index];
+            name = self->name;
+            ctrl = self->controlType;
+            enabled = self->enabled;
+        }
+        if (id == UIA_NamePropertyId) {
+            out->vt = VT_BSTR;
+            out->bstrVal = SysAllocString(name.c_str());
+        } else if (id == UIA_ControlTypePropertyId) {
+            out->vt = VT_I4;
+            out->lVal = ctrl;
+        } else if (id == UIA_IsControlElementPropertyId || id == UIA_IsContentElementPropertyId) {
+            out->vt = VT_BOOL;
+            out->boolVal = VARIANT_TRUE;
+        } else if (id == UIA_IsEnabledPropertyId) {
+            // ★ 不实现它 ⇒ 客户端默认 false ⇒ `SetValue` 在客户端就抛
+            //   `ElementNotEnabledException`（provider 根本收不到调）。
+            out->vt = VT_BOOL;
+            out->boolVal = enabled ? VARIANT_TRUE : VARIANT_FALSE;
+        } else if (id == UIA_IsOffscreenPropertyId) {
+            // ★ 不实现 ⇒ 客户端默认 false ⇒ 读屏对着**窗口外**画焦点框
+            //   （滚出视口的行仍在语义树里且仍报矩形，2026-10-30 实测 y=1452 / 客户区底 712）。
+            //   判据是"矩形与客户区相交"，几何取 `nodeScreenRect()`，不用"宽度为 0"判
+            //   —— 零面积分组只是画不出东西，不代表不在屏上。窗口根（-1）恒在屏上。
+            bool off = false;
+            RECT r;
+            RECT client;
+            if (m_index >= 0 && GetClientRect(m_hwnd, &client)) {
+                POINT org;
+                org.x = 0;
+                org.y = 0;
+                ClientToScreen(m_hwnd, &org);
+                OffsetRect(&client, org.x, org.y);
+                RECT hit;
+                off = !nodeScreenRect(m_index, &r) || !IntersectRect(&hit, &r, &client);
+            }
+            out->vt = VT_BOOL;
+            out->boolVal = off ? VARIANT_TRUE : VARIANT_FALSE;
+        } else if (id == UIA_HasKeyboardFocusPropertyId) {
+            // §65：数据一直在（`focused` 被 `GetFocus()` 用来做 Fragment 导航），
+            //   只是从来没在这里答过 ⇒ 客户端读到 VT_EMPTY 按 false 处理，
+            //   读屏不播报焦点、自动化写不出"焦点在我期望的地方"这种判据。
+            out->vt = VT_BOOL;
+            out->boolVal = (self != nullptr && self->focused) ? VARIANT_TRUE : VARIANT_FALSE;
+        } else if (id == UIA_IsKeyboardFocusablePropertyId) {
+            out->vt = VT_BOOL;
+            out->boolVal = (self != nullptr && self->focusable) ? VARIANT_TRUE : VARIANT_FALSE;
+        } else if (id == UIA_ToggleToggleStatePropertyId) {
+            // 只对勾选族答（与 `TogglePattern` 同一族）。其它控件留 VT_EMPTY。
+            if (self != nullptr
+                && (ctrl == UIA_CheckBoxControlTypeId || ctrl == UIA_RadioButtonControlTypeId)) {
+                out->vt = VT_I4;
+                out->lVal = (long)toggleStateOf(*self);
+            }
+        } else if (id == UIA_ValueValuePropertyId) {
+            if (self != nullptr && ctrl == UIA_EditControlTypeId) {
+                out->vt = VT_BSTR;
+                out->bstrVal = SysAllocString(self->value.c_str());
+            }
+        } else if (id == UIA_SelectionItemIsSelectedPropertyId) {
+            // 三态：0 = 这个角色没有选中概念 ⇒ 不答（否则每个按钮都说"未选中"）。
+            if (self != nullptr && self->selectState != 0) {
+                out->vt = VT_BOOL;
+                out->boolVal = self->selectState == 2 ? VARIANT_TRUE : VARIANT_FALSE;
+            }
+        } else if (id == UIA_ExpandCollapseExpandCollapseStatePropertyId) {
+            if (self != nullptr && self->expandState != 0) {
+                out->vt = VT_I4;
+                out->lVal = self->expandState == 2 ? ExpandCollapseState_Expanded
+                                                   : ExpandCollapseState_Collapsed;
+            }
+        } else if (id == UIA_LevelPropertyId) {
+            if (self != nullptr && self->level > 0) {
+                out->vt = VT_I4;
+                out->lVal = self->level;
+            }
+        }
+        return S_OK;
+    }
+    HRESULT simpleHost(IRawElementProviderSimple **r) {
+        *r = nullptr;
+        return S_OK;
+    }
+
+    // ── Fragment 逻辑（FragmentAdapter 转发；按 parent 走树）──
+    HRESULT fragNavigate(NavigateDirection dir, IRawElementProviderFragment **ret) {
+        *ret = nullptr;
+        const std::vector<UiaNode> &nodes = m_slot.uiaNodes;
+        if (m_index == -1) {
+            if (dir == NavigateDirection_FirstChild) {
+                int c = uiaFirstChild(nodes, -1);
+                if (c >= 0) *ret = makeFragment(c);
+            }
+            return S_OK;
+        }
+        int target = -1;
+        bool valid = false;
+        switch (dir) {
+            case NavigateDirection_Parent:
+                target = m_index < (int)nodes.size() ? nodes[m_index].parent : -1;   // -1 = 窗口根（合法）
+                valid = true;
+                break;
+            case NavigateDirection_FirstChild:
+                target = uiaFirstChild(nodes, m_index);
+                valid = target >= 0;
+                break;
+            case NavigateDirection_LastChild:
+                target = uiaLastChild(nodes, m_index);
+                valid = target >= 0;
+                break;
+            case NavigateDirection_NextSibling:
+                target = uiaNextSibling(nodes, m_index);
+                valid = target >= 0;
+                break;
+            case NavigateDirection_PreviousSibling:
+                target = uiaPrevSibling(nodes, m_index);
+                valid = target >= 0;
+                break;
+            default:
+                break;
+        }
+        if (valid) *ret = makeFragment(target);
+        return S_OK;
+    }
+    HRESULT fragSetFocus() { return S_OK; }
+    HRESULT fragRuntimeId(SAFEARRAY **ret) {
+        int id = m_index;
+        *ret = SafeArrayCreateVector(VT_I4, 0, 1);
+        LONG idx = 0;
+        SafeArrayPutElement(*ret, &idx, &id);
+        return S_OK;
+    }
+    HRESULT fragEmbedded(SAFEARRAY **ret) {
+        *ret = nullptr;
+        return S_OK;
+    }
+    /**
+     * 节点矩形：逻辑客户区 → 屏幕物理像素。false = 算不出来（窗口销毁中）。
+     * `BoundingRectangle` 与 `IsOffscreen` 必须同源，否则客户端读到"矩形在屏上、
+     * offscreen 说不在"。DPI 现查而非读 `slot.dpi`（后者靠 `WM_DPICHANGED` 落地，
+     * 跨屏拖动那几帧仍是旧值）。客户区→屏幕必须 `ClientToScreen`，加 `GetWindowRect()`
+     * 原点会把边框算进去（2026-10-30 前这里给的是客户区坐标，放大镜跟随全偏）。
+     */
+    bool nodeScreenRect(int index, RECT *out) {
+        if (m_hwnd == nullptr) {
+            return false;
+        }
+        const std::vector<UiaNode> &nodes = m_slot.uiaNodes;
+        if (index < 0 || index >= (int)nodes.size()) {
+            return false;
+        }
+
+        UINT dpi = m_dpiFn(m_hwnd);
+        const double scale = (dpi == 0 ? 96.0 : (double)dpi) / 96.0;
+
+        POINT pt;
+        pt.x = (LONG)(nodes[index].x * scale + 0.5);
+        pt.y = (LONG)(nodes[index].y * scale + 0.5);
+        if (!ClientToScreen(m_hwnd, &pt)) {
+            return false;
+        }
+
+        out->left = pt.x;
+        out->top = pt.y;
+        out->right = pt.x + (LONG)(nodes[index].w * scale + 0.5);
+        out->bottom = pt.y + (LONG)(nodes[index].h * scale + 0.5);
+        return true;
+    }
+
+    HRESULT fragBoundingRect(UiaRect *rect) {
+        // 默认零矩形：越界 / 窗口已销毁 / 换算失败都落在这里（理由见末段）。
+        rect->left = rect->top = rect->width = rect->height = 0.0;
+
+        RECT r;
+        if (!nodeScreenRect(m_index, &r)) {
+            return S_OK;
+        }
+        rect->left = (double)r.left;
+        rect->top = (double)r.top;
+        // 用 right-left 而不是再乘一遍 scale：让 `left + width == right` 严格成立，
+        // 客户端拿矩形画焦点框时不会看到 1px 的缝。
+        rect->width = (double)(r.right - r.left);
+        rect->height = (double)(r.bottom - r.top);
+        return S_OK;
+    }
+    HRESULT fragFragmentRoot(IRawElementProviderFragmentRoot **ret) {
+        *ret = new CProvider(m_slot, m_hwnd, m_dpiFn, -1);   // CProvider* → FragmentRoot*（upcast，直接基类）
+        return S_OK;
+    }
+
+private:
+    ULONG m_ref;
+    WindowSlot &m_slot;
+    HWND m_hwnd;
+    DriftDpiFn m_dpiFn;
+    int m_index;
+    SimpleAdapter *m_simple;
+    FragmentAdapter *m_frag;
+};
+
+// ── adapter 方法定义（CProvider 之后，故可调其 public simple*/frag*）──
+STDMETHODIMP SimpleAdapter::QueryInterface(REFIID riid, void **ppv) {
+    if (ppv == nullptr) return E_INVALIDARG;
+    if (riid == __uuidof(IUnknown)) { *ppv = m_host; m_host->AddRef(); return S_OK; }
+    if (riid == __uuidof(IRawElementProviderSimple)) { *ppv = this; AddRef(); return S_OK; }
+    return m_host->QueryInterface(riid, ppv);
+}
+STDMETHODIMP_(ULONG) SimpleAdapter::AddRef() { return m_host->AddRef(); }
+STDMETHODIMP_(ULONG) SimpleAdapter::Release() { return m_host->Release(); }
+STDMETHODIMP SimpleAdapter::get_ProviderOptions(ProviderOptions *p) { return m_host->simpleOptions(p); }
+STDMETHODIMP SimpleAdapter::GetPatternProvider(PATTERNID id, IUnknown **ppv) { return m_host->simplePattern(id, ppv); }
+STDMETHODIMP SimpleAdapter::GetPropertyValue(PROPERTYID id, VARIANT *out) { return m_host->simpleProperty(id, out); }
+STDMETHODIMP SimpleAdapter::get_HostRawElementProvider(IRawElementProviderSimple **r) { return m_host->simpleHost(r); }
+
+STDMETHODIMP FragmentAdapter::QueryInterface(REFIID riid, void **ppv) {
+    if (ppv == nullptr) return E_INVALIDARG;
+    if (riid == __uuidof(IUnknown)) { *ppv = m_host; m_host->AddRef(); return S_OK; }
+    if (riid == __uuidof(IRawElementProviderFragment)) { *ppv = this; AddRef(); return S_OK; }
+    return m_host->QueryInterface(riid, ppv);
+}
+STDMETHODIMP_(ULONG) FragmentAdapter::AddRef() { return m_host->AddRef(); }
+STDMETHODIMP_(ULONG) FragmentAdapter::Release() { return m_host->Release(); }
+STDMETHODIMP FragmentAdapter::Navigate(NavigateDirection dir, IRawElementProviderFragment **ret) { return m_host->fragNavigate(dir, ret); }
+STDMETHODIMP FragmentAdapter::SetFocus() { return m_host->fragSetFocus(); }
+STDMETHODIMP FragmentAdapter::GetRuntimeId(SAFEARRAY **ret) { return m_host->fragRuntimeId(ret); }
+STDMETHODIMP FragmentAdapter::GetEmbeddedFragmentRoots(SAFEARRAY **ret) { return m_host->fragEmbedded(ret); }
+STDMETHODIMP FragmentAdapter::get_BoundingRectangle(UiaRect *rect) { return m_host->fragBoundingRect(rect); }
+STDMETHODIMP FragmentAdapter::get_FragmentRoot(IRawElementProviderFragmentRoot **ret) { return m_host->fragFragmentRoot(ret); }
+// ★ provider 是每窗状态：住在 `WindowSlot::uiaProvider`，provider 自己持 `m_slot`。
+
+
+}   // namespace drift::win32::uia
+
+// ═══════════════════════════════════════════════════════════ 对外入口 ══
+
+using namespace drift::win32::uia;
+
+long driftUiaControlTypeFor(const std::string &role) {
+    return uiaControlTypeFor(role);
+}
+
+void driftUiaAttach(WindowSlot &slot, HWND hwnd, DriftDpiFn dpiFn) {
+    // 根 provider：m_index = -1 = 窗口根
+    slot.uiaProvider = new CProvider(slot, hwnd, dpiFn, -1);
+}
+
+void driftUiaDetach(WindowSlot &slot) {
+    slot.uiaNodes.clear();
+    slot.uiaNodes.shrink_to_fit();
+    if (slot.uiaProvider != nullptr) {
+        // Release 而不是 delete：UIA 系统可能仍持一份引用（它是 COM 对象）
+        slot.uiaProvider->Release();
+        slot.uiaProvider = nullptr;
+    }
+}
+
+bool driftUiaHandleGetObject(WindowSlot &slot, HWND hwnd, WPARAM wp, LPARAM lp, LRESULT *result) {
+    if (lp != (LPARAM)UiaRootObjectId || slot.uiaProvider == nullptr) {
+        return false;
+    }
+    IRawElementProviderSimple *simple = nullptr;
+    if (FAILED(slot.uiaProvider->QueryInterface(__uuidof(IRawElementProviderSimple), (void **)&simple))) {
+        return false;
+    }
+    *result = UiaReturnRawElementProvider(hwnd, wp, lp, simple);
+
+    return true;
+}
+
+void driftUiaApply(WindowSlot &slot, const std::vector<UiaNode> &nodes) {
+    // 选中变化要在覆盖前抓快照：结构事件只看节点数，而选中不改节点数
+    std::vector<std::wstring> oldKeys;
+    std::vector<int> oldSelect;
+    oldKeys.reserve(slot.uiaNodes.size());
+    oldSelect.reserve(slot.uiaNodes.size());
+    for (const UiaNode &o : slot.uiaNodes) {
+        oldKeys.push_back(o.key);
+        oldSelect.push_back(o.selectState);
+    }
+
+    slot.uiaNodes = nodes;
+
+    const int cnt = (int)slot.uiaNodes.size();
+    if (cnt != slot.lastNodeCount) {
+        slot.lastNodeCount = cnt;
+        if (slot.uiaProvider != nullptr) {
+            IRawElementProviderSimple *simple = nullptr;
+            if (SUCCEEDED(slot.uiaProvider->QueryInterface(__uuidof(IRawElementProviderSimple), (void **)&simple)) && simple != nullptr) {
+                UiaRaiseStructureChangedEvent(simple, StructureChangeType_ChildrenInvalidated, nullptr, 0);
+                simple->Release();
+            }
+        }
+    }
+
+    int focusIdx = -1;
+    for (size_t k = 0; k < slot.uiaNodes.size(); k++) {
+        if (slot.uiaNodes[k].focused) { focusIdx = (int)k; break; }
+    }
+    if (focusIdx != slot.lastFocusIdx) {
+        slot.lastFocusIdx = focusIdx;
+        if (focusIdx >= 0 && slot.uiaProvider != nullptr) {
+            IRawElementProviderSimple *fsimple = slot.uiaProvider->makeFragmentSimple(focusIdx);
+            if (fsimple != nullptr) {
+                UiaRaiseAutomationEvent(fsimple, UIA_AutomationFocusChangedEventId);
+                fsimple->Release();
+            }
+        }
+    }
+
+    // 选中事件：按 key 认节点、只在同一份节点上 raise（结构变了交给上面那条）
+    if (slot.uiaProvider != nullptr && oldKeys.size() == slot.uiaNodes.size()) {
+        for (size_t k = 0; k < slot.uiaNodes.size(); k++) {
+            if (slot.uiaNodes[k].key.empty()) continue;
+            if (oldKeys[k] != slot.uiaNodes[k].key) continue;
+            if (oldSelect[k] == 2 || slot.uiaNodes[k].selectState != 2) continue;
+            IRawElementProviderSimple *ssimple = slot.uiaProvider->makeFragmentSimple((int)k);
+            if (ssimple != nullptr) {
+                UiaRaiseAutomationEvent(ssimple, UIA_SelectionItem_ElementSelectedEventId);
+                ssimple->Release();
+            }
+        }
+    }
+}

@@ -15,7 +15,7 @@ namespace Drift\Platform;
  *
  * ★★ **位的编号就是桥的 ABI**（与 `Backdrop::value` / `CursorShape::value`
  *   同一条纪律）：`drift_win_material_caps(): int` 返回的位掩码按下面各属性
- *   注释里的位值定义。**改位值等于改 ABI**，必须与 `cpp-src/drift_win32.cc`
+ *   注释里的位值定义。**改位值等于改 ABI**，必须与 `cpp-src/win32/drift_win32.cc`
  *   的 `php_drift_win_material_caps()` 同步。
  *
  * ★ 平台能力、不是正确性：不支持 = 对应旋钮 no-op（与 `setBackdrop` 的

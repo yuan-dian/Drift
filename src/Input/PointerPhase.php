@@ -12,7 +12,7 @@ namespace Drift\Input;
  * 不参与焦点与光标 ⇒ 才独立成类。
  *
  * ★ **`value` 就是桥的 ABI 编号**（`PendingEvent.d`，见
- *   `cpp-src/drift_win32.cc`）—— 与 `CursorShape` 同一条纪律：改这里的 value
+ *   `cpp-src/win32/drift_win32.cc`）—— 与 `CursorShape` 同一条纪律：改这里的 value
  *   等于改 ABI，必须与桥同步。
  *
  * @api

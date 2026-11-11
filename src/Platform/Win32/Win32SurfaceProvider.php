@@ -32,7 +32,7 @@ final class Win32SurfaceProvider implements SurfaceProvider
      *
      * ★ 代价与前置（部署形态，§4.6）：exe 依赖 `cpp/fonts/NotoSansSC-*.ttf`
      *   （21 MB，OFL，可再分发）。字体查找**先试 exe 所在目录**（见
-     *   `cpp-src/drift_skia.cc` 的 `ensureFont()`）⇒ 分发时把 `fonts/` 放到 exe
+     *   `cpp-src/skia/drift_skia.cc` 的 `ensureFont()`）⇒ 分发时把 `fonts/` 放到 exe
      *   旁边即可，**不再要求以仓库根为 cwd 启动**。找不到字体时 `SkiaCanvas`
      *   会记一条 Diagnostic 并如实不画（不中止、不画方框）。
      *

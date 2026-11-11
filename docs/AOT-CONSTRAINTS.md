@@ -13,7 +13,7 @@
 v6 `13` 册记 12 条但口径是"从零设计"。
 
 ★ 其中最贵的一条：**`C2653` / `C2660` / `C2129` 曾在 `cpp-src/` 里零线索**
-（`08` §1.2 当时的账；D-2 已把三条补进 `cpp-src/drift_skia.cc` 的对应代码处）。
+（`08` §1.2 当时的账；D-2 已把三条补进 `cpp-src/skia/drift_skia.cc` 的对应代码处）。
 ★ 顺带纠一个**张冠李戴**：`08` §1.2 把 C2653 描述成"命名空间内非限定函数
 不回退全局 ⇒ 必须 `\`"—— **那条是 PHP 侧规则，报的是运行期
 `Call to undefined function`，不是 MSVC C2653**。本仓真正的 C2653 是
@@ -654,9 +654,9 @@ M0-1 证明 `readonly` 免费 ⇒ **原先唯一的迁移理由（"慢 10×+"）
 | **C2065** | 常量链 `A = B \| C` 而 `B = X \| Y` | `CanvasCapabilities::ALL_MASK` 注释 |
 | **C2872** | 类常量与同类方法同名 | 改名（无残留） |
 | **C3861** | `drawImageRect` 有 4 参/6 参两重载；`SkPath` 无构造方法 ⇒ `SkPathBuilder` + `detach()` | `BACKPORT-19OP.md` |
-| **C2653** | **Skia API 改名**：`SkGradientShader`（旧，一个类+静态工厂）→ `SkShaders::LinearGradient/RadialGradient`（新，命名空间下的自由函数）。★ 与 PHP 侧"非限定函数不回退全局"**不是一回事**（那条报运行期 Fatal） | `cpp-src/drift_skia.cc` `php_drift_skia_set_gradient` docblock |
-| **C2660** | 函数参数个数不符：`SkDashPathEffect::Make(intervals,count,phase)` 3 参 → `Make(SkSpan,phase)` 2 参 | `cpp-src/drift_skia.cc` `php_drift_skia_set_dash` docblock |
-| **C2129** | 匿名命名空间在第 230 行关闭 ⇒ NS 内 forward-declare 的 static helper 定义也必须留在 NS 内 | `cpp-src/drift_skia.cc` `} // namespace` 处 + `applyPaintSource()` docblock |
+| **C2653** | **Skia API 改名**：`SkGradientShader`（旧，一个类+静态工厂）→ `SkShaders::LinearGradient/RadialGradient`（新，命名空间下的自由函数）。★ 与 PHP 侧"非限定函数不回退全局"**不是一回事**（那条报运行期 Fatal） | `cpp-src/skia/drift_skia.cc` `php_drift_skia_set_gradient` docblock |
+| **C2660** | 函数参数个数不符：`SkDashPathEffect::Make(intervals,count,phase)` 3 参 → `Make(SkSpan,phase)` 2 参 | `cpp-src/skia/drift_skia.cc` `php_drift_skia_set_dash` docblock |
+| **C2129** | 匿名命名空间在第 230 行关闭 ⇒ NS 内 forward-declare 的 static helper 定义也必须留在 NS 内 | `cpp-src/skia/drift_skia.cc` `} // namespace` 处 + `applyPaintSource()` docblock |
 
 ★ 后三行是 `08` §1.2 的记账缺口（"仓库里零线索"）。本文件补上**判据**，
 `cpp-src/` 的具体位置注释由 **D-2** 补。

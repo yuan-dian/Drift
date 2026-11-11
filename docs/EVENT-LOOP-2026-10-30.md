@@ -39,7 +39,7 @@
 
 ### 1.1 泵：阻塞在 `GetMessageW`，没有超时
 
-`cpp-src/drift_win32.cc:2745` 的 `php_drift_win_pump()`：
+`cpp-src/win32/drift_win32.cc:2745` 的 `php_drift_win_pump()`：
 
 ```cpp
 for (;;) {
@@ -199,7 +199,7 @@ $sock = stream_socket_client("tcp://127.0.0.1:9000", ...);   // php_stream，不
 > `docs/design-v7/08-平台与能力矩阵.md` §9.6 纪律 1：
 > 「参数只有**标量 + `array`**，不传对象」—— 对象过界 = `Var` 装箱 + 生命周期不明。
 
-`cpp-src/drift_win32.stub.php` 的 40 个桥函数**没有一个**收 `resource`/`Mixed`；
+`cpp-src/win32/drift_win32.stub.php` 的 40 个桥函数**没有一个**收 `resource`/`Mixed`；
 唯一的「句柄」表达是 `int`（如 `drift_win_present_skia(int $hwnd, int $canvas)`）。
 
 ⇒ 三条路都被堵：
@@ -393,7 +393,7 @@ needsPaint =
 
 - **做什么**：§6.1 的接口 + Win32 实现（`MsgWait`）+ `FrameClock` 改用它。
 - **改哪里**：`src/Platform/Platform.php`、`src/Platform/Win32/Win32Platform.php`、
-  `cpp-src/drift_win32.cc`（新增一个桥 `drift_win_wait(timeoutMs)`）、`FrameClock`。
+  `cpp-src/win32/drift_win32.cc`（新增一个桥 `drift_win_wait(timeoutMs)`）、`FrameClock`。
 - **跨平台**：接口一致，实现各自；此时只有 Win32 后端，其它平台写在能力矩阵里。
 - **收益**：24h 空闲时 CPU 真正归零（今天靠定时器也是 0，但**有 watcher 时不是**）；
   为 L3 铺路。

@@ -62,8 +62,8 @@
 
 ### 1.5 壳 ↔ PHP ABI 无版本握手
 
-- `cpp-src/drift_win32.stub.php:10-11` 自承：「改一边必须同步另一边：签名不一致时 tpc 链接期会**静默失败** —— 不是编译错误，是运行期行为不对。**这是本桥唯一的硬纪律**」。全仓无 `abiVersion` / `schemaHash` / capability handshake。
-- `cpp-src/drift_win32.cc:189-205` 的 `PendingEvent` 是 `HWND + 5 个 int + string`，五个 int 按 `kind` 复用含义（pointer 的 x/y/button/phase/modifier、wheel 的 x/y/delta/axis…）；`stub.php:378-380` 光标枚举是裸整数；`stub.php:266-279` 事件 schema 只是文档表格。
+- `cpp-src/win32/drift_win32.stub.php:10-11` 自承：「改一边必须同步另一边：签名不一致时 tpc 链接期会**静默失败** —— 不是编译错误，是运行期行为不对。**这是本桥唯一的硬纪律**」。全仓无 `abiVersion` / `schemaHash` / capability handshake。
+- `cpp-src/win32/drift_win32.cc:189-205` 的 `PendingEvent` 是 `HWND + 5 个 int + string`，五个 int 按 `kind` 复用含义（pointer 的 x/y/button/phase/modifier、wheel 的 x/y/delta/axis…）；`stub.php:378-380` 光标枚举是裸整数；`stub.php:266-279` 事件 schema 只是文档表格。
 
 **判断**：AOT 下壳与 PHP 是分开编译的产物，错配表现为「行为不对」，定位成本极高。
 **建议**：首包带 `abiVersion + schemaHash`，不匹配**响亮失败**。成本 S，跨发版收益大。

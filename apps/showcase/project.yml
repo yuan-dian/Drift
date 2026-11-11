@@ -41,7 +41,7 @@ include: ../../build/base.yml
 # ── 源码（路径相对**本文件所在目录**）──
 #   `.`             本应用全部：main.php（全局 main()）+ src/ + bin/win32/
 #   `../../src`     Drift 框架（bin 模式 = 整程序 AOT，框架随应用一起编译进 exe）
-#   `../../cpp-src` Win32 桥：drift_win32.stub.php（ABI 声明）+ drift_win32.cc（实现）
+#   `../../cpp-src` 桥接层（core 平台无关 / win32 实现 / skia 渲染后端）：win32/drift_win32.stub.php + win32/drift_win32.cc
 #
 # ★ `sources` 留在各应用文件里而不是 base：tpc 的 YAML **list 型项是整体替换**
 #   （不是追加），放 base 里会被子文件顶掉 —— 而这里每项都含各应用自己的相对路径。

@@ -87,9 +87,9 @@ final class Contract
     public static function readTexts(string $root): array
     {
         return [
-            'stub' => self::cat($root . '/cpp-src/*.stub.php'),
-            'cc' => self::cat($root . '/cpp-src/*.cc'),
-            'fakes' => self::cat($root . '/tools/fakes/*.php'),
+            'stub' => self::catFiles($root . '/cpp-src', '.stub.php'),
+            'cc' => self::catFiles($root . '/cpp-src', '.cc'),
+            'fakes' => self::catFiles($root . '/tools/fakes', '.php'),
         ];
     }
 
@@ -237,10 +237,22 @@ final class Contract
         return $out;
     }
 
-    private static function cat(string $glob): string
+    /** 递归收集：拆分后 stub / cc 分布在 `core/` `win32/` `skia/` 子目录里 */
+    private static function catFiles(string $dir, string $suffix): string
     {
+        $files = [];
+        $it = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS)
+        );
+        foreach ($it as $file) {
+            if ($file->isFile() && str_ends_with($file->getFilename(), $suffix)) {
+                $files[] = $file->getPathname();
+            }
+        }
+        sort($files);
+
         $parts = [];
-        foreach (glob($glob) ?: [] as $file) {
+        foreach ($files as $file) {
             $parts[] = (string) file_get_contents($file);
         }
 

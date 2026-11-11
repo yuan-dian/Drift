@@ -1064,7 +1064,7 @@ check('Rendering · Paint 风格可判', Paint::stroke($red, 2.0)->isStroke() &&
 //   E3 popClip 不动偏移（两后端同解）· E4 兄弟干扰（TextField 序列后兄弟保住
 //   容器偏移）· F 描边宽度不乘 dpr · G 零宽早退 · H 句柄 0 静默跳过。
 //
-// ★ 在解释器面做，不构建 exe：真桥（cpp-src/drift_skia.cc）只存在于 AOT 构建，
+// ★ 在解释器面做，不构建 exe：真桥（cpp-src/skia/drift_skia.cc）只存在于 AOT 构建，
 //   而 `use function` 是**运行期**解析 ⇒ 助手区的假桥接管调用并记录每一次跨边界
 //   参数 —— "Skia 收到了什么"成为可断言的纯数据。
 // ★ 判据是**跨后端几何同构**，不是像素 golden：两后端的抗锯齿范围与描边实现

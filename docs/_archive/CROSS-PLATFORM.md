@@ -18,9 +18,9 @@
 |---|---|---|---|
 | 框架 PHP | `src/` **198 文件** | `Win32` 仅出现在**注释**，零类型引用 | ✅ 直接可移植 |
 | 确定性光栅 | `RasterCanvas`（纯 PHP 软光栅） | 0 | ✅ 天生可移植 |
-| Skia 后端 | `cpp-src/drift_skia.cc` **384 行** | **1 处**：`GetModuleFileNameA`（找 exe 旁 `fonts/`） | ⚠️ 一处就能清干净 |
+| Skia 后端 | `cpp-src/skia/drift_skia.cc` **384 行** | **1 处**：`GetModuleFileNameA`（找 exe 旁 `fonts/`） | ⚠️ 一处就能清干净 |
 | 平台端口 | `src/Platform/*.php` 9 接口 + `Win32/` 10 文件（**1501 行**） | 全部收敛在 `Win32/` 子目录 | ✅ 结构已经对了 |
-| OS 壳 | `cpp-src/drift_win32.cc` **1858 行 / 21 个桥函数** | 100% | ❗ 唯一真耦合 |
+| OS 壳 | `cpp-src/win32/drift_win32.cc` **1858 行 / 21 个桥函数** | 100% | ❗ 唯一真耦合 |
 | 构建 | `tools/drift-build` | Win32 库列表硬编码 | ❗ 需按平台分册 |
 
 ⇒ 结论：**不需要为跨平台重做架构，只需要把"唯一真耦合"切成可替换的片，并把 7 条语义决策现在钉住。**

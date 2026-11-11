@@ -10,7 +10,7 @@ use Drift\Platform\InputSource;
  * Win32 的输入队列（§9.1 路由链的输入侧）。
  *
  * ★ **它不做归一化** —— 归一化发生在桥里（`WM_KEYDOWN` → 键名 + 修饰键位，
- *   见 `cpp-src/drift_win32.cc::keyNameFromVk`），这里只做**入队/出队**。
+ *   见 `cpp-src/win32/drift_win32.cc::keyNameFromVk`），这里只做**入队/出队**。
  *   把 VK 表搬到 PHP 就是把平台常量漏进上层（§5.1 纪律 1）。
  *
  * ★ **队列而不是单个"最近事件"**：一帧里可能积累多条（快速连按、一次

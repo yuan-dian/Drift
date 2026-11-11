@@ -206,7 +206,7 @@ AccessibilityNodeInfo / Linux AT-SPI）。这也解释了为什么「跨平台�
 | **B1** | 无根 README / 无构建指引 | 根目录无 `README*`；`doctor.php` 只报告不修复 | 别人 clone 后无从下手；这是所有其它问题的前置 | S |
 | **B2** | 无 CI | 无 `.github/`；`gate.php --json` 无消费方 | 无法对外承诺「main 分支是绿的」；发版靠人手跑 | S |
 | **B3** | 无版本/变更日志/发布流程 | 无 `CHANGELOG` / `VERSION` / tag 规范 | 用户无法判断「升级会不会坏」；出问题无法定位版本 | S |
-| **B4** | 壳 ↔ PHP ABI 无握手 | `cpp-src/drift_win32.stub.php` 自承「改一边必须同步另一边…**静默失败**」 | 错配表现为「行为不对」而非报错 —— 这是最贵的故障形态 | S |
+| **B4** | 壳 ↔ PHP ABI 无握手 | `cpp-src/win32/drift_win32.stub.php` 自承「改一边必须同步另一边…**静默失败**」 | 错配表现为「行为不对」而非报错 —— 这是最贵的故障形态 | S |
 | **B5** | AOT 增量构建 stale 无判据 | `drift-build.php` 的 `--full` 靠「怀疑」触发；无「类集合变化」失效条件 | 出包时可能 `0xC0000005`，且只在发版暴露一次 | S |
 | **B6** | 只有一个平台后端 | `src/Platform/` 仅 `Win32/` | 1.0 的「通用」定义不成立；无障碍也要整套重做 | L |
 | **B7** | 无生态与组件分发 | 无组件注册表；`composer.json` 只声明 `php>=8.4` | 「框架」与「一个应用底座」的分野就在这里 | L |

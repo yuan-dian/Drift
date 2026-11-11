@@ -2,7 +2,7 @@
 #
 # ★ 红线：业务 PHP 一律不进 sources。AOT 注册过的类被动态 require 会 Fatal
 #   「already in use」；绝大多数源码由内嵌 ZendVM 运行期解释。
-# ★ 例外只有下面两个平台回调文件：cpp-src/drift_win32.cc 的 WndProc 以 extern
+# ★ 例外只有下面两个平台回调文件：cpp-src/win32/drift_win32.cc 的 WndProc 以 extern
 #   静态链接 php_drift_resize_hook_pump()，不收进壳就是 LNK2019。它们是链接期契约，
 #   不是业务代码；ResizeHookState 由 AOT 注册后 autoload 不会再加载它。
 # ★ no-console 盖掉 base.yml 的 true：dev 要 stdout/stderr 看热更日志与 Fatal。

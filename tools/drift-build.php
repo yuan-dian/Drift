@@ -324,7 +324,10 @@ hash_update($inputs, 'src:' . hashTree("{$root}/src") . "\n");
 // ★ 指纹算的是**工程目录**（不是 `apps/{$app}`）：应用与探针走同一条路，
 //   而且探针的目录名与 `name:` 一致是约定，两者等价。
 hash_update($inputs, 'app:' . hashTree($projectDir) . "\n");
-hash_update($inputs, 'cpp:' . hashTree("{$root}/cpp-src") . "\n");
+// ★ 后缀必须显式传 `''`（全部文件）：`hashTree()` 默认只收 `.php`，而 `cpp-src/`
+//   下只有 `drift_*.stub.php` 是 PHP —— 只改 `uia.cc` / 窗口头时指纹不变、构建
+//   SKIP，产物静默过期（2026-11-11 实证：拆完 UIA 重编却报"输入未变"）。
+hash_update($inputs, 'cpp:' . hashTree("{$root}/cpp-src", '') . "\n");
 // 配置与清单是**受控文件**：改了它们同样影响构建结果
 hash_update($inputs, 'base:' . (is_file("{$root}/build/base.yml") ? (string) hash_file('sha256', "{$root}/build/base.yml") : '') . "\n");
 hash_update($inputs, 'manifest:' . (is_file("{$root}/build/app.manifest") ? (string) hash_file('sha256', "{$root}/build/app.manifest") : '') . "\n");

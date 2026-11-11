@@ -46,7 +46,7 @@ spl_autoload_register(static function (string $class) use ($prefixes): void {
 
 // ── 壳函数替身（解释器下没有 C++ 桥）───────────────────────────────
 // smoke / preview 用 php.exe 直接跑框架代码，而 `drift_thread_id()` 的真实实现住在
-// `cpp-src/drift_win32.cc`（只有 AOT 产物才有）。单线程解释器里"UI 线程"就是当前线程
+// `cpp-src/win32/drift_win32.cc`（只有 AOT 产物才有）。单线程解释器里"UI 线程"就是当前线程
 // ⇒ 给一个固定的非零值即可（`0` 表示"未挂载"，不能拿来顶替）。
 if (!function_exists('drift_thread_id')) {
     function drift_thread_id(): int
