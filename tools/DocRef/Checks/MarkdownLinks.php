@@ -27,11 +27,15 @@ use Drift\Dev\Lint\Diagnostic;
  *   · http(s) / 纯 `#anchor` 跳过（无文件可查）。
  *   · 代码块内跳过（示例里的 `](...)` 不是真链接）。
  *   · **mailto: 等非文件协议跳过**。
+ *   · 目录链接按存在处理（README 常链 `apps/<app>/`，GitHub 会渲染目录页）。
  */
 final class MarkdownLinks implements Check
 {
     /** `](target)` —— 排除 `![...]` 图片与 `<...>` 自动链接 */
     private const LINK = '/(?<!!)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/';
+
+    /** 根级入口文档：漏出受检集 = 它们的死链没人守 */
+    private const ENTRY_DOCS = ['README.md', 'CHANGELOG.md', 'AGENTS.md', 'DESIGN.md'];
 
     public function name(): string
     {
@@ -47,6 +51,20 @@ final class MarkdownLinks implements Check
     {
         $found = [];
         $root = $docs->root();
+
+        // 判据空转比死链更隐蔽：受检集漏掉入口文档时，下面的链接检查对它们完全不生效
+        $scanned = $docs->docFiles();
+        foreach (self::ENTRY_DOCS as $entry) {
+            if (!\in_array($entry, $scanned, true)) {
+                $found[] = new Diagnostic(
+                    $this->name(),
+                    Diagnostic::ERROR,
+                    'tools/DocRef/DocSet.php',
+                    1,
+                    '入口文档 ' . $entry . ' 不在受检集，死链检查不会覆盖它'
+                );
+            }
+        }
 
         foreach ($docs->docFiles() as $doc) {
             $inFence = false;
@@ -80,7 +98,9 @@ final class MarkdownLinks implements Check
                     // 基准 1：文档所在目录；基准 2：仓库根
                     $cand1 = $this->join($docDir, $pathPart);
                     $cand2 = ltrim($pathPart, './');
-                    if (is_file($root . '/' . $cand1) || is_file($root . '/' . $cand2)) {
+                    // `file_exists` 而非 `is_file`：链向目录（`apps/hello/` 等）是 README
+                    // 的合法形态，只认文件会把它们全报成死链（2026-11-11 实测）。
+                    if (file_exists($root . '/' . $cand1) || file_exists($root . '/' . $cand2)) {
                         continue;
                     }
 
@@ -111,6 +131,17 @@ final class MarkdownLinks implements Check
         // 正例必须绿：`docs/00-README.md` 同目录的 `architecture/00-README.md` 真实存在
         if (!is_file('docs/architecture/00-README.md')) {
             throw new \RuntimeException('selftest: 正例文件缺失（architecture/00-README.md）');
+        }
+        if (!is_dir('apps/hello')) {
+            throw new \RuntimeException('selftest: 目录正例缺失（apps/hello）');
+        }
+
+        // 入口文档必须在受检集里：漏一个，那一份文档的死链就没人守
+        $docs = (new DocSet(\dirname(__DIR__, 3)))->docFiles();
+        foreach (self::ENTRY_DOCS as $entry) {
+            if (!\in_array($entry, $docs, true)) {
+                throw new \RuntimeException('selftest: 入口文档 ' . $entry . ' 不在 docref 受检集');
+            }
         }
     }
 

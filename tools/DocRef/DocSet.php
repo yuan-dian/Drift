@@ -34,7 +34,7 @@ final class DocSet
     /** @var array<string, list<string>> basename → 路径列表 */
     private array $basenameIndex = [];
 
-    /** @var list<string> 全部受检文档（docs/** + DESIGN.md） */
+    /** @var list<string> 全部受检文档（docs/** + 根级入口文档） */
     private array $docFiles = [];
 
     public function __construct(private readonly string $root)
@@ -227,7 +227,9 @@ final class DocSet
     private function collectDocs(): array
     {
         $out = [];
-        foreach (['docs', 'DESIGN.md'] as $seed) {
+        // 根级入口文档必须受检：README / CHANGELOG / AGENTS 是读者第一站，
+        // 漏掉它们 = 死链没人守（2026-11-11 实测 README 的 tutorial.md 死链）。
+        foreach (['docs', 'DESIGN.md', 'README.md', 'CHANGELOG.md', 'AGENTS.md'] as $seed) {
             $abs = $this->root . '/' . $seed;
             if (is_file($abs)) {
                 $out[] = $seed;
