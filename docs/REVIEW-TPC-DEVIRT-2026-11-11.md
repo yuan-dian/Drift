@@ -14,6 +14,19 @@ commit）：typed property、常量、`??`/nullsafe、typed array 属性、inter
 
 上游只声明验证过 **Linux x86_64 + GCC**，未覆盖 Windows/MSVC。
 
+**相邻的一组提交单独处理「可空类」**（2026-11-09，`963c0ae1` + `340a8589`，同样在 12:45 那次
+合并里）：
+
+- `?T` / `T|null` 在参数、返回、推导局部、属性、提升构造参数里**保留 `php::Object` + 类信息**，
+  句柄本身可存 null；native 调用沿普通 typed object 路径，不再退化成 `php::Var`。
+- 可空标量、其它联合类型仍走动态；`&$ref` 形式的可空对象参数仍是 `php::Ref`（Zend 引用 ABI）。
+- 语义未放宽：空接收者上调用仍抛 `Error`（PHPX 在调用点保护），`?->` 仍短路且**不计算实参**。
+- 另一条 `340a8589` 只做**去冗余校验**：`new` / `clone` / `$this` / 非空对象属性 / 非空返回的
+  调用、以及 SSA 证明非空的局部，不再重复类与空值检查；可空对象实参的边界检查交给
+  native 调用路径。
+- ★ 这会**改 ABI**：可空对象形参从 `php::Var` 变 `php::Object`。本仓两份 stub
+  （`cpp-src/skia`、`cpp-src/win32`）零可空类类型，所以桥接层不受影响。
+
 ## 2. 本仓是否命中：逐个场景核对
 
 | 上游场景 | 命中 | 证据 |
@@ -22,7 +35,7 @@ commit）：typed property、常量、`??`/nullsafe、typed array 属性、inter
 | 闭包参数 / 按值捕获 / 返回 | **强命中** | 全仓 152 处闭包；`Bootstrap.cc` 已实证恢复静态（见 §3） |
 | 联合 / 可空 / 交叉类型 | **命中**（改为 `php::Object`） | 178 处 `?Klass` 返回声明 |
 | 常量参与算术 | 轻 | 17 处 `self::X` 运算 |
-| `??` / nullsafe | **部分** | 上游明确「nullable 必须排除」，`taskHost = cond ? … : null` 仍走动态派发，这是设计取舍不是遗漏 |
+| `??` / nullsafe | **部分** | `??` 与 nullsafe 结果类型已保留；但 `cond ? $a : null` 这类**异型合流**仍降级为 `php::Var`。可空类本身已不再降级（见 §1 末段与 §8） |
 | typed array 属性（`#[\StdList]`） | **不命中** | 全仓 0 处，属性一律裸 `array` |
 | interface 单实现者特化 | **不命中** | 只对「**同文件**单实现者」生效；`TaskHost` 有 3 个实现且分散在 3 个文件 |
 
@@ -52,6 +65,12 @@ commit）：typed property、常量、`??`/nullsafe、typed array 属性、inter
 
 热点文件动态派发降幅：`TableState` 169→86、`InputRouter` 93→60、`RenderBox` 91→49、
 `Element` 44→40；`FocusManager` 66→67（基本不变）。
+
+★ **这组数字属于 12:45 那次合并的整批（20+ 提交）**，本稿不把它拆成单提交归因：可空那组
+（11-09 的 `963c0ae1` + `340a8589`）单独快照**编不过本仓** —— `src/App/FocusManager.php:428`
+的 `return $state;`（`?ScrollMetrics` 接 `States::of()` 的结果）在那一档报
+`Cannot assign object to return value of type ?ScrollMetrics`，是后续同批提交一起补齐的。
+⇒ 不要尝试 cherry-pick 这组；按整批前进。
 
 ### 3.2 帧税（`probes/frame_tax_aot`，12k 节点，新旧 exe 交替三轮取中位数）
 
@@ -95,6 +114,33 @@ hash_update($inputs, 'tpc:' . (string) hash_file('sha256', $entry));
 同样不随源码内容变化 —— 两侧都不能指望，所以本仓每次 tpc 更新后仍应显式 `--full` 一次
 （指纹变了会自动全量，这条只是兜底）。
 
+### 4.1 编译器与运行时必须同步前进（2026-11-11 实测）
+
+指纹修好后紧接着撞上第二层：tpc 与 PHPX 是**两棵树**，新编译器可能要求新的运行期符号。
+
+- `3959b2ef` / `c3e52aee`（2026-11-11 13:22 / 13:43）把「已知 Closure 的 `$f(...)`」从
+  `obj.call(get_persistent_method(…))` 改成 `typephp_call_closure(...)`。
+- 本机 Windows 运行时 `typephp-windows-x64/phpx/lib/phpx.lib` 是 **11-06** 的，头里没有
+  这个符号 ⇒ `drift-build` 直接红：`error C3861: "typephp_call_closure": 找不到标识符`。
+- `D:/TypePHP/phpx` 是 `swoole/phpx` master（13:43，含 `src/typephp/typephp_call.cc`），
+  但 `lib/` 只有 Linux 产物；**本机没有任何 `.lib`/`.a` 含该符号**，所以不能靠换 include
+  绕过 —— 必须重建 Windows 版 `phpx.lib`。
+
+**收益核算决定了「先不追」**：同一份源码做 codegen 对照（`drift-codegen`，510 文件 / 450 `.cc`），
+闭包那三条提交的净效果是 `typephp_call_method_cached` **4969 → 4969**、`php::Var`
+**34117 → 34117**，只多出 **4 处** `typephp_call_closure`（`TableState` 的排序回调）。
+为 4 个调用点去重建运行时不合算。
+
+**当前做法**：本地构建用 `DRIFT_TPC_ENTRY` 固定到 `d4f8c3ca`（12:45 合并，`typephp_call_closure`
+之前）的 worktree `D:/TypePHP/tpc-pin`；等上游 Windows 运行时发布后再解开，届时按 T2 重跑。
+
+```bash
+DRIFT_TPC_ENTRY="D:/TypePHP/tpc-pin/bin/tpc.php" php tools/drift-build.php users
+```
+
+★ 顺带一条踩过的坑：worktree 里的 `vendor/` 不能做成 junction —— PHP 会把 `__DIR__`
+解析成**真实路径**，于是加载回原树的 `src/`（表现为「固定了还是报新符号」）。要真拷贝。
+
 ## 5. 不做的事
 
 - **不把 `php::Var == 0` / 动态派发计数做成 gate 判据**：剩余 1128 处里合法动态占多数
@@ -102,8 +148,8 @@ hash_update($inputs, 'tpc:' . (string) hash_file('sha256', $entry));
   判据只会被调阈值调到失去意义。它适合当量具（`frame-tax` 同类），不适合当门。
 - **不为拿收益改业务写法**（给属性加 `#[\StdList]`、把接口实现塞进同一文件）：这是被
   编译器牵着走，且会破坏分层。上游修好后自然覆盖。
-- **不锁 tpc 版本**：当前依赖的是 `fix/composite-abstract-interface-return` 特性分支，
-  不是 tag。长期该锁一个稳定快照，但那是发布纪律问题，与本 issue 无关。
+- **不长期锁 tpc 版本**：当前依赖的是 `fix/composite-abstract-interface-return` 特性分支，
+  不是 tag。§4.1 那次固定是**临时**的（等 Windows 运行时补齐），不是发布纪律意义上的锁定。
 
 ## 6. 结论与顺序
 
@@ -116,10 +162,13 @@ hash_update($inputs, 'tpc:' . (string) hash_file('sha256', $entry));
 ## 7. 复现命令
 
 ```
-php tools/drift-build.php users --full                      # 换编译器后必须全量
+# 当前唯一能编过的入口（§4.1：上游 Windows 运行时尚未含 typephp_call_closure）
+DRIFT_TPC_ENTRY="D:/TypePHP/tpc-pin/bin/tpc.php" php tools/drift-build.php users --full
 python tools/probe-window.py users --title 用户管理          # 5 条判据
 bash probes/frame_tax_aot/build.sh && ./frame_tax_aot_probe.exe
 grep -rho 'typephp_call_method_cached' apps/users/build --include='*.cc' | wc -l
+# 编译器版本对照（只走翻译层，不碰 MSVC，~35s）
+DRIFT_TPC_ENTRY="D:/TypePHP/typephp/bin/tpc.php" php tools/drift-codegen.php
 ```
 
 ## 8. 剩下 1128 处动态派发是什么写法
@@ -128,17 +177,23 @@ grep -rho 'typephp_call_method_cached' apps/users/build --include='*.cc' | wc -l
 
 | 接收者 | 处数 | 含义 |
 |---|---|---|
-| `php::Object` | 633 | **知道是对象，但类被擦掉**（可空 / 接口 / 跨层返回后强转） |
+| `php::Object` | 633 | 类在运行期确定：**多态方法**（非 final 且被覆写）或经接口/转换擦掉类 |
 | `php::Var` | 458 | **值层面就不知道**（裸 `array` 元素、`mixed`、异型三元合流） |
 | `this_` | 14 | abstract 类里的 `$this->`（子类可覆写，不可直调） |
 | 内联表达式 | 23 | `typephp_call_method_cached(typephp_read_property_cached(...))` 链式 |
 
 对应到 PHP 写法，按占比排序：
 
-1. **可空对象 `?Klass`** —— 最大宗。声明处：属性 **140**、形参 **97**、返回 **198**。
-   关键实证：`RenderBox.cc:247-256` 的 `while ($node !== null)` 循环里，
-   `$node->parent()` 仍走动态派发 —— **`!== null` 检查不做收窄**（上游只做了
-   `instanceof` 收窄，`f6185155`；nullable 被明确排除在去虚化之外）。
+1. **可空对象 `?Klass`** —— 声明处：属性 **140**、形参 **97**、返回 **198**。**已不再降级**：
+   `963c0ae1` + `340a8589`（2026-11-09，随 12:45 那次合并进本仓）把 `?T` / `T|null` 的
+   参数、返回、局部、属性都保留成 `php::Object` + 类信息，空句柄由 PHPX 在调用点抛
+   `Error`（等价 PHP 语义），`?->` 仍短路且不计算实参。生成代码可直接印证：
+   `php::Object root;` / `php::Object frame;`，`$this->focus->collect()` 直接编成
+   `php_drift__app__focusmanager__collect(focus, …)`。
+   ★ 但仍有两类动态派发：① **多态**（`RenderObject::parent()` 被 `Element` 覆写、非 final
+   ⇒ 静态直调会在子类上出错，`RenderBox.cc:247` 的 `$node->parent()` 属于这一类，**不是缺陷**）；
+   ② 值经 `typephp_nullable_object_value` 这类可空转换后类被抹掉。
+   `!== null` 依旧不做收窄，但既然不再擦类，它已不是主要矛盾。
 2. **接口类型** —— `src/` 有 **40** 个接口；`TaskHost` 有 3 个实现且**跨文件**
    （上游特化只对「同文件单实现者」生效）。例 `Element.php:76` 的
    `$host->requestFocus()`（`?FocusHost`）。
@@ -155,5 +210,8 @@ grep -rho 'typephp_call_method_cached' apps/users/build --include='*.cc' | wc -l
   元素与 `foreach` 都会拿到元素类。但会引入写入校验与 COW/引用限制，且 `$children`
   的写入路径多 —— 属于「为拿 5% 去动核心数据结构」，暂不做。
 - **不该改**：可空与接口是语义需要（空状态、可替换端口），改写成非空只是把断言挪到别处。
-- **该找上游**：§1 那条 `!== null` / `if ($x === null) return;` 之后的对象收窄。
-  这一条能吃掉 633 里的大部分，是当前杠杆最大的一项，且与既有 `instanceof` 收窄同源。
+- **别把多态当缺陷**：633 里相当一部分是「非 final + 被子类覆写」的方法（`Element::parent()`
+  这类），静态直调才是错的。做这类统计时先看目标方法有没有覆写，否则会得出「还剩一半可优化」
+  的假结论。
+- **该找上游**：接口跨文件多实现的特化（`TaskHost` 三个实现分散在三处），以及可空转换路径上
+  的类保留。`!== null` 收窄仍有价值但不是杠杆 —— 类已保留，剩下的是多态与擦除。
