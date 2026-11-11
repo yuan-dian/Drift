@@ -331,8 +331,16 @@ hash_update($inputs, 'cpp:' . hashTree("{$root}/cpp-src", '') . "\n");
 // 配置与清单是**受控文件**：改了它们同样影响构建结果
 hash_update($inputs, 'base:' . (is_file("{$root}/build/base.yml") ? (string) hash_file('sha256', "{$root}/build/base.yml") : '') . "\n");
 hash_update($inputs, 'manifest:' . (is_file("{$root}/build/app.manifest") ? (string) hash_file('sha256', "{$root}/build/app.manifest") : '') . "\n");
-// tpc 编译器本身（源码树入口）变了 ⇒ 旧缓存可能不兼容
-hash_update($inputs, 'tpc:' . (string) hash_file('sha256', $entry) . "\n");
+// ★ tpc 编译器身份：源码树形态必须覆盖**全部源码**，不能只哈希入口。
+//   `bin/tpc.php` 只有 12 行、2026-09-23 至今没变过 ⇒ 只哈希它等于「升级编译器
+//   不算输入变」：拉取/切换 tpc 后决策照旧 SKIP，旧 `.cc` 与旧 exe 原样保留，
+//   升级静默不生效（2026-11-11 实证：产物 10:32 编、编译器源码 12:43 更新）。
+$tpcBinDir = dirname($entry);
+$tpcSourceRoot = dirname($tpcBinDir);
+$tpcIdentity = is_dir($tpcSourceRoot . '/src')
+    ? hashTree($tpcSourceRoot . '/src', '') . hashTree($tpcBinDir, '')
+    : (is_file($entry) ? (string) hash_file('sha256', $entry) : '');
+hash_update($inputs, 'tpc:' . $tpcIdentity . "\n");
 $inputsHash = hash_final($inputs);
 
 // ─────────────────────── 跨层 ABI 契约 preflight ───────────────────────
@@ -368,6 +376,15 @@ fwrite(STDOUT, sprintf(
     substr($inputsHash, 0, 12),
     $previous === $inputsHash ? '相同' : '已变',
 ));
+
+// 重建 3 分钟要说清是谁变了：源码 / 壳 / 编译器三者的处置完全不同
+$tpcIdentityFile = "{$work}/tpc.identity.sha";
+$tpcIdentityPrev = is_file($tpcIdentityFile)
+    ? trim((string) file_get_contents($tpcIdentityFile))
+    : '';
+if ($tpcIdentityPrev !== '' && $tpcIdentityPrev !== $tpcIdentity) {
+    fwrite(STDOUT, "[drift-build] ★ tpc 编译器源码变了 —— 产物会整体不同，本次必为全量\n");
+}
 
 // ★ --dry 必须在 wipeCache 之前退出：否则 `--dry --full` 会「只算决策」却真清了缓存。
 if ($dry) {
@@ -494,5 +511,6 @@ fwrite(STDOUT, sprintf(
 
 // 记下本次构建的输入清单：下次构建据此判断"变没变"
 file_put_contents($manifestFile, $inputsHash . "\n");
+file_put_contents($tpcIdentityFile, $tpcIdentity . "\n");
 
 distributeRuntime($root, $distRoot);

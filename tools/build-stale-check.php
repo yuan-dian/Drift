@@ -67,6 +67,21 @@ function stale_missing(string $src): array
         $missing[] = "C++ 源码没进输入指纹（`cpp-src` 那行要给 hashTree 传 ''，否则改 .cc 会 SKIP）";
     }
 
+    // tpc 编译器身份必须覆盖编译器**源码树**：`bin/tpc.php` 只有 12 行、2026-09-23
+    // 至今未变 ⇒ 只 `hash_file($entry)` 等于「升级编译器不算输入变」，拉取 tpc 后
+    // 决策照旧 SKIP、旧产物静默保留（2026-11-11 实证）。
+    foreach ([
+        "'tpc:' . \$tpcIdentity" => 'tpc 指纹退回了只哈希入口（`bin/tpc.php` 恒不变）⇒ 升级编译器会 SKIP',
+        'hashTree($tpcSourceRoot' => 'tpc 指纹没覆盖编译器源码树（`typephp/src/**` 改了不算输入变）',
+    ] as $needle => $why) {
+        if (!\str_contains($src, $needle)) {
+            $missing[] = $why;
+        }
+    }
+    if (\str_contains($src, "'tpc:' . (string) hash_file('sha256', \$entry)")) {
+        $missing[] = 'tpc 指纹只哈希了入口文件（旧口径）⇒ 升级编译器不会触发全量';
+    }
+
     return $missing;
 }
 
@@ -79,6 +94,8 @@ function stale_good_source(): string
         "\$incremental = in_array('--incremental', \$argvRest, true);",
         "\$decision = StalePolicy::decide(\$p, \$c, \$e, \$f, \$i);",
         "hash_update(\$inputs, 'cpp:' . hashTree(\$root . '/cpp-src', '') . \"\\n\");",
+        "hash_update(\$inputs, 'tpc:' . \$tpcIdentity . \"\\n\");",
+        "\$tpcIdentity = is_dir(\$tpcSourceRoot . '/src') ? hashTree(\$tpcSourceRoot . '/src', '') : '';",
         "fwrite(STDOUT, StalePolicy::label(\$decision));",
         "if (\$dry) { exit(0); }",
         "if (\$decision === StalePolicy::FULL) { wipeCache(\$a); wipeCache(\$b); }",
@@ -167,6 +184,30 @@ if ($selftest) {
             'got' => \array_values(\array_filter(
                 stale_missing(\str_replace("hashTree(\$root . '/cpp-src', '')", "hashTree(\$root . '/cpp-src')", $good)),
                 static fn(string $m): bool => \str_contains($m, '没进输入指纹')
+            )),
+            'wantCount' => 1,
+        ],
+        [
+            'name' => 'tpc 指纹退回只哈希入口 ⇒ 报升级编译器会 SKIP',
+            'got' => \array_values(\array_filter(
+                stale_missing(\str_replace(
+                    "hash_update(\$inputs, 'tpc:' . \$tpcIdentity . \"\\n\");",
+                    "hash_update(\$inputs, 'tpc:' . (string) hash_file('sha256', \$entry) . \"\\n\");",
+                    $good
+                )),
+                static fn(string $m): bool => \str_contains($m, 'tpc 指纹')
+            )),
+            'wantCount' => 2,
+        ],
+        [
+            'name' => 'tpc 不再覆盖编译器源码树 ⇒ 报源码改了不算输入变',
+            'got' => \array_values(\array_filter(
+                stale_missing(\str_replace(
+                    "hashTree(\$tpcSourceRoot . '/src', '')",
+                    "'unused'",
+                    $good
+                )),
+                static fn(string $m): bool => \str_contains($m, '没覆盖编译器源码树')
             )),
             'wantCount' => 1,
         ],
