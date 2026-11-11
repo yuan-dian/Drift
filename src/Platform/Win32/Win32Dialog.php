@@ -175,8 +175,8 @@ final class Win32Dialog implements Dialog
      *   中止序列不成比例（少一条筛选，用户还能选"所有文件"）。
      *
      * ★ **空表 ⇒ 一行"所有文件"**：`lpstrFilter = NULL` 时 Win32 对话框
-     *   **不显示筛选行**，用户会以为对话框坏了。兜底文案住 PHP 而不是 C，
-     *   因为 `drift_win32.cc` 不声明 `/utf-8`（源码里的中文字面量会成乱码）。
+     *   **不显示筛选行**，用户会以为对话框坏了。兜底文案住 PHP 侧，
+     *   C 侧不放中文字面量（用户可见文案统一从 PHP 传入）。
      *
      * @param array<array-key, mixed> $filters
      */

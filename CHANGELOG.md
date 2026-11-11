@@ -29,7 +29,7 @@
 - Windows 无障碍满配（UIA provider + 树导航 + 结构 / 焦点事件）
 - 控件面约 110 个类（覆盖日常 60–70%）
 - 8 个应用样例（hello / tutorial / users / showcase / watermark / bench / dev / pacing）
-- 工程质量：18 项闸门 + 变异四律 + 三态判据 + 金样确定性注入 + T0/T1/T2 分层 + 真机探针
+- 工程质量：28 项闸门 + 变异四律 + 三态判据 + 金样确定性注入 + T0/T1/T2 分层 + 真机探针
 
 ### 明确不包含（preview 阶段）
 

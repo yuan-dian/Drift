@@ -1,30 +1,25 @@
 /**
- * Drift 的 Win32 壳（§5.1 / §7.3 M1 后端）。
+ * Drift 的 Win32 壳（§5.1 / §7.3）：界面由 PHP 自绘，壳负责建窗 / 泵消息 / 上屏，
+ * 并把平台服务（IME / DPI / 剪贴板 / 对话框 / UIA / 解码 / 崩溃捕获）以原语交给 PHP。
  *
- * 壳只做四件事：**建窗 / 泵消息 / 贴一帧像素 / 定时器**。
- * 界面全部由 PHP 自绘（§18：原生控件与自绘主题无法统一），所以这里没有工具栏、
- * 没有状态栏、没有 RichEdit —— 与 GUI 仓 `gui_win32.cc`（2108 行）和
- * markdown-editor `win32.cc`（2873 行）比，本文件小得多，**这是设计使然，不是欠账**。
+ * 边界见同目录 `drift_win32.stub.php`。三条纪律：
+ *   ① 只传原语，句柄是不透明 int；② PHP 侧不持 Win32 常量、不做 wParam 位运算；
+ *   ③ 零回调跨边界 —— WndProc 收下的东西一律进队列，由泵取出。
  *
- * 与 PHP 的边界见 `cpp-src/drift_win32.stub.php`。三条纪律照抄两个参考实现：
- *   ① 只传原语，句柄是不透明 int；
- *   ② PHP 侧不持有 Win32 常量、不做 wParam 位运算（键码在这里就归一化成键名）；
- *   ③ 零回调、零闭包跨边界 —— WndProc 收下的东西一律进队列，由泵取出。
- *
- * ★ 为什么 M1 不链 Skia：`RasterCanvas` 已经是零 OS 依赖的完整软光栅（§7.2 裁决 1），
- *   贴屏走 `SetDIBitsToDevice` 即可跑通"一个窗口画出 Hello Drift"。§7.3 的分期
- *   本来就写着"M1 = 位块传送"，而 `SurfaceProvider` 这层抽象存在的意义正是
- *   "后端可换" ⇒ Skia 后端接同一个端口，应用侧一行不改。
+ * 本文件只留共享状态 + WndProc + 消息泵；自包含的 ABI 实现在同目录各 TU
+ * （clipboard / dialogs / uia / image_decode / io_wake / crash_report）。
+ * 目录：`core/` 平台无关、`win32/` 本平台、`skia/` 渲染后端。
  */
 
 #define NOMINMAX
+
+#include "string_conv.h"
 
 #include <cstring>   // memcpy —— Skia 直贴路径按行拷（§7.3 提速，见文件尾）
 #include <phpx.h>
 #include <windows.h>
 #include <imm.h>
 #include <windowsx.h>   // GET_X_LPARAM / GET_Y_LPARAM（在 windowsx.h，不在 windows.h）
-#include <commdlg.h>    // OPENFILENAMEW / GetOpenFileNameW（A5-① 文件对话框）
 #include <shellapi.h>   // DragAcceptFiles / DragQueryFileW / DragFinish（A5-② 拖文件进窗）
 #include <vector>       // std::vector —— WM_DROPFILES 逐个路径的临时缓冲
 #include <map>          // std::map —— 窗口身份表（HWND → WindowSlot，M1-a）
@@ -34,7 +29,6 @@
 #include <dwmapi.h>     // DwmSetWindowAttribute —— 窗口圆角/背景（P1 质感）
 #pragma comment(lib, "ole32.lib")             // COM 基础设施（UIA 模块在 uia.cc 里另链）
 #pragma comment(lib, "dwmapi.lib")            // DwmSetWindowAttribute（P1 圆角/背景）
-#pragma comment(lib, "comdlg32.lib")          // GetOpenFileNameW / GetSaveFileNameW（A5-①）
 #pragma comment(lib, "shell32.lib")           // DragQueryFileW / DragFinish（A5-②）
 
 // ★ Win11 DWM 常量兜底：旧 SDK 的 `dwmapi.h` 没有这两个成员。值取自
@@ -82,7 +76,6 @@ struct DriftWindowCompositionAttribData {
 typedef BOOL (WINAPI *DriftSetWindowCompositionAttribute)(HWND, DriftWindowCompositionAttribData *);
 
 #include <string>
-#include <vector>
 
 // ★★ IO 线程池拆成两半（2026-10-30，按"平台边界"切）：
 //   `core/io_pool.*`  池体（纯 C++20，零 `windows.h`）
@@ -109,16 +102,13 @@ using namespace php;
 //     否则两个窗的拖动会去重排同一个表面（不报错、只画错窗）。
 extern void php_drift_resize_hook_pump(Int hwnd);
 
-// ★ **这里曾经还有一个 `php_drift_uia_invoke()`**（UIA `Invoke` 直接回调 PHP）。
-//   2026-10-25 删掉：跨进程 COM 回调里重入 PHP 会让进程静默消失；改成"投消息 ⇒
-//   入队 ⇒ 交一条 `SemanticsInvokeEvent`"之后，壳里**一次 PHP 都不进**，
-//   顺带消掉"形参必须是 `php::Int`"与"增量构建不认新增 .php"这两个 AOT 坑。
+// ★ COM 回调里重入 PHP 会让进程静默消失 ⇒ UIA Invoke 只投消息入队，壳里一次 PHP 都不进。
 
 namespace {
 
 // ─────────────────────────────────────────────────────────────── 常量 ──
 
-/** 窗口类名。一个进程只有一个主窗口 ⇒ 常量即可，不必按实例区分 */
+/** 窗口类名：进程内所有窗口共用，不按实例区分 */
 const wchar_t *const kWindowClass = L"DriftWindowClass";
 
 
@@ -235,9 +225,8 @@ static void fillGeomFromCache(HWND hwnd, Array &out) {
     }
 }
 
-// ★ IME / 帧缓冲 / 材质 / DPI 的字段都在 `WindowSlot` 里（见文件头）。它们原本是
-//   一串进程级全局，共同依赖"只有一个窗口"这个没写出来的前提 —— 那样建第二个窗
-//   就是静默互相破坏（两窗交替 present 互相重分配位图 ⇒ 闪烁 + 偶发错帧）。
+// ★ IME / 帧缓冲 / 材质 / DPI 字段都在 `window_slot.h` 的 `WindowSlot` 里：
+//   进程级全局会让两个窗口交替 present 时互相重分配位图 ⇒ 闪烁 + 偶发错帧。
 
 /**
  * 待交付事件队列。WndProc 填，`php_drift_win_pump()` 取 —— 同线程，无需加锁（§5.3）。
@@ -289,43 +278,6 @@ LPCWSTR cursorIdForShape(int shape) {
         case 7:  return MAKEINTRESOURCEW(32648);   // IDC_NO
         default: return MAKEINTRESOURCEW(32512);   // IDC_ARROW（0 与未知值同路）
     }
-}
-
-// ────────────────────────────────────────────────────── 字符串换算 ──
-
-/** UTF-8（PHP 侧）→ UTF-16（Win32 W 系列 API） */
-std::wstring toWide(const String &text) {
-    size_t length = text.length();
-    if (length == 0) {
-        return std::wstring();
-    }
-
-    int needed = MultiByteToWideChar(CP_UTF8, 0, text.data(), (int)length, NULL, 0);
-    if (needed <= 0) {
-        return std::wstring();
-    }
-
-    std::wstring out;
-    out.resize((size_t)needed);
-    MultiByteToWideChar(CP_UTF8, 0, text.data(), (int)length, &out[0], needed);
-    return out;
-}
-
-/** UTF-16 → UTF-8 */
-std::string toUtf8(const wchar_t *text, int length) {
-    if (text == NULL || length <= 0) {
-        return std::string();
-    }
-
-    int needed = WideCharToMultiByte(CP_UTF8, 0, text, length, NULL, 0, NULL, NULL);
-    if (needed <= 0) {
-        return std::string();
-    }
-
-    std::string out;
-    out.resize((size_t)needed);
-    WideCharToMultiByte(CP_UTF8, 0, text, length, &out[0], needed, NULL, NULL);
-    return out;
 }
 
 // ──────────────────────────────────────────────────── 键码归一化 ──
@@ -868,7 +820,6 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             driftUiaDetach(win);
             // ★ 关**最后一个**窗口才退出进程（2026-10-30）：`PostQuitMessage` 是
             //   进程级的，多窗口下"关一个 = 全退"正是 §5 裁决 ① 要否掉的语义。
-            //   单窗口时两个分支等价（那个窗就是最后一个）。
             if (g_liveWindows.empty()) {
                 PostQuitMessage(0);
             }
@@ -1031,9 +982,8 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // ★ 只发 `WA_INACTIVE`，**不发对称的激活**：今天没有消费者需要在
             //   激活时做任何事（A15：没有消费者不预先发明线上语义）。
             //
-            // ★ 用 `WM_ACTIVATE` 而不是 `WM_KILLFOCUS`：前者语义就是"这扇窗
-            //   不再是前台"，与"用户切走了"一一对应；后者还会被"焦点在窗口内
-            //   部控件之间移动"触发（今天单窗口无此情形，但语义不对）。
+            // ★ 用 `WM_ACTIVATE` 而不是 `WM_KILLFOCUS`：前者与"用户切走了"一一对应，
+            //   后者连窗口内部控件间的焦点移动都会触发。
             if (LOWORD(wp) == WA_INACTIVE) {
                 PendingEvent event = {};
                 event.kind = kEvDeactivate;
@@ -1391,9 +1341,8 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             break;
     }
 
-    // ★ 必须写 DefWindowProcW（显式 W 后缀）：`DefWindowProc` 宏在非 UNICODE 编译
-    //   配置下会展开成 A 版，而本文件全程用 W 系列 API —— 混用会让 WM_CHAR 收到
-    //   的是 ANSI 码位（GUI 仓同名坑，注释在 `gui_win32.cc` 第 450 行附近）。
+    // ★ 必须写 DefWindowProcW（显式 W 后缀）：`DefWindowProc` 宏在非 UNICODE 配置下
+    //   展开成 A 版，混用会让 WM_CHAR 收到 ANSI 码位。
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
@@ -2080,7 +2029,7 @@ void php_drift_win_set_min_size(Int hwnd, Int width, Int height) {
     // 用户在窄屏幕上开不出窗口）。
     win.minClientW = width > 0 ? (int)width : 0;
     win.minClientH = height > 0 ? (int)height : 0;
-    (void)hwnd;   // 单窗口进程：状态在进程级（同 win.clientW）
+    (void)hwnd;   // 状态在 slotOf(hwnd) 取出的 win 里，参数本身不再用
 }
 
 void php_drift_win_ime_caret(Int hwnd, Float x, Float y, Float h) {
@@ -2434,7 +2383,7 @@ Array php_drift_win_pump() {
             g_wakePosted = false;
         }
 
-        TranslateMessage(&msg);   // WM_KEYDOWN ⇒ WM_CHAR（也是 IME 的入口，M3 才接）
+        TranslateMessage(&msg);   // WM_KEYDOWN ⇒ WM_CHAR，也是 IME 的入口
         DispatchMessageW(&msg);   // WndProc 把关心的事件塞进 g_queue
         // 没有关心的事件 ⇒ 回到循环开头（先查队列，再继续等下一条）。
         // 壳不把"不关心的消息"回传给 PHP（否则泵会变成每帧几百次跨边界调用）。
@@ -2579,9 +2528,7 @@ Int php_drift_thread_id() {
 //   本文件只做两件事：**php 类型 ↔ std 类型的换算**，以及把"起池"与"建唤醒窗"
 //   绑成一次调用（顺序有讲究，见 `php_drift_io_start()`）。
 //
-// ★ 为什么拆：线程池的**池体**是跨平台的，只有"怎么叫醒 UI"是平台的。混在一个
-//   3927 行的文件里，"这条代码能不能跨平台"就只能靠读代码回答；拆成
-//   `core/` 与 `win32/` 两个目录之后，它变成**路径问题**。
+// ★ 池体跨平台，只有"怎么叫醒 UI"是平台的。目录分开后，"能不能跨平台"变成路径问题。
 //
 // ★ 为什么 ABI 包装留在本文件而不是 `core/`：`php_drift_io_start()` 要建 Win32
 //   唤醒窗 ⇒ 它**是平台相关的**。放进 `core/` 会让 `core` 反过来依赖 `win32`
@@ -2694,15 +2641,8 @@ void php_drift_win_present(Int hwnd, String rgba, Int width, Int height) {
 }
 
 // ═══════════════════════════════════════════════ Skia 直贴（§7.3 提速）══
-// ★★ 旧路径每帧把同一批像素做两次**方向相反**的逐像素交换：
-//     `drift_skia_read_pixels()`   BGRA → RGBA（为了喂 `php_drift_win_present`）
-//     `php_drift_win_present()`    RGBA → BGRA（为了喂 32bpp DIB）
-//   中间还要过一次 PHP 字符串形态的 4MB 跨界。实测这两段合计占端到端 **50%+**
-//   （`docs/design-v7/26-bench-结果.md` §5：toRgba 30% + present 20.5%）。
-//
-//   ★ **交换本来就是多余的**：Skia 的 N32 在小端上就是 **BGRA**，而 32bpp
-//     `BI_RGB` DIB 要的也是 BGRA ⇒ 按行 `memcpy` 就够，两次 swizzle 全省。
-//
+// ★ Skia N32 在小端就是 BGRA，32bpp `BI_RGB` DIB 要的也是 BGRA ⇒ 按行 `memcpy`，
+//   不做 swizzle（旧路径两次反向交换占端到端 50%+，见 `docs/design-v7/26-bench-结果.md` §5）。
 // ★ 像素指针由 `drift_skia.cc` 零拷取出。它**不是** PHP ABI 函数（不进 stub，
 //   PHP 侧拿不到）⇒ 用 `extern "C"` 固定符号名，不为它开公共面。
 extern "C" bool drift_skia_surface_pixels(
@@ -2798,324 +2738,11 @@ void php_drift_win_uia_push(Int hwnd, Array nodes) {
 
     driftUiaApply(slot, next);
 }
-// ═══════════════════════════════ 剪贴板（§5.1 壳服务 / M3 文本编辑三件套）══
-// 只做纯文本（CF_UNICODETEXT）。壳**不知道**"复制/粘贴"的语义 —— 它只回答三个
-// 问题：有没有文本、读出来是什么、写进去。选择态与 Ctrl+C/V/X 的翻译住 PHP 侧
-// （§9.1 路由链第 ③ 环，`TextFieldState` + `Application`）。
-//
-// ★ 位置纪律：本段必须在 `php_drift_win_uia_push` 的收尾 `}` **之后**（全局
-//   作用域）。插进任何函数体内部 ⇒ C2601「本地函数定义是非法的」，而 PHP 侧
-//   smoke 用 `function_exists` 假实现，**一点都看不出来**（2026-10-21 实测）。
-
-/**
- * 打开剪贴板（带重试）。
- *
- * ★ 为什么必须重试：`OpenClipboard` 在**别的进程**正握着剪贴板时返回 FALSE
- *   （ERROR_ACCESS_DENIED）—— 这是 Windows 的既定行为、不是错误路径。不重试的
- *   后果是"用户刚在别的程序里复制过，这边的 Ctrl+V 就随机失效"，且**不报错**
- *   （G2 反模式：把平台时序噪声当永久失败）。
- */
-static bool openClipboardWithRetry(int attempts) {
-    for (int i = 0; i < attempts; i++) {
-        if (OpenClipboard(NULL)) {
-            return true;
-        }
-        Sleep(2);
-    }
-    return false;
-}
-
-/** 读纯文本；空 / 非文本 / 打不开 ⇒ 空串（端口契约：空串不是错误） */
-String php_drift_win_clipboard_read_text() {
-    if (!openClipboardWithRetry(8)) {
-        return String("");
-    }
-
-    std::string out;
-    if (IsClipboardFormatAvailable(CF_UNICODETEXT)) {
-        HANDLE handle = GetClipboardData(CF_UNICODETEXT);
-        if (handle != NULL) {
-            const wchar_t *text = (const wchar_t *)GlobalLock(handle);
-            if (text != NULL) {
-                // CF_UNICODETEXT 保证 NUL 结尾 ⇒ 可以按 wcslen 取长
-                out = toUtf8(text, (int)wcslen(text));
-                GlobalUnlock(handle);
-            }
-        }
-    }
-
-    CloseClipboard();
-    return String(out.c_str());
-}
-
-/**
- * 写纯文本（覆盖剪贴板现有内容）。
- *
- * ★ 失败是**静默**的：端口契约是 `writeText(): void`（调用方没有错误通道），
- *   而"写失败"在 Windows 上只剩"剪贴板被别的进程占着"一种，已由重试消掉。
- *   真要吃这个错，先把端口改成返回 `bool` —— 今天没有消费者要它（A15）。
- */
-void php_drift_win_clipboard_write_text(String text) {
-    if (!openClipboardWithRetry(8)) {
-        return;
-    }
-
-    std::wstring wide = toWide(text);
-    SIZE_T bytes = (SIZE_T)(wide.size() + 1) * sizeof(wchar_t);
-
-    HANDLE handle = GlobalAlloc(GMEM_MOVEABLE, bytes);
-    if (handle == NULL) {
-        CloseClipboard();
-        return;
-    }
-
-    memcpy(GlobalLock(handle), wide.c_str(), bytes);
-    GlobalUnlock(handle);
-
-    if (SetClipboardData(CF_UNICODETEXT, handle) == NULL) {
-        // 系统没接手 ⇒ 块还是我们的，必须自己放（否则每失败一次漏一块全局内存）
-        GlobalFree(handle);
-    }
-
-    CloseClipboard();
-}
-
-/** 剪贴板上有没有纯文本 —— 让"粘贴"能先判可用性再改状态 */
-Bool php_drift_win_clipboard_has_text() {
-    if (!openClipboardWithRetry(8)) {
-        return Bool(false);
-    }
-
-    bool has = IsClipboardFormatAvailable(CF_UNICODETEXT) != FALSE;
-    CloseClipboard();
-    return Bool(has);
-}
-
-// ═══════════════════════════════ 原生对话框（§5.1 壳服务 / A5-①）══
-// `Drift\Platform\Dialog` 的 Win32 实现。四件事：选已有文件 / 选保存位置 /
-// 单键提示 / 是-否确认。
-//
-// ★★ **四个函数全是模态**（`GetOpenFileNameW` / `MessageBoxW`）：模态期间系统跑
-//   自己的内层消息循环，PHP 侧**一帧都跑不到**。这是原生对话框的固有语义，
-//   不是缺陷；但调用点不能在动画/滚动的回调里。
-// ★ 位置纪律同剪贴板那段：必须在全局作用域（任何函数体的收尾 `}` 之后）。
-//   插进函数体内部 ⇒ C2601，而 PHP 侧 smoke 一点都看不出来（2026-10-21 实测）。
-// ★ 这里**没有中文字符串字面量**：本文件不声明 `/utf-8`，MSVC 按系统码页读源码，
-//   中文字面量会变成乱码。所有给用户看的文案都从 PHP 传来（UTF-8 → `toWide`）。
-
-/**
- * `显示名\t通配符`（行间 `\n`）→ `OPENFILENAMEW::lpstrFilter` 要的
- * **双 NUL 结尾**宽字符表：`名\0通配符\0名\0通配符\0\0`。
- *
- * ★ 为什么不在 PHP 侧直接拼双 NUL：NUL 穿过 ABI 之后在调试器里全是一样的点，
- *   出了错看不出来；而 `\t` / `\n` 是**可读、可单测**的中间形态
- *   （`Win32Dialog::filterText()` 有断言），一次转换留在这里。
- */
-static std::vector<wchar_t> buildFilterWide(const String &filters) {
-    std::vector<wchar_t> out;
-    std::string raw(filters.data(), filters.length());
-
-    size_t start = 0;
-    while (start < raw.size()) {
-        size_t end = raw.find('\n', start);
-        if (end == std::string::npos) {
-            end = raw.size();
-        }
-
-        std::string line = raw.substr(start, end - start);
-        if (!line.empty() && line[line.size() - 1] == '\r') {
-            line.erase(line.size() - 1);   // 容忍 CRLF：调用方用 heredoc 拼也不会坏
-        }
-
-        if (!line.empty()) {
-            size_t tab = line.find('\t');
-            std::string label = tab == std::string::npos ? line : line.substr(0, tab);
-            std::string pattern = tab == std::string::npos ? std::string() : line.substr(tab + 1);
-
-            std::wstring wideLabel = toWide(String(label));
-            std::wstring widePattern = toWide(String(pattern));
-            out.insert(out.end(), wideLabel.begin(), wideLabel.end());
-            out.push_back(L'\0');
-            out.insert(out.end(), widePattern.begin(), widePattern.end());
-            out.push_back(L'\0');
-        }
-
-        if (end == raw.size()) {
-            break;
-        }
-        start = end + 1;
-    }
-
-    if (out.empty()) {
-        return out;   // 空表 ⇒ 调用方给 NULL（PHP 侧保证至少一行，这里是防御）
-    }
-
-    out.push_back(L'\0');   // 双 NUL 的第二个
-    return out;
-}
-
-/**
- * 打开 / 保存 的公共部分：取消与真失败在这里分开处理。
- *
- * 成功返回**选中的路径表**（空表 = 取消）。`multi` 只对"打开"有意义 ——
- * 保存对话框没有多选（Win32 会忽略 `OFN_ALLOWMULTISELECT`）。
- *
- * ★★ **多选时 `lpstrFile` 里的形状不是"路径列表"**（2026-11-02）：
- *   - 单选：`C:\a\b.png\0\0` —— 整串就是一个完整路径。
- *   - 多选：`C:\a\0b.png\0c.png\0\0` —— **第一段是目录**，后面才是文件名。
- *   把两种形状都当"路径列表"读 ⇒ 多选时拿到一个目录 + 若干裸文件名
- *   （后续 `fopen` 全部失败，而对话框本身"成功"了）。判别依据是
- *   **第一段之后还有没有内容**：有 ⇒ 多选形状。
- */
-static std::vector<std::wstring> runFileDialog(Int owner, const String &title, const String &filters,
-                                               const String &defaultName, bool save, bool multi) {
-    std::vector<wchar_t> filterWide = buildFilterWide(filters);
-
-    // ★ `nMaxFile` 是**字符数**不是字节数；32K 宽字符 ≈ 14K 个汉字路径，够。
-    //   ★ 多选时这**一整块**要装下"目录 + 所有文件名"，所以它必须比单选更宽裕：
-    //     32K 字符约等于 1000 个 30 字符的文件名，超出部分 Win32 直接**不返回**
-    //     （返回值仍是成功，用户会以为漏选了）—— 这是 API 的固有限制，不是我们的
-    //     取舍；真要更大就得上 `IFileOpenDialog`（COM），不值得为这一点引进来。
-    std::vector<wchar_t> fileBuf(32768, 0);
-    std::wstring seed = toWide(defaultName);
-    if (!seed.empty() && seed.size() < fileBuf.size()) {
-        std::copy(seed.begin(), seed.end(), fileBuf.begin());
-    }
-
-    std::wstring titleWide = toWide(title);
-
-    OPENFILENAMEW ofn;
-    ZeroMemory(&ofn, sizeof(ofn));
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = (HWND)(INT_PTR)owner;
-    ofn.lpstrFilter = filterWide.empty() ? NULL : filterWide.data();
-    ofn.lpstrFile = fileBuf.data();
-    ofn.nMaxFile = (DWORD)fileBuf.size();
-    ofn.lpstrTitle = titleWide.empty() ? NULL : titleWide.c_str();
-    // ★ `OFN_PATHMUSTEXIST`：路径打错时对话框自己拦住，不把无效路径递回上层。
-    // ★ `OFN_NOCHANGEDIR`：**不许改进程的工作目录** —— 应用侧有相对路径
-    //   （`getcwd()` 那条纪律），读文件之后 cwd 变了会让后面每次读写都错位。
-    ofn.Flags = OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-    ofn.Flags |= save ? OFN_OVERWRITEPROMPT : OFN_FILEMUSTEXIST;
-    if (multi && !save) {
-        ofn.Flags |= OFN_ALLOWMULTISELECT;
-    }
-
-    BOOL ok = save ? GetSaveFileNameW(&ofn) : GetOpenFileNameW(&ofn);
-    if (!ok) {
-        DWORD code = CommDlgExtendedError();
-        if (code != 0) {
-            // 端口（`Dialog::openFile(): ?string`）只有"取消 / 成功"两态 ⇒
-            // 真失败**不能**装作用户点了取消：壳自己喊出来（§1.2 响亮失败）。
-            wchar_t message[128];
-            swprintf_s(message, L"file dialog failed: 0x%08lX", (unsigned long)code);
-            MessageBoxW((HWND)(INT_PTR)owner, message, L"Drift",
-                        MB_OK | MB_ICONERROR | MB_TASKMODAL | MB_SETFOREGROUND);
-        }
-        return std::vector<std::wstring>();
-    }
-
-    std::vector<std::wstring> paths;
-
-    // ★ 形状判别：第一段之后还有内容 ⇒ 多选形状（第一段是目录）。
-    //   单选时 `wcslen` 直接到结尾，`rest` 指向结尾 NUL ⇒ 走上面的单元素分支。
-    const wchar_t *dir = fileBuf.data();
-    size_t dirLen = wcslen(dir);
-    const wchar_t *rest = dir + dirLen + 1;
-
-    if (*rest == L'\0') {
-        paths.push_back(std::wstring(dir));
-        return paths;
-    }
-
-    // 多选：`dir` 是目录，`rest` 起是若干以 NUL 分隔的文件名。
-    // ★ 目录**可能已带尾分隔符**（根目录 `C:\`）：拼之前先判，否则出 `C:\\a.png`。
-    std::wstring base(dir);
-    if (!base.empty() && base[base.size() - 1] != L'\\' && base[base.size() - 1] != L'/') {
-        base.push_back(L'\\');
-    }
-
-    while (*rest != L'\0') {
-        paths.push_back(base + rest);
-        rest += wcslen(rest) + 1;
-    }
-
-    return paths;
-}
-
-String php_drift_win_open_file(Int owner, String title, String filters, String defaultName) {
-    std::vector<std::wstring> paths = runFileDialog(owner, title, filters, defaultName, false, false);
-    if (paths.empty()) {
-        return String();
-    }
-
-    return String(toUtf8(paths[0].c_str(), (int) paths[0].size()));
-}
-
-/**
- * 多选：返回**每行一个 UTF-8 路径**（`\n` 连接）；取消 ⇒ 空串。
- *
- * ★ 用 `\n` 而不是把数组穿过 ABI：桥只认 `int / string / bool` 这些原语
- *   （`Array` 得自己造 `zend_array`，那是另一套出错面）。Windows 路径**不允许**
- *   换行符 ⇒ `\n` 是无歧义分隔符，不需要转义。
- * ★ 空串 = 取消。**单选一个文件时也是一个元素**，不会退化成"带 `\n` 的怪形状"。
- */
-String php_drift_win_open_files(Int owner, String title, String filters) {
-    std::vector<std::wstring> paths = runFileDialog(owner, title, filters, String(), false, true);
-
-    std::string joined;
-    for (size_t i = 0; i < paths.size(); ++i) {
-        if (i > 0) {
-            joined.push_back('\n');
-        }
-        joined += toUtf8(paths[i].c_str(), (int) paths[i].size());
-    }
-
-    return String(joined.c_str());
-}
-
-String php_drift_win_save_file(Int owner, String title, String filters, String defaultName) {
-    std::vector<std::wstring> paths = runFileDialog(owner, title, filters, defaultName, true, false);
-    if (paths.empty()) {
-        return String();
-    }
-
-    return String(toUtf8(paths[0].c_str(), (int) paths[0].size()));
-}
-
-void php_drift_win_alert(Int owner, String title, String body) {
-    std::wstring wideTitle = toWide(title);
-    std::wstring wideBody = toWide(body);
-    MessageBoxW((HWND)(INT_PTR)owner, wideBody.c_str(), wideTitle.c_str(),
-                MB_OK | MB_ICONINFORMATION | MB_TASKMODAL | MB_SETFOREGROUND);
-}
-
-Bool php_drift_win_confirm(Int owner, String title, String body) {
-    std::wstring wideTitle = toWide(title);
-    std::wstring wideBody = toWide(body);
-    // ★ `MB_DEFBUTTON2`：默认焦点在"否"。破坏性动作的默认不能是"执行"
-    //   （`Dialog::confirm()` 的契约：关掉窗口 ⇒ false）。
-    int result = MessageBoxW((HWND)(INT_PTR)owner, wideBody.c_str(), wideTitle.c_str(),
-                             MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2
-                                 | MB_TASKMODAL | MB_SETFOREGROUND);
-    return Bool(result == IDYES);
-}
 // ─────────────────────── 图片解码（WIC，2026-11-02）───────────────────────
-//
-// 为什么解码要落在**壳**上，而不是 PHP 侧：
-//   本仓已有的 `PngDecoder` 是纯 PHP、只认 PNG（`W8-1` 的产物）。而 `apps/watermark`
-//   要显示的是服务端返回的 **JPEG**（AI 出图几乎不可能是 PNG），并且用户上传的
-//   原图也是 jpg。四条路的取舍见 `win32/image_decode.h` 的表格 —— 结论是 WIC：
-//   零体积增量（`windowscodecs.lib` 是系统组件）、格式全覆盖、系统级速度。
-//
-// ★ 返回**空数组**表示失败（不是抛异常）：PHP 侧 `ImageLoader` 的降级是"1×1 透明
-//   占位 + 一条 DIAGNOSTIC"，与"文件找不到"走同一条路。跨边界抛 C++ 异常需要
-//   phpx 的翻译层，而"解不出图"是**预期内**的结果（用户可能选了个 .psd），
-//   不是异常。
-// ★ `maxWidth`：目标宽度上限（0 = 原尺寸）。缩放**在解码期**做（WIC scaler），
-//   不是解完再缩 —— 一张 1792×2390 的原尺寸 RGBA 是 17MB，而预览只显示 560 宽，
-//   按原尺寸解等于把九成字节分配给永远画不到的像素。多张叠起来就会顶穿 PHP 的
-//   128M 上限，而且是在 UI 线程里。
+// 取舍表见 `win32/image_decode.h`（JPEG / 零体积增量 / 格式全覆盖）。
+// ★ 返回**空数组**表示失败：解不出图是预期内结果，跨边界抛 C++ 异常要 phpx 翻译层。
+// ★ `maxWidth`（0 = 原尺寸）必须在**解码期**缩放：原尺寸 RGBA 一张就 17MB，
+//   解完再缩会把九成字节分给画不到的像素，多张叠起来顶穿 PHP 128M 上限。
 Array php_drift_image_decode(String path, Int maxWidth) {
     Array out;
 

@@ -134,6 +134,10 @@ $checks = [
     //   而那种错在 tpc 下是链接期静默失败，真机行为错却全绿。判据必须进 gate。
     'abi'     => ['ABI 契约（abi-check）', [PHP_BINARY, $root . '/tools/abi-check.php'], false],
     'abiself' => ['ABI 校验自证（变异体）', [PHP_BINARY, $root . '/tools/abi-check.php', '--selftest'], false],
+    // ★ 拆 TU 后 `core/` 的平台纯度与扩展库 pragma 的归属都成了「链接期才炸」的约束，
+    //   abi-check 只管签名、不管这两条。
+    'cppbridge' => ['C++ 桥接结构（cpp-bridge-check）', [PHP_BINARY, $root . '/tools/cpp-bridge-check.php'], false],
+    'cppbridgeself' => ['桥接结构自证（变异体）', [PHP_BINARY, $root . '/tools/cpp-bridge-check.php', '--selftest'], false],
     // ★ 静默退化：检测点一行就能加，判据却可能忘 —— 对账「每个 key 都有断言」，
     //   与 PHPUnit 那边「行为对不对」不同源，两道都要在 gate 里。
     'dxdiag'  => ['DX 退化判据对账（diagnostic-check）', [PHP_BINARY, $root . '/tools/diagnostic-check.php'], false],
