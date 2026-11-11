@@ -40,7 +40,7 @@
 ★ 与上一版相比，读完 11 份后有 **两处判断被修正**（见 §2.5）：
 ① "只有三条值得借" 太窄 —— 实际是 **4 条已兑现 + 6 条该借**，且漏掉了最有价值的一条
 （不是从别人借的，是 Drift2 自己的 G1 没兑现）；
-② 命令系统"15 条不值得改" **方向对但漏了一条自己的原则** —— `DESIGN.md:79` 的 G1
+② 命令系统"15 条不值得改" **方向对但漏了一条自己的原则** —— `docs/_archive/DESIGN-v2-2026-10-14.md:79` 的 G1
 原文就写着"死命令可构建期校验，GUI 却放运行期"，而 `tools/lint.php` 里零命中。
 
 ---
@@ -93,7 +93,7 @@ Drift2 后面的所有补丁，几乎都是在这四条**之外**的地方没守
 | **2** | **控件分四大模块家族**：语义元素 / 复合行为根 / 有状态系统 / 基础设施 | GPUI | **无**。63 个控件一视同仁，`Select`（复合行为根）与 `Button`（语义元素）被当成同一量级 | **A1** 的理论依据 |
 | **3** | **覆盖层坐标/绘制顺序/命中盒共用一个视口模型** + **状态所有权三形态（受控值/句柄/Entity）** | GPUI 不变量 ⑨ + 机制四 | **不成立**。菜单 `placeMenu()`、模态 `placeModal()` 两套；浮层用"单槽位 + 互斥"代替句柄 | **A1 的核心** |
 | **4** | **能力分级要"可解释"**：`Partial { reason }` —— 降级原因能展示给用户/日志 | UDA `SupportLevel` | **有二值无原因**。`unsupportedMessage()` 已带 tier + 两条修法（这是 reason 的雏形），但**没有"降级可用"这一档** | **A3**（但见 §2.4 的 Qt 警示：不要用"降级"掩盖"没实现"） |
-| **5** | **连接的可检查性 > 连接的表达力**：字符串绑定路径写错 ⇒ 运行期静默失败（WPF 最大痛点） | WPF 反面 **+ Drift2 自己的 G1** | **构建期零校验，四处裸字符串**：注册侧 `apps/users/src/UsersApplication.php:146` 的字典键、引用侧 `Pages/UsersPage.php:75` 的 `->command('nav.signup')`、键盘绑定侧 `:167` 的 `->bind(ctrl('S'), 'form.submit')`、前缀分流 `Commands/NavigationCommands.php:23` 的 `str_starts_with($name, 'nav.')`。★ **诚实修正**：派发时**有** DIAGNOSTIC 上报（`CommandRouter.php:78`，不是完全静默），但三个问题——① 是**运行期**不是构建期，**直接违反 `DESIGN.md:79` 的 G1「编译器优先：死命令、key 唯一性、handler 存在性都可构建期校验，GUI 却放运行期」**；② DIAGNOSTIC 级在真机上用户看不见；③ `names()` 注释写着"死命令 lint（§16.6.1 R5）的静态输入"，而 `tools/lint.php` 里 **command/dead 零命中** ⇒ **规则从未实现**（正是本项目自己的判据"未被消费的分支 = 未实现"） | **B5** |
+| **5** | **连接的可检查性 > 连接的表达力**：字符串绑定路径写错 ⇒ 运行期静默失败（WPF 最大痛点） | WPF 反面 **+ Drift2 自己的 G1** | **构建期零校验，四处裸字符串**：注册侧 `apps/users/src/UsersApplication.php:146` 的字典键、引用侧 `Pages/UsersPage.php:75` 的 `->command('nav.signup')`、键盘绑定侧 `:167` 的 `->bind(ctrl('S'), 'form.submit')`、前缀分流 `Commands/NavigationCommands.php:23` 的 `str_starts_with($name, 'nav.')`。★ **诚实修正**：派发时**有** DIAGNOSTIC 上报（`CommandRouter.php:78`，不是完全静默），但三个问题——① 是**运行期**不是构建期，**直接违反 `docs/_archive/DESIGN-v2-2026-10-14.md:79` 的 G1「编译器优先：死命令、key 唯一性、handler 存在性都可构建期校验，GUI 却放运行期」**；② DIAGNOSTIC 级在真机上用户看不见；③ `names()` 注释写着"死命令 lint（§16.6.1 R5）的静态输入"，而 `tools/lint.php` 里 **command/dead 零命中** ⇒ **规则从未实现**（正是本项目自己的判据"未被消费的分支 = 未实现"） | **B5** |
 | **6** | **滚动位置进约束**：`SliverConstraints.scrollOffset` 让"布局仍是纯函数"、滚动态可无头测试 | Flutter | **部分**。`RenderScrollView` 把 offset 写进子盒 `offsetX/offsetY`（布局期，方向对），但 offset 是**盒的私有字段**，不是约束的一部分 ⇒ 布局签名里看不见"当前滚到哪" | **B6（低成本）** |
 
 ### 2.3 明确不借（5 条）—— 写下来免得再讨论
@@ -116,7 +116,7 @@ Drift2 后面的所有补丁，几乎都是在这四条**之外**的地方没守
 | # | 别人的坑 | Drift2 的对应风险 | 该立的判据 |
 |---|---|---|---|
 | **1** | **Qt 的双轨**：QWidget（命令式）+ QML（声明式）两套渲染/事件/布局，团队技能分裂，是它被长期吐槽的第一条 | **A3 做完就会接近**：Skia 能画路径、Raster 不能 ⇒ 两个后端能力不等价 ⇒ 同一个控件在两个后端表现不同（且只有 golden 能发现） | **两个后端必须能力等价**：要么都支持，要么都响亮失败。**不允许"一个强一个弱"**（这条比"支持更多 op"更重要） |
-| **2** | **WPF 的字符串绑定静默失败**：`{Binding Cont}` 拼错 ⇒ 输出窗口一行警告、界面空白，无数人坑数小时 | **同构，但比 WPF 轻一档**：派发时有 DIAGNOSTIC（`CommandRouter.php:78`），可 `tools/lint.php` 里**构建期零校验**。★ 更要紧的是：`DESIGN.md:79` 的 G1 **原文就写着"死命令可构建期校验，GUI 却放运行期"** ⇒ 这是**自己的原则没兑现**，比"学别人"更该改 | **连接必须可检查**：见 B5（lint 规则，不是常量表）。★ 与"int vs string"无关——**string 也能检查，int 也能写错** |
+| **2** | **WPF 的字符串绑定静默失败**：`{Binding Cont}` 拼错 ⇒ 输出窗口一行警告、界面空白，无数人坑数小时 | **同构，但比 WPF 轻一档**：派发时有 DIAGNOSTIC（`CommandRouter.php:78`），可 `tools/lint.php` 里**构建期零校验**。★ 更要紧的是：`docs/_archive/DESIGN-v2-2026-10-14.md:79` 的 G1 **原文就写着"死命令可构建期校验，GUI 却放运行期"** ⇒ 这是**自己的原则没兑现**，比"学别人"更该改 | **连接必须可检查**：见 B5（lint 规则，不是常量表）。★ 与"int vs string"无关——**string 也能检查，int 也能写错** |
 | **3** | **SwiftUI / Compose 的"跳过"黑盒**：属性图不可 inspect、稳定性推断要靠编译器报告——"为什么没更新/为什么一直在重组"是两家最高频问题 | **现在还没踩**：`settle()` 是全树递归找脏节点（没有"跳过"优化）。但一旦为性能加"这个子树不用重建"的推断，就会立刻变成黑盒 | **任何"跳过"必须可解释**：跳过决策要能通过 `SurfaceProfile` / Diagnostic 回答"为什么跳过这个节点"。★ 现在不做跳过，是**优点**不是欠债 |
 | **4** | **React 的 memo 地狱**：响应单位 = 组件函数 ⇒ 必须手动 `memo/useCallback/useMemo` 三层，写满屏幕还上不去 | **已经避开**：Drift2 的响应单位是 `State`（比组件函数细），`markDirty` 只重建标脏的 StatefulElement | **不要引入"手动标注"文化**：任何要求调用方写 `memo(...)` 才能不卡的机制，方向就是错的。性能要靠结构（分层/虚拟化），不靠注解 |
 
@@ -128,7 +128,7 @@ Drift2 后面的所有补丁，几乎都是在这四条**之外**的地方没守
 
 **修正二：命令系统"15 条不值得改"—— 方向对，但漏了一条自己的原则。**
 既有裁决（24 §5.3）说的是"15 个命令 / 52 处出现，改 int 不值得"——**这个判断保留**。
-但 `DESIGN.md:79` 的 G1 原文写着："**死命令、key 唯一性、handler 存在性都可构建期校验，GUI 却放运行期**"。
+但 `docs/_archive/DESIGN-v2-2026-10-14.md:79` 的 G1 原文写着："**死命令、key 唯一性、handler 存在性都可构建期校验，GUI 却放运行期**"。
 ⇒ 这不是"要不要学 WPF"，是**自己写下的判据没兑现**：
 `CommandRouter::names()` 的注释都声明了它是"死命令 lint 的静态输入"，而 `tools/lint.php` 里零命中。
 ⇒ 结论：**不改 int（派发方式不动），补一条 lint 规则**（B5）。两件事不冲突。
@@ -638,7 +638,7 @@ UDA 真正该借的是**"降级要可解释"**——而这一点 Drift2 已经�
 | **B2** | **`frame()` 阶段表**：把 9 段提成 `const STAGES = [...]` + 每段一个私有方法，`frame()` 只做循环 | 消灭 P5 的"第 7 段补丁"；阶段依赖可画出来 | 低——纯重构，`SurfaceProfile` 段键正好复用 |
 | **B3** | **`BoxStyle` 显式标志**：`null/0 = 未设` 改成 `hasBorder` / `hasRadius` 布尔 | `->border($c, 0.0)` 能表达"我要 0"（现在表达不出，§24.2 #26 的遗留） | 低——值对象加两个字段，合并逻辑改一处 |
 | **B4** | **修饰需求按四类正交切分**（借 Compose 的分类法，不借链式 API）：把"盒样式/输入声明/语义/布局约束"四类各自的入口写成一张对照表，进 `docs/architecture/08` | 新控件不会漏一类（现在 `cursor()` 漏在 `StatefulWidget` 上就是这么来的） | 低——**文档 + lint 规则**，不改代码 |
-| **B5** | **死命令构建期校验**（兑现 `DESIGN.md:79` 的 G1，不是新发明）：`tools/lint.php` 加一条 `dead-command` 规则——扫 `->command('x')` / `->bind(_, 'x')` 的字符串字面量，与 `commands()` 返回的键集合求差；**引用了不存在的命令 ⇒ lint 报错**（构建期，零运行时成本） | ★ 这不是"借鉴 WPF"，是**补上自己写了没做的规则**：`CommandRouter::names()` 的注释已声明它是"死命令 lint 的静态输入"，但 lint 里零命中。收益：把"点了没反应"从运行期 DIAGNOSTIC 提前到构建期 error | **极低**——`names()` 已存在，只需扫两个模式；`Button::command()` / `MenuItem::command()` / `KeyChord::bind()` 都是字符串字面量（实测 8 个命令名全部是字面量，无拼接） |
+| **B5** | **死命令构建期校验**（兑现 `docs/_archive/DESIGN-v2-2026-10-14.md:79` 的 G1，不是新发明）：`tools/lint.php` 加一条 `dead-command` 规则——扫 `->command('x')` / `->bind(_, 'x')` 的字符串字面量，与 `commands()` 返回的键集合求差；**引用了不存在的命令 ⇒ lint 报错**（构建期，零运行时成本） | ★ 这不是"借鉴 WPF"，是**补上自己写了没做的规则**：`CommandRouter::names()` 的注释已声明它是"死命令 lint 的静态输入"，但 lint 里零命中。收益：把"点了没反应"从运行期 DIAGNOSTIC 提前到构建期 error | **极低**——`names()` 已存在，只需扫两个模式；`Button::command()` / `MenuItem::command()` / `KeyChord::bind()` 都是字符串字面量（实测 8 个命令名全部是字面量，无拼接） |
 | **B6** | **滚动位置进约束**（Flutter `SliverConstraints`）：把 `RenderScrollView` 的 `appliedOffset()` 提升为 `ScrollConstraints` 的一部分，`layout()` 签名里能看见"滚到哪" | 布局仍是纯函数这件事变得**可验证**（现在靠"偏移在布局期写进子盒"的纪律，纪律不是契约）；滚动态的无头夹具更直接 | 中——`RenderBox::layout()` 签名要改（或加一个 `ScrollBox extends RenderBox` 分支），影响所有容器；**建议等 A1/A2 稳定后再做** |
 | **B7** | **lint 规则自带反例自检**（`spec/13` 的 D-F1）：每条规则配一个"故意违反"的样例，`php tools/lint.php --self-check` 跑一遍，**规则没红就报"这条规则空转"** | Drift2 的反例自检是**手工的**（改坏代码 → 看红 → 还原），规则本身坏了没人知道。v4.1 记过"两个 lint 空转"的实例 | 低——每条规则加一个坏样例（可放 `_build/lint-fixtures/`），`--self-check` 跑两遍 |
 | **B8** | **变体 × 状态矩阵 golden**（`spec/13` 的 D-W8）：每个控件的 (变体 × 状态) 出一张基准图，新增控件必须带 | 把"禁用态颜色不对"从上线发现变成提交时红。★ Drift2 现在只有零散像素断言，没有矩阵 | 中——场景数会涨（Button 4 变体 × 4 状态 = 16 张）；**先只做 `Button` + `Toggle` 两个**，验证成本可接受再推广 |

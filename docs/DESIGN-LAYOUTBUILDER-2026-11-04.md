@@ -225,7 +225,7 @@ Frame::run()
 - **新增类触发 AOT 全量**：必须 `drift-build --full`，且逐个确认 `.cc` 生成。
   ★ **2026-11-10 后订正**：这条人肉纪律已判据化 —— 输入指纹变了 / 首次 /
   产物不在 ⇒ `drift-build` **自动全量**（`StalePolicy` + gate `stalepolicy`，见
-  `DESIGN.md` §16.2.2）；只有 `--incremental` 才走增量。原条目保留作 2026-11-04 快照。
+  `docs/_archive/DESIGN-v2-2026-10-14.md` §16.2.2）；只有 `--incremental` 才走增量。原条目保留作 2026-11-04 快照。
 - **帧内 `markDirty()` 会顺带登记动效活跃表**：`tickFrame()` 默认 `false`，不续帧；
   但队列须被 `takeActiveAnimations()` 正常消费，真机追一帧确认无空转。
 - **逃生舱被滥用**：靠 docblock + §3「不该用它」清单 + 判据 11 治理，

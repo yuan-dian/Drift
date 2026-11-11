@@ -56,19 +56,19 @@
 | `readonly class` | **按对象身份**，每次 `new` 仍不相等 | ✅ 允许 | 否（fixture `good()` 第三条正是 `new UserRow(...)`） |
 
 ⇒ 把判据从「类型白名单」重述为「**`===` 是否有稳定值语义**」是**修正规则自身**，
-不是为迁就业务而放宽。`readonly class` 的历史裁决（`DESIGN.md:2541`）本棒不重开，
+不是为迁就业务而放宽。`readonly class` 的历史裁决（`docs/_archive/DESIGN-v2-2026-10-14.md:2541`）本棒不重开，
 只在文档登记，避免一棒摊太大。
 
 ## 2. 不重开的已判死项（先列，防止走回头路）
 
 | 议题 | 裁决出处 | 本棒态度 |
 |---|---|---|
-| 运行期自动依赖追踪 / 读即订阅 | `DESIGN.md:1527-1530`（两次否决）、`ARCH-REVIEW-2026-10-21.md:103`（不可观测） | 不碰；读侧仍是显式 `select()` |
+| 运行期自动依赖追踪 / 读即订阅 | `docs/_archive/DESIGN-v2-2026-10-14.md:1527-1530`（两次否决）、`ARCH-REVIEW-2026-10-21.md:103`（不可观测） | 不碰；读侧仍是显式 `select()` |
 | 编译期依赖表 / AOT 无 build 栈 | `REVIEW-2026-11-01.md:16/29/116`（P2-5） | 不碰 |
-| `Cell` / `Computed` 原语 | `MEMORY.md:60`（Cell 已删）、`DESIGN.md:1244,1266` | 不复活 |
-| `Bound` / 表单双向绑定 | `DESIGN.md:1291,1297-1300` | 不碰 |
-| `Subject` 改框架级自动广播 / 自动 marshal | `DESIGN.md:1129,1159-1160`、`_archive/DECISIONS-2026-10-14.md:666-679` | 写侧仍手动 `notifyChanged()` |
-| Store 每字段 Cell 化 / property hooks 全量铺开 | `DESIGN.md:1160`「业务层零 GUI 依赖」 | 不做；实测 16 个字段 × 4 行 hook > 省下的 29 行 notify，且引入中间态撕裂读 |
+| `Cell` / `Computed` 原语 | `MEMORY.md:60`（Cell 已删）、`docs/_archive/DESIGN-v2-2026-10-14.md:1244,1266` | 不复活 |
+| `Bound` / 表单双向绑定 | `docs/_archive/DESIGN-v2-2026-10-14.md:1291,1297-1300` | 不碰 |
+| `Subject` 改框架级自动广播 / 自动 marshal | `docs/_archive/DESIGN-v2-2026-10-14.md:1129,1159-1160`、`_archive/DECISIONS-2026-10-14.md:666-679` | 写侧仍手动 `notifyChanged()` |
+| Store 每字段 Cell 化 / property hooks 全量铺开 | `docs/_archive/DESIGN-v2-2026-10-14.md:1160`「业务层零 GUI 依赖」 | 不做；实测 16 个字段 × 4 行 hook > 省下的 29 行 notify，且引入中间态撕裂读 |
 | `FlowPolicy` 一类的收敛 helper | `DEBT-2026-11-02.md:8664-8670` §68.5 已判死 | 不建类 |
 
 **「按 Drift3 方案重写」也不重开**：`docs/ANALYSIS-watermark-async3-borrow-2026-11-07.md` §10

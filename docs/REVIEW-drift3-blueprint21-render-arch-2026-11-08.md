@@ -56,7 +56,7 @@
 
 | # | 文档断言（§2.1 为主） | 当前 Drift2 事实 | 判定 |
 | --- | --- | --- | --- |
-| 1 | `DESIGN.md:210-217` 三树 Widget→Element→RenderObject | `DESIGN.md` §3.2 仍是这个形状 | ✅ 属实 |
+| 1 | `docs/_archive/DESIGN-v2-2026-10-14.md:210-217` 三树 Widget→Element→RenderObject | `docs/_archive/DESIGN-v2-2026-10-14.md` §3.2 仍是这个形状 | ✅ 属实 |
 | 2 | `Element.php:504` reconcile 两阶段 O(k) | `src/Widget/Element.php:504-553`：前缀同步 + `(class,key)` 建桶 | ✅ 属实 |
 | 3 | **Render 层没有脏边界、`relayout()` 永远全树重排** | `src/Layout/RenderObject.php:17` 的注释**仍在**；但全树 layout 是 11-04 的**主动裁决**（见 #7），且脏边界已另有实现：`Pipeline` 四个单调序号、`markPaintChanged()`、`LayerCache` 的 `RepaintBoundary`。注释腐烂 ≠ 实现没有 | ⚠️ 半对（引文真、结论过时） |
 | 4 | **零脏空闲帧也全额支付 3 次全树遍历、每帧白分配 4MB** | `src/App/Frame.php:113-125` `needsSettle()` 三条序号都没动 ⇒ **整段跳过（含浮层第二棵树）**；`Frame.php:277-303` paint 另有五条门控，`run()` 直接 `return false`，注释写「屏幕是上一帧内容，是设计意图」 | ❌ 已修 |
@@ -75,7 +75,7 @@
 - §2.1 自己引用 `Key.php`「类型 + 显式 key，`1` 与 `'1'` 不等」，§4.3 的 `Node` 却写
   **`int key`** ⇒ 字符串 Key 与类型区分直接丢失。Drift2 `Element::slotKey()` 用「带类型前缀 +
   字符串带长度前缀」的编码，正是为了防 `'i5'` 与 `5` 撞桶。
-- §1.2 把 `Cell` 冻结为「状态原语，属渲染层 M2」；Drift2 `DESIGN.md:1527-1530` 与 §69 方案
+- §1.2 把 `Cell` 冻结为「状态原语，属渲染层 M2」；Drift2 `docs/_archive/DESIGN-v2-2026-10-14.md:1527-1530` 与 §69 方案
   已把 `Cell` / 自动依赖收集 / `Computed` / `Bound` / Subject 自动广播**判死**（`MEMORY.md` §60
   原话「没有 `Cell` 了」）。Drift3 当然可以有自己的 `Cell`，但**不能从 Drift2 借证据**。
 

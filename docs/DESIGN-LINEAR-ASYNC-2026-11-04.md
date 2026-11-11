@@ -327,7 +327,7 @@ public function run(array $files): void
 - **不抄 `Coroutine\run()` 当入口**：本仓唯一 loop 是帧循环（§2.1）；
 - **不抄 Flutter `FutureBuilder` 当业务骨架**：那会把状态机又搬回 UI 层，
   正是 watermark 现在的样子；
-- **不抄 Vue `v-model` / WPF `Binding`**：`DESIGN.md` §11.4.2 四层论据、§18 三次否决；
+- **不抄 Vue `v-model` / WPF `Binding`**：`docs/_archive/DESIGN-v2-2026-10-14.md` §11.4.2 四层论据、§18 三次否决；
 - **不造 `pollUntil` / 步骤链 DSL**：`docs/DEBT-2026-11-02.md` §24.1 三条结构性理由不变 ——
   `await()` 是控制流原语，不是把某条业务链 DSL 化。
 
@@ -426,14 +426,14 @@ public function run(array $files): void
 
 | 事实 | 出处 |
 |---|---|
-| nano 在 M0–M5 **明确不做**，重估时机"不设" | `DESIGN.md` §16.7.5（2026-10-14） |
-| 禁令定位是「**零成本**保留将来可切的可选性」 | `DESIGN.md` §16.6.3 |
+| nano 在 M0–M5 **明确不做**，重估时机"不设" | `docs/_archive/DESIGN-v2-2026-10-14.md` §16.7.5（2026-10-14） |
+| 禁令定位是「**零成本**保留将来可切的可选性」 | `docs/_archive/DESIGN-v2-2026-10-14.md` §16.6.3 |
 | 但 `Fiber` 这一条**不再零成本** —— 它挡住 `AsyncScope` | 本册 §3 |
 | `--nano` 不支持 Fiber ⇒ 本仓一直走 `-m bin` | `docs/design-v7/11-编译器约束映射.md` §5.4 **早就写着** |
 
 ⇒ `BANNED_TYPES` 从 `['Generator','Fiber']` 改为 `['Generator']`。
 **代价如实记账**：放弃"将来切 nano 消除多文件部署"这条可选性 —— 而它在
-`DESIGN.md` §10.2 代价 2 里**本来就是被接受的那笔账**。
+`docs/_archive/DESIGN-v2-2026-10-14.md` §10.2 代价 2 里**本来就是被接受的那笔账**。
 
 ★ 同一棒把这条规则从"**没有夹具**（`selftest` 里是空数组）"升级成双向判据：
 `apps/NanoBad.php`（5 条 error：`\Generator` / `yield`×2 / `eval` / `getenv`）+

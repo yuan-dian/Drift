@@ -291,7 +291,7 @@ AccessibilityNodeInfo / Linux AT-SPI）。这也解释了为什么「跨平台�
 | **B3** 版本 / 变更日志 / 发布流程 | [`CHANGELOG.md`](../CHANGELOG.md)（v0.1.0-preview.1 + tag 规范）+ [`docs/CONTRIBUTING.md`](CONTRIBUTING.md)（工具链精确版本 / T0–T2 分层 / 改代码纪律） | ✅ |
 | **B 项第 5 条**（真值沉淀） | [`docs/CONTRIBUTING.md`](CONTRIBUTING.md) 固化第二开发者 / CI 真值（`.workbuddy-ai/memory/` 不进 git，真值走上 docs） | ✅ |
 | **B4** 壳 ↔ PHP ABI 无握手 | 改走**静态契约**：`tools/Abi/Contract.php` + `abi-check`（stub 唯一事实源、三向签名）/ `drift-build` preflight / gate `abi` / `abiself`。**不做运行期 version 握手**：单体 AOT 一起编译，真实错配路径是缓存 stale（B5） | ✅ 以静态契约收口 |
-| **B5** AOT 增量构建 stale 无判据 | `tools/Build/StalePolicy.php` 默认「门不能信缓存」（输入变了 / 首次 / 产物不在 ⇒ 自动全量）+ `--incremental` opt-in + `tools/build-stale-check.php` / gate `stalepolicy` / `staleself`，见 `DESIGN.md` §16.2.2 | ✅ |
+| **B5** AOT 增量构建 stale 无判据 | `tools/Build/StalePolicy.php` 默认「门不能信缓存」（输入变了 / 首次 / 产物不在 ⇒ 自动全量）+ `--incremental` opt-in + `tools/build-stale-check.php` / gate `stalepolicy` / `staleself`，见 `docs/_archive/DESIGN-v2-2026-10-14.md` §16.2.2 | ✅ |
 
 **剩余到 1.0 的阻断项 B6–B7 未动**（第二平台后端 / 生态与包管理），属 L 级，见 §5。
 B4 以静态 ABI 契约收口（运行期握手属有意裁决不做），B5 已判据化；§7-B 的表格是

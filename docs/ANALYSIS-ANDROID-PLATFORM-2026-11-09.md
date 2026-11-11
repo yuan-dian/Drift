@@ -64,11 +64,11 @@
   MSVC + Windows SDK」；`build/base.yml:120-131` 链接 14 个 Windows 库
   （`user32` / `gdi32` / `imm32` / `windowscodecs` / `dwrite` / `d3d12` …）+ 12 个 Skia
   Windows `.lib`；产物写死 `{$app}.exe`。
-- `DESIGN.md:991`：「库构建仍**需要 PHP 运行时与 PHPX**（`phpx.lib` 链接期 +
+- `docs/_archive/DESIGN-v2-2026-10-14.md:991`：「库构建仍**需要 PHP 运行时与 PHPX**（`phpx.lib` 链接期 +
   `phpx.dll` 运行期）⇒ **不是完全自包含产物**」；
-  `DESIGN.md:938-940` 提到 tpc `-m lib` 的理论产物是 Linux `.so`；
+  `docs/_archive/DESIGN-v2-2026-10-14.md:938-940` 提到 tpc `-m lib` 的理论产物是 Linux `.so`；
   `docs/RESEARCH-ALIGN-2026-11-03.md:240` 记「产物带 `libphp.so` + `libphpx.so`」。
-  **Drift2 全仓 0 个 lib 工程**（`DESIGN.md:3583`），`-m ext` 明确不做；
+  **Drift2 全仓 0 个 lib 工程**（`docs/_archive/DESIGN-v2-2026-10-14.md:3583`），`-m ext` 明确不做；
   但上游 `typephp/examples/android-native/android.yml` 已是真实 `mode: lib`
   工程（§8），所以「理论」二字只对本仓成立。
 - 全仓 Grep `NDK|JNI|ANativeWindow|gradle|apk|arm64-v8a|交叉编译` ⇒
@@ -255,7 +255,7 @@ Drift2 完全可以走它，`AsyncScope` 的 `\Fiber` 也就不再是阻塞。
    明确禁 `Fiber` / `Generator` / `yield` / 匿名类 / `eval` / `include`，理由是
    「C++17 has no standard stack-switching API」；Drift2 `src/Async/AsyncScope.php:149,218`
    用 `\Fiber::suspend()`，`build/base.yml:73` 是 `cxx-std: c++20`，
-   `DESIGN.md:2605-2613` 另记 ZTS/NTS、C++20/C++17、网络三条硬冲突。
+   `docs/_archive/DESIGN-v2-2026-10-14.md:2605-2613` 另记 ZTS/NTS、C++20/C++17、网络三条硬冲突。
    ⇒ 若上 Android **必须走非 nano**，这点反而比旧稿更明确。
 3. **规模与语言面完全不对等**：示例只有 2 个 PHP 文件、零框架、零 Fiber、零 Skia；
    Drift2 是 397 个 `src/` 文件 + 12 个 Skia Windows `.lib` + `mode: bin` 单 exe。

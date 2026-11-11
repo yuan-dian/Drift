@@ -59,7 +59,7 @@ python tools/probe-window.py hello
 
 ## 文档
 
-- 设计裁决：[`DESIGN.md`](DESIGN.md)（为什么这么设计）
+- 现行设计：[`DESIGN.md`](DESIGN.md)（分层 / 稳定契约 / 有意不做）；v2 历史裁决见 `docs/_archive/DESIGN-v2-2026-10-14.md`
 - 实现现状：[`docs/architecture/00-README.md`](docs/architecture/00-README.md)（现在怎么写）
 - 文档索引与权威对照：[`docs/00-README.md`](docs/00-README.md)
 - 给贡献者 / CI：[`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md)

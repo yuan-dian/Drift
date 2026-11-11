@@ -325,7 +325,7 @@ Fatal error: The variable `$frame` is undefined in ...FramePhase.php:124
 
 ### 2.5 AOT 口径的第一把尺子：帧税三数（2026-11-04）
 
-**为什么量**：`DESIGN.md` §13.5 与 `DEBT` §28 里「12k 全量重排 51ms / 6.2× 触线 /
+**为什么量**：`docs/_archive/DESIGN-v2-2026-10-14.md` §13.5 与 `DEBT` §28 里「12k 全量重排 51ms / 6.2× 触线 /
 稳态帧 8.7µs」这些数，全部来自 `php tools/frame-tax-probe.php --scale`，也就是
 **PHP 解释器 + 软光栅**。工具自己都印着「口径：PHP 解释器；AOT 未复量」，
 而「增量布局要不要立项」正压在这把尺子上。

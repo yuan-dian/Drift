@@ -94,7 +94,7 @@ if ($this->polling && $settled) { $this->scheduleNextPoll(); }
 | 建议 | 今天的判定 | 依据 |
 |---|---|---|
 | P0-1 状态订阅自动化（MobX 式自动依赖收集） | **不立项** | PHP 无 `Proxy`；AOT 下生成式 getter 在 `php.exe` 里不生效（§4.1 静默税）；`select` 闭包是 lint `dead-subscription` 推导依赖的**锚点**（§16.6.3），自动收集会拆掉这条闸门。`Computed` 已明确选「显式依赖 + 粗粒度版本」路线（`03` §4.6） |
-| P0-2 表单绑定 `bind()` + `Slot` | **正式判死，不重开** | `DESIGN.md` §11.4.2 四层论据（2026-10-14，§23.2 O-16 方案 A′）：PHP 属性无引用语义 ⇒ 必须传 read+write 两个闭包 ⇒ 字段名仍出现 2 次、与手写等价、**净收益 0** 却多一个公共类型；§18 已把 Vue `v-model` / WPF `Binding` / SwiftUI 属性包装器**三次列入避开栏** |
+| P0-2 表单绑定 `bind()` + `Slot` | **正式判死，不重开** | `docs/_archive/DESIGN-v2-2026-10-14.md` §11.4.2 四层论据（2026-10-14，§23.2 O-16 方案 A′）：PHP 属性无引用语义 ⇒ 必须传 read+write 两个闭包 ⇒ 字段名仍出现 2 次、与手写等价、**净收益 0** 却多一个公共类型；§18 已把 Vue `v-model` / WPF `Binding` / SwiftUI 属性包装器**三次列入避开栏** |
 | P1 Job / 值对象 codegen | **判死** | §24.6：`fromArray()` 有真校验与兜底，不是样板 |
 | P1 双路径收敛 | **已落地** | §23 `JobRunner`，watermark 5 条链各剩一行 |
 | `pollUntil` 原语 | **判死** | §24.1：1 个消费者 ⇒ 形状凭空设计；必须在 `AsyncCommand` 之上再造一层状态机；`Future` 递归链取消不可达 |

@@ -51,7 +51,7 @@
   「唯一写点 / 只增不减 / 消费者是测试探针」纪律是 §22 收过的账。
 - **不改 `Element::updateChildren()`**：10-27 已裁决「前缀同步 + (class,key) 建桶」两阶段 O(k)，
   并否掉 Flutter 三扫（尾同步省不出量级，多一份推理成本）。本棒对它的唯一动作是临时变异后恢复。
-- **不改 `syntheticRoot()` 树形状**：每行 4 节点是 `DESIGN.md` §13.5 表、`--scale` 归一化比值、
+- **不改 `syntheticRoot()` 树形状**：每行 4 节点是 `docs/_archive/DESIGN-v2-2026-10-14.md` §13.5 表、`--scale` 归一化比值、
   AOT 探针复量的共同分母，改了所有历史读数不可比。
 - **不立项增量布局**：`docs/DESIGN-INCREMENTAL-LAYOUT-VERDICT-2026-11-04.md` §0 三条触发条件均未成立。
 - **不给 `--check` 加结构判据**：那 6 条的前提是「静止合成树的固定税」，语义不合；
