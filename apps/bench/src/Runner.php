@@ -59,7 +59,7 @@ final class Runner
         }
 
         self::line('════════════════════════════════════════════════════════════════');
-        self::line(' Drift2 bench —— v7 阶段 0 微基准（AOT 产物）');
+        self::line(' Drift bench —— v7 阶段 0 微基准（AOT 产物）');
         self::line(' 规格：docs/design-v7/25-推进路线.md §3');
         self::line('════════════════════════════════════════════════════════════════');
         self::line('');

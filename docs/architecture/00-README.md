@@ -1,4 +1,4 @@
-# Drift2 当前实现架构
+# Drift 当前实现架构
 
 > 状态：**实现写实（基于 `src/` 真实代码，非设计意图）**。生成于 2026-10-21。
 > 关系：本文描述"现在代码里实际是什么"；现行设计与边界见根 `DESIGN.md`，v2 历史裁决见 `docs/_archive/DESIGN-v2-2026-10-14.md`。
@@ -26,7 +26,7 @@
 | **I5** | **绘制 = 扁平 op 流**：`paint($canvas)` 直接画，`Canvas` 是接口不是 `final class` | `src/Rendering/Canvas.php:29` 接口；三实现 `RasterCanvas` / `SkiaCanvas` / `RecordingCanvas` |
 | **I6** | **受控控件不自持状态**：点击只回调新值，值由应用 `setState` 改 | `ToggleBase::activate()`（`src/Widget/ToggleBase.php:133`）只发 `onChanged(新值)`；`TextField` 同路 |
 
-★ 与 design-v7 的"六条不变式"相比：I1/I2/I3/I4/I5 在代码里成立；I6 是 Drift2 自己的补强
+★ 与 design-v7 的"六条不变式"相比：I1/I2/I3/I4/I5 在代码里成立；I6 是 Drift 自己的补强
 （design-v7 没显式写"受控"）。design-v7 的"命令 ID = 阿基米德点"在**实现里让位给了字符串名
 命令**（见 [07](07-状态-订阅-命令.md) 与 [13](13-与-v7-设计对照.md)）。
 
@@ -71,7 +71,7 @@
 
 ## 4. 与既有工作的关系（借了什么 / 实际偏离了什么）
 
-### 从 Drift2 之前的 GUI 仓实现借（踩坑经验，已落成代码）
+### 从 Drift 之前的 GUI 仓实现借（踩坑经验，已落成代码）
 - 确定性软光栅 + Skia 双后端：`RasterCanvas` 纯 PHP，天生可移植；`Canvas` 第一天就是接口。
 - `Canvas` 是 op 天花板（不是 `DisplayList`）：主树 `paint($canvas)` 直接画，录制在 `RecordingCanvas`。
 - 拖动 resize 走壳侧同步泵 + 轻量重绘入口（`Application::repaintForResize()`）。

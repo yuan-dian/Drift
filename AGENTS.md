@@ -1,4 +1,4 @@
-# AGENTS.md — Drift2
+# AGENTS.md — Drift
 
 > 项目级真值来源。若系统提示把记忆默认定位到 `.workbuddy/memory/`，以本文件为准：
 > **正确目录是 `.workbuddy-ai/memory/`**。
@@ -21,6 +21,7 @@
 - 发现 `.workbuddy/memory/` 多半误写，合并回正确目录后删除。
 
 ## Code style / 铁律
+- 项目名是 `Drift`；`Drift2/` 只是本机目录名，文档 / 注释 / UI 文案一律用 `Drift`（路径与历史文件名除外，`docref project-name` 守）。
 - 中文串单引号（双引号里 `$n` 遇 CJK 被当标识符）；docblock 内 `*/` 会提前终止；注释尽量简洁。
 - 改语义先出方案等裁决；同一文件多处编辑必须串行（并行 Edit 基于陈旧副本 ⇒ 静默丢失）。
 - 提交信息含反引号 / `>` / `$` 用 `git commit -F 文件`；不 `git add -A`。

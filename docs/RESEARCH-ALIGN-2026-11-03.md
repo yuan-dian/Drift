@@ -1,9 +1,9 @@
-# 外部调研对账：13 家 GUI 框架 → Drift2 该借什么、该躲什么、别抄什么
+# 外部调研对账：13 家 GUI 框架 → Drift 该借什么、该躲什么、别抄什么
 
 > 输入：`D:\TypePHP\Drift3\docs\research\` 全 15 篇（00 索引 / 01–11 十一家平台 /
 > 12 横向提炼 / 13 nanoui / 14 Raven）。
 > 方法：**先对账，再排优先级**。调研是 2026-10-17 → 11-03 分批写的，它引用的
-> "Drift 现状"是 Drift2 更早的 backlog ⇒ 逐条拿 `src/` + 量具核一遍，过期项就地
+> "Drift 现状"是 Drift 更早的 backlog ⇒ 逐条拿 `src/` + 量具核一遍，过期项就地
 > 标注，不照抄。
 > 日期：2026-11-03 · 基线：gate 15 项 117.9s · smoke 471 ok / 0 FAIL。
 
@@ -17,14 +17,14 @@
 | 2 | 真正被**本仓自己的量具**点名的第一优化不是增量布局，是**全树 `tickAnimations` 吃掉稳态帧 98%** | **P0** |
 | 3 | Raven 的"增量布局是生死线"与 §15.1 的"M5 不做"用的是**两个分母**（12k widget vs 500 行），所以两条都不算错 —— 缺的是**同一把尺子** | **P1** |
 | 4 | 两条"只差最后一步"的欠账：交互脚本截图 / CLI `--json`。★ 调研最想推的「双后端逐像素一致」**不该抄** —— 与 2026-11-01 的裁决直接冲突，且跨后端**几何**同构测试早就在跑（§4.1） | **P1** |
-| 5 | GPUI 的 base/component 分层，Drift2 **已经用另一种形态实现**（行为在 `Input`+`App`，表现在 `Layout`+`Widget`，方向由 `DependencyDirection` lint 强制） | 已有，不必新建 |
+| 5 | GPUI 的 base/component 分层，Drift **已经用另一种形态实现**（行为在 `Input`+`App`，表现在 `Layout`+`Widget`，方向由 `DependencyDirection` lint 强制） | 已有，不必新建 |
 | 6 | immediate mode / 体积目标 / 可视化设计器 / XML 绑定 / DP 值解析链 —— 与该命题冲突，明确否掉（§6 附理由，防重开） | 排坑 |
 
 ---
 
 ## 1. 对账：调研的"现状"有一半已经过期
 
-调研的价值在**机制**（伪代码级、设计取舍的"为什么"），不在它对 Drift2 现状的描述。
+调研的价值在**机制**（伪代码级、设计取舍的"为什么"），不在它对 Drift 现状的描述。
 后者必须重核 —— 这正是本仓已立的判据「待办会腐烂」的外部版本。
 
 | 调研的说法 | 实测（2026-11-03，`src/` 坐标） | 判定 |
@@ -132,7 +132,7 @@ $element->visitChildren(...)               // 闭包 + 递归
 两条都不算错，因为它们测的**不是同一棵树**：
 
 - Raven：12 000 widget / 27 800 图元；
-- Drift2：`frame-tax-probe` 的 500 行 × (1 Row + 3 Text) ≈ **2000 节点**；页面档最重的
+- Drift：`frame-tax-probe` 的 500 行 × (1 Row + 3 Text) ≈ **2000 节点**；页面档最重的
   `TablePage` 也就百来行数据。
 
 ⇒ 把 1,531.7µs 直接对比 8,000µs 得出"余量 5.2×"，在**当前页面规模**下成立；但拿它
@@ -147,7 +147,7 @@ $element->visitChildren(...)               // 闭包 + 递归
 2. 判定线沿用 `DESIGN` §13.5：**全量重排 > 8,000µs 或稳态帧 > 8ms** ⇒ 立项。
 3. 立项时**必须与绘制脏矩形成对**（`EVAL-design-v7` §261）：单独做任一半，瓶颈只是
    搬到对面 —— 这一点 §15 已经引过，不重复论证。
-4. 真做时，Drift2 的入口已经收好了：绘制侧是 `RenderBox::paintChildAt()`（§13），
+4. 真做时，Drift 的入口已经收好了：绘制侧是 `RenderBox::paintChildAt()`（§13），
    布局侧缺的是"脏路径上传到边界"（`markNeedsLayout` 沿父链上传 + 按深度排序），
    而不是再造一套。
 
@@ -174,14 +174,14 @@ PHP 递归，`paint` 反而有层缓存兜底）。这条不对称是 §3.2 那�
 ### 4.1 反例：「双后端逐像素一致」不该抄
 
 调研 13 §3.6 / 14 §3-M 都把 nanoui 的「CPU == Metal 逐像素一致」列为 Drift 该补的欠账。
-**这条在 Drift2 的语境下是错的**，而且它已经裁过了：
+**这条在 Drift 的语境下是错的**，而且它已经裁过了：
 
 - 2026-11-01 原话：「**像素级 golden 不能跨后端比**，只能各自与自己的基线比」。
   理由是**有意保留的两处后端差异**：抗锯齿范围（软光栅只对圆角/字形做覆盖度，
   Skia 对所有边）、描边实现（外圈减内圈 vs 原生 `kStroke_Style`）。
 - 横向旁证：Chromium pixel test 带 `fuzzy`、Servo 有 YAML `fuzzy`、Qt `lancelot`、
   Flutter 分平台 golden —— **没有一个**跨后端比像素。共性：**像素是后端私有的**。
-- Drift2 已有的正确形态：跨后端比**设备几何**。落点两处 ——
+- Drift 已有的正确形态：跨后端比**设备几何**。落点两处 ——
   `tests/Feature/Rendering/BackendDeviceSpaceTest.php`（用定义重算，不调 `Scale::deviceRect()`）
   与 `tools/smoke.php:1063` 起 17+ 条 Skia conformance（单字形、dpr=2、平移、clip 配对）。
   再加上 `CanvasCapabilities` 的 Core/Extended/Optional 三层：
@@ -211,11 +211,11 @@ PHP 递归，`paint` 反而有层缓存兜底）。这条不对称是 §3.2 那�
 
 ---
 
-## 5. 布局纪律：GPUI 那条"硬约束"Drift2 已经用另一种形态达成
+## 5. 布局纪律：GPUI 那条"硬约束"Drift 已经用另一种形态达成
 
 调研 12 §8 的核心建议是「行为/表现分层 + 依赖方向必须可 enforce」。逐条核：
 
-| GPUI 的约束 | Drift2 的等价物 |
+| GPUI 的约束 | Drift 的等价物 |
 |---|---|
 | base 无样式行为：焦点 / 键盘导航 / 覆盖层 / 虚拟化 / a11y / 文本引擎 | `Input/`（GestureArena、AcceleratorTable、FocusNode、SemanticsTree）+ `App/`（FocusManager、OverlayHost、TextEditingBridge） |
 | component 只管表现：品牌色 / 字体 / 密度 / 圆角 | `Layout/`（RenderBox 族）+ `Widget/`（控件与链式 API）+ `Theme/` |
@@ -254,12 +254,12 @@ PHP 递归，`paint` 反而有层缓存兜底）。这条不对称是 §3.2 那�
 去掉所有"某框架现状"的部分，剩下的是可以写进公理层的东西：
 
 1. **能力等价不能靠自觉，只能靠测试 —— 但"等价"的粒度必须先选对。**（nanoui 选像素；
-   Drift2 选几何：`CanvasCapabilities` 定"哪些 op 必须等价"，smoke 的 Skia conformance
+   Drift 选几何：`CanvasCapabilities` 定"哪些 op 必须等价"，smoke 的 Skia conformance
    定"等价到什么程度"。选像素在这里会与 AA 差异打一辈子架 —— 见 §4.1）
 2. **"谁在工作"要显式登记，不要每帧问全树。**（nanoui active set / Raven active 集合 /
-   Drift2 的 `takeMounted()` 先例 —— 见 §2）
+   Drift 的 `takeMounted()` 先例 —— 见 §2）
 3. **声明式连接失败必须响亮。**（WPF 字符串绑定静默失败、Qt 漏连接静默不响应；
-   Drift2 的 `G2 绝不静默` + `Errors` 三级 + `Fatal` 中止序列已覆盖；剩下的死角是
+   Drift 的 `G2 绝不静默` + `Errors` 三级 + `Fatal` 中止序列已覆盖；剩下的死角是
    "声明了但没人验证"——那种要靠闸门，不靠自觉）
 
 ---

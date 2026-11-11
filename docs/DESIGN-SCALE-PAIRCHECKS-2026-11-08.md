@@ -1,7 +1,7 @@
 # §71 12k 尺子补调和复杂度判据（实现前分析）
 
 > 2026-11-08 · 基准 HEAD `1bd8918`（§70），gate 18/18。
-> 触发：`docs/REVIEW-drift3-blueprint21-render-arch-2026-11-08.md` §6 推荐「把 `pairChecks` 拿回 Drift2」。
+> 触发：`docs/REVIEW-drift3-blueprint21-render-arch-2026-11-08.md` §6 推荐「把 `pairChecks` 拿回 Drift」。
 > **方法：先回查代码，再决定动不动手。** 本棒不碰 `src/` 产品代码。
 
 ## 0. 结论先行

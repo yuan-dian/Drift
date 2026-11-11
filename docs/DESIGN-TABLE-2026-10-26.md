@@ -2,7 +2,7 @@
 
 > **这份文档不是实现说明，是结构裁决。** 唯一目的：让阶段 2..7 不推翻阶段 1。
 >
-> 判据来自两处：① 成熟框架里**所有**表格控件都收敛到的结构；② Drift2 自己已经
+> 判据来自两处：① 成熟框架里**所有**表格控件都收敛到的结构；② Drift 自己已经
 > 落地并验证过的通道（`intrinsicWidth` / `ownsPress` / `State` 窗口计算 / C5）。
 
 ---
@@ -40,14 +40,14 @@
 
 1. Flutter 的 `DataTable` 是**唯一不做虚拟化、不做滚动**的，而且它自己文档里就写了"大数据请用 `PaginatedDataTable`"。⇒ **不要把 Flutter DataTable 当参考**，它是"简单版必然重写"的活标本。
 2. 除 Flutter 外，其余四个**全是双向滚动 + 冻结表头 + 行列两级虚拟化**。这不是巧合，是表格的物理属性（列宽总和 > 视口是常态）。
-3. 排序的位置分两派：**数据视图层**（WPF/Qt）或**回调**（Flutter/ag-Grid）。Drift2 是声明式单向数据流，没有 model 层 ⇒ 只能走回调。
+3. 排序的位置分两派：**数据视图层**（WPF/Qt）或**回调**（Flutter/ag-Grid）。Drift 是声明式单向数据流，没有 model 层 ⇒ 只能走回调。
 4. 选择**全部**在 view 层（`SelectionModel` / `SelectedItems` / `selected`），没有一家放进数据行里。
 
 ---
 
 ## 2. 六条共性（地基）
 
-| # | 共性 | 证据 | 对 Drift2 的强制力 |
+| # | 共性 | 证据 | 对 Drift 的强制力 |
 |---|---|---|---|
 | 1 | **列定义是对象** | 5 家全是（`DataGridColumn` / `DataColumn` / `columnDefs`） | `TableColumn` 值对象；**不接受** `cellBuilder($row, $i)` |
 | 2 | **列宽三层**：策略算初值 → 每列 Min/Max 夹 → 用户拖拽写实际值（实际值最优先） | WPF `DataGridLength` + `MinWidth` + 用户拖拽；Qt `resizeMode` + `Interactive`；ag-Grid `flex`+`width`+`resizable` | `TableColumnWidth` 值对象 + `TableState::$widthOverrides`。**不是**"显式宽度"，也不是"纯 flex" |
@@ -58,7 +58,7 @@
 
 ---
 
-## 3. Drift2 的既有约束（不是我的偏好，是已落地的裁决）
+## 3. Drift 的既有约束（不是我的偏好，是已落地的裁决）
 
 ### 3.1 `intrinsicWidth` 通道已现成 ⇒ 列宽自适应不需要测量缓存
 
@@ -66,7 +66,7 @@
 `docs/ARCH-REVIEW-2026-10-21.md:106` 已记：
 
 > `Measure`/`Arrange` 两遍布局 | WPF / SwiftUI | 已判 no-op（布局位置无关 ⇒ 分离无收益）。
-> WPF 两遍式的收益（**表格/网格先知道"大家多宽"**）Drift2 用 `intrinsicWidth` 已覆盖
+> WPF 两遍式的收益（**表格/网格先知道"大家多宽"**）Drift 用 `intrinsicWidth` 已覆盖
 
 ⇒ `TableColumnWidth::intrinsic()` 可以做，**不需要**造测量缓存或两遍布局原语。
 
@@ -557,7 +557,7 @@ TableColumn::make('status', '状态')->cell(fn(User $u): Widget => Badge::make($
 | WPF | `INotifyCollectionChanged` + `ObservableCollection`（逐项增删事件） |
 | Qt | `dataChanged(topLeft, bottomRight)`（带矩形范围的增量） |
 | ag-Grid | rowNode 级事件 |
-| **Drift2** | **没有**。`store->notifyChanged()` → 重建 |
+| **Drift** | **没有**。`store->notifyChanged()` → 重建 |
 
 代价分析（三步，都跟总行数无关）：
 
@@ -628,7 +628,7 @@ private function rowAt(int $i): mixed   // 首版：$this->rows[$i]
   窗口式取数）在管理后台表格这个场景里 **10⁵ 行以内用数组就够**。
 - 主流里 Model/View（Qt `QAbstractItemModel`）与数组（antd `dataSource` /
   Flutter `DataTable` / WinForms `DataTable`）**长期并存**，选一个即可。
-  Drift2 全仓已经是数组派（`LazyList::items(array)`），Table 跟随，不做第二次分叉。
+  Drift 全仓已经是数组派（`LazyList::items(array)`），Table 跟随，不做第二次分叉。
 
 **诚实边界**：滚动条按**已加载**行数算，不是服务端总数。远程分页时应用 append 到数组
 （管理后台的典型量级 10³~10⁵，数组无压力）。这与 `LazyList::keyOf()` 的

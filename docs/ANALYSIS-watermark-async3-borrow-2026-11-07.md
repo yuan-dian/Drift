@@ -116,14 +116,14 @@
 ### 3.4 B4 · 进程池死亡判据对照（借诊断结论，不搬实现）
 
 - **该借**：`ProcessPoolIoSource.php:433-447` 用 `proc_get_status.running ∪ stdout EOF` **双判**，
-  注释点名「AOT 子进程 `proc_get_status` 可能误报」。Drift2 `ProcessTaskHost::reap()`
+  注释点名「AOT 子进程 `proc_get_status` 可能误报」。Drift `ProcessTaskHost::reap()`
   `:598-626` **只看 `proc_get_status`，且空闲期有 `REAP_IDLE_INTERVAL_US` 节流**；
   `readReplies()` `:515-517` 遇到 `$chunk === ''` 只 `continue`，没有标 EOF 死亡。
   ⇒ 值得补一个 EOF 标记 + 一条「worker 提前退出但 status 仍 true」的变异判据。
 - **已等价，别重复造**：「只结算死者名下在途、不重试」`ProcessPoolIoSource.php:448-459`
   vs `ProcessTaskHost.php:616-622` 的 `$item['worker'] !== $index` 过滤——本仓已有。
 - **明确不换协议**：Drift3 的 4 字节长度帧 + 逐字节滑窗重同步（`:376-388`）是为了修
-  「AOT 下 PHP warning 走 stdout 污染帧流」；Drift2 用 JSON Lines（`:521-530`），
+  「AOT 下 PHP warning 走 stdout 污染帧流」；Drift 用 JSON Lines（`:521-530`），
   一行垃圾一行好，`:542-546` 报一条非协议数据后继续 ⇒ **本仓协议反而更抗污染**。
   建议把这个「为什么用行协议」写进注释，免得以后有人照着 Drift3 改成长度帧。
 - `SPAWN_PER_FRAME=1` / `pm.max_requests` 帧内限速：`prewarm()`（`apps/watermark/bin/win32/Bootstrap.php:89-91`）
@@ -170,11 +170,11 @@ watermark 没有 token 刷新接口；签名有效期是主动判断（`:497`）
 
 ### 4.3 `SwitchLatest` / 代次
 `SwitchLatest.php:30-36` 只翻代次、**不取消上游**（迟到结果靠 `CompletionQueue` 的代次门拒收）。
-Drift2 是 `abandon() → Future::cancel()` 让被弃请求**永不结算**（`AsyncCommand.php:251-253`），
+Drift 是 `abandon() → Future::cancel()` 让被弃请求**永不结算**（`AsyncCommand.php:251-253`），
 并有 `StoreSettledEffectsTest.php:155-196` 的真判据「取消后迟到结果不落地不下载」。⇒ 更强，不借。
 
 ### 4.4 同名不同义 + 本仓既有裁决
-`AsyncValue`（Drift2 不可变 + `fold()` vs Drift3 可变 + revision）、`AsyncScope`（Fiber 流水线
+`AsyncValue`（Drift 不可变 + `fold()` vs Drift3 可变 + revision）、`AsyncScope`（Fiber 流水线
 vs 作用域树）、`AsyncCancelled` 同命名空间不同义，原样搬入必 Fatal。
 `DEBT §55.6`（`:7412-7415`）已裁决结构化作用域树「零消费者，暂不立项」，且明确点出
 蓝图 `07` 对「全局单 scope + 手动 dispose」的描述**已过时**。⇒ 不借，也不必重新裁决。
@@ -184,7 +184,7 @@ watermark 是「单 worker 子进程 + 同步 HTTP」，没有 `curl_multi`、�
 没有帧内预算轮转。`CurlIoSource` 的 `REGISTER_PER_FRAME=4`、`CompositeIoSource` 的
 `intdiv(budgetUs, count)` 环形轮转都针对**同一进程内多 IO 源**。任何一个 `IoSource` 都
 `implements Drift\Async\IoSource` 且 `use AsyncRuntime`，而 `AsyncRuntime` 组合 21 个组件
-（`20 §2.4:119-123`）⇒ 搬一个源 ≈ 搬半套运行时，还会与 Drift2 的
+（`20 §2.4:119-123`）⇒ 搬一个源 ≈ 搬半套运行时，还会与 Drift 的
 `EventLoop`/`FrameClock`/`PumpHost`/`TaskHost` 形成**两套并行帧循环**（都独占阻塞等待原语）。
 ⇒ 不借。若真要提速，正确做法是改 Job 粒度或 `maxWorkers`，但那会撞上
 `UploadBatchJob.php:19-21` 明令回避的「第二套异步簿记」，属独立裁决。
@@ -605,7 +605,7 @@ Drift3 的答法确实更好：U3 把 `Thread`/`Process`/`Coroutine`/`Fiber`/`ca
    2 夹具 + 1 组 selftest 断言。
 2. **收状态广播 / Widget 样板**：1127 行 Widgets + 29 行 `SubjectBuilder` +
    29 次 `notifyChanged` 才是代码量的**最大单一来源**。思路与 Drift3 的
-   `when()` 四态 + 显式登记边同构，但可以纯在 Drift2 应用层做 helper/派生，
+   `when()` 四态 + 显式登记边同构，但可以纯在 Drift 应用层做 helper/派生，
    不需要 `AsyncValue`、不需要换运行时。**这是回答「代码量大」的真正着力点。**
 3. **跨进程序列化样板**单独立项裁决：13 `NamedJob` + 9/8 编解码 + 5 项 Registry 登记
    是 Jobs + Api 值对象的大头。Drift3 的答案是裁决 A「不跨进程，HTTP 走 `curl_multi`」，

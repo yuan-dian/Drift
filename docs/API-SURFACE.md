@@ -1,4 +1,4 @@
-# Drift2 API 面清单（@api / @internal）
+# Drift API 面清单（@api / @internal）
 
 > 由 `php tools/lint.php --api` 自动生成，勿手改（`gate` 的 `apidoc` 项会核对）。
 > 口径：docblock **独立标注行**（` * @api` 或单行 `/** @api … */`）；

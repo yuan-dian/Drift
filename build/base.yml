@@ -49,11 +49,11 @@
 #
 #   ★ 体积（最小程序 `/O2 /MT` **实测**，非"库文件大小"）：core 光栅 **4.03 MiB**
 #     → +文本栈（SkParagraph/SkShaper/HarfBuzz/ICU）**5.89 MiB**（+1.86）
-#     → +SVG/SkSG/expat **6.41 MiB**（+0.52）。对照 Drift2 `users.exe`（无 Skia）2.90 MiB。
+#     → +SVG/SkSG/expat **6.41 MiB**（+0.52）。对照 Drift `users.exe`（无 Skia）2.90 MiB。
 #
 #   ★ `resource:` 的**图标已接**（见文件末尾）；版本信息与 `manifest:`
 #     （comctl32 v6 —— 没有它，**原生** MessageBox 是 Win95 外观）仍未接。
-#     Drift2 的 `Errors::installFatalBox` 正是用 `MessageBoxW` ⇒ 接 manifest 时
+#     Drift 的 `Errors::installFatalBox` 正是用 `MessageBoxW` ⇒ 接 manifest 时
 #     要一起验原生框的外观。
 #     ★ **DPI 感知不在 manifest 的清单里**：它在**运行期**由 `drift_win_create()` 用
 #       `SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)` 设定（§24.1 #43）。
@@ -198,7 +198,7 @@ resource:
 # 应用清单 —— comctl32 v6，让进程**激活视觉样式**
 #
 # 影响面只有系统绘制的窗口（原生 MessageBox / IME 候选窗）：没有它，
-# `Errors::installFatalBox()` 的 MessageBoxW 是 Win95 外观。Drift2 自己的界面
+# `Errors::installFatalBox()` 的 MessageBoxW 是 Win95 外观。Drift 自己的界面
 # 全部自绘，不受影响。
 #
 # ★★ 清单里**不要**写 dpiAwareness —— DPI 感知是运行期由 `drift_win_create()`

@@ -235,6 +235,11 @@ final class DocSet
                 $out[] = $seed;
                 continue;
             }
+            // 文件型 seed 不存在就跳过（精简工作区 / selftest 的临时目录）：
+            // 否则会被当成目录递归，RecursiveDirectoryIterator 直接抛异常。
+            if (!is_dir($abs)) {
+                continue;
+            }
             $it = new \RecursiveIteratorIterator(
                 new \RecursiveDirectoryIterator($abs, \FilesystemIterator::SKIP_DOTS)
             );

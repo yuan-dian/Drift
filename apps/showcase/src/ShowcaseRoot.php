@@ -68,7 +68,7 @@ use App\Showcase\Pages\PickerPage;
  * 示例台根（LayUI 式 admin 布局）：**顶条 + 左导航 + 右内容**。
  *
  * 形态对照 `D:/TypePHP/GUI/examples/showcase`（顶栏 + 左侧功能列表 + 右侧功能展示），
- * 落到 Drift2 现有控件面（§12.1 第 3 条「外壳 + 内容槽」）：
+ * 落到 Drift 现有控件面（§12.1 第 3 条「外壳 + 内容槽」）：
  *
  * ```
  * Dock(top: AppBar, center: Row(

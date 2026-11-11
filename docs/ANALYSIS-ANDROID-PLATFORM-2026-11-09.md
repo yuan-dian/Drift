@@ -14,11 +14,11 @@
 2. **实现 Android 后端不是「填一份 8 项清单」**：`docs/_archive/CROSS-PLATFORM.md`
    的移动端小节说「不需要新抽象，只需要一个新 `Platform` 实现」，那句话只在
    **PHP 框架层成立**。门槛在它没写的 L0：把 PHP 运行时 / PHPX / tpc 产物 /
-   Skia 用 NDK 交叉编译成 Android `.so`。**Drift2 仓对此零验证、零代码，
+   Skia 用 NDK 交叉编译成 Android `.so`。**Drift 仓对此零验证、零代码，
    但上游 tpc 已有可跑的 Android 示例（§8）** ⇒ L0 从「可行性未知」降级为
-   「形状已知、Drift2 侧的规模 / 语言面 / 渲染路径未验」。
-3. **上游示例没有解决 Drift2 的渲染**：它走 Java 原生 View 桥（`ui_add_label` 等），
-   上游全仓 `ANativeWindow` **零命中** ⇒「PHP 能在 Android 跑」≠「Drift2 自绘能上屏」。
+   「形状已知、Drift 侧的规模 / 语言面 / 渲染路径未验」。
+3. **上游示例没有解决 Drift 的渲染**：它走 Java 原生 View 桥（`ui_add_label` 等），
+   上游全仓 `ANativeWindow` **零命中** ⇒「PHP 能在 Android 跑」≠「Drift 自绘能上屏」。
    且 `mode: bin`（单 exe）→ `mode: lib`（`.so` + JNI + `Activity`）是启动形态变更，
    不是给 `build/base.yml` 加一个 target。
 4. **移动端是本仓明确写下的非目标**（`docs/architecture/00-README.md:101`）。
@@ -58,7 +58,7 @@
 
 ## 3. Android 接入的五层（按依赖排序）
 
-### L0 · 运行时与构建链 —— 最硬；上游已有形状，Drift2 侧零验证
+### L0 · 运行时与构建链 —— 最硬；上游已有形状，Drift 侧零验证
 
 - `tools/drift-build.php:15-17` 明写「真的调用 `cl.exe` / `link.exe`…需要本机有
   MSVC + Windows SDK」；`build/base.yml:120-131` 链接 14 个 Windows 库
@@ -68,7 +68,7 @@
   `phpx.dll` 运行期）⇒ **不是完全自包含产物**」；
   `docs/_archive/DESIGN-v2-2026-10-14.md:938-940` 提到 tpc `-m lib` 的理论产物是 Linux `.so`；
   `docs/RESEARCH-ALIGN-2026-11-03.md:240` 记「产物带 `libphp.so` + `libphpx.so`」。
-  **Drift2 全仓 0 个 lib 工程**（`docs/_archive/DESIGN-v2-2026-10-14.md:3583`），`-m ext` 明确不做；
+  **Drift 全仓 0 个 lib 工程**（`docs/_archive/DESIGN-v2-2026-10-14.md:3583`），`-m ext` 明确不做；
   但上游 `typephp/examples/android-native/android.yml` 已是真实 `mode: lib`
   工程（§8），所以「理论」二字只对本仓成立。
 - 全仓 Grep `NDK|JNI|ANativeWindow|gradle|apk|arm64-v8a|交叉编译` ⇒
@@ -79,10 +79,10 @@
 - **但「本仓零命中」不等于「上游零实现」**：`typephp/examples/android-native`
   把 `mode: lib` + `aarch64-linux-android24` + NDK `clang++` + JNI + 打包成
   signed APK 整条链都跑通了，且**非 nano 路径也存在**（§8）。原稿此处写的
-  「整件事可不可行未知」应订正为「上游形状已知，Drift2 侧未复现」。
+  「整件事可不可行未知」应订正为「上游形状已知，Drift 侧未复现」。
 
 ⇒ 剩下的三个**真正未验证点**，全部不需要写任何 `Platform` 代码就能验：
-① tpc 在 Android target 下能否编过 Drift2 的 397 文件 / `cxx-std: c++20` /
+① tpc 在 Android target 下能否编过 Drift 的 397 文件 / `cxx-std: c++20` /
 `\Fiber`（上游示例只有两个小 PHP 文件）；② Skia 的 arm64 构建（上游零 Skia，
 或按 D1 先用纯 `RasterCanvas` 绕开）；③ `ANativeWindow` 的 `present()`（上游零命中，
 要自己写）。见 §5 的 G0′。
@@ -146,9 +146,9 @@
 → `AndroidShellHolder`（C++ 侧顶层编排，与 Java 侧 `FlutterEngine` 1:1）
 → `VsyncWaiterAndroid`（等垂直同步驱动帧）。
 
-对照到 Drift2：
+对照到 Drift：
 
-| Flutter | Drift2 落点 |
+| Flutter | Drift 落点 |
 |---|---|
 | 引擎编成 `.so` + Java 薄壳 | L0 的 `-m lib` + `Activity`，**不是**把 Java 塞进 C++ |
 | `FlutterJNI` 单一边界 | 对应 `cpp-src/win32/drift_win32.stub.php` 的「只传原语、零回调、零闭包」纪律，Android 要守同样形状 |
@@ -156,7 +156,7 @@
 | `PlatformViewAndroid` / `AccessibilityBridge` | L1 的 `ANativeWindow` + L3 的 `AccessibilityNodeProvider` |
 
 **可迁移的是切法与顺序**（先 .so 能加载 → 再贴一帧 → 再谈输入），
-**不是**任何代码：Flutter 引擎自带 Dart runtime 与 Skia，Drift2 的 tpc 产物
+**不是**任何代码：Flutter 引擎自带 Dart runtime 与 Skia，Drift 的 tpc 产物
 仍需 PHP/PHPX 运行时，这是本仓独有的额外一层。
 
 ---
@@ -168,7 +168,7 @@
 | 门 | 验证什么 | 退出条件 | 失败含义 |
 |---|---|---|---|
 | **G0**（降级） | 复现上游：拿 `typephp/examples/android-native` 跑出 signed APK，装机启动一次 | APK `apksigner verify` 通过 + 真机点一次计数 +1 | **只是工具链 / 环境缺口**，不是可行性判死；上游已给定形状（§8） |
-| **G0′**（真生死门） | 把 `sources` 换成 Drift2 的 `src/`（或最小可编译子集），`mode: lib` + `aarch64-linux-android24`，**不建窗、不接 Skia**，编译出 `.so` 并由 JNI 调通一个纯 PHP 函数 | `.so` 被加载 + 返回值正确 + 编译期零 Fatal | tpc 在 Android target 下编不过 Drift2 的规模 / `c++20` / `\Fiber` / ZTS ⇒ **整件事停，后面全不做** |
+| **G0′**（真生死门） | 把 `sources` 换成 Drift 的 `src/`（或最小可编译子集），`mode: lib` + `aarch64-linux-android24`，**不建窗、不接 Skia**，编译出 `.so` 并由 JNI 调通一个纯 PHP 函数 | `.so` 被加载 + 返回值正确 + 编译期零 Fatal | tpc 在 Android target 下编不过 Drift 的规模 / `c++20` / `\Fiber` / ZTS ⇒ **整件事停，后面全不做** |
 | **G1** | `ANativeWindow` 贴一帧 `RasterCanvas` 的 RGBA（先绕开 Skia） | 真机截图像素与 PHP 侧 `toRgba()` 一致 | present 路径不成立，或 PHPX 线程模型有问题；上游示例**不覆盖**此门 |
 | **G2** | `AInputQueue` → `PointerEvent` 归一化（先落 D6 `device=1`） | 一次 tap 能触发 `onPressed`；`hovered` 在触摸下**始终为 false** | 输入语义缺口；此门要配「hover 不该出现」的反例判据 |
 | **G3** | Activity 生命周期 / IME / Accessibility | 前后台切换不丢帧、不崩；语义树经 Java provider 可读 | 产品化缺口，可分期 |
@@ -207,10 +207,10 @@ G0′ 过了，这两条判死的**前提才成立**，届时回来重裁，而�
 - 全程只读。**未跑 NDK、未编译任何 Android 产物、未装机、未做变异**。
   §8 的上游证据也只读了源码与构建脚本，**没有实际执行 `build-app.sh`**
   ⇒「上游跑得通」是「上游有完整可执行的链」的判断，不是本机实测结果。
-- L0 的 Drift2 侧判断来自 `build/base.yml` / `tools/drift-build.php` / `DESIGN.md`
+- L0 的 Drift 侧判断来自 `build/base.yml` / `tools/drift-build.php` / `DESIGN.md`
   的静态文本；**订正**：旧稿写「tpc 是否真能用 NDK 交叉编译、PHP 运行时在 Android
-  上是否可用，本仓无证据」——对 Drift2 仓成立，但上游 `typephp` 就是证据（§8）。
-  仍未验证的是**把这套链套到 Drift2 的 397 文件 + `c++20` + Fiber 上**（G0′）。
+  上是否可用，本仓无证据」——对 Drift 仓成立，但上游 `typephp` 就是证据（§8）。
+  仍未验证的是**把这套链套到 Drift 的 397 文件 + `c++20` + Fiber 上**（G0′）。
 - 「移动端是非目标」是 2026-10 的裁决；本稿不推翻它，只把推翻所需的成本与门序列摊开。
 - `docs/_archive/CROSS-PLATFORM.md` 是归档评审稿，其中的行号 / 文件数 / 估时均为
   2026-10-20 快照；本稿引用的 `src/` 现状已按 `14e3e83` 重核。
@@ -219,7 +219,7 @@ G0′ 过了，这两条判死的**前提才成立**，届时回来重裁，而�
 
 ## 8. 上游 `typephp/examples/android-native` 带来的订正（2026-11-09 追加）
 
-用户指出 `D:\TypePHP\typephp\examples\android-native`。这是 **tpc 上游仓**（不是 Drift2）
+用户指出 `D:\TypePHP\typephp\examples\android-native`。这是 **tpc 上游仓**（不是 Drift）
 自带的完整 Android 示例；`README.md` 自述「compiles PHP into a self-contained Android
 `arm64-v8a` shared library and packages a signed APK … does not require Gradle or
 Android Studio」。它把旧稿 §3/§7 的「L0 零证据」直接推翻了一半。
@@ -234,32 +234,32 @@ Android Studio」。它把旧稿 §3/§7 的「L0 零证据」直接推翻了一
 | `Android extends UnixPlatform`：`supportsTarget()`、NDK `clang++` 发现、`libphp.a` 检测、`-Wl,--start-group/--end-group` | `typephp/src/Platform/Android.php` | 编译器侧是真交叉编译支持 |
 | 非 nano 路径链 `libphp.a` + `log/android/dl/m`；`getAndroidSdkDir()` 校验 ABI 戳 | `typephp/src/Build/NativeBuildConfigurationTrait.php:77-95,302-305,399-401` | **`--nano` 不是唯一路径** |
 | `sdk/build-native.sh --target android-arm64-v8a` → `phpx/android/build.sh` → `libphpx.a` | `phpx/sdk/build-native.sh:13,89-95,129-132` | PHP 运行时层 + PHPX 层的 Android 构建入口存在 |
-| PHP 侧只有 `did_launch()` / `control_activated(int)` 两个入口；业务走 `ui_add_label/button/set_control_text` 原语 | `php-src/android-main.php` · `application.php` · `cpp-src/android_ui.stub.php` | 桥「只传原语、零回调、零闭包」与 Drift2 `drift_win32.stub.php` 同形，可照抄骨架 |
+| PHP 侧只有 `did_launch()` / `control_activated(int)` 两个入口；业务走 `ui_add_label/button/set_control_text` 原语 | `php-src/android-main.php` · `application.php` · `cpp-src/android_ui.stub.php` | 桥「只传原语、零回调、零闭包」与 Drift `drift_win32.stub.php` 同形，可照抄骨架 |
 
 ★ **两条路径，别只看见 `--nano`**：上游 `typephp/examples/android-native/README.md`
 的 Prerequisites / Build 段明写，`--nano` 把 php-nano + PHPX 源码编进 `.so`、
 不需要预编 Android `libphp.a`；**不带 `--nano`** 时改用 `PHPX_ANDROID_SDK_DIR`
 （`phpx/sdk/build-native.sh` 产出）走标准 Zend VM。
-⇒ 旧稿隐含的「Drift2 不做 nano ⇒ Android 没戏」是**推论过度**：非 nano 路径存在，
-Drift2 完全可以走它，`AsyncScope` 的 `\Fiber` 也就不再是阻塞。
+⇒ 旧稿隐含的「Drift 不做 nano ⇒ Android 没戏」是**推论过度**：非 nano 路径存在，
+Drift 完全可以走它，`AsyncScope` 的 `\Fiber` 也就不再是阻塞。
 
 ### 8.2 它没证明什么（三条硬边界）
 
 1. **UI 是 Java 原生 View，不是自绘**：`MainActivity.java` 直接 `new TextView /
    EditText / Button / ImageView`，`android_ui.stub.php` 全是 `ui_add_*` 控件原语；
    **上游 typephp 全仓 `ANativeWindow` 零命中**（`grep -rIl`，含全部 examples）。
-   ⇒ G1「整帧 RGBA 上屏」仍是 Drift2 要自己写的第一份代码。而且这恰好与
+   ⇒ G1「整帧 RGBA 上屏」仍是 Drift 要自己写的第一份代码。而且这恰好与
    `docs/architecture/00-README.md:99`「原生控件（一律自绘）」的裁决**相反**，
    所以示例能抄的只有**壳与运行时**，不能抄 UI 层。
-2. **`--nano` 对 Drift2 仍然不可用**：`typephp/src/Transform/NanoSyntaxValidationVisitor.php:11-16,62-66`
+2. **`--nano` 对 Drift 仍然不可用**：`typephp/src/Transform/NanoSyntaxValidationVisitor.php:11-16,62-66`
    明确禁 `Fiber` / `Generator` / `yield` / 匿名类 / `eval` / `include`，理由是
-   「C++17 has no standard stack-switching API」；Drift2 `src/Async/AsyncScope.php:149,218`
+   「C++17 has no standard stack-switching API」；Drift `src/Async/AsyncScope.php:149,218`
    用 `\Fiber::suspend()`，`build/base.yml:73` 是 `cxx-std: c++20`，
    `docs/_archive/DESIGN-v2-2026-10-14.md:2605-2613` 另记 ZTS/NTS、C++20/C++17、网络三条硬冲突。
    ⇒ 若上 Android **必须走非 nano**，这点反而比旧稿更明确。
 3. **规模与语言面完全不对等**：示例只有 2 个 PHP 文件、零框架、零 Fiber、零 Skia；
-   Drift2 是 397 个 `src/` 文件 + 12 个 Skia Windows `.lib` + `mode: bin` 单 exe。
-   上游 `mode: lib` 由 `nativeApplicationDidLaunch` 回调拉起应用，Drift2 现在是
+   Drift 是 397 个 `src/` 文件 + 12 个 Skia Windows `.lib` + `mode: bin` 单 exe。
+   上游 `mode: lib` 由 `nativeApplicationDidLaunch` 回调拉起应用，Drift 现在是
    `main()` 拉起 ⇒ **启动形态与组合根都要改**，不是给 yml 换个 target。
 
 ### 8.3 环境现状（本机，2026-11-09 实测）
@@ -276,7 +276,7 @@ Drift2 完全可以走它，`AsyncScope` 的 `\Fiber` 也就不再是阻塞。
 
 - 旧 **G0**（NDK 编 `.so` + JNI 跑通纯 PHP 函数）从「唯一决定生死的门」
   **降级**为「复现上游」的环境门 —— 形状与代码都在上游现成。
-- **新增 G0′** 才是生死门：把 Drift2 的源码面套进这条链，验 tpc 在 Android
+- **新增 G0′** 才是生死门：把 Drift 的源码面套进这条链，验 tpc 在 Android
   target 下能否编过 `c++20` + `\Fiber` + 397 文件。
 - G1 / G2 / G3 **一条都没被上游覆盖**（`ANativeWindow` / `AInputQueue` /
   `AccessibilityNodeProvider` 全零命中）。

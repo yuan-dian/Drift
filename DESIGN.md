@@ -1,4 +1,4 @@
-# Drift2 设计
+# Drift 设计
 
 > **只写「现在是什么」**：当前架构、稳定契约、有意不做的事。
 > 不写路线图、开放项、棒次战史与验证读数（这些每改一次代码就腐烂）。
@@ -9,7 +9,7 @@
 
 ## §0 一页概览
 
-Drift2 用 PHP 写声明式 UI，经 TypePHP AOT 编译成**独立 Windows `.exe`**，目标机无需 PHP 运行时。架构与 Flutter 同构（Widget / Element / RenderObject 三棵树 + 单向下行 + 组合根注入），界面全自绘，不用原生控件。
+Drift 用 PHP 写声明式 UI，经 TypePHP AOT 编译成**独立 Windows `.exe`**，目标机无需 PHP 运行时。架构与 Flutter 同构（Widget / Element / RenderObject 三棵树 + 单向下行 + 组合根注入），界面全自绘，不用原生控件。
 
 **三条公理**（仲裁设计分歧，至今有效）：
 

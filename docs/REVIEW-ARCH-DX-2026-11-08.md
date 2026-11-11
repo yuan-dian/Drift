@@ -86,7 +86,7 @@
 
 ## 3. 能力缺失（对照成熟 GUI）
 
-| 缺失能力 | 成熟框架 | Drift2 现状 | 性质 |
+| 缺失能力 | 成熟框架 | Drift 现状 | 性质 |
 |---|---|---|---|
 | **树内环境 / 依赖注入** | Flutter `InheritedWidget` / Compose `CompositionLocal` / WPF 继承属性 | `BuildContext` 是 `final readonly` 固定 5 字段、明确无 `of()/find()`（`src/Widget/BuildContext.php:21-22,36`）；但 `src/Theme/ThemeScope.php:17-19,62-65` **逐字实现了**「父链解析、最内层赢」且 `src/Widget/Widget.php:205-214` 的 `childContext()` 就是通用钩子，却标 `@internal` | **真缺失，且现成扩展点被锁死**：`ThemeScope.php:58-61` 自承「为让 Widget 不认识 Theme，这里不加第二个协议例外」。深层控件只能 prop drilling。否决 provider soup 是合理取舍，但「连类型安全的 `ProvidedValue<T>` 都没有」是能力缺口 |
 | 通用事件路由 | WPF tunnel/bubble + `Handled` | 集中式 `InputRouter` + 沿父链找声明者；`hitTest()` 只返回单个最深盒，无 `HitTestResult` 链 | 真缺失。导致光标/悬停/焦点/滚轮/拖放各写一遍查找（`InputRouter.php:261-274,582-639`） |

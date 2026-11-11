@@ -137,7 +137,7 @@ final class ApiSurface
     /** markdown 清单（当文档用：可直接贴进 docs/） */
     public static function render(array $r): string
     {
-        $out = "# Drift2 API 面清单（@api / @internal）\n\n";
+        $out = "# Drift API 面清单（@api / @internal）\n\n";
         $out .= "> 由 `php tools/lint.php --api` 自动生成，勿手改（`gate` 的 `apidoc` 项会核对）。\n";
         $out .= "> 口径：docblock **独立标注行**（` * @api` 或单行 `/** @api … */`）；\n";
         $out .= "> 行内描述性提及（如「它本身是 @internal 的实现细节」这类文字）不计入。\n";
@@ -261,7 +261,7 @@ final class ApiSurface
         $full = self::scan($root);
         self::assert($full['unmatched'] === 0, "全仓有 {$full['unmatched']} 处标注未能归属 —— 解析器漏了声明形态");
         self::assert(\count($full['api']) > 300, 'api 清单异常稀少，解析器可能坏了');
-        self::assert(str_contains(self::render($full), '# Drift2 API 面清单'), 'render 产出异常');
+        self::assert(str_contains(self::render($full), '# Drift API 面清单'), 'render 产出异常');
 
         fwrite(STDOUT, "  ok    api-surface 解析器双向自检通过（@api " . \count($full['api'])
             . " / @internal " . \count($full['internal']) . " / 提及 " . $full['mentions'] . "）\n");

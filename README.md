@@ -1,10 +1,10 @@
-# Drift2
+# Drift
 
 > **技术预览 · 仅 Windows 10/11 x64 · API 不保证向后兼容。**
 > 源码可见的技术预览，**不是** 1.0，第三方请勿当作稳定依赖。
 > 版本与发布档位见 [`CHANGELOG.md`](CHANGELOG.md)。
 
-Drift2 是一个**声明式 + 自绘 + 单语言 AOT** 的桌面 GUI 框架：用 PHP 写界面，
+Drift 是一个**声明式 + 自绘 + 单语言 AOT** 的桌面 GUI 框架：用 PHP 写界面，
 编译成独立 `.exe`（目标机无需 PHP 运行时）。架构与 Flutter 同构
 （Widget / Element / RenderObject 三棵树 + 单向下行 + 组合根注入），绘制走 Skia。
 

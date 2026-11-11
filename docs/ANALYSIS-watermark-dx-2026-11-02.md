@@ -140,7 +140,7 @@ return $host->submit(new FetchSignJob($base));                           // 真�
 
 ### 3.1 能力矩阵
 
-| 维度 | Drift2 (watermark) | Flutter | Qt 6 (QML) | WinUI 3 / WPF | Electron | Compose Desktop |
+| 维度 | Drift (watermark) | Flutter | Qt 6 (QML) | WinUI 3 / WPF | Electron | Compose Desktop |
 |---|---|---|---|---|---|---|
 | 渲染 | 自绘 + Skia CPU 光栅 | 自绘 + Impeller/Skia | 原生 + 可选 RHI | 原生 | Chromium | 自绘 + Skia |
 | 语言 / 产物 | PHP → C++ → **原生 AOT** | Dart → AOT/JIT | C++ / QML | C# / XAML | JS/TS + Chromium | Kotlin/JVM |

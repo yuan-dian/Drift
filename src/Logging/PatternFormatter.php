@@ -14,7 +14,7 @@ use Drift\Errors;
  * ★ **未知占位符 ⇒ Fatal**（不是忽略）：G2「绝不静默」。写错 pattern
  *   就该响，而不是静默输出一个缺字段的行。
  * ★ 只做单字符 8 个占位符，**不做 `%{time yyyyMMdd}`**：带参数的 tokenizer
- *   要 100+ 行，而 Drift2 的时间需求只有"时分秒"；需要别的格式写 `LogFormatter`。
+ *   要 100+ 行，而 Drift 的时间需求只有"时分秒"；需要别的格式写 `LogFormatter`。
  * ★ **每 sink 一个 formatter**（学 spdlog）：文件要时间戳、控制台不要 —— 这是真实差异。
  *
  * ★ 不做 spdlog 的 `add_flag` 注册机制：PHP 里自定义 formatter 就是一个类，

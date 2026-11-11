@@ -30,7 +30,7 @@ use Drift\Widget\Wrap;
 /**
  * 页 6「反馈 Feedback」—— 三态（Loading / Error / Empty）+ Spinner + 模态对话框。
  *
- * 对照 LayUI 的提示体系（提示条 / 加载态 / 空数据）。Drift2 的三态用
+ * 对照 LayUI 的提示体系（提示条 / 加载态 / 空数据）。Drift 的三态用
  * **封闭域 match 无 default**（§12.1 第 2 条：加一个状态编译期就叫）——
  * 本页把三种状态摆在同一屏，用 `Offstage` 切换（保留各自状态，不销毁）。
  *

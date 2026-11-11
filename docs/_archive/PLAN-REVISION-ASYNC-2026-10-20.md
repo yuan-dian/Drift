@@ -16,7 +16,7 @@
    - 「整个进程只有一个线程持有 PHP 运行时」→ 改为「**主请求独占 UI 线程；工作线程各自独立请求，不共享 zval**」。
    - 「PHP 并行走子进程池（唯一已实测手段）」→ **不再是唯一**；`Swoole\Thread` 更便宜（无 123ms spawn），
      子进程池降级为「崩溃隔离 / NTS」。
-3. **Drift2 的旧结论作废**：`probes/RESULTS.md` §11–12 的「Swoole\Thread 跑不到 tpc 类」已过时；
+3. **Drift 的旧结论作废**：`probes/RESULTS.md` §11–12 的「Swoole\Thread 跑不到 tpc 类」已过时；
    可评估 `ThreadTaskHost`（ZTS only）。
 4. **但 dist 不含修复**：`typephp-windows-x64-0.9.1/phpx` 的 mtime 是 2026-10-13，**早于修复**。
    要用线程必须从 `13cf7175` 构建 phpx，并让 `PHPX_HOME` 指向它（Composer 依赖 `dev-master`）。
@@ -148,7 +148,7 @@ function main(): void {
 
 ---
 
-## 5. 对 Drift2 的影响（回植 / 实验）
+## 5. 对 Drift 的影响（回植 / 实验）
 
 | 项 | 旧结论 | 新结论 |
 |---|---|---|
@@ -157,7 +157,7 @@ function main(): void {
 | 默认异步 | `SyncTaskHost` | 不变；`ThreadTaskHost` 是 opt-in |
 | 崩溃隔离 | `ProcessTaskHost` 有 | thread 没有 ⇒ `ProcessTaskHost` 保留 |
 
-**建议的最小探针（Drift2 侧）**：
+**建议的最小探针（Drift 侧）**：
 1. 用修复版 phpx（`13cf7175`）构建一个最小 AOT exe：主线程建 `Swoole\Thread\Queue`，
    起 2 个 worker，worker 里调用**编译出的类方法**并 push 结果；
 2. 判据：worker 正常退出、主请求状态不变、结果正确、无 `IS_STR_PERSISTENT` 断言；
@@ -171,9 +171,9 @@ function main(): void {
 ## 6. 对「重构 vs 回植」判断的影响
 
 - **线程修复降低了 design-v6 在 async 上的架构优势**：原本「PHP 并行只能子进程」是重构的一个理由；
-  现在 `Swoole\Thread` 更便宜，**回植 Drift2 也能补上**（`ThreadTaskHost`）。
+  现在 `Swoole\Thread` 更便宜，**回植 Drift 也能补上**（`ThreadTaskHost`）。
 - **但不改变**「一棵树 / 无 diff / 布局三策略 / 文本三拆」的地基优势——那些仍只有重构能拿到。
-- **结论**：线程修复让「回植 Drift2」的性价比**更高**，而不是更低；如果最终选重构，
+- **结论**：线程修复让「回植 Drift」的性价比**更高**，而不是更低；如果最终选重构，
   D-16/08/16 必须按本修订写，否则会按旧结论把「PHP 并行」错误地限制在子进程。
 
 ---
@@ -181,7 +181,7 @@ function main(): void {
 ## 7. 下一步（待裁决）
 
 1. **design-v6 是否采纳本修订**（D-16 / 08 §3.3 / 16 §5.6/§5.8 / 13 V-7）？
-2. **Drift2 是否先做 §5 的最小线程探针**？（需先构建修复版 phpx）
+2. **Drift 是否先做 §5 的最小线程探针**？（需先构建修复版 phpx）
 3. **是否更新 `probes/RESULTS.md` §11–12**（旧结论已过时）？
 4. **`Async::thread` 放进 design-v6 的哪个阶段**？建议 P1 不做，P2 作为 opt-in。
 

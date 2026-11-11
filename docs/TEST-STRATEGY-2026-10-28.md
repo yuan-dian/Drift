@@ -30,7 +30,7 @@
 ★ 注意 `tests/` 那 7 个文件**不是** PHPUnit 的用例 —— 它是给 CI 的手工素材目录。
 所以"PHPUnit + tests 两套"的真实关系是：**PHPUnit 管能断言的，`tests/` 管要跑起来的**。
 
-## 2. Drift2 的现状（量化）
+## 2. Drift 的现状（量化）
 
 ```
 tools/smoke.php   19407 行   1727 条 check()   单进程顺序执行   48s / 上限 2G

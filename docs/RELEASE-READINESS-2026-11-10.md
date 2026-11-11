@@ -1,4 +1,4 @@
-# Drift2 发布就绪度评估 —— 对照成熟 GUI 框架（2026-11-10）
+# Drift 发布就绪度评估 —— 对照成熟 GUI 框架（2026-11-10）
 
 > 基线 `14e3e83`（§75 之后）。**只读评估**：未改一行产品代码、未跑 gate、未做构建。
 > 方法：① 代码实测量规模与能力面 ② 112 份文档交叉核对 ③ 对照 7 个成熟 GUI 框架逐维比较
@@ -89,10 +89,10 @@
 
 ## 3. 十八维横向对比
 
-> 列：Drift2 / Flutter / SwiftUI / Compose / WPF / Qt / Electron。
+> 列：Drift / Flutter / SwiftUI / Compose / WPF / Qt / Electron。
 > 评级针对「该维度对本类应用的支撑是否够用」，不是绝对优劣。
 
-| # | 维度 | Drift2 | Flutter | SwiftUI | Compose | WPF | Qt | Electron |
+| # | 维度 | Drift | Flutter | SwiftUI | Compose | WPF | Qt | Electron |
 |---|---|---|---|---|---|---|---|---|
 | 1 | **架构模型** | ● 声明式 + 保留树（Element/RenderObject 三层，`reconcile` 差分） | ● | ● | ● | ● 保留模式 + XAML | ● | ○ DOM 即树 |
 | 2 | **渲染后端** | ● Skia 自绘 + Raster 软后端；双后端同一 `Canvas` 契约 | ● Skia/Impeller | ● 原生 CoreAnimation | ● Skia/原生 | ● DirectX | ● 自绘 + 原生控件 | ● Chromium |

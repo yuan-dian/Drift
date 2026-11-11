@@ -189,17 +189,17 @@ watermark 是「选图 → 上传 → 提交水印任务 → 轮询 → 下载�
 
 ⇒ 「一张图一个组件」在列表/批量场景里，节流、顺序、聚合仍归业务。
 
-### 4.4 WPF / WinUI：最接近 Drift2 现状的一面镜子
+### 4.4 WPF / WinUI：最接近 Drift 现状的一面镜子
 
 `BitmapImage.IsAsync = true` 的语义常被误读：它让**解码**不阻塞 UI 线程，
 `DecodePixelWidth` 在解码期就按目标尺寸缩；`ImageFailed` / `DownloadProgress` 给失败与进度。
 但**下载、缓存策略、重试、取消、生命周期仍要业务/服务层管**，WPF 没有「任何元素都能发请求」的白嫖。
 
-这正好对上 Drift2 已有的两件：
+这正好对上 Drift 已有的两件：
 - `Image::decodeWidth()` 的 `SUPERSAMPLE=2.0` == `DecodePixelWidth` 的尺寸决策；
 - `ImageDecoder`（WIC 优先 / `PngDecoder` 兜底）== 原生解码避 PHP 堆 OOM。
 
-⇒ **Drift2 已经把 WPF 那条「异步解码 + 尺寸决策」做完了**；没做的是「谁来下载」，
+⇒ **Drift 已经把 WPF 那条「异步解码 + 尺寸决策」做完了**；没做的是「谁来下载」，
 而 WPF 也把这件事留给了业务层。
 
 ### 4.5 Web / React：query 与 mutation 显式分家

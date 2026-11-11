@@ -23,7 +23,7 @@ use Drift\Widget\Widget;
 /**
  * 页 5「列表 List」—— `Each` 数据驱动 + `ScrollView` 滚动（2026-10-17 落地）。
  *
- * 对照 LayUI 的 list / table：列表行 = 标题 + 次要信息 + 右侧动作。Drift2 用
+ * 对照 LayUI 的 list / table：列表行 = 标题 + 次要信息 + 右侧动作。Drift 用
  * `Each`（key 必填，R4）驱动，长列表（16 行超过视口）走 `ScrollView` ——
  * 滚动偏移**布局期进子盒 offset**（坐标链纪律，§24.2 #15）。
  */

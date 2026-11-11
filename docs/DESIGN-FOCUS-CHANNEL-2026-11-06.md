@@ -98,7 +98,7 @@
 | Flutter | `node.requestFocus()`；`FocusScope.of(context)` | 独立 node + 向上查找 |
 | Win32 | `SetFocus(hwnd)` | 全局函数 + 句柄 |
 
-4/5 是「元素方法」。Drift2 没有独立的 `FocusNode` 对象（焦点按 `Element` 收集），
+4/5 是「元素方法」。Drift 没有独立的 `FocusNode` 对象（焦点按 `Element` 收集），
 所以 `Element` 就是 node ⇒ 方案 1 与四种主流实现同形。
 Flutter 的 `FocusScope.of(context)` 是本仓**明确否决**的那条（provider soup），不借鉴。
 

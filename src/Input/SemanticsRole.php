@@ -26,7 +26,7 @@ namespace Drift\Input;
  *   - **纯布局 / 装饰 / 动画包装**（`SizedBox`/`Padding`/`Align`/`Row`/`Column`/
  *     `Stack`/`Card`/`Opacity`/`Spacer`/`Expanded`/`Divider`）**一律不给** ——
  *     它们是**结构**不是语义，给了只会让"按角色找控件"被淹没。
- *   - **叶子内容**（`Text`/`Icon`/`Image`）也**不给**：Drift2 没有 Flutter 式
+ *   - **叶子内容**（`Text`/`Icon`/`Image`）也**不给**：Drift 没有 Flutter 式
  *     语义合并，`hitTest()` 取"最深"节点 ⇒ 叶子普遍嵌在交互控件内部，一旦给
  *     `Text` 角色，检查器把光标移到按钮上会选中里面的文字而不是按钮。需要
  *     "文本可被找到"时用 `name`（按钮的 `semName` = label）表达。

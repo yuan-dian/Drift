@@ -4,7 +4,7 @@
 > `[AOT codegen] 类常量与同类方法同名（大小写不敏感）⇒ 生成 C++ 符号冲突 ⇒ error C2872，整个应用编译不过`
 >
 > **提交对象**：上游 TypePHP 编译器（AOT / codegen）
-> **提交人**：Drift2（TypePHP→C++17→AOT 的 Win32 GUI 框架）实测发现
+> **提交人**：Drift（TypePHP→C++17→AOT 的 Win32 GUI 框架）实测发现
 > **实证日期**：2026-10-21（复现）/ 2026-10-15（首次真机暴露）
 > **编译器**：`tpc` AOT v0.9.5（`D:/TypePHP/typephp` @ `1a9d77d1`），Windows + MSVC，`-O0`、`-m bin`、`c++17`
 > **对照**：同一段源码用发行版 `php.exe` 跑，结果**完全正确** ⇒ 缺陷在 AOT 生成物，不在运行时语义。
@@ -137,7 +137,7 @@ php::Var php_probe__fontdata__latin;   // ← 第 146 行
 
 ---
 
-## 5. 触发判据（已全仓扫过，Drift2 仓仅此一处）
+## 5. 触发判据（已全仓扫过，Drift 仓仅此一处）
 
 同时满足两条才触发：
 
@@ -169,7 +169,7 @@ decl.h:8   extern php::Int php_probe__fontdata__latin(php::Object &this_);   ←
 
 ---
 
-## 7. 当前规避（Drift2 侧）
+## 7. 当前规避（Drift 侧）
 
 常量改名，语义零变化：`LATIN` → `LATIN_GLYPHS`、`CJK` → `CJK_GLYPHS`。
 ⇒ **规避可行但代价落在用户命名上**，且**编译器没有给出任何提示**说明"这两个名字不能共存"。
@@ -188,11 +188,11 @@ decl.h:8   extern php::Int php_probe__fontdata__latin(php::Object &this_);   ←
 ## 附录 A：另一条同家族常量缺陷（已在我方 fork 修复，未合上游）
 
 - **现象**：方法体内获取**表达式求值的类常量**（`const ALL_MASK = A | B | C`，再 `return self::ALL_MASK;`）⇒
-  `findNativeClassConst()` 把常量初值的 C++ 串直接内联进获取方函数体，而该串里的 `tmp_var_N`（parse 期 materialize 临时量）只在 `arrayExpr` 的 prelude 里声明、且只随**数组常量**发射 ⇒ C2065 / C2593（Drift2 实证：`RecordingCanvas::capabilities` 返回 `CanvasCapabilities::ALL_MASK`）。
+  `findNativeClassConst()` 把常量初值的 C++ 串直接内联进获取方函数体，而该串里的 `tmp_var_N`（parse 期 materialize 临时量）只在 `arrayExpr` 的 prelude 里声明、且只随**数组常量**发射 ⇒ C2065 / C2593（Drift 实证：`RecordingCanvas::capabilities` 返回 `CanvasCapabilities::ALL_MASK`）。
 - **修复**（本地 commit `1a9d77d1`）：`value` 串含 `tmp_var_` 或 `arrayExpr` 非空时返回 false，回落既有 `php::constant(ce, name)` 查表路径（与 forward-ref 回落同型）。
 - **注意**：上游 `phpt` 未覆盖"表达式常量体内获取"这一形态；建议一并补测试。
 
-## 附录 B：复现物位置（Drift2 仓内，可直接 `--dry` 复核）
+## 附录 B：复现物位置（Drift 仓内，可直接 `--dry` 复核）
 
 ```
 _build/const-bug-probe/            # 数组常量版（触发）
@@ -203,4 +203,4 @@ _build/const-bug-probe/scalar/     # 标量常量版（对照，不触发）
 
 ---
 
-**关联 Drift2 内部记录**：`docs/_archive/changelog-v2.md` §24.1 #41（上游 tpc codegen 缺陷）。
+**关联 Drift 内部记录**：`docs/_archive/changelog-v2.md` §24.1 #41（上游 tpc codegen 缺陷）。

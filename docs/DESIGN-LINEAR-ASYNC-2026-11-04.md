@@ -110,7 +110,7 @@ iocp_socket => enabled
 
 `docs/ASYNC-2026-10-30.md` §1.2 的判断**是对的**：
 
-- Drift2 帧循环是 `GetMessageW()`（阻塞等窗口消息）→ `Application::frame()`；
+- Drift 帧循环是 `GetMessageW()`（阻塞等窗口消息）→ `Application::frame()`；
 - Swoole 协程的挂起/恢复由它自己的 loop 驱动，进入 `Coroutine\run()` /
   `Scheduler->start()` 后主线程控制流归它；
 - 两个调度器抢同一根控制流。
@@ -192,7 +192,7 @@ Swow 基于 `libcat`（libuv 衍生）自建事件驱动，Windows 支持早于 
 
 ### 3.1 三个锚点（2026-11-04 实测）
 
-| | 原始网页 | 成熟 GUI（Flutter / SwiftUI / React / Qt） | Drift2 `apps/watermark` |
+| | 原始网页 | 成熟 GUI（Flutter / SwiftUI / React / Qt） | Drift `apps/watermark` |
 |---|---|---|---|
 | 体量 | **713 行** HTML+CSS+JS，核心逻辑约 400 行 | 同量级或更少（框架自带资源原语） | **3457 行**源码（`Store 980` 其中 `WatermarkStore.php 830` / `Api 694` / `Jobs 477` / `Widgets 1105` / `root 201`） |
 | 5 步流水线 | 一段线性 `async/await` | `async/await` / `.task {}` / `FutureBuilder` / `QNetworkAccessManager` + signal | `5 AsyncCommand` + `5 NamedJob` + `5 absorb` + `15 SubjectBuilder::make` |
@@ -213,7 +213,7 @@ Swow 基于 `libcat`（libuv 衍生）自建事件驱动，Windows 支持早于 
 | ③ 跨进程序列化 | `5 × NamedJob` + 注册表 + `fromArray()` | 每个步骤一个可 JSON 边界的类、`name()` + `args()` 重建、返回值只能数组 |
 
 成熟 GUI 里这三份分别是：**语言运行时（`async/await`）**、**框架状态原语**、
-**平台的 IO/资源层**。Drift2 只把第 ③ 份的一部分（`JobRunner` / `TaskHost`）下沉了，
+**平台的 IO/资源层**。Drift 只把第 ③ 份的一部分（`JobRunner` / `TaskHost`）下沉了，
 ①② 仍在应用层，于是**每一步都要写三遍**。
 
 ### 3.3 诚实结论：§29 的结算缝不算改善 DX
@@ -244,7 +244,7 @@ Swow 基于 `libcat`（libuv 衍生）自建事件驱动，Windows 支持早于 
 ★ 关键前提本仓已经把 IO 层做成了非阻塞：`IoPoller::poll()` 每帧
 `stream_select(..., 0)`、`ProcessTaskHost` 用 socket 描述符（0.008ms/次）、
 `Future` 只在帧内 `settle()` 之前结算。旧裁决「Fiber 不会让出阻塞 IO」
-的前提是「IO 是阻塞的」—— **在 Drift2 里这个前提不成立**，Fiber 的短板
+的前提是「IO 是阻塞的」—— **在 Drift 里这个前提不成立**，Fiber 的短板
 （没有配套 IO 层）恰好被现成的 `IoPoller` / `CompletionQueue` 补上了。
 
 ### 4.2 目标形状（**草案，未实现**）

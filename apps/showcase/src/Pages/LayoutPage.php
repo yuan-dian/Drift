@@ -43,7 +43,7 @@ use Drift\Widget\Wrap;
  *   间距没有边界，观感就是用户说的"生硬、没有质感"。
  *
  * 对照 LayUI：文档页没有专门的"布局"页（布局由 CSS 网格承担）；本页演示的是
- * Drift2 用**声明式控件**表达同一件事的形态。
+ * Drift 用**声明式控件**表达同一件事的形态。
  */
 final class LayoutPage extends StatelessWidget
 {

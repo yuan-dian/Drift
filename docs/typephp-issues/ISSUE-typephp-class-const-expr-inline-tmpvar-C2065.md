@@ -4,7 +4,7 @@
 > `[AOT codegen] 表达式求值的类常量被内联进获取方函数体，携带 parse 期临时量 ⇒ C2065/C2593，整个应用编译不过`
 >
 > **提交对象**：上游 TypePHP 编译器（AOT / codegen）
-> **提交人**：Drift2（TypePHP→C++17→AOT 的 Win32 GUI 框架）实测发现
+> **提交人**：Drift（TypePHP→C++17→AOT 的 Win32 GUI 框架）实测发现
 > **实证日期**：2026-10-20（真机构建暴露）/ 2026-10-21（用父提交复现确认）
 > **编译器**：`tpc` AOT v0.9.5，Windows + MSVC，`-O0`、`-m bin`、`c++17`
 > **复现基线**：缺陷在 `06851fb5` 上复现；本仓 fork 已修复于 `1a9d77d1`（尚未提交上游 PR，补丁见 §9）
@@ -19,7 +19,7 @@ build/src/main.cc(21): error C2065: 'tmp_var_1': 未声明的标识符
 build/src/main.cc(21): error C2593: 'operator |' is ambiguous
 ```
 
-（具体错误号随 MSVC 版本略有差异；Drift2 bench 应用上表现为 `C2065`。）
+（具体错误号随 MSVC 版本略有差异；Drift bench 应用上表现为 `C2065`。）
 
 - **本地 PHP 语义完全正确**：`public const ALL_MASK = CAP_A | CAP_B;` 与 `return self::ALL_MASK;` 分开写，PHP 合法。
 - **AOT 把常量初值串直接内联进"获取方"的函数体**，而该串里含有 parse 阶段产生的 **materialize 临时量 `tmp_var_N`** —— 这些临时量的声明只存在于 `arrayExpr` 的 prelude 里、且**只随数组常量发射**，获取方作用域里根本没有它们。
@@ -147,7 +147,7 @@ return $constDef->value;      // ← value 串原样飞出类定义所在的作�
 
 ---
 
-## 6. 真实案例（Drift2）
+## 6. 真实案例（Drift）
 
 `src/Rendering/CanvasCapabilities.php`：
 
@@ -176,7 +176,7 @@ public const ALL_MASK = self::CAP_ELLIPSE | self::CAP_LINE
 
 ## 8. 用户侧规避（可行但不該由用户承担）
 
-把常量链**平铺成叶子常量的一次运算**，不让"常量引用常量"进编译进产物的表达式（Drift2 `CanvasCapabilities.php:56-64` 就是这么改的）。中间 mask 保留供人查阅，但**不进任何表达式**。
+把常量链**平铺成叶子常量的一次运算**，不让"常量引用常量"进编译进产物的表达式（Drift `CanvasCapabilities.php:56-64` 就是这么改的）。中间 mask 保留供人查阅，但**不进任何表达式**。
 ⇒ 能用，但这是让用户替编译器绕坑。
 
 ---
@@ -226,7 +226,7 @@ public const ALL_MASK = self::CAP_ELLIPSE | self::CAP_LINE
 1. 新测试在父提交 `06851fb5`（未修）上**失败**，失败正文就是 `tmp_var_0 = (((php::Var(tmp_var_0)) | (php::Var(tmp_var_1))))`；带闸后通过。
 2. 拆掉闸（保持测试）再跑 ⇒ 同样失败 ⇒ 该测试**确实抓得住这个 bug**，不是摆设。
 3. **完整 PHPUnit 套件**（排除 `Build` 目录与被 Linux-only `exit(1)` 中断的 `CompilerBaseApiTest`）：修复分支与 master 的失败清单**逐条一致**（各 143 条：37 errors / 106 failures / 111 warnings），唯一的差量就是新增的这 1 个测试 / 7 条断言 ⇒ **零回归**。
-4. Drift2 bench 应用 AOT 构建从 `C2065` 转为 `✓ bench.exe`（7.6 MB）；Drift2 smoke 797/0。
+4. Drift bench 应用 AOT 构建从 `C2065` 转为 `✓ bench.exe`（7.6 MB）；Drift smoke 797/0。
 
 **还需要上游做的两件事**：
 1. **合并该 PR**（`fix/class-const-expr-inline-tmpvars`）；
@@ -234,7 +234,7 @@ public const ALL_MASK = self::CAP_ELLIPSE | self::CAP_LINE
 
 ---
 
-## 附录：复现物位置（Drift2 仓内，可自行复核 before/after）
+## 附录：复现物位置（Drift 仓内，可自行复核 before/after）
 
 ```
 _build/const-tmp-probe/     # 最小复现工程
@@ -254,4 +254,4 @@ sed -n '17,26p' build/src/main.cc       # 看 tmp_var_0 自引用 / tmp_var_1 �
 ---
 
 **关联**：本仓另有一条同家族常量缺陷 issue —— 类常量与同类方法同名 ⇒ `C2872`（`docs/ISSUE-typephp-class-const-vs-method-C2872.md`）。
-**关联 Drift2 内部记录**：`docs/_archive/changelog-v2.md` §24.1 系列；`src/Rendering/CanvasCapabilities.php:56-64`（规避注释）。
+**关联 Drift 内部记录**：`docs/_archive/changelog-v2.md` §24.1 系列；`src/Rendering/CanvasCapabilities.php:56-64`（规避注释）。

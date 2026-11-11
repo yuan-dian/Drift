@@ -13,7 +13,7 @@
 |------|------|------|
 | GUI 怎么拿到 Skia | **预编译包**，不是自己构建 | `cpp/skia/` 里有 `include/` + `modules/` + `src/` + `out/Release-x64/*.lib`（约 **141 MB**），但**仓内没有 `gn` / `ninja` / `args.gn`** ⇒ 没有任何"从源码构建"的痕迹 |
 | 这个包是什么 CRT | **`/MT`（静态 CRT）** | `dumpbin -directives` 显示 obj 里是 `FAILIFMISMATCH:RuntimeLibrary=MT_StaticRelease` |
-| Drift2 要不要重建 Skia | **不要** —— 直接用这个包 | tpc 的 `/MD` 写在 `cxxflags` **之前**（`Msvc.php:104`）⇒ 用户 `cxx-flags` 里的 `/MT` **能覆盖**；且 `php8ts` 在本环境是 **DLL** ⇒ 跨 DLL 边界不共享 CRT。**已实测**：`/MT` 真机构建 `hello.exe` 成功 |
+| Drift 要不要重建 Skia | **不要** —— 直接用这个包 | tpc 的 `/MD` 写在 `cxxflags` **之前**（`Msvc.php:104`）⇒ 用户 `cxx-flags` 里的 `/MT` **能覆盖**；且 `php8ts` 在本环境是 **DLL** ⇒ 跨 DLL 边界不共享 CRT。**已实测**：`/MT` 真机构建 `hello.exe` 成功 |
 | 这个方式是否最优 | **是**（对当前形态）。替代方案见 §5 | 逐条评估：源码重建（贵、无收益）/ 换包（无源）/ 去 ICU（不可行）/ 去 SVG（仅省 0.52 MB） |
 | 包体多大 | 最小程序实测：core **4.03 MB** → +文本栈 **5.89 MB** → +SVG **6.41 MB** | 见 §4；对照无 Skia 的 `users.exe` **2.90 MB** |
 | 最大的坑 | ① **ICU 甩不掉** ② **`icudtl.dat` 必须随 exe 分发** ③ **Skottie 实际不可用** ④ 预编译包**不是官方主干快照**（API 有缺） | 见 §3 |
@@ -67,25 +67,25 @@ manifest:     # comctl32 v6 —— 没有它，原生 MessageBox 是 Win95 外�
 
 ★ **exe 落 cwd** ⇒ 从仓库根调用时，双击即用（双击把 cwd 设成 exe 所在目录 = 仓库根，正好满足"资源相对路径"与"ld-flags 相对 cwd"两条）。
 
-### 1.3 CRT：这个包为什么是 `/MT`，以及 Drift2 为什么能用
+### 1.3 CRT：这个包为什么是 `/MT`，以及 Drift 为什么能用
 
 - 包是 **`/MT`**（`MT_StaticRelease`），而本机 PHP 运行时 `php8ts` 是 **`/MD`**。
 - **`/MT` 与 `/MD` 对象的 `FAILIFMISMATCH:RuntimeLibrary` 记录不能用任何链接器开关桥接** —— `/NODEFAULTLIB` / `/DEFAULTLIB` 只影响库搜索，改不了这条硬断言。混用即 `LNK2038`。
 - **但这条墙只在"同一个链接单元里的静态库"上致命**；跨 **DLL 边界**时两边各有各的 CRT 堆，互不干涉。
-- `php8ts` 在本环境是 **DLL**（不是 `.lib`）⇒ Drift2 的 exe 与 Skia 静态库**同处一个链接单元**，两边都是 `/MT` ⇒ **一致，可用**。
+- `php8ts` 在本环境是 **DLL**（不是 `.lib`）⇒ Drift 的 exe 与 Skia 静态库**同处一个链接单元**，两边都是 `/MT` ⇒ **一致，可用**。
 - 而 tpc 在 `typephp/src/Backend/Msvc.php:104` 无条件追加 `' /MD'`，用户 `cxxflags` 在 `:112` **之后**追加 ⇒ **`cxx-flags` 里写 `/MT` 就能覆盖它**。
 
 **实测**：给 `apps/hello/project.yml` 加 `/MT` 后 `php tools/drift-build.php hello` ⇒ **构建成功**（桥接 obj 记录 `MT_StaticRelease`）。
 
 ### 1.4 一条必须记住的边界
 
-★ **`/MT` 换不到"免 CRT / 单文件"**。Drift2 的 exe 用 `/MT` 构建后**仍然导入 `VCRUNTIME140.dll`**（因为 `php8ts.dll` 是 `/MD`，它自带那半边）。GUI 的 exe 也一样。⇒ **"加 `/MT` 能省掉 VC 运行时依赖"是错的**；加 `/MT` 的唯一理由是**匹配 Skia 包**。
+★ **`/MT` 换不到"免 CRT / 单文件"**。Drift 的 exe 用 `/MT` 构建后**仍然导入 `VCRUNTIME140.dll`**（因为 `php8ts.dll` 是 `/MD`，它自带那半边）。GUI 的 exe 也一样。⇒ **"加 `/MT` 能省掉 VC 运行时依赖"是错的**；加 `/MT` 的唯一理由是**匹配 Skia 包**。
 
 ---
 
 ## 2 使用方式（代码怎么用）
 
-出处：`cpp-src/gui_gfx.cc`（2301 行）+ `gui_win32.cc`（2108 行）。以下是 Drift2 要照搬的骨架。
+出处：`cpp-src/gui_gfx.cc`（2301 行）+ `gui_win32.cc`（2108 行）。以下是 Drift 要照搬的骨架。
 
 ### 2.1 表面：光栅直画到自有 bitmap
 
@@ -126,7 +126,7 @@ para->paint(canvas, x, y);
 
 ### 2.4 贴屏：`SetDIBitsToDevice`
 
-`guiBlitToScreen()` 把 `bmp` 的像素整块送到窗口 DC。Drift2 的 M1 软光栅走的是同一条路（`RasterCanvas` + `SetDIBitsToDevice`）⇒ **换 Skia 只换"画什么"，不换"怎么贴"**。
+`guiBlitToScreen()` 把 `bmp` 的像素整块送到窗口 DC。Drift 的 M1 软光栅走的是同一条路（`RasterCanvas` + `SetDIBitsToDevice`）⇒ **换 Skia 只换"画什么"，不换"怎么贴"**。
 
 ### 2.5 其它用到的模块
 
@@ -142,7 +142,7 @@ para->paint(canvas, x, y);
 
 - **现象**：吃 `/MT` 的预编译 Skia 进 `/MD` 工程 ⇒ `LNK2038: mismatch detected for 'RuntimeLibrary'`。
 - **根因**：`FAILIFMISMATCH` 记录烘进每个 obj，链接器旗标改不了。
-- **解法（两条，别混）**：① 让宿主与包同 CRT（Drift2 选这条：加 `/MT`）；② 从源码重建 `/MD` Skia（**本包没有源码构建链**，且要装 depot_tools + 数小时）。
+- **解法（两条，别混）**：① 让宿主与包同 CRT（Drift 选这条：加 `/MT`）；② 从源码重建 `/MD` Skia（**本包没有源码构建链**，且要装 depot_tools + 数小时）。
 - ★ **判据**：`dumpbin -directives <obj>` 看 `RuntimeLibrary` 记录；`dumpbin -dependents <exe>` 看是否仍导入 `VCRUNTIME140.dll`。
 
 ### 3.2 坑 2 —— ICU 是**运行期硬依赖**，且甩不掉
@@ -211,7 +211,7 @@ para->paint(canvas, x, y);
 
 | 程序 | 体积 |
 |------|------|
-| Drift2 `users.exe`（**无 Skia**，软光栅） | **2.90 MB** |
+| Drift `users.exe`（**无 Skia**，软光栅） | **2.90 MB** |
 | GUI `typephp_gui_demo.exe`（框架 + Skia 全开） | **12.76 MiB**（≈13.4 MB 十进制） |
 
 ### 4.2 两条读法
@@ -223,7 +223,7 @@ para->paint(canvas, x, y);
 
 **+1.86 MB**（4.03 → 5.89，含 HarfBuzz + SkShaper + SkParagraph + ICU 整条链），且**不可省**（§3.2）。⇒ **"自实现一个最小 ICU 断行器"省不到 1 MB，不值得。**
 
-### 4.4 对 Drift2 的预测
+### 4.4 对 Drift 的预测
 
 | 形态 | 预测体积 |
 |------|----------|
@@ -231,7 +231,7 @@ para->paint(canvas, x, y);
 | + Skia + 文本栈（SkParagraph/ICU） | **≈ 8.8 MB** |
 | + SVG/SkSG | **≈ 9.3 MB** |
 
-外加**必须分发**的 `icudtl.dat`（778 KB）+ 字体（若用 Noto Sans SC 两个字重约 21 MB；Drift2 的确定性测试字体是自有点阵，**不适用**）。
+外加**必须分发**的 `icudtl.dat`（778 KB）+ 字体（若用 Noto Sans SC 两个字重约 21 MB；Drift 的确定性测试字体是自有点阵，**不适用**）。
 
 ---
 
@@ -239,14 +239,14 @@ para->paint(canvas, x, y);
 
 | 方向 | 判断 | 依据 |
 |------|------|------|
-| **直接用预编译包（不重建）** | ✅ **可行且最优** | §1.3 实测 `/MT` 可用；源码重建要 depot_tools + 数小时 + 数 GB，**换不到任何东西**（Drift2 不需要 `/MD`） |
+| **直接用预编译包（不重建）** | ✅ **可行且最优** | §1.3 实测 `/MT` 可用；源码重建要 depot_tools + 数小时 + 数 GB，**换不到任何东西**（Drift 不需要 `/MD`） |
 | 换一个"官方 `/MD` 预编译包" | ❌ **无源** | Skia 官方不发布 Windows 预编译包（只有 `libskia.a` 的 macOS/iOS 形态） |
-| 从源码重建 `/MD` Skia | ❌ 无收益 | 只有"宿主必须是 `/MD` 且不能改"时才需要（那是 DLL 形态）；Drift2 是 bin 形态，能改 |
+| 从源码重建 `/MD` Skia | ❌ 无收益 | 只有"宿主必须是 `/MD` 且不能改"时才需要（那是 DLL 形态）；Drift 是 bin 形态，能改 |
 | `/MT` 换"单文件 / 免 CRT" | ❌ **换不到** | §1.4：exe 仍导入 `VCRUNTIME140.dll`（`php8ts.dll` 是 `/MD`） |
 | 去掉 ICU（改用 `Bidi` 后端） | ❌ **不可行** | §3.5：包里**没有** `Bidi` 实现；且 `skshaper.lib` 硬引 `ICU::Make` |
 | 自实现最小 ICU / 断行 | ❌ 不值得 | §4.3：省不到 1 MB |
 | 把 `icudtl.dat` 内嵌进 exe | ⚠️ **方向对、路径不通** | §3.2：`udata_setCommonData` 在，但头未随包 ⇒ 要自建注入机制（未实测，登记 §24.2 #6） |
-| **只上文本 + 矢量，不上 SVG** | ✅ 成立 | 只值 **+0.52 MB**，但 Drift2 当前**没有 SVG 需求** ⇒ 先不加，需要时再加 |
+| **只上文本 + 矢量，不上 SVG** | ✅ 成立 | 只值 **+0.52 MB**，但 Drift 当前**没有 SVG 需求** ⇒ 先不加，需要时再加 |
 | 删 `skottie` / 未用的 lib | ✅ 无害 | §3.3：Skottie 本来不可用；其余是空转（dead-strip） |
 | 把 Skia 换成"平台原生文本栈"（DirectWrite） | ❌ **与采用 Skia 的理由冲突** | 换平台文本栈 ⇒ 排版随机器变，"处处同一张 PNG"的确定性目标落空 —— 而那通常正是采用 Skia 的理由 |
 
@@ -257,7 +257,7 @@ para->paint(canvas, x, y);
 
 ---
 
-## 6 对 Drift2 的落地建议（M4 `SkiaCanvas`）
+## 6 对 Drift 的落地建议（M4 `SkiaCanvas`）
 
 1. **不重建 Skia** —— 直接引用上游包的 `include/` 与 `out/Release-x64/*.lib`。包的**分发方式**另定（约 141 MB，**不宜入库**）⇒ §24.2 #12。
 2. **`build/base.yml` 的追加项按本文校正**（已改）：`c++20` / `/MT` / `/DUSE_SKIA` / `/I"cpp/skia"` / `GR_GL_FUNCTION_TYPE` / 20 个 lib（**去掉 `skottie`**）/ `advapi32.lib`。

@@ -1,6 +1,6 @@
 # 后续推进计划 · 2026-11-08
 
-> 基准：Drift2 `d2fc77a`（§71）；输入为本轮三份材料——
+> 基准：Drift `d2fc77a`（§71）；输入为本轮三份材料——
 > `docs/REVIEW-drift3-blueprint21-render-arch-2026-11-08.md`、
 > `docs/ANALYSIS-watermark-async-ui-components-2026-11-08.md`、
 > `docs/REVIEW-drift3-blueprint13-async-resource-2026-11-08.md`，

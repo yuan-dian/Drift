@@ -1,4 +1,4 @@
-# Drift2 文档索引与权威对照
+# Drift 文档索引与权威对照
 
 > **为什么需要这份**：仓库里曾有**四套并行文档**，册名几乎一一对应，读者（包括未来的我）
 > 分不清**哪套是权威、什么时候该看哪套**。ARCH-REVIEW-2026-10-24 §M2 把"三套并行、
@@ -90,14 +90,14 @@ v2 修订期的过程稿，只在追溯历史时看。**
 
 ---
 
-## 5. 非 Drift2 文档（`docs/typephp-issues/`）
+## 5. 非 Drift 文档（`docs/typephp-issues/`）
 
 | 文件 | 内容 |
 |---|---|
 | [`ISSUE-typephp-class-const-expr-inline-tmpvar-C2065.md`](typephp-issues/ISSUE-typephp-class-const-expr-inline-tmpvar-C2065.md) | TypePHP 编译器 bug 记录（`class const` 表达式内联临时变量 C2065） |
 | [`ISSUE-typephp-class-const-vs-method-C2872.md`](typephp-issues/ISSUE-typephp-class-const-vs-method-C2872.md) | TypePHP 编译器 bug 记录（`class const` vs 方法 C2872） |
 
-★ 这两份是**别的仓（typephp）的 bug 记录**，不是 Drift2 设计/实现文档，单独归类避免干扰。
+★ 这两份是**别的仓（typephp）的 bug 记录**，不是 Drift 设计/实现文档，单独归类避免干扰。
 
 ---
 

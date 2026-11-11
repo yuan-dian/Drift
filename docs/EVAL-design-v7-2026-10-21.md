@@ -81,12 +81,12 @@ layout() 本就位置无关（§14.1 规则 1）
 ★★ **更硬的证据：v7 想解决的问题已经被另一条路解决了，而且更彻底。**
 
 v7 D8 的动机原文是"**定位是 O(子数) 的加法，重量是 O(子树)**"——滚动不该重排整棵树。
-Drift2 现在的答案是**虚拟化**（`LazyColumn` + `RenderScrollView` 的 `virtualExtent`/`sliceOrigin`）：
+Drift 现在的答案是**虚拟化**（`LazyColumn` + `RenderScrollView` 的 `virtualExtent`/`sliceOrigin`）：
 
 | 方案 | 滚动时的成本 | 实测 |
 |---|---|---|
 | v7 的 place-only | O(可见孩子数) 次 **加法**（仍要遍历整棵已建树） | 未实现，无数据 |
-| Drift2 的虚拟化 | O(可见孩子数) 次**布局**，不可见孩子**根本没被建** | 10000 行单帧 96 ms → **0.2 ms** |
+| Drift 的虚拟化 | O(可见孩子数) 次**布局**，不可见孩子**根本没被建** | 10000 行单帧 96 ms → **0.2 ms** |
 
 ⇒ 虚拟化连"不可见孩子的节点"都不存在，比 place-only 少一整层；而它已经落地并有消费者
 （`BigListPage`）。**D8 的目标达成度：虚拟化 100%，place-only 只在其上再加一点。**
