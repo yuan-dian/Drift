@@ -14,6 +14,7 @@ use Drift\Dev\Lint\Rules\BackendBranch;
 use Drift\Dev\Lint\Rules\CancelGuard;
 use Drift\Dev\Lint\Rules\CachedSubscriber;
 use Drift\Dev\Lint\Rules\ClassMissingUse;
+use Drift\Dev\Lint\Rules\CjkVarName;
 use Drift\Dev\Lint\Rules\DeadCommand;
 use Drift\Dev\Lint\Rules\DeadSubscription;
 use Drift\Dev\Lint\Rules\DependencyDirection;
@@ -121,6 +122,9 @@ final class Linter
             // 取消守卫顺序（§68）：宽 catch 吞掉 AsyncCancelled 后循环会多跑一轮，
             //   运行时 guardCancelled() 只在下个让出点补抛，错误文案已经写出去了。
             new CancelGuard(),
+            // 中文串单引号（AGENTS 铁律，2026-11-11 机械化）：双引号里 `$n` 紧跟中文
+            //   会被词法吃成 `$n项` ⇒ 静默取到未定义变量。全仓当前 0 处，纯防复发。
+            new CjkVarName(),
         ]);
     }
 

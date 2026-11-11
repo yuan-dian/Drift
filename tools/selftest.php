@@ -213,6 +213,13 @@ function drift_lint_selftest(string $root, Linter $linter): bool
             'apps/CancelGuardBad.php:' . Diagnostic::ERROR,
             'apps/CancelGuardBad.php:' . Diagnostic::ERROR,
         ],
+        // 中文串单引号（2026-11-11 机械化 AGENTS 铁律），Bad 两条。
+        //   ★ Good 侧钉四件"看着像但不是"：单引号拼接 / `{$n}` 花括号边界 /
+        //     单引号里的 `$…` 字面量 / 变量后有空格（`"$n 项"` 的变量名就是 `$n`）。
+        'cjk-var-name' => [
+            'apps/CjkVarNameBad.php:' . Diagnostic::ERROR,
+            'apps/CjkVarNameBad.php:' . Diagnostic::ERROR,
+        ],
     ];
 
     $ok = true;
