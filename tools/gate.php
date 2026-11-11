@@ -14,33 +14,13 @@ declare(strict_types=1);
  *   两者共用 `probe-window.py` 的五条判据。分层与「dev 绿 ≠ AOT 绿」清单见
  *   `docs/architecture/12-工程与工具.md` §3 —— 日常不碰 AOT 之后那份清单更要紧。
  *
- * 检查项（顺序即执行顺序，廉价优先；★ 标 slow 的在 `--fast` 下跳过）：
- *   doctor    环境（PHPRC / tpc / cl.exe / DPI…）
- *   lint      代码规则 · 0 error
- *   selftest  lint 规则双向自检
- *   abi       跨层 ABI 契约（stub / C++ 实现 / 解释器替身三向签名）
- *   abiself   ABI 校验器的变异体自证
- *   dxdiag    DX 退化「接入点 ↔ 判据」对账
- *   dxself    对账器的变异体自证
- *   stalepolicy 构建 stale 决策接线对账（门不能信缓存）
- *   staleself 对账器的变异体自证
- *   errshape 错误码贯通链路接线对账（worker → TaskHost → UI）
- *   errself 对账器的变异体自证
- *   devshell  开发态壳红线（sources 白名单 / 变量路径 require / 桥接回调）
- *   docref    文档 file:line / § 引用
- *   apidoc    API 面清单（apidoc）
- *   probe     探针骨架（probe-audit --selftest）
- *   pixels    像素契约（probe_pixels --selftest，依赖本机 python ⇒ 允许"没测到"）
- *   tick      每帧固定税（frame-tax --check，6 条自洽判据）
- *   scale     12k 节点尺子（frame-tax --scale，6 条自洽判据）
- *   sym       崩溃符号翻译（rva2sym --selftest，6 条；合成 map，无构建前置）
- *   decode    图片解码通道序（decode-selftest；要 MSVC + WIC ⇒ 允许"没测到"）
- *   m2        M2 conformance（W1–W8 静态 + 夹具 + 量具反例自检）
- *   unit      纯单元
- *   feature★  场景测试（真挂载 + 推帧）
- *   golden    原语像素基线
- *   pages★    整页像素基线
- *   smoke★    端到端 smoke
+ * 检查项清单**不写在这里**（2026-11-11）：这份名单曾两次与 `--list` 对不上
+ * （26 项 vs 真实 28 项），漏掉的是最新加的那批 —— 而最新加的那批恰恰是还没被
+ * 任何人记住的。**唯一的清单是 `--list`**（它从 `$checks` 里算出来，不可能漂）。
+ *
+ *   php tools/gate.php --list     # 当前项、顺序、是否 slow
+ *
+ * 顺序即执行顺序（廉价优先、失败即停）；标 slow 的在 `--fast` 下跳过。
  *
  * ★ 耗时**不写在这里**了（2026-11-02）：这份清单曾逐项标着"~4.6s / ~22.8s、合计 63.4s"，
  *   而实际早已是 120s 量级 —— 数字一旦没有判据就会烂，且烂了没人发现。
@@ -126,7 +106,10 @@ $python = find_python();
  *      值 = [显示名, 命令, 是否慢项]
  */
 $checks = [
-    'doctor'   => ['环境（doctor）', [PHP_BINARY, $root . '/tools/doctor.php', '--quiet'], false],
+    // ★ `--scope=gate`：doctor 的 `affects` 分级要真被读 —— 一台没有 MSVC 的机器上
+    //   MSVC / SDK / PHPRC 都不影响本闸门（本闸门是 T0，纯 PHP），否则第一项就 break，
+    //   后面 27 项一条都跑不到（2026-11-11 修）。
+    'doctor'   => ['环境（doctor）', [PHP_BINARY, $root . '/tools/doctor.php', '--quiet', '--scope=gate'], false],
     'lint'     => ['lint', [PHP_BINARY, $root . '/tools/lint.php'], false],
     'selftest' => ['lint 自检', [PHP_BINARY, $root . '/tools/lint.php', '--selftest'], false],
     // ★ 跨层 ABI：stub 是唯一事实源，C++ 实现与解释器替身都是被校验方。

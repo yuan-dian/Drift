@@ -73,7 +73,7 @@ final class ScrollKeyApplication extends Application
         // 声明者只认领一个与翻页无关的键 ⇒ 它"没吃掉 PageDown"，但框架仍然让开。
         return Column::make()
             ->children([$view])
-            ->keyboard(static function (KeyEvent $event): bool {
+            ->keyboard(static function (KeyEvent $event, Element $self): bool {
                 return $event->chord->key === 'F13';
             });
     }

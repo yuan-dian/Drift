@@ -138,8 +138,8 @@ final class OverlayLayout
         if (\is_infinite($capW)) {
             $box->layout(BoxConstraints::unbounded());
         } else {
-            // ★ 走 `capWidth()` 工厂，**不要**在这里手写 `BoxConstraints::INFINITY`：
-            //   外部类常量在 AOT 下求值成 0 ⇒ 面板宽高全 0、画面一丝不变，而 smoke 全绿。
+            // ★ 走 `capWidth()` 工厂：只限宽的约束只在这一处写（INF 单一出口）。
+            //   Tooltip 面板尺寸断言守住「不是 0」（旧 AOT 缺陷已修，见 PITFALLS 勘误）。
             $box->layout(BoxConstraints::capWidth($capW));
         }
 

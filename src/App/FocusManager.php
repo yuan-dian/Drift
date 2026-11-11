@@ -323,7 +323,8 @@ final class FocusManager
                 continue;
             }
 
-            // 签名 `(KeyEvent, Element)`；老的单参 handler 在 PHP 里会忽略多余参数。
+            // 固定传 `(KeyEvent, Element)` 两参：AOT 校验实参个数，少写即 Fatal
+            // （lint `callback-arity` 守全部调用点与返回 `\Closure` 的工厂）。
             $result = $handler($event, $node);
 
             if ($result === true || $result === KeyResult::Handled) {

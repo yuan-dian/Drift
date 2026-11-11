@@ -82,7 +82,43 @@ function stale_missing(string $src): array
         $missing[] = 'tpc 指纹只哈希了入口文件（旧口径）⇒ 升级编译器不会触发全量';
     }
 
+    // 工程目录必须收 `project.yml`：默认后缀只认 `.php` ⇒ 改 `sources` / `ignore` /
+    // `resource` 后指纹不变、构建 SKIP，产物静默过期；但又**不能**收全部——
+    // `build/` 是每次构建都变的生成物，收进来就永远 FULL（比 SKIP 更难发现）。
+    $appLine = stale_line_with($src, "'app:'");
+    if ($appLine === '') {
+        $missing[] = '工程目录没进输入指纹（`app:` 那行没了）';
+    } else {
+        if (!\str_contains($appLine, 'hashTree(')) {
+            $missing[] = "工程目录没走 hashTree（`app:` 那行）";
+        }
+        if (!\str_contains($appLine, "'.yml'")) {
+            $missing[] = "工程目录只收 `.php`（`app:` 那行要带 '.yml'，否则改 project.yml 会 SKIP）";
+        }
+        if (!\str_contains($appLine, "'build'")) {
+            $missing[] = "工程目录没排除 build/（生成物每帧都变 ⇒ 指纹永远变、每次全量重编）";
+        }
+    }
+
+    // 图标是构建期嵌入的，但它在仓库根 `assets/`，不在工程目录内 ⇒ 必须单列一项。
+    $assetsLine = stale_line_with($src, "'assets:'");
+    if ($assetsLine === '' || !\str_contains($assetsLine, 'hashTree(')) {
+        $missing[] = '图标目录没进输入指纹（`assets:` 那行）⇒ 换图标构建会 SKIP';
+    }
+
     return $missing;
+}
+
+/** 取出包含指定标记的那一行源码（用于逐行核对参数），没有则返回 '' */
+function stale_line_with(string $src, string $needle): string
+{
+    foreach (\preg_split('~\R~', $src) ?: [] as $line) {
+        if (\str_contains($line, $needle)) {
+            return $line;
+        }
+    }
+
+    return '';
 }
 
 /** 一份「接线齐全」的合成源码，供 --selftest 做正对照 */
@@ -93,6 +129,8 @@ function stale_good_source(): string
         "function wipeCache(string \$d): void {}",
         "\$incremental = in_array('--incremental', \$argvRest, true);",
         "\$decision = StalePolicy::decide(\$p, \$c, \$e, \$f, \$i);",
+        "hash_update(\$inputs, 'app:' . hashTree(\$projectDir, ['.php', '.yml', '.json'], ['build', 'bin', 'tests']) . \"\\n\");",
+        "hash_update(\$inputs, 'assets:' . hashTree(\$root . '/assets', '') . \"\\n\");",
         "hash_update(\$inputs, 'cpp:' . hashTree(\$root . '/cpp-src', '') . \"\\n\");",
         "hash_update(\$inputs, 'tpc:' . \$tpcIdentity . \"\\n\");",
         "\$tpcIdentity = is_dir(\$tpcSourceRoot . '/src') ? hashTree(\$tpcSourceRoot . '/src', '') : '';",
@@ -208,6 +246,42 @@ if ($selftest) {
                     $good
                 )),
                 static fn(string $m): bool => \str_contains($m, '没覆盖编译器源码树')
+            )),
+            'wantCount' => 1,
+        ],
+        [
+            'name' => '工程目录退回默认后缀（只收 .php）⇒ 报改 project.yml 会 SKIP',
+            'got' => \array_values(\array_filter(
+                stale_missing(\str_replace(
+                    "hashTree(\$projectDir, ['.php', '.yml', '.json'], ['build', 'bin', 'tests'])",
+                    "hashTree(\$projectDir)",
+                    $good
+                )),
+                static fn(string $m): bool => \str_contains($m, '只收 `.php`')
+            )),
+            'wantCount' => 1,
+        ],
+        [
+            'name' => '工程目录不排除 build/ ⇒ 报指纹永远变、每次全量',
+            'got' => \array_values(\array_filter(
+                stale_missing(\str_replace(
+                    "['build', 'bin', 'tests']",
+                    "['bin', 'tests']",
+                    $good
+                )),
+                static fn(string $m): bool => \str_contains($m, '没排除 build/')
+            )),
+            'wantCount' => 1,
+        ],
+        [
+            'name' => '删掉 assets 指纹行 ⇒ 报换图标会 SKIP',
+            'got' => \array_values(\array_filter(
+                stale_missing(\str_replace(
+                    "hash_update(\$inputs, 'assets:' . hashTree(\$root . '/assets', '') . \"\\n\");\n",
+                    '',
+                    $good
+                )),
+                static fn(string $m): bool => \str_contains($m, '图标目录没进输入指纹')
             )),
             'wantCount' => 1,
         ],

@@ -10,6 +10,14 @@ on:
 
 jobs:
   # ── T0：纯 PHP 校验，公开 Windows runner 即可，无需 MSVC / tpc ──
+  #
+  # ★ 判据集**不写白名单**（2026-11-11）：此前是
+  #     --only=lint,selftest,devshell,docref,apidoc,probe,tick,scale,sym,m2,unit
+  #   —— 11 项 vs `gate` 真实 28 项，漏掉的是 abi / cppbridge / dxdiag /
+  #   stalepolicy / errshape 这五个「接线对账 + 变异自证」对，共 10 项亚秒级纯 PHP
+  #   判据。它们恰恰是最该进 CI 的类型（没有前置依赖、抓的是"能力是假的"）。
+  #   根因是白名单不会随新增判据增长 ⇒ 改成 `--fast`：集合自动跟随 `$checks`。
+  #   doctor 用 `--scope=gate`（见 tools/doctor.php），缺 MSVC 不拦本闸门。
   gate-fast:
     name: Gate (T0 pure-PHP)
     runs-on: windows-latest
@@ -20,16 +28,13 @@ jobs:
         with:
           php-version: '8.4'
           extensions: mbstring, gd
-      - name: Run gate (T0 subset)
+      - name: Run gate (all fast items)
         shell: bash
-        run: |
-          php tools/gate.php \
-            --only=lint,selftest,devshell,docref,apidoc,probe,tick,scale,sym,m2,unit \
-            --json
+        run: php tools/gate.php --fast --json
 
-  # ── Nightly：T0 + 慢项（feature / golden），仍纯 PHP ──
+  # ── Nightly：T0 全量（含 feature / pages / smoke 等慢项），仍纯 PHP ──
   gate-nightly:
-    name: Gate (nightly, slow items)
+    name: Gate (nightly, all items)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     steps:
@@ -39,12 +44,9 @@ jobs:
         with:
           php-version: '8.4'
           extensions: mbstring, gd
-      - name: Run gate (T0 + slow)
+      - name: Run gate (full)
         shell: bash
-        run: |
-          php tools/gate.php \
-            --only=lint,selftest,devshell,docref,apidoc,probe,tick,scale,sym,m2,unit,feature,golden \
-            --json
+        run: php tools/gate.php --json
 
   # ── T2：AOT 真机构建 + 真机探针 ──
   # 需要自托管 Windows runner，预装：

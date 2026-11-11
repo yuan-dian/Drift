@@ -215,3 +215,27 @@ DRIFT_TPC_ENTRY="D:/TypePHP/typephp/bin/tpc.php" php tools/drift-codegen.php
   的假结论。
 - **该找上游**：接口跨文件多实现的特化（`TaskHost` 三个实现分散在三处），以及可空转换路径上
   的类保留。`!== null` 收窄仍有价值但不是杠杆 —— 类已保留，剩下的是多态与擦除。
+
+---
+
+## 9. 附带终结的一条历史 AOT 差异：外部类常量求值成 0（2026-11-11 补）
+
+用户点名复核后确认：**这一批修复同时把「外部类常量引用在 tpc 生成物里求值成 0」
+这条老坑终结了**，本仓不必再为它绕路。
+
+- 上游：`fce275b7 fix(compiler): fold native class scalar constant expressions`
+  （10-27）是常量折叠的根因修复；本批次的 `95e4f3e6 fix(types): retain scalar
+  constant storage and lowered types`（11-10）保留标量常量的存储与降级类型。
+  同家族还有 `47c8215d`（#172，表达式常量回落 Zend 查表）与 `1497c731`
+  （#178，数组常量符号冲突）。
+- 本仓观察：`2026-10-28.md` 记忆已写「当前编译器已不再复现（保留为回归守卫）」，
+  只是 `MEMORY.md` 铁律、源码注释与 `PITFALLS` 全文没同步 ⇒ 11-11 综合 review 的
+  分面代理据此把 `RenderScrollView` 手写 `BoxConstraints::INFINITY` 误判成 P0。
+- 当前产物实证：`apps/users/build/include/php_src_Geometry_BoxConstraints_arginfo.h`
+  把 `INFINITY` 注册为 `std::numeric_limits<double>::infinity()`；
+  `RenderScrollView.cc` 把该常量编成 `php::constant(...)` 取内建 `INF`（不是 0）。
+
+**处置**：只同步文档与注释，不改布局。`BoxConstraints::capWidth()` 工厂与
+Tooltip/Select 面板非零尺寸断言继续留着，作为「INF 不为 0」的回归守卫 ——
+上游若回退，这些断言会先红。不新增依赖生成产物的 T2 定值判据（产物不进 git，
+只会多一个维护面）。订正清单见 `PLAN-REVIEW-FIX-2026-11-11.md` §2.2。

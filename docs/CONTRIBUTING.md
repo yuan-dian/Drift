@@ -24,7 +24,7 @@
 
 ## 2. 三层验证（T0/T1/T2，dev 绿 ≠ AOT 绿）
 
-- **T0**：纯 PHP 校验（`gate` 的 lint / selftest / devshell / docref / apidoc / probe / tick / scale / sym / m2 / unit）。
+- **T0**：纯 PHP 校验（`gate --fast` 的全部项 —— **以 `gate.php --list` 为准**，别抄清单）。
   只装 PHP 8.4 就能跑——**CI 公开 runner 跑这部分**。
 - **T1**：开发态壳（`php tools/drift-dev.php <app>`）—— 改 PHP 即时生效，不重编译。
 - **T2**：AOT 真机构建 + 真机探针（`drift-build --full` + `probe-window`）。
@@ -44,10 +44,13 @@ python tools/probe-window.py <app>   # 真机探针（5 判据）
 
 ## 4. CI
 
-- **PR**：跑 T0 纯 PHP 子集
-  （`gate --only=lint,selftest,devshell,docref,apidoc,probe,tick,scale,sym,m2,unit --json`），
-  `windows-latest` + `setup-php 8.4`，**无需 MSVC / tpc**。
-- **Nightly**：同上 + 慢项（feature / golden）。
+- **PR**：跑 T0 全量（`php tools/gate.php --fast --json`），`windows-latest` +
+  `setup-php 8.4`，**无需 MSVC / tpc**。
+  ★ 不要在这里写 `--only=<清单>`：白名单不会随新增判据增长，2026-11-11 之前它只列了
+  11 项（真实 28 项），漏掉的是 abi / cppbridge / dxdiag / stalepolicy / errshape
+  这五对「接线对账 + 变异自证」——最该进 CI 的那一批。缺工具链的项由
+  `doctor --scope=gate` 放行（`affects` 里没有 `gate` 的失败不拦本闸门）。
+- **Nightly**：`php tools/gate.php --json`（全量，含 feature / pages / smoke 慢项）。
 - **AOT / T2**：需自托管 Windows runner（预装 §1 工具链），见 `.github/workflows/ci.yml` 注释模板。
 
 ## 5. 改代码的纪律

@@ -240,7 +240,7 @@ final class Slider extends RenderBoxWidget implements SemanticsValueEditable
             return null;
         }, ownsPress: true);
 
-        $this->keyboard(function (KeyEvent $event): bool {
+        $this->keyboard(function (KeyEvent $event, Element $self): bool {
             return $this->nudge($event);
         });
     }

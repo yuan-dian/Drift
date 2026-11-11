@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Layout;
 
+use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Point;
 use Drift\Geometry\Rect;
@@ -24,10 +25,18 @@ use Throwable;
  *
  * ★ **`paintBroken` 不自动复位**：渲染期异常意味着这棵子树的结构已经不可信，
  *   本盒从此只画兜底标记。要恢复只能重新挂载（应用级决定，不是框架偷偷重试）。
+ *
+ * ★ **必须留痕**（2026-11-11 补）：Element 层的 `ErrorBoundaryElement` 只包住
+ *   `rebuild` / `settlePass`，**包不住 layout / paint** —— 那两段抛出的异常此前
+ *   被这里吞掉且零留痕，症状就是"某个方块变成红叉，日志什么都没有"。红叉能看见
+ *   不代表能排查：没有异常文本与行号，等于把定位成本推给下一个人。
  */
 final class RenderErrorBoundary extends RenderProxyBox
 {
     private bool $paintBroken = false;
+
+    /** 同一个坏盒每帧都会再抛一次 —— 只留第一条痕迹 */
+    private bool $reported = false;
 
     protected function performLayout(BoxConstraints $constraints): Size
     {
@@ -41,7 +50,7 @@ final class RenderErrorBoundary extends RenderProxyBox
 
             return $constraints->constrain($child->size());
         } catch (Throwable $e) {
-            $this->paintBroken = true;
+            $this->markBroken($e, '布局');
 
             // 兜底地：自然尺寸（不动用约束上限 —— INF 约束会画出无限大的盒）
             return $constraints->constrain(new Size(160.0, 48.0));
@@ -60,9 +69,27 @@ final class RenderErrorBoundary extends RenderProxyBox
         try {
             parent::paintContent($canvas);
         } catch (Throwable $e) {
-            $this->paintBroken = true;
+            $this->markBroken($e, '绘制');
             $this->paintBrokenMark($canvas);
         }
+    }
+
+    /** 置坏并**留一次痕**（G2：兜底不等于静默） */
+    private function markBroken(Throwable $e, string $phase): void
+    {
+        $this->paintBroken = true;
+        if ($this->reported) {
+            return;
+        }
+        $this->reported = true;
+
+        Errors::report(sprintf(
+            '错误边界吞下%s期异常：%s（%s:%d）—— 该子树只画兜底标记，重新挂载才能恢复',
+            $phase,
+            $e->getMessage(),
+            basename($e->getFile()),
+            $e->getLine(),
+        ), Errors::DIAGNOSTIC);
     }
 
     private function paintBrokenMark(Canvas $canvas): void

@@ -307,7 +307,7 @@ final class ComboBoxState extends State
             ->cross(FlexAlign::Stretch)
             ->children($rows)
             // 焦点在行上时的按键转发（见 forwardKey()）：只有焦点在这一支时命中。
-            ->keyboard(function (KeyEvent $event): bool {
+            ->keyboard(function (KeyEvent $event, Element $self): bool {
                 return $this->forwardKey($event);
             });
     }
@@ -506,7 +506,7 @@ final class ComboBoxState extends State
      */
     private function keyHandler(): \Closure
     {
-        return function (KeyEvent $event): bool {
+        return function (KeyEvent $event, Element $self): bool {
             $open = $this->dismiss !== null;
 
             if ($event->chord->is(KeyChord::escape())) {

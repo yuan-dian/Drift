@@ -39,4 +39,17 @@ final class IconButton extends Button
     {
         return new self($icon, $label);
     }
+
+    /**
+     * ★ 覆写成**响亮失败**，不是沿用父类：`Button::make()` 里是 `new self`（= `Button`），
+     *   `IconButton::make('保存')` 会静默返回一个**没有图标**的普通按钮 —— 而返回类型
+     *   写着 `self`，读代码的人以为拿到了图标按钮，跑起来只是"图标不见了"。
+     *   本类的图标是必填的，`make(label)` 无法表达 ⇒ 指回 `of()`（G2：要么生效，要么响）。
+     */
+    public static function make(string $label): self
+    {
+        throw new \LogicException(
+            "IconButton::make() 无法表达图标（构造必需 IconName）⇒ 用 IconButton::of(\$icon, '{$label}')",
+        );
+    }
 }

@@ -9,7 +9,7 @@ use Drift\Geometry\EdgeInsets;
  * 悬停提示的**形体**（W8-2，2026-10-23）—— 纯工厂，不是 Widget。
  *
  * ```php
- * IconButton::make('save')->tooltip('保存当前文档 (Ctrl+S)');   // 应用侧只有这一行
+ * IconButton::of(IconName::Check, '保存')->tooltip('保存当前文档 (Ctrl+S)');   // 应用侧只有这一行
  * ```
  *
  * ★ **为什么是工厂而不是 Widget 类**：Tooltip 的形体就是"`PopupPanel` + 一段小字"，

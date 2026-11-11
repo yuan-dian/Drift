@@ -366,7 +366,7 @@ final class DirectionalFocusTest extends SmokeTestCase
     public function testDeclinedHandsTheKeyBackToTheFramework(): void
     {
         $declined = $this->app(Column::make()
-            ->keyboard(static fn(KeyEvent $e): KeyResult => KeyResult::Declined)
+            ->keyboard(static fn(KeyEvent $e, Element $self): KeyResult => KeyResult::Declined)
             ->children([Button::make('A'), Button::make('B')]));
         $f1 = $declined->focus();
         $f1?->focus($this->labelOf($declined, 'A'));
@@ -378,7 +378,7 @@ final class DirectionalFocusTest extends SmokeTestCase
         );
 
         $owned = $this->app(Column::make()
-            ->keyboard(static fn(KeyEvent $e): KeyResult => KeyResult::Owned)
+            ->keyboard(static fn(KeyEvent $e, Element $self): KeyResult => KeyResult::Owned)
             ->children([Button::make('A'), Button::make('B')]));
         $f2 = $owned->focus();
         $f2?->focus($this->labelOf($owned, 'A'));
@@ -391,7 +391,7 @@ final class DirectionalFocusTest extends SmokeTestCase
 
         // 老的 `bool` 声明一条都不用改：`false` ≡ `Owned`
         $legacy = $this->app(Column::make()
-            ->keyboard(static fn(KeyEvent $e): bool => false)
+            ->keyboard(static fn(KeyEvent $e, Element $self): bool => false)
             ->children([Button::make('A'), Button::make('B')]));
         $f3 = $legacy->focus();
         $f3?->focus($this->labelOf($legacy, 'A'));

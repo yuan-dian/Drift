@@ -170,6 +170,7 @@ trait WidgetInteraction
      *   所以包裹式控件也能挂：`ComboBox` 包 `TextField` 时焦点在 `TextField`，
      *   而 `ComboBox` 自己声明的 `keyboard()` 照样收得到。
      * 回调 `\Closure(KeyEvent, Element): (bool|KeyResult)`：
+     * ★ 两个形参必须写全：AOT 校验实参个数、解释器忽略多余实参（lint `callback-arity` 守）。
      * - `true` / `KeyResult::Handled` ⇒ 吃掉这个键；
      * - `false` / `KeyResult::Owned` ⇒ 不吃，但**这个键仍归我**（下游各环照跑，
      *   框架的方向键导航不跑）。默认口径，`Select` 面板关着靠它让位给激活；

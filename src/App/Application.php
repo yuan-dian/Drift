@@ -847,6 +847,12 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         }
 
         // 拖动中的重排同样是窗口帧：裁剪 + 留痕，不弹 Fatal 打断拖动。
+        // ★ 必须先切管线：下面的 `placeOverlays()` 会经 `RenderBox::setBase()` /
+        //   `bumpStructure()` 往 `Pipeline::current()` 记账。多窗口下若不切，这一轮
+        //   重排的 paintEpoch 记到**上一个跑帧的窗口**账上 ⇒ 本窗静默不重绘
+        //   （2026-11-11 补：这是「进帧必 enter」铁律漏的第 5 个入口）。
+        Pipeline::enter($this->pipeline);
+
         // 档位若变了得先重建树 —— 放在跑帧之前，同帧生效（否则会闪一帧旧布局）。
         $this->adoptWindowSize($constraints);
 

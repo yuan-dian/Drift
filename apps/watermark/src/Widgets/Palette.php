@@ -13,10 +13,9 @@ use Drift\Rendering\Color;
  *   + 深灰虚线"会变成"深底 + 浅线"，与原文的观感差很远。
  *   要支持主题时，正确的做法是**新增一组 `ColorToken`**（框架侧），而不是在
  *   应用里散着写 hex —— 但那是另一件事，不在本应用的范围内。
- * ★ 全部是 `static` 方法而不是常量：`Color` 是对象，而 PHP 的类常量不能放对象
- *   （8.1 起可以，但 tpc 的 AOT 对常量求值的支持没验过 —— 本仓踩过"外部类常量
- *   求值成 0"的坑）。方法每次 new 一个 `Color`，成本可以忽略（`Color` 是
- *   `final readonly` 的小对象）。
+ * ★ 全部是 `static` 方法而不是常量：`Color` 是对象，PHP 8.1 虽允许对象常量，
+ *   但 tpc 对 `new` 型常量初值未验过。方法每次 new 一个 `Color`（`final readonly`
+ *   小对象），成本可忽略。
  */
 final class Palette
 {

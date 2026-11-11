@@ -172,7 +172,7 @@ final class CalendarViewState extends State
             ->children($kids)
             // 只给宽、不给高：高度由内容（行数）决定，SizedBox 高度小于子内容会触发 C6 Fatal，"5 行还是 6 行"本来就是内容说了算。
             ->boxSize(width: CalendarView::CELL_WIDTH * CalendarView::COLUMNS + self::PAD * 2.0)
-            ->keyboard(function (KeyEvent $event): KeyResult {
+            ->keyboard(function (KeyEvent $event, Element $self): KeyResult {
                 return $this->pageKey($event);
             });
     }

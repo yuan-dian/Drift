@@ -11,6 +11,7 @@ use Drift\Dev\Lint\Rules\AttributeUnqualified;
 use Drift\Dev\Lint\Rules\AwaitProgress;
 use Drift\Dev\Lint\Rules\AwaitScope;
 use Drift\Dev\Lint\Rules\BackendBranch;
+use Drift\Dev\Lint\Rules\CallbackArity;
 use Drift\Dev\Lint\Rules\CancelGuard;
 use Drift\Dev\Lint\Rules\CachedSubscriber;
 use Drift\Dev\Lint\Rules\ClassMissingUse;
@@ -125,6 +126,9 @@ final class Linter
             // 中文串单引号（AGENTS 铁律，2026-11-11 机械化）：双引号里 `$n` 紧跟中文
             //   会被词法吃成 `$n项` ⇒ 静默取到未定义变量。全仓当前 0 处，纯防复发。
             new CjkVarName(),
+            // AOT 回调 arity（2026-11-11 综合 review P0）：解释器忽略多余实参、
+            //   AOT 当场 Fatal ⇒ 整页错误占位。内联闭包与 `\Closure` 工厂两种形态都守。
+            new CallbackArity(),
         ]);
     }
 

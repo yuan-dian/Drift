@@ -167,8 +167,8 @@ final class DialogPageState extends State
     /**
      * 筛选表：**照抄 `Dialog::openFile()` 文档里的形状**（`[显示名, 通配符]`）。
      *
-     * ★ 不用类常量：AOT 对"外部类常量"有前科（求值成 0，见 MEMORY 第 18 条），
-     *   而这里是同一个类内的常量 —— 仍然不值得为省两个括号去赌。
+     * ★ 筛选表直接写字面量：只有两项，抽常量省不下什么，也少一层间接。
+     *   旧注释引用的「外部类常量求值成 0」AOT 缺陷已由上游修复（2026-11-11 勘误）。
      *
      * @return list<array{string, string}>
      */

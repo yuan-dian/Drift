@@ -110,7 +110,7 @@ final class PressLabApplication extends Application
                 ->onPressed(function (): void {
                     $this->keyPresses++;
                 })
-                ->keyboard(function (KeyEvent $event): bool {
+                ->keyboard(function (KeyEvent $event, Element $self): bool {
                     $this->keyLog[] = $event->chord->key;
 
                     return $this->keyHandled;

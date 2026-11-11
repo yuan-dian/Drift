@@ -13,7 +13,7 @@
  *   也不在 AOT 语义，在**事件序列**里。有这两份对表，下次再撞到同类现象
  *   不必重跑一整条链去排除框架本身。
  */
-require 'D:/TypePHP/Drift2/tools/autoload.php';
+require __DIR__ . '/autoload.php';
 
 use Drift\Dev\Bench\FrameTaxApp;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;

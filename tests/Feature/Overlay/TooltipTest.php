@@ -171,9 +171,8 @@ final class TooltipTest extends SmokeTestCase
         $panelBox = $top?->element?->effectiveBox();
         $panelW = ($panelBox?->size()?->width ?? 0.0) - 8.0;    // elevation 4 × 2
         $panelH = ($panelBox?->size()?->height ?? 0.0) - 8.0;
-        // ★ 面板必须有非零尺寸。2026-10-23 真机踩过：`BoxConstraints::INFINITY` 作为
-        //   **外部类常量引用**在 AOT 下求值成 0 ⇒ maxHeight=0 ⇒ 面板 w=h=0 ⇒
-        //   位置算得完全正确、画面一丝不变，而解释器侧全绿。
+        // ★ 面板必须有非零尺寸：2026-10-23 真机踩过「位置完全正确、尺寸 0」而
+        //   解释器侧全绿。成因（外部类常量求值成 0）已由上游修复；此断言保留作回归守卫。
         check(
             'Tooltip · 面板宽高非零（位置对但尺寸 0 = 画面一丝不变）',
             $panelW > 0.0 && $panelH > 0.0,

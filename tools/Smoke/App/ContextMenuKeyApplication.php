@@ -6,8 +6,10 @@ namespace Drift\Dev\Smoke\App;
 use Drift\App\Application;
 use Drift\Commands\CommandArg;
 use Drift\Input\KeyChord;
+use Drift\Input\KeyEvent;
 use Drift\Widget\Button;
 use Drift\Widget\Column;
+use Drift\Widget\Element;
 use Drift\Widget\Menu\ContextMenu;
 use Drift\Widget\Menu\MenuItem;
 use Drift\Widget\Widget;
@@ -39,7 +41,7 @@ final class ContextMenuKeyApplication extends Application
                     MenuItem::make('删除该行')->command('row.del'),
                 ])),
             Button::make('空白'),
-            Button::make('认领')->keyboard(function ($event): bool {
+            Button::make('认领')->keyboard(function (KeyEvent $event, Element $self): bool {
                 if ($event->chord->is(KeyChord::shift('F10'))) {
                     $this->claimed = true;
 

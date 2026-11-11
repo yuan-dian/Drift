@@ -321,7 +321,7 @@ final class SelectState extends State
             ->cross(FlexAlign::Stretch)
             ->children($rows)
             // 焦点在行上（Tab 进来）时按键转发到同一套导航
-            ->keyboard(function (KeyEvent $event): bool {
+            ->keyboard(function (KeyEvent $event, Element $self): bool {
                 return $this->handleNav($event);
             });
     }
@@ -336,7 +336,7 @@ final class SelectState extends State
      */
     private function keyHandler(): \Closure
     {
-        return function (KeyEvent $event): bool {
+        return function (KeyEvent $event, Element $self): bool {
             if ($this->dismiss === null) {
                 return false;
             }

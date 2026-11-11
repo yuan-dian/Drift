@@ -38,7 +38,7 @@ final class KeyAncestorApplication extends Application
         return Column::make()->paddingAll(24.0)->spacing(8.0)->children([
             // ★ 声明在**外层**：焦点会落在里面的 TextField 上，这层自己永远不是焦点控件
             TextField::make()->value('ab'),
-        ])->keyboard(function (KeyEvent $event): bool {
+        ])->keyboard(function (KeyEvent $event, Element $self): bool {
             $this->ancestorLog[] = $event->chord->key;
 
             return $this->ancestorEats;

@@ -62,14 +62,17 @@ function win(string $path): string
  *   ★ 只认**内容**（`hash_file`），不认 mtime —— `git checkout` / `touch` 会改
  *     mtime 但内容不变，按 mtime 判会误报"变了"从而白清一次缓存。
  *
- * @param string $suffix 只要这个后缀；'' ⇒ 全部文件
+ * @param string|list<string> $suffix 只要这些后缀（数组 = 任一命中）；'' ⇒ 全部文件
+ * @param list<string> $excludeDirs 相对 $dir 的目录前缀，跳过它们（生成物 / 产物目录）
  */
-function hashTree(string $dir, string $suffix = '.php'): string
+function hashTree(string $dir, string|array $suffix = '.php', array $excludeDirs = []): string
 {
     if (!is_dir($dir)) {
         return '';
     }
 
+    // `''` 归一成空集 = 全部收；数组里混了 `''` 同样按全部收
+    $suffixes = array_values(array_filter((array) $suffix, static fn(string $s): bool => $s !== ''));
     $files = [];
     $walker = new \RecursiveIteratorIterator(
         new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS)
@@ -78,8 +81,15 @@ function hashTree(string $dir, string $suffix = '.php'): string
         if (!$file instanceof \SplFileInfo || !$file->isFile()) {
             continue;
         }
-        if ($suffix !== '' && !str_ends_with($file->getFilename(), $suffix)) {
+        if ($suffixes !== [] && !array_filter($suffixes, static fn(string $s): bool => str_ends_with($file->getFilename(), $s))) {
             continue;
+        }
+        // 排除前缀按**目录**匹配：`build` 只跳过 `build/...`，不误伤 `rebuild.php`
+        $relative = str_replace('\\', '/', substr($file->getPathname(), strlen($dir) + 1));
+        foreach ($excludeDirs as $skip) {
+            if (str_starts_with($relative, $skip . '/')) {
+                continue 2;
+            }
         }
         $files[] = $file->getPathname();
     }
@@ -323,7 +333,19 @@ $inputs = hash_init('sha256');
 hash_update($inputs, 'src:' . hashTree("{$root}/src") . "\n");
 // ★ 指纹算的是**工程目录**（不是 `apps/{$app}`）：应用与探针走同一条路，
 //   而且探针的目录名与 `name:` 一致是约定，两者等价。
-hash_update($inputs, 'app:' . hashTree($projectDir) . "\n");
+// ★ 后缀必须显式给全 `project.yml`：默认只收 `.php` ⇒ 改 `sources` / `ignore` /
+//   `resource` 后指纹不变、构建 SKIP，产物静默过期（2026-11-11 修订）。
+// ★ 空手写 `''` 收全部也**不行**：`build/` 是每次构建都变的生成物 ⇒ 永远 FULL，
+//   比 SKIP 更难发现。故显式排除 `build`（生成物）、`bin`（产物）、
+//   `tests`（不进 AOT sources，改测试不该触发三分钟重编）。宁可多一次 FULL，
+//   不可漏一次 SKIP —— 方向是对的，因为漏 SKIP 是静默交付旧 exe。
+hash_update($inputs, 'app:' . hashTree($projectDir, ['.php', '.yml', '.json'], ['build', 'bin', 'tests']) . "\n");
+// ★ 图标是**构建期嵌入**的（`resource.icon` → tpc 生成 .res），但它在**仓库根**
+//   `assets/`、不在工程目录内 ⇒ 上面那行收不到。改图标是"改了却没重编"的同款洞。
+// ★ 字体（`cpp/fonts/`）**不进指纹**：它在运行期由 `FontLocator` / `drift_skia.cc`
+//   从 exe 旁的 `fonts/` 或 `cpp/fonts/` 加载，换 ttf 不需要重编，收进来只会制造
+//   每次 200s 的假 FULL。
+hash_update($inputs, 'assets:' . hashTree("{$root}/assets", '') . "\n");
 // ★ 后缀必须显式传 `''`（全部文件）：`hashTree()` 默认只收 `.php`，而 `cpp-src/`
 //   下只有 `drift_*.stub.php` 是 PHP —— 只改 `uia.cc` / 窗口头时指纹不变、构建
 //   SKIP，产物静默过期（2026-11-11 实证：拆完 UIA 重编却报"输入未变"）。

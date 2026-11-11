@@ -220,6 +220,15 @@ function drift_lint_selftest(string $root, Linter $linter): bool
             'apps/CjkVarNameBad.php:' . Diagnostic::ERROR,
             'apps/CjkVarNameBad.php:' . Diagnostic::ERROR,
         ],
+        // AOT 回调 arity（2026-11-11）：内联 keyboard / pointer / hover 三条 +
+        //   `$this->keyFactory()` 间接工厂一条。Good 侧钉住「正确签名 / 字符串里的
+        //   ->keyboard / 非槽方法单参闭包 / 双参工厂」不误报。
+        'callback-arity' => [
+            'apps/CallbackArityBad.php:' . Diagnostic::ERROR,
+            'apps/CallbackArityBad.php:' . Diagnostic::ERROR,
+            'apps/CallbackArityBad.php:' . Diagnostic::ERROR,
+            'apps/CallbackArityBad.php:' . Diagnostic::ERROR,
+        ],
     ];
 
     $ok = true;

@@ -350,11 +350,12 @@ final class Environment
     {
         $entry = self::envOr('DRIFT_TPC_ENTRY', '');
         if ($entry === '') {
-            foreach ([dirname($root) . '/typephp/bin/tpc.php', 'D:/TypePHP/typephp/bin/tpc.php'] as $candidate) {
-                if (is_file($candidate)) {
-                    $entry = $candidate;
-                    break;
-                }
+            // 唯一默认：与本仓**同级**的 `typephp/`（`D:/TypePHP/Drift2` ⇒ `D:/TypePHP/typephp`）。
+            // ★ 不再额外写死一个绝对路径兜底：它在本机与上一行同值（纯冗余），
+            //   换机器则是一条永远不成立的猜测 —— 失败了还得靠报错文案去查（2026-11-11）。
+            $sibling = dirname($root) . '/typephp/bin/tpc.php';
+            if (is_file($sibling)) {
+                $entry = $sibling;
             }
         }
         if ($entry === '' || !is_file($entry)) {

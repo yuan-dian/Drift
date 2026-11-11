@@ -28,8 +28,25 @@ declare(strict_types=1);
  */
 
 $root = dirname(__DIR__);
-$files = glob($root . '/tools/probe-*.py') ?: [];
+
+/**
+ * 共享件：**唯一实现本身**，不受 `duplicate-*` 规则的约束 —— 它们就是那"一份"。
+ * ★ 之前这里只扫 `probe-*.py`（连字符），三个共享件（下划线）根本不在扫描集里：
+ *   规则表里写着「输入已有唯一实现：probe_win」，而**唯一实现自己从没被审过**，
+ *   连"它是否还在"都没人核对（2026-11-11 修）。
+ */
+const DRIFT_PROBE_SHARED = ['probe_win.py', 'probe_check.py', 'probe_pixels.py'];
+
+$files = array_values(array_unique(array_merge(
+    glob($root . '/tools/probe-*.py') ?: [],
+    glob($root . '/tools/probe_*.py') ?: [],
+)));
 sort($files);
+
+$sharedMissing = array_values(array_filter(
+    DRIFT_PROBE_SHARED,
+    static fn(string $name): bool => !is_file($root . '/tools/' . $name),
+));
 
 /**
  * 规则表：`[名字, 正则, 说明]`。
@@ -100,8 +117,16 @@ function drift_probe_code_only(string $text): string
 $errors = 0;
 $checked = 0;
 
+foreach ($sharedMissing as $name) {
+    printf("tools/%s  缺共享件（规则表假定它存在）\n", $name);
+    $errors++;
+}
+
 foreach ($files as $file) {
     $rel = str_replace('\\', '/', substr($file, strlen($root) + 1));
+    if (in_array(basename($file), DRIFT_PROBE_SHARED, true)) {
+        continue; // 共享件是「唯一实现」，不审 duplicate-*，也不要求 import 自己
+    }
     $text = drift_probe_code_only((string) file_get_contents($file));
     $checked++;
 

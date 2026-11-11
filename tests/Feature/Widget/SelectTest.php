@@ -92,8 +92,8 @@ final class SelectTest extends SmokeTestCase
         $w = $size?->width ?? 0.0;
         $h = $size?->height ?? 0.0;
 
-        // ★★ 尺寸必须单独断言：Tooltip 那次"位置完全正确、尺寸 0"（AOT 外部类常量
-        //   求值成 0）就是这样漏过去的 —— 位置对不代表画得出来。
+        // ★★ 尺寸必须单独断言：Tooltip 那次"位置完全正确、尺寸 0"就是这样漏过去的 ——
+        //   位置对不代表画得出来。保留作回归守卫（成因已修复，见 PITFALLS 勘误）。
         check(
             'Select · 面板宽高非零（位置对但尺寸 0 = 画面一丝不变）',
             $w > 0.0 && $h > 0.0,

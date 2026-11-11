@@ -10,8 +10,8 @@ use Drift\State\Equatable;
  *
  * ★ **不可变 + 值相等**：实现 `Equatable` 后 `SubjectBuilder` 的 `select` 门控
  *   自动按内容比，调用点不必再手写 `->equals(...)`；漏写也不会退化成每次重建。
- * ★ `kind` 用字符串常量而不是枚举：枚举 case 不存在 / 外部常量求值成 0 是本仓
- *   踩过的 AOT 坑（见 `MEMORY`），而这里只有四个值、没有任何"穷尽"需求。
+ * ★ `kind` 用字符串常量而不是枚举：enum 里声明非 case 常量在 AOT 下会崩
+ *   （见 `MEMORY` enum 节），而这里只有四个值、没有"穷尽"需求。
  */
 final class StatusMessage implements Equatable
 {
