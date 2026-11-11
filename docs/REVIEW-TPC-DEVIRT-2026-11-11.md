@@ -121,3 +121,39 @@ python tools/probe-window.py users --title 用户管理          # 5 条判据
 bash probes/frame_tax_aot/build.sh && ./frame_tax_aot_probe.exe
 grep -rho 'typephp_call_method_cached' apps/users/build --include='*.cc' | wc -l
 ```
+
+## 8. 剩下 1128 处动态派发是什么写法
+
+`apps/users` 产物按接收者形态分（脚本按括号深度切第一个实参 + 回溯其声明/赋值）：
+
+| 接收者 | 处数 | 含义 |
+|---|---|---|
+| `php::Object` | 633 | **知道是对象，但类被擦掉**（可空 / 接口 / 跨层返回后强转） |
+| `php::Var` | 458 | **值层面就不知道**（裸 `array` 元素、`mixed`、异型三元合流） |
+| `this_` | 14 | abstract 类里的 `$this->`（子类可覆写，不可直调） |
+| 内联表达式 | 23 | `typephp_call_method_cached(typephp_read_property_cached(...))` 链式 |
+
+对应到 PHP 写法，按占比排序：
+
+1. **可空对象 `?Klass`** —— 最大宗。声明处：属性 **140**、形参 **97**、返回 **198**。
+   关键实证：`RenderBox.cc:247-256` 的 `while ($node !== null)` 循环里，
+   `$node->parent()` 仍走动态派发 —— **`!== null` 检查不做收窄**（上游只做了
+   `instanceof` 收窄，`f6185155`；nullable 被明确排除在去虚化之外）。
+2. **接口类型** —— `src/` 有 **40** 个接口；`TaskHost` 有 3 个实现且**跨文件**
+   （上游特化只对「同文件单实现者」生效）。例 `Element.php:76` 的
+   `$host->requestFocus()`（`?FocusHost`）。
+3. **裸 `array` 及其元素** —— **107** 个 `array` 属性，另有 **119** 处泛型只写在
+   `/** @var list<Element> */` 里、编译器看不见（`Element::$children` 就是）。
+   上游只修 `#[\StdList]` typed array 的属性根。
+4. **未声明类型的闭包参数** —— 生成 `php::Var x = vars_.get(N)`，例 `TableState.cc:204`。
+5. **`mixed` / `?array` 返回** —— `stage(): mixed`、`anchorAt(): ?array`。
+6. **异型三元 / `?:` 合流** —— 两支类不同 ⇒ `php::Var`（`Coalesce` 已修，三元未全修）。
+
+### 能动 / 不能动
+
+- **能改（上游已支持）**：把热点的裸 `array` 属性换成 `#[\StdList(Foo::class)]`，
+  元素与 `foreach` 都会拿到元素类。但会引入写入校验与 COW/引用限制，且 `$children`
+  的写入路径多 —— 属于「为拿 5% 去动核心数据结构」，暂不做。
+- **不该改**：可空与接口是语义需要（空状态、可替换端口），改写成非空只是把断言挪到别处。
+- **该找上游**：§1 那条 `!== null` / `if ($x === null) return;` 之后的对象收窄。
+  这一条能吃掉 633 里的大部分，是当前杠杆最大的一项，且与既有 `instanceof` 收窄同源。
