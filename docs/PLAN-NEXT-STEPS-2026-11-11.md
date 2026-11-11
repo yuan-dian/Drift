@@ -120,6 +120,8 @@
 | 给业务暴露 `Coroutine\run()` | 会把"卸载安全"换回"恢复后世界已变" | 同上 |
 | showcase 示例树 `drift2` 节点改名 | 联动 3 个 UIA 探针期望值 + 重建 AOT，零收益 | 下次顺手重建时 |
 | `docref --selftest` 的 `section-refs` 反例恒红 | 工具缺陷不是产品缺陷，且未进 gate | 下次动 `docref` |
+| 富文本**编辑侧**（`RichText` 可编辑） | 渲染侧已有 `RenderRichText` + `TextSpan::$tag` 点击命中；编辑侧今天是只读，无消费者。最小完备集已查清：`spansInRange` / `insertSpan` / `replaceRange` 三件套 + 规范化不变量（相邻同样式合并、零长度 span 删除）+ **一次编辑 = 一个 undo 单元**；内联图片要动排版层，不是加个 span 类型 | 公告编辑 / 工单备注这类真实需求 |
+| 富文本文档序列化格式 | 无消费者。要做必须是带 `version` 的显式编解码 + 迁移，**不学** `JSON.stringify(span)` 那种做法 | 出现"存下来再回显"的需求 |
 | 第二平台 / DevTools / 触控 / 高对比度 | 非 1.0 卡点，见 `DESIGN.md` 边界章 | 1.0 之后 |
 
 ---
