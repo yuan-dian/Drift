@@ -1,0 +1,59 @@
+# Product release gate. Runs on v* tags and does NOT rebuild dependencies:
+# it resolves the package from the DEPS_VERSION tag instead.
+#
+# The release is created as a DRAFT. While the repository is private that keeps the
+# publishing decision with a human; after going public it still prevents an
+# accidental announcement from a stray tag.
+
+name: Product release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: product-release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify and draft release
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP 8.4
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, gd, curl, zip
+
+      - name: Version anchors and fast gate
+        shell: bash
+        run: |
+          php tools/version.php --check
+          php tools/gate.php --fast --json
+
+      - name: Resolve deps package from DEPS_VERSION
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: php tools/fetch-deps.php --force
+
+      - name: Create draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; leaving it untouched."
+          else
+            gh release create "$TAG" --draft --verify-tag --title "Drift $TAG" --generate-notes
+          fi

@@ -1,5 +1,8 @@
 name: CI
 
+# 这里只跑判据，不写 Release。依赖包在 deps-build.yml（Skia pin 变更 / 手动，
+# 产出 deps-vN 资产），产品发版在 release.yml（v* tag，只取包不重建依赖）。
+
 on:
   push:
     branches: [main]
