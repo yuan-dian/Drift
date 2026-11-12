@@ -13,7 +13,7 @@
 
 | # | 结论 | 性质 |
 |---|---|---|
-| 1 | §26 的十条缺口仍成立；另发现一条**反向腐烂**：`GAP-10-26` 记「无滚动惯性」，实际 `ScrollMotion` 早有 glide / fling / friction | 记账纠错 |
+| 1 | §26 的十条缺口仍成立。~~另发现一条**反向腐烂**：`GAP-10-26` 记「无滚动惯性」，实际 `ScrollMotion` 早有 glide / fling / friction~~ ⇒ ★ 2026-11-12 订正：`ScrollMotion` 只有 `glideBy()`，类注释明写「不做 fling」，滚动惯性**仍是缺口**（见 §1.1） | 记账纠错 |
 | 2 | §26 量的是「**有没有**」，没量「**够不够用**」。控件库存齐了，但**单个控件的成熟度**仍有明显落差 | 新维度 |
 | 3 | 最典型是 `TextField`：公开面只有 `value/label/placeholder/onChanged` 四项，**没有错误态、辅助文本、长度约束**；Flutter `TextField` 30+ 属性、Qt `QLineEdit` 有 `validator`/`maxLength`/`inputMask`、WPF 有 `ValidationRule` | 能力缺口 |
 | 4 | 这个缺口**有真实消费者**：`apps/users` 注册页只能显示一条全局 `submitError`，**字段级错误无处可放** | 消费者信号 |
@@ -25,18 +25,33 @@
 
 | 能力 | 旧结论（GAP-10-26 / §26） | 实测（`src/` grep） | 判定 |
 |---|---|---|---|
-| 滚动惯性 | **缺口**（`grep inertia\|fling` = 0） | `src/Widget/ScrollMotion.php` 有 `glide` / `fling` / friction | **过期**（早已有） |
+| 滚动惯性 | **缺口**（`grep inertia\|fling` = 0） | `src/Widget/ScrollMotion.php` 只有 `glideBy()`；★ 2026-11-12 订正：**无 fling / friction**，注释明写「不做 fling」 | **原判「早已有」有误**，仍是缺口（零消费者），见 §1.1 |
 | 真实 TabBar | 缺（`TabView` 复用 `SegmentedControl`） | 同左；且 `TabView` **只有测试消费者**，无应用使用 | 成立，零消费者 |
 | i18n / RTL | 缺 | `Directionality\|TextDirection\|RTL` = 0 | 成立，零消费者 |
 | 混合模式 | 缺 | `BlendMode\|xfermode` = 0 | 成立，零消费者 |
-| 手势族（长按/捏合） | 半成品（只有 tap/drag） | 同左 | 成立，桌面无消费者 |
-| 装饰控件（Badge/Avatar/Breadcrumb/Pagination） | 缺 | 0 | 成立，零消费者 |
+| 手势族（长按/捏合） | 半成品（只有 tap/drag） | 同左；★ 2026-11-12 订正：右键 `ContextMenu`、拖拽 `Draggable` / `DragTarget`、`hover()`、滚轮链、`GestureArena`、`TapTracker` 双击链已落地且有 apps 消费者；仍缺 longPress / pinch / rotate / fling | 成立但**范围收窄**（四项零消费者），见 §1.1 |
+| 装饰控件（Badge/Avatar/Breadcrumb/Pagination） | 缺 | 四项 `grep` = 0；★ 2026-11-12 订正：同类 `Card` / `Divider` / `Progress` / `Spinner` / `Snackbar` / `TooltipPanel` 已有 `@api` 且被 apps 消费 | 成立但**只限这四项**，不是装饰控件整体缺，见 §1.1 |
 | 布局原语（`ConstrainedBox` / `IntrinsicWidth`） | 缺 | 内部固有尺寸在，公开控件无 | 成立，零消费者 |
 | **TextField 装饰 / 约束** | **未覆盖** | `error\|helper\|maxLength\|obscure` 在 `TextField*` = 0 | **成立，有消费者** |
 | 自动聚焦 | 未覆盖 | 0（`TableState` 注释明写「本仓无 `autoFocus`」） | **已做**（§9：机制缺的是"打开"那一半） |
 
 ★ 前七条都指向同一句话：**不是不会做，是没有消费者**。第八条不同 ——
 它今天就在让业务应用付出代价（见 §2）。
+
+### 1.1 2026-11-12 事实订正（只改事实，不改裁决）
+
+按本文开头那条铁律重扫 `src/` 与 `apps/`，上表三处记录过期。原记录保留划痕，
+是因为 §26.1 的教训正是「文档会腐烂」，抹掉错话等于抹掉证据。
+
+| # | 上表原记 | 复核事实（2026-11-12） | 裁决影响 |
+|---|---|---|---|
+| 1 | `ScrollMotion` 有 `glide` / `fling` / friction，滚动惯性「早已有」 | `src/Widget/ScrollMotion.php` 只有 `glideBy(Δ)`（目标累加）；第 31 行注释原文「★ **不做 fling（惯性）**」，曲线已下沉到 `AnimatedScalar::toward()`，默认半衰期 55ms 指数**趋近目标**，不是带初速的衰减。`GAP-10-26` 记「无滚动惯性」原本是对的 | 滚动惯性回到「缺口、零消费者」，仍延后 |
+| 2 | 手势族「只有 tap/drag、桌面无消费者」 | 右键 `src/Widget/Menu/ContextMenu.php`、拖拽 `src/Widget/Drag/Draggable.php` 与 `DragTarget.php`、`src/App/DragController.php`、`src/Input/GestureArena.php`、`hover()`（`WidgetInteraction`）、滚轮链 `src/App/ScrollInputRouter.php`、双击链 `src/Input/TapTracker.php` + `PointerEvent::$clickCount` 都已落地；`apps/users/src/Widgets/UserRow.php` 用 `contextMenu()` + `draggable()`，`apps/showcase/src/Pages/ButtonsPage.php` 用 `hover()`。真正没有的只剩 **longPress / pinch / rotate 手势与 fling 惯性**（`src/Widget/Activatable.php` 注释明写「不开 `longPressable()`」） | 缺口从「手势族」收窄为四项，仍零消费者、仍延后 |
+| 3 | 装饰控件「缺」 | 点名的四项（Badge / Avatar / Breadcrumb / Pagination）`grep` 全 0；但同类的 `Card` / `Divider` / `Progress` / `Spinner` / `Snackbar` / `TooltipPanel` 与布局侧 `Spacer` / `Expanded` 都带 `@api`，在 `apps/` 分别被 37 / 4 / 6 / 8 / 2 与 14 / 12 个文件消费。手写替代集中在演示应用（如 `apps/showcase/src/Pages/AsyncTablePage.php` 用按钮拼翻页），业务应用 `users` 没有分页 | 「装饰控件整体缺」不成立；四项仍缺、仍延后 |
+
+★ **订正只动事实层**：§0 第 5 条「其余缺口维持零消费者延后」与 §7 的延后清单不变。
+另外 `DEBT` §26.2 那十条逐条量过仍成立 —— `src/Input/GestureRecognizer.php` 今天仍是
+69 行、只有 `tap` / `drag` 两个构造器；被放大的是本稿 §1 的措辞，不是 §26.2 的账。
 
 ---
 
@@ -138,6 +153,8 @@ TextField::make()
 - **`inputFormatters`**：先用 `onChanged` 里过滤即可；框架层过滤器要处理
   "过滤后与受控值不同步"，收益不足。
 - **i18n / RTL / BlendMode / 真 TabBar / 装饰控件**：零消费者，继续延后。
+  ★ 2026-11-12 订正：这里的「装饰控件」只指 Badge / Avatar / Breadcrumb / Pagination
+  四项，不是整个装饰控件面（见 §1.1）。
 
 ---
 
