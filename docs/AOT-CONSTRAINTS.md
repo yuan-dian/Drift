@@ -53,7 +53,7 @@
 | **同一函数里变量类型是静态的**，换个类型赋值 ⇒ Fatal `Cannot assign value to variable $k of type php::Int with type php::Var` | 同一个 `$k` 先当 `for` 计数器（int）再当数组键（string）——**解释器完全允许** | 两个名字（`$rep` 计数 / `$k` 键）。★ 2026-11-04 在 `FrameTaxMeasure` 撞到，是「解释器能跑、AOT 编不过」的典型 |
 | **`sources` 是翻译单元白名单，不是类解析路径** | 写 `../../tools` 想"用到哪个类就编哪个" | 逐文件列。★ 目录里**所有** `.php` 都会被当程序的一部分预处理，而 `tools/Lint/fixtures/` 里全是**故意写坏**的夹具 ⇒ 当场死在 `All execution code must be within a function`。AOT 是静态链接，缺的类也不会按 PSR-4 现找（`class ... is undefined` 在**运行期**才炸） |
 | **反射造任意类**（`new $class()` / `ReflectionClass`）在 AOT 下不可用 | `--pages` 的 `glob` + `class_exists` + 反射发现 | **显式清单**：`tools/Bench/ShowcasePages.php`（名字是键、构造闭包是值，一份数据）。★ AOT 静态链接 ⇒ 没列进 `sources` 的类**根本不存在**，列进去了也必须**编译期**确定构造点。代价是清单会漂移 ⇒ 配判据「磁盘可用页 == 清单」兜住（**只能在解释器侧做**，那一侧才有反射）。做这条时顺带发现页面档缺「页面真建起来了」的自证，一并补上，见 `DEBT` §35 |
-| ★★ **`int / int` 是整数除法**（`7 / 2 === 3`）—— PHP 要求 `/` 永远返回 float，而 tpc 编成 C++ 的 `/` | 热路径写 `$a / $b` 且**两端都是 int** | 两端至少一个 `(float)`。★ **静默**：不崩、不报错、编译期不警告，只是数值偏。2026-11-04 在微基准里撞到（`DEBT` §36.7），`AspectPage` 里 10-24 写下的活体诊断当场被证实。★ **只有 `int/int` 错**：`int/float`、`float/int`、`float/float`、字面量 `16.0/9.0` 全对 —— 所以本仓 27 处除法实测**没有一处踩到**（几何指纹逐值相同） |
+| ★★ **默认原生标量模式下 `int / int` 是整数除法**（`7 / 2 === 3`）—— 0.8 起推断出的 `int` 局部固定为 `php::Int`，两个原生整数相除直接落 C++ 的 `/` | 热路径写 `$a / $b` 且**两端都是 int** | 两端至少一个 `(float)`。★ PHP 的真实语义是**整除得 int、非整除得 float**（`6 / 3 === 2`、`7 / 2 === 3.5`）加除零异常；tpc 默认模式把非整除截断。★ **上游有官方逃生口**：文件级 `use varint_types;` 把推断整数存回 `php::Var`，恢复 Zend 算术（非整除 float / 溢出转 float / `DivisionByZeroError` / `%`、移位、`**` 语义）；单个表达式可用 `std::any($v)`。**本仓不启用，理由与边界见 §9.4**。★ **静默**：不崩、不报错、编译期不警告，只是数值偏。2026-11-04 在微基准里撞到（`DEBT` §36.7），`AspectPage` 里 10-24 写下的活体诊断当场被证实。★ **只有 `int/int` 错**：`int/float`、`float/int`、`float/float`、字面量 `16.0/9.0` 全对 —— 本仓 27 处除法实测**没有一处踩到**（几何指纹逐值相同） |
 
 ### 1.3 对象模型
 
@@ -791,8 +791,33 @@ lint 或一条 grep 判据** —— 第 13 条已有 lint，第 14 条的判据�
 | `?Obj` **字段**用「非空 + bool」 | **不变**：字段层无量级差（§2.2），且 `?->` 静默坑仍在 |
 | `?->` 空安全调用 | **不变**：属性查表机制，与类型退化无关；只约束跨实例读 `private` / `$this->可空字段?->` 那一族 |
 | `?:` 两支声明类型不同 ⇒ C2678 | **不变**（#183 / #186 都不覆盖） |
-| `int / int` 整数除法 / `switch` / 反射静态链接 / `__DIR__` | **不变**（§1.2 / §1.4 / §8.4） |
+| `int / int` 整数除法 | **有官方逃生口，本仓不启用**：`use varint_types` 能恢复 Zend 算术，但它是 0.8 原生标量默认值的**兼容出口**，不是推荐默认（§1.2 / 下方说明） |
+| `switch` / 反射静态链接 / `__DIR__` | **不变**（§1.4 / §8.4） |
 | typed property→局部 / 常量算术 / `??` / typed array / 单实现 interface / 闭包 / 纯对象联合 | **#184 已解禁**（§9.4.1）；真实混合联合 / 引用 / 可覆写调用仍保留运行时表示 |
+
+**`use varint_types` 的完整边界与本仓裁决（2026-11-12 核对上游官方文档）**
+
+官方依据：TypePHP `CHANGELOG.md` 0.8.0「Breaking: native scalar storage is now the default」、
+`docs/zh-cn/NATIVE_TYPES.md` 开头「重要提示」、`docs/zh-cn/VARINT_TYPES.md`（专册）。
+0.8 起 `use native_types` 被移除，推断 `int`/`float`/`bool` 局部默认固定为 `php::Int`/`Float`/`Bool`，
+编译器不再因后续运算需要 PHP 动态语义而把局部变量提升为 `php::Var` —— **本仓 §1.2 那一行正是这个默认值的直接产物**，
+不是「编译器做不到」。
+
+- **作用域**：只有**文件级** `use varint_types;`（按文件重置、参与预处理缓存键）与单表达式 `std::any($v)`
+  两个出口；**没有项目级 / 全局开关**，不能写进 `project.yml` 一次开全仓。
+- **恢复什么**：`divide(6,3) → int(2)`、`divide(7,2) → float(3.5)`、`PHP_INT_MIN / -1 → float`、
+  除零抛可捕获的 `DivisionByZeroError`，以及 `%` / `<<` / `>>` / `**` 的 Zend 边界行为。
+  注意它的影响**不止整数**：浮点除法也会改走 Var 路径（零除得异常而非 INF/NAN）。
+- **代价（本仓不启用的理由）**：官方 `VARINT_TYPES.md` 明写它会**跳过整个 `optimizeVarTypes()` pass**
+  与 `optimizeObjectProps()`、不启用两个精确整数的 min/max 原生快路径、给类型化整数容器增加编译期限制，
+  并改变常量求值诊断、返回值检查与 SSA 收窄。官方原话是「**不是完整的 PHP 兼容模式**」，
+  `NATIVE_TYPES.md` 要求「只有文件确实需要 Zend 整数扩展语义时才使用」。
+  ⇒ 它与 0.8 原生标量的类型收益、#184 去虚化收益方向相反，为一条**本仓零命中**的约束付全局优化代价不划算。
+- **本仓现行解法不变**：`(float)` 一端是局部、零成本、类型明确的写法；27 处除法实测零踩坑，
+  几何指纹 27 页逐值相同（§2.8）。优先级：一端 `(float)` / `std::any()` > 整文件 `use varint_types`。
+- **若将来真要启用**：加了 `use varint_types;` 的文件必须重跑 `tools/aot-equivalence.php` +
+  `tools/fingerprint.php`（浮点除法、常量折叠与容器约束都会变），**不能用「解释器绿」代替**；
+  且该开关只影响声明它的那个文件，跨文件的调用边界仍按各自 ABI 处理。
 
 #### 9.4.1 #184 去虚化批次：官方 Issue 原文摘要与本仓复核
 
