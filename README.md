@@ -112,9 +112,51 @@ Python 3 只给真机探针 `tools/probe-window.py` 用，依赖仅标准库 `ct
 ```
 
 ★ **最大的隐藏门槛**：`/cpp/` 整目录在 `.gitignore` 里，`git clone` 后 `cpp/skia/`
-与 `cpp/fonts/` **都不存在**。当前做法是从上游参考实现仓拷一份预编译包放到这两个位置，
-包的分发方式仍是开放项，本仓不提供下载脚本；缺了它们构建期会直接链接失败。
-exe 还必须以仓库根为 cwd 启动（两者按相对路径查找）。
+与 `cpp/fonts/` **都不存在**，缺了构建期会直接链接失败。exe 还必须以仓库根为 cwd
+启动（两者按相对路径查找）。
+
+包的内容：
+
+| 项 | 内容 |
+|---|---|
+| `cpp/skia/` | Skia **M148** 预编译（clang / x64 / Release）：`include/` + `modules/` + `src/` + `out/Release-x64/` 下 24 个 `.lib`，附 `LICENSE`（BSD-3-Clause） |
+| `cpp/fonts/` | Noto Sans SC Regular / Bold + `OFL.txt`（SIL OFL 1.1 全文，重分发必须保留） |
+| 打包产物 | `drift-deps-win-x64.zip`，约 50 MB（解压后 159 MB），含 `cpp/DEPS-MANIFEST.txt` 与 `cpp/licenses/`（11 份许可全文 + `THIRD-PARTY.md` 索引）。包内路径全挂在 `cpp/` 下 —— 它解压到仓库根，顶层放文件会污染工作区 |
+
+首次获取（包托管在 GitHub Releases）：
+
+```bash
+php tools/fetch-deps.php                # 用 origin 推 owner/repo，取最新 release
+php tools/fetch-deps.php --tag=deps-v1  # 指定版本；--force 重下
+```
+
+它会下到 `dist/`、与同批上传的 `.sha256` 比对、解压到仓库根，再数一遍 `.lib` / 字体 /
+许可数量 —— 对不上直接失败，不用等到构建期吃 LNK2019。
+
+从已有 `cpp/` 复现打包，或手工解压别处拿到的包：
+
+```bash
+php tools/pack-deps.php                       # 产物 dist/drift-deps-win-x64.zip + .sha256
+unzip drift-deps-win-x64.zip -d <仓库根>       # 得到 cpp/skia、cpp/fonts、cpp/licenses
+```
+
+```powershell
+Expand-Archive drift-deps-win-x64.zip -DestinationPath <仓库根>
+Get-FileHash drift-deps-win-x64.zip -Algorithm SHA256   # 校验收到的包
+```
+
+当前包的校验值（`pack-deps.php` 打包时自动写入，`fetch-deps.php` 用它校验）：
+
+```text
+016185f308269ac376b0a87fae6d5d716486fc46838dfb42792e3e683125d31c
+```
+
+完整元数据（字节数 / entry 数 / Skia 里程碑 / 24 个 lib / 2 个字体 / 11 份许可）见
+[`deps.lock.json`](deps.lock.json)。它入库，所以换包必须同时改仓库文件 —— 这是校验能成立的前提；
+`dist/*.sha256` 只是同批上传的副本。
+
+★ **首个 release 尚未发布**：在那之前 `fetch-deps.php` 会 404，只能从已有 `cpp/` 的机器拷入。
+发布与维护流程见 [`docs/RELEASE-DEPS.md`](docs/RELEASE-DEPS.md)。
 
 #### ③ 路径不对就设环境变量
 
@@ -187,3 +229,8 @@ python tools/probe-window.py hello
 ## 许可证
 
 MIT，全文见 [`LICENSE`](LICENSE)；机器可读声明在 [`composer.json`](composer.json)。
+
+随包分发的第三方组件另按其自身许可：Skia 为 BSD-3-Clause，Noto Sans SC 为
+SIL OFL 1.1，另有九个静态库（Expat / FreeType / HarfBuzz / ICU / libjpeg-turbo /
+libpng / libwebp / Wuffs / zlib）。11 份全文与来源记录见
+[`licenses/`](licenses/THIRD-PARTY.md)，打包时整目录随附。

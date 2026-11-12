@@ -59,7 +59,15 @@
   理由是排除增量缓存的影响，不再是因为判据缺失。
 - **源码树不自足：Skia 预编译包与字体不入库**。`/cpp/` 整个目录在 `.gitignore` 里，
   `git clone` 后 `cpp/skia/`（约 141 MB）与 `cpp/fonts/`（约 21 MB）**不存在**，
-  缺了构建期直接链接失败；包的获取方式仍是开放项。另：`PHPX` 与 `tpc` 源码树属
+  缺了构建期直接链接失败。本仓提供 `php tools/pack-deps.php` 打成
+  `dist/drift-deps-win-x64.zip`（Skia M148 + Noto Sans SC，约 50 MB）并输出 SHA256，
+  包内随附 `licenses/`（11 份许可全文 + `THIRD-PARTY.md` 索引），并为 Skia 与 OFL 在
+  `cpp/skia/LICENSE`、`cpp/fonts/OFL.txt` 留了就近副本 —— 九个静态库的许可不再只给链接；
+  但**包本身不进 git 历史**：托管在 GitHub Releases，用 `php tools/fetch-deps.php` 取 ——
+  下到 `dist/`、拿入库的 `deps.lock.json` 校验、解压后核对 lib/字体/许可数量，
+  支持 `DRIFT_DEPS_URL` 镜像回退与断点续传；首个 release 尚未发布，流程见
+  [`docs/RELEASE-DEPS.md`](docs/RELEASE-DEPS.md)。
+  另：`PHPX` 与 `tpc` 源码树属
   TypePHP 编译器项目，同样不在本仓。搭建步骤见 [`README.md`](README.md) 的「构建环境」。
 - 只用运行态时**不需要**上述工具链：`php tools/gate.php --fast` 是纯 PHP 的，
   `composer install` 也不必跑（`tools/autoload.php` 直接读 psr-4）。
