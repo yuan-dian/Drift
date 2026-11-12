@@ -1,0 +1,20 @@
+{
+    "asset": "drift-deps-win-x64.zip",
+    "sha256": "016185f308269ac376b0a87fae6d5d716486fc46838dfb42792e3e683125d31c",
+    "bytes": 51985714,
+    "entries": 610,
+    "skiaMilestone": "148",
+    "skiaBuildArgs": [
+        "is_debug = false",
+        "target_cpu = \"x64\"",
+        "cc = \"clang\"",
+        "cxx = \"clang++\""
+    ],
+    "libs": 24,
+    "fonts": [
+        "NotoSansSC-Bold.ttf",
+        "NotoSansSC-Regular.ttf"
+    ],
+    "licenses": 11,
+    "generatedAt": "2026-11-12"
+}

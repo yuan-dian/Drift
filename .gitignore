@@ -90,9 +90,12 @@ desktop.ini
 /_build
 
 # ── 外部二进制依赖（不入库；§24.2 #12）──
-# Skia 预编译包（约 141 MB：include/ + modules/ + src/ + out/Release-x64/*.lib）
-# 与目录字体。**分发方式仍是开放项** —— 当前是从参考实现仓拷一份到本地。
+# Skia M148 预编译（约 141 MB：include/ + modules/ + src/ + out/Release-x64/*.lib）
+# 与字体。打包与校验走 tools/pack-deps.php，产物在 /dist/ 下（同样不入库）。
 /cpp/
+
+# 依赖包（pack-deps 的输出，约 50 MB）
+/dist/
 
 # Python 探针的字节码缓存
 __pycache__/
