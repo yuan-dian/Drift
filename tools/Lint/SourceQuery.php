@@ -375,7 +375,8 @@ final class SourceQuery
      *     constants: list<string>,
      *     bodyStart: int, bodyEnd: int
      * }>
-     *         `properties`：小写属性名 => 解析后的类型 FQN（无类型声明 ⇒ 空字符串，不入表）
+     *         `properties`：小写属性名 => 解析后的类型 FQN（无类型声明 ⇒ 空字符串，不入表）；
+     *                       含构造器提升参数（`__construct(private Cell $x)`）
      *         `methods`：小写方法名 => 方法体的 `{`…`}` token 区间（无体的不记）
      *         `constants`：类常量声明名（原文大小写；边界见 readBody 内注释）
      *         `bodyStart`/`bodyEnd`：类体 `{`…`}` 的 token 区间
@@ -509,7 +510,9 @@ final class SourceQuery
         // ★ 不能用 `+=`：`$info` 里 properties/methods 两个键已存在（空数组），
         //   联合运算符对已存在的键不做任何事 ⇒ 整个类体都会被静默丢掉。
         $body = self::readBody($file, $open, $close);
-        $info['properties'] = $body['properties'];
+        // 提升参数与显式属性是同一件事（都是类属性），合成一张表给规则用 ——
+        // 否则每条规则都要记两处来源，迟早漏一处（dead-subscription 就是这么漏的）。
+        $info['properties'] = $body['properties'] + $body['promoted'];
         $info['methods'] = $body['methods'];
         $info['constants'] = $body['constants'];
 
@@ -561,16 +564,18 @@ final class SourceQuery
     /**
      * 类体：属性表 + 方法体区间表。
      *
-     * ★ 单次前进：命中 `function` 就整块跳过方法体 ⇒ 构造器提升参数
-     *   （`__construct(private int $x)`）不会被误读成属性。
+     * ★ 单次前进：命中 `function` 就整块跳过方法体 ⇒ 方法体里的局部变量不会被误读成属性。
+     * ★ 构造器提升参数不在此列：它们在**参数表**里，由 `readPromoted()` 单独读进 `promoted`。
+     *   跳过方法体是有意契约，不为了让提升参数可见而放宽它。
      *
-     * @return array{properties: array<string, string>, methods: array<string, array{start: int, end: int, line: int}>, constants: list<string>}
+     * @return array{properties: array<string, string>, promoted: array<string, string>, methods: array<string, array{start: int, end: int, line: int}>, constants: list<string>}
      *         `constants`：类常量声明名（原文大小写；一条多常量声明只记首名）
      */
     private static function readBody(SourceFile $file, int $open, int $close): array
     {
         $tokens = $file->tokens();
         $properties = [];
+        $promoted = [];
         $methods = [];
         $constants = [];
 
@@ -629,6 +634,9 @@ final class SourceQuery
                         $j = $end;
                     }
                 }
+                if ($name === '__construct' && $parenI !== null && $afterParen !== null) {
+                    $promoted += self::readPromoted($file, $parenI, $afterParen);
+                }
                 continue;
             }
 
@@ -664,7 +672,89 @@ final class SourceQuery
             }
         }
 
-        return ['properties' => $properties, 'methods' => $methods, 'constants' => $constants];
+        return ['properties' => $properties, 'promoted' => $promoted, 'methods' => $methods, 'constants' => $constants];
+    }
+
+    /**
+     * 构造器提升参数（`__construct(private Cell $x)`）—— 它们是属性，只是声明位置在参数表。
+     *
+     * 边界：只认带可见性（或 `readonly`）的参数；普通参数不是属性。
+     * 参数上的 attribute（`#[Foo]`）不处理 —— 本仓未用，且不影响类型解析的结论。
+     *
+     * @param int $open 参数表 `(` 的下标
+     * @param int $close 参数表 `)` 的下标
+     * @return array<string, string> 小写名 => 类型 FQN（无类型 ⇒ 不入表）
+     */
+    private static function readPromoted(SourceFile $file, int $open, int $close): array
+    {
+        $tokens = $file->tokens();
+        $out = [];
+
+        foreach (self::paramSegments($tokens, $open, $close) as $seg) {
+            $varI = null;
+            foreach ($seg as $i) {
+                if (is_array($tokens[$i]) && $tokens[$i][0] === T_VARIABLE) {
+                    $varI = $i;
+                    break;
+                }
+            }
+            if ($varI === null) {
+                continue;
+            }
+
+            $promoted = false;
+            for ($k = self::nextIndex($tokens, $seg[0]); $k !== null && $k < $varI; $k = self::nextIndex($tokens, $k + 1)) {
+                $t = $tokens[$k];
+                if (is_array($t) && in_array($t[0], [T_PUBLIC, T_PROTECTED, T_PRIVATE, T_READONLY], true)) {
+                    $promoted = true;
+                    break;
+                }
+            }
+            if (!$promoted) {
+                continue;
+            }
+
+            $type = self::readTypeBefore($file, $seg[0], $varI);
+            if ($type !== '') {
+                $out[strtolower(ltrim($tokens[$varI][1], '$'))] = $type;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * 参数表按顶层逗号切段 —— 默认值里的数组 / 调用会把逗号埋进嵌套括号。
+     *
+     * @param list<mixed> $tokens
+     * @return list<list<int>> 每段的 token 下标
+     */
+    private static function paramSegments(array $tokens, int $open, int $close): array
+    {
+        $segments = [];
+        $cur = [];
+        $depth = 0;
+
+        for ($i = $open + 1; $i < $close; $i++) {
+            $tok = $tokens[$i];
+            if (!is_array($tok)) {
+                if ($tok === '(' || $tok === '[' || $tok === '{') {
+                    $depth++;
+                } elseif ($tok === ')' || $tok === ']' || $tok === '}') {
+                    $depth--;
+                } elseif ($tok === ',' && $depth === 0) {
+                    $segments[] = $cur;
+                    $cur = [];
+                    continue;
+                }
+            }
+            $cur[] = $i;
+        }
+        if ($cur !== []) {
+            $segments[] = $cur;
+        }
+
+        return $segments;
     }
 
     /**
@@ -736,10 +826,15 @@ final class SourceQuery
             $tok = $tokens[$i];
             // ★ 单字符 token（`?`）不是数组：`$tok[0]` 是字符本身，`$tok[1]` 不存在
             if (is_array($tok)) {
-                if (in_array($tok[0], [T_STATIC, T_READONLY, T_PUBLIC, T_PROTECTED, T_PRIVATE], true)) {
+                // `...`（变长参数）不是类型的一部分，属性声明里不会出现
+                if (in_array($tok[0], [T_STATIC, T_READONLY, T_PUBLIC, T_PROTECTED, T_PRIVATE, T_ELLIPSIS], true)) {
                     continue;
                 }
                 $text .= $tok[1];
+                continue;
+            }
+            // `&`（引用参数）：同上，只可能来自参数表；交集类型拼起来本来就解析不了
+            if ($tok === '&') {
                 continue;
             }
             $text .= $tok;

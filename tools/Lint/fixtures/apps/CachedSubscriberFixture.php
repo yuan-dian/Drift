@@ -9,6 +9,7 @@ use Drift\State\SubjectBuilder;
  * 夹具：`cached-subscriber` 的已知错误（§16.6.3 #10 / A4）。
  *
  * - 属性声明类型是 `SubjectBuilder`            ⇒ error
+ * - 构造器提升参数同类型（声明位置不同，仍是属性）⇒ error
  * - 方法里 `$this->x = SubjectBuilder::make(…)` ⇒ error
  */
 final class CachedSubscriberFixture
@@ -18,5 +19,12 @@ final class CachedSubscriberFixture
     public function make(): void
     {
         $this->builder = SubjectBuilder::make($this->user);
+    }
+}
+
+final class CachedSubscriberPromotedFixture
+{
+    public function __construct(private readonly SubjectBuilder $builder)
+    {
     }
 }

@@ -22,6 +22,9 @@ use Drift\Dev\Lint\SourceQuery;
  *   子树内"——**子树不是 token 可见的事实**，所以本规则只做"本类必须实现"这一层。
  *   子树内正当使用的情形走既有豁免机制（文件里写 `@internal-use-allowed: 理由`）降为 warn，
  *   与 `internal-leak` 同一个口径，不另发明机制。
+ * ★ 闭包体不判：`onPressed(fn() => $this->form->reset())` 是**延迟回调**（事件发生才读），
+ *   `builder(fn() => …)` 是**立即回调**，两者 token 同形 ⇒ 静态不可判，一律不判。
+ *   代价是真在 builder 回调里读 `$this->x->m()` 会漏报 —— 那种写法应改用 `select` 的入参。
  * ★ `State` 子类豁免：cell 本来就归 `State` 拥有（`State::cell()`），
  *   在 `State::build()` 里读自己的 cell 是天经地义，不算死订阅。
  */
@@ -111,6 +114,17 @@ final class DeadSubscription implements Rule
 
         for ($i = $build['start']; $i < $build['end']; $i++) {
             $tok = $tokens[$i];
+
+            // 闭包体不判：可能是 `onPressed` 这类**延迟回调**（事件发生时才读），
+            // 也可能被 `builder()` 立即回调 —— 静态不可判。判了就是误报。
+            if (is_array($tok) && ($tok[0] === T_FN || $tok[0] === T_FUNCTION)) {
+                $end = $this->closureEnd($tokens, $i, $build['end']);
+                if ($end !== null) {
+                    $i = $end;
+                }
+                continue;
+            }
+
             if (!is_array($tok) || $tok[0] !== T_OBJECT_OPERATOR) {
                 continue;
             }
@@ -147,6 +161,93 @@ final class DeadSubscription implements Rule
         }
 
         return $hits;
+    }
+
+    /**
+     * 闭包体的结束下标（`fn` 箭头 / 匿名 `function`）。找不到 ⇒ null。
+     *
+     * @param list<mixed> $tokens
+     */
+    private function closureEnd(array $tokens, int $at, int $limit): ?int
+    {
+        if ($tokens[$at][0] === T_FUNCTION) {
+            for ($k = $at + 1; $k < $limit; $k++) {
+                $tok = $tokens[$k];
+                if (is_array($tok)) {
+                    continue;
+                }
+                if ($tok === '{') {
+                    return SourceQuery::matchBracket($tokens, $k);
+                }
+                if ($tok === ';') {
+                    return $k;
+                }
+            }
+            return null;
+        }
+
+        // `fn` 的参数表先整体跳过：里面的 `,` / `)` 不是体的边界
+        $paren = null;
+        for ($k = $at + 1; $k < $limit; $k++) {
+            $tok = $tokens[$k];
+            if (!is_array($tok) && $tok === '(') {
+                $paren = $k;
+                break;
+            }
+            if (!is_array($tok) && ($tok === ',' || $tok === ';')) {
+                return $k; // 不是完整闭包，就地收手
+            }
+        }
+        if ($paren === null) {
+            return null;
+        }
+        $afterParen = SourceQuery::matchBracket($tokens, $paren);
+        if ($afterParen === null) {
+            return null;
+        }
+
+        // 体从 `=>` 之后开始
+        $arrow = null;
+        for ($k = $afterParen + 1; $k < $limit; $k++) {
+            $tok = $tokens[$k];
+            if (is_array($tok)) {
+                if ($tok[0] === T_DOUBLE_ARROW) {
+                    $arrow = $k;
+                    break;
+                }
+                continue;
+            }
+            if ($tok === ',' || $tok === ')' || $tok === ';') {
+                return $k;
+            }
+        }
+        if ($arrow === null) {
+            return null;
+        }
+
+        $depth = 0;
+        for ($k = $arrow + 1; $k < $limit; $k++) {
+            $tok = $tokens[$k];
+            if (is_array($tok)) {
+                continue;
+            }
+            if ($tok === '(' || $tok === '[' || $tok === '{') {
+                $depth++;
+                continue;
+            }
+            if ($tok === ')' || $tok === ']' || $tok === '}') {
+                if ($depth === 0) {
+                    return $k;
+                }
+                $depth--;
+                continue;
+            }
+            if ($tok === ',' && $depth === 0) {
+                return $k;
+            }
+        }
+
+        return null;
     }
 
 }

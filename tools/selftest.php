@@ -70,7 +70,12 @@ function drift_lint_selftest(string $root, Linter $linter): bool
             'apps/CommandFixture.php:' . Diagnostic::ERROR,
             'apps/CommandFixture.php:' . Diagnostic::ERROR,
         ],
+        // 2 条 = 类体属性 1 + 构造器提升参数 1。
+        // ★ 2026-11-12 补提升形态（+1）：`readBody()` 有意跳过方法体，提升参数在参数表里，
+        //   从前整类看不见 ⇒ `__construct(private Cell $x)` + `build()` 读它时静默假绿。
+        //   两条 Marked 夹具负责"不该响"：标了 SubscribingWidget 的两种声明位置都不许报。
         'dead-subscription' => [
+            'src/Widget/DeadSubscriptionFixture.php:' . Diagnostic::ERROR,
             'src/Widget/DeadSubscriptionFixture.php:' . Diagnostic::ERROR,
         ],
         // 2026-11-07 补 `static fn` / `static function` 形态（+5）：
@@ -95,7 +100,11 @@ function drift_lint_selftest(string $root, Linter $linter): bool
         'stale-derived' => [
             'apps/CartStore.php:' . Diagnostic::ERROR,
         ],
+        // 3 条 = 类体属性声明 1 + 构造器提升参数 1 + 方法里赋值 1。
+        // ★ 2026-11-12 补提升形态（+1）：它与 `dead-subscription` 判的是同一张
+        //   `properties` 表，声明位置换了不该换判据。
         'cached-subscriber' => [
+            'apps/CachedSubscriberFixture.php:' . Diagnostic::ERROR,
             'apps/CachedSubscriberFixture.php:' . Diagnostic::ERROR,
             'apps/CachedSubscriberFixture.php:' . Diagnostic::ERROR,
         ],

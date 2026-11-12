@@ -7,8 +7,6 @@ use Drift\Input\KeyChord;
 use Drift\Layout\Overflow;
 use Drift\Routing\PageHost;
 use Drift\Routing\RouteTable;
-use Drift\Theme\SystemTheme;
-use Drift\Theme\ThemeData;
 use Drift\Theme\ThemeScope;
 use Drift\Widget\AppBar;
 use Drift\Widget\BuildContext;
@@ -110,9 +108,7 @@ final class UsersRoot extends StatelessWidget
 
     public function build(BuildContext $ctx): Widget
     {
-        $theme = $this->app->systemTheme() === SystemTheme::Dark
-            ? ThemeData::dark()
-            : ThemeData::light();
+        $theme = $ctx->theme();
 
         $bar = AppBar::make()->title('用户管理')->children([
             NavButton::make('列表')->command('nav.users'),
