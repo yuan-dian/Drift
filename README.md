@@ -32,6 +32,107 @@ final class HelloApplication extends Application
   **默认离线 mock，不触网**，切到真实 OSS 直传网关的方式见该应用的 `Config` 类。
 - 工程质量：`tools/gate.php` 闸门 + 判据自证变异 + T0/T1/T2 分层真机验证。
 
+## 构建环境：装什么、放哪、怎么确认
+
+> 仅 Windows 10/11 x64。分两档：**跑判据 / 读代码**只要 PHP；**编出 `.exe`**还要一整套
+> 原生工具链。`tools/doctor.php` 是环境判据的单一真相源（与 `drift-build` 共用同一份
+> 路径推导），不要照记忆配 —— 缺什么它会逐项打印修法。
+
+### 档 A：只跑闸门（T0，公开 CI runner 跑的就是这档）
+
+- **PHP >= 8.4**（`composer.json` 的 `require.php`），把 `php.exe` 放进 `PATH`；
+  发行版至少带 `mbstring`（tpc 依赖），CI 同时装 `gd`。
+- **两份 `php.ini` 别弄混**：仓库根那份是**运行态**（dev 壳 / 探针读它，已入库）；
+  构建另需 `php.exe` 同目录有一份**发行版 ini** —— tpc 不加载同目录 ini，
+  脚本会复制到 `_build/ini/` 并用 `PHPRC` 指过去。发行版 ini 保持 `opcache.enable_cli=0`：
+  CLI 开 opcache 会让「改了代码却没重编」静默假绿。
+- **工具脚本不需要 `composer install`**（`tools/autoload.php` 直接读 `composer.json` 的 psr-4），
+  但**单元测试需要 PHPUnit 10.x**：`composer install`，或按 `tools/phpunit-run.php` 头注
+  下载 `tools/phpunit.phar`；两者都不入库。都没有时 `unit` / `feature` 判据是
+  **skip + exit 0**，闸门照样全绿 ⇒ 别把「全绿」当成测试跑过了。
+- **不需要 MSVC / tpc / PHPX**：`php tools/gate.php --fast` 应全绿；
+  `doctor` 里只影响 build 的项在这档不拦（`--scope=gate`）。
+  ★ 但「改 PHP 不重编译」的 dev 壳首次仍要编一次，属于档 B。
+
+### 档 B：要编出独立 `.exe`（T2）
+
+在档 A 之上补齐：
+
+| 组件 | 要求 | 默认位置 / 覆盖变量 |
+|---|---|---|
+| PHPX | 含 `include` / `lib` / `src`，与 tpc 同源 | `php.exe` 所在目录的 `phpx/`，或 `DRIFT_PHPX_HOME` |
+| tpc（TypePHP 编译器） | 源码树入口 `bin/tpc.php`（发行版 `tpc.exe` 缺编译期修复，不作默认） | 与本仓同级的 `../typephp/bin/tpc.php`，或 `DRIFT_TPC_ENTRY` |
+| MSVC | VS 2022（18），工具集 `14.51.36231`，需 `cl.exe` | `D:/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231`；`DRIFT_MSVC` / `DRIFT_MSVC_VERSION` |
+| Windows SDK | `10.0.26100.0`；`include/um` + `include/ucrt` + `lib/um/x64` 三处齐全 | `D:/Windows Kits/10`；`DRIFT_KITS` / `DRIFT_SDK_VERSION` |
+| Skia 预编译包 + 字体 | `cpp/skia/`（约 141 MB）与 `cpp/fonts/`（约 21 MB）**不随仓库分发** | 见下 |
+
+#### ① 下载安装 TypePHP（两件分开的东西）
+
+本仓要的是**编译器源码树** + **Windows PHP/PHPX 运行时**，两者都来自
+[swoole/typephp](https://github.com/swoole/typephp)，都不在本仓里。
+
+**1) 编译器源码树**（`tpc` 入口）：
+
+```bash
+git clone https://github.com/swoole/typephp.git ../typephp  # 与本仓同级 ⇒ 命中默认路径
+cd ../typephp
+composer install                 # Composer 2；给编译器装依赖，不是给本仓装
+php bin/tpc.php --help
+```
+
+★ 版本不能太旧：本仓 AOT 台账在 `bff46481`（含 #183–#186）上验过，见
+[`docs/AOT-CONSTRAINTS.md`](docs/AOT-CONSTRAINTS.md) 的「上游 #186 与当前编译器状态」一节。
+`doctor` 只验 `tpc` 入口文件存在，**不验版本** —— 旧编译器要到构建期才报错。
+**不要用 release 包里的 `tpc.exe`，也不要用 `composer require swoole/typephp`**：
+`drift-build` / `drift-codegen` 只认源码树的 `bin/tpc.php`（发行版 `tpc.exe`
+缺本仓依赖的编译期修复）。放在别处就设 `DRIFT_TPC_ENTRY` 指向那个 `bin/tpc.php`。
+
+**2) PHP + PHPX 运行时**：在 [Releases](https://github.com/swoole/typephp/releases)
+选 Windows x64、PHP 8.4/8.5 ZTS 的资产（本机用的是
+`release-windows-x64-php-8.5-zts.zip`），解压到任意目录，把该目录加进 `PATH`。
+包里自带 `php.ini`、`ext/` 与 `phpx/`（`include` / `lib` / `src`），正好满足
+`doctor` 的 `phprc` / `phpx` 两项；包内 `WINDOWS-SETUP.txt` 让手动设
+`PHP_HOME` / `PHPX_HOME`，本仓由 `drift-build` 自动派生，不必照做。
+已有 PHP >= 8.4 发行版时也可只补 `phpx/` 到 `php.exe` 同目录（或设 `DRIFT_PHPX_HOME`），
+但 PHPX 必须与编译器同源。
+
+Python 3 只给真机探针 `tools/probe-window.py` 用，依赖仅标准库 `ctypes`；
+重新生成字模的脚本才需要 Pillow。
+
+#### ② 补 Skia 与字体
+
+目录关系（默认布局）：
+
+```text
+<父目录>/
+├── typephp/                           # ① 编译器源码树；tpc 入口 bin/tpc.php
+└── <repo>/                            # 本仓库
+    ├── cpp/skia/out/Release-x64/*.lib # ② 不入库
+    └── cpp/fonts/NotoSansSC-*.ttf     # ② 不入库
+```
+
+★ **最大的隐藏门槛**：`/cpp/` 整目录在 `.gitignore` 里，`git clone` 后 `cpp/skia/`
+与 `cpp/fonts/` **都不存在**。当前做法是从上游参考实现仓拷一份预编译包放到这两个位置，
+包的分发方式仍是开放项，本仓不提供下载脚本；缺了它们构建期会直接链接失败。
+exe 还必须以仓库根为 cwd 启动（两者按相对路径查找）。
+
+#### ③ 路径不对就设环境变量
+
+MSVC / SDK / PHPX / tpc 的位置与默认不同就设上表的环境变量覆盖，不要改构建脚本；
+`INCLUDE` / `LIB` / `PATH`（`cl.exe` + `rc.exe`）由 `drift-build` 按这些目录自动拼好，
+不必手动开 Developer Command Prompt 或 `call vcvars64.bat`。
+
+### 装完怎么确认
+
+```bash
+php -v
+php tools/doctor.php          # 逐项报告；有 FAIL 会打印「修法」并退出 1
+php tools/doctor.php --strict # 发布前自查：WARN 也算失败
+```
+
+`doctor` 用 `affects` 分级：缺 MSVC 不拦 `gate`，但出 exe 时
+`phprc` / `phpx` / `tpc` / `msvc` / `sdk` 必须全绿。体检过后再走下一节。
+
 ## 五分钟跑起来（Windows 10/11 x64）
 
 > 两条路，**其一**即可看到窗口。
@@ -42,7 +143,7 @@ final class HelloApplication extends Application
 php tools/drift-dev.php hello          # 壳只编一次；改 PHP 保存后自动重启窗口
 ```
 
-> 首次会自动编一次 dev 壳，同样需要下面的工具链；之后改业务 PHP 不再编译。
+> 首次会自动编一次 dev 壳，同样需要上一节档 B 的完整工具链；之后改业务 PHP 不再编译。
 
 ### 路 B：构建独立 exe（发布态）
 
@@ -50,7 +151,7 @@ php tools/drift-dev.php hello          # 壳只编一次；改 PHP 保存后自�
 # 1. PHP >= 8.4（含 php.ini）在 PATH
 php -v
 
-# 2. 体检构建环境（MSVC / Win SDK / PHPX / tpc / php.ini）
+# 2. 体检构建环境（MSVC / Win SDK / PHPX / tpc / php.ini；装法见上一节）
 php tools/doctor.php
 
 # 3. 构建 hello（首次或输入变化时自动全量）
@@ -60,8 +161,8 @@ php tools/drift-build.php hello
 python tools/probe-window.py hello
 ```
 
-> 第三步的重型工具链是**唯一门槛**：`doctor` 会逐项报告缺什么；Skia 预编译包
-> 已 vendored 在 `cpp/skia/`，无需自行编译。精确版本与「改什么要重编译」见
+> 第三步的重型工具链是**唯一门槛**：组件、默认位置与覆盖变量见上一节「构建环境」，
+> `doctor` 会逐项报告缺什么。精确版本与「改什么要重编译」见
 > [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md)。
 
 ## 从零写一个应用
