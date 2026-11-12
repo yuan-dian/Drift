@@ -16,3 +16,7 @@
 # 证书包（`assets/cacert.pem`）：行尾不许被转换 —— 它是 curl 的信任根，
 # 而 `* text=auto` 会在 Windows 检出时把 LF 换成 CRLF（OpenSSL 能读，但 diff 全红）
 *.pem binary
+# 第三方许可全文（`licenses/*.txt`）：逐字取自上游，且被 `tools/pack-deps.php`
+# 原样注入包内。`* text=auto` 会在 Windows 检出时换成 CRLF，之后就再也对不上
+# 上游的 sha256 了。用 -text（而非 binary）保住字节，同时仍可正常 diff。
+licenses/** -text
