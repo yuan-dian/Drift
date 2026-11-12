@@ -11,6 +11,19 @@ declare(strict_types=1);
  */
 
 $root = dirname(__DIR__);
+require __DIR__ . '/version.php';
+
+// 包里必须写明它属于哪个框架版本、该发到哪个 tag：否则 Release 上一堆 zip
+// 只能靠上传时间分辨，而 fetch 默认取的那个 tag 也无从推导。
+$driftVersion = driftVersion($root);
+$depsTag = driftDepsTag($root);
+if (preg_match(DRIFT_VERSION_RE, $driftVersion) !== 1
+    || preg_match(DRIFT_DEPS_TAG_RE, $depsTag) !== 1) {
+    fwrite(STDERR, "VERSION / DEPS_VERSION 格式不对（{$driftVersion} / {$depsTag}），先修再打包。\n");
+    fwrite(STDERR, "跑 php tools/version.php --check 看详情。\n");
+    exit(1);
+}
+
 $out = $root . '/dist/drift-deps-win-x64.zip';
 foreach (array_slice($argv, 1) as $arg) {
     if (str_starts_with($arg, '--out=')) {
@@ -30,6 +43,14 @@ foreach ([$skia, $fonts] as $dir) {
 }
 
 // ── 版本元数据 ──
+// 二进制包要能追到源码。unpinned 只留给来源不可考的历史包，CI 重建必须钉 commit。
+$skiaRevision = driftSkiaRevision($root);
+if (!driftSkiaRevisionValid($skiaRevision)) {
+    fwrite(STDERR, "SKIA_REVISION 格式不对（{$skiaRevision}）：应为 40 位 Skia commit 或 unpinned。\n");
+    exit(1);
+}
+$provenance = $skiaRevision === 'unpinned' ? 'legacy' : 'ci';
+
 $milestone = 'unknown';
 $milestoneFile = $skia . '/include/core/SkMilestone.h';
 if (is_file($milestoneFile)) {
@@ -124,7 +145,11 @@ TXT;
 
 $manifest = "Drift 外部二进制依赖包\n";
 $manifest .= "========================\n\n";
+$manifest .= "Drift 版本     : {$driftVersion}\n";
+$manifest .= "配套 tag       : {$depsTag}\n";
 $manifest .= "Skia milestone : {$milestone}\n";
+$manifest .= 'Skia 源码 rev  : ' . ($skiaRevision === 'unpinned' ? 'unpinned（历史包，来源不可考）' : $skiaRevision) . "\n";
+$manifest .= "来源类型       : {$provenance}（legacy = 预编译包拷入；ci = 由 SKIA_REVISION 重建）\n";
 $manifest .= 'Skia 构建参数  : ' . ($buildArgs === [] ? '(args.gn 缺失)' : implode(' ', $buildArgs)) . "\n";
 $manifest .= '文件数         : ' . count($entries) . "\n";
 $manifest .= '解压后大小     : ' . round($totalBytes / 1048576, 1) . " MiB\n";
@@ -165,7 +190,15 @@ $zip->addFromString('cpp/licenses/THIRD-PARTY.md', (string) file_get_contents($t
 foreach ($licenseFiles as $lic) {
     $zip->addFromString('cpp/licenses/' . basename($lic), (string) file_get_contents($lic));
 }
-$zip->setArchiveComment("Drift deps: Skia M{$milestone} + Noto Sans SC (OFL)");
+// ZIP 条目默认带当前时间 ⇒ 同一份 cpp/ 重打包也会得到不同 SHA，README 里的校验值和
+// CI「lock 没变就不发版」的判断都会失效。按可复现构建惯例固定到 SOURCE_DATE_EPOCH，
+// 缺省 1980-01-01（ZIP DOS 时间戳下限）。
+$epoch = getenv('SOURCE_DATE_EPOCH');
+$ts = is_string($epoch) && preg_match('/^\d+$/', trim($epoch)) === 1 ? (int) trim($epoch) : 315532800;
+for ($i = 0; $i < $zip->numFiles; $i++) {
+    $zip->setMtimeIndex($i, $ts);
+}
+$zip->setArchiveComment("Drift {$driftVersion} · {$depsTag}: Skia M{$milestone} + Noto Sans SC (OFL)");
 $zip->close();
 
 // ── 结果 ──
@@ -186,10 +219,14 @@ file_put_contents($out . '.sha256', $sha . '  ' . basename($out) . "\n");
 // 把 sha256 写进入库的 lock 后，换包必须同时改仓库文件，diff 里看得见。
 $lock = [
     'asset' => basename($out),
+    'driftVersion' => $driftVersion,
+    'depsTag' => $depsTag,
     'sha256' => $sha,
     'bytes' => $size,
     'entries' => count($entries) + $generated,
     'skiaMilestone' => $milestone,
+    'skiaRevision' => $skiaRevision,
+    'provenance' => $provenance,
     'skiaBuildArgs' => $buildArgs,
     'libs' => count(glob($skia . '/out/Release-x64/*.lib') ?: []),
     'fonts' => array_map('basename', glob($fonts . '/*.ttf') ?: []),

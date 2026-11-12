@@ -20,3 +20,11 @@
 # 原样注入包内。`* text=auto` 会在 Windows 检出时换成 CRLF，之后就再也对不上
 # 上游的 sha256 了。用 -text（而非 binary）保住字节，同时仍可正常 diff。
 licenses/** -text
+# 版本文件会被拼进 git tag（`v$(cat VERSION)`）与 Release URL；CRLF 混进去就是
+# 一个带着换行符的坏 tag。纯文本保字节即可，仍保留 diff。
+/VERSION -text
+/DEPS_VERSION -text
+# Skia 源码重建的构建输入：`SKIA_REVISION` 会被拼进 GN 参数/清单比对，
+# `tools/skia/*.sh` 在 CRLF 下会把 \r 带进路径，headers.txt 每行也会多一个字符。
+/SKIA_REVISION -text
+tools/skia/** -text

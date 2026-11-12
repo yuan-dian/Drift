@@ -43,6 +43,8 @@ v2 修订期的过程稿，只在追溯历史时看。**
 | **新增 AOT 坑要先看哪** | `docs/AOT-CONSTRAINTS.md`（§1 判据表 / §5 代码纪律 / §6 错误码） | [`AOT-CONSTRAINTS.md`](AOT-CONSTRAINTS.md) |
 | **想加一个新控件** | `docs/architecture/08-控件面.md` + [`CUSTOM-WIDGET-GUIDE-2026-11-05.md`](CUSTOM-WIDGET-GUIDE-2026-11-05.md) | — |
 | **拿不到 Skia 包 / 要发新的依赖包** | [`RELEASE-DEPS.md`](RELEASE-DEPS.md)（发布流程与 tag 约定）+ `tools/pack-deps.php`、`tools/fetch-deps.php` | [`RELEASE-DEPS.md`](RELEASE-DEPS.md) |
+| **想从源码重建 Skia / 用 CI 自动构建依赖包** | [`RELEASE-DEPS.md`](RELEASE-DEPS.md)「CI 自动构建依赖包」+ `tools/skia/`（`args.gn.tpl` / `headers.txt` / `build-skia.sh`）+ `.github/workflows/deps-build.yml` | 根 `SKIA_REVISION` |
+| **改版本号 / 升级依赖包** | [`RELEASE-DEPS.md`](RELEASE-DEPS.md) 末节「版本号与升级锚点」+ `tools/gen-version.php` | 根 `VERSION` / `DEPS_VERSION` / `SKIA_REVISION` |
 | **想懂现行设计 / 稳定契约** | 根 `DESIGN.md` | [`../DESIGN.md`](../DESIGN.md) |
 | **想追溯历史裁决与来龙去脉** | `docs/_archive/DESIGN-v2-2026-10-14.md` | [`_archive/DESIGN-v2-2026-10-14.md`](_archive/DESIGN-v2-2026-10-14.md) |
 | **想知道 v7 提案里哪些判断被采纳 / 让位** | `docs/architecture/13-与-v7-设计对照.md` | [`13-与-v7-设计对照.md`](architecture/13-与-v7-设计对照.md) |

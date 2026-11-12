@@ -28,6 +28,7 @@ declare(strict_types=1);
  *   （没声明影响面 ≠ 没影响）。
  */
 require __DIR__ . '/autoload.php';
+require __DIR__ . '/version.php';
 
 use Drift\Dev\Doctor\Check;
 use Drift\Dev\Doctor\Environment;
@@ -84,6 +85,8 @@ if ($json) {
         'scope' => $scope,
         'root' => $root,
         'php' => PHP_VERSION,
+        'drift_version' => driftVersion($root),
+        'deps_tag' => driftDepsTag($root),
         'summary' => $counts + ['blocking_fail' => $blocking, 'scoped_out_fail' => $scopedOut],
         'checks' => array_map(
             static fn (Check $c): array => $c->toArray() + ['blocks_scope' => $scopeFlag[$c->id] ?? false],
@@ -104,7 +107,8 @@ $pad = static function (string $s, int $width): string {
 $mark = [Check::OK => '✓', Check::WARN => '⚠', Check::FAIL => '✗'];
 
 if (!$quiet) {
-    echo 'Drift 环境体检（' . count($checks) . ' 项' . ($scope === 'all' ? '' : " · scope={$scope}") . "）\n\n";
+    echo 'Drift 环境体检 · ' . driftVersion($root) . '（' . count($checks) . ' 项'
+        . ($scope === 'all' ? '' : " · scope={$scope}") . "）\n\n";
 }
 
 foreach ($checks as $check) {

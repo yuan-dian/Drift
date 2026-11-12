@@ -10,19 +10,32 @@ declare(strict_types=1);
  * 源优先级：`--url` > `DRIFT_DEPS_URL`（逗号分隔，可指镜像/内网）> GitHub release。
  * 校验优先用入库的 `deps.lock.json`；远端 `.sha256` 只作交叉验证，两者不一致就停。
  *
+ * 私有仓库必须给 token：`releases/download/...` 那条路对私有资产没有可匿名访问的地址
+ * （匿名拿到的是 404，不是 403 —— 看起来像"还没发布"）。有 token 就改走 API 解析
+ * asset id，再按 `Accept: application/octet-stream` 下载。
+ *
+ * 默认取 `DEPS_VERSION` 指定的 tag（版本锚点，不跟随 `latest`）：
+ * 代码发版比依赖包勤，latest 很容易指到没有 zip 的那个 release 上去。
+ *
  * 用法：
- *   php tools/fetch-deps.php                          # 用 origin 推 repo，取 latest
- *   php tools/fetch-deps.php --tag=deps-v1
+ *   php tools/fetch-deps.php                          # 取 DEPS_VERSION 的 tag
+ *   php tools/fetch-deps.php --latest                 # 改用仓库最新 release
+ *   php tools/fetch-deps.php --tag=deps-v2            # 临时钉别的版本
+ *   GITHUB_TOKEN=ghp_xxx php tools/fetch-deps.php     # 私有仓库
  *   php tools/fetch-deps.php --url=<zip> --force
  *   DRIFT_DEPS_URL=https://mirror.example.com/drift php tools/fetch-deps.php
  */
+
+require __DIR__ . '/deps-common.php';
+require __DIR__ . '/version.php';
 
 const ASSET = 'drift-deps-win-x64.zip';
 
 $root = dirname(__DIR__);
 $repo = null;
-$tag = null;
+$tag = driftDepsTag($root);
 $url = null;
+$tokenArg = null;
 $force = false;
 
 foreach (array_slice($argv, 1) as $arg) {
@@ -30,8 +43,12 @@ foreach (array_slice($argv, 1) as $arg) {
         $repo = substr($arg, 7);
     } elseif (str_starts_with($arg, '--tag=')) {
         $tag = substr($arg, 6);
+    } elseif ($arg === '--latest') {
+        $tag = null;
     } elseif (str_starts_with($arg, '--url=')) {
         $url = substr($arg, 6);
+    } elseif (str_starts_with($arg, '--token=')) {
+        $tokenArg = substr($arg, 8);
     } elseif ($arg === '--force') {
         $force = true;
     } else {
@@ -41,128 +58,76 @@ foreach (array_slice($argv, 1) as $arg) {
 }
 
 /**
- * 从 origin 推 owner/repo：仓库一旦托管到 GitHub，这一步就不该再让人手填。
- * 支持 https 与 scp 风格的 ssh 地址。
+ * 一个下载源：zip 地址、鉴权头，以及对应的 `.sha256` 地址。
+ *
+ * @return array{label:string,url:string,headers:list<string>,shaUrl:?string,shaHeaders:list<string>}
  */
-function repoFromOrigin(): ?string
+function source(string $label, string $url, array $headers = [], ?string $shaUrl = null, array $shaHeaders = []): array
 {
-    $out = [];
-    $code = 0;
-    exec('git config --get remote.origin.url 2>&1', $out, $code);
-    if ($code !== 0 || $out === []) {
-        return null;
-    }
-    $remote = trim($out[0]);
-    if (preg_match('#github\.com[:/]+([^/]+)/([^/]+?)(?:\.git)?/?$#', $remote, $m)) {
-        return $m[1] . '/' . $m[2];
-    }
-    return null;
+    return [
+        'label' => $label,
+        'url' => $url,
+        'headers' => $headers,
+        'shaUrl' => $shaUrl,
+        'shaHeaders' => $shaHeaders,
+    ];
 }
 
 /**
- * 候选下载地址，按优先级排列。
- * 镜像地址只写到目录即可（`https://m/drift` → `https://m/drift/<asset>`），
- * 也可以直接给带文件名的完整地址。
+ * GitHub 这一路。有 token 走 API（私有仓库唯一可行），没有就退回匿名直链。
  *
- * @return list<string>
+ * @return array{label:string,url:string,headers:list<string>,shaUrl:?string,shaHeaders:list<string>}|null
  */
-function candidates(?string $explicit, ?string $repo, ?string $tag): array
+function githubSource(string $repo, ?string $tag, ?string $token): ?array
 {
-    if ($explicit !== null) {
-        return [$explicit];
-    }
-
-    $urls = [];
-    $env = getenv('DRIFT_DEPS_URL');
-    if (is_string($env) && trim($env) !== '') {
-        foreach (explode(',', $env) as $raw) {
-            $raw = trim($raw);
-            if ($raw === '') {
-                continue;
-            }
-            $urls[] = str_ends_with(strtolower($raw), '.zip')
-                ? $raw
-                : rtrim($raw, '/') . '/' . ASSET;
-        }
-    }
-
-    if ($repo !== null) {
-        $urls[] = $tag === null
+    if ($token === null) {
+        $url = $tag === null
             ? "https://github.com/{$repo}/releases/latest/download/" . ASSET
             : "https://github.com/{$repo}/releases/download/{$tag}/" . ASSET;
+        return source('GitHub Release（匿名直链）', $url, [], $url . '.sha256');
     }
 
-    return $urls;
-}
-
-/**
- * 下载到 $dest。$resume 为真时从已有字节续传。
- *
- * @return int HTTP 状态码；0 表示失败（原因已打印，$quiet 时留给调用方说）
- */
-function download(string $url, string $dest, bool $quiet = false, bool $resume = false): int
-{
-    $offset = $resume && is_file($dest) ? (int) filesize($dest) : 0;
-    $fp = $offset > 0 ? fopen($dest, 'r+b') : fopen($dest, 'wb');
-    if ($fp === false) {
-        fwrite(STDERR, "无法写入 {$dest}\n");
-        return 0;
-    }
-    if ($offset > 0) {
-        fseek($fp, $offset);
+    $releaseUrl = $tag === null
+        ? depsApiRoot() . "/repos/{$repo}/releases/latest"
+        : depsApiRoot() . "/repos/{$repo}/releases/tags/{$tag}";
+    $release = depsApiJson($releaseUrl, $token);
+    if ($release === null) {
+        return null;
     }
 
-    if (function_exists('curl_init')) {
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_FILE => $fp,
-            CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_MAXREDIRS => 5,
-            CURLOPT_CONNECTTIMEOUT => 20,
-            CURLOPT_TIMEOUT => 1800,
-            CURLOPT_FAILONERROR => true,
-        ]);
-        if ($offset > 0) {
-            // 本机 PHP 8.5 的 curl 常量表里没有 _LARGE 变体；包远小于 2 GB，int 版够用
-            if (defined('CURLOPT_RESUME_FROM_LARGE')) {
-                curl_setopt($ch, CURLOPT_RESUME_FROM_LARGE, $offset);
-            } else {
-                curl_setopt($ch, CURLOPT_RESUME_FROM, $offset);
-            }
+    $assets = [];
+    foreach ($release['assets'] ?? [] as $a) {
+        if (isset($a['name'], $a['id'])) {
+            $assets[(string) $a['name']] = (int) $a['id'];
         }
-        $ok = curl_exec($ch);
-        $err = curl_error($ch);
-        $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-        fclose($fp);
-        if ($ok === false || $code >= 400) {
-            if (!$quiet) {
-                fwrite(STDERR, "下载失败（HTTP {$code}）：{$err}\n{$url}\n");
-            }
-            return 0;
-        }
-        return $code;
+    }
+    if (!isset($assets[ASSET])) {
+        $shown = $release['tag_name'] ?? ($tag ?? 'latest');
+        fwrite(STDERR, "  …… release {$shown} 里没有 " . ASSET . "，现有资产：\n");
+        fwrite(STDERR, '       ' . (implode('、', array_keys($assets)) ?: '（空）') . "\n");
+        return null;
     }
 
-    $ctx = stream_context_create(['http' => ['follow_location' => 1, 'timeout' => 1800]]);
-    $in = @fopen($url, 'rb', false, $ctx);
-    if ($in === false) {
-        fclose($fp);
-        if (!$quiet) {
-            fwrite(STDERR, "下载失败：{$url}\n");
-        }
-        return 0;
-    }
-    stream_copy_to_stream($in, $fp);
-    fclose($in);
-    fclose($fp);
-    return 200;
+    $octet = [
+        'Authorization: Bearer ' . $token,
+        'X-GitHub-Api-Version: 2022-11-28',
+        'Accept: application/octet-stream',
+    ];
+    $shaId = $assets[ASSET . '.sha256'] ?? null;
+
+    return source(
+        'GitHub Release（API：' . ($release['tag_name'] ?? ($tag ?? 'latest')) . '）',
+        depsApiRoot() . "/repos/{$repo}/releases/assets/{$assets[ASSET]}",
+        $octet,
+        $shaId === null ? null : depsApiRoot() . "/repos/{$repo}/releases/assets/{$shaId}",
+        $octet,
+    );
 }
 
 /** 取 `.sha256` 资产里的哈希；取不到返回 null（不阻断，但要人眼比对） */
-function remoteSha(string $url, string $tmp): ?string
+function remoteSha(?string $url, array $headers, string $tmp): ?string
 {
-    if (download($url . '.sha256', $tmp, true) === 0) {
+    if ($url === null || depsDownload($url, $tmp, $headers, true) === 0) {
         @unlink($tmp);
         return null;
     }
@@ -195,57 +160,105 @@ if (is_file($lockPath)) {
     }
 }
 
+$token = depsToken($tokenArg);
+
 if ($url === null && $repo === null) {
-    $repo = repoFromOrigin();
+    $repo = depsRepoFromOrigin();
 }
-$urls = candidates($url, $repo, $tag);
-if ($urls === []) {
+
+/** @var list<array{label:string,url:string,headers:list<string>,shaUrl:?string,shaHeaders:list<string>}> $sources */
+$sources = [];
+$githubFailed = false;
+if ($url !== null) {
+    $sources[] = source('显式地址', $url, [], $url . '.sha256');
+} else {
+    $env = getenv('DRIFT_DEPS_URL');
+    if (is_string($env) && trim($env) !== '') {
+        foreach (explode(',', $env) as $raw) {
+            $raw = trim($raw);
+            if ($raw === '') {
+                continue;
+            }
+            $u = str_ends_with(strtolower($raw), '.zip') ? $raw : rtrim($raw, '/') . '/' . ASSET;
+            $sources[] = source('镜像', $u, [], $u . '.sha256');
+        }
+    }
+    if ($repo !== null) {
+        $gh = githubSource($repo, $tag, $token);
+        if ($gh === null) {
+            $githubFailed = true;
+        } else {
+            $sources[] = $gh;
+        }
+    }
+}
+
+if ($sources === []) {
+    if ($githubFailed) {
+        // 已经知道是 GitHub 这一路出的问题，别再说「没有 origin」——原因上面打过了
+        fwrite(STDERR, "GitHub 这一路没拿到资产。\n");
+        if ($token === null) {
+            fwrite(STDERR, "私有仓库必须给 token（匿名一律 404）：\n");
+            fwrite(STDERR, "      GITHUB_TOKEN=ghp_xxx php tools/fetch-deps.php\n");
+        } else {
+            fwrite(STDERR, "token 有效的话，多半是 release 还没建：\n");
+            fwrite(STDERR, "      php tools/release-deps.php --tag=" . ($tag ?? driftDepsTag()) . "\n");
+        }
+        exit(1);
+    }
     fwrite(STDERR, "推不出下载地址：当前 checkout 没有 GitHub 的 origin。\n");
     fwrite(STDERR, "请显式指定：php tools/fetch-deps.php --repo=owner/name\n");
     exit(1);
 }
 
 $pending = !is_file($zipPath) || $force;
+$used = $sources[0];
 
 if ($pending) {
     // 断点续传只对「上次下到一半」有意义；服务器不认 Range 时会返回 200 并从头写，
-    // 那会把旧 .part 和新内容拼在一起，所以看到 200 就丢掉重下一次。
+    // 那会把旧 .part 和新内容拼在一起，所以看到失败就丢掉重下一次。
     $resumed = is_file($part) && filesize($part) > 0;
-    $usedUrl = null;
-    foreach ($urls as $candidate) {
-        $label = $resumed ? sprintf('下载 : %s（从 %d 字节续）', $candidate, filesize($part)) : "下载 : {$candidate}";
+    $done = false;
+    foreach ($sources as $src) {
+        $label = $resumed
+            ? sprintf('下载 : %s（从 %d 字节续）', $src['label'], (int) filesize($part))
+            : "下载 : {$src['label']}";
         printf("%s\n", $label);
         // 服务器不认 Range 时 curl 会直接报错，而不是返回 200 —— 静默试一次，
         // 失败就丢掉 .part 整段重下，别把"不支持续传"当成网络故障。
         $code = $resumed
-            ? download($candidate, $part, true, true)
-            : download($candidate, $part, false, false);
+            ? depsDownload($src['url'], $part, $src['headers'], true, true)
+            : depsDownload($src['url'], $part, $src['headers'], false, false);
         if ($code === 0 && $resumed) {
             echo "       续传失败（服务器可能不支持 Range），整段重下\n";
             @unlink($part);
             $resumed = false;
-            $code = download($candidate, $part, false, false);
+            $code = depsDownload($src['url'], $part, $src['headers'], false, false);
         }
         if ($code !== 0) {
-            $usedUrl = $candidate;
+            $used = $src;
+            $done = true;
             break;
         }
         @unlink($part);
     }
-    if ($usedUrl === null) {
+    if (!$done) {
         @unlink($part);
         fwrite(STDERR, "所有下载源都失败了。\n");
-        fwrite(STDERR, "提示：latest 指向的 release 未必带依赖包。若依赖包单独发版（推荐），\n");
-        fwrite(STDERR, "      用 --tag=deps-v1 指定；tag 名以 docs/RELEASE-DEPS.md 为准。\n");
+        if ($token === null) {
+            fwrite(STDERR, "提示：私有仓库取不到资产（匿名一律 404），请给 token：\n");
+            fwrite(STDERR, "      GITHUB_TOKEN=ghp_xxx php tools/fetch-deps.php\n");
+        }
+        fwrite(STDERR, "提示：默认取 DEPS_VERSION 指定的 tag（当前 " . driftDepsTag() . "）。\n");
+        fwrite(STDERR, "      确认该 tag 已发过 release，或用 --tag=<tag> / --url=<直链> 显式指定。\n");
         exit(1);
     }
 } else {
     printf("复用已有 %s（--force 重下）\n", $zipPath);
-    $usedUrl = $urls[0];
 }
 
 $actual = hash_file('sha256', $pending ? $part : $zipPath);
-$remote = remoteSha($usedUrl, $dist . '/.sha256.tmp');
+$remote = remoteSha($used['shaUrl'], $used['shaHeaders'], $dist . '/.sha256.tmp');
 $expected = $lock['sha256'] ?? $remote;
 
 if ($lock !== null && $remote !== null && !hash_equals((string) $lock['sha256'], $remote)) {
@@ -261,12 +274,12 @@ if ($expected === null) {
     fwrite(STDERR, "  请与 docs/RELEASE-DEPS.md 记录的校验值人工比对后再用。\n");
 } elseif (!hash_equals((string) $expected, $actual)) {
     @unlink($part);
-    $source = isset($lock['sha256']) ? 'deps.lock.json' : '.sha256';
-    fwrite(STDERR, "✗ SHA256 不符（对照 {$source}），包已损坏或被替换：\n  期望 {$expected}\n  实际 {$actual}\n");
+    $ref = isset($lock['sha256']) ? 'deps.lock.json' : '.sha256';
+    fwrite(STDERR, "✗ SHA256 不符（对照 {$ref}），包已损坏或被替换：\n  期望 {$expected}\n  实际 {$actual}\n");
     exit(1);
 } else {
-    $source = isset($lock['sha256']) ? 'deps.lock.json' : '远端 .sha256';
-    echo "校验 : SHA256 一致（{$source}）\n";
+    $ref = isset($lock['sha256']) ? 'deps.lock.json' : '远端 .sha256';
+    echo "校验 : SHA256 一致（{$ref}）\n";
 }
 
 if ($pending && !rename($part, $zipPath)) {

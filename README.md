@@ -32,6 +32,35 @@ final class HelloApplication extends Application
   **默认离线 mock，不触网**，切到真实 OSS 直传网关的方式见该应用的 `Config` 类。
 - 工程质量：`tools/gate.php` 闸门 + 判据自证变异 + T0/T1/T2 分层真机验证。
 
+## 版本号
+
+**版本与依赖锚点是根目录三个单行文件**，shell / CI 可直接 `cat`：
+
+| 文件 | 含义 | 当前值 |
+|---|---|---|
+| [`VERSION`](VERSION) | 框架版本，也是 git tag 与 CHANGELOG 小节名的来源 | `0.1.0-preview.1` |
+| [`DEPS_VERSION`](DEPS_VERSION) | 配套的二进制依赖包 tag（与代码版本解耦） | `deps-v1` |
+| [`SKIA_REVISION`](SKIA_REVISION) | 二进制包对应的 Skia 源码 commit | `unpinned` |
+
+运行时代码用 `\Drift\Core\Version::VERSION`（另有 `BASE` / `PREVIEW` / `TAG` / `DEPS_TAG`）。
+**这个类是生成的，不要手改**：AOT 产物里没有仓库根目录可读，所以版本必须在编译期就有了；
+同时不该出现第二份靠人记着同步的真相。
+
+改版本只需动一个文件，其余全部派生：
+
+```bash
+# 改 VERSION（或 DEPS_VERSION）
+php tools/gen-version.php      # 生成 src/Core/Version.php + 同步 8 份 apps/*/project.yml 的 PE 版本
+php tools/pack-deps.php        # 把版本锚点写进 DEPS-MANIFEST 与 deps.lock.json
+php tools/version.php --check  # 全部对齐才过；gate 里也挂着同样的判据
+```
+
+`version.php --check` 会比对 `CHANGELOG.md` 的版本小节、HEAD 上的 tag、代码常量、
+`deps.lock.json` 的版本锚点，以及 `SKIA_REVISION` 与 lock 里的 `skiaRevision`；
+`gen-version.php --check` 再覆盖 8 份 `project.yml`。漏了同步会在闸门里响，
+而不是发版时才发现 tag 和 CHANGELOG 对不上。升级流程与借鉴来源见
+[`docs/RELEASE-DEPS.md`](docs/RELEASE-DEPS.md) 末节「版本号与升级锚点」。
+
 ## 构建环境：装什么、放哪、怎么确认
 
 > 仅 Windows 10/11 x64。分两档：**跑判据 / 读代码**只要 PHP；**编出 `.exe`**还要一整套
@@ -123,15 +152,29 @@ Python 3 只给真机探针 `tools/probe-window.py` 用，依赖仅标准库 `ct
 | `cpp/fonts/` | Noto Sans SC Regular / Bold + `OFL.txt`（SIL OFL 1.1 全文，重分发必须保留） |
 | 打包产物 | `drift-deps-win-x64.zip`，约 50 MB（解压后 159 MB），含 `cpp/DEPS-MANIFEST.txt` 与 `cpp/licenses/`（11 份许可全文 + `THIRD-PARTY.md` 索引）。包内路径全挂在 `cpp/` 下 —— 它解压到仓库根，顶层放文件会污染工作区 |
 
-首次获取（包托管在 GitHub Releases）：
+首次获取（包托管在 GitHub Releases；**本仓库是私有的，必须带 token**）：
 
 ```bash
-php tools/fetch-deps.php                # 用 origin 推 owner/repo，取最新 release
-php tools/fetch-deps.php --tag=deps-v1  # 指定版本；--force 重下
+export GITHUB_TOKEN=ghp_xxx               # PowerShell: $env:GITHUB_TOKEN = "ghp_xxx"
+php tools/fetch-deps.php                  # 取 DEPS_VERSION 指定的 tag
+php tools/fetch-deps.php --tag=deps-v2    # 临时钉别的版本；--force 重下
+php tools/fetch-deps.php --latest         # 改取仓库最新 release
 ```
 
-它会下到 `dist/`、与同批上传的 `.sha256` 比对、解压到仓库根，再数一遍 `.lib` / 字体 /
+私有仓库的资产**没有可匿名访问的地址**：不带 token 时 `releases/download/...` 一律回
+404，看起来像"还没发布"。带上 token 后脚本改走 API 解析资产 id，再按
+`Accept: application/octet-stream` 下载。token 只需 `repo` 读权限。
+
+token 的取法依次是：`--token=…` > `GITHUB_TOKEN` > `GH_TOKEN` > `~/.git-credentials`。
+Windows 上 Git Credential Manager 把凭据放在系统凭据库里读不出来，那种机器只能用环境变量。
+
+它会下到 `dist/`、拿入库的 `deps.lock.json` 校验、解压到仓库根，再数一遍 `.lib` / 字体 /
 许可数量 —— 对不上直接失败，不用等到构建期吃 LNK2019。
+
+不走 `composer require`：Composer 的 `dist.shasum` 只认 SHA-1（填 SHA-256 直接校验失败）、
+解压会剥掉包内的 `cpp/` 顶层，而且没有"可选依赖"—— 包一旦进 `require`，50 MB 会摊给每个
+只跑闸门、根本不需要 Skia 的人。实测数据与取舍见 [`docs/RELEASE-DEPS.md`](docs/RELEASE-DEPS.md)
+末节「为什么不用 Composer 分发」。
 
 从已有 `cpp/` 复现打包，或手工解压别处拿到的包：
 
@@ -148,15 +191,45 @@ Get-FileHash drift-deps-win-x64.zip -Algorithm SHA256   # 校验收到的包
 当前包的校验值（`pack-deps.php` 打包时自动写入，`fetch-deps.php` 用它校验）：
 
 ```text
-016185f308269ac376b0a87fae6d5d716486fc46838dfb42792e3e683125d31c
+d612496ced3660edf4cfed42da513df85b952374196c4b904ef8593bc396ee4b
 ```
+
+同一份 `cpp/` 重打包 SHA 不变：ZIP 条目时间固定到 `SOURCE_DATE_EPOCH`（缺省
+1980-01-01），否则每次打包都换一个哈希，CI 就无法判断「依赖真变了没有」。
 
 完整元数据（字节数 / entry 数 / Skia 里程碑 / 24 个 lib / 2 个字体 / 11 份许可）见
 [`deps.lock.json`](deps.lock.json)。它入库，所以换包必须同时改仓库文件 —— 这是校验能成立的前提；
 `dist/*.sha256` 只是同批上传的副本。
 
-★ **首个 release 尚未发布**：在那之前 `fetch-deps.php` 会 404，只能从已有 `cpp/` 的机器拷入。
-发布与维护流程见 [`docs/RELEASE-DEPS.md`](docs/RELEASE-DEPS.md)。
+★ **首个 release 尚未发布**：在那之前 `fetch-deps.php` 会取不到资产，只能从已有 `cpp/` 的机器拷入。
+发布是一次性的（打包 → 建 release → 传两个资产，脚本全包）：
+
+```bash
+php tools/pack-deps.php                        # 生成包、.sha256 与 deps.lock.json
+php tools/release-deps.php                    # tag 取 DEPS_VERSION；需要 GITHUB_TOKEN
+php tools/release-deps.php --dry-run           # 只看要做什么
+```
+
+发布脚本会先把包 / `.sha256` / `deps.lock.json` 三者对齐，再核对版本锚点
+（`lock` 里的 `driftVersion` / `depsTag` 必须等于根目录 `VERSION` / `DEPS_VERSION`），
+全对齐才动手；覆盖已有资产要加 `--force`（GitHub 不支持改资产内容）。完整流程与取舍见 [`docs/RELEASE-DEPS.md`](docs/RELEASE-DEPS.md)。
+
+**不想要预编译包、要从源码自己编 Skia**（可选，仅 Windows x64）：构建输入全部入库 ——
+`SKIA_REVISION`（Skia commit）、`tools/skia/args.gn.tpl`（平台无关的 GN 参数）、
+`tools/skia/headers.txt`（包内该带哪些头）、`tools/skia/build-skia.sh`（构建脚本）。
+机器相关的 VS / Win SDK / LLVM 路径不写进仓库，用 `SKIA_WIN_VC` 等环境变量覆盖。
+
+```bash
+# 需要 git / python3 / depot_tools（gn + ninja）/ LLVM，且都在 PATH
+printf '<40 位 Skia commit>' > SKIA_REVISION
+bash tools/skia/build-skia.sh --replace    # 产出 cpp/skia；cpp/fonts 需另行备齐
+php tools/pack-deps.php                    # 组包 + 写 deps.lock.json
+```
+
+★ 现有 `deps-v1` 的包是从别的机器拷入的预编译包，**没有可追溯的源码 commit** ⇒
+`SKIA_REVISION` 目前是 `unpinned`、`deps.lock.json` 里 `provenance: legacy`。这是如实标注，
+不是漏填：脚本与 CI 重建都拒绝 `unpinned`。自动构建、发布流程见
+[`docs/RELEASE-DEPS.md`](docs/RELEASE-DEPS.md) 的「CI 自动构建依赖包」一节。
 
 #### ③ 路径不对就设环境变量
 

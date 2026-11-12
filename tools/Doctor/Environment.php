@@ -26,6 +26,10 @@ final class Environment
     public const DEFAULT_VS_YEAR = '18';
     public const DEFAULT_SDK_VERSION = '10.0.26100.0';
 
+    /** Skia M148 的 .lib 数量与字体数量；只用来判断「包在不在、全不全」 */
+    public const MIN_SKIA_LIBS = 20;
+    public const MIN_FONTS = 2;
+
     /**
      * 逐项体检（只读）。
      *
@@ -157,6 +161,9 @@ final class Environment
             },
         );
 
+        // ── Skia 预编译库与字体（`/cpp/` 不入库，缺了要到链接期才炸成 LNK2019）──
+        $checks[] = self::skiaCheck($root);
+
         // ── golden 基线完整度：缺一张 = 少一张网，必须能看见 ──
         $checks[] = self::goldenCheck($root);
 
@@ -222,6 +229,14 @@ final class Environment
         $sdkVersion = '';
 
         if ($withToolchain) {
+            // 缺包在链接期只会报 LNK2019，看不出「去取依赖包」——在动手前就问清楚
+            $skia = self::skiaCheck($root);
+            if (!$skia->ok()) {
+                throw new EnvironmentException(
+                    "{$skia->detail}；先取依赖包：{$skia->fix}",
+                );
+            }
+
             // 坑 ④：cl.exe 要 INCLUDE / LIB / PATH 三件套（vcvars64.bat 干的就是这个），
             //       而 bash 里没法 `call` 它 ⇒ 直接按 MSVC/SDK 目录拼。
             $msvc = self::msvcRoot();
@@ -420,6 +435,49 @@ final class Environment
         } catch (EnvironmentException $e) {
             return new Check($id, $label, Check::FAIL, $e->getMessage(), true, null, $affects);
         }
+    }
+
+    /**
+     * Skia 预编译库与字体是否就位。
+     *
+     * ★ `/cpp/` 整个目录在 `.gitignore` 里，clone 后本就没有。不体检的话，缺包要一直
+     *   等到链接期才炸成 `LNK2019`，而那条报错完全看不出「去取依赖包」——README 里
+     *   把它叫「最大的隐藏门槛」就是指这个。这里把它提前成一条可执行的指引。
+     */
+    private static function skiaCheck(string $root): Check
+    {
+        $libs = glob("{$root}/cpp/skia/out/Release-x64/*.lib") ?: [];
+        $fonts = glob("{$root}/cpp/fonts/*.ttf") ?: [];
+        $libOk = count($libs) >= self::MIN_SKIA_LIBS;
+        $fontOk = count($fonts) >= self::MIN_FONTS;
+
+        if ($libOk && $fontOk) {
+            return new Check(
+                'skia',
+                'Skia 依赖包',
+                Check::OK,
+                count($libs) . ' 个 .lib · ' . count($fonts) . ' 个字体',
+                true,
+            );
+        }
+
+        $missing = [];
+        if (!$libOk) {
+            $missing[] = '.lib ' . count($libs) . '/' . self::MIN_SKIA_LIBS;
+        }
+        if (!$fontOk) {
+            $missing[] = '字体 ' . count($fonts) . '/' . self::MIN_FONTS;
+        }
+
+        return new Check(
+            'skia',
+            'Skia 依赖包',
+            Check::FAIL,
+            implode(' · ', $missing) . '（/cpp/ 不入库，clone 后本就没有）',
+            true,
+            'php tools/fetch-deps.php（私有仓库先设 GITHUB_TOKEN）',
+            ['build'],
+        );
     }
 
     /**

@@ -110,6 +110,13 @@ $checks = [
     //   MSVC / SDK / PHPRC 都不影响本闸门（本闸门是 T0，纯 PHP），否则第一项就 break，
     //   后面 27 项一条都跑不到（2026-11-11 修）。
     'doctor'   => ['环境（doctor）', [PHP_BINARY, $root . '/tools/doctor.php', '--quiet', '--scope=gate'], false],
+    // VERSION / DEPS_VERSION / CHANGELOG / deps.lock.json / HEAD tag 必须同版：
+    // 版本漂了不报错的话，发版时才会发现 tag 和 CHANGELOG 对不上（Flutter 的打包流程
+    // 会拒绝发布过时的 engine.version，同理）。
+    'version'  => ['版本一致性（version --check）', [PHP_BINARY, $root . '/tools/version.php', '--check'], false],
+    // 上面那条管真相源之间的一致性；这条管所有派生副本（代码常量 + 8 份 project.yml
+    // 的 version / file-version / product-version）有没有跟上真相源。
+    'genversion' => ['版本派生副本（gen-version --check）', [PHP_BINARY, $root . '/tools/gen-version.php', '--check'], false],
     'lint'     => ['lint', [PHP_BINARY, $root . '/tools/lint.php'], false],
     'selftest' => ['lint 自检', [PHP_BINARY, $root . '/tools/lint.php', '--selftest'], false],
     // ★ 跨层 ABI：stub 是唯一事实源，C++ 实现与解释器替身都是被校验方。

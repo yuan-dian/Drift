@@ -14,7 +14,7 @@
 | App | 85 | 54 |
 | Async | 25 | 5 |
 | Commands | 7 | 0 |
-| Core | 2 | 38 |
+| Core | 3 | 38 |
 | Diagnostics.php | 0 | 2 |
 | Errors.php | 2 | 3 |
 | Geometry | 9 | 0 |
@@ -28,9 +28,9 @@
 | Text | 32 | 3 |
 | Theme | 3 | 0 |
 | Widget | 188 | 226 |
-| **合计** | **507** | **414** |
+| **合计** | **508** | **414** |
 
-覆盖 399 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
+覆盖 400 个文件 · 描述性提及 17 处（grep 口径的污染源，不计入）
 
 ## App 层
 
@@ -241,11 +241,12 @@
 
 ## Core 层
 
-### @api（应用可读面） · 2
+### @api（应用可读面） · 3
 
 | 符号 | 种类 | 文件 |
 |---|---|---|
 | `Computed` | class | src/Core/Computed.php |
+| `Version` | class | src/Core/Version.php |
 | `Versioned` | interface | src/Core/Versioned.php |
 
 ### @internal（框架内部） · 38
