@@ -21,8 +21,11 @@ use Drift\Widget\Widget;
  * 能在 `php.exe` 里跑完整 layout + paint，改一页只跑一页（§12.2 的"每页可独立
  * 预览"因此才成立）。
  *
- * ★ 它**不 new Surface**、不碰平台：表面由调用方注入（`SvgSurface` 或测试里的
- *   任何 `RenderSurface`）⇒ 与 `Application` 同一条注入纪律（§7.2 裁决 4）。
+ * ★ 它**不 new Surface**、不碰平台：表面由调用方注入 ⇒ 与 `Application` 同一条
+ *   注入纪律（§7.2 裁决 4）。
+ * ★ 2026-11-12 订正：构造签名只收 `SvgSurface`（`render()` 要调它的 `svg()`，
+ *   `resize()` 也要它记物理尺寸），**不是**任意 `RenderSurface`。旧注释写"测试里的
+ *   任何 RenderSurface"与签名不符 —— 两种输出格式（SVG / PNG）都由这一个类提供。
  */
 final class Renderer
 {

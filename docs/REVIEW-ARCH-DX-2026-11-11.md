@@ -217,6 +217,11 @@ Sync/Thread 下恒不触发，`AsyncValue::hasProgress()` 恒 false，**不报�
 | 4.7 | `fold()` 的校验与刷新路由 | 只用 `isset` 校验四支（AOT 下未验 `is_callable`，是有意取舍），写成 `null` / 数字时报错错位；「刷新中」硬编码走 `data` 支，页面须自己二次分支 | 校验信息带上具体键名；刷新路由提供显式开关（Riverpod `skipLoadingOnRefresh` 的形状），默认值不变 |
 | 4.8 | 生命周期兜底仍不对称（11-08 已提，未修） | `State::setState()` 无 `mounted` 守卫；`Application::after()` 明明返回 id 且有 `cancelAfter()`，教程的 `AsyncStage` 却把回调包成 `void`、页面切走后仍对已卸载 State 写值 | 补 `mounted` 守卫 + 通用 disposers 袋（Flutter `State.mounted` / `Timer.cancel()` 是标准形态） |
 
+> **2026-11-12 归档订正（不改 4.4 的裁决）**：该行点名的
+> `tools/probe-raster-page.php` 已合并进 `tools/drift-preview.php --format=png`，
+> 原件只读留存于 `tools/_archive/probe-raster-page.php`，默认输出不再绑本机绝对路径。
+> `tools/press-sequence.php` 那半本轮未动 ⇒ 4.4 的判据继续有效；原记录保留划痕。
+
 ---
 
 ## 5. 复核后排除的假阳性（重要：别照着代理结论改代码）

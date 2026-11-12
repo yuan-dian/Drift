@@ -46,7 +46,9 @@ if (in_array('--selftest', $args, true)) {
     exit($ok ? 0 : 1);
 }
 
-$project = Project::scan($root, ['tools/Lint/fixtures/']);
+// `tools/_archive/` 是合并前脚本 / 一次性调研尺子的只读留存：里面的 PHP 既不该进
+// 符号表，也不该按入口脚本的 namespace-mismatch 规则误报 ⇒ 与夹具一起忽略。
+$project = Project::scan($root, ['tools/Lint/fixtures/', 'tools/_archive/']);
 $diagnostics = $linter->run($project);
 
 $errors = 0;

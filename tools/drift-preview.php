@@ -2,18 +2,25 @@
 declare(strict_types=1);
 
 /**
- * drift-preview —— 无头跑完整 layout + paint，产出 SVG（§16.3 / §A.5）。
+ * drift-preview —— 无头跑完整 layout + paint，产出 SVG 或 PNG（§16.3 / §A.5）。
  *
  * ```bash
  * php tools/drift-preview.php --page=tools/Preview/demo.php [--width=320] [--height=240]
  *                              [--dpr=1] [--theme=light|dark] [--out=out.svg]
  *                              [--fixture=store.php] [--ascii] [--focus=<n>]
+ *                              [--format=svg|png]
  * ```
  *
  * `--page` 指向一个返回 `Widget` 的 PHP 文件（页面级预览，§12.2）。带参页面用
  * `--fixture` 指向一个返回 store 实例的文件 —— 页面类名约定与 §4.5 的
  * `pages/` 一页一文件一致：文件名 `UsersPage.php` ⇒ 类 `UsersPage`，
  * 构造参数取 `$store`（fixture 的返回值）。
+ *
+ * `--format=png` 直接看光栅侧的真实像素（原先独立的 `probe-raster-page.php` 已合并
+ * 进来）：**必须给 `--out`**（二进制不往终端喷），例：
+ *   php tools/drift-preview.php --page=tools/Preview/FormPage.php --format=png --out=_build/x.png
+ * 两种格式跑的是**同一帧的同一份 `RasterCanvas`**，只是编码不同 ⇒ SVG 是位图 runs，
+ * PNG 是逐像素 RGB，不存在"两套近似渲染"。
  *
  * ★ **不编译、不依赖 OS**（§16.3）：软光栅 + 纯 PHP ⇒ 内环秒级。
  * ★ **同一份渲染路径**：`Frame` → `DisplayList` → `RasterCanvas` ⇒ 预览到的就是
@@ -60,9 +67,20 @@ function argStr(array $args, string $key, string $default): string
 
 $args = parseArgs($argv ?? []);
 $page = argStr($args, 'page', '') ?: argStr($args, 'app', '');
+$format = argStr($args, 'format', 'svg');
 
 if ($page === '') {
-    fwrite(STDERR, "用法：php tools/drift-preview.php (--page=<Widget 的 php> | --app=<Application 的 php>) [--width=320] [--height=240] [--dpr=1] [--theme=light|dark] [--out=x.svg] [--fixture=store.php] [--ascii]\n");
+    fwrite(STDERR, "用法：php tools/drift-preview.php (--page=<Widget 的 php> | --app=<Application 的 php>) [--width=320] [--height=240] [--dpr=1] [--theme=light|dark] [--out=x.svg|x.png] [--fixture=store.php] [--ascii] [--format=svg|png]\n");
+    exit(2);
+}
+
+if (!in_array($format, ['svg', 'png'], true)) {
+    fwrite(STDERR, "--format 只认 svg / png，收到：{$format}\n");
+    exit(2);
+}
+
+if ($format === 'png' && argStr($args, 'out', '') === '') {
+    fwrite(STDERR, "--format=png 必须给 --out=<文件> —— 二进制不往终端喷\n");
     exit(2);
 }
 
@@ -112,7 +130,8 @@ if (!$target instanceof Widget && !$target instanceof Application) {
 }
 
 // ── 渲染 ────────────────────────────────────────────────────
-$surface = new SvgSurface();
+// PNG 只在 surface 里多留一份编码；`Renderer` 不认格式，仍返回 SVG 串。
+$surface = new SvgSurface($format === 'png');
 $renderer = new Renderer(
     $surface,
     new DeterministicMetricsProvider(
@@ -140,6 +159,12 @@ if ($focusIndex >= 0) {
 $svg = $target instanceof Application
     ? $renderer->renderApp($target, $width, $height, $dpr)
     : $renderer->render($target, $width, $height, $dpr, $prepare);
+$payload = $format === 'png' ? $surface->png() : $svg;
+
+if ($payload === '') {
+    fwrite(STDERR, "没拿到任何帧 —— Frame 没跑起来\n");
+    exit(1);
+}
 
 $out = argStr($args, 'out', '');
 if ($out !== '') {
@@ -147,10 +172,10 @@ if ($out !== '') {
     if (!is_dir($dir)) {
         mkdir($dir, 0777, true);
     }
-    file_put_contents($out, $svg);
-    fwrite(STDOUT, "已写出 {$out}（" . strlen($svg) . " 字节）\n");
+    file_put_contents($out, $payload);
+    fwrite(STDOUT, "已写出 {$out}（" . strlen($payload) . " 字节）\n");
 } else {
-    fwrite(STDOUT, $svg . "\n");
+    fwrite(STDOUT, $payload . "\n");
 }
 
 // ── 尺寸摘要：终端里确认"这页真的排开了" ────────────────────
@@ -163,7 +188,9 @@ if (($args['ascii'] ?? null) === 'true') {
         (int) round($width * $dpr),
         (int) round($height * $dpr),
     )) . "\n");
-    fwrite(STDOUT, 'SVG：' . substr_count($svg, '<rect x=') . " 条像素 run\n");
+    if ($format === 'svg') {
+        fwrite(STDOUT, 'SVG：' . substr_count($svg, '<rect x=') . " 条像素 run\n");
+    }
 }
 
 exit(0);

@@ -51,8 +51,9 @@ $H = 640;
 
 /**
  * RGBA 原始串 → PNG（color type 2 = RGB，filter 0 逐行；白底不透明 ⇒ 丢 alpha）。
- * ★ 与 `tools/probe-raster-page.php` 的编码器同口径（那份是探针里的临时副本，
- *   这里固化成基线落盘与失败 diff 图共用的一份）。
+ * ★ 与 `Drift\Dev\Preview\SvgSurface::toPng()` 同口径（2026-11-12 合并前，
+ *   另一份在已归档的 `tools/_archive/probe-raster-page.php` 里）；
+ *   这里固化成基线落盘与失败 diff 图共用的一份。
  */
 function goldenPng(string $rgba, int $w, int $h): string
 {

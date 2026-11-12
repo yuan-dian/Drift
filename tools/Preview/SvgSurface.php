@@ -11,7 +11,7 @@ use Drift\Rendering\RasterCanvas;
 use Drift\Rendering\RenderSurface;
 
 /**
- * @internal 把 `Frame` 的输出变成 **SVG 位图 runs**。
+ * @internal 把 `Frame` 的输出变成 **SVG 位图 runs** 或 **PNG 位图**。
  *
  * ★ 为什么是"位图 runs"而不是"把绘制命令翻成 SVG 元素"：命令里嵌着字形位图
  *   （§14.2 的第三个必须钉死的输入），逐命令翻过去迟早要发明一套"SVG 字体"。
@@ -20,6 +20,11 @@ use Drift\Rendering\RenderSurface;
  *
  * ★ runs 逐行合并：同一行里连续同色的像素并成一条 `<rect>`。对点阵字与实色块
  *   压缩得很好（几百条而不是几万条），且**无损** —— 像素与软光栅逐字节一致。
+ *
+ * ★ 2026-11-12：PNG 也在这里编码了。原先 `tools/probe-raster-page.php` 自己
+ *   new `RasterCanvas` 再手写一份 PNG，与这里是两条"看起来一样"的渲染路径；
+ *   现在两种格式都从**同一帧的同一份 raster** 出来，只是编码不同。
+ *   `capturePng` 默认关 ⇒ 既有 SVG / golden 路径零额外开销、输出逐字节不变。
  */
 final class SvgSurface implements RenderSurface
 {
@@ -35,7 +40,10 @@ final class SvgSurface implements RenderSurface
     /** @var list<string> 已产出的帧（多帧只在 devtools 场景用） */
     private array $frames = [];
 
-    public function __construct()
+    /** @var list<string> 与 `$frames` 一一对应的 PNG（只在 `capturePng` 打开时填） */
+    private array $pngFrames = [];
+
+    public function __construct(private readonly bool $capturePng = false)
     {
         $this->background = Color::white();
     }
@@ -68,6 +76,9 @@ final class SvgSurface implements RenderSurface
         }
 
         $this->frames[] = $this->toSvg($raster);
+        if ($this->capturePng) {
+            $this->pngFrames[] = $this->toPng($raster);
+        }
     }
 
     public function svg(int $index = -1): string
@@ -79,9 +90,49 @@ final class SvgSurface implements RenderSurface
         return $this->frames[$index < 0 ? count($this->frames) + $index : $index];
     }
 
+    /** @internal 与 `svg()` 同索引；没开 `capturePng` 或没跑过帧 ⇒ 空串 */
+    public function png(int $index = -1): string
+    {
+        if ($this->pngFrames === []) {
+            return '';
+        }
+
+        return $this->pngFrames[$index < 0 ? count($this->pngFrames) + $index : $index];
+    }
+
     public function frameCount(): int
     {
         return count($this->frames);
+    }
+
+    /**
+     * RGBA 原始串 → PNG（color type 2 = RGB，filter 0 逐行；白底不透明 ⇒ 丢 alpha）。
+     *
+     * ★ 与 `tools/golden-raster.php::goldenPng()` 同口径 —— 原先
+     *   `probe-raster-page.php` 里那份是临时副本，合并后这里是唯一一份预览编码器。
+     * ★ 手写而不走 GD：本机 PHP 没装 GD，且预览要保持"零扩展依赖"。
+     */
+    private function toPng(RasterCanvas $raster): string
+    {
+        $rgba = $raster->toRgba();
+        $raw = '';
+        for ($y = 0; $y < $this->height; $y++) {
+            $raw .= "\x00"; // filter 0
+            $base = $y * $this->width * 4;
+            for ($x = 0; $x < $this->width; $x++) {
+                $o = $base + $x * 4;
+                $raw .= $rgba[$o] . $rgba[$o + 1] . $rgba[$o + 2];
+            }
+        }
+
+        $chunk = static function (string $type, string $body): string {
+            return pack('N', strlen($body)) . $type . $body . pack('N', crc32($type . $body));
+        };
+
+        return "\x89PNG\r\n\x1a\n"
+            . $chunk('IHDR', pack('NNCCCCC', $this->width, $this->height, 8, 2, 0, 0, 0))
+            . $chunk('IDAT', gzcompress($raw, 6))
+            . $chunk('IEND', '');
     }
 
     private function toSvg(RasterCanvas $raster): string

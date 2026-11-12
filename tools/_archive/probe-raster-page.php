@@ -14,10 +14,10 @@ declare(strict_types=1);
  *   交出白底 RasterCanvas）。
  * ★ PNG 手写（color type 2 + gzcompress）—— 本机 PHP 没装 GD。
  */
-// 与 drift-preview 同一条渲染路径（Frame → DisplayList → RasterCanvas），
-// 只是把 SvgSurface 换成直接收 RGBA ⇒ 看得见 Raster 侧真实的像素。
-//
-// 用法：php _build/w1-raster-png.php [宽] [高] [out.png]
+// ── 归档快照（2026-11-12，只读留存）─────────────────────────────
+// 本入口已合并进 `tools/drift-preview.php --format=png`：两种格式现在从同一帧的
+// 同一份 RasterCanvas 出来。**不要直接运行本文件** —— 相对路径（autoload）与
+// 目录层级都已变，且默认输出仍是当年的本机绝对路径。跑法见新入口的 docblock。
 
 require dirname(__DIR__) . '/tools/autoload.php';
 

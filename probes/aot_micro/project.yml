@@ -1,0 +1,37 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# probes/aot_micro/project.yml —— AOT 微基准阶梯（归因「AOT 慢在哪一层」）
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# ★ 一句话理由：`DEBT` §34/§35 只量出「AOT 慢 1.73×/2.24×」，
+#   归因停在「大概是 `php::Var` 装箱」（未验证）。而 `AOT-CONSTRAINTS` §2.3 显示的
+#   是「装箱几乎免费」。⇒ 减速成分没定位过。本探针拆成 13 级去找。
+#
+# ★★ 与 `frame_tax_aot` 的关键差别：**不引 `../../src`**。
+#   阶梯要的是"语言原语在 AOT 下多贵"，不是"框架多慢"；
+#   零框架依赖 ⇒ 5 个翻译单元、构建几十秒，随时可重跑。
+#
+# ★ 不加 `no-console`：结论要直接看 stdout。
+# ★ 不 include `build/base.yml`：那是 Skia 的链接表（141MB），这里一行都用不到。
+
+name: aot_micro_probe
+version: 0.1.0
+
+info:
+  Author: Drift
+  Description: AOT 微基准阶梯 —— 把 1.73× 拆成「算术 / 分配 / 虚调用 / 闭包」各占多少
+
+cxx-std: c++20
+
+cxx-flags:
+  - /utf-8
+  - /FS
+
+job: 16
+
+sources:
+  - app
+  # 量具本体：与解释器侧 `tools/aot-micro-probe.php` 调的是**同一份**。
+  - ../../tools/Bench/AotMicro.php
+  # 阶梯用的四个最小类型。★ 这里可以写目录：目录里全是正常类，
+  # 没有 `tools/Lint/fixtures/` 那种"故意写坏"的夹具。
+  - ../../tools/Bench/Micro

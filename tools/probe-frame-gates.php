@@ -6,7 +6,7 @@ declare(strict_types=1);
 // ★★ 为什么走 PHP proc_open：users.exe 是 GUI 子系统（no-console），bash 起的这种
 //    进程会被沙箱回收 ⇒ 现象是"1.5 秒返回、rc=0、没有任何产出"（MEMORY 既有结论）。
 //
-// 用法：php _build/probe-frame-gates.php [等待秒数] [是否驱动输入]
+// 用法：php tools/probe-frame-gates.php [等待秒数] [是否驱动输入]
 $root = dirname(__DIR__);
 $waitSeconds = (int) ($argv[1] ?? 6);
 $drive = ($argv[2] ?? '1') !== '0';
