@@ -33,17 +33,27 @@ TypePHP 的下载安装、默认目录布局与环境变量清单，见 [`../REA
 - **T2**：AOT 真机构建 + 真机探针（`drift-build --full` + `probe-window`）。
   **需要 §1 完整工具链**——自托管 Windows runner 才跑。
 
-## 3. 日常命令
+## 3. 日常命令（一个入口，别再抄清单）
+
+★ 判据清单**只**在 `php tools/gate.php --list` / `composer checks`，项数与顺序都会变，
+  不抄进文档、不写进注释（2026-11-11 `--only` 白名单漏 5 对判据就是手写清单漂的）。
+  `composer run --list` 是唯一可发现入口；下面的 scripts 全部经 `bin/drift` 转发到
+  `tools/gate.php`，**不是第二个 runner**，也没有第二套退出码口径。
 
 ```bash
-php tools/gate.php --fast            # 日常迭代（跳过慢项）
-php tools/gate.php --full            # 全量
-php tools/gate.php --only=unit       # 单跑某项
-php tools/gate.php --json            # 机器可读（CI 消费）
-php tools/drift-dev.php <app>        # 开发态壳（免重编译）
-php tools/drift-build.php <app> --full   # 构建独立 exe
-python tools/probe-window.py <app>   # 真机探针（5 判据）
+composer check                       # T0 日常闸门（廉价项）
+composer check -- --only=unit        # 单跑某项；-- --json 机器可读
+composer check:full                  # T0 全量（含 feature / pages / smoke 慢项）
+composer test                        # PHPUnit unit；composer test -- feature 跑场景
+composer checks                      # 当前判据清单（顺序即执行顺序）
+composer dev -- <app>                # T1 开发态壳（动态 PHP、真窗口、免重编译）
+composer build -- <app> --full       # T2 AOT 构建
+composer probe -- <app>              # T2 真机探针
 ```
+
+裸命令仍在 `tools/` 下（CI / 真机探针 / 调试直接调），但**不要把它们另抄一份清单**：
+`php tools/gate.php --fast --json`（CI）、`php tools/phpunit-run.php unit`、
+`python tools/probe-window.py <app>`。
 
 ## 4. CI
 

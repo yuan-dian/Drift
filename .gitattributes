@@ -1,5 +1,8 @@
 * text=auto
 *.php text eol=lf
+# 统一 CLI 没有扩展名，落不到 `*.php` 上；不钉住的话 Windows 检出会转成 CRLF，
+# shebang 行尾部带 \r，在 Linux/WSL 下直接执行就起不来。
+/bin/drift text eol=lf
 *.md  text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf

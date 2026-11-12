@@ -40,5 +40,25 @@
         "apps/watermark/bin/macos/"
       ]
     }
+  },
+  "scripts": {
+    "check": "@php bin/drift check",
+    "check:full": "@php bin/drift check --full",
+    "checks": "@php bin/drift list",
+    "test": "@php bin/drift test",
+    "lint": "@php bin/drift lint",
+    "dev": "@php bin/drift dev",
+    "build": "@php bin/drift build",
+    "probe": "@php bin/drift probe"
+  },
+  "scripts-descriptions": {
+    "check": "T0 日常闸门（gate --fast，跳过慢项）",
+    "check:full": "T0 全量闸门（含 feature / pages / smoke）",
+    "checks": "当前判据清单 —— 唯一权威，别把项数抄进文档",
+    "test": "PHPUnit unit（缺 PHPUnit 时 exit 2，不算通过）",
+    "lint": "lint 全量规则",
+    "dev": "T1 开发态壳：动态 PHP + 真窗口，免重编译",
+    "build": "T2 AOT 构建（需完整工具链）",
+    "probe": "T2 真机探针（需 python，DRIFT_PYTHON 可覆盖）"
   }
 }

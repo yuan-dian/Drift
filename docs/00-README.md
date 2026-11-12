@@ -51,7 +51,7 @@ v2 修订期的过程稿，只在追溯历史时看。**
 | **想查 AOT 编译约束 / 坑** | `docs/AOT-CONSTRAINTS.md` + `docs/architecture/11` | — |
 | **想知道跨平台能力矩阵** | 暂缺（原 `design-v7/08-平台与能力矩阵.md` 已删；结论在 `_archive/CROSS-PLATFORM.md`） | — |
 | **追溯 v2 修订过程** | `docs/arch-v2/00-总纲.md` | [`arch-v2/00-总纲.md`](arch-v2/00-总纲.md) |
-| **找历史评审 / 归档** | `docs/_archive/` | 只读，不更新 |
+| **不知道改完该跑哪条命令 / 找统一入口** | `composer run --list`（唯一可发现入口）+ `bin/drift`；判据清单只在 `php tools/gate.php --list` | [`CONTRIBUTING.md`](CONTRIBUTING.md) §3 |
 | **想复量一次性调研尺子 / 找合并前的工具** | `tools/_archive/`（只读留存：`method-map.php`、`probe-raster-page.php`、`map-size.py`、`pe-sym.py`、`reach.py`）；现行入口是 `tools/method-weight.php <path>` 与 `tools/drift-preview.php --format=png` | 2026-11-12 合并归档；`tools/lint.php` 忽略该目录 |
 
 ---

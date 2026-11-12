@@ -1,0 +1,126 @@
+#!/usr/bin/env php
+<?php
+declare(strict_types=1);
+
+/**
+ * `drift` —— 统一开发入口（对标 `flutter` / `ng` 这类「一个 CLI + 子命令」）。
+ *
+ * ★ 只做路由，**不实现判据**：验证一律转发 `tools/gate.php`（清单住在
+ *   `tools/Support/CheckRegistry.php`，执行只住在 gate），PHPUnit 一律转发
+ *   `tools/phpunit-run.php`（它负责找 `vendor/bin/phpunit`，缺二进制时 exit 2）。
+ *   这里没有第二份判据、没有第二个 runner、没有第二套退出码口径。
+ *
+ * ★ 为什么要有它：此前 70 个顶层 CLI 各自 `require autoload` + 解析 `$argv` +
+ *   `exit()`，开发者得记住「改了 X 该跑哪条」。`composer run --list` 现在是
+ *   唯一可发现入口，`composer.json` 的 scripts 全部转发到这里。
+ *
+ * ★ 三形态口径不因这个 CLI 而模糊：
+ *   interpreter —— check / test / lint / list（T0，无头、CI 可跑）
+ *   dev-shell   —— dev（T1，真窗口 + 动态 PHP，秒级重启）
+ *   aot         —— build / probe（T2，真机，不可替代前两档）
+ *   详见 `docs/architecture/12-工程与工具.md` §3。
+ *
+ * ★ 数组式 `proc_open` + `bypass_shell`：php.exe 走 shell 时 Windows 会经
+ *   cmd.exe 二次解释带空格的路径与引号（与 gate.php / drift-build.php 同法）。
+ */
+require dirname(__DIR__) . '/tools/autoload.php';
+
+$root = dirname(__DIR__);
+$args = array_slice($argv, 1);
+$name = $args[0] ?? 'help';
+$rest = array_slice($args, 1);
+
+/** @return list<string> */
+$build = static function (string $script, array $rest, string $root): array {
+    return [PHP_BINARY, $root . '/tools/' . $script, ...$rest];
+};
+
+$cmd = match ($name) {
+    // 无参数 = 日常迭代（廉价项）；带参数则原样透传给 gate（--only / --json / --full …）
+    'check' => $build('gate.php', $rest === [] ? ['--fast'] : $rest, $root),
+    'list' => $build('gate.php', ['--list'], $root),
+    'test' => $build('phpunit-run.php', $rest === [] ? ['unit'] : $rest, $root),
+    'lint' => $build('lint.php', $rest, $root),
+    'dev' => $build('drift-dev.php', $rest, $root),
+    'build' => $build('drift-build.php', $rest, $root),
+    'probe' => [
+        (string) (getenv('DRIFT_PYTHON') ?: 'python'),
+        $root . '/tools/probe-window.py',
+        ...$rest,
+    ],
+    default => null,
+};
+
+if ($cmd === null && $name !== 'help') {
+    fwrite(STDERR, "未知子命令：{$name}\n\n");
+    $name = 'help';
+    $exitOnHelp = 2;
+} else {
+    $exitOnHelp = 0;
+}
+
+if ($name === 'help' || $cmd === null) {
+    fwrite(STDOUT, <<<'TXT'
+drift —— 统一开发入口
+
+  composer check           T0 日常闸门（廉价项）；composer check -- --only=unit 单跑
+  composer check:full      T0 全量（含 feature / pages / smoke 慢项）
+  composer test            PHPUnit unit；composer test -- feature 跑场景
+  composer lint            lint 全量
+  composer checks          当前判据清单（唯一权威，顺序即执行顺序）
+  composer dev -- <app>    T1 开发态壳（动态 PHP、真窗口、免重编译）
+  composer build -- <app> --full   T2 AOT 构建
+  composer probe -- <app>  T2 真机探针
+
+  composer run --list      看全部 scripts 及说明
+
+形态不能互相替代：dev 绿 ≠ AOT 绿；T2 的 DPI / WIC / UIA / 消息循环
+只能靠真机探针。分层见 docs/architecture/12-工程与工具.md §3。
+
+TXT);
+    exit($exitOnHelp);
+}
+
+$proc = proc_open(
+    $cmd,
+    [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+    $pipes,
+    $root,
+    null,
+    ['bypass_shell' => true],
+);
+if (!is_resource($proc)) {
+    fwrite(STDERR, "启动失败：{$cmd[0]}\n");
+    if ($name === 'probe') {
+        fwrite(STDERR, "找不到 python 时设 DRIFT_PYTHON=<解释器路径>；这是「没测到」，不是通过。\n");
+    }
+    exit(127);
+}
+fclose($pipes[0]);
+stream_set_blocking($pipes[1], false);
+stream_set_blocking($pipes[2], false);
+
+$code = -1;
+while (true) {
+    $status = proc_get_status($proc);
+    $out = (string) stream_get_contents($pipes[1]);
+    $err = (string) stream_get_contents($pipes[2]);
+    if ($out !== '') {
+        fwrite(STDOUT, $out);
+    }
+    if ($err !== '') {
+        fwrite(STDERR, $err);
+    }
+    if (!$status['running']) {
+        $code = (int) $status['exitcode'];
+        break;
+    }
+    usleep(20000);
+}
+fwrite(STDOUT, (string) stream_get_contents($pipes[1]));
+fwrite(STDERR, (string) stream_get_contents($pipes[2]));
+fclose($pipes[1]);
+fclose($pipes[2]);
+proc_close($proc);
+
+exit($code === -1 ? 1 : $code);
