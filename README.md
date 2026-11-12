@@ -76,9 +76,11 @@ php tools/version.php --check  # 全部对齐才过；gate 里也挂着同样的
   脚本会复制到 `_build/ini/` 并用 `PHPRC` 指过去。发行版 ini 保持 `opcache.enable_cli=0`：
   CLI 开 opcache 会让「改了代码却没重编」静默假绿。
 - **工具脚本不需要 `composer install`**（`tools/autoload.php` 直接读 `composer.json` 的 psr-4），
-  但**单元测试需要 PHPUnit 10.x**：`composer install`，或按 `tools/phpunit-run.php` 头注
-  下载 `tools/phpunit.phar`；两者都不入库。都没有时 `unit` / `feature` 判据是
-  **skip + exit 0**，闸门照样全绿 ⇒ 别把「全绿」当成测试跑过了。
+  但**单元测试需要 PHPUnit 10.x**：`composer install` 读入库的 `composer.lock`
+  （pin 10.5.66），装出 `vendor/bin/phpunit`；`/vendor/` 不入库，也没有 phar 兜底。
+  没装时 `unit` / `feature` 判据是 **skip（适配器 exit 2）**，闸门照样全绿 ⇒ 本机
+  别把「全绿」当成测试跑过了；CI 里由 `.github/scripts/assert-gate-report.php`
+  把 `unit` 的 `skip` 直接判红，不靠人眼看报告。
 - **不需要 MSVC / tpc / PHPX**：`php tools/gate.php --fast` 应全绿；
   `doctor` 里只影响 build 的项在这档不拦（`--scope=gate`）。
   ★ 但「改 PHP 不重编译」的 dev 壳首次仍要编一次，属于档 B。

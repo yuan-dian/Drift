@@ -27,7 +27,8 @@ TypePHP 的下载安装、默认目录布局与环境变量清单，见 [`../REA
 ## 2. 三层验证（T0/T1/T2，dev 绿 ≠ AOT 绿）
 
 - **T0**：纯 PHP 校验（`gate --fast` 的全部项 —— **以 `gate.php --list` 为准**，别抄清单）。
-  只装 PHP 8.4 就能跑——**CI 公开 runner 跑这部分**。
+  装 PHP 8.4 或 8.5 就能跑——**CI 公开 runner 两个版本都跑**（`composer.json`
+  声明 `>=8.4` 无上界，只在单版本上验等于承诺没兑现）。
 - **T1**：开发态壳（`php tools/drift-dev.php <app>`）—— 改 PHP 即时生效，不重编译。
 - **T2**：AOT 真机构建 + 真机探针（`drift-build --full` + `probe-window`）。
   **需要 §1 完整工具链**——自托管 Windows runner 才跑。
@@ -46,13 +47,21 @@ python tools/probe-window.py <app>   # 真机探针（5 判据）
 
 ## 4. CI
 
-- **PR**：跑 T0 全量（`php tools/gate.php --fast --json`），`windows-latest` +
-  `setup-php 8.4`，**无需 MSVC / tpc**。
+- **PR / push main**：跑 T0 全量（`php tools/gate.php --fast --json`），`windows-2022` +
+  `setup-php` 的 8.4 / 8.5 matrix（上游 `swoole/typephp` 同口径），**无需 MSVC / tpc**。
   ★ 不要在这里写 `--only=<清单>`：白名单不会随新增判据增长，2026-11-11 之前它只列了
   11 项（真实 28 项），漏掉的是 abi / cppbridge / dxdiag / stalepolicy / errshape
   这五对「接线对账 + 变异自证」——最该进 CI 的那一批。缺工具链的项由
   `doctor --scope=gate` 放行（`affects` 里没有 `gate` 的失败不拦本闸门）。
-- **Nightly**：`php tools/gate.php --json`（全量，含 feature / pages / smoke 慢项）。
+  ★ runner 镜像 pin `windows-2022` 而不是 `latest`；`setup-php` 带 `coverage: none` /
+  `fail-fast: true`，并有 `Show PHP environment` + 版本 / 扩展断言（不信任安装结果）。
+  **不借**上游的 `phpts: ts`：那是编译 tpc 要 ZTS，本档是纯 PHP 判据。
+- **Nightly**：`php tools/gate.php --json`（全量，含 feature / pages / smoke 慢项），单跑 8.4。
+- **报告断言**：三个 workflow 跑完 `gate --json` 都调
+  `.github/scripts/assert-gate-report.php <报告> [判据 id...]`。`ci.yml` / `release.yml`
+  必须给 `unit`（nightly 还给 `feature`）——`gate` 允许把「PHPUnit 没装」记成 `skip`，
+  而 `skip` 不算 fail，整份报告仍是 `ok: true`；这一步把「没测到」判红。
+  `deps-build.yml` 不传 id，因为自托管 runner 不保证有 composer，不该卡住 Skia 包。
 - **AOT / T2**：需自托管 Windows runner（预装 §1 工具链），见 `.github/workflows/ci.yml` 注释模板。
 
 ## 5. 改代码的纪律

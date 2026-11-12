@@ -157,18 +157,72 @@ final class CheckReport
      * 机器可读：**一个** JSON 文档（紧凑，无缩进）。`--json` 时 stdout 上只有它。
      *
      * ★ 不加 `JSON_PRETTY_PRINT`：agent 用 `json_decode` 吞，缩进只费字节。
+     *
+     * ★★ 编码边界（2026-11-12，CI 上炸出来的）：`gate` 把子进程的 stdout/stderr
+     *   **原始字节**塞进 `items[].data` —— Windows 本地代码页（GBK / cp1252）、
+     *   被截断的多字节串、工具链的本地化报错都可能不是合法 UTF-8。`json_encode`
+     *   默认遇非法字节直接抛 `JsonException: Malformed UTF-8` ⇒ 整份报告没了，
+     *   CI 只看到退出码 255，**看不到到底是哪条判据失败**。文本模式不序列化，
+     *   所以本地只跑 `--fast` 时永远绿 —— 这条路径以前根本没人验过。
+     *
+     *   两件事一起做，缺一不可：
+     *   ① `JSON_INVALID_UTF8_SUBSTITUTE` ⇒ 绝不再因编码崩掉（非法字节换 U+FFFD）；
+     *   ② 递归扫出非法字段路径，写进顶层 `encoding.nonUtf8Fields` ⇒ **不静默**。
+     *      否则报告能出，但"这段输出被动过手脚"没人知道 —— 正是本项目最忌的
+     *      「不报错、只是没效果」。要看原始现场就单独跑那条判据（文本模式原样转发）。
+     *
+     *   ★ 只放一处：所有 `--json` 工具（gate / golden / frame-tax / m2 / rva2sym）
+     *     共用这一个出口，别在每个采集点各修一遍。不猜编码（把 GBK 还原成 UTF-8
+     *     会把 cp1252 的半个字节拼成汉字，反而误导），也不依赖 mbstring。
      */
     public function json(): string
     {
+        $payload = [
+            'tool' => $this->tool,
+            'ok' => $this->ok(),
+            'summary' => $this->ok() ? $this->summary : sprintf('%d 条判据未通过', count($this->failures())),
+            'items' => array_map(static fn(CheckItem $i): array => $i->toArray(), $this->items),
+        ];
+
+        $bad = [];
+        self::scanUtf8($payload, '', $bad);
+        if ($bad !== []) {
+            $payload['encoding'] = [
+                'substituted' => true,
+                'nonUtf8Fields' => $bad,
+                'note' => '这些字段含非法 UTF-8 字节，已按 U+FFFD 替换；原始现场请单独跑该条判据（文本模式不替换）',
+            ];
+        }
+
         return (string) json_encode(
-            [
-                'tool' => $this->tool,
-                'ok' => $this->ok(),
-                'summary' => $this->ok() ? $this->summary : sprintf('%d 条判据未通过', count($this->failures())),
-                'items' => array_map(static fn(CheckItem $i): array => $i->toArray(), $this->items),
-            ],
-            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR,
+            $payload,
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR | JSON_INVALID_UTF8_SUBSTITUTE,
         );
+    }
+
+    /**
+     * 递归收集「不是合法 UTF-8 的字符串」的字段路径。
+     *
+     * ★ `preg_match('//u', $s)` 是 PCRE 对整串做 UTF-8 有效性校验：合法返 1、
+     *   非法返 false（不发 warning）。这里只负责**标不标**，替换交给 `json_encode`
+     *   的 C 实现 —— 两边不各写一套 UTF-8 状态机。
+     *
+     * @param list<string> $bad
+     */
+    private static function scanUtf8(mixed $value, string $path, array &$bad): void
+    {
+        if (is_string($value)) {
+            if (preg_match('//u', $value) !== 1) {
+                $bad[] = $path;
+            }
+
+            return;
+        }
+        if (is_array($value)) {
+            foreach ($value as $k => $v) {
+                self::scanUtf8($v, $path === '' ? (string) $k : $path . '.' . $k, $bad);
+            }
+        }
     }
 
     /**

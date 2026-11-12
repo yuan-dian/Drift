@@ -37,6 +37,10 @@ on:
 permissions:
   contents: read
 
+env:
+  COMPOSER_NO_INTERACTION: 1
+  COMPOSER_PROCESS_TIMEOUT: 0
+
 concurrency:
   group: deps-build-${{ github.ref }}
   cancel-in-progress: false
@@ -87,12 +91,27 @@ jobs:
           SKIA_WIN_TOOLCHAIN_VERSION: ${{ vars.SKIA_WIN_TOOLCHAIN_VERSION }}
         run: bash tools/skia/build-skia.sh --rev="$REV" --out="$PWD/cpp/skia" --replace
 
+      # 自托管 runner 预装 PHP，但不保证有 composer；有就按 lock 装 PHPUnit，
+      # 没有就让 phpunit-run.php 诚实报 exit 2（gate 记 skip），绝不伪装成通过。
+      # ★ 这里**不**要求 unit 必跑：本 workflow 的产物是 Skia 依赖包，不该因为
+      #   runner 没装 composer 就卡住。ci.yml / release.yml 才把 unit 当硬判据。
+      - name: Install PHPUnit (pinned by composer.lock)
+        shell: bash
+        run: |
+          if command -v composer >/dev/null 2>&1; then
+            composer install --prefer-dist --no-progress
+          else
+            echo "::notice::composer unavailable on this runner; gate will record unit as skip"
+          fi
+
       - name: Pack and verify
         shell: bash
         run: |
+          set -o pipefail
           php tools/pack-deps.php
           php tools/version.php --check
-          php tools/gate.php --fast --json
+          php tools/gate.php --fast --json | tee gate-report.json
+          php .github/scripts/assert-gate-report.php gate-report.json
 
       - uses: actions/upload-artifact@v4
         with:

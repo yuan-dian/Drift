@@ -6,14 +6,15 @@ declare(strict_types=1);
  *
  * 用法：`php tools/phpunit-run.php [unit|feature]`（缺省 = 两个套件都跑）
  *
- * ★ 二进制的优先级：`vendor/bin/phpunit` 优先，退到 `tools/phpunit.phar`。
- *   两者都指向 PHPUnit 10.x，行为一致；后者是给"没装 composer 依赖"的环境兜底。
- * ★ 都没有时 **skip + exit 0**，不红：`tools/phpunit.phar` 是 5.2 MB 外部二进制、
- *   `.gitignore` 排除（与 `/cpp/` 同级）。环境状态不是判据，测试过不过才是。
+ * ★ 只有**一个**入口：composer 装出来的 `vendor/bin/phpunit`
+ *   （`composer install` 读入库的 `composer.lock`，pin 到 PHPUnit 10.5.66）。
+ *   2026-11-12 删掉 `tools/phpunit.phar` 兜底：5.2 MB 外部二进制不入库、
+ *   版本不 pin，且与上游 `swoole/typephp` 的 `windows-build.yml` 口径不一致。
+ * ★ 没装 ⇒ **exit 2（没测到）**，由 `gate` 的 `$may_skip` 记成 `skip`。
+ *   ★★ 绝不 exit 0 —— 那会让 gate 把"根本没跑"记成"通过"（2026-11-12 查出
+ *   CI 上 `unit` 一直是这种假绿）。环境状态不是判据，但**必须看得见**。
  *
- * 装法（二选一）：
- *   composer install                       # vendor/bin/phpunit
- *   curl -sSL -o tools/phpunit.phar https://phar.phpunit.de/phpunit-10.phar
+ * 装法：`composer install`（CI 里由 setup-php 的 `tools: composer:v2` 提供）。
  *
  * @api 闸门：`tools/gate.php`
  */
@@ -21,17 +22,11 @@ declare(strict_types=1);
 $root = \dirname(__DIR__);
 $suite = $argv[1] ?? '';
 
-$bin = null;
-foreach ([$root . '/vendor/bin/phpunit', $root . '/tools/phpunit.phar'] as $candidate) {
-    if (\is_file($candidate)) {
-        $bin = $candidate;
-        break;
-    }
-}
+$bin = $root . '/vendor/bin/phpunit';
 
-if ($bin === null) {
+if (!\is_file($bin)) {
     echo "  skip  PHPUnit 未安装（composer install，或见本文件头注）\n";
-    exit(0);
+    exit(2);
 }
 
 $command = \escapeshellarg(PHP_BINARY)

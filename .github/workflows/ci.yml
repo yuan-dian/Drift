@@ -11,6 +11,19 @@ on:
     - cron: '0 2 * * *'   # nightly：跑慢项
   workflow_dispatch:
 
+# 对齐上游 swoole/typephp（windows-build.yml / linux-x64.yml）的 CI 惯例：
+# 最小权限、同 ref 取消旧跑、composer 非交互且不受子进程超时影响。
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  COMPOSER_NO_INTERACTION: 1
+  COMPOSER_PROCESS_TIMEOUT: 0
+
 jobs:
   # ── T0：纯 PHP 校验，公开 Windows runner 即可，无需 MSVC / tpc ──
   #
@@ -22,34 +35,112 @@ jobs:
   #   根因是白名单不会随新增判据增长 ⇒ 改成 `--fast`：集合自动跟随 `$checks`。
   #   doctor 用 `--scope=gate`（见 tools/doctor.php），缺 MSVC 不拦本闸门。
   gate-fast:
-    name: Gate (T0 pure-PHP)
-    runs-on: windows-latest
+    name: Gate (T0 pure-PHP, PHP ${{ matrix.php }})
+    # 上游把 Windows runner pin 到 2022 而不是 latest：latest 换镜像时 GD / PHP
+    # 扩展版本会跟着变，判据基线不该被 runner 升级悄悄挪动。
+    runs-on: windows-2022
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      # `composer.json` 声明 `>=8.4`（无上界），而此前 CI 只在 8.4 上验、作者
+      # 本机一直是 8.5.12 —— 两边从未在同一版本对过账。与上游 8.4/8.5 同口径。
+      matrix:
+        php: ['8.4', '8.5']
     steps:
       - uses: actions/checkout@v4
-      - name: Setup PHP 8.4
+      - name: Setup PHP ${{ matrix.php }}
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.4'
+          php-version: ${{ matrix.php }}
+          coverage: none
           extensions: mbstring, gd
+          tools: composer:v2
+        env:
+          fail-fast: true
+          update: true
+        # ★ 不借上游的 `phpts: ts`：那是编译 tpc 需要 ZTS PHP；本档是纯 PHP
+        #   判据，用 ZTS 反而与本地开发环境不同口径。
+      - name: Show PHP environment
+        shell: bash
+        run: |
+          php -v
+          php --ini
+          php -r 'printf("PHP_VERSION=%s\nmbstring=%s\ngd=%s\n", PHP_VERSION, extension_loaded("mbstring") ? "yes" : "no", extension_loaded("gd") ? "yes" : "no");'
+      - name: Verify PHP version and extensions
+        shell: bash
+        run: |
+          case "$(php -r 'echo PHP_VERSION;')" in
+            "${{ matrix.php }}"*) ;;
+            *) echo "::error::setup-php installed an unexpected PHP version" >&2; exit 1 ;;
+          esac
+          php -r 'foreach (["mbstring", "gd"] as $e) { if (!extension_loaded($e)) { fwrite(STDERR, "missing extension: $e\n"); exit(1); } }'
+      # ★ PHPUnit 二进制不入库（`/vendor/` 被 .gitignore 排除），CI 必须自己装。
+      #   不装 ⇒ phpunit-run.php 找不到 vendor/bin/phpunit 就 exit 2 ⇒ gate 把 unit
+      #   记成"没测到"，而不是像以前那样 exit 0 伪装成"通过"（2026-11-12 查出的假绿）。
+      #   读入库的 composer.lock（phpunit 10.5.66），与上游 swoole/typephp 的
+      #   windows-build.yml 同法；不下载不 pin 版本的 phpunit-10.phar。
+      - name: Install PHPUnit (pinned by composer.lock)
+        shell: bash
+        run: composer install --prefer-dist --no-progress
       - name: Run gate (all fast items)
         shell: bash
-        run: php tools/gate.php --fast --json
+        run: |
+          set -o pipefail
+          php tools/gate.php --fast --json | tee gate-report.json
+      # `gate` 允许把「PHPUnit 没装」记成 skip，而 skip 不算 fail ⇒ 报告仍 ok:true
+      # ⇒ CI 绿。上游用独立的 `vendor/bin/phpunit` job 天然不会这样；本仓保留
+      # gate 作为唯一账本，改由这份断言直接读 items[].status 把 skip 判红。
+      - name: Assert PHPUnit really ran (skip is not ok)
+        shell: bash
+        run: php .github/scripts/assert-gate-report.php gate-report.json unit
+      - name: Upload gate report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-report-${{ matrix.php }}
+          path: gate-report.json
+          if-no-files-found: ignore
+          retention-days: 7
 
   # ── Nightly：T0 全量（含 feature / pages / smoke 等慢项），仍纯 PHP ──
   gate-nightly:
     name: Gate (nightly, all items)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: windows-latest
+    runs-on: windows-2022
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Setup PHP 8.4
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.4'
+          coverage: none
           extensions: mbstring, gd
+          tools: composer:v2
+        env:
+          fail-fast: true
+          update: true
+      # 慢项只在 8.4 上跑一遍：matrix 的价值是给 `--fast` 做版本对账，
+      # 全量 feature / pages / smoke 翻倍没有新信息，只多占 runner。
+      - name: Install PHPUnit (pinned by composer.lock)
+        shell: bash
+        run: composer install --prefer-dist --no-progress
       - name: Run gate (full)
         shell: bash
-        run: php tools/gate.php --json
+        run: |
+          set -o pipefail
+          php tools/gate.php --json | tee gate-report.json
+      - name: Assert unit and feature really ran (skip is not ok)
+        shell: bash
+        run: php .github/scripts/assert-gate-report.php gate-report.json unit feature
+      - name: Upload gate report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-report-nightly
+          path: gate-report.json
+          if-no-files-found: ignore
+          retention-days: 7
 
   # ── T2：AOT 真机构建 + 真机探针 ──
   # 需要自托管 Windows runner，预装：
@@ -62,6 +153,7 @@ jobs:
     name: AOT build + probe (T2, self-hosted)
     if: false
     runs-on: [self-hosted, windows]
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - name: Doctor + build + probe
