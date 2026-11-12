@@ -33,6 +33,8 @@ jobs:
   #   stalepolicy / errshape 这五个「接线对账 + 变异自证」对，共 10 项亚秒级纯 PHP
   #   判据。它们恰恰是最该进 CI 的类型（没有前置依赖、抓的是"能力是假的"）。
   #   根因是白名单不会随新增判据增长 ⇒ 改成 `--fast`：集合自动跟随 `$checks`。
+  #   2026-11-12 起这 10 条在顶层收成 `tooling` 一组（组内仍逐条跑），`--fast`
+  #   依旧自动跟随，不需要在这里补名字。
   #   doctor 用 `--scope=gate`（见 tools/doctor.php），缺 MSVC 不拦本闸门。
   gate-fast:
     name: Gate (T0 pure-PHP, PHP ${{ matrix.php }})

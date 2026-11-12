@@ -36,28 +36,16 @@ final class CheckRegistry
             'genversion' => ['版本派生副本（gen-version --check）', [PHP_BINARY, $root . '/tools/gen-version.php', '--check'], false],
             'lint'     => ['lint', [PHP_BINARY, $root . '/tools/lint.php'], false],
             'selftest' => ['lint 自检', [PHP_BINARY, $root . '/tools/lint.php', '--selftest'], false],
-            // ★ 跨层 ABI：stub 是唯一事实源，C++ 实现与解释器替身都是被校验方。
-            //   只靠 stub 注释里「改一边必须同步另一边」挡不住参数类型 / 顺序错位 ——
-            //   而那种错在 tpc 下是链接期静默失败，真机行为错却全绿。判据必须进 gate。
-            'abi'     => ['ABI 契约（abi-check）', [PHP_BINARY, $root . '/tools/abi-check.php'], false],
-            'abiself' => ['ABI 校验自证（变异体）', [PHP_BINARY, $root . '/tools/abi-check.php', '--selftest'], false],
-            // ★ 拆 TU 后 `core/` 的平台纯度与扩展库 pragma 的归属都成了「链接期才炸」的约束，
-            //   abi-check 只管签名、不管这两条。
-            'cppbridge' => ['C++ 桥接结构（cpp-bridge-check）', [PHP_BINARY, $root . '/tools/cpp-bridge-check.php'], false],
-            'cppbridgeself' => ['桥接结构自证（变异体）', [PHP_BINARY, $root . '/tools/cpp-bridge-check.php', '--selftest'], false],
-            // ★ 静默退化：检测点一行就能加，判据却可能忘 —— 对账「每个 key 都有断言」，
-            //   与 PHPUnit 那边「行为对不对」不同源，两道都要在 gate 里。
-            'dxdiag'  => ['DX 退化判据对账（diagnostic-check）', [PHP_BINARY, $root . '/tools/diagnostic-check.php'], false],
-            'dxself'  => ['DX 对账自证（变异体）', [PHP_BINARY, $root . '/tools/diagnostic-check.php', '--selftest'], false],
-            // ★ 构建 stale：`StalePolicy` 改对了不等于 `drift-build` 用了它。这边对账「决策走
-            //   纯函数 / FULL 清两处缓存 / --dry 不碰缓存 / 旧口径无残留」，与单测验决策表不同源。
-            'stalepolicy' => ['构建 stale 决策接线（build-stale-check）', [PHP_BINARY, $root . '/tools/build-stale-check.php'], false],
-            'staleself'   => ['构建 stale 对账自证（变异体）', [PHP_BINARY, $root . '/tools/build-stale-check.php', '--selftest'], false],
-            // ★ 错误码贯通：`AsyncValue::code()` 加对了不等于 UI 真拿得到 —— worker 载荷、
-            //   两个 TaskHost 还原端、`fail()` 提取点任一处漏了，跨进程任务的分类就丢了。
-            //   这边对账「五段接线还在」，与 PHPUnit 验「行为对不对」不同源。
-            'errshape' => ['错误码贯通接线（error-shape-check）', [PHP_BINARY, $root . '/tools/error-shape-check.php'], false],
-            'errself'  => ['错误码对账自证（变异体）', [PHP_BINARY, $root . '/tools/error-shape-check.php', '--selftest'], false],
+            // ★ 5 对「接线对账 + 变异自证」收成一个组：它们是 5 个能力的两半，
+            //   在顶层占 10 个名字，而 `gate --only` / CI 只需要一个可寻址入口。
+            //   判据实现一行未动，细粒度用 `composer tooling -- --only=abi` 保住。
+            //   ★ 不进 PHPUnit：这些对账器与行为单测不同源（见各自头注），且零依赖；
+            //   `unit` 在缺 PHPUnit 时会 skip，绑过去等于让守卫静默消失。
+            'tooling' => [
+                '工具链对账组（接线 + 变异自证）',
+                [PHP_BINARY, $root . '/tools/group-run.php', '--group=tooling'],
+                false,
+            ],
             // ★ 日常改 PHP 不再编 AOT ⇒ dev 壳成了主入口，它的红线必须进闸门（无窗口、廉价）。
             //   只靠 project.yml 头注释挡不住「顺手把 src/ 加进 sources」那一下。
             'devshell' => ['开发态壳红线（drift-dev --selftest）', [PHP_BINARY, $root . '/tools/drift-dev.php', '--selftest'], false],
@@ -96,6 +84,39 @@ final class CheckRegistry
             'pages'    => ['golden 整页', [PHP_BINARY, $root . '/tools/golden-raster.php', '--check', '--pages'], true],
             'smoke'    => ['smoke', [PHP_BINARY, $root . '/tools/smoke.php'], true],
         ];
+    }
+
+    /**
+     * 组内子项：顶层一项展开成多条判据，**仍只此一份清单**。
+     *
+     * ★ 与 `checks()` 同住本类：`gate --list` 与组执行器不会各抄一遍。
+     * ★ 判据实现（5 个 `*-check.php`）一行不改；删任意一条会被 `group-run.php`
+     *   的磁盘自证咬红 —— 期望来自文件系统，不来自这份声明。
+     *
+     * @return array<string, list<array{id: string, label: string, command: list<string>}>>
+     */
+    public static function groups(string $root): array
+    {
+        $pairs = [
+            ['abi', 'abiself', 'ABI 契约', 'abi-check.php'],
+            ['cppbridge', 'cppbridgeself', 'C++ 桥接结构', 'cpp-bridge-check.php'],
+            ['dxdiag', 'dxself', 'DX 退化判据对账', 'diagnostic-check.php'],
+            ['stalepolicy', 'staleself', '构建 stale 决策接线', 'build-stale-check.php'],
+            ['errshape', 'errself', '错误码贯通接线', 'error-shape-check.php'],
+        ];
+
+        $steps = [];
+        foreach ($pairs as [$base, $self, $label, $file]) {
+            $cmd = [PHP_BINARY, $root . '/tools/' . $file];
+            $steps[] = ['id' => $base, 'label' => $label, 'command' => $cmd];
+            $steps[] = [
+                'id' => $self,
+                'label' => $label . '自证（变异体）',
+                'command' => [...$cmd, '--selftest'],
+            ];
+        }
+
+        return ['tooling' => $steps];
     }
 
     /**

@@ -40,6 +40,8 @@ $cmd = match ($name) {
     'check' => $build('gate.php', $rest === [] ? ['--fast'] : $rest, $root),
     'list' => $build('gate.php', ['--list'], $root),
     'test' => $build('phpunit-run.php', $rest === [] ? ['unit'] : $rest, $root),
+    // 工具链对账组：--only 透传，单点调试不必记住 10 个顶层短名。
+    'tooling' => $build('group-run.php', ['--group=tooling', ...$rest], $root),
     'lint' => $build('lint.php', $rest, $root),
     'dev' => $build('drift-dev.php', $rest, $root),
     'build' => $build('drift-build.php', $rest, $root),
@@ -66,6 +68,7 @@ drift —— 统一开发入口
   composer check           T0 日常闸门（廉价项）；composer check -- --only=unit 单跑
   composer check:full      T0 全量（含 feature / pages / smoke 慢项）
   composer test            PHPUnit unit；composer test -- feature 跑场景
+  composer tooling -- --only=abi   工具链对账组（组内单点调试）
   composer lint            lint 全量
   composer checks          当前判据清单（唯一权威，顺序即执行顺序）
   composer dev -- <app>    T1 开发态壳（动态 PHP、真窗口、免重编译）
