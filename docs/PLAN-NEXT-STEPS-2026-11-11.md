@@ -20,7 +20,7 @@
 | 棒 | 主题 | 核心判据 | 五维 | 成本 / T2 | 结论 |
 |---|---|---|---|---|---|
 | §78 | 四条腐烂论据订正 + 评审稿入仓 | ①② | 维护性 +++ | 近零 / 无 | **已完成（本轮）** |
-| §79 | CHANGELOG 已知限制 + LICENSE + 版本口径 | ③ | 交付 +++ | 低 / 无 | **P0** |
+| §79 | CHANGELOG 已知限制 + LICENSE + 版本口径 | ③ | 交付 +++ | 低 / 无 | **已完成（11-12，见 §1.1）** |
 | §80 | `curl_multi` 复活探针（判据先行） | ①② | 实现 ++ | 中 / **必须 T2** | **P1** |
 | §81 | 隐性规则 lint 化（PLAN-11-08 的 §76） | ①② | DX ++ | 中 / 无 | **P2** |
 | §82 | 执行作用域（Deadline / 预算 / 子作用域）裁决稿 | ② | DX ++ / 扩展性 ++ | 低（只出稿） | **P2，等消费者** |
@@ -29,27 +29,60 @@
 判据沿用 `DEBT §40.1` 三条：**①有消费者 ②错了是静默的 ③决定能不能交付**。
 
 排序理由：**§79 排在最前不是因为它简单，而是它决定"别人拿到能不能用"** ——
-仓库没有 `LICENSE` 时，对外就是"保留所有权利"，法务上不可用；CHANGELOG 的
-已知限制还写着两条已修的问题，用户会按错误预期选型。**§80 排 P1 是因为它唯一能
+当时仓库没有 `LICENSE`，对外等于"保留所有权利"，法务上不可用；CHANGELOG 的
+已知限制还写着两条已修的问题，用户会按错误预期选型。★ 这两点现已解决
+（`c7dd37f` 落 LICENSE 与版本口径，§1.1 完成逐条复核）。**§80 排 P1 是因为它唯一能
 改变技术结论，且越晚做越贵**：C++ 桥接刚按链接性拆分完，将来若真要接 A1
 （帧内 `curl_multi`），`IoPoller` 与 `TaskHost` 的形状都得动。
 
 ---
 
-## 1. §79 CHANGELOG 已知限制 + LICENSE + 版本口径（下一棒）
+## 1. §79 CHANGELOG 已知限制 + LICENSE + 版本口径（已完成 · 2026-11-12）
 
-三件事同一个主题：**对外事实可信**。
+三件事同一个主题：**对外事实可信**。2、3 在 `c7dd37f` 落地；1 于 2026-11-12 复核收口，
+复核结果见 §1.1。
 
 1. **已知限制逐条复核**。已知过期两条：ABI 运行期握手（已改判为静态契约 +
    `abi-check`）、AOT 增量 stale（`StalePolicy` 已落地）。做法是 **grep 复核每一条**，
    不照抄旧清单 —— 清单会腐烂是本项目反复验证过的。
-2. **落 `LICENSE`**。需要你先拍板许可类型（见对话）。定完后同步 `composer.json`
-   的 `license` 字段与 README 的授权段。
-3. **版本口径统一**。`CHANGELOG.md` 写 `v0.1.0-preview.1`，但 `git tag -l` 为空。
-   二选一：真打 tag（打之前先把 §79.1 做完），或把版本号降级为"未发布 / unreleased"。
+2. **落 `LICENSE`**。〔已完成〕许可类型定为 MIT（`LICENSE` / `composer.json` 的
+   `license` 字段 / `README.md` 的「许可证」小节三处一致）。原计划里"需要先拍板"一句已作废。
+3. **版本口径统一**。〔已完成〕取了"降级为未发布"这一支，不真打 tag：`CHANGELOG.md`
+   的「版本号规范」明写「未打 tag = 未发布」，条目标题也标了「尚未打 tag」，
+   ⇒ `git tag -l` 为空不再是矛盾，而是**如实状态**。
 
 **验收**：`docref` 绿；每条已知限制都能在代码里指出"仍存在"的落点；
 `LICENSE` / `composer.json` / README 三处口径一致；打 tag 则 `git tag -l` 非空。
+
+### 1.1 复核结果（2026-11-12）
+
+逐条对 CHANGELOG 里可证伪的数字与能力断言做取证，**只有一条需要收窄**：
+
+| 断言 | 取证 | 结论 |
+|---|---|---|
+| 「28 项闸门」 | `tools/gate.php` 的 `$checks` 逐项数出 28 | 成立 |
+| 「控件面约 130 个类（含 8 个接口）」 | `src/Widget/*.php`：类 123 + 接口 8 = 131 | 成立 |
+| 「8 个应用样例」及所列名字 | `apps/` 恰好 8 个目录，名字全对 | 成立 |
+| 「多窗口（`WindowHost` / `WindowSet`）」 | `Drift\Platform\WindowHost`（单窗操作面）+ `src/App/WindowSet.php`（组合根窗口表） | 成立，是两个不同层 |
+| 「深色主题 + `SystemTheme` 跟随系统」 | `Win32Screen::systemTheme()` → `drift_win_system_dark()`；`Win32Platform` 推 `ThemeChangedEvent`；`Application::onSystemThemeChanged()` 分发 | 成立 |
+| 「`TaskHost` 三后端」 | `ProcessTaskHost` / `SyncTaskHost` / `ThreadTaskHost` | 成立 |
+| 「UIA + 结构 / 焦点事件」 | `cpp-src/win32/uia.cc` 的 `UiaRaiseStructureChangedEvent` / `UIA_AutomationFocusChangedEventId` | 成立 |
+| 「Per-Monitor V2」 | `cpp-src/win32/drift_win32.cc:1502` 的 `kPerMonitorV2` | 成立 |
+| 「无 `RelayoutBoundary`」 | 全仓 0 命中 | 成立 |
+| 「❌ 高对比度」 | 映射已有（`ColorToken::highContrastValue()` / `ThemeData::withHighContrast()`），**系统信号未接**（`SPI_GETHIGHCONTRAST` 0 命中），唯一消费者是 `tools/smoke.php` | **表述过宽**，已收窄 |
+
+收窄后的三处改动：
+
+- 「❌ 触控 / 笔 / 高对比度」拆开：前两者留原样；高对比度改为「**系统高对比度跟随**」
+  并写明「配色映射已有、未接信号、应用层无消费者」——否则会误导人以为连配色都得自己做。
+- 已知限制新增「**源码树不自足**」：`/cpp/` 在 `.gitignore` 里，`cpp/skia/`（141 MB）与
+  `cpp/fonts/`（21 MB）clone 后不存在，构建期直接链接失败；PHPX 与 tpc 也不在本仓。
+  这条是外部使用者**第一个撞上的墙**，不写就是静默失败（判据②）。
+- 已知限制新增「纯运行态不需要工具链」：`gate --fast` 是纯 PHP 的，也不必 `composer install`。
+
+**顺手发现、未动**：`composer.json` 的 psr-4 里还留着 5 处 `apps/*/bin/macos/`，目录均不存在。
+autoload 对不存在的目录静默跳过，不影响运行，但属「仅 Windows」口径的残留 —— 改它超出
+文档范围，记在此处待和「多平台」一并裁决。
 
 ---
 

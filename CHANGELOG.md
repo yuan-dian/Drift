@@ -39,7 +39,10 @@
 - ❌ i18n 框架
 - ❌ 安装器 / 代码签名 / 自动更新
 - ❌ 第三方组件生态 / 包管理
-- ❌ 触控 / 笔 / 高对比度
+- ❌ 触控 / 笔
+- ❌ **系统高对比度跟随**：配色映射本身已有（`ColorToken::highContrastValue()` /
+  `ThemeData::withHighContrast()`），但未接 `SPI_GETHIGHCONTRAST` 信号、应用层无消费者
+  ⇒ 用户在系统里打开高对比度模式时**不会自动切换**
 - ❌ 远程崩溃上报
 
 ### Breaking
@@ -54,3 +57,9 @@
   静态契约由 `php tools/abi-check.php` 管（stub 为唯一事实源，`--json` 出 schemaHash）。
 - AOT 增量构建**已有** stale 判据（`StalePolicy`，首次自动全量）。发版验收仍用 `--full`，
   理由是排除增量缓存的影响，不再是因为判据缺失。
+- **源码树不自足：Skia 预编译包与字体不入库**。`/cpp/` 整个目录在 `.gitignore` 里，
+  `git clone` 后 `cpp/skia/`（约 141 MB）与 `cpp/fonts/`（约 21 MB）**不存在**，
+  缺了构建期直接链接失败；包的获取方式仍是开放项。另：`PHPX` 与 `tpc` 源码树属
+  TypePHP 编译器项目，同样不在本仓。搭建步骤见 [`README.md`](README.md) 的「构建环境」。
+- 只用运行态时**不需要**上述工具链：`php tools/gate.php --fast` 是纯 PHP 的，
+  `composer install` 也不必跑（`tools/autoload.php` 直接读 psr-4）。
