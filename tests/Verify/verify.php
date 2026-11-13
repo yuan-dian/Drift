@@ -97,53 +97,75 @@ function verify_missing(string $root, array $command): array
  */
 function verify_run_steps(string $root, array $steps): array
 {
+    // ★ 输出重定向到**临时文件**而不是管道：Windows 上 `stream_set_blocking(false)`
+    //   对 proc_open 管道不生效，`stream_get_contents()` 会阻塞到该进程 EOF ⇒
+    //   并发退化成「按顺序等」，durationMs 也失真（sceneset 0.9s 记成 9.7s）。
+    //   `run-corpus.php` 的 runConcurrent() 早就改用临时文件，是同一个坑。
+    $dir = \sys_get_temp_dir() . '/drift-verify-' . \getmypid();
+    if (!\is_dir($dir)) {
+        \mkdir($dir, 0777, true);
+    }
+
     $live = [];
     foreach ($steps as $s) {
-        $t0 = \hrtime(true);
+        $t0  = \hrtime(true);
+        $log = $dir . '/' . \preg_replace('/[^A-Za-z0-9_.-]/', '_', $s['id']) . '.log';
         $proc = \proc_open(
             $s['command'],
-            [0 => ['file', 'nul', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            [0 => ['file', 'nul', 'r'], 1 => ['file', $log, 'w'], 2 => ['file', $log, 'a']],
             $pipes,
             $root,
             null,
             ['bypass_shell' => true],
         );
         if (!\is_resource($proc)) {
-            $live[] = ['id' => $s['id'], 'label' => $s['label'], 't0' => $t0,
-                'handle' => null, 'pipes' => [], 'so' => '', 'se' => '', 'code' => 127];
+            $live[] = ['id' => $s['id'], 'label' => $s['label'], 't0' => $t0, 'log' => $log,
+                'handle' => null, 'code' => 127, 'endT' => \hrtime(true)];
             continue;
         }
-        \stream_set_blocking($pipes[1], false);
-        \stream_set_blocking($pipes[2], false);
-        $live[] = ['id' => $s['id'], 'label' => $s['label'], 't0' => $t0,
-            'handle' => $proc, 'pipes' => $pipes, 'so' => '', 'se' => '', 'code' => -1];
+        $live[] = ['id' => $s['id'], 'label' => $s['label'], 't0' => $t0, 'log' => $log,
+            'handle' => $proc, 'code' => -1, 'endT' => 0];
+    }
+
+    // 只轮询进程状态、不碰管道 ⇒ 不会阻塞；durationMs 记「起飞 → 该进程自己结束」，
+    // 不是「起飞 → 轮到收割它」，否则快项会被记成慢项的耗时。
+    while (true) {
+        $running = 0;
+        foreach ($live as &$r) {
+            if ($r['endT'] !== 0) {
+                continue;
+            }
+            $status = \proc_get_status($r['handle']);
+            if (!$status['running']) {
+                $r['code'] = (int) $status['exitcode'];
+                $r['endT'] = \hrtime(true);
+            } else {
+                $running++;
+            }
+        }
+        unset($r);
+        if ($running === 0) {
+            break;
+        }
+        \usleep(10000);
     }
 
     $out = [];
     foreach ($live as $r) {
         if ($r['handle'] !== null) {
-            while (true) {
-                $status = \proc_get_status($r['handle']);
-                $r['so'] .= (string) \stream_get_contents($r['pipes'][1]);
-                $r['se'] .= (string) \stream_get_contents($r['pipes'][2]);
-                if (!$status['running']) {
-                    $r['code'] = (int) $status['exitcode'];
-                    break;
-                }
-                \usleep(10000);
-            }
-            $r['so'] .= (string) \stream_get_contents($r['pipes'][1]);
-            $r['se'] .= (string) \stream_get_contents($r['pipes'][2]);
-            \fclose($r['pipes'][1]);
-            \fclose($r['pipes'][2]);
             \proc_close($r['handle']);
         }
+        // stdout 与 stderr 写进同一个文件：失败详情（PHPUnit / lint 的 stderr）
+        // 必须在报告里可见，不值得为了分流再开第二个临时文件。
         $out[] = [
             'id' => $r['id'], 'label' => $r['label'], 'exitCode' => $r['code'],
-            'stdout' => $r['so'], 'stderr' => $r['se'],
-            'durationMs' => (int) \round((\hrtime(true) - $r['t0']) / 1e6),
+            'stdout' => \is_file($r['log']) ? (string) \file_get_contents($r['log']) : '',
+            'stderr' => '',
+            'durationMs' => (int) \round(($r['endT'] - $r['t0']) / 1e6),
         ];
+        @\unlink($r['log']);
     }
+    @\rmdir($dir);
 
     return $out;
 }
