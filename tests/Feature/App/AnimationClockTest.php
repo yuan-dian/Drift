@@ -21,7 +21,10 @@ use Drift\Widget\StatefulElement;
  * ★ 反例方向有两半，缺一条就不成立：带动画的应用必须 `wantsFrame() === true`
  *   （否则动画停住），**不带**动画的应用必须为 `false`（否则空闲时 60fps 空转烧 CPU）。
  *   只测前半，把 `wantsFrame()` 写成 `return true` 也全绿。
- * ★ 真机侧由 `tools/probe-async.php` 的 ⑦⑧（帧间变化像素数）守 —— 那里才判得"屏幕上真的在转"。
+ * ★ 真机侧的能力在 `tools/probe-grab.cc` 的 `--motion`（帧间变化像素数），由
+ *   `php tools/build-grab.php` 编出的 `probe-grab.exe` 提供 —— 那里才判得
+ *   "屏幕上真的在转"。★ 这条通道不在 V2 自动清单里，需手工跑；旧脚本
+ *   `tools/probe-async.php` 已退役，别再按旧文档找它。
  */
 final class AnimationClockTest extends SmokeTestCase
 {

@@ -10,7 +10,7 @@ declare(strict_types=1);
  *   不必每次构建 exe（构建一次 60s+，而这类断言一天要跑几百遍）。
  * ★ **签名与 `cpp-src/skia/drift_skia.stub.php` 逐字一致** —— stub 注释原话：
  *   "签名不一致时是链接期静默失败"。改这里必须同步改 stub，否则测的就不是 ABI 本身；
- *   一致性由 `tools/abi-check.php` 机器判据保证（gate 的 `abi` 项）。
+ *   一致性由 `tools/abi-check.php` 机器判据保证（V2 `abi` step）。
  * ★ **只留一份**：`tools/smoke.php` 与 `tests/Support/bootstrap.php` 都 require 本文件。
  *   两份副本会漂（一边加了参数另一边没加），而漂了的表现是"smoke 绿、phpunit 红"。
  * ★ `$GLOBALS` 键名保留 `DRIFT_SMOKE_` 前缀：改名要动几十处断言，收益为零。

@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 /**
- * `drift-build` 的「门不能信缓存」接线对账（gate 的 `stalepolicy` 项）。
+ * `drift-build` 的「门不能信缓存」接线对账（V2 `stalepolicy` step）。
  *
  * ★ 为什么需要：`StalePolicy` 改对了不等于 `drift-build` 用了它 —— 把 `decide()`
  *   调用删掉、改回裸 if，单测仍全绿，构建却悄悄退回「默认信增量」。与 PHPUnit

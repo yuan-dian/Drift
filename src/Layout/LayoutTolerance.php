@@ -32,7 +32,7 @@ use Drift\Errors;
  * | `Frame::run()` / `RenderBox::layout()`（纯布局） | 调用方给的 | **中止**（真溢出要有人管） |
  * | `Application::frame()` / `repaintForResize()`（窗口帧） | 窗口客户区 | **裁剪 + 留痕**（用户拖小是合法的） |
  *
- * 测试与快照（`Snapshot::ofPage`、`inspect.php`、golden）都走**纯布局**那一侧
+ * 测试与快照（`tools/Inspect/Snapshot.php` 的 `ofPage()`、golden）都走**纯布局**那一侧
  * ⇒ 开发者写错布局照样红。牙齿没有被拔掉，只是从"杀用户的进程"挪到了"红测试"。
  *
  * ## 裁剪不静默

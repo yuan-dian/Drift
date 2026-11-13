@@ -8,7 +8,7 @@ declare(strict_types=1);
  * ★ 与 `aot-equivalence.php` 是同一枚硬币的两面：那边验「解释器 ↔ 全 AOT」，
  *   这边验「解释器 ↔ dev 壳」。两侧共用 `Fingerprint::snapshot()` 作**唯一** expected，
  *   不落盘、不建第二套基线 —— 一套 27 页 × 2 通道的判据同时守两种产物。
- * ★ 为什么不用 `inspect.php --check`：它的快照对"合法结构改动"极敏感，头部
+ * ★ 为什么不用结构快照 `--check`（S4 已退役的 `tools/inspect.php`）：它对"合法结构改动"极敏感，头部
  *   明写不进自动闸门；而 Fingerprint 逐值比的是布局与绘制命令，正是 dev 壳可能
  *   悄悄改变的那部分语义（`php.ini` / opcache / 加载顺序 / AOT 化的桥接回调类）。
  *

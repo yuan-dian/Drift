@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 /**
- * 示例 / 判据集合封闭性对账（gate 的 `tooling` 组 `sceneset` 项）。
+ * 示例 / 判据集合封闭性对账（V2 `sceneset` step，`verify --list` 可见）。
  *
  * ★ 守的是 `DESIGN-EXAMPLES-TESTING-TARGET-2026-11-13.md` 的 G2：
  *   冻结清单 ↔ 磁盘页面 ↔ golden 整页基线，三向双向校验，少一个多一个都红。

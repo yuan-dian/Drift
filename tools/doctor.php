@@ -15,12 +15,15 @@ declare(strict_types=1);
  *   php tools/doctor.php               # 逐项报告；有 FAIL ⇒ 退出 1，仅 WARN ⇒ 退出 0
  *   php tools/doctor.php --json        # 机器可读（agent 驱动的前提）
  *   php tools/doctor.php --strict      # WARN 也算失败（发布前自查用）
- *   php tools/doctor.php --quiet        # 只打失败项 + 汇总（塞进 gate 的输出里不噪）
+ *   php tools/doctor.php --quiet        # 只打失败项 + 汇总（塞进 V2 报告里不噪）
  *   php tools/doctor.php --scope=gate  # **只让 affects 含 gate 的 FAIL 拦住退出码**
  *
+ * ★ `gate` 是 V1 遗留的 scope **值**（`affects` 分级字段的一部分），参数与取值都
+ *   还活着，别改成 `verify`：改名会让既有调用静默落到「未知 --scope」。它今天指
+ *   的是 V2 的 static 层 / CI 口径。
  * ★ 为什么要有 `--scope`：`affects` 一直是「不满足时影响哪些动作」的分级字段，但
- *   判定不读它 ⇒ 一台没有 MSVC 的机器上，`gate` 的第一项 doctor 直接红，后面 27 项
- *   纯 PHP 判据一条都跑不到。CI 只能靠 `--only` 白名单绕开，而白名单不会随新增
+ *   判定不读它 ⇒ 一台没有 MSVC 的机器上，V1 gate 的第一项 doctor 直接红，后面 27 项
+ *   纯 PHP 判据一条都跑不到。V1 时期 CI 只能靠 `--only` 白名单绕开，而白名单不会随新增
  *   判据增长（10 项亚秒级接线判据长期进不了 CI）。
  *   与 Flutter 同形：`flutter doctor` 报全量，`flutter test` 只失败它自己关心的。
  *

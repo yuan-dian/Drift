@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 /**
- * C++ 桥接层的结构对账（gate 的 `cppbridge` 项）。
+ * C++ 桥接层的结构对账（V2 `cppbridge` step）。
  *
  * 锁三条「拆 TU 才会暴露、且 AOT 编译/链接期才炸」的约束：
  *   ① `cpp-src/core/` 平台无关 —— 零 windows.h / Win32 API；

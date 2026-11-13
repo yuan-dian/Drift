@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 /**
- * 「错误码贯通链路」的接线对账（gate 的 `errshape` 项）。
+ * 「错误码贯通链路」的接线对账（V2 `errshape` step）。
  *
  * ★ 为什么需要：`AsyncValue::code()` 加对了不等于 UI 真拿得到 —— 只要
  *   `ProcessWorker` 不把 code 写进 JSON、`ProcessTaskHost` / `ThreadTaskHost`

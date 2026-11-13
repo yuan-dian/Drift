@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 /**
- * DX 退化「接入点 ↔ 判据」对账（gate 的 `dxdiag` 项）。
+ * DX 退化「接入点 ↔ 判据」对账（V2 `dxdiag` step）。
  *
  * ★ 为什么需要：`Diagnostics::degraded()` 一行就能加一个检测点，但「加了检测点
  *   忘了补判据」不会让任何东西变红 —— 又一条口传纪律。本脚本扫 `src/` 里的 key
