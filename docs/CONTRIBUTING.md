@@ -71,10 +71,10 @@ composer probe -- <app>              # T2 真机探针
   ★ runner 镜像 pin `windows-2022` 而不是 `latest`；`setup-php` 带 `coverage: none` /
   `fail-fast: true`，并有 `Show PHP environment` + 版本 / 扩展断言（不信任安装结果）。
   **不借**上游的 `phpts: ts`：那是编译 tpc 要 ZTS，本档是纯 PHP 判据。
-- **Nightly**：`php bin/drift verify --full --json`（含 feature / pages / smoke 慢项），单跑 8.4。
+- **手动全量**：需要时在 Actions 手动触发 `ci.yml` 的 `gate-full`，跑 `php bin/drift verify --full --json`（含 feature / pages / smoke 慢项），单跑 8.4；不设定时任务，发版 `v*` tag 由 `release.yml` 自动跑同一档。题库全量对照是 `--layer=corpus` 的独立量具，不进 verify 报告。
 - **报告断言**：三个 workflow 跑完 `verify --json` 都调
   `.github/scripts/assert-verify-report.php <报告> [step id...]`。`ci.yml` / `release.yml`
-  必须给 `unit`（nightly / release 还给 `feature`）；V1 gate 会把「PHPUnit 没装」记成
+  必须给 `unit`（手动全量 / release 还给 `feature`）；V1 gate 会把「PHPUnit 没装」记成
   `skip` 让整份报告仍 `ok: true`，V2 改成 `exitCode=127 / ok=false`，断言再走独立路径
   读 `items[].status`，把「没测到」判红。`deps-build.yml` 只跑 `--layer=static`
   且不传 id，因为自托管 runner 不保证有 composer，不该卡住 Skia 包。

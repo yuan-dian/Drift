@@ -177,7 +177,7 @@ PHP 有 Composer，自然的问题是「直接 `composer require` 不就行了�
 |---|---|---|
 | **只认 SHA-1（40 位）** | 填 64 位 SHA-256 直接校验失败、退出 1 | 全仓是 sha256 体系（`deps.lock.json`、`.sha256` 资产、`pack-deps`），改用 Composer 要么降级到 SHA-1，要么维护两套哈希 |
 | **解压剥掉单一顶层目录** | 包内 `cpp/skia/a.lib` → `vendor/drift/deps-test/skia/a.lib`，`cpp/` 那层丢了 | 落点是 `vendor/` 而不是 `cpp/`，还得用 `post-install-cmd` 搬；Windows 上 symlink 要开发者模式或管理员，只能拷贝，50 MB 变 100 MB |
-| **没有可选依赖** | 只有 `require` / `require-dev` / `suggest`，`suggest` 不安装 | 包进 `require` ⇒ **所有 clone 的人都被拖 50 MB**，包括只跑 `gate --fast`、根本不需要 MSVC 和 Skia 的贡献者。这与 README「档 A：只跑闸门不需要构建链」直接冲突 |
+| **没有可选依赖** | 只有 `require` / `require-dev` / `suggest`，`suggest` 不安装 | 包进 `require` ⇒ **所有 clone 的人都被拖 50 MB**，包括只跑 `bin/drift verify --json`、根本不需要 MSVC 和 Skia 的贡献者。这与 README「档 A：只跑闸门不需要构建链」直接冲突 |
 | **认证另成一套** | 私有仓库走 `composer config --global github-oauth.github.com`；release 资产 302 到 `objects.githubusercontent.com`，2.8 之前会把认证头带过去吃 404 | 使用者要同时维护 `GITHUB_TOKEN`（fetch-deps）和 composer 的 auth，且 `--no-scripts` 会静默跳过搬移步骤 |
 
 根子上是错配：**Composer 管的是 PHP 包**，产物要落进 `vendor/` 供 autoload 消费；而 Skia 是
@@ -224,7 +224,7 @@ Composer 等于借它的下载器，再把它装错位置的东西搬走 —— 
 | `fetch-deps.php` / `release-deps.php` 默认取的 tag | 运行时读 `DEPS_VERSION` | `release-deps.php` 拒绝 `--tag` 覆盖真相源 |
 | `CHANGELOG.md` 的 `## v<版本>` 小节、git tag `v<版本>` | 人工写 / 人工打 | `version --check`（含 HEAD tag 比对） |
 
-两条命令都挂在 `gate.php` 里，漏同步会在闸门红，而不是发版当天发现 tag 和 CHANGELOG
+两条命令都挂在 V2 `verify` 的 static 层（`version` / `genversion` step），漏同步会在闸门红，而不是发版当天发现 tag 和 CHANGELOG
 对不上。运行时代码**不能**改成 `file_get_contents('../../VERSION')`：AOT 产物是一个
 独立 `.exe`，目标机上根本没有仓库根目录，版本必须在编译期就确定下来。
 
@@ -235,7 +235,7 @@ Composer 等于借它的下载器，再把它装错位置的东西搬走 —— 
 #   1. 编辑 VERSION，CHANGELOG.md 开一节 `## v<新版本>`
 #   2. php tools/gen-version.php      # 代码常量 + 8 份 project.yml
 #   3. php tools/pack-deps.php        # lock 与包内锚点（不改 Skia 也要，否则 lock 会漂）
-#   4. php tools/version.php --check && php tools/gate.php --fast
+#   4. php bin/drift verify --layer=static   # 含 version / genversion --check
 #   5. 提交以上全部派生产物，再 git tag v<新版本>
 
 # 改依赖包版本
@@ -266,8 +266,8 @@ Composer 等于借它的下载器，再把它装错位置的东西搬走 —— 
 | workflow | 触发 | 做什么 | 写什么 |
 |---|---|---|---|
 | `deps-build.yml` | `workflow_dispatch`（pin 变更时可加 push 路径过滤） | 从 pinned Skia commit 重建 `cpp/skia` → 组包 → 校验 | 默认只传 artifact；`publish=true` 时 commit lock → `deps-vN` tag → release 两个资产 |
-| `release.yml` | `push` `v*` tag | `version --check` + `gate --fast` + 从 `deps-vN` 取包 | **draft** release，人工确认后才 publish |
-| `ci.yml` | push / PR / nightly | 只跑判据 | 不写 Release |
+| `release.yml` | `push` `v*` tag | `verify --full --json` + 从 `deps-vN` 取包 | **draft** release，人工确认后才 publish |
+| `ci.yml` | push / PR（主闸门）+ 手动全量 | 只跑判据 | 不写 Release |
 
 ★ **依赖包不跟着产品 release 构建**，三条理由：
 
@@ -334,7 +334,7 @@ php tools/pack-deps.php && php tools/version.php --check
 | 已发布的包 | `release.yml` 会真的跑一次 `fetch-deps.php`；首个 `deps-vN` 发布前它必然红，这是它在做该做的事 |
 | 权限 | `contents: write`；分支保护需允许机器人 push |
 
-先跑一次 `publish=false`（默认）：构建 + 组包 + `gate --fast`，产物挂 artifact 人工看过，
+先跑一次 `publish=false`（默认）：构建 + 组包 + `bin/drift verify --layer=static --json`，产物挂 artifact 人工看过，
 再跑 `publish=true`。升级依赖要先把 `DEPS_VERSION` 改成 `deps-v2` 并提交 —— 同 tag 覆盖资产
 需要 `--force`，而 CI 不发 `--force`。
 
@@ -344,7 +344,7 @@ php tools/pack-deps.php && php tools/version.php --check
 - **没有签名**：`deps.lock.json` 只证明「包与仓库记录一致」，不证明发布者身份。公开后建议用
   GitHub OIDC 的 build provenance attestation（零密钥）或 minisign，别把 sha256 说成防篡改。
 - **只有 Windows x64 一种产物**：`headers.txt` 与 `args.gn.tpl` 都是单平台口径。
-- CI 里 `gate --fast` 是纯 PHP 判据，**不等于** AOT 真机构建通过；后者仍走 `ci.yml` 里关闭的
+- CI 里 `bin/drift verify --json` 是纯 PHP 判据，**不等于** AOT 真机构建通过；后者仍走 `ci.yml` 里关闭的
   `aot` job 做人工验证。
 
 ---

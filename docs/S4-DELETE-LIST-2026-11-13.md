@@ -263,8 +263,26 @@ tools/_archive/reach.py             tools/crash-selftest/selftest.cc
 `__DIR__ . '/baseline/…'`（绝对路径）写进 JSON，换台机器就带着本机目录名、
 无法逐字节比对；现输出仓库相对路径。本轮入库快照用同一规则归一，
 字段之外的矩阵内容不改。裁剪矩阵按设计在输出 JSON 前就 `exit 2`，
-所以这一字段的端到端实证留给下一次全量跑；本轮用「从 runner 源码抽出该闭包、
-喂 after 原始绝对路径」自证，输出与入库值一致。
+当时用「从 runner 源码抽出该闭包、喂 after 原始绝对路径」自证，输出与入库值一致。
+
+**端到端实证：裁决为「不必补跑」（21:30 收口）**：曾想把 `corpus` 挂进
+`verify --full` 的报告断言，核对后发现前提不成立 —— `VerifyPlan::LAYERS`
+只有 `static / behavior / device`，`--full` 的 `items` 里**没有 corpus**；
+题库对照是 `--layer=corpus` 的独立量具，S3 的两次 `CORPUS_EXIT=0` 都是
+单独跑出来的。把 corpus 列进必需项只会让全量档判红，已撤销。
+`compare` 是纯字符串变换（去掉 `$root . '/'` 前缀），源码闭包自证 + 两份
+入库快照归一一致已足以定型；`--dry-run` 不输出 JSON、裁剪矩阵在对照阶段
+`exit 2` ⇒ 没有秒级端到端通道。要实证只需手动跑一次
+`php bin/drift verify --layer=corpus --json`，看输出里的 `compare` 字段。
+本轮不为它再花 ~38min，也不为它造新入口。
+⇒ 可复用判据：**「报告里有这个 step」不能凭 `--list` 的展示行推断**，
+`--list` 的 `[corpus]` 是硬编码的说明行，真正的 step 集合只有 `steps()`。
+
+**同轮 CI 简化**：去掉 `on.schedule`（不日构建），`gate-nightly` →
+`gate-full`，只由 `workflow_dispatch` 手动触发；提交构建（PHP 8.4/8.5
+matrix）仍是主闸门，发版 `v*` tag 由 `release.yml` 跑 `--full --json`。
+`feature / pages / smoke / corpus` 属 full tier，提交构建不跑它们；
+需要时手动触发 gate-full，题库仍用 `--layer=corpus`。
 
 其余删后快验：`php tools/lint.php` = 1049 文件 / 0 error / 0 warn；
 `php tools/lint.php --selftest` 里 `project-name` 该响 3 / 不该响 0；

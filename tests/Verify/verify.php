@@ -197,7 +197,9 @@ if ($listOnly) {
     foreach ([...VerifyPlan::LAYERS, 'corpus'] as $l) {
         echo '[' . $l . "]\n";
         if ($l === 'corpus') {
-            echo "  corpus      full     缺陷题库 V2 对照 → run-corpus.php --suite=v2 --tier=full\n";
+            // ★ 这一行是**展示**不是 steps()：corpus 不在 VerifyPlan::LAYERS 里，
+            //   `--full --json` 的 items 也没有它。把它当「报告里会有 corpus」会写错断言。
+            echo "  corpus      full     缺陷题库 V2 对照（独立量具，不进 --json 的 items）→ run-corpus.php --suite=v2 --tier=full\n";
             continue;
         }
         foreach ($steps as $s) {

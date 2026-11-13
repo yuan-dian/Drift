@@ -68,7 +68,7 @@ jobs:
           php bin/drift verify --full --json | tee verify-report.json
 
       # 发版闸门不许靠没测到洗绿：unit / feature 没跑到就不该创建 draft release。
-      - name: Assert unit and feature really ran (not measured is not ok)
+      - name: Assert full gate really ran (unit / feature)
         shell: bash
         run: php .github/scripts/assert-verify-report.php verify-report.json unit feature
 

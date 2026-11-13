@@ -97,7 +97,7 @@ Drift 用 PHP 写声明式 UI，经 TypePHP AOT 编译成**独立 Windows `.exe`
   - **T1 dev 真机**：`python tools/probe-window.py <app> --dev` —— 真窗口、真 C++ 桥、真 DPI / 像素 / 关窗退出码。
   - **T2 AOT 真机**：`drift-build --full` + `probe-window.py <app>` —— 唯一能抓 AOT 编译期语义。**碰壳层 / 跨进程取数 / 新增类 / 新枚举 ⇒ dev 全绿也必须跑 T2**。
 - **判据纪律**：判据与实现不同源；每条新约束配自证变异，**改了没咬红先怀疑变异打空**。V2 采用「重编排不重判据」：判据可信度由 `tests/Contracts/` 的缺陷题库对照回答，不再给每条判据单列 `--selftest` 通道（见 `VerifyPlan` 头注）。起窗脚本一律自己关窗。
-- **CI**：PR / push 跑 `php bin/drift verify --json`，nightly 与 release 跑 `--full --json`，报告由 `.github/scripts/assert-verify-report.php` 独立断言（`partial=true` 一律红）；`deps-build` 只跑 `--layer=static`。T2 / 真机需自托管 runner，当前关闭。等价量具 `aot-equivalence.php` / `dual-mode-equivalence.php` 不进 `verify`，改 AOT 相关代码时手动跑。
+- **CI**：PR / push 跑 `php bin/drift verify --json`（主闸门）。全量档不设定时：需要时手动触发 `gate-full`，发版 `v*` tag 由 `release.yml` 自动跑 `--full --json`。报告由 `.github/scripts/assert-verify-report.php` 独立断言（`partial=true` 一律红）；题库全量对照是 `--layer=corpus` 的独立量具，**不进 verify 报告**（`VerifyPlan::LAYERS` 不含 corpus）；`deps-build` 只跑 `--layer=static`。T2 / 真机需自托管 runner，当前关闭。等价量具 `aot-equivalence.php` / `dual-mode-equivalence.php` 不进 `verify`，改 AOT 相关代码时手动跑。
 
 ---
 

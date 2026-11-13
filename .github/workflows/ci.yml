@@ -7,9 +7,7 @@ on:
   push:
     branches: [main]
   pull_request:
-  schedule:
-    - cron: '0 2 * * *'   # nightly：跑慢项
-  workflow_dispatch:
+  workflow_dispatch:   # 手动触发 gate-full（全量慢项）；不设定时任务
 
 # 对齐上游 swoole/typephp（windows-build.yml / linux-x64.yml）的 CI 惯例：
 # 最小权限、同 ref 取消旧跑、composer 非交互且不受子进程超时影响。
@@ -103,10 +101,12 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  # ── Nightly：T0 全量（含 feature / pages / smoke 等慢项），仍纯 PHP ──
-  gate-nightly:
-    name: Gate (nightly, all items)
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+  # ── 手动全量：T0 全量（含 feature / pages / smoke 慢项），仍纯 PHP ──
+  #    不设定时：提交构建是主闸门，全量档按需手动触发；发版 tag 由 release.yml 自动跑。
+  #    题库全量对照是 --layer=corpus 的独立量具，不在这个 runner 的报告里。
+  gate-full:
+    name: Gate (full, manual)
+    if: github.event_name == 'workflow_dispatch'
     runs-on: windows-2022
     timeout-minutes: 60
     steps:
@@ -121,7 +121,7 @@ jobs:
         env:
           fail-fast: true
           update: true
-      # 慢项只在 8.4 上跑一遍：matrix 的价值是给 `--fast` 做版本对账，
+      # 慢项只在 8.4 上跑一遍：matrix 的价值是给日常 fast 档做版本对账，
       # 全量 feature / pages / smoke 翻倍没有新信息，只多占 runner。
       - name: Install PHPUnit (pinned by composer.lock)
         shell: bash
@@ -131,14 +131,14 @@ jobs:
         run: |
           set -o pipefail
           php bin/drift verify --full --json | tee verify-report.json
-      - name: Assert unit and feature really ran (not measured is not ok)
+      - name: Assert full gate really ran (unit / feature)
         shell: bash
         run: php .github/scripts/assert-verify-report.php verify-report.json unit feature
       - name: Upload verify report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: verify-report-nightly
+          name: verify-report-full
           path: verify-report.json
           if-no-files-found: ignore
           retention-days: 7
