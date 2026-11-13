@@ -10,10 +10,17 @@ declare(strict_types=1);
  *   php tests/Contracts/run-corpus.php --dry-run       # 只验锚点能不能注入/还原（秒级）
  *   php tests/Contracts/run-corpus.php --probe=lint    # 只跑一条通道
  *   php tests/Contracts/run-corpus.php --json          # 机器可读，留给 V2 对比
+ *   php tests/Contracts/run-corpus.php --suite=v2 --tier=full --json
+ *                                                    # S3：V2 矩阵 + 自动对照 V1 基线
  *
- * 这是量具不是判据。只有三种情况 exit 1：D0（空对照）假红、注入没还原干净、
- * 非 aot 缺陷**一条通道都没抓到**（那说明题库或通道在骗自己）。
+ * 这是量具不是判据。exit 1：D0（空对照）假红、注入没还原干净、
+ * 非 aot 缺陷**一条通道都没抓到**、或 V2 相对 V1 基线出现覆盖回归。
  * 其余如实记录，包括「V1 其实抓不到」的格子 —— 那些正是重建时最该补的洞。
+ * exit 2 = 「没测到」：未知/未注册套件、基线缺失、裁剪结果想当验收报告。
+ *
+ * ★ 套件路由：`v1` 是现有 9 条通道；`v2` 在 S2 注册前**显式留空**。
+ *   绝不能悄悄回退到 v1 通道 —— 那只会给 V1 结果贴个 v2 标签，S3 对照自己骗自己。
+ *   V1 基线是入库的 `tests/Contracts/baseline/v1-full.json`，不在 gitignored scratch。
  *
  * ★ 通道并发跑：缺陷必须串行（每个都要改工作树），通道之间互不依赖。
  *   串行 9 条约 125s/缺陷，并发后墙钟 = 最慢那条（feature）≈ 65s。
@@ -39,10 +46,11 @@ $opt = static function (string $name) use ($argv_): ?string {
 
 $json       = \in_array('--json', $argv_, true);
 $dryRun     = \in_array('--dry-run', $argv_, true);
-$suite      = $opt('suite') ?? 'v1';
-$tier       = $opt('tier') ?? 'core';
-$onlyDefect = $opt('defect');
-$onlyProbe  = $opt('probe');
+$suite        = $opt('suite') ?? 'v1';
+$tier         = $opt('tier') ?? 'core';
+$baselinePath = $opt('baseline') ?? __DIR__ . '/baseline/v1-full.json';
+$onlyDefect   = $opt('defect');
+$onlyProbe    = $opt('probe');
 
 $phpunit = $php . ' ' . $arg('vendor/bin/phpunit') . ' -c ' . $arg('phpunit.xml')
     . ' --no-coverage --do-not-cache-result';
@@ -100,6 +108,25 @@ $probes = [
         'class' => 'behavior',
     ],
 ];
+
+/**
+ * 套件 = 哪一套验证体系在答这份题库。V2 注册前留空，S2 建好 verify 后
+ * 把 'v2' 换成真实通道数组即可 —— 判据 / 题库 / 量具逻辑一行都不用改。
+ */
+$suites = [
+    'v1' => $probes,
+    'v2' => null,
+];
+if (!\array_key_exists($suite, $suites)) {
+    \fwrite(STDERR, "未知套件 {$suite}（已有：" . \implode(', ', \array_keys($suites)) . "）\n");
+    exit(2);
+}
+if ($suites[$suite] === null) {
+    \fwrite(STDERR, "套件 {$suite} 尚未注册通道；S2 建好 verify 后在此填入真实命令。\n");
+    \fwrite(STDERR, "不回退到 V1 通道：「没测到」不是通过。\n");
+    exit(2);
+}
+$probes = $suites[$suite];
 
 if (!\in_array($tier, ['core', 'full'], true)) {
     \fwrite(STDERR, "未知层级 {$tier}（core | full）\n");
@@ -274,6 +301,51 @@ $covered = \array_values(\array_filter($graded, static fn(array $r): bool => $r[
 $blind   = \array_values(\array_filter($graded, static fn(array $r): bool => $r['caught'] === []));
 $ok      = $control === [] && $leftover === [] && $blind === [];
 
+// 非 v1 套件必须对照入库的 V1 基线：S3 的硬验收线是「V2 覆盖率 ≥ V1」。
+// 裁剪过的矩阵（--defect / --probe）不许当验收报告，否则会静默变绿。
+$regression  = [];
+$newlyCaught = [];
+if ($suite !== 'v1') {
+    if (!\is_file($baselinePath)) {
+        \fwrite(STDERR, "V1 基线不存在：{$baselinePath}（没测到，不是通过）\n");
+        exit(2);
+    }
+    $base = \json_decode((string) \file_get_contents($baselinePath), true);
+    if (!\is_array($base) || !isset($base['matrix']) || !\is_array($base['matrix'])) {
+        \fwrite(STDERR, "V1 基线格式不对：{$baselinePath}\n");
+        exit(2);
+    }
+    $caughtBy = static function (array $rows): array {
+        $out = [];
+        foreach ($rows as $row) {
+            if ($row['id'] === 'D0' || ($row['aot'] ?? false)) {
+                continue;
+            }
+            $out[$row['id']] = \array_keys($row['caught'] ?? []);
+        }
+
+        return $out;
+    };
+    $before = $caughtBy($base['matrix']);
+    $after  = $caughtBy($real);
+    if (\count($after) < \count($before)) {
+        \fwrite(STDERR, '对照需要全量题库（当前 ' . \count($after) . '/' . \count($before)
+            . "）；--defect/--probe 裁剪结果不能当验收报告。\n");
+        exit(2);
+    }
+    foreach ($before as $id => $channels) {
+        if ($channels !== [] && ($after[$id] ?? []) === []) {
+            $regression[] = $id;
+        }
+    }
+    foreach ($after as $id => $channels) {
+        if ($channels !== [] && ($before[$id] ?? []) === []) {
+            $newlyCaught[] = $id;
+        }
+    }
+    $ok = $ok && $regression === [];
+}
+
 if ($json) {
     echo \json_encode([
         'suite'    => $suite,
@@ -285,6 +357,9 @@ if ($json) {
         'covered'  => \count($covered),
         'blind'    => \array_column($blind, 'id'),
         'aotOnly'  => \array_column($aotOnly, 'id'),
+        'compare'  => $suite === 'v1' ? null : $baselinePath,
+        'regress'  => $regression,
+        'gain'     => $newlyCaught,
         'ok'       => $ok,
     ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT) . "\n";
     exit($ok ? 0 : 1);
@@ -310,6 +385,16 @@ if ($blind !== []) {
 }
 if ($aotOnly !== []) {
     echo '· aot-only（解释器侧全绿是已知缺口，不计分母）：' . \implode(', ', \array_column($aotOnly, 'id')) . "\n";
+}
+if ($suite !== 'v1') {
+    echo '· 对照 V1 基线：' . $baselinePath . '；回归 ' . \count($regression) . ' 条';
+    if ($regression !== []) {
+        echo ' ✗ ' . \implode(', ', $regression);
+    }
+    if ($newlyCaught !== []) {
+        echo '；新抓到 ' . \implode(', ', $newlyCaught);
+    }
+    echo "\n";
 }
 
 exit($ok ? 0 : 1);
