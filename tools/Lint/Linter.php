@@ -17,6 +17,7 @@ use Drift\Dev\Lint\Rules\CachedSubscriber;
 use Drift\Dev\Lint\Rules\ClassMissingUse;
 use Drift\Dev\Lint\Rules\CjkVarName;
 use Drift\Dev\Lint\Rules\DeadCommand;
+use Drift\Dev\Lint\Rules\DeadField;
 use Drift\Dev\Lint\Rules\DeadSubscription;
 use Drift\Dev\Lint\Rules\DependencyDirection;
 use Drift\Dev\Lint\Rules\InternalLeak;
@@ -59,6 +60,9 @@ final class Linter
             // §16.6.3 第二批（2026-10-15 按优先级补）
             new DeadCommand(),
             new DeadSubscription(),
+            // 表格字段名拼写（2026-11-13 A②）：field('nmae') 从前只在渲染期 Fatal，0 行时静默空白。
+            //   ★ 判据走独立路径（同文件行字段证据），不依赖生成层、不猜跨文件数据流。
+            new DeadField(),
             new SelectPurity(),
             new StaleDerived(),
             new CachedSubscriber(),

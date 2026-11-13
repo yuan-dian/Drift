@@ -25,6 +25,23 @@
 | **B · 可选** | 把「一致性敏感的多字段读点必须进同一个 `select`」写成一条窄纪律，**只覆盖已有的 7 处 `array` 切片**，不动单值切片。仓库已有 4 处正确先例 | 按需，不铺开 |
 | **C · 不做** | 全仓 VM 化、`vm-key` / `vm-pure` 两条判据、7 文件迁移、生成 PHP 源码、运行期追踪、Context 登记、整套 Drift3 架构 | 净负或语言边界 |
 
+### 执行状态（2026-11-13）
+
+- **A① 已完成，且实现方式与设想不同**：仓库没有独立的 `ctorParams()` 表 ——
+  `SourceQuery::readPromoted()` 读构造器提升参数，在 `readClass()` 里与类体属性合成
+  **同一张** `properties` 表（一处落点，每条规则不必记两个来源）。
+  `DeadSubscriptionFixture.php` 的 `ReadsCellPromotedUnmarked/Marked` 与
+  `$expected['dead-subscription'] = 2` 已在库；`php tools/lint.php --selftest` 实测
+  「该响 2 / 不该响 0」。`readBody()` 跳过方法体的契约未改。
+- **A② 已落地，但原设想的前提不成立**：全仓只有 `WindowStateStore` 有 `FIELDS` 常量，
+  表格行从来没这份契约。实测 52 处 `->field('字面量')`，若按「同文件关联数组键」对账，
+  `AsyncTablePage`（行数据来自外部）、`ColumnResizeTest`、`TableCellEditApplication`
+  等会误报 6 处 ⇒ 改为 `dead-field` 规则：判「字段名在同文件有没有任何行字段出处」
+  （列身份 / 行数据键 / `$row['x']` / 可选 `FIELDS` 显式契约四条证据通道），
+  证据集为空不判；跳过 `tests/`（`fatal_cases.php` 故意写着 `field('nmae')` 当 Fatal
+  用例）与工具链。**不新增应用侧常量** —— 那会与行数据键形成两份事实源；运行期
+  `TableColumn::textOf()` 的缺字段 Fatal 仍守「真实行里有没有这个键」，两者不重复。
+
 ★ 性能优化方向不是改形状：粗广播 `O(订阅者)` 与重建工作量都**不能**由编译器后置，
 调用开销才可以。若将来量出粗广播是帧预算主因，走已登记的细粒度状态原语，
 重启条件：Store 字段 > 20 且订阅者 > 20，或 T2 量出粗广播为主因。

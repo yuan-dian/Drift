@@ -78,6 +78,12 @@ function drift_lint_selftest(string $root, Linter $linter): bool
             'src/Widget/DeadSubscriptionFixture.php:' . Diagnostic::ERROR,
             'src/Widget/DeadSubscriptionFixture.php:' . Diagnostic::ERROR,
         ],
+        // 表格字段名拼写（2026-11-13 A②）：1 条孤立字面量 field('nmae')。
+        //   ★ Good 侧四条证据通道各只由一条通道供证：make key / 行数据键 /
+        //     $row[...] / const FIELDS；另有动态字段与同名私有方法两种"看着像但不是"。
+        'dead-field' => [
+            'apps/DeadFieldFixture.php:' . Diagnostic::ERROR,
+        ],
         // 2026-11-07 补 `static fn` / `static function` 形态（+5）：
         // 从前 isClosure() 漏认 T_STATIC ⇒ 全仓 24 处真实 select 从未进过判据。
         // 2026-11-08（+4）：readonly 白名单从「返回类型 / 体内 new」两条通道移除，

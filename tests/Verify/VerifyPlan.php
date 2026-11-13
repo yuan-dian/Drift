@@ -50,7 +50,7 @@ final class VerifyPlan
                 'layer'   => 'static',
                 'tier'    => 'fast',
                 'class'   => 'static',
-                'label'   => 'lint 33 规则（含 S4 迁入的 project-name）',
+                'label'   => 'lint 规则集（含 S4 迁入的 project-name；条数看 tools/lint.php --list）',
                 'command' => [$php, $root . '/tools/lint.php'],
             ],
             'sceneset' => [
