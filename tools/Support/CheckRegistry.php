@@ -36,8 +36,8 @@ final class CheckRegistry
             'genversion' => ['版本派生副本（gen-version --check）', [PHP_BINARY, $root . '/tools/gen-version.php', '--check'], false],
             'lint'     => ['lint', [PHP_BINARY, $root . '/tools/lint.php'], false],
             'selftest' => ['lint 自检', [PHP_BINARY, $root . '/tools/lint.php', '--selftest'], false],
-            // ★ 5 对「接线对账 + 变异自证」收成一个组：它们是 5 个能力的两半，
-            //   在顶层占 10 个名字，而 `gate --only` / CI 只需要一个可寻址入口。
+            // ★ 成对的「接线对账 + 变异自证」收成一个组：每个能力两半，
+            //   在顶层占一个可寻址入口（组内细粒度用 `--only=<id>` 保住）。
             //   判据实现一行未动，细粒度用 `composer tooling -- --only=abi` 保住。
             //   ★ 不进 PHPUnit：这些对账器与行为单测不同源（见各自头注），且零依赖；
             //   `unit` 在缺 PHPUnit 时会 skip，绑过去等于让守卫静默消失。
@@ -90,7 +90,7 @@ final class CheckRegistry
      * 组内子项：顶层一项展开成多条判据，**仍只此一份清单**。
      *
      * ★ 与 `checks()` 同住本类：`gate --list` 与组执行器不会各抄一遍。
-     * ★ 判据实现（5 个 `*-check.php`）一行不改；删任意一条会被 `group-run.php`
+     * ★ 判据实现（各个 `*-check.php`）一行不改；删任意一条会被 `group-run.php`
      *   的磁盘自证咬红 —— 期望来自文件系统，不来自这份声明。
      *
      * @return array<string, list<array{id: string, label: string, command: list<string>}>>
@@ -103,6 +103,9 @@ final class CheckRegistry
             ['dxdiag', 'dxself', 'DX 退化判据对账', 'diagnostic-check.php'],
             ['stalepolicy', 'staleself', '构建 stale 决策接线', 'build-stale-check.php'],
             ['errshape', 'errself', '错误码贯通接线', 'error-shape-check.php'],
+            // ★ 示例/判据集合封闭（G2）：三向双向对账，删页 / 孤儿基线不再静默全绿。
+            //   零依赖静态对账，走 `--fast`，与上面几对同形。
+            ['sceneset', 'scenesetself', '示例集合封闭', 'scene-set-check.php'],
         ];
 
         $steps = [];

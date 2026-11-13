@@ -39,8 +39,10 @@ TypePHP 的下载安装、默认目录布局与环境变量清单，见 [`../REA
   不抄进文档、不写进注释（2026-11-11 `--only` 白名单漏 5 对判据就是手写清单漂的）。
   `composer run --list` 是唯一可发现入口；下面的 scripts 全部经 `bin/drift` 转发到
   `tools/gate.php`，**不是第二个 runner**，也没有第二套退出码口径。
-  5 对「接线对账 + 变异自证」在顶层收成 `tooling` 一项，组内单跑用
-  `composer tooling -- --only=<id>`；组内跑完才汇总，不会第一条红就停。
+  成对的「接线对账 + 变异自证」在顶层收成 `tooling` 一项（组内条数以执行器
+  输出为准，别抄进文档）；组内单跑用 `composer tooling -- --only=<id>`；
+  组内跑完才汇总，不会第一条红就停。新加一对只需在 `CheckRegistry::groups()`
+  登记，磁盘自证会反查有没有漏。
 
 ```bash
 composer check                       # T0 日常闸门（廉价项）
