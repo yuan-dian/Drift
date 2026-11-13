@@ -18,16 +18,19 @@ declare(strict_types=1);
  * 其余如实记录，包括「V1 其实抓不到」的格子 —— 那些正是重建时最该补的洞。
  * exit 2 = 「没测到」：未知/未注册套件、基线缺失、裁剪结果想当验收报告。
  *
- * ★ 套件路由：`v1` 是现有 9 条通道；`v2` 在 S2 注册前**显式留空**。
- *   绝不能悄悄回退到 v1 通道 —— 那只会给 V1 结果贴个 v2 标签，S3 对照自己骗自己。
- *   V1 基线是入库的 `tests/Contracts/baseline/v1-full.json`，不在 gitignored scratch。
+ * ★ 套件路由：`v1` 是现有 9 条通道；`v2` 从 `tests/Verify/VerifyPlan.php` 生成。
+ *   绝不回退到 v1 通道 —— 那只会给 V1 结果贴个 v2 标签，S3 对照自己骗自己。
+ *   V1 基线是入库的 `tests/Contracts/baseline/v1-postdocs-full.json`（17 条，
+ *   4 条旧文档缺陷已显式退役），不在 gitignored scratch。
  *
  * ★ 通道并发跑：缺陷必须串行（每个都要改工作树），通道之间互不依赖。
  *   串行 9 条约 125s/缺陷，并发后墙钟 = 最慢那条（feature）≈ 65s。
  */
 require __DIR__ . '/DefectCorpus.php';
+require __DIR__ . '/../Verify/VerifyPlan.php';
 
 use Drift\Dev\Tests\Contracts\DefectCorpus;
+use Drift\Dev\Tests\Verify\VerifyPlan;
 
 $root = \dirname(__DIR__, 2);
 $php  = \escapeshellarg(PHP_BINARY);
@@ -48,7 +51,7 @@ $json       = \in_array('--json', $argv_, true);
 $dryRun     = \in_array('--dry-run', $argv_, true);
 $suite        = $opt('suite') ?? 'v1';
 $tier         = $opt('tier') ?? 'core';
-$baselinePath = $opt('baseline') ?? __DIR__ . '/baseline/v1-full.json';
+$baselinePath = $opt('baseline') ?? __DIR__ . '/baseline/v1-postdocs-full.json';
 $onlyDefect   = $opt('defect');
 $onlyProbe    = $opt('probe');
 
@@ -110,19 +113,32 @@ $probes = [
 ];
 
 /**
- * 套件 = 哪一套验证体系在答这份题库。V2 注册前留空，S2 建好 verify 后
- * 把 'v2' 换成真实通道数组即可 —— 判据 / 题库 / 量具逻辑一行都不用改。
+ * 套件 = 哪一套验证体系在答这份题库。V2 通道由 VerifyPlan 生成，命令统一走
+ * `bin/drift verify --step=<id>`：判据清单只有一份，量具不复制第二套执行器。
+ * device 层（AOT）不进题库矩阵 —— 解释器侧本来也抓不到 aot-only 两条。
  */
+$v2Probes = [];
+foreach (VerifyPlan::steps($root) as $id => $s) {
+    if ($s['layer'] === 'device') {
+        continue;
+    }
+    $v2Probes[$id] = [
+        'cmd'   => $php . ' ' . $arg('tests/Verify/verify.php') . ' --step=' . \escapeshellarg($id),
+        'tier'  => $s['tier'] === 'full' ? 'full' : 'core',
+        'class' => $s['class'],
+    ];
+}
+
 $suites = [
     'v1' => $probes,
-    'v2' => null,
+    'v2' => $v2Probes,
 ];
 if (!\array_key_exists($suite, $suites)) {
     \fwrite(STDERR, "未知套件 {$suite}（已有：" . \implode(', ', \array_keys($suites)) . "）\n");
     exit(2);
 }
 if ($suites[$suite] === null) {
-    \fwrite(STDERR, "套件 {$suite} 尚未注册通道；S2 建好 verify 后在此填入真实命令。\n");
+    \fwrite(STDERR, "套件 {$suite} 尚未注册通道。\n");
     \fwrite(STDERR, "不回退到 V1 通道：「没测到」不是通过。\n");
     exit(2);
 }
@@ -249,9 +265,10 @@ foreach ($defects as $defect) {
             'id'     => $defect['id'],
             'class'  => $defect['class'],
             'from'   => $defect['from'],
-            'aot'    => (bool) ($defect['aot'] ?? false),
-            'caught' => [],
-            'error'  => $e->getMessage(),
+            'aot'     => (bool) ($defect['aot'] ?? false),
+            'retired' => (bool) ($defect['retired'] ?? false),
+            'caught'  => [],
+            'error'   => $e->getMessage(),
         ];
         \fwrite(STDERR, "[{$defect['id']}] 注入失败：" . $e->getMessage() . "\n");
 
@@ -269,8 +286,9 @@ foreach ($defects as $defect) {
             'id'     => $defect['id'],
             'class'  => $defect['class'],
             'from'   => $defect['from'],
-            'aot'    => (bool) ($defect['aot'] ?? false),
-            'caught' => $caught,
+            'aot'     => (bool) ($defect['aot'] ?? false),
+            'retired' => (bool) ($defect['retired'] ?? false),
+            'caught'  => $caught,
         ];
     } finally {
         $revert();
@@ -295,8 +313,11 @@ foreach ($defects as $d) {
 
 $control = $matrix[0]['caught'] ?? [];
 $real    = \array_slice($matrix, 1);
-$graded  = \array_values(\array_filter($real, static fn(array $r): bool => !$r['aot']));
-$aotOnly = \array_values(\array_filter($real, static fn(array $r): bool => $r['aot']));
+// 退役条目仍注入、仍留在矩阵里作历史档案，但既不进分母也不进基线对照。
+$retired = \array_values(\array_filter($real, static fn(array $r): bool => (bool) ($r['retired'] ?? false)));
+$live    = \array_values(\array_filter($real, static fn(array $r): bool => !($r['retired'] ?? false)));
+$graded  = \array_values(\array_filter($live, static fn(array $r): bool => !$r['aot']));
+$aotOnly = \array_values(\array_filter($live, static fn(array $r): bool => $r['aot']));
 $covered = \array_values(\array_filter($graded, static fn(array $r): bool => $r['caught'] !== []));
 $blind   = \array_values(\array_filter($graded, static fn(array $r): bool => $r['caught'] === []));
 $ok      = $control === [] && $leftover === [] && $blind === [];
@@ -318,7 +339,7 @@ if ($suite !== 'v1') {
     $caughtBy = static function (array $rows): array {
         $out = [];
         foreach ($rows as $row) {
-            if ($row['id'] === 'D0' || ($row['aot'] ?? false)) {
+            if ($row['id'] === 'D0' || ($row['aot'] ?? false) || ($row['retired'] ?? false)) {
                 continue;
             }
             $out[$row['id']] = \array_keys($row['caught'] ?? []);
@@ -357,6 +378,7 @@ if ($json) {
         'covered'  => \count($covered),
         'blind'    => \array_column($blind, 'id'),
         'aotOnly'  => \array_column($aotOnly, 'id'),
+        'retired'  => \array_column($retired, 'id'),
         'compare'  => $suite === 'v1' ? null : $baselinePath,
         'regress'  => $regression,
         'gain'     => $newlyCaught,
@@ -373,7 +395,8 @@ foreach ($matrix as $row) {
     foreach ($names as $name) {
         $cells[] = \str_pad(isset($row['caught'][$name]) ? '红' : '·', 8);
     }
-    $mark = $row['aot'] ? ' (aot-only)' : '';
+    $mark = $row['aot'] ? ' (aot-only)'
+        : (($row['retired'] ?? false) ? ' (retired)' : '');
     echo \str_pad($row['id'], 6) . \implode('  ', $cells) . \count($row['caught']) . $mark . "\n";
 }
 
@@ -385,6 +408,9 @@ if ($blind !== []) {
 }
 if ($aotOnly !== []) {
     echo '· aot-only（解释器侧全绿是已知缺口，不计分母）：' . \implode(', ', \array_column($aotOnly, 'id')) . "\n";
+}
+if ($retired !== []) {
+    echo '· retired（旧文档体系事故，显式退役不计分母）：' . \implode(', ', \array_column($retired, 'id')) . "\n";
 }
 if ($suite !== 'v1') {
     echo '· 对照 V1 基线：' . $baselinePath . '；回归 ' . \count($regression) . ' 条';

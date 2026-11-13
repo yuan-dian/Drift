@@ -15,6 +15,8 @@ namespace Drift\Dev\Tests\Contracts;
  *      要么补通道，要么说明它本来就不是"可被解释器侧发现"的缺陷。
  *   2. `aot === true` 的条目是**已知缺口**（AOT 产物才炸，解释器全绿），
  *      如实记录但不计入覆盖率分母，否则 S3 的对比会自己骗自己。
+ *   3. `retired === true` 的条目仍注入、仍记录矩阵（历史档案），但**不计入分母**：
+ *      它们描述旧文档体系的事故，随文档整体重构退役，不是静默删判据。
  */
 final class DefectCorpus
 {
@@ -25,6 +27,8 @@ final class DefectCorpus
      *     from: string,
      *     note: string,
      *     aot?: bool,
+     *     retired?: bool,
+     *     retiredWhy?: string,
      *     op: array{kind: string, path?: string, from?: string, to?: string, edits?: list<array{from: string, to: string}>}
      * }>
      */
@@ -109,6 +113,8 @@ final class DefectCorpus
                 'class' => 'doc',
                 'from'  => 'apidoc · 新增 @api 但清单没重生成',
                 'note'  => '`API-SURFACE.md` 抬头写着「自动生成、勿手改」，却没有东西检查它是新的',
+                'retired'    => true,
+                'retiredWhy' => 'apidoc 守的行号派生清单随文档重构退役',
                 'op'    => [
                     'kind' => 'replace',
                     'path' => 'src/Geometry/Scale.php',
@@ -125,6 +131,8 @@ final class DefectCorpus
                 'class' => 'doc',
                 'from'  => 'docref · markdown 相对链接死链',
                 'note'  => '文档里链到不存在的分册 ⇒ 读者点进去 404，没有任何东西会报错',
+                'retired'    => true,
+                'retiredWhy' => 'markdown-links 守的旧分册链接随文档重构退役',
                 'op'    => [
                     'kind' => 'replace',
                     'path' => 'DESIGN.md',
@@ -138,6 +146,8 @@ final class DefectCorpus
                 'class' => 'doc',
                 'from'  => 'docref · 跨册 § 引用指向不存在的小节',
                 'note'  => '`x.md` §99.9` ⇒ 裁决依据指向虚无',
+                'retired'    => true,
+                'retiredWhy' => 'section-refs 守的跨册 § 编号随文档重构退役',
                 'op'    => [
                     'kind' => 'replace',
                     'path' => 'DESIGN.md',
@@ -150,6 +160,8 @@ final class DefectCorpus
                 'class' => 'doc',
                 'from'  => 'docref · 项目名写成目录名',
                 'note'  => '正文把项目写成 `Drift2` ⇒ 文档与代码两个名字，搜索与引用都会漂',
+                'retired'    => true,
+                'retiredWhy' => 'project-name 守的正文命名随文档重构退役；命名纪律并入 lint',
                 'op'    => [
                     'kind' => 'replace',
                     'path' => 'DESIGN.md',
