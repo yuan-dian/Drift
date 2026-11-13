@@ -1,6 +1,6 @@
 # S4 删除清单（路线 A · 执行账本）
 
-> 状态：**路线 A 已确认；缺口已补，删除 / 回写与删后验收见 §5、§6**。
+> 状态：**路线 A 已执行完；删除 / 回写见 §5，删后验收（含 after 报告）见 §6**。
 > 删前基准：`HEAD = 3c194e2`，`main` 领先 `origin/main` 14 笔，无 tag。
 > 事实源：`git ls-files tools` = 369 个被跟踪文件。分类由 `.workbuddy-ai/tmp/s4-classify.php`
 > 生成、依赖复核由 `.workbuddy-ai/tmp/s4-deps.php` 完成（两者都不进 git）。
@@ -236,12 +236,39 @@ tools/_archive/reach.py             tools/crash-selftest/selftest.cc
 
 ---
 
-## 6. 删后验收
+## 6. 删后验收（已完成）
 
-- **before**：`tests/Contracts/baseline/v2-full.json`（`3c194e2`），
-  `ok=true`、`graded=21`、`covered=21`、`blind=[]`、`regress=[]`、`gain=[I1,I2,I3,I4]`。
-- 删后重跑 `--suite=v2 --tier=full --json`，要求 `ok=true`、`graded=21`、
-  `covered=21`、`blind=[]`、`regress=[]`；报告入库作 after。
-- 再跑 `php bin/drift verify --full` 与 `php tools/lint.php --selftest`。
-- CI 三份 workflow 在未 push 的提交里从未实跑，push 后要盯首轮。
-- AOT / 真机 T2 不在本轮解释器侧验收范围内，属发版前复核。
+后台三段连跑（37m56s）：
+
+| 检查 | 命令 | 结果 |
+|---|---|---|
+| V2 全量 runner | `php bin/drift verify --full --json` | `VERIFY_EXIT=0`；16 项全 `ok`，`partial=false` |
+| CI 报告断言 | `php .github/scripts/assert-verify-report.php <report> unit feature pages smoke` | `ASSERT_EXIT=0` |
+| 题库全量矩阵 | `php tests/Contracts/run-corpus.php --suite=v2 --tier=full --json` | `CORPUS_EXIT=0`，`ok=true` |
+
+**after 报告已入库**：`tests/Contracts/baseline/v2-post-s4-full.json`
+（加 `note`，`compare` 归一为仓库相对路径，其余字段逐字节来自实测 JSON）。
+与 before `v2-full.json`（`3c194e2`）逐条对比：
+
+- `graded=21`、`covered=21`、`blind=[]`、`regress=[]`、`gain=[I1,I2,I3,I4]` 完全一致；
+- 28 行里 **27 行 `caught` 逐字相同**，唯一差异是退役项 `R3` 新增 `lint:1`
+  —— 正是 §2.1 把 `project-name` 迁进 `Lint` 后由 `lint` 兜住的命名缺陷；
+  **退役 ≠ 失去检测**，且它不计入 graded 分母；
+- 8 个新增静态对账通道（`abi` / `cppbridge` / `dxdiag` / `stalepolicy` /
+  `errshape` / `version` / `genversion` / `devshell`）在空对照 `D0` 全绿、
+  28 行里零命中 ⇒ 没有「脚本不存在 → 返回非 0 → 判成抓到」的删后假绿；
+- 退出码分布仍含 `1 / 2 / 3 / 255`，与 before 一致，runner 没有归一化退出码。
+
+**`compare` 的可移植性修复**：`run-corpus.php` 原先直接把
+`__DIR__ . '/baseline/…'`（绝对路径）写进 JSON，换台机器就带着本机目录名、
+无法逐字节比对；现输出仓库相对路径。本轮入库快照用同一规则归一，
+字段之外的矩阵内容不改。裁剪矩阵按设计在输出 JSON 前就 `exit 2`，
+所以这一字段的端到端实证留给下一次全量跑；本轮用「从 runner 源码抽出该闭包、
+喂 after 原始绝对路径」自证，输出与入库值一致。
+
+其余删后快验：`php tools/lint.php` = 1049 文件 / 0 error / 0 warn；
+`php tools/lint.php --selftest` 里 `project-name` 该响 3 / 不该响 0；
+`verify --step=unit` = 621 tests / 1929 assertions。
+
+**仍未覆盖**：CI 三份 workflow 在尚未 push 的提交里从未实跑，push 后要盯首轮；
+AOT / 真机 T2 不在本轮解释器侧验收范围，属发版前复核。

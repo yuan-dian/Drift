@@ -360,6 +360,16 @@ if ($suite !== 'v1') {
     $ok = $ok && $regression === [];
 }
 
+// 报告里的基线路径写成仓库相对形式：绝对路径会带本机目录名，
+// 换台机器生成的报告就无法逐字节比对。
+$compareLabel = (static function (string $path) use ($root): string {
+    $normalized = \str_replace('\\', '/', $path);
+    $prefix     = \str_replace('\\', '/', $root) . '/';
+    return \str_starts_with($normalized, $prefix)
+        ? \substr($normalized, \strlen($prefix))
+        : $normalized;
+})($baselinePath);
+
 if ($json) {
     echo \json_encode([
         'suite'    => $suite,
@@ -372,7 +382,7 @@ if ($json) {
         'blind'    => \array_column($blind, 'id'),
         'aotOnly'  => \array_column($aotOnly, 'id'),
         'retired'  => \array_column($retired, 'id'),
-        'compare'  => $suite === 'v1' ? null : $baselinePath,
+        'compare'  => $suite === 'v1' ? null : $compareLabel,
         'regress'  => $regression,
         'gain'     => $newlyCaught,
         'ok'       => $ok,
