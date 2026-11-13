@@ -109,6 +109,11 @@ drift —— 统一开发入口
 
   composer run --list      看全部 scripts 及说明
 
+环境依赖：`composer probe`（真机探针）需要 Python 3，可用 DRIFT_PYTHON 指定解释器；
+重生成字模（`tools/font-gen-*.py`，手工调用）另外需要 Pillow。日常 verify / test /
+lint 只依赖 PHP + composer vendor（PHPUnit）；`composer build` 要的是
+MSVC + SDK + tpc，与 Python 无关。
+
 形态不能互相替代：dev 绿 ≠ AOT 绿；T2 的 DPI / WIC / UIA / 消息循环
 只能靠真机探针。分层见 docs/architecture/12-工程与工具.md §3。
 
