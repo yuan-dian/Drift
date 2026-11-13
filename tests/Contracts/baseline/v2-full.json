@@ -1,0 +1,329 @@
+{
+    "note": "S3 验收快照：V2 全量矩阵（21 live = 17 旧 + 4 IR）。对照基线是 v1-postdocs-full.json；本文件只作证据，不被 run-corpus 读取。",
+    "suite": "v2",
+    "tier": "full",
+    "baseline": {
+        "lint": 0,
+        "sceneset": 0,
+        "theme": 0,
+        "ir": 0,
+        "unit": 0,
+        "feature": 0,
+        "pages": 0,
+        "smoke": 0
+    },
+    "matrix": [
+        {
+            "id": "D0",
+            "class": "control",
+            "from": "空对照",
+            "aot": false,
+            "retired": false,
+            "caught": []
+        },
+        {
+            "id": "L1",
+            "class": "static",
+            "from": "A17 · 编译期注解漏全限定名（#[\\X]）",
+            "aot": false,
+            "retired": false,
+            "caught": {
+                "lint": 1
+            }
+        },
+        {
+            "id": "L2",
+            "class": "static",
+            "from": "G1 · namespace 与 PSR-4 路径不符",
+            "aot": false,
+            "retired": false,
+            "caught": {
+                "lint": 1,
+                "theme": 255,
+                "unit": 255,
+                "feature": 255,
+                "pages": 255,
+                "smoke": 255
+            }
+        },
+        {
+            "id": "L3",
+            "class": "static",
+            "from": "§19 · 手写「平移再画子盒」替代 paintChildAt",
+            "aot": false,
+            "retired": false,
+            "caught": {
+                "lint": 1
+            }
+        },
+        {
+            "id": "L4",
+            "class": "static",
+            "from": "G1 · new 的短名类不在本文件可见",
+            "aot": false,
+            "retired": false,
+            "caught": {
+                "lint": 1
+            }
+        },
+        {
+            "id": "L5",
+            "class": "static",
+            "from": "G2 · 变量名含非 ASCII 字节",
+            "aot": false,
+            "retired": false,
+            "caught": {
+                "lint": 1
+            }
+        },
+        {
+            "id": "L6",
+            "class": "doc",
+            "from": "apidoc · 新增 @api 但清单没重生成",
+            "aot": false,
+            "retired": true,
+            "caught": []
+        },
+        {
+            "id": "R1",
+            "class": "doc",
+            "from": "docref · markdown 相对链接死链",
+            "aot": false,
+            "retired": true,
+            "caught": []
+        },
+        {
+            "id": "R2",
+            "class": "doc",
+            "from": "docref · 跨册 § 引用指向不存在的小节",
+            "aot": false,
+            "retired": true,
+            "caught": []
+        },
+        {
+            "id": "R3",
+            "class": "doc",
+            "from": "docref · 项目名写成目录名",
+            "aot": false,
+            "retired": true,
+            "caught": []
+        },
+        {
+            "id": "D1",
+            "class": "set",
+            "from": "S0 · 整页 golden 删页静默全绿",
+            "aot": false,
+            "retired": false,
+            "caught": {
+                "sceneset": 1,
+                "pages": 2
+            }
+        },
+        {
+            "id": "D2",
+            "class": "set",
+            "from": "S1 · 删页改名遗留的孤儿基线",
+            "aot": false,
+            "retired": false,
+            "caught": {
+                "sceneset": 1,
+                "pages": 1
+            }
+        },
+        {
+            "id": "D3",
+            "class": "set",
+            "from": "S0 · 冻结清单漏登记",
+            "aot": false,
+            "retired": false,
+            "caught": {
+                "sceneset": 1,
+                "pages": 1
+            }
+        },
+        {
+            "id": "G1",
+            "class": "pixel",
+            "from": "§40 · 主题色值漂一档",
+            "aot": false,
+            "retired": false,
+            "caught": {
+                "feature": 1,
+                "pages": 1
+            }
+        },
+        {
+            "id": "G2",
+            "class": "pixel",
+            "from": "§43 · 度量 token 改一档",
+            "aot": false,
+            "retired": false,
+            "caught": {
+                "theme": 1,
+                "feature": 1
+            }
+        },
+        {
+            "id": "U1",
+            "class": "unit",
+            "from": "§6.1 · 量化从四舍五入退化成截断",
+            "aot": false,
+            "retired": false,
+            "caught": {
+                "smoke": 1
+            }
+        },
+        {
+            "id": "U2",
+            "class": "unit",
+            "from": "§13.1 · flex 分母把弹性子的自然尺寸也减掉",
+            "aot": false,
+            "retired": false,
+            "caught": {
+                "unit": 1,
+                "feature": 1,
+                "pages": 3,
+                "smoke": 1
+            }
+        },
+        {
+            "id": "U3",
+            "class": "unit",
+            "from": "§46 · after() 的基准丢了「上一次输入」",
+            "aot": false,
+            "retired": false,
+            "caught": {
+                "feature": 1
+            }
+        },
+        {
+            "id": "B1",
+            "class": "behavior",
+            "from": "§44 · 两相位叠色把 hover 接到 press 进度",
+            "aot": false,
+            "retired": false,
+            "caught": {
+                "feature": 1
+            }
+        },
+        {
+            "id": "B2",
+            "class": "behavior",
+            "from": "§42 · 重建换盒后直接置位（删掉「先归零」）",
+            "aot": false,
+            "retired": false,
+            "caught": {
+                "feature": 1
+            }
+        },
+        {
+            "id": "B3",
+            "class": "behavior",
+            "from": "§20 · 键位映射把「消费」合成 bool",
+            "aot": false,
+            "retired": false,
+            "caught": {
+                "unit": 1,
+                "feature": 1
+            }
+        },
+        {
+            "id": "B4",
+            "class": "behavior",
+            "from": "§43 · 语义 token 零消费者",
+            "aot": false,
+            "retired": false,
+            "caught": {
+                "theme": 1,
+                "feature": 1
+            }
+        },
+        {
+            "id": "A1",
+            "class": "aot",
+            "from": "§67 · enum 里出现非 case 常量",
+            "aot": true,
+            "retired": false,
+            "caught": []
+        },
+        {
+            "id": "A2",
+            "class": "aot",
+            "from": "AOT · `self` 当静态属性的类型",
+            "aot": true,
+            "retired": false,
+            "caught": []
+        },
+        {
+            "id": "I1",
+            "class": "ir",
+            "from": "IR · op 顺序：save\/restore 录制反了",
+            "aot": false,
+            "retired": false,
+            "caught": {
+                "ir": 1,
+                "unit": 1,
+                "feature": 1,
+                "pages": 1,
+                "smoke": 1
+            }
+        },
+        {
+            "id": "I2",
+            "class": "ir",
+            "from": "IR · 裁剪没弹：popClip 录制丢失",
+            "aot": false,
+            "retired": false,
+            "caught": {
+                "ir": 1,
+                "feature": 3,
+                "pages": 1,
+                "smoke": 1
+            }
+        },
+        {
+            "id": "I3",
+            "class": "ir",
+            "from": "IR · 两色传反：两支画笔的颜色互换",
+            "aot": false,
+            "retired": false,
+            "caught": {
+                "ir": 1
+            }
+        },
+        {
+            "id": "I4",
+            "class": "ir",
+            "from": "IR · 纯平移\/非平移变换分叉：快路被删",
+            "aot": false,
+            "retired": false,
+            "caught": {
+                "ir": 1,
+                "unit": 1
+            }
+        }
+    ],
+    "leftover": [],
+    "graded": 21,
+    "covered": 21,
+    "blind": [],
+    "aotOnly": [
+        "A1",
+        "A2"
+    ],
+    "retired": [
+        "L6",
+        "R1",
+        "R2",
+        "R3"
+    ],
+    "compare": "tests\/Contracts\/baseline\/v1-postdocs-full.json",
+    "regress": [],
+    "gain": [
+        "I1",
+        "I2",
+        "I3",
+        "I4"
+    ],
+    "ok": true
+}
