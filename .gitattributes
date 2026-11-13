@@ -7,6 +7,9 @@
 *.yml text eol=lf
 *.yaml text eol=lf
 *.json text eol=lf
+# IR 快照基线（`tests/Verify/baseline/*.txt`）：逐命令比对，CRLF 会让它在 Windows
+# 检出后永远红。读取侧虽已做行尾归一（防御），仍钉成 LF 让 diff 干净。
+tests/Verify/baseline/*.txt text eol=lf
 *.html text eol=lf
 *.cc  text eol=lf
 *.h   text eol=lf

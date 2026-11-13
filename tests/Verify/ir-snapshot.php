@@ -71,6 +71,9 @@ if (!\is_file($baseline)) {
 }
 
 $expected = (string) \file_get_contents($baseline);
+// 行尾归一：IR 是命令流，`\r\n` 与 `\n` 不是两种 IR。`.gitattributes` 已把基线钉成
+// LF，这里再归一一次是防御 —— Windows 上 `core.autocrlf=true` 的检出不该让判据永远红。
+$expected = \str_replace("\r\n", "\n", $expected);
 if ($actual === $expected) {
     echo 'IR 快照一致（' . \count($lines) . " 条命令）\n";
     exit(0);
