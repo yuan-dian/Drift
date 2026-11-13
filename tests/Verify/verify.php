@@ -20,10 +20,10 @@ declare(strict_types=1);
  *   归一化会把它们洗成同一个值，甚至把「没测到」当成覆盖。
  *
  * ★ 依赖缺失由前置校验挡在跑之前，量具的基线阶段会再拦一次（`exit 2`）。
- * ★ 不读 `CheckRegistry`、不调 `gate.php` / `group-run.php`、不给判据配自证：
- *   V2 与 V1 的判据清单并存只是 S4 之前的过渡态，判据可信度只由题库回答。
+ * ★ 不读 V1 判据清单、不调 V1 编排层、不给判据配自证：V1 已随 S4 退役，
+ *   判据可信度只由缺陷题库回答。
  * ★ 数组式 `proc_open` + `bypass_shell`：Windows 下带空格的路径不会被
- *   `cmd.exe` 二次解释（与 `bin/drift` / `gate.php` 同法）。
+ *   `cmd.exe` 二次解释（与 `bin/drift` 同法）。
  */
 
 use Drift\Dev\Tests\Verify\VerifyPlan;
@@ -204,7 +204,7 @@ if ($listOnly) {
             if ($s['layer'] !== $l) {
                 continue;
             }
-            echo '  ' . \str_pad($s['id'], 11) . \str_pad($s['tier'], 9) . $s['label'] . "\n";
+            echo '  ' . \str_pad($s['id'], 13) . \str_pad($s['tier'], 9) . $s['label'] . "\n";
         }
     }
     echo "\n分片 " . \count($shards) . " 个（tests/Unit/* + tests/Feature/* 一级目录）；";

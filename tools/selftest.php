@@ -238,6 +238,13 @@ function drift_lint_selftest(string $root, Linter $linter): bool
             'apps/CallbackArityBad.php:' . Diagnostic::ERROR,
             'apps/CallbackArityBad.php:' . Diagnostic::ERROR,
         ],
+        // S4：命名纪律从 DocRef 迁入 lint。Bad 三条项目自称；
+        //   ProjectNameGood.md 一条都不该响 —— 钉住路径 / 反引号文件名 / 带斜杠目录名不误报。
+        'project-name' => [
+            'docs/ProjectNameBad.md:' . Diagnostic::ERROR,
+            'docs/ProjectNameBad.md:' . Diagnostic::ERROR,
+            'docs/ProjectNameBad.md:' . Diagnostic::ERROR,
+        ],
     ];
 
     $ok = true;

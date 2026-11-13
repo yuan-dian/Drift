@@ -38,15 +38,22 @@ D4      红          红          ·           ·         2   ← S0 冻结清�
 
 ## 2. 删除边界：`tools/` 不能整体删
 
-粗分（`tools/` 下 `*.php` + `*.py`）：
+粗分（`tools/` 下 `*.php` + `*.py`）——**设计当时的估算，S4 实测已推翻**：
 
-| 层 | 文件数 | 处置 |
+| 层 | 当时估算 | 处置 |
 |---|---|---|
-| 判据/验证层（`Lint/` `Smoke/` `DocRef/` `Golden/` `Bench/` `fakes/` + 顶层 `*-check.php` / `gate.php` / `smoke.php` …） | **292** | **全删重建** |
-| 构建/发布/运行层（`drift-build.php` `pack-deps.php` `fetch-deps.php` `deps-common.php` `gen-version.php` `version.php` `doctor.php` `drift-dev.php` `drift-preview.php` `build-grab.php` `release-deps.php`） | 11 | **保留**，这是生产链不是验证工具 |
-| 共享/真机探针/未定（`Support/` `Preview/` `Doctor/` `app-workers/` 13 个 `probe-*.py` …） | 57 | 逐条裁决，真机探针保留 |
+| 判据/验证层（`Lint/` `Smoke/` `DocRef/` `Golden/` `Bench/` `fakes/` + 顶层 `*-check.php` / `gate.php` / `smoke.php` …） | ~~292~~ | ~~全删重建~~ |
+| 构建/发布/运行层（`drift-build.php` `pack-deps.php` …） | 11 | **保留**，这是生产链不是验证工具 |
+| 共享/真机探针/未定（`Support/` `Preview/` `Doctor/` `app-workers/` …） | 57 | 逐条裁决，真机探针保留 |
 
-⇒ 「全部删除」= 删 292 个判据层文件，**不是 `rm -rf tools/`**。`bin/drift`、`composer.json` 的入口面保留并重定向到 V2。
+> **S4 订正（2026-11-13）**：`git ls-files tools` 实测 369 个被跟踪文件。原估算把
+> `Lint/`（106）与 `Smoke/`（130）算进「全删」，而它们正是 V2 `lint` / `unit` /
+> `feature` / `ir` 通道的**实现体与样本**。S2 实际采用 **重编排不重判据**：V2 只换
+> runner 与清单，判据实现仍住 `tools/`。逐条裁决见 `docs/S4-DELETE-LIST-2026-11-13.md`；
+> 真实可删集是 V1 编排层 / 元判据 / 文档检查 / 归档共 **47** 个（路线 A 补缺口后），不是 292。
+
+⇒ 「全部删除」= 删 V1 编排层与归档，**不是 `rm -rf tools/`**。`bin/drift`、
+`composer.json` 的入口面保留并重定向到 V2。
 
 ## 3. V2 目标形态（标准验证流程）
 
@@ -54,7 +61,7 @@ D4      红          红          ·           ·         2   ← S0 冻结清�
 
 ```
 bin/drift verify                     ← 唯一入口（复用已有 CLI，不新增顶层脚本）
- ├─ static    lint（保留 32 规则；编译器没有的能力）
+ ├─ static    lint（33 规则，含 S4 迁入的命名纪律；编译器没有的能力）
  ├─ behavior  PHPUnit(unit+feature) + golden + smoke，按目录分片，可增量选跑
  ├─ device    AOT 构建 + 少量端到端探针（T2 / 发版，人工触发）
  └─ corpus    缺陷题库验收（一次性，取代 12 条元判据）
@@ -69,9 +76,9 @@ bin/drift verify                     ← 唯一入口（复用已有 CLI，不�
 | 步 | 交付 | 硬验收线 |
 |---|---|---|
 | **S1 扩题库**（本轮起步） | 从 `DEBT` 77 章 / `PITFALLS` 240 章 / 5 个 `_build/mutate-*.php` 提炼 **20–30 条可注入缺陷**，跑出 V1 覆盖率矩阵 | 每条缺陷都能机械注入、D0 恒绿、注入后 `git diff` 为空；**AOT/真机类缺陷标 `aot-only`**（解释器侧本来就抓不到，这是已知缺口不是假绿） |
-| **S2 建 V2** | 一个 runner + 三层 + 分片；**从行为需求重写，不复制任何现有判据脚本** | `bin/drift verify` 能跑通；`tools/` 判据层零依赖 |
+| **S2 建 V2** | 一个 runner + 三层 + 分片；**重编排不重判据**：runner / 清单住 `tests/`，判据实现仍住 `tools/` | `bin/drift verify` 能跑通；`--list` 是唯一事实源 |
 | **S3 对照验收** | 同一份题库分别跑 v1 / v2 矩阵 | **V2 覆盖率 ≥ V1**；差额逐条裁决（补行为判据 or 登记为已知缺口） |
-| **S4 一次性删** | 删 292 个判据层文件 + 回写入口/文档/CI | 删前删后题库对照报告入库；`verify --full` 全绿；AOT + 真机 T2 复核 |
+| **S4 一次性删** | 删 47 个 V1 编排 / 元判据 / 文档检查 / 归档文件 + 回写入口/CI | 删前删后题库对照报告入库；`verify --full` 全绿；AOT + 真机 T2 复核 |
 
 **为什么必须按这个顺序**：没有 S1 的题库，S4 之后的「全绿」毫无意义 —— 这正是本项目反复吃过的亏（`删判据会让 gate 更绿`）。题库是唯一能让「全删」变成可验收工程动作的东西。
 
@@ -238,7 +245,7 @@ PRESUBMIT），方向一致。
 
 ⇒ **删除时机**：文档重构尚未发生，此刻物理删会让中间这段时间的引用烂了没人知道，
 且 `run-corpus.php` 立刻 `exit 1`（4 条 `blind`）。所以**设计上现在就删（V2 不建），
-物理删除随 S4 的 292 清单一起做**，与「S4 删除清单单独确认」的纪律一致。
+物理删除随 S4 删除清单（路线 A，47 个）一起做**，与「S4 删除清单单独确认」的纪律一致。
 
 ### 8.2 IR 时序死结 —— 拆成 S2-1 / S2-2
 

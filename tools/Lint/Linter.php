@@ -28,6 +28,7 @@ use Drift\Dev\Lint\Rules\NonBoxDecoration;
 use Drift\Dev\Lint\Rules\OptionalOpGuard;
 use Drift\Dev\Lint\Rules\OrphanTrait;
 use Drift\Dev\Lint\Rules\PaintShift;
+use Drift\Dev\Lint\Rules\ProjectName;
 use Drift\Dev\Lint\Rules\LaneOwner;
 use Drift\Dev\Lint\Rules\SelectPurity;
 use Drift\Dev\Lint\Rules\StaleCapabilityClaim;
@@ -129,6 +130,8 @@ final class Linter
             // AOT 回调 arity（2026-11-11 综合 review P0）：解释器忽略多余实参、
             //   AOT 当场 Fatal ⇒ 整页错误占位。内联闭包与 `\Closure` 工厂两种形态都守。
             new CallbackArity(),
+            // S4：文档检查退役后，项目命名纪律不跟着消失（判据逐字迁自 V1 文档检查层）
+            new ProjectName(),
         ]);
     }
 

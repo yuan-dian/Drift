@@ -6,10 +6,11 @@ namespace Drift\Dev\Tests\Verify;
 /**
  * V2 验证计划的**唯一事实源**：层 → step（一条判据通道）。
  *
- * ★ 为什么住 `tests/` 不住 `tools/`：S4 要删 `tools/` 的 292 个判据层文件，
- *   而 runner 与清单是验证产品本身（对标 Flutter 的 `dev/bots`），不能跟着被删。
- *   判据**实现**暂时仍在 `tools/`，由 S4 逐条迁移；本文件只声明命令，不复制
- *   `gate.php` / `group-run.php` / `CheckRegistry` 的任何判据逻辑。
+ * ★ 为什么住 `tests/` 不住 `tools/`：runner 与清单是验证产品本身（对标 Flutter
+ *   的 `dev/bots`），S4 删的是 V1 编排层 / 元判据 / 归档，不是 `tools/` 整体。
+ * ★ S4 裁决（重编排不重判据）：V2 的判据**实现**继续住 `tools/`（Lint 规则、
+ *   Smoke 夹具、静态对账、真机探针），本文件只声明命令，不复制 V1 编排层的逻辑；
+ *   V1 的组内自证由题库取代。
  *
  * ★ 重编排不重判据：这里没有元判据递归 —— 不给每条判据配 `--selftest`，
  *   判据有没有牙由 `tests/Contracts/run-corpus.php` 的缺陷题库统一回答。
@@ -49,7 +50,7 @@ final class VerifyPlan
                 'layer'   => 'static',
                 'tier'    => 'fast',
                 'class'   => 'static',
-                'label'   => 'lint 32 规则（编译期保证的文本替身）',
+                'label'   => 'lint 33 规则（含 S4 迁入的 project-name）',
                 'command' => [$php, $root . '/tools/lint.php'],
             ],
             'sceneset' => [
@@ -59,6 +60,73 @@ final class VerifyPlan
                 'class'   => 'set',
                 'label'   => '场景集合三向封闭',
                 'command' => [$php, $root . '/tools/scene-set-check.php', '--json'],
+            ],
+            // ── S4：V1 tooling 组的 5 对静态对账，主判据提升为 V2 static step ──
+            //   ★ 组内 `--selftest`（变异自证）不搬：V2 的判据可信度只由题库回答，
+            //     不再给每条判据配一个自证（设计稿 §5）。脚本本身一行未改。
+            'abi' => [
+                'id'      => 'abi',
+                'layer'   => 'static',
+                'tier'    => 'fast',
+                'class'   => 'static',
+                'label'   => 'ABI 契约静态对账',
+                'command' => [$php, $root . '/tools/abi-check.php'],
+            ],
+            'cppbridge' => [
+                'id'      => 'cppbridge',
+                'layer'   => 'static',
+                'tier'    => 'fast',
+                'class'   => 'static',
+                'label'   => 'C++ 桥接结构对账',
+                'command' => [$php, $root . '/tools/cpp-bridge-check.php'],
+            ],
+            'dxdiag' => [
+                'id'      => 'dxdiag',
+                'layer'   => 'static',
+                'tier'    => 'fast',
+                'class'   => 'static',
+                'label'   => 'DX 退化判据对账',
+                'command' => [$php, $root . '/tools/diagnostic-check.php'],
+            ],
+            'stalepolicy' => [
+                'id'      => 'stalepolicy',
+                'layer'   => 'static',
+                'tier'    => 'fast',
+                'class'   => 'static',
+                'label'   => '构建 stale 决策接线',
+                'command' => [$php, $root . '/tools/build-stale-check.php'],
+            ],
+            'errshape' => [
+                'id'      => 'errshape',
+                'layer'   => 'static',
+                'tier'    => 'fast',
+                'class'   => 'static',
+                'label'   => '错误码贯通接线',
+                'command' => [$php, $root . '/tools/error-shape-check.php'],
+            ],
+            'version' => [
+                'id'      => 'version',
+                'layer'   => 'static',
+                'tier'    => 'fast',
+                'class'   => 'static',
+                'label'   => '版本真相源一致性',
+                'command' => [$php, $root . '/tools/version.php', '--check'],
+            ],
+            'genversion' => [
+                'id'      => 'genversion',
+                'layer'   => 'static',
+                'tier'    => 'fast',
+                'class'   => 'static',
+                'label'   => '版本派生副本接线',
+                'command' => [$php, $root . '/tools/gen-version.php', '--check'],
+            ],
+            'devshell' => [
+                'id'      => 'devshell',
+                'layer'   => 'static',
+                'tier'    => 'fast',
+                'class'   => 'static',
+                'label'   => '开发态壳红线（src/ 不进 sources）',
+                'command' => [$php, $root . '/tools/drift-dev.php', '--selftest'],
             ],
             'theme' => [
                 'id'      => 'theme',
@@ -116,7 +184,33 @@ final class VerifyPlan
                 'label'   => 'AOT 真机构建（需 MSVC + SDK；真机探针走 bin/drift probe）',
                 'command' => [$php, $root . '/tools/drift-build.php', $app, '--full'],
             ],
+            // ── S4：需 MSVC / WIC 或较贵的判据挂 device/manual，绝不进日常闸门 ──
+            'sym' => [
+                'id'      => 'sym',
+                'layer'   => 'device',
+                'tier'    => 'manual',
+                'class'   => 'device',
+                'label'   => '崩溃符号翻译（合成 map 自证）',
+                'command' => [$php, $root . '/tools/rva2sym.php', '--selftest'],
+            ],
+            'decode' => [
+                'id'      => 'decode',
+                'layer'   => 'device',
+                'tier'    => 'manual',
+                'class'   => 'device',
+                'label'   => '图片通道序（WIC 缩放器不认 RGBA）',
+                'command' => [$php, $root . '/tools/decode-selftest/run.php'],
+            ],
+            'm2' => [
+                'id'      => 'm2',
+                'layer'   => 'device',
+                'tier'    => 'manual',
+                'class'   => 'device',
+                'label'   => 'M2 conformance（W1–W8）',
+                'command' => [$php, $root . '/tools/M2Conformance.php'],
+            ],
         ];
+
     }
 
     /**

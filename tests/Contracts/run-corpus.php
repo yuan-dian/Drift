@@ -18,8 +18,29 @@ declare(strict_types=1);
  * 其余如实记录，包括「V1 其实抓不到」的格子 —— 那些正是重建时最该补的洞。
  * exit 2 = 「没测到」：未知/未注册套件、基线缺失、裁剪结果想当验收报告。
  *
- * ★ 套件路由：`v1` 是现有 9 条通道；`v2` 从 `tests/Verify/VerifyPlan.php` 生成。
+ * ★ 套件路由：`v1` 是历史 7 条通道；`v2` 从 `tests/Verify/VerifyPlan.php` 生成。
  *   绝不回退到 v1 通道 —— 那只会给 V1 结果贴个 v2 标签，S3 对照自己骗自己。
+ * ★ S4 显式退役：`docref` / `apidoc` 两条 V1 文档通道已随文档体系整体重构删除，
+ *   对应题库缺陷 `L6/R1/R2/R3` 已标 `retired`。**不保留空通道**：脚本不存在会
+ *   返回非 0，被题库当成「缺陷被抓到」⇒ 删完矩阵更绿，正是本项目最恨的假绿。
+OLD
+];
+
+$edits[] = ['tests/Contracts/run-corpus.php', <<<'OLD'
+    'docref' => [
+        'cmd'   => $php . ' ' . $arg('tools/docref.php'),
+        'tier'  => 'core',
+        'class' => 'doc',
+    ],
+    'apidoc' => [
+        'cmd'   => $php . ' ' . $arg('tools/api-doc-check.php'),
+        'tier'  => 'core',
+        'class' => 'static',
+    ],
+    'theme' => [
+OLD
+, <<<'NEW'
+    'theme' => [
  *   V1 基线是入库的 `tests/Contracts/baseline/v1-postdocs-full.json`（17 条，
  *   4 条旧文档缺陷已显式退役），不在 gitignored scratch。
  *
