@@ -9,7 +9,7 @@ declare(strict_types=1);
  *   这边验「解释器 ↔ dev 壳」。两侧共用 `Fingerprint::snapshot()` 作**唯一** expected，
  *   不落盘、不建第二套基线 —— 一套 27 页 × 2 通道的判据同时守两种产物。
  * ★ 为什么不用 `inspect.php --check`：它的快照对"合法结构改动"极敏感，头部
- *   明写不进 gate；而 Fingerprint 逐值比的是布局与绘制命令，正是 dev 壳可能
+ *   明写不进自动闸门；而 Fingerprint 逐值比的是布局与绘制命令，正是 dev 壳可能
  *   悄悄改变的那部分语义（`php.ini` / opcache / 加载顺序 / AOT 化的桥接回调类）。
  *
  * ```bash
@@ -19,7 +19,7 @@ declare(strict_types=1);
  * ```
  *
  * ★ dev.exe 是本地编译产物、不进 git ⇒ 本量具属 T2（发版前 / 动过 dev 壳时跑），
- *   **不进 gate.php**：CI 上没有产物，进闸门要么假绿要么恒红。
+ *   **不进 `bin/drift verify`**：CI 上没有产物，进闸门要么假绿要么恒红。
  * ★ 无头入口不会开窗 ⇒ 不需要关窗；仍设 30s 超时主动 terminate，不把进程甩给用户。
  *
  * @internal 量具专用

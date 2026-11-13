@@ -31,7 +31,7 @@ Drift 用 PHP 写声明式 UI，经 TypePHP AOT 编译成**独立 Windows `.exe`
 - `cpp-src/` 按**平台边界**三分：`core/` 平台无关（线程池体）、`win32/` 全部 Win32 实现、`skia/` 渲染后端。接第二平台 = 新增 `cpp-src/<platform>/`，框架层不动。
 - **依赖方向 `Core < Widget < App`**：Widget 不依赖 App；`BuildContext` 是 `final readonly` 的只读环境快照（宽高 / 主题 / 字体度量 / 颜色 token），**没有 `of()` 式向上查找**。分层由 `DependencyDirection` lint 规则 fail-closed 守（`Core` 也在层表内）。
 - **唯一受控例外**：控件要把焦点交给别的 Element 时走 `Element::requestFocus()` → `Pipeline::focusHost()` 注册的回调槽。这是框架内部通道，不是给控件开访问 App 层的口子。
-- **公开面**：`@api` / `@internal` 独立标注行，`php tools/lint.php --api` 出清单（快照 `docs/API-SURFACE.md`）；未标注默认 `@internal`。
+- **公开面**：`@api` / `@internal` 独立标注行，`php tools/lint.php --api` 出清单；未标注默认 `@internal`。旧快照 `docs/API-SURFACE.md` 已随 S4 退役（生成物却没人校验新鲜度），文档重构那一棒把 API 面清单内建进生成器 / 发布脚本。
 
 ---
 
@@ -56,14 +56,14 @@ Drift 用 PHP 写声明式 UI，经 TypePHP AOT 编译成**独立 Windows `.exe`
 - **值缝**：`Subject` 通知 + `SubjectBuilder::select()` 切片订阅；`===` 身份门控决定「同值不重建」。稳定值要么实现 `Equatable`，要么复用同一实例 —— 这是应用侧契约，`SelectPurity` lint 只守其中一部分。
 - **动作缝**：字符串名命令 + `CommandRouter` + Element 冒泡链。控件是**受控**的：点击只回调新值，值由应用改。
 - **异步**：`TaskHost` 三后端 `SyncTaskHost` / `ThreadTaskHost` / `ProcessTaskHost`；任务单元是 `Job` **类**（不是闭包）；`Future` / `AsyncScope::task()+await()` / `Future::all()`；四态 `AsyncValue`（idle / loading / data / error）走 `fold()`；进度走 `await()` 第二参；超时由任务自己声明上限（`TimedJob`）。
-- **失败出口**：`Errors` 三级（Fatal / Recoverable / Diagnostic；Fatal 写日志 → 原生错误框 → 固定退出码，退出前卸下注入的闭包）；`Drift\Diagnostics` 记显式 `[DX]` 退化；异步错误统一成带错误码的 `Async\Failure`（gate `errshape` 守其贯通）。
+- **失败出口**：`Errors` 三级（Fatal / Recoverable / Diagnostic；Fatal 写日志 → 原生错误框 → 固定退出码，退出前卸下注入的闭包）；`Drift\Diagnostics` 记显式 `[DX]` 退化；异步错误统一成带错误码的 `Async\Failure`（V2 的 `static/errshape` step 守其贯通）。
 
 ---
 
 ## §4 布局 / 渲染 / 文本
 
 - **布局**：`RenderBox::layout()` 单遍 `final`，子类只写 `performLayout(constraints) → size`；无界用 `INF`，**不拿 0 当哨兵**；每容器声明溢出策略，违反 ⇒ 响亮失败。长列表靠 `LazyColumn` + `ScrollView` 的可见窗口切片。
-- **有意不做增量布局**：整树重排，无 `RelayoutBoundary` / damage rect；`gate scale` 的 12k 节点尺子守余量，重裁触发条件记在 `DEBT`。
+- **有意不做增量布局**：整树重排，无 `RelayoutBoundary` / damage rect；12k 节点规模余量由 `tools/Bench/FrameTaxMeasure.php` 量具测（S4 后不再单列自动 step，需要时手动跑），重裁触发条件记在 `DEBT`。
 - **绘制**：`Canvas` 是接口 —— `RasterCanvas`（纯 PHP 软光栅）/ `SkiaCanvas`（默认后端）/ `RecordingCanvas`（把 op 录进 `DisplayList`，供回放、快照、golden）。**主树直接画到 Canvas，录制是其中一种实现**，不是每帧必经阶段。op 分 Core / Extended / Optional 三层，能力用 `capabilities()` 位掩码查；Optional 在不支持的后端**显式失败**，绝不静默丢像素。
 - **文本**：`TtfFace` 解析真 TTF 做步进度量（不做 GPOS kerning / bidi / 断行禁则），字形走 Skia 真字体，软后端保留位图路径；IME 走 `TextInputClient`。
 - **确定性**：字体 / DPI / 主题 / 时间都注入，不读环境时钟；`DisplayList` 可重放 ⇒ golden 逐字节比对（原语 + 整页两套基线）。
@@ -84,7 +84,7 @@ Drift 用 PHP 写声明式 UI，经 TypePHP AOT 编译成**独立 Windows `.exe`
 
 - `Platform` 是**能力端口集合**：`screen` / `window` / `surface` / `input` / `clipboard` / `dialog` / `tray` / `imeCaret` / `waitEvents` / `pumpEvents` / `now` / `configDir` 等；`null` = 该能力不支持（类型层面的合法状态，调用方必须处理）。
 - Win32 实现已覆盖：Per-Monitor V2 DPI 与分数缩放、深色主题跟随系统、剪贴板、原生文件对话框、WIC 图片解码、崩溃报告、UIA。
-- **ABI**：`cpp-src/**/*.stub.php` 是唯一事实源，`tools/abi-check.php` 三向对签名（stub ↔ C++ 符号 ↔ 替身），`drift-build` preflight 与 gate `abi` / `abiself` 守；输入指纹收 `.php/.cc/.h`，只改 C++ 也会触发全量。**不做运行期版本握手** —— 单体 AOT 一起编译，真实错配路径是构建缓存 stale，已由静态契约收口。这是裁决，不是遗漏。
+- **ABI**：`cpp-src/**/*.stub.php` 是唯一事实源，`tools/abi-check.php` 三向对签名（stub ↔ C++ 符号 ↔ 替身），`drift-build` preflight 与 V2 的 `static/abi` step 守；判据自身的变异体自证走 `--selftest`，不再单列 step（可信度由缺陷题库回答）；输入指纹收 `.php/.cc/.h`，只改 C++ 也会触发全量。**不做运行期版本握手** —— 单体 AOT 一起编译，真实错配路径是构建缓存 stale，已由静态契约收口。这是裁决，不是遗漏。
 
 ---
 
@@ -93,11 +93,11 @@ Drift 用 PHP 写声明式 UI，经 TypePHP AOT 编译成**独立 Windows `.exe`
 - **双轨**：`php tools/drift-dev.php <app>` = dev 壳 + 动态加载业务 PHP（改 PHP 秒级生效）；`php tools/drift-build.php <app>` = 全 AOT 独立 exe。出哪个 exe 才编哪个 app，dev 壳所有应用共用。
 - `StalePolicy` 裁决 SKIP / FULL / INCREMENTAL：**输入变了 / 首次 / 产物不在 ⇒ 自动全量**（门不能信缓存）；`--incremental` 需显式 opt-in，`--dry` 只看决策。
 - **验证按运行形态分层**（详见 [`docs/architecture/12-工程与工具.md`](docs/architecture/12-工程与工具.md)）：
-  - **T0 无头**：`php tools/gate.php` —— lint / docref / phpunit / smoke / golden / dev 壳红线，确定性、可 CI（`--fast` 跳慢项）。
+  - **T0 无头**：`php bin/drift verify` —— 一个 CLI + 一份判据清单（`VerifyPlan::steps()`、`--list` 唯一事实源）；四层 `static` / `behavior` / `device` / `corpus`，日常档跳过 `full` 项，`--full` 跑全量并出 JSON 验收报告。
   - **T1 dev 真机**：`python tools/probe-window.py <app> --dev` —— 真窗口、真 C++ 桥、真 DPI / 像素 / 关窗退出码。
   - **T2 AOT 真机**：`drift-build --full` + `probe-window.py <app>` —— 唯一能抓 AOT 编译期语义。**碰壳层 / 跨进程取数 / 新增类 / 新枚举 ⇒ dev 全绿也必须跑 T2**。
-- **判据纪律**：判据与实现不同源；每条新约束配自证变异（gate 里成对注册：`abi`/`abiself`、`cppbridge`/`cppbridgeself`、`stalepolicy`/`staleself`、`errshape`/`errself`…），**改了没咬红先怀疑变异打空**。起窗脚本一律自己关窗。
-- **CI**：PR 跑 T0 快子集，nightly 加慢项；T2 job 需自托管 runner，当前关闭。等价量具 `aot-equivalence.php` / `dual-mode-equivalence.php` 不进 gate，改 AOT 相关代码时手动跑。
+- **判据纪律**：判据与实现不同源；每条新约束配自证变异，**改了没咬红先怀疑变异打空**。V2 采用「重编排不重判据」：判据可信度由 `tests/Contracts/` 的缺陷题库对照回答，不再给每条判据单列 `--selftest` 通道（见 `VerifyPlan` 头注）。起窗脚本一律自己关窗。
+- **CI**：PR / push 跑 `php bin/drift verify --json`，nightly 与 release 跑 `--full --json`，报告由 `.github/scripts/assert-verify-report.php` 独立断言（`partial=true` 一律红）；`deps-build` 只跑 `--layer=static`。T2 / 真机需自托管 runner，当前关闭。等价量具 `aot-equivalence.php` / `dual-mode-equivalence.php` 不进 `verify`，改 AOT 相关代码时手动跑。
 
 ---
 

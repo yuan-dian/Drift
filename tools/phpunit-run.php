@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 /**
- * `gate` 里的 PHPUnit 适配器。
+ * V2 `unit` step 的 PHPUnit 适配器（`bin/drift test`）。
  *
  * 用法：`php tools/phpunit-run.php [unit|feature]`（缺省 = 两个套件都跑）
  *
@@ -10,13 +10,13 @@ declare(strict_types=1);
  *   （`composer install` 读入库的 `composer.lock`，pin 到 PHPUnit 10.5.66）。
  *   2026-11-12 删掉 `tools/phpunit.phar` 兜底：5.2 MB 外部二进制不入库、
  *   版本不 pin，且与上游 `swoole/typephp` 的 `windows-build.yml` 口径不一致。
- * ★ 没装 ⇒ **exit 2（没测到）**，由 `gate` 的 `$may_skip` 记成 `skip`。
- *   ★★ 绝不 exit 0 —— 那会让 gate 把"根本没跑"记成"通过"（2026-11-12 查出
+ * ★ 没装 ⇒ **exit 2（没测到）**，V2 runner 原样透传成 `fail`。
+ *   ★★ 绝不 exit 0 —— 那会把"根本没跑"记成"通过"（2026-11-12 查出
  *   CI 上 `unit` 一直是这种假绿）。环境状态不是判据，但**必须看得见**。
  *
  * 装法：`composer install`（CI 里由 setup-php 的 `tools: composer:v2` 提供）。
  *
- * @api 闸门：`tools/gate.php`
+ * @api 闸门：`bin/drift verify`
  */
 
 $root = \dirname(__DIR__);

@@ -9,7 +9,7 @@ declare(strict_types=1);
  *   php tools/abi-check.php --json       # 机器可读（CI 固化 schemaHash）
  *   php tools/abi-check.php --selftest   # 变异体自证（判据自己也要被测）
  *
- * 退出码：0 = 一致 · 1 = 判据红 · 2 = 用法错（与 `gate.php` 同口径；环境错不当判据红）。
+ * 退出码：0 = 一致 · 1 = 判据红 · 2 = 用法错（与 V2 `verify` step 同口径；环境错不当判据红）。
  *
  * ★ 为什么变异必须走真实源码文本：只测比较器会漏掉解析器自己的假绿 ——
  *   一条没匹配上的 str_replace 会让"必须红"的用例变成"没改东西所以绿"。
