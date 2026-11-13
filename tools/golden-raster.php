@@ -15,6 +15,7 @@ require __DIR__ . '/../tools/autoload.php';
 use Drift\App\Frame;
 use Drift\Dev\Support\CheckItem;
 use Drift\Dev\Support\CheckReport;
+use Drift\Dev\Support\SceneSet;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Scale;
@@ -35,6 +36,7 @@ use Drift\Widget\BuildContext;
 use Drift\Widget\Card;
 use Drift\Widget\CustomPaint;
 use Drift\Widget\CustomPainter;
+use Drift\Dev\Golden\PageScenes;
 use Drift\Dev\Inspect\Snapshot;
 use Drift\Dev\Smoke\App\FakeDialog;
 use Drift\Dev\Smoke\Golden\GoldenGaugePainter;
@@ -607,13 +609,16 @@ $pageClasses = [];
 $skippedPages = [];
 /** @var list<string> 要接线却没接、也没登记理由的页 —— 见文件末尾的硬失败 */
 $unwiredPages = [];
-$pageFiles = glob(dirname(__DIR__) . '/apps/showcase/src/Pages/*.php') ?: [];
-sort($pageFiles);
+/** @var list<string> 冻结清单里的页在磁盘上找不到 —— 见文件末尾的硬失败 */
+$missingPages = [];
 
-foreach ($pageFiles as $pageFile) {
-    $pageName = basename($pageFile, '.php');
+// ★ 场景集合来自 L1 冻结清单，不再由 glob(apps/) 隐式决定（2026-11-13 S1）。
+//   删一个 Page 文件 ⇒ 清单还在 ⇒ 硬失败，而不是场景数静默 −1、旧基线成孤儿。
+foreach (PageScenes::names() as $pageName) {
+    $pageFile = dirname(__DIR__) . '/apps/showcase/src/Pages/' . $pageName . '.php';
     $pageClass = 'App\\Showcase\\Pages\\' . $pageName;
-    if (!class_exists($pageClass)) {
+    if (!is_file($pageFile) || !class_exists($pageClass)) {
+        $missingPages[] = $pageName . (is_file($pageFile) ? '（文件在、类没找到）' : '（文件不在）');
         continue;
     }
     $pageCtor = (new ReflectionClass($pageClass))->getConstructor();
@@ -711,6 +716,13 @@ if ($unwiredPages !== []) {
     exit(2);
 }
 
+// ★ S1：清单里的页找不到 ⇒ 硬失败。判据资产被删不许表现成「少跑一页」（照绿）。
+if ($missingPages !== []) {
+    fwrite(STDERR, '✗ 冻结清单里的页在磁盘上找不到：' . implode('、', $missingPages) . "\n"
+        . "  ⇒ 要么补回页面，要么显式改 tools/Golden/PageScenes.php 并同步基线。\n");
+    exit(2);
+}
+
 // ─────────────────── 模式：默认 md5 文本 / --update / --check / --png ───────────────────
 //
 // 默认（旧行为）：输出 `name: len md5`，人手动前后 diff。
@@ -805,6 +817,30 @@ if ($mode === 'check') {
     /** @var list<CheckItem> $items */
     $items = [];
     $buildDir = dirname(__DIR__) . '/_build';
+
+    // ★ R1 反向扫描：只判「场景有没有基线」时，删一页 = 场景数 −1、旧基线成孤儿、
+    //   gate 静默全绿。这里补「基线有、场景无」，与 `SceneSet::compare()` 双向闭合。
+    //   `--canvas` 的基线不是一级目录一一对应，故只扫整页层。
+    if (!$onlyCanvas) {
+        $declaredPages = [];
+        foreach (array_keys($pageScenes) as $sceneName) {
+            $declaredPages[] = substr($sceneName, strlen('page/'));
+        }
+        $baselinePages = [];
+        foreach (glob($dir . '/page/*', GLOB_ONLYDIR) ?: [] as $baselineDir) {
+            $baselinePages[] = basename(str_replace('\\', '/', $baselineDir));
+        }
+        foreach (SceneSet::compare($declaredPages, $baselinePages)['orphan'] as $orphan) {
+            $items[] = $item = new CheckItem(
+                'page/' . $orphan,
+                false,
+                '孤儿基线：golden/page/' . $orphan . ' 有基线但没有场景（删页或改名遗留）',
+                ['kind' => 'page', 'reason' => 'orphan-baseline'],
+            );
+            CheckReport::emitLine($item, $json);
+        }
+    }
+
     foreach ($scenes as $name => $make) {
         $kind = str_starts_with($name, 'page/') ? 'page' : 'canvas';
         $rgba = $make();

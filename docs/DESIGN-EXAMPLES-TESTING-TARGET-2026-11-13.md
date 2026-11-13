@@ -354,3 +354,68 @@ M5 + 对照证明**自证是聚合层的唯一守门人**（摘掉 orphan 后实
   S2 / S3 顺序推进；本棒一个都未动。
 - 上一棒 `DESIGN-TOOLING-GROUP-2026-11-12.md` 里的「组内 10 条」是成稿时口径，
   现为 12 条；该稿是实施记录，不改历史数字。
+
+---
+
+## 10. 实施记录 · S1 集合封闭（2026-11-13 第二棒）
+
+### 10.1 范围
+
+按 §9.4 调整后的落点，S1 做三件事，**不动任何 `src/`、不动判据语义、不刷基线像素**：
+
+| 编号 | 改动 | 兑现 |
+|---|---|---|
+| M1 | `tools/golden-raster.php` 的场景发现由活 `glob('apps/showcase/src/Pages/*.php')` 改读 `PageScenes::names()`；清单里的页找不到就 `exit(2)` | G1 的一半：判据集合不再由 demo 文件系统隐式决定 |
+| M2 | `tools/frame-tax-probe.php` 判据⑤ 的两行 `array_diff` 换成 `SceneSet::compare()`；判据消息一字未改 | 去掉第二份实现，`tooling` 组的集合判据与 `--pages` 量具同源 |
+| R1 | `tools/golden-raster.php --check` 加孤儿基线反向扫描（`--canvas` 不适用，跳过） | 降级后的纵深防御：`golden` 自己也看得见删页 / 改名遗留 |
+
+**额外补的一条对价**：§9.6 遗留的第一条在本棒兑现。仓里有两份手写清单 ——
+`PageScenes`（34 页）与 `Bench/ShowcasePages.php`（27 页 AOT 子集）。只校验各自与磁盘相等，
+两份仍能同时漂。`tools/scene-set-check.php` 因此加第四向校验
+`ShowcasePages::names() ⊆ PageScenes::names()`，空清单也算红；`--selftest` 补 3 条合成变异。
+
+### 10.2 零依赖守卫的契约变化
+
+`scene-set-check.php` 是「不装 PHPUnit 也必须能跑」的静态对账。S1 让它直接 require
+`Bench/ShowcasePages.php` 读 `names()`，这是**新约束**：那份清单必须在没有 autoload 时也能被加载。
+`use` 语句与 `static fn(): Widget => new XxxPage()` 都是延迟的，当前成立；一旦有人改成加载期
+`new`，守卫会当场 Fatal。约束写在被约束方（`ShowcasePages.php` 文件头）而不是只在调用方，
+并把调用方头部「只读两个集合 + 一份冻结清单」的旧描述改正。
+
+### 10.3 变异牙检（`_build/mutate-s1.php`，15 条全过）
+
+| 变异 | 期望 | 实测 |
+|---|---|---|
+| 基线三条（对账 / 自证 / `golden --check --pages`） | 全绿 | 绿 ✓ |
+| M1 删 `AlignPage.php` | 对账报 `disk:missing`；**`golden` 硬失败 exit 2** | 红 / 红 ✓ |
+| M2 造 `golden/page/GhostPage/` | 对账报 `baseline:orphan`；**`golden` 报 `orphan-baseline`** | 红 / 红 ✓ |
+| M3 从冻结清单删一项 | 对账报 `disk:orphan`；`golden` 报孤儿基线 | 红 / 红 ✓ |
+| M4 AOT 清单多一项 | 对账报 `bench:not-in-golden` | 红 ✓ |
+| M5 摘掉 R1 并同时造孤儿基线 | 对账仍红；**`golden` 静默全绿** | 红 / 绿 ✓ |
+| 还原后基线三条 | 全绿 | 绿 ✓ |
+
+**与 S0 的对照才是本棒的验收线**：M1 / M2 这两个完全相同的缺陷变体，在 S0 时
+`golden --check --pages --json` 都是 exit 0；S1 后分别变成 exit 2 与 exit 1。
+M5 则证明 R1 是 `golden` 这条路径的**唯一**守门人 —— 摘掉它，孤儿基线又静默，
+符合 §9.4 把 R1 定位为「纵深防御、不是 gate 唯一能发现的地方」的裁决：
+`tooling` 组的 `sceneset` 仍在，`--fast` 也会红，只是 `golden` 自己瞎了。
+
+### 10.4 停止线核对
+
+| 项 | 结果 |
+|---|---|
+| `scene-set-check --selftest` | 17 条合成变异全过（S0 的 14 条 + AOT 对价 3 条） |
+| 实盘对账 | 清单 34 / 磁盘 34 / 基线 34 / AOT 27，四向封闭 |
+| `tooling` 组 | 12 项全过，组自证通过；顶层 gate 仍 21 项 |
+| `composer check` / `check:full` | 18 项全过（50.4s）/ 21 项全过（154.9s），EXIT=0 |
+| `docref` | 123 ok / 0 FAIL |
+| lint | 1083 文件 · 0 error · 0 warn |
+| 基线像素 | 未刷任何一张，34 页逐字节比对照绿 |
+| 改动文件 | 5 个，全 LF，`git diff --check` 干净 |
+
+### 10.5 未兑现 / 留给后续
+
+- **G1 仍只兑现一半**：改 demo 的页集合不再影响判据，但改文案、导航顺序仍会撞
+  `tools/smoke.php` 的字面量断言与 13 个真机探针 ⇒ S2 的 R2、S3 的 R3-a。
+- **G3 / G4 不变**：G3 必须 T2；G4 由每棒变异牙检举证，不是常驻判据。
+- **M3 单独一棒**：3 个纯值对象契约上移属语义变更，不与 S2 的其他改动混提交。

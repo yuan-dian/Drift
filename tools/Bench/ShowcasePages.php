@@ -54,6 +54,9 @@ use Drift\Widget\Widget;
  * ★ 单一数据源：`names()` 由键派生、`make()` 由同一个表取 —— **两者不可能不同步**。
  *   这比「一个名字数组 + 一个 match 分支表」好：那种写法有两份数据，漏改一处就静默错。
  *
+ * ★ 本文件还被 `scene-set-check.php` 在没有 autoload 的情况下直接 require，只为读
+ *   `names()`。⇒ 表里的值必须保持延迟闭包，不能在加载期 `new` 页面类或求值框架类型。
+ *
  * @internal 量具专用，不进公共 API
  */
 final class ShowcasePages

@@ -8,7 +8,10 @@ declare(strict_types=1);
  *   冻结清单 ↔ 磁盘页面 ↔ golden 整页基线，三向双向校验，少一个多一个都红。
  * ★ 为什么单独成项：原来集合由 `glob('apps/...')` 隐式决定，`golden --check`
  *   只判「场景有没有基线」⇒ 删一页、旧基线成孤儿，gate 静默全绿。
- * ★ 与 PHPUnit 不同源、零框架依赖：只读两个集合 + 一份冻结清单，不渲染、不 require autoload。
+ * ★ 与 PHPUnit 不同源、零框架依赖：只读三份集合（冻结清单 / 磁盘 / 基线）
+ *   加一份 AOT 页清单，不渲染、不 require autoload。
+ * ★ `Bench/ShowcasePages.php` 被直接 require：只调 `names()`，其 `use` 与延迟闭包都不触发
+ *   装载。⇒ 那份清单必须保持「不装 autoload 也能被加载」，见它自己的文件头。
  *
  * 用法：
  *   php tools/scene-set-check.php             # 对账，exit 0/1
@@ -18,6 +21,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/Support/SceneSet.php';
 require __DIR__ . '/Golden/PageScenes.php';
+require __DIR__ . '/Bench/ShowcasePages.php';
 
 use Drift\Dev\Golden\PageScenes;
 use Drift\Dev\Support\SceneSet;
@@ -63,9 +67,10 @@ function scene_baseline_names(string $dir): array
  * @param list<string> $declared
  * @param list<string> $disk
  * @param list<string> $baseline
+ * @param list<string>|null $bench AOT 页清单；null = 不检查（合成自证用）
  * @return array{problems: list<array{code:string,detail:string}>, disk: array{missing:list<string>,orphan:list<string>}, baseline: array{missing:list<string>,orphan:list<string>}}
  */
-function scene_reconcile(array $declared, array $disk, array $baseline): array
+function scene_reconcile(array $declared, array $disk, array $baseline, ?array $bench = null): array
 {
     $problems = [];
     $add = static function (string $code, string $detail) use (&$problems): void {
@@ -76,6 +81,20 @@ function scene_reconcile(array $declared, array $disk, array $baseline): array
     foreach (['declared' => $declared, 'disk' => $disk, 'baseline' => $baseline] as $kind => $set) {
         if ($set === []) {
             $add('empty:' . $kind, $kind . ' 集合为空（判据资产可能被整体删掉）');
+        }
+    }
+
+    // 两份手写清单的对价：AOT 的 27 页必须被整页 golden 的 34 页覆盖，
+    // 否则两份清单可以同时漂而这里全绿。
+    if ($bench !== null) {
+        if ($bench === []) {
+            $add('empty:bench', 'AOT 页清单为空（判据资产可能被整体删掉）');
+        } else {
+            $outside = \array_values(\array_diff($bench, $declared));
+            \sort($outside);
+            if ($outside !== []) {
+                $add('bench:not-in-golden', 'AOT 页清单里有整页清单没有的页：' . \implode(', ', $outside));
+            }
         }
     }
 
@@ -142,6 +161,9 @@ if ($selftest) {
         ['清单重复 ⇒ 红', ['duplicate:declared'], scene_reconcile(['APage', 'APage', 'BPage'], ['APage', 'APage', 'BPage'], ['APage', 'APage', 'BPage'])],
         ['清单乱序 ⇒ 红', ['unsorted:declared'], scene_reconcile(['BPage', 'APage'], ['BPage', 'APage'], ['BPage', 'APage'])],
         ['磁盘/基线顺序不同 ⇒ 不误报', [], scene_reconcile($base, ['CPage', 'APage', 'BPage'], ['BPage', 'CPage', 'APage'])],
+        ['AOT 清单是整页清单子集 ⇒ 绿', [], scene_reconcile($base, $base, $base, ['APage', 'CPage'])],
+        ['AOT 清单多一项 ⇒ 红', ['bench:not-in-golden'], scene_reconcile($base, $base, $base, ['APage', 'GhostPage'])],
+        ['AOT 清单为空 ⇒ 红', ['empty:bench'], scene_reconcile($base, $base, $base, [])],
     ];
 
     // 纯函数与扫描器各补一条独立路径，避免「聚合层自己判自己」。
@@ -184,7 +206,8 @@ $root = \dirname(__DIR__);
 $declared = PageScenes::names();
 $disk = scene_disk_names($root . '/apps/showcase/src/Pages');
 $baseline = scene_baseline_names($root . '/golden/page');
-$result = scene_reconcile($declared, $disk, $baseline);
+$bench = \Drift\Dev\Bench\ShowcasePages::names();
+$result = scene_reconcile($declared, $disk, $baseline, $bench);
 
 if ($json) {
     echo \json_encode([
@@ -192,12 +215,19 @@ if ($json) {
         'declared' => \count($declared),
         'disk' => \count($disk),
         'baseline' => \count($baseline),
+        'bench' => \count($bench),
         'problems' => $result['problems'],
     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . "\n";
     exit($result['problems'] === [] ? 0 : 1);
 }
 
-\printf("[scene-set-check] 清单 %d / 磁盘 %d / 基线 %d\n", \count($declared), \count($disk), \count($baseline));
+\printf(
+    "[scene-set-check] 清单 %d / 磁盘 %d / 基线 %d / AOT %d\n",
+    \count($declared),
+    \count($disk),
+    \count($baseline),
+    \count($bench),
+);
 foreach ($result['problems'] as $p) {
     \fwrite(STDERR, '  - ' . $p['code'] . '：' . $p['detail'] . "\n");
 }

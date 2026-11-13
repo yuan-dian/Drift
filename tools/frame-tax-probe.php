@@ -131,6 +131,7 @@ use Drift\Dev\Bench\ShowcasePages;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Support\CheckItem;
 use Drift\Dev\Support\CheckReport;
+use Drift\Dev\Support\SceneSet;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Size;
 use Drift\Rendering\FrameStage;
@@ -363,9 +364,12 @@ if ($pages) {
     // ⑤ 清单 == 磁盘。★ 显式清单（`ShowcasePages`）的唯一代价就是漂移：
     //   加一页忘了填，它从分母里静默消失，而 ②（上界）③④（比值）**全都照绿**。
     //   ⇒ 这条判据是那份代价的对价，不是锦上添花。
+    //   ★ S1：双向比对改用与 `scene-set-check` 共享的 `SceneSet::compare()`；
+    //     判据语义与消息一字未改，只去掉第二份 `array_diff`。
     $listed = ShowcasePages::names();
-    $missing = \array_values(\array_diff($disk['usable'], $listed));  // 磁盘有、清单无
-    $extra = \array_values(\array_diff($listed, $disk['usable']));    // 清单有、磁盘无
+    $drift = SceneSet::compare($listed, $disk['usable']);
+    $missing = $drift['orphan'];   // 磁盘有、清单无
+    $extra = $drift['missing'];    // 清单有、磁盘无
     $items[] = new CheckItem('⑤', $missing === [] && $extra === [], $missing === [] && $extra === []
         ? \sprintf('清单与磁盘一致（%d 页）', \count($listed))
         : \sprintf(
