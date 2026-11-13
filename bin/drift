@@ -15,6 +15,12 @@ declare(strict_types=1);
  *   `exit()`，开发者得记住「改了 X 该跑哪条」。`composer run --list` 现在是
  *   唯一可发现入口，`composer.json` 的 scripts 全部转发到这里。
  *
+ * ★ 手工工具（8 个）也是子命令，但**不进 `VerifyPlan`**：它们是 AOT / 双模等价、
+ *   预览、字模与报告生成这类「按需调用、要特定环境」的开发工具，不是判据通道；
+ *   把它们塞进 `--list` 只会让 CI 清单多出 8 条没人跑的项。
+ *   `dual-mode-fingerprint-entry.php` 故意不路由 —— 它由 `DRIFT_DEV_ENTRY` 指向，
+ *   是被 dev.exe 加载的无头入口，不是给人敲的命令。
+ *
  * ★ 三形态口径不因这个 CLI 而模糊：
  *   interpreter —— check / verify / test / lint / list（T0，无头、CI 可跑）
  *   dev-shell   —— dev（T1，真窗口 + 动态 PHP，秒级重启）
@@ -55,6 +61,15 @@ $cmd = match ($name) {
         $root . '/tools/probe-window.py',
         ...$rest,
     ],
+    // 手工工具：按需调用，不进 VerifyPlan / CI。
+    'codegen'       => $build('drift-codegen.php', $rest, $root),
+    'preview'       => $build('drift-preview.php', $rest, $root),
+    'aot-equiv'     => $build('aot-equivalence.php', $rest, $root),
+    'dual-equiv'    => $build('dual-mode-equivalence.php', $rest, $root),
+    'fingerprint'   => $build('fingerprint.php', $rest, $root),
+    'font-scan'     => $build('font-scan-chars.php', $rest, $root),
+    'golden-report' => $build('golden-report.php', $rest, $root),
+    'grab'          => $build('build-grab.php', $rest, $root),
     default => null,
 };
 
@@ -81,6 +96,16 @@ drift —— 统一开发入口
   composer dev -- <app>    T1 开发态壳（动态 PHP、真窗口、免重编译）
   composer build -- <app> --full   T2 AOT 构建
   composer probe -- <app>  T2 真机探针
+
+  手工工具（按需调用，不进 V2 判据清单 / CI）
+  composer preview -- --page=<Widget 的 php>   T0 无头 layout+paint → SVG/PNG
+  composer codegen                            T1 tpc 翻译层门（秒级，不编译）
+  composer aot-equiv                          T2 解释器 ↔ 全 AOT 逐值几何等价
+  composer dual-equiv                         T2 解释器 ↔ dev 壳逐值语义等价
+  composer fingerprint                        解释器侧 27 页双通道指纹
+  composer font-scan                          扫字面量非 ASCII 字符集（字模生成）
+  composer golden-report                      golden 失败现场 HTML（先量再呈现）
+  composer grab                               重建 tools/probe-grab.exe（需 MSVC）
 
   composer run --list      看全部 scripts 及说明
 
