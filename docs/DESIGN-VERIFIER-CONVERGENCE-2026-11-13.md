@@ -256,6 +256,13 @@ PRESUBMIT），方向一致。
 题库 `--suite=v2` 从 `VerifyPlan` 生成 7 条通道；4 条文档缺陷显式退役，对照基线
 换成 `v1-postdocs-full.json`（17 条）。S3 的 `--tier=full` 全量矩阵仍需实跑。
 
+⇒ **S2-2 已落地**：`ir` 通道（`tests/Verify/ir-snapshot.php`）渲染固定夹具
+（`tests/Verify/IrFixture.php`，`CustomPainter` 直接发 4 类命令）→ `PaintFingerprint`
+逐命令序列化 → 与入库基线 `tests/Verify/baseline/ir.txt` 逐字节比对。同批把 4 类
+IR 层缺陷写进题库（`I1` op 顺序 / `I2` 裁剪没弹 / `I3` 两色传反 / `I4` 平移与变换分叉），
+逐条实证「注入 ⇒ `ir` 红、还原 ⇒ 绿、零残留」。`ir` 在 `behavior` 层 `fast` 档，
+不进 `device`；判据与实现不同源（序列化走 `PaintFingerprint`，与录制器两套代码）。
+
 ### 8.3 `--suite` 从标签升格为路由
 
 此前 `$suite` 只是报告字段，`$probes` 写死 9 条 V1 通道 ⇒ `--suite=v2` 会把 V1 结果

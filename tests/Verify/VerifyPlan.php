@@ -68,6 +68,14 @@ final class VerifyPlan
                 'label'   => '语义 token 有真实消费者（feature 切片）',
                 'command' => [...self::phpunitBase($root), $root . '/tests/Feature/Table/ThemeMetricTest.php'],
             ],
+            'ir' => [
+                'id'      => 'ir',
+                'layer'   => 'behavior',
+                'tier'    => 'fast',
+                'class'   => 'ir',
+                'label'   => 'IR 快照（绘制命令流结构，锚点从像素上移）',
+                'command' => [$php, $root . '/tests/Verify/ir-snapshot.php'],
+            ],
             'unit' => [
                 'id'      => 'unit',
                 'layer'   => 'behavior',

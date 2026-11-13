@@ -358,6 +358,61 @@ final class DefectCorpus
                     'to'   => "final class PumpHost\n{\n    private static self \$corpusProbe;\n",
                 ],
             ],
+
+            // ── IR 类：绘制命令流的结构缺陷（V2-5，随 IR 快照通道同批进题库）──
+            // 只有 `ir` 通道（IR 快照）能抓到；V1 没有 IR 通道 ⇒ 在 V1 矩阵里是盲区，
+            // 这不是假绿，而是「V1 缺这条通道」的实证。像素 golden 可能恰好不变
+            // （命令流错、画出来一样），正是 IR 快照存在的理由。
+            [
+                'id'    => 'I1',
+                'class' => 'ir',
+                'from'  => 'IR · op 顺序：save/restore 录制反了',
+                'note'  => '`save()` 录成 RESTORE、`restore()` 录成 SAVE ⇒ 命令流栈序倒置，像素可能恰好不变',
+                'op'    => [
+                    'kind' => 'replace',
+                    'path' => 'src/Rendering/RecordingCanvas.php',
+                    'from' => "    public function save(): void\n    {\n        \$this->list->record(DisplayList::OP_SAVE);\n    }\n\n    public function restore(): void\n    {\n        \$this->list->record(DisplayList::OP_RESTORE);\n    }\n",
+                    'to'   => "    public function save(): void\n    {\n        \$this->list->record(DisplayList::OP_RESTORE);\n    }\n\n    public function restore(): void\n    {\n        \$this->list->record(DisplayList::OP_SAVE);\n    }\n",
+                ],
+            ],
+            [
+                'id'    => 'I2',
+                'class' => 'ir',
+                'from'  => 'IR · 裁剪没弹：popClip 录制丢失',
+                'note'  => 'pushClip 配不上 popClip ⇒ clipDepth 失衡、后续命令仍被裁，像素不一定立刻变',
+                'op'    => [
+                    'kind' => 'replace',
+                    'path' => 'src/Rendering/RecordingCanvas.php',
+                    'from' => "    public function popClip(): void\n    {\n        \$this->list->record(DisplayList::OP_POP_CLIP);\n    }\n",
+                    'to'   => "    public function popClip(): void\n    {\n        // 语料注入：裁剪从不弹出（clipDepth 失衡 + 缺 POP_CLIP）。\n    }\n",
+                ],
+            ],
+            [
+                'id'    => 'I3',
+                'class' => 'ir',
+                'from'  => 'IR · 两色传反：两支画笔的颜色互换',
+                'note'  => '两个矩形本应红先绿后，颜色传反 ⇒ 命令流的 paint 槽互换，结构差异可定位',
+                'op'    => [
+                    'kind' => 'replace',
+                    'path' => 'tests/Verify/IrFixture.php',
+                    'from' => "        \$canvas->drawRect(new Rect(10.0, 10.0, 100.0, 60.0), Paint::fill(Color::fromRgb(0xC0, 0x10, 0x20)));\n"
+                        . "        \$canvas->drawRect(new Rect(20.0, 80.0, 120.0, 60.0), Paint::fill(Color::fromRgb(0x10, 0xC0, 0x30)));\n",
+                    'to'   => "        \$canvas->drawRect(new Rect(10.0, 10.0, 100.0, 60.0), Paint::fill(Color::fromRgb(0x10, 0xC0, 0x30)));\n"
+                        . "        \$canvas->drawRect(new Rect(20.0, 80.0, 120.0, 60.0), Paint::fill(Color::fromRgb(0xC0, 0x10, 0x20)));\n",
+                ],
+            ],
+            [
+                'id'    => 'I4',
+                'class' => 'ir',
+                'from'  => 'IR · 纯平移/非平移变换分叉：快路被删',
+                'note'  => '`transform()` 丢掉 isTranslationOnly 快路 ⇒ 纯平移录成 OP_TRANSFORM，回放端切坐标模式',
+                'op'    => [
+                    'kind' => 'replace',
+                    'path' => 'src/Rendering/RecordingCanvas.php',
+                    'from' => "    public function transform(Matrix2D \$matrix): void\n    {\n        if (\$matrix->isTranslationOnly()) {\n            \$this->list->record(DisplayList::OP_TRANSLATE, \$matrix->tx, \$matrix->ty);\n\n            return;\n        }\n\n        \$this->list->record(DisplayList::OP_TRANSFORM, \$matrix);\n    }\n",
+                    'to'   => "    public function transform(Matrix2D \$matrix): void\n    {\n        \$this->list->record(DisplayList::OP_TRANSFORM, \$matrix);\n    }\n",
+                ],
+            ],
         ];
     }
 
