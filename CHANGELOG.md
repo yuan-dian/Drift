@@ -83,5 +83,5 @@
   重建与 CI 自动化的入口见该文档的「CI 自动构建依赖包」一节。
   另：`PHPX` 与 `tpc` 源码树属
   TypePHP 编译器项目，同样不在本仓。搭建步骤见 [`README.md`](README.md) 的「构建环境」。
-- 只用运行态时**不需要**上述工具链：`php tools/gate.php --fast` 是纯 PHP 的，
+- 只用运行态时**不需要**上述工具链：`php bin/drift verify` 是纯 PHP 的，
   `composer install` 也不必跑（`tools/autoload.php` 直接读 psr-4）。

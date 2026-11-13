@@ -54,22 +54,23 @@ jobs:
           esac
 
       # PHPUnit 不在仓库里（`/vendor/` 被 .gitignore 排除）；用入库的
-      # composer.lock 装，否则 gate 的 unit 项只是"没测到"。
+      # composer.lock 装，否则 verify 的 unit / feature step 起不来。
       - name: Install PHPUnit (pinned by composer.lock)
         shell: bash
         run: composer install --prefer-dist --no-progress
 
-      - name: Version anchors and fast gate
+      # 发版前跑全量；版本锚点由 static/version 与 static/genversion 覆盖，
+      # 不再在 workflow 里另起一份版本命令。
+      - name: Version anchors and full verify
         shell: bash
         run: |
-          php tools/version.php --check
           set -o pipefail
-          php tools/gate.php --fast --json | tee gate-report.json
+          php bin/drift verify --full --json | tee verify-report.json
 
-      # 发版闸门不许靠 skip 洗绿：unit 没跑到就不该创建 draft release。
-      - name: Assert PHPUnit really ran (skip is not ok)
+      # 发版闸门不许靠没测到洗绿：unit / feature 没跑到就不该创建 draft release。
+      - name: Assert unit and feature really ran (not measured is not ok)
         shell: bash
-        run: php .github/scripts/assert-gate-report.php gate-report.json unit
+        run: php .github/scripts/assert-verify-report.php verify-report.json unit feature
 
       - name: Resolve deps package from DEPS_VERSION
         shell: bash

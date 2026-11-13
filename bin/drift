@@ -5,10 +5,11 @@ declare(strict_types=1);
 /**
  * `drift` —— 统一开发入口（对标 `flutter` / `ng` 这类「一个 CLI + 子命令」）。
  *
- * ★ 只做路由，**不实现判据**：V1 验证转发 `tools/gate.php`（清单住
- *   `tools/Support/CheckRegistry.php`），V2 转发 `tests/Verify/verify.php`
- *   （计划住 `tests/Verify/VerifyPlan.php`）；PHPUnit 转发 `tools/phpunit-run.php`。
- *   两套体系在 S4 删 V1 之前并存，但各自只有一份清单、一个执行器、一套退出码口径。
+ * ★ 只做路由，**不实现判据**：验证统一转发 `tests/Verify/verify.php`
+ *   （计划住 `tests/Verify/VerifyPlan.php`，`--list` 是唯一事实源）；
+ *   PHPUnit 单跑转发 `tools/phpunit-run.php`。
+ *   S4 起 V1 gate 已退役，`check` / `list` / `tooling` 只是历史脚本名的别名，
+ *   一律转发 V2 runner，不再有第二份清单或第二个执行器。
  *
  * ★ 为什么要有它：此前 70 个顶层 CLI 各自 `require autoload` + 解析 `$argv` +
  *   `exit()`，开发者得记住「改了 X 该跑哪条」。`composer run --list` 现在是
@@ -21,7 +22,7 @@ declare(strict_types=1);
  *   详见 `docs/architecture/12-工程与工具.md` §3。
  *
  * ★ 数组式 `proc_open` + `bypass_shell`：php.exe 走 shell 时 Windows 会经
- *   cmd.exe 二次解释带空格的路径与引号（与 gate.php / drift-build.php 同法）。
+ *   cmd.exe 二次解释带空格的路径与引号（与 drift-build.php 同法）。
  */
 require dirname(__DIR__) . '/tools/autoload.php';
 
@@ -35,15 +36,17 @@ $build = static function (string $script, array $rest, string $root): array {
     return [PHP_BINARY, $root . '/tools/' . $script, ...$rest];
 };
 
+$verify = [PHP_BINARY, $root . '/tests/Verify/verify.php'];
+
 $cmd = match ($name) {
-    // 无参数 = 日常迭代（廉价项）；带参数则原样透传给 gate（--only / --json / --full …）
-    'check' => $build('gate.php', $rest === [] ? ['--fast'] : $rest, $root),
-    'list' => $build('gate.php', ['--list'], $root),
+    // S4：V1 gate 已退役，三个历史脚本名作别名一律转发 V2 runner。
+    //     V1 专有参数（--fast / --only=… / --group=…）不再存在，传入由 verify 判为未知参数。
+    'check'   => [...$verify, ...$rest],
+    'list'    => [...$verify, '--list'],
+    'tooling' => [...$verify, '--layer=static', ...$rest],
     'test' => $build('phpunit-run.php', $rest === [] ? ['unit'] : $rest, $root),
-    // 工具链对账组：--only 透传，单点调试不必记住 10 个顶层短名。
-    'tooling' => $build('group-run.php', ['--group=tooling', ...$rest], $root),
-    // V2 验证入口：执行器住 tests/Verify/，不经过 tools/ 判据层清单。
-    'verify' => [PHP_BINARY, $root . '/tests/Verify/verify.php', ...$rest],
+    // V2 验证入口：执行器住 tests/Verify/，判据清单只有 VerifyPlan 一份。
+    'verify' => [...$verify, ...$rest],
     'lint' => $build('lint.php', $rest, $root),
     'dev' => $build('drift-dev.php', $rest, $root),
     'build' => $build('drift-build.php', $rest, $root),
@@ -67,12 +70,12 @@ if ($name === 'help' || $cmd === null) {
     fwrite(STDOUT, <<<'TXT'
 drift —— 统一开发入口
 
-  composer check           T0 日常闸门（廉价项）；composer check -- --only=unit 单跑
-  composer check:full      T0 全量（含 feature / pages / smoke 慢项）
+  composer check           V2 日常验证（历史别名，等价于 composer verify）
+  composer check:full      V2 全量（历史别名，等价于 composer verify:full）
   composer test            PHPUnit unit；composer test -- feature 跑场景
-  composer tooling -- --only=abi   工具链对账组（组内单点调试）
+  composer tooling         V2 static 层（历史别名；单点用 verify -- --step=<id>）
   composer lint            lint 全量
-  composer checks          当前判据清单（唯一权威，顺序即执行顺序）
+  composer checks          当前 V2 判据清单（--list，唯一权威）
   composer verify          V2 日常验证（static + behavior 快项）
   composer verify:full     V2 CI 口径；verify -- --list 看分层计划
   composer dev -- <app>    T1 开发态壳（动态 PHP、真窗口、免重编译）

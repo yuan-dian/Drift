@@ -51,8 +51,8 @@ v2 修订期的过程稿，只在追溯历史时看。**
 | **想查 AOT 编译约束 / 坑** | `docs/AOT-CONSTRAINTS.md` + `docs/architecture/11` | — |
 | **想知道跨平台能力矩阵** | 暂缺（原 `design-v7/08-平台与能力矩阵.md` 已删；结论在 `_archive/CROSS-PLATFORM.md`） | — |
 | **追溯 v2 修订过程** | `docs/arch-v2/00-总纲.md` | [`arch-v2/00-总纲.md`](arch-v2/00-总纲.md) |
-| **不知道改完该跑哪条命令 / 找统一入口** | `composer run --list`（唯一可发现入口）+ `bin/drift`；判据清单只在 `php tools/gate.php --list` | [`CONTRIBUTING.md`](CONTRIBUTING.md) §3 |
-| **想复量一次性调研尺子 / 找合并前的工具** | `tools/_archive/`（只读留存：`method-map.php`、`probe-raster-page.php`、`map-size.py`、`pe-sym.py`、`reach.py`）；现行入口是 `tools/method-weight.php <path>` 与 `tools/drift-preview.php --format=png` | 2026-11-12 合并归档；`tools/lint.php` 忽略该目录 |
+| **不知道改完该跑哪条命令 / 找统一入口** | `composer run --list`（唯一可发现入口）+ `bin/drift`；判据清单只在 `php bin/drift verify --list` | [`CONTRIBUTING.md`](CONTRIBUTING.md) §3 |
+| ~~想复量一次性调研尺子 / 找合并前的工具~~ | 已随 S4 退役：`tools/_archive/` 与 `method-weight.php` 都删除，历史数字只留 git 记录 | 2026-11-13 S4；现行图像入口是 `tools/drift-preview.php --format=png`，判据入口是 `bin/drift verify` |
 
 ---
 
@@ -109,23 +109,20 @@ v2 修订期的过程稿，只在追溯历史时看。**
 
 ## 6. 防漂移纪律（M2 的闸门）
 
-**这份对照表解决的是"看哪套"，没解决"内容是否一致"。** 后者由 `tools/docref.php`
-把守（ARCH-REVIEW §7 的 M2，已落地）—— 三条检查：
+**这份对照表解决的是"看哪套"，没解决"内容是否一致"。** 旧体系由 `tools/docref.php`
+把守（ARCH-REVIEW §7 的 M2），三条检查为 `file-line-refs` / `section-refs` /
+`markdown-links`。**该体系已随 S4 显式退役**：`docs/` 是开发期迭代产物，正式发布前
+要整体重构，为旧文档继续跑引用检查是无效开销。题库里对应的 `L6/R1/R2/R3`
+四条缺陷已标 `retired`，`--suite=v1` 的两条文档通道也已从量具里摘除
+（不保留空通道，否则「脚本不存在」会被当成「缺陷被抓到」）。
 
-1. `file-line-refs`：文档里的 `file:line` 引用 —— 文件须存在、起始行不越界、裸名不许歧义
-2. `section-refs`：跨册 § 引用（反引号册名后跟 §编号）—— 目标册与标题编号都须存在
-3. `markdown-links`：文档里的相对链接 —— 按文档自身目录与仓库根双基准解析，不许死链
-
-跑法：`php tools/docref.php`（`--list` 看检查清单，`--selftest` 量具双向自检）。
-**error 才挡闸门**（越界 / 歧义 / 标题对不上 —— 本仓内可确定的错）；**warn 是留痕**
-（外部仓引用如 typephp 的 `HISTORY.md`，本仓无从验证）。
-
-★ 每条检查都过双向自检（该响会响 + 不该响不误响，§20 纪律 1）—— 没有这层，
-闸门只能证明"跑了"，不能证明"测得准"。
+承接方式：文档重构那一棒把引用完整性 / API 面清单内建进生成器或发布脚本；
+命名纪律 `project-name` 已迁入 `tools/Lint/Rules/ProjectName.php`，是 `lint` 的
+第 33 条规则，不在退役范围。
 
 ★ **改文档的纪律**：新文档**不写 `file:line`** —— 定位用符号名（类名 / 方法名 / 标题号）；
 行号每改一次代码就漂，是 100% 会过期的跳转目标。历史文档里已有的行号只作**当时的
-坐标**：`docref` 报越界就把行号摘掉、留文件名（2026-11-04 清了 17 处），不要按当前
+坐标**：旧 `docref` 报越界时把行号摘掉、留文件名（2026-11-04 清了 17 处），不要按当前
 代码去「改对」—— 那等于把历史改写成假的。本表的行数仍是 `wc -l` 实测。
 
 ---
@@ -133,11 +130,12 @@ v2 修订期的过程稿，只在追溯历史时看。**
 ## 7. API 面清单（U1）
 
 「我作为应用开发者能用什么」—— `php tools/lint.php --api` 输出 `@api` /
-`@internal` 清单（按层分组），快照在 [`API-SURFACE.md`](API-SURFACE.md)
-（自动生成，勿手改）。
+`@internal` 清单（按层分组）。旧快照 `API-SURFACE.md` 已随 S4 退役：它是
+生成物却长期没人校验新鲜度，抬头写着「勿手改」但内容已漂。文档重构那一棒
+把 API 面清单内建进生成器 / 发布脚本，不再留一份靠人记着同步的手抄基线。
 
 ★ 口径：docblock **独立标注行**。单行 `/** @api … */` 与行内描述性提及
 （如「它本身是 `@internal` 的实现细节」）都按规则区分 —— grep 口径两者都算错
 （实测：@api 真标注 333 / @internal 241，而 grep 字样是 332 / 253）。
-★ 这份快照是 **API 面变更的 diff 基线** —— 拆 `Application`（ARCH-REVIEW §7 的
-S1）时重跑 `--api`，与快照的 diff 就是该审的 API 面变化。
+★ `lint.php --api` 仍是口径本身（docblock 独立标注行），退役的只是那份手抄快照。
+以后审 API 面变化直接重跑 `--api` 前后对照，不再与一份会漂的快照比。

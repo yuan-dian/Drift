@@ -30,7 +30,7 @@ final class HelloApplication extends Application
 - 用 PHP 写声明式 UI，AOT 编译为原生 Windows 程序；dev 态改 PHP 不重编译。
 - 自带业务闭环样例 [`apps/watermark`](apps/watermark)（选图 → 上传 → 建任务 → 轮询 → 出图）；
   **默认离线 mock，不触网**，切到真实 OSS 直传网关的方式见该应用的 `Config` 类。
-- 工程质量：`tools/gate.php` 闸门 + 判据自证变异 + T0/T1/T2 分层真机验证。
+- 工程质量：`bin/drift verify` 统一验证 + 缺陷题库覆盖率对照 + T0/T1/T2 分层真机验证。
 
 ## 版本号
 
@@ -52,7 +52,7 @@ final class HelloApplication extends Application
 # 改 VERSION（或 DEPS_VERSION）
 php tools/gen-version.php      # 生成 src/Core/Version.php + 同步 8 份 apps/*/project.yml 的 PE 版本
 php tools/pack-deps.php        # 把版本锚点写进 DEPS-MANIFEST 与 deps.lock.json
-php tools/version.php --check  # 全部对齐才过；gate 里也挂着同样的判据
+php tools/version.php --check  # 全部对齐才过；verify 的 static 层也挂着同样的判据
 ```
 
 `version.php --check` 会比对 `CHANGELOG.md` 的版本小节、HEAD 上的 tag、代码常量、
@@ -78,11 +78,11 @@ php tools/version.php --check  # 全部对齐才过；gate 里也挂着同样的
 - **工具脚本不需要 `composer install`**（`tools/autoload.php` 直接读 `composer.json` 的 psr-4），
   但**单元测试需要 PHPUnit 10.x**：`composer install` 读入库的 `composer.lock`
   （pin 10.5.66），装出 `vendor/bin/phpunit`；`/vendor/` 不入库，也没有 phar 兜底。
-  没装时 `unit` / `feature` 判据是 **skip（适配器 exit 2）**，闸门照样全绿 ⇒ 本机
-  别把「全绿」当成测试跑过了；CI 里由 `.github/scripts/assert-gate-report.php`
-  把 `unit` 的 `skip` 直接判红，不靠人眼看报告。
-- **不需要 MSVC / tpc / PHPX**：`php tools/gate.php --fast` 应全绿；
-  `doctor` 里只影响 build 的项在这档不拦（`--scope=gate`）。
+  没装时 `unit` / `feature` step 起不来，V2 报告记成 `exitCode=127 / ok=false`，
+  不会伪装成全绿；CI 里再由 `.github/scripts/assert-verify-report.php`
+  独立读 `items[].status`，`unit` 不是 `ok` 就直接判红，不靠人眼看报告。
+- **不需要 MSVC / tpc / PHPX**：`php bin/drift verify` 应全绿；
+  `doctor` 里只影响 build 的项在这档不拦。
   ★ 但「改 PHP 不重编译」的 dev 壳首次仍要编一次，属于档 B。
 
 ### 档 B：要编出独立 `.exe`（T2）
@@ -247,7 +247,7 @@ php tools/doctor.php          # 逐项报告；有 FAIL 会打印「修法」并
 php tools/doctor.php --strict # 发布前自查：WARN 也算失败
 ```
 
-`doctor` 用 `affects` 分级：缺 MSVC 不拦 `gate`，但出 exe 时
+`doctor` 用 `affects` 分级：缺 MSVC 不拦 `verify`，但出 exe 时
 `phprc` / `phpx` / `tpc` / `msvc` / `sdk` 必须全绿。体检过后再走下一节。
 
 ## 五分钟跑起来（Windows 10/11 x64）

@@ -32,12 +32,12 @@ jobs:
   #   —— 11 项 vs `gate` 真实 28 项，漏掉的是 abi / cppbridge / dxdiag /
   #   stalepolicy / errshape 这五个「接线对账 + 变异自证」对，共 10 项亚秒级纯 PHP
   #   判据。它们恰恰是最该进 CI 的类型（没有前置依赖、抓的是"能力是假的"）。
-  #   根因是白名单不会随新增判据增长 ⇒ 改成 `--fast`：集合自动跟随 `$checks`。
-  #   2026-11-12 起这 10 条在顶层收成 `tooling` 一组（组内仍逐条跑），`--fast`
-  #   依旧自动跟随，不需要在这里补名字。
-  #   doctor 用 `--scope=gate`（见 tools/doctor.php），缺 MSVC 不拦本闸门。
+  #   根因是白名单不会随新增判据增长 ⇒ 改成跑全量廉价项。
+  #   2026-11-12 起这 10 条在顶层收成 `tooling` 一组；2026-11-13 S4 起 V1 gate
+  #   整体退役，判据集合自动跟随 `tests/Verify/VerifyPlan.php` 的 `fast` 层，
+  #   CI 不再写任何判据白名单（`--list` 是唯一事实源）。
   gate-fast:
-    name: Gate (T0 pure-PHP, PHP ${{ matrix.php }})
+    name: Verify (T0 pure-PHP, PHP ${{ matrix.php }})
     # 上游把 Windows runner pin 到 2022 而不是 latest：latest 换镜像时 GD / PHP
     # 扩展版本会跟着变，判据基线不该被 runner 升级悄悄挪动。
     runs-on: windows-2022
@@ -77,30 +77,29 @@ jobs:
           esac
           php -r 'foreach (["mbstring", "gd"] as $e) { if (!extension_loaded($e)) { fwrite(STDERR, "missing extension: $e\n"); exit(1); } }'
       # ★ PHPUnit 二进制不入库（`/vendor/` 被 .gitignore 排除），CI 必须自己装。
-      #   不装 ⇒ phpunit-run.php 找不到 vendor/bin/phpunit 就 exit 2 ⇒ gate 把 unit
-      #   记成"没测到"，而不是像以前那样 exit 0 伪装成"通过"（2026-11-12 查出的假绿）。
+      #   不装 ⇒ verify 的 unit / feature step 进程起不来（exitCode 127）、
+      #   顶层 ok=false，绝不会伪装成"通过"（2026-11-12 查出的假绿）。
       #   读入库的 composer.lock（phpunit 10.5.66），与上游 swoole/typephp 的
       #   windows-build.yml 同法；不下载不 pin 版本的 phpunit-10.phar。
       - name: Install PHPUnit (pinned by composer.lock)
         shell: bash
         run: composer install --prefer-dist --no-progress
-      - name: Run gate (all fast items)
+      - name: Run verify (fast items, CI matrix)
         shell: bash
         run: |
           set -o pipefail
-          php tools/gate.php --fast --json | tee gate-report.json
-      # `gate` 允许把「PHPUnit 没装」记成 skip，而 skip 不算 fail ⇒ 报告仍 ok:true
-      # ⇒ CI 绿。上游用独立的 `vendor/bin/phpunit` job 天然不会这样；本仓保留
-      # gate 作为唯一账本，改由这份断言直接读 items[].status 把 skip 判红。
-      - name: Assert PHPUnit really ran (skip is not ok)
+          php bin/drift verify --json | tee verify-report.json
+      # verify 不像 V1 gate 那样把「没测到」算通过；这份断言再走独立路径
+      # 读 items[].status，钉住 unit 确实跑到了（判据与 runner 不同源）。
+      - name: Assert PHPUnit really ran (not measured is not ok)
         shell: bash
-        run: php .github/scripts/assert-gate-report.php gate-report.json unit
-      - name: Upload gate report
+        run: php .github/scripts/assert-verify-report.php verify-report.json unit
+      - name: Upload verify report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gate-report-${{ matrix.php }}
-          path: gate-report.json
+          name: verify-report-${{ matrix.php }}
+          path: verify-report.json
           if-no-files-found: ignore
           retention-days: 7
 
@@ -127,20 +126,20 @@ jobs:
       - name: Install PHPUnit (pinned by composer.lock)
         shell: bash
         run: composer install --prefer-dist --no-progress
-      - name: Run gate (full)
+      - name: Run verify (full)
         shell: bash
         run: |
           set -o pipefail
-          php tools/gate.php --json | tee gate-report.json
-      - name: Assert unit and feature really ran (skip is not ok)
+          php bin/drift verify --full --json | tee verify-report.json
+      - name: Assert unit and feature really ran (not measured is not ok)
         shell: bash
-        run: php .github/scripts/assert-gate-report.php gate-report.json unit feature
-      - name: Upload gate report
+        run: php .github/scripts/assert-verify-report.php verify-report.json unit feature
+      - name: Upload verify report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gate-report-nightly
-          path: gate-report.json
+          name: verify-report-nightly
+          path: verify-report.json
           if-no-files-found: ignore
           retention-days: 7
 

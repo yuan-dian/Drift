@@ -6,9 +6,9 @@
 ## Commands
 - 开发（改 PHP 不重编壳）：`php tools/drift-dev.php <app>`（`--rebuild` 强编壳，`--selftest` 红线自检，`--no-watch` 跑一次）
 - AOT 构建：`php tools/drift-build.php <app>`（输入指纹变了 / 首次 / 产物不在 ⇒ **自动全量**，门不能信缓存；`--incremental` 显式放行增量，`--full` 强制全量，`--dry` 只打印决策且不碰缓存）
-- 全量闸门（lint+docref+phpunit+smoke+golden+devshell+探针骨架）：`php tools/gate.php`（`--fast` 跳 slow 项）
+- 验证（唯一入口）：`php bin/drift verify`（日常）/ `php bin/drift verify --full`（CI 口径）；判据清单只在 `php bin/drift verify --list`，别抄项数
 - 真机探针（自动起窗/关窗/退出码 0）：`python tools/probe-window.py <app>` / `--dev` / `--dev-runner`
-- AOT 语义等价（T2 手动）：`php tools/aot-equivalence.php`、`php tools/dual-mode-equivalence.php`
+- AOT 语义等价（T2 手动）：`php tools/aot-equivalence.php`、`php tools/dual-mode-equivalence.php`；解释器侧指纹 `php tools/fingerprint.php`（`probes/frame_tax_aot/build.sh` 会硬调，删不得）
 
 ## Project structure
 - `src/` PHP 框架核心；`apps/<app>/` 各应用（含 `project.yml`）；`cpp-src/` AOT 壳（只编壳+桥）：`core/` 平台无关、`win32/` Win32 全部实现（含 `uia.*`）、`skia/` 渲染后端。接第二个平台 = 新增 `cpp-src/<platform>/`。
@@ -21,7 +21,7 @@
 - 发现 `.workbuddy/memory/` 多半误写，合并回正确目录后删除。
 
 ## Code style / 铁律
-- 项目名是 `Drift`；`Drift2/` 只是本机目录名，文档 / 注释 / UI 文案一律用 `Drift`（路径与历史文件名除外，`docref project-name` 守）。
+- 项目名是 `Drift`；`Drift2/` 只是本机目录名，文档 / 注释 / UI 文案一律用 `Drift`（路径与历史文件名除外，`lint project-name` 守）。
 - 中文串单引号（双引号里 `$n` 遇 CJK 被当标识符，lint `cjk-var-name` 守）；docblock 内 `*/` 会提前终止；注释尽量简洁。
 - 改语义先出方案等裁决；同一文件多处编辑必须串行（并行 Edit 基于陈旧副本 ⇒ 静默丢失）。
 - 提交信息含反引号 / `>` / `$` 用 `git commit -F 文件`；不 `git add -A`。

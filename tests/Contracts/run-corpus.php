@@ -23,29 +23,11 @@ declare(strict_types=1);
  * ★ S4 显式退役：`docref` / `apidoc` 两条 V1 文档通道已随文档体系整体重构删除，
  *   对应题库缺陷 `L6/R1/R2/R3` 已标 `retired`。**不保留空通道**：脚本不存在会
  *   返回非 0，被题库当成「缺陷被抓到」⇒ 删完矩阵更绿，正是本项目最恨的假绿。
-OLD
-];
-
-$edits[] = ['tests/Contracts/run-corpus.php', <<<'OLD'
-    'docref' => [
-        'cmd'   => $php . ' ' . $arg('tools/docref.php'),
-        'tier'  => 'core',
-        'class' => 'doc',
-    ],
-    'apidoc' => [
-        'cmd'   => $php . ' ' . $arg('tools/api-doc-check.php'),
-        'tier'  => 'core',
-        'class' => 'static',
-    ],
-    'theme' => [
-OLD
-, <<<'NEW'
-    'theme' => [
- *   V1 基线是入库的 `tests/Contracts/baseline/v1-postdocs-full.json`（17 条，
+ * ★ V1 基线是入库的 `tests/Contracts/baseline/v1-postdocs-full.json`（17 条，
  *   4 条旧文档缺陷已显式退役），不在 gitignored scratch。
  *
  * ★ 通道并发跑：缺陷必须串行（每个都要改工作树），通道之间互不依赖。
- *   串行 9 条约 125s/缺陷，并发后墙钟 = 最慢那条（feature）≈ 65s。
+ *   并发一律输出重定向到临时文件；Windows 上 proc_open 管道会阻塞到 EOF。
  */
 require __DIR__ . '/DefectCorpus.php';
 require __DIR__ . '/../Verify/VerifyPlan.php';
@@ -90,16 +72,6 @@ $probes = [
         'cmd'   => $php . ' ' . $arg('tools/scene-set-check.php') . ' --json',
         'tier'  => 'core',
         'class' => 'set',
-    ],
-    'docref' => [
-        'cmd'   => $php . ' ' . $arg('tools/docref.php'),
-        'tier'  => 'core',
-        'class' => 'doc',
-    ],
-    'apidoc' => [
-        'cmd'   => $php . ' ' . $arg('tools/api-doc-check.php'),
-        'tier'  => 'core',
-        'class' => 'static',
     ],
     'theme' => [
         'cmd'   => $phpunit . ' ' . $arg('tests/Feature/Table/ThemeMetricTest.php'),
