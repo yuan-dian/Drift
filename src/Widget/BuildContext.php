@@ -9,6 +9,7 @@ use Drift\Text\TextRole;
 use Drift\Rendering\ColorToken;
 use Drift\Rendering\MetricToken;
 use Drift\Theme\ThemeData;
+use Drift\Theme\ThemeExtension;
 
 /**
  * `build()` 的入参：**本次构建所处的渲染环境**（§3.4）。
@@ -127,5 +128,16 @@ final readonly class BuildContext
     public function textColor(TextRole $role): Color
     {
         return $this->theme->textColor($role);
+    }
+
+    /**
+     * 取应用侧自定义 token（对标 Flutter `Theme.of(ctx).extension<T>()`）。
+     *
+     * ★ 不是向上查找：值已在 `theme()` 里解析完，这里只做一次按键读取。
+     *   参数只接受 `Foo::class` 这种编译期常量，别手拼字符串。
+     */
+    public function extension(string $class): ?ThemeExtension
+    {
+        return $this->theme->extension($class);
     }
 }

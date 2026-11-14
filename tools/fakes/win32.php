@@ -51,6 +51,44 @@ if (!function_exists('drift_win_dpi')) {
     }
 }
 
+// ── 系统外观（明暗 / HC / 系统色）────────────────────────────────────────
+// ★ 三个都是标量替身，由 `winSystemAppearanceFake()` 剧本注入；默认浅色 + 关 HC。
+//   HC 判据要能证伪「系统色有没有真的覆盖 token」，故颜色也必须是可配的。
+if (!function_exists('drift_win_system_dark')) {
+    function drift_win_system_dark(): bool
+    {
+        return (bool) ($GLOBALS['DRIFT_SMOKE_SYSTEM_DARK'] ?? false);
+    }
+}
+
+if (!function_exists('drift_win_high_contrast')) {
+    function drift_win_high_contrast(): bool
+    {
+        return (bool) ($GLOBALS['DRIFT_SMOKE_HIGH_CONTRAST'] ?? false);
+    }
+}
+
+if (!function_exists('drift_win_system_color')) {
+    function drift_win_system_color(int $slot): int
+    {
+        $colors = $GLOBALS['DRIFT_SMOKE_SYSTEM_COLORS'] ?? [];
+
+        return (int) ($colors[$slot] ?? 0);
+    }
+}
+
+/**
+ * 设定假桥报告的系统外观。
+ *
+ * @param array<int, int> $colors 槽号 => 0xRRGGBB，见 `Drift\Platform\SystemColor`
+ */
+function winSystemAppearanceFake(bool $dark, bool $highContrast, array $colors = []): void
+{
+    $GLOBALS['DRIFT_SMOKE_SYSTEM_DARK'] = $dark;
+    $GLOBALS['DRIFT_SMOKE_HIGH_CONTRAST'] = $highContrast;
+    $GLOBALS['DRIFT_SMOKE_SYSTEM_COLORS'] = $colors;
+}
+
 if (!function_exists('drift_win_material_caps')) {
     function drift_win_material_caps(): int
     {

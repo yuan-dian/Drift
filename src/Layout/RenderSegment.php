@@ -187,7 +187,7 @@ final class RenderSegment extends RenderProxyBox
     /** 圆角夹到半短边：软光栅会夹、Skia 桥不夹，不自己夹则双端不一致。 */
     private function pillRadius(Rect $pill): float
     {
-        return $pill->width < $pill->height ? $pill->width / 2.0 : $pill->height / 2.0;
+        return min($pill->width, $pill->height) / 2.0;
     }
 
     protected function paintContent(Canvas $canvas): void

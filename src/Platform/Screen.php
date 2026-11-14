@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Platform;
 
 use Drift\Geometry\BoxConstraints;
+use Drift\Theme\SystemAppearance;
 use Drift\Theme\SystemTheme;
 
 /**
@@ -47,4 +48,12 @@ interface Screen
      *   （§5.1 裁决 3）。
      */
     public function systemTheme(): SystemTheme;
+
+    /**
+     * 系统外观快照：明暗 + 高对比度 + HC 时用户选的系统色（§9.2）。
+     *
+     * ★ 每次现读，不缓存：HC 与明暗都是运行期事件，缓存就要配失效逻辑。
+     * ★ `systemTheme()` 是它的明暗子集；新代码用这个，别让 HC 状态散在第二个通道里。
+     */
+    public function appearance(): SystemAppearance;
 }

@@ -128,12 +128,19 @@ final class DependencyDirection implements Rule
      *   `Widget → Commands`，派发实现仍住 `Drift\App`"。四处都是同一个 `CommandArg`，
      *   没有第二类型在穿 —— 放开整层会让 `Widget` 去 `new` 命令路由，那才是越界。
      *   （若将来出现第二个穿层的 Commands 类型，就该重审这条边界，而不是继续加行。）
+     *
+     * `ThemeChangedEvent` 是**第五例、另一条缝**（2026-11-14，HC 跟随）：平台把
+     * 一次系统外观快照（`Drift\Theme\SystemAppearance`）塞进输入事件，交给
+     * `Drift\App\Application` 换主题。`Input` 层不 `new` 主题、不解析 token，
+     * 只当载荷容器 ⇒ 与上面「一个值类型穿层」同族，按文件放行而非放开
+     * `Input → Theme` 整层。`SystemAppearanceTest` 守着这条例外不扩散。
      */
     private const FILE_EXCEPTIONS = [
         'src/Widget/BuildContext.php' => ['Theme'],
         'src/Widget/State.php' => ['Commands'],
         'src/Widget/Button.php' => ['Commands'],
         'src/Widget/ActivationContext.php' => ['Commands'],
+        'src/Input/ThemeChangedEvent.php' => ['Theme'],
     ];
 
     public function name(): string

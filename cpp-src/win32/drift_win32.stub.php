@@ -252,6 +252,18 @@ function drift_win_dpi(int $hwnd): int {}
 function drift_win_system_dark(): bool {}
 
 /**
+ * 系统是否开启高对比度（`SPI_GETHIGHCONTRAST` / `HCF_HIGHCONTRASTON`）。
+ * 与 `system_dark()` 正交：暗色 + HC 是合法组合（§9.2）。
+ */
+function drift_win_high_contrast(): bool {}
+
+/**
+ * HC 时用户选的系统色（`GetSysColor()`），返回 0xRRGGBB。
+ * `$slot` 见 `Drift\Platform\SystemColor`；非 HC 时调用方不该问它。
+ */
+function drift_win_system_color(int $slot): int {}
+
+/**
  * 报 IME 插入符位置（§8.4）—— x/y/h 是**设备像素**的客户区坐标，(-1,-1,0) = 无插入符。
  *
  * ★ **必须带 hwnd**（2026-10-30）：Windows 的插入符是**线程级**的，
@@ -275,7 +287,7 @@ function drift_win_ime_caret(int $hwnd, float $x, float $y, float $h): void {}
  * | `pointer` | `x` `y`（**物理**像素，客户区原点） `button` `phase`（0=down 1=move 2=up 3=leave，与 `Drift\Input\PointerPhase` 同值） | `WM_{L,M,R}BUTTONDOWN` / `WM_MOUSEMOVE` / `WM_{L,M,R}BUTTONUP` / `WM_MOUSELEAVE`（`leave` 的坐标是**最后已知位置** —— 系统不再带坐标；`move` 的 `button` 恒 0，按住态由应用自己的拖动状态跟踪） |
  * | `key` | `key`（**键名**字符串） `ctrl` `alt` `shift` | `WM_KEYDOWN` |
  * | `char` | `text`（UTF-8） | `WM_CHAR`（`TranslateMessage` 合成） |
- * | `theme` | — | `WM_SETTINGCHANGE`（系统主题变更，载荷为空） |
+ * | `theme` | — | `WM_SETTINGCHANGE`（`ImmersiveColorSet`）/ `WM_SYSCOLORCHANGE`（HC 开关与系统色变更；载荷为空，消费方查 `Screen::appearance()`） |
  * | `wheel` | `x` `y`（**物理**像素，客户区原点） `delta`（WHEEL_DELTA=120 为一格；**壳已取负** ⇒ 正=回拉=内容上移=看到下面，与触控板"上划看到下面"同族） | `WM_MOUSEWHEEL`（坐标经 `ScreenToClient` 换算） |
  * | `files-dropped` | `x` `y`（**物理**像素，客户区原点 = `DragQueryPoint` 落点） `paths`（UTF-8，`'\n'` 分隔的多路径原始串；空串 = 零个文件） | `WM_DROPFILES`（`DragAcceptFiles` 开窗接受拖放） |
  * | `close-requested` | — | `WM_CLOSE`（**仅当该窗 `drift_win_set_close_guard(hwnd, true)`**；否则直接销毁、不出事件） |

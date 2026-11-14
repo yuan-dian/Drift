@@ -1620,10 +1620,13 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         if ($event instanceof ThemeChangedEvent) {
             // §9.2 事件通路的终点：显式消费（不落 default 丢弃）。
             //
-            // ★ 顺序要紧：**先钩子、再下发**。`onSystemThemeChanged()` 是应用
-            //   重读系统主题、更新自己 `theme()` 来源的地方；它跑完，`theme()`
-            //   才是新值 ⇒ 这之后下发的 context 才带着新主题。
+            // ★ 顺序要紧：**先钩子、再换主题、再下发**。带快照时框架自己按系统
+            //   外观换主题；不带（旧形态）则仍由应用覆写 onSystemThemeChanged()
+            //   更新自己的主题来源，跑完 theme() 才是新值。
             $this->onSystemThemeChanged();
+            if ($event->appearance !== null) {
+                $this->scope->setTheme(ThemeData::forAppearance($event->appearance));
+            }
             $this->applyNewContext();
 
             return null;

@@ -64,17 +64,19 @@
 | 「控件面约 130 个类（含 8 个接口）」 | `src/Widget/*.php`：类 123 + 接口 8 = 131 | 成立 |
 | 「8 个应用样例」及所列名字 | `apps/` 恰好 8 个目录，名字全对 | 成立 |
 | 「多窗口（`WindowHost` / `WindowSet`）」 | `Drift\Platform\WindowHost`（单窗操作面）+ `src/App/WindowSet.php`（组合根窗口表） | 成立，是两个不同层 |
-| 「深色主题 + `SystemTheme` 跟随系统」 | `Win32Screen::systemTheme()` → `drift_win_system_dark()`；`Win32Platform` 推 `ThemeChangedEvent`；`Application::onSystemThemeChanged()` 分发 | 成立 |
+| 「深色主题 + `SystemTheme` 跟随系统」 | `Win32Screen::systemTheme()` → `drift_win_system_dark()`；`Win32Platform` 推 `ThemeChangedEvent`；`Application::onSystemThemeChanged()` 分发 | 成立；另已接 HC 独立轴（见下条） |
 | 「`TaskHost` 三后端」 | `ProcessTaskHost` / `SyncTaskHost` / `ThreadTaskHost` | 成立 |
 | 「UIA + 结构 / 焦点事件」 | `cpp-src/win32/uia.cc` 的 `UiaRaiseStructureChangedEvent` / `UIA_AutomationFocusChangedEventId` | 成立 |
 | 「Per-Monitor V2」 | `cpp-src/win32/drift_win32.cc:1502` 的 `kPerMonitorV2` | 成立 |
 | 「无 `RelayoutBoundary`」 | 全仓 0 命中 | 成立 |
-| 「❌ 高对比度」 | 映射已有（`ColorToken::highContrastValue()` / `ThemeData::withHighContrast()`），**系统信号未接**（`SPI_GETHIGHCONTRAST` 0 命中），唯一消费者是 `tools/smoke.php` | **表述过宽**，已收窄 |
+| 「❌ 高对比度」 | 原判「映射已有、系统信号未接、唯一消费者是 `tools/smoke.php`」⇒ **表述过宽**，已收窄为「系统高对比度跟随」；该轮之后已**接线完成**：`WM_SYSCOLORCHANGE` + `SPI_GETHIGHCONTRAST` + `GetSysColor()`，showcase 为真实消费者，见 `docs/architecture/09-主题与语义.md` §2.2 | 已收窄 → 已闭环 |
 
 收窄后的三处改动：
 
 - 「❌ 触控 / 笔 / 高对比度」拆开：前两者留原样；高对比度改为「**系统高对比度跟随**」
   并写明「配色映射已有、未接信号、应用层无消费者」——否则会误导人以为连配色都得自己做。
+  （2026-11-14 该系统信号已接线，见 `docs/architecture/09-主题与语义.md` §2.2；
+  本条保留为当时的收窄记录。）
 - 已知限制新增「**源码树不自足**」：`/cpp/` 在 `.gitignore` 里，`cpp/skia/`（141 MB）与
   `cpp/fonts/`（21 MB）clone 后不存在，构建期直接链接失败；PHPX 与 tpc 也不在本仓。
   这条是外部使用者**第一个撞上的墙**，不写就是静默失败（判据②）。

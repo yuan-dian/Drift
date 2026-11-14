@@ -7,8 +7,6 @@ use Drift\Async\Future;
 use Drift\Rendering\Color;
 use Drift\Rendering\ColorToken;
 use Drift\Platform\Dialog;
-use Drift\Widget\Text;
-use Drift\Theme\ThemeData;
 use Drift\Theme\ThemeScope;
 use Drift\Widget\AppBar;
 use Drift\Widget\BuildContext;
@@ -240,18 +238,21 @@ final class ShowcaseState extends State
 
     public function build(BuildContext $ctx): Widget
     {
-        // ★ 全局色板：LayUI 招牌色（与 GUI 仓 ShowcaseRoot::palette() 同键）——
-        //   ThemeScope 覆盖整棵子树，Text 的角色色从主题解析 ⇒ 换主题字号/色跟着走。
-        // ★ **只覆盖 Accent**：`Pane` 交给框架默认（2026-10-25 色阶拆分后它是
-        //   画布底 #E9EBEF）。原先这里把 Pane 覆写回 #FFFFFF，顶条(AppBar 的
-        //   Chrome #F3F3F3)就和背景板糊成一片 —— 覆盖值恰好约等于 Chrome，
-        //   层次差被自己的覆盖吃掉了。
-        $canvas = $ctx->theme()->color(ColorToken::Pane);
+        $theme = $ctx->theme();
+        $canvas = $theme->color(ColorToken::Pane);
         $compact = $ctx->windowSize()->isCompact();
+        $brand = ShowcaseBrand::defaults();
+
+        // ★ 从 ctx 的主题派生，不再硬造 ThemeData::light()：系统明暗 / HC 由
+        //   AppScope 下发，root 自己造一份就把系统外观盖掉了。
+        // ★ HC 下不覆盖 Accent：用户选的系统色必须赢过品牌色（Win32 官方口径）。
+        //   `withExtension()` 把应用侧自定义 token 挂进这棵子树。
+        $scoped = $theme->isHighContrast()
+            ? $theme
+            : $theme->withColor(ColorToken::Accent, $brand->accent);
 
         return ThemeScope::make(
-            ThemeData::light()
-                ->withColor(ColorToken::Accent, Color::fromRgb(0x00, 0x96, 0x88)),
+            $scoped->withExtension($brand),
             Dock::make()
                 ->top($this->buildTopBar())
                 ->center($this->buildBody($canvas, $compact))
@@ -260,12 +261,14 @@ final class ShowcaseState extends State
 
     private function buildTopBar(): Widget
     {
+        // ★ 副标题交给 BrandCaption：它在 ThemeScope 子树里读 `ShowcaseBrand::of($ctx)`，
+        //   顺带把系统明暗 / HC 的接线做成肉眼可见。
         // ★ 右侧动作区：两个 Flat 图标按钮（无底 ⇒ 顶条上不出现第二个实心块）。
         //   AppBar::actions() 内部自动插弹性占位，导航短时这组仍贴右边缘。
         return AppBar::make()
             ->title('Drift 示例台')
             ->children([
-                Text::make('LayUI 式布局 · 覆盖现有控件面'),
+                BrandCaption::make(),
             ])
             ->actions([
                 // ★ 演示"动作位"两种接线：纯 UI 回调（左）与命令（右）。

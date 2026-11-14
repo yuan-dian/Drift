@@ -11,6 +11,7 @@ use Drift\App\WindowSet;
 use Drift\Errors;
 use Drift\Platform\Win32\ResizeHookState;
 use Drift\Platform\Win32\Win32Platform;
+use Drift\Theme\ThemeData;
 
 use App\Showcase\Jobs\FetchRowsJob;
 use App\Showcase\Jobs\JobRegistry;
@@ -91,6 +92,11 @@ final class Bootstrap
         //   主题、全局命令。单窗口时它等价于"每个应用自建一个"，多窗口时
         //   它才是"两窗共用一份"的物质基础 —— 这里显式建一个，让第二窗有东西可共享。
         $scope = AppScope::make();
+
+        // ★ 启动时按系统外观取一份主题：HC 信号与系统色只在组合根能问（§5.1
+        //   纪律 1，Application 不持平台）。运行期切外观走 ThemeChangedEvent
+        //   自带的快照，由 Application 换主题并全树下发，不必再问平台。
+        $scope->setTheme(ThemeData::forAppearance($platform->screen(0)->appearance()));
 
         // ★★ 后台任务后端（N3/N5）：异步表格要**真慢任务**跑在别的进程里 ——
         //   默认的 `SyncTaskHost` 会在 `submit()` 那一帧同步跑完 job（慢网络 ⇒ UI 卡死）。

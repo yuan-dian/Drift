@@ -31,7 +31,9 @@
 - 手势竞技场 + 焦点通道 + 键盘 / 滚轮 / 拖放
 - 动画（`AnimatedValue` / `Curve` / `AnimationController` / 隐式动画）
 - 多窗口（`WindowHost` / `WindowSet`）
-- 深色主题（`ColorToken` + `SystemTheme` 跟随系统）
+- 深色主题（`ColorToken` + `SystemTheme` 跟随系统）+ 系统高对比度跟随
+  （HC 独立轴 + `GetSysColor()` 用户选色）
+- 主题扩展缝：`ThemeExtension` + `ThemeData::withExtension()`，应用侧可挂自定义 token
 - Windows 无障碍满配（UIA provider + 树导航 + 结构 / 焦点事件）
 - 控件面约 130 个类（含 8 个接口；精确清单以 `src/Widget/` 为准）
 - 8 个应用样例（hello / tutorial / users / showcase / watermark / bench / dev / pacing）
@@ -47,14 +49,14 @@
 - ❌ 安装器 / 代码签名 / 自动更新
 - ❌ 第三方组件生态 / 包管理
 - ❌ 触控 / 笔
-- ❌ **系统高对比度跟随**：配色映射本身已有（`ColorToken::highContrastValue()` /
-  `ThemeData::withHighContrast()`），但未接 `SPI_GETHIGHCONTRAST` 信号、应用层无消费者
-  ⇒ 用户在系统里打开高对比度模式时**不会自动切换**
 - ❌ 远程崩溃上报
 
 ### Breaking
 
-- 无（首个预览版）。
+- `Screen` 端口新增 `appearance(): SystemAppearance`（唯一实现 `Win32Screen` 已跟上）；
+  `ThemeChangedEvent` 新增带默认值的 `appearance` 参数，无参构造仍可用。
+- 壳 ↔ PHP 新增 `drift_win_high_contrast()` / `drift_win_system_color(int)` 两个桥函数，
+  并接了 `WM_SYSCOLORCHANGE`。ABI 无运行期握手，**改 C++ 壳必须整树重编译**。
 
 ### 已知限制
 

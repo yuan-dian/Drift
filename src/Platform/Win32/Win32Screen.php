@@ -6,8 +6,13 @@ namespace Drift\Platform\Win32;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Size;
 use Drift\Platform\Screen;
+use Drift\Platform\SystemColor;
+use Drift\Rendering\Color;
+use Drift\Theme\SystemAppearance;
 use Drift\Theme\SystemTheme;
 
+use function drift_win_high_contrast;
+use function drift_win_system_color;
 use function drift_win_system_dark;
 
 /**
@@ -70,5 +75,31 @@ final class Win32Screen implements Screen
     public function systemTheme(): SystemTheme
     {
         return drift_win_system_dark() ? SystemTheme::Dark : SystemTheme::Light;
+    }
+
+    public function appearance(): SystemAppearance
+    {
+        $theme = drift_win_system_dark() ? SystemTheme::Dark : SystemTheme::Light;
+        if (!drift_win_high_contrast()) {
+            return new SystemAppearance($theme, false);
+        }
+
+        // HC 时才问系统色：官方要求用 GetSysColor() 的用户选择色，不是应用硬编码。
+        return new SystemAppearance(
+            $theme,
+            true,
+            $this->systemColor(SystemColor::WINDOW),
+            $this->systemColor(SystemColor::WINDOW_TEXT),
+            $this->systemColor(SystemColor::BUTTON_FACE),
+            $this->systemColor(SystemColor::HOTLIGHT),
+        );
+    }
+
+    /** 桥给 0xRRGGBB（COLORREF 的 BGR→RGB 转换在 C++ 侧做完）。 */
+    private function systemColor(int $slot): Color
+    {
+        $rgb = drift_win_system_color($slot);
+
+        return Color::fromRgb(($rgb >> 16) & 0xFF, ($rgb >> 8) & 0xFF, $rgb & 0xFF);
     }
 }

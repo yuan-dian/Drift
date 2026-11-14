@@ -120,6 +120,10 @@ use Drift\Text\TextAlign;
 use Drift\Text\TextLayout;
 use Drift\Text\TextLine;
 use Drift\Text\TextStyle;
+use Drift\Platform\SystemColor;
+use Drift\Platform\Win32\Win32Screen;
+use Drift\Platform\Win32\Win32WindowHost;
+use Drift\Theme\SystemAppearance;
 use Drift\Theme\SystemTheme;
 use Drift\Theme\ThemeData;
 use Drift\Widget\Activatable;
@@ -3098,6 +3102,64 @@ check(
 check(
     'Theme · forSystem 按系统主题选表',
     ThemeData::forSystem(SystemTheme::Dark)->isDark() && !ThemeData::forSystem(SystemTheme::Light)->isDark()
+);
+
+// ⑬-b 系统外观快照：HC 独立轴 + GetSysColor() 用户选色（§9.2）
+// ★ 假桥剧本是唯一注入点：真机 HC 信号要人工切，自动链只覆盖这条确定性映射。
+winSystemAppearanceFake(true, true, [
+    SystemColor::WINDOW      => 0x112233,
+    SystemColor::WINDOW_TEXT => 0xAABBCC,
+    SystemColor::BUTTON_FACE => 0x445566,
+    SystemColor::HOTLIGHT    => 0xDDEEFF,
+]);
+$screen = new Win32Screen(new Win32WindowHost(), 0);
+$appearance = $screen->appearance();
+check(
+    'Appearance · 暗色 + HC 是合法组合（HC 不塞进明暗）',
+    $appearance->theme === SystemTheme::Dark && $appearance->highContrast
+);
+check(
+    'Appearance · 四个槽号按 0xRRGGBB 拆成 Color',
+    $appearance->window?->equals(Color::fromRgb(0x11, 0x22, 0x33)) === true
+        && $appearance->windowText?->equals(Color::fromRgb(0xAA, 0xBB, 0xCC)) === true
+        && $appearance->buttonFace?->equals(Color::fromRgb(0x44, 0x55, 0x66)) === true
+        && $appearance->hotlight?->equals(Color::fromRgb(0xDD, 0xEE, 0xFF)) === true
+);
+$appearanceTheme = ThemeData::forAppearance($appearance);
+check(
+    'Appearance · 用户窗口色覆盖 Pane / Surface，文字色覆盖 Text / Muted / Border',
+    $appearanceTheme->color(ColorToken::Pane)->equals(Color::fromRgb(0x11, 0x22, 0x33))
+        && $appearanceTheme->color(ColorToken::Surface)->equals(Color::fromRgb(0x11, 0x22, 0x33))
+        && $appearanceTheme->color(ColorToken::Text)->equals(Color::fromRgb(0xAA, 0xBB, 0xCC))
+        && $appearanceTheme->color(ColorToken::Muted)->equals(Color::fromRgb(0xAA, 0xBB, 0xCC))
+        && $appearanceTheme->color(ColorToken::Border)->equals(Color::fromRgb(0xAA, 0xBB, 0xCC))
+);
+check(
+    'Appearance · 按钮色 / 热链色覆盖 Chrome / Accent',
+    $appearanceTheme->color(ColorToken::Chrome)->equals(Color::fromRgb(0x44, 0x55, 0x66))
+        && $appearanceTheme->color(ColorToken::Accent)->equals(Color::fromRgb(0xDD, 0xEE, 0xFF))
+);
+check(
+    'Appearance · HC 标志独立、明暗不被改写',
+    $appearanceTheme->isHighContrast() && $appearanceTheme->isDark()
+);
+$handMade = new SystemAppearance(SystemTheme::Light, true);
+check(
+    'Appearance · 快照不带系统色时退回框架 HC 配色',
+    ThemeData::forAppearance($handMade)->isHighContrast()
+        && ThemeData::forAppearance($handMade)->color(ColorToken::Border)
+            ->equals($lightTheme->withHighContrast()->color(ColorToken::Border))
+);
+winSystemAppearanceFake(false, false, []);
+$plainAppearance = $screen->appearance();
+check(
+    'Appearance · 非 HC 时不问系统色',
+    !$plainAppearance->highContrast && $plainAppearance->window === null
+);
+check(
+    'Appearance · 非 HC 直接按明暗选表',
+    !ThemeData::forAppearance($plainAppearance)->isDark()
+        && !ThemeData::forAppearance($plainAppearance)->isHighContrast()
 );
 
 // ⑭ BuildContext + StatelessWidget（§3.4 / §15.6.1）

@@ -190,7 +190,7 @@ final class RenderSegmentedControl extends RenderBox implements ChildContainer
         // ★ 圆角同样夹到 min(w,h)/2（与 RenderSegment 同一条纪律）：轨通常远宽于
         //   高，但"一段 + 短标签"的窄轨会让 h/2 超过半宽 ⇒ 自交圆角，且软光栅与
         //   Skia 桥的夹法不一致 ⇒ 双端 conformance 红。
-        $radius = $size->width < $size->height ? $size->width / 2.0 : $size->height / 2.0;
+        $radius = min($size->width, $size->height) / 2.0;
 
         $canvas->drawRect($rect, Paint::fill($this->style->track), $radius);
 

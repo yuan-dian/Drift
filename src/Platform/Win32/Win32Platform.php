@@ -258,8 +258,10 @@ final class Win32Platform implements Platform
         }
 
         if ($type === 'theme') {
-            // 载荷为空 —— 新主题查 Screen::systemTheme()（不缓存，每次读注册表）。
-            $this->inputOf($handle)->push(new ThemeChangedEvent());
+            // 明暗 / HC / 系统色都在这一份快照里；事件侧不查、消费侧也不查。
+            $this->inputOf($handle)->push(new ThemeChangedEvent(
+                $this->screen($handle)->appearance()
+            ));
 
             return 1;
         }

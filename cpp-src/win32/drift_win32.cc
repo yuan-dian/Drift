@@ -1041,6 +1041,15 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
 
+        case WM_SYSCOLORCHANGE: {
+            // 高对比主题切换 / 用户改系统色：Win32 官方口径要求应用在这条消息里
+            // 重查 SPI_GETHIGHCONTRAST 与 GetSysColor()。复用 kEvTheme，不新增事件种类。
+            PendingEvent event = {};
+            event.kind = kEvTheme;
+            enqueue(hwnd, event);
+            return 0;
+        }
+
         case WM_DPICHANGED: {
             win.dpi = HIWORD(wp);
             // 系统给了一个建议外框，照它调整（不照做的话窗口在新 DPI 下尺寸不对）
@@ -2307,6 +2316,31 @@ Bool php_drift_win_system_dark() {
     }
 
     return (Bool)(value == 0);
+}
+
+Bool php_drift_win_high_contrast() {
+    HIGHCONTRAST hc = {};
+    hc.cbSize = sizeof(hc);
+    if (!SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(hc), &hc, 0)) {
+        return (Bool)false;
+    }
+    return (Bool)((hc.dwFlags & HCF_HIGHCONTRASTON) != 0);
+}
+
+Int php_drift_win_system_color(Int slot) {
+    // slot 是 Drift 的槽号（Drift\Platform\SystemColor），不是 COLOR_* 宏值：
+    // 平台常量留在本文件，PHP 侧换平台时不用改数字。
+    int index;
+    switch ((int)slot) {
+        case 0: index = COLOR_WINDOW; break;
+        case 1: index = COLOR_WINDOWTEXT; break;
+        case 2: index = COLOR_BTNFACE; break;
+        case 3: index = COLOR_HOTLIGHT; break;
+        default: return (Int)0;
+    }
+    COLORREF c = GetSysColor(index);
+    // COLORREF 是 0x00BBGGRR，PHP 侧要 0xRRGGBB。
+    return (Int)(((c & 0xFF) << 16) | (c & 0xFF00) | ((c >> 16) & 0xFF));
 }
 
 // ══════════════════════════════════════════════════════════════ 消息泵 ══
