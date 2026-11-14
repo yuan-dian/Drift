@@ -1,5 +1,6 @@
 # 中间表示（IR）对接 UI 与渲染：对验证与工具设计的价值评估（2026-11-13）
 
+> ★ 本文是 2026-11-13 的只读评估快照，不是现状说明。
 > 用户想法：引入 IR 对接 UI 与渲染，只要一个通用 IR 验证，很多就不需要真机验证；换渲染层也方便。
 > 本文对照成熟跨平台 GUI 框架 + 本仓实证，判断这个想法对 V2 验证体系重建有没有帮助。
 
@@ -9,7 +10,7 @@
 
 三句话：
 
-1. `src/Rendering/DisplayList.php` 就是绘制 IR：17 个 opcode、生产路径也走录制、`replay(Canvas $canvas)` 可投到任意后端；`RasterCanvas`（纯 PHP 软光栅）/ `SkiaCanvas` / `tools/fakes/` 是现成的可替换后端。项目调研稿 `12-横向思路提炼.md` §6 早已裁决「DrawOp 命令流唯一中间表示 + provider 插拔，软光栅兼做无头 golden 测试」。
+1. `src/Rendering/DisplayList.php` 就是绘制 IR：17 个 opcode、录制后 `replay(Canvas $canvas)` 可投到任意后端（生产主树直接画，录制用于 `LayerCache` 与离屏回放）；`RasterCanvas`（纯 PHP 软光栅）/ `SkiaCanvas` / `tools/fakes/` 是现成的可替换后端。项目调研稿 `12-横向思路提炼.md` §6 早已裁决「DrawOp 命令流唯一中间表示 + provider 插拔，软光栅兼做无头 golden 测试」。
 2. **「一个 IR 验证管住跨形态正确性」也已经有了**：`tools/Bench/PaintFingerprint.php`（逐命令按值比）+ `GeomFingerprint.php` + `AotEquivalence.php`，专门证明 AOT 产物与解释器画出同一份 IR。这是用户想法**已经被实证有效**的最强证据。
 3. 但**验证锚点还压在最下游的像素上**：`golden-raster.php` 守 34 份 `.rgba.gz` 像素基线，`smoke.php` 有 94 处 ink/pixel 判据，13 个真机探针靠标题 / 坐标 / UIA 文案定位。⇒ IR 的价值不在"少做真机"，在**把锚点从像素上移到结构**。
 
@@ -29,7 +30,7 @@ Win32 壳 / 上屏 / UIA
 
 | 能力 | 落点 | 状态 |
 |---|---|---|
-| 绘制 IR | `src/Rendering/DisplayList.php` | 已有，生产路径也走录制（§7.2 裁决 2） |
+| 绘制 IR | `src/Rendering/DisplayList.php` | 已有，生产主树直接画；录制-回放用于 `LayerCache`、离屏与 golden（见 `architecture/04-绘制与双后端.md`） |
 | 可替换后端 | `RasterCanvas` / `SkiaCanvas` / `tools/fakes/` | 已有，`CanvasCapabilities` 三级能力面 |
 | IR 内建自检 | `DisplayList::assertBalanced()` | 已有（save/clip/layer 三种栈配平） |
 | 跨形态等价指纹 | `PaintFingerprint` / `GeomFingerprint` / `AotEquivalence` | 已有，AOT 等价性就靠它 |

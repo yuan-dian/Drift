@@ -6,7 +6,7 @@ namespace Drift\Rendering;
 use Drift\Errors;
 
 /**
- * 渐变（19 op 的 `LINEAR` / `RADIAL`，Extended 层，P3 实现后端）。
+ * 渐变（`Paint` 的填充源，Extended 层）。
  *
  * **为什么渐变进 `Paint` 而不是新的 draw 方法**：design-v6 的 op 表里
  * `SOLID` / `LINEAR` / `RADIAL` / `NONE` 是**同一层的 paint source** ——

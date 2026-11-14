@@ -8,12 +8,11 @@ use Drift\Geometry\Rect;
 use Drift\Text\Paragraph;
 
 /**
- * 绘制目标。三个实现：`RecordingCanvas`（生产入口）/ `SkiaCanvas`（回放器）/ `RasterCanvas`（软光栅）。
+ * 绘制目标。真机由 `Frame` 把 `SkiaCanvas` 直接递给 `paintComposed()`；`RasterCanvas`
+ * 供测试与预览；`RecordingCanvas` 把命令录进 `DisplayList`，供 `LayerCache` 与离屏夹具回放。
  *
  * 坐标：父级绘制子盒前已 translate 到盒原点，`paint` 以 (0,0) 为盒左上角。
- *
- * 能力分三层：Core（所有后端必须）/ Extended（Raster 允许降级近似）/
- * Optional（仅 Skia 级）。`capabilities()` 返回位掩码，调用方**查一次**，不要每次绘制都查。
+ * 能力位见 `CanvasCapabilities::CAP_*`；`capabilities()` 返回掩码，调用方查一次即可。
  *
  * @api extension
  */
@@ -64,7 +63,7 @@ interface Canvas
     /**
      * 能力位掩码（`CanvasCapabilities::CAP_*`）。
      *
-     * `RecordingCanvas` 返回 `ALL_MASK`：它只录制，能不能画由回放时的画布裁决。
+     * 录制画布返回**回放端**的能力，默认取 `RasterCanvas::supportedCapabilities()`，不是全量。
      */
     public function capabilities(): int;
 
@@ -78,9 +77,7 @@ interface Canvas
      */
     public function drawLine(float $x1, float $y1, float $x2, float $y2, Paint $paint): void;
 
-    /**
-     * 矢量路径，Optional 层。几何在逻辑空间，吃画布的 `translate()`。
-     */
+    /** 矢量路径，Extended 层。几何在逻辑空间，吃画布的 `translate()`。 */
     public function drawPath(Path $path, Paint $paint): void;
 
     /**
@@ -89,9 +86,7 @@ interface Canvas
      */
     public function drawImage(ImageHandle $image, ?Rect $src, Rect $dst): void;
 
-    /**
-     * 阴影，Optional 层。它是原语：字段层转调这里，不要另造一层半透明矩形。
-     */
+    /** 阴影，Optional 层（当前仅 Skia 支持）。它是原语：字段层转调这里，不要另造半透明矩形。 */
     public function drawShadow(Shadow $shadow): void;
 
     /**
@@ -119,4 +114,7 @@ interface Canvas
      * `$sigma <= 0` 或矩形退化 ⇒ 空操作。Raster 后端近似为"不模糊"，`CAP_BACKDROP` 仍置位。
      */
     public function blurBackdrop(float $sigma, Rect $rect): void;
+
+    /** 帧末自证：所有状态栈必须归零，否则漏掉的 save/clip/layer 会把状态带到下一帧。 */
+    public function assertFrameBalanced(): void;
 }

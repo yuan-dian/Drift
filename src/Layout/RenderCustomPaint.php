@@ -10,7 +10,7 @@ use Drift\Rendering\Canvas;
 use Drift\Widget\CustomPainter;
 
 /**
- * 自绘盒（`CustomPaint` 的渲染侧，2026-10-20 P2）：19 op 逃生舱的**尺寸仲裁者**。
+ * 自绘盒（`CustomPaint` 的渲染侧）：自绘逃生舱的**尺寸仲裁者**。
  *
  * 布局只有一条职责：回答"这块自绘区多大"；绘画只有一句：把画布和尺寸递给画家。
  * 它刻意不做子节点、不做盒样式 —— 组合（`Card` / `Padding` / `SizedBox`）比

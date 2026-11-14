@@ -8,7 +8,7 @@ use Drift\Geometry\Rect;
 use Drift\Text\Paragraph;
 
 /**
- * 录制画布：把绘制命令写进 `DisplayList`，交给调用方的 surface 回放（§7.2 裁决 1）。
+ * 录制画布：把绘制命令写进 `DisplayList`，交给调用方的画布回放。
  *
  * 真机主树由 `Frame::paintComposed()` 直接画到 SkiaCanvas；开了重绘边界的盒
  * 才经 `LayerCache` 录放。离屏消费者（测试 / 预览）回放到 `RasterCanvas`。
@@ -17,31 +17,17 @@ use Drift\Text\Paragraph;
  */
 final class RecordingCanvas implements Canvas
 {
-    /**
-     * @param int $capabilities 录制层**对外声称**的能力位。
-     *
-     * ★ 默认 `ALL_MASK`（"全录，回放裁决"）；但**离屏回放**的消费者（测试夹具、
-     *   预览）必须传**回放后端**的能力 —— 否则会录下 Optional op（如 `drawShadow`），
-     *   回放时 `unsupportedOp` 响亮失败。2026-10-25 给阴影接第一个消费者时踩到：
-     *   `RecordingSurface` 全能力录 → `RasterCanvas` 回放 → `drawShadow` 崩。
-     * ★ 传 `RasterCanvas::supportedCapabilities()` 而不是再拼一份常量：tpc 对
-     *   "常量链"会生成坏代码（见 `CanvasCapabilities::ALL_MASK` 注释），一份定义更稳。
-     */
     private readonly DisplayList $list;
 
+    /** 对外声称的能力位；默认取回放端能力，见构造器 */
     private readonly int $capabilities;
 
     public function __construct(DisplayList $list, int $capabilities = -1)
     {
         $this->list = $list;
-        // ★ 默认 = **离屏回放端（Raster）的能力**，不是 `ALL_MASK`。
-        //   理由：不传 capabilities 的消费者（`create()` / 测试夹具 / 预览）回放到
-        //   `RasterCanvas`；`LayerCache` 传调用方画布的能力，真机主树直接画 SkiaCanvas。
-        //   默认 `ALL_MASK` 会让它录下 Optional op（`drawShadow`），回放时
-        //   `unsupportedOp` 响亮失败 —— 2026-10-25 给阴影接第一个消费者时，
-        //   smoke 的 Card / 浮层段全崩。
-        // ★ 默认值**不能**写成参数默认值 `RasterCanvas::supportedCapabilities()`：
-        //   外部类静态调用做默认参数在 AOT 下不安全。用 -1 哨兵，在**方法体内**解析。
+        // 默认 = 离屏回放端（Raster）的能力。全录会让 Optional op（drawShadow）
+        // 在回放时 unsupportedOp 响亮失败。
+        // ★ 不能把外部类静态调用写成参数默认值（AOT 下不安全），用 -1 哨兵在方法体内解析。
         $this->capabilities = $capabilities < 0 ? RasterCanvas::supportedCapabilities() : $capabilities;
     }
 
@@ -70,11 +56,7 @@ final class RecordingCanvas implements Canvas
         $this->list->record(DisplayList::OP_TRANSLATE, $dx, $dy);
     }
 
-    /**
-     * ★ 纯平移**降级成 `OP_TRANSLATE`**：三个后端对那条 op 都有"累加偏移"的
-     *   快速路，而 `OP_TRANSFORM` 会让回放端切到坐标模式。录制侧就分好流，
-     *   回放侧与后端都不用再判一次。
-     */
+    /** 纯平移降级成 OP_TRANSLATE：回放端有累加偏移快路，OP_TRANSFORM 会切坐标模式。 */
     public function transform(Matrix2D $matrix): void
     {
         if ($matrix->isTranslationOnly()) {
@@ -106,12 +88,7 @@ final class RecordingCanvas implements Canvas
         $this->list->record(DisplayList::OP_DRAW_PARAGRAPH, $paragraph, $paint, $x, $y);
     }
 
-    /**
-     * 录制侧的**声称能力**（构造时注入，默认全能力）。
-     *
-     * ★ 默认"全录，回放裁决"（失败消息带真后端名，见 `Canvas` 契约）；离屏回放
-     *   的消费者改成传回放后端的能力，让 Optional op 在**录制时**就降级。
-     */
+    /** 声称能力 = 构造时注入的回放端能力；不是全量。 */
     public function capabilities(): int
     {
         return $this->capabilities;
@@ -161,5 +138,11 @@ final class RecordingCanvas implements Canvas
     public function blurBackdrop(float $sigma, Rect $rect): void
     {
         $this->list->record(DisplayList::OP_BLUR_BACKDROP, $sigma, $rect);
+    }
+
+    /** 帧末自证交给录制层的 W8 配平断言。 */
+    public function assertFrameBalanced(): void
+    {
+        $this->list->assertBalanced();
     }
 }

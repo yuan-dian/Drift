@@ -1,26 +1,15 @@
 <?php
 
 /**
- * Drift 的 Skia 桥接 ABI（§7.2 裁决 1 / §7.3 的 M1 后端之二）。
+ * Drift 的 Skia 桥接 ABI。
  *
- * ★ 与 `drift_win32.stub.php` 同一条纪律：每个函数都是**空体**，TypePHP 读它拿签名
- *   并生成 C++ 声明头，实现住在 `cpp-src/drift_skia.cc`，函数名加 `php_` 前缀。
- *   **改一边必须同步另一边** —— 签名不一致时是链接期「静默失败」，不是编译错误。
- *   机器判据见 `tools/abi-check.php`：stub 是唯一事实源，cc 与 fakes 都是被校验方。
+ * ★ 每个函数都是空体：TypePHP 读它拿签名生成 C++ 声明头，实现在
+ *   `cpp-src/skia/drift_skia.cc`（加 `php_` 前缀）。改一边必须同步另一边 ——
+ *   签名不一致是链接期静默失败；判据见 `tools/abi-check.php`。
+ * ★ 句柄是不透明 int，`0` = 创建失败，后续调用对 `0` 静默忽略（这一帧没画，不是应用该崩）。
+ * ★ 坐标一律物理像素：逻辑→物理只在 PHP 侧 `Scale::quantizeRect()` 做一次，本桥不再量化。
  *
- * ★ **本桥只画，不建窗、不泵消息、不贴屏**。窗口与贴屏仍归 `drift_win32.cc`：
- *   `SkiaCanvas` 画完之后由 `drift_skia_read_pixels()` 取回 RGBA 字节，
- *   再交给**同一条** `drift_win_present()` 上屏。于是：
- *   ① 贴屏路径只有一处（§7.3 "present 是唯一跨边界的一次"）；
- *   ② `WM_PAINT` 重贴缓存的逻辑不用在 Skia 侧重写一遍（漏了就是"窗口被遮住再露出来白屏"）。
- *
- * ★ **画布句柄是不透明 int**（§5.1 纪律 1）：C++ 侧持一个句柄表，PHP 侧只负责传递。
- *   句柄 `0` = 无效（创建失败），所有后续调用对 `0` 一律**静默忽略** ——
- *   画布创建失败是"这一帧没画"，不是"应用该崩"（与光标形状同一档：装饰性失败）。
- *
- * ★ **坐标一律是物理像素**（§6.1）：逻辑→物理的换算只有一处，在 PHP 侧的
- *   `Scale::quantizeRect()`（`RasterCanvas` 同款）。本桥不接收 dpr，也不做量化 ——
- *   多一个换算点就多一个取整口径，两个后端就会出现"矩形和文字差半个像素"这类账。
+ * 本桥只画不贴屏：画完由 `drift_skia_read_pixels()` 取回 RGBA，交 `drift_win_present()` 上屏。
  */
 
 /**
@@ -38,40 +27,18 @@ function drift_skia_canvas_destroy(int $canvas): void {}
 /**
  * 压入裁剪矩形（与当前裁剪求交，**物理像素**）。与 `popClip()` 必须配对。
  *
- * ★ **`save` / `restore` / `translate` 不在本 ABI 里**，是有意的：
- *   变换与量化由 PHP 侧算（§6.1 "逻辑→物理只走 `Scale::quantizeRect()`，唯一量化点"），
- *   本桥收到的**永远是设备坐标**。若让 Skia 自己也持一份变换，两个后端就会出现
- *   "先加偏移再取整"与"先取整再加偏移"的差异 —— 那种半个像素的账最难查。
- *   `pushClip` / `popClip` 是例外：Skia 的裁剪**是 save 状态的一部分**，
- *   所以它们内部各做一次 `save()` / `restore()`（配对，栈深平衡）。
+ * ★ 内部各做一次 save()/restore()：Skia 的裁剪是 save 状态的一部分。
  */
 function drift_skia_push_clip(int $canvas, float $x, float $y, float $w, float $h): void {}
 
 function drift_skia_pop_clip(int $canvas): void {}
 
 /*
- * ════════════════ 变换（A1c，2026-10-29：上面的裁决被推翻）════════════════
- *
- * **原来写的是**「`save` / `restore` / `translate` 不在本 ABI 里，是有意的：
- * 变换与量化由 PHP 侧算」。那条对**平移**成立且继续成立（`SkiaCanvas::translate()`
- * 一行没动，仍是 PHP 累加偏移）。但它对**仿射**不成立，理由不是"图省事"：
- *
- *   `SkiaCanvas` 画的每一笔都是"PHP 算好设备坐标 → 桥按下发坐标画"。矩形、椭圆、
- *   线段、路径都能在 PHP 侧变换（自己乘矩阵即可），**唯独文字不行** ——
- *   `drift_skia_draw_paragraph` 只收 `(x, y)`，字号与字形位图在 C++ 侧决定。
- *   若坚持"变换全在 PHP"，`Transform` 就只能平移文字、不能旋转缩放文字，
- *   也就是"卡片能转、卡片上的字不转"。那不是实现取舍，那是功能不存在。
- *
- * 所以：**真变换下推到 Skia 的 CTM**，纯平移仍走 PHP 偏移快路。
- * 坐标口径随之分两段（`SkiaCanvas` 里写在 `$devMode` 上）：
- *   - `$devMode = false`（默认）：桥收到设备坐标，与原来逐字节一致；
- *   - `$devMode = true`：进模式时把已累加的偏移 `save + translate` 下推、归零，
- *     之后桥收到的是**逻辑坐标 × dpr**，由 CTM 完成剩下的变换。
- * 两段之间**不混用** —— 混用就是"先取整再变换"与"先变换再取整"的半个像素账，
- * 那条对平移的担心仍然有效，所以切换点只有一个（`enterDeviceMode()`）。
- *
- * `save` / `restore` 下推是**必须**的：CTM 是 Skia 保存栈的一部分，PHP 侧
- * `restore()` 不弹它 ⇒ 后续所有绘制都带着上一个盒的旋转。
+ * 变换分两段：纯平移走 PHP 侧 offset 快路，真仿射下推 Skia 的 CTM。
+ * 文字必须吃 CTM，否则"卡片能转、卡片上的字不转"。
+ * 切换点只有 `SkiaCanvas::enterDeviceMode()` 一处，两段不混用：混用就是
+ * "先取整再变换"与"先变换再取整"的半个像素账。
+ * save/restore 必须下推：CTM 是 Skia 保存栈的一部分，漏弹会让后续绘制带着上一个盒的旋转。
  */
 
 /** 压入 Skia 保存栈（与 `drift_skia_restore` 配对）。只给 `SkiaCanvas` 的变换模式用 */

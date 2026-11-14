@@ -32,20 +32,13 @@ final class Frame
     private const MAX_CONSTRAINT_ROUNDS = 4;
 
     /**
-     * 上一帧的约束，摊平存四个 float（不包成 ?BoxConstraints）：AOT 下可选对象字段
-     * 退化成 Variant，相等判断变慢且类型不确定，这里只做相等判断无需对象。
-     */
-    /**
-     * 上一帧 settle 时看到的结构版本号（管线 structureVersion）。
-     * 节点的增删/重排要求父级 adoptBoxes()，这件事不被盒换代覆盖（重排复用子、不换盒）。
-     */
-    /**
      * 上一帧 settle 时看到的标脏序号（管线 markedCount）。
      * 用只增不减的序号而非全局 pendingDirty()：后者会漂移（已卸载的脏 State 永远 >0），
      * 拿它判"要不要 settle"会退化成永不跳过。
      */
     private int $lastMarkedCount = -1;
 
+    /** 上一帧 settle 时看到的结构版本号；节点增删/重排要求父级 adoptBoxes()。 */
     private int $lastSettleStructure = -1;
 
     private bool $laidOut = false;
@@ -53,6 +46,10 @@ final class Frame
     /** 本帧所属的管线（构造参数，见构造器注）；量具与"像素脏了没"都读它 */
     private readonly Pipeline $pipeline;
 
+    /**
+     * 上一帧的约束，摊平存四个 float（不包成 ?BoxConstraints）：AOT 下可选对象字段
+     * 退化成 Variant，相等判断变慢且类型不确定，这里只做相等判断无需对象。
+     */
     private float $lastMinWidth = 0.0;
 
     private float $lastMaxWidth = 0.0;
@@ -325,6 +322,8 @@ final class Frame
                 $afterPaint($canvas);
             }
 
+            // 帧末自证：直接画路径没有 DisplayList 的 W8 兜底。
+            $canvas->assertFrameBalanced();
             $this->surface->endFrame();
             $painted = true;
         } catch (Throwable $e) {

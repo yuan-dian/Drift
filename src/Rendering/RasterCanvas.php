@@ -156,11 +156,24 @@ final class RasterCanvas implements Canvas
     {
         $frame = array_pop($this->stack);
         if ($frame === null) {
-            return; // 未配对由录制侧拦截，光栅侧静默忽略
+            return; // 多弹的 restore 静默忽略；漏弹由帧末自证兜底
         }
         $this->offsetX = $frame[0];
         $this->offsetY = $frame[1];
         $this->transform = $frame[2];
+    }
+
+    /** 帧末自证：变换 / 裁剪 / 层三条栈都必须归零。 */
+    public function assertFrameBalanced(): void
+    {
+        if ($this->stack !== [] || $this->clipStack !== [] || $this->layerAlpha !== []) {
+            Errors::report(sprintf(
+                'RasterCanvas 帧末栈未配平：变换 %d、裁剪 %d、层 %d —— 漏掉的 pop 会把状态带到下一帧',
+                count($this->stack),
+                count($this->clipStack),
+                count($this->layerAlpha),
+            ));
+        }
     }
 
     public function translate(float $dx, float $dy): void

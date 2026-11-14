@@ -7,7 +7,7 @@ use Drift\Errors;
 use Drift\Geometry\Rect;
 
 /**
- * 阴影（19 op 的 `SHADOW`，Optional 层，P4 实现后端）。
+ * 阴影（`SHADOW` 原语，当前仅 Skia 支持）。
  *
  * **为什么收成值对象而不是六个参数的方法签名**：① `drawShadow` 在
  * `DisplayList` 里要录制成**一个**操作数（扁平命令表的槽位是有限的）；

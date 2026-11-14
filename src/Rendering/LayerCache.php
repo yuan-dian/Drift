@@ -77,6 +77,7 @@ final class LayerCache
             return;
         }
         $list = $rec->displayList();
+        $list->assertBalanced();
         $this->list = $list;
         $this->recording = null;
         $this->epoch = $epoch;

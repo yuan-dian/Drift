@@ -6,30 +6,11 @@ namespace Drift\Rendering;
 use Drift\Errors;
 
 /**
- * 画布能力位掩码（D2：op 分级进 `Canvas` 契约，2026-10-20 采纳）。
+ * 画布能力位掩码：每个 `CAP_*` 表示"该后端能处理这个 op"，位清 0 ⇒ 响亮失败而非静默丢像素。
  *
- * **为什么是位掩码而不是 tier 常量**：CustomPaint 拿到画布时只需要一次
- * "这个 op 能不能画"的答案（构建期/首帧查一次，不在每像素、每次绘制时查）。
- * 位掩码让"按 op 断言"与"按层断言"（`CORE_MASK` / `EXTENDED_MASK` /
- * `OPTIONAL_MASK`）用同一份数据表达。
- *
- * **分层与位语义**（D2 表，跨平台确定性的契约形状）：
- *
- * | 层 | op | 所有后端 | RasterCanvas | SkiaCanvas |
- * |---|---|---|---|---|
- * | Core | ELLIPSE / LINE | **必须实现**（缺一个就是缺陷） | 必须（golden 用它） | 必须 |
- * | Extended | GRADIENT / DASH / CLIP_PATH / PATH / LAYER / BACKDROP | Skia 级必须 | **可降级近似**（渐变→分带、虚线→实线；路径硬边无抗锯齿且只做 Miter+Butt；路径裁剪 = 每行 x 区间掩码；层 = alpha 乘数栈；模糊背景 = 不模糊） | 必须 |
- * | Optional | IMAGE / SHADOW | 仅 Skia 级 | **报 E-OP-UNSUPPORTED** | 必须 |
- *
- * **位置位 = "该后端能处理这个 op"**（Extended 的近似也算处理 —— 输出质量
- * 档位见各后端方法注释与 `BACKPORT-19OP.md` §5 的 R2 取舍；金色基线只用
- * Raster 的 Core 层，P3/P4 的 op 用结构 golden）。
- * **位清 0 = 画布遇到该 op 会响亮失败**（不是静默丢像素 —— 那正是
- * "矩形全对、内容没了"这类最难查的 bug 形状）。
- *
- * ★ `RECT` / `ROUND_RECT` / `TEXT` / `SAVE` / `CLIP_RECT` 等**不在位掩码里**：
- *   它们是 7-op 时代的原语，所有后端（含将来的平台后端）无条件支持，没有
- *   "能力问题"。位掩码只覆盖 19 op 回植新增的面。
+ * 分层与各后端支持情况以 `RasterCanvas::supportedCapabilities()` /
+ * `SkiaCanvas::capabilities()` 的返回值为准；本类只定义位，不重复列矩阵。
+ * `RECT` / `TEXT` / `SAVE` / `CLIP_RECT` 等原语无条件支持，不在掩码里。
  *
  * @api
  */
@@ -43,66 +24,33 @@ final class CanvasCapabilities
     public const CAP_GRADIENT = 1 << 2;
     public const CAP_DASH = 1 << 3;
     public const CAP_CLIP_PATH = 1 << 4;
-    // ★ `CAP_PATH` 在 W1/L3-1 从 Optional 提到 Extended：Raster 补齐了扫描线
-    //   填充后，两边都有 ⇒ 按"能力等价"（`05` §2.2）它不再是可以缺的。
-    //   提档的语义是"缺了它控件画不出来"，不是"实现质量相同" —— Raster 这一份
-    //   是硬边、无抗锯齿、只做 Miter+Butt（`05` §3.3 / §3.4），差异写在 docblock。
+    // Extended：Raster 补齐扫描线填充后，两边都有，缺了它控件画不出来。
+    // Raster 是硬边、无抗锯齿、只做 Miter+Butt，与 Skia 的质量差写在各方法 docblock。
     public const CAP_PATH = 1 << 5;
-    // ★ `CAP_LAYER` 在 W1/L3-3 从 Optional 提到 Extended：Raster 的 alpha
-    //   乘数栈（`05` §5.6）能近似层语义 ⇒ "缺了它控件画不出来"这条不再成立
-    //   （`opacity` 动画是 Extended 级需求）。与真离屏的差异是"层内重叠子
-    //   更透"，smoke 夹具 #9 钉住。位值随之重排（无常量/字面量硬编码依赖，
-    //   全部经常量名引用）。
+    // Extended：Raster 的 alpha 乘数栈能近似层语义。与真离屏的差异是"层内重叠子更透"。
     public const CAP_LAYER = 1 << 6;
 
-    /**
-     * 模糊背景（`Canvas::blurBackdrop()`）—— Extended 层，Raster 近似为**不模糊**。
-     *
-     * ★ 为什么算 Extended 而不是 Optional：缺了它"控件画不出来"这条不成立
-     *   —— 毛玻璃面板退化成半透明面板，结构、透明度、层级全对，只少一层糊。
-     *   与 `CAP_LAYER`（alpha 乘数栈近似真离屏）同一档取舍：**近似也算处理**。
-     * ★ 与 `CAP_SHADOW` 的区别：阴影缺了会让卡片看起来"浮不起来"（结构性的
-     *   层次信息丢失），所以 Raster 响亮失败；模糊缺了只是"不够精致"。
-     */
+    /** 模糊背景：Raster 近似为不模糊。缺了它结构仍对，只少一层糊 ⇒ 算 Extended。 */
     public const CAP_BACKDROP = 1 << 9;
 
-    // ── Optional 层 ──
-    // ★ `CAP_IMAGE` 自 W8-1 起**两个后端都有**：Skia 走 `drawImageRect` 原生
-    //   codec，Raster 走内存 RGBA 的最近邻 blit（纯整数、可复现）。1:1 时两者
-    //   逐字节相同；缩放时 Skia 双线性、Raster 最近邻 —— 有意的差异，理由见
-    //   `RasterCanvas::drawImage` 的 docblock（Raster 是测试后端，要的是确定性）。
-    // ★ `CAP_SHADOW` 仍只有 Skia：Raster 响亮失败（E-OP-UNSUPPORTED）。
+    // ── 其余位 ──
+    // 两个后端都支持：Skia 走原生 codec，Raster 走内存 RGBA 最近邻 blit（确定性）。
     public const CAP_IMAGE = 1 << 7;
+    // 仅 Skia 支持：Raster 遇到 drawShadow 响亮失败（E-OP-UNSUPPORTED）。
     public const CAP_SHADOW = 1 << 8;
 
     /**
      * 全量位掩码。
      *
-     * ★ **平铺成叶子常量的一次 `|`，不引用中间 mask**：tpc 对"常量链"
-     *   （`ALL = CORE | EXT | OPT`，而 CORE 自己又是两个叶子的 `|`）会生成
-     *   引用未声明临时量的坏代码（2026-10-20 bench 构建 C2065 实证，
-     *   RecordingCanvas::capabilities 挂掉）。中间 mask 保留供人查阅与
-     *   `tierOf()` 用，但**不进任何编译进产物的表达式**。
+     * ★ 必须平铺成叶子常量的一次 `|`，不能引用中间 mask：tpc 对"常量链"会生成
+     *   引用未声明临时量的坏代码（C2065）。中间 mask 不进任何编译进产物的表达式。
      */
     public const ALL_MASK = self::CAP_ELLIPSE | self::CAP_LINE
         | self::CAP_GRADIENT | self::CAP_DASH | self::CAP_CLIP_PATH
         | self::CAP_PATH | self::CAP_IMAGE | self::CAP_SHADOW | self::CAP_LAYER
         | self::CAP_BACKDROP;
 
-    /**
-     * 后端遇到**自己没实现**的 op 时的失败消息（E-OP-UNSUPPORTED）。
-     *
-     * 措辞纪律：现象 + op 名 + 两条修法；不写内部编号、不写术语。
-     *
-     * @param string $op      方法名，如 `drawPath`
-     * @param string $backend 后端名，如 `RasterCanvas`
-     * @param string $tier    `Core` / `Extended` / `Optional`
-     */
-    /**
-     * 线段的 Fill 风格检查（两个后端同一口径）。
-     *
-     * 线段没有内外圈概念 ⇒ Fill 语义不存在；静默按 1px 画正是最难查的错。
-     */
+    /** 线段的 Fill 风格检查（两个后端同一口径）：Fill 语义不存在，静默按 1px 画最难查。 */
     public static function assertStrokePaint(Paint $paint, string $op): void
     {
         if (!$paint->isStroke()) {
@@ -114,6 +62,7 @@ final class CanvasCapabilities
         }
     }
 
+    /** 后端遇到未实现 op 时的失败消息（E-OP-UNSUPPORTED）：现象 + op 名 + 两条修法。 */
     public static function unsupportedMessage(string $op, string $backend, string $tier): string
     {
         return sprintf(

@@ -6,11 +6,10 @@ namespace Drift\Rendering;
 use Drift\Errors;
 
 /**
- * 图像句柄（19 op 的 `IMAGE`，Optional 层，P4 实现后端）。
+ * 图像句柄（内存 RGBA；两个后端都支持 `drawImage`）。
  *
- * 现在只承载**内存 RGBA**：`drawImage` 没落地之前，它存在的意义是
- * ① 让 `Canvas::drawImage()` 的签名有真实类型可依；② 给"图片从哪来"
- * （将来：SkImage / PNG 解码 / 图集）留出一个换实现不换调用点的位置。
+ * 只承载内存 RGBA，留出"图片从哪来"（SkImage / PNG 解码 / 图集）
+ * 换实现不换调用点的位置。
  *
  * ★ 像素格式与两个后端的 `toRgba()` 一致：行优先 RGBA，每像素 4 字节 ——
  *   跨进程/跨后端传递图像时不需要再来一次 swizzle。

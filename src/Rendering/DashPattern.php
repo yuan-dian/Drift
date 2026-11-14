@@ -6,7 +6,7 @@ namespace Drift\Rendering;
 use Drift\Errors;
 
 /**
- * 虚线图案（19 op 的 `DASH`，Extended 层，P3 实现后端）。
+ * 虚线图案（`Paint` 的描边属性，Extended 层）。
  *
  * 挂在 `Paint` 上（描边属性）：`on` / `off` 是"画多少 / 空多少"的重复周期，
  * `phase` 是周期内的起始偏移（让相邻段可以错开半个周期，接缝不齐时用）。

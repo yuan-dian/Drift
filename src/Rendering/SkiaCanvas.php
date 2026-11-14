@@ -145,7 +145,7 @@ final class SkiaCanvas implements Canvas
     {
         $frame = array_pop($this->stack);
         if ($frame === null) {
-            return;   // 未配对的 restore 由 W8 在录制侧拦截，光栅侧静默忽略即可
+            return;   // 多弹的 restore 静默忽略；漏弹由帧末自证兜底
         }
 
         // 先弹 Skia 的保存层再恢复 PHP 状态：`devMode` 是"CTM 里有没有东西"的
@@ -160,6 +160,17 @@ final class SkiaCanvas implements Canvas
         $this->offsetX = $frame[0];
         $this->offsetY = $frame[1];
         $this->devMode = $frame[2];
+    }
+
+    /** 帧末自证：变换栈必须归零。 */
+    public function assertFrameBalanced(): void
+    {
+        if ($this->stack !== []) {
+            Errors::report(sprintf(
+                'SkiaCanvas 帧末仍有 %d 层未配对的 save/restore —— 漏掉的 restore 会把状态带到下一帧',
+                count($this->stack),
+            ));
+        }
     }
 
     public function translate(float $dx, float $dy): void
