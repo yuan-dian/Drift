@@ -33,6 +33,8 @@ require __DIR__ . '/../../tools/autoload.php';
 // 桥的解释器替身（与 smoke / phpunit 同一份）。`material-alpha-no-frameless` 在
 // 走到桥之前就 Fatal 了，但加载它才能保证"崩在硬校验上"而不是"崩在缺函数上"。
 require_once __DIR__ . '/../../tools/fakes/win32.php';
+// Skia 帧末自证的反例要真构造 SkiaCanvas；替身必须在用例执行前加载。
+require_once __DIR__ . '/../../tools/fakes/skia.php';
 
 use Drift\App\Application;
 use Drift\App\Frame;
@@ -54,6 +56,8 @@ use Drift\Dev\Smoke\State\LoopPage;
 use Drift\Errors;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\EdgeInsets;
+use Drift\Geometry\Matrix2D;
+use Drift\Geometry\Rect;
 use Drift\Geometry\Size;
 use Drift\Input\AcceleratorTable;
 use Drift\Input\KeyChord;
@@ -68,6 +72,8 @@ use Drift\Logging\PatternFormatter;
 use Drift\Platform\Win32\Win32WindowHost;
 use Drift\Platform\WindowMaterial;
 use Drift\Rendering\Color;
+use Drift\Rendering\Path;
+use Drift\Rendering\SkiaCanvas;
 use Drift\Routing\RouteTable;
 use Drift\Text\DeterministicFontManager;
 use Drift\Text\DeterministicMetricsProvider;
@@ -591,6 +597,36 @@ $cases = [
     // 用的，不能顺手把 plusMonths 也降级成静默。
     'ymoverflow' => static function (): void {
         YearMonth::make(1, 1)->plusMonths(-1);
+    },
+
+    // Skia 单栈镜像：帧末自证必须看见所有未配对的状态，而不只是变换栈。
+    //   5 例分别对应 4 类压栈入口 + 变换锚点，任一入口漏维护镜像都会退回 exit 0。
+    'skia-unclosed-clip' => static function (): void {
+        $c = new SkiaCanvas(8, 8, Color::white());
+        $c->pushClip(new Rect(0.0, 0.0, 4.0, 4.0));
+        $c->assertFrameBalanced();
+    },
+    'skia-unclosed-layer' => static function (): void {
+        $c = new SkiaCanvas(8, 8, Color::white());
+        $c->pushLayer(0.5);
+        $c->assertFrameBalanced();
+    },
+    'skia-unclosed-clip-path' => static function (): void {
+        $c = new SkiaCanvas(8, 8, Color::white());
+        $c->pushClipPath(
+            Path::create()->moveTo(1.0, 1.0)->lineTo(5.0, 1.0)->lineTo(5.0, 5.0)->close()
+        );
+        $c->assertFrameBalanced();
+    },
+    'skia-unclosed-save' => static function (): void {
+        $c = new SkiaCanvas(8, 8, Color::white());
+        $c->save();
+        $c->assertFrameBalanced();
+    },
+    'skia-unclosed-transform' => static function (): void {
+        $c = new SkiaCanvas(8, 8, Color::white());
+        $c->transform(Matrix2D::rotation(30.0));
+        $c->assertFrameBalanced();
     },
 ];
 

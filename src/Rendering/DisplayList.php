@@ -152,16 +152,12 @@ final class DisplayList
         return $this->length * self::SLOTS * 16;
     }
 
-    /**
-     * W8：录制结束时命令栈深度必须为 0。
-     *
-     * 不配对 ⇒ 缓冲复用会把上一帧未闭合的栈带到下一帧（§7.2）。
-     */
+    /** 录制结束时命令栈深度必须为 0，否则缓冲复用会把未闭合状态带进下一次回放。 */
     public function assertBalanced(): void
     {
         if ($this->saveDepth !== 0 || $this->clipDepth !== 0 || $this->layerDepth !== 0) {
             Errors::report(sprintf(
-                'DisplayList 录制未闭合：save/restore 差 %d、pushClip/popClip 差 %d、pushLayer/popLayer 差 %d（W8）',
+                'DisplayList 录制未闭合：save/restore 差 %d、pushClip/popClip 差 %d、pushLayer/popLayer 差 %d',
                 $this->saveDepth,
                 $this->clipDepth,
                 $this->layerDepth

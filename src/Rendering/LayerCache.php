@@ -4,17 +4,10 @@ declare(strict_types=1);
 namespace Drift\Rendering;
 
 /**
- * 一个盒的**层缓存**（A 批② `RepaintBoundary`）：把它的绘制命令录成一份
- * `DisplayList`，没变就只重放，跳过整棵子树的 `paint()`。
+ * 一个盒的层缓存：把绘制命令录成一份 `DisplayList`，没变就只重放，跳过子树的 `paint()`。
  *
- * ★ 为什么住 `Rendering` 而不是塞进 `RenderBox`：录制画布是**具体画布实现**，
- *   `backend-branch` 规则禁止 `src/Layout` 提它的类型名（防软光栅 / Skia 双轨）。
- *   而 `Rendering` 是这些实现的家 ⇒ 缓冲逻辑放这里，布局层只留"要不要缓存"
- *   这一个决定，不必为一条 `new` 给整个 `RenderBox` 开文件级豁免。
- *
- * ★ 为什么不是双轨：`RecordingCanvas` 只录命令、不碰任何后端；录完的
- *   `DisplayList` 回放到**调用方给的那张 canvas**（真机是录制面、测试是软光栅）
- *   ⇒ 两边走的是同一份命令，不存在"某条路坏了而测试全绿"。
+ * 录制画布是具体画布实现，`src/Layout` 不能提它的类型名（防软光栅 / Skia 双轨）；
+ * 回放到调用方给的那张 canvas ⇒ 两边走同一份命令，不存在"某条路坏了而测试全绿"。
  *
  * @internal 唯一的消费者是 `RenderBox::paintOrReplay()`
  */

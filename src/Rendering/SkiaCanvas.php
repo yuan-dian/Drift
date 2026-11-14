@@ -58,10 +58,10 @@ final class SkiaCanvas implements Canvas
      */
     private bool $devMode = false;
 
-    /** 已下推的 Skia 保存层数（`restore()` 要按它退回） */
+    /** C++ 侧 SkCanvas 保存栈的镜像深度：变换锚点 / 裁剪 / 路径裁剪 / 合成层共用这一条栈 */
     private int $skiaDepth = 0;
 
-    /** @var list<array{float, float, bool, int}> 状态栈：[offsetX, offsetY, devMode, skiaDepth] */
+    /** @var list<array{float, float, bool, int}> 状态栈：[offsetX, offsetY, devMode, 压栈时的 skiaDepth] */
     private array $stack = [];
 
     private readonly Scale $scale;
@@ -150,6 +150,8 @@ final class SkiaCanvas implements Canvas
 
         // 先弹 Skia 的保存层再恢复 PHP 状态：`devMode` 是"CTM 里有没有东西"的
         //   镜像，顺序反了会出现"PHP 说没变换、Skia 还带着旋转"。
+        // skiaDepth 记的是 save 时的栈深 ⇒ 这个 while 就是 Skia 的 restoreToCount：
+        //   块内漏配对的裁剪 / 层在这里一并退回，不会漏给后续兄弟盒。
         if ($this->handle !== 0) {
             while ($this->skiaDepth > $frame[3]) {
                 drift_skia_restore($this->handle);
@@ -162,13 +164,16 @@ final class SkiaCanvas implements Canvas
         $this->devMode = $frame[2];
     }
 
-    /** 帧末自证：变换栈必须归零。 */
+    /** 帧末自证：变换栈归零、Skia 保存栈回到基线、设备模式退出。 */
     public function assertFrameBalanced(): void
     {
-        if ($this->stack !== []) {
+        if ($this->stack !== [] || $this->skiaDepth !== 0 || $this->devMode) {
             Errors::report(sprintf(
-                'SkiaCanvas 帧末仍有 %d 层未配对的 save/restore —— 漏掉的 restore 会把状态带到下一帧',
+                'SkiaCanvas 帧末状态未配平：变换栈 %d 层、Skia 保存栈 %d 层、设备模式 %s'
+                . ' —— 未闭合的裁剪 / 层 / 变换会污染同一帧后续兄弟盒',
                 count($this->stack),
+                $this->skiaDepth,
+                $this->devMode ? '未退出' : '已退出',
             ));
         }
     }
@@ -229,8 +234,8 @@ final class SkiaCanvas implements Canvas
 
     /**
      * 进入"设备坐标模式"：把已累加的逻辑偏移换成设备偏移下推，然后归零。
-     * 压一层 Skia save 作为撤销锚点：`restore()` 按 `skiaDepth` 退回。
-     * 不压的话"这个盒的旋转"会漏给后面所有兄弟，且录制侧查不出来。
+     * 压一层 Skia save 作为撤销锚点；`restore()` 按 `skiaDepth` 退回，
+     * 不压的话"这个盒的旋转"会漏给后面所有兄弟。
      */
     private function enterDeviceMode(): void
     {
@@ -264,6 +269,7 @@ final class SkiaCanvas implements Canvas
             $device->width,
             $device->height,
         );
+        ++$this->skiaDepth;
     }
 
     public function popClip(): void
@@ -271,7 +277,13 @@ final class SkiaCanvas implements Canvas
         if ($this->handle === 0) {
             return;
         }
+        // 空 Path 的 pushClipPath 不下推，pop 必须跟着不下推：C++ 是单栈，多弹一次
+        // 会把别人的保存层一起弹掉。
+        if ($this->skiaDepth <= 0) {
+            return;
+        }
         drift_skia_pop_clip($this->handle);
+        --$this->skiaDepth;
     }
 
     public function drawRect(Rect $rect, Paint $paint, float $radius = 0.0): void
@@ -364,7 +376,8 @@ final class SkiaCanvas implements Canvas
     }
 
 
-    /** Core 两 op + P3 渐变/虚线 + P4 Optional（PATH/IMAGE/SHADOW/LAYER）+ Extended CLIP_PATH。 */
+    /** Core 两 op + P3 渐变/虚线 + P4 Optional（PATH/IMAGE/SHADOW/LAYER）+ Extended CLIP_PATH。
+     *  平铺叶子常量，不复用 ALL_MASK：AOT 对常量链会生成引用未声明临时量的坏代码。 */
     public function capabilities(): int
     {
         return CanvasCapabilities::CAP_ELLIPSE | CanvasCapabilities::CAP_LINE
@@ -529,6 +542,7 @@ final class SkiaCanvas implements Canvas
             return;
         }
         drift_skia_push_layer($this->handle, $opacity);
+        ++$this->skiaDepth;
     }
 
     /** 弹出合成层（P4 · Optional） */
@@ -537,7 +551,11 @@ final class SkiaCanvas implements Canvas
         if ($this->handle === 0) {
             return;
         }
+        if ($this->skiaDepth <= 0) {
+            return;
+        }
         drift_skia_pop_layer($this->handle);
+        --$this->skiaDepth;
     }
 
     /**
@@ -582,6 +600,7 @@ final class SkiaCanvas implements Canvas
         }
         [$count, $verbs, $coords] = $this->packPath($path);
         drift_skia_push_clip_path($this->handle, $count, $verbs, $coords);
+        ++$this->skiaDepth;
     }
 
     /**

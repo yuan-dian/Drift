@@ -1717,7 +1717,7 @@ check('Rendering · Color 越界退出码 = 3', $code === 3, '实际 ' . $code .
 fresh($log);
 [$code, $output] = runCase(__FILE__, 'w8', null);
 check('Rendering · W8 未闭合退出码 = 3', $code === 3, '实际 ' . $code . ' / ' . $output);
-check('Rendering · W8 未闭合写了 Errors.log', str_contains(logText($log), 'W8'));
+check('Rendering · W8 未闭合写了 Errors.log', str_contains(logText($log), 'DisplayList 录制未闭合'));
 
 // ⑩+1 19 op 回植 · P0 契约（2026-10-20，D2 分层进 Canvas）
 fresh($log);
@@ -1968,7 +1968,7 @@ check(
     $code === 3,
     '实际 ' . $code . ' / ' . $output
 );
-check('Path · pushClipPath 不配对写了 Errors.log', str_contains(logText($log), 'W8'));
+check('Path · pushClipPath 不配对写了 Errors.log', str_contains(logText($log), 'DisplayList 录制未闭合'));
 
 // ⑧ pushLayer 单层 opacity：白底上画 50% 黑 ⇒ source-over 混合值
 //    alpha = round(255 × 0.5) = 128 ⇒ dst = round((0×128 + 255×127)/255) = 127
@@ -2008,7 +2008,7 @@ check(
     $code === 3,
     '实际 ' . $code . ' / ' . $output
 );
-check('Path · pushLayer 不配对写了 Errors.log', str_contains(logText($log), 'W8'));
+check('Path · pushLayer 不配对写了 Errors.log', str_contains(logText($log), 'DisplayList 录制未闭合'));
 
 // ⑩+3 19 op 回植 · P3 渐变/虚线（RasterCanvas，确定性后端；Skia 侧在 Skia 桥落地后补断言）
 $fb = new RasterCanvas(40, 40, Color::white(), Scale::of(1.0));

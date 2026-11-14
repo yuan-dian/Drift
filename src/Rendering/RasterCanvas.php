@@ -168,7 +168,7 @@ final class RasterCanvas implements Canvas
     {
         if ($this->stack !== [] || $this->clipStack !== [] || $this->layerAlpha !== []) {
             Errors::report(sprintf(
-                'RasterCanvas 帧末栈未配平：变换 %d、裁剪 %d、层 %d —— 漏掉的 pop 会把状态带到下一帧',
+                'RasterCanvas 帧末栈未配平：变换 %d、裁剪 %d、层 %d —— 未闭合的状态会污染同一帧后续兄弟盒',
                 count($this->stack),
                 count($this->clipStack),
                 count($this->layerAlpha),
@@ -334,6 +334,7 @@ final class RasterCanvas implements Canvas
      *
      * 平铺叶子常量一次 `|`：tpc 对常量链会生成坏代码。
      */
+    /** 平铺叶子常量，不复用 ALL_MASK：AOT 对常量链会生成引用未声明临时量的坏代码。 */
     public static function supportedCapabilities(): int
     {
         return CanvasCapabilities::CAP_ELLIPSE | CanvasCapabilities::CAP_LINE

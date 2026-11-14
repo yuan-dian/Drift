@@ -19,10 +19,10 @@ use Drift\Text\Paragraph;
 interface Canvas
 {
     /**
-     * 压入偏移状态。与 `restore()` 配对（配平由 W8 断言）。
+     * 压入状态作用域，与 `restore()` 配对；帧末自证检查未配对的压栈。
      *
-     * 变换栈与裁剪栈是**两条独立的栈**：`restore()` 不还原裁剪，裁剪只归
-     * `pushClip()` / `popClip()` 管。混成一栈会让同一份命令流在两个后端出不同像素。
+     * 块内的 `pushClip` / `pushLayer` 一律显式配 `popClip` / `popLayer`：
+     * 两个后端回收未闭合状态的时机不同，显式配对才能同时通过两者的帧末自证。
      */
     public function save(): void;
 
@@ -37,7 +37,8 @@ interface Canvas
      * 纯平移的矩阵走 `translate()`（各实现短路累加 PHP 侧偏移），只有真变换才切换
      * 坐标模式 —— 这是不破坏既有像素基线的前提。
      *
-     * 必须与 `save()` / `restore()` 配对；W8 只查栈深，查不出"忘了撤销"。
+     * 必须与 `save()` / `restore()` 配对：真变换会切进设备坐标模式，
+     * 只有配对的 `restore()` 能把 CTM 退回。
      */
     public function transform(Matrix2D $matrix): void;
 
@@ -92,7 +93,7 @@ interface Canvas
     /**
      * 压入合成层（`opacity` 0..1），与 `popLayer()` 配对。当前 offset / clip 照常生效。
      *
-     * 层深计入 `assertBalanced()`：不配对的 `pushLayer` 会让后续绘制整体变透而无人知晓。
+     * 未配对的层会让后续绘制整体变透且无人知晓；帧末自证会检查这个深度。
      */
     public function pushLayer(float $opacity): void;
 
@@ -115,6 +116,6 @@ interface Canvas
      */
     public function blurBackdrop(float $sigma, Rect $rect): void;
 
-    /** 帧末自证：所有状态栈必须归零，否则漏掉的 save/clip/layer 会把状态带到下一帧。 */
+    /** 帧末自证：未配对的状态压栈必须归零，否则会污染同一帧后续兄弟盒的绘制。 */
     public function assertFrameBalanced(): void;
 }

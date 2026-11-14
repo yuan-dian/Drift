@@ -50,6 +50,36 @@ if (!function_exists('drift_skia_canvas_create')) {
         $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][] = ['pop_clip'];
     }
 
+    // 变换 / 保存栈：真桥只存在于 AOT，但 `restore()` 的差额退回与
+    // `enterDeviceMode()` 的锚点层要在解释器面可断言，所以这里也记调用。
+    // 签名逐字对齐 `drift_skia.stub.php`，由 abi-check 兜住。
+    function drift_skia_save(int $canvas): void
+    {
+        $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][] = ['save'];
+    }
+
+    function drift_skia_restore(int $canvas): void
+    {
+        $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][] = ['restore'];
+    }
+
+    function drift_skia_translate(int $canvas, float $dx, float $dy): void
+    {
+        $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][] = ['translate', $dx, $dy];
+    }
+
+    function drift_skia_concat(
+        int $canvas,
+        float $a,
+        float $b,
+        float $c,
+        float $d,
+        float $tx,
+        float $ty,
+    ): void {
+        $GLOBALS['DRIFT_SMOKE_SKIA_CALLS'][] = ['concat', $a, $b, $c, $d, $tx, $ty];
+    }
+
     function drift_skia_draw_rect(
         int $canvas,
         float $x,

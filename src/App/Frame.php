@@ -322,7 +322,7 @@ final class Frame
                 $afterPaint($canvas);
             }
 
-            // 帧末自证：直接画路径没有 DisplayList 的 W8 兜底。
+            // 帧末自证：直接画路径没有录制侧的深度计数兜底。
             $canvas->assertFrameBalanced();
             $this->surface->endFrame();
             $painted = true;

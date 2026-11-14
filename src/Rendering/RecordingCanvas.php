@@ -140,7 +140,7 @@ final class RecordingCanvas implements Canvas
         $this->list->record(DisplayList::OP_BLUR_BACKDROP, $sigma, $rect);
     }
 
-    /** 帧末自证交给录制层的 W8 配平断言。 */
+    /** 帧末自证交给录制层的深度配平断言。 */
     public function assertFrameBalanced(): void
     {
         $this->list->assertBalanced();
