@@ -26,8 +26,8 @@ namespace Drift\Widget;
  *
  *   把行为包成闭包再让框架 `($handler)($element, $host)` 调用，等于用闭包模拟
  *   虚方法：类型系统不知道"这是激活"，接口文档无处安放，实现类也不能只覆写
- *   其中一段。而本仓已有四个能力接口（`EditableText` / `Scrollable` / `Job` /
- *   `NamedJob`），`Activatable` 是第五个，**同构**。
+ *   其中一段。本仓其它能力接口（`EditableText` / `Scrollable` / `Job` /
+ *   `NamedJob`）都是同一形状，**同构**。
  *
  * ★ 边界：本接口只管"激活"这一个动作。**不开** `longPressable()` / `focusable()`
  *   之类 —— 没有第二种激活时机，加了就是"未被消费的分支 = 未实现"。

@@ -13,8 +13,8 @@ use Drift\Input\FocusNode;
  *   Widget 挂载后封存（`seal()`），把可变焦点塞进来会立刻撞纪律。
  * ★ `focusNode()` 的 `FocusNode` 是**不可变值对象**（`withOrder()` / `skipped()` /
  *   `withAutoFocus()` 都返回新实例），与 `Modifier` 同一套"换新不就地改"。
- * ★ 这里**没有**"声明独占某个键"的入口（`claimKeys()` 2026-11-03 已删）：
- *   键归谁由路由顺序回答（焦点链先、加速键后），见 `App\InputRouter::dispatch()`。
+ * ★ 这里**没有**"声明独占某个键"的入口：键归谁由路由顺序回答
+ *   （焦点链先、加速键后），见 `App\InputRouter::dispatch()`。
  *
  * @internal 与 `Widget` 同生共死
  */

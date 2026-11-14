@@ -28,24 +28,13 @@ use Drift\Widget\Widget;
 use Drift\Widget\Wrap;
 
 /**
- * 页 4「表单 Form」—— **LayUI 文档页（layui.dev/docs/2/form/）的结构复刻**。
+ * 页 4「表单 Form」—— LayUI 文档页（layui.dev/docs/2/form/）的结构复刻。
  *
- * 原版结构：H1 主标题 + 引用导语 → H2「示例」→ H3 小节（综合演示 / 方框风格 /
- * 登录表单）→ 每个示例是**圆角白底卡片**（浅边框 + 浅灰预览底 + 右上 `</>` 源码
- * 切换）→ 表单元素是**水平排布**（标签固定宽 ~90px 右对齐，输入框撑满）。
- *
- * ★★★ **两处如实暴露的缺口**（示例台的价值就在这 —— 不假动作）：
- *   ① **通用卡片面板缺席**：盒样式（background/border/radius）只有
- *      `BoxWidget` 子类有，而它的子类今天只有 Button / AppBar / PopupPanel
- *      ⇒ LayUI 的圆角卡片**当前做不出通用容器**（要嘛把每块内容塞进 Button，
- *      要嘛新增控件）。本页用 AppBar 横条做分节标题来近似。
- *   ② **水平表单标签缺席**：`TextField` 的 label 在**字段上方**（caption），
- *      不是 LayUI 的左侧右对齐标签。定尺寸原语 `SizedBox` 已于 2026-10-17 补齐
- *      （见页末②与页面文案），固定宽标签现在做得出；本页仍用
- *      `Row(cross:End)` + `Text(caption)` 是历史写法，未改。
- *
- * ★ 预览/代码切换（LayUI 的 `</>`）**做得到**：`Offstage`（保留状态、不画）
- *   + `setState` 切换可见性 —— 本页演示这一条。
+ * ★ 曾记的两处缺口今天都已闭合：通用圆角容器就是 `Card`（或 `SizedBox` 加
+ *   `->background()` / `->radius()`；修饰挂在根 `Widget` 上，不是某个盒样式基类
+ *   的特权）；固定宽标签在 `SizedBox` 到位后也做得出，本页 `field()` 仍是
+ *   `Row(cross:End)` 的历史写法。仍缺的只有 label 位置，见页末对照。
+ * ★ 预览/代码切换靠 `Offstage` + `setState`：保留状态、不画。
  */
 final class FormPage extends StatefulWidget
 {

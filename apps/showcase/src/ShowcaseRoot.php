@@ -77,10 +77,10 @@ use App\Showcase\Pages\PickerPage;
  * ))
  * ```
  *
- * ★ **左侧列没有 SizedBox**（框架暂无此控件）：宽度由导航按钮的自然宽度决定
+ * ★ **左侧列不给固定宽度**：宽度由导航按钮的自然宽度决定
  *   —— 这正是 Flex 布局的"内容撑开"路径，不是缺陷规避。
- * ★ **导航底色走按钮自己的盒样式**（`BoxWidget::background`）而不是给 Column
- *   上底色（`Flex extends RenderBoxWidget`，无盒样式）—— 渲染能力边界的一次直观演示。
+ * ★ **导航底色走按钮自己的 `->background()`** 而不是给 Column 上底色：修饰挂在
+ *   根 `Widget` 上，`Element::syncBox()` 交给各自的盒；给 Column 上色会连留白一起染掉。
  * ★ 页切换是**纯 UI 态**（§12.3）：住 `ShowcaseState::$selected`，不注册命令。
  */
 final class ShowcaseRoot extends StatefulWidget
@@ -285,8 +285,8 @@ final class ShowcaseState extends State
     /**
      * 外壳 = **浅灰背景板 + 白色导航面板 + 内容槽**（LayUI admin 的层次）。
      *
-     * ★ 三个 `Card` 各有分工：最外层只当"背景板"（`->background()` 一给，
-     *   `BoxWidget` 的默认边框/圆角就整套让位 —— §15.7 纪律 3），中间那层是
+     * ★ 三个 `Card` 各有分工：最外层只当"背景板"（用户一旦给了盒样式，
+     *   `defaultBoxStyle()` 的默认边框/圆角就整套让位），中间那层是
      *   **真正的卡片**（白底 + 1px 边框 + 圆角 2 + 内边距），内容页里每个 demo
      *   再各自一张卡片。
      * ★ `$canvas` 由 `build()` 从主题取（`ColorToken::Pane`）而不是硬编码

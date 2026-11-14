@@ -9,7 +9,7 @@ use Drift\Widget\Drag\DragTarget;
 use Drift\Widget\Menu\ContextMenu;
 
 /**
- * `Widget` 的**交互面**：11 个回调槽 + 12 个对应的读侧。
+ * `Widget` 的**交互面**：回调槽与一一对应的读侧。
  *
  * 每个槽都是 `xxx(Closure)` + 一个 `xxxValue()`：写侧只在构建期调用，读侧给
  * 命中链 / 帧管线问"声明了什么"。读侧标 `@internal`：应用不该读自己的槽。

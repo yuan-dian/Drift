@@ -13,7 +13,7 @@ use Drift\Rendering\Gradient;
 use Drift\Rendering\Modifier;
 
 /**
- * `Widget` 的修饰面：27 个 fluent setter，全部写同一个 `$this->mods`。
+ * `Widget` 的修饰面：fluent setter 全部写同一个 `$this->mods`。
  *
  * 子类通常不该覆写这些方法（它们是"给任意控件贴一层"的统一入口）；
  * 字段 `$mods` 与读侧 `mods()` 留在 `Widget`（`Element::syncBox()` 只认那一个引用）。

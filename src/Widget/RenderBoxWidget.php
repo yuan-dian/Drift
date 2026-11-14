@@ -7,7 +7,7 @@ use Drift\Layout\RenderBox;
 use Drift\Rendering\BoxStyle;
 
 /**
- * 带渲染盒的控件（§13.2 的 Widget → RenderBox 构造契约）。
+ * 带渲染盒的控件（Widget → RenderBox 构造契约）。
  *
  * ★ **Widget 自己不持盒**：盒在 Element 挂载时由本方法造，配置更新时**重新造一个
  *   换掉**。于是"Widget 不可变 ⇒ 参数只会整体换新"这条性质保证了不存在字段级半同步
@@ -22,7 +22,7 @@ use Drift\Rendering\BoxStyle;
 abstract class RenderBoxWidget extends Widget
 {
     /**
-     * 造本控件的渲染盒。**只读 Widget 自己的字段**（§13.2：字段对齐由 lint 比对）。
+     * 造本控件的渲染盒。**只读 Widget 自己的字段**（字段对齐由 lint 比对）。
      *
      * 收 `BuildContext` 是因为有些控件的盒要**环境**才有形状（`Text` 要把语义角色
      * 经 `ThemeData` 解析成 `TextStyle`，还要拿到注入的度量）。不需要的控件忽略它 ——
@@ -79,27 +79,13 @@ abstract class RenderBoxWidget extends Widget
     /**
      * 用户**没声明任何盒样式**时用的默认样式（主题派生）；`null` = 没有默认。
      *
-     * ## 为什么需要这条钩子（2026-10-31）
-     *
-     * "默认样式 + 用户可覆盖"是**主题化控件**的通用形状，但在它之前只有一条实现方式：
-     * 控件在 `createRenderObject()` 里自己把默认值与 `$mods->boxStyle()` 合并
-     * （`Button` / `PopupPanel` 的 `resolveBoxStyle()`）。那条路要求控件**自绘 chrome**
-     * （`paintsBoxChrome() === true`），因为合并结果只能交给 `Render*` 自己画。
-     *
-     * 不画 chrome、只想要"普通盒 + 默认样式"的控件（`Card`）因此**没有地方**放默认值
-     * —— 它只能自己存一份 `BoxStyle` 并在 `build()` 里逐字段翻给孩子。`Card` 为此
-     * 背了 7 个覆写方法、3 个字段和 5 个 `if` 分支，且 `Modifier` 以后新增视觉维
-     * 时**不会**自动流过去（漏了不报错，只是那个维度在卡片上静默不生效）。
-     *
-     * 收到这条钩子上之后，默认样式与用户样式在**同一个地方**（`Element::syncBox()`）
-     * 合成，控件不必自持任何样式字段。
-     *
-     * ★ **只对不自绘 chrome 的控件生效**（`paintsBoxChrome() === true` 的控件自己
-     *   合并用户样式，再叠一层默认会打架）。`syncBox()` 里已按这个条件分流。
-     * ★ 判据是 `BoxStyle::isBlank()`（**用户一个字段都没设过**），不是 `isNone()`：
+     * ★ 默认与用户样式在 `Element::syncBox()` 同一处合成，控件不必自持样式字段；
+     *   只靠 `createRenderObject()` 自己合并时，`Modifier` 新增视觉维不会自动流过去
+     *   （漏了不报错，只是那个维度静默不生效）。
+     * ★ 只对不自绘 chrome 的控件生效；`paintsBoxChrome() === true` 的控件自己合并，
+     *   再叠一层默认会打架。
+     * ★ 判据是 `BoxStyle::isBlank()`（用户一个字段都没设过），不是 `isNone()`：
      *   `->radius(4)` 也算设过 ⇒ 整套默认让位。见 `Modifier::withBoxStyleIfBlank()`。
-     * ★ 拿得到 `BuildContext` 是关键：主题 token 只能从这里读，而 Widget 的字段
-     *   在构造期没有 context。
      *
      * @internal 只给 Element 用；应用不该调
      */

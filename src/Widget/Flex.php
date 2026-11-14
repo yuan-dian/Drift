@@ -16,8 +16,8 @@ use Drift\Layout\RenderFlex;
  *   （GUI 仓的教训）。也不用 trait 共享 —— §15.7 纪律：trait 混入多个类在 AOT 下
  *   展开成什么没验过，继承已验。
  *
- * ★ **结构节点，不是 `BoxWidget`**：它有布局职责但没有盒样式 ⇒ 继承裸 `Widget`，
- *   拿不到 `->background()`（§15.7 纪律 1）。
+ * ★ **结构节点**：布局在 `RenderFlex`，修饰走 `Widget` 基类字段，两者由
+ *   `Element::syncBox()` 汇到同一个盒。
  *
  * @api
  */

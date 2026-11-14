@@ -36,7 +36,7 @@ use Drift\Widget\Wrap;
  *   · `Column/Row` 的 `spacing` / `cross` 交叉轴对齐
  *   · `Expanded` 占剩余（flex 分母 2026-10-17 已修，见 §24.2 #15）
  *   · `Center` 居中、`Spacer` 吃掉剩余、`Padding` 内边距
- *   · 盒样式修饰符（`BoxWidget::background/border/radius`）
+ *   · 盒样式修饰符（所有 Widget 通用的 `->background()` / `->border()` / `->radius()`）
  *
  * ★ **每个 demo 一个 `Card`**（2026-10-17）：页面背景是浅灰、内容块是白卡片 ——
  *   "分组"是质感的第一来源。此前所有内容直接铺在纯白页面上，块与块之间只有

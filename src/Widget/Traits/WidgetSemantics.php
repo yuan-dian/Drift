@@ -19,7 +19,7 @@ use Drift\Input\SemanticsRole;
 trait WidgetSemantics
 {
     /**
-     * 声明"这个控件是什么"（§9 无障碍 / M5）—— 角色 + 人读信息，供
+     * 声明"这个控件是什么"—— 角色 + 人读信息，供
      * `SemanticsBuilder` 建语义树（检查器 / 自动化 / 将来的朗读消费）。
      *
      * ```php

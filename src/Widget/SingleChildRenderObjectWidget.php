@@ -33,7 +33,7 @@ namespace Drift\Widget;
  * 但单子控件的子**本来就是不可变的**（`Padding` / `Center` / `SizedBox` 一直是
  * `readonly` 构造器注入）。这里跟随本仓既有事实，不是跟随 Flutter。
  *
- * ★ **子不可空**：11 处 `->child()` 调用方全部直接当非空用
+ * ★ **子不可空**：`->child()` 的调用方全部直接当非空用
  *   （`[$widget->child()]`、`->createElement()`）。可空子的控件（`Spacer` 之类）
  *   继续直接继承 `RenderBoxWidget` —— 抽象只覆盖同形的多数，不追求 100%。
  *
