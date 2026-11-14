@@ -27,13 +27,13 @@ use Drift\Rendering\Paint;
 final class ScrollBarGeometry
 {
     /** 条粗（逻辑像素） */
-    public const THICKNESS = 6.0;
+    public const float THICKNESS = 6.0;
 
     /** 条离视口边缘的空隙 */
-    public const MARGIN = 3.0;
+    public const float MARGIN = 3.0;
 
     /** thumb 最短长度（内容再长也留这么一截，否则细到抓不住） */
-    public const MIN_THUMB = 24.0;
+    public const float MIN_THUMB = 24.0;
 
     /**
      * thumb 长度：视口占比 × 轨道。

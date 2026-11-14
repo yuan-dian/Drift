@@ -55,7 +55,7 @@ final class Menu extends Button
      *   "贴着内容还是滚动"由 `RenderPopupPanel` 按**实测自然高**决定（2026-10-24），
      *   所以短菜单不会因为上限设得大就凭空变长，也不会因为设得小就无故滚。
      */
-    public const PANEL_MAX_HEIGHT = 320.0;
+    public const float PANEL_MAX_HEIGHT = 320.0;
 
     /** @var null|callable(self, ?\Drift\Widget\Element): void */
     private $openHandler = null;

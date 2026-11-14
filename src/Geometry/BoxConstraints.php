@@ -17,7 +17,7 @@ use Drift\Errors;
  */
 final readonly class BoxConstraints
 {
-    public const INFINITY = INF;
+    public const float INFINITY = INF;
 
     public function __construct(
         public float $minWidth = 0.0,

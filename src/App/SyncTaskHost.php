@@ -46,7 +46,7 @@ final class SyncTaskHost implements TaskHost
      * ★ 阈值 50ms 的来历：一帧 16.7ms，50ms ≈ 连掉三帧 —— 低于这个量的同步任务
      *   用户看不出来，报它只是噪音。
      */
-    private const SLOW_MS = 50;
+    private const int SLOW_MS = 50;
 
     /**
      * 已完成、等 UI 线程取走的结果。

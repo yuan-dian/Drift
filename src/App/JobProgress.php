@@ -65,7 +65,7 @@ final class JobProgress
      * ★ 为什么 1%：进度条的可见精度就是这个量级（`Progress` 宽 300px ⇒ 1% = 3px）。
      *   更细的粒度不会让用户看到更多，只会让管道更忙。
      */
-    public const MIN_STEP = 0.01;
+    public const float MIN_STEP = 0.01;
 
     /** 当前 sink（`null` = 没人在听） */
     private static ?\Closure $sink = null;

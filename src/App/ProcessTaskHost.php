@@ -18,7 +18,7 @@ use Drift\Errors;
 final class ProcessTaskHost implements TaskHost
 {
     /** 一次最多读多少字节（8K ≈ 几十条回复，够一帧消化） */
-    private const READ_CHUNK = 8192;
+    private const int READ_CHUNK = 8192;
 
     /**
      * 在跑的 worker 池。
@@ -62,7 +62,7 @@ final class ProcessTaskHost implements TaskHost
     private int $lastReapUs = 0;
 
     /** 空闲期 reap 的最小间隔（500ms ≈ 33 帧） */
-    private const REAP_IDLE_INTERVAL_US = 500_000;
+    private const int REAP_IDLE_INTERVAL_US = 500_000;
 
     /** worker 索引发号器（只增不减，见 $workers 的注释） */
     private int $workerSeq = 0;

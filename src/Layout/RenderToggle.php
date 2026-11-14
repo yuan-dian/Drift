@@ -34,12 +34,12 @@ use Drift\Text\TextStyle;
  */
 final class RenderToggle extends RenderProxyBox
 {
-    public const KIND_CHECKBOX = 1;
-    public const KIND_RADIO = 2;
-    public const KIND_SWITCH = 3;
+    public const int KIND_CHECKBOX = 1;
+    public const int KIND_RADIO = 2;
+    public const int KIND_SWITCH = 3;
 
     /** 开关轨道宽 / 高的比例（18 高 ⇒ 34.2 宽，接近 1.9:1 的常见比例） */
-    private const SWITCH_RATIO = 1.9;
+    private const float SWITCH_RATIO = 1.9;
 
     public function __construct(
         private readonly int $kind,

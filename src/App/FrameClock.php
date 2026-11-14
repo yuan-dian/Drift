@@ -20,17 +20,17 @@ final class FrameClock
      *   请求 16 会落到 31ms（32fps）。等待层换成高精度可等待定时器后不再有这一档，
      *   可以按真实帧率要时间。
      */
-    public const FRAME_MS = 1000.0 / 60.0;
+    public const float FRAME_MS = 1000.0 / 60.0;
 
     /** 明显卡顿阈值：约 4 帧。低于它的间隔可能只是漏了一个 tick（量化噪声）。 */
-    public const STALL_MS = 60.0;
+    public const float STALL_MS = 60.0;
 
     /**
      * 冻结阈值：超过它就不是"抖了一下"，是"界面真的停了"。
      * 这一档走 `RECOVERABLE`（dev 弹框中止，release 只写日志），因为是应用有同步调用的确凿证据；
      * 60–500ms 那档只记 `DIAGNOSTIC`（进环形缓冲，随任何一次中止一起落盘 —— 事后取证）。
      */
-    public const FREEZE_MS = 500.0;
+    public const float FREEZE_MS = 500.0;
 
     /** 上一帧的时间戳（`null` = 还没跑过帧） */
     private ?float $lastTs = null;

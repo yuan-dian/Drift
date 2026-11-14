@@ -40,7 +40,7 @@ use function abs;
 final class TapTracker
 {
     /** 连击窗口（毫秒）。500 与 Windows 的 `GetDoubleClickTime()` 默认值一致 */
-    public const DEFAULT_INTERVAL_MS = 500.0;
+    public const float DEFAULT_INTERVAL_MS = 500.0;
 
     /**
      * 连击允许的位移（**逻辑**像素，单轴）。
@@ -48,7 +48,7 @@ final class TapTracker
      * 4 与 Windows 的 `SM_CXDOUBLECLK` 默认值一致（那是**物理**像素；逻辑像素在
      * 高 DPI 下更宽松一点点 —— 对"手抖"这个真实问题来说，宽松是对的）。
      */
-    public const DEFAULT_SLOP_PX = 4.0;
+    public const float DEFAULT_SLOP_PX = 4.0;
 
     private ?float $lastMs = null;
 

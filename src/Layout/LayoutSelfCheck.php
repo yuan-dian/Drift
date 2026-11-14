@@ -22,12 +22,12 @@ final class LayoutSelfCheck
     public static bool $on = false;
 
     /** 采样间隔（帧） */
-    private const SAMPLE_EVERY = 16;
+    private const int SAMPLE_EVERY = 16;
 
     /**
      * 报告文件（getcwd() 相对）。
      */
-    private const REPORT = 'build/layout.check.out';
+    private const string REPORT = 'build/layout.check.out';
 
     /** 已执行比对次数 */
     public static int $checks = 0;

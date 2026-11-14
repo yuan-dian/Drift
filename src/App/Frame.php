@@ -29,7 +29,7 @@ final class Frame
      * 帧内约束反馈的轮数上限。正常 2 轮（首轮不知道约束 / 约束刚变），
      * 4 轮是防御上限：超了就是 builder 在"按约束返回又改变约束"地打转。
      */
-    private const MAX_CONSTRAINT_ROUNDS = 4;
+    private const int MAX_CONSTRAINT_ROUNDS = 4;
 
     /**
      * 上一帧 settle 时看到的标脏序号（管线 markedCount）。

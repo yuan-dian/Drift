@@ -44,10 +44,10 @@ final class Snackbar
      *
      * ★ 4000 是 Material 的默认值，也是"够读完两行中文"的量级。
      */
-    public const DEFAULT_DURATION_MS = 4000;
+    public const int DEFAULT_DURATION_MS = 4000;
 
     /** 面板宽度上限（逻辑像素）：一行通知不该横穿整个窗口 */
-    public const MAX_WIDTH = 480.0;
+    public const float MAX_WIDTH = 480.0;
 
     /**
      * 面板**内容**最小宽（逻辑像素）。
@@ -63,10 +63,10 @@ final class Snackbar
      *   ★ 长文案不受影响：`max(220, 全文宽)` ⇒ 面板被 `MAX_WIDTH` 夹住 ⇒
      *     正文换行、按钮仍有位置。
      */
-    public const MIN_WIDTH = 220.0;
+    public const float MIN_WIDTH = 220.0;
 
     /** 离客户区底边的留白（逻辑像素） */
-    public const MARGIN = 24.0;
+    public const float MARGIN = 24.0;
 
     private string $message;
 

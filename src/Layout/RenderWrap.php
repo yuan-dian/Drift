@@ -73,7 +73,7 @@ final class RenderWrap extends RenderBox implements ChildContainer
      * ★ 必须给：浮点累加下"刚好等于可用宽"会算成 `90.000000000000014 > 90`
      *   ⇒ 本该放得下的子被挤到下一行。**不报错**，只是布局莫名其妙多一行。
      */
-    private const EPS = 0.0001;
+    private const float EPS = 0.0001;
 
     /** @var list<RenderBox> */
     private array $kids = [];

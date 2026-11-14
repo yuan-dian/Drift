@@ -16,7 +16,7 @@ final class HttpResponse
      * 错误消息里"body 前 N 字"的默认长度。
      * 取 200：够看清服务端回的那句人话，又不让一条异常消息刷成一屏 HTML。
      */
-    private const SNIPPET_CHARS = 200;
+    private const int SNIPPET_CHARS = 200;
 
     /** @var array<string, string> 头名已小写；同名多值按 `", "` 合并 */
     private readonly array $headers;

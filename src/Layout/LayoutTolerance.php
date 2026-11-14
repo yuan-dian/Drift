@@ -64,7 +64,7 @@ final class LayoutTolerance
      *   可用只有 344.0（差 0.0）"的 Fatal（2026-10-29，`CalendarView` 的 7 列网格）。
      *   这种量级在任何渲染管线上都不可见，而真溢出（≥ 0.5px）照样报。
      */
-    public const EPSILON = 0.01;
+    public const float EPSILON = 0.01;
 
     /** @var array<string, true> 已留痕的裁剪（键 = 触发者类名） */
     private static array $noted = [];

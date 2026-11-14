@@ -33,18 +33,18 @@ use Drift\Logging\PatternFormatter;
 final class Errors
 {
     /** 框架不变式被破坏，继续跑必然得到错误结果 */
-    public const FATAL = 3;
+    public const int FATAL = 3;
     /** 契约被违反但可安全降级 */
-    public const RECOVERABLE = 2;
+    public const int RECOVERABLE = 2;
     /** 值得知道，不是错误 */
-    public const DIAGNOSTIC = 1;
+    public const int DIAGNOSTIC = 1;
 
     /** 环形缓冲容量（§1.2 中止序列 ①） */
-    private const RING_SIZE = 100;
+    private const int RING_SIZE = 100;
     /** 固定退出码，可被启动器 / CI 观测（§1.2 中止序列 ③） */
-    private const EXIT_CODE = 3;
+    private const int EXIT_CODE = 3;
     /** 栈深度上限 —— 中止路径不做无界回溯 */
-    private const STACK_DEPTH = 16;
+    private const int STACK_DEPTH = 16;
 
     private static bool $debug = true;
     private static string $logPath = '';

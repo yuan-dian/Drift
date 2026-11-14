@@ -46,7 +46,7 @@ final class AnimatedValue
      *   差 1% 相当于 2.5/255，任何屏幕上都看不出。取 `0.001` 会让整条动画多跑
      *   一倍时长（指数逼近尾段极慢），换来的是**帧时钟多转几百毫秒**。
      */
-    private const EPSILON = 0.01;
+    private const float EPSILON = 0.01;
 
     private float $value;
 

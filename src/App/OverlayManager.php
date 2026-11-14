@@ -20,10 +20,10 @@ use Drift\Widget\Widget;
 final class OverlayManager
 {
     /** 悬停多久才弹 Tooltip（毫秒）；相邻切换不等（已显示时立即换内容） */
-    private const TOOLTIP_DELAY_MS = 500;
+    private const int TOOLTIP_DELAY_MS = 500;
 
     /** 面板宽度上限：非居中层的约束无界，不限宽会右侧溢出客户区 */
-    private const PANEL_MAX_WIDTH = 320.0;
+    private const float PANEL_MAX_WIDTH = 320.0;
 
     /** 浮层栈本体 —— 本类自持，宿主经 `overlays()` 现读 */
     private OverlayStack $overlays;

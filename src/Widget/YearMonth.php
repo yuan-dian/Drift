@@ -28,10 +28,10 @@ use Drift\Errors;
 final class YearMonth
 {
     /** 平年每月天数（2 月见 `daysInMonth()`） */
-    private const DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    private const array DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
     /** Sakamoto 公式的月份偏移表（1..12） */
-    private const SAKAMOTO = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
+    private const array SAKAMOTO = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
 
     public function __construct(
         public readonly int $year,

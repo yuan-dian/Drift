@@ -21,7 +21,7 @@ final class PumpHost
      * 必须给（不能传 `null` 沿用无限）：`Future::all()` 聚合几百请求一次回来
      *   几百条回调，每条都改 Store ⇒ 一帧几十毫秒的偶发卡顿。
      */
-    private const TASK_BUDGET_MS = 4;
+    private const int TASK_BUDGET_MS = 4;
 
     /**
      * 后台执行端口 —— `attach()` 时由**作用域**给一次并缓存。

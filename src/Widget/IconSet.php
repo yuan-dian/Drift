@@ -24,7 +24,7 @@ use Drift\Rendering\Path;
 final class IconSet
 {
     /** 圆的二次贝塞尔近似系数（`4/3·(√2−1)`，四段逼近误差 < 0.03%） */
-    private const KAPPA = 0.5523;
+    private const float KAPPA = 0.5523;
 
     public static function path(IconName $name, float $size): Path
     {

@@ -41,7 +41,7 @@ final class Image extends RenderBoxWidget
      * 解码宽度相对逻辑宽度的倍数（覆盖到 200% DPI 缩放）。
      * 取值理由见 `decodeWidth()`。
      */
-    private const SUPERSAMPLE = 2.0;
+    private const float SUPERSAMPLE = 2.0;
 
     /** 资源路径（空 = 用内存句柄） */
     private string $path = '';

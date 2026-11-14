@@ -14,13 +14,13 @@ namespace Drift\Rendering;
 final readonly class SliderStyle
 {
     /** 轨道粗细（逻辑像素）—— 4 是"看得见但不像进度条"的常见取值 */
-    public const DEFAULT_TRACK_HEIGHT = 4.0;
+    public const float DEFAULT_TRACK_HEIGHT = 4.0;
 
     /** 拇指半径 —— 8 ⇒ 直径 16，与按钮的圆角同量级 */
-    public const DEFAULT_THUMB_RADIUS = 8.0;
+    public const float DEFAULT_THUMB_RADIUS = 8.0;
 
     /** 拇指上下留白（盒高 = 2*半径 + 这个 ×2） */
-    public const DEFAULT_THUMB_GAP = 2.0;
+    public const float DEFAULT_THUMB_GAP = 2.0;
 
     public function __construct(
         /** 轨道底色（未选段） */

@@ -21,13 +21,13 @@ use Drift\State\Subject;
 final class ComboBox extends StatefulWidget
 {
     /** 面板内容最小宽（逻辑像素） */
-    public const PANEL_MIN_WIDTH = 180.0;
+    public const float PANEL_MIN_WIDTH = 180.0;
 
     /** 面板内容高度上限（逻辑像素）；滚动由 `RenderPopupPanel` 按实测自然高决定 */
-    public const PANEL_MAX_HEIGHT = 260.0;
+    public const float PANEL_MAX_HEIGHT = 260.0;
 
     /** 输入框默认宽（逻辑像素） */
-    public const DEFAULT_WIDTH = 200.0;
+    public const float DEFAULT_WIDTH = 200.0;
 
     /** @var list<Option> */
     private readonly array $options;

@@ -22,14 +22,14 @@ namespace Drift\Rendering;
 final class Elevation
 {
     /** 贴地（不画）：卡片、面板、分组块 */
-    public const Flat = 0.0;
+    public const float Flat = 0.0;
 
     /** 抬起一档：悬停中的按钮、可拖拽的块 */
-    public const Raised = 0.06;
+    public const float Raised = 0.06;
 
     /** 浮在内容之上：下拉面板、菜单、气泡 */
-    public const Floating = 0.12;
+    public const float Floating = 0.12;
 
     /** 独占焦点：对话框、模态面板 */
-    public const Overlay = 0.18;
+    public const float Overlay = 0.18;
 }

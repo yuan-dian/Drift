@@ -135,8 +135,8 @@ function driftVersionCheck(?string $root = null): array
     // 运行时用的是编译期常量，不是运行时读文件（AOT 产物里没有仓库根目录）。
     // 它是派生产物，所以这里只比对，改版本请走 gen-version.php。
     $constSrc = (string) @file_get_contents($root . '/src/Core/Version.php');
-    preg_match("/public const VERSION = '([^']+)'/", $constSrc, $cm);
-    preg_match("/public const DEPS_TAG = '([^']+)'/", $constSrc, $dm);
+    preg_match("/public const string VERSION = '([^']+)'/", $constSrc, $cm);
+    preg_match("/public const string DEPS_TAG = '([^']+)'/", $constSrc, $dm);
     if (($cm[1] ?? null) !== $version) {
         $errors[] = 'src/Core/Version.php 的 VERSION 与 VERSION 不一致 —— 跑 php tools/gen-version.php';
     }

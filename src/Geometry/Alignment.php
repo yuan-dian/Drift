@@ -37,7 +37,7 @@ namespace Drift\Geometry;
 final readonly class Alignment
 {
     /** 分数比较容差（`-1.0000000001` 与 `-1` 视为同一个锚点） */
-    public const EPSILON = 1.0E-9;
+    public const float EPSILON = 1.0E-9;
 
     public function __construct(public float $x = 0.0, public float $y = 0.0)
     {

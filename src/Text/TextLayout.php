@@ -20,8 +20,8 @@ use Drift\Geometry\Scale;
  */
 final class TextLayout
 {
-    public const ELLIPSIS = 0x2026;
-    public const LINE_FEED = 0x0A;
+    public const int ELLIPSIS = 0x2026;
+    public const int LINE_FEED = 0x0A;
 
     public function __construct(private readonly TextShaper $shaper)
     {

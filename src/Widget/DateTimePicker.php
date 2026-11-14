@@ -49,13 +49,13 @@ use Drift\Errors;
 final class DateTimePicker extends StatefulWidget
 {
     /** 触发框默认宽 —— "2026-10-29 09:05" 放得下 */
-    public const DEFAULT_WIDTH = 200.0;
+    public const float DEFAULT_WIDTH = 200.0;
 
     /** 面板高度上限（日历 5~6 行 ≈ 250） */
-    public const PANEL_MAX_HEIGHT = 400.0;
+    public const float PANEL_MAX_HEIGHT = 400.0;
 
     /** 两块面板之间的间隔 */
-    public const PANEL_GAP = 8.0;
+    public const float PANEL_GAP = 8.0;
 
     /**
      * 面板宽的下限：日历半宽 + 间隔 + 时刻列宽。

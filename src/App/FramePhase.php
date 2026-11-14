@@ -27,7 +27,7 @@ final class FramePhase
     /**
      * 报告文件（getcwd() 相对）。
      */
-    private const REPORT = 'build/frame.trace.out';
+    private const string REPORT = 'build/frame.trace.out';
 
     /** 已断言帧数 */
     private static int $frames = 0;

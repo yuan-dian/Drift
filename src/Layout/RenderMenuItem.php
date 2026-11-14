@@ -32,7 +32,7 @@ use Drift\Text\TextStyle;
 final class RenderMenuItem extends RenderProxyBox
 {
     /** 分隔线上下留白之和 */
-    private const SEPARATOR_HEIGHT = 7.0;
+    private const float SEPARATOR_HEIGHT = 7.0;
 
     public function __construct(
         string $label,

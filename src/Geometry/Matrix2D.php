@@ -33,10 +33,10 @@ use Drift\Errors;
 final readonly class Matrix2D
 {
     /** 一度对应的弧度（常量除法在 AOT 下会生成 `int/int` ⇒ 一律写字面量） */
-    public const DEG_TO_RAD = 0.017453292519943295;
+    public const float DEG_TO_RAD = 0.017453292519943295;
 
     /** 判"是否轴对齐"的宽容度：缩放算出来的 1.0000000000000002 不该被当成旋转 */
-    public const EPSILON = 1.0E-6;
+    public const float EPSILON = 1.0E-6;
 
     public function __construct(
         public float $a = 1.0,

@@ -14,27 +14,27 @@ namespace Drift\App\Io;
 final class Http
 {
     /** 连接超时默认值（秒） */
-    public const DEFAULT_CONNECT_TIMEOUT_S = 5.0;
+    public const float DEFAULT_CONNECT_TIMEOUT_S = 5.0;
 
     /** 总超时默认值（秒） */
-    public const DEFAULT_TIMEOUT_S = 10.0;
+    public const float DEFAULT_TIMEOUT_S = 10.0;
 
     /** 允许的动词（别的在此无意义，早抛比让 curl 猜好） */
-    private const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'];
+    private const array METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'];
 
     /** 合法的 `$opts` 键 —— 拼错的键当场抛，不静默忽略 */
-    private const OPT_KEYS = ['body', 'headers', 'connectTimeout', 'timeout', 'followRedirects', 'expectOk', 'fields', 'files', 'onProgress'];
+    private const array OPT_KEYS = ['body', 'headers', 'connectTimeout', 'timeout', 'followRedirects', 'expectOk', 'fields', 'files', 'onProgress'];
 
     /**
      * 上传体积上限（字节）。超过 ⇒ 抛，不静默截断、不静默换路。
      */
-    public const MAX_UPLOAD_BYTES = 1024 * 1024 * 1024;
+    public const int MAX_UPLOAD_BYTES = 1024 * 1024 * 1024;
 
     /**
      * 扩展名 → MIME 的最小映射（multipart 每个 part 都要 Content-Type）。
      * 不认得的扩展退回 application/octet-stream。
      */
-    private const MIME_BY_EXT = [
+    private const array MIME_BY_EXT = [
         'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'png' => 'image/png',
         'gif' => 'image/gif', 'webp' => 'image/webp', 'bmp' => 'image/bmp',
         'heic' => 'image/heic', 'svg' => 'image/svg+xml', 'tif' => 'image/tiff',
@@ -388,7 +388,7 @@ final class Http
      * 不用常量名：老 curl 上 \defined() 为假时裸写常量名是 Undefined constant，
      *   会让退化行为变成直接崩。值由单测钉住。
      */
-    private const NATIVE_CA = 16;
+    private const int NATIVE_CA = 16;
 
     /**
      * 造一个流式的 multipart/form-data 请求体，返回 [body, content-type]。

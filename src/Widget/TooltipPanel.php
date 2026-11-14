@@ -30,7 +30,7 @@ final class TooltipPanel
      * ★ 320 ≈ 40 个汉字，一行提示的合理上限。不设上限的话，一段长文案会让面板
      *   横穿整个窗口（`placeEntry()` 对非居中层给的是无界约束）。
      */
-    public const MAX_WIDTH = 320.0;
+    public const float MAX_WIDTH = 320.0;
 
     private function __construct()
     {

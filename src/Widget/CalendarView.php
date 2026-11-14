@@ -26,13 +26,13 @@ use Drift\Layout\FlexAlign;
  */
 final class CalendarView extends StatefulWidget
 {
-    public const COLUMNS = 7;
+    public const int COLUMNS = 7;
 
     /** 格子宽：15px 的日期字 + 两侧 `gap` 内边距（`Button::compact()`）+ 呼吸 */
-    public const CELL_WIDTH = 40.0;
+    public const float CELL_WIDTH = 40.0;
 
     /** 最少 5 行 —— 4 行的月份（28 天且 1 号是周一）在视觉上太扁 */
-    public const MIN_ROWS = 5;
+    public const int MIN_ROWS = 5;
 
     private YearMonth $month;
 
@@ -137,24 +137,24 @@ final class CalendarView extends StatefulWidget
  */
 final class CalendarViewState extends State
 {
-    private const MODE_DAY = 0;
-    private const MODE_MONTH = 1;
-    private const MODE_YEAR = 2;
+    private const int MODE_DAY = 0;
+    private const int MODE_MONTH = 1;
+    private const int MODE_YEAR = 2;
 
     /** 面板内边距 */
-    private const PAD = 8.0;
+    private const float PAD = 8.0;
 
     /** 周起始固定周一（中文习惯） */
-    private const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'];
+    private const array WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'];
 
     /** 月 / 年视图 4 列 × 3 行 = 12 格 —— 与"12 个月"天然对齐 */
-    private const PICK_COLUMNS = 4;
+    private const int PICK_COLUMNS = 4;
 
     /** 年视图一屏 12 年 */
-    private const YEAR_SPAN = 12;
+    private const int YEAR_SPAN = 12;
 
     /** 当前年落在屏内第 6 位（`year - 5`）—— 附近的年总在屏上，不必先翻页 */
-    private const YEAR_LEAD = 5;
+    private const int YEAR_LEAD = 5;
 
     private int $mode = self::MODE_DAY;
 

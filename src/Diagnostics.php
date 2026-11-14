@@ -19,7 +19,7 @@ namespace Drift;
  */
 final class Diagnostics
 {
-    public const PREFIX = '[DX] ';
+    public const string PREFIX = '[DX] ';
 
     /** @var array<string, true> 本进程已报过的 key */
     private static array $reported = [];

@@ -66,7 +66,7 @@ final class BitmapFontFace implements FontFace
      */
     private array $rasterCache = [];
 
-    private const RASTER_CACHE_MAX = 8192;
+    private const int RASTER_CACHE_MAX = 8192;
 
     /**
      * @param array<int, list<string>> $glyphs

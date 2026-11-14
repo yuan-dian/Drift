@@ -34,7 +34,7 @@ use Drift\Widget\Element;
 final class InputRouter
 {
     /** 一格滚轮的逻辑像素（策略归框架：平台只做 WHEEL_DELTA/120 的量化）。48 = 3 行 × 16px。 */
-    private const WHEEL_NOTCH_PX = 48.0;
+    private const float WHEEL_NOTCH_PX = 48.0;
 
     /**
      * 进行中的手势竞技场。仅当命中链上有 `Draggable` 声明者时开：激活从 down 推迟到裁决，

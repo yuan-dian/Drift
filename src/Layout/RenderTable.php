@@ -24,7 +24,7 @@ use Drift\Rendering\Paint;
 final class RenderTable extends RenderBox implements ScrollBarHost
 {
     /** 光标格描边的厚度（内描边，不入布局） */
-    public const FOCUS_RING_W = 2.0;
+    public const float FOCUS_RING_W = 2.0;
 
     private ?RenderBox $header = null;
 

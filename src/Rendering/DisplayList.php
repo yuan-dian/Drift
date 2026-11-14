@@ -18,23 +18,23 @@ use Drift\Errors;
  */
 final class DisplayList
 {
-    public const OP_SAVE = 1;
-    public const OP_RESTORE = 2;
-    public const OP_TRANSLATE = 3;
-    public const OP_PUSH_CLIP = 4;
-    public const OP_POP_CLIP = 5;
-    public const OP_DRAW_RECT = 6;
+    public const int OP_SAVE = 1;
+    public const int OP_RESTORE = 2;
+    public const int OP_TRANSLATE = 3;
+    public const int OP_PUSH_CLIP = 4;
+    public const int OP_POP_CLIP = 5;
+    public const int OP_DRAW_RECT = 6;
     /** 段落绘制：`[paragraph, paint, x, y]` —— 位图在回放时才产生 */
-    public const OP_DRAW_PARAGRAPH = 7;
-    public const OP_DRAW_ELLIPSE = 8;   // [rect, paint]
-    public const OP_DRAW_LINE = 9;     // [x1, y1, x2, y2, paint]
-    public const OP_DRAW_PATH = 10;    // [path, paint]
-    public const OP_DRAW_IMAGE = 11;   // [image, ?src, dst]
-    public const OP_DRAW_SHADOW = 12;  // [shadow]
-    public const OP_LAYER_PUSH = 13;   // [opacity]
-    public const OP_LAYER_POP = 14;    // []
-    public const OP_PUSH_CLIP_PATH = 15; // [path]
-    public const OP_BLUR_BACKDROP = 16;  // [sigma, rect]
+    public const int OP_DRAW_PARAGRAPH = 7;
+    public const int OP_DRAW_ELLIPSE = 8;   // [rect, paint]
+    public const int OP_DRAW_LINE = 9;     // [x1, y1, x2, y2, paint]
+    public const int OP_DRAW_PATH = 10;    // [path, paint]
+    public const int OP_DRAW_IMAGE = 11;   // [image, ?src, dst]
+    public const int OP_DRAW_SHADOW = 12;  // [shadow]
+    public const int OP_LAYER_PUSH = 13;   // [opacity]
+    public const int OP_LAYER_POP = 14;    // []
+    public const int OP_PUSH_CLIP_PATH = 15; // [path]
+    public const int OP_BLUR_BACKDROP = 16;  // [sigma, rect]
     /**
      * 仿射变换：`[matrix]` 走引用槽，不拆成 6 个 float。
      *
@@ -42,7 +42,7 @@ final class DisplayList
      *   命令每条多两个槽。矩阵与 `Rect` / `Path` / `Paint` 同类的"对象进槽"，
      *   且 `Matrix2D` 不可变，重放期不会被改。纯平移仍录 `OP_TRANSLATE`。
      */
-    public const OP_TRANSFORM = 17;    // [matrix]
+    public const int OP_TRANSFORM = 17;    // [matrix]
 
     /**
      * 每条命令占的槽位数：`[op, a, b, c, d, ref]`。
@@ -50,7 +50,7 @@ final class DisplayList
      * ★ 统一 6 槽是因为 `OP_DRAW_LINE` 要 5 个操作数；不为一种 op 特例化，
      *   record/replay 的寻址才能保持「一条命令一段连续槽位」。
      */
-    private const SLOTS = 6;
+    private const int SLOTS = 6;
 
     /** @var array<int, mixed> 扁平命令缓冲 —— 复用，不每帧重建 */
     private array $buffer = [];

@@ -59,7 +59,7 @@ final class TextDraft
     /**
      * 撤销栈上限，超过丢最旧的。100 而非无限：每页几十个输入框，无限栈是隐蔽内存增长。
      */
-    private const UNDO_LIMIT = 100;
+    private const int UNDO_LIMIT = 100;
 
     /**
      * @param string $text 初值；插入符落在末尾（与外部推值同约定）

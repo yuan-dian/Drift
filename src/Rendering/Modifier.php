@@ -111,13 +111,13 @@ final class Modifier
     private float $insetBottom = \NAN;
 
     /** `withInset()` 的边序 —— 与 CSS 的 left/top/right/bottom 同序 */
-    public const INSET_LEFT = 0;
+    public const int INSET_LEFT = 0;
 
-    public const INSET_TOP = 1;
+    public const int INSET_TOP = 1;
 
-    public const INSET_RIGHT = 2;
+    public const int INSET_RIGHT = 2;
 
-    public const INSET_BOTTOM = 3;
+    public const int INSET_BOTTOM = 3;
 
     // ── 合成变换 ─────────────────────────────────────────────
     //

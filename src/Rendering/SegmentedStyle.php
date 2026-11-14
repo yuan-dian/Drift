@@ -21,10 +21,10 @@ namespace Drift\Rendering;
 final readonly class SegmentedStyle
 {
     /** 段间距默认值（`MetricToken::Gap` 的 1/4 —— 段间缝只要"分得开"，不是布局间隙） */
-    public const DEFAULT_GAP = 2.0;
+    public const float DEFAULT_GAP = 2.0;
 
     /** 选中块四边内缩默认值（让块与轨道描边之间永远有一缝） */
-    public const DEFAULT_INSET = 2.0;
+    public const float DEFAULT_INSET = 2.0;
 
     public function __construct(
         /** 轨道底（`ColorToken::Chrome`） */

@@ -44,7 +44,7 @@ final class FocusManager
      *
      * 不取 0：布局算出来的间距是浮点数，`12.0` 与 `12.000000001` 该算同分。
      */
-    private const SCORE_TIE = 0.5;
+    private const float SCORE_TIE = 0.5;
 
     /** @var list<Element> 文档序（深度优先），同容器内按 `focusOrder` 稳定排序 */
     private array $order = [];

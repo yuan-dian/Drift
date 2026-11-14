@@ -27,16 +27,16 @@ namespace Drift\Widget;
 final class Curve
 {
     /** @internal 线性：`map(t) = t`（默认曲线 —— 不给曲线时行为可预测） */
-    public const LINEAR = 0;
+    public const int LINEAR = 0;
 
     /** @internal 慢起快收：`t²`（"东西开始动了"） */
-    public const EASE_IN = 1;
+    public const int EASE_IN = 1;
 
     /** @internal 快起慢收：`1-(1-t)²`（"东西停下来了" —— 交互反馈的默认手感） */
-    public const EASE_OUT = 2;
+    public const int EASE_OUT = 2;
 
     /** @internal 两头慢中间快（"从 A 到 B"） */
-    public const EASE_IN_OUT = 3;
+    public const int EASE_IN_OUT = 3;
 
     private function __construct(private readonly int $kind)
     {

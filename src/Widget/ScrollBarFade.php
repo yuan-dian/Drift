@@ -24,10 +24,10 @@ use Drift\Rendering\AnimatedValue;
 final class ScrollBarFade
 {
     /** 停止滚动后多久开始淡下去（毫秒） */
-    private const IDLE_MS = 900.0;
+    private const float IDLE_MS = 900.0;
 
     /** 空闲时的透明度 */
-    private const IDLE_OPACITY = 0.35;
+    private const float IDLE_OPACITY = 0.35;
 
     private ?AnimatedValue $fade = null;
 

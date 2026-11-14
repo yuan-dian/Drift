@@ -55,8 +55,8 @@ function syncFile(string $path, string $expected, bool $checkOnly): bool
 }
 
 // ── 代码里的常量 ──
-// 不用 `public const string`：src/ 会被 tpc 整树 AOT 编译，类型化类常量在
-// 编译器侧没有验证过；仓库现有常量一律无类型，别为版本信息去趟这个雷。
+// 类型化类常量已过整树 codegen（511 php → 451 cc / 0 skip），与 src/ 其余常量同口径；
+// 改模板要同步 tools/version.php 的取值正则。
 $class = <<<'PHP'
 <?php
 declare(strict_types=1);
@@ -74,11 +74,11 @@ namespace Drift\Core;
  */
 final class Version
 {
-    public const VERSION = '%s';
-    public const BASE = '%s';
-    public const PREVIEW = %d;
-    public const TAG = 'v%s';
-    public const DEPS_TAG = '%s';
+    public const string VERSION = '%s';
+    public const string BASE = '%s';
+    public const int PREVIEW = %d;
+    public const string TAG = 'v%s';
+    public const string DEPS_TAG = '%s';
 
     private function __construct()
     {

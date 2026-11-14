@@ -49,16 +49,16 @@ use Drift\Widget\ScrollView;
 final class TimeView extends StatelessWidget
 {
     /** 每列**内容**宽：两位数字 + 两侧内边距（`Button::compact()`）+ 呼吸 */
-    public const COLUMN_WIDTH = 56.0;
+    public const float COLUMN_WIDTH = 56.0;
 
     /** 每行高 —— 同时也是 `LazyColumn` 的 `itemExtent`（窗口计算的除数） */
-    public const ROW_HEIGHT = 34.0;
+    public const float ROW_HEIGHT = 34.0;
 
     /** 一屏看到几行：奇数不好看，6 行足够"上下都还能滚"的暗示 */
-    public const VISIBLE_ROWS = 6;
+    public const int VISIBLE_ROWS = 6;
 
     /** 列与列之间的间隔 */
-    public const COLUMN_GAP = 4.0;
+    public const float COLUMN_GAP = 4.0;
 
     /**
      * 视口右侧被滚动条占掉的宽。
@@ -69,17 +69,17 @@ final class TimeView extends StatelessWidget
      *   ⇒ 正确做法是**把条的宽度算进列盒**，让内容与条各占各的。
      * ★ 用常量而不是写死 9：条的粗细以后改了这里跟着走。
      */
-    private const BAR_GUTTER = ScrollBarGeometry::THICKNESS + 2.0 * ScrollBarGeometry::MARGIN;
+    private const float BAR_GUTTER = ScrollBarGeometry::THICKNESS + 2.0 * ScrollBarGeometry::MARGIN;
 
     /** 列盒宽 = 内容 + 条留白（条落在内容右侧的空白里，两侧各留一份边距） */
-    private const COLUMN_EXTENT = self::COLUMN_WIDTH + self::BAR_GUTTER;
+    private const float COLUMN_EXTENT = self::COLUMN_WIDTH + self::BAR_GUTTER;
 
     /** 打开时在当前值上方留几行 —— 让人一眼看出"上面还有更早的" */
-    private const LEAD_ROWS = 2;
+    private const int LEAD_ROWS = 2;
 
-    private const KIND_HOUR = 0;
-    private const KIND_MINUTE = 1;
-    private const KIND_SECOND = 2;
+    private const int KIND_HOUR = 0;
+    private const int KIND_MINUTE = 1;
+    private const int KIND_SECOND = 2;
 
     private readonly LocalTime $value;
 

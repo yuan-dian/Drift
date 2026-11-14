@@ -45,7 +45,7 @@ final class Win32SurfaceProvider implements SurfaceProvider
      *   开关破这条纪律；也不是 §12.3 的配置系统（那是用户可见的主题/设置，
      *   这个是部署形态）。
      */
-    private const DEFAULT_RENDERER = 'skia';
+    private const string DEFAULT_RENDERER = 'skia';
 
     private ?RenderSurface $surface = null;
 

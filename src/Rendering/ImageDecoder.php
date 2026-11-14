@@ -59,7 +59,7 @@ use Drift\Errors;
 final class ImageDecoder
 {
     /** 壳函数名（只有 AOT 产物 / 加载了 `drift_win32` 的进程里才有） */
-    private const FN = 'drift_image_decode';
+    private const string FN = 'drift_image_decode';
 
     /**
      * 本进程有没有 WIC 解码能力。

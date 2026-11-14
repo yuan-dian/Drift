@@ -32,10 +32,10 @@ use Drift\Rendering\ProgressStyle;
 final class RenderProgress extends RenderBox
 {
     /** 无界宽度时的兜底条长（同 `RenderDivider`） */
-    private const MIN_WIDTH = 24.0;
+    private const float MIN_WIDTH = 24.0;
 
     /** 千分比分母 */
-    public const SCALE = 1000;
+    public const int SCALE = 1000;
 
     public function __construct(
         private readonly ProgressStyle $style,

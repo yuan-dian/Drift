@@ -60,7 +60,7 @@ use Drift\Rendering\SliderStyle;
 final class Slider extends RenderBoxWidget implements SemanticsValueEditable
 {
     /** 没显式给宽时的默认宽（与 `RenderSlider` 的无界兜底同值） */
-    public const DEFAULT_WIDTH = 160.0;
+    public const float DEFAULT_WIDTH = 160.0;
 
     private float $value = 0.0;
 

@@ -33,10 +33,10 @@ use Drift\State\Subject;
 final class OptionPanel extends StatefulWidget
 {
     /** 内容四周留白（逻辑像素）—— 面板有边框，行贴边会显得挤 */
-    public const PADDING = 4.0;
+    public const float PADDING = 4.0;
 
     /** 阴影高度（逻辑像素）—— 浮层要"浮"起来 */
-    public const ELEVATION = 4.0;
+    public const float ELEVATION = 4.0;
 
     private function __construct(
         private readonly Subject $source,

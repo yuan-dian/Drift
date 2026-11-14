@@ -41,8 +41,8 @@ use Drift\Errors;
  */
 final class TableColumnWidth
 {
-    private const FIXED = 0;
-    private const FLEX = 1;
+    private const int FIXED = 0;
+    private const int FLEX = 1;
 
     private function __construct(
         private readonly int $kind,

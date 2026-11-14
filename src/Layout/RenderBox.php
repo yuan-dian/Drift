@@ -446,11 +446,11 @@ abstract class RenderBox extends RenderObject
 
     // `alignSelf` 的取值。★ **int 哨兵而不是 enum**：要表达"未设"（INHERIT），
     // 而 `FlexAlign` 没有这个 case；加一个会让 `placeChildren()` 的 match 多一条死分支。
-    public const ALIGN_INHERIT = 0;   // 跟父容器的 crossAlign
-    public const ALIGN_START   = 1;
-    public const ALIGN_CENTER  = 2;
-    public const ALIGN_END     = 3;
-    public const ALIGN_STRETCH = 4;
+    public const int ALIGN_INHERIT = 0;   // 跟父容器的 crossAlign
+    public const int ALIGN_START   = 1;
+    public const int ALIGN_CENTER  = 2;
+    public const int ALIGN_END     = 3;
+    public const int ALIGN_STRETCH = 4;
 
     /**
      * 一次性写四个弹性意图（`Element::syncBox()` 唯一调用点）：四个 setter 就是四次
@@ -783,7 +783,7 @@ abstract class RenderBox extends RenderObject
     /**
      * 禁用时整棵子树的不透明度。0.38 才落进 Windows 原生禁用控件的观感区间（0.5 仍像可点）。
      */
-    public const DISABLED_ALPHA = 0.38;
+    public const float DISABLED_ALPHA = 0.38;
 
     // 层缓存：缓存 `paint()` 的**命令序列**，画自身局部坐标 ⇒ 与位置无关 ⇒ 滚动命中。
     // ★ 失效判据**不含** compose 偏移 / 不透明度 / 滚动偏移：含了就等于"一动就失效"，

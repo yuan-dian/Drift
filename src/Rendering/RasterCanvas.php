@@ -85,7 +85,7 @@ final class RasterCanvas implements Canvas
     /** @var array<string, array<int, array<int, string>>> */
     private array $blendLuts = [];
 
-    private const CACHE_MAX = 128;
+    private const int CACHE_MAX = 128;
 
     public function __construct(
         private readonly int $width,
@@ -565,13 +565,13 @@ final class RasterCanvas implements Canvas
     }
 
     /** 二次贝塞尔扁平化的固定段数 */
-    private const QUAD_SEGMENTS = 16;
+    private const int QUAD_SEGMENTS = 16;
 
     /** 扫描线成本上界：边数 × 行数 */
-    private const SCANLINE_BUDGET = 200000;
+    private const int SCANLINE_BUDGET = 200000;
 
     /** miter 接缝长度上界（单位为半宽；SVG 默认 miter-limit = 4） */
-    private const MITER_LIMIT = 4.0;
+    private const float MITER_LIMIT = 4.0;
 
     /**
      * 扁平化路径 → 子路径表（坐标已在**设备像素**空间）。

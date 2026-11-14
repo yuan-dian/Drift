@@ -32,7 +32,7 @@ use Drift\Rendering\Paint;
 final class RenderDivider extends RenderBox
 {
     /** 无界宽度时的兜底线长（与 `PopupPanel` 的 `minWidth` 同一思路） */
-    private const MIN_WIDTH = 24.0;
+    private const float MIN_WIDTH = 24.0;
 
     public function __construct(
         private readonly DividerStyle $style,

@@ -63,7 +63,7 @@ final class AnimatedOpacity extends StatefulWidget
      *
      * ★ 别把它挪进 `AnimatedValue` 的默认值：那会同时把滚动拖慢三倍。
      */
-    public const HALF_LIFE_MS = 150.0;
+    public const float HALF_LIFE_MS = 150.0;
 
     private function __construct(
         private readonly float $target,

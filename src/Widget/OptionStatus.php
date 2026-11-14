@@ -36,16 +36,16 @@ namespace Drift\Widget;
 final class OptionStatus
 {
     /** 正常：面板画选项行 */
-    public const READY = 0;
+    public const int READY = 0;
 
     /** 取数中：面板只画一行"正在加载…" */
-    public const LOADING = 1;
+    public const int LOADING = 1;
 
     /** 取到了但是空表：面板只画一行提示 */
-    public const EMPTY = 2;
+    public const int EMPTY = 2;
 
     /** 取数失败：面板只画一行错误 */
-    public const ERROR = 3;
+    public const int ERROR = 3;
 
     private function __construct(
         private readonly int $kind,

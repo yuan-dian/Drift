@@ -26,7 +26,7 @@ use Drift\Rendering\Canvas;
  */
 final class RenderDock extends RenderBox
 {
-    private const SLOTS = ['top', 'left', 'center', 'right', 'bottom'];
+    private const array SLOTS = ['top', 'left', 'center', 'right', 'bottom'];
 
     /** @var array<string, RenderBox|null> */
     private array $slots = ['top' => null, 'left' => null, 'center' => null, 'right' => null, 'bottom' => null];

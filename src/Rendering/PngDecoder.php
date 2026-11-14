@@ -49,7 +49,7 @@ use Drift\Errors;
  */
 final class PngDecoder
 {
-    private const SIGNATURE = "\x89PNG\r\n\x1a\n";
+    private const string SIGNATURE = "\x89PNG\r\n\x1a\n";
 
     /**
      * 本类**愿意**自己解的像素上限（2026-11-02）。
@@ -66,7 +66,7 @@ final class PngDecoder
      *   试 WIC（见那边的分派表）。所以这条上限**不会**让大图变成占位图 ——
      *   它只是把"本类不该干的活"退回去。
      */
-    private const MAX_SELF_DECODE_PIXELS = 1 << 20;
+    private const int MAX_SELF_DECODE_PIXELS = 1 << 20;
 
 
     /**

@@ -28,7 +28,7 @@ use Drift\Rendering\Paint;
 final class RenderSpinner extends RenderBox
 {
     /** 每老一档掉的 alpha（0..255）：头 = 满实，最老 = 255 − 7×STEP */
-    private const ALPHA_STEP = 28;
+    private const int ALPHA_STEP = 28;
 
     public function __construct(
         private readonly float $diameter,

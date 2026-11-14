@@ -26,18 +26,18 @@ use Drift\Errors;
 final class Log
 {
     /** 最啰嗦，release 默认关 */
-    public const DEBUG = 1;
+    public const int DEBUG = 1;
     /** 业务常规轨迹 */
-    public const INFO = 2;
+    public const int INFO = 2;
     /** 不该发生但没崩 */
-    public const WARN = 3;
+    public const int WARN = 3;
     /** 出错了但还在跑 */
-    public const ERROR = 4;
+    public const int ERROR = 4;
     /** 永远开启 —— 学 Qt：fatal 级别不受任何门槛影响 */
-    public const FATAL = 5;
+    public const int FATAL = 5;
 
     /** 环形缓冲容量（`12` §4.4） */
-    public const RING_CAPACITY = 2000;
+    public const int RING_CAPACITY = 2000;
 
     /** 启动点（`%t` 的零点），一次性捕获 */
     private static ?int $startNs = null;

@@ -45,10 +45,10 @@ final class WindowStateStore
      * v1 → v2：键加槽位前缀；必须抬版本，因为"无前缀的键 = 主窗"只在 v1 成立，
      * v2 里无前缀的行非法（两种解释并存会写出读不回的文件）。
      */
-    private const FORMAT_VERSION = 2;
+    private const int FORMAT_VERSION = 2;
 
     /** 一个窗口存这五个字段；顺序即写入顺序（人读时稳定） */
-    private const FIELDS = ['x', 'y', 'w', 'h', 'max'];
+    private const array FIELDS = ['x', 'y', 'w', 'h', 'max'];
 
     private string $path;
 

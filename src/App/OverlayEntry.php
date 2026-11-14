@@ -20,22 +20,22 @@ use Drift\Widget\Widget;
 final class OverlayEntry
 {
     /** 锚下方（菜单 / 下拉） */
-    public const BELOW = 0;
+    public const int BELOW = 0;
 
     /** 锚上方 */
-    public const ABOVE = 1;
+    public const int ABOVE = 1;
 
     /** 锚右侧（子菜单） */
-    public const RIGHT = 2;
+    public const int RIGHT = 2;
 
     /** 锚左侧 */
-    public const LEFT = 3;
+    public const int LEFT = 3;
 
     /** 客户区居中（模态） */
-    public const CENTER = 4;
+    public const int CENTER = 4;
 
     /** 最近一次命中的指针位置（右键菜单） */
-    public const AT_POINTER = 5;
+    public const int AT_POINTER = 5;
 
     /**
      * 锚下方、**水平居中于锚点**（W8-2 Tooltip，2026-10-23）。
@@ -43,10 +43,10 @@ final class OverlayEntry
      * ★ 为什么不复用 `BELOW` + 应用侧自己算偏移：落位算法在 `originFor()` 里，
      *   应用算不了（拿不到夹紧后的 `maxW`）。方向是**语义**，不是坐标。
      */
-    public const BELOW_CENTER = 6;
+    public const int BELOW_CENTER = 6;
 
     /** 锚上方、水平居中于锚点（Tooltip 首选） */
-    public const ABOVE_CENTER = 7;
+    public const int ABOVE_CENTER = 7;
 
     /**
      * 客户区底部居中（Snackbar，2026-10-23）。
@@ -56,7 +56,7 @@ final class OverlayEntry
      *   （`CENTER` 提前返回，本方向走常规的量 + 落位 + 夹取）。
      * ★ 贴底留白走 `$inset`（不是面板 padding）：padding 是内边距，改不了"离底多远"。
      */
-    public const BOTTOM_CENTER = 8;
+    public const int BOTTOM_CENTER = 8;
 
     private static int $nextId = 1;
 

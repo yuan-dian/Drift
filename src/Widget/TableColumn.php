@@ -18,7 +18,7 @@ use Drift\Text\TextAlign;
  */
 final class TableColumn
 {
-    private const DEFAULT_PADDING_X = 8.0;
+    private const float DEFAULT_PADDING_X = 8.0;
 
     private string $title;
 

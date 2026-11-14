@@ -23,10 +23,10 @@ use Drift\Geometry\Rect;
  */
 final class Path
 {
-    public const CMD_MOVE = 1;
-    public const CMD_LINE = 2;
-    public const CMD_QUAD = 3;
-    public const CMD_CLOSE = 4;
+    public const int CMD_MOVE = 1;
+    public const int CMD_LINE = 2;
+    public const int CMD_QUAD = 3;
+    public const int CMD_CLOSE = 4;
 
     /**
      * 扁平命令表：`[cmd, x1, y1, x2, y2]` 每项五槽。

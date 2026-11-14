@@ -45,7 +45,7 @@ final class ContextMenu
      *   超出部分被裁 ⇒ **第 N 项之后点不到**。值是策略圆整数，"贴着还是滚"由
      *   `RenderPopupPanel` 按实测自然高决定。
      */
-    public const PANEL_MAX_HEIGHT = 320.0;
+    public const float PANEL_MAX_HEIGHT = 320.0;
 
     private function __construct()
     {

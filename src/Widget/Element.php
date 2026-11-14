@@ -23,7 +23,7 @@ abstract class Element
     /**
      * 收敛循环的最大轮数：防御上限，正常 ≤ 2。
      */
-    private const SETTLE_ROUNDS = 16;
+    private const int SETTLE_ROUNDS = 16;
 
     protected ?Element $parent = null;
     protected BuildContext $context;

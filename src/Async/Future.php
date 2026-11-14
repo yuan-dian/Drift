@@ -17,9 +17,9 @@ use Drift\Errors;
  */
 final class Future
 {
-    private const PENDING = 0;
-    private const FULFILLED = 1;
-    private const REJECTED = 2;
+    private const int PENDING = 0;
+    private const int FULFILLED = 1;
+    private const int REJECTED = 2;
 
     private int $state = self::PENDING;
 

@@ -105,16 +105,16 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     /** 语义树消费闭包。`null` ⇒ 不建语义树（零开销）。 */
     protected ?\Closure $semanticsSink = null;
     /** 一帧预算（毫秒，60fps）。用途是回答"超了先砍谁"，不是 CPU 分配表。 */
-    public const BUDGET_MS = 16.7;
+    public const float BUDGET_MS = 16.7;
 
     /** 连续多少帧超预算才算"真超"（单帧超常是 GC 或系统抢占）。 */
-    public const OVER_BUDGET_FRAMES = 10;
+    public const int OVER_BUDGET_FRAMES = 10;
 
     /**
      * 六阶段预算（毫秒）。是降级顺序的依据：超了先砍语义推送，
      * `layout` / `paint` / `present` 永不砍（砍了等于画面不更新）。
      */
-    public const STAGE_BUDGET_MS = [
+    public const array STAGE_BUDGET_MS = [
         'A 组（四个泵）' => 1.0,
         'settle' => 1.0,
         'layout' => 2.0,
@@ -148,16 +148,16 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     private int $semanticsCoalesced = 0;
 
     /** coalesce 的帧数上限：没有上限 ⇒ 动画期间一直不推，读屏用户完全失去反馈。 */
-    private const SEMANTICS_COALESCE_MAX = 4;
+    private const int SEMANTICS_COALESCE_MAX = 4;
 
     /** 悬停多久才弹出 Tooltip（毫秒，桌面惯例档）。已在显示时切到另一控件立即换内容。 */
-    public const TOOLTIP_DELAY_MS = 500;
+    public const int TOOLTIP_DELAY_MS = 500;
 
     /**
      * 控件浮层面板（`Widget::overlayPanel()`）的宽度上限。
      * 必须限定：非居中面板拿到无界约束，夹紧只挪 x 不改宽 ⇒ 长选项会溢出客户区。
      */
-    public const PANEL_MAX_WIDTH = 320.0;
+    public const float PANEL_MAX_WIDTH = 320.0;
 
     /** 上次推送的档位（`full` / `coalesce` / `none`）—— 夹具与 devtools 读它 */
     private string $semanticsMode = 'none';

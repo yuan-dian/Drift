@@ -24,7 +24,7 @@ use Drift\Input\SemanticsRole;
 abstract class LazyList extends StatefulWidget
 {
     /** 默认"视口外多造几格"= 0：窗口恰好覆盖视口，翻页时靠下一帧补齐 */
-    private const DEFAULT_OVERSCAN = 0.0;
+    private const float DEFAULT_OVERSCAN = 0.0;
 
     /** @var list<mixed> */
     private array $items = [];

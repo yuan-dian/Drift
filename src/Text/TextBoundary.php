@@ -14,18 +14,18 @@ namespace Drift\Text;
 final class TextBoundary
 {
     // 同类连续段的四种归属（不用枚举：case 拼错时 AOT 不报错）
-    private const RUN_LATIN = 1;
+    private const int RUN_LATIN = 1;
 
-    private const RUN_CJK = 2;
+    private const int RUN_CJK = 2;
 
-    private const RUN_SPACE = 3;
+    private const int RUN_SPACE = 3;
 
-    private const RUN_OTHER = 4;
+    private const int RUN_OTHER = 4;
 
     /** 换行（段落分隔）；`\r` 只作为 `\r\n` 的前半个字节被吞掉 */
-    private const NEWLINE = 0x0A;
+    private const int NEWLINE = 0x0A;
 
-    private const CARRIAGE_RETURN = 0x0D;
+    private const int CARRIAGE_RETURN = 0x0D;
 
     private function __construct()
     {

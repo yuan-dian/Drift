@@ -17,15 +17,15 @@ use Drift\State\Subject;
 final class Select extends StatefulWidget
 {
     /** 面板内容最小宽（逻辑像素）—— 比这更窄的一列选项点起来太挤 */
-    public const PANEL_MIN_WIDTH = 180.0;
+    public const float PANEL_MIN_WIDTH = 180.0;
 
     /**
      * 面板内容高度上限（逻辑像素）。更长的列表才滚（`RenderPopupPanel` 按实测自然高决定）。
      */
-    public const PANEL_MAX_HEIGHT = 260.0;
+    public const float PANEL_MAX_HEIGHT = 260.0;
 
     /** 触发框默认宽（逻辑像素）。`Button` 被定宽后标签靠左，正好是选择框的形态 */
-    public const DEFAULT_WIDTH = 160.0;
+    public const float DEFAULT_WIDTH = 160.0;
 
     /** @var list<Option> */
     private readonly array $options;

@@ -17,27 +17,27 @@ use Drift\Errors;
 final class CanvasCapabilities
 {
     // ── Core：所有后端必须实现，缺一个即缺陷 ──
-    public const CAP_ELLIPSE = 1 << 0;
-    public const CAP_LINE = 1 << 1;
+    public const int CAP_ELLIPSE = 1 << 0;
+    public const int CAP_LINE = 1 << 1;
 
     // ── Extended：Skia 级必须；Raster 允许降级近似 ──
-    public const CAP_GRADIENT = 1 << 2;
-    public const CAP_DASH = 1 << 3;
-    public const CAP_CLIP_PATH = 1 << 4;
+    public const int CAP_GRADIENT = 1 << 2;
+    public const int CAP_DASH = 1 << 3;
+    public const int CAP_CLIP_PATH = 1 << 4;
     // Extended：Raster 补齐扫描线填充后，两边都有，缺了它控件画不出来。
     // Raster 是硬边、无抗锯齿、只做 Miter+Butt，与 Skia 的质量差写在各方法 docblock。
-    public const CAP_PATH = 1 << 5;
+    public const int CAP_PATH = 1 << 5;
     // Extended：Raster 的 alpha 乘数栈能近似层语义。与真离屏的差异是"层内重叠子更透"。
-    public const CAP_LAYER = 1 << 6;
+    public const int CAP_LAYER = 1 << 6;
 
     /** 模糊背景：Raster 近似为不模糊。缺了它结构仍对，只少一层糊 ⇒ 算 Extended。 */
-    public const CAP_BACKDROP = 1 << 9;
+    public const int CAP_BACKDROP = 1 << 9;
 
     // ── 其余位 ──
     // 两个后端都支持：Skia 走原生 codec，Raster 走内存 RGBA 最近邻 blit（确定性）。
-    public const CAP_IMAGE = 1 << 7;
+    public const int CAP_IMAGE = 1 << 7;
     // 仅 Skia 支持：Raster 遇到 drawShadow 响亮失败（E-OP-UNSUPPORTED）。
-    public const CAP_SHADOW = 1 << 8;
+    public const int CAP_SHADOW = 1 << 8;
 
     /**
      * 全量位掩码。
@@ -45,7 +45,7 @@ final class CanvasCapabilities
      * ★ 必须平铺成叶子常量的一次 `|`，不能引用中间 mask：tpc 对"常量链"会生成
      *   引用未声明临时量的坏代码（C2065）。中间 mask 不进任何编译进产物的表达式。
      */
-    public const ALL_MASK = self::CAP_ELLIPSE | self::CAP_LINE
+    public const int ALL_MASK = self::CAP_ELLIPSE | self::CAP_LINE
         | self::CAP_GRADIENT | self::CAP_DASH | self::CAP_CLIP_PATH
         | self::CAP_PATH | self::CAP_IMAGE | self::CAP_SHADOW | self::CAP_LAYER
         | self::CAP_BACKDROP;

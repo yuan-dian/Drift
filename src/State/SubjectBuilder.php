@@ -161,7 +161,7 @@ final class SubjectBuilderState extends State
     private ?Subject $boundSource = null;
 
     /** 连续「同值不同身份」计数；一次可能是偶然，连续到阈值才说明每帧重建 */
-    private const JITTER_ALERT = 8;
+    private const int JITTER_ALERT = 8;
 
     private int $jitterStreak = 0;
 

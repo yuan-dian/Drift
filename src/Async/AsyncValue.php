@@ -15,10 +15,10 @@ namespace Drift\Async;
  */
 final class AsyncValue
 {
-    private const IDLE = 0;
-    private const LOADING = 1;
-    private const DATA = 2;
-    private const ERROR = 3;
+    private const int IDLE = 0;
+    private const int LOADING = 1;
+    private const int DATA = 2;
+    private const int ERROR = 3;
 
     /** 四态之一（`self::IDLE` / `LOADING` / `DATA` / `ERROR`） */
     private int $state;

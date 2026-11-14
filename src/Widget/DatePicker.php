@@ -53,13 +53,13 @@ use Drift\Errors;
 final class DatePicker extends StatefulWidget
 {
     /** 触发框默认宽（逻辑像素）—— "2026-10-29" 十个字符放得下 */
-    public const DEFAULT_WIDTH = 180.0;
+    public const float DEFAULT_WIDTH = 180.0;
 
     /** 面板最小宽（日历自己声明 296 + 外壳内边距） */
-    public const PANEL_MIN_WIDTH = 304.0;
+    public const float PANEL_MIN_WIDTH = 304.0;
 
     /** 面板高度上限（日历 5~6 行 ≈ 250，留余量） */
-    public const PANEL_MAX_HEIGHT = 400.0;
+    public const float PANEL_MAX_HEIGHT = 400.0;
 
     private ?LocalDate $value = null;
 

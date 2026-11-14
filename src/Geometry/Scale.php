@@ -13,7 +13,7 @@ namespace Drift\Geometry;
  */
 final readonly class Scale
 {
-    public const BASE_DPI = 96.0;
+    public const float BASE_DPI = 96.0;
 
     public function __construct(public float $dpr = 1.0)
     {

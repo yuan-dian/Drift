@@ -116,13 +116,13 @@ final class TableState extends State implements Scrollable, EditableText, Constr
     private ?string $dividerDragKey = null;
 
     /** 选中行底色的透明度（0–255，约 14%）—— 半透明 `Accent`，不新增 `AccentContainer` token */
-    private const SELECTED_ALPHA = 36;
+    private const int SELECTED_ALPHA = 36;
 
     /** 列宽手柄的命中区宽（逻辑像素）—— 与 Excel 同量级 */
-    private const RESIZE_HANDLE_W = 5.0;
+    private const float RESIZE_HANDLE_W = 5.0;
 
     /** 表头列分割线宽（逻辑像素）—— 发丝线，1px 是 DPI 下的最小可辨宽度 */
-    private const DIVIDER_W = 1.0;
+    private const float DIVIDER_W = 1.0;
 
     /** 鼠标悬停的行 key（纯 UI 态：没人从外部读写它） */
     private string|int|null $hoverKey = null;
@@ -156,7 +156,7 @@ final class TableState extends State implements Scrollable, EditableText, Constr
     private float $dragStartY = 0.0;
 
     /** 拖动起判阈值（逻辑像素）—— 手抖几像素不该把"点行"变成"选一片" */
-    private const DRAG_SLOP = 4.0;
+    private const float DRAG_SLOP = 4.0;
 
     /**
      * 正在编辑的格：**行 key + 列 key**（`null` = 没在编辑）。

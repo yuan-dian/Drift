@@ -14,11 +14,11 @@ namespace Drift\Core;
  */
 final class Version
 {
-    public const VERSION = '0.1.0-preview.1';
-    public const BASE = '0.1.0';
-    public const PREVIEW = 1;
-    public const TAG = 'v0.1.0-preview.1';
-    public const DEPS_TAG = 'deps-v1';
+    public const string VERSION = '0.1.0-preview.1';
+    public const string BASE = '0.1.0';
+    public const int PREVIEW = 1;
+    public const string TAG = 'v0.1.0-preview.1';
+    public const string DEPS_TAG = 'deps-v1';
 
     private function __construct()
     {

@@ -17,14 +17,14 @@ namespace Drift\Text;
 final class Utf8
 {
     /** 不能出现在行首的标点（禁则：行首禁则） */
-    private const NO_LINE_START = [
+    private const array NO_LINE_START = [
         0x3001, 0x3002, 0xFF0C, 0xFF0E, 0xFF01, 0xFF1F, 0xFF1B, 0xFF1A, // 、。，．！？；：
         0xFF09, 0x3009, 0x300B, 0x300D, 0x300F, 0x3011, 0x3015, 0x2019, 0x201D, // ）〉》」』】〕’”… 的闭引号
         0x2026, 0x00B7,
     ];
 
     /** 不能出现在行尾的标点（行尾禁则） */
-    private const NO_LINE_END = [
+    private const array NO_LINE_END = [
         0xFF08, 0x3008, 0x300A, 0x300C, 0x300E, 0x3010, 0x3014, 0x2018, 0x201C,
     ];
 

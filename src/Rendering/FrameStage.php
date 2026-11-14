@@ -37,33 +37,33 @@ namespace Drift\Rendering;
 final class FrameStage
 {
     // ── 九段：有顺序约束，见 FramePhase ──────────────────────────────
-    public const PUMP_IO = 'pumpIo';
-    public const PUMP_TASKS = 'pumpTasks';
-    public const PUMP_TIMERS = 'pumpTimers';
-    public const TICK_ANIMATIONS = 'tickAnimations';
-    public const PLACE_OVERLAYS = 'placeOverlays';
-    public const SETTLE = 'settle';
-    public const TICK_LATE_MOUNT = 'tickLateMount';
-    public const FOCUS_COLLECT = 'focusCollect';
-    public const PUMP_SEMANTICS = 'pumpSemantics';
+    public const string PUMP_IO = 'pumpIo';
+    public const string PUMP_TASKS = 'pumpTasks';
+    public const string PUMP_TIMERS = 'pumpTimers';
+    public const string TICK_ANIMATIONS = 'tickAnimations';
+    public const string PLACE_OVERLAYS = 'placeOverlays';
+    public const string SETTLE = 'settle';
+    public const string TICK_LATE_MOUNT = 'tickLateMount';
+    public const string FOCUS_COLLECT = 'focusCollect';
+    public const string PUMP_SEMANTICS = 'pumpSemantics';
 
     // ── 只计时：不在 frame() 的顺序名单里 ────────────────────────────
     /** `Frame::run()` 内部 */
-    public const LAYOUT = 'layout';
-    public const PAINT = 'paint';
+    public const string LAYOUT = 'layout';
+    public const string PAINT = 'paint';
 
     /** `Platform` 侧的表面三段 */
-    public const BEGIN_FRAME = 'beginFrame';
-    public const PRESENT = 'present';
+    public const string BEGIN_FRAME = 'beginFrame';
+    public const string PRESENT = 'present';
 
     /** settle 之前（会产脏；组内顺序任意 —— 各泵写的是不同的 State） */
-    private const BEFORE = 'before';
+    private const string BEFORE = 'before';
 
     /** 顺序由直写代码保证，这里只要求"出现过" */
-    private const CORE = 'core';
+    private const string CORE = 'core';
 
     /** settle 之后（观察**新**树；`focusCollect` 要在 `pumpSemantics` 前 —— 语义树要带焦点） */
-    private const AFTER = 'after';
+    private const string AFTER = 'after';
 
     /**
      * 有顺序约束的九段：名字 => [组, 越界/缺失的后果]。
@@ -73,7 +73,7 @@ final class FrameStage
      *
      * @var array<string, array{string, string}>
      */
-    private const ORDERED = [
+    private const array ORDERED = [
         self::PUMP_IO => [self::BEFORE, '外部数据晚一帧到，回调里的 setState 要等下一帧'],
         self::PUMP_TASKS => [self::BEFORE, '后台结果晚一帧生效 —— "loading → ready" 会闪一帧空'],
         self::PUMP_TIMERS => [self::BEFORE, '延时回调晚一帧；跑到 settle 之后则回调里的 setState 要等下一帧（tooltip 晚出、snackbar 晚走）'],
@@ -86,7 +86,7 @@ final class FrameStage
     ];
 
     /** @var list<string> 只计时、不参与顺序校验的段 */
-    private const TIMED_ONLY = [self::LAYOUT, self::PAINT, self::BEGIN_FRAME, self::PRESENT];
+    private const array TIMED_ONLY = [self::LAYOUT, self::PAINT, self::BEGIN_FRAME, self::PRESENT];
 
     /**
      * 九段全名单，顺序 = 一帧内的正确顺序。

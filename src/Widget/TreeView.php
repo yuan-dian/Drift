@@ -31,16 +31,16 @@ final class TreeView extends StatelessWidget implements SemanticsExpandable
      * 低于它时行内容会被 `LazyColumn` 的 `SizedBox` 夹住 ⇒ 箭头被裁。这不是
      * 可以随手改小的审美参数；要更密先解决按钮的紧凑档。
      */
-    public const DEFAULT_ROW_HEIGHT = 42.0;
+    public const float DEFAULT_ROW_HEIGHT = 42.0;
 
     /** 每层缩进（逻辑像素） */
-    public const DEFAULT_INDENT = 18.0;
+    public const float DEFAULT_INDENT = 18.0;
 
     /**
      * 行标签的 Key 前缀 —— `←` 跳父行要"从树里找回父行那个 `Element`"，
      * 而 `keyboard()` 回调只拿得到自己。按身份找得到才谈得上移焦。
      */
-    private const ROW_KEY_PREFIX = 'tree-row:';
+    private const string ROW_KEY_PREFIX = 'tree-row:';
 
     /**
      * 叶子行占的箭头位宽度（= `IconButton` 的天然边长）。
@@ -48,7 +48,7 @@ final class TreeView extends StatelessWidget implements SemanticsExpandable
      * 对齐用的空位（不能跟着调）。两者数值相等是因为箭头按钮是正方形；
      * 主题字号 / 间距一变测试就红，而不是静默错位。
      */
-    public const ARROW_SLOT = 42.0;
+    public const float ARROW_SLOT = 42.0;
 
     /** @var list<TreeNode> 根层节点 */
     private array $nodes = [];

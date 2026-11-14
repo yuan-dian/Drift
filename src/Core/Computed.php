@@ -28,7 +28,7 @@ use Drift\Errors;
 final class Computed implements Versioned
 {
     /** 派生链深度上限（`03` §4.7）：字段 → 过滤/聚合 → 格式化三层，留一倍余量 */
-    private const MAX_DEPTH = 8;
+    private const int MAX_DEPTH = 8;
 
     private mixed $value = null;
     private bool $hasValue = false;

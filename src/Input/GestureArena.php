@@ -20,7 +20,7 @@ namespace Drift\Input;
 final class GestureArena
 {
     /** 拖动阈值（**逻辑**像素，平方比较免开方）—— Windows `SM_CXDRAG` 同量级 */
-    public const DRAG_THRESHOLD_PX = 6.0;
+    public const float DRAG_THRESHOLD_PX = 6.0;
 
     /** @var list<GestureRecognizer> */
     private array $members = [];

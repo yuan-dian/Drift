@@ -24,9 +24,9 @@ use Drift\Errors;
 final class PatternFormatter implements LogFormatter
 {
     /** 片段类型：字面量 */
-    private const LITERAL = 0;
+    private const int LITERAL = 0;
     /** 片段类型：占位符 */
-    private const PLACEHOLDER = 1;
+    private const int PLACEHOLDER = 1;
 
     /**
      * 已编译片段。
