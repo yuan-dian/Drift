@@ -9,13 +9,10 @@ use Drift\Rendering\MetricToken;
 use Drift\Text\TextRole;
 
 /**
- * 一份解析完成的主题（§11.5 / §15.7）。
+ * 一份解析完成的主题。
  *
- * ★ **`ThemeData` 是"取值来源"，不是查找入口**：`color(ColorToken)` 是一次
- *   **表查找**，没有向上遍历、没有特异性权重 —— §18 已否决 CSS 层叠。
- *
- * ★ **合并只发生一次**：显式样式与主题 token 的优先级在 `ThemeData` 里解析完，
- *   下游只读值（§15.7 纪律 3）。
+ * `color()` / `metric()` 是一次表查找，不向上遍历 —— 控件拿到的是解析后的值。
+ * 显式样式与 token 的优先级只在这里解析一次，下游只读值。
  *
  * @api
  */
@@ -25,8 +22,7 @@ final class ThemeData
      * @param array<string, Color> $colors  覆盖层，键 = `ColorToken->name`
      * @param array<string, float> $metrics 覆盖层，键 = `MetricToken->name`
      *
-     * ★ 用 `->name` 而不是 token 本身，只因为 **PHP 的数组键不能是对象**；
-     *   这是内部细节，**公共面没有字符串键**（§16.4 否决字符串注册表）。
+     * 用 `->name` 而非 token 本身，只因为 PHP 数组键不能是对象；公共面没有字符串键。
      */
     private function __construct(
         private readonly bool $dark,
@@ -66,24 +62,25 @@ final class ThemeData
         return $this->metrics[$token->name] ?? $token->baselineValue();
     }
 
-    /** 单个颜色的点覆盖（§15.7：点是 `BoxStyle` 的粒度，这里是“改一张表里的一个键”） */
+    /** 点覆盖：改一个 token。同一 token 再次调用以本次为准（后写覆盖）。 */
     public function withColor(ColorToken $token, Color $color): self
     {
-        return new self($this->dark, $this->colors + [$token->name => $color], $this->metrics);
+        $colors = $this->colors;
+        $colors[$token->name] = $color;
+
+        return new self($this->dark, $colors, $this->metrics);
     }
 
+    /** 点覆盖：改一个度量。同一 token 再次调用以本次为准（后写覆盖）。 */
     public function withMetric(MetricToken $token, float $value): self
     {
-        return new self($this->dark, $this->colors, $this->metrics + [$token->name => $value]);
+        $metrics = $this->metrics;
+        $metrics[$token->name] = $value;
+
+        return new self($this->dark, $this->colors, $metrics);
     }
 
-    /**
-     * 文本语义角色 → 字号（§15.2 / §15.7 纪律 3）。
-     *
-     * ★ **合并只发生在这里一次**：控件只说角色，字号取自这张表 ⇒ 换肤改表，
-     *   调用点一个字都不动。
-     * ★ 显式的 `->size()` 优先于角色（§15.7 纪律 3：优先级在 `ThemeData` 解析一次）。
-     */
+    /** 文本角色 → 字号。显式的 `->size()` 优先于角色；换肤只改这张表。 */
     public function textSize(TextRole $role): float
     {
         return match ($role) {
@@ -108,10 +105,8 @@ final class ThemeData
     }
 
     /**
-     * 换成高对比度（§9.2 / §A.3.3）：**面覆盖**，把有高对比形态的 token 全换掉。
-     *
-     * 没有高对比形态的（当前是 `Hover` / `Pressed`）**保留原值** —— 它们的
-     * 高对比形态是描边不是底色，换底色只会让两者无法区分。
+     * 换成高对比度：面覆盖，把有高对比形态的 token 全换掉。
+     * `Hover` / `Pressed` 没有高对比形态（描边不是底色），保留原值。
      */
     public function withHighContrast(): self
     {

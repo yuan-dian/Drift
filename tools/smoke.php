@@ -3067,6 +3067,18 @@ check(
     $lightTheme->withMetric(MetricToken::Gap, 20.0)->metric(MetricToken::Gap) === 20.0
         && $lightTheme->metric(MetricToken::Gap) === 8.0
 );
+check(
+    'Theme · withColor 同一 token 后写覆盖（数组 + 合并会让第二次静默无效）',
+    $lightTheme->withColor(ColorToken::Accent, Color::black())
+        ->withColor(ColorToken::Accent, Color::fromRgb(9, 8, 7))
+        ->color(ColorToken::Accent)->equals(Color::fromRgb(9, 8, 7))
+);
+check(
+    'Theme · withMetric 同一 token 后写覆盖',
+    $lightTheme->withMetric(MetricToken::Gap, 20.0)
+        ->withMetric(MetricToken::Gap, 40.0)
+        ->metric(MetricToken::Gap) === 40.0
+);
 
 $highContrast = $lightTheme->withHighContrast();
 check(
