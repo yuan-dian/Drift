@@ -260,7 +260,25 @@ function depsDownload(string $url, string $dest, array $headers = [], bool $quie
             }
             return 0;
         }
+        // 服务器忽略 Range 会回 200 并把完整响应追加到已 seek 的 .part 上，curl 不报错；
+        // 那会被后面的 SHA 校验误判成「包坏了」。这里直接判失败让调用方整段重下。
+        if ($offset > 0 && $code !== 206) {
+            if (!$quiet) {
+                fwrite(STDERR, "续传未生效（HTTP {$code}，期望 206）\n");
+            }
+            return 0;
+        }
         return $code;
+    }
+
+    // stream 路径不支持 Range：续传的 .part 必须丢掉重下，否则完整响应会拼到旧字节后面
+    if ($offset > 0) {
+        fclose($fp);
+        $fp = fopen($dest, 'wb');
+        if ($fp === false) {
+            fwrite(STDERR, "无法写入 {$dest}\n");
+            return 0;
+        }
     }
 
     $ctx = stream_context_create([
@@ -278,6 +296,20 @@ function depsDownload(string $url, string $dest, array $headers = [], bool $quie
             fwrite(STDERR, "下载失败：{$url}\n");
         }
         return 0;
+    }
+    // follow_location 会留下多条状态行，取最后一条（最终响应）
+    foreach (array_reverse($http_response_header ?? []) as $h) {
+        if (preg_match('#^HTTP/\S+\s+(\d{3})#', $h, $hm)) {
+            if ((int) $hm[1] >= 400) {
+                fclose($in);
+                fclose($fp);
+                if (!$quiet) {
+                    fwrite(STDERR, "下载失败（HTTP {$hm[1]}）：{$url}\n");
+                }
+                return 0;
+            }
+            break;
+        }
     }
     stream_copy_to_stream($in, $fp);
     fclose($in);

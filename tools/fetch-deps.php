@@ -215,8 +215,8 @@ $pending = !is_file($zipPath) || $force;
 $used = $sources[0];
 
 if ($pending) {
-    // 断点续传只对「上次下到一半」有意义；服务器不认 Range 时会返回 200 并从头写，
-    // 那会把旧 .part 和新内容拼在一起，所以看到失败就丢掉重下一次。
+    // 断点续传只对「上次下到一半」有意义；服务器不认 Range 会回 200 并把完整响应
+    // 追加到 .part 上（curl 不报错），deps-common 会按非 206 判失败。
     $resumed = is_file($part) && filesize($part) > 0;
     $done = false;
     foreach ($sources as $src) {
@@ -224,8 +224,7 @@ if ($pending) {
             ? sprintf('下载 : %s（从 %d 字节续）', $src['label'], (int) filesize($part))
             : "下载 : {$src['label']}";
         printf("%s\n", $label);
-        // 服务器不认 Range 时 curl 会直接报错，而不是返回 200 —— 静默试一次，
-        // 失败就丢掉 .part 整段重下，别把"不支持续传"当成网络故障。
+        // 失败就丢掉 .part 整段重下，别把「不支持续传」当成网络故障。
         $code = $resumed
             ? depsDownload($src['url'], $part, $src['headers'], true, true)
             : depsDownload($src['url'], $part, $src['headers'], false, false);

@@ -29,7 +29,7 @@ use PHPUnit\Framework\TestCase;
  *
  * ★ 反同源：期望值来自手写 GBK 字节（`\xB4\xED\xCE\xF3` = "错误"）与 U+FFFD
  *   字面量，不拿 `json_encode` 自己的结果当期望 —— 实现和判据一起错也绿。
- * ★ 放 `unit` 而非 `feature`：CI 的 `gate-fast` 跑 `--fast`，`feature` 是 slow 项。
+ * ★ 放 `unit` 而非 `feature`：CI 的 `gate-fast` 跑默认快项（V2 已无 `--fast`），`feature` 是 slow 项。
  */
 final class CheckReportUtf8Test extends TestCase
 {

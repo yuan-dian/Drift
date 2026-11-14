@@ -211,15 +211,16 @@ Composer 等于借它的下载器，再把它装错位置的东西搬走 —— 
 **一个反面教材**：上游 TypePHP 的 `7136faf`（`chore: bump version to 0.10.0`）一次手改
 4 行 —— `project.yml` 的 `version` / `file-version` / `product-version`，加
 `Translator.php` 的 `VERSION` 常量，全靠人记得同步。本仓 8 个 `apps/*/project.yml`
-是同款，注释里甚至明写着「两处真相，改版本时一起改」。**值得学的是它暴露的问题，
-不是它的做法**：只要有第二份手抄副本，就一定会漂。
+里 7 个是同款（`bench` 是量具，不进产品 PE 资源，只有 `version:`），注释里甚至
+明写着「两处真相，改版本时一起改」。**值得学的是它暴露的问题，不是它的做法**：
+只要有第二份手抄副本，就一定会漂。
 
 **所以结构是这样**（真相源只有两行，其余全是派生产物）：
 
 | 派生副本 | 生成者 | 谁负责判据 |
 |---|---|---|
 | `src/Core/Version.php`（`VERSION` / `BASE` / `PREVIEW` / `TAG` / `DEPS_TAG`） | `gen-version.php` | `version --check` + `gen-version --check` |
-| 8 份 `apps/*/project.yml` 的 `version` / `file-version` / `product-version` | `gen-version.php` | `gen-version --check` |
+| 7 份 `apps/*/project.yml` 的三处版本（+ `bench` 的 `version`） | `gen-version.php` | `gen-version --check`（含字段齐备断言） |
 | `deps.lock.json` 的 `driftVersion` / `depsTag`，包内 `DEPS-MANIFEST.txt` 与 zip 注释 | `pack-deps.php` | `version --check` + `release-deps.php` 前置 |
 | `fetch-deps.php` / `release-deps.php` 默认取的 tag | 运行时读 `DEPS_VERSION` | `release-deps.php` 拒绝 `--tag` 覆盖真相源 |
 | `CHANGELOG.md` 的 `## v<版本>` 小节、git tag `v<版本>` | 人工写 / 人工打 | `version --check`（含 HEAD tag 比对） |
@@ -293,9 +294,10 @@ lock，会留下「新包已发、旧 lock 还在」的窗口：`fetch-deps.php`
 GITHUB_TOKEN 产生的 push 不再触发新 workflow，所以不会自激。**分支保护若禁止 Actions 直接
 push main，这一步会红** —— 给机器人开例外或改用有写权限的 PAT，不要为此把 lock 改成运行时回写。
 
-`pack-deps.php` 把 ZIP 条目时间固定到 `SOURCE_DATE_EPOCH`（缺省 1980-01-01），同一份
-`cpp/` 重打包 SHA 稳定。否则每次打包都换一个哈希，「lock 没变就不发版」的判断永远失效，
-README 里的校验值也只能每次跟着改。
+`pack-deps.php` 把条目按路径排序，并写盘后把所有 ZIP DOS 时间统一覆盖成 1980-01-01
+00:00（包内不写扩展时间戳，跨时区重建也一致），同一份 `cpp/` 重打包 SHA 稳定。否则
+每次打包都换一个哈希，「lock 没变就不发版」的判断永远失效，README 里的校验值也只能
+每次跟着改。
 
 ### 构建输入（供下载源码自行构建的使用者）
 

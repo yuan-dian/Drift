@@ -17,7 +17,7 @@
 | Windows SDK | 10.0.26100.0 | `DEFAULT_SDK_VERSION` |
 | PHPX | 须与 tpc 匹配 | 默认 `<php.exe 目录>/phpx/`，用 `DRIFT_PHPX_HOME` 覆盖（`PHPX_HOME` 由构建脚本写给子进程） |
 | tpc（TypePHP 编译器） | 与 PHPX 同源 | 默认同级 `../typephp/bin/tpc.php`，用 `DRIFT_TPC_ENTRY` 覆盖；`doctor` 会检查 |
-| Skia + 字体 | `cpp/skia/`（约 141 MB）+ `cpp/fonts/`（约 21 MB） | **`/cpp/` 在 `.gitignore` 里，不随仓库分发**；clone 后需自行补入，分发方式仍是开放项 |
+| Skia + 字体 | `cpp/skia/`（约 141 MB）+ `cpp/fonts/`（约 21 MB） | `/cpp/` 在 `.gitignore` 里不入库；clone 后跑 `php tools/fetch-deps.php` 从 `deps-vN` Release 取包，源码自建见 [`RELEASE-DEPS.md`](RELEASE-DEPS.md) |
 
 `php tools/doctor.php` 逐项体检（只读，不安装）。它与 `drift-build` 共用同一份
 定位逻辑（`tools/Doctor/Environment.php`），**不会各写一套**。

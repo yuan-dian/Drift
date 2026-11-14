@@ -102,6 +102,9 @@ foreach ([['cpp/skia', $skia], ['cpp/fonts', $fonts]] as [$prefix, $dir]) {
     }
 }
 
+// 迭代顺序随文件系统变；排序后才让跨机器重打包的字节一致。
+usort($entries, static fn (array $a, array $b): int => strcmp($a[0], $b[0]));
+
 $totalBytes = 0;
 foreach ($entries as [, $path]) {
     $totalBytes += filesize($path);
@@ -164,6 +167,49 @@ $manifest .= "FTL / Unicode V3 / IJG+BSD-3 / libpng v2 / BSD-3 / MIT+Apache-2.0 
 $manifest .= "其中 Skia 与 OFL 另在 cpp/skia/LICENSE、cpp/fonts/OFL.txt 留了就近副本，\n";
 $manifest .= "内容与 cpp/licenses/ 相同。分发时 cpp/licenses/ 整个目录必须随附，勿删。\n";
 
+/**
+ * ZIP 的 DOS 时间按 CRT 本地时区写（包内不写 UT extra）：同一个 SOURCE_DATE_EPOCH
+ * 在 UTC+8 机器落成 08:00、UTC 机器落成 00:00 ⇒ 跨时区重打包 SHA 不同。
+ * putenv('TZ') 与 date_default_timezone_set 都改不了 libzip 的这一行为，
+ * 所以写盘后直接把每个条目的 DOS 字段覆盖成固定的 1980-01-01 00:00。
+ */
+function normalizeZipDosTimes(string $path): void
+{
+    $b = (string) file_get_contents($path);
+    $len = strlen($b);
+    $fixed = "\x00\x00\x21\x00"; // DOS time=0、date=1980-01-01
+
+    $i = 0;
+    while ($i + 30 <= $len && substr($b, $i, 4) === "PK\x03\x04") {
+        for ($j = 0; $j < 4; $j++) {
+            $b[$i + 10 + $j] = $fixed[$j];
+        }
+        $nameLen = unpack('v', substr($b, $i + 26, 2))[1];
+        $extraLen = unpack('v', substr($b, $i + 28, 2))[1];
+        $compSize = unpack('V', substr($b, $i + 18, 4))[1];
+        $i += 30 + $nameLen + $extraLen + $compSize;
+    }
+
+    $eocd = strrpos($b, "PK\x05\x06");
+    if ($eocd === false) {
+        fwrite(STDERR, "ZIP 结构异常：找不到 EOCD\n");
+        exit(1);
+    }
+    $p = unpack('V', substr($b, $eocd + 16, 4))[1];
+    $count = unpack('v', substr($b, $eocd + 10, 2))[1];
+    for ($k = 0; $k < $count && substr($b, $p, 4) === "PK\x01\x02"; $k++) {
+        for ($j = 0; $j < 4; $j++) {
+            $b[$p + 12 + $j] = $fixed[$j];
+        }
+        $nameLen = unpack('v', substr($b, $p + 28, 2))[1];
+        $extraLen = unpack('v', substr($b, $p + 30, 2))[1];
+        $commentLen = unpack('v', substr($b, $p + 32, 2))[1];
+        $p += 46 + $nameLen + $extraLen + $commentLen;
+    }
+
+    file_put_contents($path, $b);
+}
+
 // ── 写 zip ──
 $dir = dirname($out);
 if (!is_dir($dir) && !mkdir($dir, 0777, true) && !is_dir($dir)) {
@@ -190,16 +236,9 @@ $zip->addFromString('cpp/licenses/THIRD-PARTY.md', (string) file_get_contents($t
 foreach ($licenseFiles as $lic) {
     $zip->addFromString('cpp/licenses/' . basename($lic), (string) file_get_contents($lic));
 }
-// ZIP 条目默认带当前时间 ⇒ 同一份 cpp/ 重打包也会得到不同 SHA，README 里的校验值和
-// CI「lock 没变就不发版」的判断都会失效。按可复现构建惯例固定到 SOURCE_DATE_EPOCH，
-// 缺省 1980-01-01（ZIP DOS 时间戳下限）。
-$epoch = getenv('SOURCE_DATE_EPOCH');
-$ts = is_string($epoch) && preg_match('/^\d+$/', trim($epoch)) === 1 ? (int) trim($epoch) : 315532800;
-for ($i = 0; $i < $zip->numFiles; $i++) {
-    $zip->setMtimeIndex($i, $ts);
-}
 $zip->setArchiveComment("Drift {$driftVersion} · {$depsTag}: Skia M{$milestone} + Noto Sans SC (OFL)");
 $zip->close();
+normalizeZipDosTimes($out);
 
 // ── 结果 ──
 $size = filesize($out);
@@ -217,6 +256,7 @@ file_put_contents($out . '.sha256', $sha . '  ' . basename($out) . "\n");
 // ── 入库的锁文件 ──
 // 只发 .sha256 是自证：包和校验值同源上传，被替换时两者一起变，等于没校验。
 // 把 sha256 写进入库的 lock 后，换包必须同时改仓库文件，diff 里看得见。
+// 不写生成时间：它按天漂，会让「lock 没变就不发版」误判，且没有消费方。
 $lock = [
     'asset' => basename($out),
     'driftVersion' => $driftVersion,
@@ -231,7 +271,6 @@ $lock = [
     'libs' => count(glob($skia . '/out/Release-x64/*.lib') ?: []),
     'fonts' => array_map('basename', glob($fonts . '/*.ttf') ?: []),
     'licenses' => count($licenseFiles),
-    'generatedAt' => date('Y-m-d'),
 ];
 $lockFile = $root . '/deps.lock.json';
 file_put_contents(

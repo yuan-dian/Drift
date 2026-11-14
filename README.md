@@ -193,11 +193,12 @@ Get-FileHash drift-deps-win-x64.zip -Algorithm SHA256   # 校验收到的包
 当前包的校验值（`pack-deps.php` 打包时自动写入，`fetch-deps.php` 用它校验）：
 
 ```text
-d612496ced3660edf4cfed42da513df85b952374196c4b904ef8593bc396ee4b
+a3b45d2ca542c89a6091a77878fb852f964e8a7e20d1d9f89ed819005dfc67e9
 ```
 
-同一份 `cpp/` 重打包 SHA 不变：ZIP 条目时间固定到 `SOURCE_DATE_EPOCH`（缺省
-1980-01-01），否则每次打包都换一个哈希，CI 就无法判断「依赖真变了没有」。
+同一份 `cpp/` 重打包 SHA 不变：条目按路径排序，且所有 ZIP DOS 时间统一写成
+1980-01-01 00:00（包内不写扩展时间戳，跨时区重建也一致）。否则每次打包都换一个哈希，
+CI 就无法判断「依赖真变了没有」。
 
 完整元数据（字节数 / entry 数 / Skia 里程碑 / 24 个 lib / 2 个字体 / 11 份许可）见
 [`deps.lock.json`](deps.lock.json)。它入库，所以换包必须同时改仓库文件 —— 这是校验能成立的前提；

@@ -5,6 +5,9 @@
 > ④ 区分「真缺口 / 有意裁剪 / 已裁决不重开」⑤ 按发布形态分级判定。
 > 不照抄 `DEBT` 与推进计划（本仓已多次证明清单会腐烂：§73/§74 都是把计划推荐判错后改选）。
 > 新文档不写 `file:line`（`docs/00-README.md` §6 的纪律），定位只用类名 / 文件名。
+>
+> ★ 本文是 **2026-11-10 的只读基线快照**，不是现状说明。之后的 CI、版本锚点与依赖
+> 分发链已落地，现状见 [`CONTRIBUTING.md`](CONTRIBUTING.md) 与 [`RELEASE-DEPS.md`](RELEASE-DEPS.md)。
 
 ---
 
@@ -287,7 +290,7 @@ AccessibilityNodeInfo / Linux AT-SPI）。这也解释了为什么「跨平台�
 | 缺口 | 交付物 | 状态 |
 |---|---|---|
 | **B1** 根 README / 构建指引 | [`README.md`](../README.md)（定位 + 30 秒示意 + 五分钟跑起来 + Windows-only / alpha / API 不保证兼容 标注） | ✅ |
-| **B2** CI | [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)（PR 跑 T0 纯 PHP 子集 `--json`；nightly 加慢项；T2 注释模板需自托管 runner） | ✅ |
+| **B2** CI | [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)（push/PR 跑快项、全量档手动触发、无日构建；T2 注释模板需自托管 runner） | ✅ |
 | **B3** 版本 / 变更日志 / 发布流程 | [`CHANGELOG.md`](../CHANGELOG.md)（v0.1.0-preview.1 + tag 规范）+ [`docs/CONTRIBUTING.md`](CONTRIBUTING.md)（工具链精确版本 / T0–T2 分层 / 改代码纪律） | ✅ |
 | **B 项第 5 条**（真值沉淀） | [`docs/CONTRIBUTING.md`](CONTRIBUTING.md) 固化第二开发者 / CI 真值（`.workbuddy-ai/memory/` 不进 git，真值走上 docs） | ✅ |
 | **B4** 壳 ↔ PHP ABI 无握手 | 改走**静态契约**：`tools/Abi/Contract.php` + `abi-check`（stub 唯一事实源、三向签名）/ `drift-build` preflight / gate `abi` / `abiself`。**不做运行期 version 握手**：单体 AOT 一起编译，真实错配路径是缓存 stale（B5） | ✅ 以静态契约收口 |

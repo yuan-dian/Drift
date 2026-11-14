@@ -2,7 +2,7 @@
     "asset": "drift-deps-win-x64.zip",
     "driftVersion": "0.1.0-preview.1",
     "depsTag": "deps-v1",
-    "sha256": "d612496ced3660edf4cfed42da513df85b952374196c4b904ef8593bc396ee4b",
+    "sha256": "a3b45d2ca542c89a6091a77878fb852f964e8a7e20d1d9f89ed819005dfc67e9",
     "bytes": 51985887,
     "entries": 610,
     "skiaMilestone": "148",
@@ -19,6 +19,5 @@
         "NotoSansSC-Bold.ttf",
         "NotoSansSC-Regular.ttf"
     ],
-    "licenses": 11,
-    "generatedAt": "2026-11-12"
+    "licenses": 11
 }

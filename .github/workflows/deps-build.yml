@@ -105,6 +105,13 @@ jobs:
             echo "::notice::composer unavailable on this runner; only the static layer runs"
           fi
 
+      # pack 与 fetch-deps 自验都要 curl/zip；缺扩展时会报成「所有下载源都失败了」，
+      # 不如在这里直接点名。
+      - name: Assert PHP extensions
+        shell: bash
+        run: |
+          php -r 'foreach (["curl", "zip"] as $e) { if (!extension_loaded($e)) { fwrite(STDERR, "missing PHP extension: $e\n"); exit(1); } }'
+
       - name: Pack and verify
         shell: bash
         run: |
@@ -121,6 +128,19 @@ jobs:
             dist/drift-deps-win-x64.zip.sha256
             deps.lock.json
           retention-days: 14
+
+      # 必须在写远端之前拦：tag 已存在时下面的 git tag 会失败，而 lock 的 commit
+      # 已经 push 出去，留一个没有 release 的孤儿提交。
+      - name: Preflight deps tag is unused
+        if: ${{ inputs.publish }}
+        shell: bash
+        run: |
+          TAG="$(tr -d '\r\n' < DEPS_VERSION)"
+          git fetch --tags --quiet
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "::error::tag $TAG already exists; bump DEPS_VERSION and sync CHANGELOG / README / deps.lock.json before publishing a new package"
+            exit 1
+          fi
 
       - name: Commit lock and push
         if: ${{ inputs.publish }}
@@ -149,7 +169,7 @@ jobs:
         shell: bash
         env:
           TOKEN: ${{ github.token }}
-        run: php tools/release-deps.php --token="$TOKEN"
+        run: php tools/release-deps.php --token="$TOKEN" --force
 
       - name: Verify from published assets
         if: ${{ inputs.publish }}

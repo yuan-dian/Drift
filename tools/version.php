@@ -11,7 +11,7 @@ declare(strict_types=1);
  * 也可直接跑：
  *   php tools/version.php            # 人读
  *   php tools/version.php --json     # 机器可读
- *   php tools/version.php --check    # 一致性判据，供 gate 调用，不一致 exit 1
+ *   php tools/version.php --check    # 一致性判据，供 bin/drift verify 调用，不一致 exit 1
  */
 
 const DRIFT_VERSION_RE = '/^\d+\.\d+\.\d+-preview\.\d+$/';
@@ -90,7 +90,7 @@ function driftVersionInfo(?string $root = null): array
 
 /**
  * 版本文件不能只是"写在那儿"：CHANGELOG、git tag、依赖锁文件都从它派生，
- * 任一处漂了都要在 gate 里响，而不是等发版时才发现 tag 和 CHANGELOG 对不上。
+ * 任一处漂了都要在 verify 里响，而不是等发版时才发现 tag 和 CHANGELOG 对不上。
  *
  * @return array{ok:bool,errors:list<string>,info:array}
  */
@@ -156,6 +156,22 @@ function driftVersionCheck(?string $root = null): array
         }
         if (($lock['skiaRevision'] ?? null) !== $skiaRev) {
             $errors[] = 'deps.lock.json 的 skiaRevision 与 SKIA_REVISION 不一致 —— 换 Skia 后重跑 pack-deps.php';
+        }
+
+        // README 里那份校验值是给人的，pack-deps 不会自动同步它：换包忘改就会让
+        // 使用者校验失败，而上面所有版本判据都还是绿的。
+        $readme = (string) @file_get_contents($root . '/README.md');
+        preg_match_all('/\b[0-9a-f]{64}\b/i', $readme, $rm);
+        $hashes = array_map('strtolower', $rm[0]);
+        if ($hashes === []) {
+            $errors[] = 'README.md 里找不到 SHA256 —— 换包后要同步「当前包的校验值」';
+        } else {
+            foreach ($hashes as $h) {
+                if (!hash_equals((string) $lock['sha256'], $h)) {
+                    $errors[] = "README.md 的 SHA256（{$h}）与 deps.lock.json 不一致 —— 换包后同步 README";
+                    break;
+                }
+            }
         }
     }
 

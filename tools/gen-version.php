@@ -10,7 +10,7 @@ declare(strict_types=1);
  * 手抄迟早漏一处，且漏了没人知道 —— 所以这里生成，version.php --check 判据。
  *
  * 用法：php tools/gen-version.php [--check]
- *   --check 只比对不写盘，供 gate 与人工核对。
+ *   --check 只比对不写盘，供 bin/drift verify 与人工核对。
  */
 
 require __DIR__ . '/version.php';
@@ -68,7 +68,7 @@ namespace Drift\Core;
  *
  * 真相源是那两个纯文本文件（Chromium chrome/VERSION、Flutter engine.version 的形态）：
  * shell / CI 能直接 cat，而运行时代码需要编译期就确定的值 —— AOT 产物里没有仓库根
- * 目录可以读，所以这里存一份派生副本，由 gate 保证它不漂。
+ * 目录可以读，所以这里存一份派生副本，由 bin/drift verify 保证它不漂。
  *
  * @api
  */
@@ -92,8 +92,19 @@ $ok = syncFile($constPath, $class, $checkOnly);
 
 // ── 各应用 project.yml 的三处版本 ──
 $apps = glob($root . '/apps/*/project.yml') ?: [];
+// bench 是量具、不进产品 PE 资源，只有 version:；其余应用三处版本必须齐备。
+// 只比对替换后文本会发现不了「字段根本不存在」，所以这里显式数一遍。
+$peOptional = ['bench'];
 foreach ($apps as $yml) {
     $text = (string) file_get_contents($yml);
+    if (!in_array(basename(dirname($yml)), $peOptional, true)) {
+        foreach (['version', 'file-version', 'product-version'] as $field) {
+            if (preg_match('/^\s*' . preg_quote($field, '/') . ':\s*\S+/m', $text) !== 1) {
+                fwrite(STDERR, "✗ {$yml} 缺 {$field}（PE 版本字段）\n");
+                $ok = false;
+            }
+        }
+    }
     $patched = preg_replace_callback(
         '/^(\s*(?:version|file-version|product-version):\s*)(\S+)(\s*)$/m',
         static fn (array $m): string => $m[1] . $peVersion . $m[3],
@@ -109,12 +120,13 @@ foreach ($apps as $yml) {
     }
 }
 
+if (!$ok) {
+    fwrite(STDERR, "✗ 版本派生副本不一致或缺字段，跑：php tools/gen-version.php\n");
+    fwrite(STDERR, "  （{$constPath} 与 apps/*/project.yml 都是派生产物）\n");
+    exit(1);
+}
+
 if ($checkOnly) {
-    if (!$ok) {
-        fwrite(STDERR, "✗ 版本副本与 VERSION / DEPS_VERSION 不一致，跑：php tools/gen-version.php\n");
-        fwrite(STDERR, "  （{$constPath} 与 apps/*/project.yml 都是派生产物）\n");
-        exit(1);
-    }
     echo "✓ 版本副本一致（{$version} · {$depsTag}）\n";
     exit(0);
 }
