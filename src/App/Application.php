@@ -558,23 +558,58 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         return $this->onCloseRequested();
     }
 
-    /** 把新的渲染环境下发到根与浮层两棵树（浮层是第二棵树）。
+    /**
+     * 本应用的全部渲染树根：主树在前，浮层按栈序在后（`null` = 不在树里）。
      *
-     * 主题值与旧值 `===` 时 `applyContext()` 幂等短路 ⇒ 不跟随系统主题的应用零重建成本。
+     * ★ 浮层是**第二棵树**。主题下发 / 窗口档下发 / 焦点链 / 动画发现四处都要走它，
+     *   原先各写一遍 `foreach (overlays()->all())` —— "漏了浮层"是反复踩到的那类坑
+     *   （菜单里的 Spinner 不转、菜单项 Tab 不到、换了主题菜单不变），且都不报错。
+     *
+     * @return list<Element>
      */
-    private function applyNewContext(): void
+    private function treeRoots(): array
+    {
+        $roots = [];
+        $root = $this->root;
+        if ($root !== null) {
+            $roots[] = $root;
+        }
+
+        foreach ($this->overlayHost->overlays()->all() as $entry) {
+            if ($entry->element !== null) {
+                $roots[] = $entry->element;
+            }
+        }
+
+        return $roots;
+    }
+
+    /**
+     * 把新环境下发到**每一棵**树。
+     *
+     * ★ `$derive` 从主树的旧环境算出新环境，两棵树共用同一个结果：浮层与主树必须
+     *   同主题 / 同窗口档，否则菜单与页面各画一套。
+     */
+    private function pushContext(\Closure $derive): void
     {
         $root = $this->root;
         if ($root === null) {
             return;
         }
 
-        $context = $root->context()->withTheme($this->theme());
-        $root->applyContext($context);
-
-        foreach ($this->overlayHost->overlays()->all() as $e) {
-            $e->element?->applyContext($context);
+        $context = $derive($root->context());
+        foreach ($this->treeRoots() as $element) {
+            $element->applyContext($context);
         }
+    }
+
+    /** 把新的渲染环境下发到每一棵树。
+     *
+     * 主题值与旧值 `===` 时 `applyContext()` 幂等短路 ⇒ 不跟随系统主题的应用零重建成本。
+     */
+    private function applyNewContext(): void
+    {
+        $this->pushContext(fn(BuildContext $context): BuildContext => $context->withTheme($this->theme()));
     }
 
     /**
@@ -582,7 +617,6 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      *
      * ★ 档内不重建是有意的：拖动 resize 是高频路径（平台在模态尺寸循环里同步调回），
      *   逐像素重建全树会卡；而"档位不变 ⇒ 布局结论不变"，重排就够了。
-     * ★ 只下发给根与浮层两棵树 —— 与 `applyNewContext()` 同一族，别处没有第三棵。
      */
     private function adoptWindowSize(BoxConstraints $constraints): void
     {
@@ -599,12 +633,11 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         // `rebuild()` 会推结构版本号 ⇒ 先切到本应用的管线，否则记到别的窗口账上。
         Pipeline::enter($this->pipeline);
 
-        $context = $root->context()->withWindow($constraints->maxWidth, $constraints->maxHeight, $next);
-        $root->applyContext($context);
-
-        foreach ($this->overlayHost->overlays()->all() as $e) {
-            $e->element?->applyContext($context);
-        }
+        $this->pushContext(fn(BuildContext $context): BuildContext => $context->withWindow(
+            $constraints->maxWidth,
+            $constraints->maxHeight,
+            $next,
+        ));
     }
 
     /**
@@ -731,7 +764,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
 
         // 每帧重建焦点链：settle 可能换掉子树，旧链会握着已移除的 Element（按键静默丢给死节点）。
         // 浮层是第二棵树，也要进链，否则菜单项永远 Tab 不到。
-        $this->stage(FrameStage::FOCUS_COLLECT, function () use ($root): void {
+        $this->stage(FrameStage::FOCUS_COLLECT, function (): void {
             // ★ 捕获者卸载 ⇒ 必须释放：settle 换掉子树后，指针事件全发给死节点（静默冻住）。
             $captureNode = $this->input->captureNode();
             if ($captureNode !== null && !$captureNode->isMounted()) {
@@ -742,13 +775,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
                 ), Errors::DIAGNOSTIC);
                 $this->input->releasePointer();
             }
-            $popupRoots = [];
-            foreach ($this->overlayHost->overlays()->all() as $e) {
-                if ($e->element !== null) {
-                    $popupRoots[] = $e->element;
-                }
-            }
-            $this->focus?->collect([$root, ...$popupRoots], $this->overlayHost->focusTrapRoots());
+            $this->focus?->collect($this->treeRoots(), $this->overlayHost->focusTrapRoots());
         });
 
         // 每帧末经 sink 交出语义树（无 sink ⇒ 不建，零开销）。
@@ -1103,6 +1130,47 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     }
 
     /**
+     * 语义动作的**寻址**：节点索引 → 命中的 Element + 节点中心。
+     *
+     * ★ Invoke / SetValue / ExpandCollapse 三个 UIA 动作**共用这一处**。索引口径
+     *   （`toArrays()['nodes']` 的下标，前序）、零面积拒绝、命中换算是同一件事：
+     *   抄成三份，任一份漂了都是"读屏点错格子"，而且**没有报错**。
+     * ★ 索引是快照下标：树在两次推送之间变了 ⇒ 可能指到别的节点（与任何 UI 自动化
+     *   一样是竞态）；结构变化会立刻整棵重推，窗口很短。
+     *
+     * @return array{element: Element, x: float, y: float, node: \Drift\Input\SemanticsNode}|null
+     *   `null` ⇒ 越界 / 零面积 / 未挂载 / 没命中 —— 消费方回
+     *   `UIA_E_ELEMENTNOTAVAILABLE`，不能假装成功
+     */
+    private function semanticsTarget(int $index): ?array
+    {
+        $tree = SemanticsBuilder::build($this->root, null);
+        if ($index < 0 || $index >= $tree->count()) {
+            return null;
+        }
+
+        $node = $tree->node($index);
+        if ($node->w <= 0 || $node->h <= 0) {
+            return null;
+        }
+
+        $root = $this->root;
+        $focus = $this->focus;
+        if ($root === null || $focus === null) {
+            return null;
+        }
+
+        $x = $node->x + $node->w / 2.0;
+        $y = $node->y + $node->h / 2.0;
+
+        // 语义节点几何就是渲染树的逻辑坐标（与命中测试同一套），中心点可直接命中。
+        $hit = $focus->hitTest($x, $y, $root);
+        $element = $hit === null ? null : $focus->elementAt($root, $hit);
+
+        return $element === null ? null : ['element' => $element, 'x' => $x, 'y' => $y, 'node' => $node];
+    }
+
+    /**
      * 按**语义节点索引**激活一次（§9 / M5 无障碍的"可操作"半边）。
      *
      * 消费者：`dispatchInput()` 收到 `SemanticsInvokeEvent` 时转调（UIA
@@ -1115,36 +1183,23 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      *   `onSelected`、`Toggle` 走 `onChanged`…每加一个控件就要补一支，而且
      *   "读屏点"与"鼠标点"行为不同是**没人测得出来**的那类缺陷。
      *
-     * ★ 坐标：语义节点几何就是渲染树的逻辑坐标（与命中测试同一套），
-     *   所以中心点可以直接喂给 `dispatchInput()`。
-     *
-     * ★ 索引口径：`SemanticsBuilder::toArrays()['nodes']` 的下标（前序），与推给
-     *   UIA 的那份快照同一套编号。树在两次推送之间变了 ⇒ 索引可能指到别的节点
-     *   （与任何 UI 自动化一样是竞态）；结构变化会立刻触发整棵重推，窗口很短。
-     *
      * @return bool 真的派发了（越界 / 零面积 ⇒ false —— 消费方据此回
      *   `UIA_E_ELEMENTNOTAVAILABLE`，不能假装成功）
      */
     public function invokeSemanticsNode(int $index): bool
     {
-        $tree = SemanticsBuilder::build($this->root, null);
-        if ($index < 0 || $index >= $tree->count()) {
+        $target = $this->semanticsTarget($index);
+        if ($target === null) {
             return false;
         }
-        $node = $tree->node($index);
-        if ($node->w <= 0 || $node->h <= 0) {
-            return false;
-        }
-        $x = $node->x + $node->w / 2.0;
-        $y = $node->y + $node->h / 2.0;
 
         // ★ 合成一次**完整**指针手势：先 move 再 down/up。
         //   真实的鼠标点击永远先有 `WM_MOUSEMOVE`（悬停链先建立）——
         //   "凭空 down"在真机上不激活（`CursorShape` 退默认），别把它当成
         //   "少一条事件无所谓"。
-        $this->dispatchInput(PointerEvent::move($x, $y));
-        $this->dispatchInput(PointerEvent::down($x, $y));
-        $this->dispatchInput(PointerEvent::up($x, $y));
+        $this->dispatchInput(PointerEvent::move($target['x'], $target['y']));
+        $this->dispatchInput(PointerEvent::down($target['x'], $target['y']));
+        $this->dispatchInput(PointerEvent::up($target['x'], $target['y']));
 
         return true;
     }
@@ -1153,31 +1208,17 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      * 按**语义节点索引**写入一个值（UIA `IValueProvider` / `IRangeValueProvider`
      * 的 `SetValue`，§4.4 提交 2）。
      *
-     * ★ 寻址与 `invokeSemanticsNode()` 同源（节点几何中心 → 命中 → Element），
-     *   区别只在最后一步：**不派发 tap**，而是沿命中 Element 的父链找
-     *   `SemanticsValueEditable`（与 `activateFocusedWidget()` 找 `Activatable`
-     *   同构）。`SetValue` 是"把值改成 X"，不是"点一下"。
-     * ★ 返回 false 的四种情形（越界 / 零面积 / 未挂载 / 无人接）⇒ 消费方回
-     *   `UIA_E_ELEMENTNOTAVAILABLE`，**不能假装成功**。
+     * ★ **不派发 tap**：`SetValue` 是"把值改成 X"，不是"点一下"。命中后沿父链找
+     *   `SemanticsValueEditable`（与 `activateFocusedWidget()` 找 `Activatable` 同构）。
      */
     public function setSemanticsValue(int $index, string $value): bool
     {
-        $tree = SemanticsBuilder::build($this->root, null);
-        if ($index < 0 || $index >= $tree->count()) {
+        $target = $this->semanticsTarget($index);
+        if ($target === null) {
             return false;
         }
-        $node = $tree->node($index);
-        if ($node->w <= 0 || $node->h <= 0) {
-            return false;
-        }
-        $root = $this->root;
-        $focus = $this->focus;
-        if ($root === null || $focus === null) {
-            return false;
-        }
-        $hit = $focus->hitTest($node->x + $node->w / 2.0, $node->y + $node->h / 2.0, $root);
-        $element = $hit === null ? null : $focus->elementAt($root, $hit);
-        for ($e = $element; $e !== null; $e = $e->parent()) {
+
+        for ($e = $target['element']; $e !== null; $e = $e->parent()) {
             $widget = $e->widget();
             if ($widget instanceof SemanticsValueEditable) {
                 return $widget->setSemanticsValue($value);
@@ -1190,9 +1231,6 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     /**
      * 按**语义节点索引**展开/折叠一行（UIA `IExpandCollapseProvider`，§65）。
      *
-     * ★ 寻址与 `invokeSemanticsNode()` / `setSemanticsValue()` 同源（节点几何
-     *   中心 → 命中 → Element），区别在最后一步：沿父链找
-     *   `SemanticsExpandable`，把动作交给它。
      * ★ **不合成 tap**：行的 tap 是"选中"，展开是另一件事。而箭头那个 `IconButton`
      *   虽然在语义树里，却只是一颗没有身份的按钮 —— 按索引找它比按 Key 找行更脆。
      * ★ `expandState === 0` 直接拒（叶子 / 非集合）：客户端不该对它们发起这条命令，
@@ -1202,25 +1240,15 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      */
     public function setSemanticsExpanded(int $index, bool $expand): bool
     {
-        $tree = SemanticsBuilder::build($this->root, null);
-        if ($index < 0 || $index >= $tree->count()) {
+        $target = $this->semanticsTarget($index);
+        if ($target === null || $target['node']->expandState === 0) {
             return false;
         }
-        $node = $tree->node($index);
-        if ($node->w <= 0 || $node->h <= 0 || $node->expandState === 0) {
-            return false;
-        }
-        $root = $this->root;
-        $focus = $this->focus;
-        if ($root === null || $focus === null) {
-            return false;
-        }
-        $hit = $focus->hitTest($node->x + $node->w / 2.0, $node->y + $node->h / 2.0, $root);
-        $element = $hit === null ? null : $focus->elementAt($root, $hit);
-        for ($e = $element; $e !== null; $e = $e->parent()) {
+
+        for ($e = $target['element']; $e !== null; $e = $e->parent()) {
             $widget = $e->widget();
             if ($widget instanceof SemanticsExpandable) {
-                return $widget->setSemanticsExpanded($node->key, $expand);
+                return $widget->setSemanticsExpanded($target['node']->key, $expand);
             }
         }
 
@@ -1267,7 +1295,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     /**
      * 全树发现：重建活跃表，并回答"还有人在动吗"。
      *
-     * ★ 三棵树都要走（根 + 每个浮层）—— 见 `tickAnimations()` 的第一条。
+     * ★ 每一棵树都要走（根 + 每个浮层）—— 见 `tickAnimations()` 的第一条。
      */
     private function collectActiveAnimations(float $timestampMs): bool
     {
@@ -1278,13 +1306,8 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
 
         $busy = false;
 
-        $root = $this->root;
-        if ($root !== null && $this->scanSubtree($root, $timestampMs)) {
-            $busy = true;
-        }
-
-        foreach ($this->overlayHost->overlays()->all() as $e) {
-            if ($e->element !== null && $this->scanSubtree($e->element, $timestampMs)) {
+        foreach ($this->treeRoots() as $element) {
+            if ($this->scanSubtree($element, $timestampMs)) {
                 $busy = true;
             }
         }

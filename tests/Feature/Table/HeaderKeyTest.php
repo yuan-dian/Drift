@@ -7,6 +7,9 @@ use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
+use Drift\Widget\Table;
+use Drift\Widget\TableColumn;
+use Drift\Widget\TableColumnWidth;
 use Drift\Widget\TableSelection;
 use Drift\Widget\TableSort;
 use Drift\Widget\TableSortDirection;
@@ -326,6 +329,49 @@ final class HeaderKeyTest extends SmokeTestCase
                 && $state?->headerFocusedColumn() === 0,
             'rect=' . (Fixtures::boxOf($el)?->headerFocusRect() === null ? 'null' : '有')
                 . ' header=' . \json_encode($state?->headerFocusedColumn()),
+        );
+
+        $this->flushChecks();
+    }
+
+    /**
+     * ⑩ 应用把列删了：表头光标跟着夹，不能停在虚空。
+     *
+     * ★ 症状是**静默**的：`headerFocusedColumn()` 仍报"在表头"，而 `headerRect()`
+     *   给 `null` ⇒ 焦点框消失、`revealHeaderFocus()` 无目标。用户看到的是
+     *   "焦点没了，但按 Enter 还能排序"。
+     */
+    public function testHeaderCursorClampsWhenColumnsShrink(): void
+    {
+        [$el, $state, $sink] = self::mountSorted();
+        self::press($state, KeyChord::up());
+        self::press($state, KeyChord::right());
+
+        check(
+            'Table · 表头光标：先进到第 2 个可排列（name，下标 1）',
+            $state?->headerFocusedColumn() === 1,
+            'header=' . \json_encode($state?->headerFocusedColumn()),
+        );
+
+        // 应用换了一份列定义：只剩一列
+        $el->update(
+            Table::make(
+                [TableColumn::make('id', 'ID')->field('id')->width(TableColumnWidth::fixed(60.0))->sortable()],
+                Fixtures::rows(6),
+            )->keyOf(static fn(array $row): int => $row['id'])
+                ->rowHeight(Fixtures::ROW_H)
+                ->headerHeight(Fixtures::HEADER_H)
+                ->sort(TableSort::none())
+                ->onSortChange($sink->receive(...)),
+        );
+        Fixtures::pump($el);
+
+        check(
+            'Table · 表头光标：列被删后夹到现存列（框还在，不落在虚空）',
+            $state?->headerFocusedColumn() === 0
+                && Fixtures::boxOf($el)?->headerFocusRect() !== null,
+            'header=' . \json_encode($state?->headerFocusedColumn())
+                . ' rect=' . (Fixtures::boxOf($el)?->headerFocusRect() === null ? 'null' : '有'),
         );
 
         $this->flushChecks();

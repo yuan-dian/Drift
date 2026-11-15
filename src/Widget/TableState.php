@@ -536,11 +536,8 @@ final class TableState extends State implements Scrollable, EditableText, Constr
         if ($nav->is(KeyChord::up()) && $this->focusedRow === 0 && !$chord->shift) {
             $header = $this->headerEntryCol($col);
             if ($header !== null) {
-                $this->setState(function () use ($header): void {
-                    // 列一起带过去：`↓` 出表头要回**同一列**（两处各存一份必然漂）
-                    $this->focusedCol = $header;
-                    $this->headerCol = $header;
-                });
+                // 列一起带过去：`↓` 出表头要回**同一列**（`placeCursor()` 收口）
+                $this->moveCursor($this->focusedRow, $header, $header);
 
                 return true;
             }
@@ -556,10 +553,7 @@ final class TableState extends State implements Scrollable, EditableText, Constr
             return true;
         }
 
-        $this->setState(function () use ($row, $col): void {
-            $this->focusedRow = $row;
-            $this->focusedCol = $col;
-        });
+        $this->moveCursor($row, $col);
 
         $this->revealFocus();
 
@@ -585,9 +579,7 @@ final class TableState extends State implements Scrollable, EditableText, Constr
 
         // 列被删光 / 全部改成不可排 ⇒ 光标退回行区，别停在死区里
         if ($cols === []) {
-            $this->setState(function (): void {
-                $this->headerCol = null;
-            });
+            $this->moveCursor($this->focusedRow, $this->focusedCol);
 
             return false;
         }
@@ -601,10 +593,7 @@ final class TableState extends State implements Scrollable, EditableText, Constr
         // 这一列不再可排（应用换了列定义）⇒ 夹到最近的可排列，下一次按键才不会算到虚空
         if (!\in_array($current, $cols, true)) {
             $current = $this->headerEntryCol($current) ?? $cols[0];
-            $this->setState(function () use ($current): void {
-                $this->focusedCol = $current;
-                $this->headerCol = $current;
-            });
+            $this->moveCursor($this->focusedRow, $current, $current);
         }
 
         if ($plain->is(KeyChord::enter()) || $plain->is(KeyChord::make('Space'))) {
@@ -636,9 +625,7 @@ final class TableState extends State implements Scrollable, EditableText, Constr
         } elseif ($plain->is(KeyChord::end())) {
             $next = $cols[\count($cols) - 1];
         } elseif ($plain->is(KeyChord::down())) {
-            $this->setState(function (): void {
-                $this->headerCol = null;
-            });
+            $this->moveCursor($this->focusedRow, $this->focusedCol);
 
             return true;
         } elseif ($plain->is(KeyChord::up())
@@ -654,10 +641,7 @@ final class TableState extends State implements Scrollable, EditableText, Constr
             return true;
         }
 
-        $this->setState(function () use ($next): void {
-            $this->focusedCol = $next;
-            $this->headerCol = $next;
-        });
+        $this->moveCursor($this->focusedRow, $next, $next);
 
         $this->revealHeaderFocus();
 
@@ -1101,6 +1085,34 @@ final class TableState extends State implements Scrollable, EditableText, Constr
         return false;   // 其余（含加速键）放行 —— 编辑中也要能按 Ctrl+S
     }
 
+    /**
+     * 光标三元组的**唯一写者**：`(focusedRow, focusedCol, headerCol)`。
+     *
+     * ★ 不变式：`headerCol !== null ⇒ focusedCol === headerCol`（出表头要回**同一列**）。
+     *   原先四处各写一遍（进表头 / 表头内移 / 出表头 / 指针落行），漏一处就是"出表头
+     *   跳回别的列"—— 而这只要求应用换一次列定义。
+     * ★ 三个字段都夹到现存行列：列被删光后 `headerCol` 停在虚空时，焦点框会**消失**
+     *   （`headerRect()` 给 null）而光标仍算"在表头"。
+     * ★ 本方法**不标脏**：build 期（`settleGeometry()`）也要用同一份夹取。
+     */
+    private function placeCursor(int $row, int $col, ?int $headerCol): void
+    {
+        $rows = \count($this->view()->rowList());
+        $cols = \count($this->view()->columnList());
+
+        $this->focusedRow = $rows === 0 ? 0 : \max(0, \min($row, $rows - 1));
+        $this->focusedCol = $cols === 0 ? 0 : \max(0, \min($headerCol ?? $col, $cols - 1));
+        $this->headerCol = ($headerCol === null || $cols === 0) ? null : $this->focusedCol;
+    }
+
+    /** 光标落点 + 标脏。`$headerCol` 非 null ⇒ 光标在表头（`null` ⇒ 回行区，行号列号不动则传现值）。 */
+    private function moveCursor(int $row, int $col, ?int $headerCol = null): void
+    {
+        $this->setState(function () use ($row, $col, $headerCol): void {
+            $this->placeCursor($row, $col, $headerCol);
+        });
+    }
+
     /** 把光标格移到 `(row, col)`（夹取后）；不动选择，只动光标 */
     private function moveFocusTo(int $row, int $col): void
     {
@@ -1118,10 +1130,7 @@ final class TableState extends State implements Scrollable, EditableText, Constr
             return;
         }
 
-        $this->setState(function () use ($row, $col): void {
-            $this->focusedRow = $row;
-            $this->focusedCol = $col;
-        });
+        $this->moveCursor($row, $col);
 
         $this->revealFocus();
     }
@@ -1862,11 +1871,7 @@ final class TableState extends State implements Scrollable, EditableText, Constr
 
         // 指针落在数据行 ⇒ 光标回到行区（表头框必须随之消失，不然两个焦点同时亮）
         if ($this->focusedRow !== $index || $this->focusedCol !== $col || $this->headerCol !== null) {
-            $this->setState(function () use ($index, $col): void {
-                $this->focusedRow = $index;
-                $this->focusedCol = $col;
-                $this->headerCol = null;
-            });
+            $this->moveCursor($index, $col);
         }
 
         // ★ 双击 / 三击（阶段 7b + 9）：**放在选择之前** —— 本方法尾部有三处早退
@@ -2156,8 +2161,9 @@ final class TableState extends State implements Scrollable, EditableText, Constr
 
         // 光标格跟着行列数夹（行被删 / 列被删之后不能停在不存在的位置）。
         // 与偏移写回同一条纪律：build 期直接写字段，不经 `setState`（不标脏）。
-        $this->focusedRow = $g->rowCount === 0 ? 0 : \min($this->focusedRow, $g->rowCount - 1);
-        $this->focusedCol = $columns === [] ? 0 : \min($this->focusedCol, \count($columns) - 1);
+        // ★ 走 `placeCursor()`：表头光标同样要夹 —— 否则它停在已被删掉的列上，
+        //   焦点框**静默消失**（`headerRect()` 给 null）而光标仍算"在表头"。
+        $this->placeCursor($this->focusedRow, $this->focusedCol, $this->headerCol);
 
         return $g;
     }
