@@ -49,6 +49,34 @@ static long uiaControlTypeFor(const std::string &role) {
     return UIA_CustomControlTypeId;
 }
 
+// 事件 diff 的身份：Element key 优先，其次 automationId（给自动化的稳定标识）。
+// 两者都空就跳过 —— 只按索引比会在滚动/排序后误报（§66）。
+static std::wstring uiaNodeIdentity(const UiaNode &n) {
+    return !n.key.empty() ? n.key : n.automationId;
+}
+
+// 属性变更事件的 VARIANT：raise 之后立刻 VariantClear，避免 BSTR 泄漏。
+static VARIANT uiaVarBstr(const std::wstring &s) {
+    VARIANT v;
+    VariantInit(&v);
+    v.vt = VT_BSTR;
+    v.bstrVal = SysAllocString(s.c_str());
+    return v;
+}
+static VARIANT uiaVarBool(bool b) {
+    VARIANT v;
+    VariantInit(&v);
+    v.vt = VT_BOOL;
+    v.boolVal = b ? VARIANT_TRUE : VARIANT_FALSE;
+    return v;
+}
+static void uiaRaiseProperty(IRawElementProviderSimple *simple, PROPERTYID id,
+                             VARIANT before, VARIANT after) {
+    UiaRaiseAutomationPropertyChangedEvent(simple, id, before, after);
+    VariantClear(&before);
+    VariantClear(&after);
+}
+
 /**
  * 勾选态（§65）：`ToggleState` 属性与 `get_ToggleState()` 共用这一份判据。
  * 两处各写一份，症状是「读屏念已选中、脚本调 Pattern 说未选中」，而没人会同时验。
@@ -223,6 +251,30 @@ public:
 private:
     WindowSlot &m_slot;
     HWND m_hwnd;
+    int m_index;
+};
+
+/**
+ * 容器选中（P0-2）：从现有子节点的 selectState 派生，不新增语义字段、
+ * 不存第二份选中集。GetSelection 的定义在 CProvider 之后（要调 makeFragmentSimple）。
+ */
+class SelectionAdapter : public ComTearOff<SelectionAdapter, ISelectionProvider> {
+public:
+    explicit SelectionAdapter(WindowSlot &slot, int index) : m_slot(slot), m_index(index) {}
+    STDMETHOD(GetSelection)(SAFEARRAY **ret) override;
+    STDMETHOD(get_CanSelectMultiple)(BOOL *ret) override {
+        if (ret == nullptr) return E_INVALIDARG;
+        *ret = FALSE;
+        return S_OK;
+    }
+    STDMETHOD(get_IsSelectionRequired)(BOOL *ret) override {
+        if (ret == nullptr) return E_INVALIDARG;
+        *ret = FALSE;
+        return S_OK;
+    }
+
+private:
+    WindowSlot &m_slot;
     int m_index;
 };
 
@@ -526,30 +578,57 @@ public:
         *ppv = nullptr;
         const std::vector<UiaNode> &nodes = m_slot.uiaNodes;
         if (m_index < 0 || m_index >= (int)nodes.size()) return S_OK;
-        long ctrl = nodes[m_index].controlType;
-        // 按 ControlType 分派（§4.4）：控件"是什么"决定"能问什么 Pattern"。
-        // ★ 不按 role 判 —— role→ControlType 已在 `uiaControlTypeFor` 收敛，
-        //   多一层判据就是两处要同步。
-        // ★ `TreeItem` 必须一起给：树的行换了角色（§65），控制类型跟着从 Button
-        //   变 TreeItem ⇒ 只判 Button 的话"鼠标点得动、读屏点不动"。
-        //   TreeItem 在 UIA 里本来就该支持 Invoke。
-        if (id == UIA_InvokePatternId
-            && (ctrl == UIA_ButtonControlTypeId || ctrl == UIA_TreeItemControlTypeId)) {
-            *ppv = new InvokeAdapter(m_slot, m_hwnd, m_index);
-        } else if (id == UIA_ValuePatternId && ctrl == UIA_EditControlTypeId) {
-            *ppv = new ValueAdapter(m_slot, m_hwnd, m_index);
-        } else if (id == UIA_TogglePatternId
-                   && (ctrl == UIA_CheckBoxControlTypeId || ctrl == UIA_RadioButtonControlTypeId)) {
-            *ppv = new ToggleAdapter(m_slot, m_hwnd, m_index);
-        } else if (id == UIA_RangeValuePatternId
-                   && (ctrl == UIA_SliderControlTypeId || ctrl == UIA_ProgressBarControlTypeId)) {
-            *ppv = new RangeAdapter(m_slot, m_hwnd, m_index);
-        } else if (id == UIA_SelectionItemPatternId && nodes[m_index].selectState != 0) {
-            // §65：**按状态而不是按控制类型**分派。选中概念不属于某一种控件
-            //   （树行、列表项、标签页都有），而"有没有这个概念"恰好就是三态里的 0。
-            *ppv = new SelectionItemAdapter(m_slot, m_hwnd, m_index);
-        } else if (id == UIA_ExpandCollapsePatternId && nodes[m_index].expandState != 0) {
-            *ppv = new ExpandCollapseAdapter(m_slot, m_hwnd, m_index);
+
+        // 一行 = 一种能力。predicate 只读语义数据；新增 Pattern 加一行表项，
+        // 不再往 if 链里插分支，也不在 PHP 侧推第二份「能力位」。
+        struct Rule {
+            PATTERNID id;
+            bool (*applies)(const std::vector<UiaNode> &, int);
+            IUnknown *(*make)(WindowSlot &, HWND, int);
+        };
+        static const Rule rules[] = {
+            {UIA_InvokePatternId,
+             [](const std::vector<UiaNode> &n, int i) {
+                 long c = n[i].controlType;
+                 // TreeItem 换了角色仍要能 Invoke（§65）
+                 return c == UIA_ButtonControlTypeId || c == UIA_TreeItemControlTypeId;
+             },
+             [](WindowSlot &s, HWND h, int i) -> IUnknown * { return new InvokeAdapter(s, h, i); }},
+            {UIA_ValuePatternId,
+             [](const std::vector<UiaNode> &n, int i) { return n[i].controlType == UIA_EditControlTypeId; },
+             [](WindowSlot &s, HWND h, int i) -> IUnknown * { return new ValueAdapter(s, h, i); }},
+            {UIA_TogglePatternId,
+             [](const std::vector<UiaNode> &n, int i) {
+                 long c = n[i].controlType;
+                 return c == UIA_CheckBoxControlTypeId || c == UIA_RadioButtonControlTypeId;
+             },
+             [](WindowSlot &s, HWND h, int i) -> IUnknown * { return new ToggleAdapter(s, h, i); }},
+            {UIA_RangeValuePatternId,
+             [](const std::vector<UiaNode> &n, int i) {
+                 long c = n[i].controlType;
+                 return c == UIA_SliderControlTypeId || c == UIA_ProgressBarControlTypeId;
+             },
+             [](WindowSlot &s, HWND h, int i) -> IUnknown * { return new RangeAdapter(s, h, i); }},
+            {UIA_SelectionItemPatternId,
+             [](const std::vector<UiaNode> &n, int i) { return n[i].selectState != 0; },
+             [](WindowSlot &s, HWND h, int i) -> IUnknown * { return new SelectionItemAdapter(s, h, i); }},
+            {UIA_ExpandCollapsePatternId,
+             [](const std::vector<UiaNode> &n, int i) { return n[i].expandState != 0; },
+             [](WindowSlot &s, HWND h, int i) -> IUnknown * { return new ExpandCollapseAdapter(s, h, i); }},
+            {UIA_SelectionPatternId,
+             [](const std::vector<UiaNode> &n, int i) {
+                 for (int k = 0; k < (int)n.size(); k++) {
+                     if (k != i && n[k].parent == i && n[k].selectState != 0) return true;
+                 }
+                 return false;
+             },
+             [](WindowSlot &s, HWND, int i) -> IUnknown * { return new SelectionAdapter(s, i); }},
+        };
+        for (const Rule &r : rules) {
+            if (r.id == id && r.applies(nodes, m_index)) {
+                *ppv = r.make(m_slot, m_hwnd, m_index);
+                break;
+            }
         }
         return S_OK;
     }
@@ -641,6 +720,21 @@ public:
             if (self != nullptr && self->level > 0) {
                 out->vt = VT_I4;
                 out->lVal = self->level;
+            }
+        } else if (id == UIA_HelpTextPropertyId) {
+            if (self != nullptr && !self->hint.empty()) {
+                out->vt = VT_BSTR;
+                out->bstrVal = SysAllocString(self->hint.c_str());
+            }
+        } else if (id == UIA_AutomationIdPropertyId) {
+            if (self != nullptr && !self->automationId.empty()) {
+                out->vt = VT_BSTR;
+                out->bstrVal = SysAllocString(self->automationId.c_str());
+            }
+        } else if (id == UIA_AcceleratorKeyPropertyId) {
+            if (self != nullptr && !self->acceleratorKey.empty()) {
+                out->vt = VT_BSTR;
+                out->bstrVal = SysAllocString(self->acceleratorKey.c_str());
             }
         }
         return S_OK;
@@ -767,6 +861,29 @@ private:
 };
 
 // ── adapter 方法定义（CProvider 之后，故可调其 public simple*/frag*）──
+STDMETHODIMP SelectionAdapter::GetSelection(SAFEARRAY **ret) {
+    if (ret == nullptr) return E_INVALIDARG;
+    *ret = nullptr;
+    const std::vector<UiaNode> &nodes = m_slot.uiaNodes;
+    std::vector<int> picked;
+    for (int k = 0; k < (int)nodes.size(); k++) {
+        if (k != m_index && nodes[k].parent == m_index && nodes[k].selectState == 2) {
+            picked.push_back(k);
+        }
+    }
+    SAFEARRAY *sa = SafeArrayCreateVector(VT_UNKNOWN, 0, (ULONG)picked.size());
+    if (sa == nullptr) return E_OUTOFMEMORY;
+    for (size_t i = 0; i < picked.size(); i++) {
+        LONG at = (LONG)i;
+        IRawElementProviderSimple *simple = m_slot.uiaProvider != nullptr
+            ? m_slot.uiaProvider->makeFragmentSimple(picked[i]) : nullptr;
+        SafeArrayPutElement(sa, &at, simple);   // SAFEARRAY 自己 AddRef
+        if (simple != nullptr) simple->Release();
+    }
+    *ret = sa;
+    return S_OK;
+}
+
 STDMETHODIMP SimpleAdapter::QueryInterface(REFIID riid, void **ppv) {
     if (ppv == nullptr) return E_INVALIDARG;
     if (riid == __uuidof(IUnknown)) { *ppv = m_host; m_host->AddRef(); return S_OK; }
@@ -837,13 +954,25 @@ bool driftUiaHandleGetObject(WindowSlot &slot, HWND hwnd, WPARAM wp, LPARAM lp, 
 
 void driftUiaApply(WindowSlot &slot, const std::vector<UiaNode> &nodes) {
     // 选中变化要在覆盖前抓快照：结构事件只看节点数，而选中不改节点数
-    std::vector<std::wstring> oldKeys;
+    std::vector<std::wstring> oldKeys, oldIdent, oldName, oldValue;
     std::vector<int> oldSelect;
-    oldKeys.reserve(slot.uiaNodes.size());
-    oldSelect.reserve(slot.uiaNodes.size());
+    std::vector<char> oldEnabled, oldFocusable;
+    size_t n = slot.uiaNodes.size();
+    oldKeys.reserve(n);
+    oldIdent.reserve(n);
+    oldSelect.reserve(n);
+    oldName.reserve(n);
+    oldValue.reserve(n);
+    oldEnabled.reserve(n);
+    oldFocusable.reserve(n);
     for (const UiaNode &o : slot.uiaNodes) {
         oldKeys.push_back(o.key);
+        oldIdent.push_back(uiaNodeIdentity(o));
         oldSelect.push_back(o.selectState);
+        oldName.push_back(o.name);
+        oldValue.push_back(o.value);
+        oldEnabled.push_back(o.enabled ? 1 : 0);
+        oldFocusable.push_back(o.focusable ? 1 : 0);
     }
 
     slot.uiaNodes = nodes;
@@ -886,6 +1015,43 @@ void driftUiaApply(WindowSlot &slot, const std::vector<UiaNode> &nodes) {
                 UiaRaiseAutomationEvent(ssimple, UIA_SelectionItem_ElementSelectedEventId);
                 ssimple->Release();
             }
+        }
+    }
+
+    // 属性变更：读屏客户端订阅的是**事件**，不是快照。按 key 认节点，
+    // 结构变化已经由 ChildrenInvalidated 覆盖，这里不重复比较。
+    if (slot.uiaProvider != nullptr && oldKeys.size() == slot.uiaNodes.size()) {
+        for (size_t k = 0; k < slot.uiaNodes.size(); k++) {
+            const UiaNode &now = slot.uiaNodes[k];
+            std::wstring id = uiaNodeIdentity(now);
+            if (id.empty() || oldIdent[k] != id) continue;
+            bool nameChanged = oldName[k] != now.name;
+            bool valueChanged = oldValue[k] != now.value;
+            bool enabledChanged = (oldEnabled[k] != 0) != now.enabled;
+            bool focusableChanged = (oldFocusable[k] != 0) != now.focusable;
+            if (!nameChanged && !valueChanged && !enabledChanged && !focusableChanged) continue;
+
+            IRawElementProviderSimple *simple = slot.uiaProvider->makeFragmentSimple((int)k);
+            if (simple == nullptr) continue;
+            if (nameChanged) {
+                uiaRaiseProperty(simple, UIA_NamePropertyId, uiaVarBstr(oldName[k]), uiaVarBstr(now.name));
+            }
+            if (enabledChanged) {
+                uiaRaiseProperty(simple, UIA_IsEnabledPropertyId,
+                                 uiaVarBool(oldEnabled[k] != 0), uiaVarBool(now.enabled));
+            }
+            if (focusableChanged) {
+                uiaRaiseProperty(simple, UIA_IsKeyboardFocusablePropertyId,
+                                 uiaVarBool(oldFocusable[k] != 0), uiaVarBool(now.focusable));
+            }
+            if (valueChanged) {
+                uiaRaiseProperty(simple, UIA_ValueValuePropertyId, uiaVarBstr(oldValue[k]), uiaVarBstr(now.value));
+                // 文本控件必须同时发 TextChanged：官方要求两个事件都支持。
+                if (now.controlType == UIA_EditControlTypeId) {
+                    UiaRaiseAutomationEvent(simple, UIA_Text_TextChangedEventId);
+                }
+            }
+            simple->Release();
         }
     }
 }

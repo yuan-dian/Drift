@@ -116,7 +116,11 @@ P0-1 最终**一行 `SemanticsNode` 都没碰**（语义 Value 本来就是受�
 P0-2 要独立改 `uia.cc` 的 provider 架构、重编 AOT、跑真机 UIA 探针。
 分轮不会重复接线，反而避免「PHP 数据面已推、C++ 还没消费」的中间态进闸门。
 
-下一轮的既定裁决（避免再照 §5 的最小落点堆 if）：
+> **事后订正（2026-11-15，P0-2 已落地）**：下面 1 / 3 / 4 三条经复核**否决**，
+> 2 条的「按 key diff」也改为「`key` 优先、`automationId` 兜底」。
+> 以 `docs/DESIGN-UIA-P0-2-2026-11-15.md` 与 `DEBT §81` 为准，别照本节开工。
+
+下一轮的既定裁决（避免再照 §5 的最小落点堆 if，**已被上方订正覆盖**）：
 
 1. **能力位替代 ControlType if 链**。`uia.cc:simplePattern()` 现在按 `ControlType` 硬分派 6 种；
    继续加 4 种会变成「一个模式 N 份手写」。改为在 `SemanticsNode` 上声明标量 `patternMask`，

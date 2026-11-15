@@ -2753,6 +2753,9 @@ void php_drift_win_uia_push(Int hwnd, Array nodes) {
         node.key = toWide(String(std::string(a.get("key").toCString())));
         node.controlType = driftUiaControlTypeFor(std::string(a.get("role").toCString()));
         node.value = toWide(String(std::string(a.get("value").toCString())));
+        node.hint = toWide(String(std::string(a.get("hint").toCString())));
+        node.automationId = toWide(String(std::string(a.get("automationId").toCString())));
+        node.acceleratorKey = toWide(String(std::string(a.get("acceleratorKey").toCString())));
         node.rangeMin = a.get("rangeMin").toFloat();
         node.rangeMax = a.get("rangeMax").toFloat();
         node.enabled = a.get("enabled").toBool();

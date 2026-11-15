@@ -98,6 +98,9 @@ final class SemanticsBuilder
             $n->selectState = $w->semanticsSelectState();
             $n->expandState = $w->semanticsExpandState();
             $n->level = $w->semanticsLevel();
+            $n->hint = $w->semanticsHint();
+            $n->automationId = $w->semanticsAutomationId();
+            $n->acceleratorKey = $w->semanticsAcceleratorKey();
             $n->parent = $parentIdx;
             $n->depth = $depth;
 

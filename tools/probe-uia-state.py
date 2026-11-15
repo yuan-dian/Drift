@@ -91,6 +91,22 @@ def find_visible(uia, w, hwnd, target):
     return None
 
 
+def find_edit(uia, w, hwnd, target):
+    # 顶栏「搜索」Button 与表单「搜索」Edit 同名；只按名字取第一个会拿到按钮。
+    import contextlib
+    import io
+
+    root = U.element_from_handle(uia, hwnd)
+    found = []
+    with contextlib.redirect_stdout(io.StringIO()):
+        U.dump(root, w, found=found, target=target)
+    for elem, r, _t in found:
+        if U.ctype_of(elem) == 50004:      # UIA_EditControlTypeId
+            # 与 `find()` 同形状：调用方按 `hit[0]` 取元素
+            return elem, r
+    return None
+
+
 def click_name(uia, w, hwnd, target, wait=1.2):
     """按名字点；不在视口中部就先滚（同 `probe-tree-left.py`，那边记了为什么）。"""
     for _ in range(12):
@@ -323,6 +339,81 @@ def main():
             PC.check("⑬b 选中变化真的 raise 了 ElementSelected（20012，经 UIA 核心分发）",
                      arrived and len(names) > 0,
                      f"事件数={len(names)} sender={names[:2]}")
+
+        # ── P0-2：属性面 / 容器 Pattern / 事件面 ──────────────────────
+        # 全部走 UIA 客户端：PHP 侧填了但 provider 没答 ⇒ VT_EMPTY，不报错。
+        if not PC.check("入口：点得到导航项 '表单 Form'",
+                        click_name(uia, w, hwnd, "表单 Form")):
+            PC.skip("表单页没切过去，⑭⑮⑯ 量不到")
+
+        search = find_edit(uia, w, hwnd, "搜索")
+        if not PC.check("入口：UIA 树里有 '搜索' 输入框", search is not None):
+            PC.skip("没有输入框，⑭⑮⑯ 量不到")
+
+        help_v = U.prop_of(search[0], U.UIA_HelpTextPropertyId)[1]
+        PC.check("⑭ HelpText 读到业务声明的提示（不是 VT_EMPTY）",
+                 help_v == "输入关键词后按 Enter 提交", help_v)
+        aid = U.prop_of(search[0], U.UIA_AutomationIdPropertyId)[1]
+        PC.check("⑮ AutomationId 读到稳定标识（不是 VT_EMPTY）",
+                 aid == "form.search", aid)
+
+        val_obj = pattern(search[0], U.UIA_ValuePatternId)
+        if not PC.check("入口：输入框拿得到 ValuePattern", val_obj is not None):
+            PC.skip("没有 ValuePattern，⑯ 触发不了值变化")
+
+        try:
+            sub2 = U.AutomationEventSubscription(uia, root, U.UIA_Text_TextChangedEventId)
+        except OSError as exc:
+            PC.skip(f"订阅 TextChanged 失败：{exc}")
+
+        with sub2:
+            U.pump(0.3)
+            quiet2 = len(sub2.events)
+            PC.check("⑯a 静默窗口没有 TextChanged 噪声（防『一直有事件』假绿）",
+                     quiet2 == 0, quiet2)
+            sub2.events.clear()
+            U.set_value_pattern(val_obj, "P0-2 事件面")
+
+            got = None
+            for _ in range(25):
+                hit = find_edit(uia, w, hwnd, "搜索")
+                got = U.prop_of(hit[0], U.UIA_ValueValuePropertyId)[1] if hit else None
+                if got == "P0-2 事件面":
+                    break
+                U.pump(0.1)
+            if not PC.check("⑯b SetValue 真的改到了值（COM → PostMessage → 受控值）",
+                            got == "P0-2 事件面", got):
+                PC.skip("值没改，⑯c 的『没收到事件』与『根本没变化』分不开")
+            arrived = sub2.wait(
+                2.0, lambda ev: any(e[0] == U.UIA_Text_TextChangedEventId for e in ev))
+            PC.check("⑯c 值变化真的 raise 了 TextChanged（经 UIA 核心分发）",
+                     arrived, f"事件数={len(sub2.events)}")
+
+        # 容器 SelectionPattern：从行节点沿 Fragment Parent 上溯，不依赖控件名字
+        if not PC.check("入口：点得到导航项 '表格 Table'",
+                        click_name(uia, w, hwnd, "表格 Table")):
+            PC.skip("表格页没切过去，⑰⑱⑲⑳ 量不到")
+
+        row = find_visible(uia, w, hwnd, "行 1")
+        container = U.walker_parent(w, row[0]) if row else None
+        if not PC.check("入口：行 1 的 Fragment Parent 拿得到容器", container is not None):
+            PC.skip("找不到容器节点，⑰⑱⑲⑳ 量不到")
+
+        sel_obj = pattern(container, U.UIA_SelectionPatternId)
+        if not PC.check("⑰ 容器拿得到 SelectionPattern（按子节点状态派生）",
+                        sel_obj is not None):
+            PC.skip("没有 SelectionPattern，⑱⑲ 量不到")
+
+        hr, multi = U.pattern_bool(sel_obj, 4)
+        PC.check("⑱ CanSelectMultiple = False", hr == 0 and multi is False, (hex(hr), multi))
+        hr, cnt = U.pattern_selection_count(sel_obj)
+        PC.check("⑲ GetCurrentSelection 读到合法元素数（不是垃圾值）",
+                 hr == 0 and 0 <= cnt <= 10, (hex(hr), cnt))
+
+        nav = find(uia, w, hwnd, "表单 Form")
+        nav_sel = pattern(nav[0], U.UIA_SelectionPatternId) if nav else None
+        PC.check("⑳ 导航按钮不该拿到 SelectionPattern（防 predicate 恒真）",
+                 nav_sel is None, nav_sel)
 
         return None
     finally:

@@ -123,6 +123,85 @@ function cpp_bridge_missing(array $sources): array
     return $missing;
 }
 
+/**
+ * 语义字段三向对账：`SemanticsTree::toArrays()` 的键（扣掉 devtools 专用）
+ * 必须与 `php_drift_win_uia_push()` 里 `a.get()` 的键**完全相等**。
+ *
+ * ★ 加一个语义字段要改六处，漏掉 C++ 那处不报错：客户端只读到 VT_EMPTY。
+ *   与 `SemanticsMetaTest::testSerializedKeysMatchNodeFields()` 合起来覆盖三向
+ *   （Node 字段 ⇄ 导出键 ⇄ C++ 读取键）。
+ *
+ * @return list<string> 违规项（空 = 全过）
+ */
+function cpp_bridge_semantics_drift(string $treePhp, string $pushCc): array
+{
+    $tree = cpp_bridge_code($treePhp);
+    $push = cpp_bridge_code($pushCc);
+
+    if (!\preg_match('~public function toArrays\(\): array\s*\{(.*?)\n    \}~s', $tree, $m)) {
+        return ['找不到 SemanticsTree::toArrays()'];
+    }
+    \preg_match_all('~\'([A-Za-z][A-Za-z0-9]*)\'\s*=>\s*\$n->~', $m[1], $tm);
+    $phpKeys = \array_values(\array_unique($tm[1] ?? []));
+
+    if (!\preg_match('~void php_drift_win_uia_push\([^)]*\)\s*\{(.*?)\n\}~s', $push, $pm)) {
+        return ['找不到 php_drift_win_uia_push()'];
+    }
+    \preg_match_all('~a\.get\("([A-Za-z][A-Za-z0-9]*)"\)~', $pm[1], $cm);
+    $cppKeys = \array_values(\array_unique($cm[1] ?? []));
+
+    // `type` / `depth` 只进 devtools 快照，不进 UIA 树
+    $expected = \array_values(\array_diff($phpKeys, ['type', 'depth']));
+    \sort($expected);
+    \sort($cppKeys);
+    if ($expected !== $cppKeys) {
+        return ['语义字段漂移：PHP 导出 ' . \json_encode($expected)
+            . ' / C++ 读取 ' . \json_encode($cppKeys)];
+    }
+
+    return [];
+}
+
+/**
+ * UIA provider 的**结构契约**（P0-2）。
+ *
+ * ★ 这是结构对账，不是行为判据：行为由 `tools/probe-uia-state.py` 在 AOT 真机上量。
+ *   它盯的是「删一行分派 / 删一个属性分支 / 删一次 raise」这类静默退化 ——
+ *   C++ 重编 170s/次，不可能为每组变异都重编。
+ *
+ * @return list<string> 违规项（空 = 全过）
+ */
+function cpp_bridge_uia_contract(string $uiaCc): array
+{
+    $code = cpp_bridge_code($uiaCc);
+    if (!\preg_match('~static const Rule rules\[\] = \{(.*?)\n        \};~s', $code, $m)) {
+        return ['找不到 UIA Pattern 分派表'];
+    }
+
+    $bad = [];
+    foreach ([
+        'UIA_InvokePatternId', 'UIA_ValuePatternId', 'UIA_TogglePatternId',
+        'UIA_RangeValuePatternId', 'UIA_SelectionItemPatternId',
+        'UIA_ExpandCollapsePatternId', 'UIA_SelectionPatternId',
+    ] as $p) {
+        if (\substr_count($m[1], $p) !== 1) {
+            $bad[] = '分派表 ' . $p;
+        }
+    }
+    foreach (['UIA_HelpTextPropertyId', 'UIA_AutomationIdPropertyId', 'UIA_AcceleratorKeyPropertyId'] as $p) {
+        if (\substr_count($code, $p) !== 1) {
+            $bad[] = '属性分支 ' . $p;
+        }
+    }
+    foreach (['UiaRaiseAutomationPropertyChangedEvent', 'UIA_Text_TextChangedEventId'] as $p) {
+        if (!\str_contains($code, $p)) {
+            $bad[] = '事件 ' . $p;
+        }
+    }
+
+    return $bad === [] ? [] : ['UIA 契约缺项/重复：' . \implode(', ', $bad)];
+}
+
 /** @return array<string, string> 全绿的合成源码 */
 function cpp_bridge_good_sources(): array
 {
@@ -212,12 +291,92 @@ if ($selftest) {
         \fwrite(STDERR, '    实得 ' . \json_encode($got) . "\n");
     }
 
-    echo $failures === 0 ? "--- cpp-bridge selftest 6/6 ---\n" : "--- cpp-bridge selftest FAIL ({$failures}) ---\n";
+    // ④ 语义字段对账：任一侧漏一个键都要红（不是「改了字段但没人读」的静默绿）
+    $goodTree = <<<'PHP'
+<?php
+class T {
+    public function toArrays(): array
+    {
+        $ns[] = [
+            'role' => $n->role,
+            'name' => $n->name,
+            'hint' => $n->hint,
+            'type' => $n->type,
+            'depth' => $n->depth,
+        ];
+        return ['count' => 1, 'nodes' => $ns];
+    }
+}
+PHP;
+    $goodPush = <<<'CPP'
+void php_drift_win_uia_push(Int hwnd, Array nodes) {
+    node.role = a.get("role").toInt();
+    node.name = a.get("name").toCString();
+    node.hint = a.get("hint").toCString();
+}
+CPP;
+    $semBase = cpp_bridge_semantics_drift($goodTree, $goodPush);
+    echo ($semBase === [] ? '  ✓ ' : '  ✗ ') . "语义字段基线全绿\n";
+    if ($semBase !== []) {
+        $failures++;
+        \fwrite(STDERR, '    实得 ' . \json_encode($semBase) . "\n");
+    }
+    $semReport = static function (string $name, string $tree, string $push) use (&$failures): void {
+        $got = cpp_bridge_semantics_drift($tree, $push);
+        $ok = \count($got) === 1;
+        echo ($ok ? '  ✓ ' : '  ✗ ') . $name . "\n";
+        if (!$ok) {
+            $failures++;
+            \fwrite(STDERR, '    实得 ' . \json_encode($got) . "\n");
+        }
+    };
+    $semReport('toArrays 漏导出 hint ⇒ 红',
+        \str_replace("            'hint' => \$n->hint,\n", '', $goodTree), $goodPush);
+    $semReport('C++ 漏读 hint ⇒ 红', $goodTree,
+        \str_replace("    node.hint = a.get(\"hint\").toCString();\n", '', $goodPush));
+
+    // ⑤ UIA 契约：分派表 / 属性分支 / 事件缺一项都要红
+    $patterns = [
+        'UIA_InvokePatternId', 'UIA_ValuePatternId', 'UIA_TogglePatternId',
+        'UIA_RangeValuePatternId', 'UIA_SelectionItemPatternId',
+        'UIA_ExpandCollapsePatternId', 'UIA_SelectionPatternId',
+    ];
+    $goodUia = "static const Rule rules[] = {\n"
+        . \implode("\n", \array_map(static fn(string $p): string => '    ' . $p . ',', $patterns))
+        . "\n        };\n"
+        . "UIA_HelpTextPropertyId UIA_AutomationIdPropertyId UIA_AcceleratorKeyPropertyId\n"
+        . "UiaRaiseAutomationPropertyChangedEvent UIA_Text_TextChangedEventId\n";
+    $uiaBase = cpp_bridge_uia_contract($goodUia);
+    echo ($uiaBase === [] ? '  ✓ ' : '  ✗ ') . "UIA 契约基线全绿\n";
+    if ($uiaBase !== []) {
+        $failures++;
+        \fwrite(STDERR, '    实得 ' . \json_encode($uiaBase) . "\n");
+    }
+    $uiaReport = static function (string $name, string $src) use (&$failures): void {
+        $got = cpp_bridge_uia_contract($src);
+        $ok = \count($got) === 1;
+        echo ($ok ? '  ✓ ' : '  ✗ ') . $name . "\n";
+        if (!$ok) {
+            $failures++;
+            \fwrite(STDERR, '    实得 ' . \json_encode($got) . "\n");
+        }
+    };
+    $uiaReport('分派表删掉 SelectionPattern ⇒ 红',
+        \str_replace('    UIA_SelectionPatternId,' . "\n", '', $goodUia));
+    $uiaReport('删掉属性变更 raise ⇒ 红',
+        \str_replace('UiaRaiseAutomationPropertyChangedEvent ', '', $goodUia));
+
+    echo $failures === 0 ? "--- cpp-bridge selftest 10/10 ---\n" : "--- cpp-bridge selftest FAIL ({$failures}) ---\n";
     exit($failures === 0 ? 0 : 1);
 }
 
-$sources = cpp_bridge_sources(\dirname(__DIR__));
+$root = \dirname(__DIR__);
+$sources = cpp_bridge_sources($root);
 $missing = cpp_bridge_missing($sources);
+$treePhp = (string) \file_get_contents($root . '/src/Input/SemanticsTree.php');
+$pushCc = $sources['cpp-src/win32/drift_win32.cc'] ?? '';
+$missing = \array_merge($missing, cpp_bridge_semantics_drift($treePhp, $pushCc));
+$missing = \array_merge($missing, cpp_bridge_uia_contract($sources['cpp-src/win32/uia.cc'] ?? ''));
 $core = \count(\array_filter(\array_keys($sources), static fn(string $p): bool => \str_starts_with($p, 'cpp-src/core/')));
 $cc = \count(\array_filter(\array_keys($sources), static fn(string $p): bool => \str_ends_with($p, '.cc')));
 

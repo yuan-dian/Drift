@@ -143,6 +143,31 @@ trait WidgetSemantics
         return $this->semLevel;
     }
 
+    /**
+     * 声明静态描述：读屏提示 / 自动化 ID / 快捷键。
+     * 与 `semantics()` 正交，`null` = 不动这一项；空串 = 不向平台报该属性。
+     *
+     * @api
+     */
+    public function semanticsMeta(
+        ?string $hint = null,
+        ?string $automationId = null,
+        ?string $acceleratorKey = null,
+    ): static {
+        $this->mutate();
+        if ($hint !== null) {
+            $this->semHint = $hint;
+        }
+        if ($automationId !== null) {
+            $this->semAutomationId = $automationId;
+        }
+        if ($acceleratorKey !== null) {
+            $this->semAcceleratorKey = $acceleratorKey;
+        }
+
+        return $this;
+    }
+
     /** @internal `SemanticsBuilder` 读它 */
     public function semanticsName(): string
     {
@@ -171,5 +196,23 @@ trait WidgetSemantics
     public function semanticsRangeMax(): float
     {
         return $this->semRangeMax;
+    }
+
+    /** @internal `SemanticsBuilder` 读它 */
+    public function semanticsHint(): string
+    {
+        return $this->semHint;
+    }
+
+    /** @internal `SemanticsBuilder` 读它 */
+    public function semanticsAutomationId(): string
+    {
+        return $this->semAutomationId;
+    }
+
+    /** @internal `SemanticsBuilder` 读它 */
+    public function semanticsAcceleratorKey(): string
+    {
+        return $this->semAcceleratorKey;
     }
 }

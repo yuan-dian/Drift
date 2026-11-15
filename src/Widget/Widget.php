@@ -167,6 +167,15 @@ abstract class Widget
     /** @internal 层级（1-based）；0 = 未声明 */
     private int $semLevel = 0;
 
+    /** @internal 读屏补充提示（UIA HelpText）；空 = 不答 */
+    private string $semHint = '';
+
+    /** @internal 自动化稳定标识（UIA AutomationId）；空 = 不答 */
+    private string $semAutomationId = '';
+
+    /** @internal 快捷键串（UIA AcceleratorKey）；空 = 不答 */
+    private string $semAcceleratorKey = '';
+
     /**
      * ★ 子类必须调 `parent::__construct()`。
      * @api

@@ -192,7 +192,8 @@ final class TablePageState extends State
                         // 都开到这一份声明。命令复用 `showcase.refresh`（本应用只注册了它）
                         // ⇒ 真机上选完一项能看见 Snackbar。
                         ->contextMenu(ContextMenu::make()->items([
-                            MenuItem::make('刷新数据')->chord(KeyChord::ctrl('R'))->command('showcase.refresh'),
+                            MenuItem::make('刷新数据')->chord(KeyChord::ctrl('R'))->command('showcase.refresh')
+                                ->semanticsMeta(acceleratorKey: 'Ctrl+R'),
                             MenuItem::separator(),
                             MenuItem::make('清空选择')->onPressed(fn() => $this->setState(
                                 function (): void {

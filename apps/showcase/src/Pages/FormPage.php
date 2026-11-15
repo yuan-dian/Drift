@@ -168,12 +168,22 @@ final class FormState extends State
                 ->label('搜索')
                 ->placeholder('输入关键词后按 Enter')
                 ->value($this->query)
-                ->onChanged(fn(string $v) => $this->query = $v)
+                ->onChanged(function (string $v): void {
+                    // UIA SetValue 与键盘输入走同一条 onChanged；不 setState 的话
+                    // 受控值、语义树与 TextChanged 事件都不会更新。
+                    $this->setState(function () use ($v): void {
+                        $this->query = $v;
+                    });
+                })
                 ->onSubmitted(function (string $v): void {
                     $this->setState(function () use ($v): void {
                         $this->submittedQuery = $v;
                     });
-                }),
+                })
+                ->semanticsMeta(
+                    hint: '输入关键词后按 Enter 提交',
+                    automationId: 'form.search',
+                ),
             Text::make($this->submittedQuery === '' ? '回车之后这里显示提交的词' : '已提交：' . $this->submittedQuery)
                 ->caption(),
 

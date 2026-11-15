@@ -85,4 +85,13 @@ final class SemanticsNode
     public int $parent = -1;
 
     public int $depth = 0;
+
+    /** 读屏补充提示（UIA HelpText）；空 = 不答 */
+    public string $hint = '';
+
+    /** 自动化稳定标识（UIA AutomationId）；空 = 不答 */
+    public string $automationId = '';
+
+    /** 快捷键串（UIA AcceleratorKey）；空 = 不答 */
+    public string $acceleratorKey = '';
 }

@@ -13,7 +13,13 @@
 >   详见 `docs/DESIGN-FORM-P0-1-2026-11-15.md` 与 `DEBT §80`。
 >   **§7 的「P0-1 → P0-2 同轮」也已按新事实改为分轮**：P0-1 一行 `SemanticsNode`
 >   都没碰，分轮不会接两遍线。
-> P0-2 与七条 P1 仍未动；下表的差距判定在动手前仍应在当天 HEAD 重 grep。
+> ③ 落地 P0-2 的**能力声明面 + 事件面**：`simplePattern()` 改分派表、补容器
+>   `ISelectionProvider`；语义节点加 `hint` / `automationId` / `acceleratorKey`；
+>   `driftUiaApply()` 按 key diff 发属性变更与 TextChanged。原 §5 的
+>   「`ITextProvider` 薄实现」是错判（它要 `ITextRangeProvider` 全套字符级 API），
+>   `IGrid` / `IScroll` 也缺数据面 ⇒ 三者推迟。详见
+>   `docs/DESIGN-UIA-P0-2-2026-11-15.md` 与 `DEBT §81`。
+> 七条 P1 仍未动；下表的差距判定在动手前仍应在当天 HEAD 重 grep。
 
 ---
 

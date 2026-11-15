@@ -44,6 +44,10 @@ struct UiaNode {
     bool enabled = true;
     // 人读串（PHP `SemanticsNode::$value`）；range 只对 slider / progress 有意义
     std::wstring value;
+    // 静态描述（PHP `SemanticsNode`）：空串 ⇒ 不向客户端答该属性
+    std::wstring hint;
+    std::wstring automationId;
+    std::wstring acceleratorKey;
     double rangeMin = 0.0;
     double rangeMax = 0.0;
 };

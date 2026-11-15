@@ -58,6 +58,11 @@ COINIT_APARTMENTTHREADED = 0x2
 TreeScope_Children = 0x2
 TreeScope_Descendants = 0x4
 UIA_InvokePatternId = 10000
+# 数值取自 Win SDK 10.0.26100.0/um/UIAutomationClient.h，不猜
+UIA_SelectionPatternId = 10001
+UIA_ValuePatternId = 10002
+UIA_Text_TextChangedEventId = 20015
+UIA_AutomationPropertyChangedEventId = 20004
 
 # IUIAutomation 的 vtable 索引（IUnknown 占 0..2）
 IUIA_ElementFromHandle = 6
@@ -85,6 +90,9 @@ UIA_ExpandCollapseExpandCollapseStatePropertyId = 30070
 UIA_SelectionItemIsSelectedPropertyId = 30079
 UIA_ToggleToggleStatePropertyId = 30086
 UIA_LevelPropertyId = 30154
+UIA_AcceleratorKeyPropertyId = 30006
+UIA_AutomationIdPropertyId = 30011
+UIA_HelpTextPropertyId = 30013
 
 # IUIAutomationTreeWalker（`GetParentElement` 在最前，别从 FirstChild 开始数）
 WALKER_GetFirstChildElement = 4
@@ -244,6 +252,7 @@ class VARIANT(ctypes.Structure):
 
 VT_EMPTY = 0
 VT_I4 = 3
+VT_BSTR = 8
 VT_BOOL = 11
 
 
@@ -266,10 +275,54 @@ def prop_of(elem, property_id):
         return v.vt, v.llVal & 0xFFFFFFFF
     if v.vt == VT_BOOL:
         return v.vt, bool(v.llVal & 0xFFFF)
+    if v.vt == VT_BSTR:
+        # BSTR 指针落在 union 的低 8 字节（与 llVal 同偏移）
+        return v.vt, ctypes.wstring_at(v.llVal) if v.llVal else ""
     if v.vt == VT_EMPTY:
         return v.vt, None
 
     return v.vt, None
+
+
+def set_value_pattern(obj, text):
+    # IValueProvider::SetValue（slot 3），LPCWSTR 入参
+    fn = _call(obj, 3, ctypes.HRESULT, ctypes.c_wchar_p)
+    return fn(obj, text) & 0xFFFFFFFF
+
+
+def pattern_bool(obj, slot):
+    # 读返回 BOOL 的 Pattern getter ⇒ (hr, bool)
+    val = ctypes.c_long()
+    fn = _call(obj, slot, ctypes.HRESULT, ctypes.POINTER(ctypes.c_long))
+    hr = fn(obj, ctypes.byref(val)) & 0xFFFFFFFF
+    return hr, bool(val.value)
+
+
+def pattern_selection_count(obj):
+    # ★ GetCurrentPattern 给的是**客户端** IUIAutomationSelectionPattern：
+    #   slot 3 = GetCurrentSelection(IUIAutomationElementArray**)，不是 provider
+    #   侧 ISelectionProvider::GetSelection 的 SAFEARRAY。按 SAFEARRAY 解析会读出
+    #   0xFFFFFFFF 之类的垃圾值，判据写 cnt>=0 还会假绿（真机实测踩过）。
+    arr = ctypes.c_void_p()
+    fn = _call(obj, 3, ctypes.HRESULT, ctypes.POINTER(ctypes.c_void_p))
+    hr = fn(obj, ctypes.byref(arr)) & 0xFFFFFFFF
+    if hr != 0 or not arr.value:
+        return hr, -1
+    length = ctypes.c_int(-1)
+    # IUIAutomationElementArray: IUnknown(0..2) + get_Length(3) + GetElement(4)
+    get_len = _call(arr, 3, ctypes.HRESULT, ctypes.POINTER(ctypes.c_int))
+    hr2 = get_len(arr, ctypes.byref(length)) & 0xFFFFFFFF
+    release = _call(arr, 2, ctypes.c_ulong)
+    release(arr)
+    return hr2, length.value if hr2 == 0 else -1
+
+
+def walker_parent(w, elem):
+    # 沿 Fragment 的 Parent 找容器节点（不依赖控件名字）
+    out = ctypes.c_void_p()
+    fn = _call(w, 3, ctypes.HRESULT, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p))
+    hr = fn(w, elem, ctypes.byref(out)) & 0xFFFFFFFF
+    return out.value if hr == 0 and out.value else None
 
 
 CONTROL_TYPES = {

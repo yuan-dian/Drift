@@ -26,7 +26,7 @@ void driftUiaDetach(WindowSlot &slot);
  */
 bool driftUiaHandleGetObject(WindowSlot &slot, HWND hwnd, WPARAM wp, LPARAM lp, LRESULT *result);
 
-/** 换一整棵语义树，并按差异 raise 结构 / 焦点 / 选中事件 */
+/** 换一整棵语义树，并按差异 raise 结构 / 焦点 / 选中 / 属性 / 文本事件 */
 void driftUiaApply(WindowSlot &slot, const std::vector<UiaNode> &nodes);
 
 /** 语义角色 ⇒ UIA ControlTypeId（PHP 侧不持平台常量） */

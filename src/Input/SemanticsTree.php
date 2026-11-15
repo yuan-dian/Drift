@@ -176,6 +176,10 @@ final class SemanticsTree
                 'h' => $n->h,
                 'parent' => $n->parent,
                 'depth' => $n->depth,
+                // 空串 ⇒ C++ 留 VT_EMPTY；三键不是状态，是给读屏/自动化的静态描述
+                'hint' => $n->hint,
+                'automationId' => $n->automationId,
+                'acceleratorKey' => $n->acceleratorKey,
             ];
         }
 
