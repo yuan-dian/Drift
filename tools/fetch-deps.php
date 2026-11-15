@@ -23,11 +23,18 @@ declare(strict_types=1);
  *   php tools/fetch-deps.php --tag=deps-v2            # 临时钉别的版本
  *   GITHUB_TOKEN=ghp_xxx php tools/fetch-deps.php     # 私有仓库
  *   php tools/fetch-deps.php --url=<zip> --force
+ *   php tools/fetch-deps.php --url=D:/transfer/drift-deps-win-x64.zip
+ *                                                     # 离线包（首个 release 之前唯一可行）
  *   DRIFT_DEPS_URL=https://mirror.example.com/drift php tools/fetch-deps.php
+ *   DRIFT_DEPS_URL=D:/transfer php tools/fetch-deps.php   # 本地目录同样认（自动补包名）
  */
+
+use Drift\Dev\Deps\Source;
 
 require __DIR__ . '/deps-common.php';
 require __DIR__ . '/version.php';
+// 直接 require 单个文件，不拉 `autoload.php`：本脚本要能「装个 PHP 就跑」（见 deps-common 头注）
+require __DIR__ . '/Deps/Source.php';
 
 const ASSET = 'drift-deps-win-x64.zip';
 
@@ -60,9 +67,12 @@ foreach (array_slice($argv, 1) as $arg) {
 /**
  * 一个下载源：zip 地址、鉴权头，以及对应的 `.sha256` 地址。
  *
- * @return array{label:string,url:string,headers:list<string>,shaUrl:?string,shaHeaders:list<string>}
+ * `local = true` 表示 `url` 是**本机文件路径**：那句「拷过来就行」以前只能写在文档里，
+ * 现在是一条命令（首个 release 发布前它才是唯一可行的那条路）。
+ *
+ * @return array{label:string,url:string,headers:list<string>,shaUrl:?string,shaHeaders:list<string>,local:bool}
  */
-function source(string $label, string $url, array $headers = [], ?string $shaUrl = null, array $shaHeaders = []): array
+function source(string $label, string $url, array $headers = [], ?string $shaUrl = null, array $shaHeaders = [], bool $local = false): array
 {
     return [
         'label' => $label,
@@ -70,13 +80,14 @@ function source(string $label, string $url, array $headers = [], ?string $shaUrl
         'headers' => $headers,
         'shaUrl' => $shaUrl,
         'shaHeaders' => $shaHeaders,
+        'local' => $local,
     ];
 }
 
 /**
  * GitHub 这一路。有 token 走 API（私有仓库唯一可行），没有就退回匿名直链。
  *
- * @return array{label:string,url:string,headers:list<string>,shaUrl:?string,shaHeaders:list<string>}|null
+ * @return array{label:string,url:string,headers:list<string>,shaUrl:?string,shaHeaders:list<string>,local:bool}|null
  */
 function githubSource(string $repo, ?string $tag, ?string $token): ?array
 {
@@ -166,11 +177,21 @@ if ($url === null && $repo === null) {
     $repo = depsRepoFromOrigin();
 }
 
-/** @var list<array{label:string,url:string,headers:list<string>,shaUrl:?string,shaHeaders:list<string>}> $sources */
+/** @var list<array{label:string,url:string,headers:list<string>,shaUrl:?string,shaHeaders:list<string>,local:bool}> $sources */
 $sources = [];
 $githubFailed = false;
 if ($url !== null) {
-    $sources[] = source('显式地址', $url, [], $url . '.sha256');
+    $localPath = Source::localPath($url);
+    if ($localPath !== null) {
+        $sources[] = source('本地文件', $localPath, [], null, [], true);
+    } elseif (!Source::isUrl($url)) {
+        // 早退：交给 curl 只会得到 `URL rejected: Port number was not a decimal number`
+        fwrite(STDERR, "✗ 既不是网址也不是已存在的文件：{$url}\n");
+        fwrite(STDERR, "      网址要带协议（https://…）；离线包请给路径（先把 pack-deps 的产物拷过来）。\n");
+        exit(1);
+    } else {
+        $sources[] = source('显式地址', $url, [], $url . '.sha256');
+    }
 } else {
     $env = getenv('DRIFT_DEPS_URL');
     if (is_string($env) && trim($env) !== '') {
@@ -180,6 +201,12 @@ if ($url !== null) {
                 continue;
             }
             $u = str_ends_with(strtolower($raw), '.zip') ? $raw : rtrim($raw, '/') . '/' . ASSET;
+            // 目录与直给文件同义：`DRIFT_DEPS_URL=D:/transfer` 会补上包名再判
+            $localPath = Source::localPath($u);
+            if ($localPath !== null) {
+                $sources[] = source('本地文件', $localPath, [], null, [], true);
+                continue;
+            }
             $sources[] = source('镜像', $u, [], $u . '.sha256');
         }
     }
@@ -220,6 +247,17 @@ if ($pending) {
     $resumed = is_file($part) && filesize($part) > 0;
     $done = false;
     foreach ($sources as $src) {
+        if ($src['local']) {
+            printf("拷贝 : 本地文件 %s\n", $src['url']);
+            if (@copy($src['url'], $part)) {
+                $used = $src;
+                $done = true;
+                break;
+            }
+            fwrite(STDERR, "✗ 拷贝失败：{$src['url']}\n");
+            @unlink($part);
+            continue;
+        }
         $label = $resumed
             ? sprintf('下载 : %s（从 %d 字节续）', $src['label'], (int) filesize($part))
             : "下载 : {$src['label']}";
@@ -250,6 +288,8 @@ if ($pending) {
         }
         fwrite(STDERR, "提示：默认取 DEPS_VERSION 指定的 tag（当前 " . driftDepsTag() . "）。\n");
         fwrite(STDERR, "      确认该 tag 已发过 release，或用 --tag=<tag> / --url=<直链> 显式指定。\n");
+        fwrite(STDERR, "      首个 release 发布前：在已有 cpp/ 的机器上 php tools/pack-deps.php，\n");
+        fwrite(STDERR, "      再把 dist/drift-deps-win-x64.zip 拷过来，用 --url=<那个路径> 安装。\n");
         exit(1);
     }
 } else {
@@ -257,7 +297,9 @@ if ($pending) {
 }
 
 $actual = hash_file('sha256', $pending ? $part : $zipPath);
-$remote = remoteSha($used['shaUrl'], $used['shaHeaders'], $dist . '/.sha256.tmp');
+$remote = $used['local']
+    ? Source::localSha($used['url'])
+    : remoteSha($used['shaUrl'], $used['shaHeaders'], $dist . '/.sha256.tmp');
 $expected = $lock['sha256'] ?? $remote;
 
 if ($lock !== null && $remote !== null && !hash_equals((string) $lock['sha256'], $remote)) {

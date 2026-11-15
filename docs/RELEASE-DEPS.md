@@ -99,11 +99,30 @@ php tools/doctor.php
 `24 个 .lib · 2 个字体`）。只在开发机上测等于没测 —— 开发机的 `cpp/` 本来就存在，
 `--force` 覆盖一遍看不出「从零」。
 
+**首个 release 之前，或目标机器在内网**：走离线包，判据与在线那条完全一样。
+
+```bash
+# 有 cpp/ 的机器
+php tools/pack-deps.php                     # → dist/drift-deps-win-x64.zip + .sha256
+
+# 新机器（clone 后，把 zip 拷过去即可）
+php tools/fetch-deps.php --url=D:/transfer/drift-deps-win-x64.zip
+DRIFT_DEPS_URL=D:/transfer php tools/fetch-deps.php   # 给目录也行，脚本补包名
+```
+
+`--url` 还认反斜杠路径、`file://`、百分号编码（空格 / 中文）。2026-11-15 在
+`_build/deps-probe/` 造了一棵「只有 `tools/` 与三个版本文件」的假新机器跑通：
+`拷贝 → SHA256 一致 → 解压 610 entry → 24 lib / 2 字体 / 11 许可 → 对账一致`，退出 0。
+★ 它不走网络，**不替代在线那条的验收**，只证明离线这条路是活的 —— 上线前的验收仍要
+按上面三步在干净 clone 里跑。
+
 ## 五、边界
 
 - **私有仓库必须带 token**。`releases/download/...` 对私有资产没有可匿名访问的地址，
   匿名请求拿到的是 404（不是 403）—— 看起来像"还没发布"。`fetch-deps.php` 在有 token 时
   改走 API 解析 asset id 再按 `application/octet-stream` 取，token 只需 `repo` 读权限。
+- **首个 release 发布前**，GitHub 那条路必然拿不到资产：离线包（`--url=<本机 zip>`）是
+  唯一可行路径，它与在线那条共用鉴权之外的**全部**校验（lock → SHA → 解压后数一遍）。
 - 单资产上限 2 GB（GitHub 限制），当前 49.6 MiB，够用很久。
 - **包不进 git 历史**：50 MB × 每次发版会让仓库永久膨胀，且 clone 变慢；
   release 资产可删可换，这才是它该待的地方。

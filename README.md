@@ -178,10 +178,24 @@ Windows 上 Git Credential Manager 把凭据放在系统凭据库里读不出来
 只跑闸门、根本不需要 Skia 的人。实测数据与取舍见 [`docs/RELEASE-DEPS.md`](docs/RELEASE-DEPS.md)
 末节「为什么不用 Composer 分发」。
 
-从已有 `cpp/` 复现打包，或手工解压别处拿到的包：
+从已有 `cpp/` 的机器分发（**首个 release 之前唯一可行**，也是内网 / 离线机器的做法）：
 
 ```bash
-php tools/pack-deps.php                       # 产物 dist/drift-deps-win-x64.zip + .sha256
+# ① 有 cpp/ 的机器：打包（产物 dist/drift-deps-win-x64.zip + .sha256）
+php tools/pack-deps.php
+
+# ② 新机器：clone 后把那个 zip 拷过来，一条命令装上
+php tools/fetch-deps.php --url=D:/transfer/drift-deps-win-x64.zip
+DRIFT_DEPS_URL=D:/transfer php tools/fetch-deps.php   # 指目录也行，脚本自己补包名
+```
+
+`--url` 认裸路径 / 反斜杠 / `file://` / 百分号编码；路径写错会直接说「既不是网址也不是
+已存在的文件」，不会再抛 curl 的 `Port number was not a decimal number`。这条命令与在线
+那条走**同一套校验**（`deps.lock.json` + 解压后数 `.lib` / 字体 / 许可）。
+
+手工解压仍然可以，但不校验、也不做解压后对账：
+
+```bash
 unzip drift-deps-win-x64.zip -d <仓库根>       # 得到 cpp/skia、cpp/fonts、cpp/licenses
 ```
 
@@ -204,7 +218,8 @@ CI 就无法判断「依赖真变了没有」。
 [`deps.lock.json`](deps.lock.json)。它入库，所以换包必须同时改仓库文件 —— 这是校验能成立的前提；
 `dist/*.sha256` 只是同批上传的副本。
 
-★ **首个 release 尚未发布**：在那之前 `fetch-deps.php` 会取不到资产，只能从已有 `cpp/` 的机器拷入。
+★ **首个 release 尚未发布**：GitHub 那条路会取不到资产 —— 用上面的 `--url=<本机 zip>`
+（离线包），校验与在线那条一样。
 发布是一次性的（打包 → 建 release → 传两个资产，脚本全包）：
 
 ```bash

@@ -79,7 +79,9 @@
   `php tools/release-deps.php` 完成，不需要 `gh`（tag 由 `DEPS_VERSION` 决定，
   发版前还会对账包内 `deps.lock.json` 的版本锚点）。
   `doctor` 新增「Skia 依赖包」一项，`drift-build` 缺包时直接给出取包命令，
-  不再一路跑到链接期才报 LNK2019。首个 release 尚未发布，流程见
+  不再一路跑到链接期才报 LNK2019。首个 release 尚未发布：在那之前用离线包
+  `php tools/fetch-deps.php --url=<本机 zip 路径>`（或 `DRIFT_DEPS_URL=<目录>`），
+  与在线那条共用同一套校验（lock → SHA256 → 解压后数 lib / 字体 / 许可），流程见
   [`docs/RELEASE-DEPS.md`](docs/RELEASE-DEPS.md)。★ 首个包没有可追溯的 Skia commit
   （`SKIA_REVISION` = `unpinned`、lock 里 `provenance: legacy`）；从 pinned commit
   重建与 CI 自动化的入口见该文档的「CI 自动构建依赖包」一节。
