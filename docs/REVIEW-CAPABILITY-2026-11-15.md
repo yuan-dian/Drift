@@ -32,7 +32,22 @@
 >   之后是对的，`doctor` 未接线的事实留到那一轮收口。
 >   真机接缝由 `tools/probe-hotreload-p15.php` 只读通道实测（优雅写盘 / 强杀不写盘 2/2），
 >   交互探针因桌面锁定 SKIP（码 2），没写成通过。
-> 其余六条 P1 仍未动；下表的差距判定在动手前仍应在当天 HEAD 重 grep。
+> ⑤ 落地 **P1-3 命令启用态**（`DEBT §83` / `docs/DESIGN-COMMAND-GATE-P1-3-2026-11-15.md`）。
+>   重 grep 后**订正了 §7 顺序与 §5 的 P1-3 落点**：P1-2 换 `WM_POINTER` 必须先裁
+>   「拖出窗口即取消」的语义变更（`PITFALLS.md:191`「要改先裁决」），且核心真机判据
+>   依赖前台窗口（桌面锁定下只能永久 SKIP）⇒ 不该排在纯 PHP、可无窗口验证的 P1-3 之前；
+>   §5 的「Intent/Action 层」撞 2026-10-14 判死的幽灵术语（`DESIGN-v1.0:916-917`），
+>   「给 `AcceleratorTable` 加作用域」破坏纯映射可共享且零消费者。真缺口是**命令启用态
+>   三份手写、快捷键路径完全不查** ⇒ 门控与 handler 同一注册写者、在
+>   `Application::dispatch()` 一处判定（借鉴 Flutter 改版后 `Action.isEnabled` /
+>   WPF `CanExecute`），不引入 `Intent`、不碰键位表、不改 Widget→Commands 依赖。
+>   真消费者 `nav.back` 门控取 P0-3 的 `NavigationStack::canPop()`。
+>   **顺带闭合两处同族静默错**：`UsersRoot.php:120` 声明 `Ctrl+N` 却没绑键表、
+>   `TablePage.php:195` 声明 `Ctrl+R`（连 UIA `acceleratorKey` 都报了）而 showcase
+>   根本没覆写 `accelerators()`；两者都补绑并加全仓 chord↔bind 静态对账。
+>   §5 判据②的「菜单项灰掉」本轮不接（`UsersRoot` 是 StatelessWidget、不订阅
+>   `AppStore`，动态灰掉需独立裁决）；框架只保证派发一致 + 被拦不静默。
+> 其余五条 P1 仍未动；下表的差距判定在动手前仍应在当天 HEAD 重 grep。
 
 ---
 
@@ -225,6 +240,13 @@
 | P1-6 | CLI 收口 + 首个 release 资产 + `Future::timeout` | `bin/drift` 加 5 条路由与 `create`；发 `deps-v1` tag；`Future::timeout()` 统一回 `Failure` code | `php bin/drift doctor` / `fetch-deps` exit 0；新机器两条命令装起来；超时是机器可判 code 而不是字符串匹配 |
 | P1-7 | OS 集成：多格式剪贴板、系统托盘、OS 通知、电源/会话事件 | `Win32Clipboard`/`Tray` 已有端口骨架 | 复制富文本到 Word 保留格式；锁屏后 `WakeReason` 能区分；`WM_ENDSESSION` 触发保存守卫 |
 
+> **§5 P1-3 事后订正（11-15 ⑤）**：表中「Intent/Action 层 + 焦点作用域」三条判据里
+> 只有 ② 是真缺口。`Intent` 是本仓判死的幽灵术语（`docs/_archive/DESIGN-v1.0-2026-10-14.md:916-917`、
+> `DECISIONS-2026-10-14.md:77`「删掉后三条 lint 塌缩成一条」）；`AcceleratorTable` 加作用域
+> 会破坏 `PITFALLS.md:2713` 的纯映射可共享且跨作用域重复绑定零消费者；`State::handleCommand()`
+> 生产侧只有一个冒烟夹具 ⇒ 判据①③过满。真缺口是「启用态三份手写、快捷键不查」，
+> 落点是 `CommandGate` + `Application::dispatch()` 唯一判定入口，详见设计稿与 `DEBT §83`。
+
 ### P2 — 增强 / 优化（有账但不急）
 
 - **表现力**：弹簧/交错动画、隐式动画家族、SVG 解析、图片 LRU、离屏位图 layer、变换参与布局。
@@ -277,6 +299,16 @@ P1-3 快捷键 → P1-4 滚动 → P1-6 CLI/timeout/release → P1-7 OS 集成
 - **P1-6 成本最低、最该早做**：`bin/drift doctor` 现在 exit 2，新人第一条命令就撞墙；
   首版 release 是上一轮 §77 已铺好路的账号动作。
 
+> **§7 事后订正（同日 ④⑤）**：
+> - 「P1-6 成本最低、最该早做」过满：`doctor` exit 2 是**响亮**的，按 §5 三条判据
+>   只占一条 ⇒ 顺序图把它排在 P1-3/P1-4 之后是对的（④ 已量）。
+> - 顺序图把 **P1-2 指针通道排在 P1-3 之前**缺两个前置：`PITFALLS.md:191` 明文
+>   「壳侧没有 `SetCapture` 是刻意的…**要改先裁决**」，换 `WM_POINTER` 会改变
+>   「拖出窗口即取消」的手势语义；且核心真机判据（拖出窗口仍收 move/up、双指捏合）
+>   依赖前台窗口，桌面锁定下只能永久 SKIP。§4 的 WinUI 借鉴只说「一次上
+>   `WM_POINTER`」，没有授权改收口语义。⇒ P1-2 改为「先出指针语义裁决 + 可交互
+>   会话」再动；P1-3 纯 PHP、零 AOT、可无窗口验证，先做（⑤ 已落地）。
+
 ---
 
 ## 8. 复核后排除的假阳性 / 需精确化的口径
@@ -295,8 +327,10 @@ P1-3 快捷键 → P1-4 滚动 → P1-6 CLI/timeout/release → P1-7 OS 集成
      返回实现且已被 `TextEditingBridge` 使用 —— **文档说缺，代码说有**；
    - `src/Platform/Screen.php:18`、`src/Input/ThemeChangedEvent.php:19` 引用了不存在的 `DpiChanged` 类型；
    - `ScrollMotion.php:15` 仍写「三份实现」，`ScrollLane.php:11` 与同文件 `:37` 写「四个」。
-6. **数字口径**：控件 143/153（非 110）；`Application` public 69（非 72 ——
-   `docs/00-README.md:50` 与 `14-组合根与装配.md:18` 仍是 72，上一轮只改了 §4 的 118 行）；
+6. **数字口径**：控件 143/153（非 110）；`Application` 的 public **数量不写死** ——
+   11-15 ⑤ 新增 `commandGates()` 后 Reflection 实测 73，而本条曾写 69、
+   `14-组合根与装配.md` 曾写 72 ⇒ 手写数字必然腐烂，改为以
+   `CompositionRootTest` 的 Reflection 为准（索引表仍要补方法名）；
    `verify --list` 20 step，`corpus` 是展示行不进 `--json`；`TableState` 2737 行（11-14 登记 2731）。
 7. **11-14 的「权威文档列幽灵基类 `BoxWidget`」已修**（`08-控件面.md:5,14,21,615`），
    别再照抄；但 `TooltipPanel.php:16` 的示例注释与 `tools/Preview/M2LayoutPage.php:28` 仍留着旧名，

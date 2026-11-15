@@ -41,6 +41,9 @@ final class CommandRouter
     /** @var array<string, CommandHandler> */
     private array $handlers = [];
 
+    /** @var array<string, CommandGate> 与 handlers 同一个写者 ⇒ 写不出"门控了不存在的命令" */
+    private array $gates = [];
+
     private function __construct(private ?self $parent = null)
     {
     }
@@ -60,10 +63,11 @@ final class CommandRouter
      *
      * @param CommandHandler $handler **具名类的实例**，不是闭包 —— 理由见
      *        `CommandHandler` 的说明（可枚举 / 可单测 / 静态可达）
+     * @param null|CommandGate $gate 可选门控；不给 ⇒ 该命令恒可用（兼容既有注册点）
      *
      * @api
      */
-    public function on(string $name, CommandHandler $handler): self
+    public function on(string $name, CommandHandler $handler, ?CommandGate $gate = null): self
     {
         if (isset($this->handlers[$name])) {
             // 后注册的静默覆盖先注册的 ⇒ 上线后"点了没反应"且查不出为什么。G2。
@@ -83,8 +87,23 @@ final class CommandRouter
         }
 
         $this->handlers[$name] = $handler;
+        if ($gate !== null) {
+            $this->gates[$name] = $gate;
+        }
 
         return $this;
+    }
+
+    /** 全链是否允许派发；没挂门控 ⇒ true。由 `Application::dispatch()` 一处调用。 */
+    public function enabled(string $name, CommandArg $arg): bool
+    {
+        return $this->gateInChain($name)?->allows($name, $arg) ?? true;
+    }
+
+    /** 沿父链找门控（就近优先，与 handlerInChain 同形） */
+    private function gateInChain(string $name): ?CommandGate
+    {
+        return $this->gates[$name] ?? $this->parent?->gateInChain($name);
     }
 
     /**

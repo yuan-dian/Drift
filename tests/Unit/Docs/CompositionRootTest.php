@@ -9,8 +9,8 @@ use Drift\Dev\Tests\Support\SmokeTestCase;
 /**
  * `14-组合根与装配.md` §4 的能力索引与 `Application` 真实公共面对账。
  *
- * ★ 不往 `Application.php` 的 72 个方法上贴分组注释：那会造 72 行新的腐烂面。
- *   索引放在文档里，由 Reflection 守「一个不漏、一个不多」。
+ * ★ 不往 `Application.php` 的每个 public 方法上贴分组注释：那会造一整片新的腐烂面。
+ *   索引放在文档里，由 Reflection 守「一个不漏、一个不多」；数量同样不写死。
  */
 final class CompositionRootTest extends SmokeTestCase
 {

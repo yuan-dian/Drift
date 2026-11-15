@@ -18,6 +18,7 @@ use Drift\Widget\Widget;
 
 use App\Users\Commands\AppCommands;
 use App\Users\Commands\NavigationCommands;
+use App\Users\Commands\NavigationGate;
 use App\Users\Commands\SignupCommands;
 use App\Users\Commands\UserCommands;
 use App\Users\Store\AppStore;
@@ -196,6 +197,12 @@ final class UsersApplication extends Application
         ];
     }
 
+    /** 门控与 handler 同表注册；键不在 commands() 里会留诊断。 */
+    public function commandGates(): iterable
+    {
+        return ['nav.back' => new NavigationGate($this->app)];
+    }
+
     /**
      * 应用级加速键（§9.1 路由链第 ① 环，在焦点之前）。
      *
@@ -207,6 +214,7 @@ final class UsersApplication extends Application
         return AcceleratorTable::make()
             ->bind(KeyChord::ctrl('R'), 'users.refresh')
             ->bind(KeyChord::ctrl('S'), 'form.submit')
+            ->bind(KeyChord::ctrl('N'), 'nav.signup')
             ->bind(KeyChord::alt('Left'), 'nav.back')
             ->bind(KeyChord::f(5), 'users.refresh');
     }

@@ -6,6 +6,7 @@ namespace Drift\App;
 use Drift\App\Io\IoPoller;
 use Drift\Async\Future;
 use Drift\Commands\CommandArg;
+use Drift\Commands\CommandGate;
 use Drift\Commands\CommandHandler;
 use Drift\Commands\CommandRouter;
 use Drift\Core\Pipeline;
@@ -299,6 +300,17 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         return [];
     }
 
+    /** 命令门控：`命令名 => CommandGate`。键必须与 `commands()` 对齐，孤立门控会留诊断。
+     *
+     * @return iterable<string, CommandGate>
+     *
+     * @api
+     */
+    public function commandGates(): iterable
+    {
+        return [];
+    }
+
     /** 应用作用域 —— 多窗口时把同一个实例递给每个 `Application`（共享字体 / 线程池 / IO / 主题）。
      *
      * @api
@@ -454,10 +466,23 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
             $this->metrics(),
         );
 
+        // 门控与 handler 同一写者；孤立门控（无命令）留痕，避免"声明了却永不生效"。
+        $gates = [];
+        foreach ($this->commandGates() as $name => $gate) {
+            $gates[(string) $name] = $gate;
+        }
+
         // 此刻子类字段已就位，`commands()` 才可信。重复注册会 Fatal ⇒ 必须可重入。
         foreach ($this->commands() as $name => $handler) {
-            if (!$this->router->has((string) $name)) {
-                $this->router->on((string) $name, $handler);
+            $name = (string) $name;
+            if (!$this->router->has($name)) {
+                $this->router->on($name, $handler, $gates[$name] ?? null);
+            }
+        }
+
+        foreach ($gates as $name => $_) {
+            if (!$this->router->hasInChain($name)) {
+                Errors::report(sprintf('命令门控 %s 没有对应的 handler（门控不会生效）', $name), Errors::DIAGNOSTIC);
             }
         }
 
@@ -1708,9 +1733,10 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      * 顺序刻意如此：**树内冒泡优先于应用级注册表** —— 页面自己最知道这条命令
      * 是不是它的（`users.refresh` 与列表页的关系，框架不该猜）。返回 true 就停。
      *
-     * ★ **第 ①② 环从根开始深度优先**：现在还没有 hitTest（`Input` 层属 M3），
-     *   所以"命中的 Element"这一环暂时由根遍历代替 —— 语义等价（都是"从具体
-     *   往一般找"），等 hitTest 落地只改这一处。
+     * ★ 第 ①② 环仍从根深度优先，不是从焦点父链上溯：生产侧
+     *   `State::handleCommand()` 只有冒烟夹具一个实现，改地址空间是零消费者的
+     *   语义变更，须单独裁决。`hitTest` 早已落地，旧注释"等它落地只改这一处"已失效。
+     * ★ 门控在冒泡之前判一次 ⇒ 按键 / 点击 / 其它入口共用同一判定。
      *
      * @api
      */
@@ -1718,14 +1744,23 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     {
         // ★ 同 `dispatchInput()`：命令 handler 里的 `setState()` 也是帧外写。
         Pipeline::enter($this->pipeline);
+        $arg ??= CommandArg::none();
+
+        if (!$this->router->enabled($name, $arg)) {
+            // 被拦要响亮：按了没反应且查不出原因是最难查的一类 bug。
+            // 提前 return 不清浮层 ⇒ 禁用菜单项点完菜单仍开着（与 WPF/Qt 同形）。
+            Errors::report(sprintf('命令 %s 当前不可用（门控拒绝）', $name), Errors::DIAGNOSTIC);
+
+            return false;
+        }
 
         $root = $this->root;
         $handled = false;
 
-        if ($root !== null && $this->bubble($root, $name, $arg ?? CommandArg::none())) {
+        if ($root !== null && $this->bubble($root, $name, $arg)) {
             $handled = true;
         } else {
-            $handled = $this->router->dispatch($name, $arg ?? CommandArg::none());
+            $handled = $this->router->dispatch($name, $arg);
         }
 
         // §9.1 关闭语义 #2：**命令分发之后才关**浮层 —— 菜单项的处理逻辑可能

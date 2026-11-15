@@ -47,7 +47,7 @@ v2 修订期的过程稿，只在追溯历史时看。**
 | **改版本号 / 升级依赖包** | [`RELEASE-DEPS.md`](RELEASE-DEPS.md) 末节「版本号与升级锚点」+ `tools/gen-version.php` | 根 `VERSION` / `DEPS_VERSION` / `SKIA_REVISION` |
 | **想懂现行设计 / 稳定契约** | 根 `DESIGN.md` | [`../DESIGN.md`](../DESIGN.md) |
 | **想追溯历史裁决与来龙去脉** | `docs/_archive/DESIGN-v2-2026-10-14.md` | [`_archive/DESIGN-v2-2026-10-14.md`](_archive/DESIGN-v2-2026-10-14.md) |
-| **想懂组合根 / 装配顺序 / `Application` 公共面** | `docs/architecture/14-组合根与装配.md`（装配四步接力 + 69 个 public 能力索引） | [`14-组合根与装配.md`](architecture/14-组合根与装配.md) |
+| **想懂组合根 / 装配顺序 / `Application` 公共面** | `docs/architecture/14-组合根与装配.md`（装配四步接力 + public 能力索引，数量由 Reflection 判据对账） | [`14-组合根与装配.md`](architecture/14-组合根与装配.md) |
 | **想知道 v7 提案里哪些判断被采纳 / 让位** | `docs/architecture/13-与-v7-设计对照.md` | [`13-与-v7-设计对照.md`](architecture/13-与-v7-设计对照.md) |
 | **想查 AOT 编译约束 / 坑** | `docs/AOT-CONSTRAINTS.md` + `docs/architecture/11` | — |
 | **想知道跨平台能力矩阵** | 暂缺（原 `design-v7/08-平台与能力矩阵.md` 已删；结论在 `_archive/CROSS-PLATFORM.md`） | — |
