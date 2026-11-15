@@ -72,7 +72,8 @@ final class PumpHost
      *   （实测误差 = 常数唤醒开销 ~1–2ms，不随 N 放大；判据见 `AfterSchedulerTest`）。
      * - 回调在 `frame()` 内、`settle()` 之前跑 ⇒ 回调里 `setState()` 同帧生效。
      *
-     * 有定时器在等 ⇒ `wantsFrame()` 为真 ⇒ 帧时钟保持上膛（消息泵阻塞，没人叫醒就永远不响）。
+     * 有定时器在等 ⇒ `nextDeadlineMs()` 给等待层一个到期时刻（消息泵阻塞，没人叫醒就
+     *   永远不响）；它不并进帧欠账，与 `wantsFrame()` 取较早者。
      * `after(0, $cb)` 即"帧边界执行"；它替代不了"必须在两帧之间跑"的需求
      *   （如 `WindowSet::open()` 那种会重入的）。
      * ★ **不要拿它做动画计时**：动画走帧时钟，那里有按绝对时刻排程的 `nextFrameAt`。

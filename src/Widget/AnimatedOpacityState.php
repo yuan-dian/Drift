@@ -7,7 +7,7 @@ namespace Drift\Widget;
  * `AnimatedOpacity` 的节律（细节见那边的类注释）。
  *
  * 三件事：① 目标变了就 `toward()`；② 每帧把新值 `setCompose()` 到盒上；
- * ③ 返回"还要下一帧吗"喂给 `wantsFrame()`。
+ * ③ 返回"还要下一帧吗"，由帧末 `continueFrame()` 转成下一帧的欠账。
  *
  * ★★ **`tickFrame()` 不 `setState`**：一重建就前功尽弃（`setCompose()` 的整条
  *   设计就是"不重建不重排"，见 `RenderBox::setCompose()` 的注释）。所以这里
@@ -42,7 +42,7 @@ final class AnimatedOpacityState extends State
             $scalar->toward($target);
             // ★★ 必须叫醒帧时钟：本方法在 **settle 期间**跑，而
             //   `Application::frame()` 的 `tickAnimations()` 在 settle **之前**
-            //   已经跑过了 ⇒ 它看到的目标还是旧的 ⇒ `wantsFrame()` 为 false ⇒
+            //   已经跑过了 ⇒ 它看到的目标还是旧的 ⇒ 没有欠账 ⇒
             //   帧时钟落闸 ⇒ 动画停在起点（真机现象：点「淡入」画面一动不动，
             //   再点一次才动）。
             $this->requestFrame();

@@ -32,8 +32,8 @@ use Drift\Core\Pipeline;
  *   （与 `AnimationController` 同一条纪律）。
  * ★ **首帧必须返回 `true`**：`toward()` 之后如果第一帧就报"没动画"，帧时钟
  *   立刻停摆、值永远停在起点（且不报错）。所以"还没拿到 dt"这一帧也算在跑。
- * ★ **收口帧返回 `false` 但值已落到目标**：本仓 Render 层每帧全量 paint ⇒
- *   不需要标脏，"最后一帧画得到"不靠返回值保证。
+ * ★ **收口帧返回 `false` 但值已落到目标**：`setCompose()` 推的 `paintEpoch` 让本帧
+ *   paint 门控必画 ⇒ 收口帧画得到，不必为"最后一帧"多要一帧。
  *
  * @api
  */

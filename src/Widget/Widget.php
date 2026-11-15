@@ -205,7 +205,8 @@ abstract class Widget
     /**
      * 子层拿到的渲染环境。
      * 默认原样递下去。**只有"面覆盖"型节点才覆写**（如 `Drift\Theme\ThemeScope` 换主题）。
-     * 返回 `BuildContext` 而非更具体的类型，所以 `Drift\Widget` 不需要认识 `Drift\Theme`。
+     * 签名收 `BuildContext` 而不是具体主题类型；`src/Widget/BuildContext.php` 是
+     * `Widget → Theme` 唯一的文件级例外（见 `DependencyDirection::FILE_EXCEPTIONS`）。
      * @internal Element 挂载 / 更新时调它，用户不需要。
      */
     public function childContext(BuildContext $context): BuildContext

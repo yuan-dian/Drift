@@ -173,7 +173,7 @@ final class ScrollViewState extends State implements Scrollable, ScrollMetrics
      *   反过来就会"这一帧先按旧空闲时长淡一点、再被滚动打回全亮"—— 抖动。
      *
      * ★ 返回值是"还要下一帧吗"，由 `Application` 聚合进 `animating` ⇒
-     *   `wantsFrame()` 自动命中"有动画在跑"。**不需要给 `wantsFrame()` 加判据。**
+     *   帧末 `continueFrame()` 据此 `scheduleNextFrame()`；不需要在等待层加判据。
      */
     #[\Override]
     public function tickFrame(float $timestampMs): bool

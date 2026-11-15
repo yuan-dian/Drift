@@ -19,9 +19,9 @@ use Drift\Text\TextStyle;
  * ★ **问度量，不问平台**：`TextMetricsProvider` 在造盒时注入（§14.2），所以同一份
  *   Widget 树在测试里喂固定度量 ⇒ 布局可复现、golden 可比对。
  *
- * ★ `performLayout` **会调两次**（一次自然尺寸、一次被夹紧后的最终尺寸）——
- *   这是有意的：文本断行依赖可用宽度，宽度变了断行就变，所以最终度量必须用最终
- *   宽度重算。`TextMetricsProvider` 自己有缓存（键含 maxWidth），第二次几乎免费。
+ * ★ 断行依赖可用宽度 ⇒ `performLayout()` 按约束的 maxWidth 度量一次并留下 paragraph；
+ *   `contentIntrinsicHeight()` 是父盒问固有高度的另一条路径，按传入宽度再度量一次。
+ *   度量器自带以 maxWidth 为键的缓存，两条路径不会重复算。
  *
  * @api
  */

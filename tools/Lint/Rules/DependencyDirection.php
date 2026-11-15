@@ -8,18 +8,21 @@ use Drift\Dev\Lint\Project;
 use Drift\Dev\Lint\Rule;
 
 /**
- * §4.3 依赖规则：谁能依赖谁。
+ * §4.3 依赖规则：谁能依赖谁。PSR-4 之后这条第一次可静态检查。
  *
- * GUI 仓用平铺 `namespace GUI;` + classmap，"分层"没有抓手；PSR-4 之后
- * "谁能依赖谁"第一次变得可静态检查 —— 这条规则就是那个抓手。
+ * ★ 层集合由 `ALLOWED` 的 key 派生，未登记的段默认报红（借 ArchUnit
+ *   `failOnEmptyShould` 的默认拒绝语义）；`UNLAYERED` 是写明理由的豁免。
+ *   `Drift\<Type>` 顶层设施（`Errors` 等）只有两段、没有层段，天然不进表。
  *
- * ★ 2026-11-10：层集合改由 `ALLOWED` 的 key 派生，不再维护第二份 `LAYERS` 表
- *   （两份表曾漂移出 `Core` 漏层）。未登记的命名空间段默认报红，只有写进
- *   `UNLAYERED` 才豁免 —— 借 ArchUnit `failOnEmptyShould` 的默认拒绝语义。
+ * ★ 2026-11-15 收紧：`ALLOWED` 只保留**有真实流量**的边。治理前 79 条非自身
+ *   授权里 37 条零流量（46.8%）—— 宽而不管的表既拦不住越界，也读不出形状。
+ *   `DependencyMatrixTest` 守「每条授权边都有流量」与「双向边只有登记过的三对」。
+ *   新增引用被本规则拦下时，显式加回一行并写明理由，这就是 burn-down。
  *
- * ★ `Errors` 等顶层 `namespace Drift;` 设施不是层：`Drift\<Type>` 只有两段，
- *   没有层段，所有层天然可用，因此不进 `ALLOWED`。此前 14 行都写着 `'Errors'`
- *   却恒被跳过（段不在层表里）—— 那是死条目，不是可收紧的边，故一并删除。
+ * ★ 规则盲区，显式登记：`src/Errors.php` 引用 `Drift\Logging\Log` /
+ *   `PatternFormatter`，但整份顶层文件不参与检查 ⇒ 治理时 `Logging` 的层内入边
+ *   实测为 0 是「看不见」而不是「没人用日志」。`Routing` 只被 `apps/` 消费
+ *   （业务代码不参与分层检查），`App` 是组合根，两者零入边同理。
  */
 final class DependencyDirection implements Rule
 {
@@ -38,71 +41,50 @@ final class DependencyDirection implements Rule
     /**
      * §4.3 的允许集（含自身）。**本表的 key 就是层集合**，不另设 `LAYERS`。
      *
-     * ★ 两处对 §4.3 的补正（都是"写全已有裁决"，不是新设计）：
+     * ★ 每行只列**当前有真实引用**的目标层（2026-11-15 按 `src/` 逐边实测收紧）。
+     *   删掉的 37 条零流量边不是"撤销设计裁决"，而是把"以后可能要"从表里拿走：
+     *   真要加依赖时，加一行 + 写理由的成本，远低于养着一张没人审的宽表。
+     *   `DependencyMatrixTest` 会在零流量边回潮时咬红。
      *
-     *   ① `Theme` 行漏列了 `Rendering`，而 §4.2 把 `Color` 放在 `Drift\Rendering`，
-     *      `ThemeData` 必须产出颜色值 ⇒ 放行 Rendering。
+     * ★ `Platform` 行的 `Rendering` / `Input` / `Theme` 容易被误读成"开后门"：
+     *   它们是平台必须产出的**输出类型**（表面 / 事件 / 系统主题），没有更低的层
+     *   能拥有 ⇒ 按文件放行会扩散到 `Platform\<Os>\` 的每个文件。
      *
-     *   ② `Platform` 行漏列了 `Rendering` / `Input` / `Theme` 三条，而 §5.1 的接口
-     *      签名已经要求它们 —— `Platform::surface(): ?SurfaceProvider` 的
-     *      `SurfaceProvider::surface(): RenderSurface`（§7.1）、
-     *      `InputSource::poll(): ?InputEvent`（§9.1 路由链把平台输出逐字写成
-     *      `PointerEvent / KeyEvent`）、`Screen::systemTheme(): SystemTheme`（§9.2）。
-     *
-     *      ★ 这三条与 ① 的性质不同，值得说清楚**为什么是层放行而不是按文件例外**：
-     *        它们全是**平台必须产出的输出类型**（表面 / 事件 / 系统主题），而这三样
-     *        没有任何更低的层能拥有 —— `Rendering` 要 `Text`，`Input` 要 `Geometry`，
-     *        都住在 `Platform` **上面**。按文件放行在这里不成立：每个平台的
-     *        `Win32SurfaceProvider` / `Win32InputSource` / `Win32Screen` 都要引它们，
-     *        例外会一路扩散到 `Platform\<Os>\` 的每一个文件。
-     *        ⇒ 这不是"给 Platform 开后门"，而是 §4.3 的表把 Platform 的**出口**
-     *          当成了入口来登记（表中 `Platform` 行只写了"输入侧"）。
-     *
-     *   ③ `App` 行（2026-10-21 补）：§4.3 原表写「`App | 全部 | apps`」而这里
-     *      没有对应行 —— 之前靠 `check()` 的"表里没有就跳过"顺带放行（行为
-     *      等价，但表与文档不一致，读代码的人无法确认这个放行是有意的）。
-     *      显式列出全部层 ⇒ 放行是**写下来的决定**，且 `App` 文件从此也参与
-     *      检查（将来若要把某条边收紧，改这一行就有抓手）。
+     * ★ `Widget` 行不含 `Async`：`FutureBuilder` 被 `State\AsyncCommand` 取代后，
+     *   那条放行已随消费者一起移除（2026-10-30）。
      */
     private const ALLOWED = [
-        // ★ `Core`（2026-11-10 补）：`src/Core/` 是帧管线基座（`Pipeline` /
-        //   `PipelineAccess` / `Versioned` / `Computed`），全 @internal，只认 `Logging`。
-        //   ★ 只给下面 5 个**实际引用**它的层放行 —— 其余层若要用 Core，
-        //     必须显式改那一行并说明理由，不允许"反正谁都能用"地兜底放开。
-        'Core'      => ['Core', 'Logging'],
-        'Geometry'  => ['Geometry', 'Logging'],
-        'Platform'  => ['Platform', 'Geometry', 'Rendering', 'Input', 'Theme', 'Logging'],
-        'Text'      => ['Text', 'Geometry', 'Logging'],
-        'Rendering' => ['Rendering', 'Geometry', 'Text', 'Core', 'Logging'],
-        'Input'     => ['Input', 'Geometry', 'Text', 'Layout', 'Logging'],
-        // ★ `Widget` 行的 `Async`（2026-10-30 增删记录）：加它是为了 `FutureBuilder`
-        //   同时认识 `Future` 与 `AsyncValue`；那个控件已被 `State\AsyncCommand`
-        //   取代（它是 `FutureBuilder` 的超集，且复用既有 `Cell`/`Subject` 通知设施）
-        //   ⇒ **放行随之移除**，否则就是一条"没人走也没人审"的边。
-        //   ★ 现在唯一放行 `Async` 的非 `App` 层是 `State`（见下面那行的注释）。
-        'Widget'    => ['Widget', 'Layout', 'State', 'Rendering', 'Text', 'Geometry', 'Input', 'Platform', 'Core', 'Logging'],
-        'Layout'    => ['Widget', 'Layout', 'State', 'Rendering', 'Text', 'Geometry', 'Input', 'Platform', 'Core', 'Logging'],
-        // ★ `Async`（2026-10-30，`AsyncCommand`）：`Drift\State\AsyncCommand` 是
-        //   "异步版的 `Cell`" —— 住在 `State`（生命周期与页面对齐），值为
-        //   `AsyncValue`、发起走 `Future`，两者都在 `Async` 层。
-        //   ★ 为什么改这一行而不是把命令塞进 `Widget`：命令不是控件，而 `Widget`
-        //     已经放行 `Async` ⇒ 方向仍是"上层用下层"，不产生新环
-        //     （`Async` 自己只认 `Logging`）。
-        'State'     => ['Widget', 'Layout', 'State', 'Rendering', 'Text', 'Geometry', 'Input', 'Platform', 'Async', 'Core', 'Logging'],
-        'Commands'  => ['Commands', 'Geometry', 'State', 'Logging'],
-        'Theme'     => ['Theme', 'Widget', 'Layout', 'State', 'Text', 'Geometry', 'Rendering', 'Input', 'Logging'],
-        'Routing'   => ['Routing', 'Widget', 'Layout', 'State', 'Text', 'Geometry', 'Rendering', 'Input', 'Logging'],
-        // ★ `Async`（2026-10-30，N3）：`Future` 是**纯值类型**，只认 `Logging`
-        //   （失败没人接时要喊 Fatal，那是顶层 `Errors` 设施，不进层表）。
-        //   它比 `App` 低 —— 执行体后端（`TaskHost`）住在 `App`，反过来不成立。
-        'Async'     => ['Async', 'Logging'],
-        'App'       => ['App', 'Async', 'Geometry', 'Platform', 'Text', 'Rendering', 'Input', 'Widget', 'Layout', 'State', 'Commands', 'Theme', 'Routing', 'Core', 'Logging'],
-
-        // ★ `Logging` 是横切层，2026-10-24 随日志系统补登记。
-        //   **当时不登记 = 完全不受检查**：`layerOf()` 对不在层表里的段返回 null，
-        //   `check()` 两侧都跳过 —— `Core` 后来正是这么漏的（2026-11-10 改为默认报红）。
-        //   日志是最低位的横切能力，任何层都该能记；而它自己不得反向拽住业务层。
+        'Core'      => ['Core'],
+        'Geometry'  => ['Geometry'],
+        'Platform'  => ['Platform', 'Geometry', 'Rendering', 'Input', 'Theme'],
+        'Text'      => ['Text', 'Geometry'],
+        'Rendering' => ['Rendering', 'Geometry', 'Text', 'Core'],
+        'Input'     => ['Input', 'Geometry', 'Text'],
+        'Widget'    => ['Widget', 'Layout', 'State', 'Rendering', 'Text', 'Geometry', 'Input', 'Core'],
+        'Layout'    => ['Widget', 'Layout', 'Rendering', 'Text', 'Geometry', 'Input', 'Core'],
+        'State'     => ['Widget', 'State', 'Async', 'Core'],
+        'Commands'  => ['Commands'],
+        'Theme'     => ['Theme', 'Widget', 'Text', 'Rendering'],
+        'Routing'   => ['Routing', 'Widget', 'State'],
+        'Async'     => ['Async'],
+        'App'       => ['App', 'Async', 'Geometry', 'Platform', 'Text', 'Rendering', 'Input', 'Widget', 'Layout', 'Commands', 'Theme', 'Core'],
         'Logging'   => ['Logging'],
+    ];
+
+    /**
+     * 有意保留的双向边；键是两层按字母序拼的，判据按实际流量对账。
+     *
+     * Widget↔Layout / Widget↔State：同一棵树的两个视角，两侧都有真实引用。
+     * Theme↔Widget：`ThemeScope` 等主题控件住 `Theme`，而 `BuildContext` 住
+     * `Widget`；反向只走 `BuildContext.php` 一条文件例外，不是对称互许。
+     *
+     * ★ 不照搬 Flutter `InheritedWidget` / `BuildOwner`：那要改公开签名并引入
+     *   AOT 生成物风险，收益只是"看起来没有环"。移除条件是任一侧引用归零。
+     */
+    private const DOCUMENTED_CYCLES = [
+        'Layout|Widget',
+        'State|Widget',
+        'Theme|Widget',
     ];
 
     /**

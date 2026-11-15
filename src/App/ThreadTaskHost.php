@@ -103,9 +103,11 @@ final class ThreadTaskHost implements TaskHost
     }
 
     /**
-     * 在途 + 排队（帧时钟的判据：`wantsFrame()` 用它决定帧循环要不要继续）。
-     * `needsPolling()` 回答"要不要空转着等"，决定帧时钟给 `-1` 还是帧间隔；本态正常可睡，只有有积压才以帧节奏回来续交。
-     * 积压必须计入：从原生池取出即出 `$inflight`（结果已在手上），不加这一项则交不完的批次让 `pending()` 掉 0 ⇒ 帧循环停 ⇒ 积压永远交不出去。
+     * 在途 + 排队。`PumpHost::hasPolledAsync()` 读它，帧末 `continueFrame()` 据此
+     * `scheduleNextFrame()`；`needsPolling()` 回答"要不要空转着等"，决定帧时钟给
+     * `-1` 还是帧间隔；本态正常可睡，只有有积压才以帧节奏回来续交。
+     * 积压必须计入：从原生池取出即出 `$inflight`（结果已在手上），不加这一项则
+     * 交不完的批次让 `pending()` 掉 0 ⇒ 帧循环停 ⇒ 积压永远交不出去。
      */
     public function pending(): int
     {

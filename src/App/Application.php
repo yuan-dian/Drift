@@ -111,8 +111,8 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     public const int OVER_BUDGET_FRAMES = 10;
 
     /**
-     * 六阶段预算（毫秒）。是降级顺序的依据：超了先砍语义推送，
-     * `layout` / `paint` / `present` 永不砍（砍了等于画面不更新）。
+     * 降级用的耗时分组（毫秒），不是帧阶段 —— 阶段顺序看 `FrameStage::ORDERED`。
+     * 超了先砍语义推送，`layout` / `paint` / `present` 永不砍（砍了等于画面不更新）。
      */
     public const array STAGE_BUDGET_MS = [
         'A 组（四个泵）' => 1.0,
@@ -661,8 +661,8 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
             $this->pumps->pumpTimers($timestampMs);
         });
 
-        // ④ 同理。返回值喂给 `wantsFrame()` 决定下次要不要被叫醒；`stage()` 返回 `mixed`，
-        // 这里把类型收敛回 `bool`。
+        // ④ 同理。busy 在帧末 `continueFrame()` 里转成 `scheduleNextFrame()`；`stage()` 返回
+        // `mixed`，这里把类型收敛回 `bool`。
         $this->animating = (bool) $this->stage(FrameStage::TICK_ANIMATIONS, function () use ($timestampMs): bool {
             return $this->tickAnimations($timestampMs);
         });
@@ -873,7 +873,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     // ------------------------------------------------------------------
     // 异步泵 API 委托壳（S1 第 9 步）：实现搬进 {@see PumpHost}，
     // **API 位置不动** —— 应用 / 组合根 / 测试照旧按 Application 调。
-    // frame() 的四泵与 wantsFrame() 判据直调片，不经这些壳。
+    // frame() 的 PUMP_* 段直调 PumpHost，不经这些委托壳。
     // ------------------------------------------------------------------
 
     /**
@@ -881,7 +881,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      *
      * 时间基准是上一帧的时间戳，不是环境时钟；在 `frame()` 之外调用会早一个帧间隔（≤一帧）。
      * 回调在 `frame()` 内、settle 之前跑 ⇒ 里面的 `setState()` 同帧生效。
-     * 有定时器在等 ⇒ `wantsFrame()` 为真，否则阻塞的消息泵永远不会被叫醒。
+     * 有定时器在等 ⇒ `nextDeadlineMs()` 给等待层一个到期时刻，按时叫醒阻塞的消息泵。
      *
      * @param int $milliseconds 延时（毫秒；负数按 0 处理 ⇒ 下一帧就触发）
      * @return int 定时器 id（`cancelAfter()` 用）
@@ -985,7 +985,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
             Errors::report(sprintf(
                 '连续 %d 帧超过 %.1fms 预算（本帧 %.1fms，最差 %.1fms）'
                     . ' ⇒ 语义推送降到每 4 帧一次（焦点变化仍立即推）。'
-                    . "\n" . '六阶段预算：%s —— 超了先砍语义推送，layout / paint / present 永不砍（`06` §3.3）。'
+                    . "\n" . '耗时预算分组：%s —— 超了先砍语义推送，layout / paint / present 永不砍（`06` §3.3）。'
                     . "\n" . '修法：① 打开分段计时看哪一段超了；'
                     . '② 检查本帧是否 rebuild 了整棵子树（动画应该用 setCompose 而不是 markDirty）。',
                 self::OVER_BUDGET_FRAMES,
@@ -1025,7 +1025,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         return $this->zeroViewportFrames;
     }
 
-    /** 六阶段预算拼成一行（诊断文案用；数字的唯一来源是 {@see self::STAGE_BUDGET_MS}） */
+    /** 耗时预算分组拼成一行（诊断文案用；数字的唯一来源是 {@see self::STAGE_BUDGET_MS}） */
     private static function stageBudgetText(): string
     {
         $parts = [];
@@ -1377,8 +1377,8 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      *
      * ★ **State 与盒在同一次访问里推进**（`RenderObject::tickAnimations`）：
      *   悬停过渡这类"盒态"动画住在 Render 层、不进 State，分开走两遍就是两次
-     *   O(树)。同一次访问顺手问一句，`wantsFrame()` 的"有动画在跑"判据自动
-     *   覆盖两处 —— **不需要加第八条判据**。
+     *   O(树)。两处的 busy 在这里合成一个返回值，帧末 `continueFrame()` 据此
+     *   记一次 `scheduleNextFrame()`。
      */
     private function tickElement(Element $element, float $timestampMs): bool
     {
@@ -1593,7 +1593,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         // ★ UIA 的"可操作"半边（§9 / M5）：读屏要求激活一个语义节点。
         //   走 `dispatchInput()` 而不是壳直接回调 —— 平台把它翻成一条**输入事件**
         //   （`SemanticsInvokeEvent`），于是它与其他事件同队、同轮循环，激活引起的
-        //   重建由紧随的 `FrameClock::tick()` 落盘。见该事件的类注释。
+        //   重建由紧随的 `FrameClock::advance()` 落盘。见该事件的类注释。
         if ($event instanceof SemanticsInvokeEvent) {
             $this->invokeSemanticsNode($event->index);
 
@@ -1650,8 +1650,9 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     /**
      * 焦点环的**目标**（`null` = 本帧不画）。
      *
-     * ★ 一个纯函数收口两处消费者：`paintFocusRing()` 画它、`wantsFrame()` 比对它。
-     *   分开写两份判据会出现"焦点变了但环不该画（指针模态）"却仍请求一帧的死循环。
+     * ★ 一个纯函数收口两处消费者：`paintFocusRing()` 画它、`continueFrame()` 比对它
+     *   决定要不要 `scheduleFrame()`。分开写两份判据会出现"焦点变了但环不该画（指针模态）"
+     *   却仍请求一帧的死循环。
      */
     private function focusRingTarget(): ?Element
     {

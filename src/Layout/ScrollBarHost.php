@@ -79,8 +79,9 @@ interface ScrollBarHost
      *   （真机表现："拖着条，画面不动"）。
      *
      * ★★ 实现**必须**把新偏移**应用到子盒 `offset`**（`applyScrollOffsets()`），
-     *   而不是只改字段：`Frame` 每帧无条件 paint，而 paint 读的就是子盒 offset
-     *   ⇒ 只改字段 = 画面停在旧位置（不报错、不写日志）。
+     *   而不是只改字段：写子盒 `offset` 会推 `paintEpoch`，而 `Frame` 的 paint 门控
+     *   认的就是它；paint 读的也是子盒 offset ⇒ 只改字段 = 画面停在旧位置
+     *   （甚至整段 paint 被跳过，不报错、不写日志）。
      *   ★ **不要**借 `RenderBox::markNeedsLayout()` 去"让偏移生效"（2026-10-27
      *   第二版已改掉）：那会让 `Frame` 重排**整棵树**，而偏移不改任何盒的
      *   `size` ⇒ 重排是纯浪费（实测滚动帧 `layout` 3.65ms，占一半）。

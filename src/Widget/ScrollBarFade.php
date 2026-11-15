@@ -82,7 +82,7 @@ final class ScrollBarFade
             //   若这里返回 false，帧时钟当场落闸 ⇒ 之后一帧都不来 ⇒ `idleMs`
             //   永远停在 0 ⇒ 淡出**永不发生**（真机实测：滚动条停在全亮不动，
             //   而 smoke 里手推 tick 看不出问题）。所以计时期间必须自报在跑。
-            //   代价：滚动后 900ms 内保持上膛（每帧全量 paint）—— 有界，可接受。
+            //   代价：滚动后 900ms 内保持上膛（每帧都跑一次 paint）—— 有界，可接受。
             if ($this->idleMs < self::IDLE_MS) {
                 return true;
             }

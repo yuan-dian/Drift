@@ -142,7 +142,7 @@ final class AnimationController
     /**
      * @internal 由 State::tickFrame() 调。
      *
-     * @return bool 还要下一帧吗（直接喂 wantsFrame()）
+     * @return bool 还要下一帧吗（由 `continueFrame()` 转成欠账）
      */
     public function tick(float $timestampMs): bool
     {

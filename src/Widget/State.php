@@ -130,8 +130,9 @@ abstract class State
      * 每帧推进动画 —— 默认"这一帧不动"。
      *
      * 由 `Application::frame()` 在 settle 之前遍历树调用，内部 `setState()` 由紧随
-     * 的 settle 段消费，同一帧生效。返回 `true` = 还要下一帧，聚合喂 `wantsFrame()`；
-     * 动画跑完（或卸载）就没人返回 true，定时器停摆，无需谁记得 stop()。
+     * 的 settle 段消费，同一帧生效。返回 `true` = 还要下一帧，帧末 `continueFrame()`
+     * 据此记 `scheduleNextFrame()`；动画跑完（或卸载）就没人返回 true，欠账清零、
+     * 帧时钟停摆，无需谁记得 stop()。
      *
      * @param float $timestampMs 注入的帧时间戳（不读环境时钟）
      * @return bool 还要下一帧吗
