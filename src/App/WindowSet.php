@@ -129,9 +129,13 @@ final class WindowSet
             EventLoop::run($this->platform, $apps);
         } finally {
             $host = $this->platform->window();
+            $restoration = null;
             foreach ($this->windows as $handle => $window) {
                 $window->state()?->persist($host, $handle);
+                // 进程一份：多窗口共享同一个 AppScope ⇒ 取到的一定是同一个 store
+                $restoration ??= $window->app()->scope()->restorationStore();
             }
+            $restoration?->persist();
 
             // 清表 + 强制回收：组合根的树是环（应用→Element→Widget→闭包→应用），只能靠 GC；
             // 不主动放手，AOT 在 PHP shutdown 解引用已销毁类元数据会崩。单窗口也做（一次 GC 便宜）。

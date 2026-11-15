@@ -3,26 +3,36 @@ declare(strict_types=1);
 
 namespace App\Users\Store;
 
+use Drift\App\Restoration\RestorableValue;
+use Drift\Routing\NavigationStack;
 use Drift\State\Subject;
 use Drift\Theme\SystemTheme;
 
-/**
- * 跨页共享态（§A.2.7）：当前页 / 状态栏 / 系统主题。
- *
- * ★ **业务层不认识任何 GUI 类型**（连 `Drift\Widget` 都不 import）—— 所以同一份
- *   store 能在单测里跑，也能在真机上跑（§11.3）。
- */
+/** 跨页共享态。导航存档与广播只在 changed() 一处发生，漏一处冷启动就回首页。 */
 final class AppStore extends Subject
 {
-    private string $currentPage = 'users';
-
     private string $statusLine = '就绪';
 
     private SystemTheme $systemTheme = SystemTheme::Light;
 
+    private NavigationStack $nav;
+
+    private ?RestorableValue $navState;
+
+    public function __construct(?NavigationStack $nav = null, ?RestorableValue $navState = null)
+    {
+        $this->nav = $nav ?? new NavigationStack('users');
+        $this->navState = $navState;
+    }
+
     public function currentPage(): string
     {
-        return $this->currentPage;
+        return $this->nav->current();
+    }
+
+    public function nav(): NavigationStack
+    {
+        return $this->nav;
     }
 
     public function statusLine(): string
@@ -37,11 +47,44 @@ final class AppStore extends Subject
 
     public function navigate(string $page): void
     {
-        if ($page === $this->currentPage) {
-            return; // ★ 相等门控：同页不广播（否则每帧都重建）
+        if ($page === $this->nav->current() || !$this->nav->push($page)) {
+            return;
         }
+        $this->changed();
+    }
 
-        $this->currentPage = $page;
+    /** 提交表单后回列表：换栈顶而不是再压一层（否则按返回又回到注册页）。 */
+    public function replace(string $page): void
+    {
+        if ($this->nav->replace($page)) {
+            $this->changed();
+        }
+    }
+
+    public function back(): bool
+    {
+        if (!$this->nav->pop()) {
+            return false;
+        }
+        $this->changed();
+
+        return true;
+    }
+
+    public function forward(): bool
+    {
+        if (!$this->nav->forward()) {
+            return false;
+        }
+        $this->changed();
+
+        return true;
+    }
+
+    /** 导航变更的唯一写者：存档 + 广播一起做。 */
+    private function changed(): void
+    {
+        $this->navState?->set($this->nav->toArray());
         $this->notifyChanged();
     }
 

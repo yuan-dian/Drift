@@ -5,6 +5,7 @@ namespace App\Users\Store;
 
 use Drift\App\TaskHost;
 use Drift\Async\Future;
+use Drift\App\Restoration\RestorationBucket;
 use Drift\Core\Computed;
 use Drift\State\AsyncCommand;
 use Drift\State\Subject;
@@ -64,6 +65,8 @@ final class UserStore extends Subject
 
     private string $query = '';
 
+    private ?RestorationBucket $bucket = null;
+
     /**
      * 派生值：按 `$query` 过滤 `$rows`。
      *
@@ -121,6 +124,14 @@ final class UserStore extends Subject
         return $this->rows;
     }
 
+    /** 冷启动复原搜索词；之后每次 setQuery 都写回同一份 bucket。 */
+    public function bindRestoration(RestorationBucket $bucket): void
+    {
+        $this->bucket = $bucket;
+        $this->query = (string) $bucket->read('users.query', '');
+        $this->notifyChanged();
+    }
+
     public function query(): string
     {
         return $this->query;
@@ -145,6 +156,7 @@ final class UserStore extends Subject
         }
 
         $this->query = $q;
+        $this->bucket?->write('users.query', $q);
         // ★ 依赖变了 ⇒ notifyChanged() 推版本 ⇒ visibleComputed 下次 get() 自动重算
         $this->notifyChanged();
     }

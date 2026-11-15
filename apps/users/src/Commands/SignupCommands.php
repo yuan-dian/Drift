@@ -46,7 +46,7 @@ final class SignupCommands implements CommandHandler
 
         $this->form->reset();
         $this->app->say('注册成功');
-        $this->app->navigate('users');
+        $this->app->replace('users');
         $this->users->load();
 
         return true;

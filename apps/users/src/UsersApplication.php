@@ -8,9 +8,11 @@ use Drift\App\AppScope;
 use Drift\App\TaskHost;
 
 use App\Users\Jobs\FetchUsersJob;
+use Drift\App\Restoration\RestorableValue;
 use Drift\Commands\CommandHandler;
 use Drift\Input\AcceleratorTable;
 use Drift\Input\KeyChord;
+use Drift\Routing\NavigationStack;
 use Drift\Widget\Menu\Menu;
 use Drift\Widget\Widget;
 
@@ -94,9 +96,20 @@ final class UsersApplication extends Application
         parent::__construct([], $scope ?? AppScope::make()->setTaskHost($host));
 
         $this->src = $src;
-        $this->app = new AppStore();
+
+        // 业务状态：bucket 是唯一真相源，导航存档 / 表单 / 搜索框都注册进来。
+        $bucket = $this->scope()->restoration();
+        $savedNav = $bucket === null ? [] : $bucket->read('nav', []);
+        $nav = NavigationStack::fromArray(is_array($savedNav) ? $savedNav : [], 'users');
+        $navState = $bucket === null ? null : new RestorableValue($bucket, 'nav');
+
+        $this->app = new AppStore($nav, $navState);
         $this->users = new UserStore($this->src, $host, $apiBase);
         $this->form = new SignupForm();
+        if ($bucket !== null) {
+            $this->form->bindRestoration($bucket);
+            $this->users->bindRestoration($bucket);
+        }
 
         // 首屏：进 Loading（用户看得到）→ 结果由 frame 的 drain 段回贴（§11.5 / §17.4.2）
         $this->users->load();
@@ -174,6 +187,7 @@ final class UsersApplication extends Application
             'nav.users' => $nav,
             'nav.signup' => $nav,
             'nav.settings' => $nav,
+            'nav.back' => $nav,
             'user.del' => $user,
             'users.refresh' => $user,
             'form.submit' => $signup,
@@ -193,6 +207,7 @@ final class UsersApplication extends Application
         return AcceleratorTable::make()
             ->bind(KeyChord::ctrl('R'), 'users.refresh')
             ->bind(KeyChord::ctrl('S'), 'form.submit')
+            ->bind(KeyChord::alt('Left'), 'nav.back')
             ->bind(KeyChord::f(5), 'users.refresh');
     }
 }

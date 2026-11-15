@@ -118,6 +118,7 @@ final class UsersRoot extends StatelessWidget
                 Menu::make('文件')->items([
                     MenuItem::make('刷新')->chord(KeyChord::ctrl('R'))->command('users.refresh'),
                     MenuItem::make('新建')->chord(KeyChord::ctrl('N'))->command('nav.signup'),
+                    MenuItem::make('返回')->chord(KeyChord::alt('Left'))->command('nav.back'),
                     MenuItem::separator(),
                     MenuItem::make('退出')->command('app.quit'),
                 ])->onOpen($this->menuOpener ?? static function (Menu $m, ?\Drift\Widget\Element $a): void {

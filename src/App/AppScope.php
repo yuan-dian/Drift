@@ -4,6 +4,8 @@ declare(strict_types=1);
 namespace Drift\App;
 
 use Drift\App\Io\IoPoller;
+use Drift\App\Restoration\RestorationBucket;
+use Drift\App\Restoration\RestorationStore;
 use Drift\Commands\CommandRouter;
 use Drift\Errors;
 use Drift\Input\AcceleratorTable;
@@ -41,6 +43,9 @@ final class AppScope
     private bool $taskHostDecided = false;
 
     private ?IoPoller $io = null;
+
+    /** 业务状态恢复（一个进程一份；未装配 ⇒ 不持久化） */
+    private ?RestorationStore $restoration = null;
 
     /** 已登记到本 scope 的窗口数（`enter()` 自增） */
     private int $windows = 0;
@@ -190,6 +195,28 @@ final class AppScope
     public function io(): IoPoller
     {
         return $this->io ??= new IoPoller();
+    }
+
+    // ── 业务状态恢复 ────────────────────────────────────────────────────
+
+    /** 组合根在建应用之前装配；store 构造即恢复，应用构造时读 bucket 已有值。 */
+    public function setRestoration(RestorationStore $store): self
+    {
+        $this->restoration = $store;
+
+        return $this;
+    }
+
+    /** 应用侧唯一入口：显式 DI，不做向上查找（§9.1 否决 `BuildContext::of()`）。 */
+    public function restoration(): ?RestorationBucket
+    {
+        return $this->restoration?->bucket();
+    }
+
+    /** @internal `WindowSet` 在退出时取它写回一次 */
+    public function restorationStore(): ?RestorationStore
+    {
+        return $this->restoration;
     }
 
     // ── 窗口登记（主题一致性检查的唯一理由）──────────────────────────────

@@ -24,6 +24,9 @@ final class RouteTable
     /** @var array<string, callable(): Widget> */
     private array $routes = [];
 
+    /** @var array<string, callable(array<string, mixed>): Widget> */
+    private array $argRoutes = [];
+
     private function __construct()
     {
     }
@@ -57,20 +60,36 @@ final class RouteTable
         return $this;
     }
 
-    /** 造一页。未命中 ⇒ `null`（开放域 ⇒ 由调用方的 `default` 分支处理） */
-    public function build(string $name): ?Widget
+    /** 注册一条带参数的路由。参数从 `build()` 传进来，冷启动时由导航栈存档复原。 */
+    public function routeArgs(string $name, callable $factory): self
     {
+        if (isset($this->argRoutes[$name]) || isset($this->routes[$name])) {
+            Errors::report(sprintf('路由 %s 已注册，重复注册会静默覆盖', $name));
+        }
+
+        $this->argRoutes[$name] = $factory;
+
+        return $this;
+    }
+
+    /** 造一页。未命中 ⇒ `null`（开放域 ⇒ 由调用方的 `default` 分支处理） */
+    public function build(string $name, array $args = []): ?Widget
+    {
+        if (isset($this->argRoutes[$name])) {
+            return ($this->argRoutes[$name])($args);
+        }
+
         return isset($this->routes[$name]) ? ($this->routes[$name])() : null;
     }
 
     public function has(string $name): bool
     {
-        return isset($this->routes[$name]);
+        return isset($this->routes[$name]) || isset($this->argRoutes[$name]);
     }
 
     /** 已注册的页面名 —— devtools 列举 + "死路由"检查的静态输入 */
     public function names(): array
     {
-        return array_keys($this->routes);
+        return array_keys(array_merge($this->routes, $this->argRoutes));
     }
 }

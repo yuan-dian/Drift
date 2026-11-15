@@ -99,13 +99,20 @@ final class Bootstrap
             Errors::installFatalBox(null);
         });
 
+        // 业务状态恢复：构造即读回，应用构造时 bucket 已有值；写回由 WindowSet 在退出时做一次。
+        $scope = \Drift\App\AppScope::make()
+            ->setTaskHost($taskHost)
+            ->setRestoration(new \Drift\App\Restoration\RestorationStore(
+                Paths::userConfig($platform->configDir(), 'users.state')
+            ));
+
         $set->open(
             'main',
             null,   // ★ 标题来自 UsersApplication::title()（2026-10-30）
             self::WINDOW_WIDTH,
             self::WINDOW_HEIGHT,
-            static function () use ($src, $taskHost): UsersApplication {
-                return new UsersApplication($src, $taskHost);
+            static function () use ($src, $taskHost, $scope): UsersApplication {
+                return new UsersApplication($src, $taskHost, \App\Users\Jobs\FetchUsersJob::DEFAULT_BASE, $scope);
             },
             // ══════════ 建窗之后、还原几何之前 ══════════
             // （无边框会让客户区变大：多出原标题栏高度 ⇒ 还原的客户区↔外框换算
