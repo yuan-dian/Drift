@@ -119,6 +119,7 @@ final class TextFieldState extends EditableTextState
             $this->selectionStart(),
             $this->selectionEnd(),
             $invalid,
+            $field->obscureValue(),
         );
 
         $kids = [];
@@ -156,6 +157,12 @@ final class TextFieldState extends EditableTextState
     protected function maxLength(): ?int
     {
         return $this->field()->maxLengthValue();
+    }
+
+    #[\Override]
+    protected function inputFormatters(): array
+    {
+        return $this->field()->formatters();
     }
 
     private function field(): TextField

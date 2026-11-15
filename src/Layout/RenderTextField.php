@@ -46,6 +46,9 @@ use Drift\Text\TextStyle;
  */
 final class RenderTextField extends RenderBox implements TextInputBox
 {
+    /** 遮蔽字符：固定宽度，每个原文码位一个（U+2022，UTF-8 三字节） */
+    private const MASK_CHAR = "\xE2\x80\xA2";
+
     private ?Paragraph $paragraph = null;
 
     /**
@@ -69,6 +72,7 @@ final class RenderTextField extends RenderBox implements TextInputBox
         private readonly int $selectionEnd,
         private readonly TextMetricsProvider $metrics,
         private readonly Scale $scale = new Scale(1.0),
+        private readonly bool $obscure = false,
     ) {
     }
 
@@ -107,7 +111,61 @@ final class RenderTextField extends RenderBox implements TextInputBox
     /** 实际显示的文本（空值 ⇒ 显示占位符） */
     private function shownText(): string
     {
-        return $this->text === '' ? $this->placeholder : $this->text;
+        $display = $this->displayText();
+
+        return $display === '' ? $this->placeholder : $display;
+    }
+
+    /**
+     * 绘制源。遮蔽时换成等码位数的圆点串；`$this->text` 始终是原文，
+     * 公开的字节偏移契约（构造参数、offsetAt、caretRect）也始终是原文偏移。
+     */
+    private function displayText(): string
+    {
+        if (!$this->obscure || $this->text === '') {
+            return $this->text;
+        }
+
+        return str_repeat(self::MASK_CHAR, count($this->maskBounds()) - 1);
+    }
+
+    /** 原文每个码位的结束字节边界：`[0, b1, …, strlen]` */
+    private function maskBounds(): array
+    {
+        $out = [0];
+        foreach (Utf8::decode($this->text) as $glyph) {
+            $out[] = $glyph[1] + $glyph[2];
+        }
+
+        return $out;
+    }
+
+    /** 原文偏移 → 绘制串偏移 */
+    private function toDisplayOffset(int $offset): int
+    {
+        if (!$this->obscure) {
+            return $offset;
+        }
+
+        $offset = max(0, min($offset, strlen($this->text)));
+        $n = 0;
+        foreach ($this->maskBounds() as $bound) {
+            if ($bound >= $offset) {
+                break;
+            }
+            $n++;
+        }
+
+        return $n * strlen(self::MASK_CHAR);
+    }
+
+    /** 绘制串偏移 → 原文偏移（吸附到码位边界） */
+    private function fromDisplayOffset(int $offset): int
+    {
+        $bounds = $this->maskBounds();
+        $n = intdiv(max(0, $offset), strlen(self::MASK_CHAR));
+
+        return $bounds[min($n, count($bounds) - 1)];
     }
 
     protected function performLayout(BoxConstraints $constraints): Size
@@ -193,13 +251,17 @@ final class RenderTextField extends RenderBox implements TextInputBox
      */
     public function offsetAt(float $x): int
     {
-        return self::offsetAtX(
-            $this->text,
+        // 遮蔽时按圆点串量 x，再换算回原文偏移：调用方（指针框选 / 表格编辑）
+        // 拿到的仍是原文的 UTF-8 字节偏移。
+        $display = self::offsetAtX(
+            $this->displayText(),
             $this->style,
             $x - $this->insets->left,
             $this->metrics,
             $this->scale,
         );
+
+        return $this->obscure ? $this->fromDisplayOffset($display) : $display;
     }
 
     /**
@@ -266,7 +328,11 @@ final class RenderTextField extends RenderBox implements TextInputBox
             $offset = strlen($this->text);
         }
 
-        return $this->metrics->advance(substr($this->text, 0, $offset), $this->style, $this->scale);
+        return $this->metrics->advance(
+            substr($this->displayText(), 0, $this->toDisplayOffset($offset)),
+            $this->style,
+            $this->scale,
+        );
     }
 
     /** @internal 冒烟 / 调试：解析后的字号（主题 → 这里） */

@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Widget;
 
 use Drift\Geometry\EdgeInsets;
+use Drift\Geometry\Scale;
 use Drift\Input\CursorShape;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderTextField;
@@ -43,6 +44,7 @@ final class TextFieldBox extends RenderBoxWidget
         private readonly int $selectionStart,
         private readonly int $selectionEnd,
         private readonly bool $invalid,
+        private readonly bool $obscure = false,
     ) {
         parent::__construct();
         // §9.1 命中三方消费：指针停在字段上给 I 形光标（文本编辑的通用约定）。
@@ -60,8 +62,9 @@ final class TextFieldBox extends RenderBoxWidget
         int $selectionStart,
         int $selectionEnd,
         bool $invalid = false,
+        bool $obscure = false,
     ): self {
-        return new self($text, $placeholder, $caretOffset, $selectionStart, $selectionEnd, $invalid);
+        return new self($text, $placeholder, $caretOffset, $selectionStart, $selectionEnd, $invalid, $obscure);
     }
 
     public function text(): string
@@ -134,6 +137,8 @@ final class TextFieldBox extends RenderBoxWidget
             $this->selectionStart,
             $this->selectionEnd,
             $context->metrics(),
+            new Scale(1.0),
+            $this->obscure,
         );
 
         // 反馈 = 边框朝文字色递进两档（亮主题变深、暗主题变亮，方向由主题自己给）。

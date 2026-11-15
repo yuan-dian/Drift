@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Widget;
 
 use Drift\Input\SemanticsRole;
+use Drift\Text\TextInputFormatter;
 
 /**
  * 单行输入框（§15.2 / §A.2.9）。
@@ -52,6 +53,8 @@ final class TextField extends StatefulWidget implements SemanticsValueEditable
     private string $error = '';
     private string $helper = '';
     private ?int $maxLength = null;
+    private bool $obscure = false;
+    private array $formatters = [];
     private ?\Closure $onChanged = null;
     private ?\Closure $onSubmitted = null;
 
@@ -133,6 +136,41 @@ final class TextField extends StatefulWidget implements SemanticsValueEditable
         $this->maxLength = $max;
 
         return $this;
+    }
+
+    /**
+     * 遮蔽显示（密码框）。只换绘制串，语义 `Value` 仍是原文 —— 读屏 / 自动化
+     * 需要真值，屏幕需要圆点，两者不是同一份数据。
+     */
+    public function obscureText(bool $on = true): static
+    {
+        $this->mutate();
+        $this->obscure = $on;
+
+        return $this;
+    }
+
+    public function obscureValue(): bool
+    {
+        return $this->obscure;
+    }
+
+    /**
+     * 输入格式化器（按顺序执行）。只作用于用户键入 / 粘贴 / IME 提交，
+     * 不改外部 `value()`，也不改撤销栈里的历史文本。
+     */
+    public function inputFormatters(TextInputFormatter ...$formatters): static
+    {
+        $this->mutate();
+        $this->formatters = \array_values($formatters);
+
+        return $this;
+    }
+
+    /** @return list<TextInputFormatter> */
+    public function formatters(): array
+    {
+        return $this->formatters;
     }
 
     /**

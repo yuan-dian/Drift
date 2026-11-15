@@ -9,6 +9,7 @@ use Drift\Input\KeyEvent;
 use Drift\Input\TextKeymap;
 use Drift\Text\TextChange;
 use Drift\Text\TextDraft;
+use Drift\Text\TextInputFormatter;
 
 /**
  * 可编辑文本控件的 State 基类（`TextFieldState` / `TextAreaState`）。
@@ -56,6 +57,12 @@ abstract class EditableTextState extends State implements EditableText
         return null;
     }
 
+    /** @return list<TextInputFormatter> 控件按自己的配置覆写；默认不格式化 */
+    protected function inputFormatters(): array
+    {
+        return [];
+    }
+
     // ── 生命周期 ────────────────────────────────────────────────────────
 
     #[\Override]
@@ -63,6 +70,7 @@ abstract class EditableTextState extends State implements EditableText
     {
         $this->draft = new TextDraft($this->controlledValue());
         $this->draft->limit($this->maxLength());
+        $this->draft->setFormatters($this->inputFormatters());
     }
 
     #[\Override]
@@ -71,6 +79,7 @@ abstract class EditableTextState extends State implements EditableText
         parent::didUpdateWidget($widget);
         $this->adoptValue($widget);
         $this->draft()->limit($this->maxLength());
+        $this->draft()->setFormatters($this->inputFormatters());
     }
 
     /** 状态机本体（子类要读插入符 / 做行级移动时用；**不要**在外面另存一份文本） */
@@ -80,6 +89,7 @@ abstract class EditableTextState extends State implements EditableText
             // 框架不变量：initState() 先于任何公开方法被调
             $this->draft = new TextDraft($this->controlledValue());
             $this->draft->limit($this->maxLength());
+            $this->draft->setFormatters($this->inputFormatters());
         }
 
         return $this->draft;

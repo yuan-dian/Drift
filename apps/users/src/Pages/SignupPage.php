@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Users\Pages;
 
 use Drift\Geometry\EdgeInsets;
+use Drift\Text\FilteringTextInputFormatter;
 use Drift\State\SubjectBuilder;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
@@ -72,6 +73,7 @@ final class SignupPage extends StatelessWidget
                     ->label('邮箱')
                     ->error($s[1])
                     ->maxLength(128)
+                    ->inputFormatters(new FilteringTextInputFormatter('/\s+/u'))
                     ->onSubmitted(fn(string $_) => $this->submitted())
                     ->onChanged(fn(string $x) => $this->form->email = $x)),
 

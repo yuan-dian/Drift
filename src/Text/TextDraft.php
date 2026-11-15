@@ -56,6 +56,9 @@ final class TextDraft
      */
     private ?int $maxLength = null;
 
+    /** 用户输入格式化器（按顺序执行）；外部推值与撤销/重做都不过它们 */
+    private array $formatters = [];
+
     /**
      * 撤销栈上限，超过丢最旧的。100 而非无限：每页几十个输入框，无限栈是隐蔽内存增长。
      */
@@ -76,6 +79,12 @@ final class TextDraft
     public function limit(?int $max): void
     {
         $this->maxLength = $max === null ? null : \max(0, $max);
+    }
+
+    /** @param list<TextInputFormatter> $formatters 空数组 = 不格式化 */
+    public function setFormatters(array $formatters): void
+    {
+        $this->formatters = $formatters;
     }
 
     // ── 读 ──────────────────────────────────────────────────────────────
@@ -162,7 +171,7 @@ final class TextDraft
             return TextChange::None;
         }
 
-        return $this->applyText(
+        return $this->commitInput(
             \substr($this->buffer, 0, $this->caret) . $text . \substr($this->buffer, $this->caret),
             $this->caret + \strlen($text),
             'type',
@@ -365,18 +374,9 @@ final class TextDraft
         $text = $this->clampInput($text, $start, $this->selectionEnd());
         $next = \substr($this->buffer, 0, $start) . $text . \substr($this->buffer, $this->selectionEnd());
 
-        if ($next === $this->buffer) {
-            // 替换成同一段文本 ⇒ 缓冲没变，但选区必须收口（用户确实按了删除）。
-            $this->caret = $start + \strlen($text);
-            $this->collapse();
-            $this->breakMerge();
-
-            return TextChange::Caret;
-        }
-
         // $text === '' 归 'delete'：语义上替换成空串就是删除；kind 不给默认值，
         // 每个调用点必须表态。
-        return $this->applyText($next, $start + \strlen($text), $text === '' ? 'delete' : 'type');
+        return $this->commitInput($next, $start + \strlen($text), $text === '' ? 'delete' : 'type');
     }
 
     /** 删掉选区（无选区 ⇒ 无事发生） */
@@ -624,6 +624,36 @@ final class TextDraft
     }
 
     /**
+     * 用户输入的唯一落点：先格式化，再入撤销栈。
+     *
+     * ★ `setText()`（外部受控值）与 `undo()` / `redo()` 都不走这里 ⇒ 应用是真相源，
+     *   撤销也不会被格式化重排。格式化后的整次输入只占一步撤销。
+     */
+    private function commitInput(string $next, int $caret, string $kind): TextChange
+    {
+        if ($this->formatters !== []) {
+            $edit = new TextEdit($next, $caret);
+            foreach ($this->formatters as $formatter) {
+                $edit = $formatter->format($edit);
+            }
+            $next = $edit->text;
+            $caret = $edit->caret;
+        }
+
+        $caret = \max(0, \min($caret, \strlen($next)));
+        if ($next === $this->buffer) {
+            // 格式化把输入全删了（或替换成同一段）⇒ 文本没变，但选区必须收口
+            $this->caret = $this->snap($caret);
+            $this->collapse();
+            $this->breakMerge();
+
+            return TextChange::Caret;
+        }
+
+        return $this->applyText($next, $caret, $kind);
+    }
+
+    /**
      * 落一次文本改动：改缓冲、移插入符、折叠选区。
      *
      * 所有改文本的路径收口到此 ⇒ "文本一变就折叠选区"与撤销入栈点都只有一处。
@@ -636,7 +666,7 @@ final class TextDraft
         $this->snapshot($kind);
 
         $this->buffer = $next;
-        $this->caret = $caret;
+        $this->caret = $this->snap($caret);
         $this->collapse();
 
         // 新编辑让重做失去意义（撤销树分叉只有从当前点重开一支这一种解）。
