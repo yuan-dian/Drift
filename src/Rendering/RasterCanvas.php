@@ -347,7 +347,8 @@ final class RasterCanvas implements Canvas
     public function capabilities(): int
     {
         // Extended 位都是"产出了像素但近似"：虚线在矩形/椭圆描边退化、层不透明度是
-        // 乘数、图像最近邻、`blurBackdrop` 是空实现。能力位只回答"能不能画"。
+        // 乘数、图像最近邻、`blurBackdrop` 是空实现。能力位只回答"能不能画"，
+        // 逐位的近似登记在 `CanvasCapabilityContractTest::CONTRACT`。
         return self::supportedCapabilities();
     }
 

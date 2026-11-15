@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Dev\Tests\Unit\Rendering;
 
 use Drift\Dev\Tests\Support\SmokeTestCase;
+use Drift\Rendering\Canvas;
 use Drift\Rendering\DisplayList;
 
 /**
@@ -78,6 +79,65 @@ final class DisplayListOpCoverageTest extends SmokeTestCase
             'DisplayList · 一次性 op 不进深度计数（否则帧末会假红）',
             !in_array('OP_BLUR_BACKDROP', $counted, true),
             'counted=' . implode(',', $counted),
+        );
+
+        $this->flushChecks();
+    }
+
+    /**
+     * 接口形状 ↔ 命令流：新增 push/pop 方法却漏一条栈 op，或反过来，都会让
+     * 「作用域化」的替代方案（04 §4.1）失去依据 ⇒ 这里直接对账，不靠人评审。
+     */
+    public function testCanvasStackMethodsMatchDisplayListStackOps(): void
+    {
+        $contract = [
+            'save'         => 'OP_SAVE',
+            'restore'      => 'OP_RESTORE',
+            'pushClip'     => 'OP_PUSH_CLIP',
+            'popClip'      => 'OP_POP_CLIP',
+            'pushLayer'    => 'OP_LAYER_PUSH',
+            'popLayer'     => 'OP_LAYER_POP',
+            'pushClipPath' => 'OP_PUSH_CLIP_PATH',
+        ];
+
+        $methods = [];
+        foreach ((new \ReflectionClass(Canvas::class))->getMethods() as $method) {
+            $name = $method->getName();
+            if ($name === 'save' || $name === 'restore'
+                || str_starts_with($name, 'push') || str_starts_with($name, 'pop')) {
+                $methods[] = $name;
+            }
+        }
+        $declared = array_keys($contract);
+        sort($methods);
+        sort($declared);
+
+        check(
+            'Canvas · 栈方法集合恰好是登记的 7 个（新增 push*/pop* 必须同步 op）',
+            $methods === $declared,
+            'actual=' . implode(',', $methods),
+        );
+
+        $ops = $this->opConstants();
+        $mapped = array_values($contract);
+        $unknown = array_values(array_diff($mapped, array_keys($ops)));
+        sort($mapped);
+        check(
+            'Canvas · 每个栈方法都映射到真实的 OP_* 常量',
+            $unknown === [],
+            'unknown=' . implode(',', $unknown),
+        );
+
+        $src = (string) file_get_contents((string) (new \ReflectionClass(DisplayList::class))->getFileName());
+        $body = $this->methodBody($src, 'public function record(');
+        $pos = strpos($body, '$this->length++;');
+        $counted = $pos === false ? [] : $this->opsIn(substr($body, $pos));
+        sort($counted);
+        check(
+            'Canvas · 栈方法 ↔ record() 深度计数的栈 op 同集',
+            $mapped === $counted,
+            'missing=' . implode(',', array_diff($mapped, $counted))
+                . ' extra=' . implode(',', array_diff($counted, $mapped)),
         );
 
         $this->flushChecks();

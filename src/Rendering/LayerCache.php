@@ -24,6 +24,9 @@ final class LayerCache
 
     private float $h = -1.0;
 
+    /** Optional op 集合是录制时按回放端 capabilities() 定的，换端就必须重录。 */
+    private int $caps = -1;
+
     /**
      * 丢掉缓存，下一次 `beginRecord()` 必然重录。
      *
@@ -36,22 +39,28 @@ final class LayerCache
     {
         $this->list = null;
         $this->epoch = -1;
+        $this->caps = -1;
     }
 
     /**
      * 命中 ⇒ 重放到 `$canvas` 并返回 `null`；否则返回一张**录制画布**，
      * 调用方往它上面画完后必须调 `endRecord()`。
+     *
+     * ★ 命中判据含回放端能力位：换端不重录会把按旧端能力选定的命令流
+     *   直接回放给新端（Optional op 可能在回放时响亮失败）。
      */
     public function beginRecord(Canvas $canvas, int $epoch, float $w, float $h): ?Canvas
     {
+        $caps = $canvas->capabilities();
         $cached = $this->list;
-        if ($cached !== null && $this->epoch === $epoch && $this->w === $w && $this->h === $h) {
+        if ($cached !== null && $this->epoch === $epoch && $this->w === $w && $this->h === $h
+            && $this->caps === $caps) {
             $cached->replay($canvas);
 
             return null;
         }
 
-        $rec = new RecordingCanvas(new DisplayList(), $canvas->capabilities());
+        $rec = new RecordingCanvas(new DisplayList(), $caps);
         $this->recording = $rec;
 
         return $rec;
@@ -76,6 +85,7 @@ final class LayerCache
         $this->epoch = $epoch;
         $this->w = $w;
         $this->h = $h;
+        $this->caps = $canvas->capabilities();
         $list->replay($canvas);
     }
 }

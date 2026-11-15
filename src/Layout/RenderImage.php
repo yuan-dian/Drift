@@ -103,11 +103,9 @@ final class RenderImage extends RenderBox
             return; // 没排过 / 零尺寸 ⇒ 无墨
         }
 
-        // ★ 守卫（`optional-op-guard`）：`drawImage` 是 Optional 层的 op。
-        //   自 W8-1 起**三个后端都有 `CAP_IMAGE`**（Skia 走原生 codec，Raster 走
-        //   最近邻 blit），所以这条今天恒真；留着是给"将来某个只实现 Core 的后端"
-        //   兜底 —— 没有位就跳过（不 Fatal），与 `SkiaCanvas` 拿不到句柄时静默
-        //   跳过是同一档处置。
+        // ★ 守卫（`optional-op-guard`）：三个后端都有 `CAP_IMAGE` ⇒ 今天恒真；
+        //   留着给将来只实现 Core 的后端兜底（缺位就跳过，图片缺席不影响布局）。
+        //   与 `CAP_SHADOW` 走降级的差异登记在 `CanvasCapabilityContractTest`。
         $caps = $canvas->capabilities();
         if (($caps & CanvasCapabilities::CAP_IMAGE) === 0) {
             return;

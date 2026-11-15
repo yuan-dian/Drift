@@ -79,9 +79,9 @@ final class UploadCard extends StatelessWidget
     /**
      * 上传区（虚线框 + 三行文案）。
      *
-     * ★★ 虚线的效果**只在真机上看得见**：软光栅（`RasterCanvas::drawRect`）把
-     *   矩形描边的虚线降级成实线（R2 的既有取舍）⇒ golden 抓不到它，
-     *   验证只能靠 `probe` 看图。见 `BoxStyle::$borderDash` 的文档。
+     * ★ 虚线是 `CAP_DASH` 的已知近似：`RasterCanvas::drawRect()` 把描边虚线降级成
+     *   实线（R2 的既有取舍）⇒ 只跑 Raster 的 golden 看不到差异，画质由
+     *   `CanvasCapabilityContractTest` 登记、真机效果看 `probe`。
      */
     private function dropZone(): Widget
     {

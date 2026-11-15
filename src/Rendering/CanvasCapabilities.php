@@ -6,7 +6,12 @@ namespace Drift\Rendering;
 use Drift\Errors;
 
 /**
- * 画布能力位掩码：每个 `CAP_*` 表示"该后端能处理这个 op"，位清 0 ⇒ 响亮失败而非静默丢像素。
+ * 画布能力位掩码：每个 `CAP_*` 表示"该后端能发起这个 op"。
+ *
+ * ★ 只回答"能不能"，不回答画得像不像：Raster 对多数 Extended 位是置位的降级近似，
+ *   逐位的语义登记在 `CanvasCapabilityContractTest` 的 `CONTRACT`。
+ * ★ 缺位怎么处置由调用方决定：`ShadowPainter` 降级形状、`RenderImage` 跳过这一笔、
+ *   直接发 op 则 `unsupportedOp` 响亮失败。
  *
  * 分层与各后端支持情况以 `RasterCanvas::supportedCapabilities()` /
  * `SkiaCanvas::capabilities()` 的返回值为准；本类只定义位，不重复列矩阵。

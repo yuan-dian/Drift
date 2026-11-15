@@ -10,11 +10,10 @@ use Drift\Dev\Lint\Rule;
 /**
  * 发起 Optional 层的 op 之前，同类内必须查过能力位（G2：不许在 Raster 上炸）。
  *
- * 背景：`05` §2.5 判据推论 3。`drawImage` / `drawShadow` 是 Optional 层
- * （只有 Skia 级后端实现；Raster 遇到就响亮失败 E-OP-UNSUPPORTED）。
- * 控件 / demo 页直接发这两个 op ⇒ 同一份 Widget 在 preview / golden / smoke
- * 上当场 Fatal。正确形态是发起前 `capabilities()` 查一次位，没有就换一种
- * 呈现或跳过。
+ * 背景：`05` §2.5 判据推论 3。Raster 自 W8-1 起已支持 `CAP_IMAGE`
+ * （内存 RGBA 最近邻 blit），但仍不支持 `CAP_SHADOW` ⇒ 不查位就发
+ * `drawShadow` 会在 preview / golden / smoke 上当场 Fatal。正确形态是发起前
+ * `capabilities()` 查一次位，没有就换一种呈现或跳过。
  *
  * 判据（三条同时满足才报）：
  *   ① 一个**类区间**（class / interface / trait / enum；无类的文件整份算一个
