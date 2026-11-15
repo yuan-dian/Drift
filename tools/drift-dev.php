@@ -29,15 +29,18 @@ function usage(): never
     fwrite(STDOUT, <<<TXT
     drift-dev —— 开发态运行器（改 PHP 即重启，壳不重编）
 
-      用法： php tools/drift-dev.php [应用名] [--rebuild] [--no-watch]
+      用法： php tools/drift-dev.php [应用名] [--rebuild] [--no-watch] [--hard-restart]
 
       应用名    默认 hello；须在 composer.json 有 App\<名字>\ PSR-4 前缀
       --rebuild 强制重编 dev 壳（改了 cpp-src / 壳配置时其实会自动检测）
       --no-watch  只跑一次，不监听文件变化
+      --hard-restart  跳过优雅退出：不把本次会话的 dirty 状态写回
       --selftest  指纹 + 壳红线自检（含反例），不启动进程；gate 也跑它
 
     ★ 热更是「跨进程重启」：内嵌 ZendVM 对同一路径的 require 会缓存 opcode，
-      同进程重刷读不到新代码；且本框架无 Store/Cell，状态不应跨热更保留。
+      同进程重刷读不到新代码。重启前先优雅关窗，让 WindowSet::run() 的 finally
+      写回业务状态；新进程由 RestorationStore 构造即恢复。超时才强杀。
+      强杀不投 WM_CLOSE ⇒ finally 不跑 ⇒ 半截输入会丢，属预期降级。
 
     TXT);
     exit(0);
@@ -193,6 +196,36 @@ function running($process, array $pipes): bool
     return false;
 }
 
+/** 输出管道全 EOF = 写句柄已关（OS 级事实，比 proc_get_status 可靠）。 */
+function exited(array $pipes): bool
+{
+    foreach ($pipes as $pipe) {
+        if (is_resource($pipe) && !feof($pipe)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/**
+ * 请求优雅关闭并等待；true = 进程已退出（清理钩子有机会跑）。
+ * 不强杀：杀与不杀由调用方按结果决定，避免两条路径各调一次。
+ */
+function gracefulStop(callable $requestClose, callable $alive, int $timeoutMs = 1500): bool
+{
+    $requestClose();
+    $deadline = microtime(true) + $timeoutMs / 1000;
+    while ($alive()) {
+        if (microtime(true) >= $deadline) {
+            return false;
+        }
+        usleep(50000);
+    }
+
+    return true;
+}
+
 function drain(array $pipes): void
 {
     foreach ($pipes as $pipe) {
@@ -206,17 +239,33 @@ function drain(array $pipes): void
     }
 }
 
-/** @param resource $process */
-function stop($process, array $pipes): void
+/**
+ * @param resource $process
+ * @return bool 是否优雅退出（false = 已强杀，本次会话状态未写回）
+ */
+function stop($process, array $pipes, bool $graceful = true): bool
 {
     // ★ 实测：Windows 上 proc_open 对 AOT 进程返回的 pid / running 都不可靠
-    //   （pid 在 tasklist 里查不到，running 会误报 yes）⇒ 不能拿它去 taskkill。
-    //   dev 壳产物名固定 dev.exe，按映像名强杀最稳；dev 态重启不追求优雅
-    //   shutdown（正常关窗路径由真机探针单独验证）。
-    if (PHP_OS_FAMILY === 'Windows') {
-        exec('taskkill /IM dev.exe /F 2>&1');
-    } else {
-        proc_terminate($process);
+    //   （pid 在 tasklist 里查不到，running 会误报 yes）⇒ 按固定映像名 dev.exe 操作。
+    //   不带 /F 会投 WM_CLOSE ⇒ 应用走正常关窗 ⇒ WindowSet::run() 的 finally 写回状态。
+    $requestClose = PHP_OS_FAMILY === 'Windows'
+        ? static function (): void { exec('taskkill /IM dev.exe 2>&1'); }
+        : static function () use ($process): void { proc_terminate($process, 15); };
+    $forceKill = PHP_OS_FAMILY === 'Windows'
+        ? static function (): void { exec('taskkill /IM dev.exe /F 2>&1'); }
+        : static function () use ($process): void { proc_terminate($process, 9); };
+
+    $elegant = $graceful ? gracefulStop(
+        $requestClose,
+        static function () use ($pipes): bool {
+            drain($pipes);
+
+            return !exited($pipes);
+        },
+    ) : false;
+
+    if (!$elegant) {
+        $forceKill();
     }
     drain($pipes);
     foreach ($pipes as $pipe) {
@@ -225,6 +274,8 @@ function stop($process, array $pipes): void
         }
     }
     proc_close($process);
+
+    return $elegant;
 }
 
 /** project.yml 的 sources 段；只认 `- xxx` 行，不引 yaml 依赖。 */
@@ -270,6 +321,88 @@ function shellContract(string $root): array
         '两个桥接回调文件存在' => is_file("{$root}/src/Platform/Win32/ResizeHook.php")
             && is_file("{$root}/src/Platform/Win32/ResizeHookState.php"),
     ];
+}
+
+/**
+ * 跨进程：优雅关闭让 finally 真跑、强杀不跑、超时有界。
+ * 子进程是独立 PHP 进程 + 独立文件路径，判据不读 stop() 的配置字段。
+ */
+function gracefulContract(string $dir): array
+{
+    $checks = [];
+    $child = "{$dir}/child.php";
+    file_put_contents($child, <<<'PHP'
+<?php
+$sentinel = $argv[1];
+try {
+    while (true) {
+        $line = fgets(STDIN);
+        if ($line === false || trim($line) === 'q') {
+            break;
+        }
+    }
+} finally {
+    usleep(100000); // 模拟清理钩子耗时：不等就判不出「没等」
+    file_put_contents($sentinel, 'finally');
+}
+PHP);
+
+    /** @return array{0: resource, 1: array<int, resource>} */
+    $spawn = static function (string $sentinel) use ($child): array {
+        $pipes = [];
+        $proc = proc_open(
+            [PHP_BINARY, $child, $sentinel],
+            [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes,
+        );
+
+        return [$proc, $pipes];
+    };
+    $close = static function (array $p): void {
+        foreach ($p as $pipe) {
+            if (is_resource($pipe)) {
+                fclose($pipe);
+            }
+        }
+    };
+
+    // ① 优雅路径
+    [$proc, $pipes] = $spawn("{$dir}/elegant.flag");
+    $asked = 0;
+    $ok = gracefulStop(
+        static function () use (&$asked, $pipes): void {
+            $asked++;
+            fwrite($pipes[0], "q\n");
+        },
+        static fn(): bool => proc_get_status($proc)['running'],
+        1000,
+    );
+    $checks['优雅关闭返回 true'] = $ok;
+    $checks['优雅关闭后 finally 真的写盘'] = is_file("{$dir}/elegant.flag")
+        && file_get_contents("{$dir}/elegant.flag") === 'finally';
+    $checks['requestClose 恰好一次'] = $asked === 1;
+    $close($pipes);
+    proc_close($proc);
+
+    // ② 强杀对照：TerminateProcess 不给 finally 机会
+    [$forced, $forcedPipes] = $spawn("{$dir}/forced.flag");
+    proc_terminate($forced);
+    usleep(250000);
+    $checks['强杀不跑 finally（对照组）'] = !is_file("{$dir}/forced.flag");
+    $close($forcedPipes);
+    proc_close($forced);
+
+    // ③ 超时有界
+    $start = microtime(true);
+    $timedOut = gracefulStop(
+        static function (): void {},
+        static fn(): bool => true,
+        120,
+    );
+    $checks['alive 恒 true ⇒ 返回 false'] = $timedOut === false;
+    $checks['超时有界（< 800ms）'] = (microtime(true) - $start) * 1000 < 800;
+
+    return $checks;
 }
 
 /** 判据自检：正反例都要有，否则「跳过编译」可能是一句永远不会兑现的承诺。 */
@@ -320,6 +453,11 @@ function selftest(): int
         array_filter($live, static fn(string $s): bool => $s !== '../../src/Platform/Win32/ResizeHookState.php')
     ));
 
+    // 优雅重启的跨进程契约：子进程独立起，判据读文件不读配置。
+    foreach (gracefulContract($root) as $name => $ok) {
+        $checks[$name] = $ok;
+    }
+
     // 清理临时树（只删本次自建目录，不碰任何用户文件）
     $items = new \RecursiveIteratorIterator(
         new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS),
@@ -352,6 +490,7 @@ if (in_array('--selftest', $rest, true)) {
 
 $rebuild = in_array('--rebuild', $rest, true);
 $noWatch = in_array('--no-watch', $rest, true);
+$hardRestart = in_array('--hard-restart', $rest, true);
 
 $app = 'hello';
 foreach ($rest as $argument) {
@@ -403,9 +542,9 @@ $env['DRIFT_DEV_APP'] = $app;
 
 $process = null;
 $pipes = [];
-register_shutdown_function(static function () use (&$process, &$pipes): void {
+register_shutdown_function(static function () use (&$process, &$pipes, $hardRestart): void {
     if ($process !== null) {
-        stop($process, $pipes);
+        stop($process, $pipes, !$hardRestart);
     }
 });
 
@@ -413,11 +552,13 @@ $start = static function () use (&$process, &$pipes, $exe, $root, $env): void {
     [$process, $pipes] = spawn($exe, $root, $env);
     out('启动 dev.exe（PID ' . proc_get_status($process)['pid'] . '）');
 };
-$stopProcess = static function () use (&$process, &$pipes): void {
+$stopProcess = static function () use (&$process, &$pipes, $hardRestart): void {
     if ($process === null) {
         return;
     }
-    stop($process, $pipes);
+    if (!stop($process, $pipes, !$hardRestart)) {
+        out('优雅关闭未生效 ⇒ 已强杀，本次会话状态未写回');
+    }
     $process = null;
     $pipes = [];
 };
