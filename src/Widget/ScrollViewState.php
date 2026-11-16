@@ -58,6 +58,12 @@ final class ScrollViewState extends State implements Scrollable, ScrollMetrics
         $this->scrollBy($offset - $this->offset());
     }
 
+    #[\Override]
+    public function animateTo(float $offset, float $durationMs, Curve $curve): void
+    {
+        $this->lane()->animateTo($offset, $durationMs, $curve);
+    }
+
     /** 主轴：由 Widget 声明决定（同一个 State 既可能纵向也可能横向） */
     public function scrollAxis(): Axis
     {

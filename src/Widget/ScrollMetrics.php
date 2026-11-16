@@ -27,6 +27,14 @@ interface ScrollMetrics
     public function scrollTo(float $offset): void;
 
     /**
+     * 动画滚到绝对偏移：摊成 `$durationMs` 帧序列，每帧仍走 `scrollTo` 那条夹取路。
+     *
+     * ★ 不把 `scrollTo` 改成动画：thumb 拖动 / `ensureVisible` / 判据都要"调完就到"。
+     *   两条入口分工见 `Scrollable::glideByAxis()` 的同类裁决。
+     */
+    public function animateTo(float $offset, float $durationMs, Curve $curve): void;
+
+    /**
      * 主轴（`ScrollView` 可以横向 ⇒ 调用方不能假设是竖的）。
      *
      * ★ 存在的理由：`PageUp` / `PageDown` 要按**这个容器自己的**方向翻页。

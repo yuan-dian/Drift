@@ -66,6 +66,23 @@ final class ScrollController
         $this->sync();
     }
 
+    /**
+     * 动画滚到绝对偏移（`durationMs <= 0` 退化成 `jumpTo`）。
+     *
+     * ★ 中断语义同 Flutter：用户一动（滚轮 / thumb / ensureVisible）立即让位，
+     *   不会在用户操作后还继续把画面拽走；后一次调用顶掉前一次。
+     */
+    public function animateTo(float $offset, float $durationMs = 240.0, ?Curve $curve = null): void
+    {
+        if ($durationMs <= 0.0) {
+            $this->jumpTo($offset);
+
+            return;
+        }
+
+        $this->target?->animateTo($offset, $durationMs, $curve ?? Curve::easeOut());
+    }
+
     /** 滚到底（内容比视口短 ⇒ 不动） */
     public function jumpToBottom(): void
     {

@@ -249,6 +249,10 @@ final class LoadMorePageState extends State
             Button::make('重试')
                 ->enabled(!$running && $value->hasError())
                 ->onPressed(fn() => $this->rows->retry()),
+
+            // 长列表回顶：走 animateTo（不碰 scrollTo 的"调完就到"语义）
+            Button::make('回到顶部')
+                ->onPressed(fn() => $this->scroll->animateTo(0.0)),
         ]);
     }
 

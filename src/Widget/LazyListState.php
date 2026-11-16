@@ -100,6 +100,12 @@ final class LazyListState extends State implements Scrollable, ScrollMetrics, Co
         $this->scrollBy($offset - $this->offset());
     }
 
+    #[\Override]
+    public function animateTo(float $offset, float $durationMs, Curve $curve): void
+    {
+        $this->lane()->animateTo($offset, $durationMs, $curve);
+    }
+
     /** 主轴：`LazyRow` 是横向 */
     public function scrollAxis(): Axis
     {

@@ -19,6 +19,19 @@ final class ScrollLane
     private ?ScrollMotion $motion = null;
 
     /**
+     * 编程式定时滚动（`animateTo`）。与滚轮 `motion` 互斥：后者是"追目标"的
+     * 指数趋近（随时改向、无总时长），前者是定时长 + 曲线（Flutter / Qt 的语义）。
+     */
+    private ?AnimationController $journey = null;
+
+    private float $journeyFrom = 0.0;
+
+    private float $journeyTo = 0.0;
+
+    /** 动画帧正经 `$apply` 回流到 `move()`：此时不能当成用户接管而取消自己 */
+    private bool $journeyApplying = false;
+
+    /**
      * 滚动条的显隐节律。
      * 可注入：`TableState` 的两根轴传**同一个**实例（横竖同时淡出）；不传则自建。
      * `ScrollBarFade` 内部仍是懒的（`noteScroll()` 才建槽）⇒ 提前造对象不改任何行为。
@@ -70,6 +83,10 @@ final class ScrollLane
      */
     public function move(float $delta, callable $push): bool
     {
+        if (!$this->journeyApplying) {
+            $this->cancelJourney();   // 用户接管（thumb / ensureVisible）⇒ 定时滚动让位
+        }
+
         $next = max(0.0, $this->offset + $delta);
 
         if ($next === $this->offset) {
@@ -92,6 +109,8 @@ final class ScrollLane
      */
     public function glide(float $delta): void
     {
+        $this->cancelJourney();   // 滚轮接管 ⇒ 定时滚动让位
+
         $motion = $this->motion();
         if (!$motion->isAnimating()) {
             $motion->snapTo($this->offset);
@@ -100,6 +119,37 @@ final class ScrollLane
 
         $this->fade->noteScroll();
         $this->wake();
+    }
+
+    /**
+     * 编程式滚到绝对偏移，摊成 `$durationMs` 毫秒的定时动画。
+     *
+     * ★ 不在这里夹目标：每帧位移仍交给 `$apply`（State 的 `scrollBy`）⇒
+     *   夹取 / 换窗 / 锚点 / 提交编辑复用既有那一条路；够不到就在边界收口。
+     * ★ 和滚轮互斥，后启动的顶掉前一个；用户一动也立即让位。
+     */
+    public function animateTo(float $target, float $durationMs, Curve $curve): void
+    {
+        $this->cancelJourney();
+        $motion = $this->motion;
+        if ($motion !== null && $motion->isAnimating()) {
+            $motion->snapTo($this->offset);
+        }
+
+        $this->journeyFrom = $this->offset;
+        $this->journeyTo = $target;
+        $this->journey = new AnimationController($durationMs, $curve);
+        $this->journey->forward();
+
+        $this->fade->noteScroll();
+        $this->wake();
+    }
+
+    /** 就地停住定时滚动（打断 ≠ 跑到终点，不触发完成回调） */
+    private function cancelJourney(): void
+    {
+        $this->journey?->stop();
+        $this->journey = null;
     }
 
     /**
@@ -113,6 +163,35 @@ final class ScrollLane
      */
     public function tick(float $timestampMs, callable $apply): bool
     {
+        if ($this->journey !== null) {
+            $journey = $this->journey;
+            $more = $journey->tick($timestampMs);
+            $goal = $this->journeyFrom
+                + ($this->journeyTo - $this->journeyFrom) * $journey->value();
+
+            $before = $this->offset;
+            $this->journeyApplying = true;
+            try {
+                $apply($goal - $before);   // 每帧仍走 State 的 scrollBy（夹取/锚点只此一份）
+            } finally {
+                $this->journeyApplying = false;
+            }
+
+            // 首帧 δ=0 不是"撞墙"；只有目标真变了却没动才算够不到
+            if ($goal !== $before && $this->offset === $before) {
+                $this->cancelJourney();
+
+                return false;
+            }
+            if (!$more) {
+                $this->journey = null;
+
+                return false;
+            }
+
+            return true;
+        }
+
         $motion = $this->motion;
         if ($motion === null) {
             return false;   // 没被滚轮滚过 ⇒ 不建槽、不占帧
