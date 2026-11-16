@@ -1,9 +1,8 @@
 # Product release gate. Runs on v* tags and does NOT rebuild dependencies:
 # it resolves the package from the DEPS_VERSION tag instead.
 #
-# The release is created as a DRAFT. While the repository is private that keeps the
-# publishing decision with a human; after going public it still prevents an
-# accidental announcement from a stray tag.
+# The release is created as a DRAFT so a stray tag cannot announce a release
+# before a human has reviewed the notes and assets.
 
 name: Product release
 

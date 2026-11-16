@@ -1,0 +1,54 @@
+name: 缺陷报告
+description: 报告一个可复现的问题
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        好报告的唯一标准是别人照着能复现。安全漏洞不要在这里报告，走 SECURITY.md。
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么
+      description: 期望与实际行为
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤
+      description: 最小可运行代码或 apps/ 里的小应用；贴关键片段而非整仓
+      placeholder: |
+        1. php tools/drift-dev.php hello
+        2. 点击 …
+        3. 看到 …
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: 在哪个形态出现
+      options:
+        - 解释器 / verify
+        - dev 壳
+        - AOT exe
+        - 不确定
+    validations:
+      required: true
+  - type: textarea
+    id: verify
+    attributes:
+      label: 验证输出
+      description: 贴 php bin/drift verify 的相关输出
+      render: shell
+  - type: textarea
+    id: env
+    attributes:
+      label: 环境
+      description: php -v、php tools/doctor.php --json、Windows 版本
+      placeholder: |
+        PHP 8.4.x
+        Windows 11 x64
+    validations:
+      required: true

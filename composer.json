@@ -3,6 +3,32 @@
   "description": "Drift —— 用 TypePHP 写的声明式 GUI 框架",
   "type": "library",
   "license": "MIT",
+  "keywords": [
+    "gui",
+    "desktop",
+    "php",
+    "typephp",
+    "aot",
+    "declarative",
+    "windows",
+    "skia"
+  ],
+  "homepage": "https://github.com/yuan-dian/Drift",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yuan-dian/Drift.git"
+  },
+  "support": {
+    "issues": "https://github.com/yuan-dian/Drift/issues",
+    "source": "https://github.com/yuan-dian/Drift",
+    "security": "https://github.com/yuan-dian/Drift/security/advisories/new"
+  },
+  "authors": [
+    {
+      "name": "原点",
+      "email": "467490186@qq.com"
+    }
+  ],
   "require": {
     "php": ">=8.4"
   },
@@ -11,9 +37,9 @@
   },
   "autoload": {
     "psr-4": {
-            "Drift\\": "src/",
-            "Drift\\Dev\\": "tools/",
-            "Drift\\Dev\\Tests\\": "tests/",
+      "Drift\\": "src/",
+      "Drift\\Dev\\": "tools/",
+      "Drift\\Dev\\Tests\\": "tests/",
       "App\\Hello\\": [
         "apps/hello/src/",
         "apps/hello/bin/win32/",

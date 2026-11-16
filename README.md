@@ -113,7 +113,7 @@ php bin/tpc.php --help
 
 ★ 版本不能太旧：本仓 AOT 台账在 `bff46481`（含 #183–#186）上验过，见
 [`AOT 约束`](docs/reference/aot-constraints.md)。
-`doctor` 只验 `tpc` 入口文件存在，**不验版本** —— 旧编译器要到构建期才报错。
+`doctor` 用 git 祖先判定核对 tpc 源码树是否含最低修复基线 `bff46481`（`--version` 固定报 v0.10.0，区分不了 commit）；源码树不是 git 或基线不在历史里时报 WARN，不是静默放行。
 **不要用 release 包里的 `tpc.exe`，也不要用 `composer require swoole/typephp`**：
 `drift-build` / `drift-codegen` 只认源码树的 `bin/tpc.php`（发行版 `tpc.exe`
 缺本仓依赖的编译期修复）。放在别处就设 `DRIFT_TPC_ENTRY` 指向那个 `bin/tpc.php`。
@@ -154,7 +154,7 @@ Python 3 只给真机探针 `tools/probe-window.py` 用，依赖仅标准库 `ct
 | `cpp/fonts/` | Noto Sans SC Regular / Bold + `OFL.txt`（SIL OFL 1.1 全文，重分发必须保留） |
 | 打包产物 | `drift-deps-win-x64.zip`，约 50 MB（解压后 159 MB），含 `cpp/DEPS-MANIFEST.txt` 与 `cpp/licenses/`（11 份许可全文 + `THIRD-PARTY.md` 索引）。包内路径全挂在 `cpp/` 下 —— 它解压到仓库根，顶层放文件会污染工作区 |
 
-首次获取（包托管在 GitHub Releases；**本仓库是私有的，必须带 token**）：
+首次获取（包托管在 GitHub Releases）：
 
 ```bash
 export GITHUB_TOKEN=ghp_xxx               # PowerShell: $env:GITHUB_TOKEN = "ghp_xxx"
@@ -163,9 +163,9 @@ php tools/fetch-deps.php --tag=deps-v2    # 临时钉别的版本；--force 重�
 php tools/fetch-deps.php --latest         # 改取仓库最新 release
 ```
 
-私有仓库的资产**没有可匿名访问的地址**：不带 token 时 `releases/download/...` 一律回
-404，看起来像"还没发布"。带上 token 后脚本改走 API 解析资产 id，再按
-`Accept: application/octet-stream` 下载。token 只需 `repo` 读权限。
+公开 Release 可直接匿名下载；资产尚未发布、或落在私有 fork / 内网镜像后面时，脚本会
+带 token 改走 API 解析资产 id，再按 `Accept: application/octet-stream` 下载（token 只需
+`repo` 读权限）。取不到包也可以用 `--url=<本机 zip>` 离线装，见下节。
 
 token 的取法依次是：`--token=…` > `GITHUB_TOKEN` > `GH_TOKEN` > `~/.git-credentials`。
 Windows 上 Git Credential Manager 把凭据放在系统凭据库里读不出来，那种机器只能用环境变量。
@@ -178,7 +178,7 @@ Windows 上 Git Credential Manager 把凭据放在系统凭据库里读不出来
 只跑闸门、根本不需要 Skia 的人。实测数据与取舍见 [`依赖与发布`](docs/guides/dependencies-and-release.md)
 末节「为什么不用 Composer 分发」。
 
-从已有 `cpp/` 的机器分发（**首个 release 之前唯一可行**，也是内网 / 离线机器的做法）：
+从已有 `cpp/` 的机器分发（依赖包尚未发布的阶段、内网 / 离线机器都走这条）：
 
 ```bash
 # ① 有 cpp/ 的机器：打包（产物 dist/drift-deps-win-x64.zip + .sha256）
@@ -218,7 +218,7 @@ CI 就无法判断「依赖真变了没有」。
 [`deps.lock.json`](deps.lock.json)。它入库，所以换包必须同时改仓库文件 —— 这是校验能成立的前提；
 `dist/*.sha256` 只是同批上传的副本。
 
-★ **首个 release 尚未发布**：GitHub 那条路会取不到资产 —— 用上面的 `--url=<本机 zip>`
+★ **依赖包尚未发布**：GitHub 那条路会取不到资产 —— 用上面的 `--url=<本机 zip>`
 （离线包），校验与在线那条一样。
 发布是一次性的（打包 → 建 release → 传两个资产，脚本全包）：
 

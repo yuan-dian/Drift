@@ -37,7 +37,7 @@
 
 - tpc 要的是**编译器源码树**，不要用 release 包里的 `tpc.exe`，也不要 `composer require swoole/typephp`——发行版的可执行文件缺本仓依赖的编译期修复。`drift-build` 和 `drift-codegen` 只认源码树的 `bin/tpc.php`。放别处就用 `DRIFT_TPC_ENTRY` 指过去。
 - PHP + PHPX 运行时来自 TypePHP 的 Windows x64、PHP 8.4/8.5 ZTS 发行资产，解压后把目录加进 `PATH`；包里自带 `php.ini`、`ext/` 与 `phpx/`。已有 PHP 时可只补 `phpx/`，但必须与编译器同源。
-- doctor 只验 tpc 入口文件存在，**不验版本**；旧编译器要到构建期才报错。所以版本问题不能只看 doctor 绿不绿。
+- doctor 用 git 祖先判定核对 tpc 源码树是否含最低修复基线（`bff46481`）；源码树不是 git 或基线不在历史里时报 WARN，不静默放行。`--version` 固定报 v0.10.0，区分不了 commit 级修复。
 
 ## Skia 与字体
 
@@ -55,9 +55,9 @@
 
 包内容：`cpp/skia/` 是预编译头文件与 `.lib`，附许可文件；`cpp/fonts/` 是 Noto Sans SC Regular / Bold 加 `OFL.txt`（SIL OFL 1.1 全文，重分发必须保留）。打包产物解压到仓库根，包内路径都挂在 `cpp/` 下，不要手动把文件散到顶层污染工作区。
 
-## 取包：token 与离线
+## 取包：Release 与离线
 
-依赖包托管在私有仓库的 Releases，**没有可匿名访问的地址**。不带 token 时下载一律回 404，看起来像"还没发布"。token 只需 `repo` 读权限。
+依赖包托管在 GitHub Releases，公开资产可匿名下载。资产尚未发布、或落在私有 fork / 内网镜像后面时，可带 token 走 API 解析（只需 `repo` 读权限）；也可以直接用 `--url` 指向本机 zip。
 
 ```bash
 php tools/fetch-deps.php                     # 取 DEPS_VERSION 指定的 tag
@@ -78,6 +78,18 @@ DRIFT_DEPS_URL=<目录> php tools/fetch-deps.php            # 指目录也行，
 `--url` 认裸路径、反斜杠、`file://` 和百分号编码。两种取法走同一套校验：拿入库的 `deps.lock.json` 校验，解压后再数 `.lib`、字体与许可，对不上直接失败，不会拖到构建期报链接错误。
 
 不走 `composer require`：Composer 的校验口径和打包口径不同，解压还会剥掉包内的 `cpp/` 顶层，而且没有可选依赖机制——包一旦进 `require`，体积会摊给每个只跑判据、根本不需要 Skia 的人。
+
+## 从 clone 到 hello 的最短路径
+
+一条命令串不起来，因为中间隔着两件**发布侧**的事，不是本地命令能补的：仓库可见性、依赖包是否已发布。按这个顺序走：
+
+1. `git clone <仓库>` —— 此时 `cpp/` 为空，只能跑档 A。
+2. 取依赖包：有公开 Release 时直接 `php tools/fetch-deps.php`；资产尚未发布时走 `--url=<本机 zip>`（见上节）。
+3. 补齐档 B 工具链（TypePHP 源码树 + PHPX + MSVC + SDK），路径不对设环境变量，不改脚本。
+4. `php tools/doctor.php` —— **单一真相源**，逐项报缺什么、给修法；全绿再往下。
+5. `php tools/drift-build.php hello` → `python tools/probe-window.py hello`。
+
+每一步的判据都在 doctor 里，本文不复述它的检查项（会漂）。`doctor` 报 FAIL 就按它打印的修法走，不要跳到构建期再猜。
 
 ## 自查
 

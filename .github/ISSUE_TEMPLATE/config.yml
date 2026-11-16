@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 文档与快速开始
+    url: https://github.com/yuan-dian/Drift#readme
+    about: 环境、命令、验证分层与边界先看文档，很多问题是已知设计取舍

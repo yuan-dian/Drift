@@ -31,6 +31,14 @@ final class Environment
     public const MIN_FONTS = 2;
 
     /**
+     * tpc 编译期修复的最低基线 commit（AOT 台账验过点，含 #183–#186）。
+     *
+     * ★ `--version` 固定报 v0.10.0，区分不了 commit 级修复 ⇒ 用 git 祖先判定。
+     * ★ 拿不到 git 历史不报 OK（那会假绿），报 WARN 让风险可见。
+     */
+    public const TPC_MIN_COMMIT = 'bff46481';
+
+    /**
      * 逐项体检（只读）。
      *
      * @return list<Check>
@@ -118,6 +126,16 @@ final class Environment
                 $entry = self::tpcEntry($root);
 
                 return new Check('tpc', 'tpc 入口', Check::OK, $entry, true);
+            },
+        );
+
+        // ── tpc 版本基线：入口在 ≠ 含编译期修复；旧编译器到构建期才报错 ──
+        $checks[] = self::guard(
+            'tpc-baseline',
+            'tpc 版本基线',
+            ['build'],
+            function () use ($root): Check {
+                return self::tpcBaselineCheck($root);
             },
         );
 
@@ -380,6 +398,64 @@ final class Environment
         }
 
         return $entry;
+    }
+
+    /**
+     * tpc 源码树是否包含最低编译期修复基线。
+     *
+     * ★ `--version` 固定报 v0.10.0，区分不了 commit 级修复（#183–#186），
+     *   所以走 `git merge-base --is-ancestor`：0=含基线，1=不含，其他=无法判定。
+     * ★ 拿不到 git / 非 git 树 / 基线不在该仓库 ⇒ WARN（可见但不误伤构建）。
+     *   ★ 绝不因"没测到"报 OK —— 那是本仓最典型的静默假绿。
+     * ★ git 调用隔离在 gitAncestor()，测试可注入，判据与实现不同源。
+     */
+    public static function tpcBaselineCheck(string $root, ?callable $ancestor = null): Check
+    {
+        $entry = self::tpcEntry($root);
+        $tree = dirname(dirname($entry)); // <tree>/bin/tpc.php ⇒ 源码树根
+
+        if (!is_dir($tree . '/.git')) {
+            return new Check('tpc-baseline', 'tpc 版本基线', Check::WARN,
+                "{$tree} 不是 git 源码树，无法核对基线 " . self::TPC_MIN_COMMIT, false,
+                '用 git clone 的 tpc 源码树（doctor 只验入口，不验版本）', ['build']);
+        }
+
+        $probe = $ancestor ?? static fn (string $t, string $c): int => self::gitAncestor($t, $c);
+        $rc = $probe($tree, self::TPC_MIN_COMMIT);
+
+        if ($rc === 0) {
+            return new Check('tpc-baseline', 'tpc 版本基线', Check::OK,
+                'HEAD 含基线 ' . self::TPC_MIN_COMMIT, true, null, ['build']);
+        }
+        if ($rc === 1) {
+            return new Check('tpc-baseline', 'tpc 版本基线', Check::FAIL,
+                'HEAD 不含基线 ' . self::TPC_MIN_COMMIT . '（旧编译器到构建期才报错）', true,
+                '更新 typephp 源码树到含 ' . self::TPC_MIN_COMMIT . ' 的 commit', ['build']);
+        }
+
+        return new Check('tpc-baseline', 'tpc 版本基线', Check::WARN,
+            "无法判定基线（git 返回 {$rc}；可能该仓库无此 commit）", false,
+            '确认源码树完整且含 ' . self::TPC_MIN_COMMIT, ['build']);
+    }
+
+    /** `git merge-base --is-ancestor <commit> HEAD`：0=是，1=否，128+=错误 */
+    public static function gitAncestor(string $tree, string $commit): int
+    {
+        // ★ tpcEntry() 返回反斜杠路径（PHP_BINARY 派生），Windows 下 escapeshellarg
+        //   会把 `\` 双写 ⇒ git -C 找不到路径、rc=1 被误判成"不含基线"（假红）。
+        //   先统一成正斜杠（git 认），再转义。
+        $tree = str_replace('\\', '/', $tree);
+        if (!is_dir($tree)) {
+            return 128;
+        }
+        // ★ PHP exec() 在 Windows 走 cmd.exe，stderr 重定向必须是 `2>NUL`：
+        //   bash 风格的 `2>/dev/null` 会让 cmd.exe 解析失败、rc=1 被误判成"不含基线"。
+        $cmd = 'git -C ' . escapeshellarg($tree) . ' merge-base --is-ancestor '
+            . escapeshellarg($commit) . ' HEAD 2>NUL';
+        $rc = 0;
+        exec($cmd, $_, $rc);
+
+        return $rc;
     }
 
     /**
