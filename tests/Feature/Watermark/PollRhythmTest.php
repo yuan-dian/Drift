@@ -111,7 +111,7 @@ final class PollRhythmTest extends TestCase
         [$store, $host, $timers] = $this->running(pending: 5);
 
         self::assertSame(1, $timers->count(), '夹具前提：此时正有一拍排着');
-        $store->stopPolling();
+        $store->stop();
 
         self::assertFalse($store->isPolling());
 

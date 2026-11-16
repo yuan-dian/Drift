@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Watermark\Jobs;
 
 use Drift\App\Io\Http;
+use Drift\App\JobArgs;
 use Drift\App\JobProgress;
 use Drift\App\NamedJob;
 use Drift\App\TimedJob;
@@ -33,6 +34,8 @@ use Drift\App\TimedJob;
  */
 final class DownloadResultsJob implements NamedJob, TimedJob
 {
+    use JobArgs;
+
     public const NAME = 'watermark.download';
 
     /** 单张结果图的 HTTP 上限（秒）—— 4K 图可能几 MB。 */
@@ -57,7 +60,20 @@ final class DownloadResultsJob implements NamedJob, TimedJob
 
     public function args(): array
     {
-        return ['urls' => \array_values($this->urls), 'dir' => $this->cacheDir];
+        return ['urls' => \array_values($this->urls), 'cacheDir' => $this->cacheDir];
+    }
+
+    /**
+     * worker 侧重建（**读法与 `args()` 上下相邻**，漏字段当场看得见）。
+     *
+     * @param array<string, mixed> $args
+     */
+    public static function fromArgs(array $args): self
+    {
+        return new self(
+            self::argList($args, 'urls'),
+            self::argString($args, 'cacheDir'),
+        );
     }
 
     /**

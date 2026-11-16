@@ -106,32 +106,50 @@ final class TaskCard extends StatelessWidget
         ]);
     }
 
-    /** 提交按钮：可用态在订阅里读（见 `UsersPage` 那个"永久灰"的教训） */
+    /**
+     * 提交按钮：可用态与**原因**都来自 `submitBlocker()`（同一份判据）。
+     *
+     * ★ 以前这里读 `isSubmitting()` —— 只有"正在提交"那一档才会灰，于是上传中 /
+     *   轮询中按钮是亮的，点下去才被告知"还有一步没做完"。`enabled()` 与
+     *   `submitTask()` 的守卫必须同源，否则界面在说一句、逻辑在说另一句。
+     */
     private function actions(): Widget
     {
         $store = $this->store;
 
         return SubjectBuilder::make($store)
-            ->select(static fn(WatermarkStore $s): bool => $s->isSubmitting())
-            ->builder(static function (bool $running) use ($store): Widget {
-                $items = [
-                    Button::primary('提交任务')
-                        ->enabled(!$running)
-                        ->onPressed(static function () use ($store): void {
-                            $store->submitTask();
-                        }),
-                    Spacer::make(),
-                ];
+            ->select(static fn(WatermarkStore $s): array => [
+                'blocker' => $s->submitBlocker(),
+                'submitting' => $s->isSubmitting(),
+            ])
+            ->builder(static function (array $state) use ($store): Widget {
+                $blocker = \is_string($state['blocker'] ?? null) ? $state['blocker'] : '';
+                $submitting = ($state['submitting'] ?? false) === true;
 
                 // ★ 提交中给一个转圈：只禁用按钮的话，用户看到的是"按钮变灰了"
                 //   而不知道是在跑还是点坏了。
-                if ($running) {
-                    $items = [
+                if ($submitting) {
+                    return Row::make()->spacing(10)->children([
                         Spinner::make()->diameter(12.0),
                         Text::make('提交中…')->caption(),
                         Spacer::make(),
-                    ];
+                    ]);
                 }
+
+                $items = [
+                    Button::primary('提交任务')
+                        ->enabled($blocker === '')
+                        ->onPressed(static function () use ($store): void {
+                            $store->submitTask();
+                        }),
+                ];
+
+                // ★ 灰按钮旁必须有一句话：不说原因的话，用户只会觉得按钮坏了
+                if ($blocker !== '') {
+                    $items[] = Text::make($blocker)->caption();
+                }
+
+                $items[] = Spacer::make();
 
                 return Row::make()->spacing(10)->children($items);
             });

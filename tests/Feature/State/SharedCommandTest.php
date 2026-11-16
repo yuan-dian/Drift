@@ -55,6 +55,12 @@ final class SharedCommandTest extends SmokeTestCase
                 return $future;
             }
 
+            public function cancelSupport(): \Drift\App\CancelSupport
+            {
+                // 假后端同步交付（Future 要么已结算、要么由测试手动结算）⇒ 没有在跑的活
+                return \Drift\App\CancelSupport::AlreadyDone;
+            }
+
             public function pending(): int
             {
                 return \count($this->futures);

@@ -5,6 +5,7 @@ namespace App\Users\Jobs;
 
 use App\Users\Store\UserSeed;
 use Drift\App\Io\Http;
+use Drift\App\JobArgs;
 use Drift\App\NamedJob;
 
 /**
@@ -26,6 +27,8 @@ use Drift\App\NamedJob;
  */
 final class FetchUsersJob implements NamedJob
 {
+    use JobArgs;
+
     /** 注册表里的键（UI 与 worker 必须一致） */
     public const NAME = 'users.fetch';
 
@@ -51,7 +54,20 @@ final class FetchUsersJob implements NamedJob
 
     public function args(): array
     {
-        return ['page' => $this->page, 'base' => $this->baseUrl];
+        return ['page' => $this->page, 'baseUrl' => $this->baseUrl];
+    }
+
+    /**
+     * worker 侧重建（**读法与 `args()` 上下相邻**，漏字段当场看得见）。
+     *
+     * @param array<string, mixed> $args
+     */
+    public static function fromArgs(array $args): self
+    {
+        return new self(
+            self::argInt($args, 'page', 1),
+            self::argString($args, 'baseUrl', self::DEFAULT_BASE),
+        );
     }
 
     public function run(): mixed

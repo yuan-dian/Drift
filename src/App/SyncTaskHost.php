@@ -114,6 +114,16 @@ final class SyncTaskHost implements TaskHost
     }
 
     /**
+     * 没有后台活在跑：`submit()` 返回时 `Job::run()` 已经跑完（结果只是"已就绪，等交付"）。
+     *
+     * ★ 这不是"不支持取消"，是**没有对象可取消**。界面据此不必说"仍在后台运行"。
+     */
+    public function cancelSupport(): CancelSupport
+    {
+        return CancelSupport::AlreadyDone;
+    }
+
+    /**
      * 已完成、但还没被 `drain()` 取走的结果数。
      *
      * ★ 本后端 `submit()` **同步跑完** ⇒ 这里永远只有"已就绪未回贴"，没有在途。

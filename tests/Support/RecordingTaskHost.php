@@ -63,6 +63,12 @@ final class RecordingTaskHost implements TaskHost
         return Future::resolved($answer);
     }
 
+    public function cancelSupport(): \Drift\App\CancelSupport
+    {
+        // 假后端同步交付（Future 要么已结算、要么由测试手动结算）⇒ 没有在跑的活
+        return \Drift\App\CancelSupport::AlreadyDone;
+    }
+
     public function pending(): int
     {
         return 0;

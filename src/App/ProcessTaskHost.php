@@ -183,6 +183,16 @@ final class ProcessTaskHost implements TaskHost
     }
 
     /**
+     * 三档里唯一"取消能省 CPU"的：还在排队（没派发）的那条会被真的摘掉。
+     *
+     * ★ 已发给 worker 的停不了（杀进程要重拉、还丢在途状态）—— 见 `dropQueued()`。
+     */
+    public function cancelSupport(): CancelSupport
+    {
+        return CancelSupport::QueuedOnly;
+    }
+
+    /**
      * 把**还没发出去**的那一条从队列里摘掉（`Future::cancel()` 的钩子）。
      *
      * 能真停的只有"还在排队"的。已发给 worker 的停不了：杀进程要重拉（起价 275ms）
@@ -207,12 +217,17 @@ final class ProcessTaskHost implements TaskHost
     /**
      * 记一条"发不出去"的失败（帧内结算，见 `$failed` 的注释）。
      *
-     * 用 `RuntimeException` 而非 `Errors::report`：这是**调用方写错了**，它有权 `catch()`
-     * 兜住；没人 catch 时 `Future` 自己走 Fatal 序列。
+     * 用 `Failure` 而非裸 `RuntimeException`：这三条全是**装配写错了**，给稳定的
+     * `CODE_JOB_REJECTED` 让 UI 能画"配置错误"而不是"重试"（重试还是同一句）。
+     * 仍然"可 catch"：没人 catch 时 `Future` 自己走 Fatal 序列。
      */
     private function fail(Future $future, string $message): void
     {
-        $this->failed->push(new Completion(null, new \RuntimeException($message), $future));
+        $this->failed->push(new Completion(
+            null,
+            new Failure($message, Failure::CODE_JOB_REJECTED),
+            $future,
+        ));
     }
 
     public function drain(callable $onEach, ?int $budgetMs = null): void
@@ -263,10 +278,11 @@ final class ProcessTaskHost implements TaskHost
 
             $onEach(new Completion(
                 null,
-                new \RuntimeException(
+                new Failure(
                     '后台任务超时：' . $item['name'] . ' 超过 ' . $limitMs . 'ms 没回来（'
                     . ($item['limitMs'] > 0 ? '任务声明上限' : 'Host 默认上限')
-                    . '；worker 已终止，池会自动补一个）'
+                    . '；worker 已终止，池会自动补一个）',
+                    Failure::CODE_TIMEOUT,
                 ),
                 $item['future'],
             ));
@@ -637,7 +653,7 @@ final class ProcessTaskHost implements TaskHost
                 if ($item['worker'] !== $index) {
                     continue;
                 }
-                $onEach(new Completion(null, new \RuntimeException($message), $item['future']));
+                $onEach(new Completion(null, new Failure($message, Failure::CODE_WORKER_DIED), $item['future']));
                 unset($this->inflight[$id]);
             }
 

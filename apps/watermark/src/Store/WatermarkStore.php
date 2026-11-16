@@ -217,13 +217,73 @@ final class WatermarkStore extends Subject
         return $this->phase === Phase::Submitting;
     }
 
-    /** 能提交任务 = 有已上传的图 + 时间地址都填了 + 没在忙着别的步骤 */
+    /**
+     * 流水线在跑（任何一步）。
+     *
+     * ★ 与 `canUpload()` / `canSubmit()` 分工：**那两个回答"能不能点这个动作"**，
+     *   本方法回答"现在是不是在忙"。按钮的 `enabled` 必须用前者 —— 用本方法会
+     *   在"没选图"时也把按钮点亮（症状是点了才被告知缺什么）。
+     */
+    public function isBusy(): bool
+    {
+        return $this->phase !== Phase::Idle;
+    }
+
+    /**
+     * 此刻按「停止」有意义吗。
+     *
+     * ★ 只覆盖**提交之后**的三档（`Submitting` / `Polling` / `Downloading`）。
+     *   `Signing` / `Uploading` 不提供停止：用户刚点完上传，意图明确；而打断
+     *   半截上传除了留一个半截对象，并不能省下什么。这条边界写在这里而不是
+     *   散在界面里 —— 否则"按钮什么时候出现"会有第二份判据。
+     */
+    public function canStop(): bool
+    {
+        return $this->phase === Phase::Submitting
+            || $this->phase === Phase::Polling
+            || $this->phase === Phase::Downloading;
+    }
+
+    /** 停止按钮的文案：停的是什么就说什么，别让用户猜 */
+    public function stopLabel(): string
+    {
+        if ($this->phase === Phase::Polling) {
+            return '停止轮询';
+        }
+        if ($this->phase === Phase::Downloading) {
+            return '停止下载';
+        }
+
+        return '取消提交';
+    }
+
+    /**
+     * 「为什么还不能提交」—— `''` ⇒ 能提交。
+     *
+     * ★ 按钮灰着的时候旁边必须有一句话，否则用户只会觉得按钮坏了。更重要的是
+     *   **这份判据与 `canSubmit()` 是同一份**：以前这里是两套（按钮读
+     *   `isSubmitting()`、守卫读 `canSubmit()`），于是"上传中按钮还是亮的，点了
+     *   才被告知还有一步没做完"。
+     */
+    public function submitBlocker(): string
+    {
+        if ($this->uploadedKeys === []) {
+            return '请先上传图片';
+        }
+        if ($this->time === '' || $this->address === '') {
+            return '请填写时间和地址';
+        }
+        if ($this->phase !== Phase::Idle) {
+            return '还有一步没做完，请稍候';
+        }
+
+        return '';
+    }
+
+    /** 能提交任务 —— 与 `submitBlocker()` 同一份判据（按钮亮不亮、点不点得动不会分叉） */
     public function canSubmit(): bool
     {
-        return $this->uploadedKeys !== []
-            && $this->time !== ''
-            && $this->address !== ''
-            && $this->phase === Phase::Idle;
+        return $this->submitBlocker() === '';
     }
 
     public function isPolling(): bool
@@ -334,6 +394,17 @@ final class WatermarkStore extends Subject
      */
     public function addFiles(array $paths): int
     {
+        // ★ 忙的时候**不加**：整批上传的 `$items` 在发起那一刻就定下来了，中途追加
+        //   的图不会被传；而这里若照旧清空 `uploadedKeys`，随后的上传又会把它覆盖成
+        //   "只含旧批次" ⇒ 界面显示 3 张、任务里只有 1 张，且**没有任何报错**。
+        //   拒绝 + 说清原因，比"看起来加进去了"诚实。
+        if ($this->isBusy()) {
+            $this->uploadMessage = StatusMessage::error('正在处理中，完成后才能添加图片');
+            $this->notifyChanged();
+
+            return 0;
+        }
+
         $existing = [];
         foreach ($this->selected as $one) {
             $existing[$one->path] = true;
@@ -451,18 +522,11 @@ final class WatermarkStore extends Subject
     /** 点「提交任务」 */
     public function submitTask(): void
     {
-        if (!$this->canSubmit()) {
-            // ★ 不静默返回：用户点了按钮什么都没发生，会以为按钮坏了。
-            //   真正的原因（没传图 / 没填时间）由 `canSubmit()` 的条件给，
-            //   这里给一句人话。
-            if ($this->uploadedKeys === []) {
-                $this->taskMessage = StatusMessage::error('请先上传图片');
-            } elseif ($this->time === '' || $this->address === '') {
-                $this->taskMessage = StatusMessage::error('请填写时间和地址');
-            } else {
-                // ★ 别的东西在跑（上传 / 上一轮还在查）：这是"再等等"，不是填错了。
-                $this->taskMessage = StatusMessage::error('还有一步没做完，请稍候');
-            }
+        // ★ 原因只有一份（`submitBlocker()`）：界面拿它画灰按钮旁那行字，
+        //   这里拿它兜住"按钮之外还有快捷键 / 别的入口"那条路。
+        $blocker = $this->submitBlocker();
+        if ($blocker !== '') {
+            $this->taskMessage = StatusMessage::error($blocker);
             $this->notifyChanged();
 
             return;
@@ -471,12 +535,19 @@ final class WatermarkStore extends Subject
         $this->flow->run(Flow::Submit);
     }
 
-    /** 用户点「停止轮询」 */
-    public function stopPolling(): void
+    /**
+     * 用户点「停止」（轮询中 / 下载中 / 提交中）。
+     *
+     * ★ 名字不叫 `stopPolling()`：它取消的是**整条流水线**（`AsyncScope` 一取消，
+     *   剩下的"继续查"和"查完下载"都不要了）。原来的名字只覆盖 `Phase::Polling`，
+     *   于是下载阶段按不到停止 —— 而下载恰恰是最可能让人想停的一步。
+     */
+    public function stop(): void
     {
-        if ($this->phase !== Phase::Polling) {
+        if (!$this->canStop()) {
             return;
         }
+
         $this->flow->cancel();
         $this->notifyChanged();
     }
@@ -514,12 +585,16 @@ final class WatermarkStore extends Subject
     /**
      * 取一份签名。
      *
-     * @param bool $report 失败要不要写到 `uploadMessage`（预热失败不打扰用户）
+     * @param bool $report 失败要不要写到 `uploadMessage`、要不要占用 `Phase::Signing`
+     *                     （预热两样都不要：它是后台的，用户不该被它挡住任何按钮）
      */
     private function fetchSign(AsyncScope $co, bool $report): ?SignInfo
     {
-        $this->phase = Phase::Signing;
+        // ★ `phase` 只在**用户看得见的那次**取签名里占位。预热不占 —— 占了的话
+        //   首屏那一两秒里 `isBusy()` 为 true，`canUpload()` 为 false，用户看着
+        //   有图却点不动「上传」；而预热本来就该是"什么都不挡"的。
         if ($report) {
+            $this->phase = Phase::Signing;
             $this->uploadMessage = StatusMessage::loading('正在获取上传凭证…');
             $this->notifyChanged();
         }

@@ -72,13 +72,13 @@ final class ThreadTaskHost implements TaskHost
 
         if (!$job instanceof NamedJob) {
             $this->fail($id, $future, 'ThreadTaskHost 只能跑 NamedJob —— ' . get_class($job)
-                . '（跨线程只传"名字 + 两个标量"，对象过不去）');
+                . '（跨线程只传"名字 + 两个标量"，对象过不去）', Failure::CODE_JOB_REJECTED);
 
             return $future;
         }
 
         if (!$this->ensureStarted()) {
-            $this->fail($id, $future, 'ThreadTaskHost：IO 池起不来（建唤醒窗失败）');
+            $this->fail($id, $future, 'ThreadTaskHost：IO 池起不来（建唤醒窗失败）', Failure::CODE_HOST_UNAVAILABLE);
 
             return $future;
         }
@@ -94,12 +94,22 @@ final class ThreadTaskHost implements TaskHost
         );
 
         if (!$ok) {
-            $this->fail($id, $future, 'ThreadTaskHost：投递失败 —— ' . $job->name());
+            $this->fail($id, $future, 'ThreadTaskHost：投递失败 —— ' . $job->name(), Failure::CODE_HOST_UNAVAILABLE);
 
             return $future;
         }
 
         return $future;
+    }
+
+    /**
+     * 只能"不交付"：任务交给 C++ worker 之后就摘不回来，取消省不到 CPU。
+     *
+     * ★ 与类注释那条"取消只有不交付一档"是同一句话，现在它是**可查询**的。
+     */
+    public function cancelSupport(): CancelSupport
+    {
+        return CancelSupport::DetachedOnly;
     }
 
     /**
@@ -238,11 +248,11 @@ final class ThreadTaskHost implements TaskHost
         return $this->started;
     }
 
-    private function fail(int $id, Future $future, string $message): void
+    private function fail(int $id, Future $future, string $message, string $code): void
     {
         // 从在途表摘掉：它永远不会有结果行回来，`pending()` 不能一直算它。
         unset($this->inflight[$id]);
 
-        $this->failed->push(new Completion(null, new \RuntimeException($message), $future));
+        $this->failed->push(new Completion(null, new Failure($message, $code), $future));
     }
 }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Showcase\Jobs;
 
 use Drift\App\Io\Http;
+use Drift\App\JobArgs;
 use Drift\App\NamedJob;
 
 /**
@@ -34,6 +35,8 @@ use Drift\App\NamedJob;
  */
 final class FetchRowsJob implements NamedJob
 {
+    use JobArgs;
+
     /** 注册表里的键（UI 与 worker 必须一致） */
     public const NAME = 'showcase.rows';
 
@@ -75,10 +78,25 @@ final class FetchRowsJob implements NamedJob
     {
         return [
             'page' => $this->page,
-            'per' => $this->perPage,
+            'perPage' => $this->perPage,
             'mode' => $this->mode,
-            'base' => $this->baseUrl,
+            'baseUrl' => $this->baseUrl,
         ];
+    }
+
+    /**
+     * worker 侧重建（**读法与 `args()` 上下相邻**，漏字段当场看得见）。
+     *
+     * @param array<string, mixed> $args
+     */
+    public static function fromArgs(array $args): self
+    {
+        return new self(
+            self::argInt($args, 'page', 1),
+            self::argInt($args, 'perPage', 20),
+            self::argString($args, 'mode', self::MODE_LOCAL),
+            self::argString($args, 'baseUrl', self::DEFAULT_BASE),
+        );
     }
 
     /**

@@ -3,7 +3,6 @@ declare(strict_types=1);
 
 namespace App\Watermark\Jobs;
 
-use App\Watermark\Api\Config;
 use Drift\App\Job;
 
 /**
@@ -11,7 +10,18 @@ use Drift\App\Job;
  *
  * ★ 它是"组合根的配置"：`Bootstrap` 里两条路径（正常窗口 / `--drift-worker`）
  *   都调 `make()`，所以两侧的名字不可能对不上。
- * ★ 加一个后台任务 = 加一个 `NamedJob` + 在这里登记一行 —— 没有别的开关。
+ *
+ * ## 加一个后台任务的完整动作
+ *
+ * 1. `Jobs/` 下加一个 `NamedJob` 类（`args()` 与 `static fromArgs()` **上下相邻**写）；
+ * 2. **本文件加一行** `XxxJob::NAME => static fn (array $a): Job => XxxJob::fromArgs($a),`
+ * 3. 没了。
+ *
+ * ★ **参数搬运不在这里**（2026-11-16 起）：以前每族要手写 `(string) ($args['…'] ?? 默认)`
+ *   三五行，而它和 `args()` 是同一份信息的两遍抄写 —— 键名一分叉就是**静默**错
+ *   （漏掉的参数在两侧都退化成默认值，只有真机 worker 里跑错参数）。现在映射住在
+ *   任务类自己身上，本文件只剩「名字 → 怎么造」。漏登记由
+ *   `NamedJobContractTest` 直接判红。
  */
 final class JobRegistry
 {
@@ -21,44 +31,11 @@ final class JobRegistry
     public static function make(): array
     {
         return [
-            FetchSignJob::NAME => static function (array $args): Job {
-                return new FetchSignJob((string) ($args['base'] ?? Config::API_BASE));
-            },
-            UploadBatchJob::NAME => static function (array $args): Job {
-                $sign = $args['sign'] ?? [];
-                $items = $args['items'] ?? [];
-
-                return new UploadBatchJob(
-                    \is_array($sign) ? $sign : [],
-                    \is_array($items) ? \array_values($items) : [],
-                    (string) ($args['base'] ?? Config::API_BASE),
-                );
-            },
-            AddTaskJob::NAME => static function (array $args): Job {
-                $keys = $args['keys'] ?? [];
-
-                return new AddTaskJob(
-                    \is_array($keys) ? \array_values($keys) : [],
-                    (string) ($args['time'] ?? ''),
-                    (string) ($args['address'] ?? ''),
-                    (string) ($args['size'] ?? '2K'),
-                    (string) ($args['base'] ?? Config::API_BASE),
-                );
-            },
-            PollResultJob::NAME => static function (array $args): Job {
-                return new PollResultJob(
-                    (string) ($args['taskId'] ?? ''),
-                    (string) ($args['base'] ?? Config::API_BASE),
-                );
-            },
-            DownloadResultsJob::NAME => static function (array $args): Job {
-                $urls = $args['urls'] ?? [];
-
-                return new DownloadResultsJob(
-                    \is_array($urls) ? \array_values($urls) : [],
-                    (string) ($args['dir'] ?? ''),
-                );
-            },
+            FetchSignJob::NAME => static fn (array $args): Job => FetchSignJob::fromArgs($args),
+            UploadBatchJob::NAME => static fn (array $args): Job => UploadBatchJob::fromArgs($args),
+            AddTaskJob::NAME => static fn (array $args): Job => AddTaskJob::fromArgs($args),
+            PollResultJob::NAME => static fn (array $args): Job => PollResultJob::fromArgs($args),
+            DownloadResultsJob::NAME => static fn (array $args): Job => DownloadResultsJob::fromArgs($args),
         ];
     }
 }

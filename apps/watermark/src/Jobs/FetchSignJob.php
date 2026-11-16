@@ -5,6 +5,7 @@ namespace App\Watermark\Jobs;
 
 use App\Watermark\Api\Api;
 use App\Watermark\Api\Config;
+use Drift\App\JobArgs;
 use Drift\App\NamedJob;
 
 /**
@@ -17,6 +18,8 @@ use Drift\App\NamedJob;
  */
 final class FetchSignJob implements NamedJob
 {
+    use JobArgs;
+
     public const NAME = 'watermark.sign';
 
     public function __construct(private readonly string $base = Config::API_BASE)
@@ -31,6 +34,16 @@ final class FetchSignJob implements NamedJob
     public function args(): array
     {
         return ['base' => $this->base];
+    }
+
+    /**
+     * worker 侧重建（**读法与 `args()` 上下相邻**，漏字段当场看得见）。
+     *
+     * @param array<string, mixed> $args
+     */
+    public static function fromArgs(array $args): self
+    {
+        return new self(self::argString($args, 'base', Config::API_BASE));
     }
 
     public function run(): mixed

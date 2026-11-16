@@ -7,6 +7,7 @@ use App\Watermark\Api\Api;
 use App\Watermark\Api\ApiException;
 use App\Watermark\Api\Config;
 use App\Watermark\Api\SignInfo;
+use Drift\App\JobArgs;
 use Drift\App\JobProgress;
 use Drift\App\NamedJob;
 use Drift\App\TimedJob;
@@ -38,6 +39,8 @@ use Drift\App\TimedJob;
  */
 final class UploadBatchJob implements NamedJob, TimedJob
 {
+    use JobArgs;
+
     public const NAME = 'watermark.upload';
 
     /** 给 worker 启动与收尾的余量（毫秒）—— 上限只用来判卡死，不必卡到秒级。 */
@@ -66,6 +69,20 @@ final class UploadBatchJob implements NamedJob, TimedJob
             'items' => \array_values($this->items),
             'base' => $this->base,
         ];
+    }
+
+    /**
+     * worker 侧重建（**读法与 `args()` 上下相邻**，漏字段当场看得见）。
+     *
+     * @param array<string, mixed> $args
+     */
+    public static function fromArgs(array $args): self
+    {
+        return new self(
+            self::argMap($args, 'sign'),
+            self::argList($args, 'items'),
+            self::argString($args, 'base', Config::API_BASE),
+        );
     }
 
     /**

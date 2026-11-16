@@ -5,6 +5,7 @@ namespace App\Watermark\Jobs;
 
 use App\Watermark\Api\Api;
 use App\Watermark\Api\Config;
+use Drift\App\JobArgs;
 use Drift\App\NamedJob;
 
 /**
@@ -15,6 +16,8 @@ use Drift\App\NamedJob;
  */
 final class AddTaskJob implements NamedJob
 {
+    use JobArgs;
+
     public const NAME = 'watermark.addTask';
 
     /**
@@ -37,12 +40,29 @@ final class AddTaskJob implements NamedJob
     public function args(): array
     {
         return [
-            'keys' => \array_values($this->objectKeys),
+            'objectKeys' => \array_values($this->objectKeys),
             'time' => $this->time,
             'address' => $this->address,
-            'size' => $this->imageSize,
+            'imageSize' => $this->imageSize,
             'base' => $this->base,
         ];
+    }
+
+    /**
+     * worker 侧重建（**读法与 `args()` 上下相邻**，漏字段当场看得见）。
+     *
+     * @param array<string, mixed> $args
+     */
+    public static function fromArgs(array $args): self
+    {
+        return new self(
+            self::argList($args, 'objectKeys'),
+            self::argString($args, 'time'),
+            self::argString($args, 'address'),
+            // 与 `WatermarkStore::$imageSize` 的初值同一个默认：UI 侧不选就是 2K
+            self::argString($args, 'imageSize', '2K'),
+            self::argString($args, 'base', Config::API_BASE),
+        );
     }
 
     public function run(): mixed

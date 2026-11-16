@@ -9,7 +9,9 @@ use Drift\App\Job;
  * 任务注册表 —— **UI 侧与 worker 侧共用同一份**（`ProcessTaskHost` 的约定）。
  *
  * ★ 两边（正常窗口 / `--drift-worker`）都调 `make()` ⇒ 名字不可能对不上。
- * ★ 加一个后台任务 = 加一个 `NamedJob` + 在这里登记一行。
+ * ★ 加一个后台任务 = 一个 `NamedJob` 类 + **本文件一行**。参数怎么从 `args()`
+ *   还原由任务自己的 `fromArgs()` 回答 —— 映射与 `args()` 上下相邻，不会分叉。
+ *   漏登记由 `NamedJobContractTest` 判红。
  */
 final class JobRegistry
 {
@@ -19,14 +21,7 @@ final class JobRegistry
     public static function make(): array
     {
         return [
-            FetchRowsJob::NAME => static function (array $args): Job {
-                return new FetchRowsJob(
-                    (int) ($args['page'] ?? 1),
-                    (int) ($args['per'] ?? 20),
-                    (string) ($args['mode'] ?? FetchRowsJob::MODE_LOCAL),
-                    (string) ($args['base'] ?? FetchRowsJob::DEFAULT_BASE),
-                );
-            },
+            FetchRowsJob::NAME => static fn (array $args): Job => FetchRowsJob::fromArgs($args),
         ];
     }
 }

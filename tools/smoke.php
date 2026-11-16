@@ -5088,6 +5088,12 @@ $manualHost = new class implements TaskHost {
         return $future;
     }
 
+    public function cancelSupport(): \Drift\App\CancelSupport
+    {
+        // 假后端同步交付（Future 要么已结算、要么由测试手动结算）⇒ 没有在跑的活
+        return \Drift\App\CancelSupport::AlreadyDone;
+    }
+
     public function pending(): int
     {
         return \count($this->futures);
@@ -5169,6 +5175,12 @@ $inFlightHost = static fn (bool $needsPolling): TaskHost => new class ($needsPol
     public function submit(Job $job): Future
     {
         throw new \LogicException('夹具不跑任务 —— 判据只看 pending() 与 needsPolling()');
+    }
+
+    public function cancelSupport(): \Drift\App\CancelSupport
+    {
+        // 夹具**不真跑任务**（submit 直接抛），"在途"只是 pending() 报的数 ⇒ 没有活可停
+        return \Drift\App\CancelSupport::AlreadyDone;
     }
 
     public function pending(): int

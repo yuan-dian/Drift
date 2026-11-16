@@ -228,6 +228,18 @@ final class Future
         return $this->hasProgress;
     }
 
+    /**
+     * 是不是 `then()` / `catch()` 派生出来的节点。
+     *
+     * ★ 进度只喂根任务，派生节点上的订阅永远收不到（`onProgress()` 会为此留一条
+     *   诊断）。框架内部有"明知收不到就别挂"的场合（`AsyncCommand` 转发进度），
+     *   所以把标记开出来 —— 没有它，框架自己就得靠"挂一个空订阅然后报 DX"来表达。
+     */
+    public function isDerived(): bool
+    {
+        return $this->derived;
+    }
+
     /** 当前进度（没报过 ⇒ `$fallback`）。不返回 `?float`：调用点要的是一个能画的数 */
     public function progressOr(float $fallback = 0.0): float
     {

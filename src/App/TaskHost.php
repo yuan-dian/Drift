@@ -9,8 +9,8 @@ use Drift\Async\Future;
  * 后台执行端口 —— 把"别占 UI 线程"收进一个可替换的端口。
  * 端口的存在让 UI 代码零改动：Store/页面只调 `$src->fetchPage()`，换后端是组合根一行。
  *
- * ★ 两条不变量：后端不许直接调 `$onDone`（一律把 Completion 入队，由 drain() 取出）；
- *   drain() 只在 UI 线程的帧内被调用（Application::frame() 的第一段）。
+ * ★ 两条不变量：后端不许直接交付结算（一律把 `Completion` 入队，由 `drain()` 取出）；
+ *   `drain()` 只在 UI 线程的帧内被调用（`Application::frame()` 的第一段）。
  *
  * @api
  */
@@ -26,6 +26,19 @@ interface TaskHost
      *   （任务失败被吞 = 界面永远转圈）。提交与挂回调在同一同步块里，天然满足。
      */
     public function submit(Job $job): Future;
+
+    /**
+     * `cancel()` 在这个后端能停到多深 —— **能力声明**，不是实现细节。
+     *
+     * ★ 为什么必须由后端自己回答：三个后端的差异极大（进程池能撤排队 / 线程池只
+     *   能不交付 / 同步后端根本没有在跑的活），而应用侧要据此决定"要不要给用户看
+     *   这个按钮"、"要不要说"任务仍在后台运行""。以前这个差异只活在文档里。
+     * ★ 新增一个后端**必须**回答它（编译期强制）：漏了这道声明，"取消"就会退化成
+     *   一个只能靠读实现才知道边界的东西。
+     *
+     * @see CancelSupport
+     */
+    public function cancelSupport(): CancelSupport;
 
     /**
      * 还有多少条任务没回贴（在途 + 排队）。

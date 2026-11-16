@@ -276,24 +276,35 @@ final class ResultCard extends StatelessWidget
         ];
     }
 
-    /** "停止轮询"（只在真的在轮询时出现） */
+    /**
+     * 「停止」（只在真的能停时出现：提交中 / 轮询中 / 下载中）。
+     *
+     * ★ 判据与文案都来自 Store（`canStop()` / `stopLabel()`）：以前这里读
+     *   `isPolling()`，于是**下载阶段没有停止按钮**（而下载恰恰是最想停的一步）。
+     *   数组切片用 `===` 判等（同序同值即相等）⇒ 内容没变不重建。
+     */
     private function pollControl(): Widget
     {
         $store = $this->store;
 
         return SubjectBuilder::make($store)
-            ->select(static fn(WatermarkStore $s): bool => $s->isPolling())
-            ->builder(static function (bool $polling) use ($store): Widget {
-                if (!$polling) {
+            ->select(static fn(WatermarkStore $s): array => [
+                'stop' => $s->canStop(),
+                'label' => $s->stopLabel(),
+            ])
+            ->builder(static function (array $state) use ($store): Widget {
+                if (($state['stop'] ?? false) !== true) {
                     return SizedBox::make()->size(0.0, 0.0);
                 }
 
+                $label = \is_string($state['label'] ?? null) ? $state['label'] : '停止';
+
                 return Row::make()->spacing(10)->children([
-                    Button::make('停止轮询')
+                    Button::make($label)
                         ->variant(ButtonVariant::Danger)
                         ->compact()
                         ->onPressed(static function () use ($store): void {
-                            $store->stopPolling();
+                            $store->stop();
                         }),
                     Spacer::make(),
                 ]);

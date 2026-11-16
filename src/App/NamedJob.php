@@ -34,8 +34,14 @@ interface NamedJob extends Job
     /**
      * 重建这个任务所需的参数（JSON 可序列化）。
      *
-     * ★ 它应当与构造器入参**一一对应** —— worker 侧用
-     * `$registry[$name]($args)` 重建，参数对不上就是运行期的 TypeError。
+     * ★★ **键名必须等于构造参数名，一个不多一个不少**（`args()` 的键集 ==
+     *   `__construct` 的参数名集）。这不是风格问题：registry 那侧是手工
+     *   `new XxxJob($args['…'], …)`，两处名字一旦分叉，"改一处忘另一处"就是
+     *   **静默**错 —— 漏掉的那个参数在两侧都退化成默认值，UI 一切正常，只有
+     *   worker 里跑的是错参数。判据：`NamedJobContractTest`（反射比对 + 重建
+     *   roundtrip），加参数忘了同步会红。
+     * ★ 值只能是标量或标量数组（`ThreadTaskHost` 只搬 int/str 两个槽，
+     *   `ProcessTaskHost` 只能 JSON）：传对象在进程池里看着能过，换线程池就静默。
      *
      * @return array<string, mixed>
      */

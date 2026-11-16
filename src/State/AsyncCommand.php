@@ -313,11 +313,19 @@ final class AsyncCommand extends Subject
         // 带着上一次的值进 loading：刷新/翻页时列表不闪空；首屏无旧值则整块转圈。
         $this->emit(AsyncValue::loading()->carriedFrom($this->value));
 
-        // 订阅根任务本身：Future::onProgress() 不沿 chain() 传递，必须挂 $future。
+        // 订阅根任务本身：`Future::onProgress()` 不沿 chain() 传递，必须挂 $future。
         // 同步/线程后端不喂进度 ⇒ hasProgress() 恒 false ⇒ 画不定长转圈（非错误）。
-        $future->onProgress(function (float $fraction): void {
-            $this->emit($this->value->withProgress($fraction));
-        });
+        //
+        // ★ 派生链**不挂**：`make()` 明确允许 `$task` 返回 `submit()->then(…)`，而那种
+        //   Future 上的进度订阅永远收不到（进度只喂根任务）。以前这里照挂不误 ⇒ 每个
+        //   走派生链的命令都白挂一次，还留一条 `progress/derived-chain` 诊断 ——
+        //   框架自己制造噪音，把真正的"应用挂错链"淹掉。收不到就不挂；要让进度真的
+        //   动，用 `AsyncScope::await($root, $onProgress)`。
+        if (!$future->isDerived()) {
+            $future->onProgress(function (float $fraction): void {
+                $this->emit($this->value->withProgress($fraction));
+            });
+        }
 
         // 先取到变量再调用（AOT 已验证的形态）。
         $future

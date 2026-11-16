@@ -10,7 +10,9 @@ use Drift\App\Job;
  *
  * ★ 它是"组合根的配置"：`Bootstrap` 里两条路径（正常窗口 / `--drift-worker`）
  *   都调 `make()`，所以两侧的名字不可能对不上。
- * ★ 加一个后台任务 = 加一个 `NamedJob` + 在这里登记一行 —— 没有别的开关。
+ * ★ 加一个后台任务 = 一个 `NamedJob` 类 + **本文件一行**。参数怎么从 `args()`
+ *   还原由任务自己的 `fromArgs()` 回答 —— 映射与 `args()` 上下相邻，不会分叉。
+ *   漏登记由 `NamedJobContractTest` 判红。
  */
 final class JobRegistry
 {
@@ -20,12 +22,7 @@ final class JobRegistry
     public static function make(): array
     {
         return [
-            FetchUsersJob::NAME => static function (array $args): Job {
-                return new FetchUsersJob(
-                    (int) ($args['page'] ?? 1),
-                    (string) ($args['base'] ?? FetchUsersJob::DEFAULT_BASE),
-                );
-            },
+            FetchUsersJob::NAME => static fn (array $args): Job => FetchUsersJob::fromArgs($args),
         ];
     }
 }

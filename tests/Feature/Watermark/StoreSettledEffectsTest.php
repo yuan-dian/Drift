@@ -173,7 +173,7 @@ final class StoreSettledEffectsTest extends TestCase
         self::assertSame(2, $host->countOf(PollResultJob::class), '夹具前提：第二次查询已在途');
         self::assertTrue($store->isPolling());
 
-        $store->stopPolling();
+        $store->stop();
 
         self::assertFalse($store->isPolling(), '取消后阶段没有归位 ⇒ "停止轮询"按钮永远挂着');
         self::assertTrue($store->canUpload(), '取消后应该回到可操作态');
@@ -295,6 +295,12 @@ final class DeferredHost implements TaskHost
         }
 
         return $n;
+    }
+
+    public function cancelSupport(): \Drift\App\CancelSupport
+    {
+        // 假后端同步交付（Future 要么已结算、要么由测试手动结算）⇒ 没有在跑的活
+        return \Drift\App\CancelSupport::AlreadyDone;
     }
 
     public function pending(): int
