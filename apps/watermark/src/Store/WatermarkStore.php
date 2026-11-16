@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Watermark\Store;
 
 use App\Watermark\Api\Config;
+use App\Watermark\Api\DownloadReport;
 use App\Watermark\Api\SignInfo;
 use App\Watermark\Api\TaskResult;
 use App\Watermark\Jobs\AddTaskJob;
@@ -105,7 +106,7 @@ final class WatermarkStore extends Subject
     private ?TaskResult $lastResult = null;
 
     /**
-     * 下载段的唯一真值：四态 + 进度 + 载荷 `['locals' => …, 'failed' => …]`。
+     * 下载段的唯一真值：四态 + 进度 + 载荷 `DownloadReport`。
      *
      * 稳定态复用同一实例（`AsyncValue` 走 `===` 门控，不实现 `Equatable`）；
      * 只在状态真变化时赋一次值，不在 getter 里 new。
@@ -306,13 +307,13 @@ final class WatermarkStore extends Subject
      */
     public function localPaths(): array
     {
-        return $this->downloadPayload()['locals'];
+        return $this->downloadReport()->paths();
     }
 
     /** @return array<string, string> 下载失败的 URL → 原因 */
     public function failedDownloads(): array
     {
-        return $this->downloadPayload()['failed'];
+        return $this->downloadReport()->failed();
     }
 
     /** 下载段的唯一真值（界面走 `AsyncValue::fold()` 四态） */
@@ -355,23 +356,21 @@ final class WatermarkStore extends Subject
             return StatusMessage::error($v->message());
         }
 
-        return $this->downloadPayload()['failed'] !== []
+        return $this->downloadReport()->failedCount() > 0
             ? StatusMessage::error('部分结果图没能下载')
             : StatusMessage::success('结果图已下载');
     }
 
-    /** @return array{locals: array<string, string>, failed: array<string, string>} */
-    private function downloadPayload(): array
+    /**
+     * 下载结果 —— **本类内部唯一读它的人**（Widget 走 `localPaths()` / `failedDownloads()`）。
+     *
+     * ★ 载荷里存的就是 `DownloadReport`（`downloadResults()` 放的）⇒ 这里是**取回**，
+     *   不是重新解包。以前三个 getter 各解一遍同一段 `is_array`，形状还与 Job 侧
+     *   分叉（`paths` vs `locals`）。
+     */
+    private function downloadReport(): DownloadReport
     {
-        $raw = $this->downloads->dataOr([]);
-        if (!\is_array($raw)) {
-            return ['locals' => [], 'failed' => []];
-        }
-
-        return [
-            'locals' => \is_array($raw['locals'] ?? null) ? $raw['locals'] : [],
-            'failed' => \is_array($raw['failed'] ?? null) ? $raw['failed'] : [],
-        ];
+        return DownloadReport::fromPayload($this->downloads->dataOr(null));
     }
 
     public function statusLine(): StatusMessage
@@ -861,28 +860,12 @@ final class WatermarkStore extends Subject
             return;
         }
 
-        $locals = [];
-        $paths = \is_array($raw) ? ($raw['paths'] ?? []) : [];
-        foreach (\is_array($paths) ? $paths : [] as $url => $path) {
-            if (\is_string($url) && \is_string($path) && $path !== '') {
-                $locals[$url] = $path;
-            }
-        }
-
-        $failed = [];
-        $rawFailed = \is_array($raw) ? ($raw['failed'] ?? []) : [];
-        foreach (\is_array($rawFailed) ? $rawFailed : [] as $url => $reason) {
-            if (\is_string($url) && $reason !== '') {
-                $failed[$url] = \is_string($reason) ? $reason : '下载失败';
-            }
-        }
-
         // 部分失败仍走 data：已下载成功的图要照旧可见（成熟 GUI 组件不汇总部分失败）。
-        $this->downloads = AsyncValue::data(['locals' => $locals, 'failed' => $failed])
-            ->withProgress(1.0);
-        if ($failed !== []) {
+        $report = DownloadReport::fromPayload($raw);
+        $this->downloads = AsyncValue::data($report)->withProgress(1.0);
+        if ($report->failedCount() > 0) {
             $this->statusLine = StatusMessage::error(
-                '有 ' . (string) \count($failed) . ' 张结果图没能下载'
+                '有 ' . (string) $report->failedCount() . ' 张结果图没能下载'
             );
         }
 

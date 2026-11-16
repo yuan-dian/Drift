@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Watermark;
 
+use App\Watermark\Api\DownloadReport;
 use App\Watermark\Jobs\AddTaskJob;
 use App\Watermark\Jobs\DownloadResultsJob;
 use App\Watermark\Jobs\FetchSignJob;
@@ -55,7 +56,7 @@ final class DownloadImagesStatesTest extends TestCase
 
         $ok = $this->textsOf(ResultCard::imagesFor(
             $urls,
-            AsyncValue::data(['locals' => [$a => '/tmp/a.png', $b => '/tmp/b.png'], 'failed' => []])
+            AsyncValue::data(DownloadReport::of([$a => '/tmp/a.png', $b => '/tmp/b.png'], []))
                 ->withProgress(1.0)
         ));
         self::assertContains($a, $ok);
@@ -64,7 +65,7 @@ final class DownloadImagesStatesTest extends TestCase
 
         $partial = $this->textsOf(ResultCard::imagesFor(
             $urls,
-            AsyncValue::data(['locals' => [$a => '/tmp/a.png'], 'failed' => [$b => 'HTTP 404']])
+            AsyncValue::data(DownloadReport::of([$a => '/tmp/a.png'], [$b => 'HTTP 404']))
                 ->withProgress(1.0)
         ));
         self::assertContains($a, $partial, '部分成功时已下载的图不能整块消失');

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Watermark\Jobs;
 
+use App\Watermark\Api\DownloadReport;
 use Drift\App\Io\Http;
 use Drift\App\JobArgs;
 use Drift\App\JobProgress;
@@ -70,7 +71,7 @@ final class DownloadResultsJob implements NamedJob, TimedJob
     {
         $total = \count($this->urls);
         if ($total === 0) {
-            return ['paths' => [], 'failed' => []];
+            return DownloadReport::none()->toArray();
         }
 
         $dir = $this->cacheDir !== '' ? $this->cacheDir : \sys_get_temp_dir();
@@ -91,7 +92,9 @@ final class DownloadResultsJob implements NamedJob, TimedJob
             JobProgress::report(\min(1.0, $done / $total));
         }
 
-        return ['paths' => $paths, 'failed' => $failed];
+        // ★ 用 `of()` 而不是手写数组字面量：形状由 `DownloadReport` 定义，读回那一侧
+        //   也是它 —— 键名不会再出现"Job 写 paths、Store 存 locals"这种分叉。
+        return DownloadReport::of($paths, $failed)->toArray();
     }
 
     /** 下一张，返回本地路径 */

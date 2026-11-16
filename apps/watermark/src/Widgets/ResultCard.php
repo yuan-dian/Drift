@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Watermark\Widgets;
 
+use App\Watermark\Api\DownloadReport;
 use App\Watermark\Api\TaskResult;
 use App\Watermark\Store\WatermarkStore;
 use Drift\Async\AsyncValue;
@@ -178,7 +179,7 @@ final class ResultCard extends StatelessWidget
             ),
 
             'data' => static fn(AsyncValue $x): Widget => Column::make()->spacing(16)->children(
-                self::imageItems($urls, self::payloadOf($x))
+                self::imageItems($urls, DownloadReport::fromPayload($x->dataOr(null)))
             ),
 
             // 整条下载失败不许再画"正在下载"转圈。
@@ -210,21 +211,20 @@ final class ResultCard extends StatelessWidget
             Text::make($text)->caption(),
         ]);
 
-        return \array_merge([$progress], self::imageItems($urls, ['locals' => [], 'failed' => []]));
+        return \array_merge([$progress], self::imageItems($urls, DownloadReport::none()));
     }
 
     /**
      * 按服务端顺序逐 URL 画：已下载 / 失败 / 还在下。
      *
      * @param list<string> $urls
-     * @param array{locals: array<string, string>, failed: array<string, string>} $p
      * @return list<Widget>
      */
-    private static function imageItems(array $urls, array $p): array
+    private static function imageItems(array $urls, DownloadReport $report): array
     {
         $items = [];
         foreach ($urls as $url) {
-            $local = $p['locals'][$url] ?? '';
+            $local = $report->pathFor($url);
             if ($local !== '') {
                 $items[] = Column::make()->spacing(8)->children([
                     Center::make(
@@ -240,14 +240,15 @@ final class ResultCard extends StatelessWidget
                 continue;
             }
 
-            if (isset($p['failed'][$url])) {
+            $reason = $report->failureFor($url);
+            if ($reason !== '') {
                 $items[] = Row::make()
                     ->spacing(8)
                     ->padding(EdgeInsets::symmetric(14.0, 10.0))
                     ->background(Palette::errorBg())
                     ->radius(8.0)
                     ->children([
-                        Text::make('这张图没能下载：' . $p['failed'][$url])->size(13.0),
+                        Text::make('这张图没能下载：' . $reason)->size(13.0),
                     ]);
 
                 continue;
@@ -260,20 +261,6 @@ final class ResultCard extends StatelessWidget
         }
 
         return $items;
-    }
-
-    /** @return array{locals: array<string, string>, failed: array<string, string>} */
-    private static function payloadOf(AsyncValue $v): array
-    {
-        $raw = $v->dataOr([]);
-        if (!\is_array($raw)) {
-            return ['locals' => [], 'failed' => []];
-        }
-
-        return [
-            'locals' => \is_array($raw['locals'] ?? null) ? $raw['locals'] : [],
-            'failed' => \is_array($raw['failed'] ?? null) ? $raw['failed'] : [],
-        ];
     }
 
     /**

@@ -58,6 +58,8 @@ namespace Drift\App;
  */
 trait JobArgs
 {
+    use Wire;
+
     /**
      * 注册表里的键（`NAME` 常量是唯一真相源）。
      *
@@ -78,12 +80,7 @@ trait JobArgs
      */
     public function args(): array
     {
-        $out = [];
-        foreach (self::FIELDS as $field) {
-            $out[$field] = $this->{$field};
-        }
-
-        return $out;
+        return $this->toArray();
     }
 
     /**

@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace App\Watermark\Api;
 
+use Drift\App\Wire;
+
 /**
  * OSS 直传签名（`/storage/upload/sign` 的 `data`）。
  *
@@ -15,6 +17,18 @@ namespace App\Watermark\Api;
  */
 final class SignInfo
 {
+    use Wire;
+
+    /** 键名恒等于属性名（顺序 == 构造器参数顺序） */
+    private const FIELDS = [
+        'account',
+        'policy',
+        'signature',
+        'directoryPath',
+        'accessAddress',
+        'expireTime',
+    ];
+
     public function __construct(
         public readonly string $account,
         public readonly string $policy,
@@ -40,11 +54,11 @@ final class SignInfo
             return null;
         }
 
-        $account = self::str($data, 'account');
-        $policy = self::str($data, 'policy');
-        $signature = self::str($data, 'signature');
-        $directory = self::str($data, 'directoryPath');
-        $address = self::str($data, 'accessAddress');
+        $account = self::wireString($data, 'account');
+        $policy = self::wireString($data, 'policy');
+        $signature = self::wireString($data, 'signature');
+        $directory = self::wireString($data, 'directoryPath');
+        $address = self::wireString($data, 'accessAddress');
 
         // ★ 五个字段缺一不可：`accessAddress` 是上传的**目的地**，`directoryPath`
         //   是对象键的前缀，`account/policy/signature` 是凭证。
@@ -52,25 +66,7 @@ final class SignInfo
             return null;
         }
 
-        return new self($account, $policy, $signature, $directory, $address, self::str($data, 'expireTime'));
-    }
-
-    /**
-     * 摊平成数组 —— **跨进程**要用（`NamedJob` 的参数与返回值必须是 JSON 能表达
-     * 的东西，对象图传不过去）。
-     *
-     * @return array<string, string>
-     */
-    public function toArray(): array
-    {
-        return [
-            'account' => $this->account,
-            'policy' => $this->policy,
-            'signature' => $this->signature,
-            'directoryPath' => $this->directoryPath,
-            'accessAddress' => $this->accessAddress,
-            'expireTime' => $this->expireTime,
-        ];
+        return new self($account, $policy, $signature, $directory, $address, self::wireString($data, 'expireTime'));
     }
 
     /**
@@ -114,13 +110,5 @@ final class SignInfo
         }
 
         return $prefix . $nowMs . '_' . $random . '.' . $extension;
-    }
-
-    /** @param array<array-key, mixed> $data */
-    private static function str(array $data, string $key): string
-    {
-        $value = $data[$key] ?? null;
-
-        return \is_scalar($value) ? (string) $value : '';
     }
 }

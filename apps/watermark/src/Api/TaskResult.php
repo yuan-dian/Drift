@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace App\Watermark\Api;
 
+use Drift\App\Wire;
+
 /**
  * 一次任务查询的结果（`/task/getResult` 的 `data`）。
  *
@@ -14,6 +16,8 @@ namespace App\Watermark\Api;
  */
 final class TaskResult
 {
+    use Wire;
+
     public const STATUS_CREATED = 0;
 
     public const STATUS_QUEUED = 1;
@@ -23,6 +27,19 @@ final class TaskResult
     public const STATUS_DONE = 3;
 
     public const STATUS_FAILED = 4;
+
+    /** 键名恒等于属性名（顺序 == 构造器参数顺序） */
+    private const FIELDS = [
+        'taskId',
+        'status',
+        'templateName',
+        'imageSize',
+        'processingTime',
+        'createTime',
+        'updateTime',
+        'errorMsg',
+        'downloadUrls',
+    ];
 
     /**
      * @param int $status 原始状态码（0–4；`-1` 与未知值都归"失败/未知"）
@@ -51,7 +68,7 @@ final class TaskResult
             return null;
         }
 
-        $taskId = self::str($data, 'taskId');
+        $taskId = self::wireString($data, 'taskId');
         if ($taskId === '') {
             $taskId = $fallbackTaskId;
         }
@@ -69,34 +86,14 @@ final class TaskResult
         return new self(
             $taskId,
             $status,
-            self::str($data, 'templateName'),
-            self::str($data, 'imageSize'),
-            self::str($data, 'processingTime'),
-            self::str($data, 'createTime'),
-            self::str($data, 'updateTime'),
-            self::str($data, 'errorMsg'),
-            self::urls($data['downloadUrls'] ?? null),
+            self::wireString($data, 'templateName'),
+            self::wireString($data, 'imageSize'),
+            self::wireString($data, 'processingTime'),
+            self::wireString($data, 'createTime'),
+            self::wireString($data, 'updateTime'),
+            self::wireString($data, 'errorMsg'),
+            self::wireStrings($data['downloadUrls'] ?? null),
         );
-    }
-
-    /**
-     * 摊平成数组 —— **跨进程**要用（`NamedJob` 的返回值必须是 JSON 能表达的）。
-     *
-     * @return array<string, mixed>
-     */
-    public function toArray(): array
-    {
-        return [
-            'taskId' => $this->taskId,
-            'status' => $this->status,
-            'templateName' => $this->templateName,
-            'imageSize' => $this->imageSize,
-            'processingTime' => $this->processingTime,
-            'createTime' => $this->createTime,
-            'updateTime' => $this->updateTime,
-            'errorMsg' => $this->errorMsg,
-            'downloadUrls' => $this->downloadUrls,
-        ];
     }
 
     /** 还在跑（0/1/2）—— 轮询要继续 */
@@ -183,34 +180,5 @@ final class TaskResult
         }
 
         return '服务端未给出失败原因（状态 ' . (string) $this->status . '）';
-    }
-
-    /** @param array<array-key, mixed> $data */
-    private static function str(array $data, string $key): string
-    {
-        $value = $data[$key] ?? null;
-
-        return \is_scalar($value) ? (string) $value : '';
-    }
-
-    /**
-     * @param mixed $raw
-     *
-     * @return list<string>
-     */
-    private static function urls(mixed $raw): array
-    {
-        if (!\is_array($raw)) {
-            return [];
-        }
-
-        $out = [];
-        foreach ($raw as $item) {
-            if (\is_string($item) && $item !== '') {
-                $out[] = $item;
-            }
-        }
-
-        return $out;
     }
 }
