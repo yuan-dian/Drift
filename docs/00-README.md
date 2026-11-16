@@ -36,6 +36,7 @@ v2 修订期的过程稿，只在追溯历史时看。**
 | 我是谁 / 我想干什么 | 看哪套 | 入口 |
 |---|---|---|
 | **改代码前想了解现状** | `docs/architecture/` | [`00-README.md`](architecture/00-README.md) |
+| **不知道 `apps/` 下 8 个目录各是干嘛的 / 哪个是示例** | `apps/README.md`（四类定位总览） | [`apps/README.md`](../apps/README.md) |
 | **想从零写一个应用** | [`tutorial.md`](tutorial.md) + `apps/tutorial/` | [`tutorial.md`](tutorial.md) |
 | **嫌每次改 PHP 都要重编译** | `docs/DEV-MODE-2026-11-05.md` + `tools/drift-dev.php` | [`DEV-MODE-2026-11-05.md`](DEV-MODE-2026-11-05.md) |
 | **想知道哪些验证能省、哪些绝不能省** | `docs/architecture/12-工程与工具.md` §3（T0/T1/T2 分层 + dev 绿 ≠ AOT 绿清单） | [`12-工程与工具.md`](architecture/12-工程与工具.md) |
