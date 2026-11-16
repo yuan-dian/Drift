@@ -20,7 +20,7 @@ declare(strict_types=1);
  *
  * ★ 它证明的是「AOT 算出来 / 画出来的与解释器一致」，不是性能。
  *   存在的理由是一个真实 bug：tpc 把 `int / int` 编译成整数除法
- *   （`AOT-CONSTRAINTS` §1.2）。截断是静默的 —— 只有逐值比对能发现。
+ *   （`docs/reference/aot-constraints.md` §1.2）。截断是静默的 —— 只有逐值比对能发现。
  *
  * 用法：
  *   php tools/fingerprint.php                       # 两个通道的表格

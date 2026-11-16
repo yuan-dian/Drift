@@ -238,7 +238,7 @@ size_t encodeUtf8(uint32_t cp, char out[4]) {
 //    static helper 的定义放到这里，会变成"另一个实体"，编译期报
 //    **C2129「已声明但未定义」**。
 //    ⇒ 加 helper 时的判据：**它被 NS 内的 draw 函数调用 ⇒ 定义也住 NS 内**。
-//    （`docs/AOT-CONSTRAINTS.md` §6 有这三条错误码的速查表。）
+//    （`docs/reference/aot-constraints.md` §6 有这三条错误码的速查表。）
 
 // ══════════════════════════════════════════════════════════ 画布生命周期 ══
 

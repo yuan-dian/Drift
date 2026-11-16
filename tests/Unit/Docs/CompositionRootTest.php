@@ -7,14 +7,14 @@ use Drift\App\Application;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 
 /**
- * `14-组合根与装配.md` §4 的能力索引与 `Application` 真实公共面对账。
+ * 心智模型里的公共面能力索引与 `Application` 真实公共面对账。
  *
  * ★ 不往 `Application.php` 的每个 public 方法上贴分组注释：那会造一整片新的腐烂面。
  *   索引放在文档里，由 Reflection 守「一个不漏、一个不多」；数量同样不写死。
  */
 final class CompositionRootTest extends SmokeTestCase
 {
-    private const string DOC = 'docs/architecture/14-组合根与装配.md';
+    private const string DOC = 'docs/concepts/model.md';
 
     public function testEveryPublicApplicationMethodIsIndexed(): void
     {
@@ -80,7 +80,7 @@ final class CompositionRootTest extends SmokeTestCase
     private function indexSection(): string
     {
         $doc = (string) file_get_contents(dirname(__DIR__, 3) . '/' . self::DOC);
-        preg_match('/## 4\. 公共面能力索引(.*?)\n## 5\./su', $doc, $match);
+        preg_match('/## 公共面能力索引(.*?)\n## 相关/su', $doc, $match);
 
         return $match[1] ?? '';
     }

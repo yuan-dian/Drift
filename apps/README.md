@@ -23,9 +23,9 @@
 ## 常见误区
 
 - **"应用太多，能不能合并？"** —— 不能。四类的验证职责各不相同，合并会毁掉各自判据；
-  详见 [`docs/REVIEW-示例应用整合-2026-11-16.md`](../docs/REVIEW-示例应用整合-2026-11-16.md)。
+  裁决见 [`裁决索引`](../docs/decisions/README.md) 的 E5。
 - **"要不要改名叫 `examples/`？"** —— 不。`apps/` 与 `examples/` 都是成熟惯例，
   这里只有 4/8 是示例，改名反而把量具塞进"示例"目录；
-  详见 [`docs/DECISION-apps目录命名-2026-11-16.md`](../docs/DECISION-apps目录命名-2026-11-16.md)。
+  裁决见 [`裁决索引`](../docs/decisions/README.md) 的 E5。
 
 > 本表是定位导航，不写设计内容；各应用细节读各自的 `project.yml` 与源码。

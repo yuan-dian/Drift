@@ -3389,10 +3389,10 @@ if (is_file($log)) {
 //     组合节点对渲染树透明 · dpr=2 设备像素翻倍
 //   · `tests/Feature/App/HelloAppTest.php`（7）—— title/挂载/有墨/排满 · --app 出 SVG ·
 //     文本吃画布平移 · 文字真居中（看包围盒而不是墨点数）
-// ── ㊷ apps/tutorial：从零写一个应用（`docs/tutorial.md` 的配套代码）───────
+// ── ㊷ apps/tutorial：从零写一个应用（`docs/start/app-anatomy.md` 的配套代码）───────
 //
 // ★ 这一节的作用不是"证明 tutorial 能跑"，是**给教程绑一条闸门**：
-//   `docs/tutorial.md` 讲的那几条（四段结构 / overlayPanel 零接线 / after 要接线）
+//   `docs/start/app-anatomy.md` 讲的那几条（四段结构 / overlayPanel 零接线 / after 要接线）
 //   一旦被后续改动打破，这里先红，而不是等下一次有人照抄教程时才发现。
 // ★ 断言全部走**公开面**（`dispatchInput` + `findElement`），不碰 State 私有字段
 //   —— 教程要教的就是"从外面看得见的行为"。
@@ -4296,7 +4296,7 @@ check('P0 · 无端口时 frame() 行为不变（drain 段整段跳过）', $noT
 
 // ⑦ 一帧交付**有预算**（2026-10-30 P1）—— "一次回来几百条"到底会怎样
 //
-// ★ 这是 `docs/UI-THREAD-MODEL-2026-10-30.md` §7 承认"没做过"的那个量具。
+// ★ 这是 `docs/guides/debugging.md` §7 承认"没做过"的那个量具。
 //   场景不是编的：`Future::all()` 聚合几百个请求、批量上传几百个文件，都会
 //   让 `drain()` 一次面对几百条 `Completion`。
 // ★ 判据用**条数**而不是耗时：CI 机器上毫秒数会抖，而"交了几条 / 分了几个帧"

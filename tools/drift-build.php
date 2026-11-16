@@ -212,7 +212,7 @@ function usage(): never
       DRIFT_PHPX_HOME    PHPX 根（默认 <PHP 发行版>/phpx）
 
     ★ 为什么默认用**源码树** `bin/tpc.php` 而不是发行版 `tpc.exe`：
-      修复只进源码树，发行版二进制不含（详见 DESIGN.md §10.1.2）。
+      修复只进源码树，发行版二进制不含（详见 docs/guides/dependencies-and-release.md）。
 
     TXT);
     exit(0);

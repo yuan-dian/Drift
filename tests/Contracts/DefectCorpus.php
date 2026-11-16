@@ -130,14 +130,14 @@ final class DefectCorpus
                 'id'    => 'R1',
                 'class' => 'doc',
                 'from'  => 'docref · markdown 相对链接死链',
-                'note'  => '文档里链到不存在的分册 ⇒ 读者点进去 404，没有任何东西会报错',
+                'note'  => '文档里链到不存在的页面 ⇒ 读者点进去 404，没有任何东西会报错',
                 'retired'    => true,
                 'retiredWhy' => 'markdown-links 守的旧分册链接随文档重构退役',
                 'op'    => [
                     'kind' => 'replace',
-                    'path' => 'DESIGN.md',
-                    'from' => '> 历史裁决与探针证据见 [`docs/_archive/DESIGN-v2-2026-10-14.md`](docs/_archive/DESIGN-v2-2026-10-14.md)。',
-                    'to'   => "> 历史裁决与探针证据见 [`docs/_archive/DESIGN-v2-2026-10-14.md`](docs/_archive/DESIGN-v2-2026-10-14.md)。\n"
+                    'path' => 'docs/README.md',
+                    'from' => '> 按任务组织的现行知识入口。这里只回答"去哪看"；所有页面只描述现在是什么、怎么做，不记录开发过程。',
+                    'to'   => "> 按任务组织的现行知识入口。这里只回答\"去哪看\"；所有页面只描述现在是什么、怎么做，不记录开发过程。\n"
                         . ">\n> 语料注入：[死链](docs/NOPE-CORPUS.md)。",
                 ],
             ],
@@ -150,9 +150,9 @@ final class DefectCorpus
                 'retiredWhy' => 'section-refs 守的跨册 § 编号随文档重构退役',
                 'op'    => [
                     'kind' => 'replace',
-                    'path' => 'DESIGN.md',
-                    'from' => '**当前定位**：',
-                    'to'   => "**当前定位**（见 `docs/AOT-CONSTRAINTS.md` §99.9）：",
+                    'path' => 'docs/README.md',
+                    'from' => '## 第一次接触',
+                    'to'   => "## 第一次接触（见 `docs/reference/aot-constraints.md` §99.9）：",
                 ],
             ],
             [
@@ -164,9 +164,9 @@ final class DefectCorpus
                 'retiredWhy' => 'project-name 守的正文命名随文档重构退役；命名纪律并入 lint',
                 'op'    => [
                     'kind' => 'replace',
-                    'path' => 'DESIGN.md',
-                    'from' => '**当前定位**：`v0.1.0-preview.1`',
-                    'to'   => '**当前定位**（Drift2）：`v0.1.0-preview.1`',
+                    'path' => 'docs/README.md',
+                    'from' => '# Drift 文档',
+                    'to'   => '# Drift2 文档',
                 ],
             ],
 

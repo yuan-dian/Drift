@@ -43,7 +43,7 @@ final class AspectPage extends StatelessWidget
                 )->caption(),
                 // ★ 2026-11-04 结案：这条原本是 10-24 写下的**活体诊断**——
                 //   "`16 / 9` 若在 C++ 侧被当整数除法，会显示 1"。实测：**AOT 下真的是 1**，
-                //   而 `16.0 / 9.0` 是 1.7778 ⇒ 怀疑成立，见 `docs/AOT-CONSTRAINTS.md` §1.2。
+                //   而 `16.0 / 9.0` 是 1.7778 ⇒ 怀疑成立，见 `docs/reference/aot-constraints.md` §1.2。
                 // ★★ 但它**不再在运行期求值**：那会让本页几何在 AOT 与解释器下必然不同
                 //   （这一行文字宽度差 94px），`tools/fingerprint.php` 的逐值比对
                 //   就永远有脏行、当不了回归判据。这条事实改由 `probes/aot_micro` 每次

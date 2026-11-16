@@ -191,7 +191,7 @@ final class FrameTaxMeasure
                 }
             }
             // 取"离中位最近的那一帧"而不是 sort 后取下标 —— 不用闭包、不用 usort，
-            // tpc 下这两样都是额外风险（`AOT-CONSTRAINTS` §1.2）。
+            // tpc 下这两样都是额外风险（`docs/reference/aot-constraints.md` §1.2）。
             $medianTotal = Samples::of($totals)->median;
             $pick = 0;
             $best = \PHP_FLOAT_MAX;

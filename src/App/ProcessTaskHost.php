@@ -543,7 +543,7 @@ final class ProcessTaskHost implements TaskHost
             $chunk = fread($worker['out'], self::READ_CHUNK);
             if ($chunk === false || $chunk === '') {
                 // EOF 不在这里结算：进程退出由同一帧的 reap() 用 proc_get_status 看到
-                // （实测两者同一轮询内到达，见 docs/DESIGN-JOB-TIMEOUT-2026-11-08.md §8）。
+                // （实测两者同一轮询内到达，见 docs/guides/async.md §8）。
                 continue;
             }
 
@@ -628,7 +628,7 @@ final class ProcessTaskHost implements TaskHost
         // 空闲才降频：有在途时立即查（崩溃尽快变 onError），空闲时每 500ms 查一次够（只回收僵尸，没人等结果）。
         // 实时性没丢：有任务在跑时进程退出由同一帧的 reap() 用 proc_get_status 看到
         // （实测管道 EOF 与 running=false 同一轮询内到达 —— 所以没有单独的 EOF 分支，
-        // 见 docs/DESIGN-JOB-TIMEOUT-2026-11-08.md §8）；这里只补"空闲期间崩"的回收。
+        // 见 docs/guides/async.md §8）；这里只补"空闲期间崩"的回收。
         $now = intdiv(\hrtime(true), 1000);
 
         if ($this->inflight === [] && $now - $this->lastReapUs < self::REAP_IDLE_INTERVAL_US) {

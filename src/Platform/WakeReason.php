@@ -12,7 +12,7 @@ namespace Drift\Platform;
  *
  * ★ **不返回 `bool`**：`true`/`false` 只能回答"继续吗"，回答不了"为什么继续"。
  *   多窗口之后「继续」还要按窗口算（关一个窗 ≠ 退出应用），那时 `bool` 更不够用
- *   （[`MULTI-WINDOW-2026-10-30.md`](../../docs/MULTI-WINDOW-2026-10-30.md) M1）。
+ *   （[`MULTI-WINDOW-2026-10-30.md`](../../docs/guides/platform-ports.md) M1）。
  * ★ **四个 case**（2026-10-30 补齐第四个）：`Woken`（被跨上下文投递打断）原本
  *   只写在设计册里、没有生产者 —— 按"未被消费的分支 = 未实现"的纪律当时没加。
  *   A2 的 IO 线程（N5）落地后它有了生产者（`drift_io_*` 的完成队列），才补上。

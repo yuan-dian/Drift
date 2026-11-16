@@ -59,7 +59,7 @@ php tools/version.php --check  # 全部对齐才过；verify 的 static 层也�
 `deps.lock.json` 的版本锚点，以及 `SKIA_REVISION` 与 lock 里的 `skiaRevision`；
 `gen-version.php --check` 再覆盖 8 份 `project.yml`。漏了同步会在闸门里响，
 而不是发版时才发现 tag 和 CHANGELOG 对不上。升级流程与借鉴来源见
-[`docs/RELEASE-DEPS.md`](docs/RELEASE-DEPS.md) 末节「版本号与升级锚点」。
+[`依赖与发布`](docs/guides/dependencies-and-release.md)。
 
 ## 构建环境：装什么、放哪、怎么确认
 
@@ -112,7 +112,7 @@ php bin/tpc.php --help
 ```
 
 ★ 版本不能太旧：本仓 AOT 台账在 `bff46481`（含 #183–#186）上验过，见
-[`docs/AOT-CONSTRAINTS.md`](docs/AOT-CONSTRAINTS.md) 的「上游 #186 与当前编译器状态」一节。
+[`AOT 约束`](docs/reference/aot-constraints.md)。
 `doctor` 只验 `tpc` 入口文件存在，**不验版本** —— 旧编译器要到构建期才报错。
 **不要用 release 包里的 `tpc.exe`，也不要用 `composer require swoole/typephp`**：
 `drift-build` / `drift-codegen` 只认源码树的 `bin/tpc.php`（发行版 `tpc.exe`
@@ -175,7 +175,7 @@ Windows 上 Git Credential Manager 把凭据放在系统凭据库里读不出来
 
 不走 `composer require`：Composer 的 `dist.shasum` 只认 SHA-1（填 SHA-256 直接校验失败）、
 解压会剥掉包内的 `cpp/` 顶层，而且没有"可选依赖"—— 包一旦进 `require`，50 MB 会摊给每个
-只跑闸门、根本不需要 Skia 的人。实测数据与取舍见 [`docs/RELEASE-DEPS.md`](docs/RELEASE-DEPS.md)
+只跑闸门、根本不需要 Skia 的人。实测数据与取舍见 [`依赖与发布`](docs/guides/dependencies-and-release.md)
 末节「为什么不用 Composer 分发」。
 
 从已有 `cpp/` 的机器分发（**首个 release 之前唯一可行**，也是内网 / 离线机器的做法）：
@@ -230,7 +230,7 @@ php tools/release-deps.php --dry-run           # 只看要做什么
 
 发布脚本会先把包 / `.sha256` / `deps.lock.json` 三者对齐，再核对版本锚点
 （`lock` 里的 `driftVersion` / `depsTag` 必须等于根目录 `VERSION` / `DEPS_VERSION`），
-全对齐才动手；覆盖已有资产要加 `--force`（GitHub 不支持改资产内容）。完整流程与取舍见 [`docs/RELEASE-DEPS.md`](docs/RELEASE-DEPS.md)。
+全对齐才动手；覆盖已有资产要加 `--force`（GitHub 不支持改资产内容）。完整流程与取舍见 [`依赖与发布`](docs/guides/dependencies-and-release.md)。
 
 **不想要预编译包、要从源码自己编 Skia**（可选，仅 Windows x64）：构建输入全部入库 ——
 `SKIA_REVISION`（Skia commit）、`tools/skia/args.gn.tpl`（平台无关的 GN 参数）、
@@ -247,7 +247,7 @@ php tools/pack-deps.php                    # 组包 + 写 deps.lock.json
 ★ 现有 `deps-v1` 的包是从别的机器拷入的预编译包，**没有可追溯的源码 commit** ⇒
 `SKIA_REVISION` 目前是 `unpinned`、`deps.lock.json` 里 `provenance: legacy`。这是如实标注，
 不是漏填：脚本与 CI 重建都拒绝 `unpinned`。自动构建、发布流程见
-[`docs/RELEASE-DEPS.md`](docs/RELEASE-DEPS.md) 的「CI 自动构建依赖包」一节。
+[`依赖与发布`](docs/guides/dependencies-and-release.md) 的「CI 自动构建依赖包」一节。
 
 #### ③ 路径不对就设环境变量
 
@@ -296,26 +296,24 @@ python tools/probe-window.py hello
 
 > 第三步的重型工具链是**唯一门槛**：组件、默认位置与覆盖变量见上一节「构建环境」，
 > `doctor` 会逐项报告缺什么。精确版本与「改什么要重编译」见
-> [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md)。
+> [`协作流程`](docs/contributing/workflow.md)。
 
 ## 从零写一个应用
 
-看 [`docs/tutorial.md`](docs/tutorial.md) + [`apps/tutorial`](apps/tutorial)。
+看 [`应用解剖`](docs/start/app-anatomy.md) + [`apps/tutorial`](apps/tutorial)。
 
 ## 文档
 
-- 现行设计：[`DESIGN.md`](DESIGN.md)（分层 / 稳定契约 / 有意不做）；v2 历史裁决见 [`docs/_archive/DESIGN-v2-2026-10-14.md`](docs/_archive/DESIGN-v2-2026-10-14.md)
-- 实现现状：[`docs/architecture/00-README.md`](docs/architecture/00-README.md)
-- 文档索引与权威对照：[`docs/00-README.md`](docs/00-README.md)
-- 贡献 / CI / 工具链：[`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md)、[`AGENTS.md`](AGENTS.md)
-- 发布就绪度：[`docs/RELEASE-READINESS-2026-11-10.md`](docs/RELEASE-READINESS-2026-11-10.md)
+- 文档导航：[`docs/README.md`](docs/README.md)（开始 / 指南 / 概念 / 参考 / 裁决 / 贡献）
+- 框架概览与边界：[`docs/start/overview.md`](docs/start/overview.md)
+- 裁决索引：[`docs/decisions/README.md`](docs/decisions/README.md)
+- 贡献 / CI / 工具链：[`docs/contributing/setup.md`](docs/contributing/setup.md)、[`AGENTS.md`](AGENTS.md)
 - 变更日志：[`CHANGELOG.md`](CHANGELOG.md)
 
 ## 当前边界
 
 技术预览、Windows-only、API 可能变；能力面够写真实业务应用（见 `apps/watermark`）。
-缺失项与「有意不为」以 [`DESIGN.md`](DESIGN.md) 的「当前缺失与有意不为」一节为准，
-发布档位判定见上面的就绪度评估。
+缺失项与「有意不为」以 [`框架概览`](docs/start/overview.md) 与 [`裁决索引`](docs/decisions/README.md) 为准。
 
 ## 许可证
 

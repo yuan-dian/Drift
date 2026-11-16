@@ -1,7 +1,7 @@
 # apps/bench —— v7 阶段 0 的三个微基准
 
-> 规格：[`docs/design-v7/25-推进路线.md`](../../docs/design-v7/25-推进路线.md) §3
-> 背景：[`24-v7-vs-实现.md`](../../docs/design-v7/24-v7-vs-实现.md) §5
+> 规格：[`docs/decisions/README.md`](../../docs/decisions/README.md) §3
+> 背景：[`24-v7-vs-实现.md`](../../docs/decisions/README.md) §5
 
 **这里只有一个问题：三个数字。** 方案（26 册）已经自洽，实现（22081 行）能跑，
 但项目至今**没有"每阶段耗时"的数据** —— 所有"增量布局值不值得"的讨论都建立在
@@ -54,7 +54,7 @@ v7 的"一棵树"让孩子存在 `array` 里，遍历时 `toObject(Node::class)`
 
 ★ `A / C` **不作判据**。它衡量的是"PHP 层相对 C struct 的差距"，而那个差距
 **现状也有**（现状同样是裸 array + 动态分派）。拿 C 当基线会把"PHP 的固有成本"
-误判成"一棵树的成本" —— 这是 [`24` §2.2](../../docs/design-v7/24-v7-vs-实现.md)
+误判成"一棵树的成本" —— 这是 [`24` §2.2](../../docs/decisions/README.md)
 自我修正过的那一条。
 
 ★ 已核实的机制前提（`typephp/src/CompilerBase.php:2618`）：`toObject(X::class)` 的
@@ -136,7 +136,7 @@ rm build/m4.on              # 关掉，恢复无头三基准
 输出五段：`端到端` / `beginFrame`（Skia 分配 + 清白）/ `toRgba`（4 MB 搬运）/
 `present`（swizzle + GDI）/ `其余`（PHP：settle + layout + paint 的记录部分）。
 
-判据（[`25`](../../docs/design-v7/25-推进路线.md) §4）：`toRgba + present > 80%`
+判据（[`25`](../../docs/decisions/README.md) §4）：`toRgba + present > 80%`
 ⇒ 不碰 `src/Layout/`，先修这条链；`< 50%` ⇒ 才轮到 measure/place 拆分。
 
 ★ 实测落在 **50.9%**（灰区），但把 `beginFrame` 也算进"表面链"就是 **61.2%**；

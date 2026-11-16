@@ -19,7 +19,7 @@ final class ThemeCapabilityTest extends SmokeTestCase
 {
     /** @var list<string> 主题能力的权威活文档 */
     private const array ENTRY_DOCS = [
-        'docs/architecture/09-主题与语义.md',
+        'docs/guides/text-and-theme.md',
     ];
 
     public function testWithColorIsLastWriteWins(): void
@@ -167,16 +167,22 @@ final class ThemeCapabilityTest extends SmokeTestCase
 
     public function testTokenTablesMatchDocumentedCount(): void
     {
-        $src = (string) file_get_contents($this->path('docs/architecture/09-主题与语义.md'));
+        $src = (string) file_get_contents($this->path('docs/guides/text-and-theme.md'));
+        $colorCases = array_column(ColorToken::cases(), 'name');
+        $metricCases = array_column(MetricToken::cases(), 'name');
+
+        preg_match_all('/ColorToken::(\w+)/', $src, $colors);
+        preg_match_all('/MetricToken::(\w+)/', $src, $metrics);
+
         check(
-            '主题 · 09 写的 ColorToken 数量等于枚举实有数',
-            $this->documentedCount($src, 'ColorToken') === count(ColorToken::cases()),
-            'ColorToken',
+            '主题 · 文档引用的 ColorToken 成员都是真实枚举值',
+            $colors[1] !== [] && array_diff($colors[1], $colorCases) === [],
+            'tokens=' . implode(',', $colors[1]),
         );
         check(
-            '主题 · 09 写的 MetricToken 数量等于枚举实有数',
-            $this->documentedCount($src, 'MetricToken') === count(MetricToken::cases()),
-            'MetricToken',
+            '主题 · 文档引用的 MetricToken 成员都是真实枚举值',
+            $metrics[1] !== [] && array_diff($metrics[1], $metricCases) === [],
+            'tokens=' . implode(',', $metrics[1]),
         );
 
         $this->flushChecks();

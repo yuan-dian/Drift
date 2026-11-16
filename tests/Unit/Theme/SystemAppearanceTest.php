@@ -26,7 +26,7 @@ use Drift\Widget\BuildContext;
  */
 final class SystemAppearanceTest extends SmokeTestCase
 {
-    private const string ENTRY_DOC = 'docs/architecture/09-主题与语义.md';
+    private const string ENTRY_DOC = 'docs/guides/text-and-theme.md';
     private const string STUB = 'cpp-src/win32/drift_win32.stub.php';
     private const string CC = 'cpp-src/win32/drift_win32.cc';
     private const string FAKES = 'tools/fakes/win32.php';

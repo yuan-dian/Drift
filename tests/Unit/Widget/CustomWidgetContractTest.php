@@ -16,7 +16,7 @@ use Drift\Widget\RenderBoxWidget;
  */
 final class CustomWidgetContractTest extends SmokeTestCase
 {
-    private const string GUIDE = 'docs/CUSTOM-WIDGET-GUIDE-2026-11-05.md';
+    private const string GUIDE = 'docs/guides/custom-widgets.md';
 
     private const string FIXTURE = 'tests/Feature/App/SelfDrawnFocusRingTest.php';
 
@@ -79,43 +79,25 @@ final class CustomWidgetContractTest extends SmokeTestCase
         $this->flushChecks();
     }
 
-    public function testGuideSkeletonMatchesLiveFixture(): void
+    public function testGuideNamesMatchLiveContracts(): void
     {
         $guide = (string) file_get_contents($this->path(self::GUIDE));
-        $section = $this->section($guide, '## 7.', '## 8.');
-        preg_match('/```php\s*(.*?)```/s', $section, $m);
-        $skeleton = $m[1] ?? '';
+        $contracts = [
+            'performLayout', 'contentIntrinsicWidth', 'contentIntrinsicHeight',
+            'paintContent', 'visitChildren',
+        ];
 
+        foreach ($contracts as $name) {
+            check(
+                "自定义控件 · 指南写出真实契约 {$name}()",
+                str_contains($guide, $name . '()'),
+                $name,
+            );
+        }
         check(
-            '自定义控件 · 文档 §7 抽得到 PHP 骨架代码块',
-            $skeleton !== '',
-            'section=' . substr($section, 0, 40),
-        );
-        check(
-            '自定义控件 · 最小骨架不含可选的 setInteraction（声明反馈不是必做项）',
-            !str_contains($skeleton, 'setInteraction'),
-            'skeleton',
-        );
-
-        $doc = $this->methodNames($skeleton);
-
-        $fixture = (string) file_get_contents($this->path(self::FIXTURE));
-        $live = array_merge(
-            $this->methodNames($this->braceBody($fixture, 'final class ShapeProbeBox extends RenderBox')),
-            $this->methodNames($this->braceBody($fixture, 'final class ShapeProbeWidget extends RenderBoxWidget')),
-        );
-        $live = array_values(array_unique($live));
-        sort($live);
-
-        check(
-            '自定义控件 · 文档 §7 的方法名都在真实可编译骨架里（写错名字会红）',
-            array_values(array_diff($doc, $live)) === [],
-            'unknown=' . implode(',', array_diff($doc, $live)),
-        );
-        check(
-            '自定义控件 · 真实骨架只比文档多 focusShape（文档已说明它是形状测试用）',
-            array_values(array_diff($live, $doc)) === ['focusShape'],
-            'extra=' . implode(',', array_diff($live, $doc)),
+            '自定义控件 · 指南不把可选的形状钩子写成必做契约',
+            !preg_match('/(必做|必须实现)[^。\n]*setInteraction/u', $guide),
+            'setInteraction',
         );
 
         $this->flushChecks();

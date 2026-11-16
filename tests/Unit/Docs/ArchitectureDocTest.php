@@ -6,56 +6,19 @@ namespace Drift\Dev\Tests\Unit\Docs;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 
 /**
- * 活文档分册的引用纪律（根 `DESIGN.md` §9）。
+ * 新文档体系的正文纪律：不写行号、源码路径不能是幽灵、裁决必须带失效条件。
  *
- * ★ 行号每次改代码都漂：治理前 14 分册有 167 个完整路径锚点 + 46 个简写锚点
- *   （`` `:NN` ``），其中只有约四成指向真正的声明行，其余指向注释、方法体中段或空行。
- *   纪律是「只给文件 + 符号」，不是「把行号改对」—— 改对了下一轮又漂。
- * ★ 只管 `docs/architecture/`。`docs/` 顶层的历史稿 / 评审稿绑定当时快照，
- *   行号是事实记录，按 `DESIGN.md` §9 不改写。
+ * ★ 链接可达、页面结构与导航孤儿由 tools/doccheck.php 守；这里只守正文里指向
+ *   源码的符号路径与裁决表结构，不把两份检查抄成同一份清单。
  */
 final class ArchitectureDocTest extends SmokeTestCase
 {
-    /** @var list<string> 集合封闭：新增分册必须显式登记，判据才不会静默漏检 */
-    private const array LIVE_DOCS = [
-        '00-README.md',
-        '01-三层树与身份.md',
-        '02-帧管线与异步.md',
-        '03-布局与渲染盒.md',
-        '04-绘制与双后端.md',
-        '05-文本与字体栈.md',
-        '06-输入-手势与焦点.md',
-        '07-状态-订阅-命令.md',
-        '08-控件面.md',
-        '09-主题与语义.md',
-        '10-平台端口与-Win32-壳.md',
-        '11-编译器约束与-AOT-坑.md',
-        '12-工程与工具.md',
-        '13-与-v7-设计对照.md',
-        '14-组合根与装配.md',
-        '15-异步资源控件.md',
-    ];
+    /** @var list<string> 文档分区 */
+    private const array SECTIONS = ['start', 'guides', 'concepts', 'reference', 'decisions', 'contributing'];
 
-    public function testLiveDocSetIsClosed(): void
+    public function testAllLiveDocsAvoidLineAnchors(): void
     {
-        $actual = array_map('basename', glob($this->path('docs/architecture') . '/*.md') ?: []);
-        sort($actual);
-        $declared = self::LIVE_DOCS;
-        sort($declared);
-
-        check(
-            '文档纪律 · 活文档分册集合封闭（新增分册必须显式登记）',
-            $actual === $declared,
-            'actual=' . implode(',', array_diff($actual, $declared))
-                . ' missing=' . implode(',', array_diff($declared, $actual)),
-        );
-
-        $this->flushChecks();
-    }
-
-    public function testLiveDocsCarryNoLineAnchors(): void
-    {
-        foreach (glob($this->path('docs/architecture') . '/*.md') ?: [] as $file) {
+        foreach ($this->liveDocs() as $file) {
             $anchors = $this->lineAnchors((string) file_get_contents($file));
             check(
                 '文档纪律 · ' . basename($file) . ' 不写 file:line（行号会漂，按符号名定位）',
@@ -67,9 +30,9 @@ final class ArchitectureDocTest extends SmokeTestCase
         $this->flushChecks();
     }
 
-    public function testLiveDocsReferenceOnlyRealSourceFiles(): void
+    public function testAllLiveDocsReferenceOnlyRealSourceFiles(): void
     {
-        foreach (glob($this->path('docs/architecture') . '/*.md') ?: [] as $file) {
+        foreach ($this->liveDocs() as $file) {
             $ghosts = array_values(array_filter(
                 $this->srcPaths((string) file_get_contents($file)),
                 static fn (string $p): bool => !is_file(dirname(__DIR__, 3) . '/' . $p),
@@ -84,20 +47,23 @@ final class ArchitectureDocTest extends SmokeTestCase
         $this->flushChecks();
     }
 
-    public function testHistoryDraftsKeepTheirSnapshotAnchors(): void
+    public function testDecisionIndexCarriesExpiryConditions(): void
     {
-        $withAnchors = 0;
-        foreach (glob($this->path('docs') . '/*.md') ?: [] as $file) {
-            if ($this->lineAnchors((string) file_get_contents($file)) !== []) {
-                $withAnchors++;
+        $src = (string) file_get_contents($this->path('docs/decisions/README.md'));
+        $rows = 0;
+        foreach (explode("\n", $src) as $line) {
+            if (preg_match('/^\|\s*[ACNPE]\d+\s*\|/u', $line) !== 1) {
+                continue;
             }
+            $rows++;
+            $cells = explode('|', $line);
+            check(
+                '裁决索引 · ' . trim($cells[1] ?? '') . ' 带失效条件',
+                trim($cells[4] ?? '') !== '',
+                'expiry=' . trim($cells[4] ?? ''),
+            );
         }
-
-        check(
-            '文档纪律 · 历史稿仍带当时快照的行号（证明没把历史改写成假的）',
-            $withAnchors > 0,
-            'files=' . $withAnchors,
-        );
+        check('裁决索引 · 登记表不是空壳', $rows > 0, 'rows=' . $rows);
 
         $this->flushChecks();
     }
@@ -123,6 +89,19 @@ final class ArchitectureDocTest extends SmokeTestCase
         );
 
         $this->flushChecks();
+    }
+
+    /** @return list<string> */
+    private function liveDocs(): array
+    {
+        $files = [];
+        foreach (self::SECTIONS as $section) {
+            foreach (glob($this->path('docs/' . $section) . '/*.md') ?: [] as $file) {
+                $files[] = $file;
+            }
+        }
+
+        return $files;
     }
 
     /** @return list<string> 完整路径锚点 + 裸文件名锚点 + 简写 `:NN` */

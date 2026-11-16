@@ -11,7 +11,7 @@ use Drift\Dev\Bench\Micro\MicroSize;
  * tpc AOT vs PHP 解释器 的**阶梯微基准**：把「AOT 慢 1.73×」拆成可归因的成分。
  *
  * ★ 为什么需要它：`DEBT` §34 量出 AOT 在 12k 合成树上慢 1.73×、§35 在 27 个真实页上
- *   慢 2.24×，当时的解释是「`php::Var` 装箱」（假说，未验证）。但 `AOT-CONSTRAINTS` §2.3
+ *   慢 2.24×，当时的解释是「`php::Var` 装箱」（假说，未验证）。但 `docs/reference/aot-constraints.md` §2.3
  *   的 M2 微基准早就测过 `mixed` + `toInt()` vs `int` 直读 = **0.94** —— 装箱在
  *   「属性读」这一点上几乎免费。⇒ 两个结论对不上，而「两个比值都得留着」的措辞
  *   掩盖了这件事：**减速的成分根本没定位过**。
@@ -128,7 +128,7 @@ final class AotMicro
             'n' => $n,
             'minUs' => \round($best / 1000.0, 2),
             // ★★ 必须显式 `(float)`：tpc 把 `int / int` 编译成**整数除法**
-            //   （2026-11-04 实测 `7 / 2 === 3`，见 `AOT-CONSTRAINTS` §1.2）。
+            //   （2026-11-04 实测 `7 / 2 === 3`，见 `docs/reference/aot-constraints.md` §1.2）。
             //   不写这两个 cast，本量具在 AOT 侧的 ns/op 全是整数、线性自证永远算出 1.00 ——
             //   量具自己踩了被测对象的坑。
             'nsPerOp' => \round((float) $best / (float) $n, 2),
@@ -448,7 +448,7 @@ final class AotMicro
      * L07 `mixed` 拆箱。
      *
      * ★ 形参写 `mixed` 而不是让 `$m = $i` 推成 int：tpc 的形参层对 `mixed` 生成
-     *   `php::Var`（`AOT-CONSTRAINTS` §2.2 证据一），这才真的在测装箱/拆箱。
+     *   `php::Var`（`docs/reference/aot-constraints.md` §2.2 证据一），这才真的在测装箱/拆箱。
      *   如果写成 `$m = $i`，AOT 会直接推成 `php::Int`，测出来的是 1.0× —— 没意义。
      */
     private static function mixedVar(int $n, mixed $seed): int

@@ -19,7 +19,7 @@ namespace Drift\Core;
  *
  * ★★ 为什么方法叫 `pipeline()` 而不是直接写 `Pipeline::current()`：现在两者
  *   等价，但**语义不同** —— 树内对象问的是"**我的**账本"，不是"当前账本"。
- *   多窗口（`docs/MULTI-WINDOW`）落地时，这里改成读节点上的引用（`Pipeline`
+ *   多窗口（`docs/guides/platform-ports.md`）落地时，这里改成读节点上的引用（`Pipeline`
  *   类注释里候选 ①），**调用点一行都不用改**。这就是那个"扩展点"。
  *
  * @internal 框架内部所有"记本帧的账"的树内类都 use 它

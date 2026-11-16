@@ -22,10 +22,10 @@ use Drift\Widget\Widget;
  */
 final class WidgetCapabilityDiscoveryTest extends SmokeTestCase
 {
-    /** @var list<string> `docs/00-README.md` 指向的「想加一个新控件」入口 */
+    /** @var list<string> `docs/README.md` 指向的「想加一个新控件」入口 */
     private const array ENTRY_DOCS = [
-        'docs/architecture/08-控件面.md',
-        'docs/CUSTOM-WIDGET-GUIDE-2026-11-05.md',
+        'docs/guides/widgets.md',
+        'docs/guides/custom-widgets.md',
     ];
 
     /** @var list<string> 会直接误导使用者的示例台注释 */

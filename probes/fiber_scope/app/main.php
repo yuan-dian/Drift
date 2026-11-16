@@ -7,7 +7,7 @@ declare(strict_types=1);
  * 为什么需要这一枪：`tools/Lint/Rules/NanoHygiene.php` 把 `Fiber` 列为禁用类型，
  * 理由是「C++17 无栈切换，无法承载」；而 `probes/RESULTS.md` §12.2 的 `[I]` 又在
  * AOT 产物里记录了 `terminated=yes`。**两个结论直接冲突**，而线性异步
- * （`docs/DESIGN-LINEAR-ASYNC-2026-11-04.md`）整条路都压在 Fiber 上 ⇒ 不判清楚不能动 `src/`。
+ * （`docs/decisions/README.md`）整条路都压在 Fiber 上 ⇒ 不判清楚不能动 `src/`。
  *
  * ★ 探针 `[I]` 只验了「能 new / 能让出 / 能恢复」一轮。真正要落地 `AsyncScope`
  *   还需要下面九条边界，缺一条就可能让方案在真机上炸：

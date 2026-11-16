@@ -39,7 +39,7 @@ namespace win32 {
  *   再分配可能二次崩、把现场盖掉）。缓冲全是栈上定长数组 + `WriteFile`。
  * - **不重入**：`InterlockedExchange` 守卫；过滤器自己再崩时直接放行给系统。
  * - **不做符号解析**：`dbghelp` 会加载 pdb、分配内存，本机连 cdb 都没有。
- *   RVA + `dumpbin /disasm` 足够定位，见 `docs/REVIEW-2026-11-01.md` §15.4。
+ *   RVA + `dumpbin /disasm` 足够定位，见 `docs/guides/debugging.md` §15.4。
  * - **不改进程行为**：返回 `EXCEPTION_EXECUTE_HANDLER`（照常终止），只是**多留一份证据**。
  *   不尝试"继续执行" —— 堆已坏的情况下继续跑只会让下一个崩溃点漂移。
  */

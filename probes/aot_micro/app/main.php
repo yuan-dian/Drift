@@ -11,7 +11,7 @@ use Drift\Dev\Bench\AotMicro;
  * ## 它回答的那个问题
  *
  * `DEBT` §34 量出 AOT 在 12k 合成树上慢 1.73×、§35 在 27 个真实页上慢 2.24×，
- * 当时的归因是「`php::Var` 装箱」（**假说，未验证**）。可 `AOT-CONSTRAINTS` §2.3
+ * 当时的归因是「`php::Var` 装箱」（**假说，未验证**）。可 `docs/reference/aot-constraints.md` §2.3
  * 的 M2 早就测过 `mixed` + `toInt()` vs `int` 直读 = **0.94** —— 装箱在属性读上
  * 几乎免费。两个结论对不上，说明减速的成分**从来没被定位过**。
  *

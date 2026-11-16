@@ -60,7 +60,7 @@ final class Runner
 
         self::line('════════════════════════════════════════════════════════════════');
         self::line(' Drift bench —— v7 阶段 0 微基准（AOT 产物）');
-        self::line(' 规格：docs/design-v7/25-推进路线.md §3');
+        self::line(' 规格：docs/decisions/README.md §3');
         self::line('════════════════════════════════════════════════════════════════');
         self::line('');
         self::flush();
@@ -114,11 +114,11 @@ final class Runner
      *    `09` W0 第 1 步写作时写的"M0Mixed"没注意到这个重叠 ⇒ 文档要改。
      *
      * ★ **M0-2 不计时**：答案是生成物里的字段声明类型（二值），见
-     *    `M0Nullable::notes()` 与 `docs/AOT-CONSTRAINTS.md`。
+     *    `M0Nullable::notes()` 与 `docs/reference/aot-constraints.md`。
      */
     private static function m0(): void
     {
-        self::line('## M0  arch-v2 的三条实测（docs/arch-v2/08 §3）');
+        self::line('## M0  arch-v2 的三条实测（docs/reference/aot-constraints.md）');
         self::line('');
 
         // ── M0-1：readonly 的成本 ──
@@ -154,7 +154,7 @@ final class Runner
         foreach (M0Nullable::notes() as $note) {
             self::line('   · ' . $note);
         }
-        self::line('   二值结论由 grep 生成物补，落点：docs/AOT-CONSTRAINTS.md');
+        self::line('   二值结论由 grep 生成物补，落点：docs/reference/aot-constraints.md');
         self::line('');
 
         // ── M0-3：mixed 装箱（复用 M2）──

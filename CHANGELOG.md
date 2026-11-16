@@ -15,12 +15,12 @@
 - **未打 tag = 未发布**：本文件里的 `preview.N` 只表示"下一个 tag 的内容"；
   `git tag -l` 为空时，任何版本号都不构成对外承诺。
 - **破坏性变更**：preview 阶段允许；变更记入对应版本的「Breaking」小节，并在发版前于
-  [`docs/DEBT-2026-11-02.md`](docs/DEBT-2026-11-02.md) 登记。
+  在本文件对应版本的 Breaking 小节登记。
 - 发版前验收：`drift-build --full` 绿 + `probe-window` 5/5（T2 全过）。
 
 ## v0.1.0-preview.1（2026-11-10 条目 · 尚未打 tag）
 
-初版技术预览。**能力面**对照 [`docs/RELEASE-READINESS-2026-11-10.md`](docs/RELEASE-READINESS-2026-11-10.md)。
+初版技术预览。能力面见下方条目，边界见 [`框架概览`](docs/start/overview.md)。
 
 ### 已实现
 
@@ -61,7 +61,7 @@
 ### 已知限制
 
 - 布局为整树重排，无 `RelayoutBoundary`；12k 节点实测仍有余量（读数见
-  [`docs/RELEASE-READINESS-2026-11-10.md`](docs/RELEASE-READINESS-2026-11-10.md)），桌面工具类够用。
+  读数见 git 历史），桌面工具类够用。
 - 壳 ↔ PHP ABI **运行期无握手**：改 C++ 壳或 PHP 接口必须同步重编译。跨层契约不是没人守 ——
   静态契约由 `php tools/abi-check.php` 管（stub 为唯一事实源，`--json` 出 schemaHash）。
 - AOT 增量构建**已有** stale 判据（`StalePolicy`，首次自动全量）。发版验收仍用 `--full`，
@@ -82,7 +82,7 @@
   不再一路跑到链接期才报 LNK2019。首个 release 尚未发布：在那之前用离线包
   `php tools/fetch-deps.php --url=<本机 zip 路径>`（或 `DRIFT_DEPS_URL=<目录>`），
   与在线那条共用同一套校验（lock → SHA256 → 解压后数 lib / 字体 / 许可），流程见
-  [`docs/RELEASE-DEPS.md`](docs/RELEASE-DEPS.md)。★ 首个包没有可追溯的 Skia commit
+  [`依赖与发布`](docs/guides/dependencies-and-release.md)。★ 首个包没有可追溯的 Skia commit
   （`SKIA_REVISION` = `unpinned`、lock 里 `provenance: legacy`）；从 pinned commit
   重建与 CI 自动化的入口见该文档的「CI 自动构建依赖包」一节。
   另：`PHPX` 与 `tpc` 源码树属

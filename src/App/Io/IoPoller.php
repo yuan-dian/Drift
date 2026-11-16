@@ -24,7 +24,7 @@ use Drift\Core\Pipeline;
  *   - ~~不做通用 Fiber 调度器~~ —— ★ **消费者来了（2026-11-04）**：
  *     `Drift\Async\AsyncScope` 已落地，负责"多步顺序代码"的控制流。
  *     ★ 但它**不改本类**：`AsyncScope` 的 `await()` 等的是 `Future`（后端在别处跑），
- *     不碰这个轮询器。三者分工见 `docs/ASYNC-2026-10-30.md` §1.6
+ *     不碰这个轮询器。三者分工见 `docs/guides/async.md` §1.6
  *     （TaskHost 管"在别处跑"、本类管"就绪没"、AsyncScope 管"下一步"）。
  *   - ★ 名字别串味（2026-11-08）：本类 `poll()` 只问「IO 就绪没」，与输入出队、
  *     业务周期轮询、布局约束漂移自检那三个同名方法是四件事。

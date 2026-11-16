@@ -25,7 +25,7 @@ declare(strict_types=1);
  *   interpreter —— check / verify / test / lint / list（T0，无头、CI 可跑）
  *   dev-shell   —— dev（T1，真窗口 + 动态 PHP，秒级重启）
  *   aot         —— build / probe（T2，真机，不可替代前两档）
- *   详见 `docs/architecture/12-工程与工具.md` §3。
+ *   详见 `docs/guides/testing.md`。
  *
  * ★ 数组式 `proc_open` + `bypass_shell`：php.exe 走 shell 时 Windows 会经
  *   cmd.exe 二次解释带空格的路径与引号（与 drift-build.php 同法）。
@@ -115,7 +115,7 @@ lint 只依赖 PHP + composer vendor（PHPUnit）；`composer build` 要的是
 MSVC + SDK + tpc，与 Python 无关。
 
 形态不能互相替代：dev 绿 ≠ AOT 绿；T2 的 DPI / WIC / UIA / 消息循环
-只能靠真机探针。分层见 docs/architecture/12-工程与工具.md §3。
+只能靠真机探针。分层见 docs/guides/testing.md。
 
 TXT);
     exit($exitOnHelp);

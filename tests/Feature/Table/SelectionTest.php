@@ -13,7 +13,7 @@ use Drift\Widget\TableSelectionMode;
 /**
  * 选择（受控）+ 行态（悬停 / 选中）。
  *
- * 三条判据（`docs/DESIGN-TABLE-2026-10-26.md` §4 裁决 4）：
+ * 三条判据（`docs/guides/widgets.md` §4 裁决 4）：
  * ① 选中集是**受控值对象**：应用持有、控件只上报"点完之后应该是什么"；
  * ② Shift 连选的真前置是 `PointerEvent` 的修饰键；
  * ③ 行态在**行容器**上合一，`cellBuilder` 不知道自己被选中。

@@ -161,7 +161,7 @@ struct PendingEvent {
 //
 // ★★ 为什么不留一个 `slot()` 返回"当前槽"的过渡态：那就是用一个隐式全局去修
 //   另一个隐式全局 —— 多窗口时"用错窗口"不报错、只画错窗口，是最难定位的
-//   错误类型。见 `docs/MULTI-WINDOW-2026-10-30.md` §4.2b 的同一条判断。
+//   错误类型。见 `docs/guides/platform-ports.md` §4.2b 的同一条判断。
 //
 // ★★ 为什么槽**不 erase**（`WM_DESTROY` 只清资源）：`WindowStateStore::persist()`
 //   跑在**退出路径**上 —— 那时窗口已经死透、句柄已经失效，它还要来问
@@ -2676,7 +2676,7 @@ void php_drift_win_present(Int hwnd, String rgba, Int width, Int height) {
 
 // ═══════════════════════════════════════════════ Skia 直贴（§7.3 提速）══
 // ★ Skia N32 在小端就是 BGRA，32bpp `BI_RGB` DIB 要的也是 BGRA ⇒ 按行 `memcpy`，
-//   不做 swizzle（旧路径两次反向交换占端到端 50%+，见 `docs/design-v7/26-bench-结果.md` §5）。
+//   不做 swizzle（旧路径两次反向交换占端到端 50%+，见 `docs/concepts/rendering.md` §5）。
 // ★ 像素指针由 `drift_skia.cc` 零拷取出。它**不是** PHP ABI 函数（不进 stub，
 //   PHP 侧拿不到）⇒ 用 `extern "C"` 固定符号名，不为它开公共面。
 extern "C" bool drift_skia_surface_pixels(

@@ -24,7 +24,7 @@ use Drift\Dev\Lint\Tokens;
  *   ③ **实测通行**：`probes/fiber_scope` 在 AOT `-m bin` 产物里十一条边界全绿
  *      （跨帧 / 操作 tpc 编译类 / throw+finally / 回调栈恢复 / 多 Fiber / 嵌套 /
  *      深栈 / 传对象 / 局部消化 / getCurrent），且变异自检证明判据有牙。
- *      `docs/design-v7/11-编译器约束映射.md` §5.4 早就写着"`--nano` 不支持 Fiber
+ *      `docs/reference/aot-constraints.md` §5.4 早就写着"`--nano` 不支持 Fiber
  *      ⇒ 走 `-m bin`" —— 二者本就互斥，本仓走的是 `-m bin`。
  *
  * ★ `Generator` / `yield` **仍然禁**：nano 之外没有第二条论据支持生成器，

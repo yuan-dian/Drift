@@ -312,7 +312,7 @@ if ($lock !== null && $remote !== null && !hash_equals((string) $lock['sha256'],
 
 if ($expected === null) {
     fwrite(STDERR, "⚠ 既无 deps.lock.json 也取不到 .sha256，无法校验。本地 SHA256：\n{$actual}\n");
-    fwrite(STDERR, "  请与 docs/RELEASE-DEPS.md 记录的校验值人工比对后再用。\n");
+    fwrite(STDERR, "  请与 docs/guides/dependencies-and-release.md 记录的校验值人工比对后再用。\n");
 } elseif (!hash_equals((string) $expected, $actual)) {
     @unlink($part);
     $ref = isset($lock['sha256']) ? 'deps.lock.json' : '.sha256';

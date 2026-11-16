@@ -1,0 +1,82 @@
+# 快速开始
+
+> 这篇把环境要求分成两档，说明 doctor、dev 壳、AOT 构建与真机探针各自解决什么问题，并明确 dev 绿不等于 AOT 绿。
+
+## 环境分档
+
+环境按「要做什么」分档，不要凭记忆配——体检脚本是路径推导的单一真相源。
+
+| 档 | 能做什么 | 必备 | 不需要 |
+|---|---|---|---|
+| 档 A | 跑闸门、读代码、无头预览 | PHP >= 8.4（`php.exe` 在 `PATH`）；跑单元测试还需 `composer install` 装出 PHPUnit | MSVC / tpc / PHPX |
+| 档 B | 在档 A 之上编出独立 `.exe` | PHPX、tpc 源码树入口、MSVC、Windows SDK、Skia 预编译包与字体 | —— |
+
+两个容易混淆的点：
+
+- 仓库根那份 `php.ini` 是**运行态**配置，dev 壳与探针读它；构建另需 `php.exe` 同目录有一份发行版 ini，脚本会复制到 `_build/ini/` 并用 `PHPRC` 指过去。发行版 ini 保持 `opcache.enable_cli=0`，避免「改了代码却没重编」的静默假绿。
+- 真机探针用 Python 3，依赖仅标准库；重新生成字模才需要额外图像库。
+
+档 A 的工具脚本直接读 `composer.json` 的 psr-4，不需要 `composer install`；但单元测试需要 PHPUnit，缺失时对应步骤会明确记为未通过，不会伪装成全绿。
+
+## doctor：环境体检
+
+```bash
+php tools/doctor.php          # 逐项报告；有 FAIL 退出 1，仅 WARN 退出 0
+php tools/doctor.php --strict # 发布前自查：WARN 也算失败
+php tools/doctor.php --json   # 机器可读
+```
+
+体检用 `affects` 分级：缺 MSVC 不影响只跑闸门，但出 exe 时 `phprc` / `phpx` / `tpc` / `msvc` / `sdk` 必须全绿。缺项会打印修法；若二进制依赖的位置与默认不同，用环境变量覆盖，不要改构建脚本。
+
+## 档 A：跑闸门
+
+```bash
+php bin/drift verify          # 日常验证：静态层 + 行为快项
+php bin/drift verify --list   # 当前判据清单，唯一权威
+php bin/drift lint            # 架构与分层规则
+php bin/drift test            # PHPUnit 单元测试
+```
+
+这一档无 OS 窗口、可进 CI、结果确定。改了 `apps/` 或 `src/` 的代码就跑它，但它不编译业务 PHP，因此看不见 AOT 编译期语义。
+
+## 路 A：dev 壳（改 PHP 不重编译）
+
+```bash
+php tools/drift-dev.php hello
+# 等价：php bin/drift dev -- hello
+```
+
+dev 壳只编一次「壳 + C++ 桥」，之后改业务 PHP 保存即自动重启窗口，适合日常写界面。它是**所有应用共用**的一个壳，不按应用分别编。
+
+★ 首次启动仍需完整档 B 工具链来编出这个壳；「改 PHP 不重编译」只对首次之后的业务改动成立。
+
+## 路 B：AOT 构建 + 真机探针
+
+```bash
+php -v
+php tools/doctor.php                  # 或 php bin/drift verify 先过闸门
+php tools/drift-build.php hello       # 等价：php bin/drift build -- hello
+python tools/probe-window.py hello    # 等价：php bin/drift probe -- hello
+```
+
+`drift-build.php` 输出独立 exe，三态由 `StalePolicy` 裁决：输入未变且产物仍在则跳过；首次、输入变了或产物不在则自动全量；只有显式 `--incremental` 才走增量。`--full` 强制全量，`--dry` 只打印决策不构建。exe 必须以仓库根为 cwd 启动，运行时资源按相对路径查找。
+
+`probe-window.py` 在真窗口上量尺寸、像素、DPI 与关窗退出码，并**自己关窗**；加 `--dev` 则量 dev 壳形态。它也有无头预览的近亲 `drift-preview.php`，输出 SVG 或 PNG，用于确认「排开了、画出来了」，但不是真窗口。
+
+## dev 绿不等于 AOT 绿
+
+dev 壳和解释器都跑 PHP 源码，AOT 产物由编译器生成 C++17 再编译，两者语义有真实差异。dev 全绿仍必须跑 T2 的改动包括：
+
+- 控制流 `switch`、两支类型不同的 `?:`、属性读直接当实参等编辑器能过、T2 才炸的写法。
+- `int / int` 被编成整数除法带来的静默截断。
+- 编译期常量、Trait 与编译期注解的可见性、`sources` 与 `composer.json` 的命名空间扫描是否一致。
+- AOT 侧析构与 shutdown 路径、扩展加载与 `php.ini` 分发。
+
+逐值等价量具 `aot-equivalence.php` 与 `dual-mode-equivalence.php` 分别守「解释器 ↔ 全 AOT」与「解释器 ↔ dev 壳」，共用同一份 `Fingerprint` 作唯一预期；它们需要编译产物，不进日常闸门。
+
+## 相关
+
+- [应用解剖](./app-anatomy.md)
+- [CLI 参考](../reference/cli.md)
+- [AOT 约束](../reference/aot-constraints.md)
+- [测试](../guides/testing.md)

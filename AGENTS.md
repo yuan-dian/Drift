@@ -12,7 +12,7 @@
 
 ## Project structure
 - `src/` PHP 框架核心；`apps/<app>/` 各应用（含 `project.yml`）；`cpp-src/` AOT 壳（只编壳+桥）：`core/` 平台无关、`win32/` Win32 全部实现（含 `uia.*`）、`skia/` 渲染后端。接第二个平台 = 新增 `cpp-src/<platform>/`。
-- `docs/architecture/12-工程与工具.md` 权威验证分层；`docs/DEBT-2026-11-02.md` 债务与「下一棒」候选（开工前重核，会腐烂）。
+- `docs/guides/testing.md` 权威验证分层；`docs/decisions/README.md` 登记现行裁决与失效条件（开工前先复核条件是否触发）。
 - 记忆（不进 git）：`.workbuddy-ai/memory/{MEMORY,YYYY-MM-DD,PITFALLS}.md`。
 
 ## Memory location（⚠️ 写错 = 白写 + 被当垃圾清理）
@@ -32,4 +32,4 @@
 - 🚫 永不：`git rm`；把记忆写进 `.workbuddy/memory/`；dev 壳 `sources` 收业务 PHP（LNK2019 / 「already in use」重声明）；判据与实现写成同源（静默缺口最常见形状）；用 `proc_close` 等窗口消失等窗口关闭。
 
 ## Where to look
-- 完整必守判据：`.workbuddy-ai/memory/MEMORY.md`；深坑全文：`PITFALLS.md`；设计：`DESIGN.md`。
+- 完整必守判据：`.workbuddy-ai/memory/MEMORY.md`；深坑全文：`PITFALLS.md`；现行设计：`docs/concepts/model.md`；裁决：`docs/decisions/README.md`。
