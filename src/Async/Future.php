@@ -252,6 +252,8 @@ final class Future
      *
      * ★ 取消沿派生链上溯到根任务，代价是**树的剪枝**：同一个根被两处扇出，取消
      *   一处另一处也收不到结果 —— 要复用就复用**结果**，不要复用 Future。
+     *   这条纪律在 2026-11-16 起有运行时兜底：被取消的节点若有 >1 条派生链，
+     *   报 `future/fanout-cancel` 诊断，把静默剪枝变红（见下方 cancel 内注释）。
      * ★ `ThreadTaskHost` 只能"不交付"且**不减 `pending()` 记账**：结果行没回来就
      *   掉不到 0，早了会让帧时钟睡死。
      *
@@ -261,6 +263,19 @@ final class Future
     {
         if ($this->state !== self::PENDING || $this->cancelled) {
             return;
+        }
+
+        // ★ 扇出取消的静默剪枝：一条根有 >1 条独立派生链时，取消会连另一条消费者
+        //   一起剪掉，而那条链既不 cancelled 也不 resolve —— 界面永久停在 loading，
+        //   且不报错（实验见 review 2026-11-16）。合法接线根恒为 1 条链：
+        //   `then()->catch()` 串成一条，`all()/race()` 给每条入参也只挂一条链。
+        //   ⇒ links > 1 是"一根多主"的可靠信号。只诊断不改语义：后端停活是刚需。
+        if (\count($this->links) > 1) {
+            Diagnostics::degraded(
+                'future/fanout-cancel',
+                '一条 Future 被多处 then()/catch() 后又 cancel() —— 取消会剪掉所有派生链，'
+                . '另一处消费者将永远收不到结果且不报错。要复用就复用结果（resolved 值），不要复用 Future。'
+            );
         }
 
         $this->cancelled = true;

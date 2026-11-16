@@ -609,6 +609,94 @@ final class FutureTest extends SmokeTestCase
         $this->flushChecks();
     }
 
+    /**
+     * 2026-11-16：一根被两处扇出后再取消，另一处消费者会永久收不到且不报错。
+     *
+     * ★ 这是 review 里"唯一靠纪律的取消风险"的运行时兜底。判据只读
+     *   `Errors::recentDiagnostics()`，与实现不同源；并验证既有取消语义不变。
+     */
+    public function testFanoutCancelIsReported(): void
+    {
+        Diagnostics::reset();
+        $stopped = 0;
+        $root = Future::pending(function () use (&$stopped): void {
+            $stopped++;
+        });
+
+        $aGot = null;
+        $bGot = null;
+        $a = $root->then(static function (mixed $v) use (&$aGot): void {
+            $aGot = $v;
+        });
+        $b = $root->then(static function (mixed $v) use (&$bGot): void {
+            $bGot = $v;
+        });
+
+        $before = \count(Errors::recentDiagnostics());
+        $a->cancel();
+        $root->resolve('RESULT');
+
+        $ring = \array_slice(Errors::recentDiagnostics(), $before);
+        check(
+            'Future · 扇出取消 ⇒ 留 [DX] future/fanout-cancel',
+            \count($ring) === 1 && \str_contains($ring[0], '[DX] future/fanout-cancel'),
+            'ring=' . \json_encode($ring, \JSON_UNESCAPED_UNICODE)
+        );
+        check(
+            'Future · 诊断说清"复用结果、不复用 Future"的可操作改法',
+            \str_contains($ring[0] ?? '', '复用') && \str_contains($ring[0] ?? '', 'Future'),
+            'ring=' . \json_encode($ring, \JSON_UNESCAPED_UNICODE)
+        );
+        check(
+            'Future · 改诊断不改语义：后端钩子照调、两条链都被剪掉',
+            $stopped === 1 && !$a->isDone() && !$b->isDone() && $aGot === null && $bGot === null,
+            'stopped=' . $stopped . ' a=' . \var_export($aGot, true) . ' b=' . \var_export($bGot, true)
+        );
+
+        $a2 = $root->then(static fn(mixed $v): mixed => $v);
+        $a2->cancel();
+        check(
+            'Future · 同一退化按 key 去重（不刷 ring）',
+            \count(Errors::recentDiagnostics()) === $before + 1
+        );
+
+        $this->flushChecks();
+    }
+
+    /** 正对照：单链取消、`then()->catch()`、组合器、进度订阅都不误报。 */
+    public function testSingleChainCancelDoesNotReportFanout(): void
+    {
+        Diagnostics::reset();
+        $before = \count(Errors::recentDiagnostics());
+
+        // 单链：根只有一条派生链（then 串 catch）
+        $root = Future::pending();
+        $tail = $root->then(static fn(mixed $v): mixed => $v)
+            ->catch(static fn(\Throwable $e): mixed => null);
+        $tail->cancel();
+        check('Future · 单链取消不报扇出', \count(Errors::recentDiagnostics()) === $before);
+
+        // 组合器：all() 给每条入参只挂一条链，取消入参不该误报
+        $i1 = Future::pending();
+        $i2 = Future::pending();
+        Future::all([$i1, $i2]);
+        $i1->cancel();
+        check('Future · all() 入参取消不报扇出', \count(Errors::recentDiagnostics()) === $before);
+
+        // 进度订阅走 progressSinks，不算消费者扇出
+        $r2 = Future::pending();
+        $r2->onProgress(static function (float $p): void {
+        });
+        $r2->cancel();
+        check(
+            'Future · 进度订阅 + 单链取消都不报扇出',
+            \count(Errors::recentDiagnostics()) === $before,
+            'diag=' . \implode('|', \array_slice(Errors::recentDiagnostics(), $before))
+        );
+
+        $this->flushChecks();
+    }
+
     public function testAllSettledCarriesErrorCode(): void
     {
         $a = Future::pending();
