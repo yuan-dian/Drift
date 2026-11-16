@@ -9,8 +9,8 @@ use Drift\App\Io\Http;
  * 框架自带的单图下载任务 —— 由 `CoreJobs` 注入注册表，应用不用登记。
  *
  * 出参是本地文件路径；失败抛异常，由 `AsyncCommand` 落成 error 态。
- * 缓存路径的算法必须 UI / worker 共用（见 {@see self::cachePath()}），
- * 两边各算一遍会在扩展名上分叉，缓存命中永远失败。
+ * 缓存路径 UI / worker 共用同一算法；签名 URL 的稳定键由 UI 侧算好后随参数递进来，
+ * worker 不读静态服务。写盘先落临时文件再改名，避免半截文件被永久命中。
  */
 final class FetchImageJob implements NamedJob, TimedJob
 {
@@ -19,7 +19,7 @@ final class FetchImageJob implements NamedJob, TimedJob
     public const NAME = 'drift.fetchImage';
 
     /** 顺序 == 构造器参数顺序 */
-    private const FIELDS = ['url', 'cacheDir'];
+    private const FIELDS = ['url', 'cacheDir', 'cacheKey'];
 
     private const FETCH_TIMEOUT_S = 60.0;
 
@@ -32,22 +32,44 @@ final class FetchImageJob implements NamedJob, TimedJob
     public function __construct(
         private readonly string $url,
         private readonly string $cacheDir = '',
+        private readonly string $cacheKey = '',
     ) {
     }
 
-    /** UI 侧判磁盘命中、worker 侧写盘都走这里 */
-    public static function cachePath(string $url, string $dir): string
+    /**
+     * UI 侧判磁盘命中、worker 侧写盘都走这里。
+     *
+     * ★ `$cacheKey` 不为空时取代 URL 作为身份：CDN 签名 URL 每次的 query 都不同，
+     *   按完整 URL 算键会永远不命中、还堆一目录的图。扩展名仍从 URL 的路径段推，
+     *   不能把 query 里的点当成后缀。
+     */
+    public static function cachePath(string $url, string $dir, string $cacheKey = ''): string
     {
         $ext = 'jpg';
-        $dot = \strrpos($url, '.');
-        if ($dot !== false && $dot < \strlen($url) - 1) {
-            $candidate = \strtolower(\substr($url, $dot + 1));
+        $path = $url;
+        $query = \strpos($path, '?');
+        if ($query !== false) {
+            $path = \substr($path, 0, $query);
+        }
+        $dot = \strrpos($path, '.');
+        if ($dot !== false && $dot < \strlen($path) - 1) {
+            $candidate = \strtolower(\substr($path, $dot + 1));
             if (\in_array($candidate, ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif'], true)) {
                 $ext = $candidate;
             }
         }
 
-        return \rtrim($dir, '\\/') . \DIRECTORY_SEPARATOR . 'drift-image-' . \md5($url) . '.' . $ext;
+        $identity = $cacheKey !== '' ? $cacheKey : $url;
+
+        return \rtrim($dir, '\\/') . \DIRECTORY_SEPARATOR . 'drift-image-' . \md5($identity) . '.' . $ext;
+    }
+
+    /** 空文件 / 半截文件不算命中：解不出图只会显示占位，没有任何东西报错。 */
+    public static function isUsableCacheFile(string $path): bool
+    {
+        $size = \is_file($path) ? \filesize($path) : false;
+
+        return $size !== false && $size >= 16;
     }
 
     public function run(): mixed
@@ -62,9 +84,12 @@ final class FetchImageJob implements NamedJob, TimedJob
         }
 
         $dir = $this->cacheDir !== '' ? $this->cacheDir : \sys_get_temp_dir();
-        $path = self::cachePath($this->url, $dir);
-        if (\is_file($path)) {
+        $path = self::cachePath($this->url, $dir, $this->cacheKey);
+        if (self::isUsableCacheFile($path)) {
             return $path;
+        }
+        if (\is_file($path)) {
+            @\unlink($path); // 坏文件删掉重写，别让它继续冒充命中
         }
 
         $response = Http::get($this->url, [
@@ -79,9 +104,19 @@ final class FetchImageJob implements NamedJob, TimedJob
         if (!\is_dir($dir)) {
             @\mkdir($dir, 0777, true);
         }
-        $written = @\file_put_contents($path, $bytes);
+        // 先写临时文件再改名：中途被杀不会留下一个"存在但解不出"的缓存。
+        $tmp = $path . '.part.' . (string) \getmypid();
+        $written = @\file_put_contents($tmp, $bytes);
         if ($written === false || $written !== \strlen($bytes)) {
-            throw new \RuntimeException('写入图片缓存失败：' . $path);
+            @\unlink($tmp);
+            throw new \RuntimeException('写入图片缓存失败：' . $tmp);
+        }
+        if (\is_file($path)) {
+            @\unlink($path); // Windows 上 rename 不能覆盖已存在文件
+        }
+        if (!@\rename($tmp, $path)) {
+            @\unlink($tmp);
+            throw new \RuntimeException('图片缓存落盘失败：' . $path);
         }
 
         return $path;

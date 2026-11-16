@@ -88,6 +88,40 @@ final class AsyncImageTest extends SmokeTestCase
         $this->flushChecks();
     }
 
+    public function testCacheKeyCallbackReachesJob(): void
+    {
+        ImageAssets::install($this->host, 'C:\\cache', static fn(string $url): string => 'stable-id');
+        $root = Image::make()->asset('https://cdn.example.com/a.png?sig=abc')->width(48.0)->createElement();
+        $root->mount(null, smokeContext());
+
+        $jobs = $this->host->ofClass(FetchImageJob::class);
+        check(
+            '网络图 · 稳定键随 Job 参数递给 worker（worker 不用注册同一个回调）',
+            \count($jobs) === 1 && ($jobs[0]->args()['cacheKey'] ?? '') === 'stable-id',
+            'jobs=' . \count($jobs),
+        );
+        $this->flushChecks();
+    }
+
+    public function testUndecodableCacheIsRemovedForRedownload(): void
+    {
+        $url = 'https://cdn.example.com/broken.png';
+        $cached = FetchImageJob::cachePath($url, \sys_get_temp_dir());
+        \file_put_contents($cached, \str_repeat('x', 64)); // 够长，但解不出
+
+        try {
+            $source = ImageAssets::current();
+            check('损坏缓存 · 端口已装配', $source !== null);
+            if ($source !== null) {
+                check('损坏缓存 · 解不出时返回 null', $source->cached($url, 48) === null);
+                check('损坏缓存 · 文件被删，下一轮能重新下载', !\is_file($cached));
+            }
+        } finally {
+            @\unlink($cached);
+        }
+        $this->flushChecks();
+    }
+
     public function testUnknownSchemeIsRejectedWithoutJob(): void
     {
         $root = Image::make()->asset('data:image/png;base64,AAAA')->width(48.0)->createElement();

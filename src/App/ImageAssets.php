@@ -17,6 +17,10 @@ use Drift\Widget\Image;
  * 挂在主题上的服务在第一层覆盖点就丢了；`ImageLoader` 本身已是静态缓存 +
  * 静态基目录，端口同形，不引入第二套注入机制。AppScope 每进程一份（多窗口共享），
  * 与 TaskHost 的生命期一致，不会串。
+ *
+ * ★ `$cacheKey` 回调只做 URL → 稳定身份的纯文本变换：CDN 签名 URL 的 query
+ *   每次都变，按完整 URL 做键永远不命中。回调结果随 Job 参数递给 worker，
+ *   worker 不需要注册同样的回调。
  */
 final class ImageAssets implements ImageSource
 {
@@ -25,12 +29,13 @@ final class ImageAssets implements ImageSource
     public function __construct(
         private readonly ?TaskHost $host,
         private readonly string $cacheDir = '',
+        private readonly ?\Closure $cacheKey = null,
     ) {
     }
 
-    public static function install(?TaskHost $host, string $cacheDir = ''): void
+    public static function install(?TaskHost $host, string $cacheDir = '', ?\Closure $cacheKey = null): void
     {
-        self::$current = new self($host, $cacheDir);
+        self::$current = new self($host, $cacheDir, $cacheKey);
         Image::setSource(self::$current);
     }
 
@@ -49,8 +54,15 @@ final class ImageAssets implements ImageSource
     public function cached(string $url, int $width): ?ImageHandle
     {
         $path = $this->cachePath($url);
+        if (!FetchImageJob::isUsableCacheFile($path)) {
+            return null;
+        }
+        $handle = ImageLoader::load($path, $width);
+        if ($handle === null) {
+            @\unlink($path); // 够长但解不出：多半是写一半被杀，删掉让下一轮重下
+        }
 
-        return \is_file($path) ? ImageLoader::load($path, $width) : null;
+        return $handle;
     }
 
     /** UI 侧判磁盘命中，算法与 worker 写盘共用 */
@@ -58,7 +70,15 @@ final class ImageAssets implements ImageSource
     {
         $dir = $this->cacheDir !== '' ? $this->cacheDir : \sys_get_temp_dir();
 
-        return FetchImageJob::cachePath($url, $dir);
+        return FetchImageJob::cachePath($url, $dir, $this->keyFor($url));
+    }
+
+    /** 回调返回空串等于不收敛：按原 URL 算键。 */
+    private function keyFor(string $url): string
+    {
+        $callback = $this->cacheKey;
+
+        return $callback === null ? '' : (string) $callback($url);
     }
 
     /**
@@ -74,7 +94,7 @@ final class ImageAssets implements ImageSource
             return Future::rejected(new \RuntimeException('没有后台执行端口，网络图不加载：' . $url));
         }
 
-        $future = $this->host->submit(new FetchImageJob($url, $this->cacheDir));
+        $future = $this->host->submit(new FetchImageJob($url, $this->cacheDir, $this->keyFor($url)));
         $future->catch(static function (\Throwable $error) use ($url): void {
             Errors::report(
                 'Image：网络图加载失败 ' . $url . ' —— ' . $error->getMessage(),

@@ -11,14 +11,30 @@ use Drift\Errors;
  * 候选目录（按优先级）：显式基目录 → `<cwd>/assets` → `<cwd>/images`
  * → 仓库根 `assets`。绝对路径原样使用，不进候选拼接。
  * ★ 绝对路径若也丢进候选拼接，会在 Windows 上拼出永不存在的路径且不报错。
- * 解析后的绝对路径做缓存键；失败返回 `null` 并附 `DIAGNOSTIC`，由调用方降级。
+ * 缓存键是"解析后的绝对路径 + 目标宽度"，按 LRU 淘汰且有字节/条目双上限；
+ * 命中只换缓存位置，不重解码。失败返回 `null` 并附 `DIAGNOSTIC`，由调用方降级。
  *
  * @api
  */
 final class ImageLoader
 {
-    /** @var array<string, ImageHandle> 绝对路径 → 解码结果 */
+    /** 默认上限：字节是主闸门（一张大图就能到十几 MB），条目数只拦小图堆积 */
+    private const int DEFAULT_MAX_BYTES = 48 * 1024 * 1024;
+
+    private const int DEFAULT_MAX_ENTRIES = 256;
+
+    /** @var array<string, ImageHandle> 绝对路径@宽度 → 解码结果；按 LRU 顺序，最久未用在前 */
     private static array $cache = [];
+
+    private static int $cacheBytes = 0;
+
+    private static int $maxBytes = self::DEFAULT_MAX_BYTES;
+
+    private static int $maxEntries = self::DEFAULT_MAX_ENTRIES;
+
+    private static int $evictions = 0;
+
+    private static bool $oversizedReported = false;
 
     /** 显式基目录（空 = 只用候选目录） */
     private static string $baseDir = '';
@@ -111,10 +127,11 @@ final class ImageLoader
             return null;
         }
 
-        $key = $maxWidth > 0 ? $resolved . '@' . (string) $maxWidth : $resolved;
+        $key = self::cacheKey($resolved, $maxWidth);
 
-        if (isset(self::$cache[$key])) {
-            return self::$cache[$key];
+        $hit = self::cacheGet($key);
+        if ($hit !== null) {
+            return $hit;
         }
 
         // 先试壳里的 WIC（原生解码，省 PHP 堆），失败再退回纯 PHP 的 `PngDecoder`。
@@ -129,7 +146,7 @@ final class ImageLoader
         }
 
         if ($image !== null) {
-            self::$cache[$key] = $image;
+            self::cachePut($key, $image);
         } else {
             Errors::report(sprintf(
                 'ImageLoader：解不出图片 %s（PNG 解码器与壳的 WIC 都没成功）',
@@ -140,16 +157,114 @@ final class ImageLoader
         return $image;
     }
 
+    /**
+     * 设内存缓存上限并立刻淘汰到上限内；`0` 表示该项不限制。
+     *
+     * ★ 两个闸门都要：只按字节，一堆小图标能撑爆条目字典；只按条目，一张大图就顶穿内存。
+     *
+     * @api
+     */
+    public static function setCacheLimits(int $maxBytes, int $maxEntries): void
+    {
+        self::$maxBytes = $maxBytes > 0 ? $maxBytes : 0;
+        self::$maxEntries = $maxEntries > 0 ? $maxEntries : 0;
+        self::evictIfNeeded();
+    }
+
     /** 清缓存（测试 / 热重载） */
     public static function clearCache(): void
     {
         self::$cache = [];
+        self::$cacheBytes = 0;
+        self::$evictions = 0;
+        self::$oversizedReported = false;
     }
 
     /** 缓存条目数（测试用：证明"第二次不再解码"） */
     public static function cacheSize(): int
     {
         return count(self::$cache);
+    }
+
+    /** @internal 当前缓存的解码字节数 */
+    public static function cacheBytes(): int
+    {
+        return self::$cacheBytes;
+    }
+
+    /** @internal 自上次清缓存以来的淘汰次数 */
+    public static function cacheEvictions(): int
+    {
+        return self::$evictions;
+    }
+
+    /** @internal */
+    private static function cacheKey(string $resolved, int $maxWidth): string
+    {
+        return $maxWidth > 0 ? $resolved . '@' . (string) $maxWidth : $resolved;
+    }
+
+    /** 命中即移到队尾：PHP 数组保序，删了重插就是 MRU。 */
+    private static function cacheGet(string $key): ?ImageHandle
+    {
+        if (!isset(self::$cache[$key])) {
+            return null;
+        }
+        $hit = self::$cache[$key];
+        unset(self::$cache[$key]);
+        self::$cache[$key] = $hit;
+
+        return $hit;
+    }
+
+    private static function cachePut(string $key, ImageHandle $handle): void
+    {
+        $bytes = $handle->width * $handle->height * 4;
+        if (self::$maxBytes > 0 && $bytes > self::$maxBytes) {
+            // 单张就超上限：不缓存。这种情况会反复发生，只报一次免得刷屏。
+            if (!self::$oversizedReported) {
+                self::$oversizedReported = true;
+                Errors::report(sprintf(
+                    'ImageLoader：单张解码结果 %d 字节超过缓存上限 %d，本张不进缓存（可调用 setCacheLimits 调高）',
+                    $bytes,
+                    self::$maxBytes,
+                ), Errors::DIAGNOSTIC);
+            }
+
+            return;
+        }
+
+        if (isset(self::$cache[$key])) {
+            self::$cacheBytes -= self::bytesOf(self::$cache[$key]);
+        }
+        self::$cache[$key] = $handle;
+        self::$cacheBytes += $bytes;
+        self::evictIfNeeded();
+    }
+
+    private static function bytesOf(ImageHandle $handle): int
+    {
+        return $handle->width * $handle->height * 4;
+    }
+
+    /** 从队头淘汰，直到两个上限都满足。 */
+    private static function evictIfNeeded(): void
+    {
+        while ((self::$maxBytes > 0 && self::$cacheBytes > self::$maxBytes)
+            || (self::$maxEntries > 0 && count(self::$cache) > self::$maxEntries)) {
+            $oldest = null;
+            foreach (self::$cache as $key => $_) {
+                $oldest = $key;
+                break;
+            }
+            if ($oldest === null) {
+                break;
+            }
+            $victim = self::$cache[$oldest];
+            unset(self::$cache[$oldest]);
+            self::$cacheBytes -= self::bytesOf($victim);
+            self::$evictions++;
+        }
     }
 
     /**

@@ -22,6 +22,7 @@ final class ImageLoaderTest extends SmokeTestCase
 
     protected function tearDown(): void
     {
+        ImageLoader::setCacheLimits(48 * 1024 * 1024, 256);
         ImageLoader::clearCache();
         parent::tearDown();
     }
@@ -87,5 +88,92 @@ final class ImageLoaderTest extends SmokeTestCase
             !\Drift\Rendering\ImageDecoder::available(),
             'available=' . (\Drift\Rendering\ImageDecoder::available() ? 'true' : 'false'),
         );
+    }
+
+    /**
+     * LRU 与 FIFO 的分别：中间命中 A 之后再把 C 装进来，该被挤掉的是 B。
+     *
+     * ★ 判据用字节数而不是"再取一次看还在不在" —— 后者在 A 被挤掉又重新解码时
+     *   依旧是绿着的，量具本身会骗人。quad 与它的副本字节相同、strip 不同，
+     *   留谁走谁的字节数不一样。
+     */
+    public function testLruKeepsRecentlyHitEntry(): void
+    {
+        $quad = ImageLoader::resolve('demo/quad.png');
+        $strip = ImageLoader::resolve('demo/strip.png');
+        check('LRU 判据 · 两张夹具都在', $quad !== null && $strip !== null);
+        $this->flushChecks();
+        if ($quad === null || $strip === null) {
+            return;
+        }
+
+        $quadHandle = ImageLoader::load($quad, 0);
+        $stripHandle = ImageLoader::load($strip, 0);
+        $quadBytes = $quadHandle === null ? 0 : $quadHandle->width * $quadHandle->height * 4;
+        $stripBytes = $stripHandle === null ? 0 : $stripHandle->width * $stripHandle->height * 4;
+        check('LRU 判据 · 两张夹具字节数不同（否则分不出留的是谁）', $quadBytes > 0 && $stripBytes > 0 && $quadBytes !== $stripBytes);
+        ImageLoader::clearCache();
+
+        $copy = (string) \tempnam(\sys_get_temp_dir(), 'drift-lru-');
+        \copy($quad, $copy);
+
+        try {
+            ImageLoader::setCacheLimits(0, 2); // 只按条目，字节不限
+            ImageLoader::load($quad, 0);       // A
+            ImageLoader::load($strip, 0);      // B
+            ImageLoader::load($quad, 0);       // 命中 A ⇒ A 成最近使用
+            $before = ImageLoader::cacheBytes();
+            ImageLoader::load($copy, 0);       // C ⇒ 该淘汰 B
+
+            check(
+                'LRU · 命中过的条目留在缓存（FIFO 会先挤掉它，字节数会更低）',
+                ImageLoader::cacheBytes() === $quadBytes * 2,
+                'before=' . $before . ' after=' . ImageLoader::cacheBytes() . ' expected=' . ($quadBytes * 2),
+            );
+            check('LRU · 只淘汰一条', ImageLoader::cacheEvictions() === 1, 'evictions=' . ImageLoader::cacheEvictions());
+            check('LRU · 条目数守在上限', ImageLoader::cacheSize() === 2, 'size=' . ImageLoader::cacheSize());
+        } finally {
+            @\unlink($copy);
+        }
+        $this->flushChecks();
+    }
+
+    /** 字节上限与单张超限：超限时返回真图但不占缓存，且只报一次诊断。 */
+    public function testByteLimitEvictsAndOversizedStaysOut(): void
+    {
+        $quad = ImageLoader::resolve('demo/quad.png');
+        $strip = ImageLoader::resolve('demo/strip.png');
+        check('字节上限判据 · 两张夹具都在', $quad !== null && $strip !== null);
+        $this->flushChecks();
+        if ($quad === null || $strip === null) {
+            return;
+        }
+
+        $quadHandle = ImageLoader::load($quad, 0);
+        $stripHandle = ImageLoader::load($strip, 0);
+        $quadBytes = $quadHandle === null ? 0 : $quadHandle->width * $quadHandle->height * 4;
+        $stripBytes = $stripHandle === null ? 0 : $stripHandle->width * $stripHandle->height * 4;
+        ImageLoader::clearCache();
+
+        ImageLoader::setCacheLimits($quadBytes + $stripBytes - 1, 0);
+        ImageLoader::load($quad, 0);
+        ImageLoader::load($strip, 0);
+        check(
+            '字节上限 · 放不下时淘汰最久未用，留下的字节数与剩下那张一致',
+            ImageLoader::cacheSize() === 1 && ImageLoader::cacheBytes() === $stripBytes,
+            'size=' . ImageLoader::cacheSize() . ' bytes=' . ImageLoader::cacheBytes() . ' expected=' . $stripBytes,
+        );
+        check('字节上限 · 淘汰计数记下来', ImageLoader::cacheEvictions() === 1, 'evictions=' . ImageLoader::cacheEvictions());
+
+        ImageLoader::setCacheLimits($quadBytes - 1, 0);
+        ImageLoader::clearCache();
+        $loaded = ImageLoader::load($quad, 0);
+        check('单张超限 · 仍返回真图（不能因此降级成占位）', $loaded !== null && $loaded->width > 0);
+        check(
+            '单张超限 · 不进缓存（否则一张图就能顶穿上限）',
+            ImageLoader::cacheSize() === 0 && ImageLoader::cacheBytes() === 0,
+            'size=' . ImageLoader::cacheSize() . ' bytes=' . ImageLoader::cacheBytes(),
+        );
+        $this->flushChecks();
     }
 }

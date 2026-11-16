@@ -42,6 +42,11 @@ final class AppScope
     /** 有没有人对 `taskHost` 表过态（`false` ⇒ 取默认 `SyncTaskHost`） */
     private bool $taskHostDecided = false;
 
+    /** 网络图缓存配置；先于 `setTaskHost()` 设置也生效，避免装配顺序静默吃掉配置 */
+    private string $imageCacheDir = '';
+
+    private ?\Closure $imageCacheKey = null;
+
     private ?IoPoller $io = null;
 
     /** 业务状态恢复（一个进程一份；未装配 ⇒ 不持久化） */
@@ -184,7 +189,22 @@ final class AppScope
         $this->taskHostDecided = true;
 
         // 异步图片跟着后台端口一起装配 —— 组合根不用多写一行，业务也不用注入服务。
-        ImageAssets::install($taskHost);
+        ImageAssets::install($taskHost, $this->imageCacheDir, $this->imageCacheKey);
+
+        return $this;
+    }
+
+    /**
+     * 网络图缓存：目录 + 签名 URL 的稳定键回调，组合根一行配好。
+     *
+     * ★ 回调做纯文本变换（剥掉每次都变的签名 query），结果随 Job 参数进 worker；
+     *   worker 不用注册同一个回调。与 `setTaskHost()` 的调用顺序无关。
+     */
+    public function setImageCache(string $cacheDir = '', ?\Closure $cacheKey = null): self
+    {
+        $this->imageCacheDir = $cacheDir;
+        $this->imageCacheKey = $cacheKey;
+        ImageAssets::install($this->taskHost, $cacheDir, $cacheKey);
 
         return $this;
     }

@@ -53,6 +53,63 @@ final class FetchImageJobTest extends TestCase
     }
 
     #[Test]
+    public function 签名URL由稳定键收敛(): void
+    {
+        $dir = 'C:\\cache';
+        $first = FetchImageJob::cachePath('https://cdn/a.png?X-Amz-Signature=aaa', $dir);
+        $second = FetchImageJob::cachePath('https://cdn/a.png?X-Amz-Signature=bbb', $dir);
+        $stableFirst = FetchImageJob::cachePath('https://cdn/a.png?X-Amz-Signature=aaa', $dir, 'cdn/a.png');
+        $stableSecond = FetchImageJob::cachePath('https://cdn/a.png?X-Amz-Signature=bbb', $dir, 'cdn/a.png');
+
+        self::assertNotSame($first, $second, '按完整 URL 算键时，签名不同必须落到不同文件');
+        self::assertSame($stableFirst, $stableSecond, '给了稳定键，不同签名必须命中同一文件');
+        self::assertStringEndsWith('.png', $stableFirst, '稳定键不能把扩展名带走');
+    }
+
+    #[Test]
+    public function 扩展名只看路径段不看query(): void
+    {
+        self::assertStringEndsWith(
+            '.png',
+            FetchImageJob::cachePath('https://cdn/a.png?sig=1.2', 'C:\\cache'),
+            'query 里的点不能当成后缀'
+        );
+    }
+
+    #[Test]
+    public function 半截缓存不算命中(): void
+    {
+        $dir = \sys_get_temp_dir() . \DIRECTORY_SEPARATOR . 'drift-cache-' . \uniqid('', true);
+        @\mkdir($dir, 0777, true);
+        $path = FetchImageJob::cachePath('https://cdn/a.png', $dir);
+
+        try {
+            \file_put_contents($path, 'short');
+            self::assertFalse(FetchImageJob::isUsableCacheFile($path), '短文件不能再冒充命中');
+            \file_put_contents($path, \str_repeat('x', 32));
+            self::assertTrue(FetchImageJob::isUsableCacheFile($path), '完整文件应当命中');
+        } finally {
+            @\unlink($path);
+            @\rmdir($dir);
+        }
+    }
+
+    #[Test]
+    public function 组合根配缓存时装配顺序不影响稳定键(): void
+    {
+        $scope = AppScope::make();
+        $scope->setImageCache('C:\\imgcache', static fn(string $url): string => 'stable-id');
+        $scope->setTaskHost(new SyncTaskHost());
+
+        self::assertNotNull(ImageAssets::current());
+        self::assertSame(
+            FetchImageJob::cachePath('https://cdn/a.png?sig=xyz', 'C:\\imgcache', 'stable-id'),
+            ImageAssets::current()->cachePath('https://cdn/a.png?sig=xyz'),
+            'setTaskHost 重新装配时必须带着此前配置的稳定键'
+        );
+    }
+
+    #[Test]
     public function 本地文件直通且不发请求(): void
     {
         $file = (string) \tempnam(\sys_get_temp_dir(), 'drift-img-');
