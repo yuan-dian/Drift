@@ -163,6 +163,26 @@ final class ImageLoader
         return ImageHandle::fromRgba("\x00\x00\x00\x00", 1, 1);
     }
 
+    /**
+     * 来源三分类：`local` / `network` / `reject`（未知 scheme 明确拒绝，不静默当本地）。
+     *
+     * ★ 盘符判断必须排在 scheme 之前：`C:\x` 长得像 `C:` scheme，
+     *   当网络或拒绝处理会让 Windows 上所有绝对路径失效。
+     *
+     * @api
+     */
+    public static function classify(string $src): string
+    {
+        if (\strpos($src, 'http://') === 0 || \strpos($src, 'https://') === 0) {
+            return 'network';
+        }
+        if (\strlen($src) >= 2 && $src[1] === ':') {
+            return 'local';
+        }
+
+        return \strpos($src, ':') !== false ? 'reject' : 'local';
+    }
+
     /** `C:\x` / `\\server\x` / `/x` 都算绝对 */
     private static function isAbsolute(string $path): bool
     {

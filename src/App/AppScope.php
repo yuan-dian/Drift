@@ -183,6 +183,9 @@ final class AppScope
         $this->taskHost = $taskHost;
         $this->taskHostDecided = true;
 
+        // 异步图片跟着后台端口一起装配 —— 组合根不用多写一行，业务也不用注入服务。
+        ImageAssets::install($taskHost);
+
         return $this;
     }
 

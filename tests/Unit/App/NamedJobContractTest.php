@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Unit\App;
 
+use Drift\App\CoreJobs;
 use Drift\App\Job;
 use Drift\App\NamedJob;
 use PHPUnit\Framework\Attributes\Test;
@@ -202,6 +203,11 @@ final class NamedJobContractTest extends TestCase
             $classes[] = self::fqcn($file, 'App\\' . self::studly(\basename(\dirname($file, 3))) . '\\Jobs\\');
         }
 
+        // 框架自带任务（FetchImageJob 等）和应用任务同一套契约，漏了就发现不了。
+        foreach (self::classFiles($root . '/src/App/*Job.php') as $file) {
+            $classes[] = self::fqcn($file, 'Drift\\App\\');
+        }
+
         foreach (self::classFiles($root . '/tools/Smoke/App/*.php') as $file) {
             $classes[] = self::fqcn($file, 'Drift\\Dev\\Smoke\\App\\');
         }
@@ -242,6 +248,9 @@ final class NamedJobContractTest extends TestCase
             }
             $map += $class::make();
         }
+
+        // 框架自带任务由 CoreJobs 合并进每个应用；它漏登记时所有应用的网络图一起废。
+        $map += CoreJobs::register([]);
 
         // 冒烟夹具的注册表不在 apps/ 下，单独收（它是"跨进程跑 AOT 代码"的证明链）。
         $smoke = 'Drift\\Dev\\Smoke\\App\\SmokeJobRegistry';

@@ -3,56 +3,58 @@ declare(strict_types=1);
 
 namespace Drift\Widget;
 
+use Drift\Errors;
 use Drift\Layout\ImageFit;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderImage;
 use Drift\Rendering\ImageHandle;
 use Drift\Rendering\ImageLoader;
+use Drift\Rendering\ImageSource;
 
 /**
  * 图片 —— `Image::make()->asset('demo/logo.png')`。
  *
  * ```php
- * Image::make()->asset('demo/logo.png')->width(120.0)->fit(ImageFit::Cover)
+ * Image::make()->asset('demo/logo.png')->width(120.0)->fit(ImageFit::Cover)  // 本地
+ * Image::make()->asset('https://cdn/x.png')->width(120.0)                    // 网络
  * ```
  *
- * ★ **源有两种**：
- *   - `asset($path)` —— 走 `ImageLoader`（候选目录 + 解码缓存）。相对路径按
- *     `<cwd>/assets`、`<cwd>/images`、仓库根 `assets/` 依次找；绝对路径原样用。
- *   - `image($handle)` —— 已经在内存里的 `ImageHandle`（自绘 / 测试 / 生成图）。
+ * ★★ **`asset()` 是唯一字符串入口**：本地路径与 http(s) URL 同形，业务不用判断来源。
+ *   网络图的下载 / 缓存 / 三态由 {@see ImageState} 承担；本类只持配置与产盒。
+ *   `image($handle)` 仍收内存句柄（自绘 / 测试），不参与来源判定。
  *
- * ★★ **解码在 `createRenderObject()` 里做，但不会重复解**：盒每次重建都换新
- *   （§13.2），所以这里每帧都会调一次 `ImageLoader::load()` —— 它按**解析后的
- *   绝对路径**缓存，命中就是一次数组查找。没有这层缓存，每帧 inflate 一张图
- *   会把帧率直接打穿。
+ * ★ **为什么改成有态**：网络回包必须让这一张图自己重绘，而 Widget 每次重建都换新
+ *   （§13.2）。加载状态只能住在跨 build 存活的 `State` 里；`createRenderObjectFromState()`
+ *   走无子叶子路径（`Spinner` 已验证），外部 API 全不变。
  *
- * ★ **资源缺失 = 1×1 透明占位**（不崩、不空白报错）：`ImageLoader` 已经
- *   `DIAGNOSTIC` 留痕，控件这边的降级是"几乎看不见的占位"。所以**可能缺图时
- *   请显式给 `width`/`height`** —— 否则布局尺寸会缩到 1×1。
+ * ★ **资源缺失 = 1×1 透明占位**（不崩、不空白报错）；可能缺图时请显式给 `width`/`height`，
+ *   否则布局尺寸会缩到 1×1。
  *
- * ★ **不给语义角色**（§9.2：`Text`/`Icon`/`Image` 这类叶子一律不给，
- *   否则"按角色找控件"会被淹没）。要可读的名字，放在外层交互控件的 `semName`。
+ * ★ **不给语义角色**（§9.2）：要可读的名字放在外层交互控件的 `semName`。
  *
  * @api
  */
-final class Image extends RenderBoxWidget
+final class Image extends StatefulWidget
 {
     /**
-     * 解码宽度相对逻辑宽度的倍数（覆盖到 200% DPI 缩放）。
-     * 取值理由见 `decodeWidth()`。
+     * 组合根装配的获取端口（`ImageSource` 住在 Rendering 层，Widget 可依赖）。
+     *
+     * ★ 静态但不在控件里 new：App 侧 install 时推入，测试 reset 时清空。
      */
+    private static ?ImageSource $source = null;
+
+    /** 解码宽度相对逻辑宽度的倍数（覆盖到 200% DPI 缩放） */
     private const float SUPERSAMPLE = 2.0;
 
-    /** 资源路径（空 = 用内存句柄） */
+    /** 网络图没给 width 时的解码上限：本仓有原尺寸解码撑爆 128M 的前科 */
+    private const int NETWORK_MAX_WIDTH = 2048;
+
     private string $path = '';
 
-    /** 内存句柄（`$path` 非空时被 `asset()` 的结果顶替） */
     private ImageHandle $handle;
 
-    /** `<= 0` = 用原图宽（只给高时按比例推） */
     private float $width = 0.0;
 
-    /** `<= 0` = 用原图高（只给宽时按比例推） */
     private float $height = 0.0;
 
     private ImageFit $fit = ImageFit::Contain;
@@ -61,8 +63,7 @@ final class Image extends RenderBoxWidget
     {
         parent::__construct();
 
-        // ★ 非空初值：这样字段永远是真 `ImageHandle`，不必引 `?ImageHandle`
-        //   （AOT 下 `?Obj` 退化成 `php::Var`，属性访问全走动态路径）。
+        // 非空初值：AOT 下 `?Obj` 退化为 `php::Var`，属性访问全走动态路径。
         $this->handle = ImageLoader::placeholder();
     }
 
@@ -71,7 +72,22 @@ final class Image extends RenderBoxWidget
         return new self();
     }
 
-    /** 从资源文件加载（相对路径按 `ImageLoader::candidates()` 找） */
+    /** 由组合根调用（`ImageAssets::install()`），业务不接触 */
+    public static function setSource(?ImageSource $source): void
+    {
+        self::$source = $source;
+    }
+
+    /** @internal 给 ImageState 取端口 */
+    public static function imageSource(): ?ImageSource
+    {
+        return self::$source;
+    }
+
+    /**
+     * 从资源加载：相对 / 绝对路径走本地，http(s) 走异步下载 + 缓存。
+     * 其它 scheme 明确拒绝（诊断 + 占位），不静默当本地路径。
+     */
     public function asset(string $path): static
     {
         $this->mutate();
@@ -117,11 +133,33 @@ final class Image extends RenderBoxWidget
         return $this;
     }
 
+    public function createState(): State
+    {
+        return new ImageState();
+    }
+
+    public function createRenderObjectFromState(BuildContext $context, State $state): ?RenderBox
+    {
+        if (!$state instanceof ImageState) {
+            Errors::report('ImageState 只能配 Image（框架内部不变量被破坏）');
+        }
+
+        $handle = $state instanceof ImageState ? $state->handle() : ImageLoader::placeholder();
+
+        return new RenderImage($handle, $this->fit, $this->width, $this->height);
+    }
+
+    /**
+     * 无 Element 场景（单测 / 裸用）的同步产盒：只解析本地源，网络源给占位。
+     *
+     * @internal 主路径是 {@see self::createRenderObjectFromState()}；保留本方法让
+     *   既有"直接拿控件产盒"的测试与工具不必搭一棵 Element 树。
+     */
     public function createRenderObject(BuildContext $context): RenderBox
     {
         $image = $this->handle;
-        if ($this->path !== '') {
-            $loaded = ImageLoader::load($this->path, self::decodeWidth($this->width));
+        if ($this->path !== '' && ImageLoader::classify($this->path) === 'local') {
+            $loaded = ImageLoader::load($this->path, $this->decodeWidthFor('local'));
             if ($loaded !== null) {
                 $image = $loaded;
             }
@@ -130,26 +168,31 @@ final class Image extends RenderBoxWidget
         return new RenderImage($image, $this->fit, $this->width, $this->height);
     }
 
-    /**
-     * 解码目标宽度（`0` = 原尺寸）。
-     *
-     * ★★ **这是内存纪律，不是性能优化**（2026-11-02）：`ImageLoader` 缓存的
-     *   `ImageHandle` 持有**整张 RGBA**，一张 1792×2390 就是 17MB —— 而本控件
-     *   往往只显示 560 宽。按原尺寸解 = 为永远不会被画到的像素付九成内存，
-     *   多几张就顶穿 PHP 的 128M 上限（真机崩过一次，见 `ImageLoader::load()`
-     *   的分派表）。在**解码期**缩小是唯一不亏的做法。
-     *
-     * ★ 为什么乘 `SUPERSAMPLE`：`width()` 是**逻辑**像素，实际栅格化按 DPI
-     *   scale 放大（1x / 1.5x / 2x）。按逻辑宽度解，在高 DPI 下会看到放大后的
-     *   模糊。×2 覆盖到 200% 缩放 —— 再多就是拿内存换看不出来的锐度。
-     * ★ 只给宽时才算：`width <= 0` ⇒ 尺寸由原图决定 ⇒ 不能在解码期缩。
-     */
-    private static function decodeWidth(float $width): int
+    /** @internal 给 ImageState 读 */
+    public function source(): string
     {
-        if ($width <= 0.0) {
-            return 0;
+        return $this->path;
+    }
+
+    /** @internal 给 ImageState 读 */
+    public function memoryHandle(): ImageHandle
+    {
+        return $this->handle;
+    }
+
+    /** @internal 给 ImageState 读；空宽按来源决定用原尺寸还是安全上限 */
+    public function decodeWidthFor(string $kind): int
+    {
+        if ($this->width > 0.0) {
+            return (int) \ceil($this->width * self::SUPERSAMPLE);
         }
 
-        return (int) \ceil($width * self::SUPERSAMPLE);
+        return $kind === 'network' ? self::NETWORK_MAX_WIDTH : 0;
+    }
+
+    /** @internal 给 ImageState 判"没给 width"（诊断只说一次） */
+    public function hasWidth(): bool
+    {
+        return $this->width > 0.0;
     }
 }

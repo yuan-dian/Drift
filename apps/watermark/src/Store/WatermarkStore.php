@@ -4,7 +4,6 @@ declare(strict_types=1);
 namespace App\Watermark\Store;
 
 use App\Watermark\Api\Config;
-use App\Watermark\Api\DownloadReport;
 use App\Watermark\Api\SignInfo;
 use App\Watermark\Api\TaskResult;
 use App\Watermark\Jobs\AddTaskJob;
@@ -105,14 +104,6 @@ final class WatermarkStore extends Subject
     // ── 结果 ────────────────────────────────────────────────────────────
     private ?TaskResult $lastResult = null;
 
-    /**
-     * 下载段的唯一真值：四态 + 进度 + 载荷 `DownloadReport`。
-     *
-     * 稳定态复用同一实例（`AsyncValue` 走 `===` 门控，不实现 `Equatable`）；
-     * 只在状态真变化时赋一次值，不在 getter 里 new。
-     */
-    private AsyncValue $downloads;
-
     /** 底部状态栏的一句话（整个应用的"现在在干什么"） */
     private StatusMessage $statusLine;
 
@@ -126,7 +117,6 @@ final class WatermarkStore extends Subject
         private $scheduler = null,
     ) {
         $this->uploadMessage = StatusMessage::none();
-        $this->downloads = AsyncValue::idle();
         $this->taskMessage = StatusMessage::none();
         $this->statusLine = StatusMessage::info('准备就绪');
 
@@ -233,29 +223,20 @@ final class WatermarkStore extends Subject
     /**
      * 此刻按「停止」有意义吗。
      *
-     * ★ 只覆盖**提交之后**的三档（`Submitting` / `Polling` / `Downloading`）。
-     *   `Signing` / `Uploading` 不提供停止：用户刚点完上传，意图明确；而打断
-     *   半截上传除了留一个半截对象，并不能省下什么。这条边界写在这里而不是
-     *   散在界面里 —— 否则"按钮什么时候出现"会有第二份判据。
+     * ★ 只覆盖提交之后的两档（`Submitting` / `Polling`）。结果图下载已交给
+     *   `Image` 控件自治，没有"整批停止"这回事；`Signing` / `Uploading` 不提供
+     *   停止：用户刚点完上传，意图明确，打断半截上传只会留个半截对象。
      */
     public function canStop(): bool
     {
         return $this->phase === Phase::Submitting
-            || $this->phase === Phase::Polling
-            || $this->phase === Phase::Downloading;
+            || $this->phase === Phase::Polling;
     }
 
     /** 停止按钮的文案：停的是什么就说什么，别让用户猜 */
     public function stopLabel(): string
     {
-        if ($this->phase === Phase::Polling) {
-            return '停止轮询';
-        }
-        if ($this->phase === Phase::Downloading) {
-            return '停止下载';
-        }
-
-        return '取消提交';
+        return $this->phase === Phase::Polling ? '停止轮询' : '取消提交';
     }
 
     /**
@@ -295,82 +276,6 @@ final class WatermarkStore extends Subject
     public function lastResult(): ?TaskResult
     {
         return $this->lastResult;
-    }
-
-    /**
-     * 已下载到本地的结果图（`url => 本地路径`）。
-     *
-     * ★ 页面按 `lastResult()->downloadUrls` 的顺序取，**不**直接遍历这个 map：
-     *   它的键序是下载完成顺序，而用户要看的是服务端给的顺序。
-     *
-     * @return array<string, string>
-     */
-    public function localPaths(): array
-    {
-        return $this->downloadReport()->paths();
-    }
-
-    /** @return array<string, string> 下载失败的 URL → 原因 */
-    public function failedDownloads(): array
-    {
-        return $this->downloadReport()->failed();
-    }
-
-    /** 下载段的唯一真值（界面走 `AsyncValue::fold()` 四态） */
-    public function downloads(): AsyncValue
-    {
-        return $this->downloads;
-    }
-
-    public function isDownloading(): bool
-    {
-        return $this->downloads->isLoading();
-    }
-
-    public function downloadProgress(): float
-    {
-        return $this->downloads->progressOr(0.0);
-    }
-
-    /** 文案是投影，不是第二份状态 */
-    public function downloadMessage(): StatusMessage
-    {
-        $v = $this->downloads;
-        if ($v->isIdle()) {
-            return StatusMessage::none();
-        }
-
-        if ($v->isLoading()) {
-            if (!$v->hasProgress()) {
-                $urls = $this->lastResult !== null ? $this->lastResult->downloadUrls : [];
-
-                return StatusMessage::loading('正在下载 0 / ' . (string) \count($urls) . '…');
-            }
-
-            return StatusMessage::loading(
-                '正在下载… ' . (string) (int) \round($v->progressOr(0.0) * 100.0) . '%'
-            );
-        }
-
-        if ($v->hasError()) {
-            return StatusMessage::error($v->message());
-        }
-
-        return $this->downloadReport()->failedCount() > 0
-            ? StatusMessage::error('部分结果图没能下载')
-            : StatusMessage::success('结果图已下载');
-    }
-
-    /**
-     * 下载结果 —— **本类内部唯一读它的人**（Widget 走 `localPaths()` / `failedDownloads()`）。
-     *
-     * ★ 载荷里存的就是 `DownloadReport`（`downloadResults()` 放的）⇒ 这里是**取回**，
-     *   不是重新解包。以前三个 getter 各解一遍同一段 `is_array`，形状还与 Job 侧
-     *   分叉（`paths` vs `locals`）。
-     */
-    private function downloadReport(): DownloadReport
-    {
-        return DownloadReport::fromPayload($this->downloads->dataOr(null));
     }
 
     public function statusLine(): StatusMessage
@@ -573,10 +478,6 @@ final class WatermarkStore extends Subject
         } finally {
             $this->phase = Phase::Idle;
             $this->uploadFraction = 0.0;
-            // 取消穿透时下载停在 loading ⇒ 界面会永远转圈，归回 idle。
-            if ($this->downloads->isLoading()) {
-                $this->downloads = AsyncValue::idle();
-            }
             $this->notifyChanged();
         }
     }
@@ -777,10 +678,7 @@ final class WatermarkStore extends Subject
                         : StatusMessage::error($result->failureReason());
                     $this->notifyChanged();
 
-                    if ($result->isSuccess()) {
-                        $this->downloadResults($co, $result->downloadUrls);
-                    }
-
+                    // 结果图的下载交给 Image 控件自治（见 ResultCard），流水线到此收工。
                     return;
                 }
             }
@@ -829,47 +727,6 @@ final class WatermarkStore extends Subject
         }
 
         return TaskResult::fromArray($raw, $taskId);
-    }
-
-    /** @param list<string> $urls */
-    private function downloadResults(AsyncScope $co, array $urls): void
-    {
-        if ($urls === []) {
-            return;
-        }
-
-        $this->phase = Phase::Downloading;
-        $this->downloads = AsyncValue::loading();
-        $this->notifyChanged();
-
-        try {
-            // ★ 第二参不能省：`DownloadResultsJob` 每张图都报进度，少了这里就是
-            //   "Job 发了、没人订" —— 界面只剩转圈，且不报错（上传侧 :540 是模板）。
-            $raw = $co->await($this->exec(new DownloadResultsJob($urls)), function (float $fraction): void {
-                $this->downloads = $this->downloads->withProgress($fraction);
-                $this->notifyChanged();
-            });
-        } catch (AsyncCancelled $e) {
-            throw $e;
-        } catch (\Throwable $e) {
-            // 整条失败也要有独立一态，否则结果图区会一直画"正在下载"转圈。
-            $this->downloads = AsyncValue::error($e->getMessage());
-            $this->statusLine = StatusMessage::error('下载结果图失败：' . $e->getMessage());
-            $this->notifyChanged();
-
-            return;
-        }
-
-        // 部分失败仍走 data：已下载成功的图要照旧可见（成熟 GUI 组件不汇总部分失败）。
-        $report = DownloadReport::fromPayload($raw);
-        $this->downloads = AsyncValue::data($report)->withProgress(1.0);
-        if ($report->failedCount() > 0) {
-            $this->statusLine = StatusMessage::error(
-                '有 ' . (string) $report->failedCount() . ' 张结果图没能下载'
-            );
-        }
-
-        $this->notifyChanged();
     }
 
     /**

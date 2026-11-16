@@ -19,7 +19,7 @@ use PHPUnit\Framework\TestCase;
  * |---|---|
  * | ① 提交按钮的可用态 == 守卫 | 上传中 / 轮询中按钮亮着，点下去才被告知"还有一步没做完" |
  * | ② 忙时加文件被拒 | 界面显示 3 张、任务里只有 1 张，**没有任何报错** |
- * | ③ 下载阶段也能停止 | 结果图下到一半想停，按钮已经不见了 |
+ * | ③ 结果终结后流水线收工 | 拿到终态还挂着"在忙"，且多提交一条批量下载 |
  * | ④ 预热不占"在忙"位 | 首屏那一两秒里用户点了「上传」毫无反应 |
  *
  * ★ 用 `DeferredHost`（每任务回 `Future::pending()`，逐趟手动交付）：这些判据
@@ -90,7 +90,7 @@ final class BusyGateTest extends TestCase
     }
 
     #[Test]
-    public function 下载阶段也能停止(): void
+    public function 结果终结后流水线收工且不提交批量下载(): void
     {
         $host = new DeferredHost();
         $store = $this->filled($host);
@@ -103,20 +103,11 @@ final class BusyGateTest extends TestCase
         $host->futureAt(2)->resolve(['taskId' => 'T-1']);
         $host->futureAt(3)->resolve(self::successResult());
 
-        // 夹具前提：下载在途 —— 阶段与按钮文案都得说"这是下载"
-        self::assertSame(DownloadResultsJob::class, $host->nameAt(4), '夹具前提：结果已终结，正在下载');
-        self::assertTrue($store->canStop(), '下载阶段按不到停止 —— 而下载恰恰是最想停的一步');
-        self::assertSame('停止下载', $store->stopLabel());
-
-        $store->stop();
-
-        self::assertFalse($store->isBusy(), '取消后阶段没有归位 ⇒ 按钮永远挂着');
-        self::assertFalse($store->isDownloading(), '取消后下载态没归位 ⇒ 结果图区永远转圈');
-        self::assertTrue($store->canUpload(), '取消后应该回到可操作态');
-
-        // 迟到的结果不许落到界面（`Future::cancel()` 的硬契约）
-        $host->futureAt(4)->resolve(['paths' => [], 'failed' => []]);
-        self::assertSame([], $store->localPaths());
+        // 结果图下载已归 Image 控件自治：Store 拿到终态就收工，不再提交第五条任务。
+        self::assertFalse($store->isBusy(), '终态后阶段没归位 ⇒ 按钮永远挂着');
+        self::assertFalse($store->canStop());
+        self::assertSame(0, $host->countOf(DownloadResultsJob::class), '结果图不该再走批量下载');
+        self::assertTrue($store->canUpload(), '终态后应该回到可操作态');
     }
 
     #[Test]

@@ -91,18 +91,8 @@ final class PollRhythmTest extends TestCase
         self::assertSame(1, $timers->count(), '终态之后**不许**再排下一拍');
         self::assertTrue($store->lastResult()?->isSuccess() ?? false);
 
-        // 结果图下载：一次，且是那批 URL
-        $downloads = $host->ofClass(DownloadResultsJob::class);
-        self::assertCount(1, $downloads, '一次任务只该触发一次下载');
-        self::assertSame(
-            ['https://oss.example.com/r/1.png'],
-            $downloads[0]->args()['urls'],
-            '下载的必须是这次结果里那批 URL（不是空数组、不是上一批）'
-        );
-        self::assertSame(
-            ['https://oss.example.com/r/1.png' => '/tmp/drift-r1.png'],
-            $store->localPaths()
-        );
+        // 终态后不排期也不再提交任务：结果图由 Image 控件自己加载。
+        self::assertSame([], $host->ofClass(DownloadResultsJob::class), '结果图该由 Image 控件自治，不是 Store 批量下载');
     }
 
     #[Test]

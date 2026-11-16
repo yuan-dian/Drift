@@ -106,7 +106,7 @@ final class ProcessTaskHost implements TaskHost
         // 负值按"不设上限"处理：显式 `0` 与负数在此同义。
         $this->requestTerminateMs = $requestTerminateMs > 0 ? $requestTerminateMs : 0;
 
-        foreach ($registry as $name => $factory) {
+        foreach (CoreJobs::register($registry) as $name => $factory) {
             $this->registry[(string) $name] = \Closure::fromCallable($factory);
         }
     }

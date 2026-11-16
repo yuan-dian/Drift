@@ -33,6 +33,7 @@ final class ArchitectureDocTest extends SmokeTestCase
         '12-工程与工具.md',
         '13-与-v7-设计对照.md',
         '14-组合根与装配.md',
+        '15-异步资源控件.md',
     ];
 
     public function testLiveDocSetIsClosed(): void

@@ -58,7 +58,7 @@ final class StoreHostChainTest extends TestCase
     }
 
     #[Test]
-    public function 后台链路从取签名一路走到下载结果图(): void
+    public function 后台链路从取签名一路走到结果落库(): void
     {
         $urls = ['https://oss.example.com/r/1.png', 'https://oss.example.com/r/2.png'];
         $host = $this->host($urls);
@@ -67,26 +67,14 @@ final class StoreHostChainTest extends TestCase
         $store->upload();
         $store->submitTask();
 
-        // ① 五个任务，顺序即业务流程
+        // 四个任务，顺序即业务流程；结果图下载由 Image 控件自治，不在 Store 链路里。
         self::assertSame(
-            [FetchSignJob::class, UploadBatchJob::class, AddTaskJob::class, PollResultJob::class, DownloadResultsJob::class],
+            [FetchSignJob::class, UploadBatchJob::class, AddTaskJob::class, PollResultJob::class],
             $host->names(),
-            '（取签名 → 上传 → 建任务 → 查结果 → 下载）缺一环，真机就少一段'
+            '（取签名 → 上传 → 建任务 → 查结果）缺一环，真机就少一段'
         );
-
-        // ② 下载任务拿到的就是结果里那批 URL
-        $downloads = $host->ofClass(DownloadResultsJob::class);
-        self::assertCount(1, $downloads, '一次任务只该触发一次下载');
-        self::assertSame($urls, $downloads[0]->args()['urls']);
-
-        // ③ 落地：URL → 本地路径（页面靠它画缩略图）
-        self::assertSame(
-            [$urls[0] => '/tmp/drift-r1.png', $urls[1] => '/tmp/drift-r2.png'],
-            $store->localPaths()
-        );
-        self::assertSame([], $store->failedDownloads());
-        self::assertFalse($store->isDownloading());
         self::assertTrue($store->lastResult()?->isSuccess() ?? false);
+        self::assertSame($urls, $store->lastResult()?->downloadUrls);
     }
 
     /**

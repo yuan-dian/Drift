@@ -43,6 +43,8 @@ final class ProcessWorker
      */
     public static function serve(array $registry): void
     {
+        $registry = CoreJobs::register($registry);
+
         $in = fopen('php://stdin', 'r');
         $out = fopen('php://stdout', 'w');
         if ($in === false || $out === false) {
@@ -99,6 +101,8 @@ final class ProcessWorker
      */
     public static function handle(string $line, array $registry, ?callable $onProgress = null): string
     {
+        $registry = CoreJobs::register($registry);
+
         $msg = json_decode($line, true);
         if (!is_array($msg)) {
             // 协议层坏了（不是任务的错）：回一个 id=0 的错误，让 UI 侧响亮失败

@@ -5,19 +5,18 @@ namespace Drift\Dev\Tests\Feature\Widget;
 
 use App\Watermark\Store\StatusMessage;
 use App\Watermark\Store\WatermarkStore;
-use Drift\Async\AsyncValue;
 use Drift\Dev\Smoke\LeafProbe;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\State\SubjectBuilder;
 use Drift\Widget\Widget;
 
 /**
- * 三条消息切片都要按**内容**门控，而不是按 `StatusMessage` 的实例身份（§69）。
+ * 两条消息切片都要按**内容**门控，而不是按 `StatusMessage` 的实例身份（§69）。
  *
  * ★ 为什么单独一条：`WatermarkStatusBarTest` 只量 `statusLine()`，而它原本就
  *   显式写了 `->equals(...)`；`UploadCard::message()` / `TaskCard::taskMessage()`
- *   与 §68 新增的下载文案**都没有**，从前只在「该字段被重新赋成同内容新实例」
- *   时白白重建一次 —— 不会崩、不会报，只是静默多重建。
+ *   都没有，从前只在「该字段被重新赋成同内容新实例」时白白重建一次 ——
+ *   不会崩、不会报，只是静默多重建。
  *
  * ★ 判据量的是**可观察的重建次数**（builder 跑几次 / element 是否标脏），
  *   不是「`StatusMessage` 有没有 implements Equatable」这种实现同源的写法。
@@ -30,11 +29,10 @@ final class MessageValueGateTest extends SmokeTestCase
         $store = new WatermarkStore(null, 'http://127.0.0.1:1');
         $ctx = smokeContext();
 
-        $fields = ['uploadMessage', 'taskMessage', 'downloadMessage'];
+        $fields = ['uploadMessage', 'taskMessage'];
         $getters = [
             'uploadMessage' => static fn(WatermarkStore $s): StatusMessage => $s->uploadMessage(),
             'taskMessage' => static fn(WatermarkStore $s): StatusMessage => $s->taskMessage(),
-            'downloadMessage' => static fn(WatermarkStore $s): StatusMessage => $s->downloadMessage(),
         ];
 
         $runs = array_fill_keys($fields, 0);
@@ -103,15 +101,7 @@ final class MessageValueGateTest extends SmokeTestCase
     /** 私有字段 + 反射：真正的写点在异步回调里，为一条 UI 判据搭假后台不值当。 */
     private function force(WatermarkStore $store, string $field, StatusMessage $message): void
     {
-        if ($field === 'downloadMessage') {
-            // 下载段收成 AsyncValue 后消息是投影，写点改到唯一真值。
-            $value = $message->kind === StatusMessage::ERROR
-                ? AsyncValue::error($message->text)
-                : AsyncValue::idle();
-            (new \ReflectionProperty(WatermarkStore::class, 'downloads'))->setValue($store, $value);
-        } else {
-            (new \ReflectionProperty(WatermarkStore::class, $field))->setValue($store, $message);
-        }
+        (new \ReflectionProperty(WatermarkStore::class, $field))->setValue($store, $message);
         $store->notifyChanged();
     }
 }

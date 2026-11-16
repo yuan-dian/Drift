@@ -34,9 +34,6 @@ enum Phase
     /** 正在建任务 */
     case Submitting;
 
-    /** 正在轮询结果 */
+    /** 正在轮询结果（结果图下载由 Image 控件自治，不占流水线阶段） */
     case Polling;
-
-    /** 正在下载结果图 */
-    case Downloading;
 }

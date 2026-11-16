@@ -3,30 +3,24 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Watermark;
 
-use App\Watermark\Api\DownloadReport;
 use App\Watermark\Jobs\AddTaskJob;
-use App\Watermark\Jobs\DownloadResultsJob;
 use App\Watermark\Jobs\FetchSignJob;
 use App\Watermark\Jobs\PollResultJob;
 use App\Watermark\Jobs\UploadBatchJob;
 use App\Watermark\Store\WatermarkStore;
 use App\Watermark\Widgets\ResultCard;
-use Drift\Async\AsyncValue;
 use Drift\Dev\Tests\Support\RecordingTaskHost;
+use Drift\Widget\Image;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
 /**
- * 结果图区的四态画法（§75）。
+ * 结果图区：服务端给的每个 URL 直接成一个 `Image`，下载 / 缓存 / 三态归控件。
  *
- * ★ 判据量的是**最终 Widget 树里的文本**，不是 `fold()` 内部走了哪一支：
- *   删掉 `error` 支、或把它改回逐 URL 转圈，本文件必须红。
- *   「整体下载失败后每张图还画『正在下载结果图…』」是本棒修掉的真缺口。
- *
- * ★ 部分失败仍走 `data` 态：已下载成功的图与失败条必须同时可见
- *   （成熟 GUI 的异步组件不负责批量部分失败汇总）。
+ * ★ 判据量最终 Widget 树：`Image::source()` 必须就是 URL，不再有"先下载到本地
+ *   再 asset(本地路径)"这一步；也不再有应用层的批量转圈文案。
  */
 final class DownloadImagesStatesTest extends TestCase
 {
@@ -42,60 +36,33 @@ final class DownloadImagesStatesTest extends TestCase
     }
 
     #[Test]
-    public function 四态画法齐全且整体失败不再转圈(): void
+    public function 每张结果图把URL直接交给Image(): void
     {
         $a = 'https://oss.example.com/r/1.png';
         $b = 'https://oss.example.com/r/2.png';
-        $urls = [$a, $b];
 
-        self::assertSame([], $this->textsOf(ResultCard::imagesFor($urls, AsyncValue::idle())));
-
-        $loading = $this->textsOf(ResultCard::imagesFor($urls, AsyncValue::loading()));
-        self::assertContains('正在下载 0 / 2…', $loading);
-        self::assertSame(2, $this->countText($loading, '正在下载结果图…'));
-
-        $ok = $this->textsOf(ResultCard::imagesFor(
-            $urls,
-            AsyncValue::data(DownloadReport::of([$a => '/tmp/a.png', $b => '/tmp/b.png'], []))
-                ->withProgress(1.0)
-        ));
-        self::assertContains($a, $ok);
-        self::assertContains($b, $ok);
-        self::assertNotContains('正在下载结果图…', $ok);
-
-        $partial = $this->textsOf(ResultCard::imagesFor(
-            $urls,
-            AsyncValue::data(DownloadReport::of([$a => '/tmp/a.png'], [$b => 'HTTP 404']))
-                ->withProgress(1.0)
-        ));
-        self::assertContains($a, $partial, '部分成功时已下载的图不能整块消失');
-        self::assertContains('这张图没能下载：HTTP 404', $partial);
-        self::assertNotContains('正在下载结果图…', $partial);
-
-        $error = $this->textsOf(ResultCard::imagesFor($urls, AsyncValue::error('磁盘满')));
-        self::assertContains('结果图下载失败：磁盘满', $error);
-        self::assertNotContains('正在下载结果图…', $error, '整条失败后还在转圈 ⇒ 旧缺口复发');
+        self::assertSame([$a, $b], $this->imagesOf(ResultCard::imagesFor([$a, $b])));
     }
 
     #[Test]
-    public function 真链路整体失败时不假装还在下载(): void
+    public function 空结果不画任何图片(): void
+    {
+        self::assertSame([], $this->imagesOf(ResultCard::imagesFor([])));
+        self::assertSame([], $this->textsOf(ResultCard::imagesFor([])));
+    }
+
+    #[Test]
+    public function 流水线终态后页面按服务端给的URL直接画(): void
     {
         $urls = ['https://oss.example.com/r/1.png', 'https://oss.example.com/r/2.png'];
-        $host = $this->host($urls);
-        $store = $this->store($host);
+        $store = $this->store($this->host($urls));
 
         $store->upload();
         $store->submitTask();
 
-        $v = $store->downloads();
-        self::assertTrue($v->hasError(), '整条下载抛异常必须落到 error 态');
-        self::assertSame('磁盘满', $v->message());
-        self::assertSame([], $store->localPaths());
-        self::assertFalse($store->isDownloading(), '失败后不能再算"正在下载"');
-
-        $texts = $this->textsOf(ResultCard::imagesFor($urls, $v));
-        self::assertNotContains('正在下载结果图…', $texts);
-        self::assertContains('结果图下载失败：磁盘满', $texts);
+        $result = $store->lastResult();
+        self::assertTrue($result?->isSuccess() ?? false);
+        self::assertSame($urls, $this->imagesOf(ResultCard::imagesFor($result->downloadUrls)));
     }
 
     /** @param list<string> $urls */
@@ -123,9 +90,6 @@ final class DownloadImagesStatesTest extends TestCase
                 'errorMsg' => '',
                 'downloadUrls' => $urls,
             ],
-            DownloadResultsJob::class => static function (): array {
-                throw new \RuntimeException('磁盘满');
-            },
         ]);
     }
 
@@ -144,21 +108,43 @@ final class DownloadImagesStatesTest extends TestCase
         return $store;
     }
 
+    /** @return list<string> 树里所有 Image 的 source（顺序即绘制顺序） */
+    private function imagesOf(Widget $root): array
+    {
+        $out = [];
+        $this->walk($root, static function (object $node) use (&$out): void {
+            if ($node instanceof Image) {
+                $out[] = $node->source();
+            }
+        });
+
+        return $out;
+    }
+
     /** @return list<string> Widget 树里所有 Text 的内容 */
     private function textsOf(Widget $root): array
     {
         $out = [];
+        $this->walk($root, static function (object $node) use (&$out): void {
+            if ($node instanceof Text) {
+                $out[] = (string) (new \ReflectionProperty(Text::class, 'content'))->getValue($node);
+            }
+        });
+
+        return $out;
+    }
+
+    /** 深度遍历 Widget 的私有字段（判据不搭 Element 树） */
+    private function walk(Widget $root, callable $visit): void
+    {
         $seen = [];
-        $walk = function (object $node) use (&$walk, &$out, &$seen): void {
+        $walk = function (object $node) use (&$walk, &$seen, $visit): void {
             $id = \spl_object_id($node);
             if (isset($seen[$id])) {
                 return;
             }
             $seen[$id] = true;
-
-            if ($node instanceof Text) {
-                $out[] = (string) (new \ReflectionProperty(Text::class, 'content'))->getValue($node);
-            }
+            $visit($node);
 
             for ($class = new \ReflectionObject($node); $class !== false; $class = $class->getParentClass()) {
                 foreach ($class->getProperties() as $prop) {
@@ -179,13 +165,5 @@ final class DownloadImagesStatesTest extends TestCase
             }
         };
         $walk($root);
-
-        return $out;
-    }
-
-    /** @param list<string> $texts */
-    private function countText(array $texts, string $needle): int
-    {
-        return \count(\array_filter($texts, static fn(string $t): bool => $t === $needle));
     }
 }

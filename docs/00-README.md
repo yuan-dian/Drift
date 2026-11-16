@@ -49,6 +49,7 @@ v2 修订期的过程稿，只在追溯历史时看。**
 | **想追溯历史裁决与来龙去脉** | `docs/_archive/DESIGN-v2-2026-10-14.md` | [`_archive/DESIGN-v2-2026-10-14.md`](_archive/DESIGN-v2-2026-10-14.md) |
 | **想懂组合根 / 装配顺序 / `Application` 公共面** | `docs/architecture/14-组合根与装配.md`（装配四步接力 + public 能力索引，数量由 Reflection 判据对账） | [`14-组合根与装配.md`](architecture/14-组合根与装配.md) |
 | **想知道 v7 提案里哪些判断被采纳 / 让位** | `docs/architecture/13-与-v7-设计对照.md` | [`13-与-v7-设计对照.md`](architecture/13-与-v7-设计对照.md) |
+| **想给图片控件喂网络地址 / 懂异步资源门面** | `docs/architecture/15-异步资源控件.md`（唯一入口 + 三分类 + 双层缓存 + 核心任务注入） | [`15-异步资源控件.md`](architecture/15-异步资源控件.md) |
 | **想查 AOT 编译约束 / 坑** | `docs/AOT-CONSTRAINTS.md` + `docs/architecture/11` | — |
 | **想知道跨平台能力矩阵** | 暂缺（原 `design-v7/08-平台与能力矩阵.md` 已删；结论在 `_archive/CROSS-PLATFORM.md`） | — |
 | **追溯 v2 修订过程** | `docs/arch-v2/00-总纲.md` | [`arch-v2/00-总纲.md`](arch-v2/00-总纲.md) |
