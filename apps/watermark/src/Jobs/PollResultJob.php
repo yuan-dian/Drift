@@ -24,33 +24,13 @@ final class PollResultJob implements NamedJob
 
     public const NAME = 'watermark.poll';
 
+    /** 顺序 == 构造器参数顺序 */
+    private const FIELDS = ['taskId', 'base'];
+
     public function __construct(
         private readonly string $taskId,
         private readonly string $base = Config::API_BASE,
     ) {
-    }
-
-    public function name(): string
-    {
-        return self::NAME;
-    }
-
-    public function args(): array
-    {
-        return ['taskId' => $this->taskId, 'base' => $this->base];
-    }
-
-    /**
-     * worker 侧重建（**读法与 `args()` 上下相邻**，漏字段当场看得见）。
-     *
-     * @param array<string, mixed> $args
-     */
-    public static function fromArgs(array $args): self
-    {
-        return new self(
-            self::argString($args, 'taskId'),
-            self::argString($args, 'base', Config::API_BASE),
-        );
     }
 
     public function run(): mixed

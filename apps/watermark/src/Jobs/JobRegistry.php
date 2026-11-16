@@ -13,15 +13,17 @@ use Drift\App\Job;
  *
  * ## 加一个后台任务的完整动作
  *
- * 1. `Jobs/` 下加一个 `NamedJob` 类（`args()` 与 `static fromArgs()` **上下相邻**写）；
+ * 1. `Jobs/` 下加一个 `NamedJob` 类：`use JobArgs` ＋ `private const FIELDS = [...]`
+ *    （顺序 == 构造参数顺序）＋ 构造器 ＋ `run()`；
  * 2. **本文件加一行** `XxxJob::NAME => static fn (array $a): Job => XxxJob::fromArgs($a),`
  * 3. 没了。
  *
- * ★ **参数搬运不在这里**（2026-11-16 起）：以前每族要手写 `(string) ($args['…'] ?? 默认)`
- *   三五行，而它和 `args()` 是同一份信息的两遍抄写 —— 键名一分叉就是**静默**错
- *   （漏掉的参数在两侧都退化成默认值，只有真机 worker 里跑错参数）。现在映射住在
- *   任务类自己身上，本文件只剩「名字 → 怎么造」。漏登记由
- *   `NamedJobContractTest` 直接判红。
+ * ★ **参数搬运不在这里**：以前每族要手写 `(string) ($args['…'] ?? 默认)` 三五行，
+ *   而它和 `args()` 是同一份信息的两遍抄写 —— 键名一分叉就是**静默**错
+ *   （漏掉的参数在两侧都退化成默认值，只有真机 worker 里跑错参数）。现在连
+ *   `args()` / `fromArgs()` 本身也不用写了：`FIELDS` 一份名单驱动两个方向
+ *   （2026-11-16）。本文件只剩「名字 → 怎么造」。漏登记、名单与构造器不一致，
+ *   都由 `NamedJobContractTest` 直接判红。
  */
 final class JobRegistry
 {

@@ -22,6 +22,9 @@ final class FetchSignJob implements NamedJob
 
     public const NAME = 'watermark.sign';
 
+    /** 顺序 == 构造器参数顺序 */
+    private const FIELDS = ['base'];
+
     public function __construct(private readonly string $base = Config::API_BASE)
     {
     }
@@ -29,21 +32,6 @@ final class FetchSignJob implements NamedJob
     public function name(): string
     {
         return self::NAME;
-    }
-
-    public function args(): array
-    {
-        return ['base' => $this->base];
-    }
-
-    /**
-     * worker 侧重建（**读法与 `args()` 上下相邻**，漏字段当场看得见）。
-     *
-     * @param array<string, mixed> $args
-     */
-    public static function fromArgs(array $args): self
-    {
-        return new self(self::argString($args, 'base', Config::API_BASE));
     }
 
     public function run(): mixed

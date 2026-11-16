@@ -32,6 +32,9 @@ final class FetchUsersJob implements NamedJob
     /** 注册表里的键（UI 与 worker 必须一致） */
     public const NAME = 'users.fetch';
 
+    /** 顺序 == 构造器参数顺序 */
+    private const FIELDS = ['page', 'baseUrl'];
+
     /** mock 后端的默认地址（`DRIFT_API_BASE` 可覆盖） */
     public const DEFAULT_BASE = 'http://127.0.0.1:8099';
 
@@ -45,29 +48,6 @@ final class FetchUsersJob implements NamedJob
         private readonly int $page = 1,
         private readonly string $baseUrl = self::DEFAULT_BASE,
     ) {
-    }
-
-    public function name(): string
-    {
-        return self::NAME;
-    }
-
-    public function args(): array
-    {
-        return ['page' => $this->page, 'baseUrl' => $this->baseUrl];
-    }
-
-    /**
-     * worker 侧重建（**读法与 `args()` 上下相邻**，漏字段当场看得见）。
-     *
-     * @param array<string, mixed> $args
-     */
-    public static function fromArgs(array $args): self
-    {
-        return new self(
-            self::argInt($args, 'page', 1),
-            self::argString($args, 'baseUrl', self::DEFAULT_BASE),
-        );
     }
 
     public function run(): mixed

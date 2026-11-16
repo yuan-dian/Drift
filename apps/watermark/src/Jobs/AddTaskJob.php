@@ -20,6 +20,9 @@ final class AddTaskJob implements NamedJob
 
     public const NAME = 'watermark.addTask';
 
+    /** 顺序 == 构造器参数顺序 */
+    private const FIELDS = ['objectKeys', 'time', 'address', 'imageSize', 'base'];
+
     /**
      * @param list<string> $objectKeys 已上传的对象键
      */
@@ -30,39 +33,6 @@ final class AddTaskJob implements NamedJob
         private readonly string $imageSize,
         private readonly string $base = Config::API_BASE,
     ) {
-    }
-
-    public function name(): string
-    {
-        return self::NAME;
-    }
-
-    public function args(): array
-    {
-        return [
-            'objectKeys' => \array_values($this->objectKeys),
-            'time' => $this->time,
-            'address' => $this->address,
-            'imageSize' => $this->imageSize,
-            'base' => $this->base,
-        ];
-    }
-
-    /**
-     * worker 侧重建（**读法与 `args()` 上下相邻**，漏字段当场看得见）。
-     *
-     * @param array<string, mixed> $args
-     */
-    public static function fromArgs(array $args): self
-    {
-        return new self(
-            self::argList($args, 'objectKeys'),
-            self::argString($args, 'time'),
-            self::argString($args, 'address'),
-            // 与 `WatermarkStore::$imageSize` 的初值同一个默认：UI 侧不选就是 2K
-            self::argString($args, 'imageSize', '2K'),
-            self::argString($args, 'base', Config::API_BASE),
-        );
     }
 
     public function run(): mixed

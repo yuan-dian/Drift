@@ -40,6 +40,9 @@ final class FetchRowsJob implements NamedJob
     /** 注册表里的键（UI 与 worker 必须一致） */
     public const NAME = 'showcase.rows';
 
+    /** 顺序 == 构造器参数顺序 */
+    private const FIELDS = ['page', 'perPage', 'mode', 'baseUrl'];
+
     /** 本地模式的模拟耗时（微秒）—— 1.2s，足够让 loading 态被用户看见 */
     private const LOCAL_DELAY_US = 1_200_000;
 
@@ -67,36 +70,6 @@ final class FetchRowsJob implements NamedJob
         private readonly string $mode = self::MODE_LOCAL,
         private readonly string $baseUrl = self::DEFAULT_BASE,
     ) {
-    }
-
-    public function name(): string
-    {
-        return self::NAME;
-    }
-
-    public function args(): array
-    {
-        return [
-            'page' => $this->page,
-            'perPage' => $this->perPage,
-            'mode' => $this->mode,
-            'baseUrl' => $this->baseUrl,
-        ];
-    }
-
-    /**
-     * worker 侧重建（**读法与 `args()` 上下相邻**，漏字段当场看得见）。
-     *
-     * @param array<string, mixed> $args
-     */
-    public static function fromArgs(array $args): self
-    {
-        return new self(
-            self::argInt($args, 'page', 1),
-            self::argInt($args, 'perPage', 20),
-            self::argString($args, 'mode', self::MODE_LOCAL),
-            self::argString($args, 'baseUrl', self::DEFAULT_BASE),
-        );
     }
 
     /**

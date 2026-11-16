@@ -38,6 +38,9 @@ final class DownloadResultsJob implements NamedJob, TimedJob
 
     public const NAME = 'watermark.download';
 
+    /** 顺序 == 构造器参数顺序 */
+    private const FIELDS = ['urls', 'cacheDir'];
+
     /** 单张结果图的 HTTP 上限（秒）—— 4K 图可能几 MB。 */
     private const FETCH_TIMEOUT_S = 120.0;
 
@@ -51,29 +54,6 @@ final class DownloadResultsJob implements NamedJob, TimedJob
         private readonly array $urls,
         private readonly string $cacheDir = '',
     ) {
-    }
-
-    public function name(): string
-    {
-        return self::NAME;
-    }
-
-    public function args(): array
-    {
-        return ['urls' => \array_values($this->urls), 'cacheDir' => $this->cacheDir];
-    }
-
-    /**
-     * worker 侧重建（**读法与 `args()` 上下相邻**，漏字段当场看得见）。
-     *
-     * @param array<string, mixed> $args
-     */
-    public static function fromArgs(array $args): self
-    {
-        return new self(
-            self::argList($args, 'urls'),
-            self::argString($args, 'cacheDir'),
-        );
     }
 
     /**

@@ -4,98 +4,106 @@ declare(strict_types=1);
 namespace Drift\App;
 
 /**
- * `NamedJob::fromArgs()` 的参数读取原语 —— 给"从 worker 侧重建任务"用。
+ * `NamedJob` 的默认实现 —— **名字 + 参数映射**，让任务类只需声明"有什么参数"。
  *
- * ## 它解决的 DX 问题：参数映射的**局部性**
+ * ## 它消掉的抄写
  *
- * 迁移前，一个任务的参数信息被写在**两个文件**里：
+ * 跨进程只能传「名字 + 参数数组」，于是任务必须自己说清被怎么重建。手写一遍是
+ * 三份同样的信息：
  *
+ * ```php
+ * public function __construct(private readonly array $objectKeys, private readonly string $time) {}
+ * public function args(): array      { return ['objectKeys' => $this->objectKeys, 'time' => $this->time]; }
+ * public static function fromArgs(array $a): self { return new self(self::argList($a, 'objectKeys'), self::argString($a, 'time')); }
  * ```
- * Jobs/AddTaskJob.php     args(): ['objectKeys' => …, 'imageSize' => …]
- * Jobs/JobRegistry.php    new AddTaskJob((string) ($args['keys'] ?? '2K'))   ← 键名还不一样
+ *
+ * 三处漏一处就是**静默错**：漏掉的字段在两侧一起退化成默认值，UI 全正常，只有
+ * 真机 worker 里跑错参数。⇒ 用本 trait 后只留一份名单：
+ *
+ * ```php
+ * final class AddTaskJob implements NamedJob
+ * {
+ *     use JobArgs;
+ *
+ *     public const NAME = 'watermark.addTask';
+ *     private const FIELDS = ['objectKeys', 'time'];   // ← 顺序 == 构造器参数顺序
+ *
+ *     public function __construct(private readonly array $objectKeys, private readonly string $time) {}
+ *     public function run(): mixed { … }
+ * }
  * ```
  *
- * 加一个构造参数要同时改两边，而"改了一边忘另一边"的症状是**静默的**：
- * 漏掉的那个参数在两侧都退化成默认值，UI 侧一切正常，只有真机 worker 里跑的是
- * 错参数（`NamedJobContractTest` 就是为了把这条变成红）。
- *
- * ⇒ 把读取方式搬进任务类自己（`static fromArgs()`），与 `args()` **上下相邻**：
- *   写 `args()` 的时候，对应的读法就在几行之下，对称可见。registry 退化成
- *   `名字 => 类::fromArgs` 的一行表。
+ * `args()` 的值从同名属性读（构造器提升保证了"参数名 == 属性名"），`fromArgs()`
+ * 按 `FIELDS` 的顺序位置填。名单与构造器签名的一致性由 `NamedJobContractTest`
+ * 用反射守 —— 漏字段、顺序错、键名分叉都会红。
  *
  * ## 为什么用 trait 而不是基类
  *
- * `Job` 必须是 final 类（§23.2 O-03 裁决的"凡是要跨边界的东西都是类"），而基类会
- * 占用唯一的那次继承位。（trait 在 AOT 下已大量使用：`Widget` 由四个 trait 合入。）
+ * `Job` 必须是类（§23.2 O-03："凡是要跨边界的东西都是类"），但实现类可能已有
+ * 继承关系；基类会占掉唯一那次继承位。trait 在 AOT 下已大量使用（`Widget` 由四个
+ * trait 合入）。
  *
- * ## 为什么每个读取都要显式给默认值
+ * ## 为什么 `FIELDS` 是常量而不是抽象方法
  *
- * 跨进程回来的数组**不可信**：worker 侧拿到的是 JSON 解出来的 `mixed`，AOT 下
- * 类型漂了不会报错、只会静默用错值。所以这里逐个 `is_*` 收窄 + 显式默认，
- * 与 `JobRunner` 那句"两条路的返回值形状必须一致"是同一条纪律。
+ * 漏写 `FIELDS` 应当是「未定义常量」的**显式**失败，而不是抽象方法被实现成
+ * 空数组的静默失败。
+ *
+ * ## 为什么 `fromArgs()` 不给默认值
+ *
+ * `args()` 恒输出全部字段 ⇒ 正常往返闭环。手工拼的 `args` 缺字段会让构造器收到
+ * `null` 并触发 `TypeError`（显式失败）。默认值只在**构造器签名**里存在一份，
+ * 不在这里复制第二份。
  *
  * @api
  */
 trait JobArgs
 {
-    /** 读一个字符串参数（类型不对 ⇒ 用默认值，不抛：这是**数据**不是参数） */
-    protected static function argString(array $args, string $key, string $default = ''): string
+    /**
+     * 注册表里的键（`NAME` 常量是唯一真相源）。
+     *
+     * @api
+     */
+    public function name(): string
     {
-        $value = $args[$key] ?? null;
-
-        return \is_string($value) ? $value : $default;
-    }
-
-    /** 读一个整数参数（跨进程可能变成字符串或浮点，逐个收窄） */
-    protected static function argInt(array $args, string $key, int $default = 0): int
-    {
-        $value = $args[$key] ?? null;
-
-        if (\is_int($value)) {
-            return $value;
-        }
-        if (\is_float($value)) {
-            return (int) $value;
-        }
-        if (\is_string($value) && $value !== '' && \is_numeric($value)) {
-            return (int) $value;
-        }
-
-        return $default;
-    }
-
-    /** 读一个布尔参数 */
-    protected static function argBool(array $args, string $key, bool $default = false): bool
-    {
-        $value = $args[$key] ?? null;
-
-        return \is_bool($value) ? $value : $default;
+        return self::NAME;
     }
 
     /**
-     * 读一个**列表**参数（`list<…>`）—— 归一化掉键，否则重建后 `args()` 与原值不等。
+     * 键名清单，**顺序必须等于构造器参数顺序**（判据用反射比）。
      *
-     * ★ 关联数组也接受：`array_values()` 之后就是 list。跨进程的 JSON 对象解出来是
-     *   关联数组，"调用方传 list、worker 收回 map"是常态，不该让调用点各自处理。
+     * ★ 宿主类必须定义 `private const FIELDS`。trait 里**故意不给默认值**：
+     *   漏写要让「未定义常量」当场炸，而不是静默映射出空数组。
      *
-     * @return list<mixed>
+     * @api
      */
-    protected static function argList(array $args, string $key): array
+    public function args(): array
     {
-        $value = $args[$key] ?? null;
+        $out = [];
+        foreach (self::FIELDS as $field) {
+            $out[$field] = $this->{$field};
+        }
 
-        return \is_array($value) ? \array_values($value) : [];
+        return $out;
     }
 
     /**
-     * 读一个**映射**参数（`array<string, mixed>`）—— 保留键。
+     * worker 侧重建（按 `FIELDS` 的顺序位置填参数）。
      *
-     * @return array<array-key, mixed>
+     * ★ 位置展开而不是"按名还原"（`new $class(...$args)` / `get_object_vars`）：
+     *   后两者在 AOT 下零验证记录，本仓不赌。这里生成的是 `appendUnpacked` +
+     *   显式属性读取，两条都在 tpc 的正规路径上。
+     *
+     * @param array<string, mixed> $args
+     *
+     * @api
      */
-    protected static function argMap(array $args, string $key): array
+    public static function fromArgs(array $args): self
     {
-        $value = $args[$key] ?? null;
+        $values = [];
+        foreach (self::FIELDS as $field) {
+            $values[] = $args[$field] ?? null;
+        }
 
-        return \is_array($value) ? $value : [];
+        return new self(...$values);
     }
 }

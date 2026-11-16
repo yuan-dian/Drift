@@ -26,13 +26,15 @@ use PHPUnit\Framework\TestCase;
  * 比较 `args()` 与 `args()` 永远不可能发现 `args()` 本身不全。
  *
  * ⇒ 本判据把比较对象换成**构造器签名**（反射读，不受 `args()` 的自我描述影响），
- *   并要求两侧名字只有一份：`array_keys(args()) === 参数名集`。
+ *   并要求两侧只有一份名单：`array_keys(args()) === 参数名集`，**且顺序相同**
+ *   （`JobArgs` 的 `fromArgs()` 是按位置填的）。
  *
- * ## 判据分四段
+ * ## 判据分五段
  *
  * | # | 钉住什么 | 漏了会怎样 |
  * |---|---|---|
  * | ① | `args()` 键集 == 构造参数名集 | 参数静默退化默认值（上面那段） |
+ * | ①b | `args()` 键**序** == 构造参数顺序 | 同类型的两个参数被装反（`fromArgs` 按位置填，不报错） |
  * | ② | `args()` 的每个值 JSON 可表达 | 进程池看着能过，换线程池静默丢（只搬 int/str） |
  * | ③ | `name()` 形态合法且全局唯一；与 `NAME` 常量一致 | registry 键与 `name()` 分叉，worker 里"没这个任务" |
  * | ④ | 每个 `NamedJob` 都在某个 registry 里，且能重建出等价 `args()` | UI 侧一切正常，真机 worker 才炸（§17.4.5） |
@@ -73,6 +75,32 @@ final class NamedJobContractTest extends TestCase
                 . '  args()  ：' . \implode(', ', $keys) . PHP_EOL
                 . '  缺的那个参数在 registry 重建时会退化成默认值 —— UI 侧完全正常，'
                 . '只有真机 worker 里跑的是错参数（改了名却没同步两侧，症状就是这样）'
+            );
+        }
+    }
+
+    /**
+     * `fromArgs()` 是**按位置**填的（`new self(...$values)`）⇒ 键序也是契约。
+     *
+     * ★ 与上一条分开写：上一条 `sort()` 掉了顺序（它管"有没有漏"），这一条管
+     *   "顺序对不对"。漏了这条，`FIELDS` 里两个字段写反就是把两个参数装反 ——
+     *   类型相同的参数（如两个 `string`）连 `TypeError` 都不会有，全链路静默。
+     */
+    #[Test]
+    public function 参数键的顺序与构造参数顺序一致(): void
+    {
+        foreach (self::namedJobs() as $class) {
+            $job = self::instance($class);
+            $params = self::parameterNames($class);
+            $keys = \array_keys($job->args());
+
+            self::assertSame(
+                $params,
+                $keys,
+                $class . '：args() 的键序必须等于构造参数顺序（fromArgs 按位置填）。' . PHP_EOL
+                . '  构造参数：' . \implode(', ', $params) . PHP_EOL
+                . '  args()  ：' . \implode(', ', $keys) . PHP_EOL
+                . '  顺序错了不会报错：同类型的两个参数会被装反，UI 侧照样正常'
             );
         }
     }

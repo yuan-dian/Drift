@@ -34,12 +34,15 @@ interface NamedJob extends Job
     /**
      * 重建这个任务所需的参数（JSON 可序列化）。
      *
-     * ★★ **键名必须等于构造参数名，一个不多一个不少**（`args()` 的键集 ==
-     *   `__construct` 的参数名集）。这不是风格问题：registry 那侧是手工
-     *   `new XxxJob($args['…'], …)`，两处名字一旦分叉，"改一处忘另一处"就是
-     *   **静默**错 —— 漏掉的那个参数在两侧都退化成默认值，UI 一切正常，只有
-     *   worker 里跑的是错参数。判据：`NamedJobContractTest`（反射比对 + 重建
-     *   roundtrip），加参数忘了同步会红。
+     * ★★ **键名必须等于构造参数名，一个不多一个不少**，且**顺序等于构造参数顺序**。
+     *   `fromArgs()` 是按位置填的（`new self(...$values)`）—— 名字对不上就取到
+     *   `null`，顺序错了就把两个参数装反，两种都是**静默**错：漏掉的字段在两侧
+     *   一起退化成默认值，UI 一切正常，只有 worker 里跑的是错参数。
+     *
+     * ★ **别手写这个方法**：`use JobArgs` + `private const FIELDS = [...]` 就够，
+     *   名单只写一份。判据 `NamedJobContractTest` 拿反射比键集与顺序，漏字段 /
+     *   顺序错 / 键名分叉都会红。
+     *
      * ★ 值只能是标量或标量数组（`ThreadTaskHost` 只搬 int/str 两个槽，
      *   `ProcessTaskHost` 只能 JSON）：传对象在进程池里看着能过，换线程池就静默。
      *

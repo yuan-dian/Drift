@@ -43,6 +43,9 @@ final class UploadBatchJob implements NamedJob, TimedJob
 
     public const NAME = 'watermark.upload';
 
+    /** 顺序 == 构造器参数顺序 */
+    private const FIELDS = ['sign', 'items', 'base'];
+
     /** 给 worker 启动与收尾的余量（毫秒）—— 上限只用来判卡死，不必卡到秒级。 */
     private const TIMEOUT_MARGIN_MS = 10_000;
 
@@ -55,34 +58,6 @@ final class UploadBatchJob implements NamedJob, TimedJob
         private readonly array $items,
         private readonly string $base = Config::API_BASE,
     ) {
-    }
-
-    public function name(): string
-    {
-        return self::NAME;
-    }
-
-    public function args(): array
-    {
-        return [
-            'sign' => $this->sign,
-            'items' => \array_values($this->items),
-            'base' => $this->base,
-        ];
-    }
-
-    /**
-     * worker 侧重建（**读法与 `args()` 上下相邻**，漏字段当场看得见）。
-     *
-     * @param array<string, mixed> $args
-     */
-    public static function fromArgs(array $args): self
-    {
-        return new self(
-            self::argMap($args, 'sign'),
-            self::argList($args, 'items'),
-            self::argString($args, 'base', Config::API_BASE),
-        );
     }
 
     /**
