@@ -156,6 +156,17 @@
    在计时噪声内。生成物也印证：`readonly` 属性的读法是 `typephp_read_property_cached`，
    与非 readonly 的 `public` 属性**逐字相同**（见 `apps/bench/build/src/M0Readonly.cc`）。
    ⇒ **v6 `13` §7 纪律 3「热路径禁 `readonly`」在本仓不成立**，本条从判据表 §1.3/§1.5 划掉。
+
+   ★ **2026-11-16 订正（上述"零开销 / 逐字相同"已过期，勿据此决策）**：M0 生成物时间戳
+   2026-10-22，测的是 #186 之前的旧编译器。上游 `bff46481`(#186) 把 `readonly` 标量读
+   改走 `typephp_read_property_scoped`(checked Zend result + 作用域类解析)；`41d91fe6`
+   只把结果转回原生标量、**未采纳 direct-slot 优化**。本仓当前编译器 A/B 生成物：
+   `readonly float` 读 = `php::toFloat(typephp_read_property_scoped(o, …, get_persistent_class(…)))`，
+   非 readonly = `php::toFloat(o.attr(get_persistent_prop(…)))` —— **两者不再逐字相同**。
+   M0 量具的 `$acc += $ro->v` 被 `php::Var` 吸收，今天重跑也测不出该退化路径。
+   **但裁决定是否改：不改 410 处 `readonly`** —— 退化是常数级（多一次函数调用 + 类解析），
+   折算 ≪ 1ms/秒门槛；去掉 readonly 换不回 direct-slot（getter 更慢、去 readonly 丢不可变性）。
+   属性钩子全仓 0 处。完整证据与裁决见 `docs/DECISION-readonly退化复核-2026-11-16.md`。
 2. **getter 是方法调用，不是免费**：`B − C ≈ +22 ns/read`。生成物里 getter 走
    `typephp_call_method_cached`，属性读走 `typephp_read_property_cached`。
    ⇒ `02` §3.1 注释里"`#[\Getter]` 编译期零成本"要理解为**"不用手写"**，不是**"运行时免费"**。
@@ -552,6 +563,12 @@ M0-1 证明 `readonly` 免费 ⇒ **原先唯一的迁移理由（"慢 10×+"）
 | `readonly` 纪律 | "热路径禁 `readonly`" | **撤销** | **有**（M0-1） |
 | "`#[\Getter]` 编译期零成本" | 注释原话 | 改成"不用手写，运行时要一次方法调用" | **有**（M0-1） |
 | "非空对象字段可静态分派" | `08` §3.4 表第 3 行 | **不成立**（内联缓存读，非静态偏移） | **有**（M0-2） |
+
+★ **2026-11-16 复核（对上表"撤销热路径禁 readonly"的补丁）**：#186 之后 `readonly` 标量读
+不再走内联缓存，而是 checked scoped 读（见 §2.1 订正）。但裁决仍是**不迁移**——
+退化量级远低于阈值、且去 readonly 换不回 direct-slot。§3.4「不迁移」结论不变，
+只是它的理由从"readonly 免费"升级为"退化不足以抵消不可变性损失"。
+V-2 栏"M0-1 证明它免费"同样应读作"旧编译器下免费"。
 
 ---
 
