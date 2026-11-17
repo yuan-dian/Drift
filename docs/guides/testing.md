@@ -10,7 +10,7 @@
 | **T1** | `php tools/drift-dev.php <app>`，开发态壳 | 不能 |
 | **T2** | `drift-build --full` + 真机探针 | 能，唯一能 |
 
-T0 装 PHP 就能跑；`composer.json` 声明的 PHP 版本无上界，所以 CI 在公开 runner 上用两个版本都跑一遍，只在单版本上验等于承诺没兑现。T1 只编一次壳与 C++ 桥，业务 PHP 由壳内嵌 ZendVM 运行时加载，改 PHP 即时生效；它验解释器和壳层逻辑。T2 需要完整工具链与自托管 Windows runner。
+T0 装 PHP 就能跑；`composer.json` 声明的 PHP 版本无上界，所以 CI 在公开 runner 上用两个版本都跑一遍，只在单版本上验等于承诺没兑现。T1 只编一次壳与 C++ 桥，业务 PHP 由壳内嵌 ZendVM 运行时加载，改 PHP 即时生效；它验解释器和壳层逻辑。T2 在公开 `windows-2022` runner 上从源码构建工具链（`aot.yml`），本地也按需跑。
 
 三层各自能抓的东西不同：T0 抓语言级静态问题、集合封闭、错误码贯通、版本锚点一致性，以及行为层的单元测试、IR 快照、整页像素基线和 smoke；T1 抓"真窗口里跑起来"与解释器 / 壳的语义等价；T2 抓 AOT 生成物与 OS 边界的一切。
 
@@ -60,8 +60,8 @@ composer probe -- <app>              # T2 真机探针
 
 - **PR / push 主分支**：`ci.yml` 跑 `php bin/drift verify --json` 日常档，`windows-2022` + setup-php 的版本矩阵，`coverage: none` / `fail-fast: true`，并有环境与版本 / 扩展断言（不信任安装结果）；不需要 MSVC / tpc。
 - **手动全量**：按需触发 `ci.yml` 的手动档，跑 `--full --json`（含 feature / pages / smoke）；发版 tag 由 `release.yml` 自动跑同一档。题库 `--layer=corpus` 是独立量具，不并进报告。
-- **报告断言**：三个 workflow 跑完 `verify --json` 都调 `.github/scripts/assert-verify-report.php <报告> [step id...]`。`ci.yml` / `release.yml` 必须给 `unit`（手动全量与发布还给 `feature`）；"PHPUnit 没装"被记成 `skip` 时，断言走独立路径读 `items[].status`，把"没测到"判红，不让整份报告仍显示通过。`deps-build.yml` 只跑 `--layer=static` 且不传 step id，因为自托管 runner 不保证有 composer。
-- **AOT / T2**：需自托管 Windows runner 预装工具链，不进公开 runner 的日常闸门。CI 里的纯 PHP 判据不等于 AOT 真机构建通过。
+- **报告断言**：跑 `verify --json` 的三个 workflow 都调 `.github/scripts/assert-verify-report.php <报告> [step id...]`。`ci.yml` / `release.yml` 必须给 `unit`（手动全量与发布还给 `feature`）；"PHPUnit 没装"被记成 `skip` 时，断言走独立路径读 `items[].status`，把"没测到"判红，不让整份报告仍显示通过。`deps-build.yml` 只跑 `--layer=static` 且不传 step id，因为自托管 runner 不保证有 composer。
+- **AOT / T2**：`aot.yml` 在公开 `windows-2022` runner 上从源码构建 tpc / PHPX，取依赖包，全量编译 `hello` 并跑 `probe-window` 五判据；前置是 `deps-v1` 资产已发布。`ci.yml` 的结构判据守着这条通道不退化。CI 里的纯 PHP 判据不等于 AOT 真机构建通过。
 - **依赖包构建**：`deps-build.yml` 只做依赖包的重建与组包，`publish` 开启时才提交 lock、打 tag、传资产；它不跑产品判据。依赖与发版流程见[依赖与发布](./dependencies-and-release.md)。
 
 判据集合自动跟随计划表，所以新增判据不需要改 CI 白名单——这也是反对在 workflow 里手写 step id 清单的理由。报告断言里显式要求的 step id 只表达"这一项必须真的跑过"，不是判据全集。

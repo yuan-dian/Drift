@@ -25,7 +25,7 @@
 |---|---|---|---|
 | T0 | `php bin/drift verify` | 纯 PHP 校验，static + behavior 的快项 | 本地与 CI 都跑 |
 | T1 | `php tools/drift-dev.php <app>` | 开发态壳，改 PHP 即时生效、免重编译 | 本地日常 |
-| T2 | `drift-build --full` + `probe-window` | AOT 真机构建与真机探针 | 自托管 Windows runner |
+| T2 | `drift-build --full` + `probe-window` | AOT 真机构建与真机探针 | 公开 `windows-2022` runner（`aot.yml`）与本地 |
 
 要点：
 
@@ -41,12 +41,13 @@ CI 分几种触发，各跑不同档位：
 - **PR / push main**：跑 `php bin/drift verify --json` 的日常档，在 `windows-2022` 上用 8.4 / 8.5 双版本矩阵，不需要 MSVC / tpc。
 - **手动全量**：需要时手动触发，`verify --full --json`，含 feature / pages / smoke 慢项，不设定时任务。
 - **发版**：`v*` tag 自动跑全量同一档。
+- **真 AOT**：`aot.yml` 在 push main / PR / 手动触发时从源码构建 tpc 与 PHPX，全量编译 `hello` 并跑 `probe-window`；依赖包取不到就红，不用纯 PHP 判据冒充 AOT 通过。
 
 CI 的三条硬纪律：
 
 - **不写判据白名单**。判据集合自动跟随 `tests/Verify/VerifyPlan.php`，`--list` 是唯一事实源。手写白名单不会随新增判据增长，会漏掉最该进 CI 的"接线对账 + 变异自证"那一批。
 - **runner 镜像 pin 到 `windows-2022`**，不用 `latest`；装完 PHP 还要断言版本与扩展，不信任安装结果。
-- **报告要独立断言**。verify 跑完调检查脚本按 step 读 `items[].status`，把"没测到"判红——例如 PHPUnit 没装要记成失败而不是 skip，让整份报告保持通过。T2 / AOT 需要自托管 Windows runner，预装完整工具链。
+- **报告要独立断言**。verify 跑完调检查脚本按 step 读 `items[].status`，把"没测到"判红——例如 PHPUnit 没装要记成失败而不是 skip，让整份报告保持通过。T2 / AOT 在 `aot.yml` 的公开 runner 上从源码构建工具链并跑真机探针，`ci.yml` 的结构判据确认那条通道没被关掉。
 
 ## 提交与发布
 

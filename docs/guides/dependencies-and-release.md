@@ -85,6 +85,7 @@ php tools/pack-deps.php && php tools/version.php --check
 - `deps-build.yml`：`workflow_dispatch` 触发，从 pinned Skia commit 重建 → 组包 → 校验，默认只把产物挂 artifact；`publish=true` 才提交 lock → 打 `deps-vN` tag → 上传两个资产。
 - `release.yml`：`push` 产品 `v*` tag 时跑 `verify --full --json` 并从 `deps-vN` 取包，最后建 **draft** release，人工确认后才发布。
 - `ci.yml`：push / PR 的主闸门，只跑判据，不写 Release。
+- `aot.yml`：push main / PR / 手动触发的真 T2，取上面那条 `deps-vN` 资产后全量编译 `hello` 并跑真机探针；资产缺失时取包阶段就红，不会用纯 PHP 判据冒充 AOT 通过。
 
 依赖包**不跟着产品 release 构建**：`fetch-deps.php` 按固定资产名去 `DEPS_VERSION` 那个 tag 找，挂到产品 tag 上所有人都会失败；依赖版本与代码版本解耦就是为了避免"发一次产品重编一次 Skia"。
 

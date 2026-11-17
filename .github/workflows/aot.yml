@@ -1,0 +1,311 @@
+name: AOT
+
+# 公开 runner 上的真实 T2。与 TypePHP 的 windows-build.yml 同构：
+# 源码构建编译器 + PHPX，取依赖包，全量 AOT 出 exe，再跑真机五判据。
+# 不把 `drift-codegen --dry`（只生成 C++）当 AOT 通过。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aot-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  COMPOSER_NO_INTERACTION: 1
+  COMPOSER_PROCESS_TIMEOUT: 0
+  PHP_VERSION: '8.4'
+  # 本机全量 AOT 验过的编译器版本，含 Drift 要求的最低编译期修复基线。
+  TPC_REF: 41d91fe69d2f7ec99dffe252a95244793000c6d2
+  DRIFT_TPC_ENTRY: ${{ github.workspace }}\third_party\typephp\bin\tpc.php
+  DRIFT_PHPX_HOME: ${{ github.workspace }}\third_party\phpx
+
+jobs:
+  aot:
+    name: Build + probe (windows-2022)
+    runs-on: windows-2022
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP ${{ env.PHP_VERSION }} ZTS
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          coverage: none
+          extensions: mbstring, curl, openssl, zip
+          tools: composer:v2
+        env:
+          fail-fast: true
+          phpts: ts
+          update: true
+
+      # setup-php 的结果不信任：版本 / ZTS / 扩展 / php.ini 逐项回读。
+      - name: Resolve PHP build environment
+        id: php-build-env
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = php -r 'echo PHP_VERSION;'
+          if (-not $version.StartsWith('${{ env.PHP_VERSION }}.')) { throw "PHP $version != ${{ env.PHP_VERSION }}.x" }
+          if ((php -r 'echo PHP_ZTS;') -ne '1') { throw 'setup-php did not install a ZTS build' }
+          foreach ($e in @('mbstring','curl','openssl','zip')) {
+            $present = php -r "echo extension_loaded('$e') ? 'yes' : 'no';"
+            if ($present -ne 'yes') { throw "missing extension: $e" }
+          }
+          $phpExe = (Get-Command php).Source
+          $phpHome = Split-Path -Parent $phpExe
+          if (-not (Test-Path (Join-Path $phpHome 'php.ini'))) { throw "php.ini missing in $phpHome" }
+          $archive = "php-devel-pack-$version-Win32-vs17-x64.zip"
+          "PHP_HOME=$phpHome" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "PHP_DEVEL_ARCHIVE=$archive" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "BUILD_JOBS=$([Environment]::ProcessorCount)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "archive=$(Join-Path $env:RUNNER_TEMP $archive)" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "version=$version" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      # fetch-depth: 0 是 tpc 基线判据的前提：doctor 用 git 祖先判定 bff46481。
+      - name: Checkout TypePHP compiler source
+        uses: actions/checkout@v4
+        with:
+          repository: swoole/typephp
+          ref: ${{ env.TPC_REF }}
+          path: third_party/typephp
+          fetch-depth: 0
+
+      - name: Checkout PHPX
+        uses: actions/checkout@v4
+        with:
+          repository: swoole/phpx
+          ref: master
+          path: third_party/phpx
+
+      - name: Install compiler dependencies
+        working-directory: third_party/typephp
+        shell: pwsh
+        run: composer install --prefer-dist --no-progress
+
+      - name: Cache PHP development package
+        id: cache-php-devel
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ steps.php-build-env.outputs.archive }}
+          key: windows-2022-php-devel-${{ steps.php-build-env.outputs.version }}-zts-vs17-x64
+
+      - name: Install matching PHP development SDK
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $archive = '${{ steps.php-build-env.outputs.archive }}'
+          $extractDir = Join-Path $env:RUNNER_TEMP "php-devel-$env:PHP_VERSION"
+          if (-not (Test-Path $archive)) {
+            $ok = $false
+            foreach ($base in @('https://downloads.php.net/~windows/releases','https://downloads.php.net/~windows/releases/archives')) {
+              try {
+                Invoke-WebRequest -Uri "$base/$env:PHP_DEVEL_ARCHIVE" -OutFile $archive
+                $ok = $true
+                break
+              } catch { Remove-Item $archive -Force -ErrorAction SilentlyContinue }
+            }
+            if (-not $ok) { throw "cannot download $env:PHP_DEVEL_ARCHIVE" }
+          }
+          Expand-Archive -Path $archive -DestinationPath $extractDir -Force
+          $source = Get-ChildItem $extractDir -Directory |
+            Where-Object { Test-Path (Join-Path $_.FullName 'include\main\php.h') } |
+            Select-Object -First 1
+          if ($null -eq $source) { throw 'PHP development archive has an unexpected layout' }
+          $sdk = Join-Path $env:PHP_HOME 'SDK'
+          New-Item (Join-Path $sdk 'include'), (Join-Path $sdk 'lib') -ItemType Directory -Force | Out-Null
+          Copy-Item (Join-Path $source.FullName 'include\*') (Join-Path $sdk 'include') -Recurse -Force
+          Copy-Item (Join-Path $source.FullName 'lib\*') (Join-Path $sdk 'lib') -Force
+          Copy-Item (Join-Path $env:PHP_HOME 'php8embed.lib') (Join-Path $sdk 'lib') -Force
+          $hashHeader = Join-Path $sdk 'include\ext\hash\php_hash.h'
+          $text = [IO.File]::ReadAllText($hashHeader)
+          $text = $text.Replace('char *base = ecalloc(', 'char *base = (char *) ecalloc(')
+          [IO.File]::WriteAllText($hashHeader, $text, [Text.UTF8Encoding]::new($false))
+          foreach ($required in @(
+            (Join-Path $sdk 'include\main\php.h'),
+            (Join-Path $sdk 'lib\php8ts.lib'),
+            (Join-Path $sdk 'lib\php8embed.lib')
+          )) {
+            if (-not (Test-Path $required)) { throw "PHP SDK file missing: $required" }
+          }
+
+      - name: Save PHP development package
+        if: steps.cache-php-devel.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.php-build-env.outputs.archive }}
+          key: ${{ steps.cache-php-devel.outputs.cache-primary-key }}
+
+      - name: Configure MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # drift-build 不读 vcvars，按目录自己拼 INCLUDE/LIB/PATH；
+      # 这里只把 runner 上实际装的版本定位出来交给它。
+      - name: Resolve toolchain paths
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vsWhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vs = & $vsWhere -latest -products '*' -requires 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64' -property installationPath
+          if (-not $vs) { throw 'VS C++ toolset not found' }
+          $msvc = Get-ChildItem (Join-Path $vs 'VC\Tools\MSVC') -Directory |
+            Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $msvc) { throw 'MSVC toolset directory not found' }
+          $kits = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10'
+          $sdk = Get-ChildItem (Join-Path $kits 'Lib') -Directory |
+            Where-Object { Test-Path (Join-Path $_.FullName 'um\x64') } |
+            Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $sdk) { throw 'Windows SDK with um/x64 not found' }
+          "DRIFT_MSVC=$($msvc.FullName)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "DRIFT_KITS=$kits" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "DRIFT_SDK_VERSION=$($sdk.Name)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "${{ github.workspace }}\third_party\phpx\build" | Out-File $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Cache GMP and MPFR
+        id: cache-gmp-mpfr
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}\drift-cache\vcpkg-x64-windows
+          key: windows-2022-vcpkg-gmp-mpfr-x64-v1
+
+      - name: Install GMP and MPFR
+        if: steps.cache-gmp-mpfr.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vcpkg = Join-Path $env:VCPKG_INSTALLATION_ROOT 'vcpkg.exe'
+          & $vcpkg install 'gmp:x64-windows' 'mpfr:x64-windows'
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg failed: $LASTEXITCODE" }
+          $installed = Join-Path $env:VCPKG_INSTALLATION_ROOT 'installed\x64-windows'
+          $cache = Join-Path $env:RUNNER_TEMP 'drift-cache\vcpkg-x64-windows'
+          New-Item "$cache\include", "$cache\lib", "$cache\bin" -ItemType Directory -Force | Out-Null
+          Copy-Item (Join-Path $installed 'include\*') "$cache\include" -Recurse -Force
+          foreach ($lib in @('gmp.lib','gmpxx.lib','mpfr.lib')) {
+            Copy-Item (Join-Path $installed "lib\$lib") "$cache\lib" -Force
+          }
+          Copy-Item (Join-Path $installed 'bin\*.dll') "$cache\bin" -Force
+
+      - name: Save GMP and MPFR
+        if: steps.cache-gmp-mpfr.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}\drift-cache\vcpkg-x64-windows
+          key: ${{ steps.cache-gmp-mpfr.outputs.cache-primary-key }}
+
+      - name: Stage GMP and MPFR
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $cache = Join-Path $env:RUNNER_TEMP 'drift-cache\vcpkg-x64-windows'
+          $sdkLib = Join-Path $env:PHP_HOME 'SDK\lib'
+          Copy-Item "$cache\include\*" (Join-Path $env:PHP_HOME 'SDK\include') -Recurse -Force
+          foreach ($lib in @('gmp.lib','gmpxx.lib','mpfr.lib')) {
+            Copy-Item "$cache\lib\$lib" $sdkLib -Force
+          }
+          Copy-Item "$cache\bin\*.dll" $env:PHP_HOME -Force
+
+      - name: Cache mpdecimal
+        id: cache-mpdecimal
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.DRIFT_PHPX_HOME }}\thirdparty\mpdecimal\vcbuild\dist64
+          key: windows-2022-mpdecimal-${{ hashFiles('third_party/phpx/thirdparty/mpdecimal/**') }}
+
+      - name: Build mpdecimal
+        if: steps.cache-mpdecimal.outputs.cache-hit != 'true'
+        shell: pwsh
+        working-directory: third_party/phpx/thirdparty/mpdecimal/vcbuild
+        run: |
+          cmd.exe /d /s /c vcbuild64.bat
+          if ($LASTEXITCODE -ne 0) { throw "mpdecimal build failed: $LASTEXITCODE" }
+
+      - name: Save mpdecimal
+        if: steps.cache-mpdecimal.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.DRIFT_PHPX_HOME }}\thirdparty\mpdecimal\vcbuild\dist64
+          key: ${{ steps.cache-mpdecimal.outputs.cache-primary-key }}
+
+      - name: Stage mpdecimal
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dist = Join-Path $env:DRIFT_PHPX_HOME 'thirdparty\mpdecimal\vcbuild\dist64'
+          $sdkLib = Join-Path $env:PHP_HOME 'SDK\lib'
+          $sdkInclude = Join-Path $env:PHP_HOME 'SDK\include'
+          Copy-Item "$dist\*.lib" $sdkLib -Force
+          Copy-Item "$dist\*.dll" $sdkLib -Force
+          Copy-Item "$dist\*.dll" $env:PHP_HOME -Force
+          Copy-Item "$dist\mpdecimal.h" $sdkInclude -Force
+          Copy-Item "$dist\decimal.hh" $sdkInclude -Force
+
+      - name: Build PHPX
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sdkLib = Join-Path $env:PHP_HOME 'SDK\lib'
+          $phpxBuild = Join-Path $env:DRIFT_PHPX_HOME 'build'
+          cmake -S $env:DRIFT_PHPX_HOME -B $phpxBuild -G Ninja `
+            -D CMAKE_BUILD_TYPE=Release -D BUILD_TESTS=OFF -D BUILD_EXT=OFF -D GITHUB_ACTION=ON `
+            -D MPDECIMAL_LIBRARY="$sdkLib\libmpdec-4.0.1.dll.lib" `
+            -D MPDECIMALXX_LIBRARY="$sdkLib\libmpdec++-4.0.1.dll.lib"
+          if ($LASTEXITCODE -ne 0) { throw 'PHPX configure failed' }
+          cmake --build $phpxBuild --target phpx --parallel $env:BUILD_JOBS
+          if ($LASTEXITCODE -ne 0) { throw 'PHPX build failed' }
+          foreach ($required in @(
+            (Join-Path $env:DRIFT_PHPX_HOME 'lib\phpx.lib'),
+            (Join-Path $env:DRIFT_PHPX_HOME 'build\phpx.dll')
+          )) {
+            if (-not (Test-Path $required)) { throw "PHPX output missing: $required" }
+          }
+
+      - name: Fetch Skia and fonts
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          php tools/fetch-deps.php
+          if ($LASTEXITCODE -ne 0) { throw 'fetch-deps failed' }
+
+      # 同一份 Environment::probe() 供 doctor 与 drift-build 使用；
+      # 让工具链缺口在编译前报出可执行的修法，而不是链接期 LNK2019。
+      - name: Doctor (build scope)
+        shell: pwsh
+        run: |
+          php tools/doctor.php --scope=build --quiet
+          if ($LASTEXITCODE -ne 0) { throw 'doctor --scope=build failed' }
+
+      - name: Build hello (full AOT)
+        shell: pwsh
+        run: |
+          $env:PHPRC = Join-Path $env:PHP_HOME 'php.ini'
+          php tools/drift-build.php hello --full
+          if ($LASTEXITCODE -ne 0) { throw 'drift-build failed' }
+          if (-not (Test-Path 'hello.exe')) { throw 'hello.exe was not produced' }
+
+      - name: Probe hello window
+        shell: pwsh
+        run: |
+          python tools/probe-window.py hello
+          if ($LASTEXITCODE -ne 0) { throw 'probe-window failed' }
+
+      - name: Upload AOT artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aot-hello-windows-2022
+          path: |
+            hello.exe
+            hello.exe.map
+            php.ini
+          if-no-files-found: warn
+          retention-days: 7

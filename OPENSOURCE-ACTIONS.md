@@ -7,7 +7,7 @@
 1. **仓库设为公开**（GitHub 后台：Settings → General → Danger Zone → Change visibility）。身份已裁决，这一步只是落地。
 2. **发布首个依赖包**：`php tools/pack-deps.php` → `php tools/release-deps.php`，把 `deps-v1` 资产转为公开；公开后 `fetch-deps.php` 的默认路径才对匿名可用。
 3. **打 `v0.1.0-preview.1` tag 并推送**：激活已写好的 `release.yml`（当前 0 tag，`git describe` 报 no names）。release 以 DRAFT 创建， stray tag 不会误发公告。
-4. **开公开 AOT smoke**：`ci.yml` 的 `aot` job 当前 `if: false`、依赖自托管 runner。最小版本是在公开 runner 上只做"编译 hello"（不跑真机），让核心卖点在公开渠道有绿灯；真机探针仍留自托管。
+4. **开公开 AOT smoke**：已落地为 `aot.yml` —— 公开 `windows-2022` runner 从源码构建 tpc / PHPX，取依赖包，全量编译 `hello` 并跑 `probe-window` 五判据；`ci.yml` 的结构判据守着这条通道不退化。前置条件是 `deps-v1` 资产已发布（第 2 步）：包没发出去时 job 在取包阶段红，不会假绿。
 5. **README 门面**：加 CI badge + 一张运行截图；把 17 KB 的环境细节下沉，第一屏只留定位、截图、三行 hello、一句话安装。
 
 第 2 步是硬前置：跳过它，贡献入口、badge、文档再漂亮，陌生人依旧 clone 不出可运行的 exe。
