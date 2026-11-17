@@ -11,6 +11,7 @@ use Drift\Input\KeyEvent;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderTextArea;
 use Drift\Text\Paragraph;
+use Drift\Widget\Traits\SingleAxisScrollHost;
 
 /**
  * `TextArea` 的纯 UI 态（多行特有）。
@@ -27,6 +28,8 @@ use Drift\Text\Paragraph;
  */
 final class TextAreaState extends EditableTextState implements Scrollable
 {
+    use SingleAxisScrollHost;
+
     /** 上下移行时保持的列（逻辑像素）；`null` = 本次上下移是序列的第一步 */
     private ?float $goalX = null;
 
@@ -269,28 +272,6 @@ final class TextAreaState extends EditableTextState implements Scrollable
         }
     }
 
-    /**
-     * 推进这一帧的**滚动动画**与**滚动条淡出**。
-     * 顺序：先滚动、后淡出（`scrollBy()` 里 `noteScroll()` 把条打回全亮，反过来会抖动）。
-     * 插入符跟随不在这里：本方法跑在 settle **之前**，盒还是上一帧的，故在盒的
-     * `performLayout()` 里做。
-     */
-    #[\Override]
-    public function tickFrame(float $timestampMs): bool
-    {
-        $lane = $this->lane();
-
-        $busy = $lane->tick($timestampMs, function (float $delta): void {
-            $this->scrollBy($delta);
-        });
-
-        if ($lane->fade()->tickFor($this, $timestampMs)) {
-            $busy = true;
-        }
-
-        return $busy;
-    }
-
     // ── 渲染 ────────────────────────────────────────────────────────────
 
     /**
@@ -346,6 +327,8 @@ final class TextAreaState extends EditableTextState implements Scrollable
      * 选区两端也进指纹：`Ctrl+A` / Shift+方向键可能只动选区不动插入符，
      * 活动端跑出视口同样要跟随。未编辑 ⇒ 指纹清空（下次进编辑必然重新对准）。
      * 这里只改字段、**不标脏**（build 里标脏会被 E-FLUSH-CYCLE 拦）。
+     * 跟随不在 tickFrame() 做：那跑在 settle 前、盒还是上一帧的 ⇒ 放在盒的
+     * `performLayout()` 里。
      */
     private function caretRevealOffset(): ?int
     {
@@ -367,17 +350,6 @@ final class TextAreaState extends EditableTextState implements Scrollable
     }
 
     // ── 内部 ────────────────────────────────────────────────────────────
-
-    private function lane(): ScrollLane
-    {
-        $lane = $this->lane;
-        if ($lane === null) {
-            $lane = new ScrollLane(0.0, null, $this);
-            $this->lane = $lane;
-        }
-
-        return $lane;
-    }
 
     private function paragraph(): ?Paragraph
     {

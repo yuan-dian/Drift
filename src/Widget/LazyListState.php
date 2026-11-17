@@ -9,6 +9,7 @@ use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Size;
 use Drift\Layout\RenderScrollView;
+use Drift\Widget\Traits\SingleAxisScrollHost;
 
 /**
  * `LazyList` 的 State：持滚动偏移 + 决定这一帧造哪几格（两个轴共用一份）。
@@ -20,6 +21,8 @@ use Drift\Layout\RenderScrollView;
  */
 final class LazyListState extends State implements Scrollable, ScrollMetrics, ConstraintObserver
 {
+    use SingleAxisScrollHost;
+
     /** 这根轴的滚动状态机（偏移 + 动画 + 淡出）；懒建：从没滚过的列表不额外造对象。 */
     private ?ScrollLane $lane = null;
 
@@ -172,6 +175,8 @@ final class LazyListState extends State implements Scrollable, ScrollMetrics, Co
      * ⇒ 推给盒（就地改 + 标重排）即可；只有滚出缓冲带才标脏重建。
      * ★ 回写**盒夹过的值**（不是 `$next`）：内容变短时 State 里那个"增量累加值"
      *   会长期大于上限，之后每笔增量都先消耗死区 —— 真机表现"滚轮转了画面不动"。
+     * ★ 动画期间每帧都走一次换窗判断（tickFrame 调本方法）：一步 5px 也可能跨过
+     *   缓冲带边界，跳过就"滑过去时下方露白"。
      */
     public function scrollBy(float $delta): void
     {
@@ -254,40 +259,6 @@ final class LazyListState extends State implements Scrollable, ScrollMetrics, Co
         }
 
         $this->lane()->glide($delta);
-    }
-
-    /** 这根轴的滚动状态机（懒建：从没滚过的列表不建） */
-    private function lane(): ScrollLane
-    {
-        $lane = $this->lane;
-        if ($lane === null) {
-            $lane = new ScrollLane(0.0, null, $this);
-            $this->lane = $lane;
-        }
-
-        return $lane;
-    }
-
-    /**
-     * 推进这一帧的滚动动画与滚动条淡出（先滚动、后淡出）。
-     * 这里的 `scrollBy()` 会顺带做 `rememberAnchor()` 与"窗口盖不住就标脏"，
-     * 故动画期间每帧都走一次换窗判断 —— 那是必要的：一步 5px 也可能跨过缓冲带边界，
-     * 跳过它就会出现"滑过去时下方露白"。
-     */
-    #[\Override]
-    public function tickFrame(float $timestampMs): bool
-    {
-        $lane = $this->lane();
-
-        $busy = $lane->tick($timestampMs, function (float $delta): void {
-            $this->scrollBy($delta);
-        });
-
-        if ($lane->fade()->tickFor($this, $timestampMs)) {
-            $busy = true;
-        }
-
-        return $busy;
     }
 
     /**

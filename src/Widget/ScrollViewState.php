@@ -8,6 +8,7 @@ use Drift\Geometry\Axis;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Size;
 use Drift\Layout\RenderScrollView;
+use Drift\Widget\Traits\SingleAxisScrollHost;
 
 /**
  * `ScrollView` 的纯 UI 态：**滚动偏移**（§11.5 / §12.3）。
@@ -25,6 +26,8 @@ use Drift\Layout\RenderScrollView;
  */
 final class ScrollViewState extends State implements Scrollable, ScrollMetrics
 {
+    use SingleAxisScrollHost;
+
     /**
      * 这根轴的滚动状态机（偏移 + 动画 + 淡出）。
      *
@@ -158,43 +161,6 @@ final class ScrollViewState extends State implements Scrollable, ScrollMetrics
         }
 
         $this->lane()->glide($delta);
-    }
-
-    /** 这根轴的滚动状态机（懒建：从没滚过的视口不建） */
-    private function lane(): ScrollLane
-    {
-        $lane = $this->lane;
-        if ($lane === null) {
-            $lane = new ScrollLane(0.0, null, $this);
-            $this->lane = $lane;
-        }
-
-        return $lane;
-    }
-
-    /**
-     * 推进这一帧的**滚动动画**与**滚动条淡出**。
-     *
-     * ★ 顺序：先滚动、后淡出。`scrollBy()` 里会 `noteScroll()`（把条打回全亮），
-     *   反过来就会"这一帧先按旧空闲时长淡一点、再被滚动打回全亮"—— 抖动。
-     *
-     * ★ 返回值是"还要下一帧吗"，由 `Application` 聚合进 `animating` ⇒
-     *   帧末 `continueFrame()` 据此 `scheduleNextFrame()`；不需要在等待层加判据。
-     */
-    #[\Override]
-    public function tickFrame(float $timestampMs): bool
-    {
-        $lane = $this->lane();
-
-        $busy = $lane->tick($timestampMs, function (float $delta): void {
-            $this->scrollBy($delta);
-        });
-
-        if ($lane->fade()->tickFor($this, $timestampMs)) {
-            $busy = true;
-        }
-
-        return $busy;
     }
 
     /**
