@@ -19,6 +19,7 @@
 | A9 | 盒 chrome 单点 | 盒的"底 → 边框（含虚线）→ 圆角"只有一个实现 `BoxChrome::paint()`；`Modifier` 与 5 个自绘 chrome 盒共用。阴影**不在内**（Button 的 hover 阴影是动态、PopupPanel 有 fallback，语义不同）。 | 出现需要不同 chrome 语义的盒（例如逐边不同色/不同圆角），`BoxChrome` 无法用一个签名表达。 |
 | A10 | 单轴滚动宿主 trait | 三个单轴滚动 State（ScrollView/LazyList/TextArea）的 `lane()` + `tickFrame()` 收进 `SingleAxisScrollHost` trait；`$lane` 字段留在各类（trait 读写它）。`offset()`/`viewportExtent()` 不进（只 2 份且硬编码 `RenderScrollView`，TextArea 用 `RenderTextArea`）。 | 出现第 4 个单轴滚动宿主，或其 `tickFrame` 需要不同帧语义（如惯性刹车只作用于某类）。 |
 | A11 | 多子盒实现面 trait | 四个多子盒（Flex/Wrap/Stack/SegmentedControl）的 `addChild`/`clearChildren`/`children`/`visitChildren`/`paintContent` 收进 `MultiChildBox` trait；类型识别仍走 `ChildContainer` 接口，**不换父类**（D2 裁决：四盒布局算法无共同点，Flutter 亦为 mixin）。叶子的 `contentIntrinsic*` 不抽（各返回自身字段，是假重合）。 | 某个盒的 kids 增删 / 遍历序需要不同语义（如按 z-order 插入、跳过隐藏子）。 |
+| A12 | 文本输入配置面 trait | `TextField`/`TextArea` 共有的 value/label/placeholder/两回调 + 五个 getter + `setSemanticsValue` 收进 `TextInputConfig` trait；字段留宿主、各自 `make()`/`createState()`/构造不进，单行独有（error/helper/maxLength/obscure/formatters）与多行独有（minLines/lines）不进。 | 某个控件的受控纪律分叉（值不再唯一来源 / 写回不再走 onChanged），或回调签名各异。 |
 
 ## 编译器与代码纪律
 

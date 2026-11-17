@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Widget;
 
 use Drift\Input\SemanticsRole;
+use Drift\Widget\Traits\TextInputConfig;
 
 /**
  * 多行输入框（§15.2 的单行版是 `TextField`）。
@@ -41,6 +42,8 @@ use Drift\Input\SemanticsRole;
  */
 final class TextArea extends StatefulWidget implements SemanticsValueEditable
 {
+    use TextInputConfig;
+
     private string $value = '';
     private ?string $label = null;
     private string $placeholder = '';
@@ -61,35 +64,6 @@ final class TextArea extends StatefulWidget implements SemanticsValueEditable
     public static function make(): self
     {
         return new self();
-    }
-
-    /** 当前文本（受控值） */
-    public function value(string $text): static
-    {
-        $this->mutate();
-        $this->value = $text;
-        $this->semantics(SemanticsRole::TextField, null, $text);
-
-        return $this;
-    }
-
-    /** 字段标签；画在框上方（`null` = 不画） */
-    public function label(string $text): static
-    {
-        $this->mutate();
-        $this->label = $text;
-        $this->semantics(SemanticsRole::TextField, $text);
-
-        return $this;
-    }
-
-    /** 空值时显示的提示文本 */
-    public function placeholder(string $text): static
-    {
-        $this->mutate();
-        $this->placeholder = $text;
-
-        return $this;
     }
 
     /** 至少显示几行高（空文本时的下限，默认 3） */
@@ -117,49 +91,6 @@ final class TextArea extends StatefulWidget implements SemanticsValueEditable
         return $this;
     }
 
-    /**
-     * 文本改动回调：`fn(string $newText) => void`。
-     *
-     * ★ 与 `TextField::onChanged()` 同形 —— 换行也算文本改动（多行框里换行就是
-     *   编辑，没有"提交"的含义需要区分）。
-     */
-    public function onChanged(callable $handler): static
-    {
-        $this->mutate();
-        $this->onChanged = \Closure::fromCallable($handler);
-
-        return $this;
-    }
-
-    /**
-     * `Ctrl+Enter` 提交回调：`fn(string $text) => void`。
-     *
-     * ★ 不接 ⇒ `Ctrl+Enter` **什么都不做**（不吞键、也不换行）：它归
-     *   `activateFocused()` 之后的加速键。多行框默认不该拦一个没有消费者的组合。
-     */
-    public function onSubmitted(callable $handler): static
-    {
-        $this->mutate();
-        $this->onSubmitted = \Closure::fromCallable($handler);
-
-        return $this;
-    }
-
-    public function valueText(): string
-    {
-        return $this->value;
-    }
-
-    public function labelText(): ?string
-    {
-        return $this->label;
-    }
-
-    public function placeholderText(): string
-    {
-        return $this->placeholder;
-    }
-
     public function minLinesValue(): int
     {
         return $this->minLines;
@@ -168,28 +99,6 @@ final class TextArea extends StatefulWidget implements SemanticsValueEditable
     public function linesValue(): int
     {
         return $this->lines;
-    }
-
-    public function changedHandler(): ?\Closure
-    {
-        return $this->onChanged;
-    }
-
-    public function submittedHandler(): ?\Closure
-    {
-        return $this->onSubmitted;
-    }
-
-    /** 语义层写值（UIA `ValuePattern.SetValue`）—— 与 `TextField` 同一条回写路 */
-    public function setSemanticsValue(string $value): bool
-    {
-        $handler = $this->onChanged;
-        if ($handler === null) {
-            return false;
-        }
-        $handler($value);
-
-        return true;
     }
 
     public function createState(): State

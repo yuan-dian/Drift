@@ -5,6 +5,7 @@ namespace Drift\Widget;
 
 use Drift\Input\SemanticsRole;
 use Drift\Text\TextInputFormatter;
+use Drift\Widget\Traits\TextInputConfig;
 
 /**
  * 单行输入框（§15.2 / §A.2.9）。
@@ -47,6 +48,8 @@ use Drift\Text\TextInputFormatter;
  */
 final class TextField extends StatefulWidget implements SemanticsValueEditable
 {
+    use TextInputConfig;
+
     private string $value = '';
     private ?string $label = null;
     private string $placeholder = '';
@@ -74,37 +77,6 @@ final class TextField extends StatefulWidget implements SemanticsValueEditable
     public static function make(): self
     {
         return new self();
-    }
-
-    /** 当前文本（受控值）。外部换值 ⇒ `TextFieldState` 采纳并重建 */
-    public function value(string $text): static
-    {
-        $this->mutate();
-        $this->value = $text;
-        // §9：可访问"取值"跟随当前文本（读屏/自动化读它，而不是另存一份）
-        $this->semantics(SemanticsRole::TextField, null, $text);
-
-        return $this;
-    }
-
-    /** 字段标签；画在字段上方（`null` = 不画） */
-    public function label(string $text): static
-    {
-        $this->mutate();
-        $this->label = $text;
-        // §9：label 就是可访问名 —— 在**设它的那一行**顺手给，不靠框架事后猜
-        $this->semantics(SemanticsRole::TextField, $text);
-
-        return $this;
-    }
-
-    /** 空值时显示的提示文本 */
-    public function placeholder(string $text): static
-    {
-        $this->mutate();
-        $this->placeholder = $text;
-
-        return $this;
     }
 
     /**
@@ -173,48 +145,6 @@ final class TextField extends StatefulWidget implements SemanticsValueEditable
         return $this->formatters;
     }
 
-    /**
-     * 文本改动回调：`fn(string $newText) => void`。
-     *
-     * ★ 纯 UI 回调，零框架依赖（与 `Button::onPressed()` 同一个形状）——
-     *   往哪写（Store / State 字段 / 局部变量）是调用方的事。
-     */
-    public function onChanged(callable $handler): static
-    {
-        $this->mutate();
-        $this->onChanged = \Closure::fromCallable($handler);
-
-        return $this;
-    }
-
-    /**
-     * `Enter` 提交回调：`fn(string $text) => void`。裸 `Enter` 才认领，组合键归应用。
-     *
-     * ★ 不接 ⇒ **不吞** `Enter`：浮层开关（`overlayPanel()`）与加速键还看得见它。
-     */
-    public function onSubmitted(callable $handler): static
-    {
-        $this->mutate();
-        $this->onSubmitted = \Closure::fromCallable($handler);
-
-        return $this;
-    }
-
-    public function valueText(): string
-    {
-        return $this->value;
-    }
-
-    public function labelText(): ?string
-    {
-        return $this->label;
-    }
-
-    public function placeholderText(): string
-    {
-        return $this->placeholder;
-    }
-
     public function errorText(): string
     {
         return $this->error;
@@ -228,34 +158,6 @@ final class TextField extends StatefulWidget implements SemanticsValueEditable
     public function maxLengthValue(): ?int
     {
         return $this->maxLength;
-    }
-
-    public function changedHandler(): ?\Closure
-    {
-        return $this->onChanged;
-    }
-
-    public function submittedHandler(): ?\Closure
-    {
-        return $this->onSubmitted;
-    }
-
-    /**
-     * 语义层写值（UIA `ValuePattern.SetValue`）：等价于"用户把文本改成 `$value`"，
-     * 走 `onChanged` 一条回写路（受控值归应用 State）。
-     *
-     * ★ 没接 `onChanged` ⇒ `false`：控件没有把值写出去的通道，假装成功会让读屏
-     *   以为改成功了而画面不变。
-     */
-    public function setSemanticsValue(string $value): bool
-    {
-        $handler = $this->onChanged;
-        if ($handler === null) {
-            return false;
-        }
-        $handler($value);
-
-        return true;
     }
 
     public function createState(): State
