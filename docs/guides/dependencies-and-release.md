@@ -85,7 +85,7 @@ Skia 构建通道（`windows-deps.yml`）跑在 `windows-2022` 托管镜像上�
 镜像上现成的东西直接用，缺的在这里补：
 
 - **VS / Win SDK / LLVM**：镜像自带，目录名随镜像更新漂移，所以用 `vswhere` 探测而不是写死；`vars.SKIA_WIN_VC` 等仍可覆盖。GN 字符串里反斜杠是转义符，路径必须转正斜杠后才喂给 `gn gen`。
-- **gn / ninja**：从 `chromium.googlesource.com` 拉 depot_tools，带缓存。Windows 上 depot_tools 发 `.bat` 包装，所以 `SKIA_GN=gn.bat`。
+- **gn / ninja**：从 `chromium.googlesource.com` 拉 depot_tools，带缓存。clone 下来只有 shell 包装，必须先 bootstrap；bootstrap 把 CIPD 装的 `gn.exe` / `ninja.exe` / `python3.exe` 铺到 `depot_tools\bootstrap-<hash>\`，并且只在自己那个 cmd 进程里改 PATH，所以构建步骤要按 `python3_bin_reldir.txt` 自己再补一次——漏了就会在 Skia 已经 sync 完之后才报 `Unable to find gn in your $PATH`，看着像编译错。
 - **字体**：入库，构建前只做存在性检查。
 - **磁盘**：托管镜像初始只剩十几 GB，而 `git-sync-deps` 加全量编译要二十多 GB。构建前删掉本次用不到的 Android SDK / dotnet / 预装浏览器 / 多版本 JDK，再断言剩余空间不低于 18 GB。爆盘时报的会是和磁盘无关的编译错误，看起来像代码问题，所以这一步要显式拦。
 

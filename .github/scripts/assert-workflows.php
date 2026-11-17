@@ -118,6 +118,22 @@ foreach (['windows-build.yml' => $build, 'verify.yml' => $verify,
         fail("{$name} 声明了 self-hosted —— 没有注册 runner 时任务只会静默排队，不会失败");
     }
 }
+// ★ gn.exe / ninja.exe 在 depot_tools\bootstrap-<hash>\ 里，不在 depot_tools 根；
+//   而 bootstrap 只在自己那个 cmd 进程里改 PATH，父进程拿不到。所以步骤必须自己按
+//   python3_bin_reldir.txt 补齐并导出。漏了的话失败点在 git-sync-deps 之后 ——
+//   一次白跑几十分钟，报的还是 "Unable to find gn in your $PATH"。
+$depsLive = $stripComments($deps);
+foreach (['python3_bin_reldir.txt' => '读 bootstrap 的 CIPD 目录指针',
+          'GITHUB_PATH' => '把工具目录导出给后续步骤',
+          'SKIA_GN=' => '显式指定 gn'] as $needle => $label) {
+    if (!str_contains($depsLive, $needle)) {
+        fail("windows-deps.yml 缺{$label}（{$needle}）—— gn.exe / ninja.exe 只在 CIPD bootstrap 目录里");
+    }
+}
+if (preg_match('/SKIA_GN=gn\.bat/', $depsLive) === 1) {
+    fail('windows-deps.yml 又把 SKIA_GN 指回 gn.bat —— 包装脚本最终仍按 PATH 找 gn.exe，等于没修');
+}
+
 $depsJob = substr($deps, (int) strpos($deps, 'jobs:'));
 if (!str_contains($depsJob, 'runs-on: windows-2022')) {
     fail('windows-deps.yml 的 build job 必须跑在托管 windows-2022 上');
@@ -141,3 +157,4 @@ fwrite(STDOUT, '  ok     真 AOT 通道完整：' . count($buildAnchors) . " 个
 fwrite(STDOUT, '  ok     发版先构建 Skia 再编译：' . count($releaseAnchors) . " 个环节\n");
 fwrite(STDOUT, '  ok     依赖自动构建通道完整：' . count($depsAnchors) . " 个环节\n");
 fwrite(STDOUT, "  ok     构建通道全在托管 runner 上（无 self-hosted 静默排队）\n");
+fwrite(STDOUT, "  ok     depot_tools 按 CIPD 指针补 PATH（gn/ninja 不在 depot_tools 根）\n");

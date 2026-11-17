@@ -21,7 +21,7 @@ Usage: bash tools/skia/build-skia.sh [options]
 
 Env: SKIA_WIN_VC, SKIA_WIN_SDK, SKIA_WIN_SDK_VERSION, SKIA_CLANG_WIN,
      SKIA_CLANG_WIN_VERSION, SKIA_WIN_TOOLCHAIN_VERSION, SKIA_PYTHON,
-     SKIA_GN, SKIA_NINJA (set SKIA_GN=gn.bat if depot_tools only ships .bat)
+     SKIA_GN, SKIA_NINJA (Windows: gn.exe / ninja.exe from the depot_tools CIPD bootstrap)
 
 Requires: git, python3, and depot_tools (gn + ninja) on PATH.
 EOF
@@ -54,12 +54,12 @@ fi
 GN="${SKIA_GN:-gn}"
 NINJA="${SKIA_NINJA:-ninja}"
 for tool in git "$GN" "$NINJA"; do
-  command -v "$tool" >/dev/null 2>&1 || die "$tool not found on PATH (install depot_tools; on Windows try SKIA_GN=gn.bat)"
+  command -v "$tool" >/dev/null 2>&1 || die "$tool not found on PATH (Windows: bootstrap depot_tools, then put its CIPD bootstrap dir on PATH — gn.exe / ninja.exe live there, not in the depot_tools root)"
 done
 # ★ depot_tools clone 下来后没 bootstrap 时，gn 会在几百行 git-sync-deps 之后才退出，
 #   报的是 "python3_bin_reldir.txt not found"，看着像编译错误。提前问一次。
 "$GN" --version >/dev/null 2>&1 \
-  || die "$GN is not runnable — depot_tools is unbootstrapped (Windows: run bootstrap\\bootstrap.bat or update_depot_tools.bat)"
+  || die "$GN is not runnable — depot_tools is unbootstrapped or its CIPD dir is not on PATH (Windows: run bootstrap\\bootstrap.bat, then read python3_bin_reldir.txt for the dir to add)"
 
 PY="${SKIA_PYTHON:-}"
 if [[ -z "$PY" ]]; then
@@ -86,9 +86,6 @@ git -C "$skia_dir" fetch origin --quiet
 git -C "$skia_dir" checkout --detach "$rev" --quiet
 
 (cd "$skia_dir" && "$PY" tools/git-sync-deps)
-if [[ -f "$skia_dir/bin/fetch-ninja" ]]; then
-  (cd "$skia_dir" && "$PY" bin/fetch-ninja)
-fi
 
 gn_args="$(cat "$HERE/args.gn.tpl")"
 gn_args+=$'\ncc = "clang"'

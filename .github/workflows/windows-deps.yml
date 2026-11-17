@@ -194,18 +194,19 @@ jobs:
             git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$deps"
           fi
           echo "$deps" >> "$GITHUB_PATH"
-          # Windows 上 depot_tools 发的是 .bat 包装；build-skia.sh 用 SKIA_GN/SKIA_NINJA 收口。
-          echo "SKIA_GN=gn.bat" >> "$GITHUB_ENV"
-          echo "SKIA_NINJA=ninja" >> "$GITHUB_ENV"
-          echo "SKIA_PYTHON=python" >> "$GITHUB_ENV"
+          # SKIA_GN / SKIA_NINJA / SKIA_PYTHON 由下一步（bootstrap 之后）定，
+          # 那时才知道 CIPD 把 gn.exe 铺在哪个子目录里。
 
       # ★ 必须 bootstrap：clone 下来的 depot_tools 只有一个 shell 包装，
       #   gn.bat / vpython3 / cipd 都只是转发脚本。缺 python3_bin_reldir.txt 时它们
       #   一律直接退出（"need to initialize depot_tools"）；缺 gn.exe 时又是另一句
       #   "Unable to find gn in your $PATH"。两种都发生在 Skia 已经 sync 完之后，
       #   看着像编译错。
-      # ★ GITHUB_PATH 只对后续步骤生效，所以这里要自己把 $deps 塞进当前 PATH ——
-      #   否则 gn.py 在同一个步骤里找不到刚装好的 gn.exe。
+      # ★ bootstrap 把 CIPD 装的 python3 / gn / ninja 铺在 depot_tools\bootstrap-<hash>\，
+      #   并且只在它自己那个 cmd 进程里 prepend 了 PATH —— 子进程一退，父进程看不到。
+      #   所以这里必须按 python3_bin_reldir.txt（bootstrap 自己写的权威指针）再补一次，
+      #   否则同一个步骤里 gn.bat → gn.py 立刻报 "Unable to find gn in your $PATH"。
+      # ★ GITHUB_PATH 只对后续步骤生效，当前步骤的 PATH 得自己改。
       - name: Bootstrap depot_tools
         shell: pwsh
         run: |
@@ -220,20 +221,53 @@ jobs:
             & (Join-Path $deps 'update_depot_tools.bat')
             if ($LASTEXITCODE -ne 0) { throw 'update_depot_tools failed' }
           }
-          if (-not (Test-Path (Join-Path $deps 'python3_bin_reldir.txt'))) {
+
+          $relFile = Join-Path $deps 'python3_bin_reldir.txt'
+          if (-not (Test-Path $relFile)) {
             throw 'depot_tools still unbootstrapped: python3_bin_reldir.txt missing'
           }
+          $bootRoot = (Get-Content $relFile -Raw).Trim()
+          if ($bootRoot -and -not [System.IO.Path]::IsPathRooted($bootRoot)) {
+            $bootRoot = Join-Path $deps $bootRoot
+          }
+          if (-not $bootRoot -or -not (Test-Path $bootRoot)) {
+            $bootRoot = Get-ChildItem $deps -Directory -Filter 'bootstrap-*' |
+              Sort-Object Name | Select-Object -Last 1 -ExpandProperty FullName
+          }
+          if (-not $bootRoot) { throw 'depot_tools CIPD bootstrap dir not found' }
+          Write-Host "CIPD bootstrap dir: $bootRoot"
 
-          # bootstrap 只保证 python3；gn / ninja 由 CIPD 单独装，跑一次 gclient 触发。
-          & (Join-Path $deps 'gclient.bat') --version
-          if ($LASTEXITCODE -ne 0) { throw 'gclient is not runnable after bootstrap' }
+          # gn / ninja 是硬需求；CIPD 的 python 在 Windows 上可能叫 python3.exe 也可能叫
+          # python.exe，两种都认。找到的可执行文件可能在 bootstrap 目录的子目录里，
+          # 所以按"文件实际所在目录"补 PATH，而不是只补 bootRoot。
+          $dirs = [System.Collections.Generic.List[string]]::new()
+          $dirs.Add($bootRoot)
+          $found = @{}
+          foreach ($name in 'gn.exe', 'ninja.exe') {
+            $hit = Get-ChildItem $bootRoot -Recurse -Filter $name -File -ErrorAction SilentlyContinue |
+              Select-Object -First 1
+            if (-not $hit) { throw "$name missing from $bootRoot — depot_tools CIPD bootstrap is incomplete" }
+            & $hit.FullName --version
+            if ($LASTEXITCODE -ne 0) { throw "$name is not runnable: $($hit.FullName)" }
+            $found[$name] = $hit.Name
+            $dirs.Add($hit.DirectoryName)
+          }
+          $py = @('python3.exe', 'python.exe') |
+            ForEach-Object { Get-ChildItem $bootRoot -Recurse -Filter $_ -File -ErrorAction SilentlyContinue } |
+            Select-Object -First 1
+          if (-not $py) { throw "no python under $bootRoot — depot_tools CIPD bootstrap is incomplete" }
+          & $py.FullName --version
+          if ($LASTEXITCODE -ne 0) { throw "python is not runnable: $($py.Name)" }
+          $dirs.Add($py.DirectoryName)
 
-          & (Join-Path $deps 'gn.bat') --version
-          if ($LASTEXITCODE -ne 0) { throw 'gn is not runnable after bootstrap' }
-          $ninja = Join-Path $deps 'ninja.exe'
-          if (-not (Test-Path $ninja)) { throw 'ninja.exe missing after bootstrap' }
-          & $ninja --version
-          if ($LASTEXITCODE -ne 0) { throw 'ninja is not runnable after bootstrap' }
+          $extra = ($dirs | Select-Object -Unique) -join ';'
+          $env:PATH = "$extra;$env:PATH"
+          # GITHUB_PATH 是每行一条，不能把多条拼成一行。
+          $dirs | Select-Object -Unique | Add-Content -Path $env:GITHUB_PATH
+
+          Add-Content -Path $env:GITHUB_ENV -Value "SKIA_GN=$($found['gn.exe'])"
+          Add-Content -Path $env:GITHUB_ENV -Value "SKIA_NINJA=$($found['ninja.exe'])"
+          Add-Content -Path $env:GITHUB_ENV -Value "SKIA_PYTHON=$($py.Name)"
 
       # 镜像自带 VS / Win SDK / LLVM，但目录名随镜像更新漂移，不能写死；
       # vars.* 保留覆盖能力。GN 字符串里反斜杠是转义符，路径必须转正斜杠。
