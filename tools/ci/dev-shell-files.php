@@ -9,7 +9,7 @@ declare(strict_types=1);
  * `dev.exe` 是动态链接的，依赖三样宿主机器上没有的东西：
  *   - `phpx.dll`  —— TypePHP 专有运行时，任何 PHP 发行版都不带
  *   - `php8ts.dll` —— ZendVM；非 ZTS 的 PHP 只有 php8.dll
- *   - `VCRUNTIME140*.dll` —— MSVC 运行库，Windows 不预装
+ *   - `VCRUNTIME140*.dll` / `msvcp140.dll` —— MSVC 运行库，目标机器不保证有匹配版本
  * 缺任一样时 Windows 弹的是系统级"找不到 DLL"对话框，没有任何可读诊断，
  * 用户只会以为包坏了。所以这些文件是**包的一部分**，不是"用户自己装"。
  *
@@ -34,17 +34,10 @@ function devShellRequiredFiles(): array
         'cacert.pem'           => 'TLS 信任根（缺了 HTTPS 只能靠系统证书库）',
         'dev-shell.sha'        => '壳指纹（源码与包不一致时拒跑）',
         'README.md'            => '包内使用说明',
+        'vcruntime140.dll'     => 'MSVC 运行库（dev.exe / php8ts.dll / phpx.dll 都导入）',
+        'vcruntime140_1.dll'   => 'MSVC 运行库（dev.exe / phpx.dll 导入）',
+        'msvcp140.dll'         => 'MSVC C++ 运行库（phpx.dll 导入）',
     ];
-}
-
-/**
- * 有就带、没有不算错 —— 版本与镜像差异，不写死成硬要求。
- *
- * @return list<string>
- */
-function devShellOptionalFiles(): array
-{
-    return ['vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll'];
 }
 
 // ── CLI：校验一个已备好的包目录 ──────────────────────────────────────
@@ -76,17 +69,9 @@ if (PHP_SAPI === 'cli' && isset($_SERVER['argv'][0]) && realpath($_SERVER['argv'
         exit(1);
     }
 
-    $optional = [];
-    foreach (devShellOptionalFiles() as $relative) {
-        if (is_file(rtrim($dir, '/\\') . '/' . $relative)) {
-            $optional[] = $relative;
-        }
-    }
-
     printf(
-        "dev 壳包完整：%d 件必需文件 · %.1f MB%s\n",
+        "dev 壳包完整：%d 件必需文件 · %.1f MB\n",
         $total,
         $bytes / 1048576,
-        $optional === [] ? '' : ' · 另带 ' . implode(', ', $optional),
     );
 }

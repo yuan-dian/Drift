@@ -126,7 +126,7 @@ Skia 构建通道（`windows-deps.yml`）跑在 `windows-2022` 托管镜像上�
 | `php8ts.dll` | ZendVM；非 ZTS 的 PHP 只有 `php8.dll` |
 | `ext/php_mbstring.dll` `ext/php_openssl.dll` `ext/php_curl.dll` | AOT 与业务代码的必需扩展 |
 | `cacert.pem` | TLS 信任根 |
-| `vcruntime140*.dll` `msvcp140.dll` | MSVC 运行库（镜像里有就带） |
+| `vcruntime140.dll` `vcruntime140_1.dll` `msvcp140.dll` | MSVC 运行库（三个二进制都导入，必需） |
 
 清单与校验在 `tools/ci/dev-shell-files.php`：打包后立刻对备好的目录跑一次，缺一件就红。缺 DLL 时的症状是 Windows 弹系统级「找不到 DLL」，没有任何可读诊断，用户只会以为包坏了——所以「包里必须有」写成机检，不写在文档里靠人记。
 

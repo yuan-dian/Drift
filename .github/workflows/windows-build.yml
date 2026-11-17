@@ -186,6 +186,7 @@ jobs:
             Sort-Object Name -Descending | Select-Object -First 1
           if (-not $sdk) { throw 'Windows SDK with um/x64 not found' }
           "DRIFT_MSVC=$($msvc.FullName)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "DRIFT_VS=$vs" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
           "DRIFT_KITS=$kits" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
           "DRIFT_SDK_VERSION=$($sdk.Name)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
           "${{ github.workspace }}\third_party\phpx\build" | Out-File $env:GITHUB_PATH -Append -Encoding utf8
@@ -381,9 +382,22 @@ jobs:
             Copy-Item $source "$stage\ext"
           }
 
+          # setup-php 的目录未必带 VC 运行库；缺的从 VS redist 取，不许静默略过。
+          $crtDir = $null
+          if ($env:VCToolsRedistDir) {
+            $candidate = Join-Path $env:VCToolsRedistDir 'x64\Microsoft.VC143.CRT'
+            if (Test-Path $candidate) { $crtDir = $candidate }
+          }
+          if (-not $crtDir -and $env:DRIFT_VS) {
+            $crtDir = Get-ChildItem (Join-Path $env:DRIFT_VS 'VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT') `
+              -Directory -ErrorAction SilentlyContinue |
+              Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+          }
           foreach ($dll in @('vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll')) {
             $source = Join-Path $env:PHP_HOME $dll
-            if (Test-Path $source) { Copy-Item $source $stage }
+            if (-not (Test-Path $source) -and $crtDir) { $source = Join-Path $crtDir $dll }
+            if (-not (Test-Path $source)) { throw "MSVC runtime DLL missing: $dll (PHP_HOME / VS redist both failed)" }
+            Copy-Item $source $stage
           }
 
           php tools/ci/dev-shell-files.php $stage

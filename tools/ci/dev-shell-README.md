@@ -22,7 +22,7 @@
 | `php8ts.dll` | ZendVM（ZTS 构建） |
 | `ext/php_mbstring.dll` `ext/php_openssl.dll` `ext/php_curl.dll` | 业务代码与 AOT 需要的扩展 |
 | `cacert.pem` | TLS 信任根 |
-| `vcruntime140*.dll` `msvcp140.dll` | MSVC 运行库（镜像里有就带） |
+| `vcruntime140.dll` `vcruntime140_1.dll` `msvcp140.dll` | MSVC 运行库（三个二进制都导入，必需） |
 
 启动器会按包的实际位置生成 `php.ini`，`extension_dir` 指向包内 `ext/`，所以解压到
 哪都能跑，不会绑死构建机的路径。
