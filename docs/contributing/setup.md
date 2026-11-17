@@ -14,7 +14,7 @@
 ## 档 A：PHP
 
 - **PHP >= 8.4**，把 `php.exe` 放进 `PATH`。发行版至少带 `mbstring`（tpc 依赖），CI 另装 `gd`。`composer.json` 声明 `>=8.4` 且无上界，所以 CI 在 8.4 和 8.5 两个版本都跑，只验一个版本等于没兑现承诺。
-- **两份 `php.ini` 别弄混**：仓库根那份是运行态配置，dev 壳和探针读它；构建另需 `php.exe` 同目录有一份发行版 ini，tpc 不加载同目录 ini，脚本会复制到 `_build/ini/` 并用 `PHPRC` 指过去。发行版 ini 要保持 `opcache.enable_cli=0`——CLI 开 opcache 会让"改了代码却没重编"静默假绿。
+- **两份 `php.ini` 别弄混**：仓库根那份是运行态配置，本地编译版 dev 壳和探针读它（发布包的壳自带运行时，由启动器按包位置生成 ini，不读这份）；构建另需 `php.exe` 同目录有一份发行版 ini，tpc 不加载同目录 ini，脚本会复制到 `_build/ini/` 并用 `PHPRC` 指过去。发行版 ini 要保持 `opcache.enable_cli=0`——CLI 开 opcache 会让"改了代码却没重编"静默假绿。
 - **工具脚本不需要 `composer install`**，`tools/autoload.php` 直接读 `composer.json` 的 psr-4 配置。
 - **单元测试需要 PHPUnit**：`composer install` 读入库的 `composer.lock` 装出 `vendor/bin/phpunit`。`vendor/` 不入库，也没有 phar 兜底。没装时 unit / feature 步骤起不来，报告记成失败而不是伪装成全绿。
 - **Python 3** 只给真机探针 `tools/probe-window.py` 用，依赖仅标准库 `ctypes`；重新生成字模的脚本才需要 Pillow。

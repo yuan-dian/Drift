@@ -31,11 +31,13 @@ function usage(): never
 
       用法： php tools/drift-dev.php [应用名] [--rebuild] [--no-watch] [--hard-restart]
                                     [--project=<目录>] [--entry=<路径>] [--prebuilt]
+                                    [--print-runtime]
 
       应用名    默认 hello；须在 composer.json 有 App\<名字>\ PSR-4 前缀
       --project=目录  宿主项目根（Drift 作为 composer 包引入时指向你的项目；默认 Drift 包根）
       --entry=路径  动态入口（默认 apps/dev/dev-entry.php）；相对路径按 --project 解析
       --prebuilt    用现成 dev.exe，跳过壳指纹检查与编译（发布包场景）
+      --print-runtime  只打印壳 / 运行时 / ini 指向，不启动窗口
       --rebuild 强制重编 dev 壳（改了 cpp-src / 壳配置时其实会自动检测）
       --no-watch  只跑一次，不监听文件变化
       --hard-restart  跳过优雅退出：不把本次会话的 dirty 状态写回
@@ -198,7 +200,17 @@ function businessSnapshot(string $root, string $app, ?string $entry = null, ?str
  * ★ 关 opcache 有两个理由：ASLR 下它拒绝启动会让进程秒退；且它缓存 opcode
  *   会挡住「改 PHP 重启即生效」。
  */
-function runtimeIni(string $root, ?string $project = null): string
+/**
+ * 生成壳用的 ini，返回 ini 所在目录（喂给 `PHPRC`）。
+ *
+ * ★ 两条来源，判据是「壳旁边有没有自带运行时」：
+ *   - 发布包（`_build/dev-shell/`，带 phpx.dll / php8ts.dll / ext/）：扩展目录
+ *     必须指向**包内** ext。抄宿主 php.ini 是错的 —— 那里面是构建机的绝对路径，
+ *     换台机器扩展就全加载失败，报的是 `Call to undefined function mb_substr()`。
+ *   - 本地开发机（壳由 drift-build 编出、DLL 来自完整 TypePHP 发行版）：沿用
+ *     宿主配置，再关掉 opcache（热重启要读最新源码）。
+ */
+function runtimeIni(string $root, ?string $project, string $runtimeDir): string
 {
     $project ??= $root;
     // ini 落在 Drift 包内（壳以它为 cwd），内容优先取宿主项目的配置。
@@ -206,12 +218,30 @@ function runtimeIni(string $root, ?string $project = null): string
     if (!is_dir($dir) && !mkdir($dir, 0777, true) && !is_dir($dir)) {
         fail("建不了 {$dir}");
     }
+
+    $packedExt = "{$runtimeDir}/ext";
+    if (is_file("{$runtimeDir}/php8ts.dll") && is_dir($packedExt)) {
+        // 扩展名单与 tools/ci/dev-shell-files.php 的清单同源：那边声明包里必须有
+        // 哪三个 DLL，这边写 ini 去加载它们。
+        $text = 'extension_dir = "' . win($packedExt) . "\"\n"
+            . "extension=mbstring\nextension=openssl\nextension=curl\nopcache.enable=0\n";
+        file_put_contents("{$dir}/php.ini", $text);
+
+        return $dir;
+    }
+
     $source = is_file("{$project}/php.ini") ? "{$project}/php.ini"
         : (is_file("{$root}/php.ini") ? "{$root}/php.ini" : (string) php_ini_loaded_file());
     $base = $source !== '' ? (string) file_get_contents($source) : '';
     file_put_contents("{$dir}/php.ini", rtrim($base) . "\nopcache.enable=0\n");
 
     return $dir;
+}
+
+/** 反斜杠化的 Windows 路径（ini 里的路径交给 PHP 解析，不经过 shell） */
+function win(string $path): string
+{
+    return str_replace('/', '\\', $path);
 }
 
 /** @return array{0: resource, 1: array<int, resource>} */
@@ -606,8 +636,18 @@ if ($entryOption === '' && !is_file("{$root}/apps/{$appDir}/bin/win32/Bootstrap.
     fail("找不到组合根：apps/{$appDir}/bin/win32/Bootstrap.php");
 }
 
-$exe = "{$root}/dev.exe";
-$shaFile = "{$root}/_build/dev-shell.sha";
+// 两种壳来源，本地产物优先（它刚编出来，和当前源码同版本）：
+//   - 仓库根 `dev.exe`         ← `drift-build.php dev` 编的
+//   - `_build/dev-shell/`      ← 发布包解压的，自带 phpx.dll / php8ts.dll / ext/
+$packDir = "{$root}/_build/dev-shell";
+$usingPack = !is_file("{$root}/dev.exe");
+if ($usingPack) {
+    $exe = "{$packDir}/dev.exe";
+    $shaFile = "{$packDir}/dev-shell.sha";
+} else {
+    $exe = "{$root}/dev.exe";
+    $shaFile = "{$root}/_build/dev-shell.sha";
+}
 $hash = shellFingerprint($root);
 $previous = is_file($shaFile) ? trim((string) file_get_contents($shaFile)) : '';
 $project = resolveProject($root, $projectOption);
@@ -615,9 +655,20 @@ $entry = resolveEntry($root, $project, $entryOption);
 
 if ($prebuilt) {
     if (!is_file($exe)) {
-        fail('--prebuilt 需要仓库根已有 dev.exe（先把发布包的 exe 解压到仓库根）');
+        fail('--prebuilt 需要可用的壳：仓库根的 dev.exe，或把发布包解压到 _build/dev-shell/');
     }
     out('使用现成 dev.exe，跳过壳指纹检查');
+} elseif ($usingPack) {
+    // 包里的壳是流水线编出来的，这台机器多半没有工具链 ⇒ 不假装能重编，
+    // 也不静默按错位版本跑（壳与源码不一致的症状是些莫名其妙的 require 失败）。
+    if ($previous !== $hash) {
+        fail(
+            '壳指纹与当前源码不一致 —— 发布包与源码不是同一版本。'
+            . 'checkout 与包同 tag 的源码，或加 --prebuilt 显式接受错位，'
+            . '或在有 MSVC / tpc / PHPX 的机器上跑 tools/drift-build.php dev 重编'
+        );
+    }
+    out('壳未变 ⇒ 跳过编译');
 } elseif ($rebuild || !is_file($exe) || $previous !== $hash) {
     out('壳输入有变或无产物 ⇒ 编译 dev.exe（只此一次，之后改 PHP 不再编）');
     $command = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg("{$root}/tools/drift-build.php") . ' dev';
@@ -633,16 +684,28 @@ if ($prebuilt) {
     out('壳未变 ⇒ 跳过编译');
 }
 
-$iniDir = runtimeIni($root, $project);
+$iniDir = runtimeIni($root, $project, dirname($exe));
 $env = getenv();
 if (!is_array($env)) {
     $env = [];
 }
-// php8ts.dll 在 PHP 发行版目录；从任意 shell 启动时它未必在 PATH。
-$env['PATH'] = dirname(PHP_BINARY) . ';' . (string) ($env['PATH'] ?? '');
+// 壳旁边的运行时优先：发布包自带 phpx.dll / php8ts.dll，本地开发机则靠 PHP
+// 发行版目录（TypePHP 发行版里才有 phpx.dll）。两者都在时包目录在前。
+$env['PATH'] = dirname($exe) . ';' . dirname(PHP_BINARY) . ';' . (string) ($env['PATH'] ?? '');
 $env['PHPRC'] = $iniDir;
 $env['DRIFT_DEV_ENTRY'] = $entry;
 $env['DRIFT_DEV_APP'] = $app;
+
+// 只报环境、不启动 —— 起不来的第一件事就是看这三样指向哪里。
+if (in_array('--print-runtime', $rest, true)) {
+    out("壳      : {$exe}");
+    out('自带运行时: ' . (is_file(dirname($exe) . '/php8ts.dll') ? '是（包内）' : '否（用 PATH 里的 PHP 目录）'));
+    out("ini     : {$iniDir}/php.ini");
+    out("入口    : {$entry}");
+    out('--- php.ini ---');
+    fwrite(STDOUT, (string) file_get_contents("{$iniDir}/php.ini"));
+    exit(0);
+}
 
 $process = null;
 $pipes = [];

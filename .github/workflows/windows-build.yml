@@ -337,6 +337,9 @@ jobs:
           }
           if ($LASTEXITCODE -ne 0) { throw 'probe-window failed' }
 
+      # dev.exe 是动态链接的：缺 phpx.dll / php8ts.dll / VCRUNTIME140 时用户机器上
+      # 弹的是系统级「找不到 DLL」，没有可读诊断。所以运行时是包的一部分，
+      # 清单与校验都在 tools/ci/dev-shell-files.php，缺一件就红。
       - name: Pack dev shell
         if: inputs.release_tag
         shell: pwsh
@@ -345,9 +348,35 @@ jobs:
           if (-not (Test-Path 'dev.exe') -or -not (Test-Path '_build/dev-shell.sha')) {
             throw 'dev.exe / dev-shell.sha missing'
           }
-          Copy-Item '_build/dev-shell.sha' 'dev-shell.sha' -Force
-          Compress-Archive -Path 'dev.exe', 'dev-shell.sha', 'tools/ci/dev-shell-README.md' `
-            -DestinationPath 'drift-dev-shell-win-x64.zip' -Force
+
+          $stage = Join-Path $env:RUNNER_TEMP 'dev-shell'
+          if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+          New-Item $stage, "$stage\ext" -ItemType Directory -Force | Out-Null
+
+          Copy-Item 'dev.exe' $stage
+          Copy-Item '_build/dev-shell.sha' "$stage\dev-shell.sha"
+          Copy-Item 'tools/ci/dev-shell-README.md' "$stage\README.md"
+          Copy-Item 'cacert.pem' $stage
+
+          # PHPX 运行时与 ZendVM —— 两者都不是 Windows 或普通 PHP 发行版自带的。
+          Copy-Item (Join-Path $env:DRIFT_PHPX_HOME 'build\phpx.dll') $stage
+          Copy-Item (Join-Path $env:PHP_HOME 'php8ts.dll') $stage
+
+          foreach ($ext in @('php_mbstring.dll', 'php_openssl.dll', 'php_curl.dll')) {
+            $source = Join-Path $env:PHP_HOME "ext\$ext"
+            if (-not (Test-Path $source)) { throw "extension missing in PHP build: $ext" }
+            Copy-Item $source "$stage\ext"
+          }
+
+          foreach ($dll in @('vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll')) {
+            $source = Join-Path $env:PHP_HOME $dll
+            if (Test-Path $source) { Copy-Item $source $stage }
+          }
+
+          php tools/ci/dev-shell-files.php $stage
+          if ($LASTEXITCODE -ne 0) { throw 'dev shell package is incomplete' }
+
+          Compress-Archive -Path "$stage\*" -DestinationPath 'drift-dev-shell-win-x64.zip' -Force
 
       - name: Upload dev shell to Release
         if: inputs.release_tag

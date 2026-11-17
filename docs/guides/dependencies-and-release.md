@@ -113,6 +113,25 @@ Skia 构建通道（`windows-deps.yml`）跑在 `windows-2022` 托管镜像上�
 3. 流水线内部固定：`pack-deps.php` 重写 lock → `sync-lock-anchors.php` 同步 README 的 SHA256 → `git commit` + push → `git tag $DEPS_VERSION` + push → `release-deps.php` 上传 → `fetch-deps.php --tag` 回取自验。
 4. 结束后在干净 clone 里走一遍 `fetch-deps.php` → `version --check` → `doctor`。
 
+## dev 壳发布包
+
+`drift-dev-shell-win-x64.zip` 与依赖包不是一回事：它是预编译的**壳**，用发布流水线同一套工具链编出，装上之后改业务 PHP 不重编。产品 `v*` tag 时由 `windows-build.yml` 产出并上传。
+
+壳是动态链接的，所以包里必须自带运行时——这不是"用户可以自己装"的东西：
+
+| 包内文件 | 为什么要带 |
+|---|---|
+| `dev.exe` | 壳本体 |
+| `phpx.dll` | PHPX 运行时，TypePHP 专有，任何 PHP 发行版都没有 |
+| `php8ts.dll` | ZendVM；非 ZTS 的 PHP 只有 `php8.dll` |
+| `ext/php_mbstring.dll` `ext/php_openssl.dll` `ext/php_curl.dll` | AOT 与业务代码的必需扩展 |
+| `cacert.pem` | TLS 信任根 |
+| `vcruntime140*.dll` `msvcp140.dll` | MSVC 运行库（镜像里有就带） |
+
+清单与校验在 `tools/ci/dev-shell-files.php`：打包后立刻对备好的目录跑一次，缺一件就红。缺 DLL 时的症状是 Windows 弹系统级「找不到 DLL」，没有任何可读诊断，用户只会以为包坏了——所以「包里必须有」写成机检，不写在文档里靠人记。
+
+安装方式是解压到仓库的 `_build/dev-shell/`，之后 `php tools/drift-dev.php <app>`。启动器按包的实际位置生成 `php.ini`（`extension_dir` 指向包内 `ext/`），所以解压到哪都能跑，不绑构建机路径；`--print-runtime` 只打印解析结果不启动窗口，起不来时先看这个。
+
 ## 发版前检查与 tag 约定
 
 产品版本 tag 形如 `v<版本>`，tag 即发布入口；依赖包用独立的 `deps-vN`，两者不互相借用。发版前：

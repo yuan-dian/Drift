@@ -7,12 +7,29 @@
 
 - Windows 10/11 x64
 - clone 与本包**同版本 tag** 的 Drift 源码（业务 PHP、字体、组合根都在仓库里）
-- PATH 里有 PHP 8.4 ZTS 运行时（提供 `php8ts.dll`）
+- PATH 里有任意 PHP 8.4 CLI —— 只用来跑 `tools/drift-dev.php` 这个启动器，
+  **不需要 ZTS 构建**
 - 不需要 MSVC / tpc / PHPX / Skia 构建工具链
+
+## 包里有什么
+
+`dev.exe` 是动态链接的，所以运行时一起打进来：
+
+| 文件 | 作用 |
+|---|---|
+| `dev.exe` | 壳本体 |
+| `phpx.dll` | PHPX 运行时（TypePHP 专有，PHP 发行版没有） |
+| `php8ts.dll` | ZendVM（ZTS 构建） |
+| `ext/php_mbstring.dll` `ext/php_openssl.dll` `ext/php_curl.dll` | 业务代码与 AOT 需要的扩展 |
+| `cacert.pem` | TLS 信任根 |
+| `vcruntime140*.dll` `msvcp140.dll` | MSVC 运行库（镜像里有就带） |
+
+启动器会按包的实际位置生成 `php.ini`，`extension_dir` 指向包内 `ext/`，所以解压到
+哪都能跑，不会绑死构建机的路径。
 
 ## 用法
 
-1. 把 `dev.exe` 放到仓库根，`dev-shell.sha` 放到 `_build/`（没有就新建）。
+1. 把整个包解压到仓库的 `_build/dev-shell/`（`dev.exe` 与 DLL 同级）。
 2. 在仓库根执行：
 
    ```bat
@@ -38,12 +55,14 @@ php vendor/yuan-dian/drift/tools/drift-dev.php --project=. --entry=entry.php --p
 
 `--entry` 相对 `--project` 解析（绝对路径原样用）；入口里用 `__DIR__ . '/vendor/autoload.php'`
 加载宿主 autoload，因为壳以 Drift 包目录为 cwd。`--project/src`、入口及其同级 PHP 的改动
-都会触发热重启。ini 优先取宿主项目根的 `php.ini`，其次 Drift 包的，最后当前 PHP 的。
+都会触发热重启。壳自带运行时，ini 由启动器按包位置生成；宿主项目的 `php.ini` 只在
+跑本地编译版壳时才被沿用。
 
 ## 边界
 
 - 改 `src/` 或 `cpp-src/` 仍必须跑
   `php tools/drift-build.php <app> --full` 与 `python tools/probe-window.py <app>`。
-- `php8ts.dll` 必须在 PATH（PHP 发行版目录）；壳内嵌 ZendVM，但仍动态加载该 DLL。
-- 指纹不匹配时运行器会尝试重编壳；无构建工具链的机器请用 `--prebuilt`，
-  并保证源码与包同 tag，否则壳与源码会静默错位。
+- `php8ts.dll` / `phpx.dll` 就在包内，壳从自己所在目录加载，不进 PATH 也能跑。
+- 用发布包时指纹不匹配会**直接报错**，不会尝试重编（这台机器多半没有工具链）：
+  要么 checkout 与包同 tag 的源码，要么 `--prebuilt` 显式接受错位，要么在
+  有 MSVC / tpc / PHPX 的机器上跑 `tools/drift-build.php dev` 重编。
