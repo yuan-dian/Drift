@@ -52,6 +52,7 @@ $buildAnchors = [
     'php tools/fetch-deps.php' => 'Skia / 字体依赖',
     'php tools/drift-build.php $target --full' => '全量 AOT 编译',
     'php tools/drift-dev.php hello --write-fingerprint' => 'dev 壳指纹写入（与启动器同源）',
+    "Copy-Item 'assets/cacert.pem'" => 'TLS 根证书取自受版本管理的原件',
     'python tools/probe-window.py $target' => '真机五判据',
     'php tools/doctor.php --scope=build' => '编译前环境体检',
     'workflow_call:' => 'Release 可复用',

@@ -366,7 +366,8 @@ jobs:
           Copy-Item 'dev.exe' $stage
           Copy-Item '_build/dev-shell.sha' "$stage\dev-shell.sha"
           Copy-Item 'tools/ci/dev-shell-README.md' "$stage\README.md"
-          Copy-Item 'cacert.pem' $stage
+          # 仓库根的 cacert.pem 是构建期副本（.gitignore 排除），CI 里只有 assets/ 下的原件。
+          Copy-Item 'assets/cacert.pem' "$stage\cacert.pem"
 
           # PHPX 运行时与 ZendVM —— 两者都不是 Windows 或普通 PHP 发行版自带的。
           Copy-Item (Join-Path $env:DRIFT_PHPX_HOME 'build\phpx.dll') $stage
