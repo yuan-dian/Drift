@@ -1,0 +1,249 @@
+# Builds drift-deps-win-x64.zip from a pinned Skia commit.
+#
+# Two paths, one recipe:
+#   - push main / DEPS_VERSION: rebuild and publish deps-vN, then commit the lock.
+#   - workflow_call from a product release: build first, hand the package to
+#     verify/AOT via artifact; the product tag never waits on a public asset.
+#
+# Path filter is DEPS_VERSION only. The lock commit does not retrigger this flow.
+# Order is load-bearing: pack writes deps.lock.json -> commit -> tag -> release.
+# The tag must point at the commit containing the new lock, otherwise a clean
+# clone verifies the new asset against the old lock and fails.
+
+name: Windows x64 deps
+
+on:
+  push:
+    branches: [main]
+    paths: [DEPS_VERSION]
+  workflow_dispatch:
+    inputs:
+      skia_revision:
+        description: 'Skia commit (40-hex); empty means read SKIA_REVISION'
+        required: false
+        default: ''
+        type: string
+      fonts_dir:
+        description: 'Optional directory holding NotoSansSC-*.ttf (runner keeps cpp/fonts otherwise)'
+        required: false
+        default: ''
+        type: string
+      publish:
+        description: 'Commit lock, tag DEPS_VERSION and upload Release assets'
+        required: false
+        default: false
+        type: boolean
+  workflow_call:
+    inputs:
+      skia_revision:
+        description: 'Skia commit (40-hex); empty means read SKIA_REVISION'
+        required: false
+        default: ''
+        type: string
+      fonts_dir:
+        description: 'Optional directory holding NotoSansSC-*.ttf'
+        required: false
+        default: ''
+        type: string
+      publish:
+        description: 'Publish the package to the DEPS_VERSION release'
+        required: false
+        default: false
+        type: boolean
+      commit_lock:
+        description: 'Commit lock and advance DEPS_VERSION (false for product releases)'
+        required: false
+        default: true
+        type: boolean
+    outputs:
+      artifact_name:
+        description: Artifact holding zip / sha256 / deps.lock.json
+        value: ${{ jobs.build.outputs.artifact_name }}
+      deps_tag:
+        description: DEPS_VERSION used for this build
+        value: ${{ jobs.build.outputs.deps_tag }}
+      sha256:
+        description: SHA256 of the built package
+        value: ${{ jobs.build.outputs.sha256 }}
+
+permissions:
+  contents: read
+
+env:
+  COMPOSER_NO_INTERACTION: 1
+  COMPOSER_PROCESS_TIMEOUT: 0
+
+concurrency:
+  group: deps-build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build deps (self-hosted Windows)
+    runs-on: [self-hosted, windows]
+    timeout-minutes: 360
+    permissions:
+      contents: write
+    outputs:
+      artifact_name: ${{ steps.resolve.outputs.artifact_name }}
+      deps_tag: ${{ steps.resolve.outputs.deps_tag }}
+      sha256: ${{ steps.package.outputs.sha256 }}
+    steps:
+      # clean:false keeps cpp/fonts and .skia-src on the persistent runner.
+      # Fonts are not in git and do not change with Skia; cpp/skia is rebuilt below.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: false
+
+      - name: Resolve inputs
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          rev='${{ inputs.skia_revision }}'
+          if [ -z "$rev" ]; then rev="$(tr -d '\r\n' < SKIA_REVISION)"; fi
+          if [[ ! "$rev" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Skia revision must be a 40-hex commit; got '$rev' (unpinned cannot be built)"
+            exit 1
+          fi
+          printf '%s\n' "$rev" > SKIA_REVISION
+          tag="$(tr -d '\r\n' < DEPS_VERSION)"
+          if [[ ! "$tag" =~ ^deps-v[0-9]+$ ]]; then
+            echo "::error::DEPS_VERSION must look like deps-vN; got '$tag'"
+            exit 1
+          fi
+          publish=false
+          if [ "${{ github.event_name }}" = "push" ] || [ "${{ inputs.publish }}" = "true" ]; then
+            publish=true
+          fi
+          commit_lock=true
+          if [ "${{ github.event_name }}" = "workflow_call" ] && [ "${{ inputs.commit_lock }}" = "false" ]; then
+            commit_lock=false
+          fi
+          printf 'REV=%s\nTAG=%s\nPUBLISH=%s\nCOMMIT_LOCK=%s\n' "$rev" "$tag" "$publish" "$commit_lock" >> "$GITHUB_ENV"
+          printf 'rev=%s\n' "$rev" >> "$GITHUB_OUTPUT"
+          printf 'deps_tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+          printf 'artifact_name=drift-deps-%s-%s\n' "${{ github.run_id }}" "${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+          echo "Skia=$rev  Deps=$tag  publish=$publish  commit_lock=$commit_lock"
+
+      - name: Ensure fonts are present
+        shell: bash
+        run: |
+          fonts='${{ inputs.fonts_dir }}'
+          if [ -n "$fonts" ]; then
+            mkdir -p cpp/fonts
+            cp -R "$fonts"/*.ttf cpp/fonts/
+          fi
+          for f in NotoSansSC-Regular.ttf NotoSansSC-Bold.ttf; do
+            test -f "cpp/fonts/$f" || { echo "::error::cpp/fonts/$f missing: pass fonts_dir or preload it on the runner"; exit 1; }
+          done
+
+      - name: Build Skia from pinned commit
+        shell: bash
+        env:
+          SKIA_WIN_VC: ${{ vars.SKIA_WIN_VC }}
+          SKIA_WIN_SDK: ${{ vars.SKIA_WIN_SDK }}
+          SKIA_WIN_SDK_VERSION: ${{ vars.SKIA_WIN_SDK_VERSION }}
+          SKIA_CLANG_WIN: ${{ vars.SKIA_CLANG_WIN }}
+          SKIA_CLANG_WIN_VERSION: ${{ vars.SKIA_CLANG_WIN_VERSION }}
+          SKIA_WIN_TOOLCHAIN_VERSION: ${{ vars.SKIA_WIN_TOOLCHAIN_VERSION }}
+        run: bash tools/skia/build-skia.sh --rev="$REV" --out="$PWD/cpp/skia" --replace
+
+      # 自托管 runner 预装 PHP，但不保证有 composer；有就按 lock 装 PHPUnit。
+      # ★ 这里**不**把 unit 当硬判据：本 workflow 的产物是 Skia 依赖包，只跑
+      #   `verify --layer=static`（零依赖静态层），不启动 PHPUnit，也就没有
+      #   「没测到被算通过」的形状。
+      - name: Install PHPUnit (pinned by composer.lock)
+        shell: bash
+        run: |
+          if command -v composer >/dev/null 2>&1; then
+            composer install --prefer-dist --no-progress
+          else
+            echo "::notice::composer unavailable on this runner; only the static layer runs"
+          fi
+
+      - name: Assert PHP extensions
+        shell: bash
+        run: |
+          php -r 'foreach (["curl", "zip"] as $e) { if (!extension_loaded($e)) { fwrite(STDERR, "missing PHP extension: $e\n"); exit(1); } }'
+
+      - name: Pack and verify
+        shell: bash
+        run: |
+          set -o pipefail
+          php tools/pack-deps.php
+          php tools/sync-lock-anchors.php
+          php bin/drift verify --layer=static --json | tee verify-report.json
+          php .github/scripts/assert-verify-report.php verify-report.json
+
+      - name: Refresh package outputs
+        id: package
+        shell: bash
+        run: |
+          sha="$(php -r '$j=json_decode((string) file_get_contents("deps.lock.json"), true); echo $j["sha256"] ?? "";')"
+          [[ "$sha" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::pack-deps produced no SHA256"; exit 1; }
+          printf 'sha256=%s\n' "$sha" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.resolve.outputs.artifact_name }}
+          path: |
+            dist/drift-deps-win-x64.zip
+            dist/drift-deps-win-x64.zip.sha256
+            deps.lock.json
+            README.md
+          if-no-files-found: error
+          retention-days: 14
+
+      # 必须在写远端之前拦：tag 已存在时下面的 git tag 会失败，而 lock 的 commit
+      # 已经 push 出去，留一个没有 release 的孤儿提交。
+      - name: Preflight deps tag is unused
+        if: ${{ env.PUBLISH == 'true' && env.COMMIT_LOCK == 'true' }}
+        shell: bash
+        run: |
+          git fetch --tags --quiet
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "::error::tag $TAG already exists; bump DEPS_VERSION before publishing a new package"
+            exit 1
+          fi
+
+      - name: Commit lock and push
+        if: ${{ env.PUBLISH == 'true' && env.COMMIT_LOCK == 'true' }}
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add SKIA_REVISION deps.lock.json README.md
+          if git diff --cached --quiet; then
+            echo "::error::pack-deps produced no lock change; nothing to publish"
+            exit 1
+          fi
+          git commit -m "chore(deps): rebuild Skia at ${REV:0:12} for $TAG"
+          git push origin "HEAD:${{ github.ref_name }}"
+
+      - name: Tag deps version
+        if: ${{ env.PUBLISH == 'true' && env.COMMIT_LOCK == 'true' }}
+        shell: bash
+        run: |
+          git tag "$TAG"
+          git push origin "$TAG"
+
+      - name: Publish deps release
+        if: ${{ env.PUBLISH == 'true' }}
+        shell: bash
+        env:
+          TOKEN: ${{ github.token }}
+        run: php tools/release-deps.php --token="$TOKEN" --force
+
+      - name: Verify from published assets
+        if: ${{ env.PUBLISH == 'true' }}
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: php tools/fetch-deps.php --tag="$TAG" --force
+
+      - name: Dry-run summary
+        if: ${{ env.PUBLISH != 'true' }}
+        shell: bash
+        run: echo "Package built and verified as an artifact; publish=false so no commit/tag/release was written."

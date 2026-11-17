@@ -82,16 +82,18 @@ php tools/pack-deps.php && php tools/version.php --check
 
 两条流水线触发点分开：
 
-- `deps-build.yml`：`workflow_dispatch` 触发，从 pinned Skia commit 重建 → 组包 → 校验，默认只把产物挂 artifact；`publish=true` 才提交 lock → 打 `deps-vN` tag → 上传两个资产。
-- `release.yml`：`push` 产品 `v*` tag 时跑 `verify --full --json` 并从 `deps-vN` 取包，最后建 **draft** release，人工确认后才发布。
-- `ci.yml`：push / PR 的主闸门，只跑判据，不写 Release。
-- `aot.yml`：push main / PR / 手动触发的真 T2，取上面那条 `deps-vN` 资产后全量编译 `hello` 并跑真机探针；资产缺失时取包阶段就红，不会用纯 PHP 判据冒充 AOT 通过。
+- `windows-deps.yml`：`DEPS_VERSION` 变化时自动重建 → 组包 → 校验 → 提交 lock → 打 `deps-vN` tag → 上传两个资产；也可手动触发。被产品发版调用时只产 artifact，不写远端。
+- `release.yml`：`push` 产品 `v*` tag 时**先调用 `windows-deps.yml` 编出 Skia**，verify 与 dev 壳都消费这份 artifact，最后建 **draft** release。
+- `verify.yml`：push / PR 的主闸门，只跑判据，不写 Release。
+- `windows-build.yml`：push main / PR / 手动触发的真 T2，取依赖包，全量编译 `hello` 并跑真机探针；资产缺失时取包阶段就红，不会用纯 PHP 判据冒充 AOT 通过。
 
-依赖包**不跟着产品 release 构建**：`fetch-deps.php` 按固定资产名去 `DEPS_VERSION` 那个 tag 找，挂到产品 tag 上所有人都会失败；依赖版本与代码版本解耦就是为了避免"发一次产品重编一次 Skia"。
+产品发版**先构建 Skia，再编译 AOT / dev 壳**，但不会覆盖公共 `deps-vN` 资产：`fetch-deps.php` 按固定资产名去 `DEPS_VERSION` 那个 tag 找，资产发布仍只在依赖版本变化时发生。这样既保证发版链路的顺序，又不让依赖资产被每次代码 release 重写。
 
-`deps-build.yml` 的 publish 分支顺序锁死：`pack-deps.php` 重写 lock → `git commit` + push → `git tag $DEPS_VERSION` + push → `release-deps.php` 上传。tag 落在含新 lock 的 commit 上，干净 clone 时两者天然一致；最后再用 `fetch-deps.php --tag` 从已发布资产回取一遍自验。`GITHUB_TOKEN` 需要 `contents: write`；它对自身产生的 push 不再触发新 workflow，所以不会自激。分支保护若禁止 Actions 直接 push，要给机器人开例外，不要为此把 lock 改成运行时回写。
+**前置条件**：`SKIA_REVISION` 必须是 40 位 commit。当前历史包仍是 `unpinned` / `legacy`，来源不可考，流水线会在解析 revision 时红——这是有意的，不用旧二进制冒充“已重建 Skia”。首个走新链路的发版前，先用 `windows-deps.yml` 以真实 commit 重建并发布一版依赖包。
 
-自托管 runner 需要预装 VS / Win SDK / LLVM / depot_tools / PHP；hosted Windows runner 只有 14 GB SSD，全量 Skia 有爆盘风险，依赖构建因此留在自托管。两条 workflow 只监听 tag push 与手动触发，不监听 `pull_request`——fork PR 不能跑自托管构建。
+`windows-deps.yml` 的 publish 分支顺序锁死：`pack-deps.php` 重写 lock → `sync-lock-anchors.php` 同步 README SHA256 → `git commit` + push → `git tag $DEPS_VERSION` + push → `release-deps.php` 上传。tag 落在含新 lock 的 commit 上，干净 clone 时两者天然一致；最后再用 `fetch-deps.php --tag` 从已发布资产回取一遍自验。
+
+自托管 runner 需要预装 VS / Win SDK / LLVM / depot_tools / PHP；hosted Windows runner 只有 14 GB SSD，全量 Skia 有爆盘风险，依赖构建因此留在自托管。`windows-deps.yml` 只监听 `DEPS_VERSION` 变更与手动触发，`release.yml` 只监听产品 tag；都不监听 `pull_request`——fork PR 不能跑自托管构建。
 
 ## 发版前检查与 tag 约定
 

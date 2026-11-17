@@ -1,10 +1,12 @@
-# Product release gate. Runs on v* tags and does NOT rebuild dependencies:
-# it resolves the package from the DEPS_VERSION tag instead.
+# Package release. Runs on v* tags.
+#
+# Order is load-bearing: build Skia first, then verify/AOT consume that artifact.
+# The product tag never waits on a public deps asset; publish stays in windows-deps.
 #
 # The release is created as a DRAFT so a stray tag cannot announce a release
 # before a human has reviewed the notes and assets.
 
-name: Product release
+name: Package release
 
 on:
   push:
@@ -22,8 +24,20 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Skia 必须先就绪；产物通过 artifact 交给 verify 与 windows-build。
+  deps:
+    name: Build Skia dependencies
+    uses: ./.github/workflows/windows-deps.yml
+    permissions:
+      contents: write
+    with:
+      skia_revision: ''
+      publish: false
+      commit_lock: false
+
   verify:
     name: Verify and draft release
+    needs: deps
     runs-on: windows-2022
     timeout-minutes: 30
     permissions:
@@ -71,6 +85,13 @@ jobs:
         shell: bash
         run: php .github/scripts/assert-verify-report.php verify-report.json unit feature
 
+      # deps job 已按当前 SKIA_REVISION 编好 Skia；覆盖 checkout 里的旧 lock/zip。
+      - name: Restore Skia artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.deps.outputs.artifact_name }}
+          path: .
+
       - name: Resolve deps package from DEPS_VERSION
         shell: bash
         env:
@@ -88,14 +109,15 @@ jobs:
             gh release create "$TAG" --draft --verify-tag --title "Drift $TAG" --generate-notes
           fi
 
-  # 复用 aot.yml 的同一份公开工具链：编出 dev.exe 并随这个 tag 的 draft release 上传。
+  # 复用 windows-build.yml 的同一份公开工具链：编出 dev.exe 并随这个 tag 的 draft release 上传。
   # needs: verify 保证 draft 已存在；资产名固定，文档可用 latest/download 直链。
   dev-shell:
     name: Build and publish dev shell
-    needs: verify
-    uses: ./.github/workflows/aot.yml
+    needs: [verify, deps]
+    uses: ./.github/workflows/windows-build.yml
     with:
       target: dev
       release_tag: ${{ github.ref_name }}
+      deps_artifact: ${{ needs.deps.outputs.artifact_name }}
     permissions:
       contents: write

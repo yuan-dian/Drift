@@ -1,7 +1,7 @@
-name: CI
+name: Verify
 
-# 这里只跑判据，不写 Release。依赖包在 deps-build.yml（Skia pin 变更 / 手动，
-# 产出 deps-vN 资产），产品发版在 release.yml（v* tag，只取包不重建依赖）。
+# 这里只跑判据，不写 Release。依赖通道在 windows-deps.yml（Skia pin 变更 / 手动），
+# 真机构建在 windows-build.yml，产品发版在 release.yml（先依赖，再编译）。
 
 on:
   push:
@@ -87,9 +87,9 @@ jobs:
         run: |
           set -o pipefail
           php bin/drift verify --json | tee verify-report.json
-      - name: Assert AOT workflow stays real
+      - name: Assert workflow gates stay real
         shell: bash
-        run: php .github/scripts/assert-aot-workflow.php
+        run: php .github/scripts/assert-workflows.php
       # verify 不像 V1 gate 那样把「没测到」算通过；这份断言再走独立路径
       # 读 items[].status，钉住 unit 确实跑到了（判据与 runner 不同源）。
       - name: Assert PHPUnit really ran (not measured is not ok)
@@ -146,7 +146,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  # ── T2：真 AOT 在 aot.yml 的独立 job 里跑 ──
+  # ── T2：真 AOT 在 windows-build.yml 的独立 job 里跑 ──
   # 公开 windows-2022 runner 从源码构建 tpc / PHPX，取依赖包，全量编译 hello，
   # 再执行 probe-window 五判据。这里不再留 `if: false` 的占位 job —— 死 job
   # 会让人误以为 AOT 已在 CI 里。gate-fast 的结构判据守着那条通道不退化。

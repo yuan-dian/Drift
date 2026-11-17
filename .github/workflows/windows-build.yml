@@ -1,4 +1,4 @@
-name: AOT
+name: Windows x64
 
 # 公开 runner 上的真实 T2。与 TypePHP 的 windows-build.yml 同构：
 # 源码构建编译器 + PHPX，取依赖包，全量 AOT 出 exe，再跑真机五判据。
@@ -19,6 +19,11 @@ on:
         default: hello
       release_tag:
         description: 非空时把 dev 壳包上传到该 tag 的 Release
+        required: false
+        type: string
+        default: ''
+      deps_artifact:
+        description: windows-deps 产出的 Skia artifact；非空时优先使用
         required: false
         type: string
         default: ''
@@ -282,6 +287,14 @@ jobs:
           )) {
             if (-not (Test-Path $required)) { throw "PHPX output missing: $required" }
           }
+
+      # 发版链路里 Skia 先由 windows-deps 编好；日常 PR 仍走 release 资产。
+      - name: Restore Skia artifact
+        if: inputs.deps_artifact != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.deps_artifact }}
+          path: .
 
       - name: Fetch Skia and fonts
         shell: pwsh
