@@ -131,15 +131,19 @@ if [[ -n "$win_toolchain_version" ]]; then
   gn_args+=$'\nwin_toolchain_version = "'"$win_toolchain_version"'"'
 fi
 
-# 不要吞 gn 的输出：参数不对（比如 SDK 版本写成 wdf）时报错全在这里，
-# 吞掉之后剩下的只有一个无信息的 exit 1。
+# ★ 必须在 skia_dir 里跑：gn 靠「当前目录或任一父目录有 .gn」确定 source root，
+#   从仓库根调用会直接 "Can't find source root."，跟参数对不对无关。
+#   Skia 官方 CI 也是这么做的 —— infra/bots/recipe_modules/build/default.py 的
+#   compile_fn 里 `with api.context(cwd=skia_dir)` 包住 gn gen 与 ninja。
+#   不要吞 gn 的输出：参数不对（比如 SDK 版本写成 wdf）时报错全在这里，
+#   吞掉之后剩下的只有一个无信息的 exit 1。
 printf '==> gn gen\n'
-"$GN" gen "$skia_dir/out/Release-x64" --args="$gn_args" || die "gn gen failed"
+(cd "$skia_dir" && "$GN" gen out/Release-x64 --args="$gn_args") || die "gn gen failed"
 printf '==> ninja (%s)\n' "$NINJA"
 if [[ -n "$jobs" ]]; then
-  "$NINJA" -C "$skia_dir/out/Release-x64" -j "$jobs" skia modules || die "ninja failed"
+  (cd "$skia_dir" && "$NINJA" -C out/Release-x64 -j "$jobs" skia modules) || die "ninja failed"
 else
-  "$NINJA" -C "$skia_dir/out/Release-x64" skia modules || die "ninja failed"
+  (cd "$skia_dir" && "$NINJA" -C out/Release-x64 skia modules) || die "ninja failed"
 fi
 
 if [[ -d "$out" ]] && [[ -n "$(ls -A "$out" 2>/dev/null)" ]]; then

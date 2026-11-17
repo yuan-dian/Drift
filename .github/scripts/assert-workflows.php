@@ -127,6 +127,13 @@ foreach (['bin/fetch-gn', 'bin/fetch-ninja'] as $needle) {
         fail('tools/skia/build-skia.sh 缺 ' . $needle . ' —— 没有 depot_tools 时要靠它取预编译 gn / ninja');
     }
 }
+// ★ gn 靠「当前目录或任一父目录里有 .gn」确定 source root，从仓库根调它会直接
+//   "Can't find source root."，与 --args 对不对毫无关系。这一步失败时 Skia 已经
+//   clone + sync 完，一次白跑十几分钟。
+if (preg_match('/(?:--root="?\$skia_dir|cd\s+"\$skia_dir"\s*&&\s*"\$GN"\s+gen)/', $skiaScript) !== 1) {
+    fail('tools/skia/build-skia.sh 调 gn gen 时没把工作目录切到 skia_dir —— gn 会报 Can\'t find source root');
+}
+
 $depsLive = $stripComments($deps);
 if (str_contains($depsLive, 'depot_tools')) {
     fail('windows-deps.yml 又装回 depot_tools —— gn.exe 在 CIPD 子目录里，bootstrap 改的 PATH 传不出子进程');
@@ -161,3 +168,4 @@ fwrite(STDOUT, '  ok     发版先构建 Skia 再编译：' . count($releaseAnch
 fwrite(STDOUT, '  ok     依赖自动构建通道完整：' . count($depsAnchors) . " 个环节\n");
 fwrite(STDOUT, "  ok     构建通道全在托管 runner 上（无 self-hosted 静默排队）\n");
 fwrite(STDOUT, "  ok     gn / ninja 走 Skia 自带预编译包（不装 depot_tools）\n");
+fwrite(STDOUT, "  ok     gn gen 在 Skia 源码目录内执行（source root 靠 .gn 定位）\n");

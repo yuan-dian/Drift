@@ -72,7 +72,7 @@ bash tools/skia/build-skia.sh --replace
 php tools/pack-deps.php && php tools/version.php --check
 ```
 
-输入文件：`SKIA_REVISION`（pinned commit）、`tools/skia/args.gn.tpl`（平台无关的 GN 策略）、`tools/skia/headers.txt`（包内头 / 元数据路径清单，保证产物与既有布局一致）、`tools/skia/build-skia.sh`（clone → checkout → `git-sync-deps` → `gn gen` → `ninja skia modules` → 组装 `cpp/skia`）。机器相关的 VC / SDK / LLVM 路径不入库，走 `SKIA_WIN_VC` 等环境变量。`--replace` 是显式确认：默认不覆盖非空 `cpp/skia`，免得删掉本机现成的包。
+输入文件：`SKIA_REVISION`（pinned commit）、`tools/skia/args.gn.tpl`（平台无关的 GN 策略）、`tools/skia/headers.txt`（包内头 / 元数据路径清单，保证产物与既有布局一致）、`tools/skia/build-skia.sh`（clone → checkout → `git-sync-deps` → `gn gen` → `ninja skia modules` → 组装 `cpp/skia`）。gn / ninja 的调用形态照抄 Skia 官方 CI 的 `infra/bots/recipe_modules/build/default.py`：`gn gen` 必须在 Skia 源码目录内执行（它靠当前目录的 `.gn` 定位 source root），工具用仓库自带的 `bin/fetch-gn` / `bin/fetch-ninja`。机器相关的 VC / SDK / LLVM 路径不入库，走 `SKIA_WIN_VC` 等环境变量。`--replace` 是显式确认：默认不覆盖非空 `cpp/skia`，免得删掉本机现成的包。
 
 `SKIA_REVISION` 当前 pin 到 Skia M148 的真实 commit，lock 的 `skiaRevision` 与 `provenance: ci` 与之同步；该 commit 的 `SkMilestone.h` 为 148，与包内一致。`unpinned` / `provenance: legacy` 只用于来源不可考的历史包，构建脚本与 CI 都拒绝它。注意：现有 `deps-v1` 二进制仍是早期拷入包，尚未从这个 commit 实际重建，声明与产物一致须以 `windows-deps.yml` 重建并替换 Release 资产为准。
 
