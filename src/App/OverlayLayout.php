@@ -35,10 +35,8 @@ final class OverlayLayout
             }
         } catch (Throwable $t) {
             Errors::report(sprintf(
-                '帧循环：浮层 settle 段未捕获异常冒到帧末（沿途无错误边界）—— %s（%s:%d）',
-                $t->getMessage(),
-                basename($t->getFile()),
-                $t->getLine(),
+                '帧循环：浮层 settle 段未捕获异常冒到帧末（沿途无错误边界）—— %s',
+                Errors::describe($t),
             ));
         }
 

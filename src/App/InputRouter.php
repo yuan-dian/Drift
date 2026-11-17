@@ -236,10 +236,8 @@ final class InputRouter
             } catch (\Throwable $e) {
                 // 用 RECOVERABLE：`Errors::abort()` 末尾是 exit()，一次回调异常会杀掉整个进程。
                 Errors::report(sprintf(
-                    '文件拖放回调异常已隔离，后续事件不受影响 —— %s（%s:%d）',
-                    $e->getMessage(),
-                    basename($e->getFile()),
-                    $e->getLine(),
+                    '文件拖放回调异常已隔离，后续事件不受影响 —— %s',
+                    Errors::describe($e),
                 ), Errors::RECOVERABLE);
             }
 
@@ -656,10 +654,8 @@ final class InputRouter
             $handler();
         } catch (\Throwable $e) {
             Errors::report(sprintf(
-                '窗口拖动：回调未捕获异常 —— %s（%s:%d）',
-                $e->getMessage(),
-                basename($e->getFile()),
-                $e->getLine(),
+                '窗口拖动：回调未捕获异常 —— %s',
+                Errors::describe($e),
             ));
         }
     }
@@ -766,10 +762,8 @@ final class InputRouter
             $result = $handler($event, $node);
         } catch (\Throwable $e) {
             Errors::report(sprintf(
-                '指针捕获：回调未捕获异常 —— %s（%s:%d）',
-                $e->getMessage(),
-                basename($e->getFile()),
-                $e->getLine(),
+                '指针捕获：回调未捕获异常 —— %s',
+                Errors::describe($e),
             ));
             $this->releasePointer();
 

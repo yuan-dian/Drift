@@ -186,11 +186,9 @@ final class PumpHost
             $work();
         } catch (\Throwable $e) {
             Errors::report(sprintf(
-                '帧循环：%s —— %s（%s:%d）',
+                '帧循环：%s —— %s',
                 $what,
-                $e->getMessage(),
-                basename($e->getFile()),
-                $e->getLine(),
+                Errors::describe($e),
             ));
         }
     }

@@ -106,10 +106,8 @@ final class ErrorBoundaryElement extends StatelessElement
         $this->caught = $e;
 
         Errors::report(sprintf(
-            '错误边界捕获子树异常：%s（%s:%d）—— 该子树换成占位，窗口其余部分继续',
-            $e->getMessage(),
-            basename($e->getFile()),
-            $e->getLine(),
+            '错误边界捕获子树异常：%s —— 该子树换成占位，窗口其余部分继续',
+            Errors::describe($e),
         ), Errors::DIAGNOSTIC);
 
         $this->swapToPlaceholder();

@@ -60,6 +60,17 @@ final class Errors
     }
 
     /**
+     * 异常的紧凑描述 `消息（文件:行）`，供各处错误上报拼进自己的前缀。
+     *
+     * ★ 只收这一截后缀：前缀文案与级别是调用方的语义，不在这里决定。
+     *   文件名用 `basename` 而非全路径 —— 日志里全路径既长又泄露部署目录。
+     */
+    public static function describe(\Throwable $e): string
+    {
+        return sprintf('%s（%s:%d）', $e->getMessage(), basename($e->getFile()), $e->getLine());
+    }
+
+    /**
      * 报告一条错误。
      *
      * ★ 单参调用 = Fatal：与 §15.2 的用法一致，且 G2 要求默认走最响的一档

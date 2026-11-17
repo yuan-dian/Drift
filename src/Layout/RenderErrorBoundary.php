@@ -84,11 +84,9 @@ final class RenderErrorBoundary extends RenderProxyBox
         $this->reported = true;
 
         Errors::report(sprintf(
-            '错误边界吞下%s期异常：%s（%s:%d）—— 该子树只画兜底标记，重新挂载才能恢复',
+            '错误边界吞下%s期异常：%s —— 该子树只画兜底标记，重新挂载才能恢复',
             $phase,
-            $e->getMessage(),
-            basename($e->getFile()),
-            $e->getLine(),
+            Errors::describe($e),
         ), Errors::DIAGNOSTIC);
     }
 

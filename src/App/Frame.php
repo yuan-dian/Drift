@@ -174,10 +174,8 @@ final class Frame
                 }
             } catch (Throwable $e) {
                 Errors::report(sprintf(
-                    '帧循环：未捕获异常冒到帧末（沿途无错误边界）—— %s（%s:%d）',
-                    $e->getMessage(),
-                    basename($e->getFile()),
-                    $e->getLine(),
+                    '帧循环：未捕获异常冒到帧末（沿途无错误边界）—— %s',
+                    Errors::describe($e),
                 ));
             }
             // 结构快照必须在 settle 之后取：本帧的增删/重排要进下一帧的判据
@@ -216,10 +214,8 @@ final class Frame
                     $box->layout($constraints);
                 } catch (Throwable $e) {
                     Errors::report(sprintf(
-                        '帧循环：layout 阶段未捕获异常（沿途无错误边界）—— %s（%s:%d）',
-                        $e->getMessage(),
-                        basename($e->getFile()),
-                        $e->getLine(),
+                        '帧循环：layout 阶段未捕获异常（沿途无错误边界）—— %s',
+                        Errors::describe($e),
                     ));
                 }
             }
@@ -328,10 +324,8 @@ final class Frame
             $painted = true;
         } catch (Throwable $e) {
             Errors::report(sprintf(
-                '帧循环：paint 阶段未捕获异常（沿途无错误边界）—— %s（%s:%d）',
-                $e->getMessage(),
-                basename($e->getFile()),
-                $e->getLine(),
+                '帧循环：paint 阶段未捕获异常（沿途无错误边界）—— %s',
+                Errors::describe($e),
             ));
         }
 
