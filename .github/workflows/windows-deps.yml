@@ -117,14 +117,16 @@ jobs:
             echo "::error::DEPS_VERSION must look like deps-vN; got '$tag'"
             exit 1
           fi
-          publish=false
-          if [ "${{ github.event_name }}" = "push" ] || [ "${{ inputs.publish }}" = "true" ]; then
-            publish=true
+          # reusable workflow 里 github.event_name 继承调用方事件（产品发版是 tag push），
+          # 拿它判断「独立发布」会把 release 显式传的 publish=false 覆盖成 true。
+          # push 触发时 inputs 全空；dispatch / workflow_call 的 publish 有默认值恒非空。
+          publish='${{ inputs.publish }}'
+          if [ -z "$publish" ]; then
+            publish=false
+            if [ "${{ github.event_name }}" = "push" ]; then publish=true; fi
           fi
-          commit_lock=true
-          if [ "${{ github.event_name }}" = "workflow_call" ] && [ "${{ inputs.commit_lock }}" = "false" ]; then
-            commit_lock=false
-          fi
+          commit_lock='${{ inputs.commit_lock }}'
+          if [ -z "$commit_lock" ]; then commit_lock=true; fi
           printf 'REV=%s\nTAG=%s\nPUBLISH=%s\nCOMMIT_LOCK=%s\n' "$rev" "$tag" "$publish" "$commit_lock" >> "$GITHUB_ENV"
           printf 'rev=%s\n' "$rev" >> "$GITHUB_OUTPUT"
           printf 'deps_tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"

@@ -140,6 +140,17 @@ $depsLive = $stripComments($deps);
 if (str_contains($depsLive, 'depot_tools')) {
     fail('windows-deps.yml 又装回 depot_tools —— gn.exe 在 CIPD 子目录里，bootstrap 改的 PATH 传不出子进程');
 }
+// ★ reusable workflow 的 github.event_name 继承调用方：产品发版是 tag push，
+//   若用它推断「独立发布」，release 传的 publish=false 会被覆盖成 true，
+//   deps job 白编 16 分钟后在 Preflight（deps-v1 已存在）挂掉。
+//   publish / commit_lock 必须先取 inputs，只有空值（原生 push 触发）才回退事件。
+if (!str_contains($depsLive, "publish='\${{ inputs.publish }}'")
+    || !str_contains($depsLive, "commit_lock='\${{ inputs.commit_lock }}'")) {
+    fail('windows-deps.yml 的 publish/commit_lock 必须先取 inputs —— 事件推断会吃掉 release 的显式 false');
+}
+if (preg_match('/\$\{\{\s*github\.event_name\s*\}\}\s*=\s*"push"\s*\]\s*\|\|/', $depsLive) === 1) {
+    fail('windows-deps.yml 又用 event_name=push 直接推导 publish —— reusable workflow 里它继承 tag push');
+}
 // SDK 版本必须按 x.y.z.w 过滤：Include 下还有 wdf / um / shared 这些目录，
 // 按名字排序取最后一个会拿到 "wdf"，喂给 gn 之后报的错跟 SDK 八竿子打不着。
 if (!str_contains($depsLive, '^\d+\.\d+\.\d+\.\d+$')) {
