@@ -131,6 +131,11 @@ $depsLive = $stripComments($deps);
 if (str_contains($depsLive, 'depot_tools')) {
     fail('windows-deps.yml 又装回 depot_tools —— gn.exe 在 CIPD 子目录里，bootstrap 改的 PATH 传不出子进程');
 }
+// SDK 版本必须按 x.y.z.w 过滤：Include 下还有 wdf / um / shared 这些目录，
+// 按名字排序取最后一个会拿到 "wdf"，喂给 gn 之后报的错跟 SDK 八竿子打不着。
+if (!str_contains($depsLive, '^\d+\.\d+\.\d+\.\d+$')) {
+    fail('windows-deps.yml 探测 Windows SDK 版本时没有按 x.y.z.w 过滤 —— 会取到 wdf 之类的目录');
+}
 
 $depsJob = substr($deps, (int) strpos($deps, 'jobs:'));
 if (!str_contains($depsJob, 'runs-on: windows-2022')) {

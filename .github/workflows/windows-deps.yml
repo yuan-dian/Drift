@@ -203,7 +203,19 @@ jobs:
           if (-not $sdkVersion) {
             $include = Join-Path $sdk 'Include'
             if (-not (Test-Path $include)) { throw "Windows SDK include dir missing: $include" }
-            $sdkVersion = (Get-ChildItem $include -Directory | Sort-Object Name | Select-Object -Last 1).Name
+            # ★ Include 下面不只有版本号目录：镜像上还有 wdf、um、shared 之类。
+            #   按名字排序取最后一个曾取到 "wdf"，喂给 gn 后报的是莫名其妙的 SDK 错误。
+            $sdkVersion = Get-ChildItem $include -Directory |
+              Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } |
+              Sort-Object { [version]$_.Name } |
+              Select-Object -Last 1 -ExpandProperty Name
+            if (-not $sdkVersion) { throw "no versioned Windows SDK under $include" }
+          }
+          if ($sdkVersion -notmatch '^\d+\.\d+\.\d+\.\d+$') {
+            throw "Windows SDK version must look like 10.0.22621.0; got '$sdkVersion'"
+          }
+          if (-not (Test-Path (Join-Path $sdk "Include\$sdkVersion\um"))) {
+            throw "SDK $sdkVersion has no um headers under $sdk — the version dir does not exist"
           }
 
           $llvm = '${{ vars.SKIA_CLANG_WIN }}'

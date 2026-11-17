@@ -52,10 +52,10 @@ if [[ -z "$rev" ]]; then
 fi
 [[ "$rev" =~ ^[0-9a-f]{40}$ ]] || die "expected a 40-hex Skia commit, got '$rev' (unpinned means the legacy package has no traceable source)"
 
-# 工具链解析放到 checkout 之后：PATH 上没有 gn / ninja 时，用 Skia 自带的
-# bin/fetch-gn、bin/fetch-ninja 拉官方预编译二进制。这两个脚本把产物放进
-# third_party/gn、third_party/ninja —— 正是 depot_tools 包装期望的位置，版本由
-# Skia 自己的 DEPS / 脚本钉住，比装 depot_tools 再 bootstrap CIPD 少一整层。
+# 工具链解析放到 checkout 之后：gn / ninja 一律取 Skia 钉住的预编译包
+# （bin/fetch-gn、bin/fetch-ninja），产物落在 third_party/gn、third_party/ninja ——
+# 正是 depot_tools 包装期望的位置。不装 depot_tools、也不回落到 PATH：镜像自带的
+# ninja 版本不可控，混用会让产物不一致。
 
 PY="${SKIA_PYTHON:-}"
 if [[ -z "$PY" ]]; then
@@ -87,17 +87,21 @@ git -C "$skia_dir" checkout --detach "$rev" --quiet
 resolve_tool() { # <env-value> <name> <fetch-script> <windows-path> <posix-path>
   local want="$1" name="$2" script="$3" pexe="$4" pposix="$5" path
   if [[ -n "$want" ]]; then
-    command -v "$want" >/dev/null 2>&1 || die "$name '$want' is not runnable (unset the SKIA_* override to use a prebuilt one)"
+    command -v "$want" >/dev/null 2>&1 || die "$name '$want' is not runnable (unset the SKIA_* override to use the pinned prebuilt)"
     printf '%s' "$want"
     return
   fi
-  if command -v "$name" >/dev/null 2>&1; then
-    printf '%s' "$name"
-    return
+  # 只认 Skia 自己钉住的版本，不再回落到 PATH：托管镜像自带的 ninja 版本不可控，
+  # 本地有 depot_tools 时又会悄悄换成另一套，构建产物就不一致了。
+  if [[ -f "$pexe" ]]; then
+    path="$pexe"
+  elif [[ -f "$pposix" ]]; then
+    path="$pposix"
+  else
+    printf 'fetching prebuilt %s pinned by Skia\n' "$name" >&2
+    (cd "$skia_dir" && "$PY" "$script") >&2 || die "$script failed"
+    if [[ -f "$pexe" ]]; then path="$pexe"; elif [[ -f "$pposix" ]]; then path="$pposix"; else die "$script did not produce $name"; fi
   fi
-  printf 'fetching prebuilt %s pinned by Skia\n' "$name" >&2
-  (cd "$skia_dir" && "$PY" "$script") >&2 || die "$script failed"
-  if [[ -f "$pexe" ]]; then path="$pexe"; elif [[ -f "$pposix" ]]; then path="$pposix"; else die "$script did not produce $name"; fi
   chmod +x "$path" 2>/dev/null || true
   printf '%s' "$path"
 }
@@ -107,7 +111,11 @@ NINJA="$(resolve_tool "${SKIA_NINJA:-}" ninja bin/fetch-ninja "$skia_dir/third_p
 "$GN" --version >/dev/null 2>&1 || die "$GN is not runnable"
 "$NINJA" --version >/dev/null 2>&1 || die "$NINJA is not runnable"
 
-(cd "$skia_dir" && "$PY" tools/git-sync-deps)
+printf '==> syncing Skia deps\n'
+# emsdk 只服务 wasm 目标，这里编的是原生 x64 静态库；跳过它能省一次 500 MB 的
+# 工具链下载（还会往日志里灌一堆 MSYSTEM 警告）。
+export GIT_SYNC_DEPS_SKIP_EMSDK=1
+(cd "$skia_dir" && "$PY" tools/git-sync-deps) || die "git-sync-deps failed (see the last dep it printed)"
 
 gn_args="$(cat "$HERE/args.gn.tpl")"
 gn_args+=$'\ncc = "clang"'
@@ -123,11 +131,15 @@ if [[ -n "$win_toolchain_version" ]]; then
   gn_args+=$'\nwin_toolchain_version = "'"$win_toolchain_version"'"'
 fi
 
-"$GN" gen "$skia_dir/out/Release-x64" --args="$gn_args" >/dev/null
+# 不要吞 gn 的输出：参数不对（比如 SDK 版本写成 wdf）时报错全在这里，
+# 吞掉之后剩下的只有一个无信息的 exit 1。
+printf '==> gn gen\n'
+"$GN" gen "$skia_dir/out/Release-x64" --args="$gn_args" || die "gn gen failed"
+printf '==> ninja (%s)\n' "$NINJA"
 if [[ -n "$jobs" ]]; then
-  "$NINJA" -C "$skia_dir/out/Release-x64" -j "$jobs" skia modules
+  "$NINJA" -C "$skia_dir/out/Release-x64" -j "$jobs" skia modules || die "ninja failed"
 else
-  "$NINJA" -C "$skia_dir/out/Release-x64" skia modules
+  "$NINJA" -C "$skia_dir/out/Release-x64" skia modules || die "ninja failed"
 fi
 
 if [[ -d "$out" ]] && [[ -n "$(ls -A "$out" 2>/dev/null)" ]]; then
