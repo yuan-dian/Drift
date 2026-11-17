@@ -58,7 +58,7 @@
 
 ## 取包：Release 与离线
 
-依赖包托管在 GitHub Releases，公开资产可匿名下载。资产尚未发布、或落在私有 fork / 内网镜像后面时，可带 token 走 API 解析（只需 `repo` 读权限）；也可以直接用 `--url` 指向本机 zip。
+依赖包托管在 GitHub Releases，仓库公开，资产匿名可下载。`deps-v1` 资产尚未发布——在那之前直接用 `--url` 指向本机 zip。fork 出的私有镜像、或匿名直链被限流时，可给 token 走 API 解析（只需 `Contents: Read`）。
 
 ```bash
 php tools/fetch-deps.php                     # 取 DEPS_VERSION 指定的 tag

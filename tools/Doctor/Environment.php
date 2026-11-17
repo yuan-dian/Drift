@@ -551,7 +551,7 @@ final class Environment
             Check::FAIL,
             implode(' · ', $missing) . '（/cpp/ 不入库，clone 后本就没有）',
             true,
-            'php tools/fetch-deps.php（私有仓库先设 GITHUB_TOKEN）',
+            'php tools/fetch-deps.php（资产未发布时用 --url，私有 fork 先设 GITHUB_TOKEN）',
             ['build'],
         );
     }

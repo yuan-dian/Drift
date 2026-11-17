@@ -74,8 +74,8 @@
   `cpp/skia/LICENSE`、`cpp/fonts/OFL.txt` 留了就近副本 —— 九个静态库的许可不再只给链接；
   但**包本身不进 git 历史**：托管在 GitHub Releases，用 `php tools/fetch-deps.php` 取 ——
   下到 `dist/`、拿入库的 `deps.lock.json` 校验、解压后核对 lib/字体/许可数量，
-  支持 `DRIFT_DEPS_URL` 镜像回退与断点续传。公开 Release 可匿名取包；资产尚未发布、
-  或落在私有镜像后可带 token 走 API 解析；发布一侧由
+  支持 `DRIFT_DEPS_URL` 镜像回退与断点续传。仓库公开后 Release 资产匿名可取；资产尚未发布、
+  或落在私有镜像时带 token 走 API 解析；发布一侧由
   `php tools/release-deps.php` 完成，不需要 `gh`（tag 由 `DEPS_VERSION` 决定，
   发版前还会对账包内 `deps.lock.json` 的版本锚点）。
   `doctor` 新增「Skia 依赖包」一项，`drift-build` 缺包时直接给出取包命令，

@@ -4,7 +4,7 @@
 
 ## 依赖包从哪来
 
-`cpp/skia` 与 `cpp/fonts` 不进 git，`/cpp/` 与 `/dist/` 都在 `.gitignore` 里。新机器 clone 完之后，从 GitHub Releases 的独立 `deps-vN` tag 取预编译包；公开资产可匿名下载，资产尚未发布或落在私有镜像后可带 token，也可用 `--url` 指向本机包。
+`cpp/skia` 与 `cpp/fonts` 不进 git，`/cpp/` 与 `/dist/` 都在 `.gitignore` 里。新机器 clone 完之后，从 GitHub Releases 的独立 `deps-vN` tag 取预编译包；仓库公开，资产匿名可下载。`deps-v1` 尚未发布，在那之前用 `--url` 指向本机包；fork 私有镜像或匿名直链被限流时可给 token。
 
 资产名是契约，一个字都不能改：`drift-deps-win-x64.zip` 与 `drift-deps-win-x64.zip.sha256`。包内所有路径落在 `cpp/` 下，解压到仓库根不会污染工作区；许可全文随包附带。
 
@@ -24,7 +24,7 @@ DRIFT_DEPS_URL=https://mirror.example.com/drift php tools/fetch-deps.php
 
 校验规则：优先用入库的 `deps.lock.json` 里的 SHA256，远端 `.sha256` 只作交叉验证；两者不一致就停。既没有 lock 也取不到远端校验值时，只打印本地 SHA256 让人比对，不会假装校验通过。大资产支持 `.part` 断点续传，服务器不认 `Range` 时丢档重下。离线包（`--url` 指本机 zip 或目录）与在线那条共用鉴权之外的全部校验：lock → SHA256 → 解压后逐项对账。
 
-token 权限：取包只需只读——fine-grained token 选本仓库 + `Contents: Read`；classic token 用 `public_repo`（私有 fork 才需要 `repo`）。发布的包不进 git 历史，避免每次发版都让仓库永久膨胀。
+匿名可取时不需要 token。需要时只读就够——fine-grained token 选本仓库 + `Contents: Read`；classic token 用 `public_repo`（私有 fork 才需要 `repo`）。发布的包不进 git 历史，避免每次发版都让仓库永久膨胀。
 
 ## 版本锚点文件与生成物
 

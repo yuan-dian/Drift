@@ -10,9 +10,9 @@ declare(strict_types=1);
  * 源优先级：`--url` > `DRIFT_DEPS_URL`（逗号分隔，可指镜像/内网）> GitHub release。
  * 校验优先用入库的 `deps.lock.json`；远端 `.sha256` 只作交叉验证，两者不一致就停。
  *
- * 私有仓库必须给 token：`releases/download/...` 那条路对私有资产没有可匿名访问的地址
- * （匿名拿到的是 404，不是 403 —— 看起来像"还没发布"）。有 token 就改走 API 解析
- * asset id，再按 `Accept: application/octet-stream` 下载。
+ * token 是可选的：匿名走 `releases/download/...` 直链；给了 token 就改走 API 解析
+ * asset id，再按 `Accept: application/octet-stream` 下载。私有 fork / 镜像后面匿名
+ * 一律 404（不是 403 —— 看起来像"还没发布"），那种情况必须给 token。
  *
  * 默认取 `DEPS_VERSION` 指定的 tag（版本锚点，不跟随 `latest`）：
  * 代码发版比依赖包勤，latest 很容易指到没有 zip 的那个 release 上去。
@@ -21,7 +21,7 @@ declare(strict_types=1);
  *   php tools/fetch-deps.php                          # 取 DEPS_VERSION 的 tag
  *   php tools/fetch-deps.php --latest                 # 改用仓库最新 release
  *   php tools/fetch-deps.php --tag=deps-v2            # 临时钉别的版本
- *   GITHUB_TOKEN=ghp_xxx php tools/fetch-deps.php     # 私有仓库
+ *   GITHUB_TOKEN=ghp_xxx php tools/fetch-deps.php     # 私有 fork / 匿名受限时
  *   php tools/fetch-deps.php --url=<zip> --force
  *   php tools/fetch-deps.php --url=D:/transfer/drift-deps-win-x64.zip
  *                                                     # 离线包（首个 release 之前唯一可行）
@@ -85,7 +85,7 @@ function source(string $label, string $url, array $headers = [], ?string $shaUrl
 }
 
 /**
- * GitHub 这一路。有 token 走 API（私有仓库唯一可行），没有就退回匿名直链。
+ * GitHub 这一路。有 token 走 API（私有 fork 唯一可行），没有就退回匿名直链。
  *
  * @return array{label:string,url:string,headers:list<string>,shaUrl:?string,shaHeaders:list<string>,local:bool}|null
  */
@@ -223,13 +223,10 @@ if ($url !== null) {
 if ($sources === []) {
     if ($githubFailed) {
         // 已经知道是 GitHub 这一路出的问题，别再说「没有 origin」——原因上面打过了
-        fwrite(STDERR, "GitHub 这一路没拿到资产。\n");
+        fwrite(STDERR, "GitHub 这一路没拿到资产。多半是 release 还没建、资产还没上传：\n");
+        fwrite(STDERR, "      php tools/release-deps.php --tag=" . ($tag ?? driftDepsTag()) . "\n");
         if ($token === null) {
-            fwrite(STDERR, "私有仓库必须给 token（匿名一律 404）：\n");
-            fwrite(STDERR, "      GITHUB_TOKEN=ghp_xxx php tools/fetch-deps.php\n");
-        } else {
-            fwrite(STDERR, "token 有效的话，多半是 release 还没建：\n");
-            fwrite(STDERR, "      php tools/release-deps.php --tag=" . ($tag ?? driftDepsTag()) . "\n");
+            fwrite(STDERR, "若取的是私有 fork，匿名一律 404，需要给 token：GITHUB_TOKEN=ghp_xxx\n");
         }
         exit(1);
     }
@@ -283,8 +280,7 @@ if ($pending) {
         @unlink($part);
         fwrite(STDERR, "所有下载源都失败了。\n");
         if ($token === null) {
-            fwrite(STDERR, "提示：私有仓库取不到资产（匿名一律 404），请给 token：\n");
-            fwrite(STDERR, "      GITHUB_TOKEN=ghp_xxx php tools/fetch-deps.php\n");
+            fwrite(STDERR, "提示：若是私有 fork，匿名一律 404，需给 token：GITHUB_TOKEN=ghp_xxx\n");
         }
         fwrite(STDERR, "提示：默认取 DEPS_VERSION 指定的 tag（当前 " . driftDepsTag() . "）。\n");
         fwrite(STDERR, "      确认该 tag 已发过 release，或用 --tag=<tag> / --url=<直链> 显式指定。\n");

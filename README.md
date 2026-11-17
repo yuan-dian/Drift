@@ -159,15 +159,15 @@ Python 3 只给真机探针 `tools/probe-window.py` 用，依赖仅标准库 `ct
 首次获取（包托管在 GitHub Releases）：
 
 ```bash
-export GITHUB_TOKEN=ghp_xxx               # PowerShell: $env:GITHUB_TOKEN = "ghp_xxx"
 php tools/fetch-deps.php                  # 取 DEPS_VERSION 指定的 tag
 php tools/fetch-deps.php --tag=deps-v2    # 临时钉别的版本；--force 重下
 php tools/fetch-deps.php --latest         # 改取仓库最新 release
 ```
 
-公开 Release 可直接匿名下载；资产尚未发布、或落在私有 fork / 内网镜像后面时，脚本会
-带 token 改走 API 解析资产 id，再按 `Accept: application/octet-stream` 下载（token 只需
-`repo` 读权限）。取不到包也可以用 `--url=<本机 zip>` 离线装，见下节。
+仓库公开，Release 资产匿名可下载。`deps-v1` 资产尚未发布——在那之前用
+`--url=<本机 zip>` 或 `DRIFT_DEPS_URL=<目录>` 离线装（见下节）。fork 出的私有镜像、
+或匿名直链被限流时，可给 token 改走 API 解析资产 id，按
+`Accept: application/octet-stream` 下载（只需 `Contents: Read`）。
 
 token 的取法依次是：`--token=…` > `GITHUB_TOKEN` > `GH_TOKEN` > `~/.git-credentials`。
 Windows 上 Git Credential Manager 把凭据放在系统凭据库里读不出来，那种机器只能用环境变量。
