@@ -7,6 +7,7 @@ use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Size;
+use Drift\Rendering\BoxChrome;
 use Drift\Rendering\BoxStyle;
 use Drift\Rendering\Canvas;
 use Drift\Rendering\Color;
@@ -234,15 +235,7 @@ final class RenderButton extends RenderProxyBox
             ShadowPainter::paintOutside($canvas, $rect, $radius, $this->hoverElevation * $progress);
         }
 
-        // 底（实色或渐变 —— 画笔由 `BoxStyle::backgroundPaint()` 收口，比例坐标在
-        //    那里按盒尺寸落成绝对像素）
-        $backgroundPaint = $this->box->backgroundPaint($size->width, $size->height);
-        if ($backgroundPaint !== null) {
-            $canvas->drawRect($rect, $backgroundPaint, $radius);
-        }
-        if ($this->box->borderColor !== null && $this->box->borderWidth > 0.0) {
-            $canvas->drawRect($rect, Paint::stroke($this->box->borderColor, $this->box->borderWidth), $radius);
-        }
+        BoxChrome::paint($canvas, $rect, $this->box);
 
         // 两相位叠色由 `RenderBox::paint()` 统一画（①.6），这里只留浮起影子
     }

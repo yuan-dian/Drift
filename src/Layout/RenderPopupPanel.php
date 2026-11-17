@@ -8,6 +8,7 @@ use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Point;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Size;
+use Drift\Rendering\BoxChrome;
 use Drift\Rendering\BoxStyle;
 use Drift\Rendering\Canvas;
 use Drift\Rendering\Paint;
@@ -158,20 +159,8 @@ final class RenderPopupPanel extends RenderProxyBox
             }
         }
 
-        // ② 底 ③ 边框（BoxStyle 只管盒内 —— 见类 docblock）
-        // ★ 底色画笔由 `BoxStyle::backgroundPaint()` 收口（实色 / 渐变同一入口）；
-        //   按**面板矩形**换算比例坐标，不是整盒（盒的留白是给投影的）。
-        $backgroundPaint = $this->style->backgroundPaint($panel->width, $panel->height);
-        if ($backgroundPaint !== null) {
-            $canvas->drawRect($panel, $backgroundPaint, $this->style->radius);
-        }
-        if ($this->style->borderColor !== null && $this->style->borderWidth > 0.0) {
-            $canvas->drawRect(
-                $panel,
-                Paint::stroke($this->style->borderColor, $this->style->borderWidth),
-                $this->style->radius,
-            );
-        }
+        // ② 底 ③ 边框（按**面板矩形**换算，不是整盒 —— 盒的留白是给投影的）
+        BoxChrome::paint($canvas, $panel, $this->style);
 
         $child = $this->child;
         if ($child === null) {

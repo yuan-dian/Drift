@@ -8,6 +8,7 @@ use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Scale;
 use Drift\Geometry\Size;
+use Drift\Rendering\BoxChrome;
 use Drift\Rendering\BoxStyle;
 use Drift\Rendering\Canvas;
 use Drift\Rendering\Color;
@@ -352,16 +353,7 @@ final class RenderTextField extends RenderBox implements TextInputBox
     protected function paintOwnChrome(Canvas $canvas): void
     {
         $size = $this->size ?? new Size(0.0, 0.0);
-        $rect = new Rect(0.0, 0.0, $size->width, $size->height);
-
-        // 底（实色或渐变 —— 画笔由 `BoxStyle::backgroundPaint()` 收口）
-        $backgroundPaint = $this->box->backgroundPaint($size->width, $size->height);
-        if ($backgroundPaint !== null) {
-            $canvas->drawRect($rect, $backgroundPaint, $this->box->radius);
-        }
-        if ($this->box->borderColor !== null && $this->box->borderWidth > 0.0) {
-            $canvas->drawRect($rect, Paint::stroke($this->box->borderColor, $this->box->borderWidth), $this->box->radius);
-        }
+        BoxChrome::paint($canvas, new Rect(0.0, 0.0, $size->width, $size->height), $this->box);
     }
 
     /** 自持 `BoxStyle`；`mods` 那份是 0（§49）。 */

@@ -451,43 +451,17 @@ final class Modifier
 
     /**
      * 装饰绘制 —— 由 RenderBox::paint() 在画内容之前调一次。
-     * 顺序不能反（阴影在盒外 ⇒ 先画，否则被底盖掉）：① 柔和阴影 → ② 底 → ③ 边框。
-     * "底色怎么画"问 BoxStyle::backgroundPaint()（自绘 chrome 的唯一答案），此处不重写。
-     * 只用 Core op：drawRect（带圆角）三后端都支持；勿为阴影用 drawPath/模糊 mask
-     * （Optional 层，软光栅报 E-OP-UNSUPPORTED）。
+     * 顺序不能反（阴影在盒外 ⇒ 先画，否则被底盖掉）：阴影 → 底+边（`BoxChrome`）。
      */
     public function paintBehind(Canvas $canvas, Size $size): void
     {
         $rect = new Rect(0.0, 0.0, $size->width, $size->height);
-        $radius = $this->style->radius;
 
-        // ① 柔和阴影：画在盒外（父布局不会为它留白，块之间要留 ≥ 4px 间距）。
-        //    形状收在 ShadowPainter::paintOutside()。
         if ($this->shadow > 0.0) {
-            ShadowPainter::paintOutside($canvas, $rect, $radius, $this->shadow);
+            ShadowPainter::paintOutside($canvas, $rect, $this->style->radius, $this->shadow);
         }
 
-        // ② 底：渐变优先由 backgroundPaint() 决定；渐变坐标是盒内比例，
-        //    内部 resolvedTo() 换算成绝对像素（画时才知道盒多大）。
-        $paint = $this->style->backgroundPaint($size->width, $size->height);
-        if ($paint !== null) {
-            $canvas->drawRect($rect, $paint, $radius);
-        }
-
-        // ③ 边框
-        $borderColor = $this->style->borderColor;
-        if ($borderColor !== null && $this->style->borderWidth > 0.0) {
-            $stroke = Paint::stroke($borderColor, $this->style->borderWidth);
-
-            // 虚线只在这一处落到画笔上：BoxStyle::$borderDash 的唯一消费者；
-            // Paint::withDash() 已把图案带给两后端，此处不必知后端是谁。
-            $dash = $this->style->borderDash;
-            if ($dash !== null) {
-                $stroke = $stroke->withDash($dash);
-            }
-
-            $canvas->drawRect($rect, $stroke, $radius);
-        }
+        BoxChrome::paint($canvas, $rect, $this->style);
     }
 
     // ── 读：合成（`RenderBox::setMods()` 每次造盒读一次）────────────

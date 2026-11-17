@@ -16,6 +16,7 @@
 | A6 | 增量布局与 damage rect | 不做；整树重排，布局为纯函数。 | 以 `FrameTaxMeasure` 在目标节点规模复量，重排占用超过帧预算的一半。 |
 | A7 | 命令标识 | 用字符串名 + `CommandRouter` + Element 冒泡链，不用整数命令 ID。 | 命令派发成为可测量的性能热点，且命名方案无法优化。 |
 | A8 | 结构性重写 | D1–D7 剩余项不打包重写；按真实消费者逐项推进。 | 出现新的 P0 结构缺陷，或现有债务触发其重裁条件。 |
+| A9 | 盒 chrome 单点 | 盒的"底 → 边框（含虚线）→ 圆角"只有一个实现 `BoxChrome::paint()`；`Modifier` 与 5 个自绘 chrome 盒共用。阴影**不在内**（Button 的 hover 阴影是动态、PopupPanel 有 fallback，语义不同）。 | 出现需要不同 chrome 语义的盒（例如逐边不同色/不同圆角），`BoxChrome` 无法用一个签名表达。 |
 
 ## 编译器与代码纪律
 
