@@ -76,7 +76,18 @@ php tools/pack-deps.php && php tools/version.php --check
 
 `SKIA_REVISION` 当前 pin 到 Skia M148 的真实 commit，lock 的 `skiaRevision` 与 `provenance: ci` 与之同步；该 commit 的 `SkMilestone.h` 为 148，与包内一致。`unpinned` / `provenance: legacy` 只用于来源不可考的历史包，构建脚本与 CI 都拒绝它。注意：现有 `deps-v1` 二进制仍是早期拷入包，尚未从这个 commit 实际重建，声明与产物一致须以 `windows-deps.yml` 重建并替换 Release 资产为准。
 
-字体不随 Skia 变，也没有可复现的 URL + SHA256 来源，目前靠构建机器一次性预置；公开分发前要补来源 pin。
+字体不随 Skia 变，两个 Noto Sans SC 字重（Regular / Bold，OFL 授权）**入库**（`cpp/fonts/`，`.gitignore` 用 `/cpp/*` + 白名单放行）。托管 runner 没有持久盘，字体不入库就得再引一条下载链路加版本锚点，等于给重建多加一个会漂的部件；入库后来源就是 commit 本身。字体许可全文在 `licenses/OFL-NotoSansSC.txt`，打包时随附。
+
+## 依赖构建只在托管镜像上跑
+
+Skia 构建通道（`windows-deps.yml`）跑在 `windows-2022` 托管镜像上，全仓不允许出现 `self-hosted`——仓库没有注册 runner 时，自托管任务不会失败，只会静默排队到超时取消，那是最贵的一种假绿。`assert-workflows.php` 把这条守死。
+
+镜像上现成的东西直接用，缺的在这里补：
+
+- **VS / Win SDK / LLVM**：镜像自带，目录名随镜像更新漂移，所以用 `vswhere` 探测而不是写死；`vars.SKIA_WIN_VC` 等仍可覆盖。GN 字符串里反斜杠是转义符，路径必须转正斜杠后才喂给 `gn gen`。
+- **gn / ninja**：从 `chromium.googlesource.com` 拉 depot_tools，带缓存。Windows 上 depot_tools 发 `.bat` 包装，所以 `SKIA_GN=gn.bat`。
+- **字体**：入库，构建前只做存在性检查。
+- **磁盘**：托管镜像初始只剩十几 GB，而 `git-sync-deps` 加全量编译要二十多 GB。构建前删掉本次用不到的 Android SDK / dotnet / 预装浏览器 / 多版本 JDK，再断言剩余空间不低于 18 GB。爆盘时报的会是和磁盘无关的编译错误，看起来像代码问题，所以这一步要显式拦。
 
 ## CI 自动构建
 
@@ -93,7 +104,14 @@ php tools/pack-deps.php && php tools/version.php --check
 
 `windows-deps.yml` 的 publish 分支顺序锁死：`pack-deps.php` 重写 lock → `sync-lock-anchors.php` 同步 README SHA256 → `git commit` + push → `git tag $DEPS_VERSION` + push → `release-deps.php` 上传。tag 落在含新 lock 的 commit 上，干净 clone 时两者天然一致；最后再用 `fetch-deps.php --tag` 从已发布资产回取一遍自验。
 
-自托管 runner 需要预装 VS / Win SDK / LLVM / depot_tools / PHP；hosted Windows runner 只有 14 GB SSD，全量 Skia 有爆盘风险，依赖构建因此留在自托管。`windows-deps.yml` 只监听 `DEPS_VERSION` 变更与手动触发，`release.yml` 只监听产品 tag；都不监听 `pull_request`——fork PR 不能跑自托管构建。
+依赖构建只监听 `DEPS_VERSION` 变更、手动触发与产品发版调用，不监听 `pull_request`——依赖包不该按 PR 重建。
+
+从零重建一次（发布首个来源可追溯的包）的顺序：
+
+1. 确认 `SKIA_REVISION` 是 40 位 commit，`DEPS_VERSION` 是未被占用的 `deps-vN`。
+2. 手动触发 `windows-deps.yml`，`publish=true`。不写 `skia_revision` 就走文件里的值。
+3. 流水线内部固定：`pack-deps.php` 重写 lock → `sync-lock-anchors.php` 同步 README 的 SHA256 → `git commit` + push → `git tag $DEPS_VERSION` + push → `release-deps.php` 上传 → `fetch-deps.php --tag` 回取自验。
+4. 结束后在干净 clone 里走一遍 `fetch-deps.php` → `version --check` → `doctor`。
 
 ## 发版前检查与 tag 约定
 

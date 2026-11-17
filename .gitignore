@@ -96,10 +96,19 @@ desktop.ini
 # 真机构建的工作目录（drift-build 的私有 ini 副本 / 构建日志 / 截图）
 /_build
 
-# ── 外部二进制依赖（不入库；§24.2 #12）──
+# ── 外部二进制依赖 ──
 # Skia M148 预编译（约 141 MB：include/ + modules/ + src/ + out/Release-x64/*.lib）
-# 与字体。打包与校验走 tools/pack-deps.php，产物在 /dist/ 下（同样不入库）。
-/cpp/
+# 不入库：体积大且可由 SKIA_REVISION 重建。打包与校验走 tools/pack-deps.php，
+# 产物在 /dist/ 下（同样不入库）。
+#
+# ★ 字体例外，入库：deps 构建跑在托管 runner 上，那里没有持久盘、也没有别的可信
+#   来源；字体不入库就得再引一条下载链路加版本锚点，等于给「重建依赖包」多加一个
+#   会漂的部件。仍用 `/cpp/*` 而不是 `/cpp/`：目录级忽略时白名单不生效。
+/cpp/*
+!/cpp/fonts/
+/cpp/fonts/*
+!/cpp/fonts/NotoSansSC-Regular.ttf
+!/cpp/fonts/NotoSansSC-Bold.ttf
 
 # 依赖包（pack-deps 的输出，约 50 MB）
 /dist/

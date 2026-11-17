@@ -60,7 +60,7 @@ composer probe -- <app>              # T2 真机探针
 
 - **PR / push 主分支**：`verify.yml` 跑 `php bin/drift verify --json` 日常档，`windows-2022` + setup-php 的版本矩阵，`coverage: none` / `fail-fast: true`，并有环境与版本 / 扩展断言（不信任安装结果）；不需要 MSVC / tpc。
 - **手动全量**：按需触发 `verify.yml` 的手动档，跑 `--full --json`（含 feature / pages / smoke）；发版 tag 由 `release.yml` 自动跑同一档。题库 `--layer=corpus` 是独立量具，不并进报告。
-- **报告断言**：跑 `verify --json` 的 workflow 都调 `.github/scripts/assert-verify-report.php <报告> [step id...]`。`verify.yml` / `release.yml` 必须给 `unit`（手动全量与发布还给 `feature`）；"PHPUnit 没装"被记成 `skip` 时，断言走独立路径读 `items[].status`，把"没测到"判红，不让整份报告仍显示通过。`windows-deps.yml` 只跑 `--layer=static` 且不传 step id，因为自托管 runner 不保证有 composer。
+- **报告断言**：跑 `verify --json` 的 workflow 都调 `.github/scripts/assert-verify-report.php <报告> [step id...]`。`verify.yml` / `release.yml` 必须给 `unit`（手动全量与发布还给 `feature`）；"PHPUnit 没装"被记成 `skip` 时，断言走独立路径读 `items[].status`，把"没测到"判红，不让整份报告仍显示通过。`windows-deps.yml` 只跑 `--layer=static` 且不传 step id，因为它的职责是产出依赖包，PHPUnit 不在其中——不装 composer 也不会把"没测到"记成通过。
 - **AOT / T2**：`windows-build.yml` 在公开 `windows-2022` runner 上从源码构建 tpc / PHPX，取依赖包，全量编译 `hello` 并跑 `probe-window` 五判据；前置是 `deps-v1` 资产已发布。`verify.yml` 的结构判据守着这条通道不退化。CI 里的纯 PHP 判据不等于 AOT 真机构建通过。
 - **依赖包构建**：`windows-deps.yml` 在 `DEPS_VERSION` 变化时重建、组包、发布；发版调用它时只产 artifact。`release.yml` 先拿这份 Skia 再跑 verify / dev 壳。依赖与发版流程见[依赖与发布](./dependencies-and-release.md)。
 

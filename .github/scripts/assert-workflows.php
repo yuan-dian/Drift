@@ -98,10 +98,39 @@ $depsAnchors = [
     'actions/upload-artifact@v4' => '产物交给下游',
     'php tools/release-deps.php' => '发布依赖资产',
     'php tools/fetch-deps.php --tag="$TAG" --force' => '发布后回验',
+    'Ensure fonts are present' => '构建前确认字体在树里',
+    'depot_tools' => 'gn / ninja 来源',
 ];
 foreach ($depsAnchors as $needle => $label) {
     if (!str_contains($deps, $needle)) {
         fail('windows-deps.yml 缺环节：' . $label . '（' . $needle . '）');
+    }
+}
+
+// ★ 构建通道必须能在托管 runner 上真跑。self-hosted 在仓库没有注册 runner 时
+//   不会报错，只会静默排队到超时取消 —— 那种"YAML 里有、实际从不执行"的通道
+//   是最贵的一种假绿。所以出现 self-hosted 一律红，改为托管镜像 + 自动探测工具链。
+//   只看生效行：注释里讨论这件事本身是需要的，不该被自己拦住。
+$stripComments = static fn (string $text): string => (string) preg_replace('/^\s*#.*$/m', '', $text);
+foreach (['windows-build.yml' => $build, 'verify.yml' => $verify,
+          'release.yml' => $release, 'windows-deps.yml' => $deps] as $name => $text) {
+    if (str_contains($stripComments($text), 'self-hosted')) {
+        fail("{$name} 声明了 self-hosted —— 没有注册 runner 时任务只会静默排队，不会失败");
+    }
+}
+$depsJob = substr($deps, (int) strpos($deps, 'jobs:'));
+if (!str_contains($depsJob, 'runs-on: windows-2022')) {
+    fail('windows-deps.yml 的 build job 必须跑在托管 windows-2022 上');
+}
+if (preg_match('/^\s{4}timeout-minutes:\s*(\d+)\s*$/m', $depsJob, $m) !== 1 || (int) $m[1] < 180) {
+    fail('windows-deps.yml 的 timeout 至少 180 分钟 —— Skia 全量编译 + git-sync-deps 超过两小时属正常');
+}
+
+// 托管 runner 没有持久盘：字体必须在树里，否则构建前就会缺字。
+$gitignore = (string) @file_get_contents($root . '/.gitignore');
+foreach (['NotoSansSC-Regular.ttf', 'NotoSansSC-Bold.ttf'] as $font) {
+    if (!str_contains($gitignore, '!/cpp/fonts/' . $font)) {
+        fail('.gitignore 缺字体白名单 ' . $font . ' —— cpp/* 会把它挡在树外，托管 runner 就凑不齐字体');
     }
 }
 if (!str_contains($verify, 'assert-workflows.php')) {
@@ -111,3 +140,4 @@ if (!str_contains($verify, 'assert-workflows.php')) {
 fwrite(STDOUT, '  ok     真 AOT 通道完整：' . count($buildAnchors) . " 个环节\n");
 fwrite(STDOUT, '  ok     发版先构建 Skia 再编译：' . count($releaseAnchors) . " 个环节\n");
 fwrite(STDOUT, '  ok     依赖自动构建通道完整：' . count($depsAnchors) . " 个环节\n");
+fwrite(STDOUT, "  ok     构建通道全在托管 runner 上（无 self-hosted 静默排队）\n");

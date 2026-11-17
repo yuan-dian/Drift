@@ -23,6 +23,6 @@
 
 ## 尚待后续轮次（非本轮遗漏，需专门判据/设计）
 
-- **Skia 二进制重建**：commit pin 已完成（M148 真实 commit，lock 的 `provenance` 为 `ci`），但 `deps-v1` 资产仍是早期拷入包；从 pinned commit 重建并替换需要自托管 runner + 数小时，属于发布动作，不是改文件。
+- **Skia 二进制重建**：commit pin 已完成（M148 真实 commit，lock 的 `provenance` 为 `ci`），但 `deps-v1` 资产仍是早期拷入包；重建通道已迁到托管 `windows-2022`（自动探测工具链、字体入库、构建前腾磁盘），需要手动触发 `windows-deps.yml` 并置 `publish=true`，耗时数小时，属于发布动作。
 - **英文首屏**：全中文文档对国际贡献者是天然门槛；即使只做 README 首屏英文化也有价值。
 - **贡献引导脚本**：`doctor` 已是单一真相源，暂不包第二层脚本；若后续确认需要，应在 doctor 里加 `--fix` 而非另起脚本。

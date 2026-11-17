@@ -9,6 +9,12 @@
 # Order is load-bearing: pack writes deps.lock.json -> commit -> tag -> release.
 # The tag must point at the commit containing the new lock, otherwise a clean
 # clone verifies the new asset against the old lock and fails.
+#
+# Runs on a hosted runner on purpose. The earlier self-hosted variant silently
+# queued forever on a repo with no registered runner — a build channel that
+# exists in YAML but never executes. Everything the build needs is therefore
+# either on the image (VS / Win SDK / LLVM), fetched here (depot_tools), or
+# committed (cpp/fonts).
 
 name: Windows x64 deps
 
@@ -24,7 +30,7 @@ on:
         default: ''
         type: string
       fonts_dir:
-        description: 'Optional directory holding NotoSansSC-*.ttf (runner keeps cpp/fonts otherwise)'
+        description: 'Optional directory holding NotoSansSC-*.ttf (overrides the committed fonts)'
         required: false
         default: ''
         type: string
@@ -72,6 +78,7 @@ permissions:
 env:
   COMPOSER_NO_INTERACTION: 1
   COMPOSER_PROCESS_TIMEOUT: 0
+  PHP_VERSION: '8.4'
 
 concurrency:
   group: deps-build-${{ github.ref }}
@@ -79,9 +86,9 @@ concurrency:
 
 jobs:
   build:
-    name: Build deps (self-hosted Windows)
-    runs-on: [self-hosted, windows]
-    timeout-minutes: 360
+    name: Build deps (windows-2022)
+    runs-on: windows-2022
+    timeout-minutes: 330
     permissions:
       contents: write
     outputs:
@@ -89,12 +96,9 @@ jobs:
       deps_tag: ${{ steps.resolve.outputs.deps_tag }}
       sha256: ${{ steps.package.outputs.sha256 }}
     steps:
-      # clean:false keeps cpp/fonts and .skia-src on the persistent runner.
-      # Fonts are not in git and do not change with Skia; cpp/skia is rebuilt below.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          clean: false
 
       - name: Resolve inputs
         id: resolve
@@ -127,6 +131,116 @@ jobs:
           printf 'artifact_name=drift-deps-%s-%s\n' "${{ github.run_id }}" "${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
           echo "Skia=$rev  Deps=$tag  publish=$publish  commit_lock=$commit_lock"
 
+      - name: Setup PHP ${{ env.PHP_VERSION }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          extensions: curl, zip, mbstring
+          coverage: none
+
+      - name: Assert PHP extensions
+        shell: bash
+        run: |
+          php -r 'foreach (["curl", "zip"] as $e) { if (!extension_loaded($e)) { fwrite(STDERR, "missing PHP extension: $e\n"); exit(1); } }'
+
+      # 托管镜像只剩十几 GB 可用，而 git-sync-deps + 全量编译要吃掉十几 GB。
+      # 先删掉本次构建用不到的大件（Android SDK / 预装浏览器 / 多版本 JDK、node、Ruby），
+      # 保留 LLVM、VS、Win SDK、Python、dotnet —— 那几样要么构建要用，要么与 runner 自身相关。
+      - name: Free disk space
+        shell: pwsh
+        run: |
+          $targets = @(
+            'C:\Program Files\Android',
+            'C:\Program Files (x86)\Android',
+            'C:\ProgramData\Microsoft\Android',
+            'C:\Program Files\Microsoft SDKs\Azure',
+            'C:\Program Files\Google\Chrome',
+            'C:\Program Files (x86)\Google',
+            'C:\Program Files\Mozilla Firefox',
+            'C:\Program Files (x86)\Microsoft\Edge',
+            'C:\Program Files\Microsoft\Edge'
+          )
+          $targets += (Get-ChildItem 'C:\hostedtoolcache\windows' -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like 'Java_*' -or $_.Name -like 'node-*' -or $_.Name -like 'Ruby*' } |
+            Select-Object -ExpandProperty FullName)
+          foreach ($p in $targets) {
+            if (Test-Path $p) { Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue }
+          }
+          $free = (Get-PSDrive C).Free / 1GB
+          Write-Host ("C: free after cleanup = {0:N1} GB" -f $free)
+
+      # 空间不够就别开始：Skia 全量编译爆盘时会给出一个和磁盘无关的编译错误，
+      # 看起来像代码问题。这里提前拦，报的是真实原因。
+      - name: Assert disk headroom
+        shell: pwsh
+        run: |
+          $free = (Get-PSDrive C).Free / 1GB
+          if ($free -lt 18) { throw ("only {0:N1} GB free; a full Skia build needs ~20 GB" -f $free) }
+          Write-Host ("disk headroom ok: {0:N1} GB" -f $free)
+
+      # depot_tools 提供 gn / ninja；缓存命中时 gn 已 bootstrap 过，省掉首次下载。
+      - name: Cache depot_tools
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/depot_tools
+          key: depot_tools-${{ runner.os }}-v1
+
+      - name: Install depot_tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          deps="$RUNNER_TEMP/depot_tools"
+          if [ ! -d "$deps/.git" ]; then
+            git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$deps"
+          fi
+          echo "$deps" >> "$GITHUB_PATH"
+          # Windows 上 depot_tools 发的是 .bat 包装；build-skia.sh 用 SKIA_GN/SKIA_NINJA 收口。
+          echo "SKIA_GN=gn.bat" >> "$GITHUB_ENV"
+          echo "SKIA_NINJA=ninja" >> "$GITHUB_ENV"
+          echo "SKIA_PYTHON=python" >> "$GITHUB_ENV"
+
+      # 镜像自带 VS / Win SDK / LLVM，但目录名随镜像更新漂移，不能写死；
+      # vars.* 保留覆盖能力。GN 字符串里反斜杠是转义符，路径必须转正斜杠。
+      - name: Resolve MSVC / SDK / LLVM
+        shell: pwsh
+        run: |
+          $vc = '${{ vars.SKIA_WIN_VC }}'
+          if (-not $vc) {
+            $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+            if (-not (Test-Path $vswhere)) { throw 'vswhere.exe not found on this image' }
+            $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+            if (-not $vs) { throw 'no Visual Studio installation with VC tools' }
+            $vc = Join-Path $vs 'VC'
+          }
+
+          $sdk = '${{ vars.SKIA_WIN_SDK }}'
+          if (-not $sdk) { $sdk = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10' }
+          $sdkVersion = '${{ vars.SKIA_WIN_SDK_VERSION }}'
+          if (-not $sdkVersion) {
+            $include = Join-Path $sdk 'Include'
+            if (-not (Test-Path $include)) { throw "Windows SDK include dir missing: $include" }
+            $sdkVersion = (Get-ChildItem $include -Directory | Sort-Object Name | Select-Object -Last 1).Name
+          }
+
+          $llvm = '${{ vars.SKIA_CLANG_WIN }}'
+          if (-not $llvm) { $llvm = Join-Path $env:ProgramFiles 'LLVM' }
+
+          $vc = $vc -replace '\\', '/'
+          $sdk = $sdk -replace '\\', '/'
+          $llvm = $llvm -replace '\\', '/'
+          foreach ($p in @($vc, $sdk, $llvm)) {
+            if (-not (Test-Path $p)) { throw "toolchain path missing: $p" }
+          }
+          if (-not (Test-Path (Join-Path $llvm 'bin\clang-cl.exe'))) {
+            throw "clang-cl.exe missing under $llvm"
+          }
+
+          "SKIA_WIN_VC=$vc" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "SKIA_WIN_SDK=$sdk" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "SKIA_WIN_SDK_VERSION=$sdkVersion" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "SKIA_CLANG_WIN=$llvm" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "VC=$vc  SDK=$sdk/$sdkVersion  LLVM=$llvm"
+
       - name: Ensure fonts are present
         shell: bash
         run: |
@@ -136,24 +250,15 @@ jobs:
             cp -R "$fonts"/*.ttf cpp/fonts/
           fi
           for f in NotoSansSC-Regular.ttf NotoSansSC-Bold.ttf; do
-            test -f "cpp/fonts/$f" || { echo "::error::cpp/fonts/$f missing: pass fonts_dir or preload it on the runner"; exit 1; }
+            test -f "cpp/fonts/$f" || { echo "::error::cpp/fonts/$f missing — fonts are committed; check the .gitignore allowlist or pass fonts_dir"; exit 1; }
           done
 
       - name: Build Skia from pinned commit
         shell: bash
-        env:
-          SKIA_WIN_VC: ${{ vars.SKIA_WIN_VC }}
-          SKIA_WIN_SDK: ${{ vars.SKIA_WIN_SDK }}
-          SKIA_WIN_SDK_VERSION: ${{ vars.SKIA_WIN_SDK_VERSION }}
-          SKIA_CLANG_WIN: ${{ vars.SKIA_CLANG_WIN }}
-          SKIA_CLANG_WIN_VERSION: ${{ vars.SKIA_CLANG_WIN_VERSION }}
-          SKIA_WIN_TOOLCHAIN_VERSION: ${{ vars.SKIA_WIN_TOOLCHAIN_VERSION }}
         run: bash tools/skia/build-skia.sh --rev="$REV" --out="$PWD/cpp/skia" --replace
 
-      # 自托管 runner 预装 PHP，但不保证有 composer；有就按 lock 装 PHPUnit。
-      # ★ 这里**不**把 unit 当硬判据：本 workflow 的产物是 Skia 依赖包，只跑
-      #   `verify --layer=static`（零依赖静态层），不启动 PHPUnit，也就没有
-      #   「没测到被算通过」的形状。
+      # 本 workflow 的产物是 Skia 依赖包，只跑 `verify --layer=static`（零依赖静态层），
+      # 不启动 PHPUnit —— 也就没有「没测到被算通过」的形状。
       - name: Install PHPUnit (pinned by composer.lock)
         shell: bash
         run: |
@@ -162,11 +267,6 @@ jobs:
           else
             echo "::notice::composer unavailable on this runner; only the static layer runs"
           fi
-
-      - name: Assert PHP extensions
-        shell: bash
-        run: |
-          php -r 'foreach (["curl", "zip"] as $e) { if (!extension_loaded($e)) { fwrite(STDERR, "missing PHP extension: $e\n"); exit(1); } }'
 
       - name: Pack and verify
         shell: bash

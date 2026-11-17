@@ -40,7 +40,7 @@
 - 工程质量：统一闸门（`composer checks` 是清单的唯一权威，项数以输出为准）+ 变异四律 + 三态判据 + 金样确定性注入 + T0/T1/T2 分层 + 真机探针
 - 依赖链：Skia 预编译包与字体走 Release 资产（SHA256 入库、可断点续传），另有
   `SKIA_REVISION` + `tools/skia/` 构建输入支持从 pinned commit 源码重建；
-  CI 两条流水线已入库（依赖包重建 / 产品 draft release），启用需自托管 Windows runner
+  CI 两条流水线已入库（依赖包重建 / 产品 draft release），都跑在托管 `windows-2022` 上
 
 ### 明确不包含（preview 阶段）
 
