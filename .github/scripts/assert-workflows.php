@@ -57,6 +57,7 @@ $buildAnchors = [
     'php tools/doctor.php --scope=build' => '编译前环境体检',
     'workflow_call:' => 'Release 可复用',
     'python tools/probe-window.py hello --dev' => 'dev 壳真机判据',
+    "\$env:PATH = (Join-Path \$env:DRIFT_PHPX_HOME 'build')" => 'dev.exe 探针的 phpx.dll 搜索路径',
     'Compress-Archive -Path' => 'dev 壳打包',
     'gh release upload' => 'Release 资产上传',
     'name: Restore Skia artifact' => '发版复用前置 Skia 产物',
