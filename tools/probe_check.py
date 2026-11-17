@@ -49,6 +49,19 @@ _fails = []
 _total = 0
 
 
+def _utf8_output():
+    """CI runner 的 Python 可能以 cp1252 开 stdout，中文判据名会直接抛 UnicodeEncodeError。
+
+    窗口其实已经探测成功，挂在这一行等于把「日志编码」误报成「产品失败」；
+    而且判据名本身就是中文，躲不开，只能在统一入口把流的编码钉住。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def check(name, ok, detail=""):
     """记一条判据。`ok` 为假时不会立刻中断 —— 一次跑完拿到全貌。"""
     global _total
@@ -84,6 +97,7 @@ def run(main):
     ★ 反过来，一条 FAIL 都没记时不报失败：环境没测成不等于产品坏了。
     """
     skipped = None
+    _utf8_output()
     try:
         rc = main()
     except NotMeasured as exc:
