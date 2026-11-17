@@ -302,7 +302,12 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           php tools/fetch-deps.php
-          if ($LASTEXITCODE -ne 0) { throw 'fetch-deps failed' }
+          if ($LASTEXITCODE -ne 0) {
+            # 资产缺失不是代码问题，但红在这里会让人以为编译坏了。
+            # 把唯一可行的下一步直接写进错误。
+            Write-Host '::error::依赖包取不到 —— 多半是 DEPS_VERSION 指向的 deps-vN 还没发布。真 AOT 需要真实依赖包，不能跳过；先手动触发 windows-deps.yml 并置 publish=true 构建发布，再重跑本 workflow。'
+            throw 'fetch-deps failed'
+          }
 
       # 同一份 Environment::probe() 供 doctor 与 drift-build 使用；
       # 让工具链缺口在编译前报出可执行的修法，而不是链接期 LNK2019。

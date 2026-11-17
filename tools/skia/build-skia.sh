@@ -56,6 +56,10 @@ NINJA="${SKIA_NINJA:-ninja}"
 for tool in git "$GN" "$NINJA"; do
   command -v "$tool" >/dev/null 2>&1 || die "$tool not found on PATH (install depot_tools; on Windows try SKIA_GN=gn.bat)"
 done
+# ★ depot_tools clone 下来后没 bootstrap 时，gn 会在几百行 git-sync-deps 之后才退出，
+#   报的是 "python3_bin_reldir.txt not found"，看着像编译错误。提前问一次。
+"$GN" --version >/dev/null 2>&1 \
+  || die "$GN is not runnable — depot_tools is unbootstrapped (Windows: run bootstrap\\bootstrap.bat or update_depot_tools.bat)"
 
 PY="${SKIA_PYTHON:-}"
 if [[ -z "$PY" ]]; then

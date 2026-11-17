@@ -199,6 +199,30 @@ jobs:
           echo "SKIA_NINJA=ninja" >> "$GITHUB_ENV"
           echo "SKIA_PYTHON=python" >> "$GITHUB_ENV"
 
+      # ★ 必须 bootstrap：clone 下来的 depot_tools 只有一个 shell 包装，
+      #   缺 python3_bin_reldir.txt 时 gn / vpython3 / cipd 一律直接退出
+      #   （表现是 "need to initialize depot_tools by running gclient or
+      #   update_depot_tools"，而且往往发生在 Skia 已经 sync 完之后，看着像编译错）。
+      - name: Bootstrap depot_tools
+        shell: pwsh
+        run: |
+          $deps = Join-Path $env:RUNNER_TEMP 'depot_tools'
+          $bootstrap = Join-Path $deps 'bootstrap\bootstrap.bat'
+          if (Test-Path $bootstrap) {
+            & $bootstrap
+            if ($LASTEXITCODE -ne 0) { throw 'depot_tools bootstrap failed' }
+          } else {
+            & (Join-Path $deps 'update_depot_tools.bat')
+            if ($LASTEXITCODE -ne 0) { throw 'update_depot_tools failed' }
+          }
+          if (-not (Test-Path (Join-Path $deps 'python3_bin_reldir.txt'))) {
+            throw 'depot_tools still unbootstrapped: python3_bin_reldir.txt missing'
+          }
+          & (Join-Path $deps 'gn.bat') --version
+          if ($LASTEXITCODE -ne 0) { throw 'gn is not runnable after bootstrap' }
+          & (Join-Path $deps 'ninja.exe') --version
+          if ($LASTEXITCODE -ne 0) { throw 'ninja is not runnable after bootstrap' }
+
       # 镜像自带 VS / Win SDK / LLVM，但目录名随镜像更新漂移，不能写死；
       # vars.* 保留覆盖能力。GN 字符串里反斜杠是转义符，路径必须转正斜杠。
       - name: Resolve MSVC / SDK / LLVM
