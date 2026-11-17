@@ -19,6 +19,8 @@ use Drift\Rendering\Canvas;
  */
 final class RenderStack extends RenderBox implements ChildContainer
 {
+    use MultiChildBox;
+
     /** @var list<RenderBox> */
     private array $kids = [];
 
@@ -31,32 +33,6 @@ final class RenderStack extends RenderBox implements ChildContainer
         // 默认 TopLeft：Stack 语义是"叠上去、默认贴左上"（与 `Align` 的 center 不同）。
         // 参数写成 `?Alignment = null` 而非方法调用作默认值：默认参数里不能调用静态方法（PHP 限制）。
         $this->align = $align ?? Alignment::topLeft();
-    }
-
-    public function addChild(RenderBox $child): void
-    {
-        $this->kids[] = $child;
-        $this->adoptChild($child);
-    }
-
-    /** @internal 重建前清空 —— 否则同一次 rebuild 会把子盒追加两遍 */
-    public function clearChildren(): void
-    {
-        $this->kids = [];
-    }
-
-    /** @return list<RenderBox> */
-    public function children(): array
-    {
-        return $this->kids;
-    }
-
-    /** 访问序 = 绘制序 = 层叠序（后加的在上） */
-    public function visitChildren(callable $visitor): void
-    {
-        foreach ($this->kids as $kid) {
-            $visitor($kid);
-        }
     }
 
     protected function performLayout(BoxConstraints $constraints): Size
@@ -132,14 +108,6 @@ final class RenderStack extends RenderBox implements ChildContainer
         }
 
         return $max;
-    }
-
-    protected function paintContent(Canvas $canvas): void
-    {
-        // 绘制序 = `children` 顺序：后加的压在上面
-        foreach ($this->kids as $kid) {
-            $this->paintChildAt($canvas, $kid);
-        }
     }
 
     // ── 内部 ────────────────────────────────────────────────────────

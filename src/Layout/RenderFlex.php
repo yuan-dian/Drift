@@ -21,6 +21,8 @@ use Drift\Rendering\Canvas;
  */
 class RenderFlex extends RenderBox implements ChildContainer
 {
+    use MultiChildBox;
+
     /** @var list<RenderBox> */
     private array $kids = [];
 
@@ -41,12 +43,6 @@ class RenderFlex extends RenderBox implements ChildContainer
     ) {
     }
 
-    public function addChild(RenderBox $child): void
-    {
-        $this->kids[] = $child;
-        $this->adoptChild($child);
-    }
-
     /**
      * 返回本盒**实际生效**的溢出策略。
      *
@@ -64,25 +60,6 @@ class RenderFlex extends RenderBox implements ChildContainer
     public function clipsOverflow(): bool
     {
         return $this->overflow === Overflow::Clip;
-    }
-
-    /** @internal 重建前清空 —— 否则同一次 rebuild 会把子盒追加两遍 */
-    public function clearChildren(): void
-    {
-        $this->kids = [];
-    }
-
-    /** @return list<RenderBox> */
-    public function children(): array
-    {
-        return $this->kids;
-    }
-
-    public function visitChildren(callable $visitor): void
-    {
-        foreach ($this->kids as $kid) {
-            $visitor($kid);
-        }
     }
 
     protected function performLayout(BoxConstraints $constraints): Size
@@ -221,13 +198,6 @@ class RenderFlex extends RenderBox implements ChildContainer
     protected function contentIntrinsicHeight(float $width): float
     {
         return $this->vertical ? $this->intrinsicMain($width) : $this->intrinsicCross($width);
-    }
-
-    protected function paintContent(Canvas $canvas): void
-    {
-        foreach ($this->kids as $kid) {
-            $this->paintChildAt($canvas, $kid);
-        }
     }
 
     // ── 内部 ────────────────────────────────────────────────────────

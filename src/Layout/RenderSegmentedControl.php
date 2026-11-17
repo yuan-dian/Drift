@@ -49,38 +49,14 @@ use Drift\Rendering\SegmentedStyle;
  */
 final class RenderSegmentedControl extends RenderBox implements ChildContainer
 {
+    use MultiChildBox;
+
     /** @var list<RenderBox> */
     private array $kids = [];
 
     public function __construct(
         private readonly SegmentedStyle $style,
     ) {
-    }
-
-    public function addChild(RenderBox $child): void
-    {
-        $this->kids[] = $child;
-        $this->adoptChild($child);
-    }
-
-    /** @internal 重建前清空 —— 否则同一次 rebuild 会把子盒追加两遍 */
-    public function clearChildren(): void
-    {
-        $this->kids = [];
-    }
-
-    /** @return list<RenderBox> */
-    public function children(): array
-    {
-        return $this->kids;
-    }
-
-    /** 访问序 = 绘制序（段从左到右，无层叠） */
-    public function visitChildren(callable $visitor): void
-    {
-        foreach ($this->kids as $kid) {
-            $visitor($kid);
-        }
     }
 
     public function style(): SegmentedStyle
@@ -203,11 +179,4 @@ final class RenderSegmentedControl extends RenderBox implements ChildContainer
         }
     }
 
-    protected function paintContent(Canvas $canvas): void
-    {
-        // 绘制序 = children 顺序（左 → 右，无层叠）
-        foreach ($this->kids as $kid) {
-            $this->paintChildAt($canvas, $kid);
-        }
-    }
 }

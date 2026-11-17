@@ -75,6 +75,8 @@ final class RenderWrap extends RenderBox implements ChildContainer
      */
     private const float EPS = 0.0001;
 
+    use MultiChildBox;
+
     /** @var list<RenderBox> */
     private array $kids = [];
 
@@ -85,31 +87,6 @@ final class RenderWrap extends RenderBox implements ChildContainer
         private readonly FlexAlign $alignment = FlexAlign::Start,
         private readonly FlexAlign $runAlignment = FlexAlign::Start,
     ) {
-    }
-
-    public function addChild(RenderBox $child): void
-    {
-        $this->kids[] = $child;
-        $this->adoptChild($child);
-    }
-
-    /** @internal 重建前清空 —— 否则同一次 rebuild 会把子盒追加两遍 */
-    public function clearChildren(): void
-    {
-        $this->kids = [];
-    }
-
-    /** @return list<RenderBox> 访问序 = 分行序 = 绘制序 */
-    public function children(): array
-    {
-        return $this->kids;
-    }
-
-    public function visitChildren(callable $visitor): void
-    {
-        foreach ($this->kids as $kid) {
-            $visitor($kid);
-        }
     }
 
     protected function performLayout(BoxConstraints $constraints): Size
@@ -274,13 +251,6 @@ final class RenderWrap extends RenderBox implements ChildContainer
         return $this->direction === Axis::Horizontal
             ? $this->intrinsicCross($width)
             : $this->intrinsicMain($width);
-    }
-
-    protected function paintContent(Canvas $canvas): void
-    {
-        foreach ($this->kids as $kid) {
-            $this->paintChildAt($canvas, $kid);
-        }
     }
 
     // ── 内部 ────────────────────────────────────────────────────────
