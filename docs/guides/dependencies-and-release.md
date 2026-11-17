@@ -64,7 +64,7 @@ php tools/release-deps.php         # tag 取 DEPS_VERSION
 
 ## 从源码构建 Skia
 
-需要 git、python3、depot_tools（含 gn 与 ninja）、LLVM，且都在 PATH 上：
+需要 git、python3、LLVM，且都在 PATH 上（gn / ninja 见下，脚本会自己搞定）：
 
 ```bash
 printf '<40 位 commit>' > SKIA_REVISION
@@ -85,7 +85,7 @@ Skia 构建通道（`windows-deps.yml`）跑在 `windows-2022` 托管镜像上�
 镜像上现成的东西直接用，缺的在这里补：
 
 - **VS / Win SDK / LLVM**：镜像自带，目录名随镜像更新漂移，所以用 `vswhere` 探测而不是写死；`vars.SKIA_WIN_VC` 等仍可覆盖。GN 字符串里反斜杠是转义符，路径必须转正斜杠后才喂给 `gn gen`。
-- **gn / ninja**：从 `chromium.googlesource.com` 拉 depot_tools，带缓存。clone 下来只有 shell 包装，必须先 bootstrap；bootstrap 把 CIPD 装的 `gn.exe` / `ninja.exe` / `python3.exe` 铺到 `depot_tools\bootstrap-<hash>\`，并且只在自己那个 cmd 进程里改 PATH，所以构建步骤要按 `python3_bin_reldir.txt` 自己再补一次——漏了就会在 Skia 已经 sync 完之后才报 `Unable to find gn in your $PATH`，看着像编译错。
+- **gn / ninja**：不装 depot_tools。`build-skia.sh` 先看 PATH（本地开发机常装着），找不到就调 Skia 自带的 `bin/fetch-gn` / `bin/fetch-ninja` 拉官方预编译包——版本由 Skia 自己的脚本和 `DEPS` 钉住，产物落在 `third_party/gn`、`third_party/ninja`，正是 depot_tools 包装期望的位置。之前走 depot_tools 那条路连踩三次：`gn.exe` 装在 CIPD 子目录 `bootstrap-<hash>\` 里（不在 depot_tools 根），而 `bootstrap.bat` 只在它自己那个 cmd 进程内改 PATH，父进程拿不到；失败又发生在 `git-sync-deps` 之后，看着像 Skia 编译错。绕开这一层后 CI 少两个步骤。
 - **字体**：入库，构建前只做存在性检查。
 - **磁盘**：托管镜像初始只剩十几 GB，而 `git-sync-deps` 加全量编译要二十多 GB。构建前删掉本次用不到的 Android SDK / dotnet / 预装浏览器 / 多版本 JDK，再断言剩余空间不低于 18 GB。爆盘时报的会是和磁盘无关的编译错误，看起来像代码问题，所以这一步要显式拦。
 

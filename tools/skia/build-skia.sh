@@ -21,9 +21,10 @@ Usage: bash tools/skia/build-skia.sh [options]
 
 Env: SKIA_WIN_VC, SKIA_WIN_SDK, SKIA_WIN_SDK_VERSION, SKIA_CLANG_WIN,
      SKIA_CLANG_WIN_VERSION, SKIA_WIN_TOOLCHAIN_VERSION, SKIA_PYTHON,
-     SKIA_GN, SKIA_NINJA (Windows: gn.exe / ninja.exe from the depot_tools CIPD bootstrap)
+     SKIA_GN, SKIA_NINJA (optional overrides; empty means PATH lookup, then prebuilt)
 
-Requires: git, python3, and depot_tools (gn + ninja) on PATH.
+Requires: git, python3. gn / ninja come from PATH when present, otherwise from
+bin/fetch-gn and bin/fetch-ninja — the official prebuilts pinned by Skia itself.
 EOF
 }
 
@@ -51,15 +52,10 @@ if [[ -z "$rev" ]]; then
 fi
 [[ "$rev" =~ ^[0-9a-f]{40}$ ]] || die "expected a 40-hex Skia commit, got '$rev' (unpinned means the legacy package has no traceable source)"
 
-GN="${SKIA_GN:-gn}"
-NINJA="${SKIA_NINJA:-ninja}"
-for tool in git "$GN" "$NINJA"; do
-  command -v "$tool" >/dev/null 2>&1 || die "$tool not found on PATH (Windows: bootstrap depot_tools, then put its CIPD bootstrap dir on PATH — gn.exe / ninja.exe live there, not in the depot_tools root)"
-done
-# ★ depot_tools clone 下来后没 bootstrap 时，gn 会在几百行 git-sync-deps 之后才退出，
-#   报的是 "python3_bin_reldir.txt not found"，看着像编译错误。提前问一次。
-"$GN" --version >/dev/null 2>&1 \
-  || die "$GN is not runnable — depot_tools is unbootstrapped or its CIPD dir is not on PATH (Windows: run bootstrap\\bootstrap.bat, then read python3_bin_reldir.txt for the dir to add)"
+# 工具链解析放到 checkout 之后：PATH 上没有 gn / ninja 时，用 Skia 自带的
+# bin/fetch-gn、bin/fetch-ninja 拉官方预编译二进制。这两个脚本把产物放进
+# third_party/gn、third_party/ninja —— 正是 depot_tools 包装期望的位置，版本由
+# Skia 自己的 DEPS / 脚本钉住，比装 depot_tools 再 bootstrap CIPD 少一整层。
 
 PY="${SKIA_PYTHON:-}"
 if [[ -z "$PY" ]]; then
@@ -84,6 +80,32 @@ if [[ ! -d "$skia_dir/.git" ]]; then
 fi
 git -C "$skia_dir" fetch origin --quiet
 git -C "$skia_dir" checkout --detach "$rev" --quiet
+
+# gn / ninja：SKIA_GN / SKIA_NINJA 显式给了就用；否则 PATH 上找；再没有才下载。
+# 先问一次版本，把「工具链不可用」暴露在 git-sync-deps 之前——那一步要几百行输出，
+# 混在里面看着像编译错。
+resolve_tool() { # <env-value> <name> <fetch-script> <windows-path> <posix-path>
+  local want="$1" name="$2" script="$3" pexe="$4" pposix="$5" path
+  if [[ -n "$want" ]]; then
+    command -v "$want" >/dev/null 2>&1 || die "$name '$want' is not runnable (unset the SKIA_* override to use a prebuilt one)"
+    printf '%s' "$want"
+    return
+  fi
+  if command -v "$name" >/dev/null 2>&1; then
+    printf '%s' "$name"
+    return
+  fi
+  printf 'fetching prebuilt %s pinned by Skia\n' "$name" >&2
+  (cd "$skia_dir" && "$PY" "$script") >&2 || die "$script failed"
+  if [[ -f "$pexe" ]]; then path="$pexe"; elif [[ -f "$pposix" ]]; then path="$pposix"; else die "$script did not produce $name"; fi
+  chmod +x "$path" 2>/dev/null || true
+  printf '%s' "$path"
+}
+
+GN="$(resolve_tool "${SKIA_GN:-}" gn bin/fetch-gn "$skia_dir/bin/gn.exe" "$skia_dir/bin/gn")"
+NINJA="$(resolve_tool "${SKIA_NINJA:-}" ninja bin/fetch-ninja "$skia_dir/third_party/ninja/ninja.exe" "$skia_dir/third_party/ninja/ninja")"
+"$GN" --version >/dev/null 2>&1 || die "$GN is not runnable"
+"$NINJA" --version >/dev/null 2>&1 || die "$NINJA is not runnable"
 
 (cd "$skia_dir" && "$PY" tools/git-sync-deps)
 

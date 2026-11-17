@@ -240,7 +240,7 @@ php tools/release-deps.php --dry-run           # 只看要做什么
 机器相关的 VS / Win SDK / LLVM 路径不写进仓库，用 `SKIA_WIN_VC` 等环境变量覆盖。
 
 ```bash
-# 需要 git / python3 / depot_tools（gn + ninja）/ LLVM，且都在 PATH
+# 需要 git / python3 / LLVM，且都在 PATH；gn / ninja 由脚本按需下预编译包
 printf '<40 位 Skia commit>' > SKIA_REVISION
 bash tools/skia/build-skia.sh --replace    # 产出 cpp/skia；cpp/fonts 需另行备齐
 php tools/pack-deps.php                    # 组包 + 写 deps.lock.json

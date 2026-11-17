@@ -99,7 +99,6 @@ $depsAnchors = [
     'php tools/release-deps.php' => '发布依赖资产',
     'php tools/fetch-deps.php --tag="$TAG" --force' => '发布后回验',
     'Ensure fonts are present' => '构建前确认字体在树里',
-    'depot_tools' => 'gn / ninja 来源',
 ];
 foreach ($depsAnchors as $needle => $label) {
     if (!str_contains($deps, $needle)) {
@@ -118,20 +117,19 @@ foreach (['windows-build.yml' => $build, 'verify.yml' => $verify,
         fail("{$name} 声明了 self-hosted —— 没有注册 runner 时任务只会静默排队，不会失败");
     }
 }
-// ★ gn.exe / ninja.exe 在 depot_tools\bootstrap-<hash>\ 里，不在 depot_tools 根；
-//   而 bootstrap 只在自己那个 cmd 进程里改 PATH，父进程拿不到。所以步骤必须自己按
-//   python3_bin_reldir.txt 补齐并导出。漏了的话失败点在 git-sync-deps 之后 ——
-//   一次白跑几十分钟，报的还是 "Unable to find gn in your $PATH"。
-$depsLive = $stripComments($deps);
-foreach (['python3_bin_reldir.txt' => '读 bootstrap 的 CIPD 目录指针',
-          'GITHUB_PATH' => '把工具目录导出给后续步骤',
-          'SKIA_GN=' => '显式指定 gn'] as $needle => $label) {
-    if (!str_contains($depsLive, $needle)) {
-        fail("windows-deps.yml 缺{$label}（{$needle}）—— gn.exe / ninja.exe 只在 CIPD bootstrap 目录里");
+// ★ gn / ninja 不再走 depot_tools：它的 gn.exe 装在 CIPD 子目录里，而 bootstrap 只在
+//   自己那个 cmd 进程内改 PATH，父进程拿不到；CI 上连踩三次，最后一次才确认目录布局。
+//   改为 build-skia.sh 先查 PATH，再调 Skia 自带的 bin/fetch-gn / bin/fetch-ninja 取
+//   官方预编译包（版本由 Skia 自己的脚本与 DEPS 钉住）。
+$skiaScript = (string) @file_get_contents($root . '/tools/skia/build-skia.sh');
+foreach (['bin/fetch-gn', 'bin/fetch-ninja'] as $needle) {
+    if (!str_contains($skiaScript, $needle)) {
+        fail('tools/skia/build-skia.sh 缺 ' . $needle . ' —— 没有 depot_tools 时要靠它取预编译 gn / ninja');
     }
 }
-if (preg_match('/SKIA_GN=gn\.bat/', $depsLive) === 1) {
-    fail('windows-deps.yml 又把 SKIA_GN 指回 gn.bat —— 包装脚本最终仍按 PATH 找 gn.exe，等于没修');
+$depsLive = $stripComments($deps);
+if (str_contains($depsLive, 'depot_tools')) {
+    fail('windows-deps.yml 又装回 depot_tools —— gn.exe 在 CIPD 子目录里，bootstrap 改的 PATH 传不出子进程');
 }
 
 $depsJob = substr($deps, (int) strpos($deps, 'jobs:'));
@@ -157,4 +155,4 @@ fwrite(STDOUT, '  ok     真 AOT 通道完整：' . count($buildAnchors) . " 个
 fwrite(STDOUT, '  ok     发版先构建 Skia 再编译：' . count($releaseAnchors) . " 个环节\n");
 fwrite(STDOUT, '  ok     依赖自动构建通道完整：' . count($depsAnchors) . " 个环节\n");
 fwrite(STDOUT, "  ok     构建通道全在托管 runner 上（无 self-hosted 静默排队）\n");
-fwrite(STDOUT, "  ok     depot_tools 按 CIPD 指针补 PATH（gn/ninja 不在 depot_tools 根）\n");
+fwrite(STDOUT, "  ok     gn / ninja 走 Skia 自带预编译包（不装 depot_tools）\n");
