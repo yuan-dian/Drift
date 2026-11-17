@@ -24,7 +24,7 @@ declare(strict_types=1);
  *   GITHUB_TOKEN=ghp_xxx php tools/fetch-deps.php     # 私有 fork / 匿名受限时
  *   php tools/fetch-deps.php --url=<zip> --force
  *   php tools/fetch-deps.php --url=D:/transfer/drift-deps-win-x64.zip
- *                                                     # 离线包（首个 release 之前唯一可行）
+ *                                                     # 离线包（内网 / 访问不了 GitHub 时）
  *   DRIFT_DEPS_URL=https://mirror.example.com/drift php tools/fetch-deps.php
  *   DRIFT_DEPS_URL=D:/transfer php tools/fetch-deps.php   # 本地目录同样认（自动补包名）
  */
@@ -68,7 +68,7 @@ foreach (array_slice($argv, 1) as $arg) {
  * 一个下载源：zip 地址、鉴权头，以及对应的 `.sha256` 地址。
  *
  * `local = true` 表示 `url` 是**本机文件路径**：那句「拷过来就行」以前只能写在文档里，
- * 现在是一条命令（首个 release 发布前它才是唯一可行的那条路）。
+ * 现在是一条命令（离线 / 内网机器走这条）。
  *
  * @return array{label:string,url:string,headers:list<string>,shaUrl:?string,shaHeaders:list<string>,local:bool}
  */
@@ -284,7 +284,7 @@ if ($pending) {
         }
         fwrite(STDERR, "提示：默认取 DEPS_VERSION 指定的 tag（当前 " . driftDepsTag() . "）。\n");
         fwrite(STDERR, "      确认该 tag 已发过 release，或用 --tag=<tag> / --url=<直链> 显式指定。\n");
-        fwrite(STDERR, "      首个 release 发布前：在已有 cpp/ 的机器上 php tools/pack-deps.php，\n");
+        fwrite(STDERR, "      离线 / 内网：在已有 cpp/ 的机器上 php tools/pack-deps.php，\n");
         fwrite(STDERR, "      再把 dist/drift-deps-win-x64.zip 拷过来，用 --url=<那个路径> 安装。\n");
         exit(1);
     }

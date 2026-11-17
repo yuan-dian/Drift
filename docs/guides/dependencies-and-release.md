@@ -4,7 +4,7 @@
 
 ## 依赖包从哪来
 
-`cpp/skia` 与 `cpp/fonts` 不进 git，`/cpp/` 与 `/dist/` 都在 `.gitignore` 里。新机器 clone 完之后，从 GitHub Releases 的独立 `deps-vN` tag 取预编译包；仓库公开，资产匿名可下载。`deps-v1` 尚未发布，在那之前用 `--url` 指向本机包；fork 私有镜像或匿名直链被限流时可给 token。
+`cpp/skia` 与 `cpp/fonts` 不进 git，`/cpp/` 与 `/dist/` 都在 `.gitignore` 里。新机器 clone 完之后，从 GitHub Releases 的独立 `deps-vN` tag 取预编译包；仓库公开，资产匿名可下载，`deps-v1` 已发布。fork 私有镜像或匿名直链被限流时可给 token。
 
 资产名是契约，一个字都不能改：`drift-deps-win-x64.zip` 与 `drift-deps-win-x64.zip.sha256`。包内所有路径落在 `cpp/` 下，解压到仓库根不会污染工作区；许可全文随包附带。
 
@@ -74,7 +74,7 @@ php tools/pack-deps.php && php tools/version.php --check
 
 输入文件：`SKIA_REVISION`（pinned commit）、`tools/skia/args.gn.tpl`（平台无关的 GN 策略）、`tools/skia/headers.txt`（包内头 / 元数据路径清单，保证产物与既有布局一致）、`tools/skia/build-skia.sh`（clone → checkout → `git-sync-deps` → `gn gen` → `ninja skia modules` → 组装 `cpp/skia`）。gn / ninja 的调用形态照抄 Skia 官方 CI 的 `infra/bots/recipe_modules/build/default.py`：`gn gen` 必须在 Skia 源码目录内执行（它靠当前目录的 `.gn` 定位 source root），工具用仓库自带的 `bin/fetch-gn` / `bin/fetch-ninja`。机器相关的 VC / SDK / LLVM 路径不入库，走 `SKIA_WIN_VC` 等环境变量。`--replace` 是显式确认：默认不覆盖非空 `cpp/skia`，免得删掉本机现成的包。
 
-`SKIA_REVISION` 当前 pin 到 Skia M148 的真实 commit，lock 的 `skiaRevision` 与 `provenance: ci` 与之同步；该 commit 的 `SkMilestone.h` 为 148，与包内一致。`unpinned` / `provenance: legacy` 只用于来源不可考的历史包，构建脚本与 CI 都拒绝它。注意：现有 `deps-v1` 二进制仍是早期拷入包，尚未从这个 commit 实际重建，声明与产物一致须以 `windows-deps.yml` 重建并替换 Release 资产为准。
+`SKIA_REVISION` 当前 pin 到 Skia M148 的真实 commit，lock 的 `skiaRevision` 与 `provenance: ci` 与之同步；该 commit 的 `SkMilestone.h` 为 148，与包内一致。`unpinned` / `provenance: legacy` 只用于来源不可考的历史包，构建脚本与 CI 都拒绝它。`deps-v1` 已由 `windows-deps.yml` 从这个 commit 实际重建并发布（610 条目 / 49.5 MB），来源声明与产物一致：拿到包就能按该 commit 复现。
 
 字体不随 Skia 变，两个 Noto Sans SC 字重（Regular / Bold，OFL 授权）**入库**（`cpp/fonts/`，`.gitignore` 用 `/cpp/*` + 白名单放行）。托管 runner 没有持久盘，字体不入库就得再引一条下载链路加版本锚点，等于给重建多加一个会漂的部件；入库后来源就是 commit 本身。字体许可全文在 `licenses/OFL-NotoSansSC.txt`，打包时随附。
 

@@ -74,17 +74,19 @@
   `cpp/skia/LICENSE`、`cpp/fonts/OFL.txt` 留了就近副本 —— 九个静态库的许可不再只给链接；
   但**包本身不进 git 历史**：托管在 GitHub Releases，用 `php tools/fetch-deps.php` 取 ——
   下到 `dist/`、拿入库的 `deps.lock.json` 校验、解压后核对 lib/字体/许可数量，
-  支持 `DRIFT_DEPS_URL` 镜像回退与断点续传。仓库公开后 Release 资产匿名可取；资产尚未发布、
-  或落在私有镜像时带 token 走 API 解析；发布一侧由
+  支持 `DRIFT_DEPS_URL` 镜像回退与断点续传。仓库公开后 Release 资产匿名可取
+  （`deps-v1` 已发布）；落在私有镜像时带 token 走 API 解析；发布一侧由
   `php tools/release-deps.php` 完成，不需要 `gh`（tag 由 `DEPS_VERSION` 决定，
   发版前还会对账包内 `deps.lock.json` 的版本锚点）。
   `doctor` 新增「Skia 依赖包」一项，`drift-build` 缺包时直接给出取包命令，
-  不再一路跑到链接期才报 LNK2019。依赖包尚未发布：在那之前用离线包
-  `php tools/fetch-deps.php --url=<本机 zip 路径>`（或 `DRIFT_DEPS_URL=<目录>`），
-  与在线那条共用同一套校验（lock → SHA256 → 解压后数 lib / 字体 / 许可），流程见
+  不再一路跑到链接期才报 LNK2019。`deps-v1` 已发布，`php tools/fetch-deps.php`
+  匿名即可拉取；离线 / 内网场景仍可 `php tools/fetch-deps.php --url=<本机 zip 路径>`
+  （或 `DRIFT_DEPS_URL=<目录>`），与在线那条共用同一套校验（lock → SHA256 → 解压后数
+  lib / 字体 / 许可），流程见
   [`依赖与发布`](docs/guides/dependencies-and-release.md)。`SKIA_REVISION` 已 pin 到 Skia M148
-  的真实 commit，lock 的 `skiaRevision` 与 `provenance: ci` 同步；现有二进制尚待从该 commit
-  重建替换，入口见该文档的「CI 自动构建依赖包」一节。
+  的真实 commit，lock 的 `skiaRevision` 与 `provenance: ci` 同步；`deps-v1` 已由
+  `windows-deps.yml` 从这个 commit 重建并发布，来源声明与产物一致。入口见该文档的
+  「CI 自动构建依赖包」一节。
   另：`PHPX` 与 `tpc` 源码树属
   TypePHP 编译器项目，同样不在本仓。搭建步骤见 [`README.md`](README.md) 的「构建环境」。
 - 只用运行态时**不需要**上述工具链：`php bin/drift verify` 是纯 PHP 的，

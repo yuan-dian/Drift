@@ -164,8 +164,8 @@ php tools/fetch-deps.php --tag=deps-v2    # 临时钉别的版本；--force 重�
 php tools/fetch-deps.php --latest         # 改取仓库最新 release
 ```
 
-仓库公开，Release 资产匿名可下载。`deps-v1` 资产尚未发布——在那之前用
-`--url=<本机 zip>` 或 `DRIFT_DEPS_URL=<目录>` 离线装（见下节）。fork 出的私有镜像、
+仓库公开，Release 资产匿名可下载，`deps-v1` 已发布。内网 / 离线机器用
+`--url=<本机 zip>` 或 `DRIFT_DEPS_URL=<目录>` 装（见下节）。fork 出的私有镜像、
 或匿名直链被限流时，可给 token 改走 API 解析资产 id，按
 `Accept: application/octet-stream` 下载（只需 `Contents: Read`）。
 
@@ -180,7 +180,7 @@ Windows 上 Git Credential Manager 把凭据放在系统凭据库里读不出来
 只跑闸门、根本不需要 Skia 的人。实测数据与取舍见 [`依赖与发布`](docs/guides/dependencies-and-release.md)
 末节「为什么不用 Composer 分发」。
 
-从已有 `cpp/` 的机器分发（依赖包尚未发布的阶段、内网 / 离线机器都走这条）：
+从已有 `cpp/` 的机器分发（内网 / 离线机器、或想复用本机已构建好的包都走这条）：
 
 ```bash
 # ① 有 cpp/ 的机器：打包（产物 dist/drift-deps-win-x64.zip + .sha256）
@@ -220,9 +220,10 @@ CI 就无法判断「依赖真变了没有」。
 [`deps.lock.json`](deps.lock.json)。它入库，所以换包必须同时改仓库文件 —— 这是校验能成立的前提；
 `dist/*.sha256` 只是同批上传的副本。
 
-★ **依赖包尚未发布**：GitHub 那条路会取不到资产 —— 用上面的 `--url=<本机 zip>`
-（离线包），校验与在线那条一样。
-发布是一次性的（打包 → 建 release → 传两个资产，脚本全包）：
+★ **依赖包由 CI 构建**：`windows-deps.yml` 从 `SKIA_REVISION` 全量编译、打包、发布
+`deps-vN`，本地一般不需要自己 build。下面这条是给离线 / 内网场景用的（离线包），
+校验与在线那条一样。
+重新发布依赖包（打包 → 建 release → 传两个资产，脚本全包）：
 
 ```bash
 php tools/pack-deps.php                        # 生成包、.sha256 与 deps.lock.json
@@ -248,8 +249,8 @@ php tools/pack-deps.php                    # 组包 + 写 deps.lock.json
 
 ★ `SKIA_REVISION` 已 pin 到 Skia M148 的真实 commit，`deps.lock.json` 的 `skiaRevision`
 与 `provenance: ci` 同步；该 commit 的 `SkMilestone.h` 为 148，与包内一致。
-**但现有 `deps-v1` 二进制仍是早期从别处拷入的预编译包，尚未从这个 commit 实际重建**：
-须由 `windows-deps.yml` 重建并替换 Release 资产后，来源声明才与产物一致。
+`deps-v1` 由 `windows-deps.yml` 从这个 commit 实际重建并发布（610 条目 / 49.5 MB），
+包与来源声明一致。
 自动构建、发布流程见 [`依赖与发布`](docs/guides/dependencies-and-release.md) 的「CI 自动构建依赖包」一节。
 
 #### ③ 路径不对就设环境变量
