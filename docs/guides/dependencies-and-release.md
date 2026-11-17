@@ -74,7 +74,7 @@ php tools/pack-deps.php && php tools/version.php --check
 
 输入文件：`SKIA_REVISION`（pinned commit）、`tools/skia/args.gn.tpl`（平台无关的 GN 策略）、`tools/skia/headers.txt`（包内头 / 元数据路径清单，保证产物与既有布局一致）、`tools/skia/build-skia.sh`（clone → checkout → `git-sync-deps` → `gn gen` → `ninja skia modules` → 组装 `cpp/skia`）。机器相关的 VC / SDK / LLVM 路径不入库，走 `SKIA_WIN_VC` 等环境变量。`--replace` 是显式确认：默认不覆盖非空 `cpp/skia`，免得删掉本机现成的包。
 
-`SKIA_REVISION` 为 `unpinned` 表示旧包来自别的机器、只有 milestone 与 GN 参数、没有 commit 可追，lock 里也如实记 `provenance: legacy`；构建脚本与 CI 都拒绝 `unpinned`。这是不伪造来源，不是漏填。
+`SKIA_REVISION` 当前 pin 到 Skia M148 的真实 commit，lock 的 `skiaRevision` 与 `provenance: ci` 与之同步；该 commit 的 `SkMilestone.h` 为 148，与包内一致。`unpinned` / `provenance: legacy` 只用于来源不可考的历史包，构建脚本与 CI 都拒绝它。注意：现有 `deps-v1` 二进制仍是早期拷入包，尚未从这个 commit 实际重建，声明与产物一致须以 `windows-deps.yml` 重建并替换 Release 资产为准。
 
 字体不随 Skia 变，也没有可复现的 URL + SHA256 来源，目前靠构建机器一次性预置；公开分发前要补来源 pin。
 
@@ -89,7 +89,7 @@ php tools/pack-deps.php && php tools/version.php --check
 
 产品发版**先构建 Skia，再编译 AOT / dev 壳**，但不会覆盖公共 `deps-vN` 资产：`fetch-deps.php` 按固定资产名去 `DEPS_VERSION` 那个 tag 找，资产发布仍只在依赖版本变化时发生。这样既保证发版链路的顺序，又不让依赖资产被每次代码 release 重写。
 
-**前置条件**：`SKIA_REVISION` 必须是 40 位 commit。当前历史包仍是 `unpinned` / `legacy`，来源不可考，流水线会在解析 revision 时红——这是有意的，不用旧二进制冒充“已重建 Skia”。首个走新链路的发版前，先用 `windows-deps.yml` 以真实 commit 重建并发布一版依赖包。
+**前置条件**：`SKIA_REVISION` 必须是 40 位 commit，现已 pin 到 M148 分支 tip，流水线不再因 revision 未定而红。但产物侧的红线仍在：`deps-v1` 二进制尚未从该 commit 重建，首个走新链路的发版前必须先用 `windows-deps.yml` 重建并发布依赖包，否则等于用旧二进制冒充「已重建 Skia」。
 
 `windows-deps.yml` 的 publish 分支顺序锁死：`pack-deps.php` 重写 lock → `sync-lock-anchors.php` 同步 README SHA256 → `git commit` + push → `git tag $DEPS_VERSION` + push → `release-deps.php` 上传。tag 落在含新 lock 的 commit 上，干净 clone 时两者天然一致；最后再用 `fetch-deps.php --tag` 从已发布资产回取一遍自验。
 

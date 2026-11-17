@@ -82,9 +82,9 @@
   不再一路跑到链接期才报 LNK2019。依赖包尚未发布：在那之前用离线包
   `php tools/fetch-deps.php --url=<本机 zip 路径>`（或 `DRIFT_DEPS_URL=<目录>`），
   与在线那条共用同一套校验（lock → SHA256 → 解压后数 lib / 字体 / 许可），流程见
-  [`依赖与发布`](docs/guides/dependencies-and-release.md)。★ 首个包没有可追溯的 Skia commit
-  （`SKIA_REVISION` = `unpinned`、lock 里 `provenance: legacy`）；从 pinned commit
-  重建与 CI 自动化的入口见该文档的「CI 自动构建依赖包」一节。
+  [`依赖与发布`](docs/guides/dependencies-and-release.md)。`SKIA_REVISION` 已 pin 到 Skia M148
+  的真实 commit，lock 的 `skiaRevision` 与 `provenance: ci` 同步；现有二进制尚待从该 commit
+  重建替换，入口见该文档的「CI 自动构建依赖包」一节。
   另：`PHPX` 与 `tpc` 源码树属
   TypePHP 编译器项目，同样不在本仓。搭建步骤见 [`README.md`](README.md) 的「构建环境」。
 - 只用运行态时**不需要**上述工具链：`php bin/drift verify` 是纯 PHP 的，

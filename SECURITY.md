@@ -28,6 +28,6 @@
 
 本项目是 Windows 桌面 GUI 框架，以下边界值得安全研究者关注（也是已知的设计取舍，非"未修漏洞"）：
 
-- **依赖包供应链**：Skia / 字体通过 `fetch-deps.php` 从 Release 获取，入库的 `deps.lock.json` 做 SHA256 校验；`SKIA_REVISION` 当前为 `unpinned`，二进制不可从源码追溯，见[依赖与发布](docs/guides/dependencies-and-release.md)。
+- **依赖包供应链**：Skia / 字体通过 `fetch-deps.php` 从 Release 获取，入库的 `deps.lock.json` 做 SHA256 校验；`SKIA_REVISION` 已 pin 到 Skia M148 的真实 commit，但现有二进制尚未从该 commit 重建，来源声明暂领先于产物，见[依赖与发布](docs/guides/dependencies-and-release.md)。
 - **壳 ↔ PHP ABI**：无运行期握手，改 C++ 壳或 PHP 接口必须整树重编译；静态契约由 `php tools/abi-check.php` 守。
 - **网络图片**：`Image::asset()` 接受 http(s) URL，走 `TaskHost` 在 worker 解码；未知 scheme 明确拒绝，单张解码有 2048 安全上限。

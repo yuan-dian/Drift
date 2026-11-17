@@ -6,8 +6,8 @@
     "bytes": 51985887,
     "entries": 610,
     "skiaMilestone": "148",
-    "skiaRevision": "unpinned",
-    "provenance": "legacy",
+    "skiaRevision": "13ffba253fc7854fd3b34f67c82dfb2418dc2944",
+    "provenance": "ci",
     "skiaBuildArgs": [
         "is_debug = false",
         "target_cpu = \"x64\"",

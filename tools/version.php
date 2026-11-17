@@ -33,8 +33,8 @@ function driftDepsTag(?string $root = null): string
 }
 
 /**
- * Skia 源码 commit。二进制包必须能追到源码，`unpinned` 只用于来源不可考的历史包
- * （deps-v1 是从别的机器拷入的预编译包），CI 重建时必须是 40 位 hash。
+ * Skia 源码 commit。二进制包必须能追到源码，CI 重建时必须是 40 位 hash；
+ * `unpinned` 只留给来源不可考的历史包，lock 里的 `provenance` 随之记 `legacy`。
  */
 function driftSkiaRevision(?string $root = null): string
 {
@@ -156,6 +156,16 @@ function driftVersionCheck(?string $root = null): array
         }
         if (($lock['skiaRevision'] ?? null) !== $skiaRev) {
             $errors[] = 'deps.lock.json 的 skiaRevision 与 SKIA_REVISION 不一致 —— 换 Skia 后重跑 pack-deps.php';
+        }
+
+        // provenance 是 revision 的函数：40 位 commit ⇒ ci，unpinned ⇒ legacy。
+        // 两处各写一遍就是为了能对账；放任分叉等于允许“声明了 commit 却标 legacy”。
+        $wantProvenance = $skiaRev === 'unpinned' ? 'legacy' : 'ci';
+        $gotProvenance = $lock['provenance'] ?? null;
+        if ($gotProvenance !== $wantProvenance) {
+            $errors[] = "deps.lock.json 的 provenance 应为 {$wantProvenance}，实际是 "
+                . (is_string($gotProvenance) && $gotProvenance !== '' ? $gotProvenance : '(缺失)')
+                . ' —— 与 SKIA_REVISION 一起重跑 pack-deps.php';
         }
 
         // README 里那份校验值是给人的，pack-deps 不会自动同步它：换包忘改就会让

@@ -5,7 +5,7 @@
 ## 依赖顺序（先解死结，否则后面都是美化）
 
 1. **仓库设为公开**（GitHub 后台：Settings → General → Danger Zone → Change visibility）。身份已裁决，这一步只是落地。
-2. **发布首个依赖包**：先在 `SKIA_REVISION` 写入真实 40 位 Skia commit，再用 `windows-deps.yml` 重建并发布 `deps-v1`（历史 `unpinned` / `legacy` 包不能进入新发版链路）；公开后 `fetch-deps.php` 的默认路径才对匿名可用。
+2. **重建并发布首个依赖包**：`SKIA_REVISION` 已写入 Skia M148 的真实 commit、lock 的 `provenance` 已同步为 `ci`；仍须用 `windows-deps.yml` 从该 commit 重建并发布 `deps-v1`，替换早期拷入的二进制——否则来源声明领先于产物。公开后 `fetch-deps.php` 的默认路径才对匿名可用。
 3. **打 `v0.1.0-preview.1` tag 并推送**：激活已写好的 `release.yml`（当前 0 tag，`git describe` 报 no names）。release 以 DRAFT 创建， stray tag 不会误发公告。
 4. **开公开 AOT smoke**：已落地为 `windows-build.yml` —— 公开 `windows-2022` runner 从源码构建 tpc / PHPX，取依赖包，全量编译 `hello` 并跑 `probe-window` 五判据；`verify.yml` 的结构判据守着这条通道不退化。前置条件是 `deps-v1` 资产已发布（第 2 步）：包没发出去时 job 在取包阶段红，不会假绿。
 5. **README 门面**：加 CI badge + 一张运行截图；把 17 KB 的环境细节下沉，第一屏只留定位、截图、三行 hello、一句话安装。
@@ -23,6 +23,6 @@
 
 ## 尚待后续轮次（非本轮遗漏，需专门判据/设计）
 
-- **Skia commit pin**：`SKIA_REVISION=unpinned`、lock 里 `provenance: legacy`，首个包无可追溯 commit。要 pin 就得从 pinned commit 重建依赖包（自托管 runner + 数小时），属于发布动作，不是改文件。
+- **Skia 二进制重建**：commit pin 已完成（M148 真实 commit，lock 的 `provenance` 为 `ci`），但 `deps-v1` 资产仍是早期拷入包；从 pinned commit 重建并替换需要自托管 runner + 数小时，属于发布动作，不是改文件。
 - **英文首屏**：全中文文档对国际贡献者是天然门槛；即使只做 README 首屏英文化也有价值。
 - **贡献引导脚本**：`doctor` 已是单一真相源，暂不包第二层脚本；若后续确认需要，应在 doctor 里加 `--fix` 而非另起脚本。

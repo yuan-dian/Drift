@@ -40,7 +40,7 @@ final class HelloApplication extends Application
 |---|---|---|
 | [`VERSION`](VERSION) | 框架版本，也是 git tag 与 CHANGELOG 小节名的来源 | `0.1.0-preview.1` |
 | [`DEPS_VERSION`](DEPS_VERSION) | 配套的二进制依赖包 tag（与代码版本解耦） | `deps-v1` |
-| [`SKIA_REVISION`](SKIA_REVISION) | 二进制包对应的 Skia 源码 commit | `unpinned` |
+| [`SKIA_REVISION`](SKIA_REVISION) | 二进制包对应的 Skia 源码 commit | `13ffba25`（M148） |
 
 运行时代码用 `\Drift\Core\Version::VERSION`（另有 `BASE` / `PREVIEW` / `TAG` / `DEPS_TAG`）。
 **这个类是生成的，不要手改**：AOT 产物里没有仓库根目录可读，所以版本必须在编译期就有了；
@@ -246,10 +246,11 @@ bash tools/skia/build-skia.sh --replace    # 产出 cpp/skia；cpp/fonts 需另�
 php tools/pack-deps.php                    # 组包 + 写 deps.lock.json
 ```
 
-★ 现有 `deps-v1` 的包是从别的机器拷入的预编译包，**没有可追溯的源码 commit** ⇒
-`SKIA_REVISION` 目前是 `unpinned`、`deps.lock.json` 里 `provenance: legacy`。这是如实标注，
-不是漏填：脚本与 CI 重建都拒绝 `unpinned`。自动构建、发布流程见
-[`依赖与发布`](docs/guides/dependencies-and-release.md) 的「CI 自动构建依赖包」一节。
+★ `SKIA_REVISION` 已 pin 到 Skia M148 的真实 commit，`deps.lock.json` 的 `skiaRevision`
+与 `provenance: ci` 同步；该 commit 的 `SkMilestone.h` 为 148，与包内一致。
+**但现有 `deps-v1` 二进制仍是早期从别处拷入的预编译包，尚未从这个 commit 实际重建**：
+须由 `windows-deps.yml` 重建并替换 Release 资产后，来源声明才与产物一致。
+自动构建、发布流程见 [`依赖与发布`](docs/guides/dependencies-and-release.md) 的「CI 自动构建依赖包」一节。
 
 #### ③ 路径不对就设环境变量
 
