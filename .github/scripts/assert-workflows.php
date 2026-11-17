@@ -68,7 +68,7 @@ foreach ($buildAnchors as $needle => $label) {
     }
 }
 
-// 发版链路：deps 先跑，verify / dev-shell 都接它的 artifact。
+// 发版链路：deps 先跑；但 publish=false 的临时产物不能覆盖已发布的 deps 锁。
 $releaseAnchors = [
     'uses: ./.github/workflows/windows-deps.yml' => '发版先构建 Skia',
     'needs: deps' => 'verify 等依赖就绪',
@@ -76,13 +76,15 @@ $releaseAnchors = [
     'uses: ./.github/workflows/windows-build.yml' => 'Release 复用构建通道',
     'target: dev' => '发布目标是 dev 壳',
     'release_tag:' => 'Release tag 传递',
-    'deps_artifact:' => 'Skia artifact 传递',
-    'name: Restore Skia artifact' => 'verify 接收 Skia 产物',
+    "deps_artifact: ''" => '发版显式传空 artifact（只用已发布的 deps-vN）',
 ];
 foreach ($releaseAnchors as $needle => $label) {
     if (!str_contains($release, $needle)) {
         fail('release.yml 缺环节：' . $label . '（' . $needle . '）');
     }
+}
+if (str_contains($release, 'name: Restore Skia artifact')) {
+    fail('release.yml 又恢复 deps 临时产物 —— 它的 lock/zip 指向未发布的包，必然覆盖已发布 deps 的锚点');
 }
 $depsPos = strpos($release, '  deps:');
 $verifyPos = strpos($release, '  verify:');
