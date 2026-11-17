@@ -40,8 +40,8 @@ CI 分几种触发，各跑不同档位：
 
 - **PR / push main**：跑 `php bin/drift verify --json` 的日常档，在 `windows-2022` 上用 8.4 / 8.5 双版本矩阵，不需要 MSVC / tpc。
 - **手动全量**：需要时手动触发，`verify --full --json`，含 feature / pages / smoke 慢项，不设定时任务。
-- **发版**：`v*` tag 自动跑全量同一档。
-- **真 AOT**：`aot.yml` 在 push main / PR / 手动触发时从源码构建 tpc 与 PHPX，全量编译 `hello` 并跑 `probe-window`；依赖包取不到就红，不用纯 PHP 判据冒充 AOT 通过。
+- **发版**：`v*` tag 自动跑全量同一档。`release.yml` 建 draft release 后复用 `aot.yml` 编出 dev 壳，上传固定名 `drift-dev-shell-win-x64.zip`，README 以 `latest/download` 直链指向它；draft 转正式后链接才生效。
+- **真 AOT**：`aot.yml` 在 push main / PR / 手动触发时从源码构建 tpc 与 PHPX，全量编译 `hello` 并跑 `probe-window`；依赖包取不到就红，不用纯 PHP 判据冒充 AOT 通过。它同时是可复用工作流：发版以 `target=dev` 调用同一份工具链编开发壳，工具链配方只有一处。
 
 CI 的三条硬纪律：
 

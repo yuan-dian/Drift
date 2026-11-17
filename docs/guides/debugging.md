@@ -40,6 +40,8 @@ T1 能验解释器和壳层逻辑，**验不了 AOT 生成物**。`dual-mode-equ
 
 dev 壳的 `--selftest` 做指纹 + 壳红线自检（含反例），其中一条是 `src/` 不许进壳的 sources。新应用要在 `composer.json` 的 autoload 里有 `App\<名字>\` 的 PSR-4 前缀，dev 壳才知道去哪里 require——漏登记不是"找不到类"的显式报错，而是启动起来一片空白或加载不到你的页面。
 
+入口本身并不固定：壳端只读 `DRIFT_DEV_ENTRY`，运行器默认写 Drift 包内的 `apps/dev/dev-entry.php`。`--project=<目录>` 指定宿主项目根（composer 包引入时必需），`--entry=<路径>` 相对它解析；热更监听包含 `--project/src`、入口及其同级 PHP，Drift 包自身源码不热更。发布包里的预编译壳用 `--prebuilt` 启动，跳过指纹检查——代价是源码必须与包同版本，否则壳与源码会静默错位。仍需 PHP 8.4 ZTS 运行时提供 `php8ts.dll`。
+
 ## 典型静默失败
 
 **组合根 / 控件构造器漏 `parent::__construct()`。** 基类在构造里初始化 `$mods` 等字段，漏调后字段未初始化，到 `syncBox()` 读它才炸，栈顶看不出是哪一层。AOT 下的表现是 `The parameter object must be object, got null`。lint 有 `app-subclass-ctor-parent` 规则守这一类。

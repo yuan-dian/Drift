@@ -30,8 +30,12 @@ function usage(): never
     drift-dev —— 开发态运行器（改 PHP 即重启，壳不重编）
 
       用法： php tools/drift-dev.php [应用名] [--rebuild] [--no-watch] [--hard-restart]
+                                    [--project=<目录>] [--entry=<路径>] [--prebuilt]
 
       应用名    默认 hello；须在 composer.json 有 App\<名字>\ PSR-4 前缀
+      --project=目录  宿主项目根（Drift 作为 composer 包引入时指向你的项目；默认 Drift 包根）
+      --entry=路径  动态入口（默认 apps/dev/dev-entry.php）；相对路径按 --project 解析
+      --prebuilt    用现成 dev.exe，跳过壳指纹检查与编译（发布包场景）
       --rebuild 强制重编 dev 壳（改了 cpp-src / 壳配置时其实会自动检测）
       --no-watch  只跑一次，不监听文件变化
       --hard-restart  跳过优雅退出：不把本次会话的 dirty 状态写回
@@ -114,18 +118,69 @@ function shellFingerprint(string $root): string
     return hash_final($ctx);
 }
 
-/** 业务输入快照：mtime + size，便宜到可以每 400ms 算一次。 */
-function businessSnapshot(string $root, string $app): string
+/**
+ * 宿主项目根：Drift 作为 composer 包引入时 != Drift 包目录。
+ * ★ 相对路径按调用时的工作目录解析 —— 开发者在自己的项目根敲命令最自然。
+ */
+function resolveProject(string $root, string $value): string
 {
+    if (trim($value) === '') {
+        return str_replace('\\', '/', $root);
+    }
+    $path = str_replace('\\', '/', $value);
+    if (!preg_match('/^[A-Za-z]:/', $path) && !str_starts_with($path, '/')) {
+        $path = rtrim(str_replace('\\', '/', (string) getcwd()), '/') . '/' . $path;
+    }
+    if (!is_dir($path)) {
+        fail("找不到宿主项目根：{$path}（--project 指向含 composer.json 的项目目录）");
+    }
+    $real = realpath($path);
+
+    return $real === false ? $path : str_replace('\\', '/', $real);
+}
+
+/**
+ * 动态入口：相对路径按**宿主项目根**解析，绝对路径原样用。
+ * ★ 壳端只读 DRIFT_DEV_ENTRY，默认入口仍在 Drift 包内；这里让发布包的预编译壳
+ *   能指向开发者自己的项目入口（composer 包场景下两者不是同一个目录）。
+ */
+function resolveEntry(string $root, string $project, string $value): string
+{
+    $normalized = str_replace('\\', '/', $value);
+    if ($normalized === '') {
+        return str_replace('\\', '/', $root) . '/apps/dev/dev-entry.php';
+    }
+    $base = str_replace('\\', '/', $project);
+    $path = preg_match('/^[A-Za-z]:/', $normalized) || str_starts_with($normalized, '/')
+        ? $normalized
+        : $base . '/' . $normalized;
+    if (!is_file($path)) {
+        fail("找不到动态入口：{$path}（--entry 相对 --project 解析）");
+    }
+
+    return $path;
+}
+
+/** 业务输入快照：mtime + size，便宜到可以每 400ms 算一次。 */
+function businessSnapshot(string $root, string $app, ?string $entry = null, ?string $project = null): string
+{
+    $project ??= $root;
+    $defaultEntry = str_replace('\\', '/', $root) . '/apps/dev/dev-entry.php';
     $files = array_merge(
-        collectFiles("{$root}/src", ['.php'], true),
+        collectFiles("{$project}/src", ['.php'], true),
         collectFiles("{$root}/apps/{$app}", ['.php'], true),
         [
-            "{$root}/apps/dev/dev-entry.php",
+            $defaultEntry,
             "{$root}/tools/autoload.php",
             "{$root}/composer.json",
+            "{$project}/composer.json",
         ]
     );
+    // 自定义入口不在 apps/ 下：把入口及其同级 PHP 也纳入热更，否则改了不重启。
+    if ($entry !== null && $entry !== $defaultEntry) {
+        $files[] = $entry;
+        $files = array_merge($files, collectFiles(dirname($entry), ['.php'], true));
+    }
 
     $ctx = hash_init('sha256');
     foreach ($files as $path) {
@@ -143,13 +198,17 @@ function businessSnapshot(string $root, string $app): string
  * ★ 关 opcache 有两个理由：ASLR 下它拒绝启动会让进程秒退；且它缓存 opcode
  *   会挡住「改 PHP 重启即生效」。
  */
-function runtimeIni(string $root): string
+function runtimeIni(string $root, ?string $project = null): string
 {
+    $project ??= $root;
+    // ini 落在 Drift 包内（壳以它为 cwd），内容优先取宿主项目的配置。
     $dir = "{$root}/_build/dev-ini";
     if (!is_dir($dir) && !mkdir($dir, 0777, true) && !is_dir($dir)) {
         fail("建不了 {$dir}");
     }
-    $base = is_file("{$root}/php.ini") ? (string) file_get_contents("{$root}/php.ini") : '';
+    $source = is_file("{$project}/php.ini") ? "{$project}/php.ini"
+        : (is_file("{$root}/php.ini") ? "{$root}/php.ini" : (string) php_ini_loaded_file());
+    $base = $source !== '' ? (string) file_get_contents($source) : '';
     file_put_contents("{$dir}/php.ini", rtrim($base) . "\nopcache.enable=0\n");
 
     return $dir;
@@ -409,7 +468,7 @@ PHP);
 function selftest(): int
 {
     $root = sys_get_temp_dir() . '/drift-dev-selftest-' . bin2hex(random_bytes(4));
-    foreach (['apps/dev', 'src/build', 'cpp-src', 'apps/hello', 'build'] as $dir) {
+    foreach (['apps/dev', 'src/build', 'cpp-src', 'apps/hello', 'build', 'myapp', 'host-app/src'] as $dir) {
         mkdir("{$root}/{$dir}", 0777, true);
     }
     $write = static function (string $path, string $body): void {
@@ -422,6 +481,11 @@ function selftest(): int
     $write("{$root}/src/a.php", '<?php');
     $write("{$root}/src/build/cache.php", '<?php');
     $write("{$root}/apps/hello/main.php", '<?php');
+    $write("{$root}/myapp/entry.php", '<?php');
+    $write("{$root}/myapp/widget.php", '<?php');
+    $write("{$root}/host-app/composer.json", '{}');
+    $write("{$root}/host-app/entry.php", '<?php');
+    $write("{$root}/host-app/src/Widget.php", '<?php');
 
     $checks = [];
     $shell = shellFingerprint($root);
@@ -436,6 +500,28 @@ function selftest(): int
     clearstatcache();
     $checks['改业务 PHP ⇒ 不重编壳'] = shellFingerprint($root) === $shell;
     $checks['改业务 PHP ⇒ 触发重启'] = businessSnapshot($root, 'hello') !== $business;
+
+    $normalizedRoot = str_replace('\\', '/', $root);
+    $customEntry = $normalizedRoot . '/myapp/entry.php';
+    $checks['--entry 默认按 Drift 根解析'] = resolveEntry($root, $normalizedRoot, 'myapp/entry.php') === $customEntry;
+    $checks['--entry 绝对路径原样用'] = resolveEntry($root, $normalizedRoot, $customEntry) === $customEntry;
+    $business = businessSnapshot($root, 'hello', $customEntry);
+    touch("{$root}/myapp/widget.php", time() + 30);
+    clearstatcache();
+    $checks['自定义入口目录变化 ⇒ 触发重启'] = businessSnapshot($root, 'hello', $customEntry) !== $business;
+    $checks['自定义入口不重编壳'] = shellFingerprint($root) === $shell;
+
+    // composer 包场景：宿主项目根 != Drift 包根，入口与热更都必须跟着宿主走。
+    $host = $normalizedRoot . '/host-app';
+    $hostEntry = $host . '/entry.php';
+    $checks['--project 缺省为 Drift 根'] = resolveProject($root, '') === $normalizedRoot;
+    $checks['--project 绝对路径解析'] = resolveProject($root, $host) === str_replace('\\', '/', (string) realpath($host));
+    $checks['--entry 相对宿主项目根解析'] = resolveEntry($root, $host, 'entry.php') === $hostEntry;
+    $business = businessSnapshot($root, 'hello', $hostEntry, $host);
+    touch("{$root}/host-app/src/Widget.php", time() + 40);
+    clearstatcache();
+    $checks['宿主项目 src 变化 ⇒ 触发重启'] = businessSnapshot($root, 'hello', $hostEntry, $host) !== $business;
+    $checks['宿主项目变化不重编壳'] = shellFingerprint($root) === $shell;
 
     $business = businessSnapshot($root, 'hello');
     touch("{$root}/src/build/cache.php", time() + 20);
@@ -491,6 +577,16 @@ if (in_array('--selftest', $rest, true)) {
 $rebuild = in_array('--rebuild', $rest, true);
 $noWatch = in_array('--no-watch', $rest, true);
 $hardRestart = in_array('--hard-restart', $rest, true);
+$prebuilt = in_array('--prebuilt', $rest, true);
+$entryOption = '';
+$projectOption = '';
+foreach ($rest as $argument) {
+    if (str_starts_with($argument, '--entry=')) {
+        $entryOption = substr($argument, strlen('--entry='));
+    } elseif (str_starts_with($argument, '--project=')) {
+        $projectOption = substr($argument, strlen('--project='));
+    }
+}
 
 $app = 'hello';
 foreach ($rest as $argument) {
@@ -505,7 +601,8 @@ if (preg_match('/^[A-Za-z0-9_]+$/', $app) !== 1) {
 
 $root = dirname(__DIR__);
 $appDir = strtolower($app);
-if (!is_file("{$root}/apps/{$appDir}/bin/win32/Bootstrap.php")) {
+// 自定义入口自带组合根；只有走 Drift 默认入口时才要求 apps/<app>/... 就位。
+if ($entryOption === '' && !is_file("{$root}/apps/{$appDir}/bin/win32/Bootstrap.php")) {
     fail("找不到组合根：apps/{$appDir}/bin/win32/Bootstrap.php");
 }
 
@@ -513,8 +610,15 @@ $exe = "{$root}/dev.exe";
 $shaFile = "{$root}/_build/dev-shell.sha";
 $hash = shellFingerprint($root);
 $previous = is_file($shaFile) ? trim((string) file_get_contents($shaFile)) : '';
+$project = resolveProject($root, $projectOption);
+$entry = resolveEntry($root, $project, $entryOption);
 
-if ($rebuild || !is_file($exe) || $previous !== $hash) {
+if ($prebuilt) {
+    if (!is_file($exe)) {
+        fail('--prebuilt 需要仓库根已有 dev.exe（先把发布包的 exe 解压到仓库根）');
+    }
+    out('使用现成 dev.exe，跳过壳指纹检查');
+} elseif ($rebuild || !is_file($exe) || $previous !== $hash) {
     out('壳输入有变或无产物 ⇒ 编译 dev.exe（只此一次，之后改 PHP 不再编）');
     $command = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg("{$root}/tools/drift-build.php") . ' dev';
     passthru($command, $code);
@@ -529,7 +633,7 @@ if ($rebuild || !is_file($exe) || $previous !== $hash) {
     out('壳未变 ⇒ 跳过编译');
 }
 
-$iniDir = runtimeIni($root);
+$iniDir = runtimeIni($root, $project);
 $env = getenv();
 if (!is_array($env)) {
     $env = [];
@@ -537,7 +641,7 @@ if (!is_array($env)) {
 // php8ts.dll 在 PHP 发行版目录；从任意 shell 启动时它未必在 PATH。
 $env['PATH'] = dirname(PHP_BINARY) . ';' . (string) ($env['PATH'] ?? '');
 $env['PHPRC'] = $iniDir;
-$env['DRIFT_DEV_ENTRY'] = "{$root}/apps/dev/dev-entry.php";
+$env['DRIFT_DEV_ENTRY'] = $entry;
 $env['DRIFT_DEV_APP'] = $app;
 
 $process = null;
@@ -566,7 +670,7 @@ $stopProcess = static function () use (&$process, &$pipes, $hardRestart): void {
 $start();
 out("应用 {$app} ｜ 监听 src/、apps/{$appDir}/、apps/dev/dev-entry.php（Ctrl+C 退出）");
 
-$last = businessSnapshot($root, $appDir);
+$last = businessSnapshot($root, $appDir, $entry, $project);
 $restarts = 0;
 while (true) {
     drain($pipes);
@@ -582,7 +686,7 @@ while (true) {
         continue;
     }
 
-    $current = businessSnapshot($root, $appDir);
+    $current = businessSnapshot($root, $appDir, $entry, $project);
     if ($current !== $last) {
         $last = $current;
         $stopProcess();

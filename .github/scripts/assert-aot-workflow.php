@@ -19,12 +19,17 @@ function fail(string $msg): never
 $root = dirname(__DIR__, 2);
 $aotFile = $root . '/.github/workflows/aot.yml';
 $ciFile = $root . '/.github/workflows/ci.yml';
+$releaseFile = $root . '/.github/workflows/release.yml';
 
 if (!is_file($aotFile)) {
     fail('aot.yml 不存在 —— AOT 通道缺失');
 }
+if (!is_file($releaseFile)) {
+    fail('release.yml 不存在 —— dev 壳发布通道缺失');
+}
 $aot = (string) file_get_contents($aotFile);
 $ci = (string) file_get_contents($ciFile);
+$release = (string) file_get_contents($releaseFile);
 
 if (preg_match('/^\s*if:\s*false\s*$/m', $aot)) {
     fail('aot.yml 存在 if: false —— AOT job 被关掉，等于没有');
@@ -44,9 +49,13 @@ $anchors = [
     'cache-primary-key' => '工具链缓存',
     'cmake --build $phpxBuild --target phpx' => 'PHPX 真编译',
     'php tools/fetch-deps.php' => 'Skia / 字体依赖',
-    'php tools/drift-build.php hello --full' => '全量 AOT 编译',
-    'python tools/probe-window.py hello' => '真机五判据',
+    'php tools/drift-build.php $target --full' => '全量 AOT 编译',
+    'python tools/probe-window.py $target' => '真机五判据',
     'php tools/doctor.php --scope=build' => '编译前环境体检',
+    'workflow_call:' => 'Release 可复用',
+    'python tools/probe-window.py hello --dev' => 'dev 壳真机判据',
+    'Compress-Archive -Path' => 'dev 壳打包',
+    'gh release upload' => 'Release 资产上传',
 ];
 
 $missing = [];
@@ -59,4 +68,16 @@ if ($missing !== []) {
     fail('aot.yml 缺环节：' . implode('、', $missing));
 }
 
+// Release 必须真的调用这条通道，并选中 dev 目标；否则下载链接指向的空气。
+foreach ([
+    'uses: ./.github/workflows/aot.yml' => 'Release 复用 AOT 工作流',
+    'target: dev' => '发布目标是 dev 壳',
+    'release_tag:' => 'Release tag 传递',
+] as $needle => $label) {
+    if (!str_contains($release, $needle)) {
+        fail('release.yml 缺环节：' . $label . '（' . $needle . '）');
+    }
+}
+
 fwrite(STDOUT, '  ok     AOT 通道在公开 runner 上完整：' . count($anchors) . " 个环节\n");
+fwrite(STDOUT, "  ok     Release 复用同一通道发布 dev 壳：3 个环节\n");

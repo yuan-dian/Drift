@@ -50,6 +50,35 @@ dev 壳只编一次「壳 + C++ 桥」，之后改业务 PHP 保存即自动重�
 
 ★ 首次启动仍需完整档 B 工具链来编出这个壳；「改 PHP 不重编译」只对首次之后的业务改动成立。
 
+不想装构建工具链：从[最新 Release](https://github.com/yuan-dian/Drift/releases/latest/download/drift-dev-shell-win-x64.zip)
+下载预编译壳，`dev.exe` 放仓库根、`dev-shell.sha` 放 `_build/`，checkout 同版本源码后跑
+`php tools/drift-dev.php hello --prebuilt`。仍需 PHP 8.4 ZTS 运行时（`php8ts.dll`）。
+入口不固定：`--project=<目录>` 指向宿主项目根，`--entry=<路径>` 相对它解析；热更监听跟着包含入口及其同级 PHP。该直链只对已发布的正式 Release 有效。
+
+**Drift 作为 composer 包引入时**：项目根不是 `vendor/.../drift/`，必须同时给出 `--project`，并在自己的入口里加载宿主 autoload。
+
+```text
+my-app/
+├── composer.json             # require: yuan-dian/drift
+├── vendor/yuan-dian/drift/   # 预编译 dev.exe 放这里
+├── entry.php                 # 你的入口
+└── src/                      # 你的业务 PHP（此处不列具体文件）
+```
+
+```php
+<?php
+// entry.php —— 壳以 Drift 包为 cwd，用 __DIR__ 定位自己的 vendor
+require __DIR__ . '/vendor/autoload.php';
+\My\App\Bootstrap::run();
+```
+
+```bash
+# 从 my-app/ 执行
+php vendor/yuan-dian/drift/tools/drift-dev.php --project=. --entry=entry.php --prebuilt
+```
+
+`--project` 下的 `src/`、入口及其同级 PHP 的改动都会触发热重启；`vendor/` 里的 Drift 包源码不参与热更（改它需要重编壳，属 T2）。
+
 ## 路 B：AOT 构建 + 真机探针
 
 ```bash
