@@ -219,7 +219,14 @@ def selftest():
       探针里凡是用到颜色的断言都靠它，而灰度断言（亮度 / 低饱和）对翻序不敏感
       ⇒ 顺序错了之后滚动条那几条照样绿，只有"找墨绿按钮"那一条会红，还很容易
       被当成"页面变了"。**量具的契约要自己证，不能靠下游碰巧红。**
+
+    ★ selftest 是独立入口（`python tools/probe_pixels.py --selftest`），不走
+      `probe_check.run()`，所以要自己钉 UTF-8 —— CI runner 的 stdout 是 cp1252，
+      下面 check() 里的中文判据名会直接抛 UnicodeEncodeError（2026-11-17 实测）。
     """
+    from probe_check import _utf8_output
+
+    _utf8_output()
     fails = []
 
     def check(name, ok, detail=""):

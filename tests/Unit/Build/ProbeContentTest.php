@@ -34,9 +34,17 @@ final class ProbeContentTest extends SmokeTestCase
         $root = dirname(__DIR__, 3);
         $py = getenv('PYTHON_BIN') ?: 'python';
         $cmd = escapeshellarg($py) . ' ' . escapeshellarg($root . '/tools/probe_pixels.py') . ' --selftest 2>&1';
-        exec($cmd, $out, $rc);
+        // ★ 显式 cp1252：CI runner 就是这么开 stdout 的，本地默认 UTF-8 会漏掉这层。
+        //   用 putenv（不是 `VAR=value cmd` 前缀）—— Windows 上 exec 走 cmd.exe，前缀语法无效。
+        $old = getenv('PYTHONIOENCODING');
+        putenv('PYTHONIOENCODING=cp1252');
+        try {
+            exec($cmd, $out, $rc);
+        } finally {
+            $old === false ? putenv('PYTHONIOENCODING') : putenv('PYTHONIOENCODING=' . $old);
+        }
         check(
-            'probe_pixels 自检认得白纸 / 纯色块 / hello 的 0.2% 文字',
+            'probe_pixels 自检认得白纸 / 纯色块 / hello 的 0.2% 文字，且 cp1252 下不炸',
             $rc === 0,
             implode("\n", array_slice($out, -5))
         );
