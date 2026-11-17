@@ -200,13 +200,18 @@ jobs:
           echo "SKIA_PYTHON=python" >> "$GITHUB_ENV"
 
       # ★ 必须 bootstrap：clone 下来的 depot_tools 只有一个 shell 包装，
-      #   缺 python3_bin_reldir.txt 时 gn / vpython3 / cipd 一律直接退出
-      #   （表现是 "need to initialize depot_tools by running gclient or
-      #   update_depot_tools"，而且往往发生在 Skia 已经 sync 完之后，看着像编译错）。
+      #   gn.bat / vpython3 / cipd 都只是转发脚本。缺 python3_bin_reldir.txt 时它们
+      #   一律直接退出（"need to initialize depot_tools"）；缺 gn.exe 时又是另一句
+      #   "Unable to find gn in your $PATH"。两种都发生在 Skia 已经 sync 完之后，
+      #   看着像编译错。
+      # ★ GITHUB_PATH 只对后续步骤生效，所以这里要自己把 $deps 塞进当前 PATH ——
+      #   否则 gn.py 在同一个步骤里找不到刚装好的 gn.exe。
       - name: Bootstrap depot_tools
         shell: pwsh
         run: |
           $deps = Join-Path $env:RUNNER_TEMP 'depot_tools'
+          $env:PATH = "$deps;$env:PATH"
+
           $bootstrap = Join-Path $deps 'bootstrap\bootstrap.bat'
           if (Test-Path $bootstrap) {
             & $bootstrap
@@ -218,9 +223,16 @@ jobs:
           if (-not (Test-Path (Join-Path $deps 'python3_bin_reldir.txt'))) {
             throw 'depot_tools still unbootstrapped: python3_bin_reldir.txt missing'
           }
+
+          # bootstrap 只保证 python3；gn / ninja 由 CIPD 单独装，跑一次 gclient 触发。
+          & (Join-Path $deps 'gclient.bat') --version
+          if ($LASTEXITCODE -ne 0) { throw 'gclient is not runnable after bootstrap' }
+
           & (Join-Path $deps 'gn.bat') --version
           if ($LASTEXITCODE -ne 0) { throw 'gn is not runnable after bootstrap' }
-          & (Join-Path $deps 'ninja.exe') --version
+          $ninja = Join-Path $deps 'ninja.exe'
+          if (-not (Test-Path $ninja)) { throw 'ninja.exe missing after bootstrap' }
+          & $ninja --version
           if ($LASTEXITCODE -ne 0) { throw 'ninja is not runnable after bootstrap' }
 
       # 镜像自带 VS / Win SDK / LLVM，但目录名随镜像更新漂移，不能写死；
