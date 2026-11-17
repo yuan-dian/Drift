@@ -24,15 +24,20 @@ use PHPUnit\Framework\TestCase;
  *
  * ★ 用注入回调而非真 git：判据与实现不同源，且三态都能在任意机器咬红。
  *   真 git 的返回码由 gitAncestor() 单独封装，另有一条真机对照。
+ * ★ 源码树根同样注入：公开 runner 没有 tpc 源码树，三态用例不能依赖它。
  */
 final class TpcBaselineCheckTest extends TestCase
 {
-    private const ROOT = 'D:/TypePHP/Drift2';
+    /** 注入的树只要是个 git 仓库即可；本仓自身在任意 clone 上都存在。 */
+    private static function tree(): string
+    {
+        return str_replace('\\', '/', dirname(__DIR__, 3));
+    }
 
     #[Test]
     public function head含基线报OK(): void
     {
-        $check = Environment::tpcBaselineCheck(self::ROOT, static fn (): int => 0);
+        $check = Environment::tpcBaselineCheck('', static fn (): int => 0, self::tree());
 
         self::assertSame(Check::OK, $check->status);
         self::assertStringContainsString(Environment::TPC_MIN_COMMIT, $check->detail);
@@ -42,7 +47,7 @@ final class TpcBaselineCheckTest extends TestCase
     #[Test]
     public function head不含基线报FAIL(): void
     {
-        $check = Environment::tpcBaselineCheck(self::ROOT, static fn (): int => 1);
+        $check = Environment::tpcBaselineCheck('', static fn (): int => 1, self::tree());
 
         self::assertSame(Check::FAIL, $check->status);
         self::assertStringContainsString('不含基线', $check->detail);
@@ -52,7 +57,7 @@ final class TpcBaselineCheckTest extends TestCase
     #[Test]
     public function 无法判定报WARN不报OK(): void
     {
-        $check = Environment::tpcBaselineCheck(self::ROOT, static fn (): int => 128);
+        $check = Environment::tpcBaselineCheck('', static fn (): int => 128, self::tree());
 
         self::assertSame(Check::WARN, $check->status);
         self::assertNotSame(Check::OK, $check->status, '没测到绝不能算通过');
@@ -62,14 +67,13 @@ final class TpcBaselineCheckTest extends TestCase
     public function 注入参数确实透传给git查询(): void
     {
         $seen = [];
-        Environment::tpcBaselineCheck(self::ROOT, function (string $tree, string $commit) use (&$seen): int {
+        Environment::tpcBaselineCheck('', function (string $tree, string $commit) use (&$seen): int {
             $seen = [$tree, $commit];
 
             return 0;
-        });
+        }, self::tree());
 
-        self::assertSame(dirname(dirname('D:/TypePHP/typephp/bin/tpc.php')), $seen[0] ?? null,
-            '注入回调必须拿到源码树根（bin/tpc.php 的上两级）');
+        self::assertSame(self::tree(), $seen[0] ?? null, '注入回调必须拿到传入的源码树根');
         self::assertSame(Environment::TPC_MIN_COMMIT, $seen[1] ?? null);
     }
 

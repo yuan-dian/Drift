@@ -408,11 +408,11 @@ final class Environment
      * ★ 拿不到 git / 非 git 树 / 基线不在该仓库 ⇒ WARN（可见但不误伤构建）。
      *   ★ 绝不因"没测到"报 OK —— 那是本仓最典型的静默假绿。
      * ★ git 调用隔离在 gitAncestor()，测试可注入，判据与实现不同源。
+     * ★ 源码树根也可注入：三态用例不必在机器上安装 tpc 源码树。
      */
-    public static function tpcBaselineCheck(string $root, ?callable $ancestor = null): Check
+    public static function tpcBaselineCheck(string $root, ?callable $ancestor = null, ?string $tree = null): Check
     {
-        $entry = self::tpcEntry($root);
-        $tree = dirname(dirname($entry)); // <tree>/bin/tpc.php ⇒ 源码树根
+        $tree ??= dirname(dirname(self::tpcEntry($root))); // <tree>/bin/tpc.php ⇒ 源码树根
 
         if (!is_dir($tree . '/.git')) {
             return new Check('tpc-baseline', 'tpc 版本基线', Check::WARN,
