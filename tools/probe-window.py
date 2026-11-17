@@ -12,7 +12,9 @@
 判据（五者缺一不可）：
   ① 找到窗口，标题 == Application::title()；
   ② 客户区尺寸 == Bootstrap 声明的逻辑尺寸；
-  ③ 客户区有**非白像素**且颜色分布符合主题 token（空窗/黑块会被判出来）；
+  ③ 客户区有**非白像素**且不止一种颜色（白纸/纯色块会被判出来）。
+     阈值只区分"画了"与"全白"，**不衡量内容多少**：hello 白底一行字实测 0.2%，
+     users 带列表/顶条才 8.9%，拿 1% 当通用门槛会把正常的最小应用误判成空白窗。
   ④ **DPI 感知级别 == PER_MONITOR_AWARE_V2**（§6 / §24.1 #43）。★ 这条带**反例**：
      旧的 `SetProcessDPIAware()`（V1 = SYSTEM_AWARE=1）必须 FAIL —— 否则"跨屏不糊"
      这条判据就是空话（V1 进程跨屏会被系统位图拉伸，且收不到 `WM_DPICHANGED`）。
@@ -36,6 +38,7 @@ import shutil
 import sys
 from ctypes import wintypes
 
+from probe_pixels import content_stats
 from probe_check import check, run
 from probe_win import ROOT, App, grab
 
@@ -141,22 +144,14 @@ def main() -> int:
         check("② 客户区尺寸 == Bootstrap 声明的逻辑尺寸", size_ok,
               f"{w}x{h} 期望 {want_w}x{want_h} × {dpr}")
 
-        # ③ 非白像素 + 颜色分布
+        # ③ 非白像素 + 颜色数：判据收在 probe_pixels，selftest 有白纸/纯色块/hello 反例。
         w, h, data = grab(hwnd)
-        total = w * h
-        distinct: dict[tuple[int, int, int], int] = {}
-        for i in range(0, total * 4, 4):
-            b, g, r = data[i], data[i + 1], data[i + 2]
-            if (r, g, b) != (255, 255, 255):
-                key = (r, g, b)
-                distinct[key] = distinct.get(key, 0) + 1
-
-        nonwhite = sum(distinct.values())
-        print(f"  非白像素 = {nonwhite} / {total}  ({nonwhite * 100.0 / total:.1f}%)")
-        for (r, g, b), n in sorted(distinct.items(), key=lambda kv: -kv[1])[:6]:
+        stats = content_stats(data, w, h)
+        print(f"  非白像素 = {stats['nonwhite']} / {w * h}  ({stats['ratio'] * 100:.1f}%)")
+        for (r, g, b), n in sorted(stats["distinct"].items(), key=lambda kv: -kv[1])[:6]:
             print(f"    rgb({r},{g},{b}) x {n}")
-        check("③ 客户区有内容（不是一张白纸）", nonwhite > total * 0.01,
-              f"{nonwhite * 100.0 / total:.1f}%")
+        check("③ 客户区有内容（不是一张白纸）", stats["ok"],
+              f"{stats['ratio'] * 100:.1f}%，{stats['colors']} 色")
 
         # ④ DPI 感知级别
         try:

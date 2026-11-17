@@ -34,7 +34,7 @@ import time
 
 import probe_win as win
 from probe_check import check, run
-from probe_pixels import nonwhite_ratio
+from probe_pixels import content_stats
 
 ROOT = win.ROOT
 
@@ -146,11 +146,11 @@ def main() -> int:
                 check(f"② {title} 客户区 = 声明的逻辑尺寸 × dpr", ok_size,
                       f"{w}x{h}（期望 {want_w}x{want_h} × {dpr}）")
 
-                # ★ 阈值只区分"画了"与"全白"，不是"内容够多"：hello 是白底几行字
-                #   （实测 ~0.2%），`users` 那种带列表/顶条的才 40%。用法错了就会把
-                #   一个正常的最小应用判成空白窗 —— 判据要按**被验的是哪个应用**定。
-                ratio = nonwhite_ratio(win.grab(hwnd)[2], w, h)
-                check(f"③ {title} 有内容（不是空白窗口）", ratio > 0.0005, f"非白 {ratio * 100:.2f}%")
+                # ★ 内容与 probe-window 共用同一判据：阈值只区分"画了"与"全白"，
+                #   不衡量内容多少（hello ~0.2%，users 8.9%）。
+                stats = content_stats(win.grab(hwnd)[2], w, h)
+                check(f"③ {title} 有内容（不是空白窗口）", stats["ok"],
+                      f"非白 {stats['ratio'] * 100:.2f}%，{stats['colors']} 色")
 
             # ④ 关第二个窗 ⇒ 它消失、第一个窗与进程都还在
             win.user32.PostMessageW(second_hwnd, WM_CLOSE, 0, 0)

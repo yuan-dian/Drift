@@ -183,6 +183,35 @@ def nonwhite_ratio(data, width, height):
     return nonwhite / float(total)
 
 
+def content_stats(data, width, height):
+    """客户区"画了东西"的判据：**只排除白纸与纯色块，不衡量内容多少**。
+
+    ★ 阈值 0.0005 与 `probe-two-windows.py` 同一口径：hello 白底一行字实测 0.2%，
+      users 带列表/顶条 8.9%。拿 1% / 5% 当通用门槛会把正常的最小应用判成空白窗。
+    ★ 颜色数 ≥ 2 再排除"非白占比 100% 的纯色块"—— 那不是内容多，是画面崩了。
+    返回 `nonwhite` / `colors` / `ratio` / `distinct` / `ok`，调用方只消费 `ok`。
+    """
+    total = width * height
+    if total <= 0:
+        return {"nonwhite": 0, "colors": 0, "ratio": 0.0, "distinct": {}, "ok": False}
+
+    distinct = {}
+    for i in range(0, total * 4, 4):
+        key = (data[i + 2], data[i + 1], data[i])
+        if key != (255, 255, 255):
+            distinct[key] = distinct.get(key, 0) + 1
+
+    nonwhite = sum(distinct.values())
+    ratio = nonwhite / float(total)
+    return {
+        "nonwhite": nonwhite,
+        "colors": len(distinct),
+        "ratio": ratio,
+        "distinct": distinct,
+        "ok": ratio > 0.0005 and len(distinct) >= 2,
+    }
+
+
 def selftest():
     """**契约自检**：这个文件导出的语义必须被证明一次，否则它只是个会绿的函数。
 
@@ -252,6 +281,36 @@ def selftest():
     check("nonwhite_ratio 在全白上是 0.0", nonwhite_ratio(bytes(blank), W, H) == 0.0)
     check("nonwhite_ratio 认得出深色像素（不是恒 0）",
           nonwhite_ratio(bytes(with_bar), W, H) > 0.0)
+
+    # ── ④ 内容判据：白纸 / 纯色块 / 最小应用 / 零星噪点 ──
+    W, H = 640, 400
+    white = bytes((255, 255, 255, 0xFF)) * (W * H)
+    check("content_stats 白纸判无内容", not content_stats(white, W, H)["ok"])
+    black = bytes((0, 0, 0, 0xFF)) * (W * H)
+    check("content_stats 纯黑块判无内容（非白占比 100% 也不是内容）",
+          not content_stats(black, W, H)["ok"])
+
+    # hello 实测形态：白底 + 484 个非白像素、6 档灰阶（0.2%）
+    hello = bytearray(white)
+    inks = [((31, 35, 40), 151), ((143, 145, 148), 87), ((214, 215, 216), 12),
+            ((254, 254, 254), 10), ((243, 243, 244), 10), ((198, 199, 201), 9)]
+    pos = 0
+    for (r, g, b), n in inks:
+        for _ in range(n):
+            i = pos * 4
+            hello[i:i + 4] = bytes((b, g, r, 0xFF))
+            pos += 1
+    stat = content_stats(bytes(hello), W, H)
+    check("content_stats 认得 hello 的 0.2% 六色文字（原 1% 阈值误判的正是它）",
+          stat["ok"], f"ratio={stat['ratio']:.4f} colors={stat['colors']}")
+    check("content_stats 报告的数字与合成数据一致（前 6 色共 279 像素）",
+          stat["nonwhite"] == 279 and stat["colors"] == 6,
+          f"{stat['nonwhite']} / {stat['colors']}")
+
+    speck = bytearray(white)
+    speck[0:4] = bytes((40, 35, 31, 0xFF))
+    check("content_stats 不把零星噪点当内容（阈值在比例，不只是 >0）",
+          not content_stats(bytes(speck), W, H)["ok"])
 
     if fails:
         print(f"\n✗ 像素契约 {len(fails)} 条不过")
