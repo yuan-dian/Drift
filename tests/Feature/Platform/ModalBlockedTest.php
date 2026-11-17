@@ -18,8 +18,10 @@ use Drift\Platform\Win32\Win32Platform;
  * ## 这一组钉两条
  *
  * ① **账本记的是"进桥到出桥"**：`fatalBox()` 的 `MessageBoxW` 是原生模态，
- *    用户停留多久就记多久 —— 让假桥真的停留 15ms，断言账本 ≥ 10ms。
+ *    用户停留多久就记多久 —— 让假桥真的停留 40ms，断言账本 ≥ 10ms。
  *    ★ 没有"停留"的假桥这条**验不了**（hrtime 差值小到无法断言，">= 0"恒真）。
+ *    ★ 40ms 不是随意放大：CI 的 PHP 8.4 上 15ms 睡眠只量到 7.09ms（时钟粒度），
+ *      留 4 倍余量才能跨 PHP 版本稳定，又不至于拖慢测试。
  * ② **读后即清**：同一笔时间不许被剔除两次（清不掉就会把真卡顿也剔没）。
  */
 final class ModalBlockedTest extends SmokeTestCase
@@ -40,7 +42,7 @@ final class ModalBlockedTest extends SmokeTestCase
 
     public function testFatalBoxTimeIsAccountedAndReset(): void
     {
-        winMessageBoxLatencyFake(15.0);   // 用户在框里停留了 15ms
+        winMessageBoxLatencyFake(40.0);   // 用户在框里停留了 40ms（跨 PHP 版本留足量测余量）
         $platform = new Win32Platform();
 
         $platform->fatalBox('标题', '正文');
