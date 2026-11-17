@@ -209,7 +209,7 @@ Get-FileHash drift-deps-win-x64.zip -Algorithm SHA256   # 校验收到的包
 当前包的校验值（`pack-deps.php` 打包时自动写入，`fetch-deps.php` 用它校验）：
 
 ```text
-a3b45d2ca542c89a6091a77878fb852f964e8a7e20d1d9f89ed819005dfc67e9
+7c586c5b103f9c64d469cd0136844fd561f2ffdbc3b320f0bde28454960b01ca
 ```
 
 同一份 `cpp/` 重打包 SHA 不变：条目按路径排序，且所有 ZIP DOS 时间统一写成
