@@ -38,6 +38,7 @@ function usage(): never
       --entry=路径  动态入口（默认 apps/dev/dev-entry.php）；相对路径按 --project 解析
       --prebuilt    用现成 dev.exe，跳过壳指纹检查与编译（发布包场景）
       --print-runtime  只打印壳 / 运行时 / ini 指向，不启动窗口
+      --write-fingerprint  只写 _build/dev-shell.sha 后退出（发版打包用）
       --rebuild 强制重编 dev 壳（改了 cpp-src / 壳配置时其实会自动检测）
       --no-watch  只跑一次，不监听文件变化
       --hard-restart  跳过优雅退出：不把本次会话的 dirty 状态写回
@@ -118,6 +119,19 @@ function shellFingerprint(string $root): string
     }
 
     return hash_final($ctx);
+}
+
+/** 写包内指纹：发版打包与 dev 壳自编共用这一处，避免两边算法漂移。 */
+function writeShellFingerprint(string $root): string
+{
+    $shaFile = "{$root}/_build/dev-shell.sha";
+    if (!is_dir(dirname($shaFile)) && !mkdir(dirname($shaFile), 0777, true) && !is_dir(dirname($shaFile))) {
+        fail("建不了 " . dirname($shaFile));
+    }
+    $hash = shellFingerprint($root);
+    file_put_contents($shaFile, $hash . "\n");
+
+    return $hash;
 }
 
 /**
@@ -574,6 +588,14 @@ function selftest(): int
         $checks[$name] = $ok;
     }
 
+    // 发版打包也写同一份指纹：同源、且随壳输入失效。
+    $shell = shellFingerprint($root);
+    $written = writeShellFingerprint($root);
+    $checks['写指纹与壳指纹同源'] = $written === $shell
+        && trim((string) file_get_contents("{$root}/_build/dev-shell.sha")) === $shell;
+    $write("{$root}/cpp-src/drift.cc", 'int written;');
+    $checks['写指纹后改 C++ 桥 ⇒ 指纹过期'] = shellFingerprint($root) !== $shell;
+
     // 清理临时树（只删本次自建目录，不碰任何用户文件）
     $items = new \RecursiveIteratorIterator(
         new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS),
@@ -630,6 +652,13 @@ if (preg_match('/^[A-Za-z0-9_]+$/', $app) !== 1) {
 }
 
 $root = dirname(__DIR__);
+if (in_array('--write-fingerprint', $rest, true)) {
+    if (!is_file("{$root}/dev.exe")) {
+        fail('--write-fingerprint 需要仓库根的 dev.exe（先跑 drift-build.php dev）');
+    }
+    out('已写壳指纹：' . writeShellFingerprint($root));
+    exit(0);
+}
 $appDir = strtolower($app);
 // 自定义入口自带组合根；只有走 Drift 默认入口时才要求 apps/<app>/... 就位。
 if ($entryOption === '' && !is_file("{$root}/apps/{$appDir}/bin/win32/Bootstrap.php")) {
@@ -676,10 +705,7 @@ if ($prebuilt) {
     if ($code !== 0 || !is_file($exe)) {
         fail('壳编译失败');
     }
-    if (!is_dir(dirname($shaFile))) {
-        mkdir(dirname($shaFile), 0777, true);
-    }
-    file_put_contents($shaFile, $hash . "\n");
+    writeShellFingerprint($root);
 } else {
     out('壳未变 ⇒ 跳过编译');
 }

@@ -326,6 +326,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'drift-build failed' }
           if (-not (Test-Path "$($target).exe")) { throw "$($target).exe was not produced" }
 
+      # drift-build 只编壳、不写指纹；发布包里的 sha 必须与 drift-dev 启动器
+      # 用的是同一份算法，否则用户解压后第一条就是「指纹与源码不一致」。
+      - name: Write dev shell fingerprint
+        if: inputs.target == 'dev'
+        shell: pwsh
+        run: |
+          php tools/drift-dev.php hello --write-fingerprint
+          if ($LASTEXITCODE -ne 0) { throw 'write dev shell fingerprint failed' }
+          if (-not (Test-Path '_build/dev-shell.sha')) { throw 'dev-shell.sha missing' }
+
       - name: Probe window
         shell: pwsh
         run: |
