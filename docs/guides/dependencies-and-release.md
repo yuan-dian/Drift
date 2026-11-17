@@ -18,7 +18,7 @@
 php tools/fetch-deps.php                          # 取 DEPS_VERSION 的 tag
 php tools/fetch-deps.php --latest                 # 改用仓库最新 release
 php tools/fetch-deps.php --tag=deps-v2            # 临时钉别的版本
-php tools/fetch-deps.php --url=D:/transfer/drift-deps-win-x64.zip
+php tools/fetch-deps.php --url=./drift-deps-win-x64.zip
 DRIFT_DEPS_URL=https://mirror.example.com/drift php tools/fetch-deps.php
 ```
 

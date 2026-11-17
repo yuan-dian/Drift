@@ -93,9 +93,11 @@ php tools/version.php --check  # 全部对齐才过；verify 的 static 层也�
 |---|---|---|
 | PHPX | 含 `include` / `lib` / `src`，与 tpc 同源 | `php.exe` 所在目录的 `phpx/`，或 `DRIFT_PHPX_HOME` |
 | tpc（TypePHP 编译器） | 源码树入口 `bin/tpc.php`（发行版 `tpc.exe` 缺编译期修复，不作默认） | 与本仓同级的 `../typephp/bin/tpc.php`，或 `DRIFT_TPC_ENTRY` |
-| MSVC | VS 2022（18），工具集 `14.51.36231`，需 `cl.exe` | `D:/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231`；`DRIFT_MSVC` / `DRIFT_MSVC_VERSION` |
-| Windows SDK | `10.0.26100.0`；`include/um` + `include/ucrt` + `lib/um/x64` 三处齐全 | `D:/Windows Kits/10`；`DRIFT_KITS` / `DRIFT_SDK_VERSION` |
+| MSVC | C++ 生成工具即可，不需完整 IDE；实测可用工具集 `14.51.36231`，需 `cl.exe` | 生成工具安装目录下的 `VC/Tools/MSVC/<版本>`；`DRIFT_MSVC` / `DRIFT_MSVC_VERSION` |
+| Windows SDK | `10.0.26100.0`；`include/um` + `include/ucrt` + `lib/um/x64` 三处齐全 | Windows Kits 安装根下的 `10`；`DRIFT_KITS` / `DRIFT_SDK_VERSION` |
 | Skia 预编译包 + 字体 | `cpp/skia/`（约 141 MB）与 `cpp/fonts/`（约 21 MB）**不随仓库分发** | 见下 |
+
+MSVC 用独立的 [C++ 生成工具](https://visualstudio.microsoft.com/zh-hans/visual-cpp-build-tools/) 就够（它就是为命令行与 CI 准备的，含 MSVC / Windows SDK / vcpkg）。本机默认路径是实测值；版本或安装位置不同就设 `DRIFT_MSVC` 指向 `VC/Tools/MSVC/<版本>`，SDK 不同再设 `DRIFT_KITS` / `DRIFT_SDK_VERSION`，不要改构建脚本。
 
 #### ① 下载安装 TypePHP（两件分开的东西）
 
@@ -185,8 +187,8 @@ Windows 上 Git Credential Manager 把凭据放在系统凭据库里读不出来
 php tools/pack-deps.php
 
 # ② 新机器：clone 后把那个 zip 拷过来，一条命令装上
-php tools/fetch-deps.php --url=D:/transfer/drift-deps-win-x64.zip
-DRIFT_DEPS_URL=D:/transfer php tools/fetch-deps.php   # 指目录也行，脚本自己补包名
+php tools/fetch-deps.php --url=./drift-deps-win-x64.zip
+DRIFT_DEPS_URL=. php tools/fetch-deps.php   # 指目录也行，脚本自己补包名
 ```
 
 `--url` 认裸路径 / 反斜杠 / `file://` / 百分号编码；路径写错会直接说「既不是网址也不是

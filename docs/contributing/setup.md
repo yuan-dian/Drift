@@ -35,6 +35,7 @@
 
 几个必须注意的点：
 
+- MSVC 只需独立的 [**C++ 生成工具**](https://visualstudio.microsoft.com/zh-hans/visual-cpp-build-tools/)，不必装完整 Visual Studio IDE：勾选「使用 C++ 的桌面开发」工作负载（含 MSVC x64 工具集、Windows SDK、CMake、vcpkg）。本机实测版本 `14.51.36231` 写在 `Environment.php`，只是默认值；Build Tools 装出的版本/路径不同就用 `DRIFT_MSVC` 指向实际 `VC/Tools/MSVC/<版本>`，并用 `DRIFT_MSVC_VERSION` 同步展示值，不要为凑版本号去装全版。
 - tpc 要的是**编译器源码树**，不要用 release 包里的 `tpc.exe`，也不要 `composer require swoole/typephp`——发行版的可执行文件缺本仓依赖的编译期修复。`drift-build` 和 `drift-codegen` 只认源码树的 `bin/tpc.php`。放别处就用 `DRIFT_TPC_ENTRY` 指过去。
 - PHP + PHPX 运行时来自 TypePHP 的 Windows x64、PHP 8.4/8.5 ZTS 发行资产，解压后把目录加进 `PATH`；包里自带 `php.ini`、`ext/` 与 `phpx/`。已有 PHP 时可只补 `phpx/`，但必须与编译器同源。
 - doctor 用 git 祖先判定核对 tpc 源码树是否含最低修复基线（`bff46481`）；源码树不是 git 或基线不在历史里时报 WARN，不静默放行。`--version` 固定报 v0.10.0，区分不了 commit 级修复。
