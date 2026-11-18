@@ -29,7 +29,12 @@ include: ../../build/base.yml
 sources:
   - .
   - ../../src
-  - ../../cpp-src
+  - ../../cpp-src/core
+  - ../../cpp-src/skia
+  - path: ../../cpp-src/win32
+    if: PHP_OS_FAMILY == 'Windows'
+  - path: ../../cpp-src/x11
+    if: PHP_OS_FAMILY == 'Linux'
 
 # ★ `tests/` 必须排除（理由同 `apps/users/project.yml`：夹具要写顶层 `return`，
 #   AOT 编译器的判据里没有 `Stmt_Return`）。
@@ -38,5 +43,3 @@ sources:
 ignore:
   - build
   - tests
-  - ../../src/Platform/X11
-  - ../../cpp-src/x11

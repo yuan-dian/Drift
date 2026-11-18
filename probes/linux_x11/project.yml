@@ -3,17 +3,13 @@
 # ═══════════════════════════════════════════════════════════════════════════
 #
 # ★ 为什么要独立一份：Windows 的 `apps/*/project.yml` include `build/base.yml`
-#   （MSVC / Skia / win32 stub），与 Linux/GCC 不兼容。两边平台文件靠**路径隔离**
-#   而不是条件编译 —— 把 X11 桥和 win32 桥同时塞进 sources 会在翻译期撞出
-#   `Duplicate function drift_thread_id`（2026-11-18 Windows CI 实测）。
+#   （MSVC / Skia / win32 编译参数），与 Linux/GCC 不兼容。官方 qt-taskboard 示例
+#   也是每个平台一份 project 文件：sources 共用，差异只在 flags/libs。
 #
 # ★ 路径基准：build.sh 把本文件连同 app/ native/ src/ 复制到隔离工作区 $ws，
-#   再 `cd $ws && tpc project.yml`，所以这里所有 sources/ignore 路径相对 $ws。
-#   `-Llib` 里的 libX11.so 软链由 build.sh 现场建立。
-#
-# ★ ignore Win32 目录：src/Platform/Win32 里的类调用 drift_win_* 桥，Linux 侧
-#   没有 win32.cc/stub。tpc 只编可达代码，理论上不实例化就不会链接这些符号，
-#   但显式排除才不会因将来某处引用而突然炸 —— 这与 Windows 侧 ignore X11 对称。
+#   再 `cd $ws && tpc project.yml`，所以这里所有 sources 路径相对 $ws。
+#   `-Llib` 里的 libX11.so 软链由 build.sh 现场建立；`native/` 只放 X11 桥
+#   （build.sh 现场复制），所以不会与 win32 stub 混编。
 
 name: linux_x11_e2e
 version: 0.1.0
@@ -32,6 +28,3 @@ sources:
   - app
   - native
   - src
-
-ignore:
-  - src/Platform/Win32

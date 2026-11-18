@@ -381,13 +381,13 @@ function stop($process, array $pipes, bool $graceful = true): bool
     return $elegant;
 }
 
-/** project.yml 的 sources 段；只认 `- xxx` 行，不引 yaml 依赖。 */
+/** project.yml 的 sources 段；同时认 `- xxx` 与 `- path: xxx`（后者是条件 sources）。 */
 function shellSources(string $yml): array
 {
-    if (preg_match('/^sources:[^\n]*\n((?:[ \t]+-[ \t]+[^\n]*\n)+)/m', $yml, $m) !== 1) {
+    if (preg_match('/^sources:[^\n]*\n((?:[ \t]+[^\n]+\n)*)/m', $yml, $m) !== 1) {
         return [];
     }
-    preg_match_all('/^[ \t]+-[ \t]+(\S+)/m', $m[1], $mm);
+    preg_match_all('/^[ \t]+-[ \t]+(?:path:[ \t]*)?(\S+)/m', $m[1], $mm);
 
     return $mm[1] ?? [];
 }
@@ -401,7 +401,10 @@ function shellSourcesOk(array $sources): bool
 {
     $allowed = [
         'dev-shell.php',
-        '../../cpp-src',
+        '../../cpp-src/core',
+        '../../cpp-src/skia',
+        '../../cpp-src/win32',
+        '../../cpp-src/x11',
         '../../src/Platform/Win32/ResizeHook.php',
         '../../src/Platform/Win32/ResizeHookState.php',
     ];

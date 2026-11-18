@@ -24,4 +24,9 @@ include: ../../build/base.yml
 sources:
   - .
   - ../../src
-  - ../../cpp-src
+  - ../../cpp-src/core
+  - ../../cpp-src/skia
+  - path: ../../cpp-src/win32
+    if: PHP_OS_FAMILY == 'Windows'
+  - path: ../../cpp-src/x11
+    if: PHP_OS_FAMILY == 'Linux'

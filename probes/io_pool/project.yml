@@ -25,9 +25,10 @@ name: io_pool
 version: 0.1.0
 
 # ★ 继承 `build/base.yml` 只为了 Skia 的编译/链接项 —— 不是因为探针要用 Skia，
-#   而是 `sources` 里含 `../../cpp-src`，而 tpc 会**无条件编译该目录下的每个 `.cc`**
+#   而是 `sources` 里含 `../../cpp-src/skia`：tpc 会**无条件编译列出的每个 `.cc`**
 #   （`FileScanner::NATIVE_SRC_EXT`，不做可达性过滤）⇒ `drift_skia.cc` 也在内。
 #   ⇒ 不链 Skia 就是一堆 C1083。这是"探针复用框架源码"的必然代价，不是设计选择。
+# ★ win32/x11 用条件 sources 二选一，不能整目录列 cpp-src —— 两套 stub 同名。
 include: ../../build/base.yml
 
 # ★ 覆盖 base.yml 的 `true`：探针要 stdout。
@@ -48,4 +49,9 @@ resource:
 sources:
   - src
   - ../../src
-  - ../../cpp-src
+  - ../../cpp-src/core
+  - ../../cpp-src/skia
+  - path: ../../cpp-src/win32
+    if: PHP_OS_FAMILY == 'Windows'
+  - path: ../../cpp-src/x11
+    if: PHP_OS_FAMILY == 'Linux'

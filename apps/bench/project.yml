@@ -20,7 +20,7 @@
 #   合成树。tpc 只编译**可达**代码 ⇒ 只有 `ShowcaseRoot` 及其 Page 被真正生成。
 #
 # ★ 为什么链 `cpp-src`：`src/Platform/Win32/*` 引用了 `drift_win_*` 的 C 函数。
-#   bench 一个都不 new（AOT 不可达即不编译），但保留 `cpp-src` 让"可达性判断出错"
+#   bench 一个都不 new（AOT 不可达即不编译），但保留本平台桥让"可达性判断出错"
 #   时表现为**能链上**而不是一堆 LNK2019 —— 量具不该死在构建期。
 
 name: bench
@@ -35,10 +35,15 @@ include: ../../build/base.yml
 # ── 源码（路径相对**本文件所在目录**）──
 #   `.`                  main.php（全局 main()）+ src/（三个基准）
 #   `../../src`          Drift 框架（量的是真实现，不是仿写）
-#   `../../cpp-src`      Win32 桥（见上）
+#   cpp-src/<平台>      按 OS 选 win32/x11 桥（见上）
 #   `../showcase/src`    M3 的"真实应用根"夹具
 sources:
   - .
   - ../../src
-  - ../../cpp-src
+  - ../../cpp-src/core
+  - ../../cpp-src/skia
+  - path: ../../cpp-src/win32
+    if: PHP_OS_FAMILY == 'Windows'
+  - path: ../../cpp-src/x11
+    if: PHP_OS_FAMILY == 'Linux'
   - ../showcase/src

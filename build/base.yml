@@ -147,15 +147,10 @@ link-libs:
 
 # 构建产物不能进 sources —— 生成的 .cc 会被当成源码再翻译一遍，
 # 症状是 "Duplicate function main" 这类看不出根因的错误。
-#
-# X11 平台壳也不能进 Windows sources：它自带 drift_thread_id/drift_io_* 的
-# stub（Linux 侧无 win32.cc，必须自带），与 win32 stub 同名 ⇒ tpc 在翻译期
-# 就报 "Duplicate function drift_thread_id"，还没到 MSVC 编译那步。
-# 两边平台文件靠路径隔离，别指望条件编译。
+# 平台目录不在这里排除：各工程按 TypePHP 的 qt-taskboard 示例那样，在
+# sources 里用 `if: PHP_OS_FAMILY == ...` 选本平台的桥接目录。
 ignore:
   - build
-  - ../../src/Platform/X11
-  - ../../cpp-src/x11
 
 build-dir: build
 

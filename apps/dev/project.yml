@@ -26,8 +26,15 @@ include: ../../build/base.yml
 
 sources:
   - dev-shell.php
-  - ../../cpp-src
-  - ../../src/Platform/Win32/ResizeHook.php
-  - ../../src/Platform/Win32/ResizeHookState.php
+  - ../../cpp-src/core
+  - ../../cpp-src/skia
+  - path: ../../cpp-src/win32
+    if: PHP_OS_FAMILY == 'Windows'
+  - path: ../../cpp-src/x11
+    if: PHP_OS_FAMILY == 'Linux'
+  - path: ../../src/Platform/Win32/ResizeHook.php
+    if: PHP_OS_FAMILY == 'Windows'
+  - path: ../../src/Platform/Win32/ResizeHookState.php
+    if: PHP_OS_FAMILY == 'Windows'
 
 no-console: false
