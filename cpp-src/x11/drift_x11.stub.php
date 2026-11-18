@@ -23,3 +23,7 @@ function drift_io_poll(): string {}
 function drift_io_threads(): int {}
 function drift_io_handled(): int {}
 function drift_io_stop(): int {}
+
+// 图片解码（Skia codec；与 win32/WIC 同名同契约，平台二选一编入）。
+// 返回 ['w'=>int, 'h'=>int, 'rgba'=>string]，解不出时空数组（不抛）。
+function drift_image_decode(string $path, int $maxWidth = 0): array {}

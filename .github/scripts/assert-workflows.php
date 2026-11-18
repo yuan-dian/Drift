@@ -634,6 +634,110 @@ if (str_contains($x11PresentCc, 'case 4: case 5:')) {
 }
 fwrite(STDOUT, '  ok     X11 输入桥 char/wheel：' . count($x11InputAnchors) . " 个链路环节 + 滚轮反向判据\n");
 
+// ── X11 IO 池：core 池体 + 自管道唤醒 + ThreadTaskHost 端到端 ──────────
+// Windows 侧 ThreadTaskHost 靠 PostMessageW 唤醒；X11 侧若只剩空实现，
+// ThreadTaskHost 会静默不可用（submit 恒 false、poll 恒空）—— 界面照常渲染，
+// 只有异步任务永不结算，属于"不报错、只是没效果"的静默缺口。这里从五个文件
+// 交叉锚定整条链路：池体编进工程、钩子在 start 之前装、wait 吐 wake、
+// PHP 翻译 wake→Woken、probe 与 build.sh 有真判据。
+$x11IoWakeCc = (string) @file_get_contents($root . '/cpp-src/x11/io_wake.cc');
+$x11IoWakeH = (string) @file_get_contents($root . '/cpp-src/x11/io_wake.h');
+$coreIoPoolCc = (string) @file_get_contents($root . '/cpp-src/core/io_pool.cc');
+$coreIoPoolH = (string) @file_get_contents($root . '/cpp-src/core/io_pool.h');
+$ioPoolProjYml = (string) @file_get_contents($root . '/probes/linux_x11/project.yml');
+$x11IoAnchors = [
+    // 池体是平台无关的那一份（不许在 x11 里另写一套线程/队列）
+    [$coreIoPoolH, 'using WakeFn = void (*)(void *ctx)', 'core 池体缺 WakeFn 钩子声明'],
+    [$coreIoPoolCc, 'setWakeHook(', 'core 池体缺 setWakeHook 实现'],
+    [$x11PresentCc, '../core/io_pool.h', 'drift_x11.cc 没引 core 池体头'],
+    [$x11PresentCc, 'drift::io::setWakeHook', 'X11 桥没装唤醒钩子'],
+    // 自管道：非阻塞 pipe，worker 写、UI drain
+    [$x11IoWakeH, 'ioWakeReadFd', '自管道缺读端 fd 暴露（select 无法监听）'],
+    [$x11IoWakeCc, 'O_NONBLOCK', '管道未设非阻塞 —— 满时 worker 会卡死'],
+    [$x11IoWakeCc, '::pipe(fds)', '自管道没真建 pipe'],
+    [$x11PresentCc, 'drift::x11::ioWakeNotify()', '唤醒钩子没写管道'],
+    // wait 吐 wake + 真事件优先 + 不丢唤醒
+    [$x11PresentCc, 'out.set("type", "wake")', 'wait 不吐 wake 事件 —— X11Platform 翻译分支永不被触发'],
+    [$x11PresentCc, 'g_wakePending', '缺唤醒暂存 —— 被真事件抢先时那条唤醒会丢'],
+    [$x11PresentCc, 'XPending(d) > 0', 'wait 没让真事件优先于 IO 唤醒'],
+    [$x11PresentCc, 'FD_SET(wakeFd, &fds)', 'select 没监听唤醒管道读端'],
+    // ABI 转发：不再是空实现
+    [$x11PresentCc, 'drift::io::submit(', 'drift_io_submit 没转发到池体'],
+    [$x11PresentCc, 'drift::io::poll()', 'drift_io_poll 没转发到池体'],
+    [$x11PresentCc, 'drift::io::stop()', 'drift_io_stop 没转发到池体'],
+    // 工程接线：core 编进 probe，build.sh 复制两份源
+    [$ioPoolProjYml, '- core', 'probe 工程没把 core/ 列入 sources —— io_pool.cc 不会被编译'],
+    [$linuxBuildSh, 'cpp-src/core/io_pool.cc', 'build.sh 没复制 core/io_pool.* —— 链接不到池体'],
+    [$linuxBuildSh, 'cpp-src/x11/io_wake.cc', 'build.sh 没复制 x11/io_wake.* —— 链接不到唤醒钩子'],
+    // PHP 翻译（已存在的分支，锚住不许被删）
+    [$x11PlatformPhp, "if (\$type === 'wake')", 'X11Platform 没接 wake 事件'],
+    [$x11PlatformPhp, 'WakeReason::Woken', 'wake 没翻译成 Woken'],
+    // probe 与构建脚本的真判据
+    [$linuxMainPhp, 'probeIoPool(', 'probe 没跑 IO 池判据'],
+    [$linuxMainPhp, '[IO] wake woken=', 'probe 没打唤醒计数锚点'],
+    [$linuxMainPhp, 'ThreadTaskHost', 'probe 没验 ThreadTaskHost 端到端'],
+    [$linuxBuildSh, "grep -q '\\[IO\\] wake woken=8/8'", 'build.sh 没断言 8/8 唤醒'],
+    [$linuxBuildSh, "grep -q '\\[IO\\] e2e sleep=20 echo=hi errors=none'", 'build.sh 没断言 ThreadTaskHost 结算值'],
+    [$linuxBuildSh, "grep -q '\\[IO\\] threads_after_stop=0'", 'build.sh 没断言关池'],
+];
+foreach ($x11IoAnchors as [$text, $needle, $label]) {
+    if (!str_contains($text, $needle)) {
+        fail('X11 IO 池链路断裂：' . $label . '（' . $needle . '）');
+    }
+}
+// 反向锚点：X11 桥里不许再现空实现（旧 submit 的 `(void)id; (void)handler;`
+// 吞参 + 恒 false、旧 poll 的恒空串）。用函数体形状而非裸 `return false;`
+// ——后者会命中 is_alive 的合法空指针检查。
+if (str_contains($x11PresentCc, '(void)id; (void)handler;')) {
+    fail('drift_x11.cc 里又有 submit 吞参恒 false 的空实现 —— ThreadTaskHost 会静默不可用');
+}
+if (preg_match('/php_drift_io_poll\s*\([^)]*\)\s*\{\s*return\s+String\(""\)/', $x11PresentCc)) {
+    fail('drift_x11.cc 里又有 poll 恒空串的空实现 —— IO 完成结果会被吞掉');
+}
+fwrite(STDOUT, '  ok     X11 IO 池 + ThreadTaskHost：' . count($x11IoAnchors) . " 个链路环节 + 空实现反向判据\n");
+
+// ── X11 图片解码：Skia codec 解 PNG/JPEG/WebP（与 win32/WIC 同契约）─────
+// 缺了它 Linux 只能走纯 PHP PNG 路径：AI 出图多是 jpg ⇒ 界面显示占位图，
+// 而几何/布局/事件全对，属"不报错、只是图出不来"的静默缺口。锚定整条链路：
+// 解码实现用 SkCodec + RGBA 直出、ABI 包装、stub 声明、工程复制、probe 判据。
+$x11DecodeCc = (string) @file_get_contents($root . '/cpp-src/x11/image_decode.cc');
+$x11DecodeH = (string) @file_get_contents($root . '/cpp-src/x11/image_decode.h');
+$x11StubPhp = (string) @file_get_contents($root . '/cpp-src/x11/drift_x11.stub.php');
+$imageDecodeAnchors = [
+    // 解码实现：Skia codec + 解码期缩放 + RGBA 直出
+    [$x11DecodeH, 'decodeImageToRgba', '解码接口缺失'],
+    [$x11DecodeCc, 'include/codec/SkCodec.h', '没引 Skia codec 头'],
+    [$x11DecodeCc, 'SkCodec::MakeFromData', '没用 SkCodec 建解码器'],
+    [$x11DecodeCc, 'std::lround(', '没自己算精确目标尺寸（依赖 codec 粒度会让 maxWidth 静默失效）'],
+    [$x11DecodeCc, 'SkCodec::kInvalidScale', '缺缩放回退分支（codec 拒绝小图缩放时会静默不缩）'],
+    [$x11DecodeCc, 'kRGBA_8888_SkColorType', '没用 RGBA 输出格式'],
+    [$x11DecodeCc, 'kUnpremul_SkAlphaType', '用了预乘 alpha —— 颜色会偏暗'],
+    [$x11DecodeCc, 'codec->getPixels(', '没取像素'],
+    [$x11DecodeCc, 'outRgba.assign(', '没把字节写回输出（assign 保留 \0）'],
+    // ABI 包装 + stub 声明
+    [$x11PresentCc, 'php_drift_image_decode', 'drift_x11.cc 没做解码 ABI 包装'],
+    [$x11PresentCc, 'drift::x11::decodeImageToRgba(', 'ABI 没转发到解码实现'],
+    [$x11StubPhp, 'function drift_image_decode(', 'x11 stub 没声明解码函数 —— php 侧静态调用编不过'],
+    // 工程接线
+    [$linuxBuildSh, 'cpp-src/x11/image_decode.cc', 'build.sh 没复制解码实现到隔离工程'],
+    // probe 判据（三格式 + 通道序 + 缩放 + 失败路径）
+    [$linuxMainPhp, 'probeImageDecode(', 'probe 没跑解码判据'],
+    [$linuxMainPhp, "const PNG_8X8", 'probe 没内嵌 PNG 测试图'],
+    [$linuxMainPhp, "const WEBP_8X8", 'probe 没内嵌 WebP 测试图'],
+    [$linuxMainPhp, "const JPG_8X8", 'probe 没内嵌 JPEG 测试图'],
+    [$linuxMainPhp, 'drift_image_decode($paths[\'png\'], 4)', 'probe 没验 maxWidth 缩放'],
+    [$linuxBuildSh, "grep -q '\\[DEC\\] jpg 8x8 bytes=256'", 'build.sh 没断言 JPEG 解码（核心价值）'],
+    [$linuxBuildSh, "grep -q '\\[DEC\\] png red(R=255,B=0) blue(R=0,B=255)'", 'build.sh 没断言通道序'],
+    [$linuxBuildSh, "grep -q '\\[DEC\\] scaled maxWidth=4 => 4x4 bytes=64'", 'build.sh 没断言缩放'],
+    [$linuxBuildSh, "grep -q '\\[DEC\\] missing=empty'", 'build.sh 没断言失败路径'],
+];
+foreach ($imageDecodeAnchors as [$text, $needle, $label]) {
+    if (!str_contains($text, $needle)) {
+        fail('X11 图片解码链路断裂：' . $label . '（' . $needle . '）');
+    }
+}
+fwrite(STDOUT, '  ok     X11 图片解码 Skia codec：' . count($imageDecodeAnchors) . " 个链路环节\n");
+
 // ── Linux Skia 构建通道（build-only，不发布）────────────────────────────
 // 目的：在公开 runner 上回答「gn gen 认不认 Linux args / .a 能不能真编出来」。
 // 它不消费 deps-v1、不改锁、不发 tag —— 所以加反向锚点防止有人把 windows-deps

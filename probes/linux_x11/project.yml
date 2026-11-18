@@ -53,4 +53,5 @@ ld-flags:
 sources:
   - app
   - native
+  - core
   - src

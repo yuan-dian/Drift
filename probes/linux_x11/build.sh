@@ -50,9 +50,17 @@ fi
 skia_home="$(cd "$skia_home" && pwd)"
 
 rm -rf "$ws"
-mkdir -p "$ws/app" "$ws/native" "$ws/lib" "$ws/cpp"
+mkdir -p "$ws/app" "$ws/native" "$ws/core" "$ws/lib" "$ws/cpp"
 cp -r "$repo/src" "$ws/src"
 cp "$repo/cpp-src/x11/drift_x11.stub.php" "$repo/cpp-src/x11/drift_x11.cc" "$ws/native/"
+# IO 池：core 是平台无关池体（单独 core/ 目录，drift_x11.cc 用 ../core/io_pool.h 引它），
+# io_wake 是 Linux 自管道唤醒钩子（与 drift_x11.cc 同在 native/，同目录 include）。
+# ★ 不复制这两个文件 ⇒ drift_io_* 会链接到空实现（或 undefined reference），
+#   ThreadTaskHost 静默不可用 —— 这正是本轮要闭合的 P0 缺口。
+cp "$repo/cpp-src/core/io_pool.cc" "$repo/cpp-src/core/io_pool.h" "$ws/core/"
+cp "$repo/cpp-src/x11/io_wake.cc" "$repo/cpp-src/x11/io_wake.h" "$ws/native/"
+# 图片解码（Skia codec）：解码实现单独 TU，drift_x11.cc 只做 ABI 包装。
+cp "$repo/cpp-src/x11/image_decode.cc" "$repo/cpp-src/x11/image_decode.h" "$ws/native/"
 # Skia 桥与 X11 桥同编：两套 stub 是不同函数名，不会冲突。
 cp "$repo/cpp-src/skia/drift_skia.stub.php" "$repo/cpp-src/skia/drift_skia.cc" "$ws/native/"
 # 字体跟产物走：桥按 cwd 的 cpp/fonts 找 Noto，CI 与本地口径一致。
@@ -164,6 +172,19 @@ if [ $rc -eq 124 ]; then
 fi
 
 fail=0
+grep -q '\[IO\] threads=[1-9]' "$ws/run.log" || { err "IO 池未起线程：core/io_pool 或自管道唤醒未编进工程"; fail=1; }
+grep -q '\[IO\] wake woken=8/8' "$ws/run.log" || { err "IO 唤醒失败：8 次 submit 没有被 waitEvents 叫醒（自管道断）"; fail=1; }
+grep -q '\[IO\] wake woken=8/8 rows=8' "$ws/run.log" || { err "IO 完成队列丢结果：poll 没拿满 8 条"; fail=1; }
+grep -q '\[IO\] e2e sleep=20 echo=hi errors=none' "$ws/run.log" || { err "ThreadTaskHost 端到端失败：两条 Future 没按值结算"; fail=1; }
+grep -q '\[IO\] threads_after_stop=0' "$ws/run.log" || { err "IO 池没关干净：shutdown 后仍有 worker（会崩溃/泄漏）"; fail=1; }
+grep -q '\[IO\] RESULT: PASS' "$ws/run.log" || { err "IO 池判据整体未通过"; fail=1; }
+grep -q '\[DEC\] png 8x8 bytes=256' "$ws/run.log" || { err "PNG 解码失败：Skia codec 没解出 8x8 RGBA"; fail=1; }
+grep -q '\[DEC\] webp 8x8 bytes=256' "$ws/run.log" || { err "WebP 解码失败：Skia codec 缺 webp 支持"; fail=1; }
+grep -q '\[DEC\] jpg 8x8 bytes=256' "$ws/run.log" || { err "JPEG 解码失败：Skia codec 缺 jpeg 支持（本 P0 的核心价值）"; fail=1; }
+grep -q '\[DEC\] png red(R=255,B=0) blue(R=0,B=255)' "$ws/run.log" || { err "PNG 通道序错：R/B 互换 —— 与 Windows 踩过的同一个坑"; fail=1; }
+grep -q '\[DEC\] scaled maxWidth=4 => 4x4 bytes=64' "$ws/run.log" || { err "maxWidth 缩放失败：解码期没等比缩小"; fail=1; }
+grep -q '\[DEC\] missing=empty' "$ws/run.log" || { err "解码失败路径没返回空数组 —— 会抛异常打断消息循环"; fail=1; }
+grep -q '\[DEC\] RESULT: PASS' "$ws/run.log" || { err "图片解码判据整体未通过"; fail=1; }
 grep -q '\[BACKEND\] skia' "$ws/run.log" || { err "Skia 后端未启用：桥没链上或 provider 回退到了软光栅"; fail=1; }
 grep -q '\[FONT\] ready=1' "$ws/run.log" || { err "Skia 目录字体未就绪 —— 文字不会绘制（几何全对也看不出字）"; fail=1; }
 grep -q '找不到目录字体' "$ws/run.log" && { err "Skia 报了字体缺失诊断"; fail=1; }

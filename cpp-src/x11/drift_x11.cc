@@ -6,7 +6,15 @@
 #include <sys/select.h>
 #include <sys/time.h>
 #include <time.h>
+#include <string>
 #include <phpx.h>
+
+// 跨平台 IO 线程池（core 是平台无关池体）+ Linux 自管道唤醒钩子。
+// ★ io_pool.h 在 ../core/（app 工程是 cpp-src/x11 → cpp-src/core；probe 工程是
+//   native/ → core/，两边相对位置一致）。io_wake.h 与本文件同目录。
+#include "../core/io_pool.h"
+#include "io_wake.h"
+#include "image_decode.h"
 
 using php::Array;
 using php::Bool;
@@ -90,6 +98,11 @@ static Atom g_wmDelete = 0;
 // 一次只返回一条 ⇒ 文本暂存到下一次 wait()。与 Win32 的 WM_KEYDOWN→WM_CHAR
 // 同序；ctrl/alt 组合不产生文本（与 WM_CHAR 的行为一致）。
 static char g_pendingChar[8] = {0};
+
+// IO 唤醒与文本同理：一次 wait 只吐一条事件，select 可能同时被真 X 事件和
+// 唤醒管道叫醒 ⇒ 真事件优先，唤醒先记在这里，下一轮 wait 吐（与 Win32 的
+// consumeWake「真事件 > 唤醒」同序）。管道字节已 drain，标记是唯一的暂存处。
+static bool g_wakePending = false;
 
 // X11 默认错误处理是 abort；死句柄在关窗竞态里是正常路径，必须吞掉。
 static int xErrorHandler(Display *d, XErrorEvent *e)
@@ -381,12 +394,57 @@ Array php_drift_x11_wait(Float timeoutMs)
     }
 
     Display *d = display();
-    if (d == nullptr) {
+    int wakeFd = drift::x11::ioWakeReadFd();
+    if (d == nullptr && wakeFd < 0) {
         Array out;
         out.set("type", "quit");
         return out;
     }
-    while (XPending(d) == 0) {
+
+    for (;;) {
+        // ★ 真事件优先（与 Win32 的「真事件 > 唤醒」同序）：先看 X 队列。
+        //   XPending 存在的窗口事件（含注入的键鼠 / 关窗）比 IO 完成更紧急。
+        if (d != nullptr && XPending(d) > 0) {
+            XEvent ev;
+            XNextEvent(d, &ev);
+            return eventToArray(ev);
+        }
+
+        // X 队列空了才轮到 IO 唤醒：先 drain 管道（一次消费），再吐 type=wake。
+        // g_wakePending 兜住「select 同时报 X 与管道、但上面先返回真事件」那次，
+        // 避免那条唤醒被吞掉后结果躺在完成队列里没人取（core 的不变量 ①）。
+        if (drift::x11::ioWakeDrain()) {
+            g_wakePending = true;
+        }
+        if (g_wakePending) {
+            g_wakePending = false;
+            Array out;
+            out.set("type", "wake");
+            return out;
+        }
+
+        if (d == nullptr) {
+            // 有唤醒管道但没 X display（headless IO 场景）：直接睡在管道上。
+            struct timeval tv;
+            struct timeval *ptv = nullptr;
+            double ms = (double)timeoutMs;
+            if (ms >= 0.0) {
+                tv.tv_sec = (long)(ms / 1000.0);
+                tv.tv_usec = (long)((ms - (double)tv.tv_sec * 1000.0) * 1000.0);
+                ptv = &tv;
+            }
+            fd_set fds;
+            FD_ZERO(&fds);
+            FD_SET(wakeFd, &fds);
+            if (select(wakeFd + 1, &fds, nullptr, nullptr, ptv) <= 0) {
+                Array out;
+                out.set("type", "timeout");
+                return out;
+            }
+            continue;   // 回循环顶 drain 管道
+        }
+
+        // 真正阻塞：select 同时盯 X connection 与唤醒管道。
         struct timeval tv;
         struct timeval *ptv = nullptr;
         double ms = (double)timeoutMs;
@@ -397,17 +455,20 @@ Array php_drift_x11_wait(Float timeoutMs)
         }
         fd_set fds;
         FD_ZERO(&fds);
-        int fd = XConnectionNumber(d);
-        FD_SET(fd, &fds);
-        if (select(fd + 1, &fds, nullptr, nullptr, ptv) <= 0) {
+        int xfd = XConnectionNumber(d);
+        FD_SET(xfd, &fds);
+        int maxfd = xfd;
+        if (wakeFd >= 0) {
+            FD_SET(wakeFd, &fds);
+            if (wakeFd > maxfd) maxfd = wakeFd;
+        }
+        if (select(maxfd + 1, &fds, nullptr, nullptr, ptv) <= 0) {
             Array out;
             out.set("type", "timeout");
             return out;
         }
+        // 回循环顶：XPending 优先，其次 drain 管道。
     }
-    XEvent ev;
-    XNextEvent(d, &ev);
-    return eventToArray(ev);
 }
 
 void php_drift_x11_present(Int hwnd, String rgba, Int width, Int height)
@@ -462,15 +523,63 @@ String php_drift_x11_config_dir()
     return String(path);
 }
 
-// 核心桥的空实现：IO 池在无线程池的 headless/X11 最小壳里不可用。
+// ── 核心桥的 X11 实现：池体复用 core/io_pool.cc，唤醒走自管道 ──
+// 与 win32/drift_win32.cc 的 ABI 包装对称，唯一差别是唤醒钩子：
+//   Win32 = startIoWake()（消息专用窗 + PostMessageW）
+//   X11   = startIoPipe()（非阻塞管道 + select 读端）
+// 顺序同样不能反：先建唤醒通道，再起 worker（worker 一跑就可能叫醒）。
 Int php_drift_thread_id() { return (Int)pthread_self(); }
-Int php_drift_io_start(Int threads) { (void)threads; return 1; }
+
+Int php_drift_io_start(Int threads)
+{
+    if (!drift::x11::startIoPipe()) {
+        return (Int)0;
+    }
+    // ★ 钩子必须在 core::start 之前装：worker 起来后第一条完成就可能叫醒 UI。
+    drift::io::setWakeHook([](void *) { drift::x11::ioWakeNotify(); }, nullptr);
+    return (Int)drift::io::start((int)threads);
+}
+
 Bool php_drift_io_submit(Int id, String handler, Int intArg, String strArg)
 {
-    (void)id; (void)handler; (void)intArg; (void)strArg;
-    return false;
+    return (Bool)drift::io::submit(
+        (int)id,
+        std::string(handler.data(), handler.length()),
+        (int)intArg,
+        std::string(strArg.data(), strArg.length())
+    );
 }
-String php_drift_io_poll() { return String(""); }
-Int php_drift_io_threads() { return 0; }
-Int php_drift_io_handled() { return 0; }
-Int php_drift_io_stop() { return 0; }
+
+String php_drift_io_poll() { return String(drift::io::poll()); }
+Int php_drift_io_threads() { return (Int)drift::io::threads(); }
+Int php_drift_io_handled() { return (Int)drift::io::handled(); }
+
+Int php_drift_io_stop()
+{
+    drift::io::stop();              // 先 join 全部 worker
+    drift::io::setWakeHook(nullptr, nullptr);
+    drift::x11::stopIoPipe();       // 再关管道（顺序反了 = worker 叫醒死管道）
+    return (Int)0;
+}
+
+// ── 图片解码（Skia codec，与 win32/WIC 同一 ABI 契约）──
+// 空数组 = 失败（格式不支持 / 文件损坏是预期内结果，跨边界抛异常要 phpx 翻译层）。
+// 正数 maxWidth 收敛到 unsigned；负数/0 都当"原尺寸"。
+Array php_drift_image_decode(String path, Int maxWidth)
+{
+    Array out;
+    unsigned int width = 0;
+    unsigned int height = 0;
+    std::string rgba;
+    const unsigned int limit = maxWidth > 0 ? (unsigned int)maxWidth : 0U;
+
+    if (!drift::x11::decodeImageToRgba(
+            std::string(path.data(), path.length()), limit, width, height, rgba)) {
+        return out;
+    }
+
+    out.set("w", (Int)width);
+    out.set("h", (Int)height);
+    out.set("rgba", String(rgba));
+    return out;
+}

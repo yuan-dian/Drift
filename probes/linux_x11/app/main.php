@@ -3,16 +3,27 @@ declare(strict_types=1);
 
 use Drift\App\Application;
 use Drift\App\EventLoop;
+use Drift\App\Job;
+use Drift\App\NamedJob;
+use Drift\App\ThreadTaskHost;
 use Drift\Geometry\Axis;
 use Drift\Geometry\BoxConstraints;
 use Drift\Input\CursorShape;
 use Drift\Input\InputEvent;
 use Drift\Input\KeyEvent;
 use Drift\Input\ScrollEvent;
+use Drift\Platform\WakeReason;
 use Drift\Platform\X11\X11Platform;
 use Drift\Widget\Center;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
+
+use function drift_io_handled;
+use function drift_io_poll;
+use function drift_io_start;
+use function drift_io_stop;
+use function drift_io_submit;
+use function drift_io_threads;
 
 final class X11ProbeApplication extends Application
 {
@@ -84,12 +95,244 @@ final class X11ProbeApplication extends Application
     }
 }
 
+/** IO 池夹具：`echo`（验字符串往返 ABI）与 `sleep`（验跨线程投递） */
+final class IoEchoJob implements NamedJob
+{
+    public function __construct(private readonly string $text)
+    {
+    }
+
+    public function name(): string
+    {
+        return 'echo';
+    }
+
+    public function args(): array
+    {
+        return ['text' => $this->text];
+    }
+
+    public function run(): mixed
+    {
+        return $this->text;
+    }
+}
+
+final class IoSleepJob implements NamedJob
+{
+    public function __construct(private readonly int $ms)
+    {
+    }
+
+    public function name(): string
+    {
+        return 'sleep';
+    }
+
+    public function args(): array
+    {
+        return ['ms' => $this->ms];
+    }
+
+    public function run(): mixed
+    {
+        return $this->ms;
+    }
+}
+
+// 解码测试图（8×8，四象限红/绿/蓝/灰），base64 内嵌避免新增二进制 fixture。
+// PNG/WebP 无损 ⇒ 通道序判据用它们；JPEG 有损 ⇒ 只验尺寸/长度与"红象限 R≫B"。
+const PNG_8X8 = 'iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAIUlEQVR4nGP8z4AAjEgcJiRxFEC6BCMDA8LghoZGWtgBAGjwBI6UxJUVAAAAAElFTkSuQmCC';
+const WEBP_8X8 = 'UklGRjoAAABXRUJQVlA4TC4AAAAvB8ABAB8gECA4d25DQFB03XICAYJz5+Y/8MlRgYK2bZiSLMmSfBuIiP6H+OEP';
+const JPG_8X8 = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/2wBDAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/wAARCAAIAAgDAREAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD8/f8AgmL8ff8AhKf+F3f8Un9h+w/8K1/5jv2rzftX/Cff9Qa32bPs/wDt7t/8O35j9ph+wz/4ly/4gp/x1F/rl/rl/wARI/5sn/q9/Z3+r3+oX/V3M8+ufXP7c/6hfq/1X/l/7f8Acz+2C8Sv+K0f/Eu//CL/AMS2f8S2f8Rb/wCZl/xGL/XT/iMX/EMv+oDws/1c/wBXP+IWf9T3+1/7d/5lf9l/8KP/2Q==';
+
+/**
+ * 图片解码 P0 判据：drift_image_decode（Skia codec）解 PNG/JPEG/WebP。
+ *
+ * 放在建窗前（headless，无需 X/渲染）—— 解码是纯数据路径。输出 `[DEC]`，
+ * build.sh grep 成失败条件。四象限已知色验通道序（R/B 互换会让判据红）。
+ */
+function probeImageDecode(string $dir): void
+{
+    echo "=== Image decode: Skia codec ===\n";
+    if (!\function_exists('drift_image_decode')) {
+        echo "[FAIL] drift_image_decode 不存在（stub 没声明或桥没链上）\n";
+        exit(1);
+    }
+    @mkdir($dir);
+    $samples = [
+        'png' => PNG_8X8,
+        'webp' => WEBP_8X8,
+        'jpg' => JPG_8X8,
+    ];
+    $paths = [];
+    foreach ($samples as $ext => $b64) {
+        $p = $dir . '/sample.' . $ext;
+        \file_put_contents($p, \base64_decode($b64, true));
+        $paths[$ext] = $p;
+    }
+
+    // 三种格式都能解成 8×8 / 8*8*4 字节。
+    $ok = true;
+    $dims = [];
+    foreach ($paths as $ext => $p) {
+        $decoded = \drift_image_decode($p);
+        $w = $decoded['w'] ?? 0;
+        $h = $decoded['h'] ?? 0;
+        $rgba = $decoded['rgba'] ?? '';
+        $len = \strlen($rgba);
+        $dims[$ext] = "{$w}x{$h}/{$len}";
+        echo "[DEC] {$ext} {$w}x{$h} bytes={$len}\n";
+        if ($w !== 8 || $h !== 8 || $len !== 8 * 8 * 4) {
+            $ok = false;
+        }
+    }
+    echo '[DEC] dims=' . \implode(' ', $dims) . "\n";
+
+    // 通道序：PNG/WebP 无损，取左上红象限(1,1)与左下蓝象限(1,5)的字节。
+    // 红点应 R≈255,B≈0；蓝点应 B≈255,R≈0。R/B 互换会让这两条同时反。
+    foreach (['png', 'webp'] as $ext) {
+        $decoded = \drift_image_decode($paths[$ext]);
+        $rgba = (string) ($decoded['rgba'] ?? '');
+        // 像素索引 = (y * width + x) * 4；别把 x/y 写反：
+        // 红象限是左上 (x=1,y=1)，蓝象限是左下 (x=1,y=5)。
+        $redOfs = (1 * 8 + 1) * 4;    // (y=1,x=1) 左上红象限
+        $blueOfs = (5 * 8 + 1) * 4;   // (y=5,x=1) 左下蓝象限
+        $r = \ord($rgba[$redOfs]);
+        $b = \ord($rgba[$redOfs + 2]);
+        $br = \ord($rgba[$blueOfs]);
+        $bb = \ord($rgba[$blueOfs + 2]);
+        echo "[DEC] {$ext} red(R={$r},B={$b}) blue(R={$br},B={$bb})\n";
+        if (!($r > 240 && $b < 16 && $bb > 240 && $br < 16)) {
+            $ok = false;
+        }
+    }
+
+    // maxWidth 缩放：4 = 原宽一半，高也应减半，字节数按新尺寸。
+    $scaled = \drift_image_decode($paths['png'], 4);
+    $sw = $scaled['w'] ?? 0;
+    $sh = $scaled['h'] ?? 0;
+    $slen = \strlen((string) ($scaled['rgba'] ?? ''));
+    echo "[DEC] scaled maxWidth=4 => {$sw}x{$sh} bytes={$slen}\n";
+    if ($sw !== 4 || $sh !== 4 || $slen !== 4 * 4 * 4) {
+        $ok = false;
+    }
+
+    // 失败路径：不存在的文件必须返回空数组（不抛、不崩）。
+    $bad = \drift_image_decode($dir . '/does-not-exist.jpg');
+    echo '[DEC] missing=' . (\is_array($bad) && $bad === [] ? 'empty' : 'NOT_EMPTY') . "\n";
+    if ($bad !== []) {
+        $ok = false;
+    }
+
+    if (!$ok) {
+        echo "[FAIL] image decode verdict\n";
+        exit(1);
+    }
+    echo "[DEC] RESULT: PASS\n";
+}
+
+/**
+ * IO 池 P0 判据：core/io_pool（池体）+ 自管道唤醒 + ThreadTaskHost 端到端。
+ *
+ * 放在建窗之前跑（headless）：此时没有 X 事件干扰，waitEvents(-1) 若不被 IO
+ * 唤醒就会挂死 —— build.sh 的 90s 超时会抓住它，不会假绿。
+ * 输出前缀统一 `[IO]`，由 build.sh grep 成失败条件。
+ */
+function probeIoPool(X11Platform $platform): void
+{
+    echo "=== IO pool: core + self-pipe wake ===\n";
+
+    // 起池（幂等）。空实现版恒返回 1 但 threads()=0，这里必须真起线程。
+    $threads = drift_io_start(4);
+    echo "[IO] threads={$threads}\n";
+    if ($threads < 1) {
+        echo "[FAIL] io pool not started\n";
+        exit(1);
+    }
+
+    // J1 唤醒 + 0 丢失：submit(echo) → waitEvents(-1) 必须返回 Woken（不是
+    // Timeout / Message），poll 必须有结果，handled() 累加必须等于提交数。
+    $woken = 0;
+    $rows = 0;
+    $rounds = 8;
+    for ($i = 1; $i <= $rounds; $i++) {
+        drift_io_submit(1000 + $i, 'echo', 0, 'io' . $i);
+        $why = $platform->waitEvents(-1.0);
+        if ($why === WakeReason::Woken) {
+            $woken++;
+        }
+        $raw = drift_io_poll();
+        $decoded = \json_decode($raw, true);
+        $rows += \is_array($decoded) ? \count($decoded) : 0;
+    }
+    $handled = drift_io_handled();
+    echo "[IO] wake woken={$woken}/{$rounds} rows={$rows} handled={$handled}\n";
+
+    // J2 ThreadTaskHost 端到端：两条 Future 必须 resolve（sleep→20 / echo→hi）。
+    $host = new ThreadTaskHost(2);
+    $got = [];
+    $errors = [];
+    $host->submit(new IoSleepJob(20))
+        ->then(static function (mixed $v) use (&$got): void {
+            $got['sleep'] = $v;
+        })
+        ->catch(static function (\Throwable $e) use (&$errors): void {
+            $errors['sleep'] = $e->getMessage();
+        });
+    $host->submit(new IoEchoJob('hi'))
+        ->then(static function (mixed $v) use (&$got): void {
+            $got['echo'] = $v;
+        })
+        ->catch(static function (\Throwable $e) use (&$errors): void {
+            $errors['echo'] = $e->getMessage();
+        });
+
+    $deadline = $platform->now() + 5000.0;
+    $wakes = 0;
+    while ($host->pending() > 0 && $platform->now() < $deadline) {
+        if ($platform->waitEvents(-1.0) === WakeReason::Woken) {
+            $wakes++;
+        }
+        $host->drain(static function ($completion): void {
+            if ($completion->error !== null) {
+                $completion->future->reject($completion->error);
+                return;
+            }
+            $completion->future->resolve($completion->value);
+        });
+    }
+    echo '[IO] e2e sleep=' . ($got['sleep'] ?? 'MISSING')
+        . ' echo=' . ($got['echo'] ?? 'MISSING')
+        . ' errors=' . (\count($errors) === 0 ? 'none' : \implode('|', $errors))
+        . " wakes={$wakes}\n";
+
+    // J3 关池：shutdown 后 threads() 必须是 0（join 完 worker）。
+    $host->shutdown();
+    $after = drift_io_threads();
+    echo "[IO] threads_after_stop={$after}\n";
+
+    if ($woken !== $rounds || $rows !== $rounds || $handled < $rounds
+        || ($got['sleep'] ?? null) !== 20 || ($got['echo'] ?? null) !== 'hi'
+        || \count($errors) !== 0 || $after !== 0) {
+        echo "[FAIL] io pool verdict\n";
+        exit(1);
+    }
+    echo "[IO] RESULT: PASS\n";
+}
+
 function main(): void
 {
     echo "=== X11 E2E: real Application on EventLoop ===\n";
     $platform = new X11Platform();
     echo 'configDir=' . $platform->configDir() . "\n";
     echo 'now=' . $platform->now() . "\n";
+
+    // IO 池 P0 判据（建窗前，headless，无 X 事件干扰）。
+    probeIoPool($platform);
+
+    // 图片解码 P0 判据（纯数据路径，建窗前 headless 跑）。
+    probeImageDecode(\sys_get_temp_dir() . '/drift-decode-samples');
 
     $handle = $platform->window()->createWindow('X11 Drift', 320, 240);
     echo "handle={$handle}\n";
