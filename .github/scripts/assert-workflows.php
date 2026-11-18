@@ -79,10 +79,12 @@ $verifyFile = $root . '/.github/workflows/verify.yml';
 $releaseFile = $root . '/.github/workflows/release.yml';
 $depsFile = $root . '/.github/workflows/windows-deps.yml';
 $linuxFile = $root . '/.github/workflows/linux-build.yml';
+$linuxDepsFile = $root . '/.github/workflows/linux-deps.yml';
 
 foreach (['windows-build.yml' => $buildFile, 'verify.yml' => $verifyFile,
           'release.yml' => $releaseFile, 'windows-deps.yml' => $depsFile,
-          'linux-build.yml' => $linuxFile] as $name => $path) {
+          'linux-build.yml' => $linuxFile,
+          'linux-deps.yml' => $linuxDepsFile] as $name => $path) {
     if (!is_file($path)) {
         fail("{$name} 不存在 —— workflow 通道缺失");
     }
@@ -92,18 +94,20 @@ $verify = (string) file_get_contents($verifyFile);
 $release = (string) file_get_contents($releaseFile);
 $deps = (string) file_get_contents($depsFile);
 $linux = (string) file_get_contents($linuxFile);
+$linuxDeps = (string) file_get_contents($linuxDepsFile);
 
 foreach (['workflow' => ['.github/workflows/windows-build.yml', $build],
           'verify' => ['.github/workflows/verify.yml', $verify],
           'release' => ['.github/workflows/release.yml', $release],
           'deps' => ['.github/workflows/windows-deps.yml', $deps],
-          'linux' => ['.github/workflows/linux-build.yml', $linux]] as $file => [$path, $text]) {
+          'linux' => ['.github/workflows/linux-build.yml', $linux],
+          'linux-deps' => ['.github/workflows/linux-deps.yml', $linuxDeps]] as $file => [$path, $text]) {
     assertContextScope($path, $text);
 }
 fwrite(STDOUT, "  ok     表达式上下文作用域（job/workflow 级 env 不碰 runner/steps/job/env）\n");
 
 foreach (['windows-build.yml' => $build, 'verify.yml' => $verify,
-          'linux-build.yml' => $linux] as $name => $text) {
+          'linux-build.yml' => $linux, 'linux-deps.yml' => $linuxDeps] as $name => $text) {
     if (preg_match('/^\s*if:\s*false\s*$/m', $text)) {
         fail("{$name} 存在 if: false —— job 被关掉，等于没有");
     }
@@ -467,3 +471,39 @@ if (hasIgnoreEntry($linuxProjYml, 'src/Platform/Win32') || hasIgnoreEntry($linux
     fail('Linux project.yml 还在 ignore 平台目录 —— native/ 只含 X11 桥，无需剪枝');
 }
 fwrite(STDOUT, '  ok     平台桥按 OS 在 sources 里选择：' . count($bridgeProjects) . " 份工程无混编/无平台 ignore\n");
+
+// ── Linux Skia 构建通道（build-only，不发布）────────────────────────────
+// 目的：在公开 runner 上回答「gn gen 认不认 Linux args / .a 能不能真编出来」。
+// 它不消费 deps-v1、不改锁、不发 tag —— 所以加反向锚点防止有人把 windows-deps
+// 的发布段复制过来，把未接消费者的 Linux 包钉进不可变 tag。
+$linuxDepsAnchors = [
+    'runs-on: ubuntu-24.04' => '托管 Linux runner（不用会静默排队的 self-hosted）',
+    'workflow_dispatch:' => '手动兜底',
+    'clang --version' => '显式验 clang 并留版本在日志里',
+    '--platform=linux' => '显式钉 Linux 分支（不靠 uname 猜）',
+    'tools/skia/build-skia.sh' => '复用同一份 Skia 构建配方',
+    'out/Release-x64/*.a' => '产物是 Linux 静态库',
+    'actions/upload-artifact@v4' => '产物交给下游评估',
+    "grep -q -- '-MT'" => '拦截 MSVC 静态 CRT 标志泄漏到 Linux 构建',
+];
+foreach ($linuxDepsAnchors as $needle => $label) {
+    if (!str_contains($linuxDeps, $needle)) {
+        fail('linux-deps.yml 缺环节：' . $label . '（' . $needle . '）');
+    }
+}
+// 反向锚点只查生效行：注释里解释"为什么不打包"是必要的，不该被自己拦住。
+$linuxDepsLive = $stripComments($linuxDeps);
+foreach ([
+    'php tools/pack-deps.php' => '打包（会产出写死 win-x64 的包名）',
+    'php tools/release-deps.php' => '发布依赖资产',
+    'php tools/fetch-deps.php' => '发布后回验（本通道没有发布）',
+    'git tag' => '打 tag（deps 版本是不可变的）',
+    'deps.lock.json' => '改依赖锁（Linux 包还没有消费者）',
+    'publish:' => '发布开关（build-only 通道不该有）',
+    'contents: write' => '写权限（build-only 只需 contents: read）',
+] as $needle => $label) {
+    if (str_contains($linuxDepsLive, $needle)) {
+        fail('linux-deps.yml 出现 ' . $label . ' —— 这是 build-only 通道，不许碰发布链路（' . $needle . '）');
+    }
+}
+fwrite(STDOUT, '  ok     Linux Skia 构建通道：' . count($linuxDepsAnchors) . " 个 build-only 环节\n");

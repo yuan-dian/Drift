@@ -1,0 +1,176 @@
+# Builds the Linux Skia static libs (.a) from the pinned commit, for evaluation.
+#
+# Deliberately build-only: no pack, no lock, no tag, no release. The Linux
+# package has no consumer yet (X11 uses X11RasterSurface), so this workflow
+# publishes nothing — it answers "does gn gen accept our args / do the .a
+# files really build on Linux" and hands the outputs over as an artifact.
+# Once the X11 Skia backend lands, packing/publishing becomes a separate,
+# reviewed decision (deps-v2) — never a side effect of a build.
+#
+# Runs on a hosted runner on purpose: a self-hosted job on a repo with no
+# registered runner silently queues forever. Everything needed is either on
+# the image (clang / cmake / python3 / git), fetched by build-skia.sh
+# (gn / ninja from Skia's own pinned scripts), or committed (headers.txt).
+
+name: Linux x64 deps
+
+on:
+  workflow_dispatch:
+    inputs:
+      skia_revision:
+        description: 'Skia commit (40-hex); empty means read SKIA_REVISION'
+        required: false
+        default: ''
+        type: string
+  workflow_call:
+    inputs:
+      skia_revision:
+        description: 'Skia commit (40-hex); empty means read SKIA_REVISION'
+        required: false
+        default: ''
+        type: string
+    outputs:
+      artifact_name:
+        description: Artifact holding Skia .a libs + args.gn + headers
+        value: ${{ jobs.build.outputs.artifact_name }}
+      lib_count:
+        description: Number of .a files produced by ninja
+        value: ${{ jobs.build.outputs.lib_count }}
+
+permissions:
+  contents: read
+
+env:
+  COMPOSER_NO_INTERACTION: 1
+
+concurrency:
+  group: linux-deps-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build Skia libs (ubuntu-24.04)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    outputs:
+      artifact_name: ${{ steps.resolve.outputs.artifact_name }}
+      lib_count: ${{ steps.verify_libs.outputs.lib_count }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Resolve inputs
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          rev='${{ inputs.skia_revision }}'
+          if [ -z "$rev" ]; then rev="$(tr -d '\r\n' < SKIA_REVISION)"; fi
+          if [[ ! "$rev" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error title=Skia revision::must be a 40-hex commit, got '$rev' (unpinned cannot be built)"
+            exit 1
+          fi
+          printf '%s\n' "$rev" > SKIA_REVISION
+          echo "REV=$rev" >> "$GITHUB_ENV"
+          echo "deps_tag=$(tr -d '\r\n' < DEPS_VERSION)" >> "$GITHUB_ENV"
+          printf 'artifact_name=drift-skia-linux-%s-%s\n' "${{ github.run_id }}" "${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+          echo "Skia=$rev (build-only; no pack / no tag / no release)"
+
+      # ubuntu-24.04 images ship clang, but the version drifts with image
+      # updates. Verify the compiler exists and report the exact version so a
+      # future "our args only work on clang N" is diagnosable from the log.
+      # gn / ninja are NOT installed here: build-skia.sh falls back to Skia's
+      # own bin/fetch-gn and bin/fetch-ninja (pinned by the checkout).
+      - name: Assert toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          for tool in git python3 g++ make; do
+            command -v "$tool" >/dev/null 2>&1 || { echo "::error title=Missing tool::$tool not found on runner"; exit 1; }
+          done
+          if ! command -v clang >/dev/null 2>&1; then
+            echo "::error title=Missing clang::ubuntu-24.04 image should ship clang; pin a newer image or fix the build recipe"
+            exit 1
+          fi
+          clang --version | head -1
+          g++ --version | head -1
+          python3 --version
+          git --version
+
+      # Skia's git-sync-deps + full compile needs well over 10 GB. Hosted
+      # images are ~14 GB free; drop toolchains this build never touches
+      # (the Windows channel does the equivalent with PowerShell).
+      - name: Free disk space
+        shell: bash
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+                      /usr/local/share/boost /opt/hostedtoolcache/CodeQL 2>/dev/null || true
+          df -h . | tail -1
+
+      - name: Assert disk headroom
+        shell: bash
+        run: |
+          free="$(df -B1 . | awk 'NR==2 {print $4}')"
+          need=$((12 * 1024 * 1024 * 1024))
+          if [ "$free" -lt "$need" ]; then
+            echo "::error title=Disk::only $((free/1024/1024/1024)) GB free; a full Skia build needs ~12 GB"
+            exit 1
+          fi
+          echo "disk headroom ok: $((free/1024/1024/1024)) GB"
+
+      - name: Build Skia from pinned commit
+        shell: bash
+        env:
+          OUT: ${{ github.workspace }}/cpp/skia-linux
+        run: |
+          set -o pipefail
+          # --out is separate from windows-deps' cpp/skia: .a and .lib must
+          # never land in the same tree (pack-deps assumes *.lib there).
+          bash tools/skia/build-skia.sh --platform=linux --rev="$REV" --out="$OUT" --replace
+
+      - name: Verify Linux outputs
+        id: verify_libs
+        shell: bash
+        env:
+          OUT: ${{ github.workspace }}/cpp/skia-linux
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          libs=("$OUT"/out/Release-x64/*.a)
+          count=${#libs[@]}
+          if [ "$count" -eq 0 ]; then
+            echo "::error title=No .a::ninja produced no Linux static libs"
+            exit 1
+          fi
+          for lib in "${libs[@]}"; do
+            file "$lib" | grep -q 'current ar archive' || {
+              echo "::error title=Bad .a::$lib is not an ar archive"; exit 1
+            }
+          done
+          test -s "$OUT/out/Release-x64/args.gn" || { echo "::error title=No args.gn::gn did not record build args"; exit 1; }
+          # The clang-specific -MT (MSVC static CRT) must not appear in the
+          # recorded args: on clang it means "dependency target" with no value.
+          if grep -q -- '-MT' "$OUT/out/Release-x64/args.gn"; then
+            echo "::error title=-MT leaked::MSVC -MT reached a Linux build"
+            exit 1
+          fi
+          printf 'lib_count=%d\n' "$count" >> "$GITHUB_OUTPUT"
+          echo "Linux Skia: $count static libs, args.gn clean"
+          ls -lh "${libs[@]}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.resolve.outputs.artifact_name }}
+          path: |
+            ${{ github.workspace }}/cpp/skia-linux/out/Release-x64/*.a
+            ${{ github.workspace }}/cpp/skia-linux/out/Release-x64/args.gn
+            ${{ github.workspace }}/cpp/skia-linux/include
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Build-only summary
+        shell: bash
+        run: |
+          echo "Skia Linux .a built as artifact; no package/lock/tag/release was written."
+          echo "This channel never advances the deps version (still $deps_tag)."
