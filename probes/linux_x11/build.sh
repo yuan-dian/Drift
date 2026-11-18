@@ -23,30 +23,13 @@ mkdir -p "$ws/app" "$ws/native" "$ws/lib"
 cp -r "$repo/src" "$ws/src"
 cp "$repo/cpp-src/x11/drift_x11.stub.php" "$repo/cpp-src/x11/drift_x11.cc" "$ws/native/"
 cp "$probe_dir/app/main.php" "$probe_dir/send_close.py" "$ws/app/"
+cp "$probe_dir/project.yml" "$ws/project.yml"
 
 libx11="$(ldconfig -p | awk '/libX11\.so\.6/{print $NF; exit}')"
 if [ -z "$libx11" ]; then
     echo "[FAIL] libX11.so.6 不在 ldconfig 缓存"; exit 2
 fi
 ln -sf "$libx11" "$ws/lib/libX11.so"
-
-cat > "$ws/project.yml" <<YML
-name: linux_x11_e2e
-version: 0.1.0
-info:
-  Author: Drift
-  Description: X11Platform end-to-end gate
-mode: bin
-cxx-std: c++20
-job: 4
-ld-flags:
-  - -L$ws/lib
-  - -lX11
-sources:
-  - app
-  - native
-  - src
-YML
 
 cd "$ws" || exit 2
 echo "=== 编译（tpc/GCC）==="

@@ -38,3 +38,5 @@ sources:
 ignore:
   - build
   - tests
+  - ../../src/Platform/X11
+  - ../../cpp-src/x11

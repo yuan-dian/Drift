@@ -54,3 +54,5 @@ ignore:
   - build
   - tests
   - mock-server.php
+  - ../../src/Platform/X11
+  - ../../cpp-src/x11

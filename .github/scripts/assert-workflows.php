@@ -205,3 +205,35 @@ fwrite(STDOUT, "  ok     构建通道全在托管 runner 上（无 self-hosted �
 fwrite(STDOUT, "  ok     gn / ninja 走 Skia 自带预编译包（不装 depot_tools）\n");
 fwrite(STDOUT, "  ok     gn gen 在 Skia 源码目录内执行（source root 靠 .gn 定位）\n");
 fwrite(STDOUT, '  ok     Linux X11 端到端门：' . count($linuxAnchors) . " 个环节\n");
+
+// 平台文件隔离：Windows 与 Linux 各用一份 project.yml，且显式排除对方平台壳。
+// 变异测试：删掉任一 ignore ⇒ tpc 把两个 stub 一起翻译，Duplicate function 红。
+$baseYml = (string) @file_get_contents($root . '/build/base.yml');
+$linuxProjYml = (string) @file_get_contents($root . '/probes/linux_x11/project.yml');
+$linuxBuildSh = (string) @file_get_contents($root . '/probes/linux_x11/build.sh');
+// 用「行首空白 + `- 路径`」匹配，注释掉的 `- ` 不算数（否则注释也能骗过判据）。
+function hasIgnoreEntry(string $text, string $path): bool
+{
+    return preg_match('/^\s*-\s+' . preg_quote($path, '/') . '\s*$/m', $text) === 1;
+}
+$platformGuards = [
+    ['text' => $baseYml, 'path' => '../../src/Platform/X11', 'msg' => 'Windows base.yml 未 ignore X11 PHP 平台壳'],
+    ['text' => $baseYml, 'path' => '../../cpp-src/x11', 'msg' => 'Windows base.yml 未 ignore X11 C++ 桥（stub 重复声明根因）'],
+    ['text' => $linuxProjYml, 'path' => 'src/Platform/Win32', 'msg' => 'Linux project.yml 未 ignore Win32 平台壳'],
+];
+foreach ($platformGuards as $guard) {
+    if (!hasIgnoreEntry($guard['text'], $guard['path'])) {
+        fail($guard['msg']);
+    }
+}
+if (!preg_match('/^cp\s+"\$probe_dir\/project\.yml"\s+"\$ws\/project\.yml"\s*$/m', $linuxBuildSh)) {
+    fail('build.sh 没复制正式 project.yml —— 又退回 heredoc 临时配置，判据管不到');
+}
+// 自带 ignore 的 app 会整体替换 base 的 ignore，必须各自补齐 X11 排除。
+foreach (['users', 'watermark'] as $app) {
+    $appYml = (string) @file_get_contents($root . '/apps/' . $app . '/project.yml');
+    if (!hasIgnoreEntry($appYml, '../../cpp-src/x11')) {
+        fail("apps/{$app}/project.yml 自带 ignore 但没排除 X11 —— 会整体替换 base，混编复发");
+    }
+}
+fwrite(STDOUT, "  ok     平台文件双向隔离：Windows 工程 ignore X11、Linux 工程 ignore Win32\n");
