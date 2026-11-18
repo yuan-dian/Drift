@@ -47,6 +47,17 @@ gate_timeout="${DRIFT_X11_TIMEOUT:-90}"
 : > "$ws/run.log"
 timeout --signal=TERM --kill-after=5s "${gate_timeout}s" ./linux_x11_e2e > "$ws/run.log" 2>&1 &
 pid=$!
+# 卡住时抓内核态现场：CPU 时间在涨=死循环，wchan=futex=锁死锁，poll=等事件。
+(
+    while kill -0 "$pid" 2>/dev/null; do
+        stat=$(awk '{print "utime="$14" stime="$15}' "/proc/$pid/stat" 2>/dev/null)
+        wchan=$(cat "/proc/$pid/wchan" 2>/dev/null)
+        call=$(cut -c1-40 "/proc/$pid/syscall" 2>/dev/null)
+        echo "[WATCH] $stat wchan=$wchan syscall=$call"
+        sleep 5
+    done
+) > "$ws/watch.log" 2>&1 &
+watch_pid=$!
 tail -f "$ws/run.log" &
 tail_pid=$!
 win=""
@@ -62,6 +73,7 @@ if [ -z "$win" ]; then
     echo "[FAIL] 窗口未出现（createWindow / show / xwininfo 任一环断）"
     kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
     kill "$tail_pid" 2>/dev/null; wait "$tail_pid" 2>/dev/null
+    kill "$watch_pid" 2>/dev/null; wait "$watch_pid" 2>/dev/null
     exit 1
 fi
 echo "[OK] 窗口出现 $win"
@@ -70,9 +82,12 @@ python3 "$ws/app/send_close.py" "$win" || echo "[WARN] 事件注入脚本报错"
 wait "$pid"
 rc=$?
 kill "$tail_pid" 2>/dev/null; wait "$tail_pid" 2>/dev/null
+kill "$watch_pid" 2>/dev/null; wait "$watch_pid" 2>/dev/null
 
 if [ $rc -eq 124 ]; then
     echo "[FAIL] 应用 ${gate_timeout}s 未退出：事件注入或消息泵卡住（timeout 已强杀）"
+    echo "--- 卡住时内核态现场（每 5s 一次，判据看 utime/stime 是否增长）---"
+    tail -12 "$ws/watch.log"
 fi
 
 fail=0

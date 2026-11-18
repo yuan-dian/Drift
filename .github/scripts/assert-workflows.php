@@ -273,6 +273,9 @@ if (!str_contains($linuxBuildSh, 'tail -f "$ws/run.log"')) {
 if (!str_contains($linuxBuildSh, '${DRIFT_X11_TIMEOUT:-90}')) {
     fail('build.sh 的超时门限没有默认值 —— 无法在 CI 90s 与本地快测间切换');
 }
+if (!str_contains($linuxBuildSh, '/proc/$pid/wchan') || !str_contains($linuxBuildSh, 'watch.log')) {
+    fail('build.sh 缺内核态 watchdog —— 应用卡住时无法区分死循环/锁死锁/等事件');
+}
 $linuxMainPhp = (string) @file_get_contents($root . '/probes/linux_x11/app/main.php');
 // attach() 会同步跑首帧，而 resize 事件要等 EventLoop pump ⇒ 不先设尺寸就是 0×0 画布、present 整段跳过。
 if (!preg_match('/->resize\([\s\S]*?\);[\s\S]*?->attach\(/', $linuxMainPhp)) {
@@ -284,7 +287,7 @@ foreach (['shown', 'viewport', 'surface ready', 'attached'] as $stage) {
     }
 }
 // attach() 内部各钩子打标：CI 卡在 surface ready 后、attached 前，靠这些标一次定位到具体方法。
-foreach (['theme entered', 'metrics entered', 'commandGates entered', 'commands entered', 'buildRoot entered', 'first frame entered', 'first frame finished'] as $stage) {
+foreach (['theme entered', 'metrics entered', 'commandGates entered', 'commands entered', 'buildRoot entered', 'center made', 'text made', 'tree linked', 'first frame entered', 'first frame finished'] as $stage) {
     if (!str_contains($linuxMainPhp, $stage)) {
         fail("probe 缺少 [PROBE] {$stage} —— attach 内卡住时无法定位到具体钩子");
     }

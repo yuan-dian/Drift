@@ -76,8 +76,14 @@ final class X11ProbeApplication extends Application
     public function buildRoot(): Widget
     {
         echo "[PROBE] buildRoot entered\n";
+        $center = Center::make();
+        echo "[PROBE] center made\n";
+        $text = Text::make('X11 Drift');
+        echo "[PROBE] text made\n";
+        $tree = $center->child($text);
+        echo "[PROBE] tree linked\n";
 
-        return Center::make()->child(Text::make('X11 Drift'));
+        return $tree;
     }
 
     public function title(): string
