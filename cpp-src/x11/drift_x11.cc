@@ -291,9 +291,14 @@ void php_drift_x11_present(Int hwnd, String rgba, Int width, Int height)
     GC gc = XCreateGC(d, win, 0, nullptr);
     char *buf = (char*)malloc((size_t)w * h * 4);
     const unsigned char *src = (const unsigned char*)rgba.data();
+    // ★ XImage 的 32bpp 像素是 native 32-bit **0xAARRGGBB**（masks: R=0xff0000 /
+    //   G=0xff00 / B=0xff），而 toRgba() 给的是逐字节 RGBA ⇒ R 必须落到 bits 16-23。
+    //   旧写法把 src[i*4+2]（B）放到那一位，等于和 Win32 的 BGRA 打包混为一谈 ——
+    //   现象是整套配色红蓝互换（青绿 #009688 显示成橄榄 #889600），几何全对但颜色错。
+    //   Win32 的 SetDIBitsToDevice 吃 BGRA 字节，两边口径本来就不同，不能照抄。
     for (int i = 0; i < w * h; i++) {
-        ((uint32_t*)buf)[i] = 0xff000000u | ((uint32_t)src[i*4+2] << 16)
-                              | ((uint32_t)src[i*4+1] << 8) | src[i*4];
+        ((uint32_t*)buf)[i] = 0xff000000u | ((uint32_t)src[i*4] << 16)
+                              | ((uint32_t)src[i*4+1] << 8) | src[i*4+2];
     }
     XImage *img = XCreateImage(d, XDefaultVisual(d, 0), XDefaultDepth(d, 0), 2, 0,
                                buf, (unsigned int)w, (unsigned int)h, 32, w * 4);

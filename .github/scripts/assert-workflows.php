@@ -538,6 +538,16 @@ fwrite(STDOUT, '  ok     平台桥按 OS 在 sources 里选择：' . count($brid
 // provider 有桥就切过去、C++ 桥跨平台、工程真的链 13 个 .a。
 $x11SkiaSurfacePhp = (string) @file_get_contents($root . '/src/Platform/X11/X11SkiaSurface.php');
 $skiaBridgeCc = (string) @file_get_contents($root . '/cpp-src/skia/drift_skia.cc');
+$x11PresentCc = (string) @file_get_contents($root . '/cpp-src/x11/drift_x11.cc');
+// toRgba() 给的是逐字节 RGBA，XImage 的 32bpp masks 是 R=0xff0000/G=0xff00/B=0xff。
+// 打包时必须把 R 放进 bits 16-23；照抄 Win32 的 BGRA 口径会得到整体红蓝互换
+// （#009688 显示成 #889600）—— 几何、字体、事件全对，只有颜色错，极难归因。
+if (!str_contains($x11PresentCc, '0xff000000u | ((uint32_t)src[i*4] << 16)')) {
+    fail('X11 贴屏没把 RGBA 的 R 打包进 XImage 的 bits 16-23 —— 整套配色会红蓝互换');
+}
+if (str_contains($x11PresentCc, '((uint32_t)src[i*4+2] << 16)')) {
+    fail('X11 贴屏又按 BGRA 打包了 —— 那是 Win32 SetDIBitsToDevice 的口径，Xlib 不是');
+}
 $x11SkiaAnchors = [
     [$x11SkiaSurfacePhp, 'use Drift\\Rendering\\SkiaCanvas;', 'X11 Skia surface 必须用 SkiaCanvas'],
     [$x11SkiaSurfacePhp, "drift_x11_present(\n                \$this->windowHandle,", 'X11 Skia surface 必须走 X11 贴屏桥'],
