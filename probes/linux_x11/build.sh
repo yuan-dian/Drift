@@ -43,8 +43,9 @@ echo "[OK] ELF 产出 $(du -h "$ws/linux_x11_e2e" | cut -f1)"
 echo "=== 运行 + 注入关窗事件 ==="
 # wait 必须有界：应用若卡在 waitEvents()，无限等会把 CI 挂到 6h 超时。
 # tail -f 把应用输出同步到 job 日志，否则 XSendEvent 之后就是一段空白，没法定位。
+gate_timeout="${DRIFT_X11_TIMEOUT:-90}"
 : > "$ws/run.log"
-timeout --signal=TERM --kill-after=5s 90s ./linux_x11_e2e > "$ws/run.log" 2>&1 &
+timeout --signal=TERM --kill-after=5s "${gate_timeout}s" ./linux_x11_e2e > "$ws/run.log" 2>&1 &
 pid=$!
 tail -f "$ws/run.log" &
 tail_pid=$!
@@ -71,7 +72,7 @@ rc=$?
 kill "$tail_pid" 2>/dev/null; wait "$tail_pid" 2>/dev/null
 
 if [ $rc -eq 124 ]; then
-    echo "[FAIL] 应用 90s 未退出：事件注入或消息泵卡住（timeout 已强杀）"
+    echo "[FAIL] 应用 ${gate_timeout}s 未退出：事件注入或消息泵卡住（timeout 已强杀）"
 fi
 
 fail=0

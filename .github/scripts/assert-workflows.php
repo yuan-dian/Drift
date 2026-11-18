@@ -269,6 +269,19 @@ if (!str_contains($linuxBuildSh, 'timeout --signal=TERM')) {
 if (!str_contains($linuxBuildSh, 'tail -f "$ws/run.log"')) {
     fail('build.sh 没把应用输出同步到 job 日志 —— XSendEvent 之后无法定位卡点');
 }
+if (!str_contains($linuxBuildSh, '${DRIFT_X11_TIMEOUT:-90}')) {
+    fail('build.sh 的超时门限没有默认值 —— 无法在 CI 90s 与本地快测间切换');
+}
+$linuxMainPhp = (string) @file_get_contents($root . '/probes/linux_x11/app/main.php');
+// attach() 会同步跑首帧，而 resize 事件要等 EventLoop pump ⇒ 不先设尺寸就是 0×0 画布、present 整段跳过。
+if (!preg_match('/->resize\([\s\S]*?\);[\s\S]*?->attach\(/', $linuxMainPhp)) {
+    fail('probe 没在 attach 前给 surface 设尺寸 —— 首帧画布 0×0，验证不到真实呈现路径');
+}
+foreach (['shown', 'viewport', 'surface ready', 'attached'] as $stage) {
+    if (!str_contains($linuxMainPhp, $stage)) {
+        fail("probe 缺少 {$stage} 阶段标记 —— 初始化卡住时无法定位到具体调用");
+    }
+}
 if (hasIgnoreEntry($linuxProjYml, 'src/Platform/Win32') || hasIgnoreEntry($linuxProjYml, 'src/Platform/X11')) {
     fail('Linux project.yml 还在 ignore 平台目录 —— native/ 只含 X11 桥，无需剪枝');
 }

@@ -80,10 +80,27 @@ function main(): void
         exit(1);
     }
     $platform->window()->show($handle);
+    echo "shown\n";
 
     $constraints = $platform->screen($handle)->viewport();
+    echo "viewport {$constraints->maxWidth}x{$constraints->maxHeight}\n";
+
+    $provider = $platform->surface($handle);
+    if ($provider === null) {
+        echo "[FAIL] surface provider\n";
+        exit(1);
+    }
+    // 首帧在 attach() 里同步跑，而 resize 事件要等 EventLoop pump 才到 ⇒
+    // 不先给尺寸，首帧画布是 0×0、present 被整段跳过。
+    $provider->surface()->resize(
+        (int) $constraints->maxWidth,
+        (int) $constraints->maxHeight,
+        1.0,
+    );
+    echo "surface ready\n";
+
     $app = new X11ProbeApplication();
-    $app->attach($platform->surface($handle)->surface(), $constraints);
+    $app->attach($provider->surface(), $constraints);
     $app->configure($platform, $handle, (int) (\getenv('DRIFT_X11_TARGET_FRAMES') ?: 600));
     echo "attached\n";
 
