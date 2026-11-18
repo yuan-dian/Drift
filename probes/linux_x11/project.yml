@@ -8,8 +8,10 @@
 #
 # ★ 路径基准：build.sh 把本文件连同 app/ native/ src/ 复制到隔离工作区 $ws，
 #   再 `cd $ws && tpc project.yml`，所以这里所有 sources 路径相对 $ws。
-#   `-Llib` 里的 libX11.so 软链由 build.sh 现场建立；`native/` 只放 X11 桥
-#   （build.sh 现场复制），所以不会与 win32 stub 混编。
+#   `-Llib` 里的 libX11.so / libfontconfig.so 软链由 build.sh 现场建立；`native/` 只放
+#   X11 + Skia 两套桥（build.sh 现场复制），所以不会与 win32 stub 混编。
+#   `-Icpp/skia-linux` 是 Skia 包的**唯一 include 根**：桥写的是 `include/core/...`，
+#   不是 `core/...`（与 Windows 的 `cpp/skia` 同款路径口径）。
 
 name: linux_x11_e2e
 version: 0.1.0
@@ -20,9 +22,33 @@ mode: bin
 cxx-std: c++20
 job: 4
 
+cxx-flags:
+  - -Icpp/skia-linux
+
 ld-flags:
   - -Llib
+  - -Lcpp/skia-linux/out/Release-x64
   - -lX11
+  # Skia 的 fontconfig 依赖是**动态**的（静态库里只有 Fc* 引用），
+  # build.sh 现场从 libfontconfig.so.1 建软链到 lib/，CI 不必装 -dev 也能链。
+  - -lfontconfig
+  # 静态库用 --start-group 包住：13 个 .a 的依赖顺序由 Skia 内部决定，
+  # 手写顺序一旦漏一个反向依赖就是一堆 undefined reference，且换版本会复发。
+  - -Wl,--start-group
+  - -lskia
+  - -lskcms
+  - -lexpat
+  - -lfreetype2
+  - -lpng
+  - -lz
+  - -ljpeg
+  - -lwebp
+  - -lwuffs
+  - -lbentleyottmann
+  - -Wl,--end-group
+  - -lpthread
+  - -ldl
+  - -lm
 
 sources:
   - app

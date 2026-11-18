@@ -261,6 +261,12 @@ $linuxAnchors = [
     'phpts: ts' => '必须装 ZTS PHP（AOT 需要 Embed SAPI）',
     'runs-on: ubuntu-24.04' => '镜像必须与本地 GCC 同代（22.04 是 GCC 11 且已弃用）',
     "- 'cpp-src/x11/**'" => 'push/PR 必须按路径过滤，不能空跑每个分支',
+    "- 'cpp-src/skia/**'" => 'Skia 桥改动也必须触发 X11 门',
+    'libfontconfig1' => 'Skia 的 Fc* 外部符号需要 fontconfig 运行时库',
+    'name: Download Linux Skia artifact' => 'X11 门必须消费 build-only 产物，不自己重编 Skia',
+    'gh run download' => '从最近的 linux-deps 成功 run 取 artifact，不硬编码 run id',
+    'DRIFT_SKIA_HOME' => '把下载的产物路径交给 build.sh',
+    'skia_run_id' => '手动重跑时可钉住具体 Skia 构建 run',
     'Xvfb :99' => '必须有 X server，否则窗口门恒假',
     'fluxbox' => '必须有窗口管理器：裸 Xvfb 不 map/expose，Qt 官方 GUI CI 同为 Xvfb + fluxbox',
     'bash probes/linux_x11/build.sh' => '必须真跑 X11 端到端脚本',
@@ -502,7 +508,7 @@ if (!str_contains($linux, 'Acquire::Retries=5')) {
 $linuxMainPhp = (string) @file_get_contents($root . '/probes/linux_x11/app/main.php');
 $x11ProviderPhp = (string) @file_get_contents($root . '/src/Platform/X11/X11SurfaceProvider.php');
 $x11PlatformPhp = (string) @file_get_contents($root . '/src/Platform/X11/X11Platform.php');
-foreach (['shown', 'viewport', 'surface ready', 'attached'] as $stage) {
+foreach (['shown', 'viewport', 'surface ready', 'attached', '[BACKEND]', '[FONT]'] as $stage) {
     if (!str_contains($linuxMainPhp, $stage)) {
         fail("probe 缺少 {$stage} 阶段标记 —— 初始化卡住时无法定位到具体调用");
     }
@@ -527,6 +533,54 @@ if (hasIgnoreEntry($linuxProjYml, 'src/Platform/Win32') || hasIgnoreEntry($linux
 }
 fwrite(STDOUT, '  ok     平台桥按 OS 在 sources 里选择：' . count($bridgeProjects) . " 份工程无混编/无平台 ignore\n");
 
+// ── X11 侧真正消费 Skia 产物 ─────────────────────────────────────────
+// 只编出 .a 不算接上渲染后端。这里守住四段链路：surface 用 SkiaCanvas、
+// provider 有桥就切过去、C++ 桥跨平台、工程真的链 13 个 .a。
+$x11SkiaSurfacePhp = (string) @file_get_contents($root . '/src/Platform/X11/X11SkiaSurface.php');
+$skiaBridgeCc = (string) @file_get_contents($root . '/cpp-src/skia/drift_skia.cc');
+$x11SkiaAnchors = [
+    [$x11SkiaSurfacePhp, 'use Drift\\Rendering\\SkiaCanvas;', 'X11 Skia surface 必须用 SkiaCanvas'],
+    [$x11SkiaSurfacePhp, "drift_x11_present(\n                \$this->windowHandle,", 'X11 Skia surface 必须走 X11 贴屏桥'],
+    [$x11SkiaSurfacePhp, '->toRgba()', 'X11 Skia surface 必须取回像素（Xlib 没有零拷贝直贴）'],
+    [$x11SkiaSurfacePhp, '->dispose()', 'X11 Skia surface 每帧必须释放原生画布'],
+    [$x11ProviderPhp, "function_exists('drift_skia_canvas_create')", 'provider 必须运行期探测 Skia 桥（纯 PHP 单测仍走软光栅）'],
+    [$x11ProviderPhp, 'new X11SkiaSurface(', 'provider 有桥时必须切到 Skia 表面'],
+    [$x11ProviderPhp, 'new X11RasterSurface(', 'provider 必须保留无桥时的软光栅回退'],
+    [$skiaBridgeCc, "#ifdef _WIN32\n// ★ 必须在 phpx.h", 'Skia 桥的 Windows 专属头必须被平台宏包住'],
+    [$skiaBridgeCc, '#include <windows.h>', 'Windows 分支仍要包含 windows.h（不能删了 Windows 支持）'],
+    [$skiaBridgeCc, 'readlink("/proc/self/exe"', 'Linux 字体定位必须走 /proc/self/exe，而不是 cwd'],
+    [$linuxProjYml, '- -Icpp/skia-linux', 'Linux 工程必须把 Skia artifact 根作为 include 根'],
+    [$linuxProjYml, '- -lskia', 'Linux 工程必须链 libskia.a'],
+    [$linuxProjYml, '- -lfontconfig', 'libskia.a 引用 Fc*，必须链 fontconfig'],
+    [$linuxProjYml, '- -Wl,--start-group', '13 个静态库必须成组链接，避开手写顺序的反向依赖'],
+    [$linuxProjYml, '- -Wl,--end-group', '静态库组必须闭合'],
+    [$linuxBuildSh, 'skia_home="${DRIFT_SKIA_HOME:-$repo/cpp/skia-linux}"', 'build.sh 必须接收 artifact 路径'],
+    [$linuxBuildSh, 'cpp-src/skia/drift_skia.cc', 'build.sh 必须把 Skia 桥复制进隔离工作区'],
+    [$linuxBuildSh, "ldconfig -p | awk '/libfontconfig\\.so\\.1/", 'build.sh 必须从运行时库现场建 linker 软链'],
+    [$linuxBuildSh, 'Linux Skia 产物缺失', '缺产物必须响亮失败，不能静默退回软光栅'],
+    [$linuxBuildSh, "grep -q '\\[BACKEND\\] skia'", 'build.sh 必须断言 probe 真用了 Skia 后端'],
+    [$linuxBuildSh, "grep -q '\\[FONT\\] ready=1'", 'build.sh 必须断言目录字体已就绪（否则文字静默消失）'],
+    [$linuxBuildSh, '找不到目录字体', 'build.sh 必须把 Skia 的字体缺失诊断当成失败'],
+    [$linux, '--workflow linux-deps.yml', 'CI 必须从 linux-deps 成功 run 取产物'],
+    [$linux, '--status success', '只取成功构建的 artifact，失败 run 的包不能用'],
+];
+foreach ($x11SkiaAnchors as [$text, $needle, $label]) {
+    if (!str_contains($text, $needle)) {
+        fail('X11 接 Skia 链路断裂：' . $label . '（' . $needle . '）');
+    }
+}
+// 这些库是裁剪时被判定为零引用的；一旦有人把它们写回 Linux 链接清单，
+// 就是在给不需要的模块重新付体积，且会绕开 13 个 .a 的产物契约。
+foreach (['- -lharfbuzz', '- -licu', '- -lskottie', '- -lsksg', '- -lskparagraph', '- -lskshaper'] as $needle) {
+    if (str_contains($linuxProjYml, $needle)) {
+        fail('Linux project.yml 又链回已裁剪的库 ' . $needle . ' —— 与 base.yml 的零引用裁决冲突');
+    }
+}
+if (str_contains($x11SkiaSurfacePhp, 'drift_win_present')) {
+    fail('X11 Skia surface 混进了 Win32 直贴桥 —— 两套 present ABI 不通用');
+}
+fwrite(STDOUT, '  ok     X11 真正消费 Skia：' . count($x11SkiaAnchors) . " 个链路环节 + 裁剪库反向判据\n");
+
 // ── Linux Skia 构建通道（build-only，不发布）────────────────────────────
 // 目的：在公开 runner 上回答「gn gen 认不认 Linux args / .a 能不能真编出来」。
 // 它不消费 deps-v1、不改锁、不发 tag —— 所以加反向锚点防止有人把 windows-deps
@@ -541,6 +595,9 @@ $linuxDepsAnchors = [
     '--platform=linux' => '显式钉 Linux 分支（不靠 uname 猜）',
     'tools/skia/build-skia.sh' => '复用同一份 Skia 构建配方',
     'out/Release-x64/*.a' => '产物是 Linux 静态库',
+    'cpp/skia-linux/include' => '公共头必须随 .a 一起交（消费侧按 include/core/... 引用）',
+    'cpp/skia-linux/modules' => '私有头必须随 .a 一起交（SkGradient.h 引用 modules/skcms/skcms.h）',
+    'cpp/skia-linux/src' => 'src/ 私有头也在 headers.txt 里，漏传会在编译中途才炸',
     'actions/upload-artifact@v4' => '产物交给下游评估',
     "grep -q -- '-MT'" => '拦截 MSVC 静态 CRT 标志泄漏到 Linux 构建',
 ];
@@ -556,7 +613,7 @@ foreach ([
     'php tools/release-deps.php' => '发布依赖资产',
     'php tools/fetch-deps.php' => '发布后回验（本通道没有发布）',
     'git tag' => '打 tag（deps 版本是不可变的）',
-    'deps.lock.json' => '改依赖锁（Linux 包还没有消费者）',
+    'deps.lock.json' => '改依赖锁（Linux 包只在 CI 里评估，未发布）',
     'publish:' => '发布开关（build-only 通道不该有）',
     'contents: write' => '写权限（build-only 只需 contents: read）',
 ] as $needle => $label) {

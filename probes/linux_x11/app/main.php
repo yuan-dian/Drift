@@ -91,6 +91,10 @@ function main(): void
         echo "[FAIL] surface provider\n";
         exit(1);
     }
+    echo '[BACKEND] ' . (\function_exists('drift_skia_canvas_create') ? 'skia' : 'raster') . "\n";
+    if (\function_exists('drift_skia_font_ready')) {
+        echo '[FONT] ready=' . (\drift_skia_font_ready() ? '1' : '0') . "\n";
+    }
     echo "surface ready\n";
 
     $app = new X11ProbeApplication();

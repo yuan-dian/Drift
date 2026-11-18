@@ -10,15 +10,22 @@ on:
     paths:
       - 'src/**'
       - 'cpp-src/x11/**'
+      - 'cpp-src/skia/**'
       - 'probes/linux_x11/**'
       - '.github/workflows/linux-build.yml'
   pull_request:
     paths:
       - 'src/**'
       - 'cpp-src/x11/**'
+      - 'cpp-src/skia/**'
       - 'probes/linux_x11/**'
       - '.github/workflows/linux-build.yml'
   workflow_dispatch:
+    inputs:
+      skia_run_id:
+        description: '指定 Linux Skia build-only run id；留空则取最近一次成功构建'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -110,9 +117,11 @@ jobs:
           # Qt 官方 GUI CI 配方同样是 Xvfb + fluxbox（"proper focus and window management"）。
           # gdb 只用来在卡死时抓一次 C++ 栈。fonts-dejavu-core 是 fluxbox 的兜底字体：
           # 关掉 recommends 后树里一个 fonts-* 都不剩，fluxbox 会因找不到字形退出。
+          # libfontconfig1 是运行时库：Skia 的 libskia.a 引用 Fc* 符号，build.sh
+          # 会从它现场建 libfontconfig.so 软链给 linker；这里不需要 -dev 头。
           if ! timeout 600 sudo env $APT_ENV apt-get install --yes --no-install-recommends $APT_OPTS \
               build-essential cmake libgmp-dev libmpfr-dev pkg-config python3-dev \
-              xvfb x11-utils fluxbox fonts-dejavu-core gdb; then
+              libfontconfig1 xvfb x11-utils fluxbox fonts-dejavu-core gdb; then
             echo "::error title=apt-get install 超时/失败::依赖装不上，后面所有步骤都无意义"
             exit 1
           fi
@@ -174,6 +183,39 @@ jobs:
             cat /tmp/fluxbox.log >&2
             exit 1
           fi
+
+      # Skia 包由 linux-deps.yml 的 build-only run 产出；这里只消费，不重新编。
+      # 用 gh（runner 自带）+ GITHUB_TOKEN 取最近一次成功 artifact，避免把 run id
+      # 硬编码进仓库（换一次构建就失效）。artifact 过期就响亮失败，不能静默
+      # 退回软光栅 —— 否则这条门会在"Skia 根本没链上"时全绿。
+      - name: Download Linux Skia artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          run_id="${{ inputs.skia_run_id }}"
+          if [ -z "$run_id" ]; then
+            run_id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow linux-deps.yml \
+              --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
+          fi
+          if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
+            echo "::error title=No Skia artifact::找不到成功的 linux-deps.yml run，请先在 Actions 构建 Linux Skia"
+            exit 1
+          fi
+          echo "Using Skia build run ${run_id}"
+          dest="${RUNNER_TEMP}/drift-skia"
+          mkdir -p "$dest"
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --dir "$dest"
+          skia_home=""
+          for d in "$dest"/*; do
+            if [ -f "$d/out/Release-x64/libskia.a" ]; then skia_home="$d"; break; fi
+          done
+          if [ -z "$skia_home" ]; then
+            echo "::error title=Bad Skia artifact::下载的 artifact 里没有 out/Release-x64/libskia.a"
+            exit 1
+          fi
+          echo "DRIFT_SKIA_HOME=${skia_home}" >> "${GITHUB_ENV}"
 
       # 结构判据由 verify.yml 统一跑（这里再跑一遍只是同一判据的第二次执行，
       # 失败信息还得去另一个 job 看）。Linux 门只负责真编译 + 真窗口。

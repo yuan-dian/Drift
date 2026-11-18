@@ -4,7 +4,7 @@
  * 与 PHP 的边界见 `cpp-src/drift_skia.stub.php`。本文件**只做三件事**：
  *   ① 建/释放离屏 Skia 画布（`SkBitmap` + `SkCanvas::MakeRasterDirectN32`）；
  *   ② 把 PHP 的绘制命令施加到画布上（矩形 / 圆角 / 描边 / 裁剪 / 平移 / 字形）；
- *   ③ 把画布像素取回成 RGBA 字节，交给 `drift_win32.cc` 的 `drift_win_present()` 上屏。
+ *   ③ 把画布像素取回成 RGBA 字节，交给平台壳的 present（Win32 / X11 共用这一份桥）。
  *
  * ★ **不建窗、不泵消息、不贴屏**：那三件是 `drift_win32.cc` 的职责。贴屏只有一处
  *   （§7.3 "present 是唯一跨边界的一次"），`WM_PAINT` 重贴缓存的逻辑因此不用重写。
@@ -32,16 +32,21 @@
 #define NOMINMAX
 
 #include <phpx.h>
+#ifdef _WIN32
 // ★ 必须在 phpx.h **之后**（与 drift_win32.cc 同序）：phpx.h 拉进来的
 //   php_network.h 依赖 winsock2 的 `timeval`，而 windows.h 先到会把旧
 //   winsock.h 带进来 ⇒ C2027 未定义类型 timeval（实测）。
 #include <windows.h>
+#endif
 
 #include <cstdint>
 #include <cstring>
 #include <map>
 #include <memory>
 #include <string>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 #include "include/core/SkBitmap.h"
 #include "include/core/SkBlurTypes.h"
@@ -144,10 +149,13 @@ bool g_fontReady = false;
 /**
  * exe 所在目录（**含尾部路径分隔符**）；取不到时返回空串。
  *
- * ★ 用 `GetModuleFileNameA`（ANSI）而不是 `W`：`SkFontMgr_New_Custom_Directory`
+ * ★ Windows 用 `GetModuleFileNameA`（ANSI）而不是 `W`：`SkFontMgr_New_Custom_Directory`
  *   收的是 `const char*`，Windows 侧按 ANSI 代码页解析 ⇒ 两者编码口径一致。
  *   换成 UTF-8 反而会在非 ASCII 路径上出现"传进去的字节和 Skia 解析的口径不同"。
+ * ★ Linux 用 `/proc/self/exe`，语义与 Windows 侧一致（定位**当前 ELF**，不是 cwd）。
+ *   两条路都只在 `ensureFont()` 里走一次，失败就退回 cwd 相对候选。
  */
+#ifdef _WIN32
 std::string exeDirA() {
     char buf[MAX_PATH * 4];
     DWORD n = GetModuleFileNameA(NULL, buf, (DWORD)sizeof(buf));
@@ -159,6 +167,20 @@ std::string exeDirA() {
     }
     return std::string(buf, (size_t)n);
 }
+#else
+std::string exeDirA() {
+    char buf[4096];
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n <= 0) {
+        return std::string();
+    }
+    buf[n] = '\0';
+    while (n > 0 && buf[n - 1] != '/') {
+        n--;
+    }
+    return std::string(buf, (size_t)n);
+}
+#endif
 
 /**
  * 懒加载目录字体。**只试一次**（失败也记着试过了）——

@@ -1,11 +1,11 @@
 # Builds the Linux Skia static libs (.a) from the pinned commit, for evaluation.
 #
-# Deliberately build-only: no pack, no lock, no tag, no release. The Linux
-# package has no consumer yet (X11 uses X11RasterSurface), so this workflow
-# publishes nothing — it answers "does gn gen accept our args / do the .a
+# Deliberately build-only: no pack, no lock, no tag, no release. The X11
+# backend consumes its artifact for validation, but the package itself is not
+# published — this workflow answers "does gn gen accept our args / do the .a
 # files really build on Linux" and hands the outputs over as an artifact.
-# Once the X11 Skia backend lands, packing/publishing becomes a separate,
-# reviewed decision (deps-v2) — never a side effect of a build.
+# Publishing a durable Linux package stays a separate, reviewed decision
+# (deps-v2) — never a side effect of a build.
 #
 # Runs on a hosted runner on purpose: a self-hosted job on a repo with no
 # registered runner silently queues forever. Everything needed is either on
@@ -193,6 +193,10 @@ jobs:
             ${{ github.workspace }}/cpp/skia-linux/out/Release-x64/*.a
             ${{ github.workspace }}/cpp/skia-linux/out/Release-x64/args.gn
             ${{ github.workspace }}/cpp/skia-linux/include
+            # Skia 的公共头会 #include "modules/skcms/skcms.h" 等私有头；
+            # 只传 include/ 会让消费侧编译期直接炸在 SkGradient.h。
+            ${{ github.workspace }}/cpp/skia-linux/modules
+            ${{ github.workspace }}/cpp/skia-linux/src
           if-no-files-found: error
           retention-days: 14
 

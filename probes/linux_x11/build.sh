@@ -39,10 +39,25 @@ if ! command -v xwininfo >/dev/null 2>&1; then
     err "xwininfo 缺失（apt install x11-utils）"; exit 2
 fi
 
+# Skia 产物是 hard dependency：缺了就响亮失败，不能静默退回软光栅 —— 那样
+# "Skia 渲染门"会在产物过期/路径写错时全绿，等于没测。
+skia_home="${DRIFT_SKIA_HOME:-$repo/cpp/skia-linux}"
+if [ ! -f "$skia_home/out/Release-x64/libskia.a" ] \
+    || [ ! -f "$skia_home/include/core/SkCanvas.h" ]; then
+    err "Linux Skia 产物缺失：$skia_home（设置 DRIFT_SKIA_HOME 指向 build-only artifact 解包目录）"
+    exit 2
+fi
+skia_home="$(cd "$skia_home" && pwd)"
+
 rm -rf "$ws"
-mkdir -p "$ws/app" "$ws/native" "$ws/lib"
+mkdir -p "$ws/app" "$ws/native" "$ws/lib" "$ws/cpp"
 cp -r "$repo/src" "$ws/src"
 cp "$repo/cpp-src/x11/drift_x11.stub.php" "$repo/cpp-src/x11/drift_x11.cc" "$ws/native/"
+# Skia 桥与 X11 桥同编：两套 stub 是不同函数名，不会冲突。
+cp "$repo/cpp-src/skia/drift_skia.stub.php" "$repo/cpp-src/skia/drift_skia.cc" "$ws/native/"
+# 字体跟产物走：桥按 cwd 的 cpp/fonts 找 Noto，CI 与本地口径一致。
+cp -r "$repo/cpp/fonts" "$ws/cpp/fonts"
+ln -sfn "$skia_home" "$ws/cpp/skia-linux"
 cp "$probe_dir/app/main.php" "$probe_dir/send_close.py" "$ws/app/"
 cp "$probe_dir/project.yml" "$ws/project.yml"
 
@@ -51,6 +66,14 @@ if [ -z "$libx11" ]; then
     err "libX11.so.6 不在 ldconfig 缓存"; exit 2
 fi
 ln -sf "$libx11" "$ws/lib/libX11.so"
+
+# Skia 的 libskia.a 引用 Fontconfig。 linker 需要的是 `libfontconfig.so` 开发期软链，
+# 而 runner 上常只有 `libfontconfig.so.1` —— 与 libX11 同法现场建一条，本地/CI 同口径。
+libfontconfig="$(ldconfig -p | awk '/libfontconfig\.so\.1/{print $NF; exit}')"
+if [ -z "$libfontconfig" ]; then
+    err "libfontconfig.so.1 不在 ldconfig 缓存"; exit 2
+fi
+ln -sf "$libfontconfig" "$ws/lib/libfontconfig.so"
 
 cd "$ws" || exit 2
 echo "=== 编译（tpc/GCC）==="
@@ -136,6 +159,9 @@ if [ $rc -eq 124 ]; then
 fi
 
 fail=0
+grep -q '\[BACKEND\] skia' "$ws/run.log" || { err "Skia 后端未启用：桥没链上或 provider 回退到了软光栅"; fail=1; }
+grep -q '\[FONT\] ready=1' "$ws/run.log" || { err "Skia 目录字体未就绪 —— 文字不会绘制（几何全对也看不出字）"; fail=1; }
+grep -q '找不到目录字体' "$ws/run.log" && { err "Skia 报了字体缺失诊断"; fail=1; }
 grep -q '\[EVENT\] close-requested received' "$ws/run.log" || { err "无关闭回调：事件链断"; fail=1; }
 grep -q 'loop exited, frames=' "$ws/run.log" || { err "EventLoop 未收工"; fail=1; }
 [ $rc -eq 0 ] || { err "退出码 $rc"; fail=1; }
