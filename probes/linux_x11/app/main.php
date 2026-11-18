@@ -3,7 +3,12 @@ declare(strict_types=1);
 
 use Drift\App\Application;
 use Drift\App\EventLoop;
+use Drift\Geometry\Axis;
 use Drift\Geometry\BoxConstraints;
+use Drift\Input\CursorShape;
+use Drift\Input\InputEvent;
+use Drift\Input\KeyEvent;
+use Drift\Input\ScrollEvent;
 use Drift\Platform\X11\X11Platform;
 use Drift\Widget\Center;
 use Drift\Widget\Text;
@@ -26,6 +31,19 @@ final class X11ProbeApplication extends Application
     public function frameCountProbe(): int
     {
         return $this->frames;
+    }
+
+    /** 把桥翻译后的输入打出来，让 build.sh 能判「键鼠真的到了框架」。 */
+    public function dispatchInput(InputEvent $event, ?float $timestampMs = null): ?CursorShape
+    {
+        if ($event instanceof KeyEvent && $event->isText()) {
+            echo '[INPUT] char=' . $event->text . "\n";
+        } elseif ($event instanceof ScrollEvent) {
+            echo '[INPUT] scroll delta=' . $event->delta . ' axis='
+                . ($event->axis === Axis::Horizontal ? 'horizontal' : 'vertical') . "\n";
+        }
+
+        return parent::dispatchInput($event, $timestampMs);
     }
 
     public function wantsFrame(): bool

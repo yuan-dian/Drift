@@ -3,10 +3,12 @@ declare(strict_types=1);
 
 namespace Drift\Platform\X11;
 
+use Drift\Geometry\Axis;
 use Drift\Input\CloseRequestedEvent;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
+use Drift\Input\ScrollEvent;
 use Drift\Platform\Clipboard;
 use Drift\Platform\Dialog;
 use Drift\Platform\InputSource;
@@ -172,6 +174,19 @@ final class X11Platform implements Platform
             return 1;
         }
 
+        if ($type === 'wheel') {
+            // 桥给的是 WHEEL_DELTA 倍数（一格 = 120），这里收成"格"；
+            // X11 桥已按 Win32 口径定好方向与轴，PHP 只做归一化，不做平台判断。
+            $this->inputOf($handle)->push(ScrollEvent::make(
+                (float) ((int) ($event['x'] ?? 0)),
+                (float) ((int) ($event['y'] ?? 0)),
+                (float) ((int) ($event['delta'] ?? 0)) / 120.0,
+                ($event['axis'] ?? '') === 'horizontal' ? Axis::Horizontal : Axis::Vertical,
+            ));
+
+            return 1;
+        }
+
         if ($type === 'pointer') {
             $this->inputOf($handle)->push(PointerEvent::fromBridge(
                 (float) ((int) ($event['x'] ?? 0)),
@@ -195,6 +210,17 @@ final class X11Platform implements Platform
                     (bool) ($event['alt'] ?? false),
                     (bool) ($event['shift'] ?? false),
                 )));
+
+                return 1;
+            }
+        }
+
+        if ($type === 'char') {
+            // 文本输入走 character()：KeyEvent::character 用首字符做 chord、
+            // 原文做 text —— TextField 的 TextKeymap 只看 isText()，加速键不看。
+            $text = (string) ($event['text'] ?? '');
+            if ($text !== '') {
+                $this->inputOf($handle)->push(KeyEvent::character($text));
 
                 return 1;
             }

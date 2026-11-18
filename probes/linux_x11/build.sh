@@ -58,7 +58,7 @@ cp "$repo/cpp-src/skia/drift_skia.stub.php" "$repo/cpp-src/skia/drift_skia.cc" "
 # 字体跟产物走：桥按 cwd 的 cpp/fonts 找 Noto，CI 与本地口径一致。
 cp -r "$repo/cpp/fonts" "$ws/cpp/fonts"
 ln -sfn "$skia_home" "$ws/cpp/skia-linux"
-cp "$probe_dir/app/main.php" "$probe_dir/send_close.py" "$ws/app/"
+cp "$probe_dir/app/main.php" "$probe_dir/send_close.py" "$probe_dir/send_input.py" "$ws/app/"
 cp "$probe_dir/project.yml" "$ws/project.yml"
 
 libx11="$(ldconfig -p | awk '/libX11\.so\.6/{print $NF; exit}')"
@@ -142,6 +142,11 @@ if [ -z "$win" ]; then
 fi
 echo "[OK] 窗口出现 $win"
 
+# XSendEvent 直接投递到目标窗口：XTest 走输入焦点，fluxbox 会把焦点抢走，
+# 按键全进 WM —— 实测桥一条都收不到（关窗脚本已验证直投这条路可靠）。
+python3 "$ws/app/send_input.py" "$win" || echo "[WARN] 输入注入脚本报错"
+# 不 sleep：两条 XSendEvent 都进同一个 X server 队列，顺序有保证。
+# 这里多等一秒，Xvfb 下几百帧早跑完，应用会先触发兜底自毁，窗口没了再发关窗就是 BadWindow。
 python3 "$ws/app/send_close.py" "$win" || echo "[WARN] 事件注入脚本报错"
 wait "$pid"
 rc=$?
@@ -163,6 +168,9 @@ grep -q '\[BACKEND\] skia' "$ws/run.log" || { err "Skia 后端未启用：桥没
 grep -q '\[FONT\] ready=1' "$ws/run.log" || { err "Skia 目录字体未就绪 —— 文字不会绘制（几何全对也看不出字）"; fail=1; }
 grep -q '找不到目录字体' "$ws/run.log" && { err "Skia 报了字体缺失诊断"; fail=1; }
 grep -q '\[EVENT\] close-requested received' "$ws/run.log" || { err "无关闭回调：事件链断"; fail=1; }
+grep -q '\[INPUT\] char=a' "$ws/run.log" || { err "文本输入未到框架：char 事件链断（桥没吐 char 或 translate 没接）"; fail=1; }
+grep -q '\[INPUT\] scroll delta=-1 axis=vertical' "$ws/run.log" || { err "竖轮前推未到框架：wheel 事件链断或符号反了"; fail=1; }
+grep -q '\[INPUT\] scroll delta=1 axis=vertical' "$ws/run.log" || { err "竖轮后推未到框架：wheel 事件链断或符号反了"; fail=1; }
 grep -q 'loop exited, frames=' "$ws/run.log" || { err "EventLoop 未收工"; fail=1; }
 [ $rc -eq 0 ] || { err "退出码 $rc"; fail=1; }
 

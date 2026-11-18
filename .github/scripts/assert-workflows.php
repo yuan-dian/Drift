@@ -591,6 +591,49 @@ if (str_contains($x11SkiaSurfacePhp, 'drift_win_present')) {
 }
 fwrite(STDOUT, '  ok     X11 真正消费 Skia：' . count($x11SkiaAnchors) . " 个链路环节 + 裁剪库反向判据\n");
 
+// ── X11 输入桥：char / wheel 必须真到框架 ───────────────────────────────
+// Windows 桥有 WM_CHAR → KeyEvent::character() 与 WM_MOUSEWHEEL → ScrollEvent；
+// X11 桥若只吐 key/pointer，TextField 就打不了字、滚轮只会造成假点击 ——
+// 这两样几何和颜色全对也看不出来，必须有端到端锚点。
+$x11SendInputPy = (string) @file_get_contents($root . '/probes/linux_x11/send_input.py');
+$x11InputAnchors = [
+    // C++ 桥：文本来自 KeySym，不用随 locale 漂移的 XLookupString
+    [$x11PresentCc, 'utf8FromKeySym', 'X11 桥缺 KeySym→UTF-8 映射'],
+    [$x11PresentCc, 'g_pendingChar', 'X11 桥缺 key→char 暂存（一次 XNextEvent 只吐一条事件）'],
+    [$x11PresentCc, '0x01000000UL', 'X11 桥缺 Unicode keysym 映射（输入法上屏会丢字）'],
+    [$x11PresentCc, 'out.set("type", "char")', 'X11 桥不吐 char 事件 —— TextField 永远打不了字'],
+    [$x11PresentCc, 'out.set("type", "wheel")', 'X11 桥不吐 wheel 事件 —— 滚轮退化成假点击'],
+    [$x11PresentCc, 'ev.button.button >= 4 && ev.button.button <= 7', 'X11 桥没拦滚轮按钮 —— 会产生 pointer down/up'],
+    [$x11PresentCc, 'case 0xffbe: return "F1"', 'keyName 缺 F1..F12 映射（功能键做不了加速键）'],
+    // PHP 翻译
+    [$x11PlatformPhp, "if (\$type === 'char')", 'X11Platform 没接 char 事件'],
+    [$x11PlatformPhp, 'KeyEvent::character(', 'char 没翻译成可插入文本'],
+    [$x11PlatformPhp, "if (\$type === 'wheel')", 'X11Platform 没接 wheel 事件'],
+    [$x11PlatformPhp, 'ScrollEvent::make(', 'wheel 没翻译成 ScrollEvent'],
+    [$x11PlatformPhp, 'Axis::Horizontal', 'wheel 没处理横轴'],
+    // probe 与构建脚本
+    [$linuxMainPhp, 'dispatchInput(InputEvent $event', 'probe 没观测派发到框架的输入'],
+    [$linuxMainPhp, '[INPUT] char=', 'probe 没打印 char 标记 —— 断言没有锚点'],
+    [$linuxMainPhp, '[INPUT] scroll delta=', 'probe 没打印 wheel 标记 —— 断言没有锚点'],
+    [$linuxBuildSh, 'send_input.py', 'build.sh 没注入真实键鼠事件'],
+    [$linuxBuildSh, "grep -q '\\[INPUT\\] char=a'", 'build.sh 没断言文本输入到框架'],
+    [$linuxBuildSh, "grep -q '\\[INPUT\\] scroll delta=-1 axis=vertical'", 'build.sh 没断言竖轮前推及符号'],
+    [$linuxBuildSh, "grep -q '\\[INPUT\\] scroll delta=1 axis=vertical'", 'build.sh 没断言竖轮后推及符号'],
+    [$x11SendInputPy, 'XSendEvent', '注入脚本必须直接投递原生事件（XTest 会被 WM 抢走焦点）'],
+    [$x11SendInputPy, 'XKeysymToKeycode', '按键注入必须用 keysym→keycode 映射'],
+    [$x11SendInputPy, 'struct.pack_into', '必须按 XEvent 布局填字段（state@72 / keycode@76）'],
+];
+foreach ($x11InputAnchors as [$text, $needle, $label]) {
+    if (!str_contains($text, $needle)) {
+        fail('X11 输入桥断裂：' . $label . '（' . $needle . '）');
+    }
+}
+// 反向锚点：ButtonPress/Release 一旦合并处理，滚轮就同时产生 pointer down/up。
+if (str_contains($x11PresentCc, 'case 4: case 5:')) {
+    fail('X11 桥又把 ButtonPress/Release 合并处理 —— 滚轮会退化成假点击');
+}
+fwrite(STDOUT, '  ok     X11 输入桥 char/wheel：' . count($x11InputAnchors) . " 个链路环节 + 滚轮反向判据\n");
+
 // ── Linux Skia 构建通道（build-only，不发布）────────────────────────────
 // 目的：在公开 runner 上回答「gn gen 认不认 Linux args / .a 能不能真编出来」。
 // 它不消费 deps-v1、不改锁、不发 tag —— 所以加反向锚点防止有人把 windows-deps

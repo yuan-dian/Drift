@@ -86,6 +86,11 @@ extern "C" {
 static Display *g_display = nullptr;
 static Atom g_wmDelete = 0;
 
+// KeyPress 一次要吐两条事件（key 给加速键 / char 给文本），而 XNextEvent
+// 一次只返回一条 ⇒ 文本暂存到下一次 wait()。与 Win32 的 WM_KEYDOWN→WM_CHAR
+// 同序；ctrl/alt 组合不产生文本（与 WM_CHAR 的行为一致）。
+static char g_pendingChar[8] = {0};
+
 // X11 默认错误处理是 abort；死句柄在关窗竞态里是正常路径，必须吞掉。
 static int xErrorHandler(Display *d, XErrorEvent *e)
 {
@@ -107,14 +112,62 @@ static Display *display()
     return g_display;
 }
 
+/**
+ * KeySym → UTF-8 字节（写进 out，返回字节数；0 = 这个键不产生文本）。
+ *
+ * ★ 不用 XLookupString：它的输出随进程 locale 变，CI/本地 locale 不同就会
+ *   让同一份按键得到不同字节。X11 的 KeySym 对 ASCII/Latin-1 有固定数值，
+ *   现代输入法上屏的 Unicode 走 0x01000000 + codepoint —— 直接映射是确定的。
+ */
+static int utf8FromKeySym(KeySym sym, char *out)
+{
+    unsigned long cp = 0;
+    if (sym >= 0x20 && sym <= 0x7e) {
+        cp = (unsigned long)sym;
+    } else if (sym >= 0xa0 && sym <= 0xff) {
+        cp = (unsigned long)sym;
+    } else if (sym >= 0x01000000UL && sym <= 0x0100ffffUL) {
+        cp = (unsigned long)(sym - 0x01000000UL);
+    } else {
+        return 0;
+    }
+    if (cp < 0x80) {
+        out[0] = (char)cp;
+        return 1;
+    }
+    if (cp < 0x800) {
+        out[0] = (char)(0xc0 | (cp >> 6));
+        out[1] = (char)(0x80 | (cp & 0x3f));
+        return 2;
+    }
+    if (cp < 0x10000) {
+        out[0] = (char)(0xe0 | (cp >> 12));
+        out[1] = (char)(0x80 | ((cp >> 6) & 0x3f));
+        out[2] = (char)(0x80 | (cp & 0x3f));
+        return 3;
+    }
+    out[0] = (char)(0xf0 | (cp >> 18));
+    out[1] = (char)(0x80 | ((cp >> 12) & 0x3f));
+    out[2] = (char)(0x80 | ((cp >> 6) & 0x3f));
+    out[3] = (char)(0x80 | (cp & 0x3f));
+    return 4;
+}
+
 static const char *keyName(KeySym sym)
 {
     static char buf[2] = {0, 0};
-    if ((sym >= 'a' && sym <= 'z') || (sym >= '0' && sym <= '9')) {
+    // 字母归一成大写（与 Win32 keyNameFromVk 一致）；KeyChord::make 也会归一，
+    // 但桥层先统一能让两平台的事件数组逐字段相同，便于交叉比对。
+    if ((sym >= 'a' && sym <= 'z') || (sym >= 'A' && sym <= 'Z')) {
+        buf[0] = (char)(sym >= 'a' ? sym - ('a' - 'A') : sym);
+        return buf;
+    }
+    if (sym >= '0' && sym <= '9') {
         buf[0] = (char)sym;
         return buf;
     }
     switch (sym) {
+        case 0x0020: return "Space";
         case 0xff0d: return "Enter";
         case 0xff1b: return "Escape";
         case 0xff08: return "BackSpace";
@@ -124,6 +177,17 @@ static const char *keyName(KeySym sym)
         case 0xff52: return "ArrowUp";
         case 0xff53: return "ArrowRight";
         case 0xff54: return "ArrowDown";
+        case 0xff50: return "Home";
+        case 0xff57: return "End";
+        case 0xff55: return "PageUp";
+        case 0xff56: return "PageDown";
+        // XK_F1..F12 连续：0xffbe + (n-1)。
+        case 0xffbe: return "F1";  case 0xffbf: return "F2";
+        case 0xffc0: return "F3";  case 0xffc1: return "F4";
+        case 0xffc2: return "F5";  case 0xffc3: return "F6";
+        case 0xffc4: return "F7";  case 0xffc5: return "F8";
+        case 0xffc6: return "F9";  case 0xffc7: return "F10";
+        case 0xffc8: return "F11"; case 0xffc9: return "F12";
         default: return "";
     }
 }
@@ -139,7 +203,38 @@ static Array eventToArray(const XEvent &ev)
             out.set("w", (Int)ev.configure.width);
             out.set("h", (Int)ev.configure.height);
             break;
-        case 4: case 5: // ButtonPress / ButtonRelease
+        case 4: // ButtonPress
+            // X11 把滚轮当按钮 4..7。必须在这里拦下：否则滚轮退化成
+            // "指针按下 + 抬起"（产生假点击），且没有任何 ScrollEvent。
+            if (ev.button.button >= 4 && ev.button.button <= 7) {
+                const int btn = (int)ev.button.button;
+                const Bool_ shift = (ev.button.state & 1) != 0;
+                out.set("type", "wheel");
+                out.set("x", (Int)ev.button.x);
+                out.set("y", (Int)ev.button.y);
+                if (btn == 4 || btn == 5) {
+                    // 前推(4)=看上面、后推(5)=看下面。纵轴取负（用户要求的手感，
+                    // 与 Win32 桥一致）；Shift+竖轮=横轮，横轴不取负。
+                    const int sign = (btn == 4) ? 1 : -1;
+                    if (shift) {
+                        out.set("axis", String("horizontal"));
+                        out.set("delta", (Int)(sign * 120));
+                    } else {
+                        out.set("delta", (Int)(-sign * 120));
+                    }
+                } else {
+                    // Button6/7 是横轮（左倾/右倾），横向正向不取负。
+                    out.set("axis", String("horizontal"));
+                    out.set("delta", (Int)(btn == 6 ? -120 : 120));
+                }
+                break;
+            }
+            // 普通按钮： fall through 到 pointer
+        case 5: // ButtonRelease
+            if (ev.button.button >= 4 && ev.button.button <= 7) {
+                out.set("type", "noop");   // 滚轮的 release 不产生 pointer up
+                break;
+            }
             out.set("type", "pointer");
             out.set("x", (Int)ev.button.x);
             out.set("y", (Int)ev.button.y);
@@ -160,12 +255,36 @@ static Array eventToArray(const XEvent &ev)
             out.set("shift", (Bool)((ev.motion.state & 1) != 0));
             break;
         case 2: { // KeyPress
-            const char *name = keyName(XKeycodeToKeysym(ev.any.display, ev.key.keycode, 0));
-            out.set("type", "key");
-            out.set("key", String(name));
-            out.set("ctrl", (Bool)((ev.key.state & 4) != 0));
-            out.set("alt", (Bool)((ev.key.state & 8) != 0));
-            out.set("shift", (Bool)((ev.key.state & 1) != 0));
+            const KeySym sym = XKeycodeToKeysym(ev.any.display, ev.key.keycode, 0);
+            const char *name = keyName(sym);
+            const Bool_ ctrl = (ev.key.state & 4) != 0;
+            const Bool_ alt = (ev.key.state & 8) != 0;
+            const Bool_ shift = (ev.key.state & 1) != 0;
+            char text[8] = {0};
+            // Ctrl/Alt 组合不产生文本（与 WM_CHAR 一致）：Ctrl+A 只该是加速键，
+            // 不该顺手往输入框里插一个 'a'。
+            const int len = (ctrl || alt) ? 0 : utf8FromKeySym(sym, text);
+
+            // 有文本 + 有键名（如 'a'）：先吐 key，文本暂存给下一次 wait，
+            // 与 Windows 的 WM_KEYDOWN → WM_CHAR 同序。只有文本（标点 / 非 Latin）
+            // 没有键名时直接吐 char。
+            if (len > 0 && name[0] == '\0') {
+                out.set("type", "char");
+                out.set("text", String(text));
+                break;
+            }
+            if (len > 0) {
+                memcpy(g_pendingChar, text, (size_t) len + 1);
+            }
+            if (name[0] != '\0') {
+                out.set("type", "key");
+                out.set("key", String(name));
+                out.set("ctrl", ctrl);
+                out.set("alt", alt);
+                out.set("shift", shift);
+            } else {
+                out.set("type", "noop");
+            }
             break;
         }
         case 33: // ClientMessage
@@ -251,6 +370,16 @@ void php_drift_x11_set_title(Int hwnd, String title)
 
 Array php_drift_x11_wait(Float timeoutMs)
 {
+    // 上一次 KeyPress 暂存的文本先吐：这样 wait() 的调用方看到的顺序与
+    // Windows 一致（key → char），且不会让文本卡在下一个真实事件之后。
+    if (g_pendingChar[0] != '\0') {
+        Array out;
+        out.set("type", "char");
+        out.set("text", String(g_pendingChar));
+        g_pendingChar[0] = '\0';
+        return out;
+    }
+
     Display *d = display();
     if (d == nullptr) {
         Array out;
