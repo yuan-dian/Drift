@@ -13,6 +13,7 @@ use Drift\Input\CursorShape;
 use Drift\Input\InputEvent;
 use Drift\Input\KeyEvent;
 use Drift\Input\ScrollEvent;
+use Drift\Input\WindowDeactivatedEvent;
 use Drift\Platform\WakeReason;
 use Drift\Platform\X11\X11Platform;
 use Drift\Widget\Center;
@@ -55,6 +56,10 @@ final class X11ProbeApplication extends Application
         } elseif ($event instanceof ScrollEvent) {
             echo '[INPUT] scroll delta=' . $event->delta . ' axis='
                 . ($event->axis === Axis::Horizontal ? 'horizontal' : 'vertical') . "\n";
+        } elseif ($event instanceof WindowDeactivatedEvent) {
+            // 窗口失活事件不进命中链，但会经 Application::dispatchInput，
+            // 这里打标让 build.sh 能验「桥 FocusOut → translate → 框架」整条链。
+            echo "[EVENT] deactivate received at frame {$this->frames}\n";
         }
 
         return parent::dispatchInput($event, $timestampMs);

@@ -9,6 +9,7 @@ use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
 use Drift\Input\ScrollEvent;
+use Drift\Input\WindowDeactivatedEvent;
 use Drift\Platform\Clipboard;
 use Drift\Platform\Dialog;
 use Drift\Platform\InputSource;
@@ -170,6 +171,14 @@ final class X11Platform implements Platform
 
         if ($type === 'close-requested') {
             $this->inputOf($handle)->push(new CloseRequestedEvent());
+
+            return 1;
+        }
+
+        if ($type === 'deactivate') {
+            // 窗口失焦（FocusOut 且是"真的切走"）：与 Win32Platform 同口径，
+            // 收口进行中的指针手势（capture/gesture/drag），不动浮层。
+            $this->inputOf($handle)->push(new WindowDeactivatedEvent());
 
             return 1;
         }

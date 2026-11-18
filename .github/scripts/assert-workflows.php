@@ -791,6 +791,53 @@ if (preg_match('/function isMaximized\([^)]*\): bool\s*\{\s*return false;/s', $x
 }
 fwrite(STDOUT, '  ok     X11 窗口管理 ICCCM/EWMH：' . count($x11WmAnchors) . " 个链路环节 + 空实现反向判据\n");
 
+// ── X11 窗口失活：FocusOut → deactivate → WindowDeactivatedEvent ──────
+// 这个类 + 消费者在框架层早已就绪（Win32 WM_ACTIVATE 已通），但 X11 桥此前
+// 既没订阅 FocusChangeMask 也不处理 FocusOut ⇒ 用户 Alt+Tab 切走时
+// capture/gesture/drag 手势收口信号全断（拖到一半切走 ⇒ 控件永久卡在拖动中）。
+// 锚定整条链：桥订阅 + case + detail 过滤 + translate + probe 注入 + build.sh grep。
+$x11DeactivateAnchors = [
+    // 桥：订阅 FocusChangeMask（不订阅 ⇒ 收不到 FocusOut，整条链空转）
+    [$x11PresentCc, 'FOCUS_CHANGE_MASK', '建窗没订阅 FocusChangeMask —— 桥收不到 FocusOut'],
+    [$x11PresentCc, '| FOCUS_CHANGE_MASK', 'FocusChangeMask 没加进 XSelectInput 掩码'],
+    // 桥：case + "真的切走"过滤（mode=Normal && detail!=Inferior）
+    [$x11PresentCc, 'case FOCUS_OUT:', '桥没处理 FocusOut 事件'],
+    [$x11PresentCc, '"deactivate"', 'FocusOut 没翻译成 deactivate 事件类型'],
+    [$x11PresentCc, 'ev.focus.mode == NOTIFY_NORMAL', '没过滤 Grab/Ungrab 临时失焦'],
+    [$x11PresentCc, 'ev.focus.detail != NOTIFY_INFERIOR', '没过滤窗口内部焦点移动（会误收口手势）'],
+    [$x11PresentCc, 'NOTIFY_INFERIOR', '缺 NotifyInferior 常量（内部移动判据）'],
+    // PHP：translate 分支 + 事件类型
+    [$x11PlatformPhp, "if (\$type === 'deactivate')", 'X11Platform 没接 deactivate 事件'],
+    [$x11PlatformPhp, 'WindowDeactivatedEvent', 'deactivate 没翻译成 WindowDeactivatedEvent'],
+    // probe：打标 + 注入脚本 + 调用
+    [$linuxMainPhp, 'WindowDeactivatedEvent', 'probe 没识别 WindowDeactivatedEvent'],
+    [$linuxMainPhp, '[EVENT] deactivate received', 'probe 没打失活事件标 —— build.sh 无从断言'],
+    [$linuxBuildSh, 'send_focus.py', 'build.sh 没复制/调用焦点注入脚本'],
+    [$linuxBuildSh, "python3 \"\$ws/app/send_focus.py\"", 'build.sh 没注入 FocusOut'],
+    [$linuxBuildSh, "grep -q '\\[EVENT\\] deactivate received'", 'build.sh 没断言失活事件到框架'],
+];
+foreach ($x11DeactivateAnchors as [$text, $needle, $label]) {
+    if (!str_contains($text, $needle)) {
+        fail('X11 窗口失活链路断裂：' . $label . '（' . $needle . '）');
+    }
+}
+// 反向锚点 1：deactivate 分支不许退化成 no-op（push 事件被删）。
+// 用 strpos 切片（不用正则，避开引号/反斜杠转义陷阱）：从分支起点到下一个同缩进闭合 }。
+$dBeg = strpos($x11PlatformPhp, "if (\$type === 'deactivate') {");
+$dEnd = $dBeg === false ? false : strpos($x11PlatformPhp, "\n        }", $dBeg);
+$dBody = ($dBeg !== false && $dEnd !== false)
+    ? substr($x11PlatformPhp, $dBeg, $dEnd - $dBeg)
+    : '';
+if (!str_contains($dBody, 'push(new WindowDeactivatedEvent())')
+    || !str_contains($dBody, 'return 1;')) {
+    fail('X11Platform deactivate 分支没 push WindowDeactivatedEvent —— 手势收口信号断');
+}
+// 反向锚点 2：桥不许把 FocusOut 无脑吐 deactivate（删掉 detail 过滤 = 内部控件焦点移动误收口）。
+if (!str_contains($x11PresentCc, 'ev.focus.detail != NOTIFY_INFERIOR')) {
+    fail('桥的 FocusOut detail 过滤被删 —— 窗口内部焦点移动会误触发失活');
+}
+fwrite(STDOUT, '  ok     X11 窗口失活 deactivate：' . count($x11DeactivateAnchors) . " 个链路环节 + 过滤反向判据\n");
+
 // ── Linux Skia 构建通道（build-only，不发布）────────────────────────────
 // 目的：在公开 runner 上回答「gn gen 认不认 Linux args / .a 能不能真编出来」。
 // 它不消费 deps-v1、不改锁、不发 tag —— 所以加反向锚点防止有人把 windows-deps

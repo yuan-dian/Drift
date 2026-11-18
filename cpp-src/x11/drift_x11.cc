@@ -59,6 +59,8 @@ extern "C" {
                  Window subwindow; Time time; int x, y, x_root, y_root; unsigned int state, keycode; Bool_ same_screen; } key;
         struct { int type; unsigned long serial; Bool_ send_event; Display *display; Window window;
                  Atom message_type; int format; long data[5]; } client;
+        struct { int type; unsigned long serial; Bool_ send_event; Display *display; Window window;
+                 int mode; int detail; } focus;
     };
 
     Display *XOpenDisplay(const char *name);
@@ -120,6 +122,10 @@ static const long X11_SUBSTRUCTURE_REDIRECT = 1L << 20;
 static const long X11_SUBSTRUCTURE_NOTIFY = 1L << 19;
 static const unsigned long XA_ATOM_TYPE = 4;     // XGetWindowProperty 的 req_type：XA_ATOM
 static const int CLIENT_MESSAGE = 33;            // XEvent.type：ClientMessage
+static const int FOCUS_OUT = 10;                 // XEvent.type：FocusOut（失焦，对应 WM_ACTIVATE/WA_INACTIVE）
+static const int NOTIFY_NORMAL = 0;              // XFocusChangeEvent.mode：正常切换（排除 Grab/Ungrab 的临时失焦）
+static const int NOTIFY_INFERIOR = 2;            // XFocusChangeEvent.detail：焦点移到子窗口（窗口内部控件间移动，不算"用户切走"）
+static const long FOCUS_CHANGE_MASK = 1L << 21;  // XSelectInput：FocusChangeMask
 static const long WM_STATE_ICONIC = 3;           // ICCCM WM_STATE 的 IconicState
 
 static Display *g_display = nullptr;
@@ -334,6 +340,16 @@ static Array eventToArray(const XEvent &ev)
         case 33: // ClientMessage
             out.set("type", String((Int)ev.client.data[0] == (Int)g_wmDelete ? "close-requested" : "noop"));
             break;
+        case FOCUS_OUT:
+            // 窗口失焦 = 用户切走了（Alt+Tab / 点别的应用），对应 Win32 WM_ACTIVATE/WA_INACTIVE。
+            // ★ 只发"真的切走"：NotifyInferior(detail=2) 是焦点移到子窗口（窗口内部控件间移动），
+            //   Grab/Ungrab(mode!=0) 是菜单 grab 的临时失焦 —— 两者都不是"用户切走"，否则会误收口手势。
+            //   与 Win32 用 WM_ACTIVATE 而非 WM_KILLFOCUS 是同一取向。
+            // ★ 不发对称的 FocusIn：今天没有消费者需要在激活时做事（A15 无消费者不发明语义）。
+            out.set("type", String(
+                (ev.focus.mode == NOTIFY_NORMAL && ev.focus.detail != NOTIFY_INFERIOR)
+                ? "deactivate" : "noop"));
+            break;
         default:
             out.set("type", "noop");
             break;
@@ -351,8 +367,11 @@ Int php_drift_x11_create(String title, Int width, Int height)
     if (win == 0) return 0;
     XStoreName(d, win, title.data());
     // 事件掩码按 X11/X.h 的标准位：KeyPress(0)|ButtonPress(2)|ButtonRelease(3)|
-    // PointerMotion(6)|Exposure(15)|StructureNotify(17)。
-    XSelectInput(d, win, (1L << 0) | (1L << 2) | (1L << 3) | (1L << 6) | (1L << 15) | (1L << 17));
+    // PointerMotion(6)|Exposure(15)|StructureNotify(17)|FocusChange(21)。
+    // ★ FocusChange 是 deactivate 事件的来源：不订阅 ⇒ WM_DELETE_WINDOW 之外，
+    //   用户 Alt+Tab 切走时桥收不到 FocusOut，手势收口链路（capture/gesture/drag）会卡住。
+    XSelectInput(d, win, (1L << 0) | (1L << 2) | (1L << 3) | (1L << 6) | (1L << 15) | (1L << 17)
+                 | FOCUS_CHANGE_MASK);
     XMapWindow(d, win);
     if (g_wmDelete != 0) XSetWMProtocols(d, win, &g_wmDelete, 1);
     XFlush(d);
