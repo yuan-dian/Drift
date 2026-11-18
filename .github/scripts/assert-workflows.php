@@ -263,6 +263,12 @@ foreach ($bridgeProjects as $name => $text) {
 if (!preg_match('/^cp\s+"\$probe_dir\/project\.yml"\s+"\$ws\/project\.yml"\s*$/m', $linuxBuildSh)) {
     fail('build.sh 没复制正式 project.yml —— 又退回 heredoc 临时配置，判据管不到');
 }
+if (!str_contains($linuxBuildSh, 'timeout --signal=TERM')) {
+    fail('build.sh 的 wait 没有超时上界 —— 应用卡住会把 job 挂到 workflow 上限');
+}
+if (!str_contains($linuxBuildSh, 'tail -f "$ws/run.log"')) {
+    fail('build.sh 没把应用输出同步到 job 日志 —— XSendEvent 之后无法定位卡点');
+}
 if (hasIgnoreEntry($linuxProjYml, 'src/Platform/Win32') || hasIgnoreEntry($linuxProjYml, 'src/Platform/X11')) {
     fail('Linux project.yml 还在 ignore 平台目录 —— native/ 只含 X11 桥，无需剪枝');
 }

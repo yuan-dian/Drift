@@ -41,8 +41,13 @@ fi
 echo "[OK] ELF 产出 $(du -h "$ws/linux_x11_e2e" | cut -f1)"
 
 echo "=== 运行 + 注入关窗事件 ==="
-./linux_x11_e2e > "$ws/run.log" 2>&1 &
+# wait 必须有界：应用若卡在 waitEvents()，无限等会把 CI 挂到 6h 超时。
+# tail -f 把应用输出同步到 job 日志，否则 XSendEvent 之后就是一段空白，没法定位。
+: > "$ws/run.log"
+timeout --signal=TERM --kill-after=5s 90s ./linux_x11_e2e > "$ws/run.log" 2>&1 &
 pid=$!
+tail -f "$ws/run.log" &
+tail_pid=$!
 win=""
 for i in $(seq 1 200); do
     line="$(xwininfo -root -tree -display "${DISPLAY:-:0}" 2>/dev/null | grep -i '"X11 Drift"' | head -1)"
@@ -55,15 +60,19 @@ done
 if [ -z "$win" ]; then
     echo "[FAIL] 窗口未出现（createWindow / show / xwininfo 任一环断）"
     kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
-    cat "$ws/run.log"; exit 1
+    kill "$tail_pid" 2>/dev/null; wait "$tail_pid" 2>/dev/null
+    exit 1
 fi
 echo "[OK] 窗口出现 $win"
 
 python3 "$ws/app/send_close.py" "$win" || echo "[WARN] 事件注入脚本报错"
 wait "$pid"
 rc=$?
-echo "--- 程序输出 ---"
-cat "$ws/run.log"
+kill "$tail_pid" 2>/dev/null; wait "$tail_pid" 2>/dev/null
+
+if [ $rc -eq 124 ]; then
+    echo "[FAIL] 应用 90s 未退出：事件注入或消息泵卡住（timeout 已强杀）"
+fi
 
 fail=0
 grep -q '\[EVENT\] close-requested received' "$ws/run.log" || { echo "[FAIL] 无关闭回调：事件链断"; fail=1; }

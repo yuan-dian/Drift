@@ -54,6 +54,9 @@ final class X11ProbeApplication extends Application
     {
         parent::frame($timestampMs, $constraints);
         $this->frames++;
+        if ($this->frames % 60 === 0) {
+            echo "[HEARTBEAT] frame={$this->frames}\n";
+        }
 
         // 兜底自毁：注入失败时也能 10 秒内收工，脚本靠事件输出判 FAIL。
         if ($this->frames === $this->target && $this->platform !== null) {
