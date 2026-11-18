@@ -273,6 +273,49 @@ if (str_contains($linux, 'assert-workflows.php')) {
     fail('linux-build.yml 又跑了一遍结构判据 —— 它归 verify.yml 的 gate-fast 管');
 }
 
+// ★ build-skia.sh 平台化（Linux 接 Skia 的第 1 步）：Windows 产物必须逐字不变，
+//   Linux 独立分支编 .a。判据既守"两个分支都在"，也守"Windows 参数不漏进 Linux"。
+$skiaPlatformAnchors = [
+    '--platform=*) platform="${arg#--platform=}" ;;' => '参数解析里真读 --platform（不是在 usage 文本里写着）',
+    'MINGW*|MSYS*|CYGWIN*|Windows_NT*) platform="windows"' => '自动识别 Git Bash/MSYS 为 Windows',
+    'Linux) platform="linux"' => '自动识别 Linux',
+    '--dry-run) dry_run=1 ;;' => '参数解析里真设 dry_run（不是在 usage 文本里写着）',
+    'dry_run=0' => 'dry-run 默认关闭',
+    'args="$(cat "$HERE/args.gn.tpl")"' => '两平台共用同一份平台无关策略',
+    'sed \'/extra_cflags = \\[ "-MT" \\]/d\'' => 'Linux 必须摘掉 MSVC 专用的 -MT',
+    'lib_ext="lib"' => 'Windows 收 .lib',
+    'lib_ext="a"' => 'Linux 收 .a',
+    '*."$lib_ext"' => '收库时用平台后缀变量，不是写死 .lib',
+    '--args="$gn_args"' => 'gn gen 用按平台构造的 args',
+];
+foreach ($skiaPlatformAnchors as $needle => $label) {
+    if (!str_contains($skiaScript, $needle)) {
+        fail('build-skia.sh 缺平台化环节：' . $label . '（' . $needle . '）');
+    }
+}
+// Windows 专属 gn 参数必须在 windows 分支内，不能无条件追加（否则 Linux 的 clang 会因 clang_win/win_vc 报错）。
+$winBlockStart = strpos($skiaScript, 'if [[ "$platform" == "windows" ]]; then');
+$winBlockEnd = $winBlockStart === false ? false : strpos($skiaScript, "\n  fi", $winBlockStart);
+if ($winBlockStart === false || $winBlockEnd === false) {
+    fail('build-skia.sh 找不到 Windows 专属 args 分支');
+}
+$winBlock = substr($skiaScript, $winBlockStart, $winBlockEnd - $winBlockStart);
+foreach (['clang_win = ', 'win_vc = ', 'win_sdk = ', 'win_sdk_version = '] as $needle) {
+    if (!str_contains($winBlock, $needle)) {
+        fail('build-skia.sh 的 Windows args 分支缺 ' . $needle . ' —— Windows 产物会变');
+    }
+    if (str_contains($skiaScript, $needle) && !str_contains($winBlock, $needle)) {
+        fail('build-skia.sh 的 ' . $needle . ' 漏在 Windows 分支外 —— Linux clang 会吃到 Windows 参数');
+    }
+}
+// dry-run 必须在任何网络动作之前：否则"验证一下平台决策"会先 clone 1.1GB 的 Skia。
+$dryRunPos = strpos($skiaScript, 'if [[ "$dry_run" -eq 1 ]]');
+$clonePos = strpos($skiaScript, 'git clone --no-checkout');
+if ($dryRunPos === false || $clonePos === false || $dryRunPos > $clonePos) {
+    fail('build-skia.sh 的 --dry-run 没放在 clone 之前 —— 本地验证会先拉 1.1GB 源码');
+}
+
+fwrite(STDOUT, '  ok     Skia 构建平台化：' . count($skiaPlatformAnchors) . " 个环节，Windows args 参数隔离\n");
 fwrite(STDOUT, '  ok     真 AOT 通道完整：' . count($buildAnchors) . " 个环节\n");
 fwrite(STDOUT, '  ok     发版先构建 Skia 再编译：' . count($releaseAnchors) . " 个环节\n");
 fwrite(STDOUT, '  ok     依赖自动构建通道完整：' . count($depsAnchors) . " 个环节\n");
