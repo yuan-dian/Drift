@@ -287,6 +287,7 @@ $skiaPlatformAnchors = [
     'dry_run=0' => 'dry-run 默认关闭',
     'args="$(cat "$HERE/args.gn.tpl")"' => '两平台共用同一份平台无关策略',
     'sed \'/extra_cflags = \\[ "-MT" \\]/d\'' => 'Linux 必须摘掉 MSVC 专用的 -MT',
+    'skia_enable_ganesh = false' => 'Linux 关掉 Drift 不用的 Ganesh/GLX（否则要装 GL/gl.h 还白编一半）',
     'lib_ext="lib"' => 'Windows 收 .lib',
     'lib_ext="a"' => 'Linux 收 .a',
     '*."$lib_ext"' => '收库时用平台后缀变量，不是写死 .lib',
@@ -298,12 +299,23 @@ foreach ($skiaPlatformAnchors as $needle => $label) {
     }
 }
 // Windows 专属 gn 参数必须在 windows 分支内，不能无条件追加（否则 Linux 的 clang 会因 clang_win/win_vc 报错）。
-$winBlockStart = strpos($skiaScript, 'if [[ "$platform" == "windows" ]]; then');
-$winBlockEnd = $winBlockStart === false ? false : strpos($skiaScript, "\n  fi", $winBlockStart);
-if ($winBlockStart === false || $winBlockEnd === false) {
-    fail('build-skia.sh 找不到 Windows 专属 args 分支');
+// ★ 必须限定在 build_gn_args() 函数体内找分支：文件前面「平台决策」那里也有一个
+//   `if [[ "$platform" == "windows" ]]`（决定 lib_ext），直接 strpos 会命中它，
+//   截出来的块横跨整个函数，把 Linux 注释里的关键字也算进 Windows 块（踩过一次）。
+// ★ 用正则抓整个函数体（`^build_gn_args\(\) \{` 到下一行顶格的 `}`），而不是
+//   strpos("\n}\n")——后者会被函数内任意插入/缩进变化打乱定位，误报"找不到函数体"。
+if (preg_match('/^build_gn_args\(\) \{\n([\s\S]*?)^\}\n/m', $skiaScript, $fnMatch) !== 1) {
+    fail('build-skia.sh 找不到 build_gn_args() 函数体');
 }
-$winBlock = substr($skiaScript, $winBlockStart, $winBlockEnd - $winBlockStart);
+$fnBody = $fnMatch[1];
+$winBlockStart = strpos($fnBody, "\n  else\n"); // linux 分支的 else 即 windows 块起点
+$linuxBlockStart = strpos($fnBody, 'if [[ "$platform" == "linux" ]]; then');
+if ($winBlockStart === false || $linuxBlockStart === false) {
+    fail('build-skia.sh 的 build_gn_args() 缺 linux 分支或 else（windows 块）');
+}
+// windows 是 linux 的 else 分支：从 else 到函数末尾即其全部内容。
+$winBlock = substr($fnBody, $winBlockStart);
+$between = substr($fnBody, $linuxBlockStart, $winBlockStart - $linuxBlockStart);
 foreach (['clang_win = ', 'win_vc = ', 'win_sdk = ', 'win_sdk_version = '] as $needle) {
     if (!str_contains($winBlock, $needle)) {
         fail('build-skia.sh 的 Windows args 分支缺 ' . $needle . ' —— Windows 产物会变');
@@ -311,6 +323,14 @@ foreach (['clang_win = ', 'win_vc = ', 'win_sdk = ', 'win_sdk_version = '] as $n
     if (str_contains($skiaScript, $needle) && !str_contains($winBlock, $needle)) {
         fail('build-skia.sh 的 ' . $needle . ' 漏在 Windows 分支外 —— Linux clang 会吃到 Windows 参数');
     }
+}
+// ★ Ganesh 开关必须只在 Linux 分支内：Windows 包（deps-v1）带 Ganesh/GL 是历史产物，
+//   绝不能被这里的 Linux 优化改到 —— 否则已发布资产的复现性就破了。
+if (!str_contains($between, 'skia_enable_ganesh = false')) {
+    fail('build-skia.sh 的 Linux args 分支没关 Ganesh —— 会白编 GLX 后端并需要 GL/gl.h');
+}
+if (str_contains($winBlock, 'skia_enable_ganesh')) {
+    fail('build-skia.sh 的 Windows 分支出现了 Ganesh 开关 —— 会改变已发布 deps-v1 的构建参数');
 }
 // dry-run 必须在任何网络动作之前：否则"验证一下平台决策"会先 clone 1.1GB 的 Skia。
 $dryRunPos = strpos($skiaScript, 'if [[ "$dry_run" -eq 1 ]]');

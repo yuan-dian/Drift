@@ -107,6 +107,12 @@ build_gn_args() {
   args="$(cat "$HERE/args.gn.tpl")"
   if [[ "$platform" == "linux" ]]; then
     args="$(printf '%s\n' "$args" | sed '/extra_cflags = \[ "-MT" \]/d')"
+    # Drift 只用 MakeRasterDirectN32 软件光栅，一行 GPU 代码都不用。Skia 默认
+    # skia_enable_ganesh=true + skia_use_gl=true，会编 Ganesh GLX 后端（2008 个
+    # 目标里一大半），还要装 GL/gl.h 开发头。关掉 Ganesh 后 Skia 官方 gn 会把
+    # skia_use_gl 自动置 false（"skia_use_gl = skia_use_gl && skia_enable_ganesh"），
+    # GLX 源码不再编译；raster / codec / freetype / fontconfig 全部不受影响。
+    args+=$'\nskia_enable_ganesh = false'
   else
     args+=$'\ncc = "clang"'
     args+=$'\ncxx = "clang++"'
