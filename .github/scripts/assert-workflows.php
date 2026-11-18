@@ -189,14 +189,22 @@ $linuxAnchors = [
     'ref: c5599c5c9e8597e7124dd79db94739cabe39c526' => 'TypePHP 工具链必须钉 commit',
     'ref: 90e6d22a9c3f4d5dbd2c75d62e90bf5adfe58c89' => 'PHPX 工具链必须钉 commit',
     'phpts: ts' => '必须装 ZTS PHP（AOT 需要 Embed SAPI）',
+    'runs-on: ubuntu-24.04' => '镜像必须与本地 GCC 同代（22.04 是 GCC 11 且已弃用）',
+    "- 'cpp-src/x11/**'" => 'push/PR 必须按路径过滤，不能空跑每个分支',
     'Xvfb :99' => '必须有 X server，否则窗口门恒假',
     'fluxbox' => '必须有窗口管理器：裸 Xvfb 不 map/expose，Qt 官方 GUI CI 同为 Xvfb + fluxbox',
     'bash probes/linux_x11/build.sh' => '必须真跑 X11 端到端脚本',
+    'name: Upload X11 failure logs' => '失败必须上传现场日志（build/run/watch + X 日志）',
+    'if: failure()' => '日志上传必须在失败时才触发，成功不占 artifact 配额',
 ];
 foreach ($linuxAnchors as $needle => $label) {
     if (!str_contains($linux, $needle)) {
         fail('linux-build.yml 缺环节：' . $label . '（' . $needle . '）');
     }
+}
+// 同一份判据在两个 job 里跑两遍：失败信息还得跨 job 找，且第二次执行不可能有新信息。
+if (str_contains($linux, 'assert-workflows.php')) {
+    fail('linux-build.yml 又跑了一遍结构判据 —— 它归 verify.yml 的 gate-fast 管');
 }
 
 fwrite(STDOUT, '  ok     真 AOT 通道完整：' . count($buildAnchors) . " 个环节\n");
@@ -267,14 +275,38 @@ if (!preg_match('/^cp\s+"\$probe_dir\/project\.yml"\s+"\$ws\/project\.yml"\s*$/m
 if (!str_contains($linuxBuildSh, 'timeout --signal=TERM')) {
     fail('build.sh 的 wait 没有超时上界 —— 应用卡住会把 job 挂到 workflow 上限');
 }
+// 失败文本要能变成 Actions 注解，否则 [FAIL] 埋在几百行编译输出里没人看见。
+if (!str_contains($linuxBuildSh, '::error title=')) {
+    fail('build.sh 失败没挂 ::error 注解 —— CI 里只能翻日志找 [FAIL]');
+}
+// 后台进程必须走 trap 收尸：提前退出时残留的 ELF 会一直占 DISPLAY 与 CPU。
+if (!str_contains($linuxBuildSh, 'trap cleanup EXIT')) {
+    fail('build.sh 缺 trap cleanup EXIT —— 异常退出会留下孤儿进程');
+}
 if (!str_contains($linuxBuildSh, 'tail -f "$ws/run.log"')) {
     fail('build.sh 没把应用输出同步到 job 日志 —— XSendEvent 之后无法定位卡点');
 }
 if (!str_contains($linuxBuildSh, '${DRIFT_X11_TIMEOUT:-90}')) {
     fail('build.sh 的超时门限没有默认值 —— 无法在 CI 90s 与本地快测间切换');
 }
-if (!str_contains($linuxBuildSh, '/proc/$pid/wchan') || !str_contains($linuxBuildSh, 'watch.log')) {
+if (!str_contains($linuxBuildSh, '/proc/$target/wchan') || !str_contains($linuxBuildSh, 'watch.log')) {
     fail('build.sh 缺内核态 watchdog —— 应用卡住时无法区分死循环/锁死锁/等事件');
+}
+// ★ 采样的必须是应用进程，不是 timeout 包装进程：GNU timeout 会 fork+exec，
+//   `$!` 拿到的是包装进程，它的 utime 恒接近 0 ⇒ 用旧口径判"死循环"永远判不出来。
+if (!str_contains($linuxBuildSh, 'app_pid_of') || !str_contains($linuxBuildSh, '/task/$1/children')) {
+    fail('watchdog 没解析出应用子进程 —— 采的是 timeout 包装进程，utime 恒 0，判不出死循环');
+}
+if (!str_contains($linuxBuildSh, 'VmRSS')) {
+    fail('watchdog 没采 VmRSS —— 区分不了「纯 CPU 空转」与「分配失控」');
+}
+// 栈才是归因依据：utime 只说在烧 CPU，bt 说烧在哪一行。
+if (!str_contains($linuxBuildSh, 'thread apply all bt')
+    || !str_contains($linuxBuildSh, 'DRIFT_X11_GDB')) {
+    fail('build.sh 卡死时不抓 C++ 栈 —— 只能知道卡了，不知道为什么卡');
+}
+if (!str_contains($linux, 'kernel.yama.ptrace_scope=0')) {
+    fail('linux-build.yml 没放开 ptrace_scope —— gdb 无法 attach 非后代进程，栈永远是空的');
 }
 $linuxMainPhp = (string) @file_get_contents($root . '/probes/linux_x11/app/main.php');
 // attach() 会同步跑首帧，而 resize 事件要等 EventLoop pump ⇒ 不先设尺寸就是 0×0 画布、present 整段跳过。

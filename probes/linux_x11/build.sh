@@ -8,14 +8,35 @@ repo="$(cd "$probe_dir/../.." && pwd)"
 ws="${1:-/tmp/drift-linux-x11-verify}"
 tpc="${TPC:-/home/www/typephp/typephp/bin/tpc.php}"
 
+# 失败在 CI 上是注解（GitHub 会把 ::error:: 挂到 step 顶部，不用翻几十行日志），
+# 本地仍是熟悉的 [FAIL] 前缀 —— 同一行文本两种消费方式。
+err() {
+    echo "[FAIL] $1"
+    if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+        echo "::error title=Linux X11 gate::$1"
+    fi
+}
+
+# 应用 / tail / watchdog 三个后台进程统一收尸：任何提前退出（含 set -u 报错、
+# 窗口没出现、CI 取消）都不留孤儿——残留的 ELF 会一直占着 DISPLAY 和 CPU，
+# 让失败之后的日志抓取和 runner 回收都变慢。
+pid=""; tail_pid=""; watch_pid=""
+cleanup() {
+    for p in "$pid" "$tail_pid" "$watch_pid"; do
+        [ -n "$p" ] && kill "$p" 2>/dev/null
+    done
+    wait 2>/dev/null
+}
+trap cleanup EXIT
+
 if [ -z "${PHPX_HOME:-}" ]; then
-    echo "[FAIL] PHPX_HOME 未设置"; exit 2
+    err "PHPX_HOME 未设置"; exit 2
 fi
 if [ ! -f "$tpc" ]; then
-    echo "[FAIL] tpc 不存在: $tpc"; exit 2
+    err "tpc 不存在: $tpc"; exit 2
 fi
 if ! command -v xwininfo >/dev/null 2>&1; then
-    echo "[FAIL] xwininfo 缺失（apt install x11-utils）"; exit 2
+    err "xwininfo 缺失（apt install x11-utils）"; exit 2
 fi
 
 rm -rf "$ws"
@@ -27,7 +48,7 @@ cp "$probe_dir/project.yml" "$ws/project.yml"
 
 libx11="$(ldconfig -p | awk '/libX11\.so\.6/{print $NF; exit}')"
 if [ -z "$libx11" ]; then
-    echo "[FAIL] libX11.so.6 不在 ldconfig 缓存"; exit 2
+    err "libX11.so.6 不在 ldconfig 缓存"; exit 2
 fi
 ln -sf "$libx11" "$ws/lib/libX11.so"
 
@@ -36,7 +57,7 @@ echo "=== 编译（tpc/GCC）==="
 php "$tpc" project.yml -O2 -m bin --no-progress > "$ws/build.log" 2>&1
 rc=$?
 if [ $rc -ne 0 ] || [ ! -x "$ws/linux_x11_e2e" ]; then
-    echo "[FAIL] 编译失败 exit=$rc"; tail -30 "$ws/build.log"; exit 1
+    err "编译失败 exit=$rc"; tail -30 "$ws/build.log"; exit 1
 fi
 echo "[OK] ELF 产出 $(du -h "$ws/linux_x11_e2e" | cut -f1)"
 
@@ -47,13 +68,34 @@ gate_timeout="${DRIFT_X11_TIMEOUT:-90}"
 : > "$ws/run.log"
 timeout --signal=TERM --kill-after=5s "${gate_timeout}s" ./linux_x11_e2e > "$ws/run.log" 2>&1 &
 pid=$!
-# 卡住时抓内核态现场：CPU 时间在涨=死循环，wchan=futex=锁死锁，poll=等事件。
+# ★ 要采样的必须是**应用进程**，不是 timeout 包装进程：GNU timeout 会 fork 子进程再
+#   exec，`$pid` 是包装进程，它的 utime/stime 恒接近 0 —— 拿它判"死循环"永远判不出来。
+#   旧版正是踩了这个坑：watch.log 里的 utime 一直是 0，看起来像"没在烧 CPU"，
+#   而真实进程当时在跑什么完全没被观测到。
+app_pid_of() {
+    cat "/proc/$1/task/$1/children" 2>/dev/null | awk '{print $1; exit}'
+}
+# 卡住时抓内核态现场：utime/stime 在涨=纯 CPU 死循环，wchan=futex=锁死锁，poll=等事件，
+# VmRSS 涨=分配不止。四者合起来能把"卡"分成可归因的几类，不需要猜。
 (
-    while kill -0 "$pid" 2>/dev/null; do
-        stat=$(awk '{print "utime="$14" stime="$15}' "/proc/$pid/stat" 2>/dev/null)
-        wchan=$(cat "/proc/$pid/wchan" 2>/dev/null)
-        call=$(cut -c1-40 "/proc/$pid/syscall" 2>/dev/null)
-        echo "[WATCH] $stat wchan=$wchan syscall=$call"
+    for tick in $(seq 1 200); do
+        target="$(app_pid_of "$pid")"
+        [ -z "$target" ] && target="$pid"
+        stat_line=$(awk '{print "state="$3" utime="$14" stime="$15}' "/proc/$target/stat" 2>/dev/null)
+        rss=$(awk '/VmRSS/{print $2" "$3}' "/proc/$target/status" 2>/dev/null)
+        wchan=$(cat "/proc/$target/wchan" 2>/dev/null)
+        call=$(cut -c1-40 "/proc/$target/syscall" 2>/dev/null)
+        echo "[WATCH] pid=$target $stat_line rss=$rss wchan=$wchan syscall=$call"
+        kill -0 "$pid" 2>/dev/null || break
+        # 到一半还没退出 ⇒ 采一次 C++ 栈。utime 只能说"在烧 CPU"，栈才能说"烧在哪一行"。
+        # 需要 DRIFT_X11_GDB=1（本地跑不必付这份开销）且 gdb 可用。
+        if [ "${DRIFT_X11_GDB:-0}" = "1" ] && [ "$tick" -eq $((gate_timeout / 10)) ] \
+            && command -v gdb >/dev/null 2>&1; then
+            {
+                echo "===== [GDB] 第 ${tick} 个采样点（约 $((tick * 5))s）pid=$target ====="
+                gdb -p "$target" -batch -ex 'thread apply all bt 25'
+            } >> "$ws/gdb.log" 2>&1 || true
+        fi
         sleep 5
     done
 ) > "$ws/watch.log" 2>&1 &
@@ -70,10 +112,9 @@ for i in $(seq 1 200); do
     sleep 0.02
 done
 if [ -z "$win" ]; then
-    echo "[FAIL] 窗口未出现（createWindow / show / xwininfo 任一环断）"
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
-    kill "$tail_pid" 2>/dev/null; wait "$tail_pid" 2>/dev/null
-    kill "$watch_pid" 2>/dev/null; wait "$watch_pid" 2>/dev/null
+    err "窗口未出现（createWindow / show / xwininfo 任一环断）"
+    # 窗口没出现时应用输出是唯一线索（连接失败 / 立即崩溃 / 卡在初始化）。
+    echo "--- run.log ---"; tail -20 "$ws/run.log"
     exit 1
 fi
 echo "[OK] 窗口出现 $win"
@@ -81,19 +122,23 @@ echo "[OK] 窗口出现 $win"
 python3 "$ws/app/send_close.py" "$win" || echo "[WARN] 事件注入脚本报错"
 wait "$pid"
 rc=$?
+# tail / watchdog 由 trap 收尸；这里先停掉 tail，避免它把后面的判据输出盖在中间。
 kill "$tail_pid" 2>/dev/null; wait "$tail_pid" 2>/dev/null
-kill "$watch_pid" 2>/dev/null; wait "$watch_pid" 2>/dev/null
 
 if [ $rc -eq 124 ]; then
-    echo "[FAIL] 应用 ${gate_timeout}s 未退出：事件注入或消息泵卡住（timeout 已强杀）"
+    err "应用 ${gate_timeout}s 未退出：事件注入或消息泵卡住（timeout 已强杀）"
     echo "--- 卡住时内核态现场（每 5s 一次，判据看 utime/stime 是否增长）---"
     tail -12 "$ws/watch.log"
+    if [ -s "$ws/gdb.log" ]; then
+        echo "--- 卡住时的 C++ 栈（决定它烧在哪一行）---"
+        tail -60 "$ws/gdb.log"
+    fi
 fi
 
 fail=0
-grep -q '\[EVENT\] close-requested received' "$ws/run.log" || { echo "[FAIL] 无关闭回调：事件链断"; fail=1; }
-grep -q 'loop exited, frames=' "$ws/run.log" || { echo "[FAIL] EventLoop 未收工"; fail=1; }
-[ $rc -eq 0 ] || { echo "[FAIL] 退出码 $rc"; fail=1; }
+grep -q '\[EVENT\] close-requested received' "$ws/run.log" || { err "无关闭回调：事件链断"; fail=1; }
+grep -q 'loop exited, frames=' "$ws/run.log" || { err "EventLoop 未收工"; fail=1; }
+[ $rc -eq 0 ] || { err "退出码 $rc"; fail=1; }
 
 if [ $fail -ne 0 ]; then
     echo "=== RESULT: FAIL ==="

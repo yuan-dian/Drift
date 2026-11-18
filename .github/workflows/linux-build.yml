@@ -1,8 +1,23 @@
 name: Linux x64
 
+# Linux 门要编整套 src + X11 桥，空跑一次 20 分钟起。所以只在这条门真正依赖的
+# 输入变动时触发：src / cpp-src/x11 / probes/linux_x11 / 本文件。
+# 参考 Qt、GTK、wxWidgets 的 GUI CI：push 只跟 main，PR 同样带 paths 过滤 ——
+# 只改 README 的 PR 不该占一台 4 核 runner 半小时。
 on:
   push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'cpp-src/x11/**'
+      - 'probes/linux_x11/**'
+      - '.github/workflows/linux-build.yml'
   pull_request:
+    paths:
+      - 'src/**'
+      - 'cpp-src/x11/**'
+      - 'probes/linux_x11/**'
+      - '.github/workflows/linux-build.yml'
   workflow_dispatch:
 
 permissions:
@@ -12,14 +27,24 @@ concurrency:
   group: linux-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  COMPOSER_NO_INTERACTION: 1
+  COMPOSER_PROCESS_TIMEOUT: 0
+
 jobs:
   x11-e2e:
     name: X11Platform e2e (PHP 8.4 ZTS / tpc v0.10)
-    runs-on: ubuntu-22.04
+    # ★ 不用 ubuntu-22.04：它的 GCC 11.2 与本地开发（GCC 13.3）差两个大版本，
+    #   本地能过的告警/警告升级在 CI 上表现不同，等于量的是另一个编译器；
+    #   而且 22.04 镜像已进入弃用期，随时会被强制迁移。24.04 是 GCC 13.2，
+    #   与本地同代，只差补丁号。
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
       PHPX_HOME: ${{ github.workspace }}/third_party/phpx
       TPC: ${{ github.workspace }}/third_party/typephp/bin/tpc.php
+      # 编译与运行产物都落在这里；失败时整目录上传，本地能一模一样复现。
+      X11_WS: ${{ runner.temp }}/drift-linux-x11-verify
     steps:
       - uses: actions/checkout@v4
 
@@ -72,7 +97,10 @@ jobs:
           sudo apt-get update
           # fluxbox：X11 端到端门要真窗口。裸 Xvfb 无窗口管理器，窗口不会 map/expose，
           # Qt 官方 GUI CI 配方同样是 Xvfb + fluxbox（"proper focus and window management"）。
-          sudo apt-get install --yes build-essential cmake libgmp-dev libmpfr-dev pkg-config python3-dev xvfb x11-utils fluxbox
+          sudo apt-get install --yes build-essential cmake libgmp-dev libmpfr-dev pkg-config python3-dev xvfb x11-utils fluxbox gdb
+          # gdb 只用来在卡死时抓一次 C++ 栈。runner 默认 ptrace_scope=1 会拒绝对
+          # 非后代进程 attach（应用是 timeout 的子进程，不是 gdb 的后代）⇒ 放开。
+          sudo sysctl -w kernel.yama.ptrace_scope=0 || true
 
       - name: Install compiler dependencies
         run: composer install --working-dir=third_party/typephp --prefer-dist --no-progress
@@ -83,25 +111,88 @@ jobs:
           cmake -S "${PHPX_HOME}" -B "${PHPX_HOME}/build" \
             -D CMAKE_BUILD_TYPE=Release -D BUILD_TESTS=OFF -D BUILD_EXT=OFF -D GITHUB_ACTION=ON \
             -D php_dir="${PHP_HOME}"
-          cmake --build "${PHPX_HOME}/build" --target phpx --parallel 4
+          cmake --build "${PHPX_HOME}/build" --target phpx --parallel "$(nproc)"
           test -f "${PHPX_HOME}/lib/libphpx.so"
           echo "LD_LIBRARY_PATH=${PHPX_HOME}/lib:${PHP_HOME}/lib" >> "${GITHUB_ENV}"
 
+      # ★ 不用 sleep 猜就绪：runner 冷启动时 Xvfb 可能 3s 还没 bind，热节点上 1s 就绪，
+      #   固定 sleep 要么白等要么偶发失败。改为轮询真实判据（X 能应答 / WM 已注册）。
       - name: Start Xvfb + window manager
         shell: bash
         run: |
           Xvfb :99 -screen 0 1280x800x24 > /tmp/xvfb.log 2>&1 &
           echo "DISPLAY=:99" >> "${GITHUB_ENV}"
-          sleep 2
+
+          ready=0
+          for _ in $(seq 1 50); do
+            if xwininfo -root -display :99 > /dev/null 2>&1; then ready=1; break; fi
+            sleep 0.2
+          done
+          if [ "${ready}" -ne 1 ]; then
+            echo "::error title=Xvfb 未就绪::Xvfb :99 在 10s 内没有应答，看 xvfb.log"
+            cat /tmp/xvfb.log >&2
+            exit 1
+          fi
+
           # 窗口管理器负责 map/焦点/自动定位；缺它时窗口停在 withdrawn、
           # XSendEvent 打得出去但应用等不到 expose，表现为 90s 卡死。
           fluxbox > /tmp/fluxbox.log 2>&1 &
-          sleep 3
-          xwininfo -root -display :99 > /dev/null  # 确认 X 与 WM 就绪
+          wm_pid=$!
+          wm_ready=0
+          for _ in $(seq 1 50); do
+            if xprop -root -display :99 _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q 'window id'; then
+              wm_ready=1; break
+            fi
+            kill -0 "${wm_pid}" 2>/dev/null || break
+            sleep 0.2
+          done
+          if [ "${wm_ready}" -ne 1 ]; then
+            echo "::error title=窗口管理器未注册::fluxbox 没能在 root 上挂 _NET_SUPPORTING_WM_CHECK，窗口不会 map"
+            cat /tmp/fluxbox.log >&2
+            exit 1
+          fi
 
-      - name: Workflow structure assertions
-        run: php .github/scripts/assert-workflows.php
-
+      # 结构判据由 verify.yml 统一跑（这里再跑一遍只是同一判据的第二次执行，
+      # 失败信息还得去另一个 job 看）。Linux 门只负责真编译 + 真窗口。
       - name: X11 end-to-end gate
         shell: bash
-        run: bash probes/linux_x11/build.sh "${RUNNER_TEMP}/drift-linux-x11-verify"
+        env:
+          # 卡到一半时抓一次 C++ 栈：utime 只能说"在烧 CPU"，栈才能说"烧在哪"。
+          DRIFT_X11_GDB: '1'
+        run: |
+          # 步骤被取消或提前退出时不留孤儿进程：残留的 linux_x11_e2e 会一直占着
+          # DISPLAY 和 CPU，后面的日志上传与 runner 回收都跟着变慢。
+          # 按名字匹配（不是全路径）：应用是以 `./linux_x11_e2e` 起的，cmdline 里
+          # 没有工作区前缀，用 "${X11_WS}/linux_x11_e2e" 会一条都匹不上。
+          cleanup() { pkill -f 'linux_x11_e2e' || true; }
+          trap cleanup EXIT
+          bash probes/linux_x11/build.sh "${X11_WS}"
+
+      # ★ 失败必须留现场：以前只有 job 日志，日志里没有 build.log / run.log /
+      #   watch.log 的内核态采样，失败后只能靠猜。这里先就地打印关键尾巴，
+      #   再整目录上传，本地下载下来能直接 grep。
+      - name: Dump X11 failure context
+        if: failure()
+        shell: bash
+        run: |
+          for f in "${X11_WS}/build.log" "${X11_WS}/run.log" "${X11_WS}/watch.log" "${X11_WS}/gdb.log" /tmp/xvfb.log /tmp/fluxbox.log; do
+            echo "──── ${f} ────"
+            if [ -f "${f}" ]; then tail -60 "${f}"; else echo "(缺失)"; fi
+          done
+          echo "──── 当前窗口树 ────"
+          xwininfo -root -tree -display "${DISPLAY:-:99}" 2>&1 | head -40 || true
+          echo "──── 残留进程 ────"
+          pgrep -af 'linux_x11_e2e|Xvfb|fluxbox' || true
+
+      - name: Upload X11 failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x11-failure-logs
+          path: |
+            ${{ runner.temp }}/drift-linux-x11-verify/*.log
+            ${{ runner.temp }}/drift-linux-x11-verify/project.yml
+            /tmp/xvfb.log
+            /tmp/fluxbox.log
+          if-no-files-found: ignore
+          retention-days: 7
