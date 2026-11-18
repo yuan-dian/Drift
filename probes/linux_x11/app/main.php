@@ -3,8 +3,12 @@ declare(strict_types=1);
 
 use Drift\App\Application;
 use Drift\App\EventLoop;
+use Drift\Commands\CommandGate;
+use Drift\Commands\CommandHandler;
 use Drift\Geometry\BoxConstraints;
 use Drift\Platform\X11\X11Platform;
+use Drift\Text\TextMetricsProvider;
+use Drift\Theme\ThemeData;
 use Drift\Widget\Center;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
@@ -40,8 +44,39 @@ final class X11ProbeApplication extends Application
         return true;
     }
 
+    // attach() 首个桥调用 drift_thread_id() 之后就是这些钩子；逐个打标定位卡点。
+    public function theme(): ThemeData
+    {
+        echo "[PROBE] theme entered\n";
+
+        return parent::theme();
+    }
+
+    public function metrics(): TextMetricsProvider
+    {
+        echo "[PROBE] metrics entered\n";
+
+        return parent::metrics();
+    }
+
+    public function commandGates(): iterable
+    {
+        echo "[PROBE] commandGates entered\n";
+
+        return parent::commandGates();
+    }
+
+    public function commands(): iterable
+    {
+        echo "[PROBE] commands entered\n";
+
+        return parent::commands();
+    }
+
     public function buildRoot(): Widget
     {
+        echo "[PROBE] buildRoot entered\n";
+
         return Center::make()->child(Text::make('X11 Drift'));
     }
 
@@ -52,7 +87,14 @@ final class X11ProbeApplication extends Application
 
     public function frame(float $timestampMs, BoxConstraints $constraints): void
     {
+        // attach() 内的同步首帧 t=0；EventLoop 的帧 t>0。打标区分卡在挂载首帧还是循环首帧。
+        if ($this->frames === 0) {
+            echo "[PROBE] first frame entered (t={$timestampMs})\n";
+        }
         parent::frame($timestampMs, $constraints);
+        if ($this->frames === 0) {
+            echo "[PROBE] first frame finished\n";
+        }
         $this->frames++;
         if ($this->frames % 60 === 0) {
             echo "[HEARTBEAT] frame={$this->frames}\n";

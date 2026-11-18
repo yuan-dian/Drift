@@ -283,6 +283,12 @@ foreach (['shown', 'viewport', 'surface ready', 'attached'] as $stage) {
         fail("probe 缺少 {$stage} 阶段标记 —— 初始化卡住时无法定位到具体调用");
     }
 }
+// attach() 内部各钩子打标：CI 卡在 surface ready 后、attached 前，靠这些标一次定位到具体方法。
+foreach (['theme entered', 'metrics entered', 'commandGates entered', 'commands entered', 'buildRoot entered', 'first frame entered', 'first frame finished'] as $stage) {
+    if (!str_contains($linuxMainPhp, $stage)) {
+        fail("probe 缺少 [PROBE] {$stage} —— attach 内卡住时无法定位到具体钩子");
+    }
+}
 if (hasIgnoreEntry($linuxProjYml, 'src/Platform/Win32') || hasIgnoreEntry($linuxProjYml, 'src/Platform/X11')) {
     fail('Linux project.yml 还在 ignore 平台目录 —— native/ 只含 X11 桥，无需剪枝');
 }
