@@ -45,6 +45,8 @@ apps/*/build/
 #     与 `tools/Bench/Micro/` ⇒ 工程不入库时这两条命令对任何 clone 都是坏的。
 #     结论被 `apps/showcase/src/Pages/AspectPage.php` 与 `AOT-PERF` 引用，
 #     不是"跑完就废"的一次性探针。★ 不进 `gate`（要 MSVC + 全量编译）。
+#   · `probes/linux_x11/` —— Linux 端到端门，被 `linux-build.yml` 直接调用：
+#     工程不入库则任何 clone 的 CI 该步必红。
 /probes/*
 !/probes/io_pool/
 /probes/io_pool/build/
@@ -53,6 +55,7 @@ apps/*/build/
 !/probes/frame_tax_aot/
 !/probes/aot_micro/
 /probes/aot_micro/build/
+!/probes/linux_x11/
 
 # ── 工具输出 ──
 /Errors.log

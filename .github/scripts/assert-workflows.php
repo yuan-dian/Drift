@@ -21,9 +21,11 @@ $buildFile = $root . '/.github/workflows/windows-build.yml';
 $verifyFile = $root . '/.github/workflows/verify.yml';
 $releaseFile = $root . '/.github/workflows/release.yml';
 $depsFile = $root . '/.github/workflows/windows-deps.yml';
+$linuxFile = $root . '/.github/workflows/linux-build.yml';
 
 foreach (['windows-build.yml' => $buildFile, 'verify.yml' => $verifyFile,
-          'release.yml' => $releaseFile, 'windows-deps.yml' => $depsFile] as $name => $path) {
+          'release.yml' => $releaseFile, 'windows-deps.yml' => $depsFile,
+          'linux-build.yml' => $linuxFile] as $name => $path) {
     if (!is_file($path)) {
         fail("{$name} 不存在 —— workflow 通道缺失");
     }
@@ -32,8 +34,10 @@ $build = (string) file_get_contents($buildFile);
 $verify = (string) file_get_contents($verifyFile);
 $release = (string) file_get_contents($releaseFile);
 $deps = (string) file_get_contents($depsFile);
+$linux = (string) file_get_contents($linuxFile);
 
-foreach (['windows-build.yml' => $build, 'verify.yml' => $verify] as $name => $text) {
+foreach (['windows-build.yml' => $build, 'verify.yml' => $verify,
+          'linux-build.yml' => $linux] as $name => $text) {
     if (preg_match('/^\s*if:\s*false\s*$/m', $text)) {
         fail("{$name} 存在 if: false —— job 被关掉，等于没有");
     }
@@ -180,9 +184,24 @@ if (!str_contains($verify, 'assert-workflows.php')) {
     fail('verify.yml 没跑 workflow 结构判据 —— 通道退化不会被发现');
 }
 
+// Linux 门：工具链必须钉死到本地验证过的 commit，且必须真跑端到端脚本（不是只编一下）。
+$linuxAnchors = [
+    'ref: c5599c5c9e8597e7124dd79db94739cabe39c526' => 'TypePHP 工具链必须钉 commit',
+    'ref: 90e6d22a9c3f4d5dbd2c75d62e90bf5adfe58c89' => 'PHPX 工具链必须钉 commit',
+    'phpts: ts' => '必须装 ZTS PHP（AOT 需要 Embed SAPI）',
+    'Xvfb :99' => '必须有 X server，否则窗口门恒假',
+    'bash probes/linux_x11/build.sh' => '必须真跑 X11 端到端脚本',
+];
+foreach ($linuxAnchors as $needle => $label) {
+    if (!str_contains($linux, $needle)) {
+        fail('linux-build.yml 缺环节：' . $label . '（' . $needle . '）');
+    }
+}
+
 fwrite(STDOUT, '  ok     真 AOT 通道完整：' . count($buildAnchors) . " 个环节\n");
 fwrite(STDOUT, '  ok     发版先构建 Skia 再编译：' . count($releaseAnchors) . " 个环节\n");
 fwrite(STDOUT, '  ok     依赖自动构建通道完整：' . count($depsAnchors) . " 个环节\n");
 fwrite(STDOUT, "  ok     构建通道全在托管 runner 上（无 self-hosted 静默排队）\n");
 fwrite(STDOUT, "  ok     gn / ninja 走 Skia 自带预编译包（不装 depot_tools）\n");
 fwrite(STDOUT, "  ok     gn gen 在 Skia 源码目录内执行（source root 靠 .gn 定位）\n");
+fwrite(STDOUT, '  ok     Linux X11 端到端门：' . count($linuxAnchors) . " 个环节\n");
