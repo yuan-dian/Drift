@@ -3,12 +3,8 @@ declare(strict_types=1);
 
 use Drift\App\Application;
 use Drift\App\EventLoop;
-use Drift\Commands\CommandGate;
-use Drift\Commands\CommandHandler;
 use Drift\Geometry\BoxConstraints;
 use Drift\Platform\X11\X11Platform;
-use Drift\Text\TextMetricsProvider;
-use Drift\Theme\ThemeData;
 use Drift\Widget\Center;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
@@ -44,46 +40,9 @@ final class X11ProbeApplication extends Application
         return true;
     }
 
-    // attach() 首个桥调用 drift_thread_id() 之后就是这些钩子；逐个打标定位卡点。
-    public function theme(): ThemeData
-    {
-        echo "[PROBE] theme entered\n";
-
-        return parent::theme();
-    }
-
-    public function metrics(): TextMetricsProvider
-    {
-        echo "[PROBE] metrics entered\n";
-
-        return parent::metrics();
-    }
-
-    public function commandGates(): iterable
-    {
-        echo "[PROBE] commandGates entered\n";
-
-        return parent::commandGates();
-    }
-
-    public function commands(): iterable
-    {
-        echo "[PROBE] commands entered\n";
-
-        return parent::commands();
-    }
-
     public function buildRoot(): Widget
     {
-        echo "[PROBE] buildRoot entered\n";
-        $center = Center::make();
-        echo "[PROBE] center made\n";
-        $text = Text::make('X11 Drift');
-        echo "[PROBE] text made\n";
-        $tree = $center->child($text);
-        echo "[PROBE] tree linked\n";
-
-        return $tree;
+        return Center::make()->child(Text::make('X11 Drift'));
     }
 
     public function title(): string
@@ -93,14 +52,7 @@ final class X11ProbeApplication extends Application
 
     public function frame(float $timestampMs, BoxConstraints $constraints): void
     {
-        // attach() 内的同步首帧 t=0；EventLoop 的帧 t>0。打标区分卡在挂载首帧还是循环首帧。
-        if ($this->frames === 0) {
-            echo "[PROBE] first frame entered (t={$timestampMs})\n";
-        }
         parent::frame($timestampMs, $constraints);
-        if ($this->frames === 0) {
-            echo "[PROBE] first frame finished\n";
-        }
         $this->frames++;
         if ($this->frames % 60 === 0) {
             echo "[HEARTBEAT] frame={$this->frames}\n";
@@ -133,18 +85,12 @@ function main(): void
     $constraints = $platform->screen($handle)->viewport();
     echo "viewport {$constraints->maxWidth}x{$constraints->maxHeight}\n";
 
+    // 表面尺寸由 X11SurfaceProvider 创建时现读客户区；attach 的同步首帧不再依赖 pump。
     $provider = $platform->surface($handle);
     if ($provider === null) {
         echo "[FAIL] surface provider\n";
         exit(1);
     }
-    // 首帧在 attach() 里同步跑，而 resize 事件要等 EventLoop pump 才到 ⇒
-    // 不先给尺寸，首帧画布是 0×0、present 被整段跳过。
-    $provider->surface()->resize(
-        (int) $constraints->maxWidth,
-        (int) $constraints->maxHeight,
-        1.0,
-    );
     echo "surface ready\n";
 
     $app = new X11ProbeApplication();

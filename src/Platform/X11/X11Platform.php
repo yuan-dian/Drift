@@ -62,7 +62,8 @@ final class X11Platform implements Platform
             return null;
         }
 
-        return $this->surfaces[$windowHandle] ??= new X11SurfaceProvider($windowHandle);
+        // 传同一个窗口宿主：表面创建时要现读客户区尺寸（attach 的同步首帧早于 resize 事件）。
+        return $this->surfaces[$windowHandle] ??= new X11SurfaceProvider($windowHandle, $this->displayHost());
     }
 
     public function input(int $windowHandle): InputSource

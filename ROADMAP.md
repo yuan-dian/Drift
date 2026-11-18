@@ -31,7 +31,7 @@ preview 阶段允许破坏性变更，但要守两条：
 
 技术预览转 1.0 需要同时满足，缺一不可：
 
-- **平台**：至少一个非 Windows 平台端口通过 T2 真机验证（`Platform` 第二实现已在测试中，见[平台端口](docs/guides/platform-ports.md)）。
+- **平台**：至少一个非 Windows 平台端口通过 T2 真机验证（X11 端口已在公开 CI 通过端到端门：真窗口出现、关闭事件链、消息泵收工、干净退出；环境为 Xvfb + fluxbox，见[平台端口](docs/guides/platform-ports.md)）。
 - **构建可达**：陌生人 clone 后能用公开渠道独立编出 hello，不依赖 token 或预先存在的本机二进制，见[环境搭建](docs/contributing/setup.md)。
 - **公开面冻结**：`@api` 清单稳定一个完整版本周期，破坏性变更走 major 递增。
 - **发布形态**：有可下载的 Release 产物与可复现的依赖包（Skia 来源 pin 到具体 commit）。

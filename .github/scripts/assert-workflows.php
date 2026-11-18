@@ -398,20 +398,27 @@ if (!str_contains($linux, 'Acquire::Retries=5')) {
     fail('linux-build.yml 的 apt 没有重试/短超时 —— 镜像抖动时会干等');
 }
 $linuxMainPhp = (string) @file_get_contents($root . '/probes/linux_x11/app/main.php');
-// attach() 会同步跑首帧，而 resize 事件要等 EventLoop pump ⇒ 不先设尺寸就是 0×0 画布、present 整段跳过。
-if (!preg_match('/->resize\([\s\S]*?\);[\s\S]*?->attach\(/', $linuxMainPhp)) {
-    fail('probe 没在 attach 前给 surface 设尺寸 —— 首帧画布 0×0，验证不到真实呈现路径');
-}
+$x11ProviderPhp = (string) @file_get_contents($root . '/src/Platform/X11/X11SurfaceProvider.php');
+$x11PlatformPhp = (string) @file_get_contents($root . '/src/Platform/X11/X11Platform.php');
 foreach (['shown', 'viewport', 'surface ready', 'attached'] as $stage) {
     if (!str_contains($linuxMainPhp, $stage)) {
         fail("probe 缺少 {$stage} 阶段标记 —— 初始化卡住时无法定位到具体调用");
     }
 }
-// attach() 内部各钩子打标：CI 卡在 surface ready 后、attached 前，靠这些标一次定位到具体方法。
-foreach (['theme entered', 'metrics entered', 'commandGates entered', 'commands entered', 'buildRoot entered', 'center made', 'text made', 'tree linked', 'first frame entered', 'first frame finished'] as $stage) {
-    if (!str_contains($linuxMainPhp, $stage)) {
-        fail("probe 缺少 [PROBE] {$stage} —— attach 内卡住时无法定位到具体钩子");
-    }
+// [PROBE] 细分打标已完成使命（真凶最终靠 WM 就绪检查 + 失败 artifact 定位），留着只是噪声。
+if (str_contains($linuxMainPhp, '[PROBE]')) {
+    fail('probe 又塞回 [PROBE] 打标 —— 已完成使命，留着只是噪声');
+}
+// ★ 反向锚点：probe 的"attach 前手动 resize"是绕过，会让 probe PASS 掩盖真实应用首帧空白。
+//   尺寸必须由框架侧自己取，probe 只验证框架行为。
+if (preg_match('/->resize\s*\(/', $linuxMainPhp)) {
+    fail('probe 又在 attach 前手动 resize —— 会掩盖 X11RasterSurface 初始 0×0 的真实缺陷');
+}
+if (!str_contains($x11ProviderPhp, 'clientSize(') || !str_contains($x11ProviderPhp, '->resize(')) {
+    fail('X11SurfaceProvider 创建表面时没按客户区定尺寸 —— 真实应用首帧会是 0×0 空白');
+}
+if (!str_contains($x11PlatformPhp, 'new X11SurfaceProvider($windowHandle, $this->displayHost())')) {
+    fail('X11Platform 没把窗口宿主传给 surface provider —— 尺寸来源与 screen 不是单点');
 }
 if (hasIgnoreEntry($linuxProjYml, 'src/Platform/Win32') || hasIgnoreEntry($linuxProjYml, 'src/Platform/X11')) {
     fail('Linux project.yml 还在 ignore 平台目录 —— native/ 只含 X11 桥，无需剪枝');
