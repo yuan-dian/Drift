@@ -88,8 +88,39 @@ extern "C" {
     Atom XInternAtom(Display *d, const char *name, Bool_ only_if_exists);
     int XSetWMProtocols(Display *d, Window w, Atom *protocols, int count);
     KeySym XKeycodeToKeysym(Display *d, unsigned int keycode, int index);
+
+    // 窗口管理（ICCCM / EWMH）：尺寸提示、几何、状态。Xlib 结构是稳定 C ABI。
+    struct XSizeHints {
+        long flags;
+        int x, y, width, height;
+        int min_width, min_height, max_width, max_height;
+        int width_inc, height_inc;
+        int min_aspect_num, min_aspect_den, max_aspect_num, max_aspect_den;
+        int base_width, base_height;
+        int win_gravity;
+    };
+    int XSetWMNormalHints(Display *d, Window w, XSizeHints *hints);
+    int XGetWMNormalHints(Display *d, Window w, XSizeHints *hints, long *supplied_return);
+    int XMoveResizeWindow(Display *d, Window w, int x, int y, unsigned int width, unsigned int height);
+    int XIconifyWindow(Display *d, Window w, int screen_number);
+    int XDefaultScreen(Display *d);
+    int XSendEvent(Display *d, Window w, Bool_ propagate, long event_mask, XEvent *event_send);
+    int XGetWindowProperty(Display *d, Window w, Atom property, long long_offset, long long_length,
+                           Bool_ del, Atom req_type, Atom *actual_type_return, int *actual_format_return,
+                           unsigned long *nitems_return, unsigned long *bytes_after_return,
+                           unsigned char **prop_return);
+    int XFree(void *data);
+
     unsigned long pthread_self(void);
 }
+
+// EWMH / ICCCM 常量（Xutil.h / Xatom.h 的数值，避免引入整套头）。
+static const long X11_PMIN_SIZE = 1L << 4;      // XSizeHints.flags 的 min_width/min_height 有效位
+static const long X11_SUBSTRUCTURE_REDIRECT = 1L << 20;
+static const long X11_SUBSTRUCTURE_NOTIFY = 1L << 19;
+static const unsigned long XA_ATOM_TYPE = 4;     // XGetWindowProperty 的 req_type：XA_ATOM
+static const int CLIENT_MESSAGE = 33;            // XEvent.type：ClientMessage
+static const long WM_STATE_ICONIC = 3;           // ICCCM WM_STATE 的 IconicState
 
 static Display *g_display = nullptr;
 static Atom g_wmDelete = 0;
@@ -379,6 +410,162 @@ void php_drift_x11_set_title(Int hwnd, String title)
         XStoreName(d, (Window)(uintptr_t)hwnd, title.data());
         XFlush(d);
     }
+}
+
+void php_drift_x11_set_min_size(Int hwnd, Int w, Int h)
+{
+    Display *d = display();
+    if (d == nullptr || hwnd <= 0) return;
+    XSizeHints hints = {};
+    long supplied = 0;
+    XGetWMNormalHints(d, (Window)(uintptr_t)hwnd, &hints, &supplied);
+    if (w > 0) { hints.min_width = (int)w; hints.flags |= X11_PMIN_SIZE; }
+    if (h > 0) { hints.min_height = (int)h; hints.flags |= X11_PMIN_SIZE; }
+    XSetWMNormalHints(d, (Window)(uintptr_t)hwnd, &hints);
+    XFlush(d);
+}
+
+void php_drift_x11_place_window(Int hwnd, Float x, Float y, Float w, Float h, Bool maximized)
+{
+    Display *d = display();
+    if (d == nullptr || hwnd <= 0) return;
+    if (!(w > 0.0f) || !(h > 0.0f)) return;   // 垃圾尺寸不动窗口（对齐 Win32）
+    Window win = (Window)(uintptr_t)hwnd;
+    XMoveResizeWindow(d, win, (int)x, (int)y, (unsigned int)w, (unsigned int)h);
+    // maximized 是 EWMH 状态（不是几何）—— 单独发 toggle，与 place 的几何解耦。
+    if (maximized) {
+        Atom state = XInternAtom(d, "_NET_WM_STATE", 0);
+        Atom vert = XInternAtom(d, "_NET_WM_STATE_MAXIMIZED_VERT", 0);
+        Atom horz = XInternAtom(d, "_NET_WM_STATE_MAXIMIZED_HORZ", 0);
+        if (state != 0 && vert != 0 && horz != 0) {
+            XEvent ev = {};
+            ev.client.type = CLIENT_MESSAGE;
+            ev.client.window = win;
+            ev.client.message_type = state;
+            ev.client.format = 32;
+            ev.client.data[0] = 1;              // _NET_WM_STATE_ADD
+            ev.client.data[1] = (long)vert;
+            ev.client.data[2] = (long)horz;
+            ev.client.data[3] = 0;
+            ev.client.data[4] = 0;
+            XSendEvent(d, XDefaultRootWindow(d), 0,
+                       X11_SUBSTRUCTURE_REDIRECT | X11_SUBSTRUCTURE_NOTIFY, &ev);
+        }
+    }
+    XFlush(d);
+}
+
+void php_drift_x11_maximize_toggle(Int hwnd)
+{
+    Display *d = display();
+    if (d == nullptr || hwnd <= 0) return;
+    Atom state = XInternAtom(d, "_NET_WM_STATE", 0);
+    Atom vert = XInternAtom(d, "_NET_WM_STATE_MAXIMIZED_VERT", 0);
+    Atom horz = XInternAtom(d, "_NET_WM_STATE_MAXIMIZED_HORZ", 0);
+    if (state == 0 || vert == 0 || horz == 0) return;   // WM 不支持 EWMH ⇒ no-op（非错误）
+    XEvent ev = {};
+    ev.client.type = CLIENT_MESSAGE;
+    ev.client.window = (Window)(uintptr_t)hwnd;
+    ev.client.message_type = state;
+    ev.client.format = 32;
+    ev.client.data[0] = 2;                      // _NET_WM_STATE_TOGGLE
+    ev.client.data[1] = (long)vert;
+    ev.client.data[2] = (long)horz;
+    ev.client.data[3] = 0;
+    ev.client.data[4] = 0;
+    XSendEvent(d, XDefaultRootWindow(d), 0,
+               X11_SUBSTRUCTURE_REDIRECT | X11_SUBSTRUCTURE_NOTIFY, &ev);
+    XFlush(d);
+}
+
+void php_drift_x11_minimize(Int hwnd)
+{
+    Display *d = display();
+    if (d == nullptr || hwnd <= 0) return;
+    XIconifyWindow(d, (Window)(uintptr_t)hwnd, XDefaultScreen(d));
+    XFlush(d);
+}
+
+/** 顶层窗口相对 root 的坐标（客户区原点 ≈ 窗口原点：X11 无 Windows 式外框）。 */
+Array php_drift_x11_window_position(Int hwnd)
+{
+    Array out;
+    Display *d = display();
+    if (d == nullptr || hwnd <= 0) return out;
+    Window root;
+    int x, y;
+    unsigned int w, h, bw, dep;
+    if (XGetGeometry(d, (Window)(uintptr_t)hwnd, &root, &x, &y, &w, &h, &bw, &dep) == 0) return out;
+    out.set("x", (Int)x);
+    out.set("y", (Int)y);
+    return out;
+}
+
+/**
+ * 窗口状态读回（probe 判据用）：从 X server 读真实属性，不经 PHP 缓存。
+ * 返回 min_w/min_h（XSizeHints）、w/h（几何）、max_v/max_h（EWMH）、iconic（WM_STATE）。
+ */
+Array php_drift_x11_window_state(Int hwnd)
+{
+    Array out;
+    Display *d = display();
+    if (d == nullptr || hwnd <= 0) return out;
+    Window win = (Window)(uintptr_t)hwnd;
+
+    XSizeHints hints = {};
+    long supplied = 0;
+    XGetWMNormalHints(d, win, &hints, &supplied);
+    out.set("min_w", (Int)((hints.flags & X11_PMIN_SIZE) ? hints.min_width : 0));
+    out.set("min_h", (Int)((hints.flags & X11_PMIN_SIZE) ? hints.min_height : 0));
+
+    Window root;
+    int x, y;
+    unsigned int w, h, bw, dep;
+    if (XGetGeometry(d, win, &root, &x, &y, &w, &h, &bw, &dep) != 0) {
+        out.set("w", (Int)w);
+        out.set("h", (Int)h);
+    }
+
+    // _NET_WM_STATE：atom 数组，含 MAXIMIZED_VERT/HORZ 即最大化。
+    Atom state = XInternAtom(d, "_NET_WM_STATE", 0);
+    Atom vert = XInternAtom(d, "_NET_WM_STATE_MAXIMIZED_VERT", 0);
+    Atom horz = XInternAtom(d, "_NET_WM_STATE_MAXIMIZED_HORZ", 0);
+    bool maxV = false, maxH = false;
+    if (state != 0) {
+        Atom actual = 0;
+        int fmt = 0;
+        unsigned long nitems = 0, after = 0;
+        unsigned char *prop = nullptr;
+        if (XGetWindowProperty(d, win, state, 0, 16, 0, XA_ATOM_TYPE,
+                               &actual, &fmt, &nitems, &after, &prop) == 0 && prop != nullptr) {
+            Atom *atoms = (Atom *)prop;
+            for (unsigned long i = 0; i < nitems; i++) {
+                if (atoms[i] == vert) maxV = true;
+                if (atoms[i] == horz) maxH = true;
+            }
+            XFree(prop);
+        }
+    }
+    out.set("max_v", Bool(maxV));
+    out.set("max_h", Bool(maxH));
+
+    // WM_STATE（ICCCM）：2×32-bit，第一个 long == 3 ⇒ IconicState。
+    Atom wmState = XInternAtom(d, "WM_STATE", 0);
+    bool iconic = false;
+    if (wmState != 0) {
+        Atom actual = 0;
+        int fmt = 0;
+        unsigned long nitems = 0, after = 0;
+        unsigned char *prop = nullptr;
+        if (XGetWindowProperty(d, win, wmState, 0, 2, 0, wmState,
+                               &actual, &fmt, &nitems, &after, &prop) == 0
+            && prop != nullptr && nitems >= 1) {
+            iconic = (((long *)prop)[0] == WM_STATE_ICONIC);
+            XFree(prop);
+        }
+    }
+    out.set("iconic", Bool(iconic));
+    return out;
 }
 
 Array php_drift_x11_wait(Float timeoutMs)

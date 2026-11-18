@@ -10,6 +10,12 @@ function drift_x11_destroy(int $hwnd): void {}
 function drift_x11_is_alive(int $hwnd): bool {}
 function drift_x11_client_size(int $hwnd): array {}
 function drift_x11_set_title(int $hwnd, string $title): void {}
+function drift_x11_set_min_size(int $hwnd, int $w, int $h): void {}
+function drift_x11_place_window(int $hwnd, float $x, float $y, float $w, float $h, bool $maximized): void {}
+function drift_x11_maximize_toggle(int $hwnd): void {}
+function drift_x11_minimize(int $hwnd): void {}
+function drift_x11_window_position(int $hwnd): array {}
+function drift_x11_window_state(int $hwnd): array {}
 function drift_x11_wait(float $timeout_ms): array {}
 function drift_x11_present(int $hwnd, string $rgba, int $width, int $height): void {}
 function drift_x11_now_ms(): float {}

@@ -8,6 +8,7 @@ use Drift\App\NamedJob;
 use Drift\App\ThreadTaskHost;
 use Drift\Geometry\Axis;
 use Drift\Geometry\BoxConstraints;
+use Drift\Geometry\Rect;
 use Drift\Input\CursorShape;
 use Drift\Input\InputEvent;
 use Drift\Input\KeyEvent;
@@ -24,6 +25,8 @@ use function drift_io_start;
 use function drift_io_stop;
 use function drift_io_submit;
 use function drift_io_threads;
+use function drift_x11_now_ms;
+use function drift_x11_window_state;
 
 final class X11ProbeApplication extends Application
 {
@@ -321,6 +324,88 @@ function probeIoPool(X11Platform $platform): void
     echo "[IO] RESULT: PASS\n";
 }
 
+/**
+ * 窗口管理判据：ICCCM 最小尺寸 + EWMH 最大化 + ICCCM 最小化。
+ *
+ * 用独立临时窗口（标题 WM Probe）跑，测完 destroy —— 不碰主窗口，避免
+ * 最大化/图标化干扰后续输入注入与关窗。每条都走「PHP WindowHost 方法 →
+ * 桥写 X server → 桥读回真实属性」闭环，不依赖 xprop/xwininfo 外部工具。
+ */
+function probeWindowManagement(X11Platform $platform): void
+{
+    echo "=== Window management: ICCCM + EWMH ===\n";
+    $win = $platform->window();
+    $tmp = $win->createWindow('WM Probe', 320, 240);
+    if ($tmp <= 0) {
+        echo "[WM] FAIL createWindow\n";
+        exit(1);
+    }
+    $win->show($tmp);
+
+    // J1 最小尺寸（XSizeHints.min_width/min_height）。
+    $win->setMinSize($tmp, 400, 300);
+    $state = drift_x11_window_state($tmp);
+    $minW = $state['min_w'] ?? 0;
+    $minH = $state['min_h'] ?? 0;
+    echo "[WM] min {$minW}x{$minH}\n";
+
+    // J2 几何还原（XMoveResizeWindow）+ 位置读回。
+    // ★ WM 会拦截 ConfigureRequest（SubstructureRedirect）异步处理 ⇒ XFlush 后
+    //   立即读回拿到的是旧几何（真机实测：place 400x300 读回 320x240）。轮询等 WM 落地。
+    $rect = Rect::fromLtrb(120, 140, 520, 440);   // 400x300 @ (120,140)
+    $win->place($tmp, $rect, false);
+    $deadline = drift_x11_now_ms() + 2000;
+    do {
+        $sized = $win->clientSize($tmp);
+        if ((int) $sized->width === 400 && (int) $sized->height === 300) break;
+        \usleep(20000);
+    } while (drift_x11_now_ms() < $deadline);
+    $pos = $win->position($tmp);
+    $pw = (int) $sized->width;
+    $ph = (int) $sized->height;
+    $px = $pos === null ? -1 : (int) $pos->x;
+    $py = $pos === null ? -1 : (int) $pos->y;
+    echo "[WM] place {$pw}x{$ph} @ {$px},{$py}\n";
+
+    // J3 最大化（EWMH ClientMessage → WM 异步置位；轮询读回，上限 2s）。
+    $win->maximizeToggle($tmp);
+    $deadline = drift_x11_now_ms() + 2000;
+    do {
+        $maxed = $win->isMaximized($tmp);
+        if ($maxed) break;
+        \usleep(20000);
+    } while (drift_x11_now_ms() < $deadline);
+    $state = drift_x11_window_state($tmp);
+    $mv = !empty($state['max_v']) ? '1' : '0';
+    $mh = !empty($state['max_h']) ? '1' : '0';
+    $im = $maxed ? '1' : '0';
+    echo "[WM] max_v={$mv} max_h={$mh} isMaximized={$im}\n";
+
+    // J4 最小化（XIconifyWindow → WM_STATE=Iconic；同样轮询）。
+    $win->minimize($tmp);
+    $deadline = drift_x11_now_ms() + 2000;
+    do {
+        $state = drift_x11_window_state($tmp);
+        $iconic = !empty($state['iconic']);
+        if ($iconic) break;
+        \usleep(20000);
+    } while (drift_x11_now_ms() < $deadline);
+    echo '[WM] iconic=' . ($iconic ? '1' : '0') . "\n";
+
+    $win->destroy($tmp);
+
+    $ok = $minW === 400 && $minH === 300
+        && $pw === 400 && $ph === 300
+        && $px >= 0 && $py >= 0
+        && $mv === '1' && $mh === '1' && $im === '1'
+        && $iconic;
+    if (!$ok) {
+        echo "[FAIL] window management verdict\n";
+        exit(1);
+    }
+    echo "[WM] RESULT: PASS\n";
+}
+
 function main(): void
 {
     echo "=== X11 E2E: real Application on EventLoop ===\n";
@@ -333,6 +418,9 @@ function main(): void
 
     // 图片解码 P0 判据（纯数据路径，建窗前 headless 跑）。
     probeImageDecode(\sys_get_temp_dir() . '/drift-decode-samples');
+
+    // 窗口管理判据（临时窗口，测完销毁 —— 不干扰下面主窗口的输入/关窗）。
+    probeWindowManagement($platform);
 
     $handle = $platform->window()->createWindow('X11 Drift', 320, 240);
     echo "handle={$handle}\n";

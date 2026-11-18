@@ -738,6 +738,59 @@ foreach ($imageDecodeAnchors as [$text, $needle, $label]) {
 }
 fwrite(STDOUT, '  ok     X11 图片解码 Skia codec：' . count($imageDecodeAnchors) . " 个链路环节\n");
 
+// ── X11 窗口管理：ICCCM 最小尺寸 / EWMH 最大化 / ICCCM 最小化 ──────────
+// 这三项此前在 X11WindowHost 是空实现/常量 false —— 应用读回永远"不支持"，
+// 属静默缺口。锚定整条读写闭环：桥函数 + 读回 + stub + WindowHost 去 no-op +
+// probe 判据 + build.sh grep。反向锚点禁止空实现回潮。
+$x11HostPhp = (string) @file_get_contents($root . '/src/Platform/X11/X11WindowHost.php');
+$x11WmAnchors = [
+    // 桥：写侧 ICCCM/EWMH + 读侧属性
+    [$x11PresentCc, 'XSetWMNormalHints(', 'setMinSize 没写 XSizeHints'],
+    [$x11PresentCc, 'XMoveResizeWindow(', 'place 没调 XMoveResizeWindow'],
+    [$x11PresentCc, '_NET_WM_STATE_MAXIMIZED_VERT', '最大化没用 EWMH 状态'],
+    [$x11PresentCc, 'CLIENT_MESSAGE', '最大化/最小化没发 ClientMessage 给 WM'],
+    [$x11PresentCc, 'XIconifyWindow(', 'minimize 没调 XIconifyWindow'],
+    [$x11PresentCc, 'php_drift_x11_window_state', '缺读回函数 —— probe 无法验真实 X 属性'],
+    [$x11PresentCc, 'XGetWindowProperty(', '读回没从 X server 取属性'],
+    [$x11PresentCc, 'WM_STATE', '读回没验最小化状态'],
+    [$x11PresentCc, 'X11_SUBSTRUCTURE_REDIRECT', 'ClientMessage 没发对事件掩码（WM 收不到）'],
+    // stub 声明（AOT 静态调用要声明）
+    [$x11StubPhp, 'function drift_x11_set_min_size(', 'stub 缺 set_min_size'],
+    [$x11StubPhp, 'function drift_x11_place_window(', 'stub 缺 place_window'],
+    [$x11StubPhp, 'function drift_x11_maximize_toggle(', 'stub 缺 maximize_toggle'],
+    [$x11StubPhp, 'function drift_x11_minimize(', 'stub 缺 minimize'],
+    [$x11StubPhp, 'function drift_x11_window_state(', 'stub 缺 window_state'],
+    // WindowHost 去 no-op
+    [$x11HostPhp, 'drift_x11_set_min_size(', 'setMinSize 还是 no-op'],
+    [$x11HostPhp, 'drift_x11_place_window(', 'place 还是 no-op'],
+    [$x11HostPhp, 'drift_x11_maximize_toggle(', 'maximizeToggle 还是 no-op'],
+    [$x11HostPhp, 'drift_x11_minimize(', 'minimize 还是 no-op'],
+    [$x11HostPhp, 'drift_x11_window_position(', 'position 还是恒 null'],
+    [$x11HostPhp, "state['max_v'] ?? false", 'isMaximized 没读真实状态'],
+    // probe + build.sh
+    [$linuxMainPhp, 'probeWindowManagement(', 'probe 没跑窗口管理判据'],
+    [$linuxMainPhp, 'createWindow(\'WM Probe\'', '判据没用独立临时窗口（会干扰主窗口关窗）'],
+    [$linuxMainPhp, "\$win->setMinSize(\$tmp, 400, 300)", 'probe 没设最小尺寸'],
+    [$linuxMainPhp, 'drift_x11_window_state($tmp)', 'probe 没读回 X 属性'],
+    [$linuxBuildSh, "grep -q '\\[WM\\] min 400x300'", 'build.sh 没断言最小尺寸'],
+    [$linuxBuildSh, "grep -q '\\[WM\\] max_v=1 max_h=1 isMaximized=1'", 'build.sh 没断言 EWMH 最大化'],
+    [$linuxBuildSh, "grep -q '\\[WM\\] iconic=1'", 'build.sh 没断言最小化'],
+    [$linuxBuildSh, "grep -q '\\[WM\\] RESULT: PASS'", 'build.sh 没断言窗口管理整体通过'],
+];
+foreach ($x11WmAnchors as [$text, $needle, $label]) {
+    if (!str_contains($text, $needle)) {
+        fail('X11 窗口管理链路断裂：' . $label . '（' . $needle . '）');
+    }
+}
+// 反向锚点：WindowHost 里不许再有 position 恒 null / isMaximized 恒 false。
+if (preg_match('/function position\([^)]*\): \?Point\s*\{\s*return null;/s', $x11HostPhp)) {
+    fail('X11WindowHost::position() 又变回恒 null —— 窗口位置持久化会静默失效');
+}
+if (preg_match('/function isMaximized\([^)]*\): bool\s*\{\s*return false;/s', $x11HostPhp)) {
+    fail('X11WindowHost::isMaximized() 又变回恒 false —— 最大化状态永远读不到');
+}
+fwrite(STDOUT, '  ok     X11 窗口管理 ICCCM/EWMH：' . count($x11WmAnchors) . " 个链路环节 + 空实现反向判据\n");
+
 // ── Linux Skia 构建通道（build-only，不发布）────────────────────────────
 // 目的：在公开 runner 上回答「gn gen 认不认 Linux args / .a 能不能真编出来」。
 // 它不消费 deps-v1、不改锁、不发 tag —— 所以加反向锚点防止有人把 windows-deps

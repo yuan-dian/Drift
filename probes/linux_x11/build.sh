@@ -185,6 +185,11 @@ grep -q '\[DEC\] png red(R=255,B=0) blue(R=0,B=255)' "$ws/run.log" || { err "PNG
 grep -q '\[DEC\] scaled maxWidth=4 => 4x4 bytes=64' "$ws/run.log" || { err "maxWidth 缩放失败：解码期没等比缩小"; fail=1; }
 grep -q '\[DEC\] missing=empty' "$ws/run.log" || { err "解码失败路径没返回空数组 —— 会抛异常打断消息循环"; fail=1; }
 grep -q '\[DEC\] RESULT: PASS' "$ws/run.log" || { err "图片解码判据整体未通过"; fail=1; }
+grep -q '\[WM\] min 400x300' "$ws/run.log" || { err "最小尺寸失效：XSetWMNormalHints 没写进 XSizeHints"; fail=1; }
+grep -q '\[WM\] place 400x300 @ ' "$ws/run.log" || { err "几何还原失效：XMoveResizeWindow 没改窗口尺寸"; fail=1; }
+grep -q '\[WM\] max_v=1 max_h=1 isMaximized=1' "$ws/run.log" || { err "EWMH 最大化失效：ClientMessage 没让 WM 置 _NET_WM_STATE"; fail=1; }
+grep -q '\[WM\] iconic=1' "$ws/run.log" || { err "最小化失效：XIconifyWindow 没让 WM 置 WM_STATE=Iconic"; fail=1; }
+grep -q '\[WM\] RESULT: PASS' "$ws/run.log" || { err "窗口管理判据整体未通过"; fail=1; }
 grep -q '\[BACKEND\] skia' "$ws/run.log" || { err "Skia 后端未启用：桥没链上或 provider 回退到了软光栅"; fail=1; }
 grep -q '\[FONT\] ready=1' "$ws/run.log" || { err "Skia 目录字体未就绪 —— 文字不会绘制（几何全对也看不出字）"; fail=1; }
 grep -q '找不到目录字体' "$ws/run.log" && { err "Skia 报了字体缺失诊断"; fail=1; }

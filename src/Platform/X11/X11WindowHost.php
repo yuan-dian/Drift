@@ -15,12 +15,17 @@ use function drift_x11_client_size;
 use function drift_x11_create;
 use function drift_x11_destroy;
 use function drift_x11_is_alive;
+use function drift_x11_maximize_toggle;
+use function drift_x11_minimize;
+use function drift_x11_place_window;
+use function drift_x11_set_min_size;
 use function drift_x11_set_title;
 use function drift_x11_show;
+use function drift_x11_window_position;
 
 /**
- * X11 窗口端口。建窗/存活/尺寸/标题走桥；其余运行期旋钮这一版是显式 no-op
- * （材质、拖拽、最小化、光标、AT-SPI 语义），不是"平台支持但没生效"。
+ * X11 窗口端口。建窗/存活/尺寸/标题/几何/最小化/最大化走桥（ICCCM + EWMH）；
+ * 材质、拖拽、光标、AT-SPI 语义这一版是显式 no-op，不是"平台支持但没生效"。
  * @internal 平台实现；应用只认 Drift\Platform\WindowHost
  */
 final class X11WindowHost implements WindowHost
@@ -86,6 +91,7 @@ final class X11WindowHost implements WindowHost
 
     public function setMinSize(int $windowHandle, int $width, int $height): void
     {
+        drift_x11_set_min_size($windowHandle, $width, $height);
     }
 
     public function applyMaterial(int $windowHandle, WindowMaterial $material): void
@@ -107,10 +113,12 @@ final class X11WindowHost implements WindowHost
 
     public function minimize(int $windowHandle): void
     {
+        drift_x11_minimize($windowHandle);
     }
 
     public function maximizeToggle(int $windowHandle): void
     {
+        drift_x11_maximize_toggle($windowHandle);
     }
 
     public function clientSize(int $windowHandle): Size
@@ -126,16 +134,35 @@ final class X11WindowHost implements WindowHost
 
     public function position(int $windowHandle): ?Point
     {
-        return null;
+        // X11 顶层窗口的坐标即相对 root（无 Windows 式外框换算），DPI 恒 1。
+        $raw = drift_x11_window_position($windowHandle);
+        $x = $raw['x'] ?? null;
+        $y = $raw['y'] ?? null;
+        if ($x === null || $y === null) {
+            return null;   // 查询失败（死句柄 / 无 display）
+        }
+
+        return Point::of((float) $x, (float) $y);
     }
 
     public function place(int $windowHandle, Rect $rect, bool $maximized): void
     {
+        drift_x11_place_window(
+            $windowHandle,
+            $rect->left,
+            $rect->top,
+            $rect->width,
+            $rect->height,
+            $maximized,
+        );
     }
 
     public function isMaximized(int $windowHandle): bool
     {
-        return false;
+        // EWMH 完全最大化 = 横竖两维都置位（与 Win32 IsZoomed 对齐）。
+        $state = drift_x11_window_state($windowHandle);
+
+        return (bool) ($state['max_v'] ?? false) && (bool) ($state['max_h'] ?? false);
     }
 
     public function setCursor(int $windowHandle, CursorShape $shape): void
