@@ -379,8 +379,17 @@ if (!str_contains($linux, 'kernel.yama.ptrace_scope=0')) {
 if (!str_contains($linux, 'NEEDRESTART_SUSPEND')) {
     fail('linux-build.yml 的 apt 没关 needrestart —— 24.04 上会弹交互式对话框挂死');
 }
-if (!str_contains($linux, 'timeout 480 sudo env $APT_ENV apt-get install')) {
+if (!str_contains($linux, 'timeout 600 sudo env $APT_ENV apt-get install')) {
     fail('linux-build.yml 的 apt-get install 没有超时上界 —— 卡住会烧到 job 超时');
+}
+// 不加 --no-install-recommends 时 apt 会为 fluxbox 拉 ghostscript/feh/menu 等 44 个包、
+// 67.3 MB，在镜像抖动时单步就能吃掉十分钟以上。
+// 锚点必须带命令行前缀：只写 `--no-install-recommends` 会被上面那段注释满足（判据静态失效）。
+if (!str_contains($linux, 'apt-get install --yes --no-install-recommends')) {
+    fail('linux-build.yml 的 apt 没关 recommends —— fluxbox 会拖进 ghostscript 等无关包');
+}
+if (!str_contains($linux, 'Acquire::Retries=5')) {
+    fail('linux-build.yml 的 apt 没有重试/短超时 —— 镜像抖动时会干等');
 }
 $linuxMainPhp = (string) @file_get_contents($root . '/probes/linux_x11/app/main.php');
 // attach() 会同步跑首帧，而 resize 事件要等 EventLoop pump ⇒ 不先设尺寸就是 0×0 画布、present 整段跳过。

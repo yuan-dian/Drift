@@ -90,24 +90,26 @@ jobs:
               | sudo patch --directory="${include_dir}" --strip=1
           fi
 
-      # ★ ubuntu-24.04 镜像自带 needrestart：apt 一旦升级到它管的包，就会弹交互式
-      #   "Which services should be restarted?"，非交互环境下整步挂死（实测 22.04 同一步
-      #   约 1 分钟，24.04 卡到 9 分钟仍无输出）。DEBIAN_FRONTEND + NEEDRESTART_SUSPEND
-      #   一起关掉；sudo 会清环境变量，而 runner 的 sudoers 未必允许 `-E`，
-      #   所以用 `sudo env VAR=... cmd` 这种不依赖 SETENV 的写法。
-      #   外面再包 timeout：apt 卡住要变成 8 分钟内的明确失败，不是 45 分钟的静默超时。
+      # ★ 24.04 上这一步要盯三件事，任何一件失手都会挂 8 分钟以上：
+      #   ① `--no-install-recommends`：不加的话 apt 会拉 67.3 MB / 44 个包，其中
+      #      ghostscript(libgs10)、feh、menu、yudit-common、poppler-data 全是 fluxbox 的
+      #      recommends，跟窗口门毫无关系（实测单个 176 kB 的包在镜像上卡了 3 分 13 秒）。
+      #   ② apt 的默认 acquire 超时太长：镜像一抖就干等，加 Retries + 短超时让坏连接重连。
+      #   ③ 24.04 镜像自带 needrestart，且这里顺带升级 libc6 ⇒ 会弹交互式对话框。
+      #      sudo 会清环境变量，而 runner 的 sudoers 未必允许 `-E`，所以用 `sudo env VAR=..`。
+      #   外面再包 timeout：apt 卡住要变成明确失败，不是静默烧到 job 的 45 分钟上限。
       - name: Install native dependencies
         run: |
           APT_ENV="DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1"
-          if ! timeout 240 sudo env $APT_ENV apt-get update; then
+          APT_OPTS="-o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Dpkg::Options::=--force-confold"
+          if ! timeout 240 sudo env $APT_ENV apt-get update $APT_OPTS; then
             echo "::error title=apt-get update 超时/失败::apt 在 4 分钟内没跑完，看上面的输出"
             exit 1
           fi
           # fluxbox：X11 端到端门要真窗口。裸 Xvfb 无窗口管理器，窗口不会 map/expose，
           # Qt 官方 GUI CI 配方同样是 Xvfb + fluxbox（"proper focus and window management"）。
           # gdb 只用来在卡死时抓一次 C++ 栈。
-          if ! timeout 480 sudo env $APT_ENV apt-get install --yes \
-              -o Dpkg::Options::=--force-confold \
+          if ! timeout 600 sudo env $APT_ENV apt-get install --yes --no-install-recommends $APT_OPTS \
               build-essential cmake libgmp-dev libmpfr-dev pkg-config python3-dev \
               xvfb x11-utils fluxbox gdb; then
             echo "::error title=apt-get install 超时/失败::依赖装不上，后面所有步骤都无意义"
