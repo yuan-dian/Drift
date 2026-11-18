@@ -190,6 +190,7 @@ $linuxAnchors = [
     'ref: 90e6d22a9c3f4d5dbd2c75d62e90bf5adfe58c89' => 'PHPX 工具链必须钉 commit',
     'phpts: ts' => '必须装 ZTS PHP（AOT 需要 Embed SAPI）',
     'Xvfb :99' => '必须有 X server，否则窗口门恒假',
+    'fluxbox' => '必须有窗口管理器：裸 Xvfb 不 map/expose，Qt 官方 GUI CI 同为 Xvfb + fluxbox',
     'bash probes/linux_x11/build.sh' => '必须真跑 X11 端到端脚本',
 ];
 foreach ($linuxAnchors as $needle => $label) {

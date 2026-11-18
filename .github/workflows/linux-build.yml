@@ -70,7 +70,9 @@ jobs:
       - name: Install native dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes build-essential cmake libgmp-dev libmpfr-dev pkg-config python3-dev xvfb x11-utils
+          # fluxbox：X11 端到端门要真窗口。裸 Xvfb 无窗口管理器，窗口不会 map/expose，
+          # Qt 官方 GUI CI 配方同样是 Xvfb + fluxbox（"proper focus and window management"）。
+          sudo apt-get install --yes build-essential cmake libgmp-dev libmpfr-dev pkg-config python3-dev xvfb x11-utils fluxbox
 
       - name: Install compiler dependencies
         run: composer install --working-dir=third_party/typephp --prefer-dist --no-progress
@@ -85,12 +87,17 @@ jobs:
           test -f "${PHPX_HOME}/lib/libphpx.so"
           echo "LD_LIBRARY_PATH=${PHPX_HOME}/lib:${PHP_HOME}/lib" >> "${GITHUB_ENV}"
 
-      - name: Start Xvfb
+      - name: Start Xvfb + window manager
         shell: bash
         run: |
           Xvfb :99 -screen 0 1280x800x24 > /tmp/xvfb.log 2>&1 &
           echo "DISPLAY=:99" >> "${GITHUB_ENV}"
           sleep 2
+          # 窗口管理器负责 map/焦点/自动定位；缺它时窗口停在 withdrawn、
+          # XSendEvent 打得出去但应用等不到 expose，表现为 90s 卡死。
+          fluxbox > /tmp/fluxbox.log 2>&1 &
+          sleep 3
+          xwininfo -root -display :99 > /dev/null  # 确认 X 与 WM 就绪
 
       - name: Workflow structure assertions
         run: php .github/scripts/assert-workflows.php
