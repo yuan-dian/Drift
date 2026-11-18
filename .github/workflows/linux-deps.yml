@@ -98,6 +98,33 @@ jobs:
           python3 --version
           git --version
 
+      # skia_use_freetype=true 在 Linux 上会编 SkFontConfigInterface_direct.cpp，
+      # 它 #include <fontconfig/fontconfig.h>。Windows 版走 GDI 不需要这个头，
+      # 所以 windows-deps.yml 没有对应步骤 —— 这是 Linux 独有的系统依赖。
+      # 用与 linux-build.yml 相同的加固配方（24.04 上 apt 曾因 recommends/needrestart 挂死）。
+      - name: Ensure fontconfig headers
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f /usr/include/fontconfig/fontconfig.h ]; then
+            echo "fontconfig.h already present"
+            exit 0
+          fi
+          APT_ENV="DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1"
+          APT_OPTS="-o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+          if ! timeout 240 sudo env $APT_ENV apt-get update $APT_OPTS; then
+            echo "::error title=apt update::fontconfig 依赖安装失败"
+            exit 1
+          fi
+          if ! timeout 600 sudo env $APT_ENV apt-get install --yes --no-install-recommends $APT_OPTS libfontconfig1-dev; then
+            echo "::error title=apt install::libfontconfig1-dev 装不上，Skia 编译必然在 fontconfig.h 处失败"
+            exit 1
+          fi
+          test -f /usr/include/fontconfig/fontconfig.h || {
+            echo "::error title=fontconfig::apt 报成功但头文件仍缺失"; exit 1
+          }
+          echo "fontconfig headers ready"
+
       # Skia's git-sync-deps + full compile needs well over 10 GB. Hosted
       # images are ~14 GB free; drop toolchains this build never touches
       # (the Windows channel does the equivalent with PowerShell).
