@@ -90,14 +90,31 @@ jobs:
               | sudo patch --directory="${include_dir}" --strip=1
           fi
 
+      # ★ ubuntu-24.04 镜像自带 needrestart：apt 一旦升级到它管的包，就会弹交互式
+      #   "Which services should be restarted?"，非交互环境下整步挂死（实测 22.04 同一步
+      #   约 1 分钟，24.04 卡到 9 分钟仍无输出）。DEBIAN_FRONTEND + NEEDRESTART_SUSPEND
+      #   一起关掉；sudo 会清环境变量，而 runner 的 sudoers 未必允许 `-E`，
+      #   所以用 `sudo env VAR=... cmd` 这种不依赖 SETENV 的写法。
+      #   外面再包 timeout：apt 卡住要变成 8 分钟内的明确失败，不是 45 分钟的静默超时。
       - name: Install native dependencies
         run: |
-          sudo apt-get update
+          APT_ENV="DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1"
+          if ! timeout 240 sudo env $APT_ENV apt-get update; then
+            echo "::error title=apt-get update 超时/失败::apt 在 4 分钟内没跑完，看上面的输出"
+            exit 1
+          fi
           # fluxbox：X11 端到端门要真窗口。裸 Xvfb 无窗口管理器，窗口不会 map/expose，
           # Qt 官方 GUI CI 配方同样是 Xvfb + fluxbox（"proper focus and window management"）。
-          sudo apt-get install --yes build-essential cmake libgmp-dev libmpfr-dev pkg-config python3-dev xvfb x11-utils fluxbox gdb
-          # gdb 只用来在卡死时抓一次 C++ 栈。runner 默认 ptrace_scope=1 会拒绝对
-          # 非后代进程 attach（应用是 timeout 的子进程，不是 gdb 的后代）⇒ 放开。
+          # gdb 只用来在卡死时抓一次 C++ 栈。
+          if ! timeout 480 sudo env $APT_ENV apt-get install --yes \
+              -o Dpkg::Options::=--force-confold \
+              build-essential cmake libgmp-dev libmpfr-dev pkg-config python3-dev \
+              xvfb x11-utils fluxbox gdb; then
+            echo "::error title=apt-get install 超时/失败::依赖装不上，后面所有步骤都无意义"
+            exit 1
+          fi
+          # runner 默认 ptrace_scope=1 会拒绝对非后代进程 attach（应用是 timeout 的子进程，
+          # 不是 gdb 的后代）⇒ 放开，否则 gdb.log 永远是空的。
           sudo sysctl -w kernel.yama.ptrace_scope=0 || true
 
       - name: Install compiler dependencies

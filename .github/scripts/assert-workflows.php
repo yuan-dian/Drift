@@ -374,6 +374,14 @@ if (!str_contains($linuxBuildSh, 'thread apply all bt')
 if (!str_contains($linux, 'kernel.yama.ptrace_scope=0')) {
     fail('linux-build.yml 没放开 ptrace_scope —— gdb 无法 attach 非后代进程，栈永远是空的');
 }
+// 24.04 镜像自带 needrestart：apt 升级到它管的包时会弹交互式对话框挂死整步。
+// 同时 apt 必须有上界，否则卡住就是 45 分钟静默超时（实测踩到过 9 分钟无输出）。
+if (!str_contains($linux, 'NEEDRESTART_SUSPEND')) {
+    fail('linux-build.yml 的 apt 没关 needrestart —— 24.04 上会弹交互式对话框挂死');
+}
+if (!str_contains($linux, 'timeout 480 sudo env $APT_ENV apt-get install')) {
+    fail('linux-build.yml 的 apt-get install 没有超时上界 —— 卡住会烧到 job 超时');
+}
 $linuxMainPhp = (string) @file_get_contents($root . '/probes/linux_x11/app/main.php');
 // attach() 会同步跑首帧，而 resize 事件要等 EventLoop pump ⇒ 不先设尺寸就是 0×0 画布、present 整段跳过。
 if (!preg_match('/->resize\([\s\S]*?\);[\s\S]*?->attach\(/', $linuxMainPhp)) {
