@@ -332,6 +332,41 @@ if (!str_contains($between, 'skia_enable_ganesh = false')) {
 if (str_contains($winBlock, 'skia_enable_ganesh')) {
     fail('build-skia.sh 的 Windows 分支出现了 Ganesh 开关 —— 会改变已发布 deps-v1 的构建参数');
 }
+// ★ Linux 模块裁剪：Drift 只链接 core 绘制，build/base.yml 明确不链 skottie /
+//   sksg / skparagraph / skshaper / skunicode / icu。九个开关必须全部在 Linux
+//   分支内，且确实写进 for 循环（不是只出现在注释里）。任一条漏掉 = 白编一堆
+//   死库；任何一条漏进 Windows = 破坏 deps-v1 的已发布参数。
+$linuxTrimFlags = [
+    'skia_enable_pdf = false',
+    'skia_enable_skottie = false',
+    'skia_enable_svg = false',
+    'skia_enable_skparagraph = false',
+    'skia_enable_skshaper = false',
+    'skia_use_icu = false',
+    'skia_use_perfetto = false',
+    'skia_use_piex = false',
+    'skia_use_dng_sdk = false',
+];
+// 只认 for 循环体里的带引号字面量，注释里写字面量不算。用位置截取而不是
+// 正则匹配 `; do` —— shell 的 `; do` / 换行 do 都合法，正则太脆。
+$trimStart = strpos($fnBody, 'for flag in ');
+$trimEnd = $trimStart === false ? false : strpos($fnBody, "\n    done", $trimStart);
+if ($trimStart === false || $trimEnd === false) {
+    fail('build-skia.sh 找不到 Linux 模块裁剪的 for flag in 循环');
+}
+$trimLoopBody = substr($fnBody, $trimStart, $trimEnd - $trimStart);
+foreach ($linuxTrimFlags as $flag) {
+    $quoted = "'" . $flag . "'";
+    if (!str_contains($trimLoopBody, $quoted)) {
+        fail('build-skia.sh 的裁剪循环缺 ' . $quoted . ' —— 该模块会被白编进 Linux 产物');
+    }
+    if (str_contains($winBlock, $flag)) {
+        fail('build-skia.sh 的 Windows 分支出现 ' . $flag . ' —— 会改变已发布 deps-v1 的构建参数');
+    }
+}
+if (!str_contains($trimLoopBody, 'args+=')) {
+    fail('build-skia.sh 的裁剪循环没有把开关追加进 args —— 参数不会进 gn gen');
+}
 // dry-run 必须在任何网络动作之前：否则"验证一下平台决策"会先 clone 1.1GB 的 Skia。
 $dryRunPos = strpos($skiaScript, 'if [[ "$dry_run" -eq 1 ]]');
 $clonePos = strpos($skiaScript, 'git clone --no-checkout');

@@ -113,6 +113,25 @@ build_gn_args() {
     # skia_use_gl 自动置 false（"skia_use_gl = skia_use_gl && skia_enable_ganesh"），
     # GLX 源码不再编译；raster / codec / freetype / fontconfig 全部不受影响。
     args+=$'\nskia_enable_ganesh = false'
+
+    # ★ 只留 Drift 真正链接的库。仓库自己的裁决写在 build/base.yml：SkiaCanvas
+    #   用软件光栅 core 绘制，不做文本塑形，链接清单明确不含 pdf / skottie /
+    #   sksg / skparagraph / skshaper / skunicode / icu —— 这些模块编出来也是
+    #   死重量（上次 26 个 .a 里它们占了大半）。Skia 官方各模块 BUILD.gn 都有
+    #   空 group("xxx") {} 兜底，group("modules") 的 deps 不会悬空。
+    #   ★ 全部只追加在 Linux 分支：Windows 的 deps-v1 已发布，参数逐字不变。
+    for flag in \
+      'skia_enable_pdf = false' \
+      'skia_enable_skottie = false' \
+      'skia_enable_svg = false' \
+      'skia_enable_skparagraph = false' \
+      'skia_enable_skshaper = false' \
+      'skia_use_icu = false' \
+      'skia_use_perfetto = false' \
+      'skia_use_piex = false' \
+      'skia_use_dng_sdk = false'; do
+      args+=$'\n'"$flag"
+    done
   else
     args+=$'\ncc = "clang"'
     args+=$'\ncxx = "clang++"'
