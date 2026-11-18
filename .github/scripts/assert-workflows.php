@@ -388,6 +388,12 @@ if (!str_contains($linux, 'timeout 600 sudo env $APT_ENV apt-get install')) {
 if (!str_contains($linux, 'apt-get install --yes --no-install-recommends')) {
     fail('linux-build.yml 的 apt 没关 recommends —— fluxbox 会拖进 ghostscript 等无关包');
 }
+// GITHUB_ENV 只对后续 step 生效：本 step 内起的 fluxbox 必须靠 export 拿到 DISPLAY，
+// 否则它 "Couldn't connect to XServer passing null display" 立刻退出，而门继续跑 ——
+// 于是"加了 WM"的对照实验其实是空跑（这个坑真实发生过一轮）。
+if (!str_contains($linux, 'export DISPLAY=:99')) {
+    fail('linux-build.yml 的 Xvfb 步没有 export DISPLAY —— 同 step 里的 fluxbox 会连不上 X 直接退出');
+}
 if (!str_contains($linux, 'Acquire::Retries=5')) {
     fail('linux-build.yml 的 apt 没有重试/短超时 —— 镜像抖动时会干等');
 }
