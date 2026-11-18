@@ -43,8 +43,6 @@ jobs:
     env:
       PHPX_HOME: ${{ github.workspace }}/third_party/phpx
       TPC: ${{ github.workspace }}/third_party/typephp/bin/tpc.php
-      # 编译与运行产物都落在这里；失败时整目录上传，本地能一模一样复现。
-      X11_WS: ${{ runner.temp }}/drift-linux-x11-verify
     steps:
       - uses: actions/checkout@v4
 
@@ -157,6 +155,10 @@ jobs:
       - name: X11 end-to-end gate
         shell: bash
         env:
+          # ★ 不能提到 job 级 env：`runner` 上下文在 job 级 env 里不可用，
+          #   GitHub 会整份判为"无效工作流"（第 47 行报 unrecognized named-value）。
+          #   编译与运行产物都落在这里；失败时整目录上传，本地能一模一样复现。
+          X11_WS: ${{ runner.temp }}/drift-linux-x11-verify
           # 卡到一半时抓一次 C++ 栈：utime 只能说"在烧 CPU"，栈才能说"烧在哪"。
           DRIFT_X11_GDB: '1'
         run: |
@@ -174,6 +176,8 @@ jobs:
       - name: Dump X11 failure context
         if: failure()
         shell: bash
+        env:
+          X11_WS: ${{ runner.temp }}/drift-linux-x11-verify
         run: |
           for f in "${X11_WS}/build.log" "${X11_WS}/run.log" "${X11_WS}/watch.log" "${X11_WS}/gdb.log" /tmp/xvfb.log /tmp/fluxbox.log; do
             echo "──── ${f} ────"

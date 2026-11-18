@@ -16,6 +16,63 @@ function fail(string $msg): never
     exit(1);
 }
 
+// ★ 表达式上下文是有作用域的：`runner` / `steps` / `job` / `env` 只在 **step 级**可用。
+//   写进 workflow 级或 job 级 `env:`（以及 job 级 `runs-on:`）时，GitHub 会把整份
+//   workflow 判为无效 —— 只留一条 "Invalid workflow file ... unrecognized named-value"，
+//   run 里 0 个 job，等于这条通道静默消失。本地 YAML 语法检查对此完全无感（语法合法），
+//   所以必须在结构判据里独立拦一道。
+function assertNoStepOnlyContext(string $file, int $lineNo, string $line): void
+{
+    if (preg_match_all('/\$\{\{\s*([A-Za-z_][A-Za-z0-9_-]*)\./', $line, $m) === 0) {
+        return;
+    }
+    foreach ($m[1] as $ctx) {
+        if (in_array($ctx, ['runner', 'steps', 'job', 'env'], true)) {
+            fail("{$file}:{$lineNo} 在 job/workflow 级用了 step 专有上下文 {$ctx}. —— GitHub 会判整份 workflow 无效");
+        }
+    }
+}
+
+function assertContextScope(string $file, string $text): void
+{
+    $lines = explode("\n", $text);
+    $n = count($lines);
+    for ($i = 0; $i < $n; $i++) {
+        $line = $lines[$i];
+        $trimmed = ltrim($line);
+        if ($trimmed === '' || str_starts_with($trimmed, '#')) {
+            continue;
+        }
+        $indent = strlen($line) - strlen($trimmed);
+
+        // 注意用 $trimmed 匹配：job 级这两行的真实文本带 4 空格缩进，
+        // 拿 $line 去匹 `^env:` 会一格都匹不上（写成 $line 时判据静默失效）。
+        if ($indent === 4 && preg_match('/^runs-on:/', $trimmed) === 1) {
+            assertNoStepOnlyContext($file, $i + 1, $line);
+            continue;
+        }
+        // 缩进 0 = workflow 级 env；缩进 4 = job 级 env。两者都不许出现 step 专有上下文。
+        $isEnv = ($indent === 0 || $indent === 4) && preg_match('/^env:\s*$/', $trimmed) === 1;
+        if (!$isEnv) {
+            continue;
+        }
+        for ($j = $i + 1; $j < $n; $j++) {
+            $inner = $lines[$j];
+            $innerTrim = ltrim($inner);
+            if ($innerTrim === '') {
+                continue;
+            }
+            if (strlen($inner) - strlen($innerTrim) <= $indent) {
+                break;
+            }
+            if (str_starts_with($innerTrim, '#')) {
+                continue;
+            }
+            assertNoStepOnlyContext($file, $j + 1, $inner);
+        }
+    }
+}
+
 $root = dirname(__DIR__, 2);
 $buildFile = $root . '/.github/workflows/windows-build.yml';
 $verifyFile = $root . '/.github/workflows/verify.yml';
@@ -35,6 +92,15 @@ $verify = (string) file_get_contents($verifyFile);
 $release = (string) file_get_contents($releaseFile);
 $deps = (string) file_get_contents($depsFile);
 $linux = (string) file_get_contents($linuxFile);
+
+foreach (['workflow' => ['.github/workflows/windows-build.yml', $build],
+          'verify' => ['.github/workflows/verify.yml', $verify],
+          'release' => ['.github/workflows/release.yml', $release],
+          'deps' => ['.github/workflows/windows-deps.yml', $deps],
+          'linux' => ['.github/workflows/linux-build.yml', $linux]] as $file => [$path, $text]) {
+    assertContextScope($path, $text);
+}
+fwrite(STDOUT, "  ok     表达式上下文作用域（job/workflow 级 env 不碰 runner/steps/job/env）\n");
 
 foreach (['windows-build.yml' => $build, 'verify.yml' => $verify,
           'linux-build.yml' => $linux] as $name => $text) {
