@@ -61,6 +61,9 @@ cp "$repo/cpp-src/core/io_pool.cc" "$repo/cpp-src/core/io_pool.h" "$ws/core/"
 cp "$repo/cpp-src/x11/io_wake.cc" "$repo/cpp-src/x11/io_wake.h" "$ws/native/"
 # 图片解码（Skia codec）：解码实现单独 TU，drift_x11.cc 只做 ABI 包装。
 cp "$repo/cpp-src/x11/image_decode.cc" "$repo/cpp-src/x11/image_decode.h" "$ws/native/"
+# 剪贴板（xclip 子进程）：实现单独 TU，drift_x11.cc 只做 ABI 包装。
+# ★ 不复制 ⇒ drift_x11_clipboard_* 链接到未定义符号，AOT 直接编不过（不是静默假绿）。
+cp "$repo/cpp-src/x11/clipboard.cc" "$repo/cpp-src/x11/clipboard.h" "$ws/native/"
 # Skia 桥与 X11 桥同编：两套 stub 是不同函数名，不会冲突。
 cp "$repo/cpp-src/skia/drift_skia.stub.php" "$repo/cpp-src/skia/drift_skia.cc" "$ws/native/"
 # 字体跟产物走：桥按 cwd 的 cpp/fonts 找 Noto，CI 与本地口径一致。
@@ -91,6 +94,25 @@ if [ $rc -ne 0 ] || [ ! -x "$ws/linux_x11_e2e" ]; then
     err "编译失败 exit=$rc"; tail -30 "$ws/build.log"; exit 1
 fi
 echo "[OK] ELF 产出 $(du -h "$ws/linux_x11_e2e" | cut -f1)"
+
+# 剪贴板跨进程判据的前半段：应用启动前，用**外部** xclip 进程写入 CLIPBOARD 并
+# 成为 owner。应用内 probeClipboard() 的 J1 必须读回这段值 —— 证明读走的是
+# X11 selection（别的进程持有），不是本进程缓存（假实现读不到外部值）。
+# xclip 二进制：CI apt 装到 PATH；本地免 root 解包时用 XCLIP_BIN 指过去。
+xclip_bin="${XCLIP_BIN:-xclip}"
+if ! command -v "$xclip_bin" >/dev/null 2>&1; then
+    err "xclip 缺失（apt install xclip；本地可设 XCLIP_BIN=/path/to/xclip）"; exit 2
+fi
+# ★ 本地免 root 解包的 xclip 不在默认 PATH 上，而 AOT 应用内部是 execvp("xclip")
+#   （只查 PATH，没有绝对路径可用）。把 XCLIP_BIN 的目录导出，确保**应用进程**
+#   也找得到 xclip —— 否则外部写成功、应用读永远空串，还会误判成"假实现读不到"。
+#   CI 里 xclip 在 /usr/bin，dirname 是 /usr/bin，导出是无害的幂等操作。
+if [ -n "${XCLIP_BIN:-}" ]; then
+    PATH="$(dirname "$xclip_bin"):$PATH"
+    export PATH
+fi
+printf '%s' 'external-剪贴板-X11' | "$xclip_bin" -selection clipboard -t UTF8_STRING
+echo "[OK] 外部剪贴板已写入"
 
 echo "=== 运行 + 注入关窗事件 ==="
 # wait 必须有界：应用若卡在 waitEvents()，无限等会把 CI 挂到 6h 超时。
@@ -192,6 +214,11 @@ grep -q '\[WM\] place 400x300 @ ' "$ws/run.log" || { err "几何还原失效：X
 grep -q '\[WM\] max_v=1 max_h=1 isMaximized=1' "$ws/run.log" || { err "EWMH 最大化失效：ClientMessage 没让 WM 置 _NET_WM_STATE"; fail=1; }
 grep -q '\[WM\] iconic=1' "$ws/run.log" || { err "最小化失效：XIconifyWindow 没让 WM 置 WM_STATE=Iconic"; fail=1; }
 grep -q '\[WM\] RESULT: PASS' "$ws/run.log" || { err "窗口管理判据整体未通过"; fail=1; }
+grep -q '\[CLIP\] external read=external-剪贴板-X11' "$ws/run.log" || { err "跨进程剪贴板读失败：读不到外部 xclip owner 的值（可能走成本进程缓存假实现，或 -t target 不对）"; fail=1; }
+grep -q '\[CLIP\] roundtrip got=drift-剪贴板-中文-ok' "$ws/run.log" || { err "剪贴板中文往返失败：UTF8_STRING target 没生效（不显式指定会被当 Latin-1，中文变问号）"; fail=1; }
+grep -q '\[CLIP\] hasText=1' "$ws/run.log" || { err "hasText 读不到内容：剪贴板三件套的可用性门控断"; fail=1; }
+grep -q '\[CLIP\] overwrite got=second-copy' "$ws/run.log" || { err "剪贴板覆盖写失败：第二次 writeText 没替换内容"; fail=1; }
+grep -q '\[CLIP\] RESULT: PASS' "$ws/run.log" || { err "剪贴板判据整体未通过"; fail=1; }
 grep -q '\[BACKEND\] skia' "$ws/run.log" || { err "Skia 后端未启用：桥没链上或 provider 回退到了软光栅"; fail=1; }
 grep -q '\[FONT\] ready=1' "$ws/run.log" || { err "Skia 目录字体未就绪 —— 文字不会绘制（几何全对也看不出字）"; fail=1; }
 grep -q '找不到目录字体' "$ws/run.log" && { err "Skia 报了字体缺失诊断"; fail=1; }

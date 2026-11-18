@@ -119,9 +119,11 @@ jobs:
           # 关掉 recommends 后树里一个 fonts-* 都不剩，fluxbox 会因找不到字形退出。
           # libfontconfig1 是运行时库：Skia 的 libskia.a 引用 Fc* 符号，build.sh
           # 会从它现场建 libfontconfig.so 软链给 linker；这里不需要 -dev 头。
+          # xclip：剪贴板端到端门的 owner（headless 无 clipboard manager，xclip fork
+          # 常驻进程顶上；它的独立 connection 也让我们的同步 readText 不会自死锁）。
           if ! timeout 600 sudo env $APT_ENV apt-get install --yes --no-install-recommends $APT_OPTS \
               build-essential cmake libgmp-dev libmpfr-dev pkg-config python3-dev \
-              libfontconfig1 xvfb x11-utils fluxbox fonts-dejavu-core gdb; then
+              libfontconfig1 xvfb x11-utils fluxbox fonts-dejavu-core gdb xclip; then
             echo "::error title=apt-get install 超时/失败::依赖装不上，后面所有步骤都无意义"
             exit 1
           fi

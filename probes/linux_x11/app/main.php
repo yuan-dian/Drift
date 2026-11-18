@@ -411,12 +411,62 @@ function probeWindowManagement(X11Platform $platform): void
     echo "[WM] RESULT: PASS\n";
 }
 
+/**
+ * 剪贴板判据：UTF-8 纯文本三件套。
+ *
+ * 放在建窗前（headless）—— selection 不依赖窗口/渲染。两条独立路径：
+ * ① 跨应用读：build.sh 在应用启动前用外部 xclip 写入 DRIFT_CLIP_EXTERNAL_TEXT，
+ *    这里 readText() 必须读回它 —— 证明读的是别的进程持有的 CLIPBOARD owner，
+ *    不是本进程缓存（否则外部写的值读不到）。
+ * ② 应用内往返：writeText(中文) → readText 必须逐字节相等 → hasText true →
+ *    覆盖写再读 —— 证明 UTF8_STRING target 生效（不指定会被当 Latin-1，中文变问号）。
+ */
+const CLIP_EXTERNAL_TEXT = 'external-剪贴板-X11';
+
+function probeClipboard(X11Platform $platform): void
+{
+    echo "=== Clipboard: xclip UTF-8 text ===\n";
+    $clipboard = $platform->clipboard();
+    if ($clipboard === null) {
+        echo "[FAIL] clipboard null（桥函数缺失或 X11Platform 没接线）\n";
+        exit(1);
+    }
+
+    // J1 跨应用读：外部 xclip owner 的值，必须读得到。
+    $external = $clipboard->readText();
+    echo "[CLIP] external read={$external}\n";
+    if ($external !== CLIP_EXTERNAL_TEXT) {
+        echo '[FAIL] 跨进程读剪贴板失败：期望 ' . CLIP_EXTERNAL_TEXT . "，读到 {$external}\n";
+        exit(1);
+    }
+
+    // J2 应用内往返（中文验 UTF-8 target）+ hasText + 覆盖写。
+    $text = 'drift-剪贴板-中文-ok';
+    $clipboard->writeText($text);
+    $got = $clipboard->readText();
+    echo "[CLIP] roundtrip got={$got}\n";
+    $has = $clipboard->hasText();
+    echo '[CLIP] hasText=' . ($has ? '1' : '0') . "\n";
+    $clipboard->writeText('second-copy');
+    $over = $clipboard->readText();
+    echo "[CLIP] overwrite got={$over}\n";
+
+    if ($got !== $text || !$has || $over !== 'second-copy') {
+        echo "[FAIL] 剪贴板往返 / hasText / 覆盖写判据失败\n";
+        exit(1);
+    }
+    echo "[CLIP] RESULT: PASS\n";
+}
+
 function main(): void
 {
     echo "=== X11 E2E: real Application on EventLoop ===\n";
     $platform = new X11Platform();
     echo 'configDir=' . $platform->configDir() . "\n";
     echo 'now=' . $platform->now() . "\n";
+
+    // 剪贴板判据（建窗前，headless）：跨进程读 + UTF-8 往返 + hasText。
+    probeClipboard($platform);
 
     // IO 池 P0 判据（建窗前，headless，无 X 事件干扰）。
     probeIoPool($platform);

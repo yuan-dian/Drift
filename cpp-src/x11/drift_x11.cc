@@ -15,6 +15,7 @@
 #include "../core/io_pool.h"
 #include "io_wake.h"
 #include "image_decode.h"
+#include "clipboard.h"
 
 using php::Array;
 using php::Bool;
@@ -788,4 +789,22 @@ Array php_drift_image_decode(String path, Int maxWidth)
     out.set("h", (Int)height);
     out.set("rgba", String(rgba));
     return out;
+}
+
+// ── 剪贴板纯文本三件套（与 win32 同名同契约，平台二选一编入）──
+// UTF-8 直达：X11/xclip 原生 UTF-8，没有 Win32 的 UTF-16 转换负担。
+// 异步 selection 协议隔离在 clipboard.cc 的 xclip 子进程里，这里只做 ABI 包装。
+String php_drift_x11_clipboard_read_text()
+{
+    return String(drift::x11::clipboardReadText());
+}
+
+void php_drift_x11_clipboard_write_text(String text)
+{
+    drift::x11::clipboardWriteText(std::string(text.data(), text.length()));
+}
+
+Bool php_drift_x11_clipboard_has_text()
+{
+    return (Bool)drift::x11::clipboardHasText();
 }

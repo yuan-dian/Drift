@@ -33,3 +33,9 @@ function drift_io_stop(): int {}
 // 图片解码（Skia codec；与 win32/WIC 同名同契约，平台二选一编入）。
 // 返回 ['w'=>int, 'h'=>int, 'rgba'=>string]，解不出时空数组（不抛）。
 function drift_image_decode(string $path, int $maxWidth = 0): array {}
+
+// 剪贴板纯文本三件套（与 win32 同名同契约，平台二选一编入）。
+// 空 / 无 owner / 超时 ⇒ readText 空串、hasText false；writeText 失败静默。
+function drift_x11_clipboard_read_text(): string {}
+function drift_x11_clipboard_write_text(string $text): void {}
+function drift_x11_clipboard_has_text(): bool {}

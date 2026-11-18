@@ -838,6 +838,69 @@ if (!str_contains($x11PresentCc, 'ev.focus.detail != NOTIFY_INFERIOR')) {
 }
 fwrite(STDOUT, '  ok     X11 窗口失活 deactivate：' . count($x11DeactivateAnchors) . " 个链路环节 + 过滤反向判据\n");
 
+// ── X11 剪贴板：xclip 子进程 + UTF8_STRING + 有界超时 + 同步三件套 ────
+// 剪贴板是 X11 上最容易"看起来有、实际读不到"的壳服务：owner 异步 selection
+// 往返 + headless 无 manager + STRING/Latin-1 默认 target 让中文变问号。
+// 这里从实现 TU / ABI / stub / PHP 实现 / 接线 / probe / build.sh / CI 装包
+// 八处交叉锚定整条链，任一环断就红。
+$x11ClipboardCc = (string) @file_get_contents($root . '/cpp-src/x11/clipboard.cc');
+$x11ClipboardH = (string) @file_get_contents($root . '/cpp-src/x11/clipboard.h');
+$x11ClipboardPhp = (string) @file_get_contents($root . '/src/Platform/X11/X11Clipboard.php');
+$x11ClipAnchors = [
+    // 实现 TU：独立进程隔离异步 + 三条硬纪律
+    [$x11ClipboardCc, 'execvp("xclip", argv)', '剪贴板没用 xclip 子进程 —— 桥内自实现会撞同 connection 自死锁'],
+    [$x11ClipboardCc, 'fork()', '没有 fork ⇒ 不是独立进程，同步 readText 会自死锁'],
+    [$x11ClipboardCc, 'const_cast<char *>("UTF8_STRING")', '没显式指定 UTF8_STRING target —— 中文会按 Latin-1 变问号'],
+    [$x11ClipboardCc, 'kClipTimeoutMs', '缺读取超时预算 —— owner 不回通知会永久 hang（Chromium 571343363）'],
+    [$x11ClipboardCc, 'kill(pid, SIGKILL)', '超时没 kill 子进程 —— 挂死的 xclip 会留着'],
+    [$x11ClipboardCc, 'waitpid(pid, &status, 0)', '没回收子进程 —— 每次 Ctrl+V 留一个僵尸'],
+    [$x11ClipboardCc, 'signal(SIGPIPE, SIG_IGN)', '没忽略 SIGPIPE —— xclip 提前退出会杀掉宿主'],
+    [$x11ClipboardCc, 'std::chrono::steady_clock', '超时用了会被系统调时的时钟 —— 与 now() 单调纪律冲突'],
+    [$x11ClipboardH, 'clipboardReadText', '剪贴板 TU 缺读接口声明'],
+    // ABI + stub
+    [$x11PresentCc, 'php_drift_x11_clipboard_read_text', 'drift_x11.cc 没做剪贴板 ABI 包装'],
+    [$x11PresentCc, 'drift::x11::clipboardReadText()', 'ABI 没转发到剪贴板实现'],
+    [$x11StubPhp, 'function drift_x11_clipboard_read_text(): string', 'x11 stub 没声明读函数'],
+    [$x11StubPhp, 'function drift_x11_clipboard_write_text(string $text): void', 'x11 stub 没声明写函数'],
+    [$x11StubPhp, 'function drift_x11_clipboard_has_text(): bool', 'x11 stub 没声明 hasText'],
+    // PHP 实现 + 接线（不许再恒 null）
+    [$x11ClipboardPhp, 'implements Clipboard', 'X11Clipboard 没实现 Clipboard 端口'],
+    [$x11ClipboardPhp, 'drift_x11_clipboard_write_text($text)', 'X11Clipboard 没接写桥'],
+    [$x11PlatformPhp, 'function_exists(\'drift_x11_clipboard_read_text\')', '平台没做桥函数探测 —— 纯 PHP 单测会调不存在的函数'],
+    [$x11PlatformPhp, 'new X11Clipboard()', 'X11Platform::clipboard() 没返回真实现'],
+    // probe + build.sh + CI 装包
+    [$linuxMainPhp, 'probeClipboard($platform)', 'probe 没跑剪贴板判据'],
+    [$linuxMainPhp, 'external-剪贴板-X11', 'probe 没用外部写入的跨进程文本'],
+    [$linuxBuildSh, 'printf \'%s\' \'external-剪贴板-X11\'', 'build.sh 没在应用启动前用外部 xclip 写剪贴板'],
+    [$linuxBuildSh, "grep -q '\\[CLIP\\] roundtrip got=drift-剪贴板-中文-ok'", 'build.sh 没断言中文往返'],
+    [$linuxBuildSh, 'XCLIP_BIN', 'build.sh 没提供本地免 root xclip 路径开关'],
+    [$linuxBuildSh, 'cpp-src/x11/clipboard.cc', 'build.sh 没复制剪贴板 TU —— AOT 会链接失败'],
+    [$linux, 'gdb xclip', 'CI 没 apt 装 xclip —— 真机门必然失败'],
+];
+foreach ($x11ClipAnchors as [$text, $needle, $label]) {
+    if (!str_contains($text, $needle)) {
+        fail('X11 剪贴板链路断裂：' . $label . '（' . $needle . '）');
+    }
+}
+// 反向锚点 1：X11Platform::clipboard() 不许退回恒 null（那是本轮要闭合的缺口）。
+$cBeg = strpos($x11PlatformPhp, 'public function clipboard(): ?Clipboard');
+$cEnd = $cBeg === false ? false : strpos($x11PlatformPhp, "\n    }", $cBeg);
+$cBody = ($cBeg !== false && $cEnd !== false)
+    ? substr($x11PlatformPhp, $cBeg, $cEnd - $cBeg)
+    : '';
+if (!str_contains($cBody, 'new X11Clipboard()')) {
+    fail('X11Platform::clipboard() 又退回恒 null —— Ctrl+C/V/X 在 Linux 上静默失效');
+}
+// 反向锚点 2：不许用裸 popen/system 拼命令（注入风险 + 无法设超时 + 无法可靠回收）。
+if (preg_match('/\b(popen|system)\s*\(/', $x11ClipboardCc) === 1) {
+    fail('剪贴板 TU 用了裸 popen/system —— 无法设超时 / 回收子进程，且 xclip 路径注命令');
+}
+// 反向锚点 3：读写两端都必须显式 target（缺任一个 ⇒ 中文按 Latin-1 变问号）。
+if (substr_count($x11ClipboardCc, '"UTF8_STRING"') < 2) {
+    fail('剪贴板读写两端没都显式 UTF8_STRING target —— 中文会变问号');
+}
+fwrite(STDOUT, '  ok     X11 剪贴板 xclip/UTF8/超时：' . count($x11ClipAnchors) . " 个链路环节 + 3 条反向判据\n");
+
 // ── Linux Skia 构建通道（build-only，不发布）────────────────────────────
 // 目的：在公开 runner 上回答「gn gen 认不认 Linux args / .a 能不能真编出来」。
 // 它不消费 deps-v1、不改锁、不发 tag —— 所以加反向锚点防止有人把 windows-deps

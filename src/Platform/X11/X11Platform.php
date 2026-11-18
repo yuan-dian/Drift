@@ -27,8 +27,9 @@ use function drift_x11_wait;
 /**
  * X11 平台实现：装配六个子端口，把桥的命名事件翻译成框架类型。
  *
- * ★ 剪服务这一版返回 null（clipboard/dialog/tray）而非假实现 ——
- *   调用方必须处理 null，这条契约与 Win32 的 M2 降级一致。
+ * ★ 壳服务里 clipboard 由 xclip 桥真实现（纯文本，与 Win32 同契约）；dialog/tray
+ *   仍返回 null 而非假实现 —— 调用方必须处理 null，与 Win32 的 M2 降级一致。
+ *   剪贴板在桥函数缺失时（纯 PHP 单测）也返回 null。
  * @api platform
  */
 final class X11Platform implements Platform
@@ -40,6 +41,9 @@ final class X11Platform implements Platform
 
     /** @var array<int, X11SurfaceProvider> */
     private array $surfaces = [];
+
+    /** 壳服务懒建：与 Win32Platform 同形，不支持的仍是 null */
+    private ?X11Clipboard $clipboard = null;
 
     /** @var list<array<string, mixed>> */
     private array $pending = [];
@@ -91,7 +95,12 @@ final class X11Platform implements Platform
 
     public function clipboard(): ?Clipboard
     {
-        return null;
+        // xclip 桥在纯 PHP 单测里不存在函数，此时退回 null（与 Win32 的 M2 降级同口径）。
+        // 真机 / AOT 工程里三个函数都在，返回实现、让 Ctrl+C/V/X 端到端可用。
+        if (!\function_exists('drift_x11_clipboard_read_text')) {
+            return null;
+        }
+        return $this->clipboard ??= new X11Clipboard();
     }
 
     public function dialog(): ?Dialog
