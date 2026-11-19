@@ -200,6 +200,25 @@ if (!str_contains($buildLive, 'types: [completed]')) {
 if (!str_contains($buildLive, "github.event.workflow_run.conclusion == 'success'")) {
     fail('windows-build.yml 的 aot job 缺 conclusion == success 条件 —— deps 失败时也会拿旧包白编');
 }
+// ★ deps 的 build-only 手动触发（publish 没勾）也是 success，但没发任何资产；
+//   若 aot 只看 conclusion 就会跟着跑、fetch 不存在的 deps-vN 而误红（踩过一次）。
+//   workflow_run 上下文读不到 inputs.publish，只能查被触发 run 的 publish job：
+//   gate job 输出 published，aot 必须 needs gate 且 if 引用该 output。
+if (!str_contains($buildLive, 'name: Gate deps publish')) {
+    fail('windows-build.yml 缺 gate job —— 无法区分 deps 的 build-only 与真发布');
+}
+if (!str_contains($buildLive, 'actions: read')) {
+    fail('windows-build.yml 的 gate job 缺 actions: read —— 查不了 deps run 的 jobs');
+}
+if (!str_contains($buildLive, 'Publish combined deps release')) {
+    fail('windows-build.yml 的 gate 没查 publish job 的 conclusion —— 判不出资产是否发布');
+}
+if (!str_contains($buildLive, 'needs: [gate]')) {
+    fail('windows-build.yml 的 aot job 没 needs gate —— publish 判据没接进触发门');
+}
+if (!str_contains($buildLive, "needs.gate.outputs.published == 'true'")) {
+    fail('windows-build.yml 的 aot if 没引用 needs.gate.outputs.published —— build-only 触发仍会补跑误红');
+}
 if (!str_contains($crossDeps, 'name: Cross-platform deps')) {
     fail('deps.yml 的 name 必须是 Cross-platform deps —— workflow_run 按 name 匹配，改名会让补跑永久失联');
 }

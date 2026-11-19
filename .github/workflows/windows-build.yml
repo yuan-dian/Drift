@@ -53,10 +53,44 @@ env:
   DRIFT_PHPX_HOME: ${{ github.workspace }}\third_party\phpx
 
 jobs:
+  # workflow_run 补跑门：deps 的 build-only 手动触发（publish 没勾）也是 success，
+  # 但它没发任何资产；aot 若跟着跑只会 fetch 不存在的 deps-vN 而误红。GitHub 的
+  # workflow_run 上下文看不到被触发 run 的 inputs.publish，只能查它的 jobs：
+  # publish job 真执行了才是"资产已发布"。非 workflow_run 触发无需查（push/dispatch/call）。
+  gate:
+    name: Gate deps publish
+    if: ${{ github.event_name == 'workflow_run' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    outputs:
+      published: ${{ steps.check.outputs.published }}
+    steps:
+      - name: Check publish job conclusion
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          conclusion="$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" \
+            --jq '.jobs[] | select(.name == "Publish combined deps release") | .conclusion')"
+          echo "deps publish job conclusion = ${conclusion:-absent}"
+          if [ "$conclusion" = "success" ]; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::deps run $RUN_ID 未执行 publish（conclusion=${conclusion:-absent}），本次是 build-only，跳过 AOT 真机补跑。要发布请手动触发 deps.yml 并勾 publish。"
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
   aot:
     name: Build + probe (windows-2022)
-    # 只在 deps 成功时补跑；deps 失败时没有新资产，跑也是拿旧包白编。
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    needs: [gate]
+    # 两种触发都要过：非 workflow_run（push/dispatch/call）直接跑；
+    # workflow_run 时 deps 必须既 success（守卫另守）又真的执行了 publish job。
+    if: ${{ always() && (github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && needs.gate.outputs.published == 'true')) }}
     runs-on: windows-2022
     timeout-minutes: 120
     permissions:
