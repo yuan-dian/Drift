@@ -44,8 +44,8 @@ preview 阶段允许破坏性变更，但要守两条：
 下列是投入方向，不是承诺交付日期。每项开工前都要先过裁决索引，成熟 GUI 框架的做法只作借鉴，不照搬。
 
 1. **分发与可复现构建**：让 clone 到 hello 的路径对所有人都通；依赖包公开可校验、来源可追溯。tpc 最低版本判据已在 doctor 落地（git 祖先判定，非版本号比对）。
-   - **deps-v2 待发布**：双平台包结构（Windows/Linux 各一资产、macOS 平台表预留）、Windows 九项安全裁剪与发布编排代码已落地；资产尚未发布。发布动作是把 `DEPS_VERSION` 升到 `deps-v2` 并触发 `deps.yml` 完成两岸真编、单锁提交、统一发 tag 与双包回验。
-   - **待办（构建可达门槛未封闭）**：本地已用干净 checkout 验证文档路径闭环（doctor 11/11、`verify --fast` 13/13、`drift-build hello --full` 成功、`probe-window hello` 5/5 且退出码 0），公开仓库匿名可读、deps-v1 匿名 HEAD 与 `deps.lock.json` 字节吻合。**但尚未做一次「全匿名、零本机替代」的端到端重跑**：上两轮本机代理在 git pack 传输中途断流、deps 包下载只到 11% 且反复 502，只能借用本地 clone / 拷贝 vendor 与 cpp。**完成条件**：在稳定网络下匿名 `git clone` → `fetch-deps`（SHA 过）→ `composer install` → doctor → build → probe，全程不依赖 token 和本机预置的 vendor/cpp；全绿才把 1.0「构建可达」记为满足。本机代理问题不构成产品缺陷，换网络即可重跑。
+   - **deps-v2 已双平台发布**：Windows / Linux 各一资产（macOS 仅预留平台表），共享 schema=2 单锁；两岸从同一 `SKIA_REVISION` 真编并回验，Windows 裁掉未使用模块，`DEPS_VERSION` 与 Release tag 均为 `deps-v2`。AOT / dev 壳分发包自带运行时、扩展依赖与可选字体，PHP 8.4/8.5 双矩阵产物已在公开 CI 验证。
+   - **待办（构建可达门槛未封闭）**：本地已用干净 checkout 验证文档路径闭环（doctor 11/11、`verify --fast` 13/13、`drift-build hello --full` 成功、`probe-window hello` 5/5 且退出码 0），公开仓库匿名可读、`deps-v2` 双平台资产与 `deps.lock.json` 的 schema=2 锚点一致。**但尚未做一次「全匿名、零本机替代」的端到端重跑**：上两轮本机代理在 git pack 传输中途断流、deps 包下载只到 11% 且反复 502，只能借用本地 clone / 拷贝 vendor 与 cpp。**完成条件**：在稳定网络下匿名 `git clone` → `fetch-deps`（SHA 过）→ `composer install` → doctor → build → probe，全程不依赖 token 和本机预置的 vendor/cpp；全绿才把 1.0「构建可达」记为满足。本机代理问题不构成产品缺陷，换网络即可重跑。
 2. **开发者体验收口**：减少可组合 Future + 命令式状态机样板；异步资源控件保持一个 `asset()` 入口；新机制先算"每应用省几行、几处写者"。
 3. **平台扩展**：在 Windows 稳定后接第二平台；不为此提前抽象出用不上的层。
 4. **工具链**：`create` 脚手架、可视化检查器的价值等到消费者足够多再评估——没有真实用例的机制不上。

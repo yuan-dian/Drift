@@ -6,8 +6,8 @@
 
 `cpp/skia*` 与 `cpp/fonts` 不进 git，`/cpp/` 与 `/dist/` 都在 `.gitignore` 里。新机器 clone 完之后，从 GitHub Releases 的独立 `deps-vN` tag 取预编译包；仓库公开，资产匿名可下载。fork 私有镜像或匿名直链被限流时可给 token。
 
-- **deps-v1（当前发布）**：只有 `drift-deps-win-x64.zip` 一个 Windows 资产，解压得到 `cpp/skia/`。
-- **deps-v2（代码已就绪，尚待发布）**：每个平台一个资产 —— `drift-deps-win-x64.zip` 解压得到 `cpp/skia/`，`drift-deps-linux-x64.zip` 解压得到 `cpp/skia-linux/`；两者共享一份带 `platforms` 表的 `deps.lock.json`。macOS 只在平台表里预留 `macos-arm64`，未接构建通道前不发布。
+- **deps-v2（当前发布）**：每个平台一个资产 —— `drift-deps-win-x64.zip` 解压得到 `cpp/skia/`，`drift-deps-linux-x64.zip` 解压得到 `cpp/skia-linux/`；两者共享一份带 `platforms` 表的 `deps.lock.json`，均从同一 `SKIA_REVISION` 真编并回验。macOS 只在平台表里预留 `macos-arm64`，未接构建通道前不发布。
+- **deps-v1（历史）**：只有 `drift-deps-win-x64.zip` 一个 Windows 资产，解压得到 `cpp/skia/`；仍可供旧 pin 回取。
 
 资产名是契约，一个字都不能改。包内所有路径落在 `cpp/` 下，解压到仓库根不会污染工作区；许可全文随包附带。
 
@@ -77,7 +77,7 @@ php tools/pack-deps.php --platform=win-x64
 
 输入文件：`SKIA_REVISION`（pinned commit）、`tools/skia/args.gn.tpl`（平台无关的 GN 策略）、`tools/skia/headers.txt`（包内头 / 元数据路径清单，保证产物与既有布局一致）、`tools/skia/build-skia.sh`（clone → checkout → `git-sync-deps` → `gn gen` → `ninja skia modules` → 组装 `cpp/skia`）。gn / ninja 的调用形态照抄 Skia 官方 CI 的 `infra/bots/recipe_modules/build/default.py`：`gn gen` 必须在 Skia 源码目录内执行（它靠当前目录的 `.gn` 定位 source root），工具用仓库自带的 `bin/fetch-gn` / `bin/fetch-ninja`。机器相关的 VC / SDK / LLVM 路径不入库，走 `SKIA_WIN_VC` 等环境变量。`--replace` 是显式确认：默认不覆盖非空 `cpp/skia`，免得删掉本机现成的包。
 
-`SKIA_REVISION` 当前 pin 到 Skia M148 的真实 commit，lock 的 `skiaRevision` 与 `provenance: ci` 与之同步；该 commit 的 `SkMilestone.h` 为 148，与包内一致。`unpinned` / `provenance: legacy` 只用于来源不可考的历史包，构建脚本与 CI 都拒绝它。`deps-v1` 已由 `windows-deps.yml` 从这个 commit 实际重建并发布（610 条目 / 49.5 MB），来源声明与产物一致：拿到包就能按该 commit 复现。
+`SKIA_REVISION` 当前 pin 到 Skia M148 的真实 commit，lock 的 `skiaRevision` 与 `provenance: ci` 与之同步；该 commit 的 `SkMilestone.h` 为 148，与包内一致。`unpinned` / `provenance: legacy` 只用于来源不可考的历史包，构建脚本与 CI 都拒绝它。`deps-v1` 曾由 `windows-deps.yml` 从这个 commit 实际重建并发布（610 条目 / 49.5 MB）；当前 `deps-v2` 由 `deps.yml` 从同一 commit 双平台真编并回验（各 599 条目 / win 21.5 MB、linux 21.3 MB）。来源声明与产物一致：拿到包就能按该 commit 复现。
 
 字体不随 Skia 变，两个 Noto Sans SC 字重（Regular / Bold，OFL 授权）**入库**（`cpp/fonts/`，`.gitignore` 用 `/cpp/*` + 白名单放行）。托管 runner 没有持久盘，字体不入库就得再引一条下载链路加版本锚点，等于给重建多加一个会漂的部件；入库后来源就是 commit 本身。字体许可全文在 `licenses/OFL-NotoSansSC.txt`，打包时随附。字体只参与确定性渲染：AOT 运行时默认查系统字体，随包发布由 `windows-build.yml` 的 `with_fonts` 输入决定。
 
@@ -94,19 +94,19 @@ Skia 构建通道（`windows-deps.yml`）跑在 `windows-2022` 托管镜像上�
 
 ## CI 自动构建
 
-三条流水线职责分开：
+五条流水线职责分开：
 
 - `windows-deps.yml`：`DEPS_VERSION` 不直接触发它；从固定 commit 编 Windows Skia 并产出 win-x64 包 artifact。被产品发版调用时也只产 artifact。
 - `linux-deps.yml`：从同一 commit 编 Linux Skia，产出原始 `.a` 树（供 X11 门）与 linux-x64 包 artifact；同样不写 lock、不打 tag、不发 Release。
 - `deps.yml`：**唯一监听 `DEPS_VERSION` 变化的发布编排**。等两个构建作业都成功后下载两份包，重打包合成一份双平台锁，同步 README 锚点，提交 lock → 打 `deps-vN` tag → `release-deps.php` 上传全部资产 → 两个平台各回取一次。任一平台红就不写远端。
 - `release.yml`：`push` 产品 `v*` tag 时**只调用 `windows-deps.yml`** 编出 Skia，verify 与 dev 壳消费这份 artifact，最后建 **draft** release；它不覆盖公共 `deps-vN` 资产。
-- `windows-build.yml`：真 AOT + 真机门。它对 `DEPS_VERSION` 做 `paths-ignore`，不随版本提升立刻跑；改由 `workflow_run` 订阅 `deps.yml`，只在它 `completed` 且 `conclusion == success` 时补跑。
+- `windows-build.yml`：真 AOT + 真机门。它对 `DEPS_VERSION` 做 `paths-ignore`，不随版本提升立刻跑；`workflow_run` 订阅 `deps.yml` 后还要查 Publish job 的 conclusion，只有真发布才补跑。
 
 `assert-workflows.php` 守住“两个构建通道不碰发布链路、只有 `deps.yml` 写 tag/Release”的边界，避免某个平台先把自己那半份锁发布出去。
 
 **红窗隔离**：`TAG` 由 `DEPS_VERSION` 唯一决定，但资产要先真编才存在。版本提升的 push 若直接触发 `windows-build`，它会在双平台包发布前就去 fetch `deps-vN`，红在资产缺失而不是代码问题。所以版本提升只启动 `deps.yml`；发布成功后由 `workflow_run` 补一次真机门。两侧必须成对：只加 `paths-ignore` 不接补跑，等于版本提升后完全没有真机门，是另一种静默缺口。
 
-**前置条件**：`SKIA_REVISION` 必须是 40 位 commit；`deps-v1` 已由该 commit 真编并从已发布资产回验（610 条目 / 49.5 MB）。`deps-v2` 的 Windows 裁剪与 Linux 包代码已就绪，但资产尚未发布；`DEPS_VERSION` 升到 `deps-v2` 会触发 `deps.yml` 的完整双平台构建与发布，不能手动改文件冒充发布完成。
+**前置条件**：`SKIA_REVISION` 必须是 40 位 commit；当前 `deps-v2` 已由该 commit 双平台真编、回验并发布，`DEPS_VERSION` 与 Release tag 一致。后续换版只能升 `DEPS_VERSION` 触发 `deps.yml` 的完整双平台构建与发布，不能手动改文件冒充发布完成。
 
 从零重建一次双平台包的顺序：
 

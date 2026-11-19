@@ -39,7 +39,7 @@ final class HelloApplication extends Application
 | 文件 | 含义 | 当前值 |
 |---|---|---|
 | [`VERSION`](VERSION) | 框架版本，也是 git tag 与 CHANGELOG 小节名的来源 | `0.1.0-preview.1` |
-| [`DEPS_VERSION`](DEPS_VERSION) | 配套的二进制依赖包 tag（与代码版本解耦） | `deps-v1` |
+| [`DEPS_VERSION`](DEPS_VERSION) | 配套的二进制依赖包 tag（与代码版本解耦） | `deps-v2` |
 | [`SKIA_REVISION`](SKIA_REVISION) | 二进制包对应的 Skia 源码 commit | `13ffba25`（M148） |
 
 运行时代码用 `\Drift\Core\Version::VERSION`（另有 `BASE` / `PREVIEW` / `TAG` / `DEPS_TAG`）。
@@ -153,9 +153,9 @@ exe 不再要求以仓库根为 cwd 启动。
 
 | 项 | 内容 |
 |---|---|
-| `cpp/skia/` | Skia **M148** 预编译（clang / x64 / Release）：`include/` + `modules/` + `src/` + `out/Release-x64/` 下 24 个 `.lib`，附 `LICENSE`（BSD-3-Clause） |
+| `cpp/skia/` | Skia **M148** 预编译（clang / x64 / Release）：`include/` + `modules/` + `src/` + `out/Release-x64/` 下 13 个 `.lib`（Linux 对应 13 个 `.a`），已裁掉未使用的 Ganesh / PDF / SVG 等模块，附 `LICENSE`（BSD-3-Clause） |
 | `cpp/fonts/` | 可选：Noto Sans SC Regular / Bold + `OFL.txt`（SIL OFL 1.1 全文，重分发必须保留）；只用于确定性渲染 |
-| 打包产物 | deps-v1 发布 `drift-deps-win-x64.zip`；deps-v2 起按平台拆成 `drift-deps-win-x64.zip` 与 `drift-deps-linux-x64.zip`，各含 `cpp/DEPS-MANIFEST.txt` 与 `cpp/licenses/`。包内路径全挂在 `cpp/` 下 —— 解压到仓库根，顶层放文件会污染工作区 |
+| 打包产物 | deps-v2 按平台拆成 `drift-deps-win-x64.zip` 与 `drift-deps-linux-x64.zip`，各含 `cpp/DEPS-MANIFEST.txt` 与 `cpp/licenses/`。包内路径全挂在 `cpp/` 下 —— 解压到仓库根，顶层放文件会污染工作区 |
 
 首次获取（包托管在 GitHub Releases）：
 
@@ -166,7 +166,7 @@ php tools/fetch-deps.php --tag=deps-v2    # 临时钉别的版本；--force 重�
 php tools/fetch-deps.php --latest         # 改取仓库最新 release
 ```
 
-仓库公开，Release 资产匿名可下载，`deps-v1` 已发布。内网 / 离线机器用
+仓库公开，Release 资产匿名可下载，当前 `deps-v2` 双平台资产已发布。内网 / 离线机器用
 `--url=<本机 zip>` 或 `DRIFT_DEPS_URL=<目录>` 装（见下节）。fork 出的私有镜像、
 或匿名直链被限流时，可给 token 改走 API 解析资产 id，按
 `Accept: application/octet-stream` 下载（只需 `Contents: Read`）。
@@ -217,14 +217,14 @@ Get-FileHash drift-deps-win-x64.zip -Algorithm SHA256   # 校验收到的包
 dc444fbdfb168832a4b9d890c9e422f3ba18bce35093b304c86fa93a32e6c73c
 ```
 
-★ deps-v1 只有 win-x64 一个真实资产；上面的 linux-x64 行是 deps-v2 的双平台锚点预留，
-当前与 win-x64 同值只为通过 v1 的单包校验，不代表 v1 已发布 Linux 包。
+★ deps-v2 的 win-x64 与 linux-x64 都是真实资产；上面的两个 SHA 分别对应两个平台包，
+完整元数据见 `deps.lock.json`。
 
 同一份 `cpp/` 重打包 SHA 不变：条目按路径排序，且所有 ZIP DOS 时间统一写成
 1980-01-01 00:00（包内不写扩展时间戳，跨时区重建也一致）。否则每次打包都换一个哈希，
 CI 就无法判断「依赖真变了没有」。
 
-完整元数据（字节数 / entry 数 / Skia 里程碑 / 24 个 lib / 2 个字体 / 11 份许可）见
+完整元数据（字节数 / entry 数 / Skia 里程碑 / 各平台 13 个 lib / 2 个字体 / 11 份许可）见
 [`deps.lock.json`](deps.lock.json)。它入库，所以换包必须同时改仓库文件 —— 这是校验能成立的前提；
 `dist/*.sha256` 只是同批上传的副本。
 
@@ -257,8 +257,8 @@ php tools/pack-deps.php --platform=win-x64 # 组当前平台包 + 写 deps.lock.
 
 ★ `SKIA_REVISION` 已 pin 到 Skia M148 的真实 commit，`deps.lock.json` 的 `skiaRevision`
 与 `provenance: ci` 同步；该 commit 的 `SkMilestone.h` 为 148，与包内一致。
-`deps-v1` 由 `windows-deps.yml` 从这个 commit 实际重建并发布（610 条目 / 49.5 MB），
-包与来源声明一致。
+`deps-v2` 由 `deps.yml` 从这个 commit 双平台真编并发布（各 599 条目 / win 21.5 MB、
+linux 21.3 MB），包与来源声明一致。
 自动构建、发布流程见 [`依赖与发布`](docs/guides/dependencies-and-release.md) 的「CI 自动构建依赖包」一节。
 
 #### ③ 路径不对就设环境变量

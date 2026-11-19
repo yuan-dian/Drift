@@ -18,7 +18,7 @@
   在本文件对应版本的 Breaking 小节登记。
 - 发版前验收：`drift-build --full` 绿 + `probe-window` 5/5（T2 全过）。
 
-## v0.1.0-preview.1（2026-11-10 条目 · 尚未打 tag）
+## v0.1.0-preview.1（2026-11-10 条目 · 已打 tag）
 
 初版技术预览。能力面见下方条目，边界见 [`框架概览`](docs/start/overview.md)。
 
@@ -38,7 +38,7 @@
 - 控件面约 130 个类（含 8 个接口；精确清单以 `src/Widget/` 为准）
 - 8 个应用样例（hello / tutorial / users / showcase / watermark / bench / dev / pacing）
 - 工程质量：统一闸门（`composer checks` 是清单的唯一权威，项数以输出为准）+ 变异四律 + 三态判据 + 金样确定性注入 + T0/T1/T2 分层 + 真机探针
-- 双平台依赖分发（deps-v2 代码就绪，资产待发布）：Windows / Linux 各一资产、共享多平台锁；Windows Skia 裁剪九项零引用模块，macOS 仅预留平台表
+- 双平台依赖分发（deps-v2 已双平台发布）：Windows / Linux 各一资产、共享 schema=2 单锁；Windows Skia 裁剪未使用模块，macOS 仅预留平台表
 - 依赖链：Skia 预编译包与字体走 Release 资产（SHA256 入库、可断点续传），另有
   `SKIA_REVISION` + `tools/skia/` 构建输入支持从 pinned commit 源码重建；
   CI 两条流水线已入库（依赖包重建 / 产品 draft release），都跑在托管 `windows-2022` 上

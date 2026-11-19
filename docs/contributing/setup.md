@@ -58,7 +58,7 @@
 
 ## 取包：Release 与离线
 
-依赖包托管在 GitHub Releases，仓库公开，资产匿名可下载：`deps-v1` 已发布，`php tools/fetch-deps.php` 直接可取。fork 出的私有镜像、或匿名直链被限流时，可给 token 走 API 解析（只需 `Contents: Read`）。
+依赖包托管在 GitHub Releases，仓库公开，资产匿名可下载：当前 `deps-v2` 双平台资产已发布，`php tools/fetch-deps.php` 直接可取。fork 出的私有镜像、或匿名直链被限流时，可给 token 走 API 解析（只需 `Contents: Read`）。
 
 ```bash
 php tools/fetch-deps.php                     # 按宿主 OS 取 DEPS_VERSION 的 tag
@@ -83,10 +83,10 @@ DRIFT_DEPS_URL=<目录> php tools/fetch-deps.php            # 指目录也行，
 
 ## 从 clone 到 hello 的最短路径
 
-一条命令串不起来，因为中间隔着两件**发布侧**的事，不是本地命令能补的：仓库可见性、依赖包是否已发布——这两件现在都已就绪（仓库公开、`deps-v1` 已发布），下面按顺序走：
+一条命令串不起来，因为中间隔着两件**发布侧**的事，不是本地命令能补的：仓库可见性、依赖包是否已发布——这两件现在都已就绪（仓库公开、`deps-v2` 已发布），下面按顺序走：
 
 1. `git clone <仓库>` —— 此时 `cpp/` 为空，只能跑档 A。
-2. 取依赖包：`php tools/fetch-deps.php`（`deps-v1` 已发布）；离线 / 内网机器走 `--url=<本机 zip>`（见上节）。
+2. 取依赖包：`php tools/fetch-deps.php`（`deps-v2` 已发布）；离线 / 内网机器走 `--url=<本机 zip>`（见上节）。
 3. 补齐档 B 工具链（TypePHP 源码树 + PHPX + MSVC + SDK），路径不对设环境变量，不改脚本。
 4. `php tools/doctor.php` —— **单一真相源**，逐项报缺什么、给修法；全绿再往下。
 5. `php tools/drift-build.php hello` → `python tools/probe-window.py hello`。
