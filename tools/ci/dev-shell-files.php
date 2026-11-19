@@ -11,6 +11,7 @@ declare(strict_types=1);
  *   - `php8ts.dll` —— ZendVM；非 ZTS 的 PHP 只有 php8.dll
  *   - `VCRUNTIME140*.dll` / `msvcp140.dll` —— MSVC 运行库，目标机器不保证有匹配版本
  *   - `gmp-10.dll` / `mpfr-6.dll` / `libmpdec*.dll` —— phpx.dll 的传递依赖
+ *   - `libcrypto/libssl/libssh2/nghttp2/brotli*` —— openssl / curl 扩展的传递依赖
  * 缺任一样时 Windows 弹的是系统级"找不到 DLL"对话框，没有任何可读诊断，
  * 用户只会以为包坏了。所以这些文件是**包的一部分**，不是"用户自己装"。
  *
@@ -42,6 +43,12 @@ function devShellRequiredFiles(): array
         'vcruntime140.dll'     => 'MSVC 运行库（dev.exe / php8ts.dll / phpx.dll 都导入）',
         'vcruntime140_1.dll'   => 'MSVC 运行库（dev.exe / phpx.dll 导入）',
         'msvcp140.dll'         => 'MSVC C++ 运行库（phpx.dll 导入）',
+        'libcrypto-3-x64.dll'  => 'openssl 扩展依赖',
+        'libssl-3-x64.dll'     => 'openssl 扩展依赖',
+        'libssh2.dll'          => 'curl 扩展依赖',
+        'nghttp2.dll'          => 'curl 扩展依赖',
+        'brotlidec.dll'        => 'curl 扩展依赖',
+        'brotlicommon.dll'     => 'curl 扩展依赖',
     ];
 }
 

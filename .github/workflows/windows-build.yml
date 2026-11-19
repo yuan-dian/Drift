@@ -427,6 +427,13 @@ jobs:
             Copy-Item $source $stage
           }
 
+          # openssl / curl 扩展还有自己的传递依赖；缺了会在启动时报 PHP Startup Warning。
+          foreach ($dll in @('libcrypto-3-x64.dll', 'libssl-3-x64.dll', 'libssh2.dll', 'nghttp2.dll', 'brotlidec.dll', 'brotlicommon.dll')) {
+            $source = Join-Path $env:PHP_HOME $dll
+            if (-not (Test-Path $source)) { throw "extension transitive DLL missing: $dll" }
+            Copy-Item $source $stage
+          }
+
           foreach ($ext in @('php_mbstring.dll', 'php_openssl.dll', 'php_curl.dll')) {
             $source = Join-Path $env:PHP_HOME "ext\$ext"
             if (-not (Test-Path $source)) { throw "extension missing in PHP build: $ext" }
@@ -474,7 +481,7 @@ jobs:
           $target = '${{ inputs.target || 'hello' }}'
           $stage = Join-Path $env:RUNNER_TEMP 'aot-runtime'
           if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
-          New-Item $stage, "$stage\ext" -ItemType Directory -Force | Out-Null
+          New-Item $stage, "$stage\ext", "$stage\fonts" -ItemType Directory -Force | Out-Null
 
           foreach ($file in @("$target.exe", "$target.exe.map")) {
             if (Test-Path $file) { Copy-Item $file $stage }
@@ -496,6 +503,13 @@ jobs:
           foreach ($dll in @('gmp-10.dll', 'mpfr-6.dll', 'libmpdec-4.0.1.dll', 'libmpdec++-4.0.1.dll')) {
             $source = Join-Path $env:PHP_HOME $dll
             if (-not (Test-Path $source)) { throw "PHPX transitive DLL missing: $dll" }
+            Copy-Item $source $stage
+          }
+
+          # openssl / curl 扩展还有自己的传递依赖；缺了会在启动时报 PHP Startup Warning。
+          foreach ($dll in @('libcrypto-3-x64.dll', 'libssl-3-x64.dll', 'libssh2.dll', 'nghttp2.dll', 'brotlidec.dll', 'brotlicommon.dll')) {
+            $source = Join-Path $env:PHP_HOME $dll
+            if (-not (Test-Path $source)) { throw "extension transitive DLL missing: $dll" }
             Copy-Item $source $stage
           }
 
@@ -523,6 +537,12 @@ jobs:
             Copy-Item $source "$stage\ext"
           }
           Copy-Item 'assets/cacert.pem' "$stage\cacert.pem"
+
+          # Skia 从 exe 旁 fonts/ 找 NotoSansSC；没有字体时窗口是空白的。
+          # CI 探针从仓库根启动会命中 cwd 的 cpp/fonts，用户双击包不会 —— 必须随包分发。
+          if (-not (Test-Path 'cpp/fonts/NotoSansSC-Regular.ttf')) { throw 'source font missing: cpp/fonts/NotoSansSC-Regular.ttf' }
+          Copy-Item 'cpp/fonts/*' "$stage\fonts"
+          if (-not (Test-Path "$stage\fonts\NotoSansSC-Regular.ttf")) { throw 'font missing in AOT package' }
 
           php tools/ci/aot-package-files.php $stage $target
           if ($LASTEXITCODE -ne 0) { throw 'AOT runtime package is incomplete' }

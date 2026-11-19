@@ -17,6 +17,12 @@ declare(strict_types=1);
  * probe 注入 PHPRC 用的。分发包必须另写 `extension_dir = "ext/"`，让 phpx
  * 以 exe 所在目录解析 —— 用户解压到哪都能跑，不绑构建机路径。
  *
+ * ## 为什么必须带字体
+ *
+ * Skia 后端从 exe 旁 `fonts/` 或 cwd 的 `cpp/fonts/` 找 NotoSansSC.ttf；
+ * CI 探针从仓库根启动，cwd 兜底掩盖了缺字体。用户双击下载包时没有仓库，
+ * 没有字体 ⇒ 文字一个像素都不画，只剩空白窗口。
+ *
  * 用法： php tools/ci/aot-package-files.php <包目录> [目标名，默认 hello]
  */
 
@@ -40,10 +46,20 @@ function aotPackageRequiredFiles(string $target = 'hello'): array
         'vcruntime140.dll'             => 'MSVC 运行库（exe / php8ts.dll / phpx.dll 导入）',
         'vcruntime140_1.dll'           => 'MSVC 运行库（exe / phpx.dll 导入）',
         'msvcp140.dll'                 => 'MSVC C++ 运行库（phpx.dll 导入）',
+        'libcrypto-3-x64.dll'          => 'openssl 扩展依赖',
+        'libssl-3-x64.dll'             => 'openssl 扩展依赖',
+        'libssh2.dll'                  => 'curl 扩展依赖',
+        'nghttp2.dll'                  => 'curl 扩展依赖',
+        'brotlidec.dll'                => 'curl 扩展依赖',
+        'brotlicommon.dll'             => 'curl 扩展依赖',
         'ext/php_mbstring.dll'         => 'mbstring：编译产物与业务代码必需',
         'ext/php_openssl.dll'          => 'openssl：TLS 与摘要',
         'ext/php_curl.dll'             => 'curl：HTTP 客户端',
         'cacert.pem'                   => 'TLS 信任根（缺了 HTTPS 只能靠系统证书库）',
+        'fonts/NotoSansSC-Regular.ttf' => 'Skia 文字渲染必需（缺了窗口空白）',
+        'fonts/NotoSansSC-Bold.ttf'    => 'Skia 粗体文字渲染必需',
+        'fonts/FONT-NOTICE.txt'        => '字体许可声明',
+        'fonts/OFL.txt'                => '字体许可证',
     ];
 }
 

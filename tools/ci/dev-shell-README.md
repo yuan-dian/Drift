@@ -21,6 +21,7 @@
 | `phpx.dll` | PHPX 运行时（TypePHP 专有，PHP 发行版没有） |
 | `php8ts.dll` | ZendVM（ZTS 构建） |
 | `gmp-10.dll` `mpfr-6.dll` `libmpdec-4.0.1.dll` `libmpdec++-4.0.1.dll` | phpx.dll 的传递依赖 |
+| `libcrypto-3-x64.dll` `libssl-3-x64.dll` `libssh2.dll` `nghttp2.dll` `brotlidec.dll` `brotlicommon.dll` | openssl / curl 扩展的传递依赖 |
 | `ext/php_mbstring.dll` `ext/php_openssl.dll` `ext/php_curl.dll` | 业务代码与 AOT 需要的扩展 |
 | `cacert.pem` | TLS 信任根 |
 | `vcruntime140.dll` `vcruntime140_1.dll` `msvcp140.dll` | MSVC 运行库（三个二进制都导入，必需） |

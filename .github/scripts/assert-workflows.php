@@ -162,7 +162,10 @@ function driftWorkflowSection(string $text, string $startMarker, string $endMark
     return $end === false ? substr($text, $start) : substr($text, $start, $end - $start);
 }
 
-$transitiveDlls = ['gmp-10.dll', 'mpfr-6.dll', 'libmpdec-4.0.1.dll', 'libmpdec++-4.0.1.dll'];
+$transitiveDlls = [
+    'gmp-10.dll', 'mpfr-6.dll', 'libmpdec-4.0.1.dll', 'libmpdec++-4.0.1.dll',
+    'libcrypto-3-x64.dll', 'libssl-3-x64.dll', 'libssh2.dll', 'nghttp2.dll', 'brotlidec.dll', 'brotlicommon.dll',
+];
 $packAot = driftWorkflowSection($build, '- name: Pack AOT runtime', '- name: Upload AOT artifacts');
 $packDev = driftWorkflowSection($build, '- name: Pack dev shell', '- name: Upload dev shell to Release');
 if ($packAot === '') {
@@ -176,6 +179,9 @@ if (!str_contains($packAot, 'extension_dir = "ext/"')) {
 }
 if (!str_contains($packAot, 'php tools/ci/aot-package-files.php $stage $target')) {
     fail('Pack AOT runtime 没校验包完整性 —— 少 DLL 也会上传成绿');
+}
+if (!str_contains($packAot, "Copy-Item 'cpp/fonts/*'")) {
+    fail('Pack AOT runtime 没拷贝字体 —— 用户双击后 Skia 画不出文字，只剩空白窗口');
 }
 if (!str_contains($packDev, 'php tools/ci/dev-shell-files.php $stage')) {
     fail('Pack dev shell 没校验包完整性 —— 少 DLL 也会上传成绿');
