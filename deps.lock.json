@@ -1,5 +1,5 @@
 {
-    "driftVersion": "0.1.0-preview.1",
+    "driftVersion": "0.1.0",
     "depsTag": "deps-v2",
     "skiaRevision": "13ffba253fc7854fd3b34f67c82dfb2418dc2944",
     "provenance": "ci",

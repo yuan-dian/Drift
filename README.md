@@ -110,7 +110,7 @@ PHPX_HOME=/path/to/phpx bash probes/linux_x11/build.sh
 
 | 文件 | 含义 | 当前值 |
 |---|---|---|
-| [`VERSION`](VERSION) | 框架版本，也是 git tag 与 CHANGELOG 小节名的来源 | `0.1.0-preview.1` |
+| [`VERSION`](VERSION) | 框架版本，也是 git tag 与 CHANGELOG 小节名的来源 | `0.1.0` |
 | [`DEPS_VERSION`](DEPS_VERSION) | 配套二进制依赖包 tag（与代码版本解耦） | `deps-v2` |
 | [`SKIA_REVISION`](SKIA_REVISION) | 二进制包对应的 Skia 源码 commit | `13ffba25`（M148） |
 

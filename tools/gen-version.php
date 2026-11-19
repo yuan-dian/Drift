@@ -23,9 +23,15 @@ if (preg_match(DRIFT_VERSION_RE, $version) !== 1
     fwrite(STDERR, "VERSION / DEPS_VERSION 格式不对（{$version} / {$depsTag}）\n");
     exit(1);
 }
-preg_match('/-preview\.(\d+)$/', $version, $m);
-$preview = (int) $m[1];
-$base = substr($version, 0, -strlen('-preview.' . $preview));
+// 正式版（如 1.0.0）与无后缀的 0.x 都没有 -preview.N：preview=0，base=完整版本串。
+// 带后缀时维持原义：base 去掉预览段，PREVIEW 取序号。
+if (preg_match('/-preview\.(\d+)$/', $version, $m) === 1) {
+    $preview = (int) $m[1];
+    $base = substr($version, 0, -strlen('-preview.' . $preview));
+} else {
+    $preview = 0;
+    $base = $version;
+}
 $checkOnly = in_array('--check', array_slice($argv, 1), true);
 
 // PE 资源版本保持三段数字：tpc 现在能构出来，换成带预览号的字符串要重跑真机验证，

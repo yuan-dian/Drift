@@ -1,7 +1,7 @@
 # Changelog
 
-本文件记录 Drift 的发布变更。**所有版本均为技术预览（preview）**，API 不保证向后兼容，
-直至 1.0。
+本文件记录 Drift 的发布变更。**0.x 均为技术预览**，API 不保证向后兼容；`1.0.0` 起
+才是正式版并适用稳定版兼容承诺（见 [ROADMAP](ROADMAP.md)）。
 
 ## 版本号规范
 
@@ -9,14 +9,40 @@
 升级流程见 [README「版本号」](README.md)，派生副本由 `tools/gen-version.php` 生成、
 `tools/version.php --check` 判据。本节只记约定，不另存一份版本值。
 
-- 格式：`v<major>.<minor>.<patch>-preview.<N>`（`VERSION` 里不带 `v` 前缀）；
-  `0.1.0` 主线，`preview.N` 预览序号每次发预览递增。
+- 格式：`v<major>.<minor>.<patch>`，可带 `-preview.<N>` 后缀（`VERSION` 里不带 `v` 前缀）。
+  `0.x` 是预览（带不带后缀都是），`preview.N` 只是历史预览序号；`1.0.0` 为首个正式版。
 - **发布方式**：`git tag v<VERSION 内容>` 并推送即发布。
-- **未打 tag = 未发布**：本文件里的 `preview.N` 只表示"下一个 tag 的内容"；
+- **未打 tag = 未发布**：本文件里尚未打 tag 的版本只表示"下一个 tag 的内容"；
   `git tag -l` 为空时，任何版本号都不构成对外承诺。
-- **破坏性变更**：preview 阶段允许；变更记入对应版本的「Breaking」小节，并在发版前于
+- **破坏性变更**：预览阶段允许；变更记入对应版本的「Breaking」小节，并在发版前于
   在本文件对应版本的 Breaking 小节登记。
 - 发版前验收：`drift-build --full` 绿 + `probe-window` 5/5（T2 全过）。
+
+## v0.1.0（2026-11-20 · 首个无后缀的预览版）
+
+这一版把 preview.1 之后的能力补齐定为一个可下载的发布档位；**仍属技术预览**，
+但去掉了 `-preview.N` 后缀——`0.x` 版本号本身即表明预览状态，`1.0.0` 才是正式版。
+相比 `v0.1.0-preview.1`：
+
+### 已实现
+
+- **Linux x64 / X11 第二平台**：X11Platform 端到端门在公开 CI（`ubuntu-24.04`）真跑通——
+  真窗口出现、关闭事件链、消息泵收工、干净退出；环境为 Xvfb + fluxbox。
+- **X11 平台能力补全**：XSettings / 环境外观（暗色与高对比度跟随）、zenity / yad 对话框、
+  yad 托盘图标、xclip `TARGETS` 剪贴板探测、XIM 插入符定位。Wayland / AT-SPI / 组合 IME /
+  per-monitor DPI 仍不在能力面。
+- **双 PHP 矩阵**：Windows 与 Linux 两条 CI 均按 PHP 8.4 / 8.5 ZTS 双版本验证；工具链统一
+  使用 `swoole` 官方源（ref 钉死），失败日志按版本分存。
+- **依赖分发**：`deps-v2` 双平台依赖包（Windows / Linux 各一资产，schema=2 单锁，Skia pin
+  到 `13ffba25`）；dev shell 按 PHP 版本命名 `drift-dev-shell-win-x64-php8.4/8.5.zip`。
+- **文档结构**：按 start / guides / concepts / reference / decisions / contributing 六区重组，
+  统一 Windows + Linux 双平台口径。
+
+### 明确不包含（预览阶段）
+
+- ❌ 完整多平台对等（Wayland / AT-SPI / 完整 IME 组合输入 / per-monitor DPI 未接）
+- ❌ i18n 框架 / 触控 / 笔 / 安装器 / 代码签名 / 自动更新 / 第三方组件生态与包管理
+- ❌ 全匿名、零本机替代的端到端重跑（本机代理中断所阻，非产品缺陷；换网络可重跑）
 
 ## v0.1.0-preview.1（2026-11-10 条目 · 已打 tag）
 

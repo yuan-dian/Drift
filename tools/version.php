@@ -14,7 +14,9 @@ declare(strict_types=1);
  *   php tools/version.php --check    # 一致性判据，供 bin/drift verify 调用，不一致 exit 1
  */
 
-const DRIFT_VERSION_RE = '/^\d+\.\d+\.\d+-preview\.\d+$/';
+// 0.x 均为预览（带或不带 -preview.N 后缀都是预览），1.0.0 起为正式版。
+// 后缀可选：兼容历史 v0.1.0-preview.1，也允许直接发 v0.1.0。
+const DRIFT_VERSION_RE = '/^\d+\.\d+\.\d+(-preview\.\d+)?$/';
 const DRIFT_DEPS_TAG_RE = '/^deps-v\d+$/';
 
 require_once __DIR__ . '/Deps/Platforms.php';
@@ -105,7 +107,7 @@ function driftVersionCheck(?string $root = null): array
     $depsTag = $info['depsTag'];
 
     if (!is_file($root . '/VERSION') || preg_match(DRIFT_VERSION_RE, $version) !== 1) {
-        $errors[] = "VERSION 缺失或格式不对（应形如 0.1.0-preview.1）：{$version}";
+        $errors[] = "VERSION 缺失或格式不对（应形如 0.1.0 或 0.1.0-preview.1）：{$version}";
     }
     if (!is_file($root . '/DEPS_VERSION') || preg_match(DRIFT_DEPS_TAG_RE, $depsTag) !== 1) {
         $errors[] = "DEPS_VERSION 缺失或格式不对（应形如 deps-v1）：{$depsTag}";
