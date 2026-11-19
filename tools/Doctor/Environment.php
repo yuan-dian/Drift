@@ -26,8 +26,7 @@ final class Environment
     public const DEFAULT_VS_YEAR = '18';
     public const DEFAULT_SDK_VERSION = '10.0.26100.0';
 
-    /** Skia M148 的 .lib 数量与字体数量；只用来判断「包在不在、全不全」 */
-    public const MIN_SKIA_LIBS = 20;
+    /** 字体数量下限；库数下界不写死，从 Deps\Platforms 平台表取（deps-v2 裁剪后 13 个） */
     public const MIN_FONTS = 2;
 
     /**
@@ -524,7 +523,11 @@ final class Environment
     {
         $libs = glob("{$root}/cpp/skia/out/Release-x64/*.lib") ?: [];
         $fonts = glob("{$root}/cpp/fonts/*.ttf") ?: [];
-        $libOk = count($libs) >= self::MIN_SKIA_LIBS;
+        // ★ 下界跟平台表走（= base.yml 实际链接的 skia .lib 数）。写死 20 是 deps-v1
+        //   未裁剪时代的值，v2 裁完只有 13 个 ⇒ doctor 误判残缺、卡死 AOT 真机门。
+        //   Platforms 由 doctor.php → version.php 已 require_once，不要重复 require。
+        $minLibs = \Drift\Dev\Deps\Platforms::get(\Drift\Dev\Deps\Platforms::WIN)['minLibs'];
+        $libOk = count($libs) >= $minLibs;
         $fontOk = count($fonts) >= self::MIN_FONTS;
 
         if ($libOk && $fontOk) {
@@ -539,7 +542,7 @@ final class Environment
 
         $missing = [];
         if (!$libOk) {
-            $missing[] = '.lib ' . count($libs) . '/' . self::MIN_SKIA_LIBS;
+            $missing[] = '.lib ' . count($libs) . '/' . $minLibs;
         }
         if (!$fontOk) {
             $missing[] = '字体 ' . count($fonts) . '/' . self::MIN_FONTS;
