@@ -122,10 +122,12 @@ ld-flags:
   #   advapi32 注册表读 AppsUseLightTheme（§9.2 的系统深色模式）
   #   shell32   SHGetKnownFolderPath —— 用户配置目录（§5.4 `WindowStateStore`）
   #   imm32     IME 组合串
-  #   —— 以下为 Skia 需要（`skia.lib` 的 D3D 后端 / 图片编解码 / 系统字体枚举）：
-  #   d3d12 / dxgi / d3dcompiler   Skia 的 D3D12 后端（当前走 CPU 光栅，但归档里有引用）
+  #   —— 以下为 Skia / 系统能力需要：
+  #   d3d12 / dxgi / d3dcompiler   历史 Ganesh D3D 后端的导入库；deps-v2 起 Ganesh 已裁，
+  #                                 skia.lib 不再有 GPU 符号消费者，链接器会忽略未引用的
+  #                                 导入库（保留仅为避免无谓 LNK 风险，对包体零成本）
   #   windowscodecs                图片编解码（WIC）
-  #   opengl32 / msimg32           Skia 的 GL 兜底路径与 GDI 混合
+  #   opengl32 / msimg32           历史 Ganesh GL 兜底路径 / GDI 混合（同上，GL 后端已裁）
   #   dwrite / gdiplus             系统字体枚举 / GDI+ 路径
   #   ole32                        COM 初始化（WIC / DirectWrite 的底座，
   #                               `SHGetKnownFolderPath` 返回值的 `CoTaskMemFree`）

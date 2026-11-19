@@ -344,7 +344,7 @@ $skiaPlatformAnchors = [
     'dry_run=0' => 'dry-run 默认关闭',
     'args="$(cat "$HERE/args.gn.tpl")"' => '两平台共用同一份平台无关策略',
     'sed \'/extra_cflags = \\[ "-MT" \\]/d\'' => 'Linux 必须摘掉 MSVC 专用的 -MT',
-    'skia_enable_ganesh = false' => 'Linux 关掉 Drift 不用的 Ganesh/GLX（否则要装 GL/gl.h 还白编一半）',
+    'skia_enable_ganesh = false' => '两岸共用：关掉 Drift 不用的 Ganesh/GL（软件光栅零 GPU 消费者）',
     'lib_ext="lib"' => 'Windows 收 .lib',
     'lib_ext="a"' => 'Linux 收 .a',
     '*."$lib_ext"' => '收库时用平台后缀变量，不是写死 .lib',
@@ -381,19 +381,20 @@ foreach (['clang_win = ', 'win_vc = ', 'win_sdk = ', 'win_sdk_version = '] as $n
         fail('build-skia.sh 的 ' . $needle . ' 漏在 Windows 分支外 —— Linux clang 会吃到 Windows 参数');
     }
 }
-// ★ Ganesh 开关必须只在 Linux 分支内：Windows 包（deps-v1）带 Ganesh/GL 是历史产物，
-//   绝不能被这里的 Linux 优化改到 —— 否则已发布资产的复现性就破了。
-if (!str_contains($between, 'skia_enable_ganesh = false')) {
-    fail('build-skia.sh 的 Linux args 分支没关 Ganesh —— 会白编 GLX 后端并需要 GL/gl.h');
+// ★ deps-v2 起 Ganesh 也进两岸共用裁剪循环：drift_skia.cc 全部走
+//   SkCanvas::MakeRasterDirectN32 软件光栅，零 GrDirectContext / GL / D3D
+//   上下文调用，Windows 编 src/gpu/ganesh/gl/ 纯属白编。正向判据（共用循环
+//   含 Ganesh）并入下方 $sharedTrimFlags；这里守反向：平台分支不得单独再写。
+foreach (['Linux' => $between, 'Windows' => $winBlock] as $branchName => $branch) {
+    if (str_contains($branch, 'skia_enable_ganesh')) {
+        fail('build-skia.sh 的 ' . $branchName . ' 分支单独出现 Ganesh 开关 —— 共用循环才是唯一写点');
+    }
 }
-if (str_contains($winBlock, 'skia_enable_ganesh')) {
-    fail('build-skia.sh 的 Windows 分支出现了 Ganesh 开关 —— 会改变已发布 deps-v1 的构建参数');
-}
-// ★ deps-v2 两岸共用裁剪：Drift 只链接 core 绘制，build/base.yml 明确不链
-//   pdf / skottie / svg / sksg / skparagraph / skshaper / skunicode / icu /
-//   perfetto / piex / dng_sdk。九个开关必须写在平台分支之前（两平台都吃到），
-//   且不能只在注释里。任何一条漏出共用区 = 某平台又白编死库，或 Ganesh 被
-//   误加到 Windows（那会破坏 deps-v1 的既有产物契约）。
+// ★ deps-v2 两岸共用裁剪：Drift 只链接 core 软件光栅 + 图片解码，
+//   build/base.yml 明确不链 pdf / skottie / svg / sksg / skparagraph /
+//   skshaper / skunicode / icu / perfetto / piex / dng_sdk，也零 GPU 后端。
+//   十个开关（含 Ganesh）必须写在平台分支之前（两平台都吃到），且不能只在
+//   注释里。任何一条漏出共用区 = 某平台又白编死库。
 $sharedTrimFlags = [
     'skia_enable_pdf = false',
     'skia_enable_skottie = false',
@@ -404,6 +405,7 @@ $sharedTrimFlags = [
     'skia_use_perfetto = false',
     'skia_use_piex = false',
     'skia_use_dng_sdk = false',
+    'skia_enable_ganesh = false',
 ];
 // 只认 for 循环体里的带引号字面量，注释里写字面量不算。用位置截取而不是
 // 正则匹配 `; do` —— shell 的 `; do` / 换行 do 都合法，正则太脆。

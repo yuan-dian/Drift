@@ -106,12 +106,14 @@ build_gn_args() {
   local args
   args="$(cat "$HERE/args.gn.tpl")"
 
-  # ★ 两岸共用的 9 个安全裁剪开关（deps-v2 裁决）：Drift 只做 core 软件光栅 +
+  # ★ 两岸共用的 10 个安全裁剪开关（deps-v2 裁决）：Drift 只做 core 软件光栅 +
   #   图片解码，链接清单（build/base.yml）明确不含 pdf / skottie / svg / sksg /
   #   skparagraph / skshaper / skunicode / icu / perfetto / piex / dng_sdk。
-  #   Linux 已实测 1731→907 目标、26→13 库、44.3→9.7MB；Windows 同样不含这些库，
-  #   随 deps-v2 首次应用（deps-v1 已发布、参数不动）。Skia 官方各模块 BUILD.gn
-  #   都有空 group("xxx") {} 兜底，关开关不会让 group("modules") 的 deps 悬空。
+  #   Ganesh 也在其中：drift_skia.cc 唯一画布是 SkCanvas::MakeRasterDirectN32
+  #   软件光栅，全仓零 GrDirectContext / GL / D3D 上下文调用，Windows 编
+  #   src/gpu/ganesh/gl/ 属于白编；关掉后 Skia 官方 gn 自动把 skia_use_gl 置 false。
+  #   Linux 已实测（Ganesh 单独关 2008→1731，叠加 9 开关 1731→907 目标、
+  #   26→13 库、44.3→9.7MB），raster / codec / freetype 全部不受影响。
   #   ★ harfbuzz / expat / jsonreader 不在此列：Windows 链接清单仍用它们（文本栈/SVG）。
   for flag in \
     'skia_enable_pdf = false' \
@@ -122,19 +124,12 @@ build_gn_args() {
     'skia_use_icu = false' \
     'skia_use_perfetto = false' \
     'skia_use_piex = false' \
-    'skia_use_dng_sdk = false'; do
+    'skia_use_dng_sdk = false' \
+    'skia_enable_ganesh = false'; do
     args+=$'\n'"$flag"
   done
   if [[ "$platform" == "linux" ]]; then
     args="$(printf '%s\n' "$args" | sed '/extra_cflags = \[ "-MT" \]/d')"
-    # Drift 只用 MakeRasterDirectN32 软件光栅，一行 GPU 代码都不用。Skia 默认
-    # skia_enable_ganesh=true + skia_use_gl=true，会编 Ganesh GLX 后端（2008 个
-    # 目标里一大半），还要装 GL/gl.h 开发头。关掉 Ganesh 后 Skia 官方 gn 会把
-    # skia_use_gl 自动置 false（"skia_use_gl = skia_use_gl && skia_enable_ganesh"），
-    # GLX 源码不再编译；raster / codec / freetype / fontconfig 全部不受影响。
-    args+=$'\nskia_enable_ganesh = false'
-
-    # Ganesh 只关 Linux：Windows 的 skia.lib 仍链 D3D12/DXGI 后端，本轮不动。
   else
     args+=$'\ncc = "clang"'
     args+=$'\ncxx = "clang++"'
