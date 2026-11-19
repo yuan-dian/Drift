@@ -7,7 +7,8 @@
 
 三种形态共用这里的五条判据与 `App.close()` 的自动关窗：`--dev` / `--dev-runner`
 是日常入口，`DRIFT_PROBE_EXE` / `DRIFT_PROBE_ARGS_JSON` / `DRIFT_PROBE_ENV_JSON`
-留给自定义形态（显式 flag 覆盖环境变量）。
+留给自定义形态（显式 flag 覆盖环境变量）。`DRIFT_PROBE_SETTLE` 只放宽首帧等待，
+不改任何判据。
 
 判据（五者缺一不可）：
   ① 找到窗口，标题 == Application::title()；
@@ -125,11 +126,14 @@ def main() -> int:
     exe = os.environ.get("DRIFT_PROBE_EXE", f"{app}.exe")
     args = json.loads(os.environ.get("DRIFT_PROBE_ARGS_JSON", "[]"))
     env_extra = json.loads(os.environ.get("DRIFT_PROBE_ENV_JSON", "null"))
+    # 冷盘上系统字体目录扫描可能慢过默认 0.6s 首帧等待；门可以按需放宽等待，
+    # 但"必须有非白像素"这条判据不变。
+    settle = float(os.environ.get("DRIFT_PROBE_SETTLE", "0.6"))
     if flags & {"--dev", "--dev-runner"}:
         exe, args, env_extra = dev_profile(app, "--dev-runner" in flags)
 
     with App(exe, title, args=args, env_extra=env_extra, interactive=False,
-             state_name=app) as win:
+             settle=settle, state_name=app) as win:
         hwnd = win.hwnd
         print(f"hwnd = {hwnd}  标题 = {title!r}")
 

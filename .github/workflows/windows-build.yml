@@ -415,6 +415,7 @@ jobs:
         shell: pwsh
         env:
           DRIFT_PROBE_ENV_JSON: '{"DRIFT_DISABLE_BUNDLED_FONTS":"1"}'
+          DRIFT_PROBE_SETTLE: '5'
         run: |
           $target = '${{ inputs.target || 'hello' }}'
           python tools/probe-window.py $target
