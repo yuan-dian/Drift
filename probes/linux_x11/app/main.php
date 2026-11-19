@@ -16,6 +16,7 @@ use Drift\Input\ScrollEvent;
 use Drift\Input\WindowDeactivatedEvent;
 use Drift\Platform\WakeReason;
 use Drift\Platform\X11\X11Platform;
+use Drift\Theme\SystemTheme;
 use Drift\Widget\Center;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
@@ -458,6 +459,73 @@ function probeClipboard(X11Platform $platform): void
     echo "[CLIP] RESULT: PASS\n";
 }
 
+/**
+ * 系统外观判据：build.sh 用 GTK_THEME=Adwaita-dark 提供无 settings daemon 时的确定性输入。
+ *
+ * ① 桥必须存在且返回两轴数组；② Platform::screen()->appearance() 必须吃进 dark；
+ * ③ X11 没有统一系统色 API，系统色必须是 null，HC 时由 ThemeData 兜底配色接住。
+ */
+function probeAppearance(X11Platform $platform): void
+{
+    echo "=== Appearance: XSettings/env ===\n";
+    if (!\function_exists('drift_x11_system_appearance')) {
+        echo "[FAIL] drift_x11_system_appearance 桥函数缺失\n";
+        exit(1);
+    }
+    $appearance = $platform->screen(0)->appearance();
+    $dark = $appearance->theme === SystemTheme::Dark ? 1 : 0;
+    echo "[THEME] dark={$dark} high=" . ($appearance->highContrast ? 1 : 0) . "\n";
+    echo '[THEME] systemColors=' . (($appearance->window === null && $appearance->windowText === null) ? 'none' : 'unexpected') . "\n";
+
+    if ($dark !== 1 || $appearance->highContrast || $appearance->window !== null) {
+        echo "[FAIL] 系统外观未从 X11 桥传到 Screen\n";
+        exit(1);
+    }
+    echo "[THEME] RESULT: PASS\n";
+}
+
+/**
+ * 壳服务判据：dialog / tray 走独立助手进程，不占宿主 X connection。
+ *
+ * build.sh 注入 fake_shell_services.sh：它按 zenity/yad 的 argv 契约返回固定
+ * 路径与退出码。这里验端口接线、多选拆行、模态计时与托盘进程生命周期，
+ * 不冒充 GUI 外观；真助手是否可用由 `command -v yad` 在安装阶段确认。
+ */
+function probeShellServices(X11Platform $platform): void
+{
+    echo "=== Shell services: dialog + tray ===\n";
+    $dialog = $platform->dialog();
+    if ($dialog === null) {
+        echo "[FAIL] dialog null（DRIFT_X11_DIALOG_BIN 未注入或助手不可执行）\n";
+        exit(1);
+    }
+    $single = $dialog->openFile('选一个文件', [['文本文件 (*.txt)', '*.txt']]);
+    $multi = $dialog->openFiles('选多个文件');
+    echo '[DLG] single=' . ($single ?? 'null') . "\n";
+    echo '[DLG] multi=' . \implode(',', $multi) . "\n";
+    echo '[DLG] confirm=' . ($dialog->confirm('确认', '继续吗') ? '1' : '0') . "\n";
+    $dialog->alert('提示', '完成');
+    echo '[DLG] blockedMs>0=' . ($platform->consumeModalBlockedMs() > 0.0 ? '1' : '0') . "\n";
+
+    $tray = $platform->tray();
+    if ($tray === null) {
+        echo "[FAIL] tray null（DRIFT_X11_TRAY_BIN 未注入或助手不可执行）\n";
+        exit(1);
+    }
+    $installed = $tray->install('Drift X11 门', 'info');
+    echo '[TRAY] install=' . ($installed ? '1' : '0') . "\n";
+    $tray->remove();
+    echo "[TRAY] removed=1\n";
+
+    if ($single !== '/tmp/drift-dialog-a.txt' ||
+        $multi !== ['/tmp/drift-dialog-a.txt', '/tmp/drift-dialog-b.txt'] ||
+        $installed !== true) {
+        echo "[FAIL] 壳服务接线 / 解析 / 进程生命周期判据失败\n";
+        exit(1);
+    }
+    echo "[SHELL] RESULT: PASS\n";
+}
+
 function main(): void
 {
     echo "=== X11 E2E: real Application on EventLoop ===\n";
@@ -467,6 +535,12 @@ function main(): void
 
     // 剪贴板判据（建窗前，headless）：跨进程读 + UTF-8 往返 + hasText。
     probeClipboard($platform);
+
+    // 系统外观判据（建窗前，headless）：XSettings/环境兜底 → Screen::appearance()。
+    probeAppearance($platform);
+
+    // 壳服务判据（建窗前）：dialog / tray 的助手进程序列，不依赖窗口管理。
+    probeShellServices($platform);
 
     // IO 池 P0 判据（建窗前，headless，无 X 事件干扰）。
     probeIoPool($platform);
@@ -485,6 +559,14 @@ function main(): void
     }
     $platform->window()->show($handle);
     echo "shown\n";
+
+    // IME 边界：只把插入符矩形喂给 XIM spot location；组合文字事件仍属框架层缺口。
+    if (!\function_exists('drift_x11_ime_set_caret')) {
+        echo "[FAIL] drift_x11_ime_set_caret 桥函数缺失\n";
+        exit(1);
+    }
+    $platform->imeCaret($handle, [12.0, 34.0, 20.0]);
+    echo "[IME] caret=1\n";
 
     $constraints = $platform->screen($handle)->viewport();
     echo "viewport {$constraints->maxWidth}x{$constraints->maxHeight}\n";

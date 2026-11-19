@@ -100,7 +100,7 @@ function selfTest(string $root, bool $json): int
         // 三条必须不红：ABI 不含注释 / 参数名，替身不必全覆盖
         ['只加注释不误报', "// abi-probe-variant\n" . $t['stub'], $t['cc'], $t['fakes'], true],
         ['只改参数名不误报', str_replace('int $hwnd', 'int $handle', $t['stub']), $t['cc'], $t['fakes'], true],
-        ['三处同步新增函数不误报', $t['stub'] . "\n\n" . 'function drift_abi_probe(int $x): int {}', $t['cc'] . "\n\n" . 'Int php_drift_abi_probe(Int x) {' . "\n", $t['fakes'], true],
+        ['三处同步新增函数不误报（函数名含数字，守 X11 桥）', $t['stub'] . "\n\n" . 'function drift_x11_abi_probe(int $x): int {}', $t['cc'] . "\n\n" . 'Int php_drift_x11_abi_probe(Int x) {' . "\n", $t['fakes'], true],
     ];
 
     foreach ($cases as [$label, $stub, $cc, $fakes, $expectOk]) {
@@ -117,7 +117,7 @@ function selfTest(string $root, bool $json): int
     // 指纹：同一份表稳定；加一个函数必变（否则"忘抬版本"照样假阴性）
     $again = Contract::schemaHash(Contract::parseStub($t['stub']));
     $withExtra = Contract::schemaHash(Contract::parseStub(
-        $t['stub'] . "\n\n" . 'function drift_abi_probe(int $x): int {}'
+        $t['stub'] . "\n\n" . 'function drift_x11_abi_probe(int $x): int {}'
     ));
     $items[] = [
         'label' => '指纹稳定且随签名变化',

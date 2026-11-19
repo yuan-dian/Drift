@@ -9,7 +9,7 @@
 | 平台 | 状态 | T2 入口 | 已知缺口 |
 |---|---|---|---|
 | Win32 x64 | 完整桌面实现 | `drift-build --full` + `probe-window` | 触控 / 笔未做 |
-| Linux x64（X11） | 已过公开 CI 端到端门，能力子集 | `bash probes/linux_x11/build.sh`（Xvfb + fluxbox + xclip + Linux Skia `.a`） | Wayland / AT-SPI / IME / 高对比度跟随未接；`dialog()` / `tray()` 返回 `null`；剪贴板只做 UTF-8 纯文本 |
+| Linux x64（X11） | 已过公开 CI 端到端门，能力子集 | `bash probes/linux_x11/build.sh`（Xvfb + fluxbox + xclip + yad + Linux Skia `.a`） | 无 Wayland / AT-SPI / 完整 IME 组合输入 / per-monitor DPI；系统色靠 HC 兜底配色；剪贴板仅 UTF-8 纯文本，对话框/托盘依赖 zenity/yad 与托盘宿主 |
 | macOS | 未接 | —— | 仅在 deps 平台表预留 `macos-arm64` |
 
 ## 端口集合与"没有"的三种写法
@@ -39,7 +39,7 @@
 壳（C++ 侧）负责 OS 侧那一段：建窗与销毁、消息泵与唤醒窗、原生剪贴板 / 对话框 / 托盘、DPI 或缩放信号、系统主题信号，以及把桥函数暴露成稳定的 ABI。PHP 侧只通过 `Platform` 端口发命令、收事件。两侧的实现边界不同，但端口形状不变：
 
 - **Win32**：`PostMessageW` 唤醒、`HWND` 句柄、`WM_SETTINGCHANGE` 主题、`PER_MONITOR_AWARE_V2` DPI、UIA 语义树；对话框与托盘是原生通道，剪贴板走系统 API。
-- **X11**：`XConnectionNumber` + `poll()` 唤醒、窗口句柄为 `Window`、X11 selection 由独立 `xclip` 进程持有（桥内自实现会在同一 connection 上自死锁）；只做 `UTF8_STRING` 纯文本三件套，读写各有界超时与 `waitpid` 回收。Wayland / AT-SPI / IME、对话框与托盘未接，返回 `null` 或 no-op；最大化 / 最小化依赖 WM 处理。
+- **X11**：`XConnectionNumber` + `poll()` 唤醒、窗口句柄为 `Window`、X11 selection 由独立 `xclip` 进程持有（桥内自实现会在同一 connection 上自死锁）；`UTF8_STRING` 纯文本三件套，`hasText()` 先问 `TARGETS`。系统外观读 XSettings owner（`_XSETTINGS_S0`）并用环境变量兜底；对话框与托盘交给 zenity/yad 独立进程，缺失时返回 `null`。IME 只做 XIM 插入符定位，组合文字事件仍属框架层缺口；最大化 / 最小化依赖 WM 处理。
 
 以下几条是 Win32 专属的实现纪律：
 
@@ -67,13 +67,13 @@ Win32 启动阶段的 DPI 感知级别必须是 `PER_MONITOR_AWARE_V2`：旧式�
 
 ## 深色主题跟随
 
-`Screen::systemTheme()` 给明暗，`appearance()` 给完整快照（明暗 + 高对比度 + 用户选的系统色）。Win32 来源是 `WM_SETTINGCHANGE`（`lParam == "ImmersiveColorSet"`）或启动时读注册表，复用现有事件通道，不新增端口方法。`appearance()` 每次现读、不缓存：明暗与高对比度都是运行期事件，缓存就得配失效逻辑。新代码用 `appearance()`，别让高对比度状态散在第二个通道里。
+`Screen::systemTheme()` 给明暗，`appearance()` 给完整快照（明暗 + 高对比度 + 用户选的系统色）。Win32 来源是 `WM_SETTINGCHANGE`（`lParam == "ImmersiveColorSet"`）或启动时读注册表，每次现读。X11 来源是 XSettings manager（`_XSETTINGS_S0` 的 owner 属性）与 `GTK_THEME` / `GTK_COLOR_SCHEME` 等环境兜底：桥每 250ms 轮询，变了才吐 `theme` 事件让 `X11Appearance` 丢缓存；X11 没有统一系统色 API，`highContrast` 时不伪造颜色，由 `ThemeData` 的 forced-colors 配色接住。新代码用 `appearance()`，别让高对比度状态散在第二个通道里。
 
 ## 剪贴板、对话框、托盘、IME
 
-三个壳服务按平台不同：Win32 的剪贴板与对话框懒建具体实现、托盘返回 `null`；X11 的剪贴板由 `xclip` 子进程实现 UTF-8 纯文本三件套，对话框与托盘返回 `null`。调用方必须处理 `null`——"没有剪贴板"不是"复制了个空串"，静默当空操作只会让用户以为操作成功了。
+三个壳服务按平台不同：Win32 的剪贴板与对话框懒建具体实现、托盘返回 `null`；X11 的剪贴板由 `xclip` 子进程实现 UTF-8 纯文本（`hasText()` 先问 `TARGETS`），对话框走 zenity / yad，托盘走 yad `--notification`。X11 助手或托盘宿主不在时对应端口返回 `null`——"没有剪贴板/对话框"不是"空串/空操作"，静默吞掉只会让用户以为操作成功了。
 
-Win32 的原生对话框会阻塞事件循环，`consumeModalBlockedMs()` 负责把这段时间从卡顿统计里剔除。关闭请求是窗口级生命周期：应用可以拒绝（`setCloseGuard()` + `CloseRequestedEvent`），同意后框架才 `destroy()`；`isAlive()` 必须显式查 `IsWindow`，不能用"客户区 0×0"代替（最小化也是 0×0）。
+两个平台的原生对话框都阻塞调用线程，`consumeModalBlockedMs()` 负责把这段时间从卡顿统计里剔除；X11 由外部助手进程跑内层循环，不占宿主 X connection。IME 只做到光标定位：Win32 走 `IMM`、X11 走 XIM `spotLocation`；组合文字 / 预编辑事件需要框架层 `ImeEvent`，当前两平台都还没有，不能因为候选窗会跟随就宣称 IME 完整。
 
 窗口位置持久化用客户区左上角屏幕坐标，窗口销毁后 `position()` 返回**最后已知几何**（非 `null`），否则退出路径上写不回"记住窗口位置"；`place()` 一次原子还原几何与最大化态。
 

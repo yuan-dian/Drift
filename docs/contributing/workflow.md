@@ -10,7 +10,7 @@
 
 按改动落在哪一层，决定要做什么验证：
 
-- 改 `src/` 或 `cpp-src/` → 必须 T2 重编译验证：Windows 走 `drift-build --full` 加 `probe-window`，Linux X11 走 `bash probes/linux_x11/build.sh`（Xvfb + fluxbox + xclip）。dev 壳通过不能代替它，因为 dev 壳加载的是 PHP，不经过 AOT 生成物。
+- 改 `src/` 或 `cpp-src/` → 必须 T2 重编译验证：Windows 走 `drift-build --full` 加 `probe-window`，Linux X11 走 `bash probes/linux_x11/build.sh`（Xvfb + fluxbox + xclip + yad）。dev 壳通过不能代替它，因为 dev 壳加载的是 PHP，不经过 AOT 生成物。
 - 改 `apps/<app>/src/` 的 PHP → dev 壳即时生效，日常迭代很方便；但发版前仍要 T2。
 - 新增 lint 规则或判据 → 必须能回答"什么变异能让它报红"。答不上来的不上仓——一条永远不响的规则等于没有。
 - 新增或改动文档 → 不写 `file:line` 行号锚点，定位一律用类名、方法名、小节标题这类符号名。行号会随代码挪动，写进文档就失效。

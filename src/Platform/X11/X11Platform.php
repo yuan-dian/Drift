@@ -27,8 +27,8 @@ use function drift_x11_wait;
 /**
  * X11 平台实现：装配六个子端口，把桥的命名事件翻译成框架类型。
  *
- * ★ 壳服务里 clipboard 由 xclip 桥真实现（纯文本，与 Win32 同契约）；dialog/tray
- *   仍返回 null 而非假实现 —— 调用方必须处理 null，与 Win32 的 M2 降级一致。
+ * ★ 壳服务里 clipboard 与 dialog 是真实现：clipboard 走 xclip 子进程；
+ *   dialog 走 zenity / yad 独立 GUI 进程（助手不在时退回 null）。tray 另见其端口。
  *   剪贴板在桥函数缺失时（纯 PHP 单测）也返回 null。
  * @api platform
  */
@@ -44,6 +44,10 @@ final class X11Platform implements Platform
 
     /** 壳服务懒建：与 Win32Platform 同形，不支持的仍是 null */
     private ?X11Clipboard $clipboard = null;
+
+    private ?X11Dialog $dialog = null;
+
+    private ?X11Tray $tray = null;
 
     /** @var list<array<string, mixed>> */
     private array $pending = [];
@@ -105,17 +109,25 @@ final class X11Platform implements Platform
 
     public function dialog(): ?Dialog
     {
-        return null;
+        if (!X11Dialog::available()) {
+            return null;
+        }
+
+        return $this->dialog ??= new X11Dialog();
     }
 
     public function tray(): ?Tray
     {
-        return null;
+        if (!X11Tray::available()) {
+            return null;
+        }
+
+        return $this->tray ??= new X11Tray();
     }
 
     public function consumeModalBlockedMs(): float
     {
-        return 0.0;
+        return $this->dialog?->consumeModalBlockedMs() ?? 0.0;
     }
 
     public function waitEvents(float $timeoutMs): WakeReason
@@ -159,6 +171,12 @@ final class X11Platform implements Platform
     {
         $type = (string) ($event['type'] ?? 'quit');
         if ($type === 'quit' || $type === 'noop' || $type === 'timer' || $type === 'dpi') {
+            return 0;
+        }
+        if ($type === 'theme') {
+            // XSettings 的亮/暗或高对比度变了：只丢缓存，下一帧由 X11Screen 现读。
+            // 不产生输入事件 —— 主题变化不是用户按键，不该进命中链/加速键。
+            X11Appearance::invalidate();
             return 0;
         }
 
@@ -249,7 +267,23 @@ final class X11Platform implements Platform
 
     public function imeCaret(int $windowHandle, ?array $rect): void
     {
-        // 无 IME 桥；不代理到 XIM，留空即"无插入符"。
+        // 只把框架算好的插入符矩形交给 XIM 定位候选窗；组合文字/预编辑事件需要
+        // 框架层 ImeEvent，当前还没有，不能在平台层伪造"完整 IME 已接"。
+        if (!\function_exists('drift_x11_ime_set_caret')) {
+            return;
+        }
+        if ($rect === null) {
+            drift_x11_ime_set_caret($windowHandle, false, 0.0, 0.0, 0.0);
+
+            return;
+        }
+        drift_x11_ime_set_caret(
+            $windowHandle,
+            true,
+            (float) ($rect[0] ?? 0.0),
+            (float) ($rect[1] ?? 0.0),
+            (float) ($rect[2] ?? 0.0),
+        );
     }
 
     public function now(): float

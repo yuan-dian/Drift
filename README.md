@@ -33,7 +33,7 @@ Drift 是一个 **声明式 + 自绘 + 单语言 AOT** 的桌面 GUI 框架：�
 | Linux x64（X11） | 已过公开 CI 端到端门，能力子集 | ELF | `linux-build.yml` + `probes/linux_x11/build.sh` |
 | macOS | 未接 | —— | 仅在依赖平台表预留 `macos-arm64` |
 
-X11 当前缺口：Wayland / AT-SPI / IME / 高对比度跟随未接；`dialog()` / `tray()` 返回 `null`；剪贴板只做 `UTF8_STRING` 纯文本三件套。两平台端口差异见[平台能力端口](docs/guides/platform-ports.md)。
+X11 已接：Skia 自绘与真机事件链、xclip UTF-8 纯文本、zenity/yad 对话框与 yad 托盘、XSettings/环境兜底的暗色与高对比度跟随、XIM 插入符定位。仍是能力子集：无 Wayland / AT-SPI / 完整 IME 组合输入 / per-monitor DPI / 系统色回读；助手或托盘宿主缺失时对应壳服务返回 `null`。两平台端口差异见[平台能力端口](docs/guides/platform-ports.md)。
 
 ## 30 秒看懂
 
@@ -98,7 +98,7 @@ Linux 的 T2 入口不是 `drift-build.php` + `probe-window.py`，而是端到�
 PHPX_HOME=/path/to/phpx bash probes/linux_x11/build.sh
 ```
 
-它从 tpc/GCC 编出 ELF，在 Xvfb + fluxbox 下跑真窗口、输入、事件、IO、图片解码、剪贴板（外部 `xclip` owner）与干净退出判据；CI 对应 `linux-build.yml`。当前只覆盖 Skia + X11 桥的最小应用，不代表 Win32 能力对等。
+它从 tpc/GCC 编出 ELF，在 Xvfb + fluxbox 下跑真窗口、输入、事件、IO、图片解码、WM、剪贴板（外部 `xclip` owner）、系统外观、对话框/托盘助手接线、IME 插入符定位与干净退出判据；CI 对应 `linux-build.yml`。当前只覆盖 Skia + X11 桥的最小应用，不代表 Win32 能力对等。
 
 ### 从零写一个应用
 

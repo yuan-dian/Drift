@@ -26,7 +26,7 @@ final class Contract
     ];
 
     /** ABI 规则版本：校验口径变化时抬它，别让新旧指纹长得一样 */
-    private const SCHEMA_VERSION = 'd2abi1';
+    private const SCHEMA_VERSION = 'd2abi2';
 
     /**
      * @return array<string, array{ret:string, params:list<string>}>
@@ -34,7 +34,7 @@ final class Contract
     public static function parseStub(string $text): array
     {
         preg_match_all(
-            '/function\s+(drift_[a-z_]+)\s*\(([^)]*)\)\s*:\s*([a-z]+)\s*\{\s*\}/s',
+            '/function\s+(drift_[a-z0-9_]+)\s*\(([^)]*)\)\s*:\s*([a-z]+)\s*\{\s*\}/s',
             $text,
             $m,
             PREG_SET_ORDER
@@ -49,7 +49,7 @@ final class Contract
     public static function parseCc(string $text): array
     {
         preg_match_all(
-            '/(?:^|\n)[ \t]*(Int|String|Array|Bool|Float|void)\s+php_(drift_[a-z_]+)\s*\(([^)]*)\)\s*\{/',
+            '/(?:^|\n)[ \t]*(Int|String|Array|Bool|Float|void)\s+php_(drift_[a-z0-9_]+)\s*\(([^)]*)\)\s*\{/',
             $text,
             $m,
             PREG_SET_ORDER
@@ -72,7 +72,7 @@ final class Contract
     public static function parseFakes(string $text): array
     {
         preg_match_all(
-            '/\bfunction\s+(drift_[a-z_]+)\s*\(([^)]*)\)\s*:\s*([a-z]+)/s',
+            '/\bfunction\s+(drift_[a-z0-9_]+)\s*\(([^)]*)\)\s*:\s*([a-z]+)/s',
             $text,
             $m,
             PREG_SET_ORDER

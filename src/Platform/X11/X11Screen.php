@@ -12,10 +12,9 @@ use Drift\Theme\SystemTheme;
 /**
  * X11 屏幕端口。缩放在这一版固定 1.0（无 per-monitor DPI 桥），视口按客户区现读。
  *
- * ★ 主题**显式降级**为 Light：X11 没有统一的系统主题 API，正确形态是
- *   Portal Settings → gsettings → kreadconfig → xfconf-query 的级联探测
- *   （见 UniDesktop/SDK 的 appearance_specs）。没接之前返回 Light 是"未实现"，
- *   不是"系统就是浅色"—— 这条纪律写在这里，防止后来者把它当完整支持。
+ * ★ 主题走 XSettings（暗色 / 高对比度两轴）+ 环境变量兜底，变化由
+ *   X11Platform 的 `theme` 事件触发失效；详见 {@see X11Appearance}。
+ *   没有系统色 API 时不伪造颜色，HC 时由 ThemeData 的 forced-colors 兜底配色接住。
  *
  * @internal 平台实现；应用只认 Drift\Platform\Screen
  */
@@ -48,11 +47,11 @@ final class X11Screen implements Screen
 
     public function systemTheme(): SystemTheme
     {
-        return SystemTheme::Light;
+        return X11Appearance::current()->theme;
     }
 
     public function appearance(): SystemAppearance
     {
-        return SystemAppearance::light();
+        return X11Appearance::current();
     }
 }

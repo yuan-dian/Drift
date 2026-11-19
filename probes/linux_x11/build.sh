@@ -64,12 +64,17 @@ cp "$repo/cpp-src/x11/image_decode.cc" "$repo/cpp-src/x11/image_decode.h" "$ws/n
 # 剪贴板（xclip 子进程）：实现单独 TU，drift_x11.cc 只做 ABI 包装。
 # ★ 不复制 ⇒ drift_x11_clipboard_* 链接到未定义符号，AOT 直接编不过（不是静默假绿）。
 cp "$repo/cpp-src/x11/clipboard.cc" "$repo/cpp-src/x11/clipboard.h" "$ws/native/"
+# 系统外观（XSettings + 环境兜底）：实现单独 TU，drift_x11.cc 只做 ABI 包装。
+# ★ 不复制 ⇒ drift_x11_system_appearance / theme 轮询符号缺失，AOT 编不过。
+cp "$repo/cpp-src/x11/system_appearance.cc" "$repo/cpp-src/x11/system_appearance.h" "$ws/native/"
 # Skia 桥与 X11 桥同编：两套 stub 是不同函数名，不会冲突。
 cp "$repo/cpp-src/skia/drift_skia.stub.php" "$repo/cpp-src/skia/drift_skia.cc" "$ws/native/"
 # 字体跟产物走：桥按 cwd 的 cpp/fonts 找 Noto，CI 与本地口径一致。
 cp -r "$repo/cpp/fonts" "$ws/cpp/fonts"
 ln -sfn "$skia_home" "$ws/cpp/skia-linux"
 cp "$probe_dir/app/main.php" "$probe_dir/send_close.py" "$probe_dir/send_input.py" "$probe_dir/send_focus.py" "$ws/app/"
+cp "$probe_dir/fake_shell_services.sh" "$ws/app/fake_shell_services.sh"
+chmod +x "$ws/app/fake_shell_services.sh"
 cp "$probe_dir/project.yml" "$ws/project.yml"
 
 libx11="$(ldconfig -p | awk '/libX11\.so\.6/{print $NF; exit}')"
@@ -119,6 +124,15 @@ echo "=== 运行 + 注入关窗事件 ==="
 # tail -f 把应用输出同步到 job 日志，否则 XSendEvent 之后就是一段空白，没法定位。
 gate_timeout="${DRIFT_X11_TIMEOUT:-90}"
 : > "$ws/run.log"
+# GTK_THEME 只在无 XSettings daemon 的 Xvfb/fluxbox 门里充当确定性输入；真桌面仍走
+# _XSETTINGS_S0 的属性。放在应用进程上，不污染外部 xclip owner。
+# 壳服务助手用确定性假进程：验 argv 接线 / 拆行 / 进程生命周期，不冒充 GUI 外观。
+fake_services="$ws/app/fake_shell_services.sh"
+DRIFT_X11_DIALOG_BIN="$fake_services" \
+DRIFT_X11_TRAY_BIN="$fake_services" \
+DRIFT_X11_TRAY_PID_FILE="$ws/tray.pid" \
+DRIFT_X11_DIALOG_TIMEOUT_MS=3000 \
+GTK_THEME=Adwaita-dark \
 timeout --signal=TERM --kill-after=5s "${gate_timeout}s" ./linux_x11_e2e > "$ws/run.log" 2>&1 &
 pid=$!
 # ★ 要采样的必须是**应用进程**，不是 timeout 包装进程：GNU timeout 会 fork 子进程再
@@ -219,6 +233,15 @@ grep -q '\[CLIP\] roundtrip got=drift-剪贴板-中文-ok' "$ws/run.log" || { er
 grep -q '\[CLIP\] hasText=1' "$ws/run.log" || { err "hasText 读不到内容：剪贴板三件套的可用性门控断"; fail=1; }
 grep -q '\[CLIP\] overwrite got=second-copy' "$ws/run.log" || { err "剪贴板覆盖写失败：第二次 writeText 没替换内容"; fail=1; }
 grep -q '\[CLIP\] RESULT: PASS' "$ws/run.log" || { err "剪贴板判据整体未通过"; fail=1; }
+grep -q '\[THEME\] dark=1 high=0' "$ws/run.log" || { err "系统外观未跟随 XSettings/GTK_THEME：dark 或 highContrast 没传到 Screen"; fail=1; }
+grep -q '\[THEME\] systemColors=none' "$ws/run.log" || { err "X11 无统一系统色 API，桥不该伪造系统色"; fail=1; }
+grep -q '\[THEME\] RESULT: PASS' "$ws/run.log" || { err "系统外观判据整体未通过"; fail=1; }
+grep -q '\[DLG\] single=/tmp/drift-dialog-a.txt' "$ws/run.log" || { err "单文件对话框未接上助手契约"; fail=1; }
+grep -q '\[DLG\] multi=/tmp/drift-dialog-a.txt,/tmp/drift-dialog-b.txt' "$ws/run.log" || { err "多选对话框拆行失败：助手分隔符与 PHP 解析不一致"; fail=1; }
+grep -q '\[DLG\] blockedMs>0=1' "$ws/run.log" || { err "模态时间未入账：FrameClock 会把真实卡顿算进帧耗时"; fail=1; }
+grep -q '\[TRAY\] install=1' "$ws/run.log" || { err "托盘安装失败：yad 助手进程没起来"; fail=1; }
+grep -q '\[SHELL\] RESULT: PASS' "$ws/run.log" || { err "壳服务判据整体未通过"; fail=1; }
+grep -q '\[IME\] caret=1' "$ws/run.log" || { err "IME 插入符没喂给 XIM：桥缺失或 imeCaret 未接线"; fail=1; }
 grep -q '\[BACKEND\] skia' "$ws/run.log" || { err "Skia 后端未启用：桥没链上或 provider 回退到了软光栅"; fail=1; }
 grep -q '\[FONT\] ready=1' "$ws/run.log" || { err "Skia 目录字体未就绪 —— 文字不会绘制（几何全对也看不出字）"; fail=1; }
 grep -q '找不到目录字体' "$ws/run.log" && { err "Skia 报了字体缺失诊断"; fail=1; }

@@ -7,6 +7,7 @@
 #include <sys/time.h>
 #include <time.h>
 #include <string>
+#include <unordered_map>
 #include <phpx.h>
 
 // 跨平台 IO 线程池（core 是平台无关池体）+ Linux 自管道唤醒钩子。
@@ -16,6 +17,7 @@
 #include "io_wake.h"
 #include "image_decode.h"
 #include "clipboard.h"
+#include "system_appearance.h"
 
 using php::Array;
 using php::Bool;
@@ -114,6 +116,22 @@ extern "C" {
                            unsigned char **prop_return);
     int XFree(void *data);
 
+    // XIM：只做"候选窗贴插入符"这一件事。组合文字事件框架层还没有 ImeEvent，
+    // 这里不假装实现输入，只把 EventLoop 已经算好的矩形交给 XIM 的 spot location。
+    typedef struct _XIM *XIM;
+    typedef struct _XIC *XIC;
+    typedef unsigned long XIMStyle;
+    typedef void *XVaNestedList;
+    struct XPoint { short x, y; };
+    struct XRectangle { short x, y; unsigned short width, height; };
+    XIM XOpenIM(Display *d, void *rms, char *res_name, char *res_class);
+    int XCloseIM(XIM im);
+    XIC XCreateIC(XIM im, ...);
+    void XDestroyIC(XIC ic);
+    int XSetICFocus(XIC ic);
+    int XSetICValues(XIC ic, ...);
+    XVaNestedList XVaCreateNestedList(int unused, ...);
+
     unsigned long pthread_self(void);
 }
 
@@ -129,8 +147,20 @@ static const int NOTIFY_INFERIOR = 2;            // XFocusChangeEvent.detail：�
 static const long FOCUS_CHANGE_MASK = 1L << 21;  // XSelectInput：FocusChangeMask
 static const long WM_STATE_ICONIC = 3;           // ICCCM WM_STATE 的 IconicState
 
+// XIM 常量取自 Xlib.h（值是稳定 ABI，避免为几个宏引入整套 X 头）。
+static const char *const XNInputStyle = "inputStyle";
+static const char *const XNClientWindow = "clientWindow";
+static const char *const XNFocusWindow = "focusWindow";
+static const char *const XNPreeditAttributes = "preeditAttributes";
+static const char *const XNArea = "area";
+static const char *const XNSpotLocation = "spotLocation";
+static const XIMStyle XIM_PREEDIT_POSITION = 0x0004L;
+static const XIMStyle XIM_STATUS_NOTHING = 0x0400L;
+
 static Display *g_display = nullptr;
 static Atom g_wmDelete = 0;
+static XIM g_xim = nullptr;
+static std::unordered_map<Window, XIC> g_ics;
 
 // KeyPress 一次要吐两条事件（key 给加速键 / char 给文本），而 XNextEvent
 // 一次只返回一条 ⇒ 文本暂存到下一次 wait()。与 Win32 的 WM_KEYDOWN→WM_CHAR
@@ -161,6 +191,15 @@ static Display *display()
         }
     }
     return g_display;
+}
+
+/** 懒建 XIM：没有输入方法的服务器（Xvfb）会返回 null，调用方安静降级。 */
+static XIM xim()
+{
+    if (g_xim == nullptr && g_display != nullptr) {
+        g_xim = XOpenIM(g_display, nullptr, nullptr, nullptr);
+    }
+    return g_xim;
 }
 
 /**
@@ -392,7 +431,13 @@ void php_drift_x11_destroy(Int hwnd)
 {
     Display *d = display();
     if (d != nullptr && hwnd > 0) {
-        XDestroyWindow(d, (Window)(uintptr_t)hwnd);
+        const Window win = (Window)(uintptr_t)hwnd;
+        const auto it = g_ics.find(win);
+        if (it != g_ics.end()) {
+            XDestroyIC(it->second);
+            g_ics.erase(it);
+        }
+        XDestroyWindow(d, win);
         XSync(d, 0);
     }
 }
@@ -590,6 +635,14 @@ Array php_drift_x11_window_state(Int hwnd)
 
 Array php_drift_x11_wait(Float timeoutMs)
 {
+    // XSettings 快照轮询：主题变化先于输入事件吐出，让下一帧就能用新配色。
+    // poll 自带 250ms 节流；首次调用只建基线，不会在启动瞬间抖一帧。
+    if (drift::x11::pollSystemAppearanceChanged()) {
+        Array out;
+        out.set("type", "theme");
+        return out;
+    }
+
     // 上一次 KeyPress 暂存的文本先吐：这样 wait() 的调用方看到的顺序与
     // Windows 一致（key → char），且不会让文本卡在下一个真实事件之后。
     if (g_pendingChar[0] != '\0') {
@@ -807,4 +860,67 @@ void php_drift_x11_clipboard_write_text(String text)
 Bool php_drift_x11_clipboard_has_text()
 {
     return (Bool)drift::x11::clipboardHasText();
+}
+
+// ── 系统外观：亮/暗 + 高对比度两轴，不伪造 X11 不存在的系统色 ──
+Array php_drift_x11_system_appearance()
+{
+    const drift::x11::SystemAppearanceSnapshot s = drift::x11::currentSystemAppearance();
+    Array out;
+    out.set("dark", Bool(s.dark));
+    out.set("high_contrast", Bool(s.highContrast));
+    return out;
+}
+
+// ── IME 插入符定位（XIM spot location）──
+// ★ 仅定位候选窗：框架层还没有 ImeEvent，组合文字/预编辑串不在这里处理。
+//   Xvfb 无输入方法时 XOpenIM 返回 null ⇒ 安静 no-op，不能因为没 IM 就崩。
+void php_drift_x11_ime_set_caret(Int hwnd, Bool visible, Float x, Float y, Float h)
+{
+    Display *d = display();
+    if (d == nullptr || hwnd <= 0) {
+        return;
+    }
+    const Window win = (Window)(uintptr_t)hwnd;
+    auto it = g_ics.find(win);
+    if (!visible) {
+        if (it != g_ics.end()) {
+            XDestroyIC(it->second);
+            g_ics.erase(it);
+        }
+        return;
+    }
+
+    XIM im = xim();
+    if (im == nullptr) {
+        return;
+    }
+    if (it == g_ics.end()) {
+        XIC ic = XCreateIC(im,
+                           XNInputStyle, (XIMStyle)(XIM_PREEDIT_POSITION | XIM_STATUS_NOTHING),
+                           XNClientWindow, win,
+                           XNFocusWindow, win,
+                           nullptr);
+        if (ic == nullptr) {
+            return;   // 这个 IM 不支持 position 风格，留空比乱贴候选窗好
+        }
+        it = g_ics.emplace(win, ic).first;
+    }
+    XSetICFocus(it->second);
+
+    XRectangle area;
+    area.x = (short)x;
+    area.y = (short)y;
+    area.width = (unsigned short)(h > 1.0 ? h : 1.0);
+    area.height = (unsigned short)(h > 1.0 ? h : 1.0);
+    XPoint spot;
+    spot.x = (short)x;
+    spot.y = (short)(y + h);
+
+    XVaNestedList attrs = XVaCreateNestedList(
+        0, XNArea, &area, XNSpotLocation, &spot, nullptr);
+    if (attrs != nullptr) {
+        XSetICValues(it->second, XNPreeditAttributes, attrs, nullptr);
+        XFree(attrs);
+    }
 }

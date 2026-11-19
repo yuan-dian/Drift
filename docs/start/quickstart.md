@@ -11,7 +11,7 @@
 | 档 A | 跑闸门、读代码、无头预览 | PHP >= 8.4（`php.exe` 在 `PATH`）；跑单元测试还需 `composer install` 装出 PHPUnit | MSVC / tpc / PHPX |
 | 档 B | 在档 A 之上编出独立可执行程序（Windows `.exe` / Linux ELF） | PHPX、tpc 源码树入口、MSVC、Windows SDK、Skia 预编译包（字体可选） | —— |
 
-★ 表中工具链是 Windows 路径。Linux x64（X11）的 T2 走 `probes/linux_x11/build.sh`（见[平台端口](../guides/platform-ports.md)），依赖 `deps-v2` 的 linux-x64 包与 Xvfb + fluxbox + xclip，能力窄于 Win32。
+★ 表中工具链是 Windows 路径。Linux x64（X11）的 T2 走 `probes/linux_x11/build.sh`（见[平台端口](../guides/platform-ports.md)），依赖 `deps-v2` 的 linux-x64 包与 Xvfb + fluxbox + xclip + yad，能力窄于 Win32。
 
 两个容易混淆的点：
 
@@ -99,7 +99,7 @@ python tools/probe-window.py hello    # 等价：php bin/drift probe -- hello
 
 `probe-window.py` 在真窗口上量尺寸、像素、DPI 与关窗退出码，并**自己关窗**；加 `--dev` 则量 dev 壳形态。它也有无头预览的近亲 `drift-preview.php`，输出 SVG 或 PNG，用于确认「排开了、画出来了」，但不是真窗口。
 
-Linux x64（X11）的 T2 入口不同：设好 `PHPX_HOME` / `TPC` 后跑 `bash probes/linux_x11/build.sh`，并备好 Xvfb + fluxbox + xclip 与 Linux Skia `.a`。它覆盖真窗口、事件、IO、解码、剪贴板与干净退出，但只覆盖 Skia + X11 桥的最小应用，能力差见[平台端口](../guides/platform-ports.md)。
+Linux x64（X11）的 T2 入口不同：设好 `PHPX_HOME` / `TPC` 后跑 `bash probes/linux_x11/build.sh`，并备好 Xvfb + fluxbox + xclip + yad 与 Linux Skia `.a`。它覆盖真窗口、事件、IO、解码、剪贴板、外观、壳服务助手接线与干净退出，但只覆盖 Skia + X11 桥的最小应用，能力差见[平台端口](../guides/platform-ports.md)。
 
 ## dev 绿不等于 AOT 绿
 

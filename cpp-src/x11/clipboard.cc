@@ -234,8 +234,36 @@ void clipboardWriteText(const std::string &text)
 
 bool clipboardHasText()
 {
-    // 与 FakeClipboard 同口径：hasText = available && 非空。xclip 的 available
-    // 就是"读得到内容"，故直接读一次判空 —— 语义精确，且和随后 readText 用同一 target。
+    // 先问 TARGETS：没有文本 target 就别读正文。这样"无 owner / 只有图片"是一条
+    // 独立判断，不再把"剪贴板里是空串"与"压根没有 owner"混成同一次 readText。
+    char *const targetsArgv[] = {
+        const_cast<char *>("xclip"),
+        const_cast<char *>("-o"),
+        const_cast<char *>("-selection"),
+        const_cast<char *>("clipboard"),
+        const_cast<char *>("-t"),
+        const_cast<char *>("TARGETS"),
+        nullptr,
+    };
+    std::string targets;
+    if (runXclip(targetsArgv, std::string(), &targets, kClipTimeoutMs) != 0) {
+        return false;
+    }
+    static const char *const kTextTargets[] = {
+        "UTF8_STRING", "text/plain;charset=utf-8", "text/plain", "STRING", "TEXT",
+    };
+    bool textTarget = false;
+    for (const char *target : kTextTargets) {
+        if (targets.find(target) != std::string::npos) {
+            textTarget = true;
+            break;
+        }
+    }
+    if (!textTarget) {
+        return false;
+    }
+
+    // Clipboard 端口只有三方法：hasText 仍按"可读且非空"回答，保留 Fake/Win32 契约。
     return !clipboardReadText().empty();
 }
 

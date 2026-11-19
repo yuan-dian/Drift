@@ -61,7 +61,7 @@ X11 目前由 `probes/linux_x11/app/main.php` 直接装配（尚无面向应用�
 
 边界是现状陈述，不是承诺清单：
 
-- **平台**：Win32 为完整桌面实现；Linux x64（X11）已过 T2 端到端门，但仍是能力子集（无 Wayland / AT-SPI / IME，对话框与托盘返回 `null`，剪贴板为 xclip UTF-8 纯文本三件套）；macOS 未接。T2 入口与差异见[平台端口](../guides/platform-ports.md)。
+- **平台**：Win32 为完整桌面实现；Linux x64（X11）已过 T2 端到端门，但仍是能力子集（无 Wayland / AT-SPI / 完整 IME 组合输入 / per-monitor DPI；剪贴板为 xclip UTF-8 纯文本，对话框/托盘依赖 zenity/yad，暗色与高对比度走 XSettings/环境兜底）；macOS 未接。T2 入口与差异见[平台端口](../guides/platform-ports.md)。
 - **交互**：无触控、无笔；无 i18n。
 - **架构**：`Application` 仍是门面式的上帝类；环境值靠逐层传参，深层控件没有环境注入通道；无增量布局与 damage rect；无运行时检查器。
 - **工程**：无统一 `create` 脚手架；无第三方组件生态与包管理；无安装器、签名与自动更新。

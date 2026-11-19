@@ -39,3 +39,11 @@ function drift_image_decode(string $path, int $maxWidth = 0): array {}
 function drift_x11_clipboard_read_text(): string {}
 function drift_x11_clipboard_write_text(string $text): void {}
 function drift_x11_clipboard_has_text(): bool {}
+
+// 系统外观：XSettings 的亮/暗与高对比度两轴；桥不返回系统色（X11 没有统一 API）。
+// 返回 ['dark' => bool, 'high_contrast' => bool]。
+function drift_x11_system_appearance(): array {}
+
+// IME 插入符定位（XIM spot location）。visible=false 表示无插入符，桥会清掉旧的 IC 位置。
+// ★ 只定位候选窗；组合文字事件属于框架层 ImeEvent，尚未实现，别把它当完整 IME。
+function drift_x11_ime_set_caret(int $hwnd, bool $visible, float $x, float $y, float $h): void {}

@@ -9,7 +9,7 @@
 - **档 A，跑判据 / 读代码**：只要 PHP。公开 CI runner 跑的就是这档，`php bin/drift verify` 应全绿，不需要 MSVC / tpc / PHPX。
 - **档 B，编出独立 exe**：在档 A 之上补一整套原生工具链，才能做 T2 真机构建。
 
-桌面端覆盖 Windows 10/11 x64 与 Linux x64（X11，能力子集）。本页的档位表与工具链细节以 Windows 为主；Linux X11 的 T2 门走 `probes/linux_x11/build.sh`，依赖 `deps-v2` 的 linux-x64 包、Xvfb + fluxbox + xclip，能力缺口见[框架概览](../start/overview.md)。
+桌面端覆盖 Windows 10/11 x64 与 Linux x64（X11，能力子集）。本页的档位表与工具链细节以 Windows 为主；Linux X11 的 T2 门走 `probes/linux_x11/build.sh`，依赖 `deps-v2` 的 linux-x64 包、Xvfb + fluxbox + xclip + yad（壳服务助手），能力缺口见[框架概览](../start/overview.md)。
 
 `php tools/doctor.php` 是环境判据的单一真相源，它和构建脚本共用同一份路径推导逻辑，不会各写一套。不要按记忆配环境——缺什么 doctor 会逐项打印修法。
 

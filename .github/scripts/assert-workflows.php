@@ -1020,6 +1020,8 @@ $x11ClipAnchors = [
     [$x11ClipboardCc, 'kill(pid, SIGKILL)', '超时没 kill 子进程 —— 挂死的 xclip 会留着'],
     [$x11ClipboardCc, 'waitpid(pid, &status, 0)', '没回收子进程 —— 每次 Ctrl+V 留一个僵尸'],
     [$x11ClipboardCc, 'signal(SIGPIPE, SIG_IGN)', '没忽略 SIGPIPE —— xclip 提前退出会杀掉宿主'],
+    [$x11ClipboardCc, 'const_cast<char *>("TARGETS")', 'hasText 没先问 TARGETS —— 无 owner 与空串被混成一态'],
+    [$x11ClipboardCc, 'kTextTargets', '文本 target 白名单缺失 —— TARGETS 探测变成永远 false'],
     [$x11ClipboardCc, 'std::chrono::steady_clock', '超时用了会被系统调时的时钟 —— 与 now() 单调纪律冲突'],
     [$x11ClipboardH, 'clipboardReadText', '剪贴板 TU 缺读接口声明'],
     // ABI + stub
@@ -1064,7 +1066,95 @@ if (preg_match('/\b(popen|system)\s*\(/', $x11ClipboardCc) === 1) {
 if (substr_count($x11ClipboardCc, '"UTF8_STRING"') < 2) {
     fail('剪贴板读写两端没都显式 UTF8_STRING target —— 中文会变问号');
 }
-fwrite(STDOUT, '  ok     X11 剪贴板 xclip/UTF8/超时：' . count($x11ClipAnchors) . " 个链路环节 + 3 条反向判据\n");
+fwrite(STDOUT, '  ok     X11 剪贴板 xclip/UTF8/超时/TARGETS：' . count($x11ClipAnchors) . " 个链路环节 + 3 条反向判据\n");
+
+// ── Linux 平台能力补全：系统外观 / dialog / tray / XIM 插入符 ──────────
+// 这四条链都属于"没有原生 API 就接桌面工具或 X 扩展"的形态，最容易被
+// 某次清理改回 null / no-op 而测试仍绿。这里从 C++/stub/PHP/probe/CI 交叉钉住。
+$x11AppearanceCc = (string) @file_get_contents($root . '/cpp-src/x11/system_appearance.cc');
+$x11AppearanceH = (string) @file_get_contents($root . '/cpp-src/x11/system_appearance.h');
+$x11AppearancePhp = (string) @file_get_contents($root . '/src/Platform/X11/X11Appearance.php');
+$x11DialogPhp = (string) @file_get_contents($root . '/src/Platform/X11/X11Dialog.php');
+$x11TrayPhp = (string) @file_get_contents($root . '/src/Platform/X11/X11Tray.php');
+$abiContractPhp = (string) @file_get_contents($root . '/tools/Abi/Contract.php');
+$linuxFakeServices = (string) @file_get_contents($root . '/probes/linux_x11/fake_shell_services.sh');
+$x11CapAnchors = [
+    // XSettings → 亮/暗 + HC：不引入新库，只读 owner 属性 + 环境兜底
+    [$x11AppearanceCc, '"_XSETTINGS_S0"', '没读 XSettings manager selection —— 主题跟随无真相源'],
+    [$x11AppearanceCc, 'XGetSelectionOwner(d, selection)', '没解析 XSettings owner —— 读的是根窗口旧假设'],
+    [$x11AppearanceCc, '"_XSETTINGS_SETTINGS"', '没读 XSettings 属性 —— 主题值拿不到'],
+    [$x11AppearanceCc, 'pollSystemAppearanceChanged', '没有变化时轮询 —— 主题改了不会到达框架'],
+    [$x11AppearanceCc, 'getenv("GTK_THEME")', '没有裸 WM 环境兜底 —— Xvfb 门无法确定性验主题'],
+    [$x11AppearanceH, 'bool highContrast = false;', '快照没有高对比度轴 —— HC 会退化成普通暗色'],
+    [$x11PresentCc, 'php_drift_x11_system_appearance', 'drift_x11.cc 没做系统外观 ABI 包装'],
+    [$x11StubPhp, 'function drift_x11_system_appearance(): array', 'x11 stub 没声明系统外观函数'],
+    [$x11AppearancePhp, 'fromBridge(array $raw)', 'PHP 侧没有纯函数归一化 —— 桥数组无法单测'],
+    [$x11PlatformPhp, "if (\$type === 'theme')", '平台没消费 theme 事件 —— 缓存永不失效'],
+    [$x11PlatformPhp, 'X11Appearance::invalidate()', 'theme 事件没丢缓存 —— 切换主题要等重启'],
+    [$linuxBuildSh, 'cpp-src/x11/system_appearance.cc', 'build.sh 没复制系统外观 TU —— AOT 链接失败'],
+    [$linuxBuildSh, 'GTK_THEME=Adwaita-dark', '门里没有确定性主题输入'],
+    [$linuxBuildSh, "grep -q '\\[THEME\\] dark=1 high=0'", 'build.sh 没断言主题跟随'],
+    [$linuxMainPhp, 'probeAppearance($platform)', 'probe 没跑系统外观判据'],
+    // dialog：外部 GUI 进程 + 参数转义 + 模态计时
+    [$x11DialogPhp, 'final class X11Dialog implements Dialog', '没有 X11 Dialog 实现'],
+    [$x11DialogPhp, 'proc_open(', '对话框没进程隔离 —— 宿主消息泵会被模态卡住'],
+    [$x11DialogPhp, 'escapeshellarg', '对话框参数没转义 —— 用户文案可注入 shell'],
+    [$x11DialogPhp, 'consumeModalBlockedMs', '模态时间没入账 —— FrameClock 会把真卡顿洗绿'],
+    [$x11DialogPhp, "'--multiple'", '多选文件没给助手 --multiple —— 永远只能选一个'],
+    [$x11DialogPhp, 'normalizeSinglePath', '单选路径没剥行尾 —— 助手换行会混进路径'],
+    [$x11PlatformPhp, 'X11Dialog::available()', '平台没探测对话框助手就返回实现'],
+    [$x11PlatformPhp, '$this->dialog?->consumeModalBlockedMs()', '平台没汇总对话框模态时长'],
+    [$linuxMainPhp, 'probeShellServices($platform)', 'probe 没跑壳服务判据'],
+    [$linuxFakeServices, '--file-selection', '假助手没实现文件对话框契约 —— 门会假绿'],
+    [$linuxFakeServices, '--notification', '假助手没实现托盘契约 —— 门会假绿'],
+    [$linuxBuildSh, 'DRIFT_X11_DIALOG_BIN', 'build.sh 没注入确定性对话框助手'],
+    [$linux, 'gdb xclip yad', 'CI 没 apt 装 yad —— 真桌面 dialog/tray 无助手'],
+    // tray：单图标 + 前台进程 + 可回收
+    [$x11TrayPhp, 'final class X11Tray implements Tray', '没有 X11 Tray 实现'],
+    [$x11TrayPhp, "'--notification'", '托盘没用 yad notification 契约'],
+    [$x11TrayPhp, 'proc_terminate($process, 15)', 'remove 没先发 SIGTERM —— 图标进程会被硬杀'],
+    [$x11PlatformPhp, 'X11Tray::available()', '平台没探测托盘助手就返回实现'],
+    [$linuxBuildSh, 'DRIFT_X11_TRAY_PID_FILE', 'build.sh 没给托盘假助手留 PID 文件'],
+    // IME：只承诺候选窗定位，不冒充组合输入已实现
+    [$x11PresentCc, 'php_drift_x11_ime_set_caret', 'drift_x11.cc 没做 IME 插入符 ABI 包装'],
+    [$x11PresentCc, 'XIM_PREEDIT_POSITION', '没用 XIM position 风格 —— 候选窗拿不到坐标'],
+    [$x11PresentCc, 'XNSpotLocation', '没设置 spotLocation —— 候选窗仍贴原点'],
+    [$x11StubPhp, 'function drift_x11_ime_set_caret', 'x11 stub 没声明 IME 插入符桥'],
+    [$x11PlatformPhp, "function_exists('drift_x11_ime_set_caret')", 'imeCaret 没探测桥 —— 纯 PHP 单测会调不存在的函数'],
+    [$linuxMainPhp, '$platform->imeCaret($handle', 'probe 没跑插入符定位判据'],
+    [$linuxBuildSh, "grep -q '\\[IME\\] caret=1'", 'build.sh 没断言插入符桥接线'],
+    // ABI：函数名允许数字，否则所有 drift_x11_* 都逃过校验
+    [$abiContractPhp, 'drift_[a-z0-9_]+', 'ABI 正则不收数字 —— X11 桥再次逃过契约'],
+];
+foreach ($x11CapAnchors as [$text, $needle, $label]) {
+    if (!str_contains($text, $needle)) {
+        fail('Linux 能力链断裂：' . $label . '（' . $needle . '）');
+    }
+}
+// 反向锚点 1：dialog/tray 不许再恒 null（那正是本轮闭合的缺口）。
+foreach ([
+    ['public function dialog(): ?Dialog', 'new X11Dialog()', 'dialog 又退回恒 null'],
+    ['public function tray(): ?Tray', 'new X11Tray()', 'tray 又退回恒 null'],
+] as [$begin, $needle, $label]) {
+    $beg = strpos($x11PlatformPhp, $begin);
+    $end = $beg === false ? false : strpos($x11PlatformPhp, "\n    }", $beg);
+    $body = ($beg !== false && $end !== false) ? substr($x11PlatformPhp, $beg, $end - $beg) : '';
+    if (!str_contains($body, $needle)) {
+        fail('X11Platform ' . $label);
+    }
+}
+// 反向锚点 2：IME 不许把"只定位候选窗"写成"完整 IME 已接"。
+if (!str_contains($x11PlatformPhp, '组合文字/预编辑事件需要')) {
+    fail('X11Platform::imeCaret 丢了能力边界说明 —— 会被误读成完整 IME 已实现');
+}
+// 反向锚点 3：假助手必须先全扫描 argv 再分派。真 yad 把 --file-selection
+// 放在 --multiple 之前；边遍历边响应会在看到 --multiple 前就返回单文件。
+$multiPos = strpos($linuxFakeServices, 'want_multi=1');
+$filePos = strpos($linuxFakeServices, '--file-selection)');
+if ($multiPos === false || $filePos === false || $multiPos > $filePos) {
+    fail('假助手没先扫完 --multiple 就处理 --file-selection —— 多选对话框永远只回一个路径');
+}
+fwrite(STDOUT, '  ok     Linux 能力补全：外观/dialog/tray/IME：' . count($x11CapAnchors) . " 个链路环节 + 4 条反向判据\n");
 
 // ── Linux Skia 构建通道（build-only，不发布）────────────────────────────
 // 目的：在公开 runner 上真编 Linux .a，并产出 linux-x64 包交给 deps.yml。
