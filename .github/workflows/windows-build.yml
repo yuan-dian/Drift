@@ -316,7 +316,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             # 资产缺失不是代码问题，但红在这里会让人以为编译坏了。
             # 把唯一可行的下一步直接写进错误。
-            Write-Host '::error::依赖包取不到 —— 多半是 DEPS_VERSION 指向的 deps-vN 还没发布。真 AOT 需要真实依赖包，不能跳过；先手动触发 windows-deps.yml 并置 publish=true 构建发布，再重跑本 workflow。'
+            Write-Host '::error::依赖包取不到 —— 多半是 DEPS_VERSION 指向的 deps-vN 还没发布。真 AOT 需要真实依赖包，不能跳过；先手动触发 deps.yml（勾 publish）发布双平台包，再重跑本 workflow。'
             throw 'fetch-deps failed'
           }
 

@@ -146,6 +146,14 @@ foreach ($buildAnchors as $needle => $label) {
         fail('windows-build.yml 缺环节：' . $label . '（' . $needle . '）');
     }
 }
+// 取包失败的错误提示必须指向现行发布通道 deps.yml；指回已退役的
+// windows-deps.yml 会让人手动触发一个 build-only 作业，永远等不到资产。
+if (!str_contains($build, '先手动触发 deps.yml（勾 publish）')) {
+    fail('windows-build.yml 取包失败的提示仍没指向 deps.yml —— 照旧提示操作永远发不出包');
+}
+if (str_contains($build, 'windows-deps.yml 并置 publish')) {
+    fail('windows-build.yml 又指回已退役的 windows-deps.yml publish —— 它是 build-only，不发布');
+}
 
 // 发版链路：deps 先跑；但 build-only 的临时产物不能覆盖已发布的 deps 锁。
 $releaseAnchors = [
