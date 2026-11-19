@@ -46,7 +46,6 @@ concurrency:
 env:
   COMPOSER_NO_INTERACTION: 1
   COMPOSER_PROCESS_TIMEOUT: 0
-  PHP_VERSION: '8.4'
   # 本机全量 AOT 验过的编译器版本，含 Drift 要求的最低编译期修复基线。
   TPC_REF: 41d91fe69d2f7ec99dffe252a95244793000c6d2
   DRIFT_TPC_ENTRY: ${{ github.workspace }}\third_party\typephp\bin\tpc.php
@@ -93,15 +92,19 @@ jobs:
     if: ${{ always() && (github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && needs.gate.outputs.published == 'true')) }}
     runs-on: windows-2022
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.4', '8.5']
     permissions:
       contents: write # release_tag 非空时上传资产；日常 PR 所需权限不因此扩大到仓库外
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup PHP ${{ env.PHP_VERSION }} ZTS
+      - name: Setup PHP ${{ matrix.php }} ZTS
         uses: shivammathur/setup-php@v2
         with:
-          php-version: ${{ env.PHP_VERSION }}
+          php-version: ${{ matrix.php }}
           coverage: none
           extensions: mbstring, curl, openssl, zip
           tools: composer:v2
@@ -117,7 +120,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $version = php -r 'echo PHP_VERSION;'
-          if (-not $version.StartsWith('${{ env.PHP_VERSION }}.')) { throw "PHP $version != ${{ env.PHP_VERSION }}.x" }
+          if (-not $version.StartsWith('${{ matrix.php }}.')) { throw "PHP $version != ${{ matrix.php }}.x" }
           if ((php -r 'echo PHP_ZTS;') -ne '1') { throw 'setup-php did not install a ZTS build' }
           foreach ($e in @('mbstring','curl','openssl','zip')) {
             $present = php -r "echo extension_loaded('$e') ? 'yes' : 'no';"
@@ -166,7 +169,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $archive = '${{ steps.php-build-env.outputs.archive }}'
-          $extractDir = Join-Path $env:RUNNER_TEMP "php-devel-$env:PHP_VERSION"
+          $extractDir = Join-Path $env:RUNNER_TEMP "php-devel-${{ matrix.php }}"
           if (-not (Test-Path $archive)) {
             $ok = $false
             foreach ($base in @('https://downloads.php.net/~windows/releases','https://downloads.php.net/~windows/releases/archives')) {
@@ -461,14 +464,14 @@ jobs:
           php tools/ci/dev-shell-files.php $stage
           if ($LASTEXITCODE -ne 0) { throw 'dev shell package is incomplete' }
 
-          Compress-Archive -Path "$stage\*" -DestinationPath 'drift-dev-shell-win-x64.zip' -Force
+          Compress-Archive -Path "$stage\*" -DestinationPath "drift-dev-shell-win-x64-php${{ matrix.php }}.zip" -Force
 
       - name: Upload dev shell to Release
         if: inputs.release_tag
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ inputs.release_tag }}" drift-dev-shell-win-x64.zip --clobber
+        run: gh release upload "${{ inputs.release_tag }}" "drift-dev-shell-win-x64-php${{ matrix.php }}.zip" --clobber
 
       # AOT exe 不是纯静态：导入表直接依赖 phpx.dll / php8ts.dll / VC 运行库，
       # phpx.dll 又传递依赖 GMP / MPFR / decimal。构建期 php.ini 里的绝对路径
@@ -551,7 +554,7 @@ jobs:
         if: always() && inputs.target != 'dev'
         uses: actions/upload-artifact@v4
         with:
-          name: aot-${{ inputs.target || 'hello' }}-windows-2022
+          name: aot-${{ inputs.target || 'hello' }}-php${{ matrix.php }}-windows-2022
           path: ${{ runner.temp }}/aot-runtime/*
           if-no-files-found: error
           retention-days: 7
@@ -560,7 +563,7 @@ jobs:
         if: always() && inputs.target == 'dev'
         uses: actions/upload-artifact@v4
         with:
-          name: aot-dev-windows-2022
+          name: aot-dev-php${{ matrix.php }}-windows-2022
           path: |
             dev.exe
             dev.exe.map

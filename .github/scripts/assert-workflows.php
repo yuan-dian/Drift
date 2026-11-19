@@ -141,6 +141,8 @@ $buildAnchors = [
     'gh release upload' => 'Release 资产上传',
     'name: Restore Skia artifact' => '发版复用前置 Skia 产物',
     'name: Pack AOT runtime' => 'AOT 分发包运行时打包',
+    "php: ['8.4', '8.5']" => 'AOT/dev PHP 双矩阵',
+    'php${{ matrix.php }}' => '产物名带 PHP 版本',
     'php tools/ci/aot-package-files.php $stage $target' => 'AOT 包完整性校验',
 ];
 foreach ($buildAnchors as $needle => $label) {
@@ -235,6 +237,12 @@ $stripComments = static fn (string $text): string => (string) preg_replace('/^\s
 //   workflow_run 补跑；只在 push 侧加 paths-ignore 而不接补跑，会让版本提升后
 //   完全没有真机门，同样是静默缺口。两侧必须成对存在。
 $buildLive = $stripComments($build);
+if (str_contains($buildLive, 'PHP_VERSION:')) {
+    fail('windows-build.yml 仍有全局 PHP_VERSION —— 双矩阵下会让 8.4/8.5 两腿都拿同一版本');
+}
+if (!str_contains($buildLive, 'fail-fast: false')) {
+    fail('windows-build.yml 的 PHP 矩阵缺 fail-fast: false —— 一腿失败会取消另一腿，等于没测双版本');
+}
 if (!str_contains($buildLive, 'paths-ignore: [DEPS_VERSION]')) {
     fail('windows-build.yml 的 push / pull_request 必须 paths-ignore: [DEPS_VERSION] —— 否则版本提升会去 fetch 尚未发布的资产');
 }

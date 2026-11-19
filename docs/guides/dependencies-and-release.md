@@ -118,7 +118,7 @@ Skia 构建通道（`windows-deps.yml`）跑在 `windows-2022` 托管镜像上�
 
 ## dev 壳发布包
 
-`drift-dev-shell-win-x64.zip` 与依赖包不是一回事：它是预编译的**壳**，用发布流水线同一套工具链编出，装上之后改业务 PHP 不重编。产品 `v*` tag 时由 `windows-build.yml` 产出并上传。
+`drift-dev-shell-win-x64-php8.5.zip` 与依赖包不是一回事：它是预编译的**壳**，用发布流水线同一套工具链编出，装上之后改业务 PHP 不重编。产品 `v*` tag 时由 `windows-build.yml` 产出并上传。
 
 壳是动态链接的，所以包里必须自带运行时——这不是"用户可以自己装"的东西：
 

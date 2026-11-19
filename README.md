@@ -290,7 +290,7 @@ php tools/drift-dev.php hello          # 壳只编一次；改 PHP 保存后自�
 > 首次会自动编一次 dev 壳，同样需要上一节档 B 的完整工具链；之后改业务 PHP 不再编译。
 
 **没有构建工具链也能开发**：每个正式 Release 都带预编译壳——
-[下载 dev 壳](https://github.com/yuan-dian/Drift/releases/latest/download/drift-dev-shell-win-x64.zip)，
+[下载 dev 壳](https://github.com/yuan-dian/Drift/releases/latest/download/drift-dev-shell-win-x64-php8.5.zip)，
 把 `dev.exe` 放到仓库根、`dev-shell.sha` 放到 `_build/`，checkout 同版本源码后执行
 `php tools/drift-dev.php hello --prebuilt`。仍需 PHP 8.4 ZTS 运行时（提供 `php8ts.dll`），
 省掉的是 MSVC / tpc / PHPX / Skia。入口可用 `--project=<目录>` + `--entry=<路径>` 指向自己的项目，

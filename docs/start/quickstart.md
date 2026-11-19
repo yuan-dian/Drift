@@ -50,7 +50,7 @@ dev 壳只编一次「壳 + C++ 桥」，之后改业务 PHP 保存即自动重�
 
 ★ 首次启动仍需完整档 B 工具链来编出这个壳；「改 PHP 不重编译」只对首次之后的业务改动成立。
 
-不想装构建工具链：从[最新 Release](https://github.com/yuan-dian/Drift/releases/latest/download/drift-dev-shell-win-x64.zip)
+不想装构建工具链：从[最新 Release](https://github.com/yuan-dian/Drift/releases/latest/download/drift-dev-shell-win-x64-php8.5.zip)
 下载预编译壳，`dev.exe` 放仓库根、`dev-shell.sha` 放 `_build/`，checkout 同版本源码后跑
 `php tools/drift-dev.php hello --prebuilt`。仍需 PHP 8.4 ZTS 运行时（`php8ts.dll`）。
 入口不固定：`--project=<目录>` 指向宿主项目根，`--entry=<路径>` 相对它解析；热更监听跟着包含入口及其同级 PHP。该直链只对已发布的正式 Release 有效。
