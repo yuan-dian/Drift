@@ -1,8 +1,16 @@
 # 平台能力端口
 
-> 本篇解决：框架怎样通过 `Platform` 端口集合拿到窗口、表面、事件、DPI、主题与壳服务，以及 Win32 壳在边界上承担什么、哪些"没有"必须被显式处理。
+> 本篇解决：框架怎样通过 `Platform` 端口集合拿到窗口、表面、事件、DPI、主题与壳服务，Win32 与 X11 两侧壳在边界上各承担什么，以及哪些"没有"必须被显式处理。
 
 `Platform` 是**能力端口的集合**，不是上帝接口：平台名只出现在组合根，`src/` 其余部分只依赖端口。窗口级能力一律用不透明句柄参数化，有两套"指定窗口"的写法能力相同，多一层状态对象只会增加歧义；有状态的服务由平台按句柄缓存，句柄就是状态 key。
+
+## 平台现状一览
+
+| 平台 | 状态 | T2 入口 | 已知缺口 |
+|---|---|---|---|
+| Win32 x64 | 完整桌面实现 | `drift-build --full` + `probe-window` | 触控 / 笔未做 |
+| Linux x64（X11） | 已过公开 CI 端到端门，能力子集 | `bash probes/linux_x11/build.sh`（Xvfb + fluxbox + xclip + Linux Skia `.a`） | Wayland / AT-SPI / IME / 高对比度跟随未接；`dialog()` / `tray()` 返回 `null`；剪贴板只做 UTF-8 纯文本 |
+| macOS | 未接 | —— | 仅在 deps 平台表预留 `macos-arm64` |
 
 ## 端口集合与"没有"的三种写法
 
@@ -20,15 +28,20 @@
 
 | 写法 | 语义 | 调用方该做什么 |
 |---|---|---|
-| 壳服务返回 `null` | `clipboard()` / `dialog()` / `tray()` 该平台没实现 | 必须处理，不能当空操作吞掉 |
+| 壳服务返回 `null` | `dialog()` / `tray()` 在未实现的平台返回它；`clipboard()` 在 Win32 与 X11 都已实现 | 必须处理，不能当空操作吞掉 |
 | `surface()` 返回 `null` | 平台**没有渲染能力** | 与"provider 在、但表面还没 resize"分开；后者是第二种状态 |
 | 值域里的哨兵 | `configDir()` 空串 = 没有这个概念；`position()` 为 `null` = 最小化、位置不可信；`imeCaret()` 为 `null` = 无插入符；`waitEvents` 的 `-1 / 0 / >0` = 无限等 / 只探 / 等到点 | 消费者跳过对应能力，不要报成错误 |
 
 `SurfaceProvider::surface()` 对同一 provider 反复调用返回**同一个** `RenderSurface` 实例；应用持 surface，每帧 `beginFrame()` / `endFrame()`。**渲染对象树不认识 surface**：测试里手搓一个 `RasterCanvas` 就能跑完整布局 + 绘制。这层间接是为了让"换绘制后端"不必先改平台接口。
 
-## Win32 壳的职责
+## 壳的职责：Win32 与 X11
 
-壳（C++ 侧）负责 OS 侧那一段：建窗与销毁、消息泵与唤醒窗、原生对话框 / 剪贴板 / 托盘、DPI 感知级别、`WM_SETTINGCHANGE` 这类系统信号，以及把桥函数暴露成稳定的 ABI。PHP 侧只通过 `Platform` 端口发命令、收事件。
+壳（C++ 侧）负责 OS 侧那一段：建窗与销毁、消息泵与唤醒窗、原生剪贴板 / 对话框 / 托盘、DPI 或缩放信号、系统主题信号，以及把桥函数暴露成稳定的 ABI。PHP 侧只通过 `Platform` 端口发命令、收事件。两侧的实现边界不同，但端口形状不变：
+
+- **Win32**：`PostMessageW` 唤醒、`HWND` 句柄、`WM_SETTINGCHANGE` 主题、`PER_MONITOR_AWARE_V2` DPI、UIA 语义树；对话框与托盘是原生通道，剪贴板走系统 API。
+- **X11**：`XConnectionNumber` + `poll()` 唤醒、窗口句柄为 `Window`、X11 selection 由独立 `xclip` 进程持有（桥内自实现会在同一 connection 上自死锁）；只做 `UTF8_STRING` 纯文本三件套，读写各有界超时与 `waitpid` 回收。Wayland / AT-SPI / IME、对话框与托盘未接，返回 `null` 或 no-op；最大化 / 最小化依赖 WM 处理。
+
+以下几条是 Win32 专属的实现纪律：
 
 - 消息泵阻塞等待由 `waitEvents()` 完成，超时用高精度可等待定时器（约毫秒级），不用 `SetTimer` 的系统 tick——后者会把短等待量化到下个 tick。
 - `needsPolling()` 为 `false` 的后端靠 worker 的 `PostMessageW` 叫醒 UI；"说能叫醒却叫不醒"就是挂死，所以这是后端的能力声明，不是实现细节。
@@ -42,7 +55,7 @@
 
 `WindowMaterial` 是**值对象**：一次应用窗口外观材质，三个互斥 / 耦合的旋钮收在一个值里，而不是三个 setter。像素归表面，窗口端口只收"模式"。
 
-**显示时机**：组合根先 `attach()`（内含首帧，帧进 `WindowSlot::frame` 缓存）再 `show()`，`show()` 里 `InvalidateRect` + `UpdateWindow` 把缓存那一帧贴出来。先 show 后 attach ⇒ 显示时缓存还是空的，`WM_PAINT` 无内容可贴，客户区停在**未绘制**状态（自绘窗口的 `WM_ERASEBKGND` 返回 1，不擦背景）—— 这就是"黑窗闪一下再出内容"。两半都要：缓存要有内容，显示时要真贴一次。
+**显示时机（Win32）**：组合根先 `attach()`（内含首帧，帧进 `WindowSlot::frame` 缓存）再 `show()`，`show()` 里 `InvalidateRect` + `UpdateWindow` 把缓存那一帧贴出来。先 show 后 attach ⇒ 显示时缓存还是空的，`WM_PAINT` 无内容可贴，客户区停在**未绘制**状态（自绘窗口的 `WM_ERASEBKGND` 返回 1，不擦背景）—— 这就是"黑窗闪一下再出内容"。两半都要：缓存要有内容，显示时要真贴一次。X11 走 `X11SkiaSurface` 的呈现路径，没有 `WM_PAINT` 这一段。
 
 ## DPI 与缩放
 
@@ -50,7 +63,7 @@
 
 `Screen::viewport()` 是根约束的**唯一出处**：窗口客户区的逻辑尺寸、紧约束。物理像素的换算只发生在表面 resize 里。`scale()` 变化会产生 `DpiChanged` 事件，触发**全树重建**（不是 relayout）——它改的是 `build()` 的输入，字号与间距 token 都会变。
 
-启动阶段的 DPI 感知级别必须是 `PER_MONITOR_AWARE_V2`：旧式进程级感知跨屏会被系统位图拉伸、画面发糊，而且收不到 `WM_DPICHANGED`。这条只能在真机上验（见[测试](./testing.md)）。
+Win32 启动阶段的 DPI 感知级别必须是 `PER_MONITOR_AWARE_V2`：旧式进程级感知跨屏会被系统位图拉伸、画面发糊，而且收不到 `WM_DPICHANGED`。这条只能在真机上验（见[测试](./testing.md)）。
 
 ## 深色主题跟随
 
@@ -58,15 +71,15 @@
 
 ## 剪贴板、对话框、托盘、IME
 
-三个壳服务在 Win32 上的现状不同：剪贴板与对话框会懒建具体实现；托盘尚未实现，返回 `null`。调用方必须处理 `null`——"没有剪贴板"不是"复制了个空串"，静默当空操作只会让用户以为操作成功了。
+三个壳服务按平台不同：Win32 的剪贴板与对话框懒建具体实现、托盘返回 `null`；X11 的剪贴板由 `xclip` 子进程实现 UTF-8 纯文本三件套，对话框与托盘返回 `null`。调用方必须处理 `null`——"没有剪贴板"不是"复制了个空串"，静默当空操作只会让用户以为操作成功了。
 
-原生对话框会阻塞事件循环，`consumeModalBlockedMs()` 负责把这段时间从卡顿统计里剔除。关闭请求是窗口级生命周期：应用可以拒绝（`setCloseGuard()` + `CloseRequestedEvent`），同意后框架才 `destroy()`；`isAlive()` 必须显式查 `IsWindow`，不能用"客户区 0×0"代替（最小化也是 0×0）。
+Win32 的原生对话框会阻塞事件循环，`consumeModalBlockedMs()` 负责把这段时间从卡顿统计里剔除。关闭请求是窗口级生命周期：应用可以拒绝（`setCloseGuard()` + `CloseRequestedEvent`），同意后框架才 `destroy()`；`isAlive()` 必须显式查 `IsWindow`，不能用"客户区 0×0"代替（最小化也是 0×0）。
 
 窗口位置持久化用客户区左上角屏幕坐标，窗口销毁后 `position()` 返回**最后已知几何**（非 `null`），否则退出路径上写不回"记住窗口位置"；`place()` 一次原子还原几何与最大化态。
 
 ## 多窗口状态归属
 
-`WindowSet` 管活窗口表；事件按事件自带的 hwnd 投递、`EventLoop` 按窗口抽干，输入队列也按窗口取——单队列时两个应用会重复消费同一条事件。语义树 UIA provider 挂 HWND，每窗一份；`pushSemantics()` 收扁平节点数组，空数组表示无障碍关闭。
+`WindowSet` 管活窗口表；事件按事件自带的 hwnd 投递、`EventLoop` 按窗口抽干，输入队列也按窗口取——单队列时两个应用会重复消费同一条事件。Win32 的语义树 UIA provider 挂 HWND，每窗一份；`pushSemantics()` 收扁平节点数组，空数组表示无障碍关闭。
 
 `AppScope` 每进程一份、多窗口共享：后台端口、图片服务这类长命服务与任务端口同生命期，不随窗口建毁重建；窗口级状态（标题、最小尺寸、材质、光标、关闭守卫、位置几何）才归各窗口。
 

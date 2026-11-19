@@ -9,7 +9,9 @@
 - **档 A，跑判据 / 读代码**：只要 PHP。公开 CI runner 跑的就是这档，`php bin/drift verify` 应全绿，不需要 MSVC / tpc / PHPX。
 - **档 B，编出独立 exe**：在档 A 之上补一整套原生工具链，才能做 T2 真机构建。
 
-只支持 Windows 10/11 x64。`php tools/doctor.php` 是环境判据的单一真相源，它和构建脚本共用同一份路径推导逻辑，不会各写一套。不要按记忆配环境——缺什么 doctor 会逐项打印修法。
+桌面端覆盖 Windows 10/11 x64 与 Linux x64（X11，能力子集）。本页的档位表与工具链细节以 Windows 为主；Linux X11 的 T2 门走 `probes/linux_x11/build.sh`，依赖 `deps-v2` 的 linux-x64 包、Xvfb + fluxbox + xclip，能力缺口见[框架概览](../start/overview.md)。
+
+`php tools/doctor.php` 是环境判据的单一真相源，它和构建脚本共用同一份路径推导逻辑，不会各写一套。不要按记忆配环境——缺什么 doctor 会逐项打印修法。
 
 ## 档 A：PHP
 
@@ -87,7 +89,7 @@ DRIFT_DEPS_URL=<目录> php tools/fetch-deps.php            # 指目录也行，
 
 1. `git clone <仓库>` —— 此时 `cpp/` 为空，只能跑档 A。
 2. 取依赖包：`php tools/fetch-deps.php`（`deps-v2` 已发布）；离线 / 内网机器走 `--url=<本机 zip>`（见上节）。
-3. 补齐档 B 工具链（TypePHP 源码树 + PHPX + MSVC + SDK），路径不对设环境变量，不改脚本。
+3. 补齐档 B 工具链（TypePHP 源码树 + PHPX + MSVC + SDK；Linux X11 见 `probes/linux_x11/build.sh`），路径不对设环境变量，不改脚本。
 4. `php tools/doctor.php` —— **单一真相源**，逐项报缺什么、给修法；全绿再往下。
 5. `php tools/drift-build.php hello` → `python tools/probe-window.py hello`。
 

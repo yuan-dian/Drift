@@ -1,11 +1,11 @@
 # Drift
 
-> **技术预览 · 仅 Windows 10/11 x64 · API 不保证向后兼容。**
+> **技术预览 · Windows 10/11 x64 与 Linux x64（X11，能力子集） · API 不保证向后兼容。**
 > 源码可见的技术预览，**不是** 1.0，第三方请勿当作稳定依赖。
 > 版本与发布档位见 [`CHANGELOG.md`](CHANGELOG.md)。
 
 Drift 是一个**声明式 + 自绘 + 单语言 AOT** 的桌面 GUI 框架：用 PHP 写界面，
-编译成独立 `.exe`（目标机无需 PHP 运行时）。架构与 Flutter 同构
+编译成独立可执行程序（Windows `.exe` / Linux ELF，目标机无需 PHP 运行时）。架构与 Flutter 同构
 （Widget / Element / RenderObject 三棵树 + 单向下行 + 组合根注入），绘制走 Skia。
 
 最小应用（节选，完整版见 [`apps/hello`](apps/hello)）：
@@ -27,7 +27,7 @@ final class HelloApplication extends Application
 
 ## 30 秒看懂
 
-- 用 PHP 写声明式 UI，AOT 编译为原生 Windows 程序；dev 态改 PHP 不重编译。
+- 用 PHP 写声明式 UI，AOT 编译为原生程序（Windows `.exe` / Linux ELF）；dev 态改 PHP 不重编译。
 - 自带业务闭环样例 [`apps/watermark`](apps/watermark)（选图 → 上传 → 建任务 → 轮询 → 出图）；
   **默认离线 mock，不触网**，切到真实 OSS 直传网关的方式见该应用的 `Config` 类。
 - 工程质量：`bin/drift verify` 统一验证 + 缺陷题库覆盖率对照 + T0/T1/T2 分层真机验证。
@@ -63,9 +63,11 @@ php tools/version.php --check  # 全部对齐才过；verify 的 static 层也�
 
 ## 构建环境：装什么、放哪、怎么确认
 
-> 仅 Windows 10/11 x64。分两档：**跑判据 / 读代码**只要 PHP；**编出 `.exe`**还要一整套
-> 原生工具链。`tools/doctor.php` 是环境判据的单一真相源（与 `drift-build` 共用同一份
-> 路径推导），不要照记忆配 —— 缺什么它会逐项打印修法。
+> 桌面端覆盖 Windows 10/11 x64 与 Linux x64（X11，能力子集）；下面两档的配置细节以
+> Windows 工具链为准，Linux X11 的 T2 门走 `probes/linux_x11/build.sh`。分两档：
+> **跑判据 / 读代码**只要 PHP；**编出可执行程序**还要一整套原生工具链。
+> `tools/doctor.php` 是环境判据的单一真相源（与 `drift-build` 共用同一份路径推导），
+> 不要照记忆配 —— 缺什么它会逐项打印修法。
 
 ### 档 A：只跑闸门（T0，公开 CI runner 跑的就是这档）
 
@@ -243,7 +245,7 @@ php tools/release-deps.php --dry-run           # 只看要做什么
 （`lock` 里的 `driftVersion` / `depsTag` 必须等于根目录 `VERSION` / `DEPS_VERSION`），
 全对齐才动手；覆盖已有资产要加 `--force`（GitHub 不支持改资产内容）。完整流程与取舍见 [`依赖与发布`](docs/guides/dependencies-and-release.md)。
 
-**不想要预编译包、要从源码自己编 Skia**（可选，仅 Windows x64）：构建输入全部入库 ——
+**不想要预编译包、要从源码自己编 Skia**（可选；Windows 为默认，Linux 用 `--platform=linux`）：构建输入全部入库 ——
 `SKIA_REVISION`（Skia commit）、`tools/skia/args.gn.tpl`（平台无关的 GN 参数）、
 `tools/skia/headers.txt`（包内该带哪些头）、`tools/skia/build-skia.sh`（构建脚本）。
 机器相关的 VS / Win SDK / LLVM 路径不写进仓库，用 `SKIA_WIN_VC` 等环境变量覆盖。
@@ -251,8 +253,9 @@ php tools/release-deps.php --dry-run           # 只看要做什么
 ```bash
 # 需要 git / python3 / LLVM，且都在 PATH；gn / ninja 由脚本按需下预编译包
 printf '<40 位 Skia commit>' > SKIA_REVISION
-bash tools/skia/build-skia.sh --replace    # 产出 cpp/skia；字体仅确定性渲染时需要
-php tools/pack-deps.php --platform=win-x64 # 组当前平台包 + 写 deps.lock.json
+bash tools/skia/build-skia.sh --replace                              # Windows：产出 cpp/skia
+bash tools/skia/build-skia.sh --platform=linux --out=cpp/skia-linux   # Linux（二选一）
+php tools/pack-deps.php --platform=win-x64                           # Linux 换 --platform=linux-x64
 ```
 
 ★ `SKIA_REVISION` 已 pin 到 Skia M148 的真实 commit，`deps.lock.json` 的 `skiaRevision`
@@ -281,6 +284,10 @@ php tools/doctor.php --strict # 发布前自查：WARN 也算失败
 ## 五分钟跑起来（Windows 10/11 x64）
 
 > 两条路，**其一**即可看到窗口。
+>
+> Linux x64（X11）另有端到端门：真窗口、事件链、IO、解码、剪贴板与干净退出都在
+> `bash probes/linux_x11/build.sh` 里验（CI 为 `linux-build.yml`），不是本节的
+> `drift-build.php` + `probe-window.py` 路径；它只覆盖 Skia + X11 桥的最小应用，能力窄于 Win32。
 
 ### 路 A：改 PHP 不重编译（开发态，最快）
 
@@ -332,7 +339,7 @@ python tools/probe-window.py hello
 
 ## 当前边界
 
-技术预览、Windows-only、API 可能变；能力面够写真实业务应用（见 `apps/watermark`）。
+技术预览、Windows x64 与 Linux x64/X11（能力子集）、API 可能变；能力面够写真实业务应用（见 `apps/watermark`）。
 缺失项与「有意不为」以 [`框架概览`](docs/start/overview.md) 与 [`裁决索引`](docs/decisions/README.md) 为准。
 
 ## 许可证

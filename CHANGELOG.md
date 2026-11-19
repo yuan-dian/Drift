@@ -45,7 +45,7 @@
 
 ### 明确不包含（preview 阶段）
 
-- ❌ 多平台（仅 Windows 10/11 x64）
+- ❌ 完整多平台对等（preview 提供 Windows 完整桌面 + Linux x64/X11 能力子集；Wayland / AT-SPI / IME / 对话框 / 托盘未接）
 - ❌ i18n 框架
 - ❌ 安装器 / 代码签名 / 自动更新
 - ❌ 第三方组件生态 / 包管理

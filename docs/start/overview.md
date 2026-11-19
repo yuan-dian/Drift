@@ -4,11 +4,11 @@
 
 ## 框架定位
 
-Drift 是一个**声明式 + 自绘 + 单语言 AOT** 的桌面 GUI 框架：用 PHP 写界面，经 TypePHP AOT 编译为独立 Windows `.exe`，目标机无需 PHP 运行时。架构与 Flutter 同构——Widget / Element / RenderObject 三棵树、单向下行、组合根注入——界面全部自绘，不走原生控件，绘制走 Skia。
+Drift 是一个**声明式 + 自绘 + 单语言 AOT** 的桌面 GUI 框架：用 PHP 写界面，经 TypePHP AOT 编译为独立可执行程序（Windows `.exe` / Linux ELF，目标机无需 PHP 运行时）。架构与 Flutter 同构——Widget / Element / RenderObject 三棵树、单向下行、组合根注入——界面全部自绘，不走原生控件，绘制走 Skia。
 
 「单语言」是定位的关键：业务代码与框架代码都是 PHP，编译产物是一体的原生程序，不存在额外脚本层或运行时绑定。开发态另有一条路——dev 壳动态加载业务 PHP，改代码不重编译——但发布态始终是完整的 AOT 产物。
 
-当前是 **Windows 10/11 x64 的技术预览**，不是稳定版本：API 不保证向后兼容，第三方不应把它当作稳定依赖。定位由能力与边界决定，而不是由控件数量决定。
+当前是 **Windows 10/11 x64 与 Linux x64（X11，能力子集）的技术预览**，不是稳定版本：API 不保证向后兼容，第三方不应把它当作稳定依赖。定位由能力与边界决定，而不是由控件数量决定。
 
 ## 三条设计公理
 
@@ -54,14 +54,15 @@ final class HelloApplication extends Application
 }
 ```
 
-平台实现不出现在这个类里；它由组合根在 `bin/win32/Bootstrap.php` 一处注入。五个文件各管什么见[应用解剖](./app-anatomy.md)。
+平台实现不出现在这个类里；它由各平台组合根注入：Win32 应用走 `bin/win32/Bootstrap.php`，
+X11 目前由 `probes/linux_x11/app/main.php` 直接装配（尚无面向应用的 `bin/linux_x11/Bootstrap.php`）。五个文件各管什么见[应用解剖](./app-anatomy.md)。
 
 ## 当前边界
 
 边界是现状陈述，不是承诺清单：
 
-- **平台**：仅 Windows；第二平台的后端尚未实现，`Platform` 接口仍在演进。
-- **交互**：无触控、无笔、无高对比度；无 i18n。
+- **平台**：Win32 为完整桌面实现；Linux x64（X11）已过 T2 端到端门，但仍是能力子集（无 Wayland / AT-SPI / IME，对话框与托盘返回 `null`，剪贴板为 xclip UTF-8 纯文本三件套）；macOS 未接。T2 入口与差异见[平台端口](../guides/platform-ports.md)。
+- **交互**：无触控、无笔；无 i18n。
 - **架构**：`Application` 仍是门面式的上帝类；环境值靠逐层传参，深层控件没有环境注入通道；无增量布局与 damage rect；无运行时检查器。
 - **工程**：无统一 `create` 脚手架；无第三方组件生态与包管理；无安装器、签名与自动更新。
 - **稳定性**：技术预览，API 可能变化；二进制依赖与运行时版本相关，构建环境需按体检结果逐项确认。

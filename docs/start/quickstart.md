@@ -9,7 +9,9 @@
 | 档 | 能做什么 | 必备 | 不需要 |
 |---|---|---|---|
 | 档 A | 跑闸门、读代码、无头预览 | PHP >= 8.4（`php.exe` 在 `PATH`）；跑单元测试还需 `composer install` 装出 PHPUnit | MSVC / tpc / PHPX |
-| 档 B | 在档 A 之上编出独立 `.exe` | PHPX、tpc 源码树入口、MSVC、Windows SDK、Skia 预编译包（字体可选） | —— |
+| 档 B | 在档 A 之上编出独立可执行程序（Windows `.exe` / Linux ELF） | PHPX、tpc 源码树入口、MSVC、Windows SDK、Skia 预编译包（字体可选） | —— |
+
+★ 表中工具链是 Windows 路径。Linux x64（X11）的 T2 走 `probes/linux_x11/build.sh`（见[平台端口](../guides/platform-ports.md)），依赖 `deps-v2` 的 linux-x64 包与 Xvfb + fluxbox + xclip，能力窄于 Win32。
 
 两个容易混淆的点：
 
@@ -91,6 +93,8 @@ python tools/probe-window.py hello    # 等价：php bin/drift probe -- hello
 `drift-build.php` 输出独立 exe，三态由 `StalePolicy` 裁决：输入未变且产物仍在则跳过；首次、输入变了或产物不在则自动全量；只有显式 `--incremental` 才走增量。`--full` 强制全量，`--dry` 只打印决策不构建。AOT 运行时不再要求 cwd 为仓库根：字体先查 exe 旁可选 `fonts/`，再查系统字体；但 showcase 的示例资源按 `<cwd>/assets` 找，跑那个示例仍需从仓库根启动。
 
 `probe-window.py` 在真窗口上量尺寸、像素、DPI 与关窗退出码，并**自己关窗**；加 `--dev` 则量 dev 壳形态。它也有无头预览的近亲 `drift-preview.php`，输出 SVG 或 PNG，用于确认「排开了、画出来了」，但不是真窗口。
+
+Linux x64（X11）的 T2 入口不同：设好 `PHPX_HOME` / `TPC` 后跑 `bash probes/linux_x11/build.sh`，并备好 Xvfb + fluxbox + xclip 与 Linux Skia `.a`。它覆盖真窗口、事件、IO、解码、剪贴板与干净退出，但只覆盖 Skia + X11 桥的最小应用，能力差见[平台端口](../guides/platform-ports.md)。
 
 ## dev 绿不等于 AOT 绿
 

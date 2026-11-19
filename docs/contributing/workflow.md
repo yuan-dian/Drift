@@ -4,13 +4,13 @@
 
 ## 一句话前提
 
-项目是 Windows-only 的 alpha，API 可能变。改代码前先跑 `php bin/drift verify`；改 PHP 应用代码不用重编译，改 `src/` 或 `cpp-src/` 要重做 AOT。
+项目是技术预览（Windows x64 与 Linux x64/X11，API 可能变）。改代码前先跑 `php bin/drift verify`；改 PHP 应用代码不用重编译，改 `src/` 或 `cpp-src/` 要重做 AOT。
 
 ## 改代码的纪律
 
 按改动落在哪一层，决定要做什么验证：
 
-- 改 `src/` 或 `cpp-src/` → 必须 T2 重编译验证，即 `drift-build --full` 加 `probe-window`。dev 壳通过不能代替它，因为 dev 壳加载的是 PHP，不经过 AOT 生成物。
+- 改 `src/` 或 `cpp-src/` → 必须 T2 重编译验证：Windows 走 `drift-build --full` 加 `probe-window`，Linux X11 走 `bash probes/linux_x11/build.sh`（Xvfb + fluxbox + xclip）。dev 壳通过不能代替它，因为 dev 壳加载的是 PHP，不经过 AOT 生成物。
 - 改 `apps/<app>/src/` 的 PHP → dev 壳即时生效，日常迭代很方便；但发版前仍要 T2。
 - 新增 lint 规则或判据 → 必须能回答"什么变异能让它报红"。答不上来的不上仓——一条永远不响的规则等于没有。
 - 新增或改动文档 → 不写 `file:line` 行号锚点，定位一律用类名、方法名、小节标题这类符号名。行号会随代码挪动，写进文档就失效。
@@ -25,7 +25,7 @@
 |---|---|---|---|
 | T0 | `php bin/drift verify` | 纯 PHP 校验，static + behavior 的快项 | 本地与 CI 都跑 |
 | T1 | `php tools/drift-dev.php <app>` | 开发态壳，改 PHP 即时生效、免重编译 | 本地日常 |
-| T2 | `drift-build --full` + `probe-window` | AOT 真机构建与真机探针 | 公开 `windows-2022` runner（`windows-build.yml`）与本地 |
+| T2 | `drift-build --full` + `probe-window`（Windows）；`bash probes/linux_x11/build.sh`（Linux X11） | AOT 真机构建与真机探针 | 公开 `windows-2022`（`windows-build.yml`）与 `ubuntu-24.04`（`linux-build.yml`）runner，以及本地 |
 
 要点：
 
@@ -38,15 +38,16 @@
 
 CI 分几种触发，各跑不同档位：
 
-- **PR / push main**：跑 `php bin/drift verify --json` 的日常档，在 `windows-2022` 上用 8.4 / 8.5 双版本矩阵，不需要 MSVC / tpc。
+- **PR / push main**：`verify.yml` 跑 `php bin/drift verify --json` 的日常档，在 `windows-2022` 上用 8.4 / 8.5 双版本矩阵，不需要 MSVC / tpc；`linux-build.yml` 在 `src/` / `cpp-src/x11/` / `probes/linux_x11/` 变动时跑 X11 端到端门。
 - **手动全量**：需要时手动触发，`verify --full --json`，含 feature / pages / smoke 慢项，不设定时任务。
-- **发版**：`v*` tag 先调用 `windows-deps.yml` 编出 Skia，再跑全量同一档。`release.yml` 建 draft release 后复用 `windows-build.yml` 编出 dev 壳，上传 `-php8.4.zip` / `-php8.5.zip` 两个包，README 以 `latest/download` 直链指向 8.5 版；draft 转正式后链接才生效。
-- **真 AOT**：`windows-build.yml` 在 push main / PR / 手动触发时从源码构建 tpc 与 PHPX，全量编译 `hello` 并跑 `probe-window`；依赖包取不到就红，不用纯 PHP 判据冒充 AOT 通过。它同时是可复用工作流：发版以 `target=dev` 调用同一份工具链编开发壳，工具链配方只有一处。
+- **发版**：`v*` tag 由 `release.yml` 跑全量同一档并建 draft release，复用 `windows-build.yml` 编出 dev 壳，上传 `-php8.4.zip` / `-php8.5.zip` 两个包，README 以 `latest/download` 直链指向 8.5 版；draft 转正式后链接才生效。依赖包由 `deps.yml` 按 `DEPS_VERSION` 双平台发布，不随 tag 重发。
+- **真 AOT（Win32）**：`windows-build.yml` 在 push main / PR / 手动触发时从源码构建 tpc 与 PHPX，全量编译 `hello` 并跑 `probe-window`；依赖包取不到就红，不用纯 PHP 判据冒充 AOT 通过。它同时是可复用工作流：发版以 `target=dev` 调用同一份工具链编开发壳，工具链配方只有一处。
+- **真 AOT（Linux X11）**：`linux-build.yml` 在 `ubuntu-24.04` 上取 Linux Skia artifact，编出 ELF，在 Xvfb + fluxbox 下跑窗口 / 输入 / 事件 / IO / 解码 / 剪贴板 / 干净退出判据；缺 Skia artifact 即红，不用软光栅冒充。
 
 CI 的三条硬纪律：
 
 - **不写判据白名单**。判据集合自动跟随 `tests/Verify/VerifyPlan.php`，`--list` 是唯一事实源。手写白名单不会随新增判据增长，会漏掉最该进 CI 的"接线对账 + 变异自证"那一批。
-- **runner 镜像 pin 到 `windows-2022`**，不用 `latest`；装完 PHP 还要断言版本与扩展，不信任安装结果。
+- **runner 镜像 pin 到具体版本**（Windows 为 `windows-2022`，Linux 为 `ubuntu-24.04`），不用 `latest`；装完 PHP 还要断言版本与扩展，不信任安装结果。
 - **报告要独立断言**。verify 跑完调检查脚本按 step 读 `items[].status`，把"没测到"判红——例如 PHPUnit 没装要记成失败而不是 skip，让整份报告保持通过。T2 / AOT 在 `windows-build.yml` 的公开 runner 上从源码构建工具链并跑真机探针，`verify.yml` 的结构判据确认那条通道没被关掉。
 
 ## 提交与发布

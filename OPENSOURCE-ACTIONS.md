@@ -6,7 +6,7 @@
 
 1. **仓库设为公开**：已完成，无需动作。
 2. **重建并发布首个依赖包**：已完成 —— `SKIA_REVISION` 写入 Skia M148 的真实 commit，`windows-deps.yml` 从该 commit 真编并发布 `deps-v1`，且从已发布资产回验；`fetch-deps.php` 的默认路径对匿名可用。
-3. **打 `v0.1.0-preview.1` tag 并推送**：激活已写好的 `release.yml`（当前 0 tag，`git describe` 报 no names）。release 以 DRAFT 创建， stray tag 不会误发公告。
+3. **打 `v0.1.0-preview.1` tag 并推送**：已完成；`release.yml` 以 DRAFT 创建， stray tag 不会误发公告。
 4. **开公开 AOT smoke**：已落地为 `windows-build.yml` —— 公开 `windows-2022` runner 从源码构建 tpc / PHPX，取依赖包，全量编译 `hello` 并跑 `probe-window` 五判据；`verify.yml` 的结构判据守着这条通道不退化。前置条件是 `deps-v1` 资产已发布（第 2 步）：包没发出去时 job 在取包阶段红，不会假绿。
 5. **README 门面**：加 CI badge + 一张运行截图；把 17 KB 的环境细节下沉，第一屏只留定位、截图、三行 hello、一句话安装。
 
@@ -20,9 +20,9 @@
 - `ROADMAP.md`：兼容承诺、1.0 门槛、方向优先级、失效条件。
 - `tools/Doctor/Environment.php`：新增 tpc 版本基线判据（git 祖先判定），配 `tests/Unit/Doctor/TpcBaselineCheckTest.php` 三态测试 + 变异自检。
 - `docs/contributing/setup.md`：新增"从 clone 到 hello 的最短路径"，每一步判据仍收在 doctor。
+- `deps-v2` 双平台发布已完成：`deps.yml` 在公开 runner 上分别编 Windows / Linux 包并统一发布，双平台资产与 schema=2 锁已回验。
 
 ## 尚待后续轮次（非本轮遗漏，需专门判据/设计）
 
-- **deps-v2 双平台发布**：`deps-v1` 已从 M148 commit 真编并回验；下一步是升 `DEPS_VERSION` 触发 `deps.yml`，在公开 runner 上分别编 Windows/Linux 包并统一发布。代码与守卫已就绪，资产发布仍属于后台动作。
 - **英文首屏**：全中文文档对国际贡献者是天然门槛；即使只做 README 首屏英文化也有价值。
 - **贡献引导脚本**：`doctor` 已是单一真相源，暂不包第二层脚本；若后续确认需要，应在 doctor 里加 `--fix` 而非另起脚本。
