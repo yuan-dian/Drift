@@ -18,7 +18,7 @@ final class Version
     public const string BASE = '0.1.0';
     public const int PREVIEW = 1;
     public const string TAG = 'v0.1.0-preview.1';
-    public const string DEPS_TAG = 'deps-v1';
+    public const string DEPS_TAG = 'deps-v2';
 
     private function __construct()
     {

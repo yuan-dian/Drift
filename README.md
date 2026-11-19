@@ -211,9 +211,9 @@ Get-FileHash drift-deps-win-x64.zip -Algorithm SHA256   # 校验收到的包
 
 ```text
 # win-x64
-7c586c5b103f9c64d469cd0136844fd561f2ffdbc3b320f0bde28454960b01ca
+90aafe68a178f8b97e365a6733ee48e64cfa83a61d81e961e1398487e5b68d16
 # linux-x64
-7c586c5b103f9c64d469cd0136844fd561f2ffdbc3b320f0bde28454960b01ca
+dc444fbdfb168832a4b9d890c9e422f3ba18bce35093b304c86fa93a32e6c73c
 ```
 
 ★ deps-v1 只有 win-x64 一个真实资产；上面的 linux-x64 行是 deps-v2 的双平台锚点预留，
