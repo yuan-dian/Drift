@@ -38,7 +38,7 @@ require __DIR__ . '/deps-common.php';
 require __DIR__ . '/version.php';
 // 直接 require 单个文件，不拉 `autoload.php`：本脚本要能「装个 PHP 就跑」（见 deps-common 头注）
 require __DIR__ . '/Deps/Source.php';
-require __DIR__ . '/Deps/Platforms.php';
+require_once __DIR__ . '/Deps/Platforms.php';
 
 $root = dirname(__DIR__);
 $repo = null;

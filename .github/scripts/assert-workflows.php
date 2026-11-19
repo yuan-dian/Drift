@@ -228,6 +228,8 @@ $crossDepsAnchors = [
     'php tools/pack-deps.php --platform=win-x64' => '合成锁里的 win-x64 条目',
     'php tools/pack-deps.php --platform=linux-x64' => '合成锁里的 linux-x64 条目',
     'php tools/sync-lock-anchors.php' => '同步 README 两个平台哈希',
+    'php tools/gen-version.php' => '同步 DEPS_VERSION 派生产物（漏了 version --check 必红）',
+    'git add deps.lock.json README.md src/Core/Version.php apps/*/project.yml' => '提交派生产物（否则 main 的 DEPS_TAG 永远停旧版）',
     'php tools/version.php --check' => '发布前版本锚点全绿',
     'git tag "$TAG"' => '唯一写 tag 的地方',
     'php tools/release-deps.php' => '统一上传双平台资产',

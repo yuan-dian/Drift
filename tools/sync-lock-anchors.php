@@ -17,7 +17,7 @@ $root = dirname(__DIR__);
 $lockFile = $root . '/deps.lock.json';
 $readme = $root . '/README.md';
 
-require __DIR__ . '/Deps/Platforms.php';
+require_once __DIR__ . '/Deps/Platforms.php';
 
 $lock = json_decode((string) @file_get_contents($lockFile), true);
 if (!is_array($lock)) {

@@ -15,7 +15,7 @@ use Drift\Dev\Deps\Platforms;
 
 $root = dirname(__DIR__);
 require __DIR__ . '/version.php';
-require __DIR__ . '/Deps/Platforms.php';
+require_once __DIR__ . '/Deps/Platforms.php';
 
 // 包里必须写明它属于哪个框架版本、该发到哪个 tag：否则 Release 上一堆 zip
 // 只能靠上传时间分辨，而 fetch 默认取的那个 tag 也无从推导。

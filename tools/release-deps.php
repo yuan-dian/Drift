@@ -27,7 +27,7 @@ use Drift\Dev\Deps\Platforms;
 
 require __DIR__ . '/deps-common.php';
 require __DIR__ . '/version.php';
-require __DIR__ . '/Deps/Platforms.php';
+require_once __DIR__ . '/Deps/Platforms.php';
 
 $root = dirname(__DIR__);
 $repo = null;

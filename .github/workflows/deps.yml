@@ -103,6 +103,9 @@ jobs:
           php tools/pack-deps.php --platform=win-x64
           php tools/pack-deps.php --platform=linux-x64
           php tools/sync-lock-anchors.php
+          # DEPS_VERSION 是真相源，Version.php / project.yml 是它的派生副本。
+          # 不先同步就跑 version --check 一定红；不同步就提交会让 main 永远停在旧 tag。
+          php tools/gen-version.php
           php tools/version.php --check
 
       - name: Preflight deps tag is unused
@@ -119,7 +122,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add deps.lock.json README.md
+          git add deps.lock.json README.md src/Core/Version.php apps/*/project.yml
           if git diff --cached --quiet; then
             echo "::error::pack-deps produced no lock change; nothing to publish"
             exit 1
