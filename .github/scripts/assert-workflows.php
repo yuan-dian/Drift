@@ -467,6 +467,23 @@ $baseYml = (string) @file_get_contents($root . '/build/base.yml');
 $linuxProjYml = (string) @file_get_contents($root . '/probes/linux_x11/project.yml');
 $linuxBuildSh = (string) @file_get_contents($root . '/probes/linux_x11/build.sh');
 
+// ★ deps 产物下限必须与链接清单对账，不能写死数字：deps-v1 时 win 有 24 个
+//   .lib，minLibs 写成 20；deps-v2 裁掉 9 个开关后真编只剩 13 个，CI 直接报
+//   "只有 13 个 *.lib，少于 20" 而 pack 失败 —— 那是发布链的硬阻塞，包根本
+//   发不出来。真正的下界是 base.yml 实际链接的 skia .lib 数（12）；少一个就
+//   链接不过，多出来的是构建附带产物。让 Platforms.php 的 win minLibs 跟着
+//   链接清单走，两边漂了就红，不再拍脑袋。
+preg_match_all('#cpp/skia/out/Release-x64/([A-Za-z0-9_]+)\.lib#', $baseYml, $linkedLibs);
+$winLinkedCount = count(array_unique($linkedLibs[1] ?? []));
+$platformsPhp = (string) @file_get_contents($root . '/tools/Deps/Platforms.php');
+if ($winLinkedCount < 1 || !preg_match("/'minLibs'\s*=>\s*(\d+)/", $platformsPhp, $mm)) {
+    fail('无法从 base.yml / Platforms.php 读出 win 链接库数与 minLibs');
+}
+if ((int) $mm[1] !== $winLinkedCount) {
+    fail('Platforms.php 的 win minLibs=' . $mm[1] . ' 与 build/base.yml 实际链接的 '
+        . $winLinkedCount . ' 个 skia .lib 不一致 —— 写死的下界会随裁剪漂移，卡死 deps 发布');
+}
+
 $bridgeProjects = [
     'build/base.yml' => $baseYml,
     'apps/hello/project.yml' => (string) @file_get_contents($root . '/apps/hello/project.yml'),
