@@ -29,8 +29,9 @@ final class Platforms
                 'skiaDir' => 'cpp/skia',
                 'libExt' => 'lib',
                 // = build/base.yml 实际链接的 skia .lib 数（assert-workflows 对账）。
-                // deps-v1 的 20 是未裁剪时的旧值，会把裁剪后 13 个库的包误判为残缺。
-                'minLibs' => 12,
+                // deps-v1 的 20 是未裁剪时旧值；v2 裁掉 PDF/skshaper 后 harfbuzz /
+                // jsonreader 不再独立产出，链接清单降到 10，这里同步。CI 真编 13 个。
+                'minLibs' => 10,
                 'published' => true,
             ],
             self::LINUX => [

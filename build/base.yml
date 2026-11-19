@@ -103,18 +103,20 @@ ld-flags:
   # ★ 不含 skottie（头不完整、不可用）/ skshaper / skparagraph / skunicode_* / icu：
   #   M1 的 SkiaCanvas 不做文本塑形 ⇒ 不链 ICU、也就不需要 icudtl.dat。
   #   未用的 .lib **不会被链接器加载**，所以这里只列真的会被引用的那些。
+  # ★ deps-v2（Skia m148 + PDF/skshaper/fuzz 裁剪）不再产出独立 harfbuzz.lib /
+  #   jsonreader.lib：harfbuzz 静态并进 skia.lib（args 仍 skia_use_harfbuzz=true），
+  #   jsonreader 只被 fuzz 引用。core 软件光栅不依赖这俩独立库。列它们会直接
+  #   LNK1181（打不开输入文件）—— v1 的 24 库清单里曾列出，v2 必须删。
   - cpp/skia/out/Release-x64/skia.lib
   - cpp/skia/out/Release-x64/skcms.lib
   - cpp/skia/out/Release-x64/expat.lib
   - cpp/skia/out/Release-x64/freetype2.lib
-  - cpp/skia/out/Release-x64/harfbuzz.lib
   - cpp/skia/out/Release-x64/libpng.lib
   - cpp/skia/out/Release-x64/zlib.lib
   - cpp/skia/out/Release-x64/libjpeg.lib
   - cpp/skia/out/Release-x64/libwebp.lib
   - cpp/skia/out/Release-x64/wuffs.lib
   - cpp/skia/out/Release-x64/bentleyottmann.lib
-  - cpp/skia/out/Release-x64/jsonreader.lib
 
   # Windows 系统库（只列**真的用到**的；桥里每个 API 都能对上一本库）：
   #   user32   建窗 / 消息泵 / 定时器 / 光标 / 按键状态 / 消息框 / DPI

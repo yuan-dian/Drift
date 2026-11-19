@@ -504,6 +504,14 @@ if ((int) $mm[1] !== $winLinkedCount) {
     fail('Platforms.php 的 win minLibs=' . $mm[1] . ' 与 build/base.yml 实际链接的 '
         . $winLinkedCount . ' 个 skia .lib 不一致 —— 写死的下界会随裁剪漂移，卡死 deps 发布');
 }
+// ★ deps-v2 产物不再有独立 harfbuzz.lib / jsonreader.lib（PDF/skshaper 裁剪后
+//   并进 skia.lib / 只被 fuzz 引用）。链接清单再列它们就是 LNK1181，踩过一次：
+//   真编 13 库无这俩，AOT 卡在 harness 链接、跑不到真机门。反向锚点守住不回归。
+foreach (['harfbuzz.lib', 'jsonreader.lib'] as $ghostLib) {
+    if (str_contains($baseYml, 'out/Release-x64/' . $ghostLib)) {
+        fail('build/base.yml 又链接了 ' . $ghostLib . ' —— deps-v2 不产出该独立库，会 LNK1181');
+    }
+}
 
 $bridgeProjects = [
     'build/base.yml' => $baseYml,
