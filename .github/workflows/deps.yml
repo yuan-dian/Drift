@@ -1,0 +1,148 @@
+# Cross-platform deps release.
+#
+# Triggered only by DEPS_VERSION (or an explicit manual publish). The two build
+# workflows stay build-only and hand over their packages as artifacts; this job
+# is the single writer of deps.lock.json, the git tag and the Release assets.
+# That ordering avoids the deps-v1 failure mode where one platform published a
+# half-finished lock before the other package existed.
+#
+# Product releases never call this workflow: v* tags consume the already
+# published deps-vN through fetch-deps.php.
+
+name: Cross-platform deps
+
+on:
+  push:
+    branches: [main]
+    paths: [DEPS_VERSION]
+  workflow_dispatch:
+    inputs:
+      skia_revision:
+        description: 'Skia commit (40-hex); empty means read SKIA_REVISION'
+        required: false
+        default: ''
+        type: string
+      publish:
+        description: 'Commit the lock, tag DEPS_VERSION and upload both assets'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  COMPOSER_NO_INTERACTION: 1
+  PHP_VERSION: '8.4'
+
+concurrency:
+  group: deps-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Build Windows package
+    uses: ./.github/workflows/windows-deps.yml
+    with:
+      skia_revision: ${{ inputs.skia_revision }}
+
+  linux:
+    name: Build Linux package
+    uses: ./.github/workflows/linux-deps.yml
+    with:
+      skia_revision: ${{ inputs.skia_revision }}
+
+  publish:
+    name: Publish combined deps release
+    needs: [windows, linux]
+    if: ${{ github.event_name == 'push' || inputs.publish == true }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.windows.outputs.deps_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup PHP ${{ env.PHP_VERSION }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          extensions: curl, zip, mbstring
+          coverage: none
+
+      - name: Download platform packages
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/deps-artifacts
+
+      - name: Assemble both source trees
+        shell: bash
+        run: |
+          set -euo pipefail
+          win_zip="$(find "${RUNNER_TEMP}/deps-artifacts" -name 'drift-deps-win-x64.zip' -print -quit)"
+          linux_zip="$(find "${RUNNER_TEMP}/deps-artifacts" -name 'drift-deps-linux-x64.zip' -print -quit)"
+          if [ -z "$win_zip" ] || [ -z "$linux_zip" ]; then
+            echo "::error::两个平台包必须都在 artifact 里；win=${win_zip:-missing} linux=${linux_zip:-missing}"
+            exit 1
+          fi
+          unzip -q -o "$win_zip" -d "$GITHUB_WORKSPACE"
+          unzip -q -o "$linux_zip" -d "$GITHUB_WORKSPACE"
+          test -s cpp/skia/out/Release-x64/args.gn
+          test -s cpp/skia-linux/out/Release-x64/args.gn
+
+      # 包内容按路径排序且 DOS 时间固定，重打包 SHA 与构建作业上传的资产一致。
+      # 这里重打是为了让同一份锁同时拿到两个平台的条目，而不是手拼 JSON。
+      - name: Pack both platforms and sync anchors
+        shell: bash
+        run: |
+          set -o pipefail
+          php tools/pack-deps.php --platform=win-x64
+          php tools/pack-deps.php --platform=linux-x64
+          php tools/sync-lock-anchors.php
+          php tools/version.php --check
+
+      - name: Preflight deps tag is unused
+        shell: bash
+        run: |
+          git fetch --tags --quiet
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "::error::tag $TAG already exists; bump DEPS_VERSION before publishing a new package"
+            exit 1
+          fi
+
+      - name: Commit lock and push
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deps.lock.json README.md
+          if git diff --cached --quiet; then
+            echo "::error::pack-deps produced no lock change; nothing to publish"
+            exit 1
+          fi
+          git commit -m "chore(deps): publish $TAG for win-x64 and linux-x64"
+          git push origin "HEAD:${{ github.ref_name }}"
+
+      - name: Tag deps version
+        shell: bash
+        run: |
+          git tag "$TAG"
+          git push origin "$TAG"
+
+      - name: Publish deps release
+        shell: bash
+        env:
+          TOKEN: ${{ github.token }}
+        run: php tools/release-deps.php --token="$TOKEN" --force
+
+      - name: Verify both published packages
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          php tools/fetch-deps.php --tag="$TAG" --platform=win-x64 --force
+          php tools/fetch-deps.php --tag="$TAG" --platform=linux-x64 --force

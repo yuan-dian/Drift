@@ -32,8 +32,6 @@ jobs:
       contents: write
     with:
       skia_revision: ''
-      publish: false
-      commit_lock: false
 
   verify:
     name: Verify and draft release
@@ -85,8 +83,8 @@ jobs:
         shell: bash
         run: php .github/scripts/assert-verify-report.php verify-report.json unit feature
 
-      # deps job 在 publish=false 下只验证构建，不发布资产；它的临时 lock/zip 指向
-      # 一个从未上传的包。发版必须用 DEPS_VERSION 指向的已发布 deps-v1，
+      # deps job 是 build-only 构建通道；它的临时 lock/zip 指向
+      # 一个从未上传的包。发版必须用 DEPS_VERSION 指向的已发布 deps-vN，
       # 否则恢复产物会把仓库里对齐的锁覆盖成临时哈希。
       - name: Resolve deps package from DEPS_VERSION
         shell: bash

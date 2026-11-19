@@ -90,6 +90,39 @@ final class VersionAnchorTest extends SmokeTestCase
         $this->flushChecks();
     }
 
+    public function testMultiPlatformLockRejectsMissingPlatform(): void
+    {
+        $this->seed(\str_repeat('a', 40), 'ci');
+        \file_put_contents($this->root . '/DEPS_VERSION', "deps-v2\n");
+        \file_put_contents(
+            $this->root . '/src/Core/Version.php',
+            \str_replace("DEPS_TAG = 'deps-v1'", "DEPS_TAG = 'deps-v2'", (string) \file_get_contents($this->root . '/src/Core/Version.php')),
+        );
+        \file_put_contents($this->root . '/README.md', \str_repeat('a', 64) . "\n" . \str_repeat('b', 64) . "\n");
+        \file_put_contents($this->root . '/deps.lock.json', (string) \json_encode([
+            'driftVersion' => '0.1.0-preview.1',
+            'depsTag' => 'deps-v2',
+            'skiaRevision' => \str_repeat('a', 40),
+            'provenance' => 'ci',
+            'schema' => 2,
+            'sha256' => \str_repeat('a', 64),
+            'platforms' => [
+                'win-x64' => [
+                    'asset' => 'drift-deps-win-x64.zip',
+                    'sha256' => \str_repeat('a', 64),
+                ],
+            ],
+        ]));
+
+        $errors = $this->errors();
+        check(
+            '版本锚点 · deps-v2 缺 linux-x64 资产必须报红（半份锁不能发版）',
+            \str_contains($errors, '缺平台 linux-x64'),
+            $errors,
+        );
+        $this->flushChecks();
+    }
+
     public function testConsistentAnchorsPass(): void
     {
         $this->seed(\str_repeat('a', 40), 'ci');

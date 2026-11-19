@@ -17,6 +17,8 @@ declare(strict_types=1);
 const DRIFT_VERSION_RE = '/^\d+\.\d+\.\d+-preview\.\d+$/';
 const DRIFT_DEPS_TAG_RE = '/^deps-v\d+$/';
 
+require_once __DIR__ . '/Deps/Platforms.php';
+
 function driftVersionRoot(): string
 {
     return dirname(__DIR__);
@@ -173,13 +175,50 @@ function driftVersionCheck(?string $root = null): array
         $readme = (string) @file_get_contents($root . '/README.md');
         preg_match_all('/\b[0-9a-f]{64}\b/i', $readme, $rm);
         $hashes = array_map('strtolower', $rm[0]);
-        if ($hashes === []) {
-            $errors[] = 'README.md 里找不到 SHA256 —— 换包后要同步「当前包的校验值」';
+
+        if (\Drift\Dev\Deps\Platforms::multiPlatformTag($depsTag)) {
+            if (($lock['schema'] ?? null) !== 2 || !is_array($lock['platforms'] ?? null)) {
+                $errors[] = 'deps-v2 起 deps.lock.json 必须有 schema=2 与 platforms 表 —— 缺一个平台项就会静默漏发资产';
+            } else {
+                $expectedHashes = [];
+                foreach (\Drift\Dev\Deps\Platforms::published() as $p) {
+                    $entry = $lock['platforms'][$p['id']] ?? null;
+                    if (!is_array($entry)) {
+                        $errors[] = "deps.lock.json 缺平台 {$p['id']} —— 不能只打包一个平台就发 {$depsTag}";
+                        continue;
+                    }
+                    if (($entry['asset'] ?? null) !== $p['asset']) {
+                        $errors[] = "deps.lock.json 的 {$p['id']} 资产名应为 {$p['asset']}";
+                    }
+                    $sha = (string) ($entry['sha256'] ?? '');
+                    if (preg_match('/^[0-9a-f]{64}$/', $sha) !== 1) {
+                        $errors[] = "deps.lock.json 的 {$p['id']} 缺合法 SHA256";
+                    } else {
+                        $expectedHashes[] = $sha;
+                    }
+                }
+                // 顶层镜像只照顾旧消费点；它与 win-x64 平台项分叉时，两个读者会看到不同真相。
+                $win = $lock['platforms'][\Drift\Dev\Deps\Platforms::WIN] ?? null;
+                if (is_array($win) && ($lock['sha256'] ?? null) !== ($win['sha256'] ?? null)) {
+                    $errors[] = 'deps.lock.json 顶层 sha256 与 platforms.win-x64 不一致 —— pack-deps 必须同时写两处';
+                }
+                sort($expectedHashes);
+                $readmeHashes = $hashes;
+                sort($readmeHashes);
+                if ($expectedHashes !== [] && $readmeHashes !== $expectedHashes) {
+                    $errors[] = 'README.md 的 SHA256 必须按平台列出全部资产（当前 lock 有 '
+                        . count($expectedHashes) . ' 个，README 有 ' . count($readmeHashes) . ' 个）';
+                }
+            }
         } else {
-            foreach ($hashes as $h) {
-                if (!hash_equals((string) $lock['sha256'], $h)) {
-                    $errors[] = "README.md 的 SHA256（{$h}）与 deps.lock.json 不一致 —— 换包后同步 README";
-                    break;
+            if ($hashes === []) {
+                $errors[] = 'README.md 里找不到 SHA256 —— 换包后要同步「当前包的校验值」';
+            } else {
+                foreach ($hashes as $h) {
+                    if (!hash_equals((string) ($lock['sha256'] ?? ''), $h)) {
+                        $errors[] = "README.md 的 SHA256（{$h}）与 deps.lock.json 不一致 —— 换包后同步 README";
+                        break;
+                    }
                 }
             }
         }

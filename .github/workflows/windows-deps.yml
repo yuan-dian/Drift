@@ -1,14 +1,10 @@
-# Builds drift-deps-win-x64.zip from a pinned Skia commit.
+# Builds the Windows deps package from a pinned Skia commit.
 #
-# Two paths, one recipe:
-#   - push main / DEPS_VERSION: rebuild and publish deps-vN, then commit the lock.
-#   - workflow_call from a product release: build first, hand the package to
-#     verify/AOT via artifact; the product tag never waits on a public asset.
-#
-# Path filter is DEPS_VERSION only. The lock commit does not retrigger this flow.
-# Order is load-bearing: pack writes deps.lock.json -> commit -> tag -> release.
-# The tag must point at the commit containing the new lock, otherwise a clean
-# clone verifies the new asset against the old lock and fails.
+# Build-only by design: publishing the combined deps-vN release lives in deps.yml.
+# A deps release needs both Windows and Linux assets in one lock and one tag;
+# letting this workflow commit/tag after its own half-finished build would publish
+# a package with no companion asset. Product releases still call this workflow
+# directly when they only need a Windows Skia artifact.
 #
 # Runs on a hosted runner on purpose. The earlier self-hosted variant silently
 # queued forever on a repo with no registered runner — a build channel that
@@ -19,9 +15,6 @@
 name: Windows x64 deps
 
 on:
-  push:
-    branches: [main]
-    paths: [DEPS_VERSION]
   workflow_dispatch:
     inputs:
       skia_revision:
@@ -34,11 +27,6 @@ on:
         required: false
         default: ''
         type: string
-      publish:
-        description: 'Commit lock, tag DEPS_VERSION and upload Release assets'
-        required: false
-        default: false
-        type: boolean
   workflow_call:
     inputs:
       skia_revision:
@@ -51,19 +39,9 @@ on:
         required: false
         default: ''
         type: string
-      publish:
-        description: 'Publish the package to the DEPS_VERSION release'
-        required: false
-        default: false
-        type: boolean
-      commit_lock:
-        description: 'Commit lock and advance DEPS_VERSION (false for product releases)'
-        required: false
-        default: true
-        type: boolean
     outputs:
       artifact_name:
-        description: Artifact holding zip / sha256 / deps.lock.json
+        description: Artifact holding the Windows zip / sha256
         value: ${{ jobs.build.outputs.artifact_name }}
       deps_tag:
         description: DEPS_VERSION used for this build
@@ -81,7 +59,7 @@ env:
   PHP_VERSION: '8.4'
 
 concurrency:
-  group: deps-build-${{ github.ref }}
+  group: deps-build-win-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -89,8 +67,6 @@ jobs:
     name: Build deps (windows-2022)
     runs-on: windows-2022
     timeout-minutes: 330
-    permissions:
-      contents: write
     outputs:
       artifact_name: ${{ steps.resolve.outputs.artifact_name }}
       deps_tag: ${{ steps.resolve.outputs.deps_tag }}
@@ -117,21 +93,11 @@ jobs:
             echo "::error::DEPS_VERSION must look like deps-vN; got '$tag'"
             exit 1
           fi
-          # reusable workflow 里 github.event_name 继承调用方事件（产品发版是 tag push），
-          # 拿它判断「独立发布」会把 release 显式传的 publish=false 覆盖成 true。
-          # push 触发时 inputs 全空；dispatch / workflow_call 的 publish 有默认值恒非空。
-          publish='${{ inputs.publish }}'
-          if [ -z "$publish" ]; then
-            publish=false
-            if [ "${{ github.event_name }}" = "push" ]; then publish=true; fi
-          fi
-          commit_lock='${{ inputs.commit_lock }}'
-          if [ -z "$commit_lock" ]; then commit_lock=true; fi
-          printf 'REV=%s\nTAG=%s\nPUBLISH=%s\nCOMMIT_LOCK=%s\n' "$rev" "$tag" "$publish" "$commit_lock" >> "$GITHUB_ENV"
+          printf 'REV=%s\nTAG=%s\n' "$rev" "$tag" >> "$GITHUB_ENV"
           printf 'rev=%s\n' "$rev" >> "$GITHUB_OUTPUT"
           printf 'deps_tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
-          printf 'artifact_name=drift-deps-%s-%s\n' "${{ github.run_id }}" "${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
-          echo "Skia=$rev  Deps=$tag  publish=$publish  commit_lock=$commit_lock"
+          printf 'artifact_name=drift-deps-win-%s-%s\n' "${{ github.run_id }}" "${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+          echo "Skia=$rev  Deps=$tag  build-only (publish lives in deps.yml)"
 
       - name: Setup PHP ${{ env.PHP_VERSION }}
         uses: shivammathur/setup-php@v2
@@ -179,11 +145,6 @@ jobs:
           $free = (Get-PSDrive C).Free / 1GB
           if ($free -lt 18) { throw ("only {0:N1} GB free; a full Skia build needs ~20 GB" -f $free) }
           Write-Host ("disk headroom ok: {0:N1} GB" -f $free)
-
-      # gn / ninja / python 不在这里单独装：build-skia.sh 先用 PATH 上的（本地开发机
-      # 常装着 depot_tools），没有就调 Skia 自带的 bin/fetch-gn、bin/fetch-ninja 拉
-      # 官方预编译包。少一层 depot_tools bootstrap —— 它把 gn.exe 铺在 CIPD 子目录里、
-      # 又只在自己那个 cmd 进程内改 PATH，父进程拿不到，踩了三次才绕开。
 
       # 镜像自带 VS / Win SDK / LLVM，但目录名随镜像更新漂移，不能写死；
       # vars.* 保留覆盖能力。GN 字符串里反斜杠是转义符，路径必须转正斜杠。
@@ -255,31 +216,15 @@ jobs:
         shell: bash
         run: bash tools/skia/build-skia.sh --rev="$REV" --out="$PWD/cpp/skia" --replace
 
-      # 本 workflow 的产物是 Skia 依赖包，只跑 `verify --layer=static`（零依赖静态层），
-      # 不启动 PHPUnit —— 也就没有「没测到被算通过」的形状。
-      - name: Install PHPUnit (pinned by composer.lock)
+      - name: Pack Windows package
         shell: bash
-        run: |
-          if command -v composer >/dev/null 2>&1; then
-            composer install --prefer-dist --no-progress
-          else
-            echo "::notice::composer unavailable on this runner; only the static layer runs"
-          fi
-
-      - name: Pack and verify
-        shell: bash
-        run: |
-          set -o pipefail
-          php tools/pack-deps.php
-          php tools/sync-lock-anchors.php
-          php bin/drift verify --layer=static --json | tee verify-report.json
-          php .github/scripts/assert-verify-report.php verify-report.json
+        run: php tools/pack-deps.php --platform=win-x64
 
       - name: Refresh package outputs
         id: package
         shell: bash
         run: |
-          sha="$(php -r '$j=json_decode((string) file_get_contents("deps.lock.json"), true); echo $j["sha256"] ?? "";')"
+          sha="$(php -r '$j=json_decode((string) file_get_contents("deps.lock.json"), true); echo ($j["platforms"]["win-x64"]["sha256"] ?? $j["sha256"] ?? "");')"
           [[ "$sha" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::pack-deps produced no SHA256"; exit 1; }
           printf 'sha256=%s\n' "$sha" >> "$GITHUB_OUTPUT"
 
@@ -289,59 +234,5 @@ jobs:
           path: |
             dist/drift-deps-win-x64.zip
             dist/drift-deps-win-x64.zip.sha256
-            deps.lock.json
-            README.md
           if-no-files-found: error
           retention-days: 14
-
-      # 必须在写远端之前拦：tag 已存在时下面的 git tag 会失败，而 lock 的 commit
-      # 已经 push 出去，留一个没有 release 的孤儿提交。
-      - name: Preflight deps tag is unused
-        if: ${{ env.PUBLISH == 'true' && env.COMMIT_LOCK == 'true' }}
-        shell: bash
-        run: |
-          git fetch --tags --quiet
-          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-            echo "::error::tag $TAG already exists; bump DEPS_VERSION before publishing a new package"
-            exit 1
-          fi
-
-      - name: Commit lock and push
-        if: ${{ env.PUBLISH == 'true' && env.COMMIT_LOCK == 'true' }}
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add SKIA_REVISION deps.lock.json README.md
-          if git diff --cached --quiet; then
-            echo "::error::pack-deps produced no lock change; nothing to publish"
-            exit 1
-          fi
-          git commit -m "chore(deps): rebuild Skia at ${REV:0:12} for $TAG"
-          git push origin "HEAD:${{ github.ref_name }}"
-
-      - name: Tag deps version
-        if: ${{ env.PUBLISH == 'true' && env.COMMIT_LOCK == 'true' }}
-        shell: bash
-        run: |
-          git tag "$TAG"
-          git push origin "$TAG"
-
-      - name: Publish deps release
-        if: ${{ env.PUBLISH == 'true' }}
-        shell: bash
-        env:
-          TOKEN: ${{ github.token }}
-        run: php tools/release-deps.php --token="$TOKEN" --force
-
-      - name: Verify from published assets
-        if: ${{ env.PUBLISH == 'true' }}
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: php tools/fetch-deps.php --tag="$TAG" --force
-
-      - name: Dry-run summary
-        if: ${{ env.PUBLISH != 'true' }}
-        shell: bash
-        run: echo "Package built and verified as an artifact; publish=false so no commit/tag/release was written."

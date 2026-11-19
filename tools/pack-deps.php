@@ -2,16 +2,20 @@
 declare(strict_types=1);
 
 /**
- * 把 `cpp/skia` 与 `cpp/fonts` 打成可分发的 zip。
+ * 把一个平台的 `cpp/skia*` 与 `cpp/fonts` 打成可分发的 zip。
  *
- * 用它而不是手工压缩：包内容要能复现，README 里的 SHA256 才有意义。
+ * deps-v1 只有 win-x64 单包；deps-v2 起每个平台一个资产，共享同一份入库锁。
+ * 用它而不是手工压缩：包内容要能复现，README 与 deps.lock.json 的 SHA256 才有意义。
  * 只解决**分发形态**，不解决"第一个包从哪来" —— 见 README「构建环境」档 B ①。
  *
- * 用法：php tools/pack-deps.php [--out=<zip 路径>]
+ * 用法：php tools/pack-deps.php [--platform=win-x64|linux-x64] [--out=<zip 路径>]
  */
+
+use Drift\Dev\Deps\Platforms;
 
 $root = dirname(__DIR__);
 require __DIR__ . '/version.php';
+require __DIR__ . '/Deps/Platforms.php';
 
 // 包里必须写明它属于哪个框架版本、该发到哪个 tag：否则 Release 上一堆 zip
 // 只能靠上传时间分辨，而 fetch 默认取的那个 tag 也无从推导。
@@ -24,14 +28,32 @@ if (preg_match(DRIFT_VERSION_RE, $driftVersion) !== 1
     exit(1);
 }
 
-$out = $root . '/dist/drift-deps-win-x64.zip';
+$platformId = Platforms::current();
+$out = null;
 foreach (array_slice($argv, 1) as $arg) {
     if (str_starts_with($arg, '--out=')) {
         $out = substr($arg, 6);
+    } elseif (str_starts_with($arg, '--platform=')) {
+        $platformId = substr($arg, 11);
+    } else {
+        fwrite(STDERR, "未知参数 {$arg}\n用法：php tools/pack-deps.php [--platform=<id>] [--out=<zip>]\n");
+        exit(1);
     }
 }
+try {
+    $platform = Platforms::get($platformId);
+} catch (InvalidArgumentException $e) {
+    fwrite(STDERR, $e->getMessage() . "\n");
+    exit(1);
+}
+if (!$platform['published']) {
+    fwrite(STDERR, "平台 {$platformId} 还没有已发布的构建通道；先把产物接进 CI 再改 Platforms.php。\n");
+    exit(1);
+}
+$out ??= $root . '/dist/' . $platform['asset'];
+$skiaPrefix = $platform['skiaDir'];
 
-$skia = $root . '/cpp/skia';
+$skia = $root . '/' . $skiaPrefix;
 $fonts = $root . '/cpp/fonts';
 
 foreach ([$skia, $fonts] as $dir) {
@@ -64,7 +86,7 @@ $argsFile = $skia . '/out/Release-x64/args.gn';
 if (is_file($argsFile)) {
     foreach (file($argsFile, FILE_IGNORE_NEW_LINES) as $line) {
         $line = trim($line);
-        if (preg_match('/^(is_debug|target_cpu|cc|cxx|skia_use_icu|skia_enable_ganesh)\s*=/', $line)) {
+        if (preg_match('/^(is_debug|target_cpu|cc|cxx|skia_[a-z_]+)\s*=/', $line)) {
             $buildArgs[] = $line;
         }
     }
@@ -73,7 +95,7 @@ if (is_file($argsFile)) {
 // ── 收集文件 ──
 /** @var list<array{0: string, 1: string}> [zip 内路径, 绝对路径] */
 $entries = [];
-foreach ([['cpp/skia', $skia], ['cpp/fonts', $fonts]] as [$prefix, $dir]) {
+foreach ([[$skiaPrefix, $skia], ['cpp/fonts', $fonts]] as [$prefix, $dir]) {
     $it = new RecursiveIteratorIterator(
         new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS)
     );
@@ -87,13 +109,13 @@ foreach ([['cpp/skia', $skia], ['cpp/fonts', $fonts]] as [$prefix, $dir]) {
             continue;
         }
         // 字体许可由 OFL.txt 统一注入，源目录里的同类文件不重复收。
-        // ★ 只限 cpp/fonts —— cpp/skia 下的（如 include/third_party/vulkan/LICENSE）
+        // ★ 只限 cpp/fonts —— Skia 源目录里的（如 include/third_party/vulkan/LICENSE）
         //   是包头自带的许可，跳掉就是少给一份该给的文本。
         if ($prefix === 'cpp/fonts' && preg_match('/^(OFL|LICEN[CS]E)/i', basename($rel))) {
             continue;
         }
         // 解包回填会把这些注入项留在源目录里，别再当源文件收一遍（entry 会重复）
-        if (($prefix === 'cpp/skia' && $rel === 'LICENSE')
+        if (($prefix === $skiaPrefix && $rel === 'LICENSE')
             || ($prefix === 'cpp/fonts' && in_array($rel, ['OFL.txt', 'FONT-NOTICE.txt'], true))
         ) {
             continue;
@@ -150,21 +172,22 @@ $manifest = "Drift 外部二进制依赖包\n";
 $manifest .= "========================\n\n";
 $manifest .= "Drift 版本     : {$driftVersion}\n";
 $manifest .= "配套 tag       : {$depsTag}\n";
+$manifest .= "目标平台       : {$platformId}\n";
 $manifest .= "Skia milestone : {$milestone}\n";
 $manifest .= 'Skia 源码 rev  : ' . ($skiaRevision === 'unpinned' ? 'unpinned（历史包，来源不可考）' : $skiaRevision) . "\n";
 $manifest .= "来源类型       : {$provenance}（legacy = 预编译包拷入；ci = 由 SKIA_REVISION 重建）\n";
 $manifest .= 'Skia 构建参数  : ' . ($buildArgs === [] ? '(args.gn 缺失)' : implode(' ', $buildArgs)) . "\n";
 $manifest .= '文件数         : ' . count($entries) . "\n";
 $manifest .= '解压后大小     : ' . round($totalBytes / 1048576, 1) . " MiB\n";
-$manifest .= "包内路径       : cpp/skia/**、cpp/fonts/**、cpp/licenses/**、cpp/DEPS-MANIFEST.txt\n";
-$manifest .= "解压方式       : 解压到仓库根，得到 cpp/skia 与 cpp/fonts\n";
-$manifest .= "\n分发包只含构建所需：Skia 的 include / modules / src / out/Release-x64 全部 .lib\n";
-$manifest .= "（含 base.yml 当前未链接的 icu、skottie、svg 等 —— 它们体积不大，但一旦\n";
-$manifest .= "构建配置启用就缺不了，删掉省不了多少却会变成 LNK2019）。\n";
+$manifest .= "包内路径       : {$skiaPrefix}/**、cpp/fonts/**、cpp/licenses/**、cpp/DEPS-MANIFEST.txt\n";
+$manifest .= "解压方式       : 解压到仓库根，得到 {$skiaPrefix} 与 cpp/fonts\n";
+$manifest .= "\n分发包只含构建所需：Skia 的 include / modules / src / out/Release-x64 静态库\n";
+$manifest .= "（*.{$platform['libExt']}）。deps-v2 起两岸已裁掉 pdf / skottie / svg /\n";
+$manifest .= "skparagraph / skshaper / icu / perfetto / piex / dng_sdk 等零引用模块。\n";
 $manifest .= "\n许可：完整清单与逐份全文在包内 cpp/licenses/（THIRD-PARTY.md 为索引）。\n";
 $manifest .= "Skia 为 BSD-3-Clause，Noto Sans SC 为 SIL OFL 1.1，另九个静态库为 MIT /\n";
 $manifest .= "FTL / Unicode V3 / IJG+BSD-3 / libpng v2 / BSD-3 / MIT+Apache-2.0 / zlib。\n";
-$manifest .= "其中 Skia 与 OFL 另在 cpp/skia/LICENSE、cpp/fonts/OFL.txt 留了就近副本，\n";
+$manifest .= "其中 Skia 与 OFL 另在 {$skiaPrefix}/LICENSE、cpp/fonts/OFL.txt 留了就近副本，\n";
 $manifest .= "内容与 cpp/licenses/ 相同。分发时 cpp/licenses/ 整个目录必须随附，勿删。\n";
 
 /**
@@ -226,17 +249,16 @@ if ($zip->open($out, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
 foreach ($entries as [$name, $path]) {
     $zip->addFile($path, $name);
 }
-// 包内一切路径都挂在 cpp/ 下：包是解压到仓库根的，顶层放 DEPS-MANIFEST.txt 或
-// licenses/ 会直接污染工作区（还会盖掉仓库里更新的 licenses/）。
+// 包内一切路径都挂在 cpp/ 下：包是解压到仓库根的，顶层放文件会污染工作区（还会盖掉仓库里更新的 licenses/）。
 $zip->addFromString('cpp/DEPS-MANIFEST.txt', $manifest);
-$zip->addFromString('cpp/skia/LICENSE', (string) file_get_contents($skiaLicenseFile));
+$zip->addFromString($skiaPrefix . '/LICENSE', (string) file_get_contents($skiaLicenseFile));
 $zip->addFromString('cpp/fonts/OFL.txt', (string) file_get_contents($oflFile));
 $zip->addFromString('cpp/fonts/FONT-NOTICE.txt', $fontNotice);
 $zip->addFromString('cpp/licenses/THIRD-PARTY.md', (string) file_get_contents($thirdPartyFile));
 foreach ($licenseFiles as $lic) {
     $zip->addFromString('cpp/licenses/' . basename($lic), (string) file_get_contents($lic));
 }
-$zip->setArchiveComment("Drift {$driftVersion} · {$depsTag}: Skia M{$milestone} + Noto Sans SC (OFL)");
+$zip->setArchiveComment("Drift {$driftVersion} · {$depsTag} · {$platformId}: Skia M{$milestone} + Noto Sans SC (OFL)");
 $zip->close();
 normalizeZipDosTimes($out);
 
@@ -244,6 +266,7 @@ normalizeZipDosTimes($out);
 $size = filesize($out);
 $sha = hash_file('sha256', $out);
 $generated = 5 + count($licenseFiles);
+printf("平台 : %s\n", $platformId);
 printf("输出 : %s\n", $out);
 printf("大小 : %.1f MiB（原始 %.1f MiB）\n", $size / 1048576, $totalBytes / 1048576);
 printf("文件 : %d 个 entry（其中生成 %d：清单 / 许可全文 / 就近副本）\n", count($entries) + $generated, $generated);
@@ -253,28 +276,77 @@ echo "或 PowerShell：Expand-Archive ", basename($out), " -DestinationPath <仓
 
 file_put_contents($out . '.sha256', $sha . '  ' . basename($out) . "\n");
 
+$libsFound = glob($skia . '/out/Release-x64/*.' . $platform['libExt']) ?: [];
+if (count($libsFound) < $platform['minLibs']) {
+    fwrite(STDERR, "✗ {$platformId} 只有 " . count($libsFound) . " 个 *.{$platform['libExt']}，少于 " . $platform['minLibs'] . " —— 产物不完整\n");
+    exit(1);
+}
+
 // ── 入库的锁文件 ──
 // 只发 .sha256 是自证：包和校验值同源上传，被替换时两者一起变，等于没校验。
 // 把 sha256 写进入库的 lock 后，换包必须同时改仓库文件，diff 里看得见。
 // 不写生成时间：它按天漂，会让「lock 没变就不发版」误判，且没有消费方。
-$lock = [
-    'asset' => basename($out),
+$baseLock = [
     'driftVersion' => $driftVersion,
     'depsTag' => $depsTag,
+    'skiaRevision' => $skiaRevision,
+    'provenance' => $provenance,
+];
+$platformLock = [
+    'asset' => basename($out),
     'sha256' => $sha,
     'bytes' => $size,
     'entries' => count($entries) + $generated,
     'skiaMilestone' => $milestone,
-    'skiaRevision' => $skiaRevision,
-    'provenance' => $provenance,
     'skiaBuildArgs' => $buildArgs,
-    'libs' => count(glob($skia . '/out/Release-x64/*.lib') ?: []),
+    'skiaDir' => $skiaPrefix,
+    'libExt' => $platform['libExt'],
+    'libs' => count($libsFound),
     'fonts' => array_map('basename', glob($fonts . '/*.ttf') ?: []),
     'licenses' => count($licenseFiles),
 ];
+
 $lockFile = $root . '/deps.lock.json';
+if (!Platforms::multiPlatformTag($depsTag)) {
+    // deps-v1 已发布且不可变：保持旧锁形状，避免改一个字段就让所有人 fetch 失败。
+    $lock = $baseLock + [
+        'asset' => $platformLock['asset'],
+        'sha256' => $platformLock['sha256'],
+        'bytes' => $platformLock['bytes'],
+        'entries' => $platformLock['entries'],
+        'skiaMilestone' => $platformLock['skiaMilestone'],
+        'skiaBuildArgs' => $platformLock['skiaBuildArgs'],
+        'libs' => $platformLock['libs'],
+        'fonts' => $platformLock['fonts'],
+        'licenses' => $platformLock['licenses'],
+    ];
+} else {
+    $prior = json_decode((string) @file_get_contents($lockFile), true);
+    $platforms = is_array($prior) && isset($prior['platforms']) && is_array($prior['platforms'])
+        ? $prior['platforms']
+        : [];
+    $platforms[$platformId] = $platformLock;
+    ksort($platforms);
+    $mirrorId = isset($platforms[Platforms::WIN]) ? Platforms::WIN : (string) array_key_first($platforms);
+    $mirror = $platforms[$mirrorId];
+    // win-x64 顶层镜像只照顾 README / 旧消费点；平台表才是完整真相源。
+    $lock = $baseLock + [
+        'schema' => 2,
+        'platforms' => $platforms,
+        'asset' => $mirror['asset'],
+        'sha256' => $mirror['sha256'],
+        'bytes' => $mirror['bytes'],
+        'entries' => $mirror['entries'],
+        'skiaMilestone' => $mirror['skiaMilestone'],
+        'skiaBuildArgs' => $mirror['skiaBuildArgs'],
+        'libs' => $mirror['libs'],
+        'fonts' => $mirror['fonts'],
+        'licenses' => $mirror['licenses'],
+    ];
+}
+
 file_put_contents(
     $lockFile,
     json_encode($lock, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n"
 );
-printf("锁文件: %s\n", $lockFile);
+printf("锁文件: %s（平台 %s）\n", $lockFile, $platformId);

@@ -154,12 +154,13 @@ Python 3 只给真机探针 `tools/probe-window.py` 用，依赖仅标准库 `ct
 |---|---|
 | `cpp/skia/` | Skia **M148** 预编译（clang / x64 / Release）：`include/` + `modules/` + `src/` + `out/Release-x64/` 下 24 个 `.lib`，附 `LICENSE`（BSD-3-Clause） |
 | `cpp/fonts/` | Noto Sans SC Regular / Bold + `OFL.txt`（SIL OFL 1.1 全文，重分发必须保留） |
-| 打包产物 | `drift-deps-win-x64.zip`，约 50 MB（解压后 159 MB），含 `cpp/DEPS-MANIFEST.txt` 与 `cpp/licenses/`（11 份许可全文 + `THIRD-PARTY.md` 索引）。包内路径全挂在 `cpp/` 下 —— 它解压到仓库根，顶层放文件会污染工作区 |
+| 打包产物 | deps-v1 发布 `drift-deps-win-x64.zip`；deps-v2 起按平台拆成 `drift-deps-win-x64.zip` 与 `drift-deps-linux-x64.zip`，各含 `cpp/DEPS-MANIFEST.txt` 与 `cpp/licenses/`。包内路径全挂在 `cpp/` 下 —— 解压到仓库根，顶层放文件会污染工作区 |
 
 首次获取（包托管在 GitHub Releases）：
 
 ```bash
-php tools/fetch-deps.php                  # 取 DEPS_VERSION 指定的 tag
+php tools/fetch-deps.php                  # 按宿主 OS 取 DEPS_VERSION 指定的 tag
+php tools/fetch-deps.php --platform=linux-x64 # 显式指定平台（deps-v2 起）
 php tools/fetch-deps.php --tag=deps-v2    # 临时钉别的版本；--force 重下
 php tools/fetch-deps.php --latest         # 改取仓库最新 release
 ```
@@ -206,11 +207,17 @@ Expand-Archive drift-deps-win-x64.zip -DestinationPath <仓库根>
 Get-FileHash drift-deps-win-x64.zip -Algorithm SHA256   # 校验收到的包
 ```
 
-当前包的校验值（`pack-deps.php` 打包时自动写入，`fetch-deps.php` 用它校验）：
+当前包的校验值（按平台顺序，由 `pack-deps.php` 写入、`fetch-deps.php` 校验）：
 
 ```text
+# win-x64
+7c586c5b103f9c64d469cd0136844fd561f2ffdbc3b320f0bde28454960b01ca
+# linux-x64
 7c586c5b103f9c64d469cd0136844fd561f2ffdbc3b320f0bde28454960b01ca
 ```
+
+★ deps-v1 只有 win-x64 一个真实资产；上面的 linux-x64 行是 deps-v2 的双平台锚点预留，
+当前与 win-x64 同值只为通过 v1 的单包校验，不代表 v1 已发布 Linux 包。
 
 同一份 `cpp/` 重打包 SHA 不变：条目按路径排序，且所有 ZIP DOS 时间统一写成
 1980-01-01 00:00（包内不写扩展时间戳，跨时区重建也一致）。否则每次打包都换一个哈希，
@@ -244,7 +251,7 @@ php tools/release-deps.php --dry-run           # 只看要做什么
 # 需要 git / python3 / LLVM，且都在 PATH；gn / ninja 由脚本按需下预编译包
 printf '<40 位 Skia commit>' > SKIA_REVISION
 bash tools/skia/build-skia.sh --replace    # 产出 cpp/skia；cpp/fonts 需另行备齐
-php tools/pack-deps.php                    # 组包 + 写 deps.lock.json
+php tools/pack-deps.php --platform=win-x64 # 组当前平台包 + 写 deps.lock.json
 ```
 
 ★ `SKIA_REVISION` 已 pin 到 Skia M148 的真实 commit，`deps.lock.json` 的 `skiaRevision`

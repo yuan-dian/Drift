@@ -64,11 +64,11 @@
 
 依赖包相关命令：
 
-- `php tools/fetch-deps.php`：按 `DEPS_VERSION` 指定的 tag 取预编译依赖包，校验、解压到仓库根。
+- `php tools/fetch-deps.php`：按 `DEPS_VERSION` 指定的 tag 与宿主 OS 取当前平台依赖包，校验、解压到仓库根；`--platform=<id>` 可显式指定。
 - `php tools/fetch-deps.php --tag=<tag>`：临时钉某个 tag ，`--force` 强制重下。
 - `php tools/fetch-deps.php --latest`：取仓库最新 release。
 - `php tools/fetch-deps.php --url=<路径>` 或 `DRIFT_DEPS_URL=<目录>`：从本地包或目录取，走同一套校验。
-- `php tools/pack-deps.php`：组包并写 `DEPS-MANIFEST` 与 `deps.lock.json`。
+- `php tools/pack-deps.php --platform=<id>`：组当前平台包并写 `DEPS-MANIFEST` 与锁中对应平台条目。
 - `bash tools/skia/build-skia.sh --replace`：本地重编 Skia，字体需另行备齐。
 
 依赖包的获取、校验与发布流程见[依赖与发布](../guides/dependencies-and-release.md)。

@@ -61,7 +61,8 @@
 依赖包托管在 GitHub Releases，仓库公开，资产匿名可下载：`deps-v1` 已发布，`php tools/fetch-deps.php` 直接可取。fork 出的私有镜像、或匿名直链被限流时，可给 token 走 API 解析（只需 `Contents: Read`）。
 
 ```bash
-php tools/fetch-deps.php                     # 取 DEPS_VERSION 指定的 tag
+php tools/fetch-deps.php                     # 按宿主 OS 取 DEPS_VERSION 的 tag
+php tools/fetch-deps.php --platform=linux-x64 # 显式指定平台（deps-v2 起）
 php tools/fetch-deps.php --tag=<tag>         # 临时钉别的版本；--force 重下
 php tools/fetch-deps.php --latest            # 改取仓库最新 release
 ```
@@ -71,7 +72,7 @@ token 的取法依次是：`--token=…` > `GITHUB_TOKEN` > `GH_TOKEN` > `~/.git
 从已有 `cpp/` 的机器分发，适合内网 / 离线机器，或想复用本机已构建好的包：
 
 ```bash
-php tools/pack-deps.php                                   # 有 cpp/ 的机器：打包
+php tools/pack-deps.php --platform=win-x64              # 有 cpp/ 的机器：按平台打包
 php tools/fetch-deps.php --url=<包路径>                   # 新机器：用本地包装上
 DRIFT_DEPS_URL=<目录> php tools/fetch-deps.php            # 指目录也行，脚本补包名
 ```

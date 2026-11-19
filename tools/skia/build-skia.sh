@@ -105,6 +105,26 @@ win_toolchain_version="${SKIA_WIN_TOOLCHAIN_VERSION:-}"
 build_gn_args() {
   local args
   args="$(cat "$HERE/args.gn.tpl")"
+
+  # ★ 两岸共用的 9 个安全裁剪开关（deps-v2 裁决）：Drift 只做 core 软件光栅 +
+  #   图片解码，链接清单（build/base.yml）明确不含 pdf / skottie / svg / sksg /
+  #   skparagraph / skshaper / skunicode / icu / perfetto / piex / dng_sdk。
+  #   Linux 已实测 1731→907 目标、26→13 库、44.3→9.7MB；Windows 同样不含这些库，
+  #   随 deps-v2 首次应用（deps-v1 已发布、参数不动）。Skia 官方各模块 BUILD.gn
+  #   都有空 group("xxx") {} 兜底，关开关不会让 group("modules") 的 deps 悬空。
+  #   ★ harfbuzz / expat / jsonreader 不在此列：Windows 链接清单仍用它们（文本栈/SVG）。
+  for flag in \
+    'skia_enable_pdf = false' \
+    'skia_enable_skottie = false' \
+    'skia_enable_svg = false' \
+    'skia_enable_skparagraph = false' \
+    'skia_enable_skshaper = false' \
+    'skia_use_icu = false' \
+    'skia_use_perfetto = false' \
+    'skia_use_piex = false' \
+    'skia_use_dng_sdk = false'; do
+    args+=$'\n'"$flag"
+  done
   if [[ "$platform" == "linux" ]]; then
     args="$(printf '%s\n' "$args" | sed '/extra_cflags = \[ "-MT" \]/d')"
     # Drift 只用 MakeRasterDirectN32 软件光栅，一行 GPU 代码都不用。Skia 默认
@@ -114,24 +134,7 @@ build_gn_args() {
     # GLX 源码不再编译；raster / codec / freetype / fontconfig 全部不受影响。
     args+=$'\nskia_enable_ganesh = false'
 
-    # ★ 只留 Drift 真正链接的库。仓库自己的裁决写在 build/base.yml：SkiaCanvas
-    #   用软件光栅 core 绘制，不做文本塑形，链接清单明确不含 pdf / skottie /
-    #   sksg / skparagraph / skshaper / skunicode / icu —— 这些模块编出来也是
-    #   死重量（上次 26 个 .a 里它们占了大半）。Skia 官方各模块 BUILD.gn 都有
-    #   空 group("xxx") {} 兜底，group("modules") 的 deps 不会悬空。
-    #   ★ 全部只追加在 Linux 分支：Windows 的 deps-v1 已发布，参数逐字不变。
-    for flag in \
-      'skia_enable_pdf = false' \
-      'skia_enable_skottie = false' \
-      'skia_enable_svg = false' \
-      'skia_enable_skparagraph = false' \
-      'skia_enable_skshaper = false' \
-      'skia_use_icu = false' \
-      'skia_use_perfetto = false' \
-      'skia_use_piex = false' \
-      'skia_use_dng_sdk = false'; do
-      args+=$'\n'"$flag"
-    done
+    # Ganesh 只关 Linux：Windows 的 skia.lib 仍链 D3D12/DXGI 后端，本轮不动。
   else
     args+=$'\ncc = "clang"'
     args+=$'\ncxx = "clang++"'

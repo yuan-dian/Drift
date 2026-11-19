@@ -4,18 +4,21 @@
 
 ## 依赖包从哪来
 
-`cpp/skia` 与 `cpp/fonts` 不进 git，`/cpp/` 与 `/dist/` 都在 `.gitignore` 里。新机器 clone 完之后，从 GitHub Releases 的独立 `deps-vN` tag 取预编译包；仓库公开，资产匿名可下载，`deps-v1` 已发布。fork 私有镜像或匿名直链被限流时可给 token。
+`cpp/skia*` 与 `cpp/fonts` 不进 git，`/cpp/` 与 `/dist/` 都在 `.gitignore` 里。新机器 clone 完之后，从 GitHub Releases 的独立 `deps-vN` tag 取预编译包；仓库公开，资产匿名可下载。fork 私有镜像或匿名直链被限流时可给 token。
 
-资产名是契约，一个字都不能改：`drift-deps-win-x64.zip` 与 `drift-deps-win-x64.zip.sha256`。包内所有路径落在 `cpp/` 下，解压到仓库根不会污染工作区；许可全文随包附带。
+- **deps-v1（当前发布）**：只有 `drift-deps-win-x64.zip` 一个 Windows 资产，解压得到 `cpp/skia/`。
+- **deps-v2（代码已就绪，尚待发布）**：每个平台一个资产 —— `drift-deps-win-x64.zip` 解压得到 `cpp/skia/`，`drift-deps-linux-x64.zip` 解压得到 `cpp/skia-linux/`；两者共享一份带 `platforms` 表的 `deps.lock.json`。macOS 只在平台表里预留 `macos-arm64`，未接构建通道前不发布。
+
+资产名是契约，一个字都不能改。包内所有路径落在 `cpp/` 下，解压到仓库根不会污染工作区；许可全文随包附带。
 
 构建过程**不会自动下载**依赖：缺包时 `drift-build` 直接打印 `php tools/fetch-deps.php` 并退出。缺包要一眼看见来源，而不是让构建时长莫名多出几分钟。
-
 ## 获取与校验
 
 `fetch-deps.php` 的源优先级是 `--url` > `DRIFT_DEPS_URL`（逗号分隔，可指镜像或内网目录，最后一个候选永远是 GitHub）> GitHub release。默认取 `DEPS_VERSION` 指定的 tag，不跟随 `latest`——代码发版比依赖包勤，`latest` 一旦指向没传 zip 的 release，取包就失败。
 
 ```bash
-php tools/fetch-deps.php                          # 取 DEPS_VERSION 的 tag
+php tools/fetch-deps.php                          # 按宿主 OS 取当前平台包
+php tools/fetch-deps.php --platform=linux-x64     # 显式指定平台（cross 场景/回验）
 php tools/fetch-deps.php --latest                 # 改用仓库最新 release
 php tools/fetch-deps.php --tag=deps-v2            # 临时钉别的版本
 php tools/fetch-deps.php --url=./drift-deps-win-x64.zip
@@ -40,7 +43,7 @@ DRIFT_DEPS_URL=https://mirror.example.com/drift php tools/fetch-deps.php
 派生产物与守门判据：
 
 - `gen-version.php` 生成 `src/Core/Version.php`（`VERSION` / `BASE` / `PREVIEW` / `TAG` / `DEPS_TAG` 常量）与 `apps/*/project.yml` 的版本字段；由 `version --check` + `gen-version --check` 守。
-- `pack-deps.php` 重写 `deps.lock.json`（`driftVersion` / `depsTag` / `sha256`）以及包内清单、zip 注释里的锚点。
+- `pack-deps.php --platform=<id>` 重写当前平台条目与包内清单、zip 注释里的锚点；deps-v2 的锁由发布编排按 win-x64 → linux-x64 顺序合成，顶层 win-x64 镜像只兼容旧消费点。
 - `release-deps.php` 与 `fetch-deps.php` 默认取的 tag 来自运行时读 `DEPS_VERSION`；前者拒绝 `--tag` 与真相源不一致。
 - `CHANGELOG.md` 的版本小节和 git tag 由人工维护，`version --check` 含 HEAD tag 比对。
 
@@ -48,28 +51,28 @@ DRIFT_DEPS_URL=https://mirror.example.com/drift php tools/fetch-deps.php
 
 ## pack / fetch / release 流程
 
-发首个包或升级包时，顺序是固定的：
+日常只在 CI 走这条链；手动重建时按平台分别组包，最后统一发布：
 
 ```bash
-git push                           # 先推 lock：它是使用方的校验依据
-php tools/pack-deps.php            # 组包 + 写 .sha256 + 重写 deps.lock.json
-php tools/release-deps.php         # tag 取 DEPS_VERSION
+php tools/pack-deps.php --platform=win-x64      # 从 cpp/skia 组 Windows 包
+php tools/pack-deps.php --platform=linux-x64    # 从 cpp/skia-linux 组 Linux 包
+php tools/sync-lock-anchors.php                 # README 按平台顺序写两个哈希
+php tools/version.php --check                   # 缺任一平台项就红
+php tools/release-deps.php --dry-run            # 先看要上传哪些资产
+php tools/release-deps.php                      # tag 取 DEPS_VERSION，上传全部平台资产
 ```
 
-`pack-deps.php` 把条目按路径排序，并把 ZIP 内所有 DOS 时间覆盖成固定值，因此同一份 `cpp/` 重打包的 SHA256 是稳定的——否则"lock 没变就不发版"永远失效。`release-deps.php` 做四件事：前置校验包 / `.sha256` / lock 三者一致且与根目录版本锚点相同；查目标 tag 是否已有 release；没有就建，tag 落在**当前 HEAD** 上（不指定 commit 会落到默认分支最新提交，可能是别人刚推的）；先传 zip 再传 `.sha256`，中途失败不会留下"校验值在、包不在"。
+`pack-deps.php` 把条目按路径排序，并把 ZIP 内所有 DOS 时间覆盖成固定值，因此同一份源目录重打包的 SHA256 是稳定的——否则"lock 没变就不发版"永远失效。`release-deps.php` 先对每个平台校验包 / `.sha256` / lock 三者一致且与根目录版本锚点相同，再查目标 tag 是否已有 release；没有就建，tag 落在**当前 HEAD** 上（不指定 commit 会落到默认分支最新提交，可能是别人刚推的）。先传 zip 再传 `.sha256`，中途失败不会留下"校验值在、包不在"。
 
-内容变化必须重打包，SHA256 必变。推荐新 tag（`deps-vN` 递增）：旧包仍可复现。同 tag 覆盖资产要 `--force`，实际动作是"删同名资产 → 重传"；没有它遇到同名资产以退出码 2 停下，不会静默替换。无论哪种，**`deps.lock.json` 必须一起提交**，忘了提交的表现就是别人 fetch 时 SHA 不符——这正是它该做的事。
-
-先用 `--dry-run` 看发布脚本要做什么，它不产生写操作。
-
+内容变化必须重打包，SHA256 必变。推荐新 tag（`deps-vN` 递增）：旧包仍可复现。同 tag 覆盖资产要 `--force`，实际动作是"删同名资产 → 重传"；没有它遇到同名资产以退出码 2 停下，不会静默替换。无论哪种，**`deps.lock.json` 必须一起提交**；v2 起缺平台项会让 `version --check` 直接红，不再靠人眼发现半份锁。
 ## 从源码构建 Skia
 
 需要 git、python3、LLVM，且都在 PATH 上（gn / ninja 见下，脚本会自己搞定）：
 
 ```bash
 printf '<40 位 commit>' > SKIA_REVISION
-bash tools/skia/build-skia.sh --replace
-php tools/pack-deps.php && php tools/version.php --check
+bash tools/skia/build-skia.sh --platform=windows --replace   # Linux 用 --platform=linux --out=<cpp/skia-linux>
+php tools/pack-deps.php --platform=win-x64
 ```
 
 输入文件：`SKIA_REVISION`（pinned commit）、`tools/skia/args.gn.tpl`（平台无关的 GN 策略）、`tools/skia/headers.txt`（包内头 / 元数据路径清单，保证产物与既有布局一致）、`tools/skia/build-skia.sh`（clone → checkout → `git-sync-deps` → `gn gen` → `ninja skia modules` → 组装 `cpp/skia`）。gn / ninja 的调用形态照抄 Skia 官方 CI 的 `infra/bots/recipe_modules/build/default.py`：`gn gen` 必须在 Skia 源码目录内执行（它靠当前目录的 `.gn` 定位 source root），工具用仓库自带的 `bin/fetch-gn` / `bin/fetch-ninja`。机器相关的 VC / SDK / LLVM 路径不入库，走 `SKIA_WIN_VC` 等环境变量。`--replace` 是显式确认：默认不覆盖非空 `cpp/skia`，免得删掉本机现成的包。
@@ -91,28 +94,23 @@ Skia 构建通道（`windows-deps.yml`）跑在 `windows-2022` 托管镜像上�
 
 ## CI 自动构建
 
-两条流水线触发点分开：
+三条流水线职责分开：
 
-- `windows-deps.yml`：`DEPS_VERSION` 变化时自动重建 → 组包 → 校验 → 提交 lock → 打 `deps-vN` tag → 上传两个资产；也可手动触发。被产品发版调用时只产 artifact，不写远端。
-- `release.yml`：`push` 产品 `v*` tag 时**先调用 `windows-deps.yml` 编出 Skia**，verify 与 dev 壳都消费这份 artifact，最后建 **draft** release。
-- `verify.yml`：push / PR 的主闸门，只跑判据，不写 Release。
-- `windows-build.yml`：push main / PR / 手动触发的真 T2，取依赖包，全量编译 `hello` 并跑真机探针；资产缺失时取包阶段就红，不会用纯 PHP 判据冒充 AOT 通过。
+- `windows-deps.yml`：`DEPS_VERSION` 不直接触发它；从固定 commit 编 Windows Skia 并产出 win-x64 包 artifact。被产品发版调用时也只产 artifact。
+- `linux-deps.yml`：从同一 commit 编 Linux Skia，产出原始 `.a` 树（供 X11 门）与 linux-x64 包 artifact；同样不写 lock、不打 tag、不发 Release。
+- `deps.yml`：**唯一监听 `DEPS_VERSION` 变化的发布编排**。等两个构建作业都成功后下载两份包，重打包合成一份双平台锁，同步 README 锚点，提交 lock → 打 `deps-vN` tag → `release-deps.php` 上传全部资产 → 两个平台各回取一次。任一平台红就不写远端。
+- `release.yml`：`push` 产品 `v*` tag 时**只调用 `windows-deps.yml`** 编出 Skia，verify 与 dev 壳消费这份 artifact，最后建 **draft** release；它不覆盖公共 `deps-vN` 资产。
 
-产品发版**先构建 Skia，再编译 AOT / dev 壳**，但不会覆盖公共 `deps-vN` 资产：`fetch-deps.php` 按固定资产名去 `DEPS_VERSION` 那个 tag 找，资产发布仍只在依赖版本变化时发生。这样既保证发版链路的顺序，又不让依赖资产被每次代码 release 重写。
+`assert-workflows.php` 守住“两个构建通道不碰发布链路、只有 `deps.yml` 写 tag/Release”的边界，避免某个平台先把自己那半份锁发布出去。
 
-**前置条件**：`SKIA_REVISION` 必须是 40 位 commit，现已 pin 到 M148 分支 tip，流水线不再因 revision 未定而红。但产物侧的红线仍在：`deps-v1` 二进制尚未从该 commit 重建，首个走新链路的发版前必须先用 `windows-deps.yml` 重建并发布依赖包，否则等于用旧二进制冒充「已重建 Skia」。
+**前置条件**：`SKIA_REVISION` 必须是 40 位 commit；`deps-v1` 已由该 commit 真编并从已发布资产回验（610 条目 / 49.5 MB）。`deps-v2` 的 Windows 裁剪与 Linux 包代码已就绪，但资产尚未发布；`DEPS_VERSION` 升到 `deps-v2` 会触发 `deps.yml` 的完整双平台构建与发布，不能手动改文件冒充发布完成。
 
-`windows-deps.yml` 的 publish 分支顺序锁死：`pack-deps.php` 重写 lock → `sync-lock-anchors.php` 同步 README SHA256 → `git commit` + push → `git tag $DEPS_VERSION` + push → `release-deps.php` 上传。tag 落在含新 lock 的 commit 上，干净 clone 时两者天然一致；最后再用 `fetch-deps.php --tag` 从已发布资产回取一遍自验。
+从零重建一次双平台包的顺序：
 
-依赖构建只监听 `DEPS_VERSION` 变更、手动触发与产品发版调用，不监听 `pull_request`——依赖包不该按 PR 重建。
-
-从零重建一次（发布首个来源可追溯的包）的顺序：
-
-1. 确认 `SKIA_REVISION` 是 40 位 commit，`DEPS_VERSION` 是未被占用的 `deps-vN`。
-2. 手动触发 `windows-deps.yml`，`publish=true`。不写 `skia_revision` 就走文件里的值。
-3. 流水线内部固定：`pack-deps.php` 重写 lock → `sync-lock-anchors.php` 同步 README 的 SHA256 → `git commit` + push → `git tag $DEPS_VERSION` + push → `release-deps.php` 上传 → `fetch-deps.php --tag` 回取自验。
+1. 确认 `SKIA_REVISION` 是 40 位 commit，`DEPS_VERSION` 改成未占用的 `deps-vN`。
+2. push 该变更（或手动触发 `deps.yml` 并显式打开 publish）。
+3. `deps.yml` 固定执行：两平台构建 → 下载两份资产 → `pack-deps.php --platform=…` 合成锁 → `sync-lock-anchors.php` → `version --check` → 提交 lock → 打 tag → 发布 → 双平台回验。
 4. 结束后在干净 clone 里走一遍 `fetch-deps.php` → `version --check` → `doctor`。
-
 ## dev 壳发布包
 
 `drift-dev-shell-win-x64.zip` 与依赖包不是一回事：它是预编译的**壳**，用发布流水线同一套工具链编出，装上之后改业务 PHP 不重编。产品 `v*` tag 时由 `windows-build.yml` 产出并上传。

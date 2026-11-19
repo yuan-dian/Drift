@@ -77,14 +77,16 @@ $root = dirname(__DIR__, 2);
 $buildFile = $root . '/.github/workflows/windows-build.yml';
 $verifyFile = $root . '/.github/workflows/verify.yml';
 $releaseFile = $root . '/.github/workflows/release.yml';
-$depsFile = $root . '/.github/workflows/windows-deps.yml';
+$windowsDepsFile = $root . '/.github/workflows/windows-deps.yml';
 $linuxFile = $root . '/.github/workflows/linux-build.yml';
 $linuxDepsFile = $root . '/.github/workflows/linux-deps.yml';
+$crossDepsFile = $root . '/.github/workflows/deps.yml';
 
 foreach (['windows-build.yml' => $buildFile, 'verify.yml' => $verifyFile,
-          'release.yml' => $releaseFile, 'windows-deps.yml' => $depsFile,
+          'release.yml' => $releaseFile, 'windows-deps.yml' => $windowsDepsFile,
           'linux-build.yml' => $linuxFile,
-          'linux-deps.yml' => $linuxDepsFile] as $name => $path) {
+          'linux-deps.yml' => $linuxDepsFile,
+          'deps.yml' => $crossDepsFile] as $name => $path) {
     if (!is_file($path)) {
         fail("{$name} 不存在 —— workflow 通道缺失");
     }
@@ -92,16 +94,18 @@ foreach (['windows-build.yml' => $buildFile, 'verify.yml' => $verifyFile,
 $build = (string) file_get_contents($buildFile);
 $verify = (string) file_get_contents($verifyFile);
 $release = (string) file_get_contents($releaseFile);
-$deps = (string) file_get_contents($depsFile);
+$windowsDeps = (string) file_get_contents($windowsDepsFile);
 $linux = (string) file_get_contents($linuxFile);
 $linuxDeps = (string) file_get_contents($linuxDepsFile);
+$crossDeps = (string) file_get_contents($crossDepsFile);
 
 foreach (['workflow' => ['.github/workflows/windows-build.yml', $build],
           'verify' => ['.github/workflows/verify.yml', $verify],
           'release' => ['.github/workflows/release.yml', $release],
-          'deps' => ['.github/workflows/windows-deps.yml', $deps],
+          'windows-deps' => ['.github/workflows/windows-deps.yml', $windowsDeps],
           'linux' => ['.github/workflows/linux-build.yml', $linux],
-          'linux-deps' => ['.github/workflows/linux-deps.yml', $linuxDeps]] as $file => [$path, $text]) {
+          'linux-deps' => ['.github/workflows/linux-deps.yml', $linuxDeps],
+          'deps' => ['.github/workflows/deps.yml', $crossDeps]] as $file => [$path, $text]) {
     assertContextScope($path, $text);
 }
 fwrite(STDOUT, "  ok     表达式上下文作用域（job/workflow 级 env 不碰 runner/steps/job/env）\n");
@@ -143,7 +147,7 @@ foreach ($buildAnchors as $needle => $label) {
     }
 }
 
-// 发版链路：deps 先跑；但 publish=false 的临时产物不能覆盖已发布的 deps 锁。
+// 发版链路：deps 先跑；但 build-only 的临时产物不能覆盖已发布的 deps 锁。
 $releaseAnchors = [
     'uses: ./.github/workflows/windows-deps.yml' => '发版先构建 Skia',
     'needs: deps' => 'verify 等依赖就绪',
@@ -167,22 +171,50 @@ if ($depsPos === false || $verifyPos === false || $depsPos > $verifyPos) {
     fail('release.yml 的 deps job 必须在 verify 之前');
 }
 
-// Skia 构建通道：DEPS_VERSION 变化时自动发布，发版调用只产 artifact。
-$depsAnchors = [
-    'paths: [DEPS_VERSION]' => '依赖版本变化自动触发',
+// Windows 构建通道：只产 win-x64 包，发布统一交给 deps.yml。
+// 让它自己 commit/tag 会在 Linux 包还没就绪时写出半份锁（deps-v2 必须双包齐全）。
+$stripComments = static fn (string $text): string => (string) preg_replace('/^\s*#.*$/m', '', $text);
+$windowsDepsAnchors = [
     'workflow_dispatch:' => '手动兜底',
-    'workflow_call:' => '发版前置调用',
+    'workflow_call:' => '发布编排与产品发版可复用',
     'tools/skia/build-skia.sh --rev="$REV"' => '从固定 commit 编 Skia',
-    'php tools/pack-deps.php' => '打包',
-    'php tools/sync-lock-anchors.php' => '同步 README 校验锚点',
-    'actions/upload-artifact@v4' => '产物交给下游',
-    'php tools/release-deps.php' => '发布依赖资产',
-    'php tools/fetch-deps.php --tag="$TAG" --force' => '发布后回验',
+    'php tools/pack-deps.php --platform=win-x64' => '只打 Windows 包',
+    'actions/upload-artifact@v4' => '产物交给发布编排',
+    'dist/drift-deps-win-x64.zip' => '上传 Windows 资产',
     'Ensure fonts are present' => '构建前确认字体在树里',
 ];
-foreach ($depsAnchors as $needle => $label) {
-    if (!str_contains($deps, $needle)) {
+foreach ($windowsDepsAnchors as $needle => $label) {
+    if (!str_contains($windowsDeps, $needle)) {
         fail('windows-deps.yml 缺环节：' . $label . '（' . $needle . '）');
+    }
+}
+$windowsDepsLive = $stripComments($windowsDeps);
+foreach (['git tag', 'php tools/release-deps.php', 'php tools/fetch-deps.php',
+          'contents: write', 'commit_lock', 'publish='] as $needle) {
+    if (str_contains($windowsDepsLive, $needle)) {
+        fail('windows-deps.yml 又碰发布链路 ' . $needle . ' —— 双平台包必须先合成一份锁再发');
+    }
+}
+
+// 发布编排：两个构建作业各出各包，唯一一个 publish 作业写锁 / tag / Release。
+$crossDepsAnchors = [
+    'paths: [DEPS_VERSION]' => '依赖版本变化才触发发布',
+    'uses: ./.github/workflows/windows-deps.yml' => '消费 Windows 构建通道',
+    'uses: ./.github/workflows/linux-deps.yml' => '消费 Linux 构建通道',
+    'needs: [windows, linux]' => '等两个平台都构建完',
+    'actions/download-artifact@v4' => '取回两个平台资产',
+    'php tools/pack-deps.php --platform=win-x64' => '合成锁里的 win-x64 条目',
+    'php tools/pack-deps.php --platform=linux-x64' => '合成锁里的 linux-x64 条目',
+    'php tools/sync-lock-anchors.php' => '同步 README 两个平台哈希',
+    'php tools/version.php --check' => '发布前版本锚点全绿',
+    'git tag "$TAG"' => '唯一写 tag 的地方',
+    'php tools/release-deps.php' => '统一上传双平台资产',
+    '--platform=win-x64 --force' => '从已发布资产回验 Windows 包',
+    '--platform=linux-x64 --force' => '从已发布资产回验 Linux 包',
+];
+foreach ($crossDepsAnchors as $needle => $label) {
+    if (!str_contains($crossDeps, $needle)) {
+        fail('deps.yml 缺环节：' . $label . '（' . $needle . '）');
     }
 }
 
@@ -190,9 +222,9 @@ foreach ($depsAnchors as $needle => $label) {
 //   不会报错，只会静默排队到超时取消 —— 那种"YAML 里有、实际从不执行"的通道
 //   是最贵的一种假绿。所以出现 self-hosted 一律红，改为托管镜像 + 自动探测工具链。
 //   只看生效行：注释里讨论这件事本身是需要的，不该被自己拦住。
-$stripComments = static fn (string $text): string => (string) preg_replace('/^\s*#.*$/m', '', $text);
 foreach (['windows-build.yml' => $build, 'verify.yml' => $verify,
-          'release.yml' => $release, 'windows-deps.yml' => $deps] as $name => $text) {
+          'release.yml' => $release, 'windows-deps.yml' => $windowsDeps,
+          'linux-deps.yml' => $linuxDeps, 'deps.yml' => $crossDeps] as $name => $text) {
     if (str_contains($stripComments($text), 'self-hosted')) {
         fail("{$name} 声明了 self-hosted —— 没有注册 runner 时任务只会静默排队，不会失败");
     }
@@ -211,38 +243,25 @@ foreach (['bin/fetch-gn', 'bin/fetch-ninja'] as $needle) {
 //   "Can't find source root."，与 --args 对不对毫无关系。这一步失败时 Skia 已经
 //   clone + sync 完，一次白跑十几分钟。
 if (preg_match('/(?:--root="?\$skia_dir|cd\s+"\$skia_dir"\s*&&\s*"\$GN"\s+gen)/', $skiaScript) !== 1) {
-    fail('tools/skia/build-skia.sh 调 gn gen 时没把工作目录切到 skia_dir —— gn 会报 Can\'t find source root');
+    fail('build-skia.sh 调 gn gen 时没把工作目录切到 skia_dir —— gn 会报 Can\'t find source root');
 }
 
-$depsLive = $stripComments($deps);
-if (str_contains($depsLive, 'depot_tools')) {
+if (str_contains($windowsDepsLive, 'depot_tools')) {
     fail('windows-deps.yml 又装回 depot_tools —— gn.exe 在 CIPD 子目录里，bootstrap 改的 PATH 传不出子进程');
-}
-// ★ reusable workflow 的 github.event_name 继承调用方：产品发版是 tag push，
-//   若用它推断「独立发布」，release 传的 publish=false 会被覆盖成 true，
-//   deps job 白编 16 分钟后在 Preflight（deps-v1 已存在）挂掉。
-//   publish / commit_lock 必须先取 inputs，只有空值（原生 push 触发）才回退事件。
-if (!str_contains($depsLive, "publish='\${{ inputs.publish }}'")
-    || !str_contains($depsLive, "commit_lock='\${{ inputs.commit_lock }}'")) {
-    fail('windows-deps.yml 的 publish/commit_lock 必须先取 inputs —— 事件推断会吃掉 release 的显式 false');
-}
-if (preg_match('/\$\{\{\s*github\.event_name\s*\}\}\s*=\s*"push"\s*\]\s*\|\|/', $depsLive) === 1) {
-    fail('windows-deps.yml 又用 event_name=push 直接推导 publish —— reusable workflow 里它继承 tag push');
 }
 // SDK 版本必须按 x.y.z.w 过滤：Include 下还有 wdf / um / shared 这些目录，
 // 按名字排序取最后一个会拿到 "wdf"，喂给 gn 之后报的错跟 SDK 八竿子打不着。
-if (!str_contains($depsLive, '^\d+\.\d+\.\d+\.\d+$')) {
+if (!str_contains($windowsDepsLive, '^\d+\.\d+\.\d+\.\d+$')) {
     fail('windows-deps.yml 探测 Windows SDK 版本时没有按 x.y.z.w 过滤 —— 会取到 wdf 之类的目录');
 }
 
-$depsJob = substr($deps, (int) strpos($deps, 'jobs:'));
-if (!str_contains($depsJob, 'runs-on: windows-2022')) {
+$windowsDepsJob = substr($windowsDeps, (int) strpos($windowsDeps, 'jobs:'));
+if (!str_contains($windowsDepsJob, 'runs-on: windows-2022')) {
     fail('windows-deps.yml 的 build job 必须跑在托管 windows-2022 上');
 }
-if (preg_match('/^\s{4}timeout-minutes:\s*(\d+)\s*$/m', $depsJob, $m) !== 1 || (int) $m[1] < 180) {
+if (preg_match('/^\s{4}timeout-minutes:\s*(\d+)\s*$/m', $windowsDepsJob, $m) !== 1 || (int) $m[1] < 180) {
     fail('windows-deps.yml 的 timeout 至少 180 分钟 —— Skia 全量编译 + git-sync-deps 超过两小时属正常');
 }
-
 // 托管 runner 没有持久盘：字体必须在树里，否则构建前就会缺字。
 $gitignore = (string) @file_get_contents($root . '/.gitignore');
 foreach (['NotoSansSC-Regular.ttf', 'NotoSansSC-Bold.ttf'] as $font) {
@@ -338,11 +357,12 @@ if (!str_contains($between, 'skia_enable_ganesh = false')) {
 if (str_contains($winBlock, 'skia_enable_ganesh')) {
     fail('build-skia.sh 的 Windows 分支出现了 Ganesh 开关 —— 会改变已发布 deps-v1 的构建参数');
 }
-// ★ Linux 模块裁剪：Drift 只链接 core 绘制，build/base.yml 明确不链 skottie /
-//   sksg / skparagraph / skshaper / skunicode / icu。九个开关必须全部在 Linux
-//   分支内，且确实写进 for 循环（不是只出现在注释里）。任一条漏掉 = 白编一堆
-//   死库；任何一条漏进 Windows = 破坏 deps-v1 的已发布参数。
-$linuxTrimFlags = [
+// ★ deps-v2 两岸共用裁剪：Drift 只链接 core 绘制，build/base.yml 明确不链
+//   pdf / skottie / svg / sksg / skparagraph / skshaper / skunicode / icu /
+//   perfetto / piex / dng_sdk。九个开关必须写在平台分支之前（两平台都吃到），
+//   且不能只在注释里。任何一条漏出共用区 = 某平台又白编死库，或 Ganesh 被
+//   误加到 Windows（那会破坏 deps-v1 的既有产物契约）。
+$sharedTrimFlags = [
     'skia_enable_pdf = false',
     'skia_enable_skottie = false',
     'skia_enable_svg = false',
@@ -356,22 +376,29 @@ $linuxTrimFlags = [
 // 只认 for 循环体里的带引号字面量，注释里写字面量不算。用位置截取而不是
 // 正则匹配 `; do` —— shell 的 `; do` / 换行 do 都合法，正则太脆。
 $trimStart = strpos($fnBody, 'for flag in ');
-$trimEnd = $trimStart === false ? false : strpos($fnBody, "\n    done", $trimStart);
+$trimEnd = $trimStart === false ? false : strpos($fnBody, "\n  done", $trimStart);
 if ($trimStart === false || $trimEnd === false) {
-    fail('build-skia.sh 找不到 Linux 模块裁剪的 for flag in 循环');
+    fail('build-skia.sh 找不到共用的 for flag in 裁剪循环');
 }
 $trimLoopBody = substr($fnBody, $trimStart, $trimEnd - $trimStart);
-foreach ($linuxTrimFlags as $flag) {
+$commonBlock = substr($fnBody, 0, $linuxBlockStart);
+if ($trimStart >= $linuxBlockStart) {
+    fail('build-skia.sh 的裁剪循环落在平台分支内 —— Windows 没吃到 deps-v2 的裁剪');
+}
+foreach ($sharedTrimFlags as $flag) {
     $quoted = "'" . $flag . "'";
     if (!str_contains($trimLoopBody, $quoted)) {
-        fail('build-skia.sh 的裁剪循环缺 ' . $quoted . ' —— 该模块会被白编进 Linux 产物');
+        fail('build-skia.sh 的共用裁剪循环缺 ' . $quoted . ' —— 该模块会被白编进 deps-v2 产物');
     }
-    if (str_contains($winBlock, $flag)) {
-        fail('build-skia.sh 的 Windows 分支出现 ' . $flag . ' —— 会改变已发布 deps-v1 的构建参数');
+    if (str_contains($winBlock, $flag) || str_contains($between, $flag)) {
+        fail('build-skia.sh 的 ' . $flag . ' 漏进平台分支 —— 共用区才是唯一写点');
     }
 }
 if (!str_contains($trimLoopBody, 'args+=')) {
     fail('build-skia.sh 的裁剪循环没有把开关追加进 args —— 参数不会进 gn gen');
+}
+if (!str_contains($commonBlock, 'for flag in ')) {
+    fail('build-skia.sh 的共用裁剪循环不在 build_gn_args() 平台分支之前');
 }
 // dry-run 必须在任何网络动作之前：否则"验证一下平台决策"会先 clone 1.1GB 的 Skia。
 $dryRunPos = strpos($skiaScript, 'if [[ "$dry_run" -eq 1 ]]');
@@ -383,7 +410,8 @@ if ($dryRunPos === false || $clonePos === false || $dryRunPos > $clonePos) {
 fwrite(STDOUT, '  ok     Skia 构建平台化：' . count($skiaPlatformAnchors) . " 个环节，Windows args 参数隔离\n");
 fwrite(STDOUT, '  ok     真 AOT 通道完整：' . count($buildAnchors) . " 个环节\n");
 fwrite(STDOUT, '  ok     发版先构建 Skia 再编译：' . count($releaseAnchors) . " 个环节\n");
-fwrite(STDOUT, '  ok     依赖自动构建通道完整：' . count($depsAnchors) . " 个环节\n");
+fwrite(STDOUT, '  ok     Windows 依赖构建通道：' . count($windowsDepsAnchors) . " 个环节（不发布）\n");
+fwrite(STDOUT, '  ok     双平台依赖发布编排：' . count($crossDepsAnchors) . " 个环节\n");
 fwrite(STDOUT, "  ok     构建通道全在托管 runner 上（无 self-hosted 静默排队）\n");
 fwrite(STDOUT, "  ok     gn / ninja 走 Skia 自带预编译包（不装 depot_tools）\n");
 fwrite(STDOUT, "  ok     gn gen 在 Skia 源码目录内执行（source root 靠 .gn 定位）\n");
@@ -902,12 +930,12 @@ if (substr_count($x11ClipboardCc, '"UTF8_STRING"') < 2) {
 fwrite(STDOUT, '  ok     X11 剪贴板 xclip/UTF8/超时：' . count($x11ClipAnchors) . " 个链路环节 + 3 条反向判据\n");
 
 // ── Linux Skia 构建通道（build-only，不发布）────────────────────────────
-// 目的：在公开 runner 上回答「gn gen 认不认 Linux args / .a 能不能真编出来」。
-// 它不消费 deps-v1、不改锁、不发 tag —— 所以加反向锚点防止有人把 windows-deps
-// 的发布段复制过来，把未接消费者的 Linux 包钉进不可变 tag。
+// 目的：在公开 runner 上真编 Linux .a，并产出 linux-x64 包交给 deps.yml。
+// 它不提交锁、不打 tag、不发 Release —— 发布统一由双平台编排作业完成。
 $linuxDepsAnchors = [
     'runs-on: ubuntu-24.04' => '托管 Linux runner（不用会静默排队的 self-hosted）',
     'workflow_dispatch:' => '手动兜底',
+    'workflow_call:' => '发布编排可复用',
     'clang --version' => '显式验 clang 并留版本在日志里',
     'libfontconfig1-dev' => 'Linux 独有：SkFontConfigInterface_direct 需要 fontconfig 头',
     "test -f /usr/include/fontconfig/fontconfig.h || {" => '装完必须复核头文件真的在（否则 apt 报成功但头缺失时仍会编译失败）',
@@ -918,7 +946,9 @@ $linuxDepsAnchors = [
     'cpp/skia-linux/include' => '公共头必须随 .a 一起交（消费侧按 include/core/... 引用）',
     'cpp/skia-linux/modules' => '私有头必须随 .a 一起交（SkGradient.h 引用 modules/skcms/skcms.h）',
     'cpp/skia-linux/src' => 'src/ 私有头也在 headers.txt 里，漏传会在编译中途才炸',
-    'actions/upload-artifact@v4' => '产物交给下游评估',
+    'php tools/pack-deps.php --platform=linux-x64' => '打包 Linux 资产',
+    'dist/drift-deps-linux-x64.zip' => '上传 Linux 资产',
+    'actions/upload-artifact@v4' => '产物交给发布编排与 X11 门',
     "grep -q -- '-MT'" => '拦截 MSVC 静态 CRT 标志泄漏到 Linux 构建',
 ];
 foreach ($linuxDepsAnchors as $needle => $label) {
@@ -926,14 +956,14 @@ foreach ($linuxDepsAnchors as $needle => $label) {
         fail('linux-deps.yml 缺环节：' . $label . '（' . $needle . '）');
     }
 }
-// 反向锚点只查生效行：注释里解释"为什么不打包"是必要的，不该被自己拦住。
+// 反向锚点只查生效行：注释里解释"为什么不发布"是必要的，不该被自己拦住。
 $linuxDepsLive = $stripComments($linuxDeps);
 foreach ([
-    'php tools/pack-deps.php' => '打包（会产出写死 win-x64 的包名）',
     'php tools/release-deps.php' => '发布依赖资产',
     'php tools/fetch-deps.php' => '发布后回验（本通道没有发布）',
     'git tag' => '打 tag（deps 版本是不可变的）',
-    'deps.lock.json' => '改依赖锁（Linux 包只在 CI 里评估，未发布）',
+    'git commit' => '提交锁（发布编排是唯一写者）',
+    'git push' => '推提交（发布编排是唯一写者）',
     'publish:' => '发布开关（build-only 通道不该有）',
     'contents: write' => '写权限（build-only 只需 contents: read）',
 ] as $needle => $label) {

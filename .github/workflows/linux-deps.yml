@@ -1,11 +1,9 @@
-# Builds the Linux Skia static libs (.a) from the pinned commit, for evaluation.
+# Builds the Linux deps package from the pinned Skia commit.
 #
-# Deliberately build-only: no pack, no lock, no tag, no release. The X11
-# backend consumes its artifact for validation, but the package itself is not
-# published — this workflow answers "does gn gen accept our args / do the .a
-# files really build on Linux" and hands the outputs over as an artifact.
-# Publishing a durable Linux package stays a separate, reviewed decision
-# (deps-v2) — never a side effect of a build.
+# Build-only by design: publishing the combined deps-vN release lives in deps.yml.
+# The raw .a tree is still uploaded because the X11 gate consumes it directly;
+# the zip/sha pair is consumed by deps.yml together with the Windows package.
+# This workflow never commits a lock, creates a tag, or uploads a Release asset.
 #
 # Runs on a hosted runner on purpose: a self-hosted job on a repo with no
 # registered runner silently queues forever. Everything needed is either on
@@ -31,17 +29,21 @@ on:
         type: string
     outputs:
       artifact_name:
-        description: Artifact holding Skia .a libs + args.gn + headers
+        description: Artifact holding raw Skia .a libs and the Linux deps package
         value: ${{ jobs.build.outputs.artifact_name }}
       lib_count:
         description: Number of .a files produced by ninja
         value: ${{ jobs.build.outputs.lib_count }}
+      sha256:
+        description: SHA256 of the built package
+        value: ${{ jobs.build.outputs.sha256 }}
 
 permissions:
   contents: read
 
 env:
   COMPOSER_NO_INTERACTION: 1
+  PHP_VERSION: '8.4'
 
 concurrency:
   group: linux-deps-${{ github.ref }}
@@ -49,12 +51,13 @@ concurrency:
 
 jobs:
   build:
-    name: Build Skia libs (ubuntu-24.04)
+    name: Build deps (ubuntu-24.04)
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     outputs:
       artifact_name: ${{ steps.resolve.outputs.artifact_name }}
       lib_count: ${{ steps.verify_libs.outputs.lib_count }}
+      sha256: ${{ steps.package.outputs.sha256 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -75,7 +78,7 @@ jobs:
           echo "REV=$rev" >> "$GITHUB_ENV"
           echo "deps_tag=$(tr -d '\r\n' < DEPS_VERSION)" >> "$GITHUB_ENV"
           printf 'artifact_name=drift-skia-linux-%s-%s\n' "${{ github.run_id }}" "${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
-          echo "Skia=$rev (build-only; no pack / no tag / no release)"
+          echo "Skia=$rev (build-only; publish lives in deps.yml)"
 
       # ubuntu-24.04 images ship clang, but the version drifts with image
       # updates. Verify the compiler exists and report the exact version so a
@@ -97,6 +100,13 @@ jobs:
           g++ --version | head -1
           python3 --version
           git --version
+
+      - name: Setup PHP ${{ env.PHP_VERSION }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          extensions: curl, zip, mbstring
+          coverage: none
 
       # skia_use_freetype=true 在 Linux 上会编 SkFontConfigInterface_direct.cpp，
       # 它 #include <fontconfig/fontconfig.h>。Windows 版走 GDI 不需要这个头，
@@ -153,7 +163,7 @@ jobs:
         run: |
           set -o pipefail
           # --out is separate from windows-deps' cpp/skia: .a and .lib must
-          # never land in the same tree (pack-deps assumes *.lib there).
+          # never land in the same tree (pack-deps assumes one extension per platform).
           bash tools/skia/build-skia.sh --platform=linux --rev="$REV" --out="$OUT" --replace
 
       - name: Verify Linux outputs
@@ -186,6 +196,18 @@ jobs:
           echo "Linux Skia: $count static libs, args.gn clean"
           ls -lh "${libs[@]}"
 
+      - name: Pack Linux package
+        shell: bash
+        run: php tools/pack-deps.php --platform=linux-x64
+
+      - name: Refresh package outputs
+        id: package
+        shell: bash
+        run: |
+          sha="$(php -r '$j=json_decode((string) file_get_contents("deps.lock.json"), true); echo ($j["platforms"]["linux-x64"]["sha256"] ?? "");')"
+          [[ "$sha" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::pack-deps produced no SHA256"; exit 1; }
+          printf 'sha256=%s\n' "$sha" >> "$GITHUB_OUTPUT"
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.resolve.outputs.artifact_name }}
@@ -197,11 +219,13 @@ jobs:
             # 只传 include/ 会让消费侧编译期直接炸在 SkGradient.h。
             ${{ github.workspace }}/cpp/skia-linux/modules
             ${{ github.workspace }}/cpp/skia-linux/src
+            ${{ github.workspace }}/dist/drift-deps-linux-x64.zip
+            ${{ github.workspace }}/dist/drift-deps-linux-x64.zip.sha256
           if-no-files-found: error
           retention-days: 14
 
       - name: Build-only summary
         shell: bash
         run: |
-          echo "Skia Linux .a built as artifact; no package/lock/tag/release was written."
+          echo "Linux Skia package built as artifact; no commit/tag/release was written."
           echo "This channel never advances the deps version (still $deps_tag)."
