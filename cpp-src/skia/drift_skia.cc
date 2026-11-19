@@ -194,7 +194,12 @@ void addSystemFontDirs(std::string *out, int *count, int cap) {
     char windowsDir[MAX_PATH];
     UINT n = GetSystemWindowsDirectoryA(windowsDir, (UINT)sizeof(windowsDir));
     if (n > 0 && n < sizeof(windowsDir) && *count < cap) {
-        out[(*count)++] = std::string(windowsDir) + "\\Fonts";
+        std::string dir(windowsDir);
+        // GetSystemWindowsDirectoryA 在部分镜像上带尾分隔符；不去就会拼出 C:\\Windows\\Fonts。
+        while (!dir.empty() && (dir.back() == '\\' || dir.back() == '/')) {
+            dir.pop_back();
+        }
+        out[(*count)++] = dir + "\\Fonts";
     }
 #else
     const char *fixed[] = {
@@ -234,11 +239,30 @@ sk_sp<SkTypeface> matchSystemFace(const sk_sp<SkFontMgr> &mgr, bool bold) {
 }
 
 /**
+ * 按已知文件名直接开字体，绕开目录扫描后的 family 匹配。
+ *
+ * ★ 托管 runner 上的系统字体目录可能出现"扫描到了但 matchFamilyStyle 一个都不命中"
+ *   （家族名随镜像/语言包漂移）。这里与包内字体走同一个 makeFromFile 判据，
+ *   只要文件在就能拿到 face；family 匹配退居第二选择。
+ */
+sk_sp<SkTypeface> firstSystemFile(const sk_sp<SkFontMgr> &mgr, const std::string &dir,
+                                  const char *const *names, int count) {
+    for (int i = 0; i < count; i++) {
+        sk_sp<SkTypeface> face = mgr->makeFromFile((dir + "/" + names[i]).c_str());
+        if (face) {
+            return face;
+        }
+    }
+    return nullptr;
+}
+
+/**
  * 懒加载字体，**只试一次**。包内字体优先，系统字体兜底；两者都可被探针单独关掉。
  *
  * ★ 包内路径仍按固定文件名精确匹配：它承担确定性渲染，不能让系统字体插队。
- * ★ 系统路径按 family 匹配：`SkFontMgr_New_Custom_Directory` 对不存在的目录
- *   不返回 null，判据必须落在 matchFamilyStyle 的返回值上。
+ * ★ 系统路径先按已知文件名直接开，再按 family 匹配 —— 后者只作兜底。
+ *   `SkFontMgr_New_Custom_Directory` 对不存在的目录不返回 null，判据必须落在
+ *   makeFromFile / matchFamilyStyle 的返回值上。
  */
 void ensureFont() {
     if (g_fontProbed) {
@@ -281,21 +305,46 @@ void ensureFont() {
     std::string systemDirs[10];
     int systemCount = 0;
     addSystemFontDirs(systemDirs, &systemCount, 10);
+#ifdef _WIN32
+    static const char *const regularFiles[] = {
+        "segoeui.ttf", "arial.ttf", "calibri.ttf", "tahoma.ttf", "msyh.ttc"
+    };
+    static const char *const boldFiles[] = {
+        "segoeuib.ttf", "arialbd.ttf", "calibrib.ttf", "tahomabd.ttf", "msyhbd.ttc"
+    };
+#else
+    static const char *const regularFiles[] = {
+        "DejaVuSans.ttf", "LiberationSans-Regular.ttf", "NotoSans-Regular.ttf",
+        "NotoSansCJK-Regular.ttc", "Arial.ttf"
+    };
+    static const char *const boldFiles[] = {
+        "DejaVuSans-Bold.ttf", "LiberationSans-Bold.ttf", "NotoSans-Bold.ttf",
+        "NotoSansCJK-Bold.ttc", "Arial_Bold.ttf"
+    };
+#endif
     for (int i = 0; i < systemCount; i++) {
         sk_sp<SkFontMgr> mgr = SkFontMgr_New_Custom_Directory(systemDirs[i].c_str());
         if (!mgr) {
             continue;
         }
-        sk_sp<SkTypeface> regular = matchSystemFace(mgr, false);
+        sk_sp<SkTypeface> regular = firstSystemFile(
+            mgr, systemDirs[i], regularFiles,
+            (int)(sizeof(regularFiles) / sizeof(regularFiles[0])));
+        if (!regular) {
+            regular = matchSystemFace(mgr, false);
+        }
         if (!regular) {
             continue;
         }
+        sk_sp<SkTypeface> bold = firstSystemFile(
+            mgr, systemDirs[i], boldFiles,
+            (int)(sizeof(boldFiles) / sizeof(boldFiles[0])));
+        if (!bold) {
+            bold = matchSystemFace(mgr, true);
+        }
         g_fontMgr = mgr;
         g_faceRegular = regular;
-        g_faceBold = matchSystemFace(mgr, true);
-        if (!g_faceBold) {
-            g_faceBold = regular;
-        }
+        g_faceBold = bold ? bold : regular;
         g_fontReady = true;
         return;
     }
