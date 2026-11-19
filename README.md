@@ -95,7 +95,7 @@ php tools/version.php --check  # 全部对齐才过；verify 的 static 层也�
 | tpc（TypePHP 编译器） | 源码树入口 `bin/tpc.php`（发行版 `tpc.exe` 缺编译期修复，不作默认） | 与本仓同级的 `../typephp/bin/tpc.php`，或 `DRIFT_TPC_ENTRY` |
 | MSVC | C++ 生成工具即可，不需完整 IDE；实测可用工具集 `14.51.36231`，需 `cl.exe` | 生成工具安装目录下的 `VC/Tools/MSVC/<版本>`；`DRIFT_MSVC` / `DRIFT_MSVC_VERSION` |
 | Windows SDK | `10.0.26100.0`；`include/um` + `include/ucrt` + `lib/um/x64` 三处齐全 | Windows Kits 安装根下的 `10`；`DRIFT_KITS` / `DRIFT_SDK_VERSION` |
-| Skia 预编译包 + 字体 | `cpp/skia/`（约 141 MB）与 `cpp/fonts/`（约 21 MB）**不随仓库分发** | 见下 |
+| Skia 预编译包（字体可选） | `cpp/skia/`（约 141 MB）是构建必需；`cpp/fonts/`（约 21 MB）只用于确定性渲染，AOT 运行时默认走系统字体 | 见下 |
 
 MSVC 用独立的 [C++ 生成工具](https://visualstudio.microsoft.com/zh-hans/visual-cpp-build-tools/) 就够（它就是为命令行与 CI 准备的，含 MSVC / Windows SDK / vcpkg）。本机默认路径是实测值；版本或安装位置不同就设 `DRIFT_MSVC` 指向 `VC/Tools/MSVC/<版本>`，SDK 不同再设 `DRIFT_KITS` / `DRIFT_SDK_VERSION`，不要改构建脚本。
 
@@ -132,7 +132,7 @@ php bin/tpc.php --help
 Python 3 只给真机探针 `tools/probe-window.py` 用，依赖仅标准库 `ctypes`；
 重新生成字模的脚本才需要 Pillow。
 
-#### ② 补 Skia 与字体
+#### ② 补 Skia（字体可选）
 
 目录关系（默认布局）：
 
@@ -144,16 +144,17 @@ Python 3 只给真机探针 `tools/probe-window.py` 用，依赖仅标准库 `ct
     └── cpp/fonts/NotoSansSC-*.ttf     # ② 不入库
 ```
 
-★ **最大的隐藏门槛**：`/cpp/` 整目录在 `.gitignore` 里，`git clone` 后 `cpp/skia/`
-与 `cpp/fonts/` **都不存在**，缺了构建期会直接链接失败。exe 还必须以仓库根为 cwd
-启动（两者按相对路径查找）。
+★ **构建门槛是 Skia**：`/cpp/` 整目录在 `.gitignore` 里，`git clone` 后 `cpp/skia/`
+不存在，缺了链接期直接失败。`cpp/fonts/` 只承担确定性渲染：不附带也能构建、AOT 运行时
+默认查系统字体；要跨机像素一致或离线部署时，把字体包放到 exe 旁 `fonts/`。
+exe 不再要求以仓库根为 cwd 启动。
 
 包的内容：
 
 | 项 | 内容 |
 |---|---|
 | `cpp/skia/` | Skia **M148** 预编译（clang / x64 / Release）：`include/` + `modules/` + `src/` + `out/Release-x64/` 下 24 个 `.lib`，附 `LICENSE`（BSD-3-Clause） |
-| `cpp/fonts/` | Noto Sans SC Regular / Bold + `OFL.txt`（SIL OFL 1.1 全文，重分发必须保留） |
+| `cpp/fonts/` | 可选：Noto Sans SC Regular / Bold + `OFL.txt`（SIL OFL 1.1 全文，重分发必须保留）；只用于确定性渲染 |
 | 打包产物 | deps-v1 发布 `drift-deps-win-x64.zip`；deps-v2 起按平台拆成 `drift-deps-win-x64.zip` 与 `drift-deps-linux-x64.zip`，各含 `cpp/DEPS-MANIFEST.txt` 与 `cpp/licenses/`。包内路径全挂在 `cpp/` 下 —— 解压到仓库根，顶层放文件会污染工作区 |
 
 首次获取（包托管在 GitHub Releases）：
@@ -250,7 +251,7 @@ php tools/release-deps.php --dry-run           # 只看要做什么
 ```bash
 # 需要 git / python3 / LLVM，且都在 PATH；gn / ninja 由脚本按需下预编译包
 printf '<40 位 Skia commit>' > SKIA_REVISION
-bash tools/skia/build-skia.sh --replace    # 产出 cpp/skia；cpp/fonts 需另行备齐
+bash tools/skia/build-skia.sh --replace    # 产出 cpp/skia；字体仅确定性渲染时需要
 php tools/pack-deps.php --platform=win-x64 # 组当前平台包 + 写 deps.lock.json
 ```
 

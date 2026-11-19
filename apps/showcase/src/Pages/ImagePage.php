@@ -31,8 +31,8 @@ use Drift\Widget\Wrap;
  * ★ 这一页同时是**能力边界的如实记录**：没有网络图、没有 SVG、没有九宫格
  *   拉伸、没有圆角（要圆角请用 `clip` 修饰）、没有 EXIF 方向。见页末。
  *
- * ★ 资源路径按 `<cwd>/assets` 找 —— **exe 必须以仓库根为 cwd 启动**（与字体
- *   同一条约束，见 `build/base.yml` 的注释）。找不到就是 1×1 透明占位。
+ * ★ 资源路径按 `<cwd>/assets` 找 —— **跑这个示例时仍要以仓库根为 cwd 启动**。
+ *   找不到就是 1×1 透明占位（字体已不依赖 cwd，见 `cpp-src/skia/drift_skia.cc`）。
  */
 final class ImagePage extends StatelessWidget
 {
@@ -115,7 +115,7 @@ final class ImagePage extends StatelessWidget
                 ->caption(),
             Text::make('④ 放大是最近邻（Raster）与双线性（Skia）—— 有意的双端差异，1:1 时逐字节相同。')
                 ->caption(),
-            Text::make('⑤ 资源按 <cwd>/assets 找：exe 必须以仓库根为 cwd 启动，否则退回 1×1 占位。')
+            Text::make('⑤ 示例资源按 <cwd>/assets 找：从仓库根启动，否则退回 1×1 占位。')
                 ->caption(),
         ]);
     }

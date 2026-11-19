@@ -13,6 +13,12 @@ on:
   pull_request:
     paths-ignore: [DEPS_VERSION]
   workflow_dispatch:
+    inputs:
+      with_fonts:
+        description: AOT 包附带可选 NotoSansSC 字体（确定性渲染，包体 +21MB）
+        required: false
+        type: boolean
+        default: false
   # deps.yml 发布成功后才跑 AOT：此时 v2 资产已在 Release，fetch 必拿得到。
   workflow_run:
     workflows: ["Cross-platform deps"]
@@ -35,6 +41,11 @@ on:
         required: false
         type: string
         default: ''
+      with_fonts:
+        description: AOT 包附带可选 NotoSansSC 字体（确定性渲染，包体 +21MB）
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -397,6 +408,18 @@ jobs:
           }
           if ($LASTEXITCODE -ne 0) { throw 'probe-window failed' }
 
+      # 默认包不带字体，必须单独验一次系统字体路径；屏蔽包内字体后 cwd 兜底
+      # 也不会命中仓库 cpp/fonts，探针只能靠系统字体画出文字。
+      - name: Probe window (system fonts)
+        if: inputs.target != 'dev'
+        shell: pwsh
+        env:
+          DRIFT_PROBE_ENV_JSON: '{"DRIFT_DISABLE_BUNDLED_FONTS":"1"}'
+        run: |
+          $target = '${{ inputs.target || 'hello' }}'
+          python tools/probe-window.py $target
+          if ($LASTEXITCODE -ne 0) { throw 'system-font probe failed' }
+
       # dev.exe 是动态链接的：缺 phpx.dll / php8ts.dll / VCRUNTIME140 时用户机器上
       # 弹的是系统级「找不到 DLL」，没有可读诊断。所以运行时是包的一部分，
       # 清单与校验都在 tools/ci/dev-shell-files.php，缺一件就红。
@@ -476,15 +499,21 @@ jobs:
       # AOT exe 不是纯静态：导入表直接依赖 phpx.dll / php8ts.dll / VC 运行库，
       # phpx.dll 又传递依赖 GMP / MPFR / decimal。构建期 php.ini 里的绝对路径
       # 只服务于 probe；分发包另写相对 ext/ 的 ini，解压到哪都能跑。
+      # 字体默认不进包，走系统字体；with_fonts=true 时才附带 NotoSansSC。
       - name: Pack AOT runtime
         if: inputs.target != 'dev'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $target = '${{ inputs.target || 'hello' }}'
+          $withFonts = '${{ inputs.with_fonts }}' -eq 'true'
           $stage = Join-Path $env:RUNNER_TEMP 'aot-runtime'
           if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
-          New-Item $stage, "$stage\ext", "$stage\fonts" -ItemType Directory -Force | Out-Null
+          if ($withFonts) {
+            New-Item $stage, "$stage\ext", "$stage\fonts" -ItemType Directory -Force | Out-Null
+          } else {
+            New-Item $stage, "$stage\ext" -ItemType Directory -Force | Out-Null
+          }
 
           foreach ($file in @("$target.exe", "$target.exe.map")) {
             if (Test-Path $file) { Copy-Item $file $stage }
@@ -541,20 +570,22 @@ jobs:
           }
           Copy-Item 'assets/cacert.pem' "$stage\cacert.pem"
 
-          # Skia 从 exe 旁 fonts/ 找 NotoSansSC；没有字体时窗口是空白的。
-          # CI 探针从仓库根启动会命中 cwd 的 cpp/fonts，用户双击包不会 —— 必须随包分发。
-          if (-not (Test-Path 'cpp/fonts/NotoSansSC-Regular.ttf')) { throw 'source font missing: cpp/fonts/NotoSansSC-Regular.ttf' }
-          Copy-Item 'cpp/fonts/*' "$stage\fonts"
-          if (-not (Test-Path "$stage\fonts\NotoSansSC-Regular.ttf")) { throw 'font missing in AOT package' }
+          $checkArgs = @($stage, $target)
+          if ($withFonts) {
+            if (-not (Test-Path 'cpp/fonts/NotoSansSC-Regular.ttf')) { throw 'source font missing: cpp/fonts/NotoSansSC-Regular.ttf' }
+            Copy-Item 'cpp/fonts/*' "$stage\fonts"
+            if (-not (Test-Path "$stage\fonts\NotoSansSC-Regular.ttf")) { throw 'font missing in AOT package' }
+            $checkArgs += '--require-fonts'
+          }
 
-          php tools/ci/aot-package-files.php $stage $target
+          php tools/ci/aot-package-files.php @checkArgs
           if ($LASTEXITCODE -ne 0) { throw 'AOT runtime package is incomplete' }
 
       - name: Upload AOT artifacts
         if: always() && inputs.target != 'dev'
         uses: actions/upload-artifact@v4
         with:
-          name: aot-${{ inputs.target || 'hello' }}-php${{ matrix.php }}-windows-2022
+          name: aot-${{ inputs.target || 'hello' }}-php${{ matrix.php }}${{ inputs.with_fonts && '-fonts' || '' }}-windows-2022
           path: ${{ runner.temp }}/aot-runtime/*
           if-no-files-found: error
           retention-days: 7

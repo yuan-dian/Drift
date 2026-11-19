@@ -31,7 +31,7 @@
 | tpc | 编译器源码树入口 `bin/tpc.php` | 与本仓同级的 `../typephp/bin/tpc.php` | `DRIFT_TPC_ENTRY` |
 | MSVC | VS 2022 / 18，工具集 `14.51.36231`，需 `cl.exe` | Visual Studio 的 `VC/Tools/MSVC/14.51.36231` | `DRIFT_MSVC` / `DRIFT_MSVC_VERSION` |
 | Windows SDK | `10.0.26100.0`，`include/um`、`include/ucrt`、`lib/um/x64` 三处齐全 | Windows Kits 的 `10` 目录 | `DRIFT_KITS` / `DRIFT_SDK_VERSION` |
-| Skia 预编译包 + 字体 | Skia M148，头文件与 `out/Release-x64` 下的 `.lib`；字体 Noto Sans SC | `cpp/skia/` 与 `cpp/fonts/` | 见下 |
+| Skia 预编译包（字体可选） | Skia M148，头文件与 `out/Release-x64` 下的 `.lib`；字体只用于确定性渲染 | `cpp/skia/`；可选 `cpp/fonts/` | 见下 |
 
 几个必须注意的点：
 
@@ -40,9 +40,9 @@
 - PHP + PHPX 运行时来自 TypePHP 的 Windows x64、PHP 8.4/8.5 ZTS 发行资产，解压后把目录加进 `PATH`；包里自带 `php.ini`、`ext/` 与 `phpx/`。已有 PHP 时可只补 `phpx/`，但必须与编译器同源。
 - doctor 用 git 祖先判定核对 tpc 源码树是否含最低修复基线（`bff46481`）；源码树不是 git 或基线不在历史里时报 WARN，不静默放行。`--version` 固定报 v0.10.0，区分不了 commit 级修复。
 
-## Skia 与字体
+## Skia 与可选字体
 
-`cpp/` 整个目录在 `.gitignore` 里，`git clone` 之后 `cpp/skia/` 和 `cpp/fonts/` 都不存在，缺了会在构建期直接链接失败。exe 还必须以仓库根为 cwd 启动，因为这两个目录按相对路径查找。
+`cpp/` 整个目录在 `.gitignore` 里，`git clone` 之后 `cpp/skia/` 不存在，缺了会在链接期直接失败。`cpp/fonts/` 只承担确定性渲染：不附带也能构建，AOT 运行时默认查系统字体；要跨机像素一致或离线部署时，把字体包放到 exe 旁 `fonts/`。exe 不再要求以仓库根为 cwd 启动。
 
 默认布局是编译器源码树与本仓同级：
 
@@ -54,7 +54,7 @@
     └── cpp/fonts/NotoSansSC-*.ttf     # 不入库
 ```
 
-包内容：`cpp/skia/` 是预编译头文件与 `.lib`，附许可文件；`cpp/fonts/` 是 Noto Sans SC Regular / Bold 加 `OFL.txt`（SIL OFL 1.1 全文，重分发必须保留）。打包产物解压到仓库根，包内路径都挂在 `cpp/` 下，不要手动把文件散到顶层污染工作区。
+包内容：`cpp/skia/` 是预编译头文件与 `.lib`，附许可文件；`cpp/fonts/` 是可选的 Noto Sans SC Regular / Bold 加 `OFL.txt`（SIL OFL 1.1 全文，重分发必须保留）。打包产物解压到仓库根，包内路径都挂在 `cpp/` 下，不要手动把文件散到顶层污染工作区。
 
 ## 取包：Release 与离线
 

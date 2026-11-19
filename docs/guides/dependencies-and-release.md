@@ -79,7 +79,7 @@ php tools/pack-deps.php --platform=win-x64
 
 `SKIA_REVISION` 当前 pin 到 Skia M148 的真实 commit，lock 的 `skiaRevision` 与 `provenance: ci` 与之同步；该 commit 的 `SkMilestone.h` 为 148，与包内一致。`unpinned` / `provenance: legacy` 只用于来源不可考的历史包，构建脚本与 CI 都拒绝它。`deps-v1` 已由 `windows-deps.yml` 从这个 commit 实际重建并发布（610 条目 / 49.5 MB），来源声明与产物一致：拿到包就能按该 commit 复现。
 
-字体不随 Skia 变，两个 Noto Sans SC 字重（Regular / Bold，OFL 授权）**入库**（`cpp/fonts/`，`.gitignore` 用 `/cpp/*` + 白名单放行）。托管 runner 没有持久盘，字体不入库就得再引一条下载链路加版本锚点，等于给重建多加一个会漂的部件；入库后来源就是 commit 本身。字体许可全文在 `licenses/OFL-NotoSansSC.txt`，打包时随附。
+字体不随 Skia 变，两个 Noto Sans SC 字重（Regular / Bold，OFL 授权）**入库**（`cpp/fonts/`，`.gitignore` 用 `/cpp/*` + 白名单放行）。托管 runner 没有持久盘，字体不入库就得再引一条下载链路加版本锚点，等于给重建多加一个会漂的部件；入库后来源就是 commit 本身。字体许可全文在 `licenses/OFL-NotoSansSC.txt`，打包时随附。字体只参与确定性渲染：AOT 运行时默认查系统字体，随包发布由 `windows-build.yml` 的 `with_fonts` 输入决定。
 
 ## 依赖构建只在托管镜像上跑
 
@@ -89,7 +89,7 @@ Skia 构建通道（`windows-deps.yml`）跑在 `windows-2022` 托管镜像上�
 
 - **VS / Win SDK / LLVM**：镜像自带，目录名随镜像更新漂移，所以用 `vswhere` 探测而不是写死；`vars.SKIA_WIN_VC` 等仍可覆盖。GN 字符串里反斜杠是转义符，路径必须转正斜杠后才喂给 `gn gen`。
 - **gn / ninja**：不装 depot_tools。`build-skia.sh` 先看 PATH（本地开发机常装着），找不到就调 Skia 自带的 `bin/fetch-gn` / `bin/fetch-ninja` 拉官方预编译包——版本由 Skia 自己的脚本和 `DEPS` 钉住，产物落在 `third_party/gn`、`third_party/ninja`，正是 depot_tools 包装期望的位置。之前走 depot_tools 那条路连踩三次：`gn.exe` 装在 CIPD 子目录 `bootstrap-<hash>\` 里（不在 depot_tools 根），而 `bootstrap.bat` 只在它自己那个 cmd 进程内改 PATH，父进程拿不到；失败又发生在 `git-sync-deps` 之后，看着像 Skia 编译错。绕开这一层后 CI 少两个步骤。
-- **字体**：入库，构建前只做存在性检查。
+- **字体**：入库，构建前只做存在性检查；AOT 运行时默认系统字体，可选字体包由 `with_fonts` 决定是否随包发布。
 - **磁盘**：托管镜像初始只剩十几 GB，而 `git-sync-deps` 加全量编译要二十多 GB。构建前删掉本次用不到的 Android SDK / dotnet / 预装浏览器 / 多版本 JDK，再断言剩余空间不低于 18 GB。爆盘时报的会是和磁盘无关的编译错误，看起来像代码问题，所以这一步要显式拦。
 
 ## CI 自动构建

@@ -38,7 +38,7 @@
 ## 开发态与真机构建
 
 - `php tools/drift-dev.php <app>`：T1 开发态壳，动态加载 PHP、开真窗口，免重编译。改 `apps/<app>/src/` 里的 PHP 即时生效。composer 别名 `composer dev`。`--project=<目录>` 指定宿主项目根（Drift 作为 composer 包引入时指向你的项目，相对路径按调用时的工作目录解析）；`--entry=<路径>` 覆盖动态入口（默认 Drift 包内的 `apps/dev/dev-entry.php`，相对路径按 `--project` 解析）；`--prebuilt` 用现成 `dev.exe`，跳过壳指纹检查与编译（发布包场景）。
-- `php tools/drift-build.php <app>`：T2 AOT 构建，出 exe，需要完整工具链（PHPX、tpc、MSVC、Windows SDK、Skia 与字体）。`--full` 走完整口径。composer 别名 `composer build`。
+- `php tools/drift-build.php <app>`：T2 AOT 构建，出 exe，需要完整工具链（PHPX、tpc、MSVC、Windows SDK、Skia；字体可选）。`--full` 走完整口径。composer 别名 `composer build`。
 - `python tools/probe-window.py <app>`：T2 真机探针，需要 Python，`DRIFT_PYTHON` 可覆盖路径。composer 别名 `composer probe`。
 
 这三条分别对应"改应用 PHP"、"改框架或 C++ 代码"、"真机验收"三件事。只要动了 `src/` 或 `cpp-src/`，就必须重新跑 `drift-build` 做 T2 验证，dev 壳通过不能代替它。

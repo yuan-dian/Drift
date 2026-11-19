@@ -17,13 +17,12 @@ declare(strict_types=1);
  * probe 注入 PHPRC 用的。分发包必须另写 `extension_dir = "ext/"`，让 phpx
  * 以 exe 所在目录解析 —— 用户解压到哪都能跑，不绑构建机路径。
  *
- * ## 为什么必须带字体
+ * ## 字体是可选增强
  *
- * Skia 后端从 exe 旁 `fonts/` 或 cwd 的 `cpp/fonts/` 找 NotoSansSC.ttf；
- * CI 探针从仓库根启动，cwd 兜底掩盖了缺字体。用户双击下载包时没有仓库，
- * 没有字体 ⇒ 文字一个像素都不画，只剩空白窗口。
+ * C++ 桥先查 exe 旁 `fonts/`（确定性 / 离线），再查系统字体目录；
+ * 默认包可以不带 NotoSansSC。`--require-fonts` 用于校验“带字体”的确定性包。
  *
- * 用法： php tools/ci/aot-package-files.php <包目录> [目标名，默认 hello]
+ * 用法： php tools/ci/aot-package-files.php <包目录> [目标名] [--require-fonts]
  */
 
 /**
@@ -56,10 +55,17 @@ function aotPackageRequiredFiles(string $target = 'hello'): array
         'ext/php_openssl.dll'          => 'openssl：TLS 与摘要',
         'ext/php_curl.dll'             => 'curl：HTTP 客户端',
         'cacert.pem'                   => 'TLS 信任根（缺了 HTTPS 只能靠系统证书库）',
-        'fonts/NotoSansSC-Regular.ttf' => 'Skia 文字渲染必需（缺了窗口空白）',
-        'fonts/NotoSansSC-Bold.ttf'    => 'Skia 粗体文字渲染必需',
-        'fonts/FONT-NOTICE.txt'        => '字体许可声明',
-        'fonts/OFL.txt'                => '字体许可证',
+    ];
+}
+
+/** 可选字体包：放在 exe 旁 fonts/ 时走确定性渲染；默认包不带也能用系统字体。 */
+function aotPackageOptionalFontFiles(): array
+{
+    return [
+        'fonts/NotoSansSC-Regular.ttf',
+        'fonts/NotoSansSC-Bold.ttf',
+        'fonts/FONT-NOTICE.txt',
+        'fonts/OFL.txt',
     ];
 }
 
@@ -83,10 +89,14 @@ function aotPackageIniIsPortable(string $iniText): bool
 
 // ── CLI：校验一个已备好的包目录 ──────────────────────────────────────
 if (PHP_SAPI === 'cli' && isset($_SERVER['argv'][0]) && realpath($_SERVER['argv'][0]) === __FILE__) {
-    $dir = $_SERVER['argv'][1] ?? '';
-    $target = $_SERVER['argv'][2] ?? 'hello';
+    $args = array_slice($_SERVER['argv'], 1);
+    $flags = array_values(array_filter($args, static fn(string $a): bool => str_starts_with($a, '--')));
+    $positional = array_values(array_filter($args, static fn(string $a): bool => !str_starts_with($a, '--')));
+    $dir = $positional[0] ?? '';
+    $target = $positional[1] ?? 'hello';
+    $requireFonts = in_array('--require-fonts', $flags, true);
     if ($dir === '' || !is_dir($dir)) {
-        fwrite(STDERR, "用法： php tools/ci/aot-package-files.php <包目录> [目标名]\n");
+        fwrite(STDERR, "用法： php tools/ci/aot-package-files.php <包目录> [目标名] [--require-fonts]\n");
         exit(2);
     }
 
@@ -108,6 +118,21 @@ if (PHP_SAPI === 'cli' && isset($_SERVER['argv'][0]) && realpath($_SERVER['argv'
         $missing[] = 'php.ini —— extension_dir 必须是相对 ext/，且启用 mbstring/openssl/curl';
     }
 
+    $fontDir = rtrim($dir, '/\\') . '/fonts';
+    $hasFontDir = is_dir($fontDir);
+    $fontMissing = [];
+    foreach (aotPackageOptionalFontFiles() as $relative) {
+        if (!is_file(rtrim($dir, '/\\') . '/' . $relative)) {
+            $fontMissing[] = $relative;
+        }
+    }
+    if ($hasFontDir && $fontMissing !== []) {
+        $missing[] = 'fonts/ 不完整：缺 ' . implode('、', $fontMissing);
+    }
+    if ($requireFonts && $fontMissing !== []) {
+        $missing[] = '--require-fonts 指定但字体包不完整：缺 ' . implode('、', $fontMissing);
+    }
+
     foreach ($missing as $item) {
         fwrite(STDERR, "  ✗ 缺 {$item}\n");
     }
@@ -121,4 +146,7 @@ if (PHP_SAPI === 'cli' && isset($_SERVER['argv'][0]) && realpath($_SERVER['argv'
         $total,
         $bytes / 1048576,
     );
+    fwrite(STDOUT, $hasFontDir
+        ? "字体：含可选 fonts/（确定性渲染）\n"
+        : "字体：未附带 fonts/，走系统字体\n");
 }

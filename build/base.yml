@@ -18,10 +18,10 @@
 # ───────────────────────────────────────────────────────────────────────────
 # ★★ Skia 链接项（**已生效**；依据见 `SKIA-BUILD.md` 的实测报告）
 #
-#   包在 `Drift2/cpp/skia/`（`include/` + `modules/` + `src/` + `out/Release-x64/*.lib`，
-#   约 **141 MB** ⇒ **不入库**，见 `.gitignore` 与 `DESIGN.md §24.2 #12`）；
-#   字体在 `Drift2/cpp/fonts/`（Noto Sans SC，OFL）。**exe 必须以仓库根为 cwd 启动**
-#   —— 两者都按相对路径查找。
+#   包在 `cpp/skia/`（`include/` + `modules/` + `src/` + `out/Release-x64/*.lib`，
+#   约 **141 MB** ⇒ **不入库**，见 `.gitignore`）；
+#   `cpp/fonts/`（Noto Sans SC，OFL）只用于确定性渲染 —— AOT 运行时先查 exe 旁
+#   可选 `fonts/`，再查系统字体，不要求以仓库根为 cwd 启动。
 #
 #   · `/MT` —— 匹配预编译包的**静态 CRT**。★ 它**能加**（实测构建通过）：
 #     tpc 的 `/MD` 写在 cxxflags **之前**（`Msvc.php:104`），用户 flag 在之后追加

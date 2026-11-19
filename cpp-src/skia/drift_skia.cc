@@ -17,16 +17,17 @@
  * ★ **本后端不链 SkParagraph / SkUnicode / ICU**（M1 范围）：不需要 `icudtl.dat`，
  *   也不需要那 5 个注册表符号。真字体重排版（`SkiaTextMetricsProvider`）归 M4。
  *
- * ★ 字体用**目录字体**（`cpp/fonts/NotoSansSC-*.ttf`），与 GUI 参考实现同款 ——
- *   确定性来自"不查系统字体"，不是来自"用位图字体"。加载失败**不中止**，
- *   但 `drift_skia_font_ready()` 会如实回答 false，让 PHP 侧记一条 Diagnostic
- *   （否则现象是"矩形全对、字全没了"，看起来像排版 bug）。
+ * ★ 字体分三层，**命中即停**：
+ *   ① 可选包内字体：exe 旁 `fonts/` / `cpp/fonts/`，或 cwd 的 `cpp/fonts` / `fonts`。
+ *      这是确定性路径 —— 跨机器像素一致、离线可用，但不是分发前提。
+ *   ② 系统字体：Windows `C:\Windows\Fonts`，Linux `/usr/share/fonts` 等。
+ *      默认路径，跟随系统 sans-serif；没有包内字体也能画字。
+ *   ③ 都找不到时 `drift_skia_font_ready()` 如实回答 false，让 PHP 侧记一条
+ *      Diagnostic（否则现象是"矩形全对、字全没了"，看起来像排版 bug）。
  *
- * ★ **查找顺序（2026-10-17）**：① exe 所在目录的 `fonts/` ② exe 目录的
- *   `cpp/fonts/` ③ 相对 cwd 的 `cpp/fonts` ④ `fonts`。前两条让"把 fonts/ 放到
- *   exe 旁边"这种**分发形态**成立 —— 双击 / 快捷方式 / 从任意目录启动都行。
- *   （翻默认后端之前这里只有 ③④，等于暗含"cwd 必须是仓库根"，而那个前置
- *   一旦不成立，症状是"界面全白、布局全对"，最难查。）
+ * ★ 探针可用 `DRIFT_DISABLE_BUNDLED_FONTS=1` 屏蔽第 ① 层，单独验系统字体；
+ *   `DRIFT_DISABLE_SYSTEM_FONTS=1` 屏蔽第 ② 层，单独验没有字体时的诊断行为。
+ *   两个开关都不影响正常启动。
  */
 
 #define NOMINMAX
@@ -40,6 +41,7 @@
 #endif
 
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <map>
 #include <memory>
@@ -137,8 +139,8 @@ static void applyPaintSource(SkiaSlot *slot, SkPaint *paint) {
 
 // ─────────────────────────────────────────────────────────────── 字体 ──
 
-/** 相对 cwd 的兜底（旧约定：exe 放在仓库根、以仓库根启动） */
-const char *const kFontDirs[] = { "cpp/fonts", "fonts" };
+/** 可选的包内字体目录；只在用户显式附带字体包时才会命中。 */
+const char *const kBundledFontDirs[] = { "cpp/fonts", "fonts" };
 
 sk_sp<SkFontMgr> g_fontMgr;
 sk_sp<SkTypeface> g_faceRegular;
@@ -146,14 +148,18 @@ sk_sp<SkTypeface> g_faceBold;
 bool g_fontProbed = false;
 bool g_fontReady = false;
 
+/** 环境变量开关：只认 "1"，避免拼写差异把探针判据悄悄关掉。 */
+bool envDisabled(const char *name) {
+    const char *value = std::getenv(name);
+    return value != NULL && std::strcmp(value, "1") == 0;
+}
+
 /**
  * exe 所在目录（**含尾部路径分隔符**）；取不到时返回空串。
  *
  * ★ Windows 用 `GetModuleFileNameA`（ANSI）而不是 `W`：`SkFontMgr_New_Custom_Directory`
  *   收的是 `const char*`，Windows 侧按 ANSI 代码页解析 ⇒ 两者编码口径一致。
- *   换成 UTF-8 反而会在非 ASCII 路径上出现"传进去的字节和 Skia 解析的口径不同"。
  * ★ Linux 用 `/proc/self/exe`，语义与 Windows 侧一致（定位**当前 ELF**，不是 cwd）。
- *   两条路都只在 `ensureFont()` 里走一次，失败就退回 cwd 相对候选。
  */
 #ifdef _WIN32
 std::string exeDirA() {
@@ -182,13 +188,57 @@ std::string exeDirA() {
 }
 #endif
 
+/** 系统字体目录。用 Custom_Directory FontMgr 读文件，不新增 DirectWrite / fontconfig 链接依赖。 */
+void addSystemFontDirs(std::string *out, int *count, int cap) {
+#ifdef _WIN32
+    char windowsDir[MAX_PATH];
+    UINT n = GetSystemWindowsDirectoryA(windowsDir, (UINT)sizeof(windowsDir));
+    if (n > 0 && n < sizeof(windowsDir) && *count < cap) {
+        out[(*count)++] = std::string(windowsDir) + "\\Fonts";
+    }
+#else
+    const char *fixed[] = {
+        "/usr/share/fonts", "/usr/local/share/fonts",
+        "/usr/share/fonts/truetype", "/usr/share/fonts/truetype/dejavu",
+        "/usr/share/fonts/opentype",
+#if defined(__APPLE__)
+        "/System/Library/Fonts", "/Library/Fonts",
+#endif
+    };
+    for (int i = 0; i < (int)(sizeof(fixed) / sizeof(fixed[0])) && *count < cap; i++) {
+        out[(*count)++] = fixed[i];
+    }
+    const char *home = std::getenv("HOME");
+    if (home != NULL && *home != '\0' && *count < cap) {
+        out[(*count)++] = std::string(home) + "/.fonts";
+        if (*count < cap) {
+            out[(*count)++] = std::string(home) + "/.local/share/fonts";
+        }
+    }
+#endif
+}
+
+/** 系统字体按 family 匹配；包名随平台不同，逐个试到命中为止。 */
+sk_sp<SkTypeface> matchSystemFace(const sk_sp<SkFontMgr> &mgr, bool bold) {
+    static const char *const families[] = {
+        "sans-serif", "Arial", "Segoe UI", "DejaVu Sans", "Liberation Sans", "Noto Sans"
+    };
+    const SkFontStyle style = bold ? SkFontStyle::Bold() : SkFontStyle::Normal();
+    for (int i = 0; i < (int)(sizeof(families) / sizeof(families[0])); i++) {
+        sk_sp<SkTypeface> face = mgr->matchFamilyStyle(families[i], style);
+        if (face) {
+            return face;
+        }
+    }
+    return nullptr;
+}
+
 /**
- * 懒加载目录字体。**只试一次**（失败也记着试过了）——
- * 每帧重试会变成"每次绘制都扫一遍目录"。
+ * 懒加载字体，**只试一次**。包内字体优先，系统字体兜底；两者都可被探针单独关掉。
  *
- * ★ 候选顺序见文件头：exe 目录优先，cwd 相对路径兜底。`SkFontMgr_New_Custom_Directory`
- *   对不存在的目录**不返回 null**（返回一个扫不到字体的 mgr）⇒ 判据必须落在
- *   `makeFromFile` 的返回值上，不能只看 mgr。
+ * ★ 包内路径仍按固定文件名精确匹配：它承担确定性渲染，不能让系统字体插队。
+ * ★ 系统路径按 family 匹配：`SkFontMgr_New_Custom_Directory` 对不存在的目录
+ *   不返回 null，判据必须落在 matchFamilyStyle 的返回值上。
  */
 void ensureFont() {
     if (g_fontProbed) {
@@ -196,37 +246,60 @@ void ensureFont() {
     }
     g_fontProbed = true;
 
-    std::string candidates[4];
-    int count = 0;
-
-    const std::string exe = exeDirA();
-    if (!exe.empty()) {
-        candidates[count++] = exe + "fonts";
-        candidates[count++] = exe + "cpp/fonts";
+    std::string bundled[4];
+    int bundledCount = 0;
+    if (!envDisabled("DRIFT_DISABLE_BUNDLED_FONTS")) {
+        const std::string exe = exeDirA();
+        if (!exe.empty()) {
+            bundled[bundledCount++] = exe + "fonts";
+            bundled[bundledCount++] = exe + "cpp/fonts";
+        }
+        for (int i = 0; i < 2; i++) {
+            bundled[bundledCount++] = kBundledFontDirs[i];
+        }
+        for (int i = 0; i < bundledCount; i++) {
+            const std::string &dir = bundled[i];
+            sk_sp<SkFontMgr> mgr = SkFontMgr_New_Custom_Directory(dir.c_str());
+            if (!mgr) {
+                continue;
+            }
+            sk_sp<SkTypeface> regular = mgr->makeFromFile((dir + "/NotoSansSC-Regular.ttf").c_str());
+            if (!regular) {
+                continue;
+            }
+            g_fontMgr = mgr;
+            g_faceRegular = regular;
+            g_faceBold = mgr->makeFromFile((dir + "/NotoSansSC-Bold.ttf").c_str());
+            g_fontReady = true;
+            return;
+        }
     }
-    for (int i = 0; i < 2; i++) {
-        candidates[count++] = kFontDirs[i];
-    }
 
-    for (int i = 0; i < count; i++) {
-        const std::string &dir = candidates[i];
-        sk_sp<SkFontMgr> mgr = SkFontMgr_New_Custom_Directory(dir.c_str());
+    if (envDisabled("DRIFT_DISABLE_SYSTEM_FONTS")) {
+        return;
+    }
+    std::string systemDirs[10];
+    int systemCount = 0;
+    addSystemFontDirs(systemDirs, &systemCount, 10);
+    for (int i = 0; i < systemCount; i++) {
+        sk_sp<SkFontMgr> mgr = SkFontMgr_New_Custom_Directory(systemDirs[i].c_str());
         if (!mgr) {
             continue;
         }
-        sk_sp<SkTypeface> regular = mgr->makeFromFile((dir + "/NotoSansSC-Regular.ttf").c_str());
+        sk_sp<SkTypeface> regular = matchSystemFace(mgr, false);
         if (!regular) {
             continue;
         }
-        // 故意保留 mgr：`makeFromFile` 出来的 typeface 由它管理，整体不析构
         g_fontMgr = mgr;
         g_faceRegular = regular;
-        g_faceBold = mgr->makeFromFile((dir + "/NotoSansSC-Bold.ttf").c_str());
+        g_faceBold = matchSystemFace(mgr, true);
+        if (!g_faceBold) {
+            g_faceBold = regular;
+        }
         g_fontReady = true;
         return;
     }
 }
-
 /** 码点 → UTF-8（`drawString` 收 UTF-8，不是码点） */
 size_t encodeUtf8(uint32_t cp, char out[4]) {
     if (cp < 0x80u) {

@@ -143,7 +143,10 @@ $buildAnchors = [
     'name: Pack AOT runtime' => 'AOT 分发包运行时打包',
     "php: ['8.4', '8.5']" => 'AOT/dev PHP 双矩阵',
     'php${{ matrix.php }}' => '产物名带 PHP 版本',
-    'php tools/ci/aot-package-files.php $stage $target' => 'AOT 包完整性校验',
+    'php tools/ci/aot-package-files.php @checkArgs' => 'AOT 包完整性校验',
+    'with_fonts:' => '可选字体包输入',
+    '- name: Probe window (system fonts)' => '系统字体真机门',
+    "--require-fonts" => '带字体包校验',
 ];
 foreach ($buildAnchors as $needle => $label) {
     if (!str_contains($build, $needle)) {
@@ -179,11 +182,11 @@ if ($packDev === '') {
 if (!str_contains($packAot, 'extension_dir = "ext/"')) {
     fail('Pack AOT runtime 没写相对 php.ini —— 分发包会绑死构建机 PHP 路径');
 }
-if (!str_contains($packAot, 'php tools/ci/aot-package-files.php $stage $target')) {
+if (!str_contains($packAot, 'php tools/ci/aot-package-files.php @checkArgs')) {
     fail('Pack AOT runtime 没校验包完整性 —— 少 DLL 也会上传成绿');
 }
-if (!str_contains($packAot, "Copy-Item 'cpp/fonts/*'")) {
-    fail('Pack AOT runtime 没拷贝字体 —— 用户双击后 Skia 画不出文字，只剩空白窗口');
+if (!str_contains($packAot, 'if ($withFonts)')) {
+    fail('Pack AOT runtime 没做可选字体分支 —— 默认包会被迫带 21MB 字体');
 }
 if (!str_contains($packDev, 'php tools/ci/dev-shell-files.php $stage')) {
     fail('Pack dev shell 没校验包完整性 —— 少 DLL 也会上传成绿');

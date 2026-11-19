@@ -43,6 +43,8 @@
 
 `FontFamily` 声明字体族，`DeterministicFontCollection` 按 `FontFace` 顺序回退。需要新增字体能力时接到这条链上，不要在绘制点临时判断。
 
+Skia 光栅后端的**字面来源**是另一条链：exe 旁可选 `fonts/`（Noto Sans SC，确定性 / 离线）→ 系统字体目录（Windows `C:\Windows\Fonts`、Linux `/usr/share/fonts` 等，默认路径）→ 都拿不到时 `drift_skia_font_ready()` 报 false，由 PHP 侧记 Diagnostic。两条链各管一段：默认发布包可以只靠系统字体，需要确定性截图或离线部署时再随包带字体。探针可用 `DRIFT_DISABLE_BUNDLED_FONTS=1` 与 `DRIFT_DISABLE_SYSTEM_FONTS=1` 单独验每层。
+
 ## 中文点阵字模是生成物
 
 `CjkGlyphData` 是**生成物，不要手改**。它由 `tools/font-gen-glyphs.py` 从 Noto Sans SC 在 64px 上渲染、按面积覆盖度降到 16×16 二值位图写出；覆盖范围由 `tools/font-scan-chars.php` 扫描全仓字符串字面量得到，收集所有非 ASCII 字符（汉字、中文标点、箭头等）。手写那部分字模在 `DeterministicFontData` 里优先，本表只补缺。
