@@ -14,7 +14,7 @@
 
 Drift 是一个 **声明式 + 自绘 + 单语言 AOT** 的桌面 GUI 框架：用 PHP 写界面，经 TypePHP 编译为独立可执行程序（Windows `.exe` / Linux ELF），目标机无需 PHP 运行时。架构与 Flutter 同构——Widget / Element / RenderObject 三棵树、单向下行、约束布局与组合根注入——界面全部自绘，绘制走 Skia。
 
-它面向愿意为“可复现、可验证、单语言交付”付出一点工具链成本的开发者：开发态用壳加载业务 PHP，改代码保存即自动重启；发布态把同一份代码 AOT 成独立程序。
+它面向愿意为“可复现、可验证、单语言交付”付出工程成本的开发者：开发态默认用 CI 构建好的壳加载业务 PHP，本地零构建链，改代码保存即自动重启；发布态才需要完整工具链把同一份代码 AOT 成独立程序。
 
 ## 为什么 Drift
 
@@ -58,21 +58,26 @@ final class HelloApplication extends Application
 
 ## 快速开始
 
-### 路 A：开发态（改 PHP 自动重启）
+### 路 A：开发态（改 PHP 自动重启，免本地构建链）
+
+> Windows 10/11 x64。壳由 CI 在产品版本 `v*` 流水线里构建并随 Release 发布，
+> 本地不用装 MSVC / tpc / PHPX / Skia，也不用 ZTS PHP。
+
+1. 打开 [Releases](https://github.com/yuan-dian/Drift/releases)，在**产品版本 `v*`** 下载
+   `drift-dev-shell-win-x64-php8.5.zip`（另有 `...php8.4.zip`）。`deps-v*` 是 Skia / 依赖包，不是开发壳。
+2. 把整包解压到仓库根 `_build/dev-shell/`，保持 `dev.exe` 与 DLL 同级；`php.ini` 由启动器按包位置生成。
+3. 从仓库根执行：
 
 ```bash
-php tools/drift-dev.php hello          # 壳只编一次；改 PHP 保存后自动重启窗口
+php tools/drift-dev.php hello
+# 等价：php bin/drift dev -- hello
 ```
 
-首次启动需要完整构建工具链；之后改业务 PHP 不再编译。不想装工具链也有预编译壳：
-
-```bash
-# 从最新正式 Release 取 drift-dev-shell-win-x64-php8.5.zip，解压后：
-#   dev.exe -> 仓库根    dev-shell.sha -> _build/
-php tools/drift-dev.php hello --prebuilt
-```
-
-仍需 PHP 8.4 ZTS 运行时（提供 `php8ts.dll`），省掉的是 MSVC / tpc / PHPX / Skia。入口可用 `--project=<目录>` + `--entry=<路径>` 指向自己的项目；作为 composer 包引入时的写法见[快速开始](docs/start/quickstart.md#路-adev-壳改-php-不重编译)。直链只指向最新**正式** Release，draft 阶段尚未生效。
+源码与壳同 tag 时指纹匹配，不会编译。若 checkout 了其他版本但只想用现成壳，加 `--prebuilt`
+显式跳过指纹检查；不要把它当成"版本兼容"的承诺。包里自带 `phpx.dll`、`php8ts.dll`、扩展与
+VC 运行库，本机只需任意 PHP 8.4 CLI 跑启动器。入口可用 `--project=<目录>` + `--entry=<路径>`
+指向自己的项目；作为 composer 包引入时的写法见[快速开始](docs/start/quickstart.md#路-adev-壳改-php-不重编译)。
+只有要改壳 / C++ 桥时才需要档 B 工具链在本地重编 `dev.exe`；常规业务开发不需要。
 
 ### 路 B：发布态（AOT 可执行程序）
 

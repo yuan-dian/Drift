@@ -118,7 +118,7 @@ Skia 构建通道（`windows-deps.yml`）跑在 `windows-2022` 托管镜像上�
 
 ## dev 壳发布包
 
-`drift-dev-shell-win-x64-php8.5.zip` 与依赖包不是一回事：它是预编译的**壳**，用发布流水线同一套工具链编出，装上之后改业务 PHP 不重编。产品 `v*` tag 时由 `windows-build.yml` 产出并上传。
+`drift-dev-shell-win-x64-php8.4.zip` / `drift-dev-shell-win-x64-php8.5.zip` 与依赖包不是一回事：它们是预编译的**壳**，用发布流水线同一套工具链编出，装上之后改业务 PHP 不重编。产品 `v*` tag 时由 `release.yml` 调用 `windows-build.yml` 产出并上传到该产品 Release；`deps-v*` Release 只有 Skia / 字体依赖，不能拿来冒充开发壳。`releases/latest` 也可能指向较新的 `deps-v*`，用户应从 Releases 页按 `v*` 产品版本取包，不要假设 latest 一定是壳。
 
 壳是动态链接的，所以包里必须自带运行时——这不是"用户可以自己装"的东西：
 
@@ -133,7 +133,7 @@ Skia 构建通道（`windows-deps.yml`）跑在 `windows-2022` 托管镜像上�
 
 清单与校验在 `tools/ci/dev-shell-files.php`：打包后立刻对备好的目录跑一次，缺一件就红。缺 DLL 时的症状是 Windows 弹系统级「找不到 DLL」，没有任何可读诊断，用户只会以为包坏了——所以「包里必须有」写成机检，不写在文档里靠人记。
 
-安装方式是解压到仓库的 `_build/dev-shell/`，之后 `php tools/drift-dev.php <app>`。启动器按包的实际位置生成 `php.ini`（`extension_dir` 指向包内 `ext/`），所以解压到哪都能跑，不绑构建机路径；`--print-runtime` 只打印解析结果不启动窗口，起不来时先看这个。
+安装方式是把整包解压到仓库的 `_build/dev-shell/`（`dev.exe` 与 DLL 同级），之后 `php tools/drift-dev.php <app>`。壳自带 ZendVM / PHPX / 扩展 / VC 运行库，本机只要 PHP 8.4 CLI 跑启动器，不需要 ZTS PHP 或档 B 工具链。启动器按包的实际位置生成 `php.ini`（`extension_dir` 指向包内 `ext/`），所以解压到哪都能跑，不绑构建机路径；`--print-runtime` 只打印解析结果不启动窗口，起不来时先看这个。
 
 ## 发版前检查与 tag 约定
 

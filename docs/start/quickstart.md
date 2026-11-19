@@ -43,26 +43,31 @@ php bin/drift test            # PHPUnit 单元测试
 
 ## 路 A：dev 壳（改 PHP 不重编译）
 
+**Windows 10/11 x64 的默认路径是 CI 预编译壳**：壳由产品版本 `v*` 的发布流水线构建，
+本地不需要 MSVC / tpc / PHPX / Skia，也不需要 ZTS PHP；只要 PHP 8.4 CLI 跑启动器。
+从 [Releases](https://github.com/yuan-dian/Drift/releases) 的产品版本下载
+`drift-dev-shell-win-x64-php8.5.zip`（另有 `...php8.4.zip`）；`deps-v*` 只有 Skia / 字体依赖，不是壳。
+
+把整包解压到仓库根 `_build/dev-shell/`（`dev.exe` 与 DLL 同级），然后：
+
 ```bash
 php tools/drift-dev.php hello
 # 等价：php bin/drift dev -- hello
 ```
 
-dev 壳只编一次「壳 + C++ 桥」，之后改业务 PHP 保存即自动重启窗口，适合日常写界面。它是**所有应用共用**的一个壳，不按应用分别编。
+源码与包同 tag 时指纹匹配，不会编译。想跨版本使用现成壳时加 `--prebuilt` 显式跳过指纹检查，
+这表示你接受错位，不代表壳与源码兼容。改 `apps/<应用>/src/` 下的 PHP 保存后自动重启窗口，
+`Ctrl+C` 退出。包内已带 `phpx.dll`、`php8ts.dll`、扩展与 VC 运行库，启动器按包位置生成 `php.ini`，
+不绑定构建机路径；包内容与排错见[预编译壳说明](../../tools/ci/dev-shell-README.md)。
 
-★ 首次启动仍需完整档 B 工具链来编出这个壳；「改 PHP 不重编译」只对首次之后的业务改动成立。
-
-不想装构建工具链：从[最新 Release](https://github.com/yuan-dian/Drift/releases/latest/download/drift-dev-shell-win-x64-php8.5.zip)
-下载预编译壳，`dev.exe` 放仓库根、`dev-shell.sha` 放 `_build/`，checkout 同版本源码后跑
-`php tools/drift-dev.php hello --prebuilt`。仍需 PHP 8.4 ZTS 运行时（`php8ts.dll`）。
-入口不固定：`--project=<目录>` 指向宿主项目根，`--entry=<路径>` 相对它解析；热更监听跟着包含入口及其同级 PHP。该直链只对已发布的正式 Release 有效。
+dev 壳只编一次「壳 + C++ 桥」，之后改业务 PHP 保存即自动重启窗口，适合日常写界面。它是**所有应用共用**的一个壳，不按应用分别编。只有要改壳 / C++ 桥时才走档 B 工具链在本地重编；业务开发不必先过本地构建链。
 
 **Drift 作为 composer 包引入时**：项目根不是 `vendor/.../drift/`，必须同时给出 `--project`，并在自己的入口里加载宿主 autoload。
 
 ```text
 my-app/
 ├── composer.json             # require: yuan-dian/drift
-├── vendor/yuan-dian/drift/   # 预编译 dev.exe 放这里
+├── vendor/yuan-dian/drift/   # 整包解压到这里：_build/dev-shell/（dev.exe + DLL）
 ├── entry.php                 # 你的入口
 └── src/                      # 你的业务 PHP（此处不列具体文件）
 ```
