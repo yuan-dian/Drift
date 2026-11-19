@@ -146,6 +146,7 @@ $buildAnchors = [
     'php tools/ci/aot-package-files.php @checkArgs' => 'AOT 包完整性校验',
     'with_fonts:' => '可选字体包输入',
     '- name: Probe window (system fonts)' => '系统字体真机门',
+    'DRIFT_PROBE_SETTLE' => '系统字体门首帧等待',
     "--require-fonts" => '带字体包校验',
 ];
 foreach ($buildAnchors as $needle => $label) {

@@ -43,7 +43,25 @@
 
 `FontFamily` 声明字体族，`DeterministicFontCollection` 按 `FontFace` 顺序回退。需要新增字体能力时接到这条链上，不要在绘制点临时判断。
 
-Skia 光栅后端的**字面来源**是另一条链：exe 旁可选 `fonts/`（Noto Sans SC，确定性 / 离线）→ 系统字体目录（Windows `C:\Windows\Fonts`、Linux `/usr/share/fonts` 等，默认路径）→ 都拿不到时 `drift_skia_font_ready()` 报 false，由 PHP 侧记 Diagnostic。两条链各管一段：默认发布包可以只靠系统字体，需要确定性截图或离线部署时再随包带字体。探针可用 `DRIFT_DISABLE_BUNDLED_FONTS=1` 与 `DRIFT_DISABLE_SYSTEM_FONTS=1` 单独验每层。
+Skia 光栅后端的**字面来源**是另一条链：exe 旁可选 `fonts/`（Noto Sans SC，确定性 / 离线）→ 系统字体目录（Windows `C:\Windows\Fonts`、Linux `/usr/share/fonts` 等，默认路径）→ 都拿不到时 `drift_skia_font_ready()` 报 false，由 PHP 侧记 Diagnostic。系统拉丁面缺字时按码点回退到 CJK 面（微软雅黑 / Noto CJK 等），所以不带字体包也能显示中文；但跨机字形仍可能不同，要确定性渲染就随包带 `fonts/`。探针可用 `DRIFT_DISABLE_BUNDLED_FONTS=1` 与 `DRIFT_DISABLE_SYSTEM_FONTS=1` 单独验每层。
+
+### 成熟框架怎么做回退（对照）
+
+| 框架 | 回退单位 | 关键机制 | 缺字怎么表达 |
+|---|---|---|---|
+| DirectWrite | **一段**文本 | `IDWriteFontFallback::MapCharacters` 返回最长可覆盖前缀长度 + 该段字体 + `scale` | `mappedFont = NULL`：占位继续，不是错误 |
+| Pango | **逐字符** | itemization 切 run（fontconfig 做回退）+ shaping | 落到 `.notdef` 字形 |
+| Skia Paragraph | 逐字符 | 多个 `SkFontMgr` 按 Dynamic→Asset→Test→Default 顺序，`matchFamilyStyleCharacter` | 空字形，**未命中同样进缓存** |
+| Qt | 家族名链 | `setFamilies()` 显式列表，靠 `QFontDatabase` 索引 | 空字形 |
+| Flutter | 逐字符 | 多 manager 顺序注册，`disableFontFallback()` 关掉系统层 | 空字形 |
+
+Drift 的取舍（都是**有意的**，改之前先看代价）：
+
+- **只按码点问一次**，不做 run 切分。`MapCharacters` 的逐段形态是为了少查表，我们没有可省的 shaping 阶段，逐字查更简单。
+- **不做 `scale` 归一**：DirectWrite 会给不同面一个缩放让 x-height 对齐。我们混排时拉丁面与 CJK 面字号观感可能有细微差异，目前接受。
+- **认文件名不认家族名**（Qt/Skia 认族名）。好处是不依赖 fontconfig / 注册表索引，坏处是系统换了字体文件名就失配 —— 那时退化到"扫目录按族名匹配"的慢路径。
+- **没有回退缓存**：每个字形一次 `unicharToGlyph()`。Skia 内部有字形缓存，实测不是瓶颈；真要加就照 Skia Paragraph 的 `FallbackCache`（LRU）形态，别自己发明。
+
 
 ## 中文点阵字模是生成物
 

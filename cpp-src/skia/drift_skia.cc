@@ -21,7 +21,8 @@
  *   ① 可选包内字体：exe 旁 `fonts/` / `cpp/fonts/`，或 cwd 的 `cpp/fonts` / `fonts`。
  *      这是确定性路径 —— 跨机器像素一致、离线可用，但不是分发前提。
  *   ② 系统字体：Windows `C:\Windows\Fonts`，Linux `/usr/share/fonts` 等。
- *      默认路径，跟随系统 sans-serif；没有包内字体也能画字。
+ *      默认路径；已知文件名直开（不扫整个目录，避免首帧被拖成黑窗），
+ *      拉丁面缺字时按码点回退 CJK 面（否则中文全是豆腐块）。
  *   ③ 都找不到时 `drift_skia_font_ready()` 如实回答 false，让 PHP 侧记一条
  *      Diagnostic（否则现象是"矩形全对、字全没了"，看起来像排版 bug）。
  *
@@ -41,7 +42,6 @@
 #endif
 
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <map>
@@ -72,6 +72,7 @@
 #include "include/effects/SkDashPathEffect.h"
 #include "include/effects/SkImageFilters.h"
 #include "include/ports/SkFontMgr_directory.h"
+#include "include/ports/SkFontMgr_empty.h"
 
 using namespace php;
 
@@ -146,6 +147,10 @@ const char *const kBundledFontDirs[] = { "cpp/fonts", "fonts" };
 sk_sp<SkFontMgr> g_fontMgr;
 sk_sp<SkTypeface> g_faceRegular;
 sk_sp<SkTypeface> g_faceBold;
+// 系统字体默认常是拉丁面（Segoe UI / DejaVu），中文会画成豆腐块；
+// 单独留一条 CJK 回退面，按码点缺字时才用。
+sk_sp<SkTypeface> g_faceCjk;
+sk_sp<SkTypeface> g_faceCjkBold;
 bool g_fontProbed = false;
 bool g_fontReady = false;
 
@@ -240,16 +245,29 @@ sk_sp<SkTypeface> matchSystemFace(const sk_sp<SkFontMgr> &mgr, bool bold) {
 }
 
 /**
- * 按已知文件名直接开字体，绕开目录扫描后的 family 匹配。
+ * 按已知文件名直接开字体，绕开目录扫描。
  *
- * ★ 托管 runner 上的系统字体目录可能出现"扫描到了但 matchFamilyStyle 一个都不命中"
- *   （家族名随镜像/语言包漂移）。这里与包内字体走同一个 makeFromFile 判据，
- *   只要文件在就能拿到 face；family 匹配退居第二选择。
+ * ★ 空 FontMgr 只负责 `makeFromFile`，不会先扫整个目录 —— 系统字体目录里往往
+ *   几百个文件，冷盘上扫描会把首帧推后，用户看到的是"黑窗闪一下才出内容"。
+ *   family 匹配在文件都没命中时才走慢路径（`SkFontMgr_New_Custom_Directory`）。
  */
 sk_sp<SkTypeface> firstSystemFile(const sk_sp<SkFontMgr> &mgr, const std::string &dir,
                                   const char *const *names, int count) {
     for (int i = 0; i < count; i++) {
         sk_sp<SkTypeface> face = mgr->makeFromFile((dir + "/" + names[i]).c_str());
+        if (face) {
+            return face;
+        }
+    }
+    return nullptr;
+}
+
+/** 跨多个系统目录找一个 CJK 回退面；每个目录都用空 FontMgr，不触发全目录扫描。 */
+sk_sp<SkTypeface> firstSystemFileInDirs(const std::string *dirs, int dirCount,
+                                        const char *const *names, int nameCount) {
+    for (int i = 0; i < dirCount; i++) {
+        sk_sp<SkFontMgr> mgr = SkFontMgr_New_Custom_Empty();
+        sk_sp<SkTypeface> face = firstSystemFile(mgr, dirs[i], names, nameCount);
         if (face) {
             return face;
         }
@@ -313,6 +331,12 @@ void ensureFont() {
     static const char *const boldFiles[] = {
         "segoeuib.ttf", "arialbd.ttf", "calibrib.ttf", "tahomabd.ttf", "msyhbd.ttc"
     };
+    static const char *const cjkRegularFiles[] = {
+        "msyh.ttc", "simsun.ttc", "simhei.ttf", "Deng.ttf"
+    };
+    static const char *const cjkBoldFiles[] = {
+        "msyhbd.ttc", "simhei.ttf", "Dengb.ttf"
+    };
 #else
     static const char *const regularFiles[] = {
         "DejaVuSans.ttf", "LiberationSans-Regular.ttf", "NotoSans-Regular.ttf",
@@ -322,39 +346,59 @@ void ensureFont() {
         "DejaVuSans-Bold.ttf", "LiberationSans-Bold.ttf", "NotoSans-Bold.ttf",
         "NotoSansCJK-Bold.ttc", "Arial_Bold.ttf"
     };
+#if defined(__APPLE__)
+    static const char *const cjkRegularFiles[] = {
+        "PingFang.ttc", "STHeiti Light.ttc", "Hiragino Sans GB.ttc"
+    };
+    static const char *const cjkBoldFiles[] = {
+        "PingFang.ttc", "STHeiti Medium.ttc", "Hiragino Sans GB.ttc"
+    };
+#else
+    static const char *const cjkRegularFiles[] = {
+        "NotoSansCJKsc-Regular.otf", "NotoSansCJK-Regular.ttc",
+        "wqy-zenhei.ttc", "wqy-microhei.ttc", "DroidSansFallbackFull.ttf"
+    };
+    static const char *const cjkBoldFiles[] = {
+        "NotoSansCJKsc-Bold.otf", "NotoSansCJK-Bold.ttc",
+        "wqy-zenhei.ttc", "wqy-microhei.ttc", "DroidSansFallbackFull.ttf"
+    };
+#endif
 #endif
     for (int i = 0; i < systemCount; i++) {
-        sk_sp<SkFontMgr> mgr = SkFontMgr_New_Custom_Directory(systemDirs[i].c_str());
-        if (!mgr) {
-            continue;
-        }
+        // 快路径：空 FontMgr + 已知文件名直开，不扫描整个系统字体目录。
+        sk_sp<SkFontMgr> mgr = SkFontMgr_New_Custom_Empty();
         sk_sp<SkTypeface> regular = firstSystemFile(
             mgr, systemDirs[i], regularFiles,
             (int)(sizeof(regularFiles) / sizeof(regularFiles[0])));
+        sk_sp<SkTypeface> bold = regular
+            ? firstSystemFile(mgr, systemDirs[i], boldFiles,
+                              (int)(sizeof(boldFiles) / sizeof(boldFiles[0])))
+            : nullptr;
+
+        // 慢路径：已知文件一个都不在，才扫目录按 family 匹配（可能是定制字体目录）。
         if (!regular) {
+            mgr = SkFontMgr_New_Custom_Directory(systemDirs[i].c_str());
+            if (!mgr) {
+                continue;
+            }
             regular = matchSystemFace(mgr, false);
+            bold = regular ? matchSystemFace(mgr, true) : nullptr;
         }
         if (!regular) {
             continue;
-        }
-        sk_sp<SkTypeface> bold = firstSystemFile(
-            mgr, systemDirs[i], boldFiles,
-            (int)(sizeof(boldFiles) / sizeof(boldFiles[0])));
-        if (!bold) {
-            bold = matchSystemFace(mgr, true);
         }
         g_fontMgr = mgr;
         g_faceRegular = regular;
         g_faceBold = bold ? bold : regular;
+        g_faceCjk = firstSystemFileInDirs(
+            systemDirs, systemCount, cjkRegularFiles,
+            (int)(sizeof(cjkRegularFiles) / sizeof(cjkRegularFiles[0])));
+        g_faceCjkBold = firstSystemFileInDirs(
+            systemDirs, systemCount, cjkBoldFiles,
+            (int)(sizeof(cjkBoldFiles) / sizeof(cjkBoldFiles[0])));
         g_fontReady = true;
         return;
     }
-    // 只在这里打一次：真机没有字体时窗口尺寸/退出码全对、只有字没画，
-    // 不留下这行就只能在日志里猜是布局还是字体。
-    fprintf(stderr, "[FONT] no typeface: bundled=%s system=%s dirs=%d\n",
-            envDisabled("DRIFT_DISABLE_BUNDLED_FONTS") ? "disabled" : "miss",
-            envDisabled("DRIFT_DISABLE_SYSTEM_FONTS") ? "disabled" : "miss",
-            systemCount);
 }
 /** 码点 → UTF-8（`drawString` 收 UTF-8，不是码点） */
 size_t encodeUtf8(uint32_t cp, char out[4]) {
@@ -1025,7 +1069,17 @@ void php_drift_skia_draw_glyph(
         return;
     }
 
-    SkFont font((bool)bold && g_faceBold ? g_faceBold : g_faceRegular, (SkScalar)fontSize);
+    // 系统拉丁面不含中文时按码点回退到 CJK 面；包内 NotoSansSC 本身就覆盖中文，
+    // g_faceCjk 为空也不会改变行为。
+    sk_sp<SkTypeface> face = (bool)bold && g_faceBold ? g_faceBold : g_faceRegular;
+    const SkUnichar unicode = (SkUnichar)(Int)codepoint;
+    if (face && face->unicharToGlyph(unicode) == 0) {
+        sk_sp<SkTypeface> cjk = (bool)bold && g_faceCjkBold ? g_faceCjkBold : g_faceCjk;
+        if (cjk && cjk->unicharToGlyph(unicode) != 0) {
+            face = cjk;
+        }
+    }
+    SkFont font(face, (SkScalar)fontSize);
     font.setSubpixel(true);
     font.setEdging(SkFont::Edging::kAntiAlias);
 
