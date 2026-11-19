@@ -140,10 +140,51 @@ $buildAnchors = [
     'Compress-Archive -Path' => 'dev 壳打包',
     'gh release upload' => 'Release 资产上传',
     'name: Restore Skia artifact' => '发版复用前置 Skia 产物',
+    'name: Pack AOT runtime' => 'AOT 分发包运行时打包',
+    'php tools/ci/aot-package-files.php $stage $target' => 'AOT 包完整性校验',
 ];
 foreach ($buildAnchors as $needle => $label) {
     if (!str_contains($build, $needle)) {
         fail('windows-build.yml 缺环节：' . $label . '（' . $needle . '）');
+    }
+}
+
+// ★ 分发可达性守卫：probe 靠 PHPRC + PATH 跑绿，不等于用户双击能跑。
+// AOT / dev 两个包都必须自带 phpx 的完整传递依赖；少一个就是 0xC0000135。
+// 段级断言而不是全文 contains：防止把拷贝行只加进其中一个包就骗过守卫。
+function driftWorkflowSection(string $text, string $startMarker, string $endMarker): string
+{
+    $start = strpos($text, $startMarker);
+    if ($start === false) {
+        return '';
+    }
+    $end = strpos($text, $endMarker, $start + strlen($startMarker));
+    return $end === false ? substr($text, $start) : substr($text, $start, $end - $start);
+}
+
+$transitiveDlls = ['gmp-10.dll', 'mpfr-6.dll', 'libmpdec-4.0.1.dll', 'libmpdec++-4.0.1.dll'];
+$packAot = driftWorkflowSection($build, '- name: Pack AOT runtime', '- name: Upload AOT artifacts');
+$packDev = driftWorkflowSection($build, '- name: Pack dev shell', '- name: Upload dev shell to Release');
+if ($packAot === '') {
+    fail('windows-build.yml 缺 Pack AOT runtime 段 —— 产物退回裸 exe + 构建机绝对路径 php.ini，用户双击必挂');
+}
+if ($packDev === '') {
+    fail('windows-build.yml 缺 Pack dev shell 段 —— dev 壳发布包没有运行时打包');
+}
+if (!str_contains($packAot, 'extension_dir = "ext/"')) {
+    fail('Pack AOT runtime 没写相对 php.ini —— 分发包会绑死构建机 PHP 路径');
+}
+if (!str_contains($packAot, 'php tools/ci/aot-package-files.php $stage $target')) {
+    fail('Pack AOT runtime 没校验包完整性 —— 少 DLL 也会上传成绿');
+}
+if (!str_contains($packDev, 'php tools/ci/dev-shell-files.php $stage')) {
+    fail('Pack dev shell 没校验包完整性 —— 少 DLL 也会上传成绿');
+}
+foreach (['AOT' => $packAot, 'dev 壳' => $packDev] as $label => $section) {
+    foreach ($transitiveDlls as $dll) {
+        if (!str_contains($section, $dll)) {
+            fail("{$label} 打包段缺 {$dll} —— phpx.dll 的传递依赖没进包，用户机器会弹 DLL_NOT_FOUND");
+        }
     }
 }
 // 取包失败的错误提示必须指向现行发布通道 deps.yml；指回已退役的

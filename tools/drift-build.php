@@ -160,6 +160,10 @@ function distributeRuntime(string $root, string $distRoot): void
     //   仍不启 zip / gd 等无消费者的重扩展。
     $runtimeExtensions = ['mbstring', 'openssl', 'curl'];
     $runtimeIni = "{$root}/php.ini";
+    // ★ 这里写构建机 PHP 发行版的绝对路径：probe 的 launch() 以仓库根为 cwd 从本文件
+    //   派生临时 ini，相对 `ext/` 会解析到不存在的 ROOT/ext ⇒ 扩展加载失败、真机门假红。
+    //   分发包**不用这份**：CI 的 Pack AOT runtime 步骤另生成相对 `ext/` 的 php.ini
+    //   放进包（exe 以自身目录解析），这样用户解压到哪都能跑，不绑构建机路径。
     $runtimeText = "extension_dir = \"" . win($distRoot) . "/ext/\"\n";
     foreach ($runtimeExtensions as $ext) {
         $runtimeText .= "extension={$ext}\n";

@@ -10,6 +10,7 @@ declare(strict_types=1);
  *   - `phpx.dll`  —— TypePHP 专有运行时，任何 PHP 发行版都不带
  *   - `php8ts.dll` —— ZendVM；非 ZTS 的 PHP 只有 php8.dll
  *   - `VCRUNTIME140*.dll` / `msvcp140.dll` —— MSVC 运行库，目标机器不保证有匹配版本
+ *   - `gmp-10.dll` / `mpfr-6.dll` / `libmpdec*.dll` —— phpx.dll 的传递依赖
  * 缺任一样时 Windows 弹的是系统级"找不到 DLL"对话框，没有任何可读诊断，
  * 用户只会以为包坏了。所以这些文件是**包的一部分**，不是"用户自己装"。
  *
@@ -28,6 +29,10 @@ function devShellRequiredFiles(): array
         'dev.exe'              => '壳本体',
         'phpx.dll'             => 'PHPX 运行时（TypePHP 专有，PHP 发行版没有）',
         'php8ts.dll'           => 'ZendVM（ZTS 构建）',
+        'gmp-10.dll'           => 'GMP：phpx.dll 传递依赖',
+        'mpfr-6.dll'           => 'MPFR：phpx.dll 传递依赖',
+        'libmpdec-4.0.1.dll'   => 'decimal：phpx.dll 传递依赖',
+        'libmpdec++-4.0.1.dll' => 'decimal C++：phpx.dll 传递依赖',
         'ext/php_mbstring.dll' => 'mbstring：AOT 与业务代码的必需扩展',
         'ext/php_openssl.dll'  => 'openssl：TLS 与摘要',
         'ext/php_curl.dll'     => 'curl：HTTP 客户端',

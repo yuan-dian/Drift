@@ -420,6 +420,13 @@ jobs:
           Copy-Item (Join-Path $env:DRIFT_PHPX_HOME 'build\phpx.dll') $stage
           Copy-Item (Join-Path $env:PHP_HOME 'php8ts.dll') $stage
 
+          # phpx.dll 还传递依赖 GMP / MPFR / decimal；前面的 Stage 步骤已把它们放进 PHP_HOME。
+          foreach ($dll in @('gmp-10.dll', 'mpfr-6.dll', 'libmpdec-4.0.1.dll', 'libmpdec++-4.0.1.dll')) {
+            $source = Join-Path $env:PHP_HOME $dll
+            if (-not (Test-Path $source)) { throw "PHPX transitive DLL missing: $dll" }
+            Copy-Item $source $stage
+          }
+
           foreach ($ext in @('php_mbstring.dll', 'php_openssl.dll', 'php_curl.dll')) {
             $source = Join-Path $env:PHP_HOME "ext\$ext"
             if (-not (Test-Path $source)) { throw "extension missing in PHP build: $ext" }
@@ -456,14 +463,87 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "${{ inputs.release_tag }}" drift-dev-shell-win-x64.zip --clobber
 
+      # AOT exe 不是纯静态：导入表直接依赖 phpx.dll / php8ts.dll / VC 运行库，
+      # phpx.dll 又传递依赖 GMP / MPFR / decimal。构建期 php.ini 里的绝对路径
+      # 只服务于 probe；分发包另写相对 ext/ 的 ini，解压到哪都能跑。
+      - name: Pack AOT runtime
+        if: inputs.target != 'dev'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $target = '${{ inputs.target || 'hello' }}'
+          $stage = Join-Path $env:RUNNER_TEMP 'aot-runtime'
+          if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+          New-Item $stage, "$stage\ext" -ItemType Directory -Force | Out-Null
+
+          foreach ($file in @("$target.exe", "$target.exe.map")) {
+            if (Test-Path $file) { Copy-Item $file $stage }
+          }
+          if (-not (Test-Path (Join-Path $stage "$target.exe"))) { throw "$target.exe missing" }
+
+          $ini = @"
+          extension_dir = "ext/"
+          extension=mbstring
+          extension=openssl
+          extension=curl
+          opcache.enable=0
+          "@
+          [IO.File]::WriteAllText((Join-Path $stage 'php.ini'), $ini, [Text.UTF8Encoding]::new($false))
+
+          Copy-Item (Join-Path $env:DRIFT_PHPX_HOME 'build\phpx.dll') $stage
+          Copy-Item (Join-Path $env:PHP_HOME 'php8ts.dll') $stage
+
+          foreach ($dll in @('gmp-10.dll', 'mpfr-6.dll', 'libmpdec-4.0.1.dll', 'libmpdec++-4.0.1.dll')) {
+            $source = Join-Path $env:PHP_HOME $dll
+            if (-not (Test-Path $source)) { throw "PHPX transitive DLL missing: $dll" }
+            Copy-Item $source $stage
+          }
+
+          # setup-php 的目录未必带 VC 运行库；缺的从 VS redist 取，不许静默略过。
+          $crtDir = $null
+          if ($env:VCToolsRedistDir) {
+            $candidate = Join-Path $env:VCToolsRedistDir 'x64\Microsoft.VC143.CRT'
+            if (Test-Path $candidate) { $crtDir = $candidate }
+          }
+          if (-not $crtDir -and $env:DRIFT_VS) {
+            $crtDir = Get-ChildItem (Join-Path $env:DRIFT_VS 'VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT') `
+              -Directory -ErrorAction SilentlyContinue |
+              Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+          }
+          foreach ($dll in @('vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll')) {
+            $source = Join-Path $env:PHP_HOME $dll
+            if (-not (Test-Path $source) -and $crtDir) { $source = Join-Path $crtDir $dll }
+            if (-not (Test-Path $source)) { throw "MSVC runtime DLL missing: $dll (PHP_HOME / VS redist both failed)" }
+            Copy-Item $source $stage
+          }
+
+          foreach ($ext in @('php_mbstring.dll', 'php_openssl.dll', 'php_curl.dll')) {
+            $source = Join-Path $env:PHP_HOME "ext\$ext"
+            if (-not (Test-Path $source)) { throw "extension missing in PHP build: $ext" }
+            Copy-Item $source "$stage\ext"
+          }
+          Copy-Item 'assets/cacert.pem' "$stage\cacert.pem"
+
+          php tools/ci/aot-package-files.php $stage $target
+          if ($LASTEXITCODE -ne 0) { throw 'AOT runtime package is incomplete' }
+
       - name: Upload AOT artifacts
-        if: always()
+        if: always() && inputs.target != 'dev'
         uses: actions/upload-artifact@v4
         with:
           name: aot-${{ inputs.target || 'hello' }}-windows-2022
+          path: ${{ runner.temp }}/aot-runtime/*
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload dev target artifacts
+        if: always() && inputs.target == 'dev'
+        uses: actions/upload-artifact@v4
+        with:
+          name: aot-dev-windows-2022
           path: |
-            ${{ inputs.target || 'hello' }}.exe
-            ${{ inputs.target || 'hello' }}.exe.map
+            dev.exe
+            dev.exe.map
             php.ini
           if-no-files-found: warn
           retention-days: 7
