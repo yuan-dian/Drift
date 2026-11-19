@@ -115,3 +115,7 @@ jobs:
       deps_artifact: ''
     permissions:
       contents: write
+      # 被调的 windows-build.yml 里 gate job 请求 actions: read；workflow_call 时
+      # 被调 workflow 的权限上限取 caller 的 permissions，缺这项会在解析阶段
+      # startup_failure（GitHub 静态校验，连 job 都不创建）。
+      actions: read

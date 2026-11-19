@@ -226,6 +226,19 @@ foreach ($releaseAnchors as $needle => $label) {
 if (str_contains($release, 'name: Restore Skia artifact')) {
     fail('release.yml 又恢复 deps 临时产物 —— 它的 lock/zip 指向未发布的包，必然覆盖已发布 deps 的锚点');
 }
+// workflow_call 时被调 workflow 的权限上限取 caller 的 permissions。windows-build.yml
+// 的 gate job 请求 actions: read，dev-shell 必须授予同项，否则 GitHub 静态校验直接
+// startup_failure（连 job 都不创建，日志 404）。这段只在 dev-shell 块内找，避免误判别处。
+$devShellPos = strpos($release, '  dev-shell:');
+if ($devShellPos === false) {
+    fail('release.yml 缺 dev-shell job');
+} else {
+    // 去注释再查整行，避免注释里提到的 "actions: read" 造成假阳性/假阴性。
+    $devShellBlock = (string) preg_replace('/^\s*#.*$/m', '', substr($release, $devShellPos));
+    if (!preg_match('/^[ \t]+actions:[ \t]*read[ \t]*$/m', $devShellBlock)) {
+        fail('release.yml 的 dev-shell 缺 actions: read —— 被调 windows-build.yml 的 gate job 要它，缺了会 startup_failure');
+    }
+}
 $depsPos = strpos($release, '  deps:');
 $verifyPos = strpos($release, '  verify:');
 if ($depsPos === false || $verifyPos === false || $depsPos > $verifyPos) {
