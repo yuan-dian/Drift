@@ -7,8 +7,16 @@ name: Windows x64
 on:
   push:
     branches: [main]
+    # 提升 DEPS_VERSION 的 commit 不在这里触发 AOT：v2 资产要等 deps.yml
+    # 两岸真编发布后才存在，提前 fetch 只会红一段。改由下面的 workflow_run 补跑。
+    paths-ignore: [DEPS_VERSION]
   pull_request:
+    paths-ignore: [DEPS_VERSION]
   workflow_dispatch:
+  # deps.yml 发布成功后才跑 AOT：此时 v2 资产已在 Release，fetch 必拿得到。
+  workflow_run:
+    workflows: ["Cross-platform deps"]
+    types: [completed]
   # Release 复用同一份工具链：target=dev 编开发壳，release_tag 非空时随包上传。
   workflow_call:
     inputs:
@@ -47,6 +55,8 @@ env:
 jobs:
   aot:
     name: Build + probe (windows-2022)
+    # 只在 deps 成功时补跑；deps 失败时没有新资产，跑也是拿旧包白编。
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: windows-2022
     timeout-minutes: 120
     permissions:

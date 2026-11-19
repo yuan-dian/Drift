@@ -100,17 +100,22 @@ Skia 构建通道（`windows-deps.yml`）跑在 `windows-2022` 托管镜像上�
 - `linux-deps.yml`：从同一 commit 编 Linux Skia，产出原始 `.a` 树（供 X11 门）与 linux-x64 包 artifact；同样不写 lock、不打 tag、不发 Release。
 - `deps.yml`：**唯一监听 `DEPS_VERSION` 变化的发布编排**。等两个构建作业都成功后下载两份包，重打包合成一份双平台锁，同步 README 锚点，提交 lock → 打 `deps-vN` tag → `release-deps.php` 上传全部资产 → 两个平台各回取一次。任一平台红就不写远端。
 - `release.yml`：`push` 产品 `v*` tag 时**只调用 `windows-deps.yml`** 编出 Skia，verify 与 dev 壳消费这份 artifact，最后建 **draft** release；它不覆盖公共 `deps-vN` 资产。
+- `windows-build.yml`：真 AOT + 真机门。它对 `DEPS_VERSION` 做 `paths-ignore`，不随版本提升立刻跑；改由 `workflow_run` 订阅 `deps.yml`，只在它 `completed` 且 `conclusion == success` 时补跑。
 
 `assert-workflows.php` 守住“两个构建通道不碰发布链路、只有 `deps.yml` 写 tag/Release”的边界，避免某个平台先把自己那半份锁发布出去。
+
+**红窗隔离**：`TAG` 由 `DEPS_VERSION` 唯一决定，但资产要先真编才存在。版本提升的 push 若直接触发 `windows-build`，它会在双平台包发布前就去 fetch `deps-vN`，红在资产缺失而不是代码问题。所以版本提升只启动 `deps.yml`；发布成功后由 `workflow_run` 补一次真机门。两侧必须成对：只加 `paths-ignore` 不接补跑，等于版本提升后完全没有真机门，是另一种静默缺口。
 
 **前置条件**：`SKIA_REVISION` 必须是 40 位 commit；`deps-v1` 已由该 commit 真编并从已发布资产回验（610 条目 / 49.5 MB）。`deps-v2` 的 Windows 裁剪与 Linux 包代码已就绪，但资产尚未发布；`DEPS_VERSION` 升到 `deps-v2` 会触发 `deps.yml` 的完整双平台构建与发布，不能手动改文件冒充发布完成。
 
 从零重建一次双平台包的顺序：
 
 1. 确认 `SKIA_REVISION` 是 40 位 commit，`DEPS_VERSION` 改成未占用的 `deps-vN`。
-2. push 该变更（或手动触发 `deps.yml` 并显式打开 publish）。
+2. push 该变更（或手动触发 `deps.yml` 并显式打开 publish）。这次 push 不会触发 AOT，公开 CI 只跑发布编排。
 3. `deps.yml` 固定执行：两平台构建 → 下载两份资产 → `pack-deps.php --platform=…` 合成锁 → `sync-lock-anchors.php` → `version --check` → 提交 lock → 打 tag → 发布 → 双平台回验。
-4. 结束后在干净 clone 里走一遍 `fetch-deps.php` → `version --check` → `doctor`。
+4. 发布成功后 `workflow_run` 自动补跑 `windows-build.yml`：从已发布的 `deps-vN` 取包，全量 AOT + 真机五判据。这一步是新裁剪参数的真机门，绿了才算闭环。
+5. 结束后在干净 clone 里走一遍 `fetch-deps.php` → `version --check` → `doctor`。
+
 ## dev 壳发布包
 
 `drift-dev-shell-win-x64.zip` 与依赖包不是一回事：它是预编译的**壳**，用发布流水线同一套工具链编出，装上之后改业务 PHP 不重编。产品 `v*` tag 时由 `windows-build.yml` 产出并上传。

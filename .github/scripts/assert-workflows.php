@@ -174,6 +174,28 @@ if ($depsPos === false || $verifyPos === false || $depsPos > $verifyPos) {
 // Windows 构建通道：只产 win-x64 包，发布统一交给 deps.yml。
 // 让它自己 commit/tag 会在 Linux 包还没就绪时写出半份锁（deps-v2 必须双包齐全）。
 $stripComments = static fn (string $text): string => (string) preg_replace('/^\s*#.*$/m', '', $text);
+
+// ★ 红窗守卫：提升 DEPS_VERSION 的那笔 push 不能触发 AOT —— v2 资产要等
+//   deps.yml 两岸真编后才发布，提前 fetch 必然红一段。AOT 改由 deps 成功后的
+//   workflow_run 补跑；只在 push 侧加 paths-ignore 而不接补跑，会让版本提升后
+//   完全没有真机门，同样是静默缺口。两侧必须成对存在。
+$buildLive = $stripComments($build);
+if (!str_contains($buildLive, 'paths-ignore: [DEPS_VERSION]')) {
+    fail('windows-build.yml 的 push / pull_request 必须 paths-ignore: [DEPS_VERSION] —— 否则版本提升会去 fetch 尚未发布的资产');
+}
+if (!str_contains($buildLive, 'workflows: ["Cross-platform deps"]')) {
+    fail('windows-build.yml 缺 workflow_run 订阅 Cross-platform deps —— 版本提升后不会有真机门补跑');
+}
+if (!str_contains($buildLive, 'types: [completed]')) {
+    fail('windows-build.yml 的 workflow_run 缺 types: [completed]');
+}
+if (!str_contains($buildLive, "github.event.workflow_run.conclusion == 'success'")) {
+    fail('windows-build.yml 的 aot job 缺 conclusion == success 条件 —— deps 失败时也会拿旧包白编');
+}
+if (!str_contains($crossDeps, 'name: Cross-platform deps')) {
+    fail('deps.yml 的 name 必须是 Cross-platform deps —— workflow_run 按 name 匹配，改名会让补跑永久失联');
+}
+fwrite(STDOUT, "  ok     依赖发布与 AOT 红窗隔离（版本提升不提前触发、发布成功补跑）\n");
 $windowsDepsAnchors = [
     'workflow_dispatch:' => '手动兜底',
     'workflow_call:' => '发布编排与产品发版可复用',
