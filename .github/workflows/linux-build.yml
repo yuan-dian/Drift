@@ -40,37 +40,45 @@ env:
 
 jobs:
   x11-e2e:
-    name: X11Platform e2e (PHP 8.4 ZTS / tpc v0.10)
+    name: X11Platform e2e (PHP ${{ matrix.php }} ZTS / tpc v0.10)
     # ★ 不用 ubuntu-22.04：它的 GCC 11.2 与本地开发（GCC 13.3）差两个大版本，
     #   本地能过的告警/警告升级在 CI 上表现不同，等于量的是另一个编译器；
     #   而且 22.04 镜像已进入弃用期，随时会被强制迁移。24.04 是 GCC 13.2，
     #   与本地同代，只差补丁号。
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    # 与 Windows / verify 同口径：桥本身不绑 PHP 版本，但 AOT 的可达性绑 ZendVM ABI，
+    # 两腿都要证。fail-fast: false 保证 8.4 绿不掩盖 8.5 红。
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.4', '8.5']
     env:
       PHPX_HOME: ${{ github.workspace }}/third_party/phpx
       TPC: ${{ github.workspace }}/third_party/typephp/bin/tpc.php
     steps:
       - uses: actions/checkout@v4
 
+      # 官方 swoole 源，不用 fork：本地验证过的两个 commit 都在官方仓库里，
+      # 其中 90e6d22 就是官方 phpx 的 master HEAD。ref 不动，只换 owner，零行为漂移。
       - name: Checkout pinned TypePHP
         uses: actions/checkout@v4
         with:
-          repository: yuan-dian/typephp
+          repository: swoole/typephp
           ref: c5599c5c9e8597e7124dd79db94739cabe39c526
           path: third_party/typephp
 
       - name: Checkout pinned PHPX
         uses: actions/checkout@v4
         with:
-          repository: yuan-dian/phpx
+          repository: swoole/phpx
           ref: 90e6d22a9c3f4d5dbd2c75d62e90bf5adfe58c89
           path: third_party/phpx
 
-      - name: Setup PHP 8.4 ZTS
+      - name: Setup PHP ${{ matrix.php }} ZTS
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.4'
+          php-version: ${{ matrix.php }}
           coverage: none
           tools: composer:v2
         env:
@@ -82,6 +90,7 @@ jobs:
         shell: bash
         run: |
           php -r 'if (!PHP_ZTS) { fwrite(STDERR, "Expected ZTS PHP\n"); exit(1); }'
+          php -r 'if (!str_starts_with(PHP_VERSION, "${{ matrix.php }}.")) { fwrite(STDERR, "Expected PHP ${{ matrix.php }}.x, got " . PHP_VERSION . "\n"); exit(1); }'
           php_home="$(php-config --prefix)"
           test -x "${php_home}/bin/php-config"
           test -f "${php_home}/lib/libphp.so"
@@ -93,7 +102,7 @@ jobs:
         run: |
           include_dir="$(php-config --include-dir)"
           if grep -Fq 'char *base = ecalloc(' "${include_dir}/ext/hash/php_hash.h"; then
-            curl -fsSL https://raw.githubusercontent.com/yuan-dian/typephp/c5599c5c9e8597e7124dd79db94739cabe39c526/.github/patches/php-hash-cxx.patch \
+            curl -fsSL https://raw.githubusercontent.com/swoole/typephp/c5599c5c9e8597e7124dd79db94739cabe39c526/.github/patches/php-hash-cxx.patch \
               | sudo patch --directory="${include_dir}" --strip=1
           fi
 
@@ -262,7 +271,8 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: linux-x11-failure-logs
+          # 双矩阵下两腿可能同时失败；名字带版本，避免互相覆盖成同一份日志。
+          name: linux-x11-failure-logs-php${{ matrix.php }}
           path: |
             ${{ runner.temp }}/drift-linux-x11-verify/*.log
             ${{ runner.temp }}/drift-linux-x11-verify/project.yml

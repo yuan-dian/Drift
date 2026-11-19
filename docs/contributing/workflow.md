@@ -42,7 +42,7 @@ CI 分几种触发，各跑不同档位：
 - **手动全量**：需要时手动触发，`verify --full --json`，含 feature / pages / smoke 慢项，不设定时任务。
 - **发版**：`v*` tag 由 `release.yml` 跑全量同一档并建 draft release，复用 `windows-build.yml` 编出 dev 壳，上传 `drift-dev-shell-win-x64-php8.4.zip` / `...php8.5.zip` 两个包；开发态按产品 `v*` Release 取包，`releases/latest` 可能指向 `deps-v*`，不能当作开发壳直链。draft 转正式后才算公开可用。依赖包由 `deps.yml` 按 `DEPS_VERSION` 双平台发布，不随 tag 重发。
 - **真 AOT（Win32）**：`windows-build.yml` 在 push main / PR / 手动触发时从源码构建 tpc 与 PHPX，全量编译 `hello` 并跑 `probe-window`；依赖包取不到就红，不用纯 PHP 判据冒充 AOT 通过。它同时是可复用工作流：发版以 `target=dev` 调用同一份工具链编开发壳，工具链配方只有一处。
-- **真 AOT（Linux X11）**：`linux-build.yml` 在 `ubuntu-24.04` 上取 Linux Skia artifact，编出 ELF，在 Xvfb + fluxbox 下跑窗口 / 输入 / 事件 / IO / 解码 / 剪贴板 / 干净退出判据；缺 Skia artifact 即红，不用软光栅冒充。
+- **真 AOT（Linux X11）**：`linux-build.yml` 在 `ubuntu-24.04` 上按 PHP 8.4 / 8.5 双矩阵跑，取 Linux Skia artifact，编出 ELF，在 Xvfb + fluxbox 下跑窗口 / 输入 / 事件 / IO / 解码 / 剪贴板 / 干净退出判据；工具链取 swoole 官方源钉死 commit，不用 fork；缺 Skia artifact 即红，不用软光栅冒充。
 
 CI 的三条硬纪律：
 

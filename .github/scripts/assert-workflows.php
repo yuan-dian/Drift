@@ -385,8 +385,11 @@ if (!str_contains($verify, 'assert-workflows.php')) {
 
 // Linux 门：工具链必须钉死到本地验证过的 commit，且必须真跑端到端脚本（不是只编一下）。
 $linuxAnchors = [
+    'repository: swoole/typephp' => 'TypePHP 必须取官方源，不用 fork',
     'ref: c5599c5c9e8597e7124dd79db94739cabe39c526' => 'TypePHP 工具链必须钉 commit',
+    'repository: swoole/phpx' => 'PHPX 必须取官方源，不用 fork',
     'ref: 90e6d22a9c3f4d5dbd2c75d62e90bf5adfe58c89' => 'PHPX 工具链必须钉 commit',
+    'raw.githubusercontent.com/swoole/typephp/' => 'patch 必须取自官方源同 commit，不能夹带 fork 副本',
     'phpts: ts' => '必须装 ZTS PHP（AOT 需要 Embed SAPI）',
     'runs-on: ubuntu-24.04' => '镜像必须与本地 GCC 同代（22.04 是 GCC 11 且已弃用）',
     "- 'cpp-src/x11/**'" => 'push/PR 必须按路径过滤，不能空跑每个分支',
@@ -401,11 +404,26 @@ $linuxAnchors = [
     'bash probes/linux_x11/build.sh' => '必须真跑 X11 端到端脚本',
     'name: Upload X11 failure logs' => '失败必须上传现场日志（build/run/watch + X 日志）',
     'if: failure()' => '日志上传必须在失败时才触发，成功不占 artifact 配额',
+    "php: ['8.4', '8.5']" => 'X11 门必须与 Windows / verify 同口径跑 PHP 双版本',
+    'php-version: ${{ matrix.php }}' => 'setup-php 必须按矩阵腿取版本，不能写死单一版本',
+    'php${{ matrix.php }}' => '产物名带 PHP 版本，双腿同时失败时不互相覆盖',
 ];
 foreach ($linuxAnchors as $needle => $label) {
     if (!str_contains($linux, $needle)) {
         fail('linux-build.yml 缺环节：' . $label . '（' . $needle . '）');
     }
+}
+// ★ 双矩阵反向判据（与 Windows 侧同形）：写死版本或 fail-fast 都会让"测了两个版本"变成假象。
+$linuxLive = $stripComments($linux);
+if (str_contains($linuxLive, "php-version: '8.4'") || str_contains($linuxLive, "php-version: '8.5'")) {
+    fail('linux-build.yml 仍有写死的 php-version —— 双矩阵下会让两腿都拿同一版本');
+}
+if (!str_contains($linuxLive, 'fail-fast: false')) {
+    fail('linux-build.yml 的 PHP 矩阵缺 fail-fast: false —— 一腿失败会取消另一腿，等于没测双版本');
+}
+if (str_contains($linuxLive, 'yuan-dian/typephp') || str_contains($linuxLive, 'yuan-dian/phpx')
+    || str_contains($linuxLive, 'raw.githubusercontent.com/yuan-dian/')) {
+    fail('linux-build.yml 仍有 fork 工具链引用 —— 必须取 swoole 官方源（本地验过的 commit 官方都有）');
 }
 // 同一份判据在两个 job 里跑两遍：失败信息还得跨 job 找，且第二次执行不可能有新信息。
 if (str_contains($linux, 'assert-workflows.php')) {
