@@ -12,8 +12,10 @@ use Drift\Platform\Platform;
  * 而非常量；`attach()` 前表面尺寸必须非 0（否则首帧被丢弃）。
  * `ResizeHookState::$pump` 与 `Errors::installFatalBox()` 是进程级静态钩子，捕获的闭包
  * 持有整条应用图，**不卸 = 关窗必崩**，故卸载进 `run()` 的 `finally`。
- * 次序固定：createWindow+show → makeApp+beforeRestore → restore → surface →
- * beforeAttach → resize(实际客户区) → attach(内含首帧)。
+ * 次序固定：createWindow → makeApp+beforeRestore → restore → surface →
+ * beforeAttach → resize(实际客户区) → attach(内含首帧) → **show**。
+ * ★ `show()` 排在 `attach()` **之后**：首帧没上屏就显示，客户区是未绘制的空白
+ *   （自绘窗口无系统背景刷）⇒ 用户看到"黑窗闪一下才出内容"。
  * @api 组合根一行：`(new WindowSet($platform, 'app.window'))->open(...)->run()`
  */
 final class WindowSet
@@ -69,7 +71,6 @@ final class WindowSet
         }
 
         $handle = $host->createWindow($title, $width, $height);
-        $host->show($handle);
 
         $window = new Window($handle, $app, $host);
 
@@ -106,6 +107,15 @@ final class WindowSet
         );
 
         $app->attach($surface, $screen->viewport());
+
+        // ★ **首帧之后才显示窗口**（2026-11-19）：建窗时窗口类 `hbrBackground = NULL`
+        //   （自绘），客户区在第一次 present 之前是**未绘制**的 —— DWM 没有内容可合成，
+        //   用户看到的就是"黑窗闪一下再出内容"。把 `show()` 挪到 `attach()`（内含首帧）
+        //   之后，`ShowWindow` + `UpdateWindow` 触发的 `WM_PAINT` 直接从帧缓存
+        //   （`WindowSlot::frame`）贴出内容，窗口一出现就是画好的。
+        //   ★ 隐藏窗口上 `present()` 的贴屏结果可能被丢弃，但**帧缓存一定留下来了** ——
+        //   这正是"先 attach 后 show"能成立的前提，别把 present 当成唯一的落点。
+        $host->show($handle);
 
         $this->windows[$handle] = $window;
 

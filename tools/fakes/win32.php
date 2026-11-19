@@ -236,7 +236,17 @@ function winPresentCalls(): array
 if (!function_exists('drift_win_show')) {
     function drift_win_show(int $hwnd): void
     {
+        // ★ 记下**显示那一刻已经上过几次屏**：真机上"首帧之前就 show"的表现是
+        //   客户区一片未绘制（自绘窗口无系统背景刷）⇒ 用户看到黑窗闪一下。
+        //   判据只能靠这个数字 —— 无头下没有像素可抓。
+        $GLOBALS['DRIFT_SMOKE_SHOW'][] = [$hwnd, \count($GLOBALS['DRIFT_SMOKE_PRESENT'] ?? [])];
     }
+}
+
+/** @return list<array{0: int, 1: int}> 显示记录：`[hwnd, 显示时已上屏的帧数]` */
+function winShowCalls(): array
+{
+    return $GLOBALS['DRIFT_SMOKE_SHOW'] ?? [];
 }
 
 if (!function_exists('drift_win_set_title')) {
@@ -537,6 +547,7 @@ function winLoopReset(): void
     $GLOBALS['DRIFT_SMOKE_DIALOG'] = [];
     $GLOBALS['DRIFT_SMOKE_PRESENT'] = [];
     $GLOBALS['DRIFT_SMOKE_CREATE'] = [];
+    $GLOBALS['DRIFT_SMOKE_SHOW'] = [];
     unset($GLOBALS['DRIFT_SMOKE_WIN_HANDLE'], $GLOBALS['DRIFT_SMOKE_CLIENT']);
     unset($GLOBALS['DRIFT_SMOKE_WIN_SEQ'], $GLOBALS['DRIFT_SMOKE_DEAD']);
 

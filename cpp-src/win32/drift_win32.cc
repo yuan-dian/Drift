@@ -1749,6 +1749,17 @@ void php_drift_win_show(Int hwnd) {
         return;
     }
     ShowWindow(target, SW_SHOW);
+
+    // ★★ 显示后**显式标脏再贴一次**（2026-11-19）：组合根改成"先 `attach()` 再
+    //   `show()`"之后，`WindowSlot::frame` 里已经有一帧；这里 `InvalidateRect` +
+    //   `UpdateWindow` 保证 `WM_PAINT` 立刻按缓存贴出来（`presentTo` 只读缓存，
+    //   不重绘），而不是等主循环第一帧。
+    //   ★ 不依赖"`ShowWindow` 会不会把客户区标脏"这个未定行为 —— 自绘窗口的
+    //     `WM_ERASEBKGND` 返回 1（不擦背景），一旦这帧没贴上，用户看到的就是
+    //     **未绘制**的客户区（黑/桌面色），而且没有任何报错。
+    //   实测（壳内打点）：`show` 那一刻 `frame=640x400` 已在缓存里，`WM_PAINT`
+    //   与 `show` 同一 tick 跑完。
+    InvalidateRect(target, NULL, FALSE);
     UpdateWindow(target);
 }
 

@@ -42,6 +42,8 @@
 
 `WindowMaterial` 是**值对象**：一次应用窗口外观材质，三个互斥 / 耦合的旋钮收在一个值里，而不是三个 setter。像素归表面，窗口端口只收"模式"。
 
+**显示时机**：组合根先 `attach()`（内含首帧，帧进 `WindowSlot::frame` 缓存）再 `show()`，`show()` 里 `InvalidateRect` + `UpdateWindow` 把缓存那一帧贴出来。先 show 后 attach ⇒ 显示时缓存还是空的，`WM_PAINT` 无内容可贴，客户区停在**未绘制**状态（自绘窗口的 `WM_ERASEBKGND` 返回 1，不擦背景）—— 这就是"黑窗闪一下再出内容"。两半都要：缓存要有内容，显示时要真贴一次。
+
 ## DPI 与缩放
 
 `Screen::scale()` 是 DPR（1.0 = 96dpi，125% → 1.25），分数缩放**全程保留小数**；量化只在 `Scale::quantizeRect()` / `RenderSurface::resize()` 一处发生。取 DPR 全仓只有一个入口（`Win32\Dpr::of()`）：句柄无效或桥读不到时兜底为 `1.0`，避免 `0.0` 传进除法后变成 NaN 铺满整棵布局且不报错。它不缓存——跨屏拖动时 DPI 会变。

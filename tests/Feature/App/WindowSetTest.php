@@ -107,6 +107,37 @@ final class WindowSetTest extends SmokeTestCase
     }
 
     /**
+     * **窗口在首帧之后才显示** —— 否则用户先看到一个未绘制的客户区（"黑窗闪一下"）。
+     *
+     * ★ 判据是"`show()` 被调用的那一刻，已经上过几次屏"，不是"两者都发生过"：
+     *   顺序反了的时候两条都发生过，只有计数能证伪。
+     * ★ 这条在无头下只能这样测：真机上的表现是黑窗，抓不到像素就没有别的信号。
+     *   真机侧的对应判据是 `probe-window.py` 的"首个非白帧"。
+     */
+    public function testWindowIsShownOnlyAfterTheFirstFrame(): void
+    {
+        $platform = new Win32Platform('soft');
+        $set = new WindowSet($platform, $this->statePath());
+        $set->open('main', '首帧后显示', 320, 240, static function (): Application {
+            return new EchoApplication();
+        });
+
+        $shown = winShowCalls();
+        check(
+            'WindowSet · `open()` 里窗口被显示了一次',
+            \count($shown) === 1,
+            \json_encode($shown),
+        );
+        check(
+            'WindowSet · 显示时首帧已经上过屏（顺序反了 = 用户先看到黑窗）',
+            $shown !== [] && $shown[0][1] >= 1,
+            \json_encode($shown),
+        );
+
+        $this->flushChecks();
+    }
+
+    /**
      * 标题：**默认来自 `Application::title()`**，显式实参只是窗口级覆盖（2026-10-30）。
      *
      * ★ 这条判据取代的是"读代码才知道标题从哪来"：改动之前 4 个组合根各自手写
