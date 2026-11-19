@@ -41,6 +41,7 @@
 #endif
 
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <map>
@@ -348,6 +349,12 @@ void ensureFont() {
         g_fontReady = true;
         return;
     }
+    // 只在这里打一次：真机没有字体时窗口尺寸/退出码全对、只有字没画，
+    // 不留下这行就只能在日志里猜是布局还是字体。
+    fprintf(stderr, "[FONT] no typeface: bundled=%s system=%s dirs=%d\n",
+            envDisabled("DRIFT_DISABLE_BUNDLED_FONTS") ? "disabled" : "miss",
+            envDisabled("DRIFT_DISABLE_SYSTEM_FONTS") ? "disabled" : "miss",
+            systemCount);
 }
 /** 码点 → UTF-8（`drawString` 收 UTF-8，不是码点） */
 size_t encodeUtf8(uint32_t cp, char out[4]) {
@@ -392,6 +399,9 @@ Int php_drift_skia_canvas_create(Int width, Int height, Int backgroundRgba) {
     if (w <= 0 || h <= 0) {
         return (Int)0;   // 0 尺寸窗口（最小化）不是错误，只是没有可画的东西
     }
+    // 字体在**建画布时**探测，不等首笔 drawGlyph：系统字体目录扫描在冷盘/托管
+    // runner 上可能慢过首帧 ⇒ 首帧先把空白贴出去，探针抓到的就是白窗。
+    ensureFont();
 
     SkiaSlot *slot = nullptr;
     // ★★ 不透明位由**底色 alpha** 决定（不新增参数）：`a == 255` ⇒ 这扇窗本来就全不
