@@ -36,7 +36,7 @@ def main():
         if w <= 200 or h <= 200:
             return 1
 
-        app.click_nav('按钮 Button', settle=0.8)
+        app.click_nav('buttons', settle=0.8)
         app.move(w - 40, h - 40, settle=0.4)         # 页面切换的动画收口
         w, h, base = app.grab()
 

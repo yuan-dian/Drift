@@ -345,6 +345,9 @@ final class ShowcaseState extends State
 
         $button
             ->variant($isHere ? ButtonVariant::Primary : ButtonVariant::Flat)
+            // ★ 稳定 id 走 UIA 的 AutomationId，不占用可见文案：探针按它定位，
+            //   改中文名 / 加英文标不会让 6 个探针同时失效（宽窄两档同一个 id）。
+            ->semanticsMeta(automationId: $entry->id)
             ->onPressed(function () use ($entry): void {
                 // ★ `$this` 在闭包里（**不能** static fn —— 要调 setState）
                 $this->select($entry->id);

@@ -60,7 +60,7 @@ def save_png_crop(data, w, h, x0, x1, y0, y1, path):
 
 def main():
     with App("showcase.exe", "Drift 示例台") as app:
-        app.click_nav('长列表 Big', settle=1.2)
+        app.click_nav('big-list', settle=1.2)
 
         w, h, base = app.grab()
         print(f"客户区 {w}x{h}（已切到长列表页）")

@@ -383,6 +383,22 @@ def key(hwnd, vk, settle=0.0):
         time.sleep(settle)
 
 
+def _uia():
+    """延迟加载 `probe-uia.py`（文件名带横线只能走 importlib）。
+
+    ★ 必须在函数里加载：`probe-uia.py` 模块级 import 本模块，模块级加载会成环。
+      缓存到 sys.modules 让 `click_by_name` / `click_by_id` 复用同一份。
+    """
+    mod = sys.modules.get("probe_uia")
+    if mod is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("probe_uia", os.path.join(ROOT, "tools", "probe-uia.py"))
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["probe_uia"] = mod
+        spec.loader.exec_module(mod)
+    return mod
+
+
 def click_by_name(hwnd, name, settle=0.0):
     """按 **UIA 语义名**定位控件并真点 —— 坐标是查出来的，不是记下来的。
 
@@ -394,8 +410,7 @@ def click_by_name(hwnd, name, settle=0.0):
     ★ 延迟 import 避开循环：`probe-uia.py` 模块级 import 本模块，而本函数只在探针
       真正调用时才加载它 —— 那时本模块已完成初始化。
     """
-    import probe_uia as uia
-
+    uia = _uia()
     api = uia.uia_create()
     walker = uia.walker(api)
     root = uia.element_from_handle(api, hwnd)
@@ -415,6 +430,45 @@ def click_by_name(hwnd, name, settle=0.0):
     visit(root)
     if not found:
         raise NotMeasured(f'UIA 树里没有可见的 {name!r}（先 python tools/probe-uia.py --dump 看真名）')
+
+    r = found[0]
+    cx, cy = screen_to_client(hwnd, (r.left + r.right) // 2, (r.top + r.bottom) // 2)
+    click(hwnd, cx, cy, settle)
+
+
+def click_by_id(hwnd, automation_id, settle=0.0):
+    """按 **UIA AutomationId** 定位控件并真点 —— 身份由应用声明，与可见文案无关。
+
+    ★ 与 `click_by_name()` 的分工：name 会随文案改（中英切换 / 措辞调整），
+      AutomationId 是应用给控件的稳定 id（`NavEntry.id` 直接递下来）。导航项
+      这类"测试要长期认得它"的控件走这里；两者各读各自属性、互不退化，
+      这样改文案 / 改 id 的变异能分别被各自的判据咬到。
+    ★ 找不到目标一律 `NotMeasured`（码 2）—— "没测到"不等于"没变化"。
+    """
+    uia = _uia()
+    api = uia.uia_create()
+    walker = uia.walker(api)
+    root = uia.element_from_handle(api, hwnd)
+    found = []
+
+    def visit(elem):
+        _, aid = uia.prop_of(elem, uia.UIA_AutomationIdPropertyId)
+        if aid == automation_id:
+            r = uia.rect_of(elem)
+            if r.right - r.left > 0 and r.bottom - r.top > 0:
+                found.append(r)
+                return
+        child = uia.child(walker, elem)
+        while child:
+            visit(child)
+            child = uia.sibling(walker, child)
+
+    visit(root)
+    if not found:
+        raise NotMeasured(
+            f'UIA 树里没有可见的 AutomationId={automation_id!r}'
+            '（先 python tools/probe-uia.py --dump 看应用是否声明）'
+        )
 
     r = found[0]
     cx, cy = screen_to_client(hwnd, (r.left + r.right) // 2, (r.top + r.bottom) // 2)
@@ -540,9 +594,9 @@ class App:
     def click(self, x, y, settle=0.0):
         click(self.hwnd, x, y, settle)
 
-    def click_nav(self, label, settle=0.0):
-        """按侧栏的无障碍名点导航项（解坐标锁，见模块函数注释）"""
-        click_by_name(self.hwnd, label, settle)
+    def click_nav(self, nav_id, settle=0.0):
+        """按侧栏导航项的稳定 id 定位（AutomationId，解文案锁）"""
+        click_by_id(self.hwnd, nav_id, settle)
 
     def press(self, x, y, settle=0.0):
         press(self.hwnd, x, y, settle)

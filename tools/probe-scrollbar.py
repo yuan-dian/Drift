@@ -100,7 +100,7 @@ def main() -> int:
     want_wheel = "--wheel" in sys.argv
 
     with App("showcase.exe", "Drift 示例台") as app:
-        app.click_nav('长列表 Big', settle=1.0)      # 按语义名点导航，不记像素坐标
+        app.click_nav('big-list', settle=1.0)      # 按稳定 id 点导航，不记坐标也不依赖文案
         app.move(app.size()[0] - 40, app.size()[1] - 40, settle=0.3)   # 指针离开列表
         w, h, data = app.grab()
         print(f"client = {w} x {h}")

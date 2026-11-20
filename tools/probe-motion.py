@@ -46,7 +46,7 @@ def main():
         print(f"客户区 {w}x{h}")
 
         # ── ① 导航到「按钮 Button」──（按语义名，重排侧栏不影响探针）
-        app.click_nav('按钮 Button', settle=0.8)
+        app.click_nav('buttons', settle=0.8)
         app.move(w - 40, h - 40, settle=0.3)   # 指针先挪到空白，免得开局就悬在按钮上
         w, h, before = app.grab()
 
@@ -90,7 +90,7 @@ def main():
         #    ★ 必须换到**真的会溢出**的页（按钮页一屏放得下 ⇒ `maxScroll = 0`
         #      ⇒ 滚动条根本不画，第一版就是在按钮页上找它，0 命中）。
         #      「长列表 Big」才真溢出（按钮页一屏放得下 ⇒ maxScroll = 0，0 命中）。
-        app.click_nav('长列表 Big', settle=0.9)
+        app.click_nav('big-list', settle=0.9)
         app.wheel(w // 2, h // 2, 1, settle=0.25)
         w, h, scrolled = app.grab()
 
