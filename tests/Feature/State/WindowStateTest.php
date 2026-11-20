@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\State;
 
-use Drift\App\Paths;
+use Drift\App\AppPaths;
 use Drift\App\WindowStateStore;
 use Drift\Dev\Smoke\WindowState\FakeWindowHost;
 use Drift\Dev\Tests\Support\SmokeTestCase;
@@ -15,7 +15,7 @@ use Drift\Geometry\Size;
  * 窗口状态（§5.4 / M5）。
  *
  * 这一组验 `WindowStateStore` 的 persist/restore 全部分支，以及
- * `Paths::userConfig` 的路径解析。量具每条都钉了一个"反例"——
+ * `AppPaths` 的路径解析。量具每条都钉了一个"反例"——
  * 没有反例的断言就是空转分支（写了对但没被走通）。
  *
  * 临时文件走 setUp/tearDown，不污染仓库；⑦-b 的深目录在方法里自建自删。
@@ -39,18 +39,29 @@ final class WindowStateTest extends SmokeTestCase
         parent::tearDown();
     }
 
-    // ① 路径解析：空目录 ⇒ 空路径（调用方据此跳过持久化）；尾分隔符/前导斜杠归一
-    public function testUserConfigPaths(): void
+    // ① 路径解析：基础目录/应用名任一为空 ⇒ 空路径（跳过持久化的信号）；
+    //    尾分隔符与前导斜杠归一；分隔符按平台而非硬编码 '\'（X11 下 '\' 是合法文件名）
+    public function testAppPaths(): void
     {
+        $sep = DIRECTORY_SEPARATOR;
         check(
-            'State · Paths::userConfig 空目录 ⇒ 空路径（跳过持久化的信号）',
-            Paths::userConfig('', 'users.window') === '',
-            (string) strlen(Paths::userConfig('', 'users.window')),
+            'State · AppPaths 基础目录为空 ⇒ 空路径（跳过持久化的信号）',
+            AppPaths::at('', 'users')->windowState() === '',
+            (string) strlen(AppPaths::at('', 'users')->windowState()),
         );
         check(
-            'State · Paths::userConfig 归一尾分隔符与前导斜杠（C:\Drift + /b.window）',
-            Paths::userConfig('C:\Drift', '/users.window') === 'C:\Drift\users.window',
-            Paths::userConfig('C:\Drift', '/users.window'),
+            'State · AppPaths 应用名为空 ⇒ 空路径（应用身份不可省）',
+            AppPaths::at('C:\base', '')->windowState() === '',
+        );
+        check(
+            'State · AppPaths 归一尾分隔符与前导斜杠，且拼应用身份目录',
+            AppPaths::at('C:\base/', '/users')->file('/state') === 'C:\base' . $sep . 'users' . $sep . 'state',
+            AppPaths::at('C:\base/', '/users')->file('/state'),
+        );
+        check(
+            'State · windowState() 固定文件名，一个文件按槽位装多窗',
+            AppPaths::at('/base', 'app')->windowState() === '/base' . $sep . 'app' . $sep . 'window.state',
+            AppPaths::at('/base', 'app')->windowState(),
         );
         $this->flushChecks();
     }

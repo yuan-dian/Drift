@@ -227,8 +227,11 @@ function drift_win_place_window(
 ): void {}
 
 /**
- * 用户级配置目录（`%APPDATA%\Drift`；失败 = 空字符串，§5.4）。
+ * 平台基础配置目录（`%APPDATA%`；失败 = 空字符串，§5.4）。
  *
+ * ★ **不含应用身份**：框架不把品牌名写死进用户目录。组合根用
+ *   `AppPaths::forApp($platform, $appName)` 拼出 `<base>\<appname>\<file>`，
+ *   与 Qt / Electron / Tauri 的"平台给基础目录、应用给身份"两层模型一致。
  * ★ **只给路径，不创建目录**：问一次路径不该有副作用；创建归写入方。
  * ★ 空字符串 = 平台答不出来 ⇒ `WindowStateStore` 静默跳过持久化。
  * ★ 为什么 PHP 侧不能自己 `getenv('APPDATA')`：§16.7 的 `nano-hygiene`

@@ -770,17 +770,17 @@ Float php_drift_x11_now_ms()
 
 String php_drift_x11_config_dir()
 {
+    // 只返回平台基础目录（$XDG_CONFIG_HOME 或 $HOME/.config）；应用身份由
+    // 组合根 / AppPaths 拼入 —— 与 Win32 同一个两层模型。
     const char *base = getenv("XDG_CONFIG_HOME");
     if (base == nullptr || *base == '\0') {
         const char *home = getenv("HOME");
         if (home == nullptr) return String("");
         char path[1024];
-        snprintf(path, sizeof(path), "%s/.config/Drift", home);
+        snprintf(path, sizeof(path), "%s/.config", home);
         return String(path);
     }
-    char path[1024];
-    snprintf(path, sizeof(path), "%s/Drift", base);
-    return String(path);
+    return String(base);
 }
 
 // ── 核心桥的 X11 实现：池体复用 core/io_pool.cc，唤醒走自管道 ──

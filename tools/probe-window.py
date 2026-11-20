@@ -28,7 +28,7 @@
 
 ★ 启动 / 截图 / 收尾 / 用户状态隔离全部走 `tools/probe_win.py`（唯一一份）。
   本文件原来自己抄了 `PHPRC` 临时 ini、`BitBlt`+`GetDIBits`、以及"先把
-  `%APPDATA%\\Drift\\<app>.window` 挪开再还回去"那套 —— 前者 9 个探针各一份，
+  `%APPDATA%\\<app>\\window.state` 挪开再还回去"那套 —— 前者 9 个探针各一份，
   后者只有这里做，其余 8 个都在改用户的窗口位置。
 """
 

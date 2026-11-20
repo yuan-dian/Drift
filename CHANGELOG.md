@@ -18,6 +18,22 @@
   在本文件对应版本的 Breaking 小节登记。
 - 发版前验收：`drift-build --full` 绿 + `probe-window` 5/5（T2 全过）。
 
+## Unreleased
+
+### Breaking
+
+- **用户配置路径改为应用专属目录**：`Platform::configDir()` 只返回平台基础目录
+  （Win32 `%APPDATA%` / X11 `$XDG_CONFIG_HOME`），不再写死 `Drift` 子目录——框架名不进
+  用户目录，多个第三方 Drift 应用不会因同名状态文件互相覆盖。组合根用
+  `AppPaths::forApp($platform, 'app')` 声明一次应用名，框架拼出 `<base>/<app>/window.state`，
+  分隔符按平台自动处理（修掉 X11 下硬编码 `\` 生成怪文件的问题）。这个两层模型对齐
+  Qt / Electron / Tauri。
+- `Paths::userConfig()` 被 `AppPaths` 取代并删除；`WindowSet` 构造第二参数由完整路径
+  字符串改为 `AppPaths`。旧位置（`%APPDATA%\Drift\<app>.window`）的状态文件不再读取，
+  窗口几何会重置一次。
+- 诊断工具的相应路径假设同步更新（`probe_win.py` / `probe-window.py` /
+  `probe-two-windows.py` / `probe-hotreload-p15.php`）。
+
 ## v0.1.0（2026-11-20 · 首个无后缀的预览版）
 
 这一版把 preview.1 之后的能力补齐定为一个可下载的发布档位；**仍属技术预览**，

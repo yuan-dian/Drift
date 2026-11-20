@@ -54,7 +54,7 @@ php tools/drift-build.php hello
 这是**全应用唯一提到具体平台实现**的文件；共享的应用源码零平台引用。装配顺序都是真机踩出来的：
 
 1. `new <Platform>()` 建平台实现——这是全应用唯一提到具体平台的地方。
-2. `new WindowSet($platform, ...)`——构造时经 `Platform::hooks()` 装 fatal box 与 resize pump，`run()` 的 finally 统一卸。钩子捕获的闭包持有整条对象图，漏卸会让 AOT 关窗崩，所以这段不再由组合根手写。
+2. `AppPaths::forApp($platform, 'app')` 声明一次应用名——框架据此拼出 `<平台基础目录>/<应用名>/window.state`，多个 Drift 应用不会互撞；`new WindowSet($platform, $paths)` 构造时经 `Platform::hooks()` 装 fatal box 与 resize pump，`run()` 的 finally 统一卸。钩子捕获的闭包持有整条对象图，漏卸会让 AOT 关窗崩，所以这段不再由组合根手写。
 3. `AppScope::make()` 建进程级共享作用域——多窗口共用字体、任务池、主题。
 4. 按系统外观取主题。
 5. `AppScope::setTaskHost()` 必须在 `attach()` 之前——`PumpHost` 在 attach 时取走并缓存端口。

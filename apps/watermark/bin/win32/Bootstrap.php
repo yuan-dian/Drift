@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace App\Watermark;
 
-use Drift\App\Paths;
+use Drift\App\AppPaths;
 use Drift\App\ProcessTaskHost;
 use Drift\App\ProcessWorker;
 use Drift\App\WindowSet;
@@ -83,7 +83,7 @@ final class Bootstrap
             $taskHost->prewarm();
         }
 
-        $set = new WindowSet($platform, Paths::userConfig($platform->configDir(), 'watermark.window'));
+        $set = new WindowSet($platform, AppPaths::forApp($platform, 'watermark'));
 
         $set->open(
             'main',

@@ -17,7 +17,7 @@ use Drift\Platform\PlatformHooks;
  * beforeAttach → resize(实际客户区) → attach(内含首帧) → **show**。
  * ★ `show()` 排在 `attach()` **之后**：首帧没上屏就显示，客户区是未绘制的空白
  *   （自绘窗口无系统背景刷）⇒ 用户看到"黑窗闪一下才出内容"。
- * @api 组合根一行：`(new WindowSet($platform, 'app.window'))->open(...)->run()`
+ * @api 组合根一行：`(new WindowSet($platform, AppPaths::forApp($platform, 'app')))->open(...)->run()`
  */
 final class WindowSet
 {
@@ -26,17 +26,21 @@ final class WindowSet
 
     private readonly PlatformHooks $hooks;
 
+    private readonly string $statePath;
+
     /**
      * @param Platform $platform 任意平台实现（本类不认识 Win32）
-     * @param string $statePath 窗口状态文件的**完整路径**（`Paths::userConfig()` 的结果）；`''` = 不持久化
+     * @param AppPaths $paths 应用专属配置路径：窗口几何落在它的 `windowState()`；`''` = 不持久化。
+     *   应用身份在这里只声明一次，本类不再要组合根手拼 `configDir()` + 文件名。
      * @param null|\Closure():void $release 循环与持久化之后调一次：**额外的业务级清理**。
      *   进程级静态钩子不再走这里 —— 平台 `hooks()` 自己装、自己卸，组合根不必再传卸载闭包。
      */
     public function __construct(
         private readonly Platform $platform,
-        private readonly string $statePath,
+        AppPaths $paths,
         private readonly ?\Closure $release = null,
     ) {
+        $this->statePath = $paths->windowState();
         $this->hooks = $platform->hooks();
         $this->hooks->install();
         $this->hooks->setResizePump(function (int $windowHandle): void {

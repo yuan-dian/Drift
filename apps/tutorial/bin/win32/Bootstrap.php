@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace App\Tutorial;
 
-use Drift\App\Paths;
+use Drift\App\AppPaths;
 use Drift\App\WindowSet;
 use Drift\Platform\Win32\Win32Platform;
 
@@ -40,7 +40,7 @@ final class Bootstrap
     public static function run(): void
     {
         $platform = new Win32Platform();
-        $set = new WindowSet($platform, Paths::userConfig($platform->configDir(), 'tutorial.window'));
+        $set = new WindowSet($platform, AppPaths::forApp($platform, 'tutorial'));
 
         $set->open(
             'main',

@@ -6,6 +6,7 @@ namespace Drift\Dev\Tests\Feature\Restoration;
 use App\Users\Jobs\FetchUsersJob;
 use App\Users\Store\MemoryUserSource;
 use App\Users\UsersApplication;
+use Drift\App\AppPaths;
 use Drift\App\AppScope;
 use Drift\App\Application;
 use Drift\App\Restoration\RestorationStore;
@@ -19,21 +20,21 @@ final class WiringTest extends SmokeTestCase
 {
     private string $path = '';
 
-    private string $windowPath = '';
+    private AppPaths $paths;
 
     protected function setUp(): void
     {
         parent::setUp();
         $this->path = (string) tempnam(sys_get_temp_dir(), 'drift-app-state-');
-        $this->windowPath = $this->path . '.window';
+        $this->paths = AppPaths::at(sys_get_temp_dir(), 'drift-wiring-' . getmypid());
         @unlink($this->path);
-        @unlink($this->windowPath);
+        @unlink($this->paths->windowState());
     }
 
     protected function tearDown(): void
     {
         @unlink($this->path);
-        @unlink($this->windowPath);
+        @unlink($this->paths->windowState());
         parent::tearDown();
     }
 
@@ -92,7 +93,7 @@ final class WiringTest extends SmokeTestCase
         winLoopReset();
         $platform = new Win32Platform('soft');
         $scope = AppScope::make()->setRestoration(new RestorationStore($this->path));
-        $set = new WindowSet($platform, $this->windowPath);
+        $set = new WindowSet($platform, $this->paths);
 
         $set->open('main', 320, 240, static function () use ($scope): Application {
             return new EchoApplication([], $scope);
@@ -106,7 +107,7 @@ final class WiringTest extends SmokeTestCase
         check('退出时 finally 把业务状态写回（全新实例可读）',
             $cold->bucket()->read('form.name') === '赵六',
             (string) @file_get_contents($this->path));
-        check('几何文件与业务状态文件互不覆盖', is_file($this->windowPath) && is_file($this->path));
+        check('几何文件与业务状态文件互不覆盖', is_file($this->paths->windowState()) && is_file($this->path));
 
         $this->flushChecks();
     }

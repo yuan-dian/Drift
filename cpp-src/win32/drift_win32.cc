@@ -2278,14 +2278,15 @@ void php_drift_win_place_window(Int hwnd, Float x, Float y, Float w, Float h, Bo
 }
 
 String php_drift_win_config_dir() {
-    // §5.4 用户配置目录：`%APPDATA%\Drift`。只给路径，**不创建目录**。
-    // 空返回 = 平台答不出来 ⇒ PHP 侧静默跳过持久化（`WindowStateStore`）。
+    // §5.4 只返回平台基础目录（%APPDATA%）；应用身份由组合根 / AppPaths 拼入
+    // ——框架不把品牌名写进用户目录（对齐 Qt / Electron / Tauri 的两层分离）。
+    // 只给路径，**不创建目录**；空返回 = 平台答不出来 ⇒ PHP 侧静默跳过持久化。
     PWSTR raw = NULL;
     if (FAILED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, KF_FLAG_DEFAULT, NULL, &raw))) {
         return String();
     }
 
-    std::wstring dir = std::wstring(raw) + L"\\Drift";
+    std::wstring dir(raw);
     CoTaskMemFree(raw);
     return toUtf8(dir.c_str(), (int)dir.size());
 }

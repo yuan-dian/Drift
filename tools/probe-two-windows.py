@@ -107,7 +107,7 @@ def main() -> int:
         print(f"✗ 找不到 {PROFILE['exe']} —— 先跑 `php tools/drift-build.php {app}`")
         return 2
 
-    # ★ 状态文件是**用户的真实配置**（`%APPDATA%\Drift`）：探针要反复改它，
+    # ★ 状态文件是**用户的真实配置**（`%APPDATA%\<app>\window.state`）：探针要反复改它，
     #   必须先备份、结束时原样还回去。不还回去等于"跑一次测试就改掉用户的窗口位置"。
     stash = win.StateStash(app)
     stash.take()
@@ -232,7 +232,7 @@ def main() -> int:
         if proc2.poll() is None:
             proc2.terminate()
     finally:
-        # 还原用户的真实配置（探针改的是 `%APPDATA%\Drift\hello.window`）
+        # 还原用户的真实配置（探针改的是 `%APPDATA%\<app>\window.state`）
         stash.restore()
 
     return 0

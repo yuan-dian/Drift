@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\App;
 
+use Drift\App\AppPaths;
 use Drift\App\Application;
 use Drift\App\WindowSet;
 use Drift\Dev\Smoke\App\EchoApplication;
@@ -53,10 +54,16 @@ final class WindowSetTest extends SmokeTestCase
         parent::tearDown();
     }
 
-    /** 状态文件落在临时目录：测试绝不碰 %APPDATA% */
+    /** 测试用的应用路径：基础目录指向临时目录，应用名固定 */
+    private function paths(): AppPaths
+    {
+        return AppPaths::at($this->dir, 'test');
+    }
+
+    /** 状态文件落在临时目录：测试绝不碰真实配置区 */
     private function statePath(): string
     {
-        return $this->dir . \DIRECTORY_SEPARATOR . 'app.window';
+        return $this->paths()->windowState();
     }
 
     /**
@@ -71,7 +78,7 @@ final class WindowSetTest extends SmokeTestCase
     {
         $platform = new Win32Platform('soft');
         $app = new EchoApplication();
-        $set = new WindowSet($platform, $this->statePath());
+        $set = new WindowSet($platform, $this->paths());
 
         $window = $set->open('main', 320, 240, static function () use ($app): Application {
             return $app;
@@ -117,7 +124,7 @@ final class WindowSetTest extends SmokeTestCase
     public function testWindowIsShownOnlyAfterTheFirstFrame(): void
     {
         $platform = new Win32Platform('soft');
-        $set = new WindowSet($platform, $this->statePath());
+        $set = new WindowSet($platform, $this->paths());
         $set->open('main', 320, 240, static function (): Application {
             return new EchoApplication();
         }, '首帧后显示');
@@ -149,7 +156,7 @@ final class WindowSetTest extends SmokeTestCase
     public function testTitleDefaultsToApplicationTitleAndCanBeOverridden(): void
     {
         $platform = new Win32Platform('soft');
-        $set = new WindowSet($platform, $this->statePath());
+        $set = new WindowSet($platform, $this->paths());
 
         $set->open('main', 320, 240, static function (): Application {
             return new EchoApplication();
@@ -187,7 +194,7 @@ final class WindowSetTest extends SmokeTestCase
     public function testEachSlotPersistsItsOwnGroup(): void
     {
         $platform = new Win32Platform('soft');
-        $set = new WindowSet($platform, $this->statePath());
+        $set = new WindowSet($platform, $this->paths());
 
         $set->open('main', 320, 240, static function (): Application {
             return new EchoApplication();
@@ -227,7 +234,7 @@ final class WindowSetTest extends SmokeTestCase
         $released = 0;
         $sawFile = false;
 
-        $set = new WindowSet($platform, $this->statePath(), function () use (&$released, &$sawFile): void {
+        $set = new WindowSet($platform, $this->paths(), function () use (&$released, &$sawFile): void {
             ++$released;
             $sawFile = \is_file($this->statePath());
         });
@@ -283,7 +290,7 @@ final class WindowSetTest extends SmokeTestCase
             }
         };
 
-        $set = new WindowSet($platform, $this->statePath(), function () use (&$released): void {
+        $set = new WindowSet($platform, $this->paths(), function () use (&$released): void {
             ++$released;
         });
         $set->open('main', 320, 240, static function () use ($app): Application {
@@ -321,7 +328,7 @@ final class WindowSetTest extends SmokeTestCase
     public function testRepaintForResizeIgnoresUnknownHandle(): void
     {
         $platform = new Win32Platform('soft');
-        $set = new WindowSet($platform, $this->statePath());
+        $set = new WindowSet($platform, $this->paths());
         $set->open('main', 320, 240, static function (): Application {
             return new EchoApplication();
         }, '主窗');
@@ -343,7 +350,7 @@ final class WindowSetTest extends SmokeTestCase
     public function testEmptyStatePathDegradesToNoPersistence(): void
     {
         $platform = new Win32Platform('soft');
-        $set = new WindowSet($platform, '');
+        $set = new WindowSet($platform, AppPaths::at('', 'test'));
         $set->open('main', 320, 240, static function (): Application {
             return new EchoApplication();
         }, '无状态窗');

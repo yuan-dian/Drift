@@ -32,6 +32,8 @@
 | `surface()` 返回 `null` | 平台**没有渲染能力** | 与"provider 在、但表面还没 resize"分开；后者是第二种状态 |
 | 值域里的哨兵 | `configDir()` 空串 = 没有这个概念；`position()` 为 `null` = 最小化、位置不可信；`imeCaret()` 为 `null` = 无插入符；`waitEvents` 的 `-1 / 0 / >0` = 无限等 / 只探 / 等到点 | 消费者跳过对应能力，不要报成错误 |
 
+`configDir()` 只给**平台基础目录**（Win32 `%APPDATA%` / X11 `$XDG_CONFIG_HOME`），不含应用身份——框架名不进用户目录，多个 Drift 应用不会互撞。组合根用 `AppPaths::forApp($platform, 'app')` 声明一次名字，框架拼出 `<base>/<app>/window.state`；分隔符按平台自动处理。这个两层模型与 Qt 的 `setApplicationName()`、Electron 的 `package.json` `name`、Tauri 的 `bundleIdentifier` 一致。
+
 `SurfaceProvider::surface()` 对同一 provider 反复调用返回**同一个** `RenderSurface` 实例；应用持 surface，每帧 `beginFrame()` / `endFrame()`。**渲染对象树不认识 surface**：测试里手搓一个 `RasterCanvas` 就能跑完整布局 + 绘制。这层间接是为了让"换绘制后端"不必先改平台接口。
 
 ## 壳的职责：Win32 与 X11

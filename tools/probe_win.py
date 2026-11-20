@@ -390,7 +390,7 @@ def park_pointer():
 
 # ─────────────────────────── 用户状态隔离 ───────────────────────────
 #
-# ★ 应用退出时会写 `%APPDATA%\Drift\<app>.window`（真实用户的窗口几何）。
+# ★ 应用退出时会写 `%APPDATA%\<app>\window.state`（真实用户的窗口几何）。
 #   探针要验的是**默认尺寸**，留着上次的几何会把正确行为判成 FAIL；
 #   而"跑一次测试就把用户的窗口位置改掉"更不可接受。
 #   ⇒ 起进程前挪开、收尾时原样还回去（`atexit` 兜异常路径）。
@@ -399,7 +399,7 @@ def park_pointer():
 def _state_path(app_name):
     appdata = os.environ.get("APPDATA")
 
-    return os.path.join(appdata, "Drift", f"{app_name}.window") if appdata else None
+    return os.path.join(appdata, app_name, "window.state") if appdata else None
 
 
 class StateStash:

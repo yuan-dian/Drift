@@ -2,14 +2,14 @@
 declare(strict_types=1);
 
 /**
- * 真机接缝：WM_CLOSE 让 WindowSet::run() 的 finally 写 users.window；/F 强杀不写。
+ * 真机接缝：WM_CLOSE 让 WindowSet::run() 的 finally 写 users 的 window.state；/F 强杀不写。
  * php tools/probe-hotreload-p15.php —— 只读配置目录，不要前台窗口。
  * 环境不满足 ⇒ SKIP（码 2），不写成通过；不进 VerifyPlan / CI。
  */
 $root = dirname(__DIR__);
 $exe = "{$root}/dev.exe";
 $ini = "{$root}/_build/dev-ini";
-$state = getenv('APPDATA') . '/Drift/users.window';
+$state = getenv('APPDATA') . '/users/window.state';
 
 if (PHP_OS_FAMILY !== 'Windows' || !is_file($exe) || !is_dir(dirname($state))) {
     fwrite(STDERR, "SKIP: 需要 Windows + dev.exe + 用户配置目录\n");
@@ -98,7 +98,7 @@ function trial(string $exe, string $root, string $ini, string $state, bool $grac
 [$forced, $diagB] = trial($exe, $root, $ini, $state, false);
 killAll();
 
-fwrite(STDOUT, '① 优雅关闭 ⇒ finally 写出 users.window: ' . ($elegant ? 'PASS' : 'FAIL') . " | {$diagA}\n");
+fwrite(STDOUT, '① 优雅关闭 ⇒ finally 写出 users 的 window.state: ' . ($elegant ? 'PASS' : 'FAIL') . " | {$diagA}\n");
 fwrite(STDOUT, '② /F 强杀 ⇒ 不写盘（对照组）: ' . (!$forced ? 'PASS' : 'FAIL') . " | {$diagB}\n");
 $fail = ($elegant ? 0 : 1) + ($forced ? 1 : 0);
 fwrite(STDOUT, "--- probe-hotreload-p15: {$fail} FAIL / 2 条判据 ---\n");

@@ -30,7 +30,7 @@ final class StreamSink implements LogSink
 
     /**
      * @param string      $path      目标文件（父目录必须已存在 —— 创建目录归调用方，
-     *                              同 `Paths::userConfig()` 的"只给路径不创建"）
+     *                              同 `AppPaths` 的"只给路径不创建"）
      * @param int         $maxBytes  超过则轮转；`0` = 不限
      * @param null|LogFormatter $formatter 默认 `[%T] %l %c: %m %f`
      */

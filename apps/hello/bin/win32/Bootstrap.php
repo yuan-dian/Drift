@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace App\Hello;
 
-use Drift\App\Paths;
+use Drift\App\AppPaths;
 use Drift\App\WindowSet;
 use Drift\Platform\Win32\Win32Platform;
 
@@ -38,12 +38,12 @@ final class Bootstrap
     private const MIN_HEIGHT = 320;
 
     /** 窗口状态文件名（§5.4）：**一个应用一个文件**，里面按槽位分组 */
-    private const STATE_FILE = 'hello.window';
+    private const APP_NAME = 'hello';
 
     public static function run(): void
     {
         $platform = new Win32Platform();
-        $set = new WindowSet($platform, Paths::userConfig($platform->configDir(), self::STATE_FILE));
+        $set = new WindowSet($platform, AppPaths::forApp($platform, self::APP_NAME));
 
         $set->open(
             'main',

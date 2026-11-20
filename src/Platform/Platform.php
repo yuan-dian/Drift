@@ -90,7 +90,9 @@ interface Platform
     public function now(): float;
 
     /**
-     * 用户级配置目录。
+     * 平台基础配置目录（Win32 `%APPDATA%` / X11 `$XDG_CONFIG_HOME`）。
+     * ★ **不含应用身份**：框架名不进路径，多个第三方应用共用同一框架时不会互撞；
+     *   应用身份由组合根经 `AppPaths::forApp()` 拼成 `<base>/<appname>/<file>`。
      * 每个平台都有，且不随窗口/表面/输入而变；"没有这个概念"用空字符串（消费者跳过持久化），不用 null。
      * getenv('APPDATA') 在 PHP 侧被禁 ⇒ 只能由平台实现回答。只给路径，不创建目录。
      */
