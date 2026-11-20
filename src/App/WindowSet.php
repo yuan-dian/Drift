@@ -17,7 +17,7 @@ use Drift\Platform\PlatformHooks;
  * beforeAttach → resize(实际客户区) → attach(内含首帧) → **show**。
  * ★ `show()` 排在 `attach()` **之后**：首帧没上屏就显示，客户区是未绘制的空白
  *   （自绘窗口无系统背景刷）⇒ 用户看到"黑窗闪一下才出内容"。
- * @api 组合根一行：`(new WindowSet($platform, AppPaths::forApp($platform, 'app')))->open(...)->run()`
+ * @api 组合根一行：`(new WindowSet($platform, 'app'))->open(...)->run()`
  */
 final class WindowSet
 {
@@ -26,26 +26,51 @@ final class WindowSet
 
     private readonly PlatformHooks $hooks;
 
+    private readonly AppPaths $paths;
+
     private readonly string $statePath;
 
     /**
      * @param Platform $platform 任意平台实现（本类不认识 Win32）
-     * @param AppPaths $paths 应用专属配置路径：窗口几何落在它的 `windowState()`；`''` = 不持久化。
-     *   应用身份在这里只声明一次，本类不再要组合根手拼 `configDir()` + 文件名。
+     * @param string $appName 应用身份（只声明一次）：状态文件落在 `<configDir>/<appName>/window.state`。
+     *   本类经 `AppPaths` 拼路径；平台给不出配置目录则 `$statePath` 为 `''`（跳过持久化）。
      * @param null|\Closure():void $release 循环与持久化之后调一次：**额外的业务级清理**。
      *   进程级静态钩子不再走这里 —— 平台 `hooks()` 自己装、自己卸，组合根不必再传卸载闭包。
+     * @param null|AppPaths $paths 测试/特殊部署注入基础目录；生产不传，由 `$appName` 经平台推导。
      */
     public function __construct(
         private readonly Platform $platform,
-        AppPaths $paths,
+        string $appName,
         private readonly ?\Closure $release = null,
+        ?AppPaths $paths = null,
     ) {
-        $this->statePath = $paths->windowState();
+        // 正常路径用平台的基础目录；测试/特殊部署可用 $paths 注入临时目录，不碰真实配置区。
+        $this->paths = $paths ?? AppPaths::forApp($platform, $appName);
+        $this->statePath = $this->paths->windowState();
         $this->hooks = $platform->hooks();
         $this->hooks->install();
         $this->hooks->setResizePump(function (int $windowHandle): void {
             $this->repaintForResize($windowHandle);
         });
+    }
+
+    /**
+     * 测试 / 特殊部署：直接给基础目录，绕过平台的 `configDir()`。
+     * 组合根不该用这个 —— 应用身份一样只写一次，但基础目录由平台说了算。
+     */
+    public static function at(
+        Platform $platform,
+        string $baseDir,
+        string $appName,
+        ?\Closure $release = null,
+    ): self {
+        return new self($platform, $appName, $release, AppPaths::at($baseDir, $appName));
+    }
+
+    /** 应用专属目录下的另一份文件（业务状态等），与窗口几何共用同一身份、互不覆盖 */
+    public function file(string $name): string
+    {
+        return $this->paths->file($name);
     }
 
     /**

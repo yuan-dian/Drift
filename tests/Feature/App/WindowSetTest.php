@@ -78,7 +78,7 @@ final class WindowSetTest extends SmokeTestCase
     {
         $platform = new Win32Platform('soft');
         $app = new EchoApplication();
-        $set = new WindowSet($platform, $this->paths());
+        $set = WindowSet::at($platform, $this->dir, 'test');
 
         $window = $set->open('main', 320, 240, static function () use ($app): Application {
             return $app;
@@ -124,7 +124,7 @@ final class WindowSetTest extends SmokeTestCase
     public function testWindowIsShownOnlyAfterTheFirstFrame(): void
     {
         $platform = new Win32Platform('soft');
-        $set = new WindowSet($platform, $this->paths());
+        $set = WindowSet::at($platform, $this->dir, 'test');
         $set->open('main', 320, 240, static function (): Application {
             return new EchoApplication();
         }, '首帧后显示');
@@ -156,7 +156,7 @@ final class WindowSetTest extends SmokeTestCase
     public function testTitleDefaultsToApplicationTitleAndCanBeOverridden(): void
     {
         $platform = new Win32Platform('soft');
-        $set = new WindowSet($platform, $this->paths());
+        $set = WindowSet::at($platform, $this->dir, 'test');
 
         $set->open('main', 320, 240, static function (): Application {
             return new EchoApplication();
@@ -194,7 +194,7 @@ final class WindowSetTest extends SmokeTestCase
     public function testEachSlotPersistsItsOwnGroup(): void
     {
         $platform = new Win32Platform('soft');
-        $set = new WindowSet($platform, $this->paths());
+        $set = WindowSet::at($platform, $this->dir, 'test');
 
         $set->open('main', 320, 240, static function (): Application {
             return new EchoApplication();
@@ -234,7 +234,7 @@ final class WindowSetTest extends SmokeTestCase
         $released = 0;
         $sawFile = false;
 
-        $set = new WindowSet($platform, $this->paths(), function () use (&$released, &$sawFile): void {
+        $set = WindowSet::at($platform, $this->dir, 'test', function () use (&$released, &$sawFile): void {
             ++$released;
             $sawFile = \is_file($this->statePath());
         });
@@ -290,7 +290,7 @@ final class WindowSetTest extends SmokeTestCase
             }
         };
 
-        $set = new WindowSet($platform, $this->paths(), function () use (&$released): void {
+        $set = WindowSet::at($platform, $this->dir, 'test', function () use (&$released): void {
             ++$released;
         });
         $set->open('main', 320, 240, static function () use ($app): Application {
@@ -328,7 +328,7 @@ final class WindowSetTest extends SmokeTestCase
     public function testRepaintForResizeIgnoresUnknownHandle(): void
     {
         $platform = new Win32Platform('soft');
-        $set = new WindowSet($platform, $this->paths());
+        $set = WindowSet::at($platform, $this->dir, 'test');
         $set->open('main', 320, 240, static function (): Application {
             return new EchoApplication();
         }, '主窗');
@@ -350,7 +350,7 @@ final class WindowSetTest extends SmokeTestCase
     public function testEmptyStatePathDegradesToNoPersistence(): void
     {
         $platform = new Win32Platform('soft');
-        $set = new WindowSet($platform, AppPaths::at('', 'test'));
+        $set = WindowSet::at($platform, '', 'test');
         $set->open('main', 320, 240, static function (): Application {
             return new EchoApplication();
         }, '无状态窗');
@@ -362,6 +362,20 @@ final class WindowSetTest extends SmokeTestCase
             'WindowSet · 空路径 ⇒ 照常跑完、不写任何文件（静默降级，不抛）',
             !\is_file($this->statePath()),
             $this->statePath(),
+        );
+
+        $this->flushChecks();
+    }
+
+    /** `at()` 注入基础目录；`file()` 与窗口几何共用同一应用身份 */
+    public function testAtAndFileShareAppIdentity(): void
+    {
+        $set = WindowSet::at(new Win32Platform('soft'), $this->dir, 'test');
+
+        check(
+            'WindowSet · file() 取同一应用专属目录下的另一份文件',
+            $set->file('state') === $this->paths()->file('state'),
+            $set->file('state'),
         );
 
         $this->flushChecks();

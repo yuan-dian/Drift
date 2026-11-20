@@ -4,7 +4,6 @@ declare(strict_types=1);
 namespace App\Showcase;
 
 use Drift\App\AppScope;
-use Drift\App\AppPaths;
 use Drift\App\ProcessTaskHost;
 use Drift\App\ProcessWorker;
 use Drift\App\WindowSet;
@@ -70,7 +69,7 @@ final class Bootstrap
         }
 
         $platform = new Win32Platform();
-        $set = new WindowSet($platform, AppPaths::forApp($platform, self::APP_NAME));
+        $set = new WindowSet($platform, self::APP_NAME);
 
         // ★ **`AppScope` 是进程一份的那半边**（M2）：字体、任务池、IO 轮询器、
         //   主题、全局命令。单窗口时它等价于"每个应用自建一个"，多窗口时

@@ -3,7 +3,6 @@ declare(strict_types=1);
 
 namespace App\Users;
 
-use Drift\App\AppPaths;
 use Drift\App\ProcessTaskHost;
 use Drift\App\ProcessWorker;
 use Drift\App\Window;
@@ -85,14 +84,13 @@ final class Bootstrap
             $taskHost->prewarm();
         }
 
-        $paths = AppPaths::forApp($platform, 'users');
-        $set = new WindowSet($platform, $paths);
+        $set = new WindowSet($platform, 'users');
 
         // 业务状态恢复：构造即读回，应用构造时 bucket 已有值；写回由 WindowSet 在退出时做一次。
         $scope = \Drift\App\AppScope::make()
             ->setTaskHost($taskHost)
             ->setRestoration(new \Drift\App\Restoration\RestorationStore(
-                $paths->file('state')
+                $set->file('state')
             ));
 
         $set->open(

@@ -20,7 +20,8 @@ use function rtrim;
  * 文件名字符，写死会拼出 `.../.config/Drift\hello.window` 这种怪文件。
  *
  * 只组装路径、不创建目录（读路径无副作用；创建归写入方）。
- * @api
+ * 组合根不直接接触本类：只把应用名交给 `WindowSet`，路径由本类统一拼装。
+ * @internal
  */
 final class AppPaths
 {

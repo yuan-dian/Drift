@@ -410,7 +410,7 @@ final class Win32Platform implements Platform
 
     /**
      * 平台基础配置目录 —— %APPDATA%，壳只给路径不创建。
-     * 不含应用身份；应用名由组合根经 `AppPaths::forApp()` 拼入。
+     * 不含应用身份；应用名由组合根声明，`WindowSet` 经 `AppPaths` 拼入。
      * 空字符串 = 平台答不出来（SHGetKnownFolderPath 失败：极少见）⇒
      *   WindowStateStore 静默跳过持久化，不是静默崩在别处。
      */

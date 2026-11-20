@@ -3,7 +3,6 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Unit\Platform;
 
-use Drift\App\AppPaths;
 use Drift\App\EventLoop;
 use Drift\App\WindowSet;
 use Drift\Dev\Tests\Support\HeadlessPlatform;
@@ -132,7 +131,7 @@ final class PlatformContractTest extends SmokeTestCase
     public function testHeadlessCanBeInjectedIntoTheCompositionRoot(): void
     {
         $platform = new HeadlessPlatform();
-        check('组合根 · WindowSet 能接受第二实现', new WindowSet($platform, AppPaths::at('', 'test')) instanceof WindowSet);
+        check('组合根 · WindowSet 能接受第二实现', WindowSet::at($platform, '', 'test') instanceof WindowSet);
 
         EventLoop::run($platform, []);
         check(

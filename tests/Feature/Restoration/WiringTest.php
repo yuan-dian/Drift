@@ -20,13 +20,16 @@ final class WiringTest extends SmokeTestCase
 {
     private string $path = '';
 
+    private string $appName = '';
+
     private AppPaths $paths;
 
     protected function setUp(): void
     {
         parent::setUp();
         $this->path = (string) tempnam(sys_get_temp_dir(), 'drift-app-state-');
-        $this->paths = AppPaths::at(sys_get_temp_dir(), 'drift-wiring-' . getmypid());
+        $this->appName = 'drift-wiring-' . getmypid();
+        $this->paths = AppPaths::at(sys_get_temp_dir(), $this->appName);
         @unlink($this->path);
         @unlink($this->paths->windowState());
     }
@@ -93,7 +96,7 @@ final class WiringTest extends SmokeTestCase
         winLoopReset();
         $platform = new Win32Platform('soft');
         $scope = AppScope::make()->setRestoration(new RestorationStore($this->path));
-        $set = new WindowSet($platform, $this->paths);
+        $set = WindowSet::at($platform, sys_get_temp_dir(), $this->appName);
 
         $set->open('main', 320, 240, static function () use ($scope): Application {
             return new EchoApplication([], $scope);

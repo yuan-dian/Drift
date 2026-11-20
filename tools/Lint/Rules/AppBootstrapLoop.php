@@ -91,7 +91,7 @@ final class AppBootstrapLoop implements Rule
                     . '"等多久（FrameClock::nextWaitMs）/ 派发（pumpEvents）/ 光标 / IME /'
                     . ' 几何写回 / 卸静态钩子"六条契约里漏掉任何一条都是**不报错的半失效**'
                     . "\n" . '修法：删掉自己那段 `while (...)`，换成 '
-                    . '`(new WindowSet($platform, AppPaths::forApp($platform, \'app\')))->open(...)->run();`。'
+                    . '`(new WindowSet($platform, \'app\'))->open(...)->run();`。'
                     . '确实需要不同循环 ⇒ 给 `EventLoop` 加钩子，不要在组合根里复制它。',
             );
         }

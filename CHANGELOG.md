@@ -24,12 +24,12 @@
 
 - **用户配置路径改为应用专属目录**：`Platform::configDir()` 只返回平台基础目录
   （Win32 `%APPDATA%` / X11 `$XDG_CONFIG_HOME`），不再写死 `Drift` 子目录——框架名不进
-  用户目录，多个第三方 Drift 应用不会因同名状态文件互相覆盖。组合根用
-  `AppPaths::forApp($platform, 'app')` 声明一次应用名，框架拼出 `<base>/<app>/window.state`，
+  用户目录，多个第三方 Drift 应用不会因同名状态文件互相覆盖。组合根向 `WindowSet`
+  声明一次应用名，框架经 `AppPaths` 拼出 `<base>/<app>/window.state`，
   分隔符按平台自动处理（修掉 X11 下硬编码 `\` 生成怪文件的问题）。这个两层模型对齐
   Qt / Electron / Tauri。
 - `Paths::userConfig()` 被 `AppPaths` 取代并删除；`WindowSet` 构造第二参数由完整路径
-  字符串改为 `AppPaths`。旧位置（`%APPDATA%\Drift\<app>.window`）的状态文件不再读取，
+  字符串改为应用名（路径拼装内部化，`AppPaths` 不再是组合根要接触的类型）。旧位置（`%APPDATA%\Drift\<app>.window`）的状态文件不再读取，
   窗口几何会重置一次。
 - 诊断工具的相应路径假设同步更新（`probe_win.py` / `probe-window.py` /
   `probe-two-windows.py` / `probe-hotreload-p15.php`）。
