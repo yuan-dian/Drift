@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace App\Showcase\Pages;
 use Drift\Route\Route;
 use Drift\Widget\IconName;
-use App\Showcase\Pages\Base\StatelessShowcasePage;
+use App\Showcase\Pages\Base\ShowcasePage;
 
 
 use Drift\Geometry\EdgeInsets;
@@ -34,7 +34,7 @@ use Drift\Widget\Widget;
  *   左右，两者共用一份 `LazyListState` 逻辑。
  */
 #[Route(id: 'big-list', title: '长列表 Big', icon: IconName::ListBullets)]
-final class BigListPage extends StatelessShowcasePage
+final class BigListPage extends ShowcasePage
 {
     private const ROWS = 10000;
 

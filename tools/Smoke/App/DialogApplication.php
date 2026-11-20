@@ -32,12 +32,12 @@ final class DialogApplication extends Application
 
     public function buildRoot(): Widget
     {
-        return DialogPage::make(ShowcaseCaps::make($this->dialog, null, null, function (bool $enabled): void {
+        return new DialogPage(ShowcaseCaps::make($this->dialog, null, null, function (bool $enabled): void {
             // ★ 先取到局部再判空：AOT 上 `$this->可空字段?->m()` 会读成 null（MEMORY 第 21 条）。
             $sink = $this->onCloseConfirm;
             if ($sink !== null) {
                 $sink($enabled);
             }
-        }));
+        }))->host();
     }
 }

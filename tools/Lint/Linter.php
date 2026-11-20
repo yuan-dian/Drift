@@ -28,6 +28,7 @@ use Drift\Dev\Lint\Rules\NanoHygiene;
 use Drift\Dev\Lint\Rules\NonBoxDecoration;
 use Drift\Dev\Lint\Rules\OptionalOpGuard;
 use Drift\Dev\Lint\Rules\OrphanTrait;
+use Drift\Dev\Lint\Rules\PageSelfWidget;
 use Drift\Dev\Lint\Rules\PaintShift;
 use Drift\Dev\Lint\Rules\ProjectName;
 use Drift\Dev\Lint\Rules\LaneOwner;
@@ -136,6 +137,9 @@ final class Linter
             new CallbackArity(),
             // S4：文档检查退役后，项目命名纪律不跟着消失（判据逐字迁自 V1 文档检查层）
             new ProjectName(),
+            // 单类页面（Page 是 State 子类）里 `widget()` 返回的是宿主 PageShell：
+            //   照旧拿它当"页面自己"会在运行期才炸，而金标快照未必覆盖那条交互路径。
+            new PageSelfWidget(),
         ]);
     }
 

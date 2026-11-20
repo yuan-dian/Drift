@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace App\Showcase\Pages;
 use Drift\Route\Route;
 use Drift\Widget\IconName;
-use App\Showcase\Pages\Base\StatelessShowcasePage;
+use App\Showcase\Pages\Base\ShowcasePage;
 
 
 use Drift\Geometry\Alignment;
@@ -46,7 +46,7 @@ use Drift\Widget\Wrap;
  *   只能真机看 —— 这正是本页存在的理由之一。
  */
 #[Route(id: 'glass', title: '毛玻璃 Glass', icon: IconName::Brush)]
-final class GlassPage extends StatelessShowcasePage
+final class GlassPage extends ShowcasePage
 {
     public function build(BuildContext $ctx): Widget
     {

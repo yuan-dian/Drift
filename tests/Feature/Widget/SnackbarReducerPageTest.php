@@ -31,8 +31,8 @@ use Drift\Widget\Text;
  *   点按钮 → `dispatch` → `update()` 出 effect → `apply()` 调能力束 → 通知入队；
  *   点通知上的动作 → 回主路 → 新 model → 文本跟着变。
  *
- * ★ 这是双轨迁移期最需要的一条：新壳若把"动作回调回主路"接错，画面照样能画，
- *   只有点过「撤销」才会发现计数不动 —— 所以这里必须真的点一次。
+ * ★ 这条必须真的点一次「撤销」：动作回调若没接回主路，画面照样能画，
+ *   只有点过才发现计数不动 —— 静态快照覆盖不到这条交互路径。
  */
 final class SnackbarReducerPageTest extends SmokeTestCase
 {

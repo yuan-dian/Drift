@@ -38,6 +38,7 @@ use Drift\Theme\ThemeData;
 use Drift\App\Application;
 use Drift\App\FocusManager;
 use Drift\Widget\Element;
+use Drift\Widget\Page;
 use Drift\Widget\Widget;
 
 require __DIR__ . '/autoload.php';
@@ -121,6 +122,10 @@ if ($declared === []) {
 // 也拉进来（`Widget` / `StatelessWidget`），取末个就可能拿到一个抽象基类。
 $pageClass = reset($declared);
 $target = $store === null ? new $pageClass() : new $pageClass($store);
+// 单类页面自身是 State，由 host() 套宿主后才能被 preview 当 Widget 渲染。
+if ($target instanceof Page) {
+    $target = $target->host();
+}
 
 // `--app` 与 `--page` 共用一个入口：载入的东西是 Application 就走 attach()
 // （连带验 buildRoot/title/commands），是 Widget 就走 render()。

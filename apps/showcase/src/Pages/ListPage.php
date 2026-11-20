@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace App\Showcase\Pages;
 use Drift\Route\Route;
 use Drift\Widget\IconName;
-use App\Showcase\Pages\Base\StatelessShowcasePage;
+use App\Showcase\Pages\Base\ShowcasePage;
 
 
 use Drift\Geometry\EdgeInsets;
@@ -30,7 +30,7 @@ use Drift\Widget\Widget;
  * 滚动偏移**布局期进子盒 offset**（坐标链纪律，§24.2 #15）。
  */
 #[Route(id: 'list', title: '列表 List', icon: IconName::ListBullets)]
-final class ListPage extends StatelessShowcasePage
+final class ListPage extends ShowcasePage
 {
     public function build(BuildContext $ctx): Widget
     {

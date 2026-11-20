@@ -22,6 +22,7 @@ use Drift\Theme\ThemeData;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Element;
 use Drift\Widget\NavButton;
+use Drift\Widget\States;
 
 /**
  * 示例台切页：外壳接 `PageHost` ⇒ 换页是隐藏，不是卸载重建。
@@ -64,9 +65,17 @@ final class ShowcasePageSwitchTest extends SmokeTestCase
         $root->settle();
     }
 
+    /** 按类名找页面节点：单类页面取 State 身份，旧两件套取壳的类名。 */
     private function pageState(Element $root, string $pageClass): ?object
     {
-        $element = findElement($root, static fn (Element $e): bool => get_class($e->widget()) === $pageClass);
+        $element = findElement($root, static function (Element $e) use ($pageClass): bool {
+            $state = States::of($e);
+            if ($state !== null && get_class($state) === $pageClass) {
+                return true;
+            }
+
+            return get_class($e->widget()) === $pageClass;
+        });
 
         return $element?->state();
     }

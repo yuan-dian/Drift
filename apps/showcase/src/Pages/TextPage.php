@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace App\Showcase\Pages;
 use Drift\Route\Route;
 use Drift\Widget\IconName;
-use App\Showcase\Pages\Base\StatelessShowcasePage;
+use App\Showcase\Pages\Base\ShowcasePage;
 
 
 use Drift\Geometry\EdgeInsets;
@@ -28,7 +28,7 @@ use Drift\Widget\Wrap;
  * maxLines / ellipsize。
  */
 #[Route(id: 'text', title: '文本 Text', icon: IconName::TextLines)]
-final class TextPage extends StatelessShowcasePage
+final class TextPage extends ShowcasePage
 {
     public function build(BuildContext $ctx): Widget
     {

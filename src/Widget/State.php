@@ -67,6 +67,21 @@ abstract class State
     /** @internal StatefulElement 建状态时调用一次 */
     public function attach(StatefulElement $element, Widget $widget): void
     {
+        // ★ 一个 State 只能绑一个 Element。`PageShell` 交出去的是**外部注入**的
+        //   实例 ⇒ 同一 Page 被挂两处时，后一次静默覆盖前者；而先卸载的那一处会
+        //   `dropDisposers()` 把后者的订阅与命令一并退掉，表现为"切回这页请求
+        //   再也不触发"，无异常也无日志。宁可当场红。
+        //   卸载后重挂属同一类错的第二种现场：`callInit()` 幂等 ⇒ 不会重新订阅，
+        //   重挂出来的页面收不到任何通知。两种现场一起挡（都能靠"每挂一次用新
+        //   实例"避开），文案同时点到，省得只报"挂两处"把人引到错方向。
+        if ($this->element !== null && $this->element !== $element) {
+            Errors::report(sprintf(
+                '%s 已被另一个 Element 持有：同一个 State 实例不能同时挂两处，也不能卸载后重挂'
+                    . '（缓存的 host() 在条件分支里来回切？每次挂载要新的页面实例）',
+                get_class($this),
+            ));
+        }
+
         $this->element = $element;
         $this->widget = $widget;
     }

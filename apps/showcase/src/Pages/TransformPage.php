@@ -4,9 +4,7 @@ declare(strict_types=1);
 namespace App\Showcase\Pages;
 use Drift\Route\Route;
 use Drift\Widget\IconName;
-use App\Showcase\Pages\Base\StatelessShowcasePage;
-
-use App\Showcase\ShowcaseCapabilities;
+use App\Showcase\Pages\Base\ShowcasePage;
 
 use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Matrix2D;
@@ -31,13 +29,8 @@ use Drift\Widget\Wrap;
  *   两者组合（动画驱动矩阵）留到 A1c 后续，不在这一件里假装做完。
  */
 #[Route(id: 'transform', title: '变换 Transform', icon: IconName::Square)]
-final class TransformPage extends StatelessShowcasePage
+final class TransformPage extends ShowcasePage
 {
-    public static function make(ShowcaseCapabilities $caps): self
-    {
-        return new self($caps);
-    }
-
     public function build(BuildContext $ctx): Widget
     {
         return Card::make(ScrollView::make($this->body()))->paddingAll(0.0);

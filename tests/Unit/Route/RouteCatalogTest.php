@@ -7,6 +7,8 @@ use Drift\Route\Route;
 use Drift\Route\RouteCatalog;
 use Drift\Widget\BuildContext;
 use Drift\Widget\IconName;
+use Drift\Widget\Page;
+use Drift\Widget\State;
 use Drift\Widget\StatelessWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
@@ -47,12 +49,23 @@ final class RouteCatalogTest extends TestCase
     }
 
     #[Test]
-    public function testClassThatIsNotWidgetFailsAtStartup(): void
+    public function testPlainStateFailsAtStartup(): void
     {
         $this->expectException(\InvalidArgumentException::class);
-        $this->expectExceptionMessageMatches('/不是.*Widget/');
+        $this->expectExceptionMessageMatches('/既不是.*Widget/');
 
-        RouteCatalog::discover([NotAWidget::class]);
+        RouteCatalog::discover([PlainStateWithRoute::class]);
+    }
+
+    #[Test]
+    public function testPageSubclassIsAcceptedAndMountable(): void
+    {
+        $descriptor = RouteCatalog::discover([PageWithRoute::class])->get('page-sample');
+        $class = $descriptor->pageClass;
+        $page = new $class();
+
+        self::assertInstanceOf(Page::class, $page);
+        self::assertInstanceOf(Widget::class, $page->host());
     }
 
     #[Test]
@@ -119,9 +132,28 @@ final class NoAnnotationPage extends StatelessWidget
     }
 }
 
-#[Route(id: 'not-a-widget', title: '不是页面', icon: IconName::Bell)]
-final class NotAWidget
+/**
+ * 普通 `State`（不是 `Page`）：`#[Route]` 拒收。
+ *
+ * ★ 这条不是形式主义：宽判据下**任何控件内部的 State** 都能贴注解过启动期，
+ *   真正炸是在用户点开导航项、`new $pageClass($context)` 构造签名不匹配的时候。
+ */
+#[Route(id: 'plain-state', title: '不是页面', icon: IconName::Bell)]
+final class PlainStateWithRoute extends State
 {
+    public function build(BuildContext $ctx): Widget
+    {
+        return Text::make('state');
+    }
+}
+
+#[Route(id: 'page-sample', title: '单类页面', icon: IconName::Bell)]
+final class PageWithRoute extends Page
+{
+    public function build(BuildContext $ctx): Widget
+    {
+        return Text::make('page');
+    }
 }
 
 #[Route(id: 'sample', title: '撞 id', icon: IconName::Bell)]

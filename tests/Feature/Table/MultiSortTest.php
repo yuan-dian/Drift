@@ -269,9 +269,8 @@ final class MultiSortTest extends SmokeTestCase
             ['id' => 3, 'name' => 'C', 'email' => 'c@x', 'city' => '上海'],
         ];
 
-        // State 已拆到独立文件，这里仍走 `createState()` 拿实例、用 `$page::class` 反射，
-        // 不依赖 State 类名随实现改名。
-        $page = TablePage::make(ShowcaseCaps::make())->createState();
+        // 单类页面：TablePage 自身就是持有状态与算法的实例，用 `$page::class` 反射。
+        $page = new TablePage(ShowcaseCaps::make());
         (new \ReflectionProperty($page::class, 'allRows'))->setValue($page, $rows);
         $method = new \ReflectionMethod($page::class, 'sortRows');
 

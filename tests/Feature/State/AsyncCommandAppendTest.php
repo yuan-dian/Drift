@@ -80,7 +80,7 @@ final class AsyncCommandAppendTest extends SmokeTestCase
         return ['items' => $items, 'total' => $total];
     }
 
-    /** 业务侧的合并规则（页面的那一份是 `LoadMorePageState::mergePages()`） */
+    /** 业务侧的合并规则（页面的那一份是 `LoadMorePage::mergePages()`） */
     private static function merge(): \Closure
     {
         return static function (mixed $old, mixed $new): array {

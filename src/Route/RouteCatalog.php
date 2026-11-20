@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Route;
 
+use Drift\Widget\Page;
 use Drift\Widget\Widget;
 
 /**
@@ -41,9 +42,9 @@ final class RouteCatalog
     /**
      * 读注解、校验、建表。
      *
-     * @param list<class-string> $pageClasses 带 `#[Route]` 的页面 Widget 类
+     * @param list<class-string> $pageClasses 带 `#[Route]` 的页面类（通常是 `Page`；`Widget` 仅留给走 reducer 壳的例外页）
      *
-     * @throws \InvalidArgumentException 缺注解 / id 重复 / 类不是 Widget
+     * @throws \InvalidArgumentException 缺注解 / id 重复 / 类既不是 Page 也不是 Widget
      */
     public static function discover(array $pageClasses): self
     {
@@ -60,11 +61,12 @@ final class RouteCatalog
                 ));
             }
 
-            if (!$ref->isSubclassOf(Widget::class)) {
+            if (!$ref->isSubclassOf(Widget::class) && !$ref->isSubclassOf(Page::class)) {
                 throw new \InvalidArgumentException(sprintf(
-                    '"%s" 带 #[Route] 但不是 %s 子类：路由声明的是可挂载的页面',
+                    '"%s" 带 #[Route] 但既不是 %s 也不是 %s 子类：路由声明的是页面身份',
                     $class,
                     Widget::class,
+                    Page::class,
                 ));
             }
 

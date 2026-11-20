@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace App\Showcase\Pages;
 use Drift\Route\Route;
-use App\Showcase\Pages\Base\StatelessShowcasePage;
+use App\Showcase\Pages\Base\ShowcasePage;
 
 
 use Drift\Geometry\EdgeInsets;
@@ -32,7 +32,7 @@ use Drift\Widget\Wrap;
  * ★ 这一页是"图标进 showcase"的第一个消费者：没有它，`Icon` 就只是"写了没人用"。
  */
 #[Route(id: 'icon', title: '图标 Icon', icon: IconName::Plus)]
-final class IconPage extends StatelessShowcasePage
+final class IconPage extends ShowcasePage
 {
     public function build(BuildContext $ctx): Widget
     {

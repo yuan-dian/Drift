@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Widget;
 
-use App\Showcase\Pages\States\ConcurrentFetchPageState;
+use App\Showcase\Pages\ConcurrentFetchPage;
 use Drift\App\Application;
 use Drift\Async\AsyncValue;
 use Drift\Async\Future;
@@ -303,7 +303,7 @@ final class ConcurrentFetchPageTest extends SmokeTestCase
         $state = $app->pageState();
         check('ConcurrentFetchPage · 首轮三条都到了', \count($made) === 3, 'made=' . \count($made));
 
-        $state?->command()->run(ConcurrentFetchPageState::PAGES);
+        $state?->command()->run(ConcurrentFetchPage::PAGES);
         self::frames($app, 4, 1);
 
         check(

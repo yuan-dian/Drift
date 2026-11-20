@@ -1252,6 +1252,8 @@ $routeCatalogTest = (string) @file_get_contents($root . '/tests/Unit/Route/Route
 $snackbarReducerTest = (string) @file_get_contents($root . '/tests/Unit/App/SnackbarReducerTest.php');
 $snackbarReducerPageTest = (string) @file_get_contents($root . '/tests/Feature/Widget/SnackbarReducerPageTest.php');
 $depDirectionPhp = (string) @file_get_contents($root . '/tools/Lint/Rules/DependencyDirection.php');
+$pagePhp = (string) @file_get_contents($root . '/src/Widget/Page.php');
+$pageShellPhp = (string) @file_get_contents($root . '/src/Widget/PageShell.php');
 
 $routeAnchors = [
     // 注解：纯导航声明（id/title/icon），枚举参数三态实测 probes/enum_attribute
@@ -1260,9 +1262,12 @@ $routeAnchors = [
     // 描述符：只有导航三要素 + pageClass，不碰状态管理
     [$routeDescriptorPhp, 'public IconName $icon,', '描述符丢掉 icon —— 导航项拿不到图'],
     [$routeDescriptorPhp, 'public string $pageClass,', '描述符丢掉 pageClass —— 建页工厂无从派生'],
-    // bootstrap：反射只此一处，校验页面是 Widget
+    // bootstrap：反射只此一处，校验页面身份是 Page（Widget 只留给 reducer 壳的例外页）
     [$routeCatalogPhp, 'getAttributes(Route::class)', 'bootstrap 没读注解 —— 清单回到手工维护'],
-    [$routeCatalogPhp, 'isSubclassOf(Widget::class)', 'bootstrap 不校验页面类型 —— 注解可贴任意类'],
+    [$routeCatalogPhp, 'isSubclassOf(Page::class)', 'bootstrap 不校验页面身份 —— 注解可贴任意 State'],
+    // 装配收口：页面只有 host() 一条路，宿主只有 Page::host() 一个调用方
+    [$pagePhp, 'final public function host(): Widget', '页面装配入口被覆写或改名 —— 挂载语义会分叉'],
+    [$pageShellPhp, '@internal', 'PageShell 没标 @internal —— 业务会绕过 host() 直接 new 宿主'],
     // 四段式契约：可选实现，但一旦用就守四段
     [$reducerViewPhp, 'public function init(): ReducerModel;', '契约少了 init'],
     [$reducerViewPhp, 'public function update(ReducerModel $model, ReducerEvent $event): ReducerUpdate;', '契约少了 update'],
@@ -1325,4 +1330,10 @@ if (preg_match('/use\s+Drift\\\\Reducer\\\\/', $routeDirUses)) {
 if (preg_match('/use\s+Drift\\\\Route\\\\(?!Route;)/', $reducerDirUses)) {
     fail('src/Reducer/ 里 import 了 Drift\Route\ —— 状态机不许反向依赖导航（A14）');
 }
-fwrite(STDOUT, '  ok     Route 架构：注解即导航/反射/reducer 可选/命名解耦：' . count($routeAnchors) . " 个链路环节 + 5 条反向判据\n");
+// 反向判据 6：页面身份必须是 Page（迁移期兼容 Widget），不许退回"任意 State 都能贴注解"。
+//   宽判据的后果：某个控件内部的 State 被误标 #[Route] 也能过启动期反射，
+//   真正炸是在用户点开那个导航项、`new $pageClass($context)` 构造签名不匹配的时候。
+if (str_contains($routeCatalogPhp, 'isSubclassOf(State::class)')) {
+    fail('RouteCatalog 退回宽判据 —— 任意 State 都能贴 #[Route]，页面身份在类型系统里消失');
+}
+fwrite(STDOUT, '  ok     Route 架构：注解即导航/反射/reducer 可选/命名解耦：' . count($routeAnchors) . " 个链路环节 + 6 条反向判据\n");

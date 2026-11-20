@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Routing;
 
 use Drift\Widget\IconName;
+use Drift\Widget\Page;
 use Drift\Widget\Widget;
 
 /**
@@ -15,7 +16,7 @@ use Drift\Widget\Widget;
  */
 final readonly class NavEntry
 {
-    /** @param class-string<Widget> $pageClass */
+    /** @param class-string<Widget|Page> $pageClass */
     public function __construct(
         public string $id,
         public IconName $icon,
@@ -27,6 +28,9 @@ final readonly class NavEntry
     /** 页面构造器统一收一个应用上下文对象（示例台里就是能力束）。 */
     public function makePage(object $context): Widget
     {
-        return new $this->pageClass($context);
+        $page = new $this->pageClass($context);
+
+        // 单类页面经 host() 进树；走 reducer 壳的例外页本身已是 Widget，原样返回。
+        return $page instanceof Page ? $page->host() : $page;
     }
 }

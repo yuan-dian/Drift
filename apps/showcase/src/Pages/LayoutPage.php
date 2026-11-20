@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace App\Showcase\Pages;
 use Drift\Route\Route;
 use Drift\Widget\IconName;
-use App\Showcase\Pages\Base\StatelessShowcasePage;
+use App\Showcase\Pages\Base\ShowcasePage;
 
 
 use Drift\Geometry\Alignment;
@@ -49,7 +49,7 @@ use Drift\Widget\Wrap;
  * Drift 用**声明式控件**表达同一件事的形态。
  */
 #[Route(id: 'layout', title: '布局 Layout', icon: IconName::Grid)]
-final class LayoutPage extends StatelessShowcasePage
+final class LayoutPage extends ShowcasePage
 {
     public function build(BuildContext $ctx): Widget
     {

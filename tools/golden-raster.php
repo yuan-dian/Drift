@@ -36,6 +36,7 @@ use Drift\Widget\BuildContext;
 use Drift\Widget\Card;
 use Drift\Widget\CustomPaint;
 use Drift\Widget\CustomPainter;
+use Drift\Widget\Page;
 use Drift\Dev\Golden\PageScenes;
 use Drift\Dev\Inspect\Snapshot;
 use Drift\Dev\Smoke\App\ShowcaseCaps;
@@ -79,6 +80,15 @@ function goldenPng(string $rgba, int $w, int $h): string
         . $chunk('IEND', '');
 }
 
+/**
+ * 单类 Page 由 `host()` 进树；走 reducer 壳的例外页本身已是 Widget，原样返回。
+ * 量具与真实应用共用这一个判定，避免"golden 绿了但应用建不出页"。
+ */
+function mountablePage(object $page): Widget
+{
+    return $page instanceof Page ? $page->host() : $page;
+}
+
 // ─────────────────── S2：像素差异区域 → 节点反查（DevTools 方向的"快照说谁"）───────────────────
 //
 // 背景：golden 失败消息现在能说"哪一块像素变了"（包围盒 + 横带），但那一步之后
@@ -113,8 +123,7 @@ function regionNodes(string $pageClass, int $W, int $H, array $bbox, string $sce
         return "（{$shortName} 要构造参数且无接线，跳过节点反查）\n";
     }
 
-    /** @var \Drift\Widget\Widget $page */
-    $page = $required > 0 ? new $pageClass(...$wired()) : new $pageClass();
+    $page = mountablePage($required > 0 ? new $pageClass(...$wired()) : new $pageClass());
     $snapshot = Snapshot::ofPage($page, $W, $H);
 
     // 落盘：给 S3 HTML 报告消费（可折叠树 + 点节点看属性）。
@@ -664,7 +673,7 @@ foreach (PageScenes::names() as $pageName) {
         };
 
         /** @var Widget $page */
-        $page = new $pageClass(...$pageArgs);
+        $page = mountablePage(new $pageClass(...$pageArgs));
         $element = $page->createElement();
         $element->mount(null, $context);
         (new Frame($surface))->run(

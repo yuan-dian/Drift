@@ -18,6 +18,6 @@ final class DropApplication extends Application
 {
     public function buildRoot(): Widget
     {
-        return new DropPage(ShowcaseCaps::make());
+        return (new DropPage(ShowcaseCaps::make()))->host();
     }
 }

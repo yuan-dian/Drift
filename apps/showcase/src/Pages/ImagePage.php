@@ -4,9 +4,7 @@ declare(strict_types=1);
 namespace App\Showcase\Pages;
 use Drift\Route\Route;
 use Drift\Widget\IconName;
-use App\Showcase\Pages\Base\StatelessShowcasePage;
-
-use App\Showcase\ShowcaseCapabilities;
+use App\Showcase\Pages\Base\ShowcasePage;
 
 use Drift\Geometry\EdgeInsets;
 use Drift\Layout\ImageFit;
@@ -37,13 +35,8 @@ use Drift\Widget\Wrap;
  *   找不到就是 1×1 透明占位（字体已不依赖 cwd，见 `cpp-src/skia/drift_skia.cc`）。
  */
 #[Route(id: 'image', title: '图片 Image', icon: IconName::Image)]
-final class ImagePage extends StatelessShowcasePage
+final class ImagePage extends ShowcasePage
 {
-    public static function make(ShowcaseCapabilities $caps): self
-    {
-        return new self($caps);
-    }
-
     public function build(BuildContext $ctx): Widget
     {
         return Card::make(ScrollView::make($this->body()))->paddingAll(0.0);

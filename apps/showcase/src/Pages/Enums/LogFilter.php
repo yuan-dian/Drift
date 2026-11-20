@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-namespace App\Showcase\Pages\States;
+namespace App\Showcase\Pages\Enums;
 
 /** 日志页过滤档（页内封闭域）。 */
 enum LogFilter

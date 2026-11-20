@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace App\Showcase\Pages;
 use Drift\Route\Route;
 use Drift\Widget\IconName;
-use App\Showcase\Pages\Base\StatelessShowcasePage;
+use App\Showcase\Pages\Base\ShowcasePage;
 
 
 use Drift\Geometry\EdgeInsets;
@@ -33,7 +33,7 @@ use Drift\Widget\Widget;
  *   比例就变成"高 = 整页宽 / 比例"，同样看不出三段之间的差别。
  */
 #[Route(id: 'aspect', title: '宽高比 Aspect', icon: IconName::Square)]
-final class AspectPage extends StatelessShowcasePage
+final class AspectPage extends ShowcasePage
 {
     public function build(BuildContext $ctx): Widget
     {

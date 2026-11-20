@@ -5,11 +5,12 @@ namespace App\Showcase\Pages;
 use Drift\Route\Route;
 use Drift\Widget\IconName;
 
-use App\Showcase\Pages\Base\StatefulShowcasePage;
+use App\Showcase\ShowcaseCapabilities;
 use App\Showcase\Routes\Snackbar\SnackbarServices;
 use App\Showcase\Routes\SnackbarReducer;
 use Drift\Reducer\ReducerState;
 use Drift\Widget\State;
+use Drift\Widget\StatefulWidget;
 
 /**
  * Snackbar 页 —— 四段式 `ReducerView` 的**可选样板**。
@@ -24,11 +25,20 @@ use Drift\Widget\State;
  * ★ 服务投影在这里手写一行，不再由导航注解携带 —— 状态管理是页面内部选择，
  *   不进导航描述符。
  *
+ * ★ 这是 34 页里唯一保留「壳 + State」两件套的页：状态机委托给框架的
+ *   `ReducerState`，而它必须经 `createState()` 挂进树。其余页已合并成单类
+ *   `ShowcasePage`；这里的例外是** reducer 可单测性**的代价，不是历史残留。
+ *
  * @api
  */
 #[Route(id: 'snackbar', title: '通知 Snackbar', icon: IconName::Bell)]
-final class SnackbarPage extends StatefulShowcasePage
+final class SnackbarPage extends StatefulWidget
 {
+    public function __construct(private readonly ShowcaseCapabilities $caps)
+    {
+        parent::__construct();
+    }
+
     public function createState(): State
     {
         return new ReducerState(

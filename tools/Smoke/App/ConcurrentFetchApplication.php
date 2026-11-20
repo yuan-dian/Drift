@@ -4,7 +4,6 @@ declare(strict_types=1);
 namespace Drift\Dev\Smoke\App;
 
 use App\Showcase\Pages\ConcurrentFetchPage;
-use App\Showcase\Pages\States\ConcurrentFetchPageState;
 use Drift\App\Application;
 use Drift\Async\Future;
 use Drift\Widget\Widget;
@@ -36,20 +35,20 @@ final class ConcurrentFetchApplication extends Application
 
     public function buildRoot(): Widget
     {
-        return ConcurrentFetchPage::make(ShowcaseCaps::make(null, function (int $page): Future {
+        return new ConcurrentFetchPage(ShowcaseCaps::make(null, function (int $page): Future {
             $this->requested[] = $page;
 
             return ($this->fetchRows)($page);
-        }));
+        }))->host();
     }
 
-    /** 根页面的 State（测试要拿它的命令驱动"再发一次" / "重试"） */
-    public function pageState(): ?ConcurrentFetchPageState
+    /** 根页面实例（测试要拿它的命令驱动"再发一次" / "重试"） */
+    public function pageState(): ?ConcurrentFetchPage
     {
         $element = $this->root();
 
         return $element instanceof \Drift\Widget\StatefulElement
-            && $element->state() instanceof ConcurrentFetchPageState
+            && $element->state() instanceof ConcurrentFetchPage
             ? $element->state()
             : null;
     }

@@ -51,6 +51,7 @@ use Drift\Dev\Smoke\LeafProbe;
 use Drift\Dev\Smoke\State\BuildWatchWidget;
 use Drift\Dev\Smoke\State\ChainPage;
 use Drift\Dev\Smoke\State\ChainProbe;
+use Drift\Dev\Smoke\State\DoubleMountPage;
 use Drift\Dev\Smoke\State\FakeStore;
 use Drift\Dev\Smoke\State\LoopPage;
 use Drift\Errors;
@@ -627,6 +628,29 @@ $cases = [
         $c = new SkiaCanvas(8, 8, Color::white());
         $c->transform(Matrix2D::rotation(30.0));
         $c->assertFrameBalanced();
+    },
+
+    // Page：同一个 State 实例被两个 Element 持有 ⇒ 中止。`Page::host()` 交出的
+    //   是**外部注入**的 Page 实例；静默覆盖 element 会让先卸载的那一处
+    //   `dropDisposers()` 退掉后者的订阅与命令 —— 表现为"切回这页请求再也不
+    //   触发"，无异常也无日志。宁可挂载时当场红。
+    'state-double-mount' => static function (): void {
+        $page = new DoubleMountPage();
+        $shell = $page->host();
+        $page->attach(new StatefulElement($shell), $shell);
+        $page->attach(new StatefulElement($shell), $shell);
+    },
+
+    // Page：卸载后把同一个实例再挂一次 ⇒ 中止。`initState()` 只跑一次，
+    //   重挂不会重新订阅（订阅都在 initState 里做）—— 页面看着在、其实全哑。
+    //   缓存 host() 后在条件分支里来回切的写法就会撞上这一条。
+    'state-remount' => static function (): void {
+        $page = new DoubleMountPage();
+        $first = $page->host()->createElement();
+        $first->mount(null, fatalContext());
+        $first->unmount();
+
+        $page->host()->createElement()->mount(null, fatalContext());
     },
 ];
 
