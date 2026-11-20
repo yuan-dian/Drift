@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use App\Showcase\Pages\Base\StatelessShowcasePage;
+
 
 use Drift\Geometry\EdgeInsets;
 use Drift\Widget\AspectRatio;
@@ -9,9 +11,7 @@ use Drift\Widget\BuildContext;
 use Drift\Widget\Card;
 use Drift\Widget\Column;
 use Drift\Widget\Grid;
-use Drift\Widget\Row;
 use Drift\Widget\ScrollView;
-use Drift\Widget\StatelessWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
 
@@ -30,7 +30,7 @@ use Drift\Widget\Widget;
  * ★ `Column` **不用** `cross(Stretch)`：拉伸会把比例盒的宽变成"父的紧宽"，
  *   比例就变成"高 = 整页宽 / 比例"，同样看不出三段之间的差别。
  */
-final class AspectPage extends StatelessWidget
+final class AspectPage extends StatelessShowcasePage
 {
     public function build(BuildContext $ctx): Widget
     {

@@ -3,13 +3,11 @@ declare(strict_types=1);
 
 namespace App\Showcase;
 
-use Drift\Async\Future;
 use Drift\Rendering\Color;
 use Drift\Rendering\ColorToken;
-use Drift\Platform\Dialog;
 use Drift\Theme\ThemeScope;
+use Drift\Routing\NavEntry;
 use Drift\Routing\PageHost;
-use Drift\Routing\RouteTable;
 use Drift\Widget\AppBar;
 use Drift\Widget\BuildContext;
 use Drift\Widget\ButtonVariant;
@@ -24,45 +22,10 @@ use Drift\Widget\NavButton;
 use Drift\Widget\Row;
 use Drift\Widget\ScrollView;
 use Drift\Widget\SizedBox;
-use Drift\Widget\Snackbar;
 use Drift\Widget\State;
 use Drift\Widget\StatefulWidget;
 use Drift\Widget\Widget;
 
-use App\Showcase\Pages\AlignPage;
-use App\Showcase\Pages\AsyncTablePage;
-use App\Showcase\Pages\ConcurrentFetchPage;
-use App\Showcase\Pages\LoadMorePage;
-use App\Showcase\Pages\AspectPage;
-use App\Showcase\Pages\BigListPage;
-use App\Showcase\Pages\TablePage;
-use App\Showcase\Pages\ButtonsPage;
-use App\Showcase\Pages\ComboBoxPage;
-use App\Showcase\Pages\CustomPaintPage;
-use App\Showcase\Pages\DialogPage;
-use App\Showcase\Pages\DropPage;
-use App\Showcase\Pages\FeedbackPage;
-use App\Showcase\Pages\FormPage;
-use App\Showcase\Pages\GlassPage;
-use App\Showcase\Pages\GridPage;
-use App\Showcase\Pages\IconPage;
-use App\Showcase\Pages\ImagePage;
-use App\Showcase\Pages\LayoutPage;
-use App\Showcase\Pages\ListPage;
-use App\Showcase\Pages\LogPage;
-use App\Showcase\Pages\MotionPage;
-use App\Showcase\Pages\RichTextPage;
-use App\Showcase\Pages\SegmentedPage;
-use App\Showcase\Pages\SelectPage;
-use App\Showcase\Pages\SliderPage;
-use App\Showcase\Pages\SnackbarPage;
-use App\Showcase\Pages\TooltipPage;
-use App\Showcase\Pages\TextPage;
-use App\Showcase\Pages\TransformPage;
-use App\Showcase\Pages\TreePage;
-use App\Showcase\Pages\CalendarPage;
-use App\Showcase\Pages\DisabledPage;
-use App\Showcase\Pages\PickerPage;
 
 /**
  * 示例台根（LayUI 式 admin 布局）：**顶条 + 左导航 + 右内容**。
@@ -105,7 +68,7 @@ final class ShowcaseRoot extends StatefulWidget
 }
 
 /**
- * 导航条目 + 选中态。页工厂用闭包（类名字符串形态未在 codegen 验过），
+ * 导航条目 + 选中态。注册表由 `ShowcaseNav` 统一持有，
  * 实例由 PageHost 按 id 缓存。
  */
 final class ShowcaseState extends State
@@ -127,65 +90,15 @@ final class ShowcaseState extends State
      */
     public const NAV_WIDTH_COMPACT = 56;
 
-    /** @var list<NavEntry> */
-    private array $entries = [];
+    private ShowcaseNav $nav;
 
-    private RouteTable $table;
+    private string $selected;
 
-    private string $selected = 'layout';
-
-    /**
-     * @param ShowcaseCapabilities $caps 组合根接线的那一束能力（见该类的注释）
-     */
-    public function __construct(private ShowcaseCapabilities $caps)
+    /** @param ShowcaseCapabilities $caps 组合根接线的能力束 */
+    public function __construct(ShowcaseCapabilities $caps)
     {
-    }
-
-    public function initState(): void
-    {
-        $this->entries = [
-            new NavEntry('layout', IconName::Grid, '布局 Layout', static fn(): Widget => new LayoutPage()),
-            new NavEntry('text', IconName::TextLines, '文本 Text', static fn(): Widget => new TextPage()),
-            new NavEntry('buttons', IconName::Square, '按钮 Button', static fn(): Widget => new ButtonsPage()),
-            new NavEntry('form', IconName::Check, '表单 Form', static fn(): Widget => new FormPage()),
-            new NavEntry('list', IconName::ListBullets, '列表 List', static fn(): Widget => new ListPage()),
-            new NavEntry('big-list', IconName::ListBullets, '长列表 Big', static fn(): Widget => new BigListPage()),
-            new NavEntry('paint', IconName::Brush, '自绘 Paint', static fn(): Widget => new CustomPaintPage()),
-            new NavEntry('feedback', IconName::Bell, '反馈 Feedback', fn(): Widget => new FeedbackPage($this->caps->showModal)),
-            new NavEntry('motion', IconName::Play, '动画 Motion', static fn(): Widget => new MotionPage()),
-            new NavEntry('segmented', IconName::Menu, '分段 Segmented', static fn(): Widget => new SegmentedPage()),
-            new NavEntry('image', IconName::Image, '图片 Image', static fn(): Widget => new ImagePage()),
-            new NavEntry('slider', IconName::Sliders, '滑杆 Slider', static fn(): Widget => new SliderPage()),
-            new NavEntry('tooltip', IconName::Info, '提示 Tooltip', static fn(): Widget => new TooltipPage()),
-            new NavEntry('snackbar', IconName::Bell, '通知 Snackbar', fn(): Widget => new SnackbarPage($this->caps->notify)),
-            new NavEntry('select', IconName::ChevronDown, '下拉 Select', static fn(): Widget => new SelectPage()),
-            new NavEntry('combo', IconName::Search, '可编辑 Combo', fn(): Widget => new ComboBoxPage($this->caps->delay)),
-            new NavEntry('grid', IconName::Grid, '网格 Grid', static fn(): Widget => new GridPage()),
-            new NavEntry('aspect', IconName::Square, '宽高比 Aspect', static fn(): Widget => new AspectPage()),
-            new NavEntry('rich-text', IconName::TextLines, '富文本 Rich', static fn(): Widget => new RichTextPage()),
-            new NavEntry('log', IconName::ListBullets, '日志 Log', static fn(): Widget => new LogPage()),
-            new NavEntry('icon', IconName::Plus, '图标 Icon', static fn(): Widget => new IconPage()),
-            new NavEntry('glass', IconName::Brush, '毛玻璃 Glass', static fn(): Widget => new GlassPage()),
-            new NavEntry('table', IconName::Grid, '表格 Table', static fn(): Widget => new TablePage()),
-            new NavEntry('tree', IconName::ArrowRight, '树 Tree', static fn(): Widget => new TreePage()),
-            new NavEntry('calendar', IconName::Grid, '日历 Calendar', static fn(): Widget => new CalendarPage()),
-            new NavEntry('picker', IconName::ChevronDown, '日期时间 Picker', static fn(): Widget => new PickerPage()),
-            new NavEntry('disabled', IconName::Square, '禁用态 Disabled', static fn(): Widget => new DisabledPage()),
-            new NavEntry('transform', IconName::Square, '变换 Transform', static fn(): Widget => new TransformPage()),
-            new NavEntry('align', IconName::Square, '对齐 Align', static fn(): Widget => new AlignPage()),
-            new NavEntry('dialog', IconName::Info, '对话框 Dialog', fn(): Widget => new DialogPage($this->caps->dialog, $this->caps->setCloseConfirm)),
-            new NavEntry('drop', IconName::Square, '拖文件 Drop', static fn(): Widget => new DropPage()),
-            new NavEntry('async-table', IconName::ListBullets, '异步表格 Async', fn(): Widget => new AsyncTablePage($this->caps->fetchRows)),
-            new NavEntry('load-more', IconName::ListBullets, '加载更多 More', fn(): Widget => new LoadMorePage($this->caps->fetchRows)),
-            new NavEntry('concurrent', IconName::Grid, '并发取数 Concurrent', fn(): Widget => new ConcurrentFetchPage($this->caps->fetchRows)),
-        ];
-
-        // 路由表 = 数据；PageHost = 容器。两者都不认识导航按钮。
-        $table = RouteTable::make();
-        foreach ($this->entries as $entry) {
-            $table->route($entry->id, $entry->page);
-        }
-        $this->table = $table;
+        $this->nav = new ShowcaseNav($caps);
+        $this->selected = $this->nav->defaultId();
     }
 
     public function build(BuildContext $ctx): Widget
@@ -245,7 +158,7 @@ final class ShowcaseState extends State
                 Expanded::make(
                     PageHost::make()
                         ->current($this->selected)
-                        ->table($this->table)
+                        ->table($this->nav->table())
                         ->expanded()
                 ),
             ])
@@ -258,7 +171,7 @@ final class ShowcaseState extends State
     private function navButtons(bool $compact): array
     {
         $out = [];
-        foreach ($this->entries as $entry) {
+        foreach ($this->nav->entries() as $entry) {
             $out[] = $this->navButton($entry, $compact);
         }
         return $out;

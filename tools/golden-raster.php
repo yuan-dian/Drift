@@ -38,7 +38,7 @@ use Drift\Widget\CustomPaint;
 use Drift\Widget\CustomPainter;
 use Drift\Dev\Golden\PageScenes;
 use Drift\Dev\Inspect\Snapshot;
-use Drift\Dev\Smoke\App\FakeDialog;
+use Drift\Dev\Smoke\App\ShowcaseCaps;
 use Drift\Dev\Smoke\Golden\GoldenGaugePainter;
 use Drift\Dev\Smoke\Golden\GoldenSparkPainter;
 use Drift\Async\Future;
@@ -574,30 +574,11 @@ $scenes['opacity'] = static function () use ($W, $H): string {
 //   所以"要 app 接线"不是不收录的理由，只是**没接线**：这里给无头假接线。
 //   ★ 异步三页一律 `Future::pending()`（首帧稳定画 loading）：喂已结算的数据要求
 //     "行数据的形状恰好对"，那是把页面的私有细节抄进量具 ⇒ 数据一改就假红。
-$pageWiring = [
-'AsyncTablePage'      => static fn(): array => [static fn(int $page): Future => Future::pending()],
-'ConcurrentFetchPage' => static fn(): array => [static fn(int $page): Future => Future::pending()],
-'LoadMorePage'        => static fn(): array => [static fn(int $page): Future => Future::pending()],
-// 下拉：`delay(ms, fn)` 只在"点了才跑 400ms 后关面板"，首帧不调用
-'ComboBoxPage'        => static function (): array {
-    return [static function (int $ms, \Closure $run): void {
-    }];
-},
-// 对话框：`Dialog` 端口用既有替身；`setCloseConfirm` 同上是点击后才回调
-'DialogPage'          => static function (): array {
-    return [new FakeDialog(), static function (bool $on): void {
-    }];
-},
-// 模态 / 提示条：组合根接线，闭包体在首帧不被调用 ⇒ 空实现即可
-'FeedbackPage'        => static function (): array {
-    return [static function ($modal): void {
-    }];
-},
-'SnackbarPage'        => static function (): array {
-    return [static function ($snackbar): void {
-    }];
-},
-];
+$caps = ShowcaseCaps::make();
+$pageWiring = [];
+foreach (PageScenes::names() as $pageName) {
+    $pageWiring[$pageName] = static fn(): array => [$caps];
+}
 
 // ── 未接线的页必须在 $pageWiring 里，或在 $pageExempt 里**登记理由** ──
 // ★ 这就是"不许静默丢"的落实：新增一页要参数却两处都没有 ⇒ 报错退出，而不是

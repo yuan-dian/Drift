@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use App\Showcase\Pages\Base\StatelessShowcasePage;
+
 
 use Drift\Geometry\EdgeInsets;
 use Drift\Widget\BuildContext;
@@ -13,8 +15,6 @@ use Drift\Widget\LazyRow;
 use Drift\Widget\Padding;
 use Drift\Widget\Row;
 use Drift\Widget\SizedBox;
-use Drift\Widget\Spacer;
-use Drift\Widget\StatelessWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
 
@@ -31,7 +31,7 @@ use Drift\Widget\Widget;
  *   "轴只是一个参数"这条**在真机上被看见** —— 纵向条滚轮滚上下、横向条滚轮滚
  *   左右，两者共用一份 `LazyListState` 逻辑。
  */
-final class BigListPage extends StatelessWidget
+final class BigListPage extends StatelessShowcasePage
 {
     private const ROWS = 10000;
 

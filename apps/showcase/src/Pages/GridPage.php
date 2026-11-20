@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use App\Showcase\Pages\Base\StatelessShowcasePage;
+
 
 use Drift\Geometry\EdgeInsets;
 use Drift\Widget\BuildContext;
@@ -11,8 +13,6 @@ use Drift\Widget\Expanded;
 use Drift\Widget\Grid;
 use Drift\Widget\LazyGrid;
 use Drift\Widget\Row;
-use Drift\Widget\Spacer;
-use Drift\Widget\StatelessWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
 
@@ -34,7 +34,7 @@ use Drift\Widget\Widget;
  * ★ 两个版本共用同一份分行规则（`Grid::rowOf()`）⇒ 同一批数据在"全量"与"懒"
  *   之间切换，格宽逐像素一致。想看这件事就调窗口宽度：①②③ 的格子会一起变宽变窄。
  */
-final class GridPage extends StatelessWidget
+final class GridPage extends StatelessShowcasePage
 {
     /** 卡片墙的行高（含卡片自己的内边距） */
     private const CELL_HEIGHT = 48.0;

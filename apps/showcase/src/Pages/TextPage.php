@@ -2,15 +2,15 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use App\Showcase\Pages\Base\StatelessShowcasePage;
+
 
 use Drift\Geometry\EdgeInsets;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Card;
 use Drift\Widget\ScrollView;
 use Drift\Widget\Column;
-use Drift\Widget\Padding;
 use Drift\Widget\Row;
-use Drift\Widget\StatelessWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
 use Drift\Widget\Wrap;
@@ -25,7 +25,7 @@ use Drift\Widget\Wrap;
  * 演示面：title / heading / body / caption / error 五级 + size / bold /
  * maxLines / ellipsize。
  */
-final class TextPage extends StatelessWidget
+final class TextPage extends StatelessShowcasePage
 {
     public function build(BuildContext $ctx): Widget
     {

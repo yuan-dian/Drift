@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Widget;
 
-use App\Showcase\Pages\ConcurrentFetchPageState;
+use App\Showcase\Pages\States\ConcurrentFetchPageState;
 use Drift\App\Application;
 use Drift\Async\AsyncValue;
 use Drift\Async\Future;

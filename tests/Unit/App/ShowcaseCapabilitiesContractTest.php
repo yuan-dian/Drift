@@ -3,10 +3,14 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Unit\App;
 
-use App\Showcase\NavEntry;
 use App\Showcase\ShowcaseCapabilities;
+use App\Showcase\ShowcaseNav;
 use App\Showcase\ShowcaseRoot;
+use Drift\Async\Future;
 use Drift\Platform\Dialog;
+use Drift\Routing\NavEntry;
+use Drift\Widget\Modal;
+use Drift\Widget\Snackbar;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -79,6 +83,31 @@ final class ShowcaseCapabilitiesContractTest extends TestCase
     }
 
     #[Test]
+    public function 能力束具名方法的签名固定(): void
+    {
+        $expected = [
+            'notify' => [['snackbar' => Snackbar::class], 'void'],
+            'delay' => [['milliseconds' => 'int', 'callback' => 'Closure'], 'void'],
+            'showModal' => [['modal' => Modal::class], 'void'],
+            'dialog' => [[], Dialog::class],
+            'setCloseConfirm' => [['enabled' => 'bool'], 'void'],
+            'fetchRows' => [['page' => 'int'], Future::class],
+        ];
+
+        foreach ($expected as $name => [$params, $return]) {
+            self::assertTrue(method_exists(ShowcaseCapabilities::class, $name), "缺少具名方法 {$name}");
+            $method = new \ReflectionMethod(ShowcaseCapabilities::class, $name);
+            $actual = [];
+            foreach ($method->getParameters() as $param) {
+                $type = $param->getType();
+                $actual[$param->getName()] = $type === null ? '' : (string) $type;
+            }
+            self::assertSame($params, $actual, "{$name} 的参数签名漂移");
+            self::assertSame($return, (string) $method->getReturnType(), "{$name} 的返回类型漂移");
+        }
+    }
+
+    #[Test]
     public function 每个导航项都有唯一稳定标识(): void
     {
         $ids = self::navIds();
@@ -103,11 +132,12 @@ final class ShowcaseCapabilitiesContractTest extends TestCase
             . ' 删掉这行后探针全部 NotMeasured（码 2），但 PHP 单测无法发现，故此判据读源码。'
         );
 
+        $navSource = (string) \file_get_contents((string) (new \ReflectionClass(ShowcaseNav::class))->getFileName());
         foreach (self::navIds() as $id) {
             self::assertStringContainsString(
-                "new NavEntry('{$id}'",
-                $source,
-                "导航 id {$id} 必须在 ShowcaseRoot 的 entries 里登记"
+                "['{$id}', IconName::",
+                $navSource,
+                "导航 id {$id} 必须在 ShowcaseNav 的页面清单里登记"
             );
         }
     }
@@ -123,8 +153,8 @@ final class ShowcaseCapabilitiesContractTest extends TestCase
     /** @return list<string> */
     private static function navIds(): array
     {
-        $source = (string) \file_get_contents((string) (new \ReflectionClass(ShowcaseRoot::class))->getFileName());
-        \preg_match_all("/new NavEntry\\('([a-z0-9-]+)'/", $source, $matches);
+        $source = (string) \file_get_contents((string) (new \ReflectionClass(ShowcaseNav::class))->getFileName());
+        \preg_match_all("/\['([a-z0-9-]+)', IconName::/", $source, $matches);
 
         return $matches[1];
     }

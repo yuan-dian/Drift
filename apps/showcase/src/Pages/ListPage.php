@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use App\Showcase\Pages\Base\StatelessShowcasePage;
+
 
 use Drift\Geometry\EdgeInsets;
 use Drift\Rendering\Color;
@@ -15,8 +17,6 @@ use Drift\Widget\Expanded;
 use Drift\Widget\Padding;
 use Drift\Widget\Row;
 use Drift\Widget\ScrollView;
-use Drift\Widget\Spacer;
-use Drift\Widget\StatelessWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
 
@@ -27,7 +27,7 @@ use Drift\Widget\Widget;
  * `Each`（key 必填，R4）驱动，长列表（16 行超过视口）走 `ScrollView` ——
  * 滚动偏移**布局期进子盒 offset**（坐标链纪律，§24.2 #15）。
  */
-final class ListPage extends StatelessWidget
+final class ListPage extends StatelessShowcasePage
 {
     public function build(BuildContext $ctx): Widget
     {

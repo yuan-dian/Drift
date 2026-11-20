@@ -2,6 +2,9 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use App\Showcase\Pages\Base\StatelessShowcasePage;
+
+use App\Showcase\ShowcaseCapabilities;
 
 use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Matrix2D;
@@ -9,10 +12,8 @@ use Drift\Rendering\Color;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Card;
 use Drift\Widget\Column;
-use Drift\Widget\Row;
 use Drift\Widget\ScrollView;
 use Drift\Widget\SizedBox;
-use Drift\Widget\StatelessWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
 use Drift\Widget\Wrap;
@@ -27,11 +28,11 @@ use Drift\Widget\Wrap;
  *   "一帧就画对"才是它要证明的事。动画版在 Motion 页（`AnimatedOpacity`），
  *   两者组合（动画驱动矩阵）留到 A1c 后续，不在这一件里假装做完。
  */
-final class TransformPage extends StatelessWidget
+final class TransformPage extends StatelessShowcasePage
 {
-    public static function make(): self
+    public static function make(ShowcaseCapabilities $caps): self
     {
-        return new self();
+        return new self($caps);
     }
 
     public function build(BuildContext $ctx): Widget

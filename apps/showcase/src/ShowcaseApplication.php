@@ -5,13 +5,11 @@ namespace App\Showcase;
 
 use Drift\App\AppScope;
 use Drift\App\Application;
-use Drift\Async\Future;
 use Drift\Commands\CommandHandler;
 use Drift\Input\AcceleratorTable;
 use Drift\Input\KeyChord;
 use Drift\Platform\Clipboard;
 use Drift\Platform\Dialog;
-use Drift\Widget\Modal;
 use Drift\Widget\Snackbar;
 use Drift\Widget\Widget;
 
@@ -46,31 +44,19 @@ final class ShowcaseApplication extends Application
 
     public function buildRoot(): Widget
     {
-        // 能力在组合根装配：页面够不到 Application，只拿到自己那一个闭包。
-        // dialog 必填且排第一：缺端口要让组合根当场失败（tpc 不许可选参数在必选前）。
-        return ShowcaseRoot::make(new ShowcaseCapabilities(
-            // 弹通知：浮层归 Application
-            function (Snackbar $snackbar): void {
-                $this->showSnackbar($snackbar);
-            },
-            // 延时回调：控件侧没有时钟
-            function (int $milliseconds, \Closure $callback): void {
-                $this->after($milliseconds, $callback);
-            },
-            // 开模态：Modal 是 Widget，但"打开"归 Application
-            function (Modal $modal): void {
-                $this->showModal($modal);
-            },
-            $this->dialog,
-            // 关确认开关：方向相反（页面 → 应用），拦截点只在帧边界一处
-            function (bool $enabled): void {
-                $this->setConfirmClose($enabled);
-            },
-            // 取数：submit 在无后台端口时返回 rejected Future，页面落 error 可重试
-            function (int $page): Future {
-                return $this->submit(new FetchRowsJob($page, 20, $this->rowsMode));
-            },
-        ));
+        return ShowcaseRoot::make(ShowcaseCapabilities::fromApplication($this));
+    }
+
+    /** 能力束装配用：对话框端口只在组合根可见。 */
+    public function dialog(): Dialog
+    {
+        return $this->dialog;
+    }
+
+    /** 能力束装配用：取数模式由 Bootstrap 决定。 */
+    public function rowsMode(): string
+    {
+        return $this->rowsMode;
     }
 
     public function title(): string

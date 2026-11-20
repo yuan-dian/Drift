@@ -30,6 +30,7 @@ use App\Showcase\Pages\TextPage;
 use App\Showcase\Pages\TooltipPage;
 use App\Showcase\Pages\TransformPage;
 use App\Showcase\Pages\TreePage;
+use Drift\Dev\Smoke\App\ShowcaseCaps;
 use Drift\Widget\Widget;
 
 /**
@@ -45,11 +46,9 @@ use Drift\Widget\Widget;
  *   的判据 ⑤：**磁盘上可用的页 == 本清单**，多一个少一个都红。
  *   ⇒ 分层不是妥协：「清单」必须 AOT 可编（纯静态），「比对」只能解释器做（要反射）。
  *
- * ★ 只收**构造器无必填参数**的页（27 / 34）。另外 7 页（`AsyncTablePage` /
- *   `ComboBoxPage` / `ConcurrentFetchPage` / `DialogPage` / `FeedbackPage` /
- *   `LoadMorePage` / `SnackbarPage`）要注入 `\Closure $fetchRows` 之类，
- *   与 `golden-raster --pages` 的规则逐条相同 —— 量的是"打开一页的成本"，
- *   不是"给它接一个假数据源"的成本。
+ * ★ 固定 27 页（不是全部 34 页）：这是 AOT 帧税基准的历史分母，扩到 34 会改变
+ *   可比口径。所有页现在统一收能力束，由 `make()` 注入空实现 —— 量的仍是
+ *   "打开一页的成本"，不是"接假数据源"的成本。
  *
  * ★ 单一数据源：`names()` 由键派生、`make()` 由同一个表取 —— **两者不可能不同步**。
  *   这比「一个名字数组 + 一个 match 分支表」好：那种写法有两份数据，漏改一处就静默错。
@@ -67,38 +66,38 @@ final class ShowcasePages
      * ★ 用闭包而不是直接 `new`：直接 `new` 会在**调用 `all()` 时就造出 27 棵树**，
      *   既占内存又让页面构造的副作用提前发生，量的不再是"打开这一页"。
      *
-     * @return array<string, \Closure(): Widget>
+     * @return array<string, \Closure(ShowcaseCaps): Widget>
      */
     public static function all(): array
     {
         return [
-            'AlignPage' => static fn(): Widget => new AlignPage(),
-            'AspectPage' => static fn(): Widget => new AspectPage(),
-            'BigListPage' => static fn(): Widget => new BigListPage(),
-            'ButtonsPage' => static fn(): Widget => new ButtonsPage(),
-            'CalendarPage' => static fn(): Widget => new CalendarPage(),
-            'CustomPaintPage' => static fn(): Widget => new CustomPaintPage(),
-            'DisabledPage' => static fn(): Widget => new DisabledPage(),
-            'DropPage' => static fn(): Widget => new DropPage(),
-            'FormPage' => static fn(): Widget => new FormPage(),
-            'GlassPage' => static fn(): Widget => new GlassPage(),
-            'GridPage' => static fn(): Widget => new GridPage(),
-            'IconPage' => static fn(): Widget => new IconPage(),
-            'ImagePage' => static fn(): Widget => new ImagePage(),
-            'LayoutPage' => static fn(): Widget => new LayoutPage(),
-            'ListPage' => static fn(): Widget => new ListPage(),
-            'LogPage' => static fn(): Widget => new LogPage(),
-            'MotionPage' => static fn(): Widget => new MotionPage(),
-            'PickerPage' => static fn(): Widget => new PickerPage(),
-            'RichTextPage' => static fn(): Widget => new RichTextPage(),
-            'SegmentedPage' => static fn(): Widget => new SegmentedPage(),
-            'SelectPage' => static fn(): Widget => new SelectPage(),
-            'SliderPage' => static fn(): Widget => new SliderPage(),
-            'TablePage' => static fn(): Widget => new TablePage(),
-            'TextPage' => static fn(): Widget => new TextPage(),
-            'TooltipPage' => static fn(): Widget => new TooltipPage(),
-            'TransformPage' => static fn(): Widget => new TransformPage(),
-            'TreePage' => static fn(): Widget => new TreePage(),
+            'AlignPage' => static fn(ShowcaseCaps $caps): Widget => new AlignPage($caps),
+            'AspectPage' => static fn(ShowcaseCaps $caps): Widget => new AspectPage($caps),
+            'BigListPage' => static fn(ShowcaseCaps $caps): Widget => new BigListPage($caps),
+            'ButtonsPage' => static fn(ShowcaseCaps $caps): Widget => new ButtonsPage($caps),
+            'CalendarPage' => static fn(ShowcaseCaps $caps): Widget => new CalendarPage($caps),
+            'CustomPaintPage' => static fn(ShowcaseCaps $caps): Widget => new CustomPaintPage($caps),
+            'DisabledPage' => static fn(ShowcaseCaps $caps): Widget => new DisabledPage($caps),
+            'DropPage' => static fn(ShowcaseCaps $caps): Widget => new DropPage($caps),
+            'FormPage' => static fn(ShowcaseCaps $caps): Widget => new FormPage($caps),
+            'GlassPage' => static fn(ShowcaseCaps $caps): Widget => new GlassPage($caps),
+            'GridPage' => static fn(ShowcaseCaps $caps): Widget => new GridPage($caps),
+            'IconPage' => static fn(ShowcaseCaps $caps): Widget => new IconPage($caps),
+            'ImagePage' => static fn(ShowcaseCaps $caps): Widget => new ImagePage($caps),
+            'LayoutPage' => static fn(ShowcaseCaps $caps): Widget => new LayoutPage($caps),
+            'ListPage' => static fn(ShowcaseCaps $caps): Widget => new ListPage($caps),
+            'LogPage' => static fn(ShowcaseCaps $caps): Widget => new LogPage($caps),
+            'MotionPage' => static fn(ShowcaseCaps $caps): Widget => new MotionPage($caps),
+            'PickerPage' => static fn(ShowcaseCaps $caps): Widget => new PickerPage($caps),
+            'RichTextPage' => static fn(ShowcaseCaps $caps): Widget => new RichTextPage($caps),
+            'SegmentedPage' => static fn(ShowcaseCaps $caps): Widget => new SegmentedPage($caps),
+            'SelectPage' => static fn(ShowcaseCaps $caps): Widget => new SelectPage($caps),
+            'SliderPage' => static fn(ShowcaseCaps $caps): Widget => new SliderPage($caps),
+            'TablePage' => static fn(ShowcaseCaps $caps): Widget => new TablePage($caps),
+            'TextPage' => static fn(ShowcaseCaps $caps): Widget => new TextPage($caps),
+            'TooltipPage' => static fn(ShowcaseCaps $caps): Widget => new TooltipPage($caps),
+            'TransformPage' => static fn(ShowcaseCaps $caps): Widget => new TransformPage($caps),
+            'TreePage' => static fn(ShowcaseCaps $caps): Widget => new TreePage($caps),
         ];
     }
 
@@ -114,13 +113,13 @@ final class ShowcasePages
      * ★ 未知名字**抛异常**而不是返回 `null`：调用方要的是 `\Closure(): Widget`，
      *   返回 `?Widget` 会把空值推到布局里，症状是"这页怎么是空的"，离原因很远。
      */
-    public static function make(string $name): Widget
+    public static function make(string $name, ?ShowcaseCaps $caps = null): Widget
     {
         $factory = self::all()[$name] ?? null;
         if ($factory === null) {
             throw new \InvalidArgumentException('未知页面：' . $name);
         }
 
-        return $factory();
+        return $factory($caps ?? ShowcaseCaps::make());
     }
 }

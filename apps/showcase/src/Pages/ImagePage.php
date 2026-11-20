@@ -2,6 +2,9 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use App\Showcase\Pages\Base\StatelessShowcasePage;
+
+use App\Showcase\ShowcaseCapabilities;
 
 use Drift\Geometry\EdgeInsets;
 use Drift\Layout\ImageFit;
@@ -10,10 +13,7 @@ use Drift\Widget\BuildContext;
 use Drift\Widget\Card;
 use Drift\Widget\Column;
 use Drift\Widget\Image;
-use Drift\Widget\Row;
 use Drift\Widget\ScrollView;
-use Drift\Widget\Spacer;
-use Drift\Widget\StatelessWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
 use Drift\Widget\Wrap;
@@ -34,16 +34,11 @@ use Drift\Widget\Wrap;
  * ★ 资源路径按 `<cwd>/assets` 找 —— **跑这个示例时仍要以仓库根为 cwd 启动**。
  *   找不到就是 1×1 透明占位（字体已不依赖 cwd，见 `cpp-src/skia/drift_skia.cc`）。
  */
-final class ImagePage extends StatelessWidget
+final class ImagePage extends StatelessShowcasePage
 {
-    public function __construct()
+    public static function make(ShowcaseCapabilities $caps): self
     {
-        parent::__construct();
-    }
-
-    public static function make(): self
-    {
-        return new self();
+        return new self($caps);
     }
 
     public function build(BuildContext $ctx): Widget

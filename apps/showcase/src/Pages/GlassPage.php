@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use App\Showcase\Pages\Base\StatelessShowcasePage;
+
 
 use Drift\Geometry\Alignment;
 use Drift\Geometry\EdgeInsets;
@@ -16,7 +18,6 @@ use Drift\Widget\Row;
 use Drift\Widget\ScrollView;
 use Drift\Widget\SizedBox;
 use Drift\Widget\Stack;
-use Drift\Widget\StatelessWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
 use Drift\Widget\Wrap;
@@ -42,7 +43,7 @@ use Drift\Widget\Wrap;
  *   这一页退化成纯半透明面板，结构/透明度/层级全对，只少一层糊。所以"糊没糊"
  *   只能真机看 —— 这正是本页存在的理由之一。
  */
-final class GlassPage extends StatelessWidget
+final class GlassPage extends StatelessShowcasePage
 {
     public function build(BuildContext $ctx): Widget
     {

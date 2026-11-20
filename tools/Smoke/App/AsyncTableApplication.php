@@ -34,11 +34,11 @@ final class AsyncTableApplication extends Application
 
     public function buildRoot(): Widget
     {
-        return AsyncTablePage::make(function (int $page): Future {
+        return AsyncTablePage::make(ShowcaseCaps::make(null, function (int $page): Future {
             $this->requested[] = $page;
 
             return ($this->fetchRows)($page);
-        });
+        }));
     }
 
     public function title(): string

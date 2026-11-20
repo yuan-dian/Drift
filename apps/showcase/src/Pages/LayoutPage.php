@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use App\Showcase\Pages\Base\StatelessShowcasePage;
+
 
 use Drift\Geometry\Alignment;
 use Drift\Geometry\BoxConstraints;
@@ -23,7 +25,6 @@ use Drift\Widget\ScrollView;
 use Drift\Widget\SizedBox;
 use Drift\Widget\Spacer;
 use Drift\Widget\Stack;
-use Drift\Widget\StatelessWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
 use Drift\Widget\Wrap;
@@ -45,7 +46,7 @@ use Drift\Widget\Wrap;
  * 对照 LayUI：文档页没有专门的"布局"页（布局由 CSS 网格承担）；本页演示的是
  * Drift 用**声明式控件**表达同一件事的形态。
  */
-final class LayoutPage extends StatelessWidget
+final class LayoutPage extends StatelessShowcasePage
 {
     public function build(BuildContext $ctx): Widget
     {
