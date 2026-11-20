@@ -1230,3 +1230,72 @@ foreach ([
     }
 }
 fwrite(STDOUT, '  ok     Linux Skia 构建通道：' . count($linuxDepsAnchors) . " 个 build-only 环节\n");
+
+// ── Route 架构（注解 → 启动期反射 → 泛型壳）────────────────────────────
+// 这一层最容易"悄悄退化"的地方有三处：
+//   ① 注解参数从枚举退回字符串（丢掉编译期校验，拼错变成运行期静默）；
+//   ② 反射从"启动期一次"滑到热路径（每帧 newInstance，帧税爆掉）；
+//   ③ 事件主路被绕过（按钮里直接改状态 / 直接调服务，状态出现第二条写路径）。
+// 三处都不会让现有测试变红，所以在这里钉住实现链。
+$routeAnnotationPhp = (string) @file_get_contents($root . '/src/Route/Route.php');
+$routeCatalogPhp = (string) @file_get_contents($root . '/src/Route/RouteCatalog.php');
+$routeStatePhp = (string) @file_get_contents($root . '/src/Route/RouteState.php');
+$routeViewPhp = (string) @file_get_contents($root . '/src/Route/RouteView.php');
+$snackbarRoutePhp = (string) @file_get_contents($root . '/apps/showcase/src/Routes/SnackbarRoute.php');
+$showcaseRoutesPhp = (string) @file_get_contents($root . '/apps/showcase/src/Routes/ShowcaseRoutes.php');
+$snackbarPagePhp = (string) @file_get_contents($root . '/apps/showcase/src/Pages/SnackbarPage.php');
+$routeCatalogTest = (string) @file_get_contents($root . '/tests/Unit/Route/RouteCatalogTest.php');
+$snackbarRouteTest = (string) @file_get_contents($root . '/tests/Unit/App/SnackbarRouteTest.php');
+$snackbarPageTest = (string) @file_get_contents($root . '/tests/Feature/Widget/SnackbarRoutePageTest.php');
+$depDirectionPhp = (string) @file_get_contents($root . '/tools/Lint/Rules/DependencyDirection.php');
+
+$routeAnchors = [
+    // 注解：枚举参数（三态实测 probes/enum_attribute）
+    [$routeAnnotationPhp, 'public IconName $icon,', '注解 icon 退回字符串 —— 拼错不再编译期报错'],
+    [$routeAnnotationPhp, '#[\Attribute(\Attribute::TARGET_CLASS)]', 'Route 不再是类注解'],
+    // 契约：四段式
+    [$routeViewPhp, 'public function init(): RouteModel;', '契约少了 init'],
+    [$routeViewPhp, 'public function update(RouteModel $model, RouteEvent $event): RouteUpdate;', '契约少了 update'],
+    [$routeViewPhp, 'public function apply(RouteEffect $effect, \Closure $dispatch): void;', '契约少了 effect 落点'],
+    // bootstrap：反射只此一处
+    [$routeCatalogPhp, 'getAttributes(Route::class)', 'bootstrap 没读注解 —— 清单回到手工维护'],
+    [$routeCatalogPhp, 'implementsInterface(RouteView::class)', 'bootstrap 不校验契约 —— 注解可以贴在任意类上'],
+    [$routeCatalogPhp, 'new $viewClass(new $servicesClass($context))', '建页没按类型投影服务 —— 又回到能力束透传'],
+    // 泛型壳：事件主路
+    [$routeStatePhp, '$update = $this->view->update(', '壳没走 update —— 状态改动绕过纯函数'],
+    [$routeStatePhp, '$this->view->apply($effect, $this->dispatch)', '壳没执行 effect —— 通知永远不会弹'],
+    // 样板页：注解 + 动作回调回主路
+    [$snackbarRoutePhp, '#[Route(', '样板页没标注解 —— 路由表发现不到它'],
+    [$snackbarRoutePhp, 'icon: IconName::Bell,', '样板页把图标写成字符串'],
+    [$snackbarRoutePhp, 'services: SnackbarServices::class,', '样板页没声明服务投影'],
+    [$snackbarRoutePhp, 'return match ($event->intent) {', 'update 不再是穷尽分派'],
+    [$snackbarRoutePhp, 'fn () => $dispatch(new SnackbarEvent(SnackbarIntent::UndoClicked))', '动作回调没回主路 —— 计数会卡住'],
+    // 应用侧：一页一行清单 + 兼容壳
+    [$showcaseRoutesPhp, 'RouteCatalog::discover(self::CLASSES)', '应用没装路由表'],
+    [$showcaseRoutesPhp, 'SnackbarRoute::class,', '清单里少了样板页'],
+    [$snackbarPagePhp, "ShowcaseRoutes::catalog()->create('snackbar', \$this->caps)", '兼容壳没从路由表建页'],
+    [$snackbarPagePhp, 'new RouteState(', '兼容壳没交给泛型壳'],
+    // 判据存在性：改了实现就该有对应判据
+    [$routeCatalogTest, '路由 id 冲突', '没有 id 冲突判据'],
+    [$snackbarRouteTest, 'assertSame($model, $update->model', '没有"无变化不造新 model"判据'],
+    [$snackbarPageTest, '已撤销 1 次', '没有"动作回调回主路"的挂载判据'],
+    [$depDirectionPhp, "'Route'     => ['Route', 'Widget']", '新层没登记依赖方向'],
+];
+foreach ($routeAnchors as [$text, $needle, $label]) {
+    if (!str_contains($text, $needle)) {
+        fail('Route 架构链断裂：' . $label . '（' . $needle . '）');
+    }
+}
+// 反向判据 1：热路径不许出现反射（反射只准在 RouteCatalog::discover 里）。
+if (str_contains($routeStatePhp, 'Reflection')) {
+    fail('RouteState 出现反射 —— 反射滑进热路径，每帧都要走 zendvm');
+}
+// 反向判据 2：兼容壳不许再长出 build()/State 逻辑（那是被迁移掉的样板）。
+if (str_contains($snackbarPagePhp, 'function build(') || str_contains($snackbarPagePhp, 'extends State ')) {
+    fail('SnackbarPage 又长出页面逻辑 —— 兼容壳只该转调 RouteState');
+}
+// 反向判据 3：被迁移掉的旧 State 文件不许回来。
+if (file_exists($root . '/apps/showcase/src/Pages/States/SnackbarState.php')) {
+    fail('SnackbarState.php 又出现了 —— 旧壳与新壳并存等于两条状态写路径');
+}
+fwrite(STDOUT, '  ok     Route 架构：注解/反射/壳/样板页：' . count($routeAnchors) . " 个链路环节 + 3 条反向判据\n");

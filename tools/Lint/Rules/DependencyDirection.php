@@ -66,6 +66,10 @@ final class DependencyDirection implements Rule
         'Commands'  => ['Commands'],
         'Theme'     => ['Theme', 'Widget', 'Text', 'Rendering'],
         'Routing'   => ['Routing', 'Widget', 'State'],
+        // `Route`：页面架构层（`#[Route]` + `RouteView` + `RouteState`），
+        // 只压在 `Widget` 之上——它要 `BuildContext`/`Widget`/`State`/`IconName`，
+        // 不碰 `Routing`（导航还是 `Routing` 的事，两侧别互相长进来）。
+        'Route'     => ['Route', 'Widget'],
         'Async'     => ['Async'],
         'App'       => ['App', 'Async', 'Geometry', 'Platform', 'Text', 'Rendering', 'Input', 'Widget', 'Layout', 'Commands', 'Theme', 'Core'],
         'Logging'   => ['Logging'],
