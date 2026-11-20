@@ -1,0 +1,131 @@
+<?php
+declare(strict_types=1);
+
+namespace Drift\Dev\Tests\Unit\App;
+
+use App\Showcase\NavEntry;
+use App\Showcase\ShowcaseCapabilities;
+use App\Showcase\ShowcaseRoot;
+use Drift\Platform\Dialog;
+use PHPUnit\Framework\Attributes\Test;
+use PHPUnit\Framework\TestCase;
+
+/**
+ * showcase 两处"接线契约"的机器核对 —— 把位置参数错序与导航身份漂移变成红。
+ *
+ * ## ① 能力束的构造参数名与顺序
+ *
+ * `ShowcaseCapabilities` 是 6 个位置参数，其中 5 个都是 `\Closure`（解释器对多余
+ * 实参不报错、AOT 才校验个数）。把 notify 与 delay 写反、或少写一个闭包，两个测试
+ * 构造点全是同形空闭包，一样全绿，真机点下去才 Fatal。
+ * ⇒ 用反射直接钉住**构造器签名**（判据与实现同源的反面：这里读的是签名本身）。
+ *
+ * ## ② 导航 id 与 AutomationId 声明
+ *
+ * 探针已改为按 AutomationId 定位（`probe_win::click_by_id`）。`NavEntry.id` 是这个
+ * id 的唯一来源，必须每页唯一、并在 `navButton()` 里原样声明下去。
+ * ⇒ 反射读源码里的 `NavEntry(...)` 字面量 + `semanticsMeta(automationId: ...)` 接线，
+ *   任一页漏声明或两页 id 撞车都红 —— 否则探针改一次文案就全断。
+ */
+final class ShowcaseCapabilitiesContractTest extends TestCase
+{
+    /** @return list<string> */
+    private const CAP_NAMES = ['notify', 'delay', 'showModal', 'dialog', 'setCloseConfirm', 'fetchRows'];
+
+    #[Test]
+    public function 能力束构造参数名与顺序固定(): void
+    {
+        $ctor = (new \ReflectionClass(ShowcaseCapabilities::class))->getConstructor();
+        self::assertNotNull($ctor, 'ShowcaseCapabilities 必须有构造器');
+
+        $actual = [];
+        foreach ($ctor->getParameters() as $param) {
+            $actual[] = $param->getName();
+        }
+
+        self::assertSame(
+            self::CAP_NAMES,
+            $actual,
+            '能力束是 6 个位置参数，顺序即契约：写反两个闭包解释器不报错、真机才 Fatal。'
+            . ' 新增能力必须显式改这里（不是自动跟随），因为每加一样都要同步组合根与页面。'
+        );
+    }
+
+    #[Test]
+    public function 能力束每个参数的声明类型固定(): void
+    {
+        $ctor = (new \ReflectionClass(ShowcaseCapabilities::class))->getConstructor();
+        self::assertNotNull($ctor);
+
+        $types = [];
+        foreach ($ctor->getParameters() as $param) {
+            $type = $param->getType();
+            $types[$param->getName()] = $type === null ? '' : (string) $type;
+        }
+
+        self::assertSame(
+            [
+                'notify' => 'Closure',
+                'delay' => 'Closure',
+                'showModal' => 'Closure',
+                'dialog' => Dialog::class,
+                'setCloseConfirm' => 'Closure',
+                'fetchRows' => 'Closure',
+            ],
+            $types,
+            'dialog 是有四种返回语义的端口接口，不闭包化；其余五个是单向动作闭包。'
+            . ' 类型被改（尤其 dialog 退化成 Closure）会让调用点失去返回值形态。'
+        );
+    }
+
+    #[Test]
+    public function 每个导航项都有唯一稳定标识(): void
+    {
+        $ids = self::navIds();
+
+        self::assertNotEmpty($ids, 'showcase 必须有导航项');
+        self::assertSame(
+            $ids,
+            \array_values(\array_unique($ids)),
+            'NavEntry.id 是 AutomationId 与 RouteTable 键的唯一来源，重复会让探针点错页且金标看似正常。'
+        );
+    }
+
+    #[Test]
+    public function 每个导航标识都声明成自动化标识(): void
+    {
+        $source = (string) \file_get_contents((string) (new \ReflectionClass(ShowcaseRoot::class))->getFileName());
+
+        self::assertStringContainsString(
+            'semanticsMeta(automationId: $entry->id)',
+            $source,
+            'navButton() 必须把 NavEntry.id 原样声明为 AutomationId —— 探针 click_by_id 按它定位。'
+            . ' 删掉这行后探针全部 NotMeasured（码 2），但 PHP 单测无法发现，故此判据读源码。'
+        );
+
+        foreach (self::navIds() as $id) {
+            self::assertStringContainsString(
+                "new NavEntry('{$id}'",
+                $source,
+                "导航 id {$id} 必须在 ShowcaseRoot 的 entries 里登记"
+            );
+        }
+    }
+
+    #[Test]
+    public function 导航项稳定标识是只读字段(): void
+    {
+        $prop = new \ReflectionProperty(NavEntry::class, 'id');
+        self::assertTrue($prop->isReadOnly(), 'NavEntry.id 必须 readonly —— 切换期改身份等于没身份');
+        self::assertSame('string', (string) $prop->getType());
+    }
+
+    /** @return list<string> */
+    private static function navIds(): array
+    {
+        $source = (string) \file_get_contents((string) (new \ReflectionClass(ShowcaseRoot::class))->getFileName());
+        \preg_match_all("/new NavEntry\\('([a-z0-9-]+)'/", $source, $matches);
+
+        return $matches[1];
+    }
+}
