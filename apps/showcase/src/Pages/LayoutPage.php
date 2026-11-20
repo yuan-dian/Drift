@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatelessShowcasePage;
 
 
@@ -46,6 +48,7 @@ use Drift\Widget\Wrap;
  * 对照 LayUI：文档页没有专门的"布局"页（布局由 CSS 网格承担）；本页演示的是
  * Drift 用**声明式控件**表达同一件事的形态。
  */
+#[Route(id: 'layout', title: '布局 Layout', icon: IconName::Grid)]
 final class LayoutPage extends StatelessShowcasePage
 {
     public function build(BuildContext $ctx): Widget

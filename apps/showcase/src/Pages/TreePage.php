@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatefulShowcasePage;
 
 use App\Showcase\ShowcaseCapabilities;
@@ -27,6 +29,7 @@ use App\Showcase\Pages\States\TreePageState;
  * ★ 行高默认 42 不是审美参数：`IconButton` 的天然边长就是 42（`3×gap + 字号`）。
  *   调小会被 `LazyColumn` 的行盒静默裁掉，所以 `rowHeight()` 小于它**响亮失败**。
  */
+#[Route(id: 'tree', title: '树 Tree', icon: IconName::ArrowRight)]
 final class TreePage extends StatefulShowcasePage
 {
     public static function make(ShowcaseCapabilities $caps): self

@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatefulShowcasePage;
 
 use App\Showcase\ShowcaseCapabilities;
@@ -23,6 +25,7 @@ use App\Showcase\Pages\States\DisabledPageState;
  *   布尔取反的别名），不是两套并存的样式开关。收敛掉了四份局部实现，
  *   连带裁决"禁用不进 Tab 序"（见 `REVIEW-2026-10-28.md` §21）。
  */
+#[Route(id: 'disabled', title: '禁用态 Disabled', icon: IconName::Square)]
 final class DisabledPage extends StatefulShowcasePage
 {
     public static function make(ShowcaseCapabilities $caps): self

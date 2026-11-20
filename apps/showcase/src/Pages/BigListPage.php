@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatelessShowcasePage;
 
 
@@ -31,6 +33,7 @@ use Drift\Widget\Widget;
  *   "轴只是一个参数"这条**在真机上被看见** —— 纵向条滚轮滚上下、横向条滚轮滚
  *   左右，两者共用一份 `LazyListState` 逻辑。
  */
+#[Route(id: 'big-list', title: '长列表 Big', icon: IconName::ListBullets)]
 final class BigListPage extends StatelessShowcasePage
 {
     private const ROWS = 10000;

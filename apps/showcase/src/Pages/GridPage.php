@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatelessShowcasePage;
 
 
@@ -34,6 +36,7 @@ use Drift\Widget\Widget;
  * ★ 两个版本共用同一份分行规则（`Grid::rowOf()`）⇒ 同一批数据在"全量"与"懒"
  *   之间切换，格宽逐像素一致。想看这件事就调窗口宽度：①②③ 的格子会一起变宽变窄。
  */
+#[Route(id: 'grid', title: '网格 Grid', icon: IconName::Grid)]
 final class GridPage extends StatelessShowcasePage
 {
     /** 卡片墙的行高（含卡片自己的内边距） */

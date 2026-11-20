@@ -3,8 +3,8 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Unit\App;
 
+use App\Showcase\Routes\ShowcaseRoutes;
 use App\Showcase\ShowcaseCapabilities;
-use App\Showcase\ShowcaseNav;
 use App\Showcase\ShowcaseRoot;
 use Drift\Async\Future;
 use Drift\Platform\Dialog;
@@ -132,12 +132,13 @@ final class ShowcaseCapabilitiesContractTest extends TestCase
             . ' 删掉这行后探针全部 NotMeasured（码 2），但 PHP 单测无法发现，故此判据读源码。'
         );
 
-        $navSource = (string) \file_get_contents((string) (new \ReflectionClass(ShowcaseNav::class))->getFileName());
-        foreach (self::navIds() as $id) {
-            self::assertStringContainsString(
-                "['{$id}', IconName::",
-                $navSource,
-                "导航 id {$id} 必须在 ShowcaseNav 的页面清单里登记"
+        // 导航 id 的唯一真相源是页面类上的 #[Route] 注解（经 RouteCatalog 反射）。
+        // 这里断言它们真的进了路由表 —— 注解写了但没登记到 CLASSES 也一样进不了侧栏。
+        $ids = self::navIds();
+        foreach ($ids as $id) {
+            self::assertTrue(
+                ShowcaseRoutes::catalog()->has($id),
+                "导航 id {$id} 必须在 ShowcaseRoutes 的清单里登记（页面类缺 #[Route]？）"
             );
         }
     }
@@ -150,12 +151,9 @@ final class ShowcaseCapabilitiesContractTest extends TestCase
         self::assertSame('string', (string) $prop->getType());
     }
 
-    /** @return list<string> */
+    /** @return list<string> 从路由表读 —— 与导航项的唯一真相源同源 */
     private static function navIds(): array
     {
-        $source = (string) \file_get_contents((string) (new \ReflectionClass(ShowcaseNav::class))->getFileName());
-        \preg_match_all("/\['([a-z0-9-]+)', IconName::/", $source, $matches);
-
-        return $matches[1];
+        return ShowcaseRoutes::catalog()->ids();
     }
 }

@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatefulShowcasePage;
 
 use App\Showcase\ShowcaseCapabilities;
@@ -21,6 +23,7 @@ use App\Showcase\Pages\States\PickerPageState;
  * ★ 所有值住本页 `State`（受控）：选择器只上报，改不改由页面决定。
  * ★ 不读系统时间：初始值全是写死的常量 ⇒ golden 基线稳定。
  */
+#[Route(id: 'picker', title: '日期时间 Picker', icon: IconName::ChevronDown)]
 final class PickerPage extends StatefulShowcasePage
 {
     public static function make(ShowcaseCapabilities $caps): self

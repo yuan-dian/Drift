@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatefulShowcasePage;
 
 use App\Showcase\ShowcaseCapabilities;
@@ -21,6 +23,7 @@ use App\Showcase\Pages\States\LogPageState;
  * ★ 三个过滤档是**封闭域**（全部 / WARN+ / 单分类）—— 与 `FeedbackPage` 的
  *   `StubState` 同一形状，加一档编译期就叫。
  */
+#[Route(id: 'log', title: '日志 Log', icon: IconName::ListBullets)]
 final class LogPage extends StatefulShowcasePage
 {
     public static function make(ShowcaseCapabilities $caps): self

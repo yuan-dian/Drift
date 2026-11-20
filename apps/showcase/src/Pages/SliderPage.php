@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatefulShowcasePage;
 
 use App\Showcase\ShowcaseCapabilities;
@@ -23,6 +25,7 @@ use App\Showcase\Pages\States\SliderState;
  * ★ 这一页同时是**能力边界的如实记录**（页末）：没有悬停态、没有"拖动时浮出
  *   数值气泡"、没有双向（垂直）滑杆。这些都是"没有消费者"的形态，不是漏做。
  */
+#[Route(id: 'slider', title: '滑杆 Slider', icon: IconName::Sliders)]
 final class SliderPage extends StatefulShowcasePage
 {
     public static function make(ShowcaseCapabilities $caps): self

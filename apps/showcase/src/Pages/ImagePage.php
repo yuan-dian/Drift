@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatelessShowcasePage;
 
 use App\Showcase\ShowcaseCapabilities;
@@ -34,6 +36,7 @@ use Drift\Widget\Wrap;
  * ★ 资源路径按 `<cwd>/assets` 找 —— **跑这个示例时仍要以仓库根为 cwd 启动**。
  *   找不到就是 1×1 透明占位（字体已不依赖 cwd，见 `cpp-src/skia/drift_skia.cc`）。
  */
+#[Route(id: 'image', title: '图片 Image', icon: IconName::Image)]
 final class ImagePage extends StatelessShowcasePage
 {
     public static function make(ShowcaseCapabilities $caps): self

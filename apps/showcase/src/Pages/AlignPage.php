@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatelessShowcasePage;
 
 use App\Showcase\ShowcaseCapabilities;
@@ -30,6 +32,7 @@ use Drift\Widget\Wrap;
  *
  * ★ 全静态（无状态、无动画）：对齐是布局期属性，"一帧就排对"才是它要证明的事。
  */
+#[Route(id: 'align', title: '对齐 Align', icon: IconName::Square)]
 final class AlignPage extends StatelessShowcasePage
 {
     public static function make(ShowcaseCapabilities $caps): self

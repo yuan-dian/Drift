@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatelessShowcasePage;
 
 
@@ -43,6 +45,7 @@ use Drift\Widget\Wrap;
  *   这一页退化成纯半透明面板，结构/透明度/层级全对，只少一层糊。所以"糊没糊"
  *   只能真机看 —— 这正是本页存在的理由之一。
  */
+#[Route(id: 'glass', title: '毛玻璃 Glass', icon: IconName::Brush)]
 final class GlassPage extends StatelessShowcasePage
 {
     public function build(BuildContext $ctx): Widget

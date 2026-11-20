@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatefulShowcasePage;
 
 use App\Showcase\ShowcaseCapabilities;
@@ -40,6 +42,7 @@ use App\Showcase\Pages\States\LoadMorePageState;
  *   **`data` 支**（旧行还在，该画内容），所以"正在忙"必须由页面自己说出来。
  *   同一个理由见 `AsyncTablePage::toolbar()`。
  */
+#[Route(id: 'load-more', title: '加载更多 More', icon: IconName::ListBullets)]
 final class LoadMorePage extends StatefulShowcasePage
 {
     public static function make(ShowcaseCapabilities $caps): self

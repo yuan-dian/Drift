@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatefulShowcasePage;
 
 use App\Showcase\ShowcaseCapabilities;
@@ -31,6 +33,7 @@ use App\Showcase\Pages\States\ComboBoxPageState;
  *   同一类声明式浮层）。
  * ★ 页末如实记录能力边界 —— 尤其是"方向键换高亮没有"以及为什么。
  */
+#[Route(id: 'combo', title: '可编辑 Combo', icon: IconName::Search)]
 final class ComboBoxPage extends StatefulShowcasePage
 {
     /**

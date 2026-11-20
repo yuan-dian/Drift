@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatefulShowcasePage;
 
 use App\Showcase\ShowcaseCapabilities;
@@ -20,6 +22,7 @@ use App\Showcase\Pages\States\MotionState;
  * ★ **演示的正是曲线的差别**：两个控制器**同时长**，一个 `easeOut`、一个 `linear`，
  *   同一个按钮一起 `forward()` ⇒ 两条进度条分开跑，一眼看出"快起慢收"是什么。
  */
+#[Route(id: 'motion', title: '动画 Motion', icon: IconName::Play)]
 final class MotionPage extends StatefulShowcasePage
 {
     public static function make(ShowcaseCapabilities $caps): self

@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatefulShowcasePage;
 
 use App\Showcase\ShowcaseCapabilities;
@@ -19,6 +21,7 @@ use App\Showcase\Pages\States\CalendarPageState;
  * ★ 日历**不读系统时间**：没有"今天"高亮，`selected` 也只是应用传进来的一个值。
  *   这是刻意的 —— 一读时钟，golden 基线就每天都不一样。
  */
+#[Route(id: 'calendar', title: '日历 Calendar', icon: IconName::Grid)]
 final class CalendarPage extends StatefulShowcasePage
 {
     public static function make(ShowcaseCapabilities $caps): self

@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatefulShowcasePage;
 
 use App\Showcase\ShowcaseCapabilities;
@@ -30,6 +32,7 @@ use App\Showcase\Pages\States\CustomPaintPageState;
  * ★ **`painter->version()` 有真实消费者**：HUD 每帧显示内容戳 —— "没人调的
  *   分支等价于未实现"，所以版本戳被这一行的 `Text` 真的读出来。
  */
+#[Route(id: 'paint', title: '自绘 Paint', icon: IconName::Brush)]
 final class CustomPaintPage extends StatefulShowcasePage
 {
     public static function make(ShowcaseCapabilities $caps): self

@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatefulShowcasePage;
 
 use App\Showcase\ShowcaseCapabilities;
@@ -26,6 +28,7 @@ use App\Showcase\Pages\States\TooltipState;
  *   "自己写 hover 回调 + 自己 push 浮层"的收益。
  * ★ 页末如实记录能力边界。
  */
+#[Route(id: 'tooltip', title: '提示 Tooltip', icon: IconName::Info)]
 final class TooltipPage extends StatefulShowcasePage
 {
     public static function make(ShowcaseCapabilities $caps): self

@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatefulShowcasePage;
 
 use App\Showcase\ShowcaseCapabilities;
@@ -23,6 +25,7 @@ use App\Showcase\Pages\States\FeedbackState;
  *   示例台的职责就是"覆盖现有控件面"（见 `ShowcaseRoot` 类注释），所以这里
  *   给它一个入口，顺带把 `dismissible(false)` 的对照也摆上。
  */
+#[Route(id: 'feedback', title: '反馈 Feedback', icon: IconName::Bell)]
 final class FeedbackPage extends StatefulShowcasePage
 {
     public static function make(ShowcaseCapabilities $caps): self

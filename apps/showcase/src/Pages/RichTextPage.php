@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatefulShowcasePage;
 
 use Drift\Widget\RichText;
@@ -24,6 +26,7 @@ use App\Showcase\Pages\States\RichTextPageState;
  * ★ ⑤ 的判据是"点链接计数 +1、点文字其他地方不变"—— tag 命中靠字节偏移，
  *   不是"整个控件都是链接"。
  */
+#[Route(id: 'rich-text', title: '富文本 Rich', icon: IconName::TextLines)]
 final class RichTextPage extends StatefulShowcasePage
 {
     public function createState(): State

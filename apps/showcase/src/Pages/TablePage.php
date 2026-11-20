@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatefulShowcasePage;
 
 use App\Showcase\ShowcaseCapabilities;
@@ -40,6 +42,7 @@ use App\Showcase\Pages\States\TablePageState;
  *   表头的键盘排序已在（§61：首行 ↑ 进表头 / Enter 三态；§62：Shift 多键追加次键）。
  *   排序后光标**留在原位置**（`focusedRow` 是下标，"眼睛在哪"不跟数据身份，§61.5）。
  */
+#[Route(id: 'table', title: '表格 Table', icon: IconName::Grid)]
 final class TablePage extends StatefulShowcasePage
 {
     public static function make(ShowcaseCapabilities $caps): self

@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatefulShowcasePage;
 
 use App\Showcase\ShowcaseCapabilities;
@@ -16,6 +18,7 @@ use App\Showcase\Pages\States\ButtonsState;
  *   `hover()`（§24.2 #16）与 `cursor()`（三方消费第 ③ 方）在这里
  *   有**真实消费者**：鼠标划过 ⇒ 计数 +1；命中 ⇒ 指针变手型。
  */
+#[Route(id: 'buttons', title: '按钮 Button', icon: IconName::Square)]
 final class ButtonsPage extends StatefulShowcasePage
 {
     public static function make(ShowcaseCapabilities $caps): self

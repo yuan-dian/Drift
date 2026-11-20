@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatelessShowcasePage;
 
 
@@ -27,6 +29,7 @@ use Drift\Widget\Widget;
  * `Each`（key 必填，R4）驱动，长列表（16 行超过视口）走 `ScrollView` ——
  * 滚动偏移**布局期进子盒 offset**（坐标链纪律，§24.2 #15）。
  */
+#[Route(id: 'list', title: '列表 List', icon: IconName::ListBullets)]
 final class ListPage extends StatelessShowcasePage
 {
     public function build(BuildContext $ctx): Widget

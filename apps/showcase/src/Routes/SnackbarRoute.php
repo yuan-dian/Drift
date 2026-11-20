@@ -9,7 +9,6 @@ use App\Showcase\Routes\Snackbar\SnackbarIntent;
 use App\Showcase\Routes\Snackbar\SnackbarModel;
 use App\Showcase\Routes\Snackbar\SnackbarServices;
 use Drift\Geometry\EdgeInsets;
-use Drift\Route\Route;
 use Drift\Route\RouteEffect;
 use Drift\Route\RouteEvent;
 use Drift\Route\RouteModel;
@@ -20,7 +19,6 @@ use Drift\Widget\Button;
 use Drift\Widget\ButtonVariant;
 use Drift\Widget\Card;
 use Drift\Widget\Column;
-use Drift\Widget\IconName;
 use Drift\Widget\ScrollView;
 use Drift\Widget\Snackbar;
 use Drift\Widget\Text;
@@ -28,11 +26,11 @@ use Drift\Widget\Widget;
 use Drift\Widget\Wrap;
 
 /**
- * 底部通知 Snackbar —— 新架构的样板页。
+ * 底部通知 Snackbar —— 四段式 `RouteView` 的样板实现。
  *
- * 一个文件装下四件事：路由身份（注解）、状态（`SnackbarModel`）、
- * 状态怎么变（`update()`）、画面长什么样（`view()`）。副作用只有一个落点
- * （`apply()`），不再散落在按钮闭包里。
+ * 导航身份归 {@see \App\Showcase\Pages\SnackbarPage} 的 `#[Route]` 注解；
+ * 本类只管页面内部：状态（`SnackbarModel`）、状态怎么变（`update()`）、
+ * 画面长什么样（`view()`）。副作用只有一个落点（`apply()`），不再散进按钮闭包。
  *
  * 四段演示（与迁移前逐像素一致）：
  *
@@ -48,13 +46,6 @@ use Drift\Widget\Wrap;
  *
  * @api
  */
-#[Route(
-    id: 'snackbar',
-    title: '通知 Snackbar',
-    // 枚举直接进注解：拼错 case 是编译期错误（见 probes/enum_attribute 三态实测）。
-    icon: IconName::Bell,
-    services: SnackbarServices::class,
-)]
 final class SnackbarRoute implements RouteView
 {
     public function __construct(

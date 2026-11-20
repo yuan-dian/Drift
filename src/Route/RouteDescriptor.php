@@ -6,28 +6,24 @@ namespace Drift\Route;
 use Drift\Widget\IconName;
 
 /**
- * 一条路由的不可变描述符 —— 反射的产物，运行期的输入。
+ * 一条路由的不可变描述符 —— 注解的产物，导航的运行期输入。
  *
- * 由 `RouteCatalog::discover()` 在启动期造出，之后只被读：
- * 导航项、建页、自动化身份全部从这一张表派生，不再各自维护一份。
+ * 由 `RouteCatalog::discover()` 在启动期造出，之后只读：侧栏导航项、
+ * 页面工厂、自动化身份全部从这一张表派生，不再各自维护一份。
  *
- * ★ `viewClass` / `servicesClass` 存 FQCN 字符串：`new $cls(...)` 在 AOT 产物里
- *   已验证可用（`probes/class_string`），所以组合根不需要逐页写工厂闭包。
+ * ★ 只含导航三要素 + 页面类：`viewClass`/`servicesClass` 已移除。
+ *   状态管理是页面内部选择，不进导航描述符 —— 否则纯展示页也被迫声明服务。
  *
  * @api
  */
 final readonly class RouteDescriptor
 {
-    /**
-     * @param class-string<RouteView> $viewClass
-     * @param class-string $servicesClass 服务投影类，构造器收一个"应用上下文"
-     */
+    /** @param class-string $pageClass 带 #[Route] 的页面 Widget 类 */
     public function __construct(
         public string $id,
         public string $title,
         public IconName $icon,
-        public string $viewClass,
-        public string $servicesClass,
+        public string $pageClass,
     ) {
     }
 }

@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatefulShowcasePage;
 
 use App\Showcase\ShowcaseCapabilities;
@@ -21,6 +23,7 @@ use App\Showcase\Pages\States\SegmentedState;
  * ★ 这一页同时是**能力边界的如实记录**：方向键在段间移动焦点今天没有
  *   （Tab 一段一格，与 Win32 单选组一致）；悬停高亮没有视觉态。见页末。
  */
+#[Route(id: 'segmented', title: '分段 Segmented', icon: IconName::Menu)]
 final class SegmentedPage extends StatefulShowcasePage
 {
     public static function make(ShowcaseCapabilities $caps): self

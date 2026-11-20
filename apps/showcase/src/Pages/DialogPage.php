@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatefulShowcasePage;
 
 use App\Showcase\ShowcaseCapabilities;
@@ -31,6 +33,7 @@ use App\Showcase\Pages\States\DialogPageState;
  *   `application()` 访问器（§4.3 禁 `Widget → App`），平台名只出现在组合根。
  *   ★ 形参**不可空**：`?Dialog` 字段在 AOT 侧退化 `php::Var`（PITFALLS 第 20 条）。
  */
+#[Route(id: 'dialog', title: '对话框 Dialog', icon: IconName::Info)]
 final class DialogPage extends StatefulShowcasePage
 {
     public static function make(ShowcaseCapabilities $caps): self

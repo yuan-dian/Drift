@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatelessShowcasePage;
 
 use App\Showcase\ShowcaseCapabilities;
@@ -28,6 +30,7 @@ use Drift\Widget\Wrap;
  *   "一帧就画对"才是它要证明的事。动画版在 Motion 页（`AnimatedOpacity`），
  *   两者组合（动画驱动矩阵）留到 A1c 后续，不在这一件里假装做完。
  */
+#[Route(id: 'transform', title: '变换 Transform', icon: IconName::Square)]
 final class TransformPage extends StatelessShowcasePage
 {
     public static function make(ShowcaseCapabilities $caps): self

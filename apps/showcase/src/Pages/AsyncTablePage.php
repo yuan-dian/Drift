@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatefulShowcasePage;
 
 use App\Showcase\ShowcaseCapabilities;
@@ -64,6 +66,7 @@ use App\Showcase\Pages\States\AsyncTablePageState;
  * "现在不能点"），而不是在 `onPressed` 里悄悄 `return`（点了没反应、也不知道为什么）。
  * 命令的 `isRunning()` 直接就是那个判据 —— 这是 `AsyncCommand` 的存在理由之一。
  */
+#[Route(id: 'async-table', title: '异步表格 Async', icon: IconName::ListBullets)]
 final class AsyncTablePage extends StatefulShowcasePage
 {
     public static function make(ShowcaseCapabilities $caps): self

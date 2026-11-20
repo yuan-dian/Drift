@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatefulShowcasePage;
 
 use App\Showcase\ShowcaseCapabilities;
@@ -35,6 +37,7 @@ use App\Showcase\Pages\States\SelectState;
  *   高亮是**控件私有态**，应用不用为"光标停在第几行"再存一个字段。
  * ★ 页末如实记录能力边界。
  */
+#[Route(id: 'select', title: '下拉 Select', icon: IconName::ChevronDown)]
 final class SelectPage extends StatefulShowcasePage
 {
     public static function make(ShowcaseCapabilities $caps): self

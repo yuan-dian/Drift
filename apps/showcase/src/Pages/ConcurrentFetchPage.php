@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatefulShowcasePage;
 
 use App\Showcase\ShowcaseCapabilities;
@@ -49,6 +51,7 @@ use App\Showcase\Pages\States\ConcurrentFetchPageState;
  * 每份几十 MB），要么让服务端一次答完（聚合接口 / BFF）。本仓不提供"一个 worker
  * 内并发等 5 条连接"的能力 —— 那条路（`curl_multi`）在本运行时上是死的，见上文。
  */
+#[Route(id: 'concurrent', title: '并发取数 Concurrent', icon: IconName::Grid)]
 final class ConcurrentFetchPage extends StatefulShowcasePage
 {
     public static function make(ShowcaseCapabilities $caps): self

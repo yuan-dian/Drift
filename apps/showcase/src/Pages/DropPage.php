@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatefulShowcasePage;
 
 use Drift\Widget\Card;
@@ -25,6 +27,7 @@ use App\Showcase\Pages\States\DropPageState;
  *
  * ★ 构造无必填参数 ⇒ 能进 golden 整页基线（不像 `DialogPage` 要递端口）。
  */
+#[Route(id: 'drop', title: '拖文件 Drop', icon: IconName::Square)]
 final class DropPage extends StatefulShowcasePage
 {
     public function createState(): State

@@ -3,17 +3,21 @@ declare(strict_types=1);
 
 namespace Drift\Route;
 
+use Drift\Widget\Widget;
+
 /**
- * 启动期把 `#[Route]` 注解读成一张不可变路由表。
+ * 启动期把页面类上的 `#[Route]` 注解读成一张不可变导航表。
  *
  * 这是整套设计里**唯一出现反射的地方**，且只在进程启动时跑一次：
- * 之后导航、建页、自动化身份全部查 `RouteDescriptor`，热路径零反射。
+ * 之后侧栏导航项、页面工厂、自动化身份全部查 `RouteDescriptor`，热路径零反射。
  * 依据：`probes/annotation_reflection` 三态（解释器 / dev 壳 / 全 AOT）验证
  * `getAttributes()` 与 `ReflectionAttribute::newInstance()` 在 AOT 产物里可用。
  *
  * ★ 为什么类清单仍是显式数组：AOT 产物里没有"扫目录找类"这回事。
- *   清单是构建期可生成的产物，不是业务数据 —— 一页一行，取代原来的
- *   "PAGES 行 + Page 壳 + State 类 + automationId" 四处对账。
+ *   清单是构建期可生成的产物，不是业务数据 —— 一页一行，且 `id/title/icon`
+ *   只在页面类的注解里写一次，不再有 `ShowcaseNav::PAGES` 那张平行清单。
+ * ★ 本类只产出**元数据**（descriptor）；怎么把 descriptor 变成 NavEntry /
+ *   RouteTable 是应用层的接线（`ShowcaseNav`），框架不替它做产品决定。
  * ★ 为什么 id 冲突在启动期就抛：等到用户点导航才发现两个页撞 id，是线上问题；
  *   启动期抛是构建/自检问题。
  *
@@ -37,15 +41,15 @@ final class RouteCatalog
     /**
      * 读注解、校验、建表。
      *
-     * @param list<class-string> $viewClasses 实现 `RouteView` 且带 `#[Route]` 的类
+     * @param list<class-string> $pageClasses 带 `#[Route]` 的页面 Widget 类
      *
-     * @throws \InvalidArgumentException 缺注解 / id 重复 / 类没实现契约
+     * @throws \InvalidArgumentException 缺注解 / id 重复 / 类不是 Widget
      */
-    public static function discover(array $viewClasses): self
+    public static function discover(array $pageClasses): self
     {
         $byId = [];
 
-        foreach ($viewClasses as $class) {
+        foreach ($pageClasses as $class) {
             $ref = new \ReflectionClass($class);
 
             $attributes = $ref->getAttributes(Route::class);
@@ -56,11 +60,11 @@ final class RouteCatalog
                 ));
             }
 
-            if (!$ref->implementsInterface(RouteView::class)) {
+            if (!$ref->isSubclassOf(Widget::class)) {
                 throw new \InvalidArgumentException(sprintf(
-                    '"%s" 带 #[Route] 但没实现 %s：注解声明的是"可运行的路由"，不是装饰',
+                    '"%s" 带 #[Route] 但不是 %s 子类：路由声明的是可挂载的页面',
                     $class,
-                    RouteView::class,
+                    Widget::class,
                 ));
             }
 
@@ -71,7 +75,7 @@ final class RouteCatalog
                 throw new \InvalidArgumentException(sprintf(
                     '路由 id 冲突："%s" 同时被 "%s" 与 "%s" 声明',
                     $meta->id,
-                    $byId[$meta->id]->viewClass,
+                    $byId[$meta->id]->pageClass,
                     $class,
                 ));
             }
@@ -81,7 +85,6 @@ final class RouteCatalog
                 $meta->title,
                 $meta->icon,
                 $class,
-                $meta->services,
             );
         }
 
@@ -118,27 +121,5 @@ final class RouteCatalog
     public function ids(): array
     {
         return $this->ids;
-    }
-
-    /**
-     * 按描述符造一个页面实例。
-     *
-     * 两步动态构造，都在**切页时**发生（非热路径）：
-     * `new $servicesClass($context)` 造服务投影，`new $viewClass($services)` 造页面。
-     * 两者都在 `probes/class_string` 的 AOT 产物里实测可用；因此组合根不必
-     * 逐页写工厂闭包，一页一行清单就够。
-     *
-     * 约定：服务投影类的构造器收**一个**参数 —— 应用上下文（示例台里是能力束）。
-     * 这条约定由 `#[Route(services: ...)]` 显式声明，不靠反射猜类型。
-     *
-     * @param object $context 应用侧的能力束 / 服务根
-     */
-    public function create(string $id, object $context): RouteView
-    {
-        $descriptor = $this->get($id);
-        $viewClass = $descriptor->viewClass;
-        $servicesClass = $descriptor->servicesClass;
-
-        return new $viewClass(new $servicesClass($context));
     }
 }

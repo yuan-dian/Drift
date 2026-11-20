@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatefulShowcasePage;
 
 use App\Showcase\ShowcaseCapabilities;
@@ -21,6 +23,7 @@ use App\Showcase\Pages\States\FormState;
  *   `Row(cross:End)` 的历史写法。仍缺的只有 label 位置，见页末对照。
  * ★ 预览/代码切换靠 `Offstage` + `setState`：保留状态、不画。
  */
+#[Route(id: 'form', title: '表单 Form', icon: IconName::Check)]
 final class FormPage extends StatefulShowcasePage
 {
     public static function make(ShowcaseCapabilities $caps): self

@@ -2,31 +2,37 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 
 use App\Showcase\Pages\Base\StatefulShowcasePage;
-use App\Showcase\Routes\ShowcaseRoutes;
+use App\Showcase\Routes\Snackbar\SnackbarServices;
+use App\Showcase\Routes\SnackbarRoute;
 use Drift\Route\RouteState;
 use Drift\Widget\State;
 
 /**
- * Snackbar 页的**兼容壳**：只负责把路由表接到框架的挂载点。
+ * Snackbar 页 —— 四段式 `RouteView` 的**可选样板**。
  *
- * 为什么还要这个类：`NavEntry` 与 golden 量具都按类名持有页面
- * （`new $pageClass($context)`），所以页面类名与构造器形态必须保住。
- * 一页真正的逻辑全在 {@see SnackbarRoute}，这里不再有状态、不再有 build。
+ * 导航身份来自本类的 `#[Route]` 注解（与其余 33 页同一条路径）；页面内部的
+ * 状态管理则选择 `RouteView` + `RouteState`：逻辑在 {@see SnackbarRoute}，
+ * 这里只把能力束投影成 `SnackbarServices` 并交给泛型壳。
  *
- * ★ 迁移期的形态：旧 33 页照原样 `extends StatefulShowcasePage` + 手写 State；
- *   新页走 `RouteState`。等全量迁完，这个壳连同 `StatefulShowcasePage` 一起消失
- *   ——`NavEntry` 改为从 `RouteCatalog` 取描述符建页。
+ * ★ 为什么只有这一页用四段式：它的「删除 → 撤销 → 计数」是纯状态转移，
+ *   `update()` 能在无窗口的 PHP 单测里直接断言。其余页多是就地 UI 态
+ *   （悬停计数、光标、滚动位置），套四段式只会多造 Model/Event/Effect。
+ * ★ 服务投影在这里手写一行，不再由导航注解携带 —— 状态管理是页面内部选择，
+ *   不进导航描述符。
  *
  * @api
  */
+#[Route(id: 'snackbar', title: '通知 Snackbar', icon: IconName::Bell)]
 final class SnackbarPage extends StatefulShowcasePage
 {
     public function createState(): State
     {
         return new RouteState(
-            ShowcaseRoutes::catalog()->create('snackbar', $this->caps),
+            new SnackbarRoute(new SnackbarServices($this->caps)),
         );
     }
 }

@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 namespace App\Showcase\Pages;
+use Drift\Route\Route;
+use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\StatelessShowcasePage;
 
 
@@ -25,6 +27,7 @@ use Drift\Widget\Wrap;
  * 演示面：title / heading / body / caption / error 五级 + size / bold /
  * maxLines / ellipsize。
  */
+#[Route(id: 'text', title: '文本 Text', icon: IconName::TextLines)]
 final class TextPage extends StatelessShowcasePage
 {
     public function build(BuildContext $ctx): Widget
