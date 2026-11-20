@@ -95,4 +95,11 @@ interface Platform
      * getenv('APPDATA') 在 PHP 侧被禁 ⇒ 只能由平台实现回答。只给路径，不创建目录。
      */
     public function configDir(): string;
+
+    /**
+     * 进程级静态钩子的装配端口（fatal box / resize pump）。
+     * 由平台实现自己 new 并缓存，`WindowSet` 代管 install/release；
+     * 组合根不直接碰，也不写平台判断。
+     */
+    public function hooks(): PlatformHooks;
 }

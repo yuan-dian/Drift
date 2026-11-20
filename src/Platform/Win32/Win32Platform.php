@@ -19,6 +19,7 @@ use Drift\Platform\Clipboard;
 use Drift\Platform\Dialog;
 use Drift\Platform\InputSource;
 use Drift\Platform\Platform;
+use Drift\Platform\PlatformHooks;
 use Drift\Platform\Screen;
 use Drift\Platform\SurfaceProvider;
 use Drift\Platform\Tray;
@@ -40,6 +41,8 @@ use function drift_win_wait;
 final class Win32Platform implements Platform
 {
     private ?Win32WindowHost $window = null;
+
+    private ?Win32PlatformHooks $hooks = null;
 
     /**
      * 按窗口句柄缓存的事件队列。句柄就是 key：队列是有状态对象，窗口是它的天然归属。
@@ -73,6 +76,11 @@ final class Win32Platform implements Platform
     public function __construct(
         private readonly ?string $renderer = null,
     ) {
+    }
+
+    public function hooks(): PlatformHooks
+    {
+        return $this->hooks ??= new Win32PlatformHooks($this);
     }
 
     public function screen(int $windowHandle): Screen

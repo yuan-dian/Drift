@@ -8,8 +8,6 @@ use Drift\App\Paths;
 use Drift\App\ProcessTaskHost;
 use Drift\App\ProcessWorker;
 use Drift\App\WindowSet;
-use Drift\Errors;
-use Drift\Platform\Win32\ResizeHookState;
 use Drift\Platform\Win32\Win32Platform;
 use Drift\Theme\ThemeData;
 
@@ -72,21 +70,7 @@ final class Bootstrap
         }
 
         $platform = new Win32Platform();
-
-        // ★ 中止序列第 ② 步必须在**别的一切之前**装好（§1.2）。传 callable 而不是
-        //   平台实例 —— `Errors` 不依赖 Platform 类型（§5.1）。
-        Errors::installFatalBox(
-            static function (string $title, string $body) use ($platform): void {
-                $platform->fatalBox($title, $body);
-            }
-        );
-
-        // ★ 第三个参数是**卸载**：两处静态钩子捕获的闭包持有整条应用对象图，
-        //   不卸 ⇒ 活到 PHP shutdown ⇒ AOT 关窗必崩（实测 8/8）。
-        $set = new WindowSet($platform, Paths::userConfig($platform->configDir(), self::STATE_FILE), static function (): void {
-            ResizeHookState::$pump = null;
-            Errors::installFatalBox(null);
-        });
+        $set = new WindowSet($platform, Paths::userConfig($platform->configDir(), self::STATE_FILE));
 
         // ★ **`AppScope` 是进程一份的那半边**（M2）：字体、任务池、IO 轮询器、
         //   主题、全局命令。单窗口时它等价于"每个应用自建一个"，多窗口时
@@ -185,13 +169,6 @@ final class Bootstrap
                 },
             )->setMinSize(320, 260);
         }
-
-        // ★ 拖动边缘重排：业务逻辑在 `WindowSet`，这里只是接线（`ResizeHookState`
-        //   是 Win32 静态槽，`src/App` 不许引用平台实现）。按句柄分发 ⇒ 多窗时
-        //   不会让副窗的拖动去重排主窗（不报错、只画错窗）。
-        ResizeHookState::$pump = static function (int $windowHandle) use ($set): void {
-            $set->repaintForResize($windowHandle);
-        };
 
         $set->run();
     }

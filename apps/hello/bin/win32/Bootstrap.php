@@ -5,8 +5,6 @@ namespace App\Hello;
 
 use Drift\App\Paths;
 use Drift\App\WindowSet;
-use Drift\Errors;
-use Drift\Platform\Win32\ResizeHookState;
 use Drift\Platform\Win32\Win32Platform;
 
 /**
@@ -19,6 +17,9 @@ use Drift\Platform\Win32\Win32Platform;
  * ★ **循环归平台**（§5.2 裁决 1）：`Application` **没有** `run()`，只提供
  *   `attach()` 与 `frame()`；等待仍由 `Platform::waitEvents()` 给，
  *   `WindowSet::run()` 只编排（等 / 派发 / 跑帧）。
+ *
+ * ★ 进程级钩子（fatal box / resize pump）由平台 `hooks()` 提供，`WindowSet`
+ *   构造时装、`run()` 的 finally 卸；本文件不再接线，只决定开哪些窗。
  *
  * ★ **本文件是 §19 M1 的出口判据**："一个窗口画出「Hello Drift」"。
  *   它也是 `apps/hello` 里唯一引用 `Drift\Platform\Win32` 的文件 ⇒
@@ -42,22 +43,7 @@ final class Bootstrap
     public static function run(): void
     {
         $platform = new Win32Platform();
-
-        // ★ 中止序列第 ② 步必须在**别的一切之前**装好（§1.2）：引导阶段就崩的话，
-        //   没有错误框就只剩"闪退"。传 callable 而不是 Platform 实例 ——
-        //   `Errors` 不依赖 Platform 类型（§5.1）。
-        Errors::installFatalBox(
-            static function (string $title, string $body) use ($platform): void {
-                $platform->fatalBox($title, $body);
-            }
-        );
-
-        // ★ 第三个参数是**卸载**：两处静态钩子捕获的闭包持有整条应用对象图，
-        //   不卸 ⇒ 活到 PHP shutdown ⇒ AOT 关窗必崩（实测 8/8）。
-        $set = new WindowSet($platform, Paths::userConfig($platform->configDir(), self::STATE_FILE), static function (): void {
-            ResizeHookState::$pump = null;
-            Errors::installFatalBox(null);
-        });
+        $set = new WindowSet($platform, Paths::userConfig($platform->configDir(), self::STATE_FILE));
 
         $set->open(
             'main',
@@ -86,14 +72,6 @@ final class Bootstrap
                 },
             )->setMinSize(self::MIN_WIDTH, self::MIN_HEIGHT);
         }
-
-        // ★ 拖动边缘重排（§5.2）：模态尺寸循环里主循环被系统挂起，壳在 `WM_SIZE`
-        //   里**同步调回** PHP 走轻量重绘。业务逻辑在 `WindowSet::repaintForResize()`
-        //   （按句柄分发 —— 不按句柄就会让第二窗的拖动去重排第一窗，不报错、只画错窗）。
-        //   接线留在这里是因为 `ResizeHookState` 是 Win32 静态槽，`src/App` 不许引用它。
-        ResizeHookState::$pump = static function (int $windowHandle) use ($set): void {
-            $set->repaintForResize($windowHandle);
-        };
 
         $set->run();
     }

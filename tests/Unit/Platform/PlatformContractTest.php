@@ -9,10 +9,12 @@ use Drift\Dev\Tests\Support\HeadlessPlatform;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Platform\InputSource;
 use Drift\Platform\Platform;
+use Drift\Platform\PlatformHooks;
 use Drift\Platform\Screen;
 use Drift\Platform\WakeReason;
 use Drift\Platform\WindowHost;
 use Drift\Platform\Win32\Win32Platform;
+use Drift\Platform\X11\X11Platform;
 
 /**
  * 「平台 = 可替换的接口」这条口径的契约自证。
@@ -26,7 +28,7 @@ final class PlatformContractTest extends SmokeTestCase
 {
     private const EXPECTED = [
         'clipboard', 'configDir', 'consumeModalBlockedMs', 'dialog', 'fatalBox',
-        'imeCaret', 'input', 'now', 'pumpEvents', 'screen', 'surface', 'tray',
+        'hooks', 'imeCaret', 'input', 'now', 'pumpEvents', 'screen', 'surface', 'tray',
         'waitEvents', 'window',
     ];
 
@@ -39,7 +41,7 @@ final class PlatformContractTest extends SmokeTestCase
         sort($methods);
 
         check(
-            'Platform · 接口方法集 == 登记的 14 个（新增端口必须同步契约）',
+            'Platform · 接口方法集 == 登记的 15 个（新增端口必须同步契约）',
             $methods === self::EXPECTED,
             'actual=' . implode(',', $methods),
         );
@@ -67,6 +69,26 @@ final class PlatformContractTest extends SmokeTestCase
         $this->flushChecks();
     }
 
+    public function testX11ImplementsEveryPort(): void
+    {
+        $reflection = new \ReflectionClass(X11Platform::class);
+        $missing = [];
+        foreach (self::EXPECTED as $name) {
+            if (!$reflection->hasMethod($name) || $reflection->getMethod($name)->isAbstract()) {
+                $missing[] = $name;
+            }
+        }
+
+        check(
+            'Platform · X11Platform 实现全部端口（跨平台漏实现即红）',
+            $missing === [],
+            'missing=' . implode(',', $missing),
+        );
+        check('Platform · X11 hooks() 返回 PlatformHooks', (new X11Platform())->hooks() instanceof PlatformHooks);
+
+        $this->flushChecks();
+    }
+
     public function testHeadlessIsAWorkingSecondImplementation(): void
     {
         $platform = new HeadlessPlatform();
@@ -80,6 +102,7 @@ final class PlatformContractTest extends SmokeTestCase
         check('Headless · pumpEvents() 返回条数', $platform->pumpEvents() === 0);
         check('Headless · consumeModalBlockedMs() 读后为 0', $platform->consumeModalBlockedMs() === 0.0);
         check('Headless · configDir() 空串 = 不持久化', $platform->configDir() === '');
+        check('Headless · hooks() 返回 PlatformHooks', $platform->hooks() instanceof PlatformHooks);
         check('Headless · now() 单调', $platform->now() < $platform->now());
         $platform->fatalBox('t', 'b');
         $platform->imeCaret(1, null);

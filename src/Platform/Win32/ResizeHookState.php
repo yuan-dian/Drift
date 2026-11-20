@@ -8,7 +8,7 @@ namespace Drift\Platform\Win32;
  *
  * ★ 为什么是静态槽而不是 `Application` 上的字段：壳调的是**具名函数**
  *   （见 `ResizeHook.php`），拿不到 Application —— 只能从进程级静态槽取
- *   "该谁跑帧"。组合根（Bootstrap）注入，`attach()` 之后才有效。
+ *   "该谁跑帧"。平台 `hooks()` 在 `WindowSet` 构造时注入，`attach()` 之后才有效。
  *
  * ★ **槽是"按窗口分发的函数"，不是"一个闭包"**（2026-10-30，M1-b）：
  *   壳已经知道是哪个窗口在拖（`pumpResizeHook(HWND)`），把它传进来，
@@ -17,8 +17,8 @@ namespace Drift\Platform\Win32;
  *
  * ★ 槽为空 ⇒ no-op：smoke / 离屏渲染从不注入，也就不存在重入问题。
  *
- * ★ `@api`：它和 `WindowHost::pushSemantics()` 一样是**组合根的注入点**
- *   （那条链路也是"框架不持平台 ⇒ 组合根接线"），不是内部实现细节。
+ * ★ `@api`：它和 `WindowHost::pushSemantics()` 一样是平台层的注入点，由
+ *   `PlatformHooks` 代管（框架不持平台实现 ⇒ 平台自己接自己的静态槽）。
  */
 final class ResizeHookState
 {

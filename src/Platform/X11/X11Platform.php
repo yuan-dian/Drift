@@ -14,6 +14,7 @@ use Drift\Platform\Clipboard;
 use Drift\Platform\Dialog;
 use Drift\Platform\InputSource;
 use Drift\Platform\Platform;
+use Drift\Platform\PlatformHooks;
 use Drift\Platform\Screen;
 use Drift\Platform\SurfaceProvider;
 use Drift\Platform\Tray;
@@ -36,6 +37,8 @@ final class X11Platform implements Platform
 {
     private ?X11WindowHost $window = null;
 
+    private ?X11PlatformHooks $hooks = null;
+
     /** @var array<int, X11InputSource> */
     private array $inputs = [];
 
@@ -51,6 +54,11 @@ final class X11Platform implements Platform
 
     /** @var list<array<string, mixed>> */
     private array $pending = [];
+
+    public function hooks(): PlatformHooks
+    {
+        return $this->hooks ??= new X11PlatformHooks($this);
+    }
 
     public function screen(int $windowHandle): Screen
     {

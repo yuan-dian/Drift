@@ -11,7 +11,6 @@ use Drift\App\WindowSet;
 use Drift\Errors;
 use Drift\Platform\Backdrop;
 use Drift\Platform\WindowMaterial;
-use Drift\Platform\Win32\ResizeHookState;
 use Drift\Platform\Win32\Win32Platform;
 use Drift\Rendering\Color;
 
@@ -65,12 +64,6 @@ final class Bootstrap
 
         $platform = new Win32Platform();
 
-        Errors::installFatalBox(
-            static function (string $title, string $body) use ($platform): void {
-                $platform->fatalBox($title, $body);
-            }
-        );
-
         // ★ **M4 的形态到了**：首屏取数不再占 UI 线程 —— 交给常驻子进程（§17.4.5），
         //   它去请求一个**真 HTTP 后端**（`apps/users/mock-server.php`，故意慢 1.2s）。
         //   ⇒ `AsyncValue::loading()` 那一态第一次真的被用户看见（§11.5 的结论）。
@@ -92,12 +85,7 @@ final class Bootstrap
             $taskHost->prewarm();
         }
 
-        // ★ 第三个参数是**卸载**：两处静态钩子捕获的闭包持有整条应用对象图，
-        //   不卸 ⇒ 活到 PHP shutdown ⇒ AOT 关窗必崩（实测 8/8）。
-        $set = new WindowSet($platform, Paths::userConfig($platform->configDir(), 'users.window'), static function (): void {
-            ResizeHookState::$pump = null;
-            Errors::installFatalBox(null);
-        });
+        $set = new WindowSet($platform, Paths::userConfig($platform->configDir(), 'users.window'));
 
         // 业务状态恢复：构造即读回，应用构造时 bucket 已有值；写回由 WindowSet 在退出时做一次。
         $scope = \Drift\App\AppScope::make()
@@ -131,12 +119,6 @@ final class Bootstrap
             ->setMinSize(420, 320)
             // ★ UIA 无障碍（§9 / M5）：语义树是每窗一棵。不接 ⇒ 不建树、零开销。
             ->onSemantics();
-
-        // ★ 拖动边缘重排：业务逻辑在 `WindowSet`，这里只是接线（`ResizeHookState`
-        //   是 Win32 静态槽，`src/App` 不许引用平台实现）。
-        ResizeHookState::$pump = static function (int $windowHandle) use ($set): void {
-            $set->repaintForResize($windowHandle);
-        };
 
         $set->run();
     }

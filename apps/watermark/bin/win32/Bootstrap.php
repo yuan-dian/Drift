@@ -9,7 +9,6 @@ use Drift\App\ProcessWorker;
 use Drift\App\WindowSet;
 use Drift\Errors;
 use Drift\Platform\Dialog;
-use Drift\Platform\Win32\ResizeHookState;
 use Drift\Platform\Win32\Win32Platform;
 
 use App\Watermark\Jobs\JobRegistry;
@@ -58,12 +57,6 @@ final class Bootstrap
 
         $platform = new Win32Platform();
 
-        Errors::installFatalBox(
-            static function (string $title, string $body) use ($platform): void {
-                $platform->fatalBox($title, $body);
-            }
-        );
-
         // ★ 对话框端口：**建窗之前取**（`Win32Dialog` 持有窗口对象、owner 每次现取，
         //   所以取早取晚都一样；这里早取是为了"缺端口"当场失败，而不是等用户点了
         //   "选择图片"才发现）。`null` = 本平台没实现 ⇒ 走 §1.2 中止序列。
@@ -90,12 +83,7 @@ final class Bootstrap
             $taskHost->prewarm();
         }
 
-        // ★ 第三个参数是**卸载**：两处静态钩子捕获的闭包持有整条应用对象图，
-        //   不卸 ⇒ 活到 PHP shutdown ⇒ AOT 关窗必崩（实测 8/8）。
-        $set = new WindowSet($platform, Paths::userConfig($platform->configDir(), 'watermark.window'), static function (): void {
-            ResizeHookState::$pump = null;
-            Errors::installFatalBox(null);
-        });
+        $set = new WindowSet($platform, Paths::userConfig($platform->configDir(), 'watermark.window'));
 
         $set->open(
             'main',
@@ -111,12 +99,6 @@ final class Bootstrap
             ->setMinSize(480, 360)
             // ★ UIA 无障碍（§9 / M5）：语义树是每窗一棵。不接 ⇒ 不建树、零开销。
             ->onSemantics();
-
-        // ★ 拖动边缘重排：业务逻辑在 `WindowSet`，这里只是接线（`ResizeHookState`
-        //   是 Win32 静态槽，`src/App` 不许引用平台实现）。
-        ResizeHookState::$pump = static function (int $windowHandle) use ($set): void {
-            $set->repaintForResize($windowHandle);
-        };
 
         $set->run();
     }

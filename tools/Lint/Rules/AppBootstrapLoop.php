@@ -27,7 +27,8 @@ use Drift\Dev\Lint\SourceFile;
  * 第三次（2026-10-30，多窗口 + 状态持久化）
  *   组合根手抄的那 30 行里含**两个必须卸的静态钩子**（`ResizeHookState::$pump` /
  *   `Errors::installFatalBox()`）。不卸 ⇒ 对象图活到 PHP shutdown ⇒ AOT 解引用
- *   已销毁的类元数据 ⇒ **关窗必崩**（实测 8/8）。这条纪律曾写在四个文件里各一遍。
+ *   已销毁的类元数据 ⇒ **关窗必崩**（实测 8/8）。这条纪律曾写在四个文件里各一遍；
+ *   2026-11-20 起由平台 `hooks()` 端口 + `WindowSet` 统一代管，组合根不再手写。
  * ```
  *
  * ⇒ 判据两次收紧：`FrameClock::tick()` → `EventLoop::run()` → **`new WindowSet(`**。

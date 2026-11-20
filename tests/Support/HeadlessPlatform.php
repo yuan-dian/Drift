@@ -8,6 +8,7 @@ use Drift\Platform\Clipboard;
 use Drift\Platform\Dialog;
 use Drift\Platform\InputSource;
 use Drift\Platform\Platform;
+use Drift\Platform\PlatformHooks;
 use Drift\Platform\Screen;
 use Drift\Platform\SurfaceProvider;
 use Drift\Platform\Tray;
@@ -31,6 +32,8 @@ final class HeadlessPlatform implements Platform
 
     private FakeWindowHost $window;
 
+    private HeadlessPlatformHooks $hooks;
+
     private float $clock = 0.0;
 
     public function __construct()
@@ -38,6 +41,14 @@ final class HeadlessPlatform implements Platform
         $this->screen = new HeadlessScreen();
         $this->input = new HeadlessInputSource();
         $this->window = new FakeWindowHost();
+        $this->hooks = new HeadlessPlatformHooks();
+    }
+
+    public function hooks(): PlatformHooks
+    {
+        $this->calls[] = __FUNCTION__;
+
+        return $this->hooks;
     }
 
     public function screen(int $windowHandle): Screen
