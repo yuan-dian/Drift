@@ -58,7 +58,7 @@ php tools/drift-build.php hello
 3. `AppScope::make()` 建进程级共享作用域——多窗口共用字体、任务池、主题。
 4. 按系统外观取主题。
 5. `AppScope::setTaskHost()` 必须在 `attach()` 之前——`PumpHost` 在 attach 时取走并缓存端口。
-6. `WindowSet::open()` 每窗一个应用实例；槽位名要不同，否则几何互相覆盖且不报错。
+6. `WindowSet::open()` 每窗一个应用实例；槽位名要不同，否则几何互相覆盖且不报错。标题默认取应用的 `title()`，同应用开两窗要不同标题时才在末尾传覆盖值。
 7. `WindowSet::run()` 进主循环；resize pump 由平台钩子按窗口句柄接好，副窗拖动不会重排主窗。
 
 `Application` 没有 `run()`，只有 `attach()` 与 `frame()`：等待由平台给，主循环由框架编排。

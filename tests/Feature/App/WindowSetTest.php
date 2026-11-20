@@ -73,9 +73,9 @@ final class WindowSetTest extends SmokeTestCase
         $app = new EchoApplication();
         $set = new WindowSet($platform, $this->statePath());
 
-        $window = $set->open('main', '窗 1', 320, 240, static function () use ($app): Application {
+        $window = $set->open('main', 320, 240, static function () use ($app): Application {
             return $app;
-        });
+        }, '窗 1');
 
         check(
             'WindowSet · `open()` 之后窗口进表（键 = 句柄）',
@@ -118,9 +118,9 @@ final class WindowSetTest extends SmokeTestCase
     {
         $platform = new Win32Platform('soft');
         $set = new WindowSet($platform, $this->statePath());
-        $set->open('main', '首帧后显示', 320, 240, static function (): Application {
+        $set->open('main', 320, 240, static function (): Application {
             return new EchoApplication();
-        });
+        }, '首帧后显示');
 
         $shown = winShowCalls();
         check(
@@ -143,28 +143,27 @@ final class WindowSetTest extends SmokeTestCase
      * ★ 这条判据取代的是"读代码才知道标题从哪来"：改动之前 4 个组合根各自手写
      *   一个与 `title()` 逐字相同的字面量，`Application::title()` 一个运行期消费者
      *   都没有。现在标题走 `createWindow()` 的第一个实参 ⇒ 假桥记下来就能证伪。
-     * ★ 三种输入都要测：`null`（没给）/ `''`（误传空串）/ 显式串（覆盖）。
-     *   只测 `null` 的话，"实现里根本没写 `??=` 而是把 `$title` 原样往下传"也会绿
-     *   —— 那时 `''` 这条会红，但没人跑它。
+     * ★ 两种输入都要测：省略（默认 `''`）与显式串（覆盖）。显式传 `''` 与省略等价，
+     *   只测覆盖的话，"实现把 `$title` 原样往下传"也会绿 —— 那时空串这条会红。
      */
     public function testTitleDefaultsToApplicationTitleAndCanBeOverridden(): void
     {
         $platform = new Win32Platform('soft');
         $set = new WindowSet($platform, $this->statePath());
 
-        $set->open('main', null, 320, 240, static function (): Application {
+        $set->open('main', 320, 240, static function (): Application {
             return new EchoApplication();
         });
-        $set->open('empty', '', 320, 240, static function (): Application {
+        $set->open('empty', 320, 240, static function (): Application {
             return new EchoApplication();
-        });
-        $set->open('second', '覆盖后的标题', 320, 240, static function (): Application {
+        }, '');
+        $set->open('second', 320, 240, static function (): Application {
             return new EchoApplication();
-        });
+        }, '覆盖后的标题');
 
         $calls = winCreateCalls();
         check(
-            'WindowSet · 标题默认取 `$app->title()`（`null` 与 `\'\'` 都算"没给"）',
+            'WindowSet · 标题默认取 `$app->title()`（省略与空串都算"没给"）',
             \count($calls) === 3
                 && $calls[0][0] === '冒烟应用'
                 && $calls[1][0] === '冒烟应用',
@@ -190,12 +189,12 @@ final class WindowSetTest extends SmokeTestCase
         $platform = new Win32Platform('soft');
         $set = new WindowSet($platform, $this->statePath());
 
-        $set->open('main', '主窗', 320, 240, static function (): Application {
+        $set->open('main', 320, 240, static function (): Application {
             return new EchoApplication();
-        });
-        $set->open('second', '副窗', 200, 160, static function (): Application {
+        }, '主窗');
+        $set->open('second', 200, 160, static function (): Application {
             return new EchoApplication();
-        });
+        }, '副窗');
 
         winPumpScript([['type' => 'quit']]);
         $set->run();
@@ -233,9 +232,9 @@ final class WindowSetTest extends SmokeTestCase
             $sawFile = \is_file($this->statePath());
         });
 
-        $set->open('main', '主窗', 320, 240, static function (): Application {
+        $set->open('main', 320, 240, static function (): Application {
             return new EchoApplication();
-        });
+        }, '主窗');
 
         winPumpScript([['type' => 'quit']]);
         $set->run();
@@ -287,9 +286,9 @@ final class WindowSetTest extends SmokeTestCase
         $set = new WindowSet($platform, $this->statePath(), function () use (&$released): void {
             ++$released;
         });
-        $set->open('main', '会炸的窗', 320, 240, static function () use ($app): Application {
+        $set->open('main', 320, 240, static function () use ($app): Application {
             return $app;
-        });
+        }, '会炸的窗');
 
         winPumpScript([['type' => 'key', 'key' => 'A']]);
 
@@ -323,9 +322,9 @@ final class WindowSetTest extends SmokeTestCase
     {
         $platform = new Win32Platform('soft');
         $set = new WindowSet($platform, $this->statePath());
-        $set->open('main', '主窗', 320, 240, static function (): Application {
+        $set->open('main', 320, 240, static function (): Application {
             return new EchoApplication();
-        });
+        }, '主窗');
 
         $before = \count(winPresentCalls());
         $set->repaintForResize(999999);
@@ -345,9 +344,9 @@ final class WindowSetTest extends SmokeTestCase
     {
         $platform = new Win32Platform('soft');
         $set = new WindowSet($platform, '');
-        $set->open('main', '无状态窗', 320, 240, static function (): Application {
+        $set->open('main', 320, 240, static function (): Application {
             return new EchoApplication();
-        });
+        }, '无状态窗');
 
         winPumpScript([['type' => 'quit']]);
         $set->run();

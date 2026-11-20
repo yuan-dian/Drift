@@ -94,9 +94,9 @@ final class WiringTest extends SmokeTestCase
         $scope = AppScope::make()->setRestoration(new RestorationStore($this->path));
         $set = new WindowSet($platform, $this->windowPath);
 
-        $set->open('main', '窗', 320, 240, static function () use ($scope): Application {
+        $set->open('main', 320, 240, static function () use ($scope): Application {
             return new EchoApplication([], $scope);
-        });
+        }, '窗');
         $scope->restoration()?->write('form.name', '赵六');
 
         winPumpScript([['type' => 'quit']]);

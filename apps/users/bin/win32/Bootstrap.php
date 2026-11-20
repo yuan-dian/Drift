@@ -96,12 +96,12 @@ final class Bootstrap
 
         $set->open(
             'main',
-            null,   // ★ 标题来自 UsersApplication::title()（2026-10-30）
             self::WINDOW_WIDTH,
             self::WINDOW_HEIGHT,
             static function () use ($src, $taskHost, $scope): UsersApplication {
                 return new UsersApplication($src, $taskHost, \App\Users\Jobs\FetchUsersJob::DEFAULT_BASE, $scope);
             },
+            '',   // 标题走 UsersApplication::title()；占位只为把后面的回调送到正确参数位
             // ══════════ 建窗之后、还原几何之前 ══════════
             // （无边框会让客户区变大：多出原标题栏高度 ⇒ 还原的客户区↔外框换算
             //  必须按**新**口径算，否则每次启动窗口都比上次高一条标题栏）

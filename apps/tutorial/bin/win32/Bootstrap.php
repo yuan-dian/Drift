@@ -44,7 +44,6 @@ final class Bootstrap
 
         $set->open(
             'main',
-            null,   // ★ 标题来自 TutorialApplication::title()（2026-10-30）
             self::WINDOW_WIDTH,
             self::WINDOW_HEIGHT,
             static function (): TutorialApplication {

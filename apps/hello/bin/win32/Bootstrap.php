@@ -47,7 +47,6 @@ final class Bootstrap
 
         $set->open(
             'main',
-            null,   // ★ 标题来自 HelloApplication::title()（2026-10-30）
             self::WINDOW_WIDTH,
             self::WINDOW_HEIGHT,
             static function (): HelloApplication {
@@ -64,12 +63,12 @@ final class Bootstrap
         if (\getenv('DRIFT_TWO_WINDOWS') === '1') {
             $set->open(
                 'second',
-                'Hello Drift · 第二窗',
                 480,
                 360,
                 static function (): HelloApplication {
                     return new HelloApplication();
                 },
+                'Hello Drift · 第二窗',
             )->setMinSize(self::MIN_WIDTH, self::MIN_HEIGHT);
         }
 

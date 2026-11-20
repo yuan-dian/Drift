@@ -123,7 +123,6 @@ final class Bootstrap
         //   递的是**端口**不是平台实例 —— Win32 实现仍只出现在本文件。
         $main = $set->open(
             'main',
-            null,   // ★ 标题来自 ShowcaseApplication::title()（2026-10-30）
             self::WINDOW_WIDTH,
             self::WINDOW_HEIGHT,
             static function () use ($platform, $scope, $rowsMode): ShowcaseApplication {
@@ -161,12 +160,12 @@ final class Bootstrap
         if (\getenv('DRIFT_SECOND_WINDOW') === '1') {
             $set->open(
                 'inspector',
-                '多窗口 · 检查器',
                 420,
                 560,
                 static function () use ($scope): InspectorApplication {
                     return new InspectorApplication($scope);
                 },
+                '多窗口 · 检查器',
             )->setMinSize(320, 260);
         }
 

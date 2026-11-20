@@ -87,7 +87,6 @@ final class Bootstrap
 
         $set->open(
             'main',
-            null,   // ★ 标题来自 WatermarkApplication::title()（唯一来源）
             self::WINDOW_WIDTH,
             self::WINDOW_HEIGHT,
             static function () use ($dialog, $taskHost): WatermarkApplication {

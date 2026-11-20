@@ -48,18 +48,18 @@ final class WindowSet
      * 建一个窗口、还原它的几何、装一个应用，登记进表。
      * @param string $slot 窗口槽位名 —— **跨运行稳定**（写进状态文件），与句柄无关；
      *   两个窗口用同一槽位 ⇒ 后写覆盖先写（下次启动只有一个还原，**不报错**）。
-     * @param null|string $title 窗口标题；**`null` / 空串 ⇒ 用 `$app->title()`**，
-     *   这里的实参只是窗口级覆盖（同应用开两窗要不同标题时才有用）。
      * @param \Closure(): Application $makeApp 造这个窗口的应用。**不传句柄**：`Application` 构造不该知道窗口。
+     * @param string $title 窗口标题；**空串（默认）⇒ 用 `$app->title()`**，
+     *   末尾这个实参只是窗口级覆盖（同应用开两窗要不同标题时才有用）。
      * @param null|\Closure(Window):void $beforeRestore 建窗之后、还原几何之前（无边框改客户区，须在还原前；此时 `surface()` 为 null）
      * @param null|\Closure(Window):void $beforeAttach 表面就绪之后、首帧之前（材质/底色 —— 否则先闪默认外观）
      */
     public function open(
         string $slot,
-        ?string $title,
         int $width,
         int $height,
         \Closure $makeApp,
+        string $title = '',
         ?\Closure $beforeRestore = null,
         ?\Closure $beforeAttach = null,
     ): Window {
@@ -73,8 +73,8 @@ final class WindowSet
             Errors::report('WindowSet：makeApp 没有返回 Application 实例');
         }
 
-        // 空串也当"没给"：组合根易误传 ''，而 title() 忘实现时默认返回 'Drift'，'' 会让窗口无标题栏文字。
-        if ($title === null || $title === '') {
+        // 空串 = 没给（默认值）：直接拿去建窗会得到无标题窗口，统一回落到应用的 title()。
+        if ($title === '') {
             $title = $app->title();
         }
 
