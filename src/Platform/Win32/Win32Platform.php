@@ -114,8 +114,8 @@ final class Win32Platform implements Platform
 
     /**
      * 某条事件该投进哪条队列（translate() 用；input() 不用它）。
-     * 与 input($h) 的差别只有一条回落：$windowHandle <= 0 表示"这条事件没有
-     * 归属"（测试手工造的剧本 / 老壳不带 hwnd）⇒ 归主窗。
+     * 与 input($h) 的差别只有一条回落：$windowHandle <= 0 表示这条事件没有
+     * 归属（测试手工造的剧本 / 老壳不带 hwnd）⇒ 归主窗。
      */
     private function inputOf(int $windowHandle): Win32InputSource
     {
