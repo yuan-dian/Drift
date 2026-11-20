@@ -18,7 +18,7 @@ use Drift\Widget\Widget;
 use Drift\Widget\Wrap;
 
 /**
- * 页 13「悬停提示 Tooltip」—— W8-2 的第三个控件（2026-10-23）。
+ * 悬停提示 Tooltip。
  *
  * 形态对照 WinUI `ToolTip` / macOS 的 `NSView.toolTip`：**指针停留 500ms** 才出现，
  * 离开即消失，已显示时移到相邻控件立即换内容。

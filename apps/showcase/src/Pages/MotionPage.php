@@ -25,7 +25,7 @@ use Drift\Widget\Widget;
 use Drift\Widget\Wrap;
 
 /**
- * 页 9「动画 Motion」—— `AnimationController` + `Curve` 的第一个消费者。
+ * 动画 Motion—— `AnimationController` + `Curve` 的第一个消费者。
  *
  * ★ **这一页存在的理由**（§14.3 / §24.2 的判据）：框架能力**没有消费者 = 未实现**。
  *   `AnimationController::tick()` 若只被 smoke 夹具调到，它仍然是"一段没人用的
@@ -67,7 +67,7 @@ final class MotionState extends State
     /**
      * 点了多少次「淡出」/「淡入」—— **这不是装饰，是判据**。
      *
-     * ★ 存在的理由（2026-10-29）：真机上反复报"要点两次才变淡"。有了这个计数，
+     * ★ 存在的理由：真机上反复报"要点两次才变淡"。有了这个计数，
      *   一眼就能分开两种完全不同的故障：
      *   - 点一次**数字就变 1**、画面没动 ⇒ 点击进了回调，问题在动画/绘制；
      *   - 点一次**数字还是 0** ⇒ 事件根本没到按钮，问题在输入路由。

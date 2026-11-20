@@ -23,7 +23,7 @@ use Drift\Widget\Wrap;
 use Drift\Widget\YearMonth;
 
 /**
- * 页 27「日期时间（DatePicker / DateTimePicker / TimeView）」—— A3 第三件的收口（2026-10-29）。
+ * 日期时间 DatePicker / DateTimePicker / TimeView。
  *
  * ★ 这一页演的是**一个入口、两个实现件**：日期与时刻各自是独立控件
  *   （`CalendarView` / `TimeView`），`DateTimePicker` 只是把它们并排放进浮层。

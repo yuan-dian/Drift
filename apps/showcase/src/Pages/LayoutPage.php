@@ -29,16 +29,16 @@ use Drift\Widget\Widget;
 use Drift\Widget\Wrap;
 
 /**
- * 页 1「布局 Layout」—— 两种定位原语 + flex 排布。
+ * 布局 Layout—— 两种定位原语 + flex 排布。
  *
  * 演示面（全部 §13.1 的能力）：
  *   · `Dock` 五槽（顶/底横跨、左右占中段、center 余下）
  *   · `Column/Row` 的 `spacing` / `cross` 交叉轴对齐
- *   · `Expanded` 占剩余（flex 分母 2026-10-17 已修，见 §24.2 #15）
+ *   · `Expanded` 占剩余（flex 分母已修，见 §24.2 #15）
  *   · `Center` 居中、`Spacer` 吃掉剩余、`Padding` 内边距
  *   · 盒样式修饰符（所有 Widget 通用的 `->background()` / `->border()` / `->radius()`）
  *
- * ★ **每个 demo 一个 `Card`**（2026-10-17）：页面背景是浅灰、内容块是白卡片 ——
+ * ★ **每个 demo 一个 `Card`**：页面背景是浅灰、内容块是白卡片 ——
  *   "分组"是质感的第一来源。此前所有内容直接铺在纯白页面上，块与块之间只有
  *   间距没有边界，观感就是用户说的"生硬、没有质感"。
  *
@@ -111,7 +111,7 @@ final class LayoutPage extends StatelessWidget
                 // ── Dock：五槽骨架 ──
                 // ★ 本块曾是 **§24.2 #18 的曝光位**：页根是 ScrollView（无界主轴，
                 //   "先量内容有多长"）时 Dock 旧行为把 INF 当自己的高往下传
-                //   （bottom 槽 offsetY=INF）⇒ 演示一度暂缺。2026-10-17 修复
+                //   （bottom 槽 offsetY=INF）⇒ 演示一度暂缺。修复
                 //   （无界主轴取内容自然高）后恢复 —— 这里是"示例台逼出核心缺陷、
                 //   缺陷修复回填示例"闭环的注脚。
                 $this->demo('Dock：五槽骨架（无界滚动页里也正确）', Dock::make()

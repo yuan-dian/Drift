@@ -17,7 +17,7 @@ use Drift\Widget\Text;
 use Drift\Widget\Widget;
 
 /**
- * 页 19「富文本 RichText」—— W8-5（2026-10-24）。
+ * 富文本 RichText—— W8-5。
  *
  * 五段演示：
  *

@@ -19,7 +19,7 @@ use Drift\Widget\Widget;
 use Drift\Widget\Wrap;
 
 /**
- * 页 21「图标 Icon」—— `Icon` 控件的形状、尺寸与着色。
+ * 图标 Icon—— `Icon` 控件的形状、尺寸与着色。
  *
  * 演示面：
  *   · 10 个内置图标（`IconName` 全量 —— 与 `IconSet` 数据表一一对应）；

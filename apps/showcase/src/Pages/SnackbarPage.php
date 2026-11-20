@@ -20,7 +20,7 @@ use Drift\Widget\Widget;
 use Drift\Widget\Wrap;
 
 /**
- * 页 14「底部通知 Snackbar」—— W8-2 的第四个控件（2026-10-23）。
+ * 底部通知 Snackbar。
  *
  * 形态对照 Material `SnackBar`：贴底居中的一条浮动卡片，`duration` 到了自动消失，
  * 可带一个动作按钮（「撤销」）。
@@ -35,7 +35,7 @@ use Drift\Widget\Wrap;
  * ★ 应用侧只有一行 `($this->notifier)(Snackbar::make(...))`：队列、定时、落位全在框架。
  * ★ **`$notifier` 由组合根递进来**（`ShowcaseApplication::buildRoot()`）——
  *   `State` 上没有 `application()` 访问器（§4.3 禁 `Widget → App`）。
- *   2026-10-23 我先写成 `$this->application()->showSnackbar()`，真机点一下进程
+ * ★ 容易写错成 `$this->application()->showSnackbar()`：真机点一下进程
  *   直接崩、而 smoke 全绿（夹具拿着 `Application`，走的是另一条路）。
  * ★ 页末如实记录能力边界。
  */

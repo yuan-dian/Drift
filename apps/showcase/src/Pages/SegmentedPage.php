@@ -17,7 +17,7 @@ use Drift\Widget\Text;
 use Drift\Widget\Widget;
 
 /**
- * 页 11「分段控件 Segmented」—— W8 控件增补的第一个控件（2026-10-23）。
+ * 分段控件 Segmented—— W8 控件增补的第一个控件。
  *
  * 形态对照 iOS `UISegmentedControl` / WinUI `Segmented`：一组平级的视图切换，
  * **选中恰好一段**。三段演示各管一条：

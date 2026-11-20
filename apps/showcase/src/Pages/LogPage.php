@@ -23,7 +23,7 @@ use Drift\Widget\Widget;
 use Drift\Widget\Wrap;
 
 /**
- * 页 20「日志 Log」—— `12` §6 P2 的 devtools 面板。
+ * 日志 Log——devtools 面板。
  *
  * ★ **为什么这页要有按钮写日志**：showcase 的业务现在**不写日志**（`Log` 刚建好，
  *   还没接），空面板没意义。按钮让分类 / 级别 / 过滤三件事都有可见的样本 ——

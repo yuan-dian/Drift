@@ -20,7 +20,7 @@ use Drift\Widget\Widget;
 use Drift\Widget\Wrap;
 
 /**
- * 页 30「原生对话框 Dialog」—— A5-① 的唯一消费者。
+ * 原生对话框 Dialog—— A5-① 的唯一消费者。
  *
  * ★★ **为什么这一页必须存在**：`Dialog` 端口在框架里躺了一个多月
  *   （`Win32Platform::dialog()` 一直返回 `null`）。端口加方法而没人调用是
@@ -168,7 +168,7 @@ final class DialogPageState extends State
      * 筛选表：**照抄 `Dialog::openFile()` 文档里的形状**（`[显示名, 通配符]`）。
      *
      * ★ 筛选表直接写字面量：只有两项，抽常量省不下什么，也少一层间接。
-     *   旧注释引用的「外部类常量求值成 0」AOT 缺陷已由上游修复（2026-11-11 勘误）。
+     *   旧注释引用的「外部类常量求值成 0」AOT 缺陷已由上游修复。
      *
      * @return list<array{string, string}>
      */

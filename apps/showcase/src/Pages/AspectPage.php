@@ -16,7 +16,7 @@ use Drift\Widget\Text;
 use Drift\Widget\Widget;
 
 /**
- * 页 18「宽高比 AspectRatio」—— W8-3 布局广度的第二件（2026-10-24）。
+ * 宽高比 AspectRatio。
  *
  * 四段演示：
  *
@@ -41,13 +41,11 @@ final class AspectPage extends StatelessWidget
                     '比例是 `mods.aspect` 字段（与 width / height 同族）—— 布局管线第 ① 步解出，'
                     . '**没有新的渲染盒**。'
                 )->caption(),
-                // ★ 2026-11-04 结案：这条原本是 10-24 写下的**活体诊断**——
-                //   "`16 / 9` 若在 C++ 侧被当整数除法，会显示 1"。实测：**AOT 下真的是 1**，
-                //   而 `16.0 / 9.0` 是 1.7778 ⇒ 怀疑成立，见 `docs/reference/aot-constraints.md` §1.2。
-                // ★★ 但它**不再在运行期求值**：那会让本页几何在 AOT 与解释器下必然不同
-                //   （这一行文字宽度差 94px），`tools/fingerprint.php` 的逐值比对
-                //   就永远有脏行、当不了回归判据。这条事实改由 `probes/aot_micro` 每次
-                //   打印的「前提：int/int=3.0000」一行守着 —— 那份是**机器可读**的。
+                // ★ `16 / 9` 在 AOT 下真会被截成 1；`16.0 / 9.0` 才是 1.7778，
+                //   见 `docs/reference/aot-constraints.md` §1.2。
+                // ★★ 这里不写运行期求值：那会让本页几何在 AOT 与解释器下差 94px，
+                //   `tools/fingerprint.php` 逐值比对永远有脏行。该事实由 `probes/aot_micro`
+                //   打印的「前提：int/int=3.0000」一行守着。
                 Text::make('比例求值：16 / 9 = 1.7778（注意：AOT 下 `int / int` 会截断成 1）')
                     ->caption(),
 

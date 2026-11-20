@@ -20,7 +20,7 @@ use Drift\Widget\Wrap;
 use Drift\Widget\YearMonth;
 
 /**
- * 页 26「日历（CalendarView）」—— A3 第三件的前半（2026-10-29）。
+ * 日历 CalendarView。
  *
  * ★ 这一页演的是**受控**的另一半：月份住本页 `State`，所以工具栏的「上个月 /
  *   下个月」能直接翻 —— 与日历自己的箭头走的是同一条路（都只上报，值由应用改）。

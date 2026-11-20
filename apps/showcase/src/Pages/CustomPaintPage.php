@@ -27,9 +27,9 @@ use Drift\Widget\Text;
 use Drift\Widget\Widget;
 
 /**
- * 页 8「自绘 CustomPaint」—— 19 op 的逃生舱 + "用真实控件检验 19 op 够不够用"。
+ * 自绘 CustomPaint—— 19 op 的逃生舱 + "用真实控件检验 19 op 够不够用"。
  *
- * 对照：design-v6 的 CustomPaint 决策（回植 2026-10-20 P2）。两个真实自绘控件：
+ * 对照：design-v6 的 CustomPaint 决策（P2 回植）。两个真实自绘控件：
  * 仪表盘（指针动画）与走势折线。**验证结论先写在这里**：
  *
  * | 想画的 | 19 op 现在 | 判定 |

@@ -20,7 +20,7 @@ use Drift\Widget\Widget;
 use Drift\Widget\Wrap;
 
 /**
- * 页 16「可编辑下拉 ComboBox」—— W8-2 的第六件（2026-10-24）。
+ * 可编辑下拉 ComboBox。
  *
  * 与 `Select` 的差别只有一条：**框里能打字**。点一下 ⇒ 框变搜索框、列出全部候选；
  * 打字 ⇒ 实时过滤；Enter 或点一项 ⇒ 选中，框回到新标签。

@@ -19,7 +19,7 @@ use Drift\Widget\Widget;
 use Drift\Widget\Wrap;
 
 /**
- * 页 12「图片 Image」—— W8-1 资源管线的控件侧（2026-10-23）。
+ * 图片 Image——资源管线的控件侧。
  *
  * 四段各演示一种 `ImageFit`，全部用 `assets/demo/` 下的两张真图：
  *

@@ -28,7 +28,7 @@ use Drift\Widget\Widget;
 use Drift\Widget\Wrap;
 
 /**
- * 页 4「表单 Form」—— LayUI 文档页（layui.dev/docs/2/form/）的结构复刻。
+ * 表单 Form—— LayUI 文档页（layui.dev/docs/2/form/）的结构复刻。
  *
  * ★ 曾记的两处缺口今天都已闭合：通用圆角容器就是 `Card`（或 `SizedBox` 加
  *   `->background()` / `->radius()`；修饰挂在根 `Widget` 上，不是某个盒样式基类
@@ -60,15 +60,15 @@ final class FormState extends State
 
     private string $email = '';
 
-    /** 文本编辑演示（2026-10-21 #51）：源字段预填中英混排（复制过去不分家），目标字段接粘贴 */
+    /** 文本编辑演示（#51）：源字段预填中英混排（复制过去不分家），目标字段接粘贴 */
     private string $editSrc = '张三 zhangsan@example.com';
 
     private string $editDst = '';
 
-    /** 选择类控件的受控值（2026-10-21 新增，Checkbox / Radio / Toggle 的真实消费者） */
+    /** 选择类控件的受控值（Checkbox / Radio / Toggle 的真实消费者） */
     private bool $agree = true;
 
-    /** 多行输入的受控值（2026-11-03 新增，`TextArea` 的消费者） */
+    /** 多行输入的受控值（`TextArea` 的消费者） */
     private string $note = "第一行\n第二行\n第三行\n第四行\n第五行\n第六行\n第七行 —— 超过框高，右缘有滚动条";
 
     /** `Ctrl+Enter` 提交后回显的文本（提交与换行是两件事，本页演示这条分界） */
@@ -121,7 +121,7 @@ final class FormState extends State
                 Button::make('获取验证码')->variant(ButtonVariant::Default),
             ]),
 
-            // ── H3「文本编辑命令」：选择 / 复制 / 剪切 / 粘贴（2026-10-21 新增）──
+            // ── H3「文本编辑命令」：选择 / 复制 / 剪切 / 粘贴 ──
             //   演示 §9.1 的编辑命令环 + 指针框选：Shift+方向键或**拖动**选择，
             //   Ctrl+A 全选 / Esc 取消，Ctrl+C/X/V 走系统剪贴板（组合根递端口）。
             //   源字段预填中英混排 —— 多字节选区复制过去不分家（按码位边界算）。
@@ -135,7 +135,7 @@ final class FormState extends State
                     ->onChanged(fn(string $v) => $this->editDst = $v),
             ]),
 
-            // ── H3「多行输入」：TextArea（2026-11-03 新增）──
+            // ── H3「多行输入」：TextArea ──
             //   与 TextField 是**两个控件**（不是 maxLines 开关）：单行盒的插入符
             //   几何靠 `advance(前缀)` 一次量得，多行必须逐字形累加 + 行号 + 垂直偏移。
             //   演示四件事：Enter 换行 / Ctrl+Enter 提交 / 上下键跨行保持列 /
@@ -215,7 +215,7 @@ final class FormState extends State
                     });
                 }),
 
-            // ── H3「选择类控件」：Checkbox / Radio / Toggle（2026-10-21 新增）──
+            // ── H3「选择类控件」：Checkbox / Radio / Toggle ──
             //   三个控件都是**受控**的：值住 State，点击只回调新值（与 TextField 同纪律）。
             $this->sectionBar('选择类控件（Checkbox / Radio / Toggle）'),
             Card::make(Column::make()->spacing(10.0)->children([

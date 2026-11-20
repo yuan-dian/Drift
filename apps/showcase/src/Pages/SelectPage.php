@@ -23,7 +23,7 @@ use Drift\Widget\Widget;
 use Drift\Widget\Wrap;
 
 /**
- * 页 15「下拉选择 Select」—— W8-2 的第五件（2026-10-23）。
+ * 下拉选择 Select。
  *
  * 形态对照 Win32 `ComboBox` / Material `DropdownButton`：一个"选择框"，
  * 点开是一列选项，选中一项后把值交给应用（**受控**）。
@@ -33,16 +33,16 @@ use Drift\Widget\Wrap;
  *   ① 基本：三个城市，选中项在下拉里用强调色底标出来；
  *   ② 值 ≠ 显示名：`Option::make('北京市', '110000')` —— 值域是身份、标签是给人看的字；
  *   ③ 宽控件：`triggerWidth()` 定宽（标签靠左，没有下拉箭头）；
- *   ④ 长列表：30 项 ⇒ 面板被限高到 260 且**可以滚**（2026-10-24 起有了）；
+ *   ④ 长列表：30 项 ⇒ 面板被限高到 260 且**可以滚**（已支持）；
  *   ⑤ 映射短形式：`['110000' => '北京市']`（键 = 值）；
  *   ⑥ 行数组：`Option::fromRows($rows, 'name', 'id')`（DB / HTTP 的形状）；
- *   ⑦ 远程三态：加载中 / 失败 / 空表 —— 外加 `onOpen()` 打开才取数（2026-10-24）。
+ *   ⑦ 远程三态：加载中 / 失败 / 空表 —— 外加 `onOpen()` 打开才取数。
  *
  * ★ 应用侧只有这几个链式方法：`options / value / onChanged` + 三态
  *   `loading / emptyText / errorText` + `onOpen`。开面板、落位、点外面关、ESC 关、
  *   控件卸载自动收尸全在框架 —— 这与 Tooltip 是**同一类**声明式浮层
  *   （`Widget::overlayPanel()`），不需要组合根接线（与 Snackbar 相反）。
- * ★ 方向键（2026-10-24 起有了）：面板打开后 ↓/↑ 移高亮（环绕）、Enter 提交。
+ * ★ 方向键（已支持）：面板打开后 ↓/↑ 移高亮（环绕）、Enter 提交。
  *   高亮是**控件私有态**，应用不用为"光标停在第几行"再存一个字段。
  * ★ 页末如实记录能力边界。
  */
@@ -85,7 +85,7 @@ final class SelectState extends State
 
     private string $remoteValue = '';
 
-    /** 选项表的就绪度 —— 三态**互斥**（`OptionStatus`，2026-10-24） */
+    /** 选项表的就绪度 —— 三态**互斥**（`OptionStatus`） */
     private OptionStatus $remoteStatus;
 
     /** `onOpen` 被调了几次（证明它只在"要开面板"时触发，不是每次重建） */

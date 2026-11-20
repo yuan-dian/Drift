@@ -17,7 +17,7 @@ use Drift\Widget\Text;
 use Drift\Widget\Widget;
 
 /**
- * 页 17「网格 Grid / LazyGrid」—— W8-3 布局广度的第一件（2026-10-24）。
+ * 网格 Grid / LazyGrid。
  *
  * 三段演示：
  *

@@ -122,7 +122,7 @@ final class FetchRowsJob implements NamedJob
             . '/api/rows?page=' . $this->page . '&per=' . $this->perPage;
 
         // ★ 与 `apps/users` 的 `FetchUsersJob` 走**同一条路**（`Drift\App\Io\Http`）。
-        //   2026-10-31 之前两边各有一份 30 行的 curl（同样的超时、状态码判断、body 截断）
+        //   之前两边各有一份 30 行的 curl（同样的超时、状态码判断、body 截断）
         //   —— 那一份已经删掉，本文件只剩"这个接口的载荷长什么样"这一条业务知识。
         $res = Http::get($url, [
             'headers' => ['Accept' => 'application/json'],

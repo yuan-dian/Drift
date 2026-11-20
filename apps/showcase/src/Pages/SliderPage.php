@@ -17,7 +17,7 @@ use Drift\Widget\Text;
 use Drift\Widget\Widget;
 
 /**
- * 页 12「滑杆 Slider」—— W8-2 的第二个控件（2026-10-23）。
+ * 滑杆 Slider。
  *
  * 形态对照 iOS `UISlider` / WinUI `Slider`：一条轨道 + 一个拇指，连续取值。
  * 四段演示各管一条：

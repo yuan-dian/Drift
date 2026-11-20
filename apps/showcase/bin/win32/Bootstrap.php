@@ -20,7 +20,7 @@ use App\Showcase\Jobs\JobRegistry;
  * 源码为每个 OS **各编译一次**（AOT 单 exe），不是同一份二进制到处跑。
  *
  * ★ 建窗 / 还原几何 / 定表面首帧 / `attach` / 主循环 / 几何写回 / 卸静态钩子
- *   全在 `WindowSet`（2026-10-30）。**本文件只决定"开几个窗、装什么应用"**。
+ *   全在 `WindowSet`。**本文件只决定"开几个窗、装什么应用"**。
  *
  * ★ **循环归平台**（§5.2 裁决 1）：`Application` **没有** `run()`，等待仍由
  *   `Platform::waitEvents()` 给，`WindowSet::run()` 只是编排。
@@ -89,7 +89,7 @@ final class Bootstrap
         //     取走并缓存（中途换掉会让"入队 / drain"分属两个队列）。
         $exe = (string) ($argv[0] ?? '');
         if ($exe !== '') {
-            // ★★ **池容量 3**（2026-10-31）：这是「并发取数」页真正并行的前置条件。
+            // ★★ **池容量 3**：这是「并发取数」页真正并行的前置条件。
             //   `maxWorkers` 是**组合根的决定**，不是页面能提的要求 —— 一个 worker
             //   是一整套 AOT 运行时（几十 MB），"开几个"只有应用知道。
             //
@@ -104,7 +104,7 @@ final class Bootstrap
             //     其余 33 页全是单任务，永远只用到第一个 worker。
             $host = new ProcessTaskHost([$exe, '--drift-worker'], JobRegistry::make(), 3);
 
-            // ★ 预热（2026-10-31）：把首条任务的 275ms 进程启动挪到建窗之前。
+            // ★ 预热：把首条任务的 275ms 进程启动挪到建窗之前。
             //   见 `ProcessTaskHost::prewarm()` —— 它只发起进程，不等就绪。
             $host->prewarm();
 
@@ -142,7 +142,7 @@ final class Bootstrap
             //   ★ 这两个数不是"随便定一个够大"：`tools/narrow-audit.php` 按它算出
             //     内容区宽度并逐页验证"装得下"，改小/改大都要重跑那条审计。
             ->setMinSize(self::MIN_WINDOW_WIDTH, self::MIN_WINDOW_HEIGHT)
-            // ★ 关闭可拦截（2026-10-30）：声明之后 `WM_CLOSE` 不再直接销毁 ——
+            // ★ 关闭可拦截：声明之后 `WM_CLOSE` 不再直接销毁 ——
             //   它变成一条 `CloseRequestedEvent`，在帧边界落到
             //   `ShowcaseApplication::onCloseRequested()`。
             ->setCloseGuard(true)
@@ -150,7 +150,7 @@ final class Bootstrap
             //   零开销。示例台是值型 Pattern 的展示台，与 users 同形。
             ->onSemantics();
 
-        // ★★★ **第二个真实窗口**（2026-10-30，M3）：`DRIFT_SECOND_WINDOW=1` 时再建
+        // ★★★ **第二个真实窗口**（M3）：`DRIFT_SECOND_WINDOW=1` 时再建
         //   一个独立工具窗。它不是"再开一个示例台"—— 装的是 `InspectorApplication`
         //   （一块小面板），因为要验的是**基础设施**：两个 `Application` 实例共用
         //   一个 `AppScope`、各自收自己的事件、关一个另一个还在。

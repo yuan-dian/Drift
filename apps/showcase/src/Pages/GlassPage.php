@@ -22,7 +22,7 @@ use Drift\Widget\Widget;
 use Drift\Widget\Wrap;
 
 /**
- * 页 22「毛玻璃 BackdropFilter」—— 质感层的第四件（2026-10-26）。
+ * 毛玻璃 BackdropFilter。
  *
  * ## 它和 `->opacity()` 是两件事
  *
@@ -100,7 +100,7 @@ final class GlassPage extends StatelessWidget
      *   （字形本身有笔画间隙，糊了之后像"没渲染好"）。
      * ★ `$cellHeight > 0` ⇒ 行高定死。小尺寸用法（半径梯度那三个）必须给：
      *   行高由内容撑时，`Grid` 会把"文字高 + 内边距"如实要出来，装不下就
-     *   `RenderFlex 放不下` 中止（2026-10-26 真机实证：105.2 要、70 可用）。
+     *   `RenderFlex 放不下` 中止（真机实证：105.2 要、70 可用）。
      */
     private static function wallpaper(int $cols, int $rows, float $pad = 14.0, float $cellHeight = 0.0): Widget
     {
@@ -134,7 +134,7 @@ final class GlassPage extends StatelessWidget
      *
      * ★ 两层**都定死 160×96**：`Grid` 在松约束下会铺满可用宽度 ⇒ 三个 `Stack`
      *   各自想占满整行，`Row` 当场"子项共需 5004、可用 1660"而中止
-     *   （2026-10-26 真机实证）。给 `Stack` 一个定尺寸是这条的**唯一**修法 ——
+     *   （真机实证）。给 `Stack` 一个定尺寸是这条的**唯一**修法 ——
      *   光给 `BackdropFilter` 定宽没用，`Stack` 尺寸取 `max(子)`，铺满的
      *   `Grid` 仍然是那个 max。
      */

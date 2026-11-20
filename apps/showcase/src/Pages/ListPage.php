@@ -21,7 +21,7 @@ use Drift\Widget\Text;
 use Drift\Widget\Widget;
 
 /**
- * 页 5「列表 List」—— `Each` 数据驱动 + `ScrollView` 滚动（2026-10-17 落地）。
+ * 列表 List—— `Each` 数据驱动 + `ScrollView` 滚动（落地）。
  *
  * 对照 LayUI 的 list / table：列表行 = 标题 + 次要信息 + 右侧动作。Drift 用
  * `Each`（key 必填，R4）驱动，长列表（16 行超过视口）走 `ScrollView` ——

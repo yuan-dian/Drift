@@ -20,7 +20,7 @@ use Drift\Widget\Widget;
 use Drift\Widget\Wrap;
 
 /**
- * 页 28「禁用态 disabled()」—— 一个声明、四处消费（2026-10-29）。
+ * 禁用态 disabled()——一个声明、四处消费。
  *
  * 演四件事，都要求**动手点**才看得出：
  *
@@ -30,7 +30,7 @@ use Drift\Widget\Wrap;
  * 4. 切换锁定后整块**变淡** —— 变淡是合成 alpha 折进去的，不是各控件自己调色。
  *
  * ★ 页面上写明 `enabled(false)` 与 `disabled()` 的关系：**同一个状态**（前者是后者按
- *   布尔取反的别名），不是两套并存的样式开关。2026-10-29 收敛掉了四份局部实现，
+ *   布尔取反的别名），不是两套并存的样式开关。收敛掉了四份局部实现，
  *   连带裁决"禁用不进 Tab 序"（见 `REVIEW-2026-10-28.md` §21）。
  */
 final class DisabledPage extends StatefulWidget
@@ -120,7 +120,7 @@ final class DisabledPageState extends State
     }
 
     /**
-     * `enabled(false)` 等价于 `disabled()` 的三件（2026-10-29 收敛的验收面）。
+     * `enabled(false)` 等价于 `disabled()` 的三件（收敛后的验收面）。
      *
      * ★ 三者都声明了 `paintsDisabledLook()` ⇒ 换 `ColorToken::Muted`（**灰**），
      *   不叠框架的 0.38 alpha（**淡**）。与上面"锁定整块"对比着看：那块是淡、这里是灰 ——

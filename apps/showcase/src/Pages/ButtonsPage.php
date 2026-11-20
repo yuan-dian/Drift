@@ -21,10 +21,10 @@ use Drift\Widget\Widget;
 use Drift\Widget\Wrap;
 
 /**
- * 页 3「按钮 Button」—— 三变体 + 盒样式 + 悬停/光标（新落地的两个消费者）。
+ * 按钮 Button—— 三变体 + 盒样式 + 悬停/光标（新落地的两个消费者）。
  *
  * ★ 本页是 **StatefulWidget**：悬停计数要住 State —— 不是页页都能 Stateless。
- *   `hover()`（2026-10-17 §24.2 #16）与 `cursor()`（三方消费第 ③ 方）在这里
+ *   `hover()`（§24.2 #16）与 `cursor()`（三方消费第 ③ 方）在这里
  *   有**真实消费者**：鼠标划过 ⇒ 计数 +1；命中 ⇒ 指针变手型。
  */
 final class ButtonsPage extends StatefulWidget
@@ -99,7 +99,7 @@ final class ButtonsState extends State
                     }),
             ]),
 
-            // ── 悬停 + 光标：两个 2026-10-17 落地的消费者 ──
+            // ── 悬停 + 光标：两个已落地的消费者 ──
             Text::make('悬停 + 光标（§24.2 #16 的两个新消费者）')->heading(),
             Text::make('下面这块悬停计数：鼠标进入 enters +1、离开 leaves +1；命中链同时给出 PointingHand 光标。')
                 ->caption(),

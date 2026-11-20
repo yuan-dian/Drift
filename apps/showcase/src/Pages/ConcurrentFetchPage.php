@@ -22,17 +22,14 @@ use Drift\Widget\Text;
 use Drift\Widget\Widget;
 
 /**
- * 页 34「并发取数」—— **`Future::allSettled()` 的消费者**（2026-10-31）。
+ * 并发取数—— **`Future::allSettled()` 的消费者**。
  *
  * ## 它回答的那个问题
  *
- * 「同时等 N 个接口」。这个问题在仓里被反复提起过，答案换过三次：
- *
- * | 时间 | 答案 | 为什么不用 |
- * |---|---|---|
- * | 2026-10-30 初稿 | 单 worker 内 `curl_multi` | **本运行时上用不了**：`curl_multi_init()` 一句，进程退出 `exit 139`（`ASYNC-ARCH-2026-10-31.md` §14.1） |
- * | 2026-10-30 二稿 | `maxWorkers = 5` + 5 条 `submit()` | 那时没有人写过"怎么把 5 条拼成一份数据"，也没人验过 |
- * | **本页（2026-10-31）** | `maxWorkers = 3` + `Future::allSettled([...])` | —— 就是下面这一段 |
+ * 「同时等 N 个接口」用 `maxWorkers = 3` + `Future::allSettled([...])`。
+ * 不走单 worker `curl_multi`：本运行时 `curl_multi_init()` 一句就 `exit 139`
+ * （`ASYNC-ARCH-2026-10-31.md` §14.1）。不走 5 worker：多两份运行时开销，
+ * 结果拼接也没有现成先例；本页只证明并发聚合。
  *
  * ## 页面做的事（三行）
  *
@@ -62,7 +59,7 @@ use Drift\Widget\Widget;
  *
  * 池容量 3 ⇒ 最多三条真并行。**同时等 5 个接口**要么把池开到 5（5 份 AOT 运行时，
  * 每份几十 MB），要么让服务端一次答完（聚合接口 / BFF）。本仓不提供"一个 worker
- * 内并发等 5 条连接"的能力 —— 那条路（`curl_multi`）在本运行时上是死的，见上表。
+ * 内并发等 5 条连接"的能力 —— 那条路（`curl_multi`）在本运行时上是死的，见上文。
  */
 final class ConcurrentFetchPage extends StatefulWidget
 {

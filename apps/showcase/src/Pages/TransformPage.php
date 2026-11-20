@@ -18,7 +18,7 @@ use Drift\Widget\Widget;
 use Drift\Widget\Wrap;
 
 /**
- * 页 28「变换 Transform」—— `->rotate()` / `->scale()` / `->transform()` 的第一个消费者。
+ * 变换 Transform—— `->rotate()` / `->scale()` / `->transform()` 的第一个消费者。
  *
  * ★ **能力没有消费者 = 未实现**（§14.3）：`Canvas::transform()` 如果只被单测调到，
  *   它就只是一段"能算出矩阵的算术"；这一页才让"画出来的东西真的歪了"成为事实。

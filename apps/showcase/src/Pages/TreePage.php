@@ -20,7 +20,7 @@ use Drift\Widget\Widget;
 use Drift\Widget\Wrap;
 
 /**
- * 页 25「树（TreeView）」—— A3 第二件（2026-10-29）。
+ * 树 TreeView。
  *
  * ★ 这一页存在的理由同 `TablePage`：让"层级数据 + 虚拟化"在**生产形态**下被走通
  *   一次，同时把"受控"这件事演成看得见的东西 ——

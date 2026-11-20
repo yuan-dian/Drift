@@ -16,7 +16,7 @@ use Drift\Widget\TextField;
 use Drift\Widget\Widget;
 
 /**
- * **第二个真实窗口**（M3，2026-10-30）：一个独立的工具窗，与主窗同进程。
+ * **第二个真实窗口**（M3）：一个独立的工具窗，与主窗同进程。
  *
  * ## 它验的是什么（不是"再做一个演示页"）
  *
@@ -57,7 +57,7 @@ final class InspectorRoot extends StatefulWidget
      *   （`Modifier`）。不调 ⇒ 它是未初始化的 `null`，而 AOT 在 `Element::syncBox()`
      *   读 `mods()` 时报的是 **`The parameter object must be object, got null`** ——
      *   指向 `Widget::mods()`，看不出是哪一层忘了调父构造器。
-     *   同 `ShowcaseApplication` 那个 `Application` 子类的坑（2026-10-25）。
+     *   同 `ShowcaseApplication` 那个 `Application` 子类的坑。
      */
     public function __construct(private readonly AppScope $scope)
     {

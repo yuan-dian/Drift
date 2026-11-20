@@ -18,7 +18,7 @@ use Drift\Widget\Widget;
 use Drift\Widget\Wrap;
 
 /**
- * 页 29「对齐 Align」—— `Alignment` 与 `->alignContent()` 的第一个消费者。
+ * 对齐 Align—— `Alignment` 与 `->alignContent()` 的第一个消费者。
  *
  * ★ **这一页要证明的事只有一件**：同一个盒、同一个子，换锚点就换位置，而
  *   **盒与子的尺寸一个字节都不变**。所以九格里每一格的盒尺寸完全相同

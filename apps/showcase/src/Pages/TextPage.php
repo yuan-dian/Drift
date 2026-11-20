@@ -16,7 +16,7 @@ use Drift\Widget\Widget;
 use Drift\Widget\Wrap;
 
 /**
- * 页 2「文本 Text」—— 五级角色 + 排版控制。
+ * 文本 Text—— 五级角色 + 排版控制。
  *
  * 对照 LayUI 文档页的标题层级（H1 主标题 + 引用导语 + H2 分节 + H3 小节）：
  * Drift 用**语义角色**（`TextRole`）而非字号硬编码 —— 换主题时字号/颜色跟着走

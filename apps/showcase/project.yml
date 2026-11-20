@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════════════════
-# apps/showcase/project.yml —— §19 M1 的出口判据：一个窗口画出「Hello Drift」
+# apps/showcase/project.yml —— showcase 的 tpc 构建配置
 # ═══════════════════════════════════════════════════════════════════════════
 #
 # ★★ 调用约定：**从仓库根调用**（`cd <repo-root> && tpc apps/hello/project.yml -O2 -m bin`）。
@@ -12,12 +12,8 @@
 #     为基准 ⇒ 必须写 `../../` 前缀。
 #
 # ★ 编译参数（`no-console` / `cxx-std` / flags / libs / `ignore` / `build-dir`）
-#   **2026-10-16 抽到 `../../build/base.yml`**（§4.6）—— 抽的时机是"第二个应用
-#   `apps/users` 落地时"（本文件早先的注释就这么写着），因为那时才知道哪些项真的共享。
-#   本文件只留**本应用独有**的：名字 / 版本 / 描述 / 源码集。
-#   ★ 读者注意：GUI 仓的注释说"tpc 的 YAML 没有 include（被静默忽略）"—— 那是**旧版本**
-#     的经验；当前 `tpc.exe` 里含 `ProjectYamlLoader` 的 include 实现与循环检测，
-#     已实测可用（两个应用都构出来了）。
+#   在 `../../build/base.yml`（§4.6）；本文件只留**本应用独有**的：名字 / 版本 / 描述 / 源码集。
+# ★ `tpc.exe` 的 `ProjectYamlLoader` 已支持 YAML include（含循环检测），实测可用。
 
 name: showcase
 version: 0.1.0
