@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace App\Showcase\Routes\Snackbar;
 
-use Drift\Route\RouteEffect;
+use Drift\Reducer\ReducerEffect;
 
 /**
  * 「弹一条通知」这个副作用的**值**。
@@ -14,7 +14,7 @@ use Drift\Route\RouteEffect;
  *
  * @api
  */
-final readonly class NotifyEffect implements RouteEffect
+final readonly class NotifyEffect implements ReducerEffect
 {
     /**
      * @param string $message 通知正文

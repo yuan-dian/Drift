@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace App\Showcase\Routes\Snackbar;
 
-use Drift\Route\RouteModel;
+use Drift\Reducer\ReducerModel;
 
 /**
  * Snackbar 页的状态快照。
@@ -14,7 +14,7 @@ use Drift\Route\RouteModel;
  *
  * @api
  */
-final readonly class SnackbarModel implements RouteModel
+final readonly class SnackbarModel implements ReducerModel
 {
     public function __construct(
         public int $undone = 0,

@@ -66,10 +66,14 @@ final class DependencyDirection implements Rule
         'Commands'  => ['Commands'],
         'Theme'     => ['Theme', 'Widget', 'Text', 'Rendering'],
         'Routing'   => ['Routing', 'Widget', 'State'],
-        // `Route`：页面架构层（`#[Route]` + `RouteView` + `RouteState`），
-        // 只压在 `Widget` 之上——它要 `BuildContext`/`Widget`/`State`/`IconName`，
-        // 不碰 `Routing`（导航还是 `Routing` 的事，两侧别互相长进来）。
+        // `Route`：纯导航层（`#[Route]` + `RouteDescriptor` + `RouteCatalog`），
+        // 只压在 `Widget` 之上——它要 `BuildContext`/`Widget`/`IconName` 做注解与建页校验。
+        // 不碰 `Reducer`（状态管理是页面内部选择）、不碰 `Routing`（那是命令路由）。
         'Route'     => ['Route', 'Widget'],
+        // `Reducer`：可选状态机（`ReducerView` + `ReducerState` + 四个值类型），
+        // 只压在 `Widget` 之上（`Widget\State` 也算 Widget 层）。与 `Route` 平级、
+        // 互不依赖 —— 命名解耦（A14）的分层守卫：任一侧 import 另一侧都红。
+        'Reducer'   => ['Reducer', 'Widget'],
         'Async'     => ['Async'],
         'App'       => ['App', 'Async', 'Geometry', 'Platform', 'Text', 'Rendering', 'Input', 'Widget', 'Layout', 'Commands', 'Theme', 'Core'],
         'Logging'   => ['Logging'],

@@ -1,14 +1,14 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\Route;
+namespace Drift\Reducer;
 
 use Drift\Widget\BuildContext;
 use Drift\Widget\State;
 use Drift\Widget\Widget;
 
 /**
- * 通用页面壳：把 `RouteView` 接进框架的 State 生命周期。
+ * 通用页面壳：把 `ReducerView` 接进框架的 State 生命周期。
  *
  * 一页只有这一份壳，作者不再手写 `XxxPage` + `XxxPageState` 两个类、也不用
  * 自己把能力束透传进 State。壳负责三件事，且只负责这三件：
@@ -25,16 +25,16 @@ use Drift\Widget\Widget;
  *
  * @api
  */
-final class RouteState extends State
+final class ReducerState extends State
 {
-    private ?RouteModel $model = null;
+    private ?ReducerModel $model = null;
 
-    /** @var \Closure(RouteEvent): void */
+    /** @var \Closure(ReducerEvent): void */
     private \Closure $dispatch;
 
-    public function __construct(private readonly RouteView $view)
+    public function __construct(private readonly ReducerView $view)
     {
-        $this->dispatch = function (RouteEvent $event): void {
+        $this->dispatch = function (ReducerEvent $event): void {
             $this->applyEvent($event);
         };
     }
@@ -58,7 +58,7 @@ final class RouteState extends State
      * 顺序不能反：effect 里可能有"派发下一个事件"的回调，先落 model 才能保证
      * 后续事件读到的状态是本轮之后的。
      */
-    private function applyEvent(RouteEvent $event): void
+    private function applyEvent(ReducerEvent $event): void
     {
         $update = $this->view->update($this->model ??= $this->view->init(), $event);
 
@@ -74,7 +74,7 @@ final class RouteState extends State
     }
 
     /** 当前 model（只读视图，测试与探针用）。 */
-    public function model(): ?RouteModel
+    public function model(): ?ReducerModel
     {
         return $this->model;
     }

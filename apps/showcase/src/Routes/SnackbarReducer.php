@@ -9,11 +9,11 @@ use App\Showcase\Routes\Snackbar\SnackbarIntent;
 use App\Showcase\Routes\Snackbar\SnackbarModel;
 use App\Showcase\Routes\Snackbar\SnackbarServices;
 use Drift\Geometry\EdgeInsets;
-use Drift\Route\RouteEffect;
-use Drift\Route\RouteEvent;
-use Drift\Route\RouteModel;
-use Drift\Route\RouteUpdate;
-use Drift\Route\RouteView;
+use Drift\Reducer\ReducerEffect;
+use Drift\Reducer\ReducerEvent;
+use Drift\Reducer\ReducerModel;
+use Drift\Reducer\ReducerUpdate;
+use Drift\Reducer\ReducerView;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
 use Drift\Widget\ButtonVariant;
@@ -26,7 +26,7 @@ use Drift\Widget\Widget;
 use Drift\Widget\Wrap;
 
 /**
- * 底部通知 Snackbar —— 四段式 `RouteView` 的样板实现。
+ * 底部通知 Snackbar —— 四段式 `ReducerView` 的样板实现。
  *
  * 导航身份归 {@see \App\Showcase\Pages\SnackbarPage} 的 `#[Route]` 注解；
  * 本类只管页面内部：状态（`SnackbarModel`）、状态怎么变（`update()`）、
@@ -46,62 +46,62 @@ use Drift\Widget\Wrap;
  *
  * @api
  */
-final class SnackbarRoute implements RouteView
+final class SnackbarReducer implements ReducerView
 {
     public function __construct(
         private readonly SnackbarServices $services,
     ) {
     }
 
-    public function init(): RouteModel
+    public function init(): ReducerModel
     {
         return new SnackbarModel();
     }
 
-    public function view(BuildContext $ctx, RouteModel $model, \Closure $dispatch): Widget
+    public function view(BuildContext $ctx, ReducerModel $model, \Closure $dispatch): Widget
     {
         \assert($model instanceof SnackbarModel);
 
         return Card::make(ScrollView::make($this->body($model, $dispatch)))->paddingAll(0.0);
     }
 
-    public function update(RouteModel $model, RouteEvent $event): RouteUpdate
+    public function update(ReducerModel $model, ReducerEvent $event): ReducerUpdate
     {
         \assert($model instanceof SnackbarModel);
         \assert($event instanceof SnackbarEvent);
 
         return match ($event->intent) {
-            SnackbarIntent::Saved => new RouteUpdate($model, [
+            SnackbarIntent::Saved => new ReducerUpdate($model, [
                 new NotifyEffect('已保存到本地'),
             ]),
-            SnackbarIntent::LongText => new RouteUpdate($model, [
+            SnackbarIntent::LongText => new ReducerUpdate($model, [
                 new NotifyEffect(
                     '这是一段刻意写长的通知文案，用来验证面板有宽度上限：'
                     . '没有上限的话它会一路横穿整个窗口。'
                 ),
             ]),
-            SnackbarIntent::Undoable => new RouteUpdate($model, [
+            SnackbarIntent::Undoable => new ReducerUpdate($model, [
                 new NotifyEffect('已删除「草稿.docx」', actionLabel: '撤销'),
             ]),
-            SnackbarIntent::Burst => new RouteUpdate($model, [
+            SnackbarIntent::Burst => new ReducerUpdate($model, [
                 new NotifyEffect('第 1 条：立刻显示'),
                 new NotifyEffect('第 2 条：排队等待'),
                 new NotifyEffect('第 3 条：排在最后'),
             ]),
-            SnackbarIntent::PersistentError => new RouteUpdate($model, [
+            SnackbarIntent::PersistentError => new ReducerUpdate($model, [
                 new NotifyEffect('保存失败：磁盘只读', durationMs: 0, actionLabel: '知道了'),
             ]),
-            SnackbarIntent::UndoClicked => new RouteUpdate(
+            SnackbarIntent::UndoClicked => new ReducerUpdate(
                 new SnackbarModel($model->undone + 1),
             ),
         };
     }
 
-    public function apply(RouteEffect $effect, \Closure $dispatch): void
+    public function apply(ReducerEffect $effect, \Closure $dispatch): void
     {
         if (!$effect instanceof NotifyEffect) {
             throw new \InvalidArgumentException(sprintf(
-                'SnackbarRoute 不认识 effect "%s"：新 effect 必须在这里给出落点',
+                'SnackbarReducer 不认识 effect "%s"：新 effect 必须在这里给出落点',
                 \get_class($effect),
             ));
         }
@@ -123,7 +123,7 @@ final class SnackbarRoute implements RouteView
         $this->services->notify($snackbar);
     }
 
-    /** @param \Closure(RouteEvent): void $dispatch */
+    /** @param \Closure(ReducerEvent): void $dispatch */
     private function body(SnackbarModel $model, \Closure $dispatch): Widget
     {
         return Column::make()->spacing(12.0)->padding(EdgeInsets::all(20.0))->children([

@@ -8,11 +8,11 @@ use App\Showcase\Routes\Snackbar\SnackbarEvent;
 use App\Showcase\Routes\Snackbar\SnackbarIntent;
 use App\Showcase\Routes\Snackbar\SnackbarModel;
 use App\Showcase\Routes\Snackbar\SnackbarServices;
-use App\Showcase\Routes\SnackbarRoute;
+use App\Showcase\Routes\SnackbarReducer;
 use App\Showcase\ShowcaseCapabilities;
 use Drift\Async\Future;
 use Drift\Dev\Smoke\App\FakeDialog;
-use Drift\Route\RouteUpdate;
+use Drift\Reducer\ReducerUpdate;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -23,9 +23,9 @@ use PHPUnit\Framework\TestCase;
  *   带撤销的 effect"这件事可以在纯 PHP 里断言。迁移前这段逻辑藏在 `State` 的
  *   私有方法里，只能靠点按钮 + 抓快照来验证。
  */
-final class SnackbarRouteTest extends TestCase
+final class SnackbarReducerTest extends TestCase
 {
-    private function route(): SnackbarRoute
+    private function route(): SnackbarReducer
     {
         $caps = new ShowcaseCapabilities(
             static function (): void {},
@@ -36,7 +36,7 @@ final class SnackbarRouteTest extends TestCase
             static fn (): Future => Future::pending(),
         );
 
-        return new SnackbarRoute(new SnackbarServices($caps));
+        return new SnackbarReducer(new SnackbarServices($caps));
     }
 
     #[Test]
@@ -122,7 +122,7 @@ final class SnackbarRouteTest extends TestCase
         $first = $route->update($model, new SnackbarEvent(SnackbarIntent::UndoClicked));
         $second = $route->update($model, new SnackbarEvent(SnackbarIntent::UndoClicked));
 
-        self::assertInstanceOf(RouteUpdate::class, $first);
+        self::assertInstanceOf(ReducerUpdate::class, $first);
         self::assertSame(
             $first->model->undone ?? null,
             $second->model->undone ?? null,

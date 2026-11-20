@@ -1231,25 +1231,26 @@ foreach ([
 }
 fwrite(STDOUT, '  ok     Linux Skia 构建通道：' . count($linuxDepsAnchors) . " 个 build-only 环节\n");
 
-// ── Route 架构（注解即导航 → 启动期反射 → 四段式可选）─────────────────
+// ── Route 架构（注解即导航 → 启动期反射 → reducer 可选 → 命名解耦）──────
 // 这一层最容易"悄悄退化"的地方：
 //   ① 导航元数据双写：ShowcaseNav 又长出一张写 id/icon/title 的清单（注解之外）；
 //   ② 注解参数从枚举退回字符串（丢掉编译期校验，拼错变成运行期静默）；
 //   ③ 反射滑进热路径（每帧 newInstance，帧税爆掉）；
-//   ④ 四段式的事件主路被绕过（按钮里直接改状态 / 直接调服务）。
-// 四处都不会让现有测试变红，所以在这里钉住实现链。
+//   ④ reducer 的事件主路被绕过（按钮里直接改状态 / 直接调服务）；
+//   ⑤ 导航与状态机又并回一个命名空间（Route 里长出 Reducer*，或反向 import）。
+// 五处都不会让现有测试变红，所以在这里钉住实现链。
 $routeAnnotationPhp = (string) @file_get_contents($root . '/src/Route/Route.php');
 $routeCatalogPhp = (string) @file_get_contents($root . '/src/Route/RouteCatalog.php');
 $routeDescriptorPhp = (string) @file_get_contents($root . '/src/Route/RouteDescriptor.php');
-$routeStatePhp = (string) @file_get_contents($root . '/src/Route/RouteState.php');
-$routeViewPhp = (string) @file_get_contents($root . '/src/Route/RouteView.php');
-$snackbarRoutePhp = (string) @file_get_contents($root . '/apps/showcase/src/Routes/SnackbarRoute.php');
+$reducerStatePhp = (string) @file_get_contents($root . '/src/Reducer/ReducerState.php');
+$reducerViewPhp = (string) @file_get_contents($root . '/src/Reducer/ReducerView.php');
+$snackbarReducerPhp = (string) @file_get_contents($root . '/apps/showcase/src/Routes/SnackbarReducer.php');
 $showcaseRoutesPhp = (string) @file_get_contents($root . '/apps/showcase/src/Routes/ShowcaseRoutes.php');
 $showcaseNavPhp = (string) @file_get_contents($root . '/apps/showcase/src/ShowcaseNav.php');
 $snackbarPagePhp = (string) @file_get_contents($root . '/apps/showcase/src/Pages/SnackbarPage.php');
 $routeCatalogTest = (string) @file_get_contents($root . '/tests/Unit/Route/RouteCatalogTest.php');
-$snackbarRouteTest = (string) @file_get_contents($root . '/tests/Unit/App/SnackbarRouteTest.php');
-$snackbarPageTest = (string) @file_get_contents($root . '/tests/Feature/Widget/SnackbarRoutePageTest.php');
+$snackbarReducerTest = (string) @file_get_contents($root . '/tests/Unit/App/SnackbarReducerTest.php');
+$snackbarReducerPageTest = (string) @file_get_contents($root . '/tests/Feature/Widget/SnackbarReducerPageTest.php');
 $depDirectionPhp = (string) @file_get_contents($root . '/tools/Lint/Rules/DependencyDirection.php');
 
 $routeAnchors = [
@@ -1263,17 +1264,17 @@ $routeAnchors = [
     [$routeCatalogPhp, 'getAttributes(Route::class)', 'bootstrap 没读注解 —— 清单回到手工维护'],
     [$routeCatalogPhp, 'isSubclassOf(Widget::class)', 'bootstrap 不校验页面类型 —— 注解可贴任意类'],
     // 四段式契约：可选实现，但一旦用就守四段
-    [$routeViewPhp, 'public function init(): RouteModel;', '契约少了 init'],
-    [$routeViewPhp, 'public function update(RouteModel $model, RouteEvent $event): RouteUpdate;', '契约少了 update'],
-    [$routeViewPhp, 'public function apply(RouteEffect $effect, \Closure $dispatch): void;', '契约少了 effect 落点'],
+    [$reducerViewPhp, 'public function init(): ReducerModel;', '契约少了 init'],
+    [$reducerViewPhp, 'public function update(ReducerModel $model, ReducerEvent $event): ReducerUpdate;', '契约少了 update'],
+    [$reducerViewPhp, 'public function apply(ReducerEffect $effect, \Closure $dispatch): void;', '契约少了 effect 落点'],
     // 泛型壳：事件主路
-    [$routeStatePhp, '$update = $this->view->update(', '壳没走 update —— 状态改动绕过纯函数'],
-    [$routeStatePhp, '$this->view->apply($effect, $this->dispatch)', '壳没执行 effect —— 通知永远不会弹'],
+    [$reducerStatePhp, '$update = $this->view->update(', '壳没走 update —— 状态改动绕过纯函数'],
+    [$reducerStatePhp, '$this->view->apply($effect, $this->dispatch)', '壳没执行 effect —— 通知永远不会弹'],
     // 样板页：导航注解在 Page 上 + 动作回调回主路
     [$snackbarPagePhp, "#[Route(id: 'snackbar'", '样板页 Page 没标导航注解'],
-    [$snackbarPagePhp, 'new SnackbarRoute(new SnackbarServices($this->caps))', 'Page 没把能力束投影成服务'],
-    [$snackbarRoutePhp, 'return match ($event->intent) {', 'update 不再是穷尽分派'],
-    [$snackbarRoutePhp, 'fn () => $dispatch(new SnackbarEvent(SnackbarIntent::UndoClicked))', '动作回调没回主路 —— 计数会卡住'],
+    [$snackbarPagePhp, 'new SnackbarReducer(new SnackbarServices($this->caps))', 'Page 没把能力束投影成服务'],
+    [$snackbarReducerPhp, 'return match ($event->intent) {', 'update 不再是穷尽分派'],
+    [$snackbarReducerPhp, 'fn () => $dispatch(new SnackbarEvent(SnackbarIntent::UndoClicked))', '动作回调没回主路 —— 计数会卡住'],
     // 应用侧：一页一行清单 + 导航从描述符派生（不手写 PAGES）
     [$showcaseRoutesPhp, 'RouteCatalog::discover(self::CLASSES)', '应用没装路由表'],
     [$showcaseRoutesPhp, 'Pages\\SnackbarPage::class,', '清单里少了样板页'],
@@ -1281,9 +1282,10 @@ $routeAnchors = [
     [$showcaseNavPhp, 'new NavEntry(', '导航项没从描述符构造'],
     // 判据存在性：改了实现就该有对应判据
     [$routeCatalogTest, '路由 id 冲突', '没有 id 冲突判据'],
-    [$snackbarRouteTest, 'assertSame($model, $update->model', '没有"无变化不造新 model"判据'],
-    [$snackbarPageTest, '已撤销 1 次', '没有"动作回调回主路"的挂载判据'],
-    [$depDirectionPhp, "'Route'     => ['Route', 'Widget']", '新层没登记依赖方向'],
+    [$snackbarReducerTest, 'assertSame($model, $update->model', '没有"无变化不造新 model"判据'],
+    [$snackbarReducerPageTest, '已撤销 1 次', '没有"动作回调回主路"的挂载判据'],
+    [$depDirectionPhp, "'Route'     => ['Route', 'Widget']", '导航层没登记依赖方向'],
+    [$depDirectionPhp, "'Reducer'   => ['Reducer', 'Widget']", 'Reducer 层没登记依赖方向 —— 命名解耦 A14 的分层守卫丢了'],
 ];
 foreach ($routeAnchors as [$text, $needle, $label]) {
     if (!str_contains($text, $needle)) {
@@ -1291,8 +1293,8 @@ foreach ($routeAnchors as [$text, $needle, $label]) {
     }
 }
 // 反向判据 1：热路径不许出现反射（反射只准在 RouteCatalog::discover 里）。
-if (str_contains($routeStatePhp, 'Reflection')) {
-    fail('RouteState 出现反射 —— 反射滑进热路径，每帧都要走 zendvm');
+if (str_contains($reducerStatePhp, 'Reflection')) {
+    fail('ReducerState 出现反射 —— 反射滑进热路径，每帧都要走 zendvm');
 }
 // 反向判据 2：导航清单不许双写 —— ShowcaseNav 不得再声明页面常量数组或图标字面量。
 if (preg_match('/(?:const\s+\w*PAGES|\[\s*[\'"][a-z-]+[\'"]\s*,\s*IconName::)/', $showcaseNavPhp)) {
@@ -1305,6 +1307,22 @@ if (preg_match('/public\s+(?:readonly\s+)?[\w\\\\]+\s+\$services/', $routeDescri
 }
 // 反向判据 4：四段式样板页不许退回 Page 里写 build()/State。
 if (str_contains($snackbarPagePhp, 'function build(') || str_contains($snackbarPagePhp, 'extends State ')) {
-    fail('SnackbarPage 又长出页面逻辑 —— 它只该投影服务并交给 RouteState');
+    fail('SnackbarPage 又长出页面逻辑 —— 它只该投影服务并交给 ReducerState');
 }
-fwrite(STDOUT, '  ok     Route 架构：注解即导航/反射/四段式可选：' . count($routeAnchors) . " 个链路环节 + 4 条反向判据\n");
+// 反向判据 5：命名解耦（A14）—— Route 与 Reducer 两层不许互相 import。
+// 两侧只扫真实 use 行（忽略注释里的历史叙述），否则 A13/A14 的注释会被误伤。
+$routeDirUses = '';
+foreach (glob($root . '/src/Route/*.php') ?: [] as $f) {
+    $routeDirUses .= preg_replace('/^\s*\/\/.*$/m', '', (string) file_get_contents($f));
+}
+$reducerDirUses = '';
+foreach (glob($root . '/src/Reducer/*.php') ?: [] as $f) {
+    $reducerDirUses .= preg_replace('/^\s*\/\/.*$/m', '', (string) file_get_contents($f));
+}
+if (preg_match('/use\s+Drift\\\\Reducer\\\\/', $routeDirUses)) {
+    fail('src/Route/ 里出现 use Drift\Reducer\ —— 导航层不许依赖状态机（命名解耦 A14）');
+}
+if (preg_match('/use\s+Drift\\\\Route\\\\(?!Route;)/', $reducerDirUses)) {
+    fail('src/Reducer/ 里 import 了 Drift\Route\ —— 状态机不许反向依赖导航（A14）');
+}
+fwrite(STDOUT, '  ok     Route 架构：注解即导航/反射/reducer 可选/命名解耦：' . count($routeAnchors) . " 个链路环节 + 5 条反向判据\n");

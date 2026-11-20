@@ -25,7 +25,7 @@ use Drift\Widget\Snackbar;
 use Drift\Widget\Text;
 
 /**
- * Snackbar 页走新架构（`RouteState` + `update`/`apply`）后，**行为必须与迁移前等价**。
+ * Snackbar 页走新架构（`ReducerState` + `update`/`apply`）后，**行为必须与迁移前等价**。
  *
  * 判据落在真实交互链上，而不是"能不能画出东西"：
  *   点按钮 → `dispatch` → `update()` 出 effect → `apply()` 调能力束 → 通知入队；
@@ -34,7 +34,7 @@ use Drift\Widget\Text;
  * ★ 这是双轨迁移期最需要的一条：新壳若把"动作回调回主路"接错，画面照样能画，
  *   只有点过「撤销」才会发现计数不动 —— 所以这里必须真的点一次。
  */
-final class SnackbarRoutePageTest extends SmokeTestCase
+final class SnackbarReducerPageTest extends SmokeTestCase
 {
     /** @var list<Snackbar> */
     private array $notified = [];

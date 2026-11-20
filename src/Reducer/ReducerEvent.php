@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\Route;
+namespace Drift\Reducer;
 
 /**
  * 用户事件的标记接口。
@@ -11,6 +11,6 @@ namespace Drift\Route;
  *
  * @api
  */
-interface RouteEvent
+interface ReducerEvent
 {
 }

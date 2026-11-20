@@ -7,15 +7,15 @@ use Drift\Widget\IconName;
 
 use App\Showcase\Pages\Base\StatefulShowcasePage;
 use App\Showcase\Routes\Snackbar\SnackbarServices;
-use App\Showcase\Routes\SnackbarRoute;
-use Drift\Route\RouteState;
+use App\Showcase\Routes\SnackbarReducer;
+use Drift\Reducer\ReducerState;
 use Drift\Widget\State;
 
 /**
- * Snackbar 页 —— 四段式 `RouteView` 的**可选样板**。
+ * Snackbar 页 —— 四段式 `ReducerView` 的**可选样板**。
  *
  * 导航身份来自本类的 `#[Route]` 注解（与其余 33 页同一条路径）；页面内部的
- * 状态管理则选择 `RouteView` + `RouteState`：逻辑在 {@see SnackbarRoute}，
+ * 状态管理则选择 `ReducerView` + `ReducerState`：逻辑在 {@see SnackbarReducer}，
  * 这里只把能力束投影成 `SnackbarServices` 并交给泛型壳。
  *
  * ★ 为什么只有这一页用四段式：它的「删除 → 撤销 → 计数」是纯状态转移，
@@ -31,8 +31,8 @@ final class SnackbarPage extends StatefulShowcasePage
 {
     public function createState(): State
     {
-        return new RouteState(
-            new SnackbarRoute(new SnackbarServices($this->caps)),
+        return new ReducerState(
+            new SnackbarReducer(new SnackbarServices($this->caps)),
         );
     }
 }

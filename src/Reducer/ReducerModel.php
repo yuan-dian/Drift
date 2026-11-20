@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\Route;
+namespace Drift\Reducer;
 
 /**
  * 页面状态快照的标记接口。
@@ -12,6 +12,6 @@ namespace Drift\Route;
  *
  * @api
  */
-interface RouteModel
+interface ReducerModel
 {
 }

@@ -1,13 +1,13 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\Route;
+namespace Drift\Reducer;
 
 /**
  * 副作用的值类型标记。
  *
  * 页面把自己的副作用定义成 `final readonly` 值对象（`NotifyEffect` 等）：
- * `update()` 只负责把它们放进 `RouteUpdate`，真正执行在 `RouteView::apply()`。
+ * `update()` 只负责把它们放进 `ReducerUpdate`，真正执行在 `ReducerView::apply()`。
  *
  * ★ 为什么是标记接口，而不是 `(string kind, ?object payload)`：
  *   字符串 kind 会退化成"字符串分派"——拼错不会报错，只是静默不执行；
@@ -18,6 +18,6 @@ namespace Drift\Route;
  *
  * @api
  */
-interface RouteEffect
+interface ReducerEffect
 {
 }
