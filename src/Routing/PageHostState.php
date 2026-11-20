@@ -6,6 +6,7 @@ namespace Drift\Routing;
 use Drift\State\Subject;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Column;
+use Drift\Widget\Expanded;
 use Drift\Widget\Offstage;
 use Drift\Widget\State;
 use Drift\Widget\Widget;
@@ -75,7 +76,9 @@ final class PageHostState extends State
 
     public function build(BuildContext $ctx): Widget
     {
-        $current = $this->page;
+        /** @var PageHost $widget */
+        $widget = $this->widget();
+        $current = $widget->currentPage() ?? $this->page;
         $table = $this->table;
 
         if ($table === null || $current === '') {
@@ -84,7 +87,9 @@ final class PageHostState extends State
 
         $hosted = [];
         foreach ($table->names() as $name) {
-            $hosted[] = Offstage::make($this->pageFor($name), $name === $current);
+            // ★ Key 是刚需：所有 Offstage 同类，无 Key 时 diff 退化为按位置配对，
+            //   路由表顺序一变（插页/重排）State 就跟着错位到别的页。
+            $hosted[] = Offstage::make($this->pageFor($name), $name === $current)->key('page:' . $name);
         }
 
         // 当前页不在表里 ⇒ 什么都不显示（开放域，§12.1 第 2 条）
@@ -98,8 +103,12 @@ final class PageHostState extends State
     private function pageFor(string $name): Widget
     {
         if (!isset($this->pages[$name])) {
+            /** @var PageHost $widget */
+            $widget = $this->widget();
             $page = $this->table?->build($name) ?? new NoPage();
-            $this->pages[$name] = $page;
+            // 包装后的实例一起缓存：否则每次切页都 new Expanded，隐藏页的
+            // OffstageElement 会误判"换了新描述"而对隐藏页白跑 rebuild。
+            $this->pages[$name] = $widget->isExpanded() ? Expanded::make($page) : $page;
         }
 
         return $this->pages[$name];

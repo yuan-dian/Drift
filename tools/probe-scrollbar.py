@@ -43,9 +43,6 @@ MIN_THUMB = 24.0          # ScrollBarGeometry::MIN_THUMB
 # 取中间偏下 222：条全亮 119 / 淡出 208 / 底色 236，三档分得开。
 INK_LUMA = 222.0
 
-# 「长列表 Big」= 导航第 6 项（首项中心 90、pitch 36 —— probe-modal / probe-motion 实测）
-NAV_X, NAV_Y = 25, 90 + 5 * 36
-
 
 def muted_count(data, w, h):
     """全图有多少个主题 Muted 墨点（= 条该用的颜色）。"""
@@ -103,7 +100,7 @@ def main() -> int:
     want_wheel = "--wheel" in sys.argv
 
     with App("showcase.exe", "Drift 示例台") as app:
-        app.click(NAV_X, NAV_Y, settle=1.0)      # 切到「长列表 Big」
+        app.click_nav('长列表 Big', settle=1.0)      # 按语义名点导航，不记像素坐标
         app.move(app.size()[0] - 40, app.size()[1] - 40, settle=0.3)   # 指针离开列表
         w, h, data = app.grab()
         print(f"client = {w} x {h}")

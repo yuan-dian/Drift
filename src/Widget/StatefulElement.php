@@ -40,6 +40,13 @@ final class StatefulElement extends Element
         $this->state = $state;
 
         parent::mount($parent, $context);
+
+        // ★ 直接挂在可见树里 ⇒ 挂载完成即"首次可见"。Offstage 隐藏页在这里
+        //   isActive() 为假（parked 不在 children 里），等转可见时由 OffstageElement
+        //   调 activateTree —— 两条路都只跑一次（callActivate 幂等）。
+        if ($this->isActive()) {
+            $this->state?->callActivate();
+        }
     }
 
     /**

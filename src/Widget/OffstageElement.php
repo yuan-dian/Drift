@@ -52,9 +52,37 @@ final class OffstageElement extends Element
         //   切走前那一帧的旧画面 —— 而且是静默的：值明明已经变了。
         if ($wasHidden && $widget->isVisible()) {
             $parked->settle();
+            $this->activateTree($parked);
         }
 
         $this->adoptBoxes();
+    }
+
+    /**
+     * parked 不在 `children` 里 ⇒ 父层的 `applyContext()` 遍历到不了它。
+     * 不补这一句，隐藏页拿到的还是旧主题，切回来才静默换色。
+     */
+    #[\Override]
+    public function applyContext(BuildContext $context): void
+    {
+        parent::applyContext($context);
+
+        $parked = $this->parked;
+        if ($parked !== null) {
+            $parked->applyContext($this->widget->childContext($this->context));
+        }
+    }
+
+    /** 首次可见的页面才跑 `onActivate()`；子树里可能有多个 State */
+    private function activateTree(Element $element): void
+    {
+        if ($element instanceof StatefulElement) {
+            $element->state()?->callActivate();
+        }
+
+        foreach ($element->children as $child) {
+            $this->activateTree($child);
+        }
     }
 
     #[\Override]

@@ -34,6 +34,20 @@
 - 诊断工具的相应路径假设同步更新（`probe_win.py` / `probe-window.py` /
   `probe-two-windows.py` / `probe-hotreload-p15.php`）。
 
+### 已实现
+
+- **示例台切页保活**：`ShowcaseRoot` 改用框架现成的 `PageHost` + `RouteTable`，34 页按
+  稳定 id 注册、页面实例只造一次、换页走 Offstage 保活——表单草稿 / 滚动位置 / 异步
+  结果切走再切回都还在（此前每次切页 `new` 新页，23 个 StatefulWidget 的 State 全丢）。
+  新增 `PageHost::current()`（纯 UI 态直接给页名，不必再造 Subject）与 `expanded()`
+  （内容区撑高），Offstage 加稳定 Key，侧栏顺序不再是身份。
+- **`State::onActivate()` 首次可见钩子**：全常驻容器首帧就 mount 所有页，`initState()`
+  不再等于"用户进过这页"。示例台的三个异步页把首次取数从 `initState()` 迁到这里。
+- **隐藏页不再白烧 CPU**：`OffstageElement` 摘出可见树的子树从帧活跃表剔除，其环境
+  变化（主题 / 明暗）也会补发给 parked 子树，切回来直接是新主题。
+- **探针坐标锁解除**：6 个真机探针按导航项的无障碍名点击，不再记 `90 + N * 36` 的
+  像素行号；插页 / 重排不会再让探针静默点错页。
+
 ## v0.1.0（2026-11-20 · 首个无后缀的预览版）
 
 这一版把 preview.1 之后的能力补齐定为一个可下载的发布档位；**仍属技术预览**，

@@ -3,11 +3,14 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\App;
 
+use Drift\Dev\Smoke\Routing\ActivationState;
+use Drift\Dev\Smoke\Routing\ActivationWidget;
 use Drift\Dev\Smoke\Routing\NavStore;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Routing\NoPage;
 use Drift\Routing\PageHost;
 use Drift\Routing\RouteTable;
+use Drift\Widget\Expanded;
 use Drift\Widget\OffstageElement;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
@@ -97,6 +100,81 @@ final class PageHostTest extends SmokeTestCase
             $ghostSlot instanceof OffstageElement
                 && $ghostSlot->childCount() === 1
                 && $ghostSlot->childAt(0)?->widget() instanceof NoPage
+        );
+
+        $this->flushChecks();
+    }
+
+    public function testDirectCurrentModeKeepsPagesAlive(): void
+    {
+        $context = smokeContext();
+        $table = RouteTable::make()
+            ->route('a', static fn (): Widget => Text::make('A'))
+            ->route('b', static fn (): Widget => Text::make('B'));
+
+        $host = PageHost::make()->current('a')->table($table);
+        $element = $host->createElement();
+        $element->mount(null, $context);
+        $first = $element->childAt(0)?->childAt(0);
+
+        check('PageHost · current() 无需 Subject 也能选出当前页', $element->childAt(0)?->childCount() === 2);
+        check('PageHost · 每个 Offstage 带稳定 Key', $first?->widget()->identity()?->value === 'page:a');
+
+        $element->update(PageHost::make()->current('b')->table($table));
+        $element->settle();
+        $b = $element->childAt(0)?->childAt(1);
+        check(
+            'PageHost · 直接模式换页 ⇒ 旧页隐藏、新页可见',
+            $element->childAt(0)?->childAt(0)?->childCount() === 0 && $b?->childCount() === 1
+        );
+
+        $element->update(PageHost::make()->current('a')->table($table));
+        $element->settle();
+        check('PageHost · 直接模式切回 ⇒ 同一 Element（State 没丢）', $element->childAt(0)?->childAt(0) === $first);
+
+        $this->flushChecks();
+    }
+
+    public function testActivationFiresOnceOnFirstVisible(): void
+    {
+        $context = smokeContext();
+        $table = RouteTable::make()
+            ->route('a', static fn (): Widget => new ActivationWidget())
+            ->route('b', static fn (): Widget => new ActivationWidget());
+
+        $element = PageHost::make()->current('a')->table($table)->createElement();
+        $element->mount(null, $context);
+        $a = $element->childAt(0)?->childAt(0)?->childAt(0)?->state();
+        check('PageHost · 首帧可见页激活一次', $a instanceof ActivationState && $a->activations === 1);
+        check('PageHost · 首帧隐藏页不在树里（ parked 不参与可见遍历）', $element->childAt(0)?->childAt(1)?->childCount() === 0);
+
+        $element->update(PageHost::make()->current('b')->table($table));
+        $element->settle();
+        $b = $element->childAt(0)?->childAt(1)?->childAt(0)?->state();
+        check('PageHost · 首次切到隐藏页 ⇒ 激活一次', $b instanceof ActivationState && $b->activations === 1);
+        check('PageHost · 切走的页不重复激活', $a instanceof ActivationState && $a->activations === 1);
+
+        $element->update(PageHost::make()->current('a')->table($table));
+        $element->settle();
+        check('PageHost · 切回 ⇒ 激活钩子幂等', $a instanceof ActivationState && $a->activations === 1 && $b->activations === 1);
+
+        $this->flushChecks();
+    }
+
+    public function testExpandedModeCachesWrapperToo(): void
+    {
+        $context = smokeContext();
+        $table = RouteTable::make()->route('a', static fn (): Widget => Text::make('A'));
+        $element = PageHost::make()->current('a')->table($table)->expanded()->createElement();
+        $element->mount(null, $context);
+        $wrapper = $element->childAt(0)?->childAt(0)?->childAt(0)?->widget();
+        check('PageHost · expanded() 把页包进 Expanded', $wrapper instanceof Expanded);
+
+        $element->update(PageHost::make()->current('a')->table($table)->expanded());
+        $element->settle();
+        check(
+            'PageHost · 包装实例也缓存（隐藏页不白跑 rebuild）',
+            $element->childAt(0)?->childAt(0)?->childAt(0)?->widget() === $wrapper
         );
 
         $this->flushChecks();

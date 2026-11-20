@@ -100,6 +100,35 @@ abstract class Element
         return $this->mounted;
     }
 
+    /**
+     * 本节点是否**有效在树里**：自己已挂载，且每一段父子链都还在父的 `children` 中。
+     *
+     * ★ 与 `isMounted()` 的差别只在 Offstage：隐藏页被摘出 `children` 却没卸载，
+     *   `isMounted()` 仍为真。帧时钟必须认"有效在树里"，否则隐藏页动画照样每帧
+     *   推进（CPU 白烧，且切回来时相位已经跑完）。
+     *
+     * @internal
+     */
+    public function isActive(): bool
+    {
+        $node = $this;
+
+        while ($node !== null) {
+            if (!$node->isMounted()) {
+                return false;
+            }
+
+            $up = $node->parent();
+            if ($up !== null && !in_array($node, $up->children, true)) {
+                return false;
+            }
+
+            $node = $up;
+        }
+
+        return true;
+    }
+
     /** @internal 本节点在不在动效活跃表里（见 $animationActive）；Application 收/出表时读 */
     public function isAnimationActive(): bool
     {

@@ -84,6 +84,19 @@ final class HelloApplication extends Application
 
 ★★★ 覆写了 `__construct()` 就**必须**调 `parent::__construct()`。基类在构造器里建若干不依赖子类字段的部件（路由、文本编辑、滚动输入、浮层、输入、覆盖布局、泵），漏调会让这些字段全部未初始化，真机进入 `attach()` 第一句就崩；AOT 会把未初始化属性读成 `null`，错误信息往往只有一句空指针样式的提示，没有文件名与行号。有 lint 规则专门守这一条。
 
+## 多页应用：一次声明身份，切页保活
+
+页面多不等于复杂；复杂常来自"切一次页就 `new` 一个新页"，把表单草稿、滚动位置、异步结果全丢掉。框架现成的组合是：
+
+```php
+RouteTable::make()->route('buttons', static fn(): Widget => new ButtonsPage());
+PageHost::make()->current($pageId)->table($table)->expanded();
+```
+
+`RouteTable` 是数据（名字 → 工厂），`PageHost` 是容器：按名字缓存页面实例，换页走 `Offstage` 隐藏而非卸载。页名是稳定身份，和侧栏第几项无关，插页 / 重排不影响既有页。纯 UI 页切换用 `current()` 直接给页名，不必额外造 `Subject`；`expanded()` 让页根 `ScrollView` 量到可视高。
+
+全常驻容器在首帧就把所有页 mount 完，`initState()` 因此不再等于"用户进过这一页"。首次取数、注册日志槽这类"进页面才开始"的副作用放 `State::onActivate()`，它只跑一次。
+
 ## composer.json：PSR-4 登记
 
 仓库根的 `composer.json` 在本项目的首要身份是**物理边界表**，工具链与自动加载都读它。新增应用必须登记 `App\<Name>\` 到对应源码目录。

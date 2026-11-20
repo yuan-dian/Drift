@@ -49,6 +49,9 @@ abstract class State
     /** @internal 挂载重载时不要重复订阅 */
     private bool $initialized = false;
 
+    /** @internal 页面级"首次可见"钩子只跑一次 */
+    private bool $activated = false;
+
     /** @internal 帧时钟幂等：本帧已 `tickFrame()` 过的状态，重跑一遍时不再被推进第二次 */
     private int $lastTickedFrame = -1;
 
@@ -169,6 +172,30 @@ abstract class State
      */
     public function initState(): void
     {
+    }
+
+    /**
+     * 首次进入**可见树**时跑一次：挂载即可见，或 Offstage 从隐藏转可见。
+     *
+     * ★ 与 `initState()` 的差别：全常驻容器（PageHost / TabView）在首帧就把所有页
+     *   mount 完，`initState()` 因此不再等于"用户进过这一页"。首次拉数据、注册
+     *   日志槽这类"进页面才开始"的副作用放这里，切页才真正触发一次。
+     *
+     * @api
+     */
+    public function onActivate(): void
+    {
+    }
+
+    /** @internal 框架在两条激活路径上调；幂等，重复可见不重跑 */
+    public function callActivate(): void
+    {
+        if ($this->activated) {
+            return;
+        }
+
+        $this->activated = true;
+        $this->onActivate();
     }
 
     /**

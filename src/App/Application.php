@@ -771,7 +771,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         $this->stage(FrameStage::TICK_LATE_MOUNT, function () use ($timestampMs): void {
             foreach ($this->pipeline->takeMounted() as $mountedState) {
                 $mountedElement = $mountedState->element();
-                if ($mountedElement === null || !$mountedElement->isMounted()) {
+                if ($mountedElement === null || !$mountedElement->isActive()) {
                     continue;
                 }
 
@@ -1399,9 +1399,9 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         $next = [];
 
         foreach ($this->activeTicks as $element) {
-            // ★ 卸载即出表（同 `takeMounted()` 的 `isMounted()` 过滤）：不跳过就是
-            //   给一个已经离开树的节点发帧 —— 僵尸 tick，且它永远返回 false 也占着表。
-            if (!$element->isMounted()) {
+            // ★ 卸载或**被 Offstage 摘出可见树**即出表（同 takeMounted() 的 isActive() 过滤）：
+            //   不跳过就是给隐藏页发帧 —— 动画在没人看时烧 CPU，切回来相位还跑完了。
+            if (!$element->isActive()) {
                 $element->markAnimationActive(false);
                 continue;
             }

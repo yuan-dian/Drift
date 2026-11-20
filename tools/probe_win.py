@@ -41,7 +41,7 @@
     def main():
         with App("showcase.exe", "Drift 示例台") as app:
             before = app.grab()
-            app.click(25, 90 + 5 * 36)
+            app.click_nav("长列表 Big")
             ...
         return 0
 
@@ -383,6 +383,44 @@ def key(hwnd, vk, settle=0.0):
         time.sleep(settle)
 
 
+def click_by_name(hwnd, name, settle=0.0):
+    """按 **UIA 语义名**定位控件并真点 —— 坐标是查出来的，不是记下来的。
+
+    ★ 与 `click(x, y)` 的取舍：导航项按像素行号点时，插一页/重排一处，探针就静默
+      点到别的页（画面还照样变，只是测的不是原来那页）。语义名是应用自己声明的，
+      顺序变了也认得出来。UIA 原语复用 `probe-uia.py`，这里只做"查名字 → 换坐标 →
+      走本模块唯一的真输入通道"。
+
+    ★ 延迟 import 避开循环：`probe-uia.py` 模块级 import 本模块，而本函数只在探针
+      真正调用时才加载它 —— 那时本模块已完成初始化。
+    """
+    import probe_uia as uia
+
+    api = uia.uia_create()
+    walker = uia.walker(api)
+    root = uia.element_from_handle(api, hwnd)
+    found = []
+
+    def visit(elem):
+        if uia.name_of(elem) == name:
+            r = uia.rect_of(elem)
+            if r.right - r.left > 0 and r.bottom - r.top > 0:
+                found.append(r)
+                return
+        child = uia.child(walker, elem)
+        while child:
+            visit(child)
+            child = uia.sibling(walker, child)
+
+    visit(root)
+    if not found:
+        raise NotMeasured(f'UIA 树里没有可见的 {name!r}（先 python tools/probe-uia.py --dump 看真名）')
+
+    r = found[0]
+    cx, cy = screen_to_client(hwnd, (r.left + r.right) // 2, (r.top + r.bottom) // 2)
+    click(hwnd, cx, cy, settle)
+
+
 def park_pointer():
     """把光标挪到屏幕角落，别让悬停态掺进后续截图。"""
     user32.SetCursorPos(5, 5)
@@ -502,6 +540,10 @@ class App:
     def click(self, x, y, settle=0.0):
         click(self.hwnd, x, y, settle)
 
+    def click_nav(self, label, settle=0.0):
+        """按侧栏的无障碍名点导航项（解坐标锁，见模块函数注释）"""
+        click_by_name(self.hwnd, label, settle)
+
     def press(self, x, y, settle=0.0):
         press(self.hwnd, x, y, settle)
 
@@ -529,7 +571,7 @@ def _selftest():
             check("自检 · 客户区拿到了", w > 200 and h > 200, f"{w}x{h}")
             check("自检 · 窗口真在前台", user32.GetForegroundWindow() == app.hwnd)
 
-            app.click(25, 90 + 5 * 36, settle=1.0)   # 导航第 6 项：长列表 Big
+            app.click_nav('长列表 Big', settle=1.0)   # 按语义名，不按第 6 项的像素行号
             app.park()
             time.sleep(0.3)
             base = app.grab()[2]

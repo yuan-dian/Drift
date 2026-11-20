@@ -142,7 +142,11 @@ final class ConcurrentFetchPageState extends State
                 );
             },
         );
+    }
 
+    public function onActivate(): void
+    {
+        // 全常驻容器首帧就 mount 完所有页 ⇒ 并发任务留到首次可见才发。
         $this->dash->run(self::PAGES);
     }
 

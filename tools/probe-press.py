@@ -46,8 +46,8 @@ def main():
         w, h = app.size()
         print(f"客户区 {w}x{h}")
 
-        # ── 导航到「按钮 Button」（第 3 项：首项中心 90、pitch 36）──
-        app.click(25, 90 + 2 * 36, settle=0.8)
+        # ── 导航到「按钮 Button」（按语义名，重排侧栏不影响探针）──
+        app.click_nav('按钮 Button', settle=0.8)
         # 页面切换的动画收口。★ §42 之前这里要「浪费一条 move」绕开点击后
         #   hover 不恢复；帧欠账补齐后第一条输入即生效，只剩一次等待。
         app.move(w - 40, h - 40, settle=0.8)

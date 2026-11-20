@@ -40,6 +40,11 @@ final class PageHost extends StatefulWidget implements SubscribingWidget
 
     private ?RouteTable $table = null;
 
+    /** 纯 UI 态的当前页名；给定时优先于 source()/select() 订阅的结果 */
+    private ?string $current = null;
+
+    private bool $expanded = false;
+
     private function __construct()
     {
         parent::__construct();
@@ -93,6 +98,48 @@ final class PageHost extends StatefulWidget implements SubscribingWidget
         $this->table = $table;
 
         return $this;
+    }
+
+    /**
+     * 直接给当前页名：页切换是纯 UI 态时不必再造一个 Subject。
+     *
+     * ★ 与 `source()` 二选一；同时给定时本方法优先。父级重建时传新实例即可换页，
+     *   页面实例缓存仍在 State 里，不随 Widget 重建而丢。
+     *
+     * @api
+     */
+    public function current(string $page): self
+    {
+        $this->mutate();
+        $this->current = $page;
+
+        return $this;
+    }
+
+    /** @internal PageHostState 读它 */
+    public function currentPage(): ?string
+    {
+        return $this->current;
+    }
+
+    /**
+     * 每页是否撑满内容区高度。嵌在固定高度的 Row/Column 里时必须开，
+     * 否则页根 `ScrollView` 量到的是全部内容高，外层滚不动。
+     *
+     * @api
+     */
+    public function expanded(bool $value = true): self
+    {
+        $this->mutate();
+        $this->expanded = $value;
+
+        return $this;
+    }
+
+    /** @internal */
+    public function isExpanded(): bool
+    {
+        return $this->expanded;
     }
 
     /** @internal PageHostState 读它 —— 与 SubjectBuilder 同形 */

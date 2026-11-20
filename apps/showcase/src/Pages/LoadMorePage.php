@@ -129,7 +129,10 @@ final class LoadMorePageState extends State
 
             $this->loadMore($value);
         });
+    }
 
+    public function onActivate(): void
+    {
         $this->rows->run(1);
     }
 
