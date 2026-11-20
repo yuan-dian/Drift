@@ -1,5 +1,5 @@
 {
-  "name": "drift/drift",
+  "name": "yuan-dian/drift",
   "description": "Drift —— 用 TypePHP 写的声明式 GUI 框架",
   "type": "library",
   "license": "MIT",
