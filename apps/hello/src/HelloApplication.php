@@ -4,7 +4,6 @@ declare(strict_types=1);
 namespace App\Hello;
 
 use Drift\App\Application;
-use Drift\Input\CursorShape;
 use Drift\Widget\Center;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
@@ -23,14 +22,7 @@ final class HelloApplication extends Application
 {
     public function buildRoot(): Widget
     {
-        // ★ `->cursor()` 是 §9.1「一次命中，三方消费」的第 ③ 方（2026-10-15 落地）：
-        //   声明一次，命中链从命中的盒向上取**最近**的声明者 ⇒ 整窗可点。
-        //   真机验证：鼠标移进窗口后 `GetCursorInfo` 报 `IDC_HAND`（不是默认箭头）。
-        //   这是 §20 纪律 4「每个契约能力必须在示例中出现」的落点 —— 也是最省的
-        //   一条：不新增页面、不新增控件，只多一个链式调用。
-        return Center::make()->cursor(CursorShape::PointingHand)->child(
-            Text::make('Hello Drift')->title()
-        );
+        return Center::make()->child(Text::make('Hello Drift')->title());
     }
 
     public function title(): string
