@@ -35,15 +35,16 @@ use Drift\Rendering\SliderStyle;
  * ## 值 ↔ 像素只有这一处
  *
  * `valueAt()` / `thumbX()` 是本类的方法，Widget 侧**不重复实现换算**。
- * 指针回调从 `$element->effectiveBox()` 现取盒再调它们 —— 盒每帧重建（§13.2），
- * 缓存盒等于拿上一帧的几何算这一帧的位置。
+ * 指针回调从 `$element->effectiveBox()` 现取盒再调它们 —— 缓存盒等于拿旧几何算新位置。
  *
  * @api
  */
 final class RenderSlider extends RenderBox
 {
     public function __construct(
-        private readonly float $value,
+        // ★ 唯一非 readonly 的配置字段：拖动时要在既有盒上原地改（见 `reconfigure()`）。
+        //   其余字段变化一律拒绝复用，交给 `Element::syncBox()` 造新盒。
+        private float $value,
         private readonly float $min,
         private readonly float $max,
         private readonly float $step,
@@ -80,6 +81,59 @@ final class RenderSlider extends RenderBox
     protected function contentIntrinsicWidth(float $height): float
     {
         return $this->width;
+    }
+
+    /**
+     * 就地改配置（`Element::syncBox()` 的盒复用路径）。返回 `false` = 请造新盒。
+     *
+     * 只有"纯绘制量"能落进来：`value`（拇指位置）与两个反馈色。几何
+     * （`min/max/step/width`）与 `SliderStyle` 任一不同就返回 `false` —— 它们在
+     * `createRenderObject()` 里解析与构造，就地改会漏算尺寸或漏换颜色。
+     *
+     * ★ 反馈色**必须比**：它是描述态（不进 `inheritRuntimeState()`），换主题时
+     *   若只有 Hover / Pressed token 变，`SliderStyle` 可以完全相同 ⇒ 不比就会
+     *   一直用旧反馈色，且不报错。
+     * ★ 值变化调 `markPaintChanged()`：不碰 `$size`、不标布局脏，但要保证这一帧
+     *   真的重画（paint 门控的三条信号里至少动一条）。
+     */
+    public function reconfigure(
+        float $value,
+        float $min,
+        float $max,
+        float $step,
+        float $width,
+        SliderStyle $style,
+        ?Color $hoverOverlay,
+        ?Color $pressedOverlay,
+    ): bool {
+        if ($min !== $this->min || $max !== $this->max
+            || $step !== $this->step || $width !== $this->width) {
+            return false;
+        }
+        if (!$style->equals($this->style)) {
+            return false;
+        }
+
+        if (!self::sameColor($hoverOverlay, $this->interactionHover)
+            || !self::sameColor($pressedOverlay, $this->interactionPress)) {
+            $this->setInteraction($hoverOverlay, $pressedOverlay);
+        }
+
+        if ($value !== $this->value) {
+            $this->value = $value;
+            $this->markPaintChanged();
+        }
+
+        return true;
+    }
+
+    private static function sameColor(?Color $a, ?Color $b): bool
+    {
+        if ($a === null || $b === null) {
+            return $a === $b;
+        }
+
+        return $a->equals($b);
     }
 
     protected function contentIntrinsicHeight(float $width): float

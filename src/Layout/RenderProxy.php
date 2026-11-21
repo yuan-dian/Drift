@@ -51,6 +51,19 @@ use Drift\Geometry\Size;
  */
 final class RenderProxy extends RenderProxyBox
 {
+    /**
+     * 零字段：内距 / 尺寸 / 居中 / flex / inset / 样式全在 `mods`，唯一的孩子原样挂在下面。
+     *
+     * ⇒ 新配置不需要"写进盒"（`setMods()` 已逐字段落过），复用旧盒即可 —— 也让布局
+     * 缓存有机会命中。`Padding` / `Card` / `Align` / `SizedBox` 全走这里，是页面里
+     * 最多的节点。
+     */
+    #[\Override]
+    public function isConfigurationFree(): bool
+    {
+        return true;
+    }
+
     protected function performLayout(BoxConstraints $constraints): Size
     {
         $child = $this->child;

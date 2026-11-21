@@ -280,14 +280,25 @@ final class StructureControlsTest extends SmokeTestCase
     public function testUpdateSwapsBox(): void
     {
         $ctx = smokeContext();
-        // 换 children：Element 复用，盒重造（§13.2）
+        // §13.2 的判据从"换描述就换盒"收紧成"**配置**变了才换盒"：`updateRenderObject()`
+        // 判等为假时才交回框架造新盒，配置等价则复用（见 BoxReuseTest）。
+        // 这里验的是后者不会被误连坐成"配置变了也不换" —— 半同步正是在那一步发生的。
         $growRoot = Column::make()->children([Spacer::make()])->createElement();
         $growRoot->mount(null, $ctx);
         $firstBox = $growRoot->renderObject();
-        $growRoot->update(Column::make()->children([Spacer::make(2)]));
+        $growRoot->update(Column::make()->children([Spacer::make()])->spacing(4.0));
         check(
-            '结构控件 · update 换描述 ⇒ 换盒（§13.2：不存在字段级半同步）',
+            '结构控件 · 配置变了 ⇒ 换盒（§13.2：不存在字段级半同步）',
             $growRoot->renderObject() !== null && $growRoot->renderObject() !== $firstBox,
+        );
+
+        // 反面：只换 children（Column 自己的五元配置全同）⇒ 复盒。
+        // 子列表属于"结构"，由 adoptBoxes() 负责标脏 —— 不构成换盒的理由。
+        $secondBox = $growRoot->renderObject();
+        $growRoot->update(Column::make()->children([Spacer::make(), Spacer::make(2)])->spacing(4.0));
+        check(
+            '结构控件 · 只换 children ⇒ 复用盒（结构变化不等于配置变化）',
+            $growRoot->renderObject() !== null && $growRoot->renderObject() === $secondBox,
         );
 
         $this->flushChecks();

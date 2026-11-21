@@ -47,6 +47,29 @@ final class RenderText extends RenderBox
     ) {
     }
 
+    /**
+     * 新配置与本盒**完全等价**吗（内容 / 样式 / 颜色 / 度量源 / 缩放）？
+     *
+     * 只做全同判定、不做就地改写：`paragraph` 是 `performLayout()` 的产物，就地换内容
+     * 会让盒带着上一轮的段落到 `paint()`（静默画旧字）。
+     *
+     * ★ `TextStyle` / `Color` / `Scale` 每次建盒都新造，**不能比身份**（永远不等）。
+     * ★ `metrics` 比身份：换度量器就是换排版结果，必须造新盒。
+     */
+    public function matchesConfiguration(
+        string $content,
+        TextStyle $style,
+        Color $color,
+        TextMetricsProvider $metrics,
+        Scale $scale,
+    ): bool {
+        return $this->content === $content
+            && $this->style->equals($style)
+            && $this->color->equals($color)
+            && $this->metrics === $metrics
+            && $this->scale->equals($scale);
+    }
+
     /** @internal 冒烟 / 调试：解析后的字号（角色 → 主题表 → 这里） */
     public function styleSize(): float
     {

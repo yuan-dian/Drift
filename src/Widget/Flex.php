@@ -104,6 +104,31 @@ abstract class Flex extends MultiChildRenderObjectWidget
         );
     }
 
+    /**
+     * 五元配置全同 ⇒ 复用盒；任一项不同交回框架造新盒（配置真变本来就要全排一遍）。
+     *
+     * 子列表不在这里比：`syncBox()` 时子 Element 还没重建，拿不到新子盒 ——
+     * 结构变化由 `MultiChildElement::adoptBoxes()` 发现并标脏。
+     *
+     * ★ **只认 `RenderFlex` 本身**：`AppBar` 的盒是它的子类（有 `$box` 样式字段），
+     *   父类判等看不见子类字段 ⇒ 允许子类复用会把那份配置静默丢掉。
+     */
+    #[\Override]
+    public function updateRenderObject(RenderBox $box, BuildContext $context): bool
+    {
+        if (\get_class($box) !== RenderFlex::class) {
+            return false;
+        }
+
+        return $box->matchesConfiguration(
+            $this->isVertical(),
+            $this->spacing,
+            $this->padding,
+            $this->cross,
+            $this->overflow,
+        );
+    }
+
     /** @return list<Widget> */
     public function kidList(): array
     {

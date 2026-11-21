@@ -23,6 +23,18 @@ abstract class RenderProxyBox extends RenderBox
         $this->adoptChild($child);
     }
 
+    /** 摘掉子（`null` 子槽的唯一入口：复用盒时必须清，否则旧子继续被布局与绘制） */
+    public function clearChild(): void
+    {
+        $this->child = null;
+    }
+
+    /** @api 当前子盒；`null` = 没有子 */
+    public function child(): ?RenderBox
+    {
+        return $this->child;
+    }
+
     public function visitChildren(callable $visitor): void
     {
         if ($this->child !== null) {

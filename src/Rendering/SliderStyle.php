@@ -34,4 +34,20 @@ final readonly class SliderStyle
         public float $thumbBorderWidth,
     ) {
     }
+
+    /**
+     * 逐字段等价。
+     *
+     * ★ 用途唯一：`RenderSlider::reconfigure()` 判断"样式是否变了"。颜色或尺寸任一项
+     *   不等都算变 —— 那意味着必须造新盒重新解析，不能在旧盒上就地改。
+     */
+    public function equals(SliderStyle $other): bool
+    {
+        return $this->track->equals($other->track)
+            && $this->accent->equals($other->accent)
+            && $this->thumbBorder->equals($other->thumbBorder)
+            && $this->trackHeight === $other->trackHeight
+            && $this->thumbRadius === $other->thumbRadius
+            && $this->thumbBorderWidth === $other->thumbBorderWidth;
+    }
 }

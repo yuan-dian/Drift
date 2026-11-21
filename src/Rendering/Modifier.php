@@ -504,6 +504,73 @@ final class Modifier
             && !$this->transformCentered;
     }
 
+    /**
+     * **几何**等价 —— `RenderBox::setMods()` 判"要不要标布局脏"用。
+     *
+     * 只比影响尺寸与子盒偏移的字段：padding / 显式尺寸 / aspect / 对齐 / flex / inset。
+     * 颜色、阴影、透明度、禁用态、clip、transform 都只影响绘制。
+     *
+     * ★★ 必须显式处理 `NAN`：`width` / `height` / `aspect` / `basis` 的默认值都是 NAN，
+     *   而 `NAN !== NAN` ⇒ 直接用 `==` 比较两个默认 Modifier 会得到 false（"每次都变"），
+     *   盒复用后每次重建都会标脏全树。`sameFloat()` 把"两边都是 NAN"认定为相同。
+     *
+     * ★ `align` 用 `==` 深比较：小值对象；万一将来混进 NAN 字段，退化成"总是不等" ——
+     *   只损失缓存命中，不影响正确性。
+     */
+    public function geometryEquals(Modifier $other): bool
+    {
+        return self::sameFloat($this->padLeft, $other->padLeft)
+            && self::sameFloat($this->padTop, $other->padTop)
+            && self::sameFloat($this->padRight, $other->padRight)
+            && self::sameFloat($this->padBottom, $other->padBottom)
+            && self::sameFloat($this->width, $other->width)
+            && self::sameFloat($this->height, $other->height)
+            && self::sameFloat($this->aspect, $other->aspect)
+            && $this->align == $other->align
+            && $this->grow === $other->grow
+            && $this->shrink === $other->shrink
+            && self::sameFloat($this->basis, $other->basis)
+            && $this->alignSelf === $other->alignSelf
+            && self::sameFloat($this->insetLeft, $other->insetLeft)
+            && self::sameFloat($this->insetTop, $other->insetTop)
+            && self::sameFloat($this->insetRight, $other->insetRight)
+            && self::sameFloat($this->insetBottom, $other->insetBottom);
+    }
+
+    /**
+     * **全字段**等价（几何 + 绘制）—— `RenderBox::setMods()` 判"要不要请求重绘"用。
+     *
+     * 几何不变而绘制面变了（悬停色、透明度、clip、transform）时不必重算尺寸，但
+     * **必须重画**：复用盒不 bump layoutEpoch，不推 paintEpoch 就停在上一帧。
+     *
+     * ★ 新增字段必须同步加进来，否则那一维变化会静默不重绘（不报错）。
+     */
+    public function equals(Modifier $other): bool
+    {
+        return $this->geometryEquals($other)
+            && $this->style->equals($other->style)
+            && $this->shadow === $other->shadow
+            && $this->opacity === $other->opacity
+            && $this->translateX === $other->translateX
+            && $this->translateY === $other->translateY
+            && $this->disabled === $other->disabled
+            && $this->dim === $other->dim
+            && $this->repaintBoundary === $other->repaintBoundary
+            && $this->clip === $other->clip
+            && $this->transformCentered === $other->transformCentered
+            && $this->transform == $other->transform;
+    }
+
+    /** NAN 视为相等（语义是"没设"），其余严格比较 */
+    private static function sameFloat(float $a, float $b): bool
+    {
+        if (\is_nan($a)) {
+            return \is_nan($b);
+        }
+
+        return $a === $b;
+    }
+
     // ── 读：合成变换（`Element::syncBox()` → `RenderBox::applyTransform()`）──
 
     public function transform(): ?Matrix2D

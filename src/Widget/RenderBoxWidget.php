@@ -9,9 +9,11 @@ use Drift\Rendering\BoxStyle;
 /**
  * 带渲染盒的控件（Widget → RenderBox 构造契约）。
  *
- * ★ **Widget 自己不持盒**：盒在 Element 挂载时由本方法造，配置更新时**重新造一个
- *   换掉**。于是"Widget 不可变 ⇒ 参数只会整体换新"这条性质保证了不存在字段级半同步
- *   —— GUI 仓"两份手写字段赋值 ⇒ 首次正常、刷新变样且静默"因此结构上不可能。
+ * ★ **Widget 自己不持盒**：盒在 Element 挂载时由本方法造；配置更新时先问
+ *   `updateRenderObject()` 能不能就地复用，判等为假才重新造一个换掉。于是
+ *   "Widget 不可变 ⇒ 参数只会整体换新"这条性质仍然保证不存在字段级半同步
+ *   —— GUI 仓"两份手写字段赋值 ⇒ 首次正常、刷新变样且静默"因此结构上不可能：
+ *   复用的前提就是"配置逐字段等价"，不等就换盒，中间态不存在。
  *
  * ★ 放在这里而不是 `Widget` 基类上：结构节点（`Column` / `Row` / `ForEach` /
  *   `Spacer`）里有些不产盒（纯组合），基类留一个恒返回 null 的方法只会让
@@ -31,6 +33,30 @@ abstract class RenderBoxWidget extends Widget
      * 子盒不由这里挂 —— 那是 Element 的事（它才知道子 Element 的盒造好了没）。
      */
     abstract public function createRenderObject(BuildContext $context): RenderBox;
+
+    /**
+     * 把新配置写进**既有盒**，而不是再造一个。
+     *
+     * 返回 `true` = 已就地更新、盒可复用；`false` = `Element::syncBox()` 照旧走
+     * `createRenderObject()` 换新盒。
+     *
+     * 默认认**零字段盒**（`RenderBox::isConfigurationFree()`）：那类盒的配置全在 `mods`
+     * 与子层，复用零风险，且它们占页面节点的大头。有字段的盒必须逐控件覆写。
+     *
+     * ★ 覆写方的契约（缺一条都是静默错）：
+     *   ① 几何相关字段变了 ⇒ 返回 `false`，**不要**自己 `markNeedsLayout()`；
+     *   ② 样式 / 主题派生值变了 ⇒ 返回 `false`（就地改会漏重算 ⇒ 换主题后颜色不变）；
+     *   ③ 只有"纯绘制量"（如 `Slider` 的 `value`）变化才返回 `true`，且不得动 `$size`。
+     *
+     * ★ 复用路径上盒的运行时态（悬停 / 按下）不会丢 —— 这也是不再需要
+     *   `inheritRuntimeState()` 补丁的原因。
+     *
+     * @api 控件扩展点
+     */
+    public function updateRenderObject(RenderBox $box, BuildContext $context): bool
+    {
+        return $box->isConfigurationFree();
+    }
 
     /**
      * 本控件的盒**自己画底 / 边 / 圆角**吗（画在 `paintOwnChrome()` 里）？

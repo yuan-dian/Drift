@@ -27,4 +27,14 @@ interface ChildContainer
 
     /** 追加一个子盒（顺序即绘制/布局顺序） */
     public function addChild(RenderBox $child): void;
+
+    /**
+     * 当前挂着的子盒（按顺序）。
+     *
+     * 挂接方用它判"结构变没变"：相同就不必摘了重挂；不同必须 `markNeedsLayout()`
+     * —— 复用盒（配置判等通过）否则会带着上一轮的几何继续画。
+     *
+     * @return list<RenderBox>
+     */
+    public function children(): array;
 }

@@ -178,20 +178,36 @@ abstract class Element
      */
     protected function syncBox(): void
     {
-        // 全仓唯一的盒创建点：bumpLayoutEpoch 让"新盒 ⇒ 必须重排"记这里；
-        // 帧外换盒（update/applyContext）不经过 settle，不 bump ⇒ 新盒 size() 恒 null ⇒ 命中落空。
-        $this->pipeline()->bumpLayoutEpoch();
+        // ① 先问控件：能不能把新配置写进**既有盒**？
+        //    能 ⇒ 盒不换、layoutEpoch 不动（几何不作废）、运行时态不丢、祖先不必重排。
+        $reused = $this->box !== null
+            && $this->widget instanceof RenderBoxWidget
+            && $this->widget->updateRenderObject($this->box, $this->context);
 
-        $previous = $this->box;
-        $this->box = $this->widget instanceof RenderBoxWidget
-            ? $this->widget->createRenderObject($this->context)
-            : null;
+        if (!$reused) {
+            // 全仓唯一的盒创建点：bumpLayoutEpoch 记"新盒 ⇒ 必须重排"。
+            $this->pipeline()->bumpLayoutEpoch();
 
-        // 盒每次重建都换新，悬停态住盒上 ⇒ 不交回会在 setState() 时清零（鼠标移上不变色）；
-        // 只移交描述之外的部分（RenderRuntime），只认同类型，且用 get_class() 而非 $previous::class（AOT 启动即崩）。
-        if ($previous !== null && $this->box !== null
-            && \get_class($previous) === \get_class($this->box)) {
-            $this->box->inheritRuntimeState($previous);
+            $previous = $this->box;
+            $this->box = $this->widget instanceof RenderBoxWidget
+                ? $this->widget->createRenderObject($this->context)
+                : null;
+
+            // 悬停 / 按下态住在盒上 ⇒ 换盒时须交回，否则 setState() 会清零。
+            // 只移交描述之外的部分（RenderRuntime），只认同类型；用 get_class() 而非
+            // $previous::class（AOT 启动即崩）。
+            if ($previous !== null && $this->box !== null
+                && \get_class($previous) === \get_class($this->box)) {
+                $this->box->inheritRuntimeState($previous);
+            }
+
+            // 新盒 `size` 为 null ⇒ **立刻**把祖先标脏。不能留到 `settlePass()` 的后序：
+            // `pump()` 这类"rebuild + layout"直推路径不经过 settle，根盒命中缓存就会
+            // 把整棵新子树跳过去（新盒从不 `performLayout()`，子层留着上一轮的偏移）。
+            //
+            // 此刻本盒 `parent` 还是 null（要等父 `adoptBoxes()`）⇒ 标的是**祖先**的盒，
+            // 它们早就挂接好了，上传一路闭合。
+            $this->markLayoutDirtyUp();
         }
 
         // 光标形状是 Widget 的声明，集中落一份到盒上，避免各 createRenderObject 漏抄只用默认光标。
@@ -368,7 +384,7 @@ abstract class Element
         $this->widget = $newWidget;
         $this->widget->seal();
         $this->pipeline()->bumpContent(); // ★ 声明可能变了（`focusOrder` / `disabled` / 标签）
-        $this->syncBox(); // §13.2：新描述 ⇒ 新盒
+        $this->syncBox(); // §13.2：新描述到了 ⇒ 盒按配置判等决定复用还是换新
         $this->didUpdateWidget($newWidget);
         $this->rebuild();
     }
@@ -486,6 +502,27 @@ abstract class Element
 
         // 后序：子层已定盒，这里才把它们收进自己的盒（容器覆写，叶子空操作）
         $this->adoptBoxes();
+    }
+
+    /**
+     * 沿 **Element** 父链把每个祖先的盒标脏。
+     *
+     * 不直接 `$box->markNeedsLayout()`：挂接前盒的 `parent` 仍为 null，上传走空。
+     * 遇到已脏的祖先即停 —— `markNeedsLayout()` 总会向上闭合，它上面必然也脏。
+     */
+    private function markLayoutDirtyUp(): void
+    {
+        $p = $this->parent;
+        while ($p !== null) {
+            $box = $p->renderObject();
+            if ($box !== null) {
+                if ($box->needsLayout()) {
+                    return;
+                }
+                $box->markNeedsLayout();
+            }
+            $p = $p->parent;   // Stateless 中间层没有盒，继续往上找
+        }
     }
 
     /**

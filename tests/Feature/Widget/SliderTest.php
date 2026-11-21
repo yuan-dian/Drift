@@ -20,6 +20,8 @@ use Drift\Rendering\ColorToken;
 use Drift\Rendering\DisplayList;
 use Drift\Rendering\RecordingCanvas;
 use Drift\Rendering\SliderStyle;
+use Drift\Theme\ThemeData;
+use Drift\Widget\BuildContext;
 use Drift\Widget\Element;
 use Drift\Widget\SemanticsBuilder;
 use Drift\Widget\Slider;
@@ -381,5 +383,72 @@ final class SliderTest extends SmokeTestCase
             'Slider · setSemanticsValue("abc") ⇒ false（非数字，读屏据此知道没生效）',
             $w->setSemanticsValue('abc') === false,
         );
+    }
+
+    /**
+     * 拖动只改值 ⇒ 复用同一个盒，且**值真的写进去了**（否则"复用"等于不更新）。
+     *
+     * 反面判据一起钉：换主题只动 Hover 色时，反馈色必须跟着更新 —— 反馈色是描述态
+     * （不进 `inheritRuntimeState()`），复用路径若不比它，就会一直用旧色且不报错。
+     */
+    public function testValueChangeReusesBoxAndKeepsFeedbackColorsInSync(): void
+    {
+        $el = Slider::make()->range(0.0, 100.0)->value(50.0)
+            ->onChanged(static function (float $v): void {})
+            ->createElement();
+        $el->mount(null, smokeContext());
+        $first = $el->renderObject();
+        check('Slider 复用 · 挂载建出 RenderSlider', $first instanceof RenderSlider);
+
+        $el->update(
+            Slider::make()->range(0.0, 100.0)->value(60.0)
+                ->onChanged(static function (float $v): void {})
+        );
+        $second = $el->renderObject();
+        check(
+            'Slider 复用 · 只改 value ⇒ 同一个盒',
+            $first !== null && $first === $second,
+            $second === null ? 'null' : ($first === $second ? '同一个' : '换了新盒'),
+        );
+        check(
+            'Slider 复用 · 新值写进盒（fraction 0.6）',
+            $second instanceof RenderSlider && \abs($second->fraction() - 0.6) < 1e-9,
+            $second instanceof RenderSlider ? \sprintf('%.3f', $second->fraction()) : 'box 类型不符',
+        );
+
+        // 只改 Hover token 的主题：SliderStyle 逐字段不变 ⇒ 仍应复用，但反馈色要换。
+        $base = smokeContext();
+        $theme = ThemeData::light()->withColor(
+            ColorToken::Hover,
+            ThemeData::dark()->color(ColorToken::Hover),
+        );
+        $before = self::readInteractionHover($second);
+        $el->applyContext(new BuildContext(320.0, 240.0, $theme, $base->metrics()));
+        $third = $el->renderObject();
+        $after = self::readInteractionHover($third);
+        check(
+            'Slider 复用 · 只换 Hover 主题 ⇒ 仍复用盒',
+            $second !== null && $second === $third,
+            $third === null ? 'null' : ($second === $third ? '同一个' : '换了新盒'),
+        );
+        check(
+            'Slider 复用 · 只换 Hover 主题 ⇒ 盒里的反馈色跟着更新',
+            $before !== null && $after !== null && !$before->equals($after),
+            $before === null || $after === null ? '未读到反馈色' : ($before->equals($after) ? '仍是旧色' : '已换新色'),
+        );
+    }
+
+    private static function readInteractionHover(?RenderBox $box): ?\Drift\Rendering\Color
+    {
+        if ($box === null) {
+            return null;
+        }
+
+        $prop = new \ReflectionProperty(\Drift\Layout\RenderObject::class, 'interactionHover');
+
+        /** @var \Drift\Rendering\Color|null $value */
+        $value = $prop->getValue($box);
+
+        return $value;
     }
 }

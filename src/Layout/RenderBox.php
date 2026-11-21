@@ -32,6 +32,15 @@ abstract class RenderBox extends RenderObject
     // 只被读（`constraints()` / 约束反馈），从不参与任何判定 ⇒ 布局仍是纯函数。
     private ?BoxConstraints $lastConstraints = null;
 
+    // 上一次**真正执行** layout 时的约束。与 `$needsLayout` 一起判"这次能否跳过"：
+    // 未标脏且约束相等 ⇒ 尺寸必与上次相同（`layout()` 对约束是纯函数）。
+    // 与上面那份的分工：那份给 `constraints()` 读、不参与判定；这份只判重算，不外露。
+    private ?BoxConstraints $appliedConstraints = null;
+
+    // 几何是否失效。初值 true（新盒必须算一次，`size` 还是 null）。
+    // 子层失效后**必须**沿父链上传（`markNeedsLayout()`）：只标自己 ⇒ 祖先仍握旧尺寸。
+    private bool $needsLayout = true;
+
     // 浮层树的根：`absoluteOrigin()` 累加到它为止再加落点。没有它，嵌套浮层里的锚点
     // 只算到浮层根 (0,0)。★ 用独立 bool 而非 "baseX !== 0"：浮层原点可能就是 (0,0)。
     protected float $baseX = 0.0;
@@ -48,6 +57,17 @@ abstract class RenderBox extends RenderObject
      */
     public function setMods(Modifier $mods): void
     {
+        // 盒复用后这里是**几何失效的唯一入口**：padding / 尺寸 / aspect / align /
+        // flex / inset 任一项变了尺寸都可能变（clip / transform 只影响绘制，不算）。
+        // 必须用 `geometryEquals()` 而非 `!=`：这些字段的默认值是 NAN，`NAN !== NAN`
+        // 会让每次重建都判"变了" ⇒ 标脏全树、缓存白做。
+        $geometryChanged = $this->mods === null || !$mods->geometryEquals($this->mods);
+
+        // 几何没变、只是视觉变了（列线悬停色这一类）：不重排，但**必须重画** ——
+        // 复用盒不 bump layoutEpoch，不在这里推 paintEpoch 就停在上一帧。
+        $visualOnlyChanged = !$geometryChanged
+            && ($this->mods === null || !$mods->equals($this->mods));
+
         $this->mods = $mods;
 
         // ★ 禁用把置灰**折进**合成 alpha：`paintComposed()` 在 `opacity < 1` 时已开层，
@@ -65,6 +85,28 @@ abstract class RenderBox extends RenderObject
         $this->setFlexIntent($mods->flexGrow(), $mods->flexShrink(), $mods->flexBasis(), $mods->flexAlign());
         $this->setStackIntent($mods->insetLeft(), $mods->insetTop(), $mods->insetRight(), $mods->insetBottom());
         $this->applyTransform($mods->transform(), $mods->transformCentered());
+
+        if ($geometryChanged) {
+            $this->markNeedsLayout();
+        } elseif ($visualOnlyChanged) {
+            $this->pipeline()->bumpPaintEpoch();
+        }
+    }
+
+    /**
+     * 本盒是否**没有自己的配置字段**（几何与外观全由 `mods` + 子盒决定）。
+     *
+     * `true` ⇒ `Element::syncBox()` 可安全复用旧盒：新配置由 `setMods()` 逐字段落下，
+     * 子盒换新由 `adoptBoxes()` 接管，盒里没有需要写进去的东西。
+     *
+     * ★ 默认 `false`。误报的后果是"配置变了但盒还是旧的"，静默。判据：把类里所有属性
+     *   删掉，`performLayout()` / `paintContent()` 还编得过，才配返回 true。
+     *
+     * @api
+     */
+    public function isConfigurationFree(): bool
+    {
+        return false;
     }
 
     /** `null` = 这个盒没有修饰（直接 `new` 出来的测试盒 / 未挂载） */
@@ -267,6 +309,18 @@ abstract class RenderBox extends RenderObject
      */
     final public function layout(BoxConstraints $constraints): Size
     {
+        // 快速路径：未标脏且约束与上次相同 ⇒ 尺寸必然一样（对约束是纯函数）。
+        // 父层仍会逐个调 `child->layout()`，但干净子树在这里 O(1) 返回 ⇒ 代价只跟脏路径走。
+        // 自校验开着时不走：`LayoutSelfCheck` 靠"同约束连排两遍比尺寸"判纯函数，
+        // 缓存会让第二遍直接返回 ⇒ 判据失明（开发开关，关着零成本）。
+        if (!$this->needsLayout && !LayoutSelfCheck::$on) {
+            $applied = $this->appliedConstraints;
+            $cached = $this->size;
+            if ($applied !== null && $cached !== null && $applied->equals($constraints)) {
+                return $cached;
+            }
+        }
+
         $this->pipeline()->bumpLayout();
 
         $m = $this->mods;
@@ -371,7 +425,43 @@ abstract class RenderBox extends RenderObject
             });
         }
 
+        // 当前约束下的定稿：记下判据，让下一次同约束调用走快速路径。
+        $this->appliedConstraints = $constraints;
+        $this->needsLayout = false;
+
         return $this->size;
+    }
+
+    /**
+     * 标脏自己的几何，并**沿父链上传**。
+     *
+     * 上传是必需的：`layout()` 的快速路径只看本盒标记 —— 只标自己时祖先仍然干净，
+     * 会直接返回缓存尺寸，子层的新尺寸传不上去。
+     *
+     * ★ 已脏即早退：脏意味着这次失效已上传过（新盒初值 true，但那时 parent 还是 null，
+     *   由挂接方标祖先）。因此**别在手动置脏的路径上依赖它**。
+     */
+    public function markNeedsLayout(): void
+    {
+        if ($this->needsLayout) {
+            return;
+        }
+        $this->needsLayout = true;
+
+        $up = $this->parent();
+        if ($up instanceof RenderBox) {
+            $up->markNeedsLayout();
+        }
+    }
+
+    /**
+     * 本盒几何是否待重算。`Element::markLayoutDirtyUp()` 据此早停。
+     *
+     * @api
+     */
+    public function needsLayout(): bool
+    {
+        return $this->needsLayout;
     }
 
     /**

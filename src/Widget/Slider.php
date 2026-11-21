@@ -10,6 +10,7 @@ use Drift\Input\PointerEvent;
 use Drift\Input\SemanticsRole;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderSlider;
+use Drift\Rendering\Color;
 use Drift\Rendering\ColorToken;
 use Drift\Rendering\MetricToken;
 use Drift\Rendering\SliderStyle;
@@ -316,6 +317,47 @@ final class Slider extends RenderBoxWidget implements SemanticsValueEditable
 
     public function createRenderObject(BuildContext $context): RenderBox
     {
+        return new RenderSlider(
+            $this->value,
+            $this->min,
+            $this->max,
+            $this->step,
+            $this->width,
+            $this->resolveStyle($context),
+            $this->resolveHoverOverlay($context),
+            $this->resolvePressedOverlay($context),
+        );
+    }
+
+    /**
+     * 拖动时把新值写进**既有盒**：只重画，不重排、不换盒。
+     *
+     * 盒不换 ⇒ `layoutEpoch` 不动 ⇒ 祖先 `layout()` 走缓存快速路径 ⇒ 整页只有
+     * 这一根滑杆重画。几何或样式真变了则返回 `false`，由 `Element::syncBox()`
+     * 照旧造新盒 —— 那条路验过金标，是永远成立的兜底。
+     */
+    #[\Override]
+    public function updateRenderObject(RenderBox $box, BuildContext $context): bool
+    {
+        if (!$box instanceof RenderSlider) {
+            return false;
+        }
+
+        return $box->reconfigure(
+            $this->value,
+            $this->min,
+            $this->max,
+            $this->step,
+            $this->width,
+            $this->resolveStyle($context),
+            $this->resolveHoverOverlay($context),
+            $this->resolvePressedOverlay($context),
+        );
+    }
+
+    /** 已解析样式（建盒与就地更新共用一份，避免两条路径解析口径漂移） */
+    private function resolveStyle(BuildContext $context): SliderStyle
+    {
         // ★ 按标志选已解析值一律 if/else（`?:` 两支类型不同会撞 tpc 的 C2678）
         $accent = $context->color(ColorToken::Muted);
         $border = $context->color(ColorToken::Border);
@@ -324,7 +366,7 @@ final class Slider extends RenderBoxWidget implements SemanticsValueEditable
             $border = $context->color(ColorToken::Surface);
         }
 
-        $style = new SliderStyle(
+        return new SliderStyle(
             $context->color(ColorToken::Chrome),
             $accent,
             $border,
@@ -332,26 +374,16 @@ final class Slider extends RenderBoxWidget implements SemanticsValueEditable
             SliderStyle::DEFAULT_THUMB_RADIUS,
             $context->metric(MetricToken::BorderWidth),
         );
+    }
 
-        // 禁用态给 null ⇒ `acceptsHover()` 为假 ⇒ 连状态都不推（与 `ToggleBase` 同判据）
-        $hoverOverlay = null;
-        $pressedOverlay = null;
-        if (!$this->mods()->disabled()) {
-            $hoverOverlay = $context->color(ColorToken::Hover);
-            $pressedOverlay = $context->color(ColorToken::Pressed);
-        }
+    /** 禁用态给 null ⇒ `acceptsHover()` 为假 ⇒ 连状态都不推（与 `ToggleBase` 同判据） */
+    private function resolveHoverOverlay(BuildContext $context): ?Color
+    {
+        return $this->mods()->disabled() ? null : $context->color(ColorToken::Hover);
+    }
 
-        $box = new RenderSlider(
-            $this->value,
-            $this->min,
-            $this->max,
-            $this->step,
-            $this->width,
-            $style,
-            $hoverOverlay,
-            $pressedOverlay,
-        );
-
-        return $box;
+    private function resolvePressedOverlay(BuildContext $context): ?Color
+    {
+        return $this->mods()->disabled() ? null : $context->color(ColorToken::Pressed);
     }
 }

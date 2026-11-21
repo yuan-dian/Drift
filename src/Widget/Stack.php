@@ -82,6 +82,21 @@ final class Stack extends MultiChildRenderObjectWidget
         return new RenderStack($this->align, $this->fit);
     }
 
+    /**
+     * 对齐 / 撑满策略全同 ⇒ 复用盒（子列表增删由 `adoptBoxes()` 单独标脏）。
+     *
+     * `$this->align` 的 `null` 是"默认 TopLeft"哨兵，交给盒解析后比。
+     */
+    #[\Override]
+    public function updateRenderObject(RenderBox $box, BuildContext $context): bool
+    {
+        if (!$box instanceof RenderStack) {
+            return false;
+        }
+
+        return $box->matchesConfiguration($this->align, $this->fit);
+    }
+
     /** @return list<Widget> */
     public function kidList(): array
     {

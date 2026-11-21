@@ -31,13 +31,23 @@ final class ProxyElement extends StatelessElement
     protected function adoptBoxes(): void
     {
         $box = $this->renderObject();
-        if ($box === null) {
+        if (!$box instanceof RenderProxyBox) {
             return;
         }
 
         $childBox = $this->childAt(0)?->effectiveBox();
-        if ($childBox !== null && $box instanceof RenderProxyBox) {
+        if ($box->child() === $childBox) {
+            return;
+        }
+
+        if ($childBox === null) {
+            // 子被去掉（`SizedBox::make()` 无子）：复用盒必须清槽，否则旧子继续被
+            // 布局与绘制（幽灵节点），且尺寸停在旧值。
+            $box->clearChild();
+        } else {
             $box->setChild($childBox);
         }
+
+        $box->markNeedsLayout();
     }
 }

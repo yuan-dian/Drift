@@ -3,9 +3,13 @@ declare(strict_types=1);
 
 namespace Drift\Widget;
 
+use Drift\Geometry\Scale;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderText;
+use Drift\Rendering\Color;
+use Drift\Text\FontWeight;
 use Drift\Text\TextRole;
+use Drift\Text\TextStyle;
 
 /**
  * 文本控件（§15.2）。
@@ -99,24 +103,59 @@ final class Text extends RenderBoxWidget
 
     public function createRenderObject(BuildContext $context): RenderBox
     {
+        return new RenderText(
+            $this->content,
+            $this->resolveStyle($context),
+            $this->resolveColor($context),
+            $context->metrics(),
+        );
+    }
+
+    /**
+     * 内容与派生样式一个不差才复用；否则交回框架造新盒。
+     *
+     * 不能就地改写：`paragraph` 只有 `performLayout()` 能刷新，直接换内容会画出旧字。
+     *
+     * ★ 派生逻辑必须与 `createRenderObject()` 同源（下面两个 resolve）：写成两份必然
+     *   漂移 ⇒ "判等说相同、实际样式不同" ⇒ 复用出旧颜色且不报错。
+     */
+    #[\Override]
+    public function updateRenderObject(RenderBox $box, BuildContext $context): bool
+    {
+        if (!$box instanceof RenderText) {
+            return false;
+        }
+
+        return $box->matchesConfiguration(
+            $this->content,
+            $this->resolveStyle($context),
+            $this->resolveColor($context),
+            $context->metrics(),
+            // 与 createRenderObject() 一致：`Text` 不暴露缩放，盒拿默认 1.0。
+            Scale::identity(),
+        );
+    }
+
+    /** §15.7 纪律 3：主题 token 与显式样式只在这里合并一次 */
+    private function resolveStyle(BuildContext $context): TextStyle
+    {
         $theme = $context->theme();
         $role = $this->role();
 
-        // §15.7 纪律 3：主题 token 与显式样式只在这里合并一次
-        $style = \Drift\Text\TextStyle::of($this->explicitSize() ?? $theme->textSize($role))
+        $style = TextStyle::of($this->explicitSize() ?? $theme->textSize($role))
             ->withMaxLines($this->maxLinesValue())
             ->withEllipsize($this->ellipsizeValue());
 
         $bold = $this->explicitBold();
         if ($bold !== null) {
-            $style = $style->withWeight($bold ? \Drift\Text\FontWeight::Bold : \Drift\Text\FontWeight::Regular);
+            $style = $style->withWeight($bold ? FontWeight::Bold : FontWeight::Regular);
         }
 
-        return new RenderText(
-            $this->content,
-            $style,
-            $theme->textColor($role),
-            $context->metrics(),
-        );
+        return $style;
+    }
+
+    private function resolveColor(BuildContext $context): Color
+    {
+        return $context->theme()->textColor($this->role());
     }
 }

@@ -35,6 +35,19 @@ final class RenderStack extends RenderBox implements ChildContainer
         $this->align = $align ?? Alignment::topLeft();
     }
 
+    /**
+     * 新配置与本盒**完全等价**吗（对齐 / 撑满策略）？
+     *
+     * 契约同 `RenderFlex::matchesConfiguration()`：只比自己的构造参数。
+     * 入参是 `?Alignment`：`null` 表示"默认 TopLeft"，必须在**解析后**比 ——
+     * 拿 null 与对象比永远不等（复用静默失效，不报错）。
+     */
+    public function matchesConfiguration(?Alignment $align, StackFit $fit): bool
+    {
+        return $this->align->equals($align ?? Alignment::topLeft())
+            && $this->fit === $fit;
+    }
+
     protected function performLayout(BoxConstraints $constraints): Size
     {
         $expand = $this->fit === StackFit::Expand;

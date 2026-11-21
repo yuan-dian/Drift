@@ -64,24 +64,33 @@ final class RenderBoxContractTest extends SmokeTestCase
     {
         $constraints = self::loose();
 
-        $impure = new ImpureBox();
-        $first = $impure->layout($constraints);
-        $second = $impure->layout($constraints);
-        check(
-            'C1 布局纯函数 · 反例（读上一帧 size 的盒）两次结果**不同** ⇒ 这条判据有牙',
-            !$first->equals($second)
-                && \abs($second->width - ($first->width + 1.0)) < self::EPS,
-            \sprintf('第一次 %.4g，第二次 %.4g（应差 1）', $first->width, $second->width),
-        );
+        // ★ 必须在**自校验模式**下测：关着时 `layout()` 的快速路径会直接返回上次的尺寸，
+        //   于是"读上一帧 size 的盒"看起来也变纯了 —— 判据就失明了。开着时强制重算，
+        //   这条反例才真的会红。生产路径（关）靠 `needsLayout` 上传保证正确性。
+        LayoutSelfCheck::$on = true;
 
-        $pure = new SolidBox(new Size(10.0, 6.0), 24.0, 7.0);
-        $a = $pure->layout($constraints);
-        $b = $pure->layout($constraints);
-        check(
-            'C1 布局纯函数 · 纯盒（只读约束）同约束两次 ⇒ 逐字段相同',
-            $a->equals($b),
-            \sprintf('第一次 %.4g×%.4g，第二次 %.4g×%.4g', $a->width, $a->height, $b->width, $b->height),
-        );
+        try {
+            $impure = new ImpureBox();
+            $first = $impure->layout($constraints);
+            $second = $impure->layout($constraints);
+            check(
+                'C1 布局纯函数 · 反例（读上一帧 size 的盒）两次结果**不同** ⇒ 这条判据有牙',
+                !$first->equals($second)
+                    && \abs($second->width - ($first->width + 1.0)) < self::EPS,
+                \sprintf('第一次 %.4g，第二次 %.4g（应差 1）', $first->width, $second->width),
+            );
+
+            $pure = new SolidBox(new Size(10.0, 6.0), 24.0, 7.0);
+            $a = $pure->layout($constraints);
+            $b = $pure->layout($constraints);
+            check(
+                'C1 布局纯函数 · 纯盒（只读约束）同约束两次 ⇒ 逐字段相同',
+                $a->equals($b),
+                \sprintf('第一次 %.4g×%.4g，第二次 %.4g×%.4g', $a->width, $a->height, $b->width, $b->height),
+            );
+        } finally {
+            LayoutSelfCheck::$on = false;
+        }
     }
 
     /**

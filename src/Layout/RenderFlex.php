@@ -44,6 +44,27 @@ class RenderFlex extends RenderBox implements ChildContainer
     }
 
     /**
+     * 新配置与本盒**完全等价**吗（方向 / 间距 / padding / 交叉对齐 / 溢出策略）？
+     *
+     * 只比这五个构造参数，不比子层 —— 子列表增删由
+     * `MultiChildElement::adoptBoxes()` 发现并 `markNeedsLayout()`。
+     * 任一项不同必须返回 `false`（父类契约：几何变了交回框架造新盒）。
+     */
+    public function matchesConfiguration(
+        bool $vertical,
+        float $spacing,
+        EdgeInsets $padding,
+        FlexAlign $crossAlign,
+        Overflow $overflow,
+    ): bool {
+        return $this->vertical === $vertical
+            && $this->spacing === $spacing
+            && $this->padding->equals($padding)
+            && $this->crossAlign === $crossAlign
+            && $this->overflow === $overflow;
+    }
+
+    /**
      * 返回本盒**实际生效**的溢出策略。
      *
      * ★ 必须覆写：基类默认 Clip，而本盒用的是构造参数 `$this->overflow`（默认 Report）；

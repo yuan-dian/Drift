@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Widget;
 
 use Drift\Layout\ChildContainer;
+use Drift\Layout\RenderBox;
 
 /**
  * 多子控件的 Element（§DEBT D2）—— `Flex` / `Stack` / `Wrap` / `AppBar` /
@@ -43,12 +44,30 @@ final class MultiChildElement extends StatelessElement
             return;
         }
 
-        $box->clearChildren();
+        /** @var list<RenderBox> $next */
+        $next = [];
         foreach ($this->children as $child) {
             $childBox = $child->effectiveBox();
             if ($childBox !== null) {
-                $box->addChild($childBox);
+                $next[] = $childBox;
             }
+        }
+
+        // 结构没变 ⇒ 什么都不做（摘了重挂是纯开销）。
+        if ($box->children() === $next) {
+            return;
+        }
+
+        $box->clearChildren();
+        foreach ($next as $childBox) {
+            $box->addChild($childBox);
+        }
+
+        // 子项增删是几何变化，但**没有新盒会替我们上传标脏**（删子的路径不造盒，
+        // 子层也不会 `markLayoutDirtyUp()`）⇒ 复用盒会拿上一轮的偏移继续画。
+        // 子被换掉的情形由子自己的 `syncBox()` 标到我们，这里兜住"只删不加"。
+        if ($box instanceof RenderBox) {
+            $box->markNeedsLayout();
         }
     }
 }
