@@ -95,7 +95,8 @@ abstract class RenderBox extends RenderObject
         if ($diff === Modifier::DIFF_GEOMETRY) {
             $this->markNeedsLayout();
         } elseif ($diff === Modifier::DIFF_VISUAL) {
-            $this->pipeline()->bumpPaintEpoch();
+            // 视觉维录进命令流 ⇒ 必须失效边界，只标帧会重放旧像素
+            $this->markPaintChanged();
         }
     }
 
@@ -932,10 +933,12 @@ abstract class RenderBox extends RenderObject
     }
 
     /**
-     * 让**最近的外层**重绘边界丢掉缓存（`setCompose()` 的正确性前提）。
+     * 让**所有外层**重绘边界丢掉缓存（`setCompose()` 的正确性前提）。
      *
      * ★ 必须是外层：本盒若是边界，`pushLayer(alpha)` 在 `paintOrReplay()` **之外**现算，
      *   自己的缓存不含它。★ 没有外层边界 ⇒ 每帧都真画 ⇒ 无事可做。
+     * ★★ 不能遇到第一层就停：外层缓存里存的是内层命令的**拷贝**，内层重录后外层
+     *   照样重放旧命令 ⇒ 陈旧帧（`ScrollView` 里套 `Table` 就是这个形态）。
      * ★★ **只能走公开方法**：跨实例读 `$p->repaintBoundary` / `$p->layer` 在 AOT 下
      *   读不到父类 private ⇒ 失效逻辑**静默变成空操作**。
      */
@@ -944,8 +947,6 @@ abstract class RenderBox extends RenderObject
         for ($p = $this->parent(); $p !== null; $p = $p->parent()) {
             if ($p instanceof self && $p->isRepaintBoundary()) {
                 $p->invalidateLayerCache();
-
-                return;
             }
         }
     }
@@ -1029,10 +1030,11 @@ abstract class RenderBox extends RenderObject
     }
 
     /**
-     * 让**最近的重绘边界**（含自己）丢掉缓存，再标"下一帧必须画"。
+     * 让**所有重绘边界**（从自己往上）丢掉缓存，再标"下一帧必须画"。
      *
      * ★★ 从 `$this` 开始，与 `invalidateEnclosingLayer()`（从父开始）**故意不同**：
      *   hover 叠色 / 滚动条 thumb 的 alpha 是**录进命令流**的 ⇒ 自己若是边界也脏。
+     * ★★ 不能遇到第一层就停：外层缓存持内层命令的拷贝，内层重录后外层仍放旧的。
      */
     #[\Override]
     protected function markPaintChanged(): void
@@ -1040,8 +1042,6 @@ abstract class RenderBox extends RenderObject
         for ($p = $this; $p !== null; $p = $p->parent()) {
             if ($p instanceof self && $p->isRepaintBoundary()) {
                 $p->invalidateLayerCache();
-
-                break;
             }
         }
 
