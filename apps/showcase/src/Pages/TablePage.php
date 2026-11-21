@@ -5,9 +5,12 @@ namespace App\Showcase\Pages;
 use Drift\Route\Route;
 use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\ShowcasePage;
+use Drift\Core\Computed;
 use Drift\Geometry\EdgeInsets;
+use Drift\State\Cell;
 use Drift\Text\TextAlign;
 use Drift\Input\KeyChord;
+use Drift\Widget\Bind;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
 use Drift\Widget\Card;
@@ -40,10 +43,17 @@ use Drift\Widget\Widget;
  *   （姓名 / 邮箱按权重分剩余）、`minWidth`（姓名再挤也不小于 120）。
  *   对齐三种都有：`Start`（默认）/ `End`（数字右对齐）/ `Center`。
  *
- * ★ **选择与排序都是受控的**：选中集与排序状态住本页的 `State`，`Table` 只回调
+ * ★ **选择与排序都是受控的**：选中集与排序状态住本页，`Table` 只回调
  *   "点完之后应该是什么"。所以"已选 N 项 / 清空 / 清除排序"都能工作 —— 如果它们
  *   住在控件的 `State` 里，应用**永远读不到**（`State` 外部无引用通道，本仓也没有
  *   `GlobalKey`）。
+ *
+ * ★ **选中集走的是通道形态，不是值形态**（本页是 `Table::selectionFrom()` 的
+ *   真实消费者）：格子归页面，读点归 `TableState` ⇒ 点一行只重建表格子树，
+ *   整页 `build()` 不跑。写回仍是本页的事（`onSelectionChange` 里写同一个格子）。
+ *   "已选 N 项"那一行用 `Bind` 自己开读点 —— 否则它只能等下一次整页重建才刷新。
+ *   排序不同：排序变了要换数据（`Computed` 重算），页面本来就得重建，所以
+ *   `sort` 走值形态。
  *
  * ★ **排序由本页重排**（不是控件）：`Table` 不知道 `$row` 里 `name` 是中文还是
  *   日期，比较规则只有应用知道。看 `comparators()` —— 连"状态"这个**派生列**都能排，
@@ -68,29 +78,33 @@ final class TablePage extends ShowcasePage
     private const CITIES = ['北京', '上海', '广州', '深圳', '杭州'];
 
     /**
-     * 选中集（**受控**：应用持有，`Table` 只上报新值）。
-     *
-     * ★ 初值写成 `null` 而不是 `TableSelection::none()`：属性默认值必须是**常量
-     *   表达式**，而 `none()` 是方法调用（tpc 直接拒："Constant expression contains
-     *   invalid operations"）。这是 PHP 的规矩，不是本仓的。
+     * 选中集 —— **通道形态**：`Table` 在它自己的 `build()` 里读，所以点行只重建
+     * 表格子树。值形态（`selection(值)`）要求每次点击都用 `setState` 重建整页。
      */
-    private ?TableSelection $selection = null;
+    private Cell $selection;
 
-    /** 当前排序（受控；`null` 只到 `sortNow()` 为止，见上一条） */
-    private ?TableSort $sort = null;
+    /** 当前排序（受控）。值形态递给 `Table`：排序变了要换数据，页面重建不可避免 */
+    private Cell $sort;
 
     /**
-     * 原始行 —— **只造一次**。
+     * 数据版本 —— `onCellEdit` 改完行内容后 +1，让派生行重算。
      *
-     * ★ 这一条是本页的真 bug 修复（加排序时发现）：原先 `rows()` 是
-     *   在 `build()` 里调的，也就是**每次 build 都重新格式化 10000 行字符串**
-     *   （滚动一格、悬停换行、加选一项都算一次 build）。虚拟化省下的正是这笔钱，
-     *   结果在数据侧又花回去了。
+     * ★ 为什么不用"数组身份"当依赖：`allRows` 是普通字段，不是通道；`Computed`
+     *   只认通道的版本。改完数据发一次信号，比"每次 build 都重新排序"便宜得多。
      */
-    private ?array $allRows = null;
+    private Cell $dataVersion;
 
-    /** 当前显示的行（排序后；`null` = 与原始顺序相同） */
-    private ?array $viewRows = null;
+    /**
+     * 原始行 —— 只造一次。
+     *
+     * ★ 这一条是本页的真 bug 修复（加排序时发现）：原先 `rows()` 是在 `build()`
+     *   里调的，也就是**每次 build 都重新格式化 10000 行字符串**（滚动一格、
+     *   悬停换行、加选一项都算一次 build）。虚拟化省下的正是这笔钱。
+     */
+    private array $allRows = [];
+
+    /** 当前显示的行（排序后的派生值，`Computed` 缓存到下一次排序 / 改数据） */
+    private Computed $rows;
 
     /**
      * 用户拖出来的列宽（**受控**第 ④ 层：列 key ⇒ 逻辑像素）。
@@ -101,33 +115,22 @@ final class TablePage extends ShowcasePage
      */
     private array $widthOverrides = [];
 
-
-    private function selectionNow(): TableSelection
+    public function initState(): void
     {
-        if ($this->selection === null) {
-            $this->selection = TableSelection::none();
-        }
+        $this->selection = Cell::of(TableSelection::none())->named('table.selection');
+        $sort = Cell::of(TableSort::none())->named('table.sort');
+        $version = Cell::of(0)->named('table.dataVersion');
+        $this->sort = $sort;
+        $this->dataVersion = $version;
+        $this->allRows = self::generateRows();
 
-        return $this->selection;
-    }
+        // 只钉两个格子，不把整页钉进依赖图：sort 变或数据变才重排。
+        $this->rows = Computed::of(function () use ($sort, $version): array {
+            $version->get();
+            $current = $sort->get();
 
-    private function sortNow(): TableSort
-    {
-        if ($this->sort === null) {
-            $this->sort = TableSort::none();
-        }
-
-        return $this->sort;
-    }
-
-    /** 递给 `Table` 的行：原始顺序，或排序后的那份（都只算一次） */
-    private function rowsNow(): array
-    {
-        if ($this->allRows === null) {
-            $this->allRows = self::generateRows();
-        }
-
-        return $this->viewRows ?? $this->allRows;
+            return $this->sortedRows($current instanceof TableSort ? $current : TableSort::none());
+        });
     }
 
     public function build(BuildContext $ctx): Widget
@@ -163,12 +166,11 @@ final class TablePage extends ShowcasePage
                         ->keyOf(static fn(array $row): int => $row['id'])
                         ->rowHeight(self::ROW_HEIGHT)
                         ->headerHeight(self::HEADER_HEIGHT)
-                        ->selection($this->selectionNow())
-                        ->onSelectionChange(fn(TableSelection $next) => $this->setState(
-                            function () use ($next): void {
-                                $this->selection = $next;
-                            }
-                        ))
+                        // ★ 通道形态：读点在 TableState，点行不重建本页。
+                        ->selectionFrom($this->selection)
+                        ->onSelectionChange(function (TableSelection $next): void {
+                            $this->selection->set($next);
+                        })
                         ->columnWidths($this->widthOverrides)
                         // 上下文菜单的真消费者（§59）：焦点在表上时，右键与 `Shift+F10` / `Apps`
                         // 都开到这一份声明。命令复用 `showcase.refresh`（本应用只注册了它）
@@ -177,11 +179,7 @@ final class TablePage extends ShowcasePage
                             MenuItem::make('刷新数据')->chord(KeyChord::ctrl('R'))->command('showcase.refresh')
                                 ->semanticsMeta(acceleratorKey: 'Ctrl+R'),
                             MenuItem::separator(),
-                            MenuItem::make('清空选择')->onPressed(fn() => $this->setState(
-                                function (): void {
-                                    $this->selection = TableSelection::none();
-                                }
-                            )),
+                            MenuItem::make('清空选择')->onPressed($this->selection->setTo(TableSelection::none())),
                         ]))
                         ->onColumnResize(fn(string $key, float $width, bool $done) => $this->setState(
                             function () use ($key, $width): void {
@@ -191,49 +189,86 @@ final class TablePage extends ShowcasePage
                         ->sort($this->sortNow())
                         // 第二参是列序号：单键应用拿它当下标，多键应用按 `keys()` 遍历
                         // —— 本页属后者，但回调签名照接（框架契约，不擅自少接参数）。
-                        ->onSortChange(fn(TableSort $next, int $columnIndex) => $this->setState(
-                            function () use ($next): void {
-                                $this->sort = $next;
-                                $this->viewRows = $this->sortRows($next);
-                            }
-                        ))
+                        // 重排由 `$rows` 这个 `Computed` 做：写格子就够，不用在这里算。
+                        ->onSortChange(function (TableSort $next, int $columnIndex): void {
+                            $this->sort->set($next);
+                        })
                         // ★ 单元格编辑（阶段 7a）：提交的是**行 key + 列 key + 新文本**，
-                        //   写回数据由本页做（控件不碰数据）。改完按当前排序重排一次 ——
+                        //   写回数据由本页做（控件不碰数据）。改完发一次数据版本信号 ——
                         //   否则改了"姓名"列而正按姓名排序时，行序会与数据不一致。
-                        ->onCellEdit(fn(int $rowKey, string $column, string $value) => $this->setState(
-                            function () use ($rowKey, $column, $value): void {
-                                if ($this->allRows === null) {
-                                    $this->allRows = self::generateRows();
-                                }
-
-                                foreach ($this->allRows as $index => $row) {
-                                    if ((int) $row['id'] === $rowKey) {
-                                        $this->allRows[$index][$column] = $value;
-                                        break;
-                                    }
-                                }
-
-                                $this->viewRows = $this->sortRows($this->sortNow());
-                            }
+                        ->onCellEdit(fn(int $rowKey, string $column, string $value) => $this->editCell(
+                            $rowKey,
+                            $column,
+                            $value,
                         ))
                 ),
             ])
         )->paddingAll(0.0);
     }
 
-    /** "已选 N 项" + 清空（受控选择才可能做出这一行） */
+    /** 写回一行并让派生行重算（`onCellEdit` 的落点，事件期、不在 build 里） */
+    private function editCell(int $rowKey, string $column, string $value): void
+    {
+        foreach ($this->allRows as $index => $row) {
+            if ((int) $row['id'] === $rowKey) {
+                $this->allRows[$index][$column] = $value;
+                break;
+            }
+        }
+
+        $this->dataVersion->update(static fn(int $n): int => $n + 1);
+    }
+
+    /**
+     * "已选 N 项" + 清空。
+     *
+     * ★ 包一层 `Bind`：这一行是本页唯一跟着选中变的地方，让读点落在它自己身上
+     *   （不包 ⇒ 页面订阅 `$selection`，点一次行整页重建，通道形态白做）。
+     */
     private function selectionBar(): Widget
+    {
+        return Bind::make(fn(): Widget => $this->selectionReadout());
+    }
+
+    /**
+     * 当前选中集（类型收窄 + 本页**唯一**的 `get()` 读点）。
+     *
+     * ★ `Cell::get()` 返回 `mixed`：AOT 下 `mixed->count()` 走 `php::Var` 的慢路径，
+     *   漏写方法还会在真机上静默崩。收窄一次，后面全是静态类型。
+     * ★ **只在 `Bind` 的 builder 里调用** —— 在页面 `build()` 里调就等于页面订阅，
+     *   点一次行整页重建，通道形态白做。
+     */
+    private function selectionNow(): TableSelection
+    {
+        $selection = $this->selection->get();
+
+        return $selection instanceof TableSelection ? $selection : TableSelection::none();
+    }
+
+    /** 派生行（`Computed::get()` 也是 `mixed`，同样要收窄一次） */
+    private function rowsNow(): array
+    {
+        $rows = $this->rows->get();
+
+        return \is_array($rows) ? $rows : [];
+    }
+
+    /** 当前排序（同上：类型收窄；页面级读订阅整页，这是预期的 —— 排序要换数据） */
+    private function sortNow(): TableSort
+    {
+        $sort = $this->sort->get();
+
+        return $sort instanceof TableSort ? $sort : TableSort::none();
+    }
+
+    private function selectionReadout(): Widget
     {
         $count = $this->selectionNow()->count();
 
         return Row::make()->spacing(12.0)->children([
             Expanded::make(Text::make($count === 0 ? '未选中任何行' : '已选 ' . $count . ' 项（首尾可见）')->caption()),
             Expanded::make(Text::make($count === 0 ? '' : $this->readoutOfSelection())->caption()),
-            Button::make('清空选择')->onPressed(fn() => $this->setState(
-                function (): void {
-                    $this->selection = TableSelection::none();
-                }
-            )),
+            Button::make('清空选择')->onPressed($this->selection->setTo(TableSelection::none())),
         ]);
     }
 
@@ -258,12 +293,8 @@ final class TablePage extends ShowcasePage
 
         return Row::make()->spacing(12.0)->children([
             Expanded::make(Text::make($label)->caption()),
-            Button::make('清除排序')->onPressed(fn() => $this->setState(
-                function (): void {
-                    $this->sort = TableSort::none();
-                    $this->viewRows = null;
-                }
-            )),
+            // 排序是格子变、行是 `Computed` 跟着重算 —— 不用在这里重排、也不用复位派生值。
+            Button::make('清除排序')->onPressed($this->sort->setTo(TableSort::none())),
             Button::make('重置列宽')->onPressed(fn() => $this->setState(
                 function (): void {
                     $this->widthOverrides = [];
@@ -284,7 +315,7 @@ final class TablePage extends ShowcasePage
         return $key;
     }
 
-    /** 只印前 3 个 key —— 选中一万行时不该把文本撑爆 */
+    /** 只印前 3 个 key —— 选中一万行时不该把文本撑爆。**只在 `Bind` 内调用** */
     private function readoutOfSelection(): string
     {
         $keys = $this->selectionNow()->keys();
@@ -301,12 +332,12 @@ final class TablePage extends ShowcasePage
     /**
      * 按当前排序重排**一份副本**（`$rows` 是数组，PHP 赋值即 COW ⇒ 原始不会被改）。
      *
-     * ★ 取消排序 ⇒ 返回 `null`：本页不需要"记住上一次的顺序"，原始数组一直在
+     * ★ 取消排序 ⇒ 直接给原始数组：本页不需要"记住上一次的顺序"，原始数组一直在
      *   `$allRows` 里。应用的原始顺序可能来自数据库 `ORDER BY`，控件无从知道。
      * ★ 多键按 `keys()` 顺序组比较器链（主键相等才轮到次键）。只读主键会让画面上
      *   两列有箭头、数据却只按一列排 —— 那是撒谎。
      */
-    private function sortRows(TableSort $sort): ?array
+    private function sortedRows(TableSort $sort): array
     {
         $comparators = self::comparators();
         $chain = [];
@@ -318,10 +349,10 @@ final class TablePage extends ShowcasePage
         }
 
         if ($chain === []) {
-            return null;
+            return $this->allRows;
         }
 
-        return self::mergeSort($this->allRows ?? self::generateRows(), $chain);
+        return self::mergeSort($this->allRows, $chain);
     }
 
     /**

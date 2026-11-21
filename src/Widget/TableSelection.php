@@ -3,14 +3,19 @@ declare(strict_types=1);
 
 namespace Drift\Widget;
 
+use Drift\State\Equatable;
+
 /**
  * 表格的选中集（**不可变值对象**）—— 只装"选中了什么"，不装 UI 态。
  *
  * 唯一存储是选区列表（`list<TableRange>`）：整行选区 = 列端点为 `null` 的 range，
  * 格矩形 = 带列端点的 range。两种行为共用一份存储、一套 API、一个回调。
  *
- * ★ **每次变更返回新实例**：`===` 就是"选择变了没"的判据（门控与 diff 都靠它）。
- *   就地改会让同一份对象两次 build 间变了内容 —— 那种 bug 只能靠肉眼发现。
+ * ★ **每次变更返回新实例**：就地改会让同一份对象两次 build 间变了内容 ——
+ *   那种 bug 只能靠肉眼发现。
+ * ★ **判"变了没"问 `equals()`，不是 `===`**：`Cell<TableSelection>` 的门控按内容比，
+ *   同一片选区上报两次（新实例、同内容）不该触发重建。`===` 只答"是不是同一个
+ *   实例"，拿它当 diff 会让每次点行都白重建一次。
  *
  * ★ **键的类型保持原样**：PHP 数组会把数字字符串键静默转成 int（`['1'=>true]` 的
  *   键是 int 1）⇒ 内部按 `i:`/`s:` 前缀归一化，取出时还原原值，否则 `1` 与
@@ -18,7 +23,7 @@ namespace Drift\Widget;
  *
  * @api
  */
-final readonly class TableSelection
+final readonly class TableSelection implements Equatable
 {
     /**
      * @param list<TableRange> $ranges
@@ -247,6 +252,33 @@ final readonly class TableSelection
     {
         foreach ($this->ranges as $range) {
             if (!$range->isEmpty()) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * 选中内容是否相同（**不是**实例身份）—— `Cell<TableSelection>` 的门控用它。
+     *
+     * ★ 选区顺序参与判等：`[1,2]` 与 `[2,1]` 在界面上是同一次选择，但追加顺序
+     *   记录了用户的操作路径（`ranges` 的顺序就是 Shift 连选的方向），不该被抹平。
+     */
+    public function equals(Equatable $other): bool
+    {
+        if (!$other instanceof self) {
+            return false;
+        }
+
+        $mine = $this->ranges;
+        $theirs = $other->ranges;
+        if (\count($mine) !== \count($theirs)) {
+            return false;
+        }
+
+        foreach ($mine as $i => $range) {
+            if (!$range->equals($theirs[$i])) {
                 return false;
             }
         }

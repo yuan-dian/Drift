@@ -271,7 +271,7 @@ final class MultiSortTest extends SmokeTestCase
         // 单类页面：TablePage 自身就是持有状态与算法的实例，用 `$page::class` 反射。
         $page = new TablePage();
         (new \ReflectionProperty($page::class, 'allRows'))->setValue($page, $rows);
-        $method = new \ReflectionMethod($page::class, 'sortRows');
+        $method = new \ReflectionMethod($page::class, 'sortedRows');
 
         $asc = $method->invoke($page, TableSort::by('city')->thenBy('name'));
         $ids = [];

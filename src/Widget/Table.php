@@ -51,8 +51,10 @@ final class Table extends StatefulWidget
      * 选中集来源（`null` = 没启用选择）。
      *
      * `selection(值)` 包成 {@see Literal}，`selectionFrom(通道)` 收 {@see Readable}，
-     * 内部统一从 `selectionSet()` 读。★ 当前调用方仍是 TableState ⇒ 读点没下沉；
-     * 要拿到性能收益，得把 selection/focus/hover 三态一起移到细粒度读点壳。
+     * 内部统一从 `selectionSet()` 读。
+     * ★ 读点在 **`TableState`**：通道形态下选中变了只重建表格子树，页面 `build()`
+     *   不跑。这已经是通道形态的全部收益 —— 再往下的行级/格级读点没做（表格是自绘的，
+     *   一行没有独立 Element，收窄不到"只重建一行"）。
      */
     private ?Readable $selectionSource = null;
 
@@ -239,7 +241,9 @@ final class Table extends StatefulWidget
      * 不声明 = 纯展示表（点行只走 `onRowTap()`）；声明了为空 = 可选的表。
      *
      * ★ 包成 {@see Literal} 走与通道相同的读取路径：切换两种形态不改控件内部。
-     *   两种形态目前都由 TableState 读，收窄重建粒度要等细粒度读点壳。
+     * ★ 值形态下"选中变了"要由应用自己重建（`setState`）：控件读到的是新 widget
+     *   里的新值。每次点击都重建整页时用它；只有表格该跟着变时用
+     *   {@see selectionFrom()}。
      */
     public function selection(TableSelection $selection): static
     {
@@ -253,11 +257,16 @@ final class Table extends StatefulWidget
      * 选中集（**通道形态**）—— 收 `Readable`，与 `selection(值)` 互斥（后调覆盖）。
      *
      * ```php
-     * Table::make($cols, $rows)->selectionFrom($this->selection); // Cell<TableSelection>
+     * Table::make($cols, $rows)
+     *     ->selectionFrom($this->selection)                  // Cell<TableSelection>
+     *     ->onSelectionChange($this->selection->setTo(...))  // 新值写回同一个格子
      * ```
      *
-     * ★ 当前 TableState 仍通过 `selectionSet()` 读 ⇒ 读点还在整表 State。
-     *   本方法只提供入口；真正收窄要连三态读点一起下沉。
+     * ★ 与值形态的差别只有一个：**读点在 `TableState` 上**（`get()` 在它自己的
+     *   `build()` 里），所以选中变了只重建表格子树，页面 `build()` 不跑。
+     *   页面上其它跟着选中变的地方（"已选 N 项"那一行）要自己用 `Bind` 开读点；
+     *   否则页面既然不重建，那一块就永远停在首帧。
+     * ★ 双向绑定仍是应用的责任：`onSelectionChange` 里把新值写回同一个通道。
      */
     public function selectionFrom(Readable $source): static
     {
@@ -441,8 +450,8 @@ final class Table extends StatefulWidget
     /**
      * 当前选中集（`null` = 未启用选择）。
      *
-     * ★ `get()` 在调用方的 build 期登记读点。目前调用方是 TableState（整表重建）；
-     *   细粒度读点壳尚未实现，别把这里的读取当成已下沉。
+     * ★ `get()` 在调用方的 build 期登记读点 —— 调用方是 `TableState`，所以通道
+     *   形态下依赖记在表格自己头上。在事件处理器里调它不登记（只取当前值）。
      */
     public function selectionSet(): ?TableSelection
     {
@@ -454,7 +463,10 @@ final class Table extends StatefulWidget
         return $value instanceof TableSelection ? $value : null;
     }
 
-    /** @internal 预留给细粒度读点壳：自行 `get()` 把读点留在壳的 State（值形态是 `Literal`） */
+    /**
+     * @internal 给需要自己 `get()` 的读取方（`TableState`）—— 读点因此落在它身上。
+     *   值形态那边是 `Literal`，同样是 `Readable`。
+     */
     public function selectionReadable(): ?Readable
     {
         return $this->selectionSource;
