@@ -62,7 +62,7 @@ final class ShowcaseApplication extends Application
     }
 
     /**
-     * 页面工厂表：**只有需要依赖的页**在这里出现，其余 26 页走默认无参构造。
+     * 页面工厂表：**只有需要依赖的页**在这里出现，其余页走默认无参构造。
      *
      * ★ 加一个领域依赖只改这里一行 —— 不穿透 Root / State / Nav，也不改任何契约。
      * ★ 依赖各有具体类型（`Dialog` / `ButtonsStore` / `\Closure(int): Future`），写反是

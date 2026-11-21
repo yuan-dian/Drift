@@ -19,7 +19,9 @@ use Drift\Widget\Traits\TextStyleResolution;
  *
  * ★ 与 {@see ReactiveText} 的分工：后者走 build（3 个元素，通用默认）；本类走
  *   {@see Spinner} 已验证的叶子路径（`createRenderObjectFromState()` 直接产盒）——
- *   `build()` 永不调用，值变只 `syncBox()` 换 `RenderText`。兄弟节点身份与布局都不动。
+ *   `build()` 永不调用，值变只 `syncBox()` 换 `RenderText`。兄弟的**元素身份**不变。
+ * ★ 但**布局会重跑**：文本变宽变窄，父容器必须重新量一次（"9" → "10" 就是）。
+ *   要连位置都不动，得给这一格固定宽度或等宽数字 —— 等宽由字体决定，框架不管。
  *
  * ★ 只收 `Cell` 而非任意 `Readable`：高频直写的值必然是可写格子；`Computed` 派生值
  *   变化频率与源一致、用 `ReactiveText` 足够。窄入口让订阅就是一次 `watch()`，不必

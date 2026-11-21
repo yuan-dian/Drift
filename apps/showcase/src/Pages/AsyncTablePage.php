@@ -122,7 +122,7 @@ final class AsyncTablePage extends ShowcasePage
     public function onActivate(): void
     {
         // ★ 命令在 initState 建（watch 只许那里），**跑**留到首次可见：
-        //   PageHost 首帧就把 34 页全 mount 完，放 initState 等于"启动就取数"，
+        //   PageHost 首帧就把全部页 mount 完，放 initState 等于"启动就取数"，
         //   点进这一页才该看到 loading → 结果的过程。
         $this->rows->run(1);
     }

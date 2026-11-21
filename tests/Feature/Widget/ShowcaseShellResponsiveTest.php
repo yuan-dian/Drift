@@ -54,7 +54,7 @@ final class ShowcaseShellResponsiveTest extends SmokeTestCase
         LayoutTolerance::reset();
 
         // 本判据只看外壳布局结构，不跑业务 ⇒ 页面用无头装配表（能力空转、取数 pending）。
-        // PageHost 首帧会把 34 页全建出来，所以必须覆盖所有需要依赖的页。
+        // PageHost 首帧会把全部页建出来，所以必须覆盖所有需要依赖的页。
         $context = new BuildContext(
             $width,
             $height,

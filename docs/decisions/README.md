@@ -9,7 +9,7 @@
 | # | 主题 | 现行结论 | 失效条件 |
 |---|---|---|---|
 | A1 | 三棵树与组合根 | Widget / Element / RenderObject 三树 + 单向下行 + 组合根注入；`BuildContext` 是只读环境快照，无 `of()` 式向上查找。 | 出现无法逐层传值的深层场景，且实测组合成本超过帧预算门槛。 |
-| A2 | 自动依赖追踪 | 不做；状态写入走显式 `setState`。 | 真实应用因显式标脏样板无法交付，且有可验证的替代实现。 |
+| A2 | 读点响应式 | **读自动、写显式**：`build()` 期读 `Cell` / `Computed` 自动登记依赖，重建边界 = 读点所在 `State` 的子树（`Bind` / `Text::of` / `LiveText` 逐级收窄）；写入永远是显式调用（`Cell::set/update` 或 `setState`）。**不做**可变对象的透明代理（Vue `reactive()` 式"改属性即追踪"）。原表述"不做自动依赖追踪"已在 11-21 R0 落地后被推翻。 | 出现读点自动登记表达不了的依赖形状；或显式写入在真实应用里成为交付瓶颈，且有可验证的代理方案（含 AOT 生成物形状）。 |
 | A3 | 双向绑定 | 不做；控件受控，点击只回调新值，值由应用改。 | 表单类应用出现无法用受控模型表达的交互契约。 |
 | A4 | 原生控件包装 | 不做；界面全自绘。 | 无障碍或输入法出现自绘无法满足的硬性采购/平台要求。 |
 | A5 | CSS 层叠与流式布局 | 不做；单遍约束布局。 | 出现需要文档流排版的真实产品形态，且成本可承受。 |
@@ -22,7 +22,7 @@
 | A12 | 文本输入配置面 trait | `TextField`/`TextArea` 共有的 value/label/placeholder/两回调 + 五个 getter + `setSemanticsValue` 收进 `TextInputConfig` trait；字段留宿主、各自 `make()`/`createState()`/构造不进，单行独有（error/helper/maxLength/obscure/formatters）与多行独有（minLines/lines）不进。 | 某个控件的受控纪律分叉（值不再唯一来源 / 写回不再走 onChanged），或回调签名各异。 |
 | A13 | 路由声明与状态管理解耦 | `#[Route(id,title,icon)]` 是**纯导航声明**，标在页面类上（`Page`；reducer 例外页为 `Widget`）；`RouteCatalog` 启动期反射成描述符，是 id/title/icon/pageClass 的唯一真相源，导航项与建页全从它派生。四段式 `ReducerView`+`ReducerState` 降级为**复杂页可选**的内部状态管理（需纯函数可测 `update()` 才用），不进注解、不被迫全量。 | 出现多数页面都需要纯函数可测 reducer 的真实证据，且实测全量四段式的代码量/帧税被接受；或导航元数据出现注解之外的新真相源。 |
 | A14 | 导航与 reducer 命名空间分离 | `Drift\Route\` 只放导航三件套（`Route`/`RouteDescriptor`/`RouteCatalog`）；页面状态机六件套迁到 `Drift\Reducer\`（`ReducerView`/`ReducerState`/`ReducerModel`/`ReducerEvent`/`ReducerEffect`/`ReducerUpdate`）。只对**纯状态转移**页值得（实测仅 Snackbar）；Dialog（同步模态取返回值）、Feedback（fire-and-forget）、AsyncTable（`AsyncCommand` 生命周期）调用形状不是 reduce，**不铺开、不造中间档**（中间档服务假想客户，反增范式）。对标 Flutter `Route` vs `Bloc`、Compose `NavController` vs `ViewModel`、SwiftUI `NavigationStack` vs `@State`。 | 出现 3 页以上真实「事件→纯更新→effect」形状且可接受各页值类样板；或导航元数据与状态机真的需要互相引用。 |
-| A15 | 页面单元形态 | 页面 = `Drift\Widget\Page`（`State` 子类）**一个类**：字段 / `build()` / 事件处理器同处，不再有"Widget 壳 + State"两件套。`Page::host()` 是唯一装配入口，交出 `@internal` 的 `PageShell`；`#[Route]` 标页面类。三条判据：`RouteCatalog` 只收 `Page`/`Widget`、一个 `State` 只能绑一个 `Element`（同一实例同时挂两处、或卸载后重挂，均 Fatal）、`Page` 子类禁用 `$this->widget()`（它返回宿主而非页面）。showcase 34 页已全迁：33 页单类，**唯一例外 `SnackbarPage`** 保留薄 `StatefulWidget` 壳（状态机委托 `ReducerState`，必须经 `createState()` 挂树，为的是 `update()` 可纯函数单测）；`RouteCatalog`/`NavEntry`/golden 的 `Widget` 分支就是为这个例外留的，不是迁移期临时代码。**不强制所有应用**：无路由的单根应用（watermark）继续用 `StatelessWidget` 组合根，长生命周期业务流住 `Store` 而不是页面。 | 页面普遍需要"描述不可变 + 每帧换新描述"的重建能力；或单类页面里 UI 态与业务态普遍混住且无法用 `Store` 隔离。 |
+| A15 | 页面单元形态 | 页面 = `Drift\Widget\Page`（`State` 子类）**一个类**：字段 / `build()` / 事件处理器同处，不再有"Widget 壳 + State"两件套。`Page::host()` 是唯一装配入口，交出 `@internal` 的 `PageShell`；`#[Route]` 标页面类。三条判据：`RouteCatalog` 只收 `Page`/`Widget`、一个 `State` 只能绑一个 `Element`（同一实例同时挂两处、或卸载后重挂，均 Fatal）、`Page` 子类禁用 `$this->widget()`（它返回宿主而非页面）。showcase 全部页面已迁移：除 `SnackbarPage` 外都是单类，那个例外保留薄 `StatefulWidget` 壳（状态机委托 `ReducerState`，必须经 `createState()` 挂树，为的是 `update()` 可纯函数单测）；`RouteCatalog`/`NavEntry`/golden 的 `Widget` 分支就是为这个例外留的，不是迁移期临时代码。**不强制所有应用**：无路由的单根应用（watermark）继续用 `StatelessWidget` 组合根，长生命周期业务流住 `Store` 而不是页面。 | 页面普遍需要"描述不可变 + 每帧换新描述"的重建能力；或单类页面里 UI 态与业务态普遍混住且无法用 `Store` 隔离。 |
 
 ## 编译器与代码纪律
 

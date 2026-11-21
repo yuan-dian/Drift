@@ -84,7 +84,7 @@ final class ShowcasePageSwitchTest extends SmokeTestCase
         Errors::reset();
         LayoutTolerance::reset();
 
-        // 用无头装配表：PageHost 首帧会把 34 页全建出来，漏一页就 Fatal。
+        // 用无头装配表：PageHost 首帧会把全部页建出来，漏一页就 Fatal。
         $factories = ShowcasePageWiring::factories();
 
         $context = new BuildContext(

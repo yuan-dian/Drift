@@ -14,7 +14,7 @@ use Drift\Widget\StatefulWidget;
 /**
  * Snackbar 页 —— 四段式 `ReducerView` 的**可选样板**。
  *
- * 导航身份来自本类的 `#[Route]` 注解（与其余 33 页同一条路径）；页面内部的
+ * 导航身份来自本类的 `#[Route]` 注解（与其余页同一条路径）；页面内部的
  * 状态管理则选择 `ReducerView` + `ReducerState`：逻辑在 {@see SnackbarReducer}，
  * 这里只把 `notify` 这一条能力投影成 `SnackbarServices` 并交给泛型壳。
  *
@@ -24,7 +24,7 @@ use Drift\Widget\StatefulWidget;
  * ★ 服务投影在这里手写一行，不再由导航注解携带 —— 状态管理是页面内部选择，
  *   不进导航描述符。
  *
- * ★ 这是 34 页里唯一保留「壳 + State」两件套的页：状态机委托给框架的
+ * ★ 这是**唯一**保留「壳 + State」两件套的页：状态机委托给框架的
  *   `ReducerState`，而它必须经 `createState()` 挂进树。其余页已合并成单类
  *   `ShowcasePage`；这里的例外是** reducer 可单测性**的代价，不是历史残留。
  *

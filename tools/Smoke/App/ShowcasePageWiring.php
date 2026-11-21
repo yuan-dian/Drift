@@ -19,7 +19,7 @@ use Drift\Widget\Snackbar;
 use Drift\Widget\Widget;
 
 /**
- * 无头装配表：34 页都能在**没有 Application** 的环境里建出来。
+ * 无头装配表：整份页面清单都能在**没有 Application** 的环境里建出来。
  *
  * 能力全给空实现；取数默认 `Future::pending()`（首帧稳定画 loading，不把转圈相位
  * 画进基线）。基准要确定性数据时传自己的 `$fetchRows`（见 `Trees::showcase()`）。

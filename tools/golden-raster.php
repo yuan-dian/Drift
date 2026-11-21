@@ -586,7 +586,7 @@ $scenes['opacity'] = static function () use ($W, $H): string {
 //   所以"要 app 接线"不是不收录的理由，只是**没接线**：这里给无头假接线。
 //   ★ 异步三页一律 `Future::pending()`（首帧稳定画 loading）：喂已结算的数据要求
 //     "行数据的形状恰好对"，那是把页面的私有细节抄进量具 ⇒ 数据一改就假红。
-// ★ 只有**需要依赖的 8 页**在表里；其余 26 页无参构造，自动免接线。
+// ★ 只有**需要依赖的页**在表里；其余页无参构造，自动免接线。
 $pageWiring = [
     'AsyncTablePage' => static fn(): array => [
         static fn(int $page): Future => Future::pending(),

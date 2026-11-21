@@ -84,7 +84,7 @@ function scene_reconcile(array $declared, array $disk, array $baseline, ?array $
         }
     }
 
-    // 两份手写清单的对价：AOT 的 27 页必须被整页 golden 的 34 页覆盖，
+    // 两份手写清单的对价：AOT 的页清单必须被整页 golden 的全集覆盖，
     // 否则两份清单可以同时漂而这里全绿。
     if ($bench !== null) {
         if ($bench === []) {

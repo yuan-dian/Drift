@@ -101,7 +101,7 @@ final class Bootstrap
             //     完全一样，第 2、3 个只在真有第二条任务同时在途时才 spawn。
             //
             //   ★ 代价要记住：满载时 UI 进程 + 3 个 worker ≈ 100 MB + 3×31 MB。
-            //     其余 33 页全是单任务，永远只用到第一个 worker。
+            //     其余页全是单任务，永远只用到第一个 worker。
             $host = new ProcessTaskHost([$exe, '--drift-worker'], JobRegistry::make(), 3);
 
             // ★ 预热：把首条任务的 275ms 进程启动挪到建窗之前。

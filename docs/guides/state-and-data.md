@@ -1,14 +1,15 @@
 # 状态与数据
 
-> 本篇解决：UI 局部态、业务数据广播和命令三条缝怎么分工，以及 `select` 切片门控为什么要求应用侧给出稳定的值身份。
+> 本篇解决：UI 局部态、细粒度值、业务数据广播和命令四条缝怎么分工，`select` 切片门控为什么要求稳定的值身份，以及读点响应式的重建边界落在哪。
 
-## 三条缝先分开
+## 四条缝先分开
 
 - UI 局部态住 `State`：`setState()` 标脏、帧末重建。
-- 业务数据广播住 `Subject`：`notifyChanged()` 手动调一次，订阅者异常隔离。子类 `Store` 只依赖 `Subject`，所以业务层零 GUI 依赖是结构事实。
+- 细粒度值住 `Cell`：写入自动通知，重建边界由**读点**决定，不用再决定"该标谁脏"。见下文「读点响应式」一节。
+- 业务数据广播住 `Subject`：`notifyChanged()` 手动调一次，订阅者异常隔离。子类 Store 只依赖 `Subject` / `Cell`（两者都在 `Drift\State\`），所以业务层零 GUI 依赖是结构事实。
 - 动作走字符串名命令，见 [命令与动作](./commands.md)。
 
-把业务数据塞进 `State`，跨页共享与恢复就没地方放；把悬停项塞进 `Store`，每次鼠标移动都要广播一次。两者别混。
+把业务数据塞进 `State`，跨页共享与恢复就没地方放；把悬停项塞进 `Store`，每次鼠标移动都要广播一次。两者别混。**高频值（时钟、进度、实时读数）尤其别走 `setState`** —— 那是每帧整棵子树重建，改用 `LiveText`（见下文）。
 
 ## State：跨 build 的 UI 态
 
@@ -59,6 +60,44 @@ SubjectBuilder::make($this->store)
 2. 让 `select` **复用同一个实例**——值没变就返回旧对象。同实例的 `===` 为真，门控自然挡住重建。
 
 `StatusMessage` 实现 `Equatable`，单值对象切片本来就稳定。`AsyncValue` 刻意**不实现** `Equatable`，四态必须保留对象本身并用 `fold()` 分支，不要拿 `stateName()` 当分支，也不要把它塞进数组切片——那会白重建。
+
+## 读点响应式：Cell / Computed / Bind / LiveText
+
+`setState` 是"我改了，这棵子树整棵重建"。当值只影响一小块、或者变得很频繁时，改用**格子**：写入自动通知，重建边界由读点决定。
+
+```php
+private Cell $count;                                 // 声明
+$this->count = Cell::of(0)->named('count');          // initState
+$this->count->update(fn(int $n): int => $n + 1);     // 写：不 setState
+Text::of($this->count, '计数 ')->body();             // 读：读点就在这一层
+```
+
+四档粒度，按"读点落在哪"选：
+
+| 写法 | 重建范围 | 用在哪 |
+|---|---|---|
+| 页面 `build()` 里 `$cell->get()` | 整页 | 状态少、页面小；默认 |
+| `Text::of($cell)` | 那一个 State（约 3 个元素） | 局部热点，低频变 |
+| `Bind::make(fn(): Widget => …)` | 闭包那一小段 | 要拼多个值，或不是纯文本 |
+| `LiveText::of($cell)` | **零 build**，只换渲染盒 | 高频：时钟 / 进度 / 实时读数 |
+| `Computed::of(fn)` | 不自带重建，跟着依赖走 | 派生值（`clicks × 2`） |
+
+示例台的 `Reactive` 页把这几档摆在同一页上，并给出三个计数器（整页 build / 段 build / 派生重算）。跑起来 `ticks` 飞涨而整页计数纹丝不动 —— 那就是"零重建"的证据，不必靠读代码相信。
+
+三条契约，违反了都不报错：
+
+- **读点即边界**：`get()` 只在 `build()` 期间订阅。在事件处理器里读什么都不订 —— 那是"看一眼当前值"；要让这个意图可读，用 `peek()`。
+- **build 期禁写**：`build()` 里写格子当场报 `E-FLUSH-CYCLE`（否则活锁成每帧重建）。让动画或轮询起飞：在**输入回调**里 `markDirty()` 就够 —— 它除了标脏，还会把自己登记进动效活跃表。只有在 `build()` / `didUpdateWidget()` 这类 **settle 期**才开始动的，才要额外 `requestFrame()`：那时本帧的 tick 段已经跑过，不举手就停在起点，且不报错。
+- **`LiveText` 只收 `Cell`**：高频直写的值必然是可写格子；派生值的变化频率与源一致，`Text::of(Computed)` 就够。
+
+### Cell 还是 Subject
+
+两条都能广播，判据是**字段之间同不同频**：
+
+- **多字段同频、整块一起变、需要一致性切片**（查询词 + 筛选 + 分页一起刷新）：`extends Subject` + `SubjectBuilder::select`，一次广播一次门控。users / watermark 是这种形状。
+- **少数几个独立值、各自被不同位置读、变化频率差很远**（计数、悬停项、实时读数）：普通类持几个 `Cell`，各订各的，谁也不必为别人的频率买单。示例台的 `ButtonsStore` 与 `Reactive` 页是这种形状。
+
+`Cell` 本身就是 `Subject` 子类，所以"业务层零 GUI 依赖"在两条路上都成立。
 
 ## 受控控件的数据流
 
