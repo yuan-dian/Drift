@@ -82,6 +82,27 @@ SubjectBuilder::make($this->store)
 
 判断标准不是"这个字段属于哪个页面"，而是"谁在写它、谁要读它、进程重启后还要不要它"。
 
+## 多事件源仲裁用 Machine，线性流水线用 AsyncScope
+
+两者不是替代关系，看事件从几个方向来：
+
+- **多事件源仲裁**（防抖、拖拽、对话框流程、远程搜索）——几个事件随时都能进来，
+  只有"当前持有的那一次"的答案算数：用 `Machine` + `Seq` + `Effects`。`step` 是纯函数
+  `(state, event, seq) → Effects`，返回"变成什么 + 该执行什么命令"，不碰外部；`Machine`
+  应用新状态、把命令原样交回调用方执行。`Seq::next()` 给每次请求发 attempt 号，
+  状态变体持有它，号不匹配的迟到答案在 step 里落到默认分支、什么也不做
+  （attempt fence）。示例台的 `RemoteSearchStore` 是样板：快连打时只有最后一次
+  查询的结果落地。
+- **线性流水线**（签名 → 上传 → 轮询 → 下载这种一条道走到黑的异步链）——状态就是
+  协程的指令指针，天然互斥：用 `AsyncScope::task()` 写成一段顺序的 `await`。
+  它的取消靠 `AsyncCommand::abandon()` + `Future` 取消硬契约 + `await()` 的
+  `guardCancelled()`，已是更强的 fence；不要把这类流程拆成 Machine 的状态变体，
+  那会把线性代码拆回"回调 + 标志 + 二次守卫"。
+
+`Machine` 的状态用 `int` 常量 + `===` 链表达，不用 enum with payload 或状态子类
+（tpc 对 `switch` 出 C2440，子类是去虚化缺陷面）。"没有在途"用 `0` 而非 `null`，
+避免 AOT 下 nullable 属性退化 `php::Var`。
+
 ## 相关
 
 - [用 Widget 组合界面](./widgets.md)

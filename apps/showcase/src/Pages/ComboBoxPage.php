@@ -5,6 +5,7 @@ namespace App\Showcase\Pages;
 use Drift\Route\Route;
 use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\ShowcasePage;
+use App\Showcase\Stores\RemoteSearchStore;
 use Drift\Geometry\EdgeInsets;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Card;
@@ -63,10 +64,14 @@ final class ComboBoxPage extends ShowcasePage
     /** `onSearch` 被调了几次（证明"每改一次词回调一次"） */
     private int $remoteCalls = 0;
 
+    /** 查询仲裁：只有最后一次查询的响应能落地（页面级 UI 态，随页销毁） */
+    private RemoteSearchStore $remoteSearch;
+
     #[\Override]
     public function initState(): void
     {
         $this->remoteStatus = OptionStatus::ready();
+        $this->remoteSearch = new RemoteSearchStore();
     }
 
     /** @return list<Option> 四个城市（"北京市" / "北京南站" 都含"北"） */
@@ -86,30 +91,41 @@ final class ComboBoxPage extends ShowcasePage
      * ★ 这就是真应用的形状：`onSearch` 里 `status(loading())` + 发请求，
      *   `Job::onDone` 里 `status(ready())` + 换选项表。控件侧一行都不用改。
      * ★ 示例台用组合根递进来的 `after()` 排那 400ms —— 控件自己做不到（§4.3）。
+     * ★ 每次查询先向 Store 领一个 attempt，定时器闭包捕获它；快连打时旧 attempt
+     *   的响应到达会被 `arrive()` 挡掉，只剩最后一次落地 —— 兑现本页文案承诺的
+     *   "应用比对请求序号丢弃过期响应"。
      */
     private function search(string $query): void
     {
+        $attempt = $this->remoteSearch->query();
         $this->setState(function () use ($query): void {
             $this->remoteQuery = $query;
             $this->remoteCalls++;
             $this->remoteStatus = OptionStatus::loading();
         });
 
-        ($this->delayClosure())(400, function (): void {
-            $this->deliver();
+        ($this->delayClosure())(400, function () use ($attempt): void {
+            $this->deliver($attempt);
         });
     }
 
     /**
      * 模拟"服务端响应到达"。
      *
-     * ★ 注意过滤发生**在应用侧**：`onSearch` 一旦声明，控件就不再按标签筛
-     *   （服务端可能按拼音 / 按 value 匹配，本地再筛一遍是二次收缩）。
-     *   这里故意照抄"标签子串"的算法，好让"两边筛的结果一样"不至于骗过眼睛 ——
-     *   真要验证"本地没再筛"，看 smoke 里那条含不匹配项的用例。
+     * ★ `$attempt` 决定是否落地：号已被后续查询作废 ⇒ 直接丢弃，绝不覆盖界面上
+     *   更新的查询（也就是本页文案里承诺的"丢弃过期响应"，过去只是文字）。
+     *
+     * 注意过滤发生**在应用侧**：`onSearch` 一旦声明，控件就不再按标签筛
+     * （服务端可能按拼音 / 按 value 匹配，本地再筛一遍是二次收缩）。
+     * 这里故意照抄"标签子串"的算法，好让"两边筛的结果一样"不至于骗过眼睛 ——
+     * 真要验证"本地没再筛"，看 smoke 里那条含不匹配项的用例。
      */
-    private function deliver(): void
+    private function deliver(int $attempt): void
     {
+        if (!$this->remoteSearch->arrive($attempt)) {
+            return;
+        }
+
         $needle = \mb_strtoupper($this->remoteQuery, 'UTF-8');
         $out = [];
         foreach (self::cities() as $option) {
