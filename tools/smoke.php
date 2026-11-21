@@ -555,6 +555,9 @@ function drawOpCount(DisplayList $list, int $op): int
     for ($i = 0; $i < $total; $i++) {
         if ($list->opAt($i) === $op) {
             $count++;
+        } elseif ($list->opAt($i) === DisplayList::OP_DRAW_LIST) {
+            // P2 把嵌套边界收成一条引用命令；"画了 N 个东西"要数整棵树，不是顶层。
+            $count += drawOpCount($list->argAt($i, 0), $op);
         }
     }
 

@@ -43,6 +43,16 @@ final class DisplayList
      *   且 `Matrix2D` 不可变，重放期不会被改。纯平移仍录 `OP_TRANSLATE`。
      */
     public const int OP_TRANSFORM = 17;    // [matrix]
+    /**
+     * 嵌套一张完整的 DisplayList：`[childList]`。
+     *
+     * ★ 重绘边界命中时，把子边界的整张命令流作为**引用**嵌进父流，而不是逐条
+     *   拷贝命令 —— 嵌套边界（ScrollView 套 Table）否则会把每层重录放大成 O(N) 拷贝。
+     * ★ 安全前提：layer 的 DisplayList 录完即不可变（`LayerCache::beginRecord()` 每次
+     *   new 一张，`reset()` 只给一次性夹具用），且 P0 的上溯失效保证子一变父就作废，
+     *   不会有父持着陈旧子引用的窗口。
+     */
+    public const int OP_DRAW_LIST = 18;   // [childList]
 
     /**
      * 每条命令占的槽位数：`[op, a, b, c, d, ref]`。
@@ -83,9 +93,9 @@ final class DisplayList
      */
     public function record(int $op, $a = null, $b = null, $c = null, $d = null, $ref = null): void
     {
-        // OP_* 必须连续（1..OP_TRANSFORM）；新增时追加常量并同步 replay() 分支，
+        // OP_* 必须连续（1..OP_DRAW_LIST）；新增时追加常量并同步 replay() 分支，
         // 判据见 DisplayListOpCoverageTest。未知 op 会让 replay() 静默丢像素。
-        if ($op < self::OP_SAVE || $op > self::OP_TRANSFORM) {
+        if ($op < self::OP_SAVE || $op > self::OP_DRAW_LIST) {
             Errors::report(sprintf(
                 'DisplayList::record() 收到未知 op %d —— 新增 OP_* 后必须同步 record() 白名单与 replay() 分支',
                 $op,
@@ -165,9 +175,26 @@ final class DisplayList
         }
     }
 
-    /** 把命令流回放到任意画布 */
-    public function replay(Canvas $canvas): void
+    /**
+     * 把命令流回放到任意画布。
+     *
+     * ★ 目标是 `RecordingCanvas`（父边界正在录制）时，整张作为一条 `OP_DRAW_LIST`
+     *   嵌入，不逐条拷贝；目标是真画布时递归展开到它。这条分流就是 P2 的收益点。
+     * ★ `$depth` 只防病态自引用成环，正常边界嵌套远达不到上限。
+     */
+    public function replay(Canvas $canvas, int $depth = 0): void
     {
+        if ($canvas instanceof RecordingCanvas) {
+            $canvas->drawList($this);
+
+            return;
+        }
+        if ($depth > 32) {
+            Errors::report('DisplayList::replay() 嵌套超过 32 层，疑似自引用环');
+
+            return;
+        }
+
         for ($i = 0; $i < $this->length; $i++) {
             $base = $i * self::SLOTS;
             $op = $this->buffer[$base];
@@ -235,6 +262,8 @@ final class DisplayList
                 );
             } elseif ($op === self::OP_TRANSFORM) {
                 $canvas->transform($this->buffer[$base + 1]);
+            } elseif ($op === self::OP_DRAW_LIST) {
+                $this->buffer[$base + 1]->replay($canvas, $depth + 1);
             } else {
                 Errors::report(sprintf(
                     'DisplayList::replay() 遇到未处理的 op %d —— 新增 OP_* 后必须补 replay() 分支',

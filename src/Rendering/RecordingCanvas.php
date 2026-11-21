@@ -41,6 +41,18 @@ final class RecordingCanvas implements Canvas
         return $this->list;
     }
 
+    /**
+     * 把一整张子命令流作为**引用**嵌进本流（P2）。
+     *
+     * 只由 `DisplayList::replay()` 在父边界录制期间调用：子流录完即不可变，
+     * 引用在父缓存存活期内稳定。回放端能力由子流录制时自己的 caps 判据保证，
+     * 这里无需再查。
+     */
+    public function drawList(DisplayList $child): void
+    {
+        $this->list->record(DisplayList::OP_DRAW_LIST, $child);
+    }
+
     public function save(): void
     {
         $this->list->record(DisplayList::OP_SAVE);

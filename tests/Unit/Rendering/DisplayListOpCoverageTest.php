@@ -29,8 +29,8 @@ final class DisplayListOpCoverageTest extends SmokeTestCase
             'values=' . implode(',', $values),
         );
         check(
-            'DisplayList · 值域上界 == OP_TRANSFORM（record 白名单边界）',
-            max($values) === DisplayList::OP_TRANSFORM,
+            'DisplayList · 值域上界 == OP_DRAW_LIST（record 白名单边界）',
+            max($values) === DisplayList::OP_DRAW_LIST,
             'max=' . max($values),
         );
 
