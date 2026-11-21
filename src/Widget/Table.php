@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace Drift\Widget;
 
+use Drift\Core\Literal;
+use Drift\Core\Readable;
 use Drift\Errors;
 use Drift\Input\KeyEvent;
 use Drift\Input\SemanticsRole;
@@ -45,8 +47,15 @@ final class Table extends StatefulWidget
     /** 斑马行（默认开） */
     private int $stripedOn = 1;
 
-    /** 当前选中集（`null` = 没启用选择） */
-    private ?TableSelection $selection = null;
+    /**
+     * 选中集来源（`null` = 没启用选择）。
+     *
+     * ★ 参数二象性：`selection(值)` 把值包成 {@see Literal}，`selectionFrom(通道)`
+     *   直接收 `Readable`。控件内部只有一条读取路径（`selectionSet()`），
+     *   而**读点落在谁的 State 上**由此决定：值形态在 TableState，通道形态在
+     *   传通道进来的那个 State —— 这正是选择变化不再整表重建的关键（R1）。
+     */
+    private ?Readable $selectionSource = null;
 
     private TableSelectionMode $selectionMode = TableSelectionMode::Multiple;
 
@@ -227,13 +236,34 @@ final class Table extends StatefulWidget
     }
 
     /**
-     * 选中集（受控）—— 声明它才启用选择。
+     * 选中集（受控，值形态）—— 声明它才启用选择。
      * 不声明 = 纯展示表（点行只走 `onRowTap()`）；声明了为空 = 可选的表。
+     *
+     * ★ 包成 {@see Literal} 走与通道相同的读取路径：切换两种形态不改控件内部。
+     *   要"选择变化不整表重建"就用 {@see selectionFrom()}。
      */
     public function selection(TableSelection $selection): static
     {
         $this->mutate();
-        $this->selection = $selection;
+        $this->selectionSource = new Literal($selection);
+
+        return $this;
+    }
+
+    /**
+     * 选中集（**通道形态**，R1 参数二象性）—— 读点落在传入方的 State 上。
+     *
+     * ```php
+     * Table::make($cols, $rows)->selectionFrom($this->selection); // Cell<TableSelection>
+     * ```
+     *
+     * ★ 与 `selection(值)` 互斥：后调的覆盖先调的。传 `Cell` 时，`TableState` 的
+     *   `build()` 不再读它 ⇒ 选中变化只重建真正读它的那些细粒度 State。
+     */
+    public function selectionFrom(Readable $source): static
+    {
+        $this->mutate();
+        $this->selectionSource = $source;
 
         return $this;
     }
@@ -409,10 +439,27 @@ final class Table extends StatefulWidget
         return $this->stripedOn === 1;
     }
 
-    /** 当前选中集（`null` = 未启用选择） */
+    /**
+     * 当前选中集（`null` = 未启用选择）。
+     *
+     * ★ 通道形态下这里会 `get()`，**在调用方的 build 期登记读点**；所以
+     *   `TableState::build()` 里不许调它（否则读点又回到整表 State）——
+     *   行高亮改由细粒度壳自己读（见 `ReactiveTableSelection`）。
+     */
     public function selectionSet(): ?TableSelection
     {
-        return $this->selection;
+        if ($this->selectionSource === null) {
+            return null;
+        }
+        $value = $this->selectionSource->get();
+
+        return $value instanceof TableSelection ? $value : null;
+    }
+
+    /** @internal 读点壳用：拿到原始通道（值形态是 `Literal`），把读点留在壳自己的 State */
+    public function selectionReadable(): ?Readable
+    {
+        return $this->selectionSource;
     }
 
     public function selectionModeValue(): TableSelectionMode
