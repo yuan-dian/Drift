@@ -34,10 +34,10 @@ use Drift\Widget\Wrap;
 /**
  * 布局 Layout—— 两种定位原语 + flex 排布。
  *
- * 演示面（全部 §13.1 的能力）：
+ * 演示面（全部能力）：
  *   · `Dock` 五槽（顶/底横跨、左右占中段、center 余下）
  *   · `Column/Row` 的 `spacing` / `cross` 交叉轴对齐
- *   · `Expanded` 占剩余（flex 分母已修，见 §24.2 #15）
+ *   · `Expanded` 占剩余（flex 分母已修）
  *   · `Center` 居中、`Spacer` 吃掉剩余、`Padding` 内边距
  *   · 盒样式修饰符（所有 Widget 通用的 `->background()` / `->border()` / `->radius()`）
  *
@@ -113,11 +113,9 @@ final class LayoutPage extends ShowcasePage
                 ])),
 
                 // ── Dock：五槽骨架 ──
-                // ★ 本块曾是 **§24.2 #18 的曝光位**：页根是 ScrollView（无界主轴，
-                //   "先量内容有多长"）时 Dock 旧行为把 INF 当自己的高往下传
-                //   （bottom 槽 offsetY=INF）⇒ 演示一度暂缺。修复
-                //   （无界主轴取内容自然高）后恢复 —— 这里是"示例台逼出核心缺陷、
-                //   缺陷修复回填示例"闭环的注脚。
+                // ★ 本块是"示例台逼出核心缺陷、修复回填示例"的注脚：页根是 ScrollView
+                //   （无界主轴）时 Dock 必须取内容自然高，不能把 INF 当自己的高往下传
+                //   （否则 bottom 槽 offsetY=INF）。
                 $this->demo('Dock：五槽骨架（无界滚动页里也正确）', Dock::make()
                     ->top($this->slot('top（横跨整宽）'))
                     ->left($this->slot('left'))
@@ -125,7 +123,7 @@ final class LayoutPage extends ShowcasePage
                     ->right($this->slot('right'))
                     ->bottom($this->slot('bottom（横跨整宽）'))),
 
-                // ── 盒样式：背景 / 边框 / 圆角（§15.7 修正后真的画出来）──
+                // ── 盒样式：背景 / 边框 / 圆角（修正后真的画出来）──
                 $this->demo('盒样式修饰符：background / border / radius', Wrap::make()->runSpacing(8.0)->spacing(8.0)->children([
                     Button::make('主色按钮')
                         ->background(Color::fromRgb(0x00, 0x96, 0x88))

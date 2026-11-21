@@ -35,7 +35,7 @@ use Drift\Widget\Wrap;
  *   它没有"完成事件"可挂。代价写在「能力边界」第 ① 条里。
  *
  * ★ `$dialog` **由组合根递进来**（`ShowcaseRoot` → 本页）：`State` 上没有
- *   `application()` 访问器（§4.3 禁 `Widget → App`），平台名只出现在组合根。
+ *   `application()` 访问器（禁 `Widget → App`），平台名只出现在组合根。
  *   ★ 形参**不可空**：`?Dialog` 字段在 AOT 侧退化 `php::Var`（PITFALLS 第 20 条）。
  */
 #[Route(id: 'dialog', title: '对话框 Dialog', icon: IconName::Info)]
@@ -67,7 +67,7 @@ final class DialogPage extends ShowcasePage
     /**
      * 「关闭前确认」的**显示用镜像**（真相在 `Application` 的字段里）。
      *
-     * ★ 为什么这里要留一份：页面拿不到 `Application`（§4.3），而按钮文案与状态行
+     * ★ 为什么这里要留一份：页面拿不到 `Application`，而按钮文案与状态行
      *   需要知道当前是开还是关。★ 它只影响**显示** —— 真正决定"关不关"的是
      *   `Application::onCloseRequested()`，`setState()` 之后两边恒一致。
      */

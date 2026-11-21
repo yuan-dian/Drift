@@ -33,7 +33,7 @@ use Drift\Widget\Widget;
  *
  * @capability-gap: const|Drift\Rendering\DisplayList|OP_ARC 圆弧 op 仍未补（现用 11 根线段拼）
  *
- * ★ **指针动画是画家 + 帧时钟**（§12.3 纯 UI 态）：相位住 `State::tickFrame()`
+ * ★ **指针动画是画家 + 帧时钟**（纯 UI 态）：相位住 `State::tickFrame()`
  *   （每帧一步，返回 true ⇒ 帧时钟不停，与 `Spinner` 同驱动）；画家只按值画。
  * ★ **`painter->version()` 有真实消费者**：HUD 每帧显示内容戳 —— "没人调的
  *   分支等价于未实现"，所以版本戳被这一行的 `Text` 真的读出来。
@@ -78,7 +78,7 @@ final class CustomPaintPage extends ShowcasePage
     public function build(BuildContext $ctx): Widget
     {
         // ★ 每帧重建 ⇒ Widget 不可变 ⇒ 新 CustomPaint 整体换新画家指针
-        //   （§13.2 字段对齐由 lint 比对）；HUD 这一行是 version() 的真实消费者。
+        //   （字段对齐由 lint 比对）；HUD 这一行是 version() 的真实消费者。
         return Card::make(ScrollView::make($this->body()))->paddingAll(0.0);
     }
 

@@ -14,7 +14,7 @@ use Drift\Widget\CustomPainter;
 /**
  * 仪表盘画家：值 0..1 决定指针角度；`version()` = 值变了几次（内容戳）。
  *
- * ★ **方向表是字面量不是 `cos()/sin()`**：§14.1 纯函数 —— libm 的跨平台末位
+ * ★ **方向表是字面量不是 `cos()/sin()`**：纯函数 —— libm 的跨平台末位
  *   差异会让画面在多平台间不可比（`RenderSpinner` 同族先例），11 个方向写死。
  */
 final class GaugePainter extends CustomPainter

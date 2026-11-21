@@ -27,7 +27,7 @@ use Drift\Widget\Widget;
  *
  * 对照 LayUI 的 list / table：列表行 = 标题 + 次要信息 + 右侧动作。Drift 用
  * `Each`（key 必填，R4）驱动，长列表（16 行超过视口）走 `ScrollView` ——
- * 滚动偏移**布局期进子盒 offset**（坐标链纪律，§24.2 #15）。
+ * 滚动偏移**布局期进子盒 offset**（坐标链纪律）。
  */
 #[Route(id: 'list', title: '列表 List', icon: IconName::ListBullets)]
 final class ListPage extends ShowcasePage
@@ -48,7 +48,7 @@ final class ListPage extends ShowcasePage
 
         return Column::make()->spacing(12.0)->padding(EdgeInsets::all(20.0))->children([
             Text::make('列表 List')->title(),
-            Text::make('16 行种子数据超过视口 ⇒ 页根自含滚动（ScrollView，§24.2 #15）。行由 Each 按 string key 驱动（R4：key 必填且唯一）。')->caption(),
+            Text::make('16 行种子数据超过视口 ⇒ 页根自含滚动（ScrollView）。行由 Each 按 string key 驱动（R4：key 必填且唯一）。')->caption(),
 
             Each::make(static fn(string $row): string => $row)
                 ->items($rows, static fn(string $row): Widget => ListPage::row($row)),

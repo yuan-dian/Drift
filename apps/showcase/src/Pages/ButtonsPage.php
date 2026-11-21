@@ -59,7 +59,7 @@ final class ButtonsPage extends ShowcasePage
             ]),
 
             // ── 盒样式修饰符 ──
-            Text::make('盒样式：background / border / radius（§15.7）')->heading(),
+            Text::make('盒样式：background / border / radius')->heading(),
             Wrap::make()->spacing(8.0)->runSpacing(8.0)->children([
                 Button::make('品牌色')
                     ->background(Color::fromRgb(0x00, 0x96, 0x88))
@@ -75,7 +75,7 @@ final class ButtonsPage extends ShowcasePage
             ]),
 
             // ── 悬停 + 光标 ──
-            Text::make('悬停 + 光标（§24.2 #16 的两个新消费者）')->heading(),
+            Text::make('悬停 + 光标（两个新消费者）')->heading(),
             Text::make('下面这块悬停计数：鼠标进入 enters +1、离开 leaves +1；命中链同时给出 PointingHand 光标。')
                 ->caption(),
             Wrap::make()->spacing(8.0)->runSpacing(8.0)->children([

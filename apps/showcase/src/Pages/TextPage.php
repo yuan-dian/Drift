@@ -22,7 +22,7 @@ use Drift\Widget\Wrap;
  *
  * 对照 LayUI 文档页的标题层级（H1 主标题 + 引用导语 + H2 分节 + H3 小节）：
  * Drift 用**语义角色**（`TextRole`）而非字号硬编码 —— 换主题时字号/颜色跟着走
- * （§8.2 的"角色归主题"）。这也是本页想演示的核心：**复刻设计稿不写死 px**。
+ * （"角色归主题"）。这也是本页想演示的核心：**复刻设计稿不写死 px**。
  *
  * 演示面：title / heading / body / caption / error 五级 + size / bold /
  * maxLines / ellipsize。

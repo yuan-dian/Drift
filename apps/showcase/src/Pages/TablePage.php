@@ -64,8 +64,8 @@ use Drift\Widget\Widget;
  * ★ **诚实边界**（页面底部也写了一句）：无 Ctrl+方向键扩选、无拖动框选 ——
  *   都是阶段 7 后半及其前置。单元格编辑已在（阶段 7a 键盘 / 7b 指针：单击落格、
  *   双击进编辑、插入符落在指针处）。横向滚轮已在（阶段 5b：触控板横滑 / Shift+竖轮）。
- *   表头的键盘排序已在（§61：首行 ↑ 进表头 / Enter 三态；§62：Shift 多键追加次键）。
- *   排序后光标**留在原位置**（`focusedRow` 是下标，"眼睛在哪"不跟数据身份，§61.5）。
+ *   表头的键盘排序已在（首行 ↑ 进表头 / Enter 三态；Shift 多键追加次键）。
+ *   排序后光标**留在原位置**（`focusedRow` 是下标，"眼睛在哪"不跟数据身份）。
  */
 #[Route(id: 'table', title: '表格 Table', icon: IconName::Grid)]
 final class TablePage extends ShowcasePage
@@ -174,7 +174,7 @@ final class TablePage extends ShowcasePage
                             $this->selection->set($next);
                         })
                         ->columnWidths($this->widthOverrides)
-                        // 上下文菜单的真消费者（§59）：焦点在表上时，右键与 `Shift+F10` / `Apps`
+                        // 上下文菜单的真消费者：焦点在表上时，右键与 `Shift+F10` / `Apps`
                         // 都开到这一份声明。命令复用 `showcase.refresh`（本应用只注册了它）
                         // ⇒ 真机上选完一项能看见 Snackbar。
                         ->contextMenu(ContextMenu::make()->items([

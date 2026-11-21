@@ -34,7 +34,7 @@ final class P4Painter extends CustomPainter
      * 生成一张 2D 渐变 swatch（行优先 RGBA），证明 drawImage 的字节串能过桥回画。
      *
      * ★★ 数组攒 + implode：`$rgba .= …` 是二进制串（每像素 4 字节、含 \0 与高位），
-     *   AOT 下循环内累加会写坏多字节串 ⇒ 图像乱码 / 崩在无关代码（§2.4 纪律 2）。
+     *   AOT 下循环内累加会写坏多字节串 ⇒ 图像乱码 / 崩在无关代码（纪律 2）。
      */
     private function makeSwatch(int $w, int $h): ImageHandle
     {

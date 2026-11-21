@@ -16,18 +16,18 @@ use Drift\Widget\Text;
 use Drift\Widget\Widget;
 
 /**
- * 拖文件进窗 Drop—— A5-② 的唯一消费者（落地记录 §27）。
+ * 拖文件进窗 Drop—— A5-② 的唯一消费者（落地记录）。
  *
  * ★★ **为什么这一页必须存在**：`WM_DROPFILES` 通道是新开的，没有调用方就没人能
  *   回答"拖进来之后 UI 说什么""命中怎么算""没接收者会怎样"。这一页是它唯一的
- *   落点，也是 T2 真机取证的落点（§16：未被消费的分支 = 未实现）。
+ *   落点，也是 T2 真机取证的落点（未被消费的分支 = 未实现）。
  *
  * ★ **声明挂在根 Widget 上**：`Card` 上 `->onFilesDropped(...)`，命中点沿父链
  *   冒泡总能找到它 ⇒ 拖到本页任意位置都算，不需要一个大号"拖放区"来接。
  *   视觉上仍给一块提示区，暗示"这里是目标"。
  *
  * ★ **状态存字符串而不是数组**（`$lastPaths` 是 `'\n'` 分隔原始串）：数组字段跨
- *   实例读在 AOT 上是 C2679/`php::Var` 高发区（§24）；显示时才 explode。
+ *   实例读在 AOT 上是 C2679/`php::Var` 高发区；显示时才 explode。
  *
  * ★ 构造无必填参数 ⇒ 能进 golden 整页基线（不像 `DialogPage` 要递端口）。
  */
@@ -82,7 +82,7 @@ final class DropPage extends ShowcasePage
     private function accept(FilesDroppedEvent $event): void
     {
         // ★ 先 `(string)` 落局部再参与运算/传参：`$event->pathsText` 跨实例读到的是
-        //   标量 / Var（§24 纪律③）。不调 `$event->fileCount()` 也是同一考虑 ——
+        //   标量 / Var（纪律③）。不调 `$event->fileCount()` 也是同一考虑 ——
         //   少一次跨实例方法调用，count 在这里用同一套逻辑自己算。
         $text = (string) $event->pathsText;
         $count = $text === '' ? 0 : substr_count($text, "\n") + 1;

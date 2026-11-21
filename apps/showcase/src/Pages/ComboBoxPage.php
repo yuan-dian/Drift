@@ -98,7 +98,7 @@ final class ComboBoxPage extends ShowcasePage
      *
      * ★ 这就是真应用的形状：`onSearch` 里 `status(loading())` + 发请求，
      *   `Job::onDone` 里 `status(ready())` + 换选项表。控件侧一行都不用改。
-     * ★ 示例台用组合根递进来的 `after()` 排那 400ms —— 控件自己做不到（§4.3）。
+     * ★ 示例台用组合根递进来的 `after()` 排那 400ms —— 控件自己做不到。
      * ★ 每次查询先向 Store 领一个 attempt，定时器闭包捕获它；快连打时旧 attempt
      *   的响应到达会被 `arrive()` 挡掉，只剩最后一次落地 —— 兑现本页文案承诺的
      *   "应用比对请求序号丢弃过期响应"。
@@ -240,16 +240,15 @@ final class ComboBoxPage extends ShowcasePage
             ]))->paddingAll(12.0),
             Text::make('点开面板 ⇒ 立刻"正在加载…"、400ms 后列出全部 4 项（`onOpen` 取初始列表）；'
                 . '打字「北」⇒ 又进加载态、400ms 后只剩北京市 / 北京南站。'
-                . '那 400ms 是组合根递进来的 `Application::after()` —— 控件自己够不到定时器（§4.3）。')->caption(),
+                . '那 400ms 是组合根递进来的 `Application::after()` —— 控件自己够不到定时器。')->caption(),
             Text::make('远程模式下**本地过滤让位**：选项表就是服务端的结果，控件不再按标签'
                 . '筛一遍（服务端可能按拼音 / 按 value 匹配，再筛是二次收缩）。')->caption(),
-            Text::make('★ 控件**不做去抖** —— 定时器只有 Application 有（§4.3 禁 Widget → App）。'
-                . '契约定为"每改一次词回调一次、且带上当时的词"，应用自己比对词来丢弃'
-                . '过期响应（Job + 请求序号）。')->caption(),
+            Text::make('★ 控件**不做去抖** —— 契约定为"每改一次词回调一次、且带上当时的词"，'
+                . '应用自己比对词来丢弃过期响应（Job + 请求序号）。')->caption(),
 
             $this->sectionBar('能力边界（如实记录）'),
             Text::make('① 方向键换高亮：没有 —— 焦点只能由框架移动（Tab / Shift+Tab），'
-                . '控件侧的闭包拿不到 FocusManager（§4.3 禁 Widget → App）。'
+                . '控件侧的闭包拿不到 FocusManager（禁 Widget → App）。'
                 . '键盘模型是 type-ahead：Enter 取**过滤后的第一项**。'
                 . '所以面板里也**不标已选项**（标了会让"回车会选谁"变含糊）。')->caption(),
             Text::make('② Tab 可以进面板：候选行是 Button（可聚焦），Tab 进去后用 Enter 选那一行；'
@@ -260,7 +259,7 @@ final class ComboBoxPage extends ShowcasePage
             Text::make('④ 下拉箭头：没有 —— 内置字模缺 164 个字符（含 ▾），理由同 Select。')->caption(),
             Text::make('⑤ 自定义过滤：本地过滤固定是"标签的大小写不敏感子串匹配"，换不了算法；'
                 . '要按拼音 / 按 value 匹配就走 `onSearch`（选项表整个由应用给），见上面第 ⑤ 段。'
-                . '—— 2026-10-24 之前这里写的是"得自己过滤后传进来"，那是绕路，现在是正式形状。')->caption(),
+                . '这是正式形状。')->caption(),
             Text::make('⑥ 打字时**不会**自动弹出面板：开面板只有"点击 / Enter"两条路（浮层栈只有'
                 . '框架拿得到，控件侧够不着）。所以"Tab 进来直接打字"时看不到候选，'
                 . '得再点一下或按 Enter。')->caption(),

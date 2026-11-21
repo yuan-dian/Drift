@@ -27,7 +27,7 @@ use Drift\App\NamedJob;
  *   一帧都不会被拖住。`local` 不是"假异步"：`usleep` 在子进程里，UI 线程同帧
  *   照样跑满 60fps（真机判据见 `probe-*`）。
  *
- * ★ 为什么不用 `getenv` 选模式：§16.7 的 `nano-hygiene` 禁环境变量（AOT 不保证），
+ * ★ 为什么不用 `getenv` 选模式：`nano-hygiene` 禁环境变量（AOT 不保证），
  *   模式走**构造参数**（`args()` 原样跨进程带过去）—— 组合根决定一次，worker 照着跑。
  *
  * ★ 返回**数组**而不是对象：跨进程只传 JSON 能表达的东西；转 `Table` 行也是

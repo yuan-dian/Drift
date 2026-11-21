@@ -105,7 +105,7 @@ final class FormPage extends ShowcasePage
             ]),
 
             // ── H3「文本编辑命令」：选择 / 复制 / 剪切 / 粘贴 ──
-            //   演示 §9.1 的编辑命令环 + 指针框选：Shift+方向键或**拖动**选择，
+            //   演示编辑命令环 + 指针框选：Shift+方向键或**拖动**选择，
             //   Ctrl+A 全选 / Esc 取消，Ctrl+C/X/V 走系统剪贴板（组合根递端口）。
             //   源字段预填中英混排 —— 多字节选区复制过去不分家（按码位边界算）。
             $this->sectionBar('文本编辑（选择 / 复制 / 粘贴）'),
@@ -248,11 +248,11 @@ final class FormPage extends ShowcasePage
 
             // ── H3 诚实边界：本页做不到的两处 ──
             $this->sectionBar('当前能力边界（如实记录）'),
-            Text::make('① 通用卡片面板：已补（2026-10-17 的 Card / RenderCard）—— 本页外层就是一张 Card；此前只能用 AppBar 横条近似分节。')
+            Text::make('① 通用卡片面板：本页外层就是一张 Card（Card / RenderCard），分节不再靠 AppBar 横条近似。')
                 ->caption(),
-            Text::make('② 固定宽右对齐标签：已补（2026-10-17 的 SizedBox）—— 定尺寸原语到位，LayUI 的 90px 右对齐标签现在做得出；本页仍用 Row(cross:End) 是历史写法，未改。')
+            Text::make('② 固定宽右对齐标签：定尺寸原语（SizedBox）到位，LayUI 的 90px 右对齐标签做得出。')
                 ->caption(),
-            Text::make('③ 仍缺：TextField 的 label 只有"字段上方"一种位置（§A.2.9 的形态），右侧标签要自己拼 Row。')
+            Text::make('③ 仍缺：TextField 的 label 只有"字段上方"一种位置，右侧标签要自己拼 Row。')
                 ->caption(),
         ]);
     }

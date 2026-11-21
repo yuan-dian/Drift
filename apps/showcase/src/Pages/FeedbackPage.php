@@ -31,7 +31,7 @@ use Drift\Widget\Wrap;
  * 反馈 Feedback—— 三态（Loading / Error / Empty）+ Spinner + 模态对话框。
  *
  * 对照 LayUI 的提示体系（提示条 / 加载态 / 空数据）。Drift 的三态用
- * **封闭域 match 无 default**（§12.1 第 2 条：加一个状态编译期就叫）——
+ * **封闭域 match 无 default**（加一个状态编译期就叫）——
  * 本页把三种状态摆在同一屏，用 `Offstage` 切换（保留各自状态，不销毁）。
  *
  * ★ **模态对话框演示后来补上**：`Modal` 的关闭按钮（`X`）落地后，
@@ -62,7 +62,7 @@ final class FeedbackPage extends ShowcasePage
     {
         return Column::make()->spacing(12.0)->padding(EdgeInsets::all(20.0))->children([
             Text::make('反馈 Feedback')->title(),
-            Text::make('加载三态（§11.5）：Loading 走 Spinner，Error 走文案 + 重试，Empty 走空态提示。切 tab 用 Offstage ⇒ 状态保活。')
+            Text::make('加载三态：Loading 走 Spinner，Error 走文案 + 重试，Empty 走空态提示。切 tab 用 Offstage ⇒ 状态保活。')
                 ->caption(),
 
             // ── 状态切换条 ──

@@ -62,7 +62,7 @@ final class BigListPage extends ShowcasePage
             Column::make()->spacing(12.0)->padding(EdgeInsets::all(20.0))->children([
                 Text::make('长列表（虚拟化）')->title(),
                 Text::make(
-                    '10000 行 × 定高 44 —— 只造视口覆盖的十几行（LazyColumn，§13.4）。'
+                    '10000 行 × 定高 44 —— 只造视口覆盖的十几行（LazyColumn）。'
                     . '同样数据换成 Each 全量列表，单帧约 0.8 秒。'
                 )->caption(),
 

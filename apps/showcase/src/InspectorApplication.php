@@ -28,7 +28,7 @@ use Drift\Widget\Widget;
  *
  * ★ **不复用 `ShowcaseApplication`**：它带 34 个演示页，第二窗装它等于把整棵
  *   导航树再建一遍（内存翻倍、首帧慢），而这里要验的是**基础设施**不是页面。
- *   §8 的判断也指向同一处：多窗口的第一消费者是"独立工具窗"，不是"第二个完整应用"。
+ *   多窗口评审的判断也指向同一处：多窗口的第一消费者是"独立工具窗"，不是"第二个完整应用"。
  */
 final class InspectorApplication extends Application
 {

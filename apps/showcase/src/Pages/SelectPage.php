@@ -176,7 +176,7 @@ final class SelectPage extends ShowcasePage
             Text::make('打开后把光标移进面板，用滚轮往下翻 —— 第 30 项一开始在面板下沿之外，'
                 . '不限高就永远点不到它。')->caption(),
 
-            $this->sectionBar('⑤ 映射短形式 · 键 = 值、值 = 显示名（`Option::normalize()`，2026-10-24）'),
+            $this->sectionBar('⑤ 映射短形式 · 键 = 值、值 = 显示名（`Option::normalize()`）'),
             Card::make(Wrap::make()->runSpacing(12.0)->spacing(12.0)->children([
                 // ★ 键故意用**数字串**：PHP 会把 `'110000'` 转成 `int 110000`，全靠
                 //   `Option::normalize()` 里的 `(string)` 收口才装得进 string 值域。
@@ -204,7 +204,7 @@ final class SelectPage extends ShowcasePage
                 . '那两家字段名拼错是**静默**的（整列空白），这里缺字段直接 Fatal 并报出'
                 . '「哪一行、缺哪个字段、现有哪几列」。')->caption(),
 
-            $this->sectionBar('⑦ 远程三态 · 加载中 / 失败 / 空表（2026-10-24）'),
+            $this->sectionBar('⑦ 远程三态 · 加载中 / 失败 / 空表'),
             Card::make(Column::make()->spacing(10.0)->children([
                 Wrap::make()->runSpacing(12.0)->spacing(12.0)->children([
                     Select::make($this->remote)
@@ -239,21 +239,20 @@ final class SelectPage extends ShowcasePage
             ]))->paddingAll(12.0),
             Text::make('三态是**一个值**（`OptionStatus::loading() / error() / empty() / '
                 . 'ready()`），不是三个开关 —— 所以没有"同时成立时显示谁"这种问题。')->caption(),
-            Text::make('旧版靠"loading 优先于 error"这条规则；2026-10-24 收成互斥值之后'
-                . '那条规则**不存在了**。三态全是受控属性（什么时候算加载完只有应用知道），'
+            Text::make('三态全是受控属性（什么时候算加载完只有应用知道），'
                 . '控件只负责"显示成什么样"。')->caption(),
             Text::make('★ 面板是**第二棵根渲染树**：主树重建不带动它 ⇒ 三态能跨树生效，'
                 . '靠的是框架的 `overlaySignature()`（控件声明一个内容签名，框架在锚点'
                 . 'Widget 换了之后比对，变了就标脏面板）。')->caption(),
 
             $this->sectionBar('能力边界（如实记录）'),
-            Text::make('① 方向键换值：**有了**（2026-10-24）—— 面板打开后 ↓/↑ 移高亮（到顶'
+            Text::make('① 方向键换值：**有了** —— 面板打开后 ↓/↑ 移高亮（到顶'
                 . '环绕到末项）、Enter 提交。做法是"高亮 + Enter"而不是"方向键移焦点"：'
                 . '后者要新开一条"复合控件内方向键"的框架缝，而焦点/手势是本仓出过最多'
                 . ' bug 的地方，为一个 nice-to-have 动它不划算。')->caption(),
             Text::make('② 下拉箭头：没有 —— `Button` 的标签位只收字符串，要画箭头得再包一层'
                 . ' `Row`，那会多出一个焦点目标。')->caption(),
-            Text::make('③ 滚动：有了（2026-10-24）—— 面板内容套 `ScrollView` + '
+            Text::make('③ 滚动：有了 —— 面板内容套 `ScrollView` + '
                 . '`PopupPanel::maxHeight(260)`，"贴着内容还是滚动"由实测自然高决定，不按条目数猜。'
                 . '超过一屏仍建议应用自己做搜索 / 分页（几百项靠滚屏找仍然慢，且没有虚拟化）。')->caption(),
             Text::make('④ 可编辑 / 多选：没有 —— 那是 `ComboBox` 与 `list<string>` 受控值，形状不同。')->caption(),

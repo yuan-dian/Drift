@@ -27,7 +27,7 @@ use Drift\Widget\Wrap;
 /**
  * 动画 Motion—— `AnimationController` + `Curve` 的第一个消费者。
  *
- * ★ **这一页存在的理由**（§14.3 / §24.2 的判据）：框架能力**没有消费者 = 未实现**。
+ * ★ **这一页存在的理由**：框架能力**没有消费者 = 未实现**。
  *   `AnimationController::tick()` 若只被 smoke 夹具调到，它仍然是"一段没人用的
  *   算术"；进了示例台才有"每帧真的变了"这件事。
  *
@@ -37,7 +37,7 @@ use Drift\Widget\Wrap;
 #[Route(id: 'motion', title: '动画 Motion', icon: IconName::Play)]
 final class MotionPage extends ShowcasePage
 {
-    /** 单程时长（毫秒）—— 与 §17.4.9 的 15ms 帧间隔配得起（≈40 帧） */
+    /** 单程时长（毫秒）—— 与 15ms 帧间隔配得起（≈40 帧） */
     private const DURATION_MS = 600.0;
 
     private AnimationController $eased;
@@ -65,7 +65,7 @@ final class MotionPage extends ShowcasePage
     }
 
     /**
-     * 每帧推进（§17.4.10 的入口）。
+     * 每帧推进的入口。
      *
      * ★ **不许短路**：两个控制器都得收到这一帧，否则"第二个永远卡在起点"
      *   （与 `Application::tickSubtree()` 不短路同一个理由）。
