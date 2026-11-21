@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Widget;
 
+use App\Showcase\Models\PagedRows;
 use Drift\App\Application;
 use Drift\Async\AsyncValue;
 use Drift\Async\Future;
@@ -78,10 +79,14 @@ final class LoadMorePageTest extends SmokeTestCase
     }
 
     /** @return list<int> */
+    /**
+     * 载荷是 `PagedRows`（页面自己的值对象）—— 测试按它的公开面读，
+     * 而不是再解一遍 `{items}` 的形状。形状知识只有 `from()` 一处。
+     */
     private static function idsOf(AsyncValue $value): array
     {
         $data = $value->dataOr(null);
-        $rows = \is_array($data) && \is_array($data['items'] ?? null) ? $data['items'] : [];
+        $rows = $data instanceof PagedRows ? $data->items() : [];
 
         $ids = [];
         foreach ($rows as $row) {

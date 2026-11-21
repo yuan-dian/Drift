@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Widget;
 
+use App\Showcase\Models\ConcurrentResult;
 use App\Showcase\Pages\ConcurrentFetchPage;
 use Drift\App\Application;
 use Drift\Async\AsyncValue;
@@ -107,20 +108,12 @@ final class ConcurrentFetchPageTest extends SmokeTestCase
         return $texts;
     }
 
-    /**
-     * @param array<array-key, array{ok: bool, value: mixed, error: ?string}> $entries
-     */
-    private static function rowsOf(array $entries, int $page): int
+    /** 某页的行数；`-1` = 没有这一页或它失败了（两种都不是"0 行"） */
+    private static function rowsOf(?ConcurrentResult $result, int $page): int
     {
-        $entry = $entries[$page] ?? null;
-        if ($entry === null || $entry['ok'] !== true) {
-            return -1;
-        }
+        $entry = $result?->entryOf($page);
 
-        $payload = $entry['value'] ?? null;
-        $items = \is_array($payload) && \is_array($payload['items'] ?? null) ? $payload['items'] : [];
-
-        return \count($items);
+        return $entry === null || !$entry->ok() ? -1 : $entry->rowCount();
     }
 
     /**
@@ -165,28 +158,29 @@ final class ConcurrentFetchPageTest extends SmokeTestCase
         $state = $app->pageState();
         check('ConcurrentFetchPage · 拿得到 State', $state !== null, $state === null ? 'null' : 'ok');
 
-        $data = $state?->command()->value()->dataOr(null);
-        $entries = \is_array($data) && \is_array($data['entries'] ?? null) ? $data['entries'] : [];
+        $result = ConcurrentResult::from($state?->command()->value()->dataOr(null));
 
         check(
             'ConcurrentFetchPage · 三块都在，键是页码（1,2,3）',
-            \array_keys($entries) === [1, 2, 3],
-            \json_encode(\array_keys($entries)),
+            $result->entryOf(1) !== null && $result->entryOf(2) !== null && $result->entryOf(3) !== null,
+            "entry1=" . var_export($result->entryOf(1) !== null, true)
+                . " entry2=" . var_export($result->entryOf(2) !== null, true)
+                . " entry3=" . var_export($result->entryOf(3) !== null, true),
         );
         check(
             'ConcurrentFetchPage · **乱序完成也按页码归位**（2 行 / 2 行 / 3 行）',
-            self::rowsOf($entries, 1) === 2 && self::rowsOf($entries, 2) === 2 && self::rowsOf($entries, 3) === 3,
-            'rows=' . self::rowsOf($entries, 1) . '/' . self::rowsOf($entries, 2) . '/' . self::rowsOf($entries, 3),
+            self::rowsOf($result, 1) === 2 && self::rowsOf($result, 2) === 2 && self::rowsOf($result, 3) === 3,
+            'rows=' . self::rowsOf($result, 1) . '/' . self::rowsOf($result, 2) . '/' . self::rowsOf($result, 3),
         );
         check(
             'ConcurrentFetchPage · 每条都有耗时（页脚要靠它算"逐条之和"）',
-            \is_array($data['spent'] ?? null) && \count($data['spent']) === 3,
-            \json_encode($data['spent'] ?? null),
+            $result->timedCount() === 3,
+            'timed=' . $result->timedCount(),
         );
         check(
             'ConcurrentFetchPage · 总耗时是数（不是 0：`hrtime` 真的被读了两头）',
-            \is_array($data) && (float) ($data['totalMs'] ?? 0.0) >= 0.0 && ($data['totalMs'] ?? null) !== null,
-            (string) ($data['totalMs'] ?? 'null'),
+            $result->totalMs() >= 0.0,
+            (string) $result->totalMs(),
         );
         check(
             'ConcurrentFetchPage · 三张卡都画出来了（三个"2 行/3 行"级标题里的两个 2 行 + 一个 3 行）',
@@ -240,8 +234,8 @@ final class ConcurrentFetchPageTest extends SmokeTestCase
         self::frames($app, 3, 2);
 
         $value = $app->pageState()?->command()->value();
-        $data = $value?->dataOr(null);
-        $entries = \is_array($data) && \is_array($data['entries'] ?? null) ? $data['entries'] : [];
+        $result = ConcurrentResult::from($value?->dataOr(null));
+        $failed = $result->entryOf(2);
 
         check(
             'ConcurrentFetchPage · 一条失败时聚合体仍是 data（不是 error）',
@@ -250,11 +244,13 @@ final class ConcurrentFetchPageTest extends SmokeTestCase
         );
         check(
             'ConcurrentFetchPage · 失败那条带原因、其余两条照常成功',
-            ($entries[2]['ok'] ?? null) === false
-                && \str_contains((string) ($entries[2]['error'] ?? ''), 'HTTP 500')
-                && self::rowsOf($entries, 1) === 2
-                && self::rowsOf($entries, 3) === 2,
-            \json_encode($entries, \JSON_UNESCAPED_UNICODE),
+            $failed !== null
+                && !$failed->ok()
+                && \str_contains($failed->error(), 'HTTP 500')
+                && self::rowsOf($result, 1) === 2
+                && self::rowsOf($result, 3) === 2,
+            'failed=' . ($failed?->error() ?? 'null')
+                . ' rows=' . self::rowsOf($result, 1) . '/' . self::rowsOf($result, 3),
         );
         check(
             'ConcurrentFetchPage · 界面上仍是两张有数据的卡（不是整块错误页）',

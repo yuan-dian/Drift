@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Showcase\Pages;
 use Drift\Route\Route;
 use Drift\Widget\IconName;
+use App\Showcase\Models\PagedRows;
 use App\Showcase\Pages\Base\ShowcasePage;
 use Drift\Async\AsyncValue;
 use Drift\Async\Future;
@@ -70,7 +71,7 @@ final class LoadMorePage extends ShowcasePage
     /**
      * 唯一的异步簿记（`State::asyncCommand()` 造 ⇒ 订阅 + 卸载时自动停）。
      *
-     * ★ 第二个参数就是本页存在的理由：**合并规则**。没有它 `append()` 会抛。
+     * ★ 载荷是 {@see PagedRows}（不是裸数组）：形状只在它的 `from()` 认一次。
      */
     private AsyncCommand $rows;
 
@@ -85,26 +86,34 @@ final class LoadMorePage extends ShowcasePage
     public function initState(): void
     {
         $fetch = $this->fetchRows;
+        // ★ 取数结果在**落地那一刻**就解码成 `PagedRows`：载荷类型从一而终，
+        //   不再"首次 run 是数组、append 之后是对象"来回摇摆。
+        // ★ 第二个参数就是本页存在的理由：**合并规则**（`append()` 没有它会抛）。
+        //   为什么不让框架默认 `array_merge`：载荷形状是业务知识，框架猜错时的
+        //   症状是"数据少了一半"却不报错。规则本身住 `PagedRows::mergedWith()`。
         $this->rows = $this->asyncCommand(
-            static fn(int $page): Future => $fetch($page),
-            static function (mixed $old, mixed $new): array {
-                return self::mergePages($old, $new);
-            },
+            static fn(int $page): Future => $fetch($page)->then(
+                static fn(mixed $payload): PagedRows => PagedRows::from($payload)
+            ),
+            static fn(mixed $old, mixed $new): PagedRows => PagedRows::from($old)
+                ->mergedWith(PagedRows::from($new)),
         );
 
         // ★ 触底判据要"两个数"，而且只在**真的还有下一页**时才发：
         //   否则到底后每次微滚都发一条，服务端收到一串空请求。
         $this->scroll = ScrollController::make()->onChanged(function (float $offset, float $max): void {
-            if ($max <= 0.0 || $offset < $max - 8.0 || $this->rows->isRunning()) {
-                return;
-            }
-
             $value = $this->rows->value();
-            if (!$value->hasValue() || \count(self::itemsOf($value)) >= self::totalOf($value)) {
+
+            if ($max <= 0.0 || $offset < $max - 8.0 || $this->rows->isRunning() || !$value->hasValue()) {
                 return;
             }
 
-            $this->loadMore($value);
+            $rows = PagedRows::from($value->dataOr(null));
+            if ($rows->isComplete()) {
+                return;
+            }
+
+            $this->loadMore($rows);
         });
     }
 
@@ -124,28 +133,6 @@ final class LoadMorePage extends ShowcasePage
     public function command(): AsyncCommand
     {
         return $this->rows;
-    }
-
-    /**
-     * 合并两页 —— **本命令唯一的数据形状知识**，写在一处。
-     *
-     * ★ 为什么不是框架给个默认的 `array_merge`：载荷形状是业务知识（这里是
-     *   `{items, total, source}`），框架猜错时的症状是"数据少了一半"却不报错。
-     *   见 `AsyncCommand` 的类注释"合并规则从哪来"。
-     *
-     * ★ `total` 取**新的**（后端每次都会回同一个总数）；`source` 同理。
-     *   旧值只在 `items` 上参与合并 —— 其余字段"以最新一次为准"。
-     */
-    private static function mergePages(mixed $old, mixed $new): array
-    {
-        $oldItems = \is_array($old) && isset($old['items']) && \is_array($old['items']) ? $old['items'] : [];
-        $newItems = \is_array($new) && isset($new['items']) && \is_array($new['items']) ? $new['items'] : [];
-
-        return [
-            'items' => \array_merge($oldItems, $newItems),
-            'total' => \is_array($new) ? (int) ($new['total'] ?? 0) : 0,
-            'source' => \is_array($new) ? (string) ($new['source'] ?? '') : '',
-        ];
     }
 
     public function build(BuildContext $ctx): Widget
@@ -169,52 +156,34 @@ final class LoadMorePage extends ShowcasePage
     }
 
     /** 已加载的行（`data` / 刷新中 / 失败但带旧值 三种情况都有） */
-    private static function itemsOf(AsyncValue $value): array
+    private static function rowsOf(AsyncValue $value): PagedRows
     {
-        $data = $value->dataOr(null);
-
-        return \is_array($data) && isset($data['items']) && \is_array($data['items']) ? $data['items'] : [];
+        return PagedRows::from($value->dataOr(null));
     }
 
-    private static function totalOf(AsyncValue $value): int
+    private function loadMore(PagedRows $rows): void
     {
-        $data = $value->dataOr(null);
-
-        return \is_array($data) ? (int) ($data['total'] ?? 0) : 0;
-    }
-
-    /**
-     * 下一页的页码 —— **由已加载行数推出来，不另存一个计数器**。
-     *
-     * ★ 存在两个地方（`$rows` 的值 + `$nextPage` 字段）就一定会不同步：失败后
-     *   重试、取消、卸载兜底，每条路都得记得别动它。派生量只跟着值走，没有第二条路。
-     */
-    private function nextPage(AsyncValue $value): int
-    {
-        return \intdiv(\count(self::itemsOf($value)), self::PER_PAGE) + 1;
-    }
-
-    private function loadMore(AsyncValue $value): void
-    {
-        $this->rows->append($this->nextPage($value));
+        $this->rows->append($rows->nextPage(self::PER_PAGE));
     }
 
     /** 工具条：已加载多少 / 数据来源 / 「加载更多」「重试」 */
     private function toolbar(AsyncValue $value): Widget
     {
-        $loaded = \count(self::itemsOf($value));
-        $total = self::totalOf($value);
+        $rows = self::rowsOf($value);
+        $loaded = $rows->count();
+        $total = $rows->total();
         $running = $this->rows->isRunning();
 
         // ★ 四支写全（`fold()` 缺键当场抛）；刷新中走 `data` 支 ⇒ 这里问 isRefreshing()
         $label = $value->fold([
             'idle' => static fn(AsyncValue $v): string => '尚未请求',
             'loading' => static fn(AsyncValue $v): string => '正在加载第 1 页…',
-            'error' => fn(AsyncValue $v): string => $v->hasValue()
+            'error' => static fn(AsyncValue $v): string => $v->hasValue()
                 ? '加载失败（已加载的 ' . $loaded . ' 行还在）'
                 : '加载失败（可重试）',
-            'data' => fn(AsyncValue $v): string => $v->isRefreshing()
-                ? '已加载 ' . $loaded . ' 行 · 正在加载第 ' . $this->nextPage($v) . ' 页…'
+            'data' => static fn(AsyncValue $v): string => $v->isRefreshing()
+                ? '已加载 ' . $loaded . ' 行 · 正在加载第 '
+                    . self::rowsOf($v)->nextPage(self::PER_PAGE) . ' 页…'
                 : '已加载 ' . $loaded . ' / 共 ' . $total . ' 行',
         ]);
 
@@ -223,8 +192,8 @@ final class LoadMorePage extends ShowcasePage
 
             // ★ 边界判据画在按钮上：已经全了就不该能点（而不是点了没反应）
             Button::make('加载更多')
-                ->enabled(!$running && $total > 0 && $loaded < $total)
-                ->onPressed(fn() => $this->loadMore($value)),
+                ->enabled(!$running && !$rows->isComplete())
+                ->onPressed(fn() => $this->loadMore($rows)),
 
             Button::make('重试')
                 ->enabled(!$running && $value->hasError())
@@ -278,17 +247,19 @@ final class LoadMorePage extends ShowcasePage
     /** 列表 + 页脚（页脚说"正在忙"或"失败了"；都空闲时什么都不说） */
     private function listWithFooter(AsyncValue $value): Widget
     {
-        $items = self::itemsOf($value);
+        $rows = self::rowsOf($value);
+        $items = $rows->items();
 
         if ($items === []) {
             return Center::make(Text::make('这一页没有数据')->caption());
         }
 
+        $next = $rows->nextPage(self::PER_PAGE);
         $note = '';
         if ($value->hasError()) {
-            $note = '加载第 ' . $this->nextPage($value) . ' 页失败：' . $value->message();
+            $note = '加载第 ' . $next . ' 页失败：' . $value->message();
         } elseif ($value->isRefreshing()) {
-            $note = '正在加载第 ' . $this->nextPage($value) . ' 页…';
+            $note = '正在加载第 ' . $next . ' 页…';
         }
 
         return Column::make()->spacing(8.0)->children([

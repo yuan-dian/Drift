@@ -4,6 +4,8 @@ declare(strict_types=1);
 namespace App\Showcase\Pages;
 use Drift\Route\Route;
 use Drift\Widget\IconName;
+use App\Showcase\Models\ConcurrentEntry;
+use App\Showcase\Models\ConcurrentResult;
 use App\Showcase\Pages\Base\ShowcasePage;
 use Drift\Async\AsyncValue;
 use Drift\Async\Future;
@@ -31,12 +33,16 @@ use Drift\Widget\Widget;
  * （`ASYNC-ARCH-2026-10-31.md` §14.1）。不走 5 worker：多两份运行时开销，
  * 结果拼接也没有现成先例；本页只证明并发聚合。
  *
- * ## 页面做的事（三行）
+ * ## 页面做的事（两行）
  *
  * ```php
- * $futures = ['1' => $fetch(1), '2' => $fetch(2), '3' => $fetch(3)];
- * return Future::allSettled($futures);      // ← 本页存在的理由
+ * $this->dash = $this->asyncCommand(
+ *     fn(mixed $pages): Future => ConcurrentResult::gather($fetch, $pages),  // ← 本页存在的理由
+ * );
  * ```
+ *
+ * ★ 编排（逐条计时 + `allSettled` + 汇总）与解码都住 {@see ConcurrentResult}：
+ *   那部分是纯逻辑，挂树之后只剩反射能测。
  *
  * ★ **并发不在这里发生**：页面只是"一次发三条"，三条真的同时在跑是因为组合根
  *   把池开到了 3（`ProcessTaskHost(..., 3)`）。在默认池（`maxWorkers = 1`）上
@@ -80,37 +86,15 @@ final class ConcurrentFetchPage extends ShowcasePage
         //   就会把整个 State 钉在命令上（卸载之后还活着）。局部量只钉住那一个闭包。
         $fetch = $this->fetchRows;
 
+        // 编排（逐条计时 + allSettled + 汇总）住 `ConcurrentResult::gather()`；
+        // 结果在**落地那一刻**就解码成对象 ⇒ 载荷类型从一而终。
         $this->dash = $this->asyncCommand(
             static function (mixed $pages) use ($fetch): Future {
                 /** @var list<int> $list */
                 $list = \is_array($pages) ? \array_values($pages) : [];
 
-                // ★ 每条单独计时：串行与并发的差别只有把这两个数摆在一起才看得出来
-                $spent = [];
-                $futures = [];
-
-                foreach ($list as $page) {
-                    $startedAt = \hrtime(true);
-
-                    $futures[$page] = $fetch($page)->then(
-                        static function (mixed $value) use (&$spent, $page, $startedAt): mixed {
-                            $spent[$page] = (\hrtime(true) - $startedAt) / 1e6;
-
-                            return $value;
-                        }
-                    );
-                }
-
-                $startedAll = \hrtime(true);
-
-                return Future::allSettled($futures)->then(
-                    static function (array $entries) use (&$spent, $startedAll): array {
-                        return [
-                            'entries' => $entries,
-                            'spent' => $spent,
-                            'totalMs' => (\hrtime(true) - $startedAll) / 1e6,
-                        ];
-                    }
+                return ConcurrentResult::gather($fetch, $list)->then(
+                    static fn(mixed $payload): ConcurrentResult => ConcurrentResult::from($payload)
                 );
             },
         );
@@ -188,15 +172,11 @@ final class ConcurrentFetchPage extends ShowcasePage
     /** 三张卡并排 —— 一条就是一格，成败各自算数 */
     private function cards(AsyncValue $value): Widget
     {
-        $data = $value->dataOr(null);
-        $entries = \is_array($data) && \is_array($data['entries'] ?? null) ? $data['entries'] : [];
-        $spent = \is_array($data) && \is_array($data['spent'] ?? null) ? $data['spent'] : [];
+        $result = ConcurrentResult::from($value->dataOr(null));
 
         $children = [];
         foreach (self::PAGES as $page) {
-            $children[] = Expanded::make(
-                self::card($page, $entries[$page] ?? null, $spent[$page] ?? null)
-            );
+            $children[] = Expanded::make(self::card($page, $result->entryOf($page)));
         }
 
         return Row::make()->spacing(12.0)->children($children);
@@ -205,33 +185,21 @@ final class ConcurrentFetchPage extends ShowcasePage
     /**
      * 一张卡：成功画"多少行 + 数据来源 + 耗时"，失败画"失败 + 原因"。
      *
-     * @param array{ok: bool, value: mixed, error: ?string}|null $entry
+     * ★ `$entry === null` 是"没发这条请求"，不是"这条失败了" —— 两句话不一样。
      */
-    private static function card(int $page, ?array $entry, mixed $spent): Widget
+    private static function card(int $page, ?ConcurrentEntry $entry): Widget
     {
-        $ok = $entry !== null && $entry['ok'] === true;
-        $rows = 0;
-
-        if ($ok) {
-            $payload = $entry['value'] ?? null;
-            $items = \is_array($payload) && \is_array($payload['items'] ?? null) ? $payload['items'] : [];
-            $rows = \count($items);
-        }
-
-        $source = '';
-        if ($ok) {
-            $payload = $entry['value'] ?? null;
-            $source = \is_array($payload) ? (string) ($payload['source'] ?? '') : '';
-        }
+        $ok = $entry !== null && $entry->ok();
+        $spent = $entry?->spentMs();
 
         return Card::make(
             Column::make()->spacing(8.0)->padding(EdgeInsets::all(14.0))->children([
                 Text::make('第 ' . $page . ' 页')->caption(),
-                Text::make($ok ? $rows . ' 行' : '失败')->title(),
-                Text::make($ok ? $source : (string) ($entry['error'] ?? '未知原因'))->caption(),
+                Text::make($ok ? $entry->rowCount() . ' 行' : '失败')->title(),
+                Text::make($ok ? $entry->source() : ($entry?->error() ?? '没有发起'))->caption(),
                 // ★ 失败的那条没有耗时（`then` 没跑到）—— 画「—」而不是 0：
                 //   0 会让"逐条之和"看起来像真的
-                Text::make(\is_float($spent) || \is_int($spent) ? \round((float) $spent) . ' ms' : '—')->caption(),
+                Text::make($spent !== null ? \round($spent) . ' ms' : '—')->caption(),
             ])
         )->paddingAll(0.0);
     }
@@ -267,23 +235,15 @@ final class ConcurrentFetchPage extends ShowcasePage
     /** "总 1250 ms · 3 条逐条之和 3610 ms（并发省了 2360 ms）" */
     private function summaryOf(AsyncValue $value): string
     {
-        $data = $value->dataOr(null);
-        if (!\is_array($data)) {
-            return '';
-        }
+        $result = ConcurrentResult::from($value->dataOr(null));
+        $total = $result->totalMs();
+        $sum = $result->sumMs();
+        $timed = $result->timedCount();
 
-        $total = (float) ($data['totalMs'] ?? 0.0);
-        $spent = \is_array($data['spent'] ?? null) ? $data['spent'] : [];
-
-        $sum = 0.0;
-        foreach ($spent as $ms) {
-            $sum += (float) $ms;
-        }
-
-        $label = '总 ' . \round($total) . ' ms · ' . \count($spent) . ' 条逐条之和 ' . \round($sum) . ' ms';
+        $label = '总 ' . \round($total) . ' ms · ' . $timed . ' 条逐条之和 ' . \round($sum) . ' ms';
 
         // ★ 只有"省了"才说"省了"：相等或更慢时（池容量 1 / 机器卡）如实显示差值
-        if (\count($spent) > 1) {
+        if ($timed > 1) {
             $saved = $sum - $total;
             $label .= $saved > 1.0
                 ? '（并发省了 ' . \round($saved) . ' ms）'
