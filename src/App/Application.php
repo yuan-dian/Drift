@@ -103,6 +103,9 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     /** 异步泵：IO / 任务 / 定时器 / 分片。不读 root / focus / overlays。 */
     private PumpHost $pumps;
 
+    /** 窗口级环境门面（notify/delay/modal），构造期随两个宿主片段一起建好。 */
+    private readonly AppEnvironment $environment;
+
     /** 语义树消费闭包。`null` ⇒ 不建语义树（零开销）。 */
     protected ?\Closure $semanticsSink = null;
     /** 一帧预算（毫秒，60fps）。用途是回答"超了先砍谁"，不是 CPU 分配表。 */
@@ -249,6 +252,9 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
 
         // host = $this，片只经 PumpHostHost 摸时间基准与 taskHost()。
         $this->pumps = new PumpHost($this);
+
+        // 门面只包这两个宿主片段，不碰子类覆写的 dialog/clipboard（构造期不可读）。
+        $this->environment = new AppEnvironment($this->overlayHost, $this->pumps);
 
         // `commands()` 不在这里调：PHP 构造链父先子后，此刻子类字段还是 null。
         // 注册推迟到 `attach()`。
@@ -414,6 +420,19 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     public function clipboard(): ?Clipboard
     {
         return null;
+    }
+
+    /**
+     * 窗口级环境门面（notify / delay / modal）。
+     *
+     * 页面与 Store 只该拿到它、而不是本类：门面上没有 frame / attach / input。
+     * 组合根可把它递给领域对象；dialog / clipboard 仍是组合根直传的端口。
+     *
+     * @api
+     */
+    public function environment(): AppEnvironment
+    {
+        return $this->environment;
     }
 
     /** 字体度量（应用级，整个进程一份）。多窗口下覆写等于每窗解析一遍字体、各持一份缓存。
@@ -942,13 +961,13 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      */
     public function after(int $milliseconds, \Closure $callback): int
     {
-        return $this->pumps->after($milliseconds, $callback);
+        return $this->environment->delay($milliseconds, $callback);
     }
 
     /** 撤销一个延时回调（已触发 / id 不存在 ⇒ 无事发生，幂等） */
     public function cancelAfter(int $id): void
     {
-        $this->pumps->cancelAfter($id);
+        $this->environment->cancelDelay($id);
     }
 
     /**
@@ -1895,25 +1914,25 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      */
     public function showSnackbar(Snackbar $snackbar): void
     {
-        $this->overlayHost->showSnackbar($snackbar);
+        $this->environment->notify($snackbar);
     }
 
     /** 收掉当前这条通知（有排队 ⇒ 立刻上队首那条）。幂等。 */
     public function dismissSnackbar(): void
     {
-        $this->overlayHost->dismissSnackbar();
+        $this->environment->dismissSnackbar();
     }
 
     /** 当前是否有通知在显示（测试 / devtools） */
     public function hasSnackbar(): bool
     {
-        return $this->overlayHost->hasSnackbar();
+        return $this->environment->hasSnackbar();
     }
 
     /** 排队等待的通知条数（测试 / devtools） */
     public function snackbarQueueLength(): int
     {
-        return $this->overlayHost->snackbarQueueLength();
+        return $this->environment->snackbarQueueLength();
     }
 
     /** 当前通知的条目（测试 / devtools 读参数用） */
@@ -1949,7 +1968,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      */
     public function showModal(Modal $modal): void
     {
-        $this->overlayHost->showModal($modal);
+        $this->environment->showModal($modal);
     }
 
     /**
@@ -1959,7 +1978,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      */
     public function closeModal(): void
     {
-        $this->overlayHost->closeModal();
+        $this->environment->closeModal();
     }
 
     /**

@@ -52,10 +52,13 @@ UI 线程亲和：后台结果不作为回调直接改树，而是以事件形�
 
 平台实现只出现在 `bin/<platform>/Bootstrap.php`，共享源码零平台引用。控件层拿不到 `Application`，也没有 `$this->application()` 这样的方法。
 
-需要能力时只有两条合规路径：
+需要能力时有三条合规路径：
 
 1. **组合根传递**：`buildRoot()` 把应用方法包成闭包当参数递下去。
 2. **框架声明式缝**：用已经接好线的 `overlayPanel()` / `tooltip()` 等能力。
+3. **环境门面**：`Application::environment()` 返回窗口级的 `AppEnvironment`（notify / delay / modal），
+   组合根把它递给 Store / 页面。门面上没有 `frame()` / `attach()` / `input()`，
+   拿到它的领域对象摸不到应用运行时；dialog / clipboard 是组合根直传的端口，不在门面上。
 
 焦点是一个受控例外：控件请求焦点走 `Element::requestFocus()` 到 `Pipeline::focusHost()` 注册的回调槽，这是框架内部通道，不是给控件开访问 App 层的口子。
 
@@ -84,7 +87,7 @@ UI 线程亲和：后台结果不作为回调直接改树，而是以事件形�
 
 | 能力域 | 方法 |
 |---|---|
-| 应用契约与装配 | `__construct()`、`attach()`、`buildRoot()`、`title()`、`theme()`、`scope()`、`root()`、`rootBox()`、`closeRequested()` |
+| 应用契约与装配 | `__construct()`、`attach()`、`buildRoot()`、`title()`、`theme()`、`scope()`、`root()`、`rootBox()`、`closeRequested()`、`environment()` |
 | 帧与主循环 | `frame()`、`frameCount()`、`wantsFrame()`、`needsFrameImmediately()`、`nextDeadlineMs()`、`repaintForResize()`、`pipeline()`、`lastTimestampMs()`、`lastInputMs()` |
 | 命令 | `commands()`、`commandGates()`、`register()`、`router()`、`dispatch()` |
 | 输入与焦点 | `dispatchInput()`、`accelerators()`、`captureNode()`、`capturePointer()`、`releasePointer()`、`focus()`、`requestFocus()` |
