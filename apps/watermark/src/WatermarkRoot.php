@@ -17,6 +17,7 @@ use Drift\Widget\BuildContext;
 use Drift\Widget\Card;
 use Drift\Widget\Column;
 use Drift\Widget\Dock;
+use Drift\Widget\Environment;
 use Drift\Widget\ScrollView;
 use Drift\Widget\StatelessWidget;
 use Drift\Widget\Widget;
@@ -24,33 +25,27 @@ use Drift\Widget\Widget;
 /**
  * 组合根（§A.2.6 / §12.2）：**只组合，不写任何具体布局**。
  *
- * ★ 一个 store 由构造点注入；订阅点全在控件内部（三张卡片的 `SubjectBuilder` +
- *   `StatusBar` 的 `watch`）—— 值**不在这里读**。
- * ★ `$pickFiles` 由**应用**注入（`WatermarkApplication::buildRoot()`）：Widget 不许
- *   依赖 `Drift\Platform`（§4.3）⇒ 打开文件对话框这个能力以闭包形式往下递。
- *   与 `UsersRoot::menuOpener()` 同一条路。
+ * ★ 一个 store + 一个门面由构造点注入；订阅点全在控件内部（三张卡片的
+ *   `SubjectBuilder` + `StatusBar` 的 `watch`）—— 值**不在这里读**。
+ * ★ 选图能力从门面拿（`$env->openFiles()`），不再由应用包一个 `\Closure(): void`
+ *   往下递：端口类型（`Drift\Platform\Dialog`）不出 `Drift\App`，控件看到的只是
+ *   "选完给我路径列表"。
  * ★ **主题固定 light**：本应用的配色是逐值照抄的品牌色（见 `Palette` 的类注释），
  *   没有深色表。`ThemeScope` 仍然必须有 —— `Button` / `TextField` / `AppBar` 这些
  *   框架控件的默认样式都从主题取，不套就是"控件全裸"。
  */
 final class WatermarkRoot extends StatelessWidget
 {
-    /**
-     * @param \Closure(): void $pickFiles 打开文件对话框（组合根注入）
-     */
     public function __construct(
         private readonly WatermarkStore $store,
-        private readonly \Closure $pickFiles,
+        private readonly Environment $env,
     ) {
         parent::__construct();
     }
 
-    /**
-     * @param \Closure(): void $pickFiles
-     */
-    public static function make(WatermarkStore $store, \Closure $pickFiles): self
+    public static function make(WatermarkStore $store, Environment $env): self
     {
-        return new self($store, $pickFiles);
+        return new self($store, $env);
     }
 
     public function build(BuildContext $ctx): Widget
@@ -66,7 +61,7 @@ final class WatermarkRoot extends StatelessWidget
             //   露一截窗口底色。
             ->center(Card::make(ScrollView::make(
                 Column::make()->spacing(20)->children([
-                    UploadCard::make($this->store, $this->pickFiles),
+                    UploadCard::make($this->store, $this->env),
                     TaskCard::make($this->store),
                     ResultCard::make($this->store),
                 ])

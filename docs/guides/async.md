@@ -87,7 +87,7 @@ $this->flow = $this->asyncCommand(fn (array $paths): Future => AsyncScope::task(
 - `await(Future $future, ?callable $onProgress = null)` 成功返回值、失败原样抛异常，于是"第三步失败回退重来"就是普通 `try/catch`。第二个参数是**进度入口**：订阅正确顺序由它保证，不必记 `onProgress()` 的坑。
 - `sleep(int $ms): bool` 必须判返回值。`false` 表示这个作用域没有定时器（`task()` 没给第二参），这一次**没有睡**；在 `while` 里忽略它会退化成零延时重试，一轮一轮发请求且不报错。
 - 取消是往协程投 `AsyncCancelled` 异常，所以 body 里的 `catch (\Throwable)` 会连它一起接住。业务侧写 `catch (AsyncCancelled $e) { throw $e; }` 放在前面；即使忘了，`await()` / `sleep()` 入口也会把取消重新抛出来。
-- `src/Async` 不许依赖 `Drift\Platform`：定时器靠注入。`Application::after()` 是组合根递下来的能力，控件与命令只收闭包，不自己去拿平台。
+- `src/Async` 不许依赖 `Drift\Platform`：定时器靠注入。`Environment::delay()` 是组合根递下来的能力（`AsyncScope::task()` 的第二参就是它），控件与命令不自己去拿平台。
 
 ## AsyncValue 四态与 fold
 

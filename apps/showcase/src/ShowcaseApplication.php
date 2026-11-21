@@ -9,8 +9,6 @@ use Drift\Async\Future;
 use Drift\Commands\CommandHandler;
 use Drift\Input\AcceleratorTable;
 use Drift\Input\KeyChord;
-use Drift\Platform\Clipboard;
-use Drift\Platform\Dialog;
 use Drift\Widget\Page;
 use Drift\Widget\Snackbar;
 use Drift\Widget\Widget;
@@ -42,10 +40,11 @@ final class ShowcaseApplication extends Application
      * 必须调 `parent::__construct()`：基类在其中初始化 router/pumps 等七个拆分片，
      * 漏调则 `attach()` 读未初始化字段 ⇒ AOT 下 exit=255、错误信息无文件名行号。
      * smoke 抓不到（夹具都调了），lint `AppSubclassCtorParent` 守这条。
+     *
+     * ★ 端口（对话框 / 剪贴板）**不进构造器**：它们由组合根 `setDialog()` /
+     *   `setClipboard()` 装进 `AppScope`，页面从门面取。构造器只剩两个业务旋钮。
      */
     public function __construct(
-        private Dialog $dialog,
-        private ?Clipboard $clipboard = null,
         ?AppScope $scope = null,
         private string $rowsMode = FetchRowsJob::MODE_LOCAL,
     ) {
@@ -65,7 +64,7 @@ final class ShowcaseApplication extends Application
      * 页面工厂表：**只有需要依赖的页**在这里出现，其余页走默认无参构造。
      *
      * ★ 加一个领域依赖只改这里一行 —— 不穿透 Root / State / Nav，也不改任何契约。
-     * ★ 依赖各有具体类型（`Dialog` / `ButtonsStore` / `\Closure(int): Future`），写反是
+     * ★ 依赖各有具体类型（`ButtonsStore` / `\Closure(int): Future`），写反是
      *   构造期 Fatal；这替代了原先"6 个同型闭包 + 反射测试钉顺序"的做法。
      *
      * @internal 只给装配契约测试读键集合（漏注册一页 ⇒ 切到那页 Fatal）
@@ -74,14 +73,11 @@ final class ShowcaseApplication extends Application
      */
     public function pageFactories(): array
     {
-        // 环境能力从门面取具名方法（一等可调用）—— 页面只拿用得到的那一条。
+        // 页面拿的是**门面本身**，不是从门面上拆下来的几个一等可调用 ——
+        // 每页自己从 $env 取它需要的那一条（`$env->delay()` / `notify()` …）。
         $env = $this->environment();
-        $delay = $env->delay(...);
-        $showModal = $env->showModal(...);
-        $notify = $env->notify(...);
 
         $buttons = $this->buttons;
-        $dialog = $this->dialog;
         $fetchRows = fn(int $page): Future => $this->submit(
             new FetchRowsJob($page, 20, $this->rowsMode)
         );
@@ -90,19 +86,13 @@ final class ShowcaseApplication extends Application
         return [
             AsyncTablePage::class => static fn(): Widget|Page => new AsyncTablePage($fetchRows),
             ButtonsPage::class => static fn(): Widget|Page => new ButtonsPage($buttons),
-            ComboBoxPage::class => static fn(): Widget|Page => new ComboBoxPage($delay),
+            ComboBoxPage::class => static fn(): Widget|Page => new ComboBoxPage($env),
             ConcurrentFetchPage::class => static fn(): Widget|Page => new ConcurrentFetchPage($fetchRows),
-            DialogPage::class => static fn(): Widget|Page => new DialogPage($dialog, $setCloseConfirm),
-            FeedbackPage::class => static fn(): Widget|Page => new FeedbackPage($showModal),
+            DialogPage::class => static fn(): Widget|Page => new DialogPage($env, $setCloseConfirm),
+            FeedbackPage::class => static fn(): Widget|Page => new FeedbackPage($env),
             LoadMorePage::class => static fn(): Widget|Page => new LoadMorePage($fetchRows),
-            SnackbarPage::class => static fn(): Widget|Page => new SnackbarPage($notify),
+            SnackbarPage::class => static fn(): Widget|Page => new SnackbarPage($env),
         ];
-    }
-
-    /** 页面工厂装配用：对话框端口只在组合根可见。 */
-    public function dialog(): Dialog
-    {
-        return $this->dialog;
     }
 
     /** 页面工厂装配用：取数模式由 Bootstrap 决定。 */
@@ -114,11 +104,6 @@ final class ShowcaseApplication extends Application
     public function title(): string
     {
         return 'Drift 示例台';
-    }
-
-    public function clipboard(): ?Clipboard
-    {
-        return $this->clipboard;
     }
 
     /**
@@ -165,7 +150,7 @@ final class ShowcaseApplication extends Application
             return true;
         }
 
-        return $this->dialog->confirm(
+        return $this->environment()->confirm(
             '关闭示例台',
             '「关闭前确认」是开着的。点「否」窗口会留着 —— 这是关闭可拦截的演示。',
         );

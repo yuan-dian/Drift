@@ -5,6 +5,7 @@ namespace Drift\Dev\Tests\Feature\Widget;
 
 use Drift\Dev\Smoke\App\DialogApplication;
 use Drift\Dev\Smoke\App\FakeDialog;
+use Drift\Dev\Smoke\App\FakeEnvironment;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Geometry\BoxConstraints;
@@ -37,14 +38,15 @@ final class DialogPageTest extends SmokeTestCase
     private const H = 1400.0;
 
     /** @return array{0: DialogApplication, 1: FakeDialog, 2: BoxConstraints} */
-    private static function boot(?FakeDialog $dialog = null): array
+    private static function boot(?FakeEnvironment $env = null): array
     {
-        $dialog = $dialog ?? new FakeDialog();
+        $env = $env ?? new FakeEnvironment();
+        $dialog = $env->dialog;
         $surface = new SurfaceProbe();
         $surface->resize((int) self::W, (int) self::H, 1.0);
         $constraints = BoxConstraints::tight(new Size(self::W, self::H));
 
-        $app = new DialogApplication($dialog);
+        $app = new DialogApplication($env);
         $app->attach($surface, $constraints);
         $app->frame(16.0, $constraints);
 
@@ -248,12 +250,13 @@ final class DialogPageTest extends SmokeTestCase
     public function testCloseConfirmToggleReachesTheApplication(): void
     {
         $seen = [];
-        $dialog = new FakeDialog();
+        $env = new FakeEnvironment();
+        $dialog = $env->dialog;
         $surface = new SurfaceProbe();
         $surface->resize((int) self::W, (int) self::H, 1.0);
         $constraints = BoxConstraints::tight(new Size(self::W, self::H));
 
-        $app = new DialogApplication($dialog, static function (bool $enabled) use (&$seen): void {
+        $app = new DialogApplication($env, static function (bool $enabled) use (&$seen): void {
             $seen[] = $enabled;
         });
         $app->attach($surface, $constraints);

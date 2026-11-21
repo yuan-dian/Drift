@@ -9,6 +9,7 @@ use App\Tutorial\Stages\HelloStage;
 use App\Tutorial\Stages\OverlayStage;
 use Drift\Geometry\EdgeInsets;
 use Drift\Widget\BuildContext;
+use Drift\Widget\Environment;
 use Drift\Widget\Card;
 use Drift\Widget\Column;
 use Drift\Widget\Divider;
@@ -34,14 +35,14 @@ final class TutorialPage extends StatelessWidget
      * @param \Closure(int, \Closure): void $after 组合根递下来的"延时回调"能力
      *        （形参 = 毫秒 + 回调；见 `TutorialApplication::buildRoot()`）
      */
-    public function __construct(private readonly \Closure $after)
+    public function __construct(private readonly Environment $env)
     {
         parent::__construct();
     }
 
-    public static function make(\Closure $after): self
+    public static function make(Environment $env): self
     {
-        return new self($after);
+        return new self($env);
     }
 
     public function build(BuildContext $ctx): Widget
@@ -63,7 +64,7 @@ final class TutorialPage extends StatelessWidget
                     Divider::make(),
 
                     // ★ 只有这一段需要外部能力 ⇒ 只有它收参数
-                    AsyncStage::make($this->after),
+                    AsyncStage::make($this->env),
                 ])
             )
         )->paddingAll(0.0);

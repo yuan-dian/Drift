@@ -11,6 +11,7 @@ use Drift\Widget\BuildContext;
 use Drift\Widget\Card;
 use Drift\Widget\Column;
 use Drift\Widget\ComboBox;
+use Drift\Widget\Environment;
 use Drift\Widget\Option;
 use Drift\Widget\OptionStatus;
 use Drift\Widget\ScrollView;
@@ -45,7 +46,7 @@ final class ComboBoxPage extends ShowcasePage
      * @param \Closure(int, \Closure): int $delay 排一次性延时；只有 400ms 防抖用它。
      *        单参数位、类型注释明确 —— 页面只拿用得到的那一条，不接整个环境门面。
      */
-    public function __construct(private readonly \Closure $delay)
+    public function __construct(private readonly Environment $env)
     {
     }
 
@@ -112,7 +113,7 @@ final class ComboBoxPage extends ShowcasePage
             $this->remoteStatus = OptionStatus::loading();
         });
 
-        ($this->delay)(400, function () use ($attempt): void {
+        $this->env->delay(400, function () use ($attempt): void {
             $this->deliver($attempt);
         });
     }

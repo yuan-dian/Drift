@@ -79,6 +79,17 @@ Win32 启动阶段的 DPI 感知级别必须是 `PER_MONITOR_AWARE_V2`：旧式�
 
 窗口位置持久化用客户区左上角屏幕坐标，窗口销毁后 `position()` 返回**最后已知几何**（非 `null`），否则退出路径上写不回"记住窗口位置"；`place()` 一次原子还原几何与最大化态。
 
+## 应用侧怎么拿到端口
+
+组合根把端口装进 `AppScope`（`setDialog()` / `setClipboard()` / `setTaskHost()`），应用侧一律从 `Application::environment()` 取 —— 它是 `Drift\Widget\Environment` 的唯一实现。分两层看：
+
+- **Widget 与 Store 只认识 `Environment`**。它是 `Drift\Widget` 的**接口**，不是 `Drift\App` 的类 —— 契约必须住下层，否则 `Widget → App` 成环，而那意味着控件能 import 帧循环。
+- **端口方法在门面上被投影成值参数**：`openFile(string, array): ?string`、`clipboardText(): ?string`。`Dialog` / `Clipboard` 住 `Drift\Platform`，把它们写进签名等于为"控件能拿平台实现"放开整层；投影之后 `Widget` 层的 Platform 依赖仍是 0。
+
+缺端口不算异常：`?T` 返回 `null`、`array` 返回 `[]`、`bool` 返回 `false`，同时留**一条** Diagnostic（只报一次，反复刷会把别的线索挤出环形缓冲）。"平台确实没有"与"越界"是两件事，前者不该崩。
+
+窗口拖动也走门面：组合根建窗后 `environment()->setWindowDrag($drag)`，控件用 `supportsWindowDrag()` 决定"顶条画不画三个自绘按钮"、用 `startWindowDrag()` 真的拖。一个注册点、两件事，写不出"拖得动但关不掉"。
+
 ## 多窗口状态归属
 
 `WindowSet` 管活窗口表；事件按事件自带的 hwnd 投递、`EventLoop` 按窗口抽干，输入队列也按窗口取——单队列时两个应用会重复消费同一条事件。Win32 的语义树 UIA provider 挂 HWND，每窗一份；`pushSemantics()` 收扁平节点数组，空数组表示无障碍关闭。

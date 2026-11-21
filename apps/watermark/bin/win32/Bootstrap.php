@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Watermark;
 
+use Drift\App\AppScope;
 use Drift\App\ProcessTaskHost;
 use Drift\App\ProcessWorker;
 use Drift\App\WindowSet;
@@ -20,7 +21,7 @@ use App\Watermark\Jobs\JobRegistry;
  *
  * ★ 建窗 / 还原几何 / 定表面首帧 / `attach` / 主循环 / 几何写回 / 卸静态钩子全在
  *   `WindowSet`（2026-10-30）。本文件只剩**本应用自己的三件事**：
- *   后台任务宿主、对话框端口、最小尺寸。
+ *   后台任务宿主、对话框端口、最小尺寸 —— 前两件都装进 `AppScope`，应用零参数。
  * ★ **不做无边框窗 / 窗口材质**（`apps/users` 与 `apps/showcase` 里那两段）：那是
  *   §质感 的演示项，本应用是业务闭环 —— 多一段环境变量接线就多一处"只在某种设置下
  *   才走得到"的路径，而它对这个应用的价值是零。
@@ -84,13 +85,15 @@ final class Bootstrap
 
         $set = new WindowSet($platform, 'watermark');
 
+        // ★ 端口全进作用域：对话框 + 后台池都是"一个进程一份"，多窗口自动共用。
+        //   应用构造器因此只收一个 scope —— 少一个"哪个参数必填"的约定。
+        $scope = AppScope::make()->setDialog($dialog)->setTaskHost($taskHost);
+
         $set->open(
             'main',
             self::WINDOW_WIDTH,
             self::WINDOW_HEIGHT,
-            static function () use ($dialog, $taskHost): WatermarkApplication {
-                return new WatermarkApplication($dialog, $taskHost);
-            },
+            static fn (): WatermarkApplication => new WatermarkApplication($scope),
         )
             // ★ 最小尺寸（§5.4）：挡住"拖到比内容更小"—— 那种状态会踩布局的溢出
             //   硬校验（`Dock` 的 top+bottom 就吃掉了全部高度）。

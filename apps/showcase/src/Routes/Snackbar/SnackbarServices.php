@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Showcase\Routes\Snackbar;
 
+use Drift\Widget\Environment;
 use Drift\Widget\Snackbar;
 
 /**
@@ -15,14 +16,12 @@ use Drift\Widget\Snackbar;
  */
 final readonly class SnackbarServices
 {
-    /** @param \Closure(Snackbar): void $notify */
-    public function __construct(
-        private \Closure $notify,
-    ) {
+    public function __construct(private Environment $env)
+    {
     }
 
     public function notify(Snackbar $snackbar): void
     {
-        ($this->notify)($snackbar);
+        $this->env->notify($snackbar);
     }
 }

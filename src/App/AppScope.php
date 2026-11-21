@@ -9,6 +9,8 @@ use Drift\App\Restoration\RestorationStore;
 use Drift\Commands\CommandRouter;
 use Drift\Errors;
 use Drift\Input\AcceleratorTable;
+use Drift\Platform\Clipboard;
+use Drift\Platform\Dialog;
 use Drift\Text\DeterministicFontManager;
 use Drift\Text\DeterministicMetricsProvider;
 use Drift\Text\DeterministicShaper;
@@ -46,6 +48,12 @@ final class AppScope
     private string $imageCacheDir = '';
 
     private ?\Closure $imageCacheKey = null;
+
+    /** 对话框端口（`null` = 本平台没实现；`Environment` 会据此报 Diagnostic） */
+    private ?Dialog $dialog = null;
+
+    /** 剪贴板端口（同上） */
+    private ?Clipboard $clipboard = null;
 
     private ?IoPoller $io = null;
 
@@ -205,6 +213,42 @@ final class AppScope
         $this->imageCacheDir = $cacheDir;
         $this->imageCacheKey = $cacheKey;
         ImageAssets::install($this->taskHost, $cacheDir, $cacheKey);
+
+        return $this;
+    }
+
+    // ── 平台端口 ────────────────────────────────────────────────────────
+
+    /**
+     * 对话框端口 —— 一个进程一份。
+     *
+     * ★ 不进构造器：它在**建窗之前**由组合根从 `Platform::dialog()` 取，而
+     *   scope 可能在更早的地方就被 `AppScope::make()` 建好了。三态（没给 /
+     *   给了 null / 给了端口）与 `taskHost` 同一个形状，用"调没调过"表达。
+     * ★ `null` 不是错误：本平台确实可能没有对话框（X11 的 zenity 缺席），
+     *   `Environment` 在第一个消费者出现时才留 Diagnostic。
+     */
+    public function dialog(): ?Dialog
+    {
+        return $this->dialog;
+    }
+
+    public function setDialog(?Dialog $dialog): self
+    {
+        $this->dialog = $dialog;
+
+        return $this;
+    }
+
+    /** 剪贴板端口 —— 一个进程一份（`CF_UNICODETEXT` 是全局的，分窗口没有意义） */
+    public function clipboard(): ?Clipboard
+    {
+        return $this->clipboard;
+    }
+
+    public function setClipboard(?Clipboard $clipboard): self
+    {
+        $this->clipboard = $clipboard;
 
         return $this;
     }

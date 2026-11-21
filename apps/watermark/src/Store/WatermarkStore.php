@@ -20,6 +20,7 @@ use Drift\Async\AsyncValue;
 use Drift\Async\Future;
 use Drift\State\AsyncCommand;
 use Drift\State\Subject;
+use Drift\Widget\Environment;
 
 /**
  * 全部业务状态（一张卡片一块，互不干扰）。
@@ -53,12 +54,12 @@ use Drift\State\Subject;
  * ## 轮询的节奏归谁
  *
  * ★ 本类**不持有** `Application`（Store 是纯状态，§4.3 的"Widget 不许依赖 App"
- *   同一条纪律往上延伸一层）。定时器能力通过构造器注入的 `$scheduler` 表达：
+ *   同一条纪律往上延伸一层）。定时器能力通过构造器注入的 {@see Environment} 表达：
  *   ```php
- *   new WatermarkStore($host, $base, fn (int $ms, \Closure $cb): int => $this->after($ms, $cb));
+ *   new WatermarkStore($host, $base, $app->environment());
  *   ```
- *   它同时是 `AsyncScope::task()` 的第二个参数 ⇒ `sleep()` 用的就是它。
- * ★ `$scheduler === null`（解释器 / 单测）⇒ `sleep()` 返回 `false` ⇒ **只查一次**，
+ *   它同时是 `AsyncScope::task()` 的延时函数 ⇒ `sleep()` 用的就是它。
+ * ★ `$env === null`（解释器 / 单测）⇒ `sleep()` 返回 `false` ⇒ **只查一次**，
  *   循环自己退出，不假装在轮询。测试里不能有"自己转起来的定时器"。
  *
  * ## 消息为什么分三份
@@ -109,12 +110,12 @@ final class WatermarkStore extends Subject
 
     /**
      * @param null|TaskHost $host 非 null ⇒ 全部走后台（§17.4.5）；null ⇒ 同步（测试）
-     * @param null|callable(int, \Closure): int $scheduler 排一个延时回调；null ⇒ 不自动轮询
+     * @param null|Environment $env 窗口能力门面；null ⇒ 不自动轮询
      */
     public function __construct(
         private readonly ?TaskHost $host = null,
         private readonly string $apiBase = Config::API_BASE,
-        private $scheduler = null,
+        private readonly ?Environment $env = null,
     ) {
         $this->uploadMessage = StatusMessage::none();
         $this->taskMessage = StatusMessage::none();
@@ -124,16 +125,22 @@ final class WatermarkStore extends Subject
         //   用户几乎总是要传"此刻"的水印，让他每次手打一遍没有意义。
         $this->time = \date('Y-m-d H:i:s');
 
+        // 门面的 `delay()` 与 `AsyncScope::task()` 要的 `callable` 差一个返回值，
+        // 这里转接一次；不转就得让门面长出一个只为本类服务的 `__invoke`。
+        $scheduler = $env === null
+            ? null
+            : static fn (int $ms, \Closure $callback): int => $env->delay($ms, $callback);
+
         // ★ 闭包声明一个参数（`AsyncCommand::run()` 永远传一个）：混合签名在解释器
         //   下写错不报、只在 AOT 崩 —— 本仓已经炸过一次。
-        $this->flow = AsyncCommand::make(function (mixed $entry): Future {
+        $this->flow = AsyncCommand::make(function (mixed $entry) use ($scheduler): Future {
             return AsyncScope::task(
                 function (AsyncScope $co) use ($entry): void {
                     $this->runFlow($entry, $co);
                 },
-                // ★ 延时函数就是注入的 scheduler：`sleep()` 与"排定时器"从此是同一件事，
+                // ★ 延时函数就是门面的 `delay`：`sleep()` 与"排定时器"从此是同一件事，
                 //   应用手里再没有第二个能排定时器的地方。
-                $this->scheduler,
+                $scheduler,
             );
         });
     }

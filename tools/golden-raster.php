@@ -39,7 +39,7 @@ use Drift\Widget\CustomPainter;
 use Drift\Widget\Page;
 use Drift\Dev\Golden\PageScenes;
 use Drift\Dev\Inspect\Snapshot;
-use Drift\Dev\Smoke\App\FakeDialog;
+use Drift\Dev\Smoke\App\FakeEnvironment;
 use Drift\Dev\Smoke\Golden\GoldenGaugePainter;
 use Drift\Dev\Smoke\Golden\GoldenSparkPainter;
 use App\Showcase\Stores\ButtonsStore;
@@ -592,28 +592,20 @@ $pageWiring = [
         static fn(int $page): Future => Future::pending(),
     ],
     'ButtonsPage' => static fn(): array => [new ButtonsStore()],
-    'ComboBoxPage' => static fn(): array => [
-        static fn(int $milliseconds, \Closure $callback): int => 0,
-    ],
+    'ComboBoxPage' => static fn(): array => [new FakeEnvironment()],
     'ConcurrentFetchPage' => static fn(): array => [
         static fn(int $page): Future => Future::pending(),
     ],
     'DialogPage' => static fn(): array => [
-        new FakeDialog(),
+        new FakeEnvironment(),
         static function (bool $enabled): void {
         },
     ],
-    'FeedbackPage' => static fn(): array => [
-        static function (Modal $modal): void {
-        },
-    ],
+    'FeedbackPage' => static fn(): array => [new FakeEnvironment()],
     'LoadMorePage' => static fn(): array => [
         static fn(int $page): Future => Future::pending(),
     ],
-    'SnackbarPage' => static fn(): array => [
-        static function (Snackbar $snackbar): void {
-        },
-    ],
+    'SnackbarPage' => static fn(): array => [new FakeEnvironment()],
 ];
 
 // ── 未接线的页必须在 $pageWiring 里，或在 $pageExempt 里**登记理由** ──

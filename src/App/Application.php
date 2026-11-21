@@ -253,8 +253,10 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         // host = $this，片只经 PumpHostHost 摸时间基准与 taskHost()。
         $this->pumps = new PumpHost($this);
 
-        // 门面只包这两个宿主片段，不碰子类覆写的 dialog/clipboard（构造期不可读）。
-        $this->environment = new AppEnvironment($this->overlayHost, $this->pumps);
+        // 门面收三样：两个窗口私有的宿主片段 + 作用域（端口来源）。
+        // ★ 端口走 `AppScope` 而不是读 `$this->dialog()`：PHP 构造链父先子后，
+        //   此刻子类字段还是 null。作用域在 `parent::__construct()` 之前就建好了。
+        $this->environment = new AppEnvironment($this->overlayHost, $this->pumps, $this->scope);
 
         // `commands()` 不在这里调：PHP 构造链父先子后，此刻子类字段还是 null。
         // 注册推迟到 `attach()`。
@@ -411,22 +413,26 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     }
 
     /**
-     * 剪贴板壳服务 —— 组合根覆写它接真平台（框架不持平台）。
+     * 剪贴板壳服务 —— 取 `AppScope` 的端口槽（组合根 `setClipboard()` 接真平台）。
      *
-     * 默认 `null` = 本应用没有剪贴板 ⇒ `Ctrl+C / X / V` 整族回落给加速键。
+     * `null` = 本应用没有剪贴板 ⇒ `Ctrl+C / X / V` 整族回落给加速键。
+     *
+     * ★ 不再要求子类覆写：端口是多窗口共享的，覆写会让"哪个窗口的剪贴板"成为
+     *   问题 —— 而它本来就不是窗口的属性。
      *
      * @api
      */
     public function clipboard(): ?Clipboard
     {
-        return null;
+        return $this->scope->clipboard();
     }
 
     /**
-     * 窗口级环境门面（notify / delay / modal）。
+     * 应用侧唯一的能力入口（{@see Environment} 的实现）。
      *
      * 页面与 Store 只该拿到它、而不是本类：门面上没有 frame / attach / input。
-     * 组合根可把它递给领域对象；dialog / clipboard 仍是组合根直传的端口。
+     * 浮层与定时器来自本窗，对话框 / 剪贴板来自 `AppScope` 的端口槽 —— 调用点
+     * 不需要区分这两种来源，这正是它存在的理由。
      *
      * @api
      */

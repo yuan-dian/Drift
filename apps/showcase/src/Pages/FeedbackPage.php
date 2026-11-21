@@ -13,6 +13,7 @@ use Drift\Widget\ScrollView;
 use Drift\Widget\Button;
 use Drift\Widget\ButtonVariant;
 use Drift\Widget\Column;
+use Drift\Widget\Environment;
 use Drift\Widget\Divider;
 use Drift\Widget\Expanded;
 use Drift\Widget\Modal;
@@ -44,8 +45,8 @@ final class FeedbackPage extends ShowcasePage
 {
     private StubState $tab = StubState::Loading;
 
-    /** @param \Closure(Modal): void $showModal 三个弹窗都走应用级模态槽 */
-    public function __construct(private readonly \Closure $showModal)
+    /** 三个弹窗都走应用级模态槽 —— 槽位是本窗唯一的，所以不需要另传句柄 */
+    public function __construct(private readonly Environment $env)
     {
     }
 
@@ -153,7 +154,7 @@ final class FeedbackPage extends ShowcasePage
     /** 可关闭的确认框（默认 `dismissible=true` ⇒ 画 X） */
     private function openConfirm(): void
     {
-        ($this->showModal)(
+        $this->env->showModal(
             Modal::make()
                 ->title('确认删除')
                 ->child(Column::make()->spacing(12.0)->children([
@@ -169,7 +170,7 @@ final class FeedbackPage extends ShowcasePage
     /** 反例：`dismissible(false)` ⇒ 没有 X、ESC 与遮罩都被吞 */
     private function openStubborn(): void
     {
-        ($this->showModal)(
+        $this->env->showModal(
             Modal::make()
                 ->title('必须处理')
                 ->dismissible(false)
@@ -184,7 +185,7 @@ final class FeedbackPage extends ShowcasePage
     /** 打开就能打字：焦点陷阱把旧焦点清空，`autoFocus()` 接住 */
     private function openRename(): void
     {
-        ($this->showModal)(
+        $this->env->showModal(
             Modal::make()
                 ->title('重命名')
                 ->child(Column::make()->spacing(12.0)->children([

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Showcase\Pages;
 use Drift\Route\Route;
+use Drift\Widget\Environment;
 use Drift\Widget\IconName;
 
 use App\Showcase\Routes\Snackbar\SnackbarServices;
@@ -33,8 +34,7 @@ use Drift\Widget\StatefulWidget;
 #[Route(id: 'snackbar', title: '通知 Snackbar', icon: IconName::Bell)]
 final class SnackbarPage extends StatefulWidget
 {
-    /** @param \Closure(\Drift\Widget\Snackbar): void $notify 只投影这一条能力 */
-    public function __construct(private readonly \Closure $notify)
+    public function __construct(private readonly Environment $env)
     {
         parent::__construct();
     }
@@ -42,7 +42,7 @@ final class SnackbarPage extends StatefulWidget
     public function createState(): State
     {
         return new ReducerState(
-            new SnackbarReducer(new SnackbarServices($this->notify)),
+            new SnackbarReducer(new SnackbarServices($this->env)),
         );
     }
 }

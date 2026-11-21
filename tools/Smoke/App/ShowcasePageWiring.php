@@ -37,11 +37,7 @@ final class ShowcasePageWiring
      */
     public static function factories(?\Closure $fetchRows = null): array
     {
-        $delay = static fn(int $milliseconds, \Closure $callback): int => 0;
-        $showModal = static function (Modal $modal): void {
-        };
-        $notify = static function (Snackbar $snackbar): void {
-        };
+        $env = new FakeEnvironment();
         $setCloseConfirm = static function (bool $enabled): void {
         };
         $rows = $fetchRows ?? static fn(int $page): Future => Future::pending();
@@ -49,12 +45,12 @@ final class ShowcasePageWiring
         return [
             AsyncTablePage::class => static fn(): Widget|Page => new AsyncTablePage($rows),
             ButtonsPage::class => static fn(): Widget|Page => new ButtonsPage(new ButtonsStore()),
-            ComboBoxPage::class => static fn(): Widget|Page => new ComboBoxPage($delay),
+            ComboBoxPage::class => static fn(): Widget|Page => new ComboBoxPage($env),
             ConcurrentFetchPage::class => static fn(): Widget|Page => new ConcurrentFetchPage($rows),
-            DialogPage::class => static fn(): Widget|Page => new DialogPage(new FakeDialog(), $setCloseConfirm),
-            FeedbackPage::class => static fn(): Widget|Page => new FeedbackPage($showModal),
+            DialogPage::class => static fn(): Widget|Page => new DialogPage($env, $setCloseConfirm),
+            FeedbackPage::class => static fn(): Widget|Page => new FeedbackPage($env),
             LoadMorePage::class => static fn(): Widget|Page => new LoadMorePage($rows),
-            SnackbarPage::class => static fn(): Widget|Page => new SnackbarPage($notify),
+            SnackbarPage::class => static fn(): Widget|Page => new SnackbarPage($env),
         ];
     }
 }

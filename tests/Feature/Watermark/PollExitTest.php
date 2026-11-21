@@ -11,6 +11,7 @@ use App\Watermark\Jobs\PollResultJob;
 use App\Watermark\Jobs\UploadBatchJob;
 use App\Watermark\Store\StatusMessage;
 use App\Watermark\Store\WatermarkStore;
+use Drift\Dev\Smoke\App\FakeEnvironment;
 use Drift\Dev\Tests\Support\RecordingTaskHost;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -102,7 +103,7 @@ final class PollExitTest extends TestCase
      */
     private function running(?\Closure $pollAnswer): array
     {
-        $timers = new ExitTimers();
+        $timers = new FakeEnvironment();
         $answers = [
             FetchSignJob::class => [
                 'account' => 'acc',
@@ -126,11 +127,7 @@ final class PollExitTest extends TestCase
         \rename($file, $path);
         $this->tmp[] = $path;
 
-        $scheduler = static function (int $ms, \Closure $callback) use ($timers): int {
-            return $timers->after($ms, $callback);
-        };
-
-        $store = new WatermarkStore($host, 'http://gw.invalid', $scheduler);
+        $store = new WatermarkStore($host, 'http://gw.invalid', $timers);
         self::assertSame(1, $store->addFiles([$path]), '夹具没被选上 ⇒ 后面全靠巧合');
         $store->setTime('2026-11-07 12:00:00');
         $store->setAddress('上海市浦东新区');
@@ -138,31 +135,5 @@ final class PollExitTest extends TestCase
         $store->submitTask();
 
         return [$store, $host, $timers];
-    }
-}
-
-/** @internal 手动交付的定时器队列（同 PollRhythmTest::FakeTimers 的形状） */
-final class ExitTimers
-{
-    /** @var list<array{0: int, 1: \Closure}> */
-    public array $ticks = [];
-
-    public function after(int $ms, \Closure $callback): int
-    {
-        $this->ticks[] = [$ms, $callback];
-
-        return \count($this->ticks);
-    }
-
-    public function count(): int
-    {
-        return \count($this->ticks);
-    }
-
-    public function run(int $index): void
-    {
-        TestCase::assertArrayHasKey($index, $this->ticks, '没有第 ' . $index . ' 拍可跑');
-
-        ($this->ticks[$index][1])();
     }
 }

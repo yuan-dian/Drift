@@ -10,10 +10,10 @@ use Drift\Widget\Widget;
 /**
  * @internal 冒烟夹具：「对话框」示例页的宿主应用（A5-①）。
  *
- * ★ 只做一件事 —— 把 `DialogPage` 挂成根，并把 `FakeDialog` 递进去。
+ * ★ 只做一件事 —— 把 `DialogPage` 挂成根，并把 {@see FakeEnvironment} 递进去。
  *   它的存在意义是让「点按钮 ⇒ 端口被调一次 ⇒ 结果写回页面」这条链在**解释器**
  *   面就能跑（真机只能证明"对话框弹出来了"，证明不了返回值怎么落到 UI 上）。
- * ★ 端口是**构造参数**而不是 `new FakeDialog()` 写死：用例要能先设 `nextPath`
+ * ★ 门面是**构造参数**而不是写死：用例要能先设 `$env->dialog->nextPath`
  *   再点按钮（"取消"与"选了文件"是两条不同的分支）。
  */
 final class DialogApplication extends Application
@@ -24,7 +24,7 @@ final class DialogApplication extends Application
      *   页面 → 应用这条方向只有它一处，用例要能证明"闭包真的被调了"。
      */
     public function __construct(
-        public readonly FakeDialog $dialog,
+        public readonly FakeEnvironment $env,
         private ?\Closure $onCloseConfirm = null,
     ) {
         parent::__construct();
@@ -32,7 +32,7 @@ final class DialogApplication extends Application
 
     public function buildRoot(): Widget
     {
-        return new DialogPage($this->dialog, function (bool $enabled): void {
+        return new DialogPage($this->env, function (bool $enabled): void {
             // ★ 先取到局部再判空：AOT 上 `$this->可空字段?->m()` 会读成 null（MEMORY 第 21 条）。
             $sink = $this->onCloseConfirm;
             if ($sink !== null) {

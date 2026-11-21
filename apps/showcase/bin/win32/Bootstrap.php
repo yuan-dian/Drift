@@ -117,16 +117,16 @@ final class Bootstrap
             ? FetchRowsJob::MODE_HTTP
             : FetchRowsJob::MODE_LOCAL;
 
-        // ★ 对话框 / 剪贴板端口从**这里**递进应用（框架不持平台，§5.1）：
+        // ★ 对话框 / 剪贴板端口装进作用域（框架不持平台，§5.1）：
         //   示例台是 `Ctrl+C/X/V` 与「对话框」页的唯一消费者。
         //   递的是**端口**不是平台实例 —— Win32 实现仍只出现在本文件。
+        $scope->setDialog($platform->dialog())->setClipboard($platform->clipboard());
+
         $main = $set->open(
             'main',
             self::WINDOW_WIDTH,
             self::WINDOW_HEIGHT,
-            static function () use ($platform, $scope, $rowsMode): ShowcaseApplication {
-                return new ShowcaseApplication($platform->dialog(), $platform->clipboard(), $scope, $rowsMode);
-            },
+            static fn (): ShowcaseApplication => new ShowcaseApplication($scope, $rowsMode),
         );
 
         // ★ 真机探针钩子（`tools/probe-close.py ... stay`）：`DRIFT_CLOSE_CONFIRM=1`

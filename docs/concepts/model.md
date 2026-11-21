@@ -52,13 +52,15 @@ UI 线程亲和：后台结果不作为回调直接改树，而是以事件形�
 
 平台实现只出现在 `bin/<platform>/Bootstrap.php`，共享源码零平台引用。控件层拿不到 `Application`，也没有 `$this->application()` 这样的方法。
 
-需要能力时有三条合规路径：
+需要能力时走 `Drift\Widget\Environment`（`Application::environment()` 的实现）。**契约住 Widget 层，实现住 App 层** —— 反过来就是 `Widget → App` 成环，那等于让控件 import 帧循环。三条判据：
 
-1. **组合根传递**：`buildRoot()` 把应用方法包成闭包当参数递下去。
-2. **框架声明式缝**：用已经接好线的 `overlayPanel()` / `tooltip()` 等能力。
-3. **环境门面**：`Application::environment()` 返回窗口级的 `AppEnvironment`（notify / delay / modal），
-   组合根把它递给 Store / 页面。门面上没有 `frame()` / `attach()` / `input()`，
-   拿到它的领域对象摸不到应用运行时；dialog / clipboard 是组合根直传的端口，不在门面上。
+1. **一个对象，不是一串闭包**：应用侧从"每加一项能力就多一个 `\Closure` 参数"变成只收一个门面；同型闭包写反是静默 bug，而门面的方法各有名字与类型。
+2. **端口被投影成值参数**：`openFile(string, array): ?string`、`clipboardText(): ?string` —— 签名里没有 `Dialog` / `Clipboard`，那两个类型住 `Drift\Platform`，写进来就等于为"控件能拿平台实现"放开整层。缺端口返回空值 + 一条 Diagnostic，不抛异常。
+3. **门面上没有 `frame()` / `attach()` / `input()`**：Store 拿到它也摸不到应用运行时。
+
+框架已经接好线的声明式缝（`overlayPanel()` / `tooltip()`）仍然有效，那些能力不需要门面。
+
+能力**向下传**依旧是显式的：`buildRoot()` 把门面交给根控件，根再交给需要它的子控件。**不做** `BuildContext::environment()` 式向上查找 —— 判据与 `theme()` 不同：主题沿途可能被 `ThemeScope` 覆盖，门面是每窗唯一那一个，藏进上下文只会让"它从哪来"更难查。
 
 焦点是一个受控例外：控件请求焦点走 `Element::requestFocus()` 到 `Pipeline::focusHost()` 注册的回调槽，这是框架内部通道，不是给控件开访问 App 层的口子。
 
@@ -68,7 +70,7 @@ UI 线程亲和：后台结果不作为回调直接改树，而是以事件形�
 - 分层由 lint 规则以 fail-closed 方式守，未登记的跨层依赖会被拦下。
 - 有意的双向边仅限同一棵树的两个视角（Widget ↔ Layout、Widget ↔ State）与主题相关的一条文件例外；不照搬 `InheritedWidget` / `BuildOwner`，那要改公开签名并引入生成物风险。
 
-深层控件拿不到环境注入通道，只能逐层传值，这是当前架构的明确边界。
+深层控件要能力仍然逐层传 —— 差别只在传的是**一个门面**而不是"N 个按需增长的闭包"。
 
 ## 有意不做的机制
 

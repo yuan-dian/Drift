@@ -7,8 +7,6 @@ use App\Watermark\Api\Config;
 use App\Watermark\Store\WatermarkStore;
 use Drift\App\Application;
 use Drift\App\AppScope;
-use Drift\App\TaskHost;
-use Drift\Platform\Dialog;
 use Drift\Widget\Widget;
 
 /**
@@ -23,44 +21,29 @@ use Drift\Widget\Widget;
  *      四个动作都是单点的（按钮 / 拖放），没有"从菜单 / 加速键 / 另一页"发起的需求
  *      ⇒ 用 `onPressed` 闭包，基类的默认 `[]` 就够。
  *
- * ★ **对话框端口不走闭包**（与 `ShowcaseApplication` 同一个理由）：`Dialog` 是一个
- *   有多种返回语义的服务（`?string` / `array` / `bool` / `void`），包成闭包会让调用点
- *   看不出返回值是什么。它是 `@api platform` 的**端口接口**，不是平台实现 ⇒ §4.3 的
- *   边界不变。排在构造器第一个且**必填**：本应用唯一的选图入口就靠它，缺端口应当
- *   在组合根当场失败，而不是让"点击选择图片"点了没反应。
+ * ★ **端口不进构造器**（2026-11-22）：对话框与后台池都是"一个进程一份"的东西 ⇒
+ *   归 `AppScope`，由组合根 `setDialog()` / `setTaskHost()` 装配。本类现在只收
+ *   一个作用域，不再有"哪个参数是必填"的问题，也不再需要把 `after()` 包成闭包
+ *   往下递 —— 门面（`environment()`）本身就是那条通路。
  */
 final class WatermarkApplication extends Application
 {
     private WatermarkStore $store;
 
     /**
-     * @param null|TaskHost $host 非 null ⇒ 全部走**后台**（§17.4.5：常驻子进程池）；
-     *   null ⇒ 同步 `ApiClient`（解释器 / 单测）。★ 组合根的"一行"就在这里。
      * @param string $apiBase 网关地址（测试传随机端口 / 假网关）
      */
     public function __construct(
-        private readonly Dialog $dialog,
-        ?TaskHost $host = null,
-        string $apiBase = Config::API_BASE,
         ?AppScope $scope = null,
+        string $apiBase = Config::API_BASE,
     ) {
-        // ★ 后台端口是**应用级**的（一个进程一个池）⇒ 放进作用域（M2 起不再靠
-        //   覆写 `taskHost()` 递给帧循环）。装配处递了 scope 就以它为准（多窗口：
-        //   N 个 Application 共用一个）。
-        parent::__construct([], $scope ?? AppScope::make()->setTaskHost($host));
+        // ★ 后台端口是**应用级**的（一个进程一个池）⇒ 由组合根放进作用域；
+        //   没给就自建一个（解释器 / 单测），与旧版逐字节相同。
+        parent::__construct([], $scope ?? AppScope::make());
 
-        // ★ 轮询节奏：把 `Application::after()` 包成闭包往下递 —— Store **不持有**
-        //   Application（纯状态，与 §4.3"Widget 不许依赖 App"是同一条纪律往上延一层）。
-        //   与 `UsersRoot::menuOpener()` 是同一个模式。
-        //   ★ 它同时是 `AsyncScope::task()` 的延时函数 ⇒ `sleep()` 用的就是它：
-        //   定时器从此只有这一个来源，应用手里没有第二个能排定时器的地方。
-        $this->store = new WatermarkStore(
-            $host,
-            $apiBase,
-            function (int $milliseconds, \Closure $callback): int {
-                return $this->after($milliseconds, $callback);
-            },
-        );
+        // ★ Store 拿到的是门面，不是 `Application` —— 它只要"排个定时器"，
+        //   不需要知道门面背后是本窗帧泵还是别的什么。
+        $this->store = new WatermarkStore($this->scope()->taskHost(), $apiBase, $this->environment());
 
         // ★ 首屏预热取一次签名（原文 `DOMContentLoaded` 里就 fetchSign）：失败不打扰
         //   用户（上传时会再取一次），意义是把那一次 RTT 挪到用户还在看界面的时候。
@@ -76,45 +59,7 @@ final class WatermarkApplication extends Application
 
     public function buildRoot(): Widget
     {
-        // ★ 选图能力以闭包形式递给 Root（Widget 不许依赖 `Drift\Platform`）——
-        //   本方法（唯一持有 `$this` 的地方）把"打开对话框 + 收进 store"包成一个
-        //   `\Closure(): void`。
-        return WatermarkRoot::make($this->store, function (): void {
-            $this->pickFiles();
-        });
-    }
-
-    /**
-     * 打开多选对话框并把选中的文件收进 store。
-     *
-     * ★ 取消 = 空数组（`Dialog::openFiles()` 的契约），**不是失败** ⇒ 静默返回，
-     *   不写任何消息。原文的 `<input type="file" multiple>` 取消时也是无事发生。
-     */
-    private function pickFiles(): void
-    {
-        $paths = $this->dialog->openFiles('选择图片', self::filters());
-        if ($paths === []) {
-            return;
-        }
-
-        $this->store->addFiles($paths);
-    }
-
-    /**
-     * 筛选表（`[显示名, 通配符]`，形状见 `Dialog::openFile()` 的文档）。
-     *
-     * ★ 通配符用 `;` 分隔（Win32 的写法）；`Win32Dialog::filterText()` 负责翻译。
-     * ★ 第二行 `*.*` 是**必要的**：原生对话框里"所有文件"这一档不写，用户就看不到
-     *   扩展名不常见的图（`.avif` / 无扩展名）—— 而"打不开"看起来像 bug。
-     *
-     * @return list<array{0: string, 1: string}>
-     */
-    private static function filters(): array
-    {
-        return [
-            ['图片文件', '*.jpg;*.jpeg;*.png;*.webp;*.bmp;*.gif'],
-            ['所有文件', '*.*'],
-        ];
+        return WatermarkRoot::make($this->store, $this->environment());
     }
 
     /** @internal 测试读法（断言"选图之后 store 里有东西"） */

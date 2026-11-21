@@ -13,7 +13,6 @@ use Drift\Commands\CommandHandler;
 use Drift\Input\AcceleratorTable;
 use Drift\Input\KeyChord;
 use Drift\Routing\NavigationStack;
-use Drift\Widget\Menu\Menu;
 use Drift\Widget\Widget;
 
 use App\Users\Commands\AppCommands;
@@ -52,25 +51,6 @@ final class UsersApplication extends Application
 
     /** @internal `buildRoot()` 被调次数（"Root 只组合"的观测面：框架只该调一次） */
     private int $rootBuilds = 0;
-
-    /**
-     * 窗口拖动闭包（P1-Stage 1b 无边框窗）；`null` = 有原生标题栏。
-     *
-     * ★ 由**组合根**在 `attach()` 之前递进来（`fn () => $window->beginDrag($handle)`）——
-     *   本类不持 `WindowHost`（§5.1：平台实现只有组合根能提），只把它当不透明闭包
-     *   转交给 `UsersRoot`。与 `menuOpener` 同一条"应用把平台能力包成闭包往下递"的路。
-     */
-    private ?\Closure $windowDrag = null;
-
-    /**
-     * 声明无边框窗（组合根在 `attach()` 之前调；`attach()` 里就会 buildRoot）。
-     *
-     * @param \Closure(): void $drag `fn () => $window->beginDrag($handle)`
-     */
-    public function windowDrag(\Closure $drag): void
-    {
-        $this->windowDrag = $drag;
-    }
 
     /**
      * 依赖装配：**就在这里**（没有 boot()）。
@@ -125,21 +105,9 @@ final class UsersApplication extends Application
     {
         $this->rootBuilds++;
 
-        // ★ 菜单打开接线：把本应用的 `showMenu()` 包成闭包递给 Root
-        //   （Widget 不许依赖 App —— §4.3；应用自己的类当然可以）。
-        $root = UsersRoot::make($this->app, $this->users, $this->form)
-            ->menuOpener(function (Menu $menu, ?\Drift\Widget\Element $anchor): void {
-                $this->showMenu($menu->panel(), $anchor);
-            })
+        return UsersRoot::make($this->app, $this->users, $this->form, $this->environment())
             // Enter 提交与按钮共用 form.submit（校验/序列化/回跳只写一份）
             ->submitHandler(fn() => $this->dispatch('form.submit'));
-
-        // ★ 无边框窗（P1-Stage 1b）：顶条当标题栏。`null` ⇒ 不动（有原生标题栏）。
-        if ($this->windowDrag !== null) {
-            $root->windowDrag($this->windowDrag);
-        }
-
-        return $root;
     }
 
     // ── @internal 测试与 devtools 读法（M3 出口判据的断言面） ──────────

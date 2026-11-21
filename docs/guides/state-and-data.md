@@ -134,7 +134,7 @@ Text::of($this->count, '计数 ')->body();             // 读：读点就在这�
 - 页面私有、跨 build、不需要恢复：放 `State`（视图粒度、草稿、悬停）。
 - 业务数据、跨页共享、别页也要读：放 `Store`，页面用 `SubjectBuilder` 订阅。
 - 需要跨进程冷启动恢复（表单、导航栈、滚动位置）：走 `AppScope::restoration()` 配 `RestorableValue` / `NavigationStack`。一个 bucket 是唯一真相源，窗口几何另归 `WindowStateStore`。
-- 一次性 UI 动作（弹通知、开模态、延时回调）：由组合根以能力闭包递下来，不塞进业务状态。
+- 一次性 UI 动作（弹通知、开模态、延时回调）：从 `Environment` 取，不塞进业务状态。
 
 判断标准不是"这个字段属于哪个页面"，而是"谁在写它、谁要读它、进程重启后还要不要它"。
 

@@ -16,6 +16,7 @@ use Drift\Widget\Center;
 use Drift\Widget\Column;
 use Drift\Widget\Each;
 use Drift\Widget\Element;
+use Drift\Widget\Environment;
 use Drift\Layout\FlexAlign;
 use Drift\Widget\Icon;
 use Drift\Widget\IconName;
@@ -39,29 +40,35 @@ use App\Watermark\Store\StatusMessage;
  *   那一刻的快照**，之后永远不变。这是本仓真机抓过的 bug（`UsersPage` 的
  *   "刷新按钮永久灰"），不是理论风险。
  * ★ 上传区**同时**接"点击"和"拖放"：
- *   - 点击走注入的 `$pickFiles`（组合根里是 `Dialog::openFiles()`）——
- *     Widget 不许依赖 `Drift\Platform`，所以用闭包。
+ *   - 点击走门面的 `openFiles()`（组合根装的是 `Win32Dialog`）——
+ *     端口类型不出 `Drift\App`，本类只看到"给我一串路径"。
  *   - 拖放走 `onFilesDropped()`（壳的 `WM_DROPFILES`，A5-②）。★ 它是**冒泡**的：
  *     落在子控件上也会找到最近的声明者，所以整块区域都能接住。
  */
 final class UploadCard extends StatelessWidget
 {
     /**
-     * @param \Closure(): void $pickFiles 打开文件对话框（组合根注入）
+     * 原生对话框的筛选表（`[显示名, 通配符]`）。
+     *
+     * ★ 通配符用 `;` 分隔（Win32 写法），`Win32Dialog::filterText()` 负责翻译。
+     * ★ 第二行 `*.*` 是**必要的**：原生对话框里"所有文件"这一档不写，用户就看不到
+     *   扩展名不常见的图（`.avif` / 无扩展名）—— 而"打不开"看起来像 bug。
      */
+    private const array IMAGE_FILTERS = [
+        ['图片文件', '*.jpg;*.jpeg;*.png;*.webp;*.bmp;*.gif'],
+        ['所有文件', '*.*'],
+    ];
+
     public function __construct(
         private readonly WatermarkStore $store,
-        private readonly \Closure $pickFiles,
+        private readonly Environment $env,
     ) {
         parent::__construct();
     }
 
-    /**
-     * @param \Closure(): void $pickFiles
-     */
-    public static function make(WatermarkStore $store, \Closure $pickFiles): self
+    public static function make(WatermarkStore $store, Environment $env): self
     {
-        return new self($store, $pickFiles);
+        return new self($store, $env);
     }
 
     public function build(BuildContext $ctx): Widget
@@ -85,7 +92,7 @@ final class UploadCard extends StatelessWidget
      */
     private function dropZone(): Widget
     {
-        $pick = $this->pickFiles;
+        $env = $this->env;
         $store = $this->store;
 
         return Column::make()
@@ -108,10 +115,16 @@ final class UploadCard extends StatelessWidget
             //   `Fatal: expects exactly 2`。
             // ★ `ownsPress: true` ⇒ 按下归本控件（跳过"激活"那条路）。这里没有
             //   子按钮，所以不存在"抢了别人的点击"。
-            ->pointer(static function (PointerEvent $e, Element $self) use ($pick): void {
+            ->pointer(static function (PointerEvent $e, Element $self) use ($env, $store): void {
                 // 抬起才算"点击"（按下就触发的话，用户按住拖走也会开对话框）
-                if ($e->isUp()) {
-                    $pick();
+                if (!$e->isUp()) {
+                    return;
+                }
+
+                // 取消 = 空数组 ⇒ 静默返回（原文 `<input type=file>` 取消时也是无事发生）
+                $paths = $env->openFiles('选择图片', self::IMAGE_FILTERS);
+                if ($paths !== []) {
+                    $store->addFiles($paths);
                 }
             }, true)
             ->onFilesDropped(static function (FilesDroppedEvent $e) use ($store): void {

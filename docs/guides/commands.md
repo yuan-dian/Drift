@@ -57,7 +57,7 @@ public function accelerators(): AcceleratorTable
 }
 ```
 
-`ShowcaseCommands` 是具名 `CommandHandler`：只认 `showcase.refresh`，别的名字返回 `false`。handler 需要的平台能力（弹通知、剪贴板、对话框、开模态）由组合根在构造时递进去——handler 住应用侧，持能力闭包是合法的，但具体平台实现仍只出现在 Bootstrap。
+`ShowcaseCommands` 是具名 `CommandHandler`：只认 `showcase.refresh`，别的名字返回 `false`。handler 需要的平台能力（弹通知、剪贴板、对话框、开模态）由组合根在构造时按需递进去——常见形态是递一个 `Environment`，handler 自己从上面取；它住应用侧，拿门面合法，但具体平台实现仍只出现在 Bootstrap。
 
 `commands()` 不在构造器里调：PHP 构造是父先子后，那时子类字段还是 null。注册推迟到 `attach()`，并用 `has()` 做可重入保护。菜单项与加速键声明了同一个名字时，`accelerators()` 必须真绑，否则按了静默无反应。
 
@@ -79,7 +79,7 @@ public function accelerators(): AcceleratorTable
 - `Application::after(int, \Closure)` 做一次性延时回调。
 - `State::asyncCommand(\Closure $task, ?\Closure $combine = null)` 把异步结果包成 `AsyncCommand`，内部 `watch()` 它并在结果变化时 `markDirty()`，卸载时 `dispose()`。
 
-组合根把 `submit()` / `after()` 以能力闭包递给页面，页面只认"给我第 N 页的结果"，背后是进程池还是 `Future::resolved` 由接线层决定。handler 里点火一个异步任务后要立刻返回 `true`（表示已受理），结果回来再走状态更新；不要把 `handle()` 阻塞在等待上。
+页面拿两样东西：`submit()` 以能力闭包递下去（它只认"给我第 N 页的结果"，背后是进程池还是 `Future::resolved` 由接线层决定），定时器从 `Environment` 上取。handler 里点火一个异步任务后要立刻返回 `true`（表示已受理），结果回来再走状态更新；不要把 `handle()` 阻塞在等待上。
 
 ## 相关
 

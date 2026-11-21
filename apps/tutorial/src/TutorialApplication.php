@@ -26,24 +26,17 @@ use Drift\Widget\Widget;
 final class TutorialApplication extends Application
 {
     /**
-     * 能力接线：把"延时回调"递下去。
+     * 能力接线：递**门面**，不递闭包、也不递 `$this`。
      *
-     * ★ **为什么需要这一步**：`after()` 住 `Application` 上，而控件层够不到它
-     *   —— §4.3 禁 `Widget → App`（`$this->application()` 这个方法**不存在**，
-     *   而 tpc **不校验**方法存在性 ⇒ 写错了照样编译通过、smoke 也全绿，
-     *   真机一点就崩）。所以能力只能由**唯一持有 `$this` 的地方**（这里）
-     *   包成闭包往下递。
-     *
-     * ★ 递的是 `\Closure` 而不是 `$this`：页面拿到的是"能延时"这一个能力，
-     *   不是整个 `Application`。边界不变。
+     * ★ 控件层够不到 `Application` —— §4.3 禁 `Widget → App`（`$this->application()`
+     *   这个方法**不存在**，而 tpc **不校验**方法存在性 ⇒ 写错了照样编译通过、
+     *   smoke 也全绿，真机一点就崩）。所以能力只能由唯一持有 `$this` 的地方递下去。
+     * ★ 门面上没有 `frame()` / `attach()` / `input`：页面拿到的是一组能力，
+     *   不是整个应用。边界没有放松。
      */
     public function buildRoot(): Widget
     {
-        return TutorialPage::make(
-            function (int $milliseconds, \Closure $callback): void {
-                $this->after($milliseconds, $callback);
-            },
-        );
+        return TutorialPage::make($this->environment());
     }
 
     public function title(): string

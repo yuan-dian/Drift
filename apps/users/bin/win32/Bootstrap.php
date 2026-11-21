@@ -148,7 +148,10 @@ final class Bootstrap
         $app = $window->app();
 
         $host->setFrameless($handle, 0);
-        $app->windowDrag(static function () use ($host, $handle): void {
+        // ★ 注册到门面而不是应用：`Application` 不该长出一个"窗口拖动"字段，
+        //   它只是个转发口。注册之后 `UsersRoot` 用 `supportsWindowDrag()` 判
+        //   "画不画三个自绘按钮"，两件事因此同源。
+        $app->environment()->setWindowDrag(static function () use ($host, $handle): void {
             $host->beginDrag($handle);
         });
 

@@ -6,8 +6,8 @@ use Drift\Route\Route;
 use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\ShowcasePage;
 use Drift\Geometry\EdgeInsets;
-use Drift\Platform\Dialog;
 use Drift\Widget\BuildContext;
+use Drift\Widget\Environment;
 use Drift\Widget\Button;
 use Drift\Widget\ButtonVariant;
 use Drift\Widget\Card;
@@ -34,19 +34,20 @@ use Drift\Widget\Wrap;
  * ★ **按钮回调里直接调**（同步阻塞）是**正确写法**，不是偷懒：原生对话框是模态的，
  *   它没有"完成事件"可挂。代价写在「能力边界」第 ① 条里。
  *
- * ★ `$dialog` **由组合根递进来**（`ShowcaseRoot` → 本页）：`State` 上没有
- *   `application()` 访问器（禁 `Widget → App`），平台名只出现在组合根。
- *   ★ 形参**不可空**：`?Dialog` 字段在 AOT 侧退化 `php::Var`（PITFALLS 第 20 条）。
+ * ★ 对话框能力从门面拿（`$env->openFile()` / `saveFile()` / `alert()` / `confirm()`）：
+ *   `Drift\Platform\Dialog` 的类型不出 `Drift\App`，本页不再 import 平台。
+ *   `Environment` 的端口方法缺实现时返回 `null` / `false` —— 与"用户点了取消"
+ *   同一个出口，本页因此不需要区分"没端口"和"没选"。
  */
 #[Route(id: 'dialog', title: '对话框 Dialog', icon: IconName::Info)]
 final class DialogPage extends ShowcasePage
 {
     /**
-     * @param Dialog $dialog 平台端口，组合根注入（本页不碰 Application）
+     * @param Environment $env 窗口能力门面（本页只用它的四个端口方法）
      * @param \Closure(bool): void $setCloseConfirm 应用的关闭守卫开关（一等可调用）
      */
     public function __construct(
-        private readonly Dialog $dialog,
+        private readonly Environment $env,
         private readonly \Closure $setCloseConfirm,
     ) {
     }
@@ -164,7 +165,7 @@ final class DialogPage extends ShowcasePage
 
     private function pickFile(): void
     {
-        $path = $this->dialog->openFile('打开一个文件', self::filters());
+        $path = $this->env->openFile('打开一个文件', self::filters());
 
         if ($path === null) {
             $this->setState(function (): void {
@@ -185,7 +186,7 @@ final class DialogPage extends ShowcasePage
 
     private function pickSaveTarget(): void
     {
-        $path = $this->dialog->saveFile('选保存位置', '未命名.md', self::filters());
+        $path = $this->env->saveFile('选保存位置', '未命名.md', self::filters());
 
         if ($path === null) {
             $this->setState(function (): void {
@@ -206,7 +207,7 @@ final class DialogPage extends ShowcasePage
 
     private function alert(): void
     {
-        $this->dialog->alert('提示', '这是一个原生 MessageBoxW：它不依赖渲染栈，'
+        $this->env->alert('提示', '这是一个原生 MessageBoxW：它不依赖渲染栈，'
             . '所以应用画不出来的时候它还能弹。');
     }
 
@@ -229,7 +230,7 @@ final class DialogPage extends ShowcasePage
 
     private function ask(): void
     {
-        $yes = $this->dialog->confirm('确认', '要执行这个动作吗？默认按钮是「否」。');
+        $yes = $this->env->confirm('确认', '要执行这个动作吗？默认按钮是「否」。');
 
         $this->setState(function () use ($yes): void {
             if ($yes) {

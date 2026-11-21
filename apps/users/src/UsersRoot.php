@@ -11,6 +11,8 @@ use Drift\Theme\ThemeScope;
 use Drift\Widget\AppBar;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Dock;
+use Drift\Widget\Element;
+use Drift\Widget\Environment;
 use Drift\Widget\Menu\Menu;
 use Drift\Widget\Menu\MenuBar;
 use Drift\Widget\Menu\MenuItem;
@@ -29,59 +31,34 @@ use App\Users\Widgets\StatusBar;
 /**
  * 组合根（§A.2.6 / §12.2）：**只组合，不写任何具体布局**。
  *
- * ★ 三件共享态由构造点注入；订阅点全在控件内部（`StatusBar` / `PageHost` /
- *   页面里的 `SubjectBuilder`）—— 值**不在这里读**（"Root 只组合"由 lint 的
- *   `dependency-direction` + 评审共同守）。
- * ★ **菜单打开接线由外部注入**（`$menuOpener`）：Widget 不许依赖 App（§4.3）⇒
- *   `UsersApplication::buildRoot()` 把自己的 `showMenu()` 包成闭包传进来。
+ * ★ 三件共享态 + 一个门面由构造点注入；订阅点全在控件内部（`StatusBar` /
+ *   `PageHost` / 页面里的 `SubjectBuilder`）—— 值**不在这里读**（"Root 只组合"
+ *   由 lint 的 `dependency-direction` + 评审共同守）。
+ * ★ 菜单打开与窗口拖动都走 `Environment`：这两件事以前各是一条注入闭包
+ *   （`menuOpener` / `windowDrag`），类型都是 `\Closure` ⇒ 写反是静默 bug，
+ *   而且"注入点有几个"取决于这款应用恰好要什么能力。
  */
 final class UsersRoot extends StatelessWidget
 {
-    /** @var null|callable(Menu, ?\Drift\Widget\Element): void */
-    private $menuOpener = null;
-
     /** @var null|callable(): void `Enter` 提交（见 `submitHandler()`） */
     private ?\Closure $submitForm = null;
-
-    /**
-     * 窗口拖动闭包（P1-Stage 1b 无边框窗）；`null` = 有原生标题栏，顶条不是标题栏。
-     *
-     * ★ 非 null 就**同时**意味着两件事：顶条可拖动 + 画三个窗口按钮。它们不是
-     *   两个开关而是同一件事的两面 —— "无边框"这个事实的两个后果。分成两个
-     *   注入点会让"可拖但没按钮"（拖得动、关不掉）这种状态写得出来。
-     */
-    private ?\Closure $windowDrag = null;
 
     public function __construct(
         private readonly AppStore $app,
         private readonly UserStore $users,
         private readonly SignupForm $form,
+        private readonly Environment $env,
     ) {
         parent::__construct();
     }
 
-    public static function make(AppStore $app, UserStore $users, SignupForm $form): self
-    {
-        return new self($app, $users, $form);
-    }
-
-    /**
-     * 菜单打开回调（应用侧接线）。
-     *
-     * @param callable(Menu, ?\Drift\Widget\Element): void $opener
-     */
-    public function menuOpener(callable $opener): static
-    {
-        $this->mutate();
-        $this->menuOpener = $opener(...);
-
-        return $this;
-    }
-
-    /** @internal 读法（测试断言"接线到位"）；`null` ⇒ 菜单点了没反应 */
-    public function menuOpenerHandler(): ?\Closure
-    {
-        return $this->menuOpener;
+    public static function make(
+        AppStore $app,
+        UserStore $users,
+        SignupForm $form,
+        Environment $env,
+    ): self {
+        return new self($app, $users, $form, $env);
     }
 
     /** @param callable(): void $submit 组合根递的 `fn () => $this->dispatch('form.submit')` */
@@ -93,22 +70,10 @@ final class UsersRoot extends StatelessWidget
         return $this;
     }
 
-    /**
-     * 声明"顶条就是标题栏"（P1-Stage 1b 无边框窗）：可拖窗 + 画窗口按钮。
-     *
-     * @param \Closure(): void $drag 组合根递的 `fn () => $window->beginDrag($handle)`
-     */
-    public function windowDrag(\Closure $drag): static
-    {
-        $this->mutate();
-        $this->windowDrag = $drag;
-
-        return $this;
-    }
-
     public function build(BuildContext $ctx): Widget
     {
         $theme = $ctx->theme();
+        $env = $this->env;
 
         $bar = AppBar::make()->title('用户管理')->children([
             NavButton::make('列表')->command('nav.users'),
@@ -121,14 +86,21 @@ final class UsersRoot extends StatelessWidget
                     MenuItem::make('返回')->chord(KeyChord::alt('Left'))->command('nav.back'),
                     MenuItem::separator(),
                     MenuItem::make('退出')->command('app.quit'),
-                ])->onOpen($this->menuOpener ?? static function (Menu $m, ?\Drift\Widget\Element $a): void {
-                }),
+                ])->onOpen(
+                    // 菜单对象自己会造面板，锚点是命中它的那个元素
+                    static function (Menu $menu, ?Element $anchor) use ($env): void {
+                        $env->showMenu($menu->panel(), $anchor);
+                    },
+                ),
             ]),
         ]);
 
-        // ★ 无边框窗：顶条当标题栏（可拖 + 三个窗口按钮）。两件事同源，见字段注释。
-        if ($this->windowDrag !== null) {
-            $bar->windowDrag($this->windowDrag)->windowButtons(true);
+        // ★ 无边框窗：顶条当标题栏（可拖 + 三个窗口按钮）。两件事同源 ——
+        //   "无边框"这个事实的两个后果，分成两个开关会写出"可拖但关不掉"。
+        if ($env->supportsWindowDrag()) {
+            $bar->windowDrag(static function () use ($env): void {
+                $env->startWindowDrag();
+            })->windowButtons(true);
         }
 
         return ThemeScope::make($theme, Dock::make()

@@ -8,6 +8,7 @@ use App\Showcase\Routes\Snackbar\SnackbarEvent;
 use App\Showcase\Routes\Snackbar\SnackbarIntent;
 use App\Showcase\Routes\Snackbar\SnackbarModel;
 use App\Showcase\Routes\Snackbar\SnackbarServices;
+use Drift\Dev\Smoke\App\FakeEnvironment;
 use App\Showcase\Routes\SnackbarReducer;
 use Drift\Reducer\ReducerUpdate;
 use Drift\Widget\Snackbar;
@@ -25,10 +26,7 @@ final class SnackbarReducerTest extends TestCase
 {
     private function route(): SnackbarReducer
     {
-        return new SnackbarReducer(new SnackbarServices(
-            static function (Snackbar $snackbar): void {
-            },
-        ));
+        return new SnackbarReducer(new SnackbarServices(new FakeEnvironment()));
     }
 
     #[Test]

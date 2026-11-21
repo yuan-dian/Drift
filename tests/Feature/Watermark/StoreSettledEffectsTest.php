@@ -14,6 +14,7 @@ use App\Watermark\Store\WatermarkStore;
 use Drift\App\Job;
 use Drift\App\TaskHost;
 use Drift\Async\Future;
+use Drift\Dev\Smoke\App\FakeEnvironment;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -87,34 +88,29 @@ final class StoreSettledEffectsTest extends TestCase
     public function 查询每轮只排一个定时器(): void
     {
         $host = new DeferredHost();
-        /** @var list<array{0: int, 1: \Closure}> $ticks */
-        $ticks = [];
-        [$store] = $this->started($host, static function (int $ms, \Closure $cb) use (&$ticks): int {
-            $ticks[] = [$ms, $cb];
-
-            return \count($ticks);
-        });
+        $env = new FakeEnvironment();
+        [$store] = $this->started($host, $env);
 
         // 上传结算 ⇒ 才能提交；提交 ⇒ 建任务结算 ⇒ **立刻**查一次（不等一个间隔）
         $host->futureAt(1)->resolve(['keys' => ['k1']]);
         $store->submitTask();
         $host->futureAt(2)->resolve(['taskId' => 'T-1']);
         self::assertSame(PollResultJob::class, $host->nameAt(3));
-        self::assertCount(0, $ticks, '查询还在途就排了定时器 ⇒ 会和这次查询并行');
+        self::assertCount(0, $env->ticks, '查询还在途就排了定时器 ⇒ 会和这次查询并行');
 
         // 进度通知不排期（迁移前这里是"每轮两个定时器"的入口）
         $host->futureAt(3)->reportProgress(0.9);
-        self::assertCount(0, $ticks, '查询的进度通知排了定时器');
+        self::assertCount(0, $env->ticks, '查询的进度通知排了定时器');
 
         // 结算成"处理中" ⇒ 恰好排一拍，间隔来自 Config
         $host->futureAt(3)->resolve(self::pendingResult());
-        self::assertCount(1, $ticks, '结算后没有恰好排一拍');
-        self::assertSame(Config::POLL_INTERVAL_MS, $ticks[0][0], '间隔必须来自 Config，不能在别处写死');
+        self::assertCount(1, $env->ticks, '结算后没有恰好排一拍');
+        self::assertSame(Config::POLL_INTERVAL_MS, $env->ticks[0][0], '间隔必须来自 Config，不能在别处写死');
 
         // 交付这一拍 ⇒ 再查一次，且**这一刻仍只有一个定时器在册**
-        ($ticks[0][1])();
+        $env->run(0);
         self::assertSame(2, $host->countOf(PollResultJob::class), '排了的那一拍没有真的去查');
-        self::assertCount(1, $ticks, '第 2 次查询在途时又冒出一个定时器 ⇒ 2ⁿ 增长的老事故');
+        self::assertCount(1, $env->ticks, '第 2 次查询在途时又冒出一个定时器 ⇒ 2ⁿ 增长的老事故');
         self::assertTrue($store->isPolling());
     }
 
@@ -122,13 +118,8 @@ final class StoreSettledEffectsTest extends TestCase
     public function 轮询中提交任务会被挡住而不是起第二条(): void
     {
         $host = new DeferredHost();
-        /** @var list<\Closure> $ticks */
-        $ticks = [];
-        [$store] = $this->started($host, static function (int $ms, \Closure $cb) use (&$ticks): int {
-            $ticks[] = $cb;
-
-            return \count($ticks);
-        });
+        $env = new FakeEnvironment();
+        [$store] = $this->started($host, $env);
 
         $host->futureAt(1)->resolve(['keys' => ['k1']]);
         $store->submitTask();
@@ -155,21 +146,16 @@ final class StoreSettledEffectsTest extends TestCase
     public function 停止轮询后迟到的查询结果不落地也不再下载(): void
     {
         $host = new DeferredHost();
-        /** @var list<\Closure> $ticks */
-        $ticks = [];
-        [$store] = $this->started($host, static function (int $ms, \Closure $cb) use (&$ticks): int {
-            $ticks[] = $cb;
-
-            return \count($ticks);
-        });
+        $env = new FakeEnvironment();
+        [$store] = $this->started($host, $env);
 
         $host->futureAt(1)->resolve(['keys' => ['k1']]);
         $store->submitTask();
         $host->futureAt(2)->resolve(['taskId' => 'T-1']);
         $host->futureAt(3)->resolve(self::pendingResult());
-        self::assertCount(1, $ticks, '夹具前提：第一次查询结算后排了一拍');
+        self::assertCount(1, $env->ticks, '夹具前提：第一次查询结算后排了一拍');
 
-        ($ticks[0])();
+        $env->run(0);
         self::assertSame(2, $host->countOf(PollResultJob::class), '夹具前提：第二次查询已在途');
         self::assertTrue($store->isPolling());
 
@@ -177,7 +163,7 @@ final class StoreSettledEffectsTest extends TestCase
 
         self::assertFalse($store->isPolling(), '取消后阶段没有归位 ⇒ "停止轮询"按钮永远挂着');
         self::assertTrue($store->canUpload(), '取消后应该回到可操作态');
-        self::assertCount(1, $ticks, '停止之后又排了一拍');
+        self::assertCount(1, $env->ticks, '停止之后又排了一拍');
         self::assertSame(
             StatusMessage::INFO,
             $store->statusLine()->kind,
@@ -198,14 +184,14 @@ final class StoreSettledEffectsTest extends TestCase
     // ══════════════════ 夹具 ══════════════════
 
     /** 起一个走到「签名已到手、上传在途」的 store */
-    private function started(DeferredHost $host, ?\Closure $scheduler = null): array
+    private function started(DeferredHost $host, ?FakeEnvironment $env = null): array
     {
         $file = (string) \tempnam(\sys_get_temp_dir(), 'drift-wm-');
         $path = $file . '.jpg';
         \rename($file, $path);
         $this->tmp[] = $path;
 
-        $store = new WatermarkStore($host, 'http://gw.invalid', $scheduler);
+        $store = new WatermarkStore($host, 'http://gw.invalid', $env);
         self::assertSame(1, $store->addFiles([$path]), '夹具没被选上 ⇒ 后面全靠巧合');
         $store->setTime('2026-11-04 12:00:00');
         $store->setAddress('上海市浦东新区');

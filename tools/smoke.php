@@ -39,6 +39,7 @@ use Drift\Dev\Smoke\App\TaskApplication;
 use Drift\Dev\Smoke\App\TaskRowJob;
 use Drift\Dev\Smoke\App\ThrowingJob;
 use Drift\Dev\Smoke\App\SumJob;
+use Drift\App\AppScope;
 use Drift\App\Completion;
 use Drift\Async\Future;
 use Drift\App\Io\IoPoller;
@@ -50,7 +51,6 @@ use Drift\App\ProcessTaskHost;
 use Drift\App\SyncTaskHost;
 use Drift\App\TaskHost;
 use App\Users\UsersApplication;
-use App\Users\UsersRoot;
 use App\Users\Jobs\JobRegistry;
 use App\Users\Store\MemoryUserSource;
 use App\Users\Store\UserStore;
@@ -3600,7 +3600,7 @@ check(
 // ★ 视口取 **1920×1017**（真机客户区的实测值）：示例台左导航有 22 项，
 //   800 高会 `RenderFlex 放不下` 直接 FATAL（那是视口不够，不是缺陷）——
 //   夹具必须用真实尺寸，否则断言红得没有意义。
-$sc2App = new ShowcaseApplication(new FakeDialog());
+$sc2App = new ShowcaseApplication(AppScope::make()->setDialog(new FakeDialog()));
 $sc2Surface = new SurfaceProbe();
 $sc2Surface->resize(1920, 1017, 1.0);
 $sc2Constraints = BoxConstraints::loose(new Size(1920.0, 1017.0));
@@ -4065,17 +4065,8 @@ check(
     $usersApp->signupForm()->errorOf('name') === '姓名不能为空',
 );
 
-// ⑤ 菜单打开接线（Widget 不许依赖 App ⇒ 应用把 showMenu 包成闭包传进来）
-$openerInjected = 0;
-$probeRoot = UsersRoot::make($usersApp->appStore(), $usersApp->userStore(), $usersApp->signupForm())
-    ->menuOpener(function () use (&$openerInjected): void {
-        $openerInjected++;
-    });
-check(
-    'apps/users · 菜单 opener 可注入（Root 只组合，打开归应用）',
-    $probeRoot->menuOpenerHandler() instanceof Closure,
-);
-unset($probeRoot);
+// ⑤ 菜单打开接线：菜单的 `onOpen` 直接调门面的 `showMenu()`（以前是应用包一个
+//    闭包递进来）。机制本身由 ⑥ 端到端覆盖 —— 单测"闭包注入成功"已经没有对象。
 
 // ⑥ 菜单端到端：Tab 到菜单标题（焦点链第 4 个）⇒ Enter ⇒ 浮层真的开了
 for ($i = 0; $i < 4; $i++) {

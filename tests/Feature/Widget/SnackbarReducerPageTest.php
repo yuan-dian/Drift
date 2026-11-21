@@ -18,6 +18,7 @@ use Drift\Theme\ThemeData;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
 use Drift\Widget\Element;
+use Drift\Dev\Smoke\App\FakeEnvironment;
 use Drift\Widget\Snackbar;
 use Drift\Widget\Text;
 
@@ -33,8 +34,8 @@ use Drift\Widget\Text;
  */
 final class SnackbarReducerPageTest extends SmokeTestCase
 {
-    /** @var list<Snackbar> */
-    private array $notified = [];
+    /** 页面拿到的门面（`$env->notified` 是通知的落地处） */
+    private FakeEnvironment $env;
 
     public function testInteractionsFlowThroughUpdateAndApply(): void
     {
@@ -43,9 +44,9 @@ final class SnackbarReducerPageTest extends SmokeTestCase
         check('Snackbar 路由 · 初始渲染显示「已撤销 0 次」', $this->hasText($root, '已撤销 0 次'));
 
         $this->click($root, '删除一条');
-        check('Snackbar 路由 · 点删除弹出一条通知', 1 === \count($this->notified));
+        check('Snackbar 路由 · 点删除弹出一条通知', 1 === \count($this->env->notified));
 
-        $snackbar = $this->notified[0] ?? null;
+        $snackbar = $this->env->notified[0] ?? null;
         check(
             'Snackbar 路由 · 通知文案来自 effect',
             $snackbar instanceof Snackbar && '已删除「草稿.docx」' === $snackbar->messageValue(),
@@ -67,15 +68,15 @@ final class SnackbarReducerPageTest extends SmokeTestCase
         );
 
         $this->click($root, '推三条');
-        check('Snackbar 路由 · 推三条一次入队三条', 4 === \count($this->notified));
+        check('Snackbar 路由 · 推三条一次入队三条', 4 === \count($this->env->notified));
         check(
             'Snackbar 路由 · FIFO 顺序保持',
-            '第 1 条：立刻显示' === ($this->notified[1]->messageValue() ?? '')
-            && '第 3 条：排在最后' === ($this->notified[3]->messageValue() ?? ''),
+            '第 1 条：立刻显示' === ($this->env->notified[1]->messageValue() ?? '')
+            && '第 3 条：排在最后' === ($this->env->notified[3]->messageValue() ?? ''),
         );
 
         $this->click($root, '弹一条错误');
-        $last = $this->notified[4] ?? null;
+        $last = $this->env->notified[4] ?? null;
         check(
             'Snackbar 路由 · duration(0) 落到框架（不自动消失）',
             $last instanceof Snackbar && 0 === $last->durationValue(),
@@ -111,12 +112,7 @@ final class SnackbarReducerPageTest extends SmokeTestCase
     {
         Errors::reset();
         LayoutTolerance::reset();
-        $this->notified = [];
-
-        $notified = &$this->notified;
-        $notify = static function (Snackbar $snackbar) use (&$notified): void {
-            $notified[] = $snackbar;
-        };
+        $this->env = new FakeEnvironment();
 
         $context = new BuildContext(
             940.0,
@@ -128,7 +124,7 @@ final class SnackbarReducerPageTest extends SmokeTestCase
             ),
         );
 
-        $root = (new SnackbarPage($notify))->createElement();
+        $root = (new SnackbarPage($this->env))->createElement();
         $root->mount(null, $context);
         LayoutTolerance::withinWindow(static function () use ($root): void {
             (new Frame(new RecordingSurface()))->run(

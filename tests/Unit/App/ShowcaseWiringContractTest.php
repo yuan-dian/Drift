@@ -6,7 +6,6 @@ namespace Drift\Dev\Tests\Unit\App;
 use App\Showcase\Routes\ShowcaseRoutes;
 use App\Showcase\ShowcaseApplication;
 use App\Showcase\ShowcaseRoot;
-use Drift\Dev\Smoke\App\FakeDialog;
 use Drift\Routing\NavEntry;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -27,7 +26,7 @@ final class ShowcaseWiringContractTest extends TestCase
     #[Test]
     public function 每个需要依赖的页面都在工厂表里(): void
     {
-        $factories = (new ShowcaseApplication(new FakeDialog()))->pageFactories();
+        $factories = (new ShowcaseApplication())->pageFactories();
         $descriptors = ShowcaseRoutes::catalog()->all();
 
         $pageClasses = [];
