@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Dev\Tests\Unit\App;
 
 use App\Showcase\Routes\ShowcaseRoutes;
+use App\Showcase\Stores\ButtonsStore;
 use App\Showcase\ShowcaseCapabilities;
 use App\Showcase\ShowcaseRoot;
 use Drift\Async\Future;
@@ -19,9 +20,9 @@ use PHPUnit\Framework\TestCase;
  *
  * ## ① 能力束的构造参数名与顺序
  *
- * `ShowcaseCapabilities` 是 6 个位置参数，其中 5 个都是 `\Closure`（解释器对多余
- * 实参不报错、AOT 才校验个数）。把 notify 与 delay 写反、或少写一个闭包，两个测试
- * 构造点全是同形空闭包，一样全绿，真机点下去才 Fatal。
+ * `ShowcaseCapabilities` 是 6 个必填位置参数 + 1 个可选共享状态，其中 5 个必填是
+ * `\Closure`（解释器对多余实参不报错、AOT 才校验个数）。把 notify 与 delay 写反、
+ * 或少写一个闭包，两个构造点全是同形空闭包，一样全绿，真机点下去才 Fatal。
  * ⇒ 用反射直接钉住**构造器签名**（判据与实现同源的反面：这里读的是签名本身）。
  *
  * ## ② 导航 id 与 AutomationId 声明
@@ -34,7 +35,9 @@ use PHPUnit\Framework\TestCase;
 final class ShowcaseCapabilitiesContractTest extends TestCase
 {
     /** @return list<string> */
-    private const CAP_NAMES = ['notify', 'delay', 'showModal', 'dialog', 'setCloseConfirm', 'fetchRows'];
+    private const CAP_NAMES = [
+        'notify', 'delay', 'showModal', 'dialog', 'setCloseConfirm', 'fetchRows', 'buttons',
+    ];
 
     #[Test]
     public function 能力束构造参数名与顺序固定(): void
@@ -50,8 +53,8 @@ final class ShowcaseCapabilitiesContractTest extends TestCase
         self::assertSame(
             self::CAP_NAMES,
             $actual,
-            '能力束是 6 个位置参数，顺序即契约：写反两个闭包解释器不报错、真机才 Fatal。'
-            . ' 新增能力必须显式改这里（不是自动跟随），因为每加一样都要同步组合根与页面。'
+            '能力束前 6 个是必填位置参数，顺序即契约：写反两个闭包解释器不报错、真机才 Fatal。'
+            . ' 第 7 个是可选的共享状态；新增能力必须显式改这里（不是自动跟随）。'
         );
     }
 
@@ -75,10 +78,11 @@ final class ShowcaseCapabilitiesContractTest extends TestCase
                 'dialog' => Dialog::class,
                 'setCloseConfirm' => 'Closure',
                 'fetchRows' => 'Closure',
+                'buttons' => '?' . ButtonsStore::class,
             ],
             $types,
-            'dialog 是有四种返回语义的端口接口，不闭包化；其余五个是单向动作闭包。'
-            . ' 类型被改（尤其 dialog 退化成 Closure）会让调用点失去返回值形态。'
+            'dialog 是有四种返回语义的端口接口，不闭包化；前五个是单向动作闭包。'
+            . ' 第 7 个是可选共享状态：省略则新建，组合根传同一个实例即可跨页保活。'
         );
     }
 
@@ -92,6 +96,7 @@ final class ShowcaseCapabilitiesContractTest extends TestCase
             'dialog' => [[], Dialog::class],
             'setCloseConfirm' => [['enabled' => 'bool'], 'void'],
             'fetchRows' => [['page' => 'int'], Future::class],
+            'buttons' => [[], ButtonsStore::class],
         ];
 
         foreach ($expected as $name => [$params, $return]) {
