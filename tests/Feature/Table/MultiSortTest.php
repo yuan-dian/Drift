@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Table;
 
-use App\Showcase\Pages\TablePage;
+use App\Showcase\Models\UserDirectory;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
@@ -268,12 +268,10 @@ final class MultiSortTest extends SmokeTestCase
             ['id' => 3, 'name' => 'C', 'email' => 'c@x', 'city' => '上海'],
         ];
 
-        // 单类页面：TablePage 自身就是持有状态与算法的实例，用 `$page::class` 反射。
-        $page = new TablePage();
-        (new \ReflectionProperty($page::class, 'allRows'))->setValue($page, $rows);
-        $method = new \ReflectionMethod($page::class, 'sortedRows');
+        // 排序规则在 `UserDirectory` 里 —— 纯对象，直接 new，不必挂树也不必反射
+        $dir = new UserDirectory($rows);
 
-        $asc = $method->invoke($page, TableSort::by('city')->thenBy('name'));
+        $asc = $dir->sortedBy(TableSort::by('city')->thenBy('name'));
         $ids = [];
         foreach ($asc ?? [] as $row) {
             $ids[] = $row['id'];
@@ -285,8 +283,7 @@ final class MultiSortTest extends SmokeTestCase
             'ids=' . \implode(',', $ids),
         );
 
-        $desc = $method->invoke(
-            $page,
+        $desc = $dir->sortedBy(
             TableSort::by('city', TableSortDirection::Descending)->thenBy('name'),
         );
         $descIds = [];

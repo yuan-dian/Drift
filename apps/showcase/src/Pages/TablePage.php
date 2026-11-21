@@ -5,6 +5,7 @@ namespace App\Showcase\Pages;
 use Drift\Route\Route;
 use Drift\Widget\IconName;
 use App\Showcase\Pages\Base\ShowcasePage;
+use App\Showcase\Models\UserDirectory;
 use Drift\Core\Computed;
 use Drift\Geometry\EdgeInsets;
 use Drift\State\Cell;
@@ -55,9 +56,10 @@ use Drift\Widget\Widget;
  *   排序不同：排序变了要换数据（`Computed` 重算），页面本来就得重建，所以
  *   `sort` 走值形态。
  *
- * ★ **排序由本页重排**（不是控件）：`Table` 不知道 `$row` 里 `name` 是中文还是
- *   日期，比较规则只有应用知道。看 `comparators()` —— 连"状态"这个**派生列**都能排，
- *   因为闭包与 `sortable()` 互不约束。
+ * ★ **排序规则住在 `UserDirectory`，不住页面**（见该类注释）：`Table` 不知道
+ *   `$row` 里 `name` 是中文还是日期，比较规则只有应用知道；连"状态"这个
+ *   **派生列**都能排，因为闭包与 `sortable()` 互不约束。这些是纯逻辑，
+ *   挂树之后就只剩反射能测。
  *
  * ★ **诚实边界**（页面底部也写了一句）：无 Ctrl+方向键扩选、无拖动框选 ——
  *   都是阶段 7 后半及其前置。单元格编辑已在（阶段 7a 键盘 / 7b 指针：单击落格、
@@ -74,9 +76,6 @@ final class TablePage extends ShowcasePage
     private const ROW_HEIGHT = 40.0;
     private const HEADER_HEIGHT = 40.0;
 
-    /** @var list<string> */
-    private const CITIES = ['北京', '上海', '广州', '深圳', '杭州'];
-
     /**
      * 选中集 —— **通道形态**：`Table` 在它自己的 `build()` 里读，所以点行只重建
      * 表格子树。值形态（`selection(值)`）要求每次点击都用 `setState` 重建整页。
@@ -89,19 +88,22 @@ final class TablePage extends ShowcasePage
     /**
      * 数据版本 —— `onCellEdit` 改完行内容后 +1，让派生行重算。
      *
-     * ★ 为什么不用"数组身份"当依赖：`allRows` 是普通字段，不是通道；`Computed`
-     *   只认通道的版本。改完数据发一次信号，比"每次 build 都重新排序"便宜得多。
+     * ★ 为什么不用"数据身份"当依赖：`UserDirectory` 是普通对象，不是通道；
+     *   `Computed` 只认通道的版本。改完数据发一次信号，比"每次 build 都重新排序"
+     *   便宜得多 —— 一万行的归并排序不该跟着滚动发生。
      */
     private Cell $dataVersion;
 
     /**
-     * 原始行 —— 只造一次。
+     * 数据 + 排序规则（**不挂树的纯逻辑**）。
      *
-     * ★ 这一条是本页的真 bug 修复（加排序时发现）：原先 `rows()` 是在 `build()`
-     *   里调的，也就是**每次 build 都重新格式化 10000 行字符串**（滚动一格、
-     *   悬停换行、加选一项都算一次 build）。虚拟化省下的正是这笔钱。
+     * ★ 原先这些规则住在本页，于是"主键相等才轮到次键"只能用反射进页面私有方法
+     *   来验。搬到 {@see UserDirectory} 之后测试直接 `new`，页面只管组装。
+     * ★ 只造一次：以前 `rows()` 是在 `build()` 里调的，等于每次 build 都重新
+     *   格式化 10000 行字符串（滚动一格、悬停换行都算一次 build）——虚拟化省下
+     *   的正是这笔钱，不能在数据侧又花回去。
      */
-    private array $allRows = [];
+    private UserDirectory $directory;
 
     /** 当前显示的行（排序后的派生值，`Computed` 缓存到下一次排序 / 改数据） */
     private Computed $rows;
@@ -122,14 +124,14 @@ final class TablePage extends ShowcasePage
         $version = Cell::of(0)->named('table.dataVersion');
         $this->sort = $sort;
         $this->dataVersion = $version;
-        $this->allRows = self::generateRows();
+        $this->directory = UserDirectory::seed(self::ROWS);
 
         // 只钉两个格子，不把整页钉进依赖图：sort 变或数据变才重排。
         $this->rows = Computed::of(function () use ($sort, $version): array {
             $version->get();
             $current = $sort->get();
 
-            return $this->sortedRows($current instanceof TableSort ? $current : TableSort::none());
+            return $this->directory->sortedBy($current instanceof TableSort ? $current : TableSort::none());
         });
     }
 
@@ -209,11 +211,8 @@ final class TablePage extends ShowcasePage
     /** 写回一行并让派生行重算（`onCellEdit` 的落点，事件期、不在 build 里） */
     private function editCell(int $rowKey, string $column, string $value): void
     {
-        foreach ($this->allRows as $index => $row) {
-            if ((int) $row['id'] === $rowKey) {
-                $this->allRows[$index][$column] = $value;
-                break;
-            }
+        if (!$this->directory->update($rowKey, $column, $value)) {
+            return; // 没这一行 ⇒ 数据没变，别白推一版
         }
 
         $this->dataVersion->update(static fn(int $n): int => $n + 1);
@@ -329,130 +328,6 @@ final class TablePage extends ShowcasePage
         return 'key = ' . \implode(', ', $labels) . $more;
     }
 
-    /**
-     * 按当前排序重排**一份副本**（`$rows` 是数组，PHP 赋值即 COW ⇒ 原始不会被改）。
-     *
-     * ★ 取消排序 ⇒ 直接给原始数组：本页不需要"记住上一次的顺序"，原始数组一直在
-     *   `$allRows` 里。应用的原始顺序可能来自数据库 `ORDER BY`，控件无从知道。
-     * ★ 多键按 `keys()` 顺序组比较器链（主键相等才轮到次键）。只读主键会让画面上
-     *   两列有箭头、数据却只按一列排 —— 那是撒谎。
-     */
-    private function sortedRows(TableSort $sort): array
-    {
-        $comparators = self::comparators();
-        $chain = [];
-
-        foreach ($sort->keys() as [$key, $dir]) {
-            if (isset($comparators[$key])) {
-                $chain[] = [$comparators[$key], $dir === TableSortDirection::Ascending ? 1 : -1];
-            }
-        }
-
-        if ($chain === []) {
-            return $this->allRows;
-        }
-
-        return self::mergeSort($this->allRows, $chain);
-    }
-
-    /**
-     * 每列的比较规则 —— **这就是"控件不排序"的理由本身**。
-     *
-     * ★ `status` 是 `cell()` 派生列（不是字段）：只有本页知道"停用 = id 能被 3 整除"，
-     *   所以也只有本页能定义它的顺序。控件要是自己排，这种列就永远排不了。
-     * ★ 按**列 key** 索引（不是列序号）：`TableSort::keys()` 给的就是 key，插一列
-     *   不会让整张比较器表错位。
-     * ★ 闭包内部一律用**字面量键**取字段（`$a['id']` 而不是 `$a[$key]`）：动态键
-     *   取出来是 `mixed`，比较就退化成混合类型比较。
-     * ★ 中文按 UTF-8 字节序（`strcmp`），不是拼音序 —— 真要拼音序得应用自己带
-     *   `collator`，同样是应用侧知识。
-     *
-     * @return array<string, callable(array<string, mixed>, array<string, mixed>): int>
-     */
-    private static function comparators(): array
-    {
-        return [
-            'id' => static fn(array $a, array $b): int => (int) $a['id'] <=> (int) $b['id'],
-            'name' => static fn(array $a, array $b): int => \strcmp((string) $a['name'], (string) $b['name']),
-            'email' => static fn(array $a, array $b): int => \strcmp((string) $a['email'], (string) $b['email']),
-            'city' => static fn(array $a, array $b): int => \strcmp((string) $a['city'], (string) $b['city']),
-            'status' => static fn(array $a, array $b): int => self::disabledRank((int) $a['id'])
-                <=> self::disabledRank((int) $b['id']),
-        ];
-    }
-
-    /**
-     * 稳定归并排序 —— **不用 `\usort`**，为的是**稳定**。
-     *
-     * ★ 表格排序的稳定性是硬要求：按「状态」排时同组（正常/停用）内部必须保持原
-     *   顺序，否则点一次表头整张表就"抖"一下。`\usort` 自 PHP 8 起稳定，但 AOT 产物
-     *   里的 sort 由运行时自己实现（`std::sort` 这类不稳定算法很常见）——表格不能赌
-     *   这一条，几十行归并换"顺序确定"是划算的。
-     * ★ 一次排序 = 一次性操作（点击表头触发），所以 `array_slice` 的临时数组
-     *   开销可以接受；**每帧**不做任何排序。
-     *
-     * @param list<array<string, mixed>> $rows
-     * @param list<array{0: callable(array<string, mixed>, array<string, mixed>): int, 1: int}> $chain
-     * @return list<array<string, mixed>>
-     */
-    private static function mergeSort(array $rows, array $chain): array
-    {
-        $n = \count($rows);
-        if ($n < 2) {
-            return $rows;
-        }
-
-        $mid = \intdiv($n, 2);
-        $left = self::mergeSort(\array_slice($rows, 0, $mid), $chain);
-        $right = self::mergeSort(\array_slice($rows, $mid), $chain);
-
-        $lc = \count($left);
-        $rc = \count($right);
-        $i = 0;
-        $j = 0;
-        $out = [];
-
-        while ($i < $lc && $j < $rc) {
-            if (self::compareChain($left[$i], $right[$j], $chain) <= 0) {
-                $out[] = $left[$i];
-                $i++;
-            } else {
-                $out[] = $right[$j];
-                $j++;
-            }
-        }
-
-        while ($i < $lc) {
-            $out[] = $left[$i];
-            $i++;
-        }
-
-        while ($j < $rc) {
-            $out[] = $right[$j];
-            $j++;
-        }
-
-        return $out;
-    }
-
-    /** 主键相等才轮到次键；全相等返回 0，归并的 `<= 0` 保住原始顺序（稳定） */
-    private static function compareChain(array $a, array $b, array $chain): int
-    {
-        foreach ($chain as [$cmp, $sign]) {
-            $r = $sign * $cmp($a, $b);
-            if ($r !== 0) {
-                return $r;
-            }
-        }
-
-        return 0;
-    }
-
-    private static function disabledRank(int $id): int
-    {
-        return $id % 3 === 0 ? 1 : 0;
-    }
-
     /** @return list<TableColumn> */
     private static function columns(): array
     {
@@ -490,9 +365,10 @@ final class TablePage extends ShowcasePage
                 ->resizable(),
 
             // ★ 派生值走 `cell()`：状态不是行里的字段，而是由 id 算出来的。
-            //   ★★ 它**照样能排** —— `sortable()` 与 `cell()` 互不约束（见 comparators()）
+            //   ★★ 它**照样能排** —— `sortable()` 与 `cell()` 互不约束；判据与排序
+            //   共用 `UserDirectory::isDisabled()`，两处各写一遍迟早漂移。
             TableColumn::make('status', '状态')
-                ->cell(static fn(array $row): Widget => Text::make(self::disabledRank((int) $row['id']) === 1
+                ->cell(static fn(array $row): Widget => Text::make(UserDirectory::isDisabled((int) $row['id'])
                     ? '停用'
                     : '正常')->caption())
                 ->width(TableColumnWidth::fixed(88.0))
@@ -501,21 +377,5 @@ final class TablePage extends ShowcasePage
                 ->sortable()
                 ->resizable(),
         ];
-    }
-
-    /** @return list<array{id: int, name: string, email: string, city: string}> */
-    private static function generateRows(): array
-    {
-        $rows = [];
-        for ($i = 1; $i <= self::ROWS; $i++) {
-            $rows[] = [
-                'id' => $i,
-                'name' => sprintf('用户 %d', $i),
-                'email' => sprintf('user%d@example.com', $i),
-                'city' => self::CITIES[$i % 5],
-            ];
-        }
-
-        return $rows;
     }
 }
