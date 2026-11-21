@@ -8,9 +8,9 @@ use Drift\Geometry\Scale;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderText;
 use Drift\Rendering\Color;
-use Drift\Text\FontWeight;
 use Drift\Text\TextRole;
 use Drift\Text\TextStyle;
+use Drift\Widget\Traits\TextStyleResolution;
 
 /**
  * 文本控件（§15.2）。
@@ -33,6 +33,8 @@ use Drift\Text\TextStyle;
  */
 final class Text extends RenderBoxWidget
 {
+    use TextStyleResolution;
+
     private string $content;
     private int $role;
     private float $size = -1.0;
@@ -154,37 +156,14 @@ final class Text extends RenderBoxWidget
         );
     }
 
-    /** §15.7 纪律 3：主题 token 与显式样式只在这里合并一次 */
+    /** §15.7 纪律 3：主题 token 与显式样式只在 trait 里合并一次 */
     private function resolveStyle(BuildContext $context): TextStyle
     {
-        $theme = $context->theme();
-        $role = $this->role();
-
-        // ★ 按角色取**主题缓存的实例**：默认路径（没写 `->size()`）因此零分配，
-        //   相邻两帧拿到同一个对象 ⇒ `RenderText::matchesConfiguration()` 走身份短路。
-        $explicit = $this->explicitSize();
-        if ($explicit === null) {
-            $style = $theme->textStyle($role);
-        } else {
-            $style = TextStyle::of($explicit);
-        }
-
-        // `withMaxLines` / `withEllipsize` 在参数等于当前值时返回 `$this`（见 `copy()`），
-        // 所以这两句在不设行数上限时也是零分配。
-        $style = $style
-            ->withMaxLines($this->maxLinesValue())
-            ->withEllipsize($this->ellipsizeValue());
-
-        $bold = $this->explicitBold();
-        if ($bold !== null) {
-            $style = $style->withWeight($bold ? FontWeight::Bold : FontWeight::Regular);
-        }
-
-        return $style;
+        return $this->resolvedStyle($context, $this->role());
     }
 
     private function resolveColor(BuildContext $context): Color
     {
-        return $context->theme()->textColor($this->role());
+        return $this->resolvedColor($context, $this->role());
     }
 }

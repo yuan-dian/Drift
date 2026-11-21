@@ -72,6 +72,12 @@ final class RenderText extends RenderBox
             && $this->scale->equals($scale);
     }
 
+    /** @internal 冒烟 / 调试：当前渲染的文本内容 */
+    public function content(): string
+    {
+        return $this->content;
+    }
+
     /** @internal 冒烟 / 调试：解析后的字号（角色 → 主题表 → 这里） */
     public function styleSize(): float
     {
