@@ -41,6 +41,14 @@ use Drift\Widget\Wrap;
 #[Route(id: 'combo', title: '可编辑 Combo', icon: IconName::Search)]
 final class ComboBoxPage extends ShowcasePage
 {
+    /**
+     * @param \Closure(int, \Closure): int $delay 排一次性延时；只有 400ms 防抖用它。
+     *        单参数位、类型注释明确 —— 页面只拿用得到的那一条，不接整个环境门面。
+     */
+    public function __construct(private readonly \Closure $delay)
+    {
+    }
+
     private string $city = '';
 
     private string $plain = '';
@@ -104,7 +112,7 @@ final class ComboBoxPage extends ShowcasePage
             $this->remoteStatus = OptionStatus::loading();
         });
 
-        ($this->delayClosure())(400, function () use ($attempt): void {
+        ($this->delay)(400, function () use ($attempt): void {
             $this->deliver($attempt);
         });
     }
@@ -138,20 +146,6 @@ final class ComboBoxPage extends ShowcasePage
             $this->remoteOptions = $out;
             $this->remoteStatus = $out === [] ? OptionStatus::empty('没有匹配的城市') : OptionStatus::ready();
         });
-    }
-
-    /**
-     * ⑤ 段用它排 400ms 延时模拟"服务端响应"。
-     *
-     * 控件侧够不到定时器（§4.3 禁 `Widget → App`）⇒ 由组合根把 scheduler 递到
-     * 能力束，这里只把它取成闭包。
-     */
-    private function delayClosure(): \Closure
-    {
-        $caps = $this->caps;
-        return static function (int $milliseconds, \Closure $callback) use ($caps): void {
-            $caps->delay($milliseconds, $callback);
-        };
     }
 
     /** @return list<Option> 30 项（行高由主题定，这里不猜） */

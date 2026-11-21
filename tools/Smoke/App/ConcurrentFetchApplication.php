@@ -35,11 +35,11 @@ final class ConcurrentFetchApplication extends Application
 
     public function buildRoot(): Widget
     {
-        return new ConcurrentFetchPage(ShowcaseCaps::make(null, function (int $page): Future {
+        return new ConcurrentFetchPage(function (int $page): Future {
             $this->requested[] = $page;
 
             return ($this->fetchRows)($page);
-        }))->host();
+        })->host();
     }
 
     /** 根页面实例（测试要拿它的命令驱动"再发一次" / "重试"） */

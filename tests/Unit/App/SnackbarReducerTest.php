@@ -9,10 +9,8 @@ use App\Showcase\Routes\Snackbar\SnackbarIntent;
 use App\Showcase\Routes\Snackbar\SnackbarModel;
 use App\Showcase\Routes\Snackbar\SnackbarServices;
 use App\Showcase\Routes\SnackbarReducer;
-use App\Showcase\ShowcaseCapabilities;
-use Drift\Async\Future;
-use Drift\Dev\Smoke\App\FakeDialog;
 use Drift\Reducer\ReducerUpdate;
+use Drift\Widget\Snackbar;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -27,16 +25,10 @@ final class SnackbarReducerTest extends TestCase
 {
     private function route(): SnackbarReducer
     {
-        $caps = new ShowcaseCapabilities(
-            static function (): void {},
-            static function (): void {},
-            static function (): void {},
-            new FakeDialog(),
-            static function (): void {},
-            static fn (): Future => Future::pending(),
-        );
-
-        return new SnackbarReducer(new SnackbarServices($caps));
+        return new SnackbarReducer(new SnackbarServices(
+            static function (Snackbar $snackbar): void {
+            },
+        ));
     }
 
     #[Test]

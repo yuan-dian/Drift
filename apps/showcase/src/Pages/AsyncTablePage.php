@@ -40,7 +40,7 @@ use Drift\Widget\Widget;
  * ## 页面的异步簿记只有两行
  *
  * ```php
- * $this->rows = $this->asyncCommand(fn(int $page) => $this->caps->fetchRows($page));   // initState：造 + 绑定
+ * $this->rows = $this->asyncCommand(fn(int $page) => ($this->fetchRows)($page));   // initState：造 + 绑定
  * $this->rows->run($page);                               // 发起
  * $this->rows->value()                                   // build：读四态
  * ```
@@ -99,6 +99,14 @@ final class AsyncTablePage extends ShowcasePage
     private int $page = 1;
 
     /**
+     * @param \Closure(int): Future $fetchRows 取第 N 页；来源由组合根决定
+     *        （真慢任务 / 静态数据），本页零感知。
+     */
+    public function __construct(private readonly \Closure $fetchRows)
+    {
+    }
+
+    /**
      * 进页面就加载第一页 —— 这是"列表页"的真实形状（不是点按钮才加载）。
      *
      * ★ `run()` 在 `initState()` 里调是安全的：它只标脏，真正的重建发生在首帧
@@ -107,7 +115,7 @@ final class AsyncTablePage extends ShowcasePage
     public function initState(): void
     {
         $this->rows = $this->asyncCommand(
-            fn(int $page): Future => $this->caps->fetchRows($page)
+            fn(int $page): Future => ($this->fetchRows)($page)
         );
     }
 

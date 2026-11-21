@@ -50,20 +50,25 @@ use Drift\Widget\Widget;
  */
 final class ShowcaseRoot extends StatefulWidget
 {
-    /** @param ShowcaseCapabilities $caps 组合根接线的一束能力（见该类） */
-    public function __construct(private ShowcaseCapabilities $caps)
+    /**
+     * @param array<class-string, \Closure(): Widget> $pageFactories 需要领域依赖的页的工厂
+     */
+    public function __construct(private array $pageFactories)
     {
         parent::__construct();
     }
 
-    public static function make(ShowcaseCapabilities $caps): self
+    /**
+     * @param array<class-string, \Closure(): Widget> $pageFactories
+     */
+    public static function make(array $pageFactories): self
     {
-        return new self($caps);
+        return new self($pageFactories);
     }
 
     public function createState(): State
     {
-        return new ShowcaseState($this->caps);
+        return new ShowcaseState($this->pageFactories);
     }
 }
 
@@ -94,10 +99,10 @@ final class ShowcaseState extends State
 
     private string $selected;
 
-    /** @param ShowcaseCapabilities $caps 组合根接线的能力束 */
-    public function __construct(ShowcaseCapabilities $caps)
+    /** @param array<class-string, \Closure(): Widget> $pageFactories 需要领域依赖的页的工厂 */
+    public function __construct(array $pageFactories)
     {
-        $this->nav = new ShowcaseNav($caps);
+        $this->nav = new ShowcaseNav($pageFactories);
         $this->selected = $this->nav->defaultId();
     }
 

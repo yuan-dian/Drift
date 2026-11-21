@@ -5,17 +5,27 @@ namespace App\Showcase;
 
 use Drift\App\AppScope;
 use Drift\App\Application;
+use Drift\Async\Future;
 use Drift\Commands\CommandHandler;
 use Drift\Input\AcceleratorTable;
 use Drift\Input\KeyChord;
 use Drift\Platform\Clipboard;
 use Drift\Platform\Dialog;
+use Drift\Widget\Page;
 use Drift\Widget\Snackbar;
 use Drift\Widget\Widget;
 
 use App\Showcase\Commands\ShowcaseCommands;
 use App\Showcase\Jobs\FetchRowsJob;
-use App\Showcase\ShowcaseCapabilities;
+use App\Showcase\Pages\AsyncTablePage;
+use App\Showcase\Pages\ButtonsPage;
+use App\Showcase\Pages\ComboBoxPage;
+use App\Showcase\Pages\ConcurrentFetchPage;
+use App\Showcase\Pages\DialogPage;
+use App\Showcase\Pages\FeedbackPage;
+use App\Showcase\Pages\LoadMorePage;
+use App\Showcase\Pages\SnackbarPage;
+use App\Showcase\Stores\ButtonsStore;
 
 /**
  * 示例台应用。平台实现只出现在组合根 `bin/win32/Bootstrap.php`。
@@ -25,6 +35,9 @@ use App\Showcase\ShowcaseCapabilities;
  */
 final class ShowcaseApplication extends Application
 {
+    /** 应用级共享状态：所有窗口 / 所有页拿到同一个实例，切页不丢。 */
+    private ButtonsStore $buttons;
+
     /**
      * 必须调 `parent::__construct()`：基类在其中初始化 router/pumps 等七个拆分片，
      * 漏调则 `attach()` 读未初始化字段 ⇒ AOT 下 exit=255、错误信息无文件名行号。
@@ -40,20 +53,59 @@ final class ShowcaseApplication extends Application
         //   多窗口时组合根传入**同一个**实例 ⇒ 字体 / 任务池 / IO 轮询器 / 主题
         //   只有一份（见 `AppScope` 类注释的五项表）。
         parent::__construct([], $scope);
+        $this->buttons = new ButtonsStore();
     }
 
     public function buildRoot(): Widget
     {
-        return ShowcaseRoot::make(ShowcaseCapabilities::fromApplication($this));
+        return ShowcaseRoot::make($this->pageFactories());
     }
 
-    /** 能力束装配用：对话框端口只在组合根可见。 */
+    /**
+     * 页面工厂表：**只有需要依赖的页**在这里出现，其余 26 页走默认无参构造。
+     *
+     * ★ 加一个领域依赖只改这里一行 —— 不穿透 Root / State / Nav，也不改任何契约。
+     * ★ 依赖各有具体类型（`Dialog` / `ButtonsStore` / `\Closure(int): Future`），写反是
+     *   构造期 Fatal；这替代了原先"6 个同型闭包 + 反射测试钉顺序"的做法。
+     *
+     * @internal 只给装配契约测试读键集合（漏注册一页 ⇒ 切到那页 Fatal）
+     *
+     * @return array<class-string, \Closure(): Widget|Page>
+     */
+    public function pageFactories(): array
+    {
+        // 环境能力从门面取具名方法（一等可调用）—— 页面只拿用得到的那一条。
+        $env = $this->environment();
+        $delay = $env->delay(...);
+        $showModal = $env->showModal(...);
+        $notify = $env->notify(...);
+
+        $buttons = $this->buttons;
+        $dialog = $this->dialog;
+        $fetchRows = fn(int $page): Future => $this->submit(
+            new FetchRowsJob($page, 20, $this->rowsMode)
+        );
+        $setCloseConfirm = $this->setConfirmClose(...);
+
+        return [
+            AsyncTablePage::class => static fn(): Widget|Page => new AsyncTablePage($fetchRows),
+            ButtonsPage::class => static fn(): Widget|Page => new ButtonsPage($buttons),
+            ComboBoxPage::class => static fn(): Widget|Page => new ComboBoxPage($delay),
+            ConcurrentFetchPage::class => static fn(): Widget|Page => new ConcurrentFetchPage($fetchRows),
+            DialogPage::class => static fn(): Widget|Page => new DialogPage($dialog, $setCloseConfirm),
+            FeedbackPage::class => static fn(): Widget|Page => new FeedbackPage($showModal),
+            LoadMorePage::class => static fn(): Widget|Page => new LoadMorePage($fetchRows),
+            SnackbarPage::class => static fn(): Widget|Page => new SnackbarPage($notify),
+        ];
+    }
+
+    /** 页面工厂装配用：对话框端口只在组合根可见。 */
     public function dialog(): Dialog
     {
         return $this->dialog;
     }
 
-    /** 能力束装配用：取数模式由 Bootstrap 决定。 */
+    /** 页面工厂装配用：取数模式由 Bootstrap 决定。 */
     public function rowsMode(): string
     {
         return $this->rowsMode;

@@ -39,13 +39,16 @@ use Drift\Widget\CustomPainter;
 use Drift\Widget\Page;
 use Drift\Dev\Golden\PageScenes;
 use Drift\Dev\Inspect\Snapshot;
-use Drift\Dev\Smoke\App\ShowcaseCaps;
+use Drift\Dev\Smoke\App\FakeDialog;
 use Drift\Dev\Smoke\Golden\GoldenGaugePainter;
 use Drift\Dev\Smoke\Golden\GoldenSparkPainter;
+use App\Showcase\Stores\ButtonsStore;
 use Drift\Async\Future;
 use Drift\Widget\Column;
+use Drift\Widget\Modal;
 use Drift\Widget\Row;
 use Drift\Widget\ScrollView;
+use Drift\Widget\Snackbar;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
 
@@ -583,11 +586,35 @@ $scenes['opacity'] = static function () use ($W, $H): string {
 //   所以"要 app 接线"不是不收录的理由，只是**没接线**：这里给无头假接线。
 //   ★ 异步三页一律 `Future::pending()`（首帧稳定画 loading）：喂已结算的数据要求
 //     "行数据的形状恰好对"，那是把页面的私有细节抄进量具 ⇒ 数据一改就假红。
-$caps = ShowcaseCaps::make();
-$pageWiring = [];
-foreach (PageScenes::names() as $pageName) {
-    $pageWiring[$pageName] = static fn(): array => [$caps];
-}
+// ★ 只有**需要依赖的 8 页**在表里；其余 26 页无参构造，自动免接线。
+$pageWiring = [
+    'AsyncTablePage' => static fn(): array => [
+        static fn(int $page): Future => Future::pending(),
+    ],
+    'ButtonsPage' => static fn(): array => [new ButtonsStore()],
+    'ComboBoxPage' => static fn(): array => [
+        static fn(int $milliseconds, \Closure $callback): int => 0,
+    ],
+    'ConcurrentFetchPage' => static fn(): array => [
+        static fn(int $page): Future => Future::pending(),
+    ],
+    'DialogPage' => static fn(): array => [
+        new FakeDialog(),
+        static function (bool $enabled): void {
+        },
+    ],
+    'FeedbackPage' => static fn(): array => [
+        static function (Modal $modal): void {
+        },
+    ],
+    'LoadMorePage' => static fn(): array => [
+        static fn(int $page): Future => Future::pending(),
+    ],
+    'SnackbarPage' => static fn(): array => [
+        static function (Snackbar $snackbar): void {
+        },
+    ],
+];
 
 // ── 未接线的页必须在 $pageWiring 里，或在 $pageExempt 里**登记理由** ──
 // ★ 这就是"不许静默丢"的落实：新增一页要参数却两处都没有 ⇒ 报错退出，而不是

@@ -4,7 +4,6 @@ declare(strict_types=1);
 namespace Drift\Dev\Tests\Unit\App;
 
 use App\Showcase\Stores\ButtonsStore;
-use Drift\Dev\Smoke\App\ShowcaseCaps;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -29,14 +28,6 @@ final class ButtonsStoreTest extends TestCase
         self::assertSame('点击我（此前 enters=1）', $store->lastPressed->peek());
     }
 
-    public function testCapabilitiesSharesOneStore(): void
-    {
-        $caps = ShowcaseCaps::make();
-
-        self::assertInstanceOf(ButtonsStore::class, $caps->buttons());
-        self::assertSame($caps->buttons(), $caps->buttons());
-    }
-
     public function testPageIsPureView(): void
     {
         $src = (string) file_get_contents(
@@ -45,6 +36,9 @@ final class ButtonsStoreTest extends TestCase
 
         self::assertStringNotContainsString('private Cell', $src);
         self::assertStringNotContainsString('function initState', $src);
-        self::assertStringContainsString('$this->caps->buttons()', $src);
+
+        // 依赖是构造参数里的具体类型，不是一束同型闭包 —— 写反是构造期 Fatal。
+        self::assertStringContainsString('private readonly ButtonsStore $buttons', $src);
+        self::assertStringNotContainsString('ShowcaseCapabilities', $src);
     }
 }

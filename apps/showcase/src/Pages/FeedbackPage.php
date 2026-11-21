@@ -44,7 +44,11 @@ final class FeedbackPage extends ShowcasePage
 {
     private StubState $tab = StubState::Loading;
 
-    /** @param \Closure(Modal): void $showModal */
+    /** @param \Closure(Modal): void $showModal 三个弹窗都走应用级模态槽 */
+    public function __construct(private readonly \Closure $showModal)
+    {
+    }
+
     public function build(BuildContext $ctx): Widget
     {
         // ★ 页面 = **一整块白色面板 + 面板内滚动**（LayUI 文档页的形态）：
@@ -149,7 +153,7 @@ final class FeedbackPage extends ShowcasePage
     /** 可关闭的确认框（默认 `dismissible=true` ⇒ 画 X） */
     private function openConfirm(): void
     {
-        $this->caps->showModal(
+        ($this->showModal)(
             Modal::make()
                 ->title('确认删除')
                 ->child(Column::make()->spacing(12.0)->children([
@@ -165,7 +169,7 @@ final class FeedbackPage extends ShowcasePage
     /** 反例：`dismissible(false)` ⇒ 没有 X、ESC 与遮罩都被吞 */
     private function openStubborn(): void
     {
-        $this->caps->showModal(
+        ($this->showModal)(
             Modal::make()
                 ->title('必须处理')
                 ->dismissible(false)
@@ -180,7 +184,7 @@ final class FeedbackPage extends ShowcasePage
     /** 打开就能打字：焦点陷阱把旧焦点清空，`autoFocus()` 接住 */
     private function openRename(): void
     {
-        $this->caps->showModal(
+        ($this->showModal)(
             Modal::make()
                 ->title('重命名')
                 ->child(Column::make()->spacing(12.0)->children([

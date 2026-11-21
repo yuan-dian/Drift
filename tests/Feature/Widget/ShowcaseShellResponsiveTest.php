@@ -3,10 +3,8 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Widget;
 
-use App\Showcase\ShowcaseCapabilities;
 use App\Showcase\ShowcaseRoot;
-use Drift\Async\Future;
-use Drift\Dev\Smoke\App\FakeDialog;
+use Drift\Dev\Smoke\App\ShowcasePageWiring;
 use Drift\Dev\Smoke\Frame\RecordingSurface;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Errors;
@@ -55,16 +53,8 @@ final class ShowcaseShellResponsiveTest extends SmokeTestCase
         Errors::reset();
         LayoutTolerance::reset();
 
-        // 组合根那束能力全给空实现：本判据只看布局结构，不跑业务。
-        $caps = new ShowcaseCapabilities(
-            static function (): void {},
-            static function (): void {},
-            static function (): void {},
-            new FakeDialog(),
-            static function (): void {},
-            static fn(): Future => Future::pending(),
-        );
-
+        // 本判据只看外壳布局结构，不跑业务 ⇒ 页面用无头装配表（能力空转、取数 pending）。
+        // PageHost 首帧会把 34 页全建出来，所以必须覆盖所有需要依赖的页。
         $context = new BuildContext(
             $width,
             $height,
@@ -75,7 +65,7 @@ final class ShowcaseShellResponsiveTest extends SmokeTestCase
             ),
         );
 
-        $root = (new ShowcaseRoot($caps))->createElement();
+        $root = (new ShowcaseRoot(ShowcasePageWiring::factories()))->createElement();
         $root->mount(null, $context);
 
         LayoutTolerance::withinWindow(static function () use ($root, $width, $height): void {

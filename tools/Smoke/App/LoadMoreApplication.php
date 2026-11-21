@@ -34,11 +34,11 @@ final class LoadMoreApplication extends Application
 
     public function buildRoot(): Widget
     {
-        return new LoadMorePage(ShowcaseCaps::make(null, function (int $page): Future {
+        return new LoadMorePage(function (int $page): Future {
             $this->requested[] = $page;
 
             return ($this->fetchRows)($page);
-        }))->host();
+        })->host();
     }
 
     /** 根页面实例（测试要拿它的命令驱动 `append()`） */

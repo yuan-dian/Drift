@@ -4,10 +4,7 @@ declare(strict_types=1);
 namespace Drift\Dev\Tests\Feature\Widget;
 
 use App\Showcase\Pages\SnackbarPage;
-use App\Showcase\ShowcaseCapabilities;
 use Drift\App\Frame;
-use Drift\Async\Future;
-use Drift\Dev\Smoke\App\FakeDialog;
 use Drift\Dev\Smoke\Frame\RecordingSurface;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Errors;
@@ -117,16 +114,9 @@ final class SnackbarReducerPageTest extends SmokeTestCase
         $this->notified = [];
 
         $notified = &$this->notified;
-        $caps = new ShowcaseCapabilities(
-            static function (Snackbar $snackbar) use (&$notified): void {
-                $notified[] = $snackbar;
-            },
-            static function (): void {},
-            static function (): void {},
-            new FakeDialog(),
-            static function (): void {},
-            static fn (): Future => Future::pending(),
-        );
+        $notify = static function (Snackbar $snackbar) use (&$notified): void {
+            $notified[] = $snackbar;
+        };
 
         $context = new BuildContext(
             940.0,
@@ -138,7 +128,7 @@ final class SnackbarReducerPageTest extends SmokeTestCase
             ),
         );
 
-        $root = (new SnackbarPage($caps))->createElement();
+        $root = (new SnackbarPage($notify))->createElement();
         $root->mount(null, $context);
         LayoutTolerance::withinWindow(static function () use ($root): void {
             (new Frame(new RecordingSurface()))->run(

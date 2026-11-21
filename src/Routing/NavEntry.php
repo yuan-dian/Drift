@@ -10,7 +10,8 @@ use Drift\Widget\Widget;
 /**
  * 导航项：稳定 id + 图标 + 名称 + 页面类型。
  *
- * 页面类型统一由 `PageRegistry` 注入应用上下文构造，导航项本身不持有闭包。
+ * 导航项本身不持有闭包：零依赖页走默认无参构造，需要依赖的页由 `PageRegistry`
+ * 的工厂表按类名覆写。
  *
  * @api
  */
@@ -25,12 +26,16 @@ final readonly class NavEntry
     ) {
     }
 
-    /** 页面构造器统一收一个应用上下文对象（示例台里就是能力束）。 */
-    public function makePage(object $context): Widget
+    /**
+     * 默认建页：页面无参构造（`Page` 基类不带依赖）。
+     * 需要依赖的页面由 `PageRegistry` 的工厂表按类名覆写 —— 这条路径只负责"零依赖页"。
+     *
+     * ★ 只 `new`，不 `host()`：装配收口在 `PageRegistry` 一处，工厂表也就不必记得调它。
+     *
+     * @return Widget|Page
+     */
+    public function makePage(): Widget|Page
     {
-        $page = new $this->pageClass($context);
-
-        // 单类页面经 host() 进树；走 reducer 壳的例外页本身已是 Widget，原样返回。
-        return $page instanceof Page ? $page->host() : $page;
+        return new $this->pageClass();
     }
 }

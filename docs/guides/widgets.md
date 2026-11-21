@@ -81,15 +81,33 @@ Toggle::make('启用通知')->checked($this->notify)->onChanged(fn(bool $v) => $
 
 ## 何时在组合根接线
 
-有些能力控件层够不到——浮层、剪贴板、对话框、定时器、后台任务都归 `Application` 或端口，而依赖方向禁止 `Widget → App`。这类线只能在组合根接：`Application::buildRoot()` 是唯一持有 `$this` 的地方，用闭包把能力递给 `ShowcaseRoot` / `ShowcaseCapabilities` 这样的应用侧对象。
+有些能力控件层够不到——浮层、剪贴板、对话框、定时器、后台任务都归 `Application` 或端口，而依赖方向禁止 `Widget → App`。这类线只能在组合根接：`Application::buildRoot()` 是唯一持有 `$this` 的地方。
+
+页面依赖走**构造参数 + 页面工厂表**，不用一束同型闭包：
 
 ```php
-return ShowcaseRoot::make(new ShowcaseCapabilities(
-    function (Snackbar $snackbar): void { $this->showSnackbar($snackbar); },
-    function (int $milliseconds, \Closure $callback): void { $this->after($milliseconds, $callback); },
-    function (int $page): Future { return $this->submit(new FetchRowsJob($page, 20, $this->rowsMode)); },
-));
+// 组合根：键是页面类，值只负责 new（host() 由 PageRegistry 统一做）
+private function pageFactories(): array
+{
+    $env = $this->environment();
+    $fetchRows = fn(int $page): Future => $this->submit(new FetchRowsJob($page, 20, $this->rowsMode));
+
+    return [
+        // 环境能力：从门面取具名方法（一等可调用）
+        ComboBoxPage::class => static fn() => new ComboBoxPage($env->delay(...)),
+        FeedbackPage::class => static fn() => new FeedbackPage($env->showModal(...)),
+        // 领域依赖：具体类型
+        ButtonsPage::class => static fn() => new ButtonsPage($this->buttons),
+        AsyncTablePage::class => static fn() => new AsyncTablePage($fetchRows),
+    ];
+}
 ```
+
+零依赖页**不写进表里** —— `PageRegistry` 默认 `new $class()`。页面构造器就是依赖声明：`__construct(private readonly ButtonsStore $buttons)`。
+
+**为什么不用"一束能力"**：一束同型闭包靠位置区分语义，`notify` 与 `delay` 写反解释器不报错、真机才 Fatal，只能再写一个反射测试去钉签名。改成构造参数后依赖各有类型，错位当场 `TypeError` 并指出期望的类型。
+
+判据有两条：加一个领域依赖只改组合根一行，不穿透 Root / State / Nav；某页要参数却漏注册工厂，切到那页立刻 Fatal（`tests/Unit/App/ShowcaseWiringContractTest` 把它提前成静态红）。
 
 需要给动作起一个能跨树复用、能被菜单和加速键引用的名字时，才升级成命令：在应用侧 `commands()` 里返回 `命令名 => CommandHandler` 映射，键表放在 `accelerators()`。单纯"这个按钮点了改本页一个字段"用 `onPressed()` / `onChanged()` 就够了，不值得占一个命令名。
 

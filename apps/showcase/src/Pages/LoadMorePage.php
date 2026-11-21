@@ -77,11 +77,16 @@ final class LoadMorePage extends ShowcasePage
     /** 列表的滚动句柄：触底自动翻页（按钮那条路同时留着） */
     private ScrollController $scroll;
 
+    /** @param \Closure(int): Future $fetchRows 同 `AsyncTablePage`：来源由组合根决定 */
+    public function __construct(private readonly \Closure $fetchRows)
+    {
+    }
+
     public function initState(): void
     {
-        $caps = $this->caps;
+        $fetch = $this->fetchRows;
         $this->rows = $this->asyncCommand(
-            static fn(int $page): Future => $caps->fetchRows($page),
+            static fn(int $page): Future => $fetch($page),
             static function (mixed $old, mixed $new): array {
                 return self::mergePages($old, $new);
             },

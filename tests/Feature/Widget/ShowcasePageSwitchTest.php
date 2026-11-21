@@ -4,10 +4,8 @@ declare(strict_types=1);
 namespace Drift\Dev\Tests\Feature\Widget;
 
 use App\Showcase\Pages\ButtonsPage;
-use App\Showcase\ShowcaseCapabilities;
 use App\Showcase\ShowcaseRoot;
-use Drift\Async\Future;
-use Drift\Dev\Smoke\App\FakeDialog;
+use Drift\Dev\Smoke\App\ShowcasePageWiring;
 use Drift\Dev\Smoke\Frame\RecordingSurface;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Errors;
@@ -23,6 +21,7 @@ use Drift\Widget\BuildContext;
 use Drift\Widget\Element;
 use Drift\Widget\NavButton;
 use Drift\Widget\States;
+use Drift\Widget\Widget;
 
 /**
  * 示例台切页：外壳接 `PageHost` ⇒ 换页是隐藏，不是卸载重建。
@@ -85,14 +84,9 @@ final class ShowcasePageSwitchTest extends SmokeTestCase
         Errors::reset();
         LayoutTolerance::reset();
 
-        $caps = new ShowcaseCapabilities(
-            static function (): void {},
-            static function (): void {},
-            static function (): void {},
-            new FakeDialog(),
-            static function (): void {},
-            static fn (): Future => Future::pending(),
-        );
+        // 用无头装配表：PageHost 首帧会把 34 页全建出来，漏一页就 Fatal。
+        $factories = ShowcasePageWiring::factories();
+
         $context = new BuildContext(
             940.0,
             600.0,
@@ -103,7 +97,7 @@ final class ShowcasePageSwitchTest extends SmokeTestCase
             ),
         );
 
-        $root = (new ShowcaseRoot($caps))->createElement();
+        $root = (new ShowcaseRoot($factories))->createElement();
         $root->mount(null, $context);
         LayoutTolerance::withinWindow(static function () use ($root): void {
             (new \Drift\App\Frame(new RecordingSurface()))->run(

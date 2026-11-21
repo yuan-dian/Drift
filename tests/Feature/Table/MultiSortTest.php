@@ -4,7 +4,6 @@ declare(strict_types=1);
 namespace Drift\Dev\Tests\Feature\Table;
 
 use App\Showcase\Pages\TablePage;
-use Drift\Dev\Smoke\App\ShowcaseCaps;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
@@ -270,7 +269,7 @@ final class MultiSortTest extends SmokeTestCase
         ];
 
         // 单类页面：TablePage 自身就是持有状态与算法的实例，用 `$page::class` 反射。
-        $page = new TablePage(ShowcaseCaps::make());
+        $page = new TablePage();
         (new \ReflectionProperty($page::class, 'allRows'))->setValue($page, $rows);
         $method = new \ReflectionMethod($page::class, 'sortRows');
 

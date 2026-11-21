@@ -41,6 +41,16 @@ use Drift\Widget\Wrap;
 #[Route(id: 'dialog', title: '对话框 Dialog', icon: IconName::Info)]
 final class DialogPage extends ShowcasePage
 {
+    /**
+     * @param Dialog $dialog 平台端口，组合根注入（本页不碰 Application）
+     * @param \Closure(bool): void $setCloseConfirm 应用的关闭守卫开关（一等可调用）
+     */
+    public function __construct(
+        private readonly Dialog $dialog,
+        private readonly \Closure $setCloseConfirm,
+    ) {
+    }
+
     /** 最近一次拿到的路径（空串 + `$hasPath` 代替 `?string` 字段，AOT 纪律） */
     private string $path = '';
 
@@ -154,7 +164,7 @@ final class DialogPage extends ShowcasePage
 
     private function pickFile(): void
     {
-        $path = $this->caps->dialog()->openFile('打开一个文件', self::filters());
+        $path = $this->dialog->openFile('打开一个文件', self::filters());
 
         if ($path === null) {
             $this->setState(function (): void {
@@ -175,7 +185,7 @@ final class DialogPage extends ShowcasePage
 
     private function pickSaveTarget(): void
     {
-        $path = $this->caps->dialog()->saveFile('选保存位置', '未命名.md', self::filters());
+        $path = $this->dialog->saveFile('选保存位置', '未命名.md', self::filters());
 
         if ($path === null) {
             $this->setState(function (): void {
@@ -196,7 +206,7 @@ final class DialogPage extends ShowcasePage
 
     private function alert(): void
     {
-        $this->caps->dialog()->alert('提示', '这是一个原生 MessageBoxW：它不依赖渲染栈，'
+        $this->dialog->alert('提示', '这是一个原生 MessageBoxW：它不依赖渲染栈，'
             . '所以应用画不出来的时候它还能弹。');
     }
 
@@ -210,7 +220,7 @@ final class DialogPage extends ShowcasePage
     private function toggleConfirmClose(): void
     {
         $next = !$this->confirmClose;
-        $this->caps->setCloseConfirm($next);
+        ($this->setCloseConfirm)($next);
 
         $this->setState(function () use ($next): void {
             $this->confirmClose = $next;
@@ -219,7 +229,7 @@ final class DialogPage extends ShowcasePage
 
     private function ask(): void
     {
-        $yes = $this->caps->dialog()->confirm('确认', '要执行这个动作吗？默认按钮是「否」。');
+        $yes = $this->dialog->confirm('确认', '要执行这个动作吗？默认按钮是「否」。');
 
         $this->setState(function () use ($yes): void {
             if ($yes) {

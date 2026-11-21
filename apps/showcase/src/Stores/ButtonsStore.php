@@ -10,7 +10,8 @@ use Drift\State\Cell;
  *
  * ★ 状态与动作住这里，页面只做绑定：读点仍落在读它的 `Computed` / `Text` 上，
  *   Store 本身不是 State，不参与重建。
- * ★ 实例由 `ShowcaseCapabilities` 持有，组合根创建一次，跨页共享。
+ * ★ 实例由组合根创建一次（`ShowcaseApplication::__construct`），经页面工厂注入，
+ *   跨页共享 —— 切走再切回，计数还在。
  */
 final class ButtonsStore
 {

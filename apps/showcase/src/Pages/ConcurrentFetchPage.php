@@ -69,12 +69,16 @@ final class ConcurrentFetchPage extends ShowcasePage
 
     private AsyncCommand $dash;
 
+    /** @param \Closure(int): Future $fetchRows 同 `AsyncTablePage`：来源由组合根决定 */
+    public function __construct(private readonly \Closure $fetchRows)
+    {
+    }
+
     public function initState(): void
     {
         // ★ 先把闭包取成局部量：`$task` 会被存起来**稍后**调用，闭包里用 `$this`
         //   就会把整个 State 钉在命令上（卸载之后还活着）。局部量只钉住那一个闭包。
-        $caps = $this->caps;
-        $fetch = static fn(int $page): Future => $caps->fetchRows($page);
+        $fetch = $this->fetchRows;
 
         $this->dash = $this->asyncCommand(
             static function (mixed $pages) use ($fetch): Future {

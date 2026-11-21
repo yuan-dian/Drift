@@ -5,7 +5,6 @@ namespace App\Showcase\Pages;
 use Drift\Route\Route;
 use Drift\Widget\IconName;
 
-use App\Showcase\ShowcaseCapabilities;
 use App\Showcase\Routes\Snackbar\SnackbarServices;
 use App\Showcase\Routes\SnackbarReducer;
 use Drift\Reducer\ReducerState;
@@ -17,7 +16,7 @@ use Drift\Widget\StatefulWidget;
  *
  * 导航身份来自本类的 `#[Route]` 注解（与其余 33 页同一条路径）；页面内部的
  * 状态管理则选择 `ReducerView` + `ReducerState`：逻辑在 {@see SnackbarReducer}，
- * 这里只把能力束投影成 `SnackbarServices` 并交给泛型壳。
+ * 这里只把 `notify` 这一条能力投影成 `SnackbarServices` 并交给泛型壳。
  *
  * ★ 为什么只有这一页用四段式：它的「删除 → 撤销 → 计数」是纯状态转移，
  *   `update()` 能在无窗口的 PHP 单测里直接断言。其余页多是就地 UI 态
@@ -34,7 +33,8 @@ use Drift\Widget\StatefulWidget;
 #[Route(id: 'snackbar', title: '通知 Snackbar', icon: IconName::Bell)]
 final class SnackbarPage extends StatefulWidget
 {
-    public function __construct(private readonly ShowcaseCapabilities $caps)
+    /** @param \Closure(\Drift\Widget\Snackbar): void $notify 只投影这一条能力 */
+    public function __construct(private readonly \Closure $notify)
     {
         parent::__construct();
     }
@@ -42,7 +42,7 @@ final class SnackbarPage extends StatefulWidget
     public function createState(): State
     {
         return new ReducerState(
-            new SnackbarReducer(new SnackbarServices($this->caps)),
+            new SnackbarReducer(new SnackbarServices($this->notify)),
         );
     }
 }

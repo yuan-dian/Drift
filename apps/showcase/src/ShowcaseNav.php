@@ -14,14 +14,17 @@ use Drift\Routing\RouteTable;
  * ★ 清单只有一处：`#[Route]` 注解（经 `ShowcaseRoutes::catalog()` 反射成描述符）。
  *   本类不再维护 PAGES 数组 —— 那张表曾与注解写同样的 id/icon/title，
  *   改一处忘另一处就静默漂移。现在 `id/icon/title/pageClass` 全部来自描述符。
- * ★ 保留 `PageRegistry` 做建页与缓存（切页保活归 `PageHostState`），
- *   它仍是"名字 → 工厂"的唯一落点，本类只负责把描述符翻译成 NavEntry。
+ * ★ 建页：零依赖页走 `PageRegistry` 的默认无参构造；需要领域依赖的页由组合根在
+ *   `$pageFactories` 里按类名覆写。工厂表住组合根，本类只转发。
  */
 final readonly class ShowcaseNav
 {
     private PageRegistry $registry;
 
-    public function __construct(ShowcaseCapabilities $caps)
+    /**
+     * @param array<class-string, \Closure(): \Drift\Widget\Widget> $pageFactories
+     */
+    public function __construct(array $pageFactories)
     {
         $entries = [];
         foreach (ShowcaseRoutes::catalog()->all() as $descriptor) {
@@ -32,7 +35,7 @@ final readonly class ShowcaseNav
                 $descriptor->pageClass,
             );
         }
-        $this->registry = new PageRegistry($entries, $caps);
+        $this->registry = new PageRegistry($entries, $pageFactories);
     }
 
     /** @return list<NavEntry> */

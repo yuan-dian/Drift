@@ -4,7 +4,6 @@ declare(strict_types=1);
 namespace Drift\Dev\Tests\Feature\Tools;
 
 use Drift\Dev\Bench\ShowcasePages;
-use Drift\Dev\Smoke\App\ShowcaseCaps;
 use Drift\Widget\Widget;
 use PHPUnit\Framework\TestCase;
 
@@ -21,14 +20,13 @@ final class ShowcasePageTableTest extends TestCase
 {
     public function testEveryBenchEntryBuildsAMountableWidget(): void
     {
-        $caps = ShowcaseCaps::make();
         $broken = [];
 
         foreach (ShowcasePages::all() as $name => $make) {
             // 漏 host() 时 PHP 在**返回那一刻**报 TypeError ⇒ 收下来一起报，
             // 不然一次只看到一页，27 页要跑 27 轮。
             try {
-                $page = $make($caps);
+                $page = $make();
             } catch (\TypeError $e) {
                 $broken[] = $name . '：' . $e->getMessage();
                 continue;

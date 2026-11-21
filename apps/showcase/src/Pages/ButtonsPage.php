@@ -30,10 +30,15 @@ use Drift\Widget\Wrap;
 #[Route(id: 'buttons', title: '按钮 Button', icon: IconName::Square)]
 final class ButtonsPage extends ShowcasePage
 {
+    /** 共享状态由组合根建并注入 —— 跨页切走再切回，计数还在。 */
+    public function __construct(private readonly ButtonsStore $buttons)
+    {
+    }
+
     public function build(BuildContext $ctx): Widget
     {
         // 页面 = 一整块白色面板 + 面板内滚动：卡片撑满视口高，内容在卡片里滚。
-        return Card::make(ScrollView::make($this->body($this->caps->buttons())))->paddingAll(0.0);
+        return Card::make(ScrollView::make($this->body($this->buttons)))->paddingAll(0.0);
     }
 
     /** 页面内容（`build()` 只负责套一层卡片外壳，与 `LayoutPage` 的"每块一张卡"互补） */
