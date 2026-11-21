@@ -166,11 +166,6 @@ final class TtfFace implements FontFace
         return $this->glyphId($codepoint) !== 0;
     }
 
-    public function hasColorGlyphs(): bool
-    {
-        return false;
-    }
-
     public function glyphAdvance(int $codepoint): float
     {
         $gid = $this->glyphId($codepoint);

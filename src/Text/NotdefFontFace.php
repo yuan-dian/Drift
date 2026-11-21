@@ -53,11 +53,6 @@ final class NotdefFontFace implements FontFace
         return false;
     }
 
-    public function hasColorGlyphs(): bool
-    {
-        return false;
-    }
-
     public function glyphAdvance(int $codepoint): float
     {
         if ($codepoint < 0x20 || $codepoint === 0x7F) {

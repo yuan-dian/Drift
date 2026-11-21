@@ -121,11 +121,6 @@ final class BitmapFontFace implements FontFace
         return isset($this->glyphs[$codepoint]);
     }
 
-    public function hasColorGlyphs(): bool
-    {
-        return false;
-    }
-
     public function glyphAdvance(int $codepoint): float
     {
         $rows = $this->glyphs[$codepoint] ?? null;

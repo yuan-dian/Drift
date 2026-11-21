@@ -123,11 +123,6 @@ final readonly class Gradient
     }
 
     /** 坐标是盒内比例（`0..1`）还是绝对像素 */
-    public function isRelative(): bool
-    {
-        return $this->relative;
-    }
-
     /**
      * **竖直**渐变（上 → 下），坐标是盒内比例。
      *

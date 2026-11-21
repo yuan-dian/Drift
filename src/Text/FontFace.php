@@ -26,9 +26,6 @@ interface FontFace
 
     public function hasGlyph(int $codepoint): bool;
 
-    /** §8.2 坑 5：彩色 emoji / CBDT 由 face 声明能力，回退链按能力选 face */
-    public function hasColorGlyphs(): bool;
-
     /** 步进宽度，**em 的倍数** */
     public function glyphAdvance(int $codepoint): float;
 
