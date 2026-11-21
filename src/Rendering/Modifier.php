@@ -149,8 +149,36 @@ final class Modifier
     public function __construct()
     {
         // 视觉四维初值 = "什么都没设"（BoxStyle::none() 是全空值对象）
-        $this->style = BoxStyle::none();
+        $this->style = self::blankStyle();
     }
+
+    /**
+     * 共享的"无任何修饰"实例（`Widget` 构造用它当默认值）。
+     *
+     * ★ 这是**唯一**允许被多个所有者共享的 `Modifier` 实例：本类所有写方法都是 `clone`
+     *   后改副本（唯一的原地赋值在构造器里），共享读安全。
+     * ★ 好处：相邻两帧都没碰过修饰时，`$new === $old` ⇒ `RenderBox::setMods()` 整段
+     *   投影 O(1) 跳过（省掉两趟全字段比较 + 十几个字段落值）。
+     */
+    public static function empty(): self
+    {
+        return self::$sharedEmpty ??= new self();
+    }
+
+    private static ?self $sharedEmpty = null;
+
+    /**
+     * 共享的"空盒样式"（构造器与 `withoutBoxVisual()` 用它）。
+     *
+     * ★ `BoxStyle` 是 readonly ⇒ 共享安全。共享后 `diff()` 能靠身份 O(1) 判"样式没动"：
+     *   `BoxStyle::equals()` 要逐字段比，渐变那维还是深比较。
+     */
+    private static function blankStyle(): BoxStyle
+    {
+        return self::$blankStyle ??= BoxStyle::none();
+    }
+
+    private static ?BoxStyle $blankStyle = null;
 
     // ── 读：布局（`RenderBox::layout()` 每帧读）─────────────────────
 
@@ -438,7 +466,7 @@ final class Modifier
         }
 
         $copy = clone $this;
-        $copy->style = BoxStyle::none();
+        $copy->style = self::blankStyle();
 
         return $copy;
     }
@@ -504,51 +532,48 @@ final class Modifier
             && !$this->transformCentered;
     }
 
-    /**
-     * **几何**等价 —— `RenderBox::setMods()` 判"要不要标布局脏"用。
-     *
-     * 只比影响尺寸与子盒偏移的字段：padding / 显式尺寸 / aspect / 对齐 / flex / inset。
-     * 颜色、阴影、透明度、禁用态、clip、transform 都只影响绘制。
-     *
-     * ★★ 必须显式处理 `NAN`：`width` / `height` / `aspect` / `basis` 的默认值都是 NAN，
-     *   而 `NAN !== NAN` ⇒ 直接用 `==` 比较两个默认 Modifier 会得到 false（"每次都变"），
-     *   盒复用后每次重建都会标脏全树。`sameFloat()` 把"两边都是 NAN"认定为相同。
-     *
-     * ★ `align` 用 `==` 深比较：小值对象；万一将来混进 NAN 字段，退化成"总是不等" ——
-     *   只损失缓存命中，不影响正确性。
-     */
-    public function geometryEquals(Modifier $other): bool
-    {
-        return self::sameFloat($this->padLeft, $other->padLeft)
-            && self::sameFloat($this->padTop, $other->padTop)
-            && self::sameFloat($this->padRight, $other->padRight)
-            && self::sameFloat($this->padBottom, $other->padBottom)
-            && self::sameFloat($this->width, $other->width)
-            && self::sameFloat($this->height, $other->height)
-            && self::sameFloat($this->aspect, $other->aspect)
-            && $this->align == $other->align
-            && $this->grow === $other->grow
-            && $this->shrink === $other->shrink
-            && self::sameFloat($this->basis, $other->basis)
-            && $this->alignSelf === $other->alignSelf
-            && self::sameFloat($this->insetLeft, $other->insetLeft)
-            && self::sameFloat($this->insetTop, $other->insetTop)
-            && self::sameFloat($this->insetRight, $other->insetRight)
-            && self::sameFloat($this->insetBottom, $other->insetBottom);
-    }
+    /** 几何维变了：尺寸或子盒偏移可能变 ⇒ 必须重排（重排必然重画） */
+    public const int DIFF_GEOMETRY = 1;
+
+    /** 只有绘制维变了 ⇒ 不必重排，但必须重画 */
+    public const int DIFF_VISUAL = 2;
 
     /**
-     * **全字段**等价（几何 + 绘制）—— `RenderBox::setMods()` 判"要不要请求重绘"用。
+     * 一份比较同时回答"几何变没变"与"绘制变没变"（`RenderBox::setMods()` 唯一消费者）。
      *
-     * 几何不变而绘制面变了（悬停色、透明度、clip、transform）时不必重算尺寸，但
-     * **必须重画**：复用盒不 bump layoutEpoch，不推 paintEpoch 就停在上一帧。
-     *
-     * ★ 新增字段必须同步加进来，否则那一维变化会静默不重绘（不报错）。
+     * ★ 几何一变就**立即返回**：重排必然重画，绘制维不必再比 —— 这是本方法存在的
+     *   理由（`geometryEquals()` + `equals()` 分开调会把几何维比两遍：`equals()` 内部
+     *   还要再走一次几何维）。
+     * ★★ `NAN` 必须显式处理：`width` / `height` / `aspect` / `basis` 的默认值是 NAN，
+     *   而 `NAN !== NAN` ⇒ 裸比较会把"两个默认修饰"判成不同 ⇒ 每次重建都标脏全树，
+     *   盒复用等于白做。`sameFloat()` 把"两边都是 NaN"认定为相同。
+     * ★ `align` / `transform` 用 `==` 深比较（小值对象）：万一将来混进 NAN 字段，
+     *   退化成"总是不等" —— 只损失缓存命中，不会漏排。
+     * ★ 新增字段必须归进这两组之一，漏掉 ⇒ 那一维的变化静默不生效（不报错）。
      */
-    public function equals(Modifier $other): bool
+    public function diff(Modifier $other): int
     {
-        return $this->geometryEquals($other)
-            && $this->style->equals($other->style)
+        if (!self::sameFloat($this->padLeft, $other->padLeft)
+            || !self::sameFloat($this->padTop, $other->padTop)
+            || !self::sameFloat($this->padRight, $other->padRight)
+            || !self::sameFloat($this->padBottom, $other->padBottom)
+            || !self::sameFloat($this->width, $other->width)
+            || !self::sameFloat($this->height, $other->height)
+            || !self::sameFloat($this->aspect, $other->aspect)
+            || $this->align != $other->align
+            || $this->grow !== $other->grow
+            || $this->shrink !== $other->shrink
+            || !self::sameFloat($this->basis, $other->basis)
+            || $this->alignSelf !== $other->alignSelf
+            || !self::sameFloat($this->insetLeft, $other->insetLeft)
+            || !self::sameFloat($this->insetTop, $other->insetTop)
+            || !self::sameFloat($this->insetRight, $other->insetRight)
+            || !self::sameFloat($this->insetBottom, $other->insetBottom)
+        ) {
+            return self::DIFF_GEOMETRY;
+        }
+
+        $sameVisual = ($this->style === $other->style || $this->style->equals($other->style))
             && $this->shadow === $other->shadow
             && $this->opacity === $other->opacity
             && $this->translateX === $other->translateX
@@ -559,6 +584,30 @@ final class Modifier
             && $this->clip === $other->clip
             && $this->transformCentered === $other->transformCentered
             && $this->transform == $other->transform;
+
+        return $sameVisual ? 0 : self::DIFF_VISUAL;
+    }
+
+    /**
+     * **几何**等价（`clip` / `transform` 只影响绘制，不在此列）。
+     *
+     * ★ 判"要不要重排"请直接用 `diff()`：几何相等时本方法还得把绘制维比完才返回。
+     *
+     * @api
+     */
+    public function geometryEquals(Modifier $other): bool
+    {
+        return $this->diff($other) !== self::DIFF_GEOMETRY;
+    }
+
+    /**
+     * **全字段**等价（几何 + 绘制）。
+     *
+     * @api
+     */
+    public function equals(Modifier $other): bool
+    {
+        return $this->diff($other) === 0;
     }
 
     /** NAN 视为相等（语义是"没设"），其余严格比较 */
@@ -813,6 +862,12 @@ final class Modifier
      */
     public function withoutDim(): self
     {
+        // 本来就是"不变淡"⇒ 原样返回：保住实例身份，`setMods()` 才能整段跳过。
+        // 自绘禁用外观的控件每帧都被 `Element::syncBox()` 走一次这条路。
+        if (!$this->dim) {
+            return $this;
+        }
+
         $c = clone $this;
         $c->dim = false;
 

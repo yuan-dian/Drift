@@ -53,8 +53,10 @@ final class RenderText extends RenderBox
      * 只做全同判定、不做就地改写：`paragraph` 是 `performLayout()` 的产物，就地换内容
      * 会让盒带着上一轮的段落到 `paint()`（静默画旧字）。
      *
-     * ★ `TextStyle` / `Color` / `Scale` 每次建盒都新造，**不能比身份**（永远不等）。
-     * ★ `metrics` 比身份：换度量器就是换排版结果，必须造新盒。
+     * ★ 每项都先比身份再比值：`Text` 的派生样式来自 `ThemeData::textStyle()` 的缓存，
+     *   普通文本相邻两帧拿到的是**同一个实例** ⇒ 一次身份比较即可，不必逐字段。
+     *   身份不等时才回落值比较（显式写了 `->size()` / `->bold()` 的文本走这条）。
+     * ★ `metrics` 只比身份：换度量器就是换排版结果，必须造新盒。
      */
     public function matchesConfiguration(
         string $content,
@@ -64,8 +66,8 @@ final class RenderText extends RenderBox
         Scale $scale,
     ): bool {
         return $this->content === $content
-            && $this->style->equals($style)
-            && $this->color->equals($color)
+            && ($this->style === $style || $this->style->equals($style))
+            && ($this->color === $color || $this->color->equals($color))
             && $this->metrics === $metrics
             && $this->scale->equals($scale);
     }

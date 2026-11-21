@@ -7,6 +7,7 @@ use Drift\Rendering\Color;
 use Drift\Rendering\ColorToken;
 use Drift\Rendering\MetricToken;
 use Drift\Text\TextRole;
+use Drift\Text\TextStyle;
 
 /**
  * 一份解析完成的主题。
@@ -93,10 +94,32 @@ final class ThemeData
         return $this->highContrast;
     }
 
+    /**
+     * 内置颜色表的驻留（`dark` × token）。
+     *
+     * ★ 不是为了省查表，而是为了**身份稳定**：`ColorToken::lightValue()` 每次 `new`
+     *   一个 `Color`，不驻留的话同一个 token 每次取到不同实例，下游"同一份声明"的
+     *   身份短路全部失效，只能回落逐字段比较。
+     * ★★ **必须是静态，不能落实例属性**：`ThemeData` 是值对象，`AppScope::enter()`
+     *   用 `!=` 判"多窗口主题是否一致"。实例缓存会让"配置相同、缓存冷热不同"的两个
+     *   主题判**不等** ⇒ 第二个窗口晚开时报一条假的"主题不一致"。静态属性不参与
+     *   `==`，值语义原样保留。
+     *
+     * @var array<string, Color>
+     */
+    private static array $defaultColors = [];
+
     public function color(ColorToken $token): Color
     {
-        return $this->colors[$token->name]
-            ?? ($this->dark ? $token->darkValue() : $token->lightValue());
+        // 覆写值本身就是调用方给的实例 ⇒ 已经稳定，不必再驻留
+        if (isset($this->colors[$token->name])) {
+            return $this->colors[$token->name];
+        }
+
+        $key = ($this->dark ? 'd:' : 'l:') . $token->name;
+
+        return self::$defaultColors[$key]
+            ??= ($this->dark ? $token->darkValue() : $token->lightValue());
     }
 
     public function metric(MetricToken $token): float
@@ -133,6 +156,29 @@ final class ThemeData
             TextRole::Error   => $this->metric(MetricToken::FontSizeSmall),
             TextRole::Unset   => $this->metric(MetricToken::FontSize),
         };
+    }
+
+    /**
+     * 字号 → 样式实例的驻留。
+     *
+     * ★ 存在的理由是**身份**：`Text::resolveStyle()` 每帧每文本都要一份样式；每次都
+     *   `new` 的话 `RenderText::matchesConfiguration()` 只能逐字段比（9 项），而这里
+     *   返回的实例相邻两帧是同一个 ⇒ 一次身份比较就够。
+     * ★ 键是**字号**而不是角色：`TextStyle::of()` 只由字号决定，同字号的不同角色本就
+     *   该共享。也正因如此它可以放静态（不依赖主题，`==` 的值语义不受影响，理由同
+     *   `$defaultColors`）；字号取值天然离散（角色表 + 显式写死），不会无界增长。
+     * ★ 键用 `(string)`，与 `TextStyle::cacheKey()` 同源：排版缓存本来就把这两个
+     *   只差浮点尾数的字号当同一个键，这里保持同一边界。
+     *
+     * @var array<string, TextStyle>
+     */
+    private static array $stylesBySize = [];
+
+    public function textStyle(TextRole $role): TextStyle
+    {
+        $size = $this->textSize($role);
+
+        return self::$stylesBySize[(string) $size] ??= TextStyle::of($size);
     }
 
     /** 文本语义角色 → 颜色。`Error` 走 `Danger`，其余按主次分 */

@@ -46,53 +46,59 @@ use Drift\Rendering\Modifier;
 final class ModifierTest extends SmokeTestCase
 {
     /**
-     * 每个 `with*()` 一行：[工厂, 调用后 `isDefault()` 的期望值]。
+     * 每个 `with*()` 一行：[工厂, 调用后 `isDefault()` 的期望值, 该写法相对空修饰的 `diff()` 位]。
      *
      * ★ 期望值**一律 `false`** —— 没有例外（原来 `withRepaintBoundary` 那一行是
      *   `true`，S1 补字段后改回 `false`，见类注释）。
+     * ★ 第三列是**归类判据**：`diff()` 说"几何变了"的会被 `RenderBox::setMods()`
+     *   转成"重排"，说"只有绘制变了"的只推一次重画。归错组的后果是**多排一次**
+     *   （安全方向）或**漏排**（画面停住且不报错）—— 后者只有这张表能挡住。
      *
-     * @return array<string, array{0: callable(): Modifier, 1: bool}>
+     * @return array<string, array{0: callable(): Modifier, 1: bool, 2: int}>
      */
     private static function cases(): array
     {
         return [
-            'withPadding' => [static fn(): Modifier => (new Modifier())->withPadding(1.0, 1.0, 1.0, 1.0), false],
-            'withSize' => [static fn(): Modifier => (new Modifier())->withSize(10.0, 10.0), false],
-            'withWidth' => [static fn(): Modifier => (new Modifier())->withWidth(10.0), false],
-            'withHeight' => [static fn(): Modifier => (new Modifier())->withHeight(10.0), false],
-            'withAspect' => [static fn(): Modifier => (new Modifier())->withAspect(2.0), false],
-            'withFill' => [static fn(): Modifier => (new Modifier())->withFill(Color::fromRgb(1, 2, 3)), false],
+            'withPadding' => [static fn(): Modifier => (new Modifier())->withPadding(1.0, 1.0, 1.0, 1.0), false, Modifier::DIFF_GEOMETRY],
+            'withSize' => [static fn(): Modifier => (new Modifier())->withSize(10.0, 10.0), false, Modifier::DIFF_GEOMETRY],
+            'withWidth' => [static fn(): Modifier => (new Modifier())->withWidth(10.0), false, Modifier::DIFF_GEOMETRY],
+            'withHeight' => [static fn(): Modifier => (new Modifier())->withHeight(10.0), false, Modifier::DIFF_GEOMETRY],
+            'withAspect' => [static fn(): Modifier => (new Modifier())->withAspect(2.0), false, Modifier::DIFF_GEOMETRY],
+            'withFill' => [static fn(): Modifier => (new Modifier())->withFill(Color::fromRgb(1, 2, 3)), false, Modifier::DIFF_VISUAL],
             'withGradient' => [
                 static fn(): Modifier => (new Modifier())->withGradient(
                     Gradient::vertical([Color::white(), Color::black()]),
                 ),
                 false,
+                Modifier::DIFF_VISUAL,
             ],
-            'withStroke' => [static fn(): Modifier => (new Modifier())->withStroke(Color::fromRgb(1, 2, 3), 1.0), false],
+            'withStroke' => [static fn(): Modifier => (new Modifier())->withStroke(Color::fromRgb(1, 2, 3), 1.0), false, Modifier::DIFF_VISUAL],
             'withBorderDash' => [
                 static fn(): Modifier => (new Modifier())->withBorderDash(new DashPattern(6.0, 4.0)),
                 false,
+                Modifier::DIFF_VISUAL,
             ],
-            'withRadius' => [static fn(): Modifier => (new Modifier())->withRadius(4.0), false],
-            'withShadow' => [static fn(): Modifier => (new Modifier())->withShadow(0.5), false],
-            'withCompose' => [static fn(): Modifier => (new Modifier())->withCompose(0.5, 1.0, 1.0), false],
-            'withOpacity' => [static fn(): Modifier => (new Modifier())->withOpacity(0.5), false],
-            'withTranslate' => [static fn(): Modifier => (new Modifier())->withTranslate(1.0, 1.0), false],
-            'withClip' => [static fn(): Modifier => (new Modifier())->withClip(true), false],
-            'withDisabled' => [static fn(): Modifier => (new Modifier())->withDisabled(true), false],
-            'withGrow' => [static fn(): Modifier => (new Modifier())->withGrow(1), false],
-            'withShrink' => [static fn(): Modifier => (new Modifier())->withShrink(1), false],
-            'withBasis' => [static fn(): Modifier => (new Modifier())->withBasis(10.0), false],
-            'withAlignSelf' => [static fn(): Modifier => (new Modifier())->withAlignSelf(RenderBox::ALIGN_CENTER), false],
-            'withContentAlign' => [static fn(): Modifier => (new Modifier())->withContentAlign(Alignment::topRight()), false],
+            'withRadius' => [static fn(): Modifier => (new Modifier())->withRadius(4.0), false, Modifier::DIFF_VISUAL],
+            'withShadow' => [static fn(): Modifier => (new Modifier())->withShadow(0.5), false, Modifier::DIFF_VISUAL],
+            'withCompose' => [static fn(): Modifier => (new Modifier())->withCompose(0.5, 1.0, 1.0), false, Modifier::DIFF_VISUAL],
+            'withOpacity' => [static fn(): Modifier => (new Modifier())->withOpacity(0.5), false, Modifier::DIFF_VISUAL],
+            'withTranslate' => [static fn(): Modifier => (new Modifier())->withTranslate(1.0, 1.0), false, Modifier::DIFF_VISUAL],
+            'withClip' => [static fn(): Modifier => (new Modifier())->withClip(true), false, Modifier::DIFF_VISUAL],
+            'withDisabled' => [static fn(): Modifier => (new Modifier())->withDisabled(true), false, Modifier::DIFF_VISUAL],
+            'withGrow' => [static fn(): Modifier => (new Modifier())->withGrow(1), false, Modifier::DIFF_GEOMETRY],
+            'withShrink' => [static fn(): Modifier => (new Modifier())->withShrink(1), false, Modifier::DIFF_GEOMETRY],
+            'withBasis' => [static fn(): Modifier => (new Modifier())->withBasis(10.0), false, Modifier::DIFF_GEOMETRY],
+            'withAlignSelf' => [static fn(): Modifier => (new Modifier())->withAlignSelf(RenderBox::ALIGN_CENTER), false, Modifier::DIFF_GEOMETRY],
+            'withContentAlign' => [static fn(): Modifier => (new Modifier())->withContentAlign(Alignment::topRight()), false, Modifier::DIFF_GEOMETRY],
             // ★ 曾漏在 `isDefault()` 之外一整轮（S1 补上，见类注释）
-            'withRepaintBoundary' => [static fn(): Modifier => (new Modifier())->withRepaintBoundary(true), false],
-            'withInset' => [static fn(): Modifier => (new Modifier())->withInset(Modifier::INSET_LEFT, 8.0), false],
-            'withTransform' => [static fn(): Modifier => (new Modifier())->withTransform(Matrix2D::rotation(15.0)), false],
+            'withRepaintBoundary' => [static fn(): Modifier => (new Modifier())->withRepaintBoundary(true), false, Modifier::DIFF_VISUAL],
+            'withInset' => [static fn(): Modifier => (new Modifier())->withInset(Modifier::INSET_LEFT, 8.0), false, Modifier::DIFF_GEOMETRY],
+            'withTransform' => [static fn(): Modifier => (new Modifier())->withTransform(Matrix2D::rotation(15.0)), false, Modifier::DIFF_VISUAL],
             // ★ 传**非空**样式：传 `BoxStyle::none()` 等于没填，`isDefault()` 该保持真
             'withBoxStyleIfBlank' => [
                 static fn(): Modifier => (new Modifier())->withBoxStyleIfBlank(BoxStyle::none()->withRadius(2.0)),
                 false,
+                Modifier::DIFF_VISUAL,
             ],
         ];
     }
@@ -163,6 +169,142 @@ final class ModifierTest extends SmokeTestCase
             $wrong === [],
             \implode('；', $wrong)
         );
+    }
+
+    /**
+     * 每个 `with*()` 的 `diff()` 归类都必须与表里那一列一致，**且两个方向一致**。
+     *
+     * ★ 反向也要测：`diff()` 里几何维的短路顺序决定了"谁先变"影响返回值。单向测法
+     *   遇到"几何维比了 A→B 却漏了 B→A 的某个字段"就绿着过去。
+     * ★ 另一条隐含判据：**两列都不能是 0** —— `diff() === 0` 意味着"什么都没变"，
+     *   那这一维的改动会被 `setMods()` 整段吞掉（既不重排也不重画）。
+     */
+    public function testDiffClassifiesEveryWithMethod(): void
+    {
+        $empty = new Modifier();
+        $wrong = [];
+        foreach (self::cases() as $name => [$factory, , $expected]) {
+            $modifier = $factory();
+            $forward = $modifier->diff($empty);
+            $backward = $empty->diff($modifier);
+            if ($forward !== $expected || $backward !== $expected) {
+                $wrong[] = \sprintf('%s（期望 %d，实际 %d / %d）', $name, $expected, $forward, $backward);
+            }
+        }
+
+        check(
+            'Modifier · diff() 的几何 / 绘制归类与表一致（双向）',
+            $wrong === [],
+            \implode('；', $wrong)
+        );
+    }
+
+    /**
+     * 两个**各自独立构造**的空修饰 ⇒ `diff()` 为 0。
+     *
+     * ★ 这条守的是 `NAN`：`width` / `height` / `aspect` / `basis` 默认是 NAN，而
+     *   `NAN !== NAN` ⇒ 裸比较会把"两个默认修饰"判成几何不同 ⇒ 每次重建都标脏全树，
+     *   盒复用整个白做（而且**不报错**，只表现为性能回到优化前）。
+     */
+    public function testDiffOfTwoIndependentDefaultsIsNone(): void
+    {
+        $a = new Modifier();
+        $b = new Modifier();
+
+        check(
+            'Modifier · 两个独立空修饰 diff()=0（NAN 视为未设，不是"变了"）',
+            $a->diff($b) === 0 && $b->diff($a) === 0,
+            \sprintf('%d / %d', $a->diff($b), $b->diff($a))
+        );
+    }
+
+    /**
+     * 共享的空修饰实例：可从它派生出无数份，但**任何写方法都不得原地改它**。
+     *
+     * ★ 这是 `Modifier::empty()` 唯一的风险面：一旦某个 `with*()` 漏了 `clone`，
+     *   污染是**全局**的 —— 所有"没碰过修饰"的控件会同时带上那份修饰，且每个
+     *   后续重建都在放大它。行为级判据比"逐个方法查实现"更耐改。
+     */
+    public function testSharedEmptyInstanceIsNeverMutated(): void
+    {
+        check('Modifier · empty() 每次返回同一个实例', Modifier::empty() === Modifier::empty());
+
+        $derived = Modifier::empty()
+            ->withPadding(8.0, 8.0, 8.0, 8.0)
+            ->withFill(Color::fromRgb(1, 2, 3))
+            ->withRadius(4.0)
+            ->withOpacity(0.5)
+            ->withGrow(1);
+
+        check(
+            'Modifier · 派生出一份新修饰',
+            $derived !== Modifier::empty() && $derived->isDefault() === false,
+        );
+        check(
+            'Modifier · 共享实例本身未被污染',
+            Modifier::empty()->isDefault() === true,
+            'empty() 已经不再是"无修饰"了 —— 某个 with*() 漏了 clone',
+        );
+    }
+
+    /**
+     * **每个私有字段**单独改一次，`diff()` 都必须非 0。
+     *
+     * ★ 上一条（表驱动）守不住这件事：`withPadding()` 一次改四边，删掉其中一条比较
+     *   仍然返回"几何变了" ⇒ 绿着过去（实测过，变异没咬红）。字段级反射才是"新增
+     *   字段忘了归类"的真正守卫 —— 那条后果是那一维改动被 `setMods()` 整段吞掉，
+     *   既不重排也不重画，**不报错**。
+     * ★ 反射直接改私有字段（不经过 `with*()`）：这样"漏了一个写方法"也会被抓到。
+     */
+    public function testEveryFieldParticipatesInDiff(): void
+    {
+        $base = new Modifier();
+        $class = new \ReflectionClass(Modifier::class);
+        $wrong = [];
+
+        foreach ($class->getProperties() as $property) {
+            if ($property->isStatic()) {
+                continue;
+            }
+
+            $probe = new Modifier();
+            $property->setValue($probe, self::oneStepFrom($property->getValue($probe), $property));
+
+            if ($base->diff($probe) === 0) {
+                $wrong[] = $property->getName();
+            }
+        }
+
+        check(
+            'Modifier · 每个字段都参与 diff()（漏一个 ⇒ 那一维改动被静默吞掉）',
+            $wrong === [],
+            '漏：' . \implode(',', $wrong)
+        );
+    }
+
+    /** 给一个字段造"与原值必然不同"的替代值（按运行时类型分派） */
+    private static function oneStepFrom(mixed $value, \ReflectionProperty $property): mixed
+    {
+        if (\is_float($value)) {
+            return \is_nan($value) ? 5.0 : $value + 1.0;
+        }
+        if (\is_int($value)) {
+            return $value + 1;
+        }
+        if (\is_bool($value)) {
+            return !$value;
+        }
+        if ($value instanceof BoxStyle) {
+            return $value->withRadius(2.0);
+        }
+        if ($value === null) {
+            // 两个可空对象字段：`align`(?Alignment) / `transform`(?Matrix2D)
+            return (string) $property->getType() === '?' . Matrix2D::class
+                ? Matrix2D::rotation(15.0)
+                : Alignment::center();
+        }
+
+        return $value;
     }
 
     /**

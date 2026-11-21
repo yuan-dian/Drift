@@ -182,7 +182,9 @@ abstract class Widget
      */
     public function __construct()
     {
-        $this->mods = new Modifier();
+        // 共享的空实例（不是每次 new）：没碰过修饰的控件在相邻两帧拿到**同一个对象**
+        // ⇒ `RenderBox::setMods()` 能整段 O(1) 跳过。见 `Modifier::empty()`。
+        $this->mods = Modifier::empty();
     }
 
     /**

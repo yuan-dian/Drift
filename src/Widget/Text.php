@@ -142,7 +142,18 @@ final class Text extends RenderBoxWidget
         $theme = $context->theme();
         $role = $this->role();
 
-        $style = TextStyle::of($this->explicitSize() ?? $theme->textSize($role))
+        // ★ 按角色取**主题缓存的实例**：默认路径（没写 `->size()`）因此零分配，
+        //   相邻两帧拿到同一个对象 ⇒ `RenderText::matchesConfiguration()` 走身份短路。
+        $explicit = $this->explicitSize();
+        if ($explicit === null) {
+            $style = $theme->textStyle($role);
+        } else {
+            $style = TextStyle::of($explicit);
+        }
+
+        // `withMaxLines` / `withEllipsize` 在参数等于当前值时返回 `$this`（见 `copy()`），
+        // 所以这两句在不设行数上限时也是零分配。
+        $style = $style
             ->withMaxLines($this->maxLinesValue())
             ->withEllipsize($this->ellipsizeValue());
 

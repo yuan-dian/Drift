@@ -105,24 +105,59 @@ final readonly class TextStyle
         ]);
     }
 
+    /**
+     * 逐字段比较。
+     *
+     * ★ 不走 `cacheKey()`：那是**排版缓存的键**，要拼一个字符串（10 次转换 + concat）；
+     *   逐字段比是它的十分之一。两者语义等价，但 `equals()` 在每帧每文本的热路径上。
+     */
     public function equals(TextStyle $other): bool
     {
-        return $this->cacheKey() === $other->cacheKey();
+        return $this->size === $other->size
+            && $this->family->equals($other->family)
+            && $this->weight === $other->weight
+            && $this->slant === $other->slant
+            && $this->lineHeight === $other->lineHeight
+            && $this->letterSpacing === $other->letterSpacing
+            && $this->align === $other->align
+            && $this->maxLines === $other->maxLines
+            && $this->ellipsize === $other->ellipsize;
     }
 
-    /** @param array<string, mixed> $changes */
+    /**
+     * 派生新样式；**什么都没变就返回 `$this`**。
+     *
+     * ★ `Text::resolveStyle()` 每帧都做 `withMaxLines(...)->withEllipsize(...)`，参数通常
+     *   与默认值相同 ⇒ 不短路的话每次重建都白造两个对象，还会让"同一样式"失去身份可比性
+     *   （`RenderText::matchesConfiguration()` 因此只能走逐字段比较）。
+     *
+     * @param array<string, mixed> $changes
+     */
     private function copy(array $changes): self
     {
-        return new self(
-            $changes['family'] ?? $this->family,
-            $changes['size'] ?? $this->size,
-            $changes['weight'] ?? $this->weight,
-            $changes['slant'] ?? $this->slant,
-            $changes['lineHeight'] ?? $this->lineHeight,
-            $changes['letterSpacing'] ?? $this->letterSpacing,
-            $changes['align'] ?? $this->align,
-            $changes['maxLines'] ?? $this->maxLines,
-            $changes['ellipsize'] ?? $this->ellipsize,
-        );
+        $family = $changes['family'] ?? $this->family;
+        $size = $changes['size'] ?? $this->size;
+        $weight = $changes['weight'] ?? $this->weight;
+        $slant = $changes['slant'] ?? $this->slant;
+        $lineHeight = $changes['lineHeight'] ?? $this->lineHeight;
+        $letterSpacing = $changes['letterSpacing'] ?? $this->letterSpacing;
+        $align = $changes['align'] ?? $this->align;
+        $maxLines = $changes['maxLines'] ?? $this->maxLines;
+        $ellipsize = $changes['ellipsize'] ?? $this->ellipsize;
+
+        if ($family === $this->family
+            && $size === $this->size
+            && $weight === $this->weight
+            && $slant === $this->slant
+            && $lineHeight === $this->lineHeight
+            && $letterSpacing === $this->letterSpacing
+            && $align === $this->align
+            && $maxLines === $this->maxLines
+            && $ellipsize === $this->ellipsize
+        ) {
+            return $this;
+        }
+
+        return new self($family, $size, $weight, $slant, $lineHeight, $letterSpacing, $align, $maxLines, $ellipsize);
     }
 }

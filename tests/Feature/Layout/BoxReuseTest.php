@@ -13,6 +13,7 @@ use Drift\Layout\RenderFlex;
 use Drift\Layout\Overflow;
 use Drift\Rendering\Color;
 use Drift\Rendering\ColorToken;
+use Drift\Rendering\Modifier;
 use Drift\Theme\ThemeData;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Column;
@@ -131,6 +132,68 @@ final class BoxReuseTest extends SmokeTestCase
             '盒复用 · 只改颜色 ⇒ 请求重绘（publishEpoch 必须前进）',
             Pipeline::current()->paintEpoch() > $epoch,
             'paintEpoch ' . $epoch . ' → ' . Pipeline::current()->paintEpoch(),
+        );
+    }
+
+    /**
+     * 声明没变 ⇒ `setMods()` 一个字段都不动。
+     *
+     * ★ 三条判据一起看：① 同实例不标脏；② **等价但新实例**也不标脏（走值比较，
+     *   证明确实能区分"实例不同"与"值不同"）；③ 几何真变了必须标脏（证明跳过
+     *   不是"永远跳过"）。只测 ① 的话，把整个方法改成 `return;` 也能过。
+     */
+    public function testSameModifierInstanceSkipsProjection(): void
+    {
+        $element = self::mount(SizedBox::make()->size(40.0, 20.0)->paddingAll(6.0));
+        $box = $element->renderObject();
+        \assert($box instanceof RenderBox);
+        $box->layout(self::constraints());
+
+        check('投影跳过 · 排完是干净的', !$box->needsLayout());
+
+        $mods = $box->mods();
+        \assert($mods !== null);
+
+        $box->setMods($mods);
+        check('投影跳过 · 同一个实例 ⇒ 不标脏', !$box->needsLayout());
+
+        $box->setMods((new Modifier())->withSize(40.0, 20.0)->withPadding(6.0, 6.0, 6.0, 6.0));
+        check('投影跳过 · 等价的新实例 ⇒ 不标脏（值比较生效）', !$box->needsLayout());
+
+        $box->setMods((new Modifier())->withSize(40.0, 20.0)->withPadding(9.0, 9.0, 9.0, 9.0));
+        check('投影跳过 · 几何真变了 ⇒ 必须标脏', $box->needsLayout());
+    }
+
+    /**
+     * 跳过投影**不**还原 `setCompose()` 写下的合成量 —— 同实例与等值新实例都不还。
+     *
+     * ★ 这是 `AnimatedOpacity` 的正确性前提：它每帧直接写盒、不重建，而重建可能来自
+     *   无关的父层 `setState`。若那时把 alpha 打回声明值，动画中途会闪一下终点。
+     * ★ 等值新实例这一条是主体：控件每次 `build()` 都会重造修饰链，实例几乎不会相同。
+     */
+    public function testSkippedProjectionKeepsAnimatedCompose(): void
+    {
+        $element = self::mount(SizedBox::make()->size(40.0, 20.0));
+        $box = $element->renderObject();
+        \assert($box instanceof RenderBox);
+
+        $box->setCompose(0.4);
+        $mods = $box->mods();
+        \assert($mods !== null);
+        $box->setMods($mods);
+
+        check(
+            '投影跳过 · 同一实例重建，动画写下的合成量不回退',
+            \abs($box->composeOpacity() - 0.4) < 1e-9,
+            \sprintf('%.2f', $box->composeOpacity()),
+        );
+
+        $box->setMods((new Modifier())->withSize(40.0, 20.0));
+
+        check(
+            '投影跳过 · 等值新实例重建，合成量同样不回退',
+            \abs($box->composeOpacity() - 0.4) < 1e-9,
+            \sprintf('%.2f', $box->composeOpacity()),
         );
     }
 

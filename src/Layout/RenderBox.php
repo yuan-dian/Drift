@@ -53,22 +53,28 @@ abstract class RenderBox extends RenderObject
 
     /**
      * 收下 Widget 的修饰声明（`Element::syncBox()` 唯一调用点）。
-     * 合成维**初值**在这里落定；此后动画走 `setCompose()` 直接写盒，rebuild 后回到声明值。
+     *
+     * ★ **声明没变 ⇒ 一个字段都不动**。投影是纯函数（声明 → 盒字段），重写一遍只会把
+     *   `setCompose()` 写下的动画量与 `setRepaintBoundary()` 那类运行期字段打回声明值
+     *   —— 一次无关的父层重建就能让动画闪一下。两条快路：同一实例（`Modifier::empty()`
+     *   让没碰过修饰的控件恒为同一对象，热路径上的大头）、值等价（`diff() === 0`）。
+     * ★ 声明真变了才重投影：合成维回到声明值，几何变标重排，纯绘制变推重画。
      */
     public function setMods(Modifier $mods): void
     {
-        // 盒复用后这里是**几何失效的唯一入口**：padding / 尺寸 / aspect / align /
-        // flex / inset 任一项变了尺寸都可能变（clip / transform 只影响绘制，不算）。
-        // 必须用 `geometryEquals()` 而非 `!=`：这些字段的默认值是 NAN，`NAN !== NAN`
-        // 会让每次重建都判"变了" ⇒ 标脏全树、缓存白做。
-        $geometryChanged = $this->mods === null || !$mods->geometryEquals($this->mods);
+        if ($mods === $this->mods) {
+            return;
+        }
 
-        // 几何没变、只是视觉变了（列线悬停色这一类）：不重排，但**必须重画** ——
-        // 复用盒不 bump layoutEpoch，不在这里推 paintEpoch 就停在上一帧。
-        $visualOnlyChanged = !$geometryChanged
-            && ($this->mods === null || !$mods->equals($this->mods));
+        // 一趟比较同时给出两维：几何变了必须重排（重排必然重画 ⇒ 绘制维不必再比）。
+        $diff = $this->mods === null ? Modifier::DIFF_GEOMETRY : $mods->diff($this->mods);
 
+        // 值没变：换掉实例引用（后续帧的身份比较照样命中），盒字段一个都不重写。
         $this->mods = $mods;
+
+        if ($diff === 0) {
+            return;
+        }
 
         // ★ 禁用把置灰**折进**合成 alpha：`paintComposed()` 在 `opacity < 1` 时已开层，
         //   整棵子树一起变淡。`dim = false` 的控件自绘禁用外观，不再乘以免二次衰减。
@@ -86,9 +92,9 @@ abstract class RenderBox extends RenderObject
         $this->setStackIntent($mods->insetLeft(), $mods->insetTop(), $mods->insetRight(), $mods->insetBottom());
         $this->applyTransform($mods->transform(), $mods->transformCentered());
 
-        if ($geometryChanged) {
+        if ($diff === Modifier::DIFF_GEOMETRY) {
             $this->markNeedsLayout();
-        } elseif ($visualOnlyChanged) {
+        } elseif ($diff === Modifier::DIFF_VISUAL) {
             $this->pipeline()->bumpPaintEpoch();
         }
     }

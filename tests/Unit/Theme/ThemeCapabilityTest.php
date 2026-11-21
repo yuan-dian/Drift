@@ -7,6 +7,7 @@ use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Rendering\Color;
 use Drift\Rendering\ColorToken;
 use Drift\Rendering\MetricToken;
+use Drift\Text\TextRole;
 use Drift\Theme\ThemeData;
 
 /**
@@ -39,6 +40,73 @@ final class ThemeCapabilityTest extends SmokeTestCase
                 && $first->color(ColorToken::Accent)->equals(Color::fromRgb(1, 2, 3))
                 && $base->color(ColorToken::Accent)->equals(ColorToken::Accent->lightValue()),
             'immutable',
+        );
+
+        $this->flushChecks();
+    }
+
+    /**
+     * 同一角色 / 同一 token 反复取 ⇒ **同一个实例**。
+     *
+     * ★ 这不是"省一次查表"的优化测试，而是**身份契约**：`Text::resolveStyle()` 与
+     *   `RenderBox::setMods()` 的快速路径都靠"相邻两帧拿到同一个对象"来跳过逐字段
+     *   比较。身份不稳 ⇒ 那些路径静默退化成全字段比较（功能正确、性能回退，不报错）。
+     * ★ 覆写值只换它自己：换肤后未覆写的 token 仍取默认表（否则换一个色会连带改一片）。
+     */
+    public function testResolvedValuesAreStableWithinOneTheme(): void
+    {
+        $theme = ThemeData::light();
+
+        check(
+            '主题 · 同一角色的 textStyle 是同一个实例',
+            $theme->textStyle(TextRole::Title) === $theme->textStyle(TextRole::Title),
+        );
+        check(
+            '主题 · 不同角色是不同的样式',
+            $theme->textStyle(TextRole::Title) !== $theme->textStyle(TextRole::Body),
+        );
+        check(
+            '主题 · 同一 token 的 color 是同一个实例',
+            $theme->color(ColorToken::Accent) === $theme->color(ColorToken::Accent),
+        );
+
+        $recolored = $theme->withColor(ColorToken::Accent, Color::fromRgb(9, 8, 7));
+        check(
+            '主题 · 覆写的 token 换新值，其余仍取默认表',
+            $recolored->color(ColorToken::Accent) !== $theme->color(ColorToken::Accent)
+                && $recolored->color(ColorToken::Accent)->equals(Color::fromRgb(9, 8, 7))
+                && $recolored->color(ColorToken::Pane) === $theme->color(ColorToken::Pane),
+        );
+        check(
+            '主题 · 换主题后 textStyle 按新字号表解析',
+            $recolored->textStyle(TextRole::Title)->size === $theme->textSize(TextRole::Title),
+        );
+
+        $this->flushChecks();
+    }
+
+    /**
+     * 取过色 / 样式之后，`ThemeData` 仍是**值对象**（`==` 只看配置，不看派生缓存）。
+     *
+     * ★ 判据来自 `AppScope::enter()`：它用 `!=` 判"多窗口主题是否一致"。缓存一旦落在
+     *   实例上，"配置相同但缓存冷热不同"的两个主题就判不等 ⇒ 第二个窗口晚开时冒出
+     *   一条假的"主题不一致"（时序相关、难复现）。所以驻留必须是静态的。
+     */
+    public function testValueSemanticsSurviveCacheWarmUp(): void
+    {
+        $warm = ThemeData::light();
+        $warm->color(ColorToken::Accent);
+        $warm->textStyle(TextRole::Body);
+
+        check(
+            '主题 · 缓存热了以后 `==` 仍判值为等',
+            $warm == ThemeData::light(),
+        );
+
+        $recolored = $warm->withColor(ColorToken::Accent, Color::fromRgb(9, 8, 7));
+        check(
+            '主题 · 真改了配置 ⇒ `==` 判不等',
+            $recolored != ThemeData::light(),
         );
 
         $this->flushChecks();
