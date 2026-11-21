@@ -330,6 +330,10 @@ abstract class RenderBox extends RenderObject
 
         $this->pipeline()->bumpLayout();
 
+        // 去掉全局 epoch 后，换盒/换内容靠这条兜底：新盒缓存虽空，祖先边界的命令
+        // 仍录着旧子树 ⇒ 真重排过的盒上溯失效祖先链。干净盒走上面的快速路径，不付代价。
+        $this->markPaintChanged();
+
         $m = $this->mods;
 
         // ① 尺寸修饰收紧约束（设了的那一轴变成紧的）
@@ -896,8 +900,8 @@ abstract class RenderBox extends RenderObject
      * ★ 不置布局脏是整条路的重点：置了就等于每帧全树重排。
      * ★ `opacity >= 1` 且 `dx == dy == 0` ⇒ `paintComposed()` 走**零开销快路**。
      * ★★ 值真变了必须让**外层**重绘边界重录：`pushLayer(alpha)` 是录进 `DisplayList`
-     *   的一条命令，而缓存判据是 `layoutEpoch + 尺寸` —— 两者都不变 ⇒ 命中缓存、重放
-     *   旧 alpha ⇒ **画面一动不动**（值在滑、屏上是死的）。
+     *   的一条命令，而缓存判据只有 `尺寸 + 能力位` —— 尺寸不变时若不失效 ⇒ 命中缓存、
+     *   重放旧 alpha ⇒ **画面一动不动**（值在滑、屏上是死的）。
      *
      * @api
      */
@@ -1118,8 +1122,7 @@ abstract class RenderBox extends RenderObject
             $w = $s === null ? -1.0 : $s->width;
             $h = $s === null ? -1.0 : $s->height;
 
-            $epoch = $this->pipeline()->layoutEpoch();
-            $rec = $layer->beginRecord($canvas, $epoch, $w, $h);
+            $rec = $layer->beginRecord($canvas, $w, $h);
             if ($rec === null) {   // 命中：整棵子树一次 paint() 都不跑
                 $this->pipeline()->bumpReplay();
 
@@ -1127,7 +1130,7 @@ abstract class RenderBox extends RenderObject
             }
             $this->pipeline()->bumpPaint();
             $this->paint($rec);
-            $layer->endRecord($canvas, $epoch, $w, $h);
+            $layer->endRecord($canvas, $w, $h);
 
             return;
         }

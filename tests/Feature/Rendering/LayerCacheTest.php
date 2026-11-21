@@ -18,11 +18,10 @@ use Drift\Layout\RenderBox;
  *   ① "换窗"是**换盒** —— 新盒的缓存本来就是空的，判据怎么写都绿；
  *   ② "视口变窄"也测不到 —— `Table` 行区的 size 是**列宽之和**、与视口无关
  *      ⇒ 视口变了缓存仍命中，那是对的（且正是收益）。
- *   ⇒ 只能直接拿**同一棵盒**改 size：epoch 不动，只有尺寸判据能拦住。
+ *   ⇒ 只能直接拿**同一棵盒**改 size：内容没变、也没显式标脏，只有尺寸判据能拦住。
  *
- * ★ 反例自检：`cacheValid()` 去掉 `w/h` 比较 ⇒ 第三条红（paint 0）；
- *   去掉 `epoch` 比较 ⇒ 本用例仍绿（epoch 本来就没动）—— 那条由"内容变 ⇒ 重录"
- *   的端到端断言兜（`Feature/Table/LayerCacheTest` 第二条）。
+ * ★ 反例自检：`beginRecord()` 去掉 `w/h` 比较 ⇒ 第三条红（paint 0）。
+ *   "内容变 ⇒ 重录"不靠尺寸键，由写点的显式标脏兜（见 `StaleLayerInvalidationTest`）。
  */
 final class LayerCacheTest extends SmokeTestCase
 {

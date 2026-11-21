@@ -27,29 +27,29 @@ final class LayerCacheCapabilityTest extends SmokeTestCase
         $sinkA = new RecordingCanvas(new DisplayList(), $full);
         check(
             'LayerCache · 首帧返回录制画布',
-            $cache->beginRecord($sinkA, 1, 10.0, 10.0) !== null,
+            $cache->beginRecord($sinkA, 10.0, 10.0) !== null,
         );
-        $cache->endRecord($sinkA, 1, 10.0, 10.0);
+        $cache->endRecord($sinkA, 10.0, 10.0);
 
         $same = new RecordingCanvas(new DisplayList(), $full);
         check(
-            'LayerCache · 同能力 / 同 epoch / 同尺寸 ⇒ 命中（不许误失效）',
-            $cache->beginRecord($same, 1, 10.0, 10.0) === null,
+            'LayerCache · 同能力 / 同尺寸 ⇒ 命中（不许误失效）',
+            $cache->beginRecord($same, 10.0, 10.0) === null,
         );
 
         $other = new RecordingCanvas(new DisplayList(), RasterCanvas::supportedCapabilities());
         check(
             'LayerCache · 回放端能力变了 ⇒ 必须重录，不许回放旧命令流',
-            $cache->beginRecord($other, 1, 10.0, 10.0) !== null,
+            $cache->beginRecord($other, 10.0, 10.0) !== null,
         );
-        $cache->endRecord($other, 1, 10.0, 10.0);
+        $cache->endRecord($other, 10.0, 10.0);
 
         $back = new RecordingCanvas(new DisplayList(), $full);
         check(
             'LayerCache · 再换回原能力 ⇒ 仍要重录（键是双向的）',
-            $cache->beginRecord($back, 1, 10.0, 10.0) !== null,
+            $cache->beginRecord($back, 10.0, 10.0) !== null,
         );
-        $cache->endRecord($back, 1, 10.0, 10.0);
+        $cache->endRecord($back, 10.0, 10.0);
 
         $this->flushChecks();
     }

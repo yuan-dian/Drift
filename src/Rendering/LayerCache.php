@@ -18,8 +18,6 @@ final class LayerCache
     /** 正在录的那一张（`beginRecord()` 与 `endRecord()` 之间非空） */
     private ?RecordingCanvas $recording = null;
 
-    private int $epoch = -1;
-
     private float $w = -1.0;
 
     private float $h = -1.0;
@@ -30,15 +28,15 @@ final class LayerCache
     /**
      * 丢掉缓存，下一次 `beginRecord()` 必然重录。
      *
-     * ★ 调用方是 `RenderBox::invalidateEnclosingLayer()`：**合成槽（alpha / 平移）
-     *   是录进命令流里的值**，只改槽不动 `layoutEpoch` ⇒ 缓存会一直重放旧值，
-     *   画面变成死的（`AnimatedOpacity` 在 `ScrollView` 里就是这个症状：
-     *   值在滑、屏不动，直到下一次 rebuild 才"突然"到位）。
+     * ★ 调用方是 `RenderBox::markPaintChanged()` / `invalidateEnclosingLayer()`：
+     *   **凡是录进命令流的东西**（视觉维、合成槽、子树重排）变了都必须显式调它，
+     *   否则缓存一直重放旧值，画面变成死的（`AnimatedOpacity` 在 `ScrollView` 里
+     *   就是这个症状：值在滑、屏不动，直到下一次 rebuild 才"突然"到位）。
+     *   键里不再有全局 epoch —— 失效的责任完全落在各写点的标脏上。
      */
     public function invalidate(): void
     {
         $this->list = null;
-        $this->epoch = -1;
         $this->caps = -1;
     }
 
@@ -49,12 +47,11 @@ final class LayerCache
      * ★ 命中判据含回放端能力位：换端不重录会把按旧端能力选定的命令流
      *   直接回放给新端（Optional op 可能在回放时响亮失败）。
      */
-    public function beginRecord(Canvas $canvas, int $epoch, float $w, float $h): ?Canvas
+    public function beginRecord(Canvas $canvas, float $w, float $h): ?Canvas
     {
         $caps = $canvas->capabilities();
         $cached = $this->list;
-        if ($cached !== null && $this->epoch === $epoch && $this->w === $w && $this->h === $h
-            && $this->caps === $caps) {
+        if ($cached !== null && $this->w === $w && $this->h === $h && $this->caps === $caps) {
             $cached->replay($canvas);
 
             return null;
@@ -72,7 +69,7 @@ final class LayerCache
      * ★ 录与放同一次调用里完成 ⇒ 开启边界不会让首帧变黑，也不会有"缓存还没
      *   填上"的中间态需要额外判据。
      */
-    public function endRecord(Canvas $canvas, int $epoch, float $w, float $h): void
+    public function endRecord(Canvas $canvas, float $w, float $h): void
     {
         $rec = $this->recording;
         if ($rec === null) {
@@ -82,7 +79,6 @@ final class LayerCache
         $list->assertBalanced();
         $this->list = $list;
         $this->recording = null;
-        $this->epoch = $epoch;
         $this->w = $w;
         $this->h = $h;
         $this->caps = $canvas->capabilities();
