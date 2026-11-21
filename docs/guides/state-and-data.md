@@ -1,12 +1,12 @@
 # 状态与数据
 
-> 本篇解决：UI 局部态、细粒度值、业务数据广播和命令四条缝怎么分工，`select` 切片门控为什么要求稳定的值身份，以及读点响应式的重建边界落在哪。
+> 本篇解决：UI 局部态、细粒度值、业务状态和命令四条缝怎么分工，门控为什么要求稳定的值身份，以及读点响应式的重建边界落在哪。
 
 ## 四条缝先分开
 
 - UI 局部态住 `State`：`setState()` 标脏、帧末重建。
 - 细粒度值住 `Cell`：写入自动通知，重建边界由**读点**决定，不用再决定"该标谁脏"。见下文「读点响应式」一节。
-- 业务数据广播住 `Subject`：`notifyChanged()` 手动调一次，订阅者异常隔离。子类 Store 只依赖 `Subject` / `Cell`（两者都在 `Drift\State\`），所以业务层零 GUI 依赖是结构事实。
+- 业务状态住 `Cell`：一字段一格，写入自动通知；只有"多字段同频、读方要一次性看到一致快照"才 `extends Subject` + `notifyChanged()`（见下文「Cell 还是 Subject」）。两者都在 `Drift\State\`，所以业务层零 GUI 依赖是结构事实。
 - 动作走字符串名命令，见 [命令与动作](./commands.md)。
 
 把业务数据塞进 `State`，跨页共享与恢复就没地方放；把悬停项塞进 `Store`，每次鼠标移动都要广播一次。两者别混。**高频值（时钟、进度、实时读数）尤其别走 `setState`** —— 那是每帧整棵子树重建，改用 `LiveText`（见下文）。
@@ -28,7 +28,9 @@ $this->setState(function () use ($index): void { $this->hovered = $index; });
 
 `State::needsBuild()` / `consumeDirty()` 供框架在帧末判定是否重建，业务代码一般不直接调。
 
-## Subject 与 select 切片订阅
+## Subject 与整块广播（例外形状）
+
+★ **默认不写这个**。界面会读的字段用下一节的 `Cell` + `Bind`：一字段一格、写进去自动通知、读点即订阅。本节留给一种情况 —— 多个字段必须同频变化、读方要一次拿到一致的几块（查询词 + 筛选 + 分页一起刷新）。
 
 `Subject` 是广播端，`notifyChanged()` 由应用手动调（它不知道 GUI 长什么样）。`subscribeFor(object $owner, callable $handler)` 按属主订阅，`unsubscribeAllOf()` / `unsubscribeId()` 退订；每个订阅者异常隔离，先记账、通知完再报，避免第一个炸掉后面全收不到。`Subscription` 按自增 id 管理，遍历中退订不出错。
 
@@ -107,10 +109,21 @@ Text::of($this->count, '计数 ')->body();             // 读：读点就在这�
 
 ### Cell 还是 Subject
 
-两条都能广播，判据是**字段之间同不同频**：
+**默认 `Cell`**。判据一句话：**订阅方要的是"一个字段"还是"一次事务里的几个字段"**。
 
-- **多字段同频、整块一起变、需要一致性切片**（查询词 + 筛选 + 分页一起刷新）：`extends Subject` + `SubjectBuilder::select`，一次广播一次门控。users / watermark 是这种形状。
-- **少数几个独立值、各自被不同位置读、变化频率差很远**（计数、悬停项、实时读数）：普通类持几个 `Cell`，各订各的，谁也不必为别人的频率买单。示例台的 `ButtonsStore` 与 `Reactive` 页是这种形状。
+| | `Cell`（默认） | `extends Subject`（例外） |
+|---|---|---|
+| 形状 | 一字段一格，`$store->time()->get()` | 整块广播 + `notifyChanged()` |
+| 读点 | `Bind` 的 builder 里读什么订什么 | `SubjectBuilder::select` 声明切片 |
+| 粒度 | 格子粒度：进度 tick 不碰表单段 | 一次广播唤醒全部订阅者，再各自门控 |
+| 适合 | 界面读的绝大多数状态 | 多字段必须同频、读方要一次性看到一致快照 |
+
+水印应用（`WatermarkStore` 十来个格子）与示例台的 `ButtonsStore` 是前一种；后一种目前在示例应用里已没有使用者，`Subject` 本身仍被 `AsyncCommand` / `ComboBoxQuery` 这类"一个对象就是一个事件"的地方继承 —— 那是另一种用法，不是状态。
+
+两条纪律：
+
+- **不混用**：给每个字段写格子之后再整块 `notifyChanged()`，等于两套机制一起跑，每次都白通知一遍。
+- **不为省格子合并**：把几个字段合成一个数组切片塞进同一格，会让改一个字段唤醒所有读它的段 —— 正是格子要解决的问题。
 
 `Cell` 本身就是 `Subject` 子类，所以"业务层零 GUI 依赖"在两条路上都成立。
 
@@ -132,7 +145,7 @@ Text::of($this->count, '计数 ')->body();             // 读：读点就在这�
 ## 页面状态与应用状态边界
 
 - 页面私有、跨 build、不需要恢复：放 `State`（视图粒度、草稿、悬停）。
-- 业务数据、跨页共享、别页也要读：放 `Store`，页面用 `SubjectBuilder` 订阅。
+- 业务数据、跨页共享、别页也要读：放 `Store`，页面用 `Bind` 读它的格子（Store 若整块广播，才用 `SubjectBuilder::select`）。
 - 需要跨进程冷启动恢复（表单、导航栈、滚动位置）：走 `AppScope::restoration()` 配 `RestorableValue` / `NavigationStack`。一个 bucket 是唯一真相源，窗口几何另归 `WindowStateStore`。
 - 一次性 UI 动作（弹通知、开模态、延时回调）：从 `Environment` 取，不塞进业务状态。
 

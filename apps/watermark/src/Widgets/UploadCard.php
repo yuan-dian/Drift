@@ -8,7 +8,7 @@ use Drift\Geometry\EdgeInsets;
 use Drift\Input\FilesDroppedEvent;
 use Drift\Input\PointerEvent;
 use Drift\Rendering\DashPattern;
-use Drift\State\SubjectBuilder;
+use Drift\Widget\Bind;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
 use Drift\Widget\ButtonVariant;
@@ -29,16 +29,13 @@ use Drift\Widget\Text;
 use Drift\Widget\Widget;
 use Drift\Widget\Wrap;
 
-use App\Watermark\Store\SelectedImage;
-use App\Watermark\Store\StatusMessage;
-
 /**
  * 第 1 张卡片：选图 + 预览 + 上传（原文的"选择并上传图片"）。
  *
- * ★ **每个会变的值都在自己的 `SubjectBuilder` 里读**。本类是 `StatelessWidget`
- *   （`build()` 只在被造出来时跑一次）⇒ 直接读 `$store->xxx()` 拿到的是**浇筑
- *   那一刻的快照**，之后永远不变。这是本仓真机抓过的 bug（`UsersPage` 的
- *   "刷新按钮永久灰"），不是理论风险。
+ * ★ **每个会变的值都住在自己的 `Bind` 里**。本类是 `StatelessWidget`（`build()`
+ *   只在被造出来时跑一次）⇒ 直接读 `$store->xxx()` 拿到的是**浇筑那一刻的快照**，
+ *   之后永远不变。这是本仓真机抓过的 bug（`UsersPage` 的"刷新按钮永久灰"），
+ *   不是理论风险。
  * ★ 上传区**同时**接"点击"和"拖放"：
  *   - 点击走门面的 `openFiles()`（组合根装的是 `Win32Dialog`）——
  *     端口类型不出 `Drift\App`，本类只看到"给我一串路径"。
@@ -137,22 +134,21 @@ final class UploadCard extends StatelessWidget
     {
         $store = $this->store;
 
-        return SubjectBuilder::make($store)
-            ->select(static fn(WatermarkStore $s): array => $s->selected())
-            ->builder(static function (array $images) use ($store): Widget {
-                if ($images === []) {
-                    return SizedBox::make()->size(0.0, 0.0);
-                }
+        return Bind::make(static function () use ($store): Widget {
+            $images = $store->selected();
+            if ($images === []) {
+                return SizedBox::make()->size(0.0, 0.0);
+            }
 
-                $thumbs = [];
-                foreach ($images as $i => $image) {
-                    $thumbs[] = ImageThumb::make($image, (int) $i, static function (int $index) use ($store): void {
-                        $store->removeAt($index);
-                    });
-                }
+            $thumbs = [];
+            foreach ($images as $i => $image) {
+                $thumbs[] = ImageThumb::make($image, (int) $i, static function (int $index) use ($store): void {
+                    $store->removeAt($index);
+                });
+            }
 
-                return Wrap::make()->spacing(12.0)->runSpacing(12.0)->children($thumbs);
-            });
+            return Wrap::make()->spacing(12.0)->runSpacing(12.0)->children($thumbs);
+        });
     }
 
     /** 按钮行：上传 + 清空 */
@@ -160,22 +156,20 @@ final class UploadCard extends StatelessWidget
     {
         $store = $this->store;
 
-        return SubjectBuilder::make($store)
-            ->select(static fn(WatermarkStore $s): bool => $s->canUpload())
-            ->builder(static function (bool $canUpload) use ($store): Widget {
-                return Row::make()->spacing(12)->children([
-                    Button::primary('上传')->enabled($canUpload)->onPressed(static function () use ($store): void {
-                        $store->upload();
-                    }),
-                    Button::make('清空选择')
-                        ->variant(ButtonVariant::Danger)
-                        ->compact()
-                        ->onPressed(static function () use ($store): void {
-                            $store->clearSelection();
-                        }),
-                    Spacer::make(),
-                ]);
-            });
+        return Bind::make(static fn (): Widget => Row::make()->spacing(12)->children([
+            Button::primary('上传')
+                ->enabled($store->canUpload())
+                ->onPressed(static function () use ($store): void {
+                    $store->upload();
+                }),
+            Button::make('清空选择')
+                ->variant(ButtonVariant::Danger)
+                ->compact()
+                ->onPressed(static function () use ($store): void {
+                    $store->clearSelection();
+                }),
+            Spacer::make(),
+        ]));
     }
 
     /** 进度条（只在"正在上传"时出现 —— 平时它是一条 0% 的空槽，看着像坏了） */
@@ -183,24 +177,20 @@ final class UploadCard extends StatelessWidget
     {
         $store = $this->store;
 
-        return SubjectBuilder::make($store)
-            ->select(static fn(WatermarkStore $s): float => $s->isUploading() ? $s->uploadProgress() : -1.0)
-            ->builder(static function (float $fraction): Widget {
-                if ($fraction < 0.0) {
-                    return SizedBox::make()->size(0.0, 0.0);
-                }
+        return Bind::make(static function () use ($store): Widget {
+            if (!$store->isUploading()) {
+                return SizedBox::make()->size(0.0, 0.0);
+            }
 
-                return Progress::make($fraction)->height(8.0);
-            });
+            return Progress::make($store->uploadProgress())->height(8.0);
+        });
     }
 
     private function message(): Widget
     {
         $store = $this->store;
 
-        return SubjectBuilder::make($store)
-            ->select(static fn(WatermarkStore $s): StatusMessage => $s->uploadMessage())
-            ->builder(static fn(StatusMessage $m): Widget => MessageLine::make($m));
+        return Bind::make(static fn (): Widget => MessageLine::make($store->uploadMessage()));
     }
 
     /** 已上传的对象键列表（原文 `.uploaded-item`：✅ + 等宽路径） */
@@ -208,28 +198,27 @@ final class UploadCard extends StatelessWidget
     {
         $store = $this->store;
 
-        return SubjectBuilder::make($store)
-            ->select(static fn(WatermarkStore $s): array => $s->uploadedKeys())
-            ->builder(static function (array $keys): Widget {
-                if ($keys === []) {
-                    return SizedBox::make()->size(0.0, 0.0);
-                }
+        return Bind::make(static function () use ($store): Widget {
+            $keys = $store->uploadedKeys();
+            if ($keys === []) {
+                return SizedBox::make()->size(0.0, 0.0);
+            }
 
-                // ★ `Each` 的 `keyFn` 与 `builder` 都只收**一个**参数（item），
-                //   没有 index。key 用对象键本身（它天然唯一 —— 同一批里两个
-                //   相同的键说明 `objectKey()` 撞了，那是真 bug）。
-                return Each::make(static fn(string $key): string => $key)->items(
-                    $keys,
-                    static fn(string $key): Widget => Row::make()
-                        ->spacing(10)
-                        ->padding(EdgeInsets::symmetric(14.0, 10.0))
-                        ->background(Palette::listRow())
-                        ->radius(8.0)
-                        ->children([
-                            Icon::make(IconName::Check, 14.0)->color(Palette::successText()),
-                            Text::make($key)->caption(),
-                        ]),
-                );
-            });
+            // ★ `Each` 的 `keyFn` 与 `builder` 都只收**一个**参数（item），
+            //   没有 index。key 用对象键本身（它天然唯一 —— 同一批里两个
+            //   相同的键说明 `objectKey()` 撞了，那是真 bug）。
+            return Each::make(static fn (string $key): string => $key)->items(
+                $keys,
+                static fn (string $key): Widget => Row::make()
+                    ->spacing(10)
+                    ->padding(EdgeInsets::symmetric(14.0, 10.0))
+                    ->background(Palette::listRow())
+                    ->radius(8.0)
+                    ->children([
+                        Icon::make(IconName::Check, 14.0)->color(Palette::successText()),
+                        Text::make($key)->caption(),
+                    ]),
+            );
+        });
     }
 }

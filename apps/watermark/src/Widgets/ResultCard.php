@@ -6,15 +6,14 @@ namespace App\Watermark\Widgets;
 use App\Watermark\Api\TaskResult;
 use App\Watermark\Store\WatermarkStore;
 use Drift\Geometry\EdgeInsets;
+use Drift\Layout\FlexAlign;
 use Drift\Layout\ImageFit;
-use Drift\State\SubjectBuilder;
+use Drift\Widget\Bind;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
 use Drift\Widget\ButtonVariant;
 use Drift\Widget\Center;
 use Drift\Widget\Column;
-use Drift\Widget\Each;
-use Drift\Layout\FlexAlign;
 use Drift\Widget\Image;
 use Drift\Widget\Row;
 use Drift\Widget\SizedBox;
@@ -29,6 +28,8 @@ use Drift\Widget\Widget;
  *
  * ★ 结果图直接把服务端 URL 交给 `Image::asset()` —— 下载 / 缓存 / 三态由控件自治，
  *   本卡片不再维护一份批量下载状态。一张失败不影响别的。
+ * ★ 四段各自一个 `Bind`：轮询中 `lastResult` 每轮都换，只有状态区与结果区跟着
+ *   重建；"停止"那一档只看 `phase`，结果区翻新时它一动不动。
  */
 final class ResultCard extends StatelessWidget
 {
@@ -58,57 +59,53 @@ final class ResultCard extends StatelessWidget
     /** 轮询状态（5 态：已创建 / 排队中 / 处理中 / 完成 / 失败） */
     private function statusSection(): Widget
     {
-        return SubjectBuilder::make($this->store)
-            // ★ `isPolling()` 必须进 select，不能在 builder 里现读：
-            //   select 只盯 `lastResult()`，而"刚开始轮询"时它是 `null → null`（没变化）
-            //   ⇒ builder 不重建 ⇒ 状态区停在"等待任务提交后自动查询结果…"，
-            //   而下面 `pollControl()` 已经冒出"停止轮询"按钮 —— 两句话自相矛盾。
-            ->select(static fn(WatermarkStore $s): array => [
-                'result' => $s->lastResult(),
-                'polling' => $s->isPolling(),
-            ])
-            ->builder(static function (array $slice): Widget {
-                $result = $slice['result'];
-                $polling = $slice['polling'] === true;
+        $store = $this->store;
 
-                if (!$result instanceof TaskResult) {
-                    // 还没提交 / 还没查到：给一句"在等什么"，而不是空白
-                    if ($polling) {
-                        return Row::make()->spacing(10)->children([
-                            Spinner::make()->diameter(14.0),
-                            Text::make('正在查询结果…')->caption(),
-                        ]);
-                    }
+        // ★ `isPolling()` 必须和 `lastResult()` 在同一段里读：刚开始轮询时结果是
+        //   `null → null`（那一格没变），不让这一段订阅 `phase` 的话它不会被叫醒，
+        //   状态区就停在"等待任务提交后自动查询结果…"，而下面已经冒出"停止轮询"。
+        return Bind::make(static function () use ($store): Widget {
+            $result = $store->lastResult();
+            $polling = $store->isPolling();
 
-                    return Text::make('等待任务提交后自动查询结果…')->caption();
-                }
-
-                [$dot, $bg] = self::statusColors($result);
-
-                $lines = [
-                    Text::make($result->statusLabel())->size(14.0),
-                ];
-                if ($result->taskId !== '') {
-                    $lines[] = Text::make('任务 ID：' . $result->taskId)->caption();
-                }
-                $reason = $result->failureReason();
-                if ($reason !== '' && !$result->isSuccess()) {
-                    $lines[] = Text::make($reason)->caption();
-                }
-
-                return Row::make()
-                    ->spacing(12)
-                    ->padding(EdgeInsets::symmetric(18.0, 14.0))
-                    ->background($bg)
-                    ->radius(10.0)
-                    ->children([
-                        SizedBox::make()
-                            ->size(12.0, 12.0)
-                            ->background($dot)
-                            ->radius(6.0),
-                        Column::make()->spacing(4)->children($lines),
+            if (!$result instanceof TaskResult) {
+                // 还没提交 / 还没查到：给一句"在等什么"，而不是空白
+                if ($polling) {
+                    return Row::make()->spacing(10)->children([
+                        Spinner::make()->diameter(14.0),
+                        Text::make('正在查询结果…')->caption(),
                     ]);
-            });
+                }
+
+                return Text::make('等待任务提交后自动查询结果…')->caption();
+            }
+
+            [$dot, $bg] = self::statusColors($result);
+
+            $lines = [
+                Text::make($result->statusLabel())->size(14.0),
+            ];
+            if ($result->taskId !== '') {
+                $lines[] = Text::make('任务 ID：' . $result->taskId)->caption();
+            }
+            $reason = $result->failureReason();
+            if ($reason !== '' && !$result->isSuccess()) {
+                $lines[] = Text::make($reason)->caption();
+            }
+
+            return Row::make()
+                ->spacing(12)
+                ->padding(EdgeInsets::symmetric(18.0, 14.0))
+                ->background($bg)
+                ->radius(10.0)
+                ->children([
+                    SizedBox::make()
+                        ->size(12.0, 12.0)
+                        ->background($dot)
+                        ->radius(6.0),
+                    Column::make()->spacing(4)->children($lines),
+                ]);
+        });
     }
 
     /** 结果元信息（模板 / 尺寸 / 耗时 / 创建 / 完成） */
@@ -116,26 +113,25 @@ final class ResultCard extends StatelessWidget
     {
         $store = $this->store;
 
-        return SubjectBuilder::make($store)
-            ->select(static fn(WatermarkStore $s): mixed => $s->lastResult())
-            ->builder(static function (mixed $result): Widget {
-                if (!$result instanceof TaskResult || !$result->isSuccess()) {
-                    return SizedBox::make()->size(0.0, 0.0);
-                }
+        return Bind::make(static function () use ($store): Widget {
+            $result = $store->lastResult();
+            if (!$result instanceof TaskResult || !$result->isSuccess()) {
+                return SizedBox::make()->size(0.0, 0.0);
+            }
 
-                return Column::make()
-                    ->spacing(6)
-                    ->padding(EdgeInsets::all(18.0))
-                    ->background(Palette::listRow())
-                    ->radius(10.0)
-                    ->children([
-                        Text::make('模板：' . self::orDash($result->templateName))->size(13.0),
-                        Text::make('尺寸：' . self::orDash($result->imageSize))->size(13.0),
-                        Text::make('处理耗时：' . self::orDash($result->processingTime) . ' 秒')->size(13.0),
-                        Text::make('创建时间：' . self::orDash($result->createTime))->size(13.0),
-                        Text::make('完成时间：' . self::orDash($result->updateTime))->size(13.0),
-                    ]);
-            });
+            return Column::make()
+                ->spacing(6)
+                ->padding(EdgeInsets::all(18.0))
+                ->background(Palette::listRow())
+                ->radius(10.0)
+                ->children([
+                    Text::make('模板：' . self::orDash($result->templateName))->size(13.0),
+                    Text::make('尺寸：' . self::orDash($result->imageSize))->size(13.0),
+                    Text::make('处理耗时：' . self::orDash($result->processingTime) . ' 秒')->size(13.0),
+                    Text::make('创建时间：' . self::orDash($result->createTime))->size(13.0),
+                    Text::make('完成时间：' . self::orDash($result->updateTime))->size(13.0),
+                ]);
+        });
     }
 
     /** 结果图（URL 直接交给 Image，按服务端给的顺序） */
@@ -143,9 +139,7 @@ final class ResultCard extends StatelessWidget
     {
         $store = $this->store;
 
-        return SubjectBuilder::make($store)
-            ->select(static fn(WatermarkStore $s): array => self::urlsOf($s->lastResult()))
-            ->builder(static fn(array $urls): Widget => self::imagesFor($urls));
+        return Bind::make(static fn (): Widget => self::imagesFor(self::urlsOf($store->lastResult())));
     }
 
     /**
@@ -180,35 +174,27 @@ final class ResultCard extends StatelessWidget
     /**
      * 「停止」（只在提交中 / 轮询中出现；结果图下载由各 Image 自治，没有整批停止）。
      *
-     * ★ 判据与文案都来自 Store（`canStop()` / `stopLabel()`）；数组切片用 `===`
-     *   判等（同序同值即相等）⇒ 内容没变不重建。
+     * ★ 判据与文案都来自 Store（`canStop()` / `stopLabel()`），只读 `phase` 那一格。
      */
     private function pollControl(): Widget
     {
         $store = $this->store;
 
-        return SubjectBuilder::make($store)
-            ->select(static fn(WatermarkStore $s): array => [
-                'stop' => $s->canStop(),
-                'label' => $s->stopLabel(),
-            ])
-            ->builder(static function (array $state) use ($store): Widget {
-                if (($state['stop'] ?? false) !== true) {
-                    return SizedBox::make()->size(0.0, 0.0);
-                }
+        return Bind::make(static function () use ($store): Widget {
+            if (!$store->canStop()) {
+                return SizedBox::make()->size(0.0, 0.0);
+            }
 
-                $label = \is_string($state['label'] ?? null) ? $state['label'] : '停止';
-
-                return Row::make()->spacing(10)->children([
-                    Button::make($label)
-                        ->variant(ButtonVariant::Danger)
-                        ->compact()
-                        ->onPressed(static function () use ($store): void {
-                            $store->stop();
-                        }),
-                    Spacer::make(),
-                ]);
-            });
+            return Row::make()->spacing(10)->children([
+                Button::make($store->stopLabel())
+                    ->variant(ButtonVariant::Danger)
+                    ->compact()
+                    ->onPressed(static function () use ($store): void {
+                        $store->stop();
+                    }),
+                Spacer::make(),
+            ]);
+        });
     }
 
     /**
@@ -236,13 +222,9 @@ final class ResultCard extends StatelessWidget
     }
 
     /** @return list<string> */
-    private static function urlsOf(mixed $result): array
+    private static function urlsOf(?TaskResult $result): array
     {
-        if (!$result instanceof TaskResult) {
-            return [];
-        }
-
-        return $result->downloadUrls;
+        return $result === null ? [] : $result->downloadUrls;
     }
 
     private static function orDash(string $value): string

@@ -25,8 +25,8 @@ use Drift\Widget\Widget;
 /**
  * 组合根（§A.2.6 / §12.2）：**只组合，不写任何具体布局**。
  *
- * ★ 一个 store + 一个门面由构造点注入；订阅点全在控件内部（三张卡片的
- *   `SubjectBuilder` + `StatusBar` 的 `watch`）—— 值**不在这里读**。
+ * ★ 一个 store + 一个门面由构造点注入；订阅点全在控件内部（三张卡片里的
+ *   `Bind`）—— 值**不在这里读**。
  * ★ 选图能力从门面拿（`$env->openFiles()`），不再由应用包一个 `\Closure(): void`
  *   往下递：端口类型（`Drift\Platform\Dialog`）不出 `Drift\App`，控件看到的只是
  *   "选完给我路径列表"。
@@ -52,7 +52,7 @@ final class WatermarkRoot extends StatelessWidget
     {
         return ThemeScope::make(ThemeData::light(), Dock::make()
             ->top(AppBar::make()->title('AI 图片处理工具'))
-            // ★ 订阅在 StatusBar 内部（`SubjectBuilder`）：这里只给 store
+            // ★ 订阅在 StatusBar 内部（`Bind`）：这里只给 store
             ->bottom(StatusBar::make($this->store))
             // ★ 滚动归**页根**（一张 `ScrollView` 包住三张卡片）：
             //   卡片里再套滚动就是嵌套滚动 —— 内层永远"量到全部内容"、外层滚不动。

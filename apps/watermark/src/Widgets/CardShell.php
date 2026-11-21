@@ -20,7 +20,7 @@ use Drift\Widget\Widget;
  * ★ 三张卡片共用一份：外壳的圆角 / 内边距 / 徽章尺寸散在三个类里，改一次要改三处
  *   —— 而这三处一定会漂（本仓的"手写六遍的换算"那条账就是这么来的）。
  * ★ 内容槽是**注入的 Widget**（`$body`）：外壳不 `build` 内容，所以内容里的
- *   `SubjectBuilder` 订阅点仍然在各自的控件里（订阅不该被外壳吃掉）。
+ *   `Bind` 订阅点仍然在各自的控件里（订阅不该被外壳吃掉）。
  */
 final class CardShell extends StatelessWidget
 {

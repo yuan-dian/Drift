@@ -19,7 +19,7 @@ use Drift\Async\AsyncScope;
 use Drift\Async\AsyncValue;
 use Drift\Async\Future;
 use Drift\State\AsyncCommand;
-use Drift\State\Subject;
+use Drift\State\Cell;
 use Drift\Widget\Environment;
 
 /**
@@ -66,47 +66,59 @@ use Drift\Widget\Environment;
  *
  * 原文就是三块独立的状态区（`uploadStatus` / `taskStatus` / 结果区）。合成一条
  * 全局消息的话，"上传失败"会把"任务已提交"覆盖掉，用户看不出是哪一步挂了。
+ *
+ * ## 状态为什么是格子
+ *
+ * 界面会读的每一块都是 `Cell`：写进去当场通知，**没有 `notifyChanged()` 可漏**
+ * —— 漏调的症状是"值变了界面不动"，最难查的那一类。读点交给 `Bind` 的 builder，
+ * 依赖由框架采集给出。
+ *
+ * ★ 粒度才是真收益：一次广播唤醒**全部**订阅者，再由各自的切片门控把没变的挡下来；
+ *   格子只唤醒读它的那一段。上传进度 tick 一百次，表单段与结果段一次都不重建。
+ * ★ 唯一的例外是 `$sign`：不上界面，留普通字段 —— 不为没有读点的地方付格子的钱。
  */
-final class WatermarkStore extends Subject
+final class WatermarkStore
 {
-    /** @var list<SelectedImage> */
-    private array $selected = [];
+    /** 选中的图片（`list<SelectedImage>`） */
+    private Cell $selected;
 
     /** 唯一的流水线命令（参数是 `Flow` 入口） */
     private AsyncCommand $flow;
 
-    /** 现在走到哪一步 —— 界面的「在忙什么」只有这一个来源 */
-    private Phase $phase = Phase::Idle;
+    /** 现在走到哪一步（`Phase`）—— 界面的「在忙什么」只有这一个来源 */
+    private Cell $phase;
 
     // ── 签名 ────────────────────────────────────────────────────────────
+    /** 凭证：不进界面，只给流水线自己用 */
     private ?SignInfo $sign = null;
 
     // ── 上传 ────────────────────────────────────────────────────────────
-    /** @var list<string> 已上传的对象键（顺序 = 选中顺序） */
-    private array $uploadedKeys = [];
+    /** 已上传的对象键（`list<string>`，顺序 = 选中顺序） */
+    private Cell $uploadedKeys;
 
-    private StatusMessage $uploadMessage;
+    /** `StatusMessage` */
+    private Cell $uploadMessage;
 
     /** 上传进度（`0..1`）—— 由 `UploadBatchJob` 的进度通知直接写，不另存命令的值 */
-    private float $uploadFraction = 0.0;
+    private Cell $uploadFraction;
 
     // ── 表单 ────────────────────────────────────────────────────────────
-    private string $time = '';
+    private Cell $time;
 
-    private string $address = '';
+    private Cell $address;
 
-    private string $imageSize = '2K';
+    private Cell $imageSize;
 
     // ── 任务 ────────────────────────────────────────────────────────────
-    private string $taskId = '';
-
-    private StatusMessage $taskMessage;
+    /** `StatusMessage` */
+    private Cell $taskMessage;
 
     // ── 结果 ────────────────────────────────────────────────────────────
-    private ?TaskResult $lastResult = null;
+    /** `?TaskResult` */
+    private Cell $lastResult;
 
-    /** 底部状态栏的一句话（整个应用的"现在在干什么"） */
-    private StatusMessage $statusLine;
+    /** 底部状态栏的一句话（`StatusMessage`，整个应用的"现在在干什么"） */
+    private Cell $statusLine;
 
     /**
      * @param null|TaskHost $host 非 null ⇒ 全部走后台（§17.4.5）；null ⇒ 同步（测试）
@@ -115,15 +127,22 @@ final class WatermarkStore extends Subject
     public function __construct(
         private readonly ?TaskHost $host = null,
         private readonly string $apiBase = Config::API_BASE,
-        private readonly ?Environment $env = null,
+        ?Environment $env = null,
     ) {
-        $this->uploadMessage = StatusMessage::none();
-        $this->taskMessage = StatusMessage::none();
-        $this->statusLine = StatusMessage::info('准备就绪');
+        $this->selected = Cell::of([])->named('watermark.selected');
+        $this->phase = Cell::of(Phase::Idle)->named('watermark.phase');
+        $this->uploadedKeys = Cell::of([])->named('watermark.uploadedKeys');
+        $this->uploadMessage = Cell::of(StatusMessage::none())->named('watermark.uploadMessage');
+        $this->uploadFraction = Cell::of(0.0)->named('watermark.uploadFraction');
+        $this->address = Cell::of('')->named('watermark.address');
+        $this->imageSize = Cell::of('2K')->named('watermark.imageSize');
+        $this->taskMessage = Cell::of(StatusMessage::none())->named('watermark.taskMessage');
+        $this->lastResult = Cell::of(null)->named('watermark.lastResult');
+        $this->statusLine = Cell::of(StatusMessage::info('准备就绪'))->named('watermark.statusLine');
 
         // ★ 时间默认"现在"（原文 `DOMContentLoaded` 里 `formatDateTime(new Date())`）。
         //   用户几乎总是要传"此刻"的水印，让他每次手打一遍没有意义。
-        $this->time = \date('Y-m-d H:i:s');
+        $this->time = Cell::of(\date('Y-m-d H:i:s'))->named('watermark.time');
 
         // 门面的 `delay()` 与 `AsyncScope::task()` 要的 `callable` 差一个返回值，
         // 这里转接一次；不转就得让门面长出一个只为本类服务的 `__invoke`。
@@ -145,74 +164,73 @@ final class WatermarkStore extends Subject
         });
     }
 
-    // ══════════════════ 读（界面订阅这些切片） ══════════════════
+    // ══════════════ 读（在 `Bind` 的 builder 里读 = 订阅那一格） ══════════════
+    //
+    // 读方法都直接交回 `Cell::get()`：格子只由本类写，类型由构造器那一次的初值
+    // 定下来，再收窄一遍只是防御一个不存在的失效模式。PHP 的返回类型声明本身
+    // 就是运行期检查 —— 真写脏了会在那一行报，而不是画错一帧。
 
     /** @return list<SelectedImage> */
     public function selected(): array
     {
-        return $this->selected;
+        return $this->selected->get();
     }
 
     public function selectedCount(): int
     {
-        return \count($this->selected);
+        return \count($this->selected());
     }
 
     public function canUpload(): bool
     {
-        return $this->selected !== [] && $this->phase === Phase::Idle;
+        return $this->selected->get() !== [] && $this->phase->get() === Phase::Idle;
     }
 
     /** 上传进度（`0..1`）—— 只在 `Phase::Uploading` 时有意义 */
     public function uploadProgress(): float
     {
-        return $this->uploadFraction;
+        return $this->uploadFraction->get();
     }
 
     public function isUploading(): bool
     {
-        return $this->phase === Phase::Uploading;
+        return $this->phase->get() === Phase::Uploading;
     }
 
     public function uploadMessage(): StatusMessage
     {
-        return $this->uploadMessage;
+        return $this->uploadMessage->get();
     }
 
     /** @return list<string> */
     public function uploadedKeys(): array
     {
-        return $this->uploadedKeys;
+        return $this->uploadedKeys->get();
     }
 
     public function time(): string
     {
-        return $this->time;
+        return $this->time->get();
     }
 
     public function address(): string
     {
-        return $this->address;
+        return $this->address->get();
     }
 
     public function imageSize(): string
     {
-        return $this->imageSize;
+        return $this->imageSize->get();
     }
 
     public function taskMessage(): StatusMessage
     {
-        return $this->taskMessage;
-    }
-
-    public function taskId(): string
-    {
-        return $this->taskId;
+        return $this->taskMessage->get();
     }
 
     public function isSubmitting(): bool
     {
-        return $this->phase === Phase::Submitting;
+        return $this->phase->get() === Phase::Submitting;
     }
 
     /**
@@ -224,7 +242,7 @@ final class WatermarkStore extends Subject
      */
     public function isBusy(): bool
     {
-        return $this->phase !== Phase::Idle;
+        return $this->phase->get() !== Phase::Idle;
     }
 
     /**
@@ -236,14 +254,15 @@ final class WatermarkStore extends Subject
      */
     public function canStop(): bool
     {
-        return $this->phase === Phase::Submitting
-            || $this->phase === Phase::Polling;
+        $phase = $this->phase->get();
+
+        return $phase === Phase::Submitting || $phase === Phase::Polling;
     }
 
     /** 停止按钮的文案：停的是什么就说什么，别让用户猜 */
     public function stopLabel(): string
     {
-        return $this->phase === Phase::Polling ? '停止轮询' : '取消提交';
+        return $this->phase->get() === Phase::Polling ? '停止轮询' : '取消提交';
     }
 
     /**
@@ -256,13 +275,13 @@ final class WatermarkStore extends Subject
      */
     public function submitBlocker(): string
     {
-        if ($this->uploadedKeys === []) {
+        if ($this->uploadedKeys->get() === []) {
             return '请先上传图片';
         }
-        if ($this->time === '' || $this->address === '') {
+        if ($this->time->get() === '' || $this->address->get() === '') {
             return '请填写时间和地址';
         }
-        if ($this->phase !== Phase::Idle) {
+        if ($this->phase->get() !== Phase::Idle) {
             return '还有一步没做完，请稍候';
         }
 
@@ -277,17 +296,17 @@ final class WatermarkStore extends Subject
 
     public function isPolling(): bool
     {
-        return $this->phase === Phase::Polling;
+        return $this->phase->get() === Phase::Polling;
     }
 
     public function lastResult(): ?TaskResult
     {
-        return $this->lastResult;
+        return $this->lastResult->get();
     }
 
     public function statusLine(): StatusMessage
     {
-        return $this->statusLine;
+        return $this->statusLine->get();
     }
 
     // ══════════════════ 写（用户动作） ══════════════════
@@ -310,14 +329,14 @@ final class WatermarkStore extends Subject
         //   "只含旧批次" ⇒ 界面显示 3 张、任务里只有 1 张，且**没有任何报错**。
         //   拒绝 + 说清原因，比"看起来加进去了"诚实。
         if ($this->isBusy()) {
-            $this->uploadMessage = StatusMessage::error('正在处理中，完成后才能添加图片');
-            $this->notifyChanged();
+            $this->uploadMessage->set(StatusMessage::error('正在处理中，完成后才能添加图片'));
 
             return 0;
         }
 
+        $next = $this->selected();
         $existing = [];
-        foreach ($this->selected as $one) {
+        foreach ($next as $one) {
             $existing[$one->path] = true;
         }
 
@@ -331,16 +350,16 @@ final class WatermarkStore extends Subject
                 continue;
             }
             $existing[$image->path] = true;
-            $this->selected[] = $image;
+            $next[] = $image;
             $added++;
         }
 
         if ($added > 0) {
             // ★ 换了选择 ⇒ 旧的"已上传"列表作废：那些键对应的是上一批文件，
             //   留着会让用户以为"新选的也传好了"。
-            $this->uploadedKeys = [];
-            $this->uploadMessage = StatusMessage::none();
-            $this->notifyChanged();
+            $this->selected->set($next);
+            $this->uploadedKeys->set([]);
+            $this->uploadMessage->set(StatusMessage::none());
         }
 
         return $added;
@@ -349,59 +368,49 @@ final class WatermarkStore extends Subject
     /** 移除第 `$index` 个（越界 ⇒ 无事发生） */
     public function removeAt(int $index): void
     {
-        if (!isset($this->selected[$index])) {
+        $selected = $this->selected();
+        if (!isset($selected[$index])) {
             return;
         }
 
         $rest = [];
-        foreach ($this->selected as $i => $one) {
+        foreach ($selected as $i => $one) {
             if ($i !== $index) {
                 $rest[] = $one;
             }
         }
-        $this->selected = $rest;
-        $this->uploadedKeys = [];
-        $this->uploadMessage = StatusMessage::none();
-        $this->notifyChanged();
+        $this->selected->set($rest);
+        $this->uploadedKeys->set([]);
+        $this->uploadMessage->set(StatusMessage::none());
     }
 
     public function clearSelection(): void
     {
-        if ($this->selected === [] && $this->uploadedKeys === []) {
+        if ($this->selected->get() === [] && $this->uploadedKeys->get() === []) {
             return;
         }
 
-        $this->selected = [];
-        $this->uploadedKeys = [];
-        $this->uploadMessage = StatusMessage::none();
-        $this->notifyChanged();
+        $this->selected->set([]);
+        $this->uploadedKeys->set([]);
+        $this->uploadMessage->set(StatusMessage::none());
     }
+
+    // 三个表单字段的"设同值不通知"由格子的相等门控兜住（`distinct` 默认开）：
+    // 以前是每个 setter 里手写一遍 `if ($x === $this->x) return;`。
 
     public function setTime(string $time): void
     {
-        if ($time === $this->time) {
-            return;
-        }
-        $this->time = $time;
-        $this->notifyChanged();
+        $this->time->set($time);
     }
 
     public function setAddress(string $address): void
     {
-        if ($address === $this->address) {
-            return;
-        }
-        $this->address = $address;
-        $this->notifyChanged();
+        $this->address->set($address);
     }
 
     public function setImageSize(string $size): void
     {
-        if ($size === $this->imageSize) {
-            return;
-        }
-        $this->imageSize = $size;
-        $this->notifyChanged();
+        $this->imageSize->set($size);
     }
 
     /**
@@ -415,7 +424,7 @@ final class WatermarkStore extends Subject
      */
     public function prewarm(): void
     {
-        if ($this->phase !== Phase::Idle) {
+        if ($this->phase->get() !== Phase::Idle) {
             return;
         }
         $this->flow->run(Flow::Prewarm);
@@ -437,8 +446,7 @@ final class WatermarkStore extends Subject
         //   这里拿它兜住"按钮之外还有快捷键 / 别的入口"那条路。
         $blocker = $this->submitBlocker();
         if ($blocker !== '') {
-            $this->taskMessage = StatusMessage::error($blocker);
-            $this->notifyChanged();
+            $this->taskMessage->set(StatusMessage::error($blocker));
 
             return;
         }
@@ -452,6 +460,8 @@ final class WatermarkStore extends Subject
      * ★ 名字不叫 `stopPolling()`：它取消的是**整条流水线**（`AsyncScope` 一取消，
      *   剩下的"继续查"和"查完下载"都不要了）。原来的名字只覆盖 `Phase::Polling`，
      *   于是下载阶段按不到停止 —— 而下载恰恰是最可能让人想停的一步。
+     * ★ 这里不用管界面：`phase` 的归位在 `runFlow()` 的 `finally`，那一格的
+     *   `set()` 自己会通知。
      */
     public function stop(): void
     {
@@ -460,7 +470,6 @@ final class WatermarkStore extends Subject
         }
 
         $this->flow->cancel();
-        $this->notifyChanged();
     }
 
     // ══════════════════ 内部：流水线本体（顺序代码） ══════════════════
@@ -483,9 +492,8 @@ final class WatermarkStore extends Subject
                 $this->runSubmitFlow($co);
             }
         } finally {
-            $this->phase = Phase::Idle;
-            $this->uploadFraction = 0.0;
-            $this->notifyChanged();
+            $this->phase->set(Phase::Idle);
+            $this->uploadFraction->set(0.0);
         }
     }
 
@@ -501,9 +509,8 @@ final class WatermarkStore extends Subject
         //   首屏那一两秒里 `isBusy()` 为 true，`canUpload()` 为 false，用户看着
         //   有图却点不动「上传」；而预热本来就该是"什么都不挡"的。
         if ($report) {
-            $this->phase = Phase::Signing;
-            $this->uploadMessage = StatusMessage::loading('正在获取上传凭证…');
-            $this->notifyChanged();
+            $this->phase->set(Phase::Signing);
+            $this->uploadMessage->set(StatusMessage::loading('正在获取上传凭证…'));
         }
 
         try {
@@ -513,8 +520,7 @@ final class WatermarkStore extends Subject
         } catch (\Throwable $e) {
             // ★ 预热失败**不打扰用户**：上传时会再取一次。只有"上传前那次"失败才要报。
             if ($report) {
-                $this->uploadMessage = StatusMessage::error('获取上传凭证失败：' . $e->getMessage());
-                $this->notifyChanged();
+                $this->uploadMessage->set(StatusMessage::error('获取上传凭证失败：' . $e->getMessage()));
             }
 
             return null;
@@ -522,8 +528,7 @@ final class WatermarkStore extends Subject
 
         $sign = SignInfo::fromArray($raw);
         if ($sign === null && $report) {
-            $this->uploadMessage = StatusMessage::error('上传凭证格式不对（缺字段）');
-            $this->notifyChanged();
+            $this->uploadMessage->set(StatusMessage::error('上传凭证格式不对（缺字段）'));
         }
 
         return $sign;
@@ -561,7 +566,7 @@ final class WatermarkStore extends Subject
         $now = self::nowMs();
 
         $items = [];
-        foreach ($this->selected as $image) {
+        foreach ($this->selected() as $image) {
             // ★ 扩展名空 ⇒ 退回 `jpg`（原文 `file.name.split('.').pop() || 'jpg'`）。
             //   不带扩展名的对象键 OSS 能存，但取回来时没有 `Content-Type`。
             $ext = $image->extension === '' ? 'jpg' : $image->extension;
@@ -572,84 +577,78 @@ final class WatermarkStore extends Subject
             ];
         }
 
-        $this->phase = Phase::Uploading;
-        $this->uploadedKeys = [];
-        $this->uploadFraction = 0.0;
-        $this->uploadMessage = StatusMessage::loading('正在上传 0 / ' . (string) \count($items) . '…');
-        $this->statusLine = StatusMessage::info('正在上传 ' . (string) \count($items) . ' 个文件…');
-        $this->notifyChanged();
+        $total = (string) \count($items);
+        $this->phase->set(Phase::Uploading);
+        $this->uploadedKeys->set([]);
+        $this->uploadFraction->set(0.0);
+        $this->uploadMessage->set(StatusMessage::loading('正在上传 0 / ' . $total . '…'));
+        $this->statusLine->set(StatusMessage::info('正在上传 ' . $total . ' 个文件…'));
 
         $future = $this->exec(new UploadBatchJob($sign->toArray(), $items, $this->apiBase));
 
         try {
             // ★ 进度交给 `await()` 挂（它保证排在结算回调之前），这里不再手工接线。
             $raw = $co->await($future, function (float $fraction): void {
-                $this->uploadFraction = $fraction;
+                $this->uploadFraction->set($fraction);
                 // ★ 进度条与文案一起动：只动进度条的话，用户在 0% 时看不出"在干什么"
-                $this->uploadMessage = StatusMessage::loading(
+                $this->uploadMessage->set(StatusMessage::loading(
                     '正在上传… ' . (string) (int) \round($fraction * 100.0) . '%'
-                );
-                $this->notifyChanged();
+                ));
             });
         } catch (AsyncCancelled $e) {
             throw $e;
         } catch (\Throwable $e) {
-            $this->uploadedKeys = [];
-            $this->uploadMessage = StatusMessage::error($e->getMessage());
-            $this->statusLine = StatusMessage::error('上传失败');
-            $this->notifyChanged();
+            $this->uploadedKeys->set([]);
+            $this->uploadMessage->set(StatusMessage::error($e->getMessage()));
+            $this->statusLine->set(StatusMessage::error('上传失败'));
 
             return;
         }
 
-        $this->uploadedKeys = self::stringList(\is_array($raw) ? ($raw['keys'] ?? []) : []);
-        $this->uploadMessage = StatusMessage::success(
-            '全部 ' . (string) \count($this->uploadedKeys) . ' 个文件上传成功'
-        );
-        $this->statusLine = StatusMessage::success('上传完成，可以提交任务了');
-        $this->notifyChanged();
+        $keys = self::stringList(\is_array($raw) ? ($raw['keys'] ?? []) : []);
+        $this->uploadedKeys->set($keys);
+        $this->uploadMessage->set(StatusMessage::success(
+            '全部 ' . (string) \count($keys) . ' 个文件上传成功'
+        ));
+        $this->statusLine->set(StatusMessage::success('上传完成，可以提交任务了'));
     }
 
     private function runSubmitFlow(AsyncScope $co): void
     {
-        $this->phase = Phase::Submitting;
-        $this->taskMessage = StatusMessage::loading('正在提交任务…');
-        $this->notifyChanged();
+        $this->phase->set(Phase::Submitting);
+        $this->taskMessage->set(StatusMessage::loading('正在提交任务…'));
 
         try {
             $raw = $co->await($this->exec(new AddTaskJob(
-                $this->uploadedKeys,
-                $this->time,
-                $this->address,
-                $this->imageSize,
+                $this->uploadedKeys(),
+                $this->time(),
+                $this->address(),
+                $this->imageSize(),
                 $this->apiBase,
             )));
         } catch (AsyncCancelled $e) {
             throw $e;
         } catch (\Throwable $e) {
-            $this->taskMessage = StatusMessage::error($e->getMessage());
-            $this->statusLine = StatusMessage::error('提交任务失败');
-            $this->notifyChanged();
+            $this->taskMessage->set(StatusMessage::error($e->getMessage()));
+            $this->statusLine->set(StatusMessage::error('提交任务失败'));
 
             return;
         }
 
-        $taskId = \is_array($raw) ? ($raw['taskId'] ?? '') : '';
-        $this->taskId = \is_string($taskId) ? $taskId : '';
+        $rawId = \is_array($raw) ? ($raw['taskId'] ?? null) : null;
+        $taskId = \is_string($rawId) ? $rawId : '';
 
-        if ($this->taskId === '') {
-            $this->taskMessage = StatusMessage::error('建任务成功但没拿到任务 id');
-            $this->notifyChanged();
+        if ($taskId === '') {
+            $this->taskMessage->set(StatusMessage::error('建任务成功但没拿到任务 id'));
 
             return;
         }
 
-        $this->lastResult = null;
-        $this->taskMessage = StatusMessage::success('任务已提交（ID ' . $this->taskId . '），正在查询结果…');
-        $this->statusLine = StatusMessage::info('等待处理结果…');
-        $this->notifyChanged();
+        $this->lastResult->set(null);
+        $this->taskMessage->set(StatusMessage::success('任务已提交（ID ' . $taskId . '），正在查询结果…'));
+        $this->statusLine->set(StatusMessage::info('等待处理结果…'));
 
-        $this->pollLoop($co, $this->taskId);
+        $this->pollLoop($co, $taskId);
     }
 
     /**
@@ -662,8 +661,7 @@ final class WatermarkStore extends Subject
      */
     private function pollLoop(AsyncScope $co, string $taskId): void
     {
-        $this->phase = Phase::Polling;
-        $this->notifyChanged();
+        $this->phase->set(Phase::Polling);
 
         $rounds = 0;
         $failures = 0;
@@ -676,14 +674,12 @@ final class WatermarkStore extends Subject
                 $failures++;
             } else {
                 $failures = 0;
-                $this->lastResult = $result;
-                $this->notifyChanged();
+                $this->lastResult->set($result);
 
                 if ($result->isTerminal()) {
-                    $this->statusLine = $result->isSuccess()
+                    $this->statusLine->set($result->isSuccess()
                         ? StatusMessage::success('处理完成')
-                        : StatusMessage::error($result->failureReason());
-                    $this->notifyChanged();
+                        : StatusMessage::error($result->failureReason()));
 
                     // 结果图的下载交给 Image 控件自治（见 ResultCard），流水线到此收工。
                     return;
@@ -694,12 +690,11 @@ final class WatermarkStore extends Subject
             //   不知道自己被轮了几遍；散开写就会出现「失败永远继续」的永动循环。
             //   轮数按查过几次算，失败按连续几次算（成功一次即归零）。
             if ($failures >= Config::POLL_MAX_FAILURES || $rounds >= Config::POLL_MAX_ROUNDS) {
-                $this->statusLine = StatusMessage::error(
+                $this->statusLine->set(StatusMessage::error(
                     $failures >= Config::POLL_MAX_FAILURES
                         ? '查询结果连续失败，已停止自动重试'
                         : '查询超过最大轮数，已停止自动轮询'
-                );
-                $this->notifyChanged();
+                ));
 
                 return;
             }
@@ -727,8 +722,7 @@ final class WatermarkStore extends Subject
         } catch (\Throwable $e) {
             // ★ 网关抖一下不该让整轮白跑。原文也只 `console.error`，然后等下一个
             //   `setInterval`。⇒ 这里只更新底部状态，循环继续。
-            $this->statusLine = StatusMessage::error('查询结果失败（会继续重试）：' . $e->getMessage());
-            $this->notifyChanged();
+            $this->statusLine->set(StatusMessage::error('查询结果失败（会继续重试）：' . $e->getMessage()));
 
             return null;
         }
