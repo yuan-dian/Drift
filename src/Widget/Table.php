@@ -50,10 +50,9 @@ final class Table extends StatefulWidget
     /**
      * 选中集来源（`null` = 没启用选择）。
      *
-     * ★ 参数二象性：`selection(值)` 把值包成 {@see Literal}，`selectionFrom(通道)`
-     *   直接收 `Readable`。控件内部只有一条读取路径（`selectionSet()`），
-     *   而**读点落在谁的 State 上**由此决定：值形态在 TableState，通道形态在
-     *   传通道进来的那个 State —— 这正是选择变化不再整表重建的关键（R1）。
+     * `selection(值)` 包成 {@see Literal}，`selectionFrom(通道)` 收 {@see Readable}，
+     * 内部统一从 `selectionSet()` 读。★ 当前调用方仍是 TableState ⇒ 读点没下沉；
+     * 要拿到性能收益，得把 selection/focus/hover 三态一起移到细粒度读点壳。
      */
     private ?Readable $selectionSource = null;
 
@@ -240,7 +239,7 @@ final class Table extends StatefulWidget
      * 不声明 = 纯展示表（点行只走 `onRowTap()`）；声明了为空 = 可选的表。
      *
      * ★ 包成 {@see Literal} 走与通道相同的读取路径：切换两种形态不改控件内部。
-     *   要"选择变化不整表重建"就用 {@see selectionFrom()}。
+     *   两种形态目前都由 TableState 读，收窄重建粒度要等细粒度读点壳。
      */
     public function selection(TableSelection $selection): static
     {
@@ -251,14 +250,14 @@ final class Table extends StatefulWidget
     }
 
     /**
-     * 选中集（**通道形态**，R1 参数二象性）—— 读点落在传入方的 State 上。
+     * 选中集（**通道形态**）—— 收 `Readable`，与 `selection(值)` 互斥（后调覆盖）。
      *
      * ```php
      * Table::make($cols, $rows)->selectionFrom($this->selection); // Cell<TableSelection>
      * ```
      *
-     * ★ 与 `selection(值)` 互斥：后调的覆盖先调的。传 `Cell` 时，`TableState` 的
-     *   `build()` 不再读它 ⇒ 选中变化只重建真正读它的那些细粒度 State。
+     * ★ 当前 TableState 仍通过 `selectionSet()` 读 ⇒ 读点还在整表 State。
+     *   本方法只提供入口；真正收窄要连三态读点一起下沉。
      */
     public function selectionFrom(Readable $source): static
     {
@@ -442,9 +441,8 @@ final class Table extends StatefulWidget
     /**
      * 当前选中集（`null` = 未启用选择）。
      *
-     * ★ 通道形态下这里会 `get()`，**在调用方的 build 期登记读点**；所以
-     *   `TableState::build()` 里不许调它（否则读点又回到整表 State）——
-     *   行高亮改由细粒度壳自己读（见 `ReactiveTableSelection`）。
+     * ★ `get()` 在调用方的 build 期登记读点。目前调用方是 TableState（整表重建）；
+     *   细粒度读点壳尚未实现，别把这里的读取当成已下沉。
      */
     public function selectionSet(): ?TableSelection
     {
@@ -456,7 +454,7 @@ final class Table extends StatefulWidget
         return $value instanceof TableSelection ? $value : null;
     }
 
-    /** @internal 读点壳用：拿到原始通道（值形态是 `Literal`），把读点留在壳自己的 State */
+    /** @internal 预留给细粒度读点壳：自行 `get()` 把读点留在壳的 State（值形态是 `Literal`） */
     public function selectionReadable(): ?Readable
     {
         return $this->selectionSource;

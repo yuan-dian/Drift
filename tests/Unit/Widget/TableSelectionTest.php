@@ -3,6 +3,10 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Unit\Widget;
 
+use Drift\Core\Literal;
+use Drift\State\Cell;
+use Drift\Widget\Table;
+use Drift\Widget\TableColumn;
 use Drift\Widget\TableSelection;
 use PHPUnit\Framework\TestCase;
 
@@ -66,5 +70,22 @@ final class TableSelectionTest extends TestCase
     public function testOfDeduplicates(): void
     {
         self::assertSame(['a', 'b'], TableSelection::of(['a', 'b', 'a', 'b'])->keys());
+    }
+
+    public function testTableAcceptsSelectionValueAndChannel(): void
+    {
+        $value = TableSelection::of([7]);
+        $channelValue = TableSelection::of(['r2']);
+        $cell = Cell::of($channelValue);
+        $columns = [TableColumn::make('a', 'A')->field('a')];
+        $rows = [['a' => 1]];
+
+        $byValue = Table::make($columns, $rows)->selection($value);
+        $byChannel = Table::make($columns, $rows)->selectionFrom($cell);
+
+        self::assertSame($value, $byValue->selectionSet());
+        self::assertSame($channelValue, $byChannel->selectionSet());
+        self::assertInstanceOf(Literal::class, $byValue->selectionReadable());
+        self::assertSame($cell, $byChannel->selectionReadable());
     }
 }
