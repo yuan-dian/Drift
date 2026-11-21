@@ -94,49 +94,9 @@ final readonly class TableRange
     }
 
     /**
-     * 剔除一格（`Ctrl+点击` 在 Cells 行为下用它）。
-     *
-     * ★ 只处理"整行"与"单列宽"两种情形 —— 多列矩形里挖一个洞会让选区变成
-     *   非矩形（要拆成 4 块），而 `Ctrl+点击` 在 Excel 里的语义本来就是
-     *   **累加**而不是反选。挖不动就原样返回，不报错：调用方拿到同一实例
-     *   自然跳过通知。
+     * 值比较 —— `TableSelection::equals()` 逐块用它，所以它是**门控的一部分**，
+     * 不是"只给测试用"的便利方法。
      */
-    public function withoutCell(string|int $rowKey, string $colKey): self
-    {
-        if (!$this->covers($rowKey, $colKey)) {
-            return $this;
-        }
-
-        // 整行：删这一行（整行选区里"删一格"等于删这一行，没有别的解释）
-        if ($this->cols === null) {
-            return new self(self::drop($this->rows, $rowKey), null);
-        }
-
-        // 单列宽：删这一行
-        if (\count($this->cols) === 1) {
-            return new self(self::drop($this->rows, $rowKey), $this->cols);
-        }
-
-        return $this;
-    }
-
-    /**
-     * @param list<string|int> $rows
-     * @return list<string|int>
-     */
-    private static function drop(array $rows, string|int $key): array
-    {
-        $next = [];
-        foreach ($rows as $each) {
-            if ($each !== $key) {
-                $next[] = $each;
-            }
-        }
-
-        return $next;
-    }
-
-    /** 值比较（`TableSelection` 的 `===` 判据靠"每次变更换新实例"，这里只给测试用） */
     public function equals(self $other): bool
     {
         return $this->rows === $other->rows && $this->cols === $other->cols;

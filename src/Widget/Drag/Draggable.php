@@ -3,8 +3,6 @@ declare(strict_types=1);
 
 namespace Drift\Widget\Drag;
 
-use Drift\Widget\Widget;
-
 /**
  * 拖动**源**的声明（§A.3.5，应用内拖放，零平台端口）。
  *
@@ -20,8 +18,9 @@ use Drift\Widget\Widget;
  *   `Application::dispatchPointer()` 四相位派发直达 `DragController`。
  *   诚实边界：拖出窗口（无 SetCapture）`leave` 即取消。
  *
- * ★ `feedback`（拖动时跟着指针画的浮层）**本轮不画**：它要"跟随指针的第三棵树"
- *   （GUI 仓 2026-10-07 叠的提示层），归 M4 的 `FrameClock` + 悬停层一起做。
+ * ★ **没有拖影**（拖动时跟随指针的浮层）：它要"跟随指针的第三棵树"，本仓不做。
+ *   曾经留过一个 `feedback` 参数与 getter，但从没有消费者 —— 那正是"看起来能用、
+ *   其实没人读"的假能力，已删；真要做时按当时的叠层机制重新设计。
  *
  * @api
  */
@@ -29,18 +28,14 @@ final class Draggable
 {
     private mixed $data = null;
 
-    /** 拖动反馈的**形状描述**（本轮只存不画，见类 docblock） */
-    private ?Widget $feedback = null;
-
     private function __construct()
     {
     }
 
-    public static function make(mixed $payload = null, ?Widget $feedback = null): self
+    public static function make(mixed $payload = null): self
     {
         $self = new self();
         $self->data = $payload;
-        $self->feedback = $feedback;
 
         return $self;
     }
@@ -48,10 +43,5 @@ final class Draggable
     public function payload(): mixed
     {
         return $this->data;
-    }
-
-    public function feedback(): ?Widget
-    {
-        return $this->feedback;
     }
 }

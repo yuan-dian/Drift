@@ -259,7 +259,7 @@ final class DefectCorpus
                             'to'   => '',
                         ],
                         [
-                            'from' => "                if (\$kid->flex() === 0) {\n"
+                            'from' => "                if (\$kid->grow() === 0) {\n"
                                 . "                    \$fixedMain += \$mains[\$index];\n                }\n",
                             'to'   => "                \$fixedMain += \$mains[\$index];\n",
                         ],

@@ -99,7 +99,7 @@ class RenderFlex extends RenderBox implements ChildContainer
         $needsNatural = false;
         $hasBasis = false;
         foreach ($this->kids as $kid) {
-            if ($kid->flex() > 0) {
+            if ($kid->grow() > 0) {
                 $hasFlex = true;
             }
             if (!\is_nan($kid->basis())) {
@@ -118,7 +118,7 @@ class RenderFlex extends RenderBox implements ChildContainer
         $totalFlex = 0;
 
         foreach ($this->kids as $index => $kid) {
-            $flex = $kid->flex();
+            $flex = $kid->grow();
             $totalFlex += $flex;
 
             // ★ 弹性子**不在第一遍量**（主轴有界时）：份额要等固定子量完，第一遍
@@ -133,7 +133,7 @@ class RenderFlex extends RenderBox implements ChildContainer
             // 有界且非弹性 ⇒ 上限。
             // `$needsNatural` 时弹性子也拿无界主轴：给 `0..$maxMain` 的话，要压缩的
             // 弹性子第一遍就撞溢出 ⇒ `shrink` 永远用不上。判据必须含 `shrink`
-            // （`flex()` 只是 `grow()` 别名，"要压缩"的是 `grow=0, shrink>0`）。
+            // （"要压缩"的是 `grow=0, shrink>0`）。
             $elasticNatural = $needsNatural && ($flex > 0 || $kid->shrink() > 0);
             $childMainMax = ($mainBounded && !$elasticNatural) ? max(0.0, $maxMain) : INF;
             $kid->layout($this->childConstraints($kid, $childMainMax, $maxCross));
@@ -151,7 +151,7 @@ class RenderFlex extends RenderBox implements ChildContainer
         } elseif ($hasFlex && $mainBounded && $totalFlex > 0) {
             $fixedMain = 0.0;
             foreach ($this->kids as $index => $kid) {
-                if ($kid->flex() === 0) {
+                if ($kid->grow() === 0) {
                     $fixedMain += $mains[$index];
                 }
             }
@@ -160,7 +160,7 @@ class RenderFlex extends RenderBox implements ChildContainer
             $space = max(0.0, $free);
 
             foreach ($this->kids as $index => $kid) {
-                $flex = $kid->flex();
+                $flex = $kid->grow();
                 if ($flex === 0) {
                     continue;
                 }

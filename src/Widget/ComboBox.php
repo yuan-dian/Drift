@@ -268,14 +268,6 @@ final class ComboBoxState extends State
     // ── 面板侧要用的（`@internal`：只给同文件的面板 State 调）──
 
     /**
-     * @internal 面板订阅它 ⇒ 打字后自己重建（跨树的唯一一根线）
-     */
-    public function querySubject(): Subject
-    {
-        return $this->query;
-    }
-
-    /**
      * @internal 面板内容 —— `OptionPanel` 每次重建都会调它（读当前值，不是快照）。
      * 全部 `Flat`、不标已选项：Enter 取的是"第一项"，标了已选项会让"回车会选谁"变含糊。
      */

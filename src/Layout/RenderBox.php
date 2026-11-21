@@ -631,16 +631,6 @@ abstract class RenderBox extends RenderObject
     }
 
     /**
-     * ★ `flex()` 是 `grow()` 的别名，保留一个提交周期供旧调用点改名。
-     *
-     * @deprecated 用 `grow()`
-     */
-    public function flex(): int
-    {
-        return $this->grow;
-    }
-
-    /**
      * C5 溢出策略。**默认 `Clip` 只给不会超的容器**；会超的容器（`Row` / `AppBar` /
      * `Dock` 槽 / 自绘容器）**必须覆写**。
      *

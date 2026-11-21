@@ -75,11 +75,6 @@ final class TableColumnWidth
         return new self(self::FLEX, $weight);
     }
 
-    public function isFixed(): bool
-    {
-        return $this->kind === self::FIXED;
-    }
-
     public function isFlex(): bool
     {
         return $this->kind === self::FLEX;
