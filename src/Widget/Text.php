@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Widget;
 
+use Drift\Core\Readable;
 use Drift\Geometry\Scale;
 use Drift\Layout\RenderBox;
 use Drift\Layout\RenderText;
@@ -52,6 +53,23 @@ final class Text extends RenderBoxWidget
     public static function make(string $content): self
     {
         return new self($content);
+    }
+
+    /**
+     * 内容来自 `Readable` 的版本：读点落在文本自身，不必写 `Bind` 的 builder 闭包。
+     *
+     * ```php
+     * Text::of($this->count, '计数 ')->body()
+     * ```
+     *
+     * ★ 返回的是 `ReactiveText`（StatefulWidget），不是 `Text`：它要借一个 State
+     *   来承载订阅。样式链与 `Text` 一致，运行期产出的仍是普通 `Text` 子树。
+     *
+     * @api
+     */
+    public static function of(Readable $source, string $prefix = '', string $suffix = ''): ReactiveText
+    {
+        return ReactiveText::of($source, $prefix, $suffix);
     }
 
     public function title(): static   { $this->mutate(); $this->role = TextRole::Title->value;   return $this; }

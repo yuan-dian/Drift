@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Widget;
 
 use Drift\Commands\CommandArg;
+use Drift\Core\Computed;
 use Drift\Core\Pipeline;
 use Drift\Core\PipelineAccess;
 use Drift\Errors;
@@ -40,6 +41,18 @@ abstract class State
 
     /** @var array<string, int> 命名订阅槽 → disposer id（同名再挂即替换） */
     private array $watchSlots = [];
+
+    /**
+     * `build()` 读过的可订阅源 → 订阅句柄（自动依赖，2026-11-21）。
+     *
+     * ★ 惰性：整页不读任何 `Cell` / `Computed` 时这两个字段恒为 `[]` / `false`，
+     *   一次判断就退出 —— 不给没用新机制的页面添任何成本。
+     * ★ 只存**自己的**句柄（不用 `unsubscribeAllOf()`）：同一个 State 可能还通过
+     *   `watch()` 手工订了同一个 Store，整批退会把那条也退了（静默断链）。
+     */
+    private array $reactiveDeps = [];
+
+    private bool $reactiveCleanupHooked = false;
 
     private int $nextDisposerId = 1;
 
@@ -339,6 +352,85 @@ abstract class State
         $this->watchSlots[$slot] = $this->onDispose($cleanup);
 
         return $subscription;
+    }
+
+    /**
+     * 把"本次 `build()` 读了哪些可观察值"换成订阅（自动依赖，2026-11-21）。
+     *
+     * 由 `StatefulElement::rebuild()` 在 build 之后调，业务代码不碰。
+     *
+     * ★ **为什么要它**：`Cell::get()` 只能记录"被读了"，记录之后必须有人订阅，
+     *   否则值变了没人标脏（读在 build 里却永不更新 —— 比不读更糟）。订阅落在
+     *   重建单元（本 State）上，正好与 `settlePass()` 的判据对齐。
+     * ★ **为什么不用 `unsubscribeAllOf()`**：同一个 State 可能同时用 `watch()`
+     *   手工订了同一个 Store，整批退会把那条也退了（静默断链）。
+     * ★ **差集而不是清空重订**：依赖集合按位置稳定，一次 build 绝大多数时候不变；
+     *   清空重订会让订阅数每帧抖动一次（`Subject` 的 id 只增不减）。
+     *
+     * @param array<int, \Drift\Core\Versioned> $read 采集栈交出的读集合
+     *
+     * @internal
+     */
+    public function syncReactiveDeps(array $read): void
+    {
+        if ($read === [] && $this->reactiveDeps === []) {
+            return;   // 不读新机制的老页面：两条判断，零分配
+        }
+
+        // 派生值是拉取式、没有推送通道 ⇒ 订它的源（`Computed::sources()` 已展平）
+        $sources = [];
+        foreach ($read as $dep) {
+            if ($dep instanceof Computed) {
+                foreach ($dep->sources() as $id => $source) {
+                    if ($source instanceof Subject) {
+                        $sources[$id] = $source;
+                    }
+                }
+
+                continue;
+            }
+
+            if ($dep instanceof Subject) {
+                $sources[\spl_object_id($dep)] = $dep;
+            }
+        }
+
+        foreach ($this->reactiveDeps as $id => $entry) {
+            if (isset($sources[$id])) {
+                continue;
+            }
+            $entry[1]->cancel();          // 这一轮不再读它 ⇒ 退订（本 State 只此一条）
+            unset($this->reactiveDeps[$id]);
+        }
+
+        foreach ($sources as $id => $source) {
+            if (isset($this->reactiveDeps[$id])) {
+                continue;
+            }
+
+            if (!$this->reactiveCleanupHooked) {
+                $this->reactiveCleanupHooked = true;
+                $this->onDispose(function (): void {
+                    foreach ($this->reactiveDeps as $entry) {
+                        $entry[1]->cancel();
+                    }
+                    $this->reactiveDeps = [];
+                });
+            }
+
+            $this->reactiveDeps[$id] = [
+                $source,
+                $source->subscribeFor($this, function (): void {
+                    $this->markDirty();
+                }),
+            ];
+        }
+    }
+
+    /** @internal 自动依赖的订阅条数（诊断 / 测试用） */
+    public function reactiveDependencyCount(): int
+    {
+        return \count($this->reactiveDeps);
     }
 
     /**

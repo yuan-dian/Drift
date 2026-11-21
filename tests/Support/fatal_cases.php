@@ -73,6 +73,7 @@ use Drift\Logging\PatternFormatter;
 use Drift\Platform\Win32\Win32WindowHost;
 use Drift\Platform\WindowMaterial;
 use Drift\Rendering\Color;
+use Drift\Dev\Smoke\State\CellWritePage;
 use Drift\Rendering\Path;
 use Drift\Rendering\SkiaCanvas;
 use Drift\Routing\RouteTable;
@@ -511,6 +512,16 @@ $cases = [
             return $self->get() + 1;
         }, []);
         $self->get();
+    },
+
+    // Cell 版 build 期写：首帧建订阅，第二帧写自己的格子 ⇒ 订阅回调 self-markDirty
+    //   ⇒ 同一条 E-FLUSH-CYCLE。守卫放在 State 的标脏处，不放在 Tracker 上。
+    'cell-buildwrite' => static function (): void {
+        $element = (new CellWritePage())->createElement();
+        $element->mount(null, fatalContext());
+        $element->settle();
+        $element->state()?->markDirty();
+        $element->settle();
     },
 
     // build() 里标脏自己 ⇒ 每遍都重建 ⇒ 16 轮不收敛 ⇒ E-FLUSH-CYCLE

@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace Drift\Widget;
 
+use Drift\Core\Tracker;
+
 /**
  * `StatefulWidget` 的 Element（§3.2 / §12.3）。
  *
@@ -112,12 +114,25 @@ final class StatefulElement extends Element
 
         $state->noteRebuilt();     // ★ 收敛循环的"有没有重建"判据（settle() 用前后差）
         // ★ build() 包进 enter/leave：build 里对自己标脏 ⇒ markDirty() 判 E-FLUSH-CYCLE
+        // ★ 再包一层采集（2026-11-21）：build 里读的 `Cell` / `Computed` 记成本 State
+        //   的依赖，之后值变了自动标脏。**只包 `build()`，不包 `updateChildren()`** ——
+        //   子节点的 build 有自己的 State，读要记到子节点头上，不能冒到父层。
         $state->enterBuild();
         try {
-            $this->updateChildren([$state->build($this->context)]);
+            Tracker::enter();
+            try {
+                $built = $state->build($this->context);
+            } finally {
+                $read = Tracker::leave();
+            }
         } finally {
             $state->leaveBuild();
         }
+
+        // 先订再挂子层：`updateChildren()` 里子节点 mount 可能同步写格子，晚了会漏一帧
+        $state->syncReactiveDeps($read);
+
+        $this->updateChildren([$built]);
     }
 
     #[\Override]
