@@ -50,8 +50,9 @@ final class DependencyDirection implements Rule
      *   它们是平台必须产出的**输出类型**（表面 / 事件 / 系统主题），没有更低的层
      *   能拥有 ⇒ 按文件放行会扩散到 `Platform\<Os>\` 的每个文件。
      *
-     * ★ `Widget` 行不含 `Async`：`FutureBuilder` 被 `State\AsyncCommand` 取代后，
-     *   那条放行已随消费者一起移除（2026-10-30）。
+ * ★ `Widget → Async` 只为 `AsyncView` 开：它解释 `AsyncValue` 的四态，
+ *   而 `Async` 不反向依赖 `Widget`（`AsyncCommand` 靠 `Readable` 与 Widget 解耦）。
+ *   旧的 `FutureBuilder` 边在 2026-10-30 因为零消费者被删；这里是新的真实消费者。
      */
     private const ALLOWED = [
         'Core'      => ['Core'],
@@ -60,7 +61,7 @@ final class DependencyDirection implements Rule
         'Text'      => ['Text', 'Geometry'],
         'Rendering' => ['Rendering', 'Geometry', 'Text', 'Core'],
         'Input'     => ['Input', 'Geometry', 'Text'],
-        'Widget'    => ['Widget', 'Layout', 'State', 'Rendering', 'Text', 'Geometry', 'Input', 'Core'],
+        'Widget'    => ['Widget', 'Layout', 'State', 'Async', 'Rendering', 'Text', 'Geometry', 'Input', 'Core'],
         'Layout'    => ['Widget', 'Layout', 'Rendering', 'Text', 'Geometry', 'Input', 'Core'],
         'State'     => ['Widget', 'State', 'Async', 'Core'],
         'Commands'  => ['Commands'],

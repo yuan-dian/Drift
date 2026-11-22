@@ -107,16 +107,18 @@ Bind::make(fn(): Widget => $this->list($this->store->page()->value()))
 
 `AsyncValue` 是异步状态的唯一形状：`idle` / `loading` / `data` / `error`，不可变（构造子返回新实例）。载荷与状态是两个维度：四态都可带载荷，用独立的 `hasValue` 布尔表达，因为载荷本身可以是 `null`。
 
-画界面一律用 `fold()` 一次写完四支，四个分支签名完全一致：`callable(AsyncValue): mixed`。缺键当场抛，把"界面空白"停在开发期；手写 `if/else` 会漏态、会判断顺序颠倒。刷新中（`loading` 且带旧值）走 **`data`** 支——列表继续画；`error` 不这样路由，失败必须让用户看见，哪怕旧内容还在。
+画控件用 `AsyncView`：它把 `fold()` 四支包成控件，源收 `Readable`（通常是 `AsyncCommand`），读点即订阅。`data` 支必须给，另外三支有可用默认；默认不是空白，四态任何一态都得有内容。只把四态折成字符串 / 数字时直接调 `fold()`，四个分支签名仍要完全一致：`callable(AsyncValue): mixed`。
 
 ```php
-$command->value()->fold([
-    'idle'    => fn (AsyncValue $v) => Text::make('还没开始'),
-    'loading' => fn (AsyncValue $v) => $v->isRefreshing() ? $this->list($v) : Spinner::make(),
-    'data'    => fn (AsyncValue $v) => $this->list($v),
-    'error'   => fn (AsyncValue $v) => ErrorView::make($v->message(), $v->code()),
-]);
+AsyncView::of($command, fn (AsyncValue $v): Widget => $this->list($v))
+    ->loading(fn (AsyncValue $v): Widget => $v->isRefreshing()
+        ? $this->list($v)
+        : Spinner::make())
+    ->error(fn (AsyncValue $v): Widget => ErrorView::make($v->message(), $v->code()))
+    ->widget();
 ```
+
+`fold()` 的路由规则没有第二份实现：缺键当场抛，把"界面空白"停在开发期；手写 `if/else` 会漏态、会判断顺序颠倒。刷新中（`loading` 且带旧值）走 **`data`** 支——列表继续画；`error` 不这样路由，失败必须让用户看见，哪怕旧内容还在。
 
 - `AsyncValue::loading()->carriedFrom($previous)` 让刷新保留上一次的值；`isRefreshing()` 是"细进度条 / 小转圈"的判据。
 - `dataOr($fallback)` 把"没数据时用什么画"收在一处，避免拿 `mixed` 的 `value()` 直接 `foreach`。

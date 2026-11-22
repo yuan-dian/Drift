@@ -10,6 +10,7 @@ use Drift\Async\AsyncValue;
 use Drift\Async\Future;
 use Drift\Geometry\EdgeInsets;
 use Drift\State\AsyncCommand;
+use Drift\Widget\AsyncView;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
 use Drift\Widget\Card;
@@ -150,7 +151,7 @@ final class LoadMorePage extends ShowcasePage
                 $this->toolbar($value),
 
                 // ★ 必须有界高度：`LazyColumn` 自己就是滚动视口
-                Expanded::make($this->bodyOf($value)),
+                Expanded::make($this->body()),
             ])
         )->paddingAll(0.0);
     }
@@ -213,19 +214,16 @@ final class LoadMorePage extends ShowcasePage
      *   框架不改这个决定（`fold()` 照旧把 `error` 路由到 `error` 支）—— 失败必须
      *   让用户看见，但"看见"的方式由页面定：错误条 + 列表，而不是错误页。
      */
-    private function bodyOf(AsyncValue $value): Widget
+    private function body(): Widget
     {
-        return $value->fold([
-            'idle' => static fn(AsyncValue $v): Widget => Center::make(Text::make('尚未加载')->caption()),
-
-            'loading' => static fn(AsyncValue $v): Widget => Center::make(
+        return AsyncView::of($this->rows, fn(AsyncValue $v): Widget => $this->listWithFooter($v))
+            ->loading(static fn(AsyncValue $v): Widget => Center::make(
                 Column::make()->spacing(12.0)->children([
                     Spinner::make()->diameter(32.0),
                     Text::make('正在从后台取数…（UI 线程空闲）')->caption(),
                 ])
-            ),
-
-            'error' => function (AsyncValue $v): Widget {
+            ))
+            ->error(function (AsyncValue $v): Widget {
                 if ($v->hasValue()) {
                     return $this->listWithFooter($v);
                 }
@@ -238,10 +236,8 @@ final class LoadMorePage extends ShowcasePage
                             ->onPressed(fn() => $this->rows->retry()),
                     ])
                 );
-            },
-
-            'data' => fn(AsyncValue $v): Widget => $this->listWithFooter($v),
-        ]);
+            })
+            ->widget();
     }
 
     /** 列表 + 页脚（页脚说"正在忙"或"失败了"；都空闲时什么都不说） */

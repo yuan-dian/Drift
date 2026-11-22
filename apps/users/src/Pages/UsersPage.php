@@ -5,6 +5,7 @@ namespace App\Users\Pages;
 
 use Drift\Geometry\EdgeInsets;
 use Drift\Async\AsyncValue;
+use Drift\Widget\AsyncView;
 use Drift\Widget\Bind;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
@@ -31,8 +32,8 @@ use App\Users\Widgets\UserRow;
  *   读了什么就订什么（搜索词格 / 命令 / 行派生值）。列表重排不会每行广播一次，
  *   改搜索词也不会让刷新按钮重建 —— 以前靠 `SubjectBuilder` 的 `select` 手写
  *   切片做到同一件事，现在依赖由采集给出，**漏写切片**这个失效模式不存在。
- * ★ 四态用 **`AsyncValue::fold()`**（漏一支当场抛）—— 以前是 `match` 无 default
- *   守的 `LoadStatus` 封闭域（§12.1 第 2 条）；那个枚举已被 `AsyncValue` 取代。
+ * ★ 四态交给 `AsyncView`：框架提供 idle/loading/error 默认内容，页面只写 data 与
+ *   真正要定制的分支；`fold()` 的穷尽性仍由框架守着。
  * ★★ **2026-10-31 的真机 bug 必须留在注释里**：本页是 `StatelessWidget`
  *   （`build()` 只在这棵子树被造出来时跑一次），原先那句
  *   `Button::primary('刷新')->enabled(!$this->store->page()->isRunning())` 取的是
@@ -102,17 +103,11 @@ final class UsersPage extends StatelessWidget
             ->center(
                 ScrollView::make(
                     Column::make()->spacing(8)->padding(EdgeInsets::only(24.0, 0.0, 24.0, 24.0))->children([
-                        // ── 四态：读命令的当前值（`AsyncValue` 不可变 ⇒ 门控天然成立） ──
-                        Bind::make(static fn(): Widget => $store->page()->value()->fold([
-                            'loading' => static fn(AsyncValue $v): Widget => Spinner::make(),
-
-                            'error' => static fn(AsyncValue $v): Widget => Row::make()->spacing(8)->children([
-                                Text::make('加载失败')->error(),
-                                Button::primary('重试')->command('users.refresh'),
-                            ]),
-
+                        // ── 四态：源是可读命令，读点落在 AsyncView 内部 ──
+                        AsyncView::of(
+                            $store->page(),
                             // 行只在这一段里读：搜索词变 ⇒ 只重画列表，搜索框不动。
-                            'data' => static fn(AsyncValue $v): Widget => Bind::make(
+                            static fn(AsyncValue $v): Widget => Bind::make(
                                 static fn(): Widget => Each::make(
                                     static fn(User $u): int => $u->id, // ★ key 必填（R4）
                                 )->items(
@@ -120,9 +115,13 @@ final class UsersPage extends StatelessWidget
                                     static fn(User $u): Widget => UserRow::make($u),
                                 ),
                             ),
-
-                            'idle' => static fn(AsyncValue $v): Widget => Text::make('尚未加载')->caption(),
-                        ])),
+                        )
+                            ->loading(static fn(AsyncValue $v): Widget => Spinner::make())
+                            ->error(static fn(AsyncValue $v): Widget => Row::make()->spacing(8)->children([
+                                Text::make('加载失败')->error(),
+                                Button::primary('重试')->command('users.refresh'),
+                            ]))
+                            ->widget(),
                     ])
                 )
             );

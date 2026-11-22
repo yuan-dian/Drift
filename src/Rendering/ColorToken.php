@@ -31,6 +31,10 @@ use Drift\Rendering\Color;
  * `Surface` 最亮、`Hover`/`Pressed` 依次浮起），暗色表里 `Accent`/`Danger`
  * **各提亮一档** —— 直接沿用浅色值会"深蓝压深灰"看不清。
  *
+ * ★ 状态色成对：`Success`/`Warning`/`Info`/`Danger` 是前景，`*Surface` 是容器底。
+ *   只给一个色会被调用方各自配底，很快又散回 hex；成对给，换肤才是改一张表。
+ *   `WarningSurface` 同时承载进行中状态：那是色系（橙），不是业务语义。
+ *
  * @api
  */
 enum ColorToken
@@ -49,8 +53,22 @@ enum ColorToken
     case Border;
     /** 强调（链接 / 选中） */
     case Accent;
-    /** 破坏性操作 */
+    /** 破坏性操作 / 失败 */
     case Danger;
+    /** 成功前景 */
+    case Success;
+    /** 成功容器底 */
+    case SuccessSurface;
+    /** 警告前景（进行中状态也用这一档橙色） */
+    case Warning;
+    /** 警告容器底 */
+    case WarningSurface;
+    /** 信息前景 */
+    case Info;
+    /** 信息容器底 */
+    case InfoSurface;
+    /** 失败容器底 */
+    case DangerSurface;
     /** 悬停态底 */
     case Hover;
     /** 按下态底 */
@@ -67,6 +85,13 @@ enum ColorToken
             self::Border  => Color::fromRgb(0xD8, 0xDE, 0xE4),
             self::Accent  => Color::fromRgb(0x09, 0x69, 0xDA),
             self::Danger  => Color::fromRgb(0xD1, 0x24, 0x2F),
+            self::DangerSurface => Color::fromRgb(0xFF, 0xEB, 0xEE),
+            self::Success => Color::fromRgb(0x2E, 0x7D, 0x32),
+            self::SuccessSurface => Color::fromRgb(0xE8, 0xF5, 0xE9),
+            self::Warning => Color::fromRgb(0xE6, 0x51, 0x00),
+            self::WarningSurface => Color::fromRgb(0xFF, 0xF3, 0xE0),
+            self::Info    => Color::fromRgb(0x15, 0x65, 0xC0),
+            self::InfoSurface => Color::fromRgb(0xE3, 0xF2, 0xFD),
             self::Hover   => Color::fromRgb(0xEC, 0xF0, 0xF5),
             self::Pressed => Color::fromRgb(0xDF, 0xE6, 0xEF),
         };
@@ -83,6 +108,13 @@ enum ColorToken
             self::Border  => Color::fromRgb(0x3C, 0x3C, 0x3C),
             self::Accent  => Color::fromRgb(0x4C, 0x9A, 0xFF), // 提亮一档
             self::Danger  => Color::fromRgb(0xF8, 0x51, 0x49), // 同上
+            self::DangerSurface => Color::fromRgb(0x47, 0x23, 0x2A),
+            self::Success => Color::fromRgb(0x66, 0xD2, 0x8A),
+            self::SuccessSurface => Color::fromRgb(0x20, 0x37, 0x2A),
+            self::Warning => Color::fromRgb(0xF5, 0xB8, 0x5A),
+            self::WarningSurface => Color::fromRgb(0x3A, 0x2F, 0x1D),
+            self::Info    => Color::fromRgb(0x8A, 0xB4, 0xFF),
+            self::InfoSurface => Color::fromRgb(0x20, 0x32, 0x4A),
             self::Hover   => Color::fromRgb(0x33, 0x33, 0x33),
             self::Pressed => Color::fromRgb(0x3F, 0x3F, 0x3F),
         };
@@ -106,6 +138,13 @@ enum ColorToken
             self::Border  => Color::fromRgb(0x00, 0x00, 0x00),
             self::Accent  => Color::fromRgb(0x00, 0x00, 0xCC),
             self::Danger  => Color::fromRgb(0xCC, 0x00, 0x00),
+            self::DangerSurface => Color::white(),
+            self::Success => Color::fromRgb(0x00, 0x70, 0x2C),
+            self::SuccessSurface => Color::white(),
+            self::Warning => Color::fromRgb(0x8A, 0x4B, 0x00),
+            self::WarningSurface => Color::white(),
+            self::Info    => Color::fromRgb(0x00, 0x00, 0xCC),
+            self::InfoSurface => Color::white(),
             self::Hover, self::Pressed => null,
         };
     }

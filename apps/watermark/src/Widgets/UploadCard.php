@@ -209,15 +209,7 @@ final class UploadCard extends StatelessWidget
             //   相同的键说明 `objectKey()` 撞了，那是真 bug）。
             return Each::make(static fn (string $key): string => $key)->items(
                 $keys,
-                static fn (string $key): Widget => Row::make()
-                    ->spacing(10)
-                    ->padding(EdgeInsets::symmetric(14.0, 10.0))
-                    ->background(Palette::listRow())
-                    ->radius(8.0)
-                    ->children([
-                        Icon::make(IconName::Check, 14.0)->color(Palette::successText()),
-                        Text::make($key)->caption(),
-                    ]),
+                static fn (string $key): Widget => new UploadedRow($key),
             );
         });
     }

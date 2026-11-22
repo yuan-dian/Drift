@@ -80,31 +80,7 @@ final class ResultCard extends StatelessWidget
                 return Text::make('等待任务提交后自动查询结果…')->caption();
             }
 
-            [$dot, $bg] = self::statusColors($result);
-
-            $lines = [
-                Text::make($result->statusLabel())->size(14.0),
-            ];
-            if ($result->taskId !== '') {
-                $lines[] = Text::make('任务 ID：' . $result->taskId)->caption();
-            }
-            $reason = $result->failureReason();
-            if ($reason !== '' && !$result->isSuccess()) {
-                $lines[] = Text::make($reason)->caption();
-            }
-
-            return Row::make()
-                ->spacing(12)
-                ->padding(EdgeInsets::symmetric(18.0, 14.0))
-                ->background($bg)
-                ->radius(10.0)
-                ->children([
-                    SizedBox::make()
-                        ->size(12.0, 12.0)
-                        ->background($dot)
-                        ->radius(6.0),
-                    Column::make()->spacing(4)->children($lines),
-                ]);
+            return new ResultStatusRow($result);
         });
     }
 
@@ -195,30 +171,6 @@ final class ResultCard extends StatelessWidget
                 Spacer::make(),
             ]);
         });
-    }
-
-    /**
-     * 状态色：`[点, 底]`。
-     *
-     * ★ 用 `if` 链而不是 `match`：tpc 对 `match` 的窄化没验证过（本仓已有两处
-     *   注释写着这个理由）。五个分支的 `if` 链零风险。
-     *
-     * @return array{\Drift\Rendering\Color, \Drift\Rendering\Color}
-     */
-    private static function statusColors(TaskResult $result): array
-    {
-        if ($result->isSuccess()) {
-            return [Palette::successText(), Palette::successBg()];
-        }
-        if ($result->isPending()) {
-            return [Palette::accent(), Palette::infoBg()];
-        }
-        if ($result->status === TaskResult::STATUS_FAILED) {
-            return [Palette::errorText(), Palette::errorBg()];
-        }
-
-        // 未知状态（含 -1）：用中性色 + 文案里带原始状态码
-        return [Palette::hint(), Palette::listRow()];
     }
 
     /** @return list<string> */

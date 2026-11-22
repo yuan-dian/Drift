@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Watermark\Store;
 
+use Drift\Rendering\StatusTone;
 use Drift\State\Equatable;
 
 /**
@@ -58,6 +59,25 @@ final class StatusMessage implements Equatable
     public function isVisible(): bool
     {
         return $this->kind !== '' && $this->text !== '';
+    }
+
+    /** 业务 kind → 主题色档；未知 kind 落 Idle，症状是"颜色不对"，不是崩。 */
+    public function tone(): StatusTone
+    {
+        if ($this->kind === self::SUCCESS) {
+            return StatusTone::Success;
+        }
+        if ($this->kind === self::ERROR) {
+            return StatusTone::Error;
+        }
+        if ($this->kind === self::LOADING) {
+            return StatusTone::Loading;
+        }
+        if ($this->kind === self::INFO) {
+            return StatusTone::Info;
+        }
+
+        return StatusTone::Idle;
     }
 
     /** 接口收 `Equatable`：不同实现之间一律判不等，不猜对方的字段。 */

@@ -12,7 +12,7 @@
 
 ## 颜色、字号 token 与主题
 
-颜色、字号、间距都写 token，不写死。`ColorToken`（10 个封闭枚举）有 `Pane` / `Surface` / `Chrome` / `Text` / `Muted` / `Border` / `Accent` / `Danger` / `Hover` / `Pressed`，各有 `lightValue()` / `darkValue()`；`MetricToken` 有 `Padding` / `Gap` / `Radius` / `BorderWidth` / `FontSize` / `FontSizeSmall` / `FontSizeTitle` / `FontSizeHeading` / `RowHeight` / `HeaderHeight`，与明暗无关。
+颜色、字号、间距都写 token，不写死。`ColorToken`（17 个封闭枚举）有基础角色 `Pane` / `Surface` / `Chrome` / `Text` / `Muted` / `Border` / `Accent` / `Hover` / `Pressed`，状态前景 `Danger` / `Success` / `Warning` / `Info`，以及配对容器底 `DangerSurface` / `SuccessSurface` / `WarningSurface` / `InfoSurface`，各有 `lightValue()` / `darkValue()`。状态消息不要自己拼 `kind → 颜色`：用 `StatusTone` 把语义档位映射成前景/底一对（`Loading` 与 `Warning` 同为橙色系但语义分开）。`MetricToken` 有 `Padding` / `Gap` / `Radius` / `BorderWidth` / `FontSize` / `FontSizeSmall` / `FontSizeTitle` / `FontSizeHeading` / `RowHeight` / `HeaderHeight`，与明暗无关。
 
 `BuildContext` 是唯一被允许碰主题的入口：控件在 `createRenderObject(BuildContext)` 里经 `context->color(ColorToken::Accent)` / `context->metric(MetricToken::Gap)` / `context->textSize(TextRole::Body)` 取值，`RenderObject` 只收到解析后的值对象（`ToggleBase::createRenderObject()` 是样板）。不要在 Render 层反查主题。
 

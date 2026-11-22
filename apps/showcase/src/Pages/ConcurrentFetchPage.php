@@ -11,6 +11,7 @@ use Drift\Async\AsyncValue;
 use Drift\Async\Future;
 use Drift\Geometry\EdgeInsets;
 use Drift\State\AsyncCommand;
+use Drift\Widget\AsyncView;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
 use Drift\Widget\Card;
@@ -132,7 +133,7 @@ final class ConcurrentFetchPage extends ShowcasePage
 
                 $this->toolbar($value),
 
-                Expanded::make($this->bodyOf($value)),
+                Expanded::make($this->body()),
             ])
         )->paddingAll(0.0);
     }
@@ -142,31 +143,27 @@ final class ConcurrentFetchPage extends ShowcasePage
      *
      * ★ `error` 支**不是**死代码：`allSettled()` 自己不失败，但 `$task` 可以
      *   **同步**抛（`$fetchRows` 抛、`PAGES` 传错）—— `AsyncCommand` 会把那种
-     *   异常折成 `error` 态。四支必须写全（`fold()` 缺键当场抛）。
+     *   异常折成 `error` 态。`AsyncView` 仍走 `fold()` 的穷尽路由。
      */
-    private function bodyOf(AsyncValue $value): Widget
+    private function body(): Widget
     {
-        return $value->fold([
-            'idle' => static fn(AsyncValue $v): Widget => Center::make(Text::make('尚未取数')->caption()),
-
-            'loading' => static fn(AsyncValue $v): Widget => Center::make(
+        return AsyncView::of($this->dash, fn(AsyncValue $v): Widget => $this->cards($v))
+            ->idle(static fn(AsyncValue $v): Widget => Center::make(Text::make('尚未取数')->caption()))
+            ->loading(static fn(AsyncValue $v): Widget => Center::make(
                 Column::make()->spacing(12.0)->children([
                     Spinner::make()->diameter(32.0),
                     Text::make(\count(self::PAGES) . ' 条同时在途…（UI 线程空闲）')->caption(),
                 ])
-            ),
-
-            'error' => fn(AsyncValue $v): Widget => Center::make(
+            ))
+            ->error(fn(AsyncValue $v): Widget => Center::make(
                 Column::make()->spacing(12.0)->children([
                     ErrorPlaceholder::make($v->message()),
                     Button::make('重试')
                         ->enabled(!$this->dash->isRunning())
                         ->onPressed(fn() => $this->dash->retry()),
                 ])
-            ),
-
-            'data' => fn(AsyncValue $v): Widget => $this->cards($v),
-        ]);
+            ))
+            ->widget();
     }
 
     /** 三张卡并排 —— 一条就是一格，成败各自算数 */

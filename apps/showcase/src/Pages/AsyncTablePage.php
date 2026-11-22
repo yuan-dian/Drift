@@ -10,6 +10,7 @@ use Drift\Async\Future;
 use Drift\Geometry\EdgeInsets;
 use Drift\State\AsyncCommand;
 use Drift\Text\TextAlign;
+use Drift\Widget\AsyncView;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
 use Drift\Widget\Card;
@@ -145,7 +146,7 @@ final class AsyncTablePage extends ShowcasePage
                 Expanded::make(
                     Column::make()->spacing(12.0)->children([
                         $this->toolbar($value),
-                        Expanded::make($this->bodyOf($value)),
+                        Expanded::make($this->body()),
                     ])
                 ),
             ])
@@ -237,50 +238,45 @@ final class AsyncTablePage extends ShowcasePage
     }
 
     /**
-     * 四态 → 子树（`AsyncValue::fold()` 的典型用法）。
+     * 四态 → 子树：只有 data 与 error 是这一页真正要定制的分支。
      *
      * ★ 手写 `if (isLoading) … elseif (hasError) … else …` 时，漏写 `error`
      *   分支就落进 `else`、画一张**空表** —— 用户看到"这一页没有数据"，真相
-     *   却是请求失败了。`fold()` 让漏分支当场抛（见其类注释）。
+     *   却是请求失败了。`AsyncView` 仍走 `fold()` 的穷尽路由。
      */
-    private function bodyOf(AsyncValue $value): Widget
+    private function body(): Widget
     {
-        return $value->fold([
-            'idle' => static fn(AsyncValue $v): Widget => Center::make(Text::make('尚未加载')->caption()),
+        return AsyncView::of($this->rows, static function (AsyncValue $v): Widget {
+            $data = $v->value();
+            $rows = [];
+            if (\is_array($data) && isset($data['items']) && \is_array($data['items'])) {
+                $rows = $data['items'];
+            }
 
-            'loading' => static fn(AsyncValue $v): Widget => Center::make(
+            if ($rows === []) {
+                return Center::make(Text::make('这一页没有数据')->caption());
+            }
+
+            return Table::make(self::columns(), $rows)
+                ->keyOf(static fn(array $row): int => (int) $row['id'])
+                ->rowHeight(self::ROW_HEIGHT)
+                ->headerHeight(self::HEADER_HEIGHT);
+        })
+            ->loading(static fn(AsyncValue $v): Widget => Center::make(
                 Column::make()->spacing(12.0)->children([
                     Spinner::make()->diameter(32.0),
                     Text::make('正在从后台取数…（UI 线程空闲）')->caption(),
                 ])
-            ),
-
-            'error' => fn(AsyncValue $v): Widget => Center::make(
+            ))
+            ->error(fn(AsyncValue $v): Widget => Center::make(
                 Column::make()->spacing(12.0)->children([
                     ErrorPlaceholder::make($v->message()),
                     Button::make('重试')
                         ->enabled(!$this->rows->isRunning())
                         ->onPressed(fn() => $this->retry()),
                 ])
-            ),
-
-            'data' => function (AsyncValue $v): Widget {
-                $data = $v->value();
-                $rows = [];
-                if (\is_array($data) && isset($data['items']) && \is_array($data['items'])) {
-                    $rows = $data['items'];
-                }
-
-                if ($rows === []) {
-                    return Center::make(Text::make('这一页没有数据')->caption());
-                }
-
-                return Table::make(self::columns(), $rows)
-                    ->keyOf(static fn(array $row): int => (int) $row['id'])
-                    ->rowHeight(self::ROW_HEIGHT)
-                    ->headerHeight(self::HEADER_HEIGHT);
-            },
-        ]);
+            ))
+            ->widget();
     }
 
     /** 总页数（`data` 态从 `total` 算；其余三态未知 ⇒ 0，用于"下一页"的禁用判据） */
