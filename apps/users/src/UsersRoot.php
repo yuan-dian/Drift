@@ -32,7 +32,7 @@ use App\Users\Widgets\StatusBar;
  * 组合根（§A.2.6 / §12.2）：**只组合，不写任何具体布局**。
  *
  * ★ 三件共享态 + 一个门面由构造点注入；订阅点全在控件内部（`StatusBar` /
- *   `PageHost` / 页面里的 `SubjectBuilder`）—— 值**不在这里读**（"Root 只组合"
+ *   `PageHost` / 页面里的 `Bind`）—— 值**不在这里读**（"Root 只组合"
  *   由 lint 的 `dependency-direction` + 评审共同守）。
  * ★ 菜单打开与窗口拖动都走 `Environment`：这两件事以前各是一条注入闭包
  *   （`menuOpener` / `windowDrag`），类型都是 `\Closure` ⇒ 写反是静默 bug，
@@ -105,12 +105,11 @@ final class UsersRoot extends StatelessWidget
 
         return ThemeScope::make($theme, Dock::make()
             ->top($bar)
-            // ★ 订阅在 StatusBar 内部（`SubjectBuilder`）：这里只给 store
+            // ★ 订阅在 StatusBar 内部（`Bind`）：这里只给 store
             ->bottom(StatusBar::make($this->app))
-            // ★ 传 store + 切片；PageHost 内部 select 订阅当前页，换页 = 旧页 Offstage 化
+            // ★ 页名是格子 ⇒ PageHost 读它就是订阅（换页 = 旧页 Offstage 化）
             ->center(PageHost::make()
-                ->source($this->app)
-                ->select(static fn(AppStore $s): string => $s->currentPage())
+                ->from($this->app->pageSource())
                 ->table($this->routeTable()))
             ->overflow(Overflow::Clip));
     }

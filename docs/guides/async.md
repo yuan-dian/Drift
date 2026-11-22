@@ -89,6 +89,20 @@ $this->flow = $this->asyncCommand(fn (array $paths): Future => AsyncScope::task(
 - 取消是往协程投 `AsyncCancelled` 异常，所以 body 里的 `catch (\Throwable)` 会连它一起接住。业务侧写 `catch (AsyncCancelled $e) { throw $e; }` 放在前面；即使忘了，`await()` / `sleep()` 入口也会把取消重新抛出来。
 - `src/Async` 不许依赖 `Drift\Platform`：定时器靠注入。`Environment::delay()` 是组合根递下来的能力（`AsyncScope::task()` 的第二参就是它），控件与命令不自己去拿平台。
 
+## 命令本身是可观察值
+
+`AsyncCommand` 实现 `Readable`：`value()` / `isRunning()` 在 `build()` 期间读就订阅它——和 `Cell::get()` 走同一条采集栈。
+
+```php
+// 页面直接读命令，不需要 Store 先转发一次广播
+Bind::make(fn(): Widget => $this->list($this->store->page()->value()))
+```
+
+- 事件处理器里读**不**订阅（帧外没有采集帧）：`run()` 前"看一眼当前值"是正常需求。
+- 变化频率 = 四态变化次数：发起时一次 `loading`、结算时一次 `data`/`error`，加上进度通知。
+- 一个命令被多处读 ⇒ 多处各自重建；只该变一段就把那段包进自己的 `Bind`。
+- 以前靠 `Store::notifyChanged()` 把命令的变化"转发"给页面，那是每个 Store 都要手写一遍、漏写就静默陈旧的活（2026-11-22 起不需要了）。
+
 ## AsyncValue 四态与 fold
 
 `AsyncValue` 是异步状态的唯一形状：`idle` / `loading` / `data` / `error`，不可变（构造子返回新实例）。载荷与状态是两个维度：四态都可带载荷，用独立的 `hasValue` 布尔表达，因为载荷本身可以是 `null`。

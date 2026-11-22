@@ -21,8 +21,8 @@ use App\Users\Store\User;
 /**
  * 列表行（§A.2.9）：**纯展示，不吃 store**（§11.3.2 纪律 2）。
  *
- * 订阅点在页面层（`UsersPage` 的 `SubjectBuilder`），行内只吃值 ⇒ 列表重排时
- * 不会每行各触发一次广播。
+ * 订阅点在页面层（`UsersPage` 里那层 `Bind`），行内只吃值 ⇒ 列表重排时
+ * 不会每行各触发一次重建。
  */
 final class UserRow extends StatelessWidget
 {

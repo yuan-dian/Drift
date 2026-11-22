@@ -65,7 +65,9 @@ final class DependencyDirection implements Rule
         'State'     => ['Widget', 'State', 'Async', 'Core'],
         'Commands'  => ['Commands'],
         'Theme'     => ['Theme', 'Widget', 'Text', 'Rendering'],
-        'Routing'   => ['Routing', 'Widget', 'State'],
+        // `Routing`：页名来源收成 `Core\Readable`（2026-11-22）⇒ 不再需要 `State`（那是
+        // `Widget` 的邻居层）。它要的只是"读一个值并跟着变"，依赖采集在 `Widget\State`。
+        'Routing'   => ['Routing', 'Widget', 'Core'],
         // `Route`：纯导航层（`#[Route]` + `RouteDescriptor` + `RouteCatalog`），
         // 只压在 `Widget` 之上——它要 `BuildContext`/`Widget`/`IconName` 做注解与建页校验。
         // 不碰 `Reducer`（状态管理是页面内部选择）、不碰 `Routing`（那是命令路由）。

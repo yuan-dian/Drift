@@ -13,8 +13,8 @@ use Drift\Layout\RenderDock;
  * ```php
  * Dock::make()
  *     ->top(AppBar::make()->title('用户管理')->children([...]))
- *     ->bottom(StatusBar::make()->source($store)->select(...))
- *     ->center(PageHost::make()->source($store)->select(...)->table($table))
+ *     ->bottom(StatusBar::make())
+ *     ->center(PageHost::make()->from($store->pageSource())->table($table))
  *     ->overflow(Overflow::Clip);
  * ```
  *

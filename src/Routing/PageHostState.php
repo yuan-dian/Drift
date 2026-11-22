@@ -3,7 +3,6 @@ declare(strict_types=1);
 
 namespace Drift\Routing;
 
-use Drift\State\Subject;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Column;
 use Drift\Widget\Expanded;
@@ -17,19 +16,20 @@ use Drift\Widget\Widget;
  * 两件事必须由它（而不是控件）持有：
  * ① **页面 Widget 缓存** —— 控件每次重建都可能是新实例描述，缓存放控件上会在
  *    重建时被重新填；放 State 上才跨重建活着。
- * ② **当前页名** —— 订阅通知改它，`build()` 按它排 Offstage。
+ * ② **路由表** —— 首次挂载时冻结。表是数据、一次给定；跟着重建换表会让已缓存的
+ *    页面与表不同源（旧表造的页留在缓存里，新表却以为自己是权威）。
+ *
+ * ★ **页名不是字段状态**：`build()` 里读一次源（`Readable::get()`）就是订阅，
+ *   源变 ⇒ 本 State 标脏 ⇒ 重建时重新读。以前这里是 `watch()` + 手工同值门控，
+ *   与 `State` 的依赖采集是同一件事的两份实现（2026-11-22 删掉）。
  *
  * @internal
  */
 final class PageHostState extends State
 {
-    private ?Subject $subject = null;
-
-    /** @var null|callable(Subject): string */
-    private $select = null;
-
     private ?RouteTable $table = null;
 
+    /** 最近一次 build 用的页名（`page()` 的读法，测试与 devtools 用） */
     private string $page = '';
 
     /** @var array<string, Widget> 页名 → 页面 Widget。**只造一次** */
@@ -39,28 +39,7 @@ final class PageHostState extends State
     {
         /** @var PageHost $widget */
         $widget = $this->widget();
-        $this->subject = $widget->sourceSubject();
-        $select = $widget->selectFn();
-        $this->select = $select;
         $this->table = $widget->routeTable();
-
-        $subject = $this->subject;
-        if ($subject === null || $select === null) {
-            return; // 没给 source/select ⇒ 不订阅（Pages 一个都不显示）
-        }
-
-        $this->page = (string) $select($subject);
-        $this->watch($subject, function (): void {
-            $next = (string) ($this->select)($this->subject);
-            // ★ 同值不重建（§11.3.3 门控）：比的是两次 select 输出，不是 Store 新旧。
-            //   不设这道门 ⇒ 任一字段变都换一次页，"同值 notify"全变成重建。
-            if ($next === $this->page) {
-                return;
-            }
-            $this->setState(function () use ($next): void {
-                $this->page = $next;
-            });
-        });
     }
 
     public function page(): string
@@ -78,7 +57,15 @@ final class PageHostState extends State
     {
         /** @var PageHost $widget */
         $widget = $this->widget();
-        $current = $widget->currentPage() ?? $this->page;
+
+        $current = $widget->currentPage();
+        if ($current === null) {
+            // ★ 读 = 订阅：源（格子 / 派生值）变化会让本 State 重建，重新读一次。
+            $value = $widget->source()?->get();
+            $current = \is_string($value) ? $value : '';
+        }
+        $this->page = $current;
+
         $table = $this->table;
 
         if ($table === null || $current === '') {

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Support;
 
+use Drift\Errors;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -41,6 +42,11 @@ abstract class SmokeTestCase extends TestCase
     {
         parent::setUp();
         self::$current = $this;
+
+        // ★ 每个方法看到的是"自己产生的诊断"：`Errors` 是进程级环形缓冲，
+        //   不清的话"没走 Fatal"这类断言会被前一个测试类的噪音染红
+        //   （真发生过：命令门控拒绝的探针命令串进了另一条用例）。
+        Errors::reset();
     }
 
     protected function tearDown(): void

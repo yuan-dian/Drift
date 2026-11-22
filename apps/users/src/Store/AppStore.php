@@ -4,16 +4,30 @@ declare(strict_types=1);
 namespace App\Users\Store;
 
 use Drift\App\Restoration\RestorableValue;
+use Drift\Core\Readable;
 use Drift\Routing\NavigationStack;
-use Drift\State\Subject;
+use Drift\State\Cell;
 use Drift\Theme\SystemTheme;
 
-/** 跨页共享态。导航存档与广播只在 changed() 一处发生，漏一处冷启动就回首页。 */
-final class AppStore extends Subject
+/**
+ * 跨页共享态：导航 + 状态栏 + 主题。
+ *
+ * ★ **三个独立格子，不冲突**（2026-11-22 从 `extends Subject` 迁来）：它们
+ *   变化频率差得远（页名一次点击一个、状态栏每次命令一句、主题几乎不变），
+ *   合成一次广播就是让"切页"顺带重建状态栏。
+ * ★ **导航存档只在 `changed()` 一处发生**：漏一处冷启动就回首页。
+ * ★ 当前页名是**格子而不是从 `nav` 现读**：`NavigationStack` 是可变对象，
+ *   现读拿不到"变了"这件事；格子才是可订阅的源。
+ */
+final class AppStore
 {
-    private string $statusLine = '就绪';
+    private Cell $statusLine;
 
-    private SystemTheme $systemTheme = SystemTheme::Light;
+    /** 主题：`app.theme` 命令写入；Root 目前跟随系统主题（见 `UsersRoot::build()`） */
+    private Cell $systemTheme;
+
+    /** 当前页名 —— `PageHost` 的订阅源 */
+    private Cell $page;
 
     private NavigationStack $nav;
 
@@ -23,11 +37,23 @@ final class AppStore extends Subject
     {
         $this->nav = $nav ?? new NavigationStack('users');
         $this->navState = $navState;
+
+        $this->statusLine = Cell::of('就绪')->named('users.statusLine');
+        $this->systemTheme = Cell::of(SystemTheme::Light)->named('users.systemTheme');
+        $this->page = Cell::of($this->nav->current())->named('users.page');
     }
 
     public function currentPage(): string
     {
-        return $this->nav->current();
+        $current = $this->page->get();
+
+        return \is_string($current) ? $current : '';
+    }
+
+    /** 页名通道（`PageHost::from()` 用：读它 = 订它） */
+    public function pageSource(): Readable
+    {
+        return $this->page;
     }
 
     public function nav(): NavigationStack
@@ -37,12 +63,16 @@ final class AppStore extends Subject
 
     public function statusLine(): string
     {
-        return $this->statusLine;
+        $line = $this->statusLine->get();
+
+        return \is_string($line) ? $line : '';
     }
 
     public function systemTheme(): SystemTheme
     {
-        return $this->systemTheme;
+        $theme = $this->systemTheme->get();
+
+        return $theme instanceof SystemTheme ? $theme : SystemTheme::Light;
     }
 
     public function navigate(string $page): void
@@ -81,22 +111,20 @@ final class AppStore extends Subject
         return true;
     }
 
-    /** 导航变更的唯一写者：存档 + 广播一起做。 */
+    /** 导航变更的唯一写者：存档 + 页名一起做。 */
     private function changed(): void
     {
         $this->navState?->set($this->nav->toArray());
-        $this->notifyChanged();
+        $this->page->set($this->nav->current());
     }
 
     public function say(string $line): void
     {
-        $this->statusLine = $line;
-        $this->notifyChanged();
+        $this->statusLine->set($line);
     }
 
     public function setSystemTheme(SystemTheme $t): void
     {
-        $this->systemTheme = $t;
-        $this->notifyChanged();
+        $this->systemTheme->set($t);
     }
 }

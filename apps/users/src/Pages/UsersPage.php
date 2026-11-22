@@ -5,7 +5,7 @@ namespace App\Users\Pages;
 
 use Drift\Geometry\EdgeInsets;
 use Drift\Async\AsyncValue;
-use Drift\State\SubjectBuilder;
+use Drift\Widget\Bind;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
 use Drift\Widget\Column;
@@ -25,27 +25,23 @@ use App\Users\Store\UserStore;
 use App\Users\Widgets\UserRow;
 
 /**
- * 列表页（§A.2.9）：搜索 + 三态列表 + 删除。
+ * 列表页（§A.2.9）：搜索 + 四态列表 + 删除。
  *
- * ★ **订阅点在页这一层，行内只吃值**（§11.3.2 纪律 2）：`SubjectBuilder` 的
- *   `select` 是切片（只跟自己那一份数据），列表重排不会每行广播一次。
+ * ★ **订阅粒度落在"段"上**：搜索框、刷新行、列表各包一层 `Bind`，builder 里
+ *   读了什么就订什么（搜索词格 / 命令 / 行派生值）。列表重排不会每行广播一次，
+ *   改搜索词也不会让刷新按钮重建 —— 以前靠 `SubjectBuilder` 的 `select` 手写
+ *   切片做到同一件事，现在依赖由采集给出，**漏写切片**这个失效模式不存在。
  * ★ 四态用 **`AsyncValue::fold()`**（漏一支当场抛）—— 以前是 `match` 无 default
- *   守的 `LoadStatus` 封闭域（§12.1 第 2 条）；那个枚举已被 `AsyncValue` 取代，
- *   "穷尽"由 `fold()` 在运行期入口保证。
- * ★★ **2026-10-31：一个"读了会变的值却没在订阅里读"的真机 bug** —— 本页是
- *   `StatelessWidget`（`build()` 只在页面被造出来时跑一次），原先那句
+ *   守的 `LoadStatus` 封闭域（§12.1 第 2 条）；那个枚举已被 `AsyncValue` 取代。
+ * ★★ **2026-10-31 的真机 bug 必须留在注释里**：本页是 `StatelessWidget`
+ *   （`build()` 只在这棵子树被造出来时跑一次），原先那句
  *   `Button::primary('刷新')->enabled(!$this->store->page()->isRunning())` 取的是
  *   **浇筑那一刻**的值；首屏正在加载 ⇒ 按钮**永久灰掉**（数据到了也不恢复）。
- *   现在那段包在 `SubjectBuilder` 里，切片就是 `isRunning()` 这一个布尔。
- *   ⇒ 页面里**任何**读 Store 的地方都必须在某个 `select` 之内，否则它就是快照。
+ *   ⇒ 页面里**任何**读会变的值都必须在 `Bind`（或别的 State）之内，否则它就是快照。
  *
  * ★ **头部固定、列表可滚**：页面是 `Dock`（top = 标题 + 搜索行，center =
- *   可滚动列表）—— §12.1 第 3 条的"外壳 + 内容槽"形态（外壳持久、只换槽）。
- *   ★ 2026-10-17 起 `Column + Expanded` 同样可用：flex 分母已修为**只含非弹性子
- *   自然尺寸**（`RenderFlex` 阶段 2），弹性项不再被双重扣减（此前内容比视口长时
- *   拿 `tight(0)` 整块不可见）。Dock 仍优先 —— 外壳/内容槽是**语义分工**，
- *   不是绕缺陷。滚动位置是页面级纯 UI 态 ⇒ 放 `State`
- *   （§12.3 判据：承载它的 Element 不会被回收 —— 本容器不做虚拟化）。
+ *   可滚动列表）。滚动位置是页面级纯 UI 态 ⇒ 放 `State`（§12.3 判据：承载它的
+ *   Element 不会被回收 —— 本容器不做虚拟化）。
  */
 final class UsersPage extends StatelessWidget
 {
@@ -61,48 +57,41 @@ final class UsersPage extends StatelessWidget
 
     public function build(BuildContext $ctx): Widget
     {
+        $store = $this->store;
+
         return Dock::make()
             ->top(
                 Column::make()->spacing(16)->padding(EdgeInsets::all(24.0))->children([
                     Text::make('用户目录')->title(),
 
                     Row::make()->spacing(8)->children([
-                        // ── 搜索框：官方订阅形态（§11.4.2）—— 不提供 bind() ──
-                        SubjectBuilder::make($this->store)
-                            ->select(static fn(UserStore $s): string => $s->query())
-                            ->builder(fn(string $q): Widget => TextField::make()
-                                ->value($q)
-                                ->label('搜索')
-                                ->placeholder('输入姓名')
-                                ->onChanged(fn(string $x) => $this->store->setQuery($x))),
+                        // ── 搜索框：读 `query` 格 ⇒ 只这一段跟着输入重建 ──
+                        Bind::make(static fn(): Widget => TextField::make()
+                            ->value($store->query())
+                            ->label('搜索')
+                            ->placeholder('输入姓名')
+                            ->onChanged(static fn(string $x) => $store->setQuery($x))),
 
-                        // ★★ 「刷新」的可用态必须**在订阅里读**（2026-10-31 真机抓到的 bug）：
-                        //   本页是 `StatelessWidget`，`build()` 只在这棵子树被**造出来**时跑一次
-                        //   ⇒ `enabled(!$isRunning())` 取的是**浇筑那一刻**的值。首屏正是
-                        //   "进页面就 load"，那一次 `isRunning()` 是 true ⇒ 按钮**永远灰**，
-                        //   数据到了也不会恢复（真机复现：结算后 `isRunning=false`、
-                        //   `enabled=false`）。界面读的每一个会变的值都必须来自订阅 ——
-                        //   这正是 `SubjectBuilder` 存在的理由，本页却漏了这一个。
-                        //   ★ 切片只要一个布尔：命令的 `isRunning()` 每次变化都伴随一次
-                        //   值变化（`AsyncCommand` 类注释里那条不变式）⇒ 不会漏一帧，
-                        //   也不需要第二条订阅通道。
-                        SubjectBuilder::make($this->store)
-                            ->select(static fn(UserStore $s): bool => $s->page()->isRunning())
-                            ->builder(function (bool $running): Widget {
-                                $items = [
-                                    Button::primary('刷新')->enabled(!$running)->command('users.refresh'),
-                                ];
+                        // ★★ 「刷新」的可用态必须在订阅里读（2026-10-31 真机抓到的 bug）。
+                        //   读的是命令：`isRunning()` 变化总是伴随一次 `emit()` ⇒
+                        //   版本一定跟着动，不会漏帧。
+                        Bind::make(static function () use ($store): Widget {
+                            $running = $store->page()->isRunning();
 
-                                // ★ 刷新时**列表不消失**（旧值还在，见 `AsyncValue` 的
-                                //   两维模型）⇒ "正在刷新"必须有人说一句，否则看起来
-                                //   像"点了没反应"。
-                                if ($running) {
-                                    $items[] = Spinner::make()->diameter(12.0);
-                                    $items[] = Text::make('刷新中…')->caption();
-                                }
+                            $items = [
+                                Button::primary('刷新')->enabled(!$running)->command('users.refresh'),
+                            ];
 
-                                return Row::make()->spacing(8)->children($items);
-                            }),
+                            // ★ 刷新时**列表不消失**（旧值还在，见 `AsyncValue` 的
+                            //   两维模型）⇒ "正在刷新"必须有人说一句，否则看起来
+                            //   像"点了没反应"。
+                            if ($running) {
+                                $items[] = Spinner::make()->diameter(12.0);
+                                $items[] = Text::make('刷新中…')->caption();
+                            }
+
+                            return Row::make()->spacing(8)->children($items);
+                        }),
 
                         Spacer::make(),
 
@@ -113,28 +102,27 @@ final class UsersPage extends StatelessWidget
             ->center(
                 ScrollView::make(
                     Column::make()->spacing(8)->padding(EdgeInsets::only(24.0, 0.0, 24.0, 24.0))->children([
-                        // ── 列表：订阅点在这层，行内只吃值 ──
-                        // ★ 切片是命令的**当前值对象**（`AsyncValue`）：它是不可变的，
-                        //   没换值就是**同一个实例** ⇒ `SubjectBuilder` 的 `===` 门控
-                        //   天然成立（搜索框改字不会让列表重建）。
-                        SubjectBuilder::make($this->store)
-                            ->select(static fn(UserStore $s): AsyncValue => $s->page()->value())
-                            ->builder(fn(AsyncValue $v): Widget => $v->fold([
-                                'loading' => static fn(AsyncValue $v): Widget => Spinner::make(),
+                        // ── 四态：读命令的当前值（`AsyncValue` 不可变 ⇒ 门控天然成立） ──
+                        Bind::make(static fn(): Widget => $store->page()->value()->fold([
+                            'loading' => static fn(AsyncValue $v): Widget => Spinner::make(),
 
-                                'error' => static fn(AsyncValue $v): Widget => Row::make()->spacing(8)->children([
-                                    Text::make('加载失败')->error(),
-                                    Button::primary('重试')->command('users.refresh'),
-                                ]),
+                            'error' => static fn(AsyncValue $v): Widget => Row::make()->spacing(8)->children([
+                                Text::make('加载失败')->error(),
+                                Button::primary('重试')->command('users.refresh'),
+                            ]),
 
-                                'data' => fn(AsyncValue $v): Widget => SubjectBuilder::make($this->store)
-                                    ->select(static fn(UserStore $s): array => $s->visible()) // ★ 切片：只跟过滤结果
-                                    ->builder(static fn(array $rows): Widget => Each::make(
-                                        static fn(User $u): int => $u->id, // ★ key 必填（R4）
-                                    )->items($rows, static fn(User $u): Widget => UserRow::make($u))),
+                            // 行只在这一段里读：搜索词变 ⇒ 只重画列表，搜索框不动。
+                            'data' => static fn(AsyncValue $v): Widget => Bind::make(
+                                static fn(): Widget => Each::make(
+                                    static fn(User $u): int => $u->id, // ★ key 必填（R4）
+                                )->items(
+                                    $store->visible(),
+                                    static fn(User $u): Widget => UserRow::make($u),
+                                ),
+                            ),
 
-                                'idle' => static fn(AsyncValue $v): Widget => Text::make('尚未加载')->caption(),
-                            ])),
+                            'idle' => static fn(AsyncValue $v): Widget => Text::make('尚未加载')->caption(),
+                        ])),
                     ])
                 )
             );

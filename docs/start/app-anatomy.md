@@ -93,7 +93,7 @@ RouteTable::make()->route('buttons', static fn(): Widget => new ButtonsPage());
 PageHost::make()->current($pageId)->table($table)->expanded();
 ```
 
-`RouteTable` 是数据（名字 → 工厂），`PageHost` 是容器：按名字缓存页面实例，换页走 `Offstage` 隐藏而非卸载。页名是稳定身份，和侧栏第几项无关，插页 / 重排不影响既有页。纯 UI 页切换用 `current()` 直接给页名，不必额外造 `Subject`；`expanded()` 让页根 `ScrollView` 量到可视高。
+`RouteTable` 是数据（名字 → 工厂），`PageHost` 是容器：按名字缓存页面实例，换页走 `Offstage` 隐藏而非卸载。页名是稳定身份，和侧栏第几项无关，插页 / 重排不影响既有页。纯 UI 页切换用 `current()` 直接给页名；页名住在 Store 里就给一个可读通道（`->from($store->pageSource())`，`Cell` / `Computed` 都行，读它 = 订它）。`expanded()` 让页根 `ScrollView` 量到可视高。
 
 全常驻容器在首帧就把所有页 mount 完，`initState()` 因此不再等于"用户进过这一页"。首次取数、注册日志槽这类"进页面才开始"的副作用放 `State::onActivate()`，它只跑一次。
 

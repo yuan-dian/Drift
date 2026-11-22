@@ -5,11 +5,11 @@ namespace Drift\Dev\Tests\Feature\App;
 
 use Drift\Dev\Smoke\Routing\ActivationState;
 use Drift\Dev\Smoke\Routing\ActivationWidget;
-use Drift\Dev\Smoke\Routing\NavStore;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Routing\NoPage;
 use Drift\Routing\PageHost;
 use Drift\Routing\RouteTable;
+use Drift\State\Cell;
 use Drift\Widget\Expanded;
 use Drift\Widget\OffstageElement;
 use Drift\Widget\Text;
@@ -28,8 +28,10 @@ use Drift\Widget\Widget;
  *
  * ## 门控那两条必须成对
  *
- * "同值 notify 被挡住" 与 "通知仍到达订阅者" 只验一条都读不出结论：
- * 前者单独成立可能是"订阅根本没联上"（症状完全一样）。
+ * "同值写入被挡住" 与 "换值立刻标脏" 只验一条都读不出结论：前者单独成立
+ * 可能是"订阅根本没联上"（症状完全一样）。旧版是 `Subject` + 手写同值门控，
+ * 2026-11-22 起页名是一个 `Cell`，两条判据原样保留 —— 换成 `from(Readable)`
+ * 之后，这两条同时也在守"State 的依赖采集真的接上了"。
  */
 final class PageHostTest extends SmokeTestCase
 {
@@ -37,11 +39,11 @@ final class PageHostTest extends SmokeTestCase
     {
         $context = smokeContext();
 
-        $nav = new NavStore();
+        $page = Cell::of('users')->named('test.page');
         $navTable = RouteTable::make()
             ->route('users', static fn (): Widget => Text::make('用户列表'))
             ->route('signup', static fn (): Widget => Text::make('注册'));
-        $host = PageHost::make()->source($nav)->select(static fn (NavStore $s): string => $s->page())->table($navTable);
+        $host = PageHost::make()->from($page)->table($navTable);
         $hostElement = $host->createElement();
         $hostElement->mount(null, $context);
 
@@ -58,9 +60,9 @@ final class PageHostTest extends SmokeTestCase
         );
 
         // 换页：旧页隐藏但**不卸载**（State 留着），新页可见
-        $nav->go('signup');
-        check('PageHost · notify 后选中新页', $hostState !== null && $hostState->page() === 'signup');
+        $page->set('signup');
         $hostElement->settle();
+        check('PageHost · 源换值 ⇒ 选中新页', $hostState !== null && $hostState->page() === 'signup');
         check(
             'PageHost · 换页 ⇒ 旧页进 Offstage、新页可见',
             $hostElement->childAt(0)?->childAt(0)?->childCount() === 0
@@ -69,7 +71,7 @@ final class PageHostTest extends SmokeTestCase
 
         // ★ 每页只造一次：切回来是同一个 Widget 实例（否则"保留状态"是空话）
         $firstUsers = $hostElement->childAt(0)?->childAt(0);
-        $nav->go('users');
+        $page->set('users');
         $hostElement->settle();
         $backUsers = $hostElement->childAt(0)?->childAt(0);
         check(
@@ -78,21 +80,16 @@ final class PageHostTest extends SmokeTestCase
             '缓存 ' . (string) ($hostState?->cachedCount() ?? -1) . ' 页'
         );
 
-        // 同值 notify 被门控挡住（§11.3.3）：别的字段变了，页名没变 ⇒ 不换页
-        $notifiesBefore = $nav->notifyCount();
-        $nav->touchOtherField();
-        check(
-            'PageHost · 同值 notify 被门控挡住（两次 select 输出相等）',
-            $hostState !== null && !$hostState->needsBuild()
-        );
-        // 反证：通知真的到了（否则"门控挡下"与"订阅没联上"长得一样）
-        check(
-            'PageHost · 被门控挡的通知仍到达订阅者（排除"订阅没联上"）',
-            $nav->notifyCount() === $notifiesBefore + 1
-        );
+        // 同值写入被格子的相等门控挡住（§11.3.3）⇒ 不重建
+        $page->set('users');
+        check('PageHost · 同值 set 不惊动容器', $hostState !== null && !$hostState->needsBuild());
+        // 反证：不同值一定标脏 —— 否则"门控挡住"与"订阅根本没联上"长得一样
+        $page->set('signup');
+        check('PageHost · 换值 ⇒ 立刻标脏（订阅真的联上了）', $hostState !== null && $hostState->needsBuild());
+        $hostElement->settle();
 
         // 未命中：开放域 ⇒ 什么都不显示，不崩（§12.1 第 2 条）
-        $nav->go('ghost');
+        $page->set('ghost');
         $hostElement->settle();
         $ghostSlot = $hostElement->childAt(0)?->childAt(2);
         check(

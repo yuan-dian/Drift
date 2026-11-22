@@ -30,29 +30,23 @@ $this->setState(function () use ($index): void { $this->hovered = $index; });
 
 ## Subject 与整块广播（例外形状）
 
-★ **默认不写这个**。界面会读的字段用下一节的 `Cell` + `Bind`：一字段一格、写进去自动通知、读点即订阅。本节留给一种情况 —— 多个字段必须同频变化、读方要一次拿到一致的几块（查询词 + 筛选 + 分页一起刷新）。
+★ **默认不写这个**。界面会读的字段用下一节的 `Cell` + `Bind`：一字段一格、写进去自动通知、读点即订阅。本节留给一种情况 —— 多个字段必须同频变化、读方要一次拿到一致的几块（查询词 + 筛选 + 分页一起刷新，且这几次写必须落在同一次广播里）。
 
-`Subject` 是广播端，`notifyChanged()` 由应用手动调（它不知道 GUI 长什么样）。`subscribeFor(object $owner, callable $handler)` 按属主订阅，`unsubscribeAllOf()` / `unsubscribeId()` 退订；每个订阅者异常隔离，先记账、通知完再报，避免第一个炸掉后面全收不到。`Subscription` 按自增 id 管理，遍历中退订不出错。
+`Subject` 是广播端（`Cell` 也是它的子类，所以「业务层零 GUI 依赖」在两条路上都成立），`notifyChanged()` 由应用手动调。`subscribeFor(object $owner, callable $handler)` 按属主订阅，`unsubscribeAllOf()` / `unsubscribeId()` 退订；每个订阅者异常隔离，先记账、通知完再报，避免第一个炸掉后面全收不到。`Subscription` 按自增 id 管理，遍历中退订不出错。
 
-页面侧用 `SubjectBuilder` 把一个切片变成一棵子树：
+确实要整块广播时，页面侧用 `SubjectBuilder` 把某个切片变成一棵子树（`select` + `builder` 两段闭包）。`select` 闭包每次广播都跑，必须廉价、纯、无副作用：它省的是子树重建，不省计算。抖动检测会报 `select/unstable`。
 
-```php
-SubjectBuilder::make($this->store)
-    ->select(static fn(UserStore $s): string => $s->query())
-    ->builder(fn(string $q): Widget => TextField::make()->value($q));
-```
-
-`SubjectBuilder` 实现 `SubscribingWidget` 这个空标记接口，订阅责任只能落在这样的控件上。`select` 闭包每帧都跑，所以必须廉价、纯、无副作用：它省的是子树重建，不省计算。纪律是"页面里任何读 Store 的地方都必须在某个 `select` 之内"，否则读到的是快照；lint 的 `dead-subscription` 规则守这条，构造器中提升的属性也在它的检查范围内。
+**2026-11-22 起本仓 `apps/` 里没有这个形状了**：`users` 与 `watermark` 都迁成了格子 + `Bind`，`AsyncCommand` 也自己实现了 `Readable`（读即订阅）。`SubjectBuilder` 只剩测试覆盖 —— 新代码不要用它，除非上面那条"同频一致快照"真的成立。
 
 只有同时满足"同频变化、小子树、全标量、一致性敏感"时才把多个字段合进一个 `select`。`query` 每字符变、`running` 每次刷新变，这种不同频的组合会让每敲一个字符都重建整行，是反面例子。
 
-## === 身份门控
+## 相等门控
 
-门控比的是**两次 `select` 的输出**，不是 `Store` 的新旧值：框架不存 Subject 快照，旧值缓存在订阅者自己身上。默认门控是 `sameValue()`：两边都是 `Equatable` 就按值比较，否则走 `===`。
+格子 `set()` 的门控：两边都是 `Equatable` 就按值比较，否则 `===`。同值 ⇒ 什么都不发生（订阅者不会被叫醒）。整块广播那条路（`SubjectBuilder`）比的是**两次 `select` 的输出**，语义一致 —— 框架不存快照，旧值缓存在订阅者自己身上。
 
-这条默认很重要：`===` 对对象是身份比较。如果 `select` 每次 `notify` 都 `new` 一个内容相同的值对象，门控会判定"变了"，子树白重建。`SubjectBuilder` 会检测"同值不同身份"的抖动并上报 `select/unstable` 诊断，但诊断不该成为常态。
+这条默认很重要：`===` 对对象是身份比较。如果每次写都 `new` 一个内容相同的值对象，门控会判定"变了"，子树白重建。自动抖动检测为此存在：`Cell` 侧按内容比已经兜住数组 / 标量，`SubjectBuilder` 侧仍会报 `select/unstable`。
 
-数组走 `===` 时还比较键序：键序不同就是"不同"，所以合并成数组的切片要保证全标量且构造稳定。真正多字段一致的内容用值对象表达，别用随手拼的数组。
+数组按 `===` 时还比较键序：键序不同就是"不同"。真正多字段一致的内容用值对象表达，别用随手拼的数组。
 
 ## Equatable 或复用实例：应用侧契约
 
@@ -118,7 +112,7 @@ Text::of($this->count, '计数 ')->body();             // 读：读点就在这�
 | 粒度 | 格子粒度：进度 tick 不碰表单段 | 一次广播唤醒全部订阅者，再各自门控 |
 | 适合 | 界面读的绝大多数状态 | 多字段必须同频、读方要一次性看到一致快照 |
 
-水印应用（`WatermarkStore` 十来个格子）与示例台的 `ButtonsStore` 是前一种；后一种目前在示例应用里已没有使用者，`Subject` 本身仍被 `AsyncCommand` / `ComboBoxQuery` 这类"一个对象就是一个事件"的地方继承 —— 那是另一种用法，不是状态。
+水印应用（`WatermarkStore` 十来个格子）与用户目录（`AppStore` / `SignupForm` / `UserStore` 各几格，外加一个命令）是前一种；后一种在 `apps/` 里已经没有使用者。`Subject` 本身仍被 `AsyncCommand` 这类"一个对象就是一个事件"的地方继承 —— 那是另一种用法，不是状态。
 
 两条纪律：
 
@@ -140,7 +134,7 @@ Text::of($this->count, '计数 ')->body();             // 读：读点就在这�
 
 这是**值形态**：每次变化都 `setState`，整页重建。表格选中这类高频参数改用**通道形态**（见上文「值形态还是通道形态」），读点落在控件自己的 `State` 上。
 
-注意 `TextField` 的输入态标脏：受控值、语义树与 `TextChanged` 事件都跟着这份值走，所以 `onChanged` 里要用 `setState()` 改字段。只写字段不 `setState()`，依赖该值显示的部分不会更新；但仅在提交时一次性读取的草稿字段可以采用后者——先想清楚这个值有没有被显示在屏幕上。
+注意 `TextField` 的输入态标脏：受控值、语义树与 `TextChanged` 事件都跟着这份值走，所以 `onChanged` 里要用 `setState()` 改字段（值住在格子里的，直接写格子，见 `SignupForm` 的虚拟属性）。只写字段不 `setState()`，依赖该值显示的部分不会更新；但仅在提交时一次性读取的草稿字段可以采用后者——先想清楚这个值有没有被显示在屏幕上。
 
 ## 页面状态与应用状态边界
 

@@ -6,6 +6,8 @@ namespace Drift\State;
 use Drift\Async\AsyncValue;
 use Drift\Async\Failure;
 use Drift\Async\Future;
+use Drift\Core\Readable;
+use Drift\Core\Tracker;
 
 /**
  * 一次异步请求的完整生命周期：一个广播 AsyncValue 的命令。
@@ -21,9 +23,16 @@ use Drift\Async\Future;
  *   —— 那条缝因此在 `AsyncScope` 落地后失去全部消费者（迁移 watermark 时归零）。
  *   要区分"结果到了"与"值变了"就走 `AsyncScope`：`await()` 返回就是结算。
  *
+ * ★ **读即订阅**（2026-11-22）：实现 `Readable` ⇒ `value()` / `get()` /
+ *   `isRunning()` 在 build 期读都会登记依赖，与 `Cell::get()` 走同一条采集。
+ *   于是页面可以直接 `Bind::make(fn () => …$cmd->value()…)`，不必让 Store 先
+ *   把四态"转发"成一次广播 —— 那层转发是每一处都要手写、漏一处就静默陈旧的活。
+ *   ★ 三个读法**都得记**：`Subject` 自身不采集，漏一个就出现"这条读法不重建"
+ *     的分裂语义 —— 那比没有采集更难查。
+ *
  * @api
  */
-final class AsyncCommand extends Subject
+final class AsyncCommand extends Subject implements Readable
 {
     /**
      * @var \Closure(mixed): Future 组合根给的"怎么发起一次请求"
@@ -103,6 +112,21 @@ final class AsyncCommand extends Subject
      */
     public function value(): AsyncValue
     {
+        return $this->get();
+    }
+
+    /**
+     * `Readable` 入口：读 = 订阅（语义与 `Cell::get()` 相同）。
+     *
+     * ★ 读点在 `Bind` / 页面 `build()` 里就自动订阅本命令；事件处理器里读不订阅
+     *   （帧外无采集帧），正好是"先看当前值再决定"要的。
+     *
+     * @api
+     */
+    public function get(): AsyncValue
+    {
+        Tracker::record($this);
+
         return $this->value;
     }
 
@@ -127,10 +151,16 @@ final class AsyncCommand extends Subject
     /**
      * 有请求在途吗 —— 直接喂给 `Button::enabled()`（转圈时禁用翻页 / 重试）。
      *
+     * ★ 同样登记依赖：只读这一个布尔的段（例如刷新按钮）也必须跟着变。它在
+     *   `emit()` 之前就已换值，而每次 `pending` 变化都伴随一次 `emit()` ⇒
+     *   版本一定跟着动，不会漏帧。
+     *
      * @api
      */
     public function isRunning(): bool
     {
+        Tracker::record($this);
+
         return $this->pending !== null;
     }
 

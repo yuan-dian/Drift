@@ -8,6 +8,11 @@ use Drift\App\TaskHost;
 use Drift\Async\Future;
 use Drift\Errors;
 use Drift\Dev\Tests\Support\SmokeTestCase;
+use Drift\Widget\Bind;
+use Drift\Widget\Element;
+use Drift\Widget\StatefulElement;
+use Drift\Widget\Text;
+use Drift\Widget\Widget;
 
 use App\Users\Store\MemoryUserSource;
 use App\Users\Store\UserStore;
@@ -29,7 +34,7 @@ use App\Users\Store\UserStore;
  * | 2 | 后台路径 `loading` → `data`，行**真的落地** | 同上（`hydrate` 那一步没人调） |
  * | 3 | 迟到的旧响应不覆盖新数据 | 列表显示上一页，**不报错** |
  * | 4 | 失败 ⇒ `error`，但**不清空**上一次的行 | 一次网络抖动 = 列表空白 |
- * | 5 | 命令换值 ⇒ Store 广播（订阅者收到） | 数据到了界面不动（白屏） |
+ * | 5 | 在 `Bind` 里读命令 = 订阅命令（idle → loading → data 三帧都对） | 数据到了界面不动（白屏） |
  *
  * ★ 2 是这一组最值钱的一条：它是"命令住进 Store"之后**唯一**能把"原始数组 →
  *   `User`"这一步钉住的断言（`UserStore::absorb()`）。变异自检过：把那里的
@@ -181,36 +186,97 @@ final class SharedCommandTest extends SmokeTestCase
         );
 
         // ★ G2：命令必须自己挂 catch，否则 `Future` 走 Fatal 序列
-        check('共享命令 · 失败不产生诊断（没走 Fatal）', Errors::recentDiagnostics() === []);
+        $diagnostics = Errors::recentDiagnostics();
+        check(
+            '共享命令 · 失败不产生诊断（没走 Fatal）',
+            $diagnostics === [],
+            \implode(' | ', $diagnostics),
+        );
 
         $this->flushChecks();
     }
 
     /**
-     * 命令换值 ⇒ Store 广播（页面照旧只订 Store 一个，不为命令另开一条路）。
+     * 读点即订阅：`Bind` 里读 `page()->value()` 就订上了命令（2026-11-22）。
      *
-     * ★ 这是"命令住进 Store"能成立的前提：命令是 `Subject`，Store 自己先订一份
-     *   （`UserStore` 构造器里那句 `subscribeFor`）⇒ 页面侧零改动。
+     * ★ 这条取代旧的「命令换值 ⇒ Store 广播」：以前页面只订 Store 一个，Store 在
+     *   `absorb()` 里 `notifyChanged()` 转发一次。命令实现 `Readable` 之后那层
+     *   中转没有存在理由 —— 而且它有个静默代价：**每个 Store 都要手写一遍**，
+     *   漏写就是"值变了界面不动"。
+     * ★ 判据必须跨帧（idle → loading → data）：只在结算后断言一次，分不开
+     *   "读到的是浇筑那一刻的快照"与"订阅是活的"。
      */
-    public function testCommandChangeBroadcastsThroughStore(): void
+    public function testCommandReadIsSubscription(): void
     {
         $host = self::manualHost();
         $store = new UserStore(new MemoryUserSource(), $host);
+        $ctx = smokeContext();
 
-        $seen = [];
-        $store->subscribeFor($this, function () use ($store, &$seen): void {
-            $seen[] = $store->page()->value()->stateName();
-        });
-
-        $store->load(1);
-        $host->futures[0]->resolve([['id' => 1, 'name' => '张伟', 'email' => 'z@example.com']]);
+        $element = Bind::make(
+            static fn(): Widget => Text::make($store->page()->value()->stateName()),
+        )->createElement();
+        $element->mount(null, $ctx);
+        self::settle($element);
 
         check(
-            '共享命令 · 命令换值 ⇒ Store 广播（loading 与 data 各一次）',
-            $seen === ['loading', 'data'],
-            'seen=' . \implode(',', $seen),
+            '读即订阅 · 首帧 idle',
+            self::painted($element) === 'idle',
+            'painted=' . self::painted($element),
+        );
+
+        $store->load(1);
+        self::settle($element);
+        check(
+            '读即订阅 · 发起 ⇒ loading（读点真的订上了）',
+            self::painted($element) === 'loading',
+            'painted=' . self::painted($element),
+        );
+
+        $host->futures[0]->resolve([['id' => 1, 'name' => '张伟', 'email' => 'z@example.com']]);
+        self::settle($element);
+        check(
+            '读即订阅 · 结算 ⇒ data',
+            self::painted($element) === 'data',
+            'painted=' . self::painted($element),
         );
 
         $this->flushChecks();
+    }
+
+    /**
+     * 重建所有标脏的 `StatefulElement`（`Bind` 的 State 就在其中）。
+     *
+     * ★ 不递归：本用例的脏元素都是平行的一层，不存在父子同时脏。
+     */
+    private static function settle(Element $root): void
+    {
+        for ($i = 0; $i < 5; $i++) {
+            $dirty = [];
+            $walk = null;
+            $walk = static function (Element $e) use (&$walk, &$dirty): void {
+                if ($e instanceof StatefulElement && $e->state()?->needsBuild() === true) {
+                    $dirty[] = $e;
+                }
+                $e->visitChildren($walk);
+            };
+            $walk($root);
+
+            if ($dirty === []) {
+                return;
+            }
+
+            foreach ($dirty as $element) {
+                $element->rebuild();
+            }
+        }
+    }
+
+    /** 树上第一个 `Text` 的内容（本用例的整棵树就一个 `Text`） */
+    private static function painted(Element $root): string
+    {
+        $found = $root->findElement(static fn (Element $e): bool => $e->widget() instanceof Text);
+        $widget = $found?->widget();
+
+        return $widget instanceof Text ? $widget->content() : '';
     }
 }

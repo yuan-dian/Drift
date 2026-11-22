@@ -8,21 +8,36 @@ use Drift\Async\Future;
 use Drift\App\Restoration\RestorationBucket;
 use Drift\Core\Computed;
 use Drift\State\AsyncCommand;
-use Drift\State\Subject;
+use Drift\State\Cell;
 
 use App\Users\Jobs\FetchUsersJob;
 
 /**
  * 行数据 + 四态 + 搜索（§A.2.8）。
  *
- * ★ **派生值用 `Computed`**（`03` §4，W2/S5）：`visible()` 每帧会被 `select` 调一次，
- *   不缓存就是每帧一次全表过滤。原先是"手工缓存 + 4 处复位"（改依赖要记得清缓存），
- *   现在由**版本机制**保证不陈旧：依赖版本没变就直接给缓存，变了才重算。
- *   ⇒ "改了依赖忘了清缓存"这一整类静默 bug 结构上消失。
- *   粗依赖（`[$this]` = 整个 Store）是 §4.6 有意的取舍：不相干字段变化会多触发
- *   一次重算，换掉漏复位；本派生值算一次远小于 1ms，不触上界。
+ * ## 三个可观察值，各订各的（2026-11-22 从 `extends Subject` 迁来）
  *
- * ## ★★ 取数已经不是手写状态机了（2026-10-31）
+ * | 值 | 形态 | 变化频率 |
+ * |---|---|---|
+ * | 行 | `Cell<list<User>>` | 一次取数一次 |
+ * | 搜索词 | `Cell<string>` | 每个按键一次 |
+ * | 四态 | `AsyncCommand`（自己就是 Subject） | 发起两趟 + 进度 |
+ *
+ * ★ **不再有"转发"这一层**：以前页面订本 Store，命令变 ⇒ `absorb()` 里
+ *   `notifyChanged()` ⇒ 页面被叫醒。现在 `AsyncCommand` 自己就是可观察值
+ *   （读 `value()` / `isRunning()` 即订阅），页面直接订命令，`absorb()` 只做
+ *   "把载荷落到行"这件业务事。
+ *
+ * ## 派生值用 `Computed::of`（自动依赖）
+ *
+ * `visible()` 每帧会被读一次，不缓存就是每帧一次全表过滤。自动依赖版在求值期
+ * 采集"读了哪两个格子"⇒ 改 `rows` / `query` 才重算，别的都不惊动它。
+ * ★ 以前是 `new Computed($fn, [$this])` 的**粗依赖**（靠 `notifyChanged()` 推
+ *   版本号）：Store 上任何字段变化都白算一次。两格之后粗依赖没有意义了。
+ * ★ 自动模式自带采集帧 ⇒ `visible()` 读的两个格子不会被算到**页面的**订阅表上，
+ *   页面订到的是展平后的源（`Computed::sources()`），重建时再 `get()` 一次。
+ *
+ * ## 取数不是手写状态机（2026-10-31）
  *
  * 之前本类是 `AsyncCommand` 的同款逻辑**手写第二遍**：`LoadStatus` 枚举 +
  * `$status` / `$error` / `$rows` 三个字段 + `$inflight` + `load()` 六步 +
@@ -31,85 +46,63 @@ use App\Users\Jobs\FetchUsersJob;
  *
  * ```php
  * $this->page = AsyncCommand::make(fn(int $p): Future => $this->fetch($p));
- * $this->page->subscribeFor($this, fn() => $this->absorb());   // 命令变 ⇒ 我变
+ * $this->page->subscribeFor($this, fn() => $this->absorb());   // 命令变 ⇒ 落行
  * public function load(int $p = 1): void { $this->page->run($p); }
  * ```
  *
- * ⇒ `LoadStatus` 随之删除（四态已经是 `AsyncValue`），页面改读
- *   `$store->page()->value()` 并 `fold()`。
- *
- * ## 两条取数路径仍然都在，但出口只剩命令那一个
+ * ## 两条取数路径，出口只剩命令那一个
  *
  * - 有 `TaskHost` ⇒ 提交 `FetchUsersJob` 到后台（**真异步**：进程池 / 同步队列都行）；
  * - 没有 ⇒ 老路 `$src->fetchPage()`（同步，解释器与旧测试用）。
  *   ★ 两条路都交 `list<User>` 给命令：同步源给的就是对象，后台回的是 JSON
  *   （唯一的跨进程形态）⇒ **解码只有一处**（`fetch()` 里那个 `then()`），
- *   `absorb()` 只做赋值。以前为了"统一成原始数组"多写了一个
- *   `UserSeed::dehydrate()`（同步路径降级 → 再由 absorb 升回来，一趟往返）。
+ *   `absorb()` 只做赋值。
  *   ★ 这也是 §11.5 那条结论的兑现："`loading` 只在同步 IO 下不可见" —— 走后台后它
  *     真的能被用户看到（mock 后端故意慢 1.2 秒）。
  */
-final class UserStore extends Subject
+final class UserStore
 {
-    /** @var list<User> */
-    private array $rows = [];
+    /** @var Cell<list<User>> */
+    private Cell $rows;
 
     /**
      * 取数命令（**唯一的异步簿记**）。
      *
-     * ★ 它是 `Subject`（`AsyncCommand` 的基类）⇒ 既是"四态的值"，也能被页面
-     *   直接订阅。本 Store 自己先订一份（见构造器），于是**页面照旧只订 Store
-     *   一个** —— 这是 §11.3 的既有形状，不为命令另开一条路。
+     * ★ 它自己就是可观察值（`AsyncCommand implements Readable`）⇒ 页面直接读
+     *   `page()->value()` 就订上了，不需要本 Store 转发一次广播。
      */
     private AsyncCommand $page;
 
-    private string $query = '';
+    /** @var Cell<string> */
+    private Cell $query;
 
     private ?RestorationBucket $bucket = null;
 
-    /**
-     * 派生值：按 `$query` 过滤 `$rows`。
-     *
-     * ★ 依赖取**整个 Store**（`[$this]`，粗依赖）：`UserStore extends Subject`
-     *   已实现 `Versioned`，`notifyChanged()` 先推版本 ⇒ 订阅者回调里读到的是新
-     *   版本。改 `query`/`rows` 都会 `notifyChanged()` ⇒ 版本变 ⇒ 重算，无需手工复位。
-     *   ★ 命令的每次换值都会被 `absorb()` 转成 `notifyChanged()` ⇒ 版本同样变。
-     *
-     * @var Computed<list<User>>
-     */
-    private Computed $visibleComputed;
+    /** @var Computed<list<User>> 按 `$query` 过滤 `$rows` */
+    private Computed $visible;
 
     /**
      * @param null|TaskHost $host 非 null ⇒ 取数走后台（§17.4.5）；null ⇒ 同步 `$src`
      */
     public function __construct(
-        private UserSource $src,
-        private ?TaskHost $host = null,
-        private string $apiBase = FetchUsersJob::DEFAULT_BASE,
+        private readonly UserSource $src,
+        private readonly ?TaskHost $host = null,
+        private readonly string $apiBase = FetchUsersJob::DEFAULT_BASE,
     ) {
+        $this->rows = Cell::of([])->named('users.rows');
+        $this->query = Cell::of('')->named('users.query');
+
         $this->page = AsyncCommand::make(function (int $page): Future {
             return $this->fetch($page);
         });
 
-        // ★ 命令换值 ⇒ 本 Store 变（见 `$page` 的注释：页面只订 Store 一个）。
-        //   落在**构造器**里而不是 `load()` 里：订阅一次就够（§11.3 RT-1 ——
-        //   每 load 一次订一份，订阅数会随取数次数增长）。
+        // ★ 命令换值 ⇒ 落行。落在**构造器**里而不是 `load()` 里：订阅一次就够
+        //   （§11.3 RT-1 —— 每 load 一次订一份，订阅数会随取数次数增长）。
         $this->page->subscribeFor($this, function (): void {
             $this->absorb();
         });
 
-        $this->visibleComputed = new Computed(
-            fn(): array => $this->query === ''
-                ? $this->rows
-                : array_values(array_filter(
-                    $this->rows,
-                    // ★ 非 static：闭包读 `$this->query`（static 闭包用 $this 是运行时错误，
-                    //   而它在 `notifyChanged()` 的订阅者回调里 ⇒ 报错会被"订阅者异常隔离"
-                    //   包成 RECOVERABLE ⇒ debug 下整局中止）
-                    fn(User $u): bool => str_contains($u->name, $this->query),
-                )),
-            [$this],
-        );
+        $this->visible = Computed::of(fn(): array => $this->filtered());
     }
 
     /** 取数命令（页面读四态 / 禁用刷新按钮都从这里走） */
@@ -121,26 +114,29 @@ final class UserStore extends Subject
     /** @return list<User> */
     public function rows(): array
     {
-        return $this->rows;
+        $rows = $this->rows->get();
+
+        return \is_array($rows) ? $rows : [];
     }
 
     /** 冷启动复原搜索词；之后每次 setQuery 都写回同一份 bucket。 */
     public function bindRestoration(RestorationBucket $bucket): void
     {
         $this->bucket = $bucket;
-        $this->query = (string) $bucket->read('users.query', '');
-        $this->notifyChanged();
+        $this->query->set(self::text($bucket->read('users.query', '')));
     }
 
     public function query(): string
     {
-        return $this->query;
+        return self::text($this->query->get());
     }
 
     /** @return list<User> */
     public function visible(): array
     {
-        return $this->visibleComputed->get();
+        $rows = $this->visible->get();
+
+        return \is_array($rows) ? $rows : [];
     }
 
     /** 取一页 —— 只是"让命令跑一次"（去重 / 作废旧请求 / 重试都由命令管） */
@@ -151,14 +147,13 @@ final class UserStore extends Subject
 
     public function setQuery(string $q): void
     {
-        if ($q === $this->query) {
-            return; // ★ 相等门控
+        // ★ 只有值真的变了才写存档（`peek()`：这是一次写，不该顺手建立依赖）
+        if ($q === self::text($this->query->peek())) {
+            return;
         }
 
-        $this->query = $q;
+        $this->query->set($q);
         $this->bucket?->write('users.query', $q);
-        // ★ 依赖变了 ⇒ notifyChanged() 推版本 ⇒ visibleComputed 下次 get() 自动重算
-        $this->notifyChanged();
     }
 
     public function remove(int $id): bool
@@ -167,11 +162,11 @@ final class UserStore extends Subject
             return false;
         }
 
-        $this->rows = array_values(array_filter(
-            $this->rows,
+        $rows = $this->rows->peek();
+        $this->rows->set(\is_array($rows) ? \array_values(\array_filter(
+            $rows,
             static fn(User $u): bool => $u->id !== $id,
-        ));
-        $this->notifyChanged();
+        )) : []);
 
         return true;
     }
@@ -181,15 +176,11 @@ final class UserStore extends Subject
      *
      * ★ 必须回 `Future`（不能像以前那样"同步路径直接就地改状态"）：命令的统一
      *   出口在 `then/catch` 上，绕过它 ⇒ 三态、去重、取消又各走各的。
-     * ★ 同步路径失败用 `Future::rejected()`：路径不同、出口相同（以前是
-     *   `applyPage(false, [], $error)`，现在是"一条被拒的 Future"）。
-     *
+     * ★ 同步路径失败用 `Future::rejected()`：路径不同、出口相同。
      * ★ 两条路都交 `list<User>`（见类注释）⇒ 命令的 `data` 载荷就是行，
      *   `absorb()` 不再需要认识"原始数组"。
-     * ★★ 后台路径**派生**（`submit()->then(...)`）是 2026-10-31 之后才合法的
-     *   写法：上一版这里刻意回"根 Future"、把 hydrate 留到 `absorb()`，注释写着
-     *   "取消链下游不回溯上游"。那条限制已经修掉（`Future::cancel()` 现在沿链
-     *   回到根）⇒ 派生出来的这条对在途任务**真的**有效，绕行代码随之消失。
+     * ★ 后台路径**派生**（`submit()->then(...)`）是 2026-10-31 之后才合法的写法：
+     *   `Future::cancel()` 现在沿链回到根 ⇒ 派生出来的这条对在途任务**真的**有效。
      */
     private function fetch(int $page): Future
     {
@@ -198,8 +189,6 @@ final class UserStore extends Subject
             // 同步路径（解释器 / 没装后台端口的应用）
             $r = $this->src->fetchPage($page);
 
-            // ★ 同步源给的**就是** `User`（`Page::items`）⇒ 不需要"降到原始数组
-            //   再由 absorb 升回来"那一趟往返（`UserSeed::dehydrate()` 因此删除）。
             return $r->ok
                 ? Future::resolved($r->items)
                 : Future::rejected(new \RuntimeException($r->error));
@@ -212,26 +201,44 @@ final class UserStore extends Subject
     }
 
     /**
-     * 命令换值 ⇒ 落到本 Store（**唯一的落地口**）。
+     * 命令载荷 ⇒ 行（**唯一的落地口**）。
      *
-     * ★ 只有 `data` 态改写 `$rows`：失败时保留上一次的行（界面画 error，但列表
-     *   不该被清空 —— 以前 `applyPage()` 也是这个语义）。
-     * ★ 2026-10-31：`error` 现在也**带着**上一次的值（`AsyncValue::carriedFrom()`），
-     *   但本方法仍以 `hasData()` 为门 —— 值没变，不必再赋值一遍（那会多推一次版本
-     *   ⇒ 多一次派生值重算）。"旧内容还在"由命令保证，不是由这里兜底。
-     * ★ 载荷已经是 `list<User>`（`fetch()` 里 hydrate 过）⇒ 这里只做赋值，
-     *   `is_array` 只是因为 `AsyncValue` 的载荷类型是 `mixed`。
-     * ★ 回调在**帧内**执行（`Application::frame()` 的 drain 段，在 settle 之前）
-     *   ⇒ 这里的 `notifyChanged()` 会让同帧重建，看不到"空一帧"。
+     * ★ 只有 `data` 态改写行：失败时保留上一次的行（界面画 error，但列表不该被
+     *   清空 —— 以前 `applyPage()` 也是这个语义）。"旧内容还在"由 `AsyncValue`
+     *   的 `carriedFrom()` 保证，不是由这里兜底。
+     * ★ 不再 `notifyChanged()`：格子 `set()` 自己广播；值没变（失败沿用旧行）
+     *   就什么都不发生 —— 这正是想要的，四态的呈现由命令自己的那条订阅驱动。
      */
     private function absorb(): void
     {
         $value = $this->page->value();
         if ($value->hasData()) {
             $rows = $value->value();
-            $this->rows = \is_array($rows) ? $rows : [];
+            $this->rows->set(\is_array($rows) ? $rows : []);
+        }
+    }
+
+    /** @return list<User> 派生值本体（求值期读两个格子 ⇒ 自动依赖） */
+    private function filtered(): array
+    {
+        $rows = $this->rows->get();
+        if (!\is_array($rows)) {
+            return [];
         }
 
-        $this->notifyChanged();
+        $query = self::text($this->query->get());
+        if ($query === '') {
+            return $rows;
+        }
+
+        return \array_values(\array_filter(
+            $rows,
+            static fn(User $u): bool => str_contains($u->name, $query),
+        ));
+    }
+
+    private static function text(mixed $value): string
+    {
+        return \is_string($value) ? $value : '';
     }
 }

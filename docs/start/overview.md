@@ -31,7 +31,7 @@ G1 解释了为什么有 AOT 专属的编码纪律；G2 解释了为什么能力
 - **描述与树**：不可变 Widget + fluent 链式修饰、`seal()` 封存、身份由位置与 Key 决定、帧末统一重建。
 - **布局与绘制**：`RenderBox` 单遍约束布局；`Canvas` 接口的扁平 op 流，`RasterCanvas` / `SkiaCanvas` / `RecordingCanvas` 三实现。
 - **文本**：度量归框架自己，字体面按回退链工作，IME 走 `TextInputClient`。
-- **状态与异步**：`State` 标脏、`Subject` 订阅、字符串名命令派发链；`TaskHost` 的同步 / 线程 / 进程三后端。
+- **状态与异步**：`State` 标脏、`Cell` 读点订阅（`Bind` / `Computed` 收窄重建粒度）、字符串名命令派发链；`TaskHost` 的同步 / 线程 / 进程三后端。
 - **交互与外观**：命中链一次三方消费、手势消歧、焦点链、浮层栈、主题 token 与语义树。
 - **工程化**：统一验证入口、无头预览、dev 壳、AOT 构建、真机探针、golden 基线。
 
