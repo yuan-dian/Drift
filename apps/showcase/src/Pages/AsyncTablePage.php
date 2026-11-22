@@ -9,6 +9,7 @@ use Drift\Async\AsyncValue;
 use Drift\Async\Future;
 use Drift\Geometry\EdgeInsets;
 use Drift\State\AsyncCommand;
+use Drift\State\Cell;
 use Drift\Text\TextAlign;
 use Drift\Widget\AsyncView;
 use Drift\Widget\BuildContext;
@@ -96,15 +97,29 @@ final class AsyncTablePage extends ShowcasePage
      */
     private AsyncCommand $rows;
 
+    /**
+     * 上传命令（仅 HTTP 档注入 upload 时存在）—— 演示 N6 第二条分流：
+     * 大 body / multipart 走进程池 `HttpRequestJob`，进度经 `Future::onProgress` 回贴。
+     */
+    private ?AsyncCommand $uploadCmd = null;
+
+    /** 上传状态文案（进度 / 完成），由 onProgress sink 写、Text::of 读 */
+    private Cell $uploadStatus;
+
     /** 当前页（1 起）—— 纯 UI 态，不属于命令（命令只认"这一次的参数"） */
     private int $page = 1;
 
     /**
      * @param \Closure(int): Future $fetchRows 取第 N 页；来源由组合根决定
      *        （真慢任务 / 静态数据），本页零感知。
+     * @param null|\Closure(callable(float): void): Future $upload 可选上传演示：
+     *        收一个进度 sink，返回 `AsyncHttp` 的 multipart Future。默认 null ⇒
+     *        按钮不显示，local 档 / 无头 golden 与旧版逐字节相同。
      */
-    public function __construct(private readonly \Closure $fetchRows)
-    {
+    public function __construct(
+        private readonly \Closure $fetchRows,
+        private readonly ?\Closure $upload = null,
+    ) {
     }
 
     /**
@@ -118,6 +133,20 @@ final class AsyncTablePage extends ShowcasePage
         $this->rows = $this->asyncCommand(
             fn(int $page): Future => ($this->fetchRows)($page)
         );
+
+        $this->uploadStatus = Cell::of('')->named('uploadStatus');
+        if ($this->upload !== null) {
+            $upload = $this->upload;
+            $status = $this->uploadStatus;
+            // 进度 sink 由 Future 在帧内回调：写格子 ⇒ Text::of 叶子重建，不整页重建。
+            // 命令只管在途 / 去重 / 卸载停；进度走门面的 onProgress，不走 AsyncCommand
+            // （它的 task 返回派生链 then，进度只喂根任务，见 AsyncCommand::run）。
+            $this->uploadCmd = $this->asyncCommand(
+                static fn(mixed $_): Future => $upload(static function (float $f) use ($status): void {
+                    $status->set($f >= 1.0 ? '上传完成' : '上传 ' . \round($f * 100) . '%');
+                })
+            );
+        }
     }
 
     public function onActivate(): void
@@ -212,7 +241,7 @@ final class AsyncTablePage extends ShowcasePage
         $running = $this->rows->isRunning();
         $pages = $this->pagesOf($value);
 
-        return Row::make()->spacing(12.0)->children([
+        $children = [
             Expanded::make(Text::make($label)->caption()),
             Expanded::make(Text::make($source === '' ? '' : '数据来源：' . $source)->caption()),
             Button::make('上一页')
@@ -224,7 +253,19 @@ final class AsyncTablePage extends ShowcasePage
             Button::make('下一页')
                 ->enabled(!$running && $pages > $this->page)
                 ->onPressed(fn() => $this->load($this->page + 1)),
-        ]);
+        ];
+
+        // HTTP 档才有上传演示：大 body / multipart 走 HttpRequestJob 进程池，
+        // 进度经 Future::onProgress → status 格 → Text::of 叶子回贴。
+        if ($this->uploadCmd !== null) {
+            $cmd = $this->uploadCmd;
+            $children[] = Text::of($this->uploadStatus)->caption();
+            $children[] = Button::make('上传示例')
+                ->enabled(!$cmd->isRunning())
+                ->onPressed(static fn() => $cmd->run(null));
+        }
+
+        return Row::make()->spacing(12.0)->children($children);
     }
 
     /**

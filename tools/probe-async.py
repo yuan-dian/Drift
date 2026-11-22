@@ -39,6 +39,7 @@ UIA_IS_ENABLED = 30010
 NAV = "异步表格 Async"
 RETRY = "重试"
 NEXT = "下一页"
+UPLOAD = "上传示例"
 
 
 def _uia_module():
@@ -126,6 +127,19 @@ def main():
               _wait_enabled(U, api, walker, app.hwnd, RETRY, False, timeout=3.0))
         check("⑤ 第二次回贴完成",
               _wait_enabled(U, api, walker, app.hwnd, RETRY, True, timeout=10.0))
+
+        # ⑥⑦⑧ 只在 HTTP 档存在：N6 第二条分流（multipart → HttpRequestJob 进程池）
+        # 的真机端到端。local 档没注入上传闭包、没有这个按钮 ⇒ 正常收尾（既有判据全绿），
+        # 不记 SKIP：SKIP 会把退出码变 2，破坏 local 档"全绿=0"的既有承诺。
+        http_mode = (env_extra or {}).get("DRIFT_SHOWCASE_HTTP") == "1"
+        if not http_mode:
+            return 0
+        if not check("⑥ 点得到「上传示例」（HTTP 档才有）", _click_named(app.hwnd, UPLOAD)):
+            skip("上传按钮点不到，⑦⑧ 量不到")
+        check("⑦ 上传期间「上传示例」禁用（multipart 在途，进程池）",
+              _wait_enabled(U, api, walker, app.hwnd, UPLOAD, False, timeout=3.0))
+        check("⑧ 上传完成按钮恢复（onProgress / 结果已回贴 UI）",
+              _wait_enabled(U, api, walker, app.hwnd, UPLOAD, True, timeout=15.0))
 
     return 0
 

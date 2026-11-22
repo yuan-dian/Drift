@@ -88,8 +88,14 @@ final class ShowcaseApplication extends Application
         $fetchRows = $this->fetchRows(...);
         $setCloseConfirm = $this->setConfirmClose(...);
 
+        // HTTP 档才注入上传演示：让 N6 第二条分流（multipart → HttpRequestJob）
+        // 有真实消费者。local 档 / 无头 wiring 不注入 ⇒ 上传按钮不显示、像素不变。
+        $upload = $this->rowsMode === self::ROWS_HTTP
+            ? $this->uploadOverHttp(...)
+            : null;
+
         return [
-            AsyncTablePage::class => static fn(): Widget|Page => new AsyncTablePage($fetchRows),
+            AsyncTablePage::class => static fn(): Widget|Page => new AsyncTablePage($fetchRows, $upload),
             ButtonsPage::class => static fn(): Widget|Page => new ButtonsPage($buttons),
             ComboBoxPage::class => static fn(): Widget|Page => new ComboBoxPage($env),
             ConcurrentFetchPage::class => static fn(): Widget|Page => new ConcurrentFetchPage($fetchRows),
@@ -139,6 +145,43 @@ final class ShowcaseApplication extends Application
                 'total' => (int) ($data['total'] ?? 0),
                 'source' => 'HTTP ' . self::ROWS_BASE . '（' . \round($res->elapsedMs()) . 'ms）',
             ];
+        });
+    }
+
+    /**
+     * 上传演示：multipart 大请求 → `AsyncHttp` 分流到 `HttpRequestJob` 进程池。
+     *
+     * ★ 用来让 N6 第二条分流支路有真实消费者：小 JSON 档走帧内 curl_multi，
+     *   这里带 fields + 真文件 ⇒ 必走 worker，进度经 onProgress 回贴。
+     * ★ 文件路径按 `<cwd>/assets` 找（与 ImagePage 同款约定，真机从仓库根启动）。
+     *   文件不存在时当场抛错进 error 态，不静默传空 —— 否则 mock 回 200、
+     *   界面显示"成功"却没传任何字节，是最难查的那种假绿。
+     *
+     * @param callable(float): void $onProgress
+     */
+    public function uploadOverHttp(callable $onProgress): Future
+    {
+        $file = \getcwd() . '/assets/demo/quad.png';
+        if (!\is_file($file)) {
+            throw new \RuntimeException('上传示例缺素材：<cwd>/assets/demo/quad.png（从仓库根启动）');
+        }
+
+        return $this->http()->request('POST', self::ROWS_BASE . '/api/upload', [
+            'fields' => ['hello' => 'world', 'n' => '42'],
+            'files' => ['file' => $file],
+            'connectTimeout' => 5.0,
+            'timeout' => 15.0,
+            'onProgress' => $onProgress,
+        ])->then(static function (HttpResponse $res): int {
+            $data = $res->json();
+            if (!\is_array($data) || empty($data['ok'])) {
+                throw new \RuntimeException('上传失败（服务端）：' . $res->snippet());
+            }
+            // 带出收到的字节数：校验"服务端真收到了字节"，不只是 mock 回 200。
+            // 命令只取它作完成信号；进度 / 完成文案由 onProgress sink 写 status 格。
+            $files = $data['files'] ?? [];
+
+            return \is_array($files) && isset($files[0]['size']) ? (int) $files[0]['size'] : 0;
         });
     }
 

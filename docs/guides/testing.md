@@ -79,7 +79,7 @@ composer probe -- <app>              # T2 真机探针
 | 探针 | 验什么 | 前置 | 命令 |
 |---|---|---|---|
 | `probe-worker.py` | AOT worker 的行协议往返：成功回包、未注册任务回 error、错误后仍活着、关 stdin 退出 0 | 只要有 exe 和管道，**不需要桌面 / 前台** | `python tools/probe-worker.py watermark` |
-| `probe-async.py` | UI 提交 → worker → 回贴 → UI 解锁全链：按 UIA 进异步页，读「重试」`IsEnabled` 的禁用→恢复翻转，翻页再走一遍 | **需要前台桌面**（真点导航） | `python tools/probe-async.py` |
+| `probe-async.py` | UI 提交 → worker → 回贴 → UI 解锁全链：按 UIA 进异步页，读「重试」`IsEnabled` 的禁用→恢复翻转，翻页再走一遍。HTTP 档（`DRIFT_SHOWCASE_HTTP=1`）再加三条：点「上传示例」→ 禁用→恢复，验 `AsyncHttp` multipart → `HttpRequestJob` 进程池 + onProgress 回贴 | **需要前台桌面**（真点导航）；HTTP 档另需先起 `showcase-mock.php` | `python tools/probe-async.py` |
 
 两道不能合成一道：`probe-worker.py` 在桌面锁定的会话里照样能跑，`probe-async.py` 必须真输入；混在一起会让窗口五条和协议五条一起变 SKIP。分开还带来失败归因——协议层红就先查 worker，只有它绿而端到端红才是 UI 侧的问题。
 

@@ -3,11 +3,14 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Unit\App;
 
+use Drift\App\CancelSupport;
 use Drift\App\HttpRequestJob;
 use Drift\App\Io\AsyncHttp;
 use Drift\App\Io\CurlMultiTransport;
 use Drift\App\Io\HttpResponse;
 use Drift\App\Io\HttpTransport;
+use Drift\App\Job;
+use Drift\App\TaskHost;
 use Drift\Async\Future;
 use Drift\Dev\Tests\Support\RecordingTaskHost;
 use Drift\Dev\Tests\Support\SmokeTestCase;
@@ -179,6 +182,32 @@ final class AsyncHttpTest extends SmokeTestCase
         $this->flushChecks();
     }
 
+    public function testMultipartProgressReachesRootFutureSink(): void
+    {
+        // N6 第二条分流的进度链：门面把 opts.onProgress 挂到 JobRunner 返回的**根**
+        // Future 上（submitWorker），worker 经 JobProgress 报进度时应触发它。
+        // 这里用可控 Future 替身验证转接，真机那半由 probe-async ⑥⑦⑧ 兜。
+        $host = new ProgressTaskHost();
+        $http = new AsyncHttp($host, new SpyTransport());
+        $got = [];
+
+        $http->request('POST', 'http://example.test/upload', [
+            'files' => ['f' => __FILE__],
+            'onProgress' => static function (float $f) use (&$got): void { $got[] = $f; },
+        ]);
+
+        check('进度 · Job 的 opts 不带 callable（过不了进程边界）',
+            !isset($host->job()->args()['opts']['onProgress']),
+            \json_encode($host->job()->args()['opts'] ?? null));
+        check('进度 · 还没报时 sink 安静', $got === [], \json_encode($got));
+
+        $host->future()->reportProgress(0.5);
+        $host->future()->reportProgress(1.0);
+        check('进度 · 根 Future 报进度触发门面 sink', $got === [0.5, 1.0], \json_encode($got));
+
+        $this->flushChecks();
+    }
+
     public function testNoCurlCloseInAotPath(): void
     {
         $file = (string) (new \ReflectionClass(CurlMultiTransport::class))->getFileName();
@@ -225,5 +254,52 @@ final class SpyTransport implements HttpTransport
         $this->inFlightReads = $this->inFlightReads + 1;
 
         return \count($this->submitted);
+    }
+}
+
+/**
+ * 暴露提交的任务与 Future，供测试手动报进度 —— 只用于进度转接判据。
+ */
+final class ProgressTaskHost implements TaskHost
+{
+    private ?Job $submitted = null;
+
+    private ?Future $future = null;
+
+    public function submit(Job $job): Future
+    {
+        $this->submitted = $job;
+        $this->future = Future::pending();
+
+        return $this->future;
+    }
+
+    public function job(): ?Job
+    {
+        return $this->submitted;
+    }
+
+    public function future(): Future
+    {
+        return $this->future ?? throw new \LogicException('还没有提交任务');
+    }
+
+    public function cancelSupport(): CancelSupport
+    {
+        return CancelSupport::AlreadyDone;
+    }
+
+    public function pending(): int
+    {
+        return 1;
+    }
+
+    public function needsPolling(): bool
+    {
+        return true;
+    }
+
+    public function drain(callable $onEach, ?int $budgetMs = null): void
+    {
     }
 }

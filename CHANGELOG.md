@@ -64,6 +64,12 @@
 - **`AsyncView::retryOn()`**：error 默认支持一行装"错误 + 重试按钮"，showcase 的异步表格与
   并发取数两页删掉重抄的 `Center(Column(ErrorPlaceholder + Button))`；显式 `error()` 仍优先
   （分页失败要保留旧行，LoadMore 页因此不迁）。新增裁决 A23 / A24。
+- **UI 线程异步 HTTP（`AsyncHttp`）两条分流均有真机消费者**：门面按 body 大小 / multipart
+  分流——小 JSON 走帧内 `curl_multi`，multipart / 大 body 走 `HttpRequestJob` 进程池，
+  两条路共用 `Http::prepare()` / `finish()`。示例台 `DRIFT_SHOWCASE_HTTP=1` 时「异步表格」
+  取数走前者、「上传示例」按钮带进度走后者；`probe-async.py` 在 AOT 产物上对两条支路各验
+  在途→回贴。AOT 下帧内路径不调 `curl_close()`（对象属性 handle 传进去会原生崩溃，症状是
+  请求成功却永久 loading）。裁决 N6。
 
 ## v0.1.0（2026-11-20 · 首个无后缀的预览版）
 

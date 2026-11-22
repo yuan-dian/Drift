@@ -4,8 +4,10 @@ declare(strict_types=1);
 namespace Drift\Dev\Tests\Unit\App;
 
 use App\Showcase\Jobs\FetchRowsJob;
+use App\Showcase\Pages\AsyncTablePage;
 use App\Showcase\ShowcaseApplication;
 use Drift\App\AppScope;
+use Drift\App\HttpRequestJob;
 use Drift\App\Io\HttpResponse;
 use Drift\App\Io\HttpTransport;
 use Drift\Async\Future;
@@ -79,6 +81,51 @@ final class ShowcaseRowsModeTest extends TestCase
 
         self::assertInstanceOf(\RuntimeException::class, $error);
         self::assertStringContainsString('取表格失败', $error->getMessage());
+    }
+
+    #[Test]
+    public function http档给异步页注入上传演示local档不注入(): void
+    {
+        [$http] = $this->make(ShowcaseApplication::ROWS_HTTP, new HttpResponse(200, [], '{}', '', 0.0));
+        [$local] = $this->make(ShowcaseApplication::ROWS_LOCAL, [], FetchRowsJob::class);
+
+        $httpFactory = $http->pageFactories()[AsyncTablePage::class];
+        $localFactory = $local->pageFactories()[AsyncTablePage::class];
+        $httpPage = $httpFactory();
+        $localPage = $localFactory();
+
+        $ctor = new \ReflectionClass(AsyncTablePage::class);
+        $prop = $ctor->getProperty('upload');
+        self::assertNotNull($prop->getValue($httpPage), 'http 档必须给异步页注入上传闭包（N6 第二条分流要有真消费者）');
+        self::assertNull($prop->getValue($localPage), 'local 档不注入 ⇒ 上传按钮不显示，像素与旧版一致');
+    }
+
+    #[Test]
+    public function 上传演示走进程池并校验回包(): void
+    {
+        $wire = [
+            'status' => 200,
+            'headers' => ['content-type' => 'application/json'],
+            'body' => (string) \json_encode(['ok' => true, 'files' => [['name' => 'file', 'size' => 190, 'ok' => true]]]),
+            'url' => 'http://127.0.0.1:8098/api/upload',
+            'elapsedMs' => 300.0,
+        ];
+        [$app, $transport, $host] = $this->make(ShowcaseApplication::ROWS_HTTP, $wire, HttpRequestJob::class);
+
+        $progress = [];
+        $done = null;
+        $app->uploadOverHttp(static function (float $f) use (&$progress): void { $progress[] = $f; })
+            ->then(static function (mixed $text) use (&$done): void { $done = $text; });
+
+        self::assertSame([], $transport->submitted, 'multipart 不该进帧内 curl_multi');
+        $jobs = $host->ofClass(HttpRequestJob::class);
+        self::assertCount(1, $jobs, 'multipart 必须走 HttpRequestJob 进程池');
+        $args = $jobs[0]->args();
+        self::assertSame('POST', $args['method'] ?? null);
+        self::assertStringContainsString('/api/upload', (string) ($args['url'] ?? ''));
+        self::assertArrayHasKey('files', $args['opts'] ?? [], 'opts 要带 files ⇒ needsWorker 命中');
+        self::assertArrayHasKey('fields', $args['opts'] ?? []);
+        self::assertSame(190, $done, '命令的 data 载荷 = 服务端实收字节数');
     }
 
     /** @return array{ShowcaseApplication, StubTransport, RecordingTaskHost} */

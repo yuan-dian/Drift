@@ -13,9 +13,13 @@ declare(strict_types=1);
  * ## 它在整条链里的位置
  *
  * ```
- * UI 进程 ──AsyncHttp(curl_multi, 帧内非阻塞)──> 本文件（睡 1.2s 再回 JSON）
+ * UI 进程 ──AsyncHttp(curl_multi, 帧内非阻塞)──> /api/rows（睡 1.2s 再回 JSON）
  *     ▲                                              │
  *     └──── Future 帧内 settle ◄─────────────────────┘
+ *
+ * UI 进程 ──AsyncHttp(multipart → HttpRequestJob 进程池)──> /api/upload
+ *     ▲                                              │（睡 1.2s，回实收字段 / 文件字节数）
+ *     └──── Future onProgress + settle ◄─────────────┘
  * ```
  *
  * ★ **慢在网络里，不在 UI 线程里**：curl_multi 每帧只 `exec + select(0)`，
@@ -70,6 +74,32 @@ if ($path === '/api/rows' && $method === 'GET') {
         ['ok' => true, 'items' => $data['items'], 'total' => $data['total'], 'page' => $page],
         JSON_UNESCAPED_UNICODE,
     );
+
+    return;
+}
+
+// multipart 上传：`AsyncHttp` 大请求分流（fields / files ⇒ HttpRequestJob 进程池）
+// 的真机端点。回包里带收到的字段 / 文件信息，让探针能验"字节真的过了边界"。
+if ($path === '/api/upload' && $method === 'POST') {
+    // 慢到探针能观察到在途态（与 /api/rows 同量级）；真上传也本来就是慢操作。
+    usleep(1_200_000);
+
+    $fields = \is_array($_POST) ? $_POST : [];
+    $files = \is_array($_FILES) ? $_FILES : [];
+    $info = [];
+    foreach ($files as $name => $file) {
+        $info[] = [
+            'name' => $name,
+            'size' => (int) ($file['size'] ?? 0),
+            'ok' => (int) ($file['error'] ?? -1) === UPLOAD_ERR_OK,
+        ];
+    }
+
+    echo \json_encode([
+        'ok' => true,
+        'fields' => $fields,
+        'files' => $info,
+    ], JSON_UNESCAPED_UNICODE);
 
     return;
 }

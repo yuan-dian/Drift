@@ -190,6 +190,20 @@ $http->get('https://api.example/user')->then(
 
 两条路共用 `Http::prepare()` / `Http::finish()` —— 校验、TLS 信任根、头解析、错误分类（`status === null` = 传输失败）只有一份。进度用 `Future::onProgress()`，与 Job 的进度同一通道。
 
+**带进度的上传**（`onProgress` 只在 multipart 有意义，普通 body 没有中途观察点，传了当场抛）：
+
+```php
+$http->request('POST', $url, [
+    'fields' => ['key' => $objectKey],
+    'files' => ['file' => $localPath],
+    'onProgress' => fn (float $f) => $this->status->set(\round($f * 100) . '%'),
+])->then(fn (HttpResponse $r) => /* ... */);
+```
+
+门面把 `onProgress` 挂到 `JobRunner` 返回的**根** Future 上（worker 侧 `JobProgress::report()` 经 `Future` 转接），进度由此回贴 UI。★ 别把回调挂在 `then()` 之后的派生 Future 上——进度只喂根任务，派生链上的订阅永远收不到（见 `Future::onProgress()` 的 `progress/derived-chain` 诊断）。
+
+**两条支路都有 showcase 真机消费者**：`DRIFT_SHOWCASE_HTTP=1` 时「异步表格」页取数走小 JSON（帧内 curl_multi）、「上传示例」按钮走 multipart（进程池 + 进度回贴），由 `probe-async.py` 在 AOT 产物上各验一遍。零消费者的分支会退化成潜伏假实现——P12 的 `curl_close()` 崩溃正是只有真消费者才暴露得出来。
+
 **传输后端可换**：`AppScope::setHttpTransport()` 接受 `HttpTransport` 接口（`submit` / `pump` / `inFlight`）。当前只有 curl_multi 实现；**Swoole 后端刻意不实现**——`Co\Http\Client` 单用无 hook、帧循环协程化也跑通了，但把 reactor 关进 `Swoole\Thread` 在 AOT 产物里会重入主入口（线程要重新加载 `.php`，与"源码全编进 exe"冲突），见[裁决](../decisions/README.md)。没有 AOT 线程入口支持之前，不埋一个在真机上跑不通的后端。
 
 ## 常见静默坑
