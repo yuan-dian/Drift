@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\Dev\Lint\Fixtures;
+namespace App;
 
 /**
  * @internal lint 夹具：`worker-argv` 的"该响"一侧 —— 应用自己拼了 worker 开关。

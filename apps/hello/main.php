@@ -21,6 +21,6 @@ namespace {
      */
     function main(): void
     {
-        \App\Hello\Bootstrap::run();
+        (new \App\Hello\Bootstrap())->run();
     }
 }

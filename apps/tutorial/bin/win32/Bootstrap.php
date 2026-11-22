@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Tutorial;
 
+use Drift\App\AppEntry;
 use Drift\App\WindowSet;
 use Drift\Platform\Win32\Win32Platform;
 
@@ -29,14 +30,14 @@ use Drift\Platform\Win32\Win32Platform;
  * ★ 进程级钩子（fatal box / resize pump）由平台 `hooks()` 提供，`WindowSet`
  *   构造时装、`run()` 的 finally 卸；本文件只决定开哪些窗、装什么应用。
  */
-final class Bootstrap
+final class Bootstrap extends AppEntry
 {
     /** 窗口客户区（**逻辑**像素）；物理像素由 `Screen::scale()` 决定 */
     private const WINDOW_WIDTH = 720;
 
     private const WINDOW_HEIGHT = 560;
 
-    public static function run(): void
+    protected function start(): void
     {
         $platform = new Win32Platform();
         $set = new WindowSet($platform, 'tutorial');

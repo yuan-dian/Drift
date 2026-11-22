@@ -8,7 +8,7 @@ use Drift\App\Job;
 /**
  * 任务注册表 —— **UI 侧与 worker 侧共用同一份**（`ProcessTaskHost` 的约定）。
  *
- * ★ 两边（正常窗口 / `--drift-worker`）都调 `make()` ⇒ 名字不可能对不上。
+ * ★ `Bootstrap::jobs()` 一处声明，worker 与 UI 两侧都从它取 ⇒ 名字不可能对不上。
  * ★ 加一个后台任务 = 一个 `NamedJob` 类 + **本文件一行**。参数怎么从 `args()`
  *   还原由 `JobArgs` trait 按 `FIELDS` 常量回答（顺序 == 构造参数顺序），
  *   映射不用手写，不会分叉。漏登记由 `NamedJobContractTest` 判红。

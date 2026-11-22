@@ -8,8 +8,8 @@ use Drift\App\Job;
 /**
  * 任务注册表（§17.4.5）—— **UI 侧与 worker 侧共用同一份**。
  *
- * ★ 它是"组合根的配置"：`Bootstrap` 里两条路径（正常窗口 / `--drift-worker`）
- *   都调 `make()`，所以两侧的名字不可能对不上。
+ * ★ `Bootstrap::jobs()` 一处声明，worker 路径（`AppEntry` 调 `serve()`）与 UI 路径
+ *   （`useBackgroundJobs()`）都从它取，所以两侧的名字不可能对不上。
  * ★ 加一个后台任务 = 一个 `NamedJob` 类 + **本文件一行**。参数怎么从 `args()`
  *   还原由 `JobArgs` trait 按 `FIELDS` 常量回答（顺序 == 构造参数顺序），
  *   映射不用手写，不会分叉。漏登记由 `NamedJobContractTest` 判红。

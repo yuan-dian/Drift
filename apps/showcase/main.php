@@ -11,6 +11,6 @@ namespace {
      */
     function main(): void
     {
-        \App\Showcase\Bootstrap::run();
+        (new \App\Showcase\Bootstrap())->run();
     }
 }

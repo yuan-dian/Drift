@@ -5,6 +5,6 @@ declare(strict_types=1);
 namespace {
     function main(): void
     {
-        \App\Users\Bootstrap::run();
+        (new \App\Users\Bootstrap())->run();
     }
 }

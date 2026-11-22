@@ -3,9 +3,9 @@ declare(strict_types=1);
 
 namespace App\Showcase;
 
+use Drift\App\AppEntry;
 use Drift\App\AppScope;
 use Drift\App\WindowSet;
-use Drift\App\WorkerProcess;
 use Drift\Platform\Win32\Win32Platform;
 use Drift\Theme\ThemeData;
 
@@ -24,7 +24,7 @@ use App\Showcase\Jobs\JobRegistry;
  * ★ **循环归平台**（§5.2 裁决 1）：`Application` **没有** `run()`，等待仍由
  *   `Platform::waitEvents()` 给，`WindowSet::run()` 只是编排。
  */
-final class Bootstrap
+final class Bootstrap extends AppEntry
 {
     /** 窗口客户区（**逻辑**像素）；物理像素由 `Screen::scale()` 决定（§6） */
     private const WINDOW_WIDTH = 960;
@@ -45,13 +45,13 @@ final class Bootstrap
     /** 窗口状态文件名（§5.4）：一个应用一个文件，里面按槽位分组 */
     private const APP_NAME = 'showcase';
 
-    public static function run(): void
+    protected function jobs(): array
     {
-        // ★ worker 分流走框架原语：同一 exe 靠 `--drift-worker` 认角色，argv 扫描只在一处。
-        if (WorkerProcess::serveIf(JobRegistry::make())) {
-            return; // stdin 关闭 = UI 进程走了 ⇒ 正常收工
-        }
+        return JobRegistry::make();
+    }
 
+    protected function start(): void
+    {
         $platform = new Win32Platform();
         $set = new WindowSet($platform, self::APP_NAME);
 
@@ -73,7 +73,7 @@ final class Bootstrap
         //     池是懒扩张的（`prewarm()` 只发 1 个），不点那页时进程数与串行时一样。
         //     满载时 UI + 3 worker ≈ 100 + 3×31 MB，其余页永远只用到第一个 worker。
         //     `maxWorkers` 是组合根的决定，不是页面能提的要求（一个 worker 是一整套 AOT 运行时）。
-        $scope->useBackgroundJobs(JobRegistry::make(), maxWorkers: 3);
+        $scope->useBackgroundJobs($this->jobs(), maxWorkers: 3);
 
         // ★ 数据源模式：默认本地慢任务（开箱即用，零依赖）；
         //   `DRIFT_SHOWCASE_HTTP=1` ⇒ 真 HTTP（先起 `apps/showcase/mock-server.php`）。

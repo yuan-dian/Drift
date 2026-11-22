@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Hello;
 
+use Drift\App\AppEntry;
 use Drift\App\WindowSet;
 use Drift\Platform\Win32\Win32Platform;
 
@@ -24,7 +25,7 @@ use Drift\Platform\Win32\Win32Platform;
  *   它也是 `apps/hello` 里唯一引用 `Drift\Platform\Win32` 的文件 ⇒
  *   `apps` 只依赖 `@api` 这条规则（§4.3）唯一需要 `@api platform` 标注的地方。
  */
-final class Bootstrap
+final class Bootstrap extends AppEntry
 {
     /** 窗口客户区（**逻辑**像素）；物理像素由 `Screen::scale()` 决定（§6） */
     private const WINDOW_WIDTH = 640;
@@ -39,7 +40,7 @@ final class Bootstrap
     /** 窗口状态文件名（§5.4）：**一个应用一个文件**，里面按槽位分组 */
     private const APP_NAME = 'hello';
 
-    public static function run(): void
+    protected function start(): void
     {
         $platform = new Win32Platform();
         $set = new WindowSet($platform, self::APP_NAME);

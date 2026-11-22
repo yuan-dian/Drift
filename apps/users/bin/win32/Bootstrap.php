@@ -3,9 +3,9 @@ declare(strict_types=1);
 
 namespace App\Users;
 
+use Drift\App\AppEntry;
 use Drift\App\Window;
 use Drift\App\WindowSet;
-use Drift\App\WorkerProcess;
 use Drift\Errors;
 use Drift\Platform\Backdrop;
 use Drift\Platform\WindowMaterial;
@@ -30,20 +30,20 @@ use App\Users\Jobs\JobRegistry;
  * ★ **中止序列第 ② 步在别的一切之前装好**（§1.2）：引导阶段就崩的话，没有错误框
  *   就只剩"闪退"。传 callable 而不是 Platform 实例（`Errors` 不依赖 Platform 类型）。
  */
-final class Bootstrap
+final class Bootstrap extends AppEntry
 {
     /** 窗口客户区（**逻辑**像素）；物理像素由 `Screen::scale()` 决定（§6） */
     private const WINDOW_WIDTH = 900;
 
     private const WINDOW_HEIGHT = 640;
 
-    public static function run(): void
+    protected function jobs(): array
     {
-        // ★ worker 分流走框架原语：同一 exe 靠 `--drift-worker` 认角色，argv 扫描只在一处。
-        if (WorkerProcess::serveIf(JobRegistry::make())) {
-            return; // stdin 关闭 = UI 进程走了 ⇒ 正常收工
-        }
+        return JobRegistry::make();
+    }
 
+    protected function start(): void
+    {
         $platform = new Win32Platform();
 
         // ★ 首屏取数走常驻子进程（真 HTTP 后端，故意慢 1.2s）⇒ `loading()` 那一态
@@ -57,7 +57,7 @@ final class Bootstrap
             ->setRestoration(new \Drift\App\Restoration\RestorationStore(
                 $set->file('state')
             ))
-            ->useBackgroundJobs(JobRegistry::make());
+            ->useBackgroundJobs($this->jobs());
 
         // 应用构造仍收 host：它要据此把首屏取数接到后台或同步源（二者业务路径不同）。
         $taskHost = $scope->taskHost();

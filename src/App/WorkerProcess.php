@@ -6,12 +6,16 @@ namespace Drift\App;
 /**
  * 同 exe 双角色的分流：一次启动要么是 worker，要么是 UI 进程。
  *
- * ★ 本类是**全框架唯一读 `$_SERVER['argv']` 的地方**。三个应用的组合根原先各抄
- *   一遍扫描（`$argv` 在 tpc 编译期被拒，只能走 `$_SERVER`），漏一个 `break` 或
- *   改错开关名就是"worker 跑成 UI"或反之，且都能静默起来。收在这里，开关名
- *   也只剩一处 —— UI 侧拼子进程命令与 worker 侧认身份共用同一个常量。
+ * ★ 本类是**全框架唯一读 `$_SERVER['argv']` 的地方**，也是开关名的唯一定义处
+ *   （UI 侧拼子进程命令与 worker 侧认身份共用 `SWITCH`）。
  *
- * @api
+ * ★ **内部类，不进契约面**：消费者只有 `AppEntry::run()` 与
+ *   `AppScope::useBackgroundJobs()`，都在框架内。应用引用它会被 `internal-leak`
+ *   报 error —— 这是 `app-worker-role` 之外的第二层：那条只认常见写法，越界到
+ *   `use ... as W` 这类形态时由这层兜住。
+ *
+ * ★ 本类注释刻意不出现契约面标注的字面量：解析器按文本匹配，写一次就会把本类
+ *   算成公共面，上一条约束当场失效。
  */
 final class WorkerProcess
 {
@@ -43,21 +47,15 @@ final class WorkerProcess
     }
 
     /**
-     * worker 角色 ⇒ 起行协议循环（stdin 关才返回）并给出 `true`；UI 角色 ⇒ `false`。
+     * worker 角色 ⇒ 起行协议循环（stdin 关才返回）。
      *
-     * ★ `serve()` 内部是阻塞循环，正常情况下不返回；返回 `true` 就是"这次是 worker，
-     *   调用方到此为止"，不会往下建窗、进消息循环。
+     * ★ 调用前必须自己 `isWorker()`：UI 进程调它会**阻塞在读 stdin 上**（控制台里
+     *   表现为卡住，直到输入流关闭）。判定与执行的顺序由 `AppEntry::run()` 一处写死。
      *
      * @param array<string, callable(array<string, mixed>): Job> $registry
      */
-    public static function serveIf(array $registry): bool
+    public static function serve(array $registry): void
     {
-        if (!self::isWorker()) {
-            return false;
-        }
-
         ProcessWorker::serve($registry);
-
-        return true;
     }
 }

@@ -7,6 +7,7 @@ use Drift\Dev\Lint\Rules\AliasMutate;
 use Drift\Dev\Lint\Rules\AppBootstrapLoop;
 use Drift\Dev\Lint\Rules\AppInstanceofConcrete;
 use Drift\Dev\Lint\Rules\AppSubclassCtorParent;
+use Drift\Dev\Lint\Rules\AppWorkerRole;
 use Drift\Dev\Lint\Rules\AttributeUnqualified;
 use Drift\Dev\Lint\Rules\AwaitProgress;
 use Drift\Dev\Lint\Rules\AwaitScope;
@@ -143,6 +144,8 @@ final class Linter
             new PageSelfWidget(),
             // worker 开关只许在 WorkerProcess 一处拼（2026-11-22：三份组合根收成一处后的守卫）
             new WorkerArgv(),
+            // 角色判定不许搬回应用层：`WorkerProcess` 只给 `AppEntry` 用
+            new AppWorkerRole(),
         ]);
     }
 

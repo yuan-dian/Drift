@@ -10,8 +10,9 @@ use PHPUnit\Framework\TestCase;
 /**
  * `WorkerProcess`：同 exe 双角色的分流判据。
  *
- * ★ 只测纯判定与 UI 侧分流。`serveIf()` 的 worker 分支进的是阻塞行协议循环，
- *   单测里不能真起 —— 它的行为由 `ProcessWorker::handle()` 的协议测试与真机探针守。
+ * ★ 只测纯判定。`serve()` 进的是阻塞行协议循环，单测里不能真起 —— 它的行为由
+ *   `ProcessWorker::handle()` 的协议测试与真机探针守；"角色分流后走哪条路"由
+ *   `AppEntryTest` 从 UI 侧验。
  * ★ 每条都改 `$_SERVER['argv']`，`tearDown()` 恢复：测试进程自己的 argv 不能被污染，
  *   否则后续用例会把自己认成 worker。
  */
@@ -63,17 +64,6 @@ final class WorkerProcessTest extends TestCase
         // 只认精确字符串：前缀 / 子串都不算
         $_SERVER['argv'] = ['/app.exe', '--drift-worker-x'];
         self::assertFalse(WorkerProcess::isWorker());
-    }
-
-    #[Test]
-    public function serveIfDoesNotServeInUiRole(): void
-    {
-        // UI 角色不给 registry 也不该碰它 —— serveIf 应在扫描后立刻返回 false。
-        $_SERVER['argv'] = ['/app.exe'];
-
-        $served = WorkerProcess::serveIf([]);
-
-        self::assertFalse($served);
     }
 
     #[Test]

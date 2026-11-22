@@ -43,7 +43,12 @@ final class FetchUsersJob implements NamedJob, TimedJob
 
 ## 选 TaskHost：三后端一行切换
 
-组合根用 `AppScope::setTaskHost()` 装配；业务侧用 `Application::submit($job)` 提交，不碰后端类型。
+组合根继承 `AppEntry`，用 `jobs()` 声明后台任务表（worker 角色据此干活）；`start()` 里 `AppScope::useBackgroundJobs($this->jobs())` 收掉取 exe → 建池 → 预热 → 装端口。业务侧用 `Application::submit($job)` 提交，不碰后端类型。
+
+★ 三条边界，选错都不报错：
+- `SyncTaskHost` 在 UI 线程同步跑完——慢任务直接卡帧，只适合毫秒级。
+- `ProcessTaskHost` 是**跑 PHP 代码的唯一异步后端**：每个 worker 是一整套 AOT 运行时，所以池容量是组合根的决定。
+- `ThreadTaskHost` 只跑 **C++ 侧注册的原生处理函数**（跨线程只传任务名 + 两个标量槽）。PHP 的 `NamedJob::run()` **不会**被执行——它不是"轻量进程池"，`submit()` 会当场 reject。
 
 | 后端 | 在哪跑 | 取消能力 `CancelSupport` | 进度 | `needsPolling()` |
 |---|---|---|---|---|

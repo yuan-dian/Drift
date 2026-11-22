@@ -77,10 +77,10 @@ final class WorkerArgv implements Rule
                     Diagnostic::ERROR,
                     $relative,
                     $token[2],
-                    'worker 开关 --drift-worker 在这里被重新拼了一遍 —— 角色分流的 argv 扫描'
+                        'worker 开关 --drift-worker 在这里被重新拼了一遍 —— 角色分流的 argv 扫描'
                         . '只许在 `Drift\\App\\WorkerProcess` 一处。'
-                        . '修法：调用 `WorkerProcess::serveIf($registry)`（worker 分流）与 '
-                        . '`AppScope::useBackgroundJobs($registry)`（UI 侧建池），本文件删掉整段扫描。',
+                        . '修法：组合根继承 `AppEntry`（角色判定由基类做），本文件删掉整段扫描；'
+                        . '后台任务表用 `jobs()` 声明，UI 侧建池用 `AppScope::useBackgroundJobs()`。',
                 );
             }
         }

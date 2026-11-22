@@ -45,6 +45,9 @@ function drift_lint_selftest(string $root, Linter $linter): bool
         'internal-leak' => [
             'apps/Bad.php:' . Diagnostic::ERROR,
             'apps/Exempt.php:' . Diagnostic::WARN,
+            // `WorkerProcess` 不是 @api（2026-11-22）：`app-worker-role` 认出常见写法，
+            // 认不出的（别名 / 相对限定名）由这层兜。这条期望就是"第二层真的存在"。
+            'apps/WorkerRoleBad.php:' . Diagnostic::ERROR,
             // 方法级（`07` §2.2 ②，W7 第 40 步）：三种可解析接收者各一条。
             // ★ `apps/MethodGood.php` 一条都不该有 —— 它验的是三件"看着像但不是"：
             //   调 @api 方法 / 调自己覆写的同名方法 / 接收者是 `foo()->m()`（不猜）。
@@ -187,6 +190,13 @@ function drift_lint_selftest(string $root, Linter $linter): bool
         // worker 开关收口守卫（2026-11-22）：Bad 一份字面量；Good 只在注释里提开关不报。
         'worker-argv' => [
             'apps/WorkerArgvBad.php:' . Diagnostic::ERROR,
+        ],
+        // 角色判定不许搬回应用层（2026-11-22）：Bad 自己判；Good 继承 AppEntry 不报，
+        // 且 `use Drift\App\WorkerProcess;` 这种只有 import 的写法也不算（规则只看使用点）。
+        // ★ 同一份 Bad 也出现在 `internal-leak` 期望里 —— 它钉的是第二层：`WorkerProcess`
+        //   不是 @api，别名 / 相对限定名绕开本规则时那层照样报。
+        'app-worker-role' => [
+            'apps/WorkerRoleBad.php:' . Diagnostic::ERROR,
         ],
         // 子类覆写构造器必须调 `parent::__construct()`。
         // ★ 到 2026-10-30 为止这条规则**一条夹具都没有** ⇒ 恒是"该响 0"，

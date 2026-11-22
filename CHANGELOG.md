@@ -22,6 +22,12 @@
 
 ### Breaking
 
+- **组合根入口改为实例**：`Bootstrap` 必须 `extends Drift\App\AppEntry`，`run()` 由基类
+  继承且为 `final`，应用改写 `protected function start()`（后台应用再加
+  `protected function jobs()`）；`main.php` 从 `\App\X\Bootstrap::run();` 改为
+  `(new \App\X\Bootstrap())->run();`。`WorkerProcess::serveIf(array)` 删除，改为
+  `isWorker()` + `serve(array)`，且不再是 `@api` —— 应用引用它会被 `internal-leak` 与
+  `app-worker-role` 两道闸门报 error。
 - **用户配置路径改为应用专属目录**：`Platform::configDir()` 只返回平台基础目录
   （Win32 `%APPDATA%` / X11 `$XDG_CONFIG_HOME`），不再写死 `Drift` 子目录——框架名不进
   用户目录，多个第三方 Drift 应用不会因同名状态文件互相覆盖。组合根向 `WindowSet`
@@ -47,11 +53,14 @@
   变化（主题 / 明暗）也会补发给 parked 子树，切回来直接是新主题。
 - **探针坐标锁解除**：6 个真机探针按导航项的无障碍名点击，不再记 `90 + N * 36` 的
   像素行号；插页 / 重排不会再让探针静默点错页。
-- **组合根样板下沉**：worker 分流与后台装配收进框架——`WorkerProcess::serveIf()` 独占
-  同 exe 双角色的 argv 判定（`--drift-worker` 只此一处），`AppScope::useBackgroundJobs()`
-  收掉取 exe → 建进程池 → 预热 → 装端口四步；watermark / users / showcase 三份逐字相同
-  的扫描与装配删除。`worker-argv` lint 禁止第四份开关字面量重抄。第二窗 / 无边框 / 材质 /
-  恢复 / 关闭守卫仍是应用语义，留在各自组合根，不塞进配置对象。
+- **组合根样板下沉**：后台装配收进框架——`AppScope::useBackgroundJobs()` 收掉取 exe →
+  建进程池 → 预热 → 装端口四步；watermark / users / showcase 三份逐字相同的装配删除。
+  `worker-argv` lint 禁止第四份开关字面量重抄。第二窗 / 无边框 / 材质 / 恢复 / 关闭守卫
+  仍是应用语义，留在各自组合根，不塞进配置对象。
+- **进程角色分流收进 `AppEntry`**：应用组合根继承基类，只声明 `jobs()`（后台任务表，可省）
+  与 `start()`（UI 装配），看不见 `--drift-worker`、不 import `WorkerProcess`。`jobs()` 一处
+  声明、两处消费（worker 干活 + `useBackgroundJobs()` 装池），不再各 `make()` 一遍。
+  `app-worker-role` lint 守“角色判定不许搬回应用层”。裁决 A25。
 - **`AsyncView::retryOn()`**：error 默认支持一行装"错误 + 重试按钮"，showcase 的异步表格与
   并发取数两页删掉重抄的 `Center(Column(ErrorPlaceholder + Button))`；显式 `error()` 仍优先
   （分页失败要保留旧行，LoadMore 页因此不迁）。新增裁决 A23 / A24。

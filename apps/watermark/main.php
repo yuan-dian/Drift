@@ -10,6 +10,6 @@ namespace {
      */
     function main(): void
     {
-        \App\Watermark\Bootstrap::run();
+        (new \App\Watermark\Bootstrap())->run();
     }
 }

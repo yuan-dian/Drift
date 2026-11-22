@@ -3,9 +3,9 @@ declare(strict_types=1);
 
 namespace App\Watermark;
 
+use Drift\App\AppEntry;
 use Drift\App\AppScope;
 use Drift\App\WindowSet;
-use Drift\App\WorkerProcess;
 use Drift\Errors;
 use Drift\Platform\Dialog;
 use Drift\Platform\Win32\Win32Platform;
@@ -25,21 +25,20 @@ use App\Watermark\Jobs\JobRegistry;
  *   §质感 的演示项，本应用是业务闭环 —— 多一段环境变量接线就多一处"只在某种设置下
  *   才走得到"的路径，而它对这个应用的价值是零。
  */
-final class Bootstrap
+final class Bootstrap extends AppEntry
 {
     /** 窗口客户区（**逻辑**像素）；物理像素由 `Screen::scale()` 决定（§6） */
     private const WINDOW_WIDTH = 960;
 
     private const WINDOW_HEIGHT = 780;
 
-    public static function run(): void
+    protected function jobs(): array
     {
-        // ★ worker 分流走框架原语：本 exe 靠 `--drift-worker` 认角色，argv 扫描只在
-        //   `WorkerProcess` 一处。worker 只跑行协议循环，不建窗、不进消息循环。
-        if (WorkerProcess::serveIf(JobRegistry::make())) {
-            return;   // stdin 关闭 = UI 进程走了 ⇒ 正常收工
-        }
+        return JobRegistry::make();
+    }
 
+    protected function start(): void
+    {
         $platform = new Win32Platform();
 
         // ★ 对话框端口：**建窗之前取**（缺端口当场失败，而不是等用户点了"选择图片"
@@ -58,7 +57,7 @@ final class Bootstrap
         //   签名的 275ms 落在建窗期），取不到 exe 就不装后台端口，submit 给 rejected Future。
         $scope = AppScope::make()
             ->setDialog($dialog)
-            ->useBackgroundJobs(JobRegistry::make());
+            ->useBackgroundJobs($this->jobs());
 
         $set->open(
             'main',

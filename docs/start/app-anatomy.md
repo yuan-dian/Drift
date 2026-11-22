@@ -8,7 +8,7 @@
 |---|---|---|
 | `main.php` | 入口：全局 `main()` 转给组合根 | 通常不改 |
 | `project.yml` | 告诉 tpc 这个程序由哪些源码组成 | 名字、描述等本应用信息 |
-| `bin/win32/Bootstrap.php` | 组合根：平台、窗口、任务池与主循环的装配 | 窗口标题、尺寸等少量项 |
+| `bin/win32/Bootstrap.php` | 组合根：继承 `AppEntry`，装配平台、窗口、任务池与主循环 | 窗口标题、尺寸等少量项 |
 | `src/<Name>Application.php` | 应用本体：`buildRoot()` / `title()` 等 | 主要写这里 |
 | 仓库根 `composer.json` | PSR-4 登记 `App\<Name>\` | 加一行 |
 
@@ -22,7 +22,7 @@
 namespace {
     function main(): void
     {
-        \App\Hello\Bootstrap::run();
+        (new \App\Hello\Bootstrap())->run();
     }
 }
 ```
@@ -32,6 +32,8 @@ namespace {
 1. 函数名、签名固定——tpc 会加 `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup`，C++ 侧找的就是这个符号。
 2. 必须在**全局**命名空间，否则符号对不上。
 3. 调全局符号写全限定名，也就是前导 `\`；少了它会被解析成当前命名空间下的类。
+   实例化写 `(new \App\Hello\Bootstrap())->run();`——`run()` 是 `final`，进程角色
+   由它判（见下节）。
 
 入口保持「哑」：不写任何装配。装配全在 `Bootstrap.php`，因为入口文件不受 PSR-4 与分层规则检查。
 
@@ -53,17 +55,17 @@ php tools/drift-build.php hello
 
 这是**全应用唯一提到具体平台实现**的文件；共享的应用源码零平台引用。装配顺序都是真机踩出来的：
 
-1. `WorkerProcess::serveIf($registry)` 分流 worker 角色——**同一个 exe** 靠 `--drift-worker` 认身份，worker 只跑行协议循环、不建窗。argv 扫描只在 `WorkerProcess` 一处，`worker-argv` lint 禁止第四份。
+1. `final class Bootstrap extends AppEntry`——进程角色分流在基类 `run()` 里：**同一个 exe** 靠 `--drift-worker` 认身份，worker 只跑行协议循环、不建窗。应用不写这段、也不用知道它，只声明 `jobs()`（后台任务表，可省）与 `start()`（下面的装配）。
 2. `new <Platform>()` 建平台实现——这是全应用唯一提到具体平台的地方。
 3. `new WindowSet($platform, 'app')` 声明一次应用名——框架经 `AppPaths` 拼出 `<平台基础目录>/<应用名>/window.state`，多个 Drift 应用不会互撞；构造时经 `Platform::hooks()` 装 fatal box 与 resize pump，`run()` 的 finally 统一卸。钩子捕获的闭包持有整条对象图，漏卸会让 AOT 关窗崩，所以这段不再由组合根手写。
-4. `AppScope::make()` 建进程级共享作用域——多窗口共用字体、任务池、主题。要后台任务就调 `useBackgroundJobs($registry)`：它收掉取 exe → 建进程池 → 预热 → 装端口四步；取不到 exe（解释器 / 无 argv[0]）就不装后台端口，`submit()` 会给 rejected Future。必须在 `attach()` 之前——`PumpHost` 在那时取走并缓存端口。
+4. `AppScope::make()` 建进程级共享作用域——多窗口共用字体、任务池、主题。要后台任务就调 `useBackgroundJobs($this->jobs())`：它收掉取 exe → 建进程池 → 预热 → 装端口四步；取不到 exe（解释器 / 无 argv[0]）就不装后台端口，`submit()` 会给 rejected Future。必须在 `attach()` 之前——`PumpHost` 在那时取走并缓存端口。`jobs()` 一处声明、两处消费（worker 干活 + UI 装池），不要在两处各 `JobRegistry::make()` 一遍。
 5. 按系统外观取主题。
 6. `WindowSet::open()` 每窗一个应用实例；槽位名要不同，否则几何互相覆盖且不报错。标题默认取应用的 `title()`，同应用开两窗要不同标题时才在末尾传覆盖值。
 7. `WindowSet::run()` 进主循环；resize pump 由平台钩子按窗口句柄接好，副窗拖动不会重排主窗。
 
 `Application` 没有 `run()`，只有 `attach()` 与 `frame()`：等待由平台给，主循环由框架编排。
 
-进程角色分流与后台装配都是**可选**的：无后台任务的单窗应用（hello / tutorial）只需第 2、3、6、7 步。第二窗口、无边框、窗口材质、关闭守卫、状态恢复这些是应用语义，仍由组合根自己声明——它们是差异，不是样板，不塞进配置对象。
+后台装配是**可选**的：无后台任务的单窗应用（hello / tutorial）不写 `jobs()`，只需第 1、2、3、6、7 步。第二窗口、无边框、窗口材质、关闭守卫、状态恢复这些是应用语义，仍由组合根自己声明——它们是差异，不是样板，不塞进配置对象。
 
 ## Application 子类
 
