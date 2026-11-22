@@ -9,7 +9,6 @@ use Drift\App\WindowSet;
 use Drift\Platform\Win32\Win32Platform;
 use Drift\Theme\ThemeData;
 
-use App\Showcase\Jobs\FetchRowsJob;
 use App\Showcase\Jobs\JobRegistry;
 
 /**
@@ -76,10 +75,10 @@ final class Bootstrap extends AppEntry
         $scope->useBackgroundJobs($this->jobs(), maxWorkers: 3);
 
         // ★ 数据源模式：默认本地慢任务（开箱即用，零依赖）；
-        //   `DRIFT_SHOWCASE_HTTP=1` ⇒ 真 HTTP（先起 `apps/showcase/mock-server.php`）。
+        //   `DRIFT_SHOWCASE_HTTP=1` ⇒ UI 侧 AsyncHttp 真 HTTP（先起 `tools/app-workers/showcase-mock.php`）。
         $rowsMode = \getenv('DRIFT_SHOWCASE_HTTP') === '1'
-            ? FetchRowsJob::MODE_HTTP
-            : FetchRowsJob::MODE_LOCAL;
+            ? ShowcaseApplication::ROWS_HTTP
+            : ShowcaseApplication::ROWS_LOCAL;
 
         // ★ 对话框 / 剪贴板端口装进作用域（框架不持平台，§5.1）：
         //   示例台是 `Ctrl+C/X/V` 与「对话框」页的唯一消费者。

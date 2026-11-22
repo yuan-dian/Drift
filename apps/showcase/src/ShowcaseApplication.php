@@ -5,6 +5,7 @@ namespace App\Showcase;
 
 use Drift\App\AppScope;
 use Drift\App\Application;
+use Drift\App\Io\HttpResponse;
 use Drift\Async\Future;
 use Drift\Commands\CommandHandler;
 use Drift\Input\AcceleratorTable;
@@ -33,6 +34,12 @@ use App\Showcase\Stores\ButtonsStore;
  */
 final class ShowcaseApplication extends Application
 {
+    public const ROWS_LOCAL = 'local';
+
+    public const ROWS_HTTP = 'http';
+
+    private const ROWS_BASE = 'http://127.0.0.1:8098';
+
     /** 应用级共享状态：所有窗口 / 所有页拿到同一个实例，切页不丢。 */
     private ButtonsStore $buttons;
 
@@ -46,7 +53,7 @@ final class ShowcaseApplication extends Application
      */
     public function __construct(
         ?AppScope $scope = null,
-        private string $rowsMode = FetchRowsJob::MODE_LOCAL,
+        private string $rowsMode = self::ROWS_LOCAL,
     ) {
         // ★ 不传 scope ⇒ 基类自建一个（单窗口时与旧版逐字节相同）。
         //   多窗口时组合根传入**同一个**实例 ⇒ 字体 / 任务池 / IO 轮询器 / 主题
@@ -78,9 +85,7 @@ final class ShowcaseApplication extends Application
         $env = $this->environment();
 
         $buttons = $this->buttons;
-        $fetchRows = fn(int $page): Future => $this->submit(
-            new FetchRowsJob($page, 20, $this->rowsMode)
-        );
+        $fetchRows = $this->fetchRows(...);
         $setCloseConfirm = $this->setConfirmClose(...);
 
         return [
@@ -93,6 +98,48 @@ final class ShowcaseApplication extends Application
             LoadMorePage::class => static fn(): Widget|Page => new LoadMorePage($fetchRows),
             SnackbarPage::class => static fn(): Widget|Page => new SnackbarPage($env),
         ];
+    }
+
+    /**
+     * 取第 N 页：来源由组合根选定的 rowsMode 决定，页面只认这个契约。
+     *
+     * local 档把"慢"放 worker；http 档的小 JSON 走 UI 侧帧内 curl_multi，不占 worker。
+     */
+    public function fetchRows(int $page): Future
+    {
+        if ($this->rowsMode === self::ROWS_HTTP) {
+            return $this->fetchRowsOverHttp($page);
+        }
+
+        return $this->submit(new FetchRowsJob($page, 20));
+    }
+
+    /**
+     * 真 HTTP 取数：UI 侧发请求，curl_multi 每帧推进，不占 worker。
+     *
+     * ★ 出错抛异常 ⇒ `AsyncCommand` 进 error 态，页面可重试（不静默画空表）。
+     */
+    public function fetchRowsOverHttp(int $page): Future
+    {
+        $url = self::ROWS_BASE . '/api/rows?page=' . $page . '&per=20';
+
+        return $this->http()->get($url, [
+            'headers' => ['Accept' => 'application/json'],
+            'connectTimeout' => 5.0,
+            'timeout' => 10.0,
+        ])->then(static function (HttpResponse $res): array {
+            $data = $res->json();
+            if (!\is_array($data) || empty($data['ok'])) {
+                throw new \RuntimeException('取表格失败（服务端）：' . $res->snippet());
+            }
+            $items = $data['items'] ?? [];
+
+            return [
+                'items' => \is_array($items) ? $items : [],
+                'total' => (int) ($data['total'] ?? 0),
+                'source' => 'HTTP ' . self::ROWS_BASE . '（' . \round($res->elapsedMs()) . 'ms）',
+            ];
+        });
     }
 
     /** 页面工厂装配用：取数模式由 Bootstrap 决定。 */

@@ -20,4 +20,4 @@ if (!class_exists($class)) {
     return;
 }
 
-$class::run();
+(new $class())->run();

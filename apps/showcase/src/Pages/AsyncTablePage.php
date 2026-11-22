@@ -67,7 +67,8 @@ use Drift\Widget\Widget;
  * ## 数据来源完全由组合根决定（页面零感知）
  *
  * 页面只认一个 `\Closure(int): Future`（"取第 N 页"）：
- *   · 真机（`Bootstrap`）⇒ `AppScope::taskHost()->submit(new FetchRowsJob(...))`（真慢任务）；
+ *   · 真机本地档 ⇒ `submit(new FetchRowsJob(...))`（worker 里造慢）；
+ *   · 真机 HTTP 档 ⇒ `Application::http()->get()`（UI 侧帧内 curl_multi，不占 worker）；
  *   · 基准 / 整页快照（`Trees::showcase()`）⇒ `Future::resolved([...静态...])`（稳定、不转圈）。
  *   ⇒ 换成"真 HTTP / 本地模拟 / 直接给数据"都不用改本页一行 —— 这是"业务与 UI 隔离"
  *     在**接线层**的形态，也是本页能被无头基准稳定渲染的原因。

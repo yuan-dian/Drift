@@ -12,13 +12,14 @@ namespace App\Showcase\Jobs;
  *
  * | 谁 | 场景 |
  * |---|---|
- * | `FetchRowsJob::MODE_LOCAL` | 零依赖演示（`usleep` 造慢） |
- * | `tools/app-workers/showcase-mock.php` | 真 HTTP（`php -S` 造慢） |
+ * | `FetchRowsJob`（local 档） | 零依赖演示（`usleep` 造慢） |
+ * | `tools/app-workers/showcase-mock.php`（http 档） | 真 HTTP（`php -S` 造慢） |
  *
  * 如果两边各写一份生成逻辑，改一个字段就要改两处，而且**很容易只改一处** ——
  * 之后 `local` 模式能画表、`http` 模式画空白，排查方向会完全跑偏（看着像"异步坏了"，
  * 其实是 mock 少给了字段）。抽成一份后，两边只共享"行长什么样"，
  * "怎么慢"仍然各自实现（这正是它们该不同的地方）。
+ * HTTP 档取数在 `ShowcaseApplication::fetchRowsOverHttp()`，本类只供载荷形状。
  *
  * ★ 不放进 `src/`：它是示例台的业务数据，不是框架能力。
  * ★ `usleep` **不在**这里 —— 本类只造数据，耗时由调用方决定。

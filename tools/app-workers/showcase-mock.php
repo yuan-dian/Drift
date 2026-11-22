@@ -13,27 +13,27 @@ declare(strict_types=1);
  * ## 它在整条链里的位置
  *
  * ```
- * UI 进程 ──submit──> ProcessTaskHost ──管道──> worker 进程（FetchRowsJob 真跑）
- *                            ▲                          │ curl
- *                            └──── 结果回程 ◄────────────┴──> 本文件（睡 1.2s 再回 JSON）
+ * UI 进程 ──AsyncHttp(curl_multi, 帧内非阻塞)──> 本文件（睡 1.2s 再回 JSON）
+ *     ▲                                              │
+ *     └──── Future 帧内 settle ◄─────────────────────┘
  * ```
  *
- * ★ **慢在这里而不是在 UI 里**，这是本示例要证明的事：UI 线程一帧不停，
- *   转圈在转、窗口能拖，1.2s 后数据到达才重绘。
+ * ★ **慢在网络里，不在 UI 线程里**：curl_multi 每帧只 `exec + select(0)`，
+ *   等待期间窗口照常跑帧、转圈、拖动。这是本示例要证明的事。
  *
- * ★ **为什么还要一个 `local` 模式**（`FetchRowsJob::MODE_LOCAL`）：本文件需要
+ * ★ **为什么还留 `local` 档**（`ShowcaseApplication::ROWS_LOCAL`）：本文件需要
  *   先起服务、占一个端口、还要记得关 —— 对一个"打开就能看"的示例台来说门槛太高。
- *   `local` 模式用 `usleep` 在同一条 worker 链上造同样的慢，零依赖；本文件则用来
- *   验证**真实网络**这一档（连接超时、HTTP 状态码、JSON 解析失败都是真会发生的分支）。
+ *   `local` 档用 `usleep` 在 worker 造同样的慢，零依赖；本文件验证**真实网络**这一档
+ *   （连接超时、HTTP 状态码、JSON 解析失败都是真会发生的分支）。
  *
- * ★ 行数据来自 `RowsSeed`（与 `FetchRowsJob::MODE_LOCAL` 共用）——
+ * ★ 行数据来自 `RowsSeed`（与 local 档共用）——
  *   改字段只需改一处，不会出现"一边能画表、一边画空白"。
  *
  * ★ **`php -S` 默认单线程**：如果示例台连着翻两页，两个 worker 会在这里排队，
  *   第二页看起来要等 2.4s。这是**真实的**（别把它当成 bug 去修 UI）。
  *   想让 mock 也并发：`PHP_CLI_SERVER_WORKERS=4 php -S ...`（PHP 7.4+，Windows 不支持）。
  *
- * @see \App\Showcase\Jobs\FetchRowsJob
+ * @see \App\Showcase\ShowcaseApplication
  * @see \App\Showcase\Jobs\RowsSeed
  */
 

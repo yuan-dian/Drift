@@ -5,6 +5,7 @@ namespace Drift\Dev\Tests\Unit\App;
 
 use Drift\App\HttpRequestJob;
 use Drift\App\Io\AsyncHttp;
+use Drift\App\Io\CurlMultiTransport;
 use Drift\App\Io\HttpResponse;
 use Drift\App\Io\HttpTransport;
 use Drift\Async\Future;
@@ -174,6 +175,22 @@ final class AsyncHttpTest extends SmokeTestCase
         }
 
         check('setTransport · 有在途请求时拒绝换后端（否则旧请求无人 pump）', $threw instanceof \LogicException, $threw === null ? '没抛' : '抛了');
+
+        $this->flushChecks();
+    }
+
+    public function testNoCurlCloseInAotPath(): void
+    {
+        $file = (string) (new \ReflectionClass(CurlMultiTransport::class))->getFileName();
+        $source = (string) \file_get_contents($file);
+
+        check('AOT · 帧内后端不调 curl_close（对象属性 handle 传进去会原生崩溃），'
+            . '症状是请求成功但界面永久 loading',
+            !\str_contains($source, '\\curl_close('),
+            '源码里出现了 curl_close 调用');
+        check('AOT · remove handle 仍在（资源释放靠它 + 对象回收）',
+            \str_contains($source, '\\curl_multi_remove_handle('),
+            '漏了 curl_multi_remove_handle');
 
         $this->flushChecks();
     }

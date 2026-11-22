@@ -90,7 +90,9 @@ Toggle::make('启用通知')->checked($this->notify)->onChanged(fn(bool $v) => $
 private function pageFactories(): array
 {
     $env = $this->environment();
-    $fetchRows = fn(int $page): Future => $this->submit(new FetchRowsJob($page, 20, $this->rowsMode));
+    $fetchRows = $httpMode
+        ? $this->fetchRowsOverHttp(...)                              // UI 侧 AsyncHttp（帧内 curl_multi）
+        : fn(int $page): Future => $this->submit(new FetchRowsJob($page, 20));
 
     return [
         // 环境能力：从门面取具名方法（一等可调用）
