@@ -57,6 +57,9 @@ final class AppScope
 
     private ?IoPoller $io = null;
 
+    /** 异步 HTTP 门面（一个进程一份；惰性建，含帧内 curl_multi 后端） */
+    private ?\Drift\App\Io\AsyncHttp $asyncHttp = null;
+
     /** 业务状态恢复（一个进程一份；未装配 ⇒ 不持久化） */
     private ?RestorationStore $restoration = null;
 
@@ -199,6 +202,11 @@ final class AppScope
         // 异步图片跟着后台端口一起装配 —— 组合根不用多写一行，业务也不用注入服务。
         ImageAssets::install($taskHost, $this->imageCacheDir, $this->imageCacheKey);
 
+        // 门面若已惰性建好，更新同一个实例：它持有 host 的快照，不更新会让大请求
+        // 继续走旧的 SyncTaskHost（在 UI 线程同步跑阻塞 HTTP）。不换实例 ⇒
+        // PumpHost 缓存的引用不分叉（与其 attach 纪律一致）。
+        $this->asyncHttp?->setTaskHost($taskHost);
+
         return $this;
     }
 
@@ -299,6 +307,45 @@ final class AppScope
     public function io(): IoPoller
     {
         return $this->io ??= new IoPoller();
+    }
+
+    // ── 异步 HTTP ────────────────────────────────────────────────────────
+
+    /**
+     * 异步 HTTP 门面 —— 一个进程一份，与 `io()` 同构。
+     *
+     * ★ 惰性建且**自动接上本 scope 的 taskHost**：大 body / multipart 要分流到
+     *   进程池，端口从同一处取，避免"两个池"。在 `setTaskHost()` 之后第一次
+     *   `asyncHttp()` 才建，所以能拿到最终端口；组合根应用顺序无感。
+     *
+     * @api
+     */
+    public function asyncHttp(): \Drift\App\Io\AsyncHttp
+    {
+        if ($this->asyncHttp === null) {
+            // 只在本类取 taskHost：未表态时它给默认 SyncTaskHost（大请求在解释器/单测
+            // 里同步跑，与 JobRunner 的 null 语义一致），显式 null 时才没有后台。
+            $this->asyncHttp = new \Drift\App\Io\AsyncHttp($this->taskHost());
+        }
+
+        return $this->asyncHttp;
+    }
+
+    /**
+     * 换传输后端（组合根一行）。
+     *
+     * ★ 更新同一个门面实例：PumpHost 在 attach 时缓存它，换实例会让 submit 与
+     *   pump 分属两个后端（请求永不结算）。有在途请求时后端会拒绝换（见门面）。
+     */
+    public function setHttpTransport(\Drift\App\Io\HttpTransport $transport): self
+    {
+        if ($this->asyncHttp === null) {
+            $this->asyncHttp = new \Drift\App\Io\AsyncHttp($this->taskHost(), $transport);
+        } else {
+            $this->asyncHttp->setTransport($transport);
+        }
+
+        return $this;
     }
 
     // ── 业务状态恢复 ────────────────────────────────────────────────────

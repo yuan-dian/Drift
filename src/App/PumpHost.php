@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\App;
 
+use Drift\App\Io\AsyncHttp;
 use Drift\App\Io\IoPoller;
 use Drift\Async\Future;
 use Drift\Errors;
@@ -47,6 +48,9 @@ final class PumpHost
     /** 非阻塞 I/O 轮询器 —— `null` = 未挂载 */
     private ?IoPoller $io = null;
 
+    /** 异步 HTTP 门面 —— `null` = 未挂载（PUMP_IO 段顺带推进它的 curl_multi） */
+    private ?AsyncHttp $http = null;
+
     public function __construct(private PumpHostHost $host)
     {
     }
@@ -56,10 +60,17 @@ final class PumpHost
      * `attach()` 不建也不换：`tasks` 持结果队列、`io` 持监听表，中途换掉
      *   就是"入队 / drain 分属两个队列"那类静默 bug 的入口。
      */
-    public function attach(?TaskHost $tasks, ?IoPoller $io): void
+    public function attach(?TaskHost $tasks, ?IoPoller $io, ?AsyncHttp $http = null): void
     {
         $this->tasks = $tasks;
         $this->io = $io;
+        $this->http = $http;
+    }
+
+    /** 已挂载的异步 HTTP 门面（应用侧从 `Application::http()` 拿，这里供内部泵用） */
+    public function http(): ?AsyncHttp
+    {
+        return $this->http;
     }
 
     /**
@@ -136,6 +147,10 @@ final class PumpHost
     public function hasPolledAsync(): bool
     {
         if ($this->io !== null && $this->io->watchCount() > 0) {
+            return true;
+        }
+        if ($this->http !== null && $this->http->inFlight() > 0) {
+            // curl_multi 结果只能每帧 exec 拿 ⇒ 在途期间必须按帧节奏跳。
             return true;
         }
 
@@ -242,15 +257,25 @@ final class PumpHost
     public function pumpIo(): void
     {
         $io = $this->io;
-        if ($io === null) {
+        $http = $this->http;
+        if ($io === null && $http === null) {
             return;
         }
 
         $this->host->assertUiThread('poll');
 
-        $this->guarded('IO 就绪回调未捕获异常', static function () use ($io): void {
-            $io->poll();
-        });
+        if ($io !== null) {
+            $this->guarded('IO 就绪回调未捕获异常', static function () use ($io): void {
+                $io->poll();
+            });
+        }
+        if ($http !== null) {
+            // 与 IoPoller 同一段、同一 UI 线程契约；curl_multi 回调里改 Store 同帧生效。
+            // ★ 独立于 io：io 未挂载（自定义 attach）不能挡住 http 的推进。
+            $this->guarded('异步 HTTP 结算回调未捕获异常', static function () use ($http): void {
+                $http->pump();
+            });
+        }
     }
 
     /**

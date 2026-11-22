@@ -21,6 +21,9 @@ final class CoreJobs
             // 应用同名登记时以应用为准（允许覆盖核心实现）。
             $registry[FetchImageJob::NAME] = static fn(array $args): Job => FetchImageJob::fromArgs($args);
         }
+        if (!isset($registry[HttpRequestJob::NAME])) {
+            $registry[HttpRequestJob::NAME] = static fn(array $args): Job => HttpRequestJob::fromArgs($args);
+        }
 
         return $registry;
     }

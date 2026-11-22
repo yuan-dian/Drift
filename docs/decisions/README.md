@@ -59,6 +59,7 @@
 | N3 | 取消风险 | 扇出取消用运行时诊断 `future/fanout-cancel`，不升级为持有即校验的 ownership。 | 出现第二个真实踩坑，诊断已不足以定位。 |
 | N4 | 图片缓存 | 内存层用 LRU + 字节/条目双上限（默认 48 MiB / 256 条，命中移 MRU，单张超限不缓存）；磁盘层由组合根的可选 `cacheKey` 回调收敛签名 URL，写盘临时文件原子改名，损坏缓存自愈。不做同 URL 在途合并与磁盘容量淘汰。 | 并发同 URL 下载造成可测的带宽浪费，或磁盘目录在长跑中实际堆积告警，或内容失效无法用 `cacheKey` 表达。 |
 | N5 | 编程式滚动动画 | `ScrollController::animateTo()` 是定时长 + 曲线的一条独立入口；`scrollTo` / `ensureVisible` / thumb 拖动保持"调完就到"。每帧位移走 State 的 `scrollBy`，用户一动即让位，不返回完成回调。论证见 `_legacy-docs` 下当日设计稿与工作日志。 | 出现需要不同中断语义的消费者，或两条入口互斥导致可复现的交互缺陷。 |
+| N6 | UI 线程异步 HTTP | `AsyncHttp` 门面按 body 大小分流：小请求走帧内 curl_multi（`CurlMultiTransport`，每帧 `exec + select(0)`），multipart / 大 body 走进程池 `HttpRequestJob`；两条路共用 `Http::prepare()` / `finish()`，语义只一份。传输后端是 `HttpTransport` 接口，可换。这个分流替掉的是"所有 HTTP 都占 worker"和"为每个小请求配池大小"。 | 出现需要流式双向（WebSocket）或超大并发长连接的真实场景，帧内推进顶帧；或编译器支持 AOT 线程入口后 Swoole 后端能在真机跑通。 |
 
 ## 平台与能力
 

@@ -328,6 +328,19 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         return $this->scope;
     }
 
+    /**
+     * 异步 HTTP 门面（应用侧唯一入口）—— 透传 `AppScope`，多窗口共享一个后端。
+     *
+     * 业务在 Store 里不持有 Application 时，直接从组合根拿 `scope()->asyncHttp()`；
+     * 持有 Application 的页面用本方法。两者是同一个实例。
+     *
+     * @api
+     */
+    public function http(): \Drift\App\Io\AsyncHttp
+    {
+        return $this->scope->asyncHttp();
+    }
+
     /** 主题：默认取 `AppScope`。多窗口下覆写会让本窗与别的窗口不一致（`attach()` 报 DIAGNOSTIC）。 */
     public function theme(): ThemeData
     {
@@ -481,8 +494,8 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
             $this->scope->enter($this->theme());
         }
 
-        // 端口 / 轮询器从作用域取；`attach()` 只缓存引用，不负责建。
-        $this->pumps->attach($this->scope->taskHost(), $this->scope->io());
+        // 端口 / 轮询器 / 异步 HTTP 从作用域取；`attach()` 只缓存引用，不负责建。
+        $this->pumps->attach($this->scope->taskHost(), $this->scope->io(), $this->scope->asyncHttp());
 
         $context ??= new BuildContext(
             $constraints->maxWidth,

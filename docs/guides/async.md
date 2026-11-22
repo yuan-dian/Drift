@@ -169,6 +169,29 @@ AsyncView::of($command, $dataBuilder)
 - `State::asyncCommand($task, $combine)` 在 `initState()` 里造命令：它把命令的广播接成 `markDirty()`，并在 `onDispose()` 里统一 `dispose()`。
 - 图片等资源走 `ImageAssets::install()`，业务只用 `Image::make()->asset($src)`，见[异步资源](./async-assets.md)。
 
+## UI 线程发 HTTP：AsyncHttp
+
+`Http` 是阻塞的，只许在 `Job::run()`（worker 进程）里用。UI 线程要发请求用 `AsyncHttp`，拿到的仍是 `Future<HttpResponse>`，与 `submit()` 的产物同形：
+
+```php
+$http = $app->http();              // 或组合根 $scope->asyncHttp()（同一个实例）
+$http->get('https://api.example/user')->then(
+    fn (HttpResponse $r) => $this->name->set($r->json()['name']),
+);
+// 多步顺序逻辑仍走 AsyncScope::await()，见上
+```
+
+**分流在门面内部，应用侧只有一个 API**：
+
+| 请求 | 走哪 | 为什么 |
+|---|---|---|
+| 无 multipart、body ≤ 64KB | 帧内 `curl_multi`（`CurlMultiTransport`） | 不占 worker、不用配池大小；每帧 `exec + select(0)` 实测 ~12µs |
+| multipart 或 body > 64KB | 进程池 `HttpRequestJob` | 流式上传的 fd / 进度回调留在 worker，不顶 UI 帧 |
+
+两条路共用 `Http::prepare()` / `Http::finish()` —— 校验、TLS 信任根、头解析、错误分类（`status === null` = 传输失败）只有一份。进度用 `Future::onProgress()`，与 Job 的进度同一通道。
+
+**传输后端可换**：`AppScope::setHttpTransport()` 接受 `HttpTransport` 接口（`submit` / `pump` / `inFlight`）。当前只有 curl_multi 实现；**Swoole 后端刻意不实现**——`Co\Http\Client` 单用无 hook、帧循环协程化也跑通了，但把 reactor 关进 `Swoole\Thread` 在 AOT 产物里会重入主入口（线程要重新加载 `.php`，与"源码全编进 exe"冲突），见[裁决](../decisions/README.md)。没有 AOT 线程入口支持之前，不埋一个在真机上跑不通的后端。
+
 ## 常见静默坑
 
 - `Future` 失败没挂 `catch()`：Fatal 序列；症状是永久转圈。

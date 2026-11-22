@@ -44,6 +44,26 @@ final class Http
     ];
 
     /**
+     * 校验 opts 键名 —— 门面（AsyncHttp）与 prepare 共用同一份名单。
+     *
+     * 门面在分流之前调它：拼错的键不该因为"走的是哪个后端"才决定抛不抛。
+     *
+     * @param array<string, mixed> $opts
+     * @throws \InvalidArgumentException 出现未知键
+     * @internal 框架内用
+     */
+    public static function assertOptsKeys(array $opts): void
+    {
+        foreach ($opts as $key => $_) {
+            if (!\in_array((string) $key, self::OPT_KEYS, true)) {
+                throw new \InvalidArgumentException(
+                    'Http：未知选项 \'' . $key . '\'（只有 ' . \implode(' / ', self::OPT_KEYS) . '）—— 拼错的选项不会报错，只会静默不生效，所以这里直接抛'
+                );
+            }
+        }
+    }
+
+    /**
      * GET（最常用）。
      *
      * @param array<string, mixed> $opts 见 {@see self::request()}
@@ -92,6 +112,39 @@ final class Http
      */
     public static function request(string $method, string $url, array $opts = []): HttpResponse
     {
+        $prepared = self::prepare($method, $url, $opts);
+
+        try {
+            $raw = \curl_exec($prepared->handle);
+            $errno = \curl_errno($prepared->handle);
+            $error = \curl_error($prepared->handle);
+        } catch (\RuntimeException $e) {
+            // 归一到 HttpException：Http 对外契约只有这一种失败，
+            //   多一种异常类型就逼每个调用方多 catch 一个。
+            throw new HttpException($prepared->method . ' ' . $prepared->url . ' → ' . $e->getMessage(), $prepared->url);
+        } finally {
+            $prepared->closeMultipart();
+        }
+
+        $status = (int) \curl_getinfo($prepared->handle, CURLINFO_RESPONSE_CODE);
+        $effective = (string) \curl_getinfo($prepared->handle, CURLINFO_EFFECTIVE_URL);
+        $elapsedMs = ((float) \curl_getinfo($prepared->handle, CURLINFO_TOTAL_TIME)) * 1000.0;
+
+        return self::finish($prepared, $raw, $errno, $error, $status, $effective, $elapsedMs);
+    }
+
+    /**
+     * 配置一个还没执行的请求 —— 校验、multipart、TLS、头收集都在这里。
+     *
+     * 阻塞路径（request）与异步路径（CurlMultiTransport）共用它，HTTP 语义只一份。
+     *
+     * @param array<string, mixed> $opts 见 {@see self::request()}
+     * @throws \InvalidArgumentException 动词非法 / 选项名拼错 / URL 为空
+     * @throws HttpException curl 初始化失败
+     * @internal 框架内用，应用层只走 request / AsyncHttp
+     */
+    public static function prepare(string $method, string $url, array $opts = []): PreparedRequest
+    {
         $method = \strtoupper(\trim($method));
         if (!\in_array($method, self::METHODS, true)) {
             throw new \InvalidArgumentException('不支持的 HTTP 动词：' . $method . '（只认 ' . \implode('/', self::METHODS) . '）');
@@ -99,13 +152,7 @@ final class Http
         if (\trim($url) === '') {
             throw new \InvalidArgumentException('Http：URL 不能为空');
         }
-        foreach ($opts as $key => $_) {
-            if (!\in_array((string) $key, self::OPT_KEYS, true)) {
-                throw new \InvalidArgumentException(
-                    'Http：未知选项 \'' . $key . '\'（只有 ' . \implode(' / ', self::OPT_KEYS) . '）—— 拼错的选项不会报错，只会静默不生效，所以这里直接抛'
-                );
-            }
-        }
+        self::assertOptsKeys($opts);
 
         $headers = $opts['headers'] ?? [];
         if (!\is_array($headers)) {
@@ -179,8 +226,7 @@ final class Http
             throw new HttpException('Http：curl 初始化失败（运行时 ini 没启 extension=curl？）：' . $url, $url);
         }
 
-        /** @var array<string, string> $seen 最新一段响应头（重定向会重来一段） */
-        $seen = [];
+        $headersBox = new HeaderCollector();
 
         $lines = [];
         foreach ($headers as $name => $value) {
@@ -210,26 +256,9 @@ final class Http
             CURLOPT_MAXREDIRS => $redirects,
             CURLOPT_HTTPHEADER => $lines,
             // 头用回调收：CURLOPT_HEADER => true 会把头混进 body。
-            //   回调里"见到新状态行就清空"⇒ 留下的是最后一段。
-            CURLOPT_HEADERFUNCTION => static function ($_handle, string $raw) use (&$seen): int {
-                $line = \rtrim($raw, "\r\n");
-                if ($line === '') {
-                    return \strlen($raw);
-                }
-                if (\str_starts_with($line, 'HTTP/')) {
-                    $seen = [];
-
-                    return \strlen($raw);
-                }
-                $colon = \strpos($line, ':');
-                if ($colon === false) {
-                    return \strlen($raw);
-                }
-                $name = \strtolower(\trim(\substr($line, 0, $colon)));
-                $value = \trim(\substr($line, $colon + 1));
-                $seen[$name] = isset($seen[$name]) ? $seen[$name] . ', ' . $value : $value;
-
-                return \strlen($raw);
+            //   收头逻辑在 HeaderCollector，prepare/finish 两端才能共享同一份。
+            CURLOPT_HEADERFUNCTION => static function ($_handle, string $raw) use ($headersBox): int {
+                return $headersBox->ingest($raw);
             },
         ]);
 
@@ -278,24 +307,28 @@ final class Http
             \curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
         }
 
-        try {
-            $raw = \curl_exec($ch);
-            $errno = \curl_errno($ch);
-            $error = \curl_error($ch);
-        } catch (\RuntimeException $e) {
-            // 归一到 HttpException：Http 对外契约只有这一种失败，
-            //   多一种异常类型就逼每个调用方多 catch 一个。
-            throw new HttpException($method . ' ' . $url . ' → ' . $e->getMessage(), $url);
-        } finally {
-            // 文件句柄必须在这里关：curl 提前失败时 read() 不会吐完。
-            if ($multipart !== null) {
-                $multipart->close();
-            }
-        }
+        return new PreparedRequest($ch, $method, $url, $expectOk, $headersBox, $multipart);
+    }
 
-        $status = (int) \curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-        $effective = (string) \curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
-        $elapsedMs = ((float) \curl_getinfo($ch, CURLINFO_TOTAL_TIME)) * 1000.0;
+    /**
+     * 解析一次已执行的请求：curl 错误 / 非 2xx 归一成 HttpException，成功出 HttpResponse。
+     *
+     * 阻塞路径与 curl_multi 异步路径共用它 —— 错误分类、URL 口径、snippet 只此一份。
+     * `$raw` 允许 false / 非字符串（curl 失败）；`$errno` / `$error` 由调用方从 handle 取。
+     *
+     * @internal 框架内用
+     */
+    public static function finish(
+        PreparedRequest $prepared,
+        mixed $raw,
+        int $errno,
+        string $error,
+        int $status,
+        string $effective,
+        float $elapsedMs,
+    ): HttpResponse {
+        $method = $prepared->method;
+        $url = $prepared->url;
 
         if ($errno !== 0 || !\is_string($raw)) {
             // 传输层失败没有状态码（与"服务端说 500"是两回事，见 HttpException）。
@@ -307,13 +340,13 @@ final class Http
 
         $response = new HttpResponse(
             $status,
-            $seen,
+            $prepared->headers->all(),
             $raw,
             $effective !== '' ? $effective : $url,
             $elapsedMs,
         );
 
-        if ($expectOk && !$response->ok()) {
+        if ($prepared->expectOk && !$response->ok()) {
             throw new HttpException(
                 \sprintf('%s %s → HTTP %d：%s', $method, $url, $status, $response->snippet()),
                 $response->url(),
