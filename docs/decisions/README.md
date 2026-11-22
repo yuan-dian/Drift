@@ -60,6 +60,7 @@
 | N4 | 图片缓存 | 内存层用 LRU + 字节/条目双上限（默认 48 MiB / 256 条，命中移 MRU，单张超限不缓存）；磁盘层由组合根的可选 `cacheKey` 回调收敛签名 URL，写盘临时文件原子改名，损坏缓存自愈。不做同 URL 在途合并与磁盘容量淘汰。 | 并发同 URL 下载造成可测的带宽浪费，或磁盘目录在长跑中实际堆积告警，或内容失效无法用 `cacheKey` 表达。 |
 | N5 | 编程式滚动动画 | `ScrollController::animateTo()` 是定时长 + 曲线的一条独立入口；`scrollTo` / `ensureVisible` / thumb 拖动保持"调完就到"。每帧位移走 State 的 `scrollBy`，用户一动即让位，不返回完成回调。论证见 `_legacy-docs` 下当日设计稿与工作日志。 | 出现需要不同中断语义的消费者，或两条入口互斥导致可复现的交互缺陷。 |
 | N6 | UI 线程异步 HTTP | `AsyncHttp` 门面按 body 大小分流：小请求走帧内 curl_multi（`CurlMultiTransport`，每帧 `exec + select(0)`），multipart / 大 body 走进程池 `HttpRequestJob`；两条路共用 `Http::prepare()` / `finish()`，语义只一份。传输后端是 `HttpTransport` 接口，可换。这个分流替掉的是"所有 HTTP 都占 worker"和"为每个小请求配池大小"。 | 出现需要流式双向（WebSocket）或超大并发长连接的真实场景，帧内推进顶帧；或编译器支持 AOT 线程入口后 Swoole 后端能在真机跑通。 |
+| N7 | 取消能真停 CPU | `CancelSupport` 四档按"能省多少活"递增，`ProcessTaskHost` 取最高档 `Killable`：在途任务的取消 = 杀掉独占它的 worker + 下帧补池。可行性来自 `pickIdle()` 保证每 worker 在途 ≤1 ⇒ 不连坐；复用超时清扫的 `dropWorker()`，不另造协议。取消不是失败（不投 `Failure` / 不 onError / Future 保持未结算）。**不做**任务内轮询取消标志的 cooperative 检查点：那要改行协议 + 每个 `NamedJob` 配合，而"杀执行单元"用现成设施就够。借鉴 Electron `utilityProcess.kill()` / JavaFX `Future.cancel(true)`。 | 出现"取消必须在任务内部优雅收尾（如回滚半写入的文件）"的真实需求 —— 那时才需要 cooperative 检查点；或一个 worker 允许并发多条在途，"杀 worker 不连坐"的前提不再成立。 |
 
 ## 平台与能力
 

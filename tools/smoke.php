@@ -4612,17 +4612,21 @@ check(
 );
 $derivedPool->shutdown();
 
-// ②c-3 在途取消：**停不了，但结果不交付**（`pending()` 记账不变，避免帧时钟落闸后
-//   管道里的回包永远读不到 ⇒ worker 写满管道阻塞成僵尸）
+// ②c-3 在途取消：**真停 CPU**（`Killable` 档）——杀掉独占那条任务的 worker、
+//   摘掉记账 ⇒ `pending()` 归零、帧时钟能睡、下帧补池。结果当然不交付。
+//   ★ 与历史语义的差别：旧版只标记"不交付"、记账不变（怕落闸后回包读不到 ⇒
+//     worker 写满管道成僵尸）。现在杀进程时连管道一起收掉，那个担心不再成立。
 $inflightPool = new ProcessTaskHost([PHP_BINARY, $workerScript], SmokeJobRegistry::make(), 1);
 $victimSink = [];
 $victim = $inflightPool->submit(new NamedSleepJob(150));
 $victim->then(function ($v) use (&$victimSink): void { $victimSink[] = $v; });
 $victim->cancel();
 check(
-    'N3 · 在途取消：记账不变（仍算 pending，否则回包读不到）',
-    $inflightPool->inFlightCount() === 1 && $inflightPool->pending() === 1,
-    'inflight=' . $inflightPool->inFlightCount() . ' pending=' . $inflightPool->pending(),
+    'N7 · 在途取消：worker 被杀、记账归零（真停 CPU，不是只不交付）',
+    $inflightPool->inFlightCount() === 0 && $inflightPool->pending() === 0
+        && $inflightPool->workerCount() === 0,
+    'inflight=' . $inflightPool->inFlightCount() . ' pending=' . $inflightPool->pending()
+        . ' workers=' . $inflightPool->workerCount(),
 );
 $inflightPoolDeadline = microtime(true) + 3.0;
 while (microtime(true) < $inflightPoolDeadline && $inflightPool->pending() > 0) {

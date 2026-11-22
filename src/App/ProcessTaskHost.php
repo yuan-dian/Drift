@@ -142,7 +142,7 @@ final class ProcessTaskHost implements TaskHost
         $id = ++$this->seq;
 
         $future = Future::pending(function () use ($id): void {
-            $this->dropQueued($id);
+            $this->cancelTask($id);
         });
 
         if (!$job instanceof NamedJob) {
@@ -183,25 +183,43 @@ final class ProcessTaskHost implements TaskHost
     }
 
     /**
-     * 三档里唯一"取消能省 CPU"的：还在排队（没派发）的那条会被真的摘掉。
+     * 取消能让在途任务真的停下来 —— 四档里最高的一档。
      *
-     * ★ 已发给 worker 的停不了（杀进程要重拉、还丢在途状态）—— 见 `dropQueued()`。
+     * ★ 可行性来自一个不变量：`pickIdle()` 只把任务发给在途为 0 的 worker，
+     *   所以"杀掉这条任务的 worker"绝不会连坐别的活。下帧 `flush()` 自动补池。
      */
     public function cancelSupport(): CancelSupport
     {
-        return CancelSupport::QueuedOnly;
+        return CancelSupport::Killable;
     }
 
     /**
-     * 把**还没发出去**的那一条从队列里摘掉（`Future::cancel()` 的钩子）。
+     * `Future::cancel()` 的钩子：按任务当前位置分别处理。
      *
-     * 能真停的只有"还在排队"的。已发给 worker 的停不了：杀进程要重拉（起价 275ms）
-     * 还会丢在途状态，代价远大于让它跑完；那些走"不交付"，迟到的 `resolve()` 被忽略。
+     * - **排队中**（没派发）：直接从队列摘掉，那条永远不会开始。
+     * - **在途**（已发给某个 worker）：摘掉簿记 + 杀掉独占它的 worker + 收掉管道；
+     *   下一帧 `flush()` 补一个新 worker。真停 CPU —— 这是 `Killable` 档的兑现。
+     * - **已结算**：什么都不做（`Future` 自己标记"不交付"，迟到的 resolve 被忽略）。
      *
-     * ★ 但**不能**提前把 `pending()` 减掉：它一落闸，帧时钟就停止上膛，
-     *   管道里的回包永远读不到 ⇒ worker 写满管道后阻塞（僵尸进程）。
-     *   ⇒ 在途的取消只影响"交付"，不影响"记账"。
+     * ★ 在途分支**必须**同时摘 `$inflight` 并杀进程：只摘簿记会让 worker 占着坑白跑
+     *   （池容量悄悄掉一格），只标记"不交付"又省不到 CPU；`dropWorker()` 一次做全。
+     * ★ 取消不是失败：不往 `$failed` 投 `Failure`，`Future` 已 cancelled，UI 侧不会
+     *   收到 onError（"停止"是正常操作，不是异常）。
      */
+    private function cancelTask(int $id): void
+    {
+        $item = $this->inflight[$id] ?? null;
+        if ($item !== null) {
+            unset($this->inflight[$id]);
+            $this->dropWorker((int) $item['worker'], true);
+
+            return;
+        }
+
+        $this->dropQueued($id);
+    }
+
+    /** 把**还没发出去**的那一条从队列里摘掉（cancel 的排队分支） */
     private function dropQueued(int $id): void
     {
         foreach ($this->queue as $k => $item) {

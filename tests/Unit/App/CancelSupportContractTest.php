@@ -12,20 +12,21 @@ use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
 /**
- * `cancel()` 能停多深 —— 三档能力声明与后端实现必须对得上。
+ * `cancel()` 能停多深 —— 四档能力声明与后端实现必须对得上。
  *
  * ## 为什么要有这条判据
  *
- * `Future::cancel()` 的文档写"尽力而为"，而"尽力"在三后端差得很远：进程池能撤掉
- * 排队的那条，线程池一步都停不了，同步后端根本没有在跑的活。这个差异以前只活在
- * 一份 2026-10-30 的分析稿里 —— 应用想知道"按了停止之后后台还在不在烧 CPU"，
+ * `Future::cancel()` 的文档写"尽力而为"，而"尽力"在三后端差得很远：进程池能杀掉
+ * 在途那条连 worker，线程池一步都停不了，同步后端根本没有在跑的活。这个差异以前
+ * 只活在一份 2026-10-30 的分析稿里 —— 应用想知道"按了停止之后后台还在不在烧 CPU"，
  * 只能去读三个后端的实现。
  *
  * | 判据 | 漏了会怎样 |
  * |---|---|
- * | ① 三档按"能省多少活"单调递增 | 拿 `value` 排序的调用点会得到反的结论 |
+ * | ① 各档按"能省多少活"单调递增 | 拿 `value` 排序的调用点会得到反的结论 |
  * | ② 每个后端都答了，且答的是它自己那一档 | 界面对"停止"的承诺与实现不符 |
- * | ③ `describe()` 三句互不相同且非空 | 界面照档位拼文案 ⇒ 加一档要改两处 |
+ * | ③ `describe()` 每档一句、互不相同且非空 | 界面照档位拼文案 ⇒ 加一档要改两处 |
+ * | ④ `killsRunning()` 只认最高档 | 把"只不交付"说成"真停 CPU"⇒ 界面骗用户 |
  *
  * ★ 与渲染侧的 `CanvasCapabilityContractTest` 是同一种写法：能力位逐档登记，
  *   判据守"登记表与实现一致"。那边守的是 `Canvas` 的 `CAP_*`，这边守 `TaskHost`。
@@ -36,24 +37,38 @@ final class CancelSupportContractTest extends TestCase
     public function 三档按能省多少活单调递增(): void
     {
         self::assertTrue(
+            CancelSupport::Killable->value > CancelSupport::QueuedOnly->value,
+            'Killable（在途也能真停）是最高档，必须排在 QueuedOnly 之上'
+        );
+        self::assertTrue(
             CancelSupport::DetachedOnly->value < CancelSupport::QueuedOnly->value,
-            'QueuedOnly 是唯一能省 CPU 的档，它必须排在 DetachedOnly 之上'
+            'QueuedOnly 能撤排队，它必须排在 DetachedOnly 之上'
         );
         self::assertTrue(
             CancelSupport::AlreadyDone->value < CancelSupport::DetachedOnly->value,
             'AlreadyDone（没有在跑的活）必须是最低档'
         );
 
+        self::assertTrue(CancelSupport::Killable->revokesQueued());
         self::assertTrue(CancelSupport::QueuedOnly->revokesQueued());
         self::assertFalse(CancelSupport::DetachedOnly->revokesQueued());
         self::assertFalse(CancelSupport::AlreadyDone->revokesQueued());
     }
 
     #[Test]
+    public function killsRunning只认最高档(): void
+    {
+        self::assertTrue(CancelSupport::Killable->killsRunning());
+        self::assertFalse(CancelSupport::QueuedOnly->killsRunning());
+        self::assertFalse(CancelSupport::DetachedOnly->killsRunning());
+        self::assertFalse(CancelSupport::AlreadyDone->killsRunning());
+    }
+
+    #[Test]
     public function 每个后端都声明了自己那一档(): void
     {
         $expected = [
-            ProcessTaskHost::class => CancelSupport::QueuedOnly,
+            ProcessTaskHost::class => CancelSupport::Killable,
             ThreadTaskHost::class => CancelSupport::DetachedOnly,
             SyncTaskHost::class => CancelSupport::AlreadyDone,
         ];

@@ -70,6 +70,10 @@
   取数走前者、「上传示例」按钮带进度走后者；`probe-async.py` 在 AOT 产物上对两条支路各验
   在途→回贴。AOT 下帧内路径不调 `curl_close()`（对象属性 handle 传进去会原生崩溃，症状是
   请求成功却永久 loading）。裁决 N6。
+- **取消在途任务真停 CPU**：`CancelSupport` 升到四档，`ProcessTaskHost` 取最高档 `Killable`
+  ——取消一条在途任务会杀掉独占它的 worker、下帧补池（每 worker 在途 ≤1 ⇒ 不连坐），
+  排队中的仍只是摘队列。取消不是失败：不投 `Failure` / 不 onError、`Future` 保持未结算。
+  此前进程后端只能撤排队、在途只能"不交付"，后台照烧 CPU。裁决 N7。
 
 ## v0.1.0（2026-11-20 · 首个无后缀的预览版）
 
