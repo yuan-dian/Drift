@@ -72,6 +72,21 @@ composer probe -- <app>              # T2 真机探针
 
 关窗不是收尾的装饰：引擎 shutdown 段曾出现"窗口关得掉、画面也对，最后一步崩"，根因是对象图被静态钩子留到 PHP shutdown 才释放。所以探针必须自己 `App.close()`、等进程退出并检查退出码，而不是只看一眼窗口出现过。关闭语义另有专用探针验四态：关前句柄有效、拒绝后窗口还在、同意后进程自己退出、退出码为 0。脚本靠 `App.close()` 的幂等语义在收尾时再关一次，不会留下僵尸进程。
 
+### 异步链路的两层探针
+
+`probe-window.py` 的五条只证明"窗口能起、内容非白、关窗不崩"——`submit → send → worker → reply → drain → deliver` 这条链在 AOT 上从未被它覆盖。补法是两层独立探针，不往五条里加：
+
+| 探针 | 验什么 | 前置 | 命令 |
+|---|---|---|---|
+| `probe-worker.py` | AOT worker 的行协议往返：成功回包、未注册任务回 error、错误后仍活着、关 stdin 退出 0 | 只要有 exe 和管道，**不需要桌面 / 前台** | `python tools/probe-worker.py watermark` |
+| `probe-async.py` | UI 提交 → worker → 回贴 → UI 解锁全链：按 UIA 进异步页，读「重试」`IsEnabled` 的禁用→恢复翻转，翻页再走一遍 | **需要前台桌面**（真点导航） | `python tools/probe-async.py` |
+
+两道不能合成一道：`probe-worker.py` 在桌面锁定的会话里照样能跑，`probe-async.py` 必须真输入；混在一起会让窗口五条和协议五条一起变 SKIP。分开还带来失败归因——协议层红就先查 worker，只有它绿而端到端红才是 UI 侧的问题。
+
+`probe-worker.py` 用 `CoreJobs` 自带的 `drift.fetchImage`：url 传本地临时文件时直接短路返回，零网络、零应用改动，所以任何已构建的应用都能验。`probe-async.py` 读按钮而不是读文本：本仓 `Text` 控件不进语义树（真机 dump 证实），而「重试」的 `IsEnabled` 直接来自 `AsyncCommand::isRunning()`，是任务生命周期在 UI 上的真实投影。
+
+两者都走 `probe_check` 的三态协议：全过 0，有判据不过 1，前置不成立（没 exe / 抢不到前台）2。`2` 是"没测到"不是"没通过"，别当绿灯看。验收前可反向变异：把 `PING_JOB` 换成未注册名、或把 `RETRY` 换成恒启用的按钮名，两条探针都必须变红——不变红说明判据是空话。
+
 ## 相关
 
 - [命令速查](../reference/cli.md)

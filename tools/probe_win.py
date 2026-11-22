@@ -89,13 +89,16 @@ class BITMAPINFOHEADER(ctypes.Structure):
 
 # ─────────────────────────── 窗口 / 进程 ───────────────────────────
 
-def launch(exe, args=(), cwd=None, env_extra=None):
+def launch(exe, args=(), cwd=None, env_extra=None, pipes=False):
     """起一个产物，并给它**必须的**运行环境。
 
     ★ `PHPRC` 指向一个 `opcache.enable=0` 的临时 ini：TypePHP 产物会拉起 opcache，
       而 ASLR 下 opcache 拒绝启动 ⇒ 进程秒退、`FindWindowW` 返回 0（不是报错）。
       这段环境设置原来在 9 个探针里各抄一份，其中两份写成 `encoding="ascii"`、
       七份 `utf-8` —— 内容一样纯属运气。
+
+    `pipes=True` 把三条标准流接成管道，给走行协议的 worker 探针用；默认 False
+    保持既有探针的继承语义（一个字节都不变）。
     """
     if not os.path.isfile(exe):
         raise NotMeasured(f"找不到 {exe} —— 先构建它（php tools/drift-build.php ...）")
@@ -123,7 +126,9 @@ def launch(exe, args=(), cwd=None, env_extra=None):
     if env_extra:
         env.update(env_extra)
 
-    return subprocess.Popen([exe, *args], cwd=cwd or ROOT, env=env)
+    streams = ({'stdin': subprocess.PIPE, 'stdout': subprocess.PIPE,
+                'stderr': subprocess.PIPE} if pipes else {})
+    return subprocess.Popen([exe, *args], cwd=cwd or ROOT, env=env, **streams)
 
 
 def wait_window(title, proc=None, timeout=20.0):
@@ -407,32 +412,50 @@ def click_by_name(hwnd, name, settle=0.0):
       顺序变了也认得出来。UIA 原语复用 `probe-uia.py`，这里只做"查名字 → 换坐标 →
       走本模块唯一的真输入通道"。
 
-    ★ 延迟 import 避开循环：`probe-uia.py` 模块级 import 本模块，而本函数只在探针
-      真正调用时才加载它 —— 那时本模块已完成初始化。
+    ★ 目标在滚动容器外时先滚到视口中部：`offscreen` 节点照样有几何（异步页导航项
+      在侧栏 y=1241，客户区才 640），直接按那个坐标点会落到窗口外。滚轮位置取
+      目标的 x —— 侧栏和内容是两套滚动容器，滚错地方目标永远进不了视口。
     """
     uia = _uia()
     api = uia.uia_create()
     walker = uia.walker(api)
-    root = uia.element_from_handle(api, hwnd)
-    found = []
+    cw, ch = client_size(hwnd)
+    rect = None
 
-    def visit(elem):
-        if uia.name_of(elem) == name:
-            r = uia.rect_of(elem)
-            if r.right - r.left > 0 and r.bottom - r.top > 0:
-                found.append(r)
-                return
-        child = uia.child(walker, elem)
-        while child:
-            visit(child)
-            child = uia.sibling(walker, child)
+    for _ in range(12):
+        root = uia.element_from_handle(api, hwnd)
+        found = []
 
-    visit(root)
-    if not found:
-        raise NotMeasured(f'UIA 树里没有可见的 {name!r}（先 python tools/probe-uia.py --dump 看真名）')
+        def visit(elem):
+            if uia.name_of(elem) == name:
+                r = uia.rect_of(elem)
+                if r.right - r.left > 0 and r.bottom - r.top > 0:
+                    found.append(r)
+                    return
+            child = uia.child(walker, elem)
+            while child:
+                visit(child)
+                child = uia.sibling(walker, child)
 
-    r = found[0]
-    cx, cy = screen_to_client(hwnd, (r.left + r.right) // 2, (r.top + r.bottom) // 2)
+        visit(root)
+        if not found:
+            raise NotMeasured(f'UIA 树里没有可见的 {name!r}（先 python tools/probe-uia.py --dump 看真名）')
+
+        r = found[0]
+        cx_c, cy_c = screen_to_client(hwnd, (r.left + r.right) // 2, (r.top + r.bottom) // 2)
+        # 滚到底时最后一项会停在 y≈531（客户区 640）——用"在客户区内"判可见，
+        # 不能用"中部 12%~78%"，那会把已经可见的末项误判成还要继续滚。
+        if 0 <= cx_c <= cw and 8 <= cy_c <= ch - 8:
+            rect = r
+            break
+        step = 8 if cy_c > ch * 0.5 else -8
+        wheel(hwnd, max(4, min(cx_c, cw - 4)), ch // 2, step)
+        time.sleep(0.4)
+    else:
+        raise NotMeasured(f'{name!r} 在 UIA 树里，但滚不到视口中部')
+
+    cx, cy = screen_to_client(hwnd, (rect.left + rect.right) // 2,
+                              (rect.top + rect.bottom) // 2)
     click(hwnd, cx, cy, settle)
 
 
@@ -625,7 +648,7 @@ def _selftest():
             check("自检 · 客户区拿到了", w > 200 and h > 200, f"{w}x{h}")
             check("自检 · 窗口真在前台", user32.GetForegroundWindow() == app.hwnd)
 
-            app.click_nav('长列表 Big', settle=1.0)   # 按语义名，不按第 6 项的像素行号
+            app.click_nav('big-list', settle=1.0)   # NavigationEntry.id，不是显示名（按名走 click_by_name）
             app.park()
             time.sleep(0.3)
             base = app.grab()[2]
