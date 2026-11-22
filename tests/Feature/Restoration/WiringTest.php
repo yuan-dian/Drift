@@ -64,12 +64,12 @@ final class WiringTest extends SmokeTestCase
         $app = new UsersApplication(new MemoryUserSource(), null, FetchUsersJob::DEFAULT_BASE, $scope);
 
         check('冷启动 · 表单值复原',
-            $app->signupForm()->name === '李四' && $app->signupForm()->email === 'li@example.com',
+            $app->signupForm()->name() === '李四' && $app->signupForm()->email() === 'li@example.com',
             $app->signupForm()->toApiPayload()['name'] ?? '');
         check('冷启动 · 当前页复原（不是回默认首页）', $app->appStore()->currentPage() === 'signup');
         check('冷启动 · 搜索词复原', $app->userStore()->query() === 'zhang');
 
-        $app->signupForm()->name = '王五';
+        $app->signupForm()->setName('王五');
         check('改表单 ⇒ 直接落进 bucket（没有第二份真相源）',
             $scope->restoration()?->read('form.name') === '王五');
 

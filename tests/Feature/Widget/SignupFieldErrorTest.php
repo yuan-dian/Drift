@@ -20,14 +20,23 @@ final class SignupFieldErrorTest extends SmokeTestCase
         check('SignupForm · 姓名错误落到 name', $form->errorOf('name') === '姓名不能为空');
         check('SignupForm · 邮箱错误落到 email', $form->errorOf('email') === '邮箱格式不正确');
 
-        $form->name = '张三';
+        $form->setName('张三');
         check('SignupForm · 改了字段 ⇒ 该字段错误清掉', $form->errorOf('name') === '');
         check('SignupForm · 其他字段的错误还在', $form->errorOf('email') === '邮箱格式不正确');
 
-        $form->email = 'a@b.com';
+        $form->setEmail('a@b.com');
         check(
             'SignupForm · 全填对 ⇒ validate 通过且错误清空',
             $form->validate() === true && $form->errorOf('email') === '' && $form->errorOf('name') === '',
+        );
+
+        // 写入口一次做完四件事：写格子、存档、清该字段错误、清提交错误。第四件漏了就挂在界面上。
+        $form->fail('提交失败，请重试');
+        $form->setName('李四');
+        check(
+            'SignupForm · 用户一动输入 ⇒ 提交错误作废（不挂在界面上）',
+            $form->submitError() === '' && $form->errorOf('name') === '',
+            'submitError=' . $form->submitError(),
         );
 
         $this->flushChecks();

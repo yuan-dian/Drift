@@ -58,27 +58,27 @@ final class SignupPage extends StatelessWidget
 
             // 值 + 该字段错误一起读（都在这一个 builder 里 ⇒ 一条依赖集合）
             Bind::make(fn(): Widget => TextField::make()
-                ->value($this->form->name)
+                ->value($this->form->name())
                 ->label('姓名')
                 ->error($this->form->errorOf('name'))
                 ->maxLength(32)
                 ->autoFocus()
                 ->onSubmitted(fn(string $_) => $this->submitted())
-                ->onChanged(fn(string $x) => $this->form->name = $x)),
+                ->onChanged($this->form->setName(...))),
 
             Bind::make(fn(): Widget => TextField::make()
-                ->value($this->form->email)
+                ->value($this->form->email())
                 ->label('邮箱')
                 ->error($this->form->errorOf('email'))
                 ->maxLength(128)
                 ->inputFormatters(new FilteringTextInputFormatter('/\s+/u'))
                 ->onSubmitted(fn(string $_) => $this->submitted())
-                ->onChanged(fn(string $x) => $this->form->email = $x)),
+                ->onChanged($this->form->setEmail(...))),
 
             // 提交错误也是业务状态 ⇒ 订阅回 UI（§11.4.3）
-            Bind::make(fn(): Widget => $this->form->submitError === ''
+            Bind::make(fn(): Widget => $this->form->submitError() === ''
                 ? Row::make()
-                : Text::make($this->form->submitError)->error()),
+                : Text::make($this->form->submitError())->error()),
 
             Row::make()->spacing(8)->children([
                 Button::primary('提交')->command('form.submit'),

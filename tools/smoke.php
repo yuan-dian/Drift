@@ -4007,8 +4007,8 @@ check(
 
 // ★ Enter 提交的**真应用**判据：焦点在姓名框 ⇒ 按键 → 字段消费 → 应用闭包 → `form.submit`。
 //   断言"回车与按钮同路"：校验/序列化/回跳只有一份。
-$usersApp->signupForm()->name = '张三';
-$usersApp->signupForm()->email = 'zhang@example.com';
+$usersApp->signupForm()->setName('张三');
+$usersApp->signupForm()->setEmail('zhang@example.com');
 $usersApp->dispatchInput(KeyEvent::down(KeyChord::enter()));
 check(
     'apps/users · Enter 提交：合法表单 ⇒ 校验通过并回跳列表页（与按钮同一条 form.submit）',
@@ -4016,12 +4016,12 @@ check(
     'page=' . $usersApp->appStore()->currentPage() . ' status=' . $usersApp->appStore()->statusLine(),
 );
 
-// ② 值缝 · **局部态**（SignupForm：property hooks + 派生缓存）
-$usersApp->signupForm()->name = '张三';
-$usersApp->signupForm()->email = 'zhang@example.com';
+// ② 值缝 · **局部态**（SignupForm：每字段一格 + 显式读写入口）
+$usersApp->signupForm()->setName('张三');
+$usersApp->signupForm()->setEmail('zhang@example.com');
 check(
-    'apps/users · 局部态：表单字段写入（property hooks ⇒ 字段名只写一次）',
-    $usersApp->signupForm()->name === '张三' && $usersApp->signupForm()->validate() === true,
+    'apps/users · 局部态：表单字段写入（显式入口 ⇒ 写格子 + 存档 + 清错误一次做完）',
+    $usersApp->signupForm()->name() === '张三' && $usersApp->signupForm()->validate() === true,
 );
 $usersApp->dispatch('form.submit');
 check(
@@ -4031,7 +4031,7 @@ check(
 );
 // ★ 回跳后再跑一帧：焦点链要跟上主树（否则 ⑥ 的 Tab 序还停在注册页上）
 $usersApp->frame(12.0, $usersTight);
-$usersApp->signupForm()->name = '';
+$usersApp->signupForm()->setName('');
 $usersApp->dispatch('form.submit');
 check(
     'apps/users · 局部态：空姓名 ⇒ 校验失败回显到**该字段**（不走 State）',
@@ -4058,7 +4058,7 @@ $usersApp->userStore()->setQuery('');
 // ④ 加速键（§19 M3 出口判据：Ctrl+S 等加速键可用）
 //   ★ 2026-11-03：焦点链排到了加速键**之前**。这条判据因此更值钱 ——
 //     它现在真的在验"输入框吃不到的键（S 不在 `TextKeymap` 里）仍然落给加速键"。
-$usersApp->signupForm()->name = '';
+$usersApp->signupForm()->setName('');
 $usersApp->dispatchInput(KeyEvent::down(KeyChord::ctrl('S')));
 check(
     'apps/users · 加速键 Ctrl+S ⇒ form.submit 被派发（焦点链没吃的键落给加速键）',
