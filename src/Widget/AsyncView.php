@@ -34,6 +34,12 @@ final class AsyncView
     /** @var \Closure(AsyncValue): Widget */
     private \Closure $error;
 
+    /** error 默认支的重试动作；null = 错误态只显示消息，不画重试按钮 */
+    private ?\Closure $retry = null;
+
+    /** 调用方显式给过 `error()` ⇒ retryOn 不得覆盖它 */
+    private bool $errorOverridden = false;
+
     /** @param \Closure(AsyncValue): Widget $data */
     private function __construct(
         private readonly Readable $source,
@@ -57,6 +63,24 @@ final class AsyncView
         return new self($source, $data);
     }
 
+    /**
+     * 给 error 默认支装一个"重试"按钮 —— 省掉每个异步页重抄 `Center(Column(错误+按钮))`。
+     *
+     * ★ 只在没显式覆写 `error()` 时生效：调用方给了定制 error 支就尊重它（分页页
+     *   要在失败时保留旧行，那个形状框架猜不到）。`retryOn()` 与 `error()` 的先后
+     *   顺序不敏感 —— 默认值在 `widget()` 时才定型。
+     * ★ 动作是 0 参闭包（`Button::onPressed` 的约定）；读 running 态的门控由调用方
+     *   在闭包外决定不了，故本按钮不自带 enabled——重试调用方自己判重入。
+     *
+     * @param \Closure(): void $action
+     */
+    public function retryOn(\Closure $action): self
+    {
+        $this->retry = $action;
+
+        return $this;
+    }
+
     /** @param \Closure(AsyncValue): Widget $builder */
     public function idle(\Closure $builder): self
     {
@@ -77,6 +101,7 @@ final class AsyncView
     public function error(\Closure $builder): self
     {
         $this->error = $builder;
+        $this->errorOverridden = true;
 
         return $this;
     }
@@ -88,6 +113,17 @@ final class AsyncView
         $loading = $this->loading;
         $data = $this->data;
         $error = $this->error;
+        $retry = $this->retry;
+
+        // 显式 error() 优先；否则 retryOn() 给了动作就用"错误 + 重试"默认支。
+        if ($retry !== null && !$this->errorOverridden) {
+            $error = static function (AsyncValue $v) use ($retry): Widget {
+                return Center::make(Column::make()->spacing(12.0)->children([
+                    ErrorPlaceholder::make($v->message() !== '' ? $v->message() : '加载失败'),
+                    Button::make('重试')->onPressed($retry),
+                ]));
+            };
+        }
 
         return Bind::make(static function () use ($source, $idle, $loading, $data, $error): Widget {
             $raw = $source->get();

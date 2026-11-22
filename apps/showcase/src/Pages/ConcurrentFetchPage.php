@@ -17,7 +17,6 @@ use Drift\Widget\Button;
 use Drift\Widget\Card;
 use Drift\Widget\Center;
 use Drift\Widget\Column;
-use Drift\Widget\ErrorPlaceholder;
 use Drift\Widget\Expanded;
 use Drift\Widget\Row;
 use Drift\Widget\Spinner;
@@ -155,14 +154,7 @@ final class ConcurrentFetchPage extends ShowcasePage
                     Text::make(\count(self::PAGES) . ' 条同时在途…（UI 线程空闲）')->caption(),
                 ])
             ))
-            ->error(fn(AsyncValue $v): Widget => Center::make(
-                Column::make()->spacing(12.0)->children([
-                    ErrorPlaceholder::make($v->message()),
-                    Button::make('重试')
-                        ->enabled(!$this->dash->isRunning())
-                        ->onPressed(fn() => $this->dash->retry()),
-                ])
-            ))
+            ->retryOn($this->dash->retry(...))
             ->widget();
     }
 

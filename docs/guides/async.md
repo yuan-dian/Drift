@@ -120,6 +120,16 @@ AsyncView::of($command, fn (AsyncValue $v): Widget => $this->list($v))
 
 `fold()` 的路由规则没有第二份实现：缺键当场抛，把"界面空白"停在开发期；手写 `if/else` 会漏态、会判断顺序颠倒。刷新中（`loading` 且带旧值）走 **`data`** 支——列表继续画；`error` 不这样路由，失败必须让用户看见，哪怕旧内容还在。
 
+错误态要能重试时，用 `retryOn()` 给默认支装一个重试按钮，省掉每个页面重抄 `Center(Column(错误 + 按钮))`：
+
+```php
+AsyncView::of($command, $dataBuilder)
+    ->retryOn($command->retry(...))
+    ->widget();
+```
+
+`retryOn()` 是 0 参动作闭包，走 `Button::onPressed` 的约定；它只作用于默认 error 支，显式给了 `error()` 就以显式支为准（分页场景失败时要保留旧行，那个形状框架猜不到）。按钮不自带 enabled：error 支显示时命令已不在途（`loading` 与 `error` 互斥），按钮只在可点时出现。注意 `AsyncCommand::retry()` **有意不去重**——在途点它会打断重来，别把这个按钮当成其它场景的通用去重入口。
+
 - `AsyncValue::loading()->carriedFrom($previous)` 让刷新保留上一次的值；`isRefreshing()` 是"细进度条 / 小转圈"的判据。
 - `dataOr($fallback)` 把"没数据时用什么画"收在一处，避免拿 `mixed` 的 `value()` 直接 `foreach`。
 - `hasProgress()` / `progressOr()` 与载荷同手法：进度是**第五个维度**，不是第五态，`fold()` 仍四个键。

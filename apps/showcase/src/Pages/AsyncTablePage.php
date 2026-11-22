@@ -16,7 +16,6 @@ use Drift\Widget\Button;
 use Drift\Widget\Card;
 use Drift\Widget\Center;
 use Drift\Widget\Column;
-use Drift\Widget\ErrorPlaceholder;
 use Drift\Widget\Expanded;
 use Drift\Widget\Row;
 use Drift\Widget\Spinner;
@@ -268,14 +267,7 @@ final class AsyncTablePage extends ShowcasePage
                     Text::make('正在从后台取数…（UI 线程空闲）')->caption(),
                 ])
             ))
-            ->error(fn(AsyncValue $v): Widget => Center::make(
-                Column::make()->spacing(12.0)->children([
-                    ErrorPlaceholder::make($v->message()),
-                    Button::make('重试')
-                        ->enabled(!$this->rows->isRunning())
-                        ->onPressed(fn() => $this->retry()),
-                ])
-            ))
+            ->retryOn($this->retry(...))
             ->widget();
     }
 

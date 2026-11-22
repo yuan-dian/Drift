@@ -4,9 +4,8 @@ declare(strict_types=1);
 namespace App\Showcase;
 
 use Drift\App\AppScope;
-use Drift\App\ProcessTaskHost;
-use Drift\App\ProcessWorker;
 use Drift\App\WindowSet;
+use Drift\App\WorkerProcess;
 use Drift\Platform\Win32\Win32Platform;
 use Drift\Theme\ThemeData;
 
@@ -48,23 +47,8 @@ final class Bootstrap
 
     public static function run(): void
     {
-        // ★★ worker 分支：**同一个 exe**，靠参数分流（与 `apps/users` 同形）。
-        //   worker 只跑 `ProcessWorker::serve()`（读 stdin、跑任务、回 stdout），
-        //   **不进消息循环、不建窗口、不碰 UI** ⇒ "业务与 UI 隔离"的物质基础。
-        //   ★ `$argv` 在 tpc 编译期被拒 ⇒ 必须走 `$_SERVER['argv']`（`apps/users` 的注释）。
-        $argv = $_SERVER['argv'] ?? [];
-        $isWorker = false;
-        foreach ($argv as $arg) {
-            if ($arg === '--drift-worker') {
-                $isWorker = true;
-
-                break;
-            }
-        }
-
-        if ($isWorker) {
-            ProcessWorker::serve(JobRegistry::make());
-
+        // ★ worker 分流走框架原语：同一 exe 靠 `--drift-worker` 认角色，argv 扫描只在一处。
+        if (WorkerProcess::serveIf(JobRegistry::make())) {
             return; // stdin 关闭 = UI 进程走了 ⇒ 正常收工
         }
 
@@ -83,33 +67,13 @@ final class Bootstrap
 
         // ★★ 后台任务后端（N3/N5）：异步表格要**真慢任务**跑在别的进程里 ——
         //   默认的 `SyncTaskHost` 会在 `submit()` 那一帧同步跑完 job（慢网络 ⇒ UI 卡死）。
-        //   这里换成常驻子进程池（与 `apps/users` 同形）。
-        //   ★ `$argv[0]` = 本 exe 路径（AOT 下由启动器给）；空则退化为同步，不静默崩。
-        //   ★ 必须在**第一个窗口 attach() 之前**设置：端口在 attach 时被 `PumpHost`
-        //     取走并缓存（中途换掉会让"入队 / drain"分属两个队列）。
-        $exe = (string) ($argv[0] ?? '');
-        if ($exe !== '') {
-            // ★★ **池容量 3**：这是「并发取数」页真正并行的前置条件。
-            //   `maxWorkers` 是**组合根的决定**，不是页面能提的要求 —— 一个 worker
-            //   是一整套 AOT 运行时（几十 MB），"开几个"只有应用知道。
-            //
-            //   为什么是 3 而不是 5：
-            //   - 那页要同时取 3 页数据，3 是最小的"够用"值；
-            //   - 每个并发槽 = 一个常驻子进程。5 个在 8GB 机器上就是"开一个页面
-            //     崩一次内存"的写法，而收益只是少等几秒（`ASYNC-ARCH-2026-10-31.md` §15）；
-            //   - 池是**懒扩张**的（`prewarm()` 只发 1 个）：不点那页时，进程数与原来
-            //     完全一样，第 2、3 个只在真有第二条任务同时在途时才 spawn。
-            //
-            //   ★ 代价要记住：满载时 UI 进程 + 3 个 worker ≈ 100 MB + 3×31 MB。
-            //     其余页全是单任务，永远只用到第一个 worker。
-            $host = new ProcessTaskHost([$exe, '--drift-worker'], JobRegistry::make(), 3);
-
-            // ★ 预热：把首条任务的 275ms 进程启动挪到建窗之前。
-            //   见 `ProcessTaskHost::prewarm()` —— 它只发起进程，不等就绪。
-            $host->prewarm();
-
-            $scope->setTaskHost($host);
-        }
+        //   `useBackgroundJobs()` 收掉 exe → 池 → 预热 → 装端口四步，必须在第一个窗口
+        //   `attach()` 之前（端口在那时被 `PumpHost` 取走并缓存）。
+        //   ★ **池容量 3**：这是「并发取数」页真正并行的前置条件。3 是最小的"够用"值；
+        //     池是懒扩张的（`prewarm()` 只发 1 个），不点那页时进程数与串行时一样。
+        //     满载时 UI + 3 worker ≈ 100 + 3×31 MB，其余页永远只用到第一个 worker。
+        //     `maxWorkers` 是组合根的决定，不是页面能提的要求（一个 worker 是一整套 AOT 运行时）。
+        $scope->useBackgroundJobs(JobRegistry::make(), maxWorkers: 3);
 
         // ★ 数据源模式：默认本地慢任务（开箱即用，零依赖）；
         //   `DRIFT_SHOWCASE_HTTP=1` ⇒ 真 HTTP（先起 `apps/showcase/mock-server.php`）。

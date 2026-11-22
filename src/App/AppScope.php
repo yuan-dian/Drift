@@ -203,6 +203,43 @@ final class AppScope
     }
 
     /**
+     * 装配同 exe 的后台进程池 —— 组合根一行，收掉"取 argv[0] / 建 host / 预热 / 装端口"四步。
+     *
+     * ★ 四步原先在每个用后台的应用里逐字重抄，且顺序有契约：预热必须在第一个窗口
+     *   `attach()` 之前（否则首条任务要等进程启动），`setTaskHost()` 也必须在
+     *   `attach()` 之前（端口在那时被 `PumpHost` 取走并缓存）。收在这里，顺序只写一处。
+     * ★ 取不到 exe（解释器 / 未给 argv[0]）⇒ `setTaskHost(null)`：本应用不装后台端口，
+     *   `submit()` 会给出 rejected Future，不静默起同步 host 掩盖配置问题（见三态）。
+     *
+     * @param array<string, callable(array<string, mixed>): Job> $registry 名字 → 重建工厂（两侧同一份）
+     * @param int $maxWorkers 池上限（默认 1 = 串行；并发页才调大）
+     * @param bool $prewarm 是否预热一个 worker（默认 true）
+     *
+     * @api
+     */
+    public function useBackgroundJobs(
+        array $registry,
+        int $maxWorkers = 1,
+        bool $prewarm = true,
+    ): self {
+        $exe = WorkerProcess::executable();
+        if ($exe === '') {
+            return $this->setTaskHost(null);
+        }
+
+        $host = new ProcessTaskHost(
+            [$exe, WorkerProcess::SWITCH],
+            $registry,
+            $maxWorkers,
+        );
+        if ($prewarm) {
+            $host->prewarm();
+        }
+
+        return $this->setTaskHost($host);
+    }
+
+    /**
      * 网络图缓存：目录 + 签名 URL 的稳定键回调，组合根一行配好。
      *
      * ★ 回调做纯文本变换（剥掉每次都变的签名 query），结果随 Job 参数进 worker；

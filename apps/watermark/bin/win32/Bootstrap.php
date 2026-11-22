@@ -4,9 +4,8 @@ declare(strict_types=1);
 namespace App\Watermark;
 
 use Drift\App\AppScope;
-use Drift\App\ProcessTaskHost;
-use Drift\App\ProcessWorker;
 use Drift\App\WindowSet;
+use Drift\App\WorkerProcess;
 use Drift\Errors;
 use Drift\Platform\Dialog;
 use Drift\Platform\Win32\Win32Platform;
@@ -35,31 +34,16 @@ final class Bootstrap
 
     public static function run(): void
     {
-        // ★★ worker 分支：**同一个 exe**，靠参数分流（§17.4.5）。
-        //   ★ `$argv` 在 tpc 编译期被拒 ⇒ 必须用 `$_SERVER['argv']`。
-        //   ★ worker 只跑 `ProcessWorker::serve()`（读 stdin、跑任务、回 stdout），
-        //     **不进消息循环、不建窗口、不碰 UI**。
-        $argv = $_SERVER['argv'] ?? [];
-        $isWorker = false;
-        foreach ($argv as $arg) {
-            if ($arg === '--drift-worker') {
-                $isWorker = true;
-
-                break;
-            }
-        }
-
-        if ($isWorker) {
-            ProcessWorker::serve(JobRegistry::make());
-
+        // ★ worker 分流走框架原语：本 exe 靠 `--drift-worker` 认角色，argv 扫描只在
+        //   `WorkerProcess` 一处。worker 只跑行协议循环，不建窗、不进消息循环。
+        if (WorkerProcess::serveIf(JobRegistry::make())) {
             return;   // stdin 关闭 = UI 进程走了 ⇒ 正常收工
         }
 
         $platform = new Win32Platform();
 
-        // ★ 对话框端口：**建窗之前取**（`Win32Dialog` 持有窗口对象、owner 每次现取，
-        //   所以取早取晚都一样；这里早取是为了"缺端口"当场失败，而不是等用户点了
-        //   "选择图片"才发现）。`null` = 本平台没实现 ⇒ 走 §1.2 中止序列。
+        // ★ 对话框端口：**建窗之前取**（缺端口当场失败，而不是等用户点了"选择图片"
+        //   才发现）。`null` = 本平台没实现 ⇒ 走中止序列。
         $dialog = $platform->dialog();
         if (!$dialog instanceof Dialog) {
             Errors::report('本平台没有对话框实现，watermark 无法选图');
@@ -67,27 +51,14 @@ final class Bootstrap
             return;
         }
 
-        // ★ 后台端口：把本 exe 以 `--drift-worker` 起成常驻子进程。`$argv[0]` = 本
-        //   exe 路径（AOT 下由启动器给）；空 ⇒ 退化为同步（不静默崩）。
-        $exe = (string) ($argv[0] ?? '');
-        $taskHost = $exe === ''
-            ? null
-            : new ProcessTaskHost([$exe, '--drift-worker'], JobRegistry::make());
-
-        // ★★ 预热 worker：子进程的第一个任务要付约 275ms 启动
-        //   （`probes/RESULTS.md` §12 ⑧），而本应用**进窗就取签名** —— 不预热的话
-        //   那段空等正好落在用户第一眼。`prewarm()` 只把进程**发起**（`proc_open`
-        //   异步、立即返回），启动期于是与"建窗 / 首帧"重叠。
-        //   ★ 必须在 `open()` 之前：第一个窗口的 `attach()` 会取走端口并缓存。
-        if ($taskHost !== null) {
-            $taskHost->prewarm();
-        }
-
         $set = new WindowSet($platform, 'watermark');
 
         // ★ 端口全进作用域：对话框 + 后台池都是"一个进程一份"，多窗口自动共用。
-        //   应用构造器因此只收一个 scope —— 少一个"哪个参数必填"的约定。
-        $scope = AppScope::make()->setDialog($dialog)->setTaskHost($taskHost);
+        //   `useBackgroundJobs()` 收掉 exe → 池 → 预热 → 装端口四步（预热让进窗就取
+        //   签名的 275ms 落在建窗期），取不到 exe 就不装后台端口，submit 给 rejected Future。
+        $scope = AppScope::make()
+            ->setDialog($dialog)
+            ->useBackgroundJobs(JobRegistry::make());
 
         $set->open(
             'main',

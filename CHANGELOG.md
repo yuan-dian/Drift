@@ -47,6 +47,14 @@
   变化（主题 / 明暗）也会补发给 parked 子树，切回来直接是新主题。
 - **探针坐标锁解除**：6 个真机探针按导航项的无障碍名点击，不再记 `90 + N * 36` 的
   像素行号；插页 / 重排不会再让探针静默点错页。
+- **组合根样板下沉**：worker 分流与后台装配收进框架——`WorkerProcess::serveIf()` 独占
+  同 exe 双角色的 argv 判定（`--drift-worker` 只此一处），`AppScope::useBackgroundJobs()`
+  收掉取 exe → 建进程池 → 预热 → 装端口四步；watermark / users / showcase 三份逐字相同
+  的扫描与装配删除。`worker-argv` lint 禁止第四份开关字面量重抄。第二窗 / 无边框 / 材质 /
+  恢复 / 关闭守卫仍是应用语义，留在各自组合根，不塞进配置对象。
+- **`AsyncView::retryOn()`**：error 默认支持一行装"错误 + 重试按钮"，showcase 的异步表格与
+  并发取数两页删掉重抄的 `Center(Column(ErrorPlaceholder + Button))`；显式 `error()` 仍优先
+  （分页失败要保留旧行，LoadMore 页因此不迁）。新增裁决 A23 / A24。
 
 ## v0.1.0（2026-11-20 · 首个无后缀的预览版）
 

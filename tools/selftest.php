@@ -184,6 +184,10 @@ function drift_lint_selftest(string $root, Linter $linter): bool
         'app-bootstrap-loop' => [
             'apps/Loop/bin/win32/Bootstrap.php:' . Diagnostic::ERROR,
         ],
+        // worker 开关收口守卫（2026-11-22）：Bad 一份字面量；Good 只在注释里提开关不报。
+        'worker-argv' => [
+            'apps/WorkerArgvBad.php:' . Diagnostic::ERROR,
+        ],
         // 子类覆写构造器必须调 `parent::__construct()`。
         // ★ 到 2026-10-30 为止这条规则**一条夹具都没有** ⇒ 恒是"该响 0"，
         //   也就是"它能不能响"从来没被证过。当天把 `Widget` 收进基类表时，

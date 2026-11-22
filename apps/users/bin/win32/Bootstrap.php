@@ -3,10 +3,9 @@ declare(strict_types=1);
 
 namespace App\Users;
 
-use Drift\App\ProcessTaskHost;
-use Drift\App\ProcessWorker;
 use Drift\App\Window;
 use Drift\App\WindowSet;
+use Drift\App\WorkerProcess;
 use Drift\Errors;
 use Drift\Platform\Backdrop;
 use Drift\Platform\WindowMaterial;
@@ -40,58 +39,28 @@ final class Bootstrap
 
     public static function run(): void
     {
-        // ★★ worker 分支：**同一个 exe**，靠参数分流（§17.4.5）。
-        //   ★ `$argv` 在 tpc 编译期被拒（"The variable $argv is undefined"）⇒ 必须用
-        //     `$_SERVER['argv']`（探针 ⑦ 实测：连额外参数一起给全）。
-        //   ★ worker 只跑 `ProcessWorker::serve()`（读 stdin、跑任务、回 stdout），
-        //     **不进消息循环、不建窗口、不碰 UI**。
-        $argv = $_SERVER['argv'] ?? [];
-        $isWorker = false;
-        foreach ($argv as $arg) {
-            if ($arg === '--drift-worker') {
-                $isWorker = true;
-
-                break;
-            }
-        }
-
-        if ($isWorker) {
-            ProcessWorker::serve(JobRegistry::make());
-
+        // ★ worker 分流走框架原语：同一 exe 靠 `--drift-worker` 认角色，argv 扫描只在一处。
+        if (WorkerProcess::serveIf(JobRegistry::make())) {
             return; // stdin 关闭 = UI 进程走了 ⇒ 正常收工
         }
 
         $platform = new Win32Platform();
 
-        // ★ **M4 的形态到了**：首屏取数不再占 UI 线程 —— 交给常驻子进程（§17.4.5），
-        //   它去请求一个**真 HTTP 后端**（`apps/users/mock-server.php`，故意慢 1.2s）。
-        //   ⇒ `AsyncValue::loading()` 那一态第一次真的被用户看见（§11.5 的结论）。
-        //   ★ 换回同步只改这一行：`new UsersApplication($src)`（host = null）。
-        //   ★ `$argv[0]` = 本 exe 路径（AOT 下由启动器给；空则退化为同步，不静默崩）。
+        // ★ 首屏取数走常驻子进程（真 HTTP 后端，故意慢 1.2s）⇒ `loading()` 那一态
+        //   第一次真的被用户看见。`useBackgroundJobs()` 收掉 exe → 池 → 预热 → 装端口；
+        //   取不到 exe（解释器）就不装后台端口，submit 给 rejected Future。
         $src = new MemoryUserSource();
-        $exe = (string) ($argv[0] ?? '');
-        $taskHost = $exe === ''
-            ? null
-            : new ProcessTaskHost([$exe, '--drift-worker'], JobRegistry::make());
-
-        // ★★ 预热 worker（2026-10-31）：子进程的第一个任务要付 275ms 启动
-        //   （`probes/RESULTS.md` §12 ⑧），而"进页面就取数"会把这段空等摆在
-        //   用户第一眼 —— 转圈出现了、任务却还没开始跑。
-        //   `prewarm()` 只把进程**发起**（`proc_open` 异步、立即返回），启动那
-        //   275ms 于是落在"建窗 / 首帧"这段时间里（另一颗核上跑，不占 UI 线程）。
-        //   ★ 必须在 `open()` 之前：第一个窗口的 `attach()` 会取走端口并缓存。
-        if ($taskHost !== null) {
-            $taskHost->prewarm();
-        }
-
         $set = new WindowSet($platform, 'users');
 
         // 业务状态恢复：构造即读回，应用构造时 bucket 已有值；写回由 WindowSet 在退出时做一次。
         $scope = \Drift\App\AppScope::make()
-            ->setTaskHost($taskHost)
             ->setRestoration(new \Drift\App\Restoration\RestorationStore(
                 $set->file('state')
-            ));
+            ))
+            ->useBackgroundJobs(JobRegistry::make());
+
+        // 应用构造仍收 host：它要据此把首屏取数接到后台或同步源（二者业务路径不同）。
+        $taskHost = $scope->taskHost();
 
         $set->open(
             'main',

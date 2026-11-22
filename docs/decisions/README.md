@@ -33,6 +33,8 @@
 | A21 | 异步视图 | 控件层用 `Widget\AsyncView` 消费 `AsyncValue`：源是 `Readable`，`data` 支必填，`idle` / `loading` / `error` 有**非空白默认**；四态路由仍由 `AsyncValue::fold()` 独占。为它重新放行 `Widget → Async` 这条单向边（`Async` 不反向依赖 `Widget`，靠 `Readable` 解耦）。 | 出现更通用的“状态 → 子树”抽象能同时覆盖非异步四态，且不需要 Widget 依赖 Async；或默认支开始携带业务语义（那时把它拆回页面显式写）。 |
 
 | A22 | 状态条控件 | **不抽**通用 `StatusLine`。users 状态栏是无 tone 的一行文本，watermark 是带语义点的 `StatusMessage`；真正重复的只有 `Row + Text + Spacer`，而语义色已经由 `StatusTone` + `ColorToken` 收口。再抽一层会把“业务 kind → tone”映射推回调用点，抽象成本高于省下的排版。 | 第三个应用也出现“消息 + 语义点 + 容器底”且读写接口稳定，届时抽的是完整状态消息控件，不是只包 `Row` 的壳。 |
+| A23 | 组合根样板 | worker 分流与后台装配收成两个正交原语：`WorkerProcess::serveIf()` 独占 argv 扫描与角色判定（开关 `--drift-worker` 只此一处），`AppScope::useBackgroundJobs()` 收掉 exe → 池 → 预热 → 装端口四步；`worker-argv` lint 禁止第四份开关字面量。**不**做“大而全配置对象”：第二窗 / 无边框 / 材质 / 恢复 / 关闭守卫是应用语义，留在组合根；`Bootstrap.php` 必须保留 `new WindowSet(`（`app-bootstrap-loop` 判据）。 | 出现同一份装配在 5 个以上应用里逐字重复、或平台侧提出“一个配置文件描述所有窗口”的真实消费者；届时先给 `EventLoop` 加钩子，不复制循环。 |
+| A24 | 重试默认支 | `AsyncView::retryOn(\Closure)` 给**默认** error 支装“错误 + 重试按钮”，省掉 showcase 异步表格与并发取数两页重抄 `Center(Column(ErrorPlaceholder + Button))`；显式 `error()` 优先于 `retryOn()`（LoadMore 页分页失败要保留旧行的形状只有页面知道，故不迁）。重试动作是 0 参闭包；`AsyncCommand::retry()` 有意不去重（在途点它要打断重来），按钮不自带 enabled，安全性来自 error 支显示时命令已不在途。 | 第四个应用需要带自定义文案 / 门控的重试支，届时扩 `retryOn()` 参数而不是造新控件；或 error 态真的会持续 running，才把 enabled 收进框架。 |
 
 ## 编译器与代码纪律
 

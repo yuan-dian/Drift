@@ -38,6 +38,7 @@ use Drift\Dev\Lint\Rules\StaleDerived;
 use Drift\Dev\Lint\Rules\StaticPipelineFacade;
 use Drift\Dev\Lint\Rules\StrConcatLoop;
 use Drift\Dev\Lint\Rules\SubscriberMark;
+use Drift\Dev\Lint\Rules\WorkerArgv;
 
 /**
  * 规则集与执行器。
@@ -140,6 +141,8 @@ final class Linter
             // 单类页面（Page 是 State 子类）里 `widget()` 返回的是宿主 PageShell：
             //   照旧拿它当"页面自己"会在运行期才炸，而金标快照未必覆盖那条交互路径。
             new PageSelfWidget(),
+            // worker 开关只许在 WorkerProcess 一处拼（2026-11-22：三份组合根收成一处后的守卫）
+            new WorkerArgv(),
         ]);
     }
 

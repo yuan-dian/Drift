@@ -53,15 +53,17 @@ php tools/drift-build.php hello
 
 这是**全应用唯一提到具体平台实现**的文件；共享的应用源码零平台引用。装配顺序都是真机踩出来的：
 
-1. `new <Platform>()` 建平台实现——这是全应用唯一提到具体平台的地方。
-2. `new WindowSet($platform, 'app')` 声明一次应用名——框架经 `AppPaths` 拼出 `<平台基础目录>/<应用名>/window.state`，多个 Drift 应用不会互撞；构造时经 `Platform::hooks()` 装 fatal box 与 resize pump，`run()` 的 finally 统一卸。钩子捕获的闭包持有整条对象图，漏卸会让 AOT 关窗崩，所以这段不再由组合根手写。
-3. `AppScope::make()` 建进程级共享作用域——多窗口共用字体、任务池、主题。
-4. 按系统外观取主题。
-5. `AppScope::setTaskHost()` 必须在 `attach()` 之前——`PumpHost` 在 attach 时取走并缓存端口。
+1. `WorkerProcess::serveIf($registry)` 分流 worker 角色——**同一个 exe** 靠 `--drift-worker` 认身份，worker 只跑行协议循环、不建窗。argv 扫描只在 `WorkerProcess` 一处，`worker-argv` lint 禁止第四份。
+2. `new <Platform>()` 建平台实现——这是全应用唯一提到具体平台的地方。
+3. `new WindowSet($platform, 'app')` 声明一次应用名——框架经 `AppPaths` 拼出 `<平台基础目录>/<应用名>/window.state`，多个 Drift 应用不会互撞；构造时经 `Platform::hooks()` 装 fatal box 与 resize pump，`run()` 的 finally 统一卸。钩子捕获的闭包持有整条对象图，漏卸会让 AOT 关窗崩，所以这段不再由组合根手写。
+4. `AppScope::make()` 建进程级共享作用域——多窗口共用字体、任务池、主题。要后台任务就调 `useBackgroundJobs($registry)`：它收掉取 exe → 建进程池 → 预热 → 装端口四步；取不到 exe（解释器 / 无 argv[0]）就不装后台端口，`submit()` 会给 rejected Future。必须在 `attach()` 之前——`PumpHost` 在那时取走并缓存端口。
+5. 按系统外观取主题。
 6. `WindowSet::open()` 每窗一个应用实例；槽位名要不同，否则几何互相覆盖且不报错。标题默认取应用的 `title()`，同应用开两窗要不同标题时才在末尾传覆盖值。
 7. `WindowSet::run()` 进主循环；resize pump 由平台钩子按窗口句柄接好，副窗拖动不会重排主窗。
 
 `Application` 没有 `run()`，只有 `attach()` 与 `frame()`：等待由平台给，主循环由框架编排。
+
+进程角色分流与后台装配都是**可选**的：无后台任务的单窗应用（hello / tutorial）只需第 2、3、6、7 步。第二窗口、无边框、窗口材质、关闭守卫、状态恢复这些是应用语义，仍由组合根自己声明——它们是差异，不是样板，不塞进配置对象。
 
 ## Application 子类
 
