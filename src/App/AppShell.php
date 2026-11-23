@@ -234,8 +234,14 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
         // host = $this，片只经 PumpHostHost 摸时间基准与 taskHost()。
         $this->pumps = new PumpHost($this);
 
-        // 门面收三样：两个窗口私有的宿主片段 + 作用域（端口来源）。
-        $this->environment = new AppEnvironment($this->overlayHost, $this->pumps, $this->scope);
+        // 剪贴板传覆写点的闭包，不直连 scope：编辑命令环也走 app->clipboard()，
+        // 门面走同一处才不会在应用覆写后读到一个不同的端口。
+        $this->environment = new AppEnvironment(
+            $this->overlayHost,
+            $this->pumps,
+            $this->scope,
+            fn(): ?Clipboard => $this->app->clipboard(),
+        );
         $this->context = new AppContext($this->scope, $this->environment, $this->pumps);
 
         // `commands()` 不在这里调：PHP 构造链父先子后，此刻子类字段还是 null。
@@ -287,7 +293,7 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
     /**
      * 已挂载的后台端口（`null` = 未挂载或应用声明不用）。
      *
-     * @internal 测试与 devtools 读它；应用走 {@see self::submit()}，不要碰后端。
+     * @internal 测试与 devtools 读它；应用走 {@see Application::submit()}，不要碰后端。
      */
     public function tasks(): ?TaskHost
     {

@@ -22,6 +22,9 @@
 
 ### Breaking
 
+- **取消能力从四档降为三档**：`CancelSupport::QueuedOnly` 删除（三个后端早已全部升到
+  `Killable`，这档只剩枚举与文案在误导读者）；`Killable` 的 `value` 由 3 改为 2，
+  按"能省多少活"的递增序仍成立。`revokesQueued()` 现在只认 `Killable`。
 - **组合根入口改为实例**：`Bootstrap` 必须 `extends Drift\App\AppEntry`，`run()` 由基类
   继承且为 `final`，应用改写 `protected function start()`（后台应用再加
   `protected function jobs()`）；`main.php` 从 `\App\X\Bootstrap::run();` 改为
@@ -42,6 +45,14 @@
 
 ### 已实现
 
+- **CI 架构判据纳入本地验证**：`assert-workflows.php` 一直是 `verify.yml` 的独立步骤、
+  不在 `VerifyPlan` 里，A28 删 `ShowcaseNav`/`NavEntry` 后它引用已删文件，本地全绿而 CI 红。
+  判据改用 A29 后的导航链（生成清单 → `PageRegistry` → `RouteDescriptor`）做锚点，并作为
+  `workflows` static step 并入 `bin/drift verify`——同一份脚本，本地与 CI 不再漂移。
+- **剪贴板单一真相**：`Environment` 的剪贴板读写原先直连 `AppScope` 端口，而编辑命令环
+  走 `Application::clipboard()` 覆写点——应用覆写后两者指向不同端口且不报错。现门面经
+  `AppShell` 注入的覆写点闭包访问，两条路径合一；覆写机制保留，与 `theme()`/`metrics()`
+  一致。
 - **示例台切页保活**：`ShowcaseRoot` 改用框架现成的 `PageHost` + `RouteTable`，34 页按
   稳定 id 注册、页面实例只造一次、换页走 Offstage 保活——表单草稿 / 滚动位置 / 异步
   结果切走再切回都还在（此前每次切页 `new` 新页，23 个 StatefulWidget 的 State 全丢）。

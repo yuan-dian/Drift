@@ -1233,7 +1233,7 @@ fwrite(STDOUT, '  ok     Linux Skia 构建通道：' . count($linuxDepsAnchors) 
 
 // ── Route 架构（注解即导航 → 启动期反射 → reducer 可选 → 命名解耦）──────
 // 这一层最容易"悄悄退化"的地方：
-//   ① 导航元数据双写：ShowcaseNav 又长出一张写 id/icon/title 的清单（注解之外）；
+//   ① 导航元数据双写：RouteManifest 又长出写 id/icon/title 的清单（注解之外）；
 //   ② 注解参数从枚举退回字符串（丢掉编译期校验，拼错变成运行期静默）；
 //   ③ 反射滑进热路径（每帧 newInstance，帧税爆掉）；
 //   ④ reducer 的事件主路被绕过（按钮里直接改状态 / 直接调服务）；
@@ -1246,7 +1246,8 @@ $reducerStatePhp = (string) @file_get_contents($root . '/src/Reducer/ReducerStat
 $reducerViewPhp = (string) @file_get_contents($root . '/src/Reducer/ReducerView.php');
 $snackbarReducerPhp = (string) @file_get_contents($root . '/apps/showcase/src/Routes/SnackbarReducer.php');
 $showcaseRoutesPhp = (string) @file_get_contents($root . '/apps/showcase/src/Routes/ShowcaseRoutes.php');
-$showcaseNavPhp = (string) @file_get_contents($root . '/apps/showcase/src/ShowcaseNav.php');
+$routeManifestPhp = (string) @file_get_contents($root . '/apps/showcase/src/Routes/RouteManifest.php');
+$showcaseRootPhp = (string) @file_get_contents($root . '/apps/showcase/src/ShowcaseRoot.php');
 $snackbarPagePhp = (string) @file_get_contents($root . '/apps/showcase/src/Pages/SnackbarPage.php');
 $routeCatalogTest = (string) @file_get_contents($root . '/tests/Unit/Route/RouteCatalogTest.php');
 $snackbarReducerTest = (string) @file_get_contents($root . '/tests/Unit/App/SnackbarReducerTest.php');
@@ -1280,11 +1281,11 @@ $routeAnchors = [
     [$snackbarPagePhp, 'new SnackbarReducer(new SnackbarServices($this->env))', 'Page 没把环境门面投影成服务'],
     [$snackbarReducerPhp, 'return match ($event->intent) {', 'update 不再是穷尽分派'],
     [$snackbarReducerPhp, 'fn () => $dispatch(new SnackbarEvent(SnackbarIntent::UndoClicked))', '动作回调没回主路 —— 计数会卡住'],
-    // 应用侧：一页一行清单 + 导航从描述符派生（不手写 PAGES）
-    [$showcaseRoutesPhp, 'RouteCatalog::discover(self::CLASSES)', '应用没装路由表'],
-    [$showcaseRoutesPhp, 'Pages\\SnackbarPage::class,', '清单里少了样板页'],
-    [$showcaseNavPhp, 'ShowcaseRoutes::catalog()->all()', '导航没从路由表派生 —— 又回到手写清单'],
-    [$showcaseNavPhp, 'new NavEntry(', '导航项没从描述符构造'],
+    // 应用侧：生成清单只列类名 + 导航从描述符派生（不手写 PAGES）
+    [$showcaseRoutesPhp, 'RouteCatalog::discover(RouteManifest::CLASSES)', '应用没装路由表'],
+    [$routeManifestPhp, 'Pages\\SnackbarPage::class,', '生成清单里少了样板页'],
+    [$showcaseRootPhp, 'PageRegistry::discover(ShowcaseRoutes::classes()', '导航没从路由表派生 —— 又回到手写清单'],
+    [$showcaseRootPhp, 'RouteDescriptor $entry', '导航项没从描述符构造'],
     // 判据存在性：改了实现就该有对应判据
     [$routeCatalogTest, '路由 id 冲突', '没有 id 冲突判据'],
     [$snackbarReducerTest, 'assertSame($model, $update->model', '没有"无变化不造新 model"判据'],
@@ -1301,9 +1302,9 @@ foreach ($routeAnchors as [$text, $needle, $label]) {
 if (str_contains($reducerStatePhp, 'Reflection')) {
     fail('ReducerState 出现反射 —— 反射滑进热路径，每帧都要走 zendvm');
 }
-// 反向判据 2：导航清单不许双写 —— ShowcaseNav 不得再声明页面常量数组或图标字面量。
-if (preg_match('/(?:const\s+\w*PAGES|\[\s*[\'"][a-z-]+[\'"]\s*,\s*IconName::)/', $showcaseNavPhp)) {
-    fail('ShowcaseNav 又长出导航元数据 —— id/icon/title 只能来自 #[Route] 注解');
+// 反向判据 2：导航清单不许双写 —— 生成的页清单只放类名，id/icon/title 只在 #[Route] 注解里。
+if (preg_match('/(?:IconName::|[\'"]id[\'"]\s*=>|[\'"]title[\'"]\s*=>)/', $routeManifestPhp)) {
+    fail('RouteManifest 又长出导航元数据 —— id/icon/title 只能来自 #[Route] 注解');
 }
 // 反向判据 3：路由层不许碰状态管理（描述符不得有 services 属性 / 目录不得有 create()）。
 if (preg_match('/public\s+(?:readonly\s+)?[\w\\\\]+\s+\$services/', $routeDescriptorPhp)

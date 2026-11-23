@@ -6,6 +6,8 @@ namespace Drift\Dev\Tests\Feature\App;
 use Drift\App\AppScope;
 use Drift\App\Application;
 use Drift\Dev\Smoke\App\EchoApplication;
+use Drift\Dev\Smoke\App\EditApplication;
+use Drift\Dev\Smoke\App\FakeClipboard;
 use Drift\Dev\Smoke\App\FakeDialog;
 use PHPUnit\Framework\TestCase;
 use Drift\Errors;
@@ -59,6 +61,20 @@ final class EnvironmentTest extends TestCase
 
         self::assertSame('D:/tmp/合同.md', $env->openFile('打开一个文件'));
         self::assertSame(1, $dialog->openCalls, '门面必须转发到作用域里那个端口');
+    }
+
+    public function testClipboardFacadeUsesTheSameOverrideAsTheEditingRing(): void
+    {
+        $clip = new FakeClipboard();
+        $app = new EditApplication();
+        $app->clip = $clip;
+
+        // scope 里没放端口 ⇒ 门面只有走 Application::clipboard() 覆写点才读得到。
+        $env = $app->environment();
+        $env->setClipboardText('门面写入');
+
+        self::assertSame('门面写入', $clip->text, '写入必须落到应用覆写的端口');
+        self::assertSame('门面写入', $env->clipboardText(), '读写同一端口');
     }
 
     public function testWindowDragSupportAndStartAreTheSameSwitch(): void

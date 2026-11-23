@@ -40,14 +40,6 @@ enum CancelSupport: int
     case DetachedOnly = 1;
 
     /**
-     * **排队中**的那部分能真的撤掉，已发给 worker 的只能"不交付"。
-     *
-     * ★ 历史档位：进程池在引入 {@see Killable} 之前停在这一档。保留它只为
-     *   排序与文案的连续性 —— 后端声明一律用更高档，别再返回这一档。
-     */
-    case QueuedOnly = 2;
-
-    /**
      * **在途**任务也能真的杀掉（= 取消真能省 CPU），不只是"不交付"。
      *
      * ★ 进程后端（`ProcessTaskHost`）：每个 worker 在途严格 ≤1（`pickIdle()` 只挑
@@ -56,12 +48,12 @@ enum CancelSupport: int
      * ★ 借鉴 Electron `utilityProcess.kill()` / JavaFX `Future.cancel(true)`：取消
      *   终止执行单元本身，比让任务自己轮询取消标志少一层协议与每 job 的配合。
      */
-    case Killable = 3;
+    case Killable = 2;
 
     /** 取消能不能让**还没开始**的那部分真的不跑 */
     public function revokesQueued(): bool
     {
-        return $this === self::QueuedOnly || $this === self::Killable;
+        return $this === self::Killable;
     }
 
     /** 取消能不能让**已经在跑**的那部分真的停下来（= 真省 CPU） */
@@ -84,10 +76,6 @@ enum CancelSupport: int
         if ($this === self::DetachedOnly) {
             return '任务已在后台开始，取消只是不再交付结果（仍会跑完）';
         }
-        if ($this === self::QueuedOnly) {
-            return '排队中的任务会被取消，已开始的会跑完但不再交付结果';
-        }
-
         return '取消会终止正在后台跑的任务，后台立即停手';
     }
 }

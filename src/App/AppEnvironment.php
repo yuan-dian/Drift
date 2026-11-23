@@ -18,13 +18,15 @@ use Drift\Widget\Widget;
  * | 能力 | 来源 | 为什么在那儿 |
  * |---|---|---|
  * | 浮层 / 定时器 | 本窗 `OverlayManager` / `PumpHost` | 窗口私有：跨窗共享会把 A 窗的通知弹到 B 窗 |
- * | 对话框 / 剪贴板 | `AppScope` 的端口槽 | 一个进程一份（`Win32Dialog` 的 owner 每次现取，不绑窗口） |
+ * | 对话框 | `AppScope` 的端口槽 | 一个进程一份（`Win32Dialog` 的 owner 每次现取，不绑窗口） |
+ * | 剪贴板 | `Application::clipboard()` 覆写点（默认读 `AppScope`） | 编辑命令环也走这里：两个消费者必须看到同一端口 |
  * | 窗口拖动 | 组合根 `windowDrag()` 注册的闭包 | 平台实现只有组合根能提，这里只持不透明闭包 |
  *
  * ## 不持有 Application
  *
  * 门面只暴露能力，不暴露 `frame()` / `attach()` / `input` —— Store 与控件拿到它
- * 也摸不到帧循环。宿主片段构造期注入，不反向查找。
+ * 也摸不到帧循环。剪贴板拿的是覆写点的闭包而非宿主本身：应用仍可覆写端口，
+ * 但门面不会顺带拿到帧内方法。
  *
  * ## 为什么 `windowDrag` 是可变槽（本类唯一非 readonly 字段）
  *
@@ -49,6 +51,8 @@ final class AppEnvironment implements Environment
         private readonly OverlayManager $overlay,
         private readonly PumpHost $pumps,
         private readonly AppScope $scope,
+        /** @var \Closure(): ?\Drift\Platform\Clipboard 与编辑命令环共用的覆写点 */
+        private readonly \Closure $clipboardProvider,
     ) {
     }
 
@@ -198,7 +202,7 @@ final class AppEnvironment implements Environment
 
     private function clipboard(): ?\Drift\Platform\Clipboard
     {
-        $clipboard = $this->scope->clipboard();
+        $clipboard = ($this->clipboardProvider)();
 
         if ($clipboard === null && !$this->clipboardMissingReported) {
             $this->clipboardMissingReported = true;

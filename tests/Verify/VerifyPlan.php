@@ -53,6 +53,15 @@ final class VerifyPlan
                 'label'   => 'lint 规则集（含 S4 迁入的 project-name；条数看 tools/lint.php --list）',
                 'command' => [$php, $root . '/tools/lint.php'],
             ],
+            'workflows' => [
+                'id'      => 'workflows',
+                'layer'   => 'static',
+                'tier'    => 'fast',
+                'class'   => 'static',
+                // 与 verify.yml 同一份脚本：不进计划就只能靠 CI 发现漂移（A28 删类时红过一次）。
+                'label'   => 'CI workflow 结构判据（与 verify.yml 同一份脚本）',
+                'command' => [$php, $root . '/.github/scripts/assert-workflows.php'],
+            ],
             'sceneset' => [
                 'id'      => 'sceneset',
                 'layer'   => 'static',

@@ -12,7 +12,7 @@ use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
 /**
- * `cancel()` 能停多深 —— 四档能力声明与后端实现必须对得上。
+ * `cancel()` 能停多深 —— 三档能力声明与后端实现必须对得上。
  *
  * ## 为什么要有这条判据
  *
@@ -37,12 +37,8 @@ final class CancelSupportContractTest extends TestCase
     public function 三档按能省多少活单调递增(): void
     {
         self::assertTrue(
-            CancelSupport::Killable->value > CancelSupport::QueuedOnly->value,
-            'Killable（在途也能真停）是最高档，必须排在 QueuedOnly 之上'
-        );
-        self::assertTrue(
-            CancelSupport::DetachedOnly->value < CancelSupport::QueuedOnly->value,
-            'QueuedOnly 能撤排队，它必须排在 DetachedOnly 之上'
+            CancelSupport::Killable->value > CancelSupport::DetachedOnly->value,
+            'Killable（在途也能真停）是最高档，必须排在 DetachedOnly 之上'
         );
         self::assertTrue(
             CancelSupport::AlreadyDone->value < CancelSupport::DetachedOnly->value,
@@ -50,7 +46,6 @@ final class CancelSupportContractTest extends TestCase
         );
 
         self::assertTrue(CancelSupport::Killable->revokesQueued());
-        self::assertTrue(CancelSupport::QueuedOnly->revokesQueued());
         self::assertFalse(CancelSupport::DetachedOnly->revokesQueued());
         self::assertFalse(CancelSupport::AlreadyDone->revokesQueued());
     }
@@ -59,7 +54,6 @@ final class CancelSupportContractTest extends TestCase
     public function killsRunning只认最高档(): void
     {
         self::assertTrue(CancelSupport::Killable->killsRunning());
-        self::assertFalse(CancelSupport::QueuedOnly->killsRunning());
         self::assertFalse(CancelSupport::DetachedOnly->killsRunning());
         self::assertFalse(CancelSupport::AlreadyDone->killsRunning());
     }

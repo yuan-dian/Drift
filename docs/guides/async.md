@@ -158,7 +158,7 @@ AsyncView::of($command, $dataBuilder)
 
 `Future::cancel()` 是**尽力而为**：调后端钩子 + 标记"结果不要了"，此后迟到的结算被忽略；它不会让 Future 变成失败。取消沿派生链上溯到根，代价是树的剪枝——同一根被两处扇出，取消一处另一处也收不到结果。要复用就复用**结果值**，不要复用 Future。有运行时兜底：被取消节点若有多条派生链，会报 `future/fanout-cancel` 诊断，把静默剪枝变红。
 
-取消深度由 `TaskHost::cancelSupport()` 声明，界面据此决定要不要提示"仍在后台运行"，四档按"能省多少活"递增：`AlreadyDone`（同步后端没有在跑的活）→ `DetachedOnly`（线程后端摘不回已派发的活，只能"不交付"）→ `QueuedOnly`（能撤排队中的）→ `Killable`（连在途任务也真停）。`killsRunning()` 问的就是"取消会不会让后台真的停手"。
+取消深度由 `TaskHost::cancelSupport()` 声明，界面据此决定要不要提示"仍在后台运行"，三档按"能省多少活"递增：`AlreadyDone`（同步后端没有在跑的活）→ `DetachedOnly`（线程后端摘不回已派发的活，只能"不交付"）→ `Killable`（能杀在途 worker，排队与在途都真停）。`killsRunning()` 问的就是"取消会不会让后台真的停手"。
 
 进程后端是 `Killable`：`pickIdle()` 保证每个 worker 在途严格 ≤1，所以取消一条在途任务可以安全地杀掉独占它的 worker、下帧补池——不连坐别的活，也没有"取消后后台还在烧 CPU"。线程后端摘不回已派发的活，记账不能减（否则 `pending()` 掉 0、帧时钟睡死，结果永远躺在完成队列）。取消不是失败：不投 `Failure`、不触发 onError，`Future` 保持未结算，靠 `AsyncCommand::abandon()` 不再等它。这与 Electron `utilityProcess.kill()` / JavaFX `Future.cancel(true)` 是同一路子——终止执行单元比让任务自己轮询取消标志少一层协议。
 
