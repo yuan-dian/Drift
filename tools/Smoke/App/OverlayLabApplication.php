@@ -22,11 +22,10 @@ use Drift\Dev\Smoke\Overlay\FlatBox;
  * 根树几何确定：`Column` = [锚点按钮 · 背景按钮]。两个按钮都可聚焦可点 ⇒
  * 既能验"锚点钉在控件旁"，也能验"点浮层外会不会穿透到下面的按钮"。
  *
- * ★ **不给 `Application` 加新的公共 push API**：夹具走 `showMenu()` 再改
- *   栈顶条目的字段 —— `OverlayEntry` 的字段本来就是公开可配的（那是它存在的
- *   意义），夹具要造的形态（`barrier=false` 的 Tooltip、`ABOVE` 的翻转）目前
- *   还没有对应的控件（W8 才做 Tooltip），现在给框架加 API 就是给未来的控件
- *   猜形状。
+ * ★ **不给 `Application` 加新的公共 push API**：夹具走 `showMenu()` 再换栈顶条目的
+ *   落位与策略 —— 落位字段本来就公开可配，策略则整块替换（换预设，不逐位改写）。
+ *   夹具要造的形态（点外穿透的弹出层、`ABOVE` 的翻转）目前还没有对应的控件，现在给
+ *   框架加 API 就是给未来的控件猜形状。
  */
 final class OverlayLabApplication extends Application
 {
@@ -98,7 +97,10 @@ final class OverlayLabApplication extends Application
         }
 
         $e->prefer = $prefer;
-        $e->barrier = $barrier;
+        // 策略整体换一个预设，不逐位改写：半套状态（"拦层外但点外不关"）没有合法用途。
+        if (!$barrier) {
+            $e->policy = $e->policy->withoutPointerBarrier();
+        }
 
         return $e;
     }

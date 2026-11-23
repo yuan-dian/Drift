@@ -107,21 +107,21 @@ final class SelectTest extends SmokeTestCase
 
         $trigger = $app->trigger();
         check(
-            'Select · 面板参数：锚点=控件 / owner=控件（页面走了自动收尸）/ barrier=true（点外面才关得掉）'
-                . ' / scrim=false / hitTest=true / dismissOnTapOutside / dismissOnEsc / 不抢焦点',
+            'Select · 面板参数：锚点=控件 / owner=控件（页面走了自动收尸）/ 拦层外（点外面才关得掉）'
+                . ' / 无遮罩 / 参与命中 / 点外与 Esc 都关 / 不困焦点',
             $top !== null
                 && $top->anchor === $trigger
                 && $top->owner === $trigger
-                && $top->barrier === true
-                && $top->scrim === false
-                && $top->hitTest === true
-                && $top->dismissOnTapOutside === true
-                && $top->dismissOnEsc === true
-                && $top->focusTrap === false,
+                && $top->policy->blocksOutsidePointer() === true
+                && $top->policy->paintsScrim() === false
+                && $top->policy->participatesInHitTest() === true
+                && $top->policy->dismissesOnTapOutside() === true
+                && $top->policy->dismissesOnEsc() === true
+                && $top->policy->trapsFocus() === false,
             'anchor=' . ($top?->anchor === $trigger ? 'yes' : 'no')
                 . ' owner=' . ($top?->owner === $trigger ? 'yes' : 'no')
-                . ' barrier=' . ($top?->barrier ? '1' : '0')
-                . ' hitTest=' . ($top?->hitTest ? '1' : '0'),
+                . ' barrier=' . ($top?->policy->blocksOutsidePointer() ? '1' : '0')
+                . ' hitTest=' . ($top?->policy->participatesInHitTest() ? '1' : '0'),
         );
 
         // ★★ 与 Tooltip / Snackbar **相反**：那两个打开时焦点不在锚点上（悬停 / 定时器

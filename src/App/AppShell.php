@@ -1801,9 +1801,9 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
     }
 
     /**
-     * 菜单是否开着：栈里存在 `barrier=true && scrim=false` 的条目。
+     * 轻量弹出层是否开着（菜单 / 下拉 / 右键菜单）。
      *
-     * ★ **模态不算菜单**：模态是 `scrim=true` ⇒ 不满足条件。
+     * 模态有遮罩 ⇒ 不算：混答会让"菜单开着就别响应某快捷键"的判断撒谎。
      */
     public function isMenuOpen(): bool
     {

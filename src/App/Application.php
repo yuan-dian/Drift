@@ -525,7 +525,7 @@ abstract class Application
         return $this->shell->overlays();
     }
 
-    /** 菜单是否开着。 */
+    /** 轻量弹出层（菜单 / 下拉 / 右键菜单）是否开着。 */
     public function isMenuOpen(): bool
     {
         return $this->shell->isMenuOpen();

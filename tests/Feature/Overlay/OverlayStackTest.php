@@ -60,10 +60,10 @@ final class OverlayStackTest extends SmokeTestCase
         check(
             '浮层栈 · 三层同屏（count=3，栈顶是最新的模态）',
             $app->overlays()->count() === 3
-                && $app->overlays()->top()?->scrim === true
-                && $app->overlays()->at(0)?->scrim === false,
+                && $app->overlays()->top()?->policy->paintsScrim() === true
+                && $app->overlays()->at(0)?->policy->paintsScrim() === false,
             'depth=' . $app->overlays()->count()
-                . ' top-scrim=' . var_export($app->overlays()->top()?->scrim, true),
+                . ' top-scrim=' . var_export($app->overlays()->top()?->policy->paintsScrim(), true),
         );
     }
 
@@ -163,7 +163,7 @@ final class OverlayStackTest extends SmokeTestCase
         );
     }
 
-    /** barrier=true ⇒ 点浮层外不穿透到主树按钮；false ⇒ 穿透（Tooltip 不吃点击） */
+    /** 拦层外 ⇒ 点浮层外不穿透到主树按钮；不拦 ⇒ 穿透（Tooltip 不吃点击） */
     public function testBarrierDecidesWhetherClickPassesThrough(): void
     {
         [$blocked, , $t1] = self::boot();
@@ -173,7 +173,7 @@ final class OverlayStackTest extends SmokeTestCase
         $blocked->seen = [];
         $blocked->dispatchInput(PointerEvent::down($bx, $by));
         check(
-            '浮层栈 · barrier=true 点浮层外 ⇒ 主树按钮未被激活（吞掉，不穿透）',
+            '浮层栈 · 拦层外时点浮层外 ⇒ 主树按钮未被激活（吞掉，不穿透）',
             $blocked->seen === [],
             'seen=' . implode(',', $blocked->seen),
         );
@@ -190,7 +190,7 @@ final class OverlayStackTest extends SmokeTestCase
         $passThrough->seen = [];
         $passThrough->dispatchInput(PointerEvent::down($px, $py));
         check(
-            '浮层栈 · barrier=false 点浮层外 ⇒ 穿透到主树按钮（Tooltip 不吃点击）',
+            '浮层栈 · 不拦层外时点浮层外 ⇒ 穿透到主树按钮（Tooltip 不吃点击）',
             $passThrough->seen === ['lab.bottom'],
             'seen=' . implode(',', $passThrough->seen),
         );

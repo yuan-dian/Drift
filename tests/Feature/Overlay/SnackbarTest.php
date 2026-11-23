@@ -84,19 +84,19 @@ final class SnackbarTest extends SmokeTestCase
             'top=' . $top . ' expect=' . (self::H - $panelH - Snackbar::MARGIN) . ' panelH=' . $panelH,
         );
         check(
-            'Snackbar · 条目参数：hitTest=true（动作按钮要能点，与 Tooltip 相反）/ 不拦层外 / 不动焦点',
+            'Snackbar · 条目参数：参与命中（动作按钮要能点，与 Tooltip 相反）/ 不拦层外 / 不动焦点',
             $entry !== null
-                && $entry->hitTest === true
-                && $entry->barrier === false
-                && $entry->scrim === false
-                && $entry->dismissOnTapOutside === false
-                && $entry->dismissOnEsc === false
+                && $entry->policy->participatesInHitTest() === true
+                && $entry->policy->blocksOutsidePointer() === false
+                && $entry->policy->paintsScrim() === false
+                && $entry->policy->dismissesOnTapOutside() === false
+                && $entry->policy->dismissesOnEsc() === false
                 && $entry->prefer === OverlayEntry::BOTTOM_CENTER
                 && \abs($entry->maxWidth - Snackbar::MAX_WIDTH) < 0.01
                 && $entry->restoreFocus === null,
             $entry === null ? 'no entry' : \json_encode([
-                'hitTest' => $entry->hitTest,
-                'barrier' => $entry->barrier,
+                'hitTest' => $entry->policy->participatesInHitTest(),
+                'barrier' => $entry->policy->blocksOutsidePointer(),
                 'prefer' => $entry->prefer,
                 'maxWidth' => $entry->maxWidth,
                 'restoreFocus' => $entry->restoreFocus === null ? 'null' : 'set',

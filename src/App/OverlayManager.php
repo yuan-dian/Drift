@@ -78,16 +78,11 @@ final class OverlayManager
 
         $anchor ??= $this->host->focus()?->lastHit();
 
-        $e = new OverlayEntry($panel);
+        $e = new OverlayEntry($panel, OverlayPolicy::popup());
         $e->anchor = $anchor;
         $e->atX = $atX;
         $e->atY = $atY;
         $e->prefer = $atX === null ? OverlayEntry::BELOW : OverlayEntry::AT_POINTER;
-        $e->barrier = true;
-        $e->scrim = false;
-        $e->dismissOnTapOutside = true;
-        $e->dismissOnEsc = true;
-        $e->focusTrap = false;
 
         $this->pushOverlay($e);
 
@@ -199,7 +194,7 @@ final class OverlayManager
     /**
      * 弹出提示（已显示则先撤旧的）。
      *
-     * 条目参数：`barrier=false` 不拦层外点击；`hitTest=false` 指针看不见这一层
+     * 条目参数：`tooltip()` 不拦层外点击，也不参与命中（指针看不见这一层）
      * （否则悬停目标被面板抢走 ⇒ 闪烁死循环）；`owner=$anchor` 锚点回收时自动收尸。
      */
     private function showTooltip(Element $anchor): void
@@ -211,23 +206,13 @@ final class OverlayManager
 
         $this->hideTooltip();   // 换内容：先撤旧的（同一条路径，不重复实现）
 
-        $e = new OverlayEntry(TooltipPanel::make($text));
+        $e = new OverlayEntry(TooltipPanel::make($text), OverlayPolicy::tooltip());
         $e->anchor = $anchor;
         $e->owner = $anchor;
         $e->prefer = OverlayEntry::ABOVE_CENTER;
-        $e->barrier = false;
-        $e->scrim = false;
-        $e->dismissOnTapOutside = false;
-        $e->dismissOnEsc = false;
-        $e->focusTrap = false;
-        $e->hitTest = false;
         $e->maxWidth = TooltipPanel::MAX_WIDTH;
 
         $this->pushOverlay($e);
-
-        // 必须在 push 之后覆盖：`pushOverlay()` 会把当前焦点快照进 `restoreFocus`
-        // （菜单/模态需要的"焦点回锚"）；提示不抢焦点 ⇒ 置 null。
-        $e->restoreFocus = null;
 
         $this->tooltipEntry = $e;
         $this->tooltipShown = true;
@@ -251,7 +236,7 @@ final class OverlayManager
      *
      * 第一条立即显示，后面的排队（FIFO）：不排队则"连续保存三次"只看到最后一次。
      * `duration=0` ⇒ 永不自动消失，只能 `dismissSnackbar()` 收（错误提示用）。
-     * 与 Tooltip 相反：`hitTest` 保持默认 `true`（动作按钮要能点）。
+     * 与 Tooltip 相反：`snackbar()` 参与命中（动作按钮要能点）。
      */
     public function showSnackbar(Snackbar $snackbar): void
     {
@@ -340,22 +325,13 @@ final class OverlayManager
     {
         $e = new OverlayEntry(SnackbarPanel::make($snackbar, function (): void {
             $this->dismissSnackbar();
-        }));
+        }), OverlayPolicy::snackbar());
 
         $e->prefer = OverlayEntry::BOTTOM_CENTER;
         $e->inset = Snackbar::MARGIN;
-        $e->barrier = false;
-        $e->scrim = false;
-        $e->dismissOnTapOutside = false;
-        $e->dismissOnEsc = false;
-        $e->focusTrap = false;
         $e->maxWidth = Snackbar::MAX_WIDTH;
-        // `hitTest` 保持默认 true —— 动作按钮要能点（与 Tooltip 相反）。
 
         $this->pushOverlay($e);
-
-        // push 之后覆盖：`pushOverlay()` 会把当前焦点快照进 `restoreFocus`，通知不抢焦点 ⇒ 置 null。
-        $e->restoreFocus = null;
 
         $this->snackEntry = $e;
 
@@ -380,13 +356,14 @@ final class OverlayManager
     }
 
     /**
-     * 菜单是否开着：栈里存在 `barrier=true && scrim=false` 的条目。
-     * 模态是 `scrim=true` ⇒ 不算菜单：混答会让"菜单开着就别响应某快捷键"的判断撒谎。
+     * 轻量弹出层是否开着（菜单 / 下拉 / 右键菜单）。
+     *
+     * 模态有遮罩 ⇒ 不算：混答会让"菜单开着就别响应某快捷键"的判断撒谎。
      */
     public function isMenuOpen(): bool
     {
         foreach ($this->overlays->all() as $e) {
-            if ($e->barrier && !$e->scrim) {
+            if ($e->policy->isLightPopup()) {
                 return true;
             }
         }
@@ -414,15 +391,10 @@ final class OverlayManager
             $this->closeModal();
         });
 
-        $e = new OverlayEntry($modal);
+        $e = new OverlayEntry($modal, OverlayPolicy::modal($modal->isDismissible()));
         $e->modal = $modal;   // ← "是模态"记在入栈这一笔上（`modal()` 靠它，不靠 instanceof）
         $e->anchor = null;
         $e->prefer = OverlayEntry::CENTER;
-        $e->barrier = true;
-        $e->scrim = true;
-        $e->dismissOnTapOutside = $modal->isDismissible();
-        $e->dismissOnEsc = $modal->isDismissible();
-        $e->focusTrap = true;
 
         $this->pushOverlay($e);
     }
@@ -444,7 +416,9 @@ final class OverlayManager
 
     /**
      * 把条目挂载并压栈（`showMenu` / `showModal` 的共同部分）。
-     * `restoreFocus` 在这里快照：关闭时焦点回到打开前的节点。
+     *
+     * `restoreFocus` 由策略决定要不要快照：提示与通知不抢焦点，快照了反而会在关闭时
+     * 把焦点从用户手里拽走。快照必须在挂载时取 —— 此刻焦点还是"打开前"那个。
      */
     private function pushOverlay(OverlayEntry $e): void
     {
@@ -452,7 +426,9 @@ final class OverlayManager
         $element->mount(null, $this->menuContext());
 
         $e->element = $element;
-        $e->restoreFocus = $this->host->focus()?->focused();
+        if ($e->policy->restoresFocusOnClose()) {
+            $e->restoreFocus = $this->host->focus()?->focused();
+        }
 
         $this->overlays->push($e);
     }
@@ -486,7 +462,7 @@ final class OverlayManager
 
     /**
      * 焦点陷阱的根集（空数组 = 无陷阱）。
-     * 取最上面的 `focusTrap` 条目，并把压在它上面的层一起收进来：模态里开 `Select` 下拉时，
+     * 取最上面的困焦点条目，并把压在它上面的层一起收进来：模态里开 `Select` 下拉时，
      * 下拉是独立根、不在模态子树里，只收模态会让下拉 Tab 不到。
      *
      * @internal 宿主帧循环的 `focus->collect()` 直调本方法（片间契约，非扩展点）
@@ -496,7 +472,7 @@ final class OverlayManager
         $all = $this->overlays->all();
         $from = null;
         foreach ($all as $i => $e) {
-            if ($e->focusTrap) {
+            if ($e->policy->trapsFocus()) {
                 $from = $i;
             }
         }
@@ -516,14 +492,14 @@ final class OverlayManager
     }
 
     /**
-     * 最上面的 scrim（模态）条目。
-     * 取最上面的 scrim 条目，不是"栈顶是不是模态"：模态下面可能还压着菜单（新语义允许）。
+     * 最上面的遮罩层（模态）条目。
+     * 取最上面画遮罩的条目，不是"栈顶是不是模态"：模态下面可能还压着菜单（新语义允许）。
      */
     private function topModalEntry(): ?OverlayEntry
     {
         $found = null;
         foreach ($this->overlays->all() as $e) {
-            if ($e->scrim) {
+            if ($e->policy->paintsScrim()) {
                 $found = $e;
             }
         }
@@ -555,7 +531,7 @@ final class OverlayManager
      * 开 / 关控件声明的面板（`InputRouter::activateFocusedWidget()` 的通用缝）。
      *
      * 开关语义：同一个控件再激活一次就收掉（鼠标点第二下走不到 —— 面板开着时点控件在面板外，
-     * `barrier` 先关掉并吞掉那次按下）。不靠字段记"谁开着"：直接扫栈里 `owner === $anchor` 的条目
+     * 拦层外的层先关掉并吞掉那次按下）。不靠字段记"谁开着"：直接扫栈里 `owner === $anchor` 的条目
      * （字段会在不经过本类的移除路径上变陈旧）。
      *
      * @internal 片间契约口子，不是应用扩展点
@@ -575,7 +551,7 @@ final class OverlayManager
             $this->closeWidgetPanel($anchor);
         });
 
-        $e = new OverlayEntry($panel);
+        $e = new OverlayEntry($panel, OverlayPolicy::popup());
         $e->anchor = $anchor;
         // owner = 锚点自身：页面走了没关下拉 ⇒ owner 清扫收尸。
         $e->owner = $anchor;
@@ -589,19 +565,11 @@ final class OverlayManager
             $e->lastSignature = $signature();
         }
         $e->prefer = OverlayEntry::BELOW;
-        // ★ `barrier = true`（与菜单同）：这是 `dismissOnTapOutside` 唯一生效的路径 ——
-        //   `dispatchPointer()` 里"点在条目盒外"那一支包在 `if ($e->barrier)` 里，
-        //   `barrier = false` 的条目直接穿透，永远轮不到关闭。
-        $e->barrier = true;
-        $e->scrim = false;
-        $e->dismissOnTapOutside = true;
-        $e->dismissOnEsc = true;
-        $e->focusTrap = false;
         // 默认口径是"一列选项"，控件可自报更宽（`overlayPanel($f, $maxWidth)`）—— 并排两块面板不是 320 装得下。
         $e->maxWidth = $anchorWidget->overlayPanelMaxWidthValue() ?? self::PANEL_MAX_WIDTH;
 
-        // 不动 `restoreFocus`（与 Tooltip/Snackbar 相反）：开面板的是锚点自己，
-        // `pushOverlay()` 的快照天然正确，收面板时焦点回到控件上。
+        // `restoreFocus` 由策略决定：开面板的是锚点自己，`pushOverlay()` 的快照天然正确，
+        // 收面板时焦点回到控件上（与 Tooltip/Snackbar 相反）。
         $this->pushOverlay($e);
     }
 

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Overlay;
 
+use Drift\App\OverlayPolicy;
 use Drift\Dev\Smoke\App\TooltipApplication;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Tests\Support\SmokeTestCase;
@@ -211,17 +212,17 @@ final class TooltipTest extends SmokeTestCase
         check(
             'Tooltip · 条目参数：不拦点击 / 不遮罩 / 不参与命中 / 限宽 320 / 不动焦点',
             $top !== null
-                && $top->barrier === false
-                && $top->scrim === false
-                && $top->hitTest === false
-                && $top->dismissOnTapOutside === false
-                && $top->dismissOnEsc === false
+                && $top->policy->blocksOutsidePointer() === false
+                && $top->policy->paintsScrim() === false
+                && $top->policy->participatesInHitTest() === false
+                && $top->policy->dismissesOnTapOutside() === false
+                && $top->policy->dismissesOnEsc() === false
                 && \abs($top->maxWidth - TooltipPanel::MAX_WIDTH) < 0.01
                 && $top->restoreFocus === null,
             $top === null ? 'no entry' : \json_encode([
-                'barrier' => $top->barrier,
-                'hitTest' => $top->hitTest,
-                'tapOutside' => $top->dismissOnTapOutside,
+                'barrier' => $top->policy->blocksOutsidePointer(),
+                'hitTest' => $top->policy->participatesInHitTest(),
+                'tapOutside' => $top->policy->dismissesOnTapOutside(),
                 'maxWidth' => $top->maxWidth,
                 'restoreFocus' => $top->restoreFocus === null ? 'null' : 'set',
             ]),
@@ -260,17 +261,18 @@ final class TooltipTest extends SmokeTestCase
         );
         $app->dispatchInput(PointerEvent::up($panelCx, $panelCy));
 
-        // ★ 反例自检：hitTest=true ⇒ 面板自己吃掉这次 down（下面的 d 收不到）。
-        //   这一条是"为什么必须有 hitTest 字段"的证据，不是补充说明。
+        // ★ 反例自检：把同一块面板的策略换成"参与命中" ⇒ 面板自己吃掉这次 down（下面的 d 收不到）。
+        //   换 `snackbar()` 而不是随便找个预设：它与 `tooltip()` **只差这一位**，其余六项全同，
+        //   于是这条对照只动了被测变量。这是"为什么必须有这个开关"的证据，不是补充说明。
         $top2 = $app->topEntry();
         if ($top2 !== null) {
-            $top2->hitTest = true;
+            $top2->policy = OverlayPolicy::snackbar();
         }
         $app->seen = [];
         $app->dispatchInput(PointerEvent::down($panelCx, $panelCy));
         check(
-            'Tooltip · 反例：hitTest=true ⇒ 提示吃掉点击（d 收不到）—— 这就是必须有这个字段的理由',
-            $app->seen === [],
+            'Tooltip · 反例：参与命中 ⇒ 提示吃掉点击（d 收不到）—— 这就是必须有这个开关的理由',
+            $top2 !== null && $app->seen === [],
             'seen=' . \implode(',', $app->seen),
         );
         $app->dispatchInput(PointerEvent::up($panelCx, $panelCy));

@@ -67,10 +67,11 @@ final class InputRouter
         if ($event instanceof KeyEvent) {
             // ESC 必须在 `dispatchKey` 之前拦，否则被焦点控件（输入框）吃掉。
             if ($event->chord->is(KeyChord::escape())) {
-                // `dismissOnEsc=false` ⇒ 吞掉但不关。"拒绝"不等于"放行"：交回加速键链会让 Ctrl+W 绕过对话框。
+                // 不关的层（`dismissesOnEsc=false`）⇒ 吞掉但不关。"拒绝"不等于"放行"：
+                // 交回加速键链会让 Ctrl+W 绕过对话框。
                 $top = $this->overlayHost->overlays()->top();
                 if ($top !== null) {
-                    if (!$top->dismissOnEsc) {
+                    if (!$top->policy->dismissesOnEsc()) {
                         return null;
                     }
 
@@ -149,7 +150,7 @@ final class InputRouter
         }
 
         if ($event instanceof ScrollEvent) {
-            // 滚轮：浮层开着先归浮层（barrier ⇒ 不穿透滚主树），否则命中链上最近的 ScrollView。
+            // 滚轮：浮层开着先归浮层（拦层外的层 ⇒ 不穿透滚主树），否则命中链上最近的 ScrollView。
             // 格→像素的换算只在这里发生一次：`$event->delta` 是格，`scrollAt()` 收逻辑像素。
             // 轴由事件带来（壳已把 WM_MOUSEHWHEEL / Shift+竖轮翻成 Horizontal）。
             $px = $event->delta * self::WHEEL_NOTCH_PX;
@@ -168,7 +169,7 @@ final class InputRouter
                     return null;
                 }
 
-                if ($e->barrier) {
+                if ($e->policy->blocksOutsidePointer()) {
                     return null; // 浮层开着、轮在浮层外：不穿透
                 }
             }
@@ -192,7 +193,7 @@ final class InputRouter
     /**
      * 系统拖放：命中 → 沿父链冒泡找最近的 `onFilesDropped` 声明者，只投一个（不广播）。
      *
-     * 浮层优先、barrier 不穿透，与指针分支同构；找不到声明者 ⇒ 静默丢弃（拖到不接收的地方合法）。
+     * 浮层优先、拦层外的层不穿透，与指针分支同构；找不到声明者 ⇒ 静默丢弃（拖到不接收的地方合法）。
      * 坐标先 `(float)` 落局部再运算 —— `$event->x` 跨实例是标量 / Var，直接减浮层偏移会踩 AOT C2679。
      */
     private function dispatchFilesDropped(FilesDroppedEvent $event, Element $root, FocusManager $focus): void
@@ -213,7 +214,7 @@ final class InputRouter
                 return;
             }
 
-            if ($e->barrier) {
+            if ($e->policy->blocksOutsidePointer()) {
                 return;
             }
         }
@@ -251,7 +252,7 @@ final class InputRouter
      * move：光标 + 悬停（目标变化才派发）+ 拖放阈值推进。
      * up：放下（激活仍住 down，不做 press/release 视觉）；leave：全部收口。
      *
-     * 浮层开着时四相位都先归浮层，但 `barrier=false` 的层（Tooltip / Toast）miss 时不关层。
+     * 浮层开着时四相位都先归浮层，但不拦层外的层（Tooltip / Toast）miss 时不关层。
      */
     private function dispatchPointer(PointerEvent $event, Element $root, FocusManager $focus): ?CursorShape
     {
@@ -262,9 +263,9 @@ final class InputRouter
                 continue;
             }
 
-            // 不参与命中的层（Tooltip）整层跳过：既不算命中也不算层外，连 barrier 都跳过。
+            // 不参与命中的层（Tooltip）整层跳过：既不算命中也不算层外，连拦截都跳过。
             // 少了这一句，tooltip 一出就抢走锚点的悬停目标 ⇒ 显隐死循环。
-            if (!$e->hitTest) {
+            if (!$e->policy->participatesInHitTest()) {
                 continue;
             }
 
@@ -273,11 +274,11 @@ final class InputRouter
 
             if ($hit !== null) {
                 // 模态：ModalHost 盖满客户区 ⇒ 命中恒非 null；点遮罩 = 关闭意图
-                if ($e->scrim && !$this->hitsModalPanel($hit)) {
+                if ($e->policy->paintsScrim() && !$this->hitsModalPanel($hit)) {
                     if ($event->isDown()) {
                         $this->releasePointer();   // 浮层优先于捕获（`06` §10）
 
-                        if ($e->dismissOnTapOutside) {
+                        if ($e->policy->dismissesOnTapOutside()) {
                             $this->overlayHost->dismissOverlay($e);
                         }
 
@@ -325,13 +326,13 @@ final class InputRouter
             }
 
             // 点在条目盒外
-            if ($e->barrier) {
+            if ($e->policy->blocksOutsidePointer()) {
                 if ($event->isDown()) {
                     // ★ 右键点面板外：关掉这张、**继续往下派发** —— Windows 的行为是
                     //   "右键换一处 = 关旧菜单 + 在新位置开菜单"，一次点击完成。
                     //   主键仍然吞掉：左键点外是"取消"，不该顺手点到下面的控件。
                     if (!$event->isPrimary()) {
-                        if ($e->dismissOnTapOutside) {
+                        if ($e->policy->dismissesOnTapOutside()) {
                             $this->overlayHost->dismissOverlay($e);
                         }
 
@@ -341,7 +342,7 @@ final class InputRouter
                     $this->releasePointer();   // 浮层优先于捕获（`06` §10）
 
                     // 点浮层外 ⇒ 关且**吞掉该次按下**（不穿透）
-                    if ($e->dismissOnTapOutside) {
+                    if ($e->policy->dismissesOnTapOutside()) {
                         $this->overlayHost->dismissOverlay($e);
                     }
 
@@ -355,11 +356,11 @@ final class InputRouter
 
                 return null;
             }
-            // barrier=false（Tooltip / Toast）：继续往下问
+            // 不拦层外的层（Tooltip / Toast）：继续往下问
         }
 
         // ── 指针捕获：捕获期**不命中测试** ─────────────────────
-        // 排在浮层之后（浮层优先于捕获）；`barrier=false` 的浮层在上时仍能穿到捕获者。
+        // 排在浮层之后（浮层优先于捕获）；不拦层外的浮层在上时仍能穿到捕获者。
         $capture = $this->captureNode;
         if ($capture !== null) {
             $cursor = $this->dispatchToCapture($capture, $event);

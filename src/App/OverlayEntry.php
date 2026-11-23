@@ -72,7 +72,7 @@ final class OverlayEntry
      * ★ 为什么单独记一笔而不是事后 `$panel instanceof Modal` 反查：**"是不是模态"
      *   是入栈时的事实**（`showModal()` 决定的），不该靠类型反推 —— 将来
      *   `Sheet` / `Dialog` 也可能以模态入栈，那时反查就得改判据，而记账不用。
-     *   同 `$scrim` / `$barrier` / `$focusTrap` 的口径：入栈方声明意图，条目只是记录。
+     *   同 `$policy` 其余开关的口径：入栈方声明意图，条目只是记录。
      *
      * ★ 它同时让 `App` 层不必 `instanceof` 具体控件类（S1 第 10 步 4j-c）——
      *   但注意 `Modal` 这个**类型**仍在签名里（`OverlayManager::modal(): ?Modal`），
@@ -117,20 +117,13 @@ final class OverlayEntry
      */
     public float $inset = 0.0;
 
-    /** 是否拦截浮层外的指针（**与 scrim 是两个参数**） */
-    public bool $barrier = true;
-
-    /** 是否画遮罩（变暗） */
-    public bool $scrim = false;
-
-    /** 点浮层外是否关闭 */
-    public bool $dismissOnTapOutside = true;
-
-    /** Esc 是否关闭 */
-    public bool $dismissOnEsc = true;
-
-    /** Tab 是否被限制在浮层内 */
-    public bool $focusTrap = false;
+    /**
+     * 交互策略：拦不拦、关不关、管不管焦点（{@see OverlayPolicy} 的具名预设）。
+     *
+     * ★ 整块可替换、不可逐位改写：半套状态（"拦层外但点外不关"）没有合法用途，
+     *   而整体换一个预设永远是自洽的。落位不在这里，见下方 `prefer` / `maxWidth` / `inset`。
+     */
+    public OverlayPolicy $policy;
 
     /** 归属者：它 unmount 时本条目自动 pop（§7 的结构性防线） */
     public ?Element $owner = null;
@@ -155,18 +148,6 @@ final class OverlayEntry
      */
     public string $lastSignature = '';
 
-    /**
-     * 本层是否**参与指针命中测试**（W8-2 Tooltip，2026-10-23）。
-     *
-     * ★ `false` = 指针完全看不见这一层，事件穿透到下面的层/主树 —— 对应 Win32 的
-     *   `WS_EX_TRANSPARENT`。**Tooltip 必须用它**，否则会出现死循环：
-     *   tooltip 面板一出现在指针附近 ⇒ `dispatchPointer()` 的浮层段命中它 ⇒
-     *   `hoverTo(面板里的元素)` ⇒ 锚点悬停丢失 ⇒ 隐藏 ⇒ 指针又命中锚点 ⇒ 再显示。
-     * ★ 与 `barrier` **正交**：`barrier` 管"层外的按下拦不拦"，本字段管"层内的命中
-     *   算不算"。`barrier=false` 只解决"没命中时穿透"，解决不了"命中了就不放"。
-     */
-    public bool $hitTest = true;
-
     /** 挂载后的根 Element（框架写） */
     public ?Element $element = null;
 
@@ -174,12 +155,13 @@ final class OverlayEntry
     public float $x = 0.0;
     public float $y = 0.0;
 
-    /** 关闭后焦点回到哪（push 时快照，§6） */
+    /** 关闭后焦点回到哪（`policy()->restoresFocusOnClose()` 为真时入栈快照，§6） */
     public ?Element $restoreFocus = null;
 
-    public function __construct(Widget $panel)
+    public function __construct(Widget $panel, OverlayPolicy $policy)
     {
         $this->id = self::$nextId++;
         $this->panel = $panel;
+        $this->policy = $policy;
     }
 }

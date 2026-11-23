@@ -57,14 +57,16 @@
 
 `Widget::contextMenu(ContextMenu)` 挂在子树上，指针右键沿命中链向上找最近的声明者；键盘第 ④ 环从焦点元素出发沿父链找，二者终点都是 `InputRouter::openContextMenu()`。键盘没有指针位置，锚点退化为元素盒。
 
-浮层是栈（`OverlayStack` / `OverlayEntry`）。每条声明自己的关闭规则：
+浮层是栈（`OverlayStack` / `OverlayEntry`）。每条持一份 `OverlayPolicy`，用**具名预设**声明形态，而不是逐个布尔赋值——半套状态（"拦层外但点外不关"）没有合法用途：
 
-- `barrier` 决定层外的按下拦不拦，`dismissOnTapOutside` 决定点外面关不关，`hitTest` 决定层内命中有没有效——三者正交。
-- `dismissOnEsc` 决定顶层的 Esc 关不关；`dismissOnEsc = false` 时吞掉键但不关，交回加速键链会让 `Ctrl+W` 绕过对话框。
-- `focusTrap` 决定焦点是否困在这一层，`restoreFocus` 在压栈时快照打开前的焦点、关闭时恢复。
-- `scrim` 是遮罩。菜单是 `barrier=true && scrim=false`，模态带 scrim。
+- `popup()`：菜单、右键菜单、控件下拉面板。拦层外、无遮罩、点外与 Esc 都关、不困焦点、关掉回锚。三者行为完全一致，故共用一个预设。
+- `tooltip()`：不拦、不关、不参与命中。最后一条是硬要求——提示一出现就命中自己 ⇒ 锚点悬停丢失 ⇒ 隐藏 ⇒ 再命中锚点，无限闪。
+- `snackbar()`：与提示同，但参与命中（动作按钮要能点）。
+- `modal(bool $dismissible)`：盖满 + 遮罩 + 困焦点；点遮罩与 Esc 跟 `dismissible` 走，应用显式关不受它限制。
 
-菜单在**命令分发之后**才关，因为 handler 可能自己开另一个面板；模态不走这条，确认对话框在命令执行时必须还在。`tooltip()` 和 `showSnackbar()` 压栈时 `barrier=false`、`dismissOnEsc=false`、`restoreFocus=null`——它们不抢焦点也不拦点击。
+七个开关彼此正交（拦层外 / 遮罩 / 点外关 / Esc关 / 困焦点 / 参与命中 / 回锚）。`dismissesOnTapOutside()` 只在 `blocksOutsidePointer()` 为真时有意义：穿透的层永远轮不到关闭那一支。`restoreFocus` 由 `restoresFocusOnClose()` 决定要不要在压栈时快照——提示与通知不抢焦点，快照了反而会在关闭时把焦点从用户手里拽走。落位（`prefer` / `atX` / `maxWidth` / `inset`）不在策略里，那是几何。
+
+菜单在**命令分发之后**才关，因为 handler 可能自己开另一个面板；模态不走这条，确认对话框在命令执行时必须还在。
 
 ## 语义事件
 
