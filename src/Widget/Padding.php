@@ -14,7 +14,7 @@ use Drift\Layout\RenderProxy;
  * Padding::make($child)->paddingAll(8);
  * ```
  *
- * ★ **W5 之后它只是一个"壳"**（arch-v2 `02` §11）：`padding()` 继承自 `Widget`、
+ * ★ **W5 之后它只是一个"壳"**：`padding()` 继承自 `Widget`、
  *   写进 `mods`；`createRenderObject()` 给一个纯转发盒 `RenderProxy`。内距由
  *   `RenderBox::layout()` 的 ②⑤ 步施加、`paint()` 的 `translate()` 换坐标 ——
  *   与 `Text::make('hi')->paddingAll(8)` 走**同一条路**。这正是 W5 要的：

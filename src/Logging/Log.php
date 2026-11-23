@@ -36,7 +36,7 @@ final class Log
     /** 永远开启 —— 学 Qt：fatal 级别不受任何门槛影响 */
     public const int FATAL = 5;
 
-    /** 环形缓冲容量（`12` §4.4） */
+    /** 环形缓冲容量 */
     public const int RING_CAPACITY = 2000;
 
     /** 启动点（`%t` 的零点），一次性捕获 */

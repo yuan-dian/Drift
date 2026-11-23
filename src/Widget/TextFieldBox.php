@@ -22,7 +22,7 @@ use Drift\Text\TextStyle;
  *   `StatefulWidget`。2026-10-23 之前"有态"与"有盒"因此必须是两个 Widget
  *   （Flutter `TextField → EditableText → RenderEditable` 的三段形态）。
  *
- * ★ **今天它仍是三件套，但是"有子"的特例，不是框架要求**（`02` §6.4）：
+ * ★ **今天它仍是三件套，但是"有子"的特例，不是框架要求**：
  *   `createRenderObjectFromState()` 让"有态 + 有盒 + **无子**"的控件两段就够
  *   （`Spinner` 已改造，`SpinnerBox` 已删），但那个钩子的语义是"**不产子**"，
  *   而 `TextField` 有子（label + 输入框）⇒ 套上去会静默丢掉子层。

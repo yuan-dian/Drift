@@ -37,7 +37,7 @@ final class SurfaceProfile
     }
 
     /**
-     * 把一段代码**包起来计时并记账** —— 本仓唯一的"计一段"入口（2026-11-03）。
+     * 把一段代码**包起来计时并记账** —— 本仓唯一的"计一段"入口。
      *
      * ★★ 为什么要有它：一帧的九段要往**两个**出口记账 —— `FramePhase` 的 trace
      *   （顺序校验 + 真机报告）与这里的分段计时（成本归因）。两处都是手写调用，
@@ -96,7 +96,7 @@ final class SurfaceProfile
     /**
      * 纳秒 → 人读单位。**全仓唯一的 ns→文本换算**。
      *
-     * ★★ 为什么必须有它（2026-11-02）：`frame-tax-probe` 自己写过
+     * ★★ 为什么必须有它：`frame-tax-probe` 自己写过
      *   `round($v / 1000.0, 2) . 'ms'`，而 `$v` 是**纳秒** ⇒ 每个分段被印成真值的
      *   **1000 倍**：`anim=972.92ms` 其实是 `972.92µs`。于是同一段输出里
      *   "稳态帧 985.7µs / anim 段 972.92ms" 自相矛盾，**却没人发现** —— 而
@@ -154,7 +154,7 @@ final class SurfaceProfile
         self::add('probe', 2000);
         self::add('probe', 2000);
         $per = self::perCall();
-        // ★ 变量名必须与上面那个 `$got` 分开（2026-11-02）：AOT 的类型推断是
+        // ★ 变量名必须与上面那个 `$got` 分开：AOT 的类型推断是
         //   **方法内单一定型**的，同一个 `$got` 先被赋 `string`（`formatNs` 的返回）
         //   再被赋 `int` ⇒ `Cannot re-assign $got from php::Int to php::Str`。
         //   与 `MEMORY` 里"`foreach` key 复用已定型变量"是同一条坑的另一种形态。

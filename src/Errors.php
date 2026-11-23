@@ -86,7 +86,7 @@ final class Errors
             }
             // ★ 桥 ①：**同时**落一份到 `Log`（WARN 级，带时间/级别/分类）。
             //   `self::$ring` 这边**一字不动** —— 它是测试契约（78 处断言
-            //   "没有 diagnostic"），改了会一次搞红一大片（`12` §4.6）。
+            //   "没有 diagnostic"），改了会一次搞红一大片。
             Log::get('framework')->warn($message);
             return;
         }

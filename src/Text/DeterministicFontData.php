@@ -29,7 +29,7 @@ final class DeterministicFontData
     /**
      * 拉丁 5×8：第 0–6 行是字身，第 7 行是下伸部（只有 g j p q y 用到）
      *
-     * ★★ **常量名为什么带 `_GLYPHS` 后缀（2026-10-15）**：tpc 把类常量提升成
+     * ★★ **常量名为什么带 `_GLYPHS` 后缀**：tpc 把类常量提升成
      *   **文件级静态变量**，变量名 = `__<类名>__<常量名小写>`。于是
      *   `const LATIN` 提升出的变量与同名方法 `latin()` 生成的函数**同名**，
      *   而生成的声明头末尾有 `using namespace typephp_project_hello;`

@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace Drift\Layout;
 
 /**
- * `Stack` 给子的约束策略（arch-v2 `04` §4.2）。
+ * `Stack` 给子的约束策略。
  *
  * ★ **`Loose` 是默认值**：`Stack` 最常见的用法是"主内容 + 一个角标"，两者都该按
  *   自己大小。默认 `Expand` 会把主内容强制拉满 —— 那是最不常见的用法当默认值。

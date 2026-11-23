@@ -109,7 +109,7 @@ final class Win32SkiaSurface implements RenderSurface
         // ★★ 直贴（默认路径）：壳直接读 Skia 表面，**像素不进 PHP**。
         //   旧路径 `toRgba()` + `drift_win_present()` 每帧做两次**方向相反**的
         //   swizzle（BGRA→RGBA 再 RGBA→BGRA）+ 一次 4MB 跨界，
-        //   实测合计占端到端 50%+（`26` §5）；直贴把它缩成一次 memcpy。
+        //   实测合计占端到端 50%+；直贴把它缩成一次 memcpy。
         if ($canvas->isValid()) {
             drift_win_present_skia($this->windowHandle, $canvas->handle());
 

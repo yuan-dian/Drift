@@ -145,7 +145,7 @@ final class WindowSet
 
         $app->attach($surface, $screen->viewport());
 
-        // ★ **首帧之后才显示窗口**（2026-11-19）：建窗时窗口类 `hbrBackground = NULL`
+        // ★ **首帧之后才显示窗口**：建窗时窗口类 `hbrBackground = NULL`
         //   （自绘），客户区在第一次 present 之前是**未绘制**的 —— DWM 没有内容可合成，
         //   用户看到的就是"黑窗闪一下再出内容"。把 `show()` 挪到 `attach()`（内含首帧）
         //   之后，`ShowWindow` + `UpdateWindow` 触发的 `WM_PAINT` 直接从帧缓存

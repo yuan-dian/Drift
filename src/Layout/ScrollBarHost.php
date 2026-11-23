@@ -7,38 +7,19 @@ use Drift\Geometry\Axis;
 use Drift\Geometry\Rect;
 
 /**
- * **带滚动条**的盒（`RenderScrollView` / `RenderTable`）。
+ * 带滚动条的盒（`RenderScrollView` / `RenderTable`），内部实现与事件路由用。
  *
- * ★ 存在的理由与 `Widget\Scrollable` 完全同源：滚轮路由 / 滚动条拖动原先写死
- *   `instanceof RenderScrollView` ⇒ 每加一种滚动容器就要回去改 `ScrollInputRouter`
- *   与 `ScrollBarFade`（框架核心认具体控件 = 依赖方向反了，而且漏改是**静默**的：
- *   Table 的条会画出来但抓不住）。收成接口后新增滚动器只实现本接口，两处不动。
- *
- * ★ **所有几何方法都带 `Axis`**（2026-10-27，阶段 5）。旧签名是"一个盒一根条"
- *   （`isVertical()` 定轴），表格接横向滚动时那个形状直接卡死：它需要两根条，
- *   而接口表达不了"第二根"。带轴之后 `scrollAxes()` 的返回值就是答案 ——
- *   单轴视口返回一个轴，表格返回两个，路由层一次循环即可，不需要知道谁是谁。
- *
- * ★ **不承诺"内容是什么形状"**：`RenderScrollView` 是一根轴上的内容平移；
- *   `RenderTable` 是"固定表头 + 双向平移"。接口只问"条该多长 / 在哪 / 拖多远"，
- *   两个实现各自算自己的 `maxScroll`（同一轴上）。
- *
- * ★ 轴不适用时各方法返回 `0.0` / `null`（而不是抛）：`scrollAxes()` 是"可能出条"
- *   的清单，实际出不出还取决于"内容溢出没有"—— 那个判断每帧都在变，报错会刷屏。
- *
- * ★ `setBarOpacity()` 在接口里是**不得已**：淡出动画（`ScrollBarFade`）在两次
- *   重建之间要就地改透明度（否则为了一个 alpha 每帧重建整棵滚动内容）。
- *   它是 `@internal` 语义 —— 应用不该调。
+ * 几何方法一律带 `Axis`：同一盒可能画多根条，新增滚动容器也不该改路由。
+ * 接口只问"条多长 / 在哪 / 拖多远"，内容形状由实现自己算。
+ * 轴不适用时返回 `0.0` / `null`，不抛；`setBarOpacity()` 仅为淡出动画就地改透明度。
  *
  * @internal 只有滚动容器与框架的事件路由实现 / 使用它
  */
 interface ScrollBarHost
 {
     /**
-     * 本盒会画条的轴，**按绘制顺序**（先画的在前）。
-     *
-     * ★ 顺序有视觉后果：表格先横后竖 ⇒ 竖条压在右下角上，与浏览器同观感。
-     * ★ 它是"可能"，不是"当前有"：内容不溢出时 `thumbRect()` 返回 `null`。
+     * 本盒会画条的轴，按绘制顺序（先画在前）。
+     * 是"可能出条"的清单，内容不溢出时 `thumbRect()` 返回 null。
      *
      * @return list<Axis>
      */
@@ -48,11 +29,8 @@ interface ScrollBarHost
     public function thumbRect(Axis $axis): ?Rect;
 
     /**
-     * thumb 矩形换成**渲染树根坐标**（事件命中用）。
-     *
-     * ★ 为什么由实现给而不是调用方加：调用方要算它就得先拿到 `RenderBox`
-     *   （`absoluteOrigin()` 只收那个类型），而这里要的恰好是"不依赖具体盒类"。
-     *   把"绝对化"留在实现里一行，调用方就只认接口。
+     * thumb 矩形换成渲染树根坐标（事件命中用）。
+     * 绝对化由实现负责，调用方只认接口，不必拿具体 RenderBox。
      */
     public function thumbRectInRoot(Axis $axis): ?Rect;
 
@@ -66,28 +44,15 @@ interface ScrollBarHost
     public function appliedOffset(Axis $axis): float;
 
     /**
-     * **就地**改滚动偏移 —— 不重建 Widget 树、**不重排**、只重画。
+     * 就地改滚动偏移：不重建 Widget 树、不重排，只重画。
      *
-     * ★★ 存在的理由（2026-10-27，A 批第 1 项）：偏移原先只作为**构造参数**递进来
-     *   ⇒ 滚一格 = `setState()` = 整棵滚动内容重建。实测（AOT，`bench` 的
-     *   虚拟化表格档）滚动帧 **10.53ms**，其中 `settle`（重建）**5.84ms = 55%**；
-     *   不重建就只剩 **4.62ms**。偏移在语义上只改两个数，不该动"有哪些子"。
+     * 调用方必须拿返回值回写自己的字段，否则内容变短后旧值长期大于上限，
+     * 后续增量会先消耗死区（表现为拖条画面不动）。
+     * 实现必须把新偏移应用到子盒 `offset`：paint 门控与绘制读的都是它；
+     * 只改字段或借 `markNeedsLayout()` 都会让画面停在旧位置且白耗一次全树重排。
      *
-     * ★ 返回值是**实际生效**的偏移（已按 `maxScroll` 夹取）：调用方必须拿它回写
-     *   自己的字段，否则 State 里存的是"用户增量累加值"，而内容会变短
-     *   （过滤 / 列宽变窄）⇒ 旧值长期大于上限，之后每笔增量都先消耗那段死区
-     *   （真机表现："拖着条，画面不动"）。
-     *
-     * ★★ 实现**必须**把新偏移**应用到子盒 `offset`**（`applyScrollOffsets()`），
-     *   而不是只改字段：写子盒 `offset` 会推 `paintEpoch`，而 `Frame` 的 paint 门控
-     *   认的就是它；paint 读的也是子盒 offset ⇒ 只改字段 = 画面停在旧位置
-     *   （甚至整段 paint 被跳过，不报错、不写日志）。
-     *   ★ **不要**借 `RenderBox::markNeedsLayout()` 去"让偏移生效"（2026-10-27
-     *   第二版已改掉）：那会让 `Frame` 重排**整棵树**，而偏移不改任何盒的
-     *   `size` ⇒ 重排是纯浪费（实测滚动帧 `layout` 3.65ms，占一半）。
-     *
-     * @param float $value 目标偏移（**内容坐标**，调用方已夹下界 0）
-     * @return float 实际生效的偏移
+     * @param float $value 目标偏移（内容坐标，调用方已夹下界 0）
+     * @return float 实际生效的偏移（已按 maxScroll 夹取）
      * @internal 只有 `Scrollable` 的 State 实现调它
      */
     public function setScrollOffset(Axis $axis, float $value): float;

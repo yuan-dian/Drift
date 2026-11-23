@@ -167,7 +167,7 @@ final class DatePicker extends StatefulWidget
 }
 
 /**
- * `DatePicker` 的私有 State（2026-10-29）。
+ * `DatePicker` 的私有 State。
  *
  * 持三样"跨 build 活且只影响这一棵子树"的东西：`month`（翻到哪个月）、
  * `signal`（跨树广播端）、`dismiss`（面板开着 ⇔ 非 null）。

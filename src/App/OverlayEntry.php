@@ -8,7 +8,7 @@ use Drift\Widget\Modal;
 use Drift\Widget\Widget;
 
 /**
- * 一个浮层条目（arch-v2 `01` §2.1）。
+ * 一个浮层条目。
  *
  * ★ **普通 class，不是 Widget**：Widget 是"不可变描述"（挂载即 seal），
  *   而条目要每帧被写（`x`/`y` 由定位算法算、`alive` 由生命周期改）——

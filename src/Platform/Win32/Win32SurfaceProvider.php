@@ -75,7 +75,7 @@ final class Win32SurfaceProvider implements SurfaceProvider
     /**
      * 选后端：认 `'skia'` / `'soft'`，其余（含 `null`）退回 `DEFAULT_RENDERER`。
      *
-     * ★ **`'soft'` 必须被显式认下**（2026-10-17）：默认翻成 `'skia'` 之后，
+     * ★ **`'soft'` 必须被显式认下**：默认翻成 `'skia'` 之后，
      *   若这里仍写"只认 `'skia'`、其余退回默认"，`new Win32Platform('soft')`
      *   会被**静默翻成 skia** —— "软光栅仍可选"就成了一句空话，而且症状是
      *   "我要的确定性后端没生效"，最难查。冒烟里 `'soft'` 那条夹具钉住它。

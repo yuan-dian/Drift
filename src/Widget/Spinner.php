@@ -30,7 +30,7 @@ use Drift\Rendering\ColorToken;
  *   判据：**有态 + 有盒 + 无子**的控件走这条路；有子的（`TextField` /
  *   `ScrollView`）继续走 `build()`。
  *
- * ★ **动画驱动力已就位**（2026-10-18）：`SpinnerState::tickFrame()` 由
+ * ★ **动画驱动力已就位**：`SpinnerState::tickFrame()` 由
  *   `Application::frame()` 每帧遍历树调用（§17.4.9），相位随帧推进；它返回 true
  *   让帧末持续记下一帧的欠账 ⇒ 帧时钟不停 ⇒ 自己转，控件卸载后自动停。
  *   ★ 连带边界：§11.5 已记 —— 同步 IO 后端下 `loading` 态本身画不出来（同栈无帧
@@ -62,7 +62,7 @@ final class Spinner extends StatefulWidget
     }
 
     /**
-     * 从 State 直接产盒（`02` §6.2）：本控件**无子** ⇒ 走叶子路径。
+     * 从 State 直接产盒：本控件**无子** ⇒ 走叶子路径。
      *
      * ★ 直径读自己的字段（不再是 `diameterValue()` —— 那个 accessor 只为
      *   `SpinnerState::build()` 存在，叶子路径落地后没有第二个读者）。

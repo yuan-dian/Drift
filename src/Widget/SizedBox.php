@@ -28,7 +28,7 @@ use Drift\Layout\RenderProxy;
  * ★ **父约束更紧时听父的**（`tight(100)` 里塞 `width(200)` 得到 100，不报错）——
  *   约束是父给的，子无权突破（§13.1 C2）。
  *
- * ## W5：`width` / `height` 不再住这里（arch-v2 `02` §11）
+ * ## W5：`width` / `height` 不再住这里
  *
  * 它们继承自 `Widget`，写进 `mods`；夹取规则搬进 `Modifier::tighten()`（与原来
  * `RenderSizedBox` 的逐轴夹取**逐行同构**，含"父更紧 ⇒ 听父的"）。于是本类只剩

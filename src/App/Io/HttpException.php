@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace Drift\App\Io;
 
 /**
- * `Http` 的失败（2026-10-31）—— **传输失败**与**非 2xx** 共用一种异常。
+ * `Http` 的失败—— **传输失败**与**非 2xx** 共用一种异常。
  *
  * ```php
  * try {

@@ -54,7 +54,7 @@ final class SyncTaskHost implements TaskHost
      * ★ 纯 PHP 对象即可（无锁）：`submit()` 与 `drain()` 都在 UI 线程上（本后端
      *   没有第二个线程可竞争）。线程后端才需要 `mutex + deque`（§17.4.2.1 的表）。
      * ★ **交付算法（至少一条 / 剩余回队头 / 不丢）在 `CompletionQueue` 里** ——
-     *   三个后端共用那一份，不在本类里再写一遍（2026-10-31）。
+     *   三个后端共用那一份，不在本类里再写一遍。
      */
     private CompletionQueue $queue;
 

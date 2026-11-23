@@ -23,7 +23,7 @@ use Drift\Core\Tracker;
  *   —— 那条缝因此在 `AsyncScope` 落地后失去全部消费者（迁移 watermark 时归零）。
  *   要区分"结果到了"与"值变了"就走 `AsyncScope`：`await()` 返回就是结算。
  *
- * ★ **读即订阅**（2026-11-22）：实现 `Readable` ⇒ `value()` / `get()` /
+ * ★ **读即订阅**：实现 `Readable` ⇒ `value()` / `get()` /
  *   `isRunning()` 在 build 期读都会登记依赖，与 `Cell::get()` 走同一条采集。
  *   于是页面可以直接 `Bind::make(fn () => …$cmd->value()…)`，不必让 Store 先
  *   把四态"转发"成一次广播 —— 那层转发是每一处都要手写、漏一处就静默陈旧的活。

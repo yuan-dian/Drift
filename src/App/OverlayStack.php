@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace Drift\App;
 
 /**
- * 覆盖层栈（arch-v2 `01` §2.1）。**每个 Surface 一个**（多窗口时对话框不会跑到
+ * 覆盖层栈。**每个 Surface 一个**（多窗口时对话框不会跑到
  * 另一个窗口）。
  *
  * ★ 只有五个操作：push / pop / popTo / remove / top。

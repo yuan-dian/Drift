@@ -6,7 +6,7 @@ namespace Drift\Widget;
 use Drift\Errors;
 
 /**
- * 日期时间选择器 —— 触发框 + 浮层里**并排**的月历与时分秒列（2026-10-29）。
+ * 日期时间选择器 —— 触发框 + 浮层里**并排**的月历与时分秒列。
  *
  * ```php
  * DateTimePicker::make()

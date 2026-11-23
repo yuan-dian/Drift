@@ -20,7 +20,7 @@ use Drift\Widget\StatefulWidget;
  *     ->table($routeTable)
  * ```
  *
- * ★ **页名来源收成一个 `Readable`**（2026-11-22）：以前是 `source(Subject)` +
+ * ★ **页名来源收成一个 `Readable`**：以前是 `source(Subject)` +
  *   `select(callable)` 两段 —— 本类自己实现 `SubscribingWidget`、私有 State 里
  *   手写订阅 + 手工同值门控。那三件事 `State` 的依赖采集全都在做：build 期读一次
  *   源就订阅上了，格子自己的相等门控顶掉手工比较。⇒ 少一套订阅实现，也少一处

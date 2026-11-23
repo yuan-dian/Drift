@@ -68,7 +68,7 @@ final class TextField extends StatefulWidget implements SemanticsValueEditable
         $this->markFocusable();
         // §9 无障碍：文本框进语义树（name 由 `label()` 给，value 由 `value()` 跟）
         $this->semantics(SemanticsRole::TextField);
-        // ★ 不必声明"`Ctrl+A/Z/Y` 归我"：焦点链在加速键**之前**（2026-11-03），
+        // ★ 不必声明"`Ctrl+A/Z/Y` 归我"：焦点链在加速键**之前**，
         //   `TextKeymap` 认得这些键就吃、认不得就返回 `null` 落给加速键。
         //   声明式的 `claimKeys()` 已删（它列不全，也表达不了"只在编辑时抢"）。
     }

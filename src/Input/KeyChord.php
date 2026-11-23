@@ -44,7 +44,7 @@ final readonly class KeyChord
      *   在三个单修饰工厂里**表达不出来** ⇒ 没有它，平台层只能丢掉组合信息，
      *   而丢掉的后果是"加速键表里 `Ctrl+Shift+A` 永远不命中"且**不报错**。
      *
-     * ★★ **单字母键名归一成大写**（2026-11-02）。壳的 `keyNameFromVk()` 对
+     * ★★ **单字母键名归一成大写**。壳的 `keyNameFromVk()` 对
      *   `VK_A`–`VK_Z` 给的就是**大写** `"A"`，而大小写信息在 `$shift` 里、
      *   不在键名里。不归一的话 `Ctrl+A` 有 `'a'` / `'A'` 两种写法：
      *   `TableState` 写过小写、`TextKeymap` 写过大写 —— 前者的 Ctrl+A/C 在

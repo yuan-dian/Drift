@@ -940,7 +940,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
         // ★ 必须先切管线：下面的 `placeOverlays()` 会经 `RenderBox::setBase()` /
         //   `bumpStructure()` 往 `Pipeline::current()` 记账。多窗口下若不切，这一轮
         //   重排的 paintEpoch 记到**上一个跑帧的窗口**账上 ⇒ 本窗静默不重绘
-        //   （2026-11-11 补：这是「进帧必 enter」铁律漏的第 5 个入口）。
+        //   （补：这是「进帧必 enter」铁律漏的第 5 个入口）。
         Pipeline::enter($this->pipeline);
 
         // 档位若变了得先重建树 —— 放在跑帧之前，同帧生效（否则会闪一帧旧布局）。
@@ -1330,7 +1330,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
      * ★ **浮层是第二棵树**（与 `focus->collect()` / `placeOverlays()` 同一个坑）：只走
      *   `$root` 的话，菜单里放一个 `Spinner` 就永远不转，而且**没有任何报错**。
      *
-     * ★★ **两条路径，一帧只走一条**（2026-11-03）：
+     * ★★ **两条路径，一帧只走一条**：
      *
      *   | 路径 | 何时 | 成本 |
      *   |---|---|---|
@@ -1624,7 +1624,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
             $this->lastInputMs = $timestampMs;
         }
 
-        // ★ 点击链（2026-10-27）：把"第几次点击"标在事件上，供控件判双击。
+        // ★ 点击链：把"第几次点击"标在事件上，供控件判双击。
         //   **只在有时间戳时标**：没有时间就没有间隔，"这一下是第几次"无从谈起 ⇒
         //   保持默认 `1`（测试与解释器不传时间戳，行为与之前逐字节相同）。
         //   放在这里而不是路由层：时间是壳给 Application 的，路由层不持钟。
@@ -1962,7 +1962,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     }
 
     /**
-     * 浮层栈本体（`01` §8.1）—— 测试 / devtools 的正式入口。
+     * 浮层栈本体—— 测试 / devtools 的正式入口。
      *
      * @api
      */
@@ -1972,7 +1972,7 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     }
 
     /**
-     * 菜单是否开着：栈里存在 `barrier=true && scrim=false` 的条目（`01` §8.1）。
+     * 菜单是否开着：栈里存在 `barrier=true && scrim=false` 的条目。
      *
      * ★ **模态不算菜单**：模态是 `scrim=true` ⇒ 不满足条件。
      */

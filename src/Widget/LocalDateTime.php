@@ -6,7 +6,7 @@ namespace Drift\Widget;
 use Drift\Errors;
 
 /**
- * 日期 + 时刻 —— `DateTimePicker` 的受控值（2026-10-29）。
+ * 日期 + 时刻 —— `DateTimePicker` 的受控值。
  *
  * ```php
  * $at = LocalDateTime::make(LocalDate::make(2026, 10, 29), LocalTime::make(9, 5));

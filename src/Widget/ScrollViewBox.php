@@ -13,7 +13,7 @@ use Drift\Rendering\ColorToken;
  * ★ 存在理由同 `TextFieldBox`：`ScrollView` 要持滚动偏移（纯 UI 态）⇒ 只能是
  *   `StatefulWidget`。三段分工：`ScrollView`（声明）/ `ScrollViewState`（持偏移）/
  *   `ScrollViewBox`（产 `RenderScrollView`）。
- *   ★ 2026-10-23 起**这是"有子"的特例，不是框架要求**（`02` §6.4）：
+ *   ★ 2026-10-23 起**这是"有子"的特例，不是框架要求**：
  *   `createRenderObjectFromState()` 让"有态 + 有盒 + **无子**"的控件两段就够
  *   （`Spinner` 已改造），而 `ScrollView` 有子（滚动内容）⇒ 走不了叶子路径。
  *

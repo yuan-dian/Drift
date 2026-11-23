@@ -9,7 +9,7 @@ use Drift\Rendering\Color;
 use Drift\Rendering\ColorToken;
 
 /**
- * 矢量图标（`08` §4.2）—— 无字体、无位图，图形数据住 `IconSet`。
+ * 矢量图标—— 无字体、无位图，图形数据住 `IconSet`。
  *
  * ```php
  * Icon::make(IconName::Menu);                       // 16px，次要文字色

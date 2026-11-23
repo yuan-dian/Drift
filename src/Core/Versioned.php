@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace Drift\Core;
 
 /**
- * "我有版本号"（`03` §11.3.4）。
+ * "我有版本号"。
  *
  * ★ 只有一件事要说：**我变了没有**。不提 Subject、不提 State、不提 Computed ——
  *   于是业务层与 UI 层可以各自实现，`Computed` 谁都不认识。

@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace Drift\App;
 
 /**
- * 后台任务的**进度上报口**（2026-11-02）—— `Job::run()` 里调它。
+ * 后台任务的**进度上报口**—— `Job::run()` 里调它。
  *
  * ```php
  * final class UploadImageJob implements Job

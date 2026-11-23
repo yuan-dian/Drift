@@ -52,7 +52,7 @@ final class Menu extends Button
      *   画在视口外，用户看不见焦点在哪）。
      *
      * ★ 值是**策略圆整数**（菜单行约 28–32px ⇒ 约 10 行），不是布局计算：
-     *   "贴着内容还是滚动"由 `RenderPopupPanel` 按**实测自然高**决定（2026-10-24），
+     *   "贴着内容还是滚动"由 `RenderPopupPanel` 按**实测自然高**决定，
      *   所以短菜单不会因为上限设得大就凭空变长，也不会因为设得小就无故滚。
      */
     public const float PANEL_MAX_HEIGHT = 320.0;
@@ -157,7 +157,7 @@ final class Menu extends Button
         // ★ **必须套 `ScrollView`**：`PopupPanel::maxHeight()` 只负责给上限，
         //   "超高就滚"是靠内容自己是滚动视口实现的（它不会替内容滚）。
         // ★ Tab 导航不用额外接线：`MenuItem` 是 `Button`（可聚焦），焦点变化时
-        //   `Application::revealFocused()` 会把焦点项滚进视口（`04` §6.3）。
+        //   `Application::revealFocused()` 会把焦点项滚进视口。
         return PopupPanel::make(
             ScrollView::make(Column::make()->children($this->items))
         )

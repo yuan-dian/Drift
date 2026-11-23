@@ -6,7 +6,7 @@ namespace Drift\Logging;
 use Drift\Errors;
 
 /**
- * 有界环形缓冲 —— devtools / Fatal dump 的默认 sink（`12` §4.4）。
+ * 有界环形缓冲 —— devtools / Fatal dump 的默认 sink。
  *
  * ★ **覆盖写，O(1)**：容量固定 2000，写满丢最旧。日志是热路径，
  *   `array_shift()` 会让每条都 O(n) 搬移，这里用 `%` 定位整段覆盖。
@@ -55,7 +55,7 @@ final class RingSink implements LogSink
     /**
      * 时间正序的最近 N 条（最旧在前），可按分类 / 级别过滤。
      *
-     * ★ **过滤在数据层不在 UI 层**（2026-10-24）：devtools 面板要"只看 layout"
+     * ★ **过滤在数据层不在 UI 层**：devtools 面板要"只看 layout"
      *   或"只看 WARN 以上"，那是**查询语义**，不是 Widget 该做的事 ——
      *   放 UI 层会导致每个消费者各写一份过滤，口径还会漂。
      * ★ 两个过滤都是**可选**（null = 不限）：不传就退化成"最近 N 条"。

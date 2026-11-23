@@ -24,7 +24,7 @@ namespace Drift\Widget;
  *   （`rememberAnchor`）、提交编辑（`commitIfUserScrolled`）全部复用既有那一条路，
  *   动画不必重写任何一条。**"动画 = 把一次大增量拆成多次小增量"** 是这里唯一的新语义。
  *
- * ★ **曲线与"收口帧必须交付"已下沉到 `AnimatedScalar`**（2026-10-29）：
+ * ★ **曲线与"收口帧必须交付"已下沉到 `AnimatedScalar`**：
  *   `AnimatedOpacity` 落地时它成了第三个同样的需求 ⇒ 三份收成一份。
  *   本类现在只剩"位移是**相对**的"这一条滚动特有的语义。
  *

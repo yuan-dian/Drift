@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace Drift\App;
 
 /**
- * 自己声明墙钟上限的 `Job`（2026-11-08）—— 与 Celery 的 `time_limit` 同形。
+ * 自己声明墙钟上限的 `Job`—— 与 Celery 的 `time_limit` 同形。
  *
  * ★ 为什么由任务声明：只有它知道批大小与单条耗时上限。`ProcessTaskHost` 只看得到
  *   一行 JSON，而「一批 N 个文件、每个最多 300s」在组合根算不出来

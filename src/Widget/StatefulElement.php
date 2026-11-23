@@ -52,7 +52,7 @@ final class StatefulElement extends Element
     }
 
     /**
-     * 造盒：**先问 State，再走基座**（`02` §6.2）。
+     * 造盒：**先问 State，再走基座**。
      *
      * @internal 由 `Element::mount()` / `syncChildren()` 调
      */
@@ -102,7 +102,7 @@ final class StatefulElement extends Element
             return; // 未挂载：没有 State 就没有子层
         }
 
-        // ★ 叶子：只换盒，**不产子、不调 `build()`**（`02` §6.2）。
+        // ★ 叶子：只换盒，**不产子、不调 `build()`**。
         //   盒里带的是 State 的当前值 ⇒ `setState()` 后这一步把新相位递进去。
         //   注意这里**不能**省 `consumeDirty()`（上面那句）—— 不然 settle() 的
         //   "脏了就重建"判据永远为真，收敛不了。
@@ -114,7 +114,7 @@ final class StatefulElement extends Element
 
         $state->noteRebuilt();     // ★ 收敛循环的"有没有重建"判据（settle() 用前后差）
         // ★ build() 包进 enter/leave：build 里对自己标脏 ⇒ markDirty() 判 E-FLUSH-CYCLE
-        // ★ 再包一层采集（2026-11-21）：build 里读的 `Cell` / `Computed` 记成本 State
+        // ★ 再包一层采集：build 里读的 `Cell` / `Computed` 记成本 State
         //   的依赖，之后值变了自动标脏。**只包 `build()`，不包 `updateChildren()`** ——
         //   子节点的 build 有自己的 State，读要记到子节点头上，不能冒到父层。
         $state->enterBuild();

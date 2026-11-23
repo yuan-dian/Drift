@@ -72,7 +72,7 @@ final readonly class Scale
      * ★★ 顺序是契约，不是实现细节：`round((x + dx) * dpr)` 与
      *   `round(x * dpr) + round(dx * dpr)` 在 `dpr ≠ 1` 或偏移带半像素时**差整格**。
      *
-     * ★★★ 为什么住在 `Scale` 里（2026-11-01）：这段 6 行此前被**两个后端各自
+     * ★★★ 为什么住在 `Scale` 里：这段 6 行此前被**两个后端各自
      *   手写一遍**（`SkiaCanvas::toDevice()` / `RasterCanvas::toDevice()`，逐字相同），
      *   另有三处更分散的拷贝（`drawLine` 四个标量 / `packPath` 六个标量 /
      *   渐变端点）。同一个公式写六遍 = 漂移的合法来源，而"逻辑→物理只在这一个

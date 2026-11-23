@@ -9,47 +9,25 @@ use Drift\Rendering\BoxStyle;
 /**
  * 带渲染盒的控件（Widget → RenderBox 构造契约）。
  *
- * ★ **Widget 自己不持盒**：盒在 Element 挂载时由本方法造；配置更新时先问
- *   `updateRenderObject()` 能不能就地复用，判等为假才重新造一个换掉。于是
- *   "Widget 不可变 ⇒ 参数只会整体换新"这条性质仍然保证不存在字段级半同步
- *   —— GUI 仓"两份手写字段赋值 ⇒ 首次正常、刷新变样且静默"因此结构上不可能：
- *   复用的前提就是"配置逐字段等价"，不等就换盒，中间态不存在。
- *
- * ★ 放在这里而不是 `Widget` 基类上：结构节点（`Column` / `Row` / `ForEach` /
- *   `Spacer`）里有些不产盒（纯组合），基类留一个恒返回 null 的方法只会让
- *   `instanceof` 判断多一层。
+ * Widget 不持盒：挂载时造盒，配置更新先问 `updateRenderObject()` 能否复用，
+ * 不等就换盒，因此不存在字段级半同步。结构节点不产盒，所以不放 `Widget` 基类。
  *
  * @api
  */
 abstract class RenderBoxWidget extends Widget
 {
     /**
-     * 造本控件的渲染盒。**只读 Widget 自己的字段**（字段对齐由 lint 比对）。
-     *
-     * 收 `BuildContext` 是因为有些控件的盒要**环境**才有形状（`Text` 要把语义角色
-     * 经 `ThemeData` 解析成 `TextStyle`，还要拿到注入的度量）。不需要的控件忽略它 ——
-     * 一个用不上的参数，换"所有渲染控件同一个签名"。
-     *
-     * 子盒不由这里挂 —— 那是 Element 的事（它才知道子 Element 的盒造好了没）。
+     * 造本控件的渲染盒，只读 Widget 自己的字段（字段对齐由 lint 比对）。
+     * 收 `BuildContext` 供需要环境解析的控件用；子盒由 Element 挂载，不在这里挂。
      */
     abstract public function createRenderObject(BuildContext $context): RenderBox;
 
     /**
-     * 把新配置写进**既有盒**，而不是再造一个。
+     * 把新配置写进既有盒。true = 已就地更新可复用，false = 换新盒。
      *
-     * 返回 `true` = 已就地更新、盒可复用；`false` = `Element::syncBox()` 照旧走
-     * `createRenderObject()` 换新盒。
-     *
-     * 默认认**零字段盒**（`RenderBox::isConfigurationFree()`）：那类盒的配置全在 `mods`
-     * 与子层，复用零风险，且它们占页面节点的大头。有字段的盒必须逐控件覆写。
-     *
-     * ★ 覆写方的契约（缺一条都是静默错）：
-     *   ① 几何相关字段变了 ⇒ 返回 `false`，**不要**自己 `markNeedsLayout()`；
-     *   ② 样式 / 主题派生值变了 ⇒ 返回 `false`（就地改会漏重算 ⇒ 换主题后颜色不变）；
-     *   ③ 只有"纯绘制量"（如 `Slider` 的 `value`）变化才返回 `true`，且不得动 `$size`。
-     *
-     * ★ 复用路径上盒的运行时态（悬停 / 按下）不会丢 —— 这也是不再需要
-     *   `inheritRuntimeState()` 补丁的原因。
+     * 默认只复用零字段盒。覆写方必须：几何字段变 ⇒ 返回 false，不自己 `markNeedsLayout()`；
+     * 样式 / 主题派生值变 ⇒ 返回 false；只有纯绘制量变化才返回 true，且不动 `$size`。
+     * 复用路径保留悬停 / 按下运行时态，不需要 `inheritRuntimeState()`。
      *
      * @api 控件扩展点
      */
@@ -59,18 +37,11 @@ abstract class RenderBoxWidget extends Widget
     }
 
     /**
-     * 本控件的盒**自己画底 / 边 / 圆角**吗（画在 `paintOwnChrome()` 里）？
+     * 本控件自己画底 / 边 / 圆角吗（在 `paintOwnChrome()`）？
      *
-     * `true` ⇒ `Element::syncBox()` 交给盒的 `$mods` 会**剥掉**视觉三字段
-     * （`Modifier::withoutBoxVisual()`），否则 `RenderBox::paint()` 的 ① 会跟着画一遍。
-     *
-     * ★★ **描边不幂等** —— 同色画两遍不等于画一遍（`Paint::stroke` 带抗锯齿，
-     *   实测 golden 差 32 / 322 像素，全在边框条带上）。别用"看起来一样"抵赖：
-     *   底色幂等、描边不幂等，恰好是最容易漏的那一半。
-     *
-     * ★ **声明 `true` 的控件要自己把用户设的样式在 `createRenderObject()` 里合并进
-     *   `BoxStyle`**（`Button` / `PopupPanel` 读 `$mods->boxStyle()`）。只声明不合并
-     *   ⇒ 用户的 `->background()` 变成死字段（静默），比双画更糟。
+     * true ⇒ `Element::syncBox()` 会剥掉盒 `$mods` 的视觉三字段，避免描边重复绘制
+     * （抗锯齿描边不幂等，双画 golden 会差像素）。声明 true 必须在 `createRenderObject()`
+     * 里把用户样式合并进 `BoxStyle`，否则 `->background()` 等变成死字段。
      *
      * @internal 只给 Element 用；应用不该调
      */
@@ -80,20 +51,11 @@ abstract class RenderBoxWidget extends Widget
     }
 
     /**
-     * 本控件**自己画禁用外观**吗？
+     * 本控件自己画禁用外观吗？
      *
-     * `true` ⇒ `Element::syncBox()` 会给盒的 `$mods` 打 `withoutDim()`：
-     * 禁用时**不**再乘 `RenderBox::DISABLED_ALPHA`。
-     *
-     * ★ 为什么需要这个开关：`disabled()` 的默认外观是"整棵子树乘 0.38"（通用、零成本），
-     *   但有些控件有更好的表达 —— `ToggleBase` / `Slider` / `Segment` 把标签色从
-     *   `ColorToken::Text` 换成 `Muted`（**灰**而不是**淡**）。两者叠加会二次衰减：
-     *   已经变灰的字再乘 0.38，在浅底上几乎看不见。
-     * ★ 与 `paintsBoxChrome()` 同一条形状（声明在控件 / 落实在 `syncBox()` / 消费在盒），
-     *   而不是在 `RenderBox` 里 instanceof 判类 —— 后者每加一个控件就要改框架。
-     *
-     * ★ 声明 `true` 的控件有**义务**在 `createRenderObject()` 里真的按禁用换色，
-     *   否则禁用会变成"点不动但看起来完全正常"（比不禁用更误导）。
+     * true ⇒ `Element::syncBox()` 给盒 `$mods` 打 `withoutDim()`，不再乘
+     * `RenderBox::DISABLED_ALPHA`。声明 true 必须在 `createRenderObject()` 里真的换色，
+     * 否则会变成"点不动但看起来正常"。
      *
      * @internal 只给 Element 用；应用不该调
      */
@@ -103,15 +65,10 @@ abstract class RenderBoxWidget extends Widget
     }
 
     /**
-     * 用户**没声明任何盒样式**时用的默认样式（主题派生）；`null` = 没有默认。
+     * 用户没声明盒样式时的默认样式（主题派生）；null = 没有默认。
      *
-     * ★ 默认与用户样式在 `Element::syncBox()` 同一处合成，控件不必自持样式字段；
-     *   只靠 `createRenderObject()` 自己合并时，`Modifier` 新增视觉维不会自动流过去
-     *   （漏了不报错，只是那个维度静默不生效）。
-     * ★ 只对不自绘 chrome 的控件生效；`paintsBoxChrome() === true` 的控件自己合并，
-     *   再叠一层默认会打架。
-     * ★ 判据是 `BoxStyle::isBlank()`（用户一个字段都没设过），不是 `isNone()`：
-     *   `->radius(4)` 也算设过 ⇒ 整套默认让位。见 `Modifier::withBoxStyleIfBlank()`。
+     * 在 `Element::syncBox()` 与用户样式合成；只对不自绘 chrome 的控件生效。
+     * 判据是 `BoxStyle::isBlank()` 而非 `isNone()`：`->radius(4)` 也算设过。
      *
      * @internal 只给 Element 用；应用不该调
      */

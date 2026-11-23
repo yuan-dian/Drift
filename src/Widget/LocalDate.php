@@ -6,7 +6,7 @@ namespace Drift\Widget;
 use Drift\Errors;
 
 /**
- * 一个日历日期（年 / 月 / 日）—— `CalendarView` / `DatePicker` 的受控值（2026-10-29）。
+ * 一个日历日期（年 / 月 / 日）—— `CalendarView` / `DatePicker` 的受控值。
  *
  * ```php
  * $d = LocalDate::make(2026, 10, 29);

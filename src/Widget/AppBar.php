@@ -19,7 +19,7 @@ use Drift\Rendering\MetricToken;
  * ])
  * ```
  *
- * ★ **左右两组，不是一组长条**（2026-10-25）：`children()` 是**导航区**（左），
+ * ★ **左右两组，不是一组长条**：`children()` 是**导航区**（左），
  *   `actions()` 是**动作区**（右）—— 顶条的形态本来就是"左边指路、右边动手"，
  *   合成一组就得让每个调用点自己记着塞 `Spacer`。`actions()` 非空时内部自动插
  *   一个弹性占位，导航短、动作多时右侧那组仍贴右边（不是被导航推着走）。
@@ -167,7 +167,7 @@ final class AppBar extends MultiChildRenderObjectWidget
     /**
      * 用户设的 `->background()` / `->border()` / `->radius()` **逐字段覆盖**主题盒。
      *
-     * ★ S1（2026-10-28）之前这三项在 `AppBar` 上是**死字段**：`BoxWidget` 把值存进
+     * ★ S1之前这三项在 `AppBar` 上是**死字段**：`BoxWidget` 把值存进
      *   `$box`，而本方法直接 `new BoxStyle(主题…)` —— 存了但没人读。现在样式只有
      *   `$mods` 一份存储，合并写在这里，与 `Button` / `PopupPanel` 同一口径。
      */

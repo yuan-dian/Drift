@@ -6,7 +6,7 @@ namespace Drift\Logging;
 use Drift\Errors;
 
 /**
- * ① 层：pattern 字符串 ⇒ 文本（`12` §4.7.1）。
+ * ① 层：pattern 字符串 ⇒ 文本。
  *
  * ★ **必须在 `compile()` 时解析，不能在 `format()` 里解析**：spdlog 的
  *   `set_pattern()` 正是把模式预编译成内部表示 —— 日志是热路径，

@@ -11,7 +11,7 @@ use Drift\Rendering\Paint;
 use Drift\Rendering\Path;
 
 /**
- * 图标盒（`08` §4.2）：把 `IconSet` 生成的 `Path` 按已缩放坐标描出来。
+ * 图标盒：把 `IconSet` 生成的 `Path` 按已缩放坐标描出来。
  *
  * ★ **只吃已缩放的值**：`Path` 与线宽都由 `Icon::createRenderObject()` 备好 ——
  *   Layout 层不认识 `IconName` / `IconSet`（`Canvas` 没有 `scale`，缩放只能在

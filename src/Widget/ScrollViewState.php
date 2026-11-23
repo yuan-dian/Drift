@@ -164,7 +164,7 @@ final class ScrollViewState extends State implements Scrollable, ScrollMetrics
     }
 
     /**
-     * 把内容坐标里的矩形滚进视口（`04` §6.3）。
+     * 把内容坐标里的矩形滚进视口。
      *
      * ★ 算术全在 `RenderScrollView::revealDelta()`，这里只做"找盒 → 交给
      *   `scrollBy()`"。`LazyListState` 是**同一形状** —— 两个实现不各算一遍。

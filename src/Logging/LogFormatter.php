@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace Drift\Logging;
 
 /**
- * ② 层：把 `LogEntry` 变成一行文本（`12` §4.7）。
+ * ② 层：把 `LogEntry` 变成一行文本。
  *
  * ★ 三层的分界（**① 与 ③ 语义互斥**是本接口存在的理由）：
  *   ① pattern 字符串 ⇒ `PatternFormatter`（零代码改样式）

@@ -6,7 +6,7 @@ namespace Drift\Widget;
 use Drift\Errors;
 
 /**
- * 一天里的一个时刻（时 / 分 / 秒）—— `TimeView` / `DateTimePicker` 的受控值（2026-10-29）。
+ * 一天里的一个时刻（时 / 分 / 秒）—— `TimeView` / `DateTimePicker` 的受控值。
  *
  * ```php
  * $t = LocalTime::make(9, 5);          // 09:05:00

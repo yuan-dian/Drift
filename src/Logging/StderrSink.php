@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace Drift\Logging;
 
 /**
- * 开发期控制台 sink（`12` §4.4）。
+ * 开发期控制台 sink。
  *
  * ★ 走 `error_log()` 而不是 `fwrite(STDERR)`：桌面应用没有控制台，
  *   `STDERR` 常量在 GUI 子系统下可能不存在（与 `Errors` 的中止序列同一判断）。

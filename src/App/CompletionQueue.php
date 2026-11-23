@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace Drift\App;
 
 /**
- * **已完成、还没交付给 UI 线程的结果队列**（2026-10-31）—— `drain()` 的预算算法只此一份。
+ * **已完成、还没交付给 UI 线程的结果队列**—— `drain()` 的预算算法只此一份。
  *
  * ## 为什么它是一个类（不是三个后端里各写一遍）
  *
@@ -42,7 +42,7 @@ final class CompletionQueue
     private array $items = [];
 
     /**
-     * `TaskHost::drain()` 的预算换算 —— **三个后端共用这一处**（2026-10-31）。
+     * `TaskHost::drain()` 的预算换算 —— **三个后端共用这一处**。
      *
      * ★ 为什么要收：这条公式原先抄在三个后端里（`SyncTaskHost` /
      *   `ThreadTaskHost` / `ProcessTaskHost`），而它与 {@see self::drain()} 的

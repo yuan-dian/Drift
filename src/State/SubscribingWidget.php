@@ -11,7 +11,7 @@ namespace Drift\State;
  * 就只剩命名约定，`dead-subscription`（A16）那条 lint 的判据
  * （"`build()` 体内出现对 `Subject` 的方法调用 ⇒ 必须实现本接口"）也就没有抓手。
  *
- * ★ **默认不需要它**（2026-11-22）：读 `Cell` / `Computed` / `AsyncCommand` 走
+ * ★ **默认不需要它**：读 `Cell` / `Computed` / `AsyncCommand` 走
  *   `State` 的依赖采集，订阅由框架在 build 后统一建立 —— 那是 `Bind` 与页面
  *   `build()` 的路径，不经过本接口。只有**手写** `subscribeFor()` / `watch()`
  *   的类才要标记，本仓现在只剩 `SubjectBuilder`。
