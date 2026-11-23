@@ -104,11 +104,7 @@ final class ShowcaseState extends State
     /** @param array<class-string, \Closure(): Widget> $pageFactories 需要领域依赖的页的工厂 */
     public function __construct(array $pageFactories)
     {
-        // 注解是导航身份的唯一真相源；descriptor 直接喂给注册表，不再投影第二份。
-        $this->pages = new PageRegistry(
-            \array_values(ShowcaseRoutes::catalog()->all()),
-            $pageFactories
-        );
+        $this->pages = PageRegistry::discover(ShowcaseRoutes::classes(), $pageFactories);
         $this->selected = $this->pages->defaultId();
     }
 

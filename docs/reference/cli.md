@@ -56,6 +56,7 @@
 | `composer fingerprint` | 解释器侧双通道指纹，供等价比对 |
 | `composer font-scan` | 扫描字面量里的非 ASCII 字符，生成字模资产输入 |
 | `composer golden-report` | 把 golden 检查的失败现场渲染成自包含 HTML |
+| `php tools/gen-route-manifest.php` | 从 `#[Route]` 重生成 showcase 的 AOT 页清单；`--check` 只查是否过期 |
 | `composer grab` | 用 `cl.exe` 重建真机抓像素工具，需要 MSVC |
 
 ## 环境与依赖脚本

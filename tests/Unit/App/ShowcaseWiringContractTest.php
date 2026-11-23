@@ -7,6 +7,7 @@ use App\Showcase\Routes\ShowcaseRoutes;
 use App\Showcase\ShowcaseApplication;
 use App\Showcase\ShowcaseRoot;
 use Drift\Route\RouteDescriptor;
+use Drift\Routing\PageRegistry;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -55,6 +56,22 @@ final class ShowcaseWiringContractTest extends TestCase
             $missing,
             '这些页构造器要参数却没注册工厂 ⇒ 切到那页 Fatal：' . \implode('、', $missing)
         );
+    }
+
+    #[Test]
+    public function 一步装配从生成清单派生同一套描述符(): void
+    {
+        $manifest = ShowcaseRoutes::classes();
+        $descriptors = ShowcaseRoutes::catalog()->all();
+        $classes = \array_values(\array_map(static fn(RouteDescriptor $d): string => $d->pageClass, $descriptors));
+        self::assertSame($classes, $manifest, '生成清单与反射目录必须同序同类');
+
+        $registry = PageRegistry::discover($manifest);
+        self::assertSame($classes, \array_map(
+            static fn(RouteDescriptor $d): string => $d->pageClass,
+            $registry->descriptors()
+        ));
+        self::assertSame(\array_values($descriptors)[0]->id, $registry->defaultId());
     }
 
     #[Test]

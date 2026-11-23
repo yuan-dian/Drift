@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Routing;
 
+use Drift\Route\RouteCatalog;
 use Drift\Route\RouteDescriptor;
 use Drift\Widget\Page;
 use Drift\Widget\Widget;
@@ -27,6 +28,19 @@ final readonly class PageRegistry
     private array $descriptors;
 
     private RouteTable $table;
+
+    /**
+     * 一步装配：从页面类清单反射描述符并建注册表。
+     *
+     * @param list<class-string> $classes 带 `#[Route]` 的页面类
+     * @param array<class-string, \Closure(): Widget|Page> $factories 按页面类覆写建页方式
+     *
+     * @api
+     */
+    public static function discover(array $classes, array $factories = []): self
+    {
+        return new self(RouteCatalog::discover($classes)->all(), $factories);
+    }
 
     /**
      * @param list<RouteDescriptor> $descriptorsIn
