@@ -24,6 +24,7 @@ use App\Showcase\Pages\DialogPage;
 use App\Showcase\Pages\FeedbackPage;
 use App\Showcase\Pages\LoadMorePage;
 use App\Showcase\Pages\SnackbarPage;
+use App\Showcase\Pages\TablePage;
 use App\Showcase\Stores\ButtonsStore;
 
 /**
@@ -103,6 +104,8 @@ final class ShowcaseApplication extends Application
             FeedbackPage::class => static fn(): Widget|Page => new FeedbackPage($env),
             LoadMorePage::class => static fn(): Widget|Page => new LoadMorePage($fetchRows),
             SnackbarPage::class => static fn(): Widget|Page => new SnackbarPage($env),
+            // 表格 Ctrl+C → 剪贴板：注入门面才声明 onCopy（golden 默认 new 不注入 ⇒ 行为不变）。
+            TablePage::class => static fn(): Widget|Page => new TablePage($env),
         ];
     }
 

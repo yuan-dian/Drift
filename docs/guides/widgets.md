@@ -101,6 +101,9 @@ private function pageFactories(): array
         // 领域依赖：具体类型
         ButtonsPage::class => static fn() => new ButtonsPage($this->buttons),
         AsyncTablePage::class => static fn() => new AsyncTablePage($fetchRows),
+        // 表格 Ctrl+C → 剪贴板：页面从门面取写能力，控件仍不碰平台。
+        // 不注入（golden / 无头）时页面不声明 onCopy ⇒ 键放行、像素不变。
+        TablePage::class => static fn() => new TablePage($env),
     ];
 }
 ```

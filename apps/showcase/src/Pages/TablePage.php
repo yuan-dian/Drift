@@ -16,6 +16,7 @@ use Drift\Widget\BuildContext;
 use Drift\Widget\Button;
 use Drift\Widget\Card;
 use Drift\Widget\Column;
+use Drift\Widget\Environment;
 use Drift\Widget\Expanded;
 use Drift\Widget\Menu\ContextMenu;
 use Drift\Widget\Menu\MenuItem;
@@ -117,6 +118,17 @@ final class TablePage extends ShowcasePage
      */
     private array $widthOverrides = [];
 
+    /**
+     * 剪贴板门面（可选）—— 注入时把 Ctrl+C 选区交给它；不注入（golden / 无头）时
+     * 表格不声明 onCopy，键交回应用，行为与接线前逐像素一致。
+     */
+    private readonly ?Environment $clipboard;
+
+    public function __construct(?Environment $clipboard = null)
+    {
+        $this->clipboard = $clipboard;
+    }
+
     public function initState(): void
     {
         $this->selection = Cell::of(TableSelection::none())->named('table.selection');
@@ -163,49 +175,59 @@ final class TablePage extends ShowcasePage
 
                 // ★ 必须放进**有界高度**：`Table` 自己就是滚动容器（同 `LazyColumn`），
                 //   塞进无界主轴会按内容高铺开 ⇒ 虚拟化失效（窗口变成全部行）。
-                Expanded::make(
-                    Table::make(self::columns(), $this->rowsNow())
-                        ->keyOf(static fn(array $row): int => $row['id'])
-                        ->rowHeight(self::ROW_HEIGHT)
-                        ->headerHeight(self::HEADER_HEIGHT)
-                        // ★ 通道形态：读点在 TableState，点行不重建本页。
-                        ->selectionFrom($this->selection)
-                        ->onSelectionChange(function (TableSelection $next): void {
-                            $this->selection->set($next);
-                        })
-                        ->columnWidths($this->widthOverrides)
-                        // 上下文菜单的真消费者：焦点在表上时，右键与 `Shift+F10` / `Apps`
-                        // 都开到这一份声明。命令复用 `showcase.refresh`（本应用只注册了它）
-                        // ⇒ 真机上选完一项能看见 Snackbar。
-                        ->contextMenu(ContextMenu::make()->items([
-                            MenuItem::make('刷新数据')->chord(KeyChord::ctrl('R'))->command('showcase.refresh')
-                                ->semanticsMeta(acceleratorKey: 'Ctrl+R'),
-                            MenuItem::separator(),
-                            MenuItem::make('清空选择')->onPressed($this->selection->setTo(TableSelection::none())),
-                        ]))
-                        ->onColumnResize(fn(string $key, float $width, bool $done) => $this->setState(
-                            function () use ($key, $width): void {
-                                $this->widthOverrides[$key] = $width;
-                            }
-                        ))
-                        ->sort($this->sortNow())
-                        // 第二参是列序号：单键应用拿它当下标，多键应用按 `keys()` 遍历
-                        // —— 本页属后者，但回调签名照接（框架契约，不擅自少接参数）。
-                        // 重排由 `$rows` 这个 `Computed` 做：写格子就够，不用在这里算。
-                        ->onSortChange(function (TableSort $next, int $columnIndex): void {
-                            $this->sort->set($next);
-                        })
-                        // ★ 单元格编辑（阶段 7a）：提交的是**行 key + 列 key + 新文本**，
-                        //   写回数据由本页做（控件不碰数据）。改完发一次数据版本信号 ——
-                        //   否则改了"姓名"列而正按姓名排序时，行序会与数据不一致。
-                        ->onCellEdit(fn(int $rowKey, string $column, string $value) => $this->editCell(
-                            $rowKey,
-                            $column,
-                            $value,
-                        ))
-                ),
+                Expanded::make($this->table()),
             ])
         )->paddingAll(0.0);
+    }
+
+    /**
+     * 表格本体 —— 从 `build()` 抽出，只为在链式末尾条件挂 `onCopy`。
+     *
+     * ★ `onCopy` 一旦声明，`TableState` 就吃掉 `Ctrl+C`。无头 / golden 不注入
+     *   clipboard ⇒ 不声明 ⇒ 键照旧交回应用，行为逐像素不变。
+     * ★ 复制的 TSV 由 `TableState` 算（列 `copyText()` 优先、否则 `field()`），
+     *   本页只决定"交给剪贴板"—— 控件不碰平台，门面独占剪贴板写入。
+     */
+    private function table(): Table
+    {
+        $table = Table::make(self::columns(), $this->rowsNow())
+            ->keyOf(static fn(array $row): int => $row['id'])
+            ->rowHeight(self::ROW_HEIGHT)
+            ->headerHeight(self::HEADER_HEIGHT)
+            ->selectionFrom($this->selection)
+            ->onSelectionChange(function (TableSelection $next): void {
+                $this->selection->set($next);
+            })
+            ->columnWidths($this->widthOverrides)
+            ->contextMenu(ContextMenu::make()->items([
+                MenuItem::make('刷新数据')->chord(KeyChord::ctrl('R'))->command('showcase.refresh')
+                    ->semanticsMeta(acceleratorKey: 'Ctrl+R'),
+                MenuItem::separator(),
+                MenuItem::make('清空选择')->onPressed($this->selection->setTo(TableSelection::none())),
+            ]))
+            ->onColumnResize(fn(string $key, float $width, bool $done) => $this->setState(
+                function () use ($key, $width): void {
+                    $this->widthOverrides[$key] = $width;
+                }
+            ))
+            ->sort($this->sortNow())
+            ->onSortChange(function (TableSort $next, int $columnIndex): void {
+                $this->sort->set($next);
+            })
+            ->onCellEdit(fn(int $rowKey, string $column, string $value) => $this->editCell(
+                $rowKey,
+                $column,
+                $value,
+            ));
+
+        if ($this->clipboard !== null) {
+            $clipboard = $this->clipboard;
+            $table->onCopy(static function (string $tsv) use ($clipboard): void {
+                $clipboard->setClipboardText($tsv);
+            });
+        }
+
+        return $table;
     }
 
     /** 写回一行并让派生行重算（`onCellEdit` 的落点，事件期、不在 build 里） */

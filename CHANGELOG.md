@@ -74,6 +74,11 @@
   ——取消一条在途任务会杀掉独占它的 worker、下帧补池（每 worker 在途 ≤1 ⇒ 不连坐），
   排队中的仍只是摘队列。取消不是失败：不投 `Failure` / 不 onError、`Future` 保持未结算。
   此前进程后端只能撤排队、在途只能"不交付"，后台照烧 CPU。裁决 N7。
+- **表格 `Ctrl+C` 接上剪贴板（两个零消费者 token 落地）**：`Table::onCopy()` 钩子与
+  `Environment::setClipboardText()` 此前都只有实现与单测、apps 零消费者。示例台表格页
+  组合根注入 `Environment` 后声明 `onCopy`，把 `TableState` 算出的选区 TSV 交剪贴板；
+  无头 / golden 默认构造不注入 ⇒ 不声明 `onCopy`、键交回应用，逐像素不变。`Ctrl+A` /
+  `Ctrl+C` 键名大写（壳给 `A`–`Z` 大写），判据用真实键盘事件驱动而非直调回调。
 
 ## v0.1.0（2026-11-20 · 首个无后缀的预览版）
 
