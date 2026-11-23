@@ -101,7 +101,7 @@ final class RouteCatalogTest extends TestCase
     public function testPageClassIsConstructibleFromContext(): void
     {
         // 路由层不负责造页，但描述符给出的 pageClass 必须能用同一个上下文构造
-        // —— 这正是 ShowcaseNav 交给 PageRegistry 的建页方式。
+        // —— 这正是 PageRegistry 直接用描述符建页的方式。
         $context = new \stdClass();
         $descriptor = RouteCatalog::discover([SamplePage::class])->get('sample');
         $class = $descriptor->pageClass;

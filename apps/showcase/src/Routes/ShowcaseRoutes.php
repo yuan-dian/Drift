@@ -11,8 +11,8 @@ use Drift\Route\RouteCatalog;
  *
  * 这份清单唯一的用途是告诉 AOT 产物"哪些类参与启动期反射扫描"
  * （AOT 里没有扫目录找类这回事，清单本身是构建期可生成的产物）。
- * 导航项与自动化身份由 `RouteCatalog` 从注解派生 —— 迁移前 `ShowcaseNav::PAGES`
- * 那张写 id/icon/title 的平行清单已删除，不会再出现"注解改了、清单没改"的双写漂移。
+ * 导航项与自动化身份由 `RouteCatalog` 从注解派生 —— 不会再出现
+ * "注解改了、清单没改"的双写漂移。
  * ★ **页面工厂不在这里**：需要领域依赖的页由组合根按类名覆写建页方式
  *   （`ShowcaseApplication::pageFactories()`），本清单只管"哪些类参与启动期扫描"。
  *

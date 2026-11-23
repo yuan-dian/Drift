@@ -17,8 +17,8 @@ use Drift\Widget\Widget;
  * ★ 为什么类清单仍是显式数组：AOT 产物里没有"扫目录找类"这回事。
  *   清单是构建期可生成的产物，不是业务数据 —— 一页一行，且 `id/title/icon`
  *   只在页面类的注解里写一次，不再有 `ShowcaseNav::PAGES` 那张平行清单。
- * ★ 本类只产出**元数据**（descriptor）；怎么把 descriptor 变成 NavEntry /
- *   RouteTable 是应用层的接线（`ShowcaseNav`），框架不替它做产品决定。
+ * ★ 本类只产出**元数据**（descriptor）；descriptor 直接喂 `Routing\PageRegistry`
+ *   建表与建页，不再投影第二份导航项。
  * ★ 为什么 id 冲突在启动期就抛：等到用户点导航才发现两个页撞 id，是线上问题；
  *   启动期抛是构建/自检问题。
  *

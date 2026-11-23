@@ -3,11 +3,13 @@ declare(strict_types=1);
 
 namespace App\Showcase;
 
+use App\Showcase\Routes\ShowcaseRoutes;
 use Drift\Rendering\Color;
 use Drift\Rendering\ColorToken;
 use Drift\Theme\ThemeScope;
-use Drift\Routing\NavEntry;
+use Drift\Route\RouteDescriptor;
 use Drift\Routing\PageHost;
+use Drift\Routing\PageRegistry;
 use Drift\Widget\AppBar;
 use Drift\Widget\BuildContext;
 use Drift\Widget\ButtonVariant;
@@ -73,7 +75,7 @@ final class ShowcaseRoot extends StatefulWidget
 }
 
 /**
- * 导航条目 + 选中态。注册表由 `ShowcaseNav` 统一持有，
+ * 导航条目 + 选中态。注册表直接读 `#[Route]` 描述符，
  * 实例由 PageHost 按 id 缓存。
  */
 final class ShowcaseState extends State
@@ -95,15 +97,19 @@ final class ShowcaseState extends State
      */
     public const NAV_WIDTH_COMPACT = 56;
 
-    private ShowcaseNav $nav;
+    private PageRegistry $pages;
 
     private string $selected;
 
     /** @param array<class-string, \Closure(): Widget> $pageFactories 需要领域依赖的页的工厂 */
     public function __construct(array $pageFactories)
     {
-        $this->nav = new ShowcaseNav($pageFactories);
-        $this->selected = $this->nav->defaultId();
+        // 注解是导航身份的唯一真相源；descriptor 直接喂给注册表，不再投影第二份。
+        $this->pages = new PageRegistry(
+            \array_values(ShowcaseRoutes::catalog()->all()),
+            $pageFactories
+        );
+        $this->selected = $this->pages->defaultId();
     }
 
     public function build(BuildContext $ctx): Widget
@@ -163,7 +169,7 @@ final class ShowcaseState extends State
                 Expanded::make(
                     PageHost::make()
                         ->current($this->selected)
-                        ->table($this->nav->table())
+                        ->table($this->pages->table())
                         ->expanded()
                 ),
             ])
@@ -176,21 +182,21 @@ final class ShowcaseState extends State
     private function navButtons(bool $compact): array
     {
         $out = [];
-        foreach ($this->nav->entries() as $entry) {
+        foreach ($this->pages->descriptors() as $entry) {
             $out[] = $this->navButton($entry, $compact);
         }
         return $out;
     }
 
-    private function navButton(NavEntry $entry, bool $compact): Widget
+    private function navButton(RouteDescriptor $entry, bool $compact): Widget
     {
         $isHere = $entry->id === $this->selected;
 
         // 非选中 Flat（像菜单项），选中 Primary + 示例台墨绿。宽档 NavButton 左对齐
         // （图标列要齐），窄档 IconButton —— 标签仍进无障碍名。
         $button = $compact
-            ? IconButton::of($entry->icon, $entry->label)
-            : NavButton::make($entry->label)->icon($entry->icon);
+            ? IconButton::of($entry->icon, $entry->title)
+            : NavButton::make($entry->title)->icon($entry->icon);
 
         $button
             ->variant($isHere ? ButtonVariant::Primary : ButtonVariant::Flat)

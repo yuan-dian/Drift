@@ -68,10 +68,12 @@ final class DependencyDirection implements Rule
         'Theme'     => ['Theme', 'Widget', 'Text', 'Rendering'],
         // `Routing`：页名来源收成 `Core\Readable`（2026-11-22）⇒ 不再需要 `State`（那是
         // `Widget` 的邻居层）。它要的只是"读一个值并跟着变"，依赖采集在 `Widget\State`。
-        'Routing'   => ['Routing', 'Widget', 'Core'],
-        // `Route`：纯导航层（`#[Route]` + `RouteDescriptor` + `RouteCatalog`），
-        // 只压在 `Widget` 之上——它要 `BuildContext`/`Widget`/`IconName` 做注解与建页校验。
-        // 不碰 `Reducer`（状态管理是页面内部选择）、不碰 `Routing`（那是命令路由）。
+        // `Routing` 装配层可依赖 `Route` 声明层（A28：descriptor 直接喂 PageRegistry，
+        // 不再投影第二份 NavEntry）；`Route` 不反向依赖 `Routing`。
+        'Routing'   => ['Routing', 'Route', 'Widget', 'Core'],
+        // `Route`：纯声明层（`#[Route]` + `RouteDescriptor` + `RouteCatalog`），只压在 `Widget` 之上。
+        // 不碰 `Reducer`（状态管理是页面内部选择），也不反向依赖 `Routing`（装配层）——
+        // 声明不依赖装配；命令路由另住 `Commands`。方向见 A28。
         'Route'     => ['Route', 'Widget'],
         // `Reducer`：可选状态机（`ReducerView` + `ReducerState` + 四个值类型），
         // 只压在 `Widget` 之上（`Widget\State` 也算 Widget 层）。与 `Route` 平级、
