@@ -68,7 +68,7 @@ UI 线程亲和：后台结果不作为回调直接改树，而是以事件形�
 
 `Application` 是应用声明与兼容门面：应用只覆写 `buildRoot()` / `title()` / `commands()` / 生命周期钩子。每窗口的根树、帧循环、焦点链、输入路由与浮层栈住 `AppShell`；它实现 `TextEditingHost` / `InputHost` / `OverlayHost` / `PumpHostHost` / `FocusHost`，应用代码不直接引用。
 
-`AppContext` 只收本窗服务：主题、度量、端口、异步提交。它不暴露 `frame()` / `attach()` / 输入与浮层入口，避免“能力门面”再次长成第二个组合根。`Application` 的原有 public 方法保留一行转发，所以应用、组合根与测试的调用方式不变。
+`AppScope` 是进程级服务容器：主题、度量、端口、异步提交与窗口注册表。它不暴露 `frame()` / `attach()` / 输入与浮层入口，避免“能力门面”再长成第二个组合根。`Application` 对应用声明面保留一行转发到壳；四个可覆写能力（主题 / 度量 / 加速键 / 剪贴板）的默认实现直接读 `AppScope` —— 壳反过来调 `$app->theme()` 取覆写值，这里再转发壳就是无限递归。
 
 ## 依赖方向 Core < Widget < App
 

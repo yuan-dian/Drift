@@ -80,9 +80,6 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
     /** 应用作用域：进程一份的东西（主题 / 度量 / 命令父表 / 加速键 / 端口 / IO）。 */
     private readonly AppScope $scope;
 
-    /** 本窗的服务上下文：主题 / 度量 / 端口 / 提交策略；不含帧与输入。 */
-    private readonly AppContext $context;
-
     /** 已向 `$scope` 登记过本窗口（`attach()` 可重入 ⇒ 只登记一次） */
     private bool $scopeEntered = false;
 
@@ -242,19 +239,11 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
             $this->scope,
             fn(): ?Clipboard => $this->app->clipboard(),
         );
-        $this->context = new AppContext($this->scope, $this->environment, $this->pumps);
-
         // `commands()` 不在这里调：PHP 构造链父先子后，此刻子类字段还是 null。
         // 注册推迟到 `attach()`。
         foreach ($handlers as $name => $handler) {
             $this->router->on((string) $name, $handler);
         }
-    }
-
-    /** 本窗的服务上下文；`Application` 的默认能力实现都从这里取。 */
-    public function context(): AppContext
-    {
-        return $this->context;
     }
 
     /**

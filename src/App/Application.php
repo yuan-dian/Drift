@@ -158,7 +158,7 @@ abstract class Application
     /** 异步 HTTP 门面（应用侧唯一入口）。 */
     public function http(): AsyncHttp
     {
-        return $this->shell->context()->http();
+        return $this->scope()->asyncHttp();
     }
 
     /**
@@ -170,25 +170,25 @@ abstract class Application
      */
     public function theme(): ThemeData
     {
-        return $this->shell->context()->theme();
+        return $this->scope()->theme();
     }
 
     /** 后台执行端口（应用级，一个进程一个池）。 */
     final public function taskHost(): ?TaskHost
     {
-        return $this->shell->context()->taskHost();
+        return $this->scope()->taskHost();
     }
 
     /** 提交一个后台任务，策略从 `AppScope` 读取。 */
     final public function submit(Job $job): Future
     {
-        return $this->shell->context()->submit($job);
+        return $this->scope()->dispatch()->submit($job);
     }
 
     /** 显式策略提交口：调用点自己决定同步 / 拒绝 / 后台。 */
     final public function submitWith(TaskDispatch $dispatch, Job $job): Future
     {
-        return $this->shell->context()->submitWith($dispatch, $job);
+        return $dispatch->submit($job);
     }
 
     /** 已挂载的后台端口（测试 / devtools）。 */
@@ -212,25 +212,25 @@ abstract class Application
     /** 加速键表（应用级）。 */
     public function accelerators(): AcceleratorTable
     {
-        return $this->shell->context()->accelerators();
+        return $this->scope()->accelerators();
     }
 
     /** 剪贴板端口（`null` = 本应用没有）。 */
     public function clipboard(): ?Clipboard
     {
-        return $this->shell->context()->clipboard();
+        return $this->scope()->clipboard();
     }
 
     /** 应用侧唯一的能力入口。 */
     public function environment(): AppEnvironment
     {
-        return $this->shell->context()->environment();
+        return $this->shell->environment();
     }
 
     /** 字体度量（应用级，整个进程一份）。 */
     public function metrics(): TextMetricsProvider
     {
-        return $this->shell->context()->metrics();
+        return $this->scope()->metrics();
     }
 
     /** 本窗命令表。 */

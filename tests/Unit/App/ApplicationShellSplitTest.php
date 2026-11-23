@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Unit\App;
 
-use Drift\App\AppContext;
+use Drift\App\AppScope;
 use Drift\App\AppShell;
 use Drift\App\Application;
 use Drift\App\InputHost;
@@ -64,21 +64,21 @@ final class ApplicationShellSplitTest extends TestCase
     }
 
     #[Test]
-    public function 上下文只收服务不收运行时(): void
+    public function 作用域只收服务不收运行时(): void
     {
-        $context = new \ReflectionClass(AppContext::class);
+        $scope = new \ReflectionClass(AppScope::class);
         $names = [];
-        foreach ($context->getMethods(\ReflectionMethod::IS_PUBLIC) as $method) {
-            if ($method->getDeclaringClass()->getName() === AppContext::class) {
+        foreach ($scope->getMethods(\ReflectionMethod::IS_PUBLIC) as $method) {
+            if ($method->getDeclaringClass()->getName() === AppScope::class) {
                 $names[] = $method->getName();
             }
         }
 
-        foreach (['theme', 'metrics', 'environment', 'scope', 'submit', 'io', 'clipboard'] as $expected) {
+        foreach (['theme', 'metrics', 'asyncHttp', 'accelerators', 'clipboard', 'taskHost', 'io', 'dispatch'] as $expected) {
             self::assertContains($expected, $names);
         }
         foreach (['frame', 'attach', 'dispatchInput', 'root', 'focus', 'showMenu', 'showModal', 'overlays'] as $forbidden) {
-            self::assertNotContains($forbidden, $names, 'AppContext 不应暴露 ' . $forbidden);
+            self::assertNotContains($forbidden, $names, 'AppScope 不应暴露 ' . $forbidden);
         }
     }
 

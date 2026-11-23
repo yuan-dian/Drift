@@ -45,6 +45,15 @@
 
 ### 已实现
 
+- **删掉 `AppContext` 转发层**：P2 拆分留下的这个 11 方法纯转发壳只被 `Application`
+  的默认实现用到，现在那四处（主题 / 度量 / 端口 / 提交）直接读 `AppScope`，
+  壳不再持有上下文。原先守"上下文不收帧内方法"的反射断言迁到真正的服务容器
+  `AppScope` 上——守卫对象比原先更实在。
+- **输入链顺序单一真相**：键盘六环（Esc → 编辑 → 焦点 → 加速键 → 激活 → 上下文菜单键）
+  的散落描述收敛到 `InputRouter::dispatch()` 的注释，`FocusManager` 不再抄一份顺序图，
+  交互指南补上此前漏掉的 Esc 环。新增 `InputChainOrderTest` 按调用位置钉住六环顺序
+  ——顺序写错不报错、只是行为错（Esc 被输入框吃掉、`Ctrl+W` 绕过对话框），
+  这类纪律必须由工具守。
 - **CI 架构判据纳入本地验证**：`assert-workflows.php` 一直是 `verify.yml` 的独立步骤、
   不在 `VerifyPlan` 里，A28 删 `ShowcaseNav`/`NavEntry` 后它引用已删文件，本地全绿而 CI 红。
   判据改用 A29 后的导航链（生成清单 → `PageRegistry` → `RouteDescriptor`）做锚点，并作为

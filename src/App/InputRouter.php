@@ -23,9 +23,12 @@ use Drift\Widget\Element;
 
 /**
  * 输入路由主体：键 / 指针 / 滚轮 / 文件拖放四侧的派发 + 手势状态。
- * 派发顺序（写错不报错，只是行为错）：
- *   Esc（浮层栈）⇒ 编辑命令（剪贴板）⇒ 焦点链 ⇒ 加速键 ⇒ 激活。
- *   Esc 必须排在 `dispatchKey` 之前，否则被焦点控件吃掉、菜单关不掉。
+ *
+ * ★ 键盘六环顺序的唯一代码真相在 `dispatch()`，写错不报错、只是行为错：
+ *   Esc（浮层 / 拖动 / 手势）⇒ ⓪编辑命令 ⇒ ①焦点链 ⇒ ②加速键 ⇒ ③激活 ⇒ ④上下文菜单键。
+ *   Esc 必须排在 `dispatchKey` 之前，否则被焦点控件吃掉、菜单关不掉；
+ *   ④ 排最后，控件 `keyboard()` 与应用加速键都能先认领。
+ *   `InputChainOrderTest` 钉住这个顺序。
  *
  * 片间组合直连（`ScrollInputRouter` / `TextEditingBridge` / `OverlayManager`）；应用状态只走 `InputHost`，片不持副本。
  *

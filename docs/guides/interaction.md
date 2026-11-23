@@ -29,12 +29,13 @@
 
 `Esc` 在键盘链之前拦：浮层打开时先关可关闭的顶层，拖动中取消拖动，竞技场未裁决时丢弃这次手势意图并消费该键。
 
-## 键盘五环优先级
+## 键盘六环优先级
 
-`InputRouter::dispatch()` 对 `KeyEvent` 按固定顺序过环，谁先认领谁赢：
+`InputRouter::dispatch()` 对 `KeyEvent` 按固定顺序过环，谁先认领谁赢。本表是唯一文档真相，代码真相在同一方法的注释里，由 `InputChainOrderTest` 钉住顺序：
 
 | 环 | 内容 | 说明 |
 |---|---|---|
+| Esc | 浮层 / 拖动 / 手势 | 在五环之前拦：浮层开着先关顶层，拖动中取消拖动，竞技场未裁决就丢弃手势意图并吞键（交回加速键会让 `Ctrl+W` 绕过对话框） |
 | ⓪ | 编辑命令 | `Ctrl+C/X/V` 等，要平台剪贴板，只有 App 层拿得到；四条门控任一不满足整族回落 |
 | ① | 焦点链 | `FocusManager::dispatchKey()`：控件的 `keyboard()` 声明者 → `EditableText::handleKey()` |
 | ② | 加速键 | `Application::accelerators()->resolve($chord)`，命中后 `dispatch()` 命令 |
