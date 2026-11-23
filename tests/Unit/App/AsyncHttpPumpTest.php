@@ -6,6 +6,7 @@ namespace Drift\Dev\Tests\Unit\App;
 use Drift\App\Io\AsyncHttp;
 use Drift\App\Io\HttpTransport;
 use Drift\App\PumpHost;
+use Drift\App\TaskDispatch;
 use Drift\App\PumpHostHost;
 use Drift\Async\Future;
 use Drift\Dev\Tests\Support\SmokeTestCase;
@@ -22,7 +23,7 @@ final class AsyncHttpPumpTest extends SmokeTestCase
     public function testPumpRunsEvenWithoutIoPoller(): void
     {
         $transport = new CountingTransport();
-        $http = new AsyncHttp(null, $transport);
+        $http = new AsyncHttp(TaskDispatch::sync(), $transport);
         $pumps = new PumpHost(new StubPumpHost());
         $pumps->attach(null, null, $http); // io = null，http ≠ null
 

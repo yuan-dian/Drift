@@ -10,6 +10,7 @@ use Drift\App\Io\CurlMultiTransport;
 use Drift\App\Io\HttpResponse;
 use Drift\App\Io\HttpTransport;
 use Drift\App\Job;
+use Drift\App\TaskDispatch;
 use Drift\App\TaskHost;
 use Drift\Async\Future;
 use Drift\Dev\Tests\Support\RecordingTaskHost;
@@ -29,7 +30,7 @@ final class AsyncHttpTest extends SmokeTestCase
     public function testSmallRequestGoesToTransportAndPumpDelegates(): void
     {
         $transport = new SpyTransport();
-        $http = new AsyncHttp(null, $transport);
+        $http = new AsyncHttp(TaskDispatch::sync(), $transport);
 
         $future = $http->get('http://example.test/x', ['headers' => ['X-T' => '1']]);
         check('小请求 · 返回尚未结算的 Future', !$future->isDone(), $future->isDone() ? 'done' : 'pending');
@@ -56,7 +57,7 @@ final class AsyncHttpTest extends SmokeTestCase
         ];
         $host = new RecordingTaskHost([HttpRequestJob::class => $wire]);
         $transport = new SpyTransport();
-        $http = new AsyncHttp($host, $transport);
+        $http = new AsyncHttp(TaskDispatch::background($host), $transport);
 
         $big = \str_repeat('x', AsyncHttp::INLINE_BODY_LIMIT + 1);
         $got = null;
@@ -87,7 +88,7 @@ final class AsyncHttpTest extends SmokeTestCase
     {
         $host = new RecordingTaskHost([HttpRequestJob::class => []]);
         $transport = new SpyTransport();
-        $http = new AsyncHttp($host, $transport);
+        $http = new AsyncHttp(TaskDispatch::background($host), $transport);
 
         // multipart 必须有真文件（Http::buildMultipart 会 is_file）—— 用测试文件自身。
         $file = __FILE__;
@@ -101,7 +102,7 @@ final class AsyncHttpTest extends SmokeTestCase
 
     public function testUnknownOptionRejectedBySharedValidation(): void
     {
-        $http = new AsyncHttp(null, new SpyTransport());
+        $http = new AsyncHttp(TaskDispatch::sync(), new SpyTransport());
         $threw = null;
         try {
             $http->get('http://example.test/x', ['timeOut' => 1.0]);
@@ -116,7 +117,7 @@ final class AsyncHttpTest extends SmokeTestCase
 
     public function testOnProgressRequiresMultipart(): void
     {
-        $http = new AsyncHttp(null, new SpyTransport());
+        $http = new AsyncHttp(TaskDispatch::sync(), new SpyTransport());
         $threw = null;
         try {
             // 大 body 非 multipart 也想报进度 —— 门面要当场挡，不能静默吞掉回调。
@@ -135,7 +136,7 @@ final class AsyncHttpTest extends SmokeTestCase
     public function testWorkerTimeoutFollowsHttpRequestTimeout(): void
     {
         $host = new RecordingTaskHost([HttpRequestJob::class => []]);
-        $http = new AsyncHttp($host, new SpyTransport());
+        $http = new AsyncHttp(TaskDispatch::background($host), new SpyTransport());
 
         $big = \str_repeat('x', AsyncHttp::INLINE_BODY_LIMIT + 1);
         $http->post('http://example.test/x', $big, ['timeout' => 60.0]);
@@ -148,17 +149,17 @@ final class AsyncHttpTest extends SmokeTestCase
         $this->flushChecks();
     }
 
-    public function testSetTaskHostUpdatesSameFacade(): void
+    public function testSetDispatchUpdatesSameFacade(): void
     {
         $t1 = new SpyTransport();
-        $http = new AsyncHttp(null, $t1);
+        $http = new AsyncHttp(TaskDispatch::sync(), $t1);
         $host = new RecordingTaskHost([HttpRequestJob::class => []]);
-        $http->setTaskHost($host);
+        $http->setDispatch(TaskDispatch::background($host));
 
         $big = \str_repeat('x', AsyncHttp::INLINE_BODY_LIMIT + 1);
         $http->post('http://example.test/x', $big);
 
-        check('setTaskHost · 同一实例更新后大请求走新 host', \count($host->ofClass(HttpRequestJob::class)) === 1,
+        check('setDispatch · 同一实例更新后大请求走新 host', \count($host->ofClass(HttpRequestJob::class)) === 1,
             'Job 数=' . \count($host->ofClass(HttpRequestJob::class)));
 
         $this->flushChecks();
@@ -167,7 +168,7 @@ final class AsyncHttpTest extends SmokeTestCase
     public function testSetTransportRejectedWhileInFlight(): void
     {
         $t1 = new SpyTransport();
-        $http = new AsyncHttp(null, $t1);
+        $http = new AsyncHttp(TaskDispatch::sync(), $t1);
         $http->get('http://example.test/x'); // t1 记一条在途（SpyTransport::inFlight 返回提交数）
 
         $threw = null;
@@ -188,7 +189,7 @@ final class AsyncHttpTest extends SmokeTestCase
         // Future 上（submitWorker），worker 经 JobProgress 报进度时应触发它。
         // 这里用可控 Future 替身验证转接，真机那半由 probe-async ⑥⑦⑧ 兜。
         $host = new ProgressTaskHost();
-        $http = new AsyncHttp($host, new SpyTransport());
+        $http = new AsyncHttp(TaskDispatch::background($host), new SpyTransport());
         $got = [];
 
         $http->request('POST', 'http://example.test/upload', [

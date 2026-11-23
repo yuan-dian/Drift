@@ -190,6 +190,25 @@ final class AppScope
     }
 
     /**
+     * 当前提交策略：未表态 = 同步，显式 null = 拒绝，给了端口 = 后台。
+     *
+     * 与 `taskHost()` 分开：`taskHost()` 仍返回 `SyncTaskHost` 给帧泵用，
+     * 提交口只读这里的显式策略，不再靠 null 所在位置猜语义。
+     *
+     * @api
+     */
+    public function dispatch(): TaskDispatch
+    {
+        if (!$this->taskHostDecided) {
+            return TaskDispatch::sync();
+        }
+
+        return $this->taskHost === null
+            ? TaskDispatch::reject()
+            : TaskDispatch::background($this->taskHost);
+    }
+
+    /**
      * 换后端（组合根一行）：`->setTaskHost(new ProcessTaskHost(4))`。
      * ★ 必须在第一个窗口 `attach()` 之前调 —— 端口在 `attach()` 时被 `PumpHost`
      *   取走并缓存，中途换掉会让"入队 / drain"分属两个队列。
@@ -205,7 +224,7 @@ final class AppScope
         // 门面若已惰性建好，更新同一个实例：它持有 host 的快照，不更新会让大请求
         // 继续走旧的 SyncTaskHost（在 UI 线程同步跑阻塞 HTTP）。不换实例 ⇒
         // PumpHost 缓存的引用不分叉（与其 attach 纪律一致）。
-        $this->asyncHttp?->setTaskHost($taskHost);
+        $this->asyncHttp?->setDispatch($this->dispatch());
 
         return $this;
     }
@@ -323,9 +342,7 @@ final class AppScope
     public function asyncHttp(): \Drift\App\Io\AsyncHttp
     {
         if ($this->asyncHttp === null) {
-            // 只在本类取 taskHost：未表态时它给默认 SyncTaskHost（大请求在解释器/单测
-            // 里同步跑，与 JobRunner 的 null 语义一致），显式 null 时才没有后台。
-            $this->asyncHttp = new \Drift\App\Io\AsyncHttp($this->taskHost());
+            $this->asyncHttp = new \Drift\App\Io\AsyncHttp($this->dispatch());
         }
 
         return $this->asyncHttp;
@@ -340,7 +357,7 @@ final class AppScope
     public function setHttpTransport(\Drift\App\Io\HttpTransport $transport): self
     {
         if ($this->asyncHttp === null) {
-            $this->asyncHttp = new \Drift\App\Io\AsyncHttp($this->taskHost(), $transport);
+            $this->asyncHttp = new \Drift\App\Io\AsyncHttp($this->dispatch(), $transport);
         } else {
             $this->asyncHttp->setTransport($transport);
         }

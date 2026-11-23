@@ -4,8 +4,7 @@ declare(strict_types=1);
 namespace Drift\App\Io;
 
 use Drift\App\HttpRequestJob;
-use Drift\App\JobRunner;
-use Drift\App\TaskHost;
+use Drift\App\TaskDispatch;
 use Drift\Async\Future;
 
 /**
@@ -33,17 +32,16 @@ final class AsyncHttp
 
     private HttpTransport $transport;
 
-    private ?TaskHost $host;
+    private TaskDispatch $dispatch;
 
     /**
-     * @param null|TaskHost $host 大请求分流用的后台端口；`null` = 当前栈同步跑
-     *        （解释器 / 单测；与 `JobRunner` 的 null 语义一致，不是"拒绝"）
+     * @param TaskDispatch $dispatch 大请求分流的提交策略（同步 / 拒绝 / 后台）
      * @param null|HttpTransport $transport 默认 `CurlMultiTransport`；可注入以便单测
      *        或将来切换后端（Swoole 见 `HttpTransport` 接口的裁决说明）
      */
-    public function __construct(?TaskHost $host = null, ?HttpTransport $transport = null)
+    public function __construct(TaskDispatch $dispatch, ?HttpTransport $transport = null)
     {
-        $this->host = $host;
+        $this->dispatch = $dispatch;
         $this->transport = $transport ?? new CurlMultiTransport();
     }
 
@@ -88,14 +86,14 @@ final class AsyncHttp
     }
 
     /**
-     * 换后台端口（AppScope::setTaskHost 转调）—— 更新**同一实例**。
+     * 换提交策略（AppScope::setTaskHost 转调）—— 更新**同一实例**。
      *
      * ★ 不换实例是硬约束：PumpHost 在 attach 时缓存门面引用，换实例会让
      *   "submit 走新后端、pump 走旧后端"分叉，Future 永不结算。
      */
-    public function setTaskHost(?TaskHost $host): void
+    public function setDispatch(TaskDispatch $dispatch): void
     {
-        $this->host = $host;
+        $this->dispatch = $dispatch;
     }
 
     /**
@@ -153,7 +151,7 @@ final class AsyncHttp
         $httpTimeoutS = (float) ($opts['timeout'] ?? 10.0);
         $workerTimeoutMs = (int) \ceil($httpTimeoutS * 1000.0) + 10_000;
 
-        $future = JobRunner::exec($this->host, new HttpRequestJob($method, $url, $opts, $workerTimeoutMs));
+        $future = $this->dispatch->submit(new HttpRequestJob($method, $url, $opts, $workerTimeoutMs));
         if (\is_callable($onProgress)) {
             $future->onProgress($onProgress);
         }

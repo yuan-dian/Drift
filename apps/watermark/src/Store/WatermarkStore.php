@@ -12,7 +12,7 @@ use App\Watermark\Jobs\FetchSignJob;
 use App\Watermark\Jobs\PollResultJob;
 use App\Watermark\Jobs\UploadBatchJob;
 use Drift\App\Job;
-use Drift\App\JobRunner;
+use Drift\App\TaskDispatch;
 use Drift\App\TaskHost;
 use Drift\Async\AsyncCancelled;
 use Drift\Async\AsyncScope;
@@ -731,15 +731,17 @@ final class WatermarkStore
     }
 
     /**
-     * 唯一的选路点 —— 五个动作都走这里，不再各写一遍
-     * `if ($host === null) { …同步副本… } else { submit }`。
+     * 唯一的选路点 —— 五个动作都走这里，策略在当前栈显式构造。
      *
-     * ★ `null` 永远表示"在当前栈上同步跑"（解释器 / 单测），**不表示"拒绝"** ——
-     *   后者是 `Application::submit()` 的语义，两者混在一起会让症状变模糊。
+     * 本 Store 的 `null` 表示未装后台端口 ⇒ 同步跑，不借用 `Application::submit()` 的拒绝语义。
      */
     private function exec(Job $job): Future
     {
-        return JobRunner::exec($this->host, $job);
+        $dispatch = $this->host === null
+            ? TaskDispatch::sync()
+            : TaskDispatch::background($this->host);
+
+        return $dispatch->submit($job);
     }
 
     // ══════════════════ 小工具 ══════════════════

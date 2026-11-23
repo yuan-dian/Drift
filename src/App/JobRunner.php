@@ -6,11 +6,9 @@ namespace Drift\App;
 use Drift\Async\Future;
 
 /**
- * 统一任务选路：有 TaskHost 就提交，没有就在当前栈执行。
+ * 旧提交口兼容壳：新代码用 {@see TaskDispatch}，它把策略显式化。
  *
- * 应用侧不再复刻 `Job::run()` 的同步分支；两条路的返回值形状一致，失败统一落成
- * `rejected`。`null` 在这里表示同步执行，与 `Application::submit()` 的"声明不用后台"
- * 语义不同，不能混用。
+ * `null` 在这里仍按历史约定表示同步执行，不再承担"拒绝"语义。
  *
  * @api
  */
@@ -27,15 +25,14 @@ final class JobRunner
      */
     public static function exec(?TaskHost $host, Job $job): Future
     {
-        if ($host !== null) {
-            return $host->submit($job);
-        }
+        $dispatch = $host === null ? TaskDispatch::sync() : TaskDispatch::background($host);
 
-        // 同步路径必须接住异常并落成 rejected，与 TaskHost 的 error 出口一致。
-        try {
-            return Future::resolved($job->run());
-        } catch (\Throwable $error) {
-            return Future::rejected($error);
-        }
+        return $dispatch->submit($job);
+    }
+
+    /** 显式策略入口，给还没迁完 `TaskDispatch::submit()` 的调用点用。 */
+    public static function dispatch(TaskDispatch $dispatch, Job $job): Future
+    {
+        return $dispatch->submit($job);
     }
 }

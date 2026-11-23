@@ -361,26 +361,22 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
     }
 
     /**
-     * 提交一个后台任务 —— 应用侧唯一提交入口。
+     * 提交一个后台任务 —— 应用侧默认提交入口，策略从 `AppScope` 读取。
      *
-     * 没有端口时返回 `Future::rejected()` 而不抛：提交点常在 `build()` 里，抛异常会
-     * 打断渲染管线（整页消失），rejected 只让命令落到 error 态。
-     * 默认 `SyncTaskHost` 会在 `submit()` 内同步跑完；网络 / 磁盘 / 大计算必须换后端，
-     * 否则 UI 照样卡在这一行。
+     * 未声明后台端口时同步跑，显式声明不用时返回 rejected（不抛，避免打断 `build()`）。
+     * 需要覆盖策略时用 `submitWith()`。
      *
      * @api
      */
     final public function submit(Job $job): Future
     {
-        $host = $this->taskHost();
-        if ($host === null) {
-            return Future::rejected(new \RuntimeException(
-                '本应用没有后台任务端口（AppScope::setTaskHost(null)）：'
-                . \get_class($job) . ' 无处可跑'
-            ));
-        }
+        return $this->submitWith($this->scope->dispatch(), $job);
+    }
 
-        return $host->submit($job);
+    /** 显式策略提交口：调用点自己决定同步 / 拒绝 / 后台，不靠 null 猜。 */
+    final public function submitWith(TaskDispatch $dispatch, Job $job): Future
+    {
+        return $dispatch->submit($job);
     }
 
     /**

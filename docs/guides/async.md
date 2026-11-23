@@ -58,7 +58,7 @@ final class FetchUsersJob implements NamedJob, TimedJob
 
 `SyncTaskHost` 是默认后端，永远可用；同步耗时超过阈值只报一次诊断，提示用 `ProcessTaskHost` 换掉。它的诚实边界是"大响应会短暂停顿、`loading` 对用户不可见"，不要靠先广播一次 `loading` 来假装异步。
 
-`JobRunner::exec(?TaskHost $host, Job $job)` 是显式选路点：`host` 非空就提交，为 `null` 就在当前栈跑（测试 / 解释器）。它与 `Application::submit()` 的 `null` 语义相反——后者返回 `Future::rejected()`，表示"本应用声明不用后台"。两条路返回同一种 `Future`，失败一律落成 `rejected`，调用点不必分支。
+提交策略由 `TaskDispatch` 显式表达：`sync()` 在当前栈跑任务本体，`reject()` 明确不跑并返回 `rejected`，`background($host)` 交给端口。`Application::submit()` 从 `AppScope` 读策略；要覆盖时用 `submitWith(TaskDispatch, Job)`。`JobRunner::exec()` 保留为旧壳，仍把 `null` 当同步，只为兼容既有调用点。三条路返回同一种 `Future`，失败一律落成 `rejected`。
 
 ## Future：组合、失败与进度
 
@@ -166,7 +166,7 @@ AsyncView::of($command, $dataBuilder)
 
 控件与命令不直接拿平台或定时器，全部由组合根在装配时递进来：
 
-- `AppScope::setTaskHost($host)` 定后台后端；`Application::submit()` 是应用侧唯一提交入口。
+- `AppScope::setTaskHost($host)` 定后台后端；`AppScope::dispatch()` 把三态翻成 `TaskDispatch`。`Application::submit()` 是默认提交入口，`submitWith()` 可显式覆盖策略。
 - `Application::after(int $ms, \Closure $cb)` 的回调在 `frame()` 内、结算前跑，里面的 `setState()` 同帧生效。把 `[$app, 'after']` 作为第二参传给 `AsyncScope::task()`，作用域就获得 `sleep()` 能力。
 - `State::asyncCommand($task, $combine)` 在 `initState()` 里造命令：它把命令的广播接成 `markDirty()`，并在 `onDispose()` 里统一 `dispose()`。
 - 图片等资源走 `ImageAssets::install()`，业务只用 `Image::make()->asset($src)`，见[异步资源](./async-assets.md)。
@@ -202,7 +202,7 @@ $http->request('POST', $url, [
 ])->then(fn (HttpResponse $r) => /* ... */);
 ```
 
-门面把 `onProgress` 挂到 `JobRunner` 返回的**根** Future 上（worker 侧 `JobProgress::report()` 经 `Future` 转接），进度由此回贴 UI。★ 别把回调挂在 `then()` 之后的派生 Future 上——进度只喂根任务，派生链上的订阅永远收不到（见 `Future::onProgress()` 的 `progress/derived-chain` 诊断）。
+门面把 `onProgress` 挂到 `TaskDispatch::submit()` 返回的**根** Future 上（worker 侧 `JobProgress::report()` 经 `Future` 转接），进度由此回贴 UI。★ 别把回调挂在 `then()` 之后的派生 Future 上——进度只喂根任务，派生链上的订阅永远收不到（见 `Future::onProgress()` 的 `progress/derived-chain` 诊断）。
 
 **两条支路都有 showcase 真机消费者**：`DRIFT_SHOWCASE_HTTP=1` 时「异步表格」页取数走小 JSON（帧内 curl_multi）、「上传示例」按钮走 multipart（进程池 + 进度回贴），由 `probe-async.py` 在 AOT 产物上各验一遍。零消费者的分支会退化成潜伏假实现——P12 的 `curl_close()` 崩溃正是只有真消费者才暴露得出来。
 
