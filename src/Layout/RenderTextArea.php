@@ -422,10 +422,9 @@ final class RenderTextArea extends RenderBox implements TextInputBox, ScrollBarH
 
     protected function paintContent(Canvas $canvas): void
     {
-        // 只挪滚动偏移：`caretRect()` / `selectionRects()` 已经是盒内坐标，
-        // 这样三处（几何 / 命中 / 绘制）用同一套坐标，不必来回换。
+        // `caretRect()` / `selectionRects()` 已扣过滚动偏移（盒内视口坐标），
+        // 所以只把**文字**上移：再 translate 一次会让光标/选区比文字多滚一段。
         $canvas->save();
-        $canvas->translate(0.0, -$this->applied());
 
         // **选区在文本之前**：高亮是背景，反过来"选中一块却看不出选了什么"（混色不透明盖字形）。
         foreach ($this->selectionRects() as $selection) {
@@ -438,7 +437,7 @@ final class RenderTextArea extends RenderBox implements TextInputBox, ScrollBarH
                 $this->paragraph,
                 Paint::fill($color),
                 $this->insets->left,
-                $this->insets->top,
+                $this->insets->top - $this->applied(),
             );
         }
 

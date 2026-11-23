@@ -37,6 +37,9 @@
 | A24 | 重试默认支 | `AsyncView::retryOn(\Closure)` 给**默认** error 支装“错误 + 重试按钮”，省掉 showcase 异步表格与并发取数两页重抄 `Center(Column(ErrorPlaceholder + Button))`；显式 `error()` 优先于 `retryOn()`（LoadMore 页分页失败要保留旧行的形状只有页面知道，故不迁）。重试动作是 0 参闭包；`AsyncCommand::retry()` 有意不去重（在途点它要打断重来），按钮不自带 enabled，安全性来自 error 支显示时命令已不在途。 | 第四个应用需要带自定义文案 / 门控的重试支，届时扩 `retryOn()` 参数而不是造新控件；或 error 态真的会持续 running，才把 enabled 收进框架。 |
 | A25 | 组合根角色分流 | 把“同 exe 双角色”从应用侧彻底收进框架：`abstract AppEntry` 的 `final run()` 判 `WorkerProcess::isWorker()`，worker 走 `serve($this->jobs())`、UI 走 `start()`；应用只写 `jobs()`（可省）与 `start()`，不 import `WorkerProcess`。`app-worker-role` lint 守“角色判定不许搬回应用层”。**不用静态模板方法**：PHP 的 `abstract static` 是 Fatal，且 worker 进程会把 warning 吐进 stdout 污染行协议（真机表现为退出码 3），实例方法才是合法形态，入口固定 `(new Bootstrap())->run()`。**不做**双 exe（worker 仍要链全部应用代码，产物与构建翻倍）与“基类接管 AppScope”（`maxWorkers` / `prewarm` 是应用语义，收进去就得再加钩子）。 | 出现第三种进程角色（如 CLI 子命令）时在基类加**带默认实现**的钩子（`cli()` / `onWorkerStart()`）。用抽象基类而不是 interface 就为这一步：interface 加方法会强制所有实现同步改，基类加带默认实现的钩子只影响真正要用的那个应用。 |
 
+| A26 | 焦点环输入模态 | `:focus-visible` 只由**导航键**开启：`KeyEvent::isFocusNavigation()` 收口 Tab / 方向键 / PageUp / PageDown / Home / End（含 Shift 组合）；文本、Enter、Backspace、Delete、Ctrl+A/C/V 等编辑键不切模态，指针与滚轮仍关闭。应用只消费这个谓词，不另写一份键表。 | 出现"编辑键也必须提示焦点位置"的真实无障碍需求，并能给出明示规则；或新增不属于这份键表、却要切模态的导航语义。 |
+| A27 | 多行输入滚动坐标 | `RenderTextArea::caretRect()` / `selectionRects()` 返回**已扣滚动偏移**的盒内视口坐标；绘制时只把段落上移，不再对整张画布做第二次 `translate`。`offsetAt()` 反向加回偏移，几何 / 命中 / 绘制共用一份契约。 | 改成"光标几何保留内容坐标"的另一套契约，或滚动引入旋转 / 缩放等非平移变换。 |
+
 ## 编译器与代码纪律
 
 | # | 主题 | 现行结论 | 失效条件 |

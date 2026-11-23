@@ -1632,16 +1632,17 @@ abstract class Application implements TextEditingHost, InputHost, OverlayHost, P
             $event = $this->taps->annotate($event, $timestampMs);
         }
 
-        // ★ 输入模态（`:focus-visible`，W8-5 续作六）：最近一次是键盘还是指针。
-        //   键盘 ⇒ 显示焦点环；指针（点击 / 移动 / 滚轮）⇒ 隐藏。
+        // ★ 输入模态（`:focus-visible`）：导航键 ⇒ 显示焦点环；
+        //   指针（点击 / 移动 / 滚轮）⇒ 隐藏。编辑键不改模态 —— 鼠标点进输入框
+        //   再按 Enter / 打字不该凭空冒出蓝框。
         //   ★ 放在最前面：失活事件不改模态（它不是"用户操作控件"），但它下面会
         //     提前 return，别让模态逻辑被它跳过。
-        //   ★★ **只在真的翻转时举手**（2026-11-02，D1）：模态是焦点环目标的另一半
+        //   ★★ **只在真的翻转时举手**：模态是焦点环目标的另一半
         //     （`focusRingTarget()` = `keyboardFocusVisible ? focused() : null`），
         //     而环不经过 `setState` ⇒ 没有脏信号。以前靠 `wantsFrame()` 每轮重问
         //     兜住；现在变化点自己 `scheduleFrame()`。无脑每次都调就是空喊 ——
         //     鼠标移动是最高频的事件，那会让帧时钟永不上闸。
-        if ($event instanceof KeyEvent) {
+        if ($event instanceof KeyEvent && $event->isFocusNavigation()) {
             if (!$this->keyboardFocusVisible) {
                 $this->keyboardFocusVisible = true;
                 $this->pipeline->scheduleFrame();

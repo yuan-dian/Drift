@@ -221,4 +221,64 @@ final class FocusRingTest extends SmokeTestCase
             'wantsFrame=' . ($wantsAfterClick ? 'y' : 'n')
         );
     }
+
+    /**
+     * 编辑键不重开焦点环（多行输入框按 Enter 冒蓝框的回归判据）。
+     *
+     * ★ 前置和收尾都不能省：只测"编辑后没环"会在"环从来没画出来"时恒真；
+     *   只测编辑键会让"所有键都不再切模态"的过度修复蒙混过关。
+     */
+    public function testEditingKeysKeepRingHiddenUntilNavigationKey(): void
+    {
+        [$app, $probe] = self::open();
+
+        $app->dispatchInput(KeyEvent::down(KeyChord::tab()));
+        $app->frame(1.0, self::constraints());
+        check(
+            '焦点环 · 前置：Tab 后环已画出',
+            self::pixel($probe)?->equals(self::accent()) === true,
+            'rgb=' . describeColor(self::pixel($probe)),
+        );
+
+        $app->dispatchInput(PointerEvent::down(5.0, 5.0));
+        $app->frame(2.0, self::constraints());
+        check(
+            '焦点环 · 前置：指针点击后环已隐藏',
+            self::pixel($probe)?->equals(self::accent()) !== true,
+            'rgb=' . describeColor(self::pixel($probe)),
+        );
+
+        $events = [
+            KeyEvent::character('x'),
+            KeyEvent::down(KeyChord::enter()),
+            KeyEvent::down(KeyChord::backspace()),
+            KeyEvent::down(KeyChord::ctrl('A')),
+        ];
+        $t = 3.0;
+        foreach ($events as $event) {
+            $app->dispatchInput($event);
+            $wantsAfterEdit = $app->wantsFrame();
+            $app->frame($t, self::constraints());
+            $t += 1.0;
+
+            check(
+                '焦点环 · ' . $event->chord->label() . ' 是编辑键，不该重新画出蓝框',
+                self::pixel($probe)?->equals(self::accent()) !== true,
+                'rgb=' . describeColor(self::pixel($probe)),
+            );
+            if ($event->isText()) {
+                check(
+                    '焦点环 · 编辑键不切模态 ⇒ 不因焦点环请求额外帧',
+                    $wantsAfterEdit === false,
+                    'wantsFrame=' . ($wantsAfterEdit ? 'y' : 'n'),
+                );
+            }
+        }
+
+        $app->dispatchInput(KeyEvent::down(KeyChord::right()));
+        $wantsAfterNav = $app->wantsFrame();
+        $app->frame($t, self::constraints());
+        check('焦点环 · 导航键重新画出环（没有一刀切关掉全部按键）', self::pixel($probe)?->equals(self::accent()) === true);
+        check('焦点环 · 导航键切模态仍请求一帧', $wantsAfterNav === true);
+    }
 }

@@ -60,6 +60,54 @@ final class KeyModelTest extends SmokeTestCase
         $this->flushChecks();
     }
 
+    /**
+     * 输入模态分类：只有导航键切 `:focus-visible`，编辑键不切。
+     *
+     * ★ 这条把"鼠标点进输入框后按 Enter 冒蓝框"钉在**数据层**：即便应用层
+     *   忘了用这个谓词，分类本身也先被咬住；反过来只测应用层会漏掉分类漂移。
+     */
+    public function testKeyEventFocusNavigationClassification(): void
+    {
+        $navigation = [
+            KeyChord::tab(),
+            KeyChord::shift('Tab'),
+            KeyChord::left(),
+            KeyChord::right(),
+            KeyChord::up(),
+            KeyChord::down(),
+            KeyChord::pageUp(),
+            KeyChord::pageDown(),
+            KeyChord::home(),
+            KeyChord::end(),
+        ];
+        foreach ($navigation as $chord) {
+            check(
+                '输入模态 · ' . $chord->label() . ' 是导航键（应切键盘焦点环）',
+                KeyEvent::down($chord)->isFocusNavigation(),
+            );
+        }
+
+        $editing = [
+            KeyEvent::character('a'),
+            KeyEvent::character('井'),
+            KeyEvent::down(KeyChord::enter()),
+            KeyEvent::down(KeyChord::backspace()),
+            KeyEvent::down(KeyChord::delete()),
+            KeyEvent::down(KeyChord::ctrl('A')),
+            KeyEvent::down(KeyChord::ctrl('Left')),
+            KeyEvent::down(KeyChord::escape()),
+            KeyEvent::down(KeyChord::f(5)),
+        ];
+        foreach ($editing as $event) {
+            check(
+                '输入模态 · ' . $event->chord->label() . ' 不是导航键（编辑键不该冒蓝框）',
+                !$event->isFocusNavigation(),
+            );
+        }
+
+        $this->flushChecks();
+    }
+
     public function testFocusNodeDeclaration(): void
     {
         $fn = FocusNode::make()->withOrder(3);

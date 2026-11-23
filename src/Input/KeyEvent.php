@@ -49,4 +49,25 @@ final readonly class KeyEvent implements InputEvent
     {
         return $this->text !== '';
     }
+
+    /**
+     * 这次按键是不是**键盘导航**（移焦点 / 翻视口 / 行首行尾）。
+     *
+     * 只有导航键切换 `:focus-visible` 输入模态；编辑键（文本、Enter、
+     * Backspace、Delete、Ctrl+A/C/V）不改模态，否则鼠标点进输入框后按一个键
+     * 就会凭空冒出焦点环。Shift 只扩选、不改归属，所以 Tab/方向键带 Shift 仍算。
+     */
+    public function isFocusNavigation(): bool
+    {
+        if ($this->text !== '' || $this->chord->ctrl || $this->chord->alt) {
+            return false;
+        }
+
+        $key = $this->chord->key;
+
+        return $key === 'Tab'
+            || $key === 'Left' || $key === 'Right' || $key === 'Up' || $key === 'Down'
+            || $key === 'PageUp' || $key === 'PageDown'
+            || $key === 'Home' || $key === 'End';
+    }
 }
