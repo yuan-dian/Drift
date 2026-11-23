@@ -63,7 +63,7 @@ function scene_baseline_names(string $dir): array
 /** @return list<string> */
 function scene_manifest_names(string $root): array
 {
-    $path = $root . '/apps/showcase/src/Routes/ShowcaseRouteManifest.php';
+    $path = $root . '/apps/showcase/src/Routes/RouteManifest.php';
     if (!\is_file($path)) {
         return [];
     }
