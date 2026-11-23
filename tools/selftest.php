@@ -104,6 +104,7 @@ function drift_lint_selftest(string $root, Linter $linter): bool
         ],
         'nested-subscribe' => [
             'apps/NestedSubscribeFixture.php:' . Diagnostic::WARN,
+            'apps/LazySubscribeFixture.php:' . Diagnostic::WARN,
         ],
         // instanceof 漏 use（2026-10-19）
         'instanceof-missing-use' => [

@@ -65,6 +65,10 @@
 
 ### 已实现
 
+- **`nested-subscribe` 覆盖虚拟化列表**：前置闸从"文件提及 `Each`"改为参数形态
+  —— 只查 `items(array, callable)` 中第二参是闭包字面量的调用。`LazyColumn` /
+  `LazyGrid` 等大列表原先整文件漏检，而它们恰恰最怕"每行一个订阅者"；菜单单参、
+  数据 getter 零参，天然不在射程内，也不必再维护控件名单。
 - **`dead-subscription` 判据收窄到事实**：原判据是"build() 里读 `Subject`/`Cell` ⇒ 必须
   `implements SubscribingWidget`"，而那句豁免是个**做不到的承诺** —— `watch()` 是
   `State::watch()`（`protected`），一个 `StatelessWidget` 标了接口也没有订阅袋。更糟的是
