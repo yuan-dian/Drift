@@ -122,7 +122,6 @@ final readonly class Gradient
         return $this->radial;
     }
 
-    /** 坐标是盒内比例（`0..1`）还是绝对像素 */
     /**
      * **竖直**渐变（上 → 下），坐标是盒内比例。
      *

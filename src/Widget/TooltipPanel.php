@@ -16,7 +16,7 @@ use Drift\Geometry\EdgeInsets;
  *   没有任何新的布局/绘制行为。造一个 `class TooltipPanel extends BoxWidget` 只是
  *   把三行链式调用搬进构造器，换来的成本是"多一个需要测的 RenderBox 子类"。
  *   ★ 分工承 `§5.1` 裁决 1：**控件只管形体、Application 管生命周期与落位**。
- *     本类只被 `Application::showTooltip()` 用一次。
+ *     本类只被 `OverlayManager::showTooltip()` 用一次。
  * ★ 要换样式（深色底 / 圆角更大 / 带阴影）就覆写本方法或直接改这里 —— 不要
  *   在应用里手搓一份 `PopupPanel` 再自己 push 浮层（那样时序得自己写对）。
  *

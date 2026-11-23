@@ -202,7 +202,7 @@ abstract class Widget
     /**
      * 给本控件一个跨位置稳定的身份。
      * 不给 ⇒ 身份由在 `children([...])` 里的位置决定；给了 ⇒ 重排也能保住 `State`。
-     * `ForEach` 的 key 是**必填**的，因为列表重排最需要它。
+     * `Each` 的 key 是**必填**的，因为列表重排最需要它。
      * @api
      */
     public function key(string|int $value): static

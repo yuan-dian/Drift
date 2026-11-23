@@ -53,7 +53,7 @@ use Drift\Rendering\SliderStyle;
  * ## 键盘
  *
  * 方向键 / Home / End 走 `keyboard()`（W8-2 新开的缝），**不碰**
- * `Application::activateFocusedWidget()` 的 `instanceof` 塔。
+ * `InputRouter::activateFocusedWidget()` 的 `instanceof` 塔。
  * `step <= 0` 时按区间的 1% 走（连续滑杆的常见手感）。
  *
  * @api

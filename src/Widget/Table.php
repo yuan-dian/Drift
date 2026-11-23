@@ -506,18 +506,19 @@ final class Table extends StatefulWidget
         return $this->sortState;
     }
 
-    /** @internal 点击表头后的下一态往这里交（`null` = 应用没接） */
     /** 用户拖出来的列宽（`列key ⇒ 像素`）；空数组 = 全按声明算 */
     public function columnWidthOverrides(): array
     {
         return $this->columnWidths;
     }
 
+    /** @internal 列宽拖完的回调；`null` = 应用没接（宽度只能在本帧内生效） */
     public function columnResizeHandler(): ?\Closure
     {
         return $this->onColumnResize;
     }
 
+    /** @internal 点击表头后的下一态往这里交（`null` = 应用没接） */
     public function sortChangeHandler(): ?\Closure
     {
         return $this->onSortChange;

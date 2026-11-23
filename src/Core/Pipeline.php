@@ -294,7 +294,7 @@ final class Pipeline
     /**
      * 取走待入表的节点并清空。
      * @return list<object>
-     * @internal `Application::tickAnimations()` 每帧调（全扫路径也要取走，否则累积）
+     * @internal `AppShell::tickAnimations()` 每帧调（全扫路径也要取走，否则累积）
      */
     public function takeActiveAnimations(): array
     {

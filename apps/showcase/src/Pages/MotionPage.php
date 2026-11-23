@@ -68,7 +68,7 @@ final class MotionPage extends ShowcasePage
      * 每帧推进的入口。
      *
      * ★ **不许短路**：两个控制器都得收到这一帧，否则"第二个永远卡在起点"
-     *   （与 `Application::tickSubtree()` 不短路同一个理由）。
+     *   （与 `AppShell::tickAnimations()` 不短路同一个理由）。
      * ★ 返回值直接喂 `wantsFrame()` ⇒ 两个都跑完就没人返回 true ⇒ 帧时钟停摆。
      */
     public function tickFrame(float $timestampMs): bool

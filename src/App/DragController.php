@@ -21,7 +21,7 @@ use Drift\Widget\Element;
  *   指针坐标 → Element 的反查由 `Application` 做（它有焦点链）。
  *
  * ★ **指针驱动已接线**（2026-10-17，§24.2 #16）：`PointerEvent` 四相位
- *   （down/move/up/leave）经 `Application::dispatchPointer()` 驱动本状态机 ——
+ *   （down/move/up/leave）经 `InputRouter::dispatchPointer()` 驱动本状态机 ——
  *   `down` 记阈值起点（**按下 ≠ 拖动**）、`move` 过 6 逻辑像素才 `begin`、
  *   `up` 放下、`leave` 取消（无 `SetCapture` 的诚实边界：拖出窗口即取消）。
  *   宿主 / 测试仍可直接调 `begin()` / `hoverTo()` / `drop()` / `cancel()`。

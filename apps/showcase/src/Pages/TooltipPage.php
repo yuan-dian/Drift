@@ -29,7 +29,7 @@ use Drift\Widget\Wrap;
  *   ④ 没有提示的对照：悬停它什么都不该发生。
  *
  * ★ 应用侧只有一行 `->tooltip('…')`：浮层的生命周期、落位、时序全在框架
- *   （`Application::onHoverHit()` / `showTooltip()`）。这正是"声明式"相对
+ *   （`OverlayManager::onHoverHit()` / `showTooltip()`）。这正是"声明式"相对
  *   "自己写 hover 回调 + 自己 push 浮层"的收益。
  * ★ 页末如实记录能力边界。
  */

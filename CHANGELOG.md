@@ -22,6 +22,9 @@
 
 ### Breaking
 
+- **`ScrollView::vertical()` 改名为 `isVertical()`**：与 `LazyList` / `Flex` 的同一判据同名
+  （此前同一个问题有三个叫法，读代码要先确认是哪一种容器的哪个词）。唯一消费者是
+  `ScrollViewState`，应用侧零改动。
 - **取消能力从四档降为三档**：`CancelSupport::QueuedOnly` 删除（三个后端早已全部升到
   `Killable`，这档只剩枚举与文案在误导读者）；`Killable` 的 `value` 由 3 改为 2，
   按"能省多少活"的递增序仍成立。`revokesQueued()` 现在只认 `Killable`。
@@ -45,6 +48,16 @@
 
 ### 已实现
 
+- **滚动读面单一实现**：新增 `Traits\ScrollViewHost`，`ScrollView` / `LazyList` 的
+  `maxOffset` / `scrollTo` / `animateTo` / `scrollAxis` / `viewportExtent` /
+  `scrollByAxis` / `glideByAxis` / `ensureVisible` 只有一份；两类各自只回答"主轴是哪个"
+  "盒在哪""句柄是谁"。`scrollBy()` 仍分岔（懒列表要多一步换窗），留在各类。
+  `TextArea` 不进来：它的盒是 `RenderTextArea`，没有 `revealDelta()`。
+  新增结构判据：任一类把这八个方法抄回来就红。
+- **日期选择器共用骨架**：新增 `abstract CalendarPickerState`，`DatePicker` /
+  `DateTimePicker` 的"触发框 + 面板开合 + 翻月通知 + 关闭汇合 + 受控值签名"只有一份；
+  两者只剩面板内容与"选完收不收"两处差异（`DatePicker` 收、`DateTimePicker` 不收）。
+  此前 70 行逻辑各存一份，改一处漏一处不会报错。
 - **删掉 `AppContext` 转发层**：P2 拆分留下的这个 11 方法纯转发壳只被 `Application`
   的默认实现用到，现在那四处（主题 / 度量 / 端口 / 提交）直接读 `AppScope`，
   壳不再持有上下文。原先守"上下文不收帧内方法"的反射断言迁到真正的服务容器
@@ -58,6 +71,12 @@
   不在 `VerifyPlan` 里，A28 删 `ShowcaseNav`/`NavEntry` 后它引用已删文件，本地全绿而 CI 红。
   判据改用 A29 后的导航链（生成清单 → `PageRegistry` → `RouteDescriptor`）做锚点，并作为
   `workflows` static step 并入 `bin/drift verify`——同一份脚本，本地与 CI 不再漂移。
+- **注释与文档跟上拆分后的类名**：`Application` 拆成 `AppShell` 与若干协作者之后，34 处
+  注释仍写 `Application::pumpSemantics()` / `activateFocusedWidget()` / `placeOverlays()`
+  等已迁走或已不存在的方法（含 5 篇指南），现改为真实归属（`AppShell` / `InputRouter` /
+  `OverlayLayout` / `OverlayManager` / `PumpHost` / `ScrollInputRouter`）。同时清掉 5 处
+  叠置的 docblock（旧说明紧贴新说明、旧的那份描述的是被替换前的实现）与文档里两处漂移
+  （`ForEach` 应为 `Each`、`Bootstrap::run()` 应为实例调用）。
 - **剪贴板单一真相**：`Environment` 的剪贴板读写原先直连 `AppScope` 端口，而编辑命令环
   走 `Application::clipboard()` 覆写点——应用覆写后两者指向不同端口且不报错。现门面经
   `AppShell` 注入的覆写点闭包访问，两条路径合一；覆写机制保留，与 `theme()`/`metrics()`

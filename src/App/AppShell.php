@@ -1552,17 +1552,6 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
 
 
     /**
-     * 焦点环 —— **应用级叠加**，不侵入任何控件（W8-5 续作五）。
-     *
-     * ★ 为什么挂在 `Frame::run()` 的 afterPaint：树与浮层都画完之后再画，环才压在
-     *   最上层（浮层里的焦点也盖得住）。
-     * ★ 为什么不做成 `Modifier` 或各控件自绘：那要么每个盒都得知道"我在焦点上"
-     *   （盒状态跨重建会丢，见 `State::didChangeFocus()` 的注释），要么给
-     *   `RenderObject` 注入焦点查询 —— 都比这一处多。
-     * ★ 形状由盒回答（`outlineRadius()`），这里只决定画不画与颜色：主题 `Accent`
-     *   2px 外扩描边，圆角跟随控件（§50）。
-     */
-    /**
      * 焦点环的**目标**（`null` = 本帧不画）。
      *
      * ★ 一个纯函数收口两处消费者：`paintFocusRing()` 画它、`continueFrame()` 比对它
@@ -1574,6 +1563,17 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
         return $this->keyboardFocusVisible ? $this->focus?->focused() : null;
     }
 
+    /**
+     * 把焦点环画到最上层 —— **应用级叠加**，不侵入任何控件（W8-5 续作五）。
+     *
+     * ★ 为什么挂在 `Frame::run()` 的 afterPaint：树与浮层都画完之后再画，环才压在
+     *   最上层（浮层里的焦点也盖得住）。
+     * ★ 为什么不做成 `Modifier` 或各控件自绘：那要么每个盒都得知道"我在焦点上"
+     *   （盒状态跨重建会丢，见 `State::didChangeFocus()` 的注释），要么给
+     *   `RenderObject` 注入焦点查询 —— 都比这一处多。
+     * ★ 形状由盒回答（`outlineRadius()`），这里只决定画不画与颜色：主题 `Accent`
+     *   2px 外扩描边，圆角跟随控件（§50）。
+     */
     private function paintFocusRing(Canvas $canvas): void
     {
         $focused = $this->focusRingTarget();

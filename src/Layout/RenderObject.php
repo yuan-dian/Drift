@@ -256,7 +256,7 @@ abstract class RenderObject
     }
 
     /**
-     * 推进本节点自己的动画，回答"**还要下一帧吗**"（`Application::tickSubtree` 调）。
+     * 推进本节点自己的动画，回答"**还要下一帧吗**"（`AppShell::tickAnimations` 调）。
      *
      * 没有槽 ⇒ `false`，一次判空就返回。
      */

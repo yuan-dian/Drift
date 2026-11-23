@@ -135,7 +135,7 @@ abstract class Element
         return $this->animationActive;
     }
 
-    /** @internal 记/清"在活跃表里"；只有 Application::collectActiveAnimations() 与 updateActiveAnimations() 写 */
+    /** @internal 记/清"在活跃表里"；只有 AppShell::collectActiveAnimations() 与 updateActiveAnimations() 写 */
     public function markAnimationActive(bool $active): void
     {
         $this->animationActive = $active;
@@ -279,7 +279,7 @@ abstract class Element
     /**
      * 让自己在下次 settle 重建。
      * 只有 StatefulElement 有状态可重读；无态节点调它什么都不发生。
-     * 消费方 Application::syncPanelSignatures()（跨树：浮层是第二棵根渲染树，主树 setState 到不了）。
+     * 消费方 OverlayLayout::syncPanelSignatures()（跨树：浮层是第二棵根渲染树，主树 setState 到不了）。
      *
      * @internal 框架内部用，控件不要调
      */
@@ -455,32 +455,32 @@ abstract class Element
     {
         $before = $this->pipeline()->rebuiltCount();
 
-            // 第一遍无条件跑，不能因 pendingDirty()===0 整遍跳过：这一遍还做
-            // adoptBoxes()（挂载路径不调它），首帧盒挂接全靠 settle 这一遍。
-            // 跳过 ⇒ 容器握空盒 ⇒ 画面全白且不报错。
-            for ($round = 1; $round <= self::SETTLE_ROUNDS; $round++) {
-                $passBefore = $this->pipeline()->rebuiltCount();
-                $this->settlePass();
+        // 第一遍无条件跑，不能因 pendingDirty()===0 整遍跳过：这一遍还做
+        // adoptBoxes()（挂载路径不调它），首帧盒挂接全靠 settle 这一遍。
+        // 跳过 ⇒ 容器握空盒 ⇒ 画面全白且不报错。
+        for ($round = 1; $round <= self::SETTLE_ROUNDS; $round++) {
+            $passBefore = $this->pipeline()->rebuiltCount();
+            $this->settlePass();
 
-                if ($this->pipeline()->pendingDirty() === 0) {
-                    break;                        // 干净了：绝大多数帧到这里就退
-                }
-
-                if ($this->pipeline()->rebuiltCount() === $passBefore) {
-                    // 有脏计数但这一遍什么都没重建 ⇒ 计数漂移（脏 State 不在树里
-                    // /已卸载），不是真循环。再跑只是空转，且会误报 E-FLUSH-CYCLE。
-                    break;
-                }
+            if ($this->pipeline()->pendingDirty() === 0) {
+                break;                        // 干净了：绝大多数帧到这里就退
             }
 
-            if ($round > self::SETTLE_ROUNDS) {
-                Errors::report(sprintf(
-                    '一帧内 rebuild 了 %d 轮仍未收敛：有 State 在 build() 里改了会标脏的东西（E-FLUSH-CYCLE）',
-                    self::SETTLE_ROUNDS,
-                ));
+            if ($this->pipeline()->rebuiltCount() === $passBefore) {
+                // 有脏计数但这一遍什么都没重建 ⇒ 计数漂移（脏 State 不在树里
+                // /已卸载），不是真循环。再跑只是空转，且会误报 E-FLUSH-CYCLE。
+                break;
             }
+        }
 
-            return $this->pipeline()->rebuiltCount() > $before;
+        if ($round > self::SETTLE_ROUNDS) {
+            Errors::report(sprintf(
+                '一帧内 rebuild 了 %d 轮仍未收敛：有 State 在 build() 里改了会标脏的东西（E-FLUSH-CYCLE）',
+                self::SETTLE_ROUNDS,
+            ));
+        }
+
+        return $this->pipeline()->rebuiltCount() > $before;
     }
 
     /**
@@ -527,7 +527,7 @@ abstract class Element
 
     /**
      * 本节点展开出的子 Widget 列表 —— 调和的唯一入口。
-     * StatelessElement = [build($ctx)]；结构节点（Column/Row/ForEach）由自己的
+     * StatelessElement = [build($ctx)]；结构节点（Column/Row/Each）由自己的
      * Element 覆写返回 children。扩展点只有一处，四种节点共用同一套 diff。
      */
     protected function expand(): array

@@ -56,7 +56,7 @@ final class MenuTest extends SmokeTestCase
         [$app, $surface, $tight] = self::boot();
         check('浮层 · attach 后默认没开（浮层槽位为空）', !$app->isMenuOpen());
 
-        // —— 键盘路径打开：Tab 到菜单标题 ⇒ Enter（Application::activateFocused 的 Menu 分支）
+        // —— 键盘路径打开：Tab 到菜单标题 ⇒ Enter（InputRouter::activateFocused 的 Menu 分支）
         $app->dispatchInput(KeyEvent::down(KeyChord::tab()));
         $app->dispatchInput(KeyEvent::down(KeyChord::enter()));
         check(

@@ -71,7 +71,7 @@
 
 ## 语义事件
 
-控件用 `Widget::semantics(Role, name, value, enabled)` 声明语义，这是字段赋值不是虚方法覆写；不声明就不进语义树。`SemanticsBuilder` 遍历树收成语义树，`Application::pumpSemantics()` 在帧末把扁平快照推给 UIA sink，没有 sink 就不建、零开销。`Range` 类控件另用 `semanticsRange(float, float)`，与 `semantics()` 正交。
+控件用 `Widget::semantics(Role, name, value, enabled)` 声明语义，这是字段赋值不是虚方法覆写；不声明就不进语义树。`SemanticsBuilder` 遍历树收成语义树，`AppShell::pumpSemantics()` 在帧末把扁平快照推给 UIA sink，没有 sink 就不建、零开销。`Range` 类控件另用 `semanticsRange(float, float)`，与 `semantics()` 正交。
 
 读屏的"点一下"不是另一条路：`SemanticsInvokeEvent` 进输入队列后，`Application` 在节点中心派发一次合成 tap（必须 `move → down → up` 三件），交回既有输入路由，与鼠标点同路。`SemanticsSetValueEvent` 走 `Application::setSemanticsValue()`：节点几何中心 → `hitTest` → 沿 Element 父链找 `SemanticsValueEditable` → 调控件自己的回写（`onChanged` / `emit`）。`SemanticsExpandEvent` 对应展开折叠。这些事件都带载荷，与主题、失活事件同队同轮循环；壳里只入队，不在 COM 回调中跑 PHP。
 

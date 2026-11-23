@@ -38,7 +38,7 @@ use Drift\Text\TextRole;
  *   父类 `private` 不进子类属性表 ⇒ 子类实例上访问会动态建属性（值与语义全丢）。
  *   与 `Button` / `Element::$box` / `RenderBox::$size` 同一条纪律（2026-10-16 真机踩过）。
  *
- * ★ **激活走 `Application::activateFocusedWidget()`**（键盘 Space/Enter 与指针按下
+ * ★ **激活走 `InputRouter::activateFocusedWidget()`**（键盘 Space/Enter 与指针按下
  *   的唯一入口），与 `Button` 同一条路 —— 控件自己不装点击监听器。
  *
  * @api

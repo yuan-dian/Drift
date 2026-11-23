@@ -15,7 +15,7 @@ namespace Drift\Widget\Drag;
  *
  * ★ **指针驱动已接线**（2026-10-17，§24.2 #16）：`down` 记拖动意图，
  *   `move` 过阈值（6 逻辑像素，平方比较免开方）begin，`up` 放置 ——
- *   `Application::dispatchPointer()` 四相位派发直达 `DragController`。
+ *   `InputRouter::dispatchPointer()` 四相位派发直达 `DragController`。
  *   诚实边界：拖出窗口（无 SetCapture）`leave` 即取消。
  *
  * ★ **没有拖影**（拖动时跟随指针的浮层）：它要"跟随指针的第三棵树"，本仓不做。

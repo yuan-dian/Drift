@@ -64,7 +64,7 @@ Radio::make('中')->value('m')->group($this->size)->onChanged(fn(string $v) => $
 Toggle::make('启用通知')->checked($this->notify)->onChanged(fn(bool $v) => $this->notify = $v);
 ```
 
-应用拿到新值后自己在 `setState()` 里改字段，下一次 build 把新值传回控件。激活路径只有一条：`Application::activateFocusedWidget()`，键盘 Enter/Space 与指针按下都汇到这里，控件不装自己的点击监听器。`TextField` 同理：`value()` 给值，`onChanged()` 回调新文本，语义快照与输入事件也跟着这份值走。
+应用拿到新值后自己在 `setState()` 里改字段，下一次 build 把新值传回控件。激活路径只有一条：`InputRouter::activateFocusedWidget()`，键盘 Enter/Space 与指针按下都汇到这里，控件不装自己的点击监听器。`TextField` 同理：`value()` 给值，`onChanged()` 回调新文本，语义快照与输入事件也跟着这份值走。
 
 受控纪律换来的是"表单提交时读到的值"与"屏幕上显示的值"永远是同一份。把值让控件自己存，这两份就会分叉，而且分叉不会报错。
 

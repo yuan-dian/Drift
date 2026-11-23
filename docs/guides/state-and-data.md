@@ -130,7 +130,7 @@ Text::of($this->count, '计数 ')->body();             // 读：读点就在这�
    → 用户操作 → onChanged(新值) → 应用改字段 → setState → 下一帧
 ```
 
-`Checkbox` / `Radio` / `Toggle` 用 `checked()` + `onChanged()`，`TextField` 用 `value()` + `onChanged()`。激活统一走 `Application::activateFocusedWidget()`，控件不自持状态。这样"提交时读到的值"与"屏幕上的值"是同一份。
+`Checkbox` / `Radio` / `Toggle` 用 `checked()` + `onChanged()`，`TextField` 用 `value()` + `onChanged()`。激活统一走 `InputRouter::activateFocusedWidget()`，控件不自持状态。这样"提交时读到的值"与"屏幕上的值"是同一份。
 
 这是**值形态**：每次变化都 `setState`，整页重建。表格选中这类高频参数改用**通道形态**（见上文「值形态还是通道形态」），读点落在控件自己的 `State` 上。
 

@@ -41,7 +41,7 @@
 | 契约 | 覆写点 | 默认 | 触发方 |
 |---|---|---|---|
 | 指针反馈形状 | `protected paintInteraction(?Size)` → `paintStateLayer(Rect, radius, strokeWidth)` | 整盒矩形 + `outlineRadius()` | hover / press |
-| 键盘焦点轮廓 | `protected focusShape(): ?Rect` + `protected focusRadius(): float` | 整盒矩形 + `outlineRadius()` | `Application::paintFocusRing()`（`final` 画法） |
+| 键盘焦点轮廓 | `protected focusShape(): ?Rect` + `protected focusRadius(): float` | 整盒矩形 + `outlineRadius()` | `AppShell::paintFocusRing()`（`final` 画法） |
 
 不合成一条声明是有原因的：滑杆的 hover 光晕绕拇指（指针指哪儿反馈在哪儿），键盘焦点环绕整条轨道（焦点在控件上，拇指会动），两者语义不同。内置控件里 `RenderToggle` 的焦点只罩方框、`RenderSegment` 的药丸由 `pill()` / `pillRadius()` 四处共用一份算式、`RenderSlider` 绕整条轨道并跟随轨道圆角。
 

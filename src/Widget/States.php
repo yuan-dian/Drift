@@ -6,7 +6,7 @@ namespace Drift\Widget;
 /**
  * 「Element 有没有 State、是什么」的**唯一**穿透点（S1 第 2 步）。
  *
- * ★ 存在的理由只有一条：帧遍历（`tickSubtree`）、命令 bubbling、滚动路由、
+ * ★ 存在的理由只有一条：帧遍历（`tickAnimations`）、命令 bubbling、滚动路由、
  *   焦点同步（`didChangeFocus`）都要"沿链逐个问 Element 的 State" —— 没有这个
  *   工具时每处都写一遍 `instanceof StatefulElement` + `->state()`，该判据散几份
  *   就会有几份不同的漏法（`state()` 可空 / 非 StatefulElement 节点）。

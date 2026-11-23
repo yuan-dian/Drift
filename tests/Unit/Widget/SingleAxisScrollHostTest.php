@@ -94,8 +94,8 @@ final class SingleAxisScrollHostTest extends SmokeTestCase
             $code = self::codeOnly($src);
             $short = \basename($file);
 
-            if (!\preg_match('/^[ \t]*use[ \t]+SingleAxisScrollHost[ \t]*;/m', $code)) {
-                $bad[] = $short . '（未 use trait）';
+            if (\preg_match('/^[ \t]*use[ \t]+(SingleAxisScrollHost|ScrollViewHost)[ \t]*;/m', $code) !== 1) {
+                $bad[] = $short . '（未 use 滚动 trait）';
             }
             if (\preg_match('/function[ \t]+(lane|tickFrame)\s*\(/', $code) === 1) {
                 $bad[] = $short . '（仍自持 lane()/tickFrame()）';
@@ -107,7 +107,49 @@ final class SingleAxisScrollHostTest extends SmokeTestCase
 
         \sort($bad);
         check(
-            '三宿主共用 SingleAxisScrollHost：不各自实现 lane/tickFrame，但各自保留 $lane 字段',
+            '三宿主共用滚动 trait：不各自实现 lane/tickFrame，但各自保留 $lane 字段',
+            $bad === [],
+            $bad === [] ? '' : \implode(', ', $bad),
+        );
+
+        $this->flushChecks();
+    }
+
+    /**
+     * `ScrollView` / `LazyList` 的读面（`ScrollMetrics` + `scrollByAxis` / `glideByAxis`
+     * / `ensureVisible`）只有 `ScrollViewHost` 一份 —— 任一类把它抄回来就红。
+     * TextArea 的盒是 `RenderTextArea`（没有 `revealDelta()`），故不在这一组。
+     */
+    public function testScrollViewReadFaceLivesOnlyInTrait(): void
+    {
+        $owned = ['maxOffset', 'scrollTo', 'animateTo', 'scrollAxis', 'viewportExtent',
+            'scrollByAxis', 'glideByAxis', 'ensureVisible'];
+        $bad = [];
+
+        foreach (['ScrollViewState.php', 'LazyListState.php'] as $name) {
+            $file = \repoRoot() . '/src/Widget/' . $name;
+            $code = self::codeOnly((string) \file_get_contents($file));
+
+            if (\preg_match('/^[ \t]*use[ \t]+ScrollViewHost[ \t]*;/m', $code) !== 1) {
+                $bad[] = $name . '（未 use ScrollViewHost）';
+            }
+
+            foreach ($owned as $method) {
+                if (\preg_match('/function[ \t]+' . $method . '\s*\(/', $code) === 1) {
+                    $bad[] = $name . '（仍自持 ' . $method . '()）';
+                }
+            }
+
+            foreach (['mainAxis', 'scrollBox', 'scrollController'] as $fact) {
+                if (\preg_match('/function[ \t]+' . $fact . '\s*\(/', $code) !== 1) {
+                    $bad[] = $name . '（缺事实来源 ' . $fact . '()）';
+                }
+            }
+        }
+
+        \sort($bad);
+        check(
+            'ScrollView/LazyList 的读面只在 ScrollViewHost：不各自实现八个接口方法，各自只给三个事实来源',
             $bad === [],
             $bad === [] ? '' : \implode(', ', $bad),
         );

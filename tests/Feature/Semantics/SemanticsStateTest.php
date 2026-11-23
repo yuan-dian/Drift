@@ -240,7 +240,7 @@ final class SemanticsStateTest extends SmokeTestCase
      * ⑥ 端到端：应用层真的把 `FocusManager` 的可聚焦表喂进语义树。
      *
      * ★ 这条不重复 ②：② 验的是"给了表就填对"，这里验的是**有没有人给**。
-     *   `Application::pumpSemantics()` 里漏掉那一句的话，上面全绿、真机全 false ——
+     *   `AppShell::pumpSemantics()` 里漏掉那一句的话，上面全绿、真机全 false ——
      *   "改了一处漏了另一处"的典型形状。
      */
     public function testApplicationFeedsFocusableTable(): void

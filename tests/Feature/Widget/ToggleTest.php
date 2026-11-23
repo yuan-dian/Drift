@@ -179,7 +179,7 @@ final class ToggleTest extends SmokeTestCase
 
     public function testTabSpaceActivationChain(): void
     {
-        // ★★ 激活链：Tab 走到控件 + Space ⇒ `Application::activateFocusedWidget()` 的
+        // ★★ 激活链：Tab 走到控件 + Space ⇒ `InputRouter::activateFocusedWidget()` 的
         //   ToggleBase 分支 ⇒ 回调收新值。只测 `activate()` 测不到分支写错/顺序放错。
         $tglApp = new ToggleApplication();
         $tglApp->attach(new SurfaceProbe(), BoxConstraints::loose(new Size(320.0, 400.0)));

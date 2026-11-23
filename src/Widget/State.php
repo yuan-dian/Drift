@@ -16,21 +16,21 @@ use Drift\State\Subscription;
  * `StatefulWidget` 的纯 UI 态：只持"影响这一棵子树、必须跨 build 活"的东西；
  * 业务数据、跨页共享、被虚拟化回收容器的滚动位置应判据赶去 Store。
  *
+ * ★ 跨节点记账（`pendingDirty` / `markedCount` / `rebuiltCount` / `mountedThisFrame`
+ *   / `frameWantedCount`）**不住本类**，都住 `Pipeline`，一个应用一份。
+ *
  * @api
  */
 abstract class State
 {
     use PipelineAccess;
 
-    /* 跨节点记账数字（`pendingDirty` / `markedCount` / `rebuiltCount` / `mountedThisFrame` / `frameWantedCount`）不住本类，都住 `Pipeline`，一个应用一份。 */
     /**
      * @internal 正在 `build()` 的 State —— `markDirty()` 用它识别"build 期写自己"
      *
      * 唯一故意留静态的字段：build 是同步的，两个应用不可能交错进入。
      */
     private static ?State $buildingState = null;
-
-    /* `$mountedThisFrame` 与 `$frameWantedCount` 也住 `Pipeline`。 */
 
     private Widget $widget;
     private ?StatefulElement $element = null;
@@ -374,7 +374,8 @@ abstract class State
     public function syncReactiveDeps(array $read): void
     {
         if ($read === [] && $this->reactiveDeps === []) {
-            return;   // 不读新机制的老页面：两条判断，零分配
+            // 没读任何可观察值、也没订过 ⇒ 无依赖可同步（热路径零分配）
+            return;
         }
 
         // 派生值是拉取式、没有推送通道 ⇒ 订它的源（`Computed::sources()` 已展平）

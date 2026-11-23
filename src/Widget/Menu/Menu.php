@@ -30,7 +30,7 @@ use Drift\Widget\Widget;
  *   而 §4.3 禁止 `Widget → App`。等价的写法是把 `onOpen` 关掉、改在菜单栏宿主
  *   里用命令打开；当前以回调落地（形状见 §A.3.1）。
  *
- * ★ **`onOpen` 的触发点**：`Application::activateFocused()`（键盘 Enter/Space）与
+ * ★ **`onOpen` 的触发点**：`InputRouter::activateFocused()`（键盘 Enter/Space）与
  *   `dispatchPointer()` 的 down 分支（指针按下，2026-10-17 四相位已落地 §24.2 #16）
  *   —— 两条路径同终点 `activateFocusedWidget()`。
  *
@@ -157,7 +157,7 @@ final class Menu extends Button
         // ★ **必须套 `ScrollView`**：`PopupPanel::maxHeight()` 只负责给上限，
         //   "超高就滚"是靠内容自己是滚动视口实现的（它不会替内容滚）。
         // ★ Tab 导航不用额外接线：`MenuItem` 是 `Button`（可聚焦），焦点变化时
-        //   `Application::revealFocused()` 会把焦点项滚进视口。
+        //   `ScrollInputRouter::revealFocused()` 会把焦点项滚进视口。
         return PopupPanel::make(
             ScrollView::make(Column::make()->children($this->items))
         )

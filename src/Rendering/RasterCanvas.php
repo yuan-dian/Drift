@@ -332,9 +332,9 @@ final class RasterCanvas implements Canvas
     /**
      * 软光栅的支持面（静态；`RecordingCanvas` 按回放端降级要用它）。
      *
-     * 平铺叶子常量一次 `|`：tpc 对常量链会生成坏代码。
+     * ★ 平铺叶子常量一次 `|`：tpc 对常量链会生成引用未声明临时量的坏代码，
+     *   故不复用 `ALL_MASK`。
      */
-    /** 平铺叶子常量，不复用 ALL_MASK：AOT 对常量链会生成引用未声明临时量的坏代码。 */
     public static function supportedCapabilities(): int
     {
         return CanvasCapabilities::CAP_ELLIPSE | CanvasCapabilities::CAP_LINE

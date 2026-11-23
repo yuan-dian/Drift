@@ -15,7 +15,7 @@ namespace Drift\Input;
  *   任何控件 / 盒，只按位移裁决 ⇒ 零平台改动、可头侧断言。
  * ★ 成员顺序即默认胜者顺序：`up` 无人 claim 时取 `members[0]`。
  *
- * @internal 实现细节；消费方是 `Application::dispatchPointer()`。
+ * @internal 实现细节；消费方是 `InputRouter::dispatchPointer()`。
  */
 final class GestureArena
 {

@@ -184,6 +184,8 @@ final class TableState extends State implements Scrollable, EditableText, Constr
      */
     private bool $revealScrollInFlight = false;
 
+    // ── 滚动（双轴；夹取全走 `ScrollLane::move()`）──────────────────────
+
     /** 当前偏移（逻辑像素，≥ 0，已按上一帧内容长度夹过上界） */
     public function offsetY(): float
     {
@@ -386,6 +388,8 @@ final class TableState extends State implements Scrollable, EditableText, Constr
         }
     }
 
+    // ── 焦点与键盘（光标三元组只由 `placeCursor()` 写）────────────────────
+
     /**
      * 当前光标格（行 / 列**下标**；空格子表 ⇒ `null`）。
      *
@@ -403,6 +407,8 @@ final class TableState extends State implements Scrollable, EditableText, Constr
 
         return ['row' => $this->focusedRow, 'col' => $this->focusedCol];
     }
+
+    // ── 焦点与键盘（光标三元组只由 `placeCursor()` 写）────────────────────
 
     /** 光标停在表头时的列下标（`null` = 光标在数据行） */
     public function headerFocusedColumn(): ?int
@@ -1602,6 +1608,8 @@ final class TableState extends State implements Scrollable, EditableText, Constr
         return null;
     }
 
+    // ── 指针（悬停 / 拖选 / 多击；拖选刻意不逐帧上报）──────────────────────
+
     /** 悬停进入/离开——只在**目标真的变了**时才 setState（指针在一行内移动不重建） */
     private function noteRowHover(string|int $key, bool $entered): void
     {
@@ -2043,6 +2051,8 @@ final class TableState extends State implements Scrollable, EditableText, Constr
 
         return null;
     }
+
+    // ── 构建（校验 → 编辑前置 → 几何 → 表头 + 行区 → 装盒）──────────────────
 
     /**
      * 一帧的总装：**校验 → 编辑前置 → 几何 → 表头 ＋ 行区 → 装盒**。
@@ -2692,16 +2702,6 @@ final class TableState extends State implements Scrollable, EditableText, Constr
         );
     }
 
-    /**
-     * 视口尺寸的估计。
-     *
-     * ★ 优先取**上一帧**盒的实测值（精确）；首帧没有盒 ⇒ 退回窗口的对应尺寸
-     *   （上界：任何嵌套视口都不会比窗口更大）。**不读环境时钟、不问平台**
-     *   （G3：帧的输入只有约束与树）。
-     *
-     * ★ 超过 2 倍窗口 ⇒ 上一帧的盒尺寸可疑（如窗口刚从小变大），打一条
-     *   Diagnostic 而不改逻辑 —— 与 `LazyListState::viewportEstimate()` 同一条。
-     */
     /**
      * 视口主轴长度：取**本帧布局要拿到的约束**（`RenderBox::constraints()`）。
      *

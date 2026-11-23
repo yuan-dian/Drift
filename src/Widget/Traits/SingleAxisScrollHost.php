@@ -8,10 +8,11 @@ use Drift\Widget\ScrollLane;
 /**
  * 单轴滚动 State 的共用宿主面：一根 `ScrollLane` + 每帧推进。
  *
- * ★ 只收三个实现（ScrollView / LazyList / TextArea）逐字相同的部分。
- *   `offset()` / `viewportExtent()` 硬编码查 `RenderScrollView`，TextArea 用的是
- *   `RenderTextArea` ⇒ 塞进来会白得一个恒返回零尺寸的方法，故留在各自类。
- *   `scrollBy()` 按各自盒类型夹取，也不同，同样留在各类。
+ * ★ 只收三个实现（ScrollView / LazyList / TextArea）逐字相同的部分：`$lane` 与每帧推进。
+ *   `Scrollable` / `ScrollMetrics` 的其余方法分两层：
+ *   - 查 `RenderScrollView` 的那一组进 `ScrollViewHost`（TextArea 的盒是
+ *     `RenderTextArea`，进来会白得两个恒零读数）；
+ *   - `scrollBy()` 按各自盒类型夹取，留在各类。
  * ★ 宿主必须自己声明 `private ?ScrollLane $lane`（本 trait 只读写、不声明），
  *   并实现 `Scrollable::scrollBy()` —— tick 的位移仍走那一条夹取路。
  *
@@ -20,7 +21,7 @@ use Drift\Widget\ScrollLane;
 trait SingleAxisScrollHost
 {
     /** 这根轴的滚动状态机（懒建：从没滚过的容器不建） */
-    private function lane(): ScrollLane
+    protected function lane(): ScrollLane
     {
         $lane = $this->lane;
         if ($lane === null) {

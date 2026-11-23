@@ -26,7 +26,7 @@ use Drift\Text\TextRole;
  *   `Checkbox` / `TextField` 同一条纪律，控件不自持"选中了谁"。
  *
  * ★ **为什么是独立控件而不是 `SegmentedControl` 内部的一个分支**：激活入口
- *   `Application::activateFocusedWidget()` 收的是**焦点控件**，整个分段控件
+ *   `InputRouter::activateFocusedWidget()` 收的是**焦点控件**，整个分段控件
  *   一个焦点 ⇒ 激活时不知道点了哪段。一段一个焦点，命中测试（取最深盒）天然
  *   把焦点落到被点的那一段上。
  *

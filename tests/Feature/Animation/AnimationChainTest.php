@@ -13,7 +13,7 @@ use Drift\Widget\Element;
 use Drift\Widget\StatefulElement;
 
 /**
- * 动画链条（特征级）：State::tickFrame → Application::tickAnimations → animating →
+ * 动画链条（特征级）：State::tickFrame → AppShell::tickAnimations → animating →
  * wantsFrame → 帧真的重建。
  *
  * ★ 纯算术（`AnimationControllerTest`）全对而这条链断了 ⇒ 界面静止且**不报错**

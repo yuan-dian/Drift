@@ -125,13 +125,13 @@ final class Frame
      * 跑一帧。
      * @param BoxConstraints $constraints 表面给出的约束（通常 = 表面尺寸的紧约束）
      * @param float $timestampMs 帧时间戳，由 FrameClock 注入，不读环境时钟
-     * @param list<\Drift\App\OverlayEntry> $overlays 已由 Application::placeOverlays() 算好 x/y
+     * @param list<\Drift\App\OverlayEntry> $overlays 已由 OverlayLayout::placeOverlays() 算好 x/y
      * @param bool $paintRequested 应用级叠加（焦点环 / 面板落后）要求本帧画 —— 它们
      *        不经过树，Frame 看不见，只能由 Application 说
      * @return bool 本帧真的 paint + present 了吗（false = 整段跳过，或 paint 抛异常）。
      *         返回 false 时屏幕是上一帧内容 —— 这是设计意图，不是失败。
      * 浮层的布局段不在本类：settle 与 paint 在 Frame，layout 在
-     * Application::placeOverlays()（要锚点与客户区尺寸，锚点住 FocusManager）；
+     * OverlayLayout::placeOverlays()（要锚点与客户区尺寸，锚点住 FocusManager）；
      * Frame 只拿到算好的 $e->x/$e->y，画时 translate 过去。
      * @api
      */
@@ -264,7 +264,7 @@ final class Frame
 
         // ②b 布局自校验（默认关，build/layout.check 存在时开）
         // 必须放在**最后一轮** layout 之后：它用同一约束再排一次，排在前面等于替真实帧排两遍。
-        // 只覆盖主树：浮层 layout 在 Application::placeOverlays()（要锚点与客户区尺寸），自校验看不见。
+        // 只覆盖主树：浮层 layout 在 OverlayLayout::placeOverlays()（要锚点与客户区尺寸），自校验看不见。
         LayoutSelfCheck::maybeCheck($box, $constraints);
 
         // ③ paint → ④ present（有门控，见 $paintEpoch 的注）

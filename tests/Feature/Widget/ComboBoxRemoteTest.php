@@ -20,7 +20,7 @@ use Drift\Widget\OptionStatus;
  *
  * ★ 第一块钉的是 2026-10-24 之前 `ComboBox` 的**静默缺陷**：面板开着时应用换掉
  *   `options`（远程取数就是这个形状），面板**纹丝不动**、不报错。现在由框架负责
- *   （`Application::syncPanelSignatures()`）：锚点 Widget 换了 ⇒ 求签名 ⇒ 变了就标脏。
+ *   （`OverlayLayout::syncPanelSignatures()`）：锚点 Widget 换了 ⇒ 求签名 ⇒ 变了就标脏。
  * ★ 面板内容比主树**晚一帧**（`placeOverlays()` 跑在主树 settle 之前）⇒ 每次改完
  *   都要跑**两帧**，否则会把"晚一帧"误判成"没生效"。
  *

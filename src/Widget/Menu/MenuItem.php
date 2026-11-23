@@ -23,7 +23,7 @@ use Drift\Widget\Button;
  *
  * ★ **它是一种按钮**（`extends Button`，同 `NavButton` 的先例）：命令 / 参数 /
  *   `onPressed` / 焦点 / 键盘激活整套复用 —— 于是"菜单项被键盘选中"不需要
- *   第二条激活路径（`Application::activateFocused()` 认 `Button` 就够）。
+ *   第二条激活路径（`InputRouter::activateFocused()` 认 `Button` 就够）。
  *
  * ★ **`chord` 显示的诚实边界**：它是**声明**（我这条菜单项对应哪个加速键），
  *   本轮由 `RenderMenuItem` 在行的右端显示；换行 / 截断规则未细化。

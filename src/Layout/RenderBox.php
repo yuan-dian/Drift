@@ -237,7 +237,7 @@ abstract class RenderBox extends RenderObject
     }
 
     /**
-     * 标记本盒是浮层树的根，并给它客户区落点（`Application::placeEntry()` 每帧写）。
+     * 标记本盒是浮层树的根，并给它客户区落点（`OverlayLayout::placeEntry()` 每帧写）。
      * ★ 落点是在 `Frame::run` 之外算出来的 ⇒ 不标重绘就是"面板该跟着锚点挪、却停在原地"。
      */
     public function setBase(float $x, float $y): void

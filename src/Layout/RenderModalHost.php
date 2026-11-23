@@ -33,7 +33,7 @@ use Drift\Rendering\Paint;
  * ★ **点遮罩 ≠ 点面板**：命中测试走 `RenderBox` 默认实现（先越界、再逆序问子、
  *   都不中返回自己）⇒ 面板外的一切命中都停在本盒的子树里（`Center` 或本盒），
  *   **父链上没有 `RenderPopupPanel`** ⇒ `Application` 用这一条判"点在遮罩上"
- *   （见 `Application::hitsModalPanel()`）。
+ *   （见 `InputRouter::hitsModalPanel()`）。
  *
  * @internal `Modal` 的 build 产物；应用不该直接 new 它
  */

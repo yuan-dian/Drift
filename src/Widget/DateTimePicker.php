@@ -192,60 +192,37 @@ final class DateTimePicker extends StatefulWidget
 }
 
 /**
- * `DateTimePicker` 的私有 State —— 与 `DatePickerState` 同构，只有面板内容不同。
+ * `DateTimePicker` 的私有 State —— 骨架来自 `CalendarPickerState`，
+ * 这里给"日历 + 时刻列"两个面，并**不收面板**（选一半就关会让另一半得重开）。
  *
  * @internal
  */
-final class DateTimePickerState extends State
+final class DateTimePickerState extends CalendarPickerState
 {
-    /** 用户翻到的月份；`null` = 跟着受控值走（每次打开面板复位） */
-    private ?YearMonth $month = null;
-
-    /** **`null` ⇔ 面板关着** */
-    private ?\Closure $dismiss = null;
-
-    /** 翻月后通知面板重读（`PickerPanelSignal`，与 `DatePicker` 共用） */
-    private PickerPanelSignal $signal;
-
-    #[\Override]
-    public function initState(): void
-    {
-        $this->signal = new PickerPanelSignal();
-    }
-
-    public function build(BuildContext $ctx): Widget
+    protected function trigger(): Button
     {
         return Button::make($this->picker()->displayText())
             ->variant(ButtonVariant::Default)
-            ->width($this->picker()->widthValue())
-            ->overlayPanel($this->panelFactory(), $this->minWidth() + 16.0)
-            ->overlaySignature(fn (): string => $this->signature());
+            ->width($this->picker()->widthValue());
     }
 
-    /** 面板宽下限（按当前列数算）—— `overlayPanel` 自报的上限也由它派生 */
-    private function minWidth(): float
+    protected function panelMinWidth(): float
     {
         return DateTimePicker::panelMinWidth($this->picker()->showsSeconds());
     }
 
-    private function panelFactory(): \Closure
+    protected function panelMaxHeight(): float
     {
-        return function (\Closure $dismiss): Widget {
-            $this->dismiss = $dismiss;
-            $this->month = null;
-
-            return OptionPanel::make(
-                $this->signal,
-                fn (): Widget => $this->panelContent(),
-                $this->minWidth(),
-                DateTimePicker::PANEL_MAX_HEIGHT,
-                fn (): mixed => $this->onPanelClosed(),
-                false,   // ★ 时刻列自带 `LazyColumn` ⇒ 外壳再套一层就是嵌套滚动（会崩）
-            );
-        };
+        return DateTimePicker::PANEL_MAX_HEIGHT;
     }
 
-    private function panelContent(): Widget
+    /** 面板宽夹在 [下限, 下限 + 16]：列数固定 ⇒ 近似定宽，不跟着载体撑开 */
+    protected function panelMaxWidth(): ?float
+    {
+        return $this->panelMinWidth() + 16.0;
+    }
+
+    protected function panelContent(): Widget
     {
         return Row::make()->spacing(DateTimePicker::PANEL_GAP)->children([
             $this->calendar(),
@@ -253,17 +230,31 @@ final class DateTimePickerState extends State
         ]);
     }
 
+    protected function defaultMonth(): YearMonth
+    {
+        $value = $this->picker()->valueOf();
+
+        return $value === null ? $this->picker()->initialMonthValue() : $value->date->yearMonth();
+    }
+
+    protected function valueSignature(): string
+    {
+        $value = $this->picker()->valueOf();
+
+        return $value === null ? '' : $value->iso();
+    }
+
     private function calendar(): Widget
     {
         $value = $this->picker()->valueOf();
 
-        return CalendarView::make($this->month())
+        return CalendarView::make($this->shownMonth())
             ->selected($value?->date)
             ->onSelected(function (LocalDate $date): void {
                 $this->commitDate($date);
             })
             ->onMonthChange(function (YearMonth $next): void {
-                $this->showMonth($next);
+                $this->flipMonth($next);
             });
     }
 
@@ -287,24 +278,6 @@ final class DateTimePickerState extends State
         $value = $this->picker()->valueOf();
 
         return $value === null ? LocalTime::midnight() : $value->time;
-    }
-
-    private function month(): YearMonth
-    {
-        $month = $this->month;
-        if ($month !== null) {
-            return $month;
-        }
-
-        $value = $this->picker()->valueOf();
-
-        return $value === null ? $this->picker()->initialMonthValue() : $value->date->yearMonth();
-    }
-
-    private function showMonth(YearMonth $next): void
-    {
-        $this->month = $next;
-        $this->signal->notifyChanged();
     }
 
     /**
@@ -333,7 +306,7 @@ final class DateTimePickerState extends State
             return;
         }
 
-        $month = $this->month();
+        $month = $this->shownMonth();
         $this->emit(LocalDateTime::make(LocalDate::make($month->year, $month->month, 1), $time));
     }
 
@@ -343,18 +316,6 @@ final class DateTimePickerState extends State
         if ($handler !== null) {
             $handler($next);
         }
-    }
-
-    private function onPanelClosed(): void
-    {
-        $this->dismiss = null;
-    }
-
-    private function signature(): string
-    {
-        $value = $this->picker()->valueOf();
-
-        return $value === null ? '' : $value->iso();
     }
 
     private function picker(): DateTimePicker

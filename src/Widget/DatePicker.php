@@ -167,124 +167,66 @@ final class DatePicker extends StatefulWidget
 }
 
 /**
- * `DatePicker` 的私有 State。
- *
- * 持三样"跨 build 活且只影响这一棵子树"的东西：`month`（翻到哪个月）、
- * `signal`（跨树广播端）、`dismiss`（面板开着 ⇔ 非 null）。
+ * `DatePicker` 的私有 State —— 骨架（触发框 / 面板开合 / 翻月通知）在
+ * `CalendarPickerState`，这里只回答"面板里放什么"。
  *
  * @internal
  */
-final class DatePickerState extends State
+final class DatePickerState extends CalendarPickerState
 {
-    /** 用户翻到的月份；`null` = 跟着受控值走（每次打开面板都复位成 `null`） */
-    private ?YearMonth $month = null;
-
-    /** 面板的 dismiss（工厂形参）；**`null` ⇔ 面板关着** —— 不另设布尔 */
-    private ?\Closure $dismiss = null;
-
-    /** @internal 翻月后通知面板重读（面板在另一棵树上，`setState` 到不了） */
-    private PickerPanelSignal $signal;
-
-    #[\Override]
-    public function initState(): void
-    {
-        $this->signal = new PickerPanelSignal();
-    }
-
-    public function build(BuildContext $ctx): Widget
+    protected function trigger(): Button
     {
         return Button::make($this->picker()->displayText())
             ->variant(ButtonVariant::Default)
-            ->width($this->picker()->widthValue())
-            ->overlayPanel($this->panelFactory())
-            // ★ 受控值变了 ⇒ 面板重读由框架负责（同 `Select`）
-            ->overlaySignature(fn (): string => $this->signature());
+            ->width($this->picker()->widthValue());
     }
 
-    private function panelFactory(): \Closure
+    protected function panelMinWidth(): float
     {
-        return function (\Closure $dismiss): Widget {
-            $this->dismiss = $dismiss;
-            // ★ 每次打开都从受控值出发 —— 上次翻到 2025 年不该成为下次的起点
-            $this->month = null;
-
-            return OptionPanel::make(
-                $this->signal,
-                fn (): Widget => $this->panelContent(),
-                DatePicker::PANEL_MIN_WIDTH,
-                DatePicker::PANEL_MAX_HEIGHT,
-                fn (): mixed => $this->onPanelClosed(),
-                false,   // 日历定高，自己不是滚动视口 ⇒ 外壳别套 `ScrollView`
-            );
-        };
+        return DatePicker::PANEL_MIN_WIDTH;
     }
 
-    private function panelContent(): Widget
+    protected function panelMaxHeight(): float
     {
-        return CalendarView::make($this->month())
+        return DatePicker::PANEL_MAX_HEIGHT;
+    }
+
+    protected function panelContent(): Widget
+    {
+        return CalendarView::make($this->shownMonth())
             ->selected($this->picker()->valueOf())
             ->onSelected(function (LocalDate $date): void {
                 $this->commit($date);
             })
             ->onMonthChange(function (YearMonth $next): void {
-                $this->showMonth($next);
+                $this->flipMonth($next);
             });
     }
 
-    /** 面板显示哪个月：翻过就用翻到的，否则跟受控值 */
-    private function month(): YearMonth
+    protected function defaultMonth(): YearMonth
     {
-        $month = $this->month;
-        if ($month !== null) {
-            return $month;
-        }
-
         $value = $this->picker()->valueOf();
 
         return $value === null ? $this->picker()->initialMonthValue() : $value->yearMonth();
     }
 
-    /**
-     * 翻月：**只通知面板**，不 `setState` —— 触发框上的字一个字都不会变，
-     * 标脏主树等于白重排一遍页面（同 `Select::moveHighlight()`）。
-     */
-    private function showMonth(YearMonth $next): void
-    {
-        $this->month = $next;
-        $this->signal->notifyChanged();
-    }
-
-    /**
-     * 选中一天：**先收面板，再回调应用**（顺序与 `Select::commit()` 同 —— 反过来
-     * 会让面板带着新值多画一帧再消失，表现是"点一下闪一下"）。
-     */
-    private function commit(LocalDate $date): void
-    {
-        $handler = $this->picker()->onChangedHandler();
-        $dismiss = $this->dismiss;
-        $this->dismiss = null;
-
-        if ($dismiss !== null) {
-            $dismiss();
-        }
-
-        if ($handler !== null) {
-            $handler($date);
-        }
-    }
-
-    /** 面板被回收 —— 三条关闭路径（点外面 / owner 清扫 / Esc）的唯一汇合点 */
-    private function onPanelClosed(): void
-    {
-        $this->dismiss = null;
-    }
-
     /** 面板在意的只有受控值（月份是私有态，走 `signal`） */
-    private function signature(): string
+    protected function valueSignature(): string
     {
         $value = $this->picker()->valueOf();
 
         return $value === null ? '' : $value->iso();
+    }
+
+    /** 选中一天：**先收面板，再回调应用**（顺序见 `CalendarPickerState::dismissPanel()`） */
+    private function commit(LocalDate $date): void
+    {
+        $handler = $this->picker()->onChangedHandler();
+        $this->dismissPanel();
+
+        if ($handler !== null) {
+            $handler($date);
+        }
     }
 
     private function picker(): DatePicker

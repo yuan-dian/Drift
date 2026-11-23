@@ -71,7 +71,7 @@ final class ScrollView extends StatefulWidget
     }
 
     /** true = 纵向滚动（内容沿 y 平移） */
-    public function vertical(): bool
+    public function isVertical(): bool
     {
         return $this->vertical;
     }

@@ -76,7 +76,7 @@ my-app/
 <?php
 // entry.php —— 壳以 Drift 包为 cwd，用 __DIR__ 定位自己的 vendor
 require __DIR__ . '/vendor/autoload.php';
-\My\App\Bootstrap::run();
+(new \My\App\Bootstrap())->run();
 ```
 
 ```bash

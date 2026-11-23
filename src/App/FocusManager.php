@@ -221,7 +221,7 @@ final class FocusManager
      *   而实际进得去 —— §64.2 同一个坑的第二面。
      * ★ 值是标量：跨 AOT 边界不传对象（数组装对象有退化风险）。
      *
-     * @internal `Application::pumpSemantics()` 取它
+     * @internal `AppShell::pumpSemantics()` 取它
      * @return array<int, int>
      */
     public function focusableIds(): array

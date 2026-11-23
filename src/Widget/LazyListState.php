@@ -6,10 +6,8 @@ namespace Drift\Widget;
 use Drift\Errors;
 use Drift\Geometry\Axis;
 use Drift\Geometry\EdgeInsets;
-use Drift\Geometry\Rect;
-use Drift\Geometry\Size;
 use Drift\Layout\RenderScrollView;
-use Drift\Widget\Traits\SingleAxisScrollHost;
+use Drift\Widget\Traits\ScrollViewHost;
 
 /**
  * `LazyList` 的 State：持滚动偏移 + 决定这一帧造哪几格（两个轴共用一份）。
@@ -21,7 +19,7 @@ use Drift\Widget\Traits\SingleAxisScrollHost;
  */
 final class LazyListState extends State implements Scrollable, ScrollMetrics, ConstraintObserver
 {
-    use SingleAxisScrollHost;
+    use ScrollViewHost;
 
     /** 这根轴的滚动状态机（偏移 + 动画 + 淡出）；懒建：从没滚过的列表不额外造对象。 */
     private ?ScrollLane $lane = null;
@@ -80,50 +78,6 @@ final class LazyListState extends State implements Scrollable, ScrollMetrics, Co
         return $this->lane()->offset();
     }
 
-    /**
-     * 内容能滚到的最大偏移（盒没挂 ⇒ 0）。
-     *
-     * 读盒而不是自己按 `项数 × 格长` 算：完整长度已由 `build()` 以 `virtualExtent`
-     * 交给盒，自己再算一遍迟早与滚动条漂。
-     */
-    public function maxOffset(): float
-    {
-        /** @var RenderScrollView|null $box */
-        $box = $this->element()?->effectiveBoxOf(RenderScrollView::class);
-        if ($box === null) {
-            return 0.0;
-        }
-
-        return $box->maxScroll($this->view()->isVertical() ? Axis::Vertical : Axis::Horizontal);
-    }
-
-    /** 滚到绝对偏移（用 Δ 表达 ⇒ 夹取仍只有 `ScrollLane::move()` 一条路径） */
-    public function scrollTo(float $offset): void
-    {
-        $this->scrollBy($offset - $this->offset());
-    }
-
-    #[\Override]
-    public function animateTo(float $offset, float $durationMs, Curve $curve): void
-    {
-        $this->lane()->animateTo($offset, $durationMs, $curve);
-    }
-
-    /** 主轴：`LazyRow` 是横向 */
-    public function scrollAxis(): Axis
-    {
-        return $this->view()->isVertical() ? Axis::Vertical : Axis::Horizontal;
-    }
-
-    /** 视口尺寸；盒没挂 ⇒ 零尺寸（翻页键据此不吞键） */
-    public function viewportExtent(): Size
-    {
-        /** @var RenderScrollView|null $box */
-        $box = $this->element()?->effectiveBoxOf(RenderScrollView::class);
-
-        return $box?->size() ?? Size::zero();
-    }
-
     /** @internal 卸载即解绑：句柄留着死 State 会滚到虚空的盒上 */
     #[\Override]
     public function dispose(): void
@@ -180,8 +134,7 @@ final class LazyListState extends State implements Scrollable, ScrollMetrics, Co
      */
     public function scrollBy(float $delta): void
     {
-        /** @var RenderScrollView|null $box */
-        $box = $this->element()?->effectiveBoxOf(RenderScrollView::class);
+        $box = $this->scrollBox();
 
         // 盒还没挂（首帧之前 / 盒被换掉）⇒ 只改字段 + 标脏：没有盒就没有
         //   "就地推给盒"这回事，只能等下一次 build 把值递下去。
@@ -194,16 +147,16 @@ final class LazyListState extends State implements Scrollable, ScrollMetrics, Co
                 $this->rememberAnchor();
             });
 
-            $this->view()->controllerValue()?->sync();
+            $this->syncController();
 
             return;
         }
 
-        $vertical = $this->view()->isVertical();
+        $axis = $this->mainAxis();
         $moved = $this->lane()->move(
             $delta,
-            static function (float $value) use ($box, $vertical): float {
-                return $box->setScrollOffset($vertical ? Axis::Vertical : Axis::Horizontal, $value);
+            static function (float $value) use ($box, $axis): float {
+                return $box->setScrollOffset($axis, $value);
             },
         );
         if (!$moved) {
@@ -214,12 +167,12 @@ final class LazyListState extends State implements Scrollable, ScrollMetrics, Co
 
         // 窗口盖不住视口 ⇒ 必须重建（否则下方/上方是空白）
         $size = $box->size();
-        $viewport = $size === null ? 0.0 : ($vertical ? $size->height : $size->width);
+        $viewport = $size === null ? 0.0 : ($axis === Axis::Vertical ? $size->height : $size->width);
         if ($viewport <= 0.0 || !$this->windowCovers($viewport)) {
             $this->markDirty();
         }
 
-        $this->view()->controllerValue()?->sync();
+        $this->syncController();
     }
 
     /**
@@ -232,33 +185,6 @@ final class LazyListState extends State implements Scrollable, ScrollMetrics, Co
         $offset = $this->lane()->offset();
 
         return $offset >= $this->windowStart && $offset + $viewport <= $this->windowEnd;
-    }
-
-    /**
-     * 按轴滚动：只有主轴接受（`LazyRow` 的主轴是 x）。
-     * 主轴来自 Widget（`LazyList::isVertical()`），不由调用方猜。
-     */
-    public function scrollByAxis(Axis $axis, float $delta): void
-    {
-        if (($axis === Axis::Vertical) !== $this->view()->isVertical()) {
-            return;
-        }
-
-        $this->scrollBy($delta);
-    }
-
-    /**
-     * 按轴滚动，带动画（滚轮专用；细节见 `Scrollable::glideByAxis()`）。
-     * 本方法只剩"轴对不对"这一层判据 —— 起飞前对齐、目标累加、点亮条都在
-     *   `ScrollLane::glide()`（三个实现共用一份）。
-     */
-    public function glideByAxis(Axis $axis, float $delta): void
-    {
-        if (($axis === Axis::Vertical) !== $this->view()->isVertical()) {
-            return;
-        }
-
-        $this->lane()->glide($delta);
     }
 
     /**
@@ -375,28 +301,6 @@ final class LazyListState extends State implements Scrollable, ScrollMetrics, Co
         $this->anchorKey = isset($items[$index]) ? (string) $keyOf($items[$index]) : null;
     }
 
-    /**
-     * 把内容坐标里的矩形滚进视口。
-     * 这里的"内容坐标"是完整内容的坐标（含 `insets`、含所有没造出来的格子）
-     * —— 与 `$offset` 同一套坐标，故换算不需再补 `sliceOrigin`。
-     * 形状与 `ScrollViewState::ensureVisible()` 同构：算术都在
-     *   `RenderScrollView::revealDelta()`，本方法只"找盒 + 转交"。
-     */
-    public function ensureVisible(Rect $target, float $margin = 8.0): void
-    {
-        /** @var RenderScrollView|null $box */
-        $box = $this->element()?->effectiveBoxOf(RenderScrollView::class);
-        if ($box === null) {
-            return;
-        }
-
-        // 基准传自己待生效的偏移（同 `ScrollViewState`，见 `revealDelta()` 的 `$base` 说明）。
-        $delta = $box->revealDelta($target, $margin, $this->lane()->offset());
-        if ($delta !== 0.0) {
-            $this->scrollBy($delta);
-        }
-    }
-
     public function build(BuildContext $ctx): Widget
     {
         $view = $this->view();
@@ -497,8 +401,7 @@ final class LazyListState extends State implements Scrollable, ScrollMetrics, Co
     {
         $window = $vertical ? $ctx->height : $ctx->width;
 
-        /** @var RenderScrollView|null $box */
-        $box = $this->element()?->effectiveBoxOf(RenderScrollView::class);
+        $box = $this->scrollBox();
         if ($box !== null) {
             $constraints = $box->constraints();
             if ($constraints !== null) {
@@ -516,6 +419,23 @@ final class LazyListState extends State implements Scrollable, ScrollMetrics, Co
         }
 
         return max(0.0, $window);
+    }
+
+    protected function mainAxis(): Axis
+    {
+        return $this->view()->isVertical() ? Axis::Vertical : Axis::Horizontal;
+    }
+
+    protected function scrollBox(): ?RenderScrollView
+    {
+        $box = $this->element()?->effectiveBoxOf(RenderScrollView::class);
+
+        return $box instanceof RenderScrollView ? $box : null;
+    }
+
+    protected function scrollController(): ?ScrollController
+    {
+        return $this->view()->controllerValue();
     }
 
     private function view(): LazyList

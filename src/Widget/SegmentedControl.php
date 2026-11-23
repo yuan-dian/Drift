@@ -29,7 +29,7 @@ use Drift\Text\TextRole;
  * | Layout | `RenderSegmentedControl` / `RenderSegment` | 等宽布局 + 画墨 |
  *
  * ★ **为什么是结构节点（`Stack` 形态）而不是一个叶子控件**：激活入口
- *   `Application::activateFocusedWidget()` 收**焦点控件** —— 整个控件一个焦点
+ *   `InputRouter::activateFocusedWidget()` 收**焦点控件** —— 整个控件一个焦点
  *   就答不出"点了哪段"。一段一个焦点，命中测试（取最深盒）天然把焦点落到
  *   被点的那一段。形状上像 `Stack`：`kidList()` 给子层 + 自己的 Element 把子盒
  *   喂给多子渲染盒。
