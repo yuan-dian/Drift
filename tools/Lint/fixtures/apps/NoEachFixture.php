@@ -3,7 +3,6 @@ declare(strict_types=1);
 
 namespace App;
 
-use Drift\State\SubscribingWidget;
 use Drift\State\Subject;
 
 /**
@@ -14,10 +13,9 @@ use Drift\State\Subject;
  * 而判不出 receiver 是不是 `Each`（那要类型推断），所以拿"本文件出现过 `Each`"
  * 当闸。没有 `Each` 的列表根本不可能是 `Each::make(...)->items(...)`。
  *
- * ★ 这里必须 `implements SubscribingWidget`：它真的调了 `->watch()`，
- *   `subscriber-mark` 该抓的是"没标订阅者"这件事，与本文件测的粒度无关。
+ * ★ 这条夹具的价值全在"不响"：把文件闸删掉，它立刻变 warn。
  */
-final class PlainList implements SubscribingWidget
+final class PlainList
 {
     public function build(Subject $source): void
     {

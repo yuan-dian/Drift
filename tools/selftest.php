@@ -75,8 +75,12 @@ function drift_lint_selftest(string $root, Linter $linter): bool
         ],
         // 2 条 = 类体属性 1 + 构造器提升参数 1。
         // ★ 2026-11-12 补提升形态（+1）：`readBody()` 有意跳过方法体，提升参数在参数表里，
-        //   从前整类看不见 ⇒ `__construct(private Cell $x)` + `build()` 读它时静默假绿。
-        //   两条 Marked 夹具负责"不该响"：标了 SubscribingWidget 的两种声明位置都不许报。
+        //   从前整类看不见 ⇒ `__construct(private SessionSignal $s)` + `build()` 读它时静默假绿。
+        // ★ 2026-11-24 收窄判据：射程从「Subject/Cell」收到「非 Readable 的 Subject」。
+        //   原夹具的两条 "Marked" Good（`implements SubscribingWidget` 就不报）删了 ——
+        //   那是个做不到的承诺，而 `Cell` 读点本来就由最近的 `StatefulElement` 采集。
+        //   现在两条"不该响"各钉一条边界：`Readable` 过滤（删掉它这条就红）、
+        //   `closureEnd()` 闭包跳过（跳过失效这条就红）。两条都做过变异验证。
         'dead-subscription' => [
             'src/Widget/DeadSubscriptionFixture.php:' . Diagnostic::ERROR,
             'src/Widget/DeadSubscriptionFixture.php:' . Diagnostic::ERROR,
@@ -87,44 +91,13 @@ function drift_lint_selftest(string $root, Linter $linter): bool
         'dead-field' => [
             'apps/DeadFieldFixture.php:' . Diagnostic::ERROR,
         ],
-        // 2026-11-07 补 `static fn` / `static function` 形态（+5）：
-        // 从前 isClosure() 漏认 T_STATIC ⇒ 全仓 24 处真实 select 从未进过判据。
-        // 2026-11-08（+4）：readonly 白名单从「返回类型 / 体内 new」两条通道移除，
-        // 夹具各补一条 Bad 形态（fn + static fn 的 ReadonlyBox）⇒ 8 → 12。
-        // Good 侧钉住 `array` / static function 标量 / readonly + Equatable 不误报。
-        'select-purity' => [
-            'apps/SelectFixture.php:' . Diagnostic::ERROR,
-            'apps/SelectFixture.php:' . Diagnostic::ERROR,
-            'apps/SelectFixture.php:' . Diagnostic::ERROR,
-            'apps/SelectFixture.php:' . Diagnostic::ERROR,
-            'apps/SelectFixture.php:' . Diagnostic::ERROR,
-            'apps/SelectFixture.php:' . Diagnostic::ERROR,
-            'apps/SelectFixture.php:' . Diagnostic::ERROR,
-            'apps/SelectFixture.php:' . Diagnostic::ERROR,
-            'apps/SelectFixture.php:' . Diagnostic::ERROR,
-            'apps/SelectFixture.php:' . Diagnostic::ERROR,
-            'apps/SelectFixture.php:' . Diagnostic::ERROR,
-            'apps/SelectFixture.php:' . Diagnostic::ERROR,
-        ],
         'stale-derived' => [
             'apps/CartStore.php:' . Diagnostic::ERROR,
-        ],
-        // 3 条 = 类体属性声明 1 + 构造器提升参数 1 + 方法里赋值 1。
-        // ★ 2026-11-12 补提升形态（+1）：它与 `dead-subscription` 判的是同一张
-        //   `properties` 表，声明位置换了不该换判据。
-        'cached-subscriber' => [
-            'apps/CachedSubscriberFixture.php:' . Diagnostic::ERROR,
-            'apps/CachedSubscriberFixture.php:' . Diagnostic::ERROR,
-            'apps/CachedSubscriberFixture.php:' . Diagnostic::ERROR,
         ],
         'alias-mutate' => [
             'apps/AliasChildrenFixture.php:' . Diagnostic::ERROR,
         ],
         // §16.6.3 第三批（2026-10-15 按优先级补）
-        'subscriber-mark' => [
-            'apps/SubscriberMarkFixture.php:' . Diagnostic::ERROR,
-            'apps/SubscriberMarkFixture.php:' . Diagnostic::ERROR,
-        ],
         'str-concat-loop' => [
             'apps/StrConcatFixture.php:' . Diagnostic::ERROR,
             'apps/StrConcatFixture.php:' . Diagnostic::ERROR,

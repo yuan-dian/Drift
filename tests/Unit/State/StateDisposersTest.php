@@ -178,7 +178,7 @@ final class DisposerProbeState extends State
     {
         parent::didUpdateWidget($widget);
 
-        // 与 `SubjectBuilderState` 同款：只在 source 真变了才重绑
+        // 只在 source 真变了才重绑：每次 update 都换会让订阅 id 漂移
         if ($this->nextSource === null || $this->nextSource === $this->bound) {
             return;
         }

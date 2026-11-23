@@ -28,23 +28,24 @@ $this->setState(function () use ($index): void { $this->hovered = $index; });
 
 `State::needsBuild()` / `consumeDirty()` 供框架在帧末判定是否重建，业务代码一般不直接调。
 
-## Subject 与整块广播（例外形状）
+## Subject 与整块广播
 
-★ **默认不写这个**。界面会读的字段用下一节的 `Cell` + `Bind`：一字段一格、写进去自动通知、读点即订阅。本节留给一种情况 —— 多个字段必须同频变化、读方要一次拿到一致的几块（查询词 + 筛选 + 分页一起刷新，且这几次写必须落在同一次广播里）。
+★ **业务状态不写这个**。界面会读的字段用下一节的 `Cell` + `Bind`：一字段一格、写进去自动通知、读点即订阅。
 
-`Subject` 是广播端（`Cell` 也是它的子类，所以「业务层零 GUI 依赖」在两条路上都成立），`notifyChanged()` 由应用手动调。`subscribeFor(object $owner, callable $handler)` 按属主订阅，`unsubscribeAllOf()` / `unsubscribeId()` 退订；每个订阅者异常隔离，先记账、通知完再报，避免第一个炸掉后面全收不到。`Subscription` 按自增 id 管理，遍历中退订不出错。
+`Subject` 仍是订阅机制的**基座**：`Cell` 继承它、`AsyncCommand` 继承它，控件内部的信号（`SelectPanelSignal` / `ComboBoxQuery` / `PickerPanelSignal`）也用它。`notifyChanged()` 由应用手动调。`subscribeFor(object $owner, callable $handler)` 按属主订阅，`unsubscribeAllOf()` / `unsubscribeId()` 退订；每个订阅者异常隔离，先记账、通知完再报，避免第一个炸掉后面全收不到。`Subscription` 按自增 id 管理，遍历中退订不出错。
 
-确实要整块广播时，页面侧用 `SubjectBuilder` 把某个切片变成一棵子树（`select` + `builder` 两段闭包）。`select` 闭包每次广播都跑，必须廉价、纯、无副作用：它省的是子树重建，不省计算。抖动检测会报 `select/unstable`。
+★ **2026-11-24 起没有"整块广播 + 切片订阅"这条路了**：`SubjectBuilder`（`select` + `builder` 两段闭包，外加一套手工同值门控与抖动检测）已退役 —— `apps/` 里没有使用者，而那三件事 `State` 的依赖采集都在做。所以自造 `Subject` 子类之后，读法只有两种：
 
-**2026-11-22 起本仓 `apps/` 里没有这个形状了**：`users` 与 `watermark` 都迁成了格子 + `Bind`，`AsyncCommand` 也自己实现了 `Readable`（读即订阅）。`SubjectBuilder` 只剩测试覆盖 —— 新代码不要用它，除非上面那条"同频一致快照"真的成立。
+- 读点落在某个 `State::build()` 里 ⇒ 值一变**整棵子树重建**。适合"订阅者只有一两个、块很小"的内部信号；
+- 要更细的粒度 ⇒ 把字段改成 `Cell`，**不要**在 `Subject` 上再铺一层切片。
 
-只有同时满足"同频变化、小子树、全标量、一致性敏感"时才把多个字段合进一个 `select`。`query` 每字符变、`running` 每次刷新变，这种不同频的组合会让每敲一个字符都重建整行，是反面例子。
+多字段必须同频变化、读方要一次性拿到一致快照的形态目前**没有原语**。真到非它不可的时候，按 A18 定的重裁条件做"格子组合原语"，不要回退整块广播。
 
 ## 相等门控
 
-格子 `set()` 的门控：两边都是 `Equatable` 就按值比较，否则 `===`。同值 ⇒ 什么都不发生（订阅者不会被叫醒）。整块广播那条路（`SubjectBuilder`）比的是**两次 `select` 的输出**，语义一致 —— 框架不存快照，旧值缓存在订阅者自己身上。
+格子 `set()` 的门控：两边都是 `Equatable` 就按值比较，否则 `===`。同值 ⇒ 什么都不发生（订阅者不会被叫醒）。
 
-这条默认很重要：`===` 对对象是身份比较。如果每次写都 `new` 一个内容相同的值对象，门控会判定"变了"，子树白重建。自动抖动检测为此存在：`Cell` 侧按内容比已经兜住数组 / 标量，`SubjectBuilder` 侧仍会报 `select/unstable`。
+这条默认很重要：`===` 对对象是身份比较。如果每次写都 `new` 一个内容相同的值对象，门控会判定"变了"，子树白重建。`Cell` 侧按内容比已经兜住数组 / 标量；真要自定义比较规则，用 `Cell::of()->equalsBy(callable)`。
 
 数组按 `===` 时还比较键序：键序不同就是"不同"。真正多字段一致的内容用值对象表达，别用随手拼的数组。
 
@@ -105,14 +106,14 @@ Text::of($this->count, '计数 ')->body();             // 读：读点就在这�
 
 **默认 `Cell`**。判据一句话：**订阅方要的是"一个字段"还是"一次事务里的几个字段"**。
 
-| | `Cell`（默认） | `extends Subject`（例外） |
+| | `Cell`（默认） | `extends Subject`（基座 / 内部信号） |
 |---|---|---|
 | 形状 | 一字段一格，`$store->time()->get()` | 整块广播 + `notifyChanged()` |
-| 读点 | `Bind` 的 builder 里读什么订什么 | `SubjectBuilder::select` 声明切片 |
-| 粒度 | 格子粒度：进度 tick 不碰表单段 | 一次广播唤醒全部订阅者，再各自门控 |
-| 适合 | 界面读的绝大多数状态 | 多字段必须同频、读方要一次性看到一致快照 |
+| 读点 | `Bind` 的 builder 里读什么订什么 | 某个 `State::build()` 里直读 ⇒ 整棵重建 |
+| 粒度 | 格子粒度：进度 tick 不碰表单段 | 一次广播唤醒全部订阅者，重建面看读点在哪 |
+| 适合 | 界面读的绝大多数状态 | 订阅者只有一两个的控件内部信号 |
 
-水印应用（`WatermarkStore` 十来个格子）与用户目录（`AppStore` / `SignupForm` / `UserStore` 各几格，外加一个命令）是前一种；后一种在 `apps/` 里已经没有使用者。`Subject` 本身仍被 `AsyncCommand` 这类"一个对象就是一个事件"的地方继承 —— 那是另一种用法，不是状态。
+水印应用（`WatermarkStore` 十来个格子）与用户目录（`AppStore` / `SignupForm` / `UserStore` 各几格，外加一个命令）是前一种；后一种在 `apps/` 里只剩控件内部信号（下拉面板开合、远程搜索的查询）。`Subject` 本身仍被 `AsyncCommand` 这类"一个对象就是一个事件"的地方继承 —— 那是另一种用法，不是状态。
 
 两条纪律：
 
@@ -141,7 +142,7 @@ Text::of($this->count, '计数 ')->body();             // 读：读点就在这�
 ## 页面状态与应用状态边界
 
 - 页面私有、跨 build、不需要恢复：放 `State`（视图粒度、草稿、悬停）。
-- 业务数据、跨页共享、别页也要读：放 `Store`，页面用 `Bind` 读它的格子（Store 若整块广播，才用 `SubjectBuilder::select`）。
+- 业务数据、跨页共享、别页也要读：放 `Store`，页面用 `Bind` 读它的格子（Store 若整块广播，读点就落在一个 `State` 里 —— 那是整块重建，不推荐）。
 - 需要跨进程冷启动恢复（表单、导航栈、滚动位置）：走 `AppScope::restoration()` 配 `RestorableValue` / `NavigationStack`。一个 bucket 是唯一真相源，窗口几何另归 `WindowStateStore`。
 - 一次性 UI 动作（弹通知、开模态、延时回调）：从 `Environment` 取，不塞进业务状态。
 

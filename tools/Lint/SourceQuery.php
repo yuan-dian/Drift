@@ -265,9 +265,9 @@ final class SourceQuery
             if ($callI === null || $tokens[$callI] !== '(') {
                 continue;
             }
-            // ★ `index` 收 `->` 的下标：调用方要判**接收者**（`$this->select(...)`
-            //   与 `SubjectBuilder::make()->select(...)` 是两件不同的事 —— 前者
-            //   "自己承担订阅"，后者"配置一个专职订阅者"）。
+            // ★ `index` 收 `->` 的下标：调用方要判**接收者**（`$this->m(...)` 与
+            //   `$obj->m(...)` 是两件不同的事 —— 前者"自己就是那个东西"，
+            //   后者"在配置别人的东西"）。
             $hits[] = ['name' => $name, 'line' => $tokens[$i][2], 'index' => $i];
         }
 

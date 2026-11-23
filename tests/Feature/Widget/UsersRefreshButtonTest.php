@@ -29,7 +29,7 @@ use App\Users\Store\MemoryUserSource;
  * 是 `true` ⇒ 按钮**永久灰掉**，数据回来了也不恢复（真机探针：
  * `isRunning=false` 而 `enabled=false`）。
  *
- * 修法是把那段包进 `SubjectBuilder`（切片 = `isRunning()`）。判据因此必须**跨帧**：
+ * 修法是把那段包进 `Bind`（builder 里读 `isRunning()` 就等于订它）。判据因此必须**跨帧**：
  *  ① 首屏（在途）⇒ 灰 + 「刷新中…」；
  *  ② 结算后 ⇒ **亮**（这一条在修复前是红的，且永远不会自己变绿）；
  *  ③ 再发起 ⇒ 立刻又灰。

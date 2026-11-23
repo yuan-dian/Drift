@@ -11,12 +11,10 @@ use Drift\Widget\Traits\TextInputConfig;
  * 单行输入框（§15.2 / §A.2.9）。
  *
  * ```php
- * // 官方订阅形态（§11.4.2）：值由外部给，改动经 onChanged 回写
- * SubjectBuilder::make($store)
- *     ->select(fn(UserStore $s): string => $s->query())
- *     ->builder(fn(string $q): Widget =>
- *         TextField::make()->value($q)->label('搜索')->placeholder('输入姓名')
- *             ->onChanged(fn(string $x) => $store->setQuery($x)));
+ * // 受控形态：值由外部给，改动经 onChanged 回写；读点在 `Bind` 的 builder 里
+ * Bind::make(fn (BuildContext $ctx): Widget =>
+ *     TextField::make()->value($store->query()->get())->label('搜索')->placeholder('输入姓名')
+ *         ->onChanged(fn (string $x) => $store->query()->set($x)));
  * ```
  *
  * ★ **受控**：`value()` 是**唯一**的文本来源，`onChanged()` 是**唯一**的写回出口。

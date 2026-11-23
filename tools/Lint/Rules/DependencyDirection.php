@@ -63,7 +63,12 @@ final class DependencyDirection implements Rule
         'Input'     => ['Input', 'Geometry', 'Text'],
         'Widget'    => ['Widget', 'Layout', 'State', 'Async', 'Rendering', 'Text', 'Geometry', 'Input', 'Core'],
         'Layout'    => ['Widget', 'Layout', 'Rendering', 'Text', 'Geometry', 'Input', 'Core'],
-        'State'     => ['Widget', 'State', 'Async', 'Core'],
+        // `State`：纯反应式内核（`Subject` / `Cell` / `Machine` / `AsyncCommand`）。
+        // 2026-11-24 `SubjectBuilder` 退役后它**不再引用 `Widget`** —— 原先那条
+        // `State → Widget` 只为那个"专职订阅控件"存在（它是个 Widget 却住在 State 层，
+        // 于是 State 反过来要 `StatefulWidget` / `BuildContext`）。现在订阅的桥在
+        // `Widget` 侧（`Bind` / `State::watch()`），方向单向了。
+        'State'     => ['State', 'Async', 'Core'],
         'Commands'  => ['Commands'],
         'Theme'     => ['Theme', 'Widget', 'Text', 'Rendering'],
         // `Routing`：页名来源收成 `Core\Readable`（2026-11-22）⇒ 不再需要 `State`（那是
@@ -87,16 +92,18 @@ final class DependencyDirection implements Rule
     /**
      * 有意保留的双向边；键是两层按字母序拼的，判据按实际流量对账。
      *
-     * Widget↔Layout / Widget↔State：同一棵树的两个视角，两侧都有真实引用。
+     * Widget↔Layout：同一棵树的两个视角，两侧都有真实引用。
      * Theme↔Widget：`ThemeScope` 等主题控件住 `Theme`，而 `BuildContext` 住
      * `Widget`；反向只走 `BuildContext.php` 一条文件例外，不是对称互许。
+     *
+     * ★ `State|Widget` 2026-11-24 出列：`SubjectBuilder`（住在 `State` 却是个 Widget）
+     *   退役后 `State` 不再引用 `Widget`，环自己断了。移除条件就是"任一侧引用归零"。
      *
      * ★ 不照搬 Flutter `InheritedWidget` / `BuildOwner`：那要改公开签名并引入
      *   AOT 生成物风险，收益只是"看起来没有环"。移除条件是任一侧引用归零。
      */
     private const DOCUMENTED_CYCLES = [
         'Layout|Widget',
-        'State|Widget',
         'Theme|Widget',
     ];
 

@@ -4,7 +4,8 @@ declare(strict_types=1);
 namespace Drift\Dev\Smoke\App;
 
 use Drift\App\Application;
-use Drift\State\SubjectBuilder;
+use Drift\Widget\Bind;
+use Drift\Widget\BuildContext;
 use Drift\Widget\Table;
 use Drift\Widget\TableColumn;
 use Drift\Widget\TableColumnWidth;
@@ -29,7 +30,7 @@ use Drift\Widget\Widget;
  *
  * 应用改完数据要让树重建，而 `Element::markNeedsBuild()` **只对 `StatefulElement`
  * 有效**（根是 `StatelessElement` ⇒ 调了什么都不发生，现象是"回调跑了但画面没变"）。
- * ⇒ 夹具照真机的通道走：`TableCellEditStore`（`Subject`）+ `SubjectBuilder`。
+ * ⇒ 夹具照真机的通道走：`TableCellEditStore` 的 `Cell` + `Bind` 的 builder 读它。
  *
  * ## 判据
  *
@@ -67,31 +68,29 @@ final class TableCellEditApplication extends Application
 
     public function buildRoot(): Widget
     {
-        return SubjectBuilder::make($this->store)
-            ->select(static fn(TableCellEditStore $s): array => $s->rows)
-            ->builder(function (array $rows): Widget {
-                $this->table = Table::make(
-                    [
-                        // 不可编辑的列（Enter 必须放行）
-                        TableColumn::make('id', 'ID')
-                            ->field('id')
-                            ->width(TableColumnWidth::fixed(100.0)),
-                        // 可编辑的列
-                        TableColumn::make('name', '姓名')
-                            ->field('name')
-                            ->width(TableColumnWidth::fixed(200.0))
-                            ->editable(),
-                    ],
-                    $rows,
-                )->keyOf(static fn(array $row): int => (int) $row['id'])
-                    ->rowHeight(40.0)
-                    ->headerHeight(32.0)
-                    ->onCellEdit(function (int $rowKey, string $column, string $value): void {
-                        $this->editLog[] = [$rowKey, $column, $value];
-                        $this->store->setCell($rowKey, $column, $value);
-                    });
+        return Bind::make(function (BuildContext $ctx): Widget {
+            $this->table = Table::make(
+                [
+                    // 不可编辑的列（Enter 必须放行）
+                    TableColumn::make('id', 'ID')
+                        ->field('id')
+                        ->width(TableColumnWidth::fixed(100.0)),
+                    // 可编辑的列
+                    TableColumn::make('name', '姓名')
+                        ->field('name')
+                        ->width(TableColumnWidth::fixed(200.0))
+                        ->editable(),
+                ],
+                $this->store->rows->get(),
+            )->keyOf(static fn(array $row): int => (int) $row['id'])
+                ->rowHeight(40.0)
+                ->headerHeight(32.0)
+                ->onCellEdit(function (int $rowKey, string $column, string $value): void {
+                    $this->editLog[] = [$rowKey, $column, $value];
+                    $this->store->setCell($rowKey, $column, $value);
+                });
 
-                return $this->table;
-            });
+            return $this->table;
+        });
     }
 }

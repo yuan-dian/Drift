@@ -25,7 +25,7 @@ use Drift\Widget\Element;
  *
  * 少这三条，"标脏 / 换描述 / dispose"在"从不改"的实现上照样绿。
  *
- * ★ 与 `SubjectBuilderTest` / `CellTest` / `ComputedTest` 分工：那三个判的是
+ * ★ 与 `CellTest` / `ComputedTest` 分工：那两个判的是
  *   **订阅与门控**（谁在什么时候被通知），本文件只判 **State 自己的生命周期**。
  */
 final class StateLifecycleTest extends SmokeTestCase

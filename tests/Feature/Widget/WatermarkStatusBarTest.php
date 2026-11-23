@@ -17,7 +17,7 @@ use Drift\Widget\Text;
  *
  * ## 为什么这条测试必须存在
  *
- * 这个控件被改写过多轮（190 行手写订阅器 → `SubjectBuilder` → `Bind`），每次都
+ * 这个控件被改写过多轮（190 行手写订阅器 → 两段闭包切片 → `Bind`），每次都
  * 删掉一整类代码，而四条闸门一条也看不出来：`php -l` / `lint` / `smoke` /
  * `phpunit` 都不渲染它。改写的失败模式是**静默的**：订阅没接上 ⇒ 界面永远停在
  * 首帧的值；门控写错 ⇒ 每次通知都重建（看不出来，只是慢）。
@@ -51,7 +51,7 @@ final class WatermarkStatusBarTest extends SmokeTestCase
     {
         $store = $this->store();
 
-        // ① 订阅责任在框架控件上（应用侧不再 implements SubscribingWidget）
+        // ① 订阅责任在框架控件上（应用侧不再手写订阅器）
         $bar = StatusBar::make($store);
         check(
             '状态栏 · 订阅责任落在 Bind（应用不再手写订阅器）',

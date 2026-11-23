@@ -21,10 +21,10 @@ use Drift\Widget\StatefulWidget;
  * ```
  *
  * ★ **页名来源收成一个 `Readable`**：以前是 `source(Subject)` +
- *   `select(callable)` 两段 —— 本类自己实现 `SubscribingWidget`、私有 State 里
- *   手写订阅 + 手工同值门控。那三件事 `State` 的依赖采集全都在做：build 期读一次
- *   源就订阅上了，格子自己的相等门控顶掉手工比较。⇒ 少一套订阅实现，也少一处
- *   "漏写 select 就每字段变都换页"。
+ *   `select(callable)` 两段 —— 本类自己持订阅、私有 State 里手写订阅 + 手工同值门控。
+ *   那三件事 `State` 的依赖采集全都在做：build 期读一次源就订阅上了，
+ *   格子自己的相等门控顶掉手工比较。⇒ 少一套订阅实现，也少一处
+ *   "漏写切片就每字段变都换页"。
  * ★ 页名也可以**直接从父级传**（`current()`）：页切换是纯 UI 态时不必造格子。
  *   父级重建时传新名字即可，页面实例缓存仍在 State 里（不随 Widget 重建而丢）。
  *

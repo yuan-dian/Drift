@@ -14,7 +14,6 @@ use Drift\Dev\Lint\Rules\AwaitScope;
 use Drift\Dev\Lint\Rules\BackendBranch;
 use Drift\Dev\Lint\Rules\CallbackArity;
 use Drift\Dev\Lint\Rules\CancelGuard;
-use Drift\Dev\Lint\Rules\CachedSubscriber;
 use Drift\Dev\Lint\Rules\ClassMissingUse;
 use Drift\Dev\Lint\Rules\CjkVarName;
 use Drift\Dev\Lint\Rules\DeadCommand;
@@ -33,12 +32,10 @@ use Drift\Dev\Lint\Rules\PageSelfWidget;
 use Drift\Dev\Lint\Rules\PaintShift;
 use Drift\Dev\Lint\Rules\ProjectName;
 use Drift\Dev\Lint\Rules\LaneOwner;
-use Drift\Dev\Lint\Rules\SelectPurity;
 use Drift\Dev\Lint\Rules\StaleCapabilityClaim;
 use Drift\Dev\Lint\Rules\StaleDerived;
 use Drift\Dev\Lint\Rules\StaticPipelineFacade;
 use Drift\Dev\Lint\Rules\StrConcatLoop;
-use Drift\Dev\Lint\Rules\SubscriberMark;
 use Drift\Dev\Lint\Rules\WorkerArgv;
 
 /**
@@ -66,12 +63,9 @@ final class Linter
             // 表格字段名拼写（2026-11-13 A②）：field('nmae') 从前只在渲染期 Fatal，0 行时静默空白。
             //   ★ 判据走独立路径（同文件行字段证据），不依赖生成层、不猜跨文件数据流。
             new DeadField(),
-            new SelectPurity(),
             new StaleDerived(),
-            new CachedSubscriber(),
             new AliasMutate(),
             // §16.6.3 第三批（2026-10-15 按优先级补）
-            new SubscriberMark(),
             new StrConcatLoop(),
             new NestedSubscribe(),
             // instanceof 漏 use（2026-10-19：静默恒 false 缺陷模式，本仓咬过 ≥3 次）

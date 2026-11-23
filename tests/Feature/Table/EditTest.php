@@ -205,17 +205,18 @@ final class EditTest extends SmokeTestCase
         $s->type('S');
 
         // 反序（模拟排序换了行序）：id 1 从第 0 行跑到第 2 行
-        $s->app->store->setRows(\array_reverse($s->app->store->rows));
+        $s->app->store->setRows(\array_reverse($s->app->store->rows->get()));
         $s->tick();
 
         $s->chord(KeyChord::enter());
 
+        $after = $s->app->store->rows->get();
         check(
             'Table · 编辑：编辑中行序变了 ⇒ 提交仍写回**原来那条数据**（key=1，不是第 0 行）',
             $s->app->editLog === [[1, 'name', '甲S']]
-                && ($s->app->store->rows[2]['name'] ?? null) === '甲S'
-                && ($s->app->store->rows[0]['name'] ?? null) === '丙',
-            'log=' . \json_encode($s->app->editLog) . ' rows=' . \json_encode($s->app->store->rows),
+                && ($after[2]['name'] ?? null) === '甲S'
+                && ($after[0]['name'] ?? null) === '丙',
+            'log=' . \json_encode($s->app->editLog) . ' rows=' . \json_encode($after),
         );
 
         $this->flushChecks();

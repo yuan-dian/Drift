@@ -53,7 +53,7 @@ final class DependencyMatrixTest extends SmokeTestCase
         sort($declared);
 
         check(
-            '依赖矩阵 · 双向边恰好是登记过的三对（新增一对必须先裁决）',
+            '依赖矩阵 · 双向边恰好是登记过的两对（新增一对必须先裁决）',
             $actual === $declared,
             'actual=' . implode(',', $actual) . ' declared=' . implode(',', $declared),
         );

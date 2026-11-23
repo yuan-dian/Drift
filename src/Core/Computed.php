@@ -82,8 +82,8 @@ final class Computed implements Versioned, Readable
     /**
      * 取值；依赖没变就直接给缓存。
      *
-     * ★ `evaluating` 守卫与 `SubjectBuilder` 的"`select` 闭包不许有副作用"是同一条
-     *   纪律，但**它现在是运行期守卫**（`00` §2 P6：逃生口要难看）。
+     * ★ `evaluating` 守卫就是"闭包必须纯"这条纪律的**运行期**形态
+     *   （`00` §2 P6：逃生口要难看）—— 不靠静态猜闭包有没有副作用。
      */
     public function get(): mixed
     {

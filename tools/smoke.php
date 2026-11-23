@@ -3319,9 +3319,10 @@ check(
 //     "新建的实例 builds=1" —— 恒真。
 //   ★ 三处"写入了"都补了"写入前是另一个值"（needsBuild / widget() / disposed）。
 // ── ㉓ State 层：订阅生命周期 / Cell 门控 / Computed 切片 已迁出 ─────────────
-//   · `tests/Unit/State/SubjectBuilderTest.php`（8）—— 首帧就拿到 select 值 / 同值 notify
-//     被门控挡住 / 改字段不 notify 收不到 / notify 且变才标脏 / 重建拿新值 / unmount 退订 /
-//     无 select ⇒ builder 收 0 个参数（不是 null）
+//   · ~~`tests/Unit/State/SubjectBuilderTest.php`（8）~~ —— 2026-11-24 随
+//     `SubjectBuilder` 退役整文件删除（机制没了，判据没有对象）。它覆盖的
+//     "首帧拿值 / 同值 notify 被门控 / 重建拿新值 / unmount 退订"由
+//     `CellTest` + `ReactiveRebuildTest` 接着守。
 //   · `tests/Unit/State/CellTest.php`（7）—— setIfChanged 换值标脏·同值不标脏（RT-4）/ 构造
 //     私有 / makeFor 绑对 Owner
 //   · `tests/Unit/State/ComputedTest.php`（7）—— 无脏不重算 / 依赖版本变则重算 / 自进一版 /

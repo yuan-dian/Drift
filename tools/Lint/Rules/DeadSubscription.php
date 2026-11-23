@@ -13,29 +13,32 @@ use Drift\Dev\Lint\SourceQuery;
 /**
  * §16.6.3 #4 → §21 A16：死订阅（A16）。
  *
- * 判据：`build()` 体内出现对**可订阅类型**实例的方法调用
- * （`$this->user->value()`，而 `user` 声明为 `Subject`/`Cell`）
- * ⇒ 该 `build()` 所属类必须 `implements SubscribingWidget`。
- * 否则这个订阅会在重建时被静默丢弃（G2）。
+ * 判据：`build()` 体内调用**不经过采集**的可观察值方法
+ * （`$this->session->isOpen()`，而 `session` 声明为 `Subject` 子类型且不是 `Readable`）
+ * ⇒ 读了一次却没订上：数据变了不标脏，界面静默停在旧值。
  *
- * ★ 诚实的边界（静态不可判的那一半）：§16.6.3 还允许"位于某 `SubscribingWidget`
- *   子树内"——**子树不是 token 可见的事实**，所以本规则只做"本类必须实现"这一层。
- *   子树内正当使用的情形走既有豁免机制（文件里写 `@internal-use-allowed: 理由`）降为 warn，
- *   与 `internal-leak` 同一个口径，不另发明机制。
+ * ★ **`Cell` / `AsyncCommand` 不在射程内**：它们的 `get()` 内部
+ *   `Tracker::record()`，读点由最近的 `StatefulElement` 采集帧建边 ——
+ *   在 `StatelessWidget::build()` 里读也照样生效（代价是重建面变宽，不是陈旧）。
+ *   本规则只管"读了但没人记账"的那一半。2026-11-24 收窄：此前把 `Cell` 一起判，
+ *   报错文案「重建会静默丢订阅」与事实相反，而当时的"豁免"是 `implements
+ *   SubscribingWidget` —— 一个 `StatelessWidget` 根本没有订阅袋，那句承诺做不到。
+ * ★ 诚实的边界（静态不可判的那一半）：读点真的落在某 `State` 的 `watch()` 回调里
+ *   是正当的，但"这行在回调里"不是 token 可见的事实。这类形态走既有豁免机制
+ *   （文件里写 `@internal-use-allowed: 理由`）降为 warn，与 `internal-leak` 同一个口径。
  * ★ 闭包体不判：`onPressed(fn() => $this->form->reset())` 是**延迟回调**（事件发生才读），
  *   `builder(fn() => …)` 是**立即回调**，两者 token 同形 ⇒ 静态不可判，一律不判。
- *   代价是真在 builder 回调里读 `$this->x->m()` 会漏报 —— 那种写法应改用 `select` 的入参。
- * ★ `State` 子类豁免：cell 本来就归 `State` 拥有（`State::cell()`），
- *   在 `State::build()` 里读自己的 cell 是天经地义，不算死订阅。
+ *   代价是真在 builder 回调里读会漏报 —— 那种写法该改用 `Bind` 的入参。
+ * ★ `State` 子类豁免：手写订阅的正路就是 `State::watch()`，
+ *   在 `State::build()` 里读自己的源天经地义，不算死订阅。
  */
 final class DeadSubscription implements Rule
 {
-    private const SUBSCRIBABLE = [
-        'Drift\State\Subject',
-        'Drift\State\Cell',
-    ];
+    /** 可观察值的根：家族里**没实现 `Readable`** 的那些才是本规则的目标 */
+    private const SUBJECT = 'Drift\State\Subject';
 
-    private const SUBSCRIBING_WIDGET = 'Drift\State\SubscribingWidget';
+    /** 读它会 `Tracker::record` ⇒ 自动成边，不在射程内 */
+    private const READABLE = 'Drift\Core\Readable';
 
     private const STATE = 'Drift\Widget\State';
 
@@ -51,14 +54,13 @@ final class DeadSubscription implements Rule
 
     public function summary(): string
     {
-        return 'build() 里读 Subject/Cell 的类必须 implements SubscribingWidget';
+        return 'build() 里读不经过采集的 Subject（非 Readable）⇒ 变了不标脏，改用 Cell 或 Bind';
     }
 
     public function check(Project $project): array
     {
         $table = ClassTable::fromProject($project);
-        $subscribing = $table->implementorsOf(self::SUBSCRIBING_WIDGET);
-        $subscribable = $table->subtypesOf(self::SUBSCRIBABLE);
+        $silent = $this->silentSubjects($table);
 
         $found = [];
         foreach ($project->files() as $file) {
@@ -72,24 +74,22 @@ final class DeadSubscription implements Rule
                 if ($build === null) {
                     continue;
                 }
-                if (isset($subscribing[$info['fqn']])) {
-                    continue;
-                }
                 if ($table->descendsFrom($info['fqn'], self::STATE)) {
-                    continue; // State 拥有自己的 cell，不算死订阅
+                    continue; // State 拥有自己的源，且 watch() 就是在这层用的
                 }
 
-                foreach ($this->subjectCalls($file, $build, $info['properties'], $subscribable) as $hit) {
+                foreach ($this->subjectCalls($file, $build, $info['properties'], $silent) as $hit) {
                     $found[] = new Diagnostic(
                         $this->name(),
                         $severity,
                         $file->path(),
                         $hit['line'],
                         sprintf(
-                            "死订阅：build() 里读了 \$this->%s（%s 的方法），但 %s 没 implements SubscribingWidget ⇒ 重建会静默丢订阅",
+                            '死订阅：build() 里读了 $this->%s->%s()（%s 是 Subject 但不是 Readable）'
+                            . ' ⇒ 读点不经过 Tracker，数据变了不标脏；改用 Cell（读即订阅），或把 readonly 参数交给 Bind',
                             $hit['property'],
-                            $hit['type'],
-                            $info['name']
+                            $hit['method'],
+                            $hit['type']
                         )
                     );
                 }
@@ -100,14 +100,35 @@ final class DeadSubscription implements Rule
     }
 
     /**
-     * 某类的 `build()` 体里，对"声明为可订阅类型"的属性发起的调用。
+     * `Subject` 家族里**不会自动记账**的那些类。
+     *
+     * ★ 挡掉 `Readable` 是本规则正确的关键：`Cell::get()` / `AsyncCommand::get()`
+     *   自己 `Tracker::record()`，读点由框架建边；`Subject` 的其余快照方法
+     *   （`isOpen()` / `query()` 之类）不经过 `Tracker`。
+     *
+     * @return array<string, true>
+     */
+    private function silentSubjects(ClassTable $table): array
+    {
+        $out = [];
+        foreach ($table->subtypesOf([self::SUBJECT]) as $fqn => $_) {
+            if (!$table->descendsFrom($fqn, self::READABLE, viaImplements: true)) {
+                $out[$fqn] = true;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * 某类的 `build()` 体里，对"声明为不自动记账的可观察值"的属性发起的调用。
      *
      * @param array{start: int, end: int, line: int} $build
      * @param array<string, string> $properties
-     * @param array<string, true> $subscribable
-     * @return list<array{property: string, type: string, line: int}>
+     * @param array<string, true> $silent
+     * @return list<array{property: string, type: string, method: string, line: int}>
      */
-    private function subjectCalls(SourceFile $file, array $build, array $properties, array $subscribable): array
+    private function subjectCalls(SourceFile $file, array $build, array $properties, array $silent): array
     {
         $tokens = $file->tokens();
         $hits = [];
@@ -154,10 +175,15 @@ final class DeadSubscription implements Rule
             }
 
             $type = $properties[$prop] ?? null;
-            if ($type === null || !isset($subscribable[$type])) {
+            if ($type === null || !isset($silent[$type])) {
                 continue;
             }
-            $hits[] = ['property' => $prop, 'type' => $type, 'line' => $tokens[$thisI][2]];
+            $hits[] = [
+                'property' => $prop,
+                'type' => $type,
+                'method' => strtolower($tokens[$methodI][1]),
+                'line' => $tokens[$thisI][2],
+            ];
         }
 
         return $hits;

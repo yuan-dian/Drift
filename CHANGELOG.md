@@ -53,8 +53,29 @@
   （Flutter 的 `ValueListenableBuilder` / `AnimatedBuilder` 同样带 `BuildContext`）。
   所有调用点需补参数。
 
+- **手写订阅机制退役**：删除 `Drift\State\SubjectBuilder`（335 行：`select` 切片 +
+  `builder` + 手工同值门控 + `select/unstable` 抖动检测）与 `Drift\State\SubscribingWidget`
+  （空标记接口）。两者零生产消费者 —— `apps/` 里 2026-11-22 就全迁到了格子 + `Bind`，
+  只有测试还覆盖着它们。A18 的"整块广播 + 切片订阅"例外条款随之退役：`Subject` 保留为
+  基座（`Cell` / `AsyncCommand` 继承它，控件内部信号如 `SelectPanelSignal` 用它），
+  但"多字段同频一致快照"目前**没有原语**，真需要时按 A18 的重裁条件做 `Cell` 组合原语。
+  连带退役三条 lint 规则 —— `subscriber-mark` / `select-purity` / `cached-subscriber`：
+  判据分别是"调 `->select()`/`->watch()` 必须标接口"与"`SubjectBuilder` 不许存字段"，
+  被守护的 API 消失后它们只会匹配到应用自己同名的非订阅方法。
+
 ### 已实现
 
+- **`dead-subscription` 判据收窄到事实**：原判据是"build() 里读 `Subject`/`Cell` ⇒ 必须
+  `implements SubscribingWidget`"，而那句豁免是个**做不到的承诺** —— `watch()` 是
+  `State::watch()`（`protected`），一个 `StatelessWidget` 标了接口也没有订阅袋。更糟的是
+  报错文案（"重建会静默丢订阅"）与事实相反：`StatelessElement` 复用环境采集帧，
+  `StatelessWidget` 读 `Cell` 时读点会被最近的 `StatefulElement` 记住，界面照常更新。
+  现在只判**非 `Readable` 的 `Subject`**（`Cell::get()` / `AsyncCommand::get()` 自己
+  `Tracker::record()`，不会陈旧），文案改为指向真正的修法。夹具里两条 "Marked"
+  假绿用例（`implements SubscribingWidget` 就不报）一并删除。
+- **`nested-subscribe` 判据收窄**：`->items()` 里只认 `->watch()`。原先还认 `->select(`，
+  那是已退役的切片入口；逐行 `Bind` 不在射程内 —— 那是现在的主流写法，粒度由格子决定。
+- `ClassTable::implementorsOf()` 随三条规则一起删除（退役后零消费者）。
 - **删除随下载职责迁走而遗留的 331 行**：`DownloadResultsJob` / `DownloadReport` 在
   "结果图交给 `Image` 控件自治"之后没有任何派发点（`WatermarkStore` 里只剩一句 `use`，
   `JobRegistry` 却仍注册着），四个测试文件则在断言它**不该**被调用 ——「测试断言某段

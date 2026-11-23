@@ -31,7 +31,7 @@ final class Diagnostics
     /**
      * 记一条静默退化；同一个 key 只记一次。
      *
-     * @param string $key 稳定分类键（如 `select/unstable`），判据按它断言
+     * @param string $key 稳定分类键（如 `progress/derived-chain`），判据按它断言
      */
     public static function degraded(string $key, string $message): void
     {

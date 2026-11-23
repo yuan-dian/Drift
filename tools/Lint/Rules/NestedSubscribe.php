@@ -12,10 +12,14 @@ use Drift\Dev\Lint\SourceQuery;
 /**
  * §16.6.3 #9 / §2.4 纪律 10 / §11.3.2 纪律 2：订阅粒度过细（G2，**warn**）。
  *
- * 判据：`->items(…)` 的**参数区间**里出现 `->select(` / `->watch(`
+ * 判据：`->items(…)` 的**参数区间**里出现 `->watch(`
  * ⇒ 每个列表项一个订阅者。1000 行列表 = 1000 个订阅者，
  *    任一 `notify` 跑 1000 次回调（§11.3.2）。
  *
+ * ★ 2026-11-24 收窄：原先还认 `->select(`，那是 `SubjectBuilder` 的切片入口。
+ *   该机制退役后 `select(<闭包>)` 没有 provider，留在 `ACTIONS` 里只会匹配到
+ *   应用自己同名但非订阅的方法。**逐行 `Bind` 不在射程内**：那是现在的主流写法，
+ *   每个列表项各订自己的格子，粒度由格子决定（A18），不是这里的"手写 watch 铺开"。
  * ★ 为什么是 warn 不是 error：这是**粒度**问题，不是正确性问题 ——
  *   列表短的时候它完全合理。留痕、不挡路（两级严重度的本意）。
  * ★ 诚实的边界（三条，都是静态判不出来的，别假装能判）：
@@ -28,8 +32,8 @@ use Drift\Dev\Lint\SourceQuery;
  */
 final class NestedSubscribe implements Rule
 {
-    /** 订阅动作的方法名（小写）—— 与 `subscriber-mark` 同一份口径 */
-    private const ACTIONS = ['select', 'watch'];
+    /** 订阅动作（小写）—— 只剩手写那一种；`->select()` 随 A18 的例外一同退役 */
+    private const ACTIONS = ['watch'];
 
     /** item builder 的入口方法名 */
     private const BUILDER = 'items';

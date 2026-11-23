@@ -22,7 +22,7 @@ Fatal 的标准序列顺序不可换：① 写日志（错误 + 栈 + 最近Diag
 - 级别是 `DIAGNOSTIC`，所以只进环形缓冲、不中止；`Diagnostics::reported()` 返回报过的 key。
 - key 不能为空，传空串会被当成 Fatal 报出去。业务代码不要用它，只用 `Errors::report()`。
 
-框架检测点用 `[DX]`，业务错误用 `Errors`。常见的 key 有 `progress/derived-chain`（进度订阅挂到了 `then()` 派生链）、`future/fanout-cancel`（一条 Future 多处扇出后被取消）、`select/unstable` 一类选择判据不稳。看到这些 key 先按消息里的接线建议改代码，不要当成普通日志忽略：它们对应的症状分别是"进度条不动"、"另一处永久 loading"、"选择反复横跳"，都不报错。
+框架检测点用 `[DX]`，业务错误用 `Errors`。现在只有两个 key：`progress/derived-chain`（进度订阅挂到了 `then()` 派生链）、`future/fanout-cancel`（一条 Future 多处扇出后被取消）。看到这两个先按消息里的接线建议改代码，不要当成普通日志忽略：它们对应的症状分别是"进度条不动"、"另一处永久 loading"，都不报错。
 
 异步链路还要按 code 分诊：`Failure::CODE_JOB_REJECTED` 是装配写错（重试无用），其余具名码是瞬时故障。完整码表见[诊断与错误码](../reference/diagnostics.md)。
 

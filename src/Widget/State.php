@@ -334,7 +334,7 @@ abstract class State
      * ★ `watch()` 只允许在 `initState()` 调（A4 防 build 期订阅）；update 阶段
      *   要重绑就走这里，槽名保证「替换」而不是「追加」。
      *
-     * @internal 框架内 State（如 `SubjectBuilderState`）用
+     * @internal 只给框架内部的 State 用（应用侧订阅写在 `initState()` 里走 `watch()`）
      */
     public function watchSlot(string $slot, Subject $subject, callable $handler): Subscription
     {
